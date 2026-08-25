@@ -14,15 +14,16 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 ## 進め方
 
-1. 変更は **Issue 起票から始める** (目的・完了条件を書く)。複数工程は親 Issue + sub-issue で構成し、本文チェックリストは使わない
-2. **着手時に、その時点のプラン (変更点・確認方法) を対象 Issue にコメントで残す**。実装の過程でプランが変わったら、そのコメントへの返信で差分を残す
-3. `main` から `<type>/<短い説明>` ブランチを切る
-4. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)
-5. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く
+1. 変更は **Issue 起票から始める**。起票は雑でよい (書式不要・`status: needs-triage` が自動で付く)。複数工程は親 Issue + sub-issue で構成し、本文チェックリストは使わない
+2. **着手できるのは `verify:` ラベルが付いた Issue だけ** — `needs-triage` のままの Issue には着手しない。まず議論して「どうなれば解消か」を Issue 本文に固め、`verify: machine` / `verify: human` を付ける ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md))
+3. **着手時に、合意済みの完了条件を引用したプラン (変更点・確認方法) を対象 Issue にコメントで残す**。実装の過程でプランが変わったら、そのコメントへの返信で差分を残す
+4. `main` から `<type>/<短い説明>` ブランチを切る
+5. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR は `no-issue` ラベルを付ける
+6. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く
 
 ## マージの判断基準
 
-PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で **merge queue に投入してよい**。queue が「合流後の姿」で `ci-gate` を再検証してから main に入れるため、人手で CI を見張って merge する運用はしない。main への直接 push・force push はルールセットが禁止している。マージ後は main に戻って pull する。
+PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で **merge queue に投入してよい**。ただしルーティングは [ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) に従う — `verify: human` の Issue に紐づく PR と重要パス (ADR・`.github/`・`.claude/`) を触る PR は、メンテナの `review: approved` ラベルが付くまで投入しない。queue が「合流後の姿」で `ci-gate` を再検証してから main に入れるため、人手で CI を見張って merge する運用はしない。main への直接 push・force push はルールセットが禁止している。マージ後は main に戻って pull する。
 
 ## コメントの署名
 
