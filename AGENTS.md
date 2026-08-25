@@ -20,6 +20,10 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 4. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)
 5. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く
 
+## マージの判断基準
+
+PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で **merge queue に投入してよい**。queue が「合流後の姿」で `ci-gate` を再検証してから main に入れるため、人手で CI を見張って merge する運用はしない。main への直接 push・force push はルールセットが禁止している。マージ後は main に戻って pull する。
+
 ## コメントの署名
 
 同じ Issue / PR には人間も複数のエージェントも書き込む。AI エージェントが投稿するコメントは、発言の出どころが後から判別できるよう本文末尾に署名を付ける:
