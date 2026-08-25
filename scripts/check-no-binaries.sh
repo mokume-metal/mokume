@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
 # git 追跡ファイルにバイナリ (画像・動画・音声・モデル・アーカイブ等) が
 # 混入していないことを検査する (ADR-0001 原則 7 の機械強制)。
 # 例外を認める場合は ALLOWLIST に「パス<TAB>理由」を追記する。

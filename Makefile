@@ -2,14 +2,18 @@
 # (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check no-binaries
+.PHONY: setup check ci-check no-binaries reuse-lint
 
 setup: ## 開発ツールを確認する
-	@echo "ok: 現時点で追加ツールは不要"
+	@command -v reuse >/dev/null 2>&1 || { echo "reuse が見つからない: brew install reuse"; exit 1; }
+	@echo "ok: 必要なツールは揃っている"
 
 check: setup
 
-ci-check: no-binaries ## per-PR CI と同一の検査 — push 前に通す
+ci-check: no-binaries reuse-lint ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
+
+reuse-lint:
+	reuse lint

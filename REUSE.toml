@@ -1,0 +1,29 @@
+# REUSE (https://reuse.software) の帰属宣言。
+# 原則は各ファイルの SPDX ヘッダで宣言し、ヘッダを持てない・持たせたくない
+# ファイルだけをここに列挙する。ワイルドカードで将来のファイルを黙って包まない
+# (帰属不明のファイルが混入したら reuse lint が落ちるのが望む挙動)。
+
+version = 1
+
+[[annotations]]
+path = [
+  "README.md",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "CONTRIBUTING.md",
+  "CHANGELOG.md",
+  "changelog.d/README.md",
+  "docs/decisions/0001-founding-principles.md",
+  "docs/decisions/0002-issue-lifecycle-and-merge-approval.md",
+  ".gitignore",
+  "Makefile",
+  ".claude/settings.json",
+  ".github/workflows/ci.yml",
+  ".github/workflows/triage.yml",
+  ".github/dependabot.yml",
+  ".github/pull_request_template.md",
+  ".github/ISSUE_TEMPLATE/bug-report.md",
+  ".github/ISSUE_TEMPLATE/proposal.md",
+]
+SPDX-FileCopyrightText = "2026 mokume-metal"
+SPDX-License-Identifier = "MIT"
