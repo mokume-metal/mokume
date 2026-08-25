@@ -43,9 +43,13 @@ required check `review-gate` が PR ごとに判定する:
 
 重要パス: `docs/decisions/` (ADR)・`.github/` (workflows)・`.claude/`。公開 API 面はコードが生まれた時点で追加する。
 
-### 4. 人間の承認はラベルで表す
+### 4. 人間の承認は native レビューを第一級とし、ラベルは同一アカウント制約下の暫定 fallback
 
-`verify: human` の承認は、メンテナが PR に `review: approved` ラベルを付けることで行う (タイムラインに残り監査できる)。native の required approvals を使わないのは文脈で述べた自己承認の制約による。将来、エージェントの作業を別 identity (GitHub App / bot アカウント) に分離すれば native の承認に移行できる — その時は本 ADR を改訂する。
+承認の第一級の表現は **GitHub native の Approve レビュー**とする (帰属・push による stale 化の扱い・複数メンテナへの拡張・CODEOWNERS 連携が揃った専用機構のため)。review-gate は Approve レビューを最優先で見る。Changes requested のレビューが未解消の場合は、ラベルでは上書きできず赤のまま。
+
+ただし現在は PR 作成者とメンテナが同一アカウントであり、自分の PR を Approve できない。この間に限り、メンテナが PR に `review: approved` ラベルを付けることを暫定の fallback として認める (誰が付けたかはタイムラインに残る)。
+
+メンテナが複数になった時点で: fallback ラベルを廃止し、ルールセットの required approving reviews を 1 以上へ引き上げて本 ADR を改訂する。エージェントの作業を別 identity (GitHub App / bot アカウント) に分離する場合も同様に native へ完全移行する。
 
 ### 5. 機械クラスの領土を広げ続ける
 

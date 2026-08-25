@@ -21,7 +21,7 @@ fail() {
   exit 1
 }
 
-pr_json=$(gh pr view "$PR" -R "$REPO" --json body,labels,files)
+pr_json=$(gh pr view "$PR" -R "$REPO" --json body,labels,files,latestReviews)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
 body=$(jq -r '.body // ""' <<<"$pr_json")
 
@@ -57,13 +57,21 @@ if jq -r '.files[].path' <<<"$pr_json" | grep -qE "$IMPORTANT_PATHS"; then
   echo "review-gate: 重要パス (docs/decisions/ | .github/ | .claude/) に触れている"
 fi
 
-# 4. human 扱いなら承認ラベルを待つ
+# 4. human 扱いなら承認を待つ — native の Approve レビューを第一級とし、
+#    PR 作成者と承認者が同一アカウントで Approve できない間だけラベルを暫定 fallback にする
 if $need_human; then
-  if grep -qx "review: approved" <<<"$pr_labels"; then
-    echo "review-gate: メンテナ承認 (review: approved) を確認"
+  reviews=$(jq -r '[.latestReviews[]?.state] | join("\n")' <<<"$pr_json")
+  if grep -qx "CHANGES_REQUESTED" <<<"$reviews"; then
+    fail "変更要求 (Changes requested) のレビューが未解消" \
+         "指摘に対応して push し、レビュアーの承認をもらい直す (ラベルでは上書きできない)"
+  fi
+  if grep -qx "APPROVED" <<<"$reviews"; then
+    echo "review-gate: メンテナ承認 (Approve レビュー) を確認"
+  elif grep -qx "review: approved" <<<"$pr_labels"; then
+    echo "review-gate: メンテナ承認 (review: approved ラベル — 同一アカウント運用の暫定 fallback) を確認"
   else
     fail "この PR はメンテナの承認が必要 (verify: human または重要パス)" \
-         "メンテナが diff を確認し、PR に review: approved ラベルを付ける (ラベル操作で自動的に再実行される)"
+         "メンテナが diff を確認し、レビューで Approve する (推奨)。PR 作成者と同一アカウントのため Approve できない場合のみ、暫定として review: approved ラベルを付ける (どちらも自動で再評価される)"
   fi
 fi
 

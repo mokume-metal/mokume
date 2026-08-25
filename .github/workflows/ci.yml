@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  # Approve / 却下でも review-gate を自動再評価する
+  pull_request_review:
+    types: [submitted, dismissed]
   merge_group:
   push:
     branches: [main]
@@ -24,7 +27,7 @@ jobs:
   # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
   # merge_group にはタイトルが無いためスキップし、ci-gate 側は skipped を許容する。
   pr-title:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
     steps:
       - name: Conventional Commits title
@@ -43,7 +46,7 @@ jobs:
   # 承認ラベルの付け外し (labeled/unlabeled) で自動的に再評価される。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
   review-gate:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
     permissions:
       contents: read
