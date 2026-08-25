@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Install tools
+        run: pipx install reuse
       - run: make ci-check
 
   # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
