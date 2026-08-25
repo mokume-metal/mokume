@@ -1,0 +1,33 @@
+name: Triage
+
+# 新規 Issue に status: needs-triage を自動付与し、タイトルの型 (Conventional
+# Commits の type) から type: ラベルを推定して付与する (ADR-0002 決定 1)。
+# 雑な起票を妨げないため、起票時には何も要求しない — 分類は機械が下書きする。
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: needs-triage と type ラベルの自動付与
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ github.event.issue.title }}
+          NUM: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          labels="status: needs-triage"
+          case "$TITLE" in
+            "fix:"*|"fix("*)                 labels="$labels,type: bug" ;;
+            "feat:"*|"feat("*)               labels="$labels,type: feature" ;;
+            "docs:"*|"docs("*)               labels="$labels,type: docs" ;;
+            "design:"*|"design("*)           labels="$labels,type: design" ;;
+            "chore:"*|"chore("*|"ci:"*|"ci("*|"build:"*|"build("*|"refactor:"*|"refactor("*|"test:"*|"test("*|"perf:"*|"perf("*) labels="$labels,type: maintenance" ;;
+          esac
+          gh issue edit "$NUM" -R "$REPO" --add-label "$labels"
