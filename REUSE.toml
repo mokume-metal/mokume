@@ -20,6 +20,7 @@ path = [
   ".claude/settings.json",
   ".github/workflows/ci.yml",
   ".github/workflows/triage.yml",
+  ".github/workflows/parent-guard.yml",
   ".github/dependabot.yml",
   ".github/pull_request_template.md",
   ".github/ISSUE_TEMPLATE/bug-report.md",

@@ -25,6 +25,14 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で **merge queue に投入してよい**。ただしルーティングは [ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) に従う — `verify: human` の Issue に紐づく PR と重要パス (ADR・`.github/`・`.claude/`) を触る PR は、メンテナの承認 — **Approve レビュー (第一級)**、または PR 作成者と同一アカウントで Approve できない間の暫定として `review: approved` ラベル — が付くまで投入しない。queue が「合流後の姿」で `ci-gate` を再検証してから main に入れるため、人手で CI を見張って merge する運用はしない。main への直接 push・force push はルールセットが禁止している。マージ後は main に戻って pull する。
 
+## sub-issue の使い方
+
+- 複数工程の仕事は親 Issue + sub-issue で構成する (本文チェックリスト不使用)。**作成は `scripts/sub-issue.sh <親番号> <タイトル>` で 1 コマンド** (紐づけと親の `type:` ラベル継承まで行う)
+- **検証・実験のための使い捨て Issue は、検証対象の Issue の sub-issue にする** (`--test` フラグで雛形ごと作れる)。存在理由がツリーに残る
+- 階層は 2〜3 段まで。独立した Issue を無理にツリー化しない (ツリーは関係の表現であって収納棚ではない)
+- open の子を残した親の completed close は Parent guard が reopen する。ツリーごと畳む意図なら **not planned** で close する
+- 子 Issue の検索は `parent-issue:mokume-metal/mokume#N` 修飾子
+
 ## コメントの署名
 
 同じ Issue / PR には人間も複数のエージェントも書き込む。AI エージェントが投稿するコメントは、発言の出どころが後から判別できるよう本文末尾に署名を付ける:

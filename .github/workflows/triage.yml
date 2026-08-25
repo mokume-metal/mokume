@@ -22,12 +22,17 @@ jobs:
           NUM: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
         run: |
-          labels="status: needs-triage"
+          # fast path: 起票時点で verify: が付いている (完了条件が確定済み) なら
+          # needs-triage を付けない
+          existing=$(gh issue view "$NUM" -R "$REPO" --json labels --jq '[.labels[].name] | join("\n")')
+          labels=""
+          add() { if [ -z "$labels" ]; then labels="$1"; else labels="$labels,$1"; fi; }
+          grep -q '^verify: ' <<<"$existing" || add "status: needs-triage"
           case "$TITLE" in
-            "fix:"*|"fix("*)                 labels="$labels,type: bug" ;;
-            "feat:"*|"feat("*)               labels="$labels,type: feature" ;;
-            "docs:"*|"docs("*)               labels="$labels,type: docs" ;;
-            "design:"*|"design("*)           labels="$labels,type: design" ;;
-            "chore:"*|"chore("*|"ci:"*|"ci("*|"build:"*|"build("*|"refactor:"*|"refactor("*|"test:"*|"test("*|"perf:"*|"perf("*) labels="$labels,type: maintenance" ;;
+            "fix:"*|"fix("*)                 add "type: bug" ;;
+            "feat:"*|"feat("*)               add "type: feature" ;;
+            "docs:"*|"docs("*)               add "type: docs" ;;
+            "design:"*|"design("*)           add "type: design" ;;
+            "chore:"*|"chore("*|"ci:"*|"ci("*|"build:"*|"build("*|"refactor:"*|"refactor("*|"test:"*|"test("*|"perf:"*|"perf("*) add "type: maintenance" ;;
           esac
-          gh issue edit "$NUM" -R "$REPO" --add-label "$labels"
+          [ -n "$labels" ] && gh issue edit "$NUM" -R "$REPO" --add-label "$labels" || echo "付与するラベルなし"
