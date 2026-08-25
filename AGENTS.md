@@ -15,9 +15,23 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 ## 進め方
 
 1. 変更は **Issue 起票から始める** (目的・完了条件を書く)。複数工程は親 Issue + sub-issue で構成し、本文チェックリストは使わない
-2. `main` から `<type>/<短い説明>` ブランチを切る
-3. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)
-4. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く
+2. **着手時に、その時点のプラン (変更点・確認方法) を対象 Issue にコメントで残す**。実装の過程でプランが変わったら、そのコメントへの返信で差分を残す
+3. `main` から `<type>/<短い説明>` ブランチを切る
+4. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)
+5. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く
+
+## コメントの署名
+
+同じ Issue / PR には人間も複数のエージェントも書き込む。AI エージェントが投稿するコメントは、発言の出どころが後から判別できるよう本文末尾に署名を付ける:
+
+```markdown
+---
+<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code)</sub>
+```
+
+## エージェント環境の設定
+
+`.claude/settings.json` (プロジェクト設定) が頻用コマンドの許可リストと、作法を supply するプラグイン (`repo-standards@shinyaoguri`) の宣言を持つ。設定はあくまで補助で、**作法の正典はこの文書**。リポ固有の Claude スキルを作る場合は `.claude/skills/` に置く (現状なし — コードが育ってから)。
 
 ## コミット・PR の規約
 

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(make ci-check:*)",
+      "Bash(make setup:*)",
+      "Bash(make check:*)",
+      "Bash(bash scripts/check-no-binaries.sh:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)"
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "shinyaoguri": {
+      "source": {
+        "source": "github",
+        "repo": "shinyaoguri/claude-plugins"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "repo-standards@shinyaoguri": true
+  }
+}
