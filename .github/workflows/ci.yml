@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # 検査の実体は make ci-check に集約する。CI にステップを足したくなったら
+  # まず Makefile に足し、このジョブは呼ぶだけを保つ。
+  ci-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: make ci-check
+
+  # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
+  # merge_group にはタイトルが無いためスキップし、ci-gate 側は skipped を許容する。
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Conventional Commits title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if printf '%s' "$TITLE" | grep -qE '^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([^)]+\))?!?: .+'; then
+            echo "ok: $TITLE"
+          else
+            echo "PR タイトルが Conventional Commits ではない: $TITLE" >&2
+            echo '形式: <type>(<scope>): <要約>  (type: feat/fix/docs/refactor/test/chore/ci/perf/build)' >&2
+            exit 1
+          fi
+
+  # ブランチ保護が要求する唯一の必須チェック。ジョブが増えても required checks の
+  # 登録名はこの 1 つを保つ。
+  ci-gate:
+    if: always()
+    needs: [ci-check, pr-title]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All required jobs green
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          if printf '%s' "$RESULTS" | grep -Eq '"result": *"(failure|cancelled)"'; then
+            echo "必須ジョブが落ちている" >&2
+            exit 1
+          fi
