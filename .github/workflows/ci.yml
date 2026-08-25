@@ -2,6 +2,10 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  # Approve / 却下でも review-gate を自動再評価する
+  pull_request_review:
+    types: [submitted, dismissed]
   merge_group:
   push:
     branches: [main]
@@ -23,7 +27,7 @@ jobs:
   # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
   # merge_group にはタイトルが無いためスキップし、ci-gate 側は skipped を許容する。
   pr-title:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
     steps:
       - name: Conventional Commits title
@@ -38,11 +42,28 @@ jobs:
             exit 1
           fi
 
+  # ADR-0002 のマージ承認ルーティング (実体は scripts/review-gate.sh)。
+  # 承認ラベルの付け外し (labeled/unlabeled) で自動的に再評価される。
+  # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
+  review-gate:
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: ADR-0002 ルーティング判定
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/review-gate.sh "${{ github.event.pull_request.number }}"
+
   # ブランチ保護が要求する唯一の必須チェック。ジョブが増えても required checks の
   # 登録名はこの 1 つを保つ。
   ci-gate:
     if: always()
-    needs: [ci-check, pr-title]
+    needs: [ci-check, pr-title, review-gate]
     runs-on: ubuntu-latest
     steps:
       - name: All required jobs green
