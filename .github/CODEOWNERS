@@ -1,0 +1,13 @@
+# 重要パスの変更にメンテナの承認を要求する (ADR-0003 の決定 3)。
+#
+# エージェントは GitHub App の identity で PR を作るので、PR の作成者は
+# mokume-agent[bot] になる。GitHub は自分の PR を自分で承認できない仕様で、
+# CODEOWNERS にはユーザーとチームしか書けない (App は書けない) ため、
+# ここに挙げたパスの変更はメンテナの Approve なしには main へ入らない。
+#
+# ルールセット側は required approving reviews = 0 のままにしてある。
+# ここに挙がっていないパスだけを触る PR は、承認を待たずに merge queue を通る。
+
+/docs/decisions/ @shinyaoguri
+/.github/        @shinyaoguri
+/.claude/        @shinyaoguri
