@@ -6,3 +6,16 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # dependabot の PR は Issue に紐づかない (Closes #N を書かない) ため、
+    # このラベルが無いと review-gate が毎回赤で止まり、人が手で付けるまで
+    # マージできない (ADR-0005 決定 4)。
+    #
+    # labels は既定を置き換える指定なので、dependabot が既定で付ける
+    # dependencies ラベルは付かなくなる — 読み手のいないラベルは持たない
+    # (ADR-0005 決定 2)。bot の PR かどうかは author で分かる。
+    #
+    # bot が自分でゲートを外しているわけではない: no-issue は承認ゲートでは
+    # なく Issue 紐づけの例外印で、このファイル自体が .github/ 配下にあり
+    # CODEOWNERS の承認なしには変えられない。actions の更新は必ず
+    # .github/workflows/ を触るので、PR ごとにメンテナの承認も要る。
+    labels: ["no-issue"]
