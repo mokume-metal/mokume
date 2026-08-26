@@ -4,6 +4,18 @@ name: Parent guard
 # 警告する (ツリーの不変条件: 親の close = 全作業完了。ADR-0002 / #23)。
 # not_planned での close は対象外 — ツリーごと畳む意図を妨げない。
 
+# run-name が無いと GitHub は run 名にイベント既定 (issues → Issue タイトル) を使う
+# ため、同じタイトルの Issue が複数あるとどの Issue の run か Actions 一覧から辿れ
+# ない (#67)。番号を前置して一意にする。
+#
+# 値のクォートは必須。`#` は YAML のコメント開始文字なので、クォート無しでは値が
+# 空になる。`${{ }}` は YAML パース後に評価されるので、Issue タイトル側に `"` や
+# `: ` が入っていても壊れない。
+#
+# このワークフローは on: issues のみを受けるので、#38 の ci.yml のようなイベント
+# ごとの条件分岐は要らない。
+run-name: "#${{ github.event.issue.number }} ${{ github.event.issue.title }}"
+
 on:
   issues:
     types: [closed]
