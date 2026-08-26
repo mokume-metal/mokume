@@ -49,7 +49,9 @@ required check `review-gate` が PR ごとに判定する:
 
 ただし現在は PR 作成者とメンテナが同一アカウントであり、自分の PR を Approve できない。この間に限り、メンテナが PR に `review: approved` ラベルを付けることを暫定の fallback として認める (誰が付けたかはタイムラインに残る)。
 
-メンテナが複数になった時点で: fallback ラベルを廃止し、ルールセットの required approving reviews を 1 以上へ引き上げて本 ADR を改訂する。エージェントの作業を別 identity (GitHub App / bot アカウント) に分離する場合も同様に native へ完全移行する。
+**この fallback は「メンテナが一人である間の暫定」ではなく、「identity が一つである間の暫定」である。** ラベルはエージェント自身も付けられるため、承認ゲートを止めているのは仕組みではなくエージェントの自制でしかない。出口は [ADR-0003](0003-agent-identity-separation.md) が定める — エージェントに GitHub App の identity を与えて PR の作成者を分離し、承認を native へ戻したうえで本ラベルを廃止する。重要パスの human 昇格 (決定 3) は CODEOWNERS へ移り、承認待ちは required check の赤ではなく Review required で表現される。
+
+メンテナが複数になる場合も native への移行先は同じである。
 
 ### 5. 機械クラスの領土を広げ続ける
 
@@ -61,4 +63,4 @@ required check `review-gate` が PR ごとに判定する:
 - review-gate の実装は独立した Issue で行う。実装までの間、本 ADR のルーティングは運用で守る
 - AGENTS.md の「進め方」と「マージの判断基準」を本 ADR に接続する
 - エージェントは `needs-triage` の Issue に着手できない。議論を経ずに merge へ到達する経路が構造的に消える
-- ADR・workflows・`.claude/` の変更は常にメンテナの承認を要するため、エージェント単独でガバナンスを変更できなくなる
+- ADR・workflows・`.claude/` の変更は常にメンテナの承認を要する。ただし**この効果は暫定 fallback の下では規約止まり**である (ラベルはエージェント自身も付けられる) — 構造として成立するのは identity を分離した後で、[ADR-0003](0003-agent-identity-separation.md) がそこまでを引き受ける
