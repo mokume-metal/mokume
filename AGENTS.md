@@ -18,7 +18,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 2. **着手できるのは `verify:` ラベルが付いた Issue だけ** — `needs-triage` のままの Issue には着手しない。まず議論して「どうなれば解消か」を Issue 本文に固め、`verify: machine` / `verify: human` を付ける ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md))
 3. **着手時に、合意済みの完了条件を引用したプラン (変更点・確認方法) を対象 Issue にコメントで残す**。実装の過程でプランが変わったら、そのコメントへの返信で差分を残す。記憶がリセットされた次のセッションが、GitHub を読むだけで再開できる状態を保つため。Claude Code のセッションではフック (`scripts/plan-record.sh`) がプランを投稿用に整え (絶対パス・ホームは畳み、秘密らしき文字列があれば止める) 投稿コマンドを提示し、**未投稿のままセッションを終えようとすると差し戻す**。投稿はエージェントが `scripts/comment.sh` で行う — 公開操作の前に人間の目が一度入る形にしている
 4. `main` から `<type>/<短い説明>` ブランチを切る
-5. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR は `no-issue` ラベルを付ける
+5. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR は `no-issue` ラベルを付ける (PR に付けるラベルはこれだけ — 「PR のラベル」節)
 6. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く
 
 ## Issue の分類
@@ -33,11 +33,17 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 | `Design` | 設計判断・ADR |
 | `Docs` | ドキュメント |
 
-迷ったら **`Bug` > `Design` > `Docs` > `Task`** の順で、より具体的なほうを取る (`Task` は何にでも当てはまるので最後)。**ラベルは型と直交する属性だけを表す** — `status: *` (状態)・`verify: *` (完了条件の性質)・`no-issue`。検索は `type:"Design"` (引用符を付ける — 旧来の `type:issue` / `type:pr` と綴りが衝突するため)。
+迷ったら **`Bug` > `Design` > `Docs` > `Task`** の順で、より具体的なほうを取る (`Task` は何にでも当てはまるので最後)。**ラベルは型と直交する属性だけを表す** — `status: *` (状態)・`verify: *` (完了条件の性質)。`no-issue` だけは Issue ではなく PR に付く (「PR のラベル」節)。検索は `type:"Design"` (引用符を付ける — 旧来の `type:issue` / `type:pr` と綴りが衝突するため)。
 
 型の**作成・改名はメンテナの操作**で、エージェントの token では通らない (`admin:org` が要る)。既存の型を Issue に付けるのはエージェントでもできる。
 
 移行は完了している。自動付与 (テンプレート・triage・`sub-issue.sh`) は Issue Type を付け、closed を含む既存 Issue にも型が遡及適用され、旧 `type: *` ラベル 6 種は削除された (#79)。
+
+## PR のラベル
+
+**PR には分類ラベルを付けない** ([ADR-0005](docs/decisions/0005-pr-labels-as-machine-input.md))。PR が持つ属性はすべて既に正典を持つ — 型は PR タイトル (Conventional Commits・`pr-title` ジョブが検査)、対象 Issue は本文の `Closes #N`、完了条件の性質は対象 Issue の `verify: *`、重要パスは CODEOWNERS、進行状態は Draft / Review / merge queue。ラベルで重ねると写しが増えるだけになる (Issue Type は Issue 専用で、そもそも PR には付かない)。
+
+PR に付くのは **CI の判定を変えるラベルだけ**で、現状は `no-issue` (Issue を閉じない例外 PR の印・`scripts/review-gate.sh` が読む) の 1 種。新しい PR ラベルを足すときは、それを読むスクリプトを同時に示す — 読み手のいないラベルは足さない。付け忘れは `review-gate` が赤で差し戻すので、手付けのままでよい。人が介在しない bot の PR (dependabot) だけは `.github/dependabot.yml` の `labels` で自動付与する。
 
 ## マージの判断基準
 

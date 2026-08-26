@@ -4,6 +4,8 @@
 #
 # ADR-0002 / ADR-0003 のマージ判定のうち、**GitHub にできないことだけ**を見る。
 #   - PR は Issue に紐づく (Closes #N)。例外は no-issue ラベルでのみ許す
+#     (この no-issue が、PR に付く唯一のラベルである — ADR-0005。dependabot の
+#      PR には .github/dependabot.yml が自動で付ける)
 #   - 対象 Issue に verify: ラベルが無ければ、完了条件が未確定のまま実装に入っている
 #   - verify: human なら人間の Approve を要求する (CODEOWNERS では表現できないため)
 #
