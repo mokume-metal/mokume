@@ -1,0 +1,18 @@
+# 生成物とローカル環境の秘密を git から締め出す (ADR-0001 原則 7)。
+# 実際に踏んだ必要のあるものだけを書く — 使っていないツールの分は先回りしない。
+
+# SwiftPM
+.build/
+.swiftpm/
+Packages/
+
+# Xcode
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# 秘密情報 (実データ・API キーの置き場。コミットしない)
+.env
+.env.*
