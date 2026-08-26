@@ -25,12 +25,20 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が green なら、指示を待たず `gh pr merge --auto` で **merge queue に投入してよい**。queue が「合流後の姿」で `ci-gate` を再検証してから main に入れるため、人手で CI を見張って merge する運用はしない。main への直接 push・force push はルールセットが禁止している。マージ後は main に戻って pull する。
 
-**承認が要るかは 2 つの機構が決める** ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) / [ADR-0003](docs/decisions/0003-agent-identity-separation.md))。どちらも投入前に満たしておく:
+**承認が要る PR でも、先に `gh pr merge --auto` を有効化しておく。** auto-merge はゲートを飛び越えない — 承認が要る PR では予約として振る舞い、承認された瞬間に queue へ入る。こうするとメンテナの操作が **Approve 1 回で完結**し、マージのために戻ってくる必要がなくなる。承認後に push すると承認は自動で外れ (`dismiss_stale_reviews_on_push`)、auto-merge は待機に戻る。
+
+**承認が要るかは 2 つの機構が決める** ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) / [ADR-0003](docs/decisions/0003-agent-identity-separation.md)):
 
 - **重要パス** (`docs/decisions/`・`.github/`・`.claude/`) を触る PR は、`.github/CODEOWNERS` により GitHub がメンテナへレビューを自動要求する。承認が無いと **Review required** でマージできない (`ci-gate` は緑のまま)
 - **`verify: human`** の Issue に紐づく PR は、`review-gate` が Approve レビューを要求する (この分類は CODEOWNERS では表現できない)
 
 承認は **native の Approve レビュー**のみ。暫定だった `review: approved` ラベルは廃止した — エージェント自身も付けられるため、ゲートとして成立していなかった。
+
+auto-merge を有効にしたのに PR が止まって見えるときは、**同じコミットに残っている古い失敗した check run** が `statusCheckRollup` を FAILURE に固定していることがある (最新の run が全て緑でも、集計は全 run を見る)。失敗した run を再実行して上書きする:
+
+```bash
+gh run rerun <run-id> --failed
+```
 
 ## sub-issue の使い方
 
