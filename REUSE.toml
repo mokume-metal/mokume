@@ -15,6 +15,7 @@ path = [
   "changelog.d/README.md",
   "docs/decisions/0001-founding-principles.md",
   "docs/decisions/0002-issue-lifecycle-and-merge-approval.md",
+  "docs/decisions/0003-agent-identity-separation.md",
   ".gitignore",
   "Makefile",
   ".claude/settings.json",
