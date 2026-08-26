@@ -13,6 +13,9 @@ DerivedData/
 # macOS
 .DS_Store
 
+# Python (scripts/tests のフック検査が置いていく)
+__pycache__/
+
 # 秘密情報 (実データ・API キーの置き場。コミットしない)
 .env
 .env.*
