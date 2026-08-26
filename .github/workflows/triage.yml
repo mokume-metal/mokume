@@ -4,6 +4,18 @@ name: Triage
 # Commits の type) から type: ラベルを推定して付与する (ADR-0002 決定 1)。
 # 雑な起票を妨げないため、起票時には何も要求しない — 分類は機械が下書きする。
 
+# run-name が無いと GitHub は run 名にイベント既定 (issues → Issue タイトル) を使う
+# ため、同じタイトルの Issue が複数あるとどの Issue の run か Actions 一覧から辿れ
+# ない (#67)。番号を前置して一意にする。
+#
+# 値のクォートは必須。`#` は YAML のコメント開始文字なので、クォート無しでは値が
+# 空になる。`${{ }}` は YAML パース後に評価されるので、Issue タイトル側に `"` や
+# `: ` が入っていても壊れない。
+#
+# このワークフローは on: issues のみを受けるので、#38 の ci.yml のようなイベント
+# ごとの条件分岐は要らない。
+run-name: "#${{ github.event.issue.number }} ${{ github.event.issue.title }}"
+
 on:
   issues:
     types: [opened]
