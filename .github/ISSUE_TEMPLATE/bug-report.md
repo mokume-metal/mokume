@@ -2,7 +2,8 @@
 name: バグ報告 / Bug report
 about: 期待と違う挙動の報告 (雑なメモでよい・どの言語でも歓迎)
 title: "fix: "
-labels: ["type: bug", "status: needs-triage"]
+type: Bug
+labels: ["status: needs-triage"]
 ---
 
 <!-- 分かる範囲だけで OK。完了条件はトリアージの議論で決めます -->

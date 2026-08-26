@@ -37,7 +37,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 型の**作成・改名はメンテナの操作**で、エージェントの token では通らない (`admin:org` が要る)。既存の型を Issue に付けるのはエージェントでもできる。
 
-移行はまだ終わっていない: `Design` / `Docs` 型の作成 (メンテナ)・自動付与の切り替え (#78)・既存 Issue への遡及適用と `type: *` ラベルの削除 (#79) が残っている。それまでは両方が混在する。
+型は org に揃い、自動付与 (テンプレート・triage・`sub-issue.sh`) も Issue Type へ切り替わった。残るは**既存 Issue への遡及適用と `type: *` ラベルの削除** (#79) — それまでは古い Issue にラベルが残る。
 
 ## マージの判断基準
 
@@ -60,7 +60,7 @@ gh run rerun <run-id> --failed
 
 ## sub-issue の使い方
 
-- 複数工程の仕事は親 Issue + sub-issue で構成する (本文チェックリスト不使用)。**作成は `scripts/sub-issue.sh <親番号> <タイトル>` で 1 コマンド** (紐づけと親の `type:` ラベル継承まで行う。継承は #78 で Issue Type へ切り替える)
+- 複数工程の仕事は親 Issue + sub-issue で構成する (本文チェックリスト不使用)。**作成は `scripts/sub-issue.sh <親番号> <タイトル>` で 1 コマンド** (紐づけと親の Issue Type 継承まで行う。子が別の仕事なら `--type <名前>` で上書きする)
 - **検証・実験のための使い捨て Issue は、検証対象の Issue の sub-issue にする** (`--test` フラグで雛形ごと作れる)。存在理由がツリーに残る
 - 階層は 2〜3 段まで。独立した Issue を無理にツリー化しない (ツリーは関係の表現であって収納棚ではない)
 - open の子を残した親の completed close は Parent guard が reopen する。ツリーごと畳む意図なら **not planned** で close する
