@@ -26,3 +26,5 @@ if [ -n "$violations" ]; then
   exit 1
 fi
 echo "ok: バイナリの混入なし ($(git ls-files | wc -l | tr -d ' ') ファイル検査)"
+
+# (検証用の一時的な変更 — マージしない)
