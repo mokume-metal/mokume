@@ -23,6 +23,7 @@ path = [
   ".github/workflows/triage.yml",
   ".github/workflows/parent-guard.yml",
   ".github/dependabot.yml",
+  ".github/CODEOWNERS",
   ".github/pull_request_template.md",
   ".github/ISSUE_TEMPLATE/bug-report.md",
   ".github/ISSUE_TEMPLATE/proposal.md",
