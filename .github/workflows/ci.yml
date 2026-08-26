@@ -1,5 +1,20 @@
 name: CI
 
+# merge queue の run だけタイトルがワークフロー名「CI」のままで、どの PR の実行か
+# 分からなかった (#38)。run-name が無いと GitHub はイベント固有の情報を run 名に
+# するが (push → コミット 1 行目 / pull_request → PR タイトル / issues → Issue
+# タイトル)、merge_group にはその既定が無くワークフロー名へ落ちるため。
+#
+# 他イベントでは空文字を返し、既定の表示に委ねる (空文字なら既定に戻ることは #66
+# で実測)。PR 番号だけを抜き出したいところだが、Actions の式言語には split も正規
+# 表現も無いので ref を丸ごと出す。squash 予定のコミットメッセージ
+# (merge_group.head_commit.message) の方が読みやすいが、改行込みで丸ごと入って
+# しまうため使えない (#66)。
+#
+# 値のクォートは必須。`merge queue: ` の `: ` があるとクォート無しでは YAML として
+# 不正になり、workflow file issue で run が空振りする (#66)。
+run-name: "${{ github.event_name == 'merge_group' && format('merge queue: {0}', github.event.merge_group.head_ref) || '' }}"
+
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
