@@ -2,18 +2,23 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# ADR-0002 のマージ承認ルーティングを判定する (docs/decisions/0002)。
+# ADR-0002 / ADR-0003 のマージ判定のうち、**GitHub にできないことだけ**を見る。
 #   - PR は Issue に紐づく (Closes #N)。例外は no-issue ラベルでのみ許す
 #   - 対象 Issue に verify: ラベルが無ければ、完了条件が未確定のまま実装に入っている
-#   - verify: human、または重要パスに触れる PR は、メンテナの review: approved を待つ
+#   - verify: human なら人間の Approve を要求する (CODEOWNERS では表現できないため)
+#
+# 重要パス (docs/decisions/ ・ .github/ ・ .claude/) の承認要求は **CODEOWNERS が担う**。
+# エージェントは GitHub App の identity で PR を作るので、自分の PR を自分で承認できず、
+# CODEOWNERS にはユーザーとチームしか書けない。ここで重ねて判定する必要はない。
+#
+# 承認をこのスクリプトで判定するほど「承認待ち」が CI の赤になり、外から見て故障と
+# 区別できなくなる。判定を native へ寄せた分だけ、ci-gate の赤は本物の故障に近づく。
+#
 # 使い方: review-gate.sh <PR番号> (要 GH_TOKEN / gh 認証)
 set -euo pipefail
 
 PR="${1:?PR 番号が必要}"
 REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
-
-# 重要パス (公開 API 面はコードが生まれた時点で追加する)
-IMPORTANT_PATHS='^(docs/decisions/|\.github/|\.claude/)'
 
 fail() {
   echo "review-gate: 差し戻し — $1" >&2
@@ -21,7 +26,7 @@ fail() {
   exit 1
 }
 
-pr_json=$(gh pr view "$PR" -R "$REPO" --json body,labels,files,latestReviews)
+pr_json=$(gh pr view "$PR" -R "$REPO" --json body,labels,latestReviews)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
 body=$(jq -r '.body // ""' <<<"$pr_json")
 
@@ -51,27 +56,21 @@ for n in $issues; do
   fi
 done
 
-# 3. 重要パス
-if jq -r '.files[].path' <<<"$pr_json" | grep -qE "$IMPORTANT_PATHS"; then
-  need_human=true
-  echo "review-gate: 重要パス (docs/decisions/ | .github/ | .claude/) に触れている"
+# 3. verify: human は人間の Approve を待つ。
+#    完了条件が機械で判定できないと宣言した以上、誰かが見るまで通さない。
+#    重要パスの場合は CODEOWNERS も並行して承認を要求する (こちらが緑でも native 側で止まる)
+reviews=$(jq -r '[.latestReviews[]?.state] | join("\n")' <<<"$pr_json")
+if grep -qx "CHANGES_REQUESTED" <<<"$reviews"; then
+  fail "変更要求 (Changes requested) のレビューが未解消" \
+       "指摘に対応して push し、レビュアーの承認をもらい直す"
 fi
 
-# 4. human 扱いなら承認を待つ — native の Approve レビューを第一級とし、
-#    PR 作成者と承認者が同一アカウントで Approve できない間だけラベルを暫定 fallback にする
 if $need_human; then
-  reviews=$(jq -r '[.latestReviews[]?.state] | join("\n")' <<<"$pr_json")
-  if grep -qx "CHANGES_REQUESTED" <<<"$reviews"; then
-    fail "変更要求 (Changes requested) のレビューが未解消" \
-         "指摘に対応して push し、レビュアーの承認をもらい直す (ラベルでは上書きできない)"
-  fi
   if grep -qx "APPROVED" <<<"$reviews"; then
     echo "review-gate: メンテナ承認 (Approve レビュー) を確認"
-  elif grep -qx "review: approved" <<<"$pr_labels"; then
-    echo "review-gate: メンテナ承認 (review: approved ラベル — 同一アカウント運用の暫定 fallback) を確認"
   else
-    fail "この PR はメンテナの承認が必要 (verify: human または重要パス)" \
-         "メンテナが diff を確認し、レビューで Approve する (推奨)。PR 作成者と同一アカウントのため Approve できない場合のみ、暫定として review: approved ラベルを付ける (どちらも自動で再評価される)"
+    fail "verify: human の Issue に紐づく PR はメンテナの承認が必要" \
+         "メンテナが diff を確認して Approve する (Files changed → Review changes → Approve、または gh pr review $PR --approve)。承認すると自動で再評価される"
   fi
 fi
 

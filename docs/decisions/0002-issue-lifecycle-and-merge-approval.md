@@ -10,7 +10,7 @@
 
 一方で、Issue の起票は雑なメモ・思いつき・不確かな報告を歓迎したい。「解消条件が機械判定可能か」は起票時には分からないことが多く、事実確認と意図の議論を経て初めて決まる。分類を起票の条件にすると、気軽に積める文化を壊す。
 
-また本リポジトリは、メンテナと AI エージェントが**同一アカウント**で PR を作る。GitHub は自分の PR を自分で承認できないため、native の required approving reviews は使えない (有効化すると全 PR がデッドロックする)。
+また本 ADR を書いた時点では、メンテナと AI エージェントが**同一アカウント**で PR を作っていた。GitHub は自分の PR を自分で承認できないため、native の required approving reviews が使えなかった (有効化すると全 PR がデッドロックする)。この前提は [ADR-0003](0003-agent-identity-separation.md) が解消し、決定 4 は native 一本化へ改訂されている。
 
 ## 決定
 
@@ -37,21 +37,21 @@ required check `review-gate` が PR ごとに判定する:
 |---|---|
 | `Closes #N` が無く `no-issue` ラベルも無い | 赤 (Issue 駆動の徹底) |
 | 対象 Issue に `verify:` ラベルが無い | 赤 (完了条件が未確定のまま実装に入っている) |
-| `verify: human` | PR に `review: approved` ラベルが付くまで赤 |
+| `verify: human` | メンテナの Approve レビューが付くまで赤 |
 | `verify: machine` | 検査群 (`ci-check` 等) のみで通過 |
-| 変更パスが重要パスを含む | verify ラベルに関係なく human 扱い |
+| Changes requested が未解消 | 赤 |
 
-重要パス: `docs/decisions/` (ADR)・`.github/` (workflows)・`.claude/`。公開 API 面はコードが生まれた時点で追加する。
+**重要パスの承認要求は review-gate ではなく CODEOWNERS が担う** ([ADR-0003](0003-agent-identity-separation.md))。`.github/CODEOWNERS` に挙げたパス (`docs/decisions/`・`.github/`・`.claude/`) に触れる PR は、GitHub が自動でメンテナへレビューを要求し、承認が無ければマージできない。公開 API 面はコードが生まれた時点で CODEOWNERS に追加する。
 
-### 4. 人間の承認は native レビューを第一級とし、ラベルは同一アカウント制約下の暫定 fallback
+`verify: human` だけは CODEOWNERS で表現できない (パスではなく Issue の性質で決まる) ため、review-gate に残している。
 
-承認の第一級の表現は **GitHub native の Approve レビュー**とする (帰属・push による stale 化の扱い・複数メンテナへの拡張・CODEOWNERS 連携が揃った専用機構のため)。review-gate は Approve レビューを最優先で見る。Changes requested のレビューが未解消の場合は、ラベルでは上書きできず赤のまま。
+### 4. 人間の承認は native の Approve レビューに一本化する
 
-ただし現在は PR 作成者とメンテナが同一アカウントであり、自分の PR を Approve できない。この間に限り、メンテナが PR に `review: approved` ラベルを付けることを暫定の fallback として認める (誰が付けたかはタイムラインに残る)。
+承認の表現は **GitHub native の Approve レビュー**とする。帰属・push による stale 化の扱い・複数メンテナへの拡張・CODEOWNERS 連携が揃った専用機構だからである。Changes requested のレビューが未解消の場合は赤のまま。
 
-**この fallback は「メンテナが一人である間の暫定」ではなく、「identity が一つである間の暫定」である。** ラベルはエージェント自身も付けられるため、承認ゲートを止めているのは仕組みではなくエージェントの自制でしかない。出口は [ADR-0003](0003-agent-identity-separation.md) が定める — エージェントに GitHub App の identity を与えて PR の作成者を分離し、承認を native へ戻したうえで本ラベルを廃止する。重要パスの human 昇格 (決定 3) は CODEOWNERS へ移り、承認待ちは required check の赤ではなく Review required で表現される。
+当初はメンテナと PR 作成者が同一アカウントで、自分の PR を Approve できなかったため、`review: approved` ラベルを暫定の fallback として認めていた。**この fallback は廃止した。** ラベルはエージェント自身も付けられるため、承認ゲートを止めているのが仕組みではなくエージェントの自制でしかなかった。
 
-メンテナが複数になる場合も native への移行先は同じである。
+出口は [ADR-0003](0003-agent-identity-separation.md) が実行した — エージェントに GitHub App の identity を与えて PR の作成者を分離し、**自分の PR は自分で承認できない**というプラットフォームの制約が効く状態にしたうえで、ラベルをリポジトリから削除した。重要パスの承認要求は CODEOWNERS へ移り、そこでは App の承認では要件を満たせない (CODEOWNERS にはユーザーとチームしか書けない)。
 
 ### 5. 機械クラスの領土を広げ続ける
 
@@ -59,8 +59,8 @@ required check `review-gate` が PR ごとに判定する:
 
 ## 影響
 
-- ラベル体系に `verify: machine` / `verify: human` / `review: approved` / `no-issue` を追加する (ラベル整備の Issue で実施)
+- ラベル体系に `verify: machine` / `verify: human` / `no-issue` を追加する (`review: approved` も一度は追加したが、identity 分離の完了に伴い削除した)
 - review-gate の実装は独立した Issue で行う。実装までの間、本 ADR のルーティングは運用で守る
 - AGENTS.md の「進め方」と「マージの判断基準」を本 ADR に接続する
 - エージェントは `needs-triage` の Issue に着手できない。議論を経ずに merge へ到達する経路が構造的に消える
-- ADR・workflows・`.claude/` の変更は常にメンテナの承認を要する。ただし**この効果は暫定 fallback の下では規約止まり**である (ラベルはエージェント自身も付けられる) — 構造として成立するのは identity を分離した後で、[ADR-0003](0003-agent-identity-separation.md) がそこまでを引き受ける
+- ADR・workflows・`.claude/` の変更は常にメンテナの承認を要する。当初この効果は規約止まりだったが (ラベルはエージェント自身も付けられた)、[ADR-0003](0003-agent-identity-separation.md) の identity 分離と CODEOWNERS への移行によって**構造として成立した**
