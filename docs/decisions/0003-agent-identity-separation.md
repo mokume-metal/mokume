@@ -24,9 +24,22 @@
 
 ### 1. エージェントに GitHub App の identity を与える
 
-エージェントが push し PR を開く主体を、メンテナのアカウントから `mokume-metal` org 所有の GitHub App に分離する。App の権限は `contents: write` / `pull_requests: write` / `issues: write` / `metadata: read` に限り、**ルールセットの bypass list には加えない**。
+エージェントが push し PR を開く主体を、メンテナのアカウントから `mokume-metal` org 所有の GitHub App に分離する。App の権限は次に限り、**ルールセットの bypass list には加えない**。
 
-**コミットの author と署名はメンテナのまま**とする。分離するのは push と PR 作成の主体であって、著作の主体ではない。署名の検証は鍵に対して行われるため、`signed-commits` ルールセットとも両立する。
+| 権限 | 設定 | 理由 |
+| --- | --- | --- |
+| Contents | Read and write | ブランチへの push |
+| Pull requests | Read and write | PR の作成・更新 |
+| Issues | Read and write | コメント・ラベル |
+| Workflows | Read and write | GitHub は `.github/workflows/` 配下を変更する push を、`workflows` 権限の無いトークンに対して**サーバ側で拒否する** |
+| Metadata | Read-only | 必須 |
+| **Administration** | **No access** | 与えるとエージェントが自分を縛るルールセットを外せてしまい、本 ADR の目的が崩れる |
+
+`Administration` を持たない結果として、ルールセットの変更はメンテナ側の作業になる。一度きりの設定変更なので運用上の負担は小さい。
+
+**bypass を与えることになった場合は、種類を選ぶ。** ルールセットの bypass には二種類あり、exemption 型は enforcement を**黙って**飛ばす (監査記録が残らない)。将来どうしても必要になったら、痕跡が PR と audit log に残る "for pull requests only" 型を選ぶ。便利さのために監査記録を捨てない。
+
+**コミットの author と署名はメンテナのまま**とする。分離するのは push と PR 作成の主体であって、著作の主体ではない。署名の検証は鍵に対して行われるため、`signed-commits` ルールセットとも両立する (App のトークンで push したメンテナ署名のコミットが `verified: true` になることを実測した)。
 
 ### 2. machine user ではなく App を選ぶ
 
@@ -68,13 +81,19 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 - **意図しない自己承認が構造的に消える** (設定の既定として不可能になる)
 - **監査可能性** — 誰が開き誰が承認したかがタイムラインに残る
 
+**人数は増えていない。** SLSA Source Track の L4 は "two or more trusted **persons**"、CIS の供給網ガイドは "two ... **users**" による承認を求めるが、App はそこに数えられない。メンテナが一人である限りこの水準は達成できず、identity を分けても変わらない。これは AI を導入したことで生じた不足ではなく、一人のプロジェクトが元から持つ限界である。SLSA には bot への例外 (Trusted Robot) があるが、その定義は「robot の identity とコードベースを一方的に変更できないこと」を要求するので、メンテナが単独で書き換えられるエージェントは該当しない。
+
+**AI にレビュー役は与えない。** OpenSSF Scorecard は "Review by bots, including bots powered by AI/ML, do not count as code review" と明文で否定している。エージェントの出力を別のエージェントに検分させることは、本 ADR の承認とは別物であり、人間の承認の代替にはならない。
+
 より強い分離が必要になったら、エージェントの実行環境をメンテナの認証情報から隔離する (別ホスト・別ユーザー) ことを別途検討する。
 
 ### 7. コミットの貢献を維持する
 
-squash merge はコミットメッセージを PR タイトルと PR 本文で置き換えるため、ブランチ側コミットの trailer は `main` に届かない。App が squash コミットの author になる場合、メンテナの貢献を残すには `Co-authored-by:` を **PR 本文に**置く必要がある。
+squash merge の author は **App になる**。しかし GitHub は、ブランチ側コミットの author を `Co-authored-by:` として squash コミットへ**自動で付ける**。したがってメンテナの貢献は、決定 1 の「コミットの author はメンテナのまま」を守っている限り**自動で保たれる**。手当ては要らない。
 
-この要否は「App が開いた PR の squash コミットの author が誰になるか」の実測で決める。必要と分かった場合は、PR テンプレートに含め、検査で機械的に要求する。
+手で `Co-authored-by:` を PR 本文へ置く方式は採らない。実測したところ、GitHub が squash 本文を折り返して trailer の行が割れ、trailer として無効になった。書いた本人にも壊れたことが分からないため、機械で要求すれば「壊れた trailer を有効と判定する検査」になってしまう。
+
+守るべきは trailer を書くことではなく、**ブランチのコミットの author をメンテナのままにすること**である。
 
 ## 影響
 
@@ -82,4 +101,4 @@ squash merge はコミットメッセージを PR タイトルと PR 本文で�
 - `scripts/review-gate.sh` から承認判定と重要パス判定を削除する。`CODEOWNERS` を新設する
 - 「承認待ちを CI の赤以外で表現する」検討 ([#29](https://github.com/mokume-metal/mokume/issues/29)) は、本 ADR の適用によって不要になる
 - エージェントの実行手順 (`GH_TOKEN` に installation token を載せる) を AGENTS.md に加える。秘密鍵はリポジトリにもログにも置かない
-- 移行の前に、ドキュメントで確証が取れない四点 (承認数 0 と code owner review の組み合わせの挙動 / installation token での `gh` の動作 / App が push したコミットの署名検証 / squash コミットの author) を実測する
+- 移行の前に確証が取れなかった四点のうち三点は実測で解決した — installation token での `gh` の動作 (JWT は `Authorization: Bearer` で送る必要がある) / App が push したコミットの署名 (メンテナの鍵の署名は `verified` のまま) / squash コミットの author (App になるが co-author は自動で付く)。残る「承認数 0 と code owner review の組み合わせ」は CODEOWNERS の適用時に測る
