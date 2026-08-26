@@ -35,12 +35,16 @@ PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が g
 
 ## コメントの署名
 
-同じ Issue / PR には人間も複数のエージェントも書き込む。AI エージェントが投稿するコメントは、発言の出どころが後から判別できるよう本文末尾に署名を付ける:
+同じ Issue / PR には人間も複数のエージェントも書き込む。発言の出どころが後から判別できるよう、**AI エージェントからのコメントは投稿ラッパー経由で投稿する**。署名は実行環境から判定して自動で付くので、自分で書き足さなくてよい:
 
-```markdown
----
-<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code)</sub>
+```bash
+bash scripts/comment.sh issue <番号> --body-file <ファイル>
+bash scripts/comment.sh pr    <番号> --body "<本文>"
 ```
+
+投稿前に本文を確かめたいときは `--dry-run` を付ける。名乗りを自動検出できない環境では総称の署名になるので、`MOKUME_AGENT_NAME` (必要なら `MOKUME_AGENT_URL`) で明示する。
+
+**人間が直接 `gh` でコメントする分にはラッパーは不要**。Claude Code のセッションでは `.claude/settings.json` のフックが素の `gh issue comment` / `gh pr comment` を差し戻してラッパーへ誘導する。同等のフック機構を持たないエージェント (現状の Codex CLI など) では機械的には強制できないため、この節が拠りどころになる — ラッパーはどの環境からでも呼べる。
 
 ## エージェント環境の設定
 

@@ -6,6 +6,7 @@
       "Bash(make setup:*)",
       "Bash(make check:*)",
       "Bash(bash scripts/check-no-binaries.sh:*)",
+      "Bash(make hooks-test:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -20,6 +21,21 @@
       "Bash(gh issue list:*)",
       "Bash(gh run list:*)",
       "Bash(gh run view:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/agent-comment-guard.sh\"",
+            "timeout": 10,
+            "statusMessage": "コメントの投稿経路を確認中"
+          }
+        ]
+      }
     ]
   },
   "extraKnownMarketplaces": {
