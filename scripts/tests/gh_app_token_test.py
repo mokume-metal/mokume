@@ -179,6 +179,32 @@ class GhAppTokenTest(unittest.TestCase):
         proc = self.run_script(**self.configured(), GH_STUB_FAIL="1")
         self.assertNotIn(self.key_marker, proc.stdout + proc.stderr)
 
+    # --- 壊れた鍵を名指しで拒む (#57) --------------------------------------
+    # 保管先が値を壊す事故は実際に起きた (1678 バイトの鍵が 87 バイトに切り詰められた)。
+    # openssl に渡すと一般的な暗号エラーになり、原因から最も遠い形で出る
+
+    def test_rejects_a_value_that_is_not_a_pem(self):
+        proc = self.run_script(**self.configured(MOKUME_APP_PRIVATE_KEY="ただの文字列"))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("PEM ではない", proc.stderr)
+
+    def test_rejects_a_truncated_pem(self):
+        head = self.key.read_text(encoding="utf-8").splitlines()[0]
+        proc = self.run_script(**self.configured(MOKUME_APP_PRIVATE_KEY=head))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("途中で切れている", proc.stderr)
+
+    def test_rejects_a_pem_flattened_into_one_line(self):
+        flat = self.key.read_text(encoding="utf-8").replace("\n", " ")
+        proc = self.run_script(**self.configured(MOKUME_APP_PRIVATE_KEY=flat))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("改行が無い", proc.stderr)
+
+    def test_broken_key_messages_do_not_leak_the_key(self):
+        flat = self.key.read_text(encoding="utf-8").replace("\n", " ")
+        proc = self.run_script(**self.configured(MOKUME_APP_PRIVATE_KEY=flat))
+        self.assertNotIn(self.key_marker, proc.stdout + proc.stderr)
+
     def test_private_key_stays_hidden_when_signing_fails(self):
         proc = self.run_script(**self.configured(MOKUME_APP_PRIVATE_KEY="鍵ではない文字列"))
         self.assertNotEqual(proc.returncode, 0)
