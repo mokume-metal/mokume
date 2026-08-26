@@ -67,10 +67,13 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 
 承認待ちは required check の赤ではなく、GitHub の **Review required** という PR の状態で表現される。これは failing check ではないため、`ci-gate` の赤は本物の故障だけを意味するようになる (弱点 3 の解消)。
 
-`review-gate` は承認判定と重要パス判定を失い、mokume 固有の二点だけを見る短いスクリプトに縮む。
+`review-gate` は重要パス判定とラベル fallback を失い、mokume 固有の三点だけを見る短いスクリプトに縮む。
 
 - PR が Issue に紐づいているか (`Closes #N`、例外は `no-issue` ラベル)
 - 対象 Issue に `verify:` ラベルがあるか (完了条件が固まっているか)
+- 対象 Issue が `verify: human` なら、Approve レビューがあるか
+
+三点目を残すのは、**`verify: human` を CODEOWNERS で表現できない**ためである。CODEOWNERS が判定できるのは変更パスであって、Issue の性質ではない。ここを外すと「完了条件を機械で判定できないと宣言した変更」が誰にも見られずマージされうる。代償として、この分類の PR だけは承認待ちの間 `ci-gate` が赤いままになる。重要パスの PR は native の Review required で止まるようになったので、赤が出る頻度自体は大きく下がる。
 
 **自作の仕組みは GitHub にできないことだけをやる。**
 
