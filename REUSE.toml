@@ -29,3 +29,11 @@ path = [
 ]
 SPDX-FileCopyrightText = "2026 mokume-metal"
 SPDX-License-Identifier = "MIT"
+
+# ここから下は「ヘッダを持っているのに reuse が読み取れない」ファイル (#50)。
+# 宣言はファイル側のヘッダと同一なので矛盾はしないが、本来は不要な二重宣言である。
+# #50 が解決したらこのブロックごと消す。
+[[annotations]]
+path = ["scripts/gh-app-token.sh"]
+SPDX-FileCopyrightText = "2026 mokume-metal"
+SPDX-License-Identifier = "MIT"
