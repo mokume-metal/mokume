@@ -157,6 +157,13 @@ class GhAppTokenTest(unittest.TestCase):
         self.assertIn(f"app/installations/{INSTALLATION_ID}/access_tokens", called)
         self.assertIn("POST", called)
 
+    def test_sends_the_jwt_as_bearer(self):
+        # gh は GH_TOKEN を "token <値>" として送るため、JWT をそのまま渡すと
+        # GitHub が復号できず 401 になる (#53)。Bearer での送出を固定する
+        self.run_script(**self.configured())
+        called = self.log.read_text(encoding="utf-8").splitlines()[0]
+        self.assertIn("Authorization: Bearer", called)
+
     def test_api_failure_is_reported_with_next_step(self):
         proc = self.run_script(**self.configured(), GH_STUB_FAIL="1")
         self.assertNotEqual(proc.returncode, 0)

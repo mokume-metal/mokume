@@ -80,7 +80,11 @@ jwt="$header.$payload.$signature"
 
 # --- installation token -----------------------------------------------------
 
+# Authorization は Bearer で送る。gh は GH_TOKEN を "token <値>" として送る作りで、
+# App の JWT をその形で渡すと GitHub が復号できず 401 になる (#53)。ヘッダを明示して
+# 上書きし、GH_TOKEN 自体は gh が「認証が設定されていない」と言わないために置く
 if ! token=$(GH_TOKEN="$jwt" GITHUB_TOKEN="$jwt" gh api -X POST \
+  -H "Authorization: Bearer $jwt" \
   "app/installations/$MOKUME_APP_INSTALLATION_ID/access_tokens" --jq .token 2>&1); then
   fail "installation token を発行できなかった: $token" \
        "App ID とインストール ID の対応、鍵が失効していないかを確かめる (App の設定画面)"
