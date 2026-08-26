@@ -9,9 +9,6 @@
 # 設定は環境変数 (MOKUME_APP_ID / MOKUME_APP_INSTALLATION_ID と、鍵は
 # MOKUME_APP_PRIVATE_KEY か MOKUME_APP_PRIVATE_KEY_CMD)。詳細は AGENTS.md。
 # 秘密鍵の中身も、その在処もリポジトリには書かない。
-#
-# ここの説明を長くしないこと — reuse がヘッダの走査を途中で打ち切り、
-# 先頭の SPDX タグを見落とす (#50)。
 set -euo pipefail
 
 fail() { # $1=理由 $2=次にすること
