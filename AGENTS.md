@@ -91,7 +91,15 @@ bash scripts/comment.sh pr    <番号> --body "<本文>"
 export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
 ```
 
-App ID・インストール ID・秘密鍵は環境変数で渡す (`scripts/gh-app-token.sh` の冒頭に一覧)。**秘密鍵の中身も、その在処もリポジトリに書かない** — 鍵は `MOKUME_APP_PRIVATE_KEY_CMD` に「PEM を標準出力に出すコマンド」を渡す形で、手元の秘密管理から読ませる。token は有効期限 1 時間で、キャッシュしない (切れたら発行し直す)。
+**手で揃える設定は 1 つだけ** — `MOKUME_APP_PRIVATE_KEY_CMD` に「App の秘密鍵 (PEM) を標準出力に出すコマンド」を渡し、手元の秘密管理から読ませる。**秘密鍵の中身も、その在処もリポジトリに書かない** (ADR-0003)。token は有効期限 1 時間で、キャッシュしない (切れたら発行し直す)。
+
+App ID とインストール ID は秘密ではない識別子で、**インストール先の org に問い合わせれば引ける**ので、どこかに書き留める必要はない — 未設定なら `scripts/gh-app-token.sh` が自分で引く。引けなかったときは手で引くコマンドを stderr に出すので、それを実行して `MOKUME_APP_ID` / `MOKUME_APP_INSTALLATION_ID` に渡す:
+
+```bash
+gh api orgs/<org>/installations --jq '.installations[] | select(.app_slug=="mokume-agent") | {app_id, id}'
+```
+
+この API は **org を読める人間の gh 認証** (`read:org`) を要求する。App の installation token では引けないので、自動解決は「まだ App の token を持っていないセッション」でだけ効く (それが必要な場面なので噛み合う)。別の App を使うときは `MOKUME_APP_SLUG` で slug を上書きする。
 
 App の作成が済むまでは従来どおりメンテナのアカウントで作業してよい。コミットの author と署名は移行後も**メンテナのまま**で、分離するのは push と PR 作成の主体だけ。
 

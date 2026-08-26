@@ -6,8 +6,10 @@
 #
 #   export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
 #
-# 設定は環境変数 (MOKUME_APP_ID / MOKUME_APP_INSTALLATION_ID と、鍵は
-# MOKUME_APP_PRIVATE_KEY か MOKUME_APP_PRIVATE_KEY_CMD)。詳細は AGENTS.md。
+# 必ず要る設定は鍵の読み出しコマンド (MOKUME_APP_PRIVATE_KEY_CMD。値そのものを渡す
+# MOKUME_APP_PRIVATE_KEY でもよい) の 1 つだけ。App ID とインストール ID は秘密ではない
+# 識別子なので、未設定ならインストール先の org から自分で引く (#71)。明示したいときは
+# MOKUME_APP_ID / MOKUME_APP_INSTALLATION_ID で上書きできる。詳細は AGENTS.md。
 # 秘密鍵の中身も、その在処もリポジトリには書かない。
 set -euo pipefail
 
@@ -17,6 +19,36 @@ fail() { # $1=理由 $2=次にすること
   exit 1
 }
 
+for cmd in openssl gh; do
+  command -v "$cmd" >/dev/null 2>&1 || fail "$cmd が見つからない" "$cmd を入れる (make setup が前提を確かめる)"
+done
+
+# --- App の identity --------------------------------------------------------
+# ID 2 つは秘密ではなく、インストール先の org に問い合わせれば引ける。未設定なら自分で
+# 引くことで、手で揃える設定は「鍵をどう読むか」の 1 つだけになる (#71)。
+# 引くには org を読める人間の gh 認証が要る (App の installation token では引けない) ので、
+# 引けなくても即座には失敗させず、下の「足りないものを名指しする」検査に合流させる —
+# 鍵も足りないときに、必要なもの全てが 1 回のメッセージで出る
+
+app_slug="${MOKUME_APP_SLUG:-mokume-agent}"
+owner=""
+
+if [ -z "${MOKUME_APP_ID:-}" ] || [ -z "${MOKUME_APP_INSTALLATION_ID:-}" ]; then
+  owner=$(gh repo view --json owner --jq '.owner.login' 2>/dev/null) || owner=""
+  pair=""
+  if [ -n "$owner" ]; then
+    pair=$(gh api "orgs/$owner/installations" \
+      --jq ".installations[] | select(.app_slug == \"$app_slug\") | \"\(.app_id) \(.id)\"" \
+      2>/dev/null) || pair=""
+  fi
+  # 一意に定まったときだけ採用する。複数の App が入っている org で当てずっぽうに選ぶと、
+  # 「なぜか別の App の token が出る」という最も追いにくい失敗になる
+  if [ "$(printf '%s' "$pair" | grep -c .)" = "1" ]; then
+    MOKUME_APP_ID="${MOKUME_APP_ID:-${pair%% *}}"
+    MOKUME_APP_INSTALLATION_ID="${MOKUME_APP_INSTALLATION_ID:-${pair##* }}"
+  fi
+fi
+
 missing=()
 [ -n "${MOKUME_APP_ID:-}" ] || missing+=("MOKUME_APP_ID")
 [ -n "${MOKUME_APP_INSTALLATION_ID:-}" ] || missing+=("MOKUME_APP_INSTALLATION_ID")
@@ -24,13 +56,15 @@ missing=()
   missing+=("MOKUME_APP_PRIVATE_KEY または MOKUME_APP_PRIVATE_KEY_CMD")
 
 if [ ${#missing[@]} -gt 0 ]; then
-  fail "App の設定が足りない: ${missing[*]}" \
-       "AGENTS.md の「エージェントの identity」を見て環境変数を揃える"
+  next="AGENTS.md の「エージェントの identity」を見て環境変数を揃える"
+  if [ -z "${MOKUME_APP_ID:-}" ] || [ -z "${MOKUME_APP_INSTALLATION_ID:-}" ]; then
+    # ここに来たのは自動解決が効かなかったとき。次の一手をそのまま貼れる形で出す
+    next="${next}。ID 2 つは自分で引こうとしたが取れなかった (org=${owner:-不明} app_slug=$app_slug) — 手で引く:
+  gh api orgs/${owner:-<org>}/installations --jq '.installations[] | select(.app_slug==\"$app_slug\") | {app_id, id}'
+この API は org を読める人間の gh 認証 (read:org) が要る。App の installation token では引けない"
+  fi
+  fail "App の設定が足りない: ${missing[*]}" "$next"
 fi
-
-for cmd in openssl gh; do
-  command -v "$cmd" >/dev/null 2>&1 || fail "$cmd が見つからない" "$cmd を入れる (make setup が前提を確かめる)"
-done
 
 # --- 秘密鍵 -----------------------------------------------------------------
 # openssl はファイル経由でしか鍵を受け取らないので一時ファイルを作る。作った瞬間から

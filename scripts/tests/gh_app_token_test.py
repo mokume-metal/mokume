@@ -3,11 +3,12 @@
 # SPDX-License-Identifier: MIT
 """scripts/gh-app-token.sh の検査 (#49)。
 
-守りたいのは 4 つ (Issue #49 の完了条件):
+守りたいのは 5 つ (Issue #49 / #71 の完了条件):
   1. 設定が足りないとき、何を設定すればよいかを示して落ちる
   2. 組み立てる JWT が GitHub の App 認証の形 (RS256・iss が App ID・exp は 10 分以内)
   3. 応答から token だけを標準出力に出す
   4. **どの経路でも秘密鍵の内容を出力しない**
+  5. ID 2 つが未設定でも org から引いて発行できる。引けなければ手で引く手順を出す (#71)
 
 鍵は使い捨てを生成し、HTTP は偽の gh に差し替えるので、ネットワークも App も要らない。
 実行は make hooks-test (CI もこれを呼ぶ)。
@@ -26,7 +27,8 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "gh-app-token.sh"
 
 # 引数から --jq のクエリを拾って応答に適用する最小の gh。呼ばれた引数と、渡された
-# JWT (GH_TOKEN) を記録して、テスト側が中身を検証できるようにする
+# JWT (GH_TOKEN) を 1 呼び出しにつき 2 行、追記で記録して、テスト側が中身を検証できる
+# ようにする (#71 の自動解決では gh が複数回呼ばれる)。応答は呼ばれ方で切り替える
 FAKE_GH = """#!/bin/sh
 query=.
 prev=
@@ -34,7 +36,16 @@ for arg in "$@"; do
   [ "$prev" = "--jq" ] && query=$arg
   prev=$arg
 done
-{ printf '%s\\n' "$*"; printf 'JWT=%s\\n' "$GH_TOKEN"; } > "$GH_STUB_LOG"
+{ printf '%s\\n' "$*"; printf 'JWT=%s\\n' "$GH_TOKEN"; } >> "$GH_STUB_LOG"
+case "$*" in
+  *"repo view"*)
+    printf '%s' "${GH_STUB_OWNER:-{}}" | jq -r "$query"
+    exit 0 ;;
+  *orgs/*installations*)
+    [ "${GH_STUB_RESOLVE_FAIL:-0}" = "1" ] && { echo "HTTP 403: read:org が要る" >&2; exit 1; }
+    printf '%s' "${GH_STUB_INSTALLATIONS:-}" | jq -r "$query"
+    exit 0 ;;
+esac
 [ "${GH_STUB_FAIL:-0}" = "1" ] && { echo "HTTP 401: Bad credentials" >&2; exit 1; }
 printf '%s' "${GH_STUB_RESPONSE}" | jq -r "$query"
 """
@@ -42,6 +53,11 @@ printf '%s' "${GH_STUB_RESPONSE}" | jq -r "$query"
 APP_ID = "123456"
 INSTALLATION_ID = "78901234"
 TOKEN = "ghs_stubtoken0123456789"
+
+# org から引ける値 (環境変数で明示した値とは別物にして、どちらが使われたかを見分ける)
+OWNER = "stub-org"
+RESOLVED_APP_ID = "654321"
+RESOLVED_INSTALLATION_ID = "43210987"
 
 
 def b64url_decode(part):
@@ -81,8 +97,26 @@ class GhAppTokenTest(unittest.TestCase):
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["GH_STUB_LOG"] = str(self.log)
         env["GH_STUB_RESPONSE"] = json.dumps({"token": TOKEN, "expires_at": "2026-08-26T09:00:00Z"})
+        env["GH_STUB_OWNER"] = json.dumps({"owner": {"login": OWNER}})
+        # installations の応答は既定では置かない — 何も設定していない環境を再現する
         env.update(overrides)
         return env
+
+    def installations(self, *entries):
+        """orgs/<org>/installations の応答 (既定はこのリポジトリの App が 1 つだけ)"""
+        entries = entries or ((RESOLVED_APP_ID, RESOLVED_INSTALLATION_ID, "mokume-agent"),)
+        return json.dumps(
+            {
+                "installations": [
+                    {"app_id": int(app_id), "id": int(inst_id), "app_slug": slug}
+                    for app_id, inst_id, slug in entries
+                ]
+            }
+        )
+
+    def gh_calls(self):
+        lines = self.log.read_text(encoding="utf-8").splitlines()
+        return [l for l in lines if not l.startswith("JWT=")]
 
     def run_script(self, **env):
         return subprocess.run(
@@ -101,7 +135,7 @@ class GhAppTokenTest(unittest.TestCase):
     def jwt_parts(self):
         line = [
             l for l in self.log.read_text(encoding="utf-8").splitlines() if l.startswith("JWT=")
-        ][0]
+        ][-1]
         return line[len("JWT=") :].split(".")
 
     # --- 1. 設定不足 --------------------------------------------------------
@@ -231,6 +265,71 @@ class GhAppTokenTest(unittest.TestCase):
         )
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("次にすること", proc.stderr)
+        self.assertNotIn(self.key_marker, proc.stdout + proc.stderr)
+
+    # --- 5. ID を org から引く (#71) ----------------------------------------
+    # 新しいセッション・新しい worktree には MOKUME_APP_* が渡っていない。ID 2 つは
+    # 秘密ではない識別子なので、手で揃える設定を鍵 1 つに縮める
+
+    def test_ids_are_resolved_from_the_org_when_unset(self):
+        proc = self.run_script(
+            MOKUME_APP_PRIVATE_KEY_CMD=f"cat {self.key}",
+            GH_STUB_INSTALLATIONS=self.installations(),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), TOKEN)
+
+        payload = json.loads(b64url_decode(self.jwt_parts()[1]))
+        self.assertEqual(payload["iss"], RESOLVED_APP_ID)
+
+        calls = self.gh_calls()
+        self.assertTrue(any(f"orgs/{OWNER}/installations" in c for c in calls), calls)
+        self.assertIn(
+            f"app/installations/{RESOLVED_INSTALLATION_ID}/access_tokens", calls[-1]
+        )
+
+    def test_resolution_never_overrides_an_explicit_id(self):
+        proc = self.run_script(
+            **self.configured(), GH_STUB_INSTALLATIONS=self.installations()
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(b64url_decode(self.jwt_parts()[1]))
+        self.assertEqual(payload["iss"], APP_ID)
+
+    def test_explicit_ids_skip_the_resolution_call(self):
+        # 解決には org を読める認証が要る。要らない場面で要求しない
+        self.run_script(**self.configured(), GH_STUB_INSTALLATIONS=self.installations())
+        self.assertFalse([c for c in self.gh_calls() if "installations?" in c or "orgs/" in c])
+
+    def test_ambiguous_installations_are_not_guessed(self):
+        # 別 App が同じ org に入っていても、slug が一致するものだけを見る
+        proc = self.run_script(
+            MOKUME_APP_PRIVATE_KEY_CMD=f"cat {self.key}",
+            GH_STUB_INSTALLATIONS=self.installations(
+                (RESOLVED_APP_ID, RESOLVED_INSTALLATION_ID, "mokume-agent"),
+                ("999999", "99999999", "some-other-app"),
+            ),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(b64url_decode(self.jwt_parts()[1]))
+        self.assertEqual(payload["iss"], RESOLVED_APP_ID)
+
+    def test_resolution_failure_names_the_manual_command(self):
+        # #71 の完了条件そのもの — 出力だけを読んで次の一手に辿り着けること
+        proc = self.run_script(
+            MOKUME_APP_PRIVATE_KEY_CMD=f"cat {self.key}", GH_STUB_RESOLVE_FAIL="1"
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("MOKUME_APP_ID", proc.stderr)
+        self.assertIn("次にすること", proc.stderr)
+        self.assertIn(f"gh api orgs/{OWNER}/installations", proc.stderr)
+        self.assertIn("--jq", proc.stderr)
+        self.assertIn("read:org", proc.stderr)
+
+    def test_resolution_failure_does_not_leak_the_key(self):
+        proc = self.run_script(
+            MOKUME_APP_PRIVATE_KEY_CMD=f"cat {self.key}", GH_STUB_RESOLVE_FAIL="1"
+        )
         self.assertNotIn(self.key_marker, proc.stdout + proc.stderr)
 
 
