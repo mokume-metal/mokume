@@ -21,6 +21,24 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 5. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR は `no-issue` ラベルを付ける
 6. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く
 
+## Issue の分類 (移行中)
+
+「この Issue は**何の仕事か**」は GitHub の **Issue Type** で表す ([ADR-0004](docs/decisions/0004-issue-classification-by-issue-type.md))。1 Issue 1 型で、org 単位の語彙:
+
+| Issue Type | 意味 |
+| --- | --- |
+| `Bug` | 期待と違う挙動 |
+| `Feature` | 新機能・拡張 |
+| `Task` | 保守・整備・CI・リファクタ |
+| `Design` | 設計判断・ADR |
+| `Docs` | ドキュメント |
+
+迷ったら **`Bug` > `Design` > `Docs` > `Task`** の順で、より具体的なほうを取る (`Task` は何にでも当てはまるので最後)。**ラベルは型と直交する属性だけを表す** — `status: *` (状態)・`verify: *` (完了条件の性質)・`no-issue`。検索は `type:"Design"` (引用符を付ける — 旧来の `type:issue` / `type:pr` と綴りが衝突するため)。
+
+型の**作成・改名はメンテナの操作**で、エージェントの token では通らない (`admin:org` が要る)。既存の型を Issue に付けるのはエージェントでもできる。
+
+移行はまだ終わっていない: `Design` / `Docs` 型の作成 (メンテナ)・自動付与の切り替え (#78)・既存 Issue への遡及適用と `type: *` ラベルの削除 (#79) が残っている。それまでは両方が混在する。
+
 ## マージの判断基準
 
 PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が green なら、指示を待たず `gh pr merge --auto` で **merge queue に投入してよい**。queue が「合流後の姿」で `ci-gate` を再検証してから main に入れるため、人手で CI を見張って merge する運用はしない。main への直接 push・force push はルールセットが禁止している。マージ後は main に戻って pull する。
@@ -42,7 +60,7 @@ gh run rerun <run-id> --failed
 
 ## sub-issue の使い方
 
-- 複数工程の仕事は親 Issue + sub-issue で構成する (本文チェックリスト不使用)。**作成は `scripts/sub-issue.sh <親番号> <タイトル>` で 1 コマンド** (紐づけと親の `type:` ラベル継承まで行う)
+- 複数工程の仕事は親 Issue + sub-issue で構成する (本文チェックリスト不使用)。**作成は `scripts/sub-issue.sh <親番号> <タイトル>` で 1 コマンド** (紐づけと親の `type:` ラベル継承まで行う。継承は #78 で Issue Type へ切り替える)
 - **検証・実験のための使い捨て Issue は、検証対象の Issue の sub-issue にする** (`--test` フラグで雛形ごと作れる)。存在理由がツリーに残る
 - 階層は 2〜3 段まで。独立した Issue を無理にツリー化しない (ツリーは関係の表現であって収納棚ではない)
 - open の子を残した親の completed close は Parent guard が reopen する。ツリーごと畳む意図なら **not planned** で close する
