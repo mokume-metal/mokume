@@ -26,11 +26,9 @@ jobs:
             --jq '[.[] | select(.state == "open")] | map("- #\(.number) \(.title)") | join("\n")' 2>/dev/null || true)
           if [ -n "$open_children" ]; then
             gh issue reopen "$NUM" -R "$REPO"
-            gh issue comment "$NUM" -R "$REPO" --body "open の sub-issue が残っているため reopen した (親の close = 全作業完了がツリーの不変条件):
-
-$open_children
-
-ツリーごと畳む意図なら、先に子を閉じるか、親を **not planned** で close する。"
+            body="open の sub-issue が残っているため reopen した (親の close = 全作業完了がツリーの不変条件):"
+            body="$body"$'\n\n'"$open_children"$'\n\n'"ツリーごと畳む意図なら、先に子を閉じるか、親を **not planned** で close する。"
+            gh issue comment "$NUM" -R "$REPO" --body "$body"
           else
             echo "ok: open の sub-issue なし"
           fi
