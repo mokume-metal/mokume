@@ -1,0 +1,63 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 新規 Issue のトリアージ下書き (#78)。起票時には何も要求せず、分類は機械が
+# 下書きする (ADR-0002 決定 1)。「何の仕事か」は Issue Type で表す (ADR-0004)。
+#
+#   triage.sh <Issue 番号> <タイトル>
+#
+# 判断は三つ:
+#   1. verify: が既に付いていれば needs-triage を付けない (完了条件が確定済み)
+#   2. 型が既に付いていれば触らない — テンプレートや sub-issue.sh の明示指定は
+#      タイトルからの推定より確かなので、後から上書きしない
+#   3. タイトルの Conventional Commits prefix から型を推定する。推定できなければ
+#      無分類のままにする (推定できないものを機械が埋めない — ADR-0004 決定 5)
+#
+# 呼び出しは .github/workflows/triage.yml、検査は scripts/tests/triage_test.py。
+# ロジックを YAML に埋めないのは、issues イベントの workflow が既定ブランチの
+# ものしか走らず、ブランチ上で確かめられないため (#66 で確認した性質)。
+set -euo pipefail
+
+REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+
+NUM="${1:?Issue 番号が必要}"
+TITLE="${2:?タイトルが必要}"
+
+labels=$(gh issue view "$NUM" -R "$REPO" --json labels --jq '[.labels[].name] | join("\n")')
+
+if grep -q '^verify: ' <<<"$labels"; then
+  echo "triage: verify: が付いている — needs-triage は付けない"
+else
+  gh issue edit "$NUM" -R "$REPO" --add-label "status: needs-triage" >/dev/null
+  echo "triage: status: needs-triage を付けた"
+fi
+
+current_type=$(gh issue view "$NUM" -R "$REPO" --json issueType --jq '.issueType.name // empty')
+if [ -n "$current_type" ]; then
+  echo "triage: 型は既に $current_type — 上書きしない"
+  exit 0
+fi
+
+case "$TITLE" in
+  "fix:"*|"fix("*)       type="Bug" ;;
+  "feat:"*|"feat("*)     type="Feature" ;;
+  "docs:"*|"docs("*)     type="Docs" ;;
+  "design:"*|"design("*) type="Design" ;;
+  "chore:"*|"chore("*|"ci:"*|"ci("*|"build:"*|"build("*|\
+  "refactor:"*|"refactor("*|"test:"*|"test("*|"perf:"*|"perf("*) type="Task" ;;
+  *) type="" ;;
+esac
+
+if [ -z "$type" ]; then
+  echo "triage: タイトルから型を推定できなかった — トリアージで人が決める"
+  exit 0
+fi
+
+# 失敗を握り潰さない。org の型と ADR-0004 の表がずれたら、ここが最初に鳴る
+if ! gh issue edit "$NUM" -R "$REPO" --type "$type" >/dev/null; then
+  echo "triage: 型 \"$type\" を付けられなかった" >&2
+  echo "次にすること: org の Issue Type に \"$type\" があるか確かめる (正典は ADR-0004 決定 2 の 5 型)。無ければメンテナが Settings > Planning > Issue types で作る" >&2
+  exit 1
+fi
+echo "triage: 型 $type を付けた"

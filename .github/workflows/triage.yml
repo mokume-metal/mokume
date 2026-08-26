@@ -1,8 +1,12 @@
 name: Triage
 
 # 新規 Issue に status: needs-triage を自動付与し、タイトルの型 (Conventional
-# Commits の type) から type: ラベルを推定して付与する (ADR-0002 決定 1)。
+# Commits の type) から Issue Type を推定して付与する (ADR-0002 決定 1 / ADR-0004)。
 # 雑な起票を妨げないため、起票時には何も要求しない — 分類は機械が下書きする。
+#
+# 判断は scripts/triage.sh が持つ (検査は scripts/tests/triage_test.py)。issues
+# イベントの workflow は既定ブランチのものしか走らないため、ロジックをここへ埋める
+# と main に入れるまで誰も確かめられない (#66 で確認した性質)。
 
 # run-name が無いと GitHub は run 名にイベント既定 (issues → Issue タイトル) を使う
 # ため、同じタイトルの Issue が複数あるとどの Issue の run か Actions 一覧から辿れ
@@ -22,29 +26,19 @@ on:
 
 permissions:
   issues: write
+  contents: read
 
 jobs:
   label:
     runs-on: ubuntu-latest
     steps:
-      - name: needs-triage と type ラベルの自動付与
+      - uses: actions/checkout@v7
+      - name: needs-triage と Issue Type の自動付与
         env:
           GH_TOKEN: ${{ github.token }}
-          TITLE: ${{ github.event.issue.title }}
+          # Issue タイトルは起票者が書く値なので、run: に ${{ }} で展開せず環境変数
+          # 経由で渡す (展開はシェルの構文解析より前に起きるため、埋め込むと任意の
+          # コマンドを実行させられる)
           NUM: ${{ github.event.issue.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          # fast path: 起票時点で verify: が付いている (完了条件が確定済み) なら
-          # needs-triage を付けない
-          existing=$(gh issue view "$NUM" -R "$REPO" --json labels --jq '[.labels[].name] | join("\n")')
-          labels=""
-          add() { if [ -z "$labels" ]; then labels="$1"; else labels="$labels,$1"; fi; }
-          grep -q '^verify: ' <<<"$existing" || add "status: needs-triage"
-          case "$TITLE" in
-            "fix:"*|"fix("*)                 add "type: bug" ;;
-            "feat:"*|"feat("*)               add "type: feature" ;;
-            "docs:"*|"docs("*)               add "type: docs" ;;
-            "design:"*|"design("*)           add "type: design" ;;
-            "chore:"*|"chore("*|"ci:"*|"ci("*|"build:"*|"build("*|"refactor:"*|"refactor("*|"test:"*|"test("*|"perf:"*|"perf("*) add "type: maintenance" ;;
-          esac
-          [ -n "$labels" ] && gh issue edit "$NUM" -R "$REPO" --add-label "$labels" || echo "付与するラベルなし"
+          TITLE: ${{ github.event.issue.title }}
+        run: bash scripts/triage.sh "$NUM" "$TITLE"
