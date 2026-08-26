@@ -21,7 +21,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 5. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR は `no-issue` ラベルを付ける
 6. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く
 
-## Issue の分類 (移行中)
+## Issue の分類
 
 「この Issue は**何の仕事か**」は GitHub の **Issue Type** で表す ([ADR-0004](docs/decisions/0004-issue-classification-by-issue-type.md))。1 Issue 1 型で、org 単位の語彙:
 
@@ -37,7 +37,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 型の**作成・改名はメンテナの操作**で、エージェントの token では通らない (`admin:org` が要る)。既存の型を Issue に付けるのはエージェントでもできる。
 
-型は org に揃い、自動付与 (テンプレート・triage・`sub-issue.sh`) も Issue Type へ切り替わった。残るは**既存 Issue への遡及適用と `type: *` ラベルの削除** (#79) — それまでは古い Issue にラベルが残る。
+移行は完了している。自動付与 (テンプレート・triage・`sub-issue.sh`) は Issue Type を付け、closed を含む既存 Issue にも型が遡及適用され、旧 `type: *` ラベル 6 種は削除された (#79)。
 
 ## マージの判断基準
 

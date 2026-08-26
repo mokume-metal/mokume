@@ -102,7 +102,7 @@ class ReviewGateTest(unittest.TestCase):
     # --- 2. verify ラベル ---------------------------------------------------
 
     def test_issue_without_verify_label_is_blocked(self):
-        proc = self.run_gate(pr_json(), issue_json("type: maintenance"))
+        proc = self.run_gate(pr_json(), issue_json("status: needs-triage"))
         self.assert_blocked(proc, "verify: ラベルが無い")
 
     def test_verify_machine_passes_unattended(self):
