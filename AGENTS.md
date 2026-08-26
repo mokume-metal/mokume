@@ -50,6 +50,18 @@ bash scripts/comment.sh pr    <番号> --body "<本文>"
 
 `.claude/settings.json` (プロジェクト設定) が頻用コマンドの許可リストと、作法を supply するプラグイン (`repo-standards@shinyaoguri`) の宣言を持つ。設定はあくまで補助で、**作法の正典はこの文書**。
 
+### エージェントの identity (移行中)
+
+[ADR-0003](docs/decisions/0003-agent-identity-separation.md) により、エージェントは push と PR 作成を **GitHub App の identity** で行う (承認を native の Approve へ戻し、自分の PR を自分で通す経路を塞ぐため)。token は次で発行する:
+
+```bash
+export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
+```
+
+App ID・インストール ID・秘密鍵は環境変数で渡す (`scripts/gh-app-token.sh` の冒頭に一覧)。**秘密鍵の中身も、その在処もリポジトリに書かない** — 鍵は `MOKUME_APP_PRIVATE_KEY_CMD` に「PEM を標準出力に出すコマンド」を渡す形で、手元の秘密管理から読ませる。token は有効期限 1 時間で、キャッシュしない (切れたら発行し直す)。
+
+App の作成が済むまでは従来どおりメンテナのアカウントで作業してよい。コミットの author と署名は移行後も**メンテナのまま**で、分離するのは push と PR 作成の主体だけ。
+
 **mokume 向けのエージェント支援 (スキル・hooks・設定) はこのリポジトリの `.claude/` で管理する** — 個人環境のプラグインやマシン設定に置かない。このリポジトリで作業する誰の環境でも同じ支援が効くこと、支援機構自体が Issue → PR の通常ループで育てられることが理由。例外は汎用の個人標準 (`repo-standards`) のみで、これはプロジェクト非依存のためマーケットプレイス経由で利用する。リポ固有スキルの置き場は `.claude/skills/` (現状なし — コードが育ってから)。
 
 ## コミット・PR の規約
