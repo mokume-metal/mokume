@@ -16,7 +16,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 1. 変更は **Issue 起票から始める**。起票は雑でよい (書式不要・`status: needs-triage` が自動で付く)。複数工程は親 Issue + sub-issue で構成し、本文チェックリストは使わない
 2. **着手できるのは `verify:` ラベルが付いた Issue だけ** — `needs-triage` のままの Issue には着手しない。まず議論して「どうなれば解消か」を Issue 本文に固め、`verify: machine` / `verify: human` を付ける ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md))
-3. **着手時に、合意済みの完了条件を引用したプラン (変更点・確認方法) を対象 Issue にコメントで残す**。実装の過程でプランが変わったら、そのコメントへの返信で差分を残す
+3. **着手時に、合意済みの完了条件を引用したプラン (変更点・確認方法) を対象 Issue にコメントで残す**。実装の過程でプランが変わったら、そのコメントへの返信で差分を残す。記憶がリセットされた次のセッションが、GitHub を読むだけで再開できる状態を保つため。Claude Code のセッションではフック (`scripts/plan-record.sh`) がプランを投稿用に整え (絶対パス・ホームは畳み、秘密らしき文字列があれば止める) 投稿コマンドを提示し、**未投稿のままセッションを終えようとすると差し戻す**。投稿はエージェントが `scripts/comment.sh` で行う — 公開操作の前に人間の目が一度入る形にしている
 4. `main` から `<type>/<短い説明>` ブランチを切る
 5. PR を出す。本文は 目的 / 変更点 / 確認方法、Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR は `no-issue` ラベルを付ける
 6. マージは squash のみ。**PR タイトルがそのままマージコミットになる**ので Conventional Commits で書く

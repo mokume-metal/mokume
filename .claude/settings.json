@@ -23,6 +23,9 @@
       "Bash(gh run view:*)"
     ]
   },
+  "env": {
+    "CLAUDE_PLAN_RECORD": "0"
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -33,6 +36,31 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/agent-comment-guard.sh\"",
             "timeout": 10,
             "statusMessage": "コメントの投稿経路を確認中"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/plan-record.sh\" capture",
+            "timeout": 20,
+            "statusMessage": "プランを GitHub 用に整えています"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/plan-record.sh\" guard",
+            "timeout": 30,
+            "statusMessage": "プランが GitHub に残ったか確認中"
           }
         ]
       }
