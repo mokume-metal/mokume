@@ -1,0 +1,42 @@
+name: Close cleanup
+
+# close された Issue から status: in progress を外す (#72)。
+#
+# このラベルは「open かつ着手中」を並行セッションへ知らせる印で、外すのは規約上
+# 人間とエージェントの手作業だった。外し忘れると閉じた Issue に印が残り、次の
+# タスクを選ぶときに見る集合が汚れる。close は状態の変化として機械が観測できる
+# ので、規約が守られることに依存せずここで後始末する。
+#
+# close の経路 (PR 本文の Closes #N による自動 close / web UI / gh issue close /
+# not planned) はいずれも同じ issues: closed を発火するため、誰がどう閉じても効く。
+#
+# 「中断したら外す」側は機械が観測できないので自動化しない (着手し直すときに
+# 付け直せばよい)。
+#
+# parent-guard.yml も issues: closed で走る。open な子を残した親を completed で
+# close した場合、あちらが reopen する一方でこちらはラベルを外す。結果は
+# 「open かつ着手中でない」で、作業が止まった実態と合うため許容する。
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  drop-in-progress:
+    # ラベルが無ければ job ごとスキップする (API を叩かない・実行ログも汚さない)。
+    # 式全体のクォートは必須 — ラベル名の `: ` があるとクォート無しでは YAML と
+    # して不正になり、workflow file issue で run が空振りする (#66 と同じクラス)
+    if: "contains(github.event.issue.labels.*.name, 'status: in progress')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: status in progress を外す
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        # ブロックスカラーで書く。1 行に畳むとラベル名の `: ` で YAML が壊れる
+        run: |
+          gh issue edit "$NUM" -R "$REPO" --remove-label "status: in progress"
