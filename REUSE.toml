@@ -28,6 +28,7 @@ path = [
   ".github/workflows/triage.yml",
   ".github/workflows/parent-guard.yml",
   ".github/workflows/close-cleanup.yml",
+  ".github/workflows/ruleset-drift.yml",
   ".github/dependabot.yml",
   ".github/CODEOWNERS",
   ".github/rulesets/main-protection.json",
