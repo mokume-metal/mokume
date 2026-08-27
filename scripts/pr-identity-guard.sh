@@ -1,0 +1,84 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# Claude Code の PreToolUse フック: メンテナ名義で PR を作ろうとしたら差し戻す (#103)。
+#
+# ADR-0007 の不変条件 — 承認が要る PR の author は、その PR を承認できる集合の要素で
+# あってはならない。破ると **誰も承認できない PR** ができ、author は後から変えられない
+# ので close して作り直すしかない (#88)。しかもその詰みは PR 作成の瞬間には何も言わず、
+# 承認を求める段階で初めて分かる。ここで止めれば作り直しが発生しない。
+#
+# **承認の要否は区別しない。** 承認が要るかを作成前に判定するには CODEOWNERS のパス
+# 照合と、本文の Closes #N から対象 Issue の verify ラベルを引く必要がある。PreToolUse
+# の timeout は短く、API 依存の判定は遅く壊れやすい。判定をローカルで完結させ、安全側に
+# 倒す (ADR-0007 決定 2 の「例外を作らない」と同じ方向)。
+#
+# 素通しするもの:
+#   - gh pr create 以外 (view/list/diff/checks …)
+#   - --help / -h            → 使い方を尋ねているだけ
+#   - このリポジトリ以外宛て   → 規約の外
+#   - 同じ行で gh-app-token.sh を通しているもの (実際の運用形)
+#   - フック自身の環境の GH_TOKEN が installation token (ghs_) のとき
+#
+# 契約: stdin に PreToolUse の JSON。素通しは無出力 + 終了コード 0。
+# 配線は .claude/settings.json、テストは scripts/tests/pr_identity_guard_test.py。
+set -uo pipefail
+
+REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+
+deny() { # $1=理由
+  jq -n --arg r "$1" \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+  exit 0
+}
+
+payload=$(cat)
+command -v jq >/dev/null 2>&1 || exit 0
+command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
+[ -n "$command" ] || exit 0
+
+# gh のサブコマンドの手前にはグローバルオプション (-R owner/repo など) が入りうるので、
+# 「gh … <サブコマンド>」の間は緩く見る (agent-comment-guard.sh と同じ形)
+readonly GH='(^|[;&|[:space:]])gh([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+'
+
+printf '%s' "$command" | grep -qE "${GH}pr[[:space:]]+create([[:space:]]|$)" || exit 0
+
+# 使い方を尋ねているだけなら作成ではない
+printf '%s' "$command" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)' && exit 0
+
+# 他のリポジトリ宛ての PR はこのリポジトリの規約の外。-R / --repo が付いていて、
+# それがこのリポジトリでないなら口を出さない
+target=$(printf '%s' "$command" |
+  grep -oE '(^|[[:space:]])(-R|--repo)([[:space:]]|=)[^[:space:];&|]+' |
+  tail -1 | grep -oE '[^[:space:]=]+$') || target=""
+if [ -n "$target" ] && [ "$target" != "$REPO" ]; then
+  # owner を省いた指定 (--repo mokume) は自リポ扱いにはしない — 曖昧なので止める側に倒す
+  case "$target" in */*) exit 0 ;; esac
+fi
+
+# 同じ行で installation token を発行しているなら、それが常道の形
+printf '%s' "$command" |
+  grep -qE '(^|[;&|[:space:]`(])(bash[[:space:]]+)?[^[:space:];&|`)]*scripts/gh-app-token\.sh([[:space:]]|$|`|\))' && exit 0
+
+# 常設している環境 (GH_TOKEN に installation token を置いてある) も常道
+case "${GH_TOKEN:-}" in ghs_*) exit 0 ;; esac
+
+deny "$(cat <<'EOF'
+PR は GitHub App の identity で作成してください。素の gh (メンテナ名義) で作ると、
+**誰も承認できない PR** になります — GitHub は自分の PR を自分で承認できず、author は
+後から変えられないので close して作り直すしかありません (ADR-0007 / #88)。
+
+  export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
+
+`MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
+秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を
+引いて、このリポジトリの App の鍵が載っていないかを見ます。参照名が分かればその環境
+変数は 1 行で組めます (在処そのものを読む必要はありません)。
+
+一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねてください。
+
+承認が要らない PR でもここでは経路を分けません。承認の要否は CODEOWNERS のパスと
+対象 Issue の verify ラベルで決まり、作成前に確定できないためです。
+EOF
+)"
