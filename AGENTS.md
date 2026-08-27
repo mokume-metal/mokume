@@ -54,7 +54,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 **PR には分類ラベルを付けない** ([ADR-0005](docs/decisions/0005-pr-labels-as-machine-input.md))。PR が持つ属性はすべて既に正典を持つ — 型は PR タイトル (Conventional Commits・`pr-title` ジョブが検査)、対象 Issue は本文の `Closes #N`、完了条件の性質は対象 Issue の `verify: *`、重要パスは CODEOWNERS、進行状態は Draft / Review / merge queue。ラベルで重ねると写しが増えるだけになる (Issue Type は Issue 専用で、そもそも PR には付かない)。
 
-PR に付くのは **CI の判定を変えるラベルだけ**で、現状は `no-issue` (Issue を閉じない例外 PR の印・`scripts/review-gate.sh` が読む) の 1 種。新しい PR ラベルを足すときは、それを読むスクリプトを同時に示す — 読み手のいないラベルは足さない。付け忘れは `review-gate` が赤で差し戻すので、手付けのままでよい。人が介在しない bot の PR (dependabot) だけは `.github/dependabot.yml` の `labels` で自動付与する。
+PR に付くのは **CI の判定を変えるラベルだけ**で、現状は 2 種 — `no-issue` (Issue を閉じない例外 PR の印・`scripts/review-gate.sh` が読む) と `release:now` (merge したその場で版を出す印・`.github/workflows/release.yml` が読む)。新しい PR ラベルを足すときは、それを読むスクリプトを同時に示す — 読み手のいないラベルは足さない。付け忘れは `review-gate` が赤で差し戻すので、手付けのままでよい。人が介在しない bot の PR (dependabot) だけは `.github/dependabot.yml` の `labels` で自動付与する。
 
 ## マージの判断基準
 
@@ -76,6 +76,22 @@ auto-merge を有効にしたのに PR が止まって見えるときは、**同
 ```bash
 gh run rerun <run-id> --failed
 ```
+
+## 版の出方
+
+版はタグと [GitHub Release](https://github.com/mokume-metal/mokume/releases) だけで表す。**リリースはリポジトリのファイルを 1 つも変えない** — 変更履歴をファイルへまとめると Releases との二重管理になり ([ADR-0001](docs/decisions/0001-founding-principles.md) 原則 9)、それを `main` へ入れるための PR と、必須チェックを走らせる迂回が要るためである (判断の詳細は `scripts/release.py` の冒頭)。
+
+- **週に 1 度** (月曜 09:00 JST) 自動で出る。急ぐときは PR に `release:now` を付けて merge する (`.github/workflows/release.yml`)
+- **上げ幅は履歴が決める**。1.0 未満では破壊的変更も minor で出す — 0.x は形が動くことを織り込んだ区間で、そこで major を上げ始めると 1.0 の意味が薄れる
+
+  | 履歴にあるもの | 1.0 未満 | 1.0 以降 |
+  | --- | --- | --- |
+  | `!` 付き / `BREAKING CHANGE` | minor | major |
+  | `feat` | minor | minor |
+  | それ以外 | patch | patch |
+
+- **ノートは `changelog.d/` の断片から組む**。前回のタグ以降に追加されたものだけが載り、**断片は消さない** (どれが今回ぶんかは履歴が知っている)
+- **断片が 1 つも増えていなければリリースは出ない**。中身の無い版を出さないため
 
 ## ブランチ保護の正本
 
