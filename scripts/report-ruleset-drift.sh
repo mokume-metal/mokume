@@ -6,15 +6,16 @@
 #
 #   report-ruleset-drift.sh <照合の出力ファイル>
 #
-# 検査 (scripts/check-rulesets.sh) と発信をスクリプトごと分けているのは、token も
-# 権限も別だから — 照合は検査専用 App の Administration: Read で行い、起票は
-# GITHUB_TOKEN の issues: write で行う (検査 App に Issues write を持たせない)。
-# check-rulesets.sh に起票を足すと、手元で打っただけで Issue が立つことにもなる。
+# 検査 (scripts/check-rulesets.sh) と発信をスクリプトごと分けているのは、起票を CI に
+# 限るため — check-rulesets.sh に起票を足すと、手元で照合を打っただけで Issue が立つ。
+# token は照合も起票も GITHUB_TOKEN で、issues: write はドリフト検査のジョブにだけ
+# 付く。検査専用の App を Administration: Read で立てて照合させる案は、ADR-0006 決定 5
+# の改訂で廃止した (read-only では bypass_actors が見えず、匿名読み取りと同じものしか
+# 見られない)。
 #
-# ロジックを workflow の YAML に埋めないのは、scheduled workflow が既定ブランチの
-# 定義しか実行しないため。埋めると main に入るまで誰も確かめられない (#66 / triage.sh
-# と同じ理由)。呼び出しは .github/workflows/ruleset-drift.yml、検査は
-# scripts/tests/ruleset_drift_test.py。
+# ロジックを workflow の YAML に埋めないのは、単体テストで固定できないため
+# (#66 / triage.sh と同じ理由)。呼び出しは .github/workflows/ruleset-drift.yml、
+# 検査は scripts/tests/ruleset_drift_test.py。
 set -euo pipefail
 
 REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"

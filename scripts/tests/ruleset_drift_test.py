@@ -14,9 +14,9 @@
   4. 起票の後に triage を通す — GITHUB_TOKEN が作った Issue には workflow が
      発火しない (再帰防止の仕様) ので、triage.yml は走らない
 
-ワークフロー本体 (.github/workflows/ruleset-drift.yml) は scheduled workflow で、
-既定ブランチの定義しか実行されない。だから判断はスクリプト側に置き、ここで
-ブランチ上のまま確かめられるようにしてある (#66 / triage.sh と同じ理由)。
+ワークフロー本体 (.github/workflows/ruleset-drift.yml) には判断を埋めていない。
+スクリプト側に置いてあるのは、ここで単体テストとして固定でき、日次で回る検査の
+判断が毎回 CI で確かめられるようにするため (#66 / triage.sh と同じ理由)。
 
 gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワークも認証も要らない。
 実行は make ci-check (CI もこれを呼ぶ)。
