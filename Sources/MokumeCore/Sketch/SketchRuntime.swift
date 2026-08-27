@@ -33,6 +33,10 @@ public final class SketchRuntime {
     /// 外から観測されるための窓口。区画が無ければ `nil` で、**そのときフレームループは
     /// 観測の存在を一切払わない** (ADR-0018 の面が満たすべき性質)。
     private let observer: FrameObserver?
+    /// 外から送られる入力の受け口。区画が無ければ `nil`。
+    private let inbox: InputInbox?
+    /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
+    public let input = InputState()
     /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
     private var exposedValues: [String: ExposedValue] = [:]
     /// 直近のフレームの間隔 (秒)。観測が無ければ測らない。
@@ -79,6 +83,7 @@ public final class SketchRuntime {
             clock: clock ?? .frameIndex(frameRate: settings.frameRate), now: now)
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
+        self.inbox = InputInbox.makeIfEnabled()
     }
 
     /// 観測の窓口を差し替えられる入口 (検査用)。
@@ -87,7 +92,8 @@ public final class SketchRuntime {
         gpu: RenderDevice,
         clock: Clock?,
         now: @escaping () -> Double,
-        observer: FrameObserver?
+        observer: FrameObserver?,
+        inbox: InputInbox? = nil
     ) throws(RenderFailure) {
         let settings = sketch.settings
         self.sketch = sketch
@@ -97,6 +103,7 @@ public final class SketchRuntime {
             clock: clock ?? .frameIndex(frameRate: settings.frameRate), now: now)
         self.now = now
         self.observer = observer
+        self.inbox = inbox
     }
 
     // MARK: - 進める
@@ -121,8 +128,18 @@ public final class SketchRuntime {
         start()
         timing.advance()
         beginFrame()
+        receiveInput()
         try canvas.draw { withActiveRuntime { sketch.draw() } }
         serveObservationIfRequested()
+    }
+
+    /// 溜まった入力をこのフレームへ流し込む。
+    ///
+    /// **`draw()` の前に流す。** 送られた出来事が同じフレームの `draw()` から見える —
+    /// 1 フレーム遅れて効く形にすると、外から動かして確かめるときに毎回 1 枚ぶんずれる。
+    private func receiveInput() {
+        inbox?.drain(into: input)
+        input.beginFrame()
     }
 
     /// フレームの頭で片付けること。観測が無ければどれも空回りしない。
@@ -187,6 +204,7 @@ public final class SketchRuntime {
             start()
             timing.advance()
             beginFrame()
+            receiveInput()
             try? canvas.draw { withActiveRuntime { sketch.draw() } }
         }
         respond(to: request, through: observer)

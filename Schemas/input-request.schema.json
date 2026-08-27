@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/input-request.schema.json",
+  "title": "入力の要求",
+  "description": "走っているスケッチへ入力の出来事を送る。1 回にいくつでも並べられる (ドラッグのような連なりもそのまま送れる)。ADR-0018 決定 3 のとおり原子的に置き、id は要求ごとに変える。",
+  "type": "object",
+  "required": [
+    "id",
+    "events"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "この要求の識別子。応答はこれを echo する。"
+    },
+    "events": {
+      "type": "array",
+      "description": "送る出来事。並んだ順に流し込まれる。**知らない種別は、その 1 件だけが捨てられる** (残りは通る)。",
+      "items": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "description": "必須は type だけ。足りない値はゼロとして扱う。知らない鍵は無視される。",
+        "properties": {
+          "type": {
+            "type": "string",
+            "examples": [
+              "mouseDown",
+              "mouseUp",
+              "mouseMoved",
+              "scrolled",
+              "keyDown",
+              "keyUp"
+            ]
+          },
+          "x": {
+            "type": "number",
+            "description": "キャンバスの座標 (横)。窓の座標からの変換は送り手の責務。"
+          },
+          "y": {
+            "type": "number",
+            "description": "キャンバスの座標 (縦)。"
+          },
+          "button": {
+            "type": "integer",
+            "description": "釦 (0 = 主釦)。"
+          },
+          "dx": {
+            "type": "number"
+          },
+          "dy": {
+            "type": "number"
+          },
+          "code": {
+            "type": "integer",
+            "description": "キーの符号。"
+          },
+          "characters": {
+            "type": "string"
+          },
+          "isRepeat": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

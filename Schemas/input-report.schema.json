@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/input-report.schema.json",
+  "title": "入力の応答",
+  "description": "送られた入力をどう扱ったか。「送ったのに効かない」の切り分けがこれだけで済む。",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "accepted",
+    "ignored",
+    "dropped"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "応えた要求の識別子。"
+    },
+    "accepted": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "受け取った数。"
+    },
+    "ignored": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "知らない種別などで捨てた数。"
+    },
+    "dropped": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "溜めきれずに捨てた数 (起動してからの累計)。増えていれば送りすぎている。"
+    }
+  }
+}
