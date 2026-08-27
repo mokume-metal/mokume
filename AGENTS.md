@@ -89,6 +89,15 @@ gh run rerun <run-id> --failed
 - open の子を残した親の completed close は Parent guard が reopen する。ツリーごと畳む意図なら **not planned** で close する
 - 子 Issue の検索は `parent-issue:mokume-metal/mokume#N` 修飾子
 
+## 進捗の公開ロードマップ
+
+開発フェーズの見通しは Org の public Project「[mokume Roadmap](https://github.com/orgs/mokume-metal/projects/1)」(Roadmap レイアウト) で公開する。運用は最小に固定する:
+
+- 載せるのは**フェーズ親 Issue だけ**。子タスクは sub-issue ツリーが持ち、Project 側で所属を二重管理しない
+- 日程は date フィールド **Start / Target の 2 本だけ**で表す。Iteration・Milestone・独自の status フィールドは使わない — 束ねと消化率は親 Issue + sub-issue が既に持っており、重ねると所属の二重管理になる ([#124](https://github.com/mokume-metal/mokume/issues/124))
+- 状態の正典は従来どおり Issue ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md))。Project は投影で、組み込みの連動 (Issue closed → Done) に留める
+- アイテムの追加は手動でよい (フェーズ親 Issue は少数)。自動化の機構は実害が出てから ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md))
+
 ## コメントの署名
 
 同じ Issue / PR には人間も複数のエージェントも書き込む。発言の出どころが後から判別できるよう、**AI エージェントからのコメントは投稿ラッパー経由で投稿する**。署名は実行環境から判定して自動で付くので、自分で書き足さなくてよい:
