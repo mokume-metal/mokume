@@ -81,6 +81,30 @@ gh run rerun <run-id> --failed
 
 実設定との照合には認証が要る — public repo のルールセットは匿名でも読めるが、**`bypass_actors` だけは認証が無いと応答に現れない**。読めないまま「一致」とは言わず赤にする (一番危ない項目を見ていない緑を作らないため)。
 
+### ドリフト検査
+
+管理画面から直接 1 項目変えられても気付けるよう、**日次で定義と実設定を照合する** (`.github/workflows/ruleset-drift.yml`)。ずれていたら Issue が自動で立ち、run も赤くなる。手で回すときは Actions から `Ruleset drift` を `workflow_dispatch` する。
+
+契機は `schedule` + `workflow_dispatch` **のみ**で、`pull_request` では走らせない — 同一リポジトリのブランチからの PR ではブランチ側のワークフロー定義が動いて secret も渡るため、承認前の run で鍵を読まれる経路になる ([ADR-0006](docs/decisions/0006-github-settings-as-code.md) 決定 5)。scheduled workflow は既定ブランチの定義しか実行しない。
+
+照合に使うのは**検査専用の第 2 App** で、権限は `Administration: Read` + `Metadata: Read` のみ。ドリフト検出時の起票は `GITHUB_TOKEN` 側で行い、検査 App に `Issues: write` は持たせない。エージェント用の App (`Contents: write` / `Workflows: write` を持つ) の鍵は CI に置かない。
+
+**この検査を動かすための設定はメンテナ操作**で、一度だけ要る (エージェントの token では通らない):
+
+1. org に GitHub App を作る (例: `mokume-ruleset-inspector`)。Repository permissions は `Administration: Read-only` + `Metadata: Read-only` **だけ**にする
+2. このリポジトリにインストールし、秘密鍵 (PEM) を生成する
+3. リポジトリの Settings > Secrets and variables > Actions に登録する:
+
+   | 種別 | 名前 | 値 |
+   | --- | --- | --- |
+   | Variable | `MOKUME_INSPECTOR_APP_ID` | App ID |
+   | Variable | `MOKUME_INSPECTOR_APP_INSTALLATION_ID` | インストール ID |
+   | Secret | `MOKUME_INSPECTOR_APP_PRIVATE_KEY` | PEM の中身 |
+
+   ID 2 つは秘密ではない識別子なので Variable でよい。インストール ID は `gh api orgs/mokume-metal/installations --jq '.installations[] | select(.app_slug=="<slug>") | {app_id, id}'` で引ける
+
+設定が欠けている間、この workflow は**緑にせず赤で止まる**。検査できていないことを緑で覆うと、ADR-0006 が避けたかった「一番危ない項目を見ていない緑」そのものになるため。
+
 ## sub-issue の使い方
 
 - 複数工程の仕事は親 Issue + sub-issue で構成する (本文チェックリスト不使用)。**作成は `scripts/sub-issue.sh <親番号> <タイトル>` で 1 コマンド** (紐づけと親の Issue Type 継承まで行う。子が別の仕事なら `--type <名前>` で上書きする)

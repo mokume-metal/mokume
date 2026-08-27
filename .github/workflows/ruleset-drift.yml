@@ -1,0 +1,88 @@
+name: Ruleset drift
+
+# ブランチ保護のルールセットが .github/rulesets/ の定義とずれていないかを定期検査する
+# (ADR-0006 決定 4・5 / #99)。正本は定義ファイルで、GitHub 側の状態はその写しにすぎない。
+#
+# 契機を schedule + workflow_dispatch に限るのは、検査専用 App の鍵を PR の run に
+# 渡さないため。pull_request トリガのジョブは同一リポジトリのブランチからの PR で
+# ブランチ側のワークフロー定義が動き、secret も渡る — 細工した定義を載せた PR を開けば
+# 承認前の run で鍵を読める (CODEOWNERS は merge を止めるが run は止めない)。
+# scheduled workflow は既定ブランチの定義しか実行しないので、この経路は塞がる。
+#
+# ルールセットの状態は PR の内容と独立に変わる (誰かが管理画面で 1 項目変える) —
+# それがこの検査の拾いたい事象なので、per-PR の ci-gate 配下には置かない。PR で回るのは
+# 定義の「形」だけで、そちらは token の要らない make ci-check の rulesets-shape が担う。
+
+on:
+  schedule:
+    # 日次 03:17 UTC (≒ 12:17 JST)。毎時 0 分はランナーが混むので外す
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      issues: write # ドリフト検出時の起票。検査 App ではなく GITHUB_TOKEN 側で行う
+    steps:
+      - uses: actions/checkout@v7
+
+      # 設定が無いまま「検査できなかったので ok」を出すと、ADR-0006 が避けたかった
+      # 「一番危ない項目 (bypass_actors) を見ていない緑」そのものになる。赤で止める
+      - name: 検査 App の設定が揃っているか
+        env:
+          APP_ID: ${{ vars.MOKUME_INSPECTOR_APP_ID }}
+          INSTALLATION_ID: ${{ vars.MOKUME_INSPECTOR_APP_INSTALLATION_ID }}
+          PRIVATE_KEY: ${{ secrets.MOKUME_INSPECTOR_APP_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -n "$APP_ID" ] || missing="$missing vars.MOKUME_INSPECTOR_APP_ID"
+          [ -n "$INSTALLATION_ID" ] || missing="$missing vars.MOKUME_INSPECTOR_APP_INSTALLATION_ID"
+          [ -n "$PRIVATE_KEY" ] || missing="$missing secrets.MOKUME_INSPECTOR_APP_PRIVATE_KEY"
+          if [ -n "$missing" ]; then
+            echo "検査専用 App の設定が足りない:$missing" >&2
+            echo '次にすること: AGENTS.md「ルールセットのドリフト検査」の手順でメンテナが登録する' >&2
+            exit 1
+          fi
+          echo "ok: 検査 App の設定は揃っている"
+
+      - name: 定義と実設定を照合する
+        id: check
+        env:
+          # 検査専用 App の値を、既存の gh-app-token.sh が読む名前で渡す。
+          # 権限は Administration: Read + Metadata: Read のみ (ADR-0006 決定 5)
+          MOKUME_APP_ID: ${{ vars.MOKUME_INSPECTOR_APP_ID }}
+          MOKUME_APP_INSTALLATION_ID: ${{ vars.MOKUME_INSPECTOR_APP_INSTALLATION_ID }}
+          MOKUME_APP_PRIVATE_KEY: ${{ secrets.MOKUME_INSPECTOR_APP_PRIVATE_KEY }}
+        run: |
+          # 代入から始める。export を先頭に付けると終了コードが export のもの (0) へ
+          # 化け、発行に失敗しても空の token で先へ進む (#122)
+          GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN
+          set +e
+          bash scripts/check-rulesets.sh 2>&1 | tee drift.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      # 起票は GITHUB_TOKEN で行う。検査 App に Issues write を持たせないための分離
+      - name: ドリフトを起票する
+        if: steps.check.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/report-ruleset-drift.sh drift.log
+
+      # 起票の後に落とす。Actions の履歴にも赤が残らないと、Issue を閉じた後に
+      # 「いつから直っているか」が run から読めない
+      - name: 検査の結果
+        env:
+          STATUS: ${{ steps.check.outputs.status }}
+        run: |
+          if [ "$STATUS" != "0" ]; then
+            echo "ドリフトを検出した (差分は上のログ、対応は起票された Issue)" >&2
+            exit 1
+          fi
+          echo "ok: 定義と実設定は一致している"
