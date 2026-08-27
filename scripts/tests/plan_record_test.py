@@ -112,7 +112,7 @@ class PlanRecordTestCase(unittest.TestCase):
 
     def run_hook(self, mode, payload=None, stdin="", **env):
         return subprocess.run(
-            ["bash", str(SCRIPT), mode],
+            ["/bin/bash", str(SCRIPT), mode],
             input=json.dumps(payload) if payload is not None else stdin,
             capture_output=True,
             text=True,
@@ -177,7 +177,7 @@ class PlanRecordTestCase(unittest.TestCase):
             "他の人の /home/alice/notes.md も引用した。\n"
         )
         out = subprocess.run(
-            ["bash", str(SCRIPT), "sanitize",
+            ["/bin/bash", str(SCRIPT), "sanitize",
              "/Users/so/Repos/mokume/.claude/worktrees/wt"],
             input=body, capture_output=True, text=True, check=True,
         ).stdout
@@ -190,7 +190,7 @@ class PlanRecordTestCase(unittest.TestCase):
         # worktree のディレクトリ名に括弧やドットが入っても sed が壊れないこと
         root = "/Users/so/Repos/mokume (old)/.claude/wt+1"
         out = subprocess.run(
-            ["bash", str(SCRIPT), "sanitize", root],
+            ["/bin/bash", str(SCRIPT), "sanitize", root],
             input=f"{root}/scripts/comment.sh を直す\n",
             capture_output=True, text=True,
         )
@@ -206,7 +206,7 @@ class PlanRecordTestCase(unittest.TestCase):
             "参照は $API_KEY と <your-token> のまま\n"
         )
         out = subprocess.run(
-            ["bash", str(SCRIPT), "scan"],
+            ["/bin/bash", str(SCRIPT), "scan"],
             input=body, capture_output=True, text=True, check=True,
         ).stdout
         self.assertIn("BLOCK", out)
@@ -218,7 +218,7 @@ class PlanRecordTestCase(unittest.TestCase):
     def test_scan_warns_without_blocking(self):
         body = "連絡は alice@example.com。参照は op://Vault/item/credential\n"
         out = subprocess.run(
-            ["bash", str(SCRIPT), "scan"],
+            ["/bin/bash", str(SCRIPT), "scan"],
             input=body, capture_output=True, text=True, check=True,
         ).stdout
         self.assertIn("WARN", out)
@@ -226,7 +226,7 @@ class PlanRecordTestCase(unittest.TestCase):
 
     def test_scan_ignores_github_noreply(self):
         out = subprocess.run(
-            ["bash", str(SCRIPT), "scan"],
+            ["/bin/bash", str(SCRIPT), "scan"],
             input="Assisted-by: Claude <noreply@anthropic.com>\n",
             capture_output=True, text=True, check=True,
         ).stdout
@@ -271,7 +271,7 @@ class PlanRecordTestCase(unittest.TestCase):
         self.capture("計画。\n", FAKE_GH_PR="42")
         record = self.records()[0]
         proc = subprocess.run(
-            ["bash", str(COMMENT), "pr", "42", "--body-file", str(record), "--dry-run"],
+            ["/bin/bash", str(COMMENT), "pr", "42", "--body-file", str(record), "--dry-run"],
             capture_output=True, text=True, env=self.env(CLAUDECODE="1"),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -308,7 +308,7 @@ class PlanRecordTestCase(unittest.TestCase):
         outside = Path(self.workdir.name) / "plain"
         outside.mkdir()
         result = subprocess.run(
-            ["bash", str(SCRIPT), "capture"],
+            ["/bin/bash", str(SCRIPT), "capture"],
             input=json.dumps(
                 {"cwd": str(outside), "session_id": "x", "tool_input": {"plan": "計画"}}
             ),
@@ -362,7 +362,7 @@ class PlanRecordTestCase(unittest.TestCase):
         outside = Path(self.workdir.name) / "plain"
         outside.mkdir()
         result = subprocess.run(
-            ["bash", str(SCRIPT), "capture"],
+            ["/bin/bash", str(SCRIPT), "capture"],
             input=json.dumps(
                 {"cwd": str(outside), "session_id": "x", "tool_input": {"plan": "計画"}}
             ),

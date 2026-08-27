@@ -103,7 +103,7 @@ class ReviewGateTest(unittest.TestCase):
         env["FAKE_ISSUE_JSON"] = issue if issue is not None else issue_json()
         env["CODEOWNERS_FILE"] = str(self.codeowners)
         return subprocess.run(
-            ["bash", str(SCRIPT), "12"], capture_output=True, text=True, env=env
+            ["/bin/bash", str(SCRIPT), "12"], capture_output=True, text=True, env=env
         )
 
     def assert_blocked(self, proc, message):

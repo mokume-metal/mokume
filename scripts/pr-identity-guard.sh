@@ -45,6 +45,55 @@ deny() { # $1=理由
   exit 0
 }
 
+# 差し戻しの文言は関数に切り出す。`deny "$(cat <<'EOF' … EOF)"` と書くと macOS の
+# bash 3.2 が壊れる — $( … ) の中の here-document の本文まで閉じ括弧の探索対象に
+# するため、本文に $( が現れるとネストを誤認して no closing ')' になる。ここの文言は
+# 案内として GH_TOKEN="$(…)" を含むので、正しく書くほど壊れるという噛み合わせだった
+# (#160)。関数にすると here-document が $( … ) の外へ出るので誤解されない。
+
+unsafe_token_form_message() {
+  cat <<'EOF'
+token の発行が失敗しても後段が走る形になっています。この形では詰みが起きます。
+
+  export GH_TOKEN="$(…)" && gh pr create …
+  ^^^^^^ export 自身の終了コード (0) が返るため、発行に失敗しても && が切れません。
+         空の GH_TOKEN で gh がメンテナの認証へフォールバックし、**誰も承認できない
+         PR** ができます (ADR-0007 / #88。実際に #120 がこれで詰みました)。
+
+次の形にしてください。代入は右辺の終了コードをそのまま返すので && が正しく切れます:
+
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
+
+同じ理由で通らない形が他にもあります:
+
+  - set -e を足しても救われません (export の終了コードが 0 のため)
+  - 代入プレフィクス GH_TOKEN="$(…)" gh pr create … も、発行の失敗が伝わりません
+EOF
+}
+
+identity_required_message() {
+  cat <<'EOF'
+PR は GitHub App の identity で作成してください。素の gh (メンテナ名義) で作ると、
+**誰も承認できない PR** になります — GitHub は自分の PR を自分で承認できず、author は
+後から変えられないので close して作り直すしかありません (ADR-0007 / #88)。
+
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
+
+代入から始めるのが要点です。export を先頭に付けると終了コードが 0 に化けて、token の
+発行に失敗しても後段が走ってしまいます (#122)。
+
+`MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
+秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を
+引いて、このリポジトリの App の鍵が載っていないかを見ます。参照名が分かればその環境
+変数は 1 行で組めます (在処そのものを読む必要はありません)。
+
+一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねてください。
+
+承認が要らない PR でもここでは経路を分けません。承認の要否は CODEOWNERS のパスと
+対象 Issue の verify ラベルで決まり、作成前に確定できないためです。
+EOF
+}
+
 # コマンド文字列の読み方は agent-comment-guard.sh と共有する (#128)。
 # 読めなければ素通し — guard が壊れて Bash ツール全体が使えなくなるほうが害が大きい
 # (下の jq と同じ fail open の考え方)
@@ -89,24 +138,7 @@ if printf '%s' "$command" | grep -qE '[^[:space:];&|`)]*scripts/gh-app-token\.sh
 
   # token を発行しようとはしている。汎用の差し戻しだと「使っているのに止められた」と
   # 読めて直し方が分からないので、何がまずいかを名指しする
-  deny "$(cat <<'EOF'
-token の発行が失敗しても後段が走る形になっています。この形では詰みが起きます。
-
-  export GH_TOKEN="$(…)" && gh pr create …
-  ^^^^^^ export 自身の終了コード (0) が返るため、発行に失敗しても && が切れません。
-         空の GH_TOKEN で gh がメンテナの認証へフォールバックし、**誰も承認できない
-         PR** ができます (ADR-0007 / #88。実際に #120 がこれで詰みました)。
-
-次の形にしてください。代入は右辺の終了コードをそのまま返すので && が正しく切れます:
-
-  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
-
-同じ理由で通らない形が他にもあります:
-
-  - set -e を足しても救われません (export の終了コードが 0 のため)
-  - 代入プレフィクス GH_TOKEN="$(…)" gh pr create … も、発行の失敗が伝わりません
-EOF
-)"
+  deny "$(unsafe_token_form_message)"
 fi
 
 # 常設している環境 (GH_TOKEN に installation token を置いてある) も常道。
@@ -114,24 +146,4 @@ fi
 # ここが先に通ると握り潰しを見逃す
 case "${GH_TOKEN:-}" in ghs_*) exit 0 ;; esac
 
-deny "$(cat <<'EOF'
-PR は GitHub App の identity で作成してください。素の gh (メンテナ名義) で作ると、
-**誰も承認できない PR** になります — GitHub は自分の PR を自分で承認できず、author は
-後から変えられないので close して作り直すしかありません (ADR-0007 / #88)。
-
-  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
-
-代入から始めるのが要点です。export を先頭に付けると終了コードが 0 に化けて、token の
-発行に失敗しても後段が走ってしまいます (#122)。
-
-`MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
-秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を
-引いて、このリポジトリの App の鍵が載っていないかを見ます。参照名が分かればその環境
-変数は 1 行で組めます (在処そのものを読む必要はありません)。
-
-一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねてください。
-
-承認が要らない PR でもここでは経路を分けません。承認の要否は CODEOWNERS のパスと
-対象 Issue の verify ラベルで決まり、作成前に確定できないためです。
-EOF
-)"
+deny "$(identity_required_message)"

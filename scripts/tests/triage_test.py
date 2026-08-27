@@ -64,7 +64,7 @@ class TriageTest(unittest.TestCase):
         env["FAKE_TYPE"] = current_type
         env["FAKE_TYPE_EDIT_FAILS"] = "1" if type_edit_fails else "0"
         proc = subprocess.run(
-            ["bash", str(SCRIPT), "42", title],
+            ["/bin/bash", str(SCRIPT), "42", title],
             capture_output=True,
             text=True,
             env=env,

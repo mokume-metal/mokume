@@ -302,12 +302,12 @@ class ScriptTest(unittest.TestCase):
         return self.log.read_text() if self.log.exists() else ""
 
     def test_shape_は_gh_を呼ばない(self):
-        r = run(["bash", str(CHECK), "--shape"], env=self.env)
+        r = run(["/bin/bash", str(CHECK), "--shape"], env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.calls(), "")
 
     def test_照合は一致で通る(self):
-        r = run(["bash", str(CHECK)], env=self.env)
+        r = run(["/bin/bash", str(CHECK)], env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_照合は実設定がずれれば落ちる(self):
@@ -315,7 +315,7 @@ class ScriptTest(unittest.TestCase):
         body = json.loads(f.read_text())
         body["enforcement"] = "disabled"
         f.write_text(json.dumps(body))
-        r = run(["bash", str(CHECK)], env=self.env)
+        r = run(["/bin/bash", str(CHECK)], env=self.env)
         self.assertEqual(r.returncode, 1)
 
     def test_apply_は既定では書き換えない(self):
@@ -324,7 +324,7 @@ class ScriptTest(unittest.TestCase):
         body["enforcement"] = "disabled"
         f.write_text(json.dumps(body))
 
-        r = run(["bash", str(APPLY)], env=self.env)
+        r = run(["/bin/bash", str(APPLY)], env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--apply", r.stdout)
         self.assertNotIn("PUT", self.calls())
@@ -336,13 +336,13 @@ class ScriptTest(unittest.TestCase):
         body["enforcement"] = "disabled"
         f.write_text(json.dumps(body))
 
-        r = run(["bash", str(APPLY), "--apply"], env=self.env)
+        r = run(["/bin/bash", str(APPLY), "--apply"], env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("PUT", self.calls())
         self.assertEqual(json.loads(f.read_text())["enforcement"], "active")
 
     def test_apply_は差分が無ければ何もしない(self):
-        r = run(["bash", str(APPLY), "--apply"], env=self.env)
+        r = run(["/bin/bash", str(APPLY), "--apply"], env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("PUT", self.calls())
 

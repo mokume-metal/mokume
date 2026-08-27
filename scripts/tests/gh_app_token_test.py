@@ -120,7 +120,7 @@ class GhAppTokenTest(unittest.TestCase):
 
     def run_script(self, **env):
         return subprocess.run(
-            ["bash", str(SCRIPT)], capture_output=True, text=True, env=self.env(**env)
+            ["/bin/bash", str(SCRIPT)], capture_output=True, text=True, env=self.env(**env)
         )
 
     def configured(self, **overrides):

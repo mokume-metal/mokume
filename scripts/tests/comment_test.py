@@ -49,7 +49,7 @@ class GuardTest(unittest.TestCase):
     def run_guard(self, command):
         payload = json.dumps({"tool_input": {"command": command}})
         proc = subprocess.run(
-            ["bash", str(GUARD)],
+            ["/bin/bash", str(GUARD)],
             input=payload,
             capture_output=True,
             text=True,
@@ -192,7 +192,7 @@ class SignatureTest(unittest.TestCase):
 
     def dry_run(self, body="本文", **env):
         proc = subprocess.run(
-            ["bash", str(COMMENT), "issue", "42", "--body", body, "--dry-run"],
+            ["/bin/bash", str(COMMENT), "issue", "42", "--body", body, "--dry-run"],
             capture_output=True,
             text=True,
             env=clean_env(**env),
@@ -240,7 +240,7 @@ class SignatureTest(unittest.TestCase):
             f = Path(d) / "body.md"
             f.write_text("ファイルからの本文\n", encoding="utf-8")
             proc = subprocess.run(
-                ["bash", str(COMMENT), "pr", "7", "--body-file", str(f), "--dry-run"],
+                ["/bin/bash", str(COMMENT), "pr", "7", "--body-file", str(f), "--dry-run"],
                 capture_output=True,
                 text=True,
                 env=clean_env(CLAUDECODE="1"),
@@ -251,7 +251,7 @@ class SignatureTest(unittest.TestCase):
 
     def test_missing_body_is_an_error(self):
         proc = subprocess.run(
-            ["bash", str(COMMENT), "issue", "1", "--dry-run"],
+            ["/bin/bash", str(COMMENT), "issue", "1", "--dry-run"],
             capture_output=True,
             text=True,
             env=clean_env(),
@@ -260,7 +260,7 @@ class SignatureTest(unittest.TestCase):
 
     def test_bad_kind_is_an_error(self):
         proc = subprocess.run(
-            ["bash", str(COMMENT), "discussion", "1", "--body", "x"],
+            ["/bin/bash", str(COMMENT), "discussion", "1", "--body", "x"],
             capture_output=True,
             text=True,
             env=clean_env(),
@@ -317,7 +317,7 @@ class GhInvocationTest(unittest.TestCase):
                 GITHUB_REPOSITORY="mokume-metal/mokume",
             )
             proc = subprocess.run(
-                ["bash", str(COMMENT), "issue", "42", "--body", "投稿本文"],
+                ["/bin/bash", str(COMMENT), "issue", "42", "--body", "投稿本文"],
                 capture_output=True,
                 text=True,
                 env=env,

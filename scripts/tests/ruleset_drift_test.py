@@ -114,7 +114,7 @@ class ReportDriftTest(unittest.TestCase):
         for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL"):
             env.pop(key, None)
         return subprocess.run(
-            ["bash", str(SCRIPT), str(drift_file)],
+            ["/bin/bash", str(SCRIPT), str(drift_file)],
             capture_output=True,
             text=True,
             env=env,
@@ -167,7 +167,7 @@ class ReportDriftTest(unittest.TestCase):
         env = dict(os.environ)
         env.update({"PATH": f"{self.bin_dir}:{env['PATH']}", "FAKE_GH_LOG": str(self.log)})
         r = subprocess.run(
-            ["bash", str(SCRIPT), str(self.dir / "missing.log")],
+            ["/bin/bash", str(SCRIPT), str(self.dir / "missing.log")],
             capture_output=True,
             text=True,
             env=env,
