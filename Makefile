@@ -2,7 +2,7 @@
 # (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test no-binaries reuse-encoding-check reuse-lint github-yaml-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -20,7 +20,7 @@ setup: ## 開発ツールを確認する
 
 check: setup
 
-ci-check: build test no-binaries reuse-encoding-check reuse-lint github-yaml-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -35,6 +35,13 @@ reuse-lint:
 
 github-yaml-lint:
 	bash scripts/check-github-yaml.sh
+
+# 上の 1 本と役割が違う (#89)。github-yaml-lint は .github/ 配下の YAML すべての構文を
+# 名指しせず包み (#87)、こちらは workflows の意味 — 式・イベント名・run: のシェル — を
+# 見る。workflows で構文が二重に見られるのは「包む」設計の副産物で、除外を書けば名指しに
+# 戻り、次に YAML が増えたとき同じ穴が空く (ADR-0008 決定 5 の「重ねる理由」)
+workflows-lint:
+	bash scripts/check-workflows.sh
 
 # ブランチ保護の定義ファイルの「形」だけを見る (ADR-0006)。実設定との照合には
 # 認証が要り、ルールセットは PR と独立に変わるので CI のこの位置には置かない

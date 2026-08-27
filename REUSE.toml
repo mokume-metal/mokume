@@ -17,6 +17,7 @@ path = [
   "AGENTS.md",
   "CLAUDE.md",
   "CONTRIBUTING.md",
+  "SECURITY.md",
   "CHANGELOG.md",
   "changelog.d/README.md",
   ".gitignore",
