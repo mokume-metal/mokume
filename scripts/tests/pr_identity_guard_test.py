@@ -39,7 +39,7 @@ class GuardTest(unittest.TestCase):
     def run_guard(self, command, **env):
         payload = json.dumps({"tool_input": {"command": command}})
         proc = subprocess.run(
-            ["bash", str(GUARD)],
+            ["/bin/bash", str(GUARD)],
             input=payload,
             capture_output=True,
             text=True,

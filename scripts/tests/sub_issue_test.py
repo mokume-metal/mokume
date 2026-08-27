@@ -57,7 +57,7 @@ class SubIssueTest(unittest.TestCase):
         env["FAKE_GH_LOG"] = str(self.log)
         env["FAKE_PARENT_TYPE"] = parent_type
         proc = subprocess.run(
-            ["bash", str(SCRIPT), "74", *args],
+            ["/bin/bash", str(SCRIPT), "74", *args],
             capture_output=True,
             text=True,
             env=env,
