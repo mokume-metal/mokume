@@ -26,17 +26,14 @@ final class FrameObserver {
     static let imageFileName = "frame.png"
 
     let directory: URL
-    private let requestURL: URL
+    private let requests: RequestFile<ObservationRequest>
     private let reportURL: URL
     private let imageURL: URL
 
-    private var lastModification: Date?
-    private var lastHandledID: String?
-
     /// 最終更新時刻を見た回数。要求が無いフレームのコストを検査が測るために持つ。
-    private(set) var pollCount = 0
+    var pollCount: Int { requests.pollCount }
     /// 要求ファイルを実際に読んだ回数。
-    private(set) var readCount = 0
+    var readCount: Int { requests.readCount }
 
     /// 区画があるときだけ作る。
     static func makeIfEnabled(at directory: URL = WorkDirectory.facet("observe")) -> FrameObserver? {
@@ -49,29 +46,15 @@ final class FrameObserver {
 
     init(directory: URL) {
         self.directory = directory
-        self.requestURL = directory.appendingPathComponent(Self.requestFileName)
+        self.requests = RequestFile(
+            url: directory.appendingPathComponent(Self.requestFileName))
         self.reportURL = directory.appendingPathComponent(Self.reportFileName)
         self.imageURL = directory.appendingPathComponent(Self.imageFileName)
     }
 
-    /// まだ応えていない要求があれば返す。
+    /// まだ応えていない要求があれば返す。規約は ``RequestFile`` が守る。
     func pendingRequest() -> ObservationRequest? {
-        pollCount += 1
-        guard let modified = modificationDate(of: requestURL) else { return nil }
-        guard modified != lastModification else { return nil }
-        lastModification = modified
-
-        readCount += 1
-        guard let data = try? Data(contentsOf: requestURL),
-            let request = try? JSONDecoder().decode(ObservationRequest.self, from: data)
-        else {
-            // 壊れた要求で走っているスケッチを止めない。書き手が原子的に置いていない
-            // ときにここへ来る ([ADR-0018] 決定 3)
-            return nil
-        }
-        // 同じ識別子は二度処理しない ([ADR-0018] 決定 3)
-        guard request.id != lastHandledID else { return nil }
-        return request
+        requests.pending()
     }
 
     /// 応答を書く。
@@ -90,10 +73,6 @@ final class FrameObserver {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         try AtomicFile.write(try encoder.encode(report), to: reportURL)
-        lastHandledID = report.id
-    }
-
-    private func modificationDate(of url: URL) -> Date? {
-        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+        requests.markHandled(report.id)
     }
 }

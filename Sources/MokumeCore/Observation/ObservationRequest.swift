@@ -9,7 +9,7 @@ import Foundation
 /// ([ADR-0018] 決定 3) ので、書き手が新しい鍵を足しても古い実装は壊れない。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
-public struct ObservationRequest: Decodable, Equatable, Sendable {
+public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// この要求の識別子。応答はこれを echo する。
     public let id: String
     /// 書き出す画像の縮小率 (1 = 実寸)。

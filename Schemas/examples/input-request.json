@@ -1,0 +1,28 @@
+{
+  "id": "3f0a1b",
+  "events": [
+    {
+      "type": "mouseMoved",
+      "x": 320.0,
+      "y": 180.0
+    },
+    {
+      "type": "mouseDown",
+      "x": 320.0,
+      "y": 180.0,
+      "button": 0
+    },
+    {
+      "type": "mouseUp",
+      "x": 320.0,
+      "y": 180.0,
+      "button": 0
+    },
+    {
+      "type": "keyDown",
+      "code": 49,
+      "characters": " ",
+      "isRepeat": false
+    }
+  ]
+}
