@@ -2,7 +2,7 @@
 # (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test shaders no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -20,7 +20,7 @@ setup: ## 開発ツールを確認する
 
 check: setup
 
-ci-check: build test no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -61,3 +61,9 @@ build:
 
 test:
 	swift test
+
+# シェーダの原文はビルドに含まれない (SwiftPM は .metal を運ぶだけ) ので、誤りは
+# 実行するまで分からない。描画を要する検査は実行環境の制約で CI では走らない (#180)
+# ため、ここで組み立てて落とす
+shaders:
+	bash scripts/check-shaders.sh

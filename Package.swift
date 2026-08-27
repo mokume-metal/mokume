@@ -21,7 +21,11 @@ let package = Package(
         // 層: 基盤 — 何にも依存しない
         .target(name: "MokumeDiagnostics", swiftSettings: .mokume),
         // 層: 描画コア — 基盤にのみ依存する
-        .target(name: "MokumeCore", dependencies: ["MokumeDiagnostics"], swiftSettings: .mokume),
+        .target(
+            name: "MokumeCore",
+            dependencies: ["MokumeDiagnostics"],
+            resources: [.process("Drawing/Shaders")],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(name: "mokume", dependencies: ["MokumeCore"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCoreTests", dependencies: ["mokume"], swiftSettings: .mokume),
