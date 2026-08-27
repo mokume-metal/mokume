@@ -45,16 +45,18 @@ deny() { # $1=理由
   exit 0
 }
 
+# コマンド文字列の読み方は agent-comment-guard.sh と共有する (#128)。
+# 読めなければ素通し — guard が壊れて Bash ツール全体が使えなくなるほうが害が大きい
+# (下の jq と同じ fail open の考え方)
+# shellcheck source=scripts/guard-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
+
 payload=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
 command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
 [ -n "$command" ] || exit 0
 
-# gh のサブコマンドの手前にはグローバルオプション (-R owner/repo など) が入りうるので、
-# 「gh … <サブコマンド>」の間は緩く見る (agent-comment-guard.sh と同じ形)
-readonly GH='(^|[;&|[:space:]])gh([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+'
-
-printf '%s' "$command" | grep -qE "${GH}pr[[:space:]]+create([[:space:]]|$)" || exit 0
+is_gh_subcommand "$command" 'pr[[:space:]]+create' || exit 0
 
 # 使い方を尋ねているだけなら作成ではない
 printf '%s' "$command" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)' && exit 0
