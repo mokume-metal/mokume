@@ -3,6 +3,15 @@
   "id": "8f2b1d",
   "frame": 129,
   "time": 2.15,
-  "size": { "width": 800, "height": 600 },
-  "warnings": ["読み戻し用の領域を確保できなかった"]
+  "size": {
+    "width": 800,
+    "height": 600
+  },
+  "warnings": [
+    "絵を採れませんでした: 読み戻し用の領域を確保できない"
+  ],
+  "load": {
+    "thermalState": "fair"
+  },
+  "stamp": "b3f1a20c"
 }
