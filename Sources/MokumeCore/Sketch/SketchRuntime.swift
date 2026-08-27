@@ -26,8 +26,21 @@ public final class SketchRuntime {
     public var target: RenderTarget { canvas.target }
 
     private let timing: FrameTiming
+    private let now: () -> Double
     private var hasSetUp = false
     private var isPaused = false
+
+    /// 外から観測されるための窓口。区画が無ければ `nil` で、**そのときフレームループは
+    /// 観測の存在を一切払わない** (ADR-0018 の面が満たすべき性質)。
+    private let observer: FrameObserver?
+    /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
+    private var exposedValues: [String: ExposedValue] = [:]
+    /// 直近のフレームの間隔 (秒)。観測が無ければ測らない。
+    private var frameIntervals: [Double] = []
+    private var previousFrameStart: Double?
+
+    /// 間隔をどれだけ遡って平均するか。
+    private static let frameIntervalWindow = 60
 
     /// これまでに描いたフレームの数。
     public var frameCount: Int { timing.frameCount }
@@ -64,6 +77,26 @@ public final class SketchRuntime {
         self.canvas = try Canvas(target: target, gpu: gpu)
         self.timing = FrameTiming(
             clock: clock ?? .frameIndex(frameRate: settings.frameRate), now: now)
+        self.now = now
+        self.observer = FrameObserver.makeIfEnabled()
+    }
+
+    /// 観測の窓口を差し替えられる入口 (検査用)。
+    init(
+        sketch: any Sketch,
+        gpu: RenderDevice,
+        clock: Clock?,
+        now: @escaping () -> Double,
+        observer: FrameObserver?
+    ) throws(RenderFailure) {
+        let settings = sketch.settings
+        self.sketch = sketch
+        let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
+        self.canvas = try Canvas(target: target, gpu: gpu)
+        self.timing = FrameTiming(
+            clock: clock ?? .frameIndex(frameRate: settings.frameRate), now: now)
+        self.now = now
+        self.observer = observer
     }
 
     // MARK: - 進める
@@ -78,12 +111,30 @@ public final class SketchRuntime {
 
     /// フレームを 1 つ進める。
     ///
-    /// 止めている間は何もしない — **止めたのに進む**経路を作らないため。
+    /// 止めている間は描かない — **止めたのに進む**経路を作らないため。ただし観測には
+    /// 応える (下記)。呼び出し側は走っているかどうかを気にせずこれを叩けばよい。
     public func advance() throws(RenderFailure) {
-        guard !isPaused else { return }
+        guard !isPaused else {
+            serveObservationIfRequested()
+            return
+        }
         start()
         timing.advance()
+        beginFrame()
         try canvas.draw { withActiveRuntime { sketch.draw() } }
+        serveObservationIfRequested()
+    }
+
+    /// フレームの頭で片付けること。観測が無ければどれも空回りしない。
+    private func beginFrame() {
+        guard observer != nil else { return }
+        exposedValues.removeAll(keepingCapacity: true)
+        let started = now()
+        if let previous = previousFrameStart {
+            frameIntervals.append(started - previous)
+            if frameIntervals.count > Self.frameIntervalWindow { frameIntervals.removeFirst() }
+        }
+        previousFrameStart = started
     }
 
     /// 進めるのを止める。
@@ -110,6 +161,70 @@ public final class SketchRuntime {
     public func renderFrame(to url: URL) throws {
         try advance()
         try target.writePNG(to: url)
+    }
+
+    // MARK: - 観測に応える
+
+    /// 外から値を差し出す (``Sketch/expose(_:_:)-(_,Double)`` から呼ばれる)。
+    ///
+    /// 観測が有効でなければ溜めない。
+    func expose(_ name: String, _ value: ExposedValue) {
+        guard observer != nil else { return }
+        exposedValues[name] = value
+    }
+
+    /// 要求が来ていれば応える。
+    ///
+    /// **止まっていても応える。** 返すのは最後に描いた絵で、観測のためにフレームを
+    /// 進めることはしない — 観測の有無で番号が動くと、同じスケッチを 2 回走らせれば
+    /// 同じ絵になるという性質が観測に壊される。
+    ///
+    /// 例外は「まだ 1 枚も描いていない」ときだけで、そのときは 1 枚描いてから応える。
+    /// 最初の 1 枚は観測の有無によらず必ず描かれるものなので、再現性は損なわれない。
+    private func serveObservationIfRequested() {
+        guard let observer, let request = observer.pendingRequest() else { return }
+        if timing.frameCount == 0 {
+            start()
+            timing.advance()
+            beginFrame()
+            try? canvas.draw { withActiveRuntime { sketch.draw() } }
+        }
+        respond(to: request, through: observer)
+    }
+
+    private func respond(to request: ObservationRequest, through observer: FrameObserver) {
+        let size = ObservationReport.Size(width: target.width, height: target.height)
+        let values = exposedValues.isEmpty ? nil : exposedValues
+        do {
+            let image = try target.encodeForDisplay().scaled(by: request.scale)
+            try observer.respond(
+                ObservationReport(
+                    id: request.id,
+                    image: FrameObserver.imageFileName,
+                    frame: timing.frameCount,
+                    time: Double(timing.time),
+                    size: size,
+                    stats: FrameStats.summarize(image),
+                    load: RuntimeLoad.sample(frameDurations: frameIntervals),
+                    values: values,
+                    stamp: SourceStamp.current),
+                image: image)
+        } catch {
+            // 採れなくても黙らない。読み手が「まだか / 失敗か / 死んだか」を
+            // 区別できるようにするため (ADR-0018 決定 3)
+            try? observer.respond(
+                ObservationReport(
+                    id: request.id,
+                    image: nil,
+                    frame: timing.frameCount,
+                    time: Double(timing.time),
+                    size: size,
+                    warnings: ["絵を採れませんでした: \(error)"],
+                    load: RuntimeLoad.sample(frameDurations: frameIntervals),
+                    values: values,
+                    stamp: SourceStamp.current),
+                image: nil)
+        }
     }
 
     /// いま走っているランタイムとして自分を差し込んでから `body` を実行する。
