@@ -4,7 +4,9 @@
 
 ## プロジェクト
 
-mokume は macOS / Apple Silicon 専用のクリエイティブコーディング環境 (Swift + Metal)。宣言的・フレームベースのスケッチ API を提供する。**現在は設計フェーズ** — ライブラリのコードはまだ無く、作業は `docs/decisions/` (ADR) と GitHub Issues で進んでいる。
+mokume は macOS / Apple Silicon 専用のクリエイティブコーディング環境 (Swift + Metal)。宣言的・フレームベースのスケッチ API を提供する。
+
+**この文書はフェーズも進捗も書かない。** どこまで出来ているかはリポジトリ自身 (`Sources/`) と Issue / Roadmap (「進捗の公開ロードマップ」節) が正典で、ここに写すと**触る理由が無いまま古くなる** — 実際に「現在は設計フェーズ・ライブラリのコードはまだ無い」が、実装が始まった後の 2 度の改訂を素通りした ([#189](https://github.com/mokume-metal/mokume/issues/189))。[ADR-0001](docs/decisions/0001-founding-principles.md) 原則 9 の「同じ内容の二重管理を作らない」は、規約文書とプロジェクト状態の間にも効く。
 
 ## 正典の在処
 
@@ -202,7 +204,7 @@ Claude Code のセッションでは `.claude/settings.json` のフック (`scri
 
 **mokume 向けのエージェント支援 (スキル・hooks・設定) はこのリポジトリの `.claude/` で管理する** ([ADR-0017](docs/decisions/0017-agent-support-locality.md)) — 個人環境のプラグインやマシン設定に置かない。このリポジトリで作業する誰の環境でも同じ支援が効くこと、支援機構自体が Issue → PR の通常ループで育てられることが理由。**例外は設けない** — マーケットプレイス経由の汎用プラグインも宣言しない。入れている人にだけ効く支援を前提にすると、規約が環境によって変わるためである (個人が自分の `~/.claude/` に何を入れるかは自由で、そこには踏み込まない)。
 
-同種の機構がリポ側と個人環境の双方にあるときは、**リポ側が担保して個人側を黙らせる** (`.claude/settings.json` の `env` にある `CLAUDE_PLAN_RECORD: 0` が前例)。逆向きは採らない — 個人環境の機構はこのリポジトリの設計を知らないので、正常を異常と判定する。リポ固有スキルの置き場は `.claude/skills/` (現状なし — コードが育ってから)。
+同種の機構がリポ側と個人環境の双方にあるときは、**リポ側が担保して個人側を黙らせる** (`.claude/settings.json` の `env` にある `CLAUDE_PLAN_RECORD: 0` が前例)。逆向きは採らない — 個人環境の機構はこのリポジトリの設計を知らないので、正常を異常と判定する。リポ固有スキルの置き場は `.claude/skills/`。何を置くかは [ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md) の順序に従う (実害 → Issue → 機構)。
 
 ## コミット・PR の規約
 
