@@ -152,7 +152,6 @@ class ReportDriftTest(unittest.TestCase):
     def test_起票の後に_triage_を通す(self):
         self.report()
         log = self.gh_log()
-        self.assertIn("status: needs-triage", log)
         self.assertIn("--type Task", log)
 
     def test_差分が長ければ切り詰めて起票する(self):

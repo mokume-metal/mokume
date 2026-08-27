@@ -14,6 +14,8 @@
 
 運用してみると、**記録が Issue のコメントに偏った** ([#148](https://github.com/mokume-metal/mokume/issues/148))。Issue は 86 件に 116 コメント (1 件あたり 1.35) が積まれ、PR は 55 件に 12 コメント (0.22)、行単位のレビューコメントは 0 件だった。実装中の発見も、プランからの差分も、条件ごとの詳細な完了報告も Issue に書かれ、Issue が実装ログになっていた。原因は本 ADR の決定 2 と AGENTS.md が**着手後の記録まで Issue 固定で書いていた**ことにある。機構のほうは先に正しい形になっていて、`scripts/plan-record.sh` の投稿先解決は「PR があればそこ、無ければ Issue」と器の有無で選んでいた。文書が機構に追いついていない。
 
+`status: needs-triage` も廃止した ([#156](https://github.com/mokume-metal/mokume/issues/156))。このラベルは「`verify:` がまだ無い」ことの写しで、**機械の読み手が一つも無かった** — 着手ゲートを実際に守る `scripts/review-gate.sh` が見るのは `verify:` の有無だけである。写しは実測でずれていて、`verify: machine` との併存が 2 件、closed への残置が 5 件あった。決定的だったのは**付与の失敗が危険側に倒れる**ことで、Triage の run が落ちて付かなかった Issue は `label:"status: needs-triage"` の検索から漏れ、未合意のまま着手可能に見えた ([#93](https://github.com/mokume-metal/mokume/issues/93))。`verify:` の不在で未トリアージを表せば、同じ失敗はそのまま「着手できない」に倒れる。
+
 ## 決定
 
 ### 1. Issue のライフサイクル — 分類は議論の成果物
@@ -22,14 +24,14 @@
 起票 (無条件)  →  議論  →  トリアージ完了  →  着手
 ```
 
-- **起票**: 書式・分類を要求しない。新規 Issue には `status: needs-triage` が自動付与される
+- **起票**: 書式・分類を要求しない。機械が下書きするのはタイトルからの Issue Type だけで、ラベルは付かない
 - **議論**: 事実確認・意図のすり合わせをコメントで行い、「どうなれば解消と言えるか」が収束したら **Issue 本文に反映する** (本文が正典・経緯はコメントに残る)
-- **トリアージ完了**: 完了条件の機械判定可否を判定し、`verify: machine` (どの検査で判定するかを本文に明記) または `verify: human` を付与して `needs-triage` を外す。**verify ラベルの付与がトリアージ完了の印**
+- **トリアージ完了**: 完了条件の機械判定可否を判定し、`verify: machine` (どの検査で判定するかを本文に明記) または `verify: human` を付与する。**verify ラベルの付与がトリアージ完了の印であり、その不在が未トリアージを表す** — 未トリアージ側に別のラベルを置かない (写しになり、付け損ねが危険側に倒れる)
 - 自明な Issue は議論を省略し、起票直後にメンテナがラベルを付けてよい (fast path)
 
 ### 2. 着手の条件
 
-`status: needs-triage` のままの Issue には着手しない。着手時のプランは、合意済みの完了条件を引用して書く。置き場は**対象 Issue のコメント** — この時点ではまだ PR が無いためで、PR ができて以降の記録は PR 側へ移る (決定 6)。
+`verify:` ラベルが無い Issue には着手しない。着手時のプランは、合意済みの完了条件を引用して書く。置き場は**対象 Issue のコメント** — この時点ではまだ PR が無いためで、PR ができて以降の記録は PR 側へ移る (決定 6)。
 
 ### 3. PR のルーティング — review-gate
 
@@ -85,10 +87,10 @@ Issue と PR のどちらに書くかは、**「この PR が merge された後
 
 ## 影響
 
-- ラベル体系に `verify: machine` / `verify: human` / `no-issue` を追加する (`review: approved` も一度は追加したが、identity 分離の完了に伴い削除した)
+- ラベル体系に `verify: machine` / `verify: human` / `no-issue` を追加する (`review: approved` と `status: needs-triage` も一度は追加したが、前者は identity 分離の完了に伴い、後者は #156 で削除した)
 - review-gate の実装は独立した Issue で行う。実装までの間、本 ADR のルーティングは運用で守る
 - AGENTS.md の「進め方」「マージの判断基準」「コメント」を本 ADR に接続する
-- エージェントは `needs-triage` の Issue に着手できない。議論を経ずに merge へ到達する経路が構造的に消える
+- エージェントは `verify:` の無い Issue に着手できない。議論を経ずに merge へ到達する経路が構造的に消える
 - ADR・workflows・`.claude/` の変更は常にメンテナの承認を要する。当初この効果は規約止まりだったが (ラベルはエージェント自身も付けられた)、[ADR-0003](0003-agent-identity-separation.md) の identity 分離と CODEOWNERS への移行によって**構造として成立した**
 - 決定 6 は文書だけで守る。判定は「その情報が merge 後も読まれるか」という実質的な判断で、機械にできるのは投稿先が器の有無と合っているかまでであり、それは `scripts/plan-record.sh` が既に見ている
 - 行単位のレビューコメントが使われていない件は決定 6 の射程外に置いた。指摘は PR 本文のコメントで実際に届いており、実害が示されていない ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) の順序 — 実害 → Issue → 機構)

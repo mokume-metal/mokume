@@ -3,7 +3,6 @@ name: 提案 / Proposal
 about: 機能・改善・設計の提案 (思いつき・メモ歓迎・どの言語でも)
 title: "feat: "
 type: Feature
-labels: ["status: needs-triage"]
 ---
 
 <!-- 雑でよい。事実確認と完了条件はトリアージの議論で固めます -->
