@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/observe-report.schema.json",
+  "title": "観測の応答",
+  "description": "1 枚の観測の結果。画像は別ファイルで、この応答が最後に原子的に書かれる。採取できなかったときも応答は必ず書かれ、理由が warnings に載る (ADR-0018 決定 3)。",
+  "type": "object",
+  "required": ["schemaVersion", "id", "frame", "time", "size", "warnings"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "この応答の形式の版。上げ方は ADR-0018 決定 5。"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "応答した要求の識別子。読み手はこの一致で完了を知る。"
+    },
+    "image": {
+      "type": "string",
+      "minLength": 1,
+      "description": "書き出した画像のファイル名 (この応答からの相対)。採取できなかったときは省略される — 読み手は「この鍵が無ければ失敗」と判定してよい。"
+    },
+    "frame": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "この絵を描いたフレームの番号。"
+    },
+    "time": {
+      "type": "number",
+      "description": "この絵を描いたフレームの時刻 (秒)。"
+    },
+    "size": {
+      "type": "object",
+      "required": ["width", "height"],
+      "additionalProperties": false,
+      "description": "描いた面の大きさ (ピクセル)。",
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "採取の過程で起きたことわり。失敗したときは理由がここに入る。何も無ければ空配列。"
+    }
+  }
+}

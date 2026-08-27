@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/observe-request.schema.json",
+  "title": "観測の要求",
+  "description": "走っているスケッチに 1 枚の観測を求める。書き手は一時ファイル経由で原子的に置き、id は要求ごとに変える (ADR-0018 決定 3)。",
+  "type": "object",
+  "required": ["id"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "この要求の識別子。応答はこれを echo する。同じ id の要求は再処理されない。"
+    },
+    "scale": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "description": "書き出す画像の縮小率 (1 = 実寸)。省略時は 1。"
+    }
+  }
+}
