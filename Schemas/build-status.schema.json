@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/build-status.schema.json",
+  "title": "直近の作り直しの結果",
+  "description": "保存を見張っている道具が、作り直すたびに書く。窓口はこれを読んで「なぜ絵が変わらないのか」に答えられる (ADR-0018 と同じ流儀で原子的に置かれる)。",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "ok",
+    "status",
+    "output",
+    "configuration",
+    "timings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "この形式の版。上げ方は ADR-0018 決定 5。"
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "作り直せたか。false のときも直前の版は走り続けている。"
+    },
+    "status": {
+      "type": "integer",
+      "description": "作り直しの終了コード。"
+    },
+    "output": {
+      "type": "string",
+      "description": "作り直しの出力。失敗の内容はここに入る。成功しても警告が入ることがある。"
+    },
+    "stamp": {
+      "type": "string",
+      "minLength": 1,
+      "description": "この作り直しが対象にしたソースの世代。観測の応答に載る刻印と同じ値。"
+    },
+    "configuration": {
+      "type": "string",
+      "description": "どの構成で作ったか。数字がどの土俵のものか分からないと比べられない。",
+      "examples": [
+        "debug",
+        "release"
+      ]
+    },
+    "timings": {
+      "type": "object",
+      "description": "分解した所要時間 (ミリ秒)。合計だけを見ていると律速を推測で決めて外す。",
+      "required": [
+        "buildMs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "detectMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "保存から気付くまで。最初の作り直しでは省かれる。"
+        },
+        "buildMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "作り直しにかかった時間。"
+        },
+        "relaunchMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "差し替え。失敗したときは省かれる。"
+        }
+      }
+    }
+  }
+}

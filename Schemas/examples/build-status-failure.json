@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "status": 1,
+  "output": "error: cannot find 'circl' in scope\n",
+  "stamp": "9b02c7e41af8",
+  "configuration": "debug",
+  "timings": {
+    "detectMs": 131.2,
+    "buildMs": 512.7
+  }
+}
