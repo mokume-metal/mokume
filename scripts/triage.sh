@@ -7,12 +7,16 @@
 #
 #   triage.sh <Issue 番号> <タイトル>
 #
-# 判断は三つ:
-#   1. verify: が既に付いていれば needs-triage を付けない (完了条件が確定済み)
-#   2. 型が既に付いていれば触らない — テンプレートや sub-issue.sh の明示指定は
+# 判断は二つ:
+#   1. 型が既に付いていれば触らない — テンプレートや sub-issue.sh の明示指定は
 #      タイトルからの推定より確かなので、後から上書きしない
-#   3. タイトルの Conventional Commits prefix から型を推定する。推定できなければ
+#   2. タイトルの Conventional Commits prefix から型を推定する。推定できなければ
 #      無分類のままにする (推定できないものを機械が埋めない — ADR-0004 決定 5)
+#
+# ラベルは付けない。トリアージが済んだかは verify: の有無が表す (ADR-0002 決定 1)。
+# かつては status: needs-triage も付けていたが、verify: の不在の写しでしかなく、
+# 付与に失敗した Issue が未トリアージの検索から漏れて危険側に倒れたため廃止した
+# (#156)。付けない側に倒れれば、取りこぼしはそのまま「着手できない」になる。
 #
 # 呼び出しは .github/workflows/triage.yml、検査は scripts/tests/triage_test.py。
 # ロジックを YAML に埋めないのは、issues イベントの workflow が既定ブランチの
@@ -23,15 +27,6 @@ REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 
 NUM="${1:?Issue 番号が必要}"
 TITLE="${2:?タイトルが必要}"
-
-labels=$(gh issue view "$NUM" -R "$REPO" --json labels --jq '[.labels[].name] | join("\n")')
-
-if grep -q '^verify: ' <<<"$labels"; then
-  echo "triage: verify: が付いている — needs-triage は付けない"
-else
-  gh issue edit "$NUM" -R "$REPO" --add-label "status: needs-triage" >/dev/null
-  echo "triage: status: needs-triage を付けた"
-fi
 
 current_type=$(gh issue view "$NUM" -R "$REPO" --json issueType --jq '.issueType.name // empty')
 if [ -n "$current_type" ]; then

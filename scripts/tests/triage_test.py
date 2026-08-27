@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MIT
 """scripts/triage.sh の検査 (#78)。
 
-triage は起票直後に一度だけ走り、二つの下書きをする:
-  1. 完了条件がまだ無い Issue に status: needs-triage を付ける
-  2. タイトルの Conventional Commits prefix から Issue Type を推定する
+triage は起票直後に一度だけ走り、タイトルの Conventional Commits prefix から
+Issue Type を推定する。ラベルは付けない — トリアージが済んだかは verify: の有無が
+表す (ADR-0002 決定 1)。status: needs-triage は #156 で廃止した。
 
 固定したいのは「機械が埋めない」二つの境界 (ADR-0004 決定 5):
   - prefix が読めなければ型を付けない (無分類のまま人が決める)
@@ -28,14 +28,12 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "triage.sh"
 
 # 偽 gh。呼ばれた引数を残し、問い合わせには環境変数の値を返す。
-#   gh issue view <n> -R <repo> --json labels    --jq ... → FAKE_LABELS
 #   gh issue view <n> -R <repo> --json issueType --jq ... → FAKE_TYPE
-#   gh issue edit <n> -R <repo> --add-label / --type      → 記録するだけ
+#   gh issue edit <n> -R <repo> --type                    → 記録するだけ
 # --jq は本物が畳んだ後の文字列をそのまま返す (整形は検査の対象ではない)
 FAKE_GH = """#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
 case "$*" in
-  *"--json labels"*)    printf '%s' "$FAKE_LABELS" ;;
   *"--json issueType"*) printf '%s' "$FAKE_TYPE" ;;
   *"issue edit"*)
     case "$*" in
@@ -59,11 +57,10 @@ class TriageTest(unittest.TestCase):
         self.log = Path(self.tmp.name) / "gh.log"
         self.log.touch()
 
-    def run_triage(self, title, labels="", current_type="", type_edit_fails=False):
+    def run_triage(self, title, current_type="", type_edit_fails=False):
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_GH_LOG"] = str(self.log)
-        env["FAKE_LABELS"] = labels
         env["FAKE_TYPE"] = current_type
         env["FAKE_TYPE_EDIT_FAILS"] = "1" if type_edit_fails else "0"
         proc = subprocess.run(
@@ -74,17 +71,15 @@ class TriageTest(unittest.TestCase):
         )
         return proc, self.log.read_text(encoding="utf-8")
 
-    # --- 1. needs-triage ----------------------------------------------------
+    # --- 1. ラベルは触らない ------------------------------------------------
 
-    def test_needs_triage_is_added_when_completion_is_undecided(self):
+    def test_no_label_is_touched(self):
+        # 未トリアージは verify: の不在が表す。ここが再び --add-label を呼び始めたら
+        # 写しが戻ったということ (#156)。ラベルを読みにも行かない
         proc, calls = self.run_triage("chore: 何かする")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("--add-label status: needs-triage", calls)
-
-    def test_needs_triage_is_skipped_when_verify_is_already_set(self):
-        proc, calls = self.run_triage("chore: 何かする", labels="verify: machine")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("--add-label", calls)
+        self.assertNotIn("--json labels", calls)
 
     # --- 2. prefix からの型の推定 -------------------------------------------
 
