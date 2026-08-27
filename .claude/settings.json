@@ -36,6 +36,12 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/agent-comment-guard.sh\"",
             "timeout": 10,
             "statusMessage": "コメントの投稿経路を確認中"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/pr-identity-guard.sh\"",
+            "timeout": 10,
+            "statusMessage": "PR の作成主体を確認中"
           }
         ]
       }
