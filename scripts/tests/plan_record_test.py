@@ -158,6 +158,17 @@ class PlanRecordTestCase(unittest.TestCase):
         text = self.records()[0].read_text(encoding="utf-8")
         return text.split("mokume-plan-record: ")[1].split(" ")[0]
 
+    def assert_not_targeted(self, number, stderr):
+        """その番号が「投稿先」として現れていないことだけを見る。
+
+        stderr には記録ファイルのパスが載り、その名前には Unix timestamp が入る
+        (plan-record.sh の id="${session%%-*}-$(date +%s)")。番号を stderr 全体から
+        探すと timestamp を拾って偶発的に落ちるので、検査の網を投稿先の形に絞る
+        (投稿先は必ず scripts/comment.sh <kind> <番号> の形で出る。#113)。
+        """
+        for kind in ("issue", "pr"):
+            self.assertNotIn(f"scripts/comment.sh {kind} {number}", stderr)
+
     # --- サニタイズ (完了条件 3) ---------------------------------------------
 
     def test_sanitize_collapses_repo_and_home_paths(self):
@@ -402,14 +413,22 @@ class PlanRecordTestCase(unittest.TestCase):
         self.git("checkout", "-q", "-b", "claude/batch-issue-cleanup-c936e5")
         result = self.capture("名乗りの無い計画。\n", FAKE_GH_ISSUE="936")
         self.assertIn("まだありません", result.stderr)
-        self.assertNotIn("936", result.stderr)
+        self.assert_not_targeted("936", result.stderr)
+
+    def test_capture_ignores_an_all_digit_hex_suffix(self):
+        # hex が全数字だと「区切りに接した数字だけ」の網は通ってしまうので、
+        # ここを守っているのは末尾 hex を落とす sed だけになる (#113)
+        self.git("checkout", "-q", "-b", "claude/batch-issue-cleanup-123456")
+        result = self.capture("名乗りの無い計画。\n", FAKE_GH_ISSUE="123456")
+        self.assertIn("まだありません", result.stderr)
+        self.assert_not_targeted("123456", result.stderr)
 
     def test_capture_ignores_digits_glued_to_letters_in_the_branch_name(self):
         # worktree の自動生成名。0127 は英字に挟まれたハッシュの断片
         self.git("checkout", "-q", "-b", "worktree-bridge-cse_0127aTN6krq7fqrr56rh6gbc")
         result = self.capture("名乗りの無い計画。\n", FAKE_GH_ISSUE="127")
         self.assertIn("まだありません", result.stderr)
-        self.assertNotIn("127", result.stderr)
+        self.assert_not_targeted("127", result.stderr)
 
     def test_capture_still_reads_a_delimited_number_from_the_branch_name(self):
         # 区切りに接した数字は従来どおり拾う (推定の親切さを落とさない)
