@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0004: Issue の分類を Issue Type へ移す
 
 ## 状態

@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0009: OS フロアとツールチェーンを macOS 26 / Metal 4 / Swift 6 に一本化する
 
 ## 状態

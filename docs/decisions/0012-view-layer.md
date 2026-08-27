@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0012: ビュー層 — 描画をビューから独立させ、画面提示は CAMetalLayer を直接管理する
 
 ## 状態

@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0016: パッケージ骨格 — 依存の層をターゲットで表し、アンブレラで気楽さを保つ
 
 ## 状態

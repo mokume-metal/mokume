@@ -8,7 +8,15 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 ## 正典の在処
 
-- 設計判断: `docs/decisions/` の ADR (状態 / 文脈 / 決定 / 影響 の 4 節・自己完結で書く)
+- 設計判断: `docs/decisions/` の ADR (状態 / 文脈 / 決定 / 影響 の 4 節・自己完結で書く)。**帰属は ADR 自身の先頭に SPDX ヘッダ (HTML コメント) を置いて宣言し、`REUSE.toml` には足さない** — 共有ファイルに帰属を集めると、中身の無関係な ADR 同士が必ず conflict する ([#149](https://github.com/mokume-metal/mokume/issues/149))
+
+  ```markdown
+  <!--
+  SPDX-FileCopyrightText: 2026 mokume-metal
+  SPDX-License-Identifier: MIT
+  -->
+  ```
+
 - 作業の経過・発見・残タスク: GitHub Issues / PR (ローカルファイルやセッション記憶に残さない)
 - プロジェクトの土台: [ADR-0001 設計原則](docs/decisions/0001-founding-principles.md)
 

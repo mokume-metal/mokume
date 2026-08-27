@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0005: PR のラベルは機械が読む入力に限る
 
 ## 状態

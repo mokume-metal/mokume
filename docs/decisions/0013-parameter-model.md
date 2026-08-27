@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0013: パラメータ機構 — Observation に載せ、値の正典を 1 つに保つ
 
 ## 状態
