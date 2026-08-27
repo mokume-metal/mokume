@@ -24,14 +24,14 @@
 
 ### 1. エージェントに GitHub App の identity を与える
 
-エージェントが push し PR を開く主体を、メンテナのアカウントから `mokume-metal` org 所有の GitHub App に分離する。App の権限は次に限り、**ルールセットの bypass list には加えない**。
+エージェントが **PR を開く**主体を、メンテナのアカウントから `mokume-metal` org 所有の GitHub App に分離する。**push の主体は分離の対象に含めない** — 理由は決定 6 に書く。App の権限は次に限り、**ルールセットの bypass list には加えない**。
 
 | 権限 | 設定 | 理由 |
 | --- | --- | --- |
-| Contents | Read and write | ブランチへの push |
+| Contents | Read and write | PR の merge と auto-merge の予約・merge 後のリモートブランチ削除・App のトークンで push する経路を通ったときのブランチ push |
 | Pull requests | Read and write | PR の作成・更新 |
 | Issues | Read and write | コメント・ラベル |
-| Workflows | Read and write | GitHub は `.github/workflows/` 配下を変更する push を、`workflows` 権限の無いトークンに対して**サーバ側で拒否する** |
+| Workflows | Read and write | App のトークンで push する経路では効いてくる — GitHub は `.github/workflows/` 配下を変更する push を、`workflows` 権限の無いトークンに対して**サーバ側で拒否する** |
 | Metadata | Read-only | 必須 |
 | **Administration** | **No access** | 与えるとエージェントが自分を縛るルールセットを外せてしまい、本 ADR の目的が崩れる |
 
@@ -39,7 +39,7 @@
 
 **bypass を与えることになった場合は、種類を選ぶ。** ルールセットの bypass には二種類あり、exemption 型は enforcement を**黙って**飛ばす (監査記録が残らない)。将来どうしても必要になったら、痕跡が PR と audit log に残る "for pull requests only" 型を選ぶ。便利さのために監査記録を捨てない。
 
-**コミットの author と署名はメンテナのまま**とする。分離するのは push と PR 作成の主体であって、著作の主体ではない。署名の検証は鍵に対して行われるため、`signed-commits` ルールセットとも両立する (App のトークンで push したメンテナ署名のコミットが `verified: true` になることを実測した)。
+**コミットの author と署名はメンテナのまま**とする。分離するのは PR 作成の主体であって、著作の主体ではない。署名の検証は鍵に対して行われるため、`signed-commits` ルールセットとも両立する (App のトークンで push したメンテナ署名のコミットが `verified: true` になることを実測した)。
 
 ### 2. machine user ではなく App を選ぶ
 
@@ -86,6 +86,10 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 - **意図しない自己承認が構造的に消える** (設定の既定として不可能になる)
 - **監査可能性** — 誰が開き誰が承認したかがタイムラインに残る
 
+**push の主体は分離の境界に含めない。** 本 ADR は当初「エージェントが push し PR を開く主体を分離する」と書いていたが、実態はそうなっていなかった ([#106](https://github.com/mokume-metal/mokume/issues/106))。remote が SSH のクローンでは `git push` はメンテナの鍵で通り、`gh pr create` に未 push のブランチを任せた場合や App のトークンで HTTPS へ押した場合は App に帰属する。main の履歴には両方が混在し、同一ブランチでブランチ作成と後続の push が別主体になった例もある。
+
+**揃えなかったのは、揃えても守りが増えないからである。** 上と同じ理由 — 同じマシンにメンテナの鍵が残っている限り、push の帰属はエージェントが選べてしまう。選べる値は監査信号にならないので、経路を固定する機構を足しても得るものが無い ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md))。承認可能性 ([ADR-0007](0007-approvability-invariant.md)) に効くのは PR の author であって push の主体ではないため、不変条件も揺るがない。上の「監査可能性」が主張しているのが**誰が開き誰が承認したか**に限られているのは、そのためである。
+
 **人数は増えていない。** SLSA Source Track の L4 は "two or more trusted **persons**"、CIS の供給網ガイドは "two ... **users**" による承認を求めるが、App はそこに数えられない。メンテナが一人である限りこの水準は達成できず、identity を分けても変わらない。これは AI を導入したことで生じた不足ではなく、一人のプロジェクトが元から持つ限界である。SLSA には bot への例外 (Trusted Robot) があるが、その定義は「robot の identity とコードベースを一方的に変更できないこと」を要求するので、メンテナが単独で書き換えられるエージェントは該当しない。
 
 **AI にレビュー役は与えない。** OpenSSF Scorecard は "Review by bots, including bots powered by AI/ML, do not count as code review" と明文で否定している。エージェントの出力を別のエージェントに検分させることは、本 ADR の承認とは別物であり、人間の承認の代替にはならない。
@@ -106,4 +110,5 @@ squash merge の author は **App になる**。しかし GitHub は、ブラン
 - `scripts/review-gate.sh` から承認判定と重要パス判定を削除する。`CODEOWNERS` を新設する
 - 「承認待ちを CI の赤以外で表現する」検討 ([#29](https://github.com/mokume-metal/mokume/issues/29)) は、本 ADR の適用によって不要になる
 - エージェントの実行手順 (`GH_TOKEN` に installation token を載せる) を AGENTS.md に加える。秘密鍵はリポジトリにもログにも置かない
+- 決定 1 の「エージェントが push し PR を開く主体を分離する」は実態と合っていなかった。[#106](https://github.com/mokume-metal/mokume/issues/106) で push を境界の外と定め、権限表の**理由列**を App が実際に行う操作へ付け替えた (**設定列は不変**なので、ADR-0006 決定 6 の「権限表は改訂しない」= `Administration` を足さない、はそのまま生きる)
 - 移行の前に確証が取れなかった四点のうち三点は実測で解決した — installation token での `gh` の動作 (JWT は `Authorization: Bearer` で送る必要がある) / App が push したコミットの署名 (メンテナの鍵の署名は `verified` のまま) / squash コミットの author (App になるが co-author は自動で付く)。残る「承認数 0 と code owner review の組み合わせ」は CODEOWNERS の適用時に測る

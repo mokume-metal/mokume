@@ -108,7 +108,7 @@ bash scripts/comment.sh pr    <番号> --body "<本文>"
 
 ### エージェントの identity
 
-[ADR-0003](docs/decisions/0003-agent-identity-separation.md) により、エージェントは push と PR 作成を **GitHub App の identity** で行う (承認を native の Approve へ戻し、自分の PR を自分で通す経路を塞ぐため)。token は次で発行する:
+[ADR-0003](docs/decisions/0003-agent-identity-separation.md) により、エージェントは **PR の作成**を **GitHub App の identity** で行う (承認を native の Approve へ戻し、自分の PR を自分で通す経路を塞ぐため)。token は次で発行する:
 
 ```bash
 export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
@@ -130,7 +130,7 @@ gh api orgs/<org>/installations --jq '.installations[] | select(.app_slug=="moku
 
 Claude Code のセッションでは `.claude/settings.json` のフック (`scripts/pr-identity-guard.sh`) が素の `gh pr create` を差し戻し、token の発行と**鍵の探し方**を示す。同等のフック機構を持たないエージェント (現状の Codex CLI など) では機械的には強制できないため、経路を問わない検知は `review-gate` が担う — 承認が要る PR の author が唯一の承認者になっていれば CI が赤で差し戻す ([#104](https://github.com/mokume-metal/mokume/issues/104))。
 
-コミットの author と署名は**メンテナのまま**で、分離するのは push と PR 作成の主体だけ。
+コミットの author と署名は**メンテナのまま**で、分離するのは **PR 作成の主体だけ**。**push の主体は問わない** — remote が SSH のクローンならメンテナの鍵で通り、それで構わない。同じマシンに両方の認証がある以上 push の帰属は選べてしまい、監査信号にならないためである ([ADR-0003](docs/decisions/0003-agent-identity-separation.md) 決定 6)。
 
 **mokume 向けのエージェント支援 (スキル・hooks・設定) はこのリポジトリの `.claude/` で管理する** — 個人環境のプラグインやマシン設定に置かない。このリポジトリで作業する誰の環境でも同じ支援が効くこと、支援機構自体が Issue → PR の通常ループで育てられることが理由。例外は汎用の個人標準 (`repo-standards`) のみで、これはプロジェクト非依存のためマーケットプレイス経由で利用する。リポ固有スキルの置き場は `.claude/skills/` (現状なし — コードが育ってから)。
 
