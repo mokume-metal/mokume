@@ -109,6 +109,15 @@ bash scripts/comment.sh pr    <番号> --body "<本文>"
 
 投稿前に本文を確かめたいときは `--dry-run` を付ける。名乗りを自動検出できない環境では総称の署名になるので、`MOKUME_AGENT_NAME` (必要なら `MOKUME_AGENT_URL`) で明示する。
 
+**発言を伴う操作は `gh {issue,pr} comment` だけではない。** `gh pr review` の本文オプションと、`gh {issue,pr} {close,reopen}` の `--comment` も同じ扱いで、フックが差し戻す ([#123](https://github.com/mokume-metal/mokume/issues/123) — 未署名のコメントが実際にメンテナ名義で残った)。close / reopen は **2 手に分ける** — 発言をラッパーで投稿してから、状態の変更は発言なしで実行する:
+
+```bash
+bash scripts/comment.sh pr <番号> --body "<本文>"
+gh pr close <番号>
+```
+
+`comment.sh` に close / reopen の機能は足さない。ラッパーの責務を「署名を付けて投稿する」1 つに保つため (状態遷移を持たせると `--reason` `--delete-branch` と `gh` の写しが増えていく)。説明を先に投稿してから閉じる順序は、タイムラインの読み順としてもむしろ自然になる。
+
 **人間が直接 `gh` でコメントする分にはラッパーは不要**。Claude Code のセッションでは `.claude/settings.json` のフックが素の `gh issue comment` / `gh pr comment` を差し戻してラッパーへ誘導する。同等のフック機構を持たないエージェント (現状の Codex CLI など) では機械的には強制できないため、この節が拠りどころになる — ラッパーはどの環境からでも呼べる。
 
 ## エージェント環境の設定
