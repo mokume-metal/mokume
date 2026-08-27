@@ -158,6 +158,73 @@ struct ObservationProtocolTests {
         #expect(Set(produced?.keys ?? [:].keys) == Set(example?.keys ?? [:].keys))
     }
 
+    // MARK: - 要求を取りこぼさない (#221)
+
+    @Test("置いている途中を掴んでも、要求は失われない")
+    func keepsARequestThatCouldNotBeReadYet() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        let requestURL = facet.appendingPathComponent("request.json")
+        try write(request: #"{"id":"a1"}"#, to: facet)
+
+        // 書き手が置き終える前の状態を作る (読めないだけで、中身は正しい)。
+        // 最終更新時刻は変わらないので、読めるようになった後も同じ 1 件である
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: requestURL.path)
+        #expect(observer.pendingRequest() == nil)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: requestURL.path)
+        #expect(observer.pendingRequest()?.id == "a1")
+    }
+
+    @Test("解けない要求は 1 度だけ読んで捨てる")
+    func readsAnUndecodableRequestOnlyOnce() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: "{ これは JSON ではない", to: facet)
+
+        #expect(observer.pendingRequest() == nil)
+        #expect(observer.readCount == 1)
+
+        // 再読しても直らないものを毎フレーム開き直さない
+        #expect(observer.pendingRequest() == nil)
+        #expect(observer.readCount == 1)
+    }
+
+    @Test("連続して置き換えられても、1 つも取りこぼさない")
+    func losesNothingAcrossManyReplacements() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+
+        var answered: [String] = []
+        for index in 1...100 {
+            let id = "r\(index)"
+            try write(request: #"{"id":"\#(id)"}"#, to: facet)
+            guard let request = observer.pendingRequest() else { continue }
+            try observer.respond(report(id: request.id, image: nil), image: nil)
+            answered.append(request.id)
+        }
+
+        #expect(answered == (1...100).map { "r\($0)" })
+    }
+
+    @Test("応答を書けなくても、同じ要求を拾い直し続けない")
+    func doesNotSpinOnARequestItCannotAnswer() throws {
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        try write(request: #"{"id":"a1"}"#, to: facet)
+        #expect(observer.pendingRequest()?.id == "a1")
+
+        // 書き込み先を塞ぐ。応答は書けないが、応えようとしたことは残る
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: facet.path)
+        #expect(throws: (any Error).self) {
+            try observer.respond(report(id: "a1", image: nil), image: nil)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: facet.path)
+
+        #expect(observer.pendingRequest() == nil)
+    }
+
     @Test("基準は作業ディレクトリで、環境から与えられれば上書きされる")
     func resolvesTheBaseDirectory() {
         let current = URL(

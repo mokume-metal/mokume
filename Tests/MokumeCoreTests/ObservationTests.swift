@@ -204,4 +204,73 @@ struct ObservationTests {
         #expect(load["thermalState"] as? String != nil)
         #expect((load["memoryMB"] as? Double ?? 0) > 0)
     }
+
+    // MARK: - 描画が失敗しても観測は応える (#221)
+
+    @Test("描けなかったフレームでも、理由を載せた応答が返る")
+    func answersEvenWhenTheFrameCouldNotBeDrawn() throws {
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Corner(), facet: facet)
+        let image = facet.appendingPathComponent("frame.png")
+
+        // 先に 1 枚撮っておく。前回の絵が残っている状態から失敗させる
+        try runtime.advance()
+        try request(id: "ok", in: facet)
+        try runtime.advance()
+        #expect(FileManager.default.fileExists(atPath: image.path))
+
+        runtime.canvas.failureForTesting = .timedOut(seconds: 5)
+        try request(id: "a1", in: facet)
+        #expect(throws: RenderFailure.self) { try runtime.advance() }
+
+        let report = try readReport(in: facet)
+        #expect(report["id"] as? String == "a1")
+        // 描画先の中身が信用できないので絵は採らない。理由は必ず載る (ADR-0018 決定 3)
+        #expect(report["image"] as? String == nil)
+        #expect((report["warnings"] as? [String])?.isEmpty == false)
+        // 新しい識別子の応答と古い絵を組にしない
+        #expect(!FileManager.default.fileExists(atPath: image.path))
+    }
+
+    @Test("描画が失敗し続けても、置いた要求すべてに応答が返る")
+    func keepsAnsweringWhileTheFrameKeepsFailing() throws {
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Corner(), facet: facet)
+        try runtime.advance()
+        runtime.canvas.failureForTesting = .encoderUnavailable
+
+        var answered = 0
+        for index in 1...100 {
+            let id = "r\(index)"
+            try request(id: id, in: facet)
+            try? runtime.advance()
+            if try readReport(in: facet)["id"] as? String == id { answered += 1 }
+        }
+        #expect(answered == 100)
+    }
+
+    @Test("入力が生きているのに観測だけが黙る、という形にならない")
+    func neverGoesSilentWhileInputKeepsAnswering() throws {
+        let observeFacet = try makeFacet()
+        let inputFacet = try makeFacet()
+        let runtime = try SketchRuntime(
+            sketch: Corner(), gpu: try RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: observeFacet),
+            inbox: InputInbox(directory: inputFacet))
+        try runtime.advance()
+        runtime.canvas.failureForTesting = .timedOut(seconds: 5)
+
+        try AtomicFile.write(
+            Data(#"{"id":"i1","events":[{"type":"mouseMoved","x":1,"y":2}]}"#.utf8),
+            to: inputFacet.appendingPathComponent("request.json"))
+        try request(id: "o1", in: observeFacet)
+        try? runtime.advance()
+
+        // 入力が応えているなら、観測も応えていなければならない
+        let inputReport = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: inputFacet.appendingPathComponent("report.json")))
+            as? [String: Any]
+        #expect(inputReport?["id"] as? String == "i1")
+        #expect(try readReport(in: observeFacet)["id"] as? String == "o1")
+    }
 }

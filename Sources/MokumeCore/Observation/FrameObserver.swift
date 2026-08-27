@@ -64,7 +64,11 @@ final class FrameObserver {
     ///
     /// 絵が無い (採取できなかった) ときは、**前回の絵を先に消す**。新しい識別子の
     /// 応答と古い絵が組にされると、読み手は古い絵を新しいと信じてしまう。
+    ///
+    /// 応えようとしたことは、**書き込みに失敗しても**記録する。記録しないと同じ要求を
+    /// 毎フレーム拾い直し、壊れた書き込み先の上でループになる。
     func respond(_ report: ObservationReport, image: DisplayImage?) throws {
+        defer { requests.markHandled(report.id) }
         if let image {
             try AtomicFile.write(to: imageURL) { try PNGFile.write(image, to: $0) }
         } else {
@@ -73,6 +77,5 @@ final class FrameObserver {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         try AtomicFile.write(try encoder.encode(report), to: reportURL)
-        requests.markHandled(report.id)
     }
 }

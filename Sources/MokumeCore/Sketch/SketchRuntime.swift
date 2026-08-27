@@ -120,6 +120,14 @@ public final class SketchRuntime {
     ///
     /// 止めている間は描かない — **止めたのに進む**経路を作らないため。ただし観測には
     /// 応える (下記)。呼び出し側は走っているかどうかを気にせずこれを叩けばよい。
+    ///
+    /// **描けなかったときも観測には応えてから投げる。** 観測を描画の後ろに置いたまま
+    /// 素通しで投げると、描画が失敗した瞬間から観測は要求の検出にすら到達せず、
+    /// [ADR-0018] 決定 3 の「失敗しても必ず応答する」が効かなくなる。入力は描画の前に
+    /// 流し込まれるので生き続け、外からは**観測だけが黙った**ようにしか見えない
+    /// ([#221](https://github.com/mokume-metal/mokume/issues/221))。
+    ///
+    /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     public func advance() throws(RenderFailure) {
         guard !isPaused else {
             serveObservationIfRequested()
@@ -129,8 +137,15 @@ public final class SketchRuntime {
         timing.advance()
         beginFrame()
         receiveInput()
-        try canvas.draw { withActiveRuntime { sketch.draw() } }
-        serveObservationIfRequested()
+
+        var drawFailure: RenderFailure?
+        do {
+            try canvas.draw { withActiveRuntime { sketch.draw() } }
+        } catch {
+            drawFailure = error
+        }
+        serveObservationIfRequested(drawFailure: drawFailure)
+        if let drawFailure { throw drawFailure }
     }
 
     /// 溜まった入力をこのフレームへ流し込む。
@@ -198,21 +213,46 @@ public final class SketchRuntime {
     ///
     /// 例外は「まだ 1 枚も描いていない」ときだけで、そのときは 1 枚描いてから応える。
     /// 最初の 1 枚は観測の有無によらず必ず描かれるものなので、再現性は損なわれない。
-    private func serveObservationIfRequested() {
+    ///
+    /// - Parameter drawFailure: このフレームの描画が失敗していれば、その理由。
+    private func serveObservationIfRequested(drawFailure: RenderFailure? = nil) {
         guard let observer, let request = observer.pendingRequest() else { return }
-        if timing.frameCount == 0 {
+        if drawFailure == nil, timing.frameCount == 0 {
             start()
             timing.advance()
             beginFrame()
             receiveInput()
             try? canvas.draw { withActiveRuntime { sketch.draw() } }
         }
-        respond(to: request, through: observer)
+        respond(to: request, through: observer, drawFailure: drawFailure)
     }
 
-    private func respond(to request: ObservationRequest, through observer: FrameObserver) {
+    private func respond(
+        to request: ObservationRequest, through observer: FrameObserver,
+        drawFailure: RenderFailure? = nil
+    ) {
         let size = ObservationReport.Size(width: target.width, height: target.height)
         let values = exposedValues.isEmpty ? nil : exposedValues
+
+        // 描画に失敗したフレームでは描画先の中身が信用できないので、**絵は採りに
+        // 行かない**。前回の絵は `image: nil` の応答が先に消すので、読み手が古い絵を
+        // 新しいと信じることもない (ADR-0018 決定 3)
+        if let drawFailure {
+            try? observer.respond(
+                ObservationReport(
+                    id: request.id,
+                    image: nil,
+                    frame: timing.frameCount,
+                    time: Double(timing.time),
+                    size: size,
+                    warnings: ["このフレームの描画に失敗しました: \(drawFailure)"],
+                    load: RuntimeLoad.sample(frameDurations: frameIntervals),
+                    values: values,
+                    stamp: SourceStamp.current),
+                image: nil)
+            return
+        }
+
         do {
             let image = try target.encodeForDisplay().scaled(by: request.scale)
             try observer.respond(
