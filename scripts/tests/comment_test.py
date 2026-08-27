@@ -128,6 +128,49 @@ class GuardTest(unittest.TestCase):
         reason = json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("gh pr close <番号>", reason)
 
+    # --- 以前は見逃していた形 (#128) ------------------------------------
+
+    def test_command_substitution_denied(self):
+        self.assert_denied('url=$(gh issue comment 1 --body "x")')
+
+    def test_subshell_denied(self):
+        self.assert_denied('(gh pr comment 7 --body "x")')
+
+    def test_backticks_denied(self):
+        self.assert_denied("url=`gh pr comment 7 --body x`")
+
+    # --- 地の文で言及しただけなら止めない (#128) ------------------------
+
+    def test_mention_in_commit_message_passes(self):
+        self.assert_passed(
+            "git commit -F - <<'EOF'\n"
+            "guard は gh issue comment しか見ていなかった。\n"
+            "EOF"
+        )
+
+    def test_mention_at_line_start_in_heredoc_passes(self):
+        """本文の行頭に手順として書いた形。断片分割だけでは拾ってしまう。"""
+        self.assert_passed(
+            "cat > body.md <<'EOF'\n"
+            "手順:\n"
+            "\n"
+            "  gh issue comment 1 --body x\n"
+            "\n"
+            "は使わない。\n"
+            "EOF"
+        )
+
+    def test_mention_in_quoted_argument_passes(self):
+        self.assert_passed("echo '投稿は gh issue comment ではなくラッパーで行う'")
+
+    def test_words_are_not_bridged_across_a_fragment(self):
+        """離れた語を繋げて拾わない。
+
+        以前は gh と任意個の語をまたいで後方のサブコマンド名まで拾ったため、
+        「gh issue comment と pr review の話」+ --body で誤検知した。
+        """
+        self.assert_passed("echo 'gh issue comment と pr review の話' --body x")
+
     def test_read_only_commands_pass(self):
         self.assert_passed("gh issue view 1")
         self.assert_passed("gh pr list")

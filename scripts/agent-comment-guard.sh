@@ -36,6 +36,12 @@ deny() { # $1=理由
   exit 0
 }
 
+# コマンド文字列の読み方は pr-identity-guard.sh と共有する (#128)。
+# 読めなければ素通し — guard が壊れて Bash ツール全体が使えなくなるほうが害が大きい
+# (下の jq と同じ fail open の考え方)
+# shellcheck source=scripts/guard-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
+
 payload=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
 command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
@@ -44,19 +50,15 @@ command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null
 # ラッパー自身の呼び出しは素通し (内部で gh を呼ぶが、それは別プロセスでここを通らない)
 printf '%s' "$command" | grep -qE '(^|[;&|[:space:]])(bash[[:space:]]+)?[^[:space:];&|]*scripts/comment\.sh([[:space:]]|$)' && exit 0
 
-# gh のサブコマンドの手前にはグローバルオプション (-R owner/repo など) が入りうるので、
-# 「gh … <サブコマンド>」の間は緩く見る
-readonly GH='(^|[;&|[:space:]])gh([[:space:]]+[^;&|[:space:]]+)*[[:space:]]+'
-
 is_comment_command() {
-  printf '%s' "$command" | grep -qE "${GH}(issue|pr)[[:space:]]+comment([[:space:]]|$)" && return 0
+  is_gh_subcommand "$command" '(issue|pr)[[:space:]]+comment' && return 0
   # レビューは本文を伴うときだけ。--approve / --request-changes だけなら発言が無い
-  printf '%s' "$command" | grep -qE "${GH}pr[[:space:]]+review([[:space:]]|$)" &&
+  is_gh_subcommand "$command" 'pr[[:space:]]+review' &&
     printf '%s' "$command" | grep -qE '(^|[[:space:]])(-b|--body|-F|--body-file)([[:space:]]|=)' &&
     return 0
   # close / reopen も本文を伴うときだけ。状態を変えるだけなら発言が無い。
   # 冒頭のとおり、-c の意味はサブコマンドによって違うのでここで絞ってから見る
-  printf '%s' "$command" | grep -qE "${GH}(issue|pr)[[:space:]]+(close|reopen)([[:space:]]|$)" &&
+  is_gh_subcommand "$command" '(issue|pr)[[:space:]]+(close|reopen)' &&
     printf '%s' "$command" | grep -qE '(^|[[:space:]])(-c|--comment)([[:space:]]|=)' &&
     return 0
   return 1

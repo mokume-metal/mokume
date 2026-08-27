@@ -69,6 +69,34 @@ class GuardTest(unittest.TestCase):
         """個人の token では author が人間になる。ghs_ 以外は通さない。"""
         self.assert_denied("gh pr create --fill", GH_TOKEN="gho_" + "x" * 36)
 
+    # --- 以前は見逃していた形 (#128) ------------------------------------
+    #
+    # 素通りすると **メンテナ名義の PR がそのまま作られる**。承認できる人が居ない
+    # PR になり、close して作り直すしかない (ADR-0007 / #88)。
+
+    def test_command_substitution_denied(self):
+        self.assert_denied("url=$(gh pr create --fill)")
+
+    def test_subshell_denied(self):
+        self.assert_denied("(gh pr create --fill)")
+
+    def test_backticks_denied(self):
+        self.assert_denied("url=`gh pr create --fill`")
+
+    # --- 地の文で言及しただけなら止めない (#128) ------------------------
+    #
+    # 止めると回避策 (ファイルに逃がす) が身について、guard を迂回する手癖がつく。
+
+    def test_mention_in_commit_message_passes(self):
+        self.assert_passed(
+            "git commit -F - <<'EOF'\n"
+            "guard が gh pr create を差し戻すようにした。\n"
+            "EOF"
+        )
+
+    def test_mention_in_quoted_argument_passes(self):
+        self.assert_passed("echo '素の gh pr create は差し戻される'")
+
     def test_global_option_before_subcommand_denied(self):
         """gh -R owner/repo pr create のように、サブコマンドの手前に options が来る形。"""
         self.assert_denied("gh -R mokume-metal/mokume pr create --fill")
