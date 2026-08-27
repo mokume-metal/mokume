@@ -45,11 +45,16 @@ public struct SketchSettings: Equatable, Sendable {
     public var height: Int
     /// 1 秒あたりのフレーム数の目標。
     public var frameRate: Int
+    /// 窓の題名。
+    public var title: String
 
-    public init(width: Int = 960, height: Int = 540, frameRate: Int = 60) {
+    public init(
+        width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume"
+    ) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
+        self.title = title
     }
 }
 

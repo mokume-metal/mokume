@@ -24,7 +24,7 @@ let package = Package(
         .target(
             name: "MokumeCore",
             dependencies: ["MokumeDiagnostics"],
-            resources: [.process("Drawing/Shaders")],
+            resources: [.process("Drawing/Shaders"), .process("Display/Shaders")],
             swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(name: "mokume", dependencies: ["MokumeCore"], swiftSettings: .mokume),
