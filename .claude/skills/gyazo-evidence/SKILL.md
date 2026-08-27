@@ -17,6 +17,11 @@ SPDX-License-Identifier: MIT
 ([#180](https://github.com/mokume-metal/mokume/issues/180)) ので、**緑は「描けている」を意味しない**。
 PR に貼られた絵が描画の唯一の検証記録になり、squash merge でブランチが消えた後には足せない。
 
+> **人がこれを読んでいるなら、たいていここは要らない。** Issue / PR の入力欄へ画像を落とせば
+> GitHub が保管して URL を返す — アカウントもトークンも要らず、そちらの方が早い。
+> この文書が扱うのは**エージェントの経路**である。直接アップロードには API が無く、
+> エージェントには押せる入力欄も無いため、代わりに Gyazo へ上げて URL を貼る。
+
 ## 撮る経路は 2 つ
 
 | | 撮るもの | 撮り方 |
@@ -183,6 +188,8 @@ before / after は表で並べる。
 ## 前提
 
 - `img2webp` (`brew install webp`) と `ffmpeg`
-- `MOKUME_GYAZO_TOKEN_CMD` が設定されていること
+- **Gyazo のアクセストークン。** https://gyazo.com/oauth/applications でアプリを登録すると出せる
+  (OAuth フローは要らず、developer ページで出せる 1 本でよい)。環境変数 **`MOKUME_GYAZO_TOKEN_CMD`** へ
+  「トークンを標準出力に出すコマンド」を渡し、手元の秘密管理から読ませる — 値そのものを環境変数に置かない
 - 窓の一覧には Gyazo の MCP サーバーが要る (開発者向けプレビュー版・公式サポート対象外で、
   仕様が変わることがある)
