@@ -508,7 +508,7 @@ class PlanRecordTestCase(unittest.TestCase):
 
 
 class SelfContainedTest(unittest.TestCase):
-    """完了条件 4: この仕組みがリポジトリ側だけで完結していること。
+    """エージェント支援がリポジトリ側だけで完結していること (ADR-0017)。
 
     個人環境のフックが無い開発環境 (他の人・CI・別のエージェント) でも同じ担保が
     効く必要がある。実体もその配線も、この検査でリポジトリ内に閉じていることを見る。
@@ -552,6 +552,13 @@ class SelfContainedTest(unittest.TestCase):
 
     def test_script_does_not_reach_into_the_personal_environment(self):
         self.assertNotIn("~/.claude", SCRIPT.read_text(encoding="utf-8"))
+
+    def test_personal_plugins_are_not_declared(self):
+        # ADR-0017 決定 2。宣言すると、入れている人にだけ効く支援がリポジトリの
+        # 前提になり、規約が環境によって変わる (#176)。個人が自分の ~/.claude に
+        # 何を入れるかは自由で、ここで見るのはリポジトリが要求する側だけ
+        for key in ("extraKnownMarketplaces", "enabledPlugins"):
+            self.assertNotIn(key, self.settings)
 
     def test_personal_hook_is_silenced_while_working_here(self):
         # 論点 1: 個人環境にも同種のフックがある。両方動くと二重に指示が出て、
