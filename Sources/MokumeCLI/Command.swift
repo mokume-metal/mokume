@@ -17,6 +17,9 @@ enum Command {
           run [<場所>]
               スケッチを作って走らせる。場所を省くといまいるところ
 
+          watch [<場所>]
+              保存したら作り直して差し替える
+
           help
               これ
         """
@@ -29,6 +32,8 @@ enum Command {
             try NewCommand.run(rest)
         case "run":
             try RunCommand.run(rest)
+        case "watch":
+            try WatchCommand.run(rest)
         case "help", "--help", "-h":
             print(usage)
         default:
