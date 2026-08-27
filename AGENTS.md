@@ -64,6 +64,21 @@ auto-merge を有効にしたのに PR が止まって見えるときは、**同
 gh run rerun <run-id> --failed
 ```
 
+## ブランチ保護の正本
+
+保護の正本は **`.github/rulesets/*.json`** で、GitHub 側の状態はその写し ([ADR-0006](docs/decisions/0006-github-settings-as-code.md))。管理画面で直接いじらない — 変更は定義ファイルの PR から始める。
+
+| したいこと | コマンド |
+| --- | --- |
+| 定義の形を見る (token 不要。`make ci-check` に含まれる) | `bash scripts/check-rulesets.sh --shape` |
+| 実設定と照合する (認証が要る) | `bash scripts/check-rulesets.sh` |
+| 適用の差分を見る | `bash scripts/apply-rulesets.sh` |
+| 実際に適用する (**メンテナのみ**) | `bash scripts/apply-rulesets.sh --apply` |
+
+**適用はエージェントの token では通らない。** ADR-0003 決定 1 によりエージェントの App は `Administration` 権限を持たない (与えると自分を縛るルールセットを外せてしまう)。定義ファイルの PR までがエージェントの仕事で、merge 後の `--apply` はメンテナが打つ。
+
+実設定との照合には認証が要る — public repo のルールセットは匿名でも読めるが、**`bypass_actors` だけは認証が無いと応答に現れない**。読めないまま「一致」とは言わず赤にする (一番危ない項目を見ていない緑を作らないため)。
+
 ## sub-issue の使い方
 
 - 複数工程の仕事は親 Issue + sub-issue で構成する (本文チェックリスト不使用)。**作成は `scripts/sub-issue.sh <親番号> <タイトル>` で 1 コマンド** (紐づけと親の Issue Type 継承まで行う。子が別の仕事なら `--type <名前>` で上書きする)
