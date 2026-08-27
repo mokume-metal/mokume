@@ -74,6 +74,8 @@ final class InputInbox {
     @discardableResult
     func drain(into state: InputState) -> InputReport? {
         guard let request = requests.pending() else { return nil }
+        // 応えようとしたことは、応答を書けたかどうかによらず記録する (観測と同じ)
+        defer { requests.markHandled(request.id) }
         var accepted = 0
         var ignored = 0
         for raw in request.events {
@@ -88,7 +90,6 @@ final class InputInbox {
         let report = InputReport(
             id: request.id, accepted: accepted, ignored: ignored, dropped: state.droppedEvents)
         write(report)
-        requests.markHandled(request.id)
         return report
     }
 
