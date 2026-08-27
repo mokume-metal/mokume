@@ -24,6 +24,7 @@ path = [
   "docs/decisions/0009-platform-floor-and-toolchain.md",
   "docs/decisions/0010-concurrency-model.md",
   "docs/decisions/0011-color-model.md",
+  "docs/decisions/0012-view-layer.md",
   ".gitignore",
   "Makefile",
   ".claude/settings.json",
