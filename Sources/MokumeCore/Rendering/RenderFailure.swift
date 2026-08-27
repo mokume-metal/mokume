@@ -43,4 +43,19 @@ public enum RenderFailure: Error, Equatable, Sendable {
 
     /// 描画先の大きさが正しくない (幅・高さは 1 以上でなければならない)。
     case invalidSize(width: Int, height: Int)
+
+    /// 同梱しているはずのシェーダの原文が見つからない。
+    case shaderSourceMissing(name: String)
+
+    /// シェーダを組み立てられない。
+    case shaderCompilationFailed(name: String, reason: String)
+
+    /// シェーダを組み立てる口を作れない。
+    case shaderCompilerUnavailable
+
+    /// 描画のパイプラインを作れない。
+    case pipelineUnavailable(reason: String)
+
+    /// 資源を渡すテーブルを作れない。
+    case argumentTableUnavailable(reason: String)
 }

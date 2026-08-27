@@ -65,16 +65,13 @@ public enum OutputStage {
 
     /// ディスプレイのエンコードを掛ける (手 3)。
     ///
-    /// sRGB の伝達関数。色域は [ADR-0011] 決定 1 のとおり Display P3 のままで、
-    /// 変えるのは伝達関数だけである (P3 は sRGB と同じ伝達関数を使う)。
+    /// 色域は [ADR-0011] 決定 1 のとおり Display P3 のままで、変えるのは伝達関数だけ
+    /// (P3 は sRGB と同じ伝達関数を使う)。変換そのものは ``TransferFunction`` が持つ —
+    /// 入口の境界と対で置き、片方だけ直して食い違うことを防ぐため。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     static func encodeForDisplay(_ linear: Float) -> Float {
-        let value = clampToStandardRange(linear)
-        if value <= 0.003_130_8 {
-            return 12.92 * value
-        }
-        return 1.055 * pow(value, 1 / 2.4) - 0.055
+        TransferFunction.encode(clampToStandardRange(linear))
     }
 
     /// チャンネルあたり 8 bit へ量子化する (手 4)。

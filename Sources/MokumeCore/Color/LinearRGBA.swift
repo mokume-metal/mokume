@@ -44,6 +44,26 @@ public struct LinearRGBA: Equatable, Sendable {
         self.alpha = alpha
     }
 
+    /// 利用者が見た目で指定する成分から作る (作業空間へ入る**入口**の境界)。
+    ///
+    /// 成分は 0…1 の**ディスプレイのエンコードされた値** — 画面で見える明るさの
+    /// 尺度で、線形の光の量ではない。0.5 と書けば「中くらいの灰色」であって、
+    /// 光の量が半分という意味ではない。
+    ///
+    /// [ADR-0011] 決定 3 の「入力側は作業空間へ入る時点で線形へ変換する」を担う。
+    /// 線形へ戻したうえでアルファを乗算する。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    public static func display(
+        red: Float, green: Float, blue: Float, alpha: Float = 1
+    ) -> LinearRGBA {
+        LinearRGBA(
+            straightRed: TransferFunction.decode(red),
+            green: TransferFunction.decode(green),
+            blue: TransferFunction.decode(blue),
+            alpha: alpha)
+    }
+
     /// 不透明な色 (アルファ 1)。乗算済みと乗算前が一致するので変換は起きない。
     public static func opaque(red: Float, green: Float, blue: Float) -> LinearRGBA {
         LinearRGBA(premultipliedRed: red, green: green, blue: blue, alpha: 1)
