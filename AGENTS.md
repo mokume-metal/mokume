@@ -56,6 +56,8 @@ PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が g
 - **重要パス** (`docs/decisions/`・`.github/`・`.claude/`) を触る PR は、`.github/CODEOWNERS` により GitHub がメンテナへレビューを自動要求する。承認が無いと **Review required** でマージできない (`ci-gate` は緑のまま)
 - **`verify: human`** の Issue に紐づく PR は、`review-gate` が Approve レビューを要求する (この分類は CODEOWNERS では表現できない)
 
+どちらに当たる PR も **App identity で作る** — メンテナ自身が作っても自己承認になって詰むため、author を承認者集合の外に置くのが不変条件である ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。
+
 承認は **native の Approve レビュー**のみ。暫定だった `review: approved` ラベルは廃止した — エージェント自身も付けられるため、ゲートとして成立していなかった。
 
 auto-merge を有効にしたのに PR が止まって見えるときは、**同じコミットに残っている古い失敗した check run** が `statusCheckRollup` を FAILURE に固定していることがある (最新の run が全て緑でも、集計は全 run を見る)。失敗した run を再実行して上書きする:
@@ -104,7 +106,7 @@ bash scripts/comment.sh pr    <番号> --body "<本文>"
 
 `.claude/settings.json` (プロジェクト設定) が頻用コマンドの許可リストと、作法を supply するプラグイン (`repo-standards@shinyaoguri`) の宣言を持つ。設定はあくまで補助で、**作法の正典はこの文書**。
 
-### エージェントの identity (移行中)
+### エージェントの identity
 
 [ADR-0003](docs/decisions/0003-agent-identity-separation.md) により、エージェントは push と PR 作成を **GitHub App の identity** で行う (承認を native の Approve へ戻し、自分の PR を自分で通す経路を塞ぐため)。token は次で発行する:
 
@@ -114,6 +116,8 @@ export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
 
 **手で揃える設定は 1 つだけ** — `MOKUME_APP_PRIVATE_KEY_CMD` に「App の秘密鍵 (PEM) を標準出力に出すコマンド」を渡し、手元の秘密管理から読ませる。**秘密鍵の中身も、その在処もリポジトリに書かない** (ADR-0003)。token は有効期限 1 時間で、キャッシュしない (切れたら発行し直す)。
 
+**未設定でも「鍵が無い」と即断しない。** 手元の秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を引いて mokume の App の鍵が載っていないかを見る。参照名が分かれば `MOKUME_APP_PRIVATE_KEY_CMD` は 1 行で組める — **在処そのものを読む必要はない**。一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねる ([ADR-0007](docs/decisions/0007-approvability-invariant.md) 決定 5)。
+
 App ID とインストール ID は秘密ではない識別子で、**インストール先の org に問い合わせれば引ける**ので、どこかに書き留める必要はない — 未設定なら `scripts/gh-app-token.sh` が自分で引く。引けなかったときは手で引くコマンドを stderr に出すので、それを実行して `MOKUME_APP_ID` / `MOKUME_APP_INSTALLATION_ID` に渡す:
 
 ```bash
@@ -122,7 +126,9 @@ gh api orgs/<org>/installations --jq '.installations[] | select(.app_slug=="moku
 
 この API は **org を読める人間の gh 認証** (`read:org`) を要求する。App の installation token では引けないので、自動解決は「まだ App の token を持っていないセッション」でだけ効く (それが必要な場面なので噛み合う)。別の App を使うときは `MOKUME_APP_SLUG` で slug を上書きする。
 
-App の作成が済むまでは従来どおりメンテナのアカウントで作業してよい。コミットの author と署名は移行後も**メンテナのまま**で、分離するのは push と PR 作成の主体だけ。
+**承認が要る変更は、誰の手であれ App identity の PR で入れる** ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。メンテナも例外にしない — GitHub は自分の PR を自分で承認できないので、メンテナ名義で作れば**誰も承認できない PR** になる。token を発行できないときは **PR を作らない**。承認が要らない PR (CODEOWNERS 対象外かつ `verify: machine`) はこの限りではない。
+
+コミットの author と署名は**メンテナのまま**で、分離するのは push と PR 作成の主体だけ。
 
 **mokume 向けのエージェント支援 (スキル・hooks・設定) はこのリポジトリの `.claude/` で管理する** — 個人環境のプラグインやマシン設定に置かない。このリポジトリで作業する誰の環境でも同じ支援が効くこと、支援機構自体が Issue → PR の通常ループで育てられることが理由。例外は汎用の個人標準 (`repo-standards`) のみで、これはプロジェクト非依存のためマーケットプレイス経由で利用する。リポ固有スキルの置き場は `.claude/skills/` (現状なし — コードが育ってから)。
 

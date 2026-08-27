@@ -19,6 +19,7 @@ path = [
   "docs/decisions/0004-issue-classification-by-issue-type.md",
   "docs/decisions/0005-pr-labels-as-machine-input.md",
   "docs/decisions/0006-github-settings-as-code.md",
+  "docs/decisions/0007-approvability-invariant.md",
   "docs/decisions/0008-mechanism-needs-demonstrated-harm.md",
   ".gitignore",
   "Makefile",
