@@ -31,8 +31,12 @@ permissions:
 jobs:
   # 検査の実体は make ci-check に集約する。CI にステップを足したくなったら
   # まず Makefile に足し、このジョブは呼ぶだけを保つ。
+  #
+  # macOS ランナーで走らせる。ci-check に swift build / swift test が入り、
+  # ADR-0009 が macOS 26 / Metal 4 を前提に置いているため Linux ではビルドできない
+  # (このリポジトリは public なので Actions の従量課金はかからない)。
   ci-check:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       # chardet も入れる: reuse の encoding 判定モジュールを固定するため (#48)。

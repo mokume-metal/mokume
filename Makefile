@@ -2,7 +2,7 @@
 # (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check no-binaries reuse-encoding-check reuse-lint github-yaml-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test no-binaries reuse-encoding-check reuse-lint github-yaml-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -20,7 +20,7 @@ setup: ## 開発ツールを確認する
 
 check: setup
 
-ci-check: no-binaries reuse-encoding-check reuse-lint github-yaml-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test no-binaries reuse-encoding-check reuse-lint github-yaml-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -46,3 +46,11 @@ rulesets-shape:
 # ネットワークも認証も要らない
 hooks-test:
 	python3 -m unittest discover -s scripts/tests -p '*_test.py'
+
+# ライブラリのビルドとテスト。ツールチェーンの要求は ADR-0009 が定める
+# (macOS 26 / Xcode 26 / Swift 6 言語モード)。満たさない環境ではここで落ちる
+build:
+	swift build
+
+test:
+	swift test
