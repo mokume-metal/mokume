@@ -22,6 +22,7 @@ path = [
   "docs/decisions/0007-approvability-invariant.md",
   "docs/decisions/0008-mechanism-needs-demonstrated-harm.md",
   "docs/decisions/0009-platform-floor-and-toolchain.md",
+  "docs/decisions/0010-concurrency-model.md",
   ".gitignore",
   "Makefile",
   ".claude/settings.json",
