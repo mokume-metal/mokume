@@ -71,16 +71,5 @@
         ]
       }
     ]
-  },
-  "extraKnownMarketplaces": {
-    "shinyaoguri": {
-      "source": {
-        "source": "github",
-        "repo": "shinyaoguri/claude-plugins"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "repo-standards@shinyaoguri": true
   }
 }
