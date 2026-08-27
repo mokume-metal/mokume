@@ -21,6 +21,7 @@ path = [
   "docs/decisions/0006-github-settings-as-code.md",
   "docs/decisions/0007-approvability-invariant.md",
   "docs/decisions/0008-mechanism-needs-demonstrated-harm.md",
+  "docs/decisions/0009-platform-floor-and-toolchain.md",
   ".gitignore",
   "Makefile",
   ".claude/settings.json",
