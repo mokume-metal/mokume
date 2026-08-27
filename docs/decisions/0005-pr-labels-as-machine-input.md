@@ -78,5 +78,5 @@ PR ラベルの唯一の役目は、**機構への入力**である。新しい 
 - `.github/dependabot.yml` に `labels` を追加する。これにより dependabot の PR は `review-gate` の Issue 紐づけ判定を通り、CODEOWNERS の承認だけを待つ状態になる
 - 自動付与の実測は、次の週次実行 (または Insights > Dependency graph > Dependabot の "Check for updates") を待つ。実測は sub-issue に切り、結果をそこに残す
 - `scripts/review-gate.sh` の挙動は変えない。`no-issue` を読む判定は既にあり、本 ADR はその位置づけを言語化しただけである
-- `.github/dependabot.yml` の YAML 妥当性は現在どの検査も見ていない (`scripts/check-workflows-yaml.sh` の対象は `.github/workflows/*.yml`)。壊れた dependabot 設定は GitHub 上で黙って無効になるため、検査対象を広げる価値はあるが、本 ADR の関心ではない。別 Issue に切る
+- `.github/dependabot.yml` の YAML 妥当性は本 ADR を書いた時点でどの検査も見ていなかった (当時の `scripts/check-workflows-yaml.sh` の対象は `.github/workflows/*.yml`)。壊れた dependabot 設定は GitHub 上で黙って無効になるため別 Issue に切り、#87 で `scripts/check-github-yaml.sh` が `.github/` 配下の YAML すべてを対象にした
 - AGENTS.md に「PR のラベル」節を追加し、`no-issue` の説明を「進め方」から接続する
