@@ -20,6 +20,9 @@ enum Command {
           watch [<場所>]
               保存したら作り直して差し替える
 
+          mcp [<場所>]
+              エージェントの窓口を立てる (標準入出力でやりとりする)
+
           help
               これ
         """
@@ -34,6 +37,8 @@ enum Command {
             try RunCommand.run(rest)
         case "watch":
             try WatchCommand.run(rest)
+        case "mcp":
+            try MCPCommand.run(rest)
         case "help", "--help", "-h":
             print(usage)
         default:
