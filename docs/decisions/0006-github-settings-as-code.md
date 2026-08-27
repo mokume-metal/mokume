@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0006: ブランチ保護の正本をリポジトリの定義ファイルに置く
 
 ## 状態

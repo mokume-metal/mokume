@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0014: 機械学習の位置づけ — 4 つの機構の役割分担を先に引く
 
 ## 状態

@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0008: 機構の追加にも「実需が機能を駆動する」を適用する
 
 ## 状態

@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0010: 並行性規範 — スケッチは MainActor 既定、並列は明示的に分離する
 
 ## 状態

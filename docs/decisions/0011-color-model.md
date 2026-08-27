@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0011: 色規範 — linear Display P3 / 16F を作業空間とし、エンコードとアルファ変換の点を固定する
 
 ## 状態

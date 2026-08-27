@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 # ADR-0015: MetalFX の位置づけ — 空間方向だけを解像度戦略に組み込み、時間方向は決定論の代償を明示して opt-in にする
 
 ## 状態
