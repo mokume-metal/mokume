@@ -30,14 +30,24 @@ public final class RenderDevice {
     /// 物差しにできるよう**定数で持つ (壁時計の絶対値をテストに書かない)。
     public static let waitLimitSeconds = 5
 
-    /// この実行環境で GPU が使えるか。
+    /// この実行環境で描画の土台を組み立てられるか。
     ///
-    /// 使えない環境 (GPU を持たない仮想環境など) で GPU を要する検証を緑にしないため、
-    /// 判定を型の側に置く。
+    /// **GPU があるかだけでは足りない。** 仮想化された実行環境には、GPU としては
+    /// 見えるのにこの世代のコマンド構造に対応していないものがあり、そこでは
+    /// コマンドの発行口が作れない。[ADR-0009] 決定 2 により旧世代へのフォールバック
+    /// 経路は持たないので、そういう環境では描画そのものが成立しない。
+    ///
+    /// 判定を「実際に必要なところまで試す」形にしてあるのは、GPU の有無だけを見て
+    /// 「使える」と答えると、GPU を要する検証がスキップされずに失敗するため。
     ///
     /// 隔離の外から呼べる形にしてあるのは、検査の実行可否を決める前提条件として
     /// 隔離の外で評価されるため。問い合わせは GPU を持ち出さないので状態を跨がない。
-    public nonisolated static var isAvailable: Bool { MTLCreateSystemDefaultDevice() != nil }
+    ///
+    /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor-and-toolchain.md
+    public nonisolated static var isAvailable: Bool {
+        guard let device = MTLCreateSystemDefaultDevice() else { return false }
+        return device.makeMTL4CommandQueue() != nil
+    }
 
     let device: any MTLDevice
     let queue: any MTL4CommandQueue
