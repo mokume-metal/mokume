@@ -128,7 +128,7 @@ gh api orgs/<org>/installations --jq '.installations[] | select(.app_slug=="moku
 
 **承認が要る変更は、誰の手であれ App identity の PR で入れる** ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。メンテナも例外にしない — GitHub は自分の PR を自分で承認できないので、メンテナ名義で作れば**誰も承認できない PR** になる。token を発行できないときは **PR を作らない**。承認が要らない PR (CODEOWNERS 対象外かつ `verify: machine`) は不変条件の対象外だが、**フックは経路を分けない** — 承認の要否は作成前に確定できないため、`gh pr create` は一律に App identity を要求する。
 
-Claude Code のセッションでは `.claude/settings.json` のフック (`scripts/pr-identity-guard.sh`) が素の `gh pr create` を差し戻し、token の発行と**鍵の探し方**を示す。同等のフック機構を持たないエージェント (現状の Codex CLI など) では機械的には強制できないため、経路を問わない検知は `review-gate` に置く ([#104](https://github.com/mokume-metal/mokume/issues/104))。
+Claude Code のセッションでは `.claude/settings.json` のフック (`scripts/pr-identity-guard.sh`) が素の `gh pr create` を差し戻し、token の発行と**鍵の探し方**を示す。同等のフック機構を持たないエージェント (現状の Codex CLI など) では機械的には強制できないため、経路を問わない検知は `review-gate` が担う — 承認が要る PR の author が唯一の承認者になっていれば CI が赤で差し戻す ([#104](https://github.com/mokume-metal/mokume/issues/104))。
 
 コミットの author と署名は**メンテナのまま**で、分離するのは push と PR 作成の主体だけ。
 
