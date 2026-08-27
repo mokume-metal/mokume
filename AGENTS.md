@@ -115,12 +115,13 @@ gh run rerun <run-id> --failed
 
 ## 進捗の公開ロードマップ
 
-開発フェーズの見通しは Org の public Project「[mokume Roadmap](https://github.com/orgs/mokume-metal/projects/1)」(Roadmap レイアウト) で公開する。運用は最小に固定する:
+開発フェーズの見通しは Org の public Project「[mokume Roadmap](https://github.com/orgs/mokume-metal/projects/1)」(Roadmap レイアウト) で公開する。**Project は Issue の投影**で、状態の正典は従来どおり Issue ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md))。人の手数は最小に固定する:
 
-- 載せるのは**フェーズ親 Issue だけ**。子タスクは sub-issue ツリーが持ち、Project 側で所属を二重管理しない
-- 日程は date フィールド **Start / Target の 2 本だけ**で表す。Iteration・Milestone・独自の status フィールドは使わない — 束ねと消化率は親 Issue + sub-issue が既に持っており、重ねると所属の二重管理になる ([#124](https://github.com/mokume-metal/mokume/issues/124))
-- 状態の正典は従来どおり Issue ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md))。Project は投影で、組み込みの連動 (Issue closed → Done) に留める
-- アイテムの追加は手動でよい (フェーズ親 Issue は少数)。自動化の機構は実害が出てから ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md))
+- **アイテムの出入りは GitHub 組み込みワークフローに任せる** (Auto-add to project / Auto-add sub-issues to project ほか、7 種すべて有効)。Issue も PR も sub-issue も自動でアイテム化されるので、**手でキュレーションしない** — 板が雑然とする代わりに、載せ忘れが起きない側を取っている
+- **日付だけが人の手で入る**。date フィールド **Start / Target の 2 本**を、**フェーズ親 Issue にだけ**付ける。Roadmap の帯は日付を持つアイテムにしか描かれないので、自動で増える子タスク・PR は帯の視覚を汚さない ([#131](https://github.com/mokume-metal/mokume/issues/131) で確認済み)
+- **手で足すフィールドはこの 2 本だけ**。Iteration・Milestone・独自の status フィールドは足さない — 束ねと消化率は親 Issue + sub-issue が既に持っており、重ねると所属の二重管理になる ([#124](https://github.com/mokume-metal/mokume/issues/124))
+- **Status → Issue の逆流 (Auto-close issue) も有効のままでよい**。Status を Done にすると Issue が閉じる = 板の上の状態は必ず Issue に落ちる。無効化すると「Status は Done なのに Issue は open」という **Project 側にしかない状態**を許すことになり、かえって正典が二重になる
+- 自動化の機構をこれ以上足すのは実害が出てから ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md))。**組み込みワークフローの有効・無効は Project の管理画面から変える** — GraphQL に切り替えの口が無く (`deleteProjectV2Workflow` しかない)、ブランチ保護のような定義ファイル ([ADR-0006](docs/decisions/0006-github-settings-as-code.md)) も持たないので、`.github/` を探しても正本は見つからない
 
 ## コメントの署名
 
