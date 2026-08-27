@@ -19,6 +19,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
   -->
   ```
 
+- プロセスの外とやりとりする JSON の形式: `Schemas/` の JSON Schema。**実装は従う側**で、代表例との照合を `make ci-check` が見る ([ADR-0018](docs/decisions/0018-observation-and-control-surface.md))
 - 作業の経過・発見・残タスク: GitHub Issues / PR (ローカルファイルやセッション記憶に残さない)
 - プロジェクトの土台: [ADR-0001 設計原則](docs/decisions/0001-founding-principles.md)
 

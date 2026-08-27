@@ -42,7 +42,9 @@ jobs:
       # chardet も入れる: reuse の encoding 判定モジュールを固定するため (#48)。
       # 既定では環境にあるものが選ばれ、ローカルと CI で判定が食い違う
       - name: Install tools
-        run: pipx install reuse && pipx inject reuse chardet
+        run: |
+          pipx install reuse && pipx inject reuse chardet
+          pipx install check-jsonschema
       - run: make ci-check
 
   # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
