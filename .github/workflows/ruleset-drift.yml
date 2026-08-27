@@ -35,13 +35,13 @@ jobs:
       # 「一番危ない項目 (bypass_actors) を見ていない緑」そのものになる。赤で止める
       - name: 検査 App の設定が揃っているか
         env:
-          APP_ID: ${{ vars.MOKUME_INSPECTOR_APP_ID }}
-          INSTALLATION_ID: ${{ vars.MOKUME_INSPECTOR_APP_INSTALLATION_ID }}
+          APP_ID: ${{ secrets.MOKUME_INSPECTOR_APP_ID }}
+          INSTALLATION_ID: ${{ secrets.MOKUME_INSPECTOR_APP_INSTALLATION_ID }}
           PRIVATE_KEY: ${{ secrets.MOKUME_INSPECTOR_APP_PRIVATE_KEY }}
         run: |
           missing=""
-          [ -n "$APP_ID" ] || missing="$missing vars.MOKUME_INSPECTOR_APP_ID"
-          [ -n "$INSTALLATION_ID" ] || missing="$missing vars.MOKUME_INSPECTOR_APP_INSTALLATION_ID"
+          [ -n "$APP_ID" ] || missing="$missing secrets.MOKUME_INSPECTOR_APP_ID"
+          [ -n "$INSTALLATION_ID" ] || missing="$missing secrets.MOKUME_INSPECTOR_APP_INSTALLATION_ID"
           [ -n "$PRIVATE_KEY" ] || missing="$missing secrets.MOKUME_INSPECTOR_APP_PRIVATE_KEY"
           if [ -n "$missing" ]; then
             echo "検査専用 App の設定が足りない:$missing" >&2
@@ -55,8 +55,8 @@ jobs:
         env:
           # 検査専用 App の値を、既存の gh-app-token.sh が読む名前で渡す。
           # 権限は Administration: Read + Metadata: Read のみ (ADR-0006 決定 5)
-          MOKUME_APP_ID: ${{ vars.MOKUME_INSPECTOR_APP_ID }}
-          MOKUME_APP_INSTALLATION_ID: ${{ vars.MOKUME_INSPECTOR_APP_INSTALLATION_ID }}
+          MOKUME_APP_ID: ${{ secrets.MOKUME_INSPECTOR_APP_ID }}
+          MOKUME_APP_INSTALLATION_ID: ${{ secrets.MOKUME_INSPECTOR_APP_INSTALLATION_ID }}
           MOKUME_APP_PRIVATE_KEY: ${{ secrets.MOKUME_INSPECTOR_APP_PRIVATE_KEY }}
         run: |
           # 代入から始める。export を先頭に付けると終了コードが export のもの (0) へ
