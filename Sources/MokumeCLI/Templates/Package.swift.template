@@ -1,0 +1,17 @@
+// swift-tools-version: 6.2
+import PackageDescription
+
+let package = Package(
+    name: "{{NAME}}",
+    platforms: [.macOS("26.0")],
+    // **実行ファイルを宣言する。** 宣言が無くても走らせる方法はあるが、道具が
+    // 実行ファイルの場所を解決できなくなり、起動のたびに遠回りを払うことになる
+    products: [.executable(name: "{{NAME}}", targets: ["{{TARGET}}"])],
+    dependencies: [{{DEPENDENCY}}],
+    targets: [
+        .executableTarget(
+            name: "{{TARGET}}",
+            dependencies: [.product(name: "mokume", package: "{{PACKAGE}}")],
+            swiftSettings: [.swiftLanguageMode(.v6), .defaultIsolation(MainActor.self)])
+    ]
+)

@@ -15,7 +15,11 @@ let package = Package(
     platforms: [.macOS("26.0")],
     products: [
         // ADR-0016 決定 2: 利用者から見た入口は 1 つ。内部の割り方は書き味に漏らさない
-        .library(name: "mokume", targets: ["mokume"])
+        .library(name: "mokume", targets: ["mokume"]),
+        // 道具。**実行ファイルの名前は product の名前で決まる**ので、ライブラリと
+        // 同じ名前は置けない (同名で両方を宣言すると、ビルドは通るのに実行ファイルが
+        // 作られない — 実測)。配布のときに mokume という名前で入れる
+        .executable(name: "mokume-cli", targets: ["MokumeCLI"]),
     ],
     targets: [
         // 層: 基盤 — 何にも依存しない
@@ -28,9 +32,17 @@ let package = Package(
             swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(name: "mokume", dependencies: ["MokumeCore"], swiftSettings: .mokume),
+        // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
+        // 生成物はコミットしない (ADR-0001 原則 8)
+        .executableTarget(
+            name: "MokumeCLI",
+            dependencies: ["mokume"],
+            resources: [.copy("Templates")],
+            swiftSettings: .mokume),
         // 開発時に測るための道具。product には含めない (利用者へ配るものではない)
         .executableTarget(name: "frame-rate-probe", dependencies: ["mokume"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCoreTests", dependencies: ["mokume"], swiftSettings: .mokume),
+        .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
     ]
 )
 
