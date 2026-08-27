@@ -222,7 +222,16 @@ public final class Canvas {
         try flush()
     }
 
+    /// 検査から「描けなかったフレーム」を作るための差し込み。製品の経路では常に `nil`。
+    ///
+    /// 描画の失敗は環境か資源が枯れたときにしか起きず、検査から自然には作れない。
+    /// 一方で**描けなかったときに何が起きるか**は回帰検査を置くべき場所そのものなので
+    /// ([#221](https://github.com/mokume-metal/mokume/issues/221))、ここに 1 つだけ
+    /// 穴を空けてある。公開はしない。
+    var failureForTesting: RenderFailure?
+
     private func flush() throws(RenderFailure) {
+        if let failureForTesting { throw failureForTesting }
         let pass = target.makeRenderPass(clearColor: pendingBackground)
         let commands = try gpu.beginCommands()
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
