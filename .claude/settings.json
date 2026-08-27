@@ -24,7 +24,8 @@
     ]
   },
   "env": {
-    "CLAUDE_PLAN_RECORD": "0"
+    "CLAUDE_PLAN_RECORD": "0",
+    "RS_CI_WATCH": "0"
   },
   "hooks": {
     "PreToolUse": [
