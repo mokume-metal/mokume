@@ -80,6 +80,55 @@ class GuardTest(unittest.TestCase):
         """owner を省いた --repo は自リポか判定できない。曖昧なら止める側に倒す。"""
         self.assert_denied("gh pr create --repo mokume --fill")
 
+    # --- token 発行の失敗を握り潰す形 (#122) ----------------------------
+    #
+    # いずれも「token を発行しようとはしている」が、発行が失敗しても後段が走る。
+    # 空の GH_TOKEN で gh がメンテナの認証へフォールバックし、#120 と同じ詰みになる。
+
+    def test_export_prefixed_assignment_denied(self):
+        """export V="$(…)" は export 自身の終了コード (0) を返す。#120 の形。"""
+        self.assert_denied(
+            'export GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr create --fill'
+        )
+
+    def test_assignment_prefix_denied(self):
+        """代入プレフィクス V="$(…)" cmd も発行の失敗が伝わらない。"""
+        self.assert_denied(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" gh pr create --fill'
+        )
+
+    def test_set_e_does_not_rescue_export_form(self):
+        """set -e は救わない — export の終了コードが 0 だから発火しない。"""
+        self.assert_denied(
+            'set -e; export GH_TOKEN="$(bash scripts/gh-app-token.sh)";'
+            " gh pr create --fill"
+        )
+
+    def test_unsafe_form_denied_even_with_installation_token_in_env(self):
+        """env に ghs_ があっても、危険な形はそれを空文字で上書きしてしまう。
+
+        「常設 token があるなら通す」判定が先に効くと、この握り潰しを見逃す。
+        """
+        self.assert_denied(
+            'export GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr create --fill',
+            GH_TOKEN="ghs_" + "x" * 36,
+        )
+
+    def test_unsafe_form_reason_shows_the_safe_form(self):
+        """差し戻すだけでは直せない。安全な形をそのまま示す。"""
+        reason = self.assert_denied(
+            'export GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr create --fill'
+        )
+        self.assertIn('GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN', reason)
+
+    def test_unsafe_form_reason_does_not_leak_where_the_key_lives(self):
+        """新しいメッセージにも既存の観点を当てる (ADR-0003 / ADR-0007 決定 5)。"""
+        reason = self.assert_denied(
+            'export GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr create --fill'
+        )
+        for leak in ("op://", "1Password", "Keychain", "secret-read"):
+            self.assertNotIn(leak, reason)
+
     def test_reason_shows_how_to_get_a_token(self):
         reason = self.assert_denied("gh pr create --fill")
         self.assertIn("scripts/gh-app-token.sh", reason)
@@ -98,9 +147,22 @@ class GuardTest(unittest.TestCase):
     # --- 素通しするもの -------------------------------------------------
 
     def test_app_token_command_passes(self):
-        """実際の運用形 — 同じ行で installation token を発行してから作る。"""
+        """実際の運用形 — 同じ行で installation token を発行してから作る。
+
+        素の代入から始めるのが要点。代入は右辺の終了コードをそのまま返すので、
+        発行に失敗すれば && が切れて gh pr create に届かない (#122)。
+        """
         self.assert_passed(
-            'export GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr create --fill'
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN'
+            " && gh pr create --fill"
+        )
+
+    def test_app_token_command_passes_across_lines(self):
+        """前段に別の設定を置く実運用の形。判定は行をまたいでも効く。"""
+        self.assert_passed(
+            'export MOKUME_APP_PRIVATE_KEY_CMD="読み出しコマンド"\n'
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN'
+            " && gh pr create --fill"
         )
 
     def test_installation_token_in_env_passes(self):

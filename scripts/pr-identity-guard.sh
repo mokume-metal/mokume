@@ -18,8 +18,20 @@
 #   - gh pr create 以外 (view/list/diff/checks …)
 #   - --help / -h            → 使い方を尋ねているだけ
 #   - このリポジトリ以外宛て   → 規約の外
-#   - 同じ行で gh-app-token.sh を通しているもの (実際の運用形)
+#   - 同じ行で gh-app-token.sh を **失敗が後段へ伝わる形で** 通しているもの (実際の運用形)
 #   - フック自身の環境の GH_TOKEN が installation token (ghs_) のとき
+#
+# **token を発行しようとしているだけでは通さない。** 当初は「同じ行に gh-app-token.sh が
+# あるか」だけを見ていたが、それでは発行の失敗を握り潰す形が通ってしまう (#122)。
+#
+#   export GH_TOKEN="$(…)" && gh pr create …
+#
+# は export 自身の終了コード (0) を返すため、発行に失敗しても && が切れず、空の
+# GH_TOKEN で gh がメンテナの認証へフォールバックする。#120 はこれで詰んだ。
+# set -e も救わない (同じ理由)。代入プレフィクス V="$(…)" gh … も同様。
+#
+# 危険な形は複数あって数え上げると取りこぼすので、**既知の安全な形だけを素通しする**
+# (曖昧な --repo mokume を止める側に倒しているのと同じ方針)。
 #
 # 契約: stdin に PreToolUse の JSON。素通しは無出力 + 終了コード 0。
 # 配線は .claude/settings.json、テストは scripts/tests/pr_identity_guard_test.py。
@@ -57,11 +69,47 @@ if [ -n "$target" ] && [ "$target" != "$REPO" ]; then
   case "$target" in */*) exit 0 ;; esac
 fi
 
-# 同じ行で installation token を発行しているなら、それが常道の形
-printf '%s' "$command" |
-  grep -qE '(^|[;&|[:space:]`(])(bash[[:space:]]+)?[^[:space:];&|`)]*scripts/gh-app-token\.sh([[:space:]]|$|`|\))' && exit 0
+# 同じ行で installation token を発行しているなら、それが常道の形 — ただし **発行の失敗が
+# 後段へ伝わる形** に限る (冒頭の解説と #122)。
+#
+# 安全な形は素の代入から始める。代入は右辺のコマンド置換の終了コードをそのまま返すので、
+# 続く && が正しく切れる:
+#
+#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
+#
+# export を先頭に付けると終了コードが export のもの (0) に化けるため、この式は
+# 「区切りの直後に来る素の GH_TOKEN= 代入」であることを要求する。export の直後は行頭にも
+# 区切りにも当たらないので落ちる。
+readonly SAFE_TOKEN_FORM='(^|&&|;|\|)[[:space:]]*GH_TOKEN=("|'"'"')?\$\([^)]*scripts/gh-app-token\.sh[^)]*\)("|'"'"')?[[:space:]]*&&'
 
-# 常設している環境 (GH_TOKEN に installation token を置いてある) も常道
+if printf '%s' "$command" | grep -qE '[^[:space:];&|`)]*scripts/gh-app-token\.sh'; then
+  printf '%s' "$command" | grep -qE "$SAFE_TOKEN_FORM" && exit 0
+
+  # token を発行しようとはしている。汎用の差し戻しだと「使っているのに止められた」と
+  # 読めて直し方が分からないので、何がまずいかを名指しする
+  deny "$(cat <<'EOF'
+token の発行が失敗しても後段が走る形になっています。この形では詰みが起きます。
+
+  export GH_TOKEN="$(…)" && gh pr create …
+  ^^^^^^ export 自身の終了コード (0) が返るため、発行に失敗しても && が切れません。
+         空の GH_TOKEN で gh がメンテナの認証へフォールバックし、**誰も承認できない
+         PR** ができます (ADR-0007 / #88。実際に #120 がこれで詰みました)。
+
+次の形にしてください。代入は右辺の終了コードをそのまま返すので && が正しく切れます:
+
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
+
+同じ理由で通らない形が他にもあります:
+
+  - set -e を足しても救われません (export の終了コードが 0 のため)
+  - 代入プレフィクス GH_TOKEN="$(…)" gh pr create … も、発行の失敗が伝わりません
+EOF
+)"
+fi
+
+# 常設している環境 (GH_TOKEN に installation token を置いてある) も常道。
+# 判定は token 発行の形より **後**。危険な形は env の token を空文字で上書きするので、
+# ここが先に通ると握り潰しを見逃す
 case "${GH_TOKEN:-}" in ghs_*) exit 0 ;; esac
 
 deny "$(cat <<'EOF'
@@ -69,7 +117,10 @@ PR は GitHub App の identity で作成してください。素の gh (メン�
 **誰も承認できない PR** になります — GitHub は自分の PR を自分で承認できず、author は
 後から変えられないので close して作り直すしかありません (ADR-0007 / #88)。
 
-  export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
+
+代入から始めるのが要点です。export を先頭に付けると終了コードが 0 に化けて、token の
+発行に失敗しても後段が走ってしまいます (#122)。
 
 `MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
 秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を

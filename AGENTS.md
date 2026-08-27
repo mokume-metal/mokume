@@ -111,8 +111,10 @@ bash scripts/comment.sh pr    <番号> --body "<本文>"
 [ADR-0003](docs/decisions/0003-agent-identity-separation.md) により、エージェントは **PR の作成**を **GitHub App の identity** で行う (承認を native の Approve へ戻し、自分の PR を自分で通す経路を塞ぐため)。token は次で発行する:
 
 ```bash
-export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
+GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
 ```
+
+**代入から始めて後続コマンドまで `&&` で繋ぐ。** エージェントのシェル呼び出しをまたいで環境変数は持続しないので、発行と使用は必ず同じ行に乗る。このとき `export GH_TOKEN="$(...)"` と書くと**終了コードが `export` のもの (0) に化け**、発行に失敗しても `&&` が切れず、空の token で `gh` がメンテナの認証へフォールバックする — 実際に [#120](https://github.com/mokume-metal/mokume/pull/120) がこれで「誰も承認できない PR」になった ([#122](https://github.com/mokume-metal/mokume/issues/122))。`set -e` は救わない。素の代入なら右辺の終了コードがそのまま出るので `&&` が正しく切れる。危険な形は `scripts/pr-identity-guard.sh` が差し戻す。
 
 **手で揃える設定は 1 つだけ** — `MOKUME_APP_PRIVATE_KEY_CMD` に「App の秘密鍵 (PEM) を標準出力に出すコマンド」を渡し、手元の秘密管理から読ませる。**秘密鍵の中身も、その在処もリポジトリに書かない** (ADR-0003)。token は有効期限 1 時間で、キャッシュしない (切れたら発行し直す)。
 

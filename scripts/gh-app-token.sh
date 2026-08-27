@@ -4,7 +4,10 @@
 #
 # GitHub App の installation token を発行して標準出力に出す (#49 / ADR-0003)。
 #
-#   export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
+#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
+#
+# 代入から始めること。export を先頭に付けると終了コードが export のもの (0) になり、
+# 発行に失敗しても後段が走って空の GH_TOKEN で gh がメンテナの認証へ落ちる (#122)。
 #
 # 必ず要る設定は鍵の読み出しコマンド (MOKUME_APP_PRIVATE_KEY_CMD。値そのものを渡す
 # MOKUME_APP_PRIVATE_KEY でもよい) の 1 つだけ。App ID とインストール ID は秘密ではない

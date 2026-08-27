@@ -145,8 +145,10 @@ if ! grep -qx "APPROVED" <<<"$reviews"; then
 永久に来ません** — GitHub は自分の PR を自分で承認できず、PR の author は後から
 変えられないためです。
 
-  export GH_TOKEN="$(bash scripts/gh-app-token.sh)"
-  gh pr create ...
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create ...
+
+代入から始めるのが要点です。export を先頭に付けると終了コードが 0 に化けて、token の
+発行に失敗しても後段が走り、同じ詰みを繰り返します (#122)。
 
 `MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
 秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を
