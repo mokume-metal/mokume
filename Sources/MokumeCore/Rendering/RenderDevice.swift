@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Metal
+import MokumeDiagnostics
 
 /// GPU 側の一式を束ねる — デバイス・コマンドの発行口・コマンドの置き場・リソースの常駐。
 ///
@@ -52,9 +53,43 @@ public final class RenderDevice {
     let device: any MTLDevice
     let queue: any MTL4CommandQueue
 
-    /// コマンドの置き場。``commitAndWait(_:)`` が GPU の完了まで待つので、次の
-    /// ``beginCommands()`` で使い回してよい (実行中の置き場を巻き戻すことはない)。
-    private let allocator: any MTL4CommandAllocator
+    /// コマンドの置き場ひとつぶん。
+    ///
+    /// 置き場は巻き戻して使い回すが、**巻き戻してよいのは、そこへ積んだコマンドを
+    /// GPU が終えてから**である。だから「最後にここから投入した番号」を憶えておく。
+    private struct Slot {
+        let allocator: any MTL4CommandAllocator
+        /// この置き場から最後に投入したコマンドの番号。まだ無ければ 0。
+        var submission: UInt64 = 0
+    }
+
+    /// 置き場の環。
+    ///
+    /// 1 本を毎回巻き戻す形は、**待たない経路が 1 つでもあると壊れる** — 表示の経路
+    /// (``commit(_:signalling:)``) は GPU の完了を待たないので、次の
+    /// ``beginCommands()`` がまだ実行中のコマンドの載った置き場を巻き戻していた
+    /// ([#222](https://github.com/mokume-metal/mokume/issues/222))。環にして 1 周ぶん
+    /// 遅らせ、それでも終わっていなければ待つ。
+    private var slots: [Slot]
+    /// 次に使う置き場。
+    private var nextSlot = 0
+    /// 組み立て中のコマンドが、どの置き場に載っているか。
+    ///
+    /// 投入のときに番号を書き戻す先を引くために持つ。同時に複数本を組み立てても
+    /// 取り違えないよう、コマンドそのものを鍵にする。
+    private var slotOfOpenCommands: [ObjectIdentifier: Int] = [:]
+
+    /// 環の既定の本数。
+    ///
+    /// 描画・読み戻し・表示で 1 フレームあたり 2〜3 本使うので、3 本あれば
+    /// 巻き戻す番が回ってくる頃には 1 フレームぶん前の仕事になっている。**正しさは
+    /// 本数に依らない** (足りなければ待つ) ので、ここは速さのための値である。
+    static let defaultSlotCount = 3
+
+    /// 診断: 実行中のコマンドが載った置き場を巻き戻した回数。**常に 0 でなければならない。**
+    private(set) var resetsWhileInFlight = 0
+    /// 診断: 置き場が空くのを待った回数。
+    private(set) var slotWaits = 0
 
     /// 常駐させるリソースの集合。この型を通して確保したものがすべて入る。
     private let residencySet: any MTLResidencySet
@@ -72,7 +107,15 @@ public final class RenderDevice {
     }
 
     /// GPU を指定して作る。
-    public init(device: any MTLDevice) throws(RenderFailure) {
+    public convenience init(device: any MTLDevice) throws(RenderFailure) {
+        try self.init(device: device, slotCount: RenderDevice.defaultSlotCount)
+    }
+
+    /// 置き場の本数を指定できる入口 (検査用)。
+    ///
+    /// 1 本にすると「待たない経路の直後に必ず同じ置き場が回ってくる」形になり、
+    /// 環が実際に待っていることを検査から確かめられる。
+    init(device: any MTLDevice, slotCount: Int) throws(RenderFailure) {
         self.device = device
 
         guard let queue = device.makeMTL4CommandQueue() else {
@@ -80,10 +123,14 @@ public final class RenderDevice {
         }
         self.queue = queue
 
-        guard let allocator = device.makeCommandAllocator() else {
-            throw .commandAllocatorUnavailable
+        var slots: [Slot] = []
+        for _ in 0..<max(1, slotCount) {
+            guard let allocator = device.makeCommandAllocator() else {
+                throw .commandAllocatorUnavailable
+            }
+            slots.append(Slot(allocator: allocator))
         }
-        self.allocator = allocator
+        self.slots = slots
 
         let residencyDescriptor = MTLResidencySetDescriptor()
         residencyDescriptor.label = "mokume.residency"
@@ -135,13 +182,53 @@ public final class RenderDevice {
     // MARK: - コマンド
 
     /// コマンドを 1 本組み立て始める。
+    ///
+    /// 環から次の置き場を取り、**そこへ積んだ前回のコマンドが終わっていなければ待つ**。
     func beginCommands() throws(RenderFailure) -> any MTL4CommandBuffer {
-        allocator.reset()
+        let index = nextSlot
+        nextSlot = (nextSlot + 1) % slots.count
+
+        try waitForSlot(index)
+        if slots[index].submission > 0, completion.signaledValue < slots[index].submission {
+            // ここに来たら、待ちの規律が壊れている。数えて検査から読めるようにする
+            resetsWhileInFlight += 1
+        }
+        slots[index].allocator.reset()
+
         guard let commands = device.makeCommandBuffer() else {
             throw .commandBufferUnavailable
         }
-        commands.beginCommandBuffer(allocator: allocator)
+        commands.beginCommandBuffer(allocator: slots[index].allocator)
+        slotOfOpenCommands[ObjectIdentifier(commands)] = index
         return commands
+    }
+
+    /// 指定した置き場から投入したコマンドが終わるまで待つ。
+    private func waitForSlot(_ index: Int) throws(RenderFailure) {
+        let pending = slots[index].submission
+        guard pending > 0, completion.signaledValue < pending else { return }
+
+        slotWaits += 1
+        let limit = UInt64(Self.waitLimitSeconds * 1000)
+        guard completion.wait(untilSignaledValue: pending, timeoutMS: limit) else {
+            Diagnostics.warn(
+                "コマンドの置き場が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
+            throw .timedOut(seconds: Self.waitLimitSeconds)
+        }
+    }
+
+    /// 投入に番号を振り、合図を出し、置き場へ書き戻す。
+    ///
+    /// **待つ経路も待たない経路も必ずここを通す。** 通さない経路があると、その置き場は
+    /// 「終わったかどうか分からないまま巻き戻してよい」ことになってしまう。
+    @discardableResult
+    private func recordSubmission(of commands: any MTL4CommandBuffer) -> UInt64 {
+        submissionCount += 1
+        queue.signalEvent(completion, value: submissionCount)
+        if let index = slotOfOpenCommands.removeValue(forKey: ObjectIdentifier(commands)) {
+            slots[index].submission = submissionCount
+        }
+        return submissionCount
     }
 
     /// 組み立てたコマンドを投入し、GPU が終わるまで待つ。
@@ -149,11 +236,14 @@ public final class RenderDevice {
         commands.endCommandBuffer()
         queue.commit([commands])
 
-        submissionCount += 1
-        queue.signalEvent(completion, value: submissionCount)
+        let submission = recordSubmission(of: commands)
 
         let limit = UInt64(Self.waitLimitSeconds * 1000)
-        guard completion.wait(untilSignaledValue: submissionCount, timeoutMS: limit) else {
+        guard completion.wait(untilSignaledValue: submission, timeoutMS: limit) else {
+            // **黙って捨てない。** 詰まったことが分からないと、症状 (絵が止まる・
+            // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
+            Diagnostics.warn(
+                "GPU の完了を \(Self.waitLimitSeconds) 秒待っても返りませんでした。このフレームは捨てます")
             throw .timedOut(seconds: Self.waitLimitSeconds)
         }
     }
@@ -190,9 +280,14 @@ extension RenderDevice {
     ///
     /// 待たないのは、待てば表示のたびに CPU が止まり、フレームレートが GPU の
     /// 往復に縛られるため。差し出す面の同期は Metal 側の合図で足りる。
+    ///
+    /// **待たなくても番号は進める。** 進めないと、この経路で使った置き場だけが
+    /// 「いつ終わったか分からない」まま環へ戻り、次の巻き戻しが実行中のコマンドを
+    /// 踏む ([#222](https://github.com/mokume-metal/mokume/issues/222))。
     func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) {
         commands.endCommandBuffer()
         queue.commit([commands])
+        recordSubmission(of: commands)
         queue.signalDrawable(drawable)
     }
 }
