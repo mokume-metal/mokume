@@ -2,7 +2,7 @@
 # (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test shaders no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test shaders schemas no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -16,11 +16,12 @@ setup: ## 開発ツールを確認する
 		echo "reuse が $(REUSE_ENCODING_MODULE) を使えない (#48 の回避に必要):"; \
 		echo "  pipx install reuse && pipx inject reuse chardet"; \
 		echo "Homebrew 版には chardet が同梱されていないため入れ直しが要る"; exit 1; }
+	@command -v check-jsonschema >/dev/null 2>&1 || { echo "check-jsonschema が見つからない: pipx install check-jsonschema"; exit 1; }
 	@echo "ok: 必要なツールは揃っている"
 
 check: setup
 
-ci-check: build test shaders no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -67,3 +68,8 @@ test:
 # ため、ここで組み立てて落とす
 shaders:
 	bash scripts/check-shaders.sh
+
+# ワイヤフォーマットの正典は Schemas/ の JSON Schema で、実装が従う側になる
+# (ADR-0018 決定 4)。代表例をスキーマで検証し、正典と例がずれたら落とす
+schemas:
+	bash scripts/check-schemas.sh
