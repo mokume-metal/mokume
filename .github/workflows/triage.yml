@@ -32,7 +32,12 @@ jobs:
   label:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      # ここだけ意図的に 1 メジャー古い。#86 (ADR-0005 決定 4 の実測) で
+      # dependabot に提案を出させるため — 他の pin (ci.yml) は v7 が最新
+      # メジャーなので、このリポジトリには更新できる依存が 1 つも無く、
+      # 週次実行を待っても PR が来ない。dependabot の PR がこの行を v7 へ
+      # 戻すので、このコメントもその PR で一緒に消える。
+      - uses: actions/checkout@v6
       - name: needs-triage と Issue Type の自動付与
         env:
           GH_TOKEN: ${{ github.token }}
