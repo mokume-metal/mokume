@@ -28,6 +28,7 @@ path = [
   "docs/decisions/0013-parameter-model.md",
   "docs/decisions/0014-machine-learning-role.md",
   "docs/decisions/0015-metalfx-role.md",
+  "docs/decisions/0016-package-structure.md",
   ".gitignore",
   "Makefile",
   ".claude/settings.json",
