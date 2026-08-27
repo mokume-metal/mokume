@@ -58,4 +58,10 @@ public enum RenderFailure: Error, Equatable, Sendable {
 
     /// 資源を渡すテーブルを作れない。
     case argumentTableUnavailable(reason: String)
+
+    /// テクスチャの読み取り方を作れない。
+    case samplerUnavailable
+
+    /// 表示できる面を用意できない。
+    case displaySurfaceUnavailable
 }

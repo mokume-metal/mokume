@@ -19,7 +19,7 @@ final class ShapePipeline {
     let argumentTable: any MTL4ArgumentTable
 
     init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
-        let library = try Self.loadLibrary(device: gpu.device)
+        let library = try gpu.makeLibrary(named: "Shapes")
 
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = "shapeVertexMain"
@@ -65,22 +65,4 @@ final class ShapePipeline {
         }
     }
 
-    /// シェーダを読み込む。
-    ///
-    /// シェーダの原文は資源として同梱され、実行時に組み立てる。**原文の誤りは
-    /// ここまで来ないと分からない**ので、`make ci-check` が別途ビルド時に検査する
-    /// (`scripts/check-shaders.sh`)。
-    private static func loadLibrary(device: any MTLDevice) throws(RenderFailure) -> any MTLLibrary {
-        guard let url = Bundle.module.url(forResource: "Shapes", withExtension: "metal"),
-            let source = try? String(contentsOf: url, encoding: .utf8)
-        else {
-            throw .shaderSourceMissing(name: "Shapes.metal")
-        }
-        do {
-            return try device.makeLibrary(source: source, options: nil)
-        } catch {
-            throw .shaderCompilationFailed(
-                name: "Shapes.metal", reason: error.localizedDescription)
-        }
-    }
 }

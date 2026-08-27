@@ -158,3 +158,41 @@ public final class RenderDevice {
         }
     }
 }
+
+extension RenderDevice {
+    /// 同梱したシェーダを読み込む。
+    ///
+    /// シェーダの原文は資源として運ばれ、ここで組み立てる — この道具立てでは原文を
+    /// ビルドに含める手がないため。**原文の誤りはここまで来ないと分からない**ので、
+    /// `make ci-check` が別途ビルド時に組み立てて落とす (`scripts/check-shaders.sh`)。
+    func makeLibrary(named name: String) throws(RenderFailure) -> any MTLLibrary {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "metal"),
+            let source = try? String(contentsOf: url, encoding: .utf8)
+        else {
+            throw .shaderSourceMissing(name: "\(name).metal")
+        }
+        do {
+            return try device.makeLibrary(source: source, options: nil)
+        } catch {
+            throw .shaderCompilationFailed(
+                name: "\(name).metal", reason: error.localizedDescription)
+        }
+    }
+}
+
+extension RenderDevice {
+    /// 表示に使う面が空くのを待つよう予約する。差し出す面へ書く前に呼ぶ。
+    func waitForDrawable(_ drawable: any MTLDrawable) {
+        queue.waitForDrawable(drawable)
+    }
+
+    /// 組み立てたコマンドを投入し、**GPU の完了を待たずに**表示の合図を出す。
+    ///
+    /// 待たないのは、待てば表示のたびに CPU が止まり、フレームレートが GPU の
+    /// 往復に縛られるため。差し出す面の同期は Metal 側の合図で足りる。
+    func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) {
+        commands.endCommandBuffer()
+        queue.commit([commands])
+        queue.signalDrawable(drawable)
+    }
+}
