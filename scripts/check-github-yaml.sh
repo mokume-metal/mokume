@@ -14,6 +14,10 @@
 #
 # 見るのは構文だけで、スキーマは見ない (GitHub 側にスキーマ検査の口が無い)。
 # ruby は macOS / ubuntu ランナーの双方に既在のため追加ツール不要。
+#
+# workflows の**意味** (式・イベント名・run: のシェル) は scripts/check-workflows.sh が
+# actionlint で見る (#89)。二つの検査が workflows で重なるが、ここから除外すると上の
+# 「名指ししない」を壊すので重ねたままにする。
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
