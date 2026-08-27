@@ -565,6 +565,14 @@ class SelfContainedTest(unittest.TestCase):
         # 二重に差し戻される。リポ側が担保するので個人側は黙らせる
         self.assertEqual(self.settings.get("env", {}).get("CLAUDE_PLAN_RECORD"), "0")
 
+    def test_ci_watch_hook_is_silenced_while_working_here(self):
+        # 承認待ちの赤は正常な状態である (ADR-0002 決定 3 — verify: human の Issue に
+        # 紐づく PR は Approve が付くまで review-gate が赤い)。個人環境の CI 見届け
+        # フックはその設計を知らないので、直す対象が無いまま「直せ」と鳴り続ける
+        # (#159 / #194)。CI の見届けはリポ側の ci-gate と merge queue が担うので、
+        # 個人側は黙らせる
+        self.assertEqual(self.settings.get("env", {}).get("RS_CI_WATCH"), "0")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

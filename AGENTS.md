@@ -204,7 +204,7 @@ Claude Code のセッションでは `.claude/settings.json` のフック (`scri
 
 **mokume 向けのエージェント支援 (スキル・hooks・設定) はこのリポジトリの `.claude/` で管理する** ([ADR-0017](docs/decisions/0017-agent-support-locality.md)) — 個人環境のプラグインやマシン設定に置かない。このリポジトリで作業する誰の環境でも同じ支援が効くこと、支援機構自体が Issue → PR の通常ループで育てられることが理由。**例外は設けない** — マーケットプレイス経由の汎用プラグインも宣言しない。入れている人にだけ効く支援を前提にすると、規約が環境によって変わるためである (個人が自分の `~/.claude/` に何を入れるかは自由で、そこには踏み込まない)。
 
-同種の機構がリポ側と個人環境の双方にあるときは、**リポ側が担保して個人側を黙らせる** (`.claude/settings.json` の `env` にある `CLAUDE_PLAN_RECORD: 0` が前例)。逆向きは採らない — 個人環境の機構はこのリポジトリの設計を知らないので、正常を異常と判定する。リポ固有スキルの置き場は `.claude/skills/`。何を置くかは [ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md) の順序に従う (実害 → Issue → 機構)。
+同種の機構がリポ側と個人環境の双方にあるときは、**リポ側が担保して個人側を黙らせる**。黙らせる宣言の置き場は `.claude/settings.json` の `env` で、何をなぜ黙らせているかは `scripts/tests/plan_record_test.py` の `SelfContainedTest` が検査ごとのコメントに持つ (前例は `CLAUDE_PLAN_RECORD: 0`)。逆向きは採らない — 個人環境の機構はこのリポジトリの設計を知らないので、正常を異常と判定する。リポ固有スキルの置き場は `.claude/skills/`。何を置くかは [ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md) の順序に従う (実害 → Issue → 機構)。
 
 ## コミット・PR の規約
 
