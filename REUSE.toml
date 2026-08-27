@@ -11,6 +11,7 @@ path = [
   "AGENTS.md",
   "CLAUDE.md",
   "CONTRIBUTING.md",
+  "SECURITY.md",
   "CHANGELOG.md",
   "changelog.d/README.md",
   "docs/decisions/0001-founding-principles.md",
