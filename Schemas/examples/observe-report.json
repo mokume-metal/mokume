@@ -4,6 +4,56 @@
   "image": "frame.png",
   "frame": 128,
   "time": 2.1333333333333333,
-  "size": { "width": 800, "height": 600 },
-  "warnings": []
+  "size": {
+    "width": 800,
+    "height": 600
+  },
+  "warnings": [],
+  "stats": {
+    "meanColor": [
+      0.12,
+      0.13,
+      0.16
+    ],
+    "meanLuminance": 0.129,
+    "contentFraction": 0.08,
+    "contentBounds": {
+      "x": 0.4,
+      "y": 0.35,
+      "width": 0.22,
+      "height": 0.3
+    },
+    "sampleGrid": {
+      "width": 64,
+      "height": 48
+    }
+  },
+  "load": {
+    "frameRate": 59.94,
+    "frameTimeMs": {
+      "mean": 16.68,
+      "max": 18.2
+    },
+    "memoryMB": 84.5,
+    "thermalState": "nominal"
+  },
+  "values": {
+    "angle": {
+      "type": "float",
+      "value": 1.047
+    },
+    "count": {
+      "type": "int",
+      "value": 12
+    },
+    "phase": {
+      "type": "string",
+      "value": "settling"
+    },
+    "paused": {
+      "type": "bool",
+      "value": false
+    }
+  },
+  "stamp": "b3f1a20c"
 }

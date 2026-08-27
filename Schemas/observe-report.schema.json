@@ -4,7 +4,14 @@
   "title": "観測の応答",
   "description": "1 枚の観測の結果。画像は別ファイルで、この応答が最後に原子的に書かれる。採取できなかったときも応答は必ず書かれ、理由が warnings に載る (ADR-0018 決定 3)。",
   "type": "object",
-  "required": ["schemaVersion", "id", "frame", "time", "size", "warnings"],
+  "required": [
+    "schemaVersion",
+    "id",
+    "frame",
+    "time",
+    "size",
+    "warnings"
+  ],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
@@ -32,18 +39,196 @@
     },
     "size": {
       "type": "object",
-      "required": ["width", "height"],
+      "required": [
+        "width",
+        "height"
+      ],
       "additionalProperties": false,
       "description": "描いた面の大きさ (ピクセル)。",
       "properties": {
-        "width": { "type": "integer", "minimum": 1 },
-        "height": { "type": "integer", "minimum": 1 }
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "warnings": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "採取の過程で起きたことわり。失敗したときは理由がここに入る。何も無ければ空配列。"
+    },
+    "stats": {
+      "type": "object",
+      "description": "絵の要約。画像を開かずに「真っ黒ではないか」「隅に寄っていないか」を判定するために載せる。出力段を通した後の表示できる形で数える。採れなかったときは省略される。",
+      "required": [
+        "meanColor",
+        "meanLuminance",
+        "contentFraction",
+        "sampleGrid"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "meanColor": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "description": "赤・緑・青の平均 (0…1)。"
+        },
+        "meanLuminance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "明るさの平均 (0…1)。"
+        },
+        "contentFraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "左上の画素と違う色を持つ点の割合 (0…1)。0 なら一様な絵。"
+        },
+        "contentBounds": {
+          "type": "object",
+          "description": "内容のある点の外接範囲。左上が原点で、幅・高さで正規化してある。1 点も無ければ省略される。",
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "width": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "height": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "sampleGrid": {
+          "type": "object",
+          "description": "数えた点の並び。全画素ではなくこの格子で間引いている。",
+          "required": [
+            "width",
+            "height"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "load": {
+      "type": "object",
+      "description": "走らせている重さ。速い遅いを絵からの推測ではなく数値で答えるために載せる。",
+      "required": [
+        "thermalState"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "frameRate": {
+          "type": "number",
+          "minimum": 0,
+          "description": "直近で実際に出ているフレームレート。まだ測れていなければ省略。"
+        },
+        "frameTimeMs": {
+          "type": "object",
+          "description": "直近のフレームの間隔 (ミリ秒)。まだ測れていなければ省略。",
+          "required": [
+            "mean",
+            "max"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "mean": {
+              "type": "number",
+              "minimum": 0
+            },
+            "max": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "memoryMB": {
+          "type": "number",
+          "minimum": 0,
+          "description": "プロセスが使っている物理メモリ (MB)。採れなければ省略。"
+        },
+        "thermalState": {
+          "type": "string",
+          "description": "熱の状態。読み手は知らない値を捨てず素通しすること (値域は広がりうる)。",
+          "examples": [
+            "nominal",
+            "fair",
+            "serious",
+            "critical",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "values": {
+      "type": "object",
+      "description": "スケッチがこのフレームで差し出した値。名前ごとに型と値の組。1 つも無ければ省略される。",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "type",
+          "value"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "float",
+              "int",
+              "string",
+              "bool"
+            ]
+          },
+          "value": {}
+        }
+      }
+    },
+    "stamp": {
+      "type": "string",
+      "minLength": 1,
+      "description": "この絵を生んだ入力の世代。走らせる側が渡したものをそのまま返す。読み手は不透明な識別子として等値比較だけを行い、中身の意味や長さに依存しない。渡されていなければ省略。"
     }
   }
 }

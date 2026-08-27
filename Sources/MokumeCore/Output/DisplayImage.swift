@@ -36,3 +36,31 @@ public struct DisplayImage: Equatable, Sendable {
         return (bytes[base], bytes[base + 1], bytes[base + 2], bytes[base + 3])
     }
 }
+
+extension DisplayImage {
+    /// 間引いて小さくした絵を返す。
+    ///
+    /// 観測を軽く運ぶための縮小で、写真の縮小ではない — 近い点をそのまま拾う。
+    /// なめらかさより、**元の絵のどこがどう見えていたかが保たれる**ことを取る。
+    ///
+    /// 倍率が 1 以上、または範囲外のときはそのまま返す。
+    func scaled(by factor: Double) -> DisplayImage {
+        guard factor > 0, factor < 1 else { return self }
+        let newWidth = Swift.max(1, Int((Double(width) * factor).rounded()))
+        let newHeight = Swift.max(1, Int((Double(height) * factor).rounded()))
+        var bytes = [UInt8](repeating: 0, count: newWidth * newHeight * 4)
+        for y in 0..<newHeight {
+            let sourceY = Swift.min(height - 1, y * height / newHeight)
+            for x in 0..<newWidth {
+                let sourceX = Swift.min(width - 1, x * width / newWidth)
+                let source = (sourceY * width + sourceX) * 4
+                let destination = (y * newWidth + x) * 4
+                bytes[destination] = self.bytes[source]
+                bytes[destination + 1] = self.bytes[source + 1]
+                bytes[destination + 2] = self.bytes[source + 2]
+                bytes[destination + 3] = self.bytes[source + 3]
+            }
+        }
+        return DisplayImage(width: newWidth, height: newHeight, bytes: bytes)
+    }
+}
