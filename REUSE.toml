@@ -9,6 +9,14 @@
 # conflict と判定し、並行して出せなくなるためである (#149)。Markdown は
 # HTML コメントでヘッダを持てる (レンダリング時には見えない)。
 
+# ルートの LICENSE は GitHub / licensee の慣習に応える写しで、正典は
+# LICENSES/MIT.txt (REUSE 仕様 3.3 が要求する置き場)。中身が同一なので重複に
+# 見えるが、どちらも消せない — LICENSES/MIT.txt を消すと reuse lint が
+# Missing licenses で落ち、LICENSE を消すと GitHub のライセンス表示が消える
+# (REUSE は LICENSES/ しか見ず、licensee は LICENSES/ を見ない)。著作権年や
+# holder を変えるときは両方を同時に変える — reuse lint はどちらのファイルも
+# 検査対象に入れないので、ズレても CI は緑のまま通る (#154)。
+
 version = 1
 
 [[annotations]]
