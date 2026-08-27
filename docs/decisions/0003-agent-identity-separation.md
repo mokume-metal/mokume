@@ -55,6 +55,8 @@
 
 PR の作成者は自分の PR を承認できない。これは GitHub のプラットフォーム制約で、ブランチ保護の設定では上書きできず、bot にも同じく適用される。identity が分かれた瞬間に、承認は演技ではなく仕組みになる。
 
+この制約は逆向きにも効く — **author が唯一の承認者候補になっている PR は、誰にも承認できない**。本 ADR はその可能性を扱っておらず、[#88](https://github.com/mokume-metal/mokume/issues/88) で実際に詰んだ。[ADR-0007](0007-approvability-invariant.md) が承認可能性を明文の不変条件として置き、機構で守る形に補っている。
+
 重要パスの承認要求は **CODEOWNERS** で表現する。CODEOWNERS にはユーザーとチームしか書けないため、App の承認では code owner 要件を満たせない。制約が二重にかかる。
 
 ### 4. `required_approving_review_count` は 0 のままにする
