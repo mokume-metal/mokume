@@ -93,15 +93,15 @@ gh run rerun <run-id> --failed
 
 1. org に GitHub App を作る (例: `mokume-ruleset-inspector`)。Repository permissions は `Administration: Read-only` + `Metadata: Read-only` **だけ**にする
 2. このリポジトリにインストールし、秘密鍵 (PEM) を生成する
-3. リポジトリの Settings > Secrets and variables > Actions に登録する:
+3. リポジトリの Settings > Secrets and variables > Actions に、**Secret として 3 つ**登録する:
 
-   | 種別 | 名前 | 値 |
-   | --- | --- | --- |
-   | Variable | `MOKUME_INSPECTOR_APP_ID` | App ID |
-   | Variable | `MOKUME_INSPECTOR_APP_INSTALLATION_ID` | インストール ID |
-   | Secret | `MOKUME_INSPECTOR_APP_PRIVATE_KEY` | PEM の中身 |
+   | 名前 | 値 |
+   | --- | --- |
+   | `MOKUME_INSPECTOR_APP_ID` | App ID |
+   | `MOKUME_INSPECTOR_APP_INSTALLATION_ID` | インストール ID |
+   | `MOKUME_INSPECTOR_APP_PRIVATE_KEY` | PEM の中身 |
 
-   ID 2 つは秘密ではない識別子なので Variable でよい。インストール ID は `gh api orgs/mokume-metal/installations --jq '.installations[] | select(.app_slug=="<slug>") | {app_id, id}'` で引ける
+   ID 2 つは秘密ではない識別子なので Variable でもよいはずだが、**置き場は Secret 1 本に揃える** — 2 つの箱に分けると「どちらに入れたか」で静かに空文字を読む事故が起きる (実際 [#130](https://github.com/mokume-metal/mokume/pull/130) で起きた)。ログでマスクされて困るものでもない。インストール ID は `gh api orgs/mokume-metal/installations --jq '.installations[] | select(.app_slug=="<slug>") | {app_id, id}'` で引ける
 
 設定が欠けている間、この workflow は**緑にせず赤で止まる**。検査できていないことを緑で覆うと、ADR-0006 が避けたかった「一番危ない項目を見ていない緑」そのものになるため。
 
