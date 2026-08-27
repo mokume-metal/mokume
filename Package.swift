@@ -28,6 +28,8 @@ let package = Package(
             swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(name: "mokume", dependencies: ["MokumeCore"], swiftSettings: .mokume),
+        // 開発時に測るための道具。product には含めない (利用者へ配るものではない)
+        .executableTarget(name: "frame-rate-probe", dependencies: ["mokume"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCoreTests", dependencies: ["mokume"], swiftSettings: .mokume),
     ]
 )
