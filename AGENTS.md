@@ -85,25 +85,18 @@ gh run rerun <run-id> --failed
 
 管理画面から直接 1 項目変えられても気付けるよう、**日次で定義と実設定を照合する** (`.github/workflows/ruleset-drift.yml`)。ずれていたら Issue が自動で立ち、run も赤くなる。手で回すときは Actions から `Ruleset drift` を `workflow_dispatch` する。
 
-契機は `schedule` + `workflow_dispatch` **のみ**で、`pull_request` では走らせない — 同一リポジトリのブランチからの PR ではブランチ側のワークフロー定義が動いて secret も渡るため、承認前の run で鍵を読まれる経路になる ([ADR-0006](docs/decisions/0006-github-settings-as-code.md) 決定 5)。scheduled workflow は既定ブランチの定義しか実行しない。
+**この検査は `bypass_actors` を見ていない。** `bypass_actors` は ruleset への **write access** がある認証にしか返らず ([#99](https://github.com/mokume-metal/mokume/issues/99) で実測)、`Administration: Read` の App でも匿名でも見えない。CI にその鍵を置くことは「ルールセットを外せる鍵」を常設することなので、置かない。何を見ていないかは照合の出力自身が名乗る。
 
-照合に使うのは**検査専用の第 2 App** で、権限は `Administration: Read` + `Metadata: Read` のみ。ドリフト検出時の起票は `GITHUB_TOKEN` 側で行い、検査 App に `Issues: write` は持たせない。エージェント用の App (`Contents: write` / `Workflows: write` を持つ) の鍵は CI に置かない。
+したがって照合には 2 つの入口がある:
 
-**この検査を動かすための設定はメンテナ操作**で、一度だけ要る (エージェントの token では通らない):
+| 打ち方 | 認証 | `bypass_actors` |
+| --- | --- | --- |
+| `bash scripts/check-rulesets.sh` (手元・既定) | メンテナの `gh` | **見る**。読めなければ赤 |
+| `bash scripts/check-rulesets.sh --without-bypass-actors` (CI) | `GITHUB_TOKEN` | 見ない。見ていないことを出力で名乗る |
 
-1. org に GitHub App を作る (例: `mokume-ruleset-inspector`)。Repository permissions は `Administration: Read-only` + `Metadata: Read-only` **だけ**にする
-2. このリポジトリにインストールし、秘密鍵 (PEM) を生成する
-3. リポジトリの Settings > Secrets and variables > Actions に、**Secret として 3 つ**登録する:
+`--without-bypass-actors` は「**読めなかったときに許す**」であって「常に無視する」ではない。読める認証で付けても、bypass の追加はそのまま赤になる。
 
-   | 名前 | 値 |
-   | --- | --- |
-   | `MOKUME_INSPECTOR_APP_ID` | App ID |
-   | `MOKUME_INSPECTOR_APP_INSTALLATION_ID` | インストール ID |
-   | `MOKUME_INSPECTOR_APP_PRIVATE_KEY` | PEM の中身 |
-
-   ID 2 つは秘密ではない識別子なので Variable でもよいはずだが、**置き場は Secret 1 本に揃える** — 2 つの箱に分けると「どちらに入れたか」で静かに空文字を読む事故が起きる (実際 [#130](https://github.com/mokume-metal/mokume/pull/130) で起きた)。ログでマスクされて困るものでもない。インストール ID は `gh api orgs/mokume-metal/installations --jq '.installations[] | select(.app_slug=="<slug>") | {app_id, id}'` で引ける
-
-設定が欠けている間、この workflow は**緑にせず赤で止まる**。検査できていないことを緑で覆うと、ADR-0006 が避けたかった「一番危ない項目を見ていない緑」そのものになるため。
+**`bypass_actors` を機械で見張る仕組みは、いまは無い。** メンテナが手元で `bash scripts/check-rulesets.sh` を打つときに見る運用で、[ADR-0003](docs/decisions/0003-agent-identity-separation.md) 決定 1 が最も守っている項目だけは人の手に残っている。塞ぐなら `repository_ruleset` webhook を受ける先が要る — 実害が出てから足す ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md))。
 
 ## sub-issue の使い方
 

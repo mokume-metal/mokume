@@ -28,7 +28,7 @@
 
 | 事実 | 影響 |
 | --- | --- |
-| public repo のルールセットは**匿名でも読める**が、**`bypass_actors` だけは認証が要る** | ADR-0003 が最も守っている項目だけが、token 無しの検査からは見えない |
+| public repo のルールセットは**匿名でも読める**が、**`bypass_actors` だけは認証が要る** | ADR-0003 が最も守っている項目だけが、token 無しの検査からは見えない (**この読みは不正確だった** — 実際には ruleset への *write access* が要る。決定 5 の改訂を見よ) |
 | リポジトリの Actions secrets / variables は 0 件 | CI から App の token を得る経路が存在しない |
 | エージェントの App は `Administration: No access` (ADR-0003 決定 1) | **適用はメンテナの認証でしか通らない** |
 
@@ -64,19 +64,31 @@ GET の応答から次の鍵を落としたものを正規形とする: `id` / `
 | 層 | 契機 | token | 見るもの |
 | --- | --- | --- | --- |
 | 形の検査 | PR (`make ci-check` 経由で `ci-gate` の下) | 不要 | 定義が API に投げられる形か (必須の鍵・落とすべき鍵・`target` / `enforcement` の値・ファイル名と `name` の一致) |
-| ドリフト検査 | `schedule` + `workflow_dispatch` | 検査専用 App | 定義と実設定の差分 (`bypass_actors` を含む) |
+| ドリフト検査 | `schedule` + `workflow_dispatch` | `GITHUB_TOKEN` | 定義と実設定の差分 (`bypass_actors` は**除く** — 決定 5 の改訂) |
 
 **ルールセットの状態は PR の内容と独立に変わる。** 誰かが管理画面で 1 項目変えることが、この仕組みが拾いたい事象である。PR ごとに実設定を照合しても意味が薄く、fork からの PR には secret も渡らない (外部コントリビュータの PR が token 取得で落ちる)。契機を分ける。
 
 照合では、`rules` と ref_name の `include` / `exclude` を並べ替えてから比較する (API が返す順に保証が無く、順序差だけで赤くしないため)。
 
-### 5. ドリフト検査は検査専用の第二の App で行う
+### 5. ドリフト検査に検査専用の App は使わない (2026-08-27 改訂)
 
-権限は `Administration: Read` + `Metadata: Read` のみの App を別に作り、その鍵だけを Actions secret に置く。使う契機は `schedule` / `workflow_dispatch` に限る。
+**当初の決定**は「権限を `Administration: Read` + `Metadata: Read` に絞った第二の App を作り、その鍵だけを Actions secret に置き、使う契機を `schedule` / `workflow_dispatch` に限る」だった。[#99](https://github.com/mokume-metal/mokume/issues/99) で実装して実地確認したところ、**その根拠になっていた読みが二つとも誤りだった**ので撤回する。
 
-エージェント用の App に `Administration: Read` を足してその鍵を CI に置く案は却下した。その App は `Contents: write` と `Workflows: write` を持ち、**`pull_request` トリガのジョブは同一リポジトリのブランチからの PR でブランチ側のワークフロー定義が動き、secret も渡る**。エージェントは App の identity で push できるので、細工したワークフローを載せた PR を開けば、メンテナの承認前にその run で鍵を読める (CODEOWNERS は merge を止めるが run は止めない)。書き込み権限を持つ鍵を CI に置くことは、それ自体が新しい露出面になる。
+**実測 1 — `bypass_actors` は read-only では見えない。** GitHub のドキュメントに明記がある: 「情報の漏洩を防ぐため、`bypass_actors` は API を叩く者が ruleset への **write access** を持つ場合にのみ返る」。`Administration: Read` では返らない。当初の決定が確かめていたのは「匿名では見えない」「メンテナ認証では見える」の二点だけで、その中間 (read-only の App) を確かめないまま設計に組み込んでいた。**read-only の検査 App は、匿名読み取りと同じものしか見られない。**
 
-scheduled workflow はデフォルトブランチの定義しか実行されないため、この経路は `schedule` 限定の使用と最小権限の組み合わせで塞がる。ドリフト検出時の Issue 起票は `GITHUB_TOKEN` 側で行い、検査 App に `Issues: write` を持たせない。
+**実測 2 — `schedule` 限定という前提が成り立たない。** 「scheduled workflow は既定ブランチの定義しか実行しない」は正しいが、この workflow は `workflow_dispatch` も持つ。`workflow_dispatch` は**選んだ ref の定義を実行し、リポジトリ secret をそのまま渡す** ([run 33041322529](https://github.com/mokume-metal/mokume/actions/runs/33041322529) で実測。使い捨てのブランチに「秘密の長さだけを出す」定義を置いて確かめた)。GitHub のドキュメントは既定ブランチの定義が使われるとも読める書き方をしているが、実際は違う。
+
+`Administration: Write` へ上げる案は採らない。この権限は粒度が分かれておらず、同じ鍵でリポジトリの削除・移管、collaborator と team の追加削除、**ルールセットの削除**、Actions・runner・webhook・Environment の設定変更まで通る。エージェントは `contents: write` と `workflows: write` を持ち、決定 3 と [ADR-0003](0003-agent-identity-separation.md) 決定 6 が認めるとおり同じマシンにメンテナの認証がある以上、細工したブランチを dispatch すれば鍵に手が届く。**ADR-0003 決定 1 の「エージェントは自分を縛るルールセットを外せない」が、権限表を一文字も変えないまま迂回される。** Environment secret のブランチ制限でこの経路は塞げるが、塞いだ後も「リポジトリを消せる鍵の常設」は残り、保証は「権限として不可能」から「ポリシーが守っている」へ格下げされる。[ADR-0008](0008-mechanism-needs-demonstrated-harm.md) が要求する実害 — 誰かが bypass を足した事実 — はまだ無い。
+
+したがって:
+
+- **検査専用 App は作らない。** 作ったものは削除する
+- ドリフト検査は `GITHUB_TOKEN` で行い、`bypass_actors` **以外**を照合する
+- **緑が何を意味するかは照合の出力が名乗る** (`--without-bypass-actors`)。「読めないまま一致とは言わない」という筋は、黙って通すのではなく**見ていない項目を明示する**形で保つ。このフラグは「読めなかったときに許す」であって「常に無視する」ではない — 読める認証で付けても bypass の追加は赤になる
+- `bypass_actors` はメンテナが手元で `scripts/check-rulesets.sh` を引数なしで打つときに見る (読めなければ赤)。ADR-0003 決定 1 が最も守っている項目だけは、当面 人の手に残る
+- 機械で見張るなら `repository_ruleset` webhook を受ける先が要る。実害が出てから足す (ADR-0008)
+
+ドリフト検出時の起票を `GITHUB_TOKEN` で行う点は当初のまま変わらない。
 
 ### 6. ADR-0003 決定 1 の権限表は改訂しない
 
@@ -94,6 +106,6 @@ Terraform GitHub provider は state の置き場が増える。Probot safe-setti
 
 - ルールセットの変更は PR を通る。レビューと履歴が残り、`.github/` は CODEOWNERS の対象なのでメンテナ承認も要る
 - メンテナの手が要る場面が一つ増える (定義を merge した後の `--apply`)。一方で「管理画面で直接いじる」経路は、規約の上では閉じる
-- GitHub App が二つになる (作業用と検査用)。用途と権限が分かれるので、鍵が漏れたときの被害範囲も分かれる
-- 検査専用 App と scheduled のドリフト検査が入るまでの間、実設定との照合は手元で `bash scripts/check-rulesets.sh` を打つ運用になる ([#99](https://github.com/mokume-metal/mokume/issues/99))
+- **GitHub App は作業用の一つのままでよい** (決定 5 の改訂)。CI には鍵を置かないので、鍵が漏れる面が増えない
+- **`bypass_actors` の照合だけは自動化されない。** 日次のドリフト検査が拾うのはそれ以外の全項目で、`bypass_actors` はメンテナが手元で `bash scripts/check-rulesets.sh` を打ったときに見る。この検査の緑は「`bypass_actors` を除いて一致」を意味し、出力自身がそう名乗る
 - リポジトリ設定・セキュリティ設定は当面 GitHub 側が正本のまま残る。ここだけ二重基準になるが、範囲を広げるより先に、三本で仕組みが回ることを確かめる
