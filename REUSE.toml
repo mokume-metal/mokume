@@ -26,6 +26,7 @@ path = [
   "docs/decisions/0011-color-model.md",
   "docs/decisions/0012-view-layer.md",
   "docs/decisions/0013-parameter-model.md",
+  "docs/decisions/0014-machine-learning-role.md",
   ".gitignore",
   "Makefile",
   ".claude/settings.json",
