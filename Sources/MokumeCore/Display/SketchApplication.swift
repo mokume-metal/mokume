@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeDiagnostics
 import QuartzCore
 
 /// スケッチをアプリケーションとして走らせる。
@@ -116,10 +117,34 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
             try presenter.present(runtime.target, to: layer)
         } catch {
             // 1 フレーム描けなかったことでアプリケーションごと落とさない。
-            // 次のリフレッシュでもう一度試す
+            // 次のリフレッシュでもう一度試す — ただし**黙って捨てない**
+            noteFrameFailure(error)
             return
         }
+        noteFrameRecovery()
         recordFrameRate()
+    }
+
+    /// 続けて描けなかった数。始まりと終わりだけ言うために持つ。
+    private var consecutiveFailures = 0
+
+    /// 描けなかったことを 1 度だけ言う。
+    ///
+    /// **握り潰すと「絵が止まったのに理由がどこにも残らない」になる** — 観測だけが
+    /// 黙ったように見える形の調査で、いちばん最初に欲しい 1 行がここだった
+    /// ([#221](https://github.com/mokume-metal/mokume/issues/221))。一方で毎フレーム
+    /// 言えば 1 秒に 60 行流れ、本当に読むべき行が埋まる。だから始まりと終わりだけ言う。
+    private func noteFrameFailure(_ failure: RenderFailure) {
+        consecutiveFailures += 1
+        guard consecutiveFailures == 1 else { return }
+        Diagnostics.warn("フレームを描けませんでした: \(failure) — 次のリフレッシュで試し直します")
+    }
+
+    /// 描けるようになったことを言う。飛ばした数を添える。
+    private func noteFrameRecovery() {
+        guard consecutiveFailures > 0 else { return }
+        Diagnostics.warn("フレームの描画が回復しました (\(consecutiveFailures) 枚ぶん飛ばしました)")
+        consecutiveFailures = 0
     }
 
     private func recordFrameRate() {
