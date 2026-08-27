@@ -85,6 +85,49 @@ class GuardTest(unittest.TestCase):
         # 発言を伴わない Approve は署名の対象ではない
         self.assert_passed("gh pr review 3 --approve")
 
+    # --- close / reopen に添える発言 (#123) -----------------------------
+
+    def test_close_with_comment_denied(self):
+        """閉じながらの発言も発言。#120 に未署名のコメントが残った形。"""
+        self.assert_denied('gh pr close 120 -c "メンテナ名義だったので閉じる"')
+        self.assert_denied('gh pr close 120 --comment "閉じる"')
+        self.assert_denied("gh pr close 120 --comment=閉じる")
+        self.assert_denied('gh issue close 42 -c "対応済み"')
+
+    def test_reopen_with_comment_denied(self):
+        self.assert_denied('gh issue reopen 42 --comment "やり直す"')
+        self.assert_denied('gh pr reopen 120 -c "取り消す"')
+
+    def test_close_with_comment_and_leading_option_denied(self):
+        self.assert_denied('gh -R mokume-metal/mokume pr close 120 -c "理由"')
+
+    def test_close_without_comment_passes(self):
+        """状態を変えるだけなら発言が無い (--approve だけのレビューと同じ扱い)。"""
+        self.assert_passed("gh pr close 120")
+        self.assert_passed("gh pr close 120 --delete-branch")
+        self.assert_passed('gh issue close 42 --reason "not planned"')
+        self.assert_passed("gh issue reopen 42")
+
+    def test_c_option_meaning_something_else_passes(self):
+        """-c の意味は gh の中で衝突している。読み取りまで止めてはいけない。
+
+        サブコマンドを絞らずオプションだけで判定すると、ここが全部赤になる。
+        """
+        self.assert_passed("gh pr view 121 -c")  # --comments (コメントを読む)
+        self.assert_passed("gh issue view 42 -c")
+        self.assert_passed("gh issue view 42 --comments")
+        self.assert_passed("gh issue develop 42 -c")  # --checkout
+
+    def test_merge_body_passes(self):
+        """マージコミットの本文はスレッドへの発言ではない (境界)。"""
+        self.assert_passed('gh pr merge 125 --auto --squash --body "マージ本文"')
+
+    def test_close_reason_shows_the_two_step_procedure(self):
+        """差し戻すだけでは直せない。ラッパーには close 機能が無いので手順を示す。"""
+        out = self.run_guard('gh pr close 120 -c "理由"')
+        reason = json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("gh pr close <番号>", reason)
+
     def test_read_only_commands_pass(self):
         self.assert_passed("gh issue view 1")
         self.assert_passed("gh pr list")

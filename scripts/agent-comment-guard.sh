@@ -11,9 +11,20 @@
 # ask ではなく deny なのは、ラッパーに変えればその場で続行できるから (人を呼ばない)。
 #
 # 判定はコメントを投稿するコマンドだけに絞る:
-#   - gh issue comment / gh pr comment       → 差し戻す
-#   - gh pr review で本文オプションが付くもの → 差し戻す (--approve だけなら発言が無い)
-#   - それ以外 (view/list、gh api、--help)   → 素通し
+#   - gh issue comment / gh pr comment          → 差し戻す
+#   - gh pr review で本文オプションが付くもの    → 差し戻す (--approve だけなら発言が無い)
+#   - gh {issue,pr} {close,reopen} の --comment → 差し戻す (閉じ / 開き ながら発言する)
+#   - それ以外 (view/list、gh api、--help)      → 素通し
+#
+# **サブコマンドを絞ってからオプションを見る。** 「-c が付いていたら発言」と短絡すると
+# 読み取りまで止まる — gh の中で -c の意味は衝突している (#123):
+#
+#   gh pr view -c / gh issue view -c  → --comments (コメントを読む)
+#   gh issue develop -c               → --checkout
+#
+# --comment は --comments の前方一致でもあるので、オプション側も後ろを区切りで留める。
+# gh が発言を伴うサブコマンドを増やしたらここに足す。取りこぼしを後から足すほうが、
+# 誤検知で読み取りを止めるより安い。
 #
 # 契約: stdin に PreToolUse の JSON。素通しは無出力 + 終了コード 0。
 # 配線は .claude/settings.json、テストは scripts/tests/comment_test.py。
@@ -43,6 +54,11 @@ is_comment_command() {
   printf '%s' "$command" | grep -qE "${GH}pr[[:space:]]+review([[:space:]]|$)" &&
     printf '%s' "$command" | grep -qE '(^|[[:space:]])(-b|--body|-F|--body-file)([[:space:]]|=)' &&
     return 0
+  # close / reopen も本文を伴うときだけ。状態を変えるだけなら発言が無い。
+  # 冒頭のとおり、-c の意味はサブコマンドによって違うのでここで絞ってから見る
+  printf '%s' "$command" | grep -qE "${GH}(issue|pr)[[:space:]]+(close|reopen)([[:space:]]|$)" &&
+    printf '%s' "$command" | grep -qE '(^|[[:space:]])(-c|--comment)([[:space:]]|=)' &&
+    return 0
   return 1
 }
 
@@ -64,5 +80,11 @@ Issue / PR へのコメントは scripts/comment.sh から投稿してくださ�
 投稿前に本文を確かめたいときは --dry-run を付けてください。
 gh pr review で本文を添える場合も、本文はこのラッパーで投稿し、レビュー自体は
 --approve / --request-changes だけで送ってください。
+
+close / reopen に --comment を添える場合は 2 手に分けます。発言を先に投稿してから、
+状態の変更は発言なしで実行してください (説明してから閉じる、という読み順になります):
+
+  bash scripts/comment.sh pr <番号> --body "<本文>"
+  gh pr close <番号>
 EOF
 )"
