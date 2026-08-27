@@ -8,6 +8,7 @@
 
     shape <定義ディレクトリ>                 定義が API に投げられる形か (token 不要)
     diff  <定義ディレクトリ> <実設定ディレクトリ>  定義と実設定が一致しているか
+          [--without-bypass-actors]          bypass_actors を読めない認証を許す (名乗った上で)
 
 入口は scripts/check-rulesets.sh と scripts/apply-rulesets.sh。実設定の取得
 (gh の呼び出し) はそちらが持ち、ここは受け取った JSON だけを見る。
@@ -133,8 +134,18 @@ def check_shape(defs_dir):
     return status
 
 
-def check_diff(defs_dir, live_dir):
-    """定義と実設定を照合する。一致で 0、差分・欠落・過剰で 1。"""
+def check_diff(defs_dir, live_dir, without_bypass_actors=False):
+    """定義と実設定を照合する。一致で 0、差分・欠落・過剰で 1。
+
+    bypass_actors は ruleset への write access がある認証にしか返らない (実測 / #99)。
+    読めていないまま「一致」と言うのは、ADR-0003 決定 1 が最も守っている項目を
+    検査せずに緑を出すことなので、既定では赤にする。
+
+    without_bypass_actors=True は、読めないことを承知の上で残りを照合する経路。
+    緑にはするが**何を見ていないかを名乗る**。黙って通すのとは違う。読める認証で
+    呼ばれたときは普通に比較する — 取りこぼさないため、フラグは「読めなかったとき
+    に許す」であって「常に無視する」ではない。
+    """
     defs = {}
     for name, body in load_dir(defs_dir).items():
         if body is None or not isinstance(body, dict) or "name" not in body:
@@ -151,17 +162,26 @@ def check_diff(defs_dir, live_dir):
 
     status = 0
 
-    # bypass_actors は認証が無いと応答に現れない (public repo でも匿名では見えない)。
-    # 見えないまま「一致」と言うと、ADR-0003 決定 1 が最も守っている項目を検査せずに
-    # 緑を出すことになる。黙って通さず、ここで赤にする。
+    # bypass_actors は ruleset への write access がある認証にしか返らない。public repo
+    # でも匿名では見えず、Administration: Read の App でも見えない (#99 で実測)。
+    # 既定では赤にする — 見えないまま「一致」と言うと、ADR-0003 決定 1 が最も守って
+    # いる項目を検査せずに緑を出すことになる。
     blind = sorted(n for n, b in live.items() if "bypass_actors" not in b)
-    if blind:
+    if blind and not without_bypass_actors:
         print(
             "NG: 実設定に bypass_actors が含まれていない: "
             f"{', '.join(blind)} (認証が足りず読めていない。gh auth status を確認する)",
             file=sys.stderr,
         )
         return 1
+    if blind:
+        # 緑の意味を狭める。何を見ていないかが出力に無いと、この緑は
+        # 「全部一致」と読まれる
+        print(
+            "注意: bypass_actors は検査していない — この認証では読めない "
+            f"({', '.join(blind)})。読むには ruleset への write access が要る。"
+            "手元で bash scripts/check-rulesets.sh を打つと厳格に照合する"
+        )
 
     for name in sorted(set(defs) | set(live)):
         if name not in live:
@@ -177,7 +197,12 @@ def check_diff(defs_dir, live_dir):
             status = 1
             continue
 
-        want, got = dumps(canon(defs[name])), dumps(canon(live[name]))
+        want_c, got_c = canon(defs[name]), canon(live[name])
+        if "bypass_actors" not in got_c:
+            # 実設定に無い項目を定義側だけ持っていると、差分の形で毎回赤くなる。
+            # 見ていないことは上で名乗ってあるので、比較からも外す
+            want_c.pop("bypass_actors", None)
+        want, got = dumps(want_c), dumps(got_c)
         if want == got:
             print(f"ok: {name} は定義と一致")
             continue
@@ -196,10 +221,16 @@ def main(argv):
     if len(argv) >= 3 and argv[1] == "shape":
         return check_shape(argv[2])
     if len(argv) >= 4 and argv[1] == "diff":
-        return check_diff(argv[2], argv[3])
+        flags = argv[4:]
+        unknown = [f for f in flags if f != "--without-bypass-actors"]
+        if unknown:
+            print(f"不明なフラグ: {' '.join(unknown)}", file=sys.stderr)
+            return 2
+        return check_diff(argv[2], argv[3], "--without-bypass-actors" in flags)
     print(
         "使い方: rulesets_lib.py shape <定義ディレクトリ>\n"
-        "        rulesets_lib.py diff  <定義ディレクトリ> <実設定ディレクトリ>",
+        "        rulesets_lib.py diff  <定義ディレクトリ> <実設定ディレクトリ>"
+        " [--without-bypass-actors]",
         file=sys.stderr,
     )
     return 2

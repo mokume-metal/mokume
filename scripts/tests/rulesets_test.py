@@ -7,8 +7,9 @@
 
   1. 定義ファイルの形の検査が、GET の応答をそのまま置いた事故 (id 等の混入) と
      bypass_actors の欠落を落とす — ADR-0003 決定 1 は書かれていて初めて検査できる
-  2. 実設定に bypass_actors が無い (= 認証不足で読めていない) とき、黙って一致と
-     言わずに赤にする — 一番危ない項目を見ていない緑を作らないため (ADR-0006)
+  2. 実設定に bypass_actors が無い (= その認証では読めない) とき、黙って一致と
+     言わない — 既定は赤、--without-bypass-actors なら緑にするが**何を見ていないか
+     を名乗る**。一番危ない項目を見ていない緑を、黙って作らないため (ADR-0006 / #99)
   3. apply が既定では GitHub を書き換えず、--apply を付けたときだけ書き換える
 
 gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワークも認証も要らない。
@@ -156,8 +157,8 @@ class DiffTest(unittest.TestCase):
         for i, f in enumerate(sorted(DEFS.glob("*.json")), start=1):
             (self.live / f"{i}.json").write_text(f.read_text())
 
-    def diff(self):
-        return run(["python3", str(LIB), "diff", str(DEFS), str(self.live)])
+    def diff(self, *flags):
+        return run(["python3", str(LIB), "diff", str(DEFS), str(self.live), *flags])
 
     def live_file(self, name):
         for f in self.live.glob("*.json"):
@@ -202,6 +203,41 @@ class DiffTest(unittest.TestCase):
         r = self.diff()
         self.assertEqual(r.returncode, 1)
         self.assertIn("認証が足りず", r.stderr)
+
+    def test_読めないときに許すフラグは何を見ていないかを名乗る(self):
+        # CI の GITHUB_TOKEN では bypass_actors が返らない (#99 で実測)。緑にはするが、
+        # 「全部一致」と読まれないよう出力で名乗らせる
+        self.mutate("main-protection", lambda b: b.pop("bypass_actors"))
+        r = self.diff("--without-bypass-actors")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("bypass_actors は検査していない", r.stdout)
+
+    def test_読めないときに許しても他の差分は拾う(self):
+        # 見ない項目が 1 つ増えるだけで、検査そのものが緩むわけではない
+        def shift(body):
+            body.pop("bypass_actors")
+            body["enforcement"] = "evaluate"
+
+        self.mutate("main-protection", shift)
+        r = self.diff("--without-bypass-actors")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("定義とずれている", r.stderr)
+
+    def test_フラグを付けても読めるなら_bypass_actors_を比較する(self):
+        # フラグは「読めなかったときに許す」であって「常に無視する」ではない。
+        # 手元の認証で誤ってフラグを付けても、bypass の追加は取りこぼさない
+        self.mutate(
+            "main-protection",
+            lambda b: b.__setitem__("bypass_actors", [{"actor_id": 1, "actor_type": "Integration", "bypass_mode": "always"}]),
+        )
+        r = self.diff("--without-bypass-actors")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("定義とずれている", r.stderr)
+
+    def test_知らないフラグは使い方の誤りとして落ちる(self):
+        r = self.diff("--ignore-everything")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("不明なフラグ", r.stderr)
 
     def test_rules_の順序違いは通る(self):
         self.mutate("main-protection", lambda b: b["rules"].reverse())
