@@ -21,6 +21,8 @@ SPDX-License-Identifier: MIT
 
 `status: needs-triage` も廃止した ([#156](https://github.com/mokume-metal/mokume/issues/156))。このラベルは「`verify:` がまだ無い」ことの写しで、**機械の読み手が一つも無かった** — 着手ゲートを実際に守る `scripts/review-gate.sh` が見るのは `verify:` の有無だけである。写しは実測でずれていて、`verify: machine` との併存が 2 件、closed への残置が 5 件あった。決定的だったのは**付与の失敗が危険側に倒れる**ことで、Triage の run が落ちて付かなかった Issue は `label:"status: needs-triage"` の検索から漏れ、未合意のまま着手可能に見えた ([#93](https://github.com/mokume-metal/mokume/issues/93))。`verify:` の不在で未トリアージを表せば、同じ失敗はそのまま「着手できない」に倒れる。
 
+運用してみると、**機械が起票した Issue が着手できない状態で立つ**ことも分かった ([#205](https://github.com/mokume-metal/mokume/issues/205))。`scripts/report-ruleset-drift.sh` がドリフトを検出して立てる Issue は `verify:` を持たないため決定 2 の着手ゲートに掛かる。しかも同スクリプトには重複抑止があり、open な Issue が残る限り翌日以降は起票されない — **誰も着手しないまま run の赤だけが積み上がる**経路が開いていた。一方で `scripts/sub-issue.sh --test` は既に機械的に `verify: machine` を付けており、扱いが揃っていなかった。両者の違いは起票元が人か機械かではなく、**起票の時点で完了条件を知っているか**にある。
+
 ## 決定
 
 ### 1. Issue のライフサイクル — 分類は議論の成果物
@@ -33,6 +35,17 @@ SPDX-License-Identifier: MIT
 - **議論**: 事実確認・意図のすり合わせをコメントで行い、「どうなれば解消と言えるか」が収束したら **Issue 本文に反映する** (本文が正典・経緯はコメントに残る)
 - **トリアージ完了**: 完了条件の機械判定可否を判定し、`verify: machine` (どの検査で判定するかを本文に明記) または `verify: human` を付与する。**verify ラベルの付与がトリアージ完了の印であり、その不在が未トリアージを表す** — 未トリアージ側に別のラベルを置かない (写しになり、付け損ねが危険側に倒れる)
 - 自明な Issue は議論を省略し、起票直後にメンテナがラベルを付けてよい (fast path)
+
+**`verify:` を付けられるのは、完了条件を知っている起票者だけである。** fast path をメンテナに限らないのはこの基準による — スクリプトが本文と完了条件を同時に書く自動起票は、**起票の時点で完了条件が確定している**ので機械が付けてよい。
+
+| 起票元 | 本文が持つ完了条件 |
+| --- | --- |
+| `scripts/sub-issue.sh --test` | 確認が済んだら close する (使い捨ての検証用 Issue) |
+| `scripts/report-ruleset-drift.sh` | `bash scripts/check-rulesets.sh` を引数なしで打って 3 本すべて緑 ([#205](https://github.com/mokume-metal/mokume/issues/205)) |
+
+`scripts/triage.sh` が `verify:` を付けないのも同じ基準の帰結である — 人間が書いた任意の Issue の完了条件を、triage は知らない。知らない者が付ければ、印だけが先に立って合意が後から追いかけることになる。
+
+**付け損ねは危険側に倒れない。** 機械が付け損ねれば Issue は `verify:` を持たないまま = 着手できない状態で残る。`status: needs-triage` を廃止した理由 (付与の失敗が「未トリアージなのに着手可能に見える」へ倒れた) と、向きが揃っている。
 
 ### 2. 着手の条件
 
@@ -96,6 +109,7 @@ Issue と PR のどちらに書くかは、**「この PR が merge された後
 - review-gate の実装は独立した Issue で行う。実装までの間、本 ADR のルーティングは運用で守る
 - AGENTS.md の「進め方」「マージの判断基準」「コメント」を本 ADR に接続する
 - エージェントは `verify:` の無い Issue に着手できない。議論を経ずに merge へ到達する経路が構造的に消える
+- 自動起票するスクリプトは、本文に解消の判定基準を書いたうえで `verify: machine` を付ける。新しい機構は作らず、既存の起票スクリプトの責務を広げるだけで済む ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) 決定 5 の段 1)
 - ADR・workflows・`.claude/` の変更は常にメンテナの承認を要する。当初この効果は規約止まりだったが (ラベルはエージェント自身も付けられた)、[ADR-0003](0003-agent-identity-separation.md) の identity 分離と CODEOWNERS への移行によって**構造として成立した**
 - 決定 6 は文書だけで守る。判定は「その情報が merge 後も読まれるか」という実質的な判断で、機械にできるのは投稿先が器の有無と合っているかまでであり、それは `scripts/plan-record.sh` が既に見ている
 - 行単位のレビューコメントが使われていない件は決定 6 の射程外に置いた。指摘は PR 本文のコメントで実際に届いており、実害が示されていない ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) の順序 — 実害 → Issue → 機構)

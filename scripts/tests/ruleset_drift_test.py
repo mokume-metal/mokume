@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """ルールセットのドリフト起票の検査 (#99)。
 
-固定したいのは四つ:
+固定したいのは六つ:
 
   1. ドリフトを検出したら Issue が立ち、本文に差分そのものが載る
      (run のログを開かないと何がずれたか分からない起票は、無いのとあまり変わらない)
@@ -13,6 +13,11 @@
      タイトルの別 Issue を「既にある」と誤認すると、本物のドリフトが黙殺される
   4. 起票の後に triage を通す — GITHUB_TOKEN が作った Issue には workflow が
      発火しない (再帰防止の仕様) ので、triage.yml は走らない
+  5. 起票と同時に verify: machine が付く — 付かないと AGENTS.md の着手ゲートに
+     引っかかって誰も対処できず、しかも重複抑止で翌日以降の起票まで止まる (#205)
+  6. 本文に解消の判定基準が載る — verify: machine は「どの検査で判定するか」の
+     明記を要件にしている (ADR-0002 決定 1)。対処法だけ書いて判定基準の無い起票は、
+     要件を満たさないまま印だけ付けることになる
 
 ワークフロー本体 (.github/workflows/ruleset-drift.yml) には判断を埋めていない。
 スクリプト側に置いてあるのは、ここで単体テストとして固定でき、日次で回る検査の
@@ -153,6 +158,16 @@ class ReportDriftTest(unittest.TestCase):
         self.report()
         log = self.gh_log()
         self.assertIn("--type Task", log)
+
+    def test_起票に_verify_machine_を付ける(self):
+        self.report()
+        self.assertIn("--label verify: machine", self.gh_log())
+
+    def test_本文に解消の判定基準が載る(self):
+        self.report()
+        body = self.body.read_text()
+        self.assertIn("## 解消の判定", body)
+        self.assertIn("check-rulesets.sh", body)
 
     def test_差分が長ければ切り詰めて起票する(self):
         long_drift = "".join(f"line {i}\n" for i in range(1, 301))
