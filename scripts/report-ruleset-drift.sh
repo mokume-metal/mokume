@@ -24,6 +24,13 @@ REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 # 見つからなくなり二重に立つので、変えるときは open な分を先に畳む
 readonly TITLE="ci: ルールセットが定義とずれている"
 
+# 起票と同時に付けるトリアージ済みの印。完了条件 (下の「解消の判定」) を本文へ焼き
+# 込んでいるので、議論を待たずに着手できる。機械が verify: を付けてよいのは
+# 「完了条件を知っている起票者」だけで、同じ根拠で sub-issue.sh --test も付ける
+# (ADR-0002 決定 1 / #205)。付け損ねても「着手できない」に倒れるだけで危険側には
+# 倒れない — status: needs-triage を廃止したときと同じ理由
+readonly VERIFY_LABEL="verify: machine"
+
 # 本文に載せる差分の上限。ずれが大きいときに Issue 本文の上限へ当たって起票ごと
 # 失敗するより、頭を見せて run へ送る
 readonly MAX_LINES=200
@@ -76,14 +83,18 @@ adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions
 - **実設定のほうが正しい** → 変更の意図を PR に書いて定義ファイルを更新する
 
 どちらの場合も、**なぜ変わったのか**をこの Issue に残してから閉じる。管理画面での直接変更を拾うことがこの検査の目的なので、経緯が残らないと次に同じことが起きたときに区別が付かない。
+
+## 解消の判定
+
+`bash scripts/check-rulesets.sh` を**引数なし**で打ち、ルールセット 3 本すべてが緑になれば解消。引数なしの照合は `bypass_actors` まで見る (読めなければ赤になる) ので、この検査が見ていない範囲もそこで塞がる。
 BODY
   if [ -n "$run_url" ]; then
     printf '\n検出した run: %s\n' "$run_url"
   fi
-  printf '\n<sub>🤖 この Issue は .github/workflows/ruleset-drift.yml が自動起票した (#99)</sub>\n'
+  printf '\n<sub>🤖 この Issue は .github/workflows/ruleset-drift.yml が自動起票した (#99)。完了条件が本文で確定しているため `verify: machine` も自動で付く (#205)</sub>\n'
 } > "$tmp"
 
-url=$(gh issue create -R "$REPO" --title "$TITLE" --body-file "$tmp")
+url=$(gh issue create -R "$REPO" --title "$TITLE" --body-file "$tmp" --label "$VERIFY_LABEL")
 echo "report: 起票した $url"
 
 num="${url##*/}"
