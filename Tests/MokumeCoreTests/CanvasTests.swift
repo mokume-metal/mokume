@@ -154,6 +154,144 @@ struct CanvasTests {
         #expect(image[32, 42] == (0, 0, 0, 255))  // 半径 6 の外
     }
 
+    // MARK: - 積み降ろし (#235)
+
+    @Test("変換とスタイルは独立に積める")
+    func transformAndStyleStackIndependently() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.pushMatrix()  // 変換だけ積む
+            canvas.translate(20, 20)
+            canvas.fill(blue)  // 積んでいないので、戻しても残る
+            canvas.popMatrix()
+            canvas.rect(8, 8, 16, 16)  // 変換は戻り、塗りは青のまま
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 16].red < 60)  // 青のまま (白なら red が 255)
+        #expect(image[16, 16].blue > 200)
+        #expect(image[36, 36] == (0, 0, 0, 255))  // 変換が戻っているので、ずれた場所には出ない
+    }
+
+    @Test("スタイルだけを積むと、変換は戻らない")
+    func styleStackLeavesTheTransformAlone() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.pushStyle()
+            canvas.fill(blue)
+            canvas.translate(20, 20)  // 積んでいないので、戻しても残る
+            canvas.popStyle()
+            canvas.fill(white)
+            canvas.rect(8, 8, 16, 16)
+        }
+        // 変換が残っているので (28, 28) 起点に出る
+        #expect(try pixels(of: canvas)[36, 36].red == 255)
+    }
+
+    @Test("両方を積むと、両方が戻る")
+    func pushRestoresBothAtOnce() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.push()
+            canvas.translate(20, 20)
+            canvas.fill(blue)
+            canvas.pop()
+            canvas.rect(8, 8, 16, 16)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 16].red == 255)  // 塗りが白へ戻っている (青なら red が 0)
+        #expect(image[36, 36] == (0, 0, 0, 255))  // 変換も戻っている
+    }
+
+    @Test("何も積んでいない状態で降ろしても落ちない")
+    func poppingAnEmptyStackIsHarmless() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.pop()
+            canvas.popMatrix()
+            canvas.popStyle()
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.rect(8, 8, 16, 16)
+        }
+        #expect(try pixels(of: canvas)[16, 16].red == 255)
+    }
+
+    @Test("積んだスタイルは次のフレームへ漏れない")
+    func styleDoesNotLeakIntoTheNextFrame() throws {
+        let canvas = try makeCanvas()
+        // 1 フレーム目: 積んだまま降ろさずに終える
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.push()
+            canvas.fill(blue)
+            canvas.translate(20, 20)
+        }
+        // 2 フレーム目: 積んだものは残っているが、戻せば 1 フレーム目の手前へ帰る
+        try canvas.draw {
+            canvas.background(black)
+            canvas.pop()
+            canvas.rect(8, 8, 16, 16)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 16].red == 255)  // 塗りは白 (1 フレーム目で積んだ値)
+        #expect(image[36, 36] == (0, 0, 0, 255))  // 変換も戻っている
+    }
+
+    @Test("積んだ変換を捨てても、戻す先は残る")
+    func resetMatrixKeepsTheStack() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.translate(30, 30)
+            canvas.pushMatrix()
+            canvas.resetMatrix()  // いまの変換だけ捨てる
+            canvas.rect(4, 4, 8, 8)  // 原点基準で出る
+            canvas.popMatrix()
+            canvas.rect(4, 4, 8, 8)  // 積んでおいた (30, 30) が戻る
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[8, 8].red == 255)
+        #expect(image[38, 38].red == 255)
+    }
+
+    @Test("斜めに歪めると、まっすぐな辺が傾く")
+    func shearTiltsStraightEdges() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.shearX(.pi / 4)  // 45 度なら y のぶんだけ x がずれる
+            canvas.rect(8, 8, 8, 24)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[20, 12].red == 255)  // y=12 では x が 12 ぶんずれる
+        #expect(image[12, 12].red == 0)  // ずれる前の位置には無い
+    }
+
+    @Test("点が変換でどこへ移るかを引ける")
+    func screenCoordinatesFollowTheTransform() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.translate(20, 10)
+            canvas.scale(2, 3)
+            #expect(canvas.screenX(5, 5) == 30)  // 20 + 5*2
+            #expect(canvas.screenY(5, 5) == 25)  // 10 + 5*3
+        }
+    }
+
     // MARK: - 輪郭 (#234)
 
     private let blue = LinearRGBA.display(red: 0, green: 0.4, blue: 1)

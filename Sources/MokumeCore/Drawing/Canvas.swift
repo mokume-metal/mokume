@@ -64,7 +64,45 @@ public final class Canvas {
     private var currentStrokeJoin = StrokeJoin.miter
     private var hasFill = true
     private var hasStroke = true
+    private var styleStack: [Style] = []
     private var warnedReversedArc = false
+
+    /// これから描くものに効く設定の一式。
+    ///
+    /// 面の大きさや溜めている頂点は含まない — **積んで戻せるのは「これから描くものに
+    /// 効く設定」だけ**であり、既に置いた図形や面そのものは戻らない。
+    private struct Style {
+        var fill: LinearRGBA
+        var stroke: LinearRGBA
+        var strokeWeight: Float
+        var strokeCap: StrokeCap
+        var strokeJoin: StrokeJoin
+        var hasFill: Bool
+        var hasStroke: Bool
+        var rectMode: ShapeMode
+        var ellipseMode: ShapeMode
+    }
+
+    private var currentStyle: Style {
+        get {
+            Style(
+                fill: currentFill, stroke: currentStroke, strokeWeight: currentStrokeWeight,
+                strokeCap: currentStrokeCap, strokeJoin: currentStrokeJoin,
+                hasFill: hasFill, hasStroke: hasStroke,
+                rectMode: currentRectMode, ellipseMode: currentEllipseMode)
+        }
+        set {
+            currentFill = newValue.fill
+            currentStroke = newValue.stroke
+            currentStrokeWeight = newValue.strokeWeight
+            currentStrokeCap = newValue.strokeCap
+            currentStrokeJoin = newValue.strokeJoin
+            hasFill = newValue.hasFill
+            hasStroke = newValue.hasStroke
+            currentRectMode = newValue.rectMode
+            currentEllipseMode = newValue.ellipseMode
+        }
+    }
 
     /// 描画先を指定して作る。
     public init(target: RenderTarget, gpu: RenderDevice) throws(RenderFailure) {
@@ -142,14 +180,57 @@ public final class Canvas {
     /// 伸ばす・縮める。
     public func scale(_ x: Float, _ y: Float) { transform.scale(x: x, y: y) }
 
+    /// 横方向へ斜めに歪める。
+    public func shearX(_ radians: Float) { transform.shearX(by: radians) }
+
+    /// 縦方向へ斜めに歪める。
+    public func shearY(_ radians: Float) { transform.shearY(by: radians) }
+
+    /// 与えた変換を、いまの変換の後に重ねる。
+    public func applyMatrix(_ other: Transform2D) { transform.concatenate(other) }
+
+    /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
+    ///
+    /// 積んである変換 (``pushMatrix()``) は捨てない — 戻す先は残る。
+    public func resetMatrix() { transform.reset() }
+
     /// いまの変換を積んでおく。
-    public func push() { transformStack.append(transform) }
+    public func pushMatrix() { transformStack.append(transform) }
 
     /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
-    public func pop() {
+    public func popMatrix() {
         guard let restored = transformStack.popLast() else { return }
         transform = restored
     }
+
+    /// いまのスタイルを積んでおく。
+    public func pushStyle() { styleStack.append(currentStyle) }
+
+    /// 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
+    public func popStyle() {
+        guard let restored = styleStack.popLast() else { return }
+        currentStyle = restored
+    }
+
+    /// 変換とスタイルの両方を積んでおく。
+    public func push() {
+        pushMatrix()
+        pushStyle()
+    }
+
+    /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
+    public func pop() {
+        popMatrix()
+        popStyle()
+    }
+
+    // MARK: - 座標
+
+    /// 点が、いまの変換でどこへ移るか (横)。
+    public func screenX(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).x }
+
+    /// 点が、いまの変換でどこへ移るか (縦)。
+    public func screenY(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).y }
 
     // MARK: - 図形
 

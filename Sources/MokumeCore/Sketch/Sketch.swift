@@ -218,8 +218,50 @@ extension Sketch {
     public func rotate(_ radians: Float) { canvas.rotate(radians) }
     /// 伸ばす・縮める。
     public func scale(_ x: Float, _ y: Float) { canvas.scale(x, y) }
+
+    /// 横方向へ斜めに歪める。
+    public func shearX(_ radians: Float) { canvas.shearX(radians) }
+
+    /// 縦方向へ斜めに歪める。
+    public func shearY(_ radians: Float) { canvas.shearY(radians) }
+
+    /// 与えた変換を、いまの変換の後に重ねる。
+    public func applyMatrix(_ matrix: Transform2D) { canvas.applyMatrix(matrix) }
+
+    /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
+    ///
+    /// 積んである変換 (``pushMatrix()``) は捨てないので、戻す先は残る。
+    public func resetMatrix() { canvas.resetMatrix() }
+
     /// いまの変換を積んでおく。
+    public func pushMatrix() { canvas.pushMatrix() }
+
+    /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
+    public func popMatrix() { canvas.popMatrix() }
+
+    /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
+    public func pushStyle() { canvas.pushStyle() }
+
+    /// 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
+    public func popStyle() { canvas.popStyle() }
+
+    /// 変換とスタイルの**両方**を積んでおく。
+    ///
+    /// 片方だけを積みたいときは ``pushMatrix()`` / ``pushStyle()`` を使う。
     public func push() { canvas.push() }
-    /// 積んでおいた変換へ戻す。
+
+    /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
     public func pop() { canvas.pop() }
+
+    /// 点が、いまの変換でどこへ移るか (横)。
+    ///
+    /// ```swift
+    /// translate(100, 50)
+    /// rotate(.pi / 4)
+    /// let x = screenX(0, 0)   // 変換を積んだ後の原点が、面のどこにあるか
+    /// ```
+    public func screenX(_ x: Float, _ y: Float) -> Float { canvas.screenX(x, y) }
+
+    /// 点が、いまの変換でどこへ移るか (縦)。
+    public func screenY(_ x: Float, _ y: Float) -> Float { canvas.screenY(x, y) }
 }
