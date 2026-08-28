@@ -37,8 +37,6 @@
 # 配線は .claude/settings.json、テストは scripts/tests/pr_identity_guard_test.py。
 set -uo pipefail
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
-
 deny() { # $1=理由
   jq -n --arg r "$1" \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
@@ -110,15 +108,9 @@ is_gh_subcommand "$command" 'pr[[:space:]]+create' || exit 0
 # 使い方を尋ねているだけなら作成ではない
 printf '%s' "$command" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)' && exit 0
 
-# 他のリポジトリ宛ての PR はこのリポジトリの規約の外。-R / --repo が付いていて、
-# それがこのリポジトリでないなら口を出さない
-target=$(printf '%s' "$command" |
-  grep -oE '(^|[[:space:]])(-R|--repo)([[:space:]]|=)[^[:space:];&|]+' |
-  tail -1 | grep -oE '[^[:space:]=]+$') || target=""
-if [ -n "$target" ] && [ "$target" != "$REPO" ]; then
-  # owner を省いた指定 (--repo mokume) は自リポ扱いにはしない — 曖昧なので止める側に倒す
-  case "$target" in */*) exit 0 ;; esac
-fi
+# 他のリポジトリ宛ての PR はこのリポジトリの規約の外。判定は guard-lib.sh が持つ
+# (agent-comment-guard.sh と共有する。#188)
+targets_other_repo "$command" && exit 0
 
 # 同じ行で installation token を発行しているなら、それが常道の形 — ただし **発行の失敗が
 # 後段へ伝わる形** に限る (冒頭の解説と #122)。

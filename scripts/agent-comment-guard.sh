@@ -14,6 +14,7 @@
 #   - gh issue comment / gh pr comment          → 差し戻す
 #   - gh pr review で本文オプションが付くもの    → 差し戻す (--approve だけなら発言が無い)
 #   - gh {issue,pr} {close,reopen} の --comment → 差し戻す (閉じ / 開き ながら発言する)
+#   - 他のリポジトリ宛て (-R other/repo)        → 素通し (このリポジトリの規約の外)
 #   - それ以外 (view/list、gh api、--help)      → 素通し
 #
 # **サブコマンドを絞ってからオプションを見る。** 「-c が付いていたら発言」と短絡すると
@@ -68,6 +69,11 @@ is_comment_command || exit 0
 
 # 使い方を尋ねているだけなら投稿ではない
 printf '%s' "$command" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)' && exit 0
+
+# 他のリポジトリ宛てのコメントはこのリポジトリの規約の外 (#188)。あちらの署名の作法は
+# 別に決まっており、ラッパーの投稿先は mokume 固定なので、ここで止めると逃げ道が無くなる。
+# 判定は guard-lib.sh が持つ (pr-identity-guard.sh と共有する)
+targets_other_repo "$command" && exit 0
 
 deny "$(cat <<'EOF'
 Issue / PR へのコメントは scripts/comment.sh から投稿してください。
