@@ -98,18 +98,27 @@ jobs:
             *)  exit "$code" ;;
           esac
 
-  # 承認の状態を human-approval check run として報告する (#111 / #256)。
+  # 承認の状態を human-approval として報告する (#111 / #256 / #259 / #282)。
   #
   # なぜ Actions のジョブそのものでは足りないか — ジョブの結論は終了コード由来
-  # (success / failure / cancelled / skipped) に限られ、GitHub が「人の操作待ち」に
-  # 用意している action_required を出せない。必須チェックの通過扱いは success /
-  # skipped / neutral なので、待ちを neutral や skipped で表すとゲートごと消える。
-  # 残るのは action_required だけで、これは Checks API からしか作れない。
+  # (success / failure / cancelled / skipped) に限られ、「人の操作待ち」を表せない。
+  # 必須チェックの通過扱いは success / skipped / neutral なので、待ちを neutral や
+  # skipped で表すとゲートごと消える。
   #
-  # ジョブ名を check run 名と別にしてあるのは、同名だと Actions が作る check run と
-  # 二重になるためである。同じ SHA に同名の check run が二つあると、古いほうが判定を
-  # 固定する (#259 で実測) — #256 そのものを自分で作り込むことになる。
-  # 同じ理由で、報告は**既存を探して PATCH で上書きする**。作り足さない。
+  # ## check run ではなく commit status で報告する
+  #
+  # check run で表そうとすると、**作り足しても上書きしても詰む**ことが分かった (#282)。
+  #
+  # - 作り足す: 同じ SHA に同名の check run が 2 つ並び、古いほうが判定を固定する (#259)
+  # - 上書きする: check run は**最初に作った run の check suite に居続ける**。承認は
+  #   必ず後の run で届くので、最新の suite にはこの名前が現れない。マージボックスは
+  #   `Expected — Waiting for status to be reported` のまま止まり、**何度承認しても
+  #   解けない** (#279 で実測。API 側は success と言うのに画面は待ち続ける)
+  #
+  # commit status には suite が無く、**同じ context の最新が常に勝つ**。だから上書きが
+  # そのまま「最新の判定」になり、食い違いが起きない。`action_required` は使えないが、
+  # 待ちは `pending` で表せる — これは失敗ではないので #263 の要求 (承認待ちを故障として
+  # 数えない) はそのまま満たせる。むしろ「保留中」という言葉のほうが実態に合う。
   #
   # merge_group では PR 文脈が無いので無条件に success を報告する。承認は PR 段階で
   # 必須チェックとして既に効いており、queue へ入れた時点で満たされている
@@ -120,7 +129,7 @@ jobs:
     needs: [review-gate]
     runs-on: ubuntu-latest
     permissions:
-      checks: write
+      statuses: write
     steps:
       - name: human-approval を報告
         env:
@@ -130,28 +139,17 @@ jobs:
           PENDING: ${{ needs.review-gate.outputs.pending }}
         run: |
           if [ "$PENDING" = "true" ]; then
-            conclusion=action_required
-            title="メンテナの承認待ち"
-            summary="verify: human の Issue に紐づく PR です。メンテナが Approve すると解けます。故障ではありません。"
+            state=pending
+            description="メンテナの承認待ち (故障ではありません)"
           else
-            conclusion=success
-            title="承認は要らない、または承認済み"
-            summary="verify: human の承認待ちではありません。"
+            state=success
+            description="承認は要らない、または承認済み"
           fi
-          id=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=human-approval" \
-                 --jq '.check_runs[0].id // empty')
-          if [ -n "$id" ]; then
-            gh api -X PATCH "repos/$REPO/check-runs/$id" \
-              -f status=completed -f conclusion="$conclusion" \
-              -f "output[title]=$title" -f "output[summary]=$summary" --silent
-            echo "更新: check run $id → $conclusion"
-          else
-            gh api -X POST "repos/$REPO/check-runs" \
-              -f name=human-approval -f head_sha="$SHA" \
-              -f status=completed -f conclusion="$conclusion" \
-              -f "output[title]=$title" -f "output[summary]=$summary" --silent
-            echo "作成: human-approval → $conclusion"
-          fi
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f state="$state" -f context=human-approval \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID" --silent
+          echo "報告: human-approval → $state"
 
   # ブランチ保護が要求する必須チェックのうち、**CI の健全性**を表す 1 つ。
   # ジョブが増えても required checks の登録名はこの 1 つを保つ。
