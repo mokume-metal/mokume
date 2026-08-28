@@ -29,9 +29,16 @@
 # 取りこぼしとして許容するもの: sudo gh … / env X=1 gh … は先頭語が gh でないので
 # 検出しない。このリポジトリで使う形ではない。
 #
+# 「宛先はこのリポジトリか」の判定も同じ理由でここに置く (#188)。両 guard が守るのは
+# このリポジトリの規約であって、他リポジトリ宛ての操作は射程の外にある。
+# pr-identity-guard.sh だけがこれを判定していたため、agent-comment-guard.sh は
+# -R other/repo を付けたコメントまで差し戻していた — しかもラッパー (scripts/comment.sh)
+# の投稿先は mokume 固定なので、**逃げ道がどこにも無い**状態だった。
+#
 # 使い方 (source する側):
 #   . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh"
 #   is_gh_subcommand "$command" 'pr[[:space:]]+create' && …
+#   targets_other_repo "$command" && exit 0
 #
 # テストは scripts/tests/guard_lib_test.py。
 
@@ -101,4 +108,33 @@ is_gh_subcommand() { # $1=コマンド $2=サブコマンド正規表現
     strip_heredoc_bodies |
     split_into_fragments |
     grep -qE "^gh([[:space:]]+[^[:space:]]+)*[[:space:]]+$2([[:space:]]|$)"
+}
+
+# このコマンドの宛先は、このリポジトリの**外**か。
+#   $1 = コマンド文字列
+#
+# 基準は GITHUB_REPOSITORY (既定 mokume-metal/mokume)。
+#
+# -R / --repo が付いていて、それが owner/repo 形式かつ基準と違うときだけ真。
+# したがって次はすべて偽 = 「このリポジトリ宛て」として guard の判定が続く:
+#
+#   -R が無い            … 既定の宛先はカレントのリポジトリ
+#   -R mokume-metal/mokume … 明示された自リポ
+#   --repo mokume        … owner を省いた指定。自リポか判定できないので、
+#                           曖昧なものは止める側に倒す
+#
+# **ヒアドキュメント本文は先に落とす。** そこに現れる --repo x/y は投稿する文章であって
+# 宛先ではない。落とさないと、本文にそう書くだけで guard を素通りできてしまう
+# (is_gh_subcommand が地の文を拾わないために本文を落としているのと同じ理由)。
+targets_other_repo() { # $1=コマンド
+  local this_repo target
+  this_repo="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+  # -R は複数書ける。gh は後勝ちなので tail -1 で最後の指定を採る
+  target=$(printf '%s' "$1" |
+    strip_heredoc_bodies |
+    grep -oE '(^|[[:space:]])(-R|--repo)([[:space:]]|=)[^[:space:];&|]+' |
+    tail -1 | grep -oE '[^[:space:]=]+$') || target=""
+  [ -n "$target" ] || return 1
+  case "$target" in */*) ;; *) return 1 ;; esac
+  [ "$target" != "$this_repo" ]
 }
