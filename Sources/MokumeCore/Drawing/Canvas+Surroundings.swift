@@ -19,9 +19,7 @@ extension Canvas {
     public func background(_ surroundings: Surroundings) {
         guard surroundings.isUsable else { return warnBadSurroundings() }
         // 塗り 1 色の背景と同じく、溜めていたものを捨ててから置き直す
-        vertices.removeAll(keepingCapacity: true)
-        solidVertices.removeAll(keepingCapacity: true)
-        batches.removeAll(keepingCapacity: true)
+        discardPending()
         drawBackdrop(surroundings)
     }
 

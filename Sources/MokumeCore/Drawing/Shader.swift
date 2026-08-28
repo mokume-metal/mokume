@@ -17,6 +17,12 @@ public final class Shader {
     /// いま描くのに使うパイプライン。差し替えに失敗しても**前のものが残る**。
     private(set) var state: any MTLRenderPipelineState
 
+    /// 立体を塗るときのパイプライン。
+    ///
+    /// **断片は 1 つで、頂点の落とし方だけが違う。** 平面と立体で断片を別々に
+    /// 組み立てると、同じ断片なのに片方だけ差し替わる状態が作れてしまう。
+    private(set) var solidState: any MTLRenderPipelineState
+
     /// 直近の差し替えが失敗していれば、その理由。
     public private(set) var failure: String?
 
@@ -44,6 +50,9 @@ public final class Shader {
 
         let library = try gpu.makeShapeLibrary(named: name, body: body, values: values)
         self.state = try pipeline.makeState(fragmentLibrary: library, label: "mokume.shader.\(name)")
+        self.solidState = try pipeline.makeState(
+            fragmentLibrary: library, label: "mokume.shader.\(name).solid",
+            vertexFunctionName: ShapePipeline.solidVertexFunctionName)
         self.compiledBody = body
 
         if let url {
@@ -94,8 +103,15 @@ public final class Shader {
         guard body != compiledBody else { return }
         do {
             let library = try gpu.makeShapeLibrary(named: name, body: body, values: values)
-            state = try pipeline.makeState(
+            // **両方が組み上がってから差し替える。** 片方だけ差し替わると、平面と
+            // 立体で違う断片が効いている状態になる
+            let flat = try pipeline.makeState(
                 fragmentLibrary: library, label: "mokume.shader.\(name)")
+            let solid = try pipeline.makeState(
+                fragmentLibrary: library, label: "mokume.shader.\(name).solid",
+                vertexFunctionName: ShapePipeline.solidVertexFunctionName)
+            state = flat
+            solidState = solid
             compiledBody = body
             failure = nil
             generation += 1
