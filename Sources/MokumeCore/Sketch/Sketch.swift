@@ -204,9 +204,38 @@ extension Sketch {
     /// 1 つずつ描く作りではないので、「保持にしたのに速くならない」が起きない。
     public func createShape(_ body: () -> Void) -> Shape { canvas.createShape(body) }
 
+    /// 保持した形を、**置き場所ぶんだけまとめて置く**。
+    ///
+    /// 同じ形をたくさん置くときは、これがいちばん速い。形の頂点は 1 度しか置かれず、
+    /// 置き場所の数だけ描き足される — 1 万個置いても**描く回数は 1 回**になる。
+    ///
+    /// ```swift
+    /// let grain = createShape { box(6) }
+    /// var places: [Placement] = []
+    /// for _ in 0..<5000 {
+    ///     places.append(
+    ///         Placement(
+    ///             x: .random(in: 0...width), y: .random(in: 0...height),
+    ///             rotation: SIMD3(0, .random(in: 0...(2 * .pi)), 0)))
+    /// }
+    /// shape(grain, at: places)
+    /// ```
+    ///
+    /// **1 つずつ置いたときと同じ絵になる。** `push()` / `translate()` / `pop()` の
+    /// 繰り返しで書いても、まとめて渡しても、経路は 1 本しかない。
+    ///
+    /// ``Placement/fill`` を渡すと、その置き場所の色に**掛かる** (渡さなければ何も
+    /// 掛からない)。
+    public func shape(_ shape: Shape, at placements: [Placement]) {
+        canvas.shape(shape, at: placements)
+    }
+
     /// 保持した形を置く。
     ///
     /// 色は形が持っているものが使われ、置く場所といまの変換が効く。
+    ///
+    /// **たくさん置くときは shape(_:at:) を使う。** こちらは 1 回ごとに頂点を
+    /// 置き直すので、置く数だけ描く回数が増える。
     public func shape(_ shape: Shape, _ x: Float = 0, _ y: Float = 0) {
         canvas.shape(shape, x, y)
     }

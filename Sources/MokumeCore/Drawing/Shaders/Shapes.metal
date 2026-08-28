@@ -41,10 +41,20 @@ float4 paint(Fragment in, Values values) {
 // 2 本に分けない — 分ければ、片方にだけ効く性質がいずれ生まれる。
 
 struct SolidVertex {
+    /// **形自身の座標。** 世界へ移すのは置き場所の仕事である。
     float3 position;
     /// xyz が面の向き、w が 1 なら**形から求めた向き** (Swift 側の `SolidVertex` を参照)。
     float4 normal;
     float2 uv;
+    float4 color;
+};
+
+/// 同じ形を置く 1 か所ぶん。並びは Swift 側の `SolidInstance` と一致する。
+struct SolidInstance {
+    float4x4 matrix;
+    float4 normal0;
+    float4 normal1;
+    float4 normal2;
     float4 color;
 };
 
@@ -59,16 +69,30 @@ fragment float4 mokume_shadowFragment(ShapeFragmentIn in [[stage_in]]) {
 
 vertex ShapeFragmentIn solidVertexMain(
     uint index [[vertex_id]],
+    uint instance [[instance_id]],
     constant SolidVertex *vertices [[buffer(0)]],
-    constant float4x4 &viewProjection [[buffer(1)]])
+    constant float4x4 &viewProjection [[buffer(1)]],
+    constant SolidInstance *instances [[buffer(10)]])
 {
+    SolidVertex vertex_in = vertices[index];
+    SolidInstance placement = instances[instance];
+
+    // **形自身の座標を、置き場所の変換で世界へ移す。** 何も動かさない置き場所
+    // (単位行列) を通しても値は 1 ビットも変わらないので、その場で並べた頂点も
+    // 同じ経路を通せる
+    float4 world = placement.matrix * float4(vertex_in.position, 1.0);
+    float3x3 normalMatrix = float3x3(
+        placement.normal0.xyz, placement.normal1.xyz, placement.normal2.xyz);
+
     ShapeFragmentIn out;
-    out.position = viewProjection * float4(vertices[index].position, 1.0);
-    out.uv = vertices[index].uv;
-    out.color = vertices[index].color;
-    // 光は世界の座標で当たるので、変換を掛けたあとの位置と向きを渡す
-    out.worldPosition = vertices[index].position;
-    out.normal = vertices[index].normal.xyz;
-    out.isDerivedNormal = vertices[index].normal.w;
+    out.position = viewProjection * world;
+    out.uv = vertex_in.uv;
+    // 置き場所の色は**頂点の色に掛かる**。組み込みの形は頂点が白、頂点ごとに色を
+    // 変えた形は置き場所が白なので、どちらもこの 1 本で通る
+    out.color = vertex_in.color * placement.color;
+    // 光は世界の座標で当たるので、移したあとの位置と向きを渡す
+    out.worldPosition = world.xyz;
+    out.normal = normalMatrix * vertex_in.normal.xyz;
+    out.isDerivedNormal = vertex_in.normal.w;
     return out;
 }
