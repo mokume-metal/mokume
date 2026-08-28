@@ -70,6 +70,80 @@ struct CircleSegmentTests {
         #expect(Canvas.segmentCount(forRadius: 10) <= Canvas.segmentCount(forRadius: 200))
     }
 
+    // MARK: - 打ち消しと合成 (#235)
+
+    @Test("打ち消す変換を通すと元の点へ戻る")
+    func invertingATransformReturnsThePoint() throws {
+        var transform = Transform2D.identity
+        transform.translate(x: 37, y: -12)
+        transform.rotate(by: .pi / 3)
+        transform.scale(x: 2.5, y: 0.4)
+        transform.shearX(by: .pi / 6)
+
+        let inverse = try #require(transform.inverted)
+        for point in [SIMD2<Float>(0, 0), SIMD2(100, 40), SIMD2(-25, 90)] {
+            let moved = transform.apply(x: point.x, y: point.y)
+            let back = inverse.apply(x: moved.x, y: moved.y)
+            #expect(abs(back.x - point.x) < 0.01, "x が戻らない: \(back.x) != \(point.x)")
+            #expect(abs(back.y - point.y) < 0.01, "y が戻らない: \(back.y) != \(point.y)")
+        }
+    }
+
+    @Test("軸を潰した変換には打ち消しが無い")
+    func aCollapsedTransformHasNoInverse() {
+        var transform = Transform2D.identity
+        transform.scale(x: 4, y: 0)  // 縦が潰れる
+        #expect(transform.inverted == nil)
+    }
+
+    @Test("合成の順序が結果を変える")
+    func theOrderOfCompositionMatters() {
+        var moveThenTurn = Transform2D.identity
+        moveThenTurn.translate(x: 50, y: 0)
+        moveThenTurn.rotate(by: .pi / 2)
+
+        var turnThenMove = Transform2D.identity
+        turnThenMove.rotate(by: .pi / 2)
+        turnThenMove.translate(x: 50, y: 0)
+
+        // 移してから回すと、移した先が原点になる
+        let a = moveThenTurn.apply(x: 10, y: 0)
+        #expect(abs(a.x - 50) < 0.01)
+        #expect(abs(a.y - 10) < 0.01)
+
+        // 回してから移すと、回った向きへ移る
+        let b = turnThenMove.apply(x: 10, y: 0)
+        #expect(abs(b.x - 0) < 0.01)
+        #expect(abs(b.y - 60) < 0.01)
+    }
+
+    @Test("重ねた変換は、順に掛けたものと一致する")
+    func concatenationMatchesAppliedSteps() {
+        var stepByStep = Transform2D.identity
+        stepByStep.translate(x: 20, y: 30)
+        stepByStep.scale(x: 2, y: 2)
+
+        var second = Transform2D.identity
+        second.scale(x: 2, y: 2)
+        var combined = Transform2D.identity
+        combined.translate(x: 20, y: 30)
+        combined.concatenate(second)
+
+        let a = stepByStep.apply(x: 7, y: 9)
+        let b = combined.apply(x: 7, y: 9)
+        #expect(abs(a.x - b.x) < 0.001)
+        #expect(abs(a.y - b.y) < 0.001)
+    }
+
+    @Test("何も変換しない状態へ戻せる")
+    func resetReturnsToIdentity() {
+        var transform = Transform2D.identity
+        transform.translate(x: 100, y: 100)
+        transform.rotate(by: 1.2)
+        transform.reset()
+        #expect(transform == .identity)
+    }
+
     @Test("上下で頭打ちにする")
     func segmentCountIsBounded() {
         #expect(Canvas.segmentCount(forRadius: 0.5) == 32)

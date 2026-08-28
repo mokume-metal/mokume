@@ -47,7 +47,45 @@ public struct Transform2D: Equatable, Sendable {
         matrix = matrix * Self.scaling(x: x, y: y)
     }
 
+    /// 斜めに歪める (横方向) を後から重ねる。
+    public mutating func shearX(by radians: Float) {
+        matrix = matrix * Self.shearing(x: tan(radians), y: 0)
+    }
+
+    /// 斜めに歪める (縦方向) を後から重ねる。
+    public mutating func shearY(by radians: Float) {
+        matrix = matrix * Self.shearing(x: 0, y: tan(radians))
+    }
+
+    /// 与えた変換を後から重ねる。
+    public mutating func concatenate(_ other: Transform2D) {
+        matrix = matrix * other.matrix
+    }
+
+    /// 何も変換しない状態へ戻す。
+    public mutating func reset() {
+        matrix = matrix_identity_float3x3
+    }
+
+    /// この変換を打ち消す変換。
+    ///
+    /// 潰れた変換 (どこかの軸を 0 倍にしたもの) には打ち消しが無いので `nil` を返す。
+    /// 公開していないのは、いま必要としているのが検査だけだからである — 窓から届く
+    /// 座標を図形の座標へ移す用途が出たら、その形に合わせて公開を考える。
+    var inverted: Transform2D? {
+        let determinant = matrix.determinant
+        guard determinant.isFinite, abs(determinant) > .ulpOfOne else { return nil }
+        return Transform2D(matrix: matrix.inverse)
+    }
+
     // MARK: - 部品
+
+    static func shearing(x: Float, y: Float) -> simd_float3x3 {
+        simd_float3x3(
+            SIMD3<Float>(1, y, 0),
+            SIMD3<Float>(x, 1, 0),
+            SIMD3<Float>(0, 0, 1))
+    }
 
     static func translation(x: Float, y: Float) -> simd_float3x3 {
         simd_float3x3(
