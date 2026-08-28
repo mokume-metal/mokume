@@ -17,15 +17,23 @@
 
 材料はコンパイラが出すシンボルグラフで、ソースの見た目ではない。公開されているかの
 判定を自前の構文解析に持たせると、ソースの書き方が変わるたびに判定が狂う。
+
+**唯一の例外がコメントの本文である。** シンボルグラフの `docComment` に載るのは `///`
+だけで、`//` は載らない。載らないものを「説明文が無い」と読むと、`/` を 1 本削るだけで
+説明文の検査から消えられる (#315 で実際にそうなっていた)。だから宣言の直前に書かれた
+文字はソースから読む — ただし**どこが公開宣言か**も**どこにあるか**もグラフの側から取り、
+ソースから読むのは `location` が指した行の直前だけに留める。
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import pathlib
 import re
 import sys
+import urllib.parse
 
 # 利用者が最初に触る層。ここだけ手本 (Processing / p5) の綴りが正になる (ADR-0020 決定 1)
 ENTRY_TYPE = "Sketch"
@@ -65,10 +73,12 @@ def load_symbols(graphs: pathlib.Path, module: str) -> list[dict]:
         for symbol in document.get("symbols", []):
             if symbol.get("accessLevel") == "public":
                 symbols.append(symbol)
-    # プロトコルの要件と既定の実装は同じ名前で 2 度出る。一覧では 1 つに畳む
-    unique: dict[tuple[str, str], dict] = {}
+    # プロトコルの要件と既定の実装は同じ名前で 2 度出る。一覧では 1 つに畳む。
+    # **引数の型まで見て畳む** — 名前だけで畳むと、同名で引数型の違う宣言が 1 本に
+    # 潰れる。潰れたぶんは一覧から落ち、説明文の検査からも隠れる (#315)
+    unique: dict[tuple[str, str, tuple[str, ...]], dict] = {}
     for symbol in symbols:
-        unique.setdefault((owner(symbol), title(symbol)), symbol)
+        unique.setdefault((owner(symbol), title(symbol), signature(symbol)), symbol)
     return list(unique.values())
 
 
@@ -92,9 +102,58 @@ def declaration(symbol: dict) -> str:
     return "".join(fragment["spelling"] for fragment in symbol.get("declarationFragments", []))
 
 
+def signature(symbol: dict) -> tuple[str, ...]:
+    """引数の型の並び。同名の宣言を見分ける鍵になる (`background(_:)` は 2 本ある)。"""
+    parameters = (symbol.get("functionSignature") or {}).get("parameters", [])
+    types: list[str] = []
+    for parameter in parameters:
+        spelling = "".join(
+            fragment.get("spelling", "") for fragment in parameter.get("declarationFragments", []))
+        types.append(spelling.split(":", 1)[-1].strip())
+    return tuple(types)
+
+
 def doc(symbol: dict) -> str:
-    lines = symbol.get("docComment", {}).get("lines", [])
-    return "\n".join(line.get("text", "") for line in lines).strip()
+    """宣言に付いた説明文。`///` は `docComment` に載り、`//` はソースから読む。
+
+    2 つを 1 つの入口にまとめてあるのは、**書き方の違いで検査の視界が変わらない**ように
+    するためである。`//` へ落として検査から消えるなら、それは規範ではなく抜け道になる。
+    """
+    lines = (symbol.get("docComment") or {}).get("lines", [])
+    written = "\n".join(line.get("text", "") for line in lines).strip()
+    return written or slash_doc(symbol)
+
+
+@functools.lru_cache(maxsize=None)
+def source_lines(path: str) -> tuple[str, ...]:
+    return tuple(pathlib.Path(path).read_text(encoding="utf-8").split("\n"))
+
+
+def slash_doc(symbol: dict) -> str:
+    """宣言の直前に積まれた `//` の塊。`///` が付いていれば空を返す (そちらが正)。"""
+    location = symbol.get("location")
+    if not location:
+        return ""
+    path = urllib.parse.unquote(urllib.parse.urlparse(location["uri"]).path)
+    try:
+        lines = source_lines(path)
+    except OSError:
+        return ""
+    index = location.get("position", {}).get("line", 0) - 1
+    block: list[str] = []
+    while 0 <= index < len(lines):
+        text = lines[index].strip()
+        if text.startswith("@"):  # 属性は宣言の一部。またいで上を見る
+            index -= 1
+            continue
+        if text.startswith("///"):
+            return ""
+        if text.startswith("//"):
+            block.append(text[2:].strip())
+            index -= 1
+            continue
+        break
+    return "\n".join(reversed(block)).strip()
 
 
 def owner(symbol: dict) -> str:
@@ -217,15 +276,19 @@ def check_doc_canon(symbols: list[dict]) -> list[str]:
 
     同じ説明を 2 か所に置けば必ず食い違い、その食い違いは**生成した一覧を通して
     エージェントの書くコードに届く**。
+
+    突き合わせは名前だけでなく引数の型まで見る。名前だけで組にすると、同名の宣言が
+    複数あるとき (`background(_:)`) どれと比べたかが行き当たりばったりになる (#315)。
     """
-    entry = {title(s): s for s in symbols if owner(s) == ENTRY_TYPE}
-    lower = {title(s): s for s in symbols if owner(s) == LOWER_TYPE}
+    entry = {(title(s), signature(s)): s for s in symbols if owner(s) == ENTRY_TYPE}
+    lower = {(title(s), signature(s)): s for s in symbols if owner(s) == LOWER_TYPE}
 
     problems = []
-    for name, symbol in sorted(entry.items()):
-        twin = lower.get(name)
+    for key, symbol in sorted(entry.items()):
+        twin = lower.get(key)
         if twin is None:
             continue
+        name = key[0]
         upper_doc, lower_doc = doc(symbol), doc(twin)
         if not lower_doc:
             continue
