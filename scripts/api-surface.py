@@ -72,6 +72,22 @@ def load_symbols(graphs: pathlib.Path, module: str) -> list[dict]:
     return list(unique.values())
 
 
+def load_owned_identifiers(graphs: pathlib.Path) -> set[str]:
+    """このパッケージが定義するシンボルの識別子。閉包の検査の「自前」の定義になる。
+
+    モジュール名をマングリングから読み取らずグラフの中身を数えるのは、判定を
+    コンパイラの出力そのものに預けるため (このスクリプト全体の作法)。読む対象は
+    一覧に載るモジュールだけではない — 別のモジュールの型が公開の署名に漏れたら、
+    それは一覧に載りようがない型なので、同じく問題として上げたい。
+    """
+    identifiers: set[str] = set()
+    for path in sorted(graphs.glob("*.symbols.json")):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        for symbol in document.get("symbols", []):
+            identifiers.add(symbol["identifier"]["precise"])
+    return identifiers
+
+
 def declaration(symbol: dict) -> str:
     return "".join(fragment["spelling"] for fragment in symbol.get("declarationFragments", []))
 
@@ -226,6 +242,36 @@ def check_doc_canon(symbols: list[dict]) -> list[str]:
     return problems
 
 
+def check_type_closure(symbols: list[dict], owned: set[str]) -> list[str]:
+    """一覧に載る宣言の署名に出てくる型は、その一覧の中に居なければならない (#326)。
+
+    落ちていると、一覧だけを読む相手は引数を組み立てられず「一覧はあるのに書けない」
+    になる。同型の実装で実際に踏んだ穴で、#219 のコメントに記録がある。
+
+    載っているべきなのは**このパッケージが定義する型**だけ。stdlib や Foundation の
+    型はこの一覧の外に正典があるので対象外で、その線引きを `owned` が引く — 許可
+    リストを手で持たない (持てば、外の型が増えるたびに書き足す仕事が生まれる)。
+    """
+    listed = {symbol["identifier"]["precise"] for symbol in symbols}
+
+    problems = []
+    for symbol in symbols:
+        seen: set[str] = set()
+        for fragment in symbol.get("declarationFragments", []):
+            identifier = fragment.get("preciseIdentifier")
+            if identifier is None or identifier in listed or identifier in seen:
+                continue
+            seen.add(identifier)
+            if identifier not in owned:
+                continue
+            problems.append(
+                f"{owner(symbol) or '(トップレベル)'}.{title(symbol)}: "
+                f"署名に出てくる {fragment.get('spelling', identifier)} が一覧に無い。"
+                "一覧だけを読む相手はこの宣言を呼べない (#326)"
+            )
+    return problems
+
+
 COUNT_PATTERN = re.compile(r"公開\s*(?:されている)?\s*(?:シンボル|API)[^\n。]{0,16}?(\d+)\s*(?:個|本)")
 
 
@@ -279,6 +325,7 @@ def main() -> int:
         check_onoff(symbols)
         + check_forwarding(symbols, load_requirements(arguments.graphs, arguments.module))
         + check_doc_canon(symbols)
+        + check_type_closure(symbols, load_owned_identifiers(arguments.graphs))
         + check_no_written_counts(root)
     )
     if problems:
