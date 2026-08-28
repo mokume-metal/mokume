@@ -148,9 +148,9 @@ struct Tools {
         // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**
         if name == Self.apiDocument { return apiReference() }
 
-        let root = SchemasLocator.directory()
+        let root = SchemasLocator.directory(workDirectory: facets.directory)
         guard let name else { return (catalog(schemas: root), false) }
-        guard let root else { return (Self.schemasMissing, true) }
+        guard let root else { return (schemasMissing(), true) }
         guard let text = SchemasLocator.contents(of: name, in: root) else {
             return ("そういう名前の文書はありません: \(name)", true)
         }
@@ -170,7 +170,7 @@ struct Tools {
         if let root {
             lines += SchemasLocator.names(in: root).map { "- \($0)" }
         } else {
-            lines.append(Self.schemasMissing)
+            lines.append(schemasMissing())
         }
         return lines.joined(separator: "\n")
     }
@@ -187,10 +187,21 @@ struct Tools {
         }
     }
 
-    static let schemasMissing = """
-        面の仕様が見つかりません。この道具は依存として解決されたライブラリの
-        Schemas/ を読みます。
-        """
+    /// 面の仕様が見つからないときの答え。**どこを見たかまで書く。**
+    func schemasMissing() -> String {
+        let searched = SchemasLocator.candidates(workDirectory: facets.directory)
+            .map { "- \($0.path)" }.joined(separator: "\n")
+        return """
+            面の仕様が見つかりません。次の場所を見ました:
+
+            \(searched)
+
+            mokume を依存として引いているなら、そのディレクトリで一度 `swift build` を
+            打つと実体が置かれ、そこから読めるようになります。窓口を別のディレクトリで
+            立てているなら、スケッチのディレクトリを渡してください
+            (`mokume-cli mcp <ディレクトリ>`)。
+            """
+    }
 
     private func pretty(_ object: [String: Any]) -> String {
         guard let data = try? JSONSerialization.data(
