@@ -169,6 +169,8 @@ enum Scene: String, CaseIterable, Sendable {
     case surroundings
     /// 床の上に落ちた影。落とす側と受ける側を分けたもの。
     case shadows
+    /// 読み込んだモデルを、そのまま置いたもの。
+    case models
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -747,6 +749,31 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.rotateY(0.6)
             canvas.box(28)
             canvas.pop()
+
+        case .models:
+            // **読み込んで、そのまま置く。** 既定同士が噛み合っていれば、これで見える
+            canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
+            canvas.lights()
+            canvas.noStroke()
+            guard let model = try? canvas.loadModel(ModelFixture.pyramid) else { return }
+
+            canvas.fill(.display(red: 0.9, green: 0.72, blue: 0.4))
+            canvas.push()
+            canvas.translate(64, 78, 0)
+            canvas.rotateY(0.6)
+            canvas.model(model)
+            canvas.pop()
+
+            // 同じモデルを小さく 3 つ。**続けて置いても描く回数は増えない**
+            canvas.fill(.display(red: 0.5, green: 0.75, blue: 0.95))
+            for index in 0..<3 {
+                canvas.push()
+                canvas.translate(28 + Float(index) * 36, 26, -20)
+                canvas.scale(0.3, 0.3, 0.3)
+                canvas.rotateY(Float(index) * 0.9)
+                canvas.model(model)
+                canvas.pop()
+            }
 
         case .customSolids:
             canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
