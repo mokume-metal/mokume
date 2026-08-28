@@ -77,7 +77,7 @@ struct ModelTests {
         #expect(parsed.skippedLines == 2)
     }
 
-    @Test("読めたが面が 1 つも無い状態が、読めなかった状態と区別できる")
+    @Test("読めたが面が 1 つも無い状態が、読めなかった状態と区別できる", .enabled(if: RenderDevice.isAvailable, "面を作るので GPU が要る"))
     func anEmptyModelIsNotAFailure() throws {
         let canvas = try makeCanvas()
         let directory = FileManager.default.temporaryDirectory
@@ -98,7 +98,7 @@ struct ModelTests {
         }
     }
 
-    @Test("対応していない形式は、そう分かる形で投げる")
+    @Test("対応していない形式は、そう分かる形で投げる", .enabled(if: RenderDevice.isAvailable, "面を作るので GPU が要る"))
     func unsupportedFormatsSayWhy() throws {
         let canvas = try makeCanvas()
         let directory = FileManager.default.temporaryDirectory
@@ -118,10 +118,19 @@ struct ModelTests {
 
     // MARK: - 整え方
 
+    /// 面を作らずに整える。**GPU の無いところでも契約を確かめられる**ようにする —
+    /// 整え方は描画とは関わりが無いので、面が要る検査にしてしまうと、いちばん確かめ
+    /// たい規則が GPU の無い実行から丸ごと落ちる。
+    private func normalized(fitting: Float?) throws -> Model {
+        Model.make(
+            name: "pyramid", parsed: try ModelFile.load(ModelFixture.pyramid),
+            fitting: fitting, identity: 1)
+    }
+
     @Test("整えると、中心が原点に来て面に合う大きさになる")
     func normalizingCentersAndFits() throws {
-        let canvas = try makeCanvas(width: 200, height: 120)
-        let model = try canvas.loadModel(ModelFixture.pyramid)
+        // 面が 200 x 120 なら、短いほうの半分 = 60
+        let model = try normalized(fitting: 60)
 
         // **頂点そのものから測る。** 報告している大きさだけを見ると、頂点が潰れて
         // いても報告の側が正しければ通ってしまう
@@ -146,8 +155,7 @@ struct ModelTests {
 
     @Test("整えないと、ファイルの座標がそのまま残る")
     func withoutNormalizingTheFileIsKept() throws {
-        let canvas = try makeCanvas()
-        let model = try canvas.loadModel(ModelFixture.pyramid, normalize: false)
+        let model = try normalized(fitting: nil)
         // 元の四角錐は幅 2・高さ 1.6・奥行き 2 で、底面が y = 0
         #expect(abs(model.size.x - 2) < 0.001)
         #expect(abs(model.size.y - 1.6) < 0.001)
@@ -158,8 +166,7 @@ struct ModelTests {
 
     @Test("整えると、縦軸がこの面の約束 (下向き) になる")
     func normalizingFlipsTheVerticalAxis() throws {
-        let canvas = try makeCanvas()
-        let model = try canvas.loadModel(ModelFixture.pyramid)
+        let model = try normalized(fitting: 60)
         // モデルの頂点 (いちばん高いところ) は、この面では**いちばん小さい y**
         let lowest = model.mesh.points.map(\.position.y).min() ?? 0
         let highest = model.mesh.points.map(\.position.y).max() ?? 0
@@ -220,7 +227,7 @@ struct ModelTests {
 
     // MARK: - 読み直さない
 
-    @Test("同じ名前・同じ整え方なら読み直さない")
+    @Test("同じ名前・同じ整え方なら読み直さない", .enabled(if: RenderDevice.isAvailable, "面を作るので GPU が要る"))
     func theSameFileIsNotReadTwice() throws {
         let canvas = try makeCanvas()
         let first = try canvas.loadModel(ModelFixture.pyramid)
