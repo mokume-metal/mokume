@@ -8,9 +8,24 @@ import Foundation
 /// **面を増やすのではなく、既にある区画の往復を包むだけ。** ここに無い能力は
 /// 区画を直に読み書きすれば同じように使えるし、逆にここが増えても面は増えない。
 struct Tools {
+    /// 公開 API の一覧を指す名前。面の仕様と同じ入口 (`reference`) に並べる。
+    static let apiDocument = "api"
+
     let facets: Facets
+    /// 公開 API の一覧の在処。
+    var apiList: APIListLocator
     /// 識別子の作り手。検査から固定できるようにする。
     var makeID: () -> String = { UUID().uuidString.prefix(8).lowercased() }
+
+    /// 既定では、一覧の在処は区画と同じ作業ディレクトリから組む。
+    init(
+        facets: Facets, apiList: APIListLocator? = nil,
+        makeID: @escaping () -> String = { UUID().uuidString.prefix(8).lowercased() }
+    ) {
+        self.facets = facets
+        self.apiList = apiList ?? APIListLocator(directory: facets.directory)
+        self.makeID = makeID
+    }
 
     /// 一覧。名前と説明と引数の形。
     static let definitions: [[String: Any]] = [
@@ -53,11 +68,14 @@ struct Tools {
         [
             "name": "reference",
             "description":
-                "この面の仕様 (要求と応答の形) を返す。引数を省くと一覧、name を渡すとその 1 つ。",
+                "窓口が配る文書を返す。引数を省くと一覧、name を渡すとその 1 つ。name に api を渡すと、いま依存している版の公開 API (どんな型と関数があり、どう呼ぶか)。ほかは面の仕様 (要求と応答の形)。",
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "name": ["type": "string", "description": "仕様の名前 (例: observe-report)。"]
+                    "name": [
+                        "type": "string",
+                        "description": "文書の名前 (例: api, observe-report)。",
+                    ]
                 ],
             ],
         ],
@@ -126,25 +144,53 @@ struct Tools {
     }
 
     private func reference(_ arguments: [String: Any]) -> (String, Bool) {
-        guard let root = SchemasLocator.directory() else {
-            return (
-                """
-                面の仕様が見つかりません。この道具は依存として解決されたライブラリの
-                Schemas/ を読みます。
-                """, true
-            )
-        }
-        guard let name = arguments["name"] as? String else {
-            let names = SchemasLocator.names(in: root)
-            return (
-                "仕様の一覧 (name に渡すと中身が返ります):\n" + names.map { "- \($0)" }
-                    .joined(separator: "\n"), false)
-        }
+        let name = arguments["name"] as? String
+        // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**
+        if name == Self.apiDocument { return apiReference() }
+
+        let root = SchemasLocator.directory()
+        guard let name else { return (catalog(schemas: root), false) }
+        guard let root else { return (Self.schemasMissing, true) }
         guard let text = SchemasLocator.contents(of: name, in: root) else {
-            return ("そういう名前の仕様はありません: \(name)", true)
+            return ("そういう名前の文書はありません: \(name)", true)
         }
         return (text, false)
     }
+
+    /// 配っているものの一覧。
+    func catalog(schemas root: URL?) -> String {
+        var lines = [
+            "窓口が配る文書 (name に渡すと中身が返ります):",
+            "",
+            "公開 API:",
+            "- \(Self.apiDocument) — いま依存している版の公開 API の一覧",
+            "",
+            "面の仕様:",
+        ]
+        if let root {
+            lines += SchemasLocator.names(in: root).map { "- \($0)" }
+        } else {
+            lines.append(Self.schemasMissing)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// 公開 API の一覧。**どこから得たかを添える。**
+    private func apiReference() -> (String, Bool) {
+        do {
+            let found = try apiList.read()
+            return ("出所: \(found.source.text)\n\n\(found.text)", false)
+        } catch let missing as APIListLocator.Missing {
+            return (missing.advice, true)
+        } catch {
+            return ("公開 API の一覧を読めませんでした: \(error)", true)
+        }
+    }
+
+    static let schemasMissing = """
+        面の仕様が見つかりません。この道具は依存として解決されたライブラリの
+        Schemas/ を読みます。
+        """
 
     private func pretty(_ object: [String: Any]) -> String {
         guard let data = try? JSONSerialization.data(

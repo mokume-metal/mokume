@@ -137,15 +137,172 @@ struct MCPServerTests {
         #expect(request["scale"] as? Double == 0.5)
     }
 
-    @Test("面の仕様を、手元にあるものから返す")
-    func servesTheSchemasItHasAtHand() throws {
-        let root = URL(fileURLWithPath: #filePath)
+    /// このリポジトリの `Schemas/`。**検査の実行ファイルからは辿れない** (道具の実行ファイルと
+    /// 深さが違う) ので、ソースの位置から引く。
+    private func schemasRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Schemas")
+    }
+
+    @Test("面の仕様を、手元にあるものから返す")
+    func servesTheSchemasItHasAtHand() throws {
+        let root = schemasRoot()
         let names = SchemasLocator.names(in: root)
         #expect(names.contains("observe-report"))
         #expect(names.contains("input-request"))
         #expect(SchemasLocator.contents(of: "observe-report", in: root)?.contains("schemaVersion") == true)
         #expect(SchemasLocator.contents(of: "そんなものは無い", in: root) == nil)
+    }
+
+    // ---------------------------------------------------------- 公開 API の一覧
+
+    /// 取ってきた回数と宛先を記録する。**検査はネットワークに触らない。**
+    final class Fetches: @unchecked Sendable {
+        var urls: [URL] = []
+        var answer: Result<Data, Error> = .success(Data("# mokume v0.2.0 の公開 API\n".utf8))
+        func fetch(_ url: URL) throws -> Data {
+            urls.append(url)
+            return try answer.get()
+        }
+    }
+
+    struct Refused: Error {}
+
+    /// 依存の pin 1 つぶん。
+    private func pin(_ identity: String, _ version: String) -> String {
+        """
+        {"identity":"\(identity)","kind":"remoteSourceControl",\
+        "location":"https://example.com/\(identity).git",\
+        "state":{"revision":"0000","version":"\(version)"}}
+        """
+    }
+
+    private func writeResolved(_ directory: URL, pins: String...) throws {
+        try Data(#"{"pins":[\#(pins.joined(separator: ","))],"version":3}"#.utf8)
+            .write(to: directory.appendingPathComponent("Package.resolved"))
+    }
+
+    private func makeTools(directory: URL, fetches: Fetches) -> Tools {
+        Tools(
+            facets: Facets(directory: directory, waitLimit: 0.2),
+            apiList: APIListLocator(directory: directory, fetch: fetches.fetch),
+            makeID: { "fixed" })
+    }
+
+    @Test("取り置きがあれば、取りに行かずにそれを返す")
+    func servesTheCachedAPIList() throws {
+        let directory = try makeDirectory()
+        let cache = directory.appendingPathComponent(".mokume/reference/mokume-api.md")
+        try FileManager.default.createDirectory(
+            at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("# 取り置かれた一覧\n".utf8).write(to: cache)
+
+        let fetches = Fetches()
+        fetches.answer = .failure(Refused())  // 取りに行ったら落ちる
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(!outcome.isError)
+        #expect(fetches.urls.isEmpty)
+        #expect(outcome.text.contains("出所: 取り置き"))
+        #expect(outcome.text.contains("# 取り置かれた一覧"))
+    }
+
+    @Test("解決された版の資産を取ってきて取り置き、次からは取りに行かない")
+    func downloadsTheAssetForTheResolvedVersionOnce() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        let fetches = Fetches()
+        let tools = makeTools(directory: directory, fetches: fetches)
+
+        let first = tools.call("reference", arguments: ["name": "api"])
+        #expect(!first.isError)
+        #expect(first.text.contains("出所: 取ってきて取り置いた"))
+        #expect(
+            fetches.urls.map(\.absoluteString) == [
+                "https://github.com/mokume-metal/mokume/releases/download/v0.2.0/mokume-api-v0.2.0.md"
+            ])
+        #expect(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(
+                    ".mokume/reference/mokume-api-v0.2.0.md"
+                ).path))
+
+        let second = tools.call("reference", arguments: ["name": "api"])
+        #expect(second.text.contains("出所: 取り置き"))
+        #expect(fetches.urls.count == 1)
+    }
+
+    @Test("依存の識別子は完全一致で選ぶ")
+    func matchesThePackageIdentityExactly() throws {
+        let directory = try makeDirectory()
+        // 前方一致で選ぶと、先に並んでいるこちらの版を取ってしまう
+        try writeResolved(directory, pins: pin("mokume-extras", "9.9.9"), pin("mokume", "0.2.0"))
+        let fetches = Fetches()
+        _ = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+        #expect(fetches.urls.first?.absoluteString.contains("v0.2.0") == true)
+
+        // 名前が似ているだけの依存しかなければ、版は引けない
+        let other = try makeDirectory()
+        try writeResolved(other, pins: pin("mokume-extras", "9.9.9"))
+        let otherFetches = Fetches()
+        let outcome = makeTools(directory: other, fetches: otherFetches)
+            .call("reference", arguments: ["name": "api"])
+        #expect(outcome.isError)
+        #expect(otherFetches.urls.isEmpty)
+    }
+
+    @Test("版が引けなければ、組み立てて置く一手を添えて答える")
+    func explainsHowToBuildTheListWhenTheVersionIsUnknown() throws {
+        let directory = try makeDirectory()  // Package.resolved が無い = パスで指している
+        let fetches = Fetches()
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError)
+        #expect(fetches.urls.isEmpty)
+        #expect(outcome.text.contains("Package.resolved"))
+        // 次の一手は、そのまま打てる形で入っている
+        #expect(
+            outcome.text.contains(
+                "make api-list OUT=\"\(directory.appendingPathComponent(".mokume/reference/mokume-api.md").path)\""
+            ))
+    }
+
+    @Test("資産を取ってこられなければ、理由と一手を添えて答える")
+    func explainsWhenTheAssetCannotBeFetched() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.1.0"))
+        let fetches = Fetches()
+        fetches.answer = .failure(APIListLocator.FetchFailure("応答が 404 でした"))
+
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+        #expect(outcome.isError)
+        #expect(outcome.text.contains("応答が 404 でした"))
+        #expect(outcome.text.contains("make api-list"))
+        // 取れなかったものを取り置かない
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(
+                    ".mokume/reference/mokume-api-v0.1.0.md"
+                ).path))
+    }
+
+    @Test("配る文書の一覧に、公開 API と面の仕様の両方が出る")
+    func listsBothTheAPIListAndTheSchemas() throws {
+        let directory = try makeDirectory()
+        let tools = makeTools(directory: directory, fetches: Fetches())
+
+        let catalog = tools.catalog(schemas: schemasRoot())
+        #expect(catalog.contains("- api"))
+        #expect(catalog.contains("- observe-report"))
+
+        // 引数なしの呼び出しでも同じものが返る (面の仕様の在処は実行のされ方で決まる)
+        let outcome = tools.call("reference", arguments: [:])
+        #expect(!outcome.isError)
+        #expect(outcome.text.contains("- api"))
     }
 }

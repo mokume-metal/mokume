@@ -30,14 +30,16 @@ MySketch.main()
 ## エージェントから使う
 
 走っているスケッチを外から観測し、入力を送れる。窓口 (MCP サーバ) を繋ぐと、
-撮る・作り直しの結果を読む・入力を送る・面の仕様を読む、が使える。
+撮る・作り直しの結果を読む・入力を送る・面の仕様と公開 API を読む、が使える。
 
 ```bash
 claude mcp add mokume -- mokume-cli mcp
 ```
 
 窓口は薄い層で、能力そのものはスケッチ側にある — `.mokume/` のファイルを直に
-読み書きしても同じことができる (形の正典は [`Schemas/`](Schemas))。
+読み書きしても同じことができる (形の正典は [`Schemas/`](Schemas))。公開 API の
+一覧だけは版ごとに [Releases](https://github.com/mokume-metal/mokume/releases) の
+資産として配られ、窓口が `.mokume/reference/` へ取り置いて返す。
 
 - 開発の見通し: [mokume Roadmap](https://github.com/orgs/mokume-metal/projects/1)
 - 貢献の入口: [CONTRIBUTING.md](CONTRIBUTING.md)
