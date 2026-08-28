@@ -273,6 +273,67 @@ struct ShadowTests {
         #expect(canvas.shadowMapsBuilt == 2, "細かさを変えても作り直していない")
     }
 
+    // MARK: - 焼き付けと画面が重ならない
+
+    @Test("焼いたフレームには、焼き上がりを待つ仕掛けが 1 つ積まれる")
+    func theShadowBakeIsFencedOffFromTheScreenPass() throws {
+        // **仕掛けが抜けても絵は普段どおり出る。** この世代のコマンド構造は encoder を
+        // またぐ依存を自動では張らないので、抜けると焼き付けと画面が重なりうるが、
+        // 重なるのは GPU が混んだときだけで、しかも稀にしか現れない ([#341] の実測で
+        // 720 回中 11 回)。**絵で守れないので数で守る** — 積む 1 行と同じ場所で
+        // 数えているので、その行を消せばここが赤くなる。
+        //
+        // ここが見るのは**仕掛けが入っていること**だけで、実行順そのものは見ていない
+        // (見る方法は下の「混ませて繰り返す」に書いた)。
+        //
+        // [#341]: https://github.com/mokume-metal/mokume/issues/341
+        let canvas = try makeCanvas()
+        for _ in 0..<3 { _ = try floorAndSphere(canvas) }
+        #expect(canvas.shadowBarriersEncoded == 3, "焼いたのに、待つ仕掛けが積まれていない")
+
+        _ = try floorAndSphere(canvas, shadows: false)
+        #expect(canvas.shadowBarriersEncoded == 3, "焼いていないフレームにまで積んでいる")
+    }
+
+    /// 焼き付けと画面が重なっていないことを、繰り返して確かめる。
+    ///
+    /// **通っても何も証明しない検査。** 重なりは GPU が混んだときにしか現れず、
+    /// しかも**現れ方が偏っている**。仕掛けを外した状態での実測は次のとおり:
+    ///
+    /// - 6 プロセス同時 × 120 回 = 720 回中 **11 回** (別の設定でも 720 回中 12 回)
+    /// - 同じ状態でも、時間を置いて走らせた 6 プロセス同時 × 400 回 = 2400 回では **0 回**
+    /// - 1 プロセスだけで 200 回 × 2 回 → **0 回**
+    ///
+    /// 仕掛けを入れると 720 回中 0 回。つまり**落ちたら本物**だが、通ったことは
+    /// 「今日は出なかった」以上を意味しない。だから既定では走らせない。
+    /// フレームの組み立てを触ったときに、次の形で走らせる:
+    ///
+    /// ```
+    /// for i in 1 2 3 4 5 6; do MOKUME_SHADOW_STRESS=120 swift test --filter 影 & done; wait
+    /// ```
+    ///
+    /// 焼き付け先をわざと細かくして (2048)、焼くのにかかる時間を伸ばしてある。
+    /// 既定の細かさでは窓が狭く、混ませても現れにくい。
+    @Test(
+        "動く形の影が遅れない (混ませて繰り返す)",
+        .enabled(if: shadowStressRounds > 0, "MOKUME_SHADOW_STRESS に回数を入れたときだけ走らせる"),
+        .timeLimit(.minutes(5)))
+    func shadowsFollowTheSameFrameUnderLoad() throws {
+        let canvas = try makeCanvas()
+        var late = 0
+        for round in 0..<shadowStressRounds {
+            let heavy: (Canvas) -> Void = { $0.shadowDetail(2048) }
+            _ = try floorAndSphere(canvas, offset: -30, extra: heavy)
+            let second = try floorAndSphere(canvas, offset: 30, extra: heavy)
+            let fresh = try floorAndSphere(try makeCanvas(), offset: 30, extra: heavy)
+            if second.bytes != fresh.bytes {
+                late += 1
+                print("影が 1 フレーム遅れた (\(round) 回目)")
+            }
+        }
+        #expect(late == 0, "\(shadowStressRounds) 回中 \(late) 回、影が 1 フレーム遅れた")
+    }
+
     @Test("影を落とすのは、置いてあるうちの最初の向きを持つ光")
     func theFirstDirectionalLightCasts() throws {
         let canvas = try makeCanvas()
@@ -286,3 +347,9 @@ struct ShadowTests {
         }
     }
 }
+
+/// 混ませて繰り返す回数。`MOKUME_SHADOW_STRESS` に入れた数だけ回す。
+///
+/// 走らせるかどうかは検査の外で決まるので、隔離の外に置く。
+nonisolated let shadowStressRounds =
+    Int(ProcessInfo.processInfo.environment["MOKUME_SHADOW_STRESS"] ?? "") ?? 0
