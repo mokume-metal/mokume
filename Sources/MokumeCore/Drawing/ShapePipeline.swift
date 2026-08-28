@@ -35,12 +35,17 @@ final class ShapePipeline {
     static let surroundingsBufferIndex = 9
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
+    /// 焼き付けた影を渡す口の番号 (シェーダ側の `texture(1)`)。
+    static let shadowTextureIndex = 1
 
     /// 組み込みの塗りで描くパイプライン。
     let state: any MTLRenderPipelineState
 
     /// 立体を組み込みの塗りで描くパイプライン。頂点の落とし方だけが違う。
     let solidState: any MTLRenderPipelineState
+
+    /// 光から見た奥行きを焼き付けるパイプライン。
+    let shadowState: any MTLRenderPipelineState
 
     /// 平面の奥行きの扱い — **常に通し、書かない**。
     ///
@@ -80,6 +85,12 @@ final class ShapePipeline {
             pixelFormat: pixelFormat, label: "mokume.solids",
             vertexFunctionName: Self.solidVertexFunctionName)
 
+        self.shadowState = try Self.makeState(
+            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+            pixelFormat: ShadowMap.pixelFormat, label: "mokume.shadow",
+            vertexFunctionName: Self.solidVertexFunctionName,
+            fragmentFunctionName: Self.shadowFragmentFunctionName)
+
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
         flat.depthCompareFunction = .always
@@ -95,7 +106,7 @@ final class ShapePipeline {
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
         tableDescriptor.maxBufferBindCount = 10
-        tableDescriptor.maxTextureBindCount = 1
+        tableDescriptor.maxTextureBindCount = 2
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
         } catch {
@@ -107,6 +118,8 @@ final class ShapePipeline {
     static let flatVertexFunctionName = "shapeVertexMain"
     /// 立体の頂点を落とす関数の名前。
     static let solidVertexFunctionName = "solidVertexMain"
+    /// 影を焼き付ける断片の名前。
+    static let shadowFragmentFunctionName = "mokume_shadowFragment"
 
     /// 利用者の断片で塗るパイプラインを組む。
     func makeState(
@@ -121,14 +134,15 @@ final class ShapePipeline {
     private static func makeState(
         compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
         fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String,
-        vertexFunctionName: String = ShapePipeline.flatVertexFunctionName
+        vertexFunctionName: String = ShapePipeline.flatVertexFunctionName,
+        fragmentFunctionName: String = "mokume_fragmentMain"
     ) throws(RenderFailure) -> any MTLRenderPipelineState {
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = vertexFunctionName
         vertexFunction.library = vertexLibrary
 
         let fragmentFunction = MTL4LibraryFunctionDescriptor()
-        fragmentFunction.name = "mokume_fragmentMain"
+        fragmentFunction.name = fragmentFunctionName
         fragmentFunction.library = fragmentLibrary
 
         let descriptor = MTL4RenderPipelineDescriptor()

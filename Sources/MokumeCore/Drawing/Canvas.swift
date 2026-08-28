@@ -129,6 +129,33 @@ public final class Canvas {
     var warnedSurroundingsOutsideFrame = false
     /// 受け取れない周囲を知らせたか。
     var warnedBadSurroundings = false
+
+    /// 影を落とすか。**フレームを越えない** ([ADR-0021] 決定 4)。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    var shadowsEnabled = false
+    /// 焼き付ける範囲の一辺。`nil` なら面から導く。
+    var shadowRangeValue: Float?
+    /// 焼き付け先の一辺の画素数。
+    var shadowDetailValue = ShadowMap.defaultDetail
+    /// 縁の破綻を抑える量。
+    ///
+    /// 斜めに当たる面ほど、焼いた 1 画素の中で奥行きが大きく変わる。**自分の影が
+    /// 自分の上に縞として出る**のを抑えるための余裕で、大きくしすぎると影が浮く。
+    var shadowBiasValue: Float = 0.0025
+    /// 焼き付け先。**同じ細かさなら作り直さない** (同 決定 4)。
+    private var shadowMap: ShadowMap?
+    /// 焼き付け先を作った回数 (作ってから通算)。
+    ///
+    /// **作り直していないかを数える値。** 毎フレーム宣言してよい形にした以上、
+    /// 宣言のたびに確保していないことは絵では分からない。
+    private(set) var shadowMapsBuilt = 0
+    /// 影の行列を置く領域。
+    private var shadowMatrixBuffer: (any MTLBuffer)?
+    /// フレームの外で影の設定を書いたことを知らせたか。
+    var warnedShadowOutsideFrame = false
+    /// 受け取れない影の値を知らせたか。
+    var warnedBadShadow = false
     /// 光の無いところで材質を書いたことを知らせたか。
     private var warnedMaterialWithoutLight = false
     /// 映す先が無いまま金属を上げたことを知らせたか。
@@ -165,6 +192,10 @@ public final class Canvas {
     var currentStrokeCap = StrokeCap.round
     var currentStrokeJoin = StrokeJoin.miter
     var hasFill = true
+    /// これから置く形が影を落とすか。
+    var castsShadow = true
+    /// これから置く形が影を受けるか。
+    var receivesShadow = true
     var hasStroke = true
     private var styleStack: [Style] = []
     var currentBlendMode = BlendMode.blend
@@ -265,6 +296,8 @@ public final class Canvas {
         var viewer: SIMD4<Float>
         /// この列に効く周囲。**閉じた時点のもの**が入る (光と同じ理由)。
         var surroundings: PackedSurroundings
+        /// この列が影を落とす側か。焼き付けるときに、この旗で選り分ける。
+        var castsShadow: Bool
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -327,6 +360,10 @@ public final class Canvas {
         /// 材質も積む。**フレームを越えないことと、積めることは別の話である** —
         /// 変換も同じくフレームを越えないが積める。入れ子で書けないほうが不便になる
         var material: Material
+        /// 影を落とす側か。
+        var castsShadow: Bool
+        /// 影を受ける側か。
+        var receivesShadow: Bool
     }
 
     private var currentStyle: Style {
@@ -343,7 +380,8 @@ public final class Canvas {
                 verticalTextAlign: currentVerticalTextAlign,
                 textLeading: currentTextLeading, textWrap: currentTextWrap,
                 imageMode: currentImageMode, tint: currentTint,
-                material: currentMaterial)
+                material: currentMaterial,
+                castsShadow: castsShadow, receivesShadow: receivesShadow)
         }
         set {
             currentFill = newValue.fill
@@ -364,10 +402,15 @@ public final class Canvas {
             currentTextWrap = newValue.textWrap
             currentImageMode = newValue.imageMode
             currentTint = newValue.tint
-            // 材質が変わるなら、戻す前に列を閉じる (置いた立体を後の材質で描かない)
-            if currentMaterial != newValue.material {
+            // 材質と影の扱いが変わるなら、戻す前に列を閉じる (置いた立体を後の設定で
+            // 描かない)
+            if currentMaterial != newValue.material || castsShadow != newValue.castsShadow
+                || receivesShadow != newValue.receivesShadow
+            {
                 closeBatch()
                 currentMaterial = newValue.material
+                castsShadow = newValue.castsShadow
+                receivesShadow = newValue.receivesShadow
             }
             // 混ぜ方と切り抜きが変わるなら列を閉じてから戻す
             blendMode(newValue.blendMode)
@@ -545,9 +588,11 @@ public final class Canvas {
                 matrix: openSource == .flat ? projection : viewProjection,
                 // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
                 lightRange: openSource == .flat ? 0..<0 : bakeActiveLights(),
-                material: openSource == .flat ? .default : currentMaterial,
+                material: openSource == .flat
+                    ? .default : currentMaterial.receiving(shadow: receivesShadow),
                 viewer: openSource == .flat ? SIMD4(0, 0, -1, 0) : viewer,
-                surroundings: bakeSurroundings()))
+                surroundings: bakeSurroundings(),
+                castsShadow: openSource == .solid && castsShadow))
         if openSource == .solid { warnIfMaterialCannotShow() }
     }
 
@@ -1163,6 +1208,10 @@ public final class Canvas {
         defer {
             cameraStorage = nil
             currentMaterial = .default
+            shadowsEnabled = false
+            shadowRangeValue = nil
+            castsShadow = true
+            receivesShadow = true
         }
         currentClip = nil
         transform = .identity
@@ -1199,6 +1248,11 @@ public final class Canvas {
         closeBatch()
         let pass = target.makeRenderPass(clearColor: pendingBackground)
         let commands = try gpu.beginCommands()
+
+        // **画面へ描く前に、光から見た奥行きを焼く。** 同じコマンドの中で順に流すので、
+        // 焼き上がりを待つ仕掛けは要らない (GPU がこの順で実行する)
+        let bakedShadow = try bakeShadow(into: commands)
+
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
             throw .encoderUnavailable
         }
@@ -1238,7 +1292,22 @@ public final class Canvas {
 
             // 時刻と面の大きさは、フレームの中で変わらない
             uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
-                .update(from: [time, 0, width, height], count: 4)
+                .update(from: [time, 0, width, height, shadowBiasValue], count: 5)
+            // 影の行列と設定。**フレームに 1 つ**で、列ごとには変わらない
+            // **置き場所は断片側の詰め方で決まる。** 4x4 の行列は 16 バイト境界へ
+            // 揃うので、その前の 1 つの数 (縁の余裕) の後ろに詰め物が入る
+            var matrix = bakedShadow?.matrix ?? matrix_identity_float4x4
+            uniformsBuffer.contents().advanced(by: 32)
+                .copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
+            let shadowTexel = 1 / Float(bakedShadow?.map.detail ?? 1)
+            uniformsBuffer.contents().advanced(by: 96)
+                .assumingMemoryBound(to: Float.self)
+                .update(from: [bakedShadow == nil ? 0 : 1, shadowTexel, 0, 0], count: 4)
+            // **焼いていなくても、読む先は必ず束ねる。** 束ねない口を作ると、断片が
+            // 触った瞬間に何が起きるかが土台任せになる
+            pipeline.argumentTable.setTexture(
+                (bakedShadow?.map.texture ?? currentTexture).gpuResourceID,
+                index: ShapePipeline.shadowTextureIndex)
             pipeline.argumentTable.setAddress(
                 uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
 
@@ -1391,6 +1460,72 @@ public final class Canvas {
         let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
         lightingBuffer = buffer
         lightingCapacity = capacity
+        return buffer
+    }
+
+    /// 光から見た奥行きを焼く。焼かなかったら `nil`。
+    ///
+    /// 焼くのは**落とす側の列だけ**。分けられないと、自己遮蔽の強い形を置いた作品が
+    /// 「影を切る」以外の逃げ道を失う。
+    private func bakeShadow(
+        into commands: any MTL4CommandBuffer
+    ) throws(RenderFailure) -> (map: ShadowMap, matrix: simd_float4x4)? {
+        guard let matrix = shadowMatrix, !solidVertices.isEmpty else { return nil }
+        let casting = batches.filter(\.castsShadow)
+        guard !casting.isEmpty else { return nil }
+
+        let map = try shadowMapHolding(shadowDetailValue)
+        let solidBuffer = try solidVertexBufferHolding(solidVertices.count)
+        solidVertices.withUnsafeBytes { source in
+            guard let base = source.baseAddress, source.count > 0 else { return }
+            solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
+        let matrixBuffer = try shadowMatrixBufferHolding()
+        var value = matrix
+        matrixBuffer.contents().copyMemory(
+            from: &value, byteCount: MemoryLayout<simd_float4x4>.size)
+
+        guard let encoder = commands.makeRenderCommandEncoder(descriptor: map.makeRenderPass())
+        else {
+            throw .encoderUnavailable
+        }
+        encoder.setRenderPipelineState(pipeline.shadowState)
+        encoder.setDepthStencilState(pipeline.solidDepthState)
+        encoder.setViewport(
+            MTLViewport(
+                originX: 0, originY: 0, width: Double(map.detail), height: Double(map.detail),
+                znear: 0, zfar: 1))
+        encoder.setFrontFacing(.clockwise)
+        pipeline.argumentTable.setAddress(
+            solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+        pipeline.argumentTable.setAddress(
+            matrixBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
+        encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
+        for batch in casting {
+            encoder.drawPrimitives(
+                primitiveType: .triangle,
+                vertexStart: batch.run.start, vertexCount: batch.run.count)
+        }
+        encoder.endEncoding()
+        return (map, matrix)
+    }
+
+    /// 焼き付け先。**同じ細かさなら作り直さない** ([ADR-0021] 決定 4)。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    private func shadowMapHolding(_ detail: Int) throws(RenderFailure) -> ShadowMap {
+        if let shadowMap, shadowMap.detail == detail { return shadowMap }
+        let map = try ShadowMap(gpu: gpu, detail: detail)
+        shadowMap = map
+        shadowMapsBuilt += 1
+        return map
+    }
+
+    /// 影の行列を置く領域。
+    private func shadowMatrixBufferHolding() throws(RenderFailure) -> any MTLBuffer {
+        if let shadowMatrixBuffer { return shadowMatrixBuffer }
+        let buffer = try gpu.makeReadableBuffer(byteCount: Self.valuesStride)
+        shadowMatrixBuffer = buffer
         return buffer
     }
 

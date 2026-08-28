@@ -167,6 +167,8 @@ enum Scene: String, CaseIterable, Sendable {
     case materials
     /// 周囲を置いた立体。背景と映り込み・金属と非金属。
     case surroundings
+    /// 床の上に落ちた影。落とす側と受ける側を分けたもの。
+    case shadows
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -711,6 +713,39 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.translate(64, 92, 0)
             canvas.rotateX(1.1)
             canvas.box(76, 76, 6)
+            canvas.pop()
+
+        case .shadows:
+            canvas.background(.display(red: 0.06, green: 0.07, blue: 0.09))
+            // 床が見えるように、少し上から見下ろす
+            canvas.camera(64, -46, 205, 64, 74, 0, 0, 1, 0)
+            canvas.ambientLight(.opaque(red: 0.14, green: 0.14, blue: 0.17))
+            canvas.directionalLight(
+                .opaque(red: 0.85, green: 0.82, blue: 0.72), -0.62, 0.6, -0.5)
+            canvas.shadows(true)
+            canvas.noStroke()
+
+            // 床は受けるだけ。落とす側から外しておくと、自分の影が自分に出ない
+            canvas.castShadow(false)
+            canvas.fill(.display(red: 0.62, green: 0.63, blue: 0.66))
+            canvas.push()
+            canvas.translate(64, 112, -10)
+            canvas.box(190, 8, 190)
+            canvas.pop()
+
+            // 置いたものが床へ影を落とす
+            canvas.castShadow(true)
+            canvas.fill(.display(red: 0.9, green: 0.55, blue: 0.35))
+            canvas.push()
+            canvas.translate(44, 86, 6)
+            canvas.sphere(20)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.45, green: 0.75, blue: 0.95))
+            canvas.push()
+            canvas.translate(94, 88, -6)
+            canvas.rotateY(0.6)
+            canvas.box(28)
             canvas.pop()
 
         case .customSolids:

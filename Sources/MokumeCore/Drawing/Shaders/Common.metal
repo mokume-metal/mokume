@@ -68,6 +68,8 @@ struct Material {
     float4 ambientAndShininess;
     /// 自発光 (rgb) と、金属らしさ (w)。
     float4 emissiveAndMetalness;
+    /// 旗 — x が 1 なら影を受ける。
+    float4 flags;
 };
 
 /// 周囲を、ある向きへ見たときの色。
@@ -87,6 +89,52 @@ static inline float3 mokume_surroundings(Surroundings surroundings, float3 direc
 static inline float3 mokume_surroundingsAverage(Surroundings surroundings) {
     return (surroundings.topAndPresence.rgb + 2.0 * surroundings.horizonAndBackdrop.rgb
         + surroundings.bottom.rgb) * 0.25;
+}
+
+/// フレームを通して変わらない値。
+struct Uniforms {
+    float time;
+    float2 resolution;
+    /// 影の縁の破綻を抑える量。
+    float shadowBias;
+    /// 世界の座標を、光から見た切り取りの立方体へ落とす行列。
+    float4x4 shadowMatrix;
+    /// x が 1 なら影が焼いてある。y は焼き付け先の 1 画素の大きさ (0…1 の尺度)。
+    float4 shadowParams;
+};
+
+/// 焼き付けた影の読み方。**奥行きを数として比べる**ので、混ぜずにそのまま読む
+/// (混ぜると、比べる相手が「どこにも無い奥行き」になって縁が濁る)。
+constexpr sampler kShadowSampler(
+    coord::normalized, filter::nearest, address::clamp_to_edge);
+
+/// その点が光から見えているか (1 = 見えている, 0 = 遮られている)。
+///
+/// **焼いた範囲の外は遮らない。** 範囲は作品が決めるものなので、外側を「影」に
+/// すると、範囲を小さくしただけで世界の端が黒く沈む。
+static inline float mokume_shadowFactor(
+    texture2d<float> baked, float4x4 lightMatrix, float texel, float bias,
+    float3 worldPosition, float3 normal, float3 toLight)
+{
+    float4 clip = lightMatrix * float4(worldPosition, 1.0);
+    float3 ndc = clip.xyz / clip.w;
+    if (abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z > 1.0 || ndc.z < 0.0) { return 1.0; }
+    float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+
+    // **斜めに当たる面ほど余裕を増やす。** 焼いた 1 画素の中で奥行きが大きく変わる
+    // ので、一定の余裕だと自分の影が自分の上に縞として出る
+    float slope = clamp(1.0 - dot(normal, toLight), 0.0, 1.0);
+    float limit = ndc.z - (bias + bias * 4.0 * slope);
+
+    // 近くの 9 点を数えて、縁を少しなめらかにする
+    float lit = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            float recorded = baked.sample(kShadowSampler, uv + float2(x, y) * texel).r;
+            lit += limit <= recorded ? 1.0 : 0.0;
+        }
+    }
+    return lit / 9.0;
 }
 
 /// アルファの乗算を戻す。完全に透明な画素には戻すべき色が無いので 0 を返す。
@@ -120,7 +168,8 @@ static inline float3 straighten(float4 color) {
 static inline float3 mokume_shade(
     constant Light *lights, uint offset, uint count,
     float3 worldPosition, float3 normal, float4 viewer,
-    float4 color, Material material, Surroundings surroundings)
+    float4 color, Material material, Surroundings surroundings,
+    texture2d<float> baked, constant Uniforms &uniforms)
 {
     float3 base = color.rgb;
     float3 ambientResponse = material.ambientAndShininess.rgb;
@@ -134,6 +183,11 @@ static inline float3 mokume_shade(
     float spread = roughness * roughness;
     // 映り込みの色。非金属はどの色でもほぼ同じ弱い映り込み、金属は塗りそのものを映す
     float3 f0 = mix(float3(0.04), straighten(color), metalness);
+
+    // **影が減衰させるのは直接の光だけ。** 底上げの光・周囲・自発光は影の中でも残り、
+    // 周りへの返しは影の内外を問わず効く
+    bool receivesShadow = material.flags.x > 0.5 && uniforms.shadowParams.x > 0.5;
+    bool foundCaster = false;
 
     float3 total = float3(0.0);
     float3 gloss = float3(0.0);
@@ -169,6 +223,16 @@ static inline float3 mokume_shade(
         }
 
         float3 incoming = color * max(dot(n, toLight), 0.0) * cone;
+        // **影を落とすのは、置いてあるうちの最初の向きを持つ光** (Swift 側と同じ規則)。
+        // 拡散も艶もここから作るので、掛けるのはこの 1 か所で足りる
+        if (kind == kDirectionalLight && !foundCaster) {
+            foundCaster = true;
+            if (receivesShadow) {
+                incoming *= mokume_shadowFactor(
+                    baked, uniforms.shadowMatrix, uniforms.shadowParams.y,
+                    uniforms.shadowBias, worldPosition, n, toLight);
+            }
+        }
         total += incoming * (1.0 - metalness);
 
         if (shininess > 0.0) {
@@ -226,12 +290,6 @@ constant uint kReplace = 9;
 // 端では外側へはみ出さない
 constexpr sampler kGlyphSampler(
     coord::normalized, filter::linear, address::clamp_to_edge);
-
-/// フレームを通して変わらない値。
-struct Uniforms {
-    float time;
-    float2 resolution;
-};
 
 /// 1 画素ぶんの入力。**利用者の断片が受け取るのはこれだけ。**
 struct Fragment {
@@ -308,6 +366,7 @@ fragment float4 mokume_fragmentMain(
     constant Material &material [[buffer(8)]],
     constant Surroundings &surroundings [[buffer(9)]],
     texture2d<float> source_texture [[texture(0)]],
+    texture2d<float> shadow_texture [[texture(1)]],
     bool isFrontFacing [[front_facing]],
     float4 destination [[color(0)]])
 {
@@ -340,7 +399,7 @@ fragment float4 mokume_fragmentMain(
         if (in.isDerivedNormal > 0.5 && !isFrontFacing) { normal = -normal; }
         float3 lit = mokume_shade(
             lights, lighting.offset, lighting.count, in.worldPosition, normal,
-            lighting.viewer, in.color, material, surroundings);
+            lighting.viewer, in.color, material, surroundings, shadow_texture, uniforms);
         f.color = float4(lit, in.color.a);
     }
     f.texel = source_texture.sample(kGlyphSampler, in.uv);
