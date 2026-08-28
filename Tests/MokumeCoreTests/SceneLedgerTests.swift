@@ -135,6 +135,8 @@ enum Scene: String, CaseIterable, Sendable {
     case joins
     /// 混ぜ方 10 通りを、同じ下地の上に並べたもの。
     case blends
+    /// 自由に並べた頂点・曲線・穴・切り抜き。
+    case freeform
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -218,6 +220,60 @@ enum Scene: String, CaseIterable, Sendable {
                 // 左右の端を揃えてあるので、伸び方の違いがそのまま長さの差になる
                 canvas.line(32, 24 + Float(row) * 40, 96, 24 + Float(row) * 40)
             }
+
+        case .freeform:
+            canvas.background(.display(red: 0.08, green: 0.08, blue: 0.1))
+            // 左上: 深くへこんだ形 (扇状に分けるとはみ出す形)
+            canvas.fill(.display(red: 0.95, green: 0.45, blue: 0.3))
+            canvas.stroke(.display(red: 1, green: 1, blue: 1))
+            canvas.strokeWeight(2)
+            canvas.beginShape()
+            canvas.vertex(6, 6)
+            canvas.vertex(32, 40)
+            canvas.vertex(58, 6)
+            canvas.vertex(58, 58)
+            canvas.vertex(6, 58)
+            canvas.endShape(.close)
+
+            // 右上: 穴の開いた形
+            canvas.push()
+            canvas.translate(64, 0)
+            canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.5))
+            canvas.beginShape()
+            canvas.vertex(6, 6)
+            canvas.vertex(58, 6)
+            canvas.vertex(58, 58)
+            canvas.vertex(6, 58)
+            canvas.beginContour()
+            canvas.vertex(20, 20)
+            canvas.vertex(20, 44)
+            canvas.vertex(44, 44)
+            canvas.vertex(44, 20)
+            canvas.endContour()
+            canvas.endShape(.close)
+            canvas.pop()
+
+            // 左下: 曲線
+            canvas.push()
+            canvas.translate(0, 64)
+            canvas.noFill()
+            canvas.stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+            canvas.strokeWeight(4)
+            canvas.beginShape()
+            canvas.vertex(6, 54)
+            canvas.bezierVertex(6, 6, 58, 6, 58, 54)
+            canvas.endShape()
+            canvas.pop()
+
+            // 右下: 切り抜いた中にだけ描かれる
+            canvas.push()
+            canvas.translate(64, 64)
+            canvas.clip(76, 76, 40, 40)
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.35, green: 0.6, blue: 0.95))
+            canvas.circle(32, 32, 56)
+            canvas.pop()
+            canvas.noClip()
 
         case .blends:
             // 下地は横 3 帯。その上に、同じ色を混ぜ方だけ変えて重ねる

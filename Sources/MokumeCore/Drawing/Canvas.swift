@@ -66,14 +66,31 @@ public final class Canvas {
     private var hasStroke = true
     private var styleStack: [Style] = []
     private var currentBlendMode = BlendMode.blend
+    private var currentClip: MTLScissorRect?
     private var warnedReversedArc = false
+    private var warnedVertexOutsideShape = false
+
+    // MARK: - 組み立て中の形
+
+    /// 並べている途中の頂点。``beginShape(_:)`` から ``endShape(_:)`` までの間だけ中身を持つ。
+    private var shapePoints: [SIMD2<Float>] = []
+    /// 並べ終えた穴。
+    private var shapeHoles: [[SIMD2<Float>]] = []
+    /// 穴を並べている最中なら、その点。
+    private var holePoints: [SIMD2<Float>]?
+    private var shapeKind = VertexKind.polygon
+    private var isBuildingShape = false
+    private var currentCurveDetail = 20
+    private var currentCurveTightness: Float = 0
+    /// 通過点を結ぶ曲線の制御点。4 つ揃うごとに 1 区間を引く。
+    private var curveGuides: [SIMD2<Float>] = []
 
     /// 閉じた列。**同じ列は単一の混ぜ方でしか描かれない。**
     ///
     /// 混ぜ方を変える操作がその時点で列を閉じるので、既に置いた図形が後の設定で
     /// 描かれることがない。閉じ忘れると絵は「たまに」おかしくなる — 設定を変えない
     /// 単純なスケッチでは一生出ないので、規律として持つ。
-    private var batches: [(mode: BlendMode, start: Int, count: Int)] = []
+    private var batches: [(mode: BlendMode, clip: MTLScissorRect?, start: Int, count: Int)] = []
 
     /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
     private let blendModeBuffer: any MTLBuffer
@@ -95,6 +112,7 @@ public final class Canvas {
         var rectMode: ShapeMode
         var ellipseMode: ShapeMode
         var blendMode: BlendMode
+        var clip: MTLScissorRect?
     }
 
     private var currentStyle: Style {
@@ -104,7 +122,7 @@ public final class Canvas {
                 strokeCap: currentStrokeCap, strokeJoin: currentStrokeJoin,
                 hasFill: hasFill, hasStroke: hasStroke,
                 rectMode: currentRectMode, ellipseMode: currentEllipseMode,
-                blendMode: currentBlendMode)
+                blendMode: currentBlendMode, clip: currentClip)
         }
         set {
             currentFill = newValue.fill
@@ -116,8 +134,12 @@ public final class Canvas {
             hasStroke = newValue.hasStroke
             currentRectMode = newValue.rectMode
             currentEllipseMode = newValue.ellipseMode
-            // 混ぜ方が変わるなら列を閉じてから戻す
+            // 混ぜ方と切り抜きが変わるなら列を閉じてから戻す
             blendMode(newValue.blendMode)
+            if !Self.sameClip(currentClip, newValue.clip) {
+                closeBatch()
+                currentClip = newValue.clip
+            }
         }
     }
 
@@ -187,6 +209,31 @@ public final class Canvas {
     /// これから引く線の太さ (画素)。
     public func strokeWeight(_ weight: Float) { currentStrokeWeight = max(0, weight) }
 
+    /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
+    ///
+    /// **溜めている列をその場で閉じる** (混ぜ方と同じ理由)。積み降ろし
+    /// (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
+    ///
+    /// 面の外へ出た指定は面の内側へ収める — この世代の GPU は範囲外の切り抜きを
+    /// 受け取ると検証で落ちるので、指定をそのまま渡さない。
+    public func clip(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+        let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
+        let left = min(max(0, Int(box.x)), Int(width))
+        let top = min(max(0, Int(box.y)), Int(height))
+        let right = min(max(left, Int(box.x + box.width)), Int(width))
+        let bottom = min(max(top, Int(box.y + box.height)), Int(height))
+        closeBatch()
+        currentClip = MTLScissorRect(
+            x: left, y: top, width: right - left, height: bottom - top)
+    }
+
+    /// 切り抜きをやめる。
+    public func noClip() {
+        guard currentClip != nil else { return }
+        closeBatch()
+        currentClip = nil
+    }
+
     /// 描くものを、下にある絵とどう混ぜるか。
     ///
     /// **溜めている列をその場で閉じる。** 既に置いた図形が後の混ぜ方で描かれないように
@@ -197,12 +244,23 @@ public final class Canvas {
         currentBlendMode = mode
     }
 
+    /// 切り抜きが同じか。`MTLScissorRect` は素では比べられない。
+    private static func sameClip(_ a: MTLScissorRect?, _ b: MTLScissorRect?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (lhs?, rhs?):
+            return lhs.x == rhs.x && lhs.y == rhs.y
+                && lhs.width == rhs.width && lhs.height == rhs.height
+        default: return false
+        }
+    }
+
     /// 溜めている頂点を、いまの混ぜ方の列として閉じる。
     private func closeBatch() {
         let start = batches.last.map { $0.start + $0.count } ?? 0
         let count = vertices.count - start
         guard count > 0 else { return }
-        batches.append((currentBlendMode, start, count))
+        batches.append((currentBlendMode, currentClip, start, count))
     }
 
     /// 線の端の形。
@@ -388,6 +446,218 @@ public final class Canvas {
     /// 点。大きさは線の太さ、形は端点の形 (``strokeCap(_:)``) が決める。
     public func point(_ x: Float, _ y: Float) {
         draw(Outline(points: [SIMD2(x, y)], isClosed: false, fills: false))
+    }
+
+    // MARK: - 頂点を並べて描く
+
+    /// 頂点を並べ始める。
+    public func beginShape(_ kind: VertexKind = .polygon) {
+        isBuildingShape = true
+        shapeKind = kind
+        shapePoints.removeAll(keepingCapacity: true)
+        shapeHoles.removeAll(keepingCapacity: true)
+        holePoints = nil
+    }
+
+    /// 頂点を 1 つ置く。
+    public func vertex(_ x: Float, _ y: Float) {
+        guard isBuildingShape else {
+            warnVertexOutsideShapeOnce()
+            return
+        }
+        appendShapePoint(SIMD2(x, y))
+    }
+
+    /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
+    ///
+    /// 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
+    /// 始点が無ければ引きようがない。
+    public func bezierVertex(
+        _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
+    ) {
+        guard isBuildingShape, let start = lastShapePoint else {
+            warnVertexOutsideShapeOnce()
+            return
+        }
+        let c1 = SIMD2(cx1, cy1)
+        let c2 = SIMD2(cx2, cy2)
+        let end = SIMD2(x, y)
+        for step in 1...currentCurveDetail {
+            let t = Float(step) / Float(currentCurveDetail)
+            appendShapePoint(Self.cubicPoint(start, c1, c2, end, t))
+        }
+    }
+
+    /// 2 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
+    public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
+        guard isBuildingShape, let start = lastShapePoint else {
+            warnVertexOutsideShapeOnce()
+            return
+        }
+        // 2 次は 3 次の特別な形として通す — 曲線の道具を 1 本に保つ
+        let control = SIMD2(cx, cy)
+        let end = SIMD2(x, y)
+        let c1 = start + (control - start) * (2.0 / 3.0)
+        let c2 = end + (control - end) * (2.0 / 3.0)
+        bezierVertex(c1.x, c1.y, c2.x, c2.y, end.x, end.y)
+    }
+
+    /// 通過点を結ぶ曲線の制御点を置く。
+    ///
+    /// **4 つ揃って初めて 1 区間が引ける** — 最初と最後の点は曲がり方を決めるためだけに
+    /// 使われ、その間だけが実際に描かれる。
+    public func curveVertex(_ x: Float, _ y: Float) {
+        guard isBuildingShape else {
+            warnVertexOutsideShapeOnce()
+            return
+        }
+        curveGuides.append(SIMD2(x, y))
+        guard curveGuides.count >= 4 else { return }
+        let count = curveGuides.count
+        let p0 = curveGuides[count - 4]
+        let p1 = curveGuides[count - 3]
+        let p2 = curveGuides[count - 2]
+        let p3 = curveGuides[count - 1]
+        if shapePoints.isEmpty { appendShapePoint(p1) }
+        for step in 1...currentCurveDetail {
+            let t = Float(step) / Float(currentCurveDetail)
+            appendShapePoint(Self.catmullRomPoint(p0, p1, p2, p3, t, tightness: currentCurveTightness))
+        }
+    }
+
+    /// 曲線をいくつの直線で近似するか。
+    public func curveDetail(_ steps: Int) { currentCurveDetail = max(1, steps) }
+
+    /// 通過点を結ぶ曲線の張り具合。0 が既定で、大きくすると曲がりが緩くなる。
+    public func curveTightness(_ amount: Float) { currentCurveTightness = amount }
+
+    /// 穴を並べ始める。
+    public func beginContour() {
+        guard isBuildingShape else {
+            warnVertexOutsideShapeOnce()
+            return
+        }
+        holePoints = []
+    }
+
+    /// 穴を並べ終える。
+    public func endContour() {
+        guard let hole = holePoints else { return }
+        if hole.count >= 3 { shapeHoles.append(hole) }
+        holePoints = nil
+    }
+
+    /// 並べ終えて描く。
+    public func endShape(_ end: ShapeEnd = .open) {
+        defer {
+            isBuildingShape = false
+            shapePoints.removeAll(keepingCapacity: true)
+            shapeHoles.removeAll(keepingCapacity: true)
+            curveGuides.removeAll(keepingCapacity: true)
+            holePoints = nil
+        }
+        guard isBuildingShape else { return }
+        endContour()  // 閉じ忘れた穴も畳む
+
+        switch shapeKind {
+        case .points:
+            for p in shapePoints { point(p.x, p.y) }
+
+        case .lines:
+            var index = 0
+            while index + 1 < shapePoints.count {
+                line(
+                    shapePoints[index].x, shapePoints[index].y,
+                    shapePoints[index + 1].x, shapePoints[index + 1].y)
+                index += 2
+            }
+
+        case .triangles:
+            var index = 0
+            while index + 2 < shapePoints.count {
+                triangle(
+                    shapePoints[index].x, shapePoints[index].y,
+                    shapePoints[index + 1].x, shapePoints[index + 1].y,
+                    shapePoints[index + 2].x, shapePoints[index + 2].y)
+                index += 3
+            }
+
+        case .polygon:
+            drawFreeform(closed: end == .close)
+        }
+    }
+
+    /// 並べた点を、凹みと穴を許す形として描く。
+    private func drawFreeform(closed: Bool) {
+        guard shapePoints.count >= 2 else {
+            if let only = shapePoints.first { point(only.x, only.y) }
+            return
+        }
+
+        // 塗りは凹みうるので三角形化を通す。穴は先に 1 周へ畳む
+        if hasFill, shapePoints.count >= 3 {
+            let ring = shapeHoles.isEmpty
+                ? shapePoints
+                : Triangulation.mergeHoles(outer: shapePoints, holes: shapeHoles)
+            for triangle in Triangulation.triangulate(ring) {
+                appendTriangle(
+                    transform.apply(x: ring[triangle.0].x, y: ring[triangle.0].y),
+                    transform.apply(x: ring[triangle.1].x, y: ring[triangle.1].y),
+                    transform.apply(x: ring[triangle.2].x, y: ring[triangle.2].y),
+                    color: currentFill)
+            }
+        }
+
+        // 輪郭は周をそのままなぞる。穴の縁も輪郭を持つ
+        if hasStroke, currentStrokeWeight > 0 {
+            strokeOutline(Outline(points: shapePoints, isClosed: closed, fills: false))
+            for hole in shapeHoles {
+                strokeOutline(Outline(points: hole, isClosed: true, fills: false))
+            }
+        }
+    }
+
+    private var lastShapePoint: SIMD2<Float>? {
+        holePoints?.last ?? shapePoints.last
+    }
+
+    private func appendShapePoint(_ point: SIMD2<Float>) {
+        if holePoints != nil {
+            holePoints?.append(point)
+        } else {
+            shapePoints.append(point)
+        }
+    }
+
+    /// 3 次の曲線の上の点。
+    static func cubicPoint(
+        _ p0: SIMD2<Float>, _ c1: SIMD2<Float>, _ c2: SIMD2<Float>, _ p1: SIMD2<Float>, _ t: Float
+    ) -> SIMD2<Float> {
+        let u = 1 - t
+        return p0 * (u * u * u) + c1 * (3 * u * u * t) + c2 * (3 * u * t * t) + p1 * (t * t * t)
+    }
+
+    /// 通過点を結ぶ曲線の上の点。`tightness` が 0 のとき、4 点のうち中の 2 点を滑らかに繋ぐ。
+    static func catmullRomPoint(
+        _ p0: SIMD2<Float>, _ p1: SIMD2<Float>, _ p2: SIMD2<Float>, _ p3: SIMD2<Float>,
+        _ t: Float, tightness: Float
+    ) -> SIMD2<Float> {
+        let s = (1 - tightness) / 2
+        let t2 = t * t
+        let t3 = t2 * t
+        let m1 = (p2 - p0) * s
+        let m2 = (p3 - p1) * s
+        return p1 * (2 * t3 - 3 * t2 + 1)
+            + m1 * (t3 - 2 * t2 + t)
+            + p2 * (-2 * t3 + 3 * t2)
+            + m2 * (t3 - t2)
+    }
+
+    private func warnVertexOutsideShapeOnce() {
+        guard !warnedVertexOutsideShape else { return }
+        warnedVertexOutsideShape = true
+        Diagnostics.warn(
+            "vertex(): beginShape() と endShape() の間で呼んでください。この呼び出しは何もしません")
     }
 
     // MARK: - 周をひとつの道具にする
@@ -617,6 +887,7 @@ public final class Canvas {
     public func draw(_ body: () -> Void) throws(RenderFailure) {
         vertices.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
+        currentClip = nil
         pendingBackground = nil
         transform = .identity
         transformStack.removeAll(keepingCapacity: true)
@@ -660,6 +931,9 @@ public final class Canvas {
             pipeline.argumentTable.setAddress(
                 projectionBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
             for batch in batches {
+                encoder.setScissorRect(
+                    batch.clip
+                        ?? MTLScissorRect(x: 0, y: 0, width: Int(width), height: Int(height)))
                 pipeline.argumentTable.setAddress(
                     blendModeBuffer.gpuAddress
                         + UInt64(Int(batch.mode.rawIndex) * Self.blendModeStride),

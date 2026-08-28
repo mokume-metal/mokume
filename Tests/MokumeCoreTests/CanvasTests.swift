@@ -154,6 +154,307 @@ struct CanvasTests {
         #expect(image[32, 42] == (0, 0, 0, 255))  // 半径 6 の外
     }
 
+    // MARK: - 頂点を並べて描く (#237)
+
+    @Test("凹んだ形が、へこみの外へはみ出さずに塗られる")
+    func concaveShapesDoNotBulge() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            // 上辺の真ん中が深くへこんだ形
+            canvas.beginShape()
+            canvas.vertex(8, 8)
+            canvas.vertex(32, 48)
+            canvas.vertex(56, 8)
+            canvas.vertex(56, 56)
+            canvas.vertex(8, 56)
+            canvas.endShape(.close)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 52].red == 255)  // 下の広い部分は塗られる
+        #expect(image[32, 16] == (0, 0, 0, 255))  // へこみの中は塗られない
+        #expect(image[12, 50].red == 255)  // へこみの左脇は形の内側
+        // 左上の角は V 字の腕の外側。扇状に分けるとここまではみ出す
+        #expect(image[12, 12] == (0, 0, 0, 255))
+    }
+
+    @Test("穴が開く")
+    func contoursPunchHoles() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.beginShape()
+            canvas.vertex(8, 8)
+            canvas.vertex(56, 8)
+            canvas.vertex(56, 56)
+            canvas.vertex(8, 56)
+            canvas.beginContour()
+            canvas.vertex(24, 24)
+            canvas.vertex(24, 40)
+            canvas.vertex(40, 40)
+            canvas.vertex(40, 24)
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32] == (0, 0, 0, 255))  // 穴の中は背景
+        #expect(image[14, 32].red == 255)  // 穴の外側は塗られている
+        #expect(image[48, 32].red == 255)
+    }
+
+    @Test("点の列として読むと、点が並ぶ")
+    func pointsKindPlacesDots() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.stroke(white)
+            canvas.strokeWeight(6)
+            canvas.beginShape(.points)
+            canvas.vertex(16, 32)
+            canvas.vertex(48, 32)
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 32].red == 255)
+        #expect(image[48, 32].red == 255)
+        #expect(image[32, 32] == (0, 0, 0, 255))  // 点の間は繋がらない
+    }
+
+    @Test("線の列として読むと、2 点ずつ独立した線になる")
+    func linesKindPairsPoints() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.stroke(white)
+            canvas.strokeWeight(4)
+            canvas.beginShape(.lines)
+            canvas.vertex(8, 16)
+            canvas.vertex(24, 16)
+            canvas.vertex(40, 48)
+            canvas.vertex(56, 48)
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 16].red == 255)
+        #expect(image[48, 48].red == 255)
+        #expect(image[32, 32] == (0, 0, 0, 255))  // 2 本目の始点へは繋がらない
+    }
+
+    @Test("三角形の列として読むと、3 点ずつ独立した三角形になる")
+    func trianglesKindGroupsThree() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.beginShape(.triangles)
+            canvas.vertex(8, 8)
+            canvas.vertex(24, 8)
+            canvas.vertex(16, 24)
+            canvas.vertex(40, 40)
+            canvas.vertex(56, 40)
+            canvas.vertex(48, 56)
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 14].red == 255)
+        #expect(image[48, 46].red == 255)
+        #expect(image[32, 32] == (0, 0, 0, 255))  // 間は埋まらない
+    }
+
+    @Test("閉じない指定では、最後の点から最初へ戻らない")
+    func openShapesDoNotCloseTheOutline() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(4)
+            canvas.beginShape()
+            canvas.vertex(16, 16)
+            canvas.vertex(48, 16)
+            canvas.vertex(48, 48)
+            canvas.endShape(.open)
+        }
+        // 戻り道 (48,48)-(16,16) の途中には何も無い
+        #expect(try pixels(of: canvas)[30, 30] == (0, 0, 0, 255))
+    }
+
+    @Test("曲線は、分割数を上げると滑らかになる")
+    func curveDetailChangesSmoothness() throws {
+        func render(detail: Int) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.strokeWeight(2)
+                canvas.curveDetail(detail)
+                canvas.beginShape()
+                canvas.vertex(8, 56)
+                canvas.bezierVertex(8, 8, 56, 8, 56, 56)
+                canvas.endShape()
+            }
+            return try pixels(of: canvas)
+        }
+        let coarse = try render(detail: 2)
+        let fine = try render(detail: 40)
+        #expect(coarse.bytes != fine.bytes)  // 近似の粗さが絵に出る
+        // どちらも両端は通る
+        #expect(fine[8, 56].red > 0 || fine[9, 55].red > 0)
+    }
+
+    @Test("2 次の曲線も引ける")
+    func quadraticCurvesAreDrawn() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(3)
+            canvas.beginShape()
+            canvas.vertex(8, 48)
+            canvas.quadraticVertex(32, 8, 56, 48)
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 28].red > 0)  // 山の頂点あたりを通る
+        #expect(image[32, 48] == (0, 0, 0, 255))  // 弦の上は通らない
+    }
+
+    @Test("通過点を結ぶ曲線は、内側の点を通る")
+    func curveVerticesPassThroughTheMiddlePoints() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(5)
+            canvas.beginShape()
+            canvas.curveVertex(8, 32)  // 曲がり方を決めるだけ
+            canvas.curveVertex(20, 32)
+            canvas.curveVertex(44, 32)
+            canvas.curveVertex(56, 32)  // 曲がり方を決めるだけ
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32].red == 255)  // 内側の 2 点の間は引かれる
+    }
+
+    @Test("並べ始めていないのに頂点を置いても落ちない")
+    func strayVerticesAreIgnored() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.vertex(10, 10)
+            canvas.bezierVertex(1, 2, 3, 4, 5, 6)
+            canvas.endContour()
+            canvas.endShape()
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.rect(8, 8, 16, 16)
+        }
+        #expect(try pixels(of: canvas)[16, 16].red == 255)
+    }
+
+    @Test("点が 2 つに満たない形でも落ちない", arguments: [0, 1])
+    func degenerateShapesAreHarmless(_ count: Int) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.beginShape()
+            for index in 0..<count { canvas.vertex(Float(index) * 8 + 16, 32) }
+            canvas.endShape(.close)
+        }
+        #expect(try pixels(of: canvas)[8, 8] == (0, 0, 0, 255))
+    }
+
+    // MARK: - 切り抜き
+
+    @Test("切り抜いた外へは描かれない")
+    func clippingKeepsPaintInside() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.clip(16, 16, 32, 32)
+            canvas.rect(0, 0, 64, 64)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32].red == 255)  // 内側
+        #expect(image[8, 8] == (0, 0, 0, 255))  // 外側
+        #expect(image[56, 56] == (0, 0, 0, 255))
+    }
+
+    @Test("切り抜きをやめると、また全体へ描ける")
+    func noClipRestoresTheWholeSurface() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.clip(16, 16, 8, 8)
+            canvas.noClip()
+            canvas.rect(0, 0, 64, 64)
+        }
+        #expect(try pixels(of: canvas)[56, 56].red == 255)
+    }
+
+    @Test("切り抜きは積み降ろしで戻る")
+    func clippingIsRestoredByTheStyleStack() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.pushStyle()
+            canvas.clip(16, 16, 16, 16)
+            canvas.popStyle()
+            canvas.rect(0, 0, 64, 64)
+        }
+        #expect(try pixels(of: canvas)[56, 56].red == 255)  // 切り抜きが戻っている
+    }
+
+    @Test("面の外を指しても落ちない", arguments: [
+        (Float(-100), Float(-100), Float(500), Float(500)),
+        (Float(200), Float(200), Float(10), Float(10)),
+        (Float(10), Float(10), Float(-5), Float(-5)),
+    ])
+    func outOfBoundsClipsAreHarmless(_ box: (Float, Float, Float, Float)) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.clip(box.0, box.1, box.2, box.3)
+            canvas.rect(0, 0, 64, 64)
+        }
+        _ = try pixels(of: canvas)  // 落ちないことが要件
+    }
+
+    @Test("切り抜きを変えても、その前に置いた図形は影響を受けない")
+    func changingTheClipClosesTheRunSoFar() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.rect(0, 0, 16, 16)  // 切り抜き無しで置く
+            canvas.clip(32, 32, 16, 16)
+            canvas.rect(32, 32, 16, 16)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[8, 8].red == 255)  // 後から切り抜いても消えない
+        #expect(image[40, 40].red == 255)
+    }
+
     // MARK: - 混ぜ方 (#236)
 
     /// 下地の上に色を 1 つ塗り、真ん中の画素を返す。
