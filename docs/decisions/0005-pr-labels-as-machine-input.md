@@ -22,7 +22,7 @@ SPDX-License-Identifier: MIT
 | 何の仕事か (型) | PR タイトルの Conventional Commits | `.github/workflows/ci.yml` の `pr-title` ジョブ |
 | 対象の Issue | 本文の `Closes #N` | `scripts/review-gate.sh` |
 | 完了条件の性質 | 対象 Issue の `verify: *` ラベル | `scripts/review-gate.sh` |
-| 重要パスに触れるか | `.github/CODEOWNERS` | GitHub native (Review required) |
+| 重要パスに触れるか | `.github/rulesets/main-protection.json` の `required_reviewers` (要求先は `.github/CODEOWNERS`) | GitHub native (Review required) |
 | 進行状態 | Draft / Review / merge queue | GitHub native |
 
 **すべて埋まっている。** しかも PR タイトルは squash merge でそのままコミットメッセージになるため、型は単なる分類ではなく**成果物そのもの**であり、機械が形式を検査している。ここへ型ラベルを重ねると、同じ内容が 2 か所に載り、ずれたときにどちらが正かを決める根拠が無くなる (ADR-0001 原則 9)。

@@ -62,13 +62,31 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 
 この制約は逆向きにも効く — **author が唯一の承認者候補になっている PR は、誰にも承認できない**。本 ADR はその可能性を扱っておらず、[#88](https://github.com/mokume-metal/mokume/issues/88) で実際に詰んだ。[ADR-0007](0007-approvability-invariant.md) が承認可能性を明文の不変条件として置き、機構で守る形に補っている。
 
-重要パスの承認要求は **CODEOWNERS** で表現する。CODEOWNERS にはユーザーとチームしか書けないため、App の承認では code owner 要件を満たせない。制約が二重にかかる。
+重要パスの承認要求は **CODEOWNERS** で表現する。CODEOWNERS にはユーザーとチームしか書けないため、App の承認では code owner 要件を満たせない。制約が二重にかかる。(**必須化の手段は決定 4 の改訂で `required_reviewers` へ移った** — CODEOWNERS だけでは merge を止められなかった。App が承認者になれない点は `required_reviewers` でも同じで、こちらも Team しか書けない。)
 
-### 4. `required_approving_review_count` は 0 のままにする
+### 4. `required_approving_review_count` は 0 のままにする (2026-08-28 改訂)
 
-ルールセットの承認数を 1 に上げると、機械検査だけで完了を判定できる PR (`verify: machine`) まで人間の操作を待つことになり、ADR-0002 決定 1 の「機械クラスは無人で通す」が壊れる。
+ルールセットの承認数を 1 に上げると、機械検査だけで完了を判定できる PR (`verify: machine`) まで人間の操作を待つことになり、ADR-0002 決定 1 の「機械クラスは無人で通す」が壊れる。**承認数を 0 に据え置くという決定そのものは変わらない。**
 
-承認数は 0 のままにし、`require_code_owner_review` を有効にする。こうすると **CODEOWNERS 対象パスに触れる PR だけ**が承認を要求される。ADR-0002 決定 3 の「重要パスは常に human 扱い」が、自前ロジックから GitHub 標準へそのまま移る。あわせて `dismiss_stale_reviews_on_push` を有効にし、弱点 2 を塞ぐ。
+**当初の決定**は「承認数は 0 のままにし、`require_code_owner_review` を有効にする。こうすると CODEOWNERS 対象パスに触れる PR だけが承認を要求される」だった。**この読みが誤りだった**ので、必須化の手段だけを差し替える。
+
+**実測 — 承認数 0 は code owner の承認要求ごと非ブロックにする。** GitHub のドキュメントに明記がある: 「Requiring zero approvals means that the team will be added for visibility, but the team does not need to approve the request」。承認数 0 は「0 件の承認で足りる」と読まれ、`require_code_owner_review` を有効にしても merge の条件にならない。**レビュー要求は飛ぶ** — `docs/decisions/` を触った [#244](https://github.com/mokume-metal/mokume/pull/244) ・ [#229](https://github.com/mokume-metal/mokume/pull/229) ・ [#208](https://github.com/mokume-metal/mokume/pull/208) のタイムラインにはいずれも `review_requested → shinyaoguri` が残っている — が、`reviewDecision` はどれも空で `REVIEW_REQUIRED` にならない。守られていたのはメンテナが慣行で Approve していたからで、[ADR-0001](0001-founding-principles.md) 原則 8 (検証は規約でなく構造で) から外れていた ([#211](https://github.com/mokume-metal/mokume/issues/211))。
+
+必須化は **ルールセットの `required_reviewers`** が担う。`pull_request` ルールのこのパラメータは、**ファイルパターンごとに `minimum_approvals` を持つ**。
+
+```jsonc
+"required_reviewers": [
+  { "file_patterns": ["docs/decisions/**", ".github/**", ".claude/**"],
+    "minimum_approvals": 1,
+    "reviewer": { "id": <team id>, "type": "Team" } }
+]
+```
+
+承認数は 0 のまま、重要パスにだけ 1 承認が課る。**決定の意図は一字も変わらず、それを実現する機構だけが変わる。**
+
+`reviewer` に書けるのは **Team だけ** (User 不可) なので、org に `maintainers` チームを置く。CODEOWNERS は残す — 「誰に要求するか」と、[ADR-0007](0007-approvability-invariant.md) 決定 3 が承認者集合を読むための代理を担う。`require_code_owner_review` も有効のままでよい (ブロックはしないが、自動要求はこれで飛ぶ)。**新しい機構は 1 つも足していない** — `main-protection.json` の空配列を埋めただけである ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) 決定 5)。
+
+あわせて `dismiss_stale_reviews_on_push` を有効にし、弱点 2 を塞ぐ。
 
 ### 5. 承認を CI から追い出す
 
@@ -116,4 +134,4 @@ squash merge の author は **App になる**。しかし GitHub は、ブラン
 - 「承認待ちを CI の赤以外で表現する」検討 ([#29](https://github.com/mokume-metal/mokume/issues/29)) は、本 ADR の適用によって不要になる
 - エージェントの実行手順 (`GH_TOKEN` に installation token を載せる) を AGENTS.md に加える。秘密鍵はリポジトリにもログにも置かない
 - 決定 1 の「エージェントが push し PR を開く主体を分離する」は実態と合っていなかった。[#106](https://github.com/mokume-metal/mokume/issues/106) で push を境界の外と定め、権限表の**理由列**を App が実際に行う操作へ付け替えた (**設定列は不変**なので、ADR-0006 決定 6 の「権限表は改訂しない」= `Administration` を足さない、はそのまま生きる)
-- 移行の前に確証が取れなかった四点のうち三点は実測で解決した — installation token での `gh` の動作 (JWT は `Authorization: Bearer` で送る必要がある) / App が push したコミットの署名 (メンテナの鍵の署名は `verified` のまま) / squash コミットの author (App になるが co-author は自動で付く)。残る「承認数 0 と code owner review の組み合わせ」は CODEOWNERS の適用時に測る
+- 移行の前に確証が取れなかった四点のうち三点は実測で解決した — installation token での `gh` の動作 (JWT は `Authorization: Bearer` で送る必要がある) / App が push したコミットの署名 (メンテナの鍵の署名は `verified` のまま) / squash コミットの author (App になるが co-author は自動で付く)。残る「承認数 0 と code owner review の組み合わせ」は CODEOWNERS の適用時に測る**はずだったが、測られないまま運用に入った**。効いていないことが分かったのは [#211](https://github.com/mokume-metal/mokume/issues/211) — CODEOWNERS を適用した 2026-08-26 ([#59](https://github.com/mokume-metal/mokume/pull/59)) から 2 日後で、その間ずっと全パスが承認不要だった (決定 4 の改訂)。**「適用時に測る」と書いただけでは測られない** — 未確証の項目は、測る手順そのものを Issue に残すべきだった

@@ -63,9 +63,9 @@ required check `review-gate` が PR ごとに判定する:
 | `verify: machine` | 検査群 (`ci-check` 等) のみで通過 |
 | Changes requested が未解消 | 赤 |
 
-**重要パスの承認要求は review-gate ではなく CODEOWNERS が担う** ([ADR-0003](0003-agent-identity-separation.md))。`.github/CODEOWNERS` に挙げたパス (`docs/decisions/`・`.github/`・`.claude/`) に触れる PR は、GitHub が自動でメンテナへレビューを要求し、承認が無ければマージできない。公開 API 面はコードが生まれた時点で CODEOWNERS に追加する。
+**重要パスの承認要求は review-gate ではなく GitHub 側の機構が担う** ([ADR-0003](0003-agent-identity-separation.md))。ただし**要求と必須化で担い手が違う** — `.github/CODEOWNERS` に挙げたパス (`docs/decisions/`・`.github/`・`.claude/`) に触れる PR には GitHub が自動でメンテナへレビューを要求し、**マージを止めるのは `.github/rulesets/main-protection.json` の `required_reviewers`** (同じ 3 パスに `minimum_approvals: 1`) である。当初は CODEOWNERS だけで必須化できるつもりでいたが、承認数 0 との組み合わせでは非ブロックだった ([#211](https://github.com/mokume-metal/mokume/issues/211) / ADR-0003 決定 4 の改訂)。公開 API 面はコードが生まれた時点で両方に追加する。
 
-`verify: human` だけは CODEOWNERS で表現できない (パスではなく Issue の性質で決まる) ため、review-gate に残している。
+`verify: human` だけはどちらでも表現できない (パスではなく Issue の性質で決まる) ため、review-gate に残している。
 
 ### 4. 人間の承認は native の Approve レビューに一本化する
 
@@ -73,7 +73,7 @@ required check `review-gate` が PR ごとに判定する:
 
 当初はメンテナと PR 作成者が同一アカウントで、自分の PR を Approve できなかったため、`review: approved` ラベルを暫定の fallback として認めていた。**この fallback は廃止した。** ラベルはエージェント自身も付けられるため、承認ゲートを止めているのが仕組みではなくエージェントの自制でしかなかった。
 
-出口は [ADR-0003](0003-agent-identity-separation.md) が実行した — エージェントに GitHub App の identity を与えて PR の作成者を分離し、**自分の PR は自分で承認できない**というプラットフォームの制約が効く状態にしたうえで、ラベルをリポジトリから削除した。重要パスの承認要求は CODEOWNERS へ移り、そこでは App の承認では要件を満たせない (CODEOWNERS にはユーザーとチームしか書けない)。
+出口は [ADR-0003](0003-agent-identity-separation.md) が実行した — エージェントに GitHub App の identity を与えて PR の作成者を分離し、**自分の PR は自分で承認できない**というプラットフォームの制約が効く状態にしたうえで、ラベルをリポジトリから削除した。重要パスの承認要求は GitHub 側へ移り、そこでは App の承認では要件を満たせない (CODEOWNERS にもルールセットの `required_reviewers` にも、ユーザーとチームしか書けない)。
 
 ### 5. 機械クラスの領土を広げ続ける
 
@@ -110,6 +110,6 @@ Issue と PR のどちらに書くかは、**「この PR が merge された後
 - AGENTS.md の「進め方」「マージの判断基準」「コメント」を本 ADR に接続する
 - エージェントは `verify:` の無い Issue に着手できない。議論を経ずに merge へ到達する経路が構造的に消える
 - 自動起票するスクリプトは、本文に解消の判定基準を書いたうえで `verify: machine` を付ける。新しい機構は作らず、既存の起票スクリプトの責務を広げるだけで済む ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) 決定 5 の段 1)
-- ADR・workflows・`.claude/` の変更は常にメンテナの承認を要する。当初この効果は規約止まりだったが (ラベルはエージェント自身も付けられた)、[ADR-0003](0003-agent-identity-separation.md) の identity 分離と CODEOWNERS への移行によって**構造として成立した**
+- ADR・workflows・`.claude/` の変更は常にメンテナの承認を要する。当初この効果は規約止まりだったが (ラベルはエージェント自身も付けられた)、[ADR-0003](0003-agent-identity-separation.md) の identity 分離によって構造へ寄せた。**ただし CODEOWNERS への移行だけでは構造として成立していなかった** — 承認数 0 が code owner の要求を非ブロックにしており、実際に効き始めたのは ADR-0003 決定 4 の改訂 (`required_reviewers`) からである ([#211](https://github.com/mokume-metal/mokume/issues/211))
 - 決定 6 は文書だけで守る。判定は「その情報が merge 後も読まれるか」という実質的な判断で、機械にできるのは投稿先が器の有無と合っているかまでであり、それは `scripts/plan-record.sh` が既に見ている
 - 行単位のレビューコメントが使われていない件は決定 6 の射程外に置いた。指摘は PR 本文のコメントで実際に届いており、実害が示されていない ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) の順序 — 実害 → Issue → 機構)

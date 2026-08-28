@@ -9,7 +9,7 @@
   3. 承認が要る PR の author が、唯一の承認者になっていない (ADR-0007 / #88)
   4. verify: human なら人間の Approve がある
 
-重要パスの承認要求そのものは CODEOWNERS が担うので、ここでは見ない — 3 が
+重要パスの承認要求そのものはルールセットの required_reviewers が担うので、ここでは見ない — 3 が
 CODEOWNERS を読むのは「誰が承認できるか」を知るためで、承認を重ねて要求するため
 ではない。`review: approved` ラベルの fallback は identity 分離 (ADR-0003) で
 廃止した。**外したことが戻らない**ことを最後の 2 ケースで固定する。
