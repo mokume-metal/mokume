@@ -157,6 +157,8 @@ enum Scene: String, CaseIterable, Sendable {
     case userShader
     /// 基本の立体を並べ、回して奥行きが出る向きに置いたもの。
     case solids
+    /// 光を当てた立体。底上げの光・向きを持つ光・広がりを持つ光を並べたもの。
+    case lighting
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -576,6 +578,35 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.translate(places[5].x, places[5].y, 0)
             canvas.rotateX(0.9)
             canvas.torus(13, 5)
+            canvas.pop()
+
+        case .lighting:
+            canvas.background(.display(red: 0.05, green: 0.05, blue: 0.07))
+            // 底上げ + 斜め上から差す光。縦軸は下向きなので、上から差す光の向きは +y
+            canvas.ambientLight(.opaque(red: 0.18, green: 0.18, blue: 0.22))
+            canvas.directionalLight(.opaque(red: 0.9, green: 0.85, blue: 0.75), -0.45, 0.8, -0.4)
+            // 手前の右下から当てる差し色
+            canvas.pointLight(.opaque(red: 0.25, green: 0.4, blue: 0.9), 120, 110, 90)
+
+            canvas.fill(.display(red: 0.9, green: 0.9, blue: 0.92))
+            canvas.push()
+            canvas.translate(38, 44, 0)
+            canvas.sphere(24)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.95, green: 0.5, blue: 0.3))
+            canvas.push()
+            canvas.translate(92, 40, 0)
+            canvas.rotateX(0.6)
+            canvas.rotateY(0.8)
+            canvas.box(38)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.5, green: 0.85, blue: 0.6))
+            canvas.push()
+            canvas.translate(64, 98, 0)
+            canvas.rotateX(1.1)
+            canvas.torus(28, 10)
             canvas.pop()
         }
     }

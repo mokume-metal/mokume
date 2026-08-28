@@ -76,6 +76,33 @@ public final class Canvas {
     /// 置けない寸法を知らせたか。
     var warnedBadSolidSize = false
 
+    /// いま効いている光。**フレームを越えない** ([ADR-0021] 決定 4)。
+    ///
+    /// 上限を持たない — 固定の枠を持つと、超えた光が黙って捨てられる。列が「置き場の
+    /// どこから何個か」を持つ形にしてあるので、数はいくつでも同じ仕組みで届く。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    var activeLights: [Light] = []
+    /// 列ごとに焼き付けた光を並べたもの。列は自分の区間を指す。
+    ///
+    /// 列が閉じた時点の光を**写して**持つ。参照で持つと、あとから光を足したときに
+    /// 既に置いた立体の明るさまで変わる (記録した列だけで絵が決まらなくなる)。
+    private var lightStorage: [Light] = []
+    /// 光の置き場。
+    private var lightBuffer: (any MTLBuffer)?
+    private var lightCapacity = 0
+    /// 列ごとの「光がどこから何個か」の置き場。
+    private var lightingBuffer: (any MTLBuffer)?
+    private var lightingCapacity = 0
+    /// フレームの外で光が置かれたことを知らせたか。
+    var warnedLightOutsideFrame = false
+
+    /// いま `draw(_:)` の中か。
+    ///
+    /// シーンの記述 (光・視点) は、フレームの外で書かれてもどのフレームにも属さない。
+    /// 黙って捨てず警告するために、内と外を知る必要がある ([ADR-0021] 決定 4)。
+    private(set) var isDrawing = false
+
     /// このフレームで塗り直す色。`nil` なら前の内容の上に描き足す。
     private var pendingBackground: LinearRGBA?
 
@@ -175,6 +202,8 @@ public final class Canvas {
         var source: VertexSource
         /// この列を描画先の座標へ落とす行列。
         var matrix: simd_float4x4
+        /// この列に効く光が、置き場のどこから何個あるか。
+        var lightRange: Range<Int>
     }
 
     /// 列がどちらの並びから描かれるか。
@@ -439,7 +468,17 @@ public final class Canvas {
                     values: currentShader?.packedValues ?? [], start: start, count: count),
                 clip: currentClip,
                 source: openSource,
-                matrix: openSource == .flat ? projection : viewProjection))
+                matrix: openSource == .flat ? projection : viewProjection,
+                // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
+                lightRange: openSource == .flat ? 0..<0 : bakeActiveLights()))
+    }
+
+    /// いま効いている光を置き場へ写し、その区間を返す。
+    private func bakeActiveLights() -> Range<Int> {
+        guard !activeLights.isEmpty else { return 0..<0 }
+        let start = lightStorage.count
+        lightStorage.append(contentsOf: activeLights)
+        return start..<lightStorage.count
     }
 
     /// 線の端の形。
@@ -1206,8 +1245,13 @@ public final class Canvas {
         transform = .identity
         transformStack.removeAll(keepingCapacity: true)
         hasLoadedPixels = false
+        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。光はここで空に戻る
+        activeLights.removeAll(keepingCapacity: true)
+        lightStorage.removeAll(keepingCapacity: true)
 
+        isDrawing = true
         body()
+        isDrawing = false
 
         try flush()
     }
@@ -1246,6 +1290,15 @@ public final class Canvas {
                 guard let base = source.baseAddress else { return }
                 solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
             }
+            // 光の置き場。列は自分の区間を指す
+            let lightsBuffer = try lightBufferHolding(max(lightStorage.count, 1))
+            lightStorage.withUnsafeBytes { source in
+                guard let base = source.baseAddress, source.count > 0 else { return }
+                lightsBuffer.contents().copyMemory(from: base, byteCount: source.count)
+            }
+            pipeline.argumentTable.setAddress(
+                lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
+
             // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
             let matrices = try matrixBufferHolding(batches.count)
             for (index, batch) in batches.enumerated() {
@@ -1266,6 +1319,15 @@ public final class Canvas {
                 uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
 
             // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている
+            let lighting = try lightingBufferHolding(batches.count)
+            for (index, batch) in batches.enumerated() {
+                let slot = lighting.contents().advanced(by: index * Self.valuesStride)
+                    .assumingMemoryBound(to: UInt32.self)
+                slot.update(
+                    from: [UInt32(batch.lightRange.lowerBound), UInt32(batch.lightRange.count)],
+                    count: 2)
+            }
+
             let values = try valuesBufferHolding(batches.count)
             for (index, batch) in batches.enumerated() {
                 let slot = values.contents().advanced(by: index * Self.valuesStride)
@@ -1298,6 +1360,9 @@ public final class Canvas {
                 pipeline.argumentTable.setAddress(
                     values.gpuAddress + UInt64(index * Self.valuesStride),
                     index: ShapePipeline.valuesBufferIndex)
+                pipeline.argumentTable.setAddress(
+                    lighting.gpuAddress + UInt64(index * Self.valuesStride),
+                    index: ShapePipeline.lightingBufferIndex)
                 encoder.setScissorRect(
                     batch.clip
                         ?? MTLScissorRect(x: 0, y: 0, width: Int(width), height: Int(height)))
@@ -1350,6 +1415,26 @@ public final class Canvas {
             byteCount: capacity * MemoryLayout<SolidVertex>.stride)
         solidVertexBuffer = buffer
         solidVertexCapacity = capacity
+        return buffer
+    }
+
+    /// 光を置く領域。足りなければ取り直す。
+    private func lightBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = lightBuffer, lightCapacity >= count { return buffer }
+        let capacity = max(count, max(lightCapacity * 2, 8))
+        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * MemoryLayout<Light>.stride)
+        lightBuffer = buffer
+        lightCapacity = capacity
+        return buffer
+    }
+
+    /// 列ごとの「光がどこから何個か」を置く領域。足りなければ取り直す。
+    private func lightingBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = lightingBuffer, lightingCapacity >= count { return buffer }
+        let capacity = max(count, max(lightingCapacity * 2, 16))
+        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
+        lightingBuffer = buffer
+        lightingCapacity = capacity
         return buffer
     }
 

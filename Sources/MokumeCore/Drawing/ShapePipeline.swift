@@ -25,6 +25,10 @@ final class ShapePipeline {
     static let uniformsBufferIndex = 4
     /// 利用者が渡した値の口の番号 (シェーダ側の `buffer(5)`)。
     static let valuesBufferIndex = 5
+    /// この列に効く光の区間を渡す口の番号 (シェーダ側の `buffer(6)`)。
+    static let lightingBufferIndex = 6
+    /// 置いた光を渡す口の番号 (シェーダ側の `buffer(7)`)。
+    static let lightsBufferIndex = 7
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
 
@@ -86,7 +90,7 @@ final class ShapePipeline {
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
-        tableDescriptor.maxBufferBindCount = 6
+        tableDescriptor.maxBufferBindCount = 8
         tableDescriptor.maxTextureBindCount = 1
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)

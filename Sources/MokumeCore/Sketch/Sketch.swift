@@ -500,6 +500,78 @@ extension Sketch {
     /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
     public func pushStyle() { canvas.pushStyle() }
 
+    // MARK: - 光
+
+    /// 全体を底上げする光を置く。向きを持たないので、どの面も同じだけ明るくなる。
+    ///
+    /// **色そのものが明るさの倍率**である。`1.0` は「その光を正面から受けた白い面が
+    /// 白として出る」明るさで、それより明るい光は 1 を超える色で書く
+    /// (`.opaque(red: 2, green: 2, blue: 2)`)。強さを表す別の数は持たない。
+    ///
+    /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。初期化の
+    ///   ときに置いた光はどのフレームにも属さないので、警告して無視される。
+    public func ambientLight(_ color: LinearRGBA) { canvas.ambientLight(color) }
+
+    /// 向きだけを持つ光を置く (無限に遠くから差す光)。
+    ///
+    /// 渡すのは**光が進む向き**である。縦軸は下向きなので、`(0, 1, 0)` が真上から
+    /// 差す光になる。斜めの成分を入れると、陰の境目が左右どちらかへ寄る。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     ambientLight(.opaque(red: 0.3, green: 0.3, blue: 0.3))
+    ///     directionalLight(.opaque(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.8, -0.4)
+    ///     push()
+    ///     translate(width / 2, height / 2, 0)
+    ///     sphere(120)
+    ///     pop()
+    /// }
+    /// ```
+    ///
+    /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    public func directionalLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
+        canvas.directionalLight(color, x, y, z)
+    }
+
+    /// 位置を持つ光を置く。面から光源へ向かう向きで明るさが決まる。
+    ///
+    /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    public func pointLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
+        canvas.pointLight(color, x, y, z)
+    }
+
+    /// 位置と向きと広がりを持つ光を置く。広がりの外へは当たらない。
+    ///
+    /// - Parameters:
+    ///   - color: 光の色 (明るさの倍率を兼ねる)。
+    ///   - x: 光源の位置。
+    ///   - y: 光源の位置。
+    ///   - z: 光源の位置。
+    ///   - directionX: 光が進む向き。
+    ///   - directionY: 光が進む向き。
+    ///   - directionZ: 光が進む向き。
+    ///   - angle: 広がりの半分の角 (ラジアン)。
+    ///
+    /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    public func spotLight(
+        _ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float,
+        _ directionX: Float, _ directionY: Float, _ directionZ: Float,
+        angle: Float = .pi / 6
+    ) {
+        canvas.spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
+    }
+
+    /// ひととおりの光を置く — 底上げの光と、斜め上から差す光。
+    ///
+    /// 立体を「とりあえず立体らしく」見せるための組み合わせ。細かく決めたくなったら
+    /// ``ambientLight(_:)`` と ``directionalLight(_:_:_:_:)`` を自分で並べる。
+    ///
+    /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    public func lights() { canvas.lights() }
+
+    /// 置いた光をすべて取り除く。以降の立体は塗り 1 色で描かれる。
+    public func noLights() { canvas.noLights() }
+
     // MARK: - 立体
 
     /// 立方体を置く。
@@ -521,7 +593,8 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// - Note: 光はまだ無いので、立体は塗り 1 色で出る。奥行きは前後の重なりで読める。
+    /// - Note: 光を 1 つも置かなければ塗り 1 色で出る。立体らしく見せるには
+    ///   ``lights()`` を `draw()` の中で呼ぶ。
     public func box(_ size: Float) { canvas.box(size) }
 
     /// 幅・高さ・奥行きを別々に決めた箱を置く。
