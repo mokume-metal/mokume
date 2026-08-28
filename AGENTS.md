@@ -54,7 +54,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 **PR には分類ラベルを付けない** ([ADR-0005](docs/decisions/0005-pr-labels-as-machine-input.md))。PR が持つ属性はすべて既に正典を持つ — 型は PR タイトル (Conventional Commits・`pr-title` ジョブが検査)、対象 Issue は本文の `Closes #N`、完了条件の性質は対象 Issue の `verify: *`、重要パスは CODEOWNERS、進行状態は Draft / Review / merge queue。ラベルで重ねると写しが増えるだけになる (Issue Type は Issue 専用で、そもそも PR には付かない)。
 
-PR に付くのは **CI の判定を変えるラベルだけ**で、現状は 2 種 — `no-issue` (Issue を閉じない例外 PR の印・`scripts/review-gate.sh` が読む) と `release:now` (merge したその場で版を出す印・`.github/workflows/release.yml` が読む)。新しい PR ラベルを足すときは、それを読むスクリプトを同時に示す — 読み手のいないラベルは足さない。付け忘れは `review-gate` が赤で差し戻すので、手付けのままでよい。人が介在しない bot の PR (dependabot) だけは `.github/dependabot.yml` の `labels` で自動付与する。
+PR に付くのは **CI の判定を変えるラベルだけ**で、現状は 3 種 — `no-issue` (Issue を閉じない例外 PR の印・`scripts/review-gate.sh` が読む)、`release:now` (merge したその場で版を出す印・`.github/workflows/release.yml` が読む)、`no-visual-change` (描画のパスに触れるが絵は変わらない印・`scripts/check-drawing-evidence.sh` が読む)。新しい PR ラベルを足すときは、それを読むスクリプトを同時に示す — 読み手のいないラベルは足さない。付け忘れは `review-gate` が赤で差し戻すので、手付けのままでよい。人が介在しない bot の PR (dependabot) だけは `.github/dependabot.yml` の `labels` で自動付与する。
 
 ## マージの判断基準
 
@@ -281,6 +281,10 @@ Claude Code のセッションでは `.claude/settings.json` のフック (`scri
 描画結果・動きが変わる PR には before/after の視覚的証跡を載せる (動きは動きの分かる形式で)。証跡はリポジトリにコミットせず、外部ホスティングの URL で参照する。
 
 CI は描画を走らせられない ([#180](https://github.com/mokume-metal/mokume/issues/180)) ので、**緑は「描けている」を意味しない**。貼られた絵が描画の唯一の検証記録になり、squash merge でブランチが消えた後には足せない。
+
+**これは作法ではなく機械の要求である** ([#306](https://github.com/mokume-metal/mokume/issues/306))。`scripts/drawing-paths.txt` に載る場所を触った PR の本文に絵が 1 つも無ければ、`drawing-evidence` が赤で差し戻す (`make ci-check` と CI のジョブの両方から走る。GPU は要らない — 変更ファイルの一覧と本文の文字列しか見ないので、`local-render` の待ち (「マージの判断基準」節) とは独立に効く)。**見るのは絵が用意されていることだけで、絵が正しいかは見ない** — 正しさの担い手は人間と AI の目である ([ADR-0019](docs/decisions/0019-drawing-verification.md) 決定 1)。
+
+絵を出しようがない変更 (描画のパスに居るが絵は変わらないリファクタ・コメントの修正) は **`no-visual-change` ラベル**で外す。本文の編集でもラベルの付け外しでも CI は自動で再評価する。
 
 **壊れている絵は起票の時点でしか撮れない。** 見た目・動きの事象を Issue に立てるときも、同じように証跡を添える。
 

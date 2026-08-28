@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test render-status shaders schemas api api-list reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -76,6 +76,12 @@ build:
 test:
 	@mkdir -p .build
 	set -o pipefail; swift test 2>&1 | tee .build/test-log.txt
+
+# 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
+# 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは
+# 理由を述べて 0 で抜ける (PR を出した後の実行から効くようになる)
+drawing-evidence:
+	bash scripts/check-drawing-evidence.sh
 
 # 描画の検査が走ったことを commit status として報告する (#304)。CI から呼ばれても
 # 認証が無いので何もしない。報告しない理由を述べて必ず 0 で終える
