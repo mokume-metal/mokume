@@ -60,6 +60,10 @@ public final class Canvas {
     private var transformStack: [Transform2D] = []
     private var currentRectMode = ShapeMode.corner
     private var currentEllipseMode = ShapeMode.center
+    private var currentStrokeCap = StrokeCap.round
+    private var currentStrokeJoin = StrokeJoin.miter
+    private var hasFill = true
+    private var hasStroke = true
     private var warnedReversedArc = false
 
     /// 描画先を指定して作る。
@@ -94,14 +98,32 @@ public final class Canvas {
 
     // MARK: - 状態
 
-    /// これから描く図形の塗りの色。
-    public func fill(_ color: LinearRGBA) { currentFill = color }
+    /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
+    public func fill(_ color: LinearRGBA) {
+        currentFill = color
+        hasFill = true
+    }
 
-    /// これから引く線の色。
-    public func stroke(_ color: LinearRGBA) { currentStroke = color }
+    /// 図形の内側を塗らない。
+    public func noFill() { hasFill = false }
+
+    /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
+    public func stroke(_ color: LinearRGBA) {
+        currentStroke = color
+        hasStroke = true
+    }
+
+    /// 線を引かない。図形の輪郭も出なくなる。
+    public func noStroke() { hasStroke = false }
 
     /// これから引く線の太さ (画素)。
     public func strokeWeight(_ weight: Float) { currentStrokeWeight = max(0, weight) }
+
+    /// 線の端の形。
+    public func strokeCap(_ cap: StrokeCap) { currentStrokeCap = cap }
+
+    /// 線の折れ目の形。
+    public func strokeJoin(_ join: StrokeJoin) { currentStrokeJoin = join }
 
     /// 矩形に渡す座標の読み方。
     public func rectMode(_ mode: ShapeMode) { currentRectMode = mode }
@@ -140,7 +162,7 @@ public final class Canvas {
         pendingBackground = color
     }
 
-    /// 矩形を塗る。座標の読み方は ``rectMode(_:)`` が決める。
+    /// 矩形。座標の読み方は ``rectMode(_:)`` が決める。
     public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
         guard box.width > 0, box.height > 0 else { return }
@@ -148,43 +170,41 @@ public final class Canvas {
         let y = box.y
         let w = box.width
         let h = box.height
-        appendTriangle(
-            transform.apply(x: x, y: y),
-            transform.apply(x: x + w, y: y),
-            transform.apply(x: x + w, y: y + h),
-            color: currentFill)
-        appendTriangle(
-            transform.apply(x: x, y: y),
-            transform.apply(x: x + w, y: y + h),
-            transform.apply(x: x, y: y + h),
-            color: currentFill)
+        draw(
+            Outline(
+                points: [
+                    SIMD2(x, y), SIMD2(x + w, y), SIMD2(x + w, y + h), SIMD2(x, y + h),
+                ], isClosed: true))
     }
 
-    /// 正方形を塗る。座標の読み方は ``rectMode(_:)`` が決める。
+    /// 正方形。座標の読み方は ``rectMode(_:)`` が決める。
     public func square(_ a: Float, _ b: Float, _ extent: Float) {
         rect(a, b, extent, extent)
     }
 
-    /// 円を塗る。座標の読み方は ``ellipseMode(_:)`` が決める。
+    /// 円。座標の読み方は ``ellipseMode(_:)`` が決める。
     public func circle(_ a: Float, _ b: Float, _ diameter: Float) {
         ellipse(a, b, diameter, diameter)
     }
 
-    /// 楕円を塗る。座標の読み方は ``ellipseMode(_:)`` が決める。
+    /// 楕円。座標の読み方は ``ellipseMode(_:)`` が決める。
     public func ellipse(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         let box = Self.resolveBox(a, b, c, d, mode: currentEllipseMode)
         let radiusX = box.width / 2
         let radiusY = box.height / 2
         guard radiusX > 0, radiusY > 0 else { return }
-        fillFan(
-            centerX: box.x + radiusX, centerY: box.y + radiusY,
-            radiusX: radiusX, radiusY: radiusY,
-            from: 0, sweep: 2 * .pi, color: currentFill)
+        let center = SIMD2(box.x + radiusX, box.y + radiusY)
+        draw(
+            Outline(
+                points: Self.arcPoints(
+                    center: center, radiusX: radiusX, radiusY: radiusY,
+                    from: 0, sweep: 2 * .pi),
+                isClosed: true, fanCenter: center))
     }
 
-    /// 円弧を塗る。座標の読み方は ``ellipseMode(_:)`` が決める。
+    /// 円弧。座標の読み方は ``ellipseMode(_:)`` が決める。
     ///
-    /// 塗りは**中心を含む扇形**。角度は右向きが 0 で、増える向きは画面の上で時計回りに見える。
+    /// 塗りは中心を含む扇形で、輪郭も扇の周 (2 本の半径と弧) を回る。
     public func arc(
         _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float
     ) {
@@ -196,63 +216,232 @@ public final class Canvas {
             warnReversedArcOnce()
             return
         }
-        fillFan(
-            centerX: box.x + radiusX, centerY: box.y + radiusY,
-            radiusX: radiusX, radiusY: radiusY,
-            from: start, sweep: min(stop - start, 2 * .pi), color: currentFill)
+        let center = SIMD2(box.x + radiusX, box.y + radiusY)
+        let sweep = min(stop - start, 2 * .pi)
+        let arcPoints = Self.arcPoints(
+            center: center, radiusX: radiusX, radiusY: radiusY, from: start, sweep: sweep)
+        // 一周ぶんなら中心は周に含めない (楕円と同じ形になる)
+        let isFullTurn = sweep >= 2 * .pi
+        draw(
+            Outline(
+                points: isFullTurn ? arcPoints : [center] + arcPoints,
+                isClosed: true, fanCenter: center))
     }
 
-    /// 三角形を塗る。
+    /// 三角形。
     public func triangle(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float, _ x3: Float, _ y3: Float
     ) {
-        appendTriangle(
-            transform.apply(x: x1, y: y1),
-            transform.apply(x: x2, y: y2),
-            transform.apply(x: x3, y: y3),
-            color: currentFill)
+        draw(
+            Outline(
+                points: [SIMD2(x1, y1), SIMD2(x2, y2), SIMD2(x3, y3)], isClosed: true))
     }
 
-    /// 四角形を塗る。頂点は与えた順に結ばれる。
+    /// 四角形。頂点は与えた順に結ばれる。
     public func quad(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,
         _ x3: Float, _ y3: Float, _ x4: Float, _ y4: Float
     ) {
-        let p1 = transform.apply(x: x1, y: y1)
-        let p2 = transform.apply(x: x2, y: y2)
-        let p3 = transform.apply(x: x3, y: y3)
-        let p4 = transform.apply(x: x4, y: y4)
-        appendTriangle(p1, p2, p3, color: currentFill)
-        appendTriangle(p1, p3, p4, color: currentFill)
+        draw(
+            Outline(
+                points: [SIMD2(x1, y1), SIMD2(x2, y2), SIMD2(x3, y3), SIMD2(x4, y4)],
+                isClosed: true))
     }
 
-    /// 点を打つ。大きさは ``strokeWeight(_:)`` で決めた太さ、色は線の色。
-    public func point(_ x: Float, _ y: Float) {
-        let radius = currentStrokeWeight / 2
-        guard radius > 0 else { return }
-        fillFan(
-            centerX: x, centerY: y, radiusX: radius, radiusY: radius,
-            from: 0, sweep: 2 * .pi, color: currentStroke)
-    }
-
-    /// 線を引く。太さは ``strokeWeight(_:)`` で決めた値。
+    /// 線。塗りは持たない。
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
-        let dx = x2 - x1
-        let dy = y2 - y1
-        let length = (dx * dx + dy * dy).squareRoot()
-        guard length > 0, currentStrokeWeight > 0 else { return }
+        draw(
+            Outline(
+                points: [SIMD2(x1, y1), SIMD2(x2, y2)], isClosed: false, fills: false))
+    }
 
-        // 線の向きに直交する方向へ、太さの半分ずつ広げた帯として描く
+    /// 点。大きさは線の太さ、形は端点の形 (``strokeCap(_:)``) が決める。
+    public func point(_ x: Float, _ y: Float) {
+        draw(Outline(points: [SIMD2(x, y)], isClosed: false, fills: false))
+    }
+
+    // MARK: - 周をひとつの道具にする
+
+    /// 図形の周。**塗りと輪郭はここから出る**ので、図形ごとに輪郭を書かずに済む。
+    ///
+    /// 点は変換をかける前の座標で持つ — 変換は最後に 1 度だけ掛ける。輪郭の太さは
+    /// 画面の画素で測るので、変換の前に帯を作ると拡大で太さが変わってしまう。
+    struct Outline {
+        /// 周を回る点。
+        var points: [SIMD2<Float>]
+        /// 最後の点から最初の点へ戻るか。
+        var isClosed: Bool
+        /// 扇で塗れる図形の中心。`nil` なら最初の点から扇状に分ける。
+        var fanCenter: SIMD2<Float>?
+        /// 塗りを持つか。線と点は持たない。
+        var fills: Bool
+
+        init(
+            points: [SIMD2<Float>], isClosed: Bool, fanCenter: SIMD2<Float>? = nil,
+            fills: Bool = true
+        ) {
+            self.points = points
+            self.isClosed = isClosed
+            self.fanCenter = fanCenter
+            self.fills = fills
+        }
+    }
+
+    /// 周から、塗りと輪郭を出す。
+    private func draw(_ outline: Outline) {
+        if outline.fills, hasFill { fillInterior(outline) }
+        if hasStroke, currentStrokeWeight > 0 { strokeOutline(outline) }
+    }
+
+    /// 周の内側を塗る。
+    private func fillInterior(_ outline: Outline) {
+        let points = outline.points
+        guard points.count >= 3 else { return }
+        let pivot = outline.fanCenter ?? points[0]
+        let center = transform.apply(x: pivot.x, y: pivot.y)
+        // 中心を持つ図形は全周を扇に分け、持たない図形は最初の点から分ける
+        let ring = outline.fanCenter == nil ? Array(points.dropFirst()) : points
+        guard ring.count >= 2 else { return }
+        var previous = transform.apply(x: ring[0].x, y: ring[0].y)
+        for point in ring.dropFirst() {
+            let current = transform.apply(x: point.x, y: point.y)
+            appendTriangle(center, previous, current, color: currentFill)
+            previous = current
+        }
+        if outline.fanCenter != nil, outline.isClosed {
+            let first = transform.apply(x: ring[0].x, y: ring[0].y)
+            appendTriangle(center, previous, first, color: currentFill)
+        }
+    }
+
+    /// 周を太さのある帯でなぞる。
+    private func strokeOutline(_ outline: Outline) {
         let half = currentStrokeWeight / 2
-        let nx = -dy / length * half
-        let ny = dx / length * half
+        let points = outline.points
 
-        let a = transform.apply(x: x1 + nx, y: y1 + ny)
-        let b = transform.apply(x: x2 + nx, y: y2 + ny)
-        let c = transform.apply(x: x2 - nx, y: y2 - ny)
-        let d = transform.apply(x: x1 - nx, y: y1 - ny)
-        appendTriangle(a, b, c, color: currentStroke)
-        appendTriangle(a, c, d, color: currentStroke)
+        // 点が 1 つだけなら、端点の形そのものを置く
+        if points.count == 1 {
+            appendCap(at: points[0], towards: points[0] + SIMD2(1, 0), half: half, isolated: true)
+            return
+        }
+        guard points.count >= 2 else { return }
+
+        let segmentCount = outline.isClosed ? points.count : points.count - 1
+        for index in 0..<segmentCount {
+            appendBand(points[index], points[(index + 1) % points.count], half: half)
+        }
+
+        if outline.isClosed {
+            for index in 0..<points.count {
+                appendJoin(at: points[index], half: half)
+            }
+        } else {
+            for index in 1..<(points.count - 1) {
+                appendJoin(at: points[index], half: half)
+            }
+            appendCap(at: points[0], towards: points[1], half: half, isolated: false)
+            let last = points.count - 1
+            appendCap(at: points[last], towards: points[last - 1], half: half, isolated: false)
+        }
+    }
+
+    /// 線分 1 本を帯にする。
+    private func appendBand(_ a: SIMD2<Float>, _ b: SIMD2<Float>, half: Float) {
+        let delta = b - a
+        let length = (delta.x * delta.x + delta.y * delta.y).squareRoot()
+        guard length > 0 else { return }
+        let normal = SIMD2(-delta.y / length * half, delta.x / length * half)
+        let p1 = transform.apply(x: a.x + normal.x, y: a.y + normal.y)
+        let p2 = transform.apply(x: b.x + normal.x, y: b.y + normal.y)
+        let p3 = transform.apply(x: b.x - normal.x, y: b.y - normal.y)
+        let p4 = transform.apply(x: a.x - normal.x, y: a.y - normal.y)
+        appendTriangle(p1, p2, p3, color: currentStroke)
+        appendTriangle(p1, p3, p4, color: currentStroke)
+    }
+
+    /// 折れ目を埋める。
+    ///
+    /// 帯は線分ごとに独立して置くので、曲がったところに楔形の隙間が空く。そこを
+    /// 埋める形が角の形である。**隙間を埋める向きだけを見て、内側か外側かを判定しない** —
+    /// 埋める図形は内側でも帯に重なるだけで、絵は変わらない。
+    private func appendJoin(at vertex: SIMD2<Float>, half: Float) {
+        switch currentStrokeJoin {
+        case .round:
+            appendDisc(at: vertex, radiusX: half, radiusY: half, color: currentStroke)
+        case .bevel, .miter:
+            // 削ぐ形は正方形の一部で近似する。尖らせる形は鋭角で極端に伸びるため、
+            // 限界を持たない実装では削ぐ形へ倒す (限界の設計は輪郭が育ってから)
+            appendSquare(at: vertex, half: half, color: currentStroke)
+        }
+    }
+
+    /// 端を仕上げる。
+    private func appendCap(
+        at end: SIMD2<Float>, towards neighbour: SIMD2<Float>, half: Float, isolated: Bool
+    ) {
+        switch currentStrokeCap {
+        case .square where !isolated:
+            return  // 線の長さちょうどで切る
+        case .round:
+            appendDisc(at: end, radiusX: half, radiusY: half, color: currentStroke)
+        case .square, .project:
+            appendSquare(at: end, half: half, color: currentStroke)
+        }
+    }
+
+    /// 円板を置く (丸い端点と丸い角)。
+    private func appendDisc(
+        at center: SIMD2<Float>, radiusX: Float, radiusY: Float, color: LinearRGBA
+    ) {
+        let points = Self.arcPoints(
+            center: center, radiusX: radiusX, radiusY: radiusY, from: 0, sweep: 2 * .pi)
+        let hub = transform.apply(x: center.x, y: center.y)
+        var previous = transform.apply(x: points[0].x, y: points[0].y)
+        for point in points.dropFirst() {
+            let current = transform.apply(x: point.x, y: point.y)
+            appendTriangle(hub, previous, current, color: color)
+            previous = current
+        }
+        let first = transform.apply(x: points[0].x, y: points[0].y)
+        appendTriangle(hub, previous, first, color: color)
+    }
+
+    /// 正方形を置く (四角い端点と削いだ角)。
+    private func appendSquare(at center: SIMD2<Float>, half: Float, color: LinearRGBA) {
+        let a = transform.apply(x: center.x - half, y: center.y - half)
+        let b = transform.apply(x: center.x + half, y: center.y - half)
+        let c = transform.apply(x: center.x + half, y: center.y + half)
+        let d = transform.apply(x: center.x - half, y: center.y + half)
+        appendTriangle(a, b, c, color: color)
+        appendTriangle(a, c, d, color: color)
+    }
+
+    /// 弧の上の点を返す。円と楕円は「一周ぶんの弧」であり、別の道具にはしない。
+    static func arcPoints(
+        center: SIMD2<Float>, radiusX: Float, radiusY: Float, from start: Float, sweep: Float
+    ) -> [SIMD2<Float>] {
+        let full = segmentCount(forRadius: max(radiusX, radiusY))
+        let segments = max(1, Int((Float(full) * sweep / (2 * .pi)).rounded(.up)))
+        let step = sweep / Float(segments)
+        // 一周は最後の点が最初と重なるので落とす
+        let count = sweep >= 2 * .pi ? segments : segments + 1
+        return (0..<count).map { index in
+            let angle = start + step * Float(index)
+            return SIMD2(
+                center.x + radiusX * cos(angle), center.y + radiusY * sin(angle))
+        }
+    }
+
+    /// 4 つの数を、左上の角と大きさへ読み替える。
+    static func resolveBox(_ a: Float, _ b: Float, _ c: Float, _ d: Float, mode: ShapeMode)
+        -> (x: Float, y: Float, width: Float, height: Float)
+    {
+        switch mode {
+        case .corner: return (a, b, c, d)
+        case .corners: return (min(a, c), min(b, d), abs(c - a), abs(d - b))
+        case .center: return (a - c / 2, b - d / 2, c, d)
+        case .radius: return (a - c, b - d, c * 2, d * 2)
+        }
     }
 
     /// 円を近似する多角形の辺の数。
@@ -269,42 +458,6 @@ public final class Canvas {
         let n = Float.pi / acos(max(-1, 1 - tolerance / radius))
         guard n.isFinite else { return 32 }
         return min(128, max(32, Int(n.rounded(.up))))
-    }
-
-    /// 中心から扇状に三角形を並べて、円・楕円・円弧を塗る。
-    ///
-    /// 円と楕円は「一周ぶんの扇」であり、円弧と別の道具にはしない。同じ順序で頂点を
-    /// 積むので、`sweep` が一周のときの結果は分割の仕方まで一致する。
-    private func fillFan(
-        centerX: Float, centerY: Float, radiusX: Float, radiusY: Float,
-        from start: Float, sweep: Float, color: LinearRGBA
-    ) {
-        let full = Self.segmentCount(forRadius: max(radiusX, radiusY))
-        // 一周に満たない扇は、そのぶんだけ辺を割く (荒くならないよう切り上げる)
-        let segments = max(1, Int((Float(full) * sweep / (2 * .pi)).rounded(.up)))
-        let step = sweep / Float(segments)
-        let center = transform.apply(x: centerX, y: centerY)
-        var previous = transform.apply(
-            x: centerX + radiusX * cos(start), y: centerY + radiusY * sin(start))
-        for index in 1...segments {
-            let angle = start + step * Float(index)
-            let point = transform.apply(
-                x: centerX + radiusX * cos(angle), y: centerY + radiusY * sin(angle))
-            appendTriangle(center, previous, point, color: color)
-            previous = point
-        }
-    }
-
-    /// 4 つの数を、左上の角と大きさへ読み替える。
-    static func resolveBox(_ a: Float, _ b: Float, _ c: Float, _ d: Float, mode: ShapeMode)
-        -> (x: Float, y: Float, width: Float, height: Float)
-    {
-        switch mode {
-        case .corner: return (a, b, c, d)
-        case .corners: return (min(a, c), min(b, d), abs(c - a), abs(d - b))
-        case .center: return (a - c / 2, b - d / 2, c, d)
-        case .radius: return (a - c, b - d, c * 2, d * 2)
-        }
     }
 
     /// 角度が逆向きの円弧を、初回だけ知らせる。

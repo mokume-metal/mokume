@@ -110,6 +110,26 @@ extension Sketch {
     public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
     /// これから引く線の太さ (画素)。
     public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
+
+    /// 図形の内側を塗らない。輪郭だけの図形になる。
+    ///
+    /// ``fill(_:)`` を呼ぶと、その時点でまた塗るようになる。
+    public func noFill() { canvas.noFill() }
+
+    /// 線を引かない。図形の輪郭も出なくなる。
+    ///
+    /// ``stroke(_:)`` を呼ぶと、その時点でまた引くようになる。
+    public func noStroke() { canvas.noStroke() }
+
+    /// 線の端の形。既定は丸。
+    ///
+    /// 太さ 1 の線では 3 つとも同じに見えるので、**確かめるときは太さを振る**。
+    public func strokeCap(_ cap: StrokeCap) { canvas.strokeCap(cap) }
+
+    /// 線の折れ目の形。既定は尖らせる形。
+    ///
+    /// 折れ線と、閉じた図形の輪郭の角に効く。
+    public func strokeJoin(_ join: StrokeJoin) { canvas.strokeJoin(join) }
     /// 矩形を塗る。
     ///
     /// 4 つの数の読み方は ``rectMode(_:)`` が決める。既定は**左上の角と、幅と高さ**。
