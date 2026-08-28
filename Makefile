@@ -2,7 +2,7 @@
 # (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test shaders schemas no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test shaders schemas no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -21,10 +21,16 @@ setup: ## 開発ツールを確認する
 
 check: setup
 
-ci-check: build test shaders schemas no-binaries reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
+
+# 上と同じく git index の衛生を見る。呼び口は bash scripts/x.sh に一本化されている
+# ので、実行ビットは誰も使っていない — 混ざっていると ./scripts/x.sh を打った人が
+# ファイルによって permission denied を踏む (#272)
+file-modes:
+	bash scripts/check-file-modes.sh
 
 # reuse-lint より先に置く。判定モジュールが壊れていると reuse-lint は「SPDX が
 # 無い」としか言わないので、原因を先に見せる
