@@ -67,6 +67,9 @@ public final class Canvas {
     private var styleStack: [Style] = []
     private var currentBlendMode = BlendMode.blend
     private var currentClip: MTLScissorRect?
+    /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
+    var hasLoadedPixels = false
+
     private var warnedReversedArc = false
     private var warnedVertexOutsideShape = false
 
@@ -1123,12 +1126,10 @@ public final class Canvas {
     /// `body` の中で呼んだ図形が溜められ、抜けるときにまとめて描画先へ落ちる。
     /// GPU が終わるまで待ってから返る。
     public func draw(_ body: () -> Void) throws(RenderFailure) {
-        vertices.removeAll(keepingCapacity: true)
-        batches.removeAll(keepingCapacity: true)
         currentClip = nil
-        pendingBackground = nil
         transform = .identity
         transformStack.removeAll(keepingCapacity: true)
+        hasLoadedPixels = false
 
         body()
 
@@ -1143,7 +1144,7 @@ public final class Canvas {
     /// 穴を空けてある。公開はしない。
     var failureForTesting: RenderFailure?
 
-    private func flush() throws(RenderFailure) {
+    func flush() throws(RenderFailure) {
         if let failureForTesting { throw failureForTesting }
         closeBatch()
         let pass = target.makeRenderPass(clearColor: pendingBackground)
@@ -1191,6 +1192,12 @@ public final class Canvas {
 
         encoder.endEncoding()
         try gpu.commitAndWait(commands)
+
+        // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
+        // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる
+        vertices.removeAll(keepingCapacity: true)
+        batches.removeAll(keepingCapacity: true)
+        pendingBackground = nil
     }
 
     /// 頂点を置く領域。足りなければ取り直す。

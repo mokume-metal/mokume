@@ -179,6 +179,36 @@ public final class RenderDevice {
         return buffer
     }
 
+    /// 領域の上にテクスチャを載せるときの、1 行あたりのバイト数。
+    ///
+    /// 行の先頭が揃っていないとテクスチャを載せられない。**幅を切り上げるのではなく
+    /// 行の間隔を広げる**ので、どんな幅でも載せられる — 幅を切り上げると、利用者の
+    /// 指定した大きさと描かれる大きさが食い違う。
+    func alignedBytesPerRow(_ natural: Int) -> Int {
+        let alignment = device.minimumLinearTextureAlignment(for: RenderTarget.pixelFormat)
+        guard alignment > 1 else { return natural }
+        return (natural + alignment - 1) / alignment * alignment
+    }
+
+    /// CPU から読める領域の上にテクスチャを載せて確保する。
+    ///
+    /// こうして作ったテクスチャへ描くと、結果は**同じメモリ**に現れる。写しを取らずに
+    /// CPU から読めるのはこのためで、統一メモリの機械でしか成立しない ([ADR-0009])。
+    ///
+    /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor.md
+    func makeBufferBackedTexture(
+        descriptor: MTLTextureDescriptor, bytesPerRow: Int
+    ) throws(RenderFailure) -> (texture: any MTLTexture, storage: any MTLBuffer) {
+        let storage = try makeReadableBuffer(byteCount: bytesPerRow * descriptor.height)
+        guard
+            let texture = storage.makeTexture(
+                descriptor: descriptor, offset: 0, bytesPerRow: bytesPerRow)
+        else {
+            throw .textureUnavailable(width: descriptor.width, height: descriptor.height)
+        }
+        return (texture, storage)
+    }
+
     // MARK: - コマンド
 
     /// コマンドを 1 本組み立て始める。
