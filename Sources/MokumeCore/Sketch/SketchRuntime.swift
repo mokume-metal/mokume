@@ -139,6 +139,7 @@ public final class SketchRuntime {
         receiveInput()
 
         var drawFailure: RenderFailure?
+        canvas.time = timing.time
         do {
             try canvas.draw { withActiveRuntime { sketch.draw() } }
         } catch {
@@ -255,6 +256,9 @@ public final class SketchRuntime {
 
         do {
             let image = try target.encodeForDisplay().scaled(by: request.scale)
+            // 描けてはいるが直っていないもの (組み立てに失敗した断片など) は、
+            // 応答の警告として出す。**絵が出ているぶん、これが無いと気付けない**
+            let failures = canvas.shaderFailures
             try observer.respond(
                 ObservationReport(
                     id: request.id,
@@ -262,6 +266,7 @@ public final class SketchRuntime {
                     frame: timing.frameCount,
                     time: Double(timing.time),
                     size: size,
+                    warnings: failures,
                     stats: FrameStats.summarize(image),
                     load: RuntimeLoad.sample(frameDurations: frameIntervals),
                     values: values,

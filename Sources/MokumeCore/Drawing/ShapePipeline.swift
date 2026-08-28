@@ -9,6 +9,9 @@ import simd
 ///
 /// この世代の Metal では、シェーダへ資源を渡すのは**引数のテーブル**で、GPU 上の
 /// 番地を指す。テーブルの用意とパイプラインの構築をここにまとめる。
+///
+/// 頂点を組み立てる側は組み込みのものしかない — 利用者が差し替えるのは塗りだけなので、
+/// **利用者の断片から作るパイプラインも、頂点側は同じものを使う。**
 final class ShapePipeline {
     /// 頂点の並びを渡す口の番号 (シェーダ側の `buffer(0)`)。
     static let vertexBufferIndex = 0
@@ -18,25 +21,72 @@ final class ShapePipeline {
     static let blendModeBufferIndex = 2
     /// 面の中身の種類を渡す口の番号 (シェーダ側の `buffer(3)`)。
     static let textureKindBufferIndex = 3
+    /// フレームを通して変わらない値を渡す口の番号 (シェーダ側の `buffer(4)`)。
+    static let uniformsBufferIndex = 4
+    /// 利用者が渡した値の口の番号 (シェーダ側の `buffer(5)`)。
+    static let valuesBufferIndex = 5
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
 
+    /// 組み込みの塗りで描くパイプライン。
     let state: any MTLRenderPipelineState
     let argumentTable: any MTL4ArgumentTable
 
-    init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
-        let library = try gpu.makeLibrary(named: "Shapes")
+    private let vertexLibrary: any MTLLibrary
+    private let compiler: any MTL4Compiler
+    private let pixelFormat: MTLPixelFormat
 
+    init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
+        self.pixelFormat = pixelFormat
+        let library = try gpu.makeShapeLibrary(
+            named: "Shapes", body: gpu.bundledShaderSource(named: "Shapes"))
+        self.vertexLibrary = library
+
+        let compilerDescriptor = MTL4CompilerDescriptor()
+        compilerDescriptor.label = "mokume.compiler"
+        guard let compiler = try? gpu.device.makeCompiler(descriptor: compilerDescriptor) else {
+            throw .shaderCompilerUnavailable
+        }
+        self.compiler = compiler
+
+        self.state = try Self.makeState(
+            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.shapes")
+
+        let tableDescriptor = MTL4ArgumentTableDescriptor()
+        tableDescriptor.label = "mokume.shapes.arguments"
+        tableDescriptor.maxBufferBindCount = 6
+        tableDescriptor.maxTextureBindCount = 1
+        do {
+            argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
+        } catch {
+            throw .argumentTableUnavailable(reason: error.localizedDescription)
+        }
+    }
+
+    /// 利用者の断片で塗るパイプラインを組む。
+    func makeState(fragmentLibrary: any MTLLibrary, label: String) throws(RenderFailure)
+        -> any MTLRenderPipelineState
+    {
+        try Self.makeState(
+            compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary,
+            pixelFormat: pixelFormat, label: label)
+    }
+
+    private static func makeState(
+        compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
+        fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String
+    ) throws(RenderFailure) -> any MTLRenderPipelineState {
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = "shapeVertexMain"
-        vertexFunction.library = library
+        vertexFunction.library = vertexLibrary
 
         let fragmentFunction = MTL4LibraryFunctionDescriptor()
-        fragmentFunction.name = "shapeFragmentMain"
-        fragmentFunction.library = library
+        fragmentFunction.name = "mokume_fragmentMain"
+        fragmentFunction.library = fragmentLibrary
 
         let descriptor = MTL4RenderPipelineDescriptor()
-        descriptor.label = "mokume.shapes"
+        descriptor.label = label
         descriptor.vertexFunctionDescriptor = vertexFunction
         descriptor.fragmentFunctionDescriptor = fragmentFunction
 
@@ -48,26 +98,10 @@ final class ShapePipeline {
         attachment.pixelFormat = pixelFormat
         attachment.blendingState = .disabled
 
-        let compilerDescriptor = MTL4CompilerDescriptor()
-        compilerDescriptor.label = "mokume.compiler"
-        guard let compiler = try? gpu.device.makeCompiler(descriptor: compilerDescriptor) else {
-            throw .shaderCompilerUnavailable
-        }
         do {
-            state = try compiler.makeRenderPipelineState(descriptor: descriptor)
+            return try compiler.makeRenderPipelineState(descriptor: descriptor)
         } catch {
             throw .pipelineUnavailable(reason: error.localizedDescription)
         }
-
-        let tableDescriptor = MTL4ArgumentTableDescriptor()
-        tableDescriptor.label = "mokume.shapes.arguments"
-        tableDescriptor.maxBufferBindCount = 4
-        tableDescriptor.maxTextureBindCount = 1
-        do {
-            argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
-        } catch {
-            throw .argumentTableUnavailable(reason: error.localizedDescription)
-        }
     }
-
 }

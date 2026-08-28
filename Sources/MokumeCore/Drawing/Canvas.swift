@@ -36,15 +36,15 @@ public final class Canvas {
     public let height: Float
 
     let target: RenderTarget
-    private let gpu: RenderDevice
-    private let pipeline: ShapePipeline
+    let gpu: RenderDevice
+    let pipeline: ShapePipeline
 
     /// 描画先の座標へ落とす行列。半画素のずらしを含む。
     private let projection: simd_float4x4
     private let projectionBuffer: any MTLBuffer
 
     /// 溜めている頂点と、その置き場。
-    private var vertices: [ShapeVertex] = []
+    var vertices: [ShapeVertex] = []
     private var vertexBuffer: (any MTLBuffer)?
     private var vertexCapacity = 0
 
@@ -56,7 +56,7 @@ public final class Canvas {
     private var currentFill = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
     private var currentStroke = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
     private var currentStrokeWeight: Float = 1
-    private var transform = Transform2D.identity
+    var transform = Transform2D.identity
     private var transformStack: [Transform2D] = []
     private var currentRectMode = ShapeMode.corner
     private var currentEllipseMode = ShapeMode.center
@@ -65,8 +65,8 @@ public final class Canvas {
     private var hasFill = true
     private var hasStroke = true
     private var styleStack: [Style] = []
-    private var currentBlendMode = BlendMode.blend
-    private var currentClip: MTLScissorRect?
+    var currentBlendMode = BlendMode.blend
+    var currentClip: MTLScissorRect?
     /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
     var hasLoadedPixels = false
 
@@ -78,9 +78,13 @@ public final class Canvas {
     /// 字形を焼いて溜める面。**図形もここの白い区画を読む** (``GlyphAtlas``)。
     let atlas: GlyphAtlas
     /// いま列が読んでいる面。面を広げる・画像を描くと差し替わる。
-    private var currentTexture: any MTLTexture
+    var currentTexture: any MTLTexture
     /// いま読んでいる面の中身の種類。
-    private var currentTextureKind = TextureKind.coverage
+    var currentTextureKind = TextureKind.coverage
+    /// いま効いている塗り。`nil` なら組み込み。
+    var currentShader: Shader?
+    /// この面が作った塗り。観測へ失敗を載せるために持つ。
+    var shaders: [Shader] = []
     /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
     private var whiteUV: SIMD2<Float>
     /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。
@@ -123,20 +127,30 @@ public final class Canvas {
     /// 混ぜ方を変える操作がその時点で列を閉じるので、既に置いた図形が後の設定で
     /// 描かれることがない。閉じ忘れると絵は「たまに」おかしくなる — 設定を変えない
     /// 単純なスケッチでは一生出ないので、規律として持つ。
-    private var batches: [Batch] = []
+    var batches: [Batch] = []
 
     /// 閉じた列ひとつぶん。
-    private struct Batch {
-        var mode: BlendMode
+    ///
+    /// **切り抜き以外は保持した形の区間と同じもの**なので、``Shape/Run`` をそのまま
+    /// 使う。切り抜きだけが別なのは、切り抜きが描画先の座標で効く — つまり形と一緒に
+    /// 持ち運べない — ためである。
+    struct Batch {
+        var run: Shape.Run
         var clip: MTLScissorRect?
-        var texture: any MTLTexture
-        var textureKind: TextureKind
-        var start: Int
-        var count: Int
     }
 
     /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
     private let blendModeBuffer: any MTLBuffer
+    /// フレームを通して変わらない値 (時刻・面の大きさ) の置き場。
+    private let uniformsBuffer: any MTLBuffer
+    /// 列ごとの、利用者が渡した値の置き場。列 1 つにつき 1 区画。
+    private var valuesBuffer: (any MTLBuffer)?
+    private var valuesCapacity = 0
+    /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
+    private static let valuesStride = 256
+
+    /// いまのフレームの時刻 (秒)。利用者の断片から読める。
+    var time: Float = 0
     /// 面の中身の種類の番号を置いた領域。同じく番地で指す。
     private let textureKindBuffer: any MTLBuffer
     /// 定数の受け渡しは 16 バイト境界に揃える。
@@ -255,6 +269,9 @@ public final class Canvas {
             slot.pointee = kind.rawValue
         }
         self.textureKindBuffer = kindBuffer
+
+        // 時刻と面の大きさ。フレームごとに書き換わるので 1 区画だけ持つ
+        self.uniformsBuffer = try gpu.makeReadableBuffer(byteCount: Self.valuesStride)
     }
 
     /// これから置く頂点が読む面を決める。**変わるなら列を閉じる。**
@@ -356,14 +373,17 @@ public final class Canvas {
     }
 
     /// 溜めている頂点を、いまの混ぜ方の列として閉じる。
-    private func closeBatch() {
-        let start = batches.last.map { $0.start + $0.count } ?? 0
+    func closeBatch() {
+        let start = batches.last.map { $0.run.start + $0.run.count } ?? 0
         let count = vertices.count - start
         guard count > 0 else { return }
         batches.append(
             Batch(
-                mode: currentBlendMode, clip: currentClip, texture: currentTexture,
-                textureKind: currentTextureKind, start: start, count: count))
+                run: Shape.Run(
+                    mode: currentBlendMode, texture: currentTexture,
+                    textureKind: currentTextureKind, shader: currentShader,
+                    values: currentShader?.packedValues ?? [], start: start, count: count),
+                clip: currentClip))
     }
 
     /// 線の端の形。
@@ -1136,6 +1156,12 @@ public final class Canvas {
         try flush()
     }
 
+    /// 直前のフレームで描画を呼んだ回数。
+    ///
+    /// **畳めているかを数えるための値。** 絵が同じでも畳まれていなければ保持は目的を
+    /// 果たしていないので、絵ではなく回数で確かめる。
+    private(set) var drawCallsInLastFrame = 0
+
     /// 検査から「描けなかったフレーム」を作るための差し込み。製品の経路では常に `nil`。
     ///
     /// 描画の失敗は環境か資源が枯れたときにしか起きず、検査から自然には作れない。
@@ -1159,7 +1185,6 @@ public final class Canvas {
                 buffer.contents().copyMemory(
                     from: source.baseAddress!, byteCount: source.count)
             }
-            encoder.setRenderPipelineState(pipeline.state)
             encoder.setViewport(
                 MTLViewport(
                     originX: 0, originY: 0,
@@ -1169,27 +1194,51 @@ public final class Canvas {
                 buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
             pipeline.argumentTable.setAddress(
                 projectionBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
-            for batch in batches {
+
+            // 時刻と面の大きさは、フレームの中で変わらない
+            uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
+                .update(from: [time, 0, width, height], count: 4)
+            pipeline.argumentTable.setAddress(
+                uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
+
+            // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている
+            let values = try valuesBufferHolding(batches.count)
+            for (index, batch) in batches.enumerated() {
+                let slot = values.contents().advanced(by: index * Self.valuesStride)
+                    .assumingMemoryBound(to: Float.self)
+                if batch.run.values.isEmpty {
+                    slot.update(repeating: 0, count: 4)
+                } else {
+                    slot.update(from: batch.run.values, count: batch.run.values.count)
+                }
+            }
+            for (index, batch) in batches.enumerated() {
+                let run = batch.run
+                encoder.setRenderPipelineState(run.shader?.state ?? pipeline.state)
+                pipeline.argumentTable.setAddress(
+                    values.gpuAddress + UInt64(index * Self.valuesStride),
+                    index: ShapePipeline.valuesBufferIndex)
                 encoder.setScissorRect(
                     batch.clip
                         ?? MTLScissorRect(x: 0, y: 0, width: Int(width), height: Int(height)))
                 pipeline.argumentTable.setAddress(
                     blendModeBuffer.gpuAddress
-                        + UInt64(Int(batch.mode.rawIndex) * Self.blendModeStride),
+                        + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
                     index: ShapePipeline.blendModeBufferIndex)
                 pipeline.argumentTable.setTexture(
-                    batch.texture.gpuResourceID, index: ShapePipeline.textureIndex)
+                    run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
                 pipeline.argumentTable.setAddress(
                     textureKindBuffer.gpuAddress
-                        + UInt64(Int(batch.textureKind.rawValue) * Self.blendModeStride),
+                        + UInt64(Int(run.textureKind.rawValue) * Self.blendModeStride),
                     index: ShapePipeline.textureKindBufferIndex)
                 encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
                 encoder.drawPrimitives(
                     primitiveType: .triangle,
-                    vertexStart: batch.start, vertexCount: batch.count)
+                    vertexStart: run.start, vertexCount: run.count)
             }
         }
 
+        drawCallsInLastFrame = vertices.isEmpty ? 0 : batches.count
         encoder.endEncoding()
         try gpu.commitAndWait(commands)
 
@@ -1198,6 +1247,16 @@ public final class Canvas {
         vertices.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
         pendingBackground = nil
+    }
+
+    /// 列ごとの値を置く領域。足りなければ取り直す。
+    private func valuesBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = valuesBuffer, valuesCapacity >= count { return buffer }
+        let capacity = max(count, max(valuesCapacity * 2, 16))
+        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
+        valuesBuffer = buffer
+        valuesCapacity = capacity
+        return buffer
     }
 
     /// 頂点を置く領域。足りなければ取り直す。

@@ -11,6 +11,16 @@
 #
 # そこでビルド時に一度だけ組み立てて、通ることを確かめる。生成物は捨てる —
 # 欲しいのは合否であって成果物ではない。
+#
+# ## 組み立て方は実行時と同じにする
+#
+# 図形を塗る断片は、単体ではコンパイルできない。実行時は「値の宣言 → 共通部分 →
+# 断片」の順で 1 本に組み立ててから渡す (Sources/MokumeCore/Drawing/ShaderSource.swift)。
+# ここも同じ順で組み立てる — **1 本ずつ分けて確かめると、実行時に通る組み合わせを
+# 落とすか、逆に実行時に落ちる組み合わせを通してしまう。**
+#
+# どの断片が図形を塗るものかは置き場で決まる: 共通部分 (Common.metal) と同じ
+# ディレクトリにあるものがそれで、他の場所にあるものは単体で組み立てられる。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -28,15 +38,32 @@ if [ ${#shaders[@]} -eq 0 ]; then
   exit 0
 fi
 
+common=$(find Sources -name 'Common.metal' | head -1)
+common_dir=""
+if [ -n "$common" ]; then common_dir=$(dirname "$common"); fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
+# 値の宣言。実行時は利用者が渡した値から組み立てるので、ここでは何も渡さないときの形
+# (ShaderSource.declaration の分岐と同じ) を置く
+printf 'struct Values {\n    float4 mokume_unused;\n};\n' > "$work/values.metal"
+
 failed=0
 for shader in "${shaders[@]}"; do
-  if xcrun metal -c "$shader" -o "$work/$(basename "$shader").air" 2>"$work/err"; then
-    echo "ok: $shader"
+  [ "$shader" = "$common" ] && continue
+  source="$work/$(basename "$shader")"
+  if [ -n "$common_dir" ] && [ "$(dirname "$shader")" = "$common_dir" ]; then
+    cat "$work/values.metal" "$common" "$shader" > "$source"
+    label="$shader (共通部分つき)"
   else
-    echo "NG: $shader" >&2
+    cp "$shader" "$source"
+    label="$shader"
+  fi
+  if xcrun metal -c "$source" -o "$source.air" 2>"$work/err"; then
+    echo "ok: $label"
+  else
+    echo "NG: $label" >&2
     cat "$work/err" >&2
     failed=1
   fi

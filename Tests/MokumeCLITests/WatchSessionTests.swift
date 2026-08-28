@@ -218,4 +218,18 @@ struct SourceStampTests {
             encoding: .utf8)
         #expect(SourceStamp.current(for: sketch) == first)
     }
+
+    /// **断片を保存しても作り直さない。**
+    ///
+    /// 断片は走らせたまま差し替わるので、作り直して起動し直すと差し替わる様子そのものが
+    /// 見られなくなる — 保存のたびに窓が開き直り、絵は最初から始まる。
+    @Test("断片を保存しても、作り直しは起きない")
+    func savingAFragmentDoesNotTriggerARebuild() throws {
+        let sketch = try makeSketch()
+        let first = SourceStamp.current(for: sketch)
+        try "float4 paint(Fragment in, Values values) { return in.color; }".write(
+            to: sketch.appendingPathComponent("Sources/app/paint.metal"), atomically: true,
+            encoding: .utf8)
+        #expect(SourceStamp.current(for: sketch) == first)
+    }
 }
