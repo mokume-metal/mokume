@@ -240,6 +240,20 @@ struct ObservationProtocolTests {
                 == current.appendingPathComponent("work").standardizedFileURL.path)
     }
 
+    @Test("環境から与えられたかどうかを、道具が問い合わせられる")
+    func reportsWhetherTheBaseWasGiven() {
+        // 道具は自分の既定値 (スケッチのパッケージの場所) を持っているので、
+        // 「与えられていない」と「作業ディレクトリ」を区別できる必要がある
+        #expect(WorkDirectory.given(environment: [:]) == nil)
+        #expect(WorkDirectory.given(environment: ["MOKUME_WORK_DIR": ""]) == nil)
+        // 与えられたときの扱いは resolve と同じ規則 (絶対化まで含めて 1 箇所)
+        for value in ["/tmp/sketch", "work", "~/sketch"] {
+            #expect(
+                WorkDirectory.given(environment: ["MOKUME_WORK_DIR": value])
+                    == WorkDirectory.resolve(environment: ["MOKUME_WORK_DIR": value]))
+        }
+    }
+
     @Test("刻印は渡されたときだけ載る")
     func carriesTheStampOnlyWhenGiven() {
         #expect(SourceStamp.resolve(environment: [:]) == nil)

@@ -244,6 +244,61 @@ struct MCPServerTests {
         #expect(outcome.text.contains(consumer.schemas.path))
     }
 
+    // ---------------------------------------------------------- 基準ディレクトリ
+
+    @Test("区画は環境変数が決め、パッケージの場所は引数が決める")
+    func splitsTheFacetBaseFromThePackageDirectory() {
+        let cwd = URL(fileURLWithPath: "/cwd", isDirectory: true)
+        let sketch = "/sketch"
+        let elsewhere = "/elsewhere"
+
+        // 区画はスケッチが書く場所。スケッチは環境変数に従うので、引数より強い
+        let both = MCPCommand.directories(
+            arguments: [sketch], environment: ["MOKUME_WORK_DIR": elsewhere],
+            currentDirectory: cwd)
+        #expect(both.package.path == sketch)
+        #expect(both.facets.path == elsewhere)
+
+        // 環境変数が無ければ、渡された場所が両方を兼ねる (いままでどおり)
+        let given = MCPCommand.directories(
+            arguments: [sketch], environment: [:], currentDirectory: cwd)
+        #expect(given.package.path == sketch)
+        #expect(given.facets.path == sketch)
+
+        // 引数も無ければ作業ディレクトリ
+        let neither = MCPCommand.directories(
+            arguments: [], environment: [:], currentDirectory: cwd)
+        #expect(neither.package.path == cwd.path)
+        #expect(neither.facets.path == cwd.path)
+
+        // 環境変数はパッケージの場所を動かさない (Package.swift も .build/ もそこにある)
+        let environmentOnly = MCPCommand.directories(
+            arguments: [], environment: ["MOKUME_WORK_DIR": elsewhere], currentDirectory: cwd)
+        #expect(environmentOnly.package.path == cwd.path)
+        #expect(environmentOnly.facets.path == elsewhere)
+    }
+
+    @Test("区画が別の場所でも、区画は区画から・仕様はパッケージの場所から読む")
+    func readsEachAxisFromItsOwnBase() throws {
+        let consumer = try makeConsumer()
+        let work = try makeDirectory()
+        let status = work.appendingPathComponent(".mokume/build/status.json")
+        try FileManager.default.createDirectory(
+            at: status.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"schemaVersion":1,"ok":true,"status":0,"output":""}"#.utf8).write(to: status)
+
+        let tools = Tools(
+            facets: Facets(directory: work, waitLimit: 0.2),
+            packageDirectory: consumer.work, makeID: { "fixed" })
+
+        // 作り直しの記録は区画から
+        let build = tools.call("build_status", arguments: [:])
+        #expect(!build.isError)
+        // 面の仕様は、依存を解決したパッケージの場所から
+        let catalog = tools.call("reference", arguments: [:])
+        #expect(catalog.text.contains("- observe-report"))
+    }
+
     // ---------------------------------------------------------- 公開 API の一覧
 
     /// 取ってきた回数と宛先を記録する。**検査はネットワークに触らない。**

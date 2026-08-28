@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// エージェントの窓口。
 ///
@@ -68,12 +69,33 @@ struct MCPServer {
 
 /// 窓口を立てる。
 enum MCPCommand {
+    /// 引数と環境から、2 つの基準を決める。
+    ///
+    /// **区画は環境変数がいちばん強い。** 区画はスケッチが書く場所で、スケッチは
+    /// `MOKUME_WORK_DIR` に従う ([ADR-0018] 決定 2)。窓口が引数を優先すると、書き先と
+    /// 食い違って噛み合わない。
+    ///
+    /// **パッケージの場所は環境変数に動かされない。** `Package.swift` も `.build/` も
+    /// そこにあり、動かすとビルドも面の仕様の解決も行き先を失う。
+    ///
+    /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+    static func directories(
+        arguments: [String],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        currentDirectory: URL = URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+    ) -> (package: URL, facets: URL) {
+        let package = arguments.first.map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? currentDirectory
+        return (package, WorkDirectory.given(environment: environment) ?? package)
+    }
+
     static func run(_ arguments: [String]) throws(CommandFailure) {
-        let directory = URL(
-            fileURLWithPath: arguments.first ?? FileManager.default.currentDirectoryPath,
-            isDirectory: true)
+        let directories = directories(arguments: arguments)
         let server = MCPServer(
-            tools: Tools(facets: Facets(directory: directory)),
+            tools: Tools(
+                facets: Facets(directory: directories.facets),
+                packageDirectory: directories.package),
             readLine: { Swift.readLine(strippingNewline: true) },
             write: { line in
                 print(line)
