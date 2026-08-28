@@ -72,3 +72,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: gh release create "$VERSION" --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      skip: ${{ steps.version.outputs.skip }}
+
+  # 公開 API の一覧を、その版に紐づけて配る。
+  #
+  # **リポジトリには置かない。** 置くと「古くないことを守る検査」が要るようになり、
+  # 以後すべての変更がその検査に引っかかる (ADR-0001 原則 8)。版ごとに組み立てて
+  # Release の資産として付ければ、利用者もエージェントも**依存している版ぴったりの
+  # 面**を引ける。
+  #
+  # 組み立てにはツールチェーンが要るので macOS で走らせる (ADR-0009)。
+  api-surface:
+    needs: release
+    if: needs.release.outputs.skip != 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: write # Release へ資産を足す
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.version }}
+      - name: 一覧を組み立てる
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: make api-list OUT="$RUNNER_TEMP/mokume-api.md" VERSION="$VERSION"
+      - name: Release へ付ける
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          mv "$RUNNER_TEMP/mokume-api.md" "$RUNNER_TEMP/mokume-api-$VERSION.md"
+          gh release upload "$VERSION" "$RUNNER_TEMP/mokume-api-$VERSION.md"
