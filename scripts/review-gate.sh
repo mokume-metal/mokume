@@ -11,9 +11,12 @@
 #     (ADR-0007 の不変条件。破ると **誰も承認できない PR** ができる — #88)
 #   - verify: human なら人間の Approve を要求する (CODEOWNERS では表現できないため)
 #
-# 重要パス (docs/decisions/ ・ .github/ ・ .claude/) の承認要求は **CODEOWNERS が担う**。
-# エージェントは GitHub App の identity で PR を作るので、自分の PR を自分で承認できず、
-# CODEOWNERS にはユーザーとチームしか書けない。ここで重ねて判定する必要はない。
+# 重要パス (docs/decisions/ ・ .github/ ・ .claude/) の承認要求は
+# **ルールセットの required_reviewers が担う** (.github/rulesets/main-protection.json)。
+# 同じ 3 パスに minimum_approvals: 1 が課してあり、CODEOWNERS はメンテナへの
+# 自動要求と、下の「4.」が承認者集合を読むための代理を担う。ここで重ねて判定しない。
+# (当初は CODEOWNERS + 承認数 0 で必須化できるつもりでいたが、承認数 0 は
+#  「0 件で足りる」と読まれて非ブロックになっていた — #211 / ADR-0003 決定 4 の改訂)
 #
 # 承認をこのスクリプトで判定するほど「承認待ち」が CI の赤になり、外から見て故障と
 # 区別できなくなる。判定を native へ寄せた分だけ、ci-gate の赤は本物の故障に近づく。
@@ -120,9 +123,10 @@ fi
 #    承認者集合の**読める代理は .github/CODEOWNERS だけ**である。collaborator の一覧は
 #    Administration 権限を要求し、ADR-0003 決定 1 でエージェントの App は持たない
 #    (ci.yml の review-gate ジョブも contents/issues/pull-requests の read しか宣言
-#    していない)。reviewDecision も使えない — ルールセットが
-#    required_approving_review_count: 0 なので、CODEOWNERS が承認を要求している PR でも
-#    空で返る。CODEOWNERS ならチェックアウト済みのファイルを読むだけで済む。
+#    していない)。reviewDecision も使えない — ルールセットの
+#    required_approving_review_count は 0 のままなので (ADR-0003 決定 4)、重要パスに
+#    触れない verify: human の PR では空で返る。CODEOWNERS ならチェックアウト済みの
+#    ファイルを読むだけで済む。
 #
 #    App が作った PR は集合に入りようがない (CODEOWNERS にはユーザーとチームしか
 #    書けない) ので自動的に通る。外部コントリビューターも通る — メンテナが承認できる
@@ -164,7 +168,8 @@ fi
 
 # 5. verify: human は人間の Approve を待つ。
 #    完了条件が機械で判定できないと宣言した以上、誰かが見るまで通さない。
-#    重要パスの場合は CODEOWNERS も並行して承認を要求する (こちらが緑でも native 側で止まる)
+#    重要パスの場合はルールセットの required_reviewers も並行して承認を要求する
+#    (こちらが緑でも native 側で止まる)
 if $need_human; then
   if grep -qx "APPROVED" <<<"$reviews"; then
     echo "review-gate: メンテナ承認 (Approve レビュー) を確認"

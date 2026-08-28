@@ -1,12 +1,21 @@
-# 重要パスの変更にメンテナの承認を要求する (ADR-0003 の決定 3)。
+# 重要パスに触れる PR で、メンテナへレビューを自動要求する (ADR-0003 の決定 3)。
 #
 # エージェントは GitHub App の identity で PR を作るので、PR の作成者は
 # mokume-agent[bot] になる。GitHub は自分の PR を自分で承認できない仕様で、
 # CODEOWNERS にはユーザーとチームしか書けない (App は書けない) ため、
-# ここに挙げたパスの変更はメンテナの Approve なしには main へ入らない。
+# ここに挙げたパスの承認は必ずメンテナの手に渡る。
 #
-# ルールセット側は required approving reviews = 0 のままにしてある。
-# ここに挙がっていないパスだけを触る PR は、承認を待たずに merge queue を通る。
+# **承認を必須にしているのはこのファイルではない。** 同じ 3 パスに
+# minimum_approvals: 1 を課しているのはルールセットの required_reviewers
+# (.github/rulesets/main-protection.json) で、ブロックの正本はそちらにある。
+# ここが担うのは「誰に要求するか」と、review-gate が承認者集合を読むための
+# 代理 (ADR-0007 決定 3) の 2 つ。
+#
+# 当初は require_code_owner_review と required approving reviews = 0 の
+# 組み合わせで必須化できるつもりでいたが、承認数 0 は「0 件の承認で足りる」と
+# 読まれ、code owner の承認要求もろとも非ブロックになる。要求は飛ぶので
+# タイムラインには残り、メンテナが慣行で Approve していたため気付かれなかった。
+# 実際には全パスが承認不要のまま動いていた (#211 / ADR-0003 決定 4 の改訂)。
 
 /docs/decisions/ @shinyaoguri
 /.github/        @shinyaoguri

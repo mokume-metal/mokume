@@ -64,7 +64,7 @@ PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が g
 
 **承認が要るかは 2 つの機構が決める** ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) / [ADR-0003](docs/decisions/0003-agent-identity-separation.md)):
 
-- **重要パス** (`docs/decisions/`・`.github/`・`.claude/`) を触る PR は、`.github/CODEOWNERS` により GitHub がメンテナへレビューを自動要求する。承認が無いと **Review required** でマージできない (`ci-gate` は緑のまま)
+- **重要パス** (`docs/decisions/`・`.github/`・`.claude/`) を触る PR は、承認が無いと **Review required** でマージできない (`ci-gate` は緑のまま)。**要求と必須化は別の機構が担う** — 誰に要求するかは `.github/CODEOWNERS`、マージを止めるのは `.github/rulesets/main-protection.json` の `required_reviewers` (同じ 3 パスに `minimum_approvals: 1`) である。当初は CODEOWNERS だけで必須化できるつもりでいたが、`required_approving_review_count: 0` は「0 件の承認で足りる」と読まれて code owner の要求ごと非ブロックになっていた ([#211](https://github.com/mokume-metal/mokume/issues/211))
 - **`verify: human`** の Issue に紐づく PR は、`review-gate` が Approve レビューを要求する (この分類は CODEOWNERS では表現できない)
 
 どちらに当たる PR も **App identity で作る** — メンテナ自身が作っても自己承認になって詰むため、author を承認者集合の外に置くのが不変条件である ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。
