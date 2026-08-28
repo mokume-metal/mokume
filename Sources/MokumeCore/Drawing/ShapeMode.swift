@@ -15,7 +15,7 @@
 /// | ``corners`` | 一方の角 | 対角の角 |
 /// | ``center`` | 中心 | 幅と高さ |
 /// | ``radius`` | 中心 | 横と縦の半径 |
-public enum ShapeMode: Sendable, Equatable {
+public nonisolated enum ShapeMode: Sendable, Equatable {
     /// `a` `b` を左上の角、`c` `d` を幅と高さとして読む。
     case corner
     /// `a` `b` と `c` `d` を、対角にある 2 つの角として読む。

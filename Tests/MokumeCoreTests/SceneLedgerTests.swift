@@ -133,6 +133,8 @@ enum Scene: String, CaseIterable, Sendable {
     case caps
     /// 折れ目の形 3 通り。
     case joins
+    /// 混ぜ方 10 通りを、同じ下地の上に並べたもの。
+    case blends
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -215,6 +217,27 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.strokeCap(cap)
                 // 左右の端を揃えてあるので、伸び方の違いがそのまま長さの差になる
                 canvas.line(32, 24 + Float(row) * 40, 96, 24 + Float(row) * 40)
+            }
+
+        case .blends:
+            // 下地は横 3 帯。その上に、同じ色を混ぜ方だけ変えて重ねる
+            canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
+            canvas.noStroke()
+            let bands: [LinearRGBA] = [
+                .display(red: 0.85, green: 0.25, blue: 0.2),
+                .display(red: 0.2, green: 0.55, blue: 0.85),
+                .display(red: 0.9, green: 0.85, blue: 0.3),
+            ]
+            for (index, band) in bands.enumerated() {
+                canvas.fill(band)
+                canvas.rect(0, Float(index) * 43, 128, 43)
+            }
+            let overlay = LinearRGBA.display(red: 0.5, green: 0.9, blue: 0.6, alpha: 0.85)
+            for (index, mode) in BlendMode.allCases.enumerated() {
+                canvas.blendMode(mode)
+                canvas.fill(overlay)
+                canvas.rect(
+                    Float(index % 5) * 25 + 3, Float(index / 5) * 62 + 4, 20, 56)
             }
 
         case .joins:
