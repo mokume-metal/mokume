@@ -65,7 +65,20 @@ public final class Canvas {
     private var hasFill = true
     private var hasStroke = true
     private var styleStack: [Style] = []
+    private var currentBlendMode = BlendMode.blend
     private var warnedReversedArc = false
+
+    /// 閉じた列。**同じ列は単一の混ぜ方でしか描かれない。**
+    ///
+    /// 混ぜ方を変える操作がその時点で列を閉じるので、既に置いた図形が後の設定で
+    /// 描かれることがない。閉じ忘れると絵は「たまに」おかしくなる — 設定を変えない
+    /// 単純なスケッチでは一生出ないので、規律として持つ。
+    private var batches: [(mode: BlendMode, start: Int, count: Int)] = []
+
+    /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
+    private let blendModeBuffer: any MTLBuffer
+    /// 定数の受け渡しは 16 バイト境界に揃える。
+    private static let blendModeStride = 16
 
     /// これから描くものに効く設定の一式。
     ///
@@ -81,6 +94,7 @@ public final class Canvas {
         var hasStroke: Bool
         var rectMode: ShapeMode
         var ellipseMode: ShapeMode
+        var blendMode: BlendMode
     }
 
     private var currentStyle: Style {
@@ -89,7 +103,8 @@ public final class Canvas {
                 fill: currentFill, stroke: currentStroke, strokeWeight: currentStrokeWeight,
                 strokeCap: currentStrokeCap, strokeJoin: currentStrokeJoin,
                 hasFill: hasFill, hasStroke: hasStroke,
-                rectMode: currentRectMode, ellipseMode: currentEllipseMode)
+                rectMode: currentRectMode, ellipseMode: currentEllipseMode,
+                blendMode: currentBlendMode)
         }
         set {
             currentFill = newValue.fill
@@ -101,6 +116,8 @@ public final class Canvas {
             hasStroke = newValue.hasStroke
             currentRectMode = newValue.rectMode
             currentEllipseMode = newValue.ellipseMode
+            // 混ぜ方が変わるなら列を閉じてから戻す
+            blendMode(newValue.blendMode)
         }
     }
 
@@ -118,6 +135,19 @@ public final class Canvas {
         buffer.contents().copyMemory(
             from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
         self.projectionBuffer = buffer
+
+        // 混ぜ方の番号は変わらないので、全部並べて置いておき、列ごとに番地で指す。
+        // 列ごとに書き換えると、まだ描いていない列の値まで変わってしまう
+        let modes = BlendMode.allCases
+        let modeBuffer = try gpu.makeReadableBuffer(
+            byteCount: modes.count * Self.blendModeStride)
+        for mode in modes {
+            let slot = modeBuffer.contents()
+                .advanced(by: Int(mode.rawIndex) * Self.blendModeStride)
+                .assumingMemoryBound(to: UInt32.self)
+            slot.pointee = mode.rawIndex
+        }
+        self.blendModeBuffer = modeBuffer
     }
 
     /// 描画先の座標へ落とす行列を作る。
@@ -156,6 +186,24 @@ public final class Canvas {
 
     /// これから引く線の太さ (画素)。
     public func strokeWeight(_ weight: Float) { currentStrokeWeight = max(0, weight) }
+
+    /// 描くものを、下にある絵とどう混ぜるか。
+    ///
+    /// **溜めている列をその場で閉じる。** 既に置いた図形が後の混ぜ方で描かれないように
+    /// するためで、閉じ忘れは「設定を変えたときだけ絵が崩れる」形で現れる。
+    public func blendMode(_ mode: BlendMode) {
+        guard mode != currentBlendMode else { return }
+        closeBatch()
+        currentBlendMode = mode
+    }
+
+    /// 溜めている頂点を、いまの混ぜ方の列として閉じる。
+    private func closeBatch() {
+        let start = batches.last.map { $0.start + $0.count } ?? 0
+        let count = vertices.count - start
+        guard count > 0 else { return }
+        batches.append((currentBlendMode, start, count))
+    }
 
     /// 線の端の形。
     public func strokeCap(_ cap: StrokeCap) { currentStrokeCap = cap }
@@ -240,6 +288,7 @@ public final class Canvas {
     /// 描く手間をかける意味がない。
     public func background(_ color: LinearRGBA) {
         vertices.removeAll(keepingCapacity: true)
+        batches.removeAll(keepingCapacity: true)
         pendingBackground = color
     }
 
@@ -567,6 +616,7 @@ public final class Canvas {
     /// GPU が終わるまで待ってから返る。
     public func draw(_ body: () -> Void) throws(RenderFailure) {
         vertices.removeAll(keepingCapacity: true)
+        batches.removeAll(keepingCapacity: true)
         pendingBackground = nil
         transform = .identity
         transformStack.removeAll(keepingCapacity: true)
@@ -586,6 +636,7 @@ public final class Canvas {
 
     private func flush() throws(RenderFailure) {
         if let failureForTesting { throw failureForTesting }
+        closeBatch()
         let pass = target.makeRenderPass(clearColor: pendingBackground)
         let commands = try gpu.beginCommands()
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
@@ -608,9 +659,16 @@ public final class Canvas {
                 buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
             pipeline.argumentTable.setAddress(
                 projectionBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
-            encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
-            encoder.drawPrimitives(
-                primitiveType: .triangle, vertexStart: 0, vertexCount: vertices.count)
+            for batch in batches {
+                pipeline.argumentTable.setAddress(
+                    blendModeBuffer.gpuAddress
+                        + UInt64(Int(batch.mode.rawIndex) * Self.blendModeStride),
+                    index: ShapePipeline.blendModeBufferIndex)
+                encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
+                encoder.drawPrimitives(
+                    primitiveType: .triangle,
+                    vertexStart: batch.start, vertexCount: batch.count)
+            }
         }
 
         encoder.endEncoding()

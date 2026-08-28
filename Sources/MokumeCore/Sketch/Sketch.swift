@@ -126,6 +126,17 @@ extension Sketch {
     /// 太さ 1 の線では 3 つとも同じに見えるので、**確かめるときは太さを振る**。
     public func strokeCap(_ cap: StrokeCap) { canvas.strokeCap(cap) }
 
+    /// 描くものを、下にある絵とどう混ぜるか。既定は上に重ねる。
+    ///
+    /// ```swift
+    /// blendMode(.add)      // 光を重ねたように明るくなる
+    /// blendMode(.multiply) // 暗いほうへ寄る
+    /// ```
+    ///
+    /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
+    /// 「どれだけ効かせるか」はアルファが決める。
+    public func blendMode(_ mode: BlendMode) { canvas.blendMode(mode) }
+
     /// 線の折れ目の形。既定は尖らせる形。
     ///
     /// 折れ線と、閉じた図形の輪郭の角に効く。

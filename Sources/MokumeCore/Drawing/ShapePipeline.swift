@@ -14,6 +14,8 @@ final class ShapePipeline {
     static let vertexBufferIndex = 0
     /// 描画先の座標へ落とす行列を渡す口の番号 (シェーダ側の `buffer(1)`)。
     static let projectionBufferIndex = 1
+    /// 混ぜ方の番号を渡す口の番号 (シェーダ側の `buffer(2)`)。
+    static let blendModeBufferIndex = 2
 
     let state: any MTLRenderPipelineState
     let argumentTable: any MTL4ArgumentTable
@@ -34,15 +36,13 @@ final class ShapePipeline {
         descriptor.vertexFunctionDescriptor = vertexFunction
         descriptor.fragmentFunctionDescriptor = fragmentFunction
 
-        // 色は乗算済みで運ぶので、重ね方も乗算済み向けの式にする
-        // (ADR-0011 決定 4)。乗算していない色向けの式を使うと、半透明の重なりが濁る。
+        // **固定機能のブレンドは使わない。** 混ぜ方はすべてフラグメントで行う
+        // (フラグメントが描画先を読めることは実測で確認済み)。係数で処理される分と
+        // シェーダで処理される分に割れると、アルファの扱いがモードごとにばらつく
+        // 余地が残るためである。
         let attachment = descriptor.colorAttachments[0]!
         attachment.pixelFormat = pixelFormat
-        attachment.blendingState = .enabled
-        attachment.sourceRGBBlendFactor = .one
-        attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-        attachment.sourceAlphaBlendFactor = .one
-        attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        attachment.blendingState = .disabled
 
         let compilerDescriptor = MTL4CompilerDescriptor()
         compilerDescriptor.label = "mokume.compiler"
@@ -57,7 +57,7 @@ final class ShapePipeline {
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
-        tableDescriptor.maxBufferBindCount = 2
+        tableDescriptor.maxBufferBindCount = 3
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
         } catch {

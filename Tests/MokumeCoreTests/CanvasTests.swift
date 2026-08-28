@@ -154,6 +154,163 @@ struct CanvasTests {
         #expect(image[32, 42] == (0, 0, 0, 255))  // 半径 6 の外
     }
 
+    // MARK: - 混ぜ方 (#236)
+
+    /// 下地の上に色を 1 つ塗り、真ん中の画素を返す。
+    private func blended(
+        mode: BlendMode, base: LinearRGBA, top: LinearRGBA
+    ) throws -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(base)
+            canvas.noStroke()
+            canvas.blendMode(mode)
+            canvas.fill(top)
+            canvas.rect(0, 0, 16, 16)
+        }
+        return try pixels(of: canvas)[8, 8]
+    }
+
+    @Test(
+        "どの混ぜ方でも、アルファ 0 の色は下地を変えない",
+        arguments: BlendMode.allCases.filter { $0 != .replace })
+    func fullyTransparentColorsNeverDisturbTheBackground(_ mode: BlendMode) throws {
+        let base = LinearRGBA.display(red: 0.4, green: 0.3, blue: 0.2)
+        let untouched = try blended(
+            mode: .blend, base: base, top: .display(red: 0, green: 0, blue: 0, alpha: 0))
+        let painted = try blended(
+            mode: mode, base: base, top: .display(red: 0.25, green: 0.55, blue: 0.15, alpha: 0))
+        #expect(painted == untouched, "\(mode) がアルファ 0 で下地を変えた")
+    }
+
+    @Test("置き換える混ぜ方だけは下地を見ない")
+    func replaceIgnoresWhatIsUnderneath() throws {
+        let result = try blended(
+            mode: .replace,
+            base: .display(red: 1, green: 1, blue: 1),
+            top: .display(red: 0, green: 0, blue: 0, alpha: 0))
+        #expect(result.alpha == 0)  // 透明で置き換わる
+    }
+
+    @Test("掛ける混ぜ方は暗いほうへ寄る")
+    func multiplyDarkens() throws {
+        let result = try blended(
+            mode: .multiply,
+            base: .display(red: 1, green: 1, blue: 1),
+            top: .display(red: 0.5, green: 0.5, blue: 0.5))
+        let plain = try blended(
+            mode: .blend,
+            base: .display(red: 1, green: 1, blue: 1),
+            top: .display(red: 0.5, green: 0.5, blue: 0.5))
+        // 白に掛けるので、そのまま塗ったのと同じ明るさになる
+        #expect(abs(Int(result.red) - Int(plain.red)) <= 1)
+
+        let onGray = try blended(
+            mode: .multiply,
+            base: .display(red: 0.5, green: 0.5, blue: 0.5),
+            top: .display(red: 0.5, green: 0.5, blue: 0.5))
+        #expect(onGray.red < plain.red)  // 灰色どうしなら暗くなる
+    }
+
+    @Test("明るいほうを採る混ぜ方と、暗いほうを採る混ぜ方が逆に働く")
+    func lightestAndDarkestPickOppositeSides() throws {
+        let base = LinearRGBA.display(red: 0.8, green: 0.2, blue: 0.2)
+        let top = LinearRGBA.display(red: 0.2, green: 0.8, blue: 0.2)
+        let lightest = try blended(mode: .lightest, base: base, top: top)
+        let darkest = try blended(mode: .darkest, base: base, top: top)
+        #expect(lightest.red > darkest.red)
+        #expect(lightest.green > darkest.green)
+    }
+
+    @Test("足す混ぜ方は明るくなり、引く混ぜ方は暗くなる")
+    func addBrightensAndSubtractDarkens() throws {
+        let base = LinearRGBA.display(red: 0.4, green: 0.4, blue: 0.4)
+        let top = LinearRGBA.display(red: 0.3, green: 0.3, blue: 0.3)
+        let added = try blended(mode: .add, base: base, top: top)
+        let subtracted = try blended(mode: .subtract, base: base, top: top)
+        let plain = try blended(mode: .blend, base: base, top: base)
+        #expect(added.red > plain.red)
+        #expect(subtracted.red < plain.red)
+    }
+
+    @Test("差を採る混ぜ方は、同じ色どうしで黒になる")
+    func differenceOfEqualColorsIsBlack() throws {
+        let color = LinearRGBA.display(red: 0.6, green: 0.4, blue: 0.8)
+        let result = try blended(mode: .difference, base: color, top: color)
+        #expect(result.red <= 1)
+        #expect(result.green <= 1)
+        #expect(result.blue <= 1)
+    }
+
+    @Test("範囲の外の成分を渡しても下地が壊れない")
+    func outOfRangeComponentsAreSaturated() throws {
+        let result = try blended(
+            mode: .add,
+            base: .display(red: 0.5, green: 0.5, blue: 0.5),
+            top: LinearRGBA(straightRed: 8, green: -4, blue: 0.5, alpha: 1))
+        #expect(result.red == 255)  // 上へ飽和
+        #expect(result.green == 0)  // 下へ飽和 (負の値が巻き返さない)
+    }
+
+    @Test("透明な下地を作れる")
+    func aTransparentBackgroundCanBeMade() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0, alpha: 0))
+        }
+        #expect(try pixels(of: canvas)[8, 8].alpha == 0)
+    }
+
+    @Test("透明な下地の上に半透明を重ねられる")
+    func semiTransparentPaintLandsOnATransparentBackground() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0, alpha: 0))
+            canvas.noStroke()
+            canvas.fill(.display(red: 1, green: 0, blue: 0, alpha: 0.5))
+            canvas.rect(0, 0, 16, 16)
+        }
+        let center = try pixels(of: canvas)[8, 8]
+        #expect(center.alpha > 100 && center.alpha < 160)  // おおよそ半分
+        #expect(center.red > 200)  // 色は戻して出る (暗く沈まない)
+    }
+
+    @Test("混ぜ方を変えると、その前に置いた図形は影響を受けない")
+    func changingTheModeClosesTheRunSoFar() throws {
+        let canvas = try makeCanvas(width: 32, height: 16)
+        try canvas.draw {
+            canvas.background(.display(red: 1, green: 1, blue: 1))
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.5, green: 0.5, blue: 0.5))
+            canvas.rect(0, 0, 16, 16)  // 重ねる (白の上に灰色 = 灰色)
+            canvas.blendMode(.multiply)
+            canvas.rect(16, 0, 16, 16)  // 掛ける (白に掛けるので灰色)
+        }
+        let image = try pixels(of: canvas)
+        // 左は「重ねる」で描かれたまま。後から掛ける指定に変えても影響しない
+        #expect(abs(Int(image[8, 8].red) - Int(image[24, 8].red)) <= 1)
+    }
+
+    @Test("積み降ろしは混ぜ方も戻す")
+    func styleStackCarriesTheBlendMode() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(.display(red: 0.5, green: 0.5, blue: 0.5))
+            canvas.noStroke()
+            canvas.pushStyle()
+            canvas.blendMode(.add)
+            canvas.popStyle()
+            canvas.fill(.display(red: 0.3, green: 0.3, blue: 0.3))
+            canvas.rect(0, 0, 16, 16)
+        }
+        // 戻っているので「重ねる」で描かれ、塗った色そのものになる
+        let plain = try blended(
+            mode: .blend,
+            base: .display(red: 0.5, green: 0.5, blue: 0.5),
+            top: .display(red: 0.3, green: 0.3, blue: 0.3))
+        #expect(try pixels(of: canvas)[8, 8].red == plain.red)
+    }
+
     // MARK: - 積み降ろし (#235)
 
     @Test("変換とスタイルは独立に積める")
