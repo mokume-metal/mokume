@@ -5,6 +5,8 @@ import Metal
 import MokumeDiagnostics
 import simd
 
+// #346: drawing-evidence を確かめるための一時的な行 (merge しない)。
+
 /// 絵を描く面。
 ///
 /// ## 座標の約束
