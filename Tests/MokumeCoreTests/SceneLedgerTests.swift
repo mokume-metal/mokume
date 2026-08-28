@@ -210,13 +210,11 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
             canvas.stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
             let caps: [StrokeCap] = [.square, .project, .round]
+            canvas.strokeWeight(18)
             for (row, cap) in caps.enumerated() {
                 canvas.strokeCap(cap)
-                for (column, weight) in [Float(4), 10, 16].enumerated() {
-                    canvas.strokeWeight(weight)
-                    let y = 20 + Float(row) * 40 + Float(column) * 10
-                    canvas.line(20, y, 84, y)
-                }
+                // 左右の端を揃えてあるので、伸び方の違いがそのまま長さの差になる
+                canvas.line(32, 24 + Float(row) * 40, 96, 24 + Float(row) * 40)
             }
 
         case .joins:
