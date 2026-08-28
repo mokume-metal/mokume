@@ -97,6 +97,16 @@ public final class Canvas {
     /// フレームの外で光が置かれたことを知らせたか。
     var warnedLightOutsideFrame = false
 
+    /// いま効いている視点。**フレームを越えない** ([ADR-0021] 決定 4)。
+    ///
+    /// `nil` の間は面に合わせた既定を使う。既定を実体で持たないのは、面の大きさが
+    /// 変わったときに古い既定が残らないようにするため。
+    var cameraStorage: Camera?
+    /// フレームの外で視点が書かれたことを知らせたか。
+    var warnedCameraOutsideFrame = false
+    /// 成り立たない視点・投影を知らせたか。
+    var warnedBadCamera = false
+
     /// いま `draw(_:)` の中か。
     ///
     /// シーンの記述 (光・視点) は、フレームの外で書かれてもどのフレームにも属さない。
@@ -1052,11 +1062,15 @@ public final class Canvas {
     /// `body` の中で呼んだ図形が溜められ、抜けるときにまとめて描画先へ落ちる。
     /// GPU が終わるまで待ってから返る。
     public func draw(_ body: () -> Void) throws(RenderFailure) {
+        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点は**描き終えて
+        // から**既定へ戻す — 始まりで戻すと、フレームの外から読んだときだけ「もう
+        // 効かない視点」が返る。列を閉じるのに視点が要るので、戻すのは flush の後
+        defer { cameraStorage = nil }
         currentClip = nil
         transform = .identity
         transformStack.removeAll(keepingCapacity: true)
         hasLoadedPixels = false
-        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。光はここで空に戻る
+        // 光もフレームを越えない (同 決定 4)。ここで空に戻る
         activeLights.removeAll(keepingCapacity: true)
         lightStorage.removeAll(keepingCapacity: true)
 

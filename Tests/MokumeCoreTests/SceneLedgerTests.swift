@@ -161,6 +161,8 @@ enum Scene: String, CaseIterable, Sendable {
     case lighting
     /// 頂点を並べて作った立体。穴・頂点ごとの色・線と点・書いた面の向きを並べたもの。
     case customSolids
+    /// 同じ立体を、透視・平行・動かした視点の 3 通りで見たもの。
+    case viewpoints
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -663,6 +665,45 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.vertex(74 + Float(step) * 12, 94, Float(step) * 14 - 30)
             }
             canvas.endShape()
+
+        case .viewpoints:
+            canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
+            canvas.lights()
+            canvas.noStroke()
+
+            /// 同じ箱を、手前と奥に 1 つずつ。**投影の違いは、奥のものの大きさに出る**。
+            func pair(_ x: Float) {
+                canvas.push()
+                canvas.translate(x, 26, 0)
+                canvas.rotateX(-0.5)
+                canvas.rotateY(0.6)
+                canvas.box(22)
+                canvas.pop()
+                canvas.push()
+                canvas.translate(x, 62, -150)
+                canvas.rotateX(-0.5)
+                canvas.rotateY(0.6)
+                canvas.box(22)
+                canvas.pop()
+            }
+
+            // 左は既定の透視投影。奥の箱は小さく、画面の中心へ寄る
+            canvas.fill(.display(red: 0.95, green: 0.55, blue: 0.3))
+            pair(32)
+
+            // 右は平行投影。同じ 2 つが同じ大きさで、真下に並ぶ
+            canvas.ortho()
+            canvas.fill(.display(red: 0.35, green: 0.6, blue: 0.95))
+            pair(96)
+
+            // 透視へ戻し、視点を右上へ動かす。**動かす前に置いた 4 つは動かない**
+            canvas.perspective()
+            canvas.camera(150, -10, 150, 64, 64, 0, 0, 1, 0)
+            canvas.fill(.display(red: 0.4, green: 0.95, blue: 0.7))
+            canvas.push()
+            canvas.translate(72, 106, 0)
+            canvas.box(26)
+            canvas.pop()
         }
     }
 }

@@ -549,6 +549,139 @@ extension Sketch {
     /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
     public func pushStyle() { canvas.pushStyle() }
 
+    // MARK: - 視点と投影
+
+    /// 視点を既定へ戻す。
+    ///
+    /// 既定は**面がちょうど収まる位置から、面を正面に見る**視点である。だから何も
+    /// 指定せずに置いた立体は画素の大きさで見え、奥行き 0 に置いたものは同じ座標に
+    /// 描いた平面の図形とぴったり重なる。
+    ///
+    /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
+    ///   ときに書いた視点はどのフレームにも属さないので、警告して無視される。
+    public func camera() { canvas.camera() }
+
+    /// 見る位置・見ている先・上方向を決める。
+    ///
+    /// 座標は世界の座標で、**いまの変換の影響を受けない** — 視点は「何をどう置くか」
+    /// ではなく「どこから見るか」なので、積んだ変換とは別に決まる。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     background(.display(red: 0.08, green: 0.09, blue: 0.12))
+    ///     lights()
+    ///     // 斜め上から見下ろす
+    ///     camera(
+    ///         width / 2 + 260, height / 2 - 200, 420,
+    ///         width / 2, height / 2, 0,
+    ///         0, 1, 0)
+    ///     push()
+    ///     translate(width / 2, height / 2, 0)
+    ///     box(140)
+    ///     pop()
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - eyeX: 見る位置。
+    ///   - eyeY: 見る位置。
+    ///   - eyeZ: 見る位置。**奥行きは手前が正**なので、正の値が画面の手前になる。
+    ///   - centerX: 見ている先。
+    ///   - centerY: 見ている先。
+    ///   - centerZ: 見ている先。
+    ///   - upX: どちらを上とするか。
+    ///   - upY: どちらを上とするか。**縦軸は下向き**なので、`(0, 1, 0)` が普通の向きになる。
+    ///   - upZ: どちらを上とするか。
+    ///
+    /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    ///   見る位置と見ている先が同じ・上方向が視線と重なるといった成り立たない指定は、
+    ///   警告してそれまでの視点のまま続ける。
+    public func camera(
+        _ eyeX: Float, _ eyeY: Float, _ eyeZ: Float,
+        _ centerX: Float, _ centerY: Float, _ centerZ: Float,
+        _ upX: Float, _ upY: Float, _ upZ: Float
+    ) {
+        canvas.camera(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ)
+    }
+
+    /// いま効いている視点を、値として取る。
+    ///
+    /// 視点はフレームを越えないので、**複数の視点を持ちたければ値で持つ**。初期化の
+    /// ときに作っておいて、毎フレーム ``setCamera(_:)`` で当てる。
+    ///
+    /// ```swift
+    /// var front = Camera(...)
+    /// var side = Camera(...)
+    ///
+    /// func draw() {
+    ///     setCamera(frameCount / 60 % 2 == 0 ? front : side)
+    ///     ...
+    /// }
+    /// ```
+    public var currentCamera: Camera { canvas.currentCamera }
+
+    /// 作っておいた視点を当てる。
+    ///
+    /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム当てる。
+    public func setCamera(_ camera: Camera) { canvas.setCamera(camera) }
+
+    /// 透視投影を既定へ戻す。
+    ///
+    /// 既定の画角・手前と奥の面は、**既定の視点の距離から導かれている**。
+    ///
+    /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    public func perspective() { canvas.perspective() }
+
+    /// 遠くのものほど小さく写す。
+    ///
+    /// - Parameters:
+    ///   - fieldOfView: 縦方向の画角 (ラジアン)。広げるほど遠近が強く出る。
+    ///   - aspect: 横 ÷ 縦の比。ふつうは `width / height`。
+    ///   - near: 手前の面までの距離。**これより手前は写らない。**
+    ///   - far: 奥の面までの距離。**これより奥は写らない。**
+    ///
+    /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    public func perspective(_ fieldOfView: Float, _ aspect: Float, _ near: Float, _ far: Float) {
+        canvas.perspective(fieldOfView, aspect, near, far)
+    }
+
+    /// 平行投影を既定へ戻す。
+    ///
+    /// 範囲は**既定の視点を中心に面 1 枚ぶん**である。だから `ortho()` だけを書いても
+    /// 被写体は隅へ寄らず、奥に置いたものも切れない。奥行き 0 に置いたものが平面の
+    /// 図形と重なる性質も、透視投影の既定と同じように成り立つ。
+    ///
+    /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    public func ortho() { canvas.ortho() }
+
+    /// 距離によらず同じ大きさで写す。
+    ///
+    /// 範囲は**視点から見た座標**で与える。
+    ///
+    /// ```swift
+    /// // 面 1 枚ぶんを、視点を中心に写す (ortho() と同じ範囲)
+    /// ortho(-width / 2, width / 2, height / 2, -height / 2, 60, 6000)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - left: 画面の左端に来る位置。
+    ///   - right: 画面の右端に来る位置。
+    ///   - bottom: **画面の下端**に来る位置。
+    ///   - top: **画面の上端**に来る位置。
+    ///   - near: 手前の面までの距離。これより手前は写らない。
+    ///   - far: 奥の面までの距離。これより奥は写らない。
+    ///
+    /// - Important: 縦軸が下向きなので、**`top` のほうが `bottom` より小さい数**になる。
+    ///   引数は画面の側を正として読む — `top` は画面の上端であって、行列の慣行で言う
+    ///   上側ではない。取り違えても警告は出ず、絵が上下反転するだけなので注意する。
+    ///
+    /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    public func ortho(
+        _ left: Float, _ right: Float, _ bottom: Float, _ top: Float, _ near: Float, _ far: Float
+    ) {
+        canvas.ortho(left, right, bottom, top, near, far)
+    }
+
     // MARK: - 光
 
     /// 全体を底上げする光を置く。向きを持たないので、どの面も同じだけ明るくなる。

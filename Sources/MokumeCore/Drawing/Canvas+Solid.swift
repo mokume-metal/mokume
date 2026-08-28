@@ -12,91 +12,34 @@ extension Canvas {
 
     // MARK: - 見る位置
 
-    /// 既定の画角 (縦方向・ラジアン)。
-    static let defaultFieldOfView: Float = .pi / 3
+    /// 面がちょうど収まる位置から、面の正面を見る視点。
+    var defaultCamera: Camera { Camera.fitting(width: width, height: height) }
 
-    /// 面がちょうど収まる距離。
-    ///
-    /// 既定の視点はここに置く。だから何も指定せずに置いた立体は**画素の大きさで
-    /// 見える** — `box(120)` は 120 画素の箱として出る ([ADR-0021] 決定 1)。
-    var defaultEyeDistance: Float {
-        (height / 2) / tan(Canvas.defaultFieldOfView / 2)
-    }
+    // いま効いている視点。何も指定していなければ、面に合わせた既定が返る。
+    public var currentCamera: Camera { cameraStorage ?? defaultCamera }
 
-    /// 立体を落とす行列。
+    /// 立体を落とす行列。いま効いている視点から作る。
     ///
-    /// **奥行き 0 の面は、平面の図形とぴったり重なる。** 距離を上のように選び、
-    /// 平面と同じ半画素のずらしを掛けているためで、そのことは検査で固定してある。
+    /// これを読むのは ``closeBatch()`` なので、列には**閉じた時点の視点**が入る。
     var viewProjection: simd_float4x4 {
-        let distance = defaultEyeDistance
-        let eye = SIMD3<Float>(width / 2, height / 2, distance)
-        let center = SIMD3<Float>(width / 2, height / 2, 0)
-        let view = Self.lookAt(eye: eye, center: center, up: SIMD3<Float>(0, 1, 0))
-        let projection = Self.perspective(
-            fieldOfView: Canvas.defaultFieldOfView,
-            aspect: width / height,
-            near: distance / 10,
-            far: distance * 10)
-        return Self.clipAdjustment(width: width, height: height) * projection * view
+        currentCamera.viewProjection(width: width, height: height)
     }
 
-    /// 縦軸を下向きに保ち、平面と同じ半画素のずらしを掛ける。
-    ///
-    /// 縦軸は 2 度反転する — 投影が持つ「上が +y」と、この行列の反転で、世界の +y が
-    /// 画面の下になる。平面の約束をそのまま延長するための補正である ([ADR-0021] 決定 1)。
-    static func clipAdjustment(width: Float, height: Float) -> simd_float4x4 {
-        simd_float4x4(
-            SIMD4<Float>(1, 0, 0, 0),
-            SIMD4<Float>(0, -1, 0, 0),
-            SIMD4<Float>(0, 0, 1, 0),
-            SIMD4<Float>(1 / width, -1 / height, 0, 1))
-    }
+    /// 見る位置 (世界の座標)。
+    var eyePosition: SIMD3<Float> { currentCamera.eye }
 
-    /// 見る位置と向きから、世界をカメラの側へ移す行列を作る。
-    static func lookAt(eye: SIMD3<Float>, center: SIMD3<Float>, up: SIMD3<Float>) -> simd_float4x4 {
-        let back = normalize(eye - center)
-        let right = normalize(cross(up, back))
-        let above = cross(back, right)
-        return simd_float4x4(
-            SIMD4<Float>(right.x, above.x, back.x, 0),
-            SIMD4<Float>(right.y, above.y, back.y, 0),
-            SIMD4<Float>(right.z, above.z, back.z, 0),
-            SIMD4<Float>(-dot(right, eye), -dot(above, eye), -dot(back, eye), 1))
-    }
-
-    /// 遠くのものほど小さく写す投影。
-    static func perspective(fieldOfView: Float, aspect: Float, near: Float, far: Float)
-        -> simd_float4x4
-    {
-        let y = 1 / tan(fieldOfView / 2)
-        let x = y / aspect
-        let z = far / (near - far)
-        return simd_float4x4(
-            SIMD4<Float>(x, 0, 0, 0),
-            SIMD4<Float>(0, y, 0, 0),
-            SIMD4<Float>(0, 0, z, -1),
-            SIMD4<Float>(0, 0, z * near, 0))
-    }
-
-    /// 既定の視点の置き場所 (世界の座標)。
-    var eyePosition: SIMD3<Float> { SIMD3(width / 2, height / 2, defaultEyeDistance) }
-
-    /// 視線が進む向き。**奥行きの正の側が手前** ([ADR-0021] 決定 1)。
-    var viewForward: SIMD3<Float> { SIMD3(0, 0, -1) }
+    /// 視線が進む向き。
+    var viewForward: SIMD3<Float> { currentCamera.forward }
 
     /// 画面の横方向。
-    var viewRight: SIMD3<Float> { SIMD3(1, 0, 0) }
+    var viewRight: SIMD3<Float> { currentCamera.right }
 
-    /// 画面の縦方向 (縦軸は下向き)。
-    var viewUp: SIMD3<Float> { SIMD3(0, 1, 0) }
+    /// 画面の縦方向 (画面の下へ向かう)。
+    var viewDown: SIMD3<Float> { currentCamera.down }
 
     /// その位置での、画面 1 画素ぶんの世界での長さ。
-    ///
-    /// 線の太さは画面の画素で測る約束なので、奥にあるものほど世界では広く作る。
-    /// **視点の情報はここ 1 箇所から取る** — 視点を変える口が来ても式が散らばらない。
     func worldPerPixel(at position: SIMD3<Float>) -> Float {
-        let depth = max(dot(position - eyePosition, viewForward), defaultEyeDistance / 10)
-        return 2 * tan(Canvas.defaultFieldOfView / 2) * depth / height
+        currentCamera.worldPerPixel(at: position, height: height)
     }
 
     // MARK: - 基本の形
@@ -336,7 +279,7 @@ extension Canvas {
         var previous = center + viewRight * radius
         for step in 1...steps {
             let angle = 2 * Float.pi * Float(step) / Float(steps)
-            let current = center + (viewRight * cos(angle) + viewUp * sin(angle)) * radius
+            let current = center + (viewRight * cos(angle) + viewDown * sin(angle)) * radius
             appendSolidStrokeTriangle(center, previous, current)
             previous = current
         }
@@ -345,10 +288,10 @@ extension Canvas {
     /// 視線に正対する正方形を置く (四角い端点と削いだ角)。
     private func appendSolidSquare(at center: SIMD3<Float>, half: Float) {
         let radius = half * worldPerPixel(at: center)
-        let a = center + (-viewRight - viewUp) * radius
-        let b = center + (viewRight - viewUp) * radius
-        let c = center + (viewRight + viewUp) * radius
-        let d = center + (-viewRight + viewUp) * radius
+        let a = center + (-viewRight - viewDown) * radius
+        let b = center + (viewRight - viewDown) * radius
+        let c = center + (viewRight + viewDown) * radius
+        let d = center + (-viewRight + viewDown) * radius
         appendSolidStrokeTriangle(a, b, c)
         appendSolidStrokeTriangle(a, c, d)
     }
