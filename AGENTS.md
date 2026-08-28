@@ -72,13 +72,15 @@ PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が g
   gh pr view <番号> --json mergeStateStatus,statusCheckRollup
   ```
 
-- **`verify: human`** の Issue に紐づく PR は、`review-gate` が Approve レビューを要求する (この分類は CODEOWNERS では表現できない)
+- **`verify: human`** の Issue に紐づく PR は、`review-gate` が Approve レビューを要求する (この分類はパスで表現できないので CODEOWNERS にも `required_reviewers` にも書けない)
+
+  承認待ちは **`human-approval` という 2 本目の必須チェック**が `action_required` で表す。**`ci-gate` は緑のまま**なので、赤は本物の故障だけを意味する — 承認待ちを `failure` で表していた頃は監視が故障と誤検出し ([#111](https://github.com/mokume-metal/mokume/issues/111))、承認しても古い失敗 run が判定を固定して自動では進まなかった ([#256](https://github.com/mokume-metal/mokume/issues/256))
 
 どちらに当たる PR も **App identity で作る** — メンテナ自身が作っても自己承認になって詰むため、author を承認者集合の外に置くのが不変条件である ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。
 
 承認は **native の Approve レビュー**のみ。暫定だった `review: approved` ラベルは廃止した — エージェント自身も付けられるため、ゲートとして成立していなかった。
 
-auto-merge を有効にしたのに PR が止まって見えるときは、**同じコミットに残っている古い失敗した check run** が `statusCheckRollup` を FAILURE に固定していることがある (最新の run が全て緑でも、集計は全 run を見る)。失敗した run を再実行して上書きする:
+auto-merge を有効にしたのに PR が止まって見えるときは、**同じコミットに残っている古い失敗した check run** が判定を固定していることがある。最新の run が全て緑でも解けない — [#259](https://github.com/mokume-metal/mokume/issues/259) では 2 本目の run の完了から 5 分 35 秒 `BLOCKED` のままだった。失敗した run を再実行して上書きする (`--failed` は check run を作り足さず既存を上書きするので、これで解ける):
 
 ```bash
 gh run rerun <run-id> --failed

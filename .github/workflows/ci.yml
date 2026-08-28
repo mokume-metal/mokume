@@ -68,6 +68,10 @@ jobs:
   # ADR-0002 のマージ承認ルーティング (実体は scripts/review-gate.sh)。
   # 承認ラベルの付け外し (labeled/unlabeled) で自動的に再評価される。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
+  #
+  # 終了コード 20 は「承認待ち」で、**故障ではないのでジョブは緑のまま**にする
+  # (#111 / #256)。承認の状態は approval-signal ジョブが human-approval check run
+  # として別に報告する。1 (差し戻し) はそのままジョブを赤くする。
   review-gate:
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
@@ -75,15 +79,88 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
+    outputs:
+      pending: ${{ steps.gate.outputs.pending }}
     steps:
       - uses: actions/checkout@v7
       - name: ADR-0002 ルーティング判定
+        id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/review-gate.sh "${{ github.event.pull_request.number }}"
+        run: |
+          set +e
+          bash scripts/review-gate.sh "${{ github.event.pull_request.number }}"
+          code=$?
+          set -e
+          case "$code" in
+            0)  echo "pending=false" >> "$GITHUB_OUTPUT" ;;
+            20) echo "pending=true"  >> "$GITHUB_OUTPUT" ;;
+            *)  exit "$code" ;;
+          esac
 
-  # ブランチ保護が要求する唯一の必須チェック。ジョブが増えても required checks の
-  # 登録名はこの 1 つを保つ。
+  # 承認の状態を human-approval check run として報告する (#111 / #256)。
+  #
+  # なぜ Actions のジョブそのものでは足りないか — ジョブの結論は終了コード由来
+  # (success / failure / cancelled / skipped) に限られ、GitHub が「人の操作待ち」に
+  # 用意している action_required を出せない。必須チェックの通過扱いは success /
+  # skipped / neutral なので、待ちを neutral や skipped で表すとゲートごと消える。
+  # 残るのは action_required だけで、これは Checks API からしか作れない。
+  #
+  # ジョブ名を check run 名と別にしてあるのは、同名だと Actions が作る check run と
+  # 二重になるためである。同じ SHA に同名の check run が二つあると、古いほうが判定を
+  # 固定する (#259 で実測) — #256 そのものを自分で作り込むことになる。
+  # 同じ理由で、報告は**既存を探して PATCH で上書きする**。作り足さない。
+  #
+  # merge_group では PR 文脈が無いので無条件に success を報告する。承認は PR 段階で
+  # 必須チェックとして既に効いており、queue へ入れた時点で満たされている
+  # (pr-title / review-gate を skip して ci-gate が許容しているのと同じ理屈)。
+  # **必須チェックは merge queue でも報告が要る** — 報告が無いと queue が待ち続ける。
+  approval-signal:
+    if: always() && github.event_name != 'push'
+    needs: [review-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+    steps:
+      - name: human-approval を報告
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+          PENDING: ${{ needs.review-gate.outputs.pending }}
+        run: |
+          if [ "$PENDING" = "true" ]; then
+            conclusion=action_required
+            title="メンテナの承認待ち"
+            summary="verify: human の Issue に紐づく PR です。メンテナが Approve すると解けます。故障ではありません。"
+          else
+            conclusion=success
+            title="承認は要らない、または承認済み"
+            summary="verify: human の承認待ちではありません。"
+          fi
+          id=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=human-approval" \
+                 --jq '.check_runs[0].id // empty')
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/check-runs/$id" \
+              -f status=completed -f conclusion="$conclusion" \
+              -f "output[title]=$title" -f "output[summary]=$summary" --silent
+            echo "更新: check run $id → $conclusion"
+          else
+            gh api -X POST "repos/$REPO/check-runs" \
+              -f name=human-approval -f head_sha="$SHA" \
+              -f status=completed -f conclusion="$conclusion" \
+              -f "output[title]=$title" -f "output[summary]=$summary" --silent
+            echo "作成: human-approval → $conclusion"
+          fi
+
+  # ブランチ保護が要求する必須チェックのうち、**CI の健全性**を表す 1 つ。
+  # ジョブが増えても required checks の登録名はこの 1 つを保つ。
+  #
+  # もう 1 つの必須チェック human-approval は approval-signal ジョブが報告する。
+  # 名前を分けているのは種類が違うからで、ジョブが増えたからではない — ci-gate は
+  # 「検査が壊れていないか」、human-approval は「人の操作を待っているか」を表す。
+  # 混ぜると監視が承認待ちを故障と誤検出する (#111)。**承認待ちで ci-gate を赤く
+  # しない**ため、needs に approval-signal は入れない。
   ci-gate:
     if: always()
     needs: [ci-check, pr-title, review-gate]

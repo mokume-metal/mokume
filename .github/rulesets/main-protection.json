@@ -58,6 +58,9 @@
         "required_status_checks": [
           {
             "context": "ci-gate"
+          },
+          {
+            "context": "human-approval"
           }
         ],
         "strict_required_status_checks_policy": false

@@ -14,6 +14,11 @@ CODEOWNERS を読むのは「誰が承認できるか」を知るためで、承
 ではない。`review: approved` ラベルの fallback は identity 分離 (ADR-0003) で
 廃止した。**外したことが戻らない**ことを最後の 2 ケースで固定する。
 
+終了コードは三つに分かれる — 0 (通過) / 20 (承認待ち) / 1 (差し戻し)。**承認待ちだけが
+正常な状態**で、これを 1 と同じにすると ci-gate が承認待ちで赤くなり、監視の誤検出
+(#111) と「承認しても自動で進まない」(#256) の二つが起きる。assert_pending がその
+区別を固定する。
+
 gh は PATH の先頭に置いた偽物へ差し替え、CODEOWNERS も一時ファイルへ差し替えるので、
 ネットワークも認証も実ファイルの内容も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
 """
@@ -108,8 +113,20 @@ class ReviewGateTest(unittest.TestCase):
 
     def assert_blocked(self, proc, message):
         self.assertNotEqual(proc.returncode, 0, f"通ってしまった: {proc.stdout}")
+        self.assertEqual(proc.returncode, 1, f"差し戻しは 1 で表す: {proc.stdout}")
         self.assertIn(message, proc.stderr)
         self.assertIn("次にすること", proc.stderr)
+
+    def assert_pending(self, proc):
+        """承認待ち — 差し戻し (1) と区別できる終了コード 20 で抜ける (#111 / #256)。
+
+        1 と一緒にすると ci.yml が両者を見分けられず、承認待ちが ci-gate の赤に
+        なる。赤くなると監視が故障と誤検出し (#111)、承認しても古い失敗 run が
+        判定を固定して自動では進まなくなる (#256)。
+        """
+        self.assertEqual(proc.returncode, 20, f"承認待ちではない: {proc.stdout} {proc.stderr}")
+        self.assertIn("承認待ち", proc.stdout)
+        self.assertIn("次にすること", proc.stdout)
 
     # --- 1. Issue への紐づけ ------------------------------------------------
 
@@ -151,7 +168,7 @@ class ReviewGateTest(unittest.TestCase):
         proc = self.run_gate(
             pr_json(author=APP, files=["README.md"]), issue_json("verify: human")
         )
-        self.assert_blocked(proc, "メンテナの承認が必要")  # 承認待ちであって詰みではない
+        self.assert_pending(proc)  # 承認待ちであって詰みではない
 
     def test_maintainer_authored_pr_without_required_approval_passes(self):
         # verify: machine かつ CODEOWNERS 対象外 — そもそも承認が要らない
@@ -176,7 +193,7 @@ class ReviewGateTest(unittest.TestCase):
             pr_json(author=OUTSIDER, files=["docs/decisions/0009-x.md"]),
             issue_json("verify: human"),
         )
-        self.assert_blocked(proc, "メンテナの承認が必要")
+        self.assert_pending(proc)
 
     def test_a_second_owner_makes_the_pr_approvable(self):
         # メンテナが増えれば不変条件は自然に満たされる (ADR-0007 影響節)
@@ -197,9 +214,10 @@ class ReviewGateTest(unittest.TestCase):
 
     # --- 4. verify: human は人間の承認を待つ --------------------------------
 
-    def test_verify_human_without_review_is_blocked(self):
+    def test_verify_human_without_review_is_pending_not_blocked(self):
+        # **赤ではなく承認待ち** (#111 / #256)。ここを 1 に戻すと二つの害が復活する
         proc = self.run_gate(pr_json(), issue_json("verify: human"))
-        self.assert_blocked(proc, "メンテナの承認が必要")
+        self.assert_pending(proc)
 
     def test_verify_human_with_approval_passes(self):
         proc = self.run_gate(
@@ -222,7 +240,7 @@ class ReviewGateTest(unittest.TestCase):
         proc = self.run_gate(
             pr_json(labels=["review: approved"]), issue_json("verify: human")
         )
-        self.assert_blocked(proc, "メンテナの承認が必要")
+        self.assert_pending(proc)
 
     def test_important_paths_are_left_to_codeowners(self):
         # 重要パスに触れていても、対象 Issue が verify: machine で author が
