@@ -34,11 +34,17 @@ final class Probe: Sketch {
 }
 
 var seconds = 6.0
+var minimizeAfter: Double?
 var arguments = CommandLine.arguments.dropFirst().makeIterator()
 while let argument = arguments.next() {
     switch argument {
     case "--seconds":
         if let value = arguments.next(), let parsed = Double(value) { seconds = parsed }
+    case "--minimize-after":
+        // **自分で畳む。** よそのプロセスの窓を osascript から畳むにはアクセシビリティの
+        // 許可が要り、許可の無い環境では「検査が落ちた」と「窓を畳めなかった」を
+        // 区別できない (#223)
+        if let value = arguments.next(), let parsed = Double(value) { minimizeAfter = parsed }
     default:
         FileHandle.standardError.write(Data("知らない引数: \(argument)\n".utf8))
         exit(2)
@@ -47,6 +53,16 @@ while let argument = arguments.next() {
 
 let gpu = try RenderDevice()
 let application = try SketchApplication(sketch: Probe(), gpu: gpu)
+
+if let minimizeAfter {
+    Timer.scheduledTimer(withTimeInterval: minimizeAfter, repeats: false) { _ in
+        MainActor.assumeIsolated {
+            NSApp.windows.first?.miniaturize(nil)
+            print("窓を畳んだ")
+            fflush(stdout)
+        }
+    }
+}
 
 // 1 秒ごとに実測値を 1 行。行を集めるのは呼び出す側の仕事にする
 var elapsed = 0.0

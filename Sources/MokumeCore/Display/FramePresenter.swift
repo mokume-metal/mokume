@@ -19,6 +19,18 @@ final class FramePresenter {
     /// しておく** — 絵が出ない・動きが飛ぶといった症状の出どころが、ここを見れば分かる。
     private(set) var missedFrames = 0
 
+    /// 描いた絵を画面へ出すべきか。
+    ///
+    /// 窓が見えていない間は出さない — 誰も見ない絵のために `nextDrawable()` の待ちを
+    /// 払わないためで、**描くほうは止めない** (止めるのは出すほうだけ・#223)。
+    ///
+    /// **最初の 1 回は無条件に通す。** 見えているかの判定は窓が出てから更新されるので、
+    /// それを待たずに描き終えるスケッチ (1 枚しか描かないもの) が、永久に何も表示
+    /// しないことになる。
+    static func shouldPresent(windowIsVisible: Bool, hasPresented: Bool) -> Bool {
+        hasPresented ? windowIsVisible : true
+    }
+
     init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
         self.gpu = gpu
         self.pipeline = try PresentPipeline(gpu: gpu, pixelFormat: pixelFormat)
