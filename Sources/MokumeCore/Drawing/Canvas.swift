@@ -97,6 +97,24 @@ public final class Canvas {
     /// フレームの外で光が置かれたことを知らせたか。
     var warnedLightOutsideFrame = false
 
+    /// いま効いている材質。**フレームを越えない** ([ADR-0021] 決定 4)。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    var currentMaterial = Material.default
+    /// 列ごとの材質の置き場。列 1 つにつき 1 区画。
+    private var materialBuffer: (any MTLBuffer)?
+    private var materialCapacity = 0
+    /// フレームの外で材質が書かれたことを知らせたか。
+    var warnedMaterialOutsideFrame = false
+    /// 受け取れない材質の値を知らせたか。
+    var warnedBadMaterial = false
+    /// 受け取れない露出を知らせたか。
+    var warnedBadExposure = false
+    /// 光の無いところで材質を書いたことを知らせたか。
+    private var warnedMaterialWithoutLight = false
+    /// 映す先が無いまま金属を上げたことを知らせたか。
+    private var warnedMetalWithoutSurroundings = false
+
     /// いま効いている視点。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
     /// `nil` の間は面に合わせた既定を使う。既定を実体で持たないのは、面の大きさが
@@ -222,6 +240,10 @@ public final class Canvas {
         var matrix: simd_float4x4
         /// この列に効く光が、置き場のどこから何個あるか。
         var lightRange: Range<Int>
+        /// この列を描く材質。**閉じた時点のもの**が入る (光と同じ理由)。
+        var material: Material
+        /// この列を見ている場所。艶が見る向きで変わるので、材質と対で持ち歩く。
+        var viewer: SIMD4<Float>
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -281,6 +303,9 @@ public final class Canvas {
         var textWrap: TextWrap
         var imageMode: ShapeMode
         var tint: LinearRGBA
+        /// 材質も積む。**フレームを越えないことと、積めることは別の話である** —
+        /// 変換も同じくフレームを越えないが積める。入れ子で書けないほうが不便になる
+        var material: Material
     }
 
     private var currentStyle: Style {
@@ -296,7 +321,8 @@ public final class Canvas {
                 horizontalTextAlign: currentHorizontalTextAlign,
                 verticalTextAlign: currentVerticalTextAlign,
                 textLeading: currentTextLeading, textWrap: currentTextWrap,
-                imageMode: currentImageMode, tint: currentTint)
+                imageMode: currentImageMode, tint: currentTint,
+                material: currentMaterial)
         }
         set {
             currentFill = newValue.fill
@@ -317,6 +343,11 @@ public final class Canvas {
             currentTextWrap = newValue.textWrap
             currentImageMode = newValue.imageMode
             currentTint = newValue.tint
+            // 材質が変わるなら、戻す前に列を閉じる (置いた立体を後の材質で描かない)
+            if currentMaterial != newValue.material {
+                closeBatch()
+                currentMaterial = newValue.material
+            }
             // 混ぜ方と切り抜きが変わるなら列を閉じてから戻す
             blendMode(newValue.blendMode)
             if !Self.sameClip(currentClip, newValue.clip) {
@@ -492,7 +523,36 @@ public final class Canvas {
                 clip: currentClip,
                 matrix: openSource == .flat ? projection : viewProjection,
                 // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
-                lightRange: openSource == .flat ? 0..<0 : bakeActiveLights()))
+                lightRange: openSource == .flat ? 0..<0 : bakeActiveLights(),
+                material: openSource == .flat ? .default : currentMaterial,
+                viewer: openSource == .flat ? SIMD4(0, 0, -1, 0) : viewer))
+        if openSource == .solid { warnIfMaterialCannotShow() }
+    }
+
+    /// 効きようのない材質を、初回だけ知らせる ([ADR-0020] 決定 5)。
+    ///
+    /// **黙って無視しないための口である。** どちらも式としては正しく振る舞っていて、
+    /// 絵だけが「書いたのに効かない」「真っ黒」になる — 利用者からは自分のコードを
+    /// 疑うしかない形の失敗なので、起きた場所で知らせる。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    private func warnIfMaterialCannotShow() {
+        switch Material.unusableReason(currentMaterial, lights: activeLights) {
+        case nil:
+            return
+        case .noLight:
+            guard !warnedMaterialWithoutLight else { return }
+            warnedMaterialWithoutLight = true
+            Diagnostics.warn(
+                "材質を書いていますが、光を 1 つも置いていません。"
+                    + "光の無い立体は塗り 1 色で出るので、材質はどれも効きません")
+        case .metalWithoutSurroundings:
+            guard !warnedMetalWithoutSurroundings else { return }
+            warnedMetalWithoutSurroundings = true
+            Diagnostics.warn(
+                "金属を上げていますが、映す先がありません。金属は周りを映すことでしか"
+                    + "見えないので、ambientLight() を置かないと艶だけが残って暗くなります")
+        }
     }
 
     /// いま効いている光を置き場へ写し、その区間を返す。
@@ -1065,7 +1125,10 @@ public final class Canvas {
         // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点は**描き終えて
         // から**既定へ戻す — 始まりで戻すと、フレームの外から読んだときだけ「もう
         // 効かない視点」が返る。列を閉じるのに視点が要るので、戻すのは flush の後
-        defer { cameraStorage = nil }
+        defer {
+            cameraStorage = nil
+            currentMaterial = .default
+        }
         currentClip = nil
         transform = .identity
         transformStack.removeAll(keepingCapacity: true)
@@ -1151,6 +1214,18 @@ public final class Canvas {
                 slot.update(
                     from: [UInt32(batch.lightRange.lowerBound), UInt32(batch.lightRange.count)],
                     count: 2)
+                // 見ている場所は 16 バイト境界から (断片の側も詰め物を空けている)
+                var viewer = batch.viewer
+                lighting.contents().advanced(by: index * Self.valuesStride + 16)
+                    .copyMemory(from: &viewer, byteCount: MemoryLayout<SIMD4<Float>>.size)
+            }
+
+            // 列ごとの材質。**列が閉じた時点のもの**がそのまま入る
+            let materials = try materialBufferHolding(batches.count)
+            for (index, batch) in batches.enumerated() {
+                var packed = batch.material.packed
+                materials.contents().advanced(by: index * Self.valuesStride)
+                    .copyMemory(from: &packed, byteCount: PackedMaterial.expectedStride)
             }
 
             let values = try valuesBufferHolding(batches.count)
@@ -1194,6 +1269,9 @@ public final class Canvas {
                 pipeline.argumentTable.setAddress(
                     lighting.gpuAddress + UInt64(index * Self.valuesStride),
                     index: ShapePipeline.lightingBufferIndex)
+                pipeline.argumentTable.setAddress(
+                    materials.gpuAddress + UInt64(index * Self.valuesStride),
+                    index: ShapePipeline.materialBufferIndex)
                 encoder.setScissorRect(
                     batch.clip
                         ?? MTLScissorRect(x: 0, y: 0, width: Int(width), height: Int(height)))
@@ -1266,6 +1344,16 @@ public final class Canvas {
         let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
         lightingBuffer = buffer
         lightingCapacity = capacity
+        return buffer
+    }
+
+    /// 列ごとの材質を置く領域。足りなければ取り直す。
+    private func materialBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = materialBuffer, materialCapacity >= count { return buffer }
+        let capacity = max(count, max(materialCapacity * 2, 16))
+        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
+        materialBuffer = buffer
+        materialCapacity = capacity
         return buffer
     }
 

@@ -41,30 +41,84 @@ constant uint kDirectionalLight = 1;
 constant uint kPointLight = 2;
 constant uint kSpotLight = 3;
 
-/// この列に効く光が、置き場のどこから何個あるか。
+/// この列に効く光が、置き場のどこから何個あるか。と、どこから見ているか。
 struct Lighting {
     uint offset;
     uint count;
+    /// 16 バイト境界へ揃えるための詰め物 (Swift 側もこの位置を空けている)。
+    float2 padding;
+    /// 見ている場所。`w` が 1 なら xyz は**視点の位置** (透視)、0 なら
+    /// xyz は**見ている側へ向かう一定の向き** (平行)。艶は見る向きで変わるので要る。
+    float4 viewer;
 };
 
-/// 面が受け取る光を合計する。
+/// この列を描く材質。並びは Swift 側の `PackedMaterial` と一致する。
+struct Material {
+    /// 周りの光への返し (rgb) と、艶の鋭さ (w)。
+    float4 ambientAndShininess;
+    /// 自発光 (rgb) と、金属らしさ (w)。
+    float4 emissiveAndMetalness;
+};
+
+/// アルファの乗算を戻す。完全に透明な画素には戻すべき色が無いので 0 を返す。
+static inline float3 straighten(float4 color) {
+    return color.a > 0.0 ? color.rgb / color.a : float3(0.0);
+}
+
+/// 面が出す色を、置いた光と材質から決める。**式はこれ 1 本しかない。**
 ///
-/// **光を 1 つも置いていなければ、面はそのままの色で出る** (合計を返さず、呼ぶ側が
-/// 数で分岐する)。環境光は向きを持たないのでそのまま足し、向きを持つ光は面の向きと
-/// のなす角で減る (拡散のみ。粗さや金属らしさは材質の担当)。
-static inline float3 mokume_gatherLight(
+/// 式を 2 本持って切り替える形にすると、どの指定が効くかが「いまどちらの式か」に
+/// 依存する。1 本なので、材質の 4 つは常に全部が効く。
+///
+/// ```text
+/// 出る色 = 自発光
+///        + 周りへの返し · 塗り · (底上げの光の合計)
+///        + (1 − 金属らしさ) · 塗り · (向きを持つ光の合計)
+///        + 艶
+/// ```
+///
+/// **既定の材質では、材質が無かったときと 1 ビットも変わらない。** 周りへの返しは
+/// 白 (= 1 を掛けるだけ)、金属らしさは 0 (= 1 を掛けるだけ)、自発光と艶は 0 なので、
+/// 足し込む順序も掛ける順序も以前と同じままである — 順序が変わると最下位ビットが
+/// 動き、触っていない絵の台帳まで動く。
+///
+/// **光を 1 つも置いていなければ、面はそのままの色で出る** (呼ぶ側が数で分岐する)。
+/// 材質もそのとき効かないので、呼ぶ側が警告を出す。
+///
+/// 色は**アルファ乗算済み**のまま扱う ([ADR-0011] 決定 4)。映り込みの色 (`f0`) だけは
+/// 乗算を戻してから作る — 半透明の面の金属色が、透け具合で濁らないようにするため。
+static inline float3 mokume_shade(
     constant Light *lights, uint offset, uint count,
-    float3 worldPosition, float3 normal)
+    float3 worldPosition, float3 normal, float4 viewer,
+    float4 color, Material material)
 {
+    float3 base = color.rgb;
+    float3 ambientResponse = material.ambientAndShininess.rgb;
+    float shininess = material.ambientAndShininess.w;
+    float3 emissive = material.emissiveAndMetalness.rgb;
+    float metalness = clamp(material.emissiveAndMetalness.w, 0.0, 1.0);
+
+    // 艶の鋭さ (大きいほど鋭い) を粗さへ写す。**0 は「艶を出さない」の合図**なので
+    // 式に入れない — 手本の綴りをそのまま採ったため、向きがここで逆になる
+    float roughness = shininess > 0.0 ? clamp(sqrt(2.0 / (shininess + 2.0)), 0.03, 1.0) : 1.0;
+    float spread = roughness * roughness;
+    // 映り込みの色。非金属はどの色でもほぼ同じ弱い映り込み、金属は塗りそのものを映す
+    float3 f0 = mix(float3(0.04), straighten(color), metalness);
+
     float3 total = float3(0.0);
+    float3 gloss = float3(0.0);
     float3 n = normalize(normal);
+    float3 toEye = viewer.w > 0.5 ? normalize(viewer.xyz - worldPosition) : normalize(viewer.xyz);
     for (uint index = 0; index < count; index++) {
         constant Light &light = lights[offset + index];
         uint kind = uint(light.colorAndKind.w);
         float3 color = light.colorAndKind.rgb;
 
         if (kind == kAmbientLight) {
-            total += color;
+            // 周りの光は、金属でも非金属でも塗りの色で返る — 一様な周りを拡散する
+            // のと映すのは同じ式になるので、ここで金属かどうかを見ない。**金属が
+            // 真っ黒にならないのはこのため**で、映り込む先が入ったら差し替わる
+            total += color * ambientResponse;
             continue;
         }
 
@@ -84,9 +138,27 @@ static inline float3 mokume_gatherLight(
             }
         }
 
-        total += color * max(dot(n, toLight), 0.0) * cone;
+        float3 incoming = color * max(dot(n, toLight), 0.0) * cone;
+        total += incoming * (1.0 - metalness);
+
+        if (shininess > 0.0) {
+            // 粗さで広がる山 (GGX) · 遮り合い · 見る角での映り込みの強さ
+            float3 halfway = normalize(toLight + toEye);
+            float nl = max(dot(n, toLight), 0.0);
+            float nv = max(dot(n, toEye), 1e-4);
+            float nh = max(dot(n, halfway), 0.0);
+            float vh = max(dot(toEye, halfway), 0.0);
+            float spread2 = spread * spread;
+            float peak = nh * nh * (spread2 - 1.0) + 1.0;
+            float distribution = spread2 / max(M_PI_F * peak * peak, 1e-6);
+            float k = spread / 2.0;
+            float shadowing = (nl / (nl * (1.0 - k) + k)) * (nv / (nv * (1.0 - k) + k));
+            float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+            gloss += incoming * distribution * shadowing * fresnel / max(4.0 * nl * nv, 1e-4);
+        }
     }
-    return total;
+    // 艶は乗算済みの世界へ入れ直す (半透明の面では、その分だけ薄く乗る)
+    return emissive + base * total + gloss * color.a;
 }
 
 // 面の中身の種類。TextureKind と対応する
@@ -134,11 +206,6 @@ struct Fragment {
     /// 面の大きさ (画素)。
     float2 resolution;
 };
-
-/// アルファの乗算を戻す。完全に透明な画素には戻すべき色が無いので 0 を返す。
-static inline float3 straighten(float4 color) {
-    return color.a > 0.0 ? color.rgb / color.a : float3(0.0);
-}
 
 /// 出した色を下地と混ぜる。
 static inline float4 mokume_composite(float4 source, float4 destination, uint mode) {
@@ -192,6 +259,7 @@ fragment float4 mokume_fragmentMain(
     constant Values &values [[buffer(5)]],
     constant Lighting &lighting [[buffer(6)]],
     constant Light *lights [[buffer(7)]],
+    constant Material &material [[buffer(8)]],
     texture2d<float> source_texture [[texture(0)]],
     bool isFrontFacing [[front_facing]],
     float4 destination [[color(0)]])
@@ -210,9 +278,10 @@ fragment float4 mokume_fragmentMain(
         // 避けるため。書かれた向きは裏返さない (書いた指定を黙って覆さない)
         float3 normal = in.normal;
         if (in.isDerivedNormal > 0.5 && !isFrontFacing) { normal = -normal; }
-        float3 received = mokume_gatherLight(
-            lights, lighting.offset, lighting.count, in.worldPosition, normal);
-        f.color = float4(in.color.rgb * received, in.color.a);
+        float3 lit = mokume_shade(
+            lights, lighting.offset, lighting.count, in.worldPosition, normal,
+            lighting.viewer, in.color, material);
+        f.color = float4(lit, in.color.a);
     }
     f.texel = source_texture.sample(kGlyphSampler, in.uv);
     f.textureKind = textureKind;

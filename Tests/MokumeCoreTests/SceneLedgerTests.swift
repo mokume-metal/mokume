@@ -163,10 +163,26 @@ enum Scene: String, CaseIterable, Sendable {
     case customSolids
     /// 同じ立体を、透視・平行・動かした視点の 3 通りで見たもの。
     case viewpoints
+    /// 質感を振った立体。粗い/滑らか × 金属/非金属 と、自発光・遮蔽。
+    case materials
 
     var size: (width: Int, height: Int) { (128, 128) }
 
-    func draw(on canvas: Canvas) {
+    /// 質感のうち 1 つ。**潰したときに絵が動くか**を測るために名前で指せる形にする。
+    enum MaterialAspect: CaseIterable, Sendable {
+        case shininess
+        case metalness
+        case ambient
+        case emissive
+    }
+
+    func draw(on canvas: Canvas) { draw(on: canvas, without: nil) }
+
+    /// 質感の指定を 1 つだけ既定へ潰して描く。
+    ///
+    /// **検出力の測定に使う** — 潰しても絵が動かない指定があれば、その代表シーンは
+    /// その質感を写していないということになる ([ADR-0019] 決定 4)。
+    func draw(on canvas: Canvas, without suppressed: MaterialAspect?) {
         switch self {
         case .shapes:
             canvas.background(.display(red: 0.08, green: 0.09, blue: 0.12))
@@ -611,6 +627,54 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.translate(64, 98, 0)
             canvas.rotateX(1.1)
             canvas.torus(28, 10)
+            canvas.pop()
+
+        case .materials:
+            // 上の列が非金属、下の列が金属。左から右へ、粗い面から滑らかな面へ
+            canvas.background(.display(red: 0.04, green: 0.05, blue: 0.07))
+            canvas.ambientLight(.opaque(red: 0.16, green: 0.16, blue: 0.18))
+            canvas.directionalLight(
+                .opaque(red: 0.7, green: 0.68, blue: 0.62), -0.35, 0.5, -0.8)
+            canvas.noStroke()
+
+            let sharpness: [Float] = [3, 24, 160]
+            for (column, shininess) in sharpness.enumerated() {
+                for (row, metalness) in [Float(0), 1].enumerated() {
+                    canvas.fill(.display(red: 0.85, green: 0.78, blue: 0.6))
+                    canvas.shininess(suppressed == .shininess ? 0 : shininess)
+                    canvas.metalness(suppressed == .metalness ? 0 : metalness)
+                    canvas.push()
+                    canvas.translate(24 + Float(column) * 40, 30 + Float(row) * 38, 0)
+                    canvas.sphere(17)
+                    canvas.pop()
+                }
+            }
+
+            // 左下: 自ら出す光。右下: 周りの光を返さない (物陰のような面)
+            canvas.shininess(0)
+            canvas.metalness(0)
+            canvas.fill(.display(red: 0.3, green: 0.32, blue: 0.4))
+            canvas.emissive(
+                suppressed == .emissive
+                    ? .opaque(red: 0, green: 0, blue: 0)
+                    : .display(red: 0.55, green: 0.25, blue: 0.1))
+            canvas.push()
+            canvas.translate(38, 106, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateY(0.7)
+            canvas.box(30)
+            canvas.pop()
+
+            canvas.emissive(.opaque(red: 0, green: 0, blue: 0))
+            canvas.ambient(
+                suppressed == .ambient
+                    ? .opaque(red: 1, green: 1, blue: 1)
+                    : .display(red: 0.2, green: 0.2, blue: 0.25))
+            canvas.push()
+            canvas.translate(90, 106, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateY(0.7)
+            canvas.box(30)
             canvas.pop()
 
         case .customSolids:
