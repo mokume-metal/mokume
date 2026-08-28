@@ -87,6 +87,8 @@ final class FramePresenter {
             throw .encoderUnavailable
         }
         pipeline.setSource(source.texture)
+        // 明るさを写す段は**画面が持つ**。行き先が窓でも面でも同じ設定が効く
+        pipeline.setBrightness(source.brightness)
         encoder.setRenderPipelineState(pipeline.state)
         encoder.setViewport(
             MTLViewport(

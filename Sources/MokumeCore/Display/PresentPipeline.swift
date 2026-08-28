@@ -15,10 +15,14 @@ final class PresentPipeline {
     static let sourceTextureIndex = 0
     /// 読み取り方を渡す口の番号 (シェーダ側の `sampler(0)`)。
     static let samplerIndex = 0
+    /// 明るさを写す段の設定を渡す口の番号 (シェーダ側の `buffer(0)`)。
+    static let brightnessBufferIndex = 0
 
     let state: any MTLRenderPipelineState
     let argumentTable: any MTL4ArgumentTable
     private let sampler: any MTLSamplerState
+    /// 明るさを写す段の設定を置く領域。フレームごとに書き換える。
+    private let brightnessBuffer: any MTLBuffer
 
     init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
         let library = try gpu.makeLibrary(named: "Present")
@@ -59,8 +63,11 @@ final class PresentPipeline {
         }
         self.sampler = sampler
 
+        brightnessBuffer = try gpu.makeReadableBuffer(byteCount: 16)
+
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.present.arguments"
+        tableDescriptor.maxBufferBindCount = 1
         tableDescriptor.maxTextureBindCount = 1
         tableDescriptor.maxSamplerStateBindCount = 1
         do {
@@ -74,5 +81,20 @@ final class PresentPipeline {
     /// 写す元のテクスチャを差し替える。
     func setSource(_ texture: any MTLTexture) {
         argumentTable.setTexture(texture.gpuResourceID, index: Self.sourceTextureIndex)
+    }
+
+    /// 明るさを写す段の設定を差し替える。
+    ///
+    /// **折れ始める明るさも一緒に渡す。** 断片の側に同じ定数を書くと、片方だけ
+    /// 直したときに画面と書き出しが静かに食い違う。
+    func setBrightness(_ brightness: Brightness) {
+        let slot = brightnessBuffer.contents().assumingMemoryBound(to: Float.self)
+        slot[0] = brightness.exposure
+        slot[1] = Brightness.knee
+        brightnessBuffer.contents().advanced(by: 8)
+            .assumingMemoryBound(to: UInt32.self)
+            .pointee = brightness.toneMapping.rawIndex
+        argumentTable.setAddress(
+            brightnessBuffer.gpuAddress, index: Self.brightnessBufferIndex)
     }
 }

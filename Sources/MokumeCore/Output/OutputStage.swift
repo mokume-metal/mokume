@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import simd
 
 /// 作業空間の絵を、外へ出せる形へ変換する段。
 ///
@@ -14,23 +15,37 @@ import Foundation
 /// 1. **アルファを戻す** — 作業空間では乗算済みで運んでいる ([ADR-0011] 決定 4)。
 ///    外へ出す形は乗算していない表現なので、ここで割り戻す。色そのものを得てから
 ///    でないと、次のトーンマップが「暗い半透明」と「暗い色」を区別できない
-/// 2. **標準レンジへ収める** ([ADR-0011] 決定 5 の既定)
+/// 2. **明るさを画面へ写す** — 露出を掛け、範囲を超えた分を丸める
+///    ([ADR-0011] 決定 5 の既定は標準レンジへの収まり)
 /// 3. **ディスプレイのエンコードを掛ける** (sRGB の伝達関数)
 /// 4. **チャンネルあたり 8 bit へ量子化する** ([ADR-0011] 決定 6 の量子化点)
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 public enum OutputStage {
     /// 作業空間の画素を、表示できる形へ変換する。
+    ///
+    /// 明るさを写す段の設定は**画面が持つ**ので、画面を経由しないこの入口では
+    /// 既定 — 何も変えない設定 — が使われる。
     public static func encode(_ pixels: PixelBuffer) -> DisplayImage {
+        encode(pixels, brightness: .default)
+    }
+
+    /// 作業空間の画素を、指定した明るさで表示できる形へ変換する。
+    static func encode(_ pixels: PixelBuffer, brightness: Brightness) -> DisplayImage {
         var bytes = [UInt8](repeating: 0, count: pixels.width * pixels.height * 4)
         for y in 0..<pixels.height {
             for x in 0..<pixels.width {
                 let color = pixels[x, y]
                 let alpha = clampToStandardRange(color.alpha)
+                let mapped = brightness.map(
+                    SIMD3(
+                        straighten(color.red, alpha: alpha),
+                        straighten(color.green, alpha: alpha),
+                        straighten(color.blue, alpha: alpha)))
                 let base = (y * pixels.width + x) * 4
-                bytes[base] = quantize(encodeForDisplay(straighten(color.red, alpha: alpha)))
-                bytes[base + 1] = quantize(encodeForDisplay(straighten(color.green, alpha: alpha)))
-                bytes[base + 2] = quantize(encodeForDisplay(straighten(color.blue, alpha: alpha)))
+                bytes[base] = quantize(encodeForDisplay(mapped.x))
+                bytes[base + 1] = quantize(encodeForDisplay(mapped.y))
+                bytes[base + 2] = quantize(encodeForDisplay(mapped.z))
                 // 不透明度は光の量ではないので、伝達関数を掛けずにそのまま量子化する
                 bytes[base + 3] = quantize(alpha)
             }

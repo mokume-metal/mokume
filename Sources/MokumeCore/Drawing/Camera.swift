@@ -119,6 +119,18 @@ public struct Camera: Equatable, Sendable {
     /// 画面の縦方向 (世界の向き)。**画面の下へ向かう** — 縦軸が下向きだから。
     var down: SIMD3<Float> { cross(-forward, right) }
 
+    /// 見ている場所を、断片が使える形で表したもの。
+    ///
+    /// 透視は**視点の位置** (`w` = 1)、平行は**見ている側へ向かう一定の向き**
+    /// (`w` = 0)。平行では面から目までの向きが場所によらないので、位置を渡すと
+    /// 艶だけが透視のように歪む。
+    var viewer: SIMD4<Float> {
+        switch projection {
+        case .perspective: SIMD4(eye, 1)
+        case .orthographic: SIMD4(-forward, 0)
+        }
+    }
+
     /// その位置での、画面 1 画素ぶんの世界での長さ。
     ///
     /// 線の太さは画面の画素で測る約束なので、遠いものほど世界では広く作る。

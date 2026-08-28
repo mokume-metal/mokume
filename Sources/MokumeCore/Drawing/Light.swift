@@ -36,6 +36,11 @@ struct Light {
     /// 光が**進む向き**と、広がりの外側の余弦 (スポット)。
     var directionAndCone: SIMD4<Float>
 
+    /// 置いた種類。詰めた値から読み戻す。
+    ///
+    /// 種類を別に持たないのは、**詰めた値と食い違う余地を残さない**ためである。
+    var kind: Kind? { Kind(rawValue: UInt32(colorAndKind.w)) }
+
     /// シェーダ側の構造体と一致すべき大きさ (バイト)。
     static let expectedStride = 48
 

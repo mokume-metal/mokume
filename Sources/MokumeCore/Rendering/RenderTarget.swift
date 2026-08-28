@@ -24,6 +24,13 @@ public final class RenderTarget {
     /// 1 画素あたりのバイト数 (4 成分 × 半精度浮動小数 2 バイト)。
     static let bytesPerPixel = 8
 
+    /// 明るさを画面へ写す段の設定。**画面の性質なのでフレームを越える**。
+    ///
+    /// ここに置くのは、効く先が「この描画先から出て行く絵すべて」だからである。
+    /// 画面へ差し出す経路も書き出す経路も、行き先は違っても出どころはここ 1 つ
+    /// なので、設定も 1 つで足りる。
+    var brightness = Brightness.default
+
     /// 幅 (画素)。
     public let width: Int
     /// 高さ (画素)。

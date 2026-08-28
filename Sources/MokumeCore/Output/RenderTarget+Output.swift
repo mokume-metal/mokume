@@ -6,7 +6,7 @@ import Foundation
 extension RenderTarget {
     /// いまの内容を表示できる形へ変換して返す。
     public func encodeForDisplay() throws(RenderFailure) -> DisplayImage {
-        OutputStage.encode(try readPixels())
+        OutputStage.encode(try readPixels(), brightness: brightness)
     }
 
     /// いまの内容を PNG として書き出す。**書き込みが終わってから返る。**
