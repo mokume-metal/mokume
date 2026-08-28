@@ -129,6 +129,10 @@ enum Scene: String, CaseIterable, Sendable {
     case primitives
     /// 同じ引数を 4 通りの読み方で置いたもの。
     case origins
+    /// 線の端の形 3 通りを、太さを振って並べたもの。
+    case caps
+    /// 折れ目の形 3 通り。
+    case joins
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -198,6 +202,35 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.fill(entry.1)
                 canvas.rectMode(entry.0)
                 canvas.rect(20, 20, 30, 24)
+                canvas.pop()
+            }
+
+        case .caps:
+            // 端の形 3 通り × 太さ 3 段階。右端を揃えてあるので、伸び方の違いが並ぶ
+            canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
+            canvas.stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+            let caps: [StrokeCap] = [.square, .project, .round]
+            for (row, cap) in caps.enumerated() {
+                canvas.strokeCap(cap)
+                for (column, weight) in [Float(4), 10, 16].enumerated() {
+                    canvas.strokeWeight(weight)
+                    let y = 20 + Float(row) * 40 + Float(column) * 10
+                    canvas.line(20, y, 84, y)
+                }
+            }
+
+        case .joins:
+            // 折れ目の形 3 通り。閉じた形の角に効くことを見るので三角形で描く
+            canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
+            canvas.noFill()
+            canvas.stroke(.display(red: 0.4, green: 0.85, blue: 0.95))
+            canvas.strokeWeight(10)
+            let joins: [StrokeJoin] = [.miter, .bevel, .round]
+            for (index, join) in joins.enumerated() {
+                canvas.push()
+                canvas.translate(Float(index) * 40 + 4, 34)
+                canvas.strokeJoin(join)
+                canvas.triangle(18, 0, 34, 40, 2, 40)
                 canvas.pop()
             }
         }

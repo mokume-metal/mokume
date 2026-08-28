@@ -154,6 +154,187 @@ struct CanvasTests {
         #expect(image[32, 42] == (0, 0, 0, 255))  // 半径 6 の外
     }
 
+    // MARK: - 輪郭 (#234)
+
+    private let blue = LinearRGBA.display(red: 0, green: 0.4, blue: 1)
+    private let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
+
+    @Test("図形は塗りと輪郭の両方を出す")
+    func shapesCarryBothFillAndStroke() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(blue)
+            canvas.stroke(red)
+            canvas.strokeWeight(4)
+            canvas.rect(16, 16, 32, 32)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32].blue > 200)  // 内側は塗りの色
+        #expect(image[16, 32].red > 200)  // 縁は線の色
+        #expect(image[16, 32].blue < 60)
+    }
+
+    @Test("塗りを止めると輪郭だけが残る")
+    func noFillLeavesOnlyTheOutline() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(blue)
+            canvas.noFill()
+            canvas.stroke(red)
+            canvas.strokeWeight(4)
+            canvas.rect(16, 16, 32, 32)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32] == (0, 0, 0, 255))  // 内側は背景のまま
+        #expect(image[16, 32].red > 200)  // 縁は残る
+    }
+
+    @Test("線を止めると塗りだけが残る")
+    func noStrokeLeavesOnlyTheFill() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(blue)
+            canvas.stroke(red)
+            canvas.noStroke()
+            canvas.strokeWeight(4)
+            canvas.rect(16, 16, 32, 32)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32].blue > 200)
+        #expect(image[16, 32].red < 60)  // 縁に線の色は無い
+    }
+
+    @Test("塗りの色を指定し直すと、止めた塗りが戻る")
+    func fillResumesWhenAColorIsGivenAgain() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.fill(blue)  // 呼んだ時点でまた塗るようになる
+            canvas.noStroke()
+            canvas.rect(16, 16, 32, 32)
+        }
+        #expect(try pixels(of: canvas)[32, 32].blue > 200)
+    }
+
+    // MARK: - 端の形
+
+    /// 太さ 12 の線を (10, 32)-(50, 32) に引いたときの、端の外の画素。
+    private func endOfThickLine(cap: StrokeCap, probe: (x: Int, y: Int)) throws -> UInt8 {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.stroke(white)
+            canvas.strokeWeight(12)
+            canvas.strokeCap(cap)
+            canvas.line(10, 32, 50, 32)
+        }
+        return try pixels(of: canvas)[probe.x, probe.y].red
+    }
+
+    @Test("端を切る形は、線の長さちょうどで止まる")
+    func squareCapStopsAtTheGivenLength() throws {
+        #expect(try endOfThickLine(cap: .square, probe: (52, 32)) == 0)
+        #expect(try endOfThickLine(cap: .square, probe: (48, 32)) == 255)
+    }
+
+    @Test("出っ張らせる形は、太さの半分だけ伸びる")
+    func projectCapExtendsByHalfTheWeight() throws {
+        #expect(try endOfThickLine(cap: .project, probe: (52, 32)) == 255)  // 56 まで伸びる
+        #expect(try endOfThickLine(cap: .project, probe: (58, 32)) == 0)
+    }
+
+    @Test("丸める形は、四角い端では届く角に届かない")
+    func roundCapCutsTheCorners() throws {
+        // (55, 36) は中心 (50, 32) から 6.4 画素 — 半径 6 の円の外、四角の内
+        #expect(try endOfThickLine(cap: .round, probe: (55, 36)) == 0)
+        #expect(try endOfThickLine(cap: .project, probe: (55, 36)) == 255)
+        #expect(try endOfThickLine(cap: .round, probe: (54, 32)) == 255)  // 真横は円の内
+    }
+
+    // MARK: - 折れ目の形
+
+    /// 直角に折れた線の、外側の角の画素。
+    private func outerCornerOfBend(join: StrokeJoin) throws -> UInt8 {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(12)
+            canvas.strokeJoin(join)
+            // 直角の角を持つ閉じた形
+            canvas.rect(20, 20, 24, 24)
+        }
+        // 左上の角の、いちばん外側 (角から 6 画素ぶん外へ)
+        return try pixels(of: canvas)[15, 15].red
+    }
+
+    @Test("角を丸めると、四角い角には出る画素が出ない")
+    func roundJoinCutsTheOuterCorner() throws {
+        #expect(try outerCornerOfBend(join: .round) == 0)
+        #expect(try outerCornerOfBend(join: .bevel) == 255)
+    }
+
+    @Test("尖らせる形は、いまは削ぐ形と同じ")
+    func miterMatchesBevelForNow() throws {
+        // 伸びの限界を持つ尖りはまだ実装していない (StrokeJoin.miter の注記)。
+        // 作り込んだときにこの検査が赤くなり、意図した変更として扱える
+        #expect(try outerCornerOfBend(join: .miter) == outerCornerOfBend(join: .bevel))
+    }
+
+    @Test("閉じた図形の輪郭に隙間が無い")
+    func closedOutlinesHaveNoGaps() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(6)
+            canvas.strokeJoin(.bevel)
+            canvas.triangle(32, 12, 52, 48, 12, 48)
+        }
+        let image = try pixels(of: canvas)
+        // 3 つの頂点そのものが塗られている (帯を線分ごとに置くだけだと角が欠ける)
+        #expect(image[32, 12].red == 255)
+        #expect(image[52, 48].red == 255)
+        #expect(image[12, 48].red == 255)
+    }
+
+    // MARK: - 描けない線
+
+    @Test("太さを持たない線は何も描かない", arguments: [0, -4] as [Float])
+    func linesWithoutWeightDrawNothing(_ weight: Float) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.stroke(white)
+            canvas.strokeWeight(weight)
+            canvas.line(8, 32, 56, 32)
+            canvas.point(32, 8)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32] == (0, 0, 0, 255))
+        #expect(image[32, 8] == (0, 0, 0, 255))
+    }
+
+    @Test("長さのない線でも落ちず、端の形だけが残る")
+    func zeroLengthLineLeavesOnlyItsCaps() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.stroke(white)
+            canvas.strokeWeight(10)
+            canvas.strokeCap(.round)
+            canvas.line(32, 32, 32, 32)  // 同じ点
+        }
+        // 帯は出ないが、端の形は両端ぶん置かれる
+        #expect(try pixels(of: canvas)[32, 32].red == 255)
+    }
+
     // MARK: - 位置の基準
 
     @Test("読み方が違えば、同じ矩形を別の引数で書ける")
@@ -262,6 +443,7 @@ struct CanvasTests {
         try canvas.draw {
             canvas.background(black)
             canvas.fill(white)
+            canvas.noStroke()  // ここで見るのは塗りの位置と大きさ
             canvas.rect(10, 20, 4, 8)
         }
 
@@ -354,6 +536,7 @@ struct CanvasTests {
         try canvas.draw {
             canvas.background(black)
             canvas.fill(white)
+            canvas.noStroke()  // ここで見るのは塗りの伸び方
             canvas.scale(4, 1)
             canvas.rect(2, 10, 2, 4)
         }
