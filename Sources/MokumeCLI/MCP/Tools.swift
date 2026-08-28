@@ -11,19 +11,25 @@ struct Tools {
     /// 公開 API の一覧を指す名前。面の仕様と同じ入口 (`reference`) に並べる。
     static let apiDocument = "api"
 
+    /// スケッチとやりとりする区画。基準は `MOKUME_WORK_DIR` が決める (#331)。
     let facets: Facets
+    /// スケッチのパッケージの場所。**区画とは別の軸**で、SwiftPM に尋ねるときはこちらを
+    /// 使う — `Package.swift` も `.build/` も、区画が動いてもここに留まる。
+    let packageDirectory: URL
     /// 公開 API の一覧の在処。
     var apiList: APIListLocator
     /// 識別子の作り手。検査から固定できるようにする。
     var makeID: () -> String = { UUID().uuidString.prefix(8).lowercased() }
 
-    /// 既定では、一覧の在処は区画と同じ作業ディレクトリから組む。
+    /// 既定では 2 つの軸は重なる (区画の基準がパッケージの場所と同じ)。
     init(
-        facets: Facets, apiList: APIListLocator? = nil,
+        facets: Facets, packageDirectory: URL? = nil, apiList: APIListLocator? = nil,
         makeID: @escaping () -> String = { UUID().uuidString.prefix(8).lowercased() }
     ) {
+        let package = packageDirectory ?? facets.directory
         self.facets = facets
-        self.apiList = apiList ?? APIListLocator(directory: facets.directory)
+        self.packageDirectory = package
+        self.apiList = apiList ?? APIListLocator(directory: package)
         self.makeID = makeID
     }
 
@@ -148,7 +154,7 @@ struct Tools {
         // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**
         if name == Self.apiDocument { return apiReference() }
 
-        let root = SchemasLocator.directory(workDirectory: facets.directory)
+        let root = SchemasLocator.directory(workDirectory: packageDirectory)
         guard let name else { return (catalog(schemas: root), false) }
         guard let root else { return (schemasMissing(), true) }
         guard let text = SchemasLocator.contents(of: name, in: root) else {
@@ -189,7 +195,7 @@ struct Tools {
 
     /// 面の仕様が見つからないときの答え。**どこを見たかまで書く。**
     func schemasMissing() -> String {
-        let searched = SchemasLocator.candidates(workDirectory: facets.directory)
+        let searched = SchemasLocator.candidates(workDirectory: packageDirectory)
             .map { "- \($0.path)" }.joined(separator: "\n")
         return """
             面の仕様が見つかりません。次の場所を見ました:

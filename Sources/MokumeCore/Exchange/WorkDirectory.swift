@@ -23,6 +23,13 @@ public enum WorkDirectory {
     /// やりとりのファイルを置く親。
     public static let base: URL = resolve(environment: ProcessInfo.processInfo.environment)
 
+    /// 環境変数で**与えられた**基準。与えられていなければ `nil`。
+    ///
+    /// 道具は自分の既定値 (スケッチのパッケージの場所など) を持っているので、`base` の
+    /// 「無ければ作業ディレクトリ」では当てはまらないことがある。**規則はここ 1 箇所に
+    /// 置いたまま**、既定値だけを呼ぶ側に選ばせるための口である。
+    public static let given: URL? = given(environment: ProcessInfo.processInfo.environment)
+
     /// `<base>/.mokume`。
     public static var root: URL { base.appendingPathComponent(".mokume", isDirectory: true) }
 
@@ -32,11 +39,17 @@ public enum WorkDirectory {
     }
 
     /// 与えられた環境から基準を決める (検査から呼べる形)。
+    static func resolve(environment: [String: String]) -> URL {
+        given(environment: environment)
+            ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+    }
+
+    /// 与えられた環境が基準を指定しているか (検査から呼べる形)。
     ///
     /// 相対パスと `~` 始まりは、読み取り側の作業ディレクトリを基準に絶対化する。
-    static func resolve(environment: [String: String]) -> URL {
+    public static func given(environment: [String: String]) -> URL? {
+        guard let given = environment[environmentKey], !given.isEmpty else { return nil }
         let current = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        guard let given = environment[environmentKey], !given.isEmpty else { return current }
         let expanded = NSString(string: given).expandingTildeInPath
         return URL(fileURLWithPath: expanded, isDirectory: true, relativeTo: current).standardizedFileURL
     }

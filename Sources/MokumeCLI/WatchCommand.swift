@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 保存したら作り直して差し替える。
 enum WatchCommand {
@@ -20,8 +21,11 @@ enum WatchCommand {
             throw .packageNotFound(path: directory.path)
         }
 
-        let session = WatchSession(directory: directory)
+        // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
+        // パッケージの場所へ置くと観測とだけ場所が割れる (#331)
+        let session = WatchSession(directory: directory, facetBase: WorkDirectory.given ?? directory)
         print("見張っている: \(directory.path)")
+        if session.facetBase != directory { print("区画の基準: \(session.facetBase.path)") }
         report(session.start())
 
         while true {

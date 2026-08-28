@@ -18,11 +18,14 @@ struct WatchSessionTests {
         var builds = 0
         var launches = 0
         var stampsGivenToChildren: [String?] = []
+        /// 作り直しを頼まれた場所。**パッケージの場所であることを見る** (#331)
+        var builtIn: [URL] = []
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
-                build: { _ in
+                build: { directory in
                     self.builds += 1
+                    self.builtIn.append(directory)
                     // 作り直しには時間がかかる。刻む対象なので時計を進める
                     self.clock += 0.5
                     return (self.buildStatus, self.buildOutput)
@@ -160,6 +163,26 @@ struct WatchSessionTests {
         let names = try FileManager.default.contentsOfDirectory(
             atPath: directory.appendingPathComponent(".mokume/build").path)
         #expect(!names.contains { $0.hasSuffix(".tmp") })
+    }
+
+    @Test("区画の基準が別なら、記録はそちらへ置き、作り直しはパッケージの場所で行う")
+    func writesTheOutcomeToTheFacetBase() throws {
+        let recorder = Recorder()
+        let package = try makeDirectory()
+        let work = try makeDirectory()
+        // 走らせたスケッチは MOKUME_WORK_DIR に従って観測を書く。記録だけパッケージの
+        // 場所に残ると、読み手から見て観測と記録が割れる (#331)
+        let session = WatchSession(directory: package, facetBase: work, hooks: recorder.hooks())
+        session.start()
+
+        #expect(
+            FileManager.default.fileExists(
+                atPath: work.appendingPathComponent(".mokume/build/status.json").path))
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: package.appendingPathComponent(".mokume").path))
+        // ビルドと世代の判定は動かない
+        #expect(recorder.builtIn == [package])
     }
 }
 
