@@ -27,11 +27,15 @@ public final class RenderTarget {
     public let height: Int
 
     let texture: any MTLTexture
-    private let gpu: RenderDevice
 
-    /// 読み出し用の領域。読み出しのたびに確保し直さず、描画先と同じ寿命で持つ。
-    private lazy var readbackBuffer: (any MTLBuffer)? = try? gpu.makeReadableBuffer(
-        byteCount: width * height * Self.bytesPerPixel)
+    /// テクスチャが載っている領域。**描いた結果はここに現れる**ので、読むために
+    /// 写しを取る必要がない。
+    let storage: any MTLBuffer
+
+    /// 1 行あたりのバイト数。整列の要求を満たすため、幅ぶんより広いことがある。
+    let bytesPerRow: Int
+
+    private let gpu: RenderDevice
 
     /// 指定した大きさの描画先を確保する。
     public init(gpu: RenderDevice, width: Int, height: Int) throws(RenderFailure) {
@@ -45,8 +49,26 @@ public final class RenderTarget {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: Self.pixelFormat, width: width, height: height, mipmapped: false)
         descriptor.usage = [.renderTarget, .shaderRead]
-        descriptor.storageMode = .private
-        self.texture = try gpu.makeTexture(descriptor: descriptor)
+        descriptor.storageMode = .shared
+
+        let bytesPerRow = gpu.alignedBytesPerRow(width * Self.bytesPerPixel)
+        self.bytesPerRow = bytesPerRow
+        let backing = try gpu.makeBufferBackedTexture(
+            descriptor: descriptor, bytesPerRow: bytesPerRow)
+        backing.texture.label = "mokume.target"
+        self.texture = backing.texture
+        self.storage = backing.storage
+    }
+
+    // MARK: - 画素として見る
+
+    /// 描いた結果を画素として読み書きする面。返るのは描画先そのものへの窓である。
+    ///
+    /// 中身が確定しているのは GPU の仕事が終わったあとだけだが、描画の経路は投入の
+    /// たびに完了まで待つので、呼び出し側へ制御が戻った時点では常に確定している。
+    var pixels: Pixels {
+        Pixels(
+            base: storage.contents(), width: width, height: height, bytesPerRow: bytesPerRow)
     }
 
     // MARK: - 描く
@@ -91,34 +113,22 @@ public final class RenderTarget {
     /// 表示・書き出しのための変換は出力段が 1 度だけ行う ([ADR-0011] 決定 3)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    /// 読み出しには GPU の仕事が要らない。描画先は CPU から読める領域の上に載って
+    /// いるので、**ここでするのは行の詰め直しだけ**である。行の間隔が幅ぶんより広い
+    /// ことがあるので、値としての ``PixelBuffer`` へ移すときに詰める。
     public func readPixels() throws(RenderFailure) -> PixelBuffer {
-        let byteCount = width * height * Self.bytesPerPixel
-        guard let buffer = readbackBuffer else {
-            throw .bufferUnavailable(byteCount: byteCount)
+        let componentsPerRow = width * 4
+        var components = [Float16](repeating: 0, count: componentsPerRow * height)
+        let source = storage.contents()
+        components.withUnsafeMutableBytes { destination in
+            let base = destination.baseAddress!
+            for row in 0..<height {
+                base.advanced(by: row * componentsPerRow * 2)
+                    .copyMemory(
+                        from: source.advanced(by: row * bytesPerRow),
+                        byteCount: width * Self.bytesPerPixel)
+            }
         }
-
-        let commands = try gpu.beginCommands()
-        guard let encoder = commands.makeComputeCommandEncoder() else {
-            throw .encoderUnavailable
-        }
-        encoder.copy(
-            sourceTexture: texture,
-            sourceSlice: 0,
-            sourceLevel: 0,
-            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-            sourceSize: MTLSize(width: width, height: height, depth: 1),
-            destinationBuffer: buffer,
-            destinationOffset: 0,
-            destinationBytesPerRow: width * Self.bytesPerPixel,
-            destinationBytesPerImage: byteCount)
-        encoder.endEncoding()
-        try gpu.commitAndWait(commands)
-
-        let components = buffer.contents().bindMemory(
-            to: Float16.self, capacity: width * height * 4)
-        return PixelBuffer(
-            width: width,
-            height: height,
-            components: Array(UnsafeBufferPointer(start: components, count: width * height * 4)))
+        return PixelBuffer(width: width, height: height, components: components)
     }
 }

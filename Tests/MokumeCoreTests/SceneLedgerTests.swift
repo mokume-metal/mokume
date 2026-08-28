@@ -149,6 +149,8 @@ enum Scene: String, CaseIterable, Sendable {
     case textFlow
     /// 作った絵を、等倍・引き伸ばし・切り出し・色掛けで置いたもの。
     case images
+    /// 描いた図形を画素として読み、書き換えて戻したもの。
+    case pixels
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -405,6 +407,31 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.95, alpha: 0.7))
             canvas.rect(66, 54, 52, 52)
             canvas.image(source, 78, 66, 28, 28)
+
+        case .pixels:
+            // 図形を描いてから、その画素を読んで書き換える。**読みと書きが同じ
+            // フレームの中で起きる**ので、待つ場所が 1 つであることもここに載る
+            canvas.background(.display(red: 0.06, green: 0.07, blue: 0.09))
+            canvas.noStroke()
+            canvas.fill(LinearRGBA(straightRed: 0.95, green: 0.45, blue: 0.2, alpha: 0.8))
+            canvas.circle(48, 48, 64)
+            canvas.fill(LinearRGBA(straightRed: 0.2, green: 0.7, blue: 0.95, alpha: 0.6))
+            canvas.rect(56, 56, 56, 56)
+
+            // 左半分は読んだ値をそのまま書き戻す (変わらないはず)。右半分は
+            // 赤と青を入れ替える (変わるはず)。同じ絵の中に両方置く
+            for y in 0..<128 {
+                for x in 0..<128 {
+                    let color = canvas.get(x, y)
+                    canvas.set(
+                        x, y,
+                        x < 64
+                            ? color
+                            : LinearRGBA(
+                                premultipliedRed: color.blue, green: color.green,
+                                blue: color.red, alpha: color.alpha))
+                }
+            }
 
         case .joins:
             // 折れ目の形 3 通り。閉じた形の角に効くことを見るので三角形で描く

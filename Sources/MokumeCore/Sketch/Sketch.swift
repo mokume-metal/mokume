@@ -99,6 +99,54 @@ extension Sketch {
     }
 }
 
+// MARK: - 画素
+
+extension Sketch {
+    /// 描いた結果を画素として読み書きする面。
+    ///
+    /// ```swift
+    /// for y in 0..<Int(height) {
+    ///     for x in 0..<Int(width) {
+    ///         let color = pixels[x, y]
+    ///         pixels[x, y] = LinearRGBA(
+    ///             premultipliedRed: color.green, green: color.blue, blue: color.red,
+    ///             alpha: color.alpha)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// ## 送り直しの手順は無い
+    ///
+    /// 書き換えは描画先へそのまま届く。**画素の面は描画先そのもの**で、写しではない。
+    /// 「書き換えたのに送り直しを呼び忘れて絵が変わらない」という形の不具合が起きない。
+    ///
+    /// ## 読む値と書く値は同じ表現
+    ///
+    /// どちらも ``LinearRGBA`` — 線形・アルファ乗算済みの作業空間の値である。
+    /// 変換が挟まらないので `pixels[x, y] = pixels[x, y]` は絵を変えない。
+    /// 半透明の画素でも同じで、読んで書き戻すだけで色が沈むことはない。
+    ///
+    /// ## いつの絵が読めるか
+    ///
+    /// **そのフレームでそこまでに描いたもの**が読める。初めて触れた時点で溜めていた
+    /// 図形が描き切られ、GPU の完了を待つ。待つのはフレームに 1 度きりなので、
+    /// 何画素読んでも待ち時間は増えない。待つ時点を自分で選びたいときは
+    /// ``loadPixels()`` を先に呼ぶ。
+    public var pixels: Pixels { canvas.pixels }
+
+    /// 溜めている図形を描き切り、画素を読める状態にする。
+    ///
+    /// ``pixels`` も ``get(_:_:)`` も ``set(_:_:_:)`` も必要なら自分で呼ぶので、
+    /// **省いても結果は変わらない**。待つ時点を選びたいときに使う。
+    public func loadPixels() { canvas.loadPixels() }
+
+    /// 1 画素の色。原点は左上。範囲の外は透明を返す。
+    public func get(_ x: Int, _ y: Int) -> LinearRGBA { canvas.get(x, y) }
+
+    /// 1 画素の色を書き換える。範囲の外は何もしない。
+    public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) { canvas.set(x, y, color) }
+}
+
 // MARK: - 直接呼べる描画
 
 extension Sketch {
