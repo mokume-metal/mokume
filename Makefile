@@ -1,8 +1,11 @@
 # mokume 開発コマンド。検査の入口は ci-check の 1 つ — CI はこれを呼ぶだけにする
 # (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
 
+# tee を挟んだパイプの失敗を拾うために bash を使う (test ターゲット)
+SHELL := /bin/bash
+
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test shaders schemas api api-list reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test render-status shaders schemas api api-list reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -21,7 +24,9 @@ setup: ## 開発ツールを確認する
 
 check: setup
 
-ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
+# render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
+# ため (途中で落ちれば make がそこで止まり、報告は行われない)
+ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -66,8 +71,16 @@ hooks-test:
 build:
 	swift build
 
+# テストの記録を残す。何が走って何がスキップされたかを、手元の実行の報告
+# (local-render・#304) が読む
 test:
-	swift test
+	@mkdir -p .build
+	set -o pipefail; swift test 2>&1 | tee .build/test-log.txt
+
+# 描画の検査が走ったことを commit status として報告する (#304)。CI から呼ばれても
+# 認証が無いので何もしない。報告しない理由を述べて必ず 0 で終える
+render-status:
+	bash scripts/render-status.sh local
 
 # シェーダの原文はビルドに含まれない (SwiftPM は .metal を運ぶだけ) ので、誤りは
 # 実行するまで分からない。描画を要する検査は実行環境の制約で CI では走らない (#180)

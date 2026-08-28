@@ -238,7 +238,7 @@ Claude Code のセッションでは `.claude/settings.json` のフック (`scri
 
 - Conventional Commits: `<type>(<scope>): <要約>`。type は feat / fix / docs / refactor / test / chore / ci / perf / build。type と scope は英語、要約は日本語でよい
 - 1 コミット 1 関心・1 PR 1 関心
-- 検証は `make ci-check` に集約する (CI はそれを呼ぶだけ)。push 前に通す
+- 検証は `make ci-check` に集約する (CI はそれを呼ぶだけ)。push 前に通す — **これは作法ではなく merge の条件**である。絵を作る検査は CI では 1 本も走らない ([ADR-0019](docs/decisions/0019-drawing-verification.md) 決定 7) ので、全部が通ったときだけ `make ci-check` が `local-render` を commit status に打ち、描画に触れる PR はそれが無いと merge できない。報告されないときは理由が出るので、それを読んで直す (よくあるのは作業ツリーが汚れているまま打った場合)
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 ファイル置く (CHANGELOG を直接編集しない)
 
 ## してはならないこと
