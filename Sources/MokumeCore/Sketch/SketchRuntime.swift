@@ -37,6 +37,14 @@ public final class SketchRuntime {
     private let inbox: InputInbox?
     /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
+    /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
+    /// 視点 (シーンの記述) と違ってフレームごとには戻らない。まだ触っていなければ `nil`。
+    var orbit: Orbit?
+    /// 視点を操る道具を、最後に進めたフレーム。
+    ///
+    /// 1 フレームに 2 回呼ばれても 2 回ぶん回さないための目印。同じ引きずった量を
+    /// 2 度食わせると倍の速さで回るが、**絵が速いだけなので気付けない**。
+    var orbitAdvancedAt = -1
     /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
     private var exposedValues: [String: ExposedValue] = [:]
     /// 直近のフレームの間隔 (秒)。観測が無ければ測らない。

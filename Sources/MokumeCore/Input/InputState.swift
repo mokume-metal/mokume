@@ -33,6 +33,17 @@ public final class InputState {
     /// 直近のスクロール量 (このフレームぶん)。
     public private(set) var scrollX: Float = 0
     public private(set) var scrollY: Float = 0
+    /// 押したまま引きずった量 (このフレームぶん)。
+    ///
+    /// **押下は移動ではない。** `mouseX - pmouseX` には、押した瞬間にカーソルが押下
+    /// 位置へ飛んだぶんが混ざる — 前のフレームからどこへ動いたかしか分からないので、
+    /// 押した場所が前の位置と離れていれば、指を動かしていなくても差が出る。それを
+    /// 回す量に使うと**押した瞬間に絵が飛ぶ**。
+    ///
+    /// ここは**押されている間の移動だけ**を足し込むので、押下では増えない。足し込みで
+    /// 数えるので、1 フレームにまとめて届いても取りこぼしも重複も起きない。
+    public private(set) var dragX: Float = 0
+    public private(set) var dragY: Float = 0
     /// 押されているキーの符号。
     public private(set) var pressedKeys: Set<Int> = []
     /// 最後に入力された文字。
@@ -55,6 +66,8 @@ public final class InputState {
         previousY = y
         scrollX = 0
         scrollY = 0
+        dragX = 0
+        dragY = 0
         let events = pending
         pending.removeAll(keepingCapacity: true)
         for event in events { apply(event) }
@@ -73,6 +86,11 @@ public final class InputState {
             self.button = button
             isMouseDown = false
         case .mouseMoved(let x, let y):
+            // 押されている間の移動だけを引きずった量へ足す (押下では増やさない)
+            if isMouseDown {
+                dragX += x - self.x
+                dragY += y - self.y
+            }
             self.x = x
             self.y = y
         case .scrolled(let dx, let dy):

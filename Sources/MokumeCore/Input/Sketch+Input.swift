@@ -18,6 +18,14 @@ extension Sketch {
     public var scrollX: Float { Self.input.scrollX }
     /// このフレームのスクロール量 (縦)。
     public var scrollY: Float { Self.input.scrollY }
+    /// このフレームに、押したまま引きずった量 (横)。
+    ///
+    /// **押した瞬間には増えない。** `mouseX - pmouseX` を回す量に使うと、押した場所が
+    /// 前のフレームの位置と離れているときに絵が飛ぶ — 押下は移動ではないのに、位置の
+    /// 差としては現れてしまうためである。引きずって動かす道具はこちらを使う。
+    public var dragX: Float { Self.input.dragX }
+    /// このフレームに、押したまま引きずった量 (縦)。
+    public var dragY: Float { Self.input.dragY }
     /// そのキーが押されているか。
     public func isKeyDown(_ code: Int) -> Bool { Self.input.pressedKeys.contains(code) }
     /// 最後に入力された文字。

@@ -33,6 +33,57 @@ struct InputStateTests {
         #expect(state.previousY == 10)
     }
 
+    @Test("押した瞬間は、引きずった量が増えない")
+    func pressingDoesNotCountAsDragging() {
+        let state = InputState()
+        state.enqueue(.mouseMoved(x: 10, y: 10))
+        state.beginFrame()
+
+        // 前の位置から遠く離れた場所で押す。位置の差は大きいが、押下は移動ではない
+        state.enqueue(.mouseDown(x: 200, y: 150, button: 0))
+        state.beginFrame()
+        #expect(state.x - state.previousX == 190)
+        #expect(state.dragX == 0)
+        #expect(state.dragY == 0)
+    }
+
+    @Test("押している間の移動だけが、引きずった量になる")
+    func onlyMovementWhileHeldCounts() {
+        let state = InputState()
+        // 押す前の移動は数えない
+        state.enqueue(.mouseMoved(x: 10, y: 10))
+        state.enqueue(.mouseDown(x: 10, y: 10, button: 0))
+        state.enqueue(.mouseMoved(x: 30, y: 25))
+        state.beginFrame()
+        #expect(state.dragX == 20)
+        #expect(state.dragY == 15)
+
+        // 離したあとの移動も数えない
+        state.enqueue(.mouseUp(x: 30, y: 25, button: 0))
+        state.enqueue(.mouseMoved(x: 100, y: 100))
+        state.beginFrame()
+        #expect(state.dragX == 0)
+        #expect(state.dragY == 0)
+    }
+
+    @Test("1 フレームにまとめて届いても、引きずった量は取りこぼさない")
+    func draggingAccumulatesAcrossEventsInOneFrame() {
+        let state = InputState()
+        state.enqueue(.mouseDown(x: 0, y: 0, button: 0))
+        state.beginFrame()
+
+        // 行って戻る。**足し込みなので経路のとおりに数える**
+        for step in [10, 25, 40, 30] {
+            state.enqueue(.mouseMoved(x: Float(step), y: 0))
+        }
+        state.beginFrame()
+        #expect(state.dragX == 30)
+
+        // フレームが変われば 0 から数え直す
+        state.beginFrame()
+        #expect(state.dragX == 0)
+    }
+
     @Test("押して離すと、押されている状態がその通りに変わる")
     func followsTheButton() {
         let state = InputState()
