@@ -48,6 +48,15 @@ struct SolidVertex {
     float4 color;
 };
 
+/// 光から見た奥行きを焼き付ける。
+///
+/// 頂点を落とすのは**画面と同じ関数**で、渡す行列だけが光から見たものになる —
+/// 焼き付けた形と画面に出る形が違ってしまわないよう、経路を分けない。
+fragment float4 mokume_shadowFragment(ShapeFragmentIn in [[stage_in]]) {
+    // 落とした後の奥行き (0…1)。読む側は同じ数と比べる
+    return float4(in.position.z, 0.0, 0.0, 1.0);
+}
+
 vertex ShapeFragmentIn solidVertexMain(
     uint index [[vertex_id]],
     constant SolidVertex *vertices [[buffer(0)]],

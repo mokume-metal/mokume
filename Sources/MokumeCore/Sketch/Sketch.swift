@@ -852,6 +852,73 @@ extension Sketch {
         canvas.background(surroundings)
     }
 
+    // MARK: - 影
+
+    /// 影を落とすかどうか。既定は落とさない。
+    ///
+    /// 落とすのは**置いてあるうちの最初の向きを持つ光** (``directionalLight(_:_:_:_:)``)
+    /// で、その光から見た奥行きを 1 枚焼いてから画面を描く。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     lights()
+    ///     shadows(true)
+    ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
+    ///     castShadow(false)
+    ///     push()
+    ///     translate(width / 2, height * 0.8, 0)
+    ///     box(400, 10, 400)
+    ///     pop()
+    ///     castShadow(true)
+    ///     push()
+    ///     translate(width / 2, height / 2, 0)
+    ///     sphere(80)
+    ///     pop()
+    /// }
+    /// ```
+    ///
+    /// **影が減らすのは直接の光だけ**である。影の中でも、``ambientLight(_:)`` の光・
+    /// ``surroundings(_:)`` の光・``emissive(_:)`` の自発光は残り、``ambient(_:)`` は
+    /// 影の内外を問わず効く。
+    ///
+    /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。毎フレーム
+    ///   書いても焼き付け先は作り直さないので、繰り返しの負担にはならない。
+    public func shadows(_ enabled: Bool) { canvas.shadows(enabled) }
+
+    /// 影を焼き付ける範囲の一辺 (世界の長さ)。
+    ///
+    /// **影の細かさは世界の大きさに依る。** 焼き付け先の広さは決まっているので、
+    /// 広い範囲を焼けばそのぶん粗くなる。何も指定しなければ**面の対角の長さ**を使う
+    /// ので、画素と同じ尺度で作るスケッチはそのままで合う。
+    ///
+    /// ずっと小さい世界 (1 単位を 1 メートルとして数十単位、など) を作るときは、
+    /// その世界に合わせた長さを渡す。渡さないと影が数画素に潰れる。
+    ///
+    /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    public func shadowRange(_ size: Float) { canvas.shadowRange(size) }
+
+    /// 影を焼き付ける面の一辺の画素数。既定は 1024。
+    ///
+    /// 大きくすると縁が細かくなり、そのぶん焼くのに時間がかかる。**同じ数を渡し
+    /// 続けるかぎり、焼き付け先は作り直されない。**
+    public func shadowDetail(_ size: Int) { canvas.shadowDetail(size) }
+
+    /// 影の縁の破綻を抑える量。既定は `0.0025`。
+    ///
+    /// 焼いた 1 画素の中で奥行きが変わるので、そのままだと**自分の影が自分の上に
+    /// 縞として出る**。それを避けるための余裕で、大きくしすぎると影が形から離れて
+    /// 浮いて見える。
+    public func shadowBias(_ amount: Float) { canvas.shadowBias(amount) }
+
+    /// これから置く形が、影を落とす側か。既定は落とす。
+    ///
+    /// 床のように「受けるだけ」の形は落とす側から外す。**全体を切るしか無いと、
+    /// 自己遮蔽の強い形を置いた作品が影ごと諦めることになる。**
+    public func castShadow(_ enabled: Bool) { canvas.castShadow(enabled) }
+
+    /// これから置く形が、影を受ける側か。既定は受ける。
+    public func receiveShadow(_ enabled: Bool) { canvas.receiveShadow(enabled) }
+
     // MARK: - 明るさを画面へ写す
 
     /// 画面全体の明るさの倍率。既定は `1`。

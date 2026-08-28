@@ -49,6 +49,11 @@ struct Material: Equatable, Sendable {
     var ambient: SIMD3<Float> = SIMD3(1, 1, 1)
     /// 自ら出す光。光が当たっていなくても足される。
     var emissive: SIMD3<Float> = .zero
+    /// この面が影を受けるか。
+    ///
+    /// **材質の指定ではない** — 利用者は `receiveShadow(_:)` で書く。ここに載せて
+    /// あるのは、列ごとに断片へ届く値がここ 1 つにまとまっているためである。
+    var receivesShadow = true
 
     static let `default` = Material()
 
@@ -79,11 +84,19 @@ struct Material: Equatable, Sendable {
         return lights.contains(where: { $0.kind == .ambient }) ? nil : .metalWithoutSurroundings
     }
 
+    /// 影を受けるかどうかだけを差し替えた材質。
+    func receiving(shadow: Bool) -> Material {
+        var copy = self
+        copy.receivesShadow = shadow
+        return copy
+    }
+
     /// シェーダへ渡す形へ詰める。
     var packed: PackedMaterial {
         PackedMaterial(
             ambientAndShininess: SIMD4(ambient, shininess),
-            emissiveAndMetalness: SIMD4(emissive, metalness))
+            emissiveAndMetalness: SIMD4(emissive, metalness),
+            flags: SIMD4(receivesShadow ? 1 : 0, 0, 0, 0))
     }
 }
 
@@ -96,7 +109,9 @@ struct PackedMaterial {
     var ambientAndShininess: SIMD4<Float>
     /// 自発光 (rgb) と、金属らしさ (w)。
     var emissiveAndMetalness: SIMD4<Float>
+    /// 旗 — x が 1 なら影を受ける。
+    var flags: SIMD4<Float>
 
     /// シェーダ側の構造体と一致すべき大きさ (バイト)。
-    static let expectedStride = 32
+    static let expectedStride = 48
 }
