@@ -151,6 +151,29 @@ jobs:
             -f target_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID" --silent
           echo "報告: human-approval → $state"
 
+  # 描画を要する検査は、この世代のコマンド構造を持たない GPU の上では 1 本も走らない
+  # (#180・ADR-0019 決定 7)。走ったことは **手元の make ci-check** が local-render
+  # として報告する (#304)。このジョブが打つのは「手元の報告が要らない」場合だけで、
+  # 描画に触れている PR には**何も打たない** — 打たないことがそのまま待ちになる。
+  render-signal:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: local-render を代理で報告する
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          MERGE_GROUP_SHA: ${{ github.event.merge_group.head_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/render-status.sh proxy
+
   # ブランチ保護が要求する必須チェックのうち、**CI の健全性**を表す 1 つ。
   # ジョブが増えても required checks の登録名はこの 1 つを保つ。
   #

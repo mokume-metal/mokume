@@ -88,7 +88,7 @@ struct TriangulationTests {
         let hole: [SIMD2<Float>] = [
             SIMD2(5, 5), SIMD2(5, 15), SIMD2(15, 15), SIMD2(15, 5),
         ]
-        let merged = Triangulation.mergeHoles(outer: outer, holes: [hole])
+        let merged = mergeHoles(outer: outer, holes: [hole])
         let triangles = Triangulation.triangulate(merged)
         // 外 400 - 穴 100 = 300
         #expect(abs(area(of: triangles, points: merged) - 300) < 0.5)
@@ -105,7 +105,7 @@ struct TriangulationTests {
         let right: [SIMD2<Float>] = [
             SIMD2(18, 5), SIMD2(18, 15), SIMD2(24, 15), SIMD2(24, 5),
         ]
-        let merged = Triangulation.mergeHoles(outer: outer, holes: [left, right])
+        let merged = mergeHoles(outer: outer, holes: [left, right])
         let triangles = Triangulation.triangulate(merged)
         // 外 600 - 穴 60 x 2 = 480
         #expect(abs(area(of: triangles, points: merged) - 480) < 1)
@@ -116,7 +116,24 @@ struct TriangulationTests {
         let outer: [SIMD2<Float>] = [
             SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 10), SIMD2(0, 10),
         ]
-        let merged = Triangulation.mergeHoles(outer: outer, holes: [[SIMD2(2, 2), SIMD2(4, 4)]])
+        let merged = mergeHoles(outer: outer, holes: [[SIMD2(2, 2), SIMD2(4, 4)]])
         #expect(merged == outer)
+    }
+
+    // MARK: - 道具
+
+    /// 点で渡して点で受け取る形。畳む本体は**番号で**受け渡すので、検査のために
+    /// ここで番号へ付け替える (立体は同じ番号から色や面の向きを引く)。
+    private func mergeHoles(outer: [SIMD2<Float>], holes: [[SIMD2<Float>]]) -> [SIMD2<Float>] {
+        let points = outer + holes.flatMap { $0 }
+        var holeIndices: [[Int]] = []
+        var next = outer.count
+        for hole in holes {
+            holeIndices.append(Array(next..<(next + hole.count)))
+            next += hole.count
+        }
+        return Triangulation
+            .mergeHoles(outer: Array(outer.indices), holes: holeIndices, points: points)
+            .map { points[$0] }
     }
 }

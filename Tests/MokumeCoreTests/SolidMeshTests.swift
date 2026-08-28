@@ -156,4 +156,49 @@ struct SolidMeshTests {
     func meshesAreTriangleLists(_ shape: SolidShape) {
         #expect(shape.make().points.count % 3 == 0)
     }
+
+    @Test("面の巻き方が、形をまたいで揃っている", arguments: [
+        SolidShape.box(width: 10, height: 20, depth: 30),
+        .sphere(radius: 10, detail: 8),
+        .plane(width: 10, height: 10),
+        .cylinder(radius: 10, height: 20, detail: 6),
+        .cone(radius: 10, height: 20, detail: 6),
+        .torus(ringRadius: 30, tubeRadius: 10, detail: 6),
+    ])
+    func windingAgreesWithTheOutwardNormal(_ shape: SolidShape) {
+        // **巻き方は絵に出ない — 出るのは光を当てたときだけ。** 塗り 1 色なら形ごとに
+        // 逆でも同じ絵が出るので、揃っていないことに絵では気付けない。裏を向いた面を
+        // 見えている側で明るくする (両面) 扱いは表裏の判定に巻き方を使うので、
+        // ここが揃っていない形だけが逆から照らされる
+        let points = shape.make().points
+        var checked = 0
+        for index in stride(from: 0, to: points.count - 2, by: 3) {
+            let a = points[index]
+            let b = points[index + 1]
+            let c = points[index + 2]
+            let face = cross(b.position - a.position, c.position - a.position)
+            // 退化した三角形は向きを持たないので数えない
+            guard length_squared(face) > 1e-6 else { continue }
+            #expect(dot(face, a.normal + b.normal + c.normal) > 0)
+            checked += 1
+        }
+        #expect(checked > 0)
+    }
+
+    @Test("面の向きは外を向いている", arguments: [
+        SolidShape.box(width: 10, height: 20, depth: 30),
+        .sphere(radius: 10, detail: 8),
+        .cylinder(radius: 10, height: 20, detail: 6),
+        .cone(radius: 10, height: 20, detail: 6),
+    ])
+    func normalsPointOutward(_ shape: SolidShape) {
+        // **内を向いていても絵は出る。** 出るのは「光が反対から当たっているように
+        // 見える」絵で、それらしく見えてしまうので目では気付けない。中身の詰まった
+        // 形なら、面の向きと中心からの向きが同じ側にあることで機械的に見分けられる
+        // (輪は内側の面が軸を向くので中身が詰まっておらず、平らな面は volume を
+        // 持たないので、この物差しは当たらない — 巻き方の検査だけが効く)
+        for point in shape.make().points {
+            #expect(dot(point.normal, point.position) > 0)
+        }
+    }
 }
