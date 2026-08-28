@@ -21,6 +21,7 @@ vertex ShapeFragmentIn shapeVertexMain(
     // 平面は光を受けない。列が「光 0 個」を渡すので、ここは 0 で足りる
     out.worldPosition = float3(0.0);
     out.normal = float3(0.0);
+    out.isDerivedNormal = 0.0;
     return out;
 }
 
@@ -41,7 +42,8 @@ float4 paint(Fragment in, Values values) {
 
 struct SolidVertex {
     float3 position;
-    float3 normal;
+    /// xyz が面の向き、w が 1 なら**形から求めた向き** (Swift 側の `SolidVertex` を参照)。
+    float4 normal;
     float2 uv;
     float4 color;
 };
@@ -57,6 +59,7 @@ vertex ShapeFragmentIn solidVertexMain(
     out.color = vertices[index].color;
     // 光は世界の座標で当たるので、変換を掛けたあとの位置と向きを渡す
     out.worldPosition = vertices[index].position;
-    out.normal = vertices[index].normal;
+    out.normal = vertices[index].normal.xyz;
+    out.isDerivedNormal = vertices[index].normal.w;
     return out;
 }

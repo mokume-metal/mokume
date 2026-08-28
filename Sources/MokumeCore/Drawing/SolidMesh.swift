@@ -97,9 +97,11 @@ enum SolidMeshBuilder {
         var points: [SolidMesh.Point] = []
         points.reserveCapacity(36)
 
+        // 4 隅を面の周に沿って渡す。**外向きに巻き直すのはここ 1 箇所**で、面の向きも
+        // 同じ巻き方から求めるので、向きと巻き方がずれようがない
         func face(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ d: SIMD3<Float>) {
-            let normal = normalize(cross(b - a, c - a))
-            for position in [a, b, c, a, c, d] {
+            let normal = normalize(cross(c - a, b - a))
+            for position in [a, c, b, a, d, c] {
                 points.append(SolidMesh.Point(position: position, normal: normal))
             }
         }
@@ -123,8 +125,8 @@ enum SolidMeshBuilder {
         let y = height / 2
         let normal = SIMD3<Float>(0, 0, 1)
         return [
-            SIMD3(-x, -y, 0), SIMD3(-x, y, 0), SIMD3(x, y, 0),
-            SIMD3(-x, -y, 0), SIMD3(x, y, 0), SIMD3(x, -y, 0),
+            SIMD3(-x, -y, 0), SIMD3(x, -y, 0), SIMD3(x, y, 0),
+            SIMD3(-x, -y, 0), SIMD3(x, y, 0), SIMD3(-x, y, 0),
         ].map { SolidMesh.Point(position: $0, normal: normal) }
     }
 
@@ -151,7 +153,9 @@ enum SolidMeshBuilder {
                 let b = point(ring: ring + 1, step: step)
                 let c = point(ring: ring + 1, step: step + 1)
                 let d = point(ring: ring, step: step + 1)
-                points.append(contentsOf: [a, b, c, a, c, d])
+                // 巻き方は外向き。上下 (ring) と横 (step) の進む向きが左手の関係に
+                // なっているので、他の形と揃えるためにここで入れ替える
+                points.append(contentsOf: [a, c, b, a, d, c])
             }
         }
         return points
@@ -203,8 +207,8 @@ enum SolidMeshBuilder {
             let r1 = SIMD3<Float>(cos(t1), 0, sin(t1))
             let a = r0 * radius + SIMD3(0, half, 0)
             let b = r1 * radius + SIMD3(0, half, 0)
-            // 斜面の向きは、その三角形そのものから求める
-            let side = normalize(cross(b - apex, a - apex))
+            // 斜面の向きは、その三角形そのものから求める (巻き方と同じ順で読む)
+            let side = normalize(cross(a - apex, b - apex))
             points.append(contentsOf: [
                 SolidMesh.Point(position: apex, normal: side),
                 SolidMesh.Point(position: a, normal: side),

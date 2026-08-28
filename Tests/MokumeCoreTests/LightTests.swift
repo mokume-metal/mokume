@@ -241,6 +241,45 @@ struct LightTests {
         #expect(image[72, 22].red < 20)
     }
 
+    // MARK: - 組み込みの形
+
+    @Test("組み込みの立体は、光を当てた側が明るくなる", arguments: [
+        SolidShape.box(width: 34, height: 34, depth: 34),
+        .sphere(radius: 20, detail: 16),
+        .cylinder(radius: 18, height: 34, detail: 16),
+        .cone(radius: 18, height: 34, detail: 16),
+        .torus(ringRadius: 18, tubeRadius: 7, detail: 16),
+    ])
+    func builtInSolidsFaceTheLight(_ shape: SolidShape) throws {
+        // **面の向きが内を向いていても、絵はそれらしく出る。** 出るのは「光が反対から
+        // 当たっている」絵で、単体では正しく見えてしまう。同じ形を左右から照らして
+        // 明暗が入れ替わることを見れば、向きが揃っているかを絵の側から確かめられる
+        // (平らな面は光へ向く面を持たないので、この物差しは当たらない)
+        func litFraction(fromTheRight: Bool) throws -> Int {
+            let canvas = try makeCanvas()
+            let direction: Float = fromTheRight ? -1 : 1
+            try canvas.draw {
+                canvas.background(black)
+                canvas.directionalLight(white, direction, 0, -0.2)
+                canvas.fill(white)
+                canvas.push()
+                canvas.translate(32, 32, 0)
+                canvas.rotateX(0.5)
+                canvas.rotateY(0.4)
+                canvas.place(shape)
+                canvas.pop()
+            }
+            let image = try pixels(of: canvas)
+            var total = 0
+            for y in 0..<image.height {
+                for x in 40..<image.width { total += Int(image[x, y].red) }
+            }
+            return total
+        }
+
+        #expect(try litFraction(fromTheRight: true) > litFraction(fromTheRight: false))
+    }
+
     // MARK: - 道具
 
     private enum Flip { case vertical, horizontal }
