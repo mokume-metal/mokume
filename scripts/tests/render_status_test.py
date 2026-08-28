@@ -92,7 +92,7 @@ class RenderStatusTest(unittest.TestCase):
             FILES="",
             RENDER_TEST_LOG=".build/test-log.txt",
             RENDER_LEDGER="ledger.txt",
-            RENDER_PATHS="paths.txt",
+            DRAWING_PATHS="paths.txt",
         )
 
     def _git(self, *args):

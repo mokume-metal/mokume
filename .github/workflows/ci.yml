@@ -174,6 +174,38 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/render-status.sh proxy
 
+  # 描画に触れる PR に**絵が載っていること**を要求する (#306)。
+  #
+  # CI は絵を描けない (#180・ADR-0019 決定 7) ので、新しい絵が正しいかの担い手は
+  # 人間と AI の目である (ADR-0019 決定 1)。目に見せるものが無ければ担い手は働けず、
+  # squash merge でブランチが消えた後には絵を足せない。それまで担保していたのは
+  # PR テンプレートのコメント 1 行だけで、抜けたときに気付く経路が無かった。
+  #
+  # **GPU は要らない** — 変更ファイルの一覧と本文の文字列しか見ないので、上の
+  # render-signal (手元の実行を待つ) とは独立に置ける。
+  #
+  # **ci-check ジョブには相乗りさせない。** あのジョブへ GH_TOKEN を持ち込むと、
+  # render-status.sh が「CI からここへ来ても認証が無いのでここで止まる」と宣言して
+  # いる前提 (#304) を崩し、CI が local-render を打てる状態になる。
+  #
+  # 本文を編集しても逃がしラベルを付け外ししても自動で再評価される
+  # (on.pull_request.types に edited / labeled / unlabeled が入っている)。
+  # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
+  drawing-evidence:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: 描画に触れる PR に絵があるか
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash scripts/check-drawing-evidence.sh
+
   # ブランチ保護が要求する必須チェックのうち、**CI の健全性**を表す 1 つ。
   # ジョブが増えても required checks の登録名はこの 1 つを保つ。
   #
@@ -184,7 +216,7 @@ jobs:
   # しない**ため、needs に approval-signal は入れない。
   ci-gate:
     if: always()
-    needs: [ci-check, pr-title, review-gate]
+    needs: [ci-check, pr-title, review-gate, drawing-evidence]
     runs-on: ubuntu-latest
     steps:
       - name: All required jobs green

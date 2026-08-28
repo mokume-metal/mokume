@@ -27,6 +27,10 @@
 # ことは GitHub 側で「必須チェックの待ち」として現れるので、ここで赤くする必要が無い。
 set -euo pipefail
 
+# 「描画に触れているか」の判定は #306 と共有する (照合の実体は 1 つ)
+# shellcheck source=scripts/drawing-paths.sh
+. "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
+
 readonly CONTEXT=local-render
 # scene-ledger の suite 名。**この名前が走って通ったこと**を、GPU のある機械で
 # 全検査が回った証拠として使う (SceneLedgerTests.swift の @Suite 名と一致させる)。
@@ -34,7 +38,6 @@ readonly LEDGER_SUITE='代表シーンの台帳'
 
 TEST_LOG=${RENDER_TEST_LOG:-.build/test-log.txt}
 LEDGER=${RENDER_LEDGER:-Tests/MokumeCoreTests/scene-ledger.txt}
-PATHS_FILE=${RENDER_PATHS:-scripts/drawing-paths.txt}
 
 say() { echo "$CONTEXT: $*"; }
 give_up() { say "報告しない — $1"; exit 0; }
@@ -62,19 +65,6 @@ post() {
     say "報告できなかった — この commit がまだ remote に無いか、権限が無い"
     say "push してから make render-status を打つと、同じ記録から報告し直せる"
   fi
-}
-
-# 変更ファイルの 1 つでも描画の場所に載っているか。
-touches_drawing() {
-  local file prefix
-  while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    while IFS= read -r prefix; do
-      case "$prefix" in '' | '#'*) continue ;; esac
-      case "$file" in "$prefix"*) return 0 ;; esac
-    done < "$PATHS_FILE"
-  done
-  return 1
 }
 
 mode=${1:-}
