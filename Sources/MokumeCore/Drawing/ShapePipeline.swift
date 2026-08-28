@@ -30,6 +30,21 @@ final class ShapePipeline {
 
     /// 組み込みの塗りで描くパイプライン。
     let state: any MTLRenderPipelineState
+
+    /// 立体を組み込みの塗りで描くパイプライン。頂点の落とし方だけが違う。
+    let solidState: any MTLRenderPipelineState
+
+    /// 平面の奥行きの扱い — **常に通し、書かない**。
+    ///
+    /// 平面は奥行きを持たない挿入レイヤーなので ([ADR-0021] 決定 2)、書かないことで
+    /// 後から来た立体の前後関係を汚さない。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    let flatDepthState: (any MTLDepthStencilState)?
+
+    /// 立体の奥行きの扱い — **手前だけを通し、書く**。
+    let solidDepthState: (any MTLDepthStencilState)?
+
     let argumentTable: any MTL4ArgumentTable
 
     private let vertexLibrary: any MTLLibrary
@@ -52,6 +67,22 @@ final class ShapePipeline {
         self.state = try Self.makeState(
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
             pixelFormat: pixelFormat, label: "mokume.shapes")
+        self.solidState = try Self.makeState(
+            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.solids",
+            vertexFunctionName: Self.solidVertexFunctionName)
+
+        let flat = MTLDepthStencilDescriptor()
+        flat.label = "mokume.depth.flat"
+        flat.depthCompareFunction = .always
+        flat.isDepthWriteEnabled = false
+        self.flatDepthState = gpu.device.makeDepthStencilState(descriptor: flat)
+
+        let solid = MTLDepthStencilDescriptor()
+        solid.label = "mokume.depth.solid"
+        solid.depthCompareFunction = .lessEqual
+        solid.isDepthWriteEnabled = true
+        self.solidDepthState = gpu.device.makeDepthStencilState(descriptor: solid)
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
@@ -64,21 +95,28 @@ final class ShapePipeline {
         }
     }
 
+    /// 平面の頂点を落とす関数の名前。
+    static let flatVertexFunctionName = "shapeVertexMain"
+    /// 立体の頂点を落とす関数の名前。
+    static let solidVertexFunctionName = "solidVertexMain"
+
     /// 利用者の断片で塗るパイプラインを組む。
-    func makeState(fragmentLibrary: any MTLLibrary, label: String) throws(RenderFailure)
-        -> any MTLRenderPipelineState
-    {
+    func makeState(
+        fragmentLibrary: any MTLLibrary, label: String,
+        vertexFunctionName: String = ShapePipeline.flatVertexFunctionName
+    ) throws(RenderFailure) -> any MTLRenderPipelineState {
         try Self.makeState(
             compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary,
-            pixelFormat: pixelFormat, label: label)
+            pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName)
     }
 
     private static func makeState(
         compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
-        fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String
+        fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String,
+        vertexFunctionName: String = ShapePipeline.flatVertexFunctionName
     ) throws(RenderFailure) -> any MTLRenderPipelineState {
         let vertexFunction = MTL4LibraryFunctionDescriptor()
-        vertexFunction.name = "shapeVertexMain"
+        vertexFunction.name = vertexFunctionName
         vertexFunction.library = vertexLibrary
 
         let fragmentFunction = MTL4LibraryFunctionDescriptor()

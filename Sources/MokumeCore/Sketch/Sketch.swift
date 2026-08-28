@@ -455,6 +455,28 @@ extension Sketch {
     /// 伸ばす・縮める。
     public func scale(_ x: Float, _ y: Float) { canvas.scale(x, y) }
 
+    /// 原点を奥行きも含めてずらす。
+    ///
+    /// **奥行きは見ている側が正。** 正の値を渡すと手前へ、負の値を渡すと奥へ動く
+    /// (手本のある向きに合わせてある)。
+    public func translate(_ x: Float, _ y: Float, _ z: Float) { canvas.translate(x, y, z) }
+
+    /// 横軸まわりに回す。
+    ///
+    /// 縦軸が下向きなので、正の角度は**上の面が奥へ倒れる**向きに見える。
+    public func rotateX(_ radians: Float) { canvas.rotateX(radians) }
+
+    /// 縦軸まわりに回す。
+    ///
+    /// 正の角度は、右の面が奥へ回る向きに見える。
+    public func rotateY(_ radians: Float) { canvas.rotateY(radians) }
+
+    /// 奥行きの軸まわりに回す。``rotate(_:)`` と同じ。
+    public func rotateZ(_ radians: Float) { canvas.rotateZ(radians) }
+
+    /// 奥行きも含めて伸ばす・縮める。
+    public func scale(_ x: Float, _ y: Float, _ z: Float) { canvas.scale(x, y, z) }
+
     /// 横方向へ斜めに歪める。
     public func shearX(_ radians: Float) { canvas.shearX(radians) }
 
@@ -462,7 +484,7 @@ extension Sketch {
     public func shearY(_ radians: Float) { canvas.shearY(radians) }
 
     /// 与えた変換を、いまの変換の後に重ねる。
-    public func applyMatrix(_ matrix: Transform2D) { canvas.applyMatrix(matrix) }
+    public func applyMatrix(_ matrix: Transform) { canvas.applyMatrix(matrix) }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
@@ -477,6 +499,83 @@ extension Sketch {
 
     /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
     public func pushStyle() { canvas.pushStyle() }
+
+    // MARK: - 立体
+
+    /// 立方体を置く。
+    ///
+    /// 中心は原点で、大きさは画素で数える。**何も指定しなければ画素の大きさで
+    /// 見える** — 既定の視点は面がちょうど収まる位置に置いてあるので、`box(120)` は
+    /// 120 画素の箱として出る。動かすには ``translate(_:_:_:)`` と ``rotateY(_:)``
+    /// などを重ねる。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     background(.display(red: 0.08, green: 0.09, blue: 0.12))
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.3))
+    ///     push()
+    ///     translate(width / 2, height / 2, 0)
+    ///     rotateY(0.6)
+    ///     box(120)
+    ///     pop()
+    /// }
+    /// ```
+    ///
+    /// - Note: 光はまだ無いので、立体は塗り 1 色で出る。奥行きは前後の重なりで読める。
+    public func box(_ size: Float) { canvas.box(size) }
+
+    /// 幅・高さ・奥行きを別々に決めた箱を置く。
+    public func box(_ width: Float, _ height: Float, _ depth: Float) {
+        canvas.box(width, height, depth)
+    }
+
+    /// 球を置く。
+    ///
+    /// - Parameters:
+    ///   - radius: 半径 (画素)。
+    ///   - detail: **一周をいくつに割るか。** 上下は半周なので、その半分で割る。
+    public func sphere(_ radius: Float, detail: Int = Canvas.defaultSolidDetail) {
+        canvas.sphere(radius, detail: detail)
+    }
+
+    /// 平らな面を置く。画面の側を向く。
+    ///
+    /// 奥行き 0 に置いた面は、同じ座標に描いた ``rect(_:_:_:_:)`` とぴったり重なる。
+    public func plane(_ width: Float, _ height: Float) { canvas.plane(width, height) }
+
+    /// 円柱を置く。軸は縦。
+    ///
+    /// - Parameters:
+    ///   - radius: 半径 (画素)。
+    ///   - height: 高さ (画素)。
+    ///   - detail: **一周をいくつに割るか。**
+    public func cylinder(
+        _ radius: Float, _ height: Float, detail: Int = Canvas.defaultSolidDetail
+    ) {
+        canvas.cylinder(radius, height, detail: detail)
+    }
+
+    /// 円錐を置く。軸は縦で、先は上を向く。
+    ///
+    /// - Parameters:
+    ///   - radius: 底の半径 (画素)。
+    ///   - height: 高さ (画素)。
+    ///   - detail: **一周をいくつに割るか。**
+    public func cone(_ radius: Float, _ height: Float, detail: Int = Canvas.defaultSolidDetail) {
+        canvas.cone(radius, height, detail: detail)
+    }
+
+    /// 輪を置く。穴は画面の側を向く。
+    ///
+    /// - Parameters:
+    ///   - radius: 中心から管の中心までの距離 (画素)。
+    ///   - tubeRadius: 管の半径 (画素)。
+    ///   - detail: **一周をいくつに割るか。** 輪の一周も管の一周も同じ数で割る。
+    public func torus(
+        _ radius: Float, _ tubeRadius: Float, detail: Int = Canvas.defaultSolidDetail
+    ) {
+        canvas.torus(radius, tubeRadius, detail: detail)
+    }
 
     /// 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
     public func popStyle() { canvas.popStyle() }

@@ -18,6 +18,9 @@ public final class RenderTarget {
     /// 作業空間の画素の形式。
     static let pixelFormat: MTLPixelFormat = .rgba16Float
 
+    /// 奥行きを覚えておく面の形式。
+    static let depthFormat: MTLPixelFormat = .depth32Float
+
     /// 1 画素あたりのバイト数 (4 成分 × 半精度浮動小数 2 バイト)。
     static let bytesPerPixel = 8
 
@@ -27,6 +30,15 @@ public final class RenderTarget {
     public let height: Int
 
     let texture: any MTLTexture
+
+    /// 奥行きを覚えておく面。
+    ///
+    /// **立体を置かないスケッチでも持つ。** 使うときだけ確保する形にすると、確保の
+    /// 有無で描き方が 2 通りに分かれる — 分かれた経路は片方でしか成り立たない性質を
+    /// 生む ([ADR-0021] 決定 2・3)。中身はフレームごとに捨てるので、保存はしない。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    let depthTexture: any MTLTexture
 
     /// テクスチャが載っている領域。**描いた結果はここに現れる**ので、読むために
     /// 写しを取る必要がない。
@@ -58,6 +70,14 @@ public final class RenderTarget {
         backing.texture.label = "mokume.target"
         self.texture = backing.texture
         self.storage = backing.storage
+
+        let depth = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: Self.depthFormat, width: width, height: height, mipmapped: false)
+        depth.usage = [.renderTarget]
+        depth.storageMode = .private
+        let depthTexture = try gpu.makeTexture(descriptor: depth)
+        depthTexture.label = "mokume.target.depth"
+        self.depthTexture = depthTexture
     }
 
     // MARK: - 画素として見る
@@ -91,6 +111,14 @@ public final class RenderTarget {
         } else {
             attachment.loadAction = .load
         }
+
+        // 奥行きはフレームごとに作り直す。**いちばん奥から始める**ので、最初に
+        // 置いた立体は必ず通り、あとから来た手前のものがそれを隠す
+        let depth = pass.depthAttachment!
+        depth.texture = depthTexture
+        depth.loadAction = .clear
+        depth.clearDepth = 1
+        depth.storeAction = .dontCare
         return pass
     }
 

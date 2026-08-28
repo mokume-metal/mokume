@@ -67,8 +67,8 @@ extension Canvas {
             let matrix = transform.matrix
             vertices.withUnsafeMutableBufferPointer { buffer in
                 for index in base..<(base + run.count) {
-                    let point = SIMD3<Float>(
-                        buffer[index].position.x + x, buffer[index].position.y + y, 1)
+                    let point = SIMD4<Float>(
+                        buffer[index].position.x + x, buffer[index].position.y + y, 0, 1)
                     let moved = matrix * point
                     buffer[index].position = SIMD2<Float>(moved.x, moved.y)
                 }
