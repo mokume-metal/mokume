@@ -212,6 +212,34 @@ struct SolidTests {
         #expect(image[44, 32] == (0, 255, 0, 255))
     }
 
+    // MARK: - 塗り直し
+
+    @Test("面を塗り直すと、それより前に置いた立体は出ない")
+    func backgroundClearsSolidsPlacedBefore() throws {
+        // 面全体を塗り直すのだから、下に隠れるものは平面も立体も残らない
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(red)
+            canvas.push()
+            canvas.translate(16, 32, 0)
+            canvas.sphere(12)
+            canvas.pop()
+
+            canvas.background(black)
+
+            canvas.fill(green)
+            canvas.push()
+            canvas.translate(48, 32, 0)
+            canvas.sphere(12)
+            canvas.pop()
+        }
+
+        let image = try pixels(of: canvas)
+        #expect(image[16, 32] == (0, 0, 0, 255))
+        #expect(image[48, 32] == (0, 255, 0, 255))
+    }
+
     // MARK: - 作り直さない
 
     @Test("同じ寸法の立体を毎フレーム置いても、組み立ては 1 回だけ")
