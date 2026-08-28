@@ -125,6 +125,10 @@ enum Scene: String, CaseIterable, Sendable {
     case transforms
     /// 太さを変えた線。
     case strokes
+    /// 図形をひととおり。
+    case primitives
+    /// 同じ引数を 4 通りの読み方で置いたもの。
+    case origins
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -159,6 +163,42 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.strokeWeight(Float(step) * 2 + 1)
                 let y = 16 + Float(step) * 24
                 canvas.line(16, y, 112, y)
+            }
+
+        case .primitives:
+            canvas.background(.display(red: 0.07, green: 0.07, blue: 0.09))
+            canvas.fill(.display(red: 0.95, green: 0.45, blue: 0.3))
+            canvas.square(10, 10, 32)
+            canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.5))
+            canvas.triangle(60, 10, 88, 42, 52, 42)
+            canvas.fill(.display(red: 0.35, green: 0.6, blue: 0.95))
+            canvas.quad(96, 10, 120, 18, 118, 42, 94, 34)
+            canvas.fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+            canvas.ellipse(30, 78, 44, 28)
+            canvas.fill(.display(red: 0.8, green: 0.4, blue: 0.85))
+            canvas.arc(84, 78, 44, 44, 0, .pi * 1.25)
+            canvas.stroke(.display(red: 1, green: 1, blue: 1))
+            for step in 0..<5 {
+                canvas.strokeWeight(Float(step) * 2 + 2)
+                canvas.point(20 + Float(step) * 22, 114)
+            }
+
+        case .origins:
+            // 同じ 4 つの数を、4 通りの読み方で置く。読み方が場所と大きさを決める
+            canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
+            let modes: [(ShapeMode, LinearRGBA)] = [
+                (.corner, .display(red: 0.95, green: 0.4, blue: 0.3)),
+                (.corners, .display(red: 0.4, green: 0.85, blue: 0.5)),
+                (.center, .display(red: 0.35, green: 0.6, blue: 0.95)),
+                (.radius, .display(red: 0.95, green: 0.85, blue: 0.35)),
+            ]
+            for (index, entry) in modes.enumerated() {
+                canvas.push()
+                canvas.translate(Float(index % 2) * 64, Float(index / 2) * 64)
+                canvas.fill(entry.1)
+                canvas.rectMode(entry.0)
+                canvas.rect(20, 20, 30, 24)
+                canvas.pop()
             }
         }
     }

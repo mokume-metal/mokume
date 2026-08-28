@@ -110,10 +110,84 @@ extension Sketch {
     public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
     /// これから引く線の太さ (画素)。
     public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
-    /// 矩形を塗る。`x`・`y` は左上の角。
-    public func rect(_ x: Float, _ y: Float, _ w: Float, _ h: Float) { canvas.rect(x, y, w, h) }
-    /// 円を塗る。`x`・`y` は中心、`diameter` は直径。
-    public func circle(_ x: Float, _ y: Float, _ diameter: Float) { canvas.circle(x, y, diameter) }
+    /// 矩形を塗る。
+    ///
+    /// 4 つの数の読み方は ``rectMode(_:)`` が決める。既定は**左上の角と、幅と高さ**。
+    ///
+    /// ```swift
+    /// rect(20, 20, 60, 40)   // 左上 (20, 20) から 60x40
+    /// rectMode(.center)
+    /// rect(50, 40, 60, 40)   // 中心 (50, 40) の 60x40 — 上と同じ場所に出る
+    /// ```
+    ///
+    /// 幅か高さが 0 以下になる指定では**何も描かない**。
+    public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.rect(a, b, c, d) }
+
+    /// 正方形を塗る。
+    ///
+    /// 読み方は ``rect(_:_:_:_:)`` と同じで、幅と高さに同じ値を渡すのに等しい。
+    public func square(_ a: Float, _ b: Float, _ extent: Float) { canvas.square(a, b, extent) }
+
+    /// 円を塗る。
+    ///
+    /// 3 つの数の読み方は ``ellipseMode(_:)`` が決める。既定は**中心と直径**。
+    public func circle(_ a: Float, _ b: Float, _ diameter: Float) { canvas.circle(a, b, diameter) }
+
+    /// 楕円を塗る。
+    ///
+    /// 4 つの数の読み方は ``ellipseMode(_:)`` が決める。既定は**中心と、幅と高さ**。
+    public func ellipse(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+        canvas.ellipse(a, b, c, d)
+    }
+
+    /// 円弧を塗る。
+    ///
+    /// 最初の 4 つの数は ``ellipse(_:_:_:_:)`` と同じ読み方で、続く 2 つが始まりと
+    /// 終わりの角度 (ラジアン)。**角度は右向きが 0** で、増える向きは画面の上で
+    /// 時計回りに見える (縦軸が下向きのため)。
+    ///
+    /// ```swift
+    /// arc(50, 50, 80, 80, 0, .pi / 2)   // 右から下へ 4 分の 1
+    /// ```
+    ///
+    /// 塗りは**中心を含む扇形**になる。終わりの角度が始まりより小さいときは
+    /// **何も描かず**、最初の 1 回だけ知らせる。
+    public func arc(
+        _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float
+    ) {
+        canvas.arc(a, b, c, d, start, stop)
+    }
+
+    /// 三角形を塗る。3 つの頂点をそのまま与える。
+    public func triangle(
+        _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float, _ x3: Float, _ y3: Float
+    ) {
+        canvas.triangle(x1, y1, x2, y2, x3, y3)
+    }
+
+    /// 四角形を塗る。4 つの頂点は**与えた順に結ばれる**ので、順序を入れ替えると
+    /// 砂時計のような形にもなる。
+    public func quad(
+        _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,
+        _ x3: Float, _ y3: Float, _ x4: Float, _ y4: Float
+    ) {
+        canvas.quad(x1, y1, x2, y2, x3, y3, x4, y4)
+    }
+
+    /// 点を打つ。
+    ///
+    /// 大きさは ``strokeWeight(_:)`` で決めた太さ、色は ``stroke(_:)`` の色。
+    /// 塗りの色ではないことに注意 — 点は「太さを持つ線の最小の形」として扱う。
+    public func point(_ x: Float, _ y: Float) { canvas.point(x, y) }
+
+    /// 矩形に渡す座標の読み方。既定は ``ShapeMode/corner``。
+    public func rectMode(_ mode: ShapeMode) { canvas.rectMode(mode) }
+
+    /// 楕円と円弧に渡す座標の読み方。既定は ``ShapeMode/center``。
+    ///
+    /// ``circle(_:_:_:)`` にも効く — 直径 1 つしか渡さないので、意味を持つのは
+    /// 中心から測る 2 つ (``ShapeMode/center`` と ``ShapeMode/radius``) である。
+    public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }
     /// 線を引く。
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
         canvas.line(x1, y1, x2, y2)
