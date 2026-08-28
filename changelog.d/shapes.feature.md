@@ -1,1 +1,6 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
 点・正方形・楕円・円弧・三角形・四角形を描けるようになった。矩形と楕円に渡す 4 つの数の読み方も選べる — 角から測るか、対角の 2 点か、中心と大きさか、中心と半径か (`rectMode` / `ellipseMode`)。
