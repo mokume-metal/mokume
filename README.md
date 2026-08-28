@@ -40,3 +40,5 @@ claude mcp add mokume -- mokume-cli mcp
 読み書きしても同じことができる (形の正典は [`Schemas/`](Schemas))。
 
 - 開発の見通し: [mokume Roadmap](https://github.com/orgs/mokume-metal/projects/1)
+
+<!-- #265 の実測用の使い捨て変更。merge しない。 -->
