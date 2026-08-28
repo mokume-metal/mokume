@@ -108,14 +108,29 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 
 **実測 ([#259](https://github.com/mokume-metal/mokume/issues/259))** — 承認待ちを `failure` で表すことは、想定していた「監視の誤検出」([#111](https://github.com/mokume-metal/mokume/issues/111)・[#110](https://github.com/mokume-metal/mokume/pull/110) で発生) だけでなく、**承認しても PR が自動で進まない**という別の害を生んでいた ([#256](https://github.com/mokume-metal/mokume/issues/256))。同じコミットに残る古い `failure` の check run は、同名の新しい `success` があっても必須チェックの判定を固定する — 2 本目の run の完了から 5 分 35 秒、何もせず `BLOCKED` のままで、`gh run rerun --failed` の 19 秒後に `CLEAN` になった。**承認のたびに人手が要り、見ていない時間帯に承認されると PR は静かに止まったまま残る。**
 
-**承認待ちは `human-approval` という 2 本目の必須チェックで表す。** GitHub の必須ステータスチェックは `success` / `skipped` / `neutral` を通過として扱い、`action_required` / `cancelled` / `failure` / `stale` / `timed_out` でブロックする。**`action_required` だけが「ブロックするが failure ではない」**を満たす。
+**承認待ちは `human-approval` という 2 本目の必須チェックで表す。** GitHub の必須ステータスチェックは `success` / `skipped` / `neutral` を通過として扱い、`pending` / `action_required` / `cancelled` / `failure` / `stale` / `timed_out` でブロックする。この中で「ブロックするが failure ではない」を満たすのは `action_required` と `pending` の 2 つである。
 
 | 必須チェック | 表すもの | 承認待ちのとき |
 | --- | --- | --- |
 | `ci-gate` | 検査が壊れていないか | **緑のまま** |
-| `human-approval` | 人の操作を待っているか | `action_required` |
+| `human-approval` | 人の操作を待っているか | `pending` |
 
-`review-gate` は承認待ちを**終了コード 20** で返し (差し戻しの 1 と区別する)、ci.yml の `approval-signal` ジョブがそれを `human-approval` check run へ翻訳する。Actions の job の結論は終了コード由来に限られて `action_required` を出せないため、Checks API を使う。報告は**既存の check run を PATCH で上書きする** — 作り足すと古いほうが判定を固定し、#256 を自分で作り込むことになる。
+`review-gate` は承認待ちを**終了コード 20** で返し (差し戻しの 1 と区別する)、ci.yml の `approval-signal` ジョブがそれを `human-approval` へ翻訳する。Actions の job の結論は終了コード由来に限られて待ちを表せないため、報告は API から行う。
+
+#### 改訂 (2026-08-28) — check run ではなく commit status で報告する
+
+**当初は Checks API を使い、`action_required` で待ちを表していた。これを commit status の `pending` に替える。**
+
+check run で表そうとすると、**作り足しても上書きしても詰む**ことが分かった ([#282](https://github.com/mokume-metal/mokume/issues/282))。
+
+- **作り足す**と、同じ SHA に同名の check run が 2 つ並び、古いほうが判定を固定する ([#259](https://github.com/mokume-metal/mokume/issues/259))
+- **上書きする**と、check run は最初に作った run の check suite に居続ける。承認は必ず後の run で届くので、**最新の suite にはこの名前が現れない**。マージボックスは `Expected — Waiting for status to be reported` のまま止まる
+
+後者を [#279](https://github.com/mokume-metal/mokume/pull/279) で踏んだ。Checks API は `success` と答えるのに画面は待ち続け、**承認を 3 度押しても解けなかった**。API と画面で言うことが食い違うので、原因に辿り着くまでに時間がかかる。
+
+commit status には check suite が無く、**同じ context の最新が常に勝つ**。上書きがそのまま最新の判定になるので、この食い違いが起きない。`action_required` は使えないが、待ちは `pending` で表せる — これも failure ではないので #111 の要求 (承認待ちを故障として数えない) はそのまま満たせる。**「保留中」のほうが実態にも合う。**
+
+*失われるもの*: check run が持てる `output.title` / `summary` の詳しい説明。commit status は 1 行の `description` しか持てないので、理由は短くなる。詰みを避ける値のほうが重い。
 
 **新しい機構は足していない** ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) 決定 5 の第 1 段 + 第 2 段) — 既存の `review-gate` が出す信号の形を変え、GitHub が native に持つ結論を使っただけである。
 

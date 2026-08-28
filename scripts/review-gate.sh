@@ -28,9 +28,11 @@
 #   20  承認待ち (verify: human で Approve がまだ。人が Approve すれば解ける)
 #   1   差し戻し (Issue 紐づけなし・verify ラベルなし・変更要求・誰も承認できない)
 #
-# 20 を受け取った ci.yml は human-approval check run を action_required で報告する。
-# GitHub は action_required をマージのブロック側に数えつつ failure とは別の値として
-# 扱うので、「待っている」と「壊れている」が外から区別できる。
+# 20 を受け取った ci.yml は human-approval を commit status の pending で報告する。
+# GitHub は pending をマージのブロック側に数えつつ failure とは別の値として扱うので、
+# 「待っている」と「壊れている」が外から区別できる。check run ではなく status なのは、
+# check run が最初に作った run の suite に居続け、後から届く承認が最新の suite に
+# 現れないためである (#282)。
 #
 # 使い方: review-gate.sh <PR番号> (要 GH_TOKEN / gh 認証)
 set -euo pipefail

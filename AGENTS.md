@@ -74,7 +74,7 @@ PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が g
 
 - **`verify: human`** の Issue に紐づく PR は、`review-gate` が Approve レビューを要求する (この分類はパスで表現できないので CODEOWNERS にも `required_reviewers` にも書けない)
 
-  承認待ちは **`human-approval` という 2 本目の必須チェック**が `action_required` で表す。**`ci-gate` は緑のまま**なので、赤は本物の故障だけを意味する — 承認待ちを `failure` で表していた頃は監視が故障と誤検出し ([#111](https://github.com/mokume-metal/mokume/issues/111))、承認しても古い失敗 run が判定を固定して自動では進まなかった ([#256](https://github.com/mokume-metal/mokume/issues/256))
+  承認待ちは **`human-approval` という 2 本目の必須チェック**が `pending` (保留中) で表す。**`ci-gate` は緑のまま**なので、赤は本物の故障だけを意味する — 承認待ちを `failure` で表していた頃は監視が故障と誤検出し ([#111](https://github.com/mokume-metal/mokume/issues/111))、承認しても古い失敗 run が判定を固定して自動では進まなかった ([#256](https://github.com/mokume-metal/mokume/issues/256))。**check run ではなく commit status で報告する** — check run は最初に作った run の check suite に居続けるので、後から届く承認が最新の suite に現れず、承認しても永久に解けなくなる ([#282](https://github.com/mokume-metal/mokume/issues/282))
 
 どちらに当たる PR も **App identity で作る** — メンテナ自身が作っても自己承認になって詰むため、author を承認者集合の外に置くのが不変条件である ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。
 
