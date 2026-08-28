@@ -110,6 +110,25 @@ public final class Canvas {
     var warnedBadMaterial = false
     /// 受け取れない露出を知らせたか。
     var warnedBadExposure = false
+
+    /// いま置かれている周囲。**フレームを越えない** ([ADR-0021] 決定 4)。
+    ///
+    /// 光と同じく「置く」ものなので、積んだスタイルには入れない。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    var activeSurroundings: Surroundings?
+    /// いま組み立てている列が**周囲そのものを出す**なら、その周囲。
+    ///
+    /// 背景の面だけが立てる旗で、置いてある周囲とは別に持つ — 背景に出す周囲と
+    /// 映り込む周囲は、別々に選べる (片方だけ呼んでもよい)。
+    var backdrop: Surroundings?
+    /// 列ごとの周囲の置き場。列 1 つにつき 1 区画。
+    private var surroundingsBuffer: (any MTLBuffer)?
+    private var surroundingsCapacity = 0
+    /// フレームの外で周囲が置かれたことを知らせたか。
+    var warnedSurroundingsOutsideFrame = false
+    /// 受け取れない周囲を知らせたか。
+    var warnedBadSurroundings = false
     /// 光の無いところで材質を書いたことを知らせたか。
     private var warnedMaterialWithoutLight = false
     /// 映す先が無いまま金属を上げたことを知らせたか。
@@ -244,6 +263,8 @@ public final class Canvas {
         var material: Material
         /// この列を見ている場所。艶が見る向きで変わるので、材質と対で持ち歩く。
         var viewer: SIMD4<Float>
+        /// この列に効く周囲。**閉じた時点のもの**が入る (光と同じ理由)。
+        var surroundings: PackedSurroundings
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -525,7 +546,8 @@ public final class Canvas {
                 // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
                 lightRange: openSource == .flat ? 0..<0 : bakeActiveLights(),
                 material: openSource == .flat ? .default : currentMaterial,
-                viewer: openSource == .flat ? SIMD4(0, 0, -1, 0) : viewer))
+                viewer: openSource == .flat ? SIMD4(0, 0, -1, 0) : viewer,
+                surroundings: bakeSurroundings()))
         if openSource == .solid { warnIfMaterialCannotShow() }
     }
 
@@ -537,22 +559,35 @@ public final class Canvas {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     private func warnIfMaterialCannotShow() {
-        switch Material.unusableReason(currentMaterial, lights: activeLights) {
+        switch Material.unusableReason(
+            currentMaterial, lights: activeLights, surroundings: activeSurroundings)
+        {
         case nil:
             return
         case .noLight:
             guard !warnedMaterialWithoutLight else { return }
             warnedMaterialWithoutLight = true
             Diagnostics.warn(
-                "材質を書いていますが、光を 1 つも置いていません。"
-                    + "光の無い立体は塗り 1 色で出るので、材質はどれも効きません")
+                "材質を書いていますが、光も周囲も 1 つも置いていません。"
+                    + "どちらも無い立体は塗り 1 色で出るので、材質はどれも効きません")
         case .metalWithoutSurroundings:
             guard !warnedMetalWithoutSurroundings else { return }
             warnedMetalWithoutSurroundings = true
             Diagnostics.warn(
                 "金属を上げていますが、映す先がありません。金属は周りを映すことでしか"
-                    + "見えないので、ambientLight() を置かないと艶だけが残って暗くなります")
+                    + "見えないので、surroundings() で周囲を置くか ambientLight() を"
+                    + "置かないと、艶だけが残って暗くなります")
         }
+    }
+
+    /// いま効いている周囲を、この列の形へ詰める。
+    ///
+    /// **周囲そのものを出す列が優先する。** その列は光も材質も見ないので、置いてある
+    /// 周囲ではなく背景に出す周囲を持ち歩く。
+    private func bakeSurroundings() -> PackedSurroundings {
+        if let backdrop { return backdrop.packed(isBackdrop: true) }
+        guard openSource == .solid, let activeSurroundings else { return .none }
+        return activeSurroundings.packed()
     }
 
     /// いま効いている光を置き場へ写し、その区間を返す。
@@ -1135,6 +1170,7 @@ public final class Canvas {
         hasLoadedPixels = false
         // 光もフレームを越えない (同 決定 4)。ここで空に戻る
         activeLights.removeAll(keepingCapacity: true)
+        activeSurroundings = nil
         lightStorage.removeAll(keepingCapacity: true)
 
         isDrawing = true
@@ -1228,6 +1264,14 @@ public final class Canvas {
                     .copyMemory(from: &packed, byteCount: PackedMaterial.expectedStride)
             }
 
+            // 列ごとの周囲。**列が閉じた時点のもの**がそのまま入る
+            let surroundings = try surroundingsBufferHolding(batches.count)
+            for (index, batch) in batches.enumerated() {
+                var packed = batch.surroundings
+                surroundings.contents().advanced(by: index * Self.valuesStride)
+                    .copyMemory(from: &packed, byteCount: PackedSurroundings.expectedStride)
+            }
+
             let values = try valuesBufferHolding(batches.count)
             for (index, batch) in batches.enumerated() {
                 let slot = values.contents().advanced(by: index * Self.valuesStride)
@@ -1272,6 +1316,9 @@ public final class Canvas {
                 pipeline.argumentTable.setAddress(
                     materials.gpuAddress + UInt64(index * Self.valuesStride),
                     index: ShapePipeline.materialBufferIndex)
+                pipeline.argumentTable.setAddress(
+                    surroundings.gpuAddress + UInt64(index * Self.valuesStride),
+                    index: ShapePipeline.surroundingsBufferIndex)
                 encoder.setScissorRect(
                     batch.clip
                         ?? MTLScissorRect(x: 0, y: 0, width: Int(width), height: Int(height)))
@@ -1344,6 +1391,16 @@ public final class Canvas {
         let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
         lightingBuffer = buffer
         lightingCapacity = capacity
+        return buffer
+    }
+
+    /// 列ごとの周囲を置く領域。足りなければ取り直す。
+    private func surroundingsBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = surroundingsBuffer, surroundingsCapacity >= count { return buffer }
+        let capacity = max(count, max(surroundingsCapacity * 2, 16))
+        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
+        surroundingsBuffer = buffer
+        surroundingsCapacity = capacity
         return buffer
     }
 

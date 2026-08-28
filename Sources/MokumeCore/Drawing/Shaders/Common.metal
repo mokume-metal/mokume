@@ -52,6 +52,16 @@ struct Lighting {
     float4 viewer;
 };
 
+/// この列に効く周囲。並びは Swift 側の `PackedSurroundings` と一致する。
+struct Surroundings {
+    /// 上の色 (rgb) と、周囲が置かれているか (w)。
+    float4 topAndPresence;
+    /// 地平の色 (rgb) と、この列が周囲そのものを出すか (w)。
+    float4 horizonAndBackdrop;
+    /// 下の色 (rgb)。
+    float4 bottom;
+};
+
 /// この列を描く材質。並びは Swift 側の `PackedMaterial` と一致する。
 struct Material {
     /// 周りの光への返し (rgb) と、艶の鋭さ (w)。
@@ -59,6 +69,25 @@ struct Material {
     /// 自発光 (rgb) と、金属らしさ (w)。
     float4 emissiveAndMetalness;
 };
+
+/// 周囲を、ある向きへ見たときの色。
+///
+/// 縦軸は下向きなので、**上を向くほど `y` は小さい**。上半分は地平から上の色へ、
+/// 下半分は地平から下の色へ真っすぐつなぐ。背景も映り込みも**この 1 本から読む**ので、
+/// 上下・左右がずれようがない。
+static inline float3 mokume_surroundings(Surroundings surroundings, float3 direction) {
+    float height = clamp(-normalize(direction).y, -1.0, 1.0);
+    float3 horizon = surroundings.horizonAndBackdrop.rgb;
+    return height > 0.0
+        ? mix(horizon, surroundings.topAndPresence.rgb, height)
+        : mix(horizon, surroundings.bottom.rgb, -height);
+}
+
+/// 周囲をぜんぶ混ぜた色。粗い面の映り込みが寄っていく先。
+static inline float3 mokume_surroundingsAverage(Surroundings surroundings) {
+    return (surroundings.topAndPresence.rgb + 2.0 * surroundings.horizonAndBackdrop.rgb
+        + surroundings.bottom.rgb) * 0.25;
+}
 
 /// アルファの乗算を戻す。完全に透明な画素には戻すべき色が無いので 0 を返す。
 static inline float3 straighten(float4 color) {
@@ -74,7 +103,8 @@ static inline float3 straighten(float4 color) {
 /// 出る色 = 自発光
 ///        + 周りへの返し · 塗り · (底上げの光の合計)
 ///        + (1 − 金属らしさ) · 塗り · (向きを持つ光の合計)
-///        + 艶
+///        + 周りへの返し · 塗り · (周囲を面の向きで読んだ色)
+///        + 艶 (点光源のぶん + 周囲を反射の向きで読んだぶん)
 /// ```
 ///
 /// **既定の材質では、材質が無かったときと 1 ビットも変わらない。** 周りへの返しは
@@ -90,7 +120,7 @@ static inline float3 straighten(float4 color) {
 static inline float3 mokume_shade(
     constant Light *lights, uint offset, uint count,
     float3 worldPosition, float3 normal, float4 viewer,
-    float4 color, Material material)
+    float4 color, Material material, Surroundings surroundings)
 {
     float3 base = color.rgb;
     float3 ambientResponse = material.ambientAndShininess.rgb;
@@ -157,6 +187,22 @@ static inline float3 mokume_shade(
             gloss += incoming * distribution * shadowing * fresnel / max(4.0 * nl * nv, 1e-4);
         }
     }
+    if (surroundings.topAndPresence.w > 0.5) {
+        // **面の向きで読むぶん。** 底上げの光とまったく同じ位置に足す — 一様な周りを
+        // 拡散するのと映すのは同じ式なので、ここでも金属かどうかを見ない。**周囲を
+        // 置くと金属が「上が空・下が地面」に染まって形が見える**のはこの項による
+        total += mokume_surroundings(surroundings, n) * ambientResponse;
+
+        if (shininess > 0.0) {
+            // **反射の向きで読むぶん。** 粗いほど、周囲をぜんぶ混ぜた色へ寄る
+            float3 reflected = mix(
+                mokume_surroundings(surroundings, reflect(-toEye, n)),
+                mokume_surroundingsAverage(surroundings), roughness);
+            float nv = max(dot(n, toEye), 1e-4);
+            gloss += reflected * (f0 + (1.0 - f0) * pow(1.0 - nv, 5.0));
+        }
+    }
+
     // 艶は乗算済みの世界へ入れ直す (半透明の面では、その分だけ薄く乗る)
     return emissive + base * total + gloss * color.a;
 }
@@ -260,6 +306,7 @@ fragment float4 mokume_fragmentMain(
     constant Lighting &lighting [[buffer(6)]],
     constant Light *lights [[buffer(7)]],
     constant Material &material [[buffer(8)]],
+    constant Surroundings &surroundings [[buffer(9)]],
     texture2d<float> source_texture [[texture(0)]],
     bool isFrontFacing [[front_facing]],
     float4 destination [[color(0)]])
@@ -269,10 +316,23 @@ fragment float4 mokume_fragmentMain(
     f.place = in.position.xy / uniforms.resolution;
     f.uv = in.uv;
     f.color = in.color;
-    // 光が 1 つも置かれていなければ、色はそのまま (手本と同じ = 平坦な塗り)。
+    // **周囲そのものを出す列は、光も材質も見ない。** 見ている向きへ周囲を読むだけで、
+    // 背景と映り込みが同じ 1 本の関数から出る
+    if (surroundings.horizonAndBackdrop.w > 0.5) {
+        float3 toEye = lighting.viewer.w > 0.5
+            ? normalize(lighting.viewer.xyz - in.worldPosition)
+            : normalize(lighting.viewer.xyz);
+        f.color = float4(mokume_surroundings(surroundings, -toEye), 1.0);
+    }
+    // 光も周囲も無ければ、色はそのまま (手本と同じ = 平坦な塗り)。**周囲だけを
+    // 置いても効く** — 置いたのに何も起きない設定を作らないためで、周囲は光と同じく
+    // 面を明るくするものである。
     // **向きを持たない頂点も色そのまま** — 立体の線と点がこれに当たる (平面の輪郭が
     // 光を受けないのと同じ扱い)
-    if (lighting.count > 0 && dot(in.normal, in.normal) > 0.0) {
+    else if (
+        (lighting.count > 0 || surroundings.topAndPresence.w > 0.5)
+        && dot(in.normal, in.normal) > 0.0)
+    {
         // **形から求めた向きだけは、どちらの側から見ても光を受ける。** 裏を向いている
         // 面では向きを裏返す — 利用者が頂点を並べる向き (巻き方) で絵が真っ黒になるのを
         // 避けるため。書かれた向きは裏返さない (書いた指定を黙って覆さない)
@@ -280,7 +340,7 @@ fragment float4 mokume_fragmentMain(
         if (in.isDerivedNormal > 0.5 && !isFrontFacing) { normal = -normal; }
         float3 lit = mokume_shade(
             lights, lighting.offset, lighting.count, in.worldPosition, normal,
-            lighting.viewer, in.color, material);
+            lighting.viewer, in.color, material, surroundings);
         f.color = float4(lit, in.color.a);
     }
     f.texel = source_texture.sample(kGlyphSampler, in.uv);

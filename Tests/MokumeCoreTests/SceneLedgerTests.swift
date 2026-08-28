@@ -165,6 +165,8 @@ enum Scene: String, CaseIterable, Sendable {
     case viewpoints
     /// 質感を振った立体。粗い/滑らか × 金属/非金属 と、自発光・遮蔽。
     case materials
+    /// 周囲を置いた立体。背景と映り込み・金属と非金属。
+    case surroundings
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -675,6 +677,40 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.rotateX(0.5)
             canvas.rotateY(0.7)
             canvas.box(30)
+            canvas.pop()
+
+        case .surroundings:
+            // 周囲と、斜め上から差す光を 1 つ。**周囲は光に足されるだけ**なので、
+            // 非金属は光で陰影が付き、金属は周囲だけで形が出る
+            canvas.surroundings(.sky)
+            canvas.background(.sky)
+            canvas.ambientLight(.opaque(red: 0.16, green: 0.16, blue: 0.18))
+            canvas.directionalLight(
+                .opaque(red: 0.6, green: 0.58, blue: 0.5), -0.4, 0.5, -0.75)
+            canvas.noStroke()
+
+            // 上の列: 非金属 / 粗い金属 / 磨いた金属。金属は上下に染まって形が出る
+            let finishes: [(metalness: Float, shininess: Float)] = [
+                (0, 40), (1, 0), (1, 140),
+            ]
+            for (column, finish) in finishes.enumerated() {
+                canvas.fill(.display(red: 0.85, green: 0.85, blue: 0.87))
+                canvas.metalness(finish.metalness)
+                canvas.shininess(finish.shininess)
+                canvas.push()
+                canvas.translate(24 + Float(column) * 40, 38, 0)
+                canvas.sphere(17)
+                canvas.pop()
+            }
+
+            // 下: 磨いた面を寝かせて置くと、空と地面の境目が映り込む
+            canvas.metalness(1)
+            canvas.shininess(200)
+            canvas.fill(.display(red: 0.8, green: 0.78, blue: 0.72))
+            canvas.push()
+            canvas.translate(64, 92, 0)
+            canvas.rotateX(1.1)
+            canvas.box(76, 76, 6)
             canvas.pop()
 
         case .customSolids:

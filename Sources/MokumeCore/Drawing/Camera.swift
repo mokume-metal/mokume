@@ -146,6 +146,48 @@ public struct Camera: Equatable, Sendable {
         }
     }
 
+    /// 周囲を出す面の 4 隅 (世界の座標・左上から時計回り)。
+    ///
+    /// **いちばん奥に置く。** 手前に置くと、あとから置いた立体が背景に隠れる。
+    /// 奥行きの端そのものではなく少し手前にするのは、端では丸めで外へ落ちうるため。
+    ///
+    /// 大きさは**この視点が写す範囲**から求めるので、視野や投影を変えても隙間が
+    /// できない。透視では奥ほど広がり、平行では一定になる。
+    func backdropCorners() -> [SIMD3<Float>] {
+        let distance = far * 0.98
+        let center: SIMD3<Float>
+        let halfWidth: Float
+        let halfHeight: Float
+        switch projection {
+        case let .perspective(fieldOfView, aspect, _, _):
+            center = eye + forward * distance
+            halfHeight = distance * tan(fieldOfView / 2)
+            halfWidth = halfHeight * aspect
+        case let .orthographic(left, rightEdge, bottom, top, _, _):
+            // 縦は下向き (bottom のほうが大きい数)。中心がずれた投影でも合うように、
+            // 範囲の真ん中を取る
+            center =
+                eye + forward * distance + right * ((left + rightEdge) / 2)
+                + down * ((bottom + top) / 2)
+            halfWidth = abs(rightEdge - left) / 2
+            halfHeight = abs(bottom - top) / 2
+        }
+        let across = right * halfWidth
+        let downward = down * halfHeight
+        return [
+            center - across - downward, center + across - downward,
+            center + across + downward, center - across + downward,
+        ]
+    }
+
+    /// いちばん奥の距離。
+    var far: Float {
+        switch projection {
+        case let .perspective(_, _, _, far): far
+        case let .orthographic(_, _, _, _, _, far): far
+        }
+    }
+
     // MARK: - 行列
 
     /// 立体を落とす行列。
