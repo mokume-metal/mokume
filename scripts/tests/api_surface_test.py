@@ -25,15 +25,24 @@ api = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(api)
 
 
-def symbol(name, owner=None, kind="swift.method", doc=None, precise=None):
-    """シンボルグラフ 1 件ぶん。必要な欄だけ持たせる。"""
+def symbol(name, owner=None, kind="swift.method", doc=None, precise=None, takes=None):
+    """シンボルグラフ 1 件ぶん。必要な欄だけ持たせる。
+
+    `takes` に `(綴り, precise id)` を渡すと、その型を引数に取る宣言になる。
+    シンボルグラフでは型の参照が `preciseIdentifier` を持つ断片として出る。
+    """
+    fragments = [{"spelling": f"func {name}"}]
+    if takes:
+        spelling, identifier = takes
+        fragments.append(
+            {"kind": "typeIdentifier", "spelling": spelling, "preciseIdentifier": identifier})
     entry = {
         "kind": {"identifier": kind},
         "identifier": {"precise": precise or f"s:{owner or ''}{name}"},
         "accessLevel": "public",
         "names": {"title": name},
         "pathComponents": ([owner] if owner else []) + [name],
-        "declarationFragments": [{"spelling": f"func {name}"}],
+        "declarationFragments": fragments,
     }
     if doc:
         entry["docComment"] = {"lines": [{"text": line} for line in doc.split("\n")]}
@@ -97,6 +106,40 @@ class ApiSurfaceTests(unittest.TestCase):
             symbol("fill(_:)", owner="Canvas", doc="転送。"),
         ]
         self.assertEqual(api.check_doc_canon(symbols), [])
+
+    def test_署名に出てくる自前の型が一覧に無いと見つける(self):
+        symbols = [symbol("shape(_:)", owner="Sketch", takes=("Mesh", "s:6Mokume4MeshV"))]
+        problems = api.check_type_closure(symbols, {"s:6Mokume4MeshV"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Mesh", problems[0])
+
+    def test_署名に出てくる型が一覧にあれば通す(self):
+        symbols = [
+            symbol("shape(_:)", owner="Sketch", takes=("Mesh", "s:6Mokume4MeshV")),
+            symbol("Mesh", kind="swift.struct", precise="s:6Mokume4MeshV"),
+        ]
+        self.assertEqual(api.check_type_closure(symbols, {"s:6Mokume4MeshV"}), [])
+
+    def test_パッケージの外の型は対象外(self):
+        # Float は一覧に載りようがない。載っているべき型を「自前のもの」に限る
+        symbols = [symbol("circle(_:)", owner="Sketch", takes=("Float", "s:Sf"))]
+        self.assertEqual(api.check_type_closure(symbols, {"s:6Mokume4MeshV"}), [])
+
+    def test_同じ宣言が同じ型を何度も取っても一度だけ報告する(self):
+        entry = symbol("line(_:_:)", owner="Sketch", takes=("Point", "s:6Mokume5PointV"))
+        entry["declarationFragments"].append(
+            {"kind": "typeIdentifier", "spelling": "Point",
+             "preciseIdentifier": "s:6Mokume5PointV"})
+        self.assertEqual(len(api.check_type_closure([entry], {"s:6Mokume5PointV"})), 1)
+
+    def test_所有する識別子はグラフを横断して集まる(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory)
+            for name, precise in (("MokumeCore", "s:core"), ("MokumeDiagnostics", "s:diag")):
+                (graphs / f"{name}.symbols.json").write_text(
+                    json.dumps({"symbols": [symbol("Thing", kind="swift.struct", precise=precise)]}),
+                    encoding="utf-8")
+            self.assertEqual(api.load_owned_identifiers(graphs), {"s:core", "s:diag"})
 
     def test_件数の直書きを見つける(self):
         with tempfile.TemporaryDirectory() as directory:
