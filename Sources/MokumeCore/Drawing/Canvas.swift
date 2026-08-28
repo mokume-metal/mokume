@@ -89,7 +89,16 @@ public final class Canvas {
         /// 保持した形の区間。**呼ぶたびに番号が変わる**ので、続けて置いても
         /// 別の列になる (同じ形かどうかを値の比較で調べない)。
         case retained(serial: Int)
+        /// 読み込んだモデル。同じモデルが続く間は頂点を置き直さない。
+        case model(identity: Int)
     }
+
+    /// 読み込んだモデルの控え。**同じファイル・同じ整え方なら読み直さない。**
+    var modelCache: [ModelRequest: Model] = [:]
+    /// モデルを読むたびに増える番号。
+    var nextModelIdentity = 0
+    /// 面の無いモデルを置いたことを知らせたか。
+    var warnedEmptyModel = false
 
     /// 保持した形を置くたびに増える番号。
     var retainedSerial = 0

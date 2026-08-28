@@ -121,25 +121,36 @@ extension Canvas {
     /// だけが増えるので、1 万個置いても頂点は 1 組で済む。
     func place(_ shape: SolidShape) {
         guard hasFill else { return }
+
+        placeMesh(.mesh(shape)) { solidMesh(for: shape) }
+    }
+
+    /// 三角形の並びを、いまの変換と塗りで置く。
+    ///
+    /// **同じ出どころが続く間は頂点を置き直さない。** 組み込みの形も読み込んだモデルも
+    /// ここを通るので、まとめ方が 2 通りに割れない。
+    func placeMesh(
+        _ source: SolidSource, isDerived: Bool = false, mesh build: () -> SolidMesh
+    ) {
         beginSolids()
 
-        if openSolid?.source != .mesh(shape)
+        if openSolid?.source != source
             || solidInstances.count - (openSolid?.instanceStart ?? 0) >= instanceCapacity
         {
-            // 形が変わった (か、1 列に入る上限に達した)。列を閉じて頂点を置き直す
+            // 出どころが変わった (か、1 列に入る上限に達した)。列を閉じて頂点を置き直す
             closeBatch()
-            let mesh = solidMesh(for: shape)
+            let mesh = build()
             let start = solidVertices.count
             solidVertices.reserveCapacity(start + mesh.points.count)
             for point in mesh.points {
                 // **形自身の座標のまま置く。** 変換は置き場所が持つ
                 solidVertices.append(
                     SolidVertex(
-                        position: point.position, normal: point.normal, uv: whiteUV,
-                        color: .opaque(red: 1, green: 1, blue: 1)))
+                        position: point.position, normal: point.normal, isDerived: isDerived,
+                        uv: whiteUV, color: .opaque(red: 1, green: 1, blue: 1)))
             }
             openSolid = OpenSolid(
-                source: .mesh(shape), vertexStart: start, vertexCount: mesh.points.count,
+                source: source, vertexStart: start, vertexCount: mesh.points.count,
                 instanceStart: solidInstances.count)
         }
 
