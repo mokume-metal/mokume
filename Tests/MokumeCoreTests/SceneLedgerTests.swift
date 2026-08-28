@@ -171,8 +171,19 @@ enum Scene: String, CaseIterable, Sendable {
     case shadows
     /// 読み込んだモデルを、そのまま置いたもの。
     case models
+    /// 利用者が書いた断片で塗った立体。
+    case solidShader
 
     var size: (width: Int, height: Int) { (128, 128) }
+    /// 縞を掛ける断片。**光を通したあとの色**が `in.color` に入っているので、
+    /// 掛けるだけで陰影が残る。
+    static let stripes = """
+        float4 paint(Fragment in, Values values) {
+            float stripe = 0.55 + 0.45 * sin(in.position.y * values.pitch);
+            return float4(in.color.rgb * stripe, in.color.a);
+        }
+        """
+
 
     /// 質感のうち 1 つ。**潰したときに絵が動くか**を測るために名前で指せる形にする。
     enum MaterialAspect: CaseIterable, Sendable {
@@ -774,6 +785,38 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.model(model)
                 canvas.pop()
             }
+
+        case .solidShader:
+            // 平面と立体に**同じ断片**を掛ける。書き分けは要らない
+            canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
+            canvas.lights()
+            canvas.noStroke()
+            guard let painted = try? canvas.makeShader(Scene.stripes, values: ["pitch": 0.55])
+            else { return }
+
+            canvas.shader(painted)
+            canvas.fill(.display(red: 0.95, green: 0.65, blue: 0.35))
+            canvas.push()
+            canvas.translate(40, 44, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateY(0.7)
+            canvas.box(42)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.45, green: 0.8, blue: 0.95))
+            canvas.push()
+            canvas.translate(92, 48, 0)
+            canvas.sphere(24)
+            canvas.pop()
+
+            // 同じ断片が平面にも効く (下の帯)
+            canvas.fill(.display(red: 0.8, green: 0.85, blue: 0.5))
+            canvas.rect(10, 92, 108, 26)
+
+            // 組み込みの塗りへ戻すと、縞が消える
+            canvas.resetShader()
+            canvas.fill(.display(red: 0.9, green: 0.4, blue: 0.5))
+            canvas.rect(10, 82, 108, 6)
 
         case .customSolids:
             canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))

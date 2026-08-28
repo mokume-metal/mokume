@@ -1469,7 +1469,8 @@ public final class Canvas {
                     pipeline.argumentTable.setAddress(
                         buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
                 case .solid:
-                    encoder.setRenderPipelineState(pipeline.solidState)
+                    // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
+                    encoder.setRenderPipelineState(run.shader?.solidState ?? pipeline.solidState)
                     encoder.setDepthStencilState(pipeline.solidDepthState)
                     pipeline.argumentTable.setAddress(
                         solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
