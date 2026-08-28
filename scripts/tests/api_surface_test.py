@@ -25,11 +25,17 @@ api = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(api)
 
 
-def symbol(name, owner=None, kind="swift.method", doc=None, precise=None, takes=None):
+def symbol(
+    name, owner=None, kind="swift.method", doc=None, precise=None, takes=None,
+    parameters=None, location=None,
+):
     """シンボルグラフ 1 件ぶん。必要な欄だけ持たせる。
 
     `takes` に `(綴り, precise id)` を渡すと、その型を引数に取る宣言になる。
     シンボルグラフでは型の参照が `preciseIdentifier` を持つ断片として出る。
+
+    `parameters` は引数の型の綴りの並び。同名の宣言を見分ける鍵になる。
+    `location` は `(パス, 宣言の行番号 0 起点)` で、`//` の読み取りが使う。
     """
     fragments = [{"spelling": f"func {name}"}]
     if takes:
@@ -44,9 +50,30 @@ def symbol(name, owner=None, kind="swift.method", doc=None, precise=None, takes=
         "pathComponents": ([owner] if owner else []) + [name],
         "declarationFragments": fragments,
     }
+    if parameters:
+        entry["functionSignature"] = {
+            "parameters": [
+                {"declarationFragments": [{"spelling": f"_ value: {spelling}"}]}
+                for spelling in parameters
+            ]
+        }
+    if location:
+        path, line = location
+        entry["location"] = {"uri": Path(path).as_uri(), "position": {"line": line}}
     if doc:
         entry["docComment"] = {"lines": [{"text": line} for line in doc.split("\n")]}
     return entry
+
+
+def written(directory, source):
+    """ソースを 1 本書いて `(パス, 最終行の行番号 0 起点)` を返す。
+
+    `//` の読み取りは実際のソースを見るので、手組みのシンボルだけでは確かめられない。
+    宣言は最終行に置く約束にして、呼ぶ側が行を数えなくて済むようにする。
+    """
+    path = Path(directory) / "Source.swift"
+    path.write_text(source, encoding="utf-8")
+    return str(path), len(source.rstrip("\n").split("\n")) - 1
 
 
 class ApiSurfaceTests(unittest.TestCase):
@@ -106,6 +133,44 @@ class ApiSurfaceTests(unittest.TestCase):
             symbol("fill(_:)", owner="Canvas", doc="転送。"),
         ]
         self.assertEqual(api.check_doc_canon(symbols), [])
+
+    def test_下の層が二重斜線でも見つける(self):
+        """`/` を 1 本削るだけで検査から消えられてはいけない (#315)。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path, line = written(directory, "// 塗りの色。\npublic func fill(_ color: LinearRGBA) {}\n")
+            symbols = [
+                symbol("fill(_:)", owner="Sketch", doc="塗りの色。"),
+                symbol("fill(_:)", owner="Canvas", location=(path, line)),
+            ]
+            problems = api.check_doc_canon(symbols)
+            self.assertEqual(len(problems), 1)
+            self.assertIn("正本は 1 層", problems[0])
+
+    def test_三重斜線があればそちらを読む(self):
+        """`///` の下に無関係な `//` が積まれていても、正本は `///` の側。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path, line = written(
+                directory,
+                "// 溜めている列を閉じる。\n/// 転送。\npublic func fill(_ color: LinearRGBA) {}\n")
+            twin = symbol("fill(_:)", owner="Canvas", doc="転送。", location=(path, line))
+            # `///` の上にある `//` まで拾うと、覚え書きが説明文として二重に数えられる
+            self.assertEqual(api.slash_doc(twin), "")
+            self.assertEqual(api.doc(twin), "転送。")
+            symbols = [symbol("fill(_:)", owner="Sketch", doc="塗りの色。\n\n長い説明。"), twin]
+            self.assertEqual(api.check_doc_canon(symbols), [])
+
+    def test_引数の型が違えば別の宣言として突き合わせる(self):
+        """同名の宣言を 1 本に潰すと、どれと比べたかが行き当たりばったりになる (#315)。"""
+        symbols = [
+            symbol("background(_:)", owner="Sketch", doc="面全体を塗り直す。",
+                   parameters=["LinearRGBA"], precise="a"),
+            symbol("background(_:)", owner="Canvas", doc="面全体を塗り直す。",
+                   parameters=["LinearRGBA"], precise="b"),
+            symbol("background(_:)", owner="Canvas", parameters=["Surroundings"], precise="c"),
+        ]
+        problems = api.check_doc_canon(symbols)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("background(_:)", problems[0])
 
     def test_署名に出てくる自前の型が一覧に無いと見つける(self):
         symbols = [symbol("shape(_:)", owner="Sketch", takes=("Mesh", "s:6Mokume4MeshV"))]
@@ -172,6 +237,21 @@ class ApiSurfaceTests(unittest.TestCase):
             (graphs / "MokumeCore.symbols.json").write_text(
                 json.dumps(document), encoding="utf-8")
             self.assertEqual(len(api.load_symbols(graphs, "MokumeCore")), 1)
+
+    def test_引数の型が違うものは一覧で畳まれない(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory)
+            document = {
+                "symbols": [
+                    symbol("background(_:)", owner="Canvas",
+                           parameters=["LinearRGBA"], precise="a"),
+                    symbol("background(_:)", owner="Canvas",
+                           parameters=["Surroundings"], precise="b"),
+                ]
+            }
+            (graphs / "MokumeCore.symbols.json").write_text(
+                json.dumps(document), encoding="utf-8")
+            self.assertEqual(len(api.load_symbols(graphs, "MokumeCore")), 2)
 
     def test_シンボルグラフが無ければ落ちる(self):
         with tempfile.TemporaryDirectory() as directory:

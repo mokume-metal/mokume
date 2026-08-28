@@ -62,10 +62,8 @@ extension Canvas {
         return widest
     }
 
-    // 基準線から上へ伸びる高さ (画素)。
     public func textAscent() -> Float { typeface.ascent }
 
-    // 基準線から下へ伸びる深さ (画素)。
     public func textDescent() -> Float { typeface.descent }
 
     // MARK: - 描く

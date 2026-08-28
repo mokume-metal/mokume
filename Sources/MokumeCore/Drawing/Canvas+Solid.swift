@@ -108,7 +108,6 @@ extension Canvas {
     // 奥行きの軸まわりに回す。
     public func rotateZ(_ radians: Float) { transform.rotateZ(by: radians) }
 
-    // 奥行きも含めて伸ばす・縮める。
     public func scale(_ x: Float, _ y: Float, _ z: Float) {
         transform.scale(x: x, y: y, z: z)
     }

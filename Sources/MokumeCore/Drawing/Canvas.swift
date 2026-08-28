@@ -556,7 +556,6 @@ public final class Canvas {
 
     // MARK: - 状態
 
-    // これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     public func fill(_ color: LinearRGBA) {
         currentFill = color
         hasFill = true
@@ -565,7 +564,6 @@ public final class Canvas {
     /// 図形の内側を塗らない。
     public func noFill() { hasFill = false }
 
-    // これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     public func stroke(_ color: LinearRGBA) {
         currentStroke = color
         hasStroke = true
@@ -574,16 +572,12 @@ public final class Canvas {
     /// 線を引かない。図形の輪郭も出なくなる。
     public func noStroke() { hasStroke = false }
 
-    // これから引く線の太さ (画素)。
     public func strokeWeight(_ weight: Float) { currentStrokeWeight = max(0, weight) }
 
-    // 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
+    // 溜めている列をその場で閉じる (混ぜ方と同じ理由)。
     //
-    // **溜めている列をその場で閉じる** (混ぜ方と同じ理由)。積み降ろし
-    // (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
-    //
-    // 面の外へ出た指定は面の内側へ収める — この世代の GPU は範囲外の切り抜きを
-    // 受け取ると検証で落ちるので、指定をそのまま渡さない。
+    // 面の外へ出た指定を面の内側へ収めるのは、この世代の GPU が範囲外の切り抜きを
+    // 受け取ると検証で落ちるためである。指定をそのまま渡さない。
     public func clip(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
         let left = min(max(0, Int(box.x)), Int(width))
@@ -595,7 +589,6 @@ public final class Canvas {
             x: left, y: top, width: right - left, height: bottom - top)
     }
 
-    // 切り抜きをやめる。
     public func noClip() {
         guard currentClip != nil else { return }
         closeBatch()
@@ -750,22 +743,16 @@ public final class Canvas {
 
     // MARK: - 変換
 
-    // 原点をずらす。
     public func translate(_ x: Float, _ y: Float) { transform.translate(x: x, y: y) }
 
-    // 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
     public func rotate(_ radians: Float) { transform.rotate(by: radians) }
 
-    // 伸ばす・縮める。
     public func scale(_ x: Float, _ y: Float) { transform.scale(x: x, y: y) }
 
-    // 横方向へ斜めに歪める。
     public func shearX(_ radians: Float) { transform.shearX(by: radians) }
 
-    // 縦方向へ斜めに歪める。
     public func shearY(_ radians: Float) { transform.shearY(by: radians) }
 
-    // 与えた変換を、いまの変換の後に重ねる。
     public func applyMatrix(_ other: Transform) { transform.concatenate(other) }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
@@ -773,10 +760,8 @@ public final class Canvas {
     /// 積んである変換 (``pushMatrix()``) は捨てない — 戻す先は残る。
     public func resetMatrix() { transform.reset() }
 
-    // いまの変換を積んでおく。
     public func pushMatrix() { transformStack.append(transform) }
 
-    // 積んでおいた変換へ戻す。積んでいなければ何もしない。
     public func popMatrix() {
         guard let restored = transformStack.popLast() else { return }
         transform = restored
@@ -785,7 +770,6 @@ public final class Canvas {
     /// いまのスタイルを積んでおく。
     public func pushStyle() { styleStack.append(currentStyle) }
 
-    // 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
     public func popStyle() {
         guard let restored = styleStack.popLast() else { return }
         currentStyle = restored
@@ -797,7 +781,6 @@ public final class Canvas {
         pushStyle()
     }
 
-    // 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
     public func pop() {
         popMatrix()
         popStyle()
@@ -808,15 +791,10 @@ public final class Canvas {
     /// 点が、いまの変換でどこへ移るか (横)。
     public func screenX(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).x }
 
-    // 点が、いまの変換でどこへ移るか (縦)。
     public func screenY(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).y }
 
     // MARK: - 図形
 
-    // 面全体を塗り直す。
-    //
-    // それまでに溜めた図形は消える — 全面を塗るのだから、下に隠れるものを
-    // 描く手間をかける意味がない。
     public func background(_ color: LinearRGBA) {
         discardPending()
         pendingBackground = color

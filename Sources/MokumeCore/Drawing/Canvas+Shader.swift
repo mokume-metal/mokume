@@ -56,7 +56,6 @@ extension Canvas {
         currentShader = shader
     }
 
-    // 組み込みの塗りへ戻す。
     public func resetShader() {
         guard currentShader != nil else { return }
         closeBatch()

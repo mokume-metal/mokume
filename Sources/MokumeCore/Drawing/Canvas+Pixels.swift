@@ -36,7 +36,6 @@ extension Canvas {
         return target.pixels[x, y]
     }
 
-    // 1 画素の色を書き換える。範囲の外は何もしない。
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) {
         loadPixelsIfNeeded()
         target.pixels[x, y] = color
