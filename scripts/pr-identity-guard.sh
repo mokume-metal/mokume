@@ -18,7 +18,8 @@
 #   - gh pr create 以外 (view/list/diff/checks …)
 #   - --help / -h            → 使い方を尋ねているだけ
 #   - このリポジトリ以外宛て   → 規約の外
-#   - 同じ行で gh-app-token.sh を **失敗が後段へ伝わる形で** 通しているもの (実際の運用形)
+#   - 同じ行で gh-app-token.sh を **失敗が後段へ伝わる形で** 通し、かつ **export で
+#     gh まで渡している**もの (実際の運用形)
 #   - フック自身の環境の GH_TOKEN が installation token (ghs_) のとき
 #
 # **token を発行しようとしているだけでは通さない。** 当初は「同じ行に gh-app-token.sh が
@@ -29,6 +30,10 @@
 # は export 自身の終了コード (0) を返すため、発行に失敗しても && が切れず、空の
 # GH_TOKEN で gh がメンテナの認証へフォールバックする。#120 はこれで詰んだ。
 # set -e も救わない (同じ理由)。代入プレフィクス V="$(…)" gh … も同様。
+#
+# **発行できただけでも通さない。** 素の代入はそのシェルの変数を作るだけで、子プロセスの
+# gh には渡らない。#279 はこれで詰んだ (#285) — 「失敗が伝わる形」は満たしていたので
+# 素通しし、gh はメンテナの認証で走った。
 #
 # 危険な形は複数あって数え上げると取りこぼすので、**既知の安全な形だけを素通しする**
 # (曖昧な --repo mokume を止める側に倒しているのと同じ方針)。
@@ -66,6 +71,25 @@ token の発行が失敗しても後段が走る形になっています。こ�
 
   - set -e を足しても救われません (export の終了コードが 0 のため)
   - 代入プレフィクス GH_TOKEN="$(…)" gh pr create … も、発行の失敗が伝わりません
+EOF
+}
+
+token_not_exported_message() {
+  cat <<'EOF'
+token は発行できていますが、**gh へ渡っていません**。素の代入はそのシェルの変数を作る
+だけで、子プロセスには継がれません。
+
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push && gh pr create …
+                                                            ^^ ここはメンテナの認証で走る
+
+この形は「発行に失敗したら && が切れる」という条件は満たしているので気付きにくく、
+できあがるのは **誰も承認できない PR** です (ADR-0007 / #88)。しかもその詰みは、
+**閉じて作り直しても解けません** — 閉じたほうの run が残した失敗の判定が同じコミットに
+付いたままになり、作り直した PR まで巻き添えにします (#285)。
+
+export を挟んでください。代入・export・gh を && で繋ぐと、発行の失敗も伝わります:
+
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
 EOF
 }
 
@@ -125,8 +149,23 @@ targets_other_repo "$command" && exit 0
 # 区切りにも当たらないので落ちる。
 readonly SAFE_TOKEN_FORM='(^|&&|;|\|)[[:space:]]*GH_TOKEN=("|'"'"')?\$\([^)]*scripts/gh-app-token\.sh[^)]*\)("|'"'"')?[[:space:]]*&&'
 
+# **発行できただけでは足りない。** 素の代入はそのシェルの変数を作るだけで、子プロセスの
+# gh には渡らない。つまり
+#
+#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push && gh pr create …
+#
+# は「発行の失敗が伝わる形」を満たしていながら、gh はメンテナの認証で走る。#279 はこれで
+# 詰んだ (#285) — 上の SAFE_TOKEN_FORM だけを見ていたので素通しし、**誰も承認できない
+# PR** ができた。渡っていることまで確かめるため、区切りの直後に来る export を要求する。
+readonly EXPORT_FORM='(^|&&|;|\|)[[:space:]]*export[[:space:]]+GH_TOKEN([[:space:]]|&|;|\||$)'
+
 if printf '%s' "$command" | grep -qE '[^[:space:];&|`)]*scripts/gh-app-token\.sh'; then
-  printf '%s' "$command" | grep -qE "$SAFE_TOKEN_FORM" && exit 0
+  if printf '%s' "$command" | grep -qE "$SAFE_TOKEN_FORM"; then
+    printf '%s' "$command" | grep -qE "$EXPORT_FORM" && exit 0
+
+    # 発行の形は正しいが、gh へ渡っていない
+    deny "$(token_not_exported_message)"
+  fi
 
   # token を発行しようとはしている。汎用の差し戻しだと「使っているのに止められた」と
   # 読めて直し方が分からないので、何がまずいかを名指しする

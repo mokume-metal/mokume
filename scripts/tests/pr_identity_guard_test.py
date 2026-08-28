@@ -172,6 +172,49 @@ class GuardTest(unittest.TestCase):
         for leak in ("op://", "1Password", "Keychain", "secret-read"):
             self.assertNotIn(leak, reason)
 
+    def test_assignment_without_export_denied(self):
+        """**発行できただけでは足りない。**
+
+        素の代入はそのシェルの変数を作るだけで、子プロセスの gh には渡らない。
+        「発行の失敗が伝わる形」は満たしているので気付きにくく、実際に #279 が
+        これで詰んだ (#285)。
+        """
+        reason = self.assert_denied(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr create --fill'
+        )
+        self.assertIn("gh へ渡っていません", reason)
+
+    def test_assignment_without_export_denied_with_other_commands_between(self):
+        """間に別のコマンドを挟んでも同じ。実際に踏んだ形はこれだった。"""
+        reason = self.assert_denied(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push -q -u origin feat/x'
+            " && gh pr create --fill"
+        )
+        self.assertIn("gh へ渡っていません", reason)
+
+    def test_not_exported_reason_shows_the_safe_form(self):
+        reason = self.assert_denied(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr create --fill'
+        )
+        self.assertIn(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN', reason
+        )
+
+    def test_not_exported_reason_names_the_second_trap(self):
+        """閉じて作り直しても解けないことまで書く — そこが一番払う代償が大きい。"""
+        reason = self.assert_denied(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && gh pr create --fill'
+        )
+        self.assertIn("閉じて作り直しても解けません", reason)
+
+    def test_export_of_another_variable_does_not_count(self):
+        """別の変数を export しているだけでは渡ったことにならない。"""
+        reason = self.assert_denied(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export OTHER_TOKEN'
+            " && gh pr create --fill"
+        )
+        self.assertIn("gh へ渡っていません", reason)
+
     # --- 素通しするもの -------------------------------------------------
 
     def test_app_token_command_passes(self):
