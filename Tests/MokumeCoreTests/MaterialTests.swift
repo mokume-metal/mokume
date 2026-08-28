@@ -352,8 +352,10 @@ struct MaterialTests {
     func materialWithoutLightIsReported() throws {
         var material = Material.default
         material.shininess = 30
-        #expect(Material.unusableReason(material, lights: []) == .noLight)
-        #expect(Material.unusableReason(.default, lights: []) == nil)
+        #expect(Material.unusableReason(material, lights: [], surroundings: nil) == .noLight)
+        #expect(Material.unusableReason(.default, lights: [], surroundings: nil) == nil)
+        // 周囲があれば、光が無くても材質は効く
+        #expect(Material.unusableReason(material, lights: [], surroundings: .sky) == nil)
     }
 
     @Test("映す先が無いまま金属を上げたら、暗くなると分かる")
@@ -363,8 +365,14 @@ struct MaterialTests {
         let directional = Light(kind: .directional, color: .opaque(red: 1, green: 1, blue: 1))
         let ambient = Light(kind: .ambient, color: .opaque(red: 0.2, green: 0.2, blue: 0.2))
         #expect(
-            Material.unusableReason(metal, lights: [directional]) == .metalWithoutSurroundings)
-        #expect(Material.unusableReason(metal, lights: [directional, ambient]) == nil)
+            Material.unusableReason(metal, lights: [directional], surroundings: nil)
+                == .metalWithoutSurroundings)
+        #expect(
+            Material.unusableReason(metal, lights: [directional, ambient], surroundings: nil)
+                == nil)
+        // 周囲を置けば、それが映す先になる
+        #expect(
+            Material.unusableReason(metal, lights: [directional], surroundings: .sky) == nil)
     }
 
     // MARK: - 壊れた入力

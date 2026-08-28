@@ -67,14 +67,16 @@ struct Material: Equatable, Sendable {
         case metalWithoutSurroundings
     }
 
-    /// この材質が、置いた光のもとで効くかどうか。
-    static func unusableReason(_ material: Material, lights: [Light]) -> UnusableReason? {
+    /// この材質が、置いた光と周囲のもとで効くかどうか。
+    static func unusableReason(
+        _ material: Material, lights: [Light], surroundings: Surroundings?
+    ) -> UnusableReason? {
         guard !material.isDefault else { return nil }
-        if lights.isEmpty { return .noLight }
-        if material.metalness > 0, !lights.contains(where: { $0.kind == .ambient }) {
-            return .metalWithoutSurroundings
-        }
-        return nil
+        // 周囲も面を明るくするので、光が無くても周囲があれば材質は効く
+        if lights.isEmpty, surroundings == nil { return .noLight }
+        guard material.metalness > 0, surroundings == nil else { return nil }
+        // 映す先は、置いた周囲か、一様な周りとして扱う底上げの光のどちらか
+        return lights.contains(where: { $0.kind == .ambient }) ? nil : .metalWithoutSurroundings
     }
 
     /// シェーダへ渡す形へ詰める。
