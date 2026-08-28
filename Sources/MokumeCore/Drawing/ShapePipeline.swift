@@ -16,6 +16,8 @@ final class ShapePipeline {
     static let projectionBufferIndex = 1
     /// 混ぜ方の番号を渡す口の番号 (シェーダ側の `buffer(2)`)。
     static let blendModeBufferIndex = 2
+    /// 字形を焼いた面を渡す口の番号 (シェーダ側の `texture(0)`)。
+    static let glyphTextureIndex = 0
 
     let state: any MTLRenderPipelineState
     let argumentTable: any MTL4ArgumentTable
@@ -58,6 +60,7 @@ final class ShapePipeline {
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
         tableDescriptor.maxBufferBindCount = 3
+        tableDescriptor.maxTextureBindCount = 1
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
         } catch {
