@@ -305,7 +305,7 @@ public final class Canvas {
 
     // MARK: - 状態
 
-    /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
+    // これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     public func fill(_ color: LinearRGBA) {
         currentFill = color
         hasFill = true
@@ -314,7 +314,7 @@ public final class Canvas {
     /// 図形の内側を塗らない。
     public func noFill() { hasFill = false }
 
-    /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
+    // これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     public func stroke(_ color: LinearRGBA) {
         currentStroke = color
         hasStroke = true
@@ -323,16 +323,16 @@ public final class Canvas {
     /// 線を引かない。図形の輪郭も出なくなる。
     public func noStroke() { hasStroke = false }
 
-    /// これから引く線の太さ (画素)。
+    // これから引く線の太さ (画素)。
     public func strokeWeight(_ weight: Float) { currentStrokeWeight = max(0, weight) }
 
-    /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
-    ///
-    /// **溜めている列をその場で閉じる** (混ぜ方と同じ理由)。積み降ろし
-    /// (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
-    ///
-    /// 面の外へ出た指定は面の内側へ収める — この世代の GPU は範囲外の切り抜きを
-    /// 受け取ると検証で落ちるので、指定をそのまま渡さない。
+    // 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
+    //
+    // **溜めている列をその場で閉じる** (混ぜ方と同じ理由)。積み降ろし
+    // (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
+    //
+    // 面の外へ出た指定は面の内側へ収める — この世代の GPU は範囲外の切り抜きを
+    // 受け取ると検証で落ちるので、指定をそのまま渡さない。
     public func clip(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
         let left = min(max(0, Int(box.x)), Int(width))
@@ -344,7 +344,7 @@ public final class Canvas {
             x: left, y: top, width: right - left, height: bottom - top)
     }
 
-    /// 切り抜きをやめる。
+    // 切り抜きをやめる。
     public func noClip() {
         guard currentClip != nil else { return }
         closeBatch()
@@ -400,22 +400,22 @@ public final class Canvas {
 
     // MARK: - 変換
 
-    /// 原点をずらす。
+    // 原点をずらす。
     public func translate(_ x: Float, _ y: Float) { transform.translate(x: x, y: y) }
 
-    /// 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
+    // 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
     public func rotate(_ radians: Float) { transform.rotate(by: radians) }
 
-    /// 伸ばす・縮める。
+    // 伸ばす・縮める。
     public func scale(_ x: Float, _ y: Float) { transform.scale(x: x, y: y) }
 
-    /// 横方向へ斜めに歪める。
+    // 横方向へ斜めに歪める。
     public func shearX(_ radians: Float) { transform.shearX(by: radians) }
 
-    /// 縦方向へ斜めに歪める。
+    // 縦方向へ斜めに歪める。
     public func shearY(_ radians: Float) { transform.shearY(by: radians) }
 
-    /// 与えた変換を、いまの変換の後に重ねる。
+    // 与えた変換を、いまの変換の後に重ねる。
     public func applyMatrix(_ other: Transform2D) { transform.concatenate(other) }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
@@ -423,10 +423,10 @@ public final class Canvas {
     /// 積んである変換 (``pushMatrix()``) は捨てない — 戻す先は残る。
     public func resetMatrix() { transform.reset() }
 
-    /// いまの変換を積んでおく。
+    // いまの変換を積んでおく。
     public func pushMatrix() { transformStack.append(transform) }
 
-    /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
+    // 積んでおいた変換へ戻す。積んでいなければ何もしない。
     public func popMatrix() {
         guard let restored = transformStack.popLast() else { return }
         transform = restored
@@ -435,7 +435,7 @@ public final class Canvas {
     /// いまのスタイルを積んでおく。
     public func pushStyle() { styleStack.append(currentStyle) }
 
-    /// 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
+    // 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
     public func popStyle() {
         guard let restored = styleStack.popLast() else { return }
         currentStyle = restored
@@ -447,7 +447,7 @@ public final class Canvas {
         pushStyle()
     }
 
-    /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
+    // 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
     public func pop() {
         popMatrix()
         popStyle()
@@ -458,15 +458,15 @@ public final class Canvas {
     /// 点が、いまの変換でどこへ移るか (横)。
     public func screenX(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).x }
 
-    /// 点が、いまの変換でどこへ移るか (縦)。
+    // 点が、いまの変換でどこへ移るか (縦)。
     public func screenY(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).y }
 
     // MARK: - 図形
 
-    /// 面全体を塗り直す。
-    ///
-    /// それまでに溜めた図形は消える — 全面を塗るのだから、下に隠れるものを
-    /// 描く手間をかける意味がない。
+    // 面全体を塗り直す。
+    //
+    // それまでに溜めた図形は消える — 全面を塗るのだから、下に隠れるものを
+    // 描く手間をかける意味がない。
     public func background(_ color: LinearRGBA) {
         vertices.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
@@ -559,7 +559,7 @@ public final class Canvas {
                 isClosed: true))
     }
 
-    /// 線。塗りは持たない。
+    // 線。塗りは持たない。
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
         draw(
             Outline(
@@ -582,7 +582,7 @@ public final class Canvas {
         holePoints = nil
     }
 
-    /// 頂点を 1 つ置く。
+    // 頂点を 1 つ置く。
     public func vertex(_ x: Float, _ y: Float) {
         guard isBuildingShape else {
             warnVertexOutsideShapeOnce()
@@ -591,10 +591,10 @@ public final class Canvas {
         appendShapePoint(SIMD2(x, y))
     }
 
-    /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
-    ///
-    /// 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
-    /// 始点が無ければ引きようがない。
+    // 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
+    //
+    // 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
+    // 始点が無ければ引きようがない。
     public func bezierVertex(
         _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
     ) {
@@ -611,7 +611,7 @@ public final class Canvas {
         }
     }
 
-    /// 2 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
+    // 2 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
     public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
         guard isBuildingShape, let start = lastShapePoint else {
             warnVertexOutsideShapeOnce()
@@ -648,13 +648,13 @@ public final class Canvas {
         }
     }
 
-    /// 曲線をいくつの直線で近似するか。
+    // 曲線をいくつの直線で近似するか。
     public func curveDetail(_ steps: Int) { currentCurveDetail = max(1, steps) }
 
-    /// 通過点を結ぶ曲線の張り具合。0 が既定で、大きくすると曲がりが緩くなる。
+    // 通過点を結ぶ曲線の張り具合。0 が既定で、大きくすると曲がりが緩くなる。
     public func curveTightness(_ amount: Float) { currentCurveTightness = amount }
 
-    /// 穴を並べ始める。
+    // 穴を並べ始める。
     public func beginContour() {
         guard isBuildingShape else {
             warnVertexOutsideShapeOnce()
@@ -663,14 +663,14 @@ public final class Canvas {
         holePoints = []
     }
 
-    /// 穴を並べ終える。
+    // 穴を並べ終える。
     public func endContour() {
         guard let hole = holePoints else { return }
         if hole.count >= 3 { shapeHoles.append(hole) }
         holePoints = nil
     }
 
-    /// 並べ終えて描く。
+    // 並べ終えて描く。
     public func endShape(_ end: ShapeEnd = .open) {
         defer {
             isBuildingShape = false

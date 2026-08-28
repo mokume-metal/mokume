@@ -33,7 +33,7 @@ extension Canvas {
         return shader
     }
 
-    /// 文字列から断片を読み込む。保存の拾い直しは効かない (在処が無いため)。
+    /// 文字列から作る。
     public func makeShader(
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Shader {
@@ -56,7 +56,7 @@ extension Canvas {
         currentShader = shader
     }
 
-    /// 組み込みの塗りへ戻す。
+    // 組み込みの塗りへ戻す。
     public func resetShader() {
         guard currentShader != nil else { return }
         closeBatch()
