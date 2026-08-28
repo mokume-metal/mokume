@@ -88,6 +88,7 @@ public final class Canvas {
     var currentVerticalTextAlign = VerticalTextAlign.baseline
     /// 行送りの指定。`nil` は自動 (大きさから決める)。
     var currentTextLeading: Float?
+    var currentTextWrap = TextWrap.word
     var warnedMissingFont = false
     var warnedAtlasFull = false
 
@@ -144,6 +145,7 @@ public final class Canvas {
         var horizontalTextAlign: HorizontalTextAlign
         var verticalTextAlign: VerticalTextAlign
         var textLeading: Float?
+        var textWrap: TextWrap
     }
 
     private var currentStyle: Style {
@@ -158,7 +160,7 @@ public final class Canvas {
                 textStyle: currentTextStyle,
                 horizontalTextAlign: currentHorizontalTextAlign,
                 verticalTextAlign: currentVerticalTextAlign,
-                textLeading: currentTextLeading)
+                textLeading: currentTextLeading, textWrap: currentTextWrap)
         }
         set {
             currentFill = newValue.fill
@@ -176,6 +178,7 @@ public final class Canvas {
             currentHorizontalTextAlign = newValue.horizontalTextAlign
             currentVerticalTextAlign = newValue.verticalTextAlign
             currentTextLeading = newValue.textLeading
+            currentTextWrap = newValue.textWrap
             // 混ぜ方と切り抜きが変わるなら列を閉じてから戻す
             blendMode(newValue.blendMode)
             if !Self.sameClip(currentClip, newValue.clip) {
@@ -918,6 +921,16 @@ public final class Canvas {
     }
 
     // MARK: - 文字の下ごしらえ
+
+    /// 4 つの数を、いまの読み方で矩形として読む。
+    ///
+    /// 文字の流し込みもここを通す — 矩形と別の読み方を持つと、同じ 4 つの数が
+    /// API ごとに違う場所を指すことになる。
+    func resolveRect(_ a: Float, _ b: Float, _ c: Float, _ d: Float)
+        -> (x: Float, y: Float, width: Float, height: Float)
+    {
+        Self.resolveBox(a, b, c, d, mode: currentRectMode)
+    }
 
     /// 文字を塗る色。塗りを止めていれば `nil`。
     var textFillColor: LinearRGBA? { hasFill ? currentFill : nil }

@@ -374,6 +374,195 @@ struct TextTests {
         #expect(canvas.currentTextLeading == nil)
     }
 
+    // MARK: - 折り返し
+
+    @Test("幅に収まらない語は次の行へ送られる")
+    func wordsMoveToTheNextLine() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(16)
+        let lines = canvas.wrapped("aa bb cc dd", face: canvas.typeface, within: canvas.textWidth("aa bb"))
+        #expect(lines.map(String.init) == ["aa bb", "cc dd"])
+    }
+
+    @Test("折るために消費するのは、切れ目の空白だけ")
+    func onlyTheBreakingSpaceIsConsumed() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(16)
+        let source = "alpha beta gamma delta"
+        let lines = canvas.wrapped(
+            source, face: canvas.typeface, within: canvas.textWidth("alpha beta"))
+        #expect(lines.map(String.init).joined(separator: " ") == source)
+        for line in lines {
+            #expect(canvas.textWidth(String(line)) <= canvas.textWidth("alpha beta"))
+        }
+    }
+
+    @Test("幅より長い 1 語は、その語の中で折る")
+    func aWordWiderThanTheBoxBreaksInside() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(16)
+        let lines = canvas.wrapped(
+            "supercalifragilistic", face: canvas.typeface, within: canvas.textWidth("super"))
+        #expect(lines.count > 1)
+        #expect(lines.map(String.init).joined() == "supercalifragilistic")
+    }
+
+    @Test("文字の切れ目で折るときは、語の途中でも折る")
+    func characterWrapBreaksInsideWords() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(16)
+        canvas.textWrap(.character)
+        let lines = canvas.wrapped(
+            "aa bb cc dd", face: canvas.typeface, within: canvas.textWidth("aa bb"))
+        #expect(lines.map(String.init).joined() == "aa bb cc dd")
+        #expect(lines.count > 1)
+        // 語の切れ目を待たないので、行の末尾が語の終わりとは限らない
+        #expect(lines.map(String.init) != ["aa bb", "cc dd"])
+    }
+
+    @Test("改行は幅に関わらず必ず行を分ける")
+    func newlineAlwaysBreaks() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(16)
+        let lines = canvas.wrapped("a\nb", face: canvas.typeface, within: 1000)
+        #expect(lines.map(String.init) == ["a", "b"])
+    }
+
+    // MARK: - 矩形への流し込み
+
+    @Test("収まりきらなかった続きが返り、次の矩形へ流せる")
+    func theRemainderCanBePouredIntoTheNextBox() throws {
+        let canvas = try makeCanvas(width: 200, height: 200)
+        canvas.textSize(16)
+        let source = "alpha beta gamma delta epsilon zeta"
+        var short = TextFlow(lineCount: 0, height: 0, remainder: "")
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            // 1 行ぶんしか入らない高さ
+            short = canvas.text(source, 10, 10, 80, canvas.textAscent() + canvas.textDescent())
+        }
+        #expect(short.lineCount == 1)
+        #expect(short.isTruncated)
+
+        let rest = try makeCanvas(width: 200, height: 200)
+        rest.textSize(16)
+        var all = TextFlow(lineCount: 0, height: 0, remainder: "")
+        try rest.draw {
+            rest.background(black)
+            rest.fill(white)
+            all = rest.text(source, 10, 10, 80, 180)
+        }
+        #expect(!all.isTruncated)
+        // 続きだけを流し直すと、全体から 1 行ぶん減る
+        let continued = rest.text(short.remainder, 10, 10, 80, 180)
+        #expect(continued.lineCount == all.lineCount - 1)
+        #expect(!continued.isTruncated)
+    }
+
+    @Test("返る高さは、置いた行数から決まる")
+    func theReturnedHeightFollowsTheLineCount() throws {
+        let canvas = try makeCanvas(width: 200, height: 200)
+        canvas.textSize(16)
+        canvas.textLeading(24)
+        let block = canvas.textAscent() + canvas.textDescent()
+        var flow = TextFlow(lineCount: 0, height: 0, remainder: "")
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            flow = canvas.text("aa\nbb\ncc", 10, 10, 100, 180)
+        }
+        #expect(flow.lineCount == 3)
+        #expect(flow.height == block + 2 * 24)
+    }
+
+    @Test("矩形の 4 つの数は、矩形を描くときと同じ読み方をする")
+    func theBoxFollowsRectMode() throws {
+        let corner = try makeCanvas(width: 200, height: 120)
+        corner.textSize(16)
+        try corner.draw {
+            corner.background(black)
+            corner.fill(white)
+            corner.text("alpha beta gamma", 20, 20, 80, 80)
+        }
+        let center = try makeCanvas(width: 200, height: 120)
+        center.textSize(16)
+        try center.draw {
+            center.background(black)
+            center.fill(white)
+            center.rectMode(.center)
+            center.text("alpha beta gamma", 60, 60, 80, 80)
+        }
+        #expect(try pixels(of: corner).bytes == pixels(of: center).bytes)
+    }
+
+    @Test("幅か高さが無い矩形へは、何も置かない")
+    func anEmptyBoxPlacesNothing() throws {
+        let canvas = try makeCanvas()
+        var flow = TextFlow(lineCount: 1, height: 1, remainder: "")
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            flow = canvas.text("mokume", 10, 10, 0, 50)
+        }
+        #expect(flow.lineCount == 0)
+        #expect(flow.remainder == "mokume")
+        #expect(inkBounds(try pixels(of: canvas), width: 160, height: 96) == nil)
+    }
+
+    // MARK: - 輪郭
+
+    @Test("輪郭は、描いた字と同じ場所に出る")
+    func theOutlineLandsWhereTheTextIsDrawn() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.text("Agj", 24, 60)
+        }
+        let ink = try #require(inkBounds(try pixels(of: canvas), width: 160, height: 96))
+
+        let contours = canvas.textOutline("Agj", 24, 60)
+        let points = contours.flatMap(\.points)
+        let left = points.map(\.x).min()!
+        let right = points.map(\.x).max()!
+        let top = points.map(\.y).min()!
+        let bottom = points.map(\.y).max()!
+
+        #expect(abs(left - Float(ink.left)) <= 2)
+        #expect(abs(right - Float(ink.right)) <= 2)
+        #expect(abs(top - Float(ink.top)) <= 2)
+        #expect(abs(bottom - Float(ink.bottom)) <= 2)
+    }
+
+    @Test("穴のある字は、外側の周と穴に分かれる")
+    func glyphsWithHolesReportThem() throws {
+        let canvas = try makeCanvas()
+        let o = canvas.textOutline("o", 10, 50)
+        #expect(o.count == 2)
+        #expect(o.filter(\.isHole).count == 1)
+        // 外側が先に並ぶ
+        #expect(o.first?.isHole == false)
+
+        #expect(canvas.textOutline("L", 10, 50).allSatisfy { !$0.isHole })
+    }
+
+    @Test("周を持たない字は輪郭を出さない")
+    func blankGlyphsHaveNoContours() throws {
+        #expect(try makeCanvas().textOutline("   ", 10, 50).isEmpty)
+    }
+
+    @Test("輪郭も整列に従う")
+    func theOutlineFollowsAlignment() throws {
+        let canvas = try makeCanvas()
+        canvas.textAlign(.right)
+        let contours = canvas.textOutline("mokume", 120, 60)
+        let right = contours.flatMap(\.points).map(\.x).max()!
+        // 送りの終わりが 120。最後の字の右端はそれより左に来る
+        #expect(right <= 120)
+        #expect(right > 120 - canvas.textWidth("mokume"))
+    }
+
     // MARK: - 焼き場
 
     @Test("焼き場を広げても、それまでに置いた字は元のまま描かれる")
