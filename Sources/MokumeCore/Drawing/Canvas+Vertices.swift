@@ -40,7 +40,6 @@ extension Canvas {
         holePoints = nil
     }
 
-    // 頂点を 1 つ置く。
     public func vertex(_ x: Float, _ y: Float) {
         appendVertex(SIMD3(x, y, 0), hasDepth: false)
     }
@@ -64,10 +63,6 @@ extension Canvas {
         currentNormal = normalize(direction)
     }
 
-    // 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
-    //
-    // 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
-    // 始点が無ければ引きようがない。
     public func bezierVertex(
         _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
     ) {
@@ -84,7 +79,6 @@ extension Canvas {
         }
     }
 
-    // 2 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
     public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
         guard isBuildingShape, let start = lastShapePoint else {
             warnVertexOutsideShapeOnce()
@@ -122,13 +116,10 @@ extension Canvas {
         }
     }
 
-    // 曲線をいくつの直線で近似するか。
     public func curveDetail(_ steps: Int) { currentCurveDetail = max(1, steps) }
 
-    // 通過点を結ぶ曲線の張り具合。0 が既定で、大きくすると曲がりが緩くなる。
     public func curveTightness(_ amount: Float) { currentCurveTightness = amount }
 
-    // 穴を並べ始める。
     public func beginContour() {
         guard isBuildingShape else {
             warnVertexOutsideShapeOnce()
@@ -137,14 +128,12 @@ extension Canvas {
         holePoints = []
     }
 
-    // 穴を並べ終える。
     public func endContour() {
         guard let hole = holePoints else { return }
         if hole.count >= 3 { shapeHoles.append(hole) }
         holePoints = nil
     }
 
-    // 並べ終えて描く。
     public func endShape(_ end: ShapeEnd = .open) {
         defer {
             isBuildingShape = false
