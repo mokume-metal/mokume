@@ -818,9 +818,23 @@ public final class Canvas {
     // それまでに溜めた図形は消える — 全面を塗るのだから、下に隠れるものを
     // 描く手間をかける意味がない。
     public func background(_ color: LinearRGBA) {
-        vertices.removeAll(keepingCapacity: true)
-        batches.removeAll(keepingCapacity: true)
+        discardPending()
         pendingBackground = color
+    }
+
+    /// 溜めているものを捨てる。
+    ///
+    /// **塗り直しは「このフレームをここから描き直す」こと**なので、平面の頂点も
+    /// 立体の頂点も、閉じた列も、**開いたままの列と置き場所も**まとめて捨てる。
+    /// 1 つでも残すと、次に閉じる列が「もう無い頂点」を指す — 消えたはずのものが
+    /// 出る、あるいは何も出ない、という形で現れる (#323)。
+    func discardPending() {
+        vertices.removeAll(keepingCapacity: true)
+        solidVertices.removeAll(keepingCapacity: true)
+        solidInstances.removeAll(keepingCapacity: true)
+        batches.removeAll(keepingCapacity: true)
+        openSolid = nil
+        openSource = .flat
     }
 
     /// 矩形。座標の読み方は ``rectMode(_:)`` が決める。

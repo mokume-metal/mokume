@@ -51,7 +51,11 @@ final class WatchSession {
         }
     }
 
+    /// スケッチのパッケージの場所。ビルドと世代の判定はここで行う。
     let directory: URL
+    /// 区画の基準。**パッケージの場所とは別の軸** — スケッチは `MOKUME_WORK_DIR` に従って
+    /// 観測を書くので、作り直しの記録も同じ側へ置かないと読み手から見て割れる (#331)。
+    let facetBase: URL
     let configuration: String
     private var hooks: Hooks
 
@@ -64,8 +68,12 @@ final class WatchSession {
     /// 変化に気付いた時刻。作り直しの直前に消す。
     private var noticedAt: Double?
 
-    init(directory: URL, configuration: String = "debug", hooks: Hooks = .live()) {
+    init(
+        directory: URL, facetBase: URL? = nil, configuration: String = "debug",
+        hooks: Hooks = .live()
+    ) {
         self.directory = directory
+        self.facetBase = facetBase ?? directory
         self.configuration = configuration
         self.hooks = hooks
     }
@@ -136,7 +144,7 @@ final class WatchSession {
 
     /// 結果を区画へ置く。観測と同じ流儀 (原子的に書く)。
     private func write(_ report: BuildReport) {
-        let url = directory
+        let url = facetBase
             .appendingPathComponent(".mokume", isDirectory: true)
             .appendingPathComponent("build", isDirectory: true)
             .appendingPathComponent("status.json")
