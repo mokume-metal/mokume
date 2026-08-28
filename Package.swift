@@ -40,6 +40,11 @@ let package = Package(
             resources: [.copy("Templates")],
             swiftSettings: .mokume),
         // 開発時に測るための道具。product には含めない (利用者へ配るものではない)
+        // 参照スケッチ。2D の面が実際に成立していることを、使って示す。
+        // product には含めない — 利用者へ配るものではなく、面を確かめるためのもの
+        .executableTarget(
+            name: "reference-sketches", dependencies: ["mokume"], path: "Sketches",
+            swiftSettings: .mokume),
         .executableTarget(name: "frame-rate-probe", dependencies: ["mokume"], swiftSettings: .mokume),
         .testTarget(
             name: "MokumeCoreTests", dependencies: ["mokume"],

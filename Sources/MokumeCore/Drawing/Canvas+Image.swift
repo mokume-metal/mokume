@@ -38,13 +38,13 @@ extension Canvas {
 
     // MARK: - 置き方
 
-    /// 4 つの数を、絵のどこの寸法として読むか。既定は**左上の角と、幅と高さ**。
+    // 4 つの数を、絵のどこの寸法として読むか。既定は**左上の角と、幅と高さ**。
     public func imageMode(_ mode: ShapeMode) { currentImageMode = mode }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
     public func tint(_ color: LinearRGBA) { currentTint = color }
 
-    /// 色掛けをやめる。
+    // 色掛けをやめる。
     public func noTint() { currentTint = .opaque(red: 1, green: 1, blue: 1) }
 
     // MARK: - 置く

@@ -264,10 +264,13 @@ extension Sketch {
 
 extension Sketch {
     /// 面全体を塗り直す。
+    ///
+    /// それまでに溜めた図形は消える — 全面を塗るのだから、下に隠れるものを
+    /// 描く手間をかける意味がない。
     public func background(_ color: LinearRGBA) { canvas.background(color) }
-    /// これから描く図形の塗りの色。
+    /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     public func fill(_ color: LinearRGBA) { canvas.fill(color) }
-    /// これから引く線の色。
+    /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
     /// これから引く線の太さ (画素)。
     public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
@@ -304,6 +307,9 @@ extension Sketch {
     public func vertex(_ x: Float, _ y: Float) { canvas.vertex(x, y) }
 
     /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
+    ///
+    /// 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
+    /// 始点が無ければ引きようがない。
     public func bezierVertex(
         _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
     ) {
@@ -324,7 +330,7 @@ extension Sketch {
     /// 曲線をいくつの直線で近似するか。
     public func curveDetail(_ steps: Int) { canvas.curveDetail(steps) }
 
-    /// 通過点を結ぶ曲線の張り具合。0 が既定。
+    /// 通過点を結ぶ曲線の張り具合。0 が既定で、大きくすると曲がりが緩くなる。
     public func curveTightness(_ amount: Float) { canvas.curveTightness(amount) }
 
     /// 穴を並べ始める。
@@ -339,6 +345,7 @@ extension Sketch {
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
     ///
     /// 積み降ろし (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
+    /// 面の外へ出た指定は面の内側へ収める。
     public func clip(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.clip(a, b, c, d) }
 
     /// 切り抜きをやめる。
@@ -437,13 +444,13 @@ extension Sketch {
     /// ``circle(_:_:_:)`` にも効く — 直径 1 つしか渡さないので、意味を持つのは
     /// 中心から測る 2 つ (``ShapeMode/center`` と ``ShapeMode/radius``) である。
     public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }
-    /// 線を引く。
+    /// 線を引く。塗りは持たない。
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
         canvas.line(x1, y1, x2, y2)
     }
     /// 原点をずらす。
     public func translate(_ x: Float, _ y: Float) { canvas.translate(x, y) }
-    /// 回す。正の角度は画面の上で時計回りに見える。
+    /// 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
     public func rotate(_ radians: Float) { canvas.rotate(radians) }
     /// 伸ばす・縮める。
     public func scale(_ x: Float, _ y: Float) { canvas.scale(x, y) }
@@ -678,7 +685,7 @@ extension Sketch {
         canvas.image(image, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
-    /// 4 つの数を、絵のどこの寸法として読むか。既定は左上の角と、幅と高さ。
+    /// 4 つの数を、絵のどこの寸法として読むか。既定は**左上の角と、幅と高さ**。
     public func imageMode(_ mode: ShapeMode) { canvas.imageMode(mode) }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**

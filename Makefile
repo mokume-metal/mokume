@@ -2,7 +2,7 @@
 # (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test shaders schemas no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test shaders schemas api api-list reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -21,7 +21,7 @@ setup: ## 開発ツールを確認する
 
 check: setup
 
-ci-check: build test shaders schemas no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -74,6 +74,30 @@ test:
 # ため、ここで組み立てて落とす
 shaders:
 	bash scripts/check-shaders.sh
+
+# 公開 API の面。**一覧はリポジトリへ置かない** — 置くと「それが古くないことを守る
+# 検査」が要るようになり、以後すべての変更がその検査に引っかかる (ADR-0001 原則 8)。
+# 要るときに組み立てれば、そのクラスの検査ごと不要になる。
+#
+# 置き場を分けるのは、シンボルグラフを出す指定が普段のビルドと食い違うため。同じ
+# 置き場を使うと build / test と api が互いを作り直させ続ける
+API_GRAPHS := .build/api/symbol-graphs
+API_BUILD := swift build --scratch-path .build/api \
+	-Xswiftc -emit-symbol-graph -Xswiftc -emit-symbol-graph-dir -Xswiftc $(API_GRAPHS)
+
+api: ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
+	$(API_BUILD)
+	python3 scripts/api-surface.py check --graphs $(API_GRAPHS)
+
+api-list: ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
+	$(API_BUILD)
+	python3 scripts/api-surface.py list --graphs $(API_GRAPHS) \
+		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",)
+
+# 参照スケッチの絵。**リポジトリには置かない** — 撮った絵は Gyazo へ上げて URL で
+# 参照する。同じフレーム番号を描くので、撮り直せば同じ絵になる
+reference-shots: ## 参照スケッチの絵を書き出す (OUT= で置き場を指定)
+	swift run reference-sketches --render "$(or $(OUT),shots)"
 
 # ワイヤフォーマットの正典は Schemas/ の JSON Schema で、実装が従う側になる
 # (ADR-0018 決定 4)。代表例をスキーマで検証し、正典と例がずれたら落とす
