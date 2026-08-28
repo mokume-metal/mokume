@@ -21,6 +21,8 @@ struct ShapeFragmentIn {
     float3 worldPosition;
     /// 面の向き。立体だけが使う (平面は 0)。
     float3 normal;
+    /// 面の向きを形から求めたか (1 なら両面として扱う)。
+    float isDerivedNormal;
 };
 
 /// 置いた光 1 つぶん。並びは Swift 側の `Light` と一致する。
@@ -191,6 +193,7 @@ fragment float4 mokume_fragmentMain(
     constant Lighting &lighting [[buffer(6)]],
     constant Light *lights [[buffer(7)]],
     texture2d<float> source_texture [[texture(0)]],
+    bool isFrontFacing [[front_facing]],
     float4 destination [[color(0)]])
 {
     Fragment f;
@@ -198,10 +201,17 @@ fragment float4 mokume_fragmentMain(
     f.place = in.position.xy / uniforms.resolution;
     f.uv = in.uv;
     f.color = in.color;
-    // 光が 1 つも置かれていなければ、色はそのまま (手本と同じ = 平坦な塗り)
-    if (lighting.count > 0) {
+    // 光が 1 つも置かれていなければ、色はそのまま (手本と同じ = 平坦な塗り)。
+    // **向きを持たない頂点も色そのまま** — 立体の線と点がこれに当たる (平面の輪郭が
+    // 光を受けないのと同じ扱い)
+    if (lighting.count > 0 && dot(in.normal, in.normal) > 0.0) {
+        // **形から求めた向きだけは、どちらの側から見ても光を受ける。** 裏を向いている
+        // 面では向きを裏返す — 利用者が頂点を並べる向き (巻き方) で絵が真っ黒になるのを
+        // 避けるため。書かれた向きは裏返さない (書いた指定を黙って覆さない)
+        float3 normal = in.normal;
+        if (in.isDerivedNormal > 0.5 && !isFrontFacing) { normal = -normal; }
         float3 received = mokume_gatherLight(
-            lights, lighting.offset, lighting.count, in.worldPosition, in.normal);
+            lights, lighting.offset, lighting.count, in.worldPosition, normal);
         f.color = float4(in.color.rgb * received, in.color.a);
     }
     f.texel = source_texture.sample(kGlyphSampler, in.uv);

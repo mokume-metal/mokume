@@ -109,16 +109,16 @@ public final class Canvas {
     // MARK: - 描く状態
 
     var currentFill = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
-    private var currentStroke = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
-    private var currentStrokeWeight: Float = 1
+    var currentStroke = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+    var currentStrokeWeight: Float = 1
     var transform = Transform.identity
     private var transformStack: [Transform] = []
     private var currentRectMode = ShapeMode.corner
     private var currentEllipseMode = ShapeMode.center
-    private var currentStrokeCap = StrokeCap.round
-    private var currentStrokeJoin = StrokeJoin.miter
+    var currentStrokeCap = StrokeCap.round
+    var currentStrokeJoin = StrokeJoin.miter
     var hasFill = true
-    private var hasStroke = true
+    var hasStroke = true
     private var styleStack: [Style] = []
     var currentBlendMode = BlendMode.blend
     var currentClip: MTLScissorRect?
@@ -126,7 +126,8 @@ public final class Canvas {
     var hasLoadedPixels = false
 
     private var warnedReversedArc = false
-    private var warnedVertexOutsideShape = false
+    var warnedVertexOutsideShape = false
+    var warnedBadVertex = false
 
     // MARK: 文字
 
@@ -165,17 +166,26 @@ public final class Canvas {
     // MARK: - 組み立て中の形
 
     /// 並べている途中の頂点。``beginShape(_:)`` から ``endShape(_:)`` までの間だけ中身を持つ。
-    private var shapePoints: [SIMD2<Float>] = []
+    ///
+    /// **平面と立体で同じものを溜める** ([ADR-0021] 決定 5)。奥行き・面の向き・頂点ごとの
+    /// 色は「頂点の性質」であって、形の種類ごとの対応表ではない。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    var shapePoints: [BuildingVertex] = []
     /// 並べ終えた穴。
-    private var shapeHoles: [[SIMD2<Float>]] = []
+    var shapeHoles: [[BuildingVertex]] = []
     /// 穴を並べている最中なら、その点。
-    private var holePoints: [SIMD2<Float>]?
-    private var shapeKind = VertexKind.polygon
-    private var isBuildingShape = false
-    private var currentCurveDetail = 20
-    private var currentCurveTightness: Float = 0
+    var holePoints: [BuildingVertex]?
+    var shapeKind = VertexKind.polygon
+    var isBuildingShape = false
+    /// この形が奥行きを持つか。**奥行きを渡す形で頂点を 1 つでも置いたら立体になる。**
+    var shapeHasDepth = false
+    /// いま効いている面の向き。`nil` は未指定 (形から求める)。
+    var currentNormal: SIMD3<Float>?
+    var currentCurveDetail = 20
+    var currentCurveTightness: Float = 0
     /// 通過点を結ぶ曲線の制御点。4 つ揃うごとに 1 区間を引く。
-    private var curveGuides: [SIMD2<Float>] = []
+    var curveGuides: [SIMD2<Float>] = []
 
     /// 閉じた列。**同じ列は単一の混ぜ方でしか描かれない。**
     ///
@@ -198,12 +208,14 @@ public final class Canvas {
     struct Batch {
         var run: Shape.Run
         var clip: MTLScissorRect?
-        /// どちらの並びから描くか。
-        var source: VertexSource
         /// この列を描画先の座標へ落とす行列。
         var matrix: simd_float4x4
         /// この列に効く光が、置き場のどこから何個あるか。
         var lightRange: Range<Int>
+
+        /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
+        /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
+        var source: VertexSource { run.source }
     }
 
     /// 列がどちらの並びから描かれるか。
@@ -465,9 +477,9 @@ public final class Canvas {
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     textureKind: currentTextureKind, shader: currentShader,
-                    values: currentShader?.packedValues ?? [], start: start, count: count),
+                    values: currentShader?.packedValues ?? [], source: openSource,
+                    start: start, count: count),
                 clip: currentClip,
-                source: openSource,
                 matrix: openSource == .flat ? projection : viewProjection,
                 // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
                 lightRange: openSource == .flat ? 0..<0 : bakeActiveLights()))
@@ -666,218 +678,6 @@ public final class Canvas {
         draw(Outline(points: [SIMD2(x, y)], isClosed: false, fills: false))
     }
 
-    // MARK: - 頂点を並べて描く
-
-    /// 頂点を並べ始める。
-    public func beginShape(_ kind: VertexKind = .polygon) {
-        isBuildingShape = true
-        shapeKind = kind
-        shapePoints.removeAll(keepingCapacity: true)
-        shapeHoles.removeAll(keepingCapacity: true)
-        holePoints = nil
-    }
-
-    // 頂点を 1 つ置く。
-    public func vertex(_ x: Float, _ y: Float) {
-        guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
-        appendShapePoint(SIMD2(x, y))
-    }
-
-    // 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
-    //
-    // 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
-    // 始点が無ければ引きようがない。
-    public func bezierVertex(
-        _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
-    ) {
-        guard isBuildingShape, let start = lastShapePoint else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
-        let c1 = SIMD2(cx1, cy1)
-        let c2 = SIMD2(cx2, cy2)
-        let end = SIMD2(x, y)
-        for step in 1...currentCurveDetail {
-            let t = Float(step) / Float(currentCurveDetail)
-            appendShapePoint(Self.cubicPoint(start, c1, c2, end, t))
-        }
-    }
-
-    // 2 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
-    public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
-        guard isBuildingShape, let start = lastShapePoint else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
-        // 2 次は 3 次の特別な形として通す — 曲線の道具を 1 本に保つ
-        let control = SIMD2(cx, cy)
-        let end = SIMD2(x, y)
-        let c1 = start + (control - start) * (2.0 / 3.0)
-        let c2 = end + (control - end) * (2.0 / 3.0)
-        bezierVertex(c1.x, c1.y, c2.x, c2.y, end.x, end.y)
-    }
-
-    /// 通過点を結ぶ曲線の制御点を置く。
-    ///
-    /// **4 つ揃って初めて 1 区間が引ける** — 最初と最後の点は曲がり方を決めるためだけに
-    /// 使われ、その間だけが実際に描かれる。
-    public func curveVertex(_ x: Float, _ y: Float) {
-        guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
-        curveGuides.append(SIMD2(x, y))
-        guard curveGuides.count >= 4 else { return }
-        let count = curveGuides.count
-        let p0 = curveGuides[count - 4]
-        let p1 = curveGuides[count - 3]
-        let p2 = curveGuides[count - 2]
-        let p3 = curveGuides[count - 1]
-        if shapePoints.isEmpty { appendShapePoint(p1) }
-        for step in 1...currentCurveDetail {
-            let t = Float(step) / Float(currentCurveDetail)
-            appendShapePoint(Self.catmullRomPoint(p0, p1, p2, p3, t, tightness: currentCurveTightness))
-        }
-    }
-
-    // 曲線をいくつの直線で近似するか。
-    public func curveDetail(_ steps: Int) { currentCurveDetail = max(1, steps) }
-
-    // 通過点を結ぶ曲線の張り具合。0 が既定で、大きくすると曲がりが緩くなる。
-    public func curveTightness(_ amount: Float) { currentCurveTightness = amount }
-
-    // 穴を並べ始める。
-    public func beginContour() {
-        guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
-        holePoints = []
-    }
-
-    // 穴を並べ終える。
-    public func endContour() {
-        guard let hole = holePoints else { return }
-        if hole.count >= 3 { shapeHoles.append(hole) }
-        holePoints = nil
-    }
-
-    // 並べ終えて描く。
-    public func endShape(_ end: ShapeEnd = .open) {
-        defer {
-            isBuildingShape = false
-            shapePoints.removeAll(keepingCapacity: true)
-            shapeHoles.removeAll(keepingCapacity: true)
-            curveGuides.removeAll(keepingCapacity: true)
-            holePoints = nil
-        }
-        guard isBuildingShape else { return }
-        endContour()  // 閉じ忘れた穴も畳む
-
-        switch shapeKind {
-        case .points:
-            for p in shapePoints { point(p.x, p.y) }
-
-        case .lines:
-            var index = 0
-            while index + 1 < shapePoints.count {
-                line(
-                    shapePoints[index].x, shapePoints[index].y,
-                    shapePoints[index + 1].x, shapePoints[index + 1].y)
-                index += 2
-            }
-
-        case .triangles:
-            var index = 0
-            while index + 2 < shapePoints.count {
-                triangle(
-                    shapePoints[index].x, shapePoints[index].y,
-                    shapePoints[index + 1].x, shapePoints[index + 1].y,
-                    shapePoints[index + 2].x, shapePoints[index + 2].y)
-                index += 3
-            }
-
-        case .polygon:
-            drawFreeform(closed: end == .close)
-        }
-    }
-
-    /// 並べた点を、凹みと穴を許す形として描く。
-    private func drawFreeform(closed: Bool) {
-        guard shapePoints.count >= 2 else {
-            if let only = shapePoints.first { point(only.x, only.y) }
-            return
-        }
-
-        // 塗りは凹みうるので三角形化を通す。穴は先に 1 周へ畳む
-        if hasFill, shapePoints.count >= 3 {
-            let ring = shapeHoles.isEmpty
-                ? shapePoints
-                : Triangulation.mergeHoles(outer: shapePoints, holes: shapeHoles)
-            for triangle in Triangulation.triangulate(ring) {
-                appendTriangle(
-                    transform.apply(x: ring[triangle.0].x, y: ring[triangle.0].y),
-                    transform.apply(x: ring[triangle.1].x, y: ring[triangle.1].y),
-                    transform.apply(x: ring[triangle.2].x, y: ring[triangle.2].y),
-                    color: currentFill)
-            }
-        }
-
-        // 輪郭は周をそのままなぞる。穴の縁も輪郭を持つ
-        if hasStroke, currentStrokeWeight > 0 {
-            strokeOutline(Outline(points: shapePoints, isClosed: closed, fills: false))
-            for hole in shapeHoles {
-                strokeOutline(Outline(points: hole, isClosed: true, fills: false))
-            }
-        }
-    }
-
-    private var lastShapePoint: SIMD2<Float>? {
-        holePoints?.last ?? shapePoints.last
-    }
-
-    private func appendShapePoint(_ point: SIMD2<Float>) {
-        if holePoints != nil {
-            holePoints?.append(point)
-        } else {
-            shapePoints.append(point)
-        }
-    }
-
-    /// 3 次の曲線の上の点。
-    static func cubicPoint(
-        _ p0: SIMD2<Float>, _ c1: SIMD2<Float>, _ c2: SIMD2<Float>, _ p1: SIMD2<Float>, _ t: Float
-    ) -> SIMD2<Float> {
-        let u = 1 - t
-        return p0 * (u * u * u) + c1 * (3 * u * u * t) + c2 * (3 * u * t * t) + p1 * (t * t * t)
-    }
-
-    /// 通過点を結ぶ曲線の上の点。`tightness` が 0 のとき、4 点のうち中の 2 点を滑らかに繋ぐ。
-    static func catmullRomPoint(
-        _ p0: SIMD2<Float>, _ p1: SIMD2<Float>, _ p2: SIMD2<Float>, _ p3: SIMD2<Float>,
-        _ t: Float, tightness: Float
-    ) -> SIMD2<Float> {
-        let s = (1 - tightness) / 2
-        let t2 = t * t
-        let t3 = t2 * t
-        let m1 = (p2 - p0) * s
-        let m2 = (p3 - p1) * s
-        return p1 * (2 * t3 - 3 * t2 + 1)
-            + m1 * (t3 - 2 * t2 + t)
-            + p2 * (-2 * t3 + 3 * t2)
-            + m2 * (t3 - t2)
-    }
-
-    private func warnVertexOutsideShapeOnce() {
-        guard !warnedVertexOutsideShape else { return }
-        warnedVertexOutsideShape = true
-        Diagnostics.warn(
-            "vertex(): beginShape() と endShape() の間で呼んでください。この呼び出しは何もしません")
-    }
-
     // MARK: - 周をひとつの道具にする
 
     /// 図形の周。**塗りと輪郭はここから出る**ので、図形ごとに輪郭を書かずに済む。
@@ -933,7 +733,7 @@ public final class Canvas {
     }
 
     /// 周を太さのある帯でなぞる。
-    private func strokeOutline(_ outline: Outline) {
+    func strokeOutline(_ outline: Outline) {
         let half = currentStrokeWeight / 2
         let points = outline.points
 
@@ -1223,15 +1023,26 @@ public final class Canvas {
             "text(): 字形を焼く場所が上限まで埋まりました。これ以上の新しい字は描かれません")
     }
 
-    private func appendTriangle(
+    func appendTriangle(
         _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, color: LinearRGBA
+    ) {
+        appendTriangle(a, b, c, colors: (color, color, color))
+    }
+
+    /// 頂点ごとに色の違う三角形を置く。
+    ///
+    /// 3 つが同じ色なら 1 色の三角形と区別が付かないので、色を 1 つ受ける形はこれの
+    /// 呼び分けである — **頂点ごとの色のために別の経路を作らない** ([ADR-0021] 決定 5)。
+    func appendTriangle(
+        _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>,
+        colors: (LinearRGBA, LinearRGBA, LinearRGBA)
     ) {
         // **図形は白い区画を読む。** 直前に画像を描いていたら、その面を読んだままに
         // なるので戻す (変わらなければ何も起きない)
         useGlyphTexture()
-        vertices.append(ShapeVertex(position: a, uv: whiteUV, color: color))
-        vertices.append(ShapeVertex(position: b, uv: whiteUV, color: color))
-        vertices.append(ShapeVertex(position: c, uv: whiteUV, color: color))
+        vertices.append(ShapeVertex(position: a, uv: whiteUV, color: colors.0))
+        vertices.append(ShapeVertex(position: b, uv: whiteUV, color: colors.1))
+        vertices.append(ShapeVertex(position: c, uv: whiteUV, color: colors.2))
     }
 
     // MARK: - 描き切る
@@ -1338,6 +1149,12 @@ public final class Canvas {
                     slot.update(from: batch.run.values, count: batch.run.values.count)
                 }
             }
+            // **どちら回りを表とするかを明示する。** 断片は表裏を見て面の向きを裏返す
+            // (両面) ので、ここが黙っていると「表」の意味が土台の既定に委ねられる。
+            // 形は外向きに巻いてあり (`SolidMeshBuilder`)、縦軸を下向きへ戻す補正が
+            // 画面での巻き方を反転させるので、時計回りが表になる
+            encoder.setFrontFacing(.clockwise)
+
             for (index, batch) in batches.enumerated() {
                 let run = batch.run
                 // 並びごとに、頂点の落とし方と奥行きの扱いを切り替える。**平面は奥行きを

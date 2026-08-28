@@ -159,6 +159,8 @@ enum Scene: String, CaseIterable, Sendable {
     case solids
     /// 光を当てた立体。底上げの光・向きを持つ光・広がりを持つ光を並べたもの。
     case lighting
+    /// 頂点を並べて作った立体。穴・頂点ごとの色・線と点・書いた面の向きを並べたもの。
+    case customSolids
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -608,6 +610,59 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.rotateX(1.1)
             canvas.torus(28, 10)
             canvas.pop()
+
+        case .customSolids:
+            canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
+            canvas.lights()
+
+            // 穴の開いた面。面の向きは書かずに形から求めさせる
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.95, green: 0.55, blue: 0.3))
+            canvas.push()
+            canvas.translate(42, 40, 0)
+            canvas.rotateX(0.9)
+            canvas.rotateZ(0.3)
+            canvas.beginShape()
+            for corner in [(-24, -24), (24, -24), (24, 24), (-24, 24)] {
+                canvas.vertex(Float(corner.0), Float(corner.1), 0)
+            }
+            canvas.beginContour()
+            for corner in [(-10, -10), (-10, 10), (10, 10), (10, -10)] {
+                canvas.vertex(Float(corner.0), Float(corner.1), 0)
+            }
+            canvas.endContour()
+            canvas.endShape(.close)
+            canvas.pop()
+
+            // 頂点ごとに色の変わる帯。奥行きを持たせて傾ける
+            canvas.push()
+            canvas.translate(90, 40, 0)
+            canvas.beginShape()
+            canvas.fill(.display(red: 0.35, green: 0.6, blue: 0.95))
+            canvas.vertex(-20, -22, -22)
+            canvas.vertex(20, -22, 14)
+            canvas.fill(.display(red: 0.95, green: 0.9, blue: 0.35))
+            canvas.vertex(20, 22, 14)
+            canvas.vertex(-20, 22, -22)
+            canvas.endShape(.close)
+            canvas.pop()
+
+            // 線と点。塗りではなく線の色で描かれる
+            canvas.fill(.display(red: 0.95, green: 0.2, blue: 0.2))
+            canvas.stroke(.display(red: 0.4, green: 0.95, blue: 0.7))
+            canvas.strokeWeight(5)
+            canvas.beginShape(.lines)
+            canvas.vertex(16, 80, -30)
+            canvas.vertex(56, 108, 30)
+            canvas.vertex(16, 108, 30)
+            canvas.vertex(56, 80, -30)
+            canvas.endShape()
+            canvas.strokeWeight(9)
+            canvas.beginShape(.points)
+            for step in 0..<4 {
+                canvas.vertex(74 + Float(step) * 12, 94, Float(step) * 14 - 30)
+            }
+            canvas.endShape()
         }
     }
 }

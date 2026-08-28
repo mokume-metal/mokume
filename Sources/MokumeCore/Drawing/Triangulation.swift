@@ -57,16 +57,27 @@ enum Triangulation {
     ///
     /// 橋は、穴のいちばん右の点から外周の点へ架ける。**架けた線が他の辺を跨がない点**を
     /// 選ぶ — 跨ぐと、畳んだ周が自己交差して三角形化が途中で止まる。
-    static func mergeHoles(outer: [SIMD2<Float>], holes: [[SIMD2<Float>]]) -> [SIMD2<Float>] {
+    ///
+    /// 受け渡すのは**点そのものではなく番号**である。畳んだ周から元の頂点を引ける
+    /// ようにするためで、立体の頂点が持つ色や面の向きは点の座標には載っていない。
+    ///
+    /// - Parameters:
+    ///   - outer: 外周をなす点の番号。
+    ///   - holes: 穴をなす点の番号。
+    ///   - points: 番号で引ける点の位置。
+    static func mergeHoles(outer: [Int], holes: [[Int]], points: [SIMD2<Float>]) -> [Int] {
         var ring = outer
         // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい
         let ordered = holes
             .filter { $0.count >= 3 }
-            .sorted { (rightmost($0)?.x ?? 0) > (rightmost($1)?.x ?? 0) }
+            .sorted {
+                (rightmost($0, points)?.x ?? 0) > (rightmost($1, points)?.x ?? 0)
+            }
 
         for hole in ordered {
-            guard let entryIndex = rightmostIndex(hole) else { continue }
-            guard let bridgeIndex = bridgeTarget(ring: ring, from: hole[entryIndex]) else {
+            guard let entryIndex = rightmostIndex(hole, points) else { continue }
+            let entry = points[hole[entryIndex]]
+            guard let bridgeIndex = bridgeTarget(ring: ring, points: points, from: entry) else {
                 continue  // 架けられる先が無ければ、その穴は諦める (塗りが埋まるだけ)
             }
             // 外周を橋の点で開き、穴を 1 周ぶん通してから戻る
@@ -125,23 +136,28 @@ enum Triangulation {
         return d1 > 0 && d2 > 0 && d3 > 0
     }
 
-    private static func rightmost(_ points: [SIMD2<Float>]) -> SIMD2<Float>? {
-        rightmostIndex(points).map { points[$0] }
+    private static func rightmost(_ ring: [Int], _ points: [SIMD2<Float>]) -> SIMD2<Float>? {
+        rightmostIndex(ring, points).map { points[ring[$0]] }
     }
 
-    private static func rightmostIndex(_ points: [SIMD2<Float>]) -> Int? {
-        points.indices.max { points[$0].x < points[$1].x }
+    private static func rightmostIndex(_ ring: [Int], _ points: [SIMD2<Float>]) -> Int? {
+        ring.indices.max { points[ring[$0]].x < points[ring[$1]].x }
     }
 
     /// 橋を架ける先を、外周の点から選ぶ。
-    private static func bridgeTarget(ring: [SIMD2<Float>], from entry: SIMD2<Float>) -> Int? {
+    private static func bridgeTarget(
+        ring: [Int], points: [SIMD2<Float>], from entry: SIMD2<Float>
+    ) -> Int? {
         var best: (index: Int, distance: Float)?
         for index in ring.indices {
-            let candidate = ring[index]
+            let candidate = points[ring[index]]
             let delta = candidate - entry
             let distance = delta.x * delta.x + delta.y * delta.y
             if let current = best, current.distance <= distance { continue }
-            guard !crossesAnyEdge(ring: ring, from: entry, to: candidate, skipping: index) else {
+            guard
+                !crossesAnyEdge(
+                    ring: ring, points: points, from: entry, to: candidate, skipping: index)
+            else {
                 continue
             }
             best = (index, distance)
@@ -151,13 +167,14 @@ enum Triangulation {
 
     /// 架けた線が、外周のどれかの辺を跨ぐか。
     private static func crossesAnyEdge(
-        ring: [SIMD2<Float>], from: SIMD2<Float>, to: SIMD2<Float>, skipping target: Int
+        ring: [Int], points: [SIMD2<Float>], from: SIMD2<Float>, to: SIMD2<Float>,
+        skipping target: Int
     ) -> Bool {
         for index in ring.indices {
             let next = (index + 1) % ring.count
             // 橋の端点を共有する辺は、跨いだことにしない
             if index == target || next == target { continue }
-            if segmentsIntersect(from, to, ring[index], ring[next]) { return true }
+            if segmentsIntersect(from, to, points[ring[index]], points[ring[next]]) { return true }
         }
         return false
     }
