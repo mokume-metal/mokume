@@ -201,6 +201,15 @@ public final class Canvas {
     /// **作り直していないかを数える値。** 毎フレーム宣言してよい形にした以上、
     /// 宣言のたびに確保していないことは絵では分からない。
     private(set) var shadowMapsBuilt = 0
+    /// 焼き上がりを待つ仕掛けを積んだ回数 (作ってから通算)。
+    ///
+    /// **仕掛けが入っていることを数える値。** 抜けていても絵は普段どおり出て、
+    /// GPU が混んだときだけ稀に前のフレームが混ざる ([#341]) ので、
+    /// 抜けたことに絵で気付く道が無い。積む 1 行と同じ場所で数え、
+    /// **その行を消したら数も減る**ようにしてある。
+    ///
+    /// [#341]: https://github.com/mokume-metal/mokume/issues/341
+    private(set) var shadowBarriersEncoded = 0
     /// 影の行列を置く領域。
     private var shadowMatrixBuffer: (any MTLBuffer)?
     /// フレームの外で影の設定を書いたことを知らせたか。
@@ -1358,8 +1367,13 @@ public final class Canvas {
         let pass = target.makeRenderPass(clearColor: pendingBackground)
         let commands = try gpu.beginCommands()
 
-        // **画面へ描く前に、光から見た奥行きを焼く。** 同じコマンドの中で順に流すので、
-        // 焼き上がりを待つ仕掛けは要らない (GPU がこの順で実行する)
+        // **画面へ描く前に、光から見た奥行きを焼く。** 同じコマンドに順に積んでも
+        // **この世代では順に実行されない** — encoder をまたぐ依存は自動では張られず、
+        // 明示しなければ焼き付けと画面が重なる。待つ仕掛けは焼く側が積む
+        // (`bakeShadow`)。当初ここに「順に流すので待つ仕掛けは要らない」と書いていた
+        // のが [#341] の出どころなので、消さずに理由を残す。
+        //
+        // [#341]: https://github.com/mokume-metal/mokume/issues/341
         let bakedShadow = try bakeShadow(into: commands)
 
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
@@ -1657,8 +1671,27 @@ public final class Canvas {
                 vertexStart: batch.run.start, vertexCount: batch.run.count,
                 instanceCount: batch.instanceCount)
         }
+        encodeShadowBarrier(on: encoder)
         encoder.endEncoding()
         return (map, matrix)
+    }
+
+    /// 焼き上がりを待つ仕掛けを積む。**焼いた面を画面のパスが読む前に置く。**
+    ///
+    /// この世代のコマンド構造は encoder をまたぐ依存を自動では張らないので、同じ
+    /// コマンドに順に積んだだけでは焼き付けと画面が重なりうる。重なると画面は
+    /// 書き終わる前の焼き付け先を読み、**前のフレームの影が混ざる** ([#341])。
+    ///
+    /// - `afterStages`: 奥行きを書くのは断片段
+    /// - `beforeQueueStages`: 焼いた面を読むのも断片段
+    /// - `visibilityOptions`: `.device` を渡す。既定の「流さない」側にすると
+    ///   実行順だけ揃えて**中身が見えない**ことになる
+    ///
+    /// [#341]: https://github.com/mokume-metal/mokume/issues/341
+    private func encodeShadowBarrier(on encoder: any MTL4RenderCommandEncoder) {
+        encoder.barrier(
+            afterStages: .fragment, beforeQueueStages: .fragment, visibilityOptions: .device)
+        shadowBarriersEncoded += 1
     }
 
     /// 焼き付け先。**同じ細かさなら作り直さない** ([ADR-0021] 決定 4)。
