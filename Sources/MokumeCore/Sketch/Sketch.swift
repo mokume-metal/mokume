@@ -456,4 +456,78 @@ extension Sketch {
     public func textOutline(_ string: String, _ x: Float, _ y: Float) -> [TextContour] {
         canvas.textOutline(string, x, y)
     }
+
+    // MARK: - 画像
+
+    /// 絵を読む。読み終わるまで返らない。
+    ///
+    /// ```swift
+    /// func setup() {
+    ///     grain = try? loadImage("assets/grain.png")
+    /// }
+    /// ```
+    ///
+    /// **読み込みは投げる。** 読めなかったときに別の道を選ぶ判断が要るので、黙って
+    /// 既定へ倒さない。見つからないときの説明には**探した場所**が載る。
+    ///
+    /// 名前は、作業ディレクトリと**実行ファイルの隣に置かれた資材の包み**から探す。
+    /// スケッチのパッケージが資材の置き場を宣言していないと、ビルドは静かに通って
+    /// 実行時に読めないだけになるので、宣言を確かめること。
+    public func loadImage(_ path: String) throws(ImageFailure) -> Image {
+        try canvas.loadImage(path)
+    }
+
+    /// 絵を読む。**読んでいる間、他の仕事を止めない。**
+    ///
+    /// 復号を別の仕事として回すので、大きな絵を読んでもフレームが詰まらない。
+    public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
+        try await canvas.requestImage(path)
+    }
+
+    /// 空の絵を作る。中身は透明。
+    ///
+    /// ``Image/set(_:_:_:)`` で書き換えると、**描くときに自動で送られる** —
+    /// 送り直しを呼び忘れて絵が変わらない、という形の不具合が起きない。
+    public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
+        try canvas.createImage(width, height)
+    }
+
+    /// 絵を等倍で置く。左上の角が (`x`, `y`) に来る。
+    public func image(_ image: Image, _ x: Float, _ y: Float) { canvas.image(image, x, y) }
+
+    /// 絵を、指定した寸法に合わせて置く。
+    ///
+    /// 4 つの数の読み方は ``imageMode(_:)`` が決める。
+    public func image(_ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+        canvas.image(image, a, b, c, d)
+    }
+
+    /// 絵の一部を切り出して置く。
+    ///
+    /// ```swift
+    /// image(sheet, 0, 0, 32, 32, 64, 0, 32, 32)   // 右となりの駒を左上へ
+    /// ```
+    ///
+    /// 前の 4 つが置き先、後の 4 つが**絵の中のどこを切り出すか**。切り出しが絵の
+    /// 外へ出ても落ちず、重なった分だけが出る。
+    public func image(
+        _ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
+        _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
+    ) {
+        canvas.image(image, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
+    }
+
+    /// 4 つの数を、絵のどこの寸法として読むか。既定は左上の角と、幅と高さ。
+    public func imageMode(_ mode: ShapeMode) { canvas.imageMode(mode) }
+
+    /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
+    ///
+    /// ```swift
+    /// tint(.display(red: 1, green: 1, blue: 1, alpha: 0.5))   // 半分の濃さで置く
+    /// tint(.display(red: 1, green: 0.6, blue: 0.6))           // 赤みを乗せる
+    /// ```
+    public func tint(_ color: LinearRGBA) { canvas.tint(color) }
+
+    /// 色掛けをやめる。
+    public func noTint() { canvas.noTint() }
 }

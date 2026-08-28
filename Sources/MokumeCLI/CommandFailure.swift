@@ -23,6 +23,9 @@ enum CommandFailure: Error, Equatable {
     case noExecutable(path: String)
     case toolchainMissing(String)
 
+    /// 資材の置き場があるのに、パッケージが宣言していない。
+    case resourcesNotDeclared(directory: String)
+
     var message: String {
         switch self {
         case .usage(let text):
@@ -46,6 +49,16 @@ enum CommandFailure: Error, Equatable {
             """
             スケッチが見つからない: \(path)
             Package.swift のあるディレクトリを指す (mokume-cli new <名前> で作れる)
+            """
+        case .resourcesNotDeclared(let directory):
+            """
+            \(directory) に資材があるが、Package.swift が宣言していない。
+            このまま走らせるとビルドは通り、実行時に読めないだけになる (絵が出ないのに
+            描画側を疑うことになる)。target に 1 行足す:
+
+              resources: [.copy("\(ResourceDeclaration.directoryName)")],
+
+            資材として運ばない置き場なら、名前を変える。
             """
         case .buildFailed(let status):
             "作り直しに失敗した (終了コード \(status))。上の出力を見る"

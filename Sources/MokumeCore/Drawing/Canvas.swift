@@ -91,6 +91,12 @@ public final class Canvas {
     /// 行送りの指定。`nil` は自動 (大きさから決める)。
     var currentTextLeading: Float?
     var currentTextWrap = TextWrap.word
+
+    // MARK: 画像
+
+    var currentImageMode = ShapeMode.corner
+    /// 画像に掛ける色。既定は掛けない (白・不透明)。
+    var currentTint = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
     var warnedMissingFont = false
     var warnedAtlasFull = false
 
@@ -156,6 +162,8 @@ public final class Canvas {
         var verticalTextAlign: VerticalTextAlign
         var textLeading: Float?
         var textWrap: TextWrap
+        var imageMode: ShapeMode
+        var tint: LinearRGBA
     }
 
     private var currentStyle: Style {
@@ -170,7 +178,8 @@ public final class Canvas {
                 textStyle: currentTextStyle,
                 horizontalTextAlign: currentHorizontalTextAlign,
                 verticalTextAlign: currentVerticalTextAlign,
-                textLeading: currentTextLeading, textWrap: currentTextWrap)
+                textLeading: currentTextLeading, textWrap: currentTextWrap,
+                imageMode: currentImageMode, tint: currentTint)
         }
         set {
             currentFill = newValue.fill
@@ -189,6 +198,8 @@ public final class Canvas {
             currentVerticalTextAlign = newValue.verticalTextAlign
             currentTextLeading = newValue.textLeading
             currentTextWrap = newValue.textWrap
+            currentImageMode = newValue.imageMode
+            currentTint = newValue.tint
             // 混ぜ方と切り抜きが変わるなら列を閉じてから戻す
             blendMode(newValue.blendMode)
             if !Self.sameClip(currentClip, newValue.clip) {
@@ -1044,6 +1055,46 @@ public final class Canvas {
         _ position: SIMD2<Float>, _ uv: SIMD2<Float>, _ color: LinearRGBA
     ) {
         vertices.append(ShapeVertex(position: position, uv: uv, color: color))
+    }
+
+    /// 画像を四角として置く。
+    ///
+    /// **字形と同じく半画素ぶん戻して置く** — 整数の座標は画素の中心を指すので、
+    /// そのまま四角の縁に使うと縁が半分だけ覆われ、等倍で置いた絵が滲む。
+    func appendImageQuad(
+        _ image: Image, x: Float, y: Float, width: Float, height: Float,
+        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
+    ) {
+        image.uploadIfNeeded()
+        useTexture(image.texture, kind: .color)
+
+        let shift: Float = -0.5
+        let left = x + shift
+        let top = y + shift
+        let right = left + width
+        let bottom = top + height
+
+        let topLeft = transform.apply(x: left, y: top)
+        let topRight = transform.apply(x: right, y: top)
+        let bottomRight = transform.apply(x: right, y: bottom)
+        let bottomLeft = transform.apply(x: left, y: bottom)
+
+        appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
+        appendGlyphVertex(topRight, SIMD2(uvMax.x, uvMin.y), color)
+        appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
+        appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
+        appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
+        appendGlyphVertex(bottomLeft, SIMD2(uvMin.x, uvMax.y), color)
+    }
+
+    /// 復号した中身から絵を作る。
+    func makeImage(_ decoded: ImageFile.Decoded) throws(ImageFailure) -> Image {
+        do {
+            return try Image(
+                width: decoded.width, height: decoded.height, pixels: decoded.pixels, gpu: gpu)
+        } catch {
+            throw .unplaceable(width: decoded.width, height: decoded.height)
+        }
     }
 
     /// 焼き場が埋まったことを、初回だけ知らせる。

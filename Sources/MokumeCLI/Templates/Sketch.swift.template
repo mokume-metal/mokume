@@ -1,6 +1,7 @@
 import Foundation
 import mokume
 
+@main
 final class {{TYPE}}: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 960, height: 540, title: "{{NAME}}")
@@ -13,5 +14,3 @@ final class {{TYPE}}: Sketch {
         circle(width / 2 + cos(angle) * 160, height / 2 + sin(angle) * 120, 80)
     }
 }
-
-{{TYPE}}.main()

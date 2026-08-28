@@ -147,6 +147,8 @@ enum Scene: String, CaseIterable, Sendable {
     ///
     /// ``text`` と同じく、この環境が持つ書体の字形に依る。
     case textFlow
+    /// 作った絵を、等倍・引き伸ばし・切り出し・色掛けで置いたもの。
+    case images
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -370,6 +372,39 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.noStroke()
             canvas.fill(.display(red: 0.95, green: 0.85, blue: 0.35))
             canvas.text("ku", 8 + canvas.textWidth("mo"), 108)
+
+        case .images:
+            canvas.background(.display(red: 0.08, green: 0.08, blue: 0.1))
+            // 元の絵はその場で作る。ファイルを置かずに済み、絵は毎回同じになる
+            guard let source = try? canvas.createImage(8, 8) else { return }
+            for y in 0..<8 {
+                for x in 0..<8 {
+                    let checker = (x / 2 + y / 2) % 2 == 0
+                    source.set(
+                        x, y,
+                        .display(
+                            red: checker ? 0.95 : 0.15, green: Float(x) / 7,
+                            blue: Float(y) / 7))
+                }
+            }
+
+            // 等倍・引き伸ばし
+            canvas.image(source, 6, 6)
+            canvas.image(source, 24, 6, 40, 40)
+
+            // 切り出し (右下の 4x4 だけ)
+            canvas.image(source, 74, 6, 40, 40, 4, 4, 4, 4)
+
+            // 色掛け。白は何も変えないので、掛けた側だけが変わる
+            canvas.tint(.display(red: 1, green: 0.5, blue: 0.5, alpha: 0.8))
+            canvas.image(source, 6, 54, 52, 52)
+            canvas.noTint()
+
+            // 図形と重ねる。画像の面を図形が読んでいないことが絵に出る
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.95, alpha: 0.7))
+            canvas.rect(66, 54, 52, 52)
+            canvas.image(source, 78, 66, 28, 28)
 
         case .joins:
             // 折れ目の形 3 通り。閉じた形の角に効くことを見るので三角形で描く
