@@ -726,6 +726,7 @@ public final class Canvas {
     // 描く手間をかける意味がない。
     public func background(_ color: LinearRGBA) {
         vertices.removeAll(keepingCapacity: true)
+        solidVertices.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
         pendingBackground = color
     }
