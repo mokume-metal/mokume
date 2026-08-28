@@ -41,7 +41,10 @@ let package = Package(
             swiftSettings: .mokume),
         // 開発時に測るための道具。product には含めない (利用者へ配るものではない)
         .executableTarget(name: "frame-rate-probe", dependencies: ["mokume"], swiftSettings: .mokume),
-        .testTarget(name: "MokumeCoreTests", dependencies: ["mokume"], swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeCoreTests", dependencies: ["mokume"],
+            // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
+            exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
     ]
 )

@@ -126,6 +126,63 @@ extension Sketch {
     /// 太さ 1 の線では 3 つとも同じに見えるので、**確かめるときは太さを振る**。
     public func strokeCap(_ cap: StrokeCap) { canvas.strokeCap(cap) }
 
+    /// 頂点を並べ始める。``vertex(_:_:)`` で点を置き、``endShape(_:)`` で描く。
+    ///
+    /// ```swift
+    /// beginShape()
+    /// vertex(20, 20)
+    /// vertex(80, 30)
+    /// vertex(50, 80)
+    /// endShape(.close)
+    /// ```
+    ///
+    /// 既定の読み方 (``VertexKind/polygon``) では、**凹んでいても穴があってもよい**。
+    public func beginShape(_ kind: VertexKind = .polygon) { canvas.beginShape(kind) }
+
+    /// 頂点を 1 つ置く。
+    public func vertex(_ x: Float, _ y: Float) { canvas.vertex(x, y) }
+
+    /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
+    public func bezierVertex(
+        _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
+    ) {
+        canvas.bezierVertex(cx1, cy1, cx2, cy2, x, y)
+    }
+
+    /// 2 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
+    public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
+        canvas.quadraticVertex(cx, cy, x, y)
+    }
+
+    /// 通過点を結ぶ曲線の制御点を置く。
+    ///
+    /// **4 つ揃って初めて 1 区間が引ける。** 最初と最後の点は曲がり方を決めるためだけに
+    /// 使われ、その間だけが描かれる — 端まで描きたいときは端の点を 2 度置く。
+    public func curveVertex(_ x: Float, _ y: Float) { canvas.curveVertex(x, y) }
+
+    /// 曲線をいくつの直線で近似するか。
+    public func curveDetail(_ steps: Int) { canvas.curveDetail(steps) }
+
+    /// 通過点を結ぶ曲線の張り具合。0 が既定。
+    public func curveTightness(_ amount: Float) { canvas.curveTightness(amount) }
+
+    /// 穴を並べ始める。
+    public func beginContour() { canvas.beginContour() }
+
+    /// 穴を並べ終える。
+    public func endContour() { canvas.endContour() }
+
+    /// 並べ終えて描く。
+    public func endShape(_ end: ShapeEnd = .open) { canvas.endShape(end) }
+
+    /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
+    ///
+    /// 積み降ろし (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
+    public func clip(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.clip(a, b, c, d) }
+
+    /// 切り抜きをやめる。
+    public func noClip() { canvas.noClip() }
+
     /// 描くものを、下にある絵とどう混ぜるか。既定は上に重ねる。
     ///
     /// ```swift
