@@ -19,6 +19,9 @@ let catalogue: [(name: String, make: () -> any Sketch)] = [
     ("shapes-and-style", { ShapesAndStyle() }),
     ("type-and-imagery", { TypeAndImagery() }),
     ("pixels-and-paint", { PixelsAndPaint() }),
+    // 触って確かめるためのもの。**書き出しても意味を持たない** (下の --render は
+    // 触っていない 1 枚を出すだけ) が、カタログを 2 つに割るほどの違いではない
+    ("pointer-and-keys", { PointerAndKeys() }),
 ]
 
 var arguments = Array(CommandLine.arguments.dropFirst())

@@ -100,11 +100,16 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
         window.center()
 
         let surface = SketchSurface(
-            frame: NSRect(origin: .zero, size: contentSize), device: gpu.device)
+            frame: NSRect(origin: .zero, size: contentSize), device: gpu.device,
+            input: runtime.input,
+            canvasSize: (runtime.target.width, runtime.target.height))
         surface.wantsLayer = true
         surface.autoresizingMask = [.width, .height]
         window.contentView = surface
         window.makeKeyAndOrderFront(nil)
+        // **面を第一応答者にしないとキーが来ない。** 窓を出したあとに据える —
+        // contentView を差し替えると応答者は窓へ戻る
+        window.makeFirstResponder(surface)
         surface.synchronizeDrawableSize()
 
         self.window = window
