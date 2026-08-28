@@ -123,9 +123,11 @@ fi
 #    承認者集合の**読める代理は .github/CODEOWNERS だけ**である。collaborator の一覧は
 #    Administration 権限を要求し、ADR-0003 決定 1 でエージェントの App は持たない
 #    (ci.yml の review-gate ジョブも contents/issues/pull-requests の read しか宣言
-#    していない)。reviewDecision も使えない — ルールセットの
-#    required_approving_review_count は 0 のままなので (ADR-0003 決定 4)、重要パスに
-#    触れない verify: human の PR では空で返る。CODEOWNERS ならチェックアウト済みの
+#    していない)。reviewDecision も使えない — **このリポジトリでは常に空で返る**。
+#    required_approving_review_count は 0 のままで (ADR-0003 決定 4)、重要パスの
+#    承認を課している required_reviewers ルールの要求は reviewDecision に映らない
+#    (#249 で実測。承認して BLOCKED が CLEAN に変わった後も空のまま)。承認の要否を
+#    機械で読むなら mergeStateStatus を見る。CODEOWNERS ならチェックアウト済みの
 #    ファイルを読むだけで済む。
 #
 #    App が作った PR は集合に入りようがない (CODEOWNERS にはユーザーとチームしか

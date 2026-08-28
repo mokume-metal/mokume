@@ -84,13 +84,17 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 
 承認数は 0 のまま、重要パスにだけ 1 承認が課る。**決定の意図は一字も変わらず、それを実現する機構だけが変わる。**
 
+**実測 ([#249](https://github.com/mokume-metal/mokume/issues/249))** — 触ったパス以外を揃えた使い捨て PR 2 本で確かめた。重要パスに触れる側は全 check が緑でも `mergeStateStatus` が `BLOCKED` で、Approve すると `CLEAN` に変わる。触れない側は承認なしで `CLEAN`。**承認すれば通るブロック**であり、[ADR-0007](0007-approvability-invariant.md) の不変条件は保たれている。
+
+**ただし `reviewDecision` には現れない。** この API が映すのは `required_approving_review_count` 側の要件だけで、`required_reviewers` ルールの要求は承認の前も後も空 (null) で返る。承認の要否・充足を機械で読むなら **`mergeStateStatus`** を見る。#211 の誤診も `reviewRequests` の空を「要求が飛んでいない」と読んだものだった — **レビュー系の API は、機構ごとに何を映すかが違う**。
+
 `reviewer` に書けるのは **Team だけ** (User 不可) なので、org に `maintainers` チームを置く。CODEOWNERS は残す — 「誰に要求するか」と、[ADR-0007](0007-approvability-invariant.md) 決定 3 が承認者集合を読むための代理を担う。`require_code_owner_review` も有効のままでよい (ブロックはしないが、自動要求はこれで飛ぶ)。**新しい機構は 1 つも足していない** — `main-protection.json` の空配列を埋めただけである ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) 決定 5)。
 
 あわせて `dismiss_stale_reviews_on_push` を有効にし、弱点 2 を塞ぐ。
 
 ### 5. 承認を CI から追い出す
 
-承認待ちは required check の赤ではなく、GitHub の **Review required** という PR の状態で表現される。これは failing check ではないため、`ci-gate` の赤は本物の故障だけを意味するようになる (弱点 3 の解消)。
+承認待ちは required check の赤ではなく、**PR の状態** (`mergeStateStatus` が `BLOCKED`) で表現される。これは failing check ではないため、`ci-gate` の赤は本物の故障だけを意味するようになる (弱点 3 の解消)。
 
 `review-gate` は重要パス判定とラベル fallback を失い、mokume 固有の三点だけを見る短いスクリプトに縮む。
 
