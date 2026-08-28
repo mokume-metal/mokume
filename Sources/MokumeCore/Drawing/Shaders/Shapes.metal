@@ -18,6 +18,9 @@ vertex ShapeFragmentIn shapeVertexMain(
     out.position = projection * float4(vertices[index].position, 0.0, 1.0);
     out.uv = vertices[index].uv;
     out.color = vertices[index].color;
+    // 平面は光を受けない。列が「光 0 個」を渡すので、ここは 0 で足りる
+    out.worldPosition = float3(0.0);
+    out.normal = float3(0.0);
     return out;
 }
 
@@ -52,5 +55,8 @@ vertex ShapeFragmentIn solidVertexMain(
     out.position = viewProjection * float4(vertices[index].position, 1.0);
     out.uv = vertices[index].uv;
     out.color = vertices[index].color;
+    // 光は世界の座標で当たるので、変換を掛けたあとの位置と向きを渡す
+    out.worldPosition = vertices[index].position;
+    out.normal = vertices[index].normal;
     return out;
 }

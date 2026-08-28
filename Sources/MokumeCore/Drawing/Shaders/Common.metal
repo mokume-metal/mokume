@@ -17,7 +17,75 @@ struct ShapeFragmentIn {
     float4 position [[position]];
     float2 uv;
     float4 color;
+    /// 世界の座標での位置。立体だけが使う (平面は 0)。
+    float3 worldPosition;
+    /// 面の向き。立体だけが使う (平面は 0)。
+    float3 normal;
 };
+
+/// 置いた光 1 つぶん。並びは Swift 側の `Light` と一致する。
+struct Light {
+    /// 色 (線形・明るさの倍率) と、種類。
+    float4 colorAndKind;
+    /// 世界の座標での位置 (点光源とスポット)。
+    float4 position;
+    /// 光が**進む向き**と、広がりの外側の余弦 (スポット)。
+    float4 directionAndCone;
+};
+
+// 光の種類。Light.Kind と対応する
+constant uint kAmbientLight = 0;
+constant uint kDirectionalLight = 1;
+constant uint kPointLight = 2;
+constant uint kSpotLight = 3;
+
+/// この列に効く光が、置き場のどこから何個あるか。
+struct Lighting {
+    uint offset;
+    uint count;
+};
+
+/// 面が受け取る光を合計する。
+///
+/// **光を 1 つも置いていなければ、面はそのままの色で出る** (合計を返さず、呼ぶ側が
+/// 数で分岐する)。環境光は向きを持たないのでそのまま足し、向きを持つ光は面の向きと
+/// のなす角で減る (拡散のみ。粗さや金属らしさは材質の担当)。
+static inline float3 mokume_gatherLight(
+    constant Light *lights, uint offset, uint count,
+    float3 worldPosition, float3 normal)
+{
+    float3 total = float3(0.0);
+    float3 n = normalize(normal);
+    for (uint index = 0; index < count; index++) {
+        constant Light &light = lights[offset + index];
+        uint kind = uint(light.colorAndKind.w);
+        float3 color = light.colorAndKind.rgb;
+
+        if (kind == kAmbientLight) {
+            total += color;
+            continue;
+        }
+
+        // 面から光源へ向かう向き。平行光は「光が進む向き」の逆
+        float3 toLight;
+        float cone = 1.0;
+        if (kind == kDirectionalLight) {
+            toLight = normalize(-light.directionAndCone.xyz);
+        } else {
+            float3 offsetToLight = light.position.xyz - worldPosition;
+            toLight = normalize(offsetToLight);
+            if (kind == kSpotLight) {
+                // 広がりの外は当たらない。縁は少しなめらかにする
+                float alignment = dot(normalize(light.directionAndCone.xyz), -toLight);
+                float outer = light.directionAndCone.w;
+                cone = smoothstep(outer, mix(outer, 1.0, 0.25), alignment);
+            }
+        }
+
+        total += color * max(dot(n, toLight), 0.0) * cone;
+    }
+    return total;
+}
 
 // 面の中身の種類。TextureKind と対応する
 constant uint kCoverage = 0;
@@ -120,6 +188,8 @@ fragment float4 mokume_fragmentMain(
     constant uint &textureKind [[buffer(3)]],
     constant Uniforms &uniforms [[buffer(4)]],
     constant Values &values [[buffer(5)]],
+    constant Lighting &lighting [[buffer(6)]],
+    constant Light *lights [[buffer(7)]],
     texture2d<float> source_texture [[texture(0)]],
     float4 destination [[color(0)]])
 {
@@ -128,6 +198,12 @@ fragment float4 mokume_fragmentMain(
     f.place = in.position.xy / uniforms.resolution;
     f.uv = in.uv;
     f.color = in.color;
+    // 光が 1 つも置かれていなければ、色はそのまま (手本と同じ = 平坦な塗り)
+    if (lighting.count > 0) {
+        float3 received = mokume_gatherLight(
+            lights, lighting.offset, lighting.count, in.worldPosition, in.normal);
+        f.color = float4(in.color.rgb * received, in.color.a);
+    }
     f.texel = source_texture.sample(kGlyphSampler, in.uv);
     f.textureKind = textureKind;
     f.time = uniforms.time;
