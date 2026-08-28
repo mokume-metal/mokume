@@ -7,17 +7,17 @@ import Testing
 @testable import MokumeCore
 
 @Suite("座標変換")
-struct Transform2DTests {
+struct TransformTests {
     @Test("何もしなければ点は動かない")
     func identityKeepsThePoint() {
-        let moved = Transform2D.identity.apply(x: 3, y: 7)
+        let moved = Transform.identity.apply(x: 3, y: 7)
         #expect(moved.x == 3)
         #expect(moved.y == 7)
     }
 
     @Test("平行移動")
     func translationMovesThePoint() {
-        var t = Transform2D.identity
+        var t = Transform.identity
         t.translate(x: 10, y: -4)
         let moved = t.apply(x: 1, y: 1)
         #expect(moved.x == 11)
@@ -27,7 +27,7 @@ struct Transform2DTests {
     @Test("正の角度は画面の上で時計回りに見える")
     func positiveAngleTurnsClockwiseOnScreen() {
         // 縦軸が下向きなので、右向きのベクトルを 90 度回すと「下」を向く
-        var t = Transform2D.identity
+        var t = Transform.identity
         t.rotate(by: .pi / 2)
         let moved = t.apply(x: 1, y: 0)
         #expect(abs(moved.x) < 1e-6)
@@ -36,7 +36,7 @@ struct Transform2DTests {
 
     @Test("拡大縮小")
     func scalingStretchesThePoint() {
-        var t = Transform2D.identity
+        var t = Transform.identity
         t.scale(x: 2, y: 3)
         let moved = t.apply(x: 5, y: 5)
         #expect(moved.x == 10)
@@ -46,7 +46,7 @@ struct Transform2DTests {
     @Test("あとから指定した変換ほど図形に近い")
     func laterTransformsApplyCloserToTheShape() {
         // 移動 → 回転 は「移動した先を中心に回る」
-        var moveThenTurn = Transform2D.identity
+        var moveThenTurn = Transform.identity
         moveThenTurn.translate(x: 100, y: 0)
         moveThenTurn.rotate(by: .pi / 2)
         let a = moveThenTurn.apply(x: 10, y: 0)
@@ -54,7 +54,7 @@ struct Transform2DTests {
         #expect(abs(a.y - 10) < 1e-4)
 
         // 回転 → 移動 は「原点で回してから移動する」— 結果が違う
-        var turnThenMove = Transform2D.identity
+        var turnThenMove = Transform.identity
         turnThenMove.rotate(by: .pi / 2)
         turnThenMove.translate(x: 100, y: 0)
         let b = turnThenMove.apply(x: 10, y: 0)
@@ -74,7 +74,7 @@ struct CircleSegmentTests {
 
     @Test("打ち消す変換を通すと元の点へ戻る")
     func invertingATransformReturnsThePoint() throws {
-        var transform = Transform2D.identity
+        var transform = Transform.identity
         transform.translate(x: 37, y: -12)
         transform.rotate(by: .pi / 3)
         transform.scale(x: 2.5, y: 0.4)
@@ -91,18 +91,18 @@ struct CircleSegmentTests {
 
     @Test("軸を潰した変換には打ち消しが無い")
     func aCollapsedTransformHasNoInverse() {
-        var transform = Transform2D.identity
+        var transform = Transform.identity
         transform.scale(x: 4, y: 0)  // 縦が潰れる
         #expect(transform.inverted == nil)
     }
 
     @Test("合成の順序が結果を変える")
     func theOrderOfCompositionMatters() {
-        var moveThenTurn = Transform2D.identity
+        var moveThenTurn = Transform.identity
         moveThenTurn.translate(x: 50, y: 0)
         moveThenTurn.rotate(by: .pi / 2)
 
-        var turnThenMove = Transform2D.identity
+        var turnThenMove = Transform.identity
         turnThenMove.rotate(by: .pi / 2)
         turnThenMove.translate(x: 50, y: 0)
 
@@ -119,13 +119,13 @@ struct CircleSegmentTests {
 
     @Test("重ねた変換は、順に掛けたものと一致する")
     func concatenationMatchesAppliedSteps() {
-        var stepByStep = Transform2D.identity
+        var stepByStep = Transform.identity
         stepByStep.translate(x: 20, y: 30)
         stepByStep.scale(x: 2, y: 2)
 
-        var second = Transform2D.identity
+        var second = Transform.identity
         second.scale(x: 2, y: 2)
-        var combined = Transform2D.identity
+        var combined = Transform.identity
         combined.translate(x: 20, y: 30)
         combined.concatenate(second)
 
@@ -137,7 +137,7 @@ struct CircleSegmentTests {
 
     @Test("何も変換しない状態へ戻せる")
     func resetReturnsToIdentity() {
-        var transform = Transform2D.identity
+        var transform = Transform.identity
         transform.translate(x: 100, y: 100)
         transform.rotate(by: 1.2)
         transform.reset()

@@ -155,6 +155,8 @@ enum Scene: String, CaseIterable, Sendable {
     case retainedShapes
     /// 利用者が書いた塗りで描いたもの。
     case userShader
+    /// 基本の立体を並べ、回して奥行きが出る向きに置いたもの。
+    case solids
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -525,6 +527,56 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.triangle(18, 0, 34, 40, 2, 40)
                 canvas.pop()
             }
+
+        case .solids:
+            canvas.background(.display(red: 0.07, green: 0.07, blue: 0.09))
+            // 3 x 2 に並べる。どれも回してあるので、輪郭だけで形が読める
+            let places: [(x: Float, y: Float)] = [
+                (32, 34), (64, 34), (96, 34), (32, 94), (64, 94), (96, 94),
+            ]
+
+            canvas.fill(.display(red: 0.95, green: 0.45, blue: 0.3))
+            canvas.push()
+            canvas.translate(places[0].x, places[0].y, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateY(0.7)
+            canvas.box(26)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.5))
+            canvas.push()
+            canvas.translate(places[1].x, places[1].y, 0)
+            canvas.sphere(14)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.35, green: 0.6, blue: 0.95))
+            canvas.push()
+            canvas.translate(places[2].x, places[2].y, 0)
+            canvas.rotateX(0.6)
+            canvas.plane(30, 24)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.9, green: 0.8, blue: 0.2))
+            canvas.push()
+            canvas.translate(places[3].x, places[3].y, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateZ(0.3)
+            canvas.cylinder(11, 28)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.85, green: 0.4, blue: 0.75))
+            canvas.push()
+            canvas.translate(places[4].x, places[4].y, 0)
+            canvas.rotateX(0.5)
+            canvas.cone(13, 28)
+            canvas.pop()
+
+            canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.9))
+            canvas.push()
+            canvas.translate(places[5].x, places[5].y, 0)
+            canvas.rotateX(0.9)
+            canvas.torus(13, 5)
+            canvas.pop()
         }
     }
 }

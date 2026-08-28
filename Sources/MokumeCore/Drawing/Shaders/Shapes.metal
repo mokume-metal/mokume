@@ -29,3 +29,28 @@ vertex ShapeFragmentIn shapeVertexMain(
 float4 paint(Fragment in, Values values) {
     return in.textureKind == kCoverage ? in.color * in.texel.r : in.texel * in.color;
 }
+
+// MARK: - 立体
+//
+// 立体の頂点も**平面と同じ塗りを通る**。ここが出すのは平面と同じ `ShapeFragmentIn` で、
+// 混ぜ方も利用者が書いた断片も、平面のときとまったく同じ経路で効く。だから塗りを
+// 2 本に分けない — 分ければ、片方にだけ効く性質がいずれ生まれる。
+
+struct SolidVertex {
+    float3 position;
+    float3 normal;
+    float2 uv;
+    float4 color;
+};
+
+vertex ShapeFragmentIn solidVertexMain(
+    uint index [[vertex_id]],
+    constant SolidVertex *vertices [[buffer(0)]],
+    constant float4x4 &viewProjection [[buffer(1)]])
+{
+    ShapeFragmentIn out;
+    out.position = viewProjection * float4(vertices[index].position, 1.0);
+    out.uv = vertices[index].uv;
+    out.color = vertices[index].color;
+    return out;
+}

@@ -48,21 +48,49 @@ public final class Canvas {
     private var vertexBuffer: (any MTLBuffer)?
     private var vertexCapacity = 0
 
+    /// 溜めている立体の頂点と、その置き場。
+    ///
+    /// 平面とは別の並びにする — 頂点の中身が違う (奥行きと面の向きを持つ) ためで、
+    /// **順序は列が持つ**ので、別の並びにしても呼び出し順は崩れない。
+    var solidVertices: [SolidVertex] = []
+    private var solidVertexBuffer: (any MTLBuffer)?
+    private var solidVertexCapacity = 0
+
+    /// いま開いている列が、どちらの並びから描かれるか。
+    var openSource = VertexSource.flat
+
+    /// 使い回している立体の形と、最後に使った時刻。
+    var solidMeshes: [SolidShape: SolidMesh] = [:]
+    var solidMeshUse: [SolidShape: Int] = [:]
+    var solidMeshClock = 0
+    /// 立体の形を組み立てた回数 (作ってから通算)。
+    ///
+    /// **畳めているかではなく、作り直していないかを数える値。** 絵は同じでも毎フレーム
+    /// 組み立て直していれば確保が積み上がるので、絵ではなく数で確かめる。
+    var solidMeshesBuilt = 0
+    /// 使い回しの表に置いておく形の数。超えたら古い順に半分捨てる。
+    static let solidMeshCacheLimit = 64
+    /// 一周を割る数の既定。
+    public static let defaultSolidDetail = 24
+
+    /// 置けない寸法を知らせたか。
+    var warnedBadSolidSize = false
+
     /// このフレームで塗り直す色。`nil` なら前の内容の上に描き足す。
     private var pendingBackground: LinearRGBA?
 
     // MARK: - 描く状態
 
-    private var currentFill = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+    var currentFill = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
     private var currentStroke = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
     private var currentStrokeWeight: Float = 1
-    var transform = Transform2D.identity
-    private var transformStack: [Transform2D] = []
+    var transform = Transform.identity
+    private var transformStack: [Transform] = []
     private var currentRectMode = ShapeMode.corner
     private var currentEllipseMode = ShapeMode.center
     private var currentStrokeCap = StrokeCap.round
     private var currentStrokeJoin = StrokeJoin.miter
-    private var hasFill = true
+    var hasFill = true
     private var hasStroke = true
     private var styleStack: [Style] = []
     var currentBlendMode = BlendMode.blend
@@ -86,7 +114,7 @@ public final class Canvas {
     /// この面が作った塗り。観測へ失敗を載せるために持つ。
     var shaders: [Shader] = []
     /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
-    private var whiteUV: SIMD2<Float>
+    var whiteUV: SIMD2<Float>
     /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。
     private var typefaces: [TypefaceRequest: Typeface] = [:]
 
@@ -134,9 +162,27 @@ public final class Canvas {
     /// **切り抜き以外は保持した形の区間と同じもの**なので、``Shape/Run`` をそのまま
     /// 使う。切り抜きだけが別なのは、切り抜きが描画先の座標で効く — つまり形と一緒に
     /// 持ち運べない — ためである。
+    ///
+    /// 落とす行列を**列が持ち歩く**のは、記録した列だけで絵が決まるようにするため
+    /// ([ADR-0021] 決定 2・3)。描くときに「いまの見る位置」を読み直すと、1 フレームの
+    /// 中で視点を変えたときに全部が最後の視点で描かれる。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     struct Batch {
         var run: Shape.Run
         var clip: MTLScissorRect?
+        /// どちらの並びから描くか。
+        var source: VertexSource
+        /// この列を描画先の座標へ落とす行列。
+        var matrix: simd_float4x4
+    }
+
+    /// 列がどちらの並びから描かれるか。
+    enum VertexSource {
+        /// 奥行きを持たない図形・字・画像。
+        case flat
+        /// 奥行きを持つ立体。
+        case solid
     }
 
     /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
@@ -146,6 +192,9 @@ public final class Canvas {
     /// 列ごとの、利用者が渡した値の置き場。列 1 つにつき 1 区画。
     private var valuesBuffer: (any MTLBuffer)?
     private var valuesCapacity = 0
+    /// 列ごとの、描画先の座標へ落とす行列の置き場。列 1 つにつき 1 区画。
+    private var matrixBuffer: (any MTLBuffer)?
+    private var matrixCapacity = 0
     /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
     private static let valuesStride = 256
 
@@ -373,9 +422,14 @@ public final class Canvas {
     }
 
     /// 溜めている頂点を、いまの混ぜ方の列として閉じる。
+    ///
+    /// 位置は**その並びの中で**数える。平面と立体は別の並びに溜まるので、それぞれの
+    /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
-        let start = batches.last.map { $0.run.start + $0.run.count } ?? 0
-        let count = vertices.count - start
+        let start = batches.last(where: { $0.source == openSource })
+            .map { $0.run.start + $0.run.count } ?? 0
+        let pending = openSource == .flat ? vertices.count : solidVertices.count
+        let count = pending - start
         guard count > 0 else { return }
         batches.append(
             Batch(
@@ -383,7 +437,9 @@ public final class Canvas {
                     mode: currentBlendMode, texture: currentTexture,
                     textureKind: currentTextureKind, shader: currentShader,
                     values: currentShader?.packedValues ?? [], start: start, count: count),
-                clip: currentClip))
+                clip: currentClip,
+                source: openSource,
+                matrix: openSource == .flat ? projection : viewProjection))
     }
 
     /// 線の端の形。
@@ -416,7 +472,7 @@ public final class Canvas {
     public func shearY(_ radians: Float) { transform.shearY(by: radians) }
 
     // 与えた変換を、いまの変換の後に重ねる。
-    public func applyMatrix(_ other: Transform2D) { transform.concatenate(other) }
+    public func applyMatrix(_ other: Transform) { transform.concatenate(other) }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
@@ -1179,21 +1235,29 @@ public final class Canvas {
             throw .encoderUnavailable
         }
 
-        if !vertices.isEmpty {
+        if !vertices.isEmpty || !solidVertices.isEmpty {
             let buffer = try vertexBufferHolding(vertices.count)
             vertices.withUnsafeBytes { source in
                 buffer.contents().copyMemory(
                     from: source.baseAddress!, byteCount: source.count)
+            }
+            let solidBuffer = try solidVertexBufferHolding(solidVertices.count)
+            solidVertices.withUnsafeBytes { source in
+                guard let base = source.baseAddress else { return }
+                solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
+            }
+            // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
+            let matrices = try matrixBufferHolding(batches.count)
+            for (index, batch) in batches.enumerated() {
+                var matrix = batch.matrix
+                matrices.contents().advanced(by: index * Self.valuesStride)
+                    .copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
             }
             encoder.setViewport(
                 MTLViewport(
                     originX: 0, originY: 0,
                     width: Double(width), height: Double(height),
                     znear: 0, zfar: 1))
-            pipeline.argumentTable.setAddress(
-                buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
-            pipeline.argumentTable.setAddress(
-                projectionBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
 
             // 時刻と面の大きさは、フレームの中で変わらない
             uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
@@ -1214,7 +1278,23 @@ public final class Canvas {
             }
             for (index, batch) in batches.enumerated() {
                 let run = batch.run
-                encoder.setRenderPipelineState(run.shader?.state ?? pipeline.state)
+                // 並びごとに、頂点の落とし方と奥行きの扱いを切り替える。**平面は奥行きを
+                // 書かない**ので、あとから来た立体の前後関係を汚さない (ADR-0021 決定 2)
+                switch batch.source {
+                case .flat:
+                    encoder.setRenderPipelineState(run.shader?.state ?? pipeline.state)
+                    encoder.setDepthStencilState(pipeline.flatDepthState)
+                    pipeline.argumentTable.setAddress(
+                        buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+                case .solid:
+                    encoder.setRenderPipelineState(pipeline.solidState)
+                    encoder.setDepthStencilState(pipeline.solidDepthState)
+                    pipeline.argumentTable.setAddress(
+                        solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+                }
+                pipeline.argumentTable.setAddress(
+                    matrices.gpuAddress + UInt64(index * Self.valuesStride),
+                    index: ShapePipeline.projectionBufferIndex)
                 pipeline.argumentTable.setAddress(
                     values.gpuAddress + UInt64(index * Self.valuesStride),
                     index: ShapePipeline.valuesBufferIndex)
@@ -1238,14 +1318,16 @@ public final class Canvas {
             }
         }
 
-        drawCallsInLastFrame = vertices.isEmpty ? 0 : batches.count
+        drawCallsInLastFrame = vertices.isEmpty && solidVertices.isEmpty ? 0 : batches.count
         encoder.endEncoding()
         try gpu.commitAndWait(commands)
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる
         vertices.removeAll(keepingCapacity: true)
+        solidVertices.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
+        openSource = .flat
         pendingBackground = nil
     }
 
@@ -1260,6 +1342,27 @@ public final class Canvas {
     }
 
     /// 頂点を置く領域。足りなければ取り直す。
+    /// 立体の頂点を置く領域。足りなければ取り直す。
+    private func solidVertexBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = solidVertexBuffer, solidVertexCapacity >= count { return buffer }
+        let capacity = max(count, max(solidVertexCapacity * 2, 1024))
+        let buffer = try gpu.makeReadableBuffer(
+            byteCount: capacity * MemoryLayout<SolidVertex>.stride)
+        solidVertexBuffer = buffer
+        solidVertexCapacity = capacity
+        return buffer
+    }
+
+    /// 列ごとの行列を置く領域。足りなければ取り直す。
+    private func matrixBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = matrixBuffer, matrixCapacity >= count { return buffer }
+        let capacity = max(count, max(matrixCapacity * 2, 16))
+        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
+        matrixBuffer = buffer
+        matrixCapacity = capacity
+        return buffer
+    }
+
     private func vertexBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
         if let buffer = vertexBuffer, vertexCapacity >= count { return buffer }
         let capacity = max(count, max(vertexCapacity * 2, 1024))
