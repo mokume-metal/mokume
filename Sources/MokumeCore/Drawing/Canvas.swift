@@ -44,7 +44,7 @@ public final class Canvas {
     private let projectionBuffer: any MTLBuffer
 
     /// 溜めている頂点と、その置き場。
-    private var vertices: [ShapeVertex] = []
+    var vertices: [ShapeVertex] = []
     private var vertexBuffer: (any MTLBuffer)?
     private var vertexCapacity = 0
 
@@ -56,7 +56,7 @@ public final class Canvas {
     private var currentFill = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
     private var currentStroke = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
     private var currentStrokeWeight: Float = 1
-    private var transform = Transform2D.identity
+    var transform = Transform2D.identity
     private var transformStack: [Transform2D] = []
     private var currentRectMode = ShapeMode.corner
     private var currentEllipseMode = ShapeMode.center
@@ -65,8 +65,8 @@ public final class Canvas {
     private var hasFill = true
     private var hasStroke = true
     private var styleStack: [Style] = []
-    private var currentBlendMode = BlendMode.blend
-    private var currentClip: MTLScissorRect?
+    var currentBlendMode = BlendMode.blend
+    var currentClip: MTLScissorRect?
     /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
     var hasLoadedPixels = false
 
@@ -78,9 +78,9 @@ public final class Canvas {
     /// 字形を焼いて溜める面。**図形もここの白い区画を読む** (``GlyphAtlas``)。
     let atlas: GlyphAtlas
     /// いま列が読んでいる面。面を広げる・画像を描くと差し替わる。
-    private var currentTexture: any MTLTexture
+    var currentTexture: any MTLTexture
     /// いま読んでいる面の中身の種類。
-    private var currentTextureKind = TextureKind.coverage
+    var currentTextureKind = TextureKind.coverage
     /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
     private var whiteUV: SIMD2<Float>
     /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。
@@ -123,16 +123,16 @@ public final class Canvas {
     /// 混ぜ方を変える操作がその時点で列を閉じるので、既に置いた図形が後の設定で
     /// 描かれることがない。閉じ忘れると絵は「たまに」おかしくなる — 設定を変えない
     /// 単純なスケッチでは一生出ないので、規律として持つ。
-    private var batches: [Batch] = []
+    var batches: [Batch] = []
 
     /// 閉じた列ひとつぶん。
-    private struct Batch {
-        var mode: BlendMode
+    ///
+    /// **切り抜き以外は保持した形の区間と同じもの**なので、``Shape/Run`` をそのまま
+    /// 使う。切り抜きだけが別なのは、切り抜きが描画先の座標で効く — つまり形と一緒に
+    /// 持ち運べない — ためである。
+    struct Batch {
+        var run: Shape.Run
         var clip: MTLScissorRect?
-        var texture: any MTLTexture
-        var textureKind: TextureKind
-        var start: Int
-        var count: Int
     }
 
     /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
@@ -356,14 +356,16 @@ public final class Canvas {
     }
 
     /// 溜めている頂点を、いまの混ぜ方の列として閉じる。
-    private func closeBatch() {
-        let start = batches.last.map { $0.start + $0.count } ?? 0
+    func closeBatch() {
+        let start = batches.last.map { $0.run.start + $0.run.count } ?? 0
         let count = vertices.count - start
         guard count > 0 else { return }
         batches.append(
             Batch(
-                mode: currentBlendMode, clip: currentClip, texture: currentTexture,
-                textureKind: currentTextureKind, start: start, count: count))
+                run: Shape.Run(
+                    mode: currentBlendMode, texture: currentTexture,
+                    textureKind: currentTextureKind, start: start, count: count),
+                clip: currentClip))
     }
 
     /// 線の端の形。
@@ -1136,6 +1138,12 @@ public final class Canvas {
         try flush()
     }
 
+    /// 直前のフレームで描画を呼んだ回数。
+    ///
+    /// **畳めているかを数えるための値。** 絵が同じでも畳まれていなければ保持は目的を
+    /// 果たしていないので、絵ではなく回数で確かめる。
+    private(set) var drawCallsInLastFrame = 0
+
     /// 検査から「描けなかったフレーム」を作るための差し込み。製品の経路では常に `nil`。
     ///
     /// 描画の失敗は環境か資源が枯れたときにしか起きず、検査から自然には作れない。
@@ -1170,26 +1178,28 @@ public final class Canvas {
             pipeline.argumentTable.setAddress(
                 projectionBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
             for batch in batches {
+                let run = batch.run
                 encoder.setScissorRect(
                     batch.clip
                         ?? MTLScissorRect(x: 0, y: 0, width: Int(width), height: Int(height)))
                 pipeline.argumentTable.setAddress(
                     blendModeBuffer.gpuAddress
-                        + UInt64(Int(batch.mode.rawIndex) * Self.blendModeStride),
+                        + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
                     index: ShapePipeline.blendModeBufferIndex)
                 pipeline.argumentTable.setTexture(
-                    batch.texture.gpuResourceID, index: ShapePipeline.textureIndex)
+                    run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
                 pipeline.argumentTable.setAddress(
                     textureKindBuffer.gpuAddress
-                        + UInt64(Int(batch.textureKind.rawValue) * Self.blendModeStride),
+                        + UInt64(Int(run.textureKind.rawValue) * Self.blendModeStride),
                     index: ShapePipeline.textureKindBufferIndex)
                 encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
                 encoder.drawPrimitives(
                     primitiveType: .triangle,
-                    vertexStart: batch.start, vertexCount: batch.count)
+                    vertexStart: run.start, vertexCount: run.count)
             }
         }
 
+        drawCallsInLastFrame = vertices.isEmpty ? 0 : batches.count
         encoder.endEncoding()
         try gpu.commitAndWait(commands)
 

@@ -151,6 +151,8 @@ enum Scene: String, CaseIterable, Sendable {
     case images
     /// 描いた図形を画素として読み、書き換えて戻したもの。
     case pixels
+    /// 保持した形を並べ、組にしたものを置いたもの。
+    case retainedShapes
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -432,6 +434,48 @@ enum Scene: String, CaseIterable, Sendable {
                                 blue: color.red, alpha: color.alpha))
                 }
             }
+
+        case .retainedShapes:
+            canvas.background(.display(red: 0.07, green: 0.08, blue: 0.1))
+
+            // 組み立ての中で色を決める。置くときの塗りは効かない
+            let leaf = canvas.createShape {
+                canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.45))
+                canvas.stroke(.display(red: 0.12, green: 0.35, blue: 0.2))
+                canvas.strokeWeight(2)
+                canvas.beginShape()
+                canvas.vertex(0, -14)
+                canvas.bezierVertex(10, -9, 10, 9, 0, 14)
+                canvas.bezierVertex(-10, 9, -10, -9, 0, -14)
+                canvas.endShape(.close)
+            }
+            let berry = canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(.display(red: 0.95, green: 0.35, blue: 0.4))
+                canvas.circle(0, 0, 9)
+            }
+
+            // 上段: 1 枚ずつ置く。**置く前に塗りを変えても形の色は変わらない**
+            canvas.fill(.display(red: 0, green: 0, blue: 1))
+            for index in 0..<4 {
+                canvas.push()
+                canvas.translate(22 + Float(index) * 28, 28)
+                canvas.rotate(Float(index) * 0.35)
+                canvas.shape(leaf)
+                canvas.pop()
+            }
+
+            // 下段: 組にしたものを 1 回で置く
+            let branch = Shape.group(
+                (0..<6).map { index in
+                    canvas.createShape {
+                        canvas.push()
+                        canvas.translate(Float(index) * 19, Float(index % 2) * 14)
+                        canvas.shape(index % 2 == 0 ? leaf : berry)
+                        canvas.pop()
+                    }
+                })
+            canvas.shape(branch, 16, 76)
 
         case .joins:
             // 折れ目の形 3 通り。閉じた形の角に効くことを見るので三角形で描く
