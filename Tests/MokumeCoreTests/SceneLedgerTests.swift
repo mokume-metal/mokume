@@ -143,6 +143,10 @@ enum Scene: String, CaseIterable, Sendable {
     /// 変われば、絵は変わっていなくてもこの行は動く。土台の書体には版の変わりにくい
     /// ものを選んであるが、覆えない字の引き当て先までは選べない。
     case text
+    /// 矩形へ流し込んだ文字と、取り出した輪郭。
+    ///
+    /// ``text`` と同じく、この環境が持つ書体の字形に依る。
+    case textFlow
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -332,6 +336,40 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.textSize(24)
             canvas.fill(.display(red: 0.5, green: 0.9, blue: 0.6))
             canvas.text("あ", 122, 122)
+
+        case .textFlow:
+            canvas.background(.display(red: 0.08, green: 0.08, blue: 0.1))
+            canvas.textFont("Helvetica")
+            canvas.textSize(13)
+
+            // 流し込む矩形を先に描いてから、その中へ流す
+            canvas.noFill()
+            canvas.stroke(.display(red: 0.3, green: 0.35, blue: 0.45))
+            canvas.strokeWeight(1)
+            canvas.rect(6, 6, 76, 56)
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.85, green: 0.9, blue: 0.95))
+            let flow = canvas.text(
+                "the grain of wood shows where it grew", 6, 6, 76, 56)
+
+            // 入りきらなかった続きは、右の細い段へ文字の切れ目で折って流す
+            canvas.textWrap(.character)
+            canvas.fill(.display(red: 0.5, green: 0.9, blue: 0.6))
+            canvas.text(flow.remainder, 88, 6, 34, 56)
+
+            // 輪郭は線でなぞる。塗った字と同じ場所・同じ字間に出る
+            canvas.noFill()
+            canvas.stroke(.display(red: 0.95, green: 0.6, blue: 0.3))
+            canvas.strokeWeight(1)
+            canvas.textSize(30)
+            for contour in canvas.textOutline("mo", 8, 108) {
+                canvas.beginShape()
+                for point in contour.points { canvas.vertex(point.x, point.y) }
+                canvas.endShape(.close)
+            }
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+            canvas.text("ku", 8 + canvas.textWidth("mo"), 108)
 
         case .joins:
             // 折れ目の形 3 通り。閉じた形の角に効くことを見るので三角形で描く

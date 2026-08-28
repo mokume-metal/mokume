@@ -407,4 +407,53 @@ extension Sketch {
 
     /// 基準線から下へ伸びる深さ (画素)。
     public func textDescent() -> Float { canvas.textDescent() }
+
+    /// 矩形の中へ文字列を流し込む。
+    ///
+    /// ```swift
+    /// let flow = text(long, 20, 20, 200, 120)
+    /// text(flow.remainder, 240, 20, 200, 120)   // 入りきらなかった続きを隣の段へ
+    /// ```
+    ///
+    /// 4 つの数の読み方は ``rectMode(_:)`` が決める — ``rect(_:_:_:_:)`` と同じ約束である。
+    /// 幅で折り返し、**高さに収まる行だけ**を置く。折り返す場所は ``textWrap(_:)``。
+    ///
+    /// 返る値は「何行置いたか・どれだけの高さを使ったか・何が残ったか」。**続きを
+    /// どこから描くかを自分で数え直さずに済む**ように返している。
+    ///
+    /// 縦の指定 (``textAlign(_:_:)``) は置いた塊全体に効く。矩形の中では基準線に
+    /// 意味が無いので、基準線指定は上揃えと同じに扱う。
+    @discardableResult
+    public func text(_ string: String, _ a: Float, _ b: Float, _ c: Float, _ d: Float)
+        -> TextFlow
+    {
+        canvas.text(string, a, b, c, d)
+    }
+
+    /// 幅に収まらなくなったとき、どこで行を折るか。既定は語の切れ目。
+    ///
+    /// 語の切れ目で折るとき、**1 語が幅より長ければその語の中で折る** —
+    /// でないと置き場所が無くなる。
+    public func textWrap(_ mode: TextWrap) { canvas.textWrap(mode) }
+
+    /// 文字列の輪郭を取り出す。
+    ///
+    /// ```swift
+    /// noFill()
+    /// stroke(.display(red: 1, green: 1, blue: 1))
+    /// for contour in textOutline("mokume", 20, 100) {
+    ///     beginShape()
+    ///     for point in contour.points { vertex(point.x, point.y) }
+    ///     endShape(.close)
+    /// }
+    /// ```
+    ///
+    /// **描くときと同じ送り**で並ぶので、``text(_:_:_:)`` と同じ位置・同じ字間になる。
+    /// 返る点はいまの座標のままで、変換は掛かっていない。
+    ///
+    /// 字ごとに、外側の周が先・穴が後の順で並ぶ。曲線は直線の並びにほどいてあり、
+    /// 細かさは曲線の大きさから決まる。
+    public func textOutline(_ string: String, _ x: Float, _ y: Float) -> [TextContour] {
+        canvas.textOutline(string, x, y)
+    }
 }
