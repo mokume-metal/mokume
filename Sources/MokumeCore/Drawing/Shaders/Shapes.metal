@@ -50,16 +50,23 @@ static inline float3 straighten(float4 color) {
 constexpr sampler kGlyphSampler(
     coord::normalized, filter::linear, address::clamp_to_edge);
 
+// 面の中身の種類。TextureKind と対応する
+constant uint kCoverage = 0;
+
 fragment float4 shapeFragmentMain(
     ShapeFragmentIn in [[stage_in]],
     constant uint &mode [[buffer(2)]],
-    texture2d<float> glyphs [[texture(0)]],
+    constant uint &textureKind [[buffer(3)]],
+    texture2d<float> source_texture [[texture(0)]],
     float4 destination [[color(0)]])
 {
-    // **図形は白い区画を指すので、掛けても色は変わらない。** 字だけが
-    // 覆っている割合で薄くなる
-    float coverage = glyphs.sample(kGlyphSampler, in.uv).r;
-    float4 source = in.color * coverage;
+    float4 texel = source_texture.sample(kGlyphSampler, in.uv);
+
+    // 覆っている割合の面なら、それを色に掛ける — **図形は白い区画を指すので
+    // 掛けても色は変わらず**、字だけが縁で薄くなる。色そのものの面 (画像) なら、
+    // 読んだ色に色掛けを掛ける。どちらも乗算済みどうしの積なので式は素直になる
+    float4 source =
+        textureKind == kCoverage ? in.color * texel.r : texel * in.color;
 
     // 置き換えるモードだけは下地を見ない
     if (mode == kReplace) {

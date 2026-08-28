@@ -14,6 +14,10 @@ enum RunCommand {
             throw .packageNotFound(path: directory.path)
         }
 
+        // **走らせる前に見る。** 宣言の抜けはビルドを通ってしまうので、ビルドの
+        // 後では「通ったのに絵が出ない」形になる
+        try ResourceDeclaration.check(in: directory)
+
         try build(in: directory)
         let executable = try executablePath(in: directory)
         try launch(executable, in: directory)

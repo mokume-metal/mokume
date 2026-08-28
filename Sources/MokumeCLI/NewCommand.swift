@@ -99,6 +99,18 @@ enum NewCommand {
                     try Templates.render("Sketch.swift.template", values)
                 ),
                 (".gitignore", try Templates.render("gitignore.template", values)),
+                // 宣言した置き場は実在しなければならない。空のままでも道具立てが
+                // 受け付けるよう、読み手への説明を 1 枚置く
+                (
+                    "Sources/\(target)/assets/README.md",
+                    """
+                    画像・音・データはこの場所へ置く。
+
+                    `Package.swift` が `resources: [.copy("assets")]` と宣言しているので、
+                    ここへ置いたものは実行ファイルの隣へ運ばれ、`loadImage("assets/名前.png")`
+                    のように名前で読める。**置き場を変えるなら宣言も変えること。**
+                    """
+                ),
             ]
         } catch let failure as CommandFailure {
             throw failure

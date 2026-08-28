@@ -51,13 +51,24 @@ struct NewCommandTests {
         #expect(NewCommand.packageIdentity(local: "/a/b/work-copy") == "work-copy")
     }
 
-    @Test("作られるのは 3 つ — 定義・スケッチ・無視の指定")
-    func writesThePackageTheSketchAndTheIgnoreFile() throws {
+    @Test("作られるのは 4 つ — 定義・スケッチ・無視の指定・資材の置き場")
+    func writesThePackageTheSketchTheIgnoreFileAndTheAssetsDirectory() throws {
         let files = try NewCommand.files(for: .init(name: "my-sketch"))
         #expect(
             files.map(\.0) == [
                 "Package.swift", "Sources/my-sketch/MySketch.swift", ".gitignore",
+                "Sources/my-sketch/assets/README.md",
             ])
+    }
+
+    @Test("スケッチの入口は、資材を足しても壊れない形で書かれている")
+    func theEntryPointSurvivesAddingResources() throws {
+        let files = try NewCommand.files(for: .init(name: "my-sketch"))
+        let sketch = try #require(files.first { $0.0.hasSuffix("MySketch.swift") }?.1)
+        // **一番上に式を置かない。** 置く形は「対象の中身が 1 つだけ」のときしか
+        // 通らないので、利用者が資材を 1 つ足した時点で組み上がらなくなる
+        #expect(sketch.contains("@main"))
+        #expect(!sketch.contains("MySketch.main()"))
     }
 
     @Test("作られた定義は、実行ファイルを宣言している")
