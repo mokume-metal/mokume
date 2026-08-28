@@ -60,7 +60,34 @@ PR に付くのは **CI の判定を変えるラベルだけ**で、現状は 2 
 
 PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が green なら、指示を待たず `gh pr merge --auto` で **merge queue に投入してよい**。queue が「合流後の姿」で `ci-gate` を再検証してから main に入れるため、人手で CI を見張って merge する運用はしない。main への直接 push・force push はルールセットが禁止している。マージ後は main に戻って pull する。
 
-**承認が要る PR でも、先に `gh pr merge --auto` を有効化しておく。** auto-merge はゲートを飛び越えない — 承認が要る PR では予約として振る舞い、承認された瞬間に queue へ入る。こうするとメンテナの操作が **Approve 1 回で完結**し、マージのために戻ってくる必要がなくなる。承認後に push すると承認は自動で外れ (`dismiss_stale_reviews_on_push`)、auto-merge は待機に戻る。
+**承認が要る PR でも、先に `gh pr merge --auto` を有効化しておく。** auto-merge はゲートを飛び越えない — 承認が要る PR では予約として振る舞い、承認された瞬間に queue へ入る。こうするとメンテナの操作が **Approve 1 回で完結**し、マージのために戻ってくる必要がなくなる。
+
+**`BEHIND` でも "Update branch" は押さない。** 必須チェックは `strict` を切ってあるので追随しなくても merge でき、その上 queue が合流後の姿で `ci-gate` を再検証する — 追随は **queue がこれからやることの前借り**にしかならない。得るものが無いのに **auto-merge だけが外れて PR が止まる** ([#110](https://github.com/mokume-metal/mokume/pull/110))。文字の衝突は GitHub が `DIRTY` で止め、意味的な衝突は合流後の main の CI が拾うので、追随しないことで壊れる経路は塞がっている。
+
+**承認と auto-merge は別々に外れる。** どちらが外れるかは出来事で違い、しかも **"Update branch" だけはタイムラインに何も残さない** — だから画面上は「承認済み・全チェック緑」に見えたまま止まり、原因に辿り着けない ([#114](https://github.com/mokume-metal/mokume/issues/114) で実測):
+
+| 出来事 | 承認 | auto-merge | タイムラインに残るもの |
+| --- | --- | --- | --- |
+| 実装コミットを push | **外れる** (`dismiss_stale_reviews_on_push`) | 残る (承認待ちに戻る) | `ReviewDismissedEvent` |
+| base ブランチが変わる | **外れる** | 残る | `ReviewDismissedEvent` (`The base branch was changed.`) |
+| "Update branch" で main を取り込む | 残る | **外れる** | **何も残らない** |
+| merge queue へ入る | — | `false` に見える (queue へ移った正常な表示) | — |
+
+実測の出所は上から [#279](https://github.com/mokume-metal/mokume/pull/279)・[#281](https://github.com/mokume-metal/mokume/pull/281)・[#110](https://github.com/mokume-metal/mokume/pull/110)・[#94](https://github.com/mokume-metal/mokume/pull/94)。
+
+**下 2 行はどちらも `autoMerge: false` に見える**ので、`mergeStateStatus` と組で読んで見分ける (承認待ちなら `BLOCKED`):
+
+```bash
+gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
+```
+
+queue に入っているかはこの経路では見えない (`gh pr view --json` に欄が無い)。要るときだけ GraphQL を引く:
+
+```bash
+gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullRequest(number:110){isInMergeQueue mergeStateStatus autoMergeRequest{enabledAt}}}}'
+```
+
+外れていたら `gh pr merge <番号> --auto --squash` を打ち直すだけでよい。
 
 **承認が要るかは 2 つの機構が決める** ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) / [ADR-0003](docs/decisions/0003-agent-identity-separation.md)):
 
@@ -80,7 +107,7 @@ PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が g
 
 承認は **native の Approve レビュー**のみ。暫定だった `review: approved` ラベルは廃止した — エージェント自身も付けられるため、ゲートとして成立していなかった。
 
-auto-merge を有効にしたのに PR が止まって見えるときは、**同じコミットに残っている古い失敗した check run** が判定を固定していることがある。最新の run が全て緑でも解けない — [#259](https://github.com/mokume-metal/mokume/issues/259) では 2 本目の run の完了から 5 分 35 秒 `BLOCKED` のままだった。失敗した run を再実行して上書きする (`--failed` は check run を作り足さず既存を上書きするので、これで解ける):
+**auto-merge が外れていない**のに止まって見えるときは、**同じコミットに残っている古い失敗した check run** が判定を固定していることがある。最新の run が全て緑でも解けない — [#259](https://github.com/mokume-metal/mokume/issues/259) では 2 本目の run の完了から 5 分 35 秒 `BLOCKED` のままだった。失敗した run を再実行して上書きする (`--failed` は check run を作り足さず既存を上書きするので、これで解ける):
 
 ```bash
 gh run rerun <run-id> --failed
