@@ -61,9 +61,13 @@ SPDX-License-Identifier: MIT
 
 ウィンドウとアプリケーションのライフサイクルは AppKit で持つ。パラメータ操作などの GUI は SwiftUI で作る ([#136](https://github.com/mokume-metal/mokume/issues/136) の設計はこの前提に載る)。
 
-### 5. 前面でないときもフレームレートを維持することを要件とする
+### 5. 窓が画面に出ていないときもフレームレートを維持することを要件とする
 
-アプリが前面でない状態でも描画のフレームレートが落ちないことを機能要件とする。**実現手段は本 ADR では決めない** — 実装時に、実際に落ちることを確認してから対処する ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md))。ただし要件であることは先に固定する。落ちてから「仕様です」と言わないためである。
+アプリの窓が画面に出ていない状態 — 背面・他の窓による被覆・別の Space・**最小化** — でも描画のフレームレートが落ちないことを機能要件とする。**実現手段は本 ADR では決めない** — 実装時に、実際に落ちることを確認してから対処する ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md))。ただし要件であることは先に固定する。落ちてから「仕様です」と言わないためである。
+
+当初この決定は「アプリが前面でない状態」としか言っておらず、最小化は文言の外にあった。そして実際に、最小化でだけフレームループごと止まった — 面 (`NSView`) に紐づけた駆動源は面が hidden になると呼ばれなくなるためで、絵が止まるだけでなく観測も入力も応答しなくなっていた ([#223](https://github.com/mokume-metal/mokume/issues/223))。**背面・被覆・Space・最小化はどれも「窓が画面に出ていない」という 1 つの状態**であり、前面かどうかだけを名指しすると残りが要件の外に落ちる。上映やライブで窓を畳んだ瞬間に絵が止まってよい理由は無い。
+
+**「落ちない」のは描くほうで、出すほうではない。** 窓が見えていない間は画面へ差し出すのを飛ばし、描画そのものは続ける。観測が返すのは「最後に描いた絵」ではなく「いま描いた絵」であるべきで ([ADR-0018](0018-observation-and-control-surface.md))、描くほうを止めるとその約束が窓の状態で緩む。
 
 ## 影響
 
@@ -72,7 +76,8 @@ SPDX-License-Identifier: MIT
 - 決定 2・3 により、[ADR-0011](0011-color-model.md) 決定 5 の EDR opt-in は「表示面の設定を実行時に切り替える」という形で実装できる
 - 決定 3 により、[ADR-0010](0010-concurrency-model.md) の main actor 既定と噛み合う — フレームの駆動が main actor 上の 1 箇所に集まり、描画順が確定する
 - 決定 4 により、GUI の状態管理は SwiftUI の仕組みに載る。パラメータ機構 ([#136](https://github.com/mokume-metal/mokume/issues/136)) はこれを前提に設計する
-- 決定 5 は要件だけを固定し、手段を持たない。実装時に**実際に落ちることを確認する**手順が必要になる
+- 決定 5 は要件だけを固定し、手段を持たない。実装時に**実際に落ちることを確認する**手順が必要になる (`scripts/measure-frame-rate.sh` が前面・背面・最小化の 3 条件で測り、`scripts/check-observation-roundtrip.sh --minimized` が畳んだ窓での応答を数える)
+- 決定 5 の射程を最小化まで広げても、**駆動源は 1 つのまま**でよかった。時間で叩く 2 本目の駆動源を足す案もあったが、駆動源を面ではなく画面 (`NSScreen`) に紐づけるだけで最小化中も 60fps を保ったので、足していない ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) — 実害を示せない機構は足さない)
 
 [MTKView]: https://developer.apple.com/documentation/metalkit/mtkview
 [CAMetalLayer]: https://developer.apple.com/documentation/quartzcore/cametallayer

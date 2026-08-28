@@ -11,6 +11,13 @@ import QuartzCore
 /// 判断はランタイムのままで、ここは**表示のリフレッシュに合わせて `advance()` を叩く
 /// 3 つ目の駆動源**を足すだけである ([ADR-0012] 決定 3)。
 ///
+/// ## 駆動源は窓ではなく画面に紐づく
+///
+/// 面 (`NSView`) から取った駆動源は面が hidden になると呼ばれなくなるので、窓を
+/// 最小化した瞬間にフレームループごと止まっていた。画面 (`NSScreen`) から取れば、
+/// 最小化・被覆・Space の切り替えのどれでも止まらない
+/// ([#223](https://github.com/mokume-metal/mokume/issues/223))。
+///
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
 @MainActor
 public final class SketchApplication: NSObject, NSApplicationDelegate {
@@ -22,8 +29,16 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var surface: SketchSurface?
     private var displayLink: CADisplayLink?
+    /// 駆動源を紐づけている画面。張り替えの要否をこれで判断する。
+    private var linkedScreen: NSScreen?
+    /// これまでに 1 度でも画面へ出したか。最初の 1 枚の扱いに使う。
+    private var hasPresented = false
 
     /// 直近に測ったフレームレート。
+    ///
+    /// 数えるのは**進めたフレーム**で、画面へ出した回数ではない。窓が見えていない間も
+    /// スケッチは進み続けるので、ここで出した回数を数えると「最小化したら 0 になった」
+    /// と読めてしまう — 測りたいのは絵が進んでいるかである。
     public private(set) var measuredFrameRate: Double = 0
     private var frameRateWindowStart: Double = 0
     private var frameRateWindowCount = 0
@@ -33,6 +48,15 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
 
     /// 窓がいま画面に出ているか。
     public var isWindowOnScreen: Bool { window?.isVisible ?? false }
+
+    /// 窓の一部でも実際に見えているか。
+    ///
+    /// 最小化・他の窓による被覆・別の Space への切り替えを **1 つの判定で覆う**。
+    /// 最小化だけを特別扱いしないのは、どれも「画面へ出しても誰も見ない」という
+    /// 同じ状態だからである。
+    private var isWindowVisible: Bool {
+        window?.occlusionState.contains(.visible) ?? false
+    }
 
     /// スケッチを画面に出す用意をする。
     ///
@@ -88,16 +112,53 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
 
         NSApp.activate()
 
-        let link = surface.displayLink(target: self, selector: #selector(step(_:)))
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowChangedScreen(_:)),
+            name: NSWindow.didChangeScreenNotification, object: window)
+
+        attachDisplayLink(to: window.screen ?? NSScreen.main)
+        frameRateWindowStart = CACurrentMediaTime()
+    }
+
+    /// フレームの駆動源を画面のリフレッシュに紐づける。
+    ///
+    /// **面 (`NSView`) からではなく画面 (`NSScreen`) から取る。** 面から取った駆動源は
+    /// 面が hidden になると呼ばれなくなる — AppKit のヘッダが `NSView` の側にだけ
+    /// 「If the view is hidden, or not on any display, the callback will not be invoked」と
+    /// 書いている。窓を最小化すると面は hidden になるので、フレームループごと止まり、
+    /// 絵だけでなく観測も入力も応答しなくなっていた (#223)。
+    ///
+    /// 画面に紐づければ、最小化・被覆・Space の切り替えのどれでも止まらない。**最小化を
+    /// 特別扱いする経路も、時間で叩く 2 本目の駆動源も要らない** — どれも「駆動源を
+    /// どこに紐づけるか」1 つの問題だった (ADR-0012 決定 3 の「表示のリフレッシュは
+    /// その駆動源の 1 つ」はそのまま)。
+    private func attachDisplayLink(to screen: NSScreen?) {
+        guard let screen else { return }
+        displayLink?.invalidate()
+
+        let link = screen.displayLink(target: self, selector: #selector(step(_:)))
         // **表示のリフレッシュ率をそのまま使わない。** 画面が 120 Hz なら 120 回
         // 呼ばれてしまい、スケッチが求めたフレームレートが無視される。求めた値を
         // 上限にも下限にも据えて、画面の性能に引きずられないようにする
-        let rate = Float(max(1, settings.frameRate))
+        let rate = Float(max(1, runtime.sketch.settings.frameRate))
         link.preferredFrameRateRange = CAFrameRateRange(
             minimum: rate, maximum: rate, preferred: rate)
         link.add(to: .main, forMode: .common)
-        self.displayLink = link
-        frameRateWindowStart = CACurrentMediaTime()
+
+        displayLink = link
+        linkedScreen = screen
+    }
+
+    /// 窓が別の画面へ移ったら駆動源を張り替える。
+    ///
+    /// 画面ごとにリフレッシュ率が違うので、移った先に付け替えないと駆動が噛み合わない。
+    ///
+    /// **窓がどの画面にも乗っていないときは触らない。** 最小化でも同じ通知が飛び、その
+    /// とき `window.screen` は `nil` を返す — 素直に張り替えると、直そうとした最小化で
+    /// こそ駆動源を失う。
+    @objc private func windowChangedScreen(_ notification: Notification) {
+        guard let screen = window?.screen, screen !== linkedScreen else { return }
+        attachDisplayLink(to: screen)
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -110,11 +171,20 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
     }
 
     /// 表示のリフレッシュごとに 1 フレーム進めて差し出す。
+    ///
+    /// **止めるのは「出す」ほうだけ。** 窓が見えていなくてもフレームは進める — 観測が
+    /// 返すのは「最後に描いた絵」ではなく「いま描いた絵」で (ADR-0018)、進めるのを
+    /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
+    /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
     @objc private func step(_ link: CADisplayLink) {
         guard let surface, let layer = surface.metalLayer else { return }
         do {
             try runtime.advance()
-            try presenter.present(runtime.target, to: layer)
+            if FramePresenter.shouldPresent(
+                windowIsVisible: isWindowVisible, hasPresented: hasPresented)
+            {
+                if try presenter.present(runtime.target, to: layer) { hasPresented = true }
+            }
         } catch {
             // 1 フレーム描けなかったことでアプリケーションごと落とさない。
             // 次のリフレッシュでもう一度試す — ただし**黙って捨てない**
