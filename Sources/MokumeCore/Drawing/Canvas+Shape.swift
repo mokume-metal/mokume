@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeDiagnostics
 import simd
 
 // 保持した形。意味の説明は利用者が最初に触る層 (`Sketch`) が正本で、ここは受け口である
@@ -18,6 +19,7 @@ extension Canvas {
         closeBatch()
         let vertexStart = vertices.count
         let solidStart = solidVertices.count
+        let instanceStart = solidInstances.count
         let runStart = batches.count
 
         // 記録の間に触った状態は外へ出さない。**形自身の座標で記録する**ので、
@@ -44,6 +46,9 @@ extension Canvas {
         // 記録した頂点が戻したあとの設定で閉じられる
         vertices.removeLast(vertices.count - vertexStart)
         solidVertices.removeLast(solidVertices.count - solidStart)
+        // 記録の間に開いた置き場所も抜く。**形は何も動かさない置き場所で置き直される**
+        // ので、記録側で持ち歩く必要が無い
+        solidInstances.removeLast(solidInstances.count - instanceStart)
         batches.removeLast(batches.count - runStart)
         currentTexture = savedTexture
         currentTextureKind = savedTextureKind
@@ -53,9 +58,27 @@ extension Canvas {
         return Shape(vertices: recorded, solidVertices: recordedSolid, runs: Array(runs))
     }
 
-    /// 保持した形を置く。
+    // 保持した形を置く。
     public func shape(_ shape: Shape, _ x: Float = 0, _ y: Float = 0) {
+        place(shape, at: [Placement(x: x, y: y)])
+    }
+
+    // 保持した形を、置き場所ぶんだけまとめて置く。
+    public func shape(_ shape: Shape, at placements: [Placement]) {
+        place(shape, at: placements)
+    }
+
+    /// 保持した形を、渡した置き場所ぶんだけ置く。
+    ///
+    /// **立体の区間は、頂点を 1 度だけ置いて置き場所を並べる。** 平面の区間は
+    /// 置き場所ごとに展開する (平面には置き場所の仕組みが無い)。どちらも、同じ
+    /// 置き場所を 1 つずつ書いたときと同じ絵になる。
+    private func place(_ shape: Shape, at placements: [Placement]) {
         guard !shape.isEmpty else { return }
+        let usable = placements.filter(\.isUsable)
+        if usable.count != placements.count { warnBadPlacement() }
+        guard !usable.isEmpty else { return }
+
         let savedMode = currentBlendMode
         let savedTexture = currentTexture
         let savedTextureKind = currentTextureKind
@@ -66,8 +89,10 @@ extension Canvas {
             blendMode(run.mode)
             useTexture(run.texture, kind: run.textureKind)
             switch run.source {
-            case .flat: place(run, of: shape, at: x, y)
-            case .solid: inSolidBatch { placeSolid(run, of: shape, at: x, y) }
+            case .flat:
+                for placement in usable { place(run, of: shape, at: placement) }
+            case .solid:
+                placeSolid(run, of: shape, at: usable)
             }
         }
 
@@ -77,19 +102,28 @@ extension Canvas {
         useTexture(savedTexture, kind: savedTextureKind)
     }
 
-    /// 平面の区間を置く。
-    private func place(_ run: Shape.Run, of shape: Shape, at x: Float, _ y: Float) {
+    /// 平面の区間を置く。**立体の列が開いていれば閉じる** (呼び出し順どおりに重ねる)。
+    private func place(_ run: Shape.Run, of shape: Shape, at placement: Placement) {
         // **まとめて写してから、その場で移す。** 1 頂点ずつ足すと、置くたびに
         // 溜め場の伸長判定を通ることになる — 保持の速さはここで決まる
         let base = vertices.count
+        beginFlat()
         vertices.append(contentsOf: shape.vertices[run.start..<(run.start + run.count)])
-        let matrix = transform.matrix
+        let matrix = transform.matrix * placement.transform.matrix
+        let tint = placement.fill
         vertices.withUnsafeMutableBufferPointer { buffer in
             for index in base..<(base + run.count) {
                 let point = SIMD4<Float>(
-                    buffer[index].position.x + x, buffer[index].position.y + y, 0, 1)
+                    buffer[index].position.x, buffer[index].position.y, 0, 1)
                 let moved = matrix * point
                 buffer[index].position = SIMD2<Float>(moved.x, moved.y)
+                // 置き場所の色は**掛かる**。渡さなければ何も掛からない
+                if let tint {
+                    let color = buffer[index].color
+                    buffer[index].color = SIMD4<Float>(
+                        color.x * tint.red, color.y * tint.green, color.z * tint.blue,
+                        color.w * tint.alpha)
+                }
             }
         }
     }
@@ -98,23 +132,42 @@ extension Canvas {
     ///
     /// 位置と一緒に**面の向きも移す** — 移さないと、回して置いた形だけ光が付いて
     /// 回らない。位置と違って向きには軸ごとの倍率が逆に効くので、専用の行列を使う。
-    private func placeSolid(_ run: Shape.Run, of shape: Shape, at x: Float, _ y: Float) {
-        let base = solidVertices.count
-        solidVertices.append(
-            contentsOf: shape.solidVertices[run.start..<(run.start + run.count)])
-        let matrix = transform.matrix
-        let normalMatrix = transform.normalMatrix
-        solidVertices.withUnsafeMutableBufferPointer { buffer in
-            for index in base..<(base + run.count) {
-                let position = buffer[index].position
-                let moved =
-                    matrix * SIMD4<Float>(position.x + x, position.y + y, position.z, 1)
-                buffer[index].position = SIMD3<Float>(moved.x, moved.y, moved.z)
-                let normal = normalMatrix * SIMD3<Float>(buffer[index].normal.x,
-                    buffer[index].normal.y, buffer[index].normal.z)
-                // 4 つ目は「形から求めた向きか」なので、移さずそのまま残す
-                buffer[index].normal = SIMD4<Float>(normal, buffer[index].normal.w)
+    private func placeSolid(_ run: Shape.Run, of shape: Shape, at placements: [Placement]) {
+        beginSolids()
+        var placed = 0
+        while placed < placements.count {
+            // **頂点は 1 度だけ置く。** 上限に達したら列を閉じて置き直す — 描く
+            // 回数が増えるだけで、絵は 1 ビットも変わらない
+            closeBatch()
+            let start = solidVertices.count
+            solidVertices.append(
+                contentsOf: shape.solidVertices[run.start..<(run.start + run.count)])
+            retainedSerial += 1
+            openSolid = OpenSolid(
+                source: .retained(serial: retainedSerial), vertexStart: start,
+                vertexCount: run.count, instanceStart: solidInstances.count)
+
+            let room = min(instanceCapacity, placements.count - placed)
+            for placement in placements[placed..<(placed + room)] {
+                let combined = Transform(
+                    matrix: transform.matrix * placement.transform.matrix)
+                solidInstances.append(
+                    SolidInstance(
+                        matrix: combined.matrix, normalMatrix: combined.normalMatrix,
+                        // 記録した頂点が色を持つので、置き場所は**白** (掛けても
+                        // 変わらない)。渡された色があればそれを掛ける
+                        color: placement.fill
+                            ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
             }
+            placed += room
         }
+    }
+
+    /// 置けない置き場所を、初回だけ知らせる。
+    private func warnBadPlacement() {
+        guard !warnedBadPlacement else { return }
+        warnedBadPlacement = true
+        Diagnostics.warn(
+            "shape(at:): 数でない値・無限を含む置き場所があったので、その分は置きませんでした")
     }
 }

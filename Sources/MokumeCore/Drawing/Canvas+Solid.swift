@@ -116,39 +116,66 @@ extension Canvas {
     // MARK: - 置く
 
     /// 形を組み立てて (あるいは使い回して)、いまの変換と塗りで置く。
+    ///
+    /// **同じ形が続く間は、頂点を置き直さない。** 2 個目からは置き場所 (変換と塗り)
+    /// だけが増えるので、1 万個置いても頂点は 1 組で済む。
     func place(_ shape: SolidShape) {
         guard hasFill else { return }
+        beginSolids()
 
-        let mesh = solidMesh(for: shape)
-        let matrix = transform.matrix
-        let normalMatrix = transform.normalMatrix
-        let color = currentFill
-
-        inSolidBatch {
-            solidVertices.reserveCapacity(solidVertices.count + mesh.points.count)
+        if openSolid?.source != .mesh(shape)
+            || solidInstances.count - (openSolid?.instanceStart ?? 0) >= instanceCapacity
+        {
+            // 形が変わった (か、1 列に入る上限に達した)。列を閉じて頂点を置き直す
+            closeBatch()
+            let mesh = solidMesh(for: shape)
+            let start = solidVertices.count
+            solidVertices.reserveCapacity(start + mesh.points.count)
             for point in mesh.points {
-                let moved = matrix * SIMD4<Float>(point.position, 1)
-                appendSolidVertex(
-                    position: SIMD3<Float>(moved.x, moved.y, moved.z),
-                    normal: normalMatrix * point.normal,
-                    color: color)
+                // **形自身の座標のまま置く。** 変換は置き場所が持つ
+                solidVertices.append(
+                    SolidVertex(
+                        position: point.position, normal: point.normal, uv: whiteUV,
+                        color: .opaque(red: 1, green: 1, blue: 1)))
             }
+            openSolid = OpenSolid(
+                source: .mesh(shape), vertexStart: start, vertexCount: mesh.points.count,
+                instanceStart: solidInstances.count)
         }
+
+        solidInstances.append(
+            SolidInstance(
+                matrix: transform.matrix, normalMatrix: transform.normalMatrix,
+                color: currentFill))
     }
 
-    /// 立体の頂点を溜める区間を開く。
-    ///
-    /// 立体の列は**その場で閉じる**。平面と立体が呼び出し順のまま重なるようにするため
-    /// で、続けて置いた立体を 1 つの列へ畳むのはまだしない (畳むこと自体が別の道具の
-    /// 仕事なので、ここでは順序だけを守る)。
-    func inSolidBatch(_ body: () -> Void) {
-        // 平面の列をここで閉じる。閉じないと、あとから置いた立体が先に描かれる
+    /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから
+    /// 置いた立体が先に描かれる。
+    func beginSolids() {
+        guard openSource == .flat else { return }
         closeBatch()
         useGlyphTexture()
         openSource = .solid
+    }
+
+    /// その場で並べる頂点を溜める区間を開く。
+    ///
+    /// 置き場所は**何も動かさないもの 1 つ**。単位行列を掛けても値は変わらないので、
+    /// 組み込みの形と同じ経路を通しても絵は 1 ビットも動かない。
+    func inSolidBatch(_ body: () -> Void) {
+        beginSolids()
+        openFreeformSolid()
         body()
+    }
+
+    /// その場で並べる頂点の列を開く (既に開いていれば何もしない)。
+    func openFreeformSolid() {
+        if openSolid?.source == .freeform { return }
         closeBatch()
-        openSource = .flat
+        openSolid = OpenSolid(
+            source: .freeform, vertexStart: solidVertices.count, vertexCount: 0,
+            instanceStart: solidInstances.count)
+        solidInstances.append(.identity)
     }
 
     /// 立体の頂点を 1 つ溜める。
@@ -159,10 +186,12 @@ extension Canvas {
         position: SIMD3<Float>, normal: SIMD3<Float>, isDerived: Bool = false,
         color: LinearRGBA
     ) {
+        openFreeformSolid()
         solidVertices.append(
             SolidVertex(
                 position: position, normal: normal, isDerived: isDerived, uv: whiteUV,
                 color: color))
+        openSolid?.vertexCount += 1
     }
 
     /// 形を使い回す。**同じ寸法なら組み立て直さない。**

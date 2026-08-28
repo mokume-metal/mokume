@@ -40,6 +40,9 @@ extension Canvas {
                 appendSolidVertex(position: corners[index], normal: .zero, color: white)
             }
         }
+        // **旗を下ろす前に閉じる。** 列は閉じた時点の設定で描かれるので、先に下ろすと
+        // この面が「ただの立体」として閉じられ、周囲ではなく塗りで出る
+        closeBatch()
         backdrop = nil
     }
 

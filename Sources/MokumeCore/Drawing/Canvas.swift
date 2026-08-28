@@ -53,6 +53,48 @@ public final class Canvas {
     /// 平面とは別の並びにする — 頂点の中身が違う (奥行きと面の向きを持つ) ためで、
     /// **順序は列が持つ**ので、別の並びにしても呼び出し順は崩れない。
     var solidVertices: [SolidVertex] = []
+    /// 立体の置き場所。列は自分の区間を指す。
+    var solidInstances: [SolidInstance] = []
+    /// いま開いている立体の列。
+    ///
+    /// **同じ形が続く間は、頂点を置き直さずに置き場所だけを足す。** 形が変わったら
+    /// (あるいは列を分ける設定が変わったら) 閉じて開き直す。
+    var openSolid: OpenSolid?
+    /// 1 つの列に入れる置き場所の上限。
+    ///
+    /// **仕組みの都合ではなく規律である。** 無制限にすると「まとめきれずに列を分ける」
+    /// 経路が普段は絶対に通らないものになり、検査できない分岐が残る (#297 の
+    /// 気をつけること)。検査からはここを下げて、その経路を必ず踏ませる。
+    var instanceCapacity = Canvas.defaultInstanceCapacity
+    /// 上限の既定。
+    static let defaultInstanceCapacity = 8192
+
+    /// 開いている立体の列ひとつぶん。
+    struct OpenSolid {
+        /// 何の頂点を並べているか。**これが変わったら列を閉じる。**
+        var source: SolidSource
+        /// 頂点の並びの中での区間。
+        var vertexStart: Int
+        var vertexCount: Int
+        /// 置き場所の並びの中で、この列が始まる位置。
+        var instanceStart: Int
+    }
+
+    /// 立体の頂点が何から来たか。
+    enum SolidSource: Equatable {
+        /// 組み込みの形。同じ寸法なら頂点を置き直さない。
+        case mesh(SolidShape)
+        /// その場で並べた頂点・線と点・背景。置き場所は 1 つ (何も動かさない)。
+        case freeform
+        /// 保持した形の区間。**呼ぶたびに番号が変わる**ので、続けて置いても
+        /// 別の列になる (同じ形かどうかを値の比較で調べない)。
+        case retained(serial: Int)
+    }
+
+    /// 保持した形を置くたびに増える番号。
+    var retainedSerial = 0
+    /// 置けない置き場所を知らせたか。
+    var warnedBadPlacement = false
     private var solidVertexBuffer: (any MTLBuffer)?
     private var solidVertexCapacity = 0
 
@@ -298,6 +340,11 @@ public final class Canvas {
         var surroundings: PackedSurroundings
         /// この列が影を落とす側か。焼き付けるときに、この旗で選り分ける。
         var castsShadow: Bool
+        /// この列の置き場所が、置き場のどこから何個あるか。
+        ///
+        /// 平面は置き場所を持たない (1 個ぶんだけ描く)。
+        var instanceStart: Int = 0
+        var instanceCount: Int = 1
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -572,10 +619,10 @@ public final class Canvas {
     /// 位置は**その並びの中で**数える。平面と立体は別の並びに溜まるので、それぞれの
     /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
-        let start = batches.last(where: { $0.source == openSource })
+        if openSource == .solid { return closeSolidBatch() }
+        let start = batches.last(where: { $0.source == .flat })
             .map { $0.run.start + $0.run.count } ?? 0
-        let pending = openSource == .flat ? vertices.count : solidVertices.count
-        let count = pending - start
+        let count = vertices.count - start
         guard count > 0 else { return }
         batches.append(
             Batch(
@@ -588,12 +635,37 @@ public final class Canvas {
                 matrix: openSource == .flat ? projection : viewProjection,
                 // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
                 lightRange: openSource == .flat ? 0..<0 : bakeActiveLights(),
-                material: openSource == .flat
-                    ? .default : currentMaterial.receiving(shadow: receivesShadow),
-                viewer: openSource == .flat ? SIMD4(0, 0, -1, 0) : viewer,
+                material: .default,
+                viewer: SIMD4(0, 0, -1, 0),
                 surroundings: bakeSurroundings(),
-                castsShadow: openSource == .solid && castsShadow))
-        if openSource == .solid { warnIfMaterialCannotShow() }
+                castsShadow: false))
+    }
+
+    /// 開いている立体の列を閉じる。
+    ///
+    /// 頂点の区間と置き場所の区間を**両方**持って閉じる。頂点は形ごとに 1 組しか
+    /// 無いので、「最後の列の終わりが次の始まり」という数え方はできない。
+    private func closeSolidBatch() {
+        guard let open = openSolid else { return }
+        openSolid = nil
+        let instanceCount = solidInstances.count - open.instanceStart
+        guard open.vertexCount > 0, instanceCount > 0 else { return }
+        batches.append(
+            Batch(
+                run: Shape.Run(
+                    mode: currentBlendMode, texture: currentTexture,
+                    textureKind: currentTextureKind, shader: currentShader,
+                    values: currentShader?.packedValues ?? [], source: .solid,
+                    start: open.vertexStart, count: open.vertexCount),
+                clip: currentClip,
+                matrix: viewProjection,
+                lightRange: bakeActiveLights(),
+                material: currentMaterial.receiving(shadow: receivesShadow),
+                viewer: viewer,
+                surroundings: bakeSurroundings(),
+                castsShadow: castsShadow,
+                instanceStart: open.instanceStart, instanceCount: instanceCount))
+        warnIfMaterialCannotShow()
     }
 
     /// 効きようのない材質を、初回だけ知らせる ([ADR-0020] 決定 5)。
@@ -633,6 +705,18 @@ public final class Canvas {
         if let backdrop { return backdrop.packed(isBackdrop: true) }
         guard openSource == .solid, let activeSurroundings else { return .none }
         return activeSurroundings.packed()
+    }
+
+    /// 平面を溜める側へ戻る。**立体の列が開いていれば閉じる。**
+    ///
+    /// 立体の列を開いたまま平面を溜めると、呼び出し順どおりの重なりが崩れる
+    /// ([ADR-0021] 決定 2)。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    func beginFlat() {
+        guard openSource == .solid else { return }
+        closeBatch()
+        openSource = .flat
     }
 
     /// いま効いている光を置き場へ写し、その区間を返す。
@@ -1122,6 +1206,7 @@ public final class Canvas {
     private func appendGlyphVertex(
         _ position: SIMD2<Float>, _ uv: SIMD2<Float>, _ color: LinearRGBA
     ) {
+        beginFlat()
         vertices.append(ShapeVertex(position: position, uv: uv, color: color))
     }
 
@@ -1189,6 +1274,7 @@ public final class Canvas {
     ) {
         // **図形は白い区画を読む。** 直前に画像を描いていたら、その面を読んだままに
         // なるので戻す (変わらなければ何も起きない)
+        beginFlat()
         useGlyphTexture()
         vertices.append(ShapeVertex(position: a, uv: whiteUV, color: colors.0))
         vertices.append(ShapeVertex(position: b, uv: whiteUV, color: colors.1))
@@ -1263,6 +1349,12 @@ public final class Canvas {
                 buffer.contents().copyMemory(
                     from: source.baseAddress!, byteCount: source.count)
             }
+            let instanceBuffer = try solidInstanceBufferHolding(max(solidInstances.count, 1))
+            solidInstances.withUnsafeBytes { source in
+                guard let base = source.baseAddress, source.count > 0 else { return }
+                instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
+            }
+
             let solidBuffer = try solidVertexBufferHolding(solidVertices.count)
             solidVertices.withUnsafeBytes { source in
                 guard let base = source.baseAddress else { return }
@@ -1372,6 +1464,12 @@ public final class Canvas {
                     encoder.setDepthStencilState(pipeline.solidDepthState)
                     pipeline.argumentTable.setAddress(
                         solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+                    // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
+                    // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
+                    pipeline.argumentTable.setAddress(
+                        instanceBuffer.gpuAddress
+                            + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
+                        index: ShapePipeline.instanceBufferIndex)
                 }
                 pipeline.argumentTable.setAddress(
                     matrices.gpuAddress + UInt64(index * Self.valuesStride),
@@ -1404,7 +1502,8 @@ public final class Canvas {
                 encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
                 encoder.drawPrimitives(
                     primitiveType: .triangle,
-                    vertexStart: run.start, vertexCount: run.count)
+                    vertexStart: run.start, vertexCount: run.count,
+                    instanceCount: batch.instanceCount)
             }
         }
 
@@ -1416,7 +1515,9 @@ public final class Canvas {
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる
         vertices.removeAll(keepingCapacity: true)
         solidVertices.removeAll(keepingCapacity: true)
+        solidInstances.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
+        openSolid = nil
         openSource = .flat
         pendingBackground = nil
     }
@@ -1432,6 +1533,10 @@ public final class Canvas {
     }
 
     /// 頂点を置く領域。足りなければ取り直す。
+    /// 立体の置き場所の置き場。
+    private var solidInstanceBuffer: (any MTLBuffer)?
+    private var solidInstanceCapacity = 0
+
     /// 立体の頂点を置く領域。足りなければ取り直す。
     private func solidVertexBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
         if let buffer = solidVertexBuffer, solidVertexCapacity >= count { return buffer }
@@ -1440,6 +1545,17 @@ public final class Canvas {
             byteCount: capacity * MemoryLayout<SolidVertex>.stride)
         solidVertexBuffer = buffer
         solidVertexCapacity = capacity
+        return buffer
+    }
+
+    /// 立体の置き場所を置く領域。足りなければ取り直す。
+    private func solidInstanceBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = solidInstanceBuffer, solidInstanceCapacity >= count { return buffer }
+        let capacity = max(count, max(solidInstanceCapacity * 2, 256))
+        let buffer = try gpu.makeReadableBuffer(
+            byteCount: capacity * MemoryLayout<SolidInstance>.stride)
+        solidInstanceBuffer = buffer
+        solidInstanceCapacity = capacity
         return buffer
     }
 
@@ -1480,6 +1596,11 @@ public final class Canvas {
             guard let base = source.baseAddress, source.count > 0 else { return }
             solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
         }
+        let instanceBuffer = try solidInstanceBufferHolding(max(solidInstances.count, 1))
+        solidInstances.withUnsafeBytes { source in
+            guard let base = source.baseAddress, source.count > 0 else { return }
+            instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
         let matrixBuffer = try shadowMatrixBufferHolding()
         var value = matrix
         matrixBuffer.contents().copyMemory(
@@ -1502,9 +1623,15 @@ public final class Canvas {
             matrixBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
         encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
         for batch in casting {
+            pipeline.argumentTable.setAddress(
+                instanceBuffer.gpuAddress
+                    + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
+                index: ShapePipeline.instanceBufferIndex)
+            encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
             encoder.drawPrimitives(
                 primitiveType: .triangle,
-                vertexStart: batch.run.start, vertexCount: batch.run.count)
+                vertexStart: batch.run.start, vertexCount: batch.run.count,
+                instanceCount: batch.instanceCount)
         }
         encoder.endEncoding()
         return (map, matrix)
