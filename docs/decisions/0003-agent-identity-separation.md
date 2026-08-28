@@ -92,7 +92,7 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 
 あわせて `dismiss_stale_reviews_on_push` を有効にし、弱点 2 を塞ぐ。
 
-### 5. 承認を CI から追い出す
+### 5. 承認を CI から追い出す (2026-08-28 改訂)
 
 承認待ちは required check の赤ではなく、**PR の状態** (`mergeStateStatus` が `BLOCKED`) で表現される。これは failing check ではないため、`ci-gate` の赤は本物の故障だけを意味するようになる (弱点 3 の解消)。
 
@@ -102,7 +102,22 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 - 対象 Issue に `verify:` ラベルがあるか (完了条件が固まっているか)
 - 対象 Issue が `verify: human` なら、Approve レビューがあるか
 
-三点目を残すのは、**`verify: human` を CODEOWNERS で表現できない**ためである。CODEOWNERS が判定できるのは変更パスであって、Issue の性質ではない。ここを外すと「完了条件を機械で判定できないと宣言した変更」が誰にも見られずマージされうる。代償として、この分類の PR だけは承認待ちの間 `ci-gate` が赤いままになる。重要パスの PR は native の Review required で止まるようになったので、赤が出る頻度自体は大きく下がる。
+三点目を残すのは、**`verify: human` を CODEOWNERS で表現できない**ためである。CODEOWNERS が判定できるのは変更パスであって、Issue の性質ではない (決定 4 の改訂で入れたルールセットの `required_reviewers` もパターン照合なので、同じ制約を受ける)。ここを外すと「完了条件を機械で判定できないと宣言した変更」が誰にも見られずマージされうる。
+
+**当初の決定**はここに代償を置いていた — 「この分類の PR だけは承認待ちの間 `ci-gate` が赤いままになる」。**この代償は払わなくてよかった**ので撤回する。
+
+**実測 ([#259](https://github.com/mokume-metal/mokume/issues/259))** — 承認待ちを `failure` で表すことは、想定していた「監視の誤検出」([#111](https://github.com/mokume-metal/mokume/issues/111)・[#110](https://github.com/mokume-metal/mokume/pull/110) で発生) だけでなく、**承認しても PR が自動で進まない**という別の害を生んでいた ([#256](https://github.com/mokume-metal/mokume/issues/256))。同じコミットに残る古い `failure` の check run は、同名の新しい `success` があっても必須チェックの判定を固定する — 2 本目の run の完了から 5 分 35 秒、何もせず `BLOCKED` のままで、`gh run rerun --failed` の 19 秒後に `CLEAN` になった。**承認のたびに人手が要り、見ていない時間帯に承認されると PR は静かに止まったまま残る。**
+
+**承認待ちは `human-approval` という 2 本目の必須チェックで表す。** GitHub の必須ステータスチェックは `success` / `skipped` / `neutral` を通過として扱い、`action_required` / `cancelled` / `failure` / `stale` / `timed_out` でブロックする。**`action_required` だけが「ブロックするが failure ではない」**を満たす。
+
+| 必須チェック | 表すもの | 承認待ちのとき |
+| --- | --- | --- |
+| `ci-gate` | 検査が壊れていないか | **緑のまま** |
+| `human-approval` | 人の操作を待っているか | `action_required` |
+
+`review-gate` は承認待ちを**終了コード 20** で返し (差し戻しの 1 と区別する)、ci.yml の `approval-signal` ジョブがそれを `human-approval` check run へ翻訳する。Actions の job の結論は終了コード由来に限られて `action_required` を出せないため、Checks API を使う。報告は**既存の check run を PATCH で上書きする** — 作り足すと古いほうが判定を固定し、#256 を自分で作り込むことになる。
+
+**新しい機構は足していない** ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) 決定 5 の第 1 段 + 第 2 段) — 既存の `review-gate` が出す信号の形を変え、GitHub が native に持つ結論を使っただけである。
 
 **自作の仕組みは GitHub にできないことだけをやる。**
 
