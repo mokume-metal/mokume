@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/review-gate.sh の検査 (#44 / #104)。
+"""scripts/review-gate.sh の検査 (#44 / #104 / #309)。
 
 このゲートが守るのは mokume 固有の四点だけ:
   1. PR が Issue に紐づいている (例外は no-issue ラベル)
@@ -18,6 +18,11 @@ CODEOWNERS を読むのは「誰が承認できるか」を知るためで、承
 正常な状態**で、これを 1 と同じにすると ci-gate が承認待ちで赤くなり、監視の誤検出
 (#111) と「承認しても自動で進まない」(#256) の二つが起きる。assert_pending がその
 区別を固定する。
+
+1 の紐づけは **GitHub が実際に作った紐づけ (closingIssuesReferences)** で判定する。本文の
+文字列を照合していた頃は、コードスパンに入れた `Closes #N` を通していた — GitHub は
+closing keyword をコードスパンの中では読まないので、緑のままマージされて Issue が開いた
+まま残った (#307 → #309)。偽 gh が返す紐づけは実測値をそのまま写す (下の closes 引数)。
 
 gh は PATH の先頭に置いた偽物へ差し替え、CODEOWNERS も一時ファイルへ差し替えるので、
 ネットワークも認証も実ファイルの内容も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
@@ -41,7 +46,7 @@ CODEOWNERS = """# 重要パス
 """
 
 # 偽 gh。review-gate が呼ぶのは 2 つだけ:
-#   gh pr view <n> -R <repo> --json body,labels,latestReviews,author,files
+#   gh pr view <n> -R <repo> --json labels,latestReviews,author,files,closingIssuesReferences
 #   gh issue view <n> -R <repo> --json labels --jq <query>
 # 応答は環境変数で決める。--jq が付くときは本物と同じようにクエリを適用する
 FAKE_GH = """#!/bin/sh
@@ -70,7 +75,28 @@ MAINTAINER = ("shinyaoguri", False)
 OUTSIDER = ("drive-by-contributor", False)
 
 
-def pr_json(body="Closes #12", labels=(), reviews=(), author=APP, files=()):
+# 既定のリポジトリ。closingIssuesReferences は他リポジトリの Issue も指せるので、
+# review-gate は自リポの紐づけだけを採る (別リポの番号で verify ラベルを引くと、
+# 同じ番号の無関係な Issue を見てしまう)
+REPO_OWNER, REPO_NAME = "mokume-metal", "mokume"
+
+
+def closing_refs(numbers, owner=REPO_OWNER, name=REPO_NAME):
+    """GitHub が返す紐づけの形 (gh pr view --json closingIssuesReferences)。"""
+    return [
+        {"number": n, "repository": {"name": name, "owner": {"login": owner}}}
+        for n in numbers
+    ]
+
+
+def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, files=(),
+            refs=None):
+    """偽の gh pr view 応答。
+
+    body と closes は**別々に**渡す。ゲートは body を読まないので、両者が食い違う形
+    (書いてあるのに紐づいていない) をそのまま表現できる — それが #309 の事象である。
+    refs を渡すと closes を無視して紐づけをそのまま置く (他リポジトリの検査用)。
+    """
     login, is_bot = author
     return json.dumps(
         {
@@ -79,6 +105,9 @@ def pr_json(body="Closes #12", labels=(), reviews=(), author=APP, files=()):
             "latestReviews": [{"state": s} for s in reviews],
             "author": {"login": login, "is_bot": is_bot},
             "files": [{"path": p} for p in files],
+            "closingIssuesReferences": (
+                closing_refs(closes) if refs is None else refs
+            ),
         }
     )
 
@@ -107,6 +136,8 @@ class ReviewGateTest(unittest.TestCase):
         env["FAKE_PR_JSON"] = pr
         env["FAKE_ISSUE_JSON"] = issue if issue is not None else issue_json()
         env["CODEOWNERS_FILE"] = str(self.codeowners)
+        # 紐づけの所属リポジトリ判定に効くので、環境に左右されないよう固定する
+        env["GITHUB_REPOSITORY"] = f"{REPO_OWNER}/{REPO_NAME}"
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), "12"], capture_output=True, text=True, env=env
         )
@@ -131,12 +162,44 @@ class ReviewGateTest(unittest.TestCase):
     # --- 1. Issue への紐づけ ------------------------------------------------
 
     def test_pr_without_issue_is_blocked(self):
-        proc = self.run_gate(pr_json(body="Issue に触れていない本文"))
+        proc = self.run_gate(pr_json(body="Issue に触れていない本文", closes=()))
         self.assert_blocked(proc, "Issue に紐づいていない")
 
     def test_no_issue_label_is_an_accepted_exception(self):
-        proc = self.run_gate(pr_json(body="紐づけなし", labels=["no-issue"]))
+        proc = self.run_gate(pr_json(body="紐づけなし", closes=(), labels=["no-issue"]))
         self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_plain_closes_passes(self):
+        # 素の Closes #N。GitHub が紐づけを作るので通る (PR #313 / #316 の実測と同じ形)
+        proc = self.run_gate(
+            pr_json(body="Closes #12", closes=(12,)), issue_json("verify: machine")
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_closes_inside_a_code_span_is_blocked(self):
+        """#309 — 書いてあるが GitHub には効かない形。
+
+        バックティックで囲むと GitHub は closing keyword を読まないので、紐づけは
+        作られない (PR #307 の closingIssuesReferences は実際に空だった)。本文の文字列
+        を照合していた頃はここが通り、マージしても Issue #290 が開いたまま残った。
+        引用・打ち消しなど他の「効かない形」も、GitHub が答える以上まとめて弾ける。
+        """
+        proc = self.run_gate(pr_json(body="`Closes #12`", closes=()))
+        self.assert_blocked(proc, "Issue に紐づいていない")
+        # 書いたのに差し戻された人が理由に辿り着けること (緑にも赤にも合図が
+        # 無かったのが事象の半分だった)
+        self.assertIn("コードスパン", proc.stderr)
+
+    def test_closing_reference_to_another_repository_does_not_count(self):
+        # Closes owner/repo#N は他リポジトリの Issue を閉じる。番号をそのまま採ると
+        # 自リポの同じ番号の Issue を見にいくので、紐づけなしとして扱う
+        proc = self.run_gate(
+            pr_json(
+                body="Closes other-org/other-repo#12",
+                refs=closing_refs([12], owner="other-org", name="other-repo"),
+            )
+        )
+        self.assert_blocked(proc, "Issue に紐づいていない")
 
     # --- 2. verify ラベル ---------------------------------------------------
 

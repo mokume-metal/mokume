@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: MIT
 #
 # ADR-0002 / ADR-0003 / ADR-0007 のマージ判定のうち、**GitHub にできないことだけ**を見る。
-#   - PR は Issue に紐づく (Closes #N)。例外は no-issue ラベルでのみ許す
+#   - PR は Issue に紐づく (Closes #N)。**GitHub が実際に作った紐づけを読む** —
+#     本文の文字列ではない (下の「1.」)。例外は no-issue ラベルでのみ許す
 #     (この no-issue が、PR に付く唯一のラベルである — ADR-0005。dependabot の
 #      PR には .github/dependabot.yml が自動で付ける)
 #   - 対象 Issue に verify: ラベルが無ければ、完了条件が未確定のまま実装に入っている
@@ -94,18 +95,45 @@ codeowners_owners_for() {
   done <<<"$paths" | sed 's/^@//' | awk 'NF' | sort -u
 }
 
-pr_json=$(gh pr view "$PR" -R "$REPO" --json body,labels,latestReviews,author,files)
+pr_json=$(gh pr view "$PR" -R "$REPO" \
+  --json labels,latestReviews,author,files,closingIssuesReferences)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
-body=$(jq -r '.body // ""' <<<"$pr_json")
 
-# 1. 対象 Issue の解決 (Closes/Fixes/Resolves #N — 複数あれば全て検査)
-issues=$(grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+' <<<"$body" | grep -oE '[0-9]+' | sort -u || true)
+# 1. 対象 Issue の解決 — **GitHub が実際に作った紐づけを読む** (複数あれば全て検査)。
+#
+#    本文を正規表現で照合していた頃は、コードスパンに入れた `Closes #N` を通していた。
+#    GitHub は closing keyword をコードスパン・引用・打ち消しの中では読まないので、
+#    検査は緑のままマージされ、Issue は開いたまま残った (#307 の実例 → #309)。この検査が
+#    守りたいのは「本文にそれらしい文字列があること」ではなく「マージしたら Issue が
+#    閉じること」なので、GitHub 自身の答え (closingIssuesReferences) を見る。
+#    書いてあるが効かない形はこれでまとめて弾ける。
+#
+#    追加の API 呼び出しは要らない — 上の gh pr view のフィールドが 1 つ増えるだけ。
+#
+#    他リポジトリを指す紐づけ (Closes owner/repo#N) は落とす。下の verify ラベル照会は
+#    自リポの番号を前提にしており、別リポの番号をそのまま渡すと**同じ番号の無関係な
+#    Issue** を見にいく (正規表現の頃はこの形に一致しなかったので、素直に読むと
+#    かえって新しい誤りが入る)
+issues=$(jq -r --arg repo "$REPO" '
+    [ .closingIssuesReferences[]?
+      | select((.repository.owner.login + "/" + .repository.name) == $repo)
+      | .number ] | unique | .[]' <<<"$pr_json")
 if [ -z "$issues" ]; then
   if grep -qx "no-issue" <<<"$pr_labels"; then
     echo "review-gate: no-issue ラベルによる例外 PR (Issue 紐づけなし)"
   else
-    fail "PR が Issue に紐づいていない (本文に Closes #N が無い)" \
-         "対象 Issue を本文の目的節に 'Closes #N' で書く。Issue を閉じない例外なら no-issue ラベルを付けて再実行する"
+    # 下のヒアドキュメントで Issue 番号を「空白 + #」の形で書かないこと。bash 3.2
+    # (macOS の /bin/bash) は $( ) の対応括弧を探すときに空白直後の # を行コメントと
+    # 読み、閉じ括弧ごと飲んで bad substitution になる
+    fail "PR が Issue に紐づいていない (GitHub が Closes #N を認識していない)" \
+         "$(cat <<'EOF'
+対象 Issue を本文の目的節に 'Closes #N' で書いてください。**コードスパン (バックティック)・
+引用・打ち消しの中に入れると GitHub は読まず**、書いてあっても紐づきません (#307・#309)。
+書いたのに差し戻される場合は、まずそこを疑ってください。
+
+Issue を閉じない例外 PR なら no-issue ラベルを付けて再実行します。
+EOF
+)"
   fi
 fi
 
