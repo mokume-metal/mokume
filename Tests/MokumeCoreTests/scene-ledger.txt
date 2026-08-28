@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 代表シーンの絵の指紋 (出力段を通した 8 bit 画素の sha256)。
+# 行が動いたら「触っていない絵が変わった」ということ — 意図した変更かを
+# 目で確かめてから書き換える。判定と更新の手順は SceneLedgerTests.swift。
+
+shapes 30fc89e97bf6b1a53902f8af5561f6b92043c55edb02c9d60c69afbe428fec3f
+transforms a873f71d39611728be60518ec7de2c192fb53057ad2314bbe1c3cf900157972d
+strokes 26189a1f0d74109a729a40b81083b3bc22cd4340b6ead4ec230bfb5df8a61f17
