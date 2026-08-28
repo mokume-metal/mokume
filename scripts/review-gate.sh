@@ -21,8 +21,23 @@
 # 承認をこのスクリプトで判定するほど「承認待ち」が CI の赤になり、外から見て故障と
 # 区別できなくなる。判定を native へ寄せた分だけ、ci-gate の赤は本物の故障に近づく。
 #
+# 終了コードは三つに分かれる。**承認待ちだけが正常な状態**で、これを故障と同じ赤で
+# 表していたために二つの害が出ていた (#111 監視の誤検出 / #256 承認しても進まない)。
+#
+#   0   通過
+#   20  承認待ち (verify: human で Approve がまだ。人が Approve すれば解ける)
+#   1   差し戻し (Issue 紐づけなし・verify ラベルなし・変更要求・誰も承認できない)
+#
+# 20 を受け取った ci.yml は human-approval check run を action_required で報告する。
+# GitHub は action_required をマージのブロック側に数えつつ failure とは別の値として
+# 扱うので、「待っている」と「壊れている」が外から区別できる。
+#
 # 使い方: review-gate.sh <PR番号> (要 GH_TOKEN / gh 認証)
 set -euo pipefail
+
+# 承認待ちの終了コード。ci.yml の approval-signal ジョブと共有する値なので、
+# 変えるときは両方を直す
+readonly PENDING=20
 
 PR="${1:?PR 番号が必要}"
 REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
@@ -172,13 +187,16 @@ fi
 #    完了条件が機械で判定できないと宣言した以上、誰かが見るまで通さない。
 #    重要パスの場合はルールセットの required_reviewers も並行して承認を要求する
 #    (こちらが緑でも native 側で止まる)
-if $need_human; then
-  if grep -qx "APPROVED" <<<"$reviews"; then
-    echo "review-gate: メンテナ承認 (Approve レビュー) を確認"
-  else
-    fail "verify: human の Issue に紐づく PR はメンテナの承認が必要" \
-         "メンテナが diff を確認して Approve する (Files changed → Review changes → Approve、または gh pr review $PR --approve)。承認すると自動で再評価される"
-  fi
+#
+#    **ここだけは差し戻しではなく「承認待ち」で抜ける** (終了コード 20)。上の 1〜4 は
+#    直さないと進めない故障だが、承認待ちは正常な途中経過で、人が Approve すれば解ける。
+#    区別しないと ci-gate が承認待ちで赤くなり、二つの害が出る (#111 / #256 — 詳細は
+#    冒頭のコメント)。
+if $need_human && ! grep -qx "APPROVED" <<<"$reviews"; then
+  echo "review-gate: 承認待ち — verify: human の Issue に紐づく PR はメンテナの承認が必要"
+  echo "次にすること: メンテナが diff を確認して Approve する (Files changed → Review changes → Approve、または gh pr review $PR --approve)。承認すると自動で再評価される"
+  exit "$PENDING"
 fi
+if $need_human; then echo "review-gate: メンテナ承認 (Approve レビュー) を確認"; fi
 
 echo "review-gate: ok"
