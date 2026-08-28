@@ -184,17 +184,86 @@ struct InputInboxTests {
         #expect(state.x == 5)
     }
 
-    @Test("知らない鍵は無視し、足りない値はゼロとして扱う")
-    func ignoresUnknownKeysAndFillsInTheGaps() throws {
+    @Test("知らない鍵は無視する")
+    func ignoresUnknownKeys() throws {
         let facet = try makeFacet()
         let inbox = InputInbox(directory: facet)
         let state = InputState()
-        try send(#"{"id":"a1","events":[{"type":"mouseDown","x":7,"pressure":0.8}]}"#, to: facet)
+        try send(
+            #"{"id":"a1","events":[{"type":"mouseDown","x":7,"y":9,"pressure":0.8}]}"#, to: facet)
 
         #expect(inbox.drain(into: state)?.accepted == 1)
         state.beginFrame()
         #expect(state.x == 7)
+        #expect(state.y == 9)
+    }
+
+    @Test(
+        "意味を持つ既定値が無い値が欠けていたら、その 1 件は通らない",
+        arguments: [
+            #"{"type":"mouseDown"}"#,
+            #"{"type":"mouseDown","x":7}"#,
+            #"{"type":"mouseUp","y":9}"#,
+            #"{"type":"mouseMoved","x":7}"#,
+            #"{"type":"keyDown"}"#,
+            #"{"type":"keyDown","characters":"a"}"#,
+            #"{"type":"keyUp"}"#,
+        ])
+    func rejectsEventsMissingValuesThatHaveNoDefault(_ event: String) throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(#"{"id":"a1","events":[\#(event)]}"#, to: facet)
+
+        // 知らない種別と同じ扱い — 解けなかったものとして数える
+        let report = try #require(inbox.drain(into: state))
+        #expect(report.accepted == 0)
+        #expect(report.ignored == 1)
+
+        // **合流点は動かない。** 0 で埋めて通していた頃は、ここが
+        // 「面の左上を押した」「A を押した」になっていた (#322)
+        state.beginFrame()
+        #expect(state.x == 0)
         #expect(state.y == 0)
+        #expect(!state.isMouseDown)
+        #expect(state.pressedKeys.isEmpty)
+    }
+
+    @Test("値の欠けた 1 件が混ざっても、残りは通る")
+    func skipsOnlyTheBrokenOne() throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(
+            #"{"id":"a1","events":[{"type":"mouseMoved"},{"type":"mouseMoved","x":5,"y":6}]}"#,
+            to: facet)
+
+        let report = try #require(inbox.drain(into: state))
+        #expect(report.accepted == 1)
+        #expect(report.ignored == 1)
+        state.beginFrame()
+        #expect(state.x == 5)
+        #expect(state.y == 6)
+    }
+
+    @Test("省略が自然に読める値は、省いても通る")
+    func fillsInTheValuesThatHaveADefault() throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        // button は 0 (主釦)・dx dy は 0 (動かない)・characters は空・isRepeat は false
+        try send(
+            #"{"id":"a1","events":[{"type":"mouseDown","x":7,"y":9},{"type":"scrolled"},{"type":"keyDown","code":49}]}"#,
+            to: facet)
+
+        #expect(inbox.drain(into: state)?.accepted == 3)
+        state.beginFrame()
+        #expect(state.isMouseDown)
+        #expect(state.button == 0)
+        #expect(state.scrollX == 0)
+        #expect(state.scrollY == 0)
+        #expect(state.pressedKeys.contains(49))
+        #expect(state.characters.isEmpty)
     }
 
     @Test("壊れた要求で走っているスケッチを止めない")

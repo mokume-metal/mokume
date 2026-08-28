@@ -23,7 +23,51 @@
         "required": [
           "type"
         ],
-        "description": "必須は type だけ。足りない値はゼロとして扱う。知らない鍵は無視される。",
+        "description": "知らない鍵は無視される。**意味を持つ既定値が無いフィールドは種別ごとに必須**で、欠けた 1 件は解けなかったものとして ignored に数えられる (残りは通る)。位置には x / y、キーには code が要る — 0 は面の左上であり A のキーであって「無い」ではないため。button (0 = 主釦) / dx / dy (0 = 動かない) / characters (空) / isRepeat (false) は省略が自然に読めるので任意。",
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "enum": [
+                    "mouseDown",
+                    "mouseUp",
+                    "mouseMoved"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "x",
+                "y"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "enum": [
+                    "keyDown",
+                    "keyUp"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "code"
+              ]
+            }
+          }
+        ],
         "properties": {
           "type": {
             "type": "string",

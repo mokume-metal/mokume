@@ -37,7 +37,7 @@ struct Tools {
         [
             "name": "input",
             "description":
-                "走っているスケッチへ入力の出来事を送る。座標はキャンバスの座標系。種別は mouseDown / mouseUp / mouseMoved / scrolled / keyDown / keyUp。",
+                "走っているスケッチへ入力の出来事を送る。座標はキャンバスの座標系。種別は mouseDown / mouseUp / mouseMoved / scrolled / keyDown / keyUp。位置の 3 種には x と y、キーの 2 種には code が要る (欠けた 1 件は ignored に数えられ、残りは通る)。button / dx / dy / characters / isRepeat は省略できる。",
             "inputSchema": [
                 "type": "object",
                 "required": ["events"],
