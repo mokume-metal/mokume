@@ -70,6 +70,27 @@ public final class Canvas {
     private var warnedReversedArc = false
     private var warnedVertexOutsideShape = false
 
+    // MARK: 文字
+
+    /// 字形を焼いて溜める面。**図形もここの白い区画を読む** (``GlyphAtlas``)。
+    let atlas: GlyphAtlas
+    /// いま列が読んでいる面。面を広げると差し替わる。
+    private var currentTexture: any MTLTexture
+    /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
+    private var whiteUV: SIMD2<Float>
+    /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。
+    private var typefaces: [TypefaceRequest: Typeface] = [:]
+
+    var currentFontName: String?
+    var currentTextSize: Float = 12
+    var currentTextStyle = TextStyle.normal
+    var currentHorizontalTextAlign = HorizontalTextAlign.left
+    var currentVerticalTextAlign = VerticalTextAlign.baseline
+    /// 行送りの指定。`nil` は自動 (大きさから決める)。
+    var currentTextLeading: Float?
+    var warnedMissingFont = false
+    var warnedAtlasFull = false
+
     // MARK: - 組み立て中の形
 
     /// 並べている途中の頂点。``beginShape(_:)`` から ``endShape(_:)`` までの間だけ中身を持つ。
@@ -90,7 +111,11 @@ public final class Canvas {
     /// 混ぜ方を変える操作がその時点で列を閉じるので、既に置いた図形が後の設定で
     /// 描かれることがない。閉じ忘れると絵は「たまに」おかしくなる — 設定を変えない
     /// 単純なスケッチでは一生出ないので、規律として持つ。
-    private var batches: [(mode: BlendMode, clip: MTLScissorRect?, start: Int, count: Int)] = []
+    private var batches:
+        [(
+            mode: BlendMode, clip: MTLScissorRect?, texture: any MTLTexture, start: Int,
+            count: Int
+        )] = []
 
     /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
     private let blendModeBuffer: any MTLBuffer
@@ -113,6 +138,12 @@ public final class Canvas {
         var ellipseMode: ShapeMode
         var blendMode: BlendMode
         var clip: MTLScissorRect?
+        var fontName: String?
+        var textSize: Float
+        var textStyle: TextStyle
+        var horizontalTextAlign: HorizontalTextAlign
+        var verticalTextAlign: VerticalTextAlign
+        var textLeading: Float?
     }
 
     private var currentStyle: Style {
@@ -122,7 +153,12 @@ public final class Canvas {
                 strokeCap: currentStrokeCap, strokeJoin: currentStrokeJoin,
                 hasFill: hasFill, hasStroke: hasStroke,
                 rectMode: currentRectMode, ellipseMode: currentEllipseMode,
-                blendMode: currentBlendMode, clip: currentClip)
+                blendMode: currentBlendMode, clip: currentClip,
+                fontName: currentFontName, textSize: currentTextSize,
+                textStyle: currentTextStyle,
+                horizontalTextAlign: currentHorizontalTextAlign,
+                verticalTextAlign: currentVerticalTextAlign,
+                textLeading: currentTextLeading)
         }
         set {
             currentFill = newValue.fill
@@ -134,6 +170,12 @@ public final class Canvas {
             hasStroke = newValue.hasStroke
             currentRectMode = newValue.rectMode
             currentEllipseMode = newValue.ellipseMode
+            currentFontName = newValue.fontName
+            currentTextSize = newValue.textSize
+            currentTextStyle = newValue.textStyle
+            currentHorizontalTextAlign = newValue.horizontalTextAlign
+            currentVerticalTextAlign = newValue.verticalTextAlign
+            currentTextLeading = newValue.textLeading
             // 混ぜ方と切り抜きが変わるなら列を閉じてから戻す
             blendMode(newValue.blendMode)
             if !Self.sameClip(currentClip, newValue.clip) {
@@ -151,6 +193,11 @@ public final class Canvas {
         self.height = Float(target.height)
         self.pipeline = try ShapePipeline(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         self.projection = Self.makeProjection(width: self.width, height: self.height)
+
+        let atlas = try GlyphAtlas(gpu: gpu)
+        self.atlas = atlas
+        self.currentTexture = atlas.texture
+        self.whiteUV = atlas.whiteUV
 
         var matrix = self.projection
         let buffer = try gpu.makeReadableBuffer(byteCount: MemoryLayout<simd_float4x4>.size)
@@ -260,7 +307,7 @@ public final class Canvas {
         let start = batches.last.map { $0.start + $0.count } ?? 0
         let count = vertices.count - start
         guard count > 0 else { return }
-        batches.append((currentBlendMode, currentClip, start, count))
+        batches.append((currentBlendMode, currentClip, currentTexture, start, count))
     }
 
     /// 線の端の形。
@@ -870,12 +917,95 @@ public final class Canvas {
             "arc(): 終わりの角度は始まりより大きくしてください。この呼び出しは何も描きません")
     }
 
+    // MARK: - 文字の下ごしらえ
+
+    /// 文字を塗る色。塗りを止めていれば `nil`。
+    var textFillColor: LinearRGBA? { hasFill ? currentFill : nil }
+
+    /// いま指定されている書体。同じ指定なら作り直さない。
+    var typeface: Typeface {
+        let request = TypefaceRequest(
+            name: currentFontName, size: currentTextSize, style: currentTextStyle)
+        if let found = typefaces[request] { return found }
+        let face = Typeface(request: request)
+        typefaces[request] = face
+        return face
+    }
+
+    /// 焼いてある字形を引く。入りきらなければ面を広げる。
+    ///
+    /// **面を広げると、そこを読む列が変わる。** 既に置いた字は前の面を指しているので、
+    /// 広げる前に列を閉じ、前の面はその列が抱えたまま残す。
+    func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
+        let key = GlyphAtlas.Key(
+            fontKey: resolved.fontKey, size: currentTextSize, style: currentTextStyle,
+            glyph: resolved.glyph)
+        if let entry = atlas.entry(for: key, font: resolved.font) { return entry }
+
+        guard atlas.canGrow else {
+            warnAtlasFullOnce()
+            return nil
+        }
+        closeBatch()
+        do {
+            try atlas.grow(gpu: gpu)
+        } catch {
+            return nil
+        }
+        currentTexture = atlas.texture
+        whiteUV = atlas.whiteUV
+        return atlas.entry(for: key, font: resolved.font)
+    }
+
+    /// 字形 1 つを四角として置く。
+    ///
+    /// **半画素ぶん戻して置く。** 整数の座標は画素の中心を指すので (``makeProjection``)、
+    /// そのまま四角の縁に使うと縁の画素が半分だけ覆われ、焼いた絵が滲む。縁を画素の
+    /// 境目へ寄せると、焼いた画素と描く画素がちょうど 1 対 1 になる。
+    func appendGlyphQuad(
+        _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
+    ) {
+        let shift: Float = -0.5
+        let left = penX + entry.offset.x + shift
+        let top = baseline + entry.offset.y + shift
+        let right = left + entry.size.x
+        let bottom = top + entry.size.y
+
+        let topLeft = transform.apply(x: left, y: top)
+        let topRight = transform.apply(x: right, y: top)
+        let bottomRight = transform.apply(x: right, y: bottom)
+        let bottomLeft = transform.apply(x: left, y: bottom)
+        let uvMin = entry.uvMin
+        let uvMax = entry.uvMax
+
+        appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
+        appendGlyphVertex(topRight, SIMD2(uvMax.x, uvMin.y), color)
+        appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
+        appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
+        appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
+        appendGlyphVertex(bottomLeft, SIMD2(uvMin.x, uvMax.y), color)
+    }
+
+    private func appendGlyphVertex(
+        _ position: SIMD2<Float>, _ uv: SIMD2<Float>, _ color: LinearRGBA
+    ) {
+        vertices.append(ShapeVertex(position: position, uv: uv, color: color))
+    }
+
+    /// 焼き場が埋まったことを、初回だけ知らせる。
+    private func warnAtlasFullOnce() {
+        guard !warnedAtlasFull else { return }
+        warnedAtlasFull = true
+        Diagnostics.warn(
+            "text(): 字形を焼く場所が上限まで埋まりました。これ以上の新しい字は描かれません")
+    }
+
     private func appendTriangle(
         _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, color: LinearRGBA
     ) {
-        vertices.append(ShapeVertex(position: a, color: color))
-        vertices.append(ShapeVertex(position: b, color: color))
-        vertices.append(ShapeVertex(position: c, color: color))
+        vertices.append(ShapeVertex(position: a, uv: whiteUV, color: color))
+        vertices.append(ShapeVertex(position: b, uv: whiteUV, color: color))
+        vertices.append(ShapeVertex(position: c, uv: whiteUV, color: color))
     }
 
     // MARK: - 描き切る
@@ -938,6 +1068,8 @@ public final class Canvas {
                     blendModeBuffer.gpuAddress
                         + UInt64(Int(batch.mode.rawIndex) * Self.blendModeStride),
                     index: ShapePipeline.blendModeBufferIndex)
+                pipeline.argumentTable.setTexture(
+                    batch.texture.gpuResourceID, index: ShapePipeline.glyphTextureIndex)
                 encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
                 encoder.drawPrimitives(
                     primitiveType: .triangle,

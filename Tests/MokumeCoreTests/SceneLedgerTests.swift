@@ -137,6 +137,12 @@ enum Scene: String, CaseIterable, Sendable {
     case blends
     /// 自由に並べた頂点・曲線・穴・切り抜き。
     case freeform
+    /// 書体・大きさ・整列・行送りを振った文字。
+    ///
+    /// **このシーンだけは、この環境が持つ書体の字形に依る。** 環境の更新で字形が
+    /// 変われば、絵は変わっていなくてもこの行は動く。土台の書体には版の変わりにくい
+    /// ものを選んであるが、覆えない字の引き当て先までは選べない。
+    case text
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -295,6 +301,37 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.rect(
                     Float(index % 5) * 25 + 3, Float(index / 5) * 62 + 4, 20, 56)
             }
+
+        case .text:
+            canvas.background(.display(red: 0.08, green: 0.08, blue: 0.1))
+            canvas.textFont("Helvetica")
+
+            // 基準線を引いてから、その上に字を置く — 図形と字が同じ列に並ぶ
+            canvas.stroke(.display(red: 0.3, green: 0.35, blue: 0.45))
+            canvas.strokeWeight(1)
+            canvas.line(6, 40, 122, 40)
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+            canvas.textSize(28)
+            canvas.text("Agj", 6, 40)
+
+            canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.95))
+            canvas.textSize(16)
+            canvas.textAlign(.center)
+            canvas.text("mokume", 64, 62)
+
+            canvas.textAlign(.left, .top)
+            canvas.textStyle(.bold)
+            canvas.textLeading(20)
+            canvas.fill(.display(red: 0.95, green: 0.45, blue: 0.3))
+            canvas.text("two\nlines", 6, 72)
+
+            // 欧文の書体が覆えない字は、環境の別の書体から引く
+            canvas.textStyle(.normal)
+            canvas.textAlign(.right, .bottom)
+            canvas.textSize(24)
+            canvas.fill(.display(red: 0.5, green: 0.9, blue: 0.6))
+            canvas.text("あ", 122, 122)
 
         case .joins:
             // 折れ目の形 3 通り。閉じた形の角に効くことを見るので三角形で描く

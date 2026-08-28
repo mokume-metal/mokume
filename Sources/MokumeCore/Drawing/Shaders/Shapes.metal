@@ -6,11 +6,13 @@ using namespace metal;
 
 struct ShapeVertex {
     float2 position;
+    float2 uv;
     float4 color;
 };
 
 struct ShapeFragmentIn {
     float4 position [[position]];
+    float2 uv;
     float4 color;
 };
 
@@ -21,6 +23,7 @@ vertex ShapeFragmentIn shapeVertexMain(
 {
     ShapeFragmentIn out;
     out.position = projection * float4(vertices[index].position, 0.0, 1.0);
+    out.uv = vertices[index].uv;
     out.color = vertices[index].color;
     return out;
 }
@@ -42,12 +45,21 @@ static inline float3 straighten(float4 color) {
     return color.a > 0.0 ? color.rgb / color.a : float3(0.0);
 }
 
+// 字形を焼いた面の読み取り方。字の縁を滑らかにするため線形に読み、
+// 端では外側へはみ出さない
+constexpr sampler kGlyphSampler(
+    coord::normalized, filter::linear, address::clamp_to_edge);
+
 fragment float4 shapeFragmentMain(
     ShapeFragmentIn in [[stage_in]],
     constant uint &mode [[buffer(2)]],
+    texture2d<float> glyphs [[texture(0)]],
     float4 destination [[color(0)]])
 {
-    float4 source = in.color;
+    // **図形は白い区画を指すので、掛けても色は変わらない。** 字だけが
+    // 覆っている割合で薄くなる
+    float coverage = glyphs.sample(kGlyphSampler, in.uv).r;
+    float4 source = in.color * coverage;
 
     // 置き換えるモードだけは下地を見ない
     if (mode == kReplace) {

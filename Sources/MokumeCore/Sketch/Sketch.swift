@@ -332,4 +332,79 @@ extension Sketch {
 
     /// 点が、いまの変換でどこへ移るか (縦)。
     public func screenY(_ x: Float, _ y: Float) -> Float { canvas.screenY(x, y) }
+
+    // MARK: - 文字
+
+    /// 文字列を描く。
+    ///
+    /// ```swift
+    /// textSize(48)
+    /// fill(.display(red: 1, green: 1, blue: 1))
+    /// text("mokume", 40, 100)   // (40, 100) が字の乗る線
+    /// ```
+    ///
+    /// `y` が何を指すかは ``textAlign(_:_:)`` が決める。既定は**基準線** — 字が乗る線で、
+    /// `g` や `y` の下へ伸びる部分はここより下に出る。
+    ///
+    /// 改行で行が分かれ、行の間隔は ``textLeading(_:)`` が決める。**塗りの色で描く**ので、
+    /// ``noFill()`` の状態では何も出ない。
+    public func text(_ string: String, _ x: Float, _ y: Float) { canvas.text(string, x, y) }
+
+    /// これから描く文字の大きさ (画素)。既定は 12。
+    ///
+    /// 行送りを指定していなければ、行の間隔もこの値から決まる。
+    public func textSize(_ size: Float) { canvas.textSize(size) }
+
+    /// これから描く文字の書体。
+    ///
+    /// ```swift
+    /// textFont("Helvetica")
+    /// ```
+    ///
+    /// **この環境に無い名前は効かない。** 名前が違っても別の書体で描かれてしまうと
+    /// 気付けないので、無い名前は警告を出して書体を変えない。``noTextFont()`` で
+    /// 既定へ戻る。
+    ///
+    /// 指定した書体が覆えない文字 (欧文の書体に日本語を渡した場合など) は、
+    /// この環境が持つ別の書体から引いて描く。
+    public func textFont(_ name: String) { canvas.textFont(name) }
+
+    /// 書体の指定をやめ、この環境の既定の書体へ戻す。
+    public func noTextFont() { canvas.noTextFont() }
+
+    /// これから描く文字の太さと傾き。既定はそのまま。
+    public func textStyle(_ style: TextStyle) { canvas.textStyle(style) }
+
+    /// 文字列を、指定した位置のどちら側へ置くか。既定は**左から右へ・基準線**。
+    ///
+    /// ```swift
+    /// textAlign(.center, .center)
+    /// text("mokume", width / 2, height / 2)   // 面のまん中に置かれる
+    /// ```
+    public func textAlign(
+        _ horizontal: HorizontalTextAlign, _ vertical: VerticalTextAlign = .baseline
+    ) {
+        canvas.textAlign(horizontal, vertical)
+    }
+
+    /// 行と行の間隔 (画素)。指定しなければ大きさの 1.25 倍。
+    public func textLeading(_ leading: Float) { canvas.textLeading(leading) }
+
+    /// 文字列を描いたときの幅 (画素)。
+    ///
+    /// **1 文字ずつの送り幅の合計**なので、部分に切って足すと全体と一致する。
+    /// 末尾の空白も幅に数える。改行を含む文字列では、いちばん長い行の幅を返す。
+    ///
+    /// ```swift
+    /// let w = textWidth("mokume")
+    /// text("mokume", 20, 60)
+    /// line(20, 64, 20 + w, 64)   // 文字列のちょうど下に線が引ける
+    /// ```
+    public func textWidth(_ string: String) -> Float { canvas.textWidth(string) }
+
+    /// 基準線から上へ伸びる高さ (画素)。
+    public func textAscent() -> Float { canvas.textAscent() }
+
+    /// 基準線から下へ伸びる深さ (画素)。
+    public func textDescent() -> Float { canvas.textDescent() }
 }
