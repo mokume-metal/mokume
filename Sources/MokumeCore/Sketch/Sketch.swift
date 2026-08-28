@@ -99,6 +99,67 @@ extension Sketch {
     }
 }
 
+// MARK: - 利用者が書く塗り
+
+extension Sketch {
+    /// 断片を読み込む。
+    ///
+    /// ```swift
+    /// // waves.metal
+    /// // float4 paint(Fragment in, Values values) {
+    /// //     float wave = 0.5 + 0.5 * sin(in.place.x * 20 + in.time * values.speed);
+    /// //     return float4(values.tint.rgb * wave, 1);
+    /// // }
+    /// waves = try loadShader(
+    ///     "assets/waves.metal",
+    ///     values: ["speed": 2, "tint": .color(.display(red: 1, green: 0.5, blue: 0.2))])
+    /// ```
+    ///
+    /// ## 書くのは「その画素の色」だけ
+    ///
+    /// 断片が用意するのは `paint` 1 本で、返すのはその画素の色である。下地との
+    /// 混ぜ方 (``blendMode(_:)``) は書かなくてよい — 組み込みの塗りとまったく同じ
+    /// 合成を通るので、**混ぜ方が断片によって食い違わない。**
+    ///
+    /// `Fragment` から読めるもの: 面の中の位置 (`position` は画素・`place` は 0…1)・
+    /// 読む面の位置 (`uv`)・図形の色 (`color`)・読んだ面の値 (`texel`)・面の種類
+    /// (`textureKind`)・秒数 (`time`)・面の大きさ (`resolution`)。
+    ///
+    /// ## 渡す値は読み込むときに宣言する
+    ///
+    /// `values` に書いた名前が、断片から `values.名前` で読める。後から名前を増やすと
+    /// 断片ごと組み直しになるので、**名前は読み込むときに決め、値だけを後から変える**
+    /// (``Shader/set(_:_:)``)。
+    ///
+    /// ## 保存したら差し替わる
+    ///
+    /// 在処のある断片は保存を拾って組み直される。**組み立てに失敗しても絵は消えない** —
+    /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。
+    ///
+    /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    public func loadShader(
+        _ path: String, values: [String: ShaderValue] = [:]
+    ) throws(ShaderFailure) -> Shader {
+        try canvas.loadShader(path, values: values)
+    }
+
+    /// 文字列から断片を作る。保存の拾い直しは効かない (在処が無いため)。
+    public func makeShader(
+        _ body: String, name: String = "shader", values: [String: ShaderValue] = [:]
+    ) throws(ShaderFailure) -> Shader {
+        try canvas.makeShader(body, name: name, values: values)
+    }
+
+    /// これから描くものを、この断片で塗る。
+    ///
+    /// **溜めている図形はその場で区切られる**ので、これより前に置いた図形が
+    /// 後から差し替わることはない。
+    public func shader(_ shader: Shader) { canvas.shader(shader) }
+
+    /// 組み込みの塗りへ戻す。
+    public func resetShader() { canvas.resetShader() }
+}
+
 // MARK: - 保持した形
 
 extension Sketch {

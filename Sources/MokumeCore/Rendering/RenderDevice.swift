@@ -286,17 +286,39 @@ extension RenderDevice {
     /// ビルドに含める手がないため。**原文の誤りはここまで来ないと分からない**ので、
     /// `make ci-check` が別途ビルド時に組み立てて落とす (`scripts/check-shaders.sh`)。
     func makeLibrary(named name: String) throws(RenderFailure) -> any MTLLibrary {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "metal"),
-            let source = try? String(contentsOf: url, encoding: .utf8)
-        else {
-            throw .shaderSourceMissing(name: "\(name).metal")
-        }
+        let source = try bundledShaderSource(named: name)
         do {
             return try device.makeLibrary(source: source, options: nil)
         } catch {
             throw .shaderCompilationFailed(
                 name: "\(name).metal", reason: error.localizedDescription)
         }
+    }
+
+    /// 図形を塗る断片を、共通部分を前置きしてから組み立てる。
+    ///
+    /// **前置きは無条件。** 断片が既に宣言を持っているかは見ない (ShaderSource を参照)。
+    func makeShapeLibrary(
+        named name: String, body: String, values: [String: ShaderValue] = [:]
+    ) throws(RenderFailure) -> any MTLLibrary {
+        let common = try bundledShaderSource(named: "Common")
+        let source = ShaderSource.assemble(common: common, values: values, body: body)
+        do {
+            return try device.makeLibrary(source: source, options: nil)
+        } catch {
+            throw .shaderCompilationFailed(
+                name: name, reason: error.localizedDescription)
+        }
+    }
+
+    /// 同梱している断片を読む。
+    func bundledShaderSource(named name: String) throws(RenderFailure) -> String {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "metal"),
+            let source = try? String(contentsOf: url, encoding: .utf8)
+        else {
+            throw .shaderSourceMissing(name: "\(name).metal")
+        }
+        return source
     }
 }
 

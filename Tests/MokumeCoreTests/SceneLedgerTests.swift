@@ -153,6 +153,8 @@ enum Scene: String, CaseIterable, Sendable {
     case pixels
     /// 保持した形を並べ、組にしたものを置いたもの。
     case retainedShapes
+    /// 利用者が書いた塗りで描いたもの。
+    case userShader
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -476,6 +478,38 @@ enum Scene: String, CaseIterable, Sendable {
                     }
                 })
             canvas.shape(branch, 16, 76)
+
+        case .userShader:
+            canvas.background(.display(red: 0.06, green: 0.07, blue: 0.09))
+            canvas.noStroke()
+
+            // 面の中の位置と、渡した値から色を作る断片
+            guard
+                let stripes = try? canvas.makeShader(
+                    """
+                    float4 paint(Fragment in, Values values) {
+                        float wave = 0.5 + 0.5 * sin(in.place.x * values.density);
+                        return float4(values.tint.rgb * wave, 1.0);
+                    }
+                    """,
+                    values: [
+                        "density": 40,
+                        "tint": .color(.display(red: 1, green: 0.55, blue: 0.25)),
+                    ])
+            else { return }
+
+            canvas.shader(stripes)
+            canvas.rect(0, 0, 128, 40)
+
+            // **値を変えると、そこで区切られる。** 上と下で別の値で描かれる
+            stripes.set("density", 12)
+            stripes.set("tint", .color(.display(red: 0.35, green: 0.75, blue: 1)))
+            canvas.rect(0, 44, 128, 40)
+
+            // 組み込みの塗りへ戻せば、いつもの図形が描ける
+            canvas.resetShader()
+            canvas.fill(.display(red: 0.9, green: 0.85, blue: 0.3))
+            canvas.circle(64, 106, 32)
 
         case .joins:
             // 折れ目の形 3 通り。閉じた形の角に効くことを見るので三角形で描く

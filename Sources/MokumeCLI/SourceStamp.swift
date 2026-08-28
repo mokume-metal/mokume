@@ -11,7 +11,12 @@ import Foundation
 /// 変われば必ず変わり、変わらなければ変わらない。
 enum SourceStamp {
     /// 数えるファイル。ここに無い変更は作り直しを起こさない。
-    static let watchedExtensions: Set<String> = ["swift", "metal"]
+    ///
+    /// **断片 (`.metal`) は数えない。** 断片は走らせたまま差し替わるので、作り直して
+    /// 起動し直すと**差し替わる様子そのものが見られなくなる** — 保存のたびに窓が
+    /// 開き直り、絵は最初から始まる。監視は 2 つあってよく、見るものを分ければよい:
+    /// 作り直しが要る変更はここが、走らせたまま差し替わる変更は走っている側が見る。
+    static let watchedExtensions: Set<String> = ["swift"]
 
     /// いまの世代。読めるファイルが 1 つも無ければ `nil`。
     static func current(for directory: URL) -> String? {

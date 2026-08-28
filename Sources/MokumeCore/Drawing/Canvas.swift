@@ -36,8 +36,8 @@ public final class Canvas {
     public let height: Float
 
     let target: RenderTarget
-    private let gpu: RenderDevice
-    private let pipeline: ShapePipeline
+    let gpu: RenderDevice
+    let pipeline: ShapePipeline
 
     /// 描画先の座標へ落とす行列。半画素のずらしを含む。
     private let projection: simd_float4x4
@@ -81,6 +81,10 @@ public final class Canvas {
     var currentTexture: any MTLTexture
     /// いま読んでいる面の中身の種類。
     var currentTextureKind = TextureKind.coverage
+    /// いま効いている塗り。`nil` なら組み込み。
+    var currentShader: Shader?
+    /// この面が作った塗り。観測へ失敗を載せるために持つ。
+    var shaders: [Shader] = []
     /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
     private var whiteUV: SIMD2<Float>
     /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。
@@ -137,6 +141,16 @@ public final class Canvas {
 
     /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
     private let blendModeBuffer: any MTLBuffer
+    /// フレームを通して変わらない値 (時刻・面の大きさ) の置き場。
+    private let uniformsBuffer: any MTLBuffer
+    /// 列ごとの、利用者が渡した値の置き場。列 1 つにつき 1 区画。
+    private var valuesBuffer: (any MTLBuffer)?
+    private var valuesCapacity = 0
+    /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
+    private static let valuesStride = 256
+
+    /// いまのフレームの時刻 (秒)。利用者の断片から読める。
+    var time: Float = 0
     /// 面の中身の種類の番号を置いた領域。同じく番地で指す。
     private let textureKindBuffer: any MTLBuffer
     /// 定数の受け渡しは 16 バイト境界に揃える。
@@ -255,6 +269,9 @@ public final class Canvas {
             slot.pointee = kind.rawValue
         }
         self.textureKindBuffer = kindBuffer
+
+        // 時刻と面の大きさ。フレームごとに書き換わるので 1 区画だけ持つ
+        self.uniformsBuffer = try gpu.makeReadableBuffer(byteCount: Self.valuesStride)
     }
 
     /// これから置く頂点が読む面を決める。**変わるなら列を閉じる。**
@@ -364,7 +381,8 @@ public final class Canvas {
             Batch(
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
-                    textureKind: currentTextureKind, start: start, count: count),
+                    textureKind: currentTextureKind, shader: currentShader,
+                    values: currentShader?.packedValues ?? [], start: start, count: count),
                 clip: currentClip))
     }
 
@@ -1167,7 +1185,6 @@ public final class Canvas {
                 buffer.contents().copyMemory(
                     from: source.baseAddress!, byteCount: source.count)
             }
-            encoder.setRenderPipelineState(pipeline.state)
             encoder.setViewport(
                 MTLViewport(
                     originX: 0, originY: 0,
@@ -1177,8 +1194,30 @@ public final class Canvas {
                 buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
             pipeline.argumentTable.setAddress(
                 projectionBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
-            for batch in batches {
+
+            // 時刻と面の大きさは、フレームの中で変わらない
+            uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
+                .update(from: [time, 0, width, height], count: 4)
+            pipeline.argumentTable.setAddress(
+                uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
+
+            // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている
+            let values = try valuesBufferHolding(batches.count)
+            for (index, batch) in batches.enumerated() {
+                let slot = values.contents().advanced(by: index * Self.valuesStride)
+                    .assumingMemoryBound(to: Float.self)
+                if batch.run.values.isEmpty {
+                    slot.update(repeating: 0, count: 4)
+                } else {
+                    slot.update(from: batch.run.values, count: batch.run.values.count)
+                }
+            }
+            for (index, batch) in batches.enumerated() {
                 let run = batch.run
+                encoder.setRenderPipelineState(run.shader?.state ?? pipeline.state)
+                pipeline.argumentTable.setAddress(
+                    values.gpuAddress + UInt64(index * Self.valuesStride),
+                    index: ShapePipeline.valuesBufferIndex)
                 encoder.setScissorRect(
                     batch.clip
                         ?? MTLScissorRect(x: 0, y: 0, width: Int(width), height: Int(height)))
@@ -1208,6 +1247,16 @@ public final class Canvas {
         vertices.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
         pendingBackground = nil
+    }
+
+    /// 列ごとの値を置く領域。足りなければ取り直す。
+    private func valuesBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = valuesBuffer, valuesCapacity >= count { return buffer }
+        let capacity = max(count, max(valuesCapacity * 2, 16))
+        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
+        valuesBuffer = buffer
+        valuesCapacity = capacity
+        return buffer
     }
 
     /// 頂点を置く領域。足りなければ取り直す。
