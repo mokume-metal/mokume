@@ -128,6 +128,34 @@ class GuardTest(unittest.TestCase):
         reason = json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("gh pr close <番号>", reason)
 
+    # --- 他のリポジトリ宛て (#188) --------------------------------------
+
+    def test_other_repo_passes(self):
+        """他のリポジトリ宛てのコメントはこのリポジトリの規約の外。
+
+        ラッパーの投稿先は mokume 固定なので、ここで差し戻すと逃げ道が無くなる。
+        pr-identity-guard.sh が同じ判定で素通ししているのと揃える。
+        """
+        self.assert_passed('gh issue comment 5 -R shinyaoguri/claude-plugins --body "x"')
+        self.assert_passed("gh pr comment 7 --repo=other/repo -F /tmp/body.md")
+        self.assert_passed('gh -R other/repo issue close 3 -c "対応済み"')
+        self.assert_passed('gh pr review 3 -R other/repo --approve --body "見ました"')
+
+    def test_this_repo_explicitly_denied(self):
+        self.assert_denied('gh issue comment 1 -R mokume-metal/mokume --body "x"')
+
+    def test_ambiguous_repo_denied(self):
+        """owner を省いた --repo は自リポか判定できない。曖昧なら止める側に倒す。"""
+        self.assert_denied('gh issue comment 1 --repo mokume --body "x"')
+
+    def test_repo_mentioned_in_heredoc_body_denied(self):
+        """本文の中の --repo は宛先ではない。データを宛先と取り違えない。"""
+        self.assert_denied(
+            "gh issue comment 1 -F - <<'EOF'\n"
+            "他リポへ書くときは --repo other/repo を付ける。\n"
+            "EOF"
+        )
+
     # --- 以前は見逃していた形 (#128) ------------------------------------
 
     def test_command_substitution_denied(self):

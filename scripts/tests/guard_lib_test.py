@@ -11,6 +11,7 @@
 実行は make ci-check (CI もこれを呼ぶ)。
 """
 
+import os
 import subprocess
 import unittest
 from pathlib import Path
@@ -33,6 +34,23 @@ def judge(command, subcommand):
         ["bash", "-c", f'. "{LIB}"\nis_gh_subcommand "$1" "$2"', "_", command, subcommand],
         capture_output=True,
         text=True,
+    )
+    return proc.returncode
+
+
+def targets_other_repo(command, **env):
+    """宛先の判定を bash に任せ、終了コードを返す。
+
+    基準リポは環境変数で決まるので、呼び出し元の env を引き継がずに立て直す
+    (このテスト自体が CI = GITHUB_REPOSITORY が立っている環境からも走る)。
+    """
+    child_env = {k: v for k, v in os.environ.items() if k != "GITHUB_REPOSITORY"}
+    child_env.update(env)
+    proc = subprocess.run(
+        ["bash", "-c", f'. "{LIB}"\ntargets_other_repo "$1"', "_", command],
+        capture_output=True,
+        text=True,
+        env=child_env,
     )
     return proc.returncode
 
@@ -162,6 +180,66 @@ class IsGhSubcommandTest(unittest.TestCase):
         )
 
 
+class TargetsOtherRepoTest(unittest.TestCase):
+    """宛先はこのリポジトリの外か (#188)。
+
+    真なら guard は口を出さない。広すぎると本文に書くだけで素通りでき、狭すぎると
+    他リポジトリ宛ての操作まで止めて逃げ道が無くなる。
+    """
+
+    def assert_other(self, command, **env):
+        self.assertEqual(
+            targets_other_repo(command, **env), 0, f"他リポと判定されるはず: {command!r}"
+        )
+
+    def assert_own(self, command, **env):
+        self.assertNotEqual(
+            targets_other_repo(command, **env), 0, f"自リポ扱いのはず: {command!r}"
+        )
+
+    def test_other_repo(self):
+        self.assert_other(f"gh issue {COMMENT} 5 -R shinyaoguri/claude-plugins --body x")
+        self.assert_other(f"gh pr {CREATE} --repo=other/repo --fill")
+        self.assert_other(f"gh -R other/repo issue {COMMENT} 5 --body x")
+
+    def test_no_repo_option_is_own(self):
+        """-R が無ければ宛先はカレントのリポジトリ。"""
+        self.assert_own(f"gh issue {COMMENT} 1 --body x")
+
+    def test_this_repo_explicitly_is_own(self):
+        self.assert_own(f"gh issue {COMMENT} 1 -R mokume-metal/mokume --body x")
+
+    def test_owner_omitted_is_own(self):
+        """owner を省いた指定は自リポか判定できない。曖昧なら止める側に倒す。"""
+        self.assert_own(f"gh pr {CREATE} --repo mokume --fill")
+
+    def test_last_option_wins(self):
+        """gh は後勝ち。判定もそれに合わせる。"""
+        self.assert_other(f"gh issue {COMMENT} 1 -R mokume-metal/mokume -R other/repo --body x")
+        self.assert_own(f"gh issue {COMMENT} 1 -R other/repo -R mokume-metal/mokume --body x")
+
+    def test_heredoc_body_is_not_a_destination(self):
+        """本文の中の --repo は投稿する文章であって宛先ではない。
+
+        落とさないと、本文にそう書くだけで guard を素通りできてしまう。
+        """
+        self.assert_own(
+            f"gh issue {COMMENT} 1 -F - <<'EOF'\n"
+            "他リポへ書くときは --repo other/repo を付ける。\n"
+            "EOF"
+        )
+
+    def test_base_repo_follows_the_environment(self):
+        """基準は GITHUB_REPOSITORY。fork や移設で自リポ名が変わっても効き続ける。"""
+        self.assert_own(
+            f"gh issue {COMMENT} 1 -R other/repo --body x", GITHUB_REPOSITORY="other/repo"
+        )
+        self.assert_other(
+            f"gh issue {COMMENT} 1 -R mokume-metal/mokume --body x",
+            GITHUB_REPOSITORY="other/repo",
+        )
+
+
 class WiringTest(unittest.TestCase):
     """配線 — 書いただけで guard から使われていなければ効かない。"""
 
@@ -169,6 +247,17 @@ class WiringTest(unittest.TestCase):
         for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
             text = (REPO / "scripts" / name).read_text()
             self.assertIn("guard-lib.sh", text, f"{name} が共有ヘルパを読んでいない")
+
+    def test_both_guards_use_the_shared_destination_check(self):
+        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
+            text = (REPO / "scripts" / name).read_text()
+            self.assertIn("targets_other_repo", text, f"{name} が宛先を見ていない")
+
+    def test_guards_do_not_extract_the_repo_option_themselves(self):
+        """複製が残っていると、片方だけ直す事故が起きる (#128 と同じ理由)。"""
+        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
+            text = (REPO / "scripts" / name).read_text()
+            self.assertNotIn("--repo)", text, f"{name} に自前の -R 抽出が残っている")
 
     def test_guards_do_not_keep_their_own_copy(self):
         """複製が残っていると、片方だけ直す事故が起きる。"""
