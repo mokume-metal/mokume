@@ -57,6 +57,203 @@ struct CanvasTests {
         #expect(try pixels(of: canvas)[4, 4] == (0, 0, 0, 255))
     }
 
+    // MARK: - 図形 (ひととおり)
+
+    @Test("正方形は、幅と高さに同じ値を渡した矩形と同じ")
+    func squareIsARectangleWithEqualSides() throws {
+        let square = try makeCanvas()
+        try square.draw {
+            square.background(black)
+            square.fill(white)
+            square.square(10, 10, 20)
+        }
+        let rectangle = try makeCanvas()
+        try rectangle.draw {
+            rectangle.background(black)
+            rectangle.fill(white)
+            rectangle.rect(10, 10, 20, 20)
+        }
+        #expect(try pixels(of: square).bytes == pixels(of: rectangle).bytes)
+    }
+
+    @Test("楕円は横と縦で違う半径を持つ")
+    func ellipseStretchesIndependently() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.ellipse(32, 32, 48, 16)  // 横に平たい
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32] == (255, 255, 255, 255))  // 中心
+        #expect(image[52, 32] == (255, 255, 255, 255))  // 横は半径 24 の内側
+        #expect(image[32, 52] == (0, 0, 0, 255))  // 縦は半径 8 なので外
+    }
+
+    @Test("円弧は指定した向きだけを塗る")
+    func arcFillsOnlyTheRequestedSweep() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            // 右向きが 0、増える向きは画面の上で時計回り = 右下の 4 分の 1
+            canvas.arc(32, 32, 40, 40, 0, .pi / 2)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[40, 40] == (255, 255, 255, 255))  // 右下は扇の中
+        #expect(image[24, 24] == (0, 0, 0, 255))  // 左上は扇の外
+        #expect(image[24, 40] == (0, 0, 0, 255))  // 左下も外
+    }
+
+    @Test("三角形は 3 頂点の内側だけを塗る")
+    func triangleFillsItsInterior() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.triangle(32, 8, 56, 56, 8, 56)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 40] == (255, 255, 255, 255))  // 内側
+        #expect(image[10, 12] == (0, 0, 0, 255))  // 左上の角の外
+    }
+
+    @Test("四角形は頂点を与えた順に結ぶ")
+    func quadFollowsTheOrderOfItsVertices() throws {
+        let square = try makeCanvas()
+        try square.draw {
+            square.background(black)
+            square.fill(white)
+            square.quad(12, 12, 52, 12, 52, 52, 12, 52)
+        }
+        // 3 番目と 4 番目を入れ替えると、辺が交差して砂時計になる
+        let crossed = try makeCanvas()
+        try crossed.draw {
+            crossed.background(black)
+            crossed.fill(white)
+            crossed.quad(12, 12, 52, 12, 12, 52, 52, 52)
+        }
+        // 右上の角は、正方形なら内側・砂時計なら (交差した辺の外へ出るので) 背景
+        #expect(try pixels(of: square)[48, 20] == (255, 255, 255, 255))
+        #expect(try pixels(of: crossed)[48, 20] == (0, 0, 0, 255))
+        #expect(try pixels(of: square).bytes != pixels(of: crossed).bytes)
+    }
+
+    @Test("点は線の色と太さで打たれる")
+    func pointUsesTheStrokeColorAndWeight() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(.display(red: 0, green: 1, blue: 0))  // 塗りの色は使われない
+            canvas.stroke(white)
+            canvas.strokeWeight(12)
+            canvas.point(32, 32)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32] == (255, 255, 255, 255))  // 線の色で打たれる
+        #expect(image[32, 42] == (0, 0, 0, 255))  // 半径 6 の外
+    }
+
+    // MARK: - 位置の基準
+
+    @Test("読み方が違えば、同じ矩形を別の引数で書ける")
+    func everyRectModeCanExpressTheSameRectangle() throws {
+        // どれも左上 (20, 20) から 20x20 を指す
+        let cases: [(ShapeMode, (Float, Float, Float, Float))] = [
+            (.corner, (20, 20, 20, 20)),
+            (.corners, (20, 20, 40, 40)),
+            (.center, (30, 30, 20, 20)),
+            (.radius, (30, 30, 10, 10)),
+        ]
+        var images: [DisplayImage] = []
+        for (mode, args) in cases {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.rectMode(mode)
+                canvas.rect(args.0, args.1, args.2, args.3)
+            }
+            images.append(try pixels(of: canvas))
+        }
+        for image in images.dropFirst() {
+            #expect(image.bytes == images[0].bytes)
+        }
+        #expect(images[0][25, 25] == (255, 255, 255, 255))
+        #expect(images[0][45, 45] == (0, 0, 0, 255))
+    }
+
+    @Test("同じ引数でも、読み方が変われば別の場所に出る")
+    func theSameArgumentsLandElsewhereUnderAnotherMode() throws {
+        let corner = try makeCanvas()
+        try corner.draw {
+            corner.background(black)
+            corner.fill(white)
+            corner.rect(20, 20, 20, 20)  // 既定 = corner
+        }
+        let center = try makeCanvas()
+        try center.draw {
+            center.background(black)
+            center.fill(white)
+            center.rectMode(.center)
+            center.rect(20, 20, 20, 20)  // 中心 (20, 20) なので左上へ寄る
+        }
+        #expect(try pixels(of: corner)[36, 36] == (255, 255, 255, 255))
+        #expect(try pixels(of: center)[36, 36] == (0, 0, 0, 255))
+        #expect(try pixels(of: center)[14, 14] == (255, 255, 255, 255))
+    }
+
+    @Test("楕円の読み方は円にも効く")
+    func circleFollowsTheEllipseMode() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.ellipseMode(.radius)
+            canvas.circle(32, 32, 10)  // 半径として読むので直径 20
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 32] == (255, 255, 255, 255))
+        #expect(image[40, 32] == (255, 255, 255, 255))  // 半径 10 の内側
+        #expect(image[32, 46] == (0, 0, 0, 255))  // 外側
+    }
+
+    // MARK: - 描けない指定
+
+    @Test("角度が逆向きの円弧は何も描かない")
+    func reversedArcDrawsNothing() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.arc(32, 32, 40, 40, .pi, 0)
+        }
+        let image = try pixels(of: canvas)
+        for y in stride(from: 0, to: 64, by: 8) {
+            for x in stride(from: 0, to: 64, by: 8) {
+                #expect(image[x, y] == (0, 0, 0, 255))
+            }
+        }
+    }
+
+    @Test("大きさを持たない図形は何も描かない", arguments: [0, -20] as [Float])
+    func degenerateShapesDrawNothing(_ size: Float) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.rect(20, 20, size, size)
+            canvas.circle(32, 32, size)
+            canvas.ellipse(32, 32, size, 20)
+        }
+        let image = try pixels(of: canvas)
+        for y in stride(from: 0, to: 64, by: 8) {
+            for x in stride(from: 0, to: 64, by: 8) {
+                #expect(image[x, y] == (0, 0, 0, 255))
+            }
+        }
+    }
+
     // MARK: - 図形
 
     @Test("矩形は指定した場所に、指定した大きさで出る")
