@@ -19,6 +19,13 @@ final class FramePresenter {
     /// しておく** — 絵が出ない・動きが飛ぶといった症状の出どころが、ここを見れば分かる。
     private(set) var missedFrames = 0
 
+    /// 前回差し出した面の大きさ。まだ 1 枚も差し出していなければ `(0, 0)`。
+    ///
+    /// 面の環は Metal 側が持っていて、**大きさが変わると環ごと作り直される**。古い面を
+    /// 常駐させたままにすると際限なく積み上がるので、変わったことをここで見て畳む
+    /// ([#357](https://github.com/mokume-metal/mokume/issues/357))。
+    private var lastDrawableSize = (width: 0, height: 0)
+
     /// 描いた絵を画面へ出すべきか。
     ///
     /// 窓が見えていない間は出さない — 誰も見ない絵のために `nextDrawable()` の待ちを
@@ -45,6 +52,16 @@ final class FramePresenter {
             missedFrames += 1
             return false
         }
+
+        // 差し出す面も**常駐の集合を通す**。通し忘れると検証レイヤが「どの residency
+        // set にも入っていない」と言い、実装や OS の版が変われば黙って壊れうる ([#357])
+        let size = (width: drawable.texture.width, height: drawable.texture.height)
+        if size != lastDrawableSize {
+            // 大きさが変わった = 前の環は死んだ。畳んでから入れ直す
+            try gpu.releaseDrawableResidency()
+            lastDrawableSize = size
+        }
+        gpu.makeDrawableResident(drawable.texture)
 
         gpu.waitForDrawable(drawable)
         let commands = try gpu.beginCommands()

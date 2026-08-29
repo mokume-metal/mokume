@@ -180,6 +180,8 @@ public final class Canvas {
     var warnedSurroundingsOutsideFrame = false
     /// 受け取れない周囲を知らせたか。
     var warnedBadSurroundings = false
+    /// 受け取れない揺らぎの設定を知らせたか。
+    var warnedBadNoise = false
 
     /// 影を落とすか。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
@@ -194,6 +196,14 @@ public final class Canvas {
     /// 斜めに当たる面ほど、焼いた 1 画素の中で奥行きが大きく変わる。**自分の影が
     /// 自分の上に縞として出る**のを抑えるための余裕で、大きくしすぎると影が浮く。
     var shadowBiasValue: Float = 0.0025
+
+    /// 揺らぎの種と細かさ。
+    ///
+    /// **描画の状態として持つ。** 断片からも同じ値が引けるよう uniforms を通って
+    /// 送られるためで、置き場が 2 つに割れると CPU と断片で別の模様が出る ([#366])。
+    ///
+    /// [#366]: https://github.com/mokume-metal/mokume/issues/366
+    var noiseSettings = ValueNoise()
     /// 焼き付け先。**同じ細かさなら作り直さない** (同 決定 4)。
     private var shadowMap: ShadowMap?
     /// 焼き付け先を作った回数 (作ってから通算)。
@@ -1418,6 +1428,15 @@ public final class Canvas {
             uniformsBuffer.contents().advanced(by: 96)
                 .assumingMemoryBound(to: Float.self)
                 .update(from: [bakedShadow == nil ? 0 : 1, shadowTexel, 0, 0], count: 4)
+            // 揺らぎの種と細かさ。**断片が種を受け取る**ので、利用者が値として
+            // 配線しなくても CPU の `noise()` と同じ模様が出る。種と枚数は整数の
+            // まま送る (`Float` を経由すると大きな種で丸めが起きる)
+            uniformsBuffer.contents().advanced(by: 112)
+                .assumingMemoryBound(to: UInt32.self)
+                .update(from: [noiseSettings.seed, UInt32(noiseSettings.octaves)], count: 2)
+            uniformsBuffer.contents().advanced(by: 120)
+                .assumingMemoryBound(to: Float.self)
+                .update(from: [noiseSettings.falloff, 0], count: 2)
             // **焼いていなくても、読む先は必ず束ねる。** 束ねない口を作ると、断片が
             // 触った瞬間に何が起きるかが土台任せになる
             pipeline.argumentTable.setTexture(

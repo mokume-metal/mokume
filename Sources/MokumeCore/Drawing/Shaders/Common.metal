@@ -105,6 +105,13 @@ struct Uniforms {
     float4x4 shadowMatrix;
     /// x が 1 なら影が焼いてある。y は焼き付け先の 1 画素の大きさ (0…1 の尺度)。
     float4 shadowParams;
+    /// 揺らぎの種。`noiseSeed()` が決める。
+    uint noiseSeed;
+    /// 重ねる枚数と、1 枚ごとの弱まり。`noiseDetail()` が決める。
+    uint noiseOctaves;
+    float noiseFalloff;
+    /// 16 バイト境界へ揃えるための詰め物 (Swift 側もこの位置を空けている)。
+    float noisePadding;
 };
 
 /// 焼き付けた影の読み方。**奥行きを数として比べる**ので、混ぜずにそのまま読む
@@ -325,7 +332,101 @@ struct Fragment {
     float time;
     /// 面の大きさ (画素)。
     float2 resolution;
+    /// 揺らぎの種。`noiseSeed()` が決めたものがそのまま届く。
+    ///
+    /// **断片が種を受け取るので、利用者は配線しなくてよい。** `noiseSeed()` を 1 度
+    /// 呼べば、CPU で引く `noise()` と断片で引く `mokume_noise()` の両方に効く。
+    uint noiseSeed;
+    /// 重ねる枚数と、1 枚ごとの弱まり。`noiseDetail()` が決める。
+    uint noiseOctaves;
+    float noiseFalloff;
 };
+
+// MARK: - 揺らぎ
+//
+// **Swift の `ValueNoise` と同じ式である。** 同じ種・同じ座標なら、CPU で引いても
+// ここで引いても同じ値が出る — 面と立体で同じ模様を出すのに、揺らぎを 2 つ別々に
+// 持たなくて済むようにするためである (#366)。
+//
+// 二重管理を許すのは ADR-0001 原則 9 に反するので、**食い違いは機械が見る** —
+// NoiseParityTests が代表点で両者を突き合わせ、ずれたら赤くなる。ここを触ったら
+// 向こうも触ることになる。
+
+/// 格子点の値を作る混ぜ合わせ。**Swift の `ValueNoise.hash` と 1 行ずつ対応する。**
+static inline uint mokume_noiseHash(int x, int y, int z, uint seed) {
+    uint h = uint(x) * 0x27D4EB2Du;
+    h ^= uint(y) * 0x165667B1u;
+    h ^= uint(z) * 0x9E3779B1u;
+    h ^= seed * 0x85EBCA6Bu;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return h;
+}
+
+/// 格子点の値 (0…1)。**ここまでは整数演算だけ**なので、CPU 側とビット単位で一致する。
+static inline float mokume_noiseCorner(int x, int y, int z, uint seed) {
+    return float(mokume_noiseHash(x, y, z, seed) >> 8) * (1.0 / 16777216.0);
+}
+
+/// 格子を繋いだ 1 枚ぶんの揺らぎ。端で傾きが 0 になる繋ぎ方
+/// (折れ目が縞として乗らないようにするため)。
+static inline float mokume_noiseLayer(float3 p, uint seed) {
+    // **端で切る。** 格子の番号は 32 ビット整数なので、外まで数えると変換が壊れる。
+    // Swift 側の `ValueNoise.coordinateLimit` と同じ値で切るので、外に出ても一致する
+    float3 c = clamp(p, -1000000.0, 1000000.0);
+    float3 i = floor(c);
+    float3 f = c - i;
+    float3 t = f * f * (3.0 - 2.0 * f);
+
+    int x0 = int(i.x), y0 = int(i.y), z0 = int(i.z);
+    int x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
+
+    float near = mix(
+        mix(mokume_noiseCorner(x0, y0, z0, seed), mokume_noiseCorner(x1, y0, z0, seed), t.x),
+        mix(mokume_noiseCorner(x0, y1, z0, seed), mokume_noiseCorner(x1, y1, z0, seed), t.x),
+        t.y);
+    float far = mix(
+        mix(mokume_noiseCorner(x0, y0, z1, seed), mokume_noiseCorner(x1, y0, z1, seed), t.x),
+        mix(mokume_noiseCorner(x0, y1, z1, seed), mokume_noiseCorner(x1, y1, z1, seed), t.x),
+        t.y);
+    return mix(near, far, t.z);
+}
+
+/// その座標の揺らぎ (0…1)。**種と細かさは画素が持っている**ので、渡すのは座標だけ。
+///
+/// ```metal
+/// float4 paint(Fragment in, Values values) {
+///     float g = mokume_noise(in, in.place * 8.0);
+///     return float4(g, g, g, 1.0);
+/// }
+/// ```
+static inline float mokume_noise(Fragment f, float3 p) {
+    float sum = 0.0;
+    float total = 0.0;
+    float amplitude = 1.0;
+    float frequency = 1.0;
+    uint octaves = max(f.noiseOctaves, 1u);
+    for (uint octave = 0; octave < octaves; octave++) {
+        // 枚ごとに種をずらす。ずらさないと、倍率違いの同じ模様が重なって格子の目が見える
+        uint layerSeed = f.noiseSeed + octave * 0x9E3779B1u;
+        sum += mokume_noiseLayer(p * frequency, layerSeed) * amplitude;
+        total += amplitude;
+        amplitude *= f.noiseFalloff;
+        frequency *= 2.0;
+    }
+    return total > 0.0 ? sum / total : 0.0;
+}
+
+static inline float mokume_noise(Fragment f, float2 p) {
+    return mokume_noise(f, float3(p, 0.0));
+}
+
+static inline float mokume_noise(Fragment f, float x) {
+    return mokume_noise(f, float3(x, 0.0, 0.0));
+}
 
 /// 出した色を下地と混ぜる。
 static inline float4 mokume_composite(float4 source, float4 destination, uint mode) {
@@ -430,6 +531,9 @@ fragment float4 mokume_fragmentMain(
     f.shapeNormal = dot(shapeNormal, shapeNormal) > 0.0 ? normalize(shapeNormal) : float3(0.0);
     f.time = uniforms.time;
     f.resolution = uniforms.resolution;
+    f.noiseSeed = uniforms.noiseSeed;
+    f.noiseOctaves = uniforms.noiseOctaves;
+    f.noiseFalloff = uniforms.noiseFalloff;
 
     return mokume_composite(paint(f, values), destination, mode);
 }
