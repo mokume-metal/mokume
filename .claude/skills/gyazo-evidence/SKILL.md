@@ -132,11 +132,17 @@ screencapture -l <windowId> -V 5 motion.mov   # 5 秒の録画
 | 宛先 | 静止画 | 動き | 使えないもの |
 | --- | --- | --- | --- |
 | PR / Issue | PNG | **WebP** | mp4 |
-| DocC | PNG | **GIF** | WebP / mp4 |
+| 参照の面 | PNG | **GIF** | WebP / mp4 |
 
 PR / Issue で WebP を使うのは、同じ絵で GIF より小さく、色数が多くても劣化しないため。
-**DocC は WebP を警告も出さずに落とす**ので、そちらへ出すものだけ GIF にする
-(このリポジトリにまだ DocC が無いため、DocC 側は**未検証**)。
+**参照の面は WebP を警告も出さずに落とす**ので、そちらへ出すものだけ GIF にする。
+
+> **落ち方が「無言」である**ことを実測で確かめてある ([ADR-0026](../../../docs/decisions/0026-readable-surfaces.md)
+> の「測ったこと」)。WebP を指した参照は本文から丸ごと消え、周りの文だけが残る — ビルドは緑・警告も
+> 無しなので、**公開された面を見るまで気付けない**。
+>
+> 面を作る道具そのものは `@Video` で mp4 を扱えるが、**上げる経路が無い** (下記「うまくいかないとき」)。
+> 動きを参照の面へ出す手段は、いまのところ GIF だけである。
 
 **A は連番がそのまま手に入る**ので、束ねる所から始める。B は録画なので、まず連番へ起こす。
 
@@ -147,7 +153,7 @@ ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos" frames/f.%04d.pn
 # PR / Issue へ出す — WebP (B は録画なので等間隔でよい。既定が可逆で 1 ビットも劣化しない)
 img2webp -loop 0 -d 67 frames/f.*.png -o motion.webp
 
-# DocC へ出す — GIF (パレットを作ってから通す)
+# 参照の面へ出す — GIF (パレットを作ってから通す)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos,palettegen" palette.png
 ffmpeg -y -i motion.mov -i palette.png \
   -lavfi "fps=15,scale=720:-1:flags=lanczos,paletteuse" -loop 0 motion.gif
@@ -304,8 +310,9 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
   ```
 
   permalink が 404 になる。**貼った先の画像も消えるので、貼り直しまで面倒を見る**
-- **mp4 を貼りたい** — 経路が無い。アップロード API が受け付けず、埋め込んでも展開されない。動きは
-  WebP (PR / Issue) か GIF (DocC) にする
+- **mp4 を貼りたい** — 経路が無い。アップロード API が受け付けず、埋め込んでも展開されない。参照の面を
+  作る道具の側は `@Video` で mp4 を扱える (実測) が、**置き場が無いので使えない**。動きは
+  WebP (PR / Issue) か GIF (参照の面) にする
 - **貼った絵が表示されない / 途中までしか動かない** — camo で詰まっている。5MB 超なら 404
   (`Content length exceeded`)、その手前なら途中切断が焼き付いている。**Gyazo 側は生きているので、URL を
   直接叩くと取れてしまい気付きにくい** — 「貼る」節の検算で camo 側の長さを見る。直すには小さくして
