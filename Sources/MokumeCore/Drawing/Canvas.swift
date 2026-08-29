@@ -1278,19 +1278,32 @@ public final class Canvas {
     /// 根拠がどこにも無く、直径 12 の円 (式は 11 を返す) に 3 倍の頂点を組み立てて
     /// いた。10,000 個置くと 40fps まで落ちる ([#423])。
     ///
-    /// 上限 128 だけは 0.25 画素の保証を外れる。半径 1000 を超える円は式が 141 以上を
-    /// 求めるが、それだけ割いても見た目は変わらないので頭打ちにしている。
+    /// **上限 1024 は品質の判断ではなく、暴走の歯止めである。** 式は大きな半径で
+    /// `n ≈ π√(2r)` に漸近するので、半径 10⁹ のような値が紛れ込むと 1 個の円に
+    /// 14 万辺を割いてしまう。上限 `n` に対して保証が届く半径は `r = n²/(2π²)` で、
+    /// 1024 なら約 53,000 — 面より桁違いに大きい円まで保証の内側に居る。
+    ///
+    /// かつての上限 128 は「大きすぎる円に 128 辺を超えて割いても見た目は変わらない」
+    /// を根拠にしていたが、実際には変わっていた。半径 20000 の円は、画面に映る
+    /// 800 列のうち 677 列で 1 画素以上・最大 6 画素ずれる ([#429] で実測)。
     ///
     /// 拡大縮小の変換は考えない。拡大した円が粗くなるのは受け入れる。
     ///
     /// [#423]: https://github.com/mokume-metal/mokume/issues/423
+    /// [#429]: https://github.com/mokume-metal/mokume/issues/429
     static func segmentCount(forRadius radius: Float) -> Int {
-        let tolerance: Float = 0.25
+        let tolerance = 0.25
+        let cap = 1024
         // 隔たりが許容誤差に届かない円は、いちばん粗い多角形で足りる
-        guard radius.isFinite, radius > tolerance else { return 3 }
-        let n = Float.pi / acos(max(-1, 1 - tolerance / radius))
-        guard n.isFinite else { return 3 }
-        return min(128, max(3, Int(n.rounded(.up))))
+        guard radius.isFinite, Double(radius) > tolerance else { return 3 }
+        // **倍精度で解く。** 半径が大きいほど `1 − tolerance/r` は 1 に貼り付き、
+        // 単精度では引き算で桁が落ちる — 半径 20000 で 629 ではなく 628 を返し、
+        // 上限とは別に保証を 0.2% 外していた ([#429])
+        let radians = acos(max(-1, 1 - tolerance / Double(radius)))
+        // 角度が潰れるのは半径が大きすぎるとき。いちばん**細かい**側へ倒す
+        // (かつては 3 を返し、半径 10⁷ の円が三角形になっていた)
+        guard radians > 0 else { return cap }
+        return min(cap, max(3, Int((Double.pi / radians).rounded(.up))))
     }
 
     /// 角度が逆向きの円弧を、初回だけ知らせる。
