@@ -19,8 +19,6 @@ final class ShapePipeline {
     static let projectionBufferIndex = 1
     /// 混ぜ方の番号を渡す口の番号 (シェーダ側の `buffer(2)`)。
     static let blendModeBufferIndex = 2
-    /// 面の中身の種類を渡す口の番号 (シェーダ側の `buffer(3)`)。
-    static let textureKindBufferIndex = 3
     /// フレームを通して変わらない値を渡す口の番号 (シェーダ側の `buffer(4)`)。
     static let uniformsBufferIndex = 4
     /// 利用者が渡した値の口の番号 (シェーダ側の `buffer(5)`)。

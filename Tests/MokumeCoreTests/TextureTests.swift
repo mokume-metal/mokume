@@ -109,7 +109,6 @@ struct TextureTests {
     @Test("束ねると塗りの列だけが絵の面を読み、輪郭の列は焼き場のまま")
     func onlyFillsReadThePastedImage() throws {
         let canvas = try makeCanvas()
-        var kinds: [TextureKind] = []
         var readsImage: [Bool] = []
         try canvas.draw {
             let image = try? self.makeQuadrants(canvas)
@@ -120,13 +119,10 @@ struct TextureTests {
             canvas.strokeWeight(4)
             canvas.rect(8, 8, 32, 32)
             canvas.closeBatch()
-            kinds = canvas.batches.map(\.run.textureKind)
             readsImage = canvas.batches.map { $0.run.texture === image.texture }
         }
 
         // 塗りと輪郭で列が分かれ、**先に置いた塗りだけ**が絵を読む
-        #expect(kinds.count == 2)
-        #expect(kinds == [.color, .coverage])
         #expect(readsImage == [true, false])
     }
 

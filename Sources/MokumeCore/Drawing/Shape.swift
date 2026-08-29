@@ -35,7 +35,6 @@ public struct Shape {
     struct Run {
         var mode: BlendMode
         var texture: any MTLTexture
-        var textureKind: TextureKind
         /// この区間を塗るもの。`nil` なら組み込みの塗り。
         var shader: Shader?
         /// 利用者が渡した値。**区間の先頭で取り込んだもの**を持ち歩く。
@@ -101,7 +100,7 @@ public struct Shape {
     /// 区間を足す。直前と設定が同じなら伸ばすだけにする。
     private static func append(_ run: Run, to runs: inout [Run]) {
         if var last = runs.last, last.mode == run.mode, last.texture === run.texture,
-            last.textureKind == run.textureKind, last.shader === run.shader,
+            last.shader === run.shader,
             last.values == run.values, last.numbers === run.numbers, last.source == run.source,
             last.start + last.count == run.start
         {
