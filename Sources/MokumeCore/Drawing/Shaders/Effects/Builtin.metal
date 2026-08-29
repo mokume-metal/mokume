@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 //
-// 組み込みの効果。**利用者の効果とまったく同じ規約で書いてある** — 前文が用意する
-// `float4 effect(Pixel in, Values values)` 1 本だけで、7 つぶんを `in.control` の
-// 種類で分ける。規約が足りているかは、ここが書けているかで分かる。
+// 組み込みの効果と、段そのものが使う変換。**利用者の効果とまったく同じ規約で書いて
+// ある** — 前文が用意する `float4 effect(Pixel in, Values values)` 1 本だけで、
+// 全部を `in.control` の種類で分ける。規約が足りているかは、ここが書けているかで分かる。
+//
+// 拡大 (種類 11・12) だけは利用者の並びに現れない — 解像度の決め方の一部であって
+// 後処理の 1 つではないため (ADR-0015 決定 1)。**通る道は同じ段**なので、ここに置く。
 //
 // 設定の並び (Swift 側の `Effect` が正本):
 //   control[0] = (種類, p0, p1, p2)
@@ -32,6 +35,42 @@ static inline float4 mokume_blurAlong(Pixel in, float2 step, float radius) {
 /// 明るさ (乗算済みのまま測る)。
 static inline float mokume_luminance(float3 color) {
     return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
+
+/// 描く細かさの絵を、出す細かさへ広げる (Catmull-Rom の三次補間)。
+///
+/// **乗算済みのまま補間する。** 掛け戻してから混ぜると、透明な画素の色 (無い) が
+/// 混ざって縁が濁る — ぼかしと同じ理由 ([ADR-0011] 決定 3・4)。
+///
+/// `offset` は入りの絵を読む位置のずらし (0…1)。時間方向のとき、揺らして描いた分を
+/// ここで戻す — 戻す場所を広げる前に置くと、余分なぼけが 1 段も入らない。
+///
+/// 三次補間は縁で行き過ぎる (負へ振れる) ことがある。作業空間の値は光の量なので、
+/// **負にはしない**。
+static inline float4 mokume_enlarge(Pixel in, float2 offset) {
+    float2 size = float2(in.source.get_width(), in.source.get_height());
+    float2 coord = (in.place + offset) * size - 0.5;
+    float2 base = floor(coord);
+    float2 f = coord - base;
+
+    // Catmull-Rom の重み (a = -0.5)
+    float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    float2 w3 = f * f * (-0.5 + 0.5 * f);
+    float wx[4] = { w0.x, w1.x, w2.x, w3.x };
+    float wy[4] = { w0.y, w1.y, w2.y, w3.y };
+
+    float4 sum = float4(0.0);
+    for (int j = 0; j < 4; j++) {
+        for (int i = 0; i < 4; i++) {
+            sum += mokume_texel(in, int2(base) + int2(i - 1, j - 1)) * (wx[i] * wy[j]);
+        }
+    }
+    sum = max(sum, float4(0.0));
+    // 乗算済みの決まりを保つ — 不透明度が無いところに色は残らない
+    if (sum.a <= 0.0) { return float4(0.0); }
+    return sum;
 }
 
 float4 effect(Pixel in, Values values) {
@@ -118,6 +157,17 @@ float4 effect(Pixel in, Values values) {
         if (p0 <= 0.0) { return in.color; }
         float3 glow = mokume_paired(in, in.place).rgb * p0;
         return float4(in.color.rgb + glow * in.color.a, in.color.a);
+    }
+
+    // 拡大: 描く細かさの絵を、出す細かさへ広げる
+    if (kind == 11) { return mokume_enlarge(in, float2(p0, p1)); }
+
+    // 拡大して、前のフレームの結果と混ぜる (時間方向)。**p2 がいまのフレームの重み**で、
+    // 1 なら前を捨てる (最初の 1 枚)
+    if (kind == 12) {
+        float4 current = mokume_enlarge(in, float2(p0, p1));
+        if (p2 >= 1.0) { return current; }
+        return mix(mokume_paired(in, in.place), current, p2);
     }
 
     return in.color;

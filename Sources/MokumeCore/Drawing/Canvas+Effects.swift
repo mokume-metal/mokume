@@ -65,8 +65,10 @@ extension Canvas {
     /// 効果のパイプライン。**頼まれてはじめて作る。**
     func effectPipeline() throws(RenderFailure) -> EffectPipeline {
         if let effectPipelineStorage { return effectPipelineStorage }
+        // **控えは描く細かさで作る。** 効果は描き終えた絵の上で働くので、拡大より
+        // 手前 = 描く細かさの側にいる
         let made = try EffectPipeline(
-            gpu: gpu, width: Int(width), height: Int(height),
+            gpu: gpu, width: pixelWidth, height: pixelHeight,
             pixelFormat: RenderTarget.pixelFormat)
         effectPipelineStorage = made
         return made
@@ -104,8 +106,11 @@ extension Canvas {
         let passes = pendingEffects.flatMap(\.passes)
         guard !passes.isEmpty else { return }
         let pipeline = try effectPipeline()
-        // 最後の写し戻しぶんを足して数える
-        try pipeline.reservePasses(passes.count + 1)
+        // **このフレームで使う枠を、1 枠も書かないうちに数え切る。** 取り直すと領域が
+        // 入れ替わるので、既に束ねた番地の指す先を生かしておくことに頼ることになる。
+        // 数え切っておけば、そもそも途中で取り直さない (写し戻しと拡大のぶんを足す)
+        try pipeline.reservePasses(
+            stagePassesUsed + passes.count + 1 + upscalePassCount)
 
         /// いまの絵。`nil` は入りの絵 (描き終えた描画先)。
         var current: RenderTarget?
@@ -120,14 +125,14 @@ extension Canvas {
             }
         }
 
-        for (index, pass) in passes.enumerated() {
+        for pass in passes {
             let source = try image(of: pass.input) ?? target
             let paired = try image(of: pass.paired ?? pass.input) ?? target
             guard let destination = try image(of: pass.output) else {
                 throw .encoderUnavailable
             }
             try encode(
-                pass, at: index, from: source.texture, paired: paired.texture,
+                pass, at: takeStagePass(), from: source.texture, paired: paired.texture,
                 into: destination, using: pipeline, in: commands)
             if pass.output == .next {
                 current = destination
@@ -138,12 +143,18 @@ extension Canvas {
         // **ここではじめて入りの絵へ書く。** 1 度きりで、途中で失敗すればここへ来ない
         guard let result = current else { return }
         try encode(
-            EffectPass(control: (SIMD4(0, 0, 0, 0), SIMD4(0, 0, 0, 0))), at: passes.count,
+            EffectPass(control: (SIMD4(0, 0, 0, 0), SIMD4(0, 0, 0, 0))), at: takeStagePass(),
             from: result.texture, paired: result.texture, into: target,
             using: pipeline, in: commands)
     }
 
-    private func encode(
+    /// 次の段の枠を 1 つ取る。**効果も拡大もここから取る** (採番は 1 系統)。
+    func takeStagePass() -> Int {
+        defer { stagePassesUsed += 1 }
+        return stagePassesUsed
+    }
+
+    func encode(
         _ pass: EffectPass, at index: Int, from source: any MTLTexture,
         paired: any MTLTexture, into destination: RenderTarget,
         using pipeline: EffectPipeline, in commands: any MTL4CommandBuffer
@@ -168,7 +179,8 @@ extension Canvas {
         var control = [pass.control.0, pass.control.1]
         block.advanced(by: EffectPipeline.controlOffset)
             .copyMemory(from: &control, byteCount: 32)
-        var frame = SIMD4<Float>(Float(width), Float(height), time, 0)
+        var frame = SIMD4<Float>(
+            Float(destination.width), Float(destination.height), time, 0)
         block.advanced(by: EffectPipeline.frameOffset)
             .copyMemory(from: &frame, byteCount: 16)
         var values = pass.shader?.packedValues ?? [0, 0, 0, 0]
@@ -193,9 +205,12 @@ extension Canvas {
         table.setTexture(paired.gpuResourceID, index: EffectPipeline.pairedTextureIndex)
 
         encoder.setRenderPipelineState(pass.shader?.state ?? pipeline.builtin)
+        // **窓は書き込む先の大きさで測る。** 段は入りと出りで大きさが違いうる
+        // (拡大がそれ) ので、面の大きさを 1 つに決め打つと出りが埋まらない
         encoder.setViewport(
             MTLViewport(
-                originX: 0, originY: 0, width: Double(width), height: Double(height),
+                originX: 0, originY: 0,
+                width: Double(destination.width), height: Double(destination.height),
                 znear: 0, zfar: 1))
         encoder.setArgumentTable(table, stages: [.vertex, .fragment])
         encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
