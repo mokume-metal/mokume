@@ -148,3 +148,146 @@ struct OutputStageTests {
         #expect(same.components.map(\.bitPattern) == pixels.components.map(\.bitPattern))
     }
 }
+
+/// 面に描かずに取り出す道 (#440)。GPU を要する。
+///
+/// [ADR-0024] 決定 6 は「出力段を通した絵を、画面の面へ描くパスから独立して取り出す
+/// 道が 1 本あること」と「全ての出口がそこから受け取ること」を要求する。ここが見るのは
+/// **取り出した絵が、読み戻して変換した絵と同じであること** — 違えば、外から足した
+/// 出口でだけ [ADR-0023] 決定 2 (出口の一致) が破れる。
+///
+/// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+/// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+@Suite(
+    "出力段: 面に描かずに取り出す",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct OutputEncodeTests {
+    private func makeCanvas(width: Int = 48, height: Int = 32) throws -> Canvas {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: width, height: height)
+        return try Canvas(target: target, gpu: gpu)
+    }
+
+    /// 出力段の 4 手を全部踏ませる絵を描く。
+    ///
+    /// **不透明な色だけでは足りない。** 乗算を戻す手と範囲へ収める手は、半透明と
+    /// 範囲外の明るさが無いと通らない — 通らない手は、実装が抜けていても一致する。
+    private func scene(on canvas: Canvas) {
+        canvas.background(.display(red: 0.02, green: 0.03, blue: 0.06))
+        canvas.fill(.display(red: 1, green: 0.85, blue: 0.3))
+        canvas.circle(16, 16, 12)
+        // 半透明 — 乗算を戻す手が要る
+        canvas.fill(.display(red: 0.2, green: 0.5, blue: 1, alpha: 0.4))
+        canvas.rect(20, 8, 20, 18)
+    }
+
+    /// 変換の特異点を直に置く。描いた図形では踏めない値を並べる。
+    private func pokeEdgeCases(on canvas: Canvas) {
+        // 範囲を超えた明るさ / 負の明るさ / 完全な透明 / 乗算を戻すと 1 を超えるもの
+        canvas.set(0, 0, LinearRGBA(premultipliedRed: 4, green: 2, blue: 0, alpha: 1))
+        canvas.set(1, 0, LinearRGBA(premultipliedRed: -1, green: 0.5, blue: 0, alpha: 1))
+        canvas.set(2, 0, .transparent)
+        canvas.set(3, 0, LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))
+        canvas.set(4, 0, LinearRGBA(premultipliedRed: .nan, green: 0.25, blue: 1, alpha: 1))
+    }
+
+    /// 2 つの絵を画素ごとに比べる。
+    ///
+    /// **食い違った数だけでなく、最初の 1 つの中身まで返す。** 数と最大の差だけでは
+    /// 「全体がわずかにずれている」のか「特定の値だけが違う」のかが分かれず、原因の
+    /// 見当が付かない。
+    private func compare(_ taken: DisplayImage, _ readBack: DisplayImage) -> Comparison {
+        var result = Comparison()
+        for y in 0..<taken.height {
+            for x in 0..<taken.width {
+                let a = taken[x, y]
+                let b = readBack[x, y]
+                guard a != b else { continue }
+                result.mismatches += 1
+                if result.detail == nil { result.detail = "(\(x), \(y)) 取り出し \(a) / 読み戻し \(b)" }
+                result.worst = max(
+                    result.worst,
+                    max(
+                        max(abs(Int(a.red) - Int(b.red)), abs(Int(a.green) - Int(b.green))),
+                        max(
+                            abs(Int(a.blue) - Int(b.blue)),
+                            abs(Int(a.alpha) - Int(b.alpha)))))
+            }
+        }
+        return result
+    }
+
+    private struct Comparison {
+        var mismatches = 0
+        var worst = 0
+        var detail: String?
+
+        /// 失敗のときに読む 1 行。
+        var report: String {
+            "\(mismatches) 画素が食い違う (最大の差 \(worst))。最初は \(detail ?? "-")"
+        }
+    }
+
+    @Test("取り出した絵が、読み戻して変換した絵と画素で一致する")
+    func takenImageMatchesTheReadBackOne() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw { scene(on: canvas) }
+        pokeEdgeCases(on: canvas)
+
+        let taken = try canvas.output.encodeToImage().read()
+        let readBack = try canvas.output.encodeForDisplay()
+
+        #expect(taken.width == readBack.width)
+        #expect(taken.height == readBack.height)
+        let result = compare(taken, readBack)
+        #expect(result.mismatches == 0, "\(result.report)")
+    }
+
+    @Test(
+        "明るさを写す設定を変えても一致する",
+        arguments: [
+            (Float(1), ToneMapping.roll), (2, .clip), (2, .roll), (0.5, .roll),
+        ])
+    func takenImageMatchesUnderEveryBrightness(exposure: Float, toneMapping: ToneMapping) throws {
+        let canvas = try makeCanvas()
+        canvas.exposure(exposure)
+        canvas.toneMapping(toneMapping)
+        try canvas.draw { scene(on: canvas) }
+        pokeEdgeCases(on: canvas)
+
+        let result = compare(
+            try canvas.output.encodeToImage().read(), try canvas.output.encodeForDisplay())
+        #expect(result.mismatches == 0, "露出 \(exposure) / 丸め \(toneMapping): \(result.report)")
+    }
+
+    @Test("何度取り出しても、置き場は 1 枚のまま")
+    func repeatedTakesReuseTheSameStorage() throws {
+        let canvas = try makeCanvas()
+        // 頼まれるまでは 1 枚も作らない (出口の無いスケッチは何も払わない)
+        #expect(canvas.output.encodedImagesMade == 0)
+
+        for _ in 0..<24 {
+            try canvas.draw { scene(on: canvas) }
+            _ = try canvas.output.encodeToImage()
+        }
+        // フレームごとに確保していれば 24 になる (ADR-0023 決定 5)
+        #expect(canvas.output.encodedImagesMade == 1)
+    }
+
+    @Test("取り出した絵は、いまのフレームのもの")
+    func takenImageFollowsTheLatestFrame() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw { canvas.background(.display(red: 1, green: 0, blue: 0)) }
+        let first = try canvas.output.encodeToImage().read()[4, 4]
+
+        try canvas.draw { canvas.background(.display(red: 0, green: 0, blue: 1)) }
+        let second = try canvas.output.encodeToImage().read()[4, 4]
+
+        // 使い回している 1 枚を返すので、古い中身が残っていると 2 回目が赤のままになる
+        #expect(first.red == 255 && first.blue == 0)
+        #expect(second.red == 0 && second.blue == 255)
+    }
+}

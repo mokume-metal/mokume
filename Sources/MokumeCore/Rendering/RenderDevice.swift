@@ -239,8 +239,11 @@ public final class RenderDevice {
     /// 行の先頭が揃っていないとテクスチャを載せられない。**幅を切り上げるのではなく
     /// 行の間隔を広げる**ので、どんな幅でも載せられる — 幅を切り上げると、利用者の
     /// 指定した大きさと描かれる大きさが食い違う。
-    func alignedBytesPerRow(_ natural: Int) -> Int {
-        let alignment = device.minimumLinearTextureAlignment(for: RenderTarget.pixelFormat)
+    /// **揃え方は形式ごとに違う**ので、載せる形式を渡す。既定は作業空間のもの。
+    func alignedBytesPerRow(
+        _ natural: Int, for pixelFormat: MTLPixelFormat = RenderTarget.pixelFormat
+    ) -> Int {
+        let alignment = device.minimumLinearTextureAlignment(for: pixelFormat)
         guard alignment > 1 else { return natural }
         return (natural + alignment - 1) / alignment * alignment
     }
