@@ -32,9 +32,10 @@ var arguments = Array(CommandLine.arguments.dropFirst())
 
 if arguments.first == "--render" {
     let directory = URL(fileURLWithPath: arguments.count > 1 ? arguments[1] : "shots")
-    // 連番で出すのは**動きの証跡のため**。立体は静止画だと向きが読めないことがあり、
-    // 観測の経路はまだ動きを撮れない (#221)。ここは既に決定論でフレームを進めているので、
-    // 同じ経路から連番を出せば、撮り直しても同じ動きになる
+    // 連番で出すのは**動きの証跡のため**。立体は静止画だと向きが読めないことがある。
+    // 観測の経路でも動きは撮れる (#312) が、あちらは走っている窓を外から覗くので間隔が
+    // 揃わない。ここは既に決定論でフレームを進めているので、同じ経路から連番を出せば
+    // **撮り直しても 1 枚ずつ同じ絵になる** — 参照スケッチの証跡はこちらで採る
     let frames = arguments.firstIndex(of: "--frames").flatMap { index in
         arguments.count > index + 1 ? Int(arguments[index + 1]) : nil
     }
