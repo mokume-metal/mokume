@@ -71,7 +71,7 @@ import json, os, pathlib, shutil, sys, time
 facet, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 rounds, scale = int(sys.argv[3]), float(sys.argv[4])
 out.mkdir(parents=True, exist_ok=True)
-previous = None
+previous, timing = None, []
 
 for index in range(1, rounds + 1):
     identifier = f"f{index:04d}"
@@ -79,20 +79,23 @@ for index in range(1, rounds + 1):
     temporary.write_text(json.dumps({"id": identifier, "scale": scale}))
     os.replace(temporary, facet / "request.json")
 
-    taken, limit = None, time.time() + 1.5
+    name, taken, limit = f"f.{index:04d}.png", None, time.time() + 1.5
     while time.time() < limit:                        # 壁時計ではなく識別子の一致で完了を知る
         try:
             report = json.loads((facet / "report.json").read_text())
             if report.get("id") == identifier and report.get("image"):
-                taken = shutil.copy(facet / report["image"], out / f"f.{index:04d}.png")
+                taken = shutil.copy(facet / report["image"], out / name)
                 break
         except Exception:
             pass
         time.sleep(0.01)
 
     if taken is None and previous:                    # 返らなかったら直前の絵を置く
-        shutil.copy(previous, out / f"f.{index:04d}.png")
+        shutil.copy(previous, out / name)
     previous = taken or previous
+    timing.append({"file": name, "at": time.time()})  # 何時に採れたか = その絵が出ていた長さ
+
+(out / "timing.json").write_text(json.dumps(timing))
 CAPTURE
 ```
 
@@ -104,8 +107,13 @@ CAPTURE
 > ([#310](https://github.com/mokume-metal/mokume/pull/310#issuecomment-5452377415) が実例 — 窓を畳んだ後に
 > 絵が凍るか回り続けるかの差が、70 枚のうち異なる絵の枚数として出た)。
 
-**採れる間隔は一定ではない** — 1 枚ごとに応答を待つためである。実時間との対応が要るなら、退避と一緒に
-`report.json` の `frame` と `time` も控えておく。
+> **採れる間隔は一定ではない。等間隔で束ねると、無かった動きを作ってしまう。** 1 枚ごとに応答を待つ上、
+> 観測を続けるとスケッチのフレームレート自体が途中で落ちる ([#370](https://github.com/mokume-metal/mokume/issues/370))。
+> 実測では 1 枚あたりの間隔が `0.248 秒 → 0.83 秒` と 3.3 倍に開き、**扇が 3.3 倍速で回り出す動画**になった —
+> スケッチは速さを変えていないのに、である。角度や位置が時刻の関数である以上これは必ず起きる。
+>
+> だから **`timing.json` を採り、各フレームの表示時間を実際の間隔から決める** (下記)。そうすれば採取が
+> 揺れても動画は実時間どおりになり、落ちている間は「絵が止まって見える」という**本当のこと**が映る。
 
 ## B. 窓を撮る
 
@@ -135,7 +143,7 @@ PR / Issue で WebP を使うのは、同じ絵で GIF より小さく、色数�
 # 録画から連番へ (B のみ・幅 720 / 15fps が目安)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos" frames/f.%04d.png
 
-# PR / Issue へ出す — WebP
+# PR / Issue へ出す — WebP (B は録画なので等間隔でよい)
 img2webp -loop 0 -mixed -d 67 frames/f.*.png -o motion.webp
 
 # DocC へ出す — GIF (パレットを作ってから通す)
@@ -146,6 +154,23 @@ ffmpeg -y -i motion.mov -i palette.png \
 
 `-d` はフレーム間隔 (ミリ秒。15fps なら 67)。`-mixed` はフレームごとに可逆 / 非可逆を選ばせる指定で、
 **微細な差分を見せる証跡では `-lossless`** を使う (サイズは増えるが 1 ビットも劣化しない)。
+
+**A は `-d` を採った間隔から 1 枚ずつ決める** (`-d` はファイルごとに効く)。等間隔で束ねてはいけない理由は
+経路 A の注意書きのとおり。
+
+```bash
+python3 - frames motion.webp <<'BUNDLE'
+import json, pathlib, subprocess, sys
+
+out = pathlib.Path(sys.argv[1])
+rows = json.loads((out / "timing.json").read_text())
+arguments = ["img2webp", "-loop", "0", "-mixed"]
+for current, following in zip(rows, rows[1:]):
+    gap = max(1, round((following["at"] - current["at"]) * 1000))
+    arguments += ["-d", str(gap), str(out / current["file"])]
+subprocess.run(arguments + ["-d", "100", str(out / rows[-1]["file"]), "-o", sys.argv[2]], check=True)
+BUNDLE
+```
 
 ## 上げる
 
