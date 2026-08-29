@@ -234,11 +234,14 @@ class RenderStatusTest(unittest.TestCase):
         return self.run_script("proxy", **base)
 
     def test_覆えている描画PRは報告する(self):
-        self.queue()
+        out = self.queue()
         posted = self.posted()
         self.assertEqual(len(posted), 1)
         self.assertIn("statuses/cafe1234", posted[0])
         self.assertIn("state=success", posted[0])
+        # 何本を見た上で通したのかを名乗る (#441)
+        self.assertIn("1 本の描画 PR", posted[0])
+        self.assertIn("#5 は覆えている", out)
 
     def test_覆えていない描画PRには失敗を打つ(self):
         """#432 を止める行。main 側で描画のファイルが動いていれば、手元で回した木は
@@ -252,13 +255,37 @@ class RenderStatusTest(unittest.TestCase):
     def test_描画に触れないPRはmainが動いていても通す(self):
         """描画に触れない PR は main の絵の組み合わせを動かさない。BEHIND のまま
         merge できる従来の運用をここで壊さない。"""
-        self.queue(
+        out = self.queue(
             FILES="AGENTS.md docs/decisions/0001-founding-principles.md",
             TREE_MERGED=TREE_DRAWING_MOVED,
         )
         posted = self.posted()
         self.assertEqual(len(posted), 1)
         self.assertIn("state=success", posted[0])
+        # 読み飛ばすときも名乗る (#441)。黙って飛ばすと、通した回のログが
+        # 「見た上で通した」のか「見る対象が無かった」のか読めない
+        self.assertIn("#5 は描画に触れない", out)
+
+    def test_見る対象が無かった回は覆っていると名乗らない(self):
+        """#439 自身の merge がこれだった — 描画 PR は 1 本も無いのに、報告だけが
+        「覆っている」と読める行を残した (#441)。"""
+        self.queue(FILES="AGENTS.md")
+        self.assertIn("描画に触れる PR は無い", self.posted()[0])
+
+    def test_見る対象が無ければ合流後の木を引かない(self):
+        """指紋は見る対象が現れて初めて要る。先に引くと、対象が無い回にも
+        「木を読めなかった」という無関係な名乗りが出る経路が残る (#441)。"""
+        self.queue(FILES="AGENTS.md")
+        self.assertNotIn("/git/trees/", self.calls.read_text())
+
+    def test_合流後の木は何本積まれても一度しか引かない(self):
+        self.queue(MERGE_GROUP_HEAD_REF="gh-readonly-queue/main/pr-5-pr-6-0123456789ab")
+        merged = [
+            c
+            for c in self.calls.read_text().splitlines()
+            if "/git/trees/cafe1234" in c
+        ]
+        self.assertEqual(len(merged), 1, merged)
 
     def test_描画に関わらないファイルが動いただけなら覆えている(self):
         self.queue(TREE_MERGED=TREE_OTHER_MOVED)
