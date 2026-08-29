@@ -148,6 +148,8 @@ gh run rerun <run-id> --failed
 
 管理画面から直接 1 項目変えられても気付けるよう、**日次で定義と実設定を照合する** (`.github/workflows/ruleset-drift.yml`)。ずれていたら Issue が自動で立ち、run も赤くなる。手で回すときは Actions から `Ruleset drift` を `workflow_dispatch` する。
 
+**同じ検査が、定義を merge した直後にも走る** (main への push で `.github/rulesets/**` が変わったとき。[#381](https://github.com/mokume-metal/mokume/issues/381))。`--apply` はメンテナの手に残っているので、打つまでは定義だけが先行した状態になる — その赤は故障ではなく「適用がまだ」の催促で、**この契機では Issue は立たない** (定義を変えるたびに人が処理すべき Issue が積み増されるため)。適用したら `Ruleset drift` を `workflow_dispatch` するか、手元で `bash scripts/check-rulesets.sh` を打てば緑に戻る。放置して翌日まで残れば、日次の回が従来どおり起票する。
+
 **この検査は `bypass_actors` を見ていない。** `bypass_actors` は ruleset への **write access** がある認証にしか返らず ([#99](https://github.com/mokume-metal/mokume/issues/99) で実測)、`Administration: Read` の App でも匿名でも見えない。CI にその鍵を置くことは「ルールセットを外せる鍵」を常設することなので、置かない。何を見ていないかは照合の出力自身が名乗る。
 
 したがって照合には 2 つの入口がある:

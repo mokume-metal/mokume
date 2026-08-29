@@ -7,6 +7,18 @@ name: Ruleset drift
 # それがこの検査の拾いたい事象なので、per-PR の ci-gate 配下には置かない。PR で回るのは
 # 定義の「形」だけで、そちらは token の要らない make ci-check の rulesets-shape が担う。
 #
+# 契機は 2 種で、拾う事象が違う (#381):
+#
+#   schedule … 管理画面から直接変えられたずれ。いつ起きるか分からないので日次で見る
+#   push     … 定義を変える PR を merge したのに apply-rulesets.sh --apply がまだ、という
+#              適用忘れ。定義が正典になった瞬間が分かっているので、その場で照合できる
+#
+# **push 契機では起票しない。** merge 直後に「まだ適用していない」のは正常な状態なので、
+# 起票すると定義を変えるたびに人が処理すべき Issue が積み増される。催促は run の赤とその
+# 失敗通知で届き、放置されれば翌日の schedule が従来どおり起票する — 赤 → 翌日 Issue の
+# 段階的な上げ方になる。この判断は report-ruleset-drift.sh 側にあり (単体テストで固定
+# したいため)、ここには契機を足す以外の分岐を置いていない。
+#
 # **この検査は bypass_actors を見ていない。** それは ruleset への write access がある
 # 認証にしか返らず (#99 で実測)、CI にその鍵を置くと「ルールセットを外せる鍵」を常設
 # することになる。検査専用 App を Administration: Read で立てる案は、read-only では
@@ -18,6 +30,11 @@ on:
   schedule:
     # 日次 03:17 UTC (≒ 12:17 JST)。毎時 0 分はランナーが混むので外す
     - cron: "17 3 * * *"
+  push:
+    # 定義が main に入った瞬間 = 実設定が追いつくべき瞬間。merge queue を経ても
+    # 最後は main への push になるので、ここで拾える
+    branches: [main]
+    paths: [".github/rulesets/**"]
   workflow_dispatch:
 
 permissions:
@@ -43,7 +60,8 @@ jobs:
           set -e
           echo "status=$status" >> "$GITHUB_OUTPUT"
 
-      - name: ドリフトを起票する
+      # 起票するか、催促に留めるかは呼び先が契機を見て決める (#381)
+      - name: ドリフトを発信する
         if: steps.check.outputs.status != '0'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,7 +74,7 @@ jobs:
           STATUS: ${{ steps.check.outputs.status }}
         run: |
           if [ "$STATUS" != "0" ]; then
-            echo "ドリフトを検出した (差分は上のログ、対応は起票された Issue)" >&2
+            echo "ドリフトを検出した (差分と対応は上のログ)" >&2
             exit 1
           fi
           echo "ok: 定義と実設定は一致している (bypass_actors を除く)"
