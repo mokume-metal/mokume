@@ -129,6 +129,20 @@ public final class RenderTarget {
         return pass
     }
 
+    /// 効果の段が書き込むパスの記述を作る。
+    ///
+    /// **奥行きを持たない。** 段は絵から絵への変換で、前後関係を持たないためである。
+    /// 奥行きを付けたパスへ、奥行きを見ないパイプラインを通すことはできない。
+    func makeEffectPass() -> MTL4RenderPassDescriptor {
+        let pass = MTL4RenderPassDescriptor()
+        let attachment = pass.colorAttachments[0]!
+        attachment.texture = texture
+        // 画面いっぱいの三角形が全部の画素を書くので、前の内容は読まない
+        attachment.loadAction = .dontCare
+        attachment.storeAction = .store
+        return pass
+    }
+
     /// 描画先を 1 色で塗り、GPU が終わるまで待つ。
     public func fill(with color: LinearRGBA) throws(RenderFailure) {
         let commands = try gpu.beginCommands()

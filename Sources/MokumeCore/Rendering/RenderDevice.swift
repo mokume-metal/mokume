@@ -404,6 +404,19 @@ extension RenderDevice {
         }
     }
 
+    /// 効果の断片を、前置きと合わせて組み立てる。
+    func makeEffectLibrary(
+        named name: String, body: String, values: [String: ShaderValue] = [:]
+    ) throws(RenderFailure) -> any MTLLibrary {
+        let common = try bundledShaderSource(named: "Effect")
+        let source = ShaderSource.assemble(common: common, values: values, body: body)
+        do {
+            return try device.makeLibrary(source: source, options: nil)
+        } catch {
+            throw .shaderCompilationFailed(name: name, reason: error.localizedDescription)
+        }
+    }
+
     /// 同梱している断片を読む。
     func bundledShaderSource(named name: String) throws(RenderFailure) -> String {
         guard let url = Bundle.module.url(forResource: name, withExtension: "metal"),
