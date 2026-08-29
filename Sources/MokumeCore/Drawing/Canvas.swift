@@ -824,6 +824,16 @@ public final class Canvas {
         openSource = .flat
     }
 
+    /// このフレームに溜めたものを、**塗り直しの予定ごと**落とす。
+    ///
+    /// `discardPending()` との違いは背景 1 つ。塗り直し (`background`) はこの直後に
+    /// 予定を置き直すので**そちらでは落とせない**が、フレームが終わるときには予定も
+    /// 一緒に落ちなければ次のフレームがその色で塗られる (#342)。
+    private func discardFrame() {
+        discardPending()
+        pendingBackground = nil
+    }
+
     /// 矩形。座標の読み方は ``rectMode(_:)`` が決める。
     public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
@@ -1308,6 +1318,11 @@ public final class Canvas {
             shadowRangeValue = nil
             castsShadow = true
             receivesShadow = true
+            // **溜めたものもフレームを越えない。** 描き切りは 6 箇所から投げるので、
+            // 片付けを成功経路の末尾だけに置くと、描けなかったフレームの図形が次の
+            // フレームでもう一度描かれる (#342)。`defer` は投げても走るので、どの
+            // 経路を通ってもここでフレームの境目に落ちる
+            discardFrame()
         }
         currentClip = nil
         transform = .identity
@@ -1528,14 +1543,11 @@ public final class Canvas {
         try gpu.commitAndWait(commands)
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
-        // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる
-        vertices.removeAll(keepingCapacity: true)
-        solidVertices.removeAll(keepingCapacity: true)
-        solidInstances.removeAll(keepingCapacity: true)
-        batches.removeAll(keepingCapacity: true)
-        openSolid = nil
-        openSource = .flat
-        pendingBackground = nil
+        // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる。
+        // ここは**描き切れたときだけ**の片付けで、投げたときは `draw(_:)` の
+        // `defer` が同じことをする (#342) — 途中の描き切り (`loadPixels()`) が
+        // 一時的に失敗しただけなら、溜めたものはフレーム末尾の描き切りに残す
+        discardFrame()
     }
 
     /// 列ごとの値を置く領域。足りなければ取り直す。
