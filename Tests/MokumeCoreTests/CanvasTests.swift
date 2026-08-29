@@ -1210,4 +1210,55 @@ struct CanvasTests {
         // 線形で 0.5 の灰色 → 出力段を経て 188
         #expect(try pixels(of: canvas)[4, 4] == (188, 188, 188, 255))
     }
+
+    // MARK: - 描けなかったフレーム (#342)
+
+    @Test("描けなかったフレームに置いたものは、次のフレームへ残らない")
+    func nothingPlacedInAFailedFrameSurvivesIntoTheNext() throws {
+        let canvas = try makeCanvas(width: 8, height: 8)
+        // 描ける状態から始める。以降の絵はこの黒が下地になる
+        try canvas.draw { canvas.background(black) }
+
+        // 描けないフレームで、塗り直しの予定と図形を置く。`.timedOut` は製品でも
+        // 通る経路 (GPU が混んだとき `commitAndWait` が諦める) で、そこを検査から作る
+        canvas.failureForTesting = .timedOut(seconds: 5)
+        #expect(throws: RenderFailure.self) {
+            try canvas.draw {
+                canvas.background(self.white)
+                canvas.fill(self.white)
+                canvas.rect(2, 2, 4, 4)
+            }
+        }
+
+        // **次のフレームには何も置かない。** 持ち越しが無ければ描くものが 1 つも
+        // 無く、下地の黒がそのまま残る
+        canvas.failureForTesting = nil
+        try canvas.draw {}
+
+        let image = try pixels(of: canvas)
+        for y in 0..<8 {
+            for x in 0..<8 {
+                #expect(image[x, y] == (0, 0, 0, 255))
+            }
+        }
+    }
+
+    @Test("描けないフレームが続いても、溜めたものは積み上がらない")
+    func repeatedFailuresDoNotPileUp() throws {
+        let canvas = try makeCanvas(width: 8, height: 8)
+        canvas.failureForTesting = .encoderUnavailable
+        for _ in 0..<20 {
+            #expect(throws: RenderFailure.self) {
+                try canvas.draw {
+                    canvas.fill(self.white)
+                    canvas.rect(0, 0, 8, 8)
+                }
+            }
+        }
+
+        // **ここだけは絵ではなく溜め場を見る。** 「積み上がらない」は描かれなかった
+        // ものの話なので、どのフレームの絵にも現れない
+        #expect(canvas.vertices.isEmpty)
+        #expect(canvas.batches.isEmpty)
+    }
 }
