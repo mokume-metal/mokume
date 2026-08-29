@@ -137,7 +137,7 @@ screencapture -l <windowId> -V 5 motion.mov   # 5 秒の録画
 PR / Issue で WebP を使うのは、同じ絵で GIF より小さく、色数が多くても劣化しないため。
 **参照の面は WebP を警告も出さずに落とす**ので、そちらへ出すものだけ GIF にする。
 
-> **落ち方が「無言」である**ことを実測で確かめてある ([ADR-0026](../../../docs/decisions/0026-readable-surfaces.md)
+> **落ち方が「無言」である**ことを実測で確かめてある ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
 > の「測ったこと」)。WebP を指した参照は本文から丸ごと消え、周りの文だけが残る — ビルドは緑・警告も
 > 無しなので、**公開された面を見るまで気付けない**。
 >
