@@ -223,6 +223,9 @@ public final class SketchApplication: NSObject {
 
     /// 駆動源を畳む。``SketchApplicationDelegate`` から呼ばれる。
     func willTerminate() {
+        // **差込口を先に閉じる。** 送り先のアプリや機材から見ると、こちらが消えるより
+        // 先に「終わる」と言われるほうが行儀がよい
+        runtime.closePlugins()
         displayLink?.invalidate()
         displayLink = nil
         if let activity {

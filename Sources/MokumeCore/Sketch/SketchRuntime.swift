@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import QuartzCore
 
 /// スケッチを走らせる。
@@ -37,6 +38,15 @@ public final class SketchRuntime {
     private let now: () -> Double
     private var hasSetUp = false
     private var isPaused = false
+
+    /// 登録された出口。**宣言順**に呼ぶ ([ADR-0024] 決定 4)。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    private var outlets: [(outlet: any Outlet, health: SeamHealth)] = []
+    /// 登録された入り口。同じく宣言順。
+    private var inlets: [(inlet: any Inlet, health: SeamHealth)] = []
+    /// 絵を取り出せなかったことを、既に言ったか。**毎フレーム言わない。**
+    private var warnedEncodeFailed = false
 
     /// 外から観測されるための窓口。区画が無ければ `nil` で、**そのときフレームループは
     /// 観測の存在を一切払わない** (ADR-0018 の面が満たすべき性質)。
@@ -141,7 +151,43 @@ public final class SketchRuntime {
     public func start() {
         guard !hasSetUp else { return }
         hasSetUp = true
+        registerPlugins()
         withActiveRuntime { sketch.setup() }
+    }
+
+    /// 宣言された束を差込口へ登録する。**組み立てのときに 1 度だけ。**
+    ///
+    /// 開くのに失敗した束は**それだけ外して続ける** ([ADR-0024] 決定 7)。1 つの束が
+    /// 使えないことでスケッチごと動かなくなるのは、代償が釣り合わない。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    private func registerPlugins() {
+        for plugin in sketch.plugins {
+            let registry = PluginRegistry()
+            plugin.register(into: registry)
+            // **束の単位で開く。** 出口と入り口の両方を持つ束は、片方が開けなければ
+            // 束ごと外れる — 半分だけ生きた束は、書いた人の想定にない状態である
+            do {
+                for outlet in registry.outlets { try outlet.open() }
+                for inlet in registry.inlets { try inlet.open() }
+            } catch {
+                Diagnostics.warn(
+                    "\(type(of: plugin)) を開けませんでした: \(error)。この束は外して続けます")
+                continue
+            }
+            outlets += registry.outlets.map { ($0, SeamHealth()) }
+            inlets += registry.inlets.map { ($0, SeamHealth()) }
+        }
+    }
+
+    /// 差込口を閉じる。**投げない** ([ADR-0024] 決定 7)。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    public func closePlugins() {
+        for entry in outlets { entry.outlet.close() }
+        for entry in inlets { entry.inlet.close() }
+        outlets.removeAll()
+        inlets.removeAll()
     }
 
     /// フレームを 1 つ進める。
@@ -166,6 +212,8 @@ public final class SketchRuntime {
         beginFrame()
         receiveInput()
 
+        supplyFromInlets()
+
         var drawFailure: RenderFailure?
         canvas.time = timing.time
         canvas.deltaTime = timing.deltaTime
@@ -174,6 +222,7 @@ public final class SketchRuntime {
         } catch {
             drawFailure = error
         }
+        if drawFailure == nil { deliverToOutlets() }
         serveObservationIfRequested(drawFailure: drawFailure)
         if let drawFailure { throw drawFailure }
     }
@@ -185,6 +234,55 @@ public final class SketchRuntime {
     private func receiveInput() {
         inbox?.drain(into: input)
         input.beginFrame()
+    }
+
+    /// 入り口に値を供給させる。**`draw()` の直前** ([ADR-0024] 決定 6)。
+    ///
+    /// 供給した値が同じフレームの `draw()` から見える。1 フレーム遅れて効く形にすると、
+    /// 外から動かして確かめるときに毎回 1 枚ぶんずれる。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    private func supplyFromInlets() {
+        for index in inlets.indices where inlets[index].health.isAttached {
+            inlets[index].inlet.supply()
+            if inlets[index].health.note(inlets[index].inlet.failure) {
+                Diagnostics.warn(
+                    "\(type(of: inlets[index].inlet)) が続けて転んだので外しました"
+                        + " (最後の理由: \(inlets[index].inlet.failure ?? "不明"))")
+            }
+        }
+    }
+
+    /// 描いた絵を出口へ渡す。
+    ///
+    /// **道を通るのは 1 フレームに 1 回**で、出口が何本あっても同じ 1 枚を配る
+    /// ([ADR-0024] 決定 6 の「全ての出口が同じ道から受け取る」)。出口が 1 つも
+    /// 付いていなければ**道を 1 回も通らない** — 使わない機能の費用を、使っていない
+    /// スケッチが払わない。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    private func deliverToOutlets() {
+        guard outlets.contains(where: { $0.health.isAttached }) else { return }
+        let image: EncodedImage
+        do {
+            image = try target.encodeToImage()
+        } catch {
+            // 毎フレーム走る経路なので投げない (ADR-0020 決定 5)。1 度だけ言う
+            guard !warnedEncodeFailed else { return }
+            warnedEncodeFailed = true
+            Diagnostics.warn("出口へ渡す絵を取り出せませんでした: \(error)")
+            return
+        }
+        let frame = OutputFrame(
+            image: image, frame: timing.frameCount, time: Double(timing.time))
+        for index in outlets.indices where outlets[index].health.isAttached {
+            outlets[index].outlet.receive(frame)
+            if outlets[index].health.note(outlets[index].outlet.failure) {
+                Diagnostics.warn(
+                    "\(type(of: outlets[index].outlet)) が続けて転んだので外しました"
+                        + " (最後の理由: \(outlets[index].outlet.failure ?? "不明"))")
+            }
+        }
     }
 
     /// フレームの頭で片付けること。観測が無ければどれも空回りしない。
@@ -220,9 +318,17 @@ public final class SketchRuntime {
     ///
     /// 既定の時計はフレーム番号から導くので、**同じスケッチを 2 回走らせれば
     /// 同じ絵が出る**。
+    ///
+    /// **出口が受け取るのと同じ道を通る** ([ADR-0024] 決定 6)。読み戻して CPU で
+    /// 変換する経路と出るバイト列は同じだが ([#440] で画素まで一致することを測った)、
+    /// 同じ道を通しておけば**一致が構造で保たれる** — 片方だけ直したときに黙って
+    /// 食い違うことがなくなる。
+    ///
+    /// [#440]: https://github.com/mokume-metal/mokume/issues/440
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func renderFrame(to url: URL) throws {
         try advance()
-        try target.writePNG(to: url)
+        try PNGFile.write(try target.encodeToImage().read(), to: url)
     }
 
     // MARK: - 観測に応える

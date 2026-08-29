@@ -24,6 +24,21 @@ public protocol Sketch: AnyObject {
     /// 大きさなどの設定。
     var settings: SketchSettings { get }
 
+    /// 外から足す機能の並び。
+    ///
+    /// **並びは 1 本で、順序は宣言順** ([ADR-0024] 決定 4)。出口だけを足すものも
+    /// 入り口だけを足すものも同じ並びに置き、仕分けは仕組みが行う。
+    ///
+    /// ```swift
+    /// var plugins: [any Plugin] { [VideoSender(name: "mokume")] }
+    /// ```
+    ///
+    /// 書いてあれば効き、書いていなければ効かない — 実行時に探して読み込む形も、
+    /// 依存に入れただけで効く形も採らない (同 決定 5)。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    var plugins: [any Plugin] { get }
+
     /// 一度だけ呼ばれる。
     func setup()
 
@@ -33,6 +48,7 @@ public protocol Sketch: AnyObject {
 
 extension Sketch {
     public var settings: SketchSettings { SketchSettings() }
+    public var plugins: [any Plugin] { [] }
     public func setup() {}
     public func draw() {}
 }
