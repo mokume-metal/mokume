@@ -69,4 +69,82 @@ struct OutputStageTests {
         #expect(OutputStage.clampToStandardRange(.nan) == 0)
         #expect(OutputStage.quantize(.nan) == 0)
     }
+
+    // MARK: - 間引きは出力段の前で効く (#382)
+
+    /// 特異な値を含む作業空間の画素を組む。
+    ///
+    /// 左上には**変換の特異点を集める** — 値になっていない成分・範囲を超えた明るさ・
+    /// 負の明るさ。ここは間引きの倍率によらず必ず拾われる位置なので、どの倍率でも
+    /// 特異点が照合に載る。残りは半透明と範囲外を混ぜて埋める。
+    private func makeVariedPixels(width: Int, height: Int) -> PixelBuffer {
+        var components = [Float16](repeating: 0, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = y * width + x
+                let alpha = Float16(Double(index % 5) / 4)
+                let tone = Float16(Double(index) / Double(width * height))
+                let base = index * 4
+                components[base] = tone * alpha
+                components[base + 1] = (1 - tone) * alpha
+                // 乗算を戻すと 1 を超えるものを混ぜる (範囲へ収める手を通す)
+                components[base + 2] = 2 * tone * alpha
+                components[base + 3] = alpha
+            }
+        }
+        components[0] = .nan
+        components[1] = 4
+        components[2] = -1
+        components[3] = 1
+        return PixelBuffer(width: width, height: height, components: components)
+    }
+
+    @Test(
+        "間引いてから変換しても、変換してから間引いたのと同じバイト列になる",
+        arguments: [0.5, 0.3, 0.75, 0.1])
+    func decimatingBeforeEncodingGivesTheSameBytes(factor: Double) {
+        let pixels = makeVariedPixels(width: 7, height: 5)
+        // 変換してから間引いた側。オラクルはここが持つ — 生産側に間引きの実装を
+        // 2 つ置くと「同じ点を拾う」が二重管理になる
+        let full = OutputStage.encode(pixels)
+        let small = OutputStage.encode(pixels.scaled(by: factor))
+
+        #expect(small.width == max(1, Int((7 * factor).rounded())))
+        #expect(small.height == max(1, Int((5 * factor).rounded())))
+        for y in 0..<small.height {
+            for x in 0..<small.width {
+                let sourceX = min(full.width - 1, x * full.width / small.width)
+                let sourceY = min(full.height - 1, y * full.height / small.height)
+                #expect(
+                    small[x, y] == full[sourceX, sourceY],
+                    "(\(x), \(y)) が元の (\(sourceX), \(sourceY)) と違う")
+            }
+        }
+    }
+
+    /// 完了条件「出力段が受け取る画素数が、要求した `scale` の画素数と一致する」。
+    ///
+    /// 出力段の費用は画素数にそのまま比例するので、**渡す前に減っていること**が
+    /// 捨てるぶんを変換していないことにあたる。この画素を出力段へ渡す唯一の場所が
+    /// `RenderTarget.encodeForDisplay(scale:)` である。
+    @Test("間引いた画素の数は、要求した倍率のぶんしかない")
+    func onlyTheRequestedPixelsReachTheOutputStage() {
+        let pixels = makeVariedPixels(width: 960, height: 540)
+        let small = pixels.scaled(by: 0.5)
+        #expect(small.width == 480)
+        #expect(small.height == 270)
+        #expect(small.components.count == small.width * small.height * 4)
+        // 実寸の 4 分の 1 — 出力段の費用もここまで落ちる
+        #expect(small.width * small.height == pixels.width * pixels.height / 4)
+    }
+
+    @Test("倍率が範囲の外なら実寸のまま返す", arguments: [1.0, 1.5, 0.0, -0.5])
+    func factorsOutsideTheRangeLeaveThePixelsAlone(factor: Double) {
+        let pixels = makeVariedPixels(width: 7, height: 5)
+        let same = pixels.scaled(by: factor)
+        #expect(same.width == pixels.width)
+        #expect(same.height == pixels.height)
+        // 値になっていない成分は自分自身とも等しくならないので、ビット列で比べる
+        #expect(same.components.map(\.bitPattern) == pixels.components.map(\.bitPattern))
+    }
 }
