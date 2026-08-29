@@ -38,14 +38,22 @@ struct Tools {
         [
             "name": "observe",
             "description":
-                "走っているスケッチの現在のフレームを撮り、絵の場所と内訳 (フレーム番号・時刻・大きさ・絵の要約・走らせている重さ・スケッチが差し出した値・版の刻印) を返す。止まっているスケッチでも最後に描いた絵が返る。",
+                "走っているスケッチを撮り、絵の場所と内訳 (フレーム番号・時刻・大きさ・絵の要約・走らせている重さ・スケッチが差し出した値・版の刻印) を返す。既定は現在のフレーム 1 枚。count を 2 以上にすると、フレームを止めずに続けて撮り、撮った順の目録が返る — 動きが正しいかは 1 枚では判定できないので、動くものを見るときはこちらを使う。止まっているスケッチでも最後に描いた絵が返る。",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "scale": [
                         "type": "number",
                         "description": "書き出す絵の縮小率 (0 より大きく 1 以下)。省略すると実寸。",
-                    ]
+                    ],
+                    "count": [
+                        "type": "integer",
+                        "description": "撮る枚数 (1…120)。省略すると 1 枚。",
+                    ],
+                    "every": [
+                        "type": "integer",
+                        "description": "何フレームおきに撮るか (1…60)。省略すると毎フレーム。秒ではなくフレームで数えるので、同じスケッチを 2 回走らせれば同じ列が返る。",
+                    ],
                 ],
             ],
         ],
@@ -102,13 +110,18 @@ struct Tools {
         let id = makeID()
         var request: [String: Any] = ["id": id]
         if let scale = arguments["scale"] as? Double { request["scale"] = scale }
+        let count = max(1, arguments["count"] as? Int ?? 1)
+        let every = max(1, arguments["every"] as? Int ?? 1)
+        if count > 1 { request["count"] = count }
+        if every > 1 { request["every"] = every }
         // 区画の有無は **要求を置く前**に控える — exchange は待つ前に自分で作るので、
         // 後から見ても分からなくなる (#227)
         let existed = facets.hasFacet(facets.observeFacet)
         let answer: [String: Any]?
         do {
             answer = try facets.exchange(
-                facet: facets.observeFacet, request: request, id: id)
+                facet: facets.observeFacet, request: request, id: id,
+                extraWait: Self.extraWait(count: count, every: every))
         } catch {
             return ("観測の要求を置けませんでした: \(error)", true)
         }
@@ -117,13 +130,33 @@ struct Tools {
         }
 
         var lines: [String] = []
-        if let image = report["image"] as? String {
-            lines.append("絵: \(facets.observeFacet.appendingPathComponent(image).path)")
-        } else {
+        let frames = (report["frames"] as? [[String: Any]]) ?? []
+        let names = frames.compactMap { $0["image"] as? String }
+        if names.isEmpty {
             lines.append("絵は採れませんでした")
+        } else if names.count == 1 {
+            lines.append("絵: \(facets.observeFacet.appendingPathComponent(names[0]).path)")
+        } else {
+            // 何枚あるかを先に言う。頼んだ枚数と食い違っていたら、そこで気付ける
+            lines.append(
+                """
+                絵 \(names.count) 枚: \(facets.observeFacet.path)/
+                  \(names.joined(separator: " "))
+                """)
         }
         lines.append(pretty(report))
         return (lines.joined(separator: "\n\n"), false)
+    }
+
+    /// 列を撮り終えるまでにかかるぶん、待ちに足す時間。
+    ///
+    /// 撮り終えるまでにフレームが `(count - 1) * every + 1` 枚ぶん進む。**足さないと、
+    /// 応答は後から正しく書かれるのに読み手だけが諦めた状態**になり、次の要求が
+    /// その古い目録を掴む。
+    ///
+    /// フレームレートは分からないので、遅い側 (30fps) を見込んで換算する。
+    static func extraWait(count: Int, every: Int) -> TimeInterval {
+        Double((count - 1) * every + 1) / 30
     }
 
     private func buildStatus() -> (String, Bool) {
