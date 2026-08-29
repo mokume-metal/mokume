@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import Foundation
 import mokume
 
 /// 組み込みの立体 6 種・光 4 種・影。

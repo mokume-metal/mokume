@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import Foundation
 import mokume
 
 /// 文字・画像・保持した形。
