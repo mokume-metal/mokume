@@ -422,7 +422,9 @@ public final class SketchRuntime {
         }
 
         do {
-            let image = try target.encodeForDisplay(scale: pending.scale)
+            // **出口が受け取るのと同じ道を通す** ([ADR-0024] 決定 6)。小さくするのは
+            // 通した後で、出るバイト列は通す前に間引いたのと同じである (#382)
+            let image = try target.encodeToImage().read().scaled(by: pending.scale)
             let name = try observer.writeFrame(image, at: pending.frames.count)
             pending.frames.append(
                 ObservationReport.CapturedFrame(
