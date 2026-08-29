@@ -203,6 +203,10 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
 長さが原本と違ったら、**上げ直して URL を変える**しかない (camo のキャッシュは消せない)。同じ絵を
 上げ直しても同一バイトなら Gyazo が同じ id を返すので、**先に小さくしてから上げる**。
 
+**貼った直後は camo URL が取れない。** `body_html` は少しの間 camo 化前を返すので、すぐ叩くと
+「camo URL が 1 つも無い」で素通りしてしまう ([#374](https://github.com/mokume-metal/mokume/issues/374)
+で実測。20 秒ほどで書き換わった)。**取れた URL の数が貼った絵の数と合っているか**を先に見る。
+
 ## 守ること
 
 - **上げることは外部サービスへの送信である。** 送る前に写り込み (他アプリ・通知・手元のパス・秘密) を
