@@ -128,6 +128,10 @@ extension Canvas {
     /// [#341]: https://github.com/mokume-metal/mokume/issues/341
     func encodeComputations(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
         guard !pendingComputations.isEmpty else { return }
+        // **流したものは溜め場から降ろす。** 読み戻し (`read(_:)`) がフレームの途中で
+        // ここを通るので、降ろさないとフレーム末尾の描き切りが同じ計算をもう一度走らせる。
+        // 描き切りだけを通る経路では `discardFrame()` が同じことをするので、挙動は変わらない
+        defer { pendingComputations.removeAll(keepingCapacity: true) }
         let pipeline = try computePipeline()
         let groups = Self.groups(
             of: pendingComputations.map { (reads: $0.reads, writes: $0.writes) })
@@ -193,6 +197,40 @@ extension Canvas {
         let lane = max(1, min(state.threadExecutionWidth, total))
         guard !isFlat else { return MTLSize(width: lane, height: 1, depth: 1) }
         return MTLSize(width: lane, height: max(1, total / lane), depth: 1)
+    }
+
+    // MARK: - 読み戻す
+
+    /// 計算が書いた値を読む。意味の説明は `Sketch` が正本。
+    ///
+    /// **溜めている図形には触らない。** 画素の読み戻し (`loadPixels()`) は描き切りを
+    /// 呼ぶのでフレームの構造が変わるが、ここは計算だけを別のコマンドに載せて流す。
+    /// だから図形を 1 つも置いていないフレームでも読めるし、読んだあとに描いたものが
+    /// 消えることもない ([#389] の完了条件 — 副作用として同期している経路に頼らせない)。
+    ///
+    /// [#389]: https://github.com/mokume-metal/mokume/issues/389
+    public func read(_ numbers: Numbers) -> [Float] {
+        runPendingComputations()
+        return numbers.snapshot()
+    }
+
+    /// 溜まっている計算を、その場で走らせて待つ。
+    ///
+    /// **残っていなければ何もしない。** 走らせたものはコマンドの完了まで待ってから
+    /// 返っている (描き切りの末尾も、ここも) ので、溜め場が空なら「走らせたものは
+    /// 全部終わっている」が成り立つ。待つ必要があるのは、まだ走っていないものが
+    /// 残っているときだけである。
+    private func runPendingComputations() {
+        guard !pendingComputations.isEmpty else { return }
+        do {
+            let commands = try gpu.beginCommands()
+            try encodeComputations(into: commands)
+            try gpu.commitAndWait(commands)
+        } catch {
+            // 読み取りは落とさない (ADR-0020 決定 5)。次のフレームの描き切りが同じ理由で
+            // 失敗し、そちらから外へ出る
+            Diagnostics.warn("計算の完了を待てませんでした: \(error)")
+        }
     }
 
     // MARK: - 依存から口の切れ目を導く
