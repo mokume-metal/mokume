@@ -34,6 +34,7 @@ solidShader 0ad952df02373362cf866a64b96d4d646e8e53b61ff3b31359aa0f53f2b506dd
 texturedShapes de69a5ab26eb1d569ebbb11024f5eeaf35aa03ed88b29a68632da498a73794ab
 texturedSolids 6e49878e9a6be8751d944a6e9a6efdf13183c1842e2eb7abd9ab394093672b20
 surfaceShader a593881bfc54e4b812f9ad717bf83311b0b60a012b6cb39e0b1f380ec7c7a73f
+effects 85199ec7c7864e4ebfb233a9cca7cc2151e3bc75ef6ab1b39b4bfad728f1f381
 
 # 時点を持つ行 (シーン@何フレーム進めたところか)。動きそのものが正しさなので、
 # 1 枚では判定できない — ADR-0023 決定 6。

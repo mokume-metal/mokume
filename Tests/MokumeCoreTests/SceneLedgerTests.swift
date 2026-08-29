@@ -225,6 +225,8 @@ enum Scene: String, CaseIterable, Sendable {
     case surfaceShader
     /// 粒が力を受けて飛ぶ。**時点を持つ最初のシーン。**
     case particles
+    /// 描いた絵に効果を重ねたもの。
+    case effects
 
     var size: (width: Int, height: Int) { (128, 128) }
     /// 年輪を掛ける断片。**形自身の座標**から作るので、形を回しても模様は形に留まる。
@@ -326,6 +328,21 @@ enum Scene: String, CaseIterable, Sendable {
             // **1 枚では描けないシーン。** フレームをまたいで持つものがあるので、
             // 走らせ方は `session(on:)` が持つ
             break
+        case .effects:
+            canvas.background(.display(red: 0.03, green: 0.04, blue: 0.07))
+            canvas.noStroke()
+            canvas.fill(.display(red: 1, green: 0.85, blue: 0.35))
+            canvas.circle(44, 46, 46)
+            canvas.fill(.display(red: 0.25, green: 0.55, blue: 1))
+            canvas.rect(58, 62, 52, 44)
+            canvas.fill(.display(red: 1, green: 0.3, blue: 0.45))
+            canvas.rect(14, 92, 40, 14)
+            // **並びの順にかかる。** にじみ → 色ずれ → 周辺減光
+            canvas.effects([
+                .bloom(amount: 0.8, threshold: 0.35, radius: 10),
+                .fringe(amount: 0.7),
+                .vignette(amount: 0.65),
+            ])
         case .shapes:
             canvas.background(.display(red: 0.08, green: 0.09, blue: 0.12))
             canvas.fill(.display(red: 0.95, green: 0.35, blue: 0.2))

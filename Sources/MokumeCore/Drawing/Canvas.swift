@@ -236,6 +236,24 @@ public final class Canvas {
     /// この面が作った計算。観測へ失敗を載せるために持つ。
     var computations: [Computation] = []
 
+    /// このフレームにかける効果の並び。**フレームを越えない** (ADR-0021 決定 4)。
+    var pendingEffects: [Effect] = []
+    /// 作った効果の断片。保存の拾い直しのために持ち続ける。
+    var effectShaders: [EffectShader] = []
+    /// 効果のパイプライン。**頼まれてはじめて作る。**
+    var effectPipelineStorage: EffectPipeline?
+    /// 積んだ待つ仕掛けの数。**積む 1 行と同じ場所で数える。**
+    var effectBarriersEncoded = 0
+    /// 検査から「途中で失敗した段」を作るための差し込み。製品の経路では常に `nil`。
+    ///
+    /// 段の失敗は資源が枯れたときにしか起きず、検査から自然には作れない。一方で
+    /// **途中で失敗したときに何が出るか**は、この Issue の完了条件そのものなので、
+    /// ここに 1 つだけ穴を空けてある (`failureForTesting` と同じ形)。公開はしない。
+    var failEffectPassForTesting: Int?
+    var warnedEffectFailed = false
+    /// 通した段の数。
+    var effectPassesEncoded = 0
+
     /// 粒の置き場所を誰が埋めるか。**製品では GPU 側 (速い経路)。**
     ///
     /// 公開しない — 利用者が選ぶものではなく、速い経路を照らす物差しを検査から
@@ -1496,6 +1514,8 @@ public final class Canvas {
         }
         currentClip = nil
         currentNumbers = nil
+        // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
+        pendingEffects.removeAll(keepingCapacity: true)
         transform = .identity
         transformStack.removeAll(keepingCapacity: true)
         hasLoadedPixels = false
@@ -1526,7 +1546,10 @@ public final class Canvas {
     /// 穴を空けてある。公開はしない。
     var failureForTesting: RenderFailure?
 
-    func flush() throws(RenderFailure) {
+    /// - Parameter applyingEffects: 効果を通すか。**フレームの終わりだけ通す** —
+    ///   フレームの途中の描き切り (`loadPixels()`) で通すと、効果のかかった絵の上に
+    ///   続きが描かれ、しかもフレームの終わりにもう一度かかる。
+    func flush(applyingEffects: Bool = true) throws(RenderFailure) {
         if let failureForTesting { throw failureForTesting }
         closeBatch()
         let pass = target.makeRenderPass(clearColor: pendingBackground)
@@ -1735,6 +1758,11 @@ public final class Canvas {
 
         drawCallsInLastFrame = vertices.isEmpty && solidVertices.isEmpty ? 0 : batches.count
         encoder.endEncoding()
+
+        // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
+        // 書き出しも観測も同じ 1 枚を受け取る (ADR-0023 決定 2)
+        if applyingEffects { applyEffects(into: commands) }
+
         try gpu.commitAndWait(commands)
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの

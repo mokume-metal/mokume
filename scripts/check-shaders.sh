@@ -23,11 +23,15 @@
 #
 #   Shaders/               図形を塗る断片   値の宣言 + Common.metal
 #   Shaders/Computations/  計算の断片       値の宣言 + Compute.metal
+#   Shaders/Effects/       効果の断片       値の宣言 + Effect.metal
 #   それ以外               単体で組み立てられる
 #
-# 塗りと計算で前置きが違うのは、計算の断片が入口の関数ごと自分で書くためである
-# (Compute.metal の冒頭がその理由を持つ)。置き場で分けているので、判定に中身を
-# 読む必要が無い。
+# 前置きが 3 通りあるのは、書く側が受け取るものと返すものが違うためである (それぞれの
+# 前置きの冒頭が理由を持つ)。置き場で分けているので、判定に中身を読む必要が無い。
+#
+# **前置きそのものは単体では確かめない。** どれも「呼ぶ先を利用者が書く」形なので
+# 単体では組み上がらず、代わりに**その前置きを使う断片が 1 つでもあれば確かめられる**。
+# 前置きを足したのに使う断片が無い、という状態は作らない。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -53,6 +57,10 @@ compute=$(find Sources -name 'Compute.metal' | head -1)
 compute_dir=""
 if [ -n "$compute" ]; then compute_dir="$(dirname "$compute")/Computations"; fi
 
+effect=$(find Sources -name 'Effect.metal' | head -1)
+effect_dir=""
+if [ -n "$effect" ]; then effect_dir="$(dirname "$effect")/Effects"; fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -62,9 +70,13 @@ printf 'struct Values {\n    float4 mokume_unused;\n};\n' > "$work/values.metal"
 
 failed=0
 for shader in "${shaders[@]}"; do
-  [ "$shader" = "$common" ] && continue
+  # 前置きは飛ばす (上の理由)
+  case "$shader" in "$common" | "$compute" | "$effect") continue ;; esac
   source="$work/$(basename "$shader")"
-  if [ -n "$compute_dir" ] && [ "$(dirname "$shader")" = "$compute_dir" ]; then
+  if [ -n "$effect_dir" ] && [ "$(dirname "$shader")" = "$effect_dir" ]; then
+    cat "$work/values.metal" "$effect" "$shader" > "$source"
+    label="$shader (効果の前置きつき)"
+  elif [ -n "$compute_dir" ] && [ "$(dirname "$shader")" = "$compute_dir" ]; then
     cat "$work/values.metal" "$compute" "$shader" > "$source"
     label="$shader (計算の前置きつき)"
   elif [ -n "$common_dir" ] && [ "$(dirname "$shader")" = "$common_dir" ]; then
