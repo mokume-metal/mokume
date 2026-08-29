@@ -92,7 +92,7 @@ public final class RenderDevice {
     private(set) var slotWaits = 0
 
     /// 常駐させるリソースの集合。この型を通して確保したものがすべて入る。
-    private let residencySet: any MTLResidencySet
+    let residencySet: any MTLResidencySet
 
     /// GPU の完了を知るための合図。投入のたびに 1 つ進める。
     private let completion: any MTLSharedEvent
@@ -195,7 +195,13 @@ public final class RenderDevice {
     /// こうして作ったテクスチャへ描くと、結果は**同じメモリ**に現れる。写しを取らずに
     /// CPU から読めるのはこのためで、統一メモリの機械でしか成立しない ([ADR-0009])。
     ///
+    /// **同じメモリでも、常駐は置き場とテクスチャで別々に数えられる。** 置き場を通した
+    /// だけでは足りず、載せたテクスチャも通す — 通し忘れると検証レイヤが「どの residency
+    /// set にも入っていない」と言う ([#351])。絵は普段どおり出てしまうので、症状からは
+    /// 見つからない。
+    ///
     /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor.md
+    /// [#351]: https://github.com/mokume-metal/mokume/issues/351
     func makeBufferBackedTexture(
         descriptor: MTLTextureDescriptor, bytesPerRow: Int
     ) throws(RenderFailure) -> (texture: any MTLTexture, storage: any MTLBuffer) {
@@ -206,6 +212,7 @@ public final class RenderDevice {
         else {
             throw .textureUnavailable(width: descriptor.width, height: descriptor.height)
         }
+        makeResident(texture)
         return (texture, storage)
     }
 
