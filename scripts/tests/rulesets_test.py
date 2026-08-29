@@ -11,6 +11,7 @@
      言わない — 既定は赤、--without-bypass-actors なら緑にするが**何を見ていないか
      を名乗る**。一番危ない項目を見ていない緑を、黙って作らないため (ADR-0006 / #99)
   3. apply が既定では GitHub を書き換えず、--apply を付けたときだけ書き換える
+  4. 古い版のツリーからの適用は、実設定を 1 本も書き換えずに止まる (#425)
 
 gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワークも認証も要らない。
 実行は make ci-check (CI もこれを呼ぶ)。
@@ -28,6 +29,7 @@ REPO = Path(__file__).resolve().parents[2]
 LIB = REPO / "scripts" / "rulesets_lib.py"
 CHECK = REPO / "scripts" / "check-rulesets.sh"
 APPLY = REPO / "scripts" / "apply-rulesets.sh"
+FRESHNESS = REPO / "scripts" / "rulesets-freshness.sh"
 DEFS = REPO / ".github" / "rulesets"
 
 # 偽 gh。実設定は FAKE_LIVE_DIR の <id>.json が正本という約束にする。
@@ -373,19 +375,14 @@ class ScriptTest(unittest.TestCase):
         self.assertNotIn("PUT", self.calls())
 
 
-class FreshnessTest(unittest.TestCase):
-    """照合の結果が「どの版の定義について」のものかを名乗るか (#311)。
+class TreeFixture(unittest.TestCase):
+    """古い版のツリーを再現する土台 (#311 / #425)。それ自身は何も検査しない。
 
-    照合するのは手元にチェックアウトされている定義なので、古い版のツリーから打つと
-    **古い定義と古い実設定が一致して緑になる**。ここで固定したいのは三つ:
+    照合も適用も見ているのは手元の定義なので、**本物の git リポジトリを一時的に作る** —
+    古いツリーは git の状態でしか表現できず、偽物で置き換えると再現したい事象そのものが
+    消える。main 側は偽 gh が返すので、ネットワークも認証も要らない。
 
-      1. わざと古いツリーで打つと、緑のまま「古い」と名乗る (Issue の完了条件 3)
-      2. 名乗りは照合の結果より先に出る (後から読ませると緑が先に目に入る)
-      3. 定義を編集している最中の作業ブランチを「古い」と言わない
-
-    そのために**本物の git リポジトリを一時的に作る** — 古いツリーは git の状態でしか
-    表現できず、偽物で置き換えると再現したい事象そのものが消える。main 側は偽 gh が
-    返すので、ネットワークも認証も要らない。
+    定義の 2 世代は merge queue の並列ビルド上限だけが違う (古 = 4 / 新 = 6)。
     """
 
     def setUp(self):
@@ -401,7 +398,7 @@ class FreshnessTest(unittest.TestCase):
         (self.repo / "scripts").mkdir(parents=True)
         self.defs = self.repo / ".github" / "rulesets"
         self.defs.mkdir(parents=True)
-        for src in (CHECK, LIB):
+        for src in (CHECK, APPLY, LIB, FRESHNESS):
             shutil.copy(src, self.repo / "scripts" / src.name)
 
         self.git("init", "-q")
@@ -420,11 +417,12 @@ class FreshnessTest(unittest.TestCase):
         gh.write_text(FAKE_GH)
         gh.chmod(0o755)
 
+        self.log = root / "gh.log"
         self.env = dict(os.environ)
         self.env.update(
             {
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
-                "FAKE_GH_LOG": str(root / "gh.log"),
+                "FAKE_GH_LOG": str(self.log),
                 "FAKE_LIVE_DIR": str(self.live),
                 "FAKE_MAIN_DEFS_DIR": str(self.new_defs),
                 "FAKE_MAIN_RULESET_COMMIT": self.new,
@@ -483,13 +481,13 @@ class FreshnessTest(unittest.TestCase):
         for i, f in enumerate(sorted(src.glob("*.json")), start=1):
             (self.live / f"{i}.json").write_text(f.read_text())
 
-    def check(self, **env):
+    def script(self, name, *flags, **env):
         """stdout と stderr を 1 本にまとめて回す (名乗りと結果の前後関係を見るため)。"""
         e = dict(self.env)
         for k, v in env.items():
             e.pop(k) if v is None else e.update({k: v})
         r = subprocess.run(
-            ["/bin/bash", str(self.repo / "scripts" / CHECK.name)],
+            ["/bin/bash", str(self.repo / "scripts" / name), *flags],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -498,6 +496,32 @@ class FreshnessTest(unittest.TestCase):
             check=False,
         )
         return r.returncode, r.stdout
+
+    def calls(self):
+        return self.log.read_text() if self.log.exists() else ""
+
+    def live_entries(self):
+        """実設定の merge queue 並列ビルド上限。世代 (4 = 古 / 6 = 新) の見分けに使う。"""
+        for f in sorted(self.live.glob("*.json")):
+            for rule in json.loads(f.read_text()).get("rules", []):
+                if rule["type"] == "merge_queue":
+                    return rule["parameters"]["max_entries_to_build"]
+        return None
+
+
+class FreshnessTest(TreeFixture):
+    """照合の結果が「どの版の定義について」のものかを名乗るか (#311)。
+
+    照合するのは手元にチェックアウトされている定義なので、古い版のツリーから打つと
+    **古い定義と古い実設定が一致して緑になる**。ここで固定したいのは三つ:
+
+      1. わざと古いツリーで打つと、緑のまま「古い」と名乗る (Issue の完了条件 3)
+      2. 名乗りは照合の結果より先に出る (後から読ませると緑が先に目に入る)
+      3. 定義を編集している最中の作業ブランチを「古い」と言わない
+    """
+
+    def check(self, **env):
+        return self.script(CHECK.name, **env)
 
     def test_古いツリーで打つと緑のまま古いと名乗る(self):
         # #311 の事象そのもの。古い定義と古い実設定は一致するので照合は緑になる
@@ -546,6 +570,90 @@ class FreshnessTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("判定していない", out)
         self.assertNotIn("手元のツリーは古い", out)
+
+
+class ApplyFreshnessTest(TreeFixture):
+    """古い版のツリーからの適用を止めるか (#425)。
+
+    適用が送るのも手元の定義なので、古い版のツリーから打つと **main の新しい定義を
+    古い版で上書きする**。#311 と入口は同じだが、読むのではなく書くので代償が違う —
+    保護そのものが古い形に戻り、ルールセットの実設定に履歴は無い。
+
+    #425 で踏んだ経路は 2 本あり、どちらも #311 の名乗りが助けにならなかった:
+
+      1. 実設定が最新なら差分が出る → 書き込んだ**後**に名乗るので、成功にしか見えない
+      2. 実設定も古ければ差分が空 → 「適用するものは無い」で終わり、名乗りが一度も出ない
+
+    止めるのは stale と判定できたときの --apply だけである。編集中・判定できずを
+    止めないのは、手元だけが違うのが正常な状態で、止めれば逃げ道が要るため。
+    """
+
+    def apply(self, *flags, **env):
+        return self.script(APPLY.name, *flags, **env)
+
+    def test_古いツリーの適用は実設定を書き換えずに止まる(self):
+        # 経路 1。実設定は最新 (6) で、手元だけが古い (4)
+        self.git("checkout", "-q", self.old)
+        code, out = self.apply("--apply")
+        self.assertEqual(code, 1, out)
+        self.assertIn("手元のツリーは古い", out)
+        self.assertIn("古い版で上書きする", out)
+        self.assertNotIn("PUT", self.calls())
+        self.assertNotIn("POST", self.calls())
+        self.assertEqual(self.live_entries(), 6)
+
+    def test_止めるときは直し方を出す(self):
+        # 逃げ道 (--allow-stale 等) を持たせない代わりに、直し方は必ず出す
+        self.git("checkout", "-q", self.old)
+        code, out = self.apply("--apply")
+        self.assertEqual(code, 1, out)
+        self.assertIn("git fetch origin main && git checkout origin/main", out)
+
+    def test_差分が空でも古ければ名乗る(self):
+        # 経路 2。実設定も古いので差分は空になり、末尾の照合までは届かない
+        self.git("checkout", "-q", self.old)
+        self.set_live(self.old_defs)
+        code, out = self.apply("--apply")
+        self.assertEqual(code, 1, out)
+        self.assertIn("手元のツリーは古い", out)
+        self.assertNotIn("適用するものは無い", out)
+
+    def test_名乗りは差分より先に出る(self):
+        # 編集中は止まらないので、名乗りと差分の前後はこちらで見る
+        edited = self.make_defs(Path(self.tmp.name) / "edited", 9)
+        self.put_defs(edited)
+        _, out = self.apply("--apply")
+        self.assertLess(out.index("編集中とみられる"), out.index("定義と実設定の差分"), out)
+
+    def test_古いツリーでも既定の実行は止めない(self):
+        self.git("checkout", "-q", self.old)
+        code, out = self.apply()
+        self.assertEqual(code, 0, out)
+        self.assertIn("手元のツリーは古い", out)
+        self.assertNotIn("PUT", self.calls())
+
+    def test_定義を編集中のツリーからは適用できる(self):
+        edited = self.make_defs(Path(self.tmp.name) / "edited", 9)
+        self.put_defs(edited)
+        code, out = self.apply("--apply")
+        self.assertEqual(code, 0, out)
+        self.assertIn("編集中とみられる", out)
+        self.assertEqual(self.live_entries(), 9)
+
+    def test_判定できないツリーからは適用できる(self):
+        # main を引けないだけで止めると、押し通すための逃げ道が要る (#425)
+        self.git("checkout", "-q", self.old)
+        code, out = self.apply("--apply", FAKE_MAIN_DEFS_DIR=None)
+        self.assertEqual(code, 0, out)
+        self.assertIn("確かめていない", out)
+        self.assertEqual(self.live_entries(), 4)
+
+    def test_main_と同じツリーからは黙って適用できる(self):
+        self.set_live(self.old_defs)
+        code, out = self.apply("--apply")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("注意", out)
+        self.assertEqual(self.live_entries(), 6)
 
 
 if __name__ == "__main__":
