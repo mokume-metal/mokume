@@ -15,7 +15,7 @@
 
 この形は `make ci-check` の `changelog-lint` が見ている ([#91](https://github.com/mokume-metal/mokume/issues/91))。名前・分類のほか、**本文が空でないこと**と、**リンクが絶対 URL であること** (相対パスと reference style はノートに載った時点で壊れる) も見る。
 
-中身は **SPDX ヘッダ (HTML コメント) + Markdown の 1 段落**。次をそのままコピーして、本文だけ書き換える — 例は `changelog.d/seedable-random-and-noise.feature.md`:
+中身は **SPDX ヘッダ (HTML コメント) + Markdown の本文**。段落はいくつ書いてもよい — 組む側が全部を 1 つの項目に収める ([#446](https://github.com/mokume-metal/mokume/issues/446))。次をそのままコピーして、本文だけ書き換える — 例は `changelog.d/seedable-random-and-noise.feature.md`:
 
 ```markdown
 <!--
@@ -38,4 +38,4 @@ SPDX-License-Identifier: MIT
 
 リリース時に断片を CHANGELOG.md へ昇格させる機構を作るときは、**SPDX ヘッダを除いて昇格する**こと。ヘッダは断片ファイルの帰属を宣言するためのもので、リリースノートの文面ではない。
 
-集約器 (`scripts/release.py`) はこの要件を満たしている — `body_of()` が HTML コメントを落としてから組む。
+集約器 (`scripts/release.py`) はこの要件を満たしている — `body_of()` が HTML コメントを落としてから組み、`as_list_item()` が本文をまるごと 1 つの項目に収める。

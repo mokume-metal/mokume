@@ -3,11 +3,12 @@
 # SPDX-License-Identifier: MIT
 """scripts/release.py の検査。
 
-守りたいのは 4 つ:
+守りたいのは 5 つ:
   1. 版の上げ幅が履歴どおりに決まる (1.0 未満では破壊的変更も minor)
   2. 中身の無い版を出さない (断片が 1 つも増えていなければ中断)
   3. 書いた断片がノートから黙って消えない (知らない分類も落とさない)
   4. 組めない形の断片は main に入る前に名指しで落ちる (#91)
+  5. 書いた本文がまるごと 1 つの項目の中に描かれる (#446)
 
 git は一時リポジトリを本物で回す — 「前回のタグ以降に追加されたか」は履歴の話で、
 そこを模造すると検査が確かめたい当のものを確かめなくなる。
@@ -100,6 +101,68 @@ class NotesTests(unittest.TestCase):
         # 知らない分類を落とすと「書いたのにノートに出ない」が黙って起きる
         notes = release.notes([self.fragment("a.security.md", "塞いだ")])
         self.assertIn("塞いだ", notes)
+
+
+def lines_outside_their_item(notes: str) -> list[str]:
+    """箇条書きの外へ出てしまった行 (#446)。
+
+    CommonMark / GFM は、リストの中で**空行のあとに列 0 から始まる行**が来たところで
+    リストを終える。その行は書いた人の意図では項目の中身なので、外に出ていたら壊れて
+    いる。見出しと、次の項目そのものは対象外。
+    """
+    escaped: list[str] = []
+    in_list = False
+    after_blank = False
+    for line in notes.split("\n"):
+        if line.startswith("## "):
+            in_list = False
+        elif line.startswith("- "):
+            in_list = True
+        elif line.strip() and in_list and after_blank and not line.startswith(" "):
+            escaped.append(line)
+        after_blank = not line.strip()
+    return escaped
+
+
+class ListItemTests(unittest.TestCase):
+    """本文を 1 つの項目に収める (#446)。"""
+
+    def test_a_single_paragraph_entry_is_untouched(self):
+        # 直す前の出力と 1 文字も変わらないこと。v0.1.0 のノートは全件この形だった
+        self.assertEqual(release.as_list_item("足した。"), "- 足した。")
+
+    def test_a_multi_paragraph_entry_stays_in_its_item(self):
+        self.assertEqual(
+            release.as_list_item("1 段落目。\n\n2 段落目。"),
+            "- 1 段落目。\n\n  2 段落目。",
+        )
+
+    def test_a_hard_wrapped_paragraph_stays_in_its_item(self):
+        self.assertEqual(
+            release.as_list_item("折り返した\n続き。"), "- 折り返した\n  続き。"
+        )
+
+    def test_a_blank_line_carries_no_trailing_space(self):
+        for line in release.as_list_item("上。\n\n下。").split("\n"):
+            self.assertEqual(line, line.rstrip())
+
+    def test_the_detector_catches_the_shape_this_bug_produced(self):
+        # 検出器そのものが効いていることを、壊れた形を直に渡して見る。
+        # これが空を返すなら、下の本物の断片に対する検査も何も見ていない
+        broken = "## 新機能\n\n- 1 段落目。\n\n2 段落目。\n- 次の項目。\n"
+        self.assertEqual(lines_outside_their_item(broken), ["2 段落目。"])
+
+    def test_the_detector_passes_a_well_formed_list(self):
+        fixed = "## 新機能\n\n- 1 段落目。\n\n  2 段落目。\n- 次の項目。\n"
+        self.assertEqual(lines_outside_their_item(fixed), [])
+
+    def test_no_real_fragment_escapes_its_item(self):
+        # 本物の changelog.d を材料にする。壊れ方は個々の断片ではなく、
+        # 断片と組み方の組み合わせで出るため
+        fragments = release.all_fragments()
+        self.assertGreater(len(fragments), 0, "断片が 1 つも読めていない")
+        escaped = lines_outside_their_item(release.notes(fragments))
+        self.assertEqual(escaped, [], f"{len(escaped)} 行が項目の外へ出ている")
 
 
 class LintTests(unittest.TestCase):
