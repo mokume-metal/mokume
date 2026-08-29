@@ -141,6 +141,18 @@ final class SketchPresence {
     private var menuDelegate: SketchPresenceMenu?
     /// 自分で run loop を回す必要があるか。``announce(_:)`` のときに 1 度だけ決める。
     private var drivesRunLoop = false
+    /// プレビューを出している面。開いている間だけ入る。
+    private var previewView: NSImageView?
+    /// 素性の行。経過時間を書き替えるために持つ。
+    private var identityItem: NSMenuItem?
+    /// メニューが開いている間だけ回る駆動源。
+    private var liveTimer: Timer?
+
+    /// プレビューを描き替える間隔 (秒)。
+    ///
+    /// **絵のフレームレートには合わせない。** ここは「動いていることが分かる」ためのもので、
+    /// 上げるほど絵を取り出す費用 (読み戻しと縮小) を毎回払う。30 fps で足りる。
+    private static let liveInterval: Double = 1.0 / 30
 
     /// 名乗っているか。
     var isAnnounced: Bool { item != nil }
@@ -216,14 +228,38 @@ final class SketchPresence {
         }
     }
 
-    /// メニューの中身を組み直す。**開かれるたびに呼ばれる** ので、経過もプレビューも新しい。
+    /// メニューの中身を組み直す。**開かれるたびに呼ばれる。**
     fileprivate func refresh(_ menu: NSMenu) {
         menu.removeAllItems()
+        previewView = nil
+        identityItem = nil
         // **AppKit の自動判定を切る。** 既定では「動作を持たない項目」を勝手に無効にして
         // 沈ませるので、読ませたい題名まで薄くなる。有効・無効はこちらで決める
         menu.autoenablesItems = false
         guard let source else { return }
-        let description = Self.describe(
+        let description = describe(source)
+
+        // 題名だけ濃く出す。**最初に読ませたいのがこれ**で、残りは判断のための添え物である
+        menu.addItem(Self.label(description.title, prominent: true))
+        menu.addItem(.separator())
+        let identity = Self.label(description.identity, prominent: false)
+        menu.addItem(identity)
+        menu.addItem(Self.label(description.origin, prominent: false))
+        identityItem = identity
+        // **落とす項目は置かない。** 片付けるかどうかは人が決める、が #454 / #473 の
+        // どちらでも範囲の外に置かれた線である (ADR-0008)
+
+        // **文字を並べ終えてから幅を訊く。** メニューの幅は一番長い行が決めるので、
+        // 先に組めば `size` がその幅を答える — 余白の取り方を推測して書かずに済む。
+        // 絵をその幅ちょうどで作れば、右に余りの出ないプレビューになる
+        let width = menu.size.width
+        guard let preview = previewItem(source, width: width) else { return }
+        menu.insertItem(preview, at: 1)
+    }
+
+    /// いま出すべき文言。
+    private func describe(_ source: SketchRuntime) -> Description {
+        Self.describe(
             title: source.sketch.settings.title,
             executable: (CommandLine.arguments.first as NSString?)?.lastPathComponent
                 ?? ProcessInfo.processInfo.processName,
@@ -231,22 +267,70 @@ final class SketchPresence {
             directory: FileManager.default.currentDirectoryPath,
             home: NSHomeDirectory(),
             elapsed: source.presenceElapsed)
+    }
 
-        // 題名だけ濃く出す。**最初に読ませたいのがこれ**で、残りは判断のための添え物である
-        menu.addItem(Self.label(description.title, prominent: true))
-        if let preview = Self.previewItem(source.presencePreview()) { menu.addItem(preview) }
-        menu.addItem(.separator())
-        menu.addItem(Self.label(description.identity, prominent: false))
-        menu.addItem(Self.label(description.origin, prominent: false))
-        // **落とす項目は置かない。** 片付けるかどうかは人が決める、が #454 / #473 の
-        // どちらでも範囲の外に置かれた線である (ADR-0008)
+    // MARK: - 開いている間、絵を動かす
+
+    /// メニューが開いた。**プレビューを動かし始める。**
+    ///
+    /// 開くと `NSApp.sendEvent` の中で AppKit が自前の追跡ループへ入り、閉じるまで戻らない
+    /// — 窓を開かない経路ではその `sendEvent` が ``pump()`` の中、つまり `advance()` の
+    /// 途中にあるので、**放っておくとプレビューはそこで止まった 1 枚になる**。
+    ///
+    /// だから追跡ループの中でも回る駆動源を置く。`.common` に登録するのが肝で、既定の
+    /// `.default` だけでは追跡中に 1 度も呼ばれない。
+    fileprivate func menuOpened() {
+        liveTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.liveInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        liveTimer = timer
+    }
+
+    /// メニューが閉じた。**駆動源を畳む。**
+    ///
+    /// 畳まないと、閉じた後もフレームを取り出し続ける (見えない絵のために毎秒 30 回)。
+    fileprivate func menuClosed() {
+        liveTimer?.invalidate()
+        liveTimer = nil
+        previewView = nil
+        identityItem = nil
+    }
+
+    /// 開いている間の 1 拍。絵と経過を新しくする。
+    private func tick() {
+        guard let source else { return }
+        // 誰も進めていなければ、ここが進める (窓を開かない経路)。進んでいれば何もしない
+        source.advanceForPresence()
+
+        if let previewView {
+            let size = previewView.frame.size
+            if let image = source.presencePreview(maxWidth: Self.previewPixels(for: size.width)),
+                let cgImage = Self.makeCGImage(image)
+            {
+                previewView.image = NSImage(cgImage: cgImage, size: size)
+            }
+        }
+        // 経過も止めない。**プレビューだけ動いて数字が固まっている**のは、見ている人には
+        // どちらが本当なのか分からない
+        if let identityItem {
+            identityItem.attributedTitle = Self.attributed(
+                describe(source).identity, prominent: false)
+        }
     }
 
     /// 読ませるだけの行。**動作を持たない**ので、押しても何も起きない。
     private static func label(_ text: String, prominent: Bool) -> NSMenuItem {
         let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
         item.isEnabled = prominent
-        item.attributedTitle = NSAttributedString(
+        item.attributedTitle = attributed(text, prominent: prominent)
+        return item
+    }
+
+    /// 行の書き方。濃く出すものと添え物で、大きさも色も変える。
+    private static func attributed(_ text: String, prominent: Bool) -> NSAttributedString {
+        NSAttributedString(
             string: text,
             attributes: [
                 .font: NSFont.systemFont(
@@ -254,19 +338,35 @@ final class SketchPresence {
                     weight: prominent ? .semibold : .regular),
                 .foregroundColor: prominent ? NSColor.labelColor : NSColor.secondaryLabelColor,
             ])
-        return item
     }
 
     /// いま描いている絵。**これが「どの窓が誰のものか」に最も直接答える。**
-    private static func previewItem(_ image: DisplayImage?) -> NSMenuItem? {
-        guard let image, let cgImage = makeCGImage(image) else { return nil }
-        let size = NSSize(width: image.width, height: image.height)
-        let view = NSImageView(frame: NSRect(origin: .zero, size: size))
-        view.image = NSImage(cgImage: cgImage, size: size)
-        view.imageScaling = .scaleProportionallyUpOrDown
+    ///
+    /// 幅はメニューに合わせて渡され、高さは絵の縦横比から出す。**絵の側の大きさに
+    /// 合わせない** — スケッチごとに絵の大きさが違うので、合わせるとメニューの幅が
+    /// スケッチごとに変わってしまう。
+    private func previewItem(_ source: SketchRuntime, width: CGFloat) -> NSMenuItem? {
+        guard width > 0,
+            let image = source.presencePreview(maxWidth: Self.previewPixels(for: width)),
+            let cgImage = Self.makeCGImage(image)
+        else { return nil }
+        let height = (width * CGFloat(image.height) / CGFloat(image.width)).rounded()
+        let view = NSImageView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        view.imageScaling = .scaleAxesIndependently
+        view.image = NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))
+        previewView = view
         let item = NSMenuItem()
         item.view = view
         return item
+    }
+
+    /// 幅 (点) に対して、絵を何画素で貰うか。
+    ///
+    /// **点ではなく画素で頼む。** Retina では 1 点が 2 画素なので、点のまま貰うと
+    /// メニューの中で 2 倍に引き伸ばされてぼやける。
+    private static func previewPixels(for width: CGFloat) -> Int {
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        return Int((width * scale).rounded())
     }
 
     /// 表示できる形の絵を `CGImage` にする。
@@ -317,6 +417,7 @@ final class SketchPresence {
     /// **解放するだけでは消えない** (実測。ステータスバーが持ち続ける)。取り下げは
     /// `removeStatusItem(_:)` を呼ぶことでしか起きない。
     func withdraw() {
+        menuClosed()
         guard let item else { return }
         NSStatusBar.system.removeStatusItem(item)
         self.item = nil
@@ -353,5 +454,13 @@ final class SketchPresenceMenu: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         presence.refresh(menu)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        presence.menuOpened()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        presence.menuClosed()
     }
 }

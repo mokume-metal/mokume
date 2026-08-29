@@ -83,6 +83,10 @@ public final class SketchRuntime {
     private lazy var presence = SketchPresence(source: self)
     /// 最初に ``advance()`` が呼ばれた時刻。名乗りの経過はここを起点に測る。
     private var firstAdvanceAt: Double?
+    /// いまフレームを描いている最中か。入れ子で描き始めないための目印。
+    private var isAdvancingFrame = false
+    /// 最後にフレームを描き終えた時刻。**誰かが進めているか**の判断に使う。
+    private var lastFrameAt: Double = 0
     /// 直近のフレームの間隔 (秒)。観測が無ければ測らない。
     private var frameIntervals: [Double] = []
     private var previousFrameStart: Double?
@@ -221,6 +225,20 @@ public final class SketchRuntime {
         // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
         // 止まっているスケッチも、居座っていることに変わりはない
         updatePresence()
+        try runFrame()
+    }
+
+    /// フレームを 1 つ進める本体。**名乗りの世話は含まない。**
+    ///
+    /// 分けてあるのは、名乗りのメニューが開いている間だけ**ここが別の駆動源から呼ばれる**
+    /// ためである (``advanceForPresence()``)。``advance()`` ごと呼ぶと、追跡ループの中で
+    /// 名乗りの世話が入れ子になる。
+    private func runFrame() throws(RenderFailure) {
+        isAdvancingFrame = true
+        defer {
+            isAdvancingFrame = false
+            lastFrameAt = now()
+        }
         guard !isPaused else {
             serveObservationIfRequested()
             return
@@ -325,6 +343,25 @@ public final class SketchRuntime {
         return now() - firstAdvanceAt
     }
 
+    /// 名乗りのメニューが開いている間、プレビューを動かすために呼ばれる。
+    ///
+    /// **誰かが既に進めているなら何もしない。** 窓を開く経路の駆動源 (`CADisplayLink`) は
+    /// `.common` モードに登録されているので、メニューを開いている間もフレームは進み続ける
+    /// — そこで二重に進めると、**メニューを開けている間だけ倍の速さで動く**。
+    ///
+    /// 逆に窓を開かない経路では、メニューを開いた時点で `advance()` が AppKit の追跡ループ
+    /// の中で止まっている。**そのままではプレビューが静止画になる**ので、ここが進める。
+    func advanceForPresence() {
+        guard !isAdvancingFrame, now() - lastFrameAt > Self.presenceStallThreshold else { return }
+        try? runFrame()
+    }
+
+    /// これだけ描かれていなければ「誰も進めていない」とみなす (秒)。
+    ///
+    /// 想定する一番遅い駆動が 30 fps (33 ms) なので、その倍を取る。短くすると、
+    /// 進んでいるのに二重に進めてしまう。
+    private static let presenceStallThreshold: Double = 0.066
+
     /// いま描かれている絵を、名乗りのメニューに載る大きさで返す。
     ///
     /// **出口が受け取るのと同じ道を通す** ([ADR-0024] 決定 6)。小さくするのは通した後で、
@@ -334,14 +371,14 @@ public final class SketchRuntime {
     ///
     /// **1 枚も描いていなければ `nil`。** 描いていない絵を出すよりは、出さないほうがよい。
     ///
+    /// - Parameter maxWidth: 返す絵の幅の上限 (画素)。**縮小率ではなく幅で頼む** — 絵の
+    ///   大きさはスケッチが決めるので、率で指定すると出来上がりがスケッチごとに変わる。
+    ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    func presencePreview() -> DisplayImage? {
+    func presencePreview(maxWidth: Int) -> DisplayImage? {
         guard timing.frameCount > 0 else { return nil }
-        // メニューに収まる幅へ落とす。**縮小率ではなく幅で決める** — 絵の大きさは
-        // スケッチが決めるので、率で指定するとメニューの幅がスケッチごとに変わる
-        let target = 240.0
         guard let image = try? self.target.encodeToImage().read() else { return nil }
-        return image.scaled(by: min(1, target / Double(max(1, image.width))))
+        return image.scaled(by: min(1, Double(maxWidth) / Double(max(1, image.width))))
     }
 
     /// フレームの頭で片付けること。観測が無ければどれも空回りしない。
