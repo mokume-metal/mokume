@@ -64,7 +64,7 @@ PR 本文 (目的 / 変更点 / 確認方法) が揃っていて `ci-gate` が g
 
 **`BEHIND` でも "Update branch" は押さない。** 必須チェックは `strict` を切ってあるので追随しなくても merge でき、その上 queue が合流後の姿で `ci-gate` を再検証する — 追随は **queue がこれからやることの前借り**にしかならない。得るものが無いのに **auto-merge だけが外れて PR が止まる** ([#110](https://github.com/mokume-metal/mokume/pull/110))。文字の衝突は GitHub が `DIRTY` で止め、意味的な衝突は合流後の main の CI が拾うので、追随しないことで壊れる経路は塞がっている。
 
-**例外は 1 つ — 描画に触れる PR で、main 側の描画のファイルが動いたとき。** 絵だけは CI が回せないので、合流後の姿を確かめられるのは手元の実行だけである。この 1 点は `local-render` が queue で **failure** になって知らせる ([#435](https://github.com/mokume-metal/mokume/issues/435)) — 報告の description が対象の PR 番号を名乗るので、そうしたら追随し、手元で `make ci-check` を打ち直して `gh pr merge --auto --squash` を掛け直す。**赤くなるまでは追随しなくてよい** (上のとおり、得るものが無いのに auto-merge だけが外れる)。
+**例外は 1 つ — 描画に触れる PR で、main 側の描画のファイルが動いたとき。** 絵だけは CI が回せないので、合流後の姿を確かめられるのは手元の実行だけである。この 1 点は `local-render` が **failure** になって知らせる ([#435](https://github.com/mokume-metal/mokume/issues/435))。failure は queue のコミットと **PR の head の両方**に付くので、`gh pr checks <番号>` がそのまま赤くなる ([#462](https://github.com/mokume-metal/mokume/issues/462) — head にも打つ前は、弾かれたことが PR 側のどこにも出なかった)。そうしたら追随し、手元で `make ci-check` を打ち直して `gh pr merge --auto --squash` を掛け直す。**赤くなるまでは追随しなくてよい** (上のとおり、得るものが無いのに auto-merge だけが外れる)。
 
 **承認と auto-merge は別々に外れる。** どちらが外れるかは出来事で違い、しかも **"Update branch" だけはタイムラインに何も残さない** — だから画面上は「承認済み・全チェック緑」に見えたまま止まり、原因に辿り着けない ([#114](https://github.com/mokume-metal/mokume/issues/114) で実測):
 
