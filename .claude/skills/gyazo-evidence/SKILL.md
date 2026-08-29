@@ -58,8 +58,62 @@ swift run mokume-cli mcp <スケッチの場所>    # エージェントの窓�
 原子的に置き、`.mokume/observe/report.json` の `id` が一致するまで待つ (仕様は
 `Schemas/observe-request.schema.json`)。
 
-> **動きはこの経路ではまだ撮れない。** 観測を続けて置くと 10 回前後で応答が止まる
-> ([#221](https://github.com/mokume-metal/mokume/issues/221))。解決するまで動きは B で撮る。
+### 動きも A で撮る
+
+**識別子を変えながら要求を置き、`report.json` の `id` が一致したら `image` が指す絵を退避する** —
+これを繰り返せば連番がそのまま手に入る。B のように録画から起こす必要は無い。要求に `scale` を
+添えると書き出しの時点で縮むので、束ねる前の縮小も要らない。
+
+```bash
+python3 - <スケッチの場所>/.mokume/observe frames 70 0.5 <<'CAPTURE'
+import json, os, pathlib, shutil, sys, time
+
+facet, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+rounds, scale = int(sys.argv[3]), float(sys.argv[4])
+out.mkdir(parents=True, exist_ok=True)
+previous, timing = None, []
+
+for index in range(1, rounds + 1):
+    identifier = f"f{index:04d}"
+    temporary = facet / ".request.json.tmp"           # 原子的に置く
+    temporary.write_text(json.dumps({"id": identifier, "scale": scale}))
+    os.replace(temporary, facet / "request.json")
+
+    name, taken, limit = f"f.{index:04d}.png", None, time.time() + 1.5
+    while time.time() < limit:                        # 壁時計ではなく識別子の一致で完了を知る
+        try:
+            report = json.loads((facet / "report.json").read_text())
+            if report.get("id") == identifier and report.get("image"):
+                taken = shutil.copy(facet / report["image"], out / name)
+                break
+        except Exception:
+            pass
+        time.sleep(0.01)
+
+    if taken is None and previous:                    # 返らなかったら直前の絵を置く
+        shutil.copy(previous, out / name)
+    previous = taken or previous
+    timing.append({"file": name, "at": time.time()})  # 何時に採れたか = その絵が出ていた長さ
+
+(out / "timing.json").write_text(json.dumps(timing))
+CAPTURE
+```
+
+置き方と待ち方は `scripts/check-observation-roundtrip.sh` と同じで、**形式の正典は `Schemas/` の
+`observe-request` / `observe-report`** である (絵のファイル名も応答の `image` が名乗る — 決め打ちしない)。
+
+> **応答が返らなかった回は直前の絵で埋める。抜けを詰めない。** 詰めると「面が黙った」ことが動きから
+> 消えてしまい、それ自体が見せたい事象であることがある
+> ([#310](https://github.com/mokume-metal/mokume/pull/310#issuecomment-5452377415) が実例 — 窓を畳んだ後に
+> 絵が凍るか回り続けるかの差が、70 枚のうち異なる絵の枚数として出た)。
+
+> **採れる間隔は一定ではない。等間隔で束ねると、無かった動きを作ってしまう。** 1 枚ごとに応答を待つ上、
+> 観測を続けるとスケッチのフレームレート自体が途中で落ちる ([#370](https://github.com/mokume-metal/mokume/issues/370))。
+> 実測では 1 枚あたりの間隔が `0.248 秒 → 0.83 秒` と 3.3 倍に開き、**扇が 3.3 倍速で回り出す動画**になった —
+> スケッチは速さを変えていないのに、である。角度や位置が時刻の関数である以上これは必ず起きる。
+>
+> だから **`timing.json` を採り、各フレームの表示時間を実際の間隔から決める** (下記)。そうすれば採取が
+> 揺れても動画は実時間どおりになり、落ちている間は「絵が止まって見える」という**本当のこと**が映る。
 
 ## B. 窓を撮る
 
@@ -83,11 +137,13 @@ PR / Issue で WebP を使うのは、同じ絵で GIF より小さく、色数�
 **DocC は WebP を警告も出さずに落とす**ので、そちらへ出すものだけ GIF にする
 (このリポジトリにまだ DocC が無いため、DocC 側は**未検証**)。
 
+**A は連番がそのまま手に入る**ので、束ねる所から始める。B は録画なので、まず連番へ起こす。
+
 ```bash
-# 録画から連番へ (幅 720 / 15fps が目安)
+# 録画から連番へ (B のみ・幅 720 / 15fps が目安)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos" frames/f.%04d.png
 
-# PR / Issue へ出す — WebP
+# PR / Issue へ出す — WebP (B は録画なので等間隔でよい)
 img2webp -loop 0 -mixed -d 67 frames/f.*.png -o motion.webp
 
 # DocC へ出す — GIF (パレットを作ってから通す)
@@ -98,6 +154,23 @@ ffmpeg -y -i motion.mov -i palette.png \
 
 `-d` はフレーム間隔 (ミリ秒。15fps なら 67)。`-mixed` はフレームごとに可逆 / 非可逆を選ばせる指定で、
 **微細な差分を見せる証跡では `-lossless`** を使う (サイズは増えるが 1 ビットも劣化しない)。
+
+**A は `-d` を採った間隔から 1 枚ずつ決める** (`-d` はファイルごとに効く)。等間隔で束ねてはいけない理由は
+経路 A の注意書きのとおり。
+
+```bash
+python3 - frames motion.webp <<'BUNDLE'
+import json, pathlib, subprocess, sys
+
+out = pathlib.Path(sys.argv[1])
+rows = json.loads((out / "timing.json").read_text())
+arguments = ["img2webp", "-loop", "0", "-mixed"]
+for current, following in zip(rows, rows[1:]):
+    gap = max(1, round((following["at"] - current["at"]) * 1000))
+    arguments += ["-d", str(gap), str(out / current["file"])]
+subprocess.run(arguments + ["-d", "100", str(out / rows[-1]["file"]), "-o", sys.argv[2]], check=True)
+BUNDLE
+```
 
 ## 上げる
 
@@ -163,7 +236,7 @@ before / after は表で並べ、**幅を宣言する**。
 ままでよい** — 幅を書くのは並べるときだけである。
 
 **動きには撮影範囲と意図をテキストで添える。** フレームを人が後から検める代わりの記録なので、
-どの窓を撮ったか・どの操作の何秒間か・どこを見てほしいかを書く。
+何を撮ったか (A なら観測したスケッチと条件・B ならどの窓)・どの操作の何秒間か・どこを見てほしいかを書く。
 
 ## 守ること
 
