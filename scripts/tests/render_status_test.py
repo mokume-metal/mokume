@@ -97,6 +97,8 @@ class RenderStatusTest(unittest.TestCase):
         self._git("init", "-q", "-b", "main")
         self._git("config", "user.email", "t@example.invalid")
         self._git("config", "user.name", "t")
+        # 使い捨てのリポジトリは手元の署名設定から独立させる (#344)
+        self._git("config", "commit.gpgsign", "false")
         self._git("remote", "add", "origin", "git@github.com:mokume-metal/mokume.git")
         # 追跡されていないファイルも「汚れ」に数える (追跡外の .swift は、ビルドには
         # 入るのに HEAD には無い)。だから土台のファイルは commit まで済ませておく
