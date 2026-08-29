@@ -32,9 +32,14 @@ import Testing
 // ## ここが見ないもの
 //
 // - **製品の側が内部で `RenderDevice` を作る経路** (`SketchApplication` など)。検査の原文には
-//   現れないので、この検査では捕まらない。実害が出てから足す ([ADR-0008](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md))
+//   現れないので、この検査では捕まらない
 // - 文字列の**補間の中にさらに文字列**が入る書き方。字句の追い方が単純なので取り違えうる
 //   (この検査自身の見本も含め、いまの原文には無い)
+//
+// どちらも実害が出てから塞ぐ ([ADR-0008](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md)
+// 決定 1)。**待たせてある置き場は [#360](https://github.com/mokume-metal/mokume/issues/360)**
+// なので、ここを踏んだら新しく起票せずそこへ書く。踏んだときの症状は「手元の `make ci-check` は
+// 緑なのに、CI だけが `commandQueueUnavailable` で赤くなる」— #336 と同じ形である。
 
 /// GPU を作る場所に、GPU の有無の条件が掛かっているかを原文から見る。
 @Suite("GPU の条件の付け忘れ")
