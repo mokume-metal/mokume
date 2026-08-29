@@ -25,6 +25,35 @@ curl -fsSL https://github.com/mokume-metal/mokume/releases/latest/download/mokum
 
 ライブラリ本体は入れなくてよい。`mokume new` が作るスケッチが依存として引く。
 
+### 手元のビルドを使う
+
+リリースを待たずに試すとき、ライブラリを触りながらスケッチで確かめるときは、この
+リポジトリから道具を作る:
+
+```bash
+git clone https://github.com/mokume-metal/mokume.git
+cd mokume
+swift build -c release --product mokume-cli
+export PATH="$PWD/.build/release:$PATH"   # この shell の間だけ
+```
+
+できるのは `mokume-cli` — 配布物の `mokume` と同じ道具で、名前だけが違う (道具は
+起動された名前で名乗るので、印字される行はそのまま打てる)。ひな形の入った
+`mokume_MokumeCLI.bundle` は隣に作られるので、実行ファイルだけを別の場所へ移さない。
+
+スケッチにも手元のライブラリを引かせるなら、`--local` でこのリポジトリの場所を渡す:
+
+```bash
+cd ..
+mokume-cli new --local ../mokume my-sketch
+cd my-sketch
+mokume-cli run
+```
+
+渡した場所は生成される `Package.swift` の `.package(path:)` へそのまま入るので、
+**作られるスケッチから見た相対**で書く (絶対パスでもよい)。`--local` を付けなければ、
+公開済みの版を引く。
+
 ## 使う
 
 ```bash
