@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 mokume-metal
 SPDX-License-Identifier: MIT
 -->
 
-# ADR-0026: 読める面の規範 (正典の所在・絵の置き方・面の分け方・言語)
+# ADR-0027: 読める面の規範 (正典の所在・絵の置き方・面の分け方・言語)
 
 ## 状態
 
