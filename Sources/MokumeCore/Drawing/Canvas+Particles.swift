@@ -124,9 +124,8 @@ extension Canvas {
         guard let run = particles.quad.runs.first, run.source == .solid else { return }
         let savedMode = currentBlendMode
         let savedTexture = currentTexture
-        let savedKind = currentTextureKind
         blendMode(run.mode)
-        useTexture(run.texture, kind: run.textureKind)
+        useTexture(run.texture)
 
         beginSolids()
         closeBatch()
@@ -142,7 +141,7 @@ extension Canvas {
         closeBatch()
 
         blendMode(savedMode)
-        useTexture(savedTexture, kind: savedKind)
+        useTexture(savedTexture)
     }
 
     /// CPU が読み戻して埋めた置き場所で描く。**速い側を照らす物差し。**

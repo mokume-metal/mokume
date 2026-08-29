@@ -51,12 +51,11 @@ struct ShaderTests {
     @Test("断片は、字と画像を描く経路にも載る")
     func aFragmentAlsoRidesTheTextAndImagePaths() throws {
         let canvas = try makeCanvas(width: 64, height: 32)
-        // 覆っている割合の面 (字) はそのまま、色そのものの面 (画像) は青にする
+        // **どちらの経路でも読む面は色である。** 読んだ濃さで青を出す 1 本で足りる
         let shader = try canvas.makeShader(
             """
             float4 paint(Fragment in, Values values) {
-                if (in.textureKind == kCoverage) { return float4(0.0, 1.0, 0.0, 1.0) * in.texel.r; }
-                return float4(0.0, 0.0, 1.0, 1.0);
+                return float4(0.0, 0.0, 1.0, 1.0) * in.texel.a;
             }
             """)
         let image = try canvas.createImage(8, 8)
@@ -65,10 +64,23 @@ struct ShaderTests {
         try canvas.draw {
             canvas.background(.opaque(red: 0, green: 0, blue: 0))
             canvas.shader(shader)
+            canvas.textFont("Helvetica")
+            canvas.textSize(24)
+            canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+            canvas.text("I", 8, 26)
             canvas.image(image, 40, 8, 16, 16)
         }
         // 画像の面を読む経路でも断片が効いている (赤ではなく青になる)
         #expect(canvas.get(48, 16) == .opaque(red: 0, green: 0, blue: 1))
+        // 字を読む経路でも同じ断片が効いている (白ではなく青が出ている)
+        var sawBlueGlyph = false
+        for y in 8..<26 {
+            for x in 4..<28 {
+                let pixel = canvas.get(x, y)
+                if pixel.blue > 0.5, pixel.red < 0.1, pixel.green < 0.1 { sawBlueGlyph = true }
+            }
+        }
+        #expect(sawBlueGlyph)
     }
 
     @Test("組み込みの塗りへ戻せる")

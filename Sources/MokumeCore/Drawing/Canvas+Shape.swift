@@ -28,7 +28,6 @@ extension Canvas {
         pushMatrix()
         resetMatrix()
         let savedTexture = currentTexture
-        let savedTextureKind = currentTextureKind
         currentClip = nil
         // **記録の間は畳まない。** 畳むと置き場所が溜め場の側に残り、記録した頂点からは
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
@@ -56,7 +55,6 @@ extension Canvas {
         solidInstances.removeLast(solidInstances.count - instanceStart)
         batches.removeLast(batches.count - runStart)
         currentTexture = savedTexture
-        currentTextureKind = savedTextureKind
         popMatrix()
         popStyle()
 
@@ -86,13 +84,12 @@ extension Canvas {
 
         let savedMode = currentBlendMode
         let savedTexture = currentTexture
-        let savedTextureKind = currentTextureKind
 
         for run in shape.runs {
             // 区間の設定へ移る。**同じなら列は閉じない**ので、続けて置いた形は
             // 前の形と同じ列に並び、描く回数は増えない
             blendMode(run.mode)
-            useTexture(run.texture, kind: run.textureKind)
+            useTexture(run.texture)
             switch run.source {
             case .flat:
                 for placement in usable { place(run, of: shape, at: placement) }
@@ -104,7 +101,7 @@ extension Canvas {
         // 記録した設定を外へ漏らさない。**戻す操作が列を閉じる**ので、いま置いた
         // 頂点は区間の設定で描かれる
         blendMode(savedMode)
-        useTexture(savedTexture, kind: savedTextureKind)
+        useTexture(savedTexture)
     }
 
     /// 平面の区間を置く。**立体の列が開いていれば閉じる** (呼び出し順どおりに重ねる)。

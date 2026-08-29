@@ -94,6 +94,12 @@ final class TypeAndImagery: Sketch {
         }
         pop()
 
+        // 自分の色を持つ字形。**塗りの色は掛からない** ので、同じ 1 行の中で
+        // 単色の字は塗りの色で出て、絵文字だけが自分の色で出る
+        textSize(30)
+        fill(.display(red: 0.6, green: 0.65, blue: 0.75))
+        text("色を持つ字形 🔴 🙂 🌿", 48, 500)
+
         // 絵を置く — 等倍・引き伸ばし・色掛け
         if let swatch {
             image(swatch, 480, 170)
