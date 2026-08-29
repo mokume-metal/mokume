@@ -10,7 +10,9 @@ macOS 26 (Tahoe) 以上・Apple Silicon 専用。スケッチを作り直すの�
 brew install mokume-metal/tap/mokume
 ```
 
-更新は `brew upgrade mokume`。
+**入るのも打つのも `mokume`** という名前の道具ひとつ。`mokume-cli` はこのリポジトリを
+自分でビルドしたときだけの名前なので、Homebrew では見つからない
+([手元のビルドを使う](#手元のビルドを使う))。更新は `brew upgrade mokume`。
 
 Homebrew を使わないなら、同じ配布物を直に展開してもよい:
 
