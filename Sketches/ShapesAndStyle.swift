@@ -49,7 +49,7 @@ final class ShapesAndStyle: Sketch {
         // 変換を積む
         push()
         translate(760, 235)
-        for index in 0..<12 {
+        for _ in 0..<12 {
             rotate(.pi / 6)
             scale(0.92, 0.92)
             stroke(.display(red: 1, green: 0.6, blue: 0.3, alpha: 0.9))

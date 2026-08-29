@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape changelog-lint hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape changelog-lint docs-links hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape changelog-lint hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape changelog-lint docs-links hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -67,6 +67,17 @@ rulesets-shape:
 # 出力が名指しで教えるので README も綴りを写さない
 changelog-lint:
 	python3 scripts/release.py lint
+
+# ドキュメントの相対リンクと見出しアンカーが指し先を持っているかを見る (#90)。
+# **外部 URL は見ない** — ネットワーク依存と flaky を CI に持ち込まないため。
+#
+# changelog.d の断片には changelog-lint が「リンクは絶対 URL のみ」を課しており、
+# 対象が重なる。重ねる理由は見ているものが違うこと — あちらはリリースノートに
+# 載った時点で壊れる書き方を断つ制約で、docs 本体の相対リンクは誰も見ていない
+# (ADR-0008 決定 5)。断片を除外リストで外す形は採らない。除外を書けば検査は
+# 名指しに戻り、次に .md が増えたとき同じ穴が空く
+docs-links:
+	python3 scripts/check-docs-links.py
 
 # エージェント向けフック (署名の強制など) の検査。gh はスタブに差し替わるので
 # ネットワークも認証も要らない
