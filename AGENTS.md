@@ -22,6 +22,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 - プロセスの外とやりとりする JSON の形式: `Schemas/` の JSON Schema。**実装は従う側**で、代表例との照合を `make ci-check` が見る ([ADR-0018](docs/decisions/0018-observation-and-control-surface.md))
 - 作業の経過・発見・残タスク: GitHub Issues / PR (ローカルファイルやセッション記憶に残さない)
 - プロジェクトの土台: [ADR-0001 設計原則](docs/decisions/0001-founding-principles.md)
+- **この文書のどこまでが外のパッケージにも効くか**: [ADR-0026](docs/decisions/0026-plugin-repository-alignment.md) 決定 1 の 3 段 (必ず揃える / 育ってから / 要らない)。**外のパッケージ側から読みに来た人はまずそこを読む** — ここに書いてある機構の多くは本体固有で、あちらには要らない
 
 ## 進め方
 
@@ -229,7 +230,7 @@ gh pr close <番号>
 
 `comment.sh` に close / reopen の機能は足さない。ラッパーの責務を「署名を付けて投稿する」1 つに保つため (状態遷移を持たせると `--reason` `--delete-branch` と `gh` の写しが増えていく)。説明を先に投稿してから閉じる順序は、タイムラインの読み順としてもむしろ自然になる。
 
-**この節が言うのはこのリポジトリ宛てのコメント**で、他のリポジトリの Issue / PR へは素の `gh` で書く (あちらの署名の作法は別に決まっている。フックも `-R` で他リポを指したコメントは素通しする)。同じ理由で `comment.sh` に `-R` も足さない ([#188](https://github.com/mokume-metal/mokume/issues/188))。
+**この節が言うのはこのリポジトリ宛てのコメント**で、他のリポジトリの Issue / PR へは素の `gh` で書く (あちらの署名の作法は別に決まっている。フックも `-R` で他リポを指したコメントは素通しする)。同じ理由で `comment.sh` に `-R` も足さない ([#188](https://github.com/mokume-metal/mokume/issues/188))。**mokume-metal の外のパッケージについては、その「あちら」を [ADR-0026](docs/decisions/0026-plugin-repository-alignment.md) 決定 4 が決めている** — 署名の 1 行は同じ形を付け、ラッパーは持ち込まない。
 
 **人間が直接 `gh` でコメントする分にはラッパーは不要**。Claude Code のセッションでは `.claude/settings.json` のフックが素の `gh issue comment` / `gh pr comment` を差し戻してラッパーへ誘導する。同等のフック機構を持たないエージェント (現状の Codex CLI など) では機械的には強制できないため、この節が拠りどころになる — ラッパーはどの環境からでも呼べる。
 
