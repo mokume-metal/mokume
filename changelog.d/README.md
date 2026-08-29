@@ -11,7 +11,9 @@
 ファイル名は `<slug>.<category>.md`。
 
 - `<slug>`: 変更を表す短い kebab-case (例: `seedable-random-and-noise`)
-- `<category>`: `feature` / `fix` / `docs` / `perf` / `breaking`
+- `<category>`: ノートの見出しに対応する分類。**正典は `scripts/release.py` の `SECTIONS`** — ここに綴りを写すと二重管理になるので並べない。使える綴りは `python3 scripts/release.py lint` が名指しで教える
+
+この形は `make ci-check` の `changelog-lint` が見ている ([#91](https://github.com/mokume-metal/mokume/issues/91))。名前・分類のほか、**本文が空でないこと**と、**リンクが絶対 URL であること** (相対パスと reference style はノートに載った時点で壊れる) も見る。
 
 中身は **SPDX ヘッダ (HTML コメント) + Markdown の 1 段落**。次をそのままコピーして、本文だけ書き換える — 例は `changelog.d/seedable-random-and-noise.feature.md`:
 
@@ -36,4 +38,4 @@ SPDX-License-Identifier: MIT
 
 リリース時に断片を CHANGELOG.md へ昇格させる機構を作るときは、**SPDX ヘッダを除いて昇格する**こと。ヘッダは断片ファイルの帰属を宣言するためのもので、リリースノートの文面ではない。
 
-集約器はまだ無いので、この要件を守らせる検査も置いていない ([ADR-0008](../docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 2 — 実害 → Issue → 機構)。
+集約器 (`scripts/release.py`) はこの要件を満たしている — `body_of()` が HTML コメントを落としてから組む。

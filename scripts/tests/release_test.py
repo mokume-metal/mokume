@@ -3,10 +3,11 @@
 # SPDX-License-Identifier: MIT
 """scripts/release.py の検査。
 
-守りたいのは 3 つ:
+守りたいのは 4 つ:
   1. 版の上げ幅が履歴どおりに決まる (1.0 未満では破壊的変更も minor)
   2. 中身の無い版を出さない (断片が 1 つも増えていなければ中断)
   3. 書いた断片がノートから黙って消えない (知らない分類も落とさない)
+  4. 組めない形の断片は main に入る前に名指しで落ちる (#91)
 
 git は一時リポジトリを本物で回す — 「前回のタグ以降に追加されたか」は履歴の話で、
 そこを模造すると検査が確かめたい当のものを確かめなくなる。
@@ -99,6 +100,112 @@ class NotesTests(unittest.TestCase):
         # 知らない分類を落とすと「書いたのにノートに出ない」が黙って起きる
         notes = release.notes([self.fragment("a.security.md", "塞いだ")])
         self.assertIn("塞いだ", notes)
+
+
+class LintTests(unittest.TestCase):
+    """断片の書式 (#91)。
+
+    **壊れ方ごとに 1 件ずつ置いて赤くなることを見る。** 正しい断片だけの群で緑に
+    なることも同じだけ大事で、偽陽性を出す検査は「赤いのが普通」にされて死ぬ。
+    """
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def fragment(self, name: str, body: str = "足した。") -> Path:
+        path = self.root / name
+        # REUSE-IgnoreStart
+        path.write_text(
+            "<!--\nSPDX-FileCopyrightText: 2026 mokume-metal\n"
+            f"SPDX-License-Identifier: MIT\n-->\n\n{body}",
+            encoding="utf-8",
+        )
+        # REUSE-IgnoreEnd
+        return path
+
+    def problems(self, name: str, body: str = "足した。") -> list[str]:
+        return release.problems_of(self.fragment(name, body))
+
+    def test_a_well_formed_fragment_has_no_problems(self):
+        for name in ("a.feature.md", "b.fix.md", "c.docs.md", "d.perf.md", "e.breaking.md"):
+            with self.subTest(name=name):
+                self.assertEqual(self.problems(name), [])
+
+    def test_a_long_kebab_case_slug_is_fine(self):
+        self.assertEqual(self.problems("seedable-random-and-noise.feature.md"), [])
+
+    def test_an_absolute_link_is_fine(self):
+        self.assertEqual(
+            self.problems("a.feature.md", "[ADR-0001](https://example.com/adr) を見る。"),
+            [],
+        )
+
+    def test_an_image_hosted_outside_is_fine(self):
+        # 証跡の絵は外部ホスティングの URL で入る (リポジトリにコミットしない)
+        self.assertEqual(
+            self.problems("a.feature.md", "![絵](https://example.com/a.png)"), []
+        )
+
+    def test_an_image_with_a_relative_target_is_named(self):
+        # 画像を特別扱いしない — 相対パスが壊れる理由はリンクと同じ
+        problems = self.problems("a.feature.md", "![絵](shots/a.png)")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("shots/a.png", problems[0])
+
+    def test_a_misspelled_category_is_named(self):
+        problems = self.problems("a.fixes.md")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("fixes", problems[0])
+        # 使える綴りは SECTIONS からその場で出す。README にも検査にも写しを作らない
+        for known, _ in release.SECTIONS:
+            self.assertIn(known, problems[0])
+
+    def test_a_wrong_extension_is_named(self):
+        self.assertEqual(len(self.problems("a.feature.markdown")), 1)
+
+    def test_a_missing_category_is_named(self):
+        # category_of は形の崩れた名前を既定の "feature" で黙って通す。
+        # ここで落とさないと分類の取り違えが誰にも見えない
+        self.assertEqual(release.category_of(self.fragment("a.md")), "feature")
+        self.assertEqual(len(self.problems("a.md")), 1)
+
+    def test_a_slug_that_is_not_kebab_case_is_named(self):
+        for name in ("CamelCase.fix.md", "snake_case.fix.md", "-leading.fix.md"):
+            with self.subTest(name=name):
+                self.assertEqual(len(self.problems(name)), 1)
+
+    def test_an_empty_body_is_named(self):
+        # SPDX ヘッダだけの断片。ノートには中身の無い項目が出る
+        self.assertEqual(len(self.problems("a.feature.md", "")), 1)
+
+    def test_a_relative_link_is_named(self):
+        problems = self.problems("a.feature.md", "[ADR](../docs/decisions/0001.md) を見る。")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("../docs/decisions/0001.md", problems[0])
+
+    def test_an_anchor_only_link_is_named(self):
+        self.assertEqual(len(self.problems("a.feature.md", "[下](#形式) を見る。")), 1)
+
+    def test_a_reference_style_link_is_named(self):
+        # 定義がこのファイルに残るので、ノートに載った時点で必ず壊れる
+        problems = self.problems("a.feature.md", "[ADR][adr] を見る。\n\n[adr]: https://example.com")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("[ADR][adr]", problems[0])
+
+    def test_it_reports_every_problem_of_one_fragment(self):
+        # 1 件目で止めると、直すたびに走らせ直すことになる
+        self.assertEqual(len(self.problems("Broken.md", "")), 2)
+
+    def test_the_readme_is_not_a_fragment(self):
+        (self.root / "README.md").write_text("案内\n", encoding="utf-8")
+        self.fragment("a.feature.md")
+        self.assertEqual(
+            [f.name for f in release.all_fragments(self.root)], ["a.feature.md"]
+        )
 
 
 class HistoryTests(unittest.TestCase):

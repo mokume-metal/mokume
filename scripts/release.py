@@ -17,6 +17,7 @@
 サブコマンド:
   next-version   次の版を出す。出すものが無ければ終了コード 2
   notes          Release の本文を組んで出す
+  lint           断片が組める形をしているかを見る。壊れていれば終了コード 1
 """
 
 import re
@@ -35,6 +36,14 @@ SECTIONS = [
     ("perf", "性能"),
     ("docs", "ドキュメント"),
 ]
+
+# 断片の名前は `<slug>.<category>.md`。slug は kebab-case
+FRAGMENT_NAME_PATTERN = re.compile(r"^(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.(?P<category>[a-z]+)\.md$")
+# `[文字](行き先)` の行き先。**画像 (`![...]()`) も除かない** — 相対パスの行き先が
+# 壊れる理由はリンクと同じで、除く理由が無い
+INLINE_LINK_PATTERN = re.compile(r"\[[^\]]*\]\((?P<target>[^)]*)\)")
+# `[文字][ラベル]` — 定義が別ファイルに残るのでノートでは必ず壊れる
+REFERENCE_LINK_PATTERN = re.compile(r"\[[^\]]*\]\[[^\]]*\]")
 
 TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 # Conventional Commits の頭。`!` は破壊的変更の印
@@ -95,6 +104,16 @@ def added_fragments(since: str | None) -> list[Path]:
     ]
 
 
+def all_fragments(directory: Path | None = None) -> list[Path]:
+    """置かれている断片すべて。
+
+    added_fragments と違って **git ではなく作業ツリーを見る** — 検査が呼ばれるのは
+    push の前で、まだコミットしていない断片こそ直せたほうが早いためである。
+    """
+    where = directory if directory is not None else REPO / FRAGMENT_DIR
+    return sorted(p for p in where.glob("*.md") if p.name != "README.md")
+
+
 def body_of(fragment: Path) -> str:
     """断片から SPDX ヘッダ (HTML コメント) を落とした本文。"""
     text = fragment.read_text(encoding="utf-8")
@@ -131,6 +150,39 @@ def notes(fragments: list[Path]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def problems_of(fragment: Path) -> list[str]:
+    """断片が組める形をしていない理由。空なら問題なし。
+
+    **SPDX ヘッダの有無は見ない** — reuse lint が既に名指しで落とす (#149・#167)。
+    **段落の数も見ない** — 1 項目に収まらない本文を畳むのは組む側の仕事である。
+    """
+    known = [name for name, _ in SECTIONS]
+    found: list[str] = []
+
+    if match := FRAGMENT_NAME_PATTERN.match(fragment.name):
+        # 語彙の正典は SECTIONS のみ。README にも、ここにも綴りの写しを置かない
+        if (category := match.group("category")) not in known:
+            found.append(f"知らない分類 `{category}` — 使えるのは {' / '.join(known)}")
+    else:
+        # category_of は形の崩れた名前を既定の "feature" で黙って通すので、
+        # ここで名指しにしないと分類の取り違えが誰にも見えない
+        found.append("名前が `<slug>.<category>.md` の形でない (slug は kebab-case)")
+
+    body = body_of(fragment)
+    if not body:
+        found.append("本文が空 — ノートに中身の無い項目が出る")
+
+    # リンクはノートに載った時点で元の場所を離れる。相対パスは基点を失い、
+    # reference style は定義がこのファイルに残るので、どちらも必ず壊れる
+    for link in INLINE_LINK_PATTERN.finditer(body):
+        if not (target := link.group("target").strip()).startswith(("http://", "https://")):
+            found.append(f"リンクの行き先が絶対 URL でない: `{target}`")
+    for reference in REFERENCE_LINK_PATTERN.finditer(body):
+        found.append(f"reference style のリンク: `{reference.group(0)}`")
+
+    return found
+
+
 def command_next_version() -> int:
     previous = latest_tag()
     fragments = added_fragments(previous)
@@ -165,6 +217,28 @@ def command_notes() -> int:
     return 0
 
 
+def command_lint() -> int:
+    """断片が組める形をしているかを見る (#91)。
+
+    **組む側がそのまま検査する。** 別の道具にすると分類の語彙が二重管理になり、
+    どちらが正典か分からなくなる。**1 件目で止めない** — 止めると直すたびに
+    走らせ直すことになる。
+    """
+    broken = 0
+    for fragment in all_fragments():
+        for problem in problems_of(fragment):
+            print(f"{FRAGMENT_DIR}/{fragment.name}: {problem}", file=sys.stderr)
+            broken += 1
+    if broken:
+        print(
+            f"断片の書式が {broken} 件壊れている。形は {FRAGMENT_DIR}/README.md が定める",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"ok: {FRAGMENT_DIR} の断片は全部組める形をしている")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -174,6 +248,8 @@ def main(argv: list[str]) -> int:
             return command_next_version()
         case "notes":
             return command_notes()
+        case "lint":
+            return command_lint()
         case unknown:
             print(f"知らないサブコマンド: {unknown}", file=sys.stderr)
             return 1

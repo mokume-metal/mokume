@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape changelog-lint hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape changelog-lint hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -60,6 +60,13 @@ workflows-lint:
 # (定期実行は #99)。手元では bash scripts/check-rulesets.sh で照合する
 rulesets-shape:
 	bash scripts/check-rulesets.sh --shape
+
+# changelog.d の断片が、リリースノートに組める形をしているかを見る (#91)。
+# **組む側 (release.py) がそのまま検査する** — 別の道具にすると分類の語彙が二重管理に
+# なる (ADR-0008 決定 5 段 1)。正典は release.py の SECTIONS で、使える綴りは検査の
+# 出力が名指しで教えるので README も綴りを写さない
+changelog-lint:
+	python3 scripts/release.py lint
 
 # エージェント向けフック (署名の強制など) の検査。gh はスタブに差し替わるので
 # ネットワークも認証も要らない
