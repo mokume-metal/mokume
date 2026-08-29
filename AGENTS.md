@@ -271,6 +271,20 @@ Claude Code のセッションでは `.claude/settings.json` のフック (`scri
 
 同種の機構がリポ側と個人環境の双方にあるときは、**リポ側が担保して個人側を黙らせる**。黙らせる宣言の置き場は `.claude/settings.json` の `env` で、何をなぜ黙らせているかは `scripts/tests/plan_record_test.py` の `SelfContainedTest` が検査ごとのコメントに持つ (前例は `CLAUDE_PLAN_RECORD: 0`)。逆向きは採らない — 個人環境の機構はこのリポジトリの設計を知らないので、正常を異常と判定する。リポ固有スキルの置き場は `.claude/skills/`。何を置くかは [ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md) の順序に従う (実害 → Issue → 機構)。
 
+## 手元に残ったプロセス
+
+セッションが終わってもスケッチ・検証プロセスは残る (シェルが終わると launchd に再親付けされる)。並行セッションが常態なので、後から見た人には**どの窓が誰のものか**が残らない — 片付けようとすると生きている検証を壊しかねず、結局放置される ([#454](https://github.com/mokume-metal/mokume/issues/454))。
+
+出所つきで一覧する:
+
+```bash
+bash scripts/orphan-processes.sh
+```
+
+**この一覧は何も殺さない。** 落とすかどうかは人間が決めるので、そのために PID を出す。持ち主の生死も断定しない — 静かに生きているセッションと終わったセッションは外から見分けられないため、判定できないものは「判定できず」と名乗って**生きている側に倒す**。何を見て何を見ないかはスクリプトの冒頭にある。
+
+走っているスケッチ自身に名乗らせる話は別で扱う ([#473](https://github.com/mokume-metal/mokume/issues/473))。
+
 ## コミット・PR の規約
 
 - Conventional Commits: `<type>(<scope>): <要約>`。type は feat / fix / docs / refactor / test / chore / ci / perf / build。type と scope は英語、要約は日本語でよい
