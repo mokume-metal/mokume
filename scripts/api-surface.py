@@ -335,6 +335,76 @@ def check_type_closure(symbols: list[dict], owned: set[str]) -> list[str]:
     return problems
 
 
+# 外の型を面に出してよいシンボルと、その理由 (ADR-0020 決定 6)。
+#
+# 作法は `scripts/check-no-binaries.sh` の ALLOWLIST と同じ — **対象と理由を組で書く**。
+# モジュール単位で丸ごと許さないのは、一度許すと以後その語彙が何本出ても検査が黙るため
+# である。ここへ 1 行足すたびに判断が入るのが狙いで、書けるのは「その型でなければ表せない
+# 理由」に限る (「便利だから」は理由にならない)。
+FOREIGN_ALLOWLIST = {
+    "PNGFile.write(_:to:)": "書き出し先の指定。ファイルの場所の正典は標準ライブラリの外にある",
+    "RenderDevice.init(device:)": "既に持っている Metal の資源を持ち込む入口。意図して開けてある",
+    "RenderTarget.writePNG(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
+    "Shader.url": "読み込み元の在処。読んだファイルを指し直せる形で返す",
+    "SketchRuntime.renderFrame(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
+    "WorkDirectory.base": "作業場所の在処。WorkDirectory は場所そのものを扱う型なので URL が本体",
+    "WorkDirectory.facet(_:)": "作業場所の下位を指す (WorkDirectory.base と同じ理由)",
+    "WorkDirectory.given": "環境から受け取った作業場所 (WorkDirectory.base と同じ理由)",
+    "WorkDirectory.given(environment:)": "環境から受け取った作業場所 (WorkDirectory.base と同じ理由)",
+    "WorkDirectory.root": "作業場所の根 (WorkDirectory.base と同じ理由)",
+}
+
+
+def module_of(identifier: str) -> str:
+    """USR からモジュール名を取る。
+
+    マングリングの読み取りをここ 1 か所に閉じる。Swift の USR は
+    `s:<長さ><モジュール名>...` の形で自分の由来を名乗り、標準ライブラリだけは短縮されて
+    `s:S...` / `s:s...` になる。ObjC から来た型は `c:objc(...)` で、モジュール名を持たない。
+    """
+    if identifier.startswith("c:objc("):
+        return "(ObjC)"
+    if identifier.startswith("s:S") or identifier.startswith("s:s"):
+        return "Swift"
+    matched = re.match(r"^s:(\d+)(.*)$", identifier)
+    if matched:
+        return matched.group(2)[: int(matched.group(1))]
+    return "(不明)"
+
+
+def check_foreign_vocabulary(symbols: list[dict], owned: set[str]) -> list[str]:
+    """公開の署名に出てよいのは、自前の型と Swift 標準ライブラリだけ (ADR-0020 決定 6)。
+
+    `check_type_closure` と同じ材料を**逆向きに**見る。あちらは自前の型が一覧から落ちて
+    いないか (閉包)、こちらは外の型が一覧に入り込んでいないか (境界) を見る。どちらも
+    「一覧だけを読む相手がその宣言を呼べるか」を守っている — 落ちていても、外の語彙で
+    書かれていても、一覧は呼べないものを呼べる顔で並べることになる。
+
+    見つかったものは既定で落とす。正当な例外は `FOREIGN_ALLOWLIST` に理由つきで載せる。
+    """
+    problems = []
+    for symbol in symbols:
+        name = f"{owner(symbol) or '(トップレベル)'}.{title(symbol)}"
+        if name in FOREIGN_ALLOWLIST:
+            continue
+        seen: set[str] = set()
+        for fragment in symbol.get("declarationFragments", []):
+            identifier = fragment.get("preciseIdentifier")
+            if identifier is None or identifier in owned or identifier in seen:
+                continue
+            seen.add(identifier)
+            module = module_of(identifier)
+            if module == "Swift":
+                continue
+            problems.append(
+                f"{name}: 署名に {module} の {fragment.get('spelling', identifier)} が出ている。"
+                "外の語彙は版ごとに配る一覧を通して利用者とエージェントに届く "
+                "(ADR-0020 決定 6)。自前の型で表すか、"
+                "scripts/api-surface.py の FOREIGN_ALLOWLIST に理由つきで載せる"
+            )
+    return problems
+
+
 COUNT_PATTERN = re.compile(r"公開\s*(?:されている)?\s*(?:シンボル|API)[^\n。]{0,16}?(\d+)\s*(?:個|本)")
 
 
@@ -384,11 +454,13 @@ def main() -> int:
         return 0
 
     root = pathlib.Path(__file__).resolve().parent.parent
+    owned = load_owned_identifiers(arguments.graphs)
     problems = (
         check_onoff(symbols)
         + check_forwarding(symbols, load_requirements(arguments.graphs, arguments.module))
         + check_doc_canon(symbols)
-        + check_type_closure(symbols, load_owned_identifiers(arguments.graphs))
+        + check_type_closure(symbols, owned)
+        + check_foreign_vocabulary(symbols, owned)
         + check_no_written_counts(root)
     )
     if problems:

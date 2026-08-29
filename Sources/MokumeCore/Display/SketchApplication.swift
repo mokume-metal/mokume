@@ -18,9 +18,27 @@ import QuartzCore
 /// 最小化・被覆・Space の切り替えのどれでも止まらない
 /// ([#223](https://github.com/mokume-metal/mokume/issues/223))。
 ///
+/// ## AppKit の delegate は別のオブジェクトが受ける
+///
+/// `NSApplicationDelegate` への準拠は internal な ``SketchApplicationDelegate`` が持つ。
+/// **この型が直接準拠すると、delegate の 3 本が公開 API の一覧に載る** — 呼ぶのは OS で
+/// あって利用者ではないのに「呼んでよい」顔で並ぶ ([ADR-0020] 決定 6 /
+/// [#324](https://github.com/mokume-metal/mokume/issues/324))。
+///
+/// `public` を外すだけでは済まない。public な型が public なプロトコルへ準拠すると、
+/// Swift は要件を public に要求する:
+///
+/// ```
+/// error: method 'applicationWillTerminate' must be declared public because it
+///        matches a requirement in public protocol 'NSApplicationDelegate'
+/// ```
+///
+/// 準拠自身の可視性を下げる書き方が Swift に無いので、**準拠ごと internal な側へ移す**。
+///
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 @MainActor
-public final class SketchApplication: NSObject, NSApplicationDelegate {
+public final class SketchApplication: NSObject {
     private let gpu: RenderDevice
     private let runtime: SketchRuntime
     private let presenter: FramePresenter
@@ -74,11 +92,13 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
     public func run() {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
-        app.delegate = self
-        // **自分を強く持っておく。** AppKit は delegate を弱く参照するので、
-        // ここで持たないと、delegate を渡した直後に自分が解放され、以後の
-        // 呼び出しが 1 つも来ない (窓が開かない形で表に出る)。走らせている間は
-        // 生きているべきものなので、寿命をここで固定する
+        // **delegate と自分を強く持っておく。** AppKit は delegate を弱く参照するので、
+        // ここで持たないと、delegate を渡した直後に解放され、以後の呼び出しが 1 つも
+        // 来ない (窓が開かない形で表に出る)。走らせている間は生きているべきものなので、
+        // 寿命をここで固定する
+        let delegate = SketchApplicationDelegate(application: self)
+        self.delegate = delegate
+        app.delegate = delegate
         SketchApplication.running = self
         app.run()
     }
@@ -86,7 +106,11 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
     /// いま走らせているもの。``run()`` の間だけ入る。
     private static var running: SketchApplication?
 
-    public func applicationDidFinishLaunching(_ notification: Notification) {
+    /// AppKit へ渡した delegate。弱く参照される先なので、こちらで寿命を持つ。
+    private var delegate: SketchApplicationDelegate?
+
+    /// 窓を開き、フレームの駆動源を繋ぐ。``SketchApplicationDelegate`` から呼ばれる。
+    func didFinishLaunching() {
         let settings = runtime.sketch.settings
         // 窓は描く解像度の半分で開く。描く解像度と窓の大きさは独立なので、
         // どちらに合わせてもよい — 大きな絵が画面からはみ出さない側を既定にする
@@ -166,11 +190,8 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
         attachDisplayLink(to: screen)
     }
 
-    public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
-    }
-
-    public func applicationWillTerminate(_ notification: Notification) {
+    /// 駆動源を畳む。``SketchApplicationDelegate`` から呼ばれる。
+    func willTerminate() {
         displayLink?.invalidate()
         displayLink = nil
     }
@@ -230,6 +251,39 @@ public final class SketchApplication: NSObject, NSApplicationDelegate {
         measuredFrameRate = Double(frameRateWindowCount) / elapsed
         frameRateWindowCount = 0
         frameRateWindowStart = now
+    }
+}
+
+// MARK: - AppKit との接点
+
+/// AppKit の delegate を受けて ``SketchApplication`` へ渡す。
+///
+/// **この型が公開されないことに意味がある。** `NSApplicationDelegate` の要件は、準拠する型が
+/// public なら public にならざるを得ない — つまり準拠を公開の型に置いた時点で、OS しか呼ばない
+/// メソッドが利用者向けの API 一覧に載る ([ADR-0020] 決定 6)。受け口をここへ分けることで、
+/// ``SketchApplication`` の面には利用者が実際に呼ぶもの (`init` と `run()` と観測の値) だけが
+/// 残る。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+@MainActor
+final class SketchApplicationDelegate: NSObject, NSApplicationDelegate {
+    private let application: SketchApplication
+
+    init(application: SketchApplication) {
+        self.application = application
+        super.init()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        application.didFinishLaunching()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        application.willTerminate()
     }
 }
 
