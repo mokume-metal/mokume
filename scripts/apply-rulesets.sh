@@ -12,11 +12,21 @@
 #
 # 既定を dry-run にしているのは、これが main の保護を書き換える操作だから。
 # 定義に無いルールセットの削除はしない (破壊的操作は人の手に残す)。
+#
+# **送るのは「手元にチェックアウトされている定義」である** (#425)。古い版のツリーから
+# 打つと、main の新しい定義を古い版で上書きする — 誤った緑を読む #311 と入口は同じだが、
+# こちらは保護そのものが古い形に戻り、実設定に履歴は無い。だから照合 (名乗るだけ) と違い、
+# **手元が古いと判定できたときは --apply を止める**。逃げ道は用意しない。直し方は 1 行で、
+# 既定が dry-run である以上、打ち直せば済むからである。
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 DEFS=.github/rulesets
+
+# REPO / DEFS を読むので、代入の後に置く
+# shellcheck source=scripts/rulesets-freshness.sh
+source scripts/rulesets-freshness.sh
 
 apply=false
 case "${1:-}" in
@@ -27,6 +37,17 @@ esac
 
 # 壊れた定義を GitHub へ送らない
 python3 scripts/rulesets_lib.py shape "$DEFS"
+
+# 差分より先に、これから送る定義がどの版かを言う (#425)。末尾の check-rulesets.sh では
+# 遅い — 差分が空なら「適用するものは無い」でそこへ届かず、差分があれば書き込んだ後になる
+report_tree_freshness
+
+# 古いツリーからの適用だけは止める。編集中・判定できずは通す — 手元だけが違うのは定義を
+# 編集している間の正常な状態で、止めれば押し通すための逃げ道が要る (#425)
+if $apply && [ "$RULESET_TREE_FRESHNESS" = stale ]; then
+  echo "NG: 手元のツリーが古いまま適用すると、main の定義を古い版で上書きする (#425)" >&2
+  exit 1
+fi
 
 live=$(mktemp -d)
 trap 'rm -rf "$live"' EXIT
