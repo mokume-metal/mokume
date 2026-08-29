@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import Foundation
 import mokume
 
 /// 焼いた絵を平面と立体に貼る。

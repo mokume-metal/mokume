@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import Foundation
 import mokume
 
 /// 質感 4 つ・周囲からの光と映り込み・明るさを画面へ写す段。
