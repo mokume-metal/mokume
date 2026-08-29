@@ -78,17 +78,18 @@ build:
 # 広げる形にしてあるのは、描画の検査が走る場所がここ 1 つだからである (ADR-0008 決定 5)。
 # 有効でも所要時間は変わらない (510 件で 21.5 秒 / 21.7 秒・実測)。
 #
-# **警告まで上げてはいない。** 検証レイヤの警告には「冗長な setRenderPipelineState」の
-# ような助言が混ざるので、一律に落とすとゲートとして成立しない (#357)。警告どまりの
-# 漏れ — #351 の residency がまさにそれ — は、検査が対象を直接見る形にしてある
-# (RenderTargetTests の「描画先は、置き場だけでなくテクスチャも常駐の集合に入る」)
+# **警告は nslog まで上げる** (#357)。上げないと警告は黙って捨てられ、常駐の通し忘れ
+# (#351・#357 と 2 度出た) が 1 件も報告されない。上げても、冗長な setRenderPipelineState
+# のような助言 (601 件) は記録に出るだけで走り切り、**residency の違反だけが表明で落ちる**
+# — 助言まで落とす assert とは違って、これなら常時のゲートにできる。集合そのものを問う
+# 検査 (RenderTargetTests・FramePresenterTests) はそのまま置く。どちらが欠けたかが分かる
 #
 # **CI では有効にしない。** CI の実行環境の GPU はこの世代のコマンド構造に対応して
 # おらず、そこでは検証レイヤが「使えるか」の判定 (RenderDevice.isAvailable が試す
 # makeMTL4CommandQueue) そのものを表明で落とし、**検査が 1 件も走らないまま止まる**。
 # 描画の検査はどのみち CI では 1 本も走らない (ADR-0019 決定 7) ので、検証レイヤが
 # 意味を持つのは描画が実際に走る手元だけである
-METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1)
+METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=nslog)
 
 test:
 	@mkdir -p .build

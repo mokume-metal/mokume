@@ -11,7 +11,12 @@ import MokumeDiagnostics
 /// この世代の Metal では、コマンドが触るリソースを常駐させるのは呼び出し側の責務で、
 /// 常駐していないリソースを読むと結果が未定義になる。**常駐の管理を各所に散らすと
 /// 「バインドしたのに描かれない」形の、症状からは原因の見えない失敗になる。**
-/// そこで確保したリソースは必ずここを通し、常駐の集合をこの型が 1 つだけ持つ。
+/// そこで確保したリソースは必ずここを通し、常駐の集合をこの型が持つ。
+///
+/// 集合は**寿命で 2 つに分けてある** — 確保したものが全部入る ``residencySet`` と、
+/// 表示に差し出す面だけが入る ``drawableResidency`` である。差し出す面の環は Metal
+/// 側が持っていて、面の大きさが変わると環ごと作り直される。混ぜると、古い面だけを
+/// 畳む手が無い ([#357](https://github.com/mokume-metal/mokume/issues/357))。
 ///
 /// ## 使い方
 ///
@@ -94,6 +99,16 @@ public final class RenderDevice {
     /// 常駐させるリソースの集合。この型を通して確保したものがすべて入る。
     let residencySet: any MTLResidencySet
 
+    /// 表示に差し出す面だけを入れる集合。
+    ///
+    /// **畳めるように分けてある。** 面の環は Metal 側が持ち、面の大きさが変わると
+    /// 環ごと作り直されるので、古い面は集合から外さないと残り続ける — 実測では 60 回
+    /// リサイズしただけで 120 件・85.2 MiB が常駐したままになった ([#357])。上の集合と
+    /// 混ぜると、外すときに確保したものまで巻き添えになる。
+    ///
+    /// [#357]: https://github.com/mokume-metal/mokume/issues/357
+    let drawableResidency: any MTLResidencySet
+
     /// GPU の完了を知るための合図。投入のたびに 1 つ進める。
     private let completion: any MTLSharedEvent
     private var submissionCount: UInt64 = 0
@@ -143,6 +158,16 @@ public final class RenderDevice {
         self.residencySet = residencySet
         queue.addResidencySet(residencySet)
 
+        residencyDescriptor.label = "mokume.residency.drawable"
+        let drawableResidency: any MTLResidencySet
+        do {
+            drawableResidency = try device.makeResidencySet(descriptor: residencyDescriptor)
+        } catch {
+            throw .residencySetUnavailable(reason: error.localizedDescription)
+        }
+        self.drawableResidency = drawableResidency
+        queue.addResidencySet(drawableResidency)
+
         guard let completion = device.makeSharedEvent() else {
             throw .synchronizationUnavailable
         }
@@ -159,6 +184,30 @@ public final class RenderDevice {
         residencySet.addAllocation(allocation)
         residencySet.commit()
         residencySet.requestResidency()
+    }
+
+    /// 表示に差し出す面を常駐させる。差し出す面へ書く前に呼ぶ。
+    ///
+    /// **既に入っていれば何もしない。** 集合なので入れ直しても数は増えないが、確定
+    /// (``MTLResidencySet/commit()``) は毎フレーム払う必要がないため。面の環は大きさが
+    /// 同じ限り有界で、実測では 120 フレーム回しても現れる面は 2 種類だった。
+    func makeDrawableResident(_ texture: any MTLTexture) {
+        guard !drawableResidency.containsAllocation(texture) else { return }
+        drawableResidency.addAllocation(texture)
+        drawableResidency.commit()
+        drawableResidency.requestResidency()
+    }
+
+    /// 差し出す面の常駐を畳む。面の大きさが変わって環が作り直されたときに呼ぶ。
+    ///
+    /// **GPU が空になってから外す。** 実行中のコマンドが踏んでいる面を常駐から外すと、
+    /// そのコマンドの結果が未定義になる。畳むのは面の大きさが変わったときだけなので、
+    /// この待ちが毎フレームの経路に乗ることはない。
+    func releaseDrawableResidency() throws(RenderFailure) {
+        guard drawableResidency.allocationCount > 0 else { return }
+        try waitUntilIdle()
+        drawableResidency.removeAllAllocations()
+        drawableResidency.commit()
     }
 
     /// 描画先にできるテクスチャを確保して常駐させる。
@@ -250,6 +299,21 @@ public final class RenderDevice {
         guard completion.wait(untilSignaledValue: pending, timeoutMS: limit) else {
             Diagnostics.warn(
                 "コマンドの置き場が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
+            throw .timedOut(seconds: Self.waitLimitSeconds)
+        }
+    }
+
+    /// 投入したコマンドがすべて終わるまで待つ。
+    ///
+    /// 待たない経路 (``commit(_:signalling:)``) も番号を進めているので、最後の番号まで
+    /// 待てば「この GPU に積んだものが全部終わった」ことになる。
+    private func waitUntilIdle() throws(RenderFailure) {
+        guard submissionCount > 0, completion.signaledValue < submissionCount else { return }
+
+        let limit = UInt64(Self.waitLimitSeconds * 1000)
+        guard completion.wait(untilSignaledValue: submissionCount, timeoutMS: limit) else {
+            Diagnostics.warn(
+                "GPU が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
             throw .timedOut(seconds: Self.waitLimitSeconds)
         }
     }

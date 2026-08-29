@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Metal
+import QuartzCore
 import Testing
 
 @testable import MokumeCore
@@ -100,5 +101,74 @@ struct PresentDecisionTests {
     @Test("まだ 1 枚も出していなければ、見えていなくても出す")
     func alwaysPresentsTheFirstFrame() {
         #expect(FramePresenter.shouldPresent(windowIsVisible: false, hasPresented: false))
+    }
+}
+
+/// 差し出す面の常駐。GPU を要する。
+///
+/// 検証レイヤは、コマンドが触るテクスチャが常駐の集合に入っていることを要求する。
+/// 差し出す面は**絵には出ない性質**なので (通し忘れても絵は普段どおり出る)、#351 の
+/// `RenderTargetTests` と同じく**絵ではなく常駐の集合そのものを問う**。
+///
+/// [#357](https://github.com/mokume-metal/mokume/issues/357)
+@Suite(
+    "差し出す面の常駐",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct DrawableResidencyTests {
+    /// 面へ差し出す一式。行き先の面だけを外から動かせるようにして返す。
+    private func makeSession(surface: Int) throws -> (
+        gpu: RenderDevice, source: RenderTarget, presenter: FramePresenter, layer: CAMetalLayer
+    ) {
+        let gpu = try RenderDevice()
+        let source = try RenderTarget(gpu: gpu, width: 32, height: 32)
+        try source.fill(with: .opaque(red: 1, green: 1, blue: 1))
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        return (gpu, source, presenter, SurfaceFixture.make(gpu.device, size: surface))
+    }
+
+    @Test("差し出した面は常駐の集合に入る")
+    func presentedDrawableJoinsTheResidencySet() throws {
+        let (gpu, source, presenter, layer) = try makeSession(surface: 64)
+
+        let presented = try presenter.present(source, to: layer)
+        try #require(presented, "面を取れていない — この検査は何も見ていない")
+
+        let allocations = gpu.drawableResidency.allAllocations
+        #expect(!allocations.isEmpty, "差し出した面が常駐していない")
+        #expect(
+            allocations.allSatisfy { ($0 as? any MTLTexture)?.width == 64 },
+            "いま差し出している面と別の大きさのものが残っている")
+    }
+
+    @Test("フレームを重ねても常駐の集合は膨らまない")
+    func residencyStaysBoundedAcrossFrames() throws {
+        let (gpu, source, presenter, layer) = try makeSession(surface: 64)
+
+        for _ in 0..<120 { try presenter.present(source, to: layer) }
+
+        // 面の環は Metal 側が持っていて、大きさが同じ限り有界である。**入れ直しても
+        // 数が増えないこと**をここで固定する (集合なので冪等・実測では 2 種類)
+        #expect(
+            gpu.drawableResidency.allocationCount <= layer.maximumDrawableCount,
+            "面の環より多くの面が常駐している")
+    }
+
+    @Test("面の大きさを変えても常駐の集合は膨らまない")
+    func residencyStaysBoundedAcrossResizes() throws {
+        let (gpu, source, presenter, layer) = try makeSession(surface: 200)
+
+        for step in 0..<60 {
+            layer.drawableSize = CGSize(width: 200 + step * 8, height: 200)
+            for _ in 0..<4 { try presenter.present(source, to: layer) }
+        }
+
+        // **ここが本番。** 大きさが変わると面の環ごと作り直されるので、古い面を畳まないと
+        // 積み上がる — 畳まない実装では 120 件・85.2 MiB が常駐したままになった (#357)
+        #expect(
+            gpu.drawableResidency.allocationCount <= layer.maximumDrawableCount,
+            "作り直される前の面が常駐に残り続けている")
     }
 }

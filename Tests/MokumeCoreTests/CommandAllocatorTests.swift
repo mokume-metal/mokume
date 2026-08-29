@@ -19,15 +19,6 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct CommandAllocatorTests {
-    /// 画面を持たない面。窓は機械で検められないが、差し出す面だけなら作れる。
-    private func makeSurface(_ device: any MTLDevice, size: Int) -> CAMetalLayer {
-        let layer = CAMetalLayer()
-        layer.device = device
-        layer.pixelFormat = RenderTarget.pixelFormat
-        layer.drawableSize = CGSize(width: size, height: size)
-        return layer
-    }
-
     /// 描く → 差し出す (待たない) を繰り返し、置き場の使われ方を返す。
     private func runFrames(
         _ count: Int, slotCount: Int, size: Int = 64
@@ -36,7 +27,7 @@ struct CommandAllocatorTests {
         let gpu = try RenderDevice(device: device, slotCount: slotCount)
         let source = try RenderTarget(gpu: gpu, width: size, height: size)
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
-        let layer = makeSurface(device, size: size)
+        let layer = SurfaceFixture.make(device, size: size)
 
         var presented = 0
         for index in 0..<count {
