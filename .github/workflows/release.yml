@@ -135,30 +135,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.release.outputs.version }}
         run: gh release upload "$VERSION" "$RUNNER_TEMP/mokume-macos-arm64.tar.gz"
-
-  # Homebrew の tap に「出た」と伝えるだけ。**formula はここでは組まない。**
-  #
-  # formula は url + sha256 を固定で持つので版ごとに中身が変わる。ここに置くと
-  # 「リリースがリポジトリのファイルを変える」ことになり、このワークフローの冒頭が
-  # 避けている迂回がそのまま要る。だから formula は mokume-metal/homebrew-tap に
-  # 置き、組み立てもあちらで行う (#398) — この段が渡すのはタグ 1 つだけ。
-  #
-  # **鍵は tap 1 本に絞った fine-grained PAT (contents: write)。** ADR-0003 の App の
-  # 秘密鍵は置かない — あれは PR を作る身元そのもので、ワークフローを 1 つ足せば
-  # 読み出せる場所には置けない。
-  #
-  # 伝令が届かなくてもリリース自体は完了している (資産はもう Release にある)。
-  # 取りこぼしたら tap 側の Update formula を workflow_dispatch で起こす。
-  tap:
-    needs: [release, cli]
-    if: needs.release.outputs.skip != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: tap に伝える
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          gh api repos/mokume-metal/homebrew-tap/dispatches \
-            -f event_type=mokume-released \
-            -f client_payload[version]="$VERSION"
