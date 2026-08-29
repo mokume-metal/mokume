@@ -106,6 +106,48 @@ struct MCPServerTests {
         #expect(outcome.text.contains("watch"))
     }
 
+    @Test("区画を起動より後に作っていたら、起動し直すことと、その理由を答える")
+    func tellsToRestartWhenTheFacetWasMissing() throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        // 区画が無いまま観測を頼む。要求は置かれるが、走っているスケッチは観測を持っていない
+        let outcome = tools.call("observe", arguments: [:])
+        #expect(outcome.isError)
+        // 打つ手 — 案内どおりにすれば直る形になっていること (#227)
+        #expect(outcome.text.contains("起動し直して"))
+        // 理由 — これが無いと「走っている最中に作れば拾われる」と読まれる
+        #expect(outcome.text.contains("起動の瞬間だけ"))
+        // 区画はこの呼び出しが作ったので、mkdir を促してはならない
+        #expect(!outcome.text.contains("mkdir"))
+    }
+
+    @Test("区画が先から在れば、順序ではなく立ち上がっていない側を答える")
+    func tellsToLaunchWhenTheFacetWasAlreadyThere() throws {
+        let directory = try makeDirectory()
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent(".mokume/observe", isDirectory: true),
+            withIntermediateDirectories: true)
+
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        let outcome = tools.call("observe", arguments: [:])
+        #expect(outcome.isError)
+        // 順序は合っているので、起動し直しを促すのは的外れになる
+        #expect(!outcome.text.contains("起動し直して"))
+        #expect(outcome.text.contains("watch"))
+    }
+
+    @Test("入力でも同じ切り分けが効き、案内はその区画を名指す")
+    func tellsToRestartForTheInputFacetToo() throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        let outcome = tools.call(
+            "input", arguments: ["events": [["type": "keyDown", "key": "a"]]])
+        #expect(outcome.isError)
+        #expect(outcome.text.contains("起動し直して"))
+        #expect(outcome.text.contains(".mokume/input"))
+        #expect(!outcome.text.contains(".mokume/observe"))
+    }
+
     @Test("直近の作り直しの結果を、そのまま返す")
     func readsTheBuildStatus() throws {
         let directory = try makeDirectory()

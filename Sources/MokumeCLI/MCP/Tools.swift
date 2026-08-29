@@ -102,6 +102,9 @@ struct Tools {
         let id = makeID()
         var request: [String: Any] = ["id": id]
         if let scale = arguments["scale"] as? Double { request["scale"] = scale }
+        // 区画の有無は **要求を置く前**に控える — exchange は待つ前に自分で作るので、
+        // 後から見ても分からなくなる (#227)
+        let existed = facets.hasFacet(facets.observeFacet)
         let answer: [String: Any]?
         do {
             answer = try facets.exchange(
@@ -109,7 +112,9 @@ struct Tools {
         } catch {
             return ("観測の要求を置けませんでした: \(error)", true)
         }
-        guard let report = answer else { return (Facets.notRunning, true) }
+        guard let report = answer else {
+            return (Facets.notRunning(facet: facets.observeFacet, existed: existed), true)
+        }
 
         var lines: [String] = []
         if let image = report["image"] as? String {
@@ -138,6 +143,7 @@ struct Tools {
             return ("events に出来事の並びが要ります", true)
         }
         let id = makeID()
+        let existed = facets.hasFacet(facets.inputFacet)
         let answer: [String: Any]?
         do {
             answer = try facets.exchange(
@@ -145,7 +151,9 @@ struct Tools {
         } catch {
             return ("入力の要求を置けませんでした: \(error)", true)
         }
-        guard let report = answer else { return (Facets.notRunning, true) }
+        guard let report = answer else {
+            return (Facets.notRunning(facet: facets.inputFacet, existed: existed), true)
+        }
         return (pretty(report), false)
     }
 
