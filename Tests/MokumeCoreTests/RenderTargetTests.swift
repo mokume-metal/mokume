@@ -64,6 +64,24 @@ struct RenderTargetTests {
         #expect(try target.readPixels()[0, 0] == LinearRGBA.opaque(red: 1, green: 0, blue: 0))
     }
 
+    @Test("描画先は、置き場だけでなくテクスチャも常駐の集合に入る")
+    func targetTextureJoinsTheResidencySet() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 4, height: 4)
+
+        // **置き場が入っているだけでは足りない。** 置き場とその上に載せたテクスチャは
+        // 別の allocation として数えられるので、テクスチャを通し忘れると検証レイヤが
+        // 「どの residency set にも入っていない」と言う ([#351])。絵は普段どおり出て
+        // しまうため、**絵ではなく常駐の集合そのものを問う**。
+        //
+        // [#351]: https://github.com/mokume-metal/mokume/issues/351
+        #expect(gpu.residencySet.containsAllocation(target.storage), "置き場が常駐していない")
+        #expect(gpu.residencySet.containsAllocation(target.texture), "描画先のテクスチャが常駐していない")
+        #expect(
+            gpu.residencySet.containsAllocation(target.depthTexture),
+            "奥行きの面が常駐していない")
+    }
+
     @Test("大きさが 0 以下の描画先は作れない", arguments: [(0, 4), (4, 0), (-1, 4)])
     func rejectsNonPositiveSizes(size: (width: Int, height: Int)) throws {
         let gpu = try RenderDevice()
