@@ -78,6 +78,15 @@ public final class SketchRuntime {
     private var exposedValues: [String: ExposedValue] = [:]
     /// 続けて撮っている最中の列。撮り終えるまで次の要求を拾わない。
     private var capture: FrameCapture?
+    /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
+    /// ``SketchPresence/grace`` 秒ぶん進み続けてからである。
+    private lazy var presence = SketchPresence(source: self)
+    /// 最初に ``advance()`` が呼ばれた時刻。名乗りの経過はここを起点に測る。
+    private var firstAdvanceAt: Double?
+    /// いまフレームを描いている最中か。入れ子で描き始めないための目印。
+    private var isAdvancingFrame = false
+    /// 最後にフレームを描き終えた時刻。**誰かが進めているか**の判断に使う。
+    private var lastFrameAt: Double = 0
     /// 直近のフレームの間隔 (秒)。観測が無ければ測らない。
     private var frameIntervals: [Double] = []
     private var previousFrameStart: Double?
@@ -212,6 +221,24 @@ public final class SketchRuntime {
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     public func advance() throws(RenderFailure) {
+        // **描く前に済ませる。** 名乗りのメニューが開くとしたらこの中なので、そのとき
+        // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
+        // 止まっているスケッチも、居座っていることに変わりはない
+        updatePresence()
+        try runFrame()
+    }
+
+    /// フレームを 1 つ進める本体。**名乗りの世話は含まない。**
+    ///
+    /// 分けてあるのは、名乗りのメニューが開いている間だけ**ここが別の駆動源から呼ばれる**
+    /// ためである (``advanceForPresence()``)。``advance()`` ごと呼ぶと、追跡ループの中で
+    /// 名乗りの世話が入れ子になる。
+    private func runFrame() throws(RenderFailure) {
+        isAdvancingFrame = true
+        defer {
+            isAdvancingFrame = false
+            lastFrameAt = now()
+        }
         guard !isPaused else {
             serveObservationIfRequested()
             return
@@ -293,6 +320,65 @@ public final class SketchRuntime {
                         + " (最後の理由: \(outlets[index].outlet.failure ?? "不明"))")
             }
         }
+    }
+
+    // MARK: - 名乗り
+
+    /// 走り続けていることをメニューバーの名乗りへ伝える。
+    ///
+    /// 起点は**最初のフレーム**で、組み立てた時刻ではない。1 枚も描かないまま持っている
+    /// ランタイム (検査が作るもの) は走っているとは言えないため。
+    private func updatePresence() {
+        let now = self.now()
+        guard let started = firstAdvanceAt else {
+            firstAdvanceAt = now
+            return
+        }
+        presence.advanced(runningFor: now - started)
+    }
+
+    /// 走り続けている時間 (秒)。名乗りが読む。
+    var presenceElapsed: Double {
+        guard let firstAdvanceAt else { return 0 }
+        return now() - firstAdvanceAt
+    }
+
+    /// 名乗りのメニューが開いている間、プレビューを動かすために呼ばれる。
+    ///
+    /// **誰かが既に進めているなら何もしない。** 窓を開く経路の駆動源 (`CADisplayLink`) は
+    /// `.common` モードに登録されているので、メニューを開いている間もフレームは進み続ける
+    /// — そこで二重に進めると、**メニューを開けている間だけ倍の速さで動く**。
+    ///
+    /// 逆に窓を開かない経路では、メニューを開いた時点で `advance()` が AppKit の追跡ループ
+    /// の中で止まっている。**そのままではプレビューが静止画になる**ので、ここが進める。
+    func advanceForPresence() {
+        guard !isAdvancingFrame, now() - lastFrameAt > Self.presenceStallThreshold else { return }
+        try? runFrame()
+    }
+
+    /// これだけ描かれていなければ「誰も進めていない」とみなす (秒)。
+    ///
+    /// 想定する一番遅い駆動が 30 fps (33 ms) なので、その倍を取る。短くすると、
+    /// 進んでいるのに二重に進めてしまう。
+    private static let presenceStallThreshold: Double = 0.066
+
+    /// いま描かれている絵を、名乗りのメニューに載る大きさで返す。
+    ///
+    /// **出口が受け取るのと同じ道を通す** ([ADR-0024] 決定 6)。小さくするのは通した後で、
+    /// 出るバイト列は通す前に間引いたのと同じである
+    /// ([#382](https://github.com/mokume-metal/mokume/issues/382)) — 観測が絵を採るときと
+    /// 同じ理屈なので、経路をもう 1 本作らない。
+    ///
+    /// **1 枚も描いていなければ `nil`。** 描いていない絵を出すよりは、出さないほうがよい。
+    ///
+    /// - Parameter maxWidth: 返す絵の幅の上限 (画素)。**縮小率ではなく幅で頼む** — 絵の
+    ///   大きさはスケッチが決めるので、率で指定すると出来上がりがスケッチごとに変わる。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    func presencePreview(maxWidth: Int) -> DisplayImage? {
+        guard timing.frameCount > 0 else { return nil }
+        guard let image = try? self.target.encodeToImage().read() else { return nil }
+        return image.scaled(by: min(1, Double(maxWidth) / Double(max(1, image.width))))
     }
 
     /// フレームの頭で片付けること。観測が無ければどれも空回りしない。
