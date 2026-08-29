@@ -35,7 +35,7 @@ enum NewCommand {
             \(root.path) を作った。
 
               cd \(options.name)
-              mokume-cli run
+              \(Command.name) run
             """)
     }
 
@@ -58,7 +58,7 @@ enum NewCommand {
                 }
                 local = arguments[index]
             case let argument where argument.hasPrefix("-"):
-                throw .usage("知らない選択肢: \(argument)\n\n" + Command.usage)
+                throw .usage("知らない選択肢: \(argument)\n\n" + Command.usage())
             case let argument:
                 guard name == nil else { throw .usage("名前は 1 つだけ: \(argument)") }
                 name = argument

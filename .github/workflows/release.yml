@@ -106,3 +106,32 @@ jobs:
         run: |
           mv "$RUNNER_TEMP/mokume-api.md" "$RUNNER_TEMP/mokume-api-$VERSION.md"
           gh release upload "$VERSION" "$RUNNER_TEMP/mokume-api-$VERSION.md"
+
+  # 道具を入れる手段。**タグを起点に配る** (ADR-0001 原則 6)。
+  #
+  # README が入手済みを前提に案内していて、入れる手段がどこにも無かった (#383)。
+  # 作品を作る人にライブラリの clone を要求しないための最小の一手として、実行ファイル
+  # を Release の資産に載せる。
+  #
+  # **資産名に版を入れない。** releases/latest/download/<名前> の固定 URL が使えるので、
+  # README の案内が版ごとに古くならない (公開 API の一覧は逆に、依存している版ぴったり
+  # を引くためのものなので版を入れる)。
+  #
+  # 束ね方の実体は Makefile の cli-dist に置く (CI にステップを足さない)。
+  cli:
+    needs: release
+    if: needs.release.outputs.skip != 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: write # Release へ資産を足す
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.version }}
+      - name: 束ねる
+        run: make cli-dist OUT="$RUNNER_TEMP/mokume-macos-arm64.tar.gz"
+      - name: Release へ付ける
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: gh release upload "$VERSION" "$RUNNER_TEMP/mokume-macos-arm64.tar.gz"

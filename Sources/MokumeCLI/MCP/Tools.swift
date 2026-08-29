@@ -130,7 +130,7 @@ struct Tools {
         guard let status = facets.read(facets.buildStatus) else {
             return (
                 """
-                作り直しの記録がありません。見張る道具 (`mokume-cli watch`) がまだ
+                作り直しの記録がありません。見張る道具 (`\(Command.name) watch`) がまだ
                 走っていないか、一度も作り直していません。
                 """, true
             )
@@ -213,7 +213,7 @@ struct Tools {
             mokume を依存として引いているなら、そのディレクトリで一度 `swift build` を
             打つと実体が置かれ、そこから読めるようになります。窓口を別のディレクトリで
             立てているなら、スケッチのディレクトリを渡してください
-            (`mokume-cli mcp <ディレクトリ>`)。
+            (`\(Command.name) mcp <ディレクトリ>`)。
             """
     }
 

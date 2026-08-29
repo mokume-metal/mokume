@@ -2,13 +2,28 @@
 
 Creative coding for Swift + Metal.
 
+## 入れる
+
+macOS 26 (Tahoe) 以上・Apple Silicon 専用。スケッチを作り直すのに Xcode 26 が要る。
+
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL https://github.com/mokume-metal/mokume/releases/latest/download/mokume-macos-arm64.tar.gz | tar xz -C ~/.local/bin
+```
+
+道具 `mokume` と、ひな形の入った `mokume_MokumeCLI.bundle` が置かれる — **2 つで 1 組**で、
+同じディレクトリに並んでいる必要がある。`~/.local/bin` に PATH が通っていなければ通す。
+更新は同じコマンドを打ち直す。
+
+ライブラリ本体は入れなくてよい。`mokume new` が作るスケッチが依存として引く。
+
 ## 使う
 
 ```bash
-mokume-cli new my-sketch   # そのまま動くスケッチ一式を作る
+mokume new my-sketch   # そのまま動くスケッチ一式を作る
 cd my-sketch
-mokume-cli run             # 作って走らせる
-mokume-cli watch           # 保存したら作り直して差し替える
+mokume run             # 作って走らせる
+mokume watch           # 保存したら作り直して差し替える
 ```
 
 スケッチは 1 ファイルから始められる:
@@ -33,7 +48,7 @@ MySketch.main()
 撮る・作り直しの結果を読む・入力を送る・面の仕様と公開 API を読む、が使える。
 
 ```bash
-claude mcp add mokume -- mokume-cli mcp
+claude mcp add mokume -- mokume mcp
 ```
 
 窓口は薄い層で、能力そのものはスケッチ側にある — `.mokume/` のファイルを直に
