@@ -19,8 +19,15 @@
 # ここも同じ順で組み立てる — **1 本ずつ分けて確かめると、実行時に通る組み合わせを
 # 落とすか、逆に実行時に落ちる組み合わせを通してしまう。**
 #
-# どの断片が図形を塗るものかは置き場で決まる: 共通部分 (Common.metal) と同じ
-# ディレクトリにあるものがそれで、他の場所にあるものは単体で組み立てられる。
+# どの前置きを付けるかは置き場で決まる。
+#
+#   Shaders/               図形を塗る断片   値の宣言 + Common.metal
+#   Shaders/Computations/  計算の断片       値の宣言 + Compute.metal
+#   それ以外               単体で組み立てられる
+#
+# 塗りと計算で前置きが違うのは、計算の断片が入口の関数ごと自分で書くためである
+# (Compute.metal の冒頭がその理由を持つ)。置き場で分けているので、判定に中身を
+# 読む必要が無い。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -42,6 +49,10 @@ common=$(find Sources -name 'Common.metal' | head -1)
 common_dir=""
 if [ -n "$common" ]; then common_dir=$(dirname "$common"); fi
 
+compute=$(find Sources -name 'Compute.metal' | head -1)
+compute_dir=""
+if [ -n "$compute" ]; then compute_dir="$(dirname "$compute")/Computations"; fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -53,7 +64,10 @@ failed=0
 for shader in "${shaders[@]}"; do
   [ "$shader" = "$common" ] && continue
   source="$work/$(basename "$shader")"
-  if [ -n "$common_dir" ] && [ "$(dirname "$shader")" = "$common_dir" ]; then
+  if [ -n "$compute_dir" ] && [ "$(dirname "$shader")" = "$compute_dir" ]; then
+    cat "$work/values.metal" "$compute" "$shader" > "$source"
+    label="$shader (計算の前置きつき)"
+  elif [ -n "$common_dir" ] && [ "$(dirname "$shader")" = "$common_dir" ]; then
     cat "$work/values.metal" "$common" "$shader" > "$source"
     label="$shader (共通部分つき)"
   else

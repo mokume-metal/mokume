@@ -36,18 +36,18 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SceneLedgerTests {
-    @Test("台帳に記録した絵が変わっていない", arguments: Scene.allCases)
-    func sceneMatchesLedger(_ scene: Scene) throws {
+    @Test("台帳に記録した絵が変わっていない", arguments: Take.all)
+    func sceneMatchesLedger(_ take: Take) throws {
         let ledger = try Ledger.load()
-        let digest = try Self.fingerprint(of: scene)
+        let digest = try Self.fingerprint(of: take)
 
-        guard let recorded = ledger[scene.rawValue] else {
+        guard let recorded = ledger[take.name] else {
             Issue.record(
                 """
-                シーン \(scene.rawValue) が台帳に無い。
+                シーン \(take.name) が台帳に無い。
                 新しいシーンなら、次の 1 行を \(Ledger.relativePath) へ足す:
 
-                    \(scene.rawValue) \(digest)
+                    \(take.name) \(digest)
 
                 足す前に、そのシーンの絵を目で見て正しいことを確かめる — 台帳の行は
                 「この絵を正しいと認めた」という記録であって、正しさの根拠ではない。
@@ -62,17 +62,17 @@ struct SceneLedgerTests {
 
         // 不一致。もう一度描いて「絵が変わった」と「決定論が壊れた」を切り分ける。
         // 切り分けずに報告すると、台帳を書き換えてはいけない場面で書き換えられる
-        let again = try Self.fingerprint(of: scene)
+        let again = try Self.fingerprint(of: take)
         if again == digest {
             Issue.record(
                 """
-                シーン \(scene.rawValue) の絵が変わった。
+                シーン \(take.name) の絵が変わった。
                 (同じシーンを 2 回描いた結果は一致するので、決定論は効いている)
 
                 意図した変更なら、\(Ledger.relativePath) の行を次へ書き換え、
                 before / after を PR の証跡に載せる:
 
-                    \(scene.rawValue) \(digest)
+                    \(take.name) \(digest)
 
                 意図していないなら、この変更が触った共通部分が他の絵まで変えている。
                 台帳は先に書き換えず、なぜ変わったかを先に調べる。
@@ -86,7 +86,7 @@ struct SceneLedgerTests {
         } else {
             Issue.record(
                 """
-                シーン \(scene.rawValue) が、同じ入力から違う絵を出している (決定論が壊れている)。
+                シーン \(take.name) が、同じ入力から違う絵を出している (決定論が壊れている)。
                 1 回目 \(digest) / 2 回目 \(again)
 
                 **台帳を書き換えてはならない。** 台帳は「変わっていないこと」しか見られないので、
@@ -100,21 +100,52 @@ struct SceneLedgerTests {
     /// `MOKUME_LEDGER_DUMP_DIR` が指してあれば、そこへ絵も書き出す。台帳へ行を足す・
     /// 書き換えるときは**絵を目で見る**必要があり (台帳の行はそれを認めた記録なので)、
     /// その手段を機構自身が持つ。既定では 1 枚も書かない。
-    static func fingerprint(of scene: Scene) throws -> String {
+    static func fingerprint(of take: Take) throws -> String {
+        let scene = take.scene
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: scene.size.width, height: scene.size.height)
         let canvas = try Canvas(target: target, gpu: gpu)
-        try canvas.draw { scene.draw(on: canvas) }
+        // **時点まで進めてから取る。** 時点を持たないシーンは 1 度描いた結果で、
+        // いままでと 1 ビットも変わらない (ADR-0023 決定 6)
+        let session = try scene.session(on: canvas)
+        for _ in 0..<(take.moment ?? 1) { try canvas.draw { session() } }
         let image = try target.encodeForDisplay()
 
         if let dir = ProcessInfo.processInfo.environment["MOKUME_LEDGER_DUMP_DIR"] {
-            let url = URL(fileURLWithPath: dir).appendingPathComponent("\(scene.rawValue).png")
+            let url = URL(fileURLWithPath: dir).appendingPathComponent("\(take.name).png")
             try? FileManager.default.createDirectory(
                 at: URL(fileURLWithPath: dir), withIntermediateDirectories: true)
             try target.writePNG(to: url)
         }
 
         return SHA256.hash(data: Data(image.bytes)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+// MARK: - 台帳の行
+
+/// 台帳の 1 行が指すもの。
+///
+/// **時点を書かない行はいままでと同じ意味**である (絵を 1 度描いた結果)。時点を持つのは
+/// 「動きそのものが正しさ」であるシーンだけで、どの時点を載せるかはシーンが決める。
+/// 全フレームは載せない — 台帳は退行を見せる装置であって、記録装置ではない
+/// ([ADR-0023] 決定 6)。
+///
+/// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+struct Take: Sendable, CustomStringConvertible {
+    let scene: Scene
+    /// 何フレーム進めた時点か。`nil` なら 1 度描いた結果。
+    let moment: Int?
+
+    var name: String { moment.map { "\(scene.rawValue)@\($0)" } ?? scene.rawValue }
+    var description: String { name }
+
+    nonisolated static var all: [Take] {
+        Scene.allCases.flatMap { scene in
+            scene.moments.isEmpty
+                ? [Take(scene: scene, moment: nil)]
+                : scene.moments.map { Take(scene: scene, moment: $0) }
+        }
     }
 }
 
@@ -192,6 +223,8 @@ enum Scene: String, CaseIterable, Sendable {
     /// 形自身の座標から模様を作った立体。**同じ形を 2 つ、違う角度で置いてある** —
     /// 模様が形について回っていることが 1 枚で読める。
     case surfaceShader
+    /// 粒が力を受けて飛ぶ。**時点を持つ最初のシーン。**
+    case particles
 
     var size: (width: Int, height: Int) { (128, 128) }
     /// 年輪を掛ける断片。**形自身の座標**から作るので、形を回しても模様は形に留まる。
@@ -249,12 +282,50 @@ enum Scene: String, CaseIterable, Sendable {
 
     func draw(on canvas: Canvas) { draw(on: canvas, without: nil) }
 
+    /// 台帳に載せる時点 (何フレーム進めたところか)。**空なら 1 度描いた結果。**
+    nonisolated var moments: [Int] {
+        switch self {
+        // 粒は**動きそのものが正しさ**なので、1 枚では判定できない。出始めと、
+        // 寿命が一巡したあとの 2 点を見る
+        case .particles: [12, 48]
+        default: []
+        }
+    }
+
+    /// 1 回ぶんの走らせ方。
+    ///
+    /// **フレームをまたいで持つものがあるシーンは、ここで作る。** 毎フレーム作り直すと
+    /// 動きが進まず、しかも絵は出るので気付けない。
+    func session(on canvas: Canvas) throws -> () -> Void {
+        switch self {
+        case .particles:
+            // 種を決めて引くので、何度走らせても同じ列が出る
+            var randomness = Randomness(seed: 20_260_830)
+            let dust = try canvas.makeParticles(count: 2000)
+            return {
+                canvas.background(.display(red: 0.04, green: 0.05, blue: 0.08))
+                canvas.emit(
+                    dust, from: .point(64, 116), rate: 900, speed: 70...150,
+                    angle: (-2.4)...(-0.75), life: 0.5...1.2, size: 2...5,
+                    color: .opaque(red: 1, green: 0.72, blue: 0.35), using: &randomness)
+                canvas.force(dust, [.gravity(0, 240), .drag(0.2)])
+                canvas.particles(dust)
+            }
+        default:
+            return { self.draw(on: canvas) }
+        }
+    }
+
     /// 質感の指定を 1 つだけ既定へ潰して描く。
     ///
     /// **検出力の測定に使う** — 潰しても絵が動かない指定があれば、その代表シーンは
     /// その質感を写していないということになる ([ADR-0019] 決定 4)。
     func draw(on canvas: Canvas, without suppressed: MaterialAspect?) {
         switch self {
+        case .particles:
+            // **1 枚では描けないシーン。** フレームをまたいで持つものがあるので、
+            // 走らせ方は `session(on:)` が持つ
+            break
         case .shapes:
             canvas.background(.display(red: 0.08, green: 0.09, blue: 0.12))
             canvas.fill(.display(red: 0.95, green: 0.35, blue: 0.2))

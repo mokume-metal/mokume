@@ -156,6 +156,7 @@ public final class SketchRuntime {
 
         var drawFailure: RenderFailure?
         canvas.time = timing.time
+        canvas.deltaTime = timing.deltaTime
         do {
             try canvas.draw { withActiveRuntime { sketch.draw() } }
         } catch {
