@@ -30,9 +30,14 @@ extension Canvas {
         let savedTexture = currentTexture
         let savedTextureKind = currentTextureKind
         currentClip = nil
+        // **記録の間は畳まない。** 畳むと置き場所が溜め場の側に残り、記録した頂点からは
+        // どこへ置くかが落ちる (`Canvas.recordingShape`)
+        let savedRecording = recordingShape
+        recordingShape = true
 
         body()
 
+        recordingShape = savedRecording
         closeBatch()
         let recorded = Array(vertices[vertexStart...])
         let recordedSolid = Array(solidVertices[solidStart...])

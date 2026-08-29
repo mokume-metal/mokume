@@ -9,21 +9,51 @@ struct ShapeVertex {
     float4 color;
 };
 
+/// 平面の図形を置く 1 か所ぶん。並びは Swift 側の `FlatInstance` と一致する。
+struct FlatInstance {
+    float4 linear;
+    float4 offset;
+    float4 fill;
+    float4 stroke;
+};
+
+/// 列ごとに変わらないもの。**立体は先頭の行列だけを読む**ので、後ろに足しても効かない。
+struct FlatFrame {
+    float4x4 projection;
+    /// 輪郭の頂点が始まる番号。**ここから後ろが輪郭**で、手前が塗りである。
+    /// 畳めない列は塗りしか無い扱い (置き場所の 2 色がどちらも白なので同じ)。
+    uint strokeStart;
+};
+
 vertex ShapeFragmentIn shapeVertexMain(
     uint index [[vertex_id]],
+    uint instance [[instance_id]],
     constant ShapeVertex *vertices [[buffer(0)]],
-    constant float4x4 &projection [[buffer(1)]])
+    constant FlatFrame &frame [[buffer(1)]],
+    constant FlatInstance *instances [[buffer(10)]])
 {
+    ShapeVertex vertex_in = vertices[index];
+    FlatInstance placement = instances[instance];
+
+    // **形自身の座標を、置き場所の変換で描画先の座標へ移す。** 何も動かさない置き場所
+    // (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
+    float2 placed = placement.linear.xy * vertex_in.position.x
+        + placement.linear.zw * vertex_in.position.y + placement.offset.xy;
+
     ShapeFragmentIn out;
-    out.position = projection * float4(vertices[index].position, 0.0, 1.0);
-    out.uv = vertices[index].uv;
-    out.color = vertices[index].color;
+    out.position = frame.projection * float4(placed, 0.0, 1.0);
+    out.uv = vertex_in.uv;
+    // 置き場所の色は**頂点の色に掛かる**。畳んだ雛形は頂点が白、畳めない頂点は置き場所が
+    // 白なので、どちらもこの 1 本で通る (立体と同じ)
+    out.color = vertex_in.color
+        * (index < frame.strokeStart ? placement.fill : placement.stroke);
     // 平面は光を受けない。列が「光 0 個」を渡すので、ここは 0 で足りる
     out.worldPosition = float3(0.0);
     out.normal = float3(0.0);
     out.isDerivedNormal = 0.0;
-    // **平面は形自身の座標を持たない。** 変換は頂点を置く時点で焼き込まれるので、
-    // 「置き場所を通す前の位置」に当たるものがそもそも無い。断片へは 0 が届く
+    // **利用者の断片へは 0 が届く。** 畳んだ雛形は形自身の座標を持つが、畳めない頂点
+    // (字・画像・その場で並べたもの) は変換が焼き込まれていて持たない — 経路によって
+    // 意味の変わる値を渡すくらいなら、平面は一貫して持たない側に置く
     out.shapePosition = float3(0.0);
     out.shapeNormal = float3(0.0);
     return out;
