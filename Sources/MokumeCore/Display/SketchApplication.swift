@@ -18,6 +18,23 @@ import QuartzCore
 /// 最小化・被覆・Space の切り替えのどれでも止まらない
 /// ([#223](https://github.com/mokume-metal/mokume/issues/223))。
 ///
+/// ## 省電力の間引きは明示的に断る
+///
+/// 駆動源を画面へ繋いでも、それだけでは足りない。**背面のアプリが CPU を使い続けると、OS は
+/// そのプロセスを高効率コアへ落とす** — フレームループが止まるのではなく、同じ仕事が一様に
+/// 4 倍遅くなる形で現れる。観測を続けているときのように 1 フレームの仕事が重いと、それが
+/// そのままフレームレートの低下になり、**負荷を止めるまで戻らない**
+/// ([#370](https://github.com/mokume-metal/mokume/issues/370))。
+///
+/// 落ちているのが**プロセスに割り当てられる CPU そのもの**であることは、観測の経路と無関係な
+/// 純 CPU のベンチまで同じ倍率で遅くなること・窓を持たないプロセスでは同じ持続負荷でも
+/// 起きないこと・前面のままなら起きないことで確かめてある。
+///
+/// [ADR-0012] 決定 5 は「窓が画面に出ていないときもフレームレートを維持する」を機能要件に
+/// 固定したうえで、**「OS の省電力機構は既定では前面でないアプリの周期処理を間引くため、
+/// 対処が要る」**と名指しし、手段は「実際に落ちることを確認してから」決めるとして空けていた。
+/// ここがその対処である。
+///
 /// ## AppKit の delegate は別のオブジェクトが受ける
 ///
 /// `NSApplicationDelegate` への準拠は internal な ``SketchApplicationDelegate`` が持つ。
@@ -100,6 +117,11 @@ public final class SketchApplication: NSObject {
         self.delegate = delegate
         app.delegate = delegate
         SketchApplication.running = self
+        // **省電力の間引きを断る** (上記・ADR-0012 決定 5)。走らせている間ずっと保持し、
+        // 終わるときに返す — 途中で手放すと、そこから先だけ間引かれる
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            reason: "スケッチのフレームを一定の速さで進め続ける")
         app.run()
     }
 
@@ -108,6 +130,15 @@ public final class SketchApplication: NSObject {
 
     /// AppKit へ渡した delegate。弱く参照される先なので、こちらで寿命を持つ。
     private var delegate: SketchApplicationDelegate?
+
+    /// 省電力の間引きを断っている印。**手放した時点で断りが切れる**ので、走らせている間は持つ。
+    ///
+    /// 取る組み合わせにも意味がある。間引きを断るのに要るのは「background ではない」ことだけ
+    /// なので、機械のスリープまで止める `.userInitiated` ではなく
+    /// `.userInitiatedAllowingIdleSystemSleep` を取る — 要件が求めていない約束を副作用で
+    /// 足さないため。`.latencyCritical` は「この周期処理は時刻に縛られている」という名乗りで、
+    /// ADR-0012 決定 5 が要件にした性質そのものである。
+    private var activity: (any NSObjectProtocol)?
 
     /// 窓を開き、フレームの駆動源を繋ぐ。``SketchApplicationDelegate`` から呼ばれる。
     func didFinishLaunching() {
@@ -194,6 +225,10 @@ public final class SketchApplication: NSObject {
     func willTerminate() {
         displayLink?.invalidate()
         displayLink = nil
+        if let activity {
+            ProcessInfo.processInfo.endActivity(activity)
+            self.activity = nil
+        }
     }
 
     /// 表示のリフレッシュごとに 1 フレーム進めて差し出す。
