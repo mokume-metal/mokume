@@ -233,6 +233,9 @@ enum Scene: String, CaseIterable, Sendable {
     case upscaled
     /// 同じ絵を、時間方向の拡大で重ねたもの。**時点を持つ** — 重なるほど落ち着く。
     case upscaledOverTime
+    /// 利用者が持つ描き場所に跡を積み上げ、画面へ置いたもの。**時点を持つ** —
+    /// 消さずに描き続けた結果そのものが正しさなので、1 枚では判定できない。
+    case layered
 
     var size: (width: Int, height: Int) { (128, 128) }
 
@@ -312,6 +315,9 @@ enum Scene: String, CaseIterable, Sendable {
         // 時間方向の拡大は**重ねた回数が絵を決める**ので、1 枚では判定できない。
         // 揺らしが一巡した直後と、そのあと落ち着いた頃の 2 点を見る
         case .upscaledOverTime: [8, 32]
+        // 描き場所は**消さずに積み上げる**ので、跡が伸びたところと、一周して
+        // 重なり始めたところの 2 点を見る
+        case .layered: [6, 20]
         default: []
         }
     }
@@ -335,6 +341,27 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.force(dust, [.gravity(0, 240), .drag(0.2)])
                 canvas.particles(dust)
             }
+        case .layered:
+            // **描き場所はフレームをまたいで持つ。** 毎フレーム作り直すと跡が
+            // 積み上がらず、しかも絵は出るので気付けない
+            let trail = try canvas.createGraphics(96, 96)
+            var step = 0
+            return {
+                canvas.background(.display(red: 0.05, green: 0.06, blue: 0.09))
+                // 描き場所は消さない。前のフレームの上に描き足す
+                trail.beginDraw()
+                trail.noStroke()
+                let angle = Float(step) * 0.42
+                trail.fill(.display(red: 1, green: 0.6, blue: 0.25, alpha: 0.85))
+                trail.circle(48 + cos(angle) * 32, 48 + sin(angle) * 32, 16)
+                trail.endDraw()
+                step += 1
+                canvas.image(trail, 16, 16)
+                // 画面側にも描いて、**置いた絵と同じ 1 枚に混ざる**ことを見せる
+                canvas.noStroke()
+                canvas.fill(.display(red: 0.3, green: 0.8, blue: 1, alpha: 0.45))
+                canvas.circle(64, 64, 52)
+            }
         default:
             return { self.draw(on: canvas) }
         }
@@ -346,7 +373,7 @@ enum Scene: String, CaseIterable, Sendable {
     /// その質感を写していないということになる ([ADR-0019] 決定 4)。
     func draw(on canvas: Canvas, without suppressed: MaterialAspect?) {
         switch self {
-        case .particles:
+        case .particles, .layered:
             // **1 枚では描けないシーン。** フレームをまたいで持つものがあるので、
             // 走らせ方は `session(on:)` が持つ
             break

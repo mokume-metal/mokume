@@ -1829,6 +1829,77 @@ extension Sketch {
     /// 色掛けをやめる。
     public func noTint() { canvas.noTint() }
 
+    // MARK: - 描き場所
+
+    /// 画面とは別の描き場所を作る。**焼いた絵を置いたり、重ねたり、積み上げたりできる。**
+    ///
+    /// ```swift
+    /// func setup() {
+    ///     trail = try! createGraphics(400, 400)
+    /// }
+    ///
+    /// func draw() {
+    ///     trail.beginDraw()
+    ///     trail.fill(.display(red: 1, green: 0.4, blue: 0.2))
+    ///     trail.circle(mouseX, mouseY, 20)   // 消さないので跡が残る
+    ///     trail.endDraw()
+    ///
+    ///     image(trail, 0, 0)
+    /// }
+    /// ```
+    ///
+    /// ## 返るのは画面と同じ ``Canvas``
+    ///
+    /// **2D も立体も字も効果も、画面と同じように書ける。** 描き場所を別の型にすると、
+    /// 「効果に渡せる絵」と「自分で描ける絵」が分かれてしまう ([ADR-0023] 決定 1)。
+    ///
+    /// ## 既定で透けていて、自動では消えない
+    ///
+    /// 作った時点の中身は透明で、以後は**こちらが ``Canvas/background(_:)`` を呼ぶまで
+    /// 消えない**。消えないからこそ、前のフレームの上に描き足して跡が積み上がる絵が
+    /// 書ける。毎フレーム消したいときは `trail.background(.transparent)` を書く。
+    ///
+    /// ## 描き換えても、置いた時点の絵が出る
+    ///
+    /// 同じフレームで置いてから描き換えて、また置ける。**先に置いた場所は描き換えに
+    /// 引きずられない**ので、途中の姿と最後の姿を並べられる。
+    ///
+    /// - Throws: 描き場所を確保できないときに ``RenderFailure``。**組み立てのときに
+    ///   投げる** ([ADR-0020] 決定 5) ので、`setup()` で作って持ち回る。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
+        try canvas.createGraphics(width, height)
+    }
+
+    /// 描き場所を等倍で置く。左上の角が (`x`, `y`) に来る。
+    ///
+    /// 置くのは**そのとき描き切れている絵**なので、``Canvas/endDraw()`` を呼ぶ前に
+    /// 置くと 1 フレーム前の絵が出る (そのときは警告が出る)。
+    public func image(_ graphics: Canvas, _ x: Float, _ y: Float) {
+        canvas.image(graphics, x, y)
+    }
+
+    /// 描き場所を、指定した寸法に合わせて置く。
+    ///
+    /// 4 つの数の読み方は ``imageMode(_:)`` が決める。絵と同じ扱いなので、
+    /// ``tint(_:)`` の色掛けも同じように効く。
+    public func image(_ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+        canvas.image(graphics, a, b, c, d)
+    }
+
+    /// 描き場所の一部を切り出して置く。
+    ///
+    /// 前の 4 つが置き先、後の 4 つが**描き場所の中のどこを切り出すか**。切り出しが
+    /// 外へ出ても落ちず、重なった分だけが出る。
+    public func image(
+        _ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
+        _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
+    ) {
+        canvas.image(graphics, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
+    }
+
     // MARK: - 貼る
 
     /// これから置く塗りに絵を貼る。
@@ -1853,6 +1924,17 @@ extension Sketch {
     /// **描き方なのでフレームを越える** — 塗りや線と同じく、一度書けば
     /// ``noTexture()`` を呼ぶまで続き、``push()`` / ``pop()`` で積める。
     public func texture(_ image: Image) { canvas.texture(image) }
+
+    /// これから置く塗りに描き場所を貼る。
+    ///
+    /// **読み込んだ絵とまったく同じに扱える。** 毎フレーム描き直した描き場所を
+    /// 立体に貼れば、面の上で動く絵になる。
+    ///
+    /// ```swift
+    /// texture(dial)
+    /// box(200)
+    /// ```
+    public func texture(_ graphics: Canvas) { canvas.texture(graphics) }
 
     /// 絵を貼るのをやめる。
     public func noTexture() { canvas.noTexture() }

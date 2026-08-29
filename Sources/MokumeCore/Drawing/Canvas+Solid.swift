@@ -144,7 +144,7 @@ extension Canvas {
             let mesh = build()
             let start = solidVertices.count
             solidVertices.reserveCapacity(start + mesh.points.count)
-            let textured = currentTextureImage != nil
+            let textured = currentPicture != nil
             for point in mesh.points {
                 // **形自身の座標のまま置く。** 変換は置き場所が持つ
                 solidVertices.append(

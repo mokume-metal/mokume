@@ -116,8 +116,13 @@ public final class RenderTarget {
 
     /// この描画先へ描くパスの記述を作る。
     ///
-    /// - Parameter clearColor: 塗り直す色。`nil` なら前の内容の上に描き足す。
-    func makeRenderPass(clearColor: LinearRGBA?) -> MTL4RenderPassDescriptor {
+    /// - Parameters:
+    ///   - clearColor: 塗り直す色。`nil` なら前の内容の上に描き足す。
+    ///   - continuingFrame: 同じフレームで既に描き切っているか。**奥行きを引き継ぐ。**
+    ///   - keepingDepth: このあと同じフレームでもう一度描き切りうるか。奥行きを残す。
+    func makeRenderPass(
+        clearColor: LinearRGBA?, continuingFrame: Bool = false, keepingDepth: Bool = false
+    ) -> MTL4RenderPassDescriptor {
         let pass = MTL4RenderPassDescriptor()
         let attachment = pass.colorAttachments[0]!
         attachment.texture = texture
@@ -133,13 +138,24 @@ public final class RenderTarget {
             attachment.loadAction = .load
         }
 
-        // 奥行きはフレームごとに作り直す。**いちばん奥から始める**ので、最初に
-        // 置いた立体は必ず通り、あとから来た手前のものがそれを隠す
+        // 奥行きは**フレームごと**に作り直す。**いちばん奥から始める**ので、最初に
+        // 置いた立体は必ず通り、あとから来た手前のものがそれを隠す。
+        //
+        // 「フレームごと」であって「パスごと」ではない。1 フレームを何回かに分けて
+        // 描き切ることがある (画素を読む・置いた描き場所が描き換わる) ので、途中の
+        // 区切りで消すと**描いた順で決まる絵**に戻ってしまう。
+        //
+        // 残すのは途中の描き切りのときだけ。フレームの最後の描き切りで残すと、
+        // 分けて描き切らないスケッチまで毎フレーム書き出しを払うことになる
         let depth = pass.depthAttachment!
         depth.texture = depthTexture
-        depth.loadAction = .clear
-        depth.clearDepth = 1
-        depth.storeAction = .dontCare
+        if continuingFrame {
+            depth.loadAction = .load
+        } else {
+            depth.loadAction = .clear
+            depth.clearDepth = 1
+        }
+        depth.storeAction = keepingDepth ? .store : .dontCare
         return pass
     }
 

@@ -427,6 +427,34 @@ public final class Canvas {
     /// 黙って捨てず警告するために、内と外を知る必要がある ([ADR-0021] 決定 4)。
     private(set) var isDrawing = false
 
+    /// 対になっていない ``beginDraw()`` / ``endDraw()`` を知らせたか。
+    private var warnedAlreadyDrawing = false
+    private var warnedNotDrawing = false
+    /// 描き切る前の描き場所を置いたことを知らせたか。
+    private(set) var warnedPlacingWhileDrawing = false
+
+    /// いま描き切っている最中か。**入れ子の描き場所で戻ってくるのを止める。**
+    private var isFlushing = false
+
+    /// このフレームで描き切った回数。**奥行きを引き継ぐかの判定に使う。**
+    private var passesThisFrame = 0
+
+    /// このフレームで置いた描き場所。
+    ///
+    /// **置いた時点の絵を守るために覚えている。** 溜めてから描くので、置いたあとに
+    /// その描き場所が描き換わると、先に置いた場所まで最新の絵に化ける。
+    private(set) var placedGraphics: Set<ObjectIdentifier> = []
+
+    /// 自分を置いた面。**自分の絵が変わる前に、そちらを先に描き切らせる。**
+    ///
+    /// 弱く持つ — 描き場所は利用者が持つもので、置いた側が寿命を延ばす筋合いが無い。
+    private(set) var placers: [WeakCanvas] = []
+
+    /// 弱く持つ面ひとつぶん。
+    struct WeakCanvas {
+        weak var canvas: Canvas?
+    }
+
     /// このフレームで塗り直す色。`nil` なら前の内容の上に描き足す。
     private var pendingBackground: LinearRGBA?
 
@@ -502,7 +530,7 @@ public final class Canvas {
     /// 焼き場の白い区画を読み続ける。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-    var currentTextureImage: Image?
+    var currentPicture: Picture?
     var warnedMissingFont = false
     var warnedAtlasFull = false
 
@@ -652,7 +680,7 @@ public final class Canvas {
         var imageMode: ShapeMode
         var tint: LinearRGBA
         /// 塗りに貼る絵。
-        var textureImage: Image?
+        var picture: Picture?
         /// 材質も積む。**フレームを越えないことと、積めることは別の話である** —
         /// 変換も同じくフレームを越えないが積める。入れ子で書けないほうが不便になる
         var material: Material
@@ -676,7 +704,7 @@ public final class Canvas {
                 verticalTextAlign: currentVerticalTextAlign,
                 textLeading: currentTextLeading, textWrap: currentTextWrap,
                 imageMode: currentImageMode, tint: currentTint,
-                textureImage: currentTextureImage,
+                picture: currentPicture,
                 material: currentMaterial,
                 castsShadow: castsShadow, receivesShadow: receivesShadow)
         }
@@ -701,7 +729,7 @@ public final class Canvas {
             currentTint = newValue.tint
             // 列を閉じる必要は無い。塗りを置く手前で必ず useFillTexture() を通るので、
             // 面が実際に変わるのはそのときで、そこで閉じられる
-            currentTextureImage = newValue.textureImage
+            currentPicture = newValue.picture
             // 材質と影の扱いが変わるなら、戻す前に列を閉じる (置いた立体を後の設定で
             // 描かない)
             if currentMaterial != newValue.material || castsShadow != newValue.castsShadow
@@ -832,9 +860,9 @@ public final class Canvas {
     /// 戻る。輪郭・端点・角・線と点はこれを通さず ``useGlyphTexture()`` のままなので、
     /// **貼る絵は塗りにしか効かない**。
     func useFillTexture() {
-        guard let image = currentTextureImage else { return useGlyphTexture() }
-        image.uploadIfNeeded()
-        useTexture(image.texture, kind: .color)
+        guard let picture = currentPicture else { return useGlyphTexture() }
+        picture.prepare()
+        useTexture(picture.texture, kind: .color)
     }
 
     /// 描画先の座標へ落とす行列を作る。
@@ -1173,6 +1201,9 @@ public final class Canvas {
         pendingFlat = nil
         buildingFlatTemplate = false
         openSource = .flat
+        // **置いた記録も一緒に落とす。** 置いた四角ごと捨てたのだから、その絵を
+        // 守るために描き切らせる相手はもう居ない
+        placedGraphics.removeAll(keepingCapacity: true)
     }
 
     /// このフレームに溜めたものを、**塗り直しの予定ごと**落とす。
@@ -1360,7 +1391,7 @@ public final class Canvas {
             strokeWeight: currentStrokeWeight,
             strokeCap: currentStrokeCap,
             strokeJoin: currentStrokeJoin,
-            textured: currentTextureImage != nil)
+            textured: currentPicture != nil)
         guard key.hasFill || key.hasStroke else { return }
 
         // **貼る絵と輪郭が同居する図形は畳まない。** 塗りは絵の面を、輪郭は字形の面を
@@ -1475,7 +1506,7 @@ public final class Canvas {
         guard ring.count >= 2 else { return }
 
         // 箱は**周そのもの**から作る。扇の中心は周の内側にあるので、含めても広がらない
-        let uvOf = currentTextureImage == nil ? nil : Self.boxUV(of: points)
+        let uvOf = currentPicture == nil ? nil : Self.boxUV(of: points)
 
         func place(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ bSource: SIMD2<Float>,
             _ c: SIMD2<Float>, _ cSource: SIMD2<Float>)
@@ -1770,11 +1801,11 @@ public final class Canvas {
     /// **字形と同じく半画素ぶん戻して置く** — 整数の座標は画素の中心を指すので、
     /// そのまま四角の縁に使うと縁が半分だけ覆われ、等倍で置いた絵が滲む。
     func appendImageQuad(
-        _ image: Image, x: Float, y: Float, width: Float, height: Float,
+        _ picture: Picture, x: Float, y: Float, width: Float, height: Float,
         uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
     ) {
-        image.uploadIfNeeded()
-        useTexture(image.texture, kind: .color)
+        picture.prepare()
+        useTexture(picture.texture, kind: .color)
 
         let shift: Float = -0.5
         let left = x + shift
@@ -1870,6 +1901,61 @@ public final class Canvas {
     /// `body` の中で呼んだ図形が溜められ、抜けるときにまとめて描画先へ落ちる。
     /// GPU が終わるまで待ってから返る。
     public func draw(_ body: () -> Void) throws(RenderFailure) {
+        beginFrame()
+        body()
+        try endFrame()
+    }
+
+    /// 描き場所として 1 フレーム分を描き始める。
+    ///
+    /// ``endDraw()`` と対で使う。手本と同じ名前・同じ対の形にしてある。
+    ///
+    /// ```swift
+    /// trail.beginDraw()
+    /// trail.circle(x, y, 20)
+    /// trail.endDraw()
+    /// ```
+    public func beginDraw() {
+        guard !isDrawing else { return warnAlreadyDrawing() }
+        beginFrame()
+    }
+
+    /// 描き場所へ描き切る。**投げない。**
+    ///
+    /// 毎フレーム呼ばれるので、1 段の失敗でフレームごと落とさない ([ADR-0020]
+    /// 決定 5)。描き切れなかったときは前の絵がそのまま残り、理由が知らされる。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func endDraw() {
+        guard isDrawing else { return warnNotDrawing() }
+        do {
+            try endFrame()
+        } catch {
+            Diagnostics.warn("endDraw(): 描き切れませんでした: \(error)")
+        }
+    }
+
+    /// フレームの始まり。**3 つの入口が同じここを通る** — 描き方が入口ごとに
+    /// 分かれると、描き場所でだけ成り立たない性質が生まれる。
+    private func beginFrame() {
+        currentClip = nil
+        currentNumbers = nil
+        // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
+        pendingEffects.removeAll(keepingCapacity: true)
+        transform = .identity
+        transformStack.removeAll(keepingCapacity: true)
+        hasLoadedPixels = false
+        // 光もフレームを越えない (同 決定 4)。ここで空に戻る
+        activeLights.removeAll(keepingCapacity: true)
+        activeSurroundings = nil
+        lightStorage.removeAll(keepingCapacity: true)
+        passesThisFrame = 0
+
+        isDrawing = true
+    }
+
+    /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
+    private func endFrame() throws(RenderFailure) {
         // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点は**描き終えて
         // から**既定へ戻す — 始まりで戻すと、フレームの外から読んだときだけ「もう
         // 効かない視点」が返る。列を閉じるのに視点が要るので、戻すのは flush の後
@@ -1886,24 +1972,68 @@ public final class Canvas {
             // 経路を通ってもここでフレームの境目に落ちる
             discardFrame()
         }
-        currentClip = nil
-        currentNumbers = nil
-        // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
-        pendingEffects.removeAll(keepingCapacity: true)
-        transform = .identity
-        transformStack.removeAll(keepingCapacity: true)
-        hasLoadedPixels = false
-        // 光もフレームを越えない (同 決定 4)。ここで空に戻る
-        activeLights.removeAll(keepingCapacity: true)
-        activeSurroundings = nil
-        lightStorage.removeAll(keepingCapacity: true)
-
-        isDrawing = true
-        body()
         isDrawing = false
         framesDrawn += 1
 
         try flush()
+    }
+
+    private func warnAlreadyDrawing() {
+        guard !warnedAlreadyDrawing else { return }
+        warnedAlreadyDrawing = true
+        Diagnostics.warn("beginDraw(): まだ endDraw() を呼んでいません。この呼び出しは効きません")
+    }
+
+    private func warnNotDrawing() {
+        guard !warnedNotDrawing else { return }
+        warnedNotDrawing = true
+        Diagnostics.warn("endDraw(): beginDraw() を呼ぶ前でした。この呼び出しは効きません")
+    }
+
+    // MARK: - 置いた時点の絵を守る
+
+    /// 描き場所を置いたことを、両側に覚えさせる。
+    func note(placing graphics: Canvas) {
+        guard graphics !== self else { return }
+        // **描き切る前に置いたら知らせる。** 出るのは前のフレームの絵で、しかも
+        // 「それらしい絵」なので、黙っていると自分のコードを疑うしかない
+        // ([ADR-0020] 決定 5)
+        if graphics.isDrawing, !warnedPlacingWhileDrawing {
+            warnedPlacingWhileDrawing = true
+            Diagnostics.warn(
+                "image(): endDraw() を呼ぶ前の描き場所を置きました。出るのは描き切る前の絵です")
+        }
+        placedGraphics.insert(ObjectIdentifier(graphics))
+        graphics.note(placedBy: self)
+    }
+
+    private func note(placedBy canvas: Canvas) {
+        guard !placers.contains(where: { $0.canvas === canvas }) else { return }
+        placers.append(WeakCanvas(canvas: canvas))
+    }
+
+    /// 自分の絵が変わる前に、自分を溜めている面を描き切らせる。
+    private func settlePlacersBeforeChange() {
+        guard !placers.isEmpty else { return }
+        // **先に空にする。** 描き切らせた先から置き直されることがあるので、
+        // 走らせたあとに消すと、そのフレームの記録まで一緒に落ちる
+        let waiting = placers
+        placers.removeAll(keepingCapacity: true)
+        for entry in waiting { entry.canvas?.settle(before: self) }
+    }
+
+    /// この描き場所を溜めているなら、いま描き切る。
+    ///
+    /// **描き切っている最中なら何もしない。** 描き場所どうしが互いを置き合うと
+    /// ここへ戻ってくるので、1 周したところで止める。
+    private func settle(before graphics: Canvas) {
+        guard !isFlushing, placedGraphics.contains(ObjectIdentifier(graphics)) else { return }
+        do {
+            // 効果はフレームの終わりに立つ段なので、途中の描き切りでは通さない
+            try flush(applyingEffects: false)
+        } catch {
+            Diagnostics.warn("置いた描き場所が変わる前の描き切りに失敗しました: \(error)")
+        }
     }
 
     /// 直前のフレームで描画を呼んだ回数。
@@ -1931,12 +2061,24 @@ public final class Canvas {
     ///   フレームの途中の描き切り (`loadPixels()`) で通すと、効果のかかった絵の上に
     ///   続きが描かれ、しかもフレームの終わりにもう一度かかる。
     func flush(applyingEffects: Bool = true) throws(RenderFailure) {
+        // **自分の絵が変わる直前がここ。** 自分を溜めている面を先に描き切らせると、
+        // その面には「置いた時点の絵」が残る。`beginDraw()` ではなくここに置くのは、
+        // 描き切りが要る経路が対の外にもある (画素の読み出し) ため
+        settlePlacersBeforeChange()
+        isFlushing = true
+        defer { isFlushing = false }
         if let failureForTesting { throw failureForTesting }
         closeBatch()
         // 段の枠の採番は描き切りごとに 0 から。**1 本のコマンドの中でだけ衝突しない
         // ことが要る**ので、コマンドと同じ寿命で数える
         stagePassesUsed = 0
-        let pass = target.makeRenderPass(clearColor: pendingBackground)
+        // **奥行きはフレームで 1 つ。** 途中の描き切りをまたいで引き継ぎ、塗り直しを
+        // 頼まれたときだけ消す (そのフレームをそこから描き直すという意味なので)
+        let pass = target.makeRenderPass(
+            clearColor: pendingBackground,
+            continuingFrame: passesThisFrame > 0 && pendingBackground == nil,
+            keepingDepth: !applyingEffects)
+        passesThisFrame += 1
         let commands = try gpu.beginCommands()
 
         // **描くより前に、頼まれた計算を流す** (ADR-0023 決定 3 — 計算はフレームの

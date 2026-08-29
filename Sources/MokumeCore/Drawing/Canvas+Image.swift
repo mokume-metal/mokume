@@ -48,21 +48,26 @@ extension Canvas {
     // MARK: - 貼る
 
     // これから置く塗りに絵を貼る。
-    public func texture(_ image: Image) { currentTextureImage = image }
+    public func texture(_ image: Image) { currentPicture = .loaded(image) }
 
-    public func noTexture() { currentTextureImage = nil }
+    /// 描き場所を貼る。
+    public func texture(_ graphics: Canvas) {
+        note(placing: graphics)
+        currentPicture = .drawn(graphics.output)
+    }
+
+    public func noTexture() { currentPicture = nil }
 
     // MARK: - 置く
 
     /// 絵を等倍で置く。
     public func image(_ image: Image, _ a: Float, _ b: Float) {
-        self.image(image, a, b, Float(image.width), Float(image.height))
+        place(.loaded(image), a, b)
     }
 
     /// 絵を、指定した寸法に合わせて置く。
     public func image(_ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
-        self.image(
-            image, a, b, c, d, 0, 0, Float(image.width), Float(image.height))
+        place(.loaded(image), a, b, c, d)
     }
 
     /// 絵の一部を切り出して置く。
@@ -72,11 +77,58 @@ extension Canvas {
         _ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
         _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
     ) {
+        place(.loaded(image), a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
+    }
+
+    /// 描き場所を等倍で置く。
+    public func image(_ graphics: Canvas, _ a: Float, _ b: Float) {
+        note(placing: graphics)
+        place(.drawn(graphics.output), a, b)
+    }
+
+    /// 描き場所を、指定した寸法に合わせて置く。
+    public func image(_ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+        note(placing: graphics)
+        place(.drawn(graphics.output), a, b, c, d)
+    }
+
+    /// 描き場所の一部を切り出して置く。
+    public func image(
+        _ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
+        _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
+    ) {
+        note(placing: graphics)
+        place(
+            .drawn(graphics.output), a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
+    }
+
+    // MARK: - 置き方は 1 本
+
+    /// 絵を置く。**読み込んだ絵も描き場所もここへ集まる** ([ADR-0023] 決定 1)。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    private func place(_ picture: Picture, _ a: Float, _ b: Float) {
+        place(picture, a, b, Float(picture.width), Float(picture.height))
+    }
+
+    private func place(
+        _ picture: Picture, _ a: Float, _ b: Float, _ c: Float, _ d: Float
+    ) {
+        place(
+            picture, a, b, c, d, 0, 0, Float(picture.width), Float(picture.height))
+    }
+
+    private func place(
+        _ picture: Picture, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
+        _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
+    ) {
         let box = Self.resolveBox(a, b, c, d, mode: currentImageMode)
-        guard box.width > 0, box.height > 0, image.width > 0, image.height > 0 else { return }
+        guard box.width > 0, box.height > 0, picture.width > 0, picture.height > 0 else {
+            return
+        }
 
         // 切り出しは絵の中へ収める。外を指しても落ちず、指した分だけが出る
-        let full = SIMD2(Float(image.width), Float(image.height))
+        let full = SIMD2(Float(picture.width), Float(picture.height))
         let left = min(max(0, sourceX), full.x)
         let top = min(max(0, sourceY), full.y)
         let right = min(max(left, sourceX + sourceWidth), full.x)
@@ -84,7 +136,7 @@ extension Canvas {
         guard right > left, bottom > top else { return }
 
         appendImageQuad(
-            image, x: box.x, y: box.y, width: box.width, height: box.height,
+            picture, x: box.x, y: box.y, width: box.width, height: box.height,
             uvMin: SIMD2(left / full.x, top / full.y),
             uvMax: SIMD2(right / full.x, bottom / full.y),
             color: currentTint)
