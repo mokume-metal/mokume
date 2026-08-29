@@ -185,6 +185,10 @@ enum Scene: String, CaseIterable, Sendable {
     case models
     /// 利用者が書いた断片で塗った立体。
     case solidShader
+    /// 焼いた絵を貼った平面の図形。輪郭・字・色掛けとの効き分けを並べたもの。
+    case texturedShapes
+    /// 焼いた絵を貼った立体。組み込みの形の展開と、自分で書いた読み取り位置。
+    case texturedSolids
     /// 形自身の座標から模様を作った立体。**同じ形を 2 つ、違う角度で置いてある** —
     /// 模様が形について回っていることが 1 枚で読める。
     case surfaceShader
@@ -210,6 +214,30 @@ enum Scene: String, CaseIterable, Sendable {
         }
         """
 
+
+    /// 貼るための絵。**その場で焼く**ので、ファイルを置かずに済み、毎回同じ絵になる。
+    ///
+    /// 縞と格子を重ねてある — 上下・左右のどちらが逆になっても絵が変わる形にしないと、
+    /// 向きの退行が台帳の行に出ない。
+    static func makeGrain(on canvas: Canvas) -> Image? {
+        guard let image = try? canvas.createImage(32, 32) else { return nil }
+        for y in 0..<32 {
+            for x in 0..<32 {
+                let ring = 0.5 + 0.5 * sin(Float(x) * 0.9 + Float(y) * 0.12)
+                // 上の 4 行だけ明るくして、上下が分かるようにする
+                let top: Float = y < 4 ? 0.6 : 0
+                // 左の 4 列だけ赤みを足して、左右が分かるようにする
+                let left: Float = x < 4 ? 0.5 : 0
+                image.set(
+                    x, y,
+                    .display(
+                        red: min(1, 0.35 + ring * 0.45 + top + left),
+                        green: min(1, 0.22 + ring * 0.35 + top),
+                        blue: min(1, 0.12 + ring * 0.2 + top)))
+            }
+        }
+        return image
+    }
 
     /// 質感のうち 1 つ。**潰したときに絵が動くか**を測るために名前で指せる形にする。
     enum MaterialAspect: CaseIterable, Sendable {
@@ -848,6 +876,73 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.model(model)
                 canvas.pop()
             }
+
+        case .texturedShapes:
+            canvas.background(.display(red: 0.08, green: 0.08, blue: 0.1))
+            guard let grain = Scene.makeGrain(on: canvas) else { return }
+            canvas.texture(grain)
+
+            // 組み込みの図形は囲みの箱から読み取り位置が決まる
+            canvas.noStroke()
+            canvas.rect(6, 6, 52, 40)
+            canvas.circle(92, 26, 40)
+
+            // 輪郭には貼られない — 縁だけが線の色で出る
+            canvas.stroke(.display(red: 1, green: 0.9, blue: 0.4))
+            canvas.strokeWeight(3)
+            canvas.rect(6, 54, 52, 40)
+
+            // 塗りが色掛けになる
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.4, green: 0.8, blue: 1))
+            canvas.rect(66, 54, 52, 40)
+
+            // 自分で書いた読み取り位置 (絵の左半分だけを引き伸ばす)
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            canvas.beginShape()
+            canvas.vertex(6, 100, 0, 0)
+            canvas.vertex(118, 100, Float(grain.width) / 2, 0)
+            canvas.vertex(118, 122, Float(grain.width) / 2, Float(grain.height))
+            canvas.vertex(6, 122, 0, Float(grain.height))
+            canvas.endShape(.close)
+
+            // 外せば、そのあとの図形は貼られない
+            canvas.noTexture()
+            canvas.fill(.display(red: 0.95, green: 0.4, blue: 0.45))
+            canvas.rect(6, 48, 112, 4)
+
+        case .texturedSolids:
+            canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
+            canvas.lights()
+            canvas.noStroke()
+            guard let grain = Scene.makeGrain(on: canvas) else { return }
+            canvas.texture(grain)
+
+            // 箱は 6 面それぞれに 1 枚。光を通した色に掛かるので陰影が残る
+            canvas.push()
+            canvas.translate(36, 40, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateY(0.7)
+            canvas.box(42)
+            canvas.pop()
+
+            // 球は経度と緯度に巻く
+            canvas.push()
+            canvas.translate(94, 42, 0)
+            canvas.sphere(24)
+            canvas.pop()
+
+            // 自分で並べた立体に読み取り位置を書く
+            canvas.push()
+            canvas.translate(64, 96, 0)
+            canvas.rotateX(0.7)
+            canvas.beginShape()
+            canvas.vertex(-48, -18, 0, 0, 0)
+            canvas.vertex(48, -18, 0, Float(grain.width), 0)
+            canvas.vertex(48, 18, 0, Float(grain.width), Float(grain.height))
+            canvas.vertex(-48, 18, 0, 0, Float(grain.height))
+            canvas.endShape(.close)
+            canvas.pop()
 
         case .solidShader:
             // 平面と立体に**同じ断片**を掛ける。書き分けは要らない

@@ -2,9 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/observe-request.schema.json",
   "title": "観測の要求",
-  "description": "走っているスケッチに 1 枚の観測を求める。書き手は一時ファイル経由で原子的に置き、id は要求ごとに変える (ADR-0018 決定 3)。",
+  "description": "走っているスケッチに観測を求める。書き手は一時ファイル経由で原子的に置き、id は要求ごとに変える (ADR-0018 決定 3)。count を 2 以上にすると、フレームループを止めずに続けて撮り、目録が最後に書かれる。",
   "type": "object",
-  "required": ["id"],
+  "required": [
+    "id"
+  ],
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -17,6 +19,20 @@
       "exclusiveMinimum": 0,
       "maximum": 1,
       "description": "書き出す画像の縮小率 (1 = 実寸)。省略時は 1。"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120,
+      "default": 1,
+      "description": "撮る枚数。省略時は 1。上限を超えて頼んでも黙って切り詰められることはなく、切った枚数が応答の warnings に載る。"
+    },
+    "every": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60,
+      "default": 1,
+      "description": "何フレームおきに撮るか。省略時は毎フレーム。**秒ではなくフレームで数える** — 既定の時計はフレーム番号から導くので、フレームで数えれば同じスケッチを 2 回走らせれば同じ列が返る。"
     }
   }
 }

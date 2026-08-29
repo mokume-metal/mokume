@@ -14,6 +14,14 @@ struct SolidMesh {
         var position: SIMD3<Float>
         /// 面の向き。光を当てる段で使う。
         var normal: SIMD3<Float>
+        /// 貼る絵のどこを読むか (0…1)。**貼る絵が無いときは使われない** —
+        /// そのときの頂点は焼き場の白い区画を指す (``Canvas/appendTriangle``)。
+        ///
+        /// 縦は**下向き** (面の座標の約束・[ADR-0021] 決定 1) なので、0 が絵の上端に
+        /// あたる。上を向いた面に貼った絵が逆さにならないのはこのためである。
+        ///
+        /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+        var uv: SIMD2<Float> = .zero
     }
 
     let points: [Point]
@@ -99,10 +107,18 @@ enum SolidMeshBuilder {
 
         // 4 隅を面の周に沿って渡す。**外向きに巻き直すのはここ 1 箇所**で、面の向きも
         // 同じ巻き方から求めるので、向きと巻き方がずれようがない
+        //
+        // 貼る絵は**6 面それぞれに 1 枚**が収まる。周は 4 隅とも「上・下・下・上」の順で
+        // 渡されるので、絵の四隅をこの順に当てれば、どの面も同じ向きで立つ
         func face(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ d: SIMD3<Float>) {
             let normal = normalize(cross(c - a, b - a))
-            for position in [a, c, b, a, d, c] {
-                points.append(SolidMesh.Point(position: position, normal: normal))
+            let corners: [(SIMD3<Float>, SIMD2<Float>)] = [
+                (a, SIMD2(0, 0)), (b, SIMD2(0, 1)), (c, SIMD2(1, 1)), (d, SIMD2(1, 0)),
+            ]
+            for index in [0, 2, 1, 0, 3, 2] {
+                points.append(
+                    SolidMesh.Point(
+                        position: corners[index].0, normal: normal, uv: corners[index].1))
             }
         }
 
@@ -119,15 +135,18 @@ enum SolidMeshBuilder {
         return points
     }
 
-    /// 平らな面。画面の側 (+z) を向く。
+    /// 平らな面。画面の側 (+z) を向く。**貼る絵はここに 1 枚がそのまま収まる。**
     static func plane(width: Float, height: Float) -> [SolidMesh.Point] {
         let x = width / 2
         let y = height / 2
         let normal = SIMD3<Float>(0, 0, 1)
-        return [
-            SIMD3(-x, -y, 0), SIMD3(x, -y, 0), SIMD3(x, y, 0),
-            SIMD3(-x, -y, 0), SIMD3(x, y, 0), SIMD3(-x, y, 0),
-        ].map { SolidMesh.Point(position: $0, normal: normal) }
+        // 縦軸が下向きなので -y が絵の上端 (v = 0)
+        let topLeft = (SIMD3<Float>(-x, -y, 0), SIMD2<Float>(0, 0))
+        let topRight = (SIMD3<Float>(x, -y, 0), SIMD2<Float>(1, 0))
+        let bottomRight = (SIMD3<Float>(x, y, 0), SIMD2<Float>(1, 1))
+        let bottomLeft = (SIMD3<Float>(-x, y, 0), SIMD2<Float>(0, 1))
+        return [topLeft, topRight, bottomRight, topLeft, bottomRight, bottomLeft]
+            .map { SolidMesh.Point(position: $0.0, normal: normal, uv: $0.1) }
     }
 
     /// 球。**一周を `detail` で割り**、上下は半周なのでその半分で割る。
@@ -142,7 +161,12 @@ enum SolidMeshBuilder {
                 sin(phi) * cos(theta),
                 cos(phi),
                 sin(phi) * sin(theta))
-            return SolidMesh.Point(position: normal * radius, normal: normal)
+            // 貼る絵は経度と緯度に巻く。`ring` が 0 のところは +y (縦軸が下向きなので
+            // 下の極) なので、絵の上端 (v = 0) が上の極に来るよう裏返す。**継ぎ目は
+            // 番号から作るので、一周の最後は 0 ではなく 1 で閉じる**
+            let uv = SIMD2<Float>(
+                Float(step) / Float(around), 1 - Float(ring) / Float(rings))
+            return SolidMesh.Point(position: normal * radius, normal: normal, uv: uv)
         }
 
         var points: [SolidMesh.Point] = []
@@ -176,19 +200,24 @@ enum SolidMeshBuilder {
             let b = n0 * radius + SIMD3(0, half, 0)
             let c = n1 * radius + SIMD3(0, half, 0)
             let d = n1 * radius + SIMD3(0, -half, 0)
+            // 側面は絵を一周に巻く。横が一周・縦が高さで、-half が上なので v = 0
+            let u0 = Float(step) / Float(detail)
+            let u1 = Float(step + 1) / Float(detail)
             points.append(contentsOf: [
-                SolidMesh.Point(position: a, normal: n0),
-                SolidMesh.Point(position: b, normal: n0),
-                SolidMesh.Point(position: c, normal: n1),
-                SolidMesh.Point(position: a, normal: n0),
-                SolidMesh.Point(position: c, normal: n1),
-                SolidMesh.Point(position: d, normal: n1),
+                SolidMesh.Point(position: a, normal: n0, uv: SIMD2(u0, 0)),
+                SolidMesh.Point(position: b, normal: n0, uv: SIMD2(u0, 1)),
+                SolidMesh.Point(position: c, normal: n1, uv: SIMD2(u1, 1)),
+                SolidMesh.Point(position: a, normal: n0, uv: SIMD2(u0, 0)),
+                SolidMesh.Point(position: c, normal: n1, uv: SIMD2(u1, 1)),
+                SolidMesh.Point(position: d, normal: n1, uv: SIMD2(u1, 0)),
             ])
             // 蓋 — 上 (-y) と下 (+y)。縦軸が下向きなので -y が上になる
             points.append(contentsOf: fan(
-                center: SIMD3(0, -half, 0), first: a, second: d, normal: SIMD3(0, -1, 0)))
+                center: SIMD3(0, -half, 0), first: a, second: d, normal: SIMD3(0, -1, 0),
+                firstAngle: t0, secondAngle: t1))
             points.append(contentsOf: fan(
-                center: SIMD3(0, half, 0), first: c, second: b, normal: SIMD3(0, 1, 0)))
+                center: SIMD3(0, half, 0), first: c, second: b, normal: SIMD3(0, 1, 0),
+                firstAngle: t1, secondAngle: t0))
         }
         return points
     }
@@ -209,13 +238,17 @@ enum SolidMeshBuilder {
             let b = r1 * radius + SIMD3(0, half, 0)
             // 斜面の向きは、その三角形そのものから求める (巻き方と同じ順で読む)
             let side = normalize(cross(a - apex, b - apex))
+            // 斜面は円柱の側面と同じ巻き方。先は 1 点なので、その帯の真ん中を指す
+            let u0 = Float(step) / Float(detail)
+            let u1 = Float(step + 1) / Float(detail)
             points.append(contentsOf: [
-                SolidMesh.Point(position: apex, normal: side),
-                SolidMesh.Point(position: a, normal: side),
-                SolidMesh.Point(position: b, normal: side),
+                SolidMesh.Point(position: apex, normal: side, uv: SIMD2((u0 + u1) / 2, 0)),
+                SolidMesh.Point(position: a, normal: side, uv: SIMD2(u0, 1)),
+                SolidMesh.Point(position: b, normal: side, uv: SIMD2(u1, 1)),
             ])
             points.append(contentsOf: fan(
-                center: SIMD3(0, half, 0), first: b, second: a, normal: SIMD3(0, 1, 0)))
+                center: SIMD3(0, half, 0), first: b, second: a, normal: SIMD3(0, 1, 0),
+                firstAngle: t1, secondAngle: t0))
         }
         return points
     }
@@ -228,7 +261,10 @@ enum SolidMeshBuilder {
             let ringDirection = SIMD3<Float>(cos(u), sin(u), 0)
             let normal = ringDirection * cos(v) + SIMD3<Float>(0, 0, sin(v))
             let position = ringDirection * ringRadius + normal * tubeRadius
-            return SolidMesh.Point(position: position, normal: normal)
+            // 貼る絵は 2 つの一周に巻く (横が輪の一周・縦が管の一周)。球と同じく
+            // 番号から作るので、どちらの継ぎ目も 1 で閉じる
+            let uv = SIMD2<Float>(Float(ring) / Float(detail), Float(tube) / Float(detail))
+            return SolidMesh.Point(position: position, normal: normal, uv: uv)
         }
 
         var points: [SolidMesh.Point] = []
@@ -246,9 +282,21 @@ enum SolidMeshBuilder {
     }
 
     /// 中心と 2 点で 1 枚の蓋を作る。
+    ///
+    /// 貼る絵は**円をそのまま円に写す** — 中心が絵の真ん中に来て、縁が絵に内接する円を
+    /// なぞる。角度を受け取るのはそのためで、位置から測り直すと蓋のある形ごとに軸の
+    /// 取り方を書くことになる。
     private static func fan(
-        center: SIMD3<Float>, first: SIMD3<Float>, second: SIMD3<Float>, normal: SIMD3<Float>
+        center: SIMD3<Float>, first: SIMD3<Float>, second: SIMD3<Float>, normal: SIMD3<Float>,
+        firstAngle: Float, secondAngle: Float
     ) -> [SolidMesh.Point] {
-        [center, first, second].map { SolidMesh.Point(position: $0, normal: normal) }
+        func rim(_ angle: Float) -> SIMD2<Float> {
+            SIMD2(0.5 + 0.5 * cos(angle), 0.5 + 0.5 * sin(angle))
+        }
+        return [
+            SolidMesh.Point(position: center, normal: normal, uv: SIMD2(0.5, 0.5)),
+            SolidMesh.Point(position: first, normal: normal, uv: rim(firstAngle)),
+            SolidMesh.Point(position: second, normal: normal, uv: rim(secondAngle)),
+        ]
     }
 }

@@ -374,6 +374,35 @@ extension Sketch {
     /// ``vertex(_:_:)`` を混ぜてもよく、そちらは奥行き 0 の頂点になる。
     public func vertex(_ x: Float, _ y: Float, _ z: Float) { canvas.vertex(x, y, z) }
 
+    /// 貼る絵の読み取り位置つきで頂点を 1 つ置く。
+    ///
+    /// `u`・`v` は**貼る絵の画素**で書く (``image(_:_:_:_:_:_:_:_:_:)`` の切り出しと
+    /// 同じ単位)。``texture(_:)`` で絵を束ねていなければ、書いても何も起きない。
+    ///
+    /// ```swift
+    /// texture(grain)
+    /// beginShape()
+    /// vertex(0, 0, 0, 0)                                  // 絵の左上を形の左上へ
+    /// vertex(200, 0, Float(grain.width), 0)
+    /// vertex(200, 200, Float(grain.width), Float(grain.height))
+    /// vertex(0, 200, 0, Float(grain.height))
+    /// endShape(.close)
+    /// ```
+    public func vertex(_ x: Float, _ y: Float, _ u: Float, _ v: Float) {
+        canvas.vertex(x, y, u, v)
+    }
+
+    /// 奥行きと読み取り位置を持つ頂点を 1 つ置く。**この形は立体になる。**
+    ///
+    /// 単位は ``vertex(_:_:_:_:)`` と同じ (貼る絵の画素)。
+    ///
+    /// **書かなかった頂点は、形の囲みの箱から求まる** — 横と縦の広がりを 0…1 に写す。
+    /// 一部にだけ書いた形では、書いた頂点だけがそのとおりに、残りが囲みの箱から
+    /// 決まるので、混ぜて書くと絵が捻れる。書くなら全部に書く。
+    public func vertex(_ x: Float, _ y: Float, _ z: Float, _ u: Float, _ v: Float) {
+        canvas.vertex(x, y, z, u, v)
+    }
+
     /// これから置く頂点の面の向きを決める。
     ///
     /// 面の向きは、光がどれだけ当たるかを決めるもの。**書き換えるまで続き、
@@ -1390,4 +1419,32 @@ extension Sketch {
 
     /// 色掛けをやめる。
     public func noTint() { canvas.noTint() }
+
+    // MARK: - 貼る
+
+    /// これから置く塗りに絵を貼る。
+    ///
+    /// ```swift
+    /// texture(grain)
+    /// box(200)            // 6 面それぞれに 1 枚ずつ貼られる
+    /// sphere(80)          // 経度と緯度に巻かれる
+    /// rect(0, 0, 300, 200)  // 平面にも同じように効く
+    /// ```
+    ///
+    /// **効くのは塗りだけ。** 輪郭・端点・角・立体の線と点・文字・周囲には貼られない
+    /// ので、`stroke()` を残したまま貼っても縁は線の色のまま出る。
+    ///
+    /// **貼った絵は、光と材質を通ったあとの色に掛かる。** 立体では陰影がそのまま残り、
+    /// 平面では ``fill(_:)`` が色掛けになる (白なら絵がそのまま出る)。
+    ///
+    /// 読み取り位置は組み込みの形が自分で持つ (箱は 6 面それぞれに 1 枚、球は経度と
+    /// 緯度、円柱と円錐は側面の一周と蓋の円、輪は 2 つの一周)。自分で並べた形では
+    /// ``vertex(_:_:_:_:)`` で書け、書かなければ形の囲みの箱から決まる。
+    ///
+    /// **描き方なのでフレームを越える** — 塗りや線と同じく、一度書けば
+    /// ``noTexture()`` を呼ぶまで続き、``push()`` / ``pop()`` で積める。
+    public func texture(_ image: Image) { canvas.texture(image) }
+
+    /// 絵を貼るのをやめる。
+    public func noTexture() { canvas.noTexture() }
 }
