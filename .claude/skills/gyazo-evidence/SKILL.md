@@ -58,8 +58,54 @@ swift run mokume-cli mcp <スケッチの場所>    # エージェントの窓�
 原子的に置き、`.mokume/observe/report.json` の `id` が一致するまで待つ (仕様は
 `Schemas/observe-request.schema.json`)。
 
-> **動きはこの経路ではまだ撮れない。** 観測を続けて置くと 10 回前後で応答が止まる
-> ([#221](https://github.com/mokume-metal/mokume/issues/221))。解決するまで動きは B で撮る。
+### 動きも A で撮る
+
+**識別子を変えながら要求を置き、`report.json` の `id` が一致したら `image` が指す絵を退避する** —
+これを繰り返せば連番がそのまま手に入る。B のように録画から起こす必要は無い。要求に `scale` を
+添えると書き出しの時点で縮むので、束ねる前の縮小も要らない。
+
+```bash
+python3 - <スケッチの場所>/.mokume/observe frames 70 0.5 <<'CAPTURE'
+import json, os, pathlib, shutil, sys, time
+
+facet, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+rounds, scale = int(sys.argv[3]), float(sys.argv[4])
+out.mkdir(parents=True, exist_ok=True)
+previous = None
+
+for index in range(1, rounds + 1):
+    identifier = f"f{index:04d}"
+    temporary = facet / ".request.json.tmp"           # 原子的に置く
+    temporary.write_text(json.dumps({"id": identifier, "scale": scale}))
+    os.replace(temporary, facet / "request.json")
+
+    taken, limit = None, time.time() + 1.5
+    while time.time() < limit:                        # 壁時計ではなく識別子の一致で完了を知る
+        try:
+            report = json.loads((facet / "report.json").read_text())
+            if report.get("id") == identifier and report.get("image"):
+                taken = shutil.copy(facet / report["image"], out / f"f.{index:04d}.png")
+                break
+        except Exception:
+            pass
+        time.sleep(0.01)
+
+    if taken is None and previous:                    # 返らなかったら直前の絵を置く
+        shutil.copy(previous, out / f"f.{index:04d}.png")
+    previous = taken or previous
+CAPTURE
+```
+
+置き方と待ち方は `scripts/check-observation-roundtrip.sh` と同じで、**形式の正典は `Schemas/` の
+`observe-request` / `observe-report`** である (絵のファイル名も応答の `image` が名乗る — 決め打ちしない)。
+
+> **応答が返らなかった回は直前の絵で埋める。抜けを詰めない。** 詰めると「面が黙った」ことが動きから
+> 消えてしまい、それ自体が見せたい事象であることがある
+> ([#310](https://github.com/mokume-metal/mokume/pull/310#issuecomment-5452377415) が実例 — 窓を畳んだ後に
+> 絵が凍るか回り続けるかの差が、70 枚のうち異なる絵の枚数として出た)。
+
+**採れる間隔は一定ではない** — 1 枚ごとに応答を待つためである。実時間との対応が要るなら、退避と一緒に
+`report.json` の `frame` と `time` も控えておく。
 
 ## B. 窓を撮る
 
@@ -83,8 +129,10 @@ PR / Issue で WebP を使うのは、同じ絵で GIF より小さく、色数�
 **DocC は WebP を警告も出さずに落とす**ので、そちらへ出すものだけ GIF にする
 (このリポジトリにまだ DocC が無いため、DocC 側は**未検証**)。
 
+**A は連番がそのまま手に入る**ので、束ねる所から始める。B は録画なので、まず連番へ起こす。
+
 ```bash
-# 録画から連番へ (幅 720 / 15fps が目安)
+# 録画から連番へ (B のみ・幅 720 / 15fps が目安)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos" frames/f.%04d.png
 
 # PR / Issue へ出す — WebP
@@ -150,7 +198,7 @@ before / after は表で並べる。
 ```
 
 **動きには撮影範囲と意図をテキストで添える。** フレームを人が後から検める代わりの記録なので、
-どの窓を撮ったか・どの操作の何秒間か・どこを見てほしいかを書く。
+何を撮ったか (A なら観測したスケッチと条件・B ならどの窓)・どの操作の何秒間か・どこを見てほしいかを書く。
 
 ## 守ること
 
