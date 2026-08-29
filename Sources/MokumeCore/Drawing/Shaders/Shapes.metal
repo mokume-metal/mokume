@@ -22,6 +22,10 @@ vertex ShapeFragmentIn shapeVertexMain(
     out.worldPosition = float3(0.0);
     out.normal = float3(0.0);
     out.isDerivedNormal = 0.0;
+    // **平面は形自身の座標を持たない。** 変換は頂点を置く時点で焼き込まれるので、
+    // 「置き場所を通す前の位置」に当たるものがそもそも無い。断片へは 0 が届く
+    out.shapePosition = float3(0.0);
+    out.shapeNormal = float3(0.0);
     return out;
 }
 
@@ -43,8 +47,14 @@ float4 paint(Fragment in, Values values) {
 struct SolidVertex {
     /// **形自身の座標。** 世界へ移すのは置き場所の仕事である。
     float3 position;
+    /// 利用者の断片へ渡す、形自身の座標 (Swift 側の `SolidVertex` を参照)。
+    /// 置き場所が変換を持つ形では `position` と同じ値で、変換を頂点へ焼き込む形
+    /// (頂点を並べて作った形) だけが違う値を持つ。
+    float3 shapePosition;
     /// xyz が面の向き、w が 1 なら**形から求めた向き** (Swift 側の `SolidVertex` を参照)。
     float4 normal;
+    /// 利用者の断片へ渡す、形自身の座標での面の向き。
+    float3 shapeNormal;
     float2 uv;
     float4 color;
 };
@@ -94,5 +104,9 @@ vertex ShapeFragmentIn solidVertexMain(
     out.worldPosition = world.xyz;
     out.normal = normalMatrix * vertex_in.normal.xyz;
     out.isDerivedNormal = vertex_in.normal.w;
+    // **利用者の断片へは、移す前の値をそのまま渡す。** 置き場所を通していないので
+    // 形を動かしても回しても変わらず、ここから作った模様は形の表面に留まる (#367)
+    out.shapePosition = vertex_in.shapePosition;
+    out.shapeNormal = vertex_in.shapeNormal;
     return out;
 }

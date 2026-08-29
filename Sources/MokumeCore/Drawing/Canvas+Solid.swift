@@ -193,13 +193,15 @@ extension Canvas {
     /// **図形は焼き場の白い区画を読む** — 白を掛けても色は変わらないので、平面と同じ
     /// 塗りをそのまま通せる (``SolidVertex/uv``)。
     func appendSolidVertex(
-        position: SIMD3<Float>, normal: SIMD3<Float>, isDerived: Bool = false,
+        position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
+        normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
         color: LinearRGBA
     ) {
         openFreeformSolid()
         solidVertices.append(
             SolidVertex(
-                position: position, normal: normal, isDerived: isDerived, uv: whiteUV,
+                position: position, shapePosition: shapePosition, normal: normal,
+                shapeNormal: shapeNormal, isDerived: isDerived, uv: whiteUV,
                 color: color))
         openSolid?.vertexCount += 1
     }
@@ -254,34 +256,49 @@ extension Canvas {
     ///
     /// 面の向きは持たせない (ゼロ)。**線と点は光を受けない** — 平面の輪郭が光を受けない
     /// のと同じ扱いで、向きを持たない頂点をそのままの色で出すのは断片の側の約束である。
-    func strokeSolidRing(_ points: [SIMD3<Float>], isClosed: Bool) {
+    ///
+    /// **点は世界の座標と形自身の座標を対で受け取る。** 帯は視線に合わせて世界の座標で
+    /// 組み立てるが、利用者の断片へ渡すのは形自身の座標のほうなので、両方が要る。
+    /// 帯の太さのぶんの広がりは持たない — **帯のどの画素も、元になった点の座標を名乗る**。
+    func strokeSolidRing(
+        _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool
+    ) {
         let half = currentStrokeWeight / 2
-        guard !points.isEmpty else { return }
+        guard !points.isEmpty, shapePoints.count == points.count else { return }
 
         // 点が 1 つだけなら、端点の形そのものを置く
         if points.count == 1 {
-            appendSolidCap(at: points[0], half: half, isolated: true)
+            appendSolidCap(at: points[0], shape: shapePoints[0], half: half, isolated: true)
             return
         }
 
         let segmentCount = isClosed ? points.count : points.count - 1
         for index in 0..<segmentCount {
-            appendSolidBand(points[index], points[(index + 1) % points.count], half: half)
+            let next = (index + 1) % points.count
+            appendSolidBand(
+                points[index], points[next],
+                shape: (shapePoints[index], shapePoints[next]), half: half)
         }
 
         if isClosed {
-            for point in points { appendSolidJoin(at: point, half: half) }
+            for index in points.indices {
+                appendSolidJoin(at: points[index], shape: shapePoints[index], half: half)
+            }
         } else {
             for index in 1..<(points.count - 1) {
-                appendSolidJoin(at: points[index], half: half)
+                appendSolidJoin(at: points[index], shape: shapePoints[index], half: half)
             }
-            appendSolidCap(at: points[0], half: half, isolated: false)
-            appendSolidCap(at: points[points.count - 1], half: half, isolated: false)
+            appendSolidCap(at: points[0], shape: shapePoints[0], half: half, isolated: false)
+            let last = points.count - 1
+            appendSolidCap(at: points[last], shape: shapePoints[last], half: half, isolated: false)
         }
     }
 
     /// 線分 1 本を帯にする。
-    private func appendSolidBand(_ a: SIMD3<Float>, _ b: SIMD3<Float>, half: Float) {
+    private func appendSolidBand(
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>,
+        shape: (SIMD3<Float>, SIMD3<Float>), half: Float
+    ) {
         let along = b - a
         guard length_squared(along) > 0 else { return }
         var side = cross(along, viewForward)
@@ -290,59 +307,64 @@ extension Canvas {
         side = normalize(side)
         let atA = side * (half * worldPerPixel(at: a))
         let atB = side * (half * worldPerPixel(at: b))
-        appendSolidStrokeTriangle(a + atA, b + atB, b - atB)
-        appendSolidStrokeTriangle(a + atA, b - atB, a - atA)
+        appendSolidStrokeTriangle(
+            a + atA, b + atB, b - atB, shape: (shape.0, shape.1, shape.1))
+        appendSolidStrokeTriangle(
+            a + atA, b - atB, a - atA, shape: (shape.0, shape.1, shape.0))
     }
 
     /// 折れ目を埋める。帯は線分ごとに独立して置くので、曲がったところに隙間が空く。
-    private func appendSolidJoin(at point: SIMD3<Float>, half: Float) {
+    private func appendSolidJoin(at point: SIMD3<Float>, shape: SIMD3<Float>, half: Float) {
         switch currentStrokeJoin {
-        case .round: appendSolidDisc(at: point, half: half)
-        case .bevel, .miter: appendSolidSquare(at: point, half: half)
+        case .round: appendSolidDisc(at: point, shape: shape, half: half)
+        case .bevel, .miter: appendSolidSquare(at: point, shape: shape, half: half)
         }
     }
 
     /// 端を仕上げる。
-    private func appendSolidCap(at point: SIMD3<Float>, half: Float, isolated: Bool) {
+    private func appendSolidCap(
+        at point: SIMD3<Float>, shape: SIMD3<Float>, half: Float, isolated: Bool
+    ) {
         switch currentStrokeCap {
         case .square where !isolated:
             return  // 線の長さちょうどで切る
         case .round:
-            appendSolidDisc(at: point, half: half)
+            appendSolidDisc(at: point, shape: shape, half: half)
         case .square, .project:
-            appendSolidSquare(at: point, half: half)
+            appendSolidSquare(at: point, shape: shape, half: half)
         }
     }
 
     /// 視線に正対する円板を置く (丸い端点と丸い角)。
-    private func appendSolidDisc(at center: SIMD3<Float>, half: Float) {
+    private func appendSolidDisc(at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float) {
         let radius = half * worldPerPixel(at: center)
         let steps = 16
         var previous = center + viewRight * radius
         for step in 1...steps {
             let angle = 2 * Float.pi * Float(step) / Float(steps)
             let current = center + (viewRight * cos(angle) + viewDown * sin(angle)) * radius
-            appendSolidStrokeTriangle(center, previous, current)
+            appendSolidStrokeTriangle(center, previous, current, shape: (shape, shape, shape))
             previous = current
         }
     }
 
     /// 視線に正対する正方形を置く (四角い端点と削いだ角)。
-    private func appendSolidSquare(at center: SIMD3<Float>, half: Float) {
+    private func appendSolidSquare(at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float) {
         let radius = half * worldPerPixel(at: center)
         let a = center + (-viewRight - viewDown) * radius
         let b = center + (viewRight - viewDown) * radius
         let c = center + (viewRight + viewDown) * radius
         let d = center + (-viewRight + viewDown) * radius
-        appendSolidStrokeTriangle(a, b, c)
-        appendSolidStrokeTriangle(a, c, d)
+        appendSolidStrokeTriangle(a, b, c, shape: (shape, shape, shape))
+        appendSolidStrokeTriangle(a, c, d, shape: (shape, shape, shape))
     }
 
     private func appendSolidStrokeTriangle(
-        _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
+        shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)
     ) {
-        appendSolidVertex(position: a, normal: .zero, color: currentStroke)
-        appendSolidVertex(position: b, normal: .zero, color: currentStroke)
-        appendSolidVertex(position: c, normal: .zero, color: currentStroke)
+        appendSolidVertex(position: a, shapePosition: shape.0, normal: .zero, color: currentStroke)
+        appendSolidVertex(position: b, shapePosition: shape.1, normal: .zero, color: currentStroke)
+        appendSolidVertex(position: c, shapePosition: shape.2, normal: .zero, color: currentStroke)
     }
 }
