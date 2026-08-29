@@ -82,9 +82,17 @@ build:
 # ような助言が混ざるので、一律に落とすとゲートとして成立しない (#357)。警告どまりの
 # 漏れ — #351 の residency がまさにそれ — は、検査が対象を直接見る形にしてある
 # (RenderTargetTests の「描画先は、置き場だけでなくテクスチャも常駐の集合に入る」)
+#
+# **CI では有効にしない。** CI の実行環境の GPU はこの世代のコマンド構造に対応して
+# おらず、そこでは検証レイヤが「使えるか」の判定 (RenderDevice.isAvailable が試す
+# makeMTL4CommandQueue) そのものを表明で落とし、**検査が 1 件も走らないまま止まる**。
+# 描画の検査はどのみち CI では 1 本も走らない (ADR-0019 決定 7) ので、検証レイヤが
+# 意味を持つのは描画が実際に走る手元だけである
+METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1)
+
 test:
 	@mkdir -p .build
-	set -o pipefail; MTL_DEBUG_LAYER=1 swift test 2>&1 | tee .build/test-log.txt
+	set -o pipefail; env $(METAL_VALIDATION) swift test 2>&1 | tee .build/test-log.txt
 
 # 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
 # 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは
