@@ -54,7 +54,21 @@ public final class RenderTarget {
     /// 1 行あたりのバイト数。整列の要求を満たすため、幅ぶんより広いことがある。
     let bytesPerRow: Int
 
-    private let gpu: RenderDevice
+    let gpu: RenderDevice
+
+    /// 出力段を通した絵の置き場。**頼まれてはじめて作り、以後は使い回す。**
+    ///
+    /// 出口が 1 つも無いスケッチはここで 1 バイトも払わない (観測が無ければ
+    /// 払わないのと同じ作法)。使い回すのは [ADR-0023] 決定 5 による。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    var encodedStorage: EncodedImage?
+    /// 出力段を通すパイプライン。同じく頼まれてはじめて作る。
+    var outputPassStorage: OutputPass?
+
+    /// 出力段を通した絵を取り出した回数。**置き場を作り直していないこと**を
+    /// 検査から数えるための目印 (作った枚数は `encodedStorage` の有無で分かる)。
+    var encodedImagesMade = 0
 
     /// 指定した大きさの描画先を確保する。
     public init(gpu: RenderDevice, width: Int, height: Int) throws(RenderFailure) {
