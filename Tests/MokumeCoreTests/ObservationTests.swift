@@ -27,6 +27,22 @@ struct ObservationTests {
         }
     }
 
+    /// フレームごとに四角が右へ動く。**動きを観測できているか**を見るため。
+    final class Drifting: Sketch {
+        init() {}
+        /// `draw()` が呼ばれた回数。撮っているあいだもフレームループが進んでいることを
+        /// 数えるために持つ。
+        private(set) var draws = 0
+        var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
+        func draw() {
+            draws += 1
+            background(.display(red: 0, green: 0, blue: 0))
+            fill(.display(red: 1, green: 1, blue: 1))
+            rect(Float(frameCount % 20), 8, 8, 8)
+            expose("frame", frameCount)
+        }
+    }
+
     /// 一様に塗るだけ。
     final class Flat: Sketch {
         init() {}
@@ -41,11 +57,19 @@ struct ObservationTests {
         return directory
     }
 
-    private func request(id: String, scale: Double? = nil, in facet: URL) throws {
+    private func request(
+        id: String, scale: Double? = nil, count: Int? = nil, every: Int? = nil, in facet: URL
+    ) throws {
         var body = #"{"id":"\#(id)""#
         if let scale { body += ",\"scale\":\(scale)" }
+        if let count { body += ",\"count\":\(count)" }
+        if let every { body += ",\"every\":\(every)" }
         body += "}"
         try AtomicFile.write(Data(body.utf8), to: facet.appendingPathComponent("request.json"))
+    }
+
+    private func frames(in facet: URL) throws -> [[String: Any]] {
+        try readReport(in: facet)["frames"] as? [[String: Any]] ?? []
     }
 
     private func readReport(in facet: URL) throws -> [String: Any] {
@@ -75,10 +99,10 @@ struct ObservationTests {
         #expect(report["id"] as? String == "a1")
         #expect(report["frame"] as? Int == 3)
         #expect((report["size"] as? [String: Any])?["width"] as? Int == 32)
-        #expect(report["image"] as? String == "frame.png")
+        #expect(report["image"] as? String == "frame-000.png")
         #expect(
             FileManager.default.fileExists(
-                atPath: facet.appendingPathComponent("frame.png").path))
+                atPath: facet.appendingPathComponent("frame-000.png").path))
     }
 
     @Test("差し出した値が、その絵と同じ応答に載る")
@@ -115,7 +139,7 @@ struct ObservationTests {
         // 止めた時点の絵をそのまま返す。観測がフレーム番号を動かさない
         #expect(report["frame"] as? Int == 2)
         #expect(runtime.frameCount == 2)
-        #expect(report["image"] as? String == "frame.png")
+        #expect(report["image"] as? String == "frame-000.png")
     }
 
     @Test("まだ 1 枚も描いていなければ、1 枚描いてから応える")
@@ -132,7 +156,7 @@ struct ObservationTests {
         #expect(report["frame"] as? Int == 1)
         #expect(
             FileManager.default.fileExists(
-                atPath: facet.appendingPathComponent("frame.png").path))
+                atPath: facet.appendingPathComponent("frame-000.png").path))
     }
 
     @Test("絵の要約が、実際に描かれたものを映す")
@@ -211,7 +235,7 @@ struct ObservationTests {
     func answersEvenWhenTheFrameCouldNotBeDrawn() throws {
         let facet = try makeFacet()
         let runtime = try makeRuntime(Corner(), facet: facet)
-        let image = facet.appendingPathComponent("frame.png")
+        let image = facet.appendingPathComponent("frame-000.png")
 
         // 先に 1 枚撮っておく。前回の絵が残っている状態から失敗させる
         try runtime.advance()
@@ -272,5 +296,215 @@ struct ObservationTests {
             as? [String: Any]
         #expect(inputReport?["id"] as? String == "i1")
         #expect(try readReport(in: observeFacet)["id"] as? String == "o1")
+    }
+
+    // MARK: - 動きを続けて観測する (#387)
+
+    @Test("1 枚だけ頼んでも、目録は 1 要素の並びとして在る")
+    func alwaysCarriesAnIndexEvenForASingleFrame() throws {
+        // 枚数で応答の形が変わると、読み手はまず形を見分けるところから始めることになる
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Corner(), facet: facet)
+        try request(id: "a1", in: facet)
+        try runtime.advance()
+
+        let listed = try frames(in: facet)
+        #expect(listed.count == 1)
+        #expect(listed.first?["image"] as? String == "frame-000.png")
+        let top = try readReport(in: facet)["frame"] as? Int
+        #expect(listed.first?["frame"] as? Int == top)
+    }
+
+    @Test("続けて撮ると、宣言した枚数の絵と目録が返る")
+    func capturesTheDeclaredNumberOfFrames() throws {
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Drifting(), facet: facet)
+        try runtime.advance()
+
+        try request(id: "a1", count: 4, every: 2, in: facet)
+        // 頼んだ列が返るまで進める。届いた時点で止める
+        for _ in 0..<16 where (try? readReport(in: facet)["id"] as? String) != "a1" {
+            try runtime.advance()
+        }
+
+        let report = try readReport(in: facet)
+        #expect(report["id"] as? String == "a1")
+        let listed = try frames(in: facet)
+        #expect(listed.count == 4)
+
+        // 名前は撮った順、絵は全部そこに在る
+        #expect(
+            listed.compactMap { $0["image"] as? String }
+                == ["frame-000.png", "frame-001.png", "frame-002.png", "frame-003.png"])
+        for name in listed.compactMap({ $0["image"] as? String }) {
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: facet.appendingPathComponent(name).path))
+        }
+
+        // フレーム番号が間隔どおりに並ぶ
+        let numbers = listed.compactMap { $0["frame"] as? Int }
+        #expect(numbers.count == 4)
+        #expect(zip(numbers, numbers.dropFirst()).allSatisfy { $1 - $0 == 2 })
+
+        // 上の階は最後の 1 枚を指す
+        #expect(report["image"] as? String == "frame-003.png")
+        #expect(report["frame"] as? Int == numbers.last)
+    }
+
+    @Test("撮っているあいだも、フレームは進み続ける")
+    func keepsTheFrameLoopRunningWhileCapturing() throws {
+        // 止めてから撮ると、測っている対象そのものが変わる
+        let sketch = Drifting()
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(sketch, facet: facet)
+        try runtime.advance()
+        let before = sketch.draws
+
+        try request(id: "a1", count: 5, every: 3, in: facet)
+        var advances = 0
+        while (try? readReport(in: facet)["id"] as? String) != "a1", advances < 40 {
+            try runtime.advance()
+            advances += 1
+        }
+
+        #expect(try readReport(in: facet)["id"] as? String == "a1")
+        // 進めた回数ぶん、ちょうど描かれている — 1 回でも間引かれていたら合わない
+        #expect(sketch.draws - before == advances)
+
+        // 絵の中身も動いている。数字だけで判定できることが目録の値打ち
+        let bounds = try frames(in: facet).compactMap {
+            ($0["stats"] as? [String: Any])?["contentBounds"] as? [String: Any]
+        }
+        #expect(bounds.count == 5)
+        #expect(Set(bounds.compactMap { $0["x"] as? Double }).count > 1)
+    }
+
+    @Test("フレームごとの値が、その絵と同じ行に載る")
+    func carriesPerFrameValuesInTheIndex() throws {
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Drifting(), facet: facet)
+        try request(id: "a1", count: 3, in: facet)
+        for _ in 0..<8 where (try? readReport(in: facet)["id"] as? String) != "a1" {
+            try runtime.advance()
+        }
+
+        let exposed = try frames(in: facet).compactMap {
+            (($0["values"] as? [String: Any])?["frame"] as? [String: Any])?["value"] as? Int
+        }
+        #expect(exposed.count == 3)
+        // 差し出した値も動いている。絵を開かずに「進んだ」と言える
+        #expect(exposed == exposed.sorted())
+        #expect(Set(exposed).count == 3)
+        // その行の絵を描いたフレームと同じ番号になっている
+        let captured = try frames(in: facet).compactMap { $0["frame"] as? Int }
+        #expect(exposed == captured)
+    }
+
+    @Test("上限を超えて頼むと、切り詰めたことが応答に出る")
+    func saysSoWhenItTrimsAnOversizedRequest() throws {
+        // **黙って切らない。** 切ったことが応答から読めないと、読み手は「動きが途中で
+        // 止まった」と「上限で切られた」を区別できない (切る規則そのものは
+        // ObservationProtocolTests の純粋な検査が見る)
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Flat(), facet: facet)
+        try request(id: "a1", count: 1, every: 1_000, in: facet)
+        try runtime.advance()
+
+        #expect(try readReport(in: facet)["id"] as? String == "a1")
+        let warnings = try readReport(in: facet)["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.contains("1000") && $0.contains("60") })
+    }
+
+    @Test("撮っている途中で描けなくなったら、そこまでを残して打ち切る")
+    func stopsTheCaptureWhenTheFrameFails() throws {
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Drifting(), facet: facet)
+        try runtime.advance()
+
+        try request(id: "a1", count: 6, every: 1, in: facet)
+        try runtime.advance()
+        try runtime.advance()
+        runtime.canvas.failureForTesting = .timedOut(seconds: 5)
+        #expect(throws: RenderFailure.self) { try runtime.advance() }
+
+        let report = try readReport(in: facet)
+        #expect(report["id"] as? String == "a1")
+        // 揃わなかったので image は落とす — 読み手はこの鍵の有無だけで成否を言える
+        #expect(report["image"] as? String == nil)
+        #expect((report["warnings"] as? [String])?.isEmpty == false)
+        // そこまでに撮れた絵は目録に残る。数が宣言と合わないことで途中だと分かる
+        let listed = try frames(in: facet)
+        #expect(!listed.isEmpty)
+        #expect(listed.count < 6)
+    }
+
+    @Test("進んでいないあいだに撮ると、そのことわりが出る")
+    func warnsWhenTheSameFrameRepeats() throws {
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Drifting(), facet: facet)
+        try runtime.advance()
+        runtime.pause()
+
+        try request(id: "a1", count: 3, in: facet)
+        for _ in 0..<8 where (try? readReport(in: facet)["id"] as? String) != "a1" {
+            try runtime.advance()
+        }
+
+        let numbers = try frames(in: facet).compactMap { $0["frame"] as? Int }
+        #expect(numbers.count == 3)
+        #expect(Set(numbers).count == 1)
+        let warnings = try readReport(in: facet)["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.contains("同じフレーム") })
+    }
+
+    @Test("撮っているあいだは、次の要求を拾わない")
+    func ignoresANewRequestUntilTheCaptureEnds() throws {
+        // 拾うと 2 つの列が同じ区画へ混ざり、どちらの目録も数が合わなくなる
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Drifting(), facet: facet)
+        try runtime.advance()
+
+        try request(id: "a1", count: 4, every: 2, in: facet)
+        try runtime.advance()
+        try request(id: "a2", count: 2, in: facet)
+
+        var advances = 0
+        while (try? readReport(in: facet)["id"] as? String) != "a1", advances < 20 {
+            try runtime.advance()
+            advances += 1
+        }
+        #expect(try frames(in: facet).count == 4)
+        // 割り込んだ要求は捨てられず、列が終わってから応えられる
+        advances = 0
+        while (try? readReport(in: facet)["id"] as? String) != "a2", advances < 20 {
+            try runtime.advance()
+            advances += 1
+        }
+        #expect(try readReport(in: facet)["id"] as? String == "a2")
+        #expect(try frames(in: facet).count == 2)
+    }
+
+    @Test("新しい列を撮り始めると、前の列の絵が残らない")
+    func leavesNoImagesFromThePreviousCapture() throws {
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Drifting(), facet: facet)
+        try request(id: "a1", count: 5, in: facet)
+        for _ in 0..<12 where (try? readReport(in: facet)["id"] as? String) != "a1" {
+            try runtime.advance()
+        }
+        #expect(try frames(in: facet).count == 5)
+
+        try request(id: "a2", count: 2, in: facet)
+        for _ in 0..<8 where (try? readReport(in: facet)["id"] as? String) != "a2" {
+            try runtime.advance()
+        }
+
+        // 目録は 2 枚。区画に残っている絵も 2 枚 — 3 枚目以降が残っていると、
+        // 目録を読まずに覗いた人が前の列と取り違える
+        #expect(try frames(in: facet).count == 2)
+        let left = try FileManager.default.contentsOfDirectory(atPath: facet.path)
+            .filter { $0.hasPrefix("frame-") }
+        #expect(left.sorted() == ["frame-000.png", "frame-001.png"])
     }
 }

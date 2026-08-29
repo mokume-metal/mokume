@@ -53,6 +53,8 @@ public final class SketchRuntime {
     var randomness = Randomness()
     /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
     private var exposedValues: [String: ExposedValue] = [:]
+    /// 続けて撮っている最中の列。撮り終えるまで次の要求を拾わない。
+    private var capture: FrameCapture?
     /// 直近のフレームの間隔 (秒)。観測が無ければ測らない。
     private var frameIntervals: [Double] = []
     private var previousFrameStart: Double?
@@ -229,9 +231,17 @@ public final class SketchRuntime {
     /// 例外は「まだ 1 枚も描いていない」ときだけで、そのときは 1 枚描いてから応える。
     /// 最初の 1 枚は観測の有無によらず必ず描かれるものなので、再現性は損なわれない。
     ///
+    /// **列を撮っている間は次の要求を拾わない。** 拾うと 2 つの列が同じ区画へ混ざり、
+    /// どちらの目録も数が合わなくなる。
+    ///
     /// - Parameter drawFailure: このフレームの描画が失敗していれば、その理由。
     private func serveObservationIfRequested(drawFailure: RenderFailure? = nil) {
-        guard let observer, let request = observer.pendingRequest() else { return }
+        guard let observer else { return }
+        if capture != nil {
+            continueCapture(through: observer, drawFailure: drawFailure)
+            return
+        }
+        guard let request = observer.pendingRequest() else { return }
         if drawFailure == nil, timing.frameCount == 0 {
             start()
             timing.advance()
@@ -239,69 +249,143 @@ public final class SketchRuntime {
             receiveInput()
             try? canvas.draw { withActiveRuntime { sketch.draw() } }
         }
-        respond(to: request, through: observer, drawFailure: drawFailure)
+        beginCapture(for: request, through: observer, drawFailure: drawFailure)
     }
 
-    private func respond(
-        to request: ObservationRequest, through observer: FrameObserver,
-        drawFailure: RenderFailure? = nil
+    /// 列を撮り始める。1 枚だけの要求も同じ道を通る。
+    ///
+    /// 枚数で道が分かれると、めったに通らない側だけが腐る。1 枚は「1 枚で終わる列」
+    /// として扱い、撮る・目録を書くの手順を 1 本に保つ。
+    private func beginCapture(
+        for request: ObservationRequest, through observer: FrameObserver,
+        drawFailure: RenderFailure?
     ) {
-        let size = ObservationReport.Size(width: target.width, height: target.height)
-        let values = exposedValues.isEmpty ? nil : exposedValues
+        let limits = request.clamped()
+        // 前回の成果物は**撮り始める前に**消す。新しい識別子の目録と古い絵が
+        // 組にされると、読み手は古い絵を新しいと信じる (ADR-0018 決定 3)
+        observer.clearProducts()
 
         // 描画に失敗したフレームでは描画先の中身が信用できないので、**絵は採りに
-        // 行かない**。前回の絵は `image: nil` の応答が先に消すので、読み手が古い絵を
-        // 新しいと信じることもない (ADR-0018 決定 3)
+        // 行かない**。目録は空のまま、理由を載せて返す
         if let drawFailure {
-            try? observer.respond(
-                ObservationReport(
-                    id: request.id,
-                    image: nil,
-                    frame: timing.frameCount,
-                    time: Double(timing.time),
-                    size: size,
-                    warnings: ["このフレームの描画に失敗しました: \(drawFailure)"],
-                    load: RuntimeLoad.sample(frameDurations: frameIntervals),
-                    values: values,
-                    stamp: SourceStamp.current),
-                image: nil)
+            finish(
+                id: request.id, through: observer, frames: [], complete: false,
+                warnings: limits.warnings + ["このフレームの描画に失敗しました: \(drawFailure)"])
+            return
+        }
+        capture = FrameCapture(
+            id: request.id, scale: request.scale, count: limits.count, every: limits.every,
+            warnings: limits.warnings)
+        continueCapture(through: observer, drawFailure: nil)
+    }
+
+    /// 撮っている列を 1 フレームぶん進める。
+    ///
+    /// **フレームループは止めない。** 撮り終わるまで待つあいだもスケッチは描き続ける —
+    /// 止めてから撮ると、測っている対象そのものが変わってしまう。
+    private func continueCapture(through observer: FrameObserver, drawFailure: RenderFailure?) {
+        guard var pending = capture else { return }
+
+        if let drawFailure {
+            // 途中で描けなくなったら、そこまでの絵は目録に残したまま打ち切る。
+            // 絵が揃っていないことは「宣言した数と合わない」で読み手に伝わる
+            capture = nil
+            finish(
+                id: pending.id, through: observer, frames: pending.frames, complete: false,
+                warnings: pending.warnings + ["このフレームの描画に失敗しました: \(drawFailure)"])
+            return
+        }
+
+        guard pending.wait == 0 else {
+            pending.wait -= 1
+            capture = pending
             return
         }
 
         do {
-            let image = try target.encodeForDisplay(scale: request.scale)
-            // 描けてはいるが直っていないもの (組み立てに失敗した断片など) は、
-            // 応答の警告として出す。**絵が出ているぶん、これが無いと気付けない**
-            let failures = canvas.shaderFailures
-            try observer.respond(
-                ObservationReport(
-                    id: request.id,
-                    image: FrameObserver.imageFileName,
+            let image = try target.encodeForDisplay(scale: pending.scale)
+            let name = try observer.writeFrame(image, at: pending.frames.count)
+            pending.frames.append(
+                ObservationReport.CapturedFrame(
+                    image: name,
                     frame: timing.frameCount,
                     time: Double(timing.time),
-                    size: size,
-                    warnings: failures,
                     stats: FrameStats.summarize(image),
-                    load: RuntimeLoad.sample(frameDurations: frameIntervals),
-                    values: values,
-                    stamp: SourceStamp.current),
-                image: image)
+                    values: exposedValues.isEmpty ? nil : exposedValues))
         } catch {
             // 採れなくても黙らない。読み手が「まだか / 失敗か / 死んだか」を
             // 区別できるようにするため (ADR-0018 決定 3)
-            try? observer.respond(
-                ObservationReport(
-                    id: request.id,
-                    image: nil,
-                    frame: timing.frameCount,
-                    time: Double(timing.time),
-                    size: size,
-                    warnings: ["絵を採れませんでした: \(error)"],
-                    load: RuntimeLoad.sample(frameDurations: frameIntervals),
-                    values: values,
-                    stamp: SourceStamp.current),
-                image: nil)
+            capture = nil
+            finish(
+                id: pending.id, through: observer, frames: pending.frames, complete: false,
+                warnings: pending.warnings + ["絵を採れませんでした: \(error)"])
+            return
         }
+
+        guard pending.frames.count < pending.count else {
+            capture = nil
+            // 描けてはいるが直っていないもの (組み立てに失敗した断片など) は、
+            // 目録の警告として出す。**絵が出ているぶん、これが無いと気付けない**
+            finish(
+                id: pending.id, through: observer, frames: pending.frames, complete: true,
+                warnings: pending.warnings + canvas.shaderFailures
+                    + Self.repetitionWarnings(pending.frames))
+            return
+        }
+        pending.wait = pending.every - 1
+        capture = pending
+    }
+
+    /// 目録を書いて、この要求を終える。
+    ///
+    /// 上の階の `image` / `frame` / `time` / `stats` は**最後に撮った 1 枚**を指す。
+    /// 揃わなかったときは `image` を落とす — 読み手はこの鍵の有無だけで成否を言える。
+    private func finish(
+        id: String, through observer: FrameObserver,
+        frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String]
+    ) {
+        let last = complete ? frames.last : nil
+        try? observer.finish(
+            ObservationReport(
+                id: id,
+                image: last?.image,
+                frame: timing.frameCount,
+                time: Double(timing.time),
+                size: ObservationReport.Size(width: target.width, height: target.height),
+                warnings: warnings,
+                stats: last?.stats,
+                load: RuntimeLoad.sample(frameDurations: frameIntervals),
+                values: exposedValues.isEmpty ? nil : exposedValues,
+                stamp: SourceStamp.current,
+                frames: frames))
+    }
+
+    /// 同じフレームが並んでいたら、そのことわり。
+    ///
+    /// 止めているあいだに列を頼むと、同じ絵が枚数ぶん並ぶ。**それは応答としては正しい**
+    /// (画面に出ているのはその絵である) が、動きを見たい読み手には見分けが付かない。
+    /// フレーム番号という事実から導けるので、止まっているかどうかの旗を見に行かない。
+    private static func repetitionWarnings(_ frames: [ObservationReport.CapturedFrame]) -> [String]
+    {
+        let numbers = frames.map(\.frame)
+        guard numbers.count > 1, Set(numbers).count < numbers.count else { return [] }
+        return ["同じフレームが並んでいます (進んでいないあいだに撮ると、絵は動きません)"]
+    }
+
+    /// 撮っている最中の列。
+    private struct FrameCapture {
+        let id: String
+        let scale: Double
+        /// 撮る枚数 (上限で切った後)。
+        let count: Int
+        /// 何フレームおきに撮るか (上限で切った後)。
+        let every: Int
+        /// 目録に載せることわり。切り詰めたことなど、撮り始める前に決まるもの。
+        var warnings: [String]
+        /// ここまでに撮れた絵。
+        var frames: [ObservationReport.CapturedFrame] = []
+        /// 次に撮るまで残っているフレーム数。0 ならこのフレームで撮る。
+        var wait = 0
     }
 
     /// いま走っているランタイムとして自分を差し込んでから `body` を実行する。

@@ -15,10 +15,12 @@ import Foundation
 struct Facets {
     /// 見に行く間隔。
     static let pollInterval: TimeInterval = 0.05
+    /// 走っているスケッチを待つ既定の上限。
+    static let defaultWaitLimit: TimeInterval = 5
 
     let directory: URL
     /// 走っているスケッチを待つ上限。検査からは短くする。
-    var waitLimit: TimeInterval = 5
+    var waitLimit: TimeInterval = defaultWaitLimit
 
     var observeFacet: URL { directory.appendingPathComponent(".mokume/observe", isDirectory: true) }
     var inputFacet: URL { directory.appendingPathComponent(".mokume/input", isDirectory: true) }
@@ -27,11 +29,15 @@ struct Facets {
     /// 要求を置き、同じ識別子の応答が返るまで待つ。
     ///
     /// - Returns: 応答。誰も応えなければ `nil`。
+    /// - Parameter extraWait: 応答が返るまでにフレームが何枚も進む要求 (続けて撮る観測
+    ///   など) で、``waitLimit`` に**足す**ぶん。上書きではなく加算にしてある —
+    ///   上書きにすると、検査が短く設定した上限を呼ぶ側が知らずに戻してしまう。
     func exchange(
-        facet: URL, request: [String: Any], id: String,
+        facet: URL, request: [String: Any], id: String, extraWait: TimeInterval = 0,
         sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
         now: () -> Date = { Date() }
     ) throws -> [String: Any]? {
+        let waitLimit = self.waitLimit + max(0, extraWait)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         let reportURL = facet.appendingPathComponent("report.json")
         let data = try JSONSerialization.data(withJSONObject: request)

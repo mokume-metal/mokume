@@ -63,7 +63,7 @@ struct ObservationProtocolTests {
         #expect(first?.id == "a1")
         #expect(first?.scale == 1)
 
-        try observer.respond(report(id: "a1", image: "frame.png"), image: nil)
+        try observer.finish(report(id: "a1", image: "frame-000.png"))
 
         // **同じ内容を置き直しても** (最終更新時刻は変わる) 応えた識別子なら処理しない。
         // 置き直さずに確かめると、最終更新時刻の判定だけで nil になってしまい、
@@ -98,7 +98,7 @@ struct ObservationProtocolTests {
     func writesTheReportAtomically() throws {
         let facet = try makeFacet()
         let observer = FrameObserver(directory: facet)
-        try observer.respond(report(id: "a1", image: nil), image: nil)
+        try observer.finish(report(id: "a1", image: nil))
 
         let names = try FileManager.default.contentsOfDirectory(atPath: facet.path)
         #expect(names.contains("report.json"))
@@ -110,22 +110,65 @@ struct ObservationProtocolTests {
         #expect(decoded?["schemaVersion"] as? Int == 1)
     }
 
-    @Test("採れなかったときは、前の絵を消してから応答する")
-    func clearsTheStaleImageOnFailure() throws {
+    @Test("撮り始める前に、前回の目録と絵が消えている")
+    func clearsTheStaleProductsBeforeCapturing() throws {
         let facet = try makeFacet()
         let observer = FrameObserver(directory: facet)
-        let image = facet.appendingPathComponent("frame.png")
-        try Data("古い絵".utf8).write(to: image)
+        let stale = ["frame-000.png", "frame-001.png"].map(facet.appendingPathComponent)
+        for url in stale { try Data("古い絵".utf8).write(to: url) }
+        try observer.finish(report(id: "a1", image: "frame-000.png"))
 
-        try observer.respond(
-            report(id: "a2", image: nil, warnings: ["絵を採れませんでした"]), image: nil)
+        observer.clearProducts()
 
-        // 新しい識別子の応答と古い絵を、読み手が組にできない状態にする
-        #expect(!FileManager.default.fileExists(atPath: image.path))
-        let written = try Data(contentsOf: facet.appendingPathComponent("report.json"))
-        let decoded = try JSONSerialization.jsonObject(with: written) as? [String: Any]
-        #expect(decoded?["image"] == nil)
-        #expect((decoded?["warnings"] as? [String])?.isEmpty == false)
+        // 新しい識別子の目録と古い絵を、読み手が組にできない状態にする
+        for url in stale { #expect(!FileManager.default.fileExists(atPath: url.path)) }
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: facet.appendingPathComponent("report.json").path))
+    }
+
+    @Test("消すのは目録が先で、絵は後")
+    func removesTheIndexBeforeTheImagesItPointsAt() throws {
+        // 逆順だと、古い目録が指す絵だけが消えた状態を読み手が掴む窓が空く
+        let facet = try makeFacet()
+        let observer = FrameObserver(directory: facet)
+        for name in ["frame-000.png", "frame-001.png"] {
+            try Data("古い絵".utf8).write(to: facet.appendingPathComponent(name))
+        }
+        try observer.finish(report(id: "a1", image: "frame-000.png"))
+
+        let removed = observer.clearProducts().map(\.lastPathComponent)
+
+        #expect(removed == ["report.json", "frame-000.png", "frame-001.png"])
+    }
+
+    @Test("撮る枚数と間隔は、上限で切ったことが分かる形で切られる")
+    func clampsTheCountAndIntervalOutLoud() {
+        let asked = ObservationRequest(id: "a1", count: 5_000, every: 600)
+        let limits = asked.clamped()
+        #expect(limits.count == ObservationRequest.maximumCount)
+        #expect(limits.every == ObservationRequest.maximumEvery)
+        // **黙って切らない。** 頼んだ枚数と返った枚数の食い違いが応答から読めないと、
+        // 読み手は「動きが途中で止まった」と「上限で切られた」を区別できない
+        #expect(limits.warnings.count == 2)
+        #expect(limits.warnings.allSatisfy { $0.contains("5000") || $0.contains("600") })
+
+        // 収まっている要求は素通し。ことわりも足さない
+        let modest = ObservationRequest(id: "a2", count: 8, every: 3).clamped()
+        #expect((modest.count, modest.every) == (8, 3))
+        #expect(modest.warnings.isEmpty)
+
+        // 0 や負の数を置かれても 1 枚以上・1 フレーム以上に寄せる (スキーマは
+        // 弾くが、実装は書き手がスキーマを守ったことを当てにしない)
+        let absurd = ObservationRequest(id: "a3", count: 0, every: -4).clamped()
+        #expect((absurd.count, absurd.every) == (1, 1))
+    }
+
+    @Test("撮った絵の名前は、名前順が撮った順になる")
+    func namesTheImagesInCaptureOrder() {
+        let names = (0..<12).map(FrameObserver.imageFileName(at:))
+        #expect(names.first == "frame-000.png")
+        #expect(names == names.sorted())
     }
 
     @Test("応答の鍵が、正典に置いた代表例と一致する")
@@ -201,7 +244,7 @@ struct ObservationProtocolTests {
             let id = "r\(index)"
             try write(request: #"{"id":"\#(id)"}"#, to: facet)
             guard let request = observer.pendingRequest() else { continue }
-            try observer.respond(report(id: request.id, image: nil), image: nil)
+            try observer.finish(report(id: request.id, image: nil))
             answered.append(request.id)
         }
 
@@ -218,7 +261,7 @@ struct ObservationProtocolTests {
         // 書き込み先を塞ぐ。応答は書けないが、応えようとしたことは残る
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: facet.path)
         #expect(throws: (any Error).self) {
-            try observer.respond(report(id: "a1", image: nil), image: nil)
+            try observer.finish(report(id: "a1", image: nil))
         }
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: facet.path)
 

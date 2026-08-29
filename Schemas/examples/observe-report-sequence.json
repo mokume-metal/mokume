@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "id": "8f2b1e",
+  "image": "frame-002.png",
+  "frame": 134,
+  "time": 2.2333333333333334,
+  "size": {
+    "width": 800,
+    "height": 600
+  },
+  "warnings": [],
+  "stats": {
+    "meanColor": [
+      0.14,
+      0.15000000000000002,
+      0.18000000000000002
+    ],
+    "meanLuminance": 0.14,
+    "contentFraction": 0.08,
+    "contentBounds": {
+      "x": 0.52,
+      "y": 0.35,
+      "width": 0.22,
+      "height": 0.3
+    },
+    "sampleGrid": {
+      "width": 64,
+      "height": 48
+    }
+  },
+  "load": {
+    "frameRate": 59.94,
+    "frameTimeMs": {
+      "mean": 16.68,
+      "max": 18.2
+    },
+    "memoryMB": 84.5,
+    "thermalState": "nominal"
+  },
+  "values": {
+    "angle": {
+      "type": "float",
+      "value": 1.361
+    }
+  },
+  "stamp": "b3f1a20c",
+  "frames": [
+    {
+      "image": "frame-000.png",
+      "frame": 130,
+      "time": 2.1666666666666665,
+      "stats": {
+        "meanColor": [
+          0.12,
+          0.13,
+          0.16
+        ],
+        "meanLuminance": 0.12,
+        "contentFraction": 0.08,
+        "contentBounds": {
+          "x": 0.4,
+          "y": 0.35,
+          "width": 0.22,
+          "height": 0.3
+        },
+        "sampleGrid": {
+          "width": 64,
+          "height": 48
+        }
+      },
+      "values": {
+        "angle": {
+          "type": "float",
+          "value": 1.047
+        }
+      }
+    },
+    {
+      "image": "frame-001.png",
+      "frame": 132,
+      "time": 2.2,
+      "stats": {
+        "meanColor": [
+          0.13,
+          0.14,
+          0.17
+        ],
+        "meanLuminance": 0.13,
+        "contentFraction": 0.08,
+        "contentBounds": {
+          "x": 0.46,
+          "y": 0.35,
+          "width": 0.22,
+          "height": 0.3
+        },
+        "sampleGrid": {
+          "width": 64,
+          "height": 48
+        }
+      },
+      "values": {
+        "angle": {
+          "type": "float",
+          "value": 1.204
+        }
+      }
+    },
+    {
+      "image": "frame-002.png",
+      "frame": 134,
+      "time": 2.2333333333333334,
+      "stats": {
+        "meanColor": [
+          0.14,
+          0.15000000000000002,
+          0.18000000000000002
+        ],
+        "meanLuminance": 0.14,
+        "contentFraction": 0.08,
+        "contentBounds": {
+          "x": 0.52,
+          "y": 0.35,
+          "width": 0.22,
+          "height": 0.3
+        },
+        "sampleGrid": {
+          "width": 64,
+          "height": 48
+        }
+      },
+      "values": {
+        "angle": {
+          "type": "float",
+          "value": 1.361
+        }
+      }
+    }
+  ]
+}
