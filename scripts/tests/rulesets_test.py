@@ -35,8 +35,13 @@ DEFS = REPO / ".github" / "rulesets"
 #   gh api repos/X/rulesets --jq '.[] | "(name)(id)"' → name<TAB>id
 #   gh api repos/X/rulesets/<id>                     → その JSON
 #   gh api -X PUT|POST ... --input <f>               → FAKE_LIVE_DIR を書き換える
+#
+# main 側 (#311 の鮮度判定が引く 2 本) は環境変数で差し替える。どちらも未設定なら
+# 引けなかったものとして落とす — 「判定できなかった」経路もこれで再現できる。
+#   gh api repos/X/contents/.github/rulesets?ref=main → FAKE_MAIN_DEFS_DIR の name<TAB>blob SHA
+#   gh api repos/X/commits?path=...&sha=main          → FAKE_MAIN_RULESET_COMMIT
 FAKE_GH = r'''#!/usr/bin/env python3
-import json, os, pathlib, sys
+import hashlib, json, os, pathlib, sys
 
 args = sys.argv[1:]
 joined = " ".join(args)
@@ -47,6 +52,24 @@ live = pathlib.Path(os.environ["FAKE_LIVE_DIR"])
 files = sorted(live.glob("*.json"))
 
 endpoint = next((a for a in args if a.startswith("repos/")), "")
+
+if "/contents/" in endpoint:
+    defs = os.environ.get("FAKE_MAIN_DEFS_DIR")
+    if not defs:
+        sys.exit(1)
+    for f in sorted(pathlib.Path(defs).glob("*.json")):
+        blob = f.read_bytes()
+        # git の blob SHA。contents API の .sha はこれと同じものを返す
+        sha = hashlib.sha1(b"blob %d\0" % len(blob) + blob).hexdigest()
+        print(f"{f.name}\t{sha}")
+    sys.exit(0)
+
+if "/commits?" in endpoint:
+    sha = os.environ.get("FAKE_MAIN_RULESET_COMMIT")
+    if not sha:
+        sys.exit(1)
+    print(sha)
+    sys.exit(0)
 
 if "PUT" in args or "POST" in args:
     src = pathlib.Path(args[args.index("--input") + 1])
@@ -294,6 +317,9 @@ class ScriptTest(unittest.TestCase):
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
                 "FAKE_GH_LOG": str(self.log),
                 "FAKE_LIVE_DIR": str(self.live),
+                # 鮮度判定 (#311) の材料。ここでは本物のリポジトリで走るので、
+                # main の定義 = 手元の定義とみなして静かに通す
+                "FAKE_MAIN_DEFS_DIR": str(DEFS),
                 "GITHUB_REPOSITORY": "mokume-metal/mokume",
             }
         )
@@ -345,6 +371,181 @@ class ScriptTest(unittest.TestCase):
         r = run(["/bin/bash", str(APPLY), "--apply"], env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("PUT", self.calls())
+
+
+class FreshnessTest(unittest.TestCase):
+    """照合の結果が「どの版の定義について」のものかを名乗るか (#311)。
+
+    照合するのは手元にチェックアウトされている定義なので、古い版のツリーから打つと
+    **古い定義と古い実設定が一致して緑になる**。ここで固定したいのは三つ:
+
+      1. わざと古いツリーで打つと、緑のまま「古い」と名乗る (Issue の完了条件 3)
+      2. 名乗りは照合の結果より先に出る (後から読ませると緑が先に目に入る)
+      3. 定義を編集している最中の作業ブランチを「古い」と言わない
+
+    そのために**本物の git リポジトリを一時的に作る** — 古いツリーは git の状態でしか
+    表現できず、偽物で置き換えると再現したい事象そのものが消える。main 側は偽 gh が
+    返すので、ネットワークも認証も要らない。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+
+        # 定義の 2 世代。merge queue の並列ビルド上限だけが違う
+        self.old_defs = self.make_defs(root / "old-defs", 4)
+        self.new_defs = self.make_defs(root / "new-defs", 6)
+
+        self.repo = root / "repo"
+        (self.repo / "scripts").mkdir(parents=True)
+        self.defs = self.repo / ".github" / "rulesets"
+        self.defs.mkdir(parents=True)
+        for src in (CHECK, LIB):
+            shutil.copy(src, self.repo / "scripts" / src.name)
+
+        self.git("init", "-q")
+        self.put_defs(self.old_defs)
+        self.old = self.commit("古い定義")
+        self.put_defs(self.new_defs)
+        self.new = self.commit("新しい定義 (main)")
+
+        self.live = root / "live"
+        self.live.mkdir()
+        self.set_live(self.new_defs)
+
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        gh.write_text(FAKE_GH)
+        gh.chmod(0o755)
+
+        self.env = dict(os.environ)
+        self.env.update(
+            {
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "FAKE_GH_LOG": str(root / "gh.log"),
+                "FAKE_LIVE_DIR": str(self.live),
+                "FAKE_MAIN_DEFS_DIR": str(self.new_defs),
+                "FAKE_MAIN_RULESET_COMMIT": self.new,
+                "GITHUB_REPOSITORY": "mokume-metal/mokume",
+            }
+        )
+
+    @staticmethod
+    def make_defs(dst, entries):
+        """本物の定義を写し、1 項目だけ動かした世代を作る。"""
+        dst.mkdir()
+        for f in DEFS.glob("*.json"):
+            body = json.loads(f.read_text())
+            for rule in body.get("rules", []):
+                if rule["type"] == "merge_queue":
+                    rule["parameters"]["max_entries_to_build"] = entries
+            (dst / f.name).write_text(
+                json.dumps(body, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+            )
+        return dst
+
+    def git(self, *args):
+        env = dict(os.environ)
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@example.invalid",
+            }
+        )
+        r = subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "commit.gpgsign=false", *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        )
+        return r.stdout.strip()
+
+    def put_defs(self, src):
+        for f in self.defs.glob("*.json"):
+            f.unlink()
+        for f in src.glob("*.json"):
+            shutil.copy(f, self.defs / f.name)
+
+    def commit(self, message):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def set_live(self, src):
+        """実設定を作る。ここを定義と同じにすると照合そのものは緑になる。"""
+        for f in self.live.glob("*.json"):
+            f.unlink()
+        for i, f in enumerate(sorted(src.glob("*.json")), start=1):
+            (self.live / f"{i}.json").write_text(f.read_text())
+
+    def check(self, **env):
+        """stdout と stderr を 1 本にまとめて回す (名乗りと結果の前後関係を見るため)。"""
+        e = dict(self.env)
+        for k, v in env.items():
+            e.pop(k) if v is None else e.update({k: v})
+        r = subprocess.run(
+            ["/bin/bash", str(self.repo / "scripts" / CHECK.name)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=e,
+            cwd=self.repo,
+            check=False,
+        )
+        return r.returncode, r.stdout
+
+    def test_古いツリーで打つと緑のまま古いと名乗る(self):
+        # #311 の事象そのもの。古い定義と古い実設定は一致するので照合は緑になる
+        self.git("checkout", "-q", self.old)
+        self.set_live(self.old_defs)
+        code, out = self.check()
+        self.assertEqual(code, 0, out)
+        self.assertIn("ok: main-protection は定義と一致", out)
+        self.assertIn("手元のツリーは古い", out)
+        self.assertIn("main-protection.json", out)
+
+    def test_名乗りは照合の結果より先に出る(self):
+        self.git("checkout", "-q", self.old)
+        self.set_live(self.old_defs)
+        _, out = self.check()
+        # 先に出るべき相手は照合の結果 (形の検査の ok: はそれ以前に出る)
+        self.assertLess(
+            out.index("手元のツリーは古い"), out.index("ok: main-protection は定義と一致"), out
+        )
+
+    def test_main_と同じツリーでは何も言わない(self):
+        code, out = self.check()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("注意", out)
+
+    def test_定義を編集中の作業ブランチは古いと言わない(self):
+        # main の最新の定義変更は HEAD に入っている。違うのは手元の編集のぶんだけ
+        edited = self.make_defs(Path(self.tmp.name) / "edited", 9)
+        self.put_defs(edited)
+        self.set_live(edited)
+        code, out = self.check()
+        self.assertEqual(code, 0, out)
+        self.assertIn("編集中とみられる", out)
+        self.assertNotIn("古い", out)
+
+    def test_main_を引けなければ確かめていないと名乗る(self):
+        code, out = self.check(FAKE_MAIN_DEFS_DIR=None)
+        self.assertEqual(code, 0, out)
+        self.assertIn("確かめていない", out)
+
+    def test_向きが分からなければ古いとは言わない(self):
+        # 中身は違うと分かっても、どちら向きかを判定する材料が無いときに断定しない
+        self.git("checkout", "-q", self.old)
+        self.set_live(self.old_defs)
+        code, out = self.check(FAKE_MAIN_RULESET_COMMIT=None)
+        self.assertEqual(code, 0, out)
+        self.assertIn("判定していない", out)
+        self.assertNotIn("手元のツリーは古い", out)
 
 
 if __name__ == "__main__":
