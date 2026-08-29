@@ -78,6 +78,17 @@ public final class Canvas {
         var vertexCount: Int
         /// 置き場所の並びの中で、この列が始まる位置。
         var instanceStart: Int
+        /// 置き場所を**外の置き場**から取るなら、その置き場と個数。
+        ///
+        /// `nil` なら溜め場の並び (いつもの経路)。粒だけがここを使う — 置き場所を
+        /// 埋めるのが GPU なので、CPU の溜め場を通らない。
+        var external: ExternalInstances?
+    }
+
+    /// 溜め場ではなく、外の置き場から置き場所を取る指定。
+    struct ExternalInstances {
+        var buffer: any MTLBuffer
+        var count: Int
     }
 
     /// 立体の頂点が何から来たか。
@@ -224,6 +235,13 @@ public final class Canvas {
     var pendingComputations: [ComputeDispatch] = []
     /// この面が作った計算。観測へ失敗を載せるために持つ。
     var computations: [Computation] = []
+
+    /// 粒の置き場所を誰が埋めるか。**製品では GPU 側 (速い経路)。**
+    ///
+    /// 公開しない — 利用者が選ぶものではなく、速い経路を照らす物差しを検査から
+    /// 差し替えるための口である。
+    var particleRoute: ParticleRoute = .instanced
+    var warnedParticlesOutsideFrame = false
     /// 計算のパイプライン。**最初に計算を作るときだけ組む** — 使わないスケッチに
     /// 組み立て器と引数のテーブルを持たせないため。
     private var computePipelineStorage: ComputePipeline?
@@ -412,6 +430,8 @@ public final class Canvas {
         /// 平面は置き場所を持たない (1 個ぶんだけ描く)。
         var instanceStart: Int = 0
         var instanceCount: Int = 1
+        /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。
+        var instances: (any MTLBuffer)?
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -446,6 +466,17 @@ public final class Canvas {
 
     /// いまのフレームの時刻 (秒)。利用者の断片から読める。
     var time: Float = 0
+
+    /// 1 フレームの長さ (秒)。**動くものの積分はこれで進む。**
+    ///
+    /// 既定を 60 分の 1 にしてあるのは、`Canvas` を直に回す経路 (検査・台帳のシーン)
+    /// でも動きが進むようにするためである。0 を既定にすると、時計を差さない経路では
+    /// 何も動かず、しかも絵は出るので気付けない。
+    var deltaTime: Float = 1.0 / 60
+
+    /// これまでに描き切ったフレームの数。**時計ではなく番号**なので、同じ入力からは
+    /// 何度走らせても同じ列になる。
+    private(set) var framesDrawn = 0
     /// 面の中身の種類の番号を置いた領域。同じく番地で指す。
     private let textureKindBuffer: any MTLBuffer
     /// 定数の受け渡しは 16 バイト境界に揃える。
@@ -731,7 +762,7 @@ public final class Canvas {
     private func closeSolidBatch() {
         guard let open = openSolid else { return }
         openSolid = nil
-        let instanceCount = solidInstances.count - open.instanceStart
+        let instanceCount = open.external?.count ?? (solidInstances.count - open.instanceStart)
         guard open.vertexCount > 0, instanceCount > 0 else { return }
         batches.append(
             Batch(
@@ -748,7 +779,9 @@ public final class Canvas {
                 viewer: viewer,
                 surroundings: bakeSurroundings(),
                 castsShadow: castsShadow,
-                instanceStart: open.instanceStart, instanceCount: instanceCount))
+                instanceStart: open.external == nil ? open.instanceStart : 0,
+                instanceCount: instanceCount,
+                instances: open.external?.buffer))
         warnIfMaterialCannotShow()
     }
 
@@ -1465,6 +1498,7 @@ public final class Canvas {
         isDrawing = true
         body()
         isDrawing = false
+        framesDrawn += 1
 
         try flush()
     }
@@ -1645,7 +1679,7 @@ public final class Canvas {
                     // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
                     // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
                     pipeline.argumentTable.setAddress(
-                        instanceBuffer.gpuAddress
+                        (batch.instances ?? instanceBuffer).gpuAddress
                             + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                         index: ShapePipeline.instanceBufferIndex)
                 }
@@ -1806,7 +1840,7 @@ public final class Canvas {
         encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
         for batch in casting {
             pipeline.argumentTable.setAddress(
-                instanceBuffer.gpuAddress
+                (batch.instances ?? instanceBuffer).gpuAddress
                     + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                 index: ShapePipeline.instanceBufferIndex)
             encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])

@@ -221,6 +221,12 @@ public final class RenderDevice {
 
     /// CPU から読める領域を確保して常駐させる。
     func makeReadableBuffer(byteCount: Int) throws(RenderFailure) -> any MTLBuffer {
+        // **頼む前に上限を見る。** 上限を超える長さをそのまま頼むと、検証層を有効にした
+        // 実行 (検査がそうしている) では `nil` ではなく**異常終了**で返ってくる —
+        // 「確保に失敗した」として扱えず、そこで走っている検査ごと落ちる
+        guard byteCount > 0, byteCount <= device.maxBufferLength else {
+            throw .bufferUnavailable(byteCount: byteCount)
+        }
         guard let buffer = device.makeBuffer(length: byteCount, options: .storageModeShared) else {
             throw .bufferUnavailable(byteCount: byteCount)
         }
