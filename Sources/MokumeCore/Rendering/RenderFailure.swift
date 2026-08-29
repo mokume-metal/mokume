@@ -44,6 +44,15 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 描画先の大きさが正しくない (幅・高さは 1 以上でなければならない)。
     case invalidSize(width: Int, height: Int)
 
+    /// 描く細かさが正しくない (0 より大きく 1 以下でなければならない)。
+    ///
+    /// 1 を超える指定 — 出すより細かく描いて縮める — は引き受けない。拡大器が
+    /// 縮小を扱わないうえ、要求も出ていないためである。
+    case invalidPixelDensity(Float)
+
+    /// 拡大の段を組み立てられない。
+    case upscalerUnavailable(reason: String)
+
     /// 同梱しているはずのシェーダの原文が見つからない。
     case shaderSourceMissing(name: String)
 

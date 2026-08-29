@@ -104,7 +104,9 @@ struct SceneLedgerTests {
         let scene = take.scene
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: scene.size.width, height: scene.size.height)
-        let canvas = try Canvas(target: target, gpu: gpu)
+        let canvas = try Canvas(
+            output: target, gpu: gpu, pixelDensity: scene.pixelDensity,
+            upscale: scene.upscale)
         // **時点まで進めてから取る。** 時点を持たないシーンは 1 度描いた結果で、
         // いままでと 1 ビットも変わらない (ADR-0023 決定 6)
         let session = try scene.session(on: canvas)
@@ -227,8 +229,25 @@ enum Scene: String, CaseIterable, Sendable {
     case particles
     /// 描いた絵に効果を重ねたもの。
     case effects
+    /// **描く細かさを半分にして拡大したもの。** 斜めと曲がりが多いので、拡大の質が出る。
+    case upscaled
+    /// 同じ絵を、時間方向の拡大で重ねたもの。**時点を持つ** — 重なるほど落ち着く。
+    case upscaledOverTime
 
     var size: (width: Int, height: Int) { (128, 128) }
+
+    /// 描く細かさ。拡大のシーンだけが 1 より小さい。
+    nonisolated var pixelDensity: Float {
+        switch self {
+        case .upscaled, .upscaledOverTime: 0.5
+        default: 1
+        }
+    }
+
+    /// 細かさの間の埋め方。
+    nonisolated var upscale: Upscale {
+        self == .upscaledOverTime ? .temporal : .spatial
+    }
     /// 年輪を掛ける断片。**形自身の座標**から作るので、形を回しても模様は形に留まる。
     /// 縞と同じく `in.color` を掛けるので、陰影はそのまま残る。
     static let grain = """
@@ -290,6 +309,9 @@ enum Scene: String, CaseIterable, Sendable {
         // 粒は**動きそのものが正しさ**なので、1 枚では判定できない。出始めと、
         // 寿命が一巡したあとの 2 点を見る
         case .particles: [12, 48]
+        // 時間方向の拡大は**重ねた回数が絵を決める**ので、1 枚では判定できない。
+        // 揺らしが一巡した直後と、そのあと落ち着いた頃の 2 点を見る
+        case .upscaledOverTime: [8, 32]
         default: []
         }
     }
@@ -343,6 +365,24 @@ enum Scene: String, CaseIterable, Sendable {
                 .fringe(amount: 0.7),
                 .vignette(amount: 0.65),
             ])
+        case .upscaled, .upscaledOverTime:
+            // 斜め・曲がり・細い線を混ぜる。**低い細かさでいちばん崩れる**ものを置いて、
+            // 拡大が何をしているかが 1 枚で読めるようにする
+            canvas.background(.display(red: 0.05, green: 0.06, blue: 0.09))
+            canvas.noStroke()
+            canvas.fill(.display(red: 1, green: 0.8, blue: 0.3))
+            canvas.circle(44, 48, 56)
+            canvas.stroke(.display(red: 0.3, green: 0.8, blue: 1))
+            canvas.strokeWeight(2)
+            for step in 0..<6 {
+                canvas.line(8, 100 + Float(step), 120, 64 + Float(step) * 6)
+            }
+            canvas.noStroke()
+            canvas.fill(.display(red: 1, green: 0.35, blue: 0.45))
+            for step in 0..<10 {
+                canvas.rect(10 + Float(step) * 12, 12, 3, 22)
+            }
+
         case .shapes:
             canvas.background(.display(red: 0.08, green: 0.09, blue: 0.12))
             canvas.fill(.display(red: 0.95, green: 0.35, blue: 0.2))
