@@ -329,6 +329,149 @@ struct ComputeTests {
         #expect(gray(image, atColumn: 16) < 0.1)
     }
 
+    // MARK: - 読み戻し
+
+    /// 種を足して並べる。**フレームごとに違う値**を書かせるため。
+    private static let seeded = """
+        kernel void seeded(device float *out [[buffer(0)]],
+                           constant Values &values [[buffer(MOKUME_VALUES)]],
+                           uint id [[thread_position_in_grid]])
+        {
+            out[id] = values.seed + float(id);
+        }
+        """
+
+    /// 1 だけ足す。**走った回数がそのまま値になる。**
+    private static let bump = """
+        kernel void bump(device float *out [[buffer(0)]],
+                         uint id [[thread_position_in_grid]])
+        {
+            out[id] = out[id] + 1;
+        }
+        """
+
+    @Test("読み戻した値は、そのフレームの結果")
+    func readsWhatThisFrameComputed() throws {
+        let canvas = try makeCanvas()
+        let field = try canvas.makeNumbers(count: 32)
+        let seeded = try canvas.makeComputation(Self.seeded, name: "seeded", values: ["seed": 0])
+
+        for frame in 1...3 {
+            seeded.set("seed", .number(Float(frame * 100)))
+            var read: [Float] = []
+            try canvas.draw {
+                canvas.compute(seeded, over: 32, writes: [field])
+                read = canvas.read(field)
+            }
+            // ひとつ前のフレームの値でも、蒔いた種でもない。**この回の結果**
+            #expect(read[0] == Float(frame * 100))
+            #expect(read[31] == Float(frame * 100 + 31))
+        }
+    }
+
+    /// 口がある理由そのもの。**待つ実装を外すと、ここが赤くなる。**
+    ///
+    /// ずれの正体は競合ではない。頼んだ計算は溜まっているだけで**走ってすらいない**ので、
+    /// 生の置き場は決定論的に必ず古い。だから再現率に振れが無く、検査に書ける。
+    @Test("積んだ直後の生の置き場は古く、読み戻した値は新しい")
+    func theRawStorageIsStaleUntilItIsRead() throws {
+        let canvas = try makeCanvas()
+        let field = try canvas.makeNumbers(count: 32)
+        let seeded = try canvas.makeComputation(Self.seeded, name: "seeded", values: ["seed": 7])
+        field.fill(-1)
+
+        var raw: Float = 0
+        var read: [Float] = []
+        try canvas.draw {
+            canvas.compute(seeded, over: 32, writes: [field])
+            raw = field.storage.contents().assumingMemoryBound(to: Float.self)[0]
+            read = canvas.read(field)
+        }
+        #expect(raw == -1)
+        #expect(read[0] == 7)
+    }
+
+    @Test("頼んだ計算が残っていなければ、読んでも走らせない")
+    func doesNotRunAnythingWhenNothingIsPending() throws {
+        let canvas = try makeCanvas()
+        let field = try canvas.makeNumbers(count: 32)
+        let seeded = try canvas.makeComputation(Self.seeded, name: "seeded", values: ["seed": 1])
+
+        var once = 0
+        var twice = 0
+        try canvas.draw {
+            canvas.compute(seeded, over: 32, writes: [field])
+            _ = canvas.read(field)
+            once = canvas.computeEncodersOpened
+            // 同じフレームで 2 度読んでも、走らせるのは 1 度きり
+            _ = canvas.read(field)
+            twice = canvas.computeEncodersOpened
+        }
+        #expect(once == 1)
+        #expect(twice == 1)
+
+        // フレームの外でも読める。**溜まっていない = 全部終わっている**ので待ちは起きない
+        #expect(canvas.read(field)[0] == 1)
+        #expect(canvas.computeEncodersOpened == 1)
+    }
+
+    @Test("読んでも、溜めている図形は描き切られない")
+    func leavesTheAccumulatedShapesAlone() throws {
+        let canvas = try makeCanvas()
+        let field = try canvas.makeNumbers(count: 32)
+        let seeded = try canvas.makeComputation(Self.seeded, name: "seeded", values: ["seed": 1])
+
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            canvas.rect(0, 0, 32, 8)
+            canvas.compute(seeded, over: 32, writes: [field])
+            _ = canvas.read(field)
+        }
+
+        // 画素の読み戻しに相乗りしていれば、ここで溜めた図形が描き切られ、フレーム
+        // 末尾の描き切りは 0 回になる。**別の経路の副作用に頼っていない**ことの裏
+        #expect(canvas.drawCallsInLastFrame == 1)
+        #expect(!canvas.hasLoadedPixels)
+        #expect(gray(try canvas.target.encodeForDisplay(), atColumn: 16) > 0.9)
+    }
+
+    @Test("読んだ後に頼んだ計算も描く前に流れ、同じ計算は 2 度走らない")
+    func runsLaterWorkWithoutRepeatingWhatWasAlreadyRun() throws {
+        let canvas = try makeCanvas()
+        let counter = try canvas.makeNumbers(count: 1)
+        let bump = try canvas.makeComputation(Self.bump, name: "bump")
+
+        var afterRead: [Float] = []
+        try canvas.draw {
+            canvas.compute(bump, over: 1, writes: [counter])
+            afterRead = canvas.read(counter)
+            // 読んだ後に頼んだぶん。**フレームを閉じる前に流れる**
+            canvas.compute(bump, over: 1, writes: [counter])
+        }
+        #expect(afterRead == [1])
+        // 流したものを溜め場から降ろしていなければ、末尾で 1 回目がもう一度走って 3 になる
+        #expect(canvas.read(counter) == [2])
+    }
+
+    @Test("読み続けても、取り出し先は取り直されない")
+    func reusesTheReadbackStorage() throws {
+        let canvas = try makeCanvas()
+        let field = try canvas.makeNumbers(count: 32)
+        let seeded = try canvas.makeComputation(Self.seeded, name: "seeded", values: ["seed": 1])
+
+        // 読まないうちは置き場を持たない
+        #expect(field.readbackAllocations == 0)
+        for _ in 0..<200 {
+            try canvas.draw {
+                canvas.compute(seeded, over: 32, writes: [field])
+                _ = canvas.read(field)
+            }
+        }
+        // 長回しでしか出ない (ADR-0023 決定 5)。フレームごとに確保していれば 200 になる
+        #expect(field.readbackAllocations == 1)
+    }
+
     /// 依存を無視して同じ口へ並べると、結果が壊れることを見る。
     ///
     /// **落ちたときだけ意味がある検査。** 通っても「壊れない」ことの証明にはならない —

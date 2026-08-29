@@ -8,15 +8,17 @@ import MokumeDiagnostics
 ///
 /// 使い方は ``Sketch/makeNumbers(count:)`` にある。
 ///
-/// ## CPU からは書くだけ
+/// ## 読む道は 1 本しかない
 ///
-/// GPU が書いた値を CPU から読む口はここには無い。**読める時刻が決まっていない口を
-/// 公開しない**という [ADR-0023] 決定 3 の後半がそのまま効く — 同じメモリを見ているので
-/// 値は「読めて」しまうが、それが計算の前なのか後なのかは呼んだ側に分からず、絵か音が
-/// おかしくなって初めて気付く形になる。読み戻しは、いつ読めるかを込みで設計する別の
-/// 仕事にしてある。
+/// **この型に読む口は無い。** 値を取り出す道は ``Sketch/read(_:)`` だけで、そこは必ず
+/// 計算の完了まで待つ。同じメモリを見ているので値は「読めて」しまうが、それが計算の前
+/// なのか後なのかは呼んだ側に分からず、絵か音がおかしくなって初めて気付く形になる。
 ///
-/// 種を蒔く向き (CPU → GPU) は、フレームの外でも中でも意味が変わらないのでここで開ける。
+/// **読める時刻を型で表すことはできない** — 読めない `Float` は作れない。代わりに
+/// 値へ届く道を同期する 1 本だけにして、[ADR-0023] 決定 3 の「読める時刻が決まって
+/// いない口を公開しない」を**到達経路**で守っている。
+///
+/// 書く向き (CPU → GPU) は、フレームの外でも中でも意味が変わらないのでここで開ける。
 ///
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 public final class Numbers {
@@ -27,6 +29,15 @@ public final class Numbers {
     let storage: any MTLBuffer
 
     private var warnedOutOfRange = false
+
+    /// 取り出し先。**1 度だけ確保して詰め直す** ([ADR-0023] 決定 5 が「読み戻しの置き場」を
+    /// 名指ししている — 毎フレーム走る経路がフレームごとに確保しない)。
+    ///
+    /// 読まれるまで確保しない。読まないスケッチはこの置き場を持たない。
+    private var readback: [Float] = []
+
+    /// 取り出し先を確保した回数。**読み続けても 1 のままであることを検査が見る。**
+    private(set) var readbackAllocations = 0
 
     init(gpu: RenderDevice, count: Int) throws(RenderFailure) {
         let count = max(1, count)
@@ -59,6 +70,22 @@ public final class Numbers {
     public func fill(_ value: Float) {
         let contents = self.contents
         for index in 0..<count { contents[index] = value }
+    }
+
+    /// いまの中身を取り出す。**待つのは呼ぶ側の仕事**で、ここは写すだけ。
+    ///
+    /// だから内部にしてある — 外から呼べると、待たずに読む道ができてしまう。
+    ///
+    /// 返した並びを**持ち続けた**ときは、次に詰め直すところで写しが 1 度起きる
+    /// (`Array` の写し取り)。それは受け取った側の選択で、機構としては 1 本で回る。
+    func snapshot() -> [Float] {
+        if readback.count != count {
+            readback = Array(repeating: 0, count: count)
+            readbackAllocations += 1
+        }
+        let contents = self.contents
+        for index in 0..<count { readback[index] = contents[index] }
+        return readback
     }
 
     private var contents: UnsafeMutablePointer<Float> {
