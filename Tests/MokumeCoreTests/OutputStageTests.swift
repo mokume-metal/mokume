@@ -291,3 +291,59 @@ struct OutputEncodeTests {
         #expect(second.red == 0 && second.blue == 255)
     }
 }
+
+/// 観測が通る道 (#448)。GPU を要する。
+///
+/// 観測は出口が受け取るのと同じ道を通り、小さくするのは通した後で行う。
+/// **拾う画素が同じなら、間引く位置を変えてもバイト列は変わらない** (#382 の逆向き)。
+@Suite(
+    "出力段: 観測の道",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct ObservationRoadTests {
+    private func makeCanvas(width: Int = 48, height: Int = 32) throws -> Canvas {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: width, height: height)
+        return try Canvas(target: target, gpu: gpu)
+    }
+
+    /// 明暗と半透明が混ざった絵。**一様な色では間引きの違いが出ない。**
+    private func scene(on canvas: Canvas) {
+        canvas.background(.display(red: 0.02, green: 0.03, blue: 0.06))
+        canvas.fill(.display(red: 1, green: 0.85, blue: 0.3))
+        canvas.circle(16, 16, 12)
+        canvas.fill(.display(red: 0.2, green: 0.5, blue: 1, alpha: 0.4))
+        canvas.rect(20, 8, 20, 18)
+    }
+
+    @Test(
+        "道を通してから間引いても、間引いてから読み戻したのと同じバイト列になる",
+        arguments: [1.0, 0.5, 0.3, 0.75, 0.1])
+    func scalingAfterTheRoadMatchesScalingBefore(factor: Double) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw { scene(on: canvas) }
+
+        // 道を通してから間引いた側 (観測がこれから通る経路)
+        let viaRoad = try canvas.output.encodeToImage().read().scaled(by: factor)
+        // 間引いてから読み戻して変換した側 (これまでの経路・オラクル)
+        let viaReadback = try canvas.output.encodeForDisplay(scale: factor)
+
+        #expect(viaRoad.width == viaReadback.width)
+        #expect(viaRoad.height == viaReadback.height)
+        #expect(viaRoad.bytes == viaReadback.bytes)
+    }
+
+    @Test("縮小率が範囲の外なら実寸のまま返す", arguments: [1.0, 1.5, 0.0, -0.5])
+    func factorsOutsideTheRangeLeaveTheImageAlone(factor: Double) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw { scene(on: canvas) }
+        let full = try canvas.output.encodeToImage().read()
+        let same = full.scaled(by: factor)
+
+        #expect(same.width == full.width)
+        #expect(same.height == full.height)
+        #expect(same.bytes == full.bytes)
+    }
+}

@@ -282,9 +282,6 @@ static inline float3 mokume_shade(
     return emissive + base * total + gloss * color.a;
 }
 
-// 面の中身の種類。TextureKind と対応する
-constant uint kCoverage = 0;
-
 // 混ぜ方の番号は BlendMode.rawIndex と対応する。ここを増やしたら向こうも増やす。
 constant uint kBlend = 0;
 constant uint kAdd = 1;
@@ -312,10 +309,8 @@ struct Fragment {
     float2 uv;
     /// 図形が持っている色 (線形・アルファ乗算済み)。
     float4 color;
-    /// 読む面から読んだ値。
+    /// 読む面から読んだ値 (線形・アルファ乗算済み)。
     float4 texel;
-    /// 読む面の中身の種類。`kCoverage` なら覆っている割合。
-    uint textureKind;
     /// **形自身の座標**での、この画素が指す位置。立体だけが持つ (平面は 0)。
     ///
     /// 置き場所の変換を通す**前**の座標なので、**形を動かしても回しても変わらない** —
@@ -481,7 +476,6 @@ float4 paint(Fragment in, Values values);
 fragment float4 mokume_fragmentMain(
     ShapeFragmentIn in [[stage_in]],
     constant uint &mode [[buffer(2)]],
-    constant uint &textureKind [[buffer(3)]],
     constant Uniforms &uniforms [[buffer(4)]],
     constant Values &values [[buffer(5)]],
     constant Lighting &lighting [[buffer(6)]],
@@ -530,7 +524,6 @@ fragment float4 mokume_fragmentMain(
         f.color = float4(lit, in.color.a);
     }
     f.texel = source_texture.sample(kGlyphSampler, in.uv);
-    f.textureKind = textureKind;
     f.shapePosition = in.shapePosition;
     // **長さがあるときだけ揃える。** 向きを持たない頂点 (立体の線と点) と平面は 0 で、
     // そのまま正規化すると 0 が数でない値に化ける

@@ -491,8 +491,6 @@ public final class Canvas {
     let atlas: GlyphAtlas
     /// いま列が読んでいる面。面を広げる・画像を描くと差し替わる。
     var currentTexture: any MTLTexture
-    /// いま読んでいる面の中身の種類。
-    var currentTextureKind = TextureKind.coverage
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader?
     /// いま塗りが読む数の並び。`nil` なら読まない。
@@ -649,8 +647,6 @@ public final class Canvas {
     /// これまでに描き切ったフレームの数。**時計ではなく番号**なので、同じ入力からは
     /// 何度走らせても同じ列になる。
     private(set) var framesDrawn = 0
-    /// 面の中身の種類の番号を置いた領域。同じく番地で指す。
-    private let textureKindBuffer: any MTLBuffer
     /// 定数の受け渡しは 16 バイト境界に揃える。
     private static let blendModeStride = 16
 
@@ -813,17 +809,6 @@ public final class Canvas {
         }
         self.blendModeBuffer = modeBuffer
 
-        let kinds = TextureKind.allCases
-        let kindBuffer = try gpu.makeReadableBuffer(
-            byteCount: kinds.count * Self.blendModeStride)
-        for kind in kinds {
-            let slot = kindBuffer.contents()
-                .advanced(by: Int(kind.rawValue) * Self.blendModeStride)
-                .assumingMemoryBound(to: UInt32.self)
-            slot.pointee = kind.rawValue
-        }
-        self.textureKindBuffer = kindBuffer
-
         // 時刻と面の大きさ。フレームごとに書き換わるので 1 区画だけ持つ
         self.uniformsBuffer = try gpu.makeReadableBuffer(byteCount: Self.valuesStride)
     }
@@ -842,16 +827,15 @@ public final class Canvas {
     /// これから置く頂点が読む面を決める。**変わるなら列を閉じる。**
     ///
     /// 閉じ忘れると、既に置いた図形や字が後から差し替わった面を読む。
-    func useTexture(_ texture: any MTLTexture, kind: TextureKind) {
-        if texture === currentTexture, kind == currentTextureKind { return }
+    func useTexture(_ texture: any MTLTexture) {
+        if texture === currentTexture { return }
         closeBatch()
         currentTexture = texture
-        currentTextureKind = kind
     }
 
     /// 図形と字が読む面 (字形の置き場) へ戻す。
     func useGlyphTexture() {
-        useTexture(atlas.texture, kind: .coverage)
+        useTexture(atlas.texture)
     }
 
     /// **塗り**が読む面へ切り替える。貼る絵が束ねてあればその面、無ければ焼き場。
@@ -862,7 +846,7 @@ public final class Canvas {
     func useFillTexture() {
         guard let picture = currentPicture else { return useGlyphTexture() }
         picture.prepare()
-        useTexture(picture.texture, kind: .color)
+        useTexture(picture.texture)
     }
 
     /// 描画先の座標へ落とす行列を作る。
@@ -998,7 +982,7 @@ public final class Canvas {
             Batch(
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
-                    textureKind: currentTextureKind, shader: currentShader,
+                    shader: currentShader,
                     values: currentShader?.packedValues ?? [], numbers: currentNumbers,
                     source: openSource, start: start, count: count),
                 clip: currentClip,
@@ -1038,7 +1022,7 @@ public final class Canvas {
             Batch(
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
-                    textureKind: currentTextureKind, shader: currentShader,
+                    shader: currentShader,
                     values: currentShader?.packedValues ?? [], numbers: currentNumbers,
                     source: .solid,
                     start: open.vertexStart, count: open.vertexCount),
@@ -1754,7 +1738,6 @@ public final class Canvas {
             return nil
         }
         currentTexture = atlas.texture
-        currentTextureKind = .coverage
         whiteUV = atlas.whiteUV
         return atlas.entry(for: key, font: resolved.font)
     }
@@ -1768,6 +1751,14 @@ public final class Canvas {
         _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
     ) {
         useGlyphTexture()
+        // **色を持つ字形には塗りの色を掛けない。** 焼き場の値に頂点の色を掛けるのが
+        // 合成の唯一の式なので、掛けても変わらない色 — 白 — を積めば、字形の色が
+        // そのまま出る。塗りの透明度だけは効かせたいので、白をその透明度で乗算した
+        // 値にする (乗算済みの白 α は 4 成分すべて α)。
+        //
+        // 「どちらの式を使うか」を描画側へ伝える道が要らないのはこのためで、
+        // 判断は積む側でここだけに閉じている (#271)
+        let color = entry.isColored ? Self.whiteScaled(byAlphaOf: color) : color
         let shift: Float = -0.5
         let left = penX + entry.offset.x + shift
         let top = baseline + entry.offset.y + shift
@@ -1789,6 +1780,13 @@ public final class Canvas {
         appendGlyphVertex(bottomLeft, SIMD2(uvMin.x, uvMax.y), color)
     }
 
+    /// 塗りの透明度だけを持つ白 (乗算済み)。掛けても字形の色を変えない。
+    private static func whiteScaled(byAlphaOf color: LinearRGBA) -> LinearRGBA {
+        let alpha = color.alpha
+        return LinearRGBA(
+            premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
+    }
+
     private func appendGlyphVertex(
         _ position: SIMD2<Float>, _ uv: SIMD2<Float>, _ color: LinearRGBA
     ) {
@@ -1805,7 +1803,7 @@ public final class Canvas {
         uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
     ) {
         picture.prepare()
-        useTexture(picture.texture, kind: .color)
+        useTexture(picture.texture)
 
         let shift: Float = -0.5
         let left = x + shift
@@ -2291,10 +2289,6 @@ public final class Canvas {
                     index: ShapePipeline.numbersBufferIndex)
                 pipeline.argumentTable.setTexture(
                     run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
-                pipeline.argumentTable.setAddress(
-                    textureKindBuffer.gpuAddress
-                        + UInt64(Int(run.textureKind.rawValue) * Self.blendModeStride),
-                    index: ShapePipeline.textureKindBufferIndex)
                 encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
                 encoder.drawPrimitives(
                     primitiveType: .triangle,

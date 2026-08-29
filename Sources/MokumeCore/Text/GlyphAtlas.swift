@@ -14,6 +14,18 @@ import simd
 /// 字は 1 文字ずつ別々の絵だが、面を分けると**字ごとに描画を切らなければならない**。
 /// 1 枚に詰めておけば、文字列も図形も同じ列にそのまま並べられる。
 ///
+/// ## この面は色を持つ
+///
+/// 焼くのは覆っている割合ではなく**色そのもの** (線形 P3・アルファ乗算済み) である。
+/// 単色の字は白で焼かれるので `RGB == A` になり、塗りの色を掛けると「塗りの色 ×
+/// 覆い」に戻る — **覆いの面だったときと 1 画素も変わらない**。絵文字のように
+/// それ自身が色を持つ字形は、その色がそのまま入る。
+///
+/// 焼く道具立ては ``ImageFile`` と同じで、色空間の変換は CoreGraphics が行う
+/// ([ADR-0011] 決定 3 の「入口で変換」)。
+///
+/// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+///
 /// ## 図形もこの面を読む
 ///
 /// 左上の隅に**白く塗った区画**を置いてある。図形はそこを指すので、字と図形で
@@ -37,6 +49,13 @@ final class GlyphAtlas {
     static let padding = 2
     /// 白く塗った区画の一辺 (画素)。
     static let whiteBlock = 4
+    /// 焼き場の画素の形式。**作業空間と同じ** — 線形・アルファ乗算済みの 16F
+    /// ([ADR-0011] 決定 2)。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    static let pixelFormat: MTLPixelFormat = .rgba16Float
+    /// 1 画素ぶんのバイト数。
+    static let bytesPerPixel = MemoryLayout<SIMD4<Float16>>.stride
 
     /// 焼いた字形 1 つぶん。
     struct Entry {
@@ -49,6 +68,11 @@ final class GlyphAtlas {
         var size: SIMD2<Float>
         /// 絵を持たない字 (空白など)。
         var isBlank: Bool
+        /// **字形が自分の色を持っているか** (絵文字がこれに当たる)。
+        ///
+        /// 色を持つ字形には塗りの色を掛けない — 積む側が頂点の色を「白 × 塗りの
+        /// 透明度」に差し替えるので、合成の式は 1 本のままでよい (``Canvas``)。
+        var isColored: Bool
     }
 
     /// 焼き分けの鍵。
@@ -79,26 +103,26 @@ final class GlyphAtlas {
         -> any MTLTexture
     {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .r8Unorm, width: side, height: side, mipmapped: false)
+            pixelFormat: Self.pixelFormat, width: side, height: side, mipmapped: false)
         descriptor.usage = .shaderRead
         descriptor.storageMode = .shared
         let texture = try gpu.makeTexture(descriptor: descriptor)
         texture.label = "mokume.glyphs"
         // 面全体を 0 で埋める。字形を焼く前に読まれても、透明として振る舞う
-        let zeros = [UInt8](repeating: 0, count: side * side)
+        let zeros = [SIMD4<Float16>](repeating: .zero, count: side * side)
         texture.replace(
             region: MTLRegionMake2D(0, 0, side, side), mipmapLevel: 0, withBytes: zeros,
-            bytesPerRow: side)
+            bytesPerRow: side * Self.bytesPerPixel)
         return texture
     }
 
     /// 左上の隅を白く塗る。図形はここを指す。
     private func paintWhiteBlock() {
         let side = Self.whiteBlock
-        let white = [UInt8](repeating: 255, count: side * side)
+        let white = [SIMD4<Float16>](repeating: SIMD4(1, 1, 1, 1), count: side * side)
         texture.replace(
             region: MTLRegionMake2D(0, 0, side, side), mipmapLevel: 0, withBytes: white,
-            bytesPerRow: side)
+            bytesPerRow: side * Self.bytesPerPixel)
     }
 
     /// 図形が指す、白い区画の中の点。
@@ -145,7 +169,8 @@ final class GlyphAtlas {
         guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
         else {
             return Entry(
-                uvMin: .zero, uvMax: .zero, offset: .zero, size: .zero, isBlank: true)
+                uvMin: .zero, uvMax: .zero, offset: .zero, size: .zero, isBlank: true,
+                isColored: false)
         }
 
         let pad = Self.padding
@@ -159,14 +184,14 @@ final class GlyphAtlas {
 
         guard let origin = reserve(width: width, height: height) else { return nil }
         guard
-            let coverage = render(
+            let pixels = render(
                 glyph: glyph, font: font, width: width, height: height, penX: -left,
                 penY: -bottom)
         else { return nil }
 
         texture.replace(
             region: MTLRegionMake2D(origin.x, origin.y, width, height), mipmapLevel: 0,
-            withBytes: coverage, bytesPerRow: width)
+            withBytes: pixels, bytesPerRow: width * Self.bytesPerPixel)
 
         let side = Float(size)
         return Entry(
@@ -175,7 +200,22 @@ final class GlyphAtlas {
             // 縦は下向きに測るので、基準線から上端までの距離が負のずれになる
             offset: SIMD2(Float(left), Float(-top)),
             size: SIMD2(Float(width), Float(height)),
-            isBlank: false)
+            isBlank: false,
+            isColored: Self.hasOwnColor(pixels))
+    }
+
+    /// 焼いた画素が、字形自身の色を持っているか。
+    ///
+    /// 白で焼いた単色の字は**乗算済みで `RGB == A` が厳密に成立する**ので、崩れて
+    /// いれば字形の側が色を持っている。書体の種別ではなく焼いた結果を見るので、
+    /// 絵文字でも色つきの飾り字でも同じ 1 つの判定で足りる。
+    private static func hasOwnColor(_ pixels: [SIMD4<Float16>]) -> Bool {
+        // 8bit で 1 段ぶんより粗いずれだけを色と見る (焼きの誤差を色と取り違えない)
+        let tolerance = Float16(1.0 / 512)
+        return pixels.contains { texel in
+            abs(texel.x - texel.w) > tolerance || abs(texel.y - texel.w) > tolerance
+                || abs(texel.z - texel.w) > tolerance
+        }
     }
 
     /// 面の中に場所を取る。棚を左から埋め、いっぱいになったら次の段へ。
@@ -192,48 +232,47 @@ final class GlyphAtlas {
         return origin
     }
 
-    /// 字形 1 つを、覆っている割合の並びとして描く。
+    /// 字形 1 つを、作業空間の色の並びとして描く。
+    ///
+    /// **白で塗る。** 単色の字はこれで `RGB == A` になり、後から塗りの色を掛けると
+    /// 覆いの面だったときと同じ値に戻る。色を持つ字形 (絵文字) は塗りの指定を無視して
+    /// 自分の色を書き込むので、同じ 1 本の焼き方で両方が通る。
     ///
     /// 画素ごとの位置合わせと、画面の並びに合わせた平滑化は**切ってある**。入れると
     /// 同じ字が置き場所によって違う絵になり、焼いたものを使い回せなくなる。
     ///
     /// 描く道具の座標は下から上へ数えるが、**並びの先頭は絵の上端**なので、
-    /// 面へはそのままの順で写す (行の間隔だけ詰め直す)。
+    /// 面へはそのままの順で写る (``ImageFile/decode(at:name:)`` と同じ)。
     private func render(
         glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int
-    ) -> [UInt8]? {
-        guard
-            let context = CGContext(
-                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceGray(),
-                bitmapInfo: CGImageAlphaInfo.none.rawValue)
-        else { return nil }
+    ) -> [SIMD4<Float16>]? {
+        var pixels = [SIMD4<Float16>](repeating: .zero, count: width * height)
+        let stride = width * Self.bytesPerPixel
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            // 画像と同じ道具立て。色空間の変換は CoreGraphics が行う (ADR-0011 決定 3)
+            guard let space = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3),
+                let context = CGContext(
+                    data: buffer.baseAddress, width: width, height: height,
+                    bitsPerComponent: 16, bytesPerRow: stride, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                        | CGBitmapInfo.floatComponents.rawValue
+                        | CGBitmapInfo.byteOrder16Little.rawValue)
+            else { return false }
 
-        context.setFillColor(gray: 0, alpha: 1)
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        context.setShouldAntialias(true)
-        context.setAllowsFontSmoothing(false)
-        context.setShouldSmoothFonts(false)
-        context.setAllowsFontSubpixelPositioning(false)
-        context.setShouldSubpixelPositionFonts(false)
-        context.setAllowsFontSubpixelQuantization(false)
-        context.setShouldSubpixelQuantizeFonts(false)
-        context.setFillColor(gray: 1, alpha: 1)
+            context.setShouldAntialias(true)
+            context.setAllowsFontSmoothing(false)
+            context.setShouldSmoothFonts(false)
+            context.setAllowsFontSubpixelPositioning(false)
+            context.setShouldSubpixelPositionFonts(false)
+            context.setAllowsFontSubpixelQuantization(false)
+            context.setShouldSubpixelQuantizeFonts(false)
+            context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
 
-        var index = glyph
-        var position = CGPoint(x: CGFloat(penX), y: CGFloat(penY))
-        CTFontDrawGlyphs(font, &index, &position, 1, context)
-
-        guard let data = context.data else { return nil }
-        let source = data.assumingMemoryBound(to: UInt8.self)
-        let stride = context.bytesPerRow
-        var coverage = [UInt8](repeating: 0, count: width * height)
-        coverage.withUnsafeMutableBufferPointer { destination in
-            for row in 0..<height {
-                destination.baseAddress!.advanced(by: row * width)
-                    .update(from: source.advanced(by: row * stride), count: width)
-            }
+            var index = glyph
+            var position = CGPoint(x: CGFloat(penX), y: CGFloat(penY))
+            CTFontDrawGlyphs(font, &index, &position, 1, context)
+            return true
         }
-        return coverage
+        return drawn ? pixels : nil
     }
 }

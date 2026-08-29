@@ -30,6 +30,10 @@
 # 済ませられないためである — 打たずに待たせると queue は check_response_timeout_minutes
 # (60 分) を空費してから諦め、しかも理由がどこにも残らない。スクリプト自身は 0 で終える
 # (赤くするのは Actions の run ではなく local-render という報告の側である)。
+#
+# その failure は **queue のコミットと、覆えていない PR の head の両方**に打つ (#462)。
+# queue のコミットだけに打っていた頃は、gh pr checks にもタイムラインにも現れず、
+# 弾かれたことに気付く経路が人間しか無かった。**head へ打つのは failure だけ**である。
 set -euo pipefail
 
 # 「描画に触れているか」の判定は #306 と共有する (照合の実体は 1 つ)
@@ -94,7 +98,8 @@ drawing_fingerprint() {
 # 描画 PR が 2 本並走すると、後から入ったほうが merge されてから main を赤くした。
 #
 # 絵を回す機械を増やす代わりに、**手元の報告が合流後の姿を覆っているか**を見る。
-# 覆っていなければ local-render を failure にして queue から外す。守られるのは
+# 覆っていなければ local-render を failure にして queue から外し、同じ failure を
+# **その PR の head にも打って gh pr checks を赤くする** (#462)。守られるのは
 # 「main の絵に関わるファイルは、常に誰かが手元で実際に回して確かめた組み合わせの
 # ままである」という不変条件で、描画に触れない PR はその組み合わせを動かさないので
 # 対象外にしてよい (BEHIND のまま merge できる従来の運用がそのまま残る)。
@@ -103,8 +108,8 @@ drawing_fingerprint() {
 # ので、queue を止めるより名乗って通すほうを取る。何を見ていないかは必ず述べる。
 report_merge_group() {
   local repo=$1 merged=$2 head_ref=$3
-  local numbers number head files fp_head checked=0
-  local fp_merged=''
+  local numbers number head files fp_head checked=0 blind=''
+  local fp_merged='' rejected=''
 
   # queue の枝は gh-readonly-queue/<base>/pr-<番号>-<base sha>。まとめて積まれた
   # ときに備えて pr-<番号> は全件拾う (1 本でも覆えていなければ通さない)
@@ -115,11 +120,19 @@ report_merge_group() {
     return
   fi
 
+  # **覆えていない PR を見つけても、そこで切り上げない** (#462)。queue はまとめて
+  # 積む (max_entries_to_build: 5) ので、1 本目で return すると 2 本目以降の作者に
+  # とっては何も変わらない — 自分の PR は緑のまま、理由もどこにも出ないまま弾かれる。
+  # 判定は rejected に畳んで、queue への報告はループの後に 1 回だけ打つ。
+  #
+  # 読めなくなったら見るのをやめる (blind)。ただし**既に決まった failure は
+  # 上書きしない** — 「読めなければ名乗って通す」は判定できなかったときの逃がしで
+  # あって、判定できた failure を取り消す口ではない。
   for number in $numbers; do
     if ! files=$(gh api "repos/$repo/pulls/$number/files" --paginate --jq '.[].filename'); then
       say "#$number の変更ファイルを読めなかった"
-      post "$repo" "$merged" success "merge queue (覆いは見ていない)"
-      return
+      blind=1
+      break
     fi
     # 読み飛ばすときも名乗る (#441)。止めなかった回のログが「見た上で通した」のか
     # 「見る対象が無かった」のかを分けて読めるようにするため
@@ -132,30 +145,42 @@ report_merge_group() {
     # 「木を読めなかった」という無関係な名乗りが出ないため (#441)
     if [ -z "$fp_merged" ] && ! fp_merged=$(drawing_fingerprint "$repo" "$merged"); then
       say "合流後の木を読めなかった (指紋を取れない)"
-      post "$repo" "$merged" success "merge queue (覆いは見ていない)"
-      return
+      blind=1
+      break
     fi
 
     if ! head=$(gh api "repos/$repo/pulls/$number" --jq '.head.sha') ||
       ! fp_head=$(drawing_fingerprint "$repo" "$head"); then
       say "#$number の head の木を読めなかった (指紋を取れない)"
-      post "$repo" "$merged" success "merge queue (覆いは見ていない)"
-      return
+      blind=1
+      break
     fi
 
     if [ "$fp_head" != "$fp_merged" ]; then
       say "#$number の手元の実行は合流後の姿を覆っていない (head=$fp_head 合流後=$fp_merged)"
       say "main を取り込んで手元で make ci-check を打ち直すと、この報告が付き直す"
-      post "$repo" "$merged" failure \
-        "#$number の手元の実行が合流後の姿を覆っていない — main を取り込んで打ち直す"
-      return
+      # **PR の head にも打つ** (#462)。queue のコミットに付けた failure は
+      # gh pr checks にもタイムラインにも現れないので、弾かれたことに気付く経路が
+      # 人間しか無かった。ここが赤くなれば、見届けの仕組みがそのまま拾う。
+      #
+      # **CI がここへ打つのは failure だけである。** success は手元の実行しか
+      # 打たない (#304) — その不変条件を、報告先を広げるついでに崩さない。
+      post "$repo" "$head" failure \
+        "merge queue で弾かれた — main を取り込んで make ci-check を打ち直す"
+      rejected="$rejected #$number"
+      continue
     fi
     say "#$number は覆えている (描画に関わるファイル $fp_head)"
     checked=$((checked + 1))
   done
 
+  if [ -n "$rejected" ]; then
+    post "$repo" "$merged" failure \
+      "${rejected# } の手元の実行が合流後の姿を覆っていない — main を取り込んで打ち直す"
+  elif [ -n "$blind" ]; then
+    post "$repo" "$merged" success "merge queue (覆いは見ていない)"
   # 見る対象が無かった回を「覆っている」と名乗らない (#441)
-  if [ "$checked" -eq 0 ]; then
+  elif [ "$checked" -eq 0 ]; then
     post "$repo" "$merged" success "merge queue (描画に触れる PR は無い)"
   else
     post "$repo" "$merged" success "merge queue ($checked 本の描画 PR が合流後の姿を覆っている)"

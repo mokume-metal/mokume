@@ -590,4 +590,107 @@ struct TextTests {
 
         #expect(try pixels(of: alone).bytes == pixels(of: crowded).bytes)
     }
+    // MARK: - 色を持つ字形
+
+    /// 色を持つ字形を検査に使う。**その字が無い環境なら見送る** — 検査の対象は
+    /// 「色が失われないこと」であって、この環境に絵文字があることではない。
+    private let coloredScalar: Unicode.Scalar = "\u{1F534}"  // 🔴
+
+    /// 描いた絵の中で、いちばん彩度の高い画素。
+    private func mostSaturated(_ image: DisplayImage, width: Int, height: Int) -> (
+        red: Int, green: Int, blue: Int, saturation: Int
+    ) {
+        var best = (red: 0, green: 0, blue: 0, saturation: -1)
+        for y in 0..<height {
+            for x in 0..<width {
+                let pixel = image[x, y]
+                let high = Int(max(pixel.red, max(pixel.green, pixel.blue)))
+                let low = Int(min(pixel.red, min(pixel.green, pixel.blue)))
+                if high - low > best.saturation {
+                    best = (Int(pixel.red), Int(pixel.green), Int(pixel.blue), high - low)
+                }
+            }
+        }
+        return best
+    }
+
+    /// 色を持つ字を 1 つ描いて読み戻す。この環境にその字が無ければ `nil`。
+    private func drawColoredGlyph(fill: LinearRGBA, background: LinearRGBA = .opaque(
+        red: 0, green: 0, blue: 0)) throws -> DisplayImage? {
+        let canvas = try makeCanvas(width: 64, height: 64)
+        canvas.noTextFont()
+        canvas.textSize(40)
+        guard canvas.typeface.glyph(for: coloredScalar) != nil else { return nil }
+        try canvas.draw {
+            canvas.background(background)
+            canvas.fill(fill)
+            canvas.text(String(self.coloredScalar), 8, 48)
+        }
+        return try pixels(of: canvas)
+    }
+
+    @Test("色を持つ字形は、色のまま描かれる")
+    func aColoredGlyphKeepsItsColor() throws {
+        guard let image = try drawColoredGlyph(fill: white) else { return }
+        let brightest = mostSaturated(image, width: 64, height: 64)
+        // 塗りは白なので、色が出ているなら字形の側が持っていた色である
+        #expect(brightest.saturation > 64)
+        #expect(brightest.red > brightest.green)
+        #expect(brightest.red > brightest.blue)
+    }
+
+    @Test("色を持つ字形に、塗りの色は掛からない")
+    func theFillColorDoesNotTintAColoredGlyph() throws {
+        guard let onWhite = try drawColoredGlyph(fill: white),
+            let onBlue = try drawColoredGlyph(fill: .opaque(red: 0, green: 0, blue: 1))
+        else { return }
+        // 塗りを青にしても、字形の色は動かない。
+        // **画素の並びごとではなく代表の 1 点で比べる** — 食い違ったときに、
+        // 面いっぱいのバイト列ではなく色そのものが表示に出る
+        #expect(
+            mostSaturated(onWhite, width: 64, height: 64)
+                == mostSaturated(onBlue, width: 64, height: 64))
+        #expect(onWhite == onBlue)
+    }
+
+    @Test("色を持つ字形にも、塗りの透明度は効く")
+    func theFillAlphaStillReachesAColoredGlyph() throws {
+        let half = LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 0.5)
+        guard let opaque = try drawColoredGlyph(fill: white),
+            let faded = try drawColoredGlyph(fill: half)
+        else { return }
+        let solid = mostSaturated(opaque, width: 64, height: 64)
+        let thin = mostSaturated(faded, width: 64, height: 64)
+        // 黒地の上なので、薄くすれば色も彩度も引く
+        #expect(thin.saturation < solid.saturation)
+        #expect(thin.red < solid.red)
+    }
+
+    @Test("単色の字は、いままでどおり塗りの色で出る")
+    func aMonochromeGlyphStillTakesTheFillColor() throws {
+        let canvas = try makeCanvas(width: 64, height: 64)
+        try canvas.draw {
+            canvas.background(self.black)
+            canvas.fill(.opaque(red: 0, green: 1, blue: 0))
+            canvas.text("A", 8, 48)
+        }
+        let image = try pixels(of: canvas)
+        let brightest = mostSaturated(image, width: 64, height: 64)
+        #expect(brightest.green > 200)
+        #expect(brightest.red < 32)
+        #expect(brightest.blue < 32)
+    }
+
+    @Test("焼き場は、色を持つ字形だけを色つきと見分ける")
+    func theAtlasMarksOnlyColoredGlyphs() throws {
+        let canvas = try makeCanvas(width: 64, height: 64)
+        canvas.noTextFont()
+        canvas.textSize(40)
+        let face = canvas.typeface
+        guard let colored = face.glyph(for: coloredScalar),
+            let plain = face.glyph(for: "A")
+        else { return }
+        #expect(canvas.glyphEntry(for: colored)?.isColored == true)
+        #expect(canvas.glyphEntry(for: plain)?.isColored == false)
+    }
 }
