@@ -206,6 +206,54 @@ class ApiSurfaceTests(unittest.TestCase):
                     encoding="utf-8")
             self.assertEqual(api.load_owned_identifiers(graphs), {"s:core", "s:diag"})
 
+    def test_署名に外部モジュールの型が出ると見つける(self):
+        symbols = [symbol("load(_:)", owner="Sketch", takes=("URL", "s:10Foundation3URLV"))]
+        problems = api.check_foreign_vocabulary(symbols, {"s:6Mokume4MeshV"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Foundation", problems[0])
+        self.assertIn("URL", problems[0])
+
+    def test_署名に出てくる_ObjC_の型も見つける(self):
+        symbols = [
+            symbol("attach(_:)", owner="Sketch", takes=("NSApplication", "c:objc(cs)NSApplication"))
+        ]
+        problems = api.check_foreign_vocabulary(symbols, set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("NSApplication", problems[0])
+
+    def test_例外表に載っているシンボルは通す(self):
+        # 表に載る「シンボル → 理由」の組は実在するものを使う。表ごと消えたらこちらが赤くなる
+        self.assertIn("RenderDevice.init(device:)", api.FOREIGN_ALLOWLIST)
+        symbols = [
+            symbol("init(device:)", owner="RenderDevice", takes=("MTLDevice", "c:objc(pl)MTLDevice"))
+        ]
+        self.assertEqual(api.check_foreign_vocabulary(symbols, set()), [])
+
+    def test_例外の理由が空なら表として成立しない(self):
+        for name, reason in api.FOREIGN_ALLOWLIST.items():
+            with self.subTest(name):
+                self.assertTrue(reason.strip(), f"{name} に理由が書かれていない")
+
+    def test_標準ライブラリの型は面に出てよい(self):
+        symbols = [
+            symbol("circle(_:)", owner="Sketch", takes=("Float", "s:Sf")),
+            symbol("name(_:)", owner="Sketch", takes=("String", "s:SS")),
+            symbol("size(_:)", owner="Sketch", takes=("SIMD2", "s:s5SIMD2V")),
+        ]
+        self.assertEqual(api.check_foreign_vocabulary(symbols, set()), [])
+
+    def test_自前の型は面に出てよい(self):
+        # 自前の型が一覧から落ちていないかは check_type_closure が見る。こちらは境界だけ
+        symbols = [symbol("shape(_:)", owner="Sketch", takes=("Mesh", "s:6Mokume4MeshV"))]
+        self.assertEqual(api.check_foreign_vocabulary(symbols, {"s:6Mokume4MeshV"}), [])
+
+    def test_USR_からモジュール名を取る(self):
+        self.assertEqual(api.module_of("s:10Foundation3URLV"), "Foundation")
+        self.assertEqual(api.module_of("s:6Mokume4MeshV"), "Mokume")
+        self.assertEqual(api.module_of("c:objc(cs)NSApplication"), "(ObjC)")
+        self.assertEqual(api.module_of("s:Sf"), "Swift")
+        self.assertEqual(api.module_of("s:s5SIMD2V"), "Swift")
+
     def test_件数の直書きを見つける(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
