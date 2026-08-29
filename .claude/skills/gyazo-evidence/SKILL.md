@@ -87,8 +87,8 @@ PR / Issue で WebP を使うのは、同じ絵で GIF より小さく、色数�
 # 録画から連番へ (幅 720 / 15fps が目安)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos" frames/f.%04d.png
 
-# PR / Issue へ出す — WebP
-img2webp -loop 0 -mixed -d 67 frames/f.*.png -o motion.webp
+# PR / Issue へ出す — WebP (既定が可逆。1 ビットも劣化しない)
+img2webp -loop 0 -d 67 frames/f.*.png -o motion.webp
 
 # DocC へ出す — GIF (パレットを作ってから通す)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos,palettegen" palette.png
@@ -96,8 +96,31 @@ ffmpeg -y -i motion.mov -i palette.png \
   -lavfi "fps=15,scale=720:-1:flags=lanczos,paletteuse" -loop 0 motion.gif
 ```
 
-`-d` はフレーム間隔 (ミリ秒。15fps なら 67)。`-mixed` はフレームごとに可逆 / 非可逆を選ばせる指定で、
-**微細な差分を見せる証跡では `-lossless`** を使う (サイズは増えるが 1 ビットも劣化しない)。
+`-d` はフレーム間隔 (ミリ秒。15fps なら 67)。
+
+**非可逆にはしない。** `-mixed` (フレームごとに可逆 / 非可逆を選ばせる指定) を付けると、この絵では
+90 フレーム全部が非可逆側へ倒れ、**淡い階調が丸ごと潰れて 16px の段差に置き換わる** — 絵は正しく
+描けているのに、貼られたものを見ると壊れているように見える
+([#369](https://github.com/mokume-metal/mokume/issues/369) で実測。誤差は最大 84 階調、画素の 18% が
+4 階調以上ずれ、フレームを追うごとに悪化した)。証跡は「元の絵に無いものが足されていないこと」に
+価値がある。
+
+**4MB を目安に収める。** GitHub は貼られた画像を camo 経由で出すので、詰まるのは Gyazo (40MB) では
+なく必ずこちらである。5,242,880 バイトを超えると `Content length exceeded` で 404 になり、**その手前でも
+大きいと途中で切られる** — 4.6MB のものが 3.4MB で打ち切られ、それが `x-cache: HIT` のまま
+`max-age=31536000` (1 年) で焼き付いた ([#369](https://github.com/mokume-metal/mokume/issues/369) で実測)。
+壊れた側を引くかはエッジ次第なので、**貼った本人には正しく見えることがある**。実測では 3.7MB は 8 回とも
+無事で、4.6MB が壊れた。
+
+超えたときは**可逆の枠内で落とす** — `-near_lossless` は可逆圧縮の中で値を丸めるだけなので、段差が出ない:
+
+```bash
+img2webp -loop 0 -near_lossless 60 -d 67 frames/f.*.png -o motion.webp   # 最大誤差 2 階調
+img2webp -loop 0 -near_lossless 40 -d 67 frames/f.*.png -o motion.webp   # 最大誤差 4 階調
+```
+
+それでも収まらないなら**短くする / 小さくする**。`-mixed` へ戻る段は作らない — 情報が減るのと、
+元に無いものが足されるのは別である。
 
 ## 上げる
 
@@ -165,6 +188,21 @@ before / after は表で並べ、**幅を宣言する**。
 **動きには撮影範囲と意図をテキストで添える。** フレームを人が後から検める代わりの記録なので、
 どの窓を撮ったか・どの操作の何秒間か・どこを見てほしいかを書く。
 
+**貼ったら camo 側を検算する。** 上のとおり camo は大きいものを途中で切ることがあり、切れた側が
+キャッシュに焼かれる。**Gyazo の URL を直接叩いても気付けない** (あちらは無事なので) ので、貼った本文から
+camo URL を取り、何度か叩いて**原本と同じ長さが返るか**を見る:
+
+```bash
+gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.html+json' --jq .body_html \
+  | grep -oE 'https://camo\.githubusercontent\.com/[a-f0-9]+/[a-f0-9]+' | sort -u \
+  | while read -r u; do
+      for _ in 1 2 3; do curl -sS -o /dev/null -w "%{size_download} " "$u"; done; echo " $u"
+    done
+```
+
+長さが原本と違ったら、**上げ直して URL を変える**しかない (camo のキャッシュは消せない)。同じ絵を
+上げ直しても同一バイトなら Gyazo が同じ id を返すので、**先に小さくしてから上げる**。
+
 ## 守ること
 
 - **上げることは外部サービスへの送信である。** 送る前に写り込み (他アプリ・通知・手元のパス・秘密) を
@@ -190,6 +228,12 @@ before / after は表で並べ、**幅を宣言する**。
   permalink が 404 になる。**貼った先の画像も消えるので、貼り直しまで面倒を見る**
 - **mp4 を貼りたい** — 経路が無い。アップロード API が受け付けず、埋め込んでも展開されない。動きは
   WebP (PR / Issue) か GIF (DocC) にする
+- **貼った絵が表示されない / 途中までしか動かない** — camo で詰まっている。5MB 超なら 404
+  (`Content length exceeded`)、その手前なら途中切断が焼き付いている。**Gyazo 側は生きているので、URL を
+  直接叩くと取れてしまい気付きにくい** — 「貼る」節の検算で camo 側の長さを見る。直すには小さくして
+  上げ直す (URL が変わるので貼り直しまで面倒を見る)
+- **貼った動きに 16px の四角い段差が見える / 淡い階調が消えている** — `-mixed` か `-lossy` で束ねている。
+  可逆で束ね直す ([#369](https://github.com/mokume-metal/mokume/issues/369))
 - **観測が「走っているスケッチが見つかりません」と返る** — 区画を起動より後に作っている (A の順序を見る)。
   一度走らせてしまったら、止めて・区画を作って・起動し直す
 - **窓の一覧に目的の窓が出ない** — 一覧が返すのは**いま画面に出ている窓**である。背面で起動した
