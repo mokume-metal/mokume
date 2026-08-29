@@ -24,6 +24,7 @@ extension RenderTarget {
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     func encodeToImage() throws(RenderFailure) -> EncodedImage {
+        encodePassCount += 1
         let image: EncodedImage
         if let encodedStorage {
             image = encodedStorage

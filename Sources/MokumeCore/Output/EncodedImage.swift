@@ -59,11 +59,19 @@ final class EncodedImage {
         return pass
     }
 
+    /// 読み戻した回数。
+    ///
+    /// **同じフレームに何枚頼まれても 1 回であること**を検査から数えるための目印
+    /// (行の詰め直しは絵の大きさに比例して掛かるので、予約ごとに払うと 2 つ頼んだ
+    /// フレームだけが遅くなる)。
+    private(set) var readCount = 0
+
     /// バイト列として読み戻す。
     ///
     /// **画素ごとの計算は 1 つも無い。** 出力段は既に GPU が通しているので、ここで
     /// するのは行の詰め直しだけである (行の間隔が幅ぶんより広いことがある)。
     func read() -> DisplayImage {
+        readCount += 1
         var bytes = [UInt8](repeating: 0, count: width * height * OutputPass.bytesPerPixel)
         let source = storage.contents()
         let widthInBytes = width * OutputPass.bytesPerPixel
