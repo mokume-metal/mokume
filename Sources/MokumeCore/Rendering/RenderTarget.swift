@@ -66,9 +66,18 @@ public final class RenderTarget {
     /// 出力段を通すパイプライン。同じく頼まれてはじめて作る。
     var outputPassStorage: OutputPass?
 
-    /// 出力段を通した絵を取り出した回数。**置き場を作り直していないこと**を
-    /// 検査から数えるための目印 (作った枚数は `encodedStorage` の有無で分かる)。
+    /// 出力段を通した絵の置き場を作った回数。**作り直していないこと**を
+    /// 検査から数えるための目印。
     var encodedImagesMade = 0
+
+    /// 出力段を通した道を通った回数。
+    ///
+    /// **置き場を作った回数とは別に要る。** 置き場は 1 枚を使い回すので、作った回数は
+    /// 何回通っても 1 のままである。「出口が 1 つも無ければ道を 1 回も通らない」
+    /// ([ADR-0023] 決定 5) を検査から見るのはこちら。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    var encodePassCount = 0
 
     /// 指定した大きさの描画先を確保する。
     public init(gpu: RenderDevice, width: Int, height: Int) throws(RenderFailure) {

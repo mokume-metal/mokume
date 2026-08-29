@@ -45,6 +45,11 @@ public final class SketchRuntime {
     private var outlets: [(outlet: any Outlet, health: SeamHealth)] = []
     /// 登録された入り口。同じく宣言順。
     private var inlets: [(inlet: any Inlet, health: SeamHealth)] = []
+
+    /// 絵をファイルにする組み込みの出口。**頼まれてはじめて作る。**
+    ///
+    /// 頼まれている間だけ ``outlets`` に居る (``attachRecorderIfNeeded()``)。
+    private var recorder: FrameRecorder?
     /// 絵を取り出せなかったことを、既に言ったか。**毎フレーム言わない。**
     private var warnedEncodeFailed = false
 
@@ -186,8 +191,12 @@ public final class SketchRuntime {
     public func closePlugins() {
         for entry in outlets { entry.outlet.close() }
         for entry in inlets { entry.inlet.close() }
+        // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
+        // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
+        recorder?.close()
         outlets.removeAll()
         inlets.removeAll()
+        recorder = nil
     }
 
     /// フレームを 1 つ進める。
@@ -223,6 +232,7 @@ public final class SketchRuntime {
             drawFailure = error
         }
         if drawFailure == nil { deliverToOutlets() }
+        detachRecorderIfDone()
         serveObservationIfRequested(drawFailure: drawFailure)
         if let drawFailure { throw drawFailure }
     }
@@ -329,6 +339,63 @@ public final class SketchRuntime {
     public func renderFrame(to url: URL) throws {
         try advance()
         try PNGFile.write(try target.encodeToImage().read(), to: url)
+    }
+
+    // MARK: - 絵をファイルにする
+
+    /// このフレームの絵を 1 枚だけ書き出すよう頼む。転送 (正本は ``Sketch/save(_:)``)。
+    public func save(_ path: String) {
+        requireRecorder().save(path)
+        attachRecorderIfNeeded()
+    }
+
+    /// 連番を始める。転送 (正本は ``Sketch/beginRecord(_:)``)。
+    public func beginRecord(_ pattern: String) {
+        requireRecorder().beginRecord(pattern)
+        attachRecorderIfNeeded()
+    }
+
+    /// 連番を止める。転送 (正本は ``Sketch/endRecord()``)。
+    public func endRecord() {
+        guard let recorder else {
+            Diagnostics.warn("endRecord(): 撮っていません")
+            return
+        }
+        recorder.endRecord()
+    }
+
+    /// 撮る係。**頼まれてはじめて作る** — 撮らないスケッチは 1 バイトも払わない。
+    private func requireRecorder() -> FrameRecorder {
+        if let recorder { return recorder }
+        let made = FrameRecorder()
+        recorder = made
+        return made
+    }
+
+    /// 頼まれているなら差込口の並びへ入れる。
+    ///
+    /// **入れ直すときは健康状態も新しくする。** 並びから外れている理由は「遊んでいた」か
+    /// 「続けて転んで外された」かのどちらかで、次に明示的に頼まれた時点がどちらにとっても
+    /// 仕切り直しになる。
+    private func attachRecorderIfNeeded() {
+        guard let recorder, !recorder.isIdle,
+            !outlets.contains(where: { $0.outlet === recorder })
+        else { return }
+        outlets.append((recorder, SeamHealth()))
+    }
+
+    /// 頼まれているものが無くなったら並びから外す。
+    ///
+    /// 付けっぱなしにすると、1 枚だけ撮ったスケッチが以後ずっと毎フレーム道を通る
+    /// ([ADR-0023] 決定 5)。続けて転んで外されたものも、並びに置いたままにしない。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    private func detachRecorderIfDone() {
+        guard let recorder,
+            let entry = outlets.first(where: { $0.outlet === recorder }),
+            recorder.isIdle || !entry.health.isAttached
+        else { return }
+        outlets.removeAll { $0.outlet === recorder }
     }
 
     // MARK: - 観測に応える
