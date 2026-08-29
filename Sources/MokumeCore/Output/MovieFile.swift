@@ -3,10 +3,13 @@
 
 import AVFoundation
 import Foundation
+import MokumeDiagnostics
 import VideoToolbox
 
 /// 動きをファイルへ書き出すときに起こりうる失敗。
 enum MovieWriteFailure: Error, Equatable {
+    /// この機械に符号化器が無い。
+    case encoderUnavailable
     /// 書き出し先を開けない。
     case destinationUnavailable(path: String)
     /// 画素の器を借りられない。
@@ -52,7 +55,42 @@ nonisolated final class MovieFile {
     let width: Int
     let height: Int
 
+    /// この機械の符号化器が受け取る設定の鍵。**符号化器が無ければ nil。**
+    ///
+    /// 受けない鍵を渡すと AVFoundation は例外を投げ、Swift からは捕まえられない —
+    /// **プロセスごと落ちる。** 機械によって受ける鍵が違う (手元の機械は
+    /// `ExpectedFrameRate` を受けるが、仮想化された機械の符号化器は受けない) ので、
+    /// 渡す前に聞く。
+    static func supportedProperties(width: Int, height: Int) -> [String: Any]? {
+        var encoder: CFString?
+        var properties: CFDictionary?
+        let status = VTCopySupportedPropertyDictionaryForEncoder(
+            width: Int32(width), height: Int32(height),
+            codecType: kCMVideoCodecType_AppleProRes4444,
+            encoderSpecification: nil, encoderIDOut: &encoder,
+            supportedPropertiesOut: &properties)
+        guard status == noErr else { return nil }
+        return properties as? [String: Any]
+    }
+
+    /// この機械で動きを書き出せるか。
+    static var isAvailable: Bool { supportedProperties(width: 640, height: 360) != nil }
+
+    /// この機械の符号化器が、乗算前のアルファをそのまま受けるか。
+    ///
+    /// 受けない機械では透けたところの色が黒へ寄る ([ADR-0023] 決定 4 の表が言う
+    /// 「保つ」のうち、色まで保てるかは符号化器による)。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    static var keepsStraightAlpha: Bool {
+        supportedProperties(width: 640, height: 360)?[
+            kVTCompressionPropertyKey_AlphaChannelMode as String] != nil
+    }
+
     init(path: String, width: Int, height: Int, frameRate: Int) throws(MovieWriteFailure) {
+        guard let supported = Self.supportedProperties(width: width, height: height) else {
+            throw .encoderUnavailable
+        }
         self.path = path
         self.width = width
         self.height = height
@@ -69,6 +107,18 @@ nonisolated final class MovieFile {
         }
         self.writer = writer
 
+        // **乗算していないアルファをそのまま渡す** ([ADR-0011] 決定 4 の境界)。
+        // 指定しないと乗算済みとして扱われ、透けた部分の色が黒へ寄る
+        var compression: [String: Any] = [:]
+        let alphaMode = kVTCompressionPropertyKey_AlphaChannelMode as String
+        if supported[alphaMode] != nil {
+            compression[alphaMode] = kVTAlphaChannelMode_StraightAlpha as String
+        } else {
+            Diagnostics.warn(
+                "この機械の符号化器は乗算前のアルファを受けません。"
+                    + "透けたところの色は黒に合成されます")
+        }
+
         input = AVAssetWriterInput(
             mediaType: .video,
             outputSettings: [
@@ -82,13 +132,7 @@ nonisolated final class MovieFile {
                     AVVideoTransferFunctionKey: AVVideoTransferFunction_IEC_sRGB,
                     AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
                 ],
-                // **乗算していないアルファをそのまま渡す** ([ADR-0011] 決定 4 の境界)。
-                // 指定しないと乗算済みとして扱われ、透けた部分の色が黒へ寄る
-                AVVideoCompressionPropertiesKey: [
-                    kVTCompressionPropertyKey_AlphaChannelMode as String:
-                        kVTAlphaChannelMode_StraightAlpha as String,
-                    AVVideoExpectedSourceFrameRateKey: frameRate,
-                ],
+                AVVideoCompressionPropertiesKey: compression,
             ])
         // 実時間に追いつく必要は無い。詰まったら待たせるほうが、落とすより正しい
         input.expectsMediaDataInRealTime = false

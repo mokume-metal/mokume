@@ -40,7 +40,12 @@ struct FixedTimestepTests {
 }
 
 /// 動きをファイルにする係。**GPU を要さない** — 出口が受け取る絵を直接渡して測る。
-@Suite("動きの書き出し")
+@Suite(
+    "動きの書き出し",
+    .enabled(
+        if: MovieFile.isAvailable,
+        "この機械には ProRes 4444 の符号化器が無い")
+)
 struct MovieWriterTests {
 
     /// 一色で塗った 1 枚。
@@ -131,7 +136,10 @@ struct MovieWriterTests {
     "動きをファイルにする",
     .enabled(
         if: RenderDevice.isAvailable,
-        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする"),
+    .enabled(
+        if: MovieFile.isAvailable,
+        "この機械には ProRes 4444 の符号化器が無い")
 )
 struct RecordMovieTests {
 
@@ -209,7 +217,11 @@ struct RecordMovieTests {
         }
     }
 
-    @Test("透けたところは、動きにも透けたまま残る")
+    @Test(
+        "透けたところは、動きにも透けたまま残る",
+        .enabled(
+            if: MovieFile.keepsStraightAlpha,
+            "この機械の符号化器は乗算前のアルファを受けない"))
     func transparencySurvivesTheTripToTheMovie() async throws {
         try await withTemporaryDirectory("mokume-movie-alpha") { directory in
             let path = directory.appendingPathComponent("clear.mov").path

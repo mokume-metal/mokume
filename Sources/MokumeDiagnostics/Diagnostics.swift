@@ -14,7 +14,13 @@ import Foundation
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0016]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0016-package-structure.md
-public enum Diagnostics {
+///
+/// **隔離の外からも言える** ([ADR-0010] 決定 4)。フレームの外へ逃がした仕事 —
+/// 書き出しや符号化 — も、気付いたことを人へ伝える必要がある。持っているのは
+/// 標準エラーへの 1 行だけで、共有する状態が無いので、隔離に縛る理由が無い。
+///
+/// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
+public nonisolated enum Diagnostics {
     /// 名乗り。どの出力がライブラリのものかを、行を見ただけで分かるようにする。
     static let prefix = "mokume"
 
