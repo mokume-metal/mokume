@@ -63,10 +63,13 @@ extension Canvas {
     }
 
     /// 組み立てに失敗している断片の理由。観測に載せる。
+    ///
+    /// **塗りと計算をまとめて返す。** 呼ぶ側 (観測) が「どの種類の断片が壊れているか」で
+    /// 経路を分けることはないので、分けると呼び忘れる側ができるだけになる。
     var shaderFailures: [String] {
         shaders.compactMap { shader in
             shader.failure.map { "shader \(shader.name): \($0)" }
-        }
+        } + computationFailures
     }
 
     /// 渡す値が変わった。**列を閉じてから変える** — そうしないと、既に置いた図形まで
