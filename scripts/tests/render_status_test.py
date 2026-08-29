@@ -61,12 +61,26 @@ if [[ "$*" == *"/git/trees/"* ]]; then
   fi
   exit 0
 fi
+# open な PR の一覧 (--jq が draft を落とした後の番号の並び)。順番の判定が読む
+if [[ "$*" == *"/pulls?"* ]]; then
+  [ -z "${OPEN_PRS_FAILS:-}" ] || { echo "gh: 500" >&2; exit 1; }
+  printf '%s\\n' ${OPEN_PRS:-}
+  exit 0
+fi
 if [[ "$*" == *"/files"* ]]; then
   # 特定の PR だけ読めない状況を作る (判定の途中で見えなくなる回)
   if [ -n "${FILES_FAILS_FOR:-}" ] && [[ "$*" == *"/pulls/${FILES_FAILS_FOR}/files"* ]]; then
     echo "gh: 404" >&2
     exit 1
   fi
+  # PR ごとに違う一覧を返す口。順番の判定は**自分以外の PR の中身**を見るので、
+  # 「先に居るが描画には触れていない PR」を作れる必要がある (書式は 番号=a,b)
+  for entry in ${FILES_BY_PR:-}; do
+    if [[ "$*" == *"/pulls/${entry%%=*}/files"* ]]; then
+      printf '%s\\n' "${entry#*=}" | tr ',' '\\n'
+      exit 0
+    fi
+  done
   printf '%s\\n' $FILES
   exit 0
 fi
@@ -215,10 +229,88 @@ class RenderStatusTest(unittest.TestCase):
             GITHUB_EVENT_NAME="pull_request",
             PR_NUMBER="5",
             PR_HEAD_SHA="deadbeef",
+            OPEN_PRS="5",
             FILES="AGENTS.md Sources/MokumeCore/Drawing/Canvas.swift",
         )
         self.assertEqual(self.posted(), [])
         self.assertIn("手元の報告を待つ", out)
+
+    # --- proxy / 描画 PR の順番 -----------------------------------------
+    #
+    # #435 の判定は「手元で回した木が合流後の姿を覆っているか」を見る。裏を返すと
+    # 「手元で打ってから merge されるまでに描画の変更が入らないこと」を要求して
+    # おり、描画 PR が並走すると片方が入るたびにもう片方が弾かれた (#456 は 3 回)。
+    # ここで固定するのは、その追いかけっこを止める番号順の順番である (#467)。
+
+    def turn(self, **env):
+        base = dict(
+            GITHUB_REPOSITORY="mokume-metal/mokume",
+            GITHUB_EVENT_NAME="pull_request",
+            PR_NUMBER="9",
+            PR_HEAD_SHA="deadbeef",
+            OPEN_PRS="3 9",
+            FILES="Sources/MokumeCore/Canvas.swift",
+            FILES_BY_PR="",
+            OPEN_PRS_FAILS="",
+            FILES_FAILS_FOR="",
+        )
+        base.update(env)
+        return self.run_script("proxy", **base)
+
+    def test_先に描画PRが居れば順番待ちで赤くする(self):
+        out = self.turn()
+        posted = self.posted_to("deadbeef")
+        self.assertEqual(len(posted), 1)
+        self.assertIn("failure", posted[0])
+        self.assertIn("#3 の merge を待つ", posted[0])
+        self.assertIn("先に #3 が居る", out)
+
+    def test_先に居るのが描画に触れないPRなら先頭として扱う(self):
+        out = self.turn(FILES_BY_PR="3=AGENTS.md,docs/decisions/0001-founding-principles.md")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("この PR が描画の先頭", out)
+
+    def test_順番待ちの相手は先に居る描画PRのうち最も若い番号(self):
+        out = self.turn(
+            OPEN_PRS="3 7 9",
+            FILES_BY_PR="3=AGENTS.md 7=Sources/MokumeCore/Text.swift",
+        )
+        self.assertIn("#7 の merge を待つ", self.posted_to("deadbeef")[0])
+        self.assertIn("先に #7 が居る", out)
+
+    def test_自分より後ろの描画PRは順番を塞がない(self):
+        out = self.turn(PR_NUMBER="3", OPEN_PRS="3 9")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("この PR が描画の先頭", out)
+
+    def test_Draftの描画PRは順番の外(self):
+        # 一覧は draft を落とした後の並びなので、自分が居なければ Draft である
+        out = self.turn(OPEN_PRS="3")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("順番の外", out)
+
+    def test_open_PRの一覧を読めなければ名乗って通す(self):
+        out = self.turn(OPEN_PRS_FAILS="1")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("順番は見ていない", out)
+
+    def test_先に居るPRの中身を読めなければ名乗って通す(self):
+        out = self.turn(FILES_FAILS_FOR="3")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("順番は見ていない", out)
+
+    def test_描画に触れないPRは順番を見ない(self):
+        # 順番待ちの failure は手元の実行でしか緑に戻せない。描画に触れない PR に
+        # 打ってしまうと、打ち直す先の無い赤で止まる
+        out = self.turn(
+            FILES="AGENTS.md",
+            OPEN_PRS="3 9",
+            FILES_BY_PR="3=Sources/MokumeCore/Canvas.swift",
+        )
+        posted = self.posted_to("deadbeef")
+        self.assertEqual(len(posted), 1)
+        self.assertIn("描画に触れていない", posted[0])
+        self.assertNotIn("先に #3 が居る", out)
 
     # --- proxy / merge queue -------------------------------------------
     #
