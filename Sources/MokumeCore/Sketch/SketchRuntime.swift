@@ -78,6 +78,11 @@ public final class SketchRuntime {
     private var exposedValues: [String: ExposedValue] = [:]
     /// 続けて撮っている最中の列。撮り終えるまで次の要求を拾わない。
     private var capture: FrameCapture?
+    /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
+    /// ``SketchPresence/grace`` 秒ぶん進み続けてからである。
+    private lazy var presence = SketchPresence(source: self)
+    /// 最初に ``advance()`` が呼ばれた時刻。名乗りの経過はここを起点に測る。
+    private var firstAdvanceAt: Double?
     /// 直近のフレームの間隔 (秒)。観測が無ければ測らない。
     private var frameIntervals: [Double] = []
     private var previousFrameStart: Double?
@@ -212,6 +217,10 @@ public final class SketchRuntime {
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     public func advance() throws(RenderFailure) {
+        // **描く前に済ませる。** 名乗りのメニューが開くとしたらこの中なので、そのとき
+        // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
+        // 止まっているスケッチも、居座っていることに変わりはない
+        updatePresence()
         guard !isPaused else {
             serveObservationIfRequested()
             return
@@ -293,6 +302,46 @@ public final class SketchRuntime {
                         + " (最後の理由: \(outlets[index].outlet.failure ?? "不明"))")
             }
         }
+    }
+
+    // MARK: - 名乗り
+
+    /// 走り続けていることをメニューバーの名乗りへ伝える。
+    ///
+    /// 起点は**最初のフレーム**で、組み立てた時刻ではない。1 枚も描かないまま持っている
+    /// ランタイム (検査が作るもの) は走っているとは言えないため。
+    private func updatePresence() {
+        let now = self.now()
+        guard let started = firstAdvanceAt else {
+            firstAdvanceAt = now
+            return
+        }
+        presence.advanced(runningFor: now - started)
+    }
+
+    /// 走り続けている時間 (秒)。名乗りが読む。
+    var presenceElapsed: Double {
+        guard let firstAdvanceAt else { return 0 }
+        return now() - firstAdvanceAt
+    }
+
+    /// いま描かれている絵を、名乗りのメニューに載る大きさで返す。
+    ///
+    /// **出口が受け取るのと同じ道を通す** ([ADR-0024] 決定 6)。小さくするのは通した後で、
+    /// 出るバイト列は通す前に間引いたのと同じである
+    /// ([#382](https://github.com/mokume-metal/mokume/issues/382)) — 観測が絵を採るときと
+    /// 同じ理屈なので、経路をもう 1 本作らない。
+    ///
+    /// **1 枚も描いていなければ `nil`。** 描いていない絵を出すよりは、出さないほうがよい。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    func presencePreview() -> DisplayImage? {
+        guard timing.frameCount > 0 else { return nil }
+        // メニューに収まる幅へ落とす。**縮小率ではなく幅で決める** — 絵の大きさは
+        // スケッチが決めるので、率で指定するとメニューの幅がスケッチごとに変わる
+        let target = 240.0
+        guard let image = try? self.target.encodeToImage().read() else { return nil }
+        return image.scaled(by: min(1, target / Double(max(1, image.width))))
     }
 
     /// フレームの頭で片付けること。観測が無ければどれも空回りしない。
