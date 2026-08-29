@@ -164,20 +164,31 @@ struct CircleSegmentTests {
 
     @Test("大きすぎる円は上で頭打ちにする")
     func segmentCountIsCappedAbove() {
-        #expect(Canvas.segmentCount(forRadius: 100_000) == 128)
+        // 上限は品質の判断ではなく暴走の歯止め。半径 10⁹ で 14 万辺を割かせない (#429)
+        #expect(Canvas.segmentCount(forRadius: 1_000_000) == 1024)
+        #expect(Canvas.segmentCount(forRadius: 1e9) == 1024)
+        // 角度が潰れるほど大きな半径も、いちばん細かい側へ倒す (かつては三角形だった)
+        #expect(Canvas.segmentCount(forRadius: 1e30) == 1024)
     }
 
-    // 小さい側は下限 32 に隠れて一度も検査されていなかった (#423)
+    // 小さい側は下限 32 に隠れて一度も検査されていなかった (#423)。大きい側は上限 128 に
+    // 当たった円を `if n < 128` で検査から外していた — その領域が実際に破れていた (#429)
     @Test(
         "多角形と真円の隔たりが 0.25 画素以下に収まる",
-        arguments: [Float(0.5), 1, 2, 6, 5, 20, 100, 400])
+        arguments: [Float(0.5), 1, 2, 6, 5, 20, 100, 400, 1000, 5000, 20000, 50000])
     func polygonStaysWithinAQuarterPixel(radius: Float) {
         let n = Canvas.segmentCount(forRadius: radius)
-        // 隔たりがいちばん大きいのは辺の中央で、その差は r(1 − cos(π/n))
-        let deviation = radius * (1 - cos(Float.pi / Float(n)))
-        // 上限で頭打ちにした大きな円だけは、この保証を外れる
-        if n < 128 {
-            #expect(deviation <= 0.25)
-        }
+        // 隔たりがいちばん大きいのは辺の中央で、その差は r(1 − cos(π/n))。
+        // **倍精度で、桁の落ちない形に置き換えて測る** — 1 − cos は半径が大きいほど
+        // 引き算で桁を失い、実装の当否ではなく測り方の誤差を見てしまう (#429)
+        let deviation = Double(radius) * 2 * pow(sin(Double.pi / (2 * Double(n))), 2)
+        #expect(deviation <= 0.25)
+    }
+
+    @Test("保証が届く半径は、上限から r = n²/(2π²) で決まる")
+    func guaranteeReachesTheRadiusTheCapImplies() {
+        // 上限に当たらないうちは式のまま。約 53,000 が境目 (#429)
+        #expect(Canvas.segmentCount(forRadius: 53_000) < 1024)
+        #expect(Canvas.segmentCount(forRadius: 60_000) == 1024)
     }
 }
