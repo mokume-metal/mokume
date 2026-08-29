@@ -298,6 +298,14 @@ public final class Canvas {
     var currentImageMode = ShapeMode.corner
     /// 画像に掛ける色。既定は掛けない (白・不透明)。
     var currentTint = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+    /// これから置く**塗り**に貼る絵。`nil` なら貼らない。
+    ///
+    /// **描き方なのでフレームを越える** ([ADR-0021] 決定 4) — 塗り・線・混ぜ方と
+    /// 同じ族である。効く先は塗りだけで、輪郭・端点・角・線と点・字・周囲は
+    /// 焼き場の白い区画を読み続ける。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    var currentTextureImage: Image?
     var warnedMissingFont = false
     var warnedAtlasFull = false
 
@@ -422,6 +430,8 @@ public final class Canvas {
         var textWrap: TextWrap
         var imageMode: ShapeMode
         var tint: LinearRGBA
+        /// 塗りに貼る絵。
+        var textureImage: Image?
         /// 材質も積む。**フレームを越えないことと、積めることは別の話である** —
         /// 変換も同じくフレームを越えないが積める。入れ子で書けないほうが不便になる
         var material: Material
@@ -445,6 +455,7 @@ public final class Canvas {
                 verticalTextAlign: currentVerticalTextAlign,
                 textLeading: currentTextLeading, textWrap: currentTextWrap,
                 imageMode: currentImageMode, tint: currentTint,
+                textureImage: currentTextureImage,
                 material: currentMaterial,
                 castsShadow: castsShadow, receivesShadow: receivesShadow)
         }
@@ -467,6 +478,9 @@ public final class Canvas {
             currentTextWrap = newValue.textWrap
             currentImageMode = newValue.imageMode
             currentTint = newValue.tint
+            // 列を閉じる必要は無い。塗りを置く手前で必ず useFillTexture() を通るので、
+            // 面が実際に変わるのはそのときで、そこで閉じられる
+            currentTextureImage = newValue.textureImage
             // 材質と影の扱いが変わるなら、戻す前に列を閉じる (置いた立体を後の設定で
             // 描かない)
             if currentMaterial != newValue.material || castsShadow != newValue.castsShadow
@@ -547,6 +561,17 @@ public final class Canvas {
     /// 図形と字が読む面 (字形の置き場) へ戻す。
     func useGlyphTexture() {
         useTexture(atlas.texture, kind: .coverage)
+    }
+
+    /// **塗り**が読む面へ切り替える。貼る絵が束ねてあればその面、無ければ焼き場。
+    ///
+    /// 塗りを置く手前で必ずこれを通すので、直前に画像や字を描いて面が変わっていても
+    /// 戻る。輪郭・端点・角・線と点はこれを通さず ``useGlyphTexture()`` のままなので、
+    /// **貼る絵は塗りにしか効かない**。
+    func useFillTexture() {
+        guard let image = currentTextureImage else { return useGlyphTexture() }
+        image.uploadIfNeeded()
+        useTexture(image.texture, kind: .color)
     }
 
     /// 描画先の座標へ落とす行列を作る。
@@ -959,6 +984,9 @@ public final class Canvas {
     }
 
     /// 周の内側を塗る。
+    ///
+    /// 貼る絵があれば、**周の囲みの箱**を 0…1 に写した読み取り位置を付ける。組み込みの
+    /// 図形はどれも周だけで表されているので、ここ 1 箇所で全部に効く。
     private func fillInterior(_ outline: Outline) {
         let points = outline.points
         guard points.count >= 3 else { return }
@@ -967,15 +995,29 @@ public final class Canvas {
         // 中心を持つ図形は全周を扇に分け、持たない図形は最初の点から分ける
         let ring = outline.fanCenter == nil ? Array(points.dropFirst()) : points
         guard ring.count >= 2 else { return }
+
+        // 箱は**周そのもの**から作る。扇の中心は周の内側にあるので、含めても広がらない
+        let uvOf = currentTextureImage == nil ? nil : Self.boxUV(of: points)
+
+        func place(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ bSource: SIMD2<Float>,
+            _ c: SIMD2<Float>, _ cSource: SIMD2<Float>)
+        {
+            appendTriangle(
+                a, b, c, colors: (currentFill, currentFill, currentFill),
+                uvs: uvOf.map { ($0(pivot), $0(bSource), $0(cSource)) })
+        }
+
         var previous = transform.apply(x: ring[0].x, y: ring[0].y)
+        var previousSource = ring[0]
         for point in ring.dropFirst() {
             let current = transform.apply(x: point.x, y: point.y)
-            appendTriangle(center, previous, current, color: currentFill)
+            place(center, previous, previousSource, current, point)
             previous = current
+            previousSource = point
         }
         if outline.fanCenter != nil, outline.isClosed {
             let first = transform.apply(x: ring[0].x, y: ring[0].y)
-            appendTriangle(center, previous, first, color: currentFill)
+            place(center, previous, previousSource, first, ring[0])
         }
     }
 
@@ -1281,17 +1323,44 @@ public final class Canvas {
     ///
     /// 3 つが同じ色なら 1 色の三角形と区別が付かないので、色を 1 つ受ける形はこれの
     /// 呼び分けである — **頂点ごとの色のために別の経路を作らない** ([ADR-0021] 決定 5)。
+    ///
+    /// `uvs` は**塗りだけが渡す**読み取り位置 (0…1)。渡さなければ焼き場の白い区画を
+    /// 読む — 白を掛けても色は変わらないので、**貼る絵を束ねていないときの絵は
+    /// 1 ビットも変わらない**。輪郭・端点・角はここを渡さない側に居続ける。
     func appendTriangle(
         _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>,
-        colors: (LinearRGBA, LinearRGBA, LinearRGBA)
+        colors: (LinearRGBA, LinearRGBA, LinearRGBA),
+        uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)? = nil
     ) {
         // **図形は白い区画を読む。** 直前に画像を描いていたら、その面を読んだままに
         // なるので戻す (変わらなければ何も起きない)
         beginFlat()
-        useGlyphTexture()
-        vertices.append(ShapeVertex(position: a, uv: whiteUV, color: colors.0))
-        vertices.append(ShapeVertex(position: b, uv: whiteUV, color: colors.1))
-        vertices.append(ShapeVertex(position: c, uv: whiteUV, color: colors.2))
+        if uvs != nil { useFillTexture() } else { useGlyphTexture() }
+        let uv = uvs ?? (whiteUV, whiteUV, whiteUV)
+        vertices.append(ShapeVertex(position: a, uv: uv.0, color: colors.0))
+        vertices.append(ShapeVertex(position: b, uv: uv.1, color: colors.1))
+        vertices.append(ShapeVertex(position: c, uv: uv.2, color: colors.2))
+    }
+
+    /// 塗りに貼る絵があるなら、囲みの箱を 0…1 に写す関数を返す。
+    ///
+    /// **変換を掛ける前の座標から作る。** 描画先の座標から作ると、回した図形の上を
+    /// 絵が滑る (図形は回ったのに絵は画面に貼り付いたままになる)。
+    static func boxUV(of points: [SIMD2<Float>]) -> (SIMD2<Float>) -> SIMD2<Float> {
+        var lowest = SIMD2<Float>(repeating: .infinity)
+        var highest = SIMD2<Float>(repeating: -.infinity)
+        for point in points {
+            lowest = simd_min(lowest, point)
+            highest = simd_max(highest, point)
+        }
+        let span = highest - lowest
+        // **潰れた軸は 0 に倒す。** 幅の無い図形を 0 で割ると、読み取り位置が数でなく
+        // なって面のどこも指さなくなる
+        return { point in
+            SIMD2(
+                span.x > 0 ? (point.x - lowest.x) / span.x : 0,
+                span.y > 0 ? (point.y - lowest.y) / span.y : 0)
+        }
     }
 
     // MARK: - 描き切る

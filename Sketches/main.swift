@@ -19,6 +19,7 @@ import mokume
 let catalogue: [(name: String, make: () -> any Sketch)] = [
     ("shapes-and-style", { ShapesAndStyle() }),
     ("type-and-imagery", { TypeAndImagery() }),
+    ("textured-surfaces", { TexturedSurfaces() }),
     ("pixels-and-paint", { PixelsAndPaint() }),
     // 触って確かめるためのもの。**書き出しても意味を持たない** (下の --render は
     // 触っていない 1 枚を出すだけ) が、カタログを 2 つに割るほどの違いではない

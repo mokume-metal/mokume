@@ -132,6 +132,9 @@ extension Canvas {
         _ source: SolidSource, isDerived: Bool = false, mesh build: () -> SolidMesh
     ) {
         beginSolids()
+        // **貼る絵が変わったら、ここで列が閉じる。** beginSolids は平面から移るときしか
+        // 効かないので、立体を続けて置いている最中の切り替えはここが拾う
+        useFillTexture()
 
         if openSolid?.source != source
             || solidInstances.count - (openSolid?.instanceStart ?? 0) >= instanceCapacity
@@ -141,12 +144,16 @@ extension Canvas {
             let mesh = build()
             let start = solidVertices.count
             solidVertices.reserveCapacity(start + mesh.points.count)
+            let textured = currentTextureImage != nil
             for point in mesh.points {
                 // **形自身の座標のまま置く。** 変換は置き場所が持つ
                 solidVertices.append(
                     SolidVertex(
                         position: point.position, normal: point.normal, isDerived: isDerived,
-                        uv: whiteUV, color: .opaque(red: 1, green: 1, blue: 1)))
+                        // 貼る絵が無ければ焼き場の白い区画を読む。**そのときの頂点は
+                        // 貼る口が無かった頃と 1 ビットも変わらない**
+                        uv: textured ? point.uv : whiteUV,
+                        color: .opaque(red: 1, green: 1, blue: 1)))
             }
             openSolid = OpenSolid(
                 source: source, vertexStart: start, vertexCount: mesh.points.count,
@@ -164,7 +171,7 @@ extension Canvas {
     func beginSolids() {
         guard openSource == .flat else { return }
         closeBatch()
-        useGlyphTexture()
+        useFillTexture()
         openSource = .solid
     }
 
@@ -192,14 +199,20 @@ extension Canvas {
     ///
     /// **図形は焼き場の白い区画を読む** — 白を掛けても色は変わらないので、平面と同じ
     /// 塗りをそのまま通せる (``SolidVertex/uv``)。
+    ///
+    /// `uv` を渡すのは**塗り**だけで、線と点・周囲の背景は渡さない側に居続ける。
+    /// 渡さなければ白い区画を読むので、貼る絵は塗りにしか効かない。
     func appendSolidVertex(
         position: SIMD3<Float>, normal: SIMD3<Float>, isDerived: Bool = false,
-        color: LinearRGBA
+        uv: SIMD2<Float>? = nil, color: LinearRGBA
     ) {
+        // **面の切り替えが先。** 切り替えは列を閉じるので、開いてから切り替えると
+        // 開いたばかりの列が閉じられ、この頂点がどの列にも属さなくなる
+        if uv != nil { useFillTexture() } else { useGlyphTexture() }
         openFreeformSolid()
         solidVertices.append(
             SolidVertex(
-                position: position, normal: normal, isDerived: isDerived, uv: whiteUV,
+                position: position, normal: normal, isDerived: isDerived, uv: uv ?? whiteUV,
                 color: color))
         openSolid?.vertexCount += 1
     }

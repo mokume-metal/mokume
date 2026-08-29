@@ -45,6 +45,13 @@ extension Canvas {
 
     public func noTint() { currentTint = .opaque(red: 1, green: 1, blue: 1) }
 
+    // MARK: - 貼る
+
+    // これから置く塗りに絵を貼る。
+    public func texture(_ image: Image) { currentTextureImage = image }
+
+    public func noTexture() { currentTextureImage = nil }
+
     // MARK: - 置く
 
     /// 絵を等倍で置く。
