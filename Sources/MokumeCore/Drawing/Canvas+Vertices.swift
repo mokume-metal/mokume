@@ -198,6 +198,8 @@ extension Canvas {
         /// 向きを形から求めたか。**求めた向きだけ両面として扱う** (``SolidVertex/normal``)。
         var isDerived: Bool
         var color: LinearRGBA
+        /// 変換を掛ける**前**の面の向き。利用者の断片へ渡す (``SolidVertex/shapeNormal``)。
+        var shapeNormal: SIMD3<Float>
     }
 
     /// 並べ終えた頂点を描く。
@@ -319,13 +321,20 @@ extension Canvas {
                 position: SIMD3(moved.x, moved.y, moved.z),
                 normal: point.normal.map { normalize(normalMatrix * $0) } ?? .zero,
                 isDerived: point.normal == nil,
-                color: point.fill)
+                color: point.fill,
+                shapeNormal: point.normal ?? .zero)
         }
 
         // **書かれていない向きは、その頂点が属する三角形の向きを足し込んで求める。**
         // 三角形 3 つぶんずつ独立に処理すると、帯状・扇状に並べたときに後ろの頂点だけ
         // 書かれないまま残る
+        //
+        // **変換の前と後で 2 度足し込む。** 片方から他方を導けば 1 度で済むが、
+        // 導いた値は既存の値と最下位ビットが揃わず、触っていない絵の台帳まで動く。
+        // 光へ渡る向き (後) は 1 ビットも変えたくないので、断片へ渡す向き (前) を
+        // 別に積む
         var accumulated = [SIMD3<Float>](repeating: .zero, count: points.count)
+        var accumulatedInShape = [SIMD3<Float>](repeating: .zero, count: points.count)
         for triangle in triangles {
             let a = placed[triangle.0].position
             let b = placed[triangle.1].position
@@ -334,10 +343,20 @@ extension Canvas {
             accumulated[triangle.0] += face
             accumulated[triangle.1] += face
             accumulated[triangle.2] += face
+
+            let p = points[triangle.0].position
+            let q = points[triangle.1].position
+            let r = points[triangle.2].position
+            let shapeFace = cross(q - p, r - p)
+            accumulatedInShape[triangle.0] += shapeFace
+            accumulatedInShape[triangle.1] += shapeFace
+            accumulatedInShape[triangle.2] += shapeFace
         }
         for index in placed.indices where points[index].normal == nil {
             let sum = accumulated[index]
             placed[index].normal = length_squared(sum) > 0 ? normalize(sum) : .zero
+            let shapeSum = accumulatedInShape[index]
+            placed[index].shapeNormal = length_squared(shapeSum) > 0 ? normalize(shapeSum) : .zero
         }
         return placed
     }
@@ -363,8 +382,11 @@ extension Canvas {
             if shapeHasDepth {
                 for index in indices {
                     let vertex = placed[index]
+                    // **変換を焼き込む前の座標と向きも渡す。** 断片へ届くのはそちらで、
+                    // 組み込みの立体と同じく「回しても模様が形に留まる」ようにする
                     appendSolidVertex(
-                        position: vertex.position, normal: vertex.normal,
+                        position: vertex.position, shapePosition: points[index].position,
+                        normal: vertex.normal, shapeNormal: vertex.shapeNormal,
                         isDerived: vertex.isDerived, uv: uv(index), color: vertex.color)
                 }
             } else {
@@ -397,7 +419,9 @@ extension Canvas {
     ) {
         guard !ring.isEmpty else { return }
         if shapeHasDepth {
-            strokeSolidRing(ring.map { placed[$0].position }, isClosed: closed)
+            strokeSolidRing(
+                ring.map { placed[$0].position }, shapePoints: ring.map { points[$0].position },
+                isClosed: closed)
         } else {
             // 平面の輪郭は変換の前の座標で組み立てる (`Outline` の説明を参照)
             strokeOutline(

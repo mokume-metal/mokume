@@ -23,6 +23,10 @@ struct ShapeFragmentIn {
     float3 normal;
     /// 面の向きを形から求めたか (1 なら両面として扱う)。
     float isDerivedNormal;
+    /// **形自身の座標**での位置。立体だけが使う (平面は 0)。
+    float3 shapePosition;
+    /// 形自身の座標での面の向き。立体だけが使う (平面は 0)。
+    float3 shapeNormal;
 };
 
 /// 置いた光 1 つぶん。並びは Swift 側の `Light` と一致する。
@@ -312,6 +316,18 @@ struct Fragment {
     float4 texel;
     /// 読む面の中身の種類。`kCoverage` なら覆っている割合。
     uint textureKind;
+    /// **形自身の座標**での、この画素が指す位置。立体だけが持つ (平面は 0)。
+    ///
+    /// 置き場所の変換を通す**前**の座標なので、**形を動かしても回しても変わらない** —
+    /// ここから作った模様は形の表面に留まる。単位は形を置いたときの寸法そのままで、
+    /// 例えば `box(520, 26, 300)` なら x は −260…260 を取る。
+    float3 shapePosition;
+    /// 形自身の座標での面の向き (長さ 1)。
+    ///
+    /// ``shapePosition`` と同じ座標系なので、**回しても面ごとの向きが変わらない**。
+    /// 向きを持たない頂点 (立体の線と点) と平面では 0 なので、使う前に長さを見る。
+    /// 形から求めた向きは、裏を向いている面では見えている側へ裏返る (光と同じ規則)。
+    float3 shapeNormal;
     /// スケッチが始まってからの秒数。
     float time;
     /// 面の大きさ (画素)。
@@ -478,6 +494,13 @@ fragment float4 mokume_fragmentMain(
     bool isFrontFacing [[front_facing]],
     float4 destination [[color(0)]])
 {
+    // **形から求めた向きだけは、どちらの側から見ても光を受ける。** 裏を向いている面
+    // では向きを裏返す — 利用者が頂点を並べる向き (巻き方) で絵が真っ黒になるのを
+    // 避けるため。書かれた向きは裏返さない (書いた指定を黙って覆さない)。
+    // **判定は光と断片で 1 つ**にする — 分けると、光が当たっている側と断片が向きだと
+    // 思っている側が食い違う面が作れてしまう
+    bool isBackOfDerived = in.isDerivedNormal > 0.5 && !isFrontFacing;
+
     Fragment f;
     f.position = in.position.xy;
     f.place = in.position.xy / uniforms.resolution;
@@ -500,11 +523,7 @@ fragment float4 mokume_fragmentMain(
         (lighting.count > 0 || surroundings.topAndPresence.w > 0.5)
         && dot(in.normal, in.normal) > 0.0)
     {
-        // **形から求めた向きだけは、どちらの側から見ても光を受ける。** 裏を向いている
-        // 面では向きを裏返す — 利用者が頂点を並べる向き (巻き方) で絵が真っ黒になるのを
-        // 避けるため。書かれた向きは裏返さない (書いた指定を黙って覆さない)
-        float3 normal = in.normal;
-        if (in.isDerivedNormal > 0.5 && !isFrontFacing) { normal = -normal; }
+        float3 normal = isBackOfDerived ? -in.normal : in.normal;
         float3 lit = mokume_shade(
             lights, lighting.offset, lighting.count, in.worldPosition, normal,
             lighting.viewer, in.color, material, surroundings, shadow_texture, uniforms);
@@ -512,6 +531,11 @@ fragment float4 mokume_fragmentMain(
     }
     f.texel = source_texture.sample(kGlyphSampler, in.uv);
     f.textureKind = textureKind;
+    f.shapePosition = in.shapePosition;
+    // **長さがあるときだけ揃える。** 向きを持たない頂点 (立体の線と点) と平面は 0 で、
+    // そのまま正規化すると 0 が数でない値に化ける
+    float3 shapeNormal = isBackOfDerived ? -in.shapeNormal : in.shapeNormal;
+    f.shapeNormal = dot(shapeNormal, shapeNormal) > 0.0 ? normalize(shapeNormal) : float3(0.0);
     f.time = uniforms.time;
     f.resolution = uniforms.resolution;
     f.noiseSeed = uniforms.noiseSeed;

@@ -189,8 +189,22 @@ enum Scene: String, CaseIterable, Sendable {
     case texturedShapes
     /// 焼いた絵を貼った立体。組み込みの形の展開と、自分で書いた読み取り位置。
     case texturedSolids
+    /// 形自身の座標から模様を作った立体。**同じ形を 2 つ、違う角度で置いてある** —
+    /// 模様が形について回っていることが 1 枚で読める。
+    case surfaceShader
 
     var size: (width: Int, height: Int) { (128, 128) }
+    /// 年輪を掛ける断片。**形自身の座標**から作るので、形を回しても模様は形に留まる。
+    /// 縞と同じく `in.color` を掛けるので、陰影はそのまま残る。
+    static let grain = """
+        float4 paint(Fragment in, Values values) {
+            float2 across = in.shapePosition.xz * float2(1.0, 2.4);
+            float rings = 0.5 + 0.5 * sin(length(across) * values.pitch);
+            float3 tint = mix(values.early.rgb, values.late.rgb, rings);
+            return float4(tint * in.color.rgb, in.color.a);
+        }
+        """
+
     /// 縞を掛ける断片。**光を通したあとの色**が `in.color` に入っているので、
     /// 掛けるだけで陰影が残る。
     static let stripes = """
@@ -961,6 +975,40 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.resetShader()
             canvas.fill(.display(red: 0.9, green: 0.4, blue: 0.5))
             canvas.rect(10, 82, 108, 6)
+
+        case .surfaceShader:
+            // **同じ形・同じ断片を、違う角度で 2 つ。** 模様が形について回っていれば、
+            // 板の傾きに合わせて年輪も傾く。画面に貼り付いていれば、2 つとも同じ向きの
+            // 縞になる ([#367](https://github.com/mokume-metal/mokume/issues/367))
+            canvas.background(.display(red: 0.06, green: 0.07, blue: 0.09))
+            canvas.lights()
+            canvas.directionalLight(.display(red: 1, green: 0.95, blue: 0.88), -0.4, 0.7, -0.6)
+            canvas.noStroke()
+            guard
+                let painted = try? canvas.makeShader(
+                    Scene.grain,
+                    values: [
+                        "pitch": 0.35,
+                        "early": .color(.display(red: 0.82, green: 0.64, blue: 0.44)),
+                        "late": .color(.display(red: 0.46, green: 0.30, blue: 0.18)),
+                    ])
+            else { return }
+
+            canvas.shader(painted)
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            for (index, spin) in [Float(0), 1.1].enumerated() {
+                canvas.push()
+                canvas.translate(64, 34 + Float(index) * 60, 0)
+                canvas.rotateX(0.55)
+                canvas.rotateY(spin)
+                canvas.box(78, 10, 46)
+                canvas.pop()
+            }
+
+            // 組み込みの塗りへ戻すと、模様は消える
+            canvas.resetShader()
+            canvas.fill(.display(red: 0.9, green: 0.45, blue: 0.35))
+            canvas.rect(0, 62, 128, 4)
 
         case .customSolids:
             canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
