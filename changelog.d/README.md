@@ -10,10 +10,10 @@
 
 ファイル名は `<slug>.<category>.md`。
 
-- `<slug>`: 変更を表す短い kebab-case (例: `add-noise-api`)
+- `<slug>`: 変更を表す短い kebab-case (例: `seedable-random-and-noise`)
 - `<category>`: `feature` / `fix` / `docs` / `perf` / `breaking`
 
-中身は **SPDX ヘッダ (HTML コメント) + Markdown の 1 段落**。次をそのままコピーして、本文だけ書き換える — 例は `changelog.d/add-noise-api.feature.md`:
+中身は **SPDX ヘッダ (HTML コメント) + Markdown の 1 段落**。次をそのままコピーして、本文だけ書き換える — 例は `changelog.d/seedable-random-and-noise.feature.md`:
 
 ```markdown
 <!--
@@ -21,7 +21,7 @@ SPDX-FileCopyrightText: 2026 mokume-metal
 SPDX-License-Identifier: MIT
 -->
 
-2 次元のパーリンノイズを引く `noise(x:y:)` を追加した。同じ座標には常に同じ値が返るので、フレームをまたいで安定した模様を描ける。
+座標を渡すと 0…1 が返る `noise()` を追加した。同じ座標には常に同じ値が返るので、フレームをまたいで安定した模様を描ける。
 ```
 
 本文はリリースノートにそのまま載る文として書く (「何ができるようになったか / 何が直ったか」を利用者の言葉で)。破壊的変更は `.breaking.md` とし、移行手順を必ず含める。

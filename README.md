@@ -7,13 +7,21 @@ Creative coding for Swift + Metal.
 macOS 26 (Tahoe) 以上・Apple Silicon 専用。スケッチを作り直すのに Xcode 26 が要る。
 
 ```bash
+brew install mokume-metal/tap/mokume
+```
+
+更新は `brew upgrade mokume`。
+
+Homebrew を使わないなら、同じ配布物を直に展開してもよい:
+
+```bash
 mkdir -p ~/.local/bin
 curl -fsSL https://github.com/mokume-metal/mokume/releases/latest/download/mokume-macos-arm64.tar.gz | tar xz -C ~/.local/bin
 ```
 
-道具 `mokume` と、ひな形の入った `mokume_MokumeCLI.bundle` が置かれる — **2 つで 1 組**で、
-同じディレクトリに並んでいる必要がある。`~/.local/bin` に PATH が通っていなければ通す。
-更新は同じコマンドを打ち直す。
+この場合、道具 `mokume` と、ひな形の入った `mokume_MokumeCLI.bundle` が置かれる —
+**2 つで 1 組**で、同じディレクトリに並んでいる必要がある。`~/.local/bin` に PATH が
+通っていなければ通す。更新は同じコマンドを打ち直す。
 
 ライブラリ本体は入れなくてよい。`mokume new` が作るスケッチが依存として引く。
 

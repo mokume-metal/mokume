@@ -13,7 +13,7 @@ import simd
 /// let leaf = createShape { box(6) }
 /// var places: [Placement] = []
 /// for _ in 0..<5000 {
-///     places.append(Placement(x: .random(in: 0...width), y: .random(in: 0...height)))
+///     places.append(Placement(x: random(width), y: random(height)))
 /// }
 /// shape(leaf, at: places)
 /// ```

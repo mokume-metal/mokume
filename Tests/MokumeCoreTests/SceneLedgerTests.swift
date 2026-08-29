@@ -161,6 +161,12 @@ enum Scene: String, CaseIterable, Sendable {
     case retainedShapes
     /// 利用者が書いた塗りで描いたもの。
     case userShader
+    /// 同じ種の揺らぎを、CPU の `noise()` と断片の `mokume_noise()` で並べたもの。
+    ///
+    /// **上下が同じ模様になる**ことがこのシーンの中身で、片方だけ動けば行が動く。
+    /// 値そのものの一致は `NoiseParityTests` が細かく見るので、ここが受け持つのは
+    /// 「触っていないのに模様が変わっていないか」だけである。
+    case noise
     /// 基本の立体を並べ、回して奥行きが出る向きに置いたもの。
     case solids
     /// 光を当てた立体。底上げの光・向きを持つ光・広がりを持つ光を並べたもの。
@@ -557,6 +563,43 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.resetShader()
             canvas.fill(.display(red: 0.9, green: 0.85, blue: 0.3))
             canvas.circle(64, 106, 32)
+
+        case .noise:
+            // 種は 1 度だけ置く。**CPU 側と断片側の両方に効く**
+            canvas.noiseSeed(20260829)
+            canvas.noiseDetail(4, 0.5)
+            canvas.background(.display(red: 0.07, green: 0.07, blue: 0.09))
+            canvas.noStroke()
+
+            // 上: CPU の揺らぎを 4 画素ごとに引いて置く
+            for row in 0..<15 {
+                for column in 0..<32 {
+                    let level = canvas.noise(Float(column) * 0.25, Float(row) * 0.25)
+                    // **線形のまま置く。** 断片が返すのも線形なので、`display` を
+                    // 通すと上下で色の空間が食い違い、同じ模様に見えなくなる
+                    canvas.fill(
+                        LinearRGBA(
+                            premultipliedRed: level, green: level * 0.7, blue: 1 - level,
+                            alpha: 1))
+                    canvas.rect(Float(column) * 4, Float(row) * 4, 4, 4)
+                }
+            }
+
+            // 下: 同じ座標を断片から引く。**種も細かさも値として渡していない**
+            guard
+                let field = try? canvas.makeShader(
+                    """
+                    float4 paint(Fragment in, Values values) {
+                        float2 p = (in.position - values.origin) * 0.0625;
+                        float level = mokume_noise(in, p);
+                        return float4(level, level * 0.7, 1.0 - level, 1.0);
+                    }
+                    """,
+                    values: ["origin": .pair(0, 68)])
+            else { return }
+            canvas.shader(field)
+            canvas.rect(0, 68, 128, 60)
+            canvas.resetShader()
 
         case .joins:
             // 折れ目の形 3 通り。閉じた形の角に効くことを見るので三角形で描く
