@@ -453,7 +453,7 @@ public final class SketchRuntime {
     /// 撮る係。**頼まれてはじめて作る** — 撮らないスケッチは 1 バイトも払わない。
     private func requireRecorder() -> FrameRecorder {
         if let recorder { return recorder }
-        let made = FrameRecorder()
+        let made = FrameRecorder(frameRate: sketch.settings.frameRate)
         recorder = made
         return made
     }

@@ -101,15 +101,24 @@ struct SceneLedgerTests {
     /// 書き換えるときは**絵を目で見る**必要があり (台帳の行はそれを認めた記録なので)、
     /// その手段を機構自身が持つ。既定では 1 枚も書かない。
     static func fingerprint(of take: Take) throws -> String {
+        try fingerprint(of: take, without: nil)
+    }
+
+    /// 同じ行を、要素を 1 つ抜いて取り直す。**検出力の測定に使う。**
+    ///
+    /// 拡大だけは描き場所の作り方に効く (描く細かさを出す細かさに揃えると、
+    /// 埋める仕事そのものが無くなる) ので、canvas を組み立てる時点で抜く。
+    static func fingerprint(of take: Take, without suppressed: Scene.Ingredient?) throws -> String {
         let scene = take.scene
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: scene.size.width, height: scene.size.height)
         let canvas = try Canvas(
-            output: target, gpu: gpu, pixelDensity: scene.pixelDensity,
+            output: target, gpu: gpu,
+            pixelDensity: suppressed == .upscale ? 1 : scene.pixelDensity,
             upscale: scene.upscale)
         // **時点まで進めてから取る。** 時点を持たないシーンは 1 度描いた結果で、
         // いままでと 1 ビットも変わらない (ADR-0023 決定 6)
-        let session = try scene.session(on: canvas)
+        let session = try scene.session(on: canvas, without: suppressed)
         for _ in 0..<(take.moment ?? 1) { try canvas.draw { session() } }
         let image = try target.encodeForDisplay()
 
@@ -296,12 +305,44 @@ enum Scene: String, CaseIterable, Sendable {
         return image
     }
 
-    /// 質感のうち 1 つ。**潰したときに絵が動くか**を測るために名前で指せる形にする。
-    enum MaterialAspect: CaseIterable, Sendable {
+    /// シーンから 1 つだけ抜いて描くための名前。**潰したときに絵が動くかを測るのに使う。**
+    ///
+    /// 2 つの群からなる。**質感の指定**は値を既定へ潰すもので、**段**はその仕事ごと
+    /// 外すものである。潰し方は違うが、測っていることは同じ「この行はこれを写しているか」
+    /// なので、名前の置き場を 2 つに割らない。
+    enum Ingredient: CaseIterable, Sendable {
+        // 質感の指定
         case shininess
         case metalness
         case ambient
         case emissive
+        // 段
+        /// 描き終えた絵に重ねる効果。
+        case effects
+        /// 描く細かさと出す細かさの差を埋める仕事。
+        case upscale
+        /// 粒に効かせる力。
+        case force
+
+        /// 質感の指定だけ。``MaterialTests`` が引数に使う。
+        nonisolated static var materialAspects: [Ingredient] {
+            [.shininess, .metalness, .ambient, .emissive]
+        }
+
+        /// 段だけ。**外すと絵が変わるはずの行**を、この要素自身が知っている。
+        nonisolated static var stages: [Ingredient] { [.effects, .upscale, .force] }
+
+        /// この要素を写しているはずの台帳の行。
+        nonisolated var takes: [Take] {
+            switch self {
+            case .effects: [Take(scene: .effects, moment: nil)]
+            case .upscale:
+                [Take(scene: .upscaled, moment: nil)]
+                    + Scene.upscaledOverTime.moments.map { Take(scene: .upscaledOverTime, moment: $0) }
+            case .force: Scene.particles.moments.map { Take(scene: .particles, moment: $0) }
+            default: []
+            }
+        }
     }
 
     func draw(on canvas: Canvas) { draw(on: canvas, without: nil) }
@@ -327,6 +368,14 @@ enum Scene: String, CaseIterable, Sendable {
     /// **フレームをまたいで持つものがあるシーンは、ここで作る。** 毎フレーム作り直すと
     /// 動きが進まず、しかも絵は出るので気付けない。
     func session(on canvas: Canvas) throws -> () -> Void {
+        try session(on: canvas, without: nil)
+    }
+
+    /// 1 回ぶんの走らせ方を、要素を 1 つ抜いて組み立てる。
+    ///
+    /// **抜くのは進め方のほう**である。粒の力のように、1 枚の絵ではなくフレームの
+    /// 進み方に効くものは ``draw(on:without:)`` では抜けない。
+    func session(on canvas: Canvas, without suppressed: Ingredient?) throws -> () -> Void {
         switch self {
         case .particles:
             // 種を決めて引くので、何度走らせても同じ列が出る
@@ -338,7 +387,10 @@ enum Scene: String, CaseIterable, Sendable {
                     dust, from: .point(64, 116), rate: 900, speed: 70...150,
                     angle: (-2.4)...(-0.75), life: 0.5...1.2, size: 2...5,
                     color: .opaque(red: 1, green: 0.72, blue: 0.35), using: &randomness)
-                canvas.force(dust, [.gravity(0, 240), .drag(0.2)])
+                // 潰したときは力を 1 つも効かせない。**出た向きのまま飛ぶ**
+                if suppressed != .force {
+                    canvas.force(dust, [.gravity(0, 240), .drag(0.2)])
+                }
                 canvas.particles(dust)
             }
         case .layered:
@@ -363,7 +415,7 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.circle(64, 64, 52)
             }
         default:
-            return { self.draw(on: canvas) }
+            return { self.draw(on: canvas, without: suppressed) }
         }
     }
 
@@ -371,7 +423,7 @@ enum Scene: String, CaseIterable, Sendable {
     ///
     /// **検出力の測定に使う** — 潰しても絵が動かない指定があれば、その代表シーンは
     /// その質感を写していないということになる ([ADR-0019] 決定 4)。
-    func draw(on canvas: Canvas, without suppressed: MaterialAspect?) {
+    func draw(on canvas: Canvas, without suppressed: Ingredient?) {
         switch self {
         case .particles, .layered:
             // **1 枚では描けないシーン。** フレームをまたいで持つものがあるので、
@@ -386,12 +438,15 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.rect(58, 62, 52, 44)
             canvas.fill(.display(red: 1, green: 0.3, blue: 0.45))
             canvas.rect(14, 92, 40, 14)
-            // **並びの順にかかる。** にじみ → 色ずれ → 周辺減光
-            canvas.effects([
-                .bloom(amount: 0.8, threshold: 0.35, radius: 10),
-                .fringe(amount: 0.7),
-                .vignette(amount: 0.65),
-            ])
+            // **並びの順にかかる。** にじみ → 色ずれ → 周辺減光。
+            // 潰したときは 1 段も掛けない (段そのものを外す)
+            if suppressed != .effects {
+                canvas.effects([
+                    .bloom(amount: 0.8, threshold: 0.35, radius: 10),
+                    .fringe(amount: 0.7),
+                    .vignette(amount: 0.65),
+                ])
+            }
         case .upscaled, .upscaledOverTime:
             // 斜め・曲がり・細い線を混ぜる。**低い細かさでいちばん崩れる**ものを置いて、
             // 拡大が何をしているかが 1 枚で読めるようにする
