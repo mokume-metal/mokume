@@ -438,6 +438,11 @@ public final class Canvas {
     private var matrixCapacity = 0
     /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
     private static let valuesStride = 256
+    /// 1 区画に収まる値の数 (float 換算)。**塗りへ渡せる値の上限**でもある。
+    ///
+    /// 上限を超える宣言は読み込みの入口 (`Canvas.loadShader` / `makeShader`) で断る
+    /// ([#348](https://github.com/mokume-metal/mokume/issues/348))。
+    static let valueSlotCapacity = valuesStride / MemoryLayout<Float>.stride
 
     /// いまのフレームの時刻 (秒)。利用者の断片から読める。
     var time: Float = 0
@@ -1603,6 +1608,10 @@ public final class Canvas {
 
             let values = try valuesBufferHolding(batches.count)
             for (index, batch) in batches.enumerated() {
+                // **区画に収まることは入口で保証されている** (`Canvas.loadShader` /
+                // `makeShader` が `valueSlotCapacity` を超える宣言を断る・#348)。ここで
+                // 切り詰めないのは、黙って切り詰めると断片の `Values` に「宣言したのに
+                // 一度も書かれない欄」が残り、絵が永久に間違ったまま出るためである
                 let slot = values.contents().advanced(by: index * Self.valuesStride)
                     .assumingMemoryBound(to: Float.self)
                 if batch.run.values.isEmpty {

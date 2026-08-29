@@ -131,6 +131,9 @@ extension Sketch {
     /// 断片ごと組み直しになるので、**名前は読み込むときに決め、値だけを後から変える**
     /// (``Shader/set(_:_:)``)。
     ///
+    /// 渡せるのは **float 換算で 64 個まで** (色は 4 個ぶん・2 つ組は 2 個ぶん) — 値は列
+    /// ごとに 1 区画へ載せるので、上限は動かせない。超えた宣言は読み込みの時点で断られる。
+    ///
     /// ## 平面にも立体にも同じ断片が効く
     ///
     /// **書き分けは要らない。** `rect` にも `box` にも同じ断片が同じ規約で効く —
@@ -148,7 +151,7 @@ extension Sketch {
     /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。平面と立体の両方が
     /// 組み上がってはじめて差し替わるので、片方だけ古い断片が効くことはない。
     ///
-    /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    /// - Throws: 見つからないとき・組み立てられないとき・値が多すぎるときに ``ShaderFailure``。
     public func loadShader(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Shader {
@@ -156,6 +159,8 @@ extension Sketch {
     }
 
     /// 文字列から断片を作る。保存の拾い直しは効かない (在処が無いため)。
+    ///
+    /// - Throws: 組み立てられないとき・値が多すぎるときに ``ShaderFailure``。
     public func makeShader(
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Shader {
