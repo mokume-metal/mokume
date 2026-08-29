@@ -62,6 +62,11 @@ if [[ "$*" == *"/git/trees/"* ]]; then
   exit 0
 fi
 if [[ "$*" == *"/files"* ]]; then
+  # 特定の PR だけ読めない状況を作る (判定の途中で見えなくなる回)
+  if [ -n "${FILES_FAILS_FOR:-}" ] && [[ "$*" == *"/pulls/${FILES_FAILS_FOR}/files"* ]]; then
+    echo "gh: 404" >&2
+    exit 1
+  fi
   printf '%s\\n' $FILES
   exit 0
 fi
@@ -144,6 +149,9 @@ class RenderStatusTest(unittest.TestCase):
         if not self.calls.exists():
             return []
         return [c for c in self.calls.read_text().splitlines() if "/statuses/" in c]
+
+    def posted_to(self, sha):
+        return [c for c in self.posted() if f"/statuses/{sha}" in c]
 
     def write_log(self, body):
         (self.work / ".build" / "test-log.txt").write_text(body)
@@ -231,6 +239,7 @@ class RenderStatusTest(unittest.TestCase):
             TREE_MERGED=TREE_BASE,
             TREE_FAILS="",
             TREE_TRUNCATED="",
+            FILES_FAILS_FOR="",
         )
         base.update(env)
         return self.run_script("proxy", **base)
@@ -247,12 +256,53 @@ class RenderStatusTest(unittest.TestCase):
 
     def test_覆えていない描画PRには失敗を打つ(self):
         """#432 を止める行。main 側で描画のファイルが動いていれば、手元で回した木は
-        合流後の姿を覆っていない — 待たせずに落として queue から外す。"""
+        合流後の姿を覆っていない — 待たせずに落として queue から外す。
+
+        failure は **queue のコミットと PR の head の両方**に打つ (#462)。queue の
+        コミットだけに打っていた頃は gh pr checks にもタイムラインにも現れず、
+        弾かれたことに気付く経路が人間しか無かった。"""
         out = self.queue(TREE_MERGED=TREE_DRAWING_MOVED)
-        posted = self.posted()
-        self.assertEqual(len(posted), 1)
-        self.assertIn("state=failure", posted[0])
+        self.assertEqual(len(self.posted()), 2, self.posted())
+        queue_post = self.posted_to("cafe1234")
+        self.assertEqual(len(queue_post), 1)
+        self.assertIn("state=failure", queue_post[0])
+        self.assertIn("#5", queue_post[0])
         self.assertIn("覆っていない", out)
+
+    def test_覆えていないPRのheadが赤くなる(self):
+        """gh pr checks が見るのは PR の head である。ここが赤くならないと、
+        弾かれたことは PR 側のどこにも出ない (#462)。"""
+        self.queue(TREE_MERGED=TREE_DRAWING_MOVED)
+        head_post = self.posted_to("beef5678")
+        self.assertEqual(len(head_post), 1, self.posted())
+        self.assertIn("state=failure", head_post[0])
+        # 理由と直し方を description が名乗る
+        self.assertIn("merge queue で弾かれた", head_post[0])
+        self.assertIn("make ci-check", head_post[0])
+
+    def test_覆えているPRのheadには打たない(self):
+        """CI が head へ打つのは failure だけである。success を打てるようにすると、
+        手元の実行しか local-render を打たないという #304 の不変条件が崩れる。"""
+        self.queue()
+        self.assertEqual(self.posted_to("beef5678"), [])
+
+    def test_覆えていないPRが複数あればすべてのheadが赤くなる(self):
+        """queue はまとめて積む (max_entries_to_build: 5)。1 本目で切り上げると、
+        2 本目以降の作者にとっては何も変わらない — 自分の PR は緑のまま弾かれる。"""
+        out = self.queue(
+            MERGE_GROUP_HEAD_REF="gh-readonly-queue/main/pr-5-pr-6-0123456789ab",
+            TREE_MERGED=TREE_DRAWING_MOVED,
+        )
+        # head は偽 gh が 1 つしか返さないので、2 本ぶんの報告が同じ SHA へ 2 回打たれる
+        self.assertEqual(len(self.posted_to("beef5678")), 2, self.posted())
+        self.assertIn("#5 の手元の実行は", out)
+        self.assertIn("#6 の手元の実行は", out)
+        queue_post = self.posted_to("cafe1234")
+        self.assertEqual(len(queue_post), 1)
+        self.assertIn("state=failure", queue_post[0])
+        # queue の報告は覆えていない PR を全部名乗る
+        self.assertIn("#5", queue_post[0])
+        self.assertIn("#6", queue_post[0])
 
     def test_描画に触れないPRはmainが動いていても通す(self):
         """描画に触れない PR は main の絵の組み合わせを動かさない。BEHIND のまま
@@ -303,6 +353,19 @@ class RenderStatusTest(unittest.TestCase):
         out = self.queue(TREE_TRUNCATED="1")
         self.assertIn("state=success", self.posted()[0])
         self.assertIn("覆いは見ていない", out)
+
+    def test_覆えていない判定は後から読めなくなっても覆らない(self):
+        """「読めなければ名乗って通す」は判定できなかったときの逃がしであって、
+        判定できた failure を取り消す口ではない (#462)。"""
+        out = self.queue(
+            MERGE_GROUP_HEAD_REF="gh-readonly-queue/main/pr-5-pr-6-0123456789ab",
+            TREE_MERGED=TREE_DRAWING_MOVED,
+            FILES_FAILS_FOR="6",
+        )
+        queue_post = self.posted_to("cafe1234")
+        self.assertEqual(len(queue_post), 1)
+        self.assertIn("state=failure", queue_post[0])
+        self.assertIn("#6 の変更ファイルを読めなかった", out)
 
     def test_PR番号を読めなければ名乗って通す(self):
         out = self.queue(MERGE_GROUP_HEAD_REF="")
