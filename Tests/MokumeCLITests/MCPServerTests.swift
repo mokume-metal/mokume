@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -114,9 +115,10 @@ struct MCPServerTests {
         let outcome = tools.call("observe", arguments: [:])
         #expect(outcome.isError)
         // 打つ手 — 案内どおりにすれば直る形になっていること (#227)
-        #expect(outcome.text.contains("起動し直して"))
+        #expect(outcome.text.contains("この呼び出しで作りました"))
+        #expect(outcome.text.contains("**起動し直してください。**"))
         // 理由 — これが無いと「走っている最中に作れば拾われる」と読まれる
-        #expect(outcome.text.contains("起動の瞬間だけ"))
+        #expect(outcome.text.contains("走っている最中に作っても"))
         // 区画はこの呼び出しが作ったので、mkdir を促してはならない
         #expect(!outcome.text.contains("mkdir"))
     }
@@ -131,9 +133,70 @@ struct MCPServerTests {
         let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
         let outcome = tools.call("observe", arguments: [:])
         #expect(outcome.isError)
-        // 順序は合っているので、起動し直しを促すのは的外れになる
-        #expect(!outcome.text.contains("起動し直して"))
+        // 順序は合っているので、そう言い切る。区画を作り直させる案内も出してはならない
+        #expect(outcome.text.contains("区画を作る順序の問題ではありません"))
+        #expect(!outcome.text.contains("この呼び出しで作りました"))
         #expect(outcome.text.contains("watch"))
+    }
+
+    @Test("区画の基準が割れているときの手も、どちらの案内にも出る")
+    func namesTheFacetBaseInBothAnswers() throws {
+        // #380 の着手条件 2 — watch と窓口で MOKUME_WORK_DIR が食い違うと、両者は別の区画を
+        // 見る。症状は上の 2 本と同じ「誰も応えない」でしかないのに、**起動し直しても直らない**。
+        // 手元で踏むと、案内どおり起動し直した先で「まだ立ち上がっていない」と言われる
+        // (watch は走っているのに、である)。だから基準は両方の案内に出す
+        let split = try makeDirectory()
+        for existed in [false, true] {
+            let directory = try makeDirectory()
+            if existed {
+                try FileManager.default.createDirectory(
+                    at: directory.appendingPathComponent(".mokume/observe", isDirectory: true),
+                    withIntermediateDirectories: true)
+            }
+            let tools = Tools(
+                facets: Facets(directory: directory, waitLimit: 0.2, workDirectoryGiven: true),
+                packageDirectory: split, makeID: { "fixed" })
+            let outcome = tools.call("observe", arguments: [:])
+            #expect(outcome.isError)
+            // 窓口が見ている基準そのもの — watch が名乗る 1 行と突き合わせられる
+            #expect(outcome.text.contains(directory.path))
+            // 何がそれを決めたか。これが無いと、どちらを直せばよいか分からない
+            #expect(outcome.text.contains("MOKUME_WORK_DIR"))
+            // 起動し直しても直らない場合があること
+            #expect(outcome.text.contains("起動し直しても直りません"))
+            // 一覧への辿り口 (読む時点ごとに文面を書き足す形にしない)
+            #expect(outcome.text.contains(Tools.startupDocument))
+        }
+    }
+
+    @Test("基準を決めたものの言い方が、環境変数の有無で変わる")
+    func tellsWhoDecidedTheFacetBase() throws {
+        let directory = try makeDirectory()
+        let given = Tools(
+            facets: Facets(directory: directory, waitLimit: 0.2, workDirectoryGiven: true),
+            makeID: { "fixed" })
+        #expect(given.call("observe", arguments: [:]).text.contains("が指している"))
+
+        let notGiven = Tools(
+            facets: Facets(directory: directory, waitLimit: 0.2, workDirectoryGiven: false),
+            makeID: { "fixed" })
+        #expect(notGiven.call("observe", arguments: [:]).text.contains("は未設定"))
+    }
+
+    @Test("起動の瞬間に決まるものを、reference が一覧で配る")
+    func servesTheStartupList() throws {
+        let directory = try makeDirectory()
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+
+        let outcome = tools.call("reference", arguments: ["name": Tools.startupDocument])
+        #expect(!outcome.isError)
+        // 一覧に居るものが**全部**出る。載せ忘れた読み手はここにも出ない
+        for entry in StartupReads.all {
+            #expect(outcome.text.contains(entry.name))
+            #expect(outcome.text.contains(entry.key))
+        }
+        // 配っているものの一覧にも並ぶ (辿り着ける入口は 1 つ)
+        #expect(tools.catalog(schemas: nil).contains(Tools.startupDocument))
     }
 
     @Test("入力でも同じ切り分けが効き、案内はその区画を名指す")

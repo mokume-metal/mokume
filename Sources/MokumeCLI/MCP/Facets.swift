@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 区画への読み書き。
 ///
@@ -21,9 +22,20 @@ struct Facets {
     let directory: URL
     /// 走っているスケッチを待つ上限。検査からは短くする。
     var waitLimit: TimeInterval = defaultWaitLimit
+    /// 区画の基準を `MOKUME_WORK_DIR` が決めたか。
+    ///
+    /// **応えないときの案内が名乗る。** 走らせる側と食い違っていても症状は「誰も応えない」
+    /// でしかなく、それは「まだ起動していない」と見分けが付かない (#380 着手条件 2)。
+    var workDirectoryGiven: Bool = false
 
-    var observeFacet: URL { directory.appendingPathComponent(".mokume/observe", isDirectory: true) }
-    var inputFacet: URL { directory.appendingPathComponent(".mokume/input", isDirectory: true) }
+    // 区画の名前も ``StartupReads`` から取る。窓口の側で綴りを持つと、スケッチが見る
+    // 場所と黙って食い違いうる (#380)
+    var observeFacet: URL { facet(StartupReads.observe) }
+    var inputFacet: URL { facet(StartupReads.input) }
+
+    func facet(_ entry: StartupReads.Entry) -> URL {
+        directory.appendingPathComponent(".mokume/\(entry.key)", isDirectory: true)
+    }
     var buildStatus: URL { directory.appendingPathComponent(".mokume/build/status.json") }
 
     /// 要求を置き、同じ識別子の応答が返るまで待つ。
@@ -74,34 +86,58 @@ struct Facets {
 
     /// 走っているスケッチが応えないときの答え。**その場で直せるところまで書く。**
     ///
-    /// 応えない理由は 2 つあり、**打つ手が違う**。`existed` (要求を置く前に区画が在ったか) が
-    /// 両者を分ける:
+    /// 応えない理由は**打つ手の違う 2 つ**に分かれ、`existed` (要求を置く前に区画が在ったか)
+    /// が 1 つ目を絞る:
     ///
-    /// - **在らせたのがこの呼び出し自身** — 走っているスケッチは観測を持っていない。
+    /// - **在らせたのがこの呼び出し自身** — 走っているスケッチは区画を持っていない。
     ///   区画を見るのは起動の瞬間だけなので、**起動し直す**以外に直らない
-    /// - **元から在った** — 区画は揃っているので、走っていないか応答が止まっている
+    ///   ([#227](https://github.com/mokume-metal/mokume/issues/227))
+    /// - **元から在った** — 区画を作る順序は合っているので、走っていないか応答が止まっている
     ///
-    /// 以前はこの区別が無く、どちらにも「`watch` を起動してから呼び直す」とだけ答えていた。
-    /// 前者の人が案内どおりにしても直らず、実装を読むまで原因に辿り着けなかった
-    /// ([#227](https://github.com/mokume-metal/mokume/issues/227))。
-    static func notRunning(facet: URL, existed: Bool) -> String {
-        let name = facet.lastPathComponent
-        guard existed else {
-            return """
-                走っているスケッチが応えませんでした。要求を置こうとしたとき \(name) の区画
-                (\(facet.path)) が無かったので、この呼び出しで作りました。
+    /// **2 つ目はどちらの側でも起きる** — 走らせる側と窓口で区画の基準が割れていると、互いに
+    /// 別の区画を見る。症状は上のどちらとも同じ形で出るのに、**起動し直しても直らない**
+    /// ([#380](https://github.com/mokume-metal/mokume/issues/380))。実際に踏むと、案内どおり
+    /// 起動し直した先で「まだ立ち上がっていない」と言われる — `watch` は走っているのに、である。
+    ///
+    /// 文面は読む時点ごとに書き足さず、**起動の瞬間に決まるものの一覧を名指す**。一覧
+    /// (``StartupReads``) に増えたものは `reference` の `startup` に自動で並ぶ。
+    func notRunning(_ entry: StartupReads.Entry, existed: Bool) -> String {
+        let path = facet(entry).path
+        let opening = existed
+            ? """
+            走っているスケッチが応えませんでした。\(entry.name) (\(path)) は
+            要求を置く前から在ったので、区画を作る順序の問題ではありません。
+            考えられるのは 2 つで、打つ手が違います。
 
-                **スケッチを起動し直してください。** 区画があるかを見るのは起動の瞬間だけなので、
-                走っている最中に作っても、いま走っているスケッチは拾いません。区画はもう在るので、
-                作り直す必要はありません。
+            1. まだ立ち上がっていないか、応答が止まっている
+               スケッチのディレクトリで `\(Command.name) watch` を起動してから、
+               もう一度呼んでください。
+            """
+            : """
+            走っているスケッチが応えませんでした。要求を置こうとしたとき\(entry.name)
+            (\(path)) が無かったので、この呼び出しで作りました。
+            考えられるのは 2 つで、打つ手が違います。
 
-                    \(Command.name) watch <スケッチの場所>
-                """
-        }
+            1. スケッチが\(entry.name)を持たないまま立ち上がっている
+               \(entry.note)。
+               **起動し直してください。** 区画はもう在るので、作り直す必要はありません。
+
+                   \(Command.name) watch <スケッチの場所>
+            """
         return """
-            走っているスケッチが応えませんでした。\(name) の区画 (\(facet.path)) は要求を置く前から
-            在ったので、順序の問題ではありません。まだ立ち上がっていないか、応答が止まっています。
-            スケッチのディレクトリで `\(Command.name) watch` を起動してから、もう一度呼んでください。
+            \(opening)
+
+            2. 窓口とスケッチで区画の基準が割れている
+               この窓口が見ているのは、
+
+                   \(StartupReadsReport.baseLine(base: directory, given: workDirectoryGiven))
+
+               です。`watch` が起動のときに名乗る「\(StartupReads.workDirectory.name)」が
+               これと違うなら、両者は別の区画を見ています。
+               **そのときは起動し直しても直りません。** `watch` と窓口の両方を、
+               同じ \(StartupReads.workDirectory.key) の下で起動し直してください。
+
+            起動の瞬間に決まるものは `reference` の `\(Tools.startupDocument)` に一覧があります。
             """
     }
 }

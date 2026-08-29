@@ -49,8 +49,10 @@ final class FrameObserver {
     /// 要求ファイルを実際に読んだ回数。
     var readCount: Int { requests.readCount }
 
-    /// 区画があるときだけ作る。
-    static func makeIfEnabled(at directory: URL = WorkDirectory.facet("observe")) -> FrameObserver? {
+    /// 区画があるときだけ作る。**区画の名前は ``StartupReads`` が正典** (#380)。
+    static func makeIfEnabled(
+        at directory: URL = WorkDirectory.facet(StartupReads.observe.key)
+    ) -> FrameObserver? {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
             isDirectory.boolValue

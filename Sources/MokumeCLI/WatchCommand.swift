@@ -25,7 +25,11 @@ enum WatchCommand {
         // パッケージの場所へ置くと観測とだけ場所が割れる (#331)
         let session = WatchSession(directory: directory, facetBase: WorkDirectory.given ?? directory)
         print("見張っている: \(directory.path)")
-        if session.facetBase != directory { print("区画の基準: \(session.facetBase.path)") }
+        // **常に名乗る。** 以前は基準がスケッチの場所と違うときだけ出していたが、それだと
+        // 窓口の側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
+        print(
+            StartupReadsReport.baseLine(
+                base: session.facetBase, given: WorkDirectory.given != nil))
         report(session.start())
 
         while true {

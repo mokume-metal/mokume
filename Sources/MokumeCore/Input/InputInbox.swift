@@ -55,8 +55,10 @@ final class InputInbox {
     private let requests: RequestFile<InputRequest>
     private let reportURL: URL
 
-    /// 区画があるときだけ働く (観測と同じ)。
-    static func makeIfEnabled(at directory: URL = WorkDirectory.facet("input")) -> InputInbox? {
+    /// 区画があるときだけ働く (観測と同じ。区画の名前は ``StartupReads`` が正典)。
+    static func makeIfEnabled(
+        at directory: URL = WorkDirectory.facet(StartupReads.input.key)
+    ) -> InputInbox? {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
             isDirectory.boolValue
