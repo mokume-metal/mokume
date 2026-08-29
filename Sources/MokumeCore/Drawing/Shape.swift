@@ -40,6 +40,8 @@ public struct Shape {
         var shader: Shader?
         /// 利用者が渡した値。**区間の先頭で取り込んだもの**を持ち歩く。
         var values: [Float]
+        /// この区間の塗りが読む数の並び。`nil` なら読まない。
+        var numbers: Numbers?
         /// どちらの並びから描くか。
         var source: Canvas.VertexSource
         var start: Int
@@ -100,7 +102,7 @@ public struct Shape {
     private static func append(_ run: Run, to runs: inout [Run]) {
         if var last = runs.last, last.mode == run.mode, last.texture === run.texture,
             last.textureKind == run.textureKind, last.shader === run.shader,
-            last.values == run.values, last.source == run.source,
+            last.values == run.values, last.numbers === run.numbers, last.source == run.source,
             last.start + last.count == run.start
         {
             last.count += run.count

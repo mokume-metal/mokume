@@ -220,6 +220,30 @@ public final class Canvas {
     ///
     /// [#341]: https://github.com/mokume-metal/mokume/issues/341
     private(set) var shadowBarriersEncoded = 0
+    /// 溜めた計算。描く前に流し、フレームの終わりに空になる。
+    var pendingComputations: [ComputeDispatch] = []
+    /// この面が作った計算。観測へ失敗を載せるために持つ。
+    var computations: [Computation] = []
+    /// 計算のパイプライン。**最初に計算を作るときだけ組む** — 使わないスケッチに
+    /// 組み立て器と引数のテーブルを持たせないため。
+    private var computePipelineStorage: ComputePipeline?
+    /// 計算の口を開いた回数・閉じた回数 (作ってから通算)。
+    ///
+    /// **開きっぱなしを数えるための組。** 開いたまま返る経路があると、そのフレームの
+    /// コマンドは投入できず、症状は「絵が止まる」としてしか出ない。数が食い違わない
+    /// ことを検査が見る。書き込むのは `Canvas+Compute` の流す経路だけ。
+    var computeEncodersOpened = 0
+    var computeEncodersClosed = 0
+    /// 計算のあとに次の段が待つ仕掛けを積んだ回数 (作ってから通算)。
+    ///
+    /// 影の側 (``shadowBarriersEncoded``) と同じ理由で持つ — 抜けていても絵は普段どおり
+    /// 出て、GPU が混んだときだけ稀に書き終わる前の並びが読まれる。積む 1 行と同じ場所で
+    /// 数え、**その行を消したら数も減る**。
+    var computeBarriersEncoded = 0
+    /// フレームの外で計算を頼んだことを知らせたか。
+    var warnedComputeOutsideFrame = false
+    /// 束ねられる本数を超えたことを知らせたか。
+    var warnedTooManyComputeBuffers = false
     /// 影の行列を置く領域。
     private var shadowMatrixBuffer: (any MTLBuffer)?
     /// フレームの外で影の設定を書いたことを知らせたか。
@@ -287,6 +311,13 @@ public final class Canvas {
     var currentTextureKind = TextureKind.coverage
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader?
+    /// いま塗りが読む数の並び。`nil` なら読まない。
+    var currentNumbers: Numbers?
+    /// 渡されていないときに読ませる並び。**1 個の 0。**
+    ///
+    /// 何も束ねない口を作らないために置く — 束ねずに走らせると、断片が読んだ瞬間に
+    /// 絵の乱れではなく異常終了になる。
+    private var emptyNumbers: Numbers
     /// この面が作った塗り。観測へ失敗を載せるために持つ。
     var shaders: [Shader] = []
     /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
@@ -517,6 +548,7 @@ public final class Canvas {
         self.width = Float(target.width)
         self.height = Float(target.height)
         self.pipeline = try ShapePipeline(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        self.emptyNumbers = try Numbers(gpu: gpu, count: 1)
         self.projection = Self.makeProjection(width: self.width, height: self.height)
 
         let atlas = try GlyphAtlas(gpu: gpu)
@@ -675,8 +707,8 @@ public final class Canvas {
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     textureKind: currentTextureKind, shader: currentShader,
-                    values: currentShader?.packedValues ?? [], source: openSource,
-                    start: start, count: count),
+                    values: currentShader?.packedValues ?? [], numbers: currentNumbers,
+                    source: openSource, start: start, count: count),
                 clip: currentClip,
                 matrix: openSource == .flat ? projection : viewProjection,
                 // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
@@ -701,7 +733,8 @@ public final class Canvas {
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     textureKind: currentTextureKind, shader: currentShader,
-                    values: currentShader?.packedValues ?? [], source: .solid,
+                    values: currentShader?.packedValues ?? [], numbers: currentNumbers,
+                    source: .solid,
                     start: open.vertexStart, count: open.vertexCount),
                 clip: currentClip,
                 matrix: viewProjection,
@@ -860,6 +893,24 @@ public final class Canvas {
     private func discardFrame() {
         discardPending()
         pendingBackground = nil
+        // 溜めた計算もフレームを越えない。描けなかったフレームの頼みが次のフレームで
+        // もう一度走ると、進み方が観測の有無で変わる
+        pendingComputations.removeAll(keepingCapacity: true)
+    }
+
+    /// 計算のパイプライン。**要るときだけ組む。**
+    func computePipeline() throws(RenderFailure) -> ComputePipeline {
+        if let computePipelineStorage { return computePipelineStorage }
+        let pipeline = try ComputePipeline(gpu: gpu)
+        computePipelineStorage = pipeline
+        return pipeline
+    }
+
+    /// 組み立てに失敗している計算の理由。
+    var computationFailures: [String] {
+        computations.compactMap { computation in
+            computation.failure.map { "computation \(computation.name): \($0)" }
+        }
     }
 
     /// 矩形。座標の読み方は ``rectMode(_:)`` が決める。
@@ -1397,6 +1448,7 @@ public final class Canvas {
             discardFrame()
         }
         currentClip = nil
+        currentNumbers = nil
         transform = .identity
         transformStack.removeAll(keepingCapacity: true)
         hasLoadedPixels = false
@@ -1431,6 +1483,11 @@ public final class Canvas {
         closeBatch()
         let pass = target.makeRenderPass(clearColor: pendingBackground)
         let commands = try gpu.beginCommands()
+
+        // **描くより前に、頼まれた計算を流す** (ADR-0023 決定 3 — 計算はフレームの
+        // 前置き)。頼まれていなければ口も開かないので、計算を使わないスケッチは
+        // ここで何も払わない
+        try encodeComputations(into: commands)
 
         // **画面へ描く前に、光から見た奥行きを焼く。** 同じコマンドに順に積んでも
         // **この世代では順に実行されない** — encoder をまたぐ依存は自動では張られず、
@@ -1605,6 +1662,11 @@ public final class Canvas {
                     blendModeBuffer.gpuAddress
                         + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
                     index: ShapePipeline.blendModeBufferIndex)
+                // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
+                // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
+                pipeline.argumentTable.setAddress(
+                    (run.numbers ?? emptyNumbers).storage.gpuAddress,
+                    index: ShapePipeline.numbersBufferIndex)
                 pipeline.argumentTable.setTexture(
                     run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
                 pipeline.argumentTable.setAddress(
@@ -1730,6 +1792,8 @@ public final class Canvas {
             solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
         pipeline.argumentTable.setAddress(
             matrixBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
+        pipeline.argumentTable.setAddress(
+            emptyNumbers.storage.gpuAddress, index: ShapePipeline.numbersBufferIndex)
         encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
         for batch in casting {
             pipeline.argumentTable.setAddress(

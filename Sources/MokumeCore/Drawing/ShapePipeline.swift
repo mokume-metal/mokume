@@ -35,6 +35,8 @@ final class ShapePipeline {
     static let surroundingsBufferIndex = 9
     /// 立体の置き場所を渡す口の番号 (シェーダ側の `buffer(10)`)。
     static let instanceBufferIndex = 10
+    /// 塗りが読む数の並びを渡す口の番号 (シェーダ側の `buffer(11)`)。
+    static let numbersBufferIndex = 11
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
     /// 焼き付けた影を渡す口の番号 (シェーダ側の `texture(1)`)。
@@ -107,7 +109,7 @@ final class ShapePipeline {
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
-        tableDescriptor.maxBufferBindCount = 11
+        tableDescriptor.maxBufferBindCount = 12
         tableDescriptor.maxTextureBindCount = 2
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)

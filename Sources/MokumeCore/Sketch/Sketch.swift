@@ -172,6 +172,137 @@ extension Sketch {
     public func resetShader() { canvas.resetShader() }
 }
 
+// MARK: - 描く前の計算
+
+extension Sketch {
+    /// 数の並びを用意する。**CPU と GPU で同じものを見る。**
+    ///
+    /// ```swift
+    /// heat = try makeNumbers(count: 4096)
+    /// heat.fill(0)
+    /// ```
+    ///
+    /// ## 書くのは CPU から、書き換えるのは GPU から
+    ///
+    /// CPU からは**書くことしかできない**。GPU が書いた値を CPU から読む口はここには
+    /// 無い — 同じメモリを見ているので値は「読めて」しまうが、それが計算の前なのか
+    /// 後なのかは呼んだ側に分からず、**絵か音がおかしくなって初めて気付く**形になる。
+    /// 読み戻しは、いつ読めるかを込みで設計する別の口になる。
+    ///
+    /// 種を蒔く向き (CPU → GPU) はフレームの外でも中でも意味が変わらないので、
+    /// `setup()` で蒔いてから `draw()` で回してよい。
+    ///
+    /// - Throws: 領域を取れないときに ``RenderFailure``。
+    public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
+        try canvas.makeNumbers(count: count)
+    }
+
+    /// 文字列から計算を作る。保存の拾い直しは効かない (在処が無いため)。
+    ///
+    /// ```swift
+    /// step = try makeComputation(
+    ///     """
+    ///     kernel void step(device float *heat [[buffer(0)]],
+    ///                      constant Values &values [[buffer(MOKUME_VALUES)]],
+    ///                      uint id [[thread_position_in_grid]])
+    ///     {
+    ///         heat[id] = 0.5 + 0.5 * sin(float(id) * 0.01 + values.time);
+    ///     }
+    ///     """,
+    ///     name: "step", values: ["time": 0])
+    /// ```
+    ///
+    /// ## 入口の関数は名前と同じ
+    ///
+    /// `name` がそのまま断片の中の `kernel void <name>(...)` になる。読み込む側
+    /// (``loadComputation(_:values:)``) ではファイル名がその名前になる。
+    ///
+    /// ## 束ねる先は呼ぶときに決まる
+    ///
+    /// ``compute(_:over:reads:writes:)`` に渡した `reads + writes` の並びが、そのまま
+    /// `buffer(0)`, `buffer(1)`, … になる。渡した値は `MOKUME_VALUES` の口に載る
+    /// (番号を書き写さずに済むよう名前で配ってある)。値は後から差し替えられる
+    /// (``Computation/set(_:_:)``)。
+    ///
+    /// ## 保存したら差し替わる
+    ///
+    /// 在処のある断片は保存を拾って組み直される。**組み立てに失敗しても計算は止まらない** —
+    /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。
+    ///
+    /// - Throws: 組み立てられないときに ``ShaderFailure``。
+    public func makeComputation(
+        _ body: String, name: String = "computation", values: [String: ShaderValue] = [:]
+    ) throws(ShaderFailure) -> Computation {
+        try canvas.makeComputation(body, name: name, values: values)
+    }
+
+    /// ファイルから計算を読み込む。**入口の関数の名前はファイル名**になる。
+    ///
+    /// - Throws: 見つからないとき・組み立てられないときに ``ShaderFailure``。
+    public func loadComputation(
+        _ path: String, values: [String: ShaderValue] = [:]
+    ) throws(ShaderFailure) -> Computation {
+        try canvas.loadComputation(path, values: values)
+    }
+
+    /// 描く前に計算させる (1 次元)。
+    ///
+    /// ```swift
+    /// func draw() {
+    ///     compute(step, over: 4096, reads: [seed], writes: [heat])
+    ///     // …heat を読む断片で塗る
+    /// }
+    /// ```
+    ///
+    /// ## 読むものと書くものを言う
+    ///
+    /// `reads` と `writes` は**束ねる先であると同時に、依存の宣言**でもある。前に頼んだ
+    /// 計算が書いた並びに触れる計算は、その計算が終わってから走る — 触れない計算どうしは
+    /// 並行に走る。**順序は宣言から導かれる**ので、待つ仕掛けを自分で書くことはない。
+    ///
+    /// 束ねる先と宣言を 1 つにしてあるのは、2 つに分けると「束ねたのに宣言し忘れた」
+    /// 組み合わせが作れてしまうからである。
+    ///
+    /// ## 計算と描画の間
+    ///
+    /// 計算が書いた並びを描画が読むときの同期も仕組みが入れる。**頼まれていない
+    /// フレームでは何も待たない**ので、計算を使わないスケッチが遅くなることはない。
+    ///
+    /// ## 描くところで頼む
+    ///
+    /// `draw()` の中だけで効く。`setup()` や初期化から頼んだ計算はどのフレームにも
+    /// 属さないので、**無視して理由を知らせる**。
+    public func compute(
+        _ computation: Computation, over count: Int,
+        reads: [Numbers] = [], writes: [Numbers] = []
+    ) {
+        canvas.compute(computation, over: count, reads: reads, writes: writes)
+    }
+
+    /// これから描くものが、この並びを読む。
+    ///
+    /// 断片からは `in.numbers[i]` で引ける。**計算が書いた値をそのまま絵にする道**で、
+    /// 渡していない断片が読むと 1 個の 0 が返る (何も束ねない状態は作らない)。
+    ///
+    /// **溜めている図形はその場で区切られる**ので、これより前に置いた図形が後から
+    /// 差し替わることはない。長さは渡した側が知っているので断片へは配らない。
+    public func numbers(_ numbers: Numbers) { canvas.numbers(numbers) }
+
+    /// 並びを読まない状態へ戻す。
+    public func resetNumbers() { canvas.resetNumbers() }
+
+    /// 描く前に計算させる (2 次元)。
+    ///
+    /// 断片は `uint2 at [[thread_position_in_grid]]` で位置を受け取る。ほかは 1 次元の
+    /// ``compute(_:over:reads:writes:)`` と同じ。
+    public func compute(
+        _ computation: Computation, over width: Int, by height: Int,
+        reads: [Numbers] = [], writes: [Numbers] = []
+    ) {
+        canvas.compute(computation, over: width, by: height, reads: reads, writes: writes)
+    }
+}
+
 // MARK: - 保持した形
 
 extension Sketch {

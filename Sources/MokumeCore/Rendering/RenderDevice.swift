@@ -382,6 +382,22 @@ extension RenderDevice {
         }
     }
 
+    /// 計算の断片を、共通部分を前置きしてから組み立てる。
+    ///
+    /// **前置きは無条件** (塗りと同じ理由 — ShaderSource を参照)。塗りと違って入口の
+    /// 関数は用意せず、束ねる先の宣言ごと利用者が書く。
+    func makeComputeLibrary(
+        named name: String, body: String, values: [String: ShaderValue] = [:]
+    ) throws(RenderFailure) -> any MTLLibrary {
+        let common = try bundledShaderSource(named: "Compute")
+        let source = ShaderSource.assemble(common: common, values: values, body: body)
+        do {
+            return try device.makeLibrary(source: source, options: nil)
+        } catch {
+            throw .shaderCompilationFailed(name: name, reason: error.localizedDescription)
+        }
+    }
+
     /// 同梱している断片を読む。
     func bundledShaderSource(named name: String) throws(RenderFailure) -> String {
         guard let url = Bundle.module.url(forResource: name, withExtension: "metal"),

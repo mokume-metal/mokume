@@ -324,6 +324,12 @@ struct Fragment {
     /// 重ねる枚数と、1 枚ごとの弱まり。`noiseDetail()` が決める。
     uint noiseOctaves;
     float noiseFalloff;
+    /// 計算が書いた数の並び。`numbers()` で渡したものが届く。
+    ///
+    /// **渡していなければ 1 個の 0 を指す。** 何も指さない状態にすると、渡し忘れた
+    /// 断片が絵の乱れではなく異常終了として出る。範囲は書いた側が知っているので、
+    /// ここでは長さを配らない。
+    device const float *numbers;
 };
 
 // MARK: - 揺らぎ
@@ -466,6 +472,7 @@ fragment float4 mokume_fragmentMain(
     constant Light *lights [[buffer(7)]],
     constant Material &material [[buffer(8)]],
     constant Surroundings &surroundings [[buffer(9)]],
+    device const float *numbers [[buffer(11)]],
     texture2d<float> source_texture [[texture(0)]],
     texture2d<float> shadow_texture [[texture(1)]],
     bool isFrontFacing [[front_facing]],
@@ -510,6 +517,7 @@ fragment float4 mokume_fragmentMain(
     f.noiseSeed = uniforms.noiseSeed;
     f.noiseOctaves = uniforms.noiseOctaves;
     f.noiseFalloff = uniforms.noiseFalloff;
+    f.numbers = numbers;
 
     return mokume_composite(paint(f, values), destination, mode);
 }
