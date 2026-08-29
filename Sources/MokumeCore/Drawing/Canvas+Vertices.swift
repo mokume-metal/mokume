@@ -68,10 +68,10 @@ extension Canvas {
     /// 切り出しに揃える)。貼る絵を束ねていなければ写す先が無いので、書かれていない
     /// ことにする — そのときの頂点は焼き場の白い区画を読み、絵は変わらない。
     private func textureUV(_ u: Float, _ v: Float) -> SIMD2<Float>? {
-        guard let image = currentTextureImage, image.width > 0, image.height > 0,
+        guard let picture = currentPicture, picture.width > 0, picture.height > 0,
             u.isFinite, v.isFinite
         else { return nil }
-        return SIMD2(u / Float(image.width), v / Float(image.height))
+        return SIMD2(u / Float(picture.width), v / Float(picture.height))
     }
 
     // これから置く頂点の面の向きを決める。
@@ -369,7 +369,7 @@ extension Canvas {
     private func emitFill(
         _ triangles: [(Int, Int, Int)], points: [BuildingVertex], placed: [PlacedVertex]
     ) {
-        let fallback = currentTextureImage == nil
+        let fallback = currentPicture == nil
             ? nil : Canvas.boxUV(of: points.map { SIMD2($0.position.x, $0.position.y) })
         func uv(_ index: Int) -> SIMD2<Float>? {
             guard let fallback else { return nil }
