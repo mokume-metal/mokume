@@ -17,8 +17,9 @@ import Foundation
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 public enum WorkDirectory {
-    /// 環境変数の名前。
-    static let environmentKey = "MOKUME_WORK_DIR"
+    /// 環境変数の名前。**一覧から取る** — 起動の瞬間に読むものは
+    /// ``StartupReads`` が正典で、ここに綴りを書き写さない (#380)。
+    static let environmentKey = StartupReads.workDirectory.key
 
     /// やりとりのファイルを置く親。
     public static let base: URL = resolve(environment: ProcessInfo.processInfo.environment)
