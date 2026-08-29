@@ -2,9 +2,14 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# ルールセットのドリフトを Issue として起票する (#99 / ADR-0006 決定 4・5)。
+# ルールセットのドリフトを発信する (#99 / ADR-0006 決定 4・5)。
 #
 #   report-ruleset-drift.sh <照合の出力ファイル>
+#
+# 発信の形は **契機で変わる** (#381)。GITHUB_EVENT_NAME を見て決める:
+#
+#   push 以外 (schedule / workflow_dispatch / 手元) … Issue を起票する
+#   push (定義変更が main に入った直後)             … 起票せず、適用手順をログへ出す
 #
 # 検査 (scripts/check-rulesets.sh) と発信をスクリプトごと分けているのは、起票を CI に
 # 限るため — check-rulesets.sh に起票を足すと、手元で照合を打っただけで Issue が立つ。
@@ -37,6 +42,30 @@ readonly MAX_LINES=200
 
 LOG="${1:?照合の出力ファイルが必要}"
 [ -f "$LOG" ] || { echo "照合の出力ファイルが無い: $LOG" >&2; exit 66; }
+
+# 定義変更を main へ入れた直後は、**まだ適用していないのが正常な状態**である。ここで
+# 起票すると、定義を変えるたびに人が処理すべき Issue が積み増される — 毎回鳴る狼になり、
+# 本物のドリフト (管理画面での直接変更) の起票まで反射で閉じられるようになる (#381)。
+#
+# push 契機では起票せず、適用の手順をログへ出して終わる。催促は run の赤とその失敗通知が
+# 運ぶ。それを見落としても、翌日の schedule が従来どおり起票する — 赤 → 翌日 Issue の
+# 段階的な上げ方で、機構は 1 つも増えない (ADR-0008 決定 5 の段 1)。
+#
+# 副作用として、push と同時に無関係なドリフトが起きていた回は起票されない。これも翌日の
+# schedule が拾うので、失われるのは検知そのものではなく 1 日ぶんの早さだけである。
+if [ "${GITHUB_EVENT_NAME:-}" = "push" ]; then
+  cat <<'NUDGE'
+report: 定義が main に入ったが、実設定への適用がまだである (起票はしない — #381)。
+
+  bash scripts/apply-rulesets.sh          # 適用の差分を見る
+  bash scripts/apply-rulesets.sh --apply  # 適用する (メンテナのみ。ADR-0003 決定 1)
+
+適用したら、この workflow を Actions から workflow_dispatch で回し直すか、手元で
+`bash scripts/check-rulesets.sh` を引数なしで打つと緑に戻ることを確かめられる
+(引数なしの照合は bypass_actors まで見る)。
+NUDGE
+  exit 0
+fi
 
 # 同じ内容で毎日立てない。GitHub の検索は前方一致や語での照合なので、返ってきた
 # ものをタイトル完全一致で絞ってから採る

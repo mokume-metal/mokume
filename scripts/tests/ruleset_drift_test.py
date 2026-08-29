@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""ルールセットのドリフト起票の検査 (#99)。
+"""ルールセットのドリフト発信の検査 (#99 / #381)。
 
-固定したいのは六つ:
+固定したいのは八つ:
 
   1. ドリフトを検出したら Issue が立ち、本文に差分そのものが載る
      (run のログを開かないと何がずれたか分からない起票は、無いのとあまり変わらない)
@@ -18,6 +18,11 @@
   6. 本文に解消の判定基準が載る — verify: machine は「どの検査で判定するか」の
      明記を要件にしている (ADR-0002 決定 1)。対処法だけ書いて判定基準の無い起票は、
      要件を満たさないまま印だけ付けることになる
+  7. push 契機では起票せず、適用の手順をログへ出して終わる — 定義変更を merge した
+     直後は「まだ適用していない」のが正常な状態なので、ここで起票すると定義を変える
+     たびに人が処理すべき Issue が積み増される (#381)
+  8. push 以外の契機では従来どおり起票する — 7 の分岐が広がると、管理画面での直接
+     変更を拾う日次の役割ごと黙る。契機の名前で分かれていることを両側から留める
 
 ワークフロー本体 (.github/workflows/ruleset-drift.yml) には判断を埋めていない。
 スクリプト側に置いてあるのは、ここで単体テストとして固定でき、日次で回る検査の
@@ -102,7 +107,7 @@ class ReportDriftTest(unittest.TestCase):
         self.body = self.dir / "body.md"
         self.bin_dir = bin_dir
 
-    def report(self, drift=DRIFT_LOG, issue_list="[]"):
+    def report(self, drift=DRIFT_LOG, issue_list="[]", event=None):
         drift_file = self.dir / "drift.log"
         drift_file.write_text(drift)
         env = dict(os.environ)
@@ -115,9 +120,13 @@ class ReportDriftTest(unittest.TestCase):
                 "GITHUB_REPOSITORY": "mokume-metal/mokume",
             }
         )
-        # 実行の残骸 (run URL) が本文に混じらないよう、Actions の変数は落とす
-        for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL"):
+        # 実行の残骸 (run URL) が本文に混じらないよう、Actions の変数は落とす。
+        # 契機も既定では落とす — 手元で打ったときに催促モードへ落ちないことを、
+        # 既存のテスト群がそのまま押さえる形にする
+        for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL", "GITHUB_EVENT_NAME"):
             env.pop(key, None)
+        if event is not None:
+            env["GITHUB_EVENT_NAME"] = event
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), str(drift_file)],
             capture_output=True,
@@ -168,6 +177,23 @@ class ReportDriftTest(unittest.TestCase):
         body = self.body.read_text()
         self.assertIn("## 解消の判定", body)
         self.assertIn("check-rulesets.sh", body)
+
+    def test_push_契機では起票せず適用の手順を出す(self):
+        # 定義変更が main に入った直後のドリフトは「正常な状態」なので起票しない。
+        # 催促は run の赤とログが運ぶ (#381)
+        r = self.report(event="push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("issue create", self.gh_log())
+        self.assertIn("apply-rulesets.sh --apply", r.stdout)
+
+    def test_push_以外の契機では従来どおり起票する(self):
+        # 催促モードの分岐が広がると、管理画面での直接変更を拾う日次の役割ごと黙る
+        for event in ("schedule", "workflow_dispatch"):
+            with self.subTest(event=event):
+                self.log.write_text("")
+                r = self.report(event=event)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("issue create", self.gh_log())
 
     def test_差分が長ければ切り詰めて起票する(self):
         long_drift = "".join(f"line {i}\n" for i in range(1, 301))
