@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 窓口が差し出す道具立て。
 ///
@@ -10,6 +11,11 @@ import Foundation
 struct Tools {
     /// 公開 API の一覧を指す名前。面の仕様と同じ入口 (`reference`) に並べる。
     static let apiDocument = "api"
+    /// 起動の瞬間に決まるものの一覧を指す名前。
+    ///
+    /// **道具を増やさず、既にある入口の責務を広げる** (ADR-0008 決定 5)。応えないときの
+    /// 案内はここを名指すので、一覧へ辿り着く経路が窓口の中で閉じる (#380)。
+    static let startupDocument = "startup"
 
     /// スケッチとやりとりする区画。基準は `MOKUME_WORK_DIR` が決める (#331)。
     let facets: Facets
@@ -82,13 +88,13 @@ struct Tools {
         [
             "name": "reference",
             "description":
-                "窓口が配る文書を返す。引数を省くと一覧、name を渡すとその 1 つ。name に api を渡すと、いま依存している版の公開 API (どんな型と関数があり、どう呼ぶか)。ほかは面の仕様 (要求と応答の形)。",
+                "窓口が配る文書を返す。引数を省くと一覧、name を渡すとその 1 つ。name に api を渡すと、いま依存している版の公開 API (どんな型と関数があり、どう呼ぶか)。startup を渡すと、起動の瞬間に決まるもの (走っている最中に変えても効かないもの) の一覧。ほかは面の仕様 (要求と応答の形)。",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "name": [
                         "type": "string",
-                        "description": "文書の名前 (例: api, observe-report)。",
+                        "description": "文書の名前 (例: api, startup, observe-report)。",
                     ]
                 ],
             ],
@@ -126,7 +132,7 @@ struct Tools {
             return ("観測の要求を置けませんでした: \(error)", true)
         }
         guard let report = answer else {
-            return (Facets.notRunning(facet: facets.observeFacet, existed: existed), true)
+            return (facets.notRunning(StartupReads.observe, existed: existed), true)
         }
 
         var lines: [String] = []
@@ -185,7 +191,7 @@ struct Tools {
             return ("入力の要求を置けませんでした: \(error)", true)
         }
         guard let report = answer else {
-            return (Facets.notRunning(facet: facets.inputFacet, existed: existed), true)
+            return (facets.notRunning(StartupReads.input, existed: existed), true)
         }
         return (pretty(report), false)
     }
@@ -194,6 +200,7 @@ struct Tools {
         let name = arguments["name"] as? String
         // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**
         if name == Self.apiDocument { return apiReference() }
+        if name == Self.startupDocument { return (startupReference(), false) }
 
         let root = SchemasLocator.directory(workDirectory: packageDirectory)
         guard let name else { return (catalog(schemas: root), false) }
@@ -211,6 +218,9 @@ struct Tools {
             "",
             "公開 API:",
             "- \(Self.apiDocument) — いま依存している版の公開 API の一覧",
+            "",
+            "起動の瞬間に決まるもの:",
+            "- \(Self.startupDocument) — 走っている最中に変えても効かないものの一覧",
             "",
             "面の仕様:",
         ]
@@ -232,6 +242,12 @@ struct Tools {
         } catch {
             return ("公開 API の一覧を読めませんでした: \(error)", true)
         }
+    }
+
+    /// 起動の瞬間に決まるものの一覧。
+    func startupReference() -> String {
+        StartupReadsReport.document(
+            base: facets.directory, given: facets.workDirectoryGiven)
     }
 
     /// 面の仕様が見つからないときの答え。**どこを見たかまで書く。**

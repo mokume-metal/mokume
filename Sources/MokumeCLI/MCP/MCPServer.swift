@@ -92,9 +92,11 @@ enum MCPCommand {
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let directories = directories(arguments: arguments)
+        // 基準を環境変数が決めたのかどうかは、応えないときの案内が名乗る (#380)
+        let given = WorkDirectory.given != nil
         let server = MCPServer(
             tools: Tools(
-                facets: Facets(directory: directories.facets),
+                facets: Facets(directory: directories.facets, workDirectoryGiven: given),
                 packageDirectory: directories.package),
             readLine: { Swift.readLine(strippingNewline: true) },
             write: { line in
