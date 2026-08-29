@@ -53,10 +53,21 @@ struct Brightness: Equatable, Sendable {
     func map(_ color: SIMD3<Float>) -> SIMD3<Float> {
         let lifted = color * exposure
         guard toneMapping == .roll else { return lifted }
+        // **どれか 1 つでも有限でなければ丸めない。** 丸めは 3 成分に共通の倍率を
+        // 掛けるので、有限でない成分が 1 つあれば倍率そのものが意味を失う。
+        //
+        // いちばん明るい成分を先に取ってから有限かを見る形にすると、**どの成分が
+        // 数でないかで丸まったり丸まらなかったりする** — `max` が数でない値を
+        // 引数の位置によって落とすためで、赤が数でなければ丸まらず、青が数でなければ
+        // 丸まる。同じ画素なのに結果が変わるうえ、絵としては「少し暗い」だけなので
+        // 気付けない ([#440] で、面に描かずに取り出した絵と突き合わせて見つかった)
+        //
+        // [#440]: https://github.com/mokume-metal/mokume/issues/440
+        guard lifted.x.isFinite, lifted.y.isFinite, lifted.z.isFinite else { return lifted }
         // **色みを変えないため、いちばん明るい成分で全体を縮める。** 成分ごとに
         // 曲げると、範囲を超えた成分だけが先に頭打ちになって色が転ぶ
         let peak = max(lifted.x, max(lifted.y, lifted.z))
-        guard peak.isFinite, peak > Self.knee else { return lifted }
+        guard peak > Self.knee else { return lifted }
         return lifted * (Self.rolled(peak) / peak)
     }
 

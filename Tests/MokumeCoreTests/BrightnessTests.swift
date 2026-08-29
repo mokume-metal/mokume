@@ -79,6 +79,31 @@ struct BrightnessTests {
         #expect(abs(mapped.y / mapped.z - 2) < 0.001)
     }
 
+    /// 数でない成分の扱いが、**どの成分かで変わらない**こと (#440)。
+    ///
+    /// 丸めは 3 成分に共通の倍率を掛けるので、有限でない成分が 1 つあれば倍率が
+    /// 意味を失う。いちばん明るい成分を先に取ってから有限かを見る形にすると、
+    /// `max` が数でない値を引数の位置で落とすため、赤が数でなければ丸まらず、
+    /// 青が数でなければ丸まる、という非対称になる。**絵としては「少し暗い」だけ**
+    /// なので、突き合わせない限り気付けない。
+    @Test("数でない成分があるときは、どの成分が壊れていても丸めない")
+    func nonFiniteComponentsNeverRoll() {
+        let brightness = Brightness(exposure: 1, toneMapping: .roll)
+        for broken in 0..<3 {
+            for value in [Float.nan, .infinity, -.infinity] {
+                // 丸めが効く明るさ (折れ目より上) を残したまま、成分を 1 つ壊す
+                var color = SIMD3<Float>(repeating: 2)
+                color[broken] = value
+                let mapped = brightness.map(color)
+                for other in 0..<3 where other != broken {
+                    #expect(
+                        mapped[other] == 2,
+                        "成分 \(broken) が \(value) のとき、成分 \(other) が丸められた")
+                }
+            }
+        }
+    }
+
     @Test("露出は掛け算で、1 は何も変えない")
     func exposureIsAMultiplier() {
         #expect(Brightness(exposure: 1).map(SIMD3(0.3, 0.2, 0.1)) == SIMD3(0.3, 0.2, 0.1))
