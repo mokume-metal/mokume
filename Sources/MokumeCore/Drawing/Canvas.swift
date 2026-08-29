@@ -48,6 +48,93 @@ public final class Canvas {
     private var vertexBuffer: (any MTLBuffer)?
     private var vertexCapacity = 0
 
+    /// 平面の置き場所。列は自分の区間を指す。
+    ///
+    /// **添字 0 は常に何も動かさない置き場所**で、畳めない列 (字・画像・その場で並べた
+    /// 頂点) はここを指す。毎フレーム置き直すので、溜め場を捨てても消えない。
+    var flatInstances: [FlatInstance] = [.identity]
+    private var flatInstanceBuffer: (any MTLBuffer)?
+    private var flatInstanceCapacity = 0
+
+    /// いま開いている平面の雛形。
+    ///
+    /// **同じ形・同じ様式が続く間は、頂点を置き直さずに置き場所だけを足す。** 形か様式が
+    /// 変わったら (あるいは畳めないものが来たら) 閉じて開き直す。立体の ``openSolid``
+    /// と対になる。
+    var openFlat: OpenFlat?
+
+    /// 雛形そのものを組み立てている最中か。
+    ///
+    /// **雛形の頂点も `appendTriangle` を通る**ので、そこで「畳めない頂点が来た」と
+    /// 判定されないよう区別する。形を組み立てるコードを畳む側と畳まない側で 2 本に
+    /// 増やさないための旗である。
+    private var buildingFlatTemplate = false
+
+    /// 保持する形を記録している最中か。**記録の間は畳まない。**
+    ///
+    /// 保持した形は自分で畳む仕組みを持つ ([#241](https://github.com/mokume-metal/mokume/issues/241)) —
+    /// 記録するのは頂点と区間だけで、置き場所は持ち歩かない。記録の中で畳むと、形自身の
+    /// 座標へ寄せた頂点だけが残り、**どこへ置くかが記録から落ちる**。
+    var recordingShape = false
+
+    /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
+    ///
+    /// 同じ形が 2 つ目に来たら、ここに控えた周から雛形を積み直して畳む。1 つ目から
+    /// 雛形を開かないのは、**平面が元から 1 つの列にまとまる**ためで、図形ごとに列を
+    /// 割ると畳む前より遅くなる場面 (矩形と円を交互に置く絵) が出る。
+    private var pendingFlat: PendingFlat?
+
+    /// 畳む相手を待っている図形ひとつぶん。
+    private struct PendingFlat {
+        var key: FlatKey
+        /// 形自身の座標での周。雛形を積み直すのに要る。
+        var outline: Outline
+        /// この図形の置き場所。畳んだときは 1 つ目の置き場所になる。
+        var placement: FlatInstance
+        /// 溜め場の中でこの図形が占めている区間。**抜けるのは末尾にいる間だけ。**
+        var vertexStart: Int
+        var vertexEnd: Int
+        /// 置いた時点の列の数。**列が閉じていたら抜けない** (閉じた列の区間が動く)。
+        var batchCount: Int
+    }
+
+    /// 開いている平面の雛形ひとつぶん。
+    struct OpenFlat {
+        /// 何を並べているか。**これが変わったら閉じる。**
+        var key: FlatKey
+        /// 輪郭の頂点が始まる位置 (並び全体での番号)。塗りしか無ければ並びの終わり。
+        var strokeStart: Int
+        /// 置き場所の並びの中で、この雛形が始まる位置。
+        var instanceStart: Int
+    }
+
+    /// 平面を畳む鍵。**これが等しい図形どうしだけが 1 つの雛形に収まる。**
+    ///
+    /// 変換も色も入っていない — どちらも置き場所が持つためである。円の分割数は半径から
+    /// 決まる (``segmentCount(forRadius:)``) ので、寸法が入った時点で分割数も一致する。
+    struct FlatKey: Equatable {
+        var form: FlatForm
+        var hasFill: Bool
+        var hasStroke: Bool
+        var strokeWeight: Float
+        var strokeCap: StrokeCap
+        var strokeJoin: StrokeJoin
+        /// 塗りに貼る絵があるか。読み取り位置が寸法から決まるので鍵に入る。
+        var textured: Bool
+    }
+
+    /// 畳める図形の形。
+    ///
+    /// **中心 (あるいは角) と寸法から組み立てられる図形だけがここに居る。** 三角形・
+    /// 四角形・線・点は「形自身の座標」の基準点が最初の点になり、引き算を挟むぶん
+    /// 畳まないときの絵と食い違いうる。畳める頂点数も小さいので、実需が出るまで
+    /// 足さない ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md))。
+    enum FlatForm: Equatable {
+        case rect(width: Float, height: Float)
+        case ellipse(radiusX: Float, radiusY: Float)
+        case arc(radiusX: Float, radiusY: Float, start: Float, sweep: Float)
+    }
+
     /// 溜めている立体の頂点と、その置き場。
     ///
     /// 平面とは別の並びにする — 頂点の中身が違う (奥行きと面の向きを持つ) ためで、
@@ -445,11 +532,17 @@ public final class Canvas {
         var castsShadow: Bool
         /// この列の置き場所が、置き場のどこから何個あるか。
         ///
-        /// 平面は置き場所を持たない (1 個ぶんだけ描く)。
+        /// 畳めない列は**何も動かさない置き場所を 1 つ**指す (平面なら添字 0)。
         var instanceStart: Int = 0
         var instanceCount: Int = 1
         /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。
         var instances: (any MTLBuffer)?
+        /// 輪郭の頂点が始まる位置 (並び全体での番号)。**平面だけが使う。**
+        ///
+        /// 頂点関数はここより手前に塗りの色を、ここから後ろに輪郭の色を掛ける。
+        /// 畳んでいない列は塗りしか無い扱いでよい — 置き場所の 2 色がどちらも白で、
+        /// どちらを掛けても値が変わらないためである。
+        var strokeStart: Int = .max
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -752,6 +845,10 @@ public final class Canvas {
     /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
         if openSource == .solid { return closeSolidBatch() }
+        // **雛形は列と一緒に閉じる。** 開いたままにすると、次に来た同じ形が「もう閉じた
+        // 列の頂点」を指す置き場所を足してしまう
+        let template = openFlat
+        openFlat = nil
         let start = batches.last(where: { $0.source == .flat })
             .map { $0.run.start + $0.run.count } ?? 0
         let count = vertices.count - start
@@ -770,7 +867,21 @@ public final class Canvas {
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),
                 surroundings: bakeSurroundings(),
-                castsShadow: false))
+                castsShadow: false,
+                // 畳んでいない列は、何も動かさない置き場所 (添字 0) を 1 つ通る
+                instanceStart: template?.instanceStart ?? 0,
+                instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
+                strokeStart: template?.strokeStart ?? .max))
+    }
+
+    /// 開いている雛形を閉じる。**畳めない頂点を置く前に呼ぶ。**
+    ///
+    /// 字・画像・その場で並べた頂点が雛形の列へ紛れ込むと、置き場所の数だけ**それらも
+    /// 繰り返し描かれる**。雛形を組み立てている最中は、その頂点自身がここを通るので
+    /// 何もしない。
+    func closeFlatTemplate() {
+        guard openFlat != nil, !buildingFlatTemplate else { return }
+        closeBatch()
     }
 
     /// 開いている立体の列を閉じる。
@@ -849,6 +960,9 @@ public final class Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     func beginFlat() {
+        // **平面の頂点はどれもここを通る。** 畳めない頂点が開いている雛形へ紛れ込むのを
+        // 止める場所を、1 つに保つ
+        closeFlatTemplate()
         guard openSource == .solid else { return }
         closeBatch()
         openSource = .flat
@@ -936,8 +1050,15 @@ public final class Canvas {
         vertices.removeAll(keepingCapacity: true)
         solidVertices.removeAll(keepingCapacity: true)
         solidInstances.removeAll(keepingCapacity: true)
+        // **何も動かさない置き場所は置き直す。** 畳めない列がこれを指すので、
+        // 空のまま次の列を閉じると、束ねる先の無い添字が残る
+        flatInstances.removeAll(keepingCapacity: true)
+        flatInstances.append(.identity)
         batches.removeAll(keepingCapacity: true)
         openSolid = nil
+        openFlat = nil
+        pendingFlat = nil
+        buildingFlatTemplate = false
         openSource = .flat
     }
 
@@ -973,15 +1094,16 @@ public final class Canvas {
     public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
         guard box.width > 0, box.height > 0 else { return }
-        let x = box.x
-        let y = box.y
         let w = box.width
         let h = box.height
+        // 周は**形自身の座標**で作り、左上の角を置き場所として渡す。畳まないときは
+        // 角を足し戻すだけなので、絵は 1 ビットも変わらない (足す順が入れ替わるだけ)
         draw(
             Outline(
                 points: [
-                    SIMD2(x, y), SIMD2(x + w, y), SIMD2(x + w, y + h), SIMD2(x, y + h),
-                ], isClosed: true))
+                    SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
+                ], isClosed: true),
+            folding: .rect(width: w, height: h), at: SIMD2(box.x, box.y))
     }
 
     /// 正方形。座標の読み方は ``rectMode(_:)`` が決める。
@@ -1000,13 +1122,15 @@ public final class Canvas {
         let radiusX = box.width / 2
         let radiusY = box.height / 2
         guard radiusX > 0, radiusY > 0 else { return }
-        let center = SIMD2(box.x + radiusX, box.y + radiusY)
+        // 周は**形自身の座標**で作り、中心を置き場所として渡す
         draw(
             Outline(
                 points: Self.arcPoints(
-                    center: center, radiusX: radiusX, radiusY: radiusY,
+                    center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
                     from: 0, sweep: 2 * .pi),
-                isClosed: true, fanCenter: center))
+                isClosed: true, fanCenter: SIMD2(0, 0)),
+            folding: .ellipse(radiusX: radiusX, radiusY: radiusY),
+            at: SIMD2(box.x + radiusX, box.y + radiusY))
     }
 
     /// 円弧。座標の読み方は ``ellipseMode(_:)`` が決める。
@@ -1023,16 +1147,19 @@ public final class Canvas {
             warnReversedArcOnce()
             return
         }
-        let center = SIMD2(box.x + radiusX, box.y + radiusY)
         let sweep = min(stop - start, 2 * .pi)
         let arcPoints = Self.arcPoints(
-            center: center, radiusX: radiusX, radiusY: radiusY, from: start, sweep: sweep)
+            center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
+            from: start, sweep: sweep)
         // 一周ぶんなら中心は周に含めない (楕円と同じ形になる)
         let isFullTurn = sweep >= 2 * .pi
         draw(
             Outline(
-                points: isFullTurn ? arcPoints : [center] + arcPoints,
-                isClosed: true, fanCenter: center))
+                points: isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints,
+                isClosed: true, fanCenter: SIMD2(0, 0)),
+            folding: .arc(
+                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep),
+            at: SIMD2(box.x + radiusX, box.y + radiusY))
     }
 
     /// 三角形。
@@ -1092,12 +1219,133 @@ public final class Canvas {
             self.fanCenter = fanCenter
             self.fills = fills
         }
+
+        /// 形自身の座標で作った周を、置き場所ぶんずらす。**畳まないときの経路。**
+        func moved(by offset: SIMD2<Float>) -> Outline {
+            Outline(
+                points: points.map { $0 + offset }, isClosed: isClosed,
+                fanCenter: fanCenter.map { $0 + offset }, fills: fills)
+        }
     }
 
     /// 周から、塗りと輪郭を出す。
     private func draw(_ outline: Outline) {
         if outline.fills, hasFill { fillInterior(outline) }
         if hasStroke, currentStrokeWeight > 0 { strokeOutline(outline) }
+    }
+
+    /// 形自身の座標で作った周を、置き場所へ置く。**同じ形が続く間は畳む。**
+    ///
+    /// 畳めるときは頂点を 1 組も積まず、置き場所を 1 つ足すだけで済む。畳めないときは
+    /// 周を置き場所ぶんずらして今までどおり積む — 足す順が入れ替わるだけなので、
+    /// **絵は 1 ビットも変わらない**。
+    private func draw(_ outline: Outline, folding form: FlatForm, at anchor: SIMD2<Float>) {
+        let key = FlatKey(
+            form: form,
+            hasFill: outline.fills && hasFill,
+            hasStroke: hasStroke && currentStrokeWeight > 0,
+            strokeWeight: currentStrokeWeight,
+            strokeCap: currentStrokeCap,
+            strokeJoin: currentStrokeJoin,
+            textured: currentTextureImage != nil)
+        guard key.hasFill || key.hasStroke else { return }
+
+        // **貼る絵と輪郭が同居する図形は畳まない。** 塗りは絵の面を、輪郭は字形の面を
+        // 読むので、1 つの図形の途中で列が割れる (`useTexture`)。1 つの雛形に収まらない
+        //
+        // 保持する形を記録している最中も畳まない (`recordingShape`)
+        guard !(key.textured && key.hasFill && key.hasStroke), !recordingShape else {
+            return draw(outline.moved(by: anchor))
+        }
+
+        // 開いている雛形と同じ形なら、置き場所を足すだけで済む
+        if let open = openFlat, open.key == key {
+            if flatInstances.count - open.instanceStart < instanceCapacity {
+                flatInstances.append(placement(at: anchor))
+                return
+            }
+            // 上限に達したら**同じ形のまま**列を開き直す。ここで畳まない経路へ落とすと、
+            // 上限をまたいだ図形だけ組み立て方が変わってしまう
+            openFlatTemplate(key: key, outline: outline)
+            flatInstances.append(placement(at: anchor))
+            return
+        }
+
+        // **2 つ目が来てから畳む。** 1 つ目で雛形を開くと、矩形と円を交互に置いた絵で
+        // 図形の数だけ列が分かれる — 平面は元から 1 つの列にまとまるので、それは
+        // 畳む前より遅い ([#424](https://github.com/mokume-metal/mokume/issues/424))
+        if let waiting = pendingFlat, waiting.key == key,
+            waiting.vertexEnd == vertices.count, waiting.batchCount == batches.count
+        {
+            // 1 つ目の頂点を溜め場から抜き、雛形として積み直す。抜けるのは**まだ列が
+            // 閉じていない末尾**にいるときだけで、上の 2 つの条件がそれを見ている
+            vertices.removeLast(vertices.count - waiting.vertexStart)
+            pendingFlat = nil
+            openFlatTemplate(key: key, outline: outline)
+            flatInstances.append(waiting.placement)
+            if flatInstances.count - openFlat!.instanceStart < instanceCapacity {
+                flatInstances.append(placement(at: anchor))
+            } else {
+                openFlatTemplate(key: key, outline: outline)
+                flatInstances.append(placement(at: anchor))
+            }
+            return
+        }
+
+        // 畳む相手がまだいない。**今までどおり置いて**、次に同じ形が来るのを待つ
+        closeFlatTemplate()
+        let batchesBefore = batches.count
+        let vertexStart = vertices.count
+        draw(outline.moved(by: anchor))
+        guard batches.count == batchesBefore, vertices.count > vertexStart else {
+            pendingFlat = nil
+            return
+        }
+        pendingFlat = PendingFlat(
+            key: key, outline: outline, placement: placement(at: anchor),
+            vertexStart: vertexStart, vertexEnd: vertices.count, batchCount: batches.count)
+    }
+
+    /// 雛形を 1 つ積んで開く。**開いていた列は閉じる。**
+    private func openFlatTemplate(key: FlatKey, outline: Outline) {
+        beginFlat()
+        closeBatch()
+        // 読む面は雛形を積み始める前に決める。積んでいる途中で変わると、雛形が
+        // 2 つの列に割れる
+        if key.textured, key.hasFill { useFillTexture() } else { useGlyphTexture() }
+
+        // **雛形の頂点は白で、変換を掛けずに積む。** 色も変換も置き場所が持つので、
+        // ここで焼き込むと二重に掛かる。組み立て自体は畳まないときとまったく同じ経路
+        let savedTransform = transform
+        let savedFill = currentFill
+        let savedStroke = currentStroke
+        transform = .identity
+        currentFill = Self.unchangedTint
+        currentStroke = Self.unchangedTint
+        buildingFlatTemplate = true
+        if key.hasFill { fillInterior(outline) }
+        let strokeStart = vertices.count
+        if key.hasStroke { strokeOutline(outline) }
+        buildingFlatTemplate = false
+        transform = savedTransform
+        currentFill = savedFill
+        currentStroke = savedStroke
+
+        openFlat = OpenFlat(
+            key: key, strokeStart: strokeStart, instanceStart: flatInstances.count)
+    }
+
+    /// 掛けても値の変わらない色。雛形の頂点はこれで積む。
+    private static let unchangedTint = LinearRGBA(
+        premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
+
+    /// いまの変換と塗りから、置き場所を 1 つ作る。
+    private func placement(at anchor: SIMD2<Float>) -> FlatInstance {
+        let columns = transform.matrix.columns
+        return FlatInstance(
+            linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
+            offset: transform.apply(x: anchor.x, y: anchor.y),
+            fill: currentFill, stroke: currentStroke)
     }
 
     /// 周の内側を塗る。
@@ -1551,6 +1799,13 @@ public final class Canvas {
     /// 果たしていないので、絵ではなく回数で確かめる。
     private(set) var drawCallsInLastFrame = 0
 
+    /// 直前のフレームで積んだ平面の頂点の数。
+    ///
+    /// **平面が畳めているかは、描画の呼び出し回数では数えられない。** 平面は元から
+    /// 1 つの列にまとまるので、畳んでも畳まなくても回数は変わらない — 変わるのは
+    /// 組み立てて積む頂点の数のほうで、それが #424 で律速だったものである。
+    private(set) var flatVerticesInLastFrame = 0
+
     /// 検査から「描けなかったフレーム」を作るための差し込み。製品の経路では常に `nil`。
     ///
     /// 描画の失敗は環境か資源が枯れたときにしか起きず、検査から自然には作れない。
@@ -1597,6 +1852,11 @@ public final class Canvas {
                 guard let base = source.baseAddress, source.count > 0 else { return }
                 instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
             }
+            let flatInstanceBuffer = try flatInstanceBufferHolding(flatInstances.count)
+            flatInstances.withUnsafeBytes { source in
+                guard let base = source.baseAddress, source.count > 0 else { return }
+                flatInstanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
+            }
 
             let solidBuffer = try solidVertexBufferHolding(solidVertices.count)
             solidVertices.withUnsafeBytes { source in
@@ -1616,8 +1876,13 @@ public final class Canvas {
             let matrices = try matrixBufferHolding(batches.count)
             for (index, batch) in batches.enumerated() {
                 var matrix = batch.matrix
-                matrices.contents().advanced(by: index * Self.valuesStride)
-                    .copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
+                let slot = matrices.contents().advanced(by: index * Self.valuesStride)
+                slot.copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
+                // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
+                // 読まない**ので、同じ区画に足しても効かない
+                var strokeStart = UInt32(min(batch.strokeStart, Int(UInt32.max)))
+                slot.advanced(by: MemoryLayout<simd_float4x4>.size)
+                    .copyMemory(from: &strokeStart, byteCount: MemoryLayout<UInt32>.size)
             }
             encoder.setViewport(
                 MTLViewport(
@@ -1715,6 +1980,12 @@ public final class Canvas {
                     encoder.setDepthStencilState(pipeline.flatDepthState)
                     pipeline.argumentTable.setAddress(
                         buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+                    // **口は立体と共用する。** 同じ列で平面と立体の両方を描くことは
+                    // 無いので、置き場所の口を 2 つ持つ理由が無い
+                    pipeline.argumentTable.setAddress(
+                        flatInstanceBuffer.gpuAddress
+                            + UInt64(batch.instanceStart * MemoryLayout<FlatInstance>.stride),
+                        index: ShapePipeline.instanceBufferIndex)
                 case .solid:
                     // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
                     encoder.setRenderPipelineState(run.shader?.solidState ?? pipeline.solidState)
@@ -1770,6 +2041,7 @@ public final class Canvas {
         }
 
         drawCallsInLastFrame = vertices.isEmpty && solidVertices.isEmpty ? 0 : batches.count
+        flatVerticesInLastFrame = vertices.count
         encoder.endEncoding()
 
         // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
@@ -1820,6 +2092,17 @@ public final class Canvas {
             byteCount: capacity * MemoryLayout<SolidInstance>.stride)
         solidInstanceBuffer = buffer
         solidInstanceCapacity = capacity
+        return buffer
+    }
+
+    /// 平面の置き場所を置く領域。足りなければ取り直す。
+    private func flatInstanceBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = flatInstanceBuffer, flatInstanceCapacity >= count { return buffer }
+        let capacity = max(count, max(flatInstanceCapacity * 2, 256))
+        let buffer = try gpu.makeReadableBuffer(
+            byteCount: capacity * MemoryLayout<FlatInstance>.stride)
+        flatInstanceBuffer = buffer
+        flatInstanceCapacity = capacity
         return buffer
     }
 
