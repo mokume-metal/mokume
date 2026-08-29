@@ -74,6 +74,17 @@ public enum Effect {
         }
     }
 
+    /// 拡大の段が使う種別の番号。**利用者の並びには現れない。**
+    ///
+    /// 拡大は解像度の決め方の一部で、後処理の 1 つではない ([ADR-0015] 決定 1)。
+    /// それでも通る道は同じ段なので、種別だけをここで名乗る — 番号がこの並びの外に
+    /// あると、組み込みの効果を 1 つ足したときに黙って衝突する。
+    ///
+    /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
+    static let enlargeKind: Float = 11
+    /// 拡大して、前のフレームの結果と混ぜる種別の番号 (時間方向)。
+    static let accumulateKind: Float = 12
+
     /// 組み込みの効果に渡す設定を詰める。**並びの正本はここ**で、読む側は
     /// `Shaders/Effects/Builtin.metal` にある。
     private static func control(

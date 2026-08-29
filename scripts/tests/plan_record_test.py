@@ -90,6 +90,8 @@ class PlanRecordTestCase(unittest.TestCase):
         self.git("init", "-q", "-b", "feat/plan-123")
         self.git("config", "user.email", "t@example.com")
         self.git("config", "user.name", "t")
+        # 使い捨てのリポジトリは手元の署名設定から独立させる (#344)
+        self.git("config", "commit.gpgsign", "false")
         (self.repo / "README.md").write_text("hi\n")
         self.git("add", "-A")
         self.git("commit", "-qm", "init")

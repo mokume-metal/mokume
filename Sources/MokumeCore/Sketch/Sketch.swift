@@ -39,22 +39,55 @@ extension Sketch {
 
 /// スケッチの設定。
 public struct SketchSettings: Equatable, Sendable {
-    /// 描く幅 (画素)。
+    /// 出す幅 (画素)。**スケッチが書く座標もこの幅の中にある。**
     public var width: Int
-    /// 描く高さ (画素)。
+    /// 出す高さ (画素)。
     public var height: Int
     /// 1 秒あたりのフレーム数の目標。
     public var frameRate: Int
     /// 窓の題名。
     public var title: String
 
+    /// 実際に刻む画素の密度。1 が実寸で、0.5 なら縦横とも半分の細かさで描く。
+    ///
+    /// **重い絵を低い細かさで描いて拡大すれば、フレーム時間に収まらなかった表現が
+    /// 動くようになる** ([ADR-0015] 決定 1)。座標は出す細かさのままなので、
+    /// スケッチのコードは 1 行も変わらない。
+    ///
+    /// 使えるのは 0 より大きく 1 以下。1 を超える指定 (出すより細かく描く) は
+    /// 引き受けないので、組み立ての時点で断る。
+    ///
+    /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
+    public var pixelDensity: Float
+    /// 描く細かさと出す細かさの間を、どうやって埋めるか。既定は ``Upscale/spatial``。
+    ///
+    /// ## 時間方向を選ぶと、単一フレームの再現が失われる
+    ///
+    /// ``Upscale/temporal`` は前のフレームの結果を積み上げて埋めるので、**フレーム N
+    /// の絵はそこへ至る経路に依る** — 単独で描いた N と、0 から進めて得た N が
+    /// 一致しない。同じ絵が出ることを前提にした仕組み (画像の比較・単一フレームだけを
+    /// 描く経路) は、``Sketch/usesFrameHistory`` を読んでそれを知る必要がある。
+    /// [ADR-0015] 決定 2 の言う代償がこれである。
+    ///
+    /// ## いまは動きの情報を持たない
+    ///
+    /// この土台はまだ「どの画素がどこから来たか」を作っていないので、時間方向の
+    /// 拡大には「何も動いていない」と告げている。**止まっている絵ではちらつきが減り、
+    /// 動くものは尾を引く。** 細かさそのものは空間方向と大きく変わらない。
+    ///
+    /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
+    public var upscale: Upscale
+
     public init(
-        width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume"
+        width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume",
+        pixelDensity: Float = 1, upscale: Upscale = .spatial
     ) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
         self.title = title
+        self.pixelDensity = pixelDensity
+        self.upscale = upscale
     }
 }
 
@@ -74,10 +107,29 @@ extension Sketch {
     /// いま描いている面。
     public var canvas: Canvas { Self.requireRuntime().canvas }
 
-    /// 描く幅 (画素)。
+    /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
     public var width: Float { canvas.width }
-    /// 描く高さ (画素)。
+    /// 出す高さ (画素)。**細かさを変えても動かない。**
     public var height: Float { canvas.height }
+
+    /// 実際に刻んでいる幅 (画素)。細かさが 1 なら ``width`` と同じ。
+    ///
+    /// ``pixels`` の索引と、断片が受け取る位置はこちらの数である。
+    public var pixelWidth: Int { canvas.pixelWidth }
+    /// 実際に刻んでいる高さ (画素)。
+    public var pixelHeight: Int { canvas.pixelHeight }
+
+    /// いまの絵が、前のフレームの結果に依っているか。
+    ///
+    /// **決定論に依る仕組みはここを読む** ([ADR-0015] の影響欄) — 同じ入力から
+    /// 同じ絵が出ることを前提にした画像比較や、単一フレームだけを描く経路は、
+    /// これが `true` の間はその前提を持てない。
+    ///
+    /// `true` になるのは ``SketchSettings/upscale`` に ``Upscale/temporal`` を
+    /// 選び、かつ実際に拡大が立っているときだけである。
+    ///
+    /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
+    public var usesFrameHistory: Bool { canvas.usesFrameHistory }
 
     /// これまでに描いたフレームの数。最初の ``draw()`` の最中は 1。
     public var frameCount: Int { Self.requireRuntime().frameCount }
@@ -609,8 +661,8 @@ extension Sketch {
     /// 描いた結果を画素として読み書きする面。
     ///
     /// ```swift
-    /// for y in 0..<Int(height) {
-    ///     for x in 0..<Int(width) {
+    /// for y in 0..<pixelHeight {
+    ///     for x in 0..<pixelWidth {
     ///         let color = pixels[x, y]
     ///         pixels[x, y] = LinearRGBA(
     ///             premultipliedRed: color.green, green: color.blue, blue: color.red,
@@ -636,6 +688,13 @@ extension Sketch {
     /// 図形が描き切られ、GPU の完了を待つ。待つのはフレームに 1 度きりなので、
     /// 何画素読んでも待ち時間は増えない。待つ時点を自分で選びたいときは
     /// ``loadPixels()`` を先に呼ぶ。
+    ///
+    /// ## 索引は実際に刻んでいる画素
+    ///
+    /// 大きさは ``pixelWidth`` / ``pixelHeight`` で、細かさ
+    /// (``SketchSettings/pixelDensity``) を下げているときは ``width`` / ``height``
+    /// より小さい。**読み書きするのは拡大より手前の絵**なので、ここで書いた値も
+    /// 拡大を通ってから出て行く。
     public var pixels: Pixels { canvas.pixels }
 
     /// 溜めている図形を描き切り、画素を読める状態にする。
@@ -644,7 +703,7 @@ extension Sketch {
     /// **省いても結果は変わらない**。待つ時点を選びたいときに使う。
     public func loadPixels() { canvas.loadPixels() }
 
-    /// 1 画素の色。原点は左上。範囲の外は透明を返す。
+    /// 1 画素の色。原点は左上。範囲の外は透明を返す。索引は ``pixels`` と同じ。
     public func get(_ x: Int, _ y: Int) -> LinearRGBA { canvas.get(x, y) }
 
     /// 1 画素の色を書き換える。範囲の外は何もしない。

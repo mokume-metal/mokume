@@ -57,6 +57,15 @@ struct Pixel {
     constant float4 *control;
 };
 
+/// 入りの絵の 1 画素を、そのまま読む。**面の外は端の画素**になる。
+///
+/// 拾い読み (``mokume_at``) と違って混ぜない。段の入りと出りで大きさが違うとき
+/// (拡大がそれ) に、入りの画素そのものを取るためにある。
+static inline float4 mokume_texel(Pixel in, int2 coord) {
+    int2 last = int2(int(in.source.get_width()) - 1, int(in.source.get_height()) - 1);
+    return in.source.read(uint2(clamp(coord, int2(0), last)));
+}
+
 /// 入りの絵のほかの場所を読む。**面の外は端の色**になる。
 static inline float4 mokume_at(Pixel in, float2 place) {
     constexpr sampler reader(coord::normalized, filter::linear, address::clamp_to_edge);
@@ -89,7 +98,11 @@ fragment float4 mokume_effectMain(
     p.paired = paired;
     p.control = control;
     // **拾い読みではなく読み取り。** 変換を挟まないので、そのまま返す効果は絵を
-    // 1 ビットも変えない
-    p.color = source.read(uint2(in.position.xy));
+    // 1 ビットも変えない。
+    //
+    // 入りと出りで大きさが違う段 (拡大) では出りのほうが広いので、端で丸める —
+    // 面の外を読んだ値は決まっていない。大きさが同じ段では 1 画素も丸まらない
+    uint2 last = uint2(source.get_width() - 1, source.get_height() - 1);
+    p.color = source.read(min(uint2(in.position.xy), last));
     return effect(p, values);
 }

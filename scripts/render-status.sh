@@ -103,7 +103,8 @@ drawing_fingerprint() {
 # ので、queue を止めるより名乗って通すほうを取る。何を見ていないかは必ず述べる。
 report_merge_group() {
   local repo=$1 merged=$2 head_ref=$3
-  local numbers number head files fp_merged fp_head
+  local numbers number head files fp_head checked=0
+  local fp_merged=''
 
   # queue の枝は gh-readonly-queue/<base>/pr-<番号>-<base sha>。まとめて積まれた
   # ときに備えて pr-<番号> は全件拾う (1 本でも覆えていなければ通さない)
@@ -114,19 +115,26 @@ report_merge_group() {
     return
   fi
 
-  if ! fp_merged=$(drawing_fingerprint "$repo" "$merged"); then
-    say "合流後の木を読めなかった (指紋を取れない)"
-    post "$repo" "$merged" success "merge queue (覆いは見ていない)"
-    return
-  fi
-
   for number in $numbers; do
     if ! files=$(gh api "repos/$repo/pulls/$number/files" --paginate --jq '.[].filename'); then
       say "#$number の変更ファイルを読めなかった"
       post "$repo" "$merged" success "merge queue (覆いは見ていない)"
       return
     fi
-    printf '%s\n' "$files" | touches_drawing || continue
+    # 読み飛ばすときも名乗る (#441)。止めなかった回のログが「見た上で通した」のか
+    # 「見る対象が無かった」のかを分けて読めるようにするため
+    if ! printf '%s\n' "$files" | touches_drawing; then
+      say "#$number は描画に触れない (覆いを見る対象ではない)"
+      continue
+    fi
+
+    # 合流後の木は、見る対象が現れて初めて引く。描画 PR が 1 本も無い回に
+    # 「木を読めなかった」という無関係な名乗りが出ないため (#441)
+    if [ -z "$fp_merged" ] && ! fp_merged=$(drawing_fingerprint "$repo" "$merged"); then
+      say "合流後の木を読めなかった (指紋を取れない)"
+      post "$repo" "$merged" success "merge queue (覆いは見ていない)"
+      return
+    fi
 
     if ! head=$(gh api "repos/$repo/pulls/$number" --jq '.head.sha') ||
       ! fp_head=$(drawing_fingerprint "$repo" "$head"); then
@@ -143,9 +151,15 @@ report_merge_group() {
       return
     fi
     say "#$number は覆えている (描画に関わるファイル $fp_head)"
+    checked=$((checked + 1))
   done
 
-  post "$repo" "$merged" success "merge queue (手元の報告が合流後の姿を覆っている)"
+  # 見る対象が無かった回を「覆っている」と名乗らない (#441)
+  if [ "$checked" -eq 0 ]; then
+    post "$repo" "$merged" success "merge queue (描画に触れる PR は無い)"
+  else
+    post "$repo" "$merged" success "merge queue ($checked 本の描画 PR が合流後の姿を覆っている)"
+  fi
 }
 
 mode=${1:-}

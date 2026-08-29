@@ -30,12 +30,38 @@ import simd
 /// 図形は溜められ、``draw(_:)`` を抜けるときにまとめて描かれる。
 @MainActor
 public final class Canvas {
-    /// 幅 (画素)。
+    /// 幅 (画素)。**出す細かさ**で、スケッチが書く座標もこの中にある。
     public let width: Float
-    /// 高さ (画素)。
+    /// 高さ (画素)。**出す細かさ。**
     public let height: Float
 
+    /// 実際に刻む幅 (画素)。細かさが 1 なら ``width`` と同じ。
+    public var pixelWidth: Int { target.width }
+    /// 実際に刻む高さ (画素)。
+    public var pixelHeight: Int { target.height }
+
+    /// 描く先。**細かさに従う**ので、``output`` より小さいことがある。
     let target: RenderTarget
+
+    /// 出す先。**すべての出口が受け取るのはこの 1 枚**である ([ADR-0023] 決定 2)。
+    ///
+    /// 細かさが 1 なら ``target`` と同じものを指す — 置き場も段も 1 つも増えない。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    public let output: RenderTarget
+
+    /// 拡大の段。細かさが 1 なら `nil` で、**フレームは段の存在を一切払わない**。
+    let upscaleStage: UpscaleStage?
+
+    /// いまの絵が前のフレームの結果に依っているか。意味の説明は ``Sketch`` 側が正本。
+    public var usesFrameHistory: Bool { upscaleStage?.kind.usesFrameHistory ?? false }
+
+    /// 拡大が使う段の枠の数。立っていなければ 0。
+    var upscalePassCount: Int {
+        guard upscaleStage != nil else { return 0 }
+        // 時間方向は、混ぜる 1 枠と次のフレームのために控える 1 枠
+        return usesFrameHistory ? 2 : 1
+    }
     let gpu: RenderDevice
     let pipeline: ShapePipeline
 
@@ -340,6 +366,13 @@ public final class Canvas {
     var warnedEffectFailed = false
     /// 通した段の数。
     var effectPassesEncoded = 0
+    /// このフレームで使った段の枠の数。**効果と拡大が同じ採番から取る。**
+    ///
+    /// 引数のテーブルは枠ごとに別のものでなければならない — 1 枚を使い回して番地を
+    /// 書き換えると、まだ走っていない枠の束ね先まで変わる (#391 で実際に踏んだ)。
+    /// 採番を 2 系統に分けると、効果と拡大が同じ番号を取り合う。
+    var stagePassesUsed = 0
+    var warnedUpscaleFailed = false
 
     /// 粒の置き場所を誰が埋めるか。**製品では GPU 側 (速い経路)。**
     ///
@@ -688,12 +721,42 @@ public final class Canvas {
         }
     }
 
-    /// 描画先を指定して作る。
-    public init(target: RenderTarget, gpu: RenderDevice) throws(RenderFailure) {
+    /// 描画先を指定して作る。描く細かさと出す細かさは同じになる。
+    public convenience init(target: RenderTarget, gpu: RenderDevice) throws(RenderFailure) {
+        try self.init(output: target, gpu: gpu, pixelDensity: 1, upscale: .spatial)
+    }
+
+    /// 出す先と、描く細かさを指定して作る。
+    ///
+    /// `pixelDensity` が 1 なら描く先と出す先は**同じ 1 枚**で、拡大の段は立たない。
+    /// 1 より小さければ、その割合の描く先を自分で確保し、間を拡大の段で埋める
+    /// ([ADR-0015] 決定 1・5)。
+    ///
+    /// - Throws: 細かさが 0 以下か 1 を超えるとき・拡大の段を組めないときに
+    ///   ``RenderFailure``。**組み立てのときに投げる** (ADR-0020 決定 5)。
+    ///
+    /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
+    public init(
+        output: RenderTarget, gpu: RenderDevice, pixelDensity: Float, upscale: Upscale
+    ) throws(RenderFailure) {
+        guard pixelDensity > 0, pixelDensity <= 1, pixelDensity.isFinite else {
+            throw .invalidPixelDensity(pixelDensity)
+        }
+        self.output = output
+        // **近いほうへ丸め、1 画素は必ず残す。** 出す先と同じ大きさになったら段は
+        // 立てない — 等倍の拡大は絵を変えないのに、置き場と 1 段ぶんの費用だけ増える
+        let drawn = Self.drawnSize(of: output, at: pixelDensity)
+        let target =
+            drawn == (output.width, output.height)
+            ? output
+            : try RenderTarget(gpu: gpu, width: drawn.width, height: drawn.height)
         self.target = target
+        self.upscaleStage =
+            target === output
+            ? nil : try UpscaleStage(gpu: gpu, kind: upscale, from: target, to: output)
         self.gpu = gpu
-        self.width = Float(target.width)
-        self.height = Float(target.height)
+        self.width = Float(output.width)
+        self.height = Float(output.height)
         self.pipeline = try ShapePipeline(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         self.emptyNumbers = try Numbers(gpu: gpu, count: 1)
         self.projection = Self.makeProjection(width: self.width, height: self.height)
@@ -735,6 +798,17 @@ public final class Canvas {
 
         // 時刻と面の大きさ。フレームごとに書き換わるので 1 区画だけ持つ
         self.uniformsBuffer = try gpu.makeReadableBuffer(byteCount: Self.valuesStride)
+    }
+
+    /// 出す先の大きさと細かさから、描く先の大きさを決める。
+    private static func drawnSize(of output: RenderTarget, at density: Float)
+        -> (width: Int, height: Int)
+    {
+        guard density != 1 else { return (output.width, output.height) }
+        return (
+            max(1, Int((Float(output.width) * density).rounded())),
+            max(1, Int((Float(output.height) * density).rounded()))
+        )
     }
 
     /// これから置く頂点が読む面を決める。**変わるなら列を閉じる。**
@@ -828,6 +902,45 @@ public final class Canvas {
         currentBlendMode = mode
     }
 
+    /// 落とす行列に、このフレームの揺らしを足す。
+    ///
+    /// **見る窓ではなく行列を動かす。** 窓の原点は画素の単位へ丸められる (実測) ので、
+    /// 画素の内側を揺らせない。行列なら切り取りの立方体の上で足せる。
+    ///
+    /// 足すのは切り取りの立方体の座標なので、割る前の高さぶんを掛けて足す — 立体は
+    /// 遠いほど `w` が大きく、定数を足すと奥ほど揺れなくなる。
+    ///
+    /// 空間方向では揺らさない (``UpscaleStage/jitter`` が 0)。
+    private func jittered(_ matrix: simd_float4x4) -> simd_float4x4 {
+        guard let offset = upscaleStage?.jitter, offset != .zero else { return matrix }
+        var shift = matrix_identity_float4x4
+        shift.columns.3.x = offset.x * 2 / Float(pixelWidth)
+        // 縦は落とす行列が向きを裏返しているので、面の下向きは立方体の上では逆になる
+        shift.columns.3.y = -offset.y * 2 / Float(pixelHeight)
+        return shift * matrix
+    }
+
+    /// 切り抜きを、実際に刻む画素へ写す。
+    ///
+    /// 切り抜きは利用者が出す細かさの座標で指定するので、細かく刻んでいるときは
+    /// そのままでは面からはみ出す。**丸めたあとで面の内側へ収める** — この世代の
+    /// GPU は範囲外の切り抜きを受け取ると検証で落ちる。
+    private func scissor(_ clip: MTLScissorRect?) -> MTLScissorRect {
+        guard let clip else {
+            return MTLScissorRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight)
+        }
+        guard pixelWidth != Int(width) || pixelHeight != Int(height) else { return clip }
+        let scaleX = Float(pixelWidth) / width
+        let scaleY = Float(pixelHeight) / height
+        let left = min(max(0, Int((Float(clip.x) * scaleX).rounded(.down))), pixelWidth)
+        let top = min(max(0, Int((Float(clip.y) * scaleY).rounded(.down))), pixelHeight)
+        let right = min(
+            max(left, Int((Float(clip.x + clip.width) * scaleX).rounded(.up))), pixelWidth)
+        let bottom = min(
+            max(top, Int((Float(clip.y + clip.height) * scaleY).rounded(.up))), pixelHeight)
+        return MTLScissorRect(x: left, y: top, width: right - left, height: bottom - top)
+    }
+
     /// 切り抜きが同じか。`MTLScissorRect` は素では比べられない。
     private static func sameClip(_ a: MTLScissorRect?, _ b: MTLScissorRect?) -> Bool {
         switch (a, b) {
@@ -861,7 +974,7 @@ public final class Canvas {
                     values: currentShader?.packedValues ?? [], numbers: currentNumbers,
                     source: openSource, start: start, count: count),
                 clip: currentClip,
-                matrix: openSource == .flat ? projection : viewProjection,
+                matrix: jittered(openSource == .flat ? projection : viewProjection),
                 // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
                 lightRange: openSource == .flat ? 0..<0 : bakeActiveLights(),
                 material: .default,
@@ -902,7 +1015,7 @@ public final class Canvas {
                     source: .solid,
                     start: open.vertexStart, count: open.vertexCount),
                 clip: currentClip,
-                matrix: viewProjection,
+                matrix: jittered(viewProjection),
                 lightRange: bakeActiveLights(),
                 material: currentMaterial.receiving(shadow: receivesShadow),
                 viewer: viewer,
@@ -1820,6 +1933,9 @@ public final class Canvas {
     func flush(applyingEffects: Bool = true) throws(RenderFailure) {
         if let failureForTesting { throw failureForTesting }
         closeBatch()
+        // 段の枠の採番は描き切りごとに 0 から。**1 本のコマンドの中でだけ衝突しない
+        // ことが要る**ので、コマンドと同じ寿命で数える
+        stagePassesUsed = 0
         let pass = target.makeRenderPass(clearColor: pendingBackground)
         let commands = try gpu.beginCommands()
 
@@ -1884,15 +2000,22 @@ public final class Canvas {
                 slot.advanced(by: MemoryLayout<simd_float4x4>.size)
                     .copyMemory(from: &strokeStart, byteCount: MemoryLayout<UInt32>.size)
             }
+            // **見る窓は実際に刻む画素で測る。** 落とす行列は出す細かさで書かれた
+            // 座標を -1…1 へ正規化するので、窓を狭めればそのまま細かく刻まれる。
+            //
             encoder.setViewport(
                 MTLViewport(
                     originX: 0, originY: 0,
-                    width: Double(width), height: Double(height),
+                    width: Double(pixelWidth), height: Double(pixelHeight),
                     znear: 0, zfar: 1))
 
-            // 時刻と面の大きさは、フレームの中で変わらない
+            // 時刻と面の大きさは、フレームの中で変わらない。**大きさは実際に刻む
+            // 画素**である — 断片が受け取る位置 (`position`) がその数で来るので、
+            // 割って出す 0…1 の位置がここと食い違うと面からはみ出す
             uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
-                .update(from: [time, 0, width, height, shadowBiasValue], count: 5)
+                .update(
+                    from: [time, 0, Float(pixelWidth), Float(pixelHeight), shadowBiasValue],
+                    count: 5)
             // 影の行列と設定。**フレームに 1 つ**で、列ごとには変わらない
             // **置き場所は断片側の詰め方で決まる。** 4x4 の行列は 16 バイト境界へ
             // 揃うので、その前の 1 つの数 (縁の余裕) の後ろに詰め物が入る
@@ -2014,9 +2137,7 @@ public final class Canvas {
                 pipeline.argumentTable.setAddress(
                     surroundings.gpuAddress + UInt64(index * Self.valuesStride),
                     index: ShapePipeline.surroundingsBufferIndex)
-                encoder.setScissorRect(
-                    batch.clip
-                        ?? MTLScissorRect(x: 0, y: 0, width: Int(width), height: Int(height)))
+                encoder.setScissorRect(scissor(batch.clip))
                 pipeline.argumentTable.setAddress(
                     blendModeBuffer.gpuAddress
                         + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
@@ -2047,6 +2168,11 @@ public final class Canvas {
         // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
         // 書き出しも観測も同じ 1 枚を受け取る (ADR-0023 決定 2)
         if applyingEffects { applyEffects(into: commands) }
+
+        // **拡大は出口の直前・段の最後。** 効果は描く細かさの上で働き、その結果を
+        // 出す細かさへ広げる。順を逆にすると、効果の半径が出す細かさで測られて
+        // 細かさを変えるたびに効き方が変わる
+        if applyingEffects { applyUpscale(into: commands) }
 
         try gpu.commitAndWait(commands)
 

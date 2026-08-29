@@ -22,8 +22,16 @@ public final class SketchRuntime {
     public let sketch: any Sketch
     /// 描いている面。
     public let canvas: Canvas
-    /// 描画先。
-    public var target: RenderTarget { canvas.target }
+    /// 出す先。**画面も保存も観測もこの 1 枚を受け取る** ([ADR-0023] 決定 2)。
+    ///
+    /// 描く細かさを下げているときは、拡大の段を通ったあとの絵である。出口ごとに
+    /// 分かれていないので、「画面ではこう見えるのに書き出すと違う」が起こらない。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    public var target: RenderTarget { canvas.output }
+
+    /// いまの絵が、前のフレームの結果に依っているか。意味の説明は ``Sketch`` 側が正本。
+    public var usesFrameHistory: Bool { canvas.usesFrameHistory }
 
     private let timing: FrameTiming
     private let now: () -> Double
@@ -94,7 +102,9 @@ public final class SketchRuntime {
         let settings = sketch.settings
         self.sketch = sketch
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
-        self.canvas = try Canvas(target: target, gpu: gpu)
+        self.canvas = try Canvas(
+            output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
+            upscale: settings.upscale)
         self.timing = FrameTiming(
             clock: clock ?? .frameIndex(frameRate: settings.frameRate), now: now)
         self.now = now
@@ -114,7 +124,9 @@ public final class SketchRuntime {
         let settings = sketch.settings
         self.sketch = sketch
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
-        self.canvas = try Canvas(target: target, gpu: gpu)
+        self.canvas = try Canvas(
+            output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
+            upscale: settings.upscale)
         self.timing = FrameTiming(
             clock: clock ?? .frameIndex(frameRate: settings.frameRate), now: now)
         self.now = now
