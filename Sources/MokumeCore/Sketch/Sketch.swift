@@ -1128,18 +1128,6 @@ extension Sketch {
     /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
     public func pop() { canvas.pop() }
 
-    /// 点が、いまの変換でどこへ移るか (横)。
-    ///
-    /// ```swift
-    /// translate(100, 50)
-    /// rotate(.pi / 4)
-    /// let x = screenX(0, 0)   // 変換を積んだ後の原点が、面のどこにあるか
-    /// ```
-    public func screenX(_ x: Float, _ y: Float) -> Float { canvas.screenX(x, y) }
-
-    /// 点が、いまの変換でどこへ移るか (縦)。
-    public func screenY(_ x: Float, _ y: Float) -> Float { canvas.screenY(x, y) }
-
     // MARK: - 文字
 
     /// 文字列を描く。
