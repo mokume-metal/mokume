@@ -7,19 +7,14 @@ import simd
 
 @testable import MokumeCore
 
-/// 外で作ったモデルを読んで置く検査。GPU を要するものと、要らないものがある。
+/// 外で作ったモデルを読んで置く検査。GPU を要するものと、要らないものがある —
+/// **要るほうは入れ子の ``ModelTests/OnCanvas`` にまとめてある**。
 ///
 /// いちばん見たいのは **「読み込んで、そのまま置いた絵が画面に見える」** — 既定同士が
 /// 噛み合っていないと、読み込みは成功しているのに絵が出ない。しかも失敗ではないので
 /// 利用者は原因に辿り着けない。だから画素で確かめる。
 @Suite("読み込んだモデル")
 struct ModelTests {
-    private func makeCanvas(width: Int = 96, height: Int = 96) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
-    }
-
     // MARK: - 読み取り (GPU を要さない)
 
     @Test("面の向きが無いモデルでも、形から求めた向きが付く")
@@ -75,45 +70,6 @@ struct ModelTests {
         // 数でない頂点は読まないので、面の番号もその分ずれる (3 点そろえば三角形になる)
         #expect(parsed.positions.count == 3)
         #expect(parsed.skippedLines == 2)
-    }
-
-    @Test("読めたが面が 1 つも無い状態が、読めなかった状態と区別できる", .enabled(if: RenderDevice.isAvailable, "面を作るので GPU が要る"))
-    func anEmptyModelIsNotAFailure() throws {
-        let canvas = try makeCanvas()
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-model-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let empty = directory.appendingPathComponent("empty.obj")
-        try "# 面が 1 つも無い\nv 0 0 0\n".write(to: empty, atomically: true, encoding: .utf8)
-
-        // 読めた (投げない)。ただし面が無いことが読み取れる
-        let model = try canvas.loadModel(empty.path)
-        #expect(model.isEmpty)
-        #expect(model.triangleCount == 0)
-
-        // 読めなかったほうは投げる
-        #expect(throws: ModelFailure.self) {
-            _ = try canvas.loadModel("assets/missing-model.obj")
-        }
-    }
-
-    @Test("対応していない形式は、そう分かる形で投げる", .enabled(if: RenderDevice.isAvailable, "面を作るので GPU が要る"))
-    func unsupportedFormatsSayWhy() throws {
-        let canvas = try makeCanvas()
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-model-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let other = directory.appendingPathComponent("thing.stl")
-        try "solid".write(to: other, atomically: true, encoding: .utf8)
-
-        do {
-            _ = try canvas.loadModel(other.path)
-            Issue.record("対応していない形式を読めてしまった")
-        } catch {
-            #expect(error == .unsupported(path: other.path, extensionName: "stl"))
-        }
     }
 
     // MARK: - 整え方
@@ -176,67 +132,120 @@ struct ModelTests {
         #expect(highest > lowest)
     }
 
-    // MARK: - 置いたら見える
-
-    @Test(
-        "読み込んで、そのまま置いた絵が画面に見える",
-        .enabled(if: RenderDevice.isAvailable, "GPU が要る"))
-    func aLoadedModelIsVisible() throws {
-        // **この 1 点が最重要。** 既定同士が噛み合っていないと、読み込みは成功して
-        // いるのに数画素の点になり、しかも失敗ではないので原因に辿り着けない
-        let canvas = try makeCanvas(width: 128, height: 128)
-        let model = try canvas.loadModel(ModelFixture.pyramid)
-        try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
-            canvas.lights()
-            canvas.noStroke()
-            canvas.fill(.opaque(red: 0.9, green: 0.7, blue: 0.4))
-            canvas.push()
-            canvas.translate(64, 64, 0)
-            canvas.model(model)
-            canvas.pop()
+    /// 面へ置いてから確かめるもの。**GPU を要する検査はこの入れ子に集める** — 条件を
+    /// `@Test` ごとの注記で表すと 1 本ずつ付け忘れられる ([#336](https://github.com/mokume-metal/mokume/pull/336))
+    /// ので、置き場所で表す。trait は入れ子へ継承されるので、ここに置いた検査には条件が必ず掛かる
+    /// (付け忘れは `GPUGateTests` が原文から見つける)。
+    @Suite(
+        "面へ置く",
+        .enabled(if: RenderDevice.isAvailable, "面を作るので GPU が要る")
+    )
+    struct OnCanvas {
+        private func makeCanvas(width: Int = 96, height: Int = 96) throws -> Canvas {
+            let gpu = try RenderDevice()
+            let target = try RenderTarget(gpu: gpu, width: width, height: height)
+            return try Canvas(target: target, gpu: gpu)
         }
-        let image = try canvas.target.encodeForDisplay()
-        var lit = 0
-        for y in 0..<image.height {
-            for x in 0..<image.width where image[x, y].red > 20 { lit += 1 }
-        }
-        // 面の 1/50 より小さければ「読めているのに見えない」と同じこと
-        #expect(lit > image.width * image.height / 50, "置いた絵が小さすぎる (\(lit) 画素)")
-    }
 
-    @Test(
-        "続けて置いても描く回数は増えない",
-        .enabled(if: RenderDevice.isAvailable, "GPU が要る"))
-    func repeatedModelsCollapseIntoOneCall() throws {
-        let canvas = try makeCanvas(width: 128, height: 128)
-        let model = try canvas.loadModel(ModelFixture.pyramid)
-        try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
-            canvas.lights()
-            canvas.noStroke()
-            for index in 0..<8 {
+        // MARK: - 読み取り
+
+        @Test("読めたが面が 1 つも無い状態が、読めなかった状態と区別できる")
+        func anEmptyModelIsNotAFailure() throws {
+            let canvas = try makeCanvas()
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let empty = directory.appendingPathComponent("empty.obj")
+            try "# 面が 1 つも無い\nv 0 0 0\n".write(to: empty, atomically: true, encoding: .utf8)
+
+            // 読めた (投げない)。ただし面が無いことが読み取れる
+            let model = try canvas.loadModel(empty.path)
+            #expect(model.isEmpty)
+            #expect(model.triangleCount == 0)
+
+            // 読めなかったほうは投げる
+            #expect(throws: ModelFailure.self) {
+                _ = try canvas.loadModel("assets/missing-model.obj")
+            }
+        }
+
+        @Test("対応していない形式は、そう分かる形で投げる")
+        func unsupportedFormatsSayWhy() throws {
+            let canvas = try makeCanvas()
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let other = directory.appendingPathComponent("thing.stl")
+            try "solid".write(to: other, atomically: true, encoding: .utf8)
+
+            do {
+                _ = try canvas.loadModel(other.path)
+                Issue.record("対応していない形式を読めてしまった")
+            } catch {
+                #expect(error == .unsupported(path: other.path, extensionName: "stl"))
+            }
+        }
+
+        // MARK: - 置いたら見える
+
+        @Test("読み込んで、そのまま置いた絵が画面に見える")
+        func aLoadedModelIsVisible() throws {
+            // **この 1 点が最重要。** 既定同士が噛み合っていないと、読み込みは成功して
+            // いるのに数画素の点になり、しかも失敗ではないので原因に辿り着けない
+            let canvas = try makeCanvas(width: 128, height: 128)
+            let model = try canvas.loadModel(ModelFixture.pyramid)
+            try canvas.draw {
+                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.lights()
+                canvas.noStroke()
+                canvas.fill(.opaque(red: 0.9, green: 0.7, blue: 0.4))
                 canvas.push()
-                canvas.translate(20 + Float(index) * 12, 64, 0)
+                canvas.translate(64, 64, 0)
                 canvas.model(model)
                 canvas.pop()
             }
+            let image = try canvas.target.encodeForDisplay()
+            var lit = 0
+            for y in 0..<image.height {
+                for x in 0..<image.width where image[x, y].red > 20 { lit += 1 }
+            }
+            // 面の 1/50 より小さければ「読めているのに見えない」と同じこと
+            #expect(lit > image.width * image.height / 50, "置いた絵が小さすぎる (\(lit) 画素)")
         }
-        #expect(canvas.drawCallsInLastFrame == 1)
-    }
 
-    // MARK: - 読み直さない
+        @Test("続けて置いても描く回数は増えない")
+        func repeatedModelsCollapseIntoOneCall() throws {
+            let canvas = try makeCanvas(width: 128, height: 128)
+            let model = try canvas.loadModel(ModelFixture.pyramid)
+            try canvas.draw {
+                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.lights()
+                canvas.noStroke()
+                for index in 0..<8 {
+                    canvas.push()
+                    canvas.translate(20 + Float(index) * 12, 64, 0)
+                    canvas.model(model)
+                    canvas.pop()
+                }
+            }
+            #expect(canvas.drawCallsInLastFrame == 1)
+        }
 
-    @Test("同じ名前・同じ整え方なら読み直さない", .enabled(if: RenderDevice.isAvailable, "面を作るので GPU が要る"))
-    func theSameFileIsNotReadTwice() throws {
-        let canvas = try makeCanvas()
-        let first = try canvas.loadModel(ModelFixture.pyramid)
-        let second = try canvas.loadModel(ModelFixture.pyramid)
-        #expect(first == second, "同じ読み込みが返っていない")
+        // MARK: - 読み直さない
 
-        // 整え方が違えば別のもの
-        let raw = try canvas.loadModel(ModelFixture.pyramid, normalize: false)
-        #expect(raw != first)
-        #expect(canvas.modelCache.count == 2)
+        @Test("同じ名前・同じ整え方なら読み直さない")
+        func theSameFileIsNotReadTwice() throws {
+            let canvas = try makeCanvas()
+            let first = try canvas.loadModel(ModelFixture.pyramid)
+            let second = try canvas.loadModel(ModelFixture.pyramid)
+            #expect(first == second, "同じ読み込みが返っていない")
+
+            // 整え方が違えば別のもの
+            let raw = try canvas.loadModel(ModelFixture.pyramid, normalize: false)
+            #expect(raw != first)
+            #expect(canvas.modelCache.count == 2)
+        }
     }
 }
