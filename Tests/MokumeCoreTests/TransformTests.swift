@@ -144,14 +144,33 @@ struct CircleSegmentTests {
         #expect(transform == .identity)
     }
 
-    @Test("上下で頭打ちにする")
-    func segmentCountIsBounded() {
-        #expect(Canvas.segmentCount(forRadius: 0.5) == 32)
-        #expect(Canvas.segmentCount(forRadius: 1) == 32)
+    // MARK: - 下限を外す (#423)
+
+    @Test("式が返す値をそのまま使う")
+    func segmentCountFollowsTheFormula() {
+        // 直径 12 の円。かつては下限 32 が掛かり、必要の 3 倍の頂点を組み立てていた
+        #expect(Canvas.segmentCount(forRadius: 6) == 11)
+        #expect(Canvas.segmentCount(forRadius: 1) == 5)
+        #expect(Canvas.segmentCount(forRadius: 20) == 20)
+    }
+
+    @Test("いちばん粗い多角形より下へは行かない")
+    func segmentCountNeverFallsBelowATriangle() {
+        // 隔たりが許容誤差に届かない円も、多角形としては成立させる
+        #expect(Canvas.segmentCount(forRadius: 0.25) == 3)
+        #expect(Canvas.segmentCount(forRadius: .nan) == 3)
+        #expect(Canvas.segmentCount(forRadius: .infinity) == 3)
+    }
+
+    @Test("大きすぎる円は上で頭打ちにする")
+    func segmentCountIsCappedAbove() {
         #expect(Canvas.segmentCount(forRadius: 100_000) == 128)
     }
 
-    @Test("多角形と真円の隔たりが 0.25 画素以下に収まる", arguments: [Float(5), 20, 100, 400])
+    // 小さい側は下限 32 に隠れて一度も検査されていなかった (#423)
+    @Test(
+        "多角形と真円の隔たりが 0.25 画素以下に収まる",
+        arguments: [Float(0.5), 1, 2, 6, 5, 20, 100, 400])
     func polygonStaysWithinAQuarterPixel(radius: Float) {
         let n = Canvas.segmentCount(forRadius: radius)
         // 隔たりがいちばん大きいのは辺の中央で、その差は r(1 − cos(π/n))

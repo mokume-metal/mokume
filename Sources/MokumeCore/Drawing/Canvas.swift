@@ -1220,17 +1220,26 @@ public final class Canvas {
     /// 円を近似する多角形の辺の数。
     ///
     /// 多角形と真円の隔たりがいちばん大きいのは辺の中央で、その差は
-    /// `r(1 − cos(π/n))`。これを 0.25 画素以下に収める `n` を選ぶ。半径が大きいほど
-    /// 細かくなるが、上下で頭打ちにする — 小さすぎる円に 32 辺は無駄がなく、
-    /// 大きすぎる円に 128 辺を超えて割いても見た目は変わらない。
+    /// `r(1 − cos(π/n))`。これを 0.25 画素以下に収める `n` を選ぶ。
+    ///
+    /// **式が返す値をそのまま使う。** 下限 3 は多角形が成立する最小の辺数であって、
+    /// 精度の判断ではない — 精度は式が持っている。かつては下限 32 を掛けていたが、
+    /// 根拠がどこにも無く、直径 12 の円 (式は 11 を返す) に 3 倍の頂点を組み立てて
+    /// いた。10,000 個置くと 40fps まで落ちる ([#423])。
+    ///
+    /// 上限 128 だけは 0.25 画素の保証を外れる。半径 1000 を超える円は式が 141 以上を
+    /// 求めるが、それだけ割いても見た目は変わらないので頭打ちにしている。
     ///
     /// 拡大縮小の変換は考えない。拡大した円が粗くなるのは受け入れる。
+    ///
+    /// [#423]: https://github.com/mokume-metal/mokume/issues/423
     static func segmentCount(forRadius radius: Float) -> Int {
         let tolerance: Float = 0.25
-        guard radius.isFinite, radius > tolerance else { return 32 }
+        // 隔たりが許容誤差に届かない円は、いちばん粗い多角形で足りる
+        guard radius.isFinite, radius > tolerance else { return 3 }
         let n = Float.pi / acos(max(-1, 1 - tolerance / radius))
-        guard n.isFinite else { return 32 }
-        return min(128, max(32, Int(n.rounded(.up))))
+        guard n.isFinite else { return 3 }
+        return min(128, max(3, Int(n.rounded(.up))))
     }
 
     /// 角度が逆向きの円弧を、初回だけ知らせる。
