@@ -342,6 +342,7 @@ def check_type_closure(symbols: list[dict], owned: set[str]) -> list[str]:
 # である。ここへ 1 行足すたびに判断が入るのが狙いで、書けるのは「その型でなければ表せない
 # 理由」に限る (「便利だから」は理由にならない)。
 FOREIGN_ALLOWLIST = {
+    "OutputFrame.texture": "毎フレーム絵を渡す出口へ、描画資源をそのまま手渡す一点 (ADR-0024 決定 8)。包むと受け取る側が取り出す口を別に求め、露出の点が増える",
     "PNGFile.write(_:to:)": "書き出し先の指定。ファイルの場所の正典は標準ライブラリの外にある",
     "RenderDevice.init(device:)": "既に持っている Metal の資源を持ち込む入口。意図して開けてある",
     "RenderTarget.writePNG(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
