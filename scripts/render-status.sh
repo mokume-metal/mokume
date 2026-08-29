@@ -25,6 +25,11 @@
 #
 # どちらのモードも**失敗しない** — 報告しない理由を述べて 0 で終える。報告が無い
 # ことは GitHub 側で「必須チェックの待ち」として現れるので、ここで赤くする必要が無い。
+#
+# 例外は merge queue の判定 (#435) で、そこでは **status を failure で打つ**。待たせて
+# 済ませられないためである — 打たずに待たせると queue は check_response_timeout_minutes
+# (60 分) を空費してから諦め、しかも理由がどこにも残らない。スクリプト自身は 0 で終える
+# (赤くするのは Actions の run ではなく local-render という報告の側である)。
 set -euo pipefail
 
 # 「描画に触れているか」の判定は #306 と共有する (照合の実体は 1 つ)
@@ -57,14 +62,90 @@ resolve_repo() {
 # それは作業の途中というだけである (remote に無い commit へは status を打てない)。
 # push のあとに make render-status をもう一度打てば、同じ記録から報告し直せる。
 post() {
-  local repo=$1 sha=$2 description=$3
+  local repo=$1 sha=$2 state=$3 description=$4
   if gh api -X POST "repos/$repo/statuses/$sha" \
-    -f state=success -f context="$CONTEXT" -f description="$description" --silent; then
-    say "報告: $sha → success ($description)"
+    -f state="$state" -f context="$CONTEXT" -f description="$description" --silent; then
+    say "報告: $sha → $state ($description)"
   else
     say "報告できなかった — この commit がまだ remote に無いか、権限が無い"
     say "push してから make render-status を打つと、同じ記録から報告し直せる"
   fi
+}
+
+# 木の「描画に関わるファイルの中身」の指紋 (#435)。
+#
+# 画素ではなくファイルの中身 (path と blob の並び) を畳む。GPU が要らず、判定に
+# 要るのは「手元が回した木と合流後の木が、絵に効く範囲で同じか」だけだからである。
+#
+# 木が truncated なら 2 を返す (この規模の木では起きないが、黙って通さないため)。
+drawing_fingerprint() {
+  local repo=$1 sha=$2 tree
+  tree=$(gh api "repos/$repo/git/trees/$sha?recursive=1" \
+    --jq 'if .truncated then "!truncated"
+          else (.tree[] | select(.type == "blob") | "\(.path) \(.sha)") end') || return 1
+  case "$tree" in '!truncated'*) return 2 ;; esac
+  printf '%s\n' "$tree" | drawing_files | sort | shasum -a 256 | cut -c1-12
+}
+
+# merge queue の SHA への報告 (#435)。
+#
+# ここが #432 の落ちた隙間である。CI は絵を回せず (ADR-0019 決定 7)、手元の実行は
+# **合流前の枝**でしか回らない。以前はその隙間を無条件の success で埋めていたので、
+# 描画 PR が 2 本並走すると、後から入ったほうが merge されてから main を赤くした。
+#
+# 絵を回す機械を増やす代わりに、**手元の報告が合流後の姿を覆っているか**を見る。
+# 覆っていなければ local-render を failure にして queue から外す。守られるのは
+# 「main の絵に関わるファイルは、常に誰かが手元で実際に回して確かめた組み合わせの
+# ままである」という不変条件で、描画に触れない PR はその組み合わせを動かさないので
+# 対象外にしてよい (BEHIND のまま merge できる従来の運用がそのまま残る)。
+#
+# **判定できないときは通す。** 防いでいるのは事故であって偽装ではない (冒頭の宣言)
+# ので、queue を止めるより名乗って通すほうを取る。何を見ていないかは必ず述べる。
+report_merge_group() {
+  local repo=$1 merged=$2 head_ref=$3
+  local numbers number head files fp_merged fp_head
+
+  # queue の枝は gh-readonly-queue/<base>/pr-<番号>-<base sha>。まとめて積まれた
+  # ときに備えて pr-<番号> は全件拾う (1 本でも覆えていなければ通さない)
+  numbers=$(printf '%s\n' "$head_ref" | grep -oE 'pr-[0-9]+' | cut -d- -f2 || true)
+  if [ -z "$numbers" ]; then
+    say "queue の枝から PR 番号を読めなかった ($head_ref)"
+    post "$repo" "$merged" success "merge queue (覆いは見ていない)"
+    return
+  fi
+
+  if ! fp_merged=$(drawing_fingerprint "$repo" "$merged"); then
+    say "合流後の木を読めなかった (指紋を取れない)"
+    post "$repo" "$merged" success "merge queue (覆いは見ていない)"
+    return
+  fi
+
+  for number in $numbers; do
+    if ! files=$(gh api "repos/$repo/pulls/$number/files" --paginate --jq '.[].filename'); then
+      say "#$number の変更ファイルを読めなかった"
+      post "$repo" "$merged" success "merge queue (覆いは見ていない)"
+      return
+    fi
+    printf '%s\n' "$files" | touches_drawing || continue
+
+    if ! head=$(gh api "repos/$repo/pulls/$number" --jq '.head.sha') ||
+      ! fp_head=$(drawing_fingerprint "$repo" "$head"); then
+      say "#$number の head の木を読めなかった (指紋を取れない)"
+      post "$repo" "$merged" success "merge queue (覆いは見ていない)"
+      return
+    fi
+
+    if [ "$fp_head" != "$fp_merged" ]; then
+      say "#$number の手元の実行は合流後の姿を覆っていない (head=$fp_head 合流後=$fp_merged)"
+      say "main を取り込んで手元で make ci-check を打ち直すと、この報告が付き直す"
+      post "$repo" "$merged" failure \
+        "#$number の手元の実行が合流後の姿を覆っていない — main を取り込んで打ち直す"
+      return
+    fi
+    say "#$number は覆えている (描画に関わるファイル $fp_head)"
+  done
+
+  post "$repo" "$merged" success "merge queue (手元の報告が合流後の姿を覆っている)"
 }
 
 mode=${1:-}
@@ -89,7 +170,7 @@ case "$mode" in
 
     skipped=$(grep -c 'skipped:' "$TEST_LOG" || true)
     ledger_digest=$(grep -vE '^[[:space:]]*(#|$)' "$LEDGER" | shasum -a 256 | cut -c1-8)
-    post "$repo" "$(git rev-parse HEAD)" \
+    post "$repo" "$(git rev-parse HEAD)" success \
       "手元で全検査が通った skipped=$skipped ledger=$ledger_digest"
     ;;
 
@@ -100,10 +181,7 @@ case "$mode" in
     # 成立した報告を打ち消す)。
     : "${GITHUB_REPOSITORY:?}" "${GITHUB_EVENT_NAME:?}"
     if [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
-      # queue が作る SHA には手元の報告が付きようがない。PR 段階で必須チェックとして
-      # 既に効いているので無条件に通す (human-approval と同じ理屈)。**必須チェックは
-      # merge queue でも報告が要る** — 報告が無いと queue が待ち続ける
-      post "$GITHUB_REPOSITORY" "${MERGE_GROUP_SHA:?}" "merge queue (PR 段階で満たされている)"
+      report_merge_group "$GITHUB_REPOSITORY" "${MERGE_GROUP_SHA:?}" "${MERGE_GROUP_HEAD_REF:-}"
       exit 0
     fi
 
@@ -112,7 +190,7 @@ case "$mode" in
       say "描画に触れている PR — 手元の報告を待つ (報告しない)"
       exit 0
     fi
-    post "$GITHUB_REPOSITORY" "${PR_HEAD_SHA:?}" "描画に触れていない"
+    post "$GITHUB_REPOSITORY" "${PR_HEAD_SHA:?}" success "描画に触れていない"
     ;;
 
   *)

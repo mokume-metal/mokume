@@ -40,7 +40,7 @@ LOG_SKIPPED = """◇ Test run started.
 """
 
 FAKE_GH = """#!/bin/bash
-# 呼ばれた引数を記録する。auth status は通り、pulls/N/files は FILES を返す
+# 呼ばれた引数を記録する。auth status は通り、API は環境変数の作り物を返す
 printf '%s\\n' "$*" >> "$GH_CALLS"
 case "$1 $2" in
   "auth status") exit 0 ;;
@@ -49,11 +49,34 @@ if [[ "$*" == *"/statuses/"* && -n "${GH_STATUS_FAILS:-}" ]]; then
   echo "gh: 422" >&2
   exit 1
 fi
+# 木の中身。--jq の結果 (blob の "path sha" の並び) を模す。truncated は
+# スクリプトが読む合図をそのまま返す
+if [[ "$*" == *"/git/trees/"* ]]; then
+  [ -z "${TREE_FAILS:-}" ] || { echo "gh: 404" >&2; exit 1; }
+  [ -z "${TREE_TRUNCATED:-}" ] || { echo '!truncated'; exit 0; }
+  if [[ "$*" == *"/git/trees/${MERGE_GROUP_SHA:-__none__}"* ]]; then
+    printf '%b\\n' "$TREE_MERGED"
+  else
+    printf '%b\\n' "$TREE_HEAD"
+  fi
+  exit 0
+fi
 if [[ "$*" == *"/files"* ]]; then
   printf '%s\\n' $FILES
+  exit 0
+fi
+# PR そのもの (--jq .head.sha)
+if [[ "$*" == *"/pulls/"* ]]; then
+  printf '%s\\n' "${PR_HEAD_SHA:-headsha}"
+  exit 0
 fi
 exit 0
 """
+
+# 木の中身の作り物。描画に関わる 1 行が動くかどうかで覆いの判定が変わる
+TREE_BASE = "Sources/MokumeCore/Canvas.swift aaa1\\nAGENTS.md bbb1"
+TREE_DRAWING_MOVED = "Sources/MokumeCore/Canvas.swift aaa2\\nAGENTS.md bbb1"
+TREE_OTHER_MOVED = "Sources/MokumeCore/Canvas.swift aaa1\\nAGENTS.md bbb2"
 
 
 class RenderStatusTest(unittest.TestCase):
@@ -187,16 +210,83 @@ class RenderStatusTest(unittest.TestCase):
         self.assertEqual(self.posted(), [])
         self.assertIn("手元の報告を待つ", out)
 
-    def test_mergequeueには無条件に報告する(self):
-        self.run_script(
-            "proxy",
+    # --- proxy / merge queue -------------------------------------------
+    #
+    # 手元の実行は**合流前の枝**でしか回らないので、queue の SHA には手元の報告が
+    # 付きようがない。以前はそこを無条件の success で埋めていて、描画 PR が 2 本
+    # 並走すると後から入ったほうが merge 後に main を赤くした (#432 / #435)。
+    # ここで固定するのは「手元の報告が合流後の姿を覆っているか」の判定である。
+
+    def queue(self, **env):
+        base = dict(
             GITHUB_REPOSITORY="mokume-metal/mokume",
             GITHUB_EVENT_NAME="merge_group",
             MERGE_GROUP_SHA="cafe1234",
+            MERGE_GROUP_HEAD_REF="gh-readonly-queue/main/pr-5-0123456789abcdef",
+            PR_HEAD_SHA="beef5678",
+            FILES="AGENTS.md Sources/MokumeCore/Canvas.swift",
+            TREE_HEAD=TREE_BASE,
+            TREE_MERGED=TREE_BASE,
+            TREE_FAILS="",
+            TREE_TRUNCATED="",
         )
+        base.update(env)
+        return self.run_script("proxy", **base)
+
+    def test_覆えている描画PRは報告する(self):
+        self.queue()
         posted = self.posted()
         self.assertEqual(len(posted), 1)
         self.assertIn("statuses/cafe1234", posted[0])
+        self.assertIn("state=success", posted[0])
+
+    def test_覆えていない描画PRには失敗を打つ(self):
+        """#432 を止める行。main 側で描画のファイルが動いていれば、手元で回した木は
+        合流後の姿を覆っていない — 待たせずに落として queue から外す。"""
+        out = self.queue(TREE_MERGED=TREE_DRAWING_MOVED)
+        posted = self.posted()
+        self.assertEqual(len(posted), 1)
+        self.assertIn("state=failure", posted[0])
+        self.assertIn("覆っていない", out)
+
+    def test_描画に触れないPRはmainが動いていても通す(self):
+        """描画に触れない PR は main の絵の組み合わせを動かさない。BEHIND のまま
+        merge できる従来の運用をここで壊さない。"""
+        self.queue(
+            FILES="AGENTS.md docs/decisions/0001-founding-principles.md",
+            TREE_MERGED=TREE_DRAWING_MOVED,
+        )
+        posted = self.posted()
+        self.assertEqual(len(posted), 1)
+        self.assertIn("state=success", posted[0])
+
+    def test_描画に関わらないファイルが動いただけなら覆えている(self):
+        self.queue(TREE_MERGED=TREE_OTHER_MOVED)
+        posted = self.posted()
+        self.assertIn("state=success", posted[0])
+
+    def test_木が読めなければ名乗って通す(self):
+        out = self.queue(TREE_FAILS="1")
+        self.assertIn("state=success", self.posted()[0])
+        self.assertIn("覆いは見ていない", out)
+
+    def test_木がtruncatedなら名乗って通す(self):
+        out = self.queue(TREE_TRUNCATED="1")
+        self.assertIn("state=success", self.posted()[0])
+        self.assertIn("覆いは見ていない", out)
+
+    def test_PR番号を読めなければ名乗って通す(self):
+        out = self.queue(MERGE_GROUP_HEAD_REF="")
+        self.assertIn("state=success", self.posted()[0])
+        self.assertIn("覆いは見ていない", out)
+
+    def test_積まれたPRをすべて見る(self):
+        """queue はまとめて積む (max_entries_to_build: 5)。1 本でも覆えていなければ
+        通さないので、枝の名前にある PR 番号は全件読む。"""
+        self.queue(MERGE_GROUP_HEAD_REF="gh-readonly-queue/main/pr-5-pr-6-0123456789ab")
+        calls = self.calls.read_text()
+        self.assertIn("/pulls/5/files", calls)
+        self.assertIn("/pulls/6/files", calls)
 
 
 if __name__ == "__main__":
