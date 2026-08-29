@@ -12,6 +12,7 @@
 
 import json
 import os
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -258,6 +259,38 @@ class GuardTest(unittest.TestCase):
     def test_non_gh_command_passes(self):
         self.assert_passed("git commit -m 'gh pr create'")
         self.assert_passed("echo hello")
+
+
+class PushFormTest(unittest.TestCase):
+    """案内する push は、そのまま打って通る形でなければならない (#376)。
+
+    upstream の無いブランチで素の `git push` は必ず落ちる。落ちる形を見せると、読んだ側は
+    その場で各自の形に書き換えて凌ぐことになり、**`-u` が付くかどうかが経路ごとに変わる**。
+    付かなかったブランチは merge されても `[gone]` にならないので、`git gone-clean` が
+    永久に拾えない — 実測で 18 本中 16 本が残っていた。
+
+    突き合わせるのは「`git push` の直後に `-u` があるか」だけにする。文言そのものを固定
+    すると、案内の言い回しを直すたびにこちらが赤くなる。
+    """
+
+    # 案内が置かれる場所。作法の正典 (AGENTS.md) と、差し戻しのときに読まれる guard
+    SOURCES = ("AGENTS.md", "scripts/pr-identity-guard.sh")
+
+    def test_案内する_push_は_upstream_を張る形になっている(self):
+        pattern = re.compile(r"git push(?![-\w])(.*)$")
+        for name in self.SOURCES:
+            text = (REPO / name).read_text(encoding="utf-8")
+            for number, line in enumerate(text.splitlines(), 1):
+                found = pattern.search(line)
+                if not found:
+                    continue
+                with self.subTest(f"{name}:{number}"):
+                    self.assertRegex(
+                        found.group(1).strip(),
+                        r"^(-u|--set-upstream)\b",
+                        f"{name}:{number} の git push が upstream を張らない形になっている。"
+                        "そのまま打つと落ちるので、読んだ側が各自の形に書き換えることになる (#376)",
+                    )
 
 
 class WiringTest(unittest.TestCase):

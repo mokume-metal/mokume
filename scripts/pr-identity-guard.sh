@@ -79,8 +79,8 @@ token_not_exported_message() {
 token は発行できていますが、**gh へ渡っていません**。素の代入はそのシェルの変数を作る
 だけで、子プロセスには継がれません。
 
-  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push && gh pr create …
-                                                            ^^ ここはメンテナの認証で走る
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push -u origin HEAD && gh pr create …
+                                                                          ^^ ここはメンテナの認証で走る
 
 この形は「発行に失敗したら && が切れる」という条件は満たしているので気付きにくく、
 できあがるのは **誰も承認できない PR** です (ADR-0007 / #88)。しかもその詰みは、
@@ -152,7 +152,7 @@ readonly SAFE_TOKEN_FORM='(^|&&|;|\|)[[:space:]]*GH_TOKEN=("|'"'"')?\$\([^)]*scr
 # **発行できただけでは足りない。** 素の代入はそのシェルの変数を作るだけで、子プロセスの
 # gh には渡らない。つまり
 #
-#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push && gh pr create …
+#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push -u origin HEAD && gh pr create …
 #
 # は「発行の失敗が伝わる形」を満たしていながら、gh はメンテナの認証で走る。#279 はこれで
 # 詰んだ (#285) — 上の SAFE_TOKEN_FORM だけを見ていたので素通しし、**誰も承認できない
