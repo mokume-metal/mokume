@@ -127,6 +127,20 @@ def category_of(fragment: Path) -> str:
     return parts[-2] if len(parts) >= 3 else "feature"
 
 
+def as_list_item(entry: str) -> str:
+    """断片の本文を箇条書きの 1 項目にする。
+
+    **継続行を項目の中身の列 (2 桁) まで下げる。** 下げないと、空行のあとの段落が
+    項目の外へ出てそこでリストが終わり、続く項目は別のリストとして始まる — 移行手順が
+    それが属する破壊的変更から切り離されて描かれていた (#446)。
+
+    1 行だけの本文は `- 本文` のままで、出力は 1 文字も変わらない。
+    """
+    first, *rest = entry.split("\n")
+    # 空行は空行のまま。桁を足すと末尾に空白が残る
+    return "\n".join([f"- {first}", *(f"  {line}" if line.strip() else "" for line in rest)])
+
+
 def notes(fragments: list[Path]) -> str:
     """Release の本文を組む。"""
     grouped: dict[str, list[str]] = {}
@@ -139,13 +153,13 @@ def notes(fragments: list[Path]) -> str:
         if entries := grouped.get(name):
             lines.append(f"## {heading}")
             lines.append("")
-            lines.extend(f"- {entry}" for entry in entries)
+            lines.extend(as_list_item(entry) for entry in entries)
             lines.append("")
     # 知らない分類も落とさない。落とすと「書いたのにノートに出ない」が黙って起きる
     for name in sorted(set(grouped) - known):
         lines.append(f"## {name}")
         lines.append("")
-        lines.extend(f"- {entry}" for entry in grouped[name])
+        lines.extend(as_list_item(entry) for entry in grouped[name])
         lines.append("")
     return "\n".join(lines).strip() + "\n"
 
