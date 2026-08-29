@@ -31,7 +31,7 @@ enum CommandFailure: Error, Equatable {
         case .usage(let text):
             text
         case .nameMissing:
-            "作るスケッチの名前が要る: mokume-cli new <名前>"
+            "作るスケッチの名前が要る: \(Command.name) new <名前>"
         case .invalidName(let name):
             """
             スケッチの名前に使えない文字がある: \(name)
@@ -42,13 +42,17 @@ enum CommandFailure: Error, Equatable {
         case .cannotCreate(let path, let reason):
             "作れなかった: \(path)\n\(reason)"
         case .templatesMissing:
-            "ひな形が見つからない。道具のビルドが壊れている可能性がある"
+            """
+            ひな形が見つからない。
+            道具は実行ファイルと mokume_MokumeCLI.bundle の 2 つで 1 組で、ひな形は
+            後者に入っている — 入れるときに片方だけ置いていないか確かめる
+            """
         case .templateUnreadable(let name):
             "ひな形を読めない: \(name)"
         case .packageNotFound(let path):
             """
             スケッチが見つからない: \(path)
-            Package.swift のあるディレクトリを指す (mokume-cli new <名前> で作れる)
+            Package.swift のあるディレクトリを指す (\(Command.name) new <名前> で作れる)
             """
         case .resourcesNotDeclared(let directory):
             """
