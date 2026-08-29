@@ -311,8 +311,8 @@ struct MaterialTests {
 
     @Test(
         "代表シーンが、質感の指定を写している",
-        arguments: Scene.MaterialAspect.allCases)
-    func theSceneShowsEveryMaterialSetting(_ aspect: Scene.MaterialAspect) throws {
+        arguments: Scene.Ingredient.materialAspects)
+    func theSceneShowsEveryMaterialSetting(_ aspect: Scene.Ingredient) throws {
         // **指定を潰して絵が動かなければ、その代表シーンはその質感を写していない。**
         // 台帳は「触っていない絵が動いていないか」しか見られないので、そもそも
         // 写っていない質感は、壊れても台帳に現れない
@@ -337,7 +337,7 @@ struct MaterialTests {
     }
 
     /// 質感の代表シーンを、指定を 1 つ潰して描く。
-    private func picture(without aspect: Scene.MaterialAspect?) throws -> DisplayImage {
+    private func picture(without aspect: Scene.Ingredient?) throws -> DisplayImage {
         let scene = Scene.materials
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: scene.size.width, height: scene.size.height)
