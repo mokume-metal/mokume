@@ -98,8 +98,25 @@ extension Model {
             center = .zero
         }
 
-        let points = zip(positions, normals).map {
-            SolidMesh.Point(position: $0, normal: $1)
+        // 読み込んだ形は**貼る絵の展開を持たない** (OBJ の `vt` はまだ読まない)。
+        // 代わりに囲みの箱の横と縦を 0…1 に写す — 何も持たせないと、面を束ねた状態で
+        // 置いたモデルが全面 1 画素の色で塗り潰され、利用者からは「貼れていない」と
+        // しか見えない。奥行きの向きは畳まれるので、真横を向いた面では絵が伸びる
+        // **整えたあとの座標から測る。** ファイルの座標から測ると、整えるときに縦軸を
+        // 裏返すぶん (上の 3 つ目) だけ絵が上下逆になる
+        var uvLowest = SIMD2<Float>(repeating: .infinity)
+        var uvHighest = SIMD2<Float>(repeating: -.infinity)
+        for position in positions {
+            uvLowest = simd_min(uvLowest, SIMD2(position.x, position.y))
+            uvHighest = simd_max(uvHighest, SIMD2(position.x, position.y))
+        }
+        let extent = uvHighest - uvLowest
+        let points = zip(positions, normals).map { position, normal in
+            SolidMesh.Point(
+                position: position, normal: normal,
+                uv: SIMD2(
+                    extent.x > 0 ? (position.x - uvLowest.x) / extent.x : 0,
+                    extent.y > 0 ? (position.y - uvLowest.y) / extent.y : 0))
         }
         return Model(
             name: name, mesh: SolidMesh(points: points),

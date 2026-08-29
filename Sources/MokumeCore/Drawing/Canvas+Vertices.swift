@@ -15,6 +15,9 @@ struct BuildingVertex {
     var position: SIMD3<Float>
     /// 面の向き。`nil` は**書かれていない**という意味で、形から求める。
     var normal: SIMD3<Float>?
+    /// 貼る絵のどこを読むか (0…1)。`nil` は**書かれていない**という意味で、
+    /// 形の囲みの箱から求める。
+    var uv: SIMD2<Float>?
     /// 置いた時点の塗り。
     var fill: LinearRGBA
 }
@@ -47,6 +50,28 @@ extension Canvas {
     // 奥行きを持つ頂点を 1 つ置く。
     public func vertex(_ x: Float, _ y: Float, _ z: Float) {
         appendVertex(SIMD3(x, y, z), hasDepth: true)
+    }
+
+    // 貼る絵の読み取り位置つきで頂点を 1 つ置く。
+    public func vertex(_ x: Float, _ y: Float, _ u: Float, _ v: Float) {
+        appendVertex(SIMD3(x, y, 0), hasDepth: false, uv: textureUV(u, v))
+    }
+
+    // 奥行きと読み取り位置を持つ頂点を 1 つ置く。
+    public func vertex(_ x: Float, _ y: Float, _ z: Float, _ u: Float, _ v: Float) {
+        appendVertex(SIMD3(x, y, z), hasDepth: true, uv: textureUV(u, v))
+    }
+
+    /// 書かれた読み取り位置を、面の中の 0…1 へ写す。
+    ///
+    /// **受け取るのは画像の画素**である (手本の既定と、``image(_:_:_:_:_:_:_:_:_:)`` の
+    /// 切り出しに揃える)。貼る絵を束ねていなければ写す先が無いので、書かれていない
+    /// ことにする — そのときの頂点は焼き場の白い区画を読み、絵は変わらない。
+    private func textureUV(_ u: Float, _ v: Float) -> SIMD2<Float>? {
+        guard let image = currentTextureImage, image.width > 0, image.height > 0,
+            u.isFinite, v.isFinite
+        else { return nil }
+        return SIMD2(u / Float(image.width), v / Float(image.height))
     }
 
     // これから置く頂点の面の向きを決める。
@@ -318,9 +343,21 @@ extension Canvas {
     }
 
     /// 塗りを出す。
+    ///
+    /// 貼る絵があれば読み取り位置を付ける。**書かれていない頂点は形の囲みの箱 (xy) から
+    /// 作る** — 組み込みの図形と同じ既定に倒すためで、書き忘れた形が絵の 1 画素だけで
+    /// 塗り潰される (手本がそうなる) のを避ける。
     private func emitFill(
         _ triangles: [(Int, Int, Int)], points: [BuildingVertex], placed: [PlacedVertex]
     ) {
+        let fallback = currentTextureImage == nil
+            ? nil : Canvas.boxUV(of: points.map { SIMD2($0.position.x, $0.position.y) })
+        func uv(_ index: Int) -> SIMD2<Float>? {
+            guard let fallback else { return nil }
+            return points[index].uv ?? fallback(
+                SIMD2(points[index].position.x, points[index].position.y))
+        }
+
         for triangle in triangles {
             let indices = [triangle.0, triangle.1, triangle.2]
             if shapeHasDepth {
@@ -328,7 +365,7 @@ extension Canvas {
                     let vertex = placed[index]
                     appendSolidVertex(
                         position: vertex.position, normal: vertex.normal,
-                        isDerived: vertex.isDerived, color: vertex.color)
+                        isDerived: vertex.isDerived, uv: uv(index), color: vertex.color)
                 }
             } else {
                 let flat = indices.map {
@@ -337,7 +374,10 @@ extension Canvas {
                 appendTriangle(
                     flat[0], flat[1], flat[2],
                     colors: (points[indices[0]].fill, points[indices[1]].fill,
-                        points[indices[2]].fill))
+                        points[indices[2]].fill),
+                    uvs: fallback == nil
+                        ? nil
+                        : (uv(indices[0])!, uv(indices[1])!, uv(indices[2])!))
             }
         }
     }
@@ -379,14 +419,17 @@ extension Canvas {
         appendVertex(SIMD3(point.x, point.y, depth), hasDepth: false)
     }
 
-    private func appendVertex(_ position: SIMD3<Float>, hasDepth: Bool) {
+    private func appendVertex(
+        _ position: SIMD3<Float>, hasDepth: Bool, uv: SIMD2<Float>? = nil
+    ) {
         guard isBuildingShape else { return warnVertexOutsideShapeOnce() }
         // 数でない座標は形を壊すだけなので置かない ([ADR-0020] 決定 5)
         guard position.x.isFinite, position.y.isFinite, position.z.isFinite else {
             return warnBadVertexOnce()
         }
         if hasDepth { shapeHasDepth = true }
-        let vertex = BuildingVertex(position: position, normal: currentNormal, fill: currentFill)
+        let vertex = BuildingVertex(
+            position: position, normal: currentNormal, uv: uv, fill: currentFill)
         if holePoints != nil {
             holePoints?.append(vertex)
         } else {
