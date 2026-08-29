@@ -130,8 +130,10 @@ public struct Transform: Equatable, Sendable {
     /// この変換を打ち消す変換。
     ///
     /// 潰れた変換 (どこかの軸を 0 倍にしたもの) には打ち消しが無いので `nil` を返す。
-    /// 公開していないのは、いま必要としているのが検査だけだからである — 窓から届く
-    /// 座標を図形の座標へ移す用途が出たら、その形に合わせて公開を考える。
+    /// 窓から届く座標を図形の座標へ移す用途は ``Canvas/spacePosition(screenX:screenY:depth:)``
+    /// が持つ。**公開するのはその 1 本だけ**で、行列そのものは面に出さない — 戻し先の
+    /// 奥行きを決める引数が要る以上、行列を渡しても利用者の側で同じ式を組み直すことに
+    /// なるためである。
     var inverted: Transform? {
         let determinant = matrix.determinant
         guard determinant.isFinite, abs(determinant) > .ulpOfOne else { return nil }

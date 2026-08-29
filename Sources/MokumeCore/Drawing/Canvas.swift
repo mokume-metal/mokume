@@ -795,13 +795,6 @@ public final class Canvas {
         popStyle()
     }
 
-    // MARK: - 座標
-
-    /// 点が、いまの変換でどこへ移るか (横)。
-    public func screenX(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).x }
-
-    public func screenY(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).y }
-
     // MARK: - 図形
 
     public func background(_ color: LinearRGBA) {
