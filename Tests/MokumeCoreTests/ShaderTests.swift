@@ -168,6 +168,77 @@ struct ShaderTests {
         #expect(left.blue == 0.5, "面の大きさが届いていない")
     }
 
+    // MARK: - 渡せる値の数
+
+    /// 列 1 つぶんの区画に**ちょうど収まる**宣言 (float 換算 64 個 = 色 16 個)。
+    ///
+    /// `ShaderSource.pack` は成分の数 → 名前の降順で並べるので、`c00` は**区画の末尾 4 つ** —
+    /// 次の区画と隣り合う位置に載る。潰れたかどうかはここを見れば分かる。
+    private static func fullSlotValues(last: LinearRGBA) -> [String: ShaderValue] {
+        var values: [String: ShaderValue] = ["c00": .color(last)]
+        for index in 1..<16 {
+            values["c\(index)"] = .color(.opaque(red: 0, green: 0, blue: 0))
+        }
+        return values
+    }
+
+    /// 末尾の値をそのまま色にする断片。区画の端が届いているかを見るのに使う。
+    private static let lastValueShader =
+        "float4 paint(Fragment in, Values values) { return values.c00; }"
+
+    /// 完了条件「上限ちょうどの塗りを 2 つ並べても、互いの区画を潰さない」。
+    @Test("上限ちょうどの値を宣言した塗りは、隣の列を潰さずに描ける")
+    func aFullSlotOfValuesDoesNotSpillIntoTheNextColumn() throws {
+        let canvas = try makeCanvas(width: 32, height: 16)
+        let green = try canvas.makeShader(
+            Self.lastValueShader, name: "full-green",
+            values: Self.fullSlotValues(last: .opaque(red: 0, green: 1, blue: 0)))
+        let blue = try canvas.makeShader(
+            Self.lastValueShader, name: "full-blue",
+            values: Self.fullSlotValues(last: .opaque(red: 0, green: 0, blue: 1)))
+
+        try canvas.draw {
+            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            // 塗りを変えると列が切れるので、区画が 2 つ並ぶ。はみ出していれば後の列が前の列を潰す
+            canvas.shader(green)
+            canvas.rect(0, 0, 16, 16)
+            canvas.shader(blue)
+            canvas.rect(16, 0, 16, 16)
+        }
+        #expect(canvas.get(8, 8) == .opaque(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(24, 8) == .opaque(red: 0, green: 0, blue: 1))
+    }
+
+    /// 完了条件「1 つ超えると断られ、置き場への書き込みまで到達しない」(#348)。
+    ///
+    /// **超えた値で描く検査は置かない。** 描けば置き場の外へ書く経路をそのまま走らせる
+    /// ことになり、検査そのものが壊れたメモリの上で動く。
+    @Test("区画に収まらない数の値を宣言すると、読み込みの時点で断られる")
+    func moreValuesThanASlotHoldsAreRefusedAtLoad() throws {
+        let canvas = try makeCanvas()
+        // 色 16 個 (64 個) に数を 1 つ足して 65 個。詰め物込みで 68 個になり、区画 (64) を超える
+        var values = Self.fullSlotValues(last: .opaque(red: 0, green: 1, blue: 0))
+        values["extra"] = 1
+
+        // 詰め物込みで 68 個。何個で上限が何個かが、断る文から読めること
+        #expect(
+            throws: ShaderFailure.tooManyValues(path: "overflowing", count: 68, capacity: 64)
+        ) {
+            try canvas.makeShader(Self.lastValueShader, name: "overflowing", values: values)
+        }
+
+        // 在処から読む経路も同じ。断るのは断片の中身ではなく**宣言の数**なので、両方に効く
+        let directory = try makeTemporaryDirectory()
+        let url = directory.appendingPathComponent("paint.metal")
+        try Self.lastValueShader.write(to: url, atomically: true, encoding: .utf8)
+        #expect(
+            throws: ShaderFailure.tooManyValues(path: url.path, count: 68, capacity: 64)
+        ) {
+            try canvas.loadShader(url.path, values: values)
+        }
+    }
+
     // MARK: - 組み立ての失敗
 
     /// 完了条件「断片のコンパイルが失敗したとき、絵が消えず、失敗の理由が観測から読める」。
