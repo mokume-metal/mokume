@@ -81,7 +81,7 @@ enum NewCommand {
                 """
                 .package(
                     url: "https://github.com/mokume-metal/mokume.git",
-                    .upToNextMinor(from: "\(Templates.libraryVersion)"))
+                    from: "\(Templates.libraryMinimumVersion)")
                 """
             }
         let values = [

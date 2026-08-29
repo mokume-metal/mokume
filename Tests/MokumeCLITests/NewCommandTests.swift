@@ -86,13 +86,16 @@ struct NewCommandTests {
         }
     }
 
-    @Test("上限を切って版を指す")
-    func pinsTheLibraryVersionWithAnUpperBound() throws {
+    @Test("版は下限だけを指し、上限を切らない")
+    func pinsTheLibraryVersionAsAFloorOnly() throws {
         let files = try NewCommand.files(for: .init(name: "my-sketch"))
         let package = try #require(files.first { $0.0 == "Package.swift" }?.1)
-        // 1.0 未満では次のマイナーで形が変わりうる。上限が無いと、作った時点では
-        // 動いていたものが後から壊れた組み合わせを引く
-        #expect(package.contains(".upToNextMinor(from: \"\(Templates.libraryVersion)\")"))
+        #expect(package.contains("from: \"\(Templates.libraryMinimumVersion)\""))
+        // **上限が戻ってきたら赤くする。** 上限を切ると、下限の値が古くなった時点で
+        // 新しく作るスケッチが古い 0.x に固定され、壊れないまま腐る (#214)
+        #expect(
+            !package.contains("upToNextMinor"),
+            "上限を切ると Templates.libraryMinimumVersion の鮮度が効いてしまう")
     }
 }
 

@@ -11,12 +11,21 @@ import Foundation
 ///
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 enum Templates {
-    /// 生成するスケッチが依存する版。
+    /// 生成するスケッチが依存する版の**下限**。
     ///
-    /// **上限を切って書く。** 1.0 未満では次のマイナーで形が変わりうるので、上限の
-    /// 無い書き方だと、作った時点では動いていたものが後から壊れた組み合わせを引く。
-    /// 版が上がったらここを更新する必要がある — 忘れても機械が拾えない — #214 で扱う。
-    static let libraryVersion = "0.1.0"
+    /// **現行版ではない。古いままでよい。** `from:` は次の major 未満を許すので、
+    /// この値が何世代か古くても、生成されたスケッチが解決するのは常に最新の 0.x に
+    /// なる。だから「版が上がったらここを更新する」を誰にも覚えさせなくてよい。
+    ///
+    /// **上限を切らない** ([#214])。上限を切ると、この値が古くなった時点で新しく作った
+    /// スケッチが古い 0.x に固定され、**壊れないまま腐る** — 誰も気付かない類の腐り方を
+    /// する。上限が守れるのは新しく作るスケッチだけで、そこで引くべきものはむしろ最新の
+    /// 0.x である (ひな形の `Sketch.swift` は現行の面で書かれている)。既に作られた
+    /// スケッチは `Package.resolved` が固定するので、後から勝手に版が動くことはない
+    /// (生成する `.gitignore` は `Package.resolved` を除外しない)。
+    ///
+    /// [#214]: https://github.com/mokume-metal/mokume/issues/214
+    static let libraryMinimumVersion = "0.1.0"
 
     /// テンプレートの置き場。
     static func directory() throws -> URL {
