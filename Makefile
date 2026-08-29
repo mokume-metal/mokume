@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -129,6 +129,33 @@ api-list: ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 	$(API_BUILD)
 	python3 scripts/api-surface.py list --graphs $(API_GRAPHS) \
 		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",)
+
+# 道具の配布物。**リリースタグを起点に配る** (ADR-0001 原則 6)。ここで束ねたものを
+# リリースのワークフローが Release の資産として上げる — CI にステップを足さず、
+# 束ね方の実体は Makefile に置く (api-list と同じ形)。
+#
+# **2 つで 1 組**にする。ひな形は資源の束 (mokume_MokumeCLI.bundle) に入り、実行ファイル
+# は Bundle.module としてその束を**隣から**探す。片方だけ配ると、入れた人は new を
+# 打った瞬間に「ひな形が見つからない」を踏む。
+#
+# **実行ファイルは mokume という名前で入れる。** product 名が mokume-cli なのは
+# SwiftPM の制約 (ライブラリと同名の product を置けない) で、利用者が打つ名前とは別。
+# 案内文は起動された名前から出るので、改名しても印字された行はそのまま打てる。
+#
+# COPYFILE_DISABLE を立てるのは、macOS の tar が拡張属性を ._ から始まる別ファイルに
+# して同梱するため。展開した人の bin に見慣れない物を置かない
+CLI_STAGE := .build/dist/stage
+CLI_ASSET := .build/dist/mokume-macos-arm64.tar.gz
+
+cli-dist: ## 道具の配布物を束ねる (OUT=path で置き場を指定)
+	swift build -c release --product mokume-cli
+	rm -rf "$(CLI_STAGE)"
+	mkdir -p "$(CLI_STAGE)" "$(dir $(CLI_ASSET))"
+	cp .build/release/mokume-cli "$(CLI_STAGE)/mokume"
+	cp -R .build/release/mokume_MokumeCLI.bundle "$(CLI_STAGE)/"
+	COPYFILE_DISABLE=1 tar -czf "$(or $(OUT),$(CLI_ASSET))" \
+		-C "$(CLI_STAGE)" mokume mokume_MokumeCLI.bundle
+	@echo "束ねた: $(or $(OUT),$(CLI_ASSET))"
 
 # 参照スケッチの絵。**リポジトリには置かない** — 撮った絵は Gyazo へ上げて URL で
 # 参照する。同じフレーム番号を描くので、撮り直せば同じ絵になる
