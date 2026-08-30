@@ -7,10 +7,15 @@
 で、ブロックの正本 (ルールセット / human-approval commit status) は触らない。だから
 ここで固定したいのは 2 種類ある:
 
-  投げる側  — 未要求・未レビューなら maintainers team へ要求が飛ぶ
+  投げる側  — 未要求・未レビューならメンテナ (user) へ要求が飛ぶ
               承認が push で外れた (DISMISSED) ら投げ直す
   投げない側 — 既に team へ要求が飛んでいる (パス由来と重なった PR に 2 通目を作らない)
+              既に同じ user へ要求が飛んでいる (CI の走り直しで 2 通目を作らない)
               既にレビュー済み (一度見た人へ投げ直さない)
+
+**宛先が user であることも固定する。** 一度 team へ揃えたが、GITHUB_TOKEN は org
+スコープを持たないので team_reviewers は 422 で落ちた (#576)。ここは偽 gh なので
+422 自体は再現しないが、投げる先の綴りが変わったら気付ける。
 
 **失敗しても終了コードが 0 のまま**であることも固定する。要求の失敗がゲートの赤に
 化けると「通知が届かない」が「マージできない」に化け、直したはずの害より大きくなる。
@@ -31,7 +36,7 @@ SCRIPT = REPO / "scripts" / "request-review.sh"
 
 # 偽 gh。request-review が呼ぶのは 2 つだけ:
 #   gh pr view <n> -R <repo> --json author,reviewRequests,latestReviews
-#   gh api -X POST repos/<repo>/pulls/<n>/requested_reviewers -f 'team_reviewers[]=<slug>' --silent
+#   gh api -X POST repos/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<login>' --silent
 # 前者は環境変数の JSON を返し (FAKE_PR_STATUS が 0 以外なら失敗を演じる)、
 # 後者は引数を GH_CALLS へ記録する。要求が飛んだかはこのファイルの中身で判定する
 FAKE_GH = """#!/bin/sh
@@ -85,42 +90,46 @@ class RequestReviewTest(unittest.TestCase):
         stub.chmod(0o755)
         self.calls = Path(self.tmp.name) / "gh-calls"
 
-    def run_script(self, pr, team=None, api_status=0, pr_status=0):
+    def run_script(self, pr, user=None, api_status=0, pr_status=0):
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_PR_JSON"] = pr
         env["FAKE_API_STATUS"] = str(api_status)
         env["FAKE_PR_STATUS"] = str(pr_status)
         env["GH_CALLS"] = str(self.calls)
-        if team is not None:
-            env["MAINTAINERS_TEAM"] = team
+        if user is not None:
+            env["MAINTAINERS_USER"] = user
         env["GITHUB_REPOSITORY"] = "mokume-metal/mokume"
         return subprocess.run(
             ["bash", str(SCRIPT), "42"],
             env=env, capture_output=True, text=True,
         )
 
-    def requested_teams(self):
-        """偽 gh へ渡った team_reviewers[]= の値。呼ばれていなければ空。"""
+    def requested_reviewers(self):
+        """偽 gh へ渡った reviewers[]= の値。呼ばれていなければ空。
+
+        team_reviewers[]= は前方一致しないので、宛先を team へ戻す変更が入れば
+        ここが空になって落ちる。
+        """
         if not self.calls.exists():
             return []
         text = self.calls.read_text(encoding="utf-8")
         return [
             word.split("=", 1)[1]
             for word in text.split()
-            if word.startswith("team_reviewers[]=")
+            if word.startswith("reviewers[]=")
         ]
 
-    def assert_requested(self, result, teams):
+    def assert_requested(self, result, reviewers):
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(sorted(self.requested_teams()), sorted(teams))
+        self.assertEqual(sorted(self.requested_reviewers()), sorted(reviewers))
 
     # --- 投げる側 ---
 
-    def test_requests_maintainers_team(self):
-        """未要求・未レビューなら team へ要求が飛ぶ (#498 の本題)。"""
+    def test_requests_the_maintainer(self):
+        """未要求・未レビューならメンテナへ要求が飛ぶ (#498 の本題)。"""
         result = self.run_script(pr_json())
-        self.assert_requested(result, [TEAM])
+        self.assert_requested(result, [MAINTAINER])
 
     def test_requests_again_after_dismissal(self):
         """承認が push で外れたら投げ直す。
@@ -130,12 +139,12 @@ class RequestReviewTest(unittest.TestCase):
         投げ直さないと「承認が外れたのに誰も知らない」に戻る。
         """
         result = self.run_script(pr_json(reviews=[(MAINTAINER, "DISMISSED")]))
-        self.assert_requested(result, [TEAM])
+        self.assert_requested(result, [MAINTAINER])
 
-    def test_team_slug_is_overridable(self):
-        """宛先の team は 1 か所で決まる (正典はルールセットの reviewer)。"""
-        result = self.run_script(pr_json(), team="other-team")
-        self.assert_requested(result, ["other-team"])
+    def test_maintainer_is_overridable(self):
+        """宛先は 1 か所で決まる (承認を課している集合の正典はルールセットの team)。"""
+        result = self.run_script(pr_json(), user="someone-else")
+        self.assert_requested(result, ["someone-else"])
 
     # --- 投げない側 ---
 
@@ -157,14 +166,19 @@ class RequestReviewTest(unittest.TestCase):
         result = self.run_script(pr_json(reviews=[(MAINTAINER, "COMMENTED")]))
         self.assert_requested(result, [])
 
-    def test_a_pending_user_request_does_not_suppress_the_team(self):
-        """user 宛の要求は team の代わりにならない。
+    def test_skips_when_the_maintainer_is_already_requested(self):
+        """既に同じ user へ要求が飛んでいるなら投げない。
 
-        誰か 1 人に声が掛かっていても、承認を課されているのは team である。
-        login を持つ要素をチーム要求と読み違えると、ここが黙って素通りする。
+        CI は Approve やラベルの付け外しでも走り直すので、見ないと同じ人へ 2 通目を
+        作る。宛先が team だった頃はこの経路が無かった (#576)。
         """
         result = self.run_script(pr_json(users=[MAINTAINER]))
-        self.assert_requested(result, [TEAM])
+        self.assert_requested(result, [])
+
+    def test_another_users_request_does_not_suppress_ours(self):
+        """別の人への要求は、メンテナへの声掛けの代わりにならない。"""
+        result = self.run_script(pr_json(users=["someone-else"]))
+        self.assert_requested(result, [MAINTAINER])
 
     # --- 失敗してもブロックに変えない ---
 
@@ -176,13 +190,13 @@ class RequestReviewTest(unittest.TestCase):
         """
         result = self.run_script(pr_json(), api_status=1)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.requested_teams(), [TEAM])
+        self.assertEqual(self.requested_reviewers(), [MAINTAINER])
 
     def test_survives_pr_view_failure(self):
         """PR を引けなくても終了コードは 0 で、要求は投げない。"""
         result = self.run_script(pr_json(), pr_status=1)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.requested_teams(), [])
+        self.assertEqual(self.requested_reviewers(), [])
 
 
 if __name__ == "__main__":
