@@ -8,8 +8,10 @@
 # **承認を必須にしているのはこのファイルではない。** 同じ 3 パスに
 # minimum_approvals: 1 を課しているのはルールセットの required_reviewers
 # (.github/rulesets/main-protection.json) で、ブロックの正本はそちらにある。
-# ここが担うのは「誰に要求するか」と、review-gate が承認者集合を読むための
-# 代理 (ADR-0007 決定 3) の 2 つ。
+# ここが担うのは「誰に要求するか」と、承認者集合を読むための代理 (ADR-0007 決定 3)。
+# 代理を読むのは 2 か所ある — review-gate.sh の承認可能性検査と、request-review.sh の
+# 要求先の決定である。後者は **verify: human の PR にレビュー要求を飛ばす** ために読む
+# (ラベルはパスではないので、この 3 行の照合には掛からない。#498)。
 #
 # 当初は require_code_owner_review と required approving reviews = 0 の
 # 組み合わせで必須化できるつもりでいたが、承認数 0 は「0 件の承認で足りる」と
