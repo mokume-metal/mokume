@@ -244,7 +244,7 @@ struct BuildDeadlineTests {
     /// 日にこの検査は赤くならず**固まる** — 壊れたことを知らせる手立てを、壊れ方の
     /// 巻き添えにしないため。20 秒眠る相手を 0.5 秒で殺すので、効いていなければ
     /// 20 秒後に赤く落ちる。
-    @Test("終わらないプロセスは、期限で殺される")
+    @Test("期限を越えたプロセスは、殺されて返る")
     func aProcessThatOutlivesTheDeadlineIsKilled() throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sleep")
