@@ -109,4 +109,59 @@ struct TemplateBuildTests {
             \(searched.map { "  - \($0.path)" }.joined(separator: "\n"))
             """)
     }
+
+    /// 束ねた包みの中で、同じことが成り立つか。
+    ///
+    /// **配ったときにしか通らない経路がある。** 包みの中では実行ファイルの隣が
+    /// `Contents/MacOS/` になり、資材は `Contents/Resources/` へ入る。組み上げの
+    /// 隣だけを見ていると、手元では動いて配った先だけで絵が出ない形になる。
+    @Test("束ねた包みの中でも、資材が絵を探す場所にある", .timeLimit(.minutes(10)))
+    func assetsLandInsideTheBundledApplication() throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-bundled-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let options = NewCommand.Options(
+            name: "packed-sketch", path: workspace.path, local: Self.repository.path)
+        let root = workspace.appendingPathComponent("packed-sketch", isDirectory: true)
+        for (path, contents) in try NewCommand.files(for: options) {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        }
+        try "木目".write(
+            to: root.appendingPathComponent("Sources/packed-sketch/assets/mark.txt"),
+            atomically: true, encoding: .utf8)
+        try AppIdentity.example.write(
+            to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
+            encoding: .utf8)
+
+        try BundleCommand.run([root.path])
+
+        let app = root.appendingPathComponent("bundle/Grain.app", isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: app.path), "包みが出来ていない")
+
+        // 包みの中だけを起点にする。**組み上げた場所は見せない** — そこが見えていると、
+        // 配った先で足りているかを確かめたことにならない
+        let searched = ImageFile.candidates(
+            for: "assets/mark.txt", workingDirectory: "/", neighbourhood: app,
+            resources: app.appendingPathComponent("Contents/Resources", isDirectory: true))
+        let found = searched.first { FileManager.default.fileExists(atPath: $0.path) }
+        #expect(
+            found != nil,
+            """
+            束ねた包みの中に、置いた資材が入っていない。
+            探した場所:
+            \(searched.map { "  - \($0.path)" }.joined(separator: "\n"))
+            """)
+
+        // 描くのに要る断片も、同じ包みの中から見つかる
+        let shader = ModuleResources.resolve(
+            name: "Shapes", extension: "metal", neighbourhood: app,
+            resources: app.appendingPathComponent("Contents/Resources", isDirectory: true),
+            lastResort: { _, _ in nil })
+        #expect(shader != nil, "描くのに要る断片が包みの中に無い")
+    }
 }
