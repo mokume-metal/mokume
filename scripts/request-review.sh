@@ -57,10 +57,7 @@ REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 # 宛先の user。承認を課している集合の正典は .github/rulesets/main-protection.json の
 # required_reviewers (team maintainers) だが、そこから user を引くには read:org が要る。
 # 綴りはここ 1 か所で持つ — team のメンバーが変わったらここも直す
-# ↓↓↓ #586 の検証のための一時的な差し替え。**この PR は merge しない。**
-# 実在しない login を宛先にすると GitHub が 422 で断るので、要求が飛ばない経路
-# (exit 20 → delivered=false → description が名乗る) を実際に通せる
-MAINTAINERS_USER="${MAINTAINERS_USER:-mokume-nonexistent-user-for-586}"
+MAINTAINERS_USER="${MAINTAINERS_USER:-shinyaoguri}"
 
 if ! pr_json=$(gh pr view "$PR" -R "$REPO" --json author,reviewRequests,latestReviews 2>&1); then
   # 投げようがないので、声が掛かっていないのは失敗したときと同じである
@@ -102,7 +99,11 @@ fi
 # author 本人の除外は要らない。GitHub が 422 を返すのは user 宛の自己要求だけで、
 # そもそもメンテナ名義の PR は review-gate が ADR-0007 の不変条件で差し戻すため、
 # 承認待ち (pending) にならず、ここは呼ばれない
-if gh api -X POST "repos/$REPO/pulls/$PR/requested_reviewers" \
+# ↓↓↓ #586 の検証のための一時的な破壊。**この PR は merge しない。**
+# 叩き先を存在しないパスにして API を必ず失敗させ、exit 20 → delivered=false →
+# description が名乗る経路を実際に通す。#575 で実測した 422 と同じ「API が非 0 を
+# 返す」経路で、そちらは宛先が team だったために起きた
+if gh api -X POST "repos/$REPO/pulls/$PR/requested_reviewers_BROKEN_FOR_586" \
      -f "reviewers[]=$MAINTAINERS_USER" --silent; then
   echo "request-review: レビューを要求した — @$MAINTAINERS_USER"
 else
