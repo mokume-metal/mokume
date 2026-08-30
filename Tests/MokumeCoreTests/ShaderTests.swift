@@ -292,17 +292,17 @@ struct ShaderTests {
 
     // MARK: - 保存を拾う
 
-    // ここの時間の上限は「見張りが死んでいたら永久に待たない」ための止め木で、
-    // 速さの主張ではない。**上限は走り出しからの時計で測られる** — このパッケージの
-    // 検査はすべて main actor に載っていて同時に走り出すので、1 つの検査が報告する
-    // 長さは実質「検査全体が終わるまでの長さ」になる。1 分にすると「全部で 1 分以内に
-    // 終わること」を暗に要求することになり、検査が増えた日に無関係な変更が赤くなる。
+    // 「見張りが死んでいたら永久に待たない」ための止め木は、下の `waitUntil` が
+    // 自分で持っている (期限つきで待ち、越えたら名指しで落ちる)。**`.timeLimit` は
+    // ここでは使えない** — 上限は走り出しからの時計で測られ、このパッケージの検査は
+    // すべて main actor に載っているので、どんな値を書いても「検査全体が何秒で
+    // 終わるか」を要求することになる (#564)。
 
     /// 完了条件「保存を 2 回連続で行い、2 回とも差し替わる」。
     ///
     /// **1 回だけ保存する検査には判別力が無い。** 置き換え保存のあと見張りを張り直さない
     /// 実装でも 1 回目は通り、死ぬのは 2 回目以降である。
-    @Test("置き換えで保存すると、2 回続けて差し替わる", .timeLimit(.minutes(5)))
+    @Test("置き換えで保存すると、2 回続けて差し替わる")
     func twoConsecutiveAtomicSavesBothArrive() async throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         let directory = try makeTemporaryDirectory()
@@ -335,7 +335,7 @@ struct ShaderTests {
         }
     }
 
-    @Test("その場で上書きして保存しても差し替わる", .timeLimit(.minutes(5)))
+    @Test("その場で上書きして保存しても差し替わる")
     func anInPlaceSaveAlsoArrives() async throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         let directory = try makeTemporaryDirectory()
@@ -357,7 +357,7 @@ struct ShaderTests {
     /// その場の上書きは親ディレクトリを変えないので、張り直さない実装ではここで
     /// 完全に届かなくなる。置き換えだけを 2 回続ける検査では、親ディレクトリ側が
     /// 毎回拾ってしまうので**この壊れは見つからない**。
-    @Test("置き換えて保存したあと、その場で上書きしても届く", .timeLimit(.minutes(5)))
+    @Test("置き換えて保存したあと、その場で上書きしても届く")
     func anInPlaceSaveAfterAnAtomicSaveStillArrives() async throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         let directory = try makeTemporaryDirectory()
