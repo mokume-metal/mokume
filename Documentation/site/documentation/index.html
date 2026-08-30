@@ -1,0 +1,28 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+
+面の中間の経路 (/documentation/) に来た読者を、モジュールの面へ送る (#549)。
+
+面を組み立てる道具はモジュールのページしか作らないので、ここには何も置かれない。
+**URL を後ろから削って上の階層へ行くのは読者の普通の動き**なので、行き止まりにしない。
+
+root の 1 枚と違って**ここは自動で送ってよい**。root は入口そのもの (送ると入口が
+読まれない) だが、こちらは経路の途中にすぎず、留まる理由が無い。
+
+**行き先はモジュールの名前を含む。** 名前が変われば黙って腐るので、指し先が面の
+モジュールと合っているかは scripts/check-published-reference.py が機械で見る。
+モジュールが 2 つ以上になったら、この 1 枚は転送ではなく一覧になる。
+-->
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>mokume の参照</title>
+    <meta http-equiv="refresh" content="0; url=mokumecore/" />
+    <link rel="canonical" href="mokumecore/" />
+  </head>
+  <body>
+    <p><a href="mokumecore/">MokumeCore の面</a>へ移動します。</p>
+  </body>
+</html>

@@ -85,14 +85,14 @@ jobs:
       # 閉じ込めると、読者が見る URL が `/reference/documentation/…` と 2 段になる —
       # `documentation` の 1 節は道具の出力に焼き込まれていて外せないので、短くできる
       # のは接頭辞の側だけである。
-      # 手で書く入口は root の index.html を 1 枚だけ上書きする (make reference の中)
+      # 手で書く層 (Documentation/site/) は、その上へ丸ごと被さる (make reference の中)
       - name: 参照の面を組み立てる
         run: make reference OUT=_site BASE="${{ steps.base.outputs.path }}"
 
       # **公開の側に、どのコミットから組んだかを 1 行だけ残す** (#483)。この回の
       # 公開が緑だったことは Actions が知っているが、**いま配られているものが新しいか**
       # は外から引かないと分からない。印は root に置く — 読む面ではなく機械が引く
-      # 1 本なので、入口の「手で書いてよいのは 1 枚」には数えない (ADR-0027 決定 3)。
+      # 1 本である (ADR-0027 決定 3)。
       # 形式の正典は書く側と読む側で 1 本にしてあるので、置くのも同じ道具に頼む
       - name: 公開の印を置く
         run: python3 scripts/check-publication.py --write-stamp _site --commit "$GITHUB_SHA"
