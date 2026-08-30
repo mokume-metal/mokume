@@ -20,7 +20,8 @@ import simd
 /// 3. 縦軸を**この面の約束 (下向き)** へ合わせる — モデルの多くは上向きで書かれる
 ///
 /// 3 つ目も整える側に入れてあるので、`normalize: false` では**ファイルの座標が
-/// そのまま残る**。
+/// そのまま残る**。ただし**貼る絵の読み取り位置は整えの対象ではない** — 形の座標では
+/// なく絵を読む位置なので、`normalize` の有無で値が変わらない (#406)。
 public struct Model: Equatable, Sendable {
     /// 読み込んだ名前。
     public let name: String
@@ -98,25 +99,33 @@ extension Model {
             center = .zero
         }
 
-        // 読み込んだ形は**貼る絵の展開を持たない** (OBJ の `vt` はまだ読まない)。
-        // 代わりに囲みの箱の横と縦を 0…1 に写す — 何も持たせないと、面を束ねた状態で
-        // 置いたモデルが全面 1 画素の色で塗り潰され、利用者からは「貼れていない」と
-        // しか見えない。奥行きの向きは畳まれるので、真横を向いた面では絵が伸びる
-        // **整えたあとの座標から測る。** ファイルの座標から測ると、整えるときに縦軸を
-        // 裏返すぶん (上の 3 つ目) だけ絵が上下逆になる
+        // **書かれた展開が無い角は、囲みの箱の横と縦を 0…1 に写した位置へ倒れる。**
+        // 何も持たせないと、面を束ねた状態で置いたモデルが全面 1 画素の色で塗り潰され、
+        // 利用者からは「貼れていない」としか見えない。奥行きの向きは畳まれるので、
+        // 真横を向いた面では絵が伸びる — 作者の展開の代わりにはならない
+        //
+        // **ファイルの座標の x と -y から測る。** 縦を裏返すのは、この面の読み取り位置が
+        // 上から下へ数えるためで、`vt` を読むときの裏返し (``ModelFile``) と同じ理由である。
+        // 整えは一様な縮小と平行移動なので 0…1 に写した値は動かない — つまりこの位置は
+        // **`normalize` の有無で変わらない** (整えたあとの座標から測っていた頃は、
+        // `normalize: false` でだけ絵が上下逆に乗っていた。#406)
         var uvLowest = SIMD2<Float>(repeating: .infinity)
         var uvHighest = SIMD2<Float>(repeating: -.infinity)
-        for position in positions {
-            uvLowest = simd_min(uvLowest, SIMD2(position.x, position.y))
-            uvHighest = simd_max(uvHighest, SIMD2(position.x, position.y))
+        for position in parsed.positions {
+            uvLowest = simd_min(uvLowest, SIMD2(position.x, -position.y))
+            uvHighest = simd_max(uvHighest, SIMD2(position.x, -position.y))
         }
         let extent = uvHighest - uvLowest
-        let points = zip(positions, normals).map { position, normal in
-            SolidMesh.Point(
-                position: position, normal: normal,
-                uv: SIMD2(
-                    extent.x > 0 ? (position.x - uvLowest.x) / extent.x : 0,
-                    extent.y > 0 ? (position.y - uvLowest.y) / extent.y : 0))
+        let points = (0..<positions.count).map { index in
+            let source = parsed.positions[index]
+            return SolidMesh.Point(
+                position: positions[index], normal: normals[index],
+                // 書かれた展開があればそれを使う。**角ごとに見る** — 混ざったモデルでも
+                // 書かれた側は活きる
+                uv: parsed.uvs[index]
+                    ?? SIMD2(
+                        extent.x > 0 ? (source.x - uvLowest.x) / extent.x : 0,
+                        extent.y > 0 ? (-source.y - uvLowest.y) / extent.y : 0))
         }
         return Model(
             name: name, mesh: SolidMesh(points: points),

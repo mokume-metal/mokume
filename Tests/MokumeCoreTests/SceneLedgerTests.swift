@@ -231,6 +231,9 @@ enum Scene: String, CaseIterable, Sendable {
     case texturedShapes
     /// 焼いた絵を貼った立体。組み込みの形の展開と、自分で書いた読み取り位置。
     case texturedSolids
+    /// 焼いた絵を貼った読み込みモデル。**作者の書いた展開と、展開を持たないモデルの
+    /// 倒れ先を並べてある** — 片方だけが動いても行が動く。
+    case texturedModel
     /// 形自身の座標から模様を作った立体。**同じ形を 2 つ、違う角度で置いてある** —
     /// 模様が形について回っていることが 1 枚で読める。
     case surfaceShader
@@ -1152,6 +1155,34 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.vertex(48, 18, 0, Float(grain.width), Float(grain.height))
             canvas.vertex(-48, 18, 0, 0, Float(grain.height))
             canvas.endShape(.close)
+            canvas.pop()
+
+        case .texturedModel:
+            // **読み込んだモデルに絵を貼る。** 左は作者の展開を持つ板 (絵の一部だけを
+            // 使う)、右は展開を持たない四角錐 (囲みの箱へ倒れて絵の全面を使う)。
+            // 倒れ先しか無かった頃は、左も全面を使っていた ([#406](https://github.com/mokume-metal/mokume/issues/406))
+            canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
+            canvas.lights()
+            canvas.noStroke()
+            guard let grain = Scene.makeGrain(on: canvas),
+                let unwrapped = try? canvas.loadModel(ModelFixture.unwrapped),
+                let pyramid = try? canvas.loadModel(ModelFixture.pyramid)
+            else { return }
+            canvas.texture(grain)
+
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            canvas.push()
+            canvas.translate(36, 62, 0)
+            canvas.rotateY(0.5)
+            canvas.scale(0.62, 0.62, 0.62)
+            canvas.model(unwrapped)
+            canvas.pop()
+
+            canvas.push()
+            canvas.translate(94, 66, 0)
+            canvas.rotateY(0.7)
+            canvas.scale(0.62, 0.62, 0.62)
+            canvas.model(pyramid)
             canvas.pop()
 
         case .solidShader:
