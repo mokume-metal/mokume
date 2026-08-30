@@ -5,13 +5,21 @@
 
 **塞ぐのは 2 つである。**
 
-1. **入口が参照の面へ繋がっていない。** 面を 2 つ並べる形 (ADR-0027 決定 3) は、
-   行き来がリンクだけで保たれている。そのリンクが切れても両方の面は 200 を返し続ける
-   ので、外から見て壊れて見えない。`scripts/check-docs-links.py` は **Markdown しか
-   見ない**ため、HTML に書いたリンクは誰も検査していなかった
+1. **入口から面へ出て行く行き先が切れている。** 手で書いた層と生成された面は、
+   リンクだけで繋がっている。そのリンクが切れても両方 200 を返し続けるので、外から
+   見て壊れて見えない。`scripts/check-docs-links.py` は **Markdown しか見ない**ため、
+   HTML に書いたリンクは誰も検査していなかった
 2. **入口と README で同じことが二重に書かれ、片方だけが古くなる。** 入口の本文の正本は
-   `Documentation/index.html` だが、入れ方の 1 行だけは README と重なる。重なった 1 行が
-   唯一の漏れ口なので、そこだけを機械で突き合わせる (ADR-0001 原則 9)
+   `Documentation/site/index.html` だが、入れ方の 1 行だけは README と重なる。重なった
+   1 行が唯一の漏れ口なので、そこだけを機械で突き合わせる (ADR-0001 原則 9)
+
+## 責務の線
+
+**生成された面の内側は見ない。** モジュールの面・記号・記事・中間の 1 枚
+(`documentation/index.html`) が出ているかと、その行き先がモジュールを指しているかは
+`check-published-reference.py` が持つ (#549)。**こちらが持つのは手で書いた層の中身と、
+そこから外へ出る行き先**である。だから下の照合は「面へ入る道があるか」までを見て、
+**その先のモジュール名までは見ない** — 見ると同じことを 2 か所で見ることになる。
 
 **同じ判定を、手元の出力ディレクトリにも公開された URL にも当てる。** 引数が
 `http://` / `https://` で始まれば引き、そうでなければ読む — `check-published-reference.py`
@@ -47,8 +55,9 @@ import urllib.error
 import urllib.request
 
 ENTRY_NAME = "index.html"
-# 参照の面へのリンク。**相対で書く**ので、基準パスに依らずこの形になる
-REFERENCE_LINK = re.compile(r"""<a\s[^>]*href=["'](\.?/?reference/)["']""", re.IGNORECASE)
+# 面へ入る道。**相対で書く**ので、基準パスに依らずこの形になる。モジュール名までは
+# 見ない (上の「責務の線」) ので、面の入口である documentation/ で止める
+FACE_LINK = re.compile(r"""<a\s[^>]*href=["']\.?/?documentation/[^"']*["']""", re.IGNORECASE)
 # 絵。src が外部 URL のものだけを資産と数える
 IMAGE_SOURCE = re.compile(
     # **`src` の直前で属性の切れ目を要求する。** 要求しないと `data-src=` の末尾に
@@ -109,8 +118,8 @@ def check(source: Source, readme: pathlib.Path) -> list[str]:
         return [f"入口が無い ({source.target}/{ENTRY_NAME})"]
     page = raw.decode("utf-8")
 
-    if not REFERENCE_LINK.search(page):
-        problems.append("参照の面 (reference/) へのリンクが無い — 面の行き来が切れている")
+    if not FACE_LINK.search(page):
+        problems.append("面 (documentation/) へのリンクが無い — 入口から面へ入れない")
 
     images = IMAGE_SOURCE.findall(page)
     if not images:
@@ -158,7 +167,7 @@ def main() -> int:
             print(f"  {problem}", file=sys.stderr)
         return 1
 
-    print("ok: 入口は参照の面へ繋がっていて、入れ方の 1 行が README と一致している")
+    print("ok: 入口は面へ繋がっていて、入れ方の 1 行が README と一致している")
     return 0
 
 

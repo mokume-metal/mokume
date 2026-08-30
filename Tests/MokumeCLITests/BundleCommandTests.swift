@@ -130,7 +130,7 @@ struct BundleCommandTests {
     func theReportTellsHowToCheck() {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
-            note: URL(fileURLWithPath: "/tmp/Demo を開くには.txt"))
+            note: URL(fileURLWithPath: "/tmp/Demo を開くには.txt"), signedAs: nil)
         #expect(report.contains("/tmp/Demo.app"))
         #expect(report.contains(".build"))
     }
@@ -154,9 +154,49 @@ struct BundleCommandTests {
     func theReportPointsAtTheOpeningNote() {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
-            note: URL(fileURLWithPath: "/tmp/Demo を開くには.txt"))
+            note: URL(fileURLWithPath: "/tmp/Demo を開くには.txt"), signedAs: nil)
         #expect(report.contains("/tmp/Demo を開くには.txt"))
         #expect(report.contains("一緒に送る"))
+    }
+
+    /// 名前は**持っている人の環境の性質**なので、環境から受け取る。
+    @Test("署名の名前は環境から取り、空白だけなら無いものとして扱う")
+    func theSigningIdentityComesFromTheEnvironment() {
+        #expect(BundleCommand.signIdentity(environment: [:]) == nil)
+        #expect(BundleCommand.signIdentity(environment: [BundleCommand.signIdentityKey: "  "]) == nil)
+        #expect(
+            BundleCommand.signIdentity(
+                environment: [BundleCommand.signIdentityKey: " Developer ID Application: X "])
+                == "Developer ID Application: X")
+    }
+
+    /// 名前を与えたときだけ、公証の前提 (強化されたランタイム・タイムスタンプ) を当てる。
+    /// **後から足せない** — 足すには署名し直しになる。
+    @Test("名前が無ければ ad-hoc、あれば公証に出せる形で署名する")
+    func theSignatureFollowsTheGivenName() {
+        let app = URL(fileURLWithPath: "/tmp/Demo.app")
+        #expect(
+            BundleCommand.signArguments(for: app, as: nil)
+                == ["codesign", "--force", "--sign", "-", "/tmp/Demo.app"])
+
+        let named = BundleCommand.signArguments(for: app, as: "Developer ID Application: X")
+        #expect(named.contains("Developer ID Application: X"))
+        #expect(named.contains("--options") && named.contains("runtime"))
+        #expect(named.contains("--timestamp"))
+    }
+
+    /// 名乗らないと「署名したのだから開くはず」と読まれる。往復はまだ残る。
+    @Test("報せが、どちらの段で署名したかを名乗る")
+    func theReportNamesTheSigningTier() {
+        let app = URL(fileURLWithPath: "/tmp/Demo.app")
+        let note = URL(fileURLWithPath: "/tmp/Demo を開くには.txt")
+
+        #expect(BundleCommand.report(for: app, note: note, signedAs: nil).contains("ad-hoc"))
+
+        let named = BundleCommand.report(
+            for: app, note: note, signedAs: "Developer ID Application: X")
+        #expect(named.contains("Developer ID Application: X"))
+        #expect(named.contains("公証はまだ通っていない"))
     }
 
     @Test("置き場を渡せる")

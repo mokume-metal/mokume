@@ -65,7 +65,7 @@ jobs:
         if: always()
         run: |
           python3 scripts/check-published-reference.py \
-            "${{ steps.site.outputs.url }}/reference" \
+            "${{ steps.site.outputs.url }}" \
             --catalog Documentation/mokume.docc
 
   assets:

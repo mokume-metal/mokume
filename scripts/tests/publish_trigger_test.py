@@ -32,7 +32,7 @@ jobs:
   publish:
     runs-on: macos-latest
     steps:
-      - run: make reference OUT=_site/reference
+      - run: make reference OUT=_site
 """
 
 

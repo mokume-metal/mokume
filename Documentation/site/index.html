@@ -2,15 +2,15 @@
 SPDX-FileCopyrightText: 2026 mokume-metal
 SPDX-License-Identifier: MIT
 
-公開する面の入口 (root)。**手で書く 1 枚**で、機械が組み立てる参照の面 (/reference/)
-とは混ぜず並べる (ADR-0027 決定 3)。配るのは make entry で、公開の側は cp するだけ。
+公開する面の入口 (root)。**手で書く層はこのディレクトリに集め**、面の出力へ丸ごと
+被せる (ADR-0027 決定 3・#552)。被せるのは make reference で、公開の側は呼ぶだけ。
 
 **本文の正本はこのファイルである。** README と重なるのは brew の 1 行と短いコード片
 だけにしてあり、その 1 行が README と一致していることは scripts/check-entry.py が見る。
 重ねる量を増やすと二重管理になる (ADR-0001 原則 9)。
 
 **リンクは相対で書く。** 公開先の基準パス (github.io の /mokume/ か、独自ドメインの
-root か) はここでは決まらないため — /reference/ の殻と同じ理由。
+root か) はここでは決まらないため — 隣の documentation/index.html と同じ理由。
 
 **外部ホストへの要求を持たない。** スタイルはここに同梱し、フォントは system font
 stack、favicon はインライン SVG。外に出て行くのは絵の <img> だけで、その死活は
@@ -311,7 +311,7 @@ final class MySketch: Sketch {
       <h2>もっと読む</h2>
       <ul class="faces">
         <li>
-          <a href="reference/">
+          <a href="documentation/mokumecore/">
             <strong>参照の面</strong>
             <span>書ける口の説明。実行結果の絵つき</span>
           </a>

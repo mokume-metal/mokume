@@ -61,7 +61,7 @@ class PublishedReferenceTest(unittest.TestCase):
         self.out = self.root / "out"
         self.build_output()
 
-    def build_output(self, paths=None, title="Mod", bundle="mokume", html=True):
+    def build_output(self, paths=None, title="Mod", bundle="mokume", html=True, middle="mod/"):
         """出来上がった面の最小の形。壊すときは引数で 1 か所だけ動かす。"""
         if paths is None:
             paths = [
@@ -92,6 +92,16 @@ class PublishedReferenceTest(unittest.TestCase):
             page = self.out / "documentation" / "mod"
             page.mkdir(parents=True, exist_ok=True)
             (page / "index.html").write_text("<!doctype html>", encoding="utf-8")
+        # 手で被せる層のうち、中間の経路を塞ぐ 1 枚 (#549)。道具の出力ではないが、
+        # `make reference` を通った時点では面の一部として置かれている
+        (self.out / "documentation").mkdir(parents=True, exist_ok=True)
+        stub = self.out / "documentation" / "index.html"
+        if middle is None:
+            stub.unlink(missing_ok=True)  # 組み直しなので、前に置いたものを消す
+        else:
+            stub.write_text(
+                f'<meta http-equiv="refresh" content="0; url={middle}" />', encoding="utf-8"
+            )
 
     def run_check(self, target=None):
         return subprocess.run(
@@ -132,6 +142,20 @@ class PublishedReferenceTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("静的配信", result.stderr)
+
+    def test_中間の経路が塞がれていなければ赤い(self):
+        # URL を後ろから削って上の階層へ行く読者が、そこで行き止まりになる (#549)
+        self.build_output(middle=None)
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("行き止まり", result.stderr)
+
+    def test_中間の経路の行き先が腐っていれば赤い(self):
+        # モジュールの名前が変われば、手で書いた行き先は黙って取り残される
+        self.build_output(middle="別のなにか/")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("指していない", result.stderr)
 
     def test_モジュールの面の題が違えば赤い(self):
         self.build_output(title="別物")

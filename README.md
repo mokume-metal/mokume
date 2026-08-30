@@ -81,7 +81,7 @@ final class MySketch: Sketch {
 MySketch.main()
 ```
 
-書ける口の説明は**参照の面**にある: <https://mokume-metal.github.io/mokume/reference/>
+書ける口の説明は**参照の面**にある: <https://mokume.org/documentation/mokumecore/>
 
 ## 渡す
 
@@ -122,8 +122,21 @@ bundle/
 
 **作品と一緒に送る。** 配るたびに手順を伝え直さずに済む。
 
-名前のある署名と公証はこの先の段で、
-[ADR-0029](docs/decisions/0029-post-run-surfaces.md) 決定 4 が段の切り方を持つ。
+### 自分の証明書を持っているなら
+
+署名に使う名前を環境から与えると、**公証に出せる形**で束ねる (強化されたランタイムと
+タイムスタンプが当たる):
+
+```bash
+MOKUME_SIGN_IDENTITY="Developer ID Application: 名前 (TEAMID)" mokume bundle
+```
+
+与えなければ、いままでどおり名前を持たない署名になる。どちらで署名したかは束ねた後の
+出力が名乗る。
+
+**公証そのものは打たない。** 名前のある署名を当てただけでは受け取った側の往復は消えず、
+`notarytool` に提出して `stapler` で結果を添付するまでが要る — そこは道具の外にある
+(段の切り方は [ADR-0029](docs/decisions/0029-post-run-surfaces.md) 決定 4)。
 
 配る前に、作者の環境に依存した解決が残っていないかを確かめる — 組み上げた場所を
 退避してから起動する:

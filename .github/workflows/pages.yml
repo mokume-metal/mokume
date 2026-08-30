@@ -70,33 +70,29 @@ jobs:
 
       # 公開先の基準パスを、configure-pages が返す URL から自分で組む。
       # **前後のスラッシュの有無に依存しない形にする** — 出力の綴りが変わっても
-      # 黙って `/mokumereference` のような経路を焼き込まないため。独自ドメインを
-      # 向けたときはパスが空になり、そのまま reference だけが残る (#483 でこの
-      # ファイルを触らずに済む)
+      # 黙って壊れた経路を焼き込まないため。独自ドメインを向けているときはパスが
+      # 空になり、そのまま `--hosting-base-path` を渡さない形になる
       - name: 公開先の基準パスを決める
         id: base
         env:
           BASE_URL: ${{ steps.pages.outputs.base_url }}
         run: |
           path="$(printf '%s' "$BASE_URL" | sed -E 's#^https?://[^/]+##; s#^/+##; s#/+$##')"
-          if [ -n "$path" ]; then path="$path/reference"; else path="reference"; fi
           echo "path=$path" >> "$GITHUB_OUTPUT"
-          echo "基準パス: $path"
+          echo "基準パス: ${path:-(root)}"
 
-      # 面は配下の 1 ディレクトリ (/reference/) だけを使う。root は手で書く入口の
-      # ためにここでは触らない (ADR-0027 決定 3 の「混ぜず並べる」)
+      # **面は root へ置く** (#543 / ADR-0027 決定 3 の改訂)。配下の 1 ディレクトリに
+      # 閉じ込めると、読者が見る URL が `/reference/documentation/…` と 2 段になる —
+      # `documentation` の 1 節は道具の出力に焼き込まれていて外せないので、短くできる
+      # のは接頭辞の側だけである。
+      # 手で書く層 (Documentation/site/) は、その上へ丸ごと被さる (make reference の中)
       - name: 参照の面を組み立てる
-        run: make reference OUT=_site/reference BASE="${{ steps.base.outputs.path }}"
-
-      # 入口は root。参照の面と同じ _site へ、**別のディレクトリを侵さずに**並ぶ
-      # (ADR-0027 決定 3)。組み立ての実体は make 側にあり、ここは呼ぶだけ
-      - name: 入口のページを組み立てる
-        run: make entry OUT=_site
+        run: make reference OUT=_site BASE="${{ steps.base.outputs.path }}"
 
       # **公開の側に、どのコミットから組んだかを 1 行だけ残す** (#483)。この回の
       # 公開が緑だったことは Actions が知っているが、**いま配られているものが新しいか**
-      # は外から引かないと分からない。印は面の root に置く (`/reference/` は参照の面の
-      # ものなので混ぜない。ADR-0027 決定 3)。
+      # は外から引かないと分からない。印は root に置く — 読む面ではなく機械が引く
+      # 1 本である (ADR-0027 決定 3)。
       # 形式の正典は書く側と読む側で 1 本にしてあるので、置くのも同じ道具に頼む
       - name: 公開の印を置く
         run: python3 scripts/check-publication.py --write-stamp _site --commit "$GITHUB_SHA"
@@ -115,9 +111,9 @@ jobs:
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
-          url="$(printf '%s' "$PAGE_URL" | sed -E 's#/+$##')/reference"
+          url="$(printf '%s' "$PAGE_URL" | sed -E 's#/+$##')"
           echo "引く先: $url"
           python3 scripts/check-published-reference.py "$url"
-          # 入口は root。参照の面とは別に引く — 片方だけが配られている状態を
-          # 「公開できた」と読まないため
-          python3 scripts/check-entry.py "$(printf '%s' "$PAGE_URL" | sed -E 's#/+$##')"
+          # 手で書いた層は別に引く。**面の内側が全部出ていても、被せた層が配られて
+          # いないことはある** — 片方だけが出ている状態を「公開できた」と読まない
+          python3 scripts/check-entry.py "$url"

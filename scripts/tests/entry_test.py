@@ -5,7 +5,7 @@
 
 この検査が塞ぐのは、**壊れても両方の面が 200 を返し続ける**壊れ方である。
 
-- 入口から参照の面へのリンクが切れる → 面は 2 つとも生きているのに行き来できない
+- 入口から面へ出て行くリンクが切れる → 手で書いた層も面も生きているのに入れない
 - 入口と README で入れ方の 1 行が食い違う → どちらも読めるが、片方が嘘になる
 
 どちらも「見れば分かる」形では現れないので、固定するのは**赤くなる側**である。
@@ -40,7 +40,7 @@ brew install mokume-metal/tap/mokume
 """
 
 # 属性を改行で分けて書く。**この形で拾えること**が要件で、1 行に畳んだ作り物で
-# 通しても、実物 (Documentation/index.html) は同じ書き方をしている
+# 通しても、実物 (Documentation/site/index.html) は同じ書き方をしている
 ENTRY = """\
 <!doctype html>
 <html lang="ja">
@@ -49,7 +49,7 @@ ENTRY = """\
       src="https://i.gyazo.com/aaaa.png"
       alt="絵" />
     <pre><code>brew install mokume-metal/tap/mokume</code></pre>
-    <a href="reference/">参照の面</a>
+    <a href="documentation/mokumecore/">参照の面</a>
   </body>
 </html>
 """
@@ -83,23 +83,32 @@ class EntryTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_行き先を__reference__と書いても通る(self):
-        self.write(ENTRY.replace('href="reference/"', 'href="./reference/"'))
+    def test_行き先を先頭のドット付きで書いても通る(self):
+        self.write(ENTRY.replace('href="documentation/', 'href="./documentation/'))
+        self.assertEqual(self.run_check().returncode, 0)
+
+    def test_モジュール名までは見ない(self):
+        # 面の内側 (モジュールの名前) を見るのは check-published-reference.py の
+        # 責務。ここで重ねると同じことを 2 か所で見ることになる
+        self.write(ENTRY.replace('documentation/mokumecore/', 'documentation/'))
         self.assertEqual(self.run_check().returncode, 0)
 
     # --- 行き来が切れる ---------------------------------------------------
 
-    def test_参照の面へのリンクが無ければ赤い(self):
-        self.write(ENTRY.replace('<a href="reference/">参照の面</a>', ""))
+    def test_面へのリンクが無ければ赤い(self):
+        self.write(ENTRY.replace('<a href="documentation/mokumecore/">参照の面</a>', ""))
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("行き来", result.stderr)
+        self.assertIn("面へ入れない", result.stderr)
 
-    def test_絶対_URL_で参照の面を指していたら赤い(self):
+    def test_絶対_URL_で面を指していたら赤い(self):
         # 基準パスは公開先で変わる。絶対で書くと github.io と独自ドメインの
         # 片方でしか繋がらない
         self.write(
-            ENTRY.replace('href="reference/"', 'href="https://mokume.org/reference/"')
+            ENTRY.replace(
+                'href="documentation/mokumecore/"',
+                'href="https://mokume.org/documentation/mokumecore/"',
+            )
         )
         self.assertEqual(self.run_check().returncode, 1)
 
@@ -179,7 +188,7 @@ class EntryTest(unittest.TestCase):
         base = f"http://127.0.0.1:{server.server_address[1]}"
         self.assertEqual(self.run_check(target=base).returncode, 0)
 
-        self.write(ENTRY.replace('<a href="reference/">参照の面</a>', ""))
+        self.write(ENTRY.replace('<a href="documentation/mokumecore/">参照の面</a>', ""))
         self.assertEqual(self.run_check(target=base).returncode, 1)
 
 
