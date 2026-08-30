@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: Publication
+
+# 公開されたものを定期で引く (#483)。**per-PR の ci-gate には置かない** —
+# 拾いたい事象はどれも PR と独立に起きるうえ、ネットワークを踏む検査を merge の
+# 条件に混ぜると、相手側の一時的な不調がこちらの赤になる (ruleset-drift.yml と
+# 同じ切り分け)。
+#
+# 見るのは 2 つで、壊れ方が違う:
+#
+#   freshness … 公開が手元の main に追随しているか。ビルドの緑は公開の緑ではない。
+#               起動条件から入力が漏れていれば、Actions は緑のまま公開だけが古くなる
+#               (ADR-0027 決定 3)。独自ドメインで引くので、証明書の検査も兼ねる
+#   assets    … 外に置いた絵が生きているか。ADR-0027 決定 2 により絵は外部ホスティングに
+#               あり、**壊れる瞬間はどの PR とも一致しない**。定期で引くしかない
+#
+# **赤くするだけで、起票はしない。** schedule の失敗は GitHub が cron を最後に触った
+# 人へ通知する。追跡単位が要るほど頻繁に鳴るかは、まだ 1 度も観測していない
+# (ADR-0008 決定 5 — native で済むなら足さない)。赤を見落とす事象が実際に起きたら、
+# ruleset-drift.yml と同じ形で起票を足す。
+
+on:
+  schedule:
+    # 日次 04:23 UTC (≒ 13:23 JST)。毎時 0 分と ruleset-drift の枠を外す
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      pages: read # Pages の custom domain の設定を読む
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 追随の判定は「未公開のコミットが猶予より古いか」を見るので、直近の
+          # 履歴と時刻が要る。これより深く遅れている公開は「印が履歴に無い」で
+          # 赤くなる — どちらにせよ赤なので、深さを増やして拾い直す意味は無い
+          fetch-depth: 200
+
+      - name: 引く先を決める
+        id: site
+        # ドメインの正典は scripts/check-publication.py にある。ここに綴りを写すと、
+        # 向け先を変えたときに片方だけが古くなる
+        run: echo "url=$(python3 scripts/check-publication.py --print-site)" >> "$GITHUB_OUTPUT"
+
+      - name: 公開が追随しているかを見る
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check-publication.py
+
+      # 印 (どのコミットを配っているか) と、中身の照合は役割が違う。印は説明文の
+      # 1 文字の直しまで拾い、こちらは「配信だけが壊れた」を拾う。**期待は手元の
+      # カタログから導かれる**ので、これがそのまま「公開されたものとリポジトリの
+      # 現在の中身の照合」になる (#478 の道具をそのまま使う。ADR-0008 決定 5)
+      #
+      # always() を付けるのは、上が赤でもこちらの結果を同じ run で見せるため。
+      # 片方ずつしか出ないと、原因の切り分けに 2 日かかる
+      - name: 公開された面が手元のカタログと合っているかを見る
+        if: always()
+        run: |
+          python3 scripts/check-published-reference.py \
+            "${{ steps.site.outputs.url }}/reference" \
+            --catalog Documentation/mokume.docc
+
+  assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 外に置いた資産が生きているかを見る
+        run: python3 scripts/check-external-assets.py
