@@ -19,9 +19,9 @@ SPDX-License-Identifier: MIT
 ```swift
 import mokume
 
-struct Hello: Sketch {
+final class Hello: Sketch {
     func draw() {
-        background(0.1)
+        background(.display(red: 0.06, green: 0.07, blue: 0.09))
         circle(width / 2, height / 2, 120)
     }
 }
