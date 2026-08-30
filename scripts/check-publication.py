@@ -31,9 +31,9 @@ JSON には `Schemas/` の正典が要る ([ADR-0018](../docs/decisions/0018-obs
 
 ## 独自ドメイン
 
-向け先は apex `mokume.org` (ADR-0027 決定 3 — root は手で書く入口、`/reference/` は参照の
-面)。**リポジトリ側が意図の正典**で、GitHub 側の設定はその写しである ([ADR-0006](../docs/decisions/0006-github-settings-as-code.md)
-と同じ向き)。`CNAME` ファイルは置かない — Actions から公開する構成では GitHub がそれを
+向け先は apex `mokume.org`。面は root に置かれ、手で書く入口が root の `index.html` を
+1 枚だけ上書きする (ADR-0027 決定 3)。**リポジトリ側が意図の正典**で、GitHub 側の設定は
+その写しである ([ADR-0006](../docs/decisions/0006-github-settings-as-code.md) と同じ向き)。`CNAME` ファイルは置かない — Actions から公開する構成では GitHub がそれを
 無視すると明記されているので、置けば「効いていない正典」が 1 つ増えるだけになる。
 
 引く先が `https://` なので、**引けること自体が証明書の検査**を兼ねる (urllib は既定で
@@ -58,7 +58,8 @@ import urllib.request
 
 # 面を向ける先。ここが意図の正典で、GitHub 側の設定はその写し
 DOMAIN = "mokume.org"
-# 公開の印の名前。面の root に置く (`/reference/` は参照の面のものなので混ぜない)
+# 公開の印の名前。root に置く — 読む面ではなく機械が引く 1 本なので、入口の
+# 「手で書いてよいのは 1 枚」には数えない (ADR-0027 決定 3)
 STAMP_NAME = "publish-stamp.txt"
 # 公開が走っている最中を赤にしないための猶予。main への push から公開が終わるまでの
 # 時間 (swift build を含むので数分〜十数分) に、ランナーの混雑ぶんの余裕を足した幅

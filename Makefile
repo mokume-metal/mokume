@@ -204,7 +204,7 @@ reference: ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時�
 		--transform-for-static-hosting \
 		$(if $(BASE),--hosting-base-path "$(BASE)",) \
 		--output-path "$(or $(OUT),$(REFERENCE_OUT))"
-	cp Documentation/reference-index.html "$(or $(OUT),$(REFERENCE_OUT))/index.html"
+	cp Documentation/index.html "$(or $(OUT),$(REFERENCE_OUT))/index.html"
 	python3 scripts/check-published-reference.py \
 		"$(or $(OUT),$(REFERENCE_OUT))" --catalog "$(REFERENCE_CATALOG)"
 
