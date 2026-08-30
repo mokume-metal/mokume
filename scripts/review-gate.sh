@@ -60,6 +60,39 @@ fail() {
   exit 1
 }
 
+# 「誰も承認できない」の差し戻し文言。**$( … ) の中に置かない** — macOS の bash 3.2 は
+# $( … ) の対応括弧を探すとき、ヒアドキュメントの本文まで走査対象にする。本文に $( や
+# 行頭の # が現れるとネストや行コメントを誤認して bad substitution になる (#160 と同じ形。
+# ここの文言は案内として GH_TOKEN="$(…)" と Issue 番号の両方を含むので、正しく書くほど
+# 壊れる)。関数に切り出すとヒアドキュメントが $( … ) の外へ出るので誤解されない
+unapprovable_message() {
+  cat <<'EOF'
+この PR を close し、GitHub App の identity で作り直してください。**承認を待っても
+永久に来ません** — GitHub は自分の PR を自分で承認できず、PR の author は後から
+変えられないためです。
+
+  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create ...
+
+代入から始めるのが要点です。export を先頭に付けると終了コードが 0 に化けて、token の
+発行に失敗しても後段が走り、同じ詰みを繰り返します (#122)。
+
+`MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
+秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を
+引いて、このリポジトリの App の鍵が載っていないかを見ます (在処そのものを読む必要は
+ありません)。一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねてください。
+
+作り直したら、**新しい PR の側の run を rerun** してください。詰んだ側の run が付けた
+この赤は同じ commit に残り続けるので、新しい PR の check が全部緑になっても ci-gate は
+赤のままです。**詰んだ側の run を rerun してはいけません** — その run は古い PR の
+イベントを持つので、何度走らせても同じ赤を再生産します (#259 の一般形とは打つ先が逆で、
+#513 に実測があります):
+
+  gh run rerun <新しい PR の run-id> --failed
+
+メンテナ自身の PR も同じです (ADR-0007 決定 2 — 例外を作らない)。
+EOF
+}
+
 # ルールセットが 1 承認を課しているパスのパターン。**写しを持たず正本を読む**
 required_patterns() {
   [ -f "$RULESET_FILE" ] || return 0
@@ -164,7 +197,9 @@ fi
 #    「承認が要る PR の author は、その PR を承認できる集合の要素であってはならない」。
 #    破ると承認を待っても永久に来ない — GitHub は自分の PR を自分で承認できず、author は
 #    後から変えられない。PR 作成前のフック (scripts/pr-identity-guard.sh) が常道で、
-#    ここは経路を問わない保険にあたる (ADR-0007 決定 3)。
+#    ここは経路を問わない保険にあたる (ADR-0007 決定 3)。**常道が黙る経路がある** —
+#    フックは「そのセッションが主として開いたディレクトリ」の .claude/settings.json
+#    しか読まないので、別のリポジトリを主とするセッションには効かない (#513)。
 #
 #    判定は 2 つに分かれる。**承認が要るか**は、対象 Issue が verify: human であるか、
 #    変更がルールセットの required_reviewers の file_patterns に当たるかで決まる。
@@ -199,24 +234,7 @@ if ! grep -qx "APPROVED" <<<"$reviews"; then
     assoc=$(gh api "repos/$REPO/pulls/$PR" --jq '.author_association' 2>/dev/null || true)
     if [ "$assoc" = "MEMBER" ] || [ "$assoc" = "OWNER" ]; then
       fail "この PR は誰も承認できない — 承認が要る PR の author ($author) が、唯一の承認者になっている (ADR-0007 / #88)" \
-           "$(cat <<'EOF'
-この PR を close し、GitHub App の identity で作り直してください。**承認を待っても
-永久に来ません** — GitHub は自分の PR を自分で承認できず、PR の author は後から
-変えられないためです。
-
-  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create ...
-
-代入から始めるのが要点です。export を先頭に付けると終了コードが 0 に化けて、token の
-発行に失敗しても後段が走り、同じ詰みを繰り返します (#122)。
-
-`MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
-秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を
-引いて、このリポジトリの App の鍵が載っていないかを見ます (在処そのものを読む必要は
-ありません)。一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねてください。
-
-メンテナ自身の PR も同じです (ADR-0007 決定 2 — 例外を作らない)。
-EOF
-)"
+           "$(unapprovable_message)"
     fi
   fi
 fi
