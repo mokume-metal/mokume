@@ -35,7 +35,12 @@ jobs:
   # macOS ランナーで走らせる。ci-check に swift build / swift test が入り、
   # ADR-0009 が macOS 26 / Metal 4 を前提に置いているため Linux ではビルドできない
   # (このリポジトリは public なので Actions の従量課金はかからない)。
+  #
+  # **承認では走らせない** (#623)。承認は PR の中身を 1 バイトも変えないので、macOS で
+  # swift build / swift test を回し直す理由が無い。pull_request_review トリガーの目的は
+  # review-gate の再評価だけである (on: のコメント)。
   ci-check:
+    if: github.event_name != 'pull_request_review'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -49,8 +54,11 @@ jobs:
 
   # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
   # merge_group にはタイトルが無いためスキップし、ci-gate 側は skipped を許容する。
+  #
+  # 承認でも走らせない (#623)。タイトルは承認では変わらず、編集は pull_request の
+  # edited が拾う。
   pr-title:
-    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Conventional Commits title
