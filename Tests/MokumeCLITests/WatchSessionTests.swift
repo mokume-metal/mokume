@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -18,6 +19,8 @@ struct WatchSessionTests {
         var builds = 0
         var launches = 0
         var stampsGivenToChildren: [String?] = []
+        /// 子へ渡した速さの名乗り。**渡さないと決めたときは nil であること**を見る
+        var ratesGivenToChildren: [String?] = []
         /// 作り直しを頼まれた場所。**パッケージの場所であることを見る** (#331)
         var builtIn: [URL] = []
 
@@ -31,15 +34,29 @@ struct WatchSessionTests {
                     return (self.buildStatus, self.buildOutput)
                 },
                 resolveExecutable: { $0.appendingPathComponent("bin") },
-                launch: { _, _, stamp in
+                launch: { _, _, stamp, rate in
                     self.launches += 1
                     self.stampsGivenToChildren.append(stamp)
+                    self.ratesGivenToChildren.append(rate)
                     self.clock += 0.03
                     return nil
                 },
                 now: { self.clock },
                 stamp: { _ in self.stamp })
         }
+    }
+
+    /// **人が見ている前でだけ足す。** 見張りを打った人には速さが要るが、機械が読む経路の
+    /// 出力は 1 バイトも変えない ([ADR-0029] 決定 5 の 2 番目)。
+    @Test("名乗ると決めた見張りは、構成の名前を子へ渡す")
+    func aReportingSessionHandsTheConfigurationToTheChild() throws {
+        let recorder = Recorder()
+        let session = WatchSession(
+            directory: try makeDirectory(), configuration: "release", reportsRate: true,
+            hooks: recorder.hooks())
+
+        _ = session.start()
+        #expect(recorder.ratesGivenToChildren == ["release"])
     }
 
     private func makeDirectory() throws -> URL {
@@ -58,6 +75,8 @@ struct WatchSessionTests {
         let report = session.start()
         #expect(recorder.builds == 1)
         #expect(recorder.launches == 1)
+        // 名乗ると決めていない見張りは、子へ速さの名乗りを渡さない (窓口の側の既定)
+        #expect(recorder.ratesGivenToChildren == [nil])
         #expect(report.ok)
         // 最初の 1 回は「保存から気付くまで」が無い
         #expect(report.timings.detectMs == nil)
@@ -254,5 +273,22 @@ struct SourceStampTests {
             to: sketch.appendingPathComponent("Sources/app/paint.metal"), atomically: true,
             encoding: .utf8)
         #expect(SourceStamp.current(for: sketch) == first)
+    }
+}
+
+/// 速さの名乗りを子へ渡す道 (#510)。
+@Suite("速さの名乗りを渡す")
+struct FrameRateHandoffTests {
+    /// **渡したときだけ載る。** 置かないことで、受け取る側は「無ければ黙る」だけで済む。
+    @Test("子へ渡す環境に載るのは、渡したものだけ")
+    func onlyWhatWasGivenLandsInTheChildEnvironment() {
+        let bare = RunCommand.childEnvironment([:])
+        #expect(bare[StartupReads.frameRateNotice.key] == nil)
+        #expect(bare[StartupReads.sourceStamp.key] == nil)
+
+        let carried = RunCommand.childEnvironment([:], stamp: "abc", reportingRate: "debug")
+        #expect(carried[StartupReads.frameRateNotice.key] == "debug")
+        #expect(carried[StartupReads.sourceStamp.key] == "abc")
+        #expect(RunCommand.childEnvironment(["A": "1"])["A"] == "1", "親の環境は運ぶ")
     }
 }
