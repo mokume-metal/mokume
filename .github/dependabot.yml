@@ -19,3 +19,5 @@ updates:
     # ルールセットの required_reviewers の承認なしには変えられない。actions の更新は必ず
     # .github/workflows/ を触るので、PR ごとにメンテナの承認も要る。
     labels: ["no-issue"]
+
+# (#539 の検証用。この行は merge しない)
