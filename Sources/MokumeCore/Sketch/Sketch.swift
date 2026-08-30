@@ -199,10 +199,39 @@ extension Sketch {
     ///
     /// `values` に書いた名前が、断片から `values.名前` で読める。後から名前を増やすと
     /// 断片ごと組み直しになるので、**名前は読み込むときに決め、値だけを後から変える**
-    /// (``Shader/set(_:_:)``)。
+    /// (``Shader/set(_:_:)-(_,ShaderValue)``)。
     ///
     /// 渡せるのは **float 換算で 64 個まで** (色は 4 個ぶん・2 つ組は 2 個ぶん) — 値は列
     /// ごとに 1 区画へ載せるので、上限は動かせない。超えた宣言は読み込みの時点で断られる。
+    ///
+    /// ## 面も名前で渡せる
+    ///
+    /// `surfaces` に書いた名前が、断片から `surfaces.名前` で読める。**渡せるのは
+    /// 読み込んだ絵と、自分で描いた面の両方**である。
+    ///
+    /// <!-- example: 文脈 var blended: Shader! -->
+    /// ```swift
+    /// // blended.metal
+    /// // float4 paint(Fragment in, Values values, Surfaces surfaces) {
+    /// //     float4 wood = mokume_sample(surfaces.grain, in.uv);
+    /// //     float4 dirt = mokume_sample(surfaces.smudge, in.place);
+    /// //     return float4(wood.rgb * mix(1.0, dirt.r, values.amount), wood.a);
+    /// // }
+    /// guard let bark = try? loadImage("assets/bark.png"),
+    ///     let smudge = try? createGraphics(256, 256)
+    /// else { return }
+    /// blended = try? loadShader(
+    ///     "assets/blended.metal",
+    ///     values: ["amount": 0.7],
+    ///     surfaces: ["grain": .image(bark), "smudge": .graphics(smudge)])
+    /// ```
+    ///
+    /// **面を宣言した断片だけ、受け取るものが 1 つ増える。** 宣言していない断片は
+    /// `paint(Fragment, Values)` のままで、書き換えなくてよい。
+    ///
+    /// 渡せるのは **4 枚まで** — 面は名前ごとに口を 1 つ使い、口の数は断片によらず
+    /// 決まっている。超えた宣言は読み込みの時点で断られる。値と同じく、**名前は
+    /// 読み込むときに決め、面だけを後から差し替える** (``Shader/set(_:_:)-(_,ShaderSurface)``)。
     ///
     /// ## 平面にも立体にも同じ断片が効く
     ///
@@ -221,20 +250,22 @@ extension Sketch {
     /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。平面と立体の両方が
     /// 組み上がってはじめて差し替わるので、片方だけ古い断片が効くことはない。
     ///
-    /// - Throws: 見つからないとき・組み立てられないとき・値が多すぎるときに ``ShaderFailure``。
+    /// - Throws: 見つからないとき・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     public func loadShader(
-        _ path: String, values: [String: ShaderValue] = [:]
+        _ path: String, values: [String: ShaderValue] = [:],
+        surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try canvas.loadShader(path, values: values)
+        try canvas.loadShader(path, values: values, surfaces: surfaces)
     }
 
     /// 文字列から断片を作る。保存の拾い直しは効かない (在処が無いため)。
     ///
-    /// - Throws: 組み立てられないとき・値が多すぎるときに ``ShaderFailure``。
+    /// - Throws: 組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     public func makeShader(
-        _ body: String, name: String = "shader", values: [String: ShaderValue] = [:]
+        _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
+        surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try canvas.makeShader(body, name: name, values: values)
+        try canvas.makeShader(body, name: name, values: values, surfaces: surfaces)
     }
 
     /// これから描くものを、この断片で塗る。
@@ -752,7 +783,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 面全体がくすんだ濃い青 1 色で塗られている -->
+    ///     <!-- shot: 面全体がくすんだ濃い青 1 色で塗られている | symmetric=xy -->
     ///     ![面全体がくすんだ濃い青 1 色で塗られている](https://i.gyazo.com/e82fe62b30c6016d1d17788c3b022dd4.png)
     ///     <!-- /shot -->
     ///   }
@@ -772,7 +803,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている -->
+    ///     <!-- shot: 先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている | symmetric=xy -->
     ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/9d79996d003e77b264444ebb7b60c5a5.png)
     ///     <!-- /shot -->
     ///   }
@@ -798,7 +829,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる -->
+    ///     <!-- shot: 橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる | symmetric=y -->
     ///     ![橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/d9561feaaaf61c716a934b9b9becbe2d.png)
     ///     <!-- /shot -->
     ///   }
@@ -818,7 +849,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている -->
+    ///     <!-- shot: 橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている | symmetric=y -->
     ///     ![橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている](https://i.gyazo.com/3b22aa622e4e116813827c7506e2a344.png)
     ///     <!-- /shot -->
     ///   }
@@ -843,7 +874,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる -->
+    ///     <!-- shot: 橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる | symmetric=y -->
     ///     ![橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/d52d48c8a4994693b679569e0715a2d4.png)
     ///     <!-- /shot -->
     ///   }
@@ -862,7 +893,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 水色に塗られた円を、太い橙色の輪郭が囲んでいる -->
+    ///     <!-- shot: 水色に塗られた円を、太い橙色の輪郭が囲んでいる | symmetric=xy -->
     ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/848e15edffad8dc14dbb347850c5d64b.png)
     ///     <!-- /shot -->
     ///   }
@@ -884,7 +915,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 上から下へ、だんだん太くなる 5 本の白い横線 -->
+    ///     <!-- shot: 上から下へ、だんだん太くなる 5 本の白い横線 | symmetric=x -->
     ///     ![上から下へ、だんだん太くなる 5 本の白い横線](https://i.gyazo.com/54213d17507b422557afb9541f29ce0a.png)
     ///     <!-- /shot -->
     ///   }
@@ -906,7 +937,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている -->
+    ///     <!-- shot: 同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている | symmetric=y -->
     ///     ![同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている](https://i.gyazo.com/8e17f246f704030ea38dca747306e122.png)
     ///     <!-- /shot -->
     ///   }
@@ -932,7 +963,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円 -->
+    ///     <!-- shot: 左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円 | symmetric=y -->
     ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/c1c94cc4ba3fb68f29dad4b295a95eba.png)
     ///     <!-- /shot -->
     ///   }
@@ -957,7 +988,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円 -->
+    ///     <!-- shot: 左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円 | symmetric=y -->
     ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/24370476c54c4b0bf6f2e035fd25fa6c.png)
     ///     <!-- /shot -->
     ///   }
@@ -988,7 +1019,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している -->
+    ///     <!-- shot: 太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している | symmetric=xy -->
     ///     ![太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している](https://i.gyazo.com/b8fff97556114a1c9a4fac48bf3658df.png)
     ///     <!-- /shot -->
     ///   }
@@ -1011,7 +1042,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 太い橙色の線が、白い目印の線のところでまっすぐ切れている -->
+    ///     <!-- shot: 太い橙色の線が、白い目印の線のところでまっすぐ切れている | symmetric=xy -->
     ///     ![太い橙色の線が、白い目印の線のところでまっすぐ切れている](https://i.gyazo.com/27e91f36498415fe4c700fb3954854e0.png)
     ///     <!-- /shot -->
     ///   }
@@ -1034,7 +1065,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 太い橙色の線が、白い目印の線より外へ四角くはみ出している -->
+    ///     <!-- shot: 太い橙色の線が、白い目印の線より外へ四角くはみ出している | symmetric=xy -->
     ///     ![太い橙色の線が、白い目印の線より外へ四角くはみ出している](https://i.gyazo.com/84aafb115c492ac744db4e9232630252.png)
     ///     <!-- /shot -->
     ///   }
@@ -1289,7 +1320,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る | frames=60 -->
+    ///     <!-- shot: 赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る | frames=60 symmetric=y -->
     ///     ![赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る](https://i.gyazo.com/1e5b770dc68ce2340e1e2addb7e725d3.gif)
     ///     <!-- /shot -->
     ///   }
@@ -1328,7 +1359,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 太い橙色の山形の折れ線。頂点は尖らず、平らに削がれている -->
+    ///     <!-- shot: 太い橙色の山形の折れ線。頂点は尖らず、平らに削がれている | symmetric=x -->
     ///     ![太い橙色の山形の折れ線。頂点は尖らず、平らに削がれている](https://i.gyazo.com/845d763011b862a08a45daf482ad4330.png)
     ///     <!-- /shot -->
     ///   }
@@ -1352,7 +1383,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 同じ折れ線の頂点が、平らに削がれている -->
+    ///     <!-- shot: 同じ折れ線の頂点が、平らに削がれている | symmetric=x -->
     ///     ![同じ折れ線の頂点が、平らに削がれている](https://i.gyazo.com/845d763011b862a08a45daf482ad4330.png)
     ///     <!-- /shot -->
     ///   }
@@ -1376,7 +1407,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 同じ折れ線の頂点が、丸くなっている -->
+    ///     <!-- shot: 同じ折れ線の頂点が、丸くなっている | symmetric=x -->
     ///     ![同じ折れ線の頂点が、丸くなっている](https://i.gyazo.com/fa97542f35665344b2155270fe77ff23.png)
     ///     <!-- /shot -->
     ///   }
@@ -1398,7 +1429,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 濃い灰色の下地に、左上 (80, 60) から 240x180 の橙色の長方形 -->
+    ///     <!-- shot: 濃い灰色の下地に、左上 (80, 60) から 240x180 の橙色の長方形 | symmetric=xy -->
     ///     ![濃い灰色の下地に、左上 (80, 60) から 240x180 の橙色の長方形](https://i.gyazo.com/91321fd926431913d8b41a1bc0877b10.png)
     ///     <!-- /shot -->
     ///   }
@@ -1440,7 +1471,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 下地の中ほどに、一辺 140 の橙色の正方形 -->
+    ///     <!-- shot: 下地の中ほどに、一辺 140 の橙色の正方形 | symmetric=xy -->
     ///     ![下地の中ほどに、一辺 140 の橙色の正方形](https://i.gyazo.com/816a997e781a50e439a784d00f4f9374.png)
     ///     <!-- /shot -->
     ///   }
@@ -1461,7 +1492,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 濃い灰色の下地の中央に、直径 160 の橙色の円 -->
+    ///     <!-- shot: 濃い灰色の下地の中央に、直径 160 の橙色の円 | symmetric=xy -->
     ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/9f85642dcfaf33847d61876f57ae2efe.png)
     ///     <!-- /shot -->
     ///   }
@@ -1482,7 +1513,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 同じ中心に重なる、直径 240・160・80 の 3 つの円 -->
+    ///     <!-- shot: 同じ中心に重なる、直径 240・160・80 の 3 つの円 | symmetric=xy -->
     ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/0deb638d76e89a91dd47d6ce89d90fda.png)
     ///     <!-- /shot -->
     ///   }
@@ -1504,7 +1535,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 画面の中央に、横に長い橙色の楕円 -->
+    ///     <!-- shot: 画面の中央に、横に長い橙色の楕円 | symmetric=xy -->
     ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/f22d63e7a8e424184eb7bb7a0bf24867.png)
     ///     <!-- /shot -->
     ///   }
@@ -1523,7 +1554,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 同じ中心に、横長と縦長の楕円が十字に重なる -->
+    ///     <!-- shot: 同じ中心に、横長と縦長の楕円が十字に重なる | symmetric=xy -->
     ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/81440c52fa93cc3f7f3ddd3d135e7529.png)
     ///     <!-- /shot -->
     ///   }
@@ -1604,7 +1635,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする | frames=60 -->
+    ///     <!-- shot: 黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする | frames=60 symmetric=y -->
     ///     ![黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする](https://i.gyazo.com/7c306f3edde7ca7f3157cbc5dd083a1f.gif)
     ///     <!-- /shot -->
     ///   }
@@ -1633,7 +1664,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 下地の中央に、頂点を上に向けた橙色の三角形 -->
+    ///     <!-- shot: 下地の中央に、頂点を上に向けた橙色の三角形 | symmetric=x -->
     ///     ![下地の中央に、頂点を上に向けた橙色の三角形](https://i.gyazo.com/9e0c0bcf222e3977d1dc13227e874eba.png)
     ///     <!-- /shot -->
     ///   }
@@ -1705,7 +1736,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 左から右へ、だんだん大きくなる 5 つの白い点 -->
+    ///     <!-- shot: 左から右へ、だんだん大きくなる 5 つの白い点 | symmetric=y -->
     ///     ![左から右へ、だんだん大きくなる 5 つの白い点](https://i.gyazo.com/85a4928d5f536bc3781c1f265bf2c2ea.png)
     ///     <!-- /shot -->
     ///   }
@@ -1726,7 +1757,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 橙色に塗る指定をしても、点は水色のまま並んでいる -->
+    ///     <!-- shot: 橙色に塗る指定をしても、点は水色のまま並んでいる | symmetric=xy -->
     ///     ![橙色に塗る指定をしても、点は水色のまま並んでいる](https://i.gyazo.com/43f7f0bf9325519e41a492150390c392.png)
     ///     <!-- /shot -->
     ///   }
@@ -1749,7 +1780,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 左上を (120, 90) とする 160x120 の橙色の長方形 -->
+    ///     <!-- shot: 左上を (120, 90) とする 160x120 の橙色の長方形 | symmetric=xy -->
     ///     ![左上を (120, 90) とする 160x120 の橙色の長方形](https://i.gyazo.com/4897a176deed098645d6b8808791c91d.png)
     ///     <!-- /shot -->
     ///   }
@@ -1829,7 +1860,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: (200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円 -->
+    ///     <!-- shot: (200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円 | symmetric=xy -->
     ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/3183dfa1e410e8670ca7f45cc055dd87.png)
     ///     <!-- /shot -->
     ///   }
@@ -1888,7 +1919,7 @@ extension Sketch {
     ///     ```
     ///   }
     ///   @Column {
-    ///     <!-- shot: 太さの違う 3 本の白い線が、端の形を変えて横に並んでいる -->
+    ///     <!-- shot: 太さの違う 3 本の白い線が、端の形を変えて横に並んでいる | symmetric=x -->
     ///     ![太さの違う 3 本の白い線が、端の形を変えて横に並んでいる](https://i.gyazo.com/2f54b8bc10dd255977971f5679592cd1.png)
     ///     <!-- /shot -->
     ///   }

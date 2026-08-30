@@ -984,7 +984,8 @@ public final class Canvas {
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     shader: currentShader,
-                    values: currentShader?.packedValues ?? [], numbers: currentNumbers,
+                    values: currentShader?.packedValues ?? [], surfaces: snapshotSurfaces(),
+                    numbers: currentNumbers,
                     source: openSource, start: start, count: count),
                 clip: currentClip,
                 matrix: jittered(openSource == .flat ? projection : viewProjection),
@@ -998,6 +999,19 @@ public final class Canvas {
                 instanceStart: template?.instanceStart ?? 0,
                 instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
                 strokeStart: template?.strokeStart ?? .max))
+    }
+
+    /// 断片へ渡す面を、いま列に写し取る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
+    ///
+    /// 並びは宣言と同じ名前順。**描き場所を渡していたら、置いたことを知らせる** —
+    /// 貼る口 (``texture(_:)``) と同じで、描き切る前の面を読んだときに黙っていると、
+    /// 出るのは前のフレームの絵になる。
+    private func snapshotSurfaces() -> [any MTLTexture] {
+        guard let shader = currentShader, !shader.surfaces.isEmpty else { return [] }
+        return shader.orderedSurfaces.map { surface in
+            if case .graphics(let graphics) = surface { note(placing: graphics) }
+            return surface.texture
+        }
     }
 
     /// 開いている雛形を閉じる。**畳めない頂点を置く前に呼ぶ。**
@@ -1024,7 +1038,8 @@ public final class Canvas {
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     shader: currentShader,
-                    values: currentShader?.packedValues ?? [], numbers: currentNumbers,
+                    values: currentShader?.packedValues ?? [], surfaces: snapshotSurfaces(),
+                    numbers: currentNumbers,
                     source: .solid,
                     start: open.vertexStart, count: open.vertexCount),
                 clip: currentClip,
@@ -2293,6 +2308,14 @@ public final class Canvas {
                     index: ShapePipeline.numbersBufferIndex)
                 pipeline.argumentTable.setTexture(
                     run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
+                // 利用者が宣言した面。**口は毎回すべて束ねる** — 渡していない口には
+                // 読む面を束ねる。束ねずに走らせると、宣言より多く読んだ断片が
+                // 絵の乱れではなく異常終了になる (数の並びと同じ扱い)
+                for slot in 0..<ShapePipeline.surfaceCapacity {
+                    let surface = slot < run.surfaces.count ? run.surfaces[slot] : run.texture
+                    pipeline.argumentTable.setTexture(
+                        surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
+                }
                 encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
                 encoder.drawPrimitives(
                     primitiveType: .triangle,

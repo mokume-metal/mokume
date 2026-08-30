@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/example-shots.py の検査 (#480)。
+"""scripts/example-shots.py の検査 (#480 / #481)。
 
-固定するのは 3 つで、どれも破れ方が無言である。
+固定するのは 4 つで、どれも破れ方が無言である。
 
 - **囲みの外を壊さない** — 撮り直しが人の書いた説明を消したら、消えたことに
   気付けるのは公開された面を読んだときになる
@@ -11,6 +11,8 @@
   ここが崩れると、撮るたびに差分が出て「絵が変わった」と見分けが付かなくなる
 - **例を書き換えたのに撮り直していない状態を赤くする** — 絵と例が食い違ったまま
   公開されるのが、この仕組みでいちばん困る壊れ方
+- **反転しても見分けが付かない絵の言い方** (#481) — 境目の当て方と、黙らせた軸の
+  扱いをここで固定する。**絵を撮らずに検められる**ように、判定は純関数へ切ってある
 
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
@@ -161,6 +163,45 @@ class ExampleShotsTest(unittest.TestCase):
         # **実行ファイルは 1 つ。** 1 例 1 ターゲットにするとビルドが現実的でなくなる
         self.assertEqual(
             (package / "Package.swift").read_text(encoding="utf-8").count(".executableTarget"), 1
+        )
+
+    def test_黙らせる軸を読み並びを揃える(self):
+        self.path.write_text(
+            SOURCE.replace("<!-- shot: 中央の橙色の円 -->", "<!-- shot: 中央の円 | symmetric=yx -->"),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.collect()[0].symmetric, "xy")
+
+    def test_知らない軸は名乗って落ちる(self):
+        self.path.write_text(
+            SOURCE.replace("<!-- shot: 中央の橙色の円 -->", "<!-- shot: 中央の円 | symmetric=z -->"),
+            encoding="utf-8",
+        )
+        with self.assertRaises(ValueError):
+            self.collect()
+
+    def test_黙らせる軸は指紋を動かさない(self):
+        # **黙らせる指定を足しても絵は 1 画素も変わらない。** 指紋が動くと撮り直しを
+        # 迫られ、「対称だと分かった」と書くだけで全部撮り直す羽目になる
+        before = self.collect()[0].fingerprint
+        self.path.write_text(
+            SOURCE.replace("<!-- shot: 中央の橙色の円 -->", "<!-- shot: 中央の橙色の円 | symmetric=xy -->"),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.collect()[0].fingerprint, before)
+
+    def test_見分けが付かない軸だけを言う(self):
+        limit = shots.INDISTINGUISHABLE
+        lines = shots.mirror_warnings(
+            "shot-1", "Sketch.swift:10", {"x": limit, "y": limit + 0.01}, ""
+        )
+        self.assertEqual(len(lines), 1)
+        self.assertIn("x 軸", lines[0])
+        self.assertIn("symmetric=x", lines[0])
+
+    def test_黙らせた軸は数えない(self):
+        self.assertEqual(
+            shots.mirror_warnings("shot-1", "Sketch.swift:10", {"x": 0.0, "y": 0.0}, "xy"), []
         )
 
     def test_実物のソースの囲みが揃っている(self):

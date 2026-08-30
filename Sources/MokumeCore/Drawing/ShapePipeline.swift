@@ -39,6 +39,15 @@ final class ShapePipeline {
     static let textureIndex = 0
     /// 焼き付けた影を渡す口の番号 (シェーダ側の `texture(1)`)。
     static let shadowTextureIndex = 1
+    /// 利用者が宣言した面を渡す口の、最初の番号 (シェーダ側の `texture(2)` から)。
+    static let surfaceTextureIndex = 2
+    /// 1 つの断片へ渡せる面の枚数。**上限の正典はここ 1 か所**で、原稿を組み立てる側
+    /// (`ShaderSource`)・入口 (`Common.metal`)・断る側 (`Canvas.loadShader`) が
+    /// これを見る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
+    ///
+    /// 口は使う枚数によらず全部が束ねられる。**空きの口にも何かを束ねる**ので、
+    /// 宣言より多く読もうとした断片も、絵が乱れるだけで異常終了はしない。
+    static let surfaceCapacity = 4
 
     /// 組み込みの塗りで描くパイプライン。
     let state: any MTLRenderPipelineState
@@ -108,7 +117,7 @@ final class ShapePipeline {
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
         tableDescriptor.maxBufferBindCount = 12
-        tableDescriptor.maxTextureBindCount = 2
+        tableDescriptor.maxTextureBindCount = Self.surfaceTextureIndex + Self.surfaceCapacity
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
         } catch {

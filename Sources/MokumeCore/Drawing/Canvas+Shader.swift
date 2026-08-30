@@ -10,7 +10,8 @@ import Foundation
 extension Canvas {
     /// 断片を読み込む。
     public func loadShader(
-        _ path: String, values: [String: ShaderValue] = [:]
+        _ path: String, values: [String: ShaderValue] = [:],
+        surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
         let candidates = ImageFile.candidates(for: path)
         guard
@@ -21,12 +22,14 @@ extension Canvas {
         }
 
         try Self.checkValuesFit(values, path: path)
+        try Self.checkSurfacesFit(surfaces, path: path)
 
         let name = url.deletingPathExtension().lastPathComponent
         let shader: Shader
         do {
             shader = try Shader(
-                name: name, url: url, body: body, values: values, gpu: gpu, pipeline: pipeline)
+                name: name, url: url, body: body, values: values, surfaces: surfaces,
+                gpu: gpu, pipeline: pipeline)
         } catch {
             throw .notCompilable(path: path, reason: "\(error)")
         }
@@ -37,14 +40,17 @@ extension Canvas {
 
     /// 文字列から作る。
     public func makeShader(
-        _ body: String, name: String = "shader", values: [String: ShaderValue] = [:]
+        _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
+        surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
         try Self.checkValuesFit(values, path: name)
+        try Self.checkSurfacesFit(surfaces, path: name)
 
         let shader: Shader
         do {
             shader = try Shader(
-                name: name, url: nil, body: body, values: values, gpu: gpu, pipeline: pipeline)
+                name: name, url: nil, body: body, values: values, surfaces: surfaces,
+                gpu: gpu, pipeline: pipeline)
         } catch {
             throw .notCompilable(path: name, reason: "\(error)")
         }
@@ -56,7 +62,7 @@ extension Canvas {
     /// 渡す値が列 1 つぶんの区画に収まるかを見る ([#348](https://github.com/mokume-metal/mokume/issues/348))。
     ///
     /// **警告して切り詰めるのではなく、ここで断る。** 値の数は宣言した時点で決まり、
-    /// ``Shader/set(_:_:)`` は宣言済みの名前しか受け付けないので**後から直せない** —
+    /// ``Shader/set(_:_:)-(_,ShaderValue)`` は宣言済みの名前しか受け付けないので**後から直せない** —
     /// フレームごとに置き直すもの (視点・周囲・材質) が黙って無視されても次のフレームで
     /// 直せるのとは違う。切り詰めれば、断片の `Values` に一度も書かれない欄が残ったまま
     /// 絵が出続ける。
@@ -68,6 +74,19 @@ extension Canvas {
         let count = ShaderSource.pack(values).count
         guard count > Canvas.valueSlotCapacity else { return }
         throw .tooManyValues(path: path, count: count, capacity: Canvas.valueSlotCapacity)
+    }
+
+    /// 渡す面が口の数に収まるかを見る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
+    ///
+    /// **値と同じく、ここで断る。** 面の名前は宣言した時点で決まり、``Shader/set(_:_:)-(_,ShaderSurface)``
+    /// は宣言済みの名前しか受け付けないので後から直せない。切り詰めれば、断片の
+    /// `Surfaces` に一度も束ねられない欄が残ったまま絵が出続ける。
+    private static func checkSurfacesFit(
+        _ surfaces: [String: ShaderSurface], path: String
+    ) throws(ShaderFailure) {
+        guard surfaces.count > ShapePipeline.surfaceCapacity else { return }
+        throw .tooManySurfaces(
+            path: path, count: surfaces.count, capacity: ShapePipeline.surfaceCapacity)
     }
 
     /// これから描くものを、この断片で塗る。**溜めている列をその場で閉じる。**

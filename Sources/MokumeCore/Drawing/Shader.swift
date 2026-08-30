@@ -7,12 +7,25 @@ import MokumeDiagnostics
 
 /// 利用者が書いた塗り。
 ///
-/// 使い方は ``Sketch/loadShader(_:values:)`` にある。
+/// 使い方は ``Sketch/loadShader(_:values:surfaces:)`` にある。
 public final class Shader {
     /// 断片の在処。保存を拾い直すのに使う。
     public let url: URL?
     /// いま効いている値。
     private(set) var values: [String: ShaderValue]
+
+    /// いま渡している面。**名前ごとに口を 1 つ使う** ([#407])。
+    ///
+    /// 値と別に持つのは詰め先が違うからで、値は列ごとの 1 区画へ、面は口へ載る。
+    ///
+    /// [#407]: https://github.com/mokume-metal/mokume/issues/407
+    private(set) var surfaces: [String: ShaderSurface]
+
+    /// 口へ束ねる順に並べた面。**原稿が宣言した並びと同じ (名前順)** — ここが食い違うと、
+    /// 断片が「木目」と書いたところへ「汚し」が届く。
+    var orderedSurfaces: [ShaderSurface] {
+        surfaces.sorted { $0.key < $1.key }.map(\.value)
+    }
 
     /// いま描くのに使うパイプライン。差し替えに失敗しても**前のものが残る**。
     private(set) var state: any MTLRenderPipelineState
@@ -40,15 +53,18 @@ public final class Shader {
 
     init(
         name: String, url: URL?, body: String, values: [String: ShaderValue],
+        surfaces: [String: ShaderSurface] = [:],
         gpu: RenderDevice, pipeline: ShapePipeline
     ) throws(RenderFailure) {
         self.name = name
         self.url = url
         self.values = values
+        self.surfaces = surfaces
         self.gpu = gpu
         self.pipeline = pipeline
 
-        let library = try gpu.makeShapeLibrary(named: name, body: body, values: values)
+        let library = try gpu.makeShapeLibrary(
+            named: name, body: body, values: values, surfaces: surfaces)
         self.state = try pipeline.makeState(fragmentLibrary: library, label: "mokume.shader.\(name)")
         self.solidState = try pipeline.makeState(
             fragmentLibrary: library, label: "mokume.shader.\(name).solid",
@@ -81,6 +97,22 @@ public final class Shader {
         values[name] = value
     }
 
+    /// 渡す面を差し替える。
+    ///
+    /// **宣言していない名前は受け付けない** — 面の宣言も断片と一緒に組み上がるので、
+    /// 後から名前を増やすと組み直しになる (値と同じ規則)。
+    public func set(_ name: String, _ surface: ShaderSurface) {
+        canvas?.shaderValuesWillChange()
+        guard surfaces[name] != nil else {
+            Diagnostics.warn(
+                "shader: 宣言していない面 \"\(name)\" は渡せません。"
+                    + "loadShader の surfaces に書いてください"
+                    + "(いまの面: \(surfaces.keys.sorted().joined(separator: ", ")))")
+            return
+        }
+        surfaces[name] = surface
+    }
+
     /// いまの値を、シェーダへ渡す並びに詰めたもの。
     var packedValues: [Float] { ShaderSource.pack(values) }
 
@@ -102,7 +134,8 @@ public final class Shader {
         // 両方が反応するので、素直に組み直すと 1 度の保存で 2 度組み立てることになる
         guard body != compiledBody else { return }
         do {
-            let library = try gpu.makeShapeLibrary(named: name, body: body, values: values)
+            let library = try gpu.makeShapeLibrary(
+                named: name, body: body, values: values, surfaces: surfaces)
             // **両方が組み上がってから差し替える。** 片方だけ差し替わると、平面と
             // 立体で違う断片が効いている状態になる
             let flat = try pipeline.makeState(
