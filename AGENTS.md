@@ -84,6 +84,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 | --- | --- | --- |
 | `autoMerge: false` + `BLOCKED` | 承認待ち、または auto-merge が外れた ([#114](https://github.com/mokume-metal/mokume/issues/114) に出来事ごとの実測) | 承認を待つ / `gh pr merge <番号> --auto --squash` を打ち直す |
 | 全 check が緑なのに進まない | 同じコミットに残る古い失敗 check run が判定を固定している ([#259](https://github.com/mokume-metal/mokume/issues/259)) | `gh run rerun <run-id> --failed` |
+| `autoMerge: false` + `CLEAN` + 全 check 緑 | 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用) | `make catch-up` |
 
 ```bash
 gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
@@ -231,8 +232,10 @@ bash scripts/orphan-processes.sh
 
 | 判定 | `local-render` | 対処 |
 | --- | --- | --- |
-| PR head と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | main を取り込み、手元で `make ci-check` を打ち直して `--auto` を掛け直す |
+| PR head と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | `make catch-up` |
 | 描画に触れる open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | 先頭が merge されるまで待つ (待ちの間に打ち直しても無駄になる)。先頭が停滞しているならその PR を Draft に落とす |
+
+`make catch-up` は復旧の 5 手 — main を取り込む → `make ci-check` → push → `make render-status` → `--auto` を掛け直す — を 1 手にする ([#457](https://github.com/mokume-metal/mokume/issues/457))。**打つ意味が無いときは走らない**ので、上の表の 2 行目 (先に描画 PR が居る) では番号を名指しして断り、数分かかる検査を空費しない。手で 5 手を追ってもよいが、**1 手抜けても PR は全チェック緑・`CLEAN` のまま止まる**ので、それに気付く経路が無い。
 
 壊れている絵は起票の時点でしか撮れないので、見た目・動きの事象を Issue に立てるときも証跡を添える。
 
