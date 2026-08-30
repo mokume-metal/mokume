@@ -191,6 +191,9 @@ public final class SketchApplication: NSObject {
         surface.wantsLayer = true
         surface.autoresizingMask = [.width, .height]
         window.contentView = surface
+        // **つまみは絵の外に立つ** (ADR-0030 決定 1)。同じ窓へ重ねるだけで、描画の
+        // 成果物には 1 画素も触らない。宣言が 1 つも無ければ何も足さない
+        KnobOverlay.makeIfNeeded(for: runtime.sketch)?.attach(to: surface)
         window.makeKeyAndOrderFront(nil)
         // **面を第一応答者にしないとキーが来ない。** 窓を出したあとに据える —
         // contentView を差し替えると応答者は窓へ戻る
