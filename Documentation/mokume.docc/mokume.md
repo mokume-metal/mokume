@@ -47,105 +47,335 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 
 - ``Sketch``
 - ``SketchSettings``
-- ``Clock``
-- ``SketchRuntime``
-- ``SketchApplication``
-- ``StartupReads``
-- ``WorkDirectory``
-- ``SourceStamp``
-- ``RuntimeLoad``
+- ``Sketch/init()``
+- ``Sketch/setup()``
+- ``Sketch/draw()``
+- ``Sketch/settings``
+- ``Sketch/plugins``
 
-### 描く
+### 面の大きさと時間
 
-- ``Canvas``
-- ``Shape``
-- ``ShapeMode``
-- ``ShapeEnd``
-- ``StrokeCap``
-- ``StrokeJoin``
-- ``Transform``
-- ``Placement``
+- ``Sketch/width``
+- ``Sketch/height``
+- ``Sketch/pixelWidth``
+- ``Sketch/pixelHeight``
+- ``Sketch/canvas``
+- ``Sketch/frameCount``
+- ``Sketch/time``
+- ``Sketch/deltaTime``
+- ``Sketch/usesFrameHistory``
+- ``Upscale``
 
-### 色と混ぜ方
+### 下地と色
 
+- ``Sketch/background(_:)-2yb9n``
+- ``Sketch/fill(_:)``
+- ``Sketch/noFill()``
+- ``Sketch/stroke(_:)``
+- ``Sketch/noStroke()``
+- ``Sketch/tint(_:)``
+- ``Sketch/noTint()``
+- ``Sketch/blendMode(_:)``
+- ``Sketch/exposure(_:)``
+- ``Sketch/toneMapping(_:)``
 - ``LinearRGBA``
 - ``BlendMode``
 - ``ToneMapping``
 
-### 文字
+### 線の引き方
 
+- ``Sketch/strokeWeight(_:)``
+- ``Sketch/strokeCap(_:)``
+- ``Sketch/strokeJoin(_:)``
+- ``StrokeCap``
+- ``StrokeJoin``
+
+### 2D の図形
+
+- ``Sketch/rect(_:_:_:_:)``
+- ``Sketch/square(_:_:_:)``
+- ``Sketch/circle(_:_:_:)``
+- ``Sketch/ellipse(_:_:_:_:)``
+- ``Sketch/arc(_:_:_:_:_:_:)``
+- ``Sketch/triangle(_:_:_:_:_:_:)``
+- ``Sketch/quad(_:_:_:_:_:_:_:_:)``
+- ``Sketch/point(_:_:)``
+- ``Sketch/line(_:_:_:_:)``
+
+### 座標の読み方
+
+- ``Sketch/rectMode(_:)``
+- ``Sketch/ellipseMode(_:)``
+- ``Sketch/imageMode(_:)``
+- ``ShapeMode``
+
+### 自分で形を組む
+
+- ``Sketch/beginShape(_:)``
+- ``Sketch/vertex(_:_:)``
+- ``Sketch/vertex(_:_:_:)``
+- ``Sketch/vertex(_:_:_:_:)``
+- ``Sketch/vertex(_:_:_:_:_:)``
+- ``Sketch/normal(_:_:_:)``
+- ``Sketch/bezierVertex(_:_:_:_:_:_:)``
+- ``Sketch/quadraticVertex(_:_:_:_:)``
+- ``Sketch/curveVertex(_:_:)``
+- ``Sketch/curveDetail(_:)``
+- ``Sketch/curveTightness(_:)``
+- ``Sketch/beginContour()``
+- ``Sketch/endContour()``
+- ``Sketch/endShape(_:)``
+- ``ShapeEnd``
+- ``VertexKind``
+
+### 形を保持して置く
+
+- ``Sketch/createShape(_:)``
+- ``Sketch/shape(_:_:_:)``
+- ``Sketch/shape(_:at:)``
+- ``Shape``
+- ``Placement``
+
+### 座標を動かす
+
+- ``Sketch/translate(_:_:)``
+- ``Sketch/translate(_:_:_:)``
+- ``Sketch/rotate(_:)``
+- ``Sketch/rotateX(_:)``
+- ``Sketch/rotateY(_:)``
+- ``Sketch/rotateZ(_:)``
+- ``Sketch/scale(_:_:)``
+- ``Sketch/scale(_:_:_:)``
+- ``Sketch/shearX(_:)``
+- ``Sketch/shearY(_:)``
+- ``Sketch/applyMatrix(_:)``
+- ``Sketch/resetMatrix()``
+- ``Transform``
+
+### 積んで戻す
+
+- ``Sketch/pushMatrix()``
+- ``Sketch/popMatrix()``
+- ``Sketch/pushStyle()``
+- ``Sketch/popStyle()``
+- ``Sketch/push()``
+- ``Sketch/pop()``
+
+### 切り抜く
+
+- ``Sketch/clip(_:_:_:_:)``
+- ``Sketch/noClip()``
+
+### 文字を描く
+
+- ``Sketch/text(_:_:_:)``
+- ``Sketch/text(_:_:_:_:_:)``
+- ``Sketch/textSize(_:)``
+- ``Sketch/textFont(_:)``
+- ``Sketch/noTextFont()``
+- ``Sketch/textStyle(_:)``
+- ``Sketch/textAlign(_:_:)``
+- ``Sketch/textLeading(_:)``
+- ``Sketch/textWrap(_:)``
+- ``Sketch/textWidth(_:)``
+- ``Sketch/textAscent()``
+- ``Sketch/textDescent()``
+- ``Sketch/textOutline(_:_:_:)``
 - ``TextStyle``
+- ``TextWrap``
 - ``TextFlow``
 - ``TextContour``
-- ``TextWrap``
 - ``HorizontalTextAlign``
 - ``VerticalTextAlign``
 
-### 画像と画素
+### 絵を置く
 
+- ``Sketch/loadImage(_:)``
+- ``Sketch/requestImage(_:)``
+- ``Sketch/createImage(_:_:)``
+- ``Sketch/image(_:_:_:)-19wv0``
+- ``Sketch/image(_:_:_:_:_:)-882gd``
+- ``Sketch/image(_:_:_:_:_:_:_:_:_:)-2oyv8``
+- ``Sketch/texture(_:)-9gngo``
+- ``Sketch/noTexture()``
 - ``Image``
+- ``ImageFailure``
+- ``DisplayImage``
+
+### 画素を読み書きする
+
+- ``Sketch/pixels``
+- ``Sketch/loadPixels()``
+- ``Sketch/get(_:_:)``
+- ``Sketch/set(_:_:_:)``
 - ``Pixels``
 - ``PixelBuffer``
-- ``DisplayImage``
+
+### 別の描き場所に描く
+
+- ``Sketch/createGraphics(_:_:)``
+- ``Sketch/image(_:_:_:)-54avl``
+- ``Sketch/image(_:_:_:_:_:)-5wi02``
+- ``Sketch/image(_:_:_:_:_:_:_:_:_:)-2crsz``
+- ``Sketch/texture(_:)-5gdhl``
+- ``Canvas``
+
+### 書き出す
+
+- ``Sketch/save(_:)``
+- ``Sketch/beginRecord(_:)``
+- ``Sketch/endRecord()``
 - ``PNGFile``
-- ``ImageFailure``
 - ``ImageWriteFailure``
 
-### 立体と光
+### 立体を置く
 
+- ``Sketch/box(_:)``
+- ``Sketch/box(_:_:_:)``
+- ``Sketch/sphere(_:detail:)``
+- ``Sketch/plane(_:_:)``
+- ``Sketch/cylinder(_:_:detail:)``
+- ``Sketch/cone(_:_:detail:)``
+- ``Sketch/torus(_:_:detail:)``
+- ``Sketch/loadModel(_:normalize:)``
+- ``Sketch/requestModel(_:normalize:)``
+- ``Sketch/model(_:)``
 - ``Model``
+- ``ModelFailure``
+
+### 視点と投影
+
+- ``Sketch/camera()``
+- ``Sketch/camera(_:_:_:_:_:_:_:_:_:)``
+- ``Sketch/currentCamera``
+- ``Sketch/setCamera(_:)``
+- ``Sketch/perspective()``
+- ``Sketch/perspective(_:_:_:_:)``
+- ``Sketch/ortho()``
+- ``Sketch/ortho(_:_:_:_:_:_:)``
+- ``Sketch/orbitControl(_:_:_:)``
+- ``Sketch/orbit``
 - ``Camera``
 - ``Orbit``
+
+### 面の位置と空間の位置
+
+- ``Sketch/screenX(_:_:)``
+- ``Sketch/screenY(_:_:)``
+- ``Sketch/screenX(_:_:_:)``
+- ``Sketch/screenY(_:_:_:)``
+- ``Sketch/screenZ(_:_:_:)``
+- ``Sketch/spacePosition(screenX:screenY:depth:)``
+
+### 光と質感
+
+- ``Sketch/ambientLight(_:)``
+- ``Sketch/directionalLight(_:_:_:_:)``
+- ``Sketch/pointLight(_:_:_:_:)``
+- ``Sketch/spotLight(_:_:_:_:_:_:_:angle:)``
+- ``Sketch/lights()``
+- ``Sketch/noLights()``
+- ``Sketch/shininess(_:)``
+- ``Sketch/metalness(_:)``
+- ``Sketch/ambient(_:)``
+- ``Sketch/emissive(_:)``
+- ``Sketch/surroundings(_:)``
+- ``Sketch/background(_:)-1085h``
 - ``Surroundings``
-- ``VertexKind``
-- ``ModelFailure``
+
+### 影を落とす
+
+- ``Sketch/shadows(_:)``
+- ``Sketch/shadowRange(_:)``
+- ``Sketch/shadowDetail(_:)``
+- ``Sketch/shadowBias(_:)``
+- ``Sketch/castShadow(_:)``
+- ``Sketch/receiveShadow(_:)``
+
+### 乱数と揺らぎ
+
+- ``Sketch/random()``
+- ``Sketch/random(_:)``
+- ``Sketch/random(_:_:)``
+- ``Sketch/randomSeed(_:)``
+- ``Sketch/noise(_:_:_:)``
+- ``Sketch/noiseSeed(_:)``
+- ``Sketch/noiseDetail(_:_:)``
 
 ### GPU に計算させる
 
+- ``Sketch/loadShader(_:values:surfaces:)``
+- ``Sketch/makeShader(_:name:values:surfaces:)``
+- ``Sketch/shader(_:)``
+- ``Sketch/resetShader()``
+- ``Sketch/effects(_:)``
+- ``Sketch/loadEffect(_:values:)``
+- ``Sketch/makeEffect(_:name:values:)``
+- ``Sketch/makeNumbers(count:)``
+- ``Sketch/numbers(_:)``
+- ``Sketch/resetNumbers()``
+- ``Sketch/read(_:)``
+- ``Sketch/makeComputation(_:name:values:)``
+- ``Sketch/loadComputation(_:values:)``
+- ``Sketch/compute(_:over:reads:writes:)``
+- ``Sketch/compute(_:over:by:reads:writes:)``
 - ``Shader``
 - ``EffectShader``
-- ``ShaderValue``
 - ``Effect``
 - ``Computation``
 - ``Numbers``
+- ``ShaderValue``
+- ``ShaderSurface``
+- ``ShaderFailure``
+
+### 粒を飛ばす
+
+- ``Sketch/makeParticles(count:)``
+- ``Sketch/emit(_:from:rate:speed:angle:life:size:color:)``
+- ``Sketch/force(_:_:)``
+- ``Sketch/particles(_:)``
 - ``Particles``
 - ``Emitter``
 - ``Force``
-- ``Upscale``
-- ``RenderDevice``
-- ``RenderTarget``
-- ``ShaderFailure``
-- ``RenderFailure``
+
+### 入力を受ける
+
+- ``Sketch/mouseX``
+- ``Sketch/mouseY``
+- ``Sketch/pmouseX``
+- ``Sketch/pmouseY``
+- ``Sketch/isMousePressed``
+- ``Sketch/mouseButton``
+- ``Sketch/scrollX``
+- ``Sketch/scrollY``
+- ``Sketch/dragX``
+- ``Sketch/dragY``
+- ``Sketch/isKeyDown(_:)``
+- ``Sketch/key``
 
 ### 走らせたまま値を動かす
 
+- ``Sketch/params``
 - ``Param(name:)``
-- ``Param(_:name:)-4ddav``
 - ``Param(_:name:)-4a6pu``
+- ``Param(_:name:)-4ddav``
 - ``Param(choices:name:)``
 - ``ParamValue``
 - ``ParamRange``
 - ``ParamDeclaration``
-- ``ParamBox``
 - ``ParamRepresentable``
 
-### 入力を受ける
+### 観測へ差し出す
 
-- ``InputState``
-- ``InputEvent``
-
-### 出して観測する
-
-- ``OutputStage``
-- ``OutputFrame``
-- ``Outlet``
-- ``Inlet``
-- ``FrameStats``
-- ``ObservationRequest``
-- ``ObservationReport``
-- ``ExposedValue``
+- ``Sketch/expose(_:_:)-19rp8``
 
 ### 外から機能を足す
 
 - ``Plugin``
 - ``PluginRegistry``
+- ``Inlet``
+- ``Outlet``
+- ``OutputFrame``
+- ``RenderDevice``
+- ``RenderTarget``
+- ``RenderFailure``

@@ -629,9 +629,8 @@ extension Sketch {
     ///
     /// ## 進むのは 1 フレームぶん
     ///
-    /// 進む量は ``deltaTime`` で決まる。時計をフレーム番号から導く設定
-    /// (``Clock/frameIndex(frameRate:)``) なら刻みが一定なので、**同じ入力から何度
-    /// 走らせても同じ動き**が出る。
+    /// 進む量は ``deltaTime`` で決まる。時計をフレーム番号から導く走らせ方 (ヘッドレスの
+    /// 書き出し) なら刻みが一定なので、**同じ入力から何度走らせても同じ動き**が出る。
     public func particles(_ particles: Particles) { canvas.particles(particles) }
 }
 

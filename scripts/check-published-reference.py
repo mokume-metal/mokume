@@ -41,8 +41,11 @@ import urllib.request
 
 # 入口の見出し `# ``MokumeCore``` — カタログの中でモジュールの面を上書きするファイル
 LANDING_TITLE = re.compile(r"^#\s*``([A-Za-z_][A-Za-z0-9_]*)``\s*$", re.MULTILINE)
-# Topics に並べた記号 (``Foo``)。入れ子の型は `Foo/Bar` の形で書けるので `/` も拾う
-CURATED_SYMBOL = re.compile(r"^\s*-\s*``([A-Za-z_][A-Za-z0-9_/]*)``\s*$", re.MULTILINE)
+# Topics に並べた記号 (``Foo``)。入れ子は `Foo/Bar` の形で書けるので `/` を、口 1 本は
+# `Foo/bar(_:_:)` の形になるので括弧・コロン・同名を分ける `-<印>` も拾う。
+# **狭いと黙って見なくなる** — 並べたのに拾えなかった記号は期待から落ち、出ていなくても
+# 誰も言わない (索引が型の粒度だった頃はこの形が現れなかった・#582)
+CURATED_SYMBOL = re.compile(r"^\s*-\s*``([A-Za-z_][A-Za-z0-9_/(:)-]*)``\s*$", re.MULTILINE)
 
 FETCH_TIMEOUT_SECONDS = 30
 

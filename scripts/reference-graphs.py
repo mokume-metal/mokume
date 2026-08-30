@@ -50,6 +50,21 @@ ADR-0027 決定 1 は既に「**面に何が出るかを、ビルドの副産物
 この 2 欄を揃えた出力は、**現行と 1 ページも警告も違わない** (938 ページ・警告 16 本。
 手元で実測)。変わるのは URL とページ上のモジュール表示だけになる。
 
+## 面から外す型 (ADR-0027 決定 5)
+
+面の相手は**スケッチを書く人 1 種類**である。道具・エージェント・実行の土台だけが触る型は
+`--omit` で名指しして外す。**`public` は 1 つも動かさない** — 落とすのはここを通るグラフ
+だけなので、一覧 (`api-surface.py`) も ADR-0020 の検査もビルドが出したグラフを見たままで、
+道具・拡張・エージェントは今までどおり使える。
+
+`@_documentation(visibility: internal)` は採らない。**効きすぎる** — ソースに 1 行足すと
+ビルドが出すグラフから消えるので、同じグラフを使う一覧と検査からも同時に消える。人が読む面
+だけに効かせられない。
+
+**外す基準は人が名指しする。** 起点からの到達可能性で自動判定にはしない — 索引を人が意味で
+束ねる以上、意味ではなく型の到達で線を引くと「`mouseX` は出るが `InputState` は消える」の
+ような、読者に説明できない切り方になる。名指しの綴りがずれたら落とす (下記)。
+
 ## モジュールが増えたら
 
 **同じ面の名前を名乗る複数のグラフは、1 つの面にマージされる** (実測: 2 本渡して
@@ -85,25 +100,54 @@ def graphs_of(source: pathlib.Path, module: str) -> list[pathlib.Path]:
 
 
 def place(
-    path: pathlib.Path, surface: str, inside: set[str], destination: pathlib.Path
-) -> int:
-    """グラフを、面の名前を名乗らせて置く。書き換えた拡張の数を返す。
+    path: pathlib.Path,
+    surface: str,
+    inside: set[str],
+    omit: set[str],
+    destination: pathlib.Path,
+) -> tuple[int, int, set[str]]:
+    """グラフを、面の名前を名乗らせて置く。(書き換えた拡張, 外した記号, 外した型の名前)。
 
     `inside` は面に集めるモジュールの名前。**そこに載っているものだけを面の内側**と
     見なし、拡張の名乗りも面の名前へ寄せる。
+
+    `omit` は面から外す最上位の型の名前。**`public` は 1 つも動かさない** — ここで
+    落とすのは人が読む面へ渡すグラフだけで、一覧 (`api-surface.py`) と ADR-0020 の検査は
+    ビルドが出したグラフをそのまま見たままになる。型ごと落とすので、その型に属する
+    記号 (メンバー・入れ子) も一緒に落ちる。
     """
     graph = json.loads(path.read_text(encoding="utf-8"))
     graph["module"]["name"] = surface
 
-    extensions = 0
+    dropped: set[str] = set()
+    omitted: set[str] = set()
+    kept = []
     for symbol in graph.get("symbols", []):
+        components = symbol.get("pathComponents") or []
+        if components and components[0] in omit:
+            dropped.add(symbol["identifier"]["precise"])
+            omitted.add(components[0])
+            continue
+        kept.append(symbol)
+    graph["symbols"] = kept
+
+    # **記号を落としたら、それを指す関係も落とす。** 残すと docc は居ない記号への辺を
+    # 辿り、面の形が壊れる (親を失ったメンバーが根に浮く)
+    graph["relationships"] = [
+        relationship
+        for relationship in graph.get("relationships", [])
+        if relationship.get("source") not in dropped and relationship.get("target") not in dropped
+    ]
+
+    extensions = 0
+    for symbol in graph["symbols"]:
         swift_extension = symbol.get("swiftExtension")
         if swift_extension and swift_extension.get("extendedModule") in inside:
             swift_extension["extendedModule"] = surface
             extensions += 1
 
     destination.write_text(json.dumps(graph), encoding="utf-8")
-    return extensions
+    return extensions, len(dropped), omitted
 
 
 def main() -> int:
@@ -120,6 +164,13 @@ def main() -> int:
     parser.add_argument(
         "--module", nargs="+", required=True, dest="modules", help="面に出すモジュール"
     )
+    parser.add_argument(
+        "--omit",
+        nargs="*",
+        default=[],
+        dest="omitted",
+        help="面から外す最上位の型 (道具・実行の土台が触るもの。ADR-0027 決定 5)",
+    )
     arguments = parser.parse_args()
 
     if not arguments.graphs.is_dir():
@@ -129,17 +180,36 @@ def main() -> int:
     arguments.out.mkdir(parents=True, exist_ok=True)
 
     inside = set(arguments.modules)
+    omit = set(arguments.omitted)
     placed: list[str] = []
     missing: list[str] = []
     extensions = 0
+    dropped = 0
+    omitted: set[str] = set()
     for module in arguments.modules:
         found = graphs_of(arguments.graphs, module)
         if not found:
             missing.append(module)
             continue
         for path in found:
-            extensions += place(path, arguments.surface, inside, arguments.out / path.name)
+            renamed, removed, seen = place(
+                path, arguments.surface, inside, omit, arguments.out / path.name
+            )
+            extensions += renamed
+            dropped += removed
+            omitted |= seen
             placed.append(path.name)
+
+    # **外すと名指ししたものが 1 つも無ければ落とす。** 綴りがずれたまま通すと、外した
+    # つもりの型が黙って面に出る — 出ているのは正しい形に見えるので、気付く手掛かりが無い
+    unknown = sorted(omit - omitted)
+    if unknown and not missing:
+        print(
+            f"面から外すと名指しした型がグラフに無い: {', '.join(unknown)}",
+            file=sys.stderr,
+        )
+        print("  綴りが実体とずれているか、その型が既に公開されていない。", file=sys.stderr)
+        return 1
 
     if missing:
         print(
@@ -155,7 +225,8 @@ def main() -> int:
 
     print(
         f"面の名前: {arguments.surface} / 渡すグラフ {len(placed)} 本: {', '.join(placed)}\n"
-        f"  面の内側を指す拡張を名乗り直した: {extensions} 件"
+        f"  面の内側を指す拡張を名乗り直した: {extensions} 件\n"
+        f"  面から外した型: {len(omitted)} 本 / 記号 {dropped} 件"
     )
     return 0
 
