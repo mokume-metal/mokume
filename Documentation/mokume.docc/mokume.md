@@ -304,8 +304,8 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 
 ### GPU に計算させる
 
-- ``Sketch/loadShader(_:values:)``
-- ``Sketch/makeShader(_:name:values:)``
+- ``Sketch/loadShader(_:values:surfaces:)``
+- ``Sketch/makeShader(_:name:values:surfaces:)``
 - ``Sketch/shader(_:)``
 - ``Sketch/resetShader()``
 - ``Sketch/effects(_:)``
@@ -325,6 +325,7 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``Computation``
 - ``Numbers``
 - ``ShaderValue``
+- ``ShaderSurface``
 - ``ShaderFailure``
 
 ### 粒を飛ばす
