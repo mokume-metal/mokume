@@ -159,8 +159,13 @@ private struct KnobRow: View {
 /// 書き込みは面と同じ入口 (``DeclaredParam/write(_:)``) を通す — 収める規則を窓と面で
 /// 2 通り持たない ([ADR-0030] 決定 3)。
 ///
+/// **窓を通した往復の検査もここを通る** ([#517](https://github.com/mokume-metal/mokume/issues/517)
+/// 出口条件 1)。``DeclaredParam/write(_:)`` を検査から直接呼ぶと「窓を通した」ことに
+/// ならず、ここが写しを持ち始めても緑のままになるので、窓の外へ出してある
+/// (同じ理由で ``KnobColor`` と ``KnobText`` も窓の外にある)。
+///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-private enum KnobBinding {
+enum KnobBinding {
     /// 数。整数の宣言には整数として書き戻す。
     static func number(_ box: any DeclaredParam, _ current: ParamValue) -> Binding<Double> {
         let isInteger = current.isInteger
