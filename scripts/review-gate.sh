@@ -12,6 +12,11 @@
 #     (ADR-0007 の不変条件。破ると **誰も承認できない PR** ができる — #88)
 #   - verify: human なら人間の Approve を要求する (CODEOWNERS では表現できないため)
 #
+# **ここは判定だけを行い、レビュー要求は投げない。** 承認待ち (終了コード 20) を人へ
+# 届けるのは scripts/request-review.sh の役目で、ci.yml の approval-signal ジョブが
+# この出力を受けて呼ぶ (#498)。分けてあるので、このスクリプトは手元から読み取り専用で
+# 打てる。
+#
 # 重要パス (docs/decisions/ ・ .github/ ・ .claude/) の承認要求は
 # **ルールセットの required_reviewers が担う** (.github/rulesets/main-protection.json)。
 # 同じ 3 パスに minimum_approvals: 1 が課してあり、CODEOWNERS はメンテナへの
