@@ -36,7 +36,9 @@
 # 弾かれたことに気付く経路が人間しか無かった。**head へ打つのは failure だけ**である。
 set -euo pipefail
 
-# 「描画に触れているか」の判定は #306 と共有する (照合の実体は 1 つ)
+# 「描画に触れているか」の判定は #306 と共有する (照合の実体は 1 つ)。**訊く問いは
+# coverage の側**である — 手元の実行の覆いが壊れるか、で、絵の証跡を要求するかとは
+# 答えが違う場所がある (#497)
 # shellcheck source=scripts/drawing-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
 # 描画 PR の順番の判定も catch-up.sh と共有する (#457)
@@ -91,7 +93,7 @@ drawing_fingerprint() {
     --jq 'if .truncated then "!truncated"
           else (.tree[] | select(.type == "blob") | "\(.path) \(.sha)") end') || return 1
   case "$tree" in '!truncated'*) return 2 ;; esac
-  printf '%s\n' "$tree" | drawing_files | sort | shasum -a 256 | cut -c1-12
+  printf '%s\n' "$tree" | drawing_files coverage | sort | shasum -a 256 | cut -c1-12
 }
 
 # merge queue の SHA への報告 (#435)。
@@ -139,8 +141,8 @@ report_merge_group() {
     fi
     # 読み飛ばすときも名乗る (#441)。止めなかった回のログが「見た上で通した」のか
     # 「見る対象が無かった」のかを分けて読めるようにするため
-    if ! printf '%s\n' "$files" | touches_drawing; then
-      say "#$number は描画に触れない (覆いを見る対象ではない)"
+    if ! printf '%s\n' "$files" | touches_drawing coverage; then
+      say "#$number は台帳の絵を動かさない (覆いを見る対象ではない)"
       continue
     fi
 
@@ -217,7 +219,7 @@ case "$mode" in
     ;;
 
   proxy)
-    # CI からの代理報告。**描画に触れている PR には打たない** — 打たないことが
+    # CI からの代理報告。**台帳の絵を動かしうる PR には打たない** — 打たないことが
     # そのまま「手元の報告待ち」になる。pending を打たないのは順序の危険を避ける
     # ためで、手元の報告が CI より先に届くことがあるから (後から pending を打つと
     # 成立した報告を打ち消す)。
@@ -228,7 +230,7 @@ case "$mode" in
     fi
 
     if gh api "repos/$GITHUB_REPOSITORY/pulls/${PR_NUMBER:?}/files" --paginate \
-      --jq '.[].filename' | touches_drawing; then
+      --jq '.[].filename' | touches_drawing coverage; then
       # 描画 PR は番号順に 1 本ずつ merge する (#467)。順番でなければここで赤くする
       # — queue で弾かれるのを待つと、待ち時間も手元の打ち直しも無駄になる
       ahead=$(ahead_drawing_pr "$GITHUB_REPOSITORY" "$PR_NUMBER")
@@ -243,10 +245,10 @@ case "$mode" in
           exit 0
           ;;
       esac
-      say "描画に触れている PR — 手元の報告を待つ (報告しない)"
+      say "台帳の絵を動かしうる PR — 手元の報告を待つ (報告しない)"
       exit 0
     fi
-    post "$GITHUB_REPOSITORY" "${PR_HEAD_SHA:?}" success "描画に触れていない"
+    post "$GITHUB_REPOSITORY" "${PR_HEAD_SHA:?}" success "手元の実行の覆いを壊さない"
     ;;
 
   *)

@@ -95,8 +95,8 @@ repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') \
 
 # 描画に触れない PR は合流後の木を動かさないので、BEHIND のまま merge できる。
 # 取り込みは queue がこれからやることの前借りにしかならない (AGENTS.md)
-gh pr view --json files --jq '.files[].path' | touches_drawing \
-  || skip "PR #$number は描画に触れない — main を取り込む必要が無い"
+gh pr view --json files --jq '.files[].path' | touches_drawing coverage \
+  || skip "PR #$number は台帳の絵を動かさない — main を取り込む必要が無い"
 
 # 描画 PR は番号順に 1 本ずつ。順番でないうちに打ち直しても、先頭が入った時点で
 # また覆えなくなる (AGENTS.md「描画に影響する変更」の表の 2 行目)。make ci-check は

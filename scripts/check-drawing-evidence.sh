@@ -79,7 +79,7 @@ if jq -e --arg l "$ESCAPE_LABEL" '.labels[]? | select(.name == $l)' >/dev/null <
   exit 0
 fi
 
-if ! jq -r '.files[]?.path // empty' <<<"$pr_json" | touches_drawing; then
+if ! jq -r '.files[]?.path // empty' <<<"$pr_json" | touches_drawing evidence; then
   say "描画に触れていない PR — 絵は要らない"
   exit 0
 fi

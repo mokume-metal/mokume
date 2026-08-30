@@ -244,12 +244,16 @@ bash scripts/orphan-processes.sh
 
 これは作法ではなく機械の要求で、`scripts/drawing-paths.txt` に載る場所を触った PR の本文に絵が 1 つも無ければ `drawing-evidence` が赤で差し戻す ([#306](https://github.com/mokume-metal/mokume/issues/306))。見るのは絵が用意されていることだけで、絵が正しいかは見ない — 正しさの担い手は人間と AI の目である ([ADR-0019](docs/decisions/0019-drawing-verification.md) 決定 1)。絵を出しようがない変更 (描画のパスに居るが絵は変わらないリファクタ・コメントの修正) は `no-visual-change` ラベルで外す (本文の編集でもラベルの付け外しでも CI は自動で再評価する)。
 
+**一覧は 1 つだが、答える問いは 2 つある。** 証跡を要求するかの問いと、下の「覆い」の問いで、`evidence-only` の印が付いた行は前者にだけ効く — 「絵は動きうるが、台帳が描く絵は動かせない」場所である ([#497](https://github.com/mokume-metal/mokume/issues/497))。いま印が付いているのは `Sketches/` だけで、参照スケッチは独立した executable target なので台帳の絵を 1 画素も動かせない (合流後の木でビルドが破れれば merge queue の `ci-check` が見る)。
+
 守っている不変条件は 1 行 — **main の絵に関わるファイルは、常に誰かが手元で実際に回して確かめた組み合わせのままである。** 手元の実行は合流前の枝でしか回らないので、`scripts/render-status.sh` が merge queue で 2 つを見る ([#435](https://github.com/mokume-metal/mokume/issues/435)・[#467](https://github.com/mokume-metal/mokume/issues/467)):
 
 | 判定 | `local-render` | 対処 |
 | --- | --- | --- |
 | PR head と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | `make catch-up` |
-| 描画に触れる open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | 先頭が merge されるまで待つ (待ちの間に打ち直しても無駄になる)。先頭が停滞しているならその PR を Draft に落とす |
+| 覆いを壊す open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | 先頭が merge されるまで待つ (待ちの間に打ち直しても無駄になる)。先頭が停滞しているならその PR を Draft に落とす |
+
+順番は番号順なので、**まだ作業中の描画 PR は Draft にしておく** — Draft は順番の外なので、完成して承認まで済んだ後続を番号だけの理由で待たせずに済む ([#497](https://github.com/mokume-metal/mokume/issues/497))。
 
 `make catch-up` は復旧の 5 手 — main を取り込む → `make ci-check` → push → `make render-status` → `--auto` を掛け直す — を 1 手にする ([#457](https://github.com/mokume-metal/mokume/issues/457))。**打つ意味が無いときは走らない**ので、上の表の 2 行目 (先に描画 PR が居る) では番号を名指しして断り、数分かかる検査を空費しない。手で 5 手を追ってもよいが、**1 手抜けても PR は全チェック緑・`CLEAN` のまま止まる**ので、それに気付く経路が無い。
 

@@ -24,9 +24,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "check-drawing-evidence.sh"
 
-PATHS = "# 見出し\n\nSources/MokumeCore/\nSketches/\n"
+# `Sketches/` は印つきの行 — 絵の証跡は要るが、覆いの判定には数えない (#497)
+PATHS = "# 見出し\n\nSources/MokumeCore/\nSketches/  evidence-only\n"
 
 DRAWING_FILES = ["Sources/MokumeCore/Drawing/Canvas.swift"]
+# 覆いの判定からは外れるが、証跡はここでも要る (#497)
+SKETCH_FILES = ["Sketches/Shapes/Circles.swift"]
 OTHER_FILES = ["AGENTS.md", "scripts/check-drawing-evidence.sh"]
 
 # gh pr view の応答を PR_JSON からそのまま返す。auth status は通る。
@@ -120,6 +123,13 @@ class DrawingEvidenceTest(unittest.TestCase):
         r = self.run_script(body="絵は変わらない", labels=["no-visual-change"])
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("no-visual-change", r.stdout)
+
+    def test_覆いの判定から外れる場所でも絵は要る(self):
+        """`Sketches/` は手元の実行の覆いには数えないが (#497)、描くのは絵なので
+        証跡の問いでは従来どおり赤くなる。2 つの問いの答えが分かれる場所である。"""
+        r = self.run_script(body="", files=SKETCH_FILES)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("絵が無い", r.stderr)
 
     def test_描画に触れないPRは絵が無くても通る(self):
         r = self.run_script(body="", files=OTHER_FILES)
