@@ -9,7 +9,8 @@
 
   投げる側  — 未要求・未レビューならメンテナ (user) へ要求が飛ぶ
               承認が push で外れた (DISMISSED) ら投げ直す
-  投げない側 — 既に team へ要求が飛んでいる (パス由来と重なった PR に 2 通目を作らない)
+  投げない側 — 重要パスに触れている (パス由来が必ず飛ぶので 2 通目になる。#584)
+              既に team へ要求が飛んでいる (上が漏れたときの保険)
               既に同じ user へ要求が飛んでいる (CI の走り直しで 2 通目を作らない)
               既にレビュー済み (一度見た人へ投げ直さない)
 
@@ -60,17 +61,45 @@ APP = "app/mokume-agent"
 MAINTAINER = "shinyaoguri"
 TEAM = "maintainers"
 
+# 承認が要るパスの正本の形。**本物の綴りは .github/rulesets/main-protection.json が
+# 持つ**ので、ここは「読める形をしている」ことだけを与える (review_gate_test.py と同じ)
+RULESET = json.dumps(
+    {
+        "rules": [
+            {
+                "type": "pull_request",
+                "parameters": {
+                    "required_reviewers": [
+                        {
+                            "file_patterns": [
+                                "docs/decisions/**",
+                                ".github/**",
+                                ".claude/**",
+                            ],
+                            "reviewer": {"id": 1, "type": "Team"},
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+)
 
-def pr_json(author=APP, teams=(), users=(), reviews=()):
+
+def pr_json(author=APP, teams=(), users=(), reviews=(), files=("Sources/x.swift",)):
     """偽の gh pr view 応答。
 
-    teams / users は Reviewers 欄に既に載っている要求、reviews は (login, state) の組。
-    **チームの要素は login を持たない** — 要求済みの判定はこの違いだけに頼るので、
-    綴り (name / slug / __typename) が変わっても壊れない。
+    teams / users は Reviewers 欄に既に載っている要求、reviews は (login, state) の組、
+    files は触ったパス。**チームの要素は login を持たない** — 要求済みの判定はこの
+    違いだけに頼るので、綴り (name / slug / __typename) が変わっても壊れない。
+
+    files の既定は重要パスに当たらないもの。当たると条件判定で先に抜けてしまい、
+    ほとんどの検査が「投げない側」に落ちる。
     """
     return json.dumps(
         {
             "author": {"login": author},
+            "files": [{"path": p} for p in files],
             "reviewRequests": (
                 [{"__typename": "Team", "name": n, "slug": n} for n in teams]
                 + [{"__typename": "User", "login": n} for n in users]
@@ -92,14 +121,19 @@ class RequestReviewTest(unittest.TestCase):
         stub.write_text(FAKE_GH, encoding="utf-8")
         stub.chmod(0o755)
         self.calls = Path(self.tmp.name) / "gh-calls"
+        self.ruleset = Path(self.tmp.name) / "main-protection.json"
+        self.ruleset.write_text(RULESET, encoding="utf-8")
 
-    def run_script(self, pr, user=None, api_status=0, pr_status=0):
+    def run_script(self, pr, user=None, api_status=0, pr_status=0, ruleset=None):
+        if ruleset is not None:
+            self.ruleset.write_text(ruleset, encoding="utf-8")
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_PR_JSON"] = pr
         env["FAKE_API_STATUS"] = str(api_status)
         env["FAKE_PR_STATUS"] = str(pr_status)
         env["GH_CALLS"] = str(self.calls)
+        env["RULESET_FILE"] = str(self.ruleset)
         if user is not None:
             env["MAINTAINERS_USER"] = user
         env["GITHUB_REPOSITORY"] = "mokume-metal/mokume"
@@ -151,6 +185,35 @@ class RequestReviewTest(unittest.TestCase):
         self.assert_requested(result, ["someone-else"])
 
     # --- 投げない側 ---
+
+    def test_skips_when_the_pr_touches_a_protected_path(self):
+        """重要パスに触れているなら投げない (#584)。
+
+        ルールセットの required_reviewers が必ず team へ要求を飛ばすので、ここが
+        投げれば必ず 2 通目になる — #530 が畳んだ重複の再来である。**状態 (もう
+        飛んでいるか) ではなく条件 (飛ぶパスか) で見る**ので、API の反映を待たない。
+        """
+        result = self.run_script(pr_json(files=["docs/decisions/0003-x.md"]))
+        self.assert_requested(result, [])
+
+    def test_requests_when_no_protected_path_is_touched(self):
+        """重要パスに触れていなければ投げる。条件判定が過剰に効いていないこと。"""
+        result = self.run_script(pr_json(files=["scripts/request-review.sh"]))
+        self.assert_requested(result, [MAINTAINER])
+
+    def test_protected_paths_come_from_the_ruleset_not_a_copy(self):
+        """判定はルールセットの file_patterns を読む。写しを持たない。
+
+        パターンを狭めれば、同じ PR が「触れていない」に変わる。
+        """
+        narrowed = json.loads(RULESET)
+        narrowed["rules"][0]["parameters"]["required_reviewers"][0][
+            "file_patterns"
+        ] = [".claude/**"]
+        result = self.run_script(
+            pr_json(files=["docs/decisions/0003-x.md"]), ruleset=json.dumps(narrowed)
+        )
+        self.assert_requested(result, [MAINTAINER])
 
     def test_skips_when_a_team_is_already_requested(self):
         """既に team へ要求が飛んでいるなら投げない。
