@@ -88,6 +88,14 @@ jobs:
       - name: 参照の面を組み立てる
         run: make reference OUT=_site/reference BASE="${{ steps.base.outputs.path }}"
 
+      # **公開の側に、どのコミットから組んだかを 1 行だけ残す** (#483)。この回の
+      # 公開が緑だったことは Actions が知っているが、**いま配られているものが新しいか**
+      # は外から引かないと分からない。印は面の root に置く (`/reference/` は参照の面の
+      # ものなので混ぜない。ADR-0027 決定 3)。
+      # 形式の正典は書く側と読む側で 1 本にしてあるので、置くのも同じ道具に頼む
+      - name: 公開の印を置く
+        run: python3 scripts/check-publication.py --write-stamp _site --commit "$GITHUB_SHA"
+
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
