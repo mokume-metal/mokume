@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders schemas api reference example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders params schemas api reference example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -155,6 +155,13 @@ catch-up: ## 弾かれた描画 PR を、合流後の姿を覆い直して merge
 # ため、ここで組み立てて落とす
 shaders:
 	bash scripts/check-shaders.sh
+
+# つまみの宣言の書き間違い (名前の重なり・型の書き忘れ) は「ビルドで止まる」約束
+# なので、止まることは実行しては確かめられない (ADR-0030 決定 5)。組み上げ済みの
+# モジュールに対して型検査を通し、通るものと止まるものを見る。**テストの中で
+# package を組み直さない** — 時間の上限を持つ他の検査と CPU を奪い合う
+params:
+	bash scripts/check-param-declarations.sh
 
 # 公開 API の面。**一覧はリポジトリへ置かない** — 置くと「それが古くないことを守る
 # 検査」が要るようになり、以後すべての変更がその検査に引っかかる (ADR-0001 原則 8)。

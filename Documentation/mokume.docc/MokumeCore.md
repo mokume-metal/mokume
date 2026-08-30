@@ -105,6 +105,15 @@ struct Hello: Sketch {
 - ``ShaderFailure``
 - ``RenderFailure``
 
+### 走らせたまま値を動かす
+
+- ``Param(_:name:)``
+- ``ParamValue``
+- ``ParamRange``
+- ``ParamDeclaration``
+- ``ParamBox``
+- ``ParamRepresentable``
+
 ### 入力を受ける
 
 - ``InputState``

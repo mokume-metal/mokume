@@ -221,6 +221,49 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("NSApplication", problems[0])
 
+    def test_自分たちのモジュールの語彙は外来ではない(self):
+        # 総称の仮引数は「宣言されたシンボル」として数えられないので所有の集合に入らない。
+        # モジュールの名前で見ないと、自前の型を持つ宣言が外来として挙がってしまう
+        symbols = [
+            symbol("value", owner="ParamBox", takes=("Value", "s:10MokumeCore8ParamBoxC5Valuexmfp"))
+        ]
+        self.assertEqual(api.check_foreign_vocabulary(symbols, set(), {"MokumeCore"}), [])
+        self.assertEqual(len(api.check_foreign_vocabulary(symbols, set(), {"Other"})), 1)
+
+    def test_他所から写された手続きは読まない(self):
+        # 標準ライブラリの型を 1 つ拡張すると、その型が準拠している約束ごとの既定の
+        # 実装までこちらの拡張のグラフへ並ぶ。自分たちが書いた面ではない
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory)
+            (graphs / "MokumeCore.symbols.json").write_text(
+                json.dumps(
+                    {"symbols": [symbol("radius", owner="Sketch", precise="s:10MokumeCore6radius")]}),
+                encoding="utf-8")
+            (graphs / "MokumeCore@Swift.symbols.json").write_text(
+                json.dumps(
+                    {
+                        "symbols": [
+                            symbol(
+                                "paramValue", owner="Int",
+                                precise="s:Si10MokumeCoreE10paramValuevp"),
+                            symbol(
+                                "formatted(_:)", owner="Int",
+                                precise="s:Sz10FoundationE9formattedyF::SYNTHESIZED::s:Si"),
+                        ]
+                    }),
+                encoding="utf-8")
+            titles = {api.title(entry) for entry in api.load_symbols(graphs, "MokumeCore")}
+            self.assertEqual(titles, {"radius", "paramValue"})
+
+    def test_自分たちのモジュールの名前はグラフの名前から数える(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory)
+            for name in ["MokumeCore", "MokumeCore@Swift", "mokume", "MokumeDiagnostics"]:
+                (graphs / f"{name}.symbols.json").write_text(
+                    json.dumps({"symbols": []}), encoding="utf-8")
+            self.assertEqual(
+                api.own_modules(graphs), {"MokumeCore", "mokume", "MokumeDiagnostics"})
+
     def test_例外表に載っているシンボルは通す(self):
         # 表に載る「シンボル → 理由」の組は実在するものを使う。表ごと消えたらこちらが赤くなる
         self.assertIn("RenderDevice.init(device:)", api.FOREIGN_ALLOWLIST)

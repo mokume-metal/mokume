@@ -37,6 +37,8 @@ path = [
   "changelog.d/README.md",
   ".gitignore",
   "Makefile",
+  # 依存の版を釘づける表。SwiftPM が書くので中にコメントを置けない
+  "Package.resolved",
   ".claude/settings.json",
   ".github/workflows/ci.yml",
   ".github/workflows/pages.yml",
