@@ -81,7 +81,7 @@ final class MySketch: Sketch {
 MySketch.main()
 ```
 
-書ける口の説明は**参照の面**にある: <https://mokume.org/documentation/mokumecore/>
+書ける口の説明は**参照の面**にある: <https://mokume.org/documentation/mokume/>
 
 ## 動かないとき
 
