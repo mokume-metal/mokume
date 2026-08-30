@@ -7,6 +7,9 @@
 存在しない、という壊れ方である。だから固定するのは**出ていないものを赤くする**側と、
 **検査自身が空回りしていたら赤くする**側の 2 つになる。
 
+**逆向き** (#515) も同じ形で固定する — 面に出ているのに入口に並んでいない最上位は、
+道具が既定の束へ自動で入れるので**面には出るし緑のまま**になる。
+
 `--catalog` から期待を導くので、台帳を別に持たない。入口の書式が変わって記号を
 1 つも読み取れなくなった状態は「全部出ている」と見分けが付かないため、そこも赤にする。
 
@@ -124,6 +127,30 @@ class PublishedReferenceTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("入口に並べた記号: 4", result.stdout)
+
+    def test_面に出ているのに入口に並んでいなければ赤い(self):
+        # 逆向き (#515)。並べ忘れは道具が既定の束へ拾うので、**面には出るし緑になる**
+        self.build_output(
+            paths=[
+                "/documentation/mod",
+                "/documentation/mod/foo",
+                "/documentation/mod/bar",
+                "/documentation/mod/baz",
+                "/documentation/mod/foo/draw(_:_:)",
+                "/documentation/mod/foo/fill(_:)-1a2b3",
+                "/documentation/mokume/guide",
+            ]
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("入口に並んでいない最上位: baz", result.stderr)
+        self.assertIn("REFERENCE_OMIT", result.stderr)
+
+    def test_口_1_本は最上位として数えない(self):
+        # `Foo/draw(_:_:)` は `Foo` のページの下に居るので、最上位の並べ漏れではない
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("面に出ている最上位: 2 (並べ漏れ 0)", result.stdout)
 
     def test_口_1_本の粒度でも期待に数える(self):
         # 索引が型の粒度だった頃は現れなかった形 (#582)。**拾えないと黙って期待から

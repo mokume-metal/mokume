@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""参照の面に、置いたものが実際に出ているかを見る (#478)。
+"""参照の面と入口の Topics を、両向きに突き合わせる (#478 / #515)。
 
 **この道具が塞ぐのは「置いても出ない」である。** 面を組み立てる道具は、入力に
 入らなかった素材について何も言わないことがある — 変換は成功し、警告も出ず、
 出力にだけ存在しない。ビルドの緑は「出ている」を意味しないので、**組み上がった
 ものを引いて中身を確かめる**経路を別に持つ (ADR-0027 決定 1)。
+
+**逆向きも見る** (#515)。入口に並べ忘れた公開型があっても、これまで何も起きなかった —
+道具が既定の束 (`Structures` / `Enumerations` …) へ自動で入れるので、面には出るし検査も
+緑のままになる。読者から見ると、その型だけが意味の無い束の底に落ちる。入口が**人が手で
+書く意味の索引**になった (ADR-0027 決定 5) 以上、並べ忘れは起きる前提で拾う。
+
+意図して並べないものは、**面から外す** (`Makefile` の `REFERENCE_OMIT`)。並べない宣言を
+別に作らないのは、面に出ているのに索引から外す形を許すと「意味の無い束の底に落ちる」
+状態を宣言で正当化できてしまうためである。
 
 **同じ判定を、手元の出力ディレクトリにも公開された URL にも当てる。** 引数が
 `http://` / `https://` で始まれば引き、そうでなければ読む。手元で通ったものが
@@ -188,11 +197,32 @@ def check(source: Source, catalog: pathlib.Path) -> list[str]:
         if path not in published:
             problems.append(f"記事 {article}.md のページ ({path}) が出ていない")
 
+    # **逆向きも見る** (#515)。ここまでは「並べたものが出ているか」だけを見ていて、
+    # 新しい公開型を足して入口に並べ忘れても何も起きなかった — 道具が既定の束
+    # (`Structures` / `Enumerations` …) へ自動で入れるので、面には出るし検査も緑になる。
+    # 読者から見ると、その型だけが意味の無い束の底に落ちる
+    prefix = f"{root}/"
+    tops = {
+        path[len(prefix):]
+        for path in published
+        if path.startswith(prefix) and "/" not in path[len(prefix):]
+    }
+    curated = {symbol.lower() for symbol in symbols if "/" not in symbol}
+    forgotten = sorted(tops - curated)
+    if forgotten:
+        problems.append(
+            "面に出ているのに入口に並んでいない最上位: "
+            + ", ".join(forgotten)
+            + " (入口の Topics へ足すか、読者が書く人でないなら Makefile の "
+            "REFERENCE_OMIT で面から外す)"
+        )
+
     print(
         f"見た先: {source.target}\n"
         f"  モジュール: {module} / カタログ: {bundle}\n"
         f"  索引に載っている経路: {len(published)}\n"
-        f"  入口に並べた記号: {len(symbols)} / 記事: {len(articles)}"
+        f"  入口に並べた記号: {len(symbols)} / 記事: {len(articles)}\n"
+        f"  面に出ている最上位: {len(tops)} (並べ漏れ {len(forgotten)})"
     )
     return problems
 
@@ -225,7 +255,7 @@ def main() -> int:
         )
         return 1
 
-    print("ok: 入口に並べたものは全部出ている")
+    print("ok: 入口に並べたものは全部出ていて、面に出ている最上位はすべて入口に並んでいる")
     return 0
 
 
