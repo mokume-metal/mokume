@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "revision": 8,
+  "id": "agent-4712",
+  "params": [
+    { "name": "radius", "type": "float", "value": 200, "min": 0, "max": 200 },
+    { "name": "shape", "type": "string", "value": "square", "choices": ["circle", "square"] }
+  ],
+  "rejected": [
+    { "name": "radiu", "reason": "unknownName" },
+    { "name": "shape", "reason": "notInChoices" }
+  ],
+  "clamped": [{ "name": "radius", "requested": 999, "value": 200 }]
+}
