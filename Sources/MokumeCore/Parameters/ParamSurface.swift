@@ -46,6 +46,9 @@ struct ParamReport: Encodable {
     let rejected: [Rejection]
     /// 範囲へ収めて入れた書き込み。
     let clamped: [Clamp]
+    /// 保存から戻せずに捨てた値と、その理由。**起動したときだけ入りうる**
+    /// ([ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 6)。
+    let discarded: [Rejection]
 
     /// 入らなかった 1 件。
     struct Rejection: Encodable, Equatable {
@@ -70,7 +73,7 @@ struct ParamReport: Encodable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, revision, id, params, rejected, clamped
+        case schemaVersion, revision, id, params, rejected, clamped, discarded
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -81,6 +84,7 @@ struct ParamReport: Encodable {
         try container.encode(params, forKey: .params)
         try container.encode(rejected, forKey: .rejected)
         try container.encode(clamped, forKey: .clamped)
+        try container.encode(discarded, forKey: .discarded)
     }
 }
 
@@ -121,26 +125,41 @@ final class ParamSurface {
 
     /// 区画があるときだけ働く (観測・入力と同じ。区画の名前は ``StartupReads`` が正典)。
     static func makeIfEnabled(
-        for sketch: any Sketch,
+        for registry: ParamRegistry,
+        store: ParamStore? = nil,
         at directory: URL = WorkDirectory.facet(StartupReads.params.key)
     ) -> ParamSurface? {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
             isDirectory.boolValue
         else { return nil }
-        return ParamSurface(directory: directory, sketch: sketch)
+        return ParamSurface(directory: directory, registry: registry, store: store)
     }
 
-    init(directory: URL, sketch: any Sketch) {
+    init(directory: URL, registry: ParamRegistry, store: ParamStore? = nil) {
         self.directory = directory
         self.requests = RequestFile(url: directory.appendingPathComponent(Self.requestFileName))
         self.reportURL = directory.appendingPathComponent(Self.reportFileName)
-        self.registry = ParamRegistry(of: sketch)
+        self.registry = registry
+        self.store = store
     }
 
+    /// 検査から 1 行で組むための入口。
+    convenience init(directory: URL, sketch: any Sketch) {
+        self.init(directory: directory, registry: ParamRegistry(of: sketch))
+    }
+
+    /// 保存。外からの書き込みを即時に書き出させるために持つ。
+    private let store: ParamStore?
+
     /// 最初の応答を書き、値の変化を見張り始める。
-    func start() {
-        publish()
+    ///
+    /// 保存から戻せなかったものは、**最初の応答に載せる** ([ADR-0030] 決定 6)。診断は
+    /// 端末にしか出ないので、外から読む側にも同じことが見えている必要がある。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    func start(after restoration: ParamStore.Restoration = .init()) {
+        publish(clamped: restoration.clamped, discarded: restoration.discarded)
     }
 
     /// 要求が来ていれば書き込み、応答を書く。値が変わっていれば応答を書き直す。
@@ -181,6 +200,9 @@ final class ParamSurface {
             }
         }
         lastHandledID = request.id
+        // **外からの書き込みは待たせずに保存する** (ADR-0030 決定 6)。書いた側は反映を
+        // 見に来るので、静かになるのを待ってから書くと、そのぶん待たせることになる
+        store?.flushNow()
         // **1 つも入らなくても応答は書く。** 「届いたが全部断られた」と「届いていない」
         // が外から区別できる形にする (ADR-0030 決定 2)
         return publish(rejected: rejected, clamped: clamped)
@@ -189,14 +211,15 @@ final class ParamSurface {
     /// いまの姿を書き出し、次の変化を見張り直す。
     @discardableResult
     private func publish(
-        rejected: [ParamReport.Rejection] = [], clamped: [ParamReport.Clamp] = []
+        rejected: [ParamReport.Rejection] = [], clamped: [ParamReport.Clamp] = [],
+        discarded: [ParamReport.Rejection] = []
     ) -> ParamReport {
         revision += 1
         valuesChanged = false
         let declarations = registry.declarations
         let report = ParamReport(
             revision: revision, id: lastHandledID, params: declarations,
-            rejected: rejected, clamped: clamped)
+            rejected: rejected, clamped: clamped, discarded: discarded)
         write(report)
         watchValues()
         return report
