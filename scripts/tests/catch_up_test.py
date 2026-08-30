@@ -274,22 +274,51 @@ class CatchUpTest(unittest.TestCase):
         self.advance_main()
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        # 5 手が順に走ったこと
         self.assertIn("main を取り込む", proc.stdout)
-        self.assertEqual(self.made(), ["ci-check", "render-status"])
+        self.assertEqual(self.made(), ["ci-check"])
         self.assertEqual(self.merged_calls(), ["pr merge 7 --auto --squash"])
         # 取り込みが実際に効いていること
         self.assertIn("theirs.txt", self._git("ls-files"))
-        # push まで届いていること
+
+    def test_素直な取り込みでは_push_しない(self):
+        """#612。push するとルールセットが承認を落とし、承認が要る描画 PR は他の PR が
+        入るたびに押し直しになる。手元の木が queue の組む木と同じなら、それを名乗る
+        報告だけで足りる (scripts/render-status.sh の covers=)。"""
+        self.advance_main()
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("push しない", proc.stdout)
+        # push 済みの head が動いていないこと — 承認が落ちない条件そのもの
+        self.assertNotEqual(
+            self._git("rev-parse", "HEAD").strip(),
+            self._git("rev-parse", "origin/work").strip())
+        self.assertEqual(self.made(), ["ci-check"])
+
+    def test_衝突を解いた合流は_push_する(self):
+        """解いた中身は remote に無いので、queue も同じ木を作れない。ここは push が
+        要り、承認のやり直しも正しい。"""
+        self.advance_main("mine.txt")  # 同じ名前・違う中身をぶつける
+        first = self.run_script()
+        self.assertEqual(first.returncode, 1, first.stdout)  # 衝突で止まる
+        # 人が解いて commit した後、もう一度打つ
+        (self.work / "mine.txt").write_text("解いた\n")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "衝突を解く")
+        self.gh_calls.unlink(missing_ok=True)
+        self.make_calls.unlink(missing_ok=True)
+        proc = self.run_script()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("push する", proc.stdout)
+        self.assertEqual(self.made(), ["ci-check", "render-status"])
         self.assertEqual(
             self._git("rev-parse", "HEAD").strip(),
             self._git("rev-parse", "origin/work").strip())
 
-    def test_取り込み済みでも報告と再投入は行う(self):
+    def test_取り込み済みでも再投入は行う(self):
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("取り込み済み", proc.stdout)
-        self.assertEqual(self.made(), ["ci-check", "render-status"])
+        self.assertEqual(self.made(), ["ci-check"])
         self.assertEqual(self.merged_calls(), ["pr merge 7 --auto --squash"])
 
     def test_queue_に載ったことを_isInMergeQueue_で示す(self):
