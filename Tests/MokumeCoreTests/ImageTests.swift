@@ -341,6 +341,110 @@ struct ImageTests {
         #expect(image.pixels == before)
     }
 
+    // MARK: - まとめて書き込む
+
+    /// 表示できる形の絵を組み立てる。成分は 0…255 のまま渡す。
+    private func makePicture(
+        _ texels: [(red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8)], width: Int, height: Int
+    ) -> DisplayImage {
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        for (index, texel) in texels.enumerated() {
+            bytes[index * 4] = texel.red
+            bytes[index * 4 + 1] = texel.green
+            bytes[index * 4 + 2] = texel.blue
+            bytes[index * 4 + 3] = texel.alpha
+        }
+        return DisplayImage(width: width, height: height, bytes: bytes)
+    }
+
+    @Test("まとめて書き込んだ絵を等倍で置くと、書き込んだ画素がそのまま出る")
+    func aWrittenPictureIsDrawnBackByteForByte() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(2, 2)
+        // 端 (0・255) だけでなく**曲線の途中**も入れる。表を引く実装が伝達関数と
+        // 食い違っていれば、途中の値で先に出る
+        image.write(
+            makePicture(
+                [
+                    (255, 0, 0, 255), (0, 128, 64, 255),
+                    (200, 200, 200, 255), (17, 96, 233, 255),
+                ], width: 2, height: 2))
+
+        try canvas.draw {
+            canvas.background(black)
+            canvas.image(image, 10, 10)
+        }
+        let drawn = try pixels(of: canvas)
+        #expect(drawn[10, 10] == (255, 0, 0, 255))
+        #expect(drawn[11, 10] == (0, 128, 64, 255))
+        #expect(drawn[10, 11] == (200, 200, 200, 255))
+        #expect(drawn[11, 11] == (17, 96, 233, 255))
+    }
+
+    @Test("出口が出した絵を書き戻すと、元の絵に戻る")
+    func writingBackWhatTheOutletProducedRestoresTheImage() throws {
+        let source = try makeCanvas(width: 32, height: 32)
+        try source.draw {
+            source.background(.display(red: 0.1, green: 0.2, blue: 0.4))
+            source.noStroke()
+            source.fill(.display(red: 0.95, green: 0.6, blue: 0.2))
+            source.circle(16, 16, 20)
+        }
+        let produced = try pixels(of: source)
+
+        let canvas = try makeCanvas(width: 32, height: 32)
+        let image = try canvas.createImage(32, 32)
+        image.write(produced)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.image(image, 0, 0)
+        }
+        #expect(try pixels(of: canvas) == produced)
+    }
+
+    @Test("まとめて書き込んだ画素は、CPU 側から読んでも同じ色になる")
+    func aWrittenPictureReadsBackOnTheCPU() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(2, 1)
+        image.write(makePicture([(255, 128, 0, 255), (64, 64, 64, 128)], width: 2, height: 1))
+
+        // 不透明な画素は、指定した表示の値がそのまま線形へ戻る
+        let opaque = image.get(0, 0)
+        #expect(abs(opaque.red - 1) < 0.001)
+        #expect(abs(opaque.green - TransferFunction.decode(128.0 / 255)) < 0.001)
+        #expect(opaque.blue == 0)
+        #expect(opaque.alpha == 1)
+
+        // 半透明の画素は**乗算済み**で入る (作業空間の不変条件)
+        let translucent = image.get(1, 0)
+        let straight = TransferFunction.decode(64.0 / 255)
+        let alpha = Float(128) / 255
+        #expect(abs(translucent.alpha - alpha) < 0.001)
+        #expect(abs(translucent.red - straight * alpha) < 0.001)
+    }
+
+    @Test("まとめて書き込むと、前の中身は残らない")
+    func writingReplacesEverythingThatWasThere() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(2, 1)
+        image.fill(white)
+        image.write(makePicture([(0, 0, 0, 255), (0, 0, 0, 255)], width: 2, height: 1))
+        #expect(image.get(0, 0) == LinearRGBA.opaque(red: 0, green: 0, blue: 0))
+        #expect(image.get(1, 0) == LinearRGBA.opaque(red: 0, green: 0, blue: 0))
+    }
+
+    @Test("大きさの違う絵を書き込んでも、絵は変わらない")
+    func writingAPictureOfADifferentSizeChangesNothing() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(2, 2)
+        image.fill(white)
+        let before = image.pixels
+        image.write(makePicture([(0, 0, 0, 255)], width: 1, height: 1))
+        #expect(image.pixels == before)
+        #expect(image.width == 2)
+        #expect(image.height == 2)
+    }
+
     // MARK: - 他の描画と混ざらない
 
     @Test("画像の後に置いた図形が、画像の面を読まない")
