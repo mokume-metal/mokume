@@ -60,9 +60,6 @@
             "context": "ci-gate"
           },
           {
-            "context": "human-approval"
-          },
-          {
             "context": "local-render"
           }
         ],

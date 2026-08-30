@@ -98,7 +98,7 @@ class SubIssueTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         create = self.create_call(calls)
         self.assertIn("test: 動作を確かめる", create)
-        self.assertIn("--label verify: machine", create)
+        self.assertIn("--label verify: triaged", create)
 
     def test_test_flag_does_not_duplicate_an_existing_prefix(self):
         proc, calls = self.run_sub_issue("test: 動作を確かめる", "--test")

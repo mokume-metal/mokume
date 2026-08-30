@@ -46,13 +46,14 @@ SPDX-License-Identifier: MIT
 ## 進め方
 
 1. 変更は Issue 起票から始める。起票は雑でよい (書式不要・分類は機械がタイトルから下書きする)。複数工程は親 Issue + sub-issue で構成し、本文チェックリストは使わない
-2. **着手できるのは `verify:` ラベルが付いた Issue だけ。** ラベルが無ければ未トリアージなので着手しない — まず議論して「どうなれば解消か」を Issue 本文に固め、`verify: machine` / `verify: human` を付ける ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md))
-3. 着手時に、合意済みの完了条件を引用したプラン (変更点・確認方法) を対象 Issue にコメントで残す。実装の過程で変わったら差分を残す (PR を出した後なら PR 側へ)。記憶がリセットされた次のセッションが、GitHub を読むだけで再開できる状態を保つため
-4. `main` から `<type>/<短い説明>` ブランチを切る
-5. PR を出す。本文は 目的 / 変更点 / 確認方法。Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR には `no-issue` ラベルを付ける
-6. マージは squash のみ。PR タイトルがそのままマージコミットになるので Conventional Commits で書く
+2. **着手できるのは `verify: triaged` が付いた Issue だけ。** ラベルが無ければ未トリアージなので着手しない — まず議論して「どうなれば解消か」を Issue 本文に固めてから付ける ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1・[ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 1)
+3. **着手時に完了条件がまだ妥当かを確かめる。** ラベルは付いた時点の判断しか表さない — 各条件を現行のコードと突き合わせ、「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書く。ずれていれば Issue 本文のほうを先に更新する ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 4。[#457](https://github.com/mokume-metal/mokume/issues/457) は起票時の 3 条件が着手前に既に満たされていた)
+4. その突き合わせを含むプラン (変更点・確認方法) を対象 Issue にコメントで残す。実装の過程で変わったら差分を残す (PR を出した後なら PR 側へ)。記憶がリセットされた次のセッションが、GitHub を読むだけで再開できる状態を保つため
+5. `main` から `<type>/<短い説明>` ブランチを切る
+6. PR を出す。本文は 目的 / 変更点 / 確認方法。**「確認方法」には閉じる Issue ごとに完了条件と、それを何でどう確かめたかの対応表を置く** (承認の代わりに残す記録 — [ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 2。`review-gate` は番号が現れることだけを見る)。Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR には `no-issue` ラベルを付ける
+7. マージは squash のみ。PR タイトルがそのままマージコミットになるので Conventional Commits で書く
 
-Claude Code のセッションでは `scripts/plan-record.sh` がプランを投稿用に整えて投稿コマンドを示し、未投稿のままセッションを終えようとすると差し戻す。投稿はエージェントが `scripts/comment.sh` で行う。
+Claude Code のセッションでは `scripts/plan-record.sh` がこれを見る — 完了条件の現況が書かれていないプランは差し戻し、書かれていればコメント投稿用に整えて投稿コマンドを示す。未投稿のままセッションを終えようとするのも差し戻す。投稿はエージェントが `scripts/comment.sh` で行う。
 
 ## Issue の分類
 
@@ -66,13 +67,13 @@ Claude Code のセッションでは `scripts/plan-record.sh` がプランを投
 | `Design` | 設計判断・ADR |
 | `Docs` | ドキュメント |
 
-迷ったら `Bug` > `Design` > `Docs` > `Task` の順で、より具体的なほうを取る (`Task` は何にでも当てはまるので最後)。ラベルは型と直交する属性だけを表す — `status: *` (状態)・`verify: *` (完了条件の性質)。検索は `type:"Design"` と引用符を付ける (旧来の `type:issue` / `type:pr` と綴りが衝突するため)。
+迷ったら `Bug` > `Design` > `Docs` > `Task` の順で、より具体的なほうを取る (`Task` は何にでも当てはまるので最後)。ラベルは型と直交する属性だけを表す — `status: *` (状態)・`verify: triaged` (完了条件が固まっている)。検索は `type:"Design"` と引用符を付ける (旧来の `type:issue` / `type:pr` と綴りが衝突するため)。
 
 型の作成・改名はメンテナの操作で、エージェントの token では通らない (`admin:org` が要る)。既存の型を Issue に付けるのはエージェントでもできる。
 
 ## PR のラベル
 
-PR には分類ラベルを付けない ([ADR-0005](docs/decisions/0005-pr-labels-as-machine-input.md))。型は PR タイトル、対象 Issue は `Closes #N`、完了条件の性質は対象 Issue の `verify: *`、重要パスはルールセットの `required_reviewers`、進行状態は Draft / Review / merge queue が既に持っている。
+PR には分類ラベルを付けない ([ADR-0005](docs/decisions/0005-pr-labels-as-machine-input.md))。型は PR タイトル、対象 Issue は `Closes #N`、完了条件は対象 Issue の本文と PR の「確認方法」の対応表、重要パスはルールセットの `required_reviewers`、進行状態は Draft / Review / merge queue が既に持っている。
 
 付くのは CI の判定を変えるラベルだけで、現状は 3 種:
 
@@ -107,12 +108,11 @@ gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
 
 承認の要否は `reviewDecision` には現れないので `mergeStateStatus` を見る (承認待ちなら `BLOCKED`・承認されると `CLEAN`)。理由は [ADR-0003](docs/decisions/0003-agent-identity-separation.md) 決定 4。**`CLEAN` だけでは「承認された」と読めない** — 承認の要らない PR も `CLEAN` なので、承認が付いたかどうかは `latestReviews` を見る ([#573](https://github.com/mokume-metal/mokume/issues/573) はここを取り違えて、承認済みの PR を「承認 0 で入った」と報告している)。
 
-承認が要るのは次の 2 つで、どちらも承認待ちの間 `ci-gate` は緑のまま ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) / ADR-0003 決定 5):
+承認が要るのは **重要パス (`docs/decisions/`・`.github/`・`.claude/`) を触る PR だけ**で、要求もマージの停止も `.github/rulesets/main-protection.json` の `required_reviewers` が担う (team `maintainers` へ 1 承認を課す)。承認待ちの間も `ci-gate` は緑のままである。
 
-- 重要パス (`docs/decisions/`・`.github/`・`.claude/`) を触る PR — 要求もマージの停止も `.github/rulesets/main-protection.json` の `required_reviewers` (team `maintainers` へ 1 承認を課す)
-- `verify: human` の Issue に紐づく PR — `review-gate` が Approve レビューを要求し、`human-approval` チェックが `pending` で待つ
+かつては `verify: human` の Issue に紐づく PR にも Approve を要求していたが、263 件のマージで測ったら固有に承認を要求したのは 36 件・変更要求は 0 件・初承認までの中央値は 11 分で、止めてはいなかった ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) が畳んだ)。代わりに置いたのが PR 本文の対応表である。
 
-承認は native の Approve レビューのみ。どちらに当たる PR も App identity で作る — author を承認者集合の外に置くのが不変条件である ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。
+承認は native の Approve レビューのみ。**承認が要る PR も要らない PR も App identity で作る** — author を承認者集合の外に置くのが不変条件で、要否は作成前に確定できない ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。
 
 ## 版の出方
 
@@ -240,7 +240,7 @@ bash scripts/orphan-processes.sh
 ## コミット・PR の規約
 
 - Conventional Commits: `<type>(<scope>): <要約>`。type は feat / fix / docs / refactor / test / chore / ci / perf / build。type と scope は英語、要約は日本語でよい
-- 1 コミット 1 関心・1 PR 1 関心
+- 1 コミット 1 関心。**1 PR は「1 つの説明で筋が通る範囲」** — 同じ親の sub-issue 群も、作業中に踏んで起票した障害もまとめて閉じてよい ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 3)。閉じる Issue ごとに「確認方法」へ対応表を置く
 - **検証は `make ci-check` に集約する。push 前に通す — これは作法ではなく merge の条件である。** 全部が通ったときだけ `local-render` が commit status に打たれ、描画に触れる PR はそれが無いと merge できない (報告されないときは理由が出る。よくあるのは作業ツリーが汚れているまま打った場合)
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 ファイル置く (CHANGELOG を直接編集しない)
 - **検査の「待たない」は待つ側が持つ。`.timeLimit` は使わない。** 上限は検査の走り出しからの時計で測られ、このパッケージの検査はすべて main actor に載っているので、どんな値を書いても「検査**全体**が何秒で終わるか」を要求することになる — 検査が増えた日に、無関係な変更が無関係な検査を赤くする ([#564](https://github.com/mokume-metal/mokume/issues/564) の実測: 905 件のうち 875 件が「60 秒超」を報告した)。固まりうる待ちには、待つ側が期限を持たせて越えたら殺す

@@ -4,15 +4,13 @@
 # 「この変更は承認が要るパスに触れているか」の判定 (#584)。
 #
 # 一覧そのものは .github/rulesets/main-protection.json の required_reviewers が持ち、
-# **それを読む照合はここ 1 つ**に保つ (ADR-0001 原則 9)。読み手が 2 つある:
+# **それを読む照合はここ 1 つ**に保つ (ADR-0001 原則 9)。
 #
-#   - 承認が要る PR かの判定 — scripts/review-gate.sh
-#   - パス由来のレビュー要求が飛ぶ PR かの判定 — scripts/request-review.sh
-#
-# 後者が要る理由は #584。ラベル由来の要求は「いま team へ要求が飛んでいるか」を API から
-# 読んで重複を避けていたが、**反映が間に合わないと黙って 2 通目を投げる** (#583 では
-# パス由来の 19 秒後に読んでも見えなかった)。パス由来が飛ぶかどうかは触れたパスで
-# **決まっている**ので、状態ではなく条件で判定すれば待つ理由が無くなる。
+# 読み手は scripts/review-gate.sh の「承認が要る PR か」の判定 1 つである。かつては
+# scripts/request-review.sh も読んでいて、ラベル由来のレビュー要求が同じ人へ 2 通目を
+# 投げないための条件判定に使っていた (#583 / #584)。ADR-0031 がラベル由来の承認ごと
+# 畳んだので、そちらは消えた (#618) — 分けた形そのものは今も正しく、読み手が 1 つに
+# 戻っただけである。
 #
 # 読むのは API ではなくリポジトリ内の定義ファイルなので、追加の権限も呼び出しも要らない。
 # drawing-paths.sh / guard-lib.sh と同じ形で source する。
@@ -21,8 +19,8 @@
 #   . "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
 #   jq -r '.files[]?.path // empty' <<<"$pr_json" | touches_protected_path && …
 #
-# テストは scripts/tests/review_gate_test.py と scripts/tests/request_review_test.py が、
-# それぞれの読み手を通して行う (どちらも RULESET_FILE を差し替えて走らせる)。
+# テストは scripts/tests/review_gate_test.py が読み手を通して行う
+# (RULESET_FILE を差し替えて走らせる)。
 
 # 承認が要るパスの正本。テストは別のファイルを指す
 RULESET_FILE="${RULESET_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.github/rulesets/main-protection.json}"

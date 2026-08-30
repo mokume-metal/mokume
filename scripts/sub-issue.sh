@@ -8,7 +8,7 @@
 # 使い方:
 #   sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--test]
 #   --type : 親から継ぐ型を上書きする (ADR-0004 の 5 型: Bug/Feature/Task/Design/Docs)
-#   --test : 使い捨て検証用。タイトルに test: を補い、verify: machine を付け、
+#   --test : 使い捨て検証用。タイトルに test: を補い、verify: triaged を付け、
 #            本文が無ければ検証用の雛形を入れる (確認後に close する前提)
 set -euo pipefail
 
@@ -32,7 +32,7 @@ done
 
 if $IS_TEST; then
   case "$TITLE" in test:*) ;; *) TITLE="test: $TITLE" ;; esac
-  LABELS+=("verify: machine")
+  LABELS+=("verify: triaged")
   if [ -z "$BODY" ] && [ -z "$BODY_FILE" ]; then
     BODY="#$PARENT の検証用の使い捨て Issue。確認が済んだら close する (merge しない試験 PR の紐づけ先)。"
   fi

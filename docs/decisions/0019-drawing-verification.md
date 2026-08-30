@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-28)
+採用 (2026-08-28) / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 2
 
 ## 文脈
 
