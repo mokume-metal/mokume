@@ -63,7 +63,13 @@ def load_requirements(graphs: pathlib.Path, module: str) -> set[str]:
 
 
 def load_symbols(graphs: pathlib.Path, module: str) -> list[dict]:
-    """モジュールのシンボルを読む。拡張のぶんは別ファイルに出るのでまとめて拾う。"""
+    """モジュールのシンボルを読む。拡張のぶんは別ファイルに出るのでまとめて拾う。
+
+    **他所の宣言から写された手続きは落とす。** 標準ライブラリの型を 1 つ拡張すると、
+    その型が準拠している約束ごとの既定の実装まで、こちらの拡張のグラフへ
+    `::SYNTHESIZED::` の印つきで並ぶ (`Int` を拡張しただけで `Int.formatted(_:)` が
+    出てくる)。自分たちが書いた面ではないので、一覧にも載せないし境界の検査にも掛けない。
+    """
     symbols: list[dict] = []
     for path in sorted(graphs.glob("*.symbols.json")):
         name = path.name.split(".symbols.json")[0]
@@ -71,8 +77,11 @@ def load_symbols(graphs: pathlib.Path, module: str) -> list[dict]:
             continue
         document = json.loads(path.read_text(encoding="utf-8"))
         for symbol in document.get("symbols", []):
-            if symbol.get("accessLevel") == "public":
-                symbols.append(symbol)
+            if symbol.get("accessLevel") != "public":
+                continue
+            if "::SYNTHESIZED::" in symbol["identifier"]["precise"]:
+                continue
+            symbols.append(symbol)
     # プロトコルの要件と既定の実装は同じ名前で 2 度出る。一覧では 1 つに畳む。
     # **引数の型まで見て畳む** — 名前だけで畳むと、同名で引数型の違う宣言が 1 本に
     # 潰れる。潰れたぶんは一覧から落ち、説明文の検査からも隠れる (#315)
@@ -80,6 +89,16 @@ def load_symbols(graphs: pathlib.Path, module: str) -> list[dict]:
     for symbol in symbols:
         unique.setdefault((owner(symbol), title(symbol), signature(symbol)), symbol)
     return list(unique.values())
+
+
+def own_modules(graphs: pathlib.Path) -> set[str]:
+    """このパッケージが組み上げたモジュールの名前。
+
+    グラフのファイル名がそのまま名乗りになっている (`<モジュール>.symbols.json` と、
+    拡張のぶんの `<モジュール>@<拡張した型のモジュール>.symbols.json`)。読む対象を
+    名前の表で持たないのは、モジュールが増えた日に書き足し忘れないため。
+    """
+    return {path.name.split(".symbols.json")[0].split("@")[0] for path in graphs.glob("*.symbols.json")}
 
 
 def load_owned_identifiers(graphs: pathlib.Path) -> set[str]:
@@ -373,7 +392,9 @@ def module_of(identifier: str) -> str:
     return "(不明)"
 
 
-def check_foreign_vocabulary(symbols: list[dict], owned: set[str]) -> list[str]:
+def check_foreign_vocabulary(
+    symbols: list[dict], owned: set[str], own: set[str] = frozenset()
+) -> list[str]:
     """公開の署名に出てよいのは、自前の型と Swift 標準ライブラリだけ (ADR-0020 決定 6)。
 
     `check_type_closure` と同じ材料を**逆向きに**見る。あちらは自前の型が一覧から落ちて
@@ -382,6 +403,9 @@ def check_foreign_vocabulary(symbols: list[dict], owned: set[str]) -> list[str]:
     書かれていても、一覧は呼べないものを呼べる顔で並べることになる。
 
     見つかったものは既定で落とす。正当な例外は `FOREIGN_ALLOWLIST` に理由つきで載せる。
+
+    自分たちのモジュールに属する識別子は外の語彙ではない。宣言されたシンボルとして
+    数えられないもの (総称の仮引数など) がここで外来と誤って挙がっていた。
     """
     problems = []
     for symbol in symbols:
@@ -395,7 +419,7 @@ def check_foreign_vocabulary(symbols: list[dict], owned: set[str]) -> list[str]:
                 continue
             seen.add(identifier)
             module = module_of(identifier)
-            if module == "Swift":
+            if module == "Swift" or module in own:
                 continue
             problems.append(
                 f"{name}: 署名に {module} の {fragment.get('spelling', identifier)} が出ている。"
@@ -461,7 +485,7 @@ def main() -> int:
         + check_forwarding(symbols, load_requirements(arguments.graphs, arguments.module))
         + check_doc_canon(symbols)
         + check_type_closure(symbols, owned)
-        + check_foreign_vocabulary(symbols, owned)
+        + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
         + check_no_written_counts(root)
     )
     if problems:

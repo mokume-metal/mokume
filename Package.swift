@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import CompilerPluginSupport
 import PackageDescription
 
 // ターゲットの並びは ADR-0016 の層そのもの。依存は必ず下の層へ向かい、
@@ -21,13 +22,28 @@ let package = Package(
         // 作られない — 実測)。配布のときに mokume という名前で入れる
         .executable(name: "mokume-cli", targets: ["MokumeCLI"]),
     ],
+    dependencies: [
+        // ADR-0013 決定 2 が原則 5 の明示的な例外として引き受けた 1 件。macro を
+        // 書くために要るもので、これ以上の外部依存を開く前例にはしない
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0")
+    ],
     targets: [
         // 層: 基盤 — 何にも依存しない
         .target(name: "MokumeDiagnostics", swiftSettings: .mokume),
+        // macro の実装。ビルドの間だけ走る道具で、利用者へ配るものには入らない
+        .macro(
+            name: "MokumeMacros",
+            dependencies: [
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+            ],
+            // 既定の隔離を main actor にしない。ここはビルドの間だけ走るコードで、
+            // スケッチの気楽さのための既定 (ADR-0010 決定 1) が効く場所ではない
+            swiftSettings: .tool),
         // 層: 描画コア — 基盤にのみ依存する
         .target(
             name: "MokumeCore",
-            dependencies: ["MokumeDiagnostics"],
+            dependencies: ["MokumeDiagnostics", "MokumeMacros"],
             resources: [.process("Drawing/Shaders"), .process("Display/Shaders")],
             swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
@@ -51,6 +67,7 @@ let package = Package(
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
+
     ]
 )
 
@@ -63,4 +80,10 @@ extension [SwiftSetting] {
     static var mokume: [SwiftSetting] {
         [.swiftLanguageMode(.v6), .defaultIsolation(MainActor.self)]
     }
+
+    /// ビルドの間だけ走るコードの言語設定 (macro の実装)。
+    ///
+    /// スケッチのための既定隔離は載せない — macro の展開はコンパイラの中で走り、
+    /// main actor は存在しない。
+    static var tool: [SwiftSetting] { [.swiftLanguageMode(.v6)] }
 }
