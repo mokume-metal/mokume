@@ -234,6 +234,15 @@ REFERENCE_MODULES := MokumeCore
 REFERENCE_SURFACE := mokume
 REFERENCE_GRAPHS := .build/reference-graphs
 REFERENCE_OUT := .build/reference
+# 面から外す型。**面の相手はスケッチを書く人 1 種類**で、道具・エージェント・実行の
+# 土台だけが触るものは人が名指しして外す (ADR-0027 決定 5 が 1 本ずつ理由を持つ)。
+# public は 1 つも動かないので、一覧も ADR-0020 の検査も全部を見たままになる
+REFERENCE_OMIT := \
+	SketchApplication SketchRuntime Clock FrameRateNotice OutputStage \
+	StartupReads WorkDirectory SourceStamp RuntimeLoad \
+	InputState InputEvent \
+	ObservationRequest ObservationReport ExposedValue FrameStats \
+	ParamBox
 
 reference: ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時の基準パス)
 	$(API_BUILD)
@@ -241,7 +250,8 @@ reference: ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時�
 	mkdir -p "$$(dirname "$(or $(OUT),$(REFERENCE_OUT))")"
 	python3 scripts/reference-graphs.py \
 		--graphs "$(API_GRAPHS)" --out "$(REFERENCE_GRAPHS)" \
-		--surface "$(REFERENCE_SURFACE)" --module $(REFERENCE_MODULES)
+		--surface "$(REFERENCE_SURFACE)" --module $(REFERENCE_MODULES) \
+		--omit $(REFERENCE_OMIT)
 	xcrun docc convert "$(REFERENCE_CATALOG)" \
 		--additional-symbol-graph-dir "$(REFERENCE_GRAPHS)" \
 		--fallback-bundle-identifier org.mokume.reference \
