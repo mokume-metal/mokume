@@ -63,6 +63,10 @@ import subprocess
 import sys
 import urllib.request
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from example_wrapping import LEVEL_BODY, dedent, strip_doc, wrap  # noqa: E402
+
 # 囲みの開き。`|` の後ろは撮影設定 (frames=90 / size=400x400)
 OPEN = re.compile(r"^(?P<indent>\s*)///\s*<!--\s*shot:\s*(?P<alt>[^|]*?)\s*(?:\|\s*(?P<attributes>[^>]*?)\s*)?-->\s*$")
 CLOSE = re.compile(r"^\s*///\s*<!--\s*/shot\s*-->\s*$")
@@ -150,23 +154,6 @@ def snippet_above(lines: list[str], open_line: int) -> list[str]:
             return dedent([strip_doc(line) for line in lines[index + 1 : end]])
         index -= 1
     return []
-
-
-def dedent(snippet: list[str]) -> list[str]:
-    """共通の字下げを落とす。**指紋を入れ子の深さから独立させる** — 2 段組へ入れた
-    だけで撮り直しを要求されると、絵は同じなのに URL が動く。"""
-    body = [line for line in snippet if line.strip()]
-    if not body:
-        return snippet
-    common = min(len(line) - len(line.lstrip()) for line in body)
-    return [line[common:] if line.strip() else "" for line in snippet]
-
-
-def strip_doc(line: str) -> str:
-    """`/// ` を剥がす。中の字下げは残す。"""
-    text = line.lstrip()
-    text = text[3:] if text.startswith("///") else text
-    return text[1:] if text.startswith(" ") else text
 
 
 def records_after(lines: list[str], close_line: int) -> dict[int, tuple[int, str, str]]:
@@ -358,16 +345,19 @@ def generate(root: pathlib.Path, shots: list[Shot], package: pathlib.Path) -> No
 
     body = ["// 生成物 — 直接編集しない (scripts/example-shots.py が書く)。", "import mokume", ""]
     for shot in shots:
+        # 包み方は example_wrapping が持つ。**組めることを見る側 (check-examples) と
+        # 同じ規則**にしておかないと、撮れる例と組める例が食い違う (原則 9)。
+        # 段は見分けさせず本体で固定する — 撮る対象は `draw()` の中身だけである
         body.append(f"/// {shot.where}")
-        body.append(f"final class {_type_name(shot)}: Sketch {{")
-        body.append(
-            f"    var settings = SketchSettings(width: {shot.width}, height: {shot.height},"
-            f' title: "{shot.name}")'
+        body += wrap(
+            _type_name(shot),
+            shot.snippet,
+            level=LEVEL_BODY,
+            members=[
+                f"var settings = SketchSettings(width: {shot.width}, height: {shot.height},"
+                f' title: "{shot.name}")'
+            ],
         )
-        body.append("    func draw() {")
-        body += [f"        {line}" if line else "" for line in shot.snippet]
-        body.append("    }")
-        body.append("}")
         body.append("")
     body.append("let catalogue: [(name: String, frames: Int, make: () -> any Sketch)] = [")
     for shot in shots:

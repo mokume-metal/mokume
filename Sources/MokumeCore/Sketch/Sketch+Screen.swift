@@ -74,11 +74,12 @@ extension Sketch {
     /// 掴む・置くはたいてい「掴んだ物と同じ奥行き」なので、その物の
     /// ``screenZ(_:_:_:)`` を取って渡す:
     ///
+    /// <!-- example: 文脈 var held = SIMD3<Float>(0, 0, 0) -->
     /// ```swift
-    /// // 箱を掴んで、画面に沿って引きずる
-    /// let depth = screenZ(box.x, box.y, box.z)
+    /// // 掴んだ物を、画面に沿って引きずる
+    /// let depth = screenZ(held.x, held.y, held.z)
     /// let pointed = spacePosition(screenX: mouseX, screenY: mouseY, depth: depth)
-    /// if isMousePressed { box = pointed }
+    /// if isMousePressed { held = pointed }
     /// ```
     ///
     /// 平行投影でも透視投影でも同じように使える (式の違いは視点の側が持つ)。

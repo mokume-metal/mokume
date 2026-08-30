@@ -20,7 +20,9 @@
 /// ```swift
 /// final class MyInlet: Inlet {
 ///     private(set) var latest: Image?
-///     func supply() { latest = 受け取った絵 }
+///     func supply() {
+///         // 受け取った絵を latest へ入れる
+///     }
 /// }
 /// ```
 ///

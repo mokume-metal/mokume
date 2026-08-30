@@ -109,7 +109,10 @@ final class Hello: Sketch {
 
 ### 走らせたまま値を動かす
 
-- ``Param(_:name:)``
+- ``Param(name:)``
+- ``Param(_:name:)-4ddav``
+- ``Param(_:name:)-4a6pu``
+- ``Param(choices:name:)``
 - ``ParamValue``
 - ``ParamRange``
 - ``ParamDeclaration``

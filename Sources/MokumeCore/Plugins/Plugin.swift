@@ -7,6 +7,8 @@
 /// ([ADR-0024] 決定 3)。1 つのパッケージが複数の差込口へ入る (映像を送る出口と、
 /// 受け取る入り口を同じパッケージが持つ) ため、束ねる単位は要る。
 ///
+/// <!-- example: 文脈 final class MySender: Outlet { func receive(_ frame: OutputFrame) {} } -->
+/// <!-- example: 文脈 final class MyReceiver: Inlet { func supply() {} } -->
 /// ```swift
 /// struct MyPlugin: Plugin {
 ///     func register(into registry: PluginRegistry) {
