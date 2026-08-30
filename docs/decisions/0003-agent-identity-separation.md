@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 の必須化の手段と決定 5 の報告先 / 改訂 (2026-08-30): 決定 4 が CODEOWNERS を畳む
+採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 の必須化の手段と決定 5 の報告先 / 改訂 (2026-08-30): 決定 4 が CODEOWNERS を畳む / 改訂 (2026-08-30): 決定 4 のラベル由来の要求を user 宛へ戻す
 
 ## 文脈
 
@@ -117,9 +117,28 @@ GitHub 自身は両者の併用を勧めている — required reviewer rule は
 - `.github/CODEOWNERS` を削除する
 - `require_code_owner_review` は `false` にする (CODEOWNERS が無ければ無意味であり、承認数 0 との組み合わせでは元から何も強制していない)
 - 承認が要るパスの正本は `required_reviewers` の `file_patterns` 1 か所になる。`review-gate` はそこを読み、代理には `author_association` を使う (ADR-0007 決定 3 の改訂)
-- ラベル由来のレビュー要求 (`scripts/request-review.sh`・[#498](https://github.com/mokume-metal/mokume/issues/498)) も **team 宛**へ揃える。宛先が 1 つになり、パス由来と重なった PR で 2 通目を作らない
+- ラベル由来のレビュー要求 (`scripts/request-review.sh`・[#498](https://github.com/mokume-metal/mokume/issues/498)) も **team 宛**へ揃える。宛先が 1 つになり、パス由来と重なった PR で 2 通目を作らない (**この 1 項だけ、下の再改訂で覆った**)
 
 `required_reviewers` と `required_approving_review_count: 0` は一字も動かさない。**この改訂が動かすのは要求経路だけで、ブロックの正本は上の決定のままである。**
+
+#### 再改訂 (2026-08-30) — ラベル由来の要求は user 宛に戻す
+
+**当初の決定**は、上の 4 つ目のとおり「ラベル由来のレビュー要求も team 宛へ揃える」だった。宛先を 1 つにすれば、パス由来と重なった PR で 2 通目を作らずに済むと考えたためである。
+
+**この手段は成立しない。** `GITHUB_TOKEN` は org スコープを持たないので、`POST /repos/{repo}/pulls/{n}/requested_reviewers` に `team_reviewers[]` を渡すと 422 で落ちる ([#576](https://github.com/mokume-metal/mokume/issues/576) — [#575](https://github.com/mokume-metal/mokume/pull/575) の CI で実測)。
+
+```
+gh: Validation Failed (HTTP 422)
+request-review: レビュー要求に失敗した — @maintainers
+```
+
+**ルールセットの `required_reviewers` が team へ飛ばせるのは、GitHub 自身が投げているからである。** API 経由で同じ宛先へ投げられることを意味しない — ここを同一視したのが誤りだった。team のメンバーを引いて宛先を作る道も `read:org` が要るので通らず、CI へ App の鍵を置けば通るが、Actions secret 0 件を保つ方針 (決定 1) に対して通知 1 通は釣り合わない。
+
+**気付かれずに入ったのは、team 宛が一度も実際に投げられなかったからである。** この改訂を入れた [#536](https://github.com/mokume-metal/mokume/pull/536) 自身は `.github/` を触るのでパス由来の要求が先に飛び、`request-review.sh` は「既に team へ要求済み」として正しくスキップした。偽 `gh` を使う検査も API を叩かない。**実際に投げる経路を通る PR は、ラベル由来だけの PR しかない。**
+
+よって宛先は user (`shinyaoguri`) へ戻す。承認を課している集合の正典は `required_reviewers` の team `maintainers` のままで、変わるのは**要求を届ける手段**だけである。
+
+**宛先が割れることは受け入れる。** パス由来が飛んでいる PR ではラベル由来がスキップするので、user 宛が飛ぶのはラベル由来だけの PR に限られる — [#530](https://github.com/mokume-metal/mokume/issues/530) が畳んだ「同じ人へ 2 通」は戻らない。team のメンバーが増えたときに宛先が追随しない点は、綴りを `scripts/request-review.sh` 1 か所で持つことで受け止める (メンバーを引く権限が無い以上、他に置き場が無い)。
 
 ### 5. 承認を CI から追い出す (2026-08-28 改訂)
 
