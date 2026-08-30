@@ -71,7 +71,8 @@ enum BundleCommand {
             into: out)
         try check(app, contains: declaredResourceBundles(inDumpOf: dump))
         try sign(app)
-        print(report(for: app))
+        let note = try writeOpeningNote(for: identity, beside: app)
+        print(report(for: app, note: note))
     }
 
     // MARK: - 引数
@@ -235,21 +236,75 @@ enum BundleCommand {
     /// たまたま当たるので、成功したように見える。退避してから起動する 1 手順が、それを
     /// 捕まえる唯一の場所である ([ADR-0029] 決定 4)。
     ///
+    /// **開き方は紙を名指しする。** 手順をここに書くと、読んだ送り手が受け取る側へ
+    /// 伝え直すことになり、配るたびに繰り返される。
+    ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
-    static func report(for app: URL) -> String {
+    static func report(for app: URL, note: URL) -> String {
         """
         束ねた: \(app.path)
 
         保証しているのは「別の機械で起動して絵が出る」ところまで。署名は名前を
-        持たないものなので、受け取った側では初回の起動が止められる。**渡すときは
-        開き方も一緒に伝える** — 止められた直後にシステム設定の「プライバシーと
-        セキュリティ」を開くと、そこにだけ「このまま開く」が出る。
+        持たないものなので、受け取った側では初回の起動が止められる。開き方を書いた
+        紙を隣に出したので、**作品と一緒に送る**:
+
+          \(note.path)
 
         配る前に、作者の環境に依存した解決が残っていないかを確かめる:
 
           mv .build .build-held && open "\(app.path)" ; mv .build-held .build
 
         退避したまま絵が出れば、包みの中だけで足りている。
+        """
+    }
+
+    // MARK: - 開き方
+
+    /// 開き方を書いた 1 枚を、包みの**隣**に出す。
+    ///
+    /// **中には入れない。** 開けないことが問題なのだから、中にあっては読めない。
+    ///
+    /// 受け取った側の設定往復は**消せない** — 名前のある署名と公証を採らないと決めた
+    /// 以上、macOS はここを通す。消せない代わりに、説明を**送り手の記憶から外す**。
+    /// 作品と一緒に送れる物にしておけば、配るたびに手順を伝え直さずに済む。
+    static func writeOpeningNote(for identity: AppIdentity, beside app: URL)
+        throws(CommandFailure) -> URL
+    {
+        let url = app.deletingLastPathComponent()
+            .appendingPathComponent(noteFileName(for: identity))
+        do {
+            try openingNote(for: identity).write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            throw .cannotCreate(path: url.path, reason: error.localizedDescription)
+        }
+        return url
+    }
+
+    /// 紙の名前。
+    ///
+    /// **作品名を入れる。** 受け取った側のフォルダに落ちたとき、何についての紙かが
+    /// 名前だけで分かる必要がある。
+    static func noteFileName(for identity: AppIdentity) -> String {
+        "\(identity.name) を開くには.txt"
+    }
+
+    /// 紙の中身。
+    ///
+    /// **止められた後に実際に踏む手順だけを書く。** 安全かどうかのような、こちらから
+    /// 断定できないことは書かない ([ADR-0029] 決定 2 と同じ規律)。
+    static func openingNote(for identity: AppIdentity) -> String {
+        """
+        \(identity.name) を開くには
+
+        はじめの 1 回だけ、開く許可を自分で与える必要があります。
+        このアプリは、macOS が開発元を確認できない形で配られているためです。
+
+        1. \(identity.name).app を二重クリックする (開けません、と出ます)
+        2. アップルメニュー → システム設定 → プライバシーとセキュリティ を開く
+        3. 下の方に \(identity.name) についての行があるので、「このまま開く」を押す
+        4. もう一度 \(identity.name).app を二重クリックする
+
+        2 回目からは、そのまま開きます。
         """
     }
 
