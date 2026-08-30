@@ -28,8 +28,8 @@ final class KnobOverlay: NSView {
 
     private let hosting: NSHostingView<KnobPanel>
 
-    init(boxes: [any DeclaredParam]) {
-        hosting = NSHostingView(rootView: KnobPanel(boxes: boxes))
+    init(boxes: [any DeclaredParam], numbers: (() -> FrameNumbers)? = nil) {
+        hosting = NSHostingView(rootView: KnobPanel(boxes: boxes, numbers: numbers))
         super.init(frame: NSRect(origin: .zero, size: hosting.fittingSize))
         hosting.frame = bounds
         hosting.autoresizingMask = [.width, .height]
@@ -46,10 +46,12 @@ final class KnobOverlay: NSView {
     /// 宣言があればつまみの面を作る。1 つも無ければ `nil`。
     ///
     /// **宣言だけでつまみが出る** ([ADR-0030] 決定 8) — 並べ方を書かせない。
-    static func makeIfNeeded(for sketch: any Sketch) -> KnobOverlay? {
+    static func makeIfNeeded(for sketch: any Sketch, numbers: (() -> FrameNumbers)? = nil)
+        -> KnobOverlay?
+    {
         let boxes = ParamCatalog.indexed(from: sketch).map(\.box)
         guard !boxes.isEmpty else { return nil }
-        return KnobOverlay(boxes: boxes)
+        return KnobOverlay(boxes: boxes, numbers: numbers)
     }
 
     /// 面へ重ねる。
