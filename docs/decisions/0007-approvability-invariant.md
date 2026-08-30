@@ -35,7 +35,7 @@ SPDX-License-Identifier: MIT
 
 ADR-0003 決定 3 が前提にしていながら書かれていなかったものを、明文の不変条件にする。書くことで、機構が守る対象になる。
 
-「承認が要る」の判定は既に二つあり、新しい分類は作らない — CODEOWNERS 対象パスに触れること (ADR-0003 決定 4) と、対象 Issue が `verify: human` であること ([ADR-0002](0002-issue-lifecycle-and-merge-approval.md) 決定 1) である。不変条件はその上に乗るだけである。
+「承認が要る」の判定は既に二つあり、新しい分類は作らない — ルールセットの `required_reviewers` が 1 承認を課しているパスに触れること (ADR-0003 決定 4) と、対象 Issue が `verify: human` であること ([ADR-0002](0002-issue-lifecycle-and-merge-approval.md) 決定 1) である。不変条件はその上に乗るだけである。
 
 ### 2. 例外を作らない — メンテナも App identity で PR を作る
 
@@ -45,7 +45,7 @@ author が repository admin なら通す、という例外は作らない。理�
 
 **メンテナにとっても詰みは詰みである。** 文脈の 1 のとおり、単独メンテナでは自分名義の PR を通せない。例外を作って救われるのは「承認が要らない PR」だけで、それは元から不変条件の対象外である。
 
-代償は、メンテナも PR 作成時に installation token を発行する手間を負うことである。鍵は既に手元にあり、発行は 1 コマンドで済む。承認が要らない PR (CODEOWNERS 対象外かつ `verify: machine`) は従来どおりでよい。
+代償は、メンテナも PR 作成時に installation token を発行する手間を負うことである。鍵は既に手元にあり、発行は 1 コマンドで済む。承認が要らない PR (ルールセットの対象パス外かつ `verify: machine`) は従来どおりでよい。
 
 ### 3. 不変条件は 2 段で守る
 
@@ -57,6 +57,21 @@ author が repository admin なら通す、という例外は作らない。理�
 どちらも単独では足りない。フックはリポジトリの `.claude/` に置くため、同等のフック機構を持たないエージェント (現状の Codex CLI など) には効かない。`review-gate` は経路を問わないが、赤くなった時点で PR は既にあり、#88 と同じく作り直しになる。**常道はフック、`review-gate` は経路を問わない保険**である。
 
 [ADR-0001](0001-founding-principles.md) 原則 8 は検証を規約でなく構造で担わせることを求めるが、**構造が一つである必要はない**。ここでは網羅性 (全経路に効く) と早さ (作る前に止まる) が、別の機構でしか得られない。
+
+#### 改訂 (2026-08-30) — 承認者集合の代理を `author_association` にする
+
+当初この検査は `.github/CODEOWNERS` を承認者集合の代理として読んでいた。collaborator の一覧が `Administration` 権限を要求し、エージェントの App は決定 1 (ADR-0003) によりそれを持たないためである。
+
+**CODEOWNERS は [#530](https://github.com/mokume-metal/mokume/issues/530) で畳んだ** (ADR-0003 決定 4 の改訂) ので、代理を GitHub native の signal へ移す。REST の PR オブジェクトが返す `author_association` が、追加の権限なしに org の中の人か外の人かを答える — App の PR は `CONTRIBUTOR`、[#88](https://github.com/mokume-metal/mokume/pull/88) のメンテナの PR は `MEMBER` だった (実測)。
+
+| | CODEOWNERS 版 | `author_association` 版 |
+| --- | --- | --- |
+| 承認者集合 | ファイルに書いた名前 | **実際の org 所属** |
+| 外部コントリビューター | 集合外なので通る | `CONTRIBUTOR` / `NONE` なので通る |
+| 承認が要るパスの判定 | CODEOWNERS のパターン (ルールセットの写し) | **ルールセットの `file_patterns` そのもの** |
+| メンテナが 2 人目に増えたとき | owner を数えて自動で緩む | **緩まない** (所属は読めるが人数は数えられない) |
+
+最後の行が失うものである。ただし詰みはしない — 2 人目の Approve が付けば検査を抜ける。それまで赤が出るだけで、これは下の影響が既に述べている「増えたらそのとき別途判断する」の範囲に収まる。写しを 1 つ消すこととの引き換えとして受け入れる ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) — 起きてから直す)。
 
 ### 4. 破れたときの回復は close して作り直す
 
@@ -74,7 +89,7 @@ ADR-0003 の「秘密鍵の中身も、その在処もリポジトリに書か�
 
 - AGENTS.md の「エージェントの identity」節を改訂する。暫定条項「App の作成が済むまでは従来どおりメンテナのアカウントで作業してよい」は移行完了によって事実と食い違っているので削除し、決定 2 と決定 5 を書き足す
 - PR 作成前のフックを `.claude/` に置く ([#103](https://github.com/mokume-metal/mokume/issues/103))。`review-gate` に検知を足す ([#104](https://github.com/mokume-metal/mokume/issues/104))
-- `.github/CODEOWNERS` は変更不要である。App はユーザーでもチームでもないため CODEOWNERS に書けず、App が作った PR は決定 1 を自動的に満たす
+- ~~`.github/CODEOWNERS` は変更不要である。App はユーザーでもチームでもないため CODEOWNERS に書けず、App が作った PR は決定 1 を自動的に満たす~~ (2026-08-30 改訂: CODEOWNERS は #530 で削除した。App が集合の外にある性質は `author_association` が `CONTRIBUTOR` を返すことで引き継がれる)
 - ルールセットも変更不要である。`required_approving_review_count` は 0 のまま (ADR-0003 決定 4)
 - **不変条件はメンテナが増えれば緩む。** 二人目が入れば「author 以外に承認者がいる」が自然に成り立ち、決定 2 の一本化は必須ではなくなる。ただし決定 2 の第一の理由 (判定で区別できない) は人数に依存しないので、緩めるかどうかはそのとき別途判断する
-- 検知の実装は「author が承認者集合の唯一の要素か」を一般形のまま書くことが望ましい。メンテナが一人の現状では「author が人間なら詰む」と同値だが、人数が変わったときに自動で正しくなる。ただし承認者集合を引くには collaborator の権限を読む必要があり、ADR-0003 決定 1 によりエージェントの App は `Administration` 権限を持たない。引けない場合は近似 (author が bot でないこと) に落とす
+- 検知の実装は「author が承認者集合の唯一の要素か」を一般形のまま書くことが望ましい。メンテナが一人の現状では「author が人間なら詰む」と同値だが、人数が変わったときに自動で正しくなる。ただし承認者集合を引くには collaborator の権限を読む必要があり、ADR-0003 決定 1 によりエージェントの App は `Administration` 権限を持たない。引けない場合は近似に落とす — 2026-08-30 の改訂で選んだのは `author_association` で、「author が bot でないこと」より狭い (外部コントリビューターを巻き込まない)

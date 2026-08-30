@@ -63,7 +63,7 @@ required check `review-gate` が PR ごとに判定する:
 | `verify: machine` | 検査群 (`ci-check` 等) のみで通過 |
 | Changes requested が未解消 | 赤 |
 
-**重要パスの承認要求は review-gate ではなく GitHub 側の機構が担う** ([ADR-0003](0003-agent-identity-separation.md))。ただし**要求と必須化で担い手が違う** — `.github/CODEOWNERS` に挙げたパス (`docs/decisions/`・`.github/`・`.claude/`) に触れる PR には GitHub が自動でメンテナへレビューを要求し、**マージを止めるのは `.github/rulesets/main-protection.json` の `required_reviewers`** (同じ 3 パスに `minimum_approvals: 1`) である。当初は CODEOWNERS だけで必須化できるつもりでいたが、承認数 0 との組み合わせでは非ブロックだった ([#211](https://github.com/mokume-metal/mokume/issues/211) / ADR-0003 決定 4 の改訂)。公開 API 面はコードが生まれた時点で両方に追加する。
+**重要パスの承認要求は review-gate ではなく GitHub 側の機構が担う** ([ADR-0003](0003-agent-identity-separation.md))。要求も必須化も **`.github/rulesets/main-protection.json` の `required_reviewers`** が担い、3 パス (`docs/decisions/`・`.github/`・`.claude/`) に `minimum_approvals: 1` を課して team `maintainers` へ要求を飛ばす。当初は CODEOWNERS だけで必須化できるつもりでいたが、承認数 0 との組み合わせでは非ブロックだった ([#211](https://github.com/mokume-metal/mokume/issues/211) / ADR-0003 決定 4 の改訂)。その CODEOWNERS も要求を二重に飛ばすだけの写しだったので畳んだ ([#530](https://github.com/mokume-metal/mokume/issues/530))。公開 API 面はコードが生まれた時点でルールセットへ追加する。
 
 `verify: human` だけはどちらでも表現できない (パスではなく Issue の性質で決まる) ため、review-gate に残している。
 
@@ -73,7 +73,7 @@ required check `review-gate` が PR ごとに判定する:
 
 当初はメンテナと PR 作成者が同一アカウントで、自分の PR を Approve できなかったため、`review: approved` ラベルを暫定の fallback として認めていた。**この fallback は廃止した。** ラベルはエージェント自身も付けられるため、承認ゲートを止めているのが仕組みではなくエージェントの自制でしかなかった。
 
-出口は [ADR-0003](0003-agent-identity-separation.md) が実行した — エージェントに GitHub App の identity を与えて PR の作成者を分離し、**自分の PR は自分で承認できない**というプラットフォームの制約が効く状態にしたうえで、ラベルをリポジトリから削除した。重要パスの承認要求は GitHub 側へ移り、そこでは App の承認では要件を満たせない (CODEOWNERS にもルールセットの `required_reviewers` にも、ユーザーとチームしか書けない)。
+出口は [ADR-0003](0003-agent-identity-separation.md) が実行した — エージェントに GitHub App の identity を与えて PR の作成者を分離し、**自分の PR は自分で承認できない**というプラットフォームの制約が効く状態にしたうえで、ラベルをリポジトリから削除した。重要パスの承認要求は GitHub 側へ移り、そこでは App の承認では要件を満たせない (ルールセットの `required_reviewers` にはチームしか書けない)。
 
 ### 5. 機械クラスの領土を広げ続ける
 

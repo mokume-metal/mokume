@@ -8,8 +8,13 @@
 # いる。このスクリプトが埋めるのは**左下の 1 マスだけ**である。
 #
 #   |                      | 要求 (人に届く)              | ブロック (マージが止まる)   |
-#   | パス由来 (3 パス)     | CODEOWNERS + required_reviewers | ルールセット required_reviewers |
+#   | パス由来 (3 パス)     | ルールセット required_reviewers | ルールセット required_reviewers |
 #   | ラベル由来 (verify: human) | **ここ**                  | human-approval commit status |
+#
+# 宛先は左列で揃えてある — どちらも team maintainers へ投げる。当初は CODEOWNERS を
+# 読んで user へ投げていたが、CODEOWNERS 自体を #530 で畳んだ (パス由来の要求が
+# 二重に飛ぶだけの写しになっていた)。team ならメンバーを引く権限が要らず、パス由来と
+# 重なった PR で宛先が割れることもない。
 #
 # 右列は GitHub 側の機構が担っていて、ここでは 1 つも触らない。ラベル由来だけ要求が
 # 無かったため、Reviewers 欄が空のまま human-approval だけが pending で止まり、
@@ -27,29 +32,10 @@ set -euo pipefail
 
 PR="${1:?PR 番号が必要}"
 REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
-# 承認者集合の読める代理 (ADR-0007 決定 3)。テストは別のファイルを指す。
-# **CODEOWNERS を読むのはこの 1 か所だけ**にしてある — パス由来の要求はルールセットの
-# required_reviewers が team へ既に飛ばしており、CODEOWNERS を要求経路から降ろす掃除が
-# 別 Issue で走りうるため、そのとき差し替える箇所を 1 つに閉じ込めておく
-CODEOWNERS_FILE="${CODEOWNERS_FILE:-$(cd "$(dirname "$0")/.." && pwd)/.github/CODEOWNERS}"
-
-# CODEOWNERS に名前が挙がっている owner をすべて出す (review-gate.sh の codeowners_all
-# と同じ読み方)。パス照合はしない — verify: human が求めるのは「メンテナの承認」で、
-# 触ったパスに紐づかないためである
-codeowners_all() {
-  [ -f "$CODEOWNERS_FILE" ] || return 0
-  sed 's/#.*//' "$CODEOWNERS_FILE" |
-    awk 'NF > 1 { for (i = 2; i <= NF; i++) { sub(/^@/, "", $i); print $i } }' | sort -u
-}
-
-# チーム表記 (@org/team) は落とす。要求 API はユーザーとチームで配列が別で、
-# このリポジトリの CODEOWNERS にはチームが 1 つも無い。増えたらここで気付けるよう、
-# 黙って混ぜずに落とす
-owners=$(codeowners_all | grep -v '/' || true)
-if [ -z "$owners" ]; then
-  echo "request-review: CODEOWNERS に owner が居ないので何もしない"
-  exit 0
-fi
+# 宛先の team。正典は .github/rulesets/main-protection.json の required_reviewers の
+# reviewer だが、あちらは id しか持たず slug を引くには read:org が要るので、綴りは
+# ここ 1 か所で持つ。ルールセットの reviewer を変えるときはここも直す
+MAINTAINERS_TEAM="${MAINTAINERS_TEAM:-maintainers}"
 
 if ! pr_json=$(gh pr view "$PR" -R "$REPO" --json author,reviewRequests,latestReviews 2>&1); then
   echo "request-review: PR の情報を引けなかったので要求を投げない" >&2
@@ -57,43 +43,35 @@ if ! pr_json=$(gh pr view "$PR" -R "$REPO" --json author,reviewRequests,latestRe
   exit 0
 fi
 
-author=$(jq -r '.author.login // ""' <<<"$pr_json")
-requested=$(jq -r '[.reviewRequests[]?.login // empty] | join("\n")' <<<"$pr_json")
+# 保留中のチーム要求。**login を持たない要素がチーム**である — 綴り (name / slug /
+# __typename) に頼らないので、GitHub が形を変えても読み違えない。このリポジトリの
+# チームは maintainers 1 つなので、1 件でもあればパス由来が既に飛んでいる
+teams_requested=$(jq -r '[ .reviewRequests[]? | select(has("login") | not) ] | length' <<<"$pr_json")
 # DISMISSED は「見た」に数えない。ルールセットが dismiss_stale_reviews_on_push: true
 # なので、承認後に push すると承認が外れる。パス由来は GitHub が自動で再要求するが、
 # ラベル由来はここで投げ直さないと「承認が外れたのに誰も知らない」に戻る
 reviewed=$(jq -r '
-  [ .latestReviews[]? | select(.state != "DISMISSED") | .author.login ] | join("\n")
+  [ .latestReviews[]? | select(.state != "DISMISSED") ] | length
 ' <<<"$pr_json")
 
-targets=()
-for owner in $owners; do
-  if [ "$owner" = "$author" ]; then
-    # GitHub は自己要求に 422 を返す。メンテナ名義の PR がこれに当たる
-    # (その PR は ADR-0007 の不変条件のほうで review-gate が差し戻す)
-    echo "request-review: $owner は author 本人なので投げない"
-  elif grep -qxF "$owner" <<<"$requested"; then
-    # パス由来と重なった PR では GitHub が既に飛ばしている。3 通目を作らない
-    echo "request-review: $owner には既に要求が飛んでいる"
-  elif grep -qxF "$owner" <<<"$reviewed"; then
-    echo "request-review: $owner は既にこの PR を見ている"
-  else
-    targets+=("$owner")
-  fi
-done
-
-if [ ${#targets[@]} -eq 0 ]; then
-  echo "request-review: 投げる相手が居ない"
+if [ "$teams_requested" -gt 0 ]; then
+  # パス由来と重なった PR では GitHub が既に飛ばしている。2 通目を作らない (#530)
+  echo "request-review: 既にチームへ要求が飛んでいる"
+  exit 0
+fi
+if [ "$reviewed" -gt 0 ]; then
+  echo "request-review: 既にこの PR を見ている人が居る"
   exit 0
 fi
 
-args=()
-for owner in "${targets[@]}"; do args+=(-f "reviewers[]=$owner"); done
-
-if gh api -X POST "repos/$REPO/pulls/$PR/requested_reviewers" "${args[@]}" --silent; then
-  echo "request-review: レビューを要求した — ${targets[*]}"
+# author 本人の除外は要らない。GitHub が 422 を返すのは user 宛の自己要求だけで、
+# そもそもメンテナ名義の PR は review-gate が ADR-0007 の不変条件で差し戻すため、
+# 承認待ち (pending) にならず、ここは呼ばれない
+if gh api -X POST "repos/$REPO/pulls/$PR/requested_reviewers" \
+     -f "team_reviewers[]=$MAINTAINERS_TEAM" --silent; then
+  echo "request-review: レビューを要求した — @$MAINTAINERS_TEAM"
 else
   # ここで止めない (冒頭のとおり、通知の失敗はブロックに変えない)
-  echo "request-review: レビュー要求に失敗した — ${targets[*]}" >&2
+  echo "request-review: レビュー要求に失敗した — @$MAINTAINERS_TEAM" >&2
   echo "次にすること: 承認は human-approval が引き続き待っているので、メンテナへ直接声を掛ける" >&2
 fi

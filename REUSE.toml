@@ -46,7 +46,6 @@ path = [
   ".github/workflows/close-cleanup.yml",
   ".github/workflows/ruleset-drift.yml",
   ".github/dependabot.yml",
-  ".github/CODEOWNERS",
   ".github/rulesets/main-protection.json",
   ".github/rulesets/signed-commits.json",
   ".github/rulesets/release-tags.json",

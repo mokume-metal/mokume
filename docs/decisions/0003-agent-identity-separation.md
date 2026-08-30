@@ -62,7 +62,7 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 
 この制約は逆向きにも効く — **author が唯一の承認者候補になっている PR は、誰にも承認できない**。本 ADR はその可能性を扱っておらず、[#88](https://github.com/mokume-metal/mokume/issues/88) で実際に詰んだ。[ADR-0007](0007-approvability-invariant.md) が承認可能性を明文の不変条件として置き、機構で守る形に補っている。
 
-重要パスの承認要求は **CODEOWNERS** で表現する。CODEOWNERS にはユーザーとチームしか書けないため、App の承認では code owner 要件を満たせない。制約が二重にかかる。(**必須化の手段は決定 4 の改訂で `required_reviewers` へ移った** — CODEOWNERS だけでは merge を止められなかった。App が承認者になれない点は `required_reviewers` でも同じで、こちらも Team しか書けない。)
+重要パスの承認要求は **CODEOWNERS** で表現する。CODEOWNERS にはユーザーとチームしか書けないため、App の承認では code owner 要件を満たせない。制約が二重にかかる。(**必須化の手段は決定 4 の改訂で `required_reviewers` へ移り、2026-08-30 の改訂で CODEOWNERS 自体を畳んだ** — CODEOWNERS だけでは merge を止められず、`required_reviewers` を入れた後は要求を二重に飛ばすだけの写しになっていた。App が承認者になれない点は `required_reviewers` でも同じで、こちらも Team しか書けない。)
 
 ### 4. `required_approving_review_count` は 0 のままにする (2026-08-28 改訂)
 
@@ -92,6 +92,35 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 
 あわせて `dismiss_stale_reviews_on_push` を有効にし、弱点 2 を塞ぐ。
 
+#### 改訂 (2026-08-30) — CODEOWNERS を畳み、要求も強制もルールセット一本にする
+
+**CODEOWNERS を残した判断が誤りだった。** 上で挙げた 2 つの役割のうち、「誰に要求するか」は `required_reviewers` が既に担っていた。実測 ([#530](https://github.com/mokume-metal/mokume/issues/530)) — 重要パスに触れる PR には**同じ人へ 1 秒差で 2 通**のレビュー要求が飛んでいた。
+
+```
+#529  review_requested → team: maintainers   2026-08-30T04:53:51Z
+#529  review_requested → user: shinyaoguri   2026-08-30T04:53:52Z
+```
+
+**`require_code_owner_review` を false にしても止まらない。** GitHub の自動要求はブランチ保護の設定と独立している — 「Code owners are automatically requested for review when someone opens a pull request that modifies code that they own」([About code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners))。止める設定は無い。**認識される場所に CODEOWNERS がある限り、要求は必ず飛ぶ。**
+
+GitHub 自身は両者の併用を勧めている — required reviewer rule は方針の強制、CODEOWNERS は所有の宣言と要求 ([GA changelog](https://github.blog/changelog/2026-02-17-required-reviewer-rule-is-now-generally-available/))。**その分業が成立するのは、両者が別の相手を指すときである。** このリポジトリでは `maintainers` チームのメンバーが `shinyaoguri` 1 人で、CODEOWNERS も同じ 1 人を指していた。足していたのは通知 1 通だけで、代わりに同じ 3 パスの写し (綴りも違った) と、それを読む glob 照合を抱えていた。
+
+残るもう 1 つの役割 (ADR-0007 決定 3 の代理) も、**GitHub native の signal で置き換えられる**。REST の PR オブジェクトが返す `author_association` は、追加の権限なしに org の中の人か外の人かを答える。
+
+| PR | author | `author_association` |
+| --- | --- | --- |
+| [#529](https://github.com/mokume-metal/mokume/pull/529) | `mokume-agent[bot]` | `CONTRIBUTOR` |
+| [#88](https://github.com/mokume-metal/mokume/pull/88) (詰んだ PR) | `shinyaoguri` | `MEMBER` |
+
+ファイルに書いた名前より**実際の所属のほうが正確**で、写しも消える。よって:
+
+- `.github/CODEOWNERS` を削除する
+- `require_code_owner_review` は `false` にする (CODEOWNERS が無ければ無意味であり、承認数 0 との組み合わせでは元から何も強制していない)
+- 承認が要るパスの正本は `required_reviewers` の `file_patterns` 1 か所になる。`review-gate` はそこを読み、代理には `author_association` を使う (ADR-0007 決定 3 の改訂)
+- ラベル由来のレビュー要求 (`scripts/request-review.sh`・[#498](https://github.com/mokume-metal/mokume/issues/498)) も **team 宛**へ揃える。宛先が 1 つになり、パス由来と重なった PR で 2 通目を作らない
+
+`required_reviewers` と `required_approving_review_count: 0` は一字も動かさない。**この改訂が動かすのは要求経路だけで、ブロックの正本は上の決定のままである。**
+
 ### 5. 承認を CI から追い出す (2026-08-28 改訂)
 
 承認待ちは required check の赤ではなく、**PR の状態** (`mergeStateStatus` が `BLOCKED`) で表現される。これは failing check ではないため、`ci-gate` の赤は本物の故障だけを意味するようになる (弱点 3 の解消)。
@@ -102,7 +131,7 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 - 対象 Issue に `verify:` ラベルがあるか (完了条件が固まっているか)
 - 対象 Issue が `verify: human` なら、Approve レビューがあるか
 
-三点目を残すのは、**`verify: human` を CODEOWNERS で表現できない**ためである。CODEOWNERS が判定できるのは変更パスであって、Issue の性質ではない (決定 4 の改訂で入れたルールセットの `required_reviewers` もパターン照合なので、同じ制約を受ける)。ここを外すと「完了条件を機械で判定できないと宣言した変更」が誰にも見られずマージされうる。
+三点目を残すのは、**`verify: human` をパス照合で表現できない**ためである。ルールセットの `required_reviewers` が判定できるのは変更パスであって、Issue の性質ではない (決定 4 の改訂まで代わりに置いていた CODEOWNERS も同じ制約を受けていた)。ここを外すと「完了条件を機械で判定できないと宣言した変更」が誰にも見られずマージされうる。
 
 **当初の決定**はここに代償を置いていた — 「この分類の PR だけは承認待ちの間 `ci-gate` が赤いままになる」。**この代償は払わなくてよかった**ので撤回する。
 

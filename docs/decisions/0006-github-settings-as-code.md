@@ -113,7 +113,7 @@ Terraform GitHub provider は state の置き場が増える。Probot safe-setti
 
 ## 影響
 
-- ルールセットの変更は PR を通る。レビューと履歴が残り、`.github/` は CODEOWNERS の対象なのでメンテナ承認も要る
+- ルールセットの変更は PR を通る。レビューと履歴が残り、`.github/` は `required_reviewers` の対象なのでメンテナ承認も要る
 - メンテナの手が要る場面が一つ増える (定義を merge した後の `--apply`)。一方で「管理画面で直接いじる」経路は、規約の上では閉じる。**打ち忘れは merge のその場で赤くなる** (決定 4 の改訂) ので、忘れたことが翌日まで見えない状態は無くなった
 - **GitHub App は作業用の一つのままでよい** (決定 5 の改訂)。CI には鍵を置かないので、鍵が漏れる面が増えない
 - **`bypass_actors` の照合だけは自動化されない。** 日次のドリフト検査が拾うのはそれ以外の全項目で、`bypass_actors` はメンテナが手元で `bash scripts/check-rulesets.sh` を打ったときに見る。この検査の緑は「`bypass_actors` を除いて一致」を意味し、出力自身がそう名乗る
