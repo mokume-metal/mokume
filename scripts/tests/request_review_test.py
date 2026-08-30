@@ -57,7 +57,8 @@ esac
 """
 
 APP = "app/mokume-agent"
-MAINTAINER = "shinyaoguri"
+# #586 の検証中だけ、宛先の既定値に合わせてある (この PR は merge しない)
+MAINTAINER = "mokume-nonexistent-user-for-586"
 TEAM = "maintainers"
 
 

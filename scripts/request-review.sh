@@ -57,7 +57,10 @@ REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 # 宛先の user。承認を課している集合の正典は .github/rulesets/main-protection.json の
 # required_reviewers (team maintainers) だが、そこから user を引くには read:org が要る。
 # 綴りはここ 1 か所で持つ — team のメンバーが変わったらここも直す
-MAINTAINERS_USER="${MAINTAINERS_USER:-shinyaoguri}"
+# ↓↓↓ #586 の検証のための一時的な差し替え。**この PR は merge しない。**
+# 実在しない login を宛先にすると GitHub が 422 で断るので、要求が飛ばない経路
+# (exit 20 → delivered=false → description が名乗る) を実際に通せる
+MAINTAINERS_USER="${MAINTAINERS_USER:-mokume-nonexistent-user-for-586}"
 
 if ! pr_json=$(gh pr view "$PR" -R "$REPO" --json author,reviewRequests,latestReviews 2>&1); then
   # 投げようがないので、声が掛かっていないのは失敗したときと同じである
