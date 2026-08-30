@@ -10,7 +10,7 @@
   4. verify: human なら人間の Approve がある
 
 重要パスの承認要求そのものはルールセットの required_reviewers が担うので、ここでは見ない — 3 が
-CODEOWNERS を読むのは「誰が承認できるか」を知るためで、承認を重ねて要求するため
+その file_patterns を読むのは「承認が要る PR か」を知るためで、承認を重ねて要求するため
 ではない。`review: approved` ラベルの fallback は identity 分離 (ADR-0003) で
 廃止した。**外したことが戻らない**ことを最後の 2 ケースで固定する。
 
@@ -24,7 +24,7 @@ CODEOWNERS を読むのは「誰が承認できるか」を知るためで、承
 closing keyword をコードスパンの中では読まないので、緑のままマージされて Issue が開いた
 まま残った (#307 → #309)。偽 gh が返す紐づけは実測値をそのまま写す (下の closes 引数)。
 
-gh は PATH の先頭に置いた偽物へ差し替え、CODEOWNERS も一時ファイルへ差し替えるので、
+gh は PATH の先頭に置いた偽物へ差し替え、ルールセットの定義も一時ファイルへ差し替えるので、
 ネットワークも認証も実ファイルの内容も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -38,16 +38,39 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "review-gate.sh"
 
-# 実物と同じ形の CODEOWNERS (owner はメンテナ 1 人)
-CODEOWNERS = """# 重要パス
-/docs/decisions/ @shinyaoguri
-/.github/        @shinyaoguri
-/.claude/        @shinyaoguri
-"""
+# 実物と同じ形のルールセット定義 (承認を要求するパスの正本)。
+# review-gate はここの file_patterns だけを読む
+RULESET = json.dumps(
+    {
+        "name": "main-protection",
+        "target": "branch",
+        "enforcement": "active",
+        "rules": [
+            {
+                "type": "pull_request",
+                "parameters": {
+                    "required_approving_review_count": 0,
+                    "required_reviewers": [
+                        {
+                            "file_patterns": [
+                                "docs/decisions/**",
+                                ".github/**",
+                                ".claude/**",
+                            ],
+                            "minimum_approvals": 1,
+                            "reviewer": {"id": 1, "type": "Team"},
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+)
 
-# 偽 gh。review-gate が呼ぶのは 2 つだけ:
+# 偽 gh。review-gate が呼ぶのは 3 つだけ:
 #   gh pr view <n> -R <repo> --json labels,latestReviews,author,files,closingIssuesReferences
 #   gh issue view <n> -R <repo> --json labels --jq <query>
+#   gh api repos/<repo>/pulls/<n> --jq .author_association
 # 応答は環境変数で決める。--jq が付くときは本物と同じようにクエリを適用する
 FAKE_GH = """#!/bin/sh
 kind=$2
@@ -60,6 +83,7 @@ done
 case "$1 $2" in
   "pr view") json=$FAKE_PR_JSON ;;
   "issue view") json=$FAKE_ISSUE_JSON ;;
+  "api "*) json=$FAKE_API_JSON ;;
   *) exit 1 ;;
 esac
 if [ -n "$query" ]; then
@@ -69,10 +93,12 @@ else
 fi
 """
 
+# author は (login, is_bot, author_association) の 3 つ組。3 つ目が承認可能性の検査に効く。
+# 値は実測 (PR #529 / #528 の App は CONTRIBUTOR、#88 のメンテナは MEMBER)
 # 既定の author は App — エージェントの常道であり、承認可能性の検査を素通しする側
-APP = ("app/mokume-agent", True)
-MAINTAINER = ("shinyaoguri", False)
-OUTSIDER = ("drive-by-contributor", False)
+APP = ("app/mokume-agent", True, "CONTRIBUTOR")
+MAINTAINER = ("shinyaoguri", False, "MEMBER")
+OUTSIDER = ("drive-by-contributor", False, "NONE")
 
 
 # 既定のリポジトリ。closingIssuesReferences は他リポジトリの Issue も指せるので、
@@ -97,7 +123,7 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
     (書いてあるのに紐づいていない) をそのまま表現できる — それが #309 の事象である。
     refs を渡すと closes を無視して紐づけをそのまま置く (他リポジトリの検査用)。
     """
-    login, is_bot = author
+    login, is_bot, assoc = author
     return json.dumps(
         {
             "body": body,
@@ -108,6 +134,8 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
             "closingIssuesReferences": (
                 closing_refs(closes) if refs is None else refs
             ),
+            # gh pr view は返さない。run_gate が偽 gh api の応答を組むために持たせる
+            "authorAssociation": assoc,
         }
     )
 
@@ -125,17 +153,20 @@ class ReviewGateTest(unittest.TestCase):
         stub = self.bindir / "gh"
         stub.write_text(FAKE_GH, encoding="utf-8")
         stub.chmod(0o755)
-        self.codeowners = Path(self.tmp.name) / "CODEOWNERS"
-        self.codeowners.write_text(CODEOWNERS, encoding="utf-8")
+        self.ruleset = Path(self.tmp.name) / "main-protection.json"
+        self.ruleset.write_text(RULESET, encoding="utf-8")
 
-    def run_gate(self, pr, issue=None, codeowners=None):
-        if codeowners is not None:
-            self.codeowners.write_text(codeowners, encoding="utf-8")
+    def run_gate(self, pr, issue=None, ruleset=None):
+        if ruleset is not None:
+            self.ruleset.write_text(ruleset, encoding="utf-8")
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_PR_JSON"] = pr
         env["FAKE_ISSUE_JSON"] = issue if issue is not None else issue_json()
-        env["CODEOWNERS_FILE"] = str(self.codeowners)
+        env["FAKE_API_JSON"] = json.dumps(
+            {"author_association": json.loads(pr)["authorAssociation"]}
+        )
+        env["RULESET_FILE"] = str(self.ruleset)
         # 紐づけの所属リポジトリ判定に効くので、環境に左右されないよう固定する
         env["GITHUB_REPOSITORY"] = f"{REPO_OWNER}/{REPO_NAME}"
         return subprocess.run(
@@ -226,23 +257,23 @@ class ReviewGateTest(unittest.TestCase):
         self.assertIn("永久に来ません", proc.stderr)
 
     def test_app_authored_verify_human_pr_passes(self):
-        # 同じ PR を App identity で作れば通る (CODEOWNERS に App は書けないので
-        # 承認者集合に入りようがない)
+        # 同じ PR を App identity で作れば通る。App は org の外なので
+        # author_association が CONTRIBUTOR になり、承認者集合に入りようがない
         proc = self.run_gate(
             pr_json(author=APP, files=["README.md"]), issue_json("verify: human")
         )
         self.assert_pending(proc)  # 承認待ちであって詰みではない
 
     def test_maintainer_authored_pr_without_required_approval_passes(self):
-        # verify: machine かつ CODEOWNERS 対象外 — そもそも承認が要らない
+        # verify: machine かつルールセットの file_patterns 対象外 — 承認が要らない
         proc = self.run_gate(
             pr_json(author=MAINTAINER, files=["README.md", "scripts/foo.sh"]),
             issue_json("verify: machine"),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-    def test_maintainer_authored_pr_touching_a_codeowned_path_is_blocked(self):
-        # verify: machine でも CODEOWNERS が承認を要求するので同じく詰む
+    def test_maintainer_authored_pr_touching_a_protected_path_is_blocked(self):
+        # verify: machine でもルールセットが承認を要求するので同じく詰む
         proc = self.run_gate(
             pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
             issue_json("verify: machine"),
@@ -258,12 +289,20 @@ class ReviewGateTest(unittest.TestCase):
         )
         self.assert_pending(proc)
 
-    def test_a_second_owner_makes_the_pr_approvable(self):
-        # メンテナが増えれば不変条件は自然に満たされる (ADR-0007 影響節)
+    def test_protected_paths_come_from_the_ruleset_not_a_copy(self):
+        """承認が要るパスの正本はルールセットで、写しを持たない (#530)。
+
+        定義から `.claude/**` を外せば、同じ PR は承認不要として通る。CODEOWNERS を
+        代理に読んでいた頃は、同じ 3 パスが 2 ファイルに綴り違いで写されていて、
+        整合を見る検査が無かった。
+        """
+        narrowed = json.loads(RULESET)
+        params = narrowed["rules"][0]["parameters"]
+        params["required_reviewers"][0]["file_patterns"] = ["docs/decisions/**"]
         proc = self.run_gate(
             pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
             issue_json("verify: machine"),
-            codeowners="/.claude/ @shinyaoguri @second-maintainer\n",
+            ruleset=json.dumps(narrowed),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
@@ -305,10 +344,10 @@ class ReviewGateTest(unittest.TestCase):
         )
         self.assert_pending(proc)
 
-    def test_important_paths_are_left_to_codeowners(self):
+    def test_important_paths_are_left_to_the_ruleset(self):
         # 重要パスに触れていても、対象 Issue が verify: machine で author が
-        # 承認者集合の外なら通す。承認を要求するのは CODEOWNERS 側 (native の
-        # Review required)
+        # 承認者集合の外なら通す。承認を要求するのはルールセットの
+        # required_reviewers 側 (native の Review required)
         proc = self.run_gate(
             pr_json(files=[".github/workflows/ci.yml"]), issue_json("verify: machine")
         )

@@ -128,8 +128,8 @@ jobs:
   # ## 承認待ちを人にも届ける (#498)
   #
   # 上の報告の宛先はマージボックスであって、**人ではない**。承認が要る経路は 2 本あり
-  # (パス由来 = CODEOWNERS + ルールセットの required_reviewers / ラベル由来 = 対象
-  # Issue の verify: human)、**レビュー要求を作るのはパス由来だけ**だった。ラベル由来の
+  # (パス由来 = ルールセットの required_reviewers / ラベル由来 = 対象 Issue の
+  # verify: human)、**レビュー要求を作るのはパス由来だけ**だった。ラベル由来の
   # PR は Reviewers 欄が空のまま human-approval だけが pending で止まり、メンテナは PR を
   # 開くまで気付けない (#494 / #495 が実際に滞留した)。
   #
@@ -169,7 +169,7 @@ jobs:
           echo "報告: human-approval → $state"
 
       # checkout はここまで要らない (status は API だけで打てる)。要求を投げるときだけ
-      # 要る — スクリプトと、その要求先を読む .github/CODEOWNERS を見るため
+      # 要る — スクリプトを走らせるため
       - uses: actions/checkout@v7
         if: needs.review-gate.outputs.pending == 'true' && github.event_name == 'pull_request'
       - name: 承認待ちをメンテナへ要求する

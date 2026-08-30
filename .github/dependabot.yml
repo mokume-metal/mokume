@@ -16,6 +16,6 @@ updates:
     #
     # bot が自分でゲートを外しているわけではない: no-issue は承認ゲートでは
     # なく Issue 紐づけの例外印で、このファイル自体が .github/ 配下にあり
-    # CODEOWNERS の承認なしには変えられない。actions の更新は必ず
+    # ルールセットの required_reviewers の承認なしには変えられない。actions の更新は必ず
     # .github/workflows/ を触るので、PR ごとにメンテナの承認も要る。
     labels: ["no-issue"]

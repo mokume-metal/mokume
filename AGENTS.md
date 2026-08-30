@@ -58,7 +58,7 @@ Claude Code のセッションでは `scripts/plan-record.sh` がプランを投
 
 ## PR のラベル
 
-PR には分類ラベルを付けない ([ADR-0005](docs/decisions/0005-pr-labels-as-machine-input.md))。型は PR タイトル、対象 Issue は `Closes #N`、完了条件の性質は対象 Issue の `verify: *`、重要パスは CODEOWNERS、進行状態は Draft / Review / merge queue が既に持っている。
+PR には分類ラベルを付けない ([ADR-0005](docs/decisions/0005-pr-labels-as-machine-input.md))。型は PR タイトル、対象 Issue は `Closes #N`、完了条件の性質は対象 Issue の `verify: *`、重要パスはルールセットの `required_reviewers`、進行状態は Draft / Review / merge queue が既に持っている。
 
 付くのは CI の判定を変えるラベルだけで、現状は 3 種:
 
@@ -93,7 +93,7 @@ gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
 
 承認が要るのは次の 2 つで、どちらも承認待ちの間 `ci-gate` は緑のまま ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) / ADR-0003 決定 5):
 
-- 重要パス (`docs/decisions/`・`.github/`・`.claude/`) を触る PR — 誰に要求するかは `.github/CODEOWNERS`、マージを止めるのは `.github/rulesets/main-protection.json` の `required_reviewers`
+- 重要パス (`docs/decisions/`・`.github/`・`.claude/`) を触る PR — 要求もマージの停止も `.github/rulesets/main-protection.json` の `required_reviewers` (team `maintainers` へ 1 承認を課す)
 - `verify: human` の Issue に紐づく PR — `review-gate` が Approve レビューを要求し、`human-approval` チェックが `pending` で待つ
 
 承認は native の Approve レビューのみ。どちらに当たる PR も App identity で作る — author を承認者集合の外に置くのが不変条件である ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。

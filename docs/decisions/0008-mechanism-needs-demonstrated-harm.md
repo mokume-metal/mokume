@@ -54,7 +54,7 @@ SPDX-License-Identifier: MIT
 順序を守っても防げない失敗が別にある。**実害はあったが、既存の機構で済んだ追加**である。
 
 - [#19](https://github.com/mokume-metal/mokume/issues/19) で `scripts/review-gate.sh` に**重要パス判定**と **`review: approved` ラベル**を自作した。塞ぐ実害はあった — 承認を機械で強制しないと、誰も見ないまま main へ入る
-- [#43](https://github.com/mokume-metal/mokume/issues/43) / [#59](https://github.com/mokume-metal/mokume/pull/59) で、重要パスの承認を **CODEOWNERS (GitHub native)** へ移した
+- [#43](https://github.com/mokume-metal/mokume/issues/43) / [#59](https://github.com/mokume-metal/mokume/pull/59) で、重要パスの承認を **GitHub native** へ移した (CODEOWNERS → ルールセットの `required_reviewers`)
 - [#44](https://github.com/mokume-metal/mokume/issues/44) / [#65](https://github.com/mokume-metal/mokume/pull/65) で自作分を縮小・廃止した。PR #65 は理由をこう書いている — 「重要パス判定と `review: approved` ラベルの fallback は**二重化・不要になった**」
 
 しかも廃止だけでは終わらなかった。`scripts/tests/review_gate_test.py` を新規に書き、**廃止したものが戻らないこと**を固定する必要があった。
@@ -86,7 +86,7 @@ SPDX-License-Identifier: MIT
 
 機構の増殖を止める機構を作れば、それ自体が増殖の一例になる (自己言及の罠)。「実害を名指ししているか」の判定には実質的な判断が要り、機械にできるのは Issue 番号の存在確認までで、それは基準の形だけを検査して中身を検査しない — 番号を書けば通る検査は、書く動機だけを増やして判断を素通りさせる。
 
-代わりに、判断が入る場所は既にある。機構は `.github/` `.claude/` `scripts/` `Makefile` のいずれかに現れ、前二者は CODEOWNERS がメンテナの承認を要求する。**残る `scripts/` と `Makefile` は承認を経ずに入りうる** — ここは人とエージェントの目に委ねる。塞ぐ価値が出たら、そのとき決定 1 の基準で塞ぐ (この ADR 自身が自分の基準に従う)。
+代わりに、判断が入る場所は既にある。機構は `.github/` `.claude/` `scripts/` `Makefile` のいずれかに現れ、前二者はルールセットの `required_reviewers` がメンテナの承認を要求する。**残る `scripts/` と `Makefile` は承認を経ずに入りうる** — ここは人とエージェントの目に委ねる。塞ぐ価値が出たら、そのとき決定 1 の基準で塞ぐ (この ADR 自身が自分の基準に従う)。
 
 ### 4. 機構を消すことには実害を要求しない
 

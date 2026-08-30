@@ -10,19 +10,21 @@
 #   - 対象 Issue に verify: ラベルが無ければ、完了条件が未確定のまま実装に入っている
 #   - 承認が要る PR の author が、その PR を承認できる唯一の人であってはならない
 #     (ADR-0007 の不変条件。破ると **誰も承認できない PR** ができる — #88)
-#   - verify: human なら人間の Approve を要求する (CODEOWNERS では表現できないため)
+#   - verify: human なら人間の Approve を要求する (パス照合では表現できないため)
 #
 # **ここは判定だけを行い、レビュー要求は投げない。** 承認待ち (終了コード 20) を人へ
 # 届けるのは scripts/request-review.sh の役目で、ci.yml の approval-signal ジョブが
 # この出力を受けて呼ぶ (#498)。分けてあるので、このスクリプトは手元から読み取り専用で
 # 打てる。
 #
-# 重要パス (docs/decisions/ ・ .github/ ・ .claude/) の承認要求は
+# 重要パス (docs/decisions/ ・ .github/ ・ .claude/) の承認要求も自動要求も
 # **ルールセットの required_reviewers が担う** (.github/rulesets/main-protection.json)。
-# 同じ 3 パスに minimum_approvals: 1 が課してあり、CODEOWNERS はメンテナへの
-# 自動要求と、下の「4.」が承認者集合を読むための代理を担う。ここで重ねて判定しない。
+# 3 パスに minimum_approvals: 1 が課してあり、team maintainers へ要求が飛ぶ。ここで
+# 重ねて判定しない — 下の「4.」がそのパターンを読むのは、承認が要る PR かどうかを
+# 知るためだけである。
 # (当初は CODEOWNERS + 承認数 0 で必須化できるつもりでいたが、承認数 0 は
-#  「0 件で足りる」と読まれて非ブロックになっていた — #211 / ADR-0003 決定 4 の改訂)
+#  「0 件で足りる」と読まれて非ブロックになっていた — #211 / ADR-0003 決定 4 の改訂。
+#  その CODEOWNERS も #530 で畳んだ — 自動要求が二重に飛ぶだけの写しになっていた)
 #
 # 承認をこのスクリプトで判定するほど「承認待ち」が CI の赤になり、外から見て故障と
 # 区別できなくなる。判定を native へ寄せた分だけ、ci-gate の赤は本物の故障に近づく。
@@ -49,8 +51,8 @@ readonly PENDING=20
 
 PR="${1:?PR 番号が必要}"
 REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
-# 承認者集合の読める代理 (下の「4.」を参照)。テストは別のファイルを指す
-CODEOWNERS_FILE="${CODEOWNERS_FILE:-$(cd "$(dirname "$0")/.." && pwd)/.github/CODEOWNERS}"
+# 承認が要るパスの正本 (下の「4.」を参照)。テストは別のファイルを指す
+RULESET_FILE="${RULESET_FILE:-$(cd "$(dirname "$0")/.." && pwd)/.github/rulesets/main-protection.json}"
 
 fail() {
   echo "review-gate: 差し戻し — $1" >&2
@@ -58,46 +60,40 @@ fail() {
   exit 1
 }
 
-# CODEOWNERS の 1 パターンが 1 ファイルに一致するか。
-# git のパターン照合のうち、CODEOWNERS が実際に使う形を扱う — ルート起点の
-# ディレクトリ接頭辞 (/.github/)、パスの完全一致とその配下 (docs/x.md)、
-# スラッシュ無しの任意階層一致 (*.md)。glob は bash に委ねるので `*` が
-# パス区切りをまたぐ点だけ git と違う (このリポジトリの CODEOWNERS には無い形)
-codeowners_match() { # $1=パターン $2=ファイルパス
-  local pattern=${1#/} path=$2
-  case "$pattern" in
-    */) [[ $path == $pattern* ]] ;;
-    */*) [[ $path == $pattern || $path == $pattern/* ]] ;;
-    *) [[ ${path##*/} == $pattern || $path == $pattern/* || $path == */$pattern/* ]] ;;
-  esac
+# ルールセットが 1 承認を課しているパスのパターン。**写しを持たず正本を読む**
+required_patterns() {
+  [ -f "$RULESET_FILE" ] || return 0
+  jq -r '
+    .rules[]? | select(.type == "pull_request")
+    | .parameters.required_reviewers[]? | .file_patterns[]?
+  ' "$RULESET_FILE"
 }
 
-# CODEOWNERS に名前が挙がっている owner をすべて出す (@ は落とす)
-codeowners_all() {
-  [ -f "$CODEOWNERS_FILE" ] || return 0
-  sed 's/#.*//' "$CODEOWNERS_FILE" |
-    awk 'NF > 1 { for (i = 2; i <= NF; i++) { sub(/^@/, "", $i); print $i } }' | sort -u
+# 1 パターンが 1 ファイルに当たるか。ルールセットの file_patterns は gitignore 形式で、
+# このリポジトリが使うのは末尾 `/**` (ディレクトリ配下すべて) だけである。他の形が
+# 増えたらここを見る — 特に否定 (`!`) は無視すると過剰に一致し、承認の要らない PR を
+# 「誰も承認できない」と誤って差し戻す
+pattern_match() { # $1=パターン $2=ファイルパス
+  local pattern=$1 path=$2
+  if [[ $pattern == */\*\* ]]; then
+    [[ $path == "${pattern%/\*\*}"/* ]]
+  else
+    [[ $path == $pattern ]]
+  fi
 }
 
-# 標準入力のファイル群 (1 行 1 件) に効く owner を出す。
-# CODEOWNERS は **最後に一致した規則が勝つ**ので、規則を上から舐めて上書きする
-# (owner を書かない規則は所有を外すため、上書きの結果が空なら所有者なし)
-codeowners_owners_for() {
-  local paths path line pattern rest hit
+# 標準入力のファイル群 (1 行 1 件) のどれかがルールセットの対象に当たるか
+touches_protected_path() {
+  local paths pattern path
   paths=$(cat)
-  [ -f "$CODEOWNERS_FILE" ] || return 0
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    hit=""
-    while IFS= read -r line; do
-      line=${line%%#*}
-      [ -n "${line//[[:space:]]/}" ] || continue
-      pattern=${line%%[[:space:]]*}
-      rest=${line#"$pattern"}
-      if codeowners_match "$pattern" "$path"; then hit=$rest; fi
-    done < "$CODEOWNERS_FILE"
-    printf '%s\n' $hit
-  done <<<"$paths" | sed 's/^@//' | awk 'NF' | sort -u
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      pattern_match "$pattern" "$path" && return 0
+    done <<<"$paths"
+  done < <(required_patterns)
+  return 1
 }
 
 pr_json=$(gh pr view "$PR" -R "$REPO" \
@@ -170,31 +166,38 @@ fi
 #    後から変えられない。PR 作成前のフック (scripts/pr-identity-guard.sh) が常道で、
 #    ここは経路を問わない保険にあたる (ADR-0007 決定 3)。
 #
-#    承認者集合の**読める代理は .github/CODEOWNERS だけ**である。collaborator の一覧は
-#    Administration 権限を要求し、ADR-0003 決定 1 でエージェントの App は持たない
-#    (ci.yml の review-gate ジョブも contents/issues/pull-requests の read しか宣言
-#    していない)。reviewDecision も使えない — **このリポジトリでは常に空で返る**。
-#    required_approving_review_count は 0 のままで (ADR-0003 決定 4)、重要パスの
-#    承認を課している required_reviewers ルールの要求は reviewDecision に映らない
-#    (#249 で実測。承認して BLOCKED が CLEAN に変わった後も空のまま)。承認の要否を
-#    機械で読むなら mergeStateStatus を見る。CODEOWNERS ならチェックアウト済みの
-#    ファイルを読むだけで済む。
+#    判定は 2 つに分かれる。**承認が要るか**は、対象 Issue が verify: human であるか、
+#    変更がルールセットの required_reviewers の file_patterns に当たるかで決まる。
+#    パスの正本はルールセット (.github/rulesets/main-protection.json) で、ここでは
+#    写しを持たない — CODEOWNERS を代理に読んでいた頃は同じ 3 パスが 2 ファイルに
+#    綴り違いで写されていて、整合を見る検査が無かった (#530)。
 #
-#    App が作った PR は集合に入りようがない (CODEOWNERS にはユーザーとチームしか
-#    書けない) ので自動的に通る。外部コントリビューターも通る — メンテナが承認できる
-#    ので詰んでいない。詰むのは「author が唯一の承認者」のときだけで、これはメンテナが
-#    増えれば自動で緩む。
+#    **承認できる人が author しかいないか**は author_association を見る。org の中の人
+#    (MEMBER / OWNER) なら、単独メンテナ構成では author 自身が唯一の承認者になる。
+#    実測: App の PR は CONTRIBUTOR (#529 / #528)、#88 のメンテナの PR は MEMBER。
+#    これは gh pr view --json には無いので REST を引く (ci.yml の review-gate ジョブが
+#    宣言している pull-requests: read で足りる)。reviewDecision は使えない —
+#    **このリポジトリでは常に空で返る**。required_approving_review_count は 0 のままで
+#    (ADR-0003 決定 4)、重要パスの承認を課している required_reviewers ルールの要求は
+#    reviewDecision に映らない (#249 で実測。承認して BLOCKED が CLEAN に変わった後も
+#    空のまま)。承認の要否を機械で読むなら mergeStateStatus だが、CI の時点では
+#    review-gate 自身の pending が混ざるので使えない。
+#
+#    App が作った PR は org の外なので自動的に通る。外部コントリビューターも通る —
+#    メンテナが承認できるので詰んでいない。**メンテナが 2 人目に増えたときは自動で
+#    緩まない** (所属しか読めず、人数を数えられないため)。そのときは 2 人目の Approve
+#    が付いた時点でこの検査を抜けるので詰みはしないが、それまで赤が出る。緩めるかは
+#    ADR-0007 影響が言うとおり、そのとき別途判断する。
 if ! grep -qx "APPROVED" <<<"$reviews"; then
   author=$(jq -r '.author.login // ""' <<<"$pr_json")
-  if $need_human; then
-    # verify: human が求めるのは「メンテナの承認」で、その集合は CODEOWNERS 全体を代理にする
-    approvers=$(codeowners_all)
-  else
-    approvers=$(jq -r '.files[]?.path // empty' <<<"$pr_json" | codeowners_owners_for)
+  need_approval=$need_human
+  if ! $need_approval &&
+     jq -r '.files[]?.path // empty' <<<"$pr_json" | touches_protected_path; then
+    need_approval=true
   fi
-  if [ -n "$author" ] && [ -n "$approvers" ] && grep -qxF "$author" <<<"$approvers"; then
-    others=$(grep -vxF "$author" <<<"$approvers" || true)
-    if [ -z "$others" ]; then
+  if $need_approval; then
+    assoc=$(gh api "repos/$REPO/pulls/$PR" --jq '.author_association' 2>/dev/null || true)
+    if [ "$assoc" = "MEMBER" ] || [ "$assoc" = "OWNER" ]; then
       fail "この PR は誰も承認できない — 承認が要る PR の author ($author) が、唯一の承認者になっている (ADR-0007 / #88)" \
            "$(cat <<'EOF'
 この PR を close し、GitHub App の identity で作り直してください。**承認を待っても
