@@ -29,6 +29,7 @@ public protocol Sketch: AnyObject {
     /// **並びは 1 本で、順序は宣言順** ([ADR-0024] 決定 4)。出口だけを足すものも
     /// 入り口だけを足すものも同じ並びに置き、仕分けは仕組みが行う。
     ///
+    /// <!-- example: 組めない VideoSender は外のパッケージが持つ (このリポジトリには無い) -->
     /// ```swift
     /// var plugins: [any Plugin] { [VideoSender(name: "mokume")] }
     /// ```
@@ -172,13 +173,14 @@ extension Sketch {
 extension Sketch {
     /// 断片を読み込む。
     ///
+    /// <!-- example: 文脈 var waves: Shader! -->
     /// ```swift
     /// // waves.metal
     /// // float4 paint(Fragment in, Values values) {
     /// //     float wave = 0.5 + 0.5 * sin(in.place.x * 20 + in.time * values.speed);
     /// //     return float4(values.tint.rgb * wave, 1);
     /// // }
-    /// waves = try loadShader(
+    /// waves = try? loadShader(
     ///     "assets/waves.metal",
     ///     values: ["speed": 2, "tint": .color(.display(red: 1, green: 0.5, blue: 0.2))])
     /// ```
@@ -282,8 +284,9 @@ extension Sketch {
 
     /// 文字列から効果を作る。保存の拾い直しは効かない (在処が無いため)。
     ///
+    /// <!-- example: 文脈 var ripple: EffectShader! -->
     /// ```swift
-    /// ripple = try makeEffect(
+    /// ripple = try? makeEffect(
     ///     """
     ///     float4 effect(Pixel in, Values values) {
     ///         float wave = sin(in.place.y * 60.0 + in.time * 4.0) * values.depth;
@@ -296,7 +299,7 @@ extension Sketch {
     /// ## 平面・立体の塗りと同じ規約
     ///
     /// 前置きは自動で足されるので、書くのは `float4 effect(Pixel in, Values values)`
-    /// 1 本だけ。`in.color` がこの画素、``mokume_at`` でほかの場所を読める。渡した値は
+    /// 1 本だけ。`in.color` がこの画素、`mokume_at` でほかの場所を読める。渡した値は
     /// `values` から名前で引ける。**組み込みの効果も同じ規約で書いてある。**
     ///
     /// 使うときは ``Effect/custom(_:)`` として並びへ入れる。
@@ -326,8 +329,9 @@ extension Sketch {
 extension Sketch {
     /// 数の並びを用意する。**CPU と GPU で同じものを見る。**
     ///
+    /// <!-- example: 文脈 var heat: Numbers! -->
     /// ```swift
-    /// heat = try makeNumbers(count: 4096)
+    /// heat = try? makeNumbers(count: 4096)
     /// heat.fill(0)
     /// ```
     ///
@@ -347,8 +351,9 @@ extension Sketch {
 
     /// 文字列から計算を作る。保存の拾い直しは効かない (在処が無いため)。
     ///
+    /// <!-- example: 文脈 var step: Computation! -->
     /// ```swift
-    /// step = try makeComputation(
+    /// step = try? makeComputation(
     ///     """
     ///     kernel void step(device float *heat [[buffer(0)]],
     ///                      constant Values &values [[buffer(MOKUME_VALUES)]],
@@ -395,6 +400,9 @@ extension Sketch {
 
     /// 描く前に計算させる (1 次元)。
     ///
+    /// <!-- example: 文脈 var step: Computation! -->
+    /// <!-- example: 文脈 var seed: Numbers! -->
+    /// <!-- example: 文脈 var heat: Numbers! -->
     /// ```swift
     /// func draw() {
     ///     compute(step, over: 4096, reads: [seed], writes: [heat])
@@ -452,11 +460,14 @@ extension Sketch {
 
     /// 計算が書いた値を読む。**そのフレームの結果が返る。**
     ///
+    /// <!-- example: 文脈 var loudness: Computation! -->
+    /// <!-- example: 文脈 var wave: Numbers! -->
+    /// <!-- example: 文脈 var level: Numbers! -->
     /// ```swift
     /// func draw() {
     ///     compute(loudness, over: 4096, reads: [wave], writes: [level])
     ///     let values = read(level)      // ここで走らせて待つ
-    ///     play(volume: values[0])
+    ///     circle(width / 2, height / 2, values[0] * 200)
     /// }
     /// ```
     ///
@@ -492,9 +503,10 @@ extension Sketch {
 extension Sketch {
     /// 粒を用意する。**同時に持てる数をここで決める。**
     ///
+    /// <!-- example: 文脈 var dust: Particles! -->
     /// ```swift
     /// func setup() {
-    ///     dust = try makeParticles(count: 20000)
+    ///     dust = try? makeParticles(count: 20000)
     /// }
     /// ```
     ///
@@ -515,6 +527,7 @@ extension Sketch {
 
     /// 粒を出す。
     ///
+    /// <!-- example: 文脈 var dust: Particles! -->
     /// ```swift
     /// func draw() {
     ///     emit(dust, from: .point(width / 2, 40), rate: 600, life: 1...2.5)
@@ -557,6 +570,7 @@ extension Sketch {
 
     /// 粒に力を効かせる。
     ///
+    /// <!-- example: 文脈 var dust: Particles! -->
     /// ```swift
     /// force(dust, .gravity(0, 90), .swirl(width / 2, height / 2, strength: 40), .drag(0.6))
     /// ```
@@ -595,6 +609,7 @@ extension Sketch {
 extension Sketch {
     /// 形を組み立てて保持する。**毎フレーム組み立て直さずに済む。**
     ///
+    /// <!-- example: 文脈 var leaf: Shape! -->
     /// ```swift
     /// func setup() {
     ///     leaf = createShape {
@@ -609,7 +624,7 @@ extension Sketch {
     /// }
     ///
     /// func draw() {
-    ///     for i in 0..<2000 { shape(leaf, x(i), y(i)) }
+    ///     for i in 0..<2000 { shape(leaf, Float(i % 50) * 8 + 10, Float(i / 50) * 8 + 10) }
     /// }
     /// ```
     ///
@@ -1075,9 +1090,11 @@ extension Sketch {
 
     /// 貼る絵の読み取り位置つきで頂点を 1 つ置く。
     ///
-    /// `u`・`v` は**貼る絵の画素**で書く (``image(_:_:_:_:_:_:_:_:_:)`` の切り出しと
-    /// 同じ単位)。``texture(_:)`` で絵を束ねていなければ、書いても何も起きない。
+    /// `u`・`v` は**貼る絵の画素**で書く (``image(_:_:_:_:_:_:_:_:_:)-(Image,_,_,_,_,_,_,_,_)``
+    /// の切り出しと同じ単位)。``texture(_:)-(Image)`` で絵を束ねていなければ、書いても
+    /// 何も起きない。
     ///
+    /// <!-- example: 文脈 var grain: Image! -->
     /// ```swift
     /// texture(grain)
     /// beginShape()
@@ -1994,6 +2011,7 @@ extension Sketch {
     /// 視点はフレームを越えないので、**複数の視点を持ちたければ値で持つ**。初期化の
     /// ときに作っておいて、毎フレーム ``setCamera(_:)`` で当てる。
     ///
+    /// <!-- example: 組めない 視点を値で持つ形だけを示す省略記法 (`...`) -->
     /// ```swift
     /// var front = Camera(...)
     /// var side = Camera(...)
@@ -2143,6 +2161,7 @@ extension Sketch {
 
     /// 外で作ったモデルを読む。読み終わるまで返らない。
     ///
+    /// <!-- example: 文脈 var head: Model? -->
     /// ```swift
     /// func setup() {
     ///     head = try? loadModel("assets/head.obj")
@@ -2151,7 +2170,7 @@ extension Sketch {
     ///     lights()
     ///     push()
     ///     translate(width / 2, height / 2, 0)
-    ///     rotateY(millis() / 2000)
+    ///     rotateY(time * 0.5)
     ///     if let head { model(head) }
     ///     pop()
     /// }
@@ -2614,6 +2633,7 @@ extension Sketch {
 
     /// 矩形の中へ文字列を流し込む。
     ///
+    /// <!-- example: 文脈 let long = "流し込む長い文章" -->
     /// ```swift
     /// let flow = text(long, 20, 20, 200, 120)
     /// text(flow.remainder, 240, 20, 200, 120)   // 入りきらなかった続きを隣の段へ
@@ -2665,6 +2685,7 @@ extension Sketch {
 
     /// 絵を読む。読み終わるまで返らない。
     ///
+    /// <!-- example: 文脈 var grain: Image? -->
     /// ```swift
     /// func setup() {
     ///     grain = try? loadImage("assets/grain.png")
@@ -2708,6 +2729,7 @@ extension Sketch {
 
     /// 絵の一部を切り出して置く。
     ///
+    /// <!-- example: 文脈 var sheet: Image! -->
     /// ```swift
     /// image(sheet, 0, 0, 32, 32, 64, 0, 32, 32)   // 右となりの駒を左上へ
     /// ```
@@ -2739,6 +2761,7 @@ extension Sketch {
 
     /// 画面とは別の描き場所を作る。**焼いた絵を置いたり、重ねたり、積み上げたりできる。**
     ///
+    /// <!-- example: 文脈 var trail: Canvas! -->
     /// ```swift
     /// func setup() {
     ///     trail = try! createGraphics(400, 400)
@@ -2761,7 +2784,7 @@ extension Sketch {
     ///
     /// ## 既定で透けていて、自動では消えない
     ///
-    /// 作った時点の中身は透明で、以後は**こちらが ``Canvas/background(_:)`` を呼ぶまで
+    /// 作った時点の中身は透明で、以後は**こちらが ``Canvas/background(_:)-(LinearRGBA)`` を呼ぶまで
     /// 消えない**。消えないからこそ、前のフレームの上に描き足して跡が積み上がる絵が
     /// 書ける。毎フレーム消したいときは `trail.background(.transparent)` を書く。
     ///
@@ -2810,6 +2833,7 @@ extension Sketch {
 
     /// これから置く塗りに絵を貼る。
     ///
+    /// <!-- example: 文脈 var grain: Image! -->
     /// ```swift
     /// texture(grain)
     /// box(200)            // 6 面それぞれに 1 枚ずつ貼られる
@@ -2836,6 +2860,7 @@ extension Sketch {
     /// **読み込んだ絵とまったく同じに扱える。** 毎フレーム描き直した描き場所を
     /// 立体に貼れば、面の上で動く絵になる。
     ///
+    /// <!-- example: 文脈 var dial: Canvas! -->
     /// ```swift
     /// texture(dial)
     /// box(200)

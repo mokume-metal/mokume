@@ -37,7 +37,7 @@ import QuartzCore
 ///
 /// ## AppKit の delegate は別のオブジェクトが受ける
 ///
-/// `NSApplicationDelegate` への準拠は internal な ``SketchApplicationDelegate`` が持つ。
+/// `NSApplicationDelegate` への準拠は internal な `SketchApplicationDelegate` が持つ。
 /// **この型が直接準拠すると、delegate の 3 本が公開 API の一覧に載る** — 呼ぶのは OS で
 /// あって利用者ではないのに「呼んでよい」顔で並ぶ ([ADR-0020] 決定 6 /
 /// [#324](https://github.com/mokume-metal/mokume/issues/324))。

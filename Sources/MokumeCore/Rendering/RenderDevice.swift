@@ -13,13 +13,14 @@ import MokumeDiagnostics
 /// 「バインドしたのに描かれない」形の、症状からは原因の見えない失敗になる。**
 /// そこで確保したリソースは必ずここを通し、常駐の集合をこの型が持つ。
 ///
-/// 集合は**寿命で 2 つに分けてある** — 確保したものが全部入る ``residencySet`` と、
-/// 表示に差し出す面だけが入る ``drawableResidency`` である。差し出す面の環は Metal
+/// 集合は**寿命で 2 つに分けてある** — 確保したものが全部入る `residencySet` と、
+/// 表示に差し出す面だけが入る `drawableResidency` である。差し出す面の環は Metal
 /// 側が持っていて、面の大きさが変わると環ごと作り直される。混ぜると、古い面だけを
 /// 畳む手が無い ([#357](https://github.com/mokume-metal/mokume/issues/357))。
 ///
 /// ## 使い方
 ///
+/// <!-- example: 組めない beginCommands / commitAndWait が internal で、外からは書けない (#563) -->
 /// ```swift
 /// let gpu = try RenderDevice()
 /// let commands = try gpu.beginCommands()
@@ -27,7 +28,7 @@ import MokumeDiagnostics
 /// try gpu.commitAndWait(commands)
 /// ```
 ///
-/// ``commitAndWait(_:)`` は GPU の完了まで呼び出し元を止める。フレームを回す経路では
+/// `commitAndWait(_:)` は GPU の完了まで呼び出し元を止める。フレームを回す経路では
 /// なく、1 枚だけ描く経路と検証で使う形である。
 public final class RenderDevice {
     /// GPU が完了するのを待つ上限 (秒)。
