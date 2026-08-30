@@ -39,6 +39,7 @@ path = [
   "Makefile",
   ".claude/settings.json",
   ".github/workflows/ci.yml",
+  ".github/workflows/pages.yml",
   ".github/workflows/release.yml",
   ".github/workflows/triage.yml",
   ".github/workflows/parent-guard.yml",
