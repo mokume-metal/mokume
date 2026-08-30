@@ -1,0 +1,107 @@
+name: Pages
+
+# 参照の面 (ソースの `///` から組み立てた、人が読む API の面) を公開する。
+# 組み立ての実体は `make reference` で、このファイルはそれを呼んで配るだけ
+# (ADR-0001 原則 8)。
+#
+# ## 置き場に GitHub Pages を採った理由 (#478)
+#
+# シンボルグラフに swift build が要るので、どこへ置く場合でも組み立ては macOS
+# ランナーで行う。**違うのは置き場だけ**で、乗り換えるときに変わるのは deploy の
+# ステップ 1 つである。その上で GitHub Pages を採ったのは:
+#
+# - **新しい資格情報・道具・ベンダーが 0 個。** deploy-pages は OIDC で動くので、
+#   このリポジトリの Actions secrets は 0 件のまま保てる。ADR-0008 決定 5 の順序で
+#   いう native に当たり、新設より前に来る
+# - 公開が起きた事実が GitHub の Deployments に残るので、公開の追随を確かめる側
+#   (#483) が正典と同じ場所から引ける
+#
+# **採らなかったのは Cloudflare Workers (静的アセット)。** mokume.org は既に
+# Cloudflare の DNS 配下にあり、apex への割り当ても証明書も自然に片付き、設定
+# ファイルがリポジトリに入る利点もある。それでも今は採らない — このリポジトリ初の
+# Actions secret と wrangler の版ピンが要るのに対し、塞ぐ実害がまだ 1 件も無い
+# (ADR-0008)。
+#
+# **見直しの引き金**: Cloudflare の proxy を被せたくなったとき (GitHub Pages は
+# proxy 下で証明書の発行が通らない既知の組み合わせ) / 本物のリダイレクト・ヘッダ
+# 規則が要るようになったとき / 帯域か公開頻度が上限に当たったとき。
+
+on:
+  # **paths で絞らない。** 絞りは公開に使う入力の写しになり、入力が増えたときに
+  # 直し忘れると「ビルドは緑のまま公開だけが古い」が無言で起きる。絞らなければ
+  # 覆っていることが構造で決まる (ADR-0027 決定 3)。
+  # この形は scripts/check-publish-trigger.py が機械で守る
+  push:
+    branches: [main]
+  # 公開だけをやり直したいとき (配信側の事故・Pages の設定変更の後) の口
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 公開は最新の 1 本だけでよい。走行中に次が来たら古いほうを捨てる
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    # 組み立てに swift build が要る (ADR-0009 の土台)。deploy まで 1 ジョブで通すのは、
+    # 成果物を渡すだけのジョブを分けても得るものが無いため
+    runs-on: macos-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # **Pages の有効化はここでは行わない。** configure-pages の enablement は
+      # GITHUB_TOKEN では通らない (Administration の書き込みが要る) ので、有効化は
+      # メンテナが 1 度だけ行う設定として外に置く — 有効でなければこの手順が
+      # 「Pages が無い」で落ちるので、忘れたまま静かに進むことは無い。
+      #
+      # 有効化のためだけに Administration を持つ鍵を CI へ置くことはしない
+      # (ADR-0003 決定 1 と同じ理由)。1 度きりの設定に、常設の鍵は釣り合わない
+      - name: Pages の設定を読む
+        id: pages
+        uses: actions/configure-pages@v6
+
+      # 公開先の基準パスを、configure-pages が返す URL から自分で組む。
+      # **前後のスラッシュの有無に依存しない形にする** — 出力の綴りが変わっても
+      # 黙って `/mokumereference` のような経路を焼き込まないため。独自ドメインを
+      # 向けたときはパスが空になり、そのまま reference だけが残る (#483 でこの
+      # ファイルを触らずに済む)
+      - name: 公開先の基準パスを決める
+        id: base
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          path="$(printf '%s' "$BASE_URL" | sed -E 's#^https?://[^/]+##; s#^/+##; s#/+$##')"
+          if [ -n "$path" ]; then path="$path/reference"; else path="reference"; fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "基準パス: $path"
+
+      # 面は配下の 1 ディレクトリ (/reference/) だけを使う。root は手で書く入口の
+      # ためにここでは触らない (ADR-0027 決定 3 の「混ぜず並べる」)
+      - name: 参照の面を組み立てる
+        run: make reference OUT=_site/reference BASE="${{ steps.base.outputs.path }}"
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - name: 公開する
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+      # **ビルドの緑は公開の緑ではない。** 組み上がったものと公開されたものは別の
+      # 事実なので、公開先を実際に引いて中身を確かめる (#478 の落とし穴)
+      - name: 公開されたものを引いて確かめる
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          url="$(printf '%s' "$PAGE_URL" | sed -E 's#/+$##')/reference"
+          echo "引く先: $url"
+          python3 scripts/check-published-reference.py "$url"

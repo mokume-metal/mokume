@@ -81,6 +81,8 @@ final class MySketch: Sketch {
 MySketch.main()
 ```
 
+書ける口の説明は**参照の面**にある: <https://mokume-metal.github.io/mokume/reference/>
+
 ## エージェントから使う
 
 走っているスケッチを外から観測し、入力を送れる。窓口 (MCP サーバ) を繋ぐと、

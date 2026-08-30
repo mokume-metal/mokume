@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape changelog-lint docs-links adr-numbers hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list reference cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders schemas api no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint rulesets-shape changelog-lint docs-links adr-numbers hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas api reference no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -54,6 +54,13 @@ github-yaml-lint:
 # 戻り、次に YAML が増えたとき同じ穴が空く (ADR-0008 決定 5 の「重ねる理由」)
 workflows-lint:
 	bash scripts/check-workflows.sh
+
+# 公開の起動条件が、面の入力を覆っているかを見る (#478)。**絞りと入力を突き合わせる
+# のではなく、絞りを持たせない**ことを検査する — 突き合わせる形にすると入力の一覧という
+# 2 つ目の写しが要る。上の 2 本とは見ているものが違う (構文でも actionlint の意味でもなく、
+# 公開が取り逃す入力があるか) ので重ねる
+publish-trigger:
+	python3 scripts/check-publish-trigger.py
 
 # ブランチ保護の定義ファイルの「形」だけを見る (ADR-0006)。実設定との照合には
 # 認証が要り、ルールセットは PR と独立に変わるので CI のこの位置には置かない
@@ -158,6 +165,42 @@ api-list: ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 	$(API_BUILD)
 	python3 scripts/api-surface.py list --graphs $(API_GRAPHS) \
 		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",)
+
+# 参照の面 (人が読む API の面)。**説明文 (`///`) が唯一の入力**で、面はその生成物
+# (ADR-0027 決定 1)。リポジトリには置かず、公開のワークフローがここを呼んで配る。
+#
+# **`reference-shots` とは別物** — あちらは参照スケッチ (Sketches/) が描く絵で、
+# こちらは説明文から組み立てる読む面である。
+#
+# **面に出すモジュールは名指しする。** 渡した置き場にあるシンボルグラフのモジュールは
+# 区別されず全部ページになるので、選り分けないと product に含まれない開発用の実行
+# ターゲット (reference-sketches・frame-rate-probe) まで公開される。一覧の側
+# (api-surface.py の --module) と同じ名指しをここでも要求する (ADR-0027 決定 1)。
+#
+# 組み立ての後に、置いたものが本当に出ているかを自分で確かめる — この道具のいちばん
+# 多い壊れ方は「変換は成功し、警告も出ず、出力にだけ存在しない」である。
+REFERENCE_CATALOG := Documentation/mokume.docc
+REFERENCE_MODULES := MokumeCore
+REFERENCE_GRAPHS := .build/reference-graphs
+REFERENCE_OUT := .build/reference
+
+reference: ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時の基準パス)
+	$(API_BUILD)
+	rm -rf "$(REFERENCE_GRAPHS)" "$(or $(OUT),$(REFERENCE_OUT))"
+	mkdir -p "$(REFERENCE_GRAPHS)" "$$(dirname "$(or $(OUT),$(REFERENCE_OUT))")"
+	for module in $(REFERENCE_MODULES); do \
+		cp "$(API_GRAPHS)/$$module.symbols.json" "$(REFERENCE_GRAPHS)/"; \
+		cp "$(API_GRAPHS)/$$module@"*.symbols.json "$(REFERENCE_GRAPHS)/" 2>/dev/null || true; \
+	done
+	xcrun docc convert "$(REFERENCE_CATALOG)" \
+		--additional-symbol-graph-dir "$(REFERENCE_GRAPHS)" \
+		--fallback-bundle-identifier org.mokume.reference \
+		--transform-for-static-hosting \
+		$(if $(BASE),--hosting-base-path "$(BASE)",) \
+		--output-path "$(or $(OUT),$(REFERENCE_OUT))"
+	cp Documentation/reference-index.html "$(or $(OUT),$(REFERENCE_OUT))/index.html"
+	python3 scripts/check-published-reference.py \
+		"$(or $(OUT),$(REFERENCE_OUT))" --catalog "$(REFERENCE_CATALOG)"
 
 # 道具の配布物。**リリースタグを起点に配る** (ADR-0001 原則 6)。ここで束ねたものを
 # リリースのワークフローが Release の資産として上げる — CI にステップを足さず、
