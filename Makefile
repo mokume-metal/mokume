@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status catch-up shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status catch-up shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders schemas api reference example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas api reference example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -88,15 +88,18 @@ docs-links:
 
 # エージェント向けフック (署名の強制など) の検査。gh はスタブに差し替わるので
 # ネットワークも認証も要らない
-# ADR の連番が一意であることを見る (#500)。**docs-links とは見ているものが違う** —
-# あちらの責務は「指し先の不在」で、番号が重複していてもファイル名が別なら全リンクが
-# 解決する。実際 #490 と #491 が両方 0026 を取ったとき docs-links は緑のまま通った
+# ADR の形を見る。連番が一意であること (#500) と、状態欄が本文の改訂に追随して
+# いること (#545)。**docs-links とは見ているものが違う** — あちらの責務は
+# 「指し先の不在」で、番号が重複していてもファイル名が別なら全リンクが解決する。
+# 実際 #490 と #491 が両方 0026 を取ったとき docs-links は緑のまま通った
 # (ADR-0008 決定 5 の段 1 を検討した結果、責務を広げずに 1 本足している)。
+# 状態欄のほうは逆に、既にある ADR の検査へ責務を寄せている (段 1)
 #
-# **効くのは merge queue の層である。** PR 単体では相手の枝が見えないので、並走した
-# 2 本目が赤くなるのは合流後の姿を検査するとき — CI は merge_group でもこれを呼ぶ
-adr-numbers:
-	bash scripts/check-adr-numbers.sh
+# **番号の重複に効くのは merge queue の層である。** PR 単体では相手の枝が見えない
+# ので、並走した 2 本目が赤くなるのは合流後の姿を検査するとき — CI は merge_group
+# でもこれを呼ぶ
+adrs:
+	bash scripts/check-adrs.sh
 
 hooks-test:
 	python3 -m unittest discover -s scripts/tests -p '*_test.py'
