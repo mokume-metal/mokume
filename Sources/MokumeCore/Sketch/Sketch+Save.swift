@@ -31,7 +31,7 @@ extension Sketch {
     /// 無いからである。
     ///
     /// **透けたところは透けたまま残る。** 出力段がアルファの乗算を戻してから書くので
-    /// ([ADR-0011] 決定 4)、``background(_:)`` に ``LinearRGBA/transparent`` を渡した
+    /// ([ADR-0011] 決定 4)、``background(_:)-(LinearRGBA)`` に ``LinearRGBA/transparent`` を渡した
     /// 絵は、透過を持つ PNG になる。
     ///
     /// ## 書かれるのはこのフレームを描き終えた後

@@ -18,7 +18,7 @@ public enum Force: Equatable, Sendable {
 
     /// 1 点から遠ざける。
     ///
-    /// **``attract`` の符号を返すだけ** — 引くと押すは同じ 1 つの計算なので、枝を
+    /// **``attract(_:_:_:strength:)`` の符号を返すだけ** — 引くと押すは同じ 1 つの計算なので、枝を
     /// 2 本持たない。名前を 2 つ置いてあるのは、`strength` を負で書くより読みやすい
     /// ためである。
     public static func repel(

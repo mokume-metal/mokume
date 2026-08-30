@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status catch-up entry-check shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
+.PHONY: setup check ci-check build test examples drawing-evidence render-status catch-up entry-check shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders schemas api reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test examples shaders schemas api reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -150,6 +150,19 @@ render-status:
 catch-up: ## 弾かれた描画 PR を、合流後の姿を覆い直して merge queue へ戻す
 	bash scripts/catch-up.sh
 
+# 説明文の中の例が、実際にコンパイルできるかを見る (#479)。腐った例は説明が無いより
+# 悪い — 読者はそれを写して、通らない理由を自分の側に探す。
+#
+# **組み直さない。** build が作った成果物へ直接当てるので、パッケージを 2 つ目に作って
+# CI の時間を倍にしなくて済む。その代わり build の後でなければ走らない (的が依存を持つ)。
+#
+# **撮る側 (example-shots) とは見ているものが違う。** あちらは囲みが付いた例を撮って
+# 書き戻す仕組みで、GPU と鍵が要るので手元でしか走らない。こちらは囲みの有無によらず
+# 全部の例を組み立てる。包み方だけは scripts/example_wrapping.py に 1 つ置いて共有する
+# — 別々に包むと、撮れる例と組める例が食い違う (ADR-0001 原則 9)
+examples: build ## 説明文の中の例が組めるかを見る
+	python3 scripts/check-examples.py
+
 # 入口が面として成立しているかを見る (#482)。**組み立ての的は無い** — 手で書く層は
 # make reference が Documentation/site/. ごと被せるので、ここは中身だけを見る
 entry-check:
@@ -195,6 +208,11 @@ api-list: ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 # 選り分けをしないので、公開へ写す資産の列挙が現れない — 列挙は漏れ、漏れたときの症状は
 # 「そのファイルだけが公開されない」でビルドは緑のままである。
 #
+# **警告は落とす** (#479)。docc の警告はほぼ全部が「読者が踏むリンク切れ」で、変換は
+# 成功したまま面に出る。カタログの `.md` の題より前に何かを置いて**ページの説明と
+# Topics が丸ごと落ちた**ときも、出るのは警告 1 本だけだった (#478 で踏んだ)。
+# 新しい検査を足さずに道具の口で済ませている (ADR-0008 決定 5 段 2)。
+#
 # 組み立ての後に、置いたものが本当に出ているかを自分で確かめる — この道具のいちばん
 # 多い壊れ方は「変換は成功し、警告も出ず、出力にだけ存在しない」である。
 REFERENCE_CATALOG := Documentation/mokume.docc
@@ -214,6 +232,7 @@ reference: ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時�
 		--additional-symbol-graph-dir "$(REFERENCE_GRAPHS)" \
 		--fallback-bundle-identifier org.mokume.reference \
 		--transform-for-static-hosting \
+		--warnings-as-errors \
 		$(if $(BASE),--hosting-base-path "$(BASE)",) \
 		--output-path "$(or $(OUT),$(REFERENCE_OUT))"
 	cp -R Documentation/site/. "$(or $(OUT),$(REFERENCE_OUT))/"

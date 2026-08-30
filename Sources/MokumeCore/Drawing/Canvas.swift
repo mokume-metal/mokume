@@ -19,6 +19,7 @@ import simd
 ///
 /// ## 描き方
 ///
+/// <!-- example: 組めない Canvas を直に回す例で、投げられる場所に置かれる (draw() の中には貼れない) -->
 /// ```swift
 /// try canvas.draw {
 ///     canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
@@ -45,7 +46,7 @@ public final class Canvas {
 
     /// 出す先。**すべての出口が受け取るのはこの 1 枚**である ([ADR-0023] 決定 2)。
     ///
-    /// 細かさが 1 なら ``target`` と同じものを指す — 置き場も段も 1 つも増えない。
+    /// 細かさが 1 なら `target` と同じものを指す — 置き場も段も 1 つも増えない。
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     public let output: RenderTarget
@@ -1908,6 +1909,9 @@ public final class Canvas {
     ///
     /// ``endDraw()`` と対で使う。手本と同じ名前・同じ対の形にしてある。
     ///
+    /// <!-- example: 文脈 var trail: Canvas! -->
+    /// <!-- example: 文脈 let x: Float = 200 -->
+    /// <!-- example: 文脈 let y: Float = 150 -->
     /// ```swift
     /// trail.beginDraw()
     /// trail.circle(x, y, 20)

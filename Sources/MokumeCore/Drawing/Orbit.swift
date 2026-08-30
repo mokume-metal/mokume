@@ -68,7 +68,7 @@ public struct Orbit: Equatable, Sendable {
 
     /// 面がちょうど収まる視点から始める操作。
     ///
-    /// **既定の視点 (``Camera/fitting(width:height:)``) と同じ位置に置く。** だから
+    /// **既定の視点 (`Camera.fitting(width:height:)`) と同じ位置に置く。** だから
     /// `orbitControl()` を足しただけでは絵が動かない。寄り・引きの限界も既定の投影の
     /// 手前・奥の面に合わせるので、限界まで動かしても切れない。
     public static func fitting(width: Float, height: Float) -> Orbit {

@@ -22,8 +22,8 @@ public enum ImageWriteFailure: Error, Equatable, Sendable {
 
 /// 絵を PNG として書き出す。
 ///
-/// **隔離の外に置く** — 読む側の ``ImageFile`` と対称にしておくと、書き出しを
-/// フレームの外へ逃がす経路 (``FrameWriter``) がそのまま呼べる ([ADR-0010] 決定 4)。
+/// **隔離の外に置く** — 読む側の `ImageFile` と対称にしておくと、書き出しを
+/// フレームの外へ逃がす経路 (`FrameWriter`) がそのまま呼べる ([ADR-0010] 決定 4)。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 public nonisolated enum PNGFile {
