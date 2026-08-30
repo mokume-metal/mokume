@@ -12,6 +12,13 @@
 ///
 /// 画素は左上を原点に行優先で、1 画素あたり 4 バイト (赤・緑・青・不透明度) が並ぶ。
 ///
+/// ## 向きを持たない
+///
+/// **この型が名乗るのは絵の「形」であって、出ていく向きではない。** 出口が
+/// ``OutputFrame/bytes()`` で出すのと同じ形を、``Image/write(_:)`` は受け取る —
+/// 外から届いた映像を毎フレーム絵にする道がそこである。出た絵をそのまま書き戻せば
+/// 元の絵に戻る、が往復の約束になる。
+///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 public struct DisplayImage: Equatable, Sendable {
     /// 幅 (画素)。
@@ -21,7 +28,22 @@ public struct DisplayImage: Equatable, Sendable {
     /// 画素のバイト列。
     public let bytes: [UInt8]
 
-    init(width: Int, height: Int, bytes: [UInt8]) {
+    /// 大きさとバイト列から作る。
+    ///
+    /// バイト列は `width * height * 4` の長さで、左上を原点に行優先。**行の間に
+    /// 詰め物を置かない** — 詰め物のある元から作るときは、詰め物を落としてから渡す。
+    ///
+    /// 長さが合わないものは受け取らない。**絵にならない値をそのまま持ち回ると、
+    /// 落ちる場所が渡した所から遠ざかる**ので、作る所で止める (同じ理由で
+    /// ``subscript(_:_:)`` も範囲の外で止まる)。
+    public init(width: Int, height: Int, bytes: [UInt8]) {
+        precondition(
+            width > 0 && height > 0,
+            "絵の大きさは 1 画素以上が要る: \(width)x\(height)")
+        precondition(
+            bytes.count == width * height * 4,
+            "バイト列の長さが大きさと合わない: \(bytes.count) バイト / \(width)x\(height) には "
+                + "\(width * height * 4) バイトが要る")
         self.width = width
         self.height = height
         self.bytes = bytes

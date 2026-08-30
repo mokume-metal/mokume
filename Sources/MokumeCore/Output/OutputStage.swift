@@ -20,6 +20,13 @@ import simd
 /// 3. **ディスプレイのエンコードを掛ける** (sRGB の伝達関数)
 /// 4. **チャンネルあたり 8 bit へ量子化する** ([ADR-0011] 決定 6 の量子化点)
 ///
+/// ## 戻す道も同じ場所に置く
+///
+/// 4 手の逆 — **出した形の絵を作業空間へ戻す**道も、この型が持つ。外から届いた映像を
+/// 毎フレーム絵にするのがそれである (``Image/write(_:)`` が呼ぶ)。離して置かないのは、
+/// 片方だけ直すと出した絵を書き戻したときに色が動くからで、伝達関数が変換の対を
+/// 離さないのと同じ理由による。
+///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 public enum OutputStage {
     /// 作業空間の画素を、表示できる形へ変換する。
@@ -51,6 +58,58 @@ public enum OutputStage {
             }
         }
         return DisplayImage(width: pixels.width, height: pixels.height, bytes: bytes)
+    }
+
+    // MARK: - 戻す
+
+    /// 表示できる形の絵を、作業空間の画素へ戻す。
+    ///
+    /// ``encode(_:)`` の逆で、3 手 — 量子化を戻す・伝達関数で線形へ・アルファを
+    /// 乗算する。明るさを写す手はここには無い (外から届いた絵に露出は掛かっていない)。
+    ///
+    /// **逆を出口と対で置く**のは、``TransferFunction`` が変換の対を離さないのと
+    /// 同じ理由である — 片方だけ直すと、出した絵を書き戻したときに色が動く。
+    ///
+    /// 書き先を渡す形にしてあるのは、**毎フレーム呼ばれる道だから**である
+    /// ([#487](https://github.com/mokume-metal/mokume/issues/487))。返り値にすると
+    /// 1920×1080 で 8 MB の確保がフレームごとに起きる。
+    ///
+    /// - Precondition: `pixels` の要素数が絵の画素数と一致していること。
+    static func decode(_ picture: DisplayImage, into pixels: inout [SIMD4<Float16>]) {
+        precondition(pixels.count == picture.width * picture.height)
+        picture.bytes.withUnsafeBufferPointer { source in
+            pixels.withUnsafeMutableBufferPointer { destination in
+                decodeLinear.withUnsafeBufferPointer { linear in
+                    for index in destination.indices {
+                        let base = index * 4
+                        let alpha = Float(source[base + 3]) / 255
+                        // **不透明なら乗算を飛ばす。** 映像はほとんどが不透明で、
+                        // 掛け算 3 回とアルファの読みがそのぶん丸ごと消える
+                        if alpha >= 1 {
+                            destination[index] = SIMD4(
+                                Float16(linear[Int(source[base])]),
+                                Float16(linear[Int(source[base + 1])]),
+                                Float16(linear[Int(source[base + 2])]), 1)
+                        } else {
+                            destination[index] = SIMD4(
+                                Float16(linear[Int(source[base])] * alpha),
+                                Float16(linear[Int(source[base + 1])] * alpha),
+                                Float16(linear[Int(source[base + 2])] * alpha),
+                                Float16(alpha))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 量子化された値から線形へ戻す表 (256 段)。
+    ///
+    /// **画素ごとに `pow()` を呼ばないための表である。** 1920×1080 なら色成分は
+    /// 622 万個あり、そこへ伝達関数を素直に掛けると変換だけで 1 フレームの予算を
+    /// 使い切る。段は 256 しか無いので、全部を先に引いておける。
+    private static let decodeLinear: [Float] = (0...255).map {
+        TransferFunction.decode(Float($0) / 255)
     }
 
     // MARK: - 4 手

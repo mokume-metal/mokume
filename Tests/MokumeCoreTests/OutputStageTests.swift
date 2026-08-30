@@ -32,6 +32,44 @@ struct OutputStageTests {
         #expect(abs((second - first) / 0.001 - 12.92) < 1e-3)
     }
 
+    // MARK: - 戻す (GPU を要さない)
+
+    @Test("量子化した値は、戻して掛け直すと元の値に返る")
+    func everyQuantisedLevelSurvivesTheRoundTrip() {
+        // **256 段すべてを見る。** 表を引く実装が伝達関数と 1 段でも食い違えば、
+        // その段で落ちる
+        var bytes = [UInt8](repeating: 255, count: 256 * 4)
+        for level in 0...255 {
+            bytes[level * 4] = UInt8(level)
+            bytes[level * 4 + 1] = UInt8(level)
+            bytes[level * 4 + 2] = UInt8(level)
+        }
+        var pixels = [SIMD4<Float16>](repeating: .zero, count: 256)
+        OutputStage.decode(DisplayImage(width: 256, height: 1, bytes: bytes), into: &pixels)
+
+        for level in 0...255 {
+            let texel = pixels[level]
+            let back = OutputStage.quantize(
+                OutputStage.encodeForDisplay(
+                    OutputStage.straighten(Float(texel.x), alpha: Float(texel.w))))
+            #expect(back == UInt8(level))
+        }
+    }
+
+    @Test("戻した画素はアルファを乗算した形で入る")
+    func decodingPremultipliesTheColour() {
+        var pixels = [SIMD4<Float16>](repeating: .zero, count: 2)
+        OutputStage.decode(
+            DisplayImage(width: 2, height: 1, bytes: [255, 255, 255, 128, 0, 0, 0, 0]),
+            into: &pixels)
+
+        let alpha = Float(128) / 255
+        #expect(abs(Float(pixels[0].x) - alpha) < 0.001)
+        #expect(abs(Float(pixels[0].w) - alpha) < 0.001)
+        // 完全に透明な画素は、色も 0 で入る
+        #expect(pixels[1] == SIMD4<Float16>(0, 0, 0, 0))
+    }
+
     @Test("標準レンジの外側は端へ寄せる")
     func outOfRangeIsClamped() {
         #expect(OutputStage.quantize(OutputStage.encodeForDisplay(4)) == 255)
