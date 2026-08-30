@@ -16,7 +16,8 @@
 
 **組み直さない。** `swift build` が作った成果物 (`.build/debug/Modules`) へ直接当てる
 ので、パッケージを 2 つ目に作って CI の時間を倍にしなくて済む。だから `make build` の
-後に置く必要がある (`make examples` が順序を持つ)。
+後に置く必要がある (`make examples` が順序を持つ)。SwiftPM を通さない代償として、
+macro の plugin だけは手で繋ぐ (`plugin_flags`)。
 
 ## 印
 
@@ -53,6 +54,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import dataclasses
+import os
 import pathlib
 import re
 import subprocess
@@ -187,10 +189,25 @@ def build_source(examples: list[Example]) -> tuple[str, list[int], list[Example]
     return "\n".join(lines) + "\n", starts, ordered
 
 
+def plugin_flags(modules: pathlib.Path) -> list[str]:
+    """macro を使う例のために、組み上がった plugin を渡す。
+
+    **名前は決め打ちしない。** SwiftPM は macro の的を `<的の名前>-tool` という実行
+    ファイルにするので、置き場を見て拾う — Package.swift の写しを持たない (原則 9)。
+    渡さないと、macro を使う例は `external macro implementation … could not be found`
+    で落ちる。SwiftPM を通さずに型検査する代償で、ここだけは手で繋ぐ必要がある。
+    """
+    flags: list[str] = []
+    for path in sorted(modules.parent.glob("*-tool")):
+        if path.is_file() and os.access(path, os.X_OK):
+            flags += ["-load-plugin-executable", f"{path}#{path.name.removesuffix('-tool')}"]
+    return flags
+
+
 def typecheck(source: pathlib.Path, modules: pathlib.Path) -> list[tuple[int, str]]:
     """`(行, 言い分)` の並び。**error だけを拾う。**"""
     result = subprocess.run(
-        ["swiftc", "-typecheck", *SWIFT_FLAGS, "-I", str(modules), str(source)],
+        ["swiftc", "-typecheck", *SWIFT_FLAGS, *plugin_flags(modules), "-I", str(modules), str(source)],
         capture_output=True,
         text=True,
     )

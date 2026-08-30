@@ -45,6 +45,8 @@ examples = _load("check_examples", SCRIPT)
 STUB = """\
 #!/usr/bin/env python3
 import pathlib, sys
+# 渡された引数を残す。**旗が本当に型検査まで届いたか**は、ここを読まないと分からない
+pathlib.Path(__file__).with_name("args.txt").write_text("\\n".join(sys.argv))
 source = pathlib.Path(sys.argv[-1])
 bad = [
     number
@@ -208,6 +210,40 @@ class 集める(unittest.TestCase):
         self.assertEqual(found[0].body, ["import mokume", "", "final class A: Sketch {}"])
 
 
+class Macroの口(unittest.TestCase):
+    """macro を使う例は plugin を渡さないと落ちる。**名前は決め打ちしない。**"""
+
+    def test_組み上がった_plugin_を拾って渡す(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory) / "debug"
+            modules = build / "Modules"
+            modules.mkdir(parents=True)
+            tool = build / "MokumeMacros-tool"
+            tool.write_text("")
+            tool.chmod(0o755)
+            (build / "notes.txt").write_text("")
+            self.assertEqual(
+                examples.plugin_flags(modules),
+                ["-load-plugin-executable", f"{tool}#MokumeMacros"],
+            )
+
+    def test_同じ綴りのディレクトリは拾わない(self):
+        """実際の置き場には `Modules-tool` というディレクトリが並ぶ (実測)。
+        渡すと swiftc がそこで落ちる。"""
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory) / "debug"
+            modules = build / "Modules"
+            modules.mkdir(parents=True)
+            (build / "Modules-tool").mkdir()
+            self.assertEqual(examples.plugin_flags(modules), [])
+
+    def test_plugin_が無ければ何も渡さない(self):
+        with tempfile.TemporaryDirectory() as directory:
+            modules = Path(directory) / "debug" / "Modules"
+            modules.mkdir(parents=True)
+            self.assertEqual(examples.plugin_flags(modules), [])
+
+
 class 通しで(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -322,6 +358,17 @@ class 通しで(unittest.TestCase):
         result = self.打つ()
         self.assertEqual(result.returncode, 1)
         self.assertIn("swift build", result.stdout)
+
+    def test_macro_の_plugin_が型検査まで届く(self):
+        """`plugin_flags` が正しくても、渡し忘れれば macro を使う例は落ちる。"""
+        tool = self.root / ".build/debug/MokumeMacros-tool"
+        tool.write_text("")
+        tool.chmod(0o755)
+        self.置く("Sources/A.swift", "/// ```swift\n/// circle(1, 2, 3)\n/// ```\n")
+        self.打つ()
+        passed = (self.root / "bin/args.txt").read_text()
+        self.assertIn("-load-plugin-executable", passed)
+        self.assertIn(f"{tool}#MokumeMacros", passed)
 
     def test_追跡されていないファイルは見ない(self):
         """他人の手元で結果が変わらないように、git が挙げたものだけを見る。"""
