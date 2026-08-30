@@ -39,6 +39,18 @@ public enum WorkDirectory {
         root.appendingPathComponent(name, isDirectory: true)
     }
 
+    /// `<base>/.mokume/state`。ライブラリが自分の続きを置く場所。
+    ///
+    /// **区画ではない。** 区画は「利用者が作ったときだけ有効」という switch を持つが
+    /// ([ADR-0018] 決定 2)、ここに置くものは既定で効く。両者を同じ入れ物に置くと、
+    /// 既定で効くものが区画を作った時点で switch が死ぬ。
+    ///
+    /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+    static var state: URL { root.appendingPathComponent("state", isDirectory: true) }
+
+    /// 合わせた値の保存先。
+    static var savedParams: URL { state.appendingPathComponent("params.json") }
+
     /// 与えられた環境から基準を決める (検査から呼べる形)。
     static func resolve(environment: [String: String]) -> URL {
         given(environment: environment)

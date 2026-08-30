@@ -60,6 +60,8 @@ public final class SketchRuntime {
     private let inbox: InputInbox?
     /// つまみの面 (区画が在るときだけ働く)。
     private let params: ParamSurface?
+    /// 合わせた値の保存。**区画とは無関係に既定で効く** (ADR-0030 決定 6)。
+    private let paramStore: ParamStore?
     /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
@@ -136,7 +138,11 @@ public final class SketchRuntime {
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
-        self.params = ParamSurface.makeIfEnabled(for: sketch)
+        // 索引は 1 度だけ引き、保存と面が同じものを持ち回る
+        let registry = ParamRegistry(of: sketch)
+        let store = ParamStore.makeIfNeeded(for: registry)
+        self.paramStore = store
+        self.params = ParamSurface.makeIfEnabled(for: registry, store: store)
     }
 
     /// 観測の窓口を差し替えられる入口 (検査用)。
@@ -147,7 +153,8 @@ public final class SketchRuntime {
         now: @escaping () -> Double,
         observer: FrameObserver?,
         inbox: InputInbox? = nil,
-        params: ParamSurface? = nil
+        params: ParamSurface? = nil,
+        paramStore: ParamStore? = nil
     ) throws(RenderFailure) {
         let settings = sketch.settings
         self.sketch = sketch
@@ -161,6 +168,7 @@ public final class SketchRuntime {
         self.observer = observer
         self.inbox = inbox
         self.params = params
+        self.paramStore = paramStore
     }
 
     // MARK: - 進める
@@ -171,10 +179,13 @@ public final class SketchRuntime {
         guard !hasSetUp else { return }
         hasSetUp = true
         registerPlugins()
+        // **戻すのは setup より先。** setup も最初の draw も、復元された値を見る
+        // (ADR-0030 決定 6)
+        let restoration = paramStore?.restore() ?? .init()
         withActiveRuntime { sketch.setup() }
         // 最初の応答は setup のあとに書く。setup で決めた値が、外から読める最初の
         // 姿になる
-        params?.start()
+        params?.start(after: restoration)
     }
 
     /// 宣言された束を差込口へ登録する。**組み立てのときに 1 度だけ。**
@@ -211,6 +222,9 @@ public final class SketchRuntime {
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
         // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
         recorder?.close()
+        // **まとめている途中の保存を落とさない。** 引いたつまみの最後の 1 手だけが
+        // 消えると、直したはずの値が次の起動で戻っていない形で出る
+        paramStore?.flushIfPending()
         outlets.removeAll()
         inlets.removeAll()
         recorder = nil
@@ -279,6 +293,7 @@ public final class SketchRuntime {
     private func receiveInput() {
         inbox?.drain(into: input)
         params?.drain()
+        paramStore?.tick()
         input.beginFrame()
     }
 

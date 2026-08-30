@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "params": [
+    { "name": "radius", "type": "float", "value": 80, "min": 0, "max": 200 },
+    { "name": "shape", "type": "string", "value": "ring", "choices": ["ring", "arc"] }
+  ],
+  "rejected": [],
+  "clamped": [],
+  "discarded": [
+    { "name": "count", "reason": "unknownName" },
+    { "name": "shape", "reason": "notInChoices" }
+  ]
+}

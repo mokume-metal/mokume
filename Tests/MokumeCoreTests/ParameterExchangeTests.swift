@@ -225,7 +225,7 @@ struct ParameterExchangeTests {
     func staysOffWithoutTheFacet() throws {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-params-absent-\(UUID().uuidString)", isDirectory: true)
-        #expect(ParamSurface.makeIfEnabled(for: Knobbed(), at: missing) == nil)
+        #expect(ParamSurface.makeIfEnabled(for: ParamRegistry(of: Knobbed()), at: missing) == nil)
     }
 
     @Test("応答の形が、代表例と食い違わない")
