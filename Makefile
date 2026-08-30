@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list reference cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders schemas api reference no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders schemas api reference example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -228,6 +228,26 @@ cli-dist: ## 道具の配布物を束ねる (OUT=path で置き場を指定)
 	COPYFILE_DISABLE=1 tar -czf "$(or $(OUT),$(CLI_ASSET))" \
 		-C "$(CLI_STAGE)" mokume mokume_MokumeCLI.bundle
 	@echo "束ねた: $(or $(OUT),$(CLI_ASSET))"
+
+# 説明文の中の例の絵。**人が貼るのではなく、コードから機械が撮って書き戻す**
+# (ADR-0027 決定 2)。`///` の中の ```swift の塊に囲み (<!-- shot: … -->) を付けると
+# 対象になり、囲みの中だけが機械の領域になる。
+#
+# **`reference-shots` とは別物** — あちらは参照スケッチ (Sketches/) が描く絵、
+# こちらは説明文の中の例の絵である。
+#
+# **撮るのは手元だけ。** GPU と外部サービスの鍵が要るので CI では走らない
+# (描画の検査が CI で 1 本も走らないのと同じ理由・ADR-0019 決定 7)。CI が見るのは
+# 下の -check で、こちらはソースを読むだけなので GPU も鍵も要らない。
+example-shots: ## 説明文の中の例を撮って書き戻す (OUT= 置き場)
+	python3 scripts/example-shots.py --capture \
+		--token-command "$${MOKUME_GYAZO_TOKEN_CMD:?Gyazo のトークンを標準出力に出すコマンドを渡す}" \
+		$(if $(OUT),--render "$(OUT)",)
+
+# 囲みの形・一文の説明・**例を書き換えたのに撮り直していないもの**を見る。
+# 指紋が見ていない範囲 (実装の変更) は合否に混ぜず要約で言う
+example-shots-check:
+	python3 scripts/example-shots.py
 
 # 参照スケッチの絵。**リポジトリには置かない** — 撮った絵は Gyazo へ上げて URL で
 # 参照する。同じフレーム番号を描くので、撮り直せば同じ絵になる
