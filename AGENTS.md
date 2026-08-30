@@ -99,6 +99,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 | `autoMerge: false` + `BLOCKED` | 承認待ち、または auto-merge が外れた ([#114](https://github.com/mokume-metal/mokume/issues/114) に出来事ごとの実測) | 承認を待つ / `gh pr merge <番号> --auto --squash` を打ち直す |
 | 全 check が緑なのに進まない | 同じコミットに残る古い失敗 check run が判定を固定している ([#259](https://github.com/mokume-metal/mokume/issues/259)) | `gh run rerun <run-id> --failed` |
 | `autoMerge: false` + `CLEAN` + 全 check 緑 | 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用) | `make catch-up` |
+| close して作り直した PR が、全 check 緑なのに赤い | close した側の run が付けた赤が**同じコミットに残っている** ([#513](https://github.com/mokume-metal/mokume/issues/513)) | **新しい PR の側**の run を rerun する。close した側を rerun すると同じ赤を再生産する — 上の行とは打つ先が逆 |
 
 ```bash
 gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
@@ -199,6 +200,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 この 1 行の形が要求すること:
 
 - **代入から始めて後続コマンドまで `&&` で繋ぐ。** `export GH_TOKEN="$(...)"` と書くと終了コードが `export` のもの (0) に化け、発行に失敗しても空の token でメンテナの認証へフォールバックする ([#122](https://github.com/mokume-metal/mokume/issues/122))。危険な形は `scripts/pr-identity-guard.sh` が差し戻す
+- **フックが黙っていることを「安全である」と読まない。** `pr-identity-guard.sh` の配線は `.claude/settings.json` にあり、読まれるのは**そのセッションが主として開いたディレクトリ**のものだけである。別のリポジトリを主とするセッションがこのリポジトリの worktree で作業しても効かない (途中で `cd` しても後から有効にはならない)。塞ぐ手が無いことは [ADR-0007](docs/decisions/0007-approvability-invariant.md) 決定 3 が示しているので、その場合はこの節を自分で守る ([#513](https://github.com/mokume-metal/mokume/issues/513))
 - push は `-u` を付ける。追跡先を持たないブランチは merge されても `[gone]` にならず手元に残り続ける ([#376](https://github.com/mokume-metal/mokume/issues/376))。`origin/main` を追跡している状態も同じなので、`git branch --unset-upstream` してから `-u` で押し直す
 
 手で揃える設定は `MOKUME_APP_PRIVATE_KEY_CMD` (App の秘密鍵 PEM を標準出力に出すコマンド) の 1 つだけ。秘密鍵の中身も在処もリポジトリに書かない。token は有効期限 1 時間で、キャッシュしない。App ID とインストール ID は `scripts/gh-app-token.sh` が org から自力で引く。
