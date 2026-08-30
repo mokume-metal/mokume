@@ -260,7 +260,12 @@ struct KnobOverlayRenderingTests {
 
         var knobPixels = 0
         if showingKnobs {
-            let panel = try #require(KnobOverlay.makeIfNeeded(for: sketch))
+            // 数字も一緒に出す。**窓に出す表示は、どれも描画の出力に入らない**
+            // (#517 の全体に効く条件 1) — 数字が焼き付くと、撮り直すたびに違う絵になる
+            let panel = try #require(
+                KnobOverlay.makeIfNeeded(for: sketch) {
+                    FrameNumbers(frameCount: 7, time: 0.25, frameRate: 59.9, frameTimeMs: 16.7)
+                })
             panel.attach(to: surface)
             window.layoutIfNeeded()
             knobPixels = Self.drawnPixels(of: panel)

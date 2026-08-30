@@ -31,21 +31,16 @@ public struct RuntimeLoad: Encodable, Equatable, Sendable {
 
     /// いまの重さを採る。
     ///
-    /// - Parameter frameDurations: 直近のフレームにかかった実時間 (秒)。空なら
-    ///   フレームレートとフレーム時間は `nil` になる (起動直後・止めている間)。
-    static func sample(frameDurations: [Double]) -> RuntimeLoad {
-        var frameRate: Double?
-        var frameTime: FrameTime?
-        if !frameDurations.isEmpty {
-            let total = frameDurations.reduce(0, +)
-            let mean = total / Double(frameDurations.count)
-            if mean > 0 { frameRate = 1 / mean }
-            frameTime = FrameTime(
-                mean: mean * 1000, max: (frameDurations.max() ?? mean) * 1000)
-        }
+    /// 速さとフレーム時間は**窓と同じ集計器**から採る ([ADR-0030] 決定 7) — 同じ意味の
+    /// 値を 2 か所で計算した時点で、いつか食い違う。ここが足すのはメモリと熱だけで、
+    /// どちらも syscall を要するので要求されたときにしか採らない。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    static func sample(tempo: FrameTempo, now: Double) -> RuntimeLoad {
+        let frameTime = tempo.frameTimeMs(now: now)
         return RuntimeLoad(
-            frameRate: frameRate,
-            frameTimeMs: frameTime,
+            frameRate: tempo.frameRate(now: now),
+            frameTimeMs: frameTime.map { FrameTime(mean: $0.mean, max: $0.max) },
             memoryMB: physicalFootprintMB(),
             thermalState: thermalStateName(ProcessInfo.processInfo.thermalState))
     }

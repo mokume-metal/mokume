@@ -69,22 +69,19 @@ public final class SketchApplication: NSObject {
     /// これまでに 1 度でも画面へ出したか。最初の 1 枚の扱いに使う。
     private var hasPresented = false
 
-    /// 直近に測ったフレームレート。
+    /// 名乗ってよい速さ。**測れていなければ `nil`。**
     ///
     /// 数えるのは**進めたフレーム**で、画面へ出した回数ではない。窓が見えていない間も
     /// スケッチは進み続けるので、ここで出した回数を数えると「最小化したら 0 になった」
     /// と読めてしまう — 測りたいのは絵が進んでいるかである。
-    public var measuredFrameRate: Double { frameRateWindow.rate }
-    private var frameRateWindow = FrameRateWindow()
-
-    /// 名乗ってよい速さ。**測れていなければ `nil`。**
     ///
-    /// [measuredFrameRate] は最後に測った値が残り続けるので、止まったスケッチは古い数字を
-    /// 名乗ってしまう。起動直後もまだ測れていない。**欠測は欠測として渡す** — 0 に化け
-    /// させると「とても重い」と誤読される ([ADR-0029] 決定 3)。
+    /// **窓はここでも読み手である** ([ADR-0030] 決定 7)。自分では数えず、観測の応答が
+    /// 返すのと同じ集計器を読む。止まったスケッチや起動直後は測れていないので `nil` を
+    /// 返す — **欠測を 0 に化けさせると「とても重い」と誤読される** ([ADR-0029] 決定 3)。
     ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
-    public var currentFrameRate: Double? { frameRateWindow.current(now: CACurrentMediaTime()) }
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    public var currentFrameRate: Double? { runtime.frameNumbers.frameRate }
 
     /// 速さを名乗る仕掛け。名乗りが与えられたときだけ持つ。
     private var frameRateNotice: Timer?
@@ -193,7 +190,10 @@ public final class SketchApplication: NSObject {
         window.contentView = surface
         // **つまみは絵の外に立つ** (ADR-0030 決定 1)。同じ窓へ重ねるだけで、描画の
         // 成果物には 1 画素も触らない。宣言が 1 つも無ければ何も足さない
-        KnobOverlay.makeIfNeeded(for: runtime.sketch)?.attach(to: surface)
+        // 数字は**読む口を渡すだけ**。窓が自分で数えると源が 2 つに割れる
+        // (ADR-0030 決定 7)
+        KnobOverlay.makeIfNeeded(for: runtime.sketch) { [runtime] in runtime.frameNumbers }?
+            .attach(to: surface)
         window.makeKeyAndOrderFront(nil)
         // **面を第一応答者にしないとキーが来ない。** 窓を出したあとに据える —
         // contentView を差し替えると応答者は窓へ戻る
@@ -210,9 +210,9 @@ public final class SketchApplication: NSObject {
             name: NSWindow.didChangeScreenNotification, object: window)
 
         attachDisplayLink(to: window.screen ?? NSScreen.main)
-        // 窓を開く時刻は起点にしない。最初のフレームが来たときに窓が開く
-        // ([FrameRateWindow]) — 進み始める前に測ったことにすると、1 枚目で
-        // 「1 枚 ÷ 待っていた時間」が閉じて 0.0 という嘘の数字になる
+        // 窓を開く時刻は起点にしない。速さを数え始めるのは最初のフレームが
+        // 来たときである ([FrameTempo]) — 進み始める前に測ったことにすると、
+        // 1 枚目で「1 枚 ÷ 待っていた時間」が出て 0.0 という嘘の数字になる
     }
 
     /// フレームの駆動源を画面のリフレッシュに紐づける。
@@ -291,7 +291,6 @@ public final class SketchApplication: NSObject {
             return
         }
         noteFrameRecovery()
-        recordFrameRate()
     }
 
     /// 続けて描けなかった数。始まりと終わりだけ言うために持つ。
@@ -316,9 +315,6 @@ public final class SketchApplication: NSObject {
         consecutiveFailures = 0
     }
 
-    private func recordFrameRate() {
-        frameRateWindow.advance(now: CACurrentMediaTime())
-    }
 }
 
 // MARK: - AppKit との接点

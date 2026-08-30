@@ -91,12 +91,24 @@ public final class SketchRuntime {
     private var isAdvancingFrame = false
     /// 最後にフレームを描き終えた時刻。**誰かが進めているか**の判断に使う。
     private var lastFrameAt: Double = 0
-    /// 直近のフレームの間隔 (秒)。観測が無ければ測らない。
-    private var frameIntervals: [Double] = []
-    private var previousFrameStart: Double?
+    /// フレームの速さを数える、**ただ 1 つの集計器** ([ADR-0030] 決定 7)。
+    ///
+    /// 窓に出る数字も観測の応答が返す数字もここから採る。**観測の有無に関わらず
+    /// 数える** — 窓は観測が無くても数字を出すので、観測が有効なときだけ数えると
+    /// 窓の側が自分で測り直す羽目になり、源が 2 つに割れる。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    private var tempo = FrameTempo()
 
-    /// 間隔をどれだけ遡って平均するか。
-    private static let frameIntervalWindow = 60
+    /// 窓に出す数字。**観測の応答が返すものと同じ集計器から採る** (ADR-0030 決定 7)。
+    var frameNumbers: FrameNumbers {
+        let moment = now()
+        return FrameNumbers(
+            frameCount: timing.frameCount,
+            time: Double(timing.time),
+            frameRate: tempo.frameRate(now: moment),
+            frameTimeMs: tempo.frameTimeMs(now: moment)?.mean)
+    }
 
     /// これまでに描いたフレームの数。
     public var frameCount: Int { timing.frameCount }
@@ -405,16 +417,13 @@ public final class SketchRuntime {
         return image.scaled(by: min(1, Double(maxWidth) / Double(max(1, image.width))))
     }
 
-    /// フレームの頭で片付けること。観測が無ければどれも空回りしない。
+    /// フレームの頭で片付けること。
     private func beginFrame() {
+        // 速さは**いつでも**数える。窓は観測が無くても数字を出すためで、ここを
+        // 観測に紐づけると窓が自分で測り直すことになる (源が 2 つに割れる)
+        tempo.record(now: now())
         guard observer != nil else { return }
         exposedValues.removeAll(keepingCapacity: true)
-        let started = now()
-        if let previous = previousFrameStart {
-            frameIntervals.append(started - previous)
-            if frameIntervals.count > Self.frameIntervalWindow { frameIntervals.removeFirst() }
-        }
-        previousFrameStart = started
     }
 
     /// 進めるのを止める。
@@ -652,7 +661,7 @@ public final class SketchRuntime {
                 size: ObservationReport.Size(width: target.width, height: target.height),
                 warnings: warnings,
                 stats: last?.stats,
-                load: RuntimeLoad.sample(frameDurations: frameIntervals),
+                load: RuntimeLoad.sample(tempo: tempo, now: now()),
                 values: exposedValues.isEmpty ? nil : exposedValues,
                 stamp: SourceStamp.current,
                 frames: frames))

@@ -69,7 +69,10 @@ var elapsed = 0.0
 Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
     MainActor.assumeIsolated {
         elapsed += 1
-        let rate = String(format: "%.1f", application.measuredFrameRate)
+        // **測れていない秒は数字を出さない** (ADR-0030 決定 7)。0.0 と書くと、
+        // 集計する側が「測ったら 0 だった」と読んでしまう — 判定に混ぜてよい値と
+        // 混ぜてはいけない値が、同じ形で並ぶことになる
+        let rate = application.currentFrameRate.map { String(format: "%.1f", $0) } ?? "—" 
         let missed = application.missedFrames
         let onScreen = application.isWindowOnScreen
         let active = NSApp.isActive
