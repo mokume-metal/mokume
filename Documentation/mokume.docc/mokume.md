@@ -1,4 +1,4 @@
-# ``MokumeCore``
+# ``mokume``
 
 <!--
 SPDX-FileCopyrightText: 2026 mokume-metal
@@ -14,7 +14,7 @@ SPDX-License-Identifier: MIT
 
 ## Overview
 
-利用者が書くのは `import mokume` の 1 行で、内部の層の割り方は書き味に漏れない。この面の題になっている `MokumeCore` は、その中で描画の口を持つモジュールの名前である。
+利用者が書くのは `import mokume` の 1 行で、内部の層の割り方は書き味にも面にも漏れない。この面に並んでいるのは、その 1 行で書けるようになるものである。
 
 ```swift
 import mokume

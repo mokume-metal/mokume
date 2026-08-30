@@ -191,6 +191,12 @@ api-list: ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 # ターゲット (reference-sketches・frame-rate-probe) まで公開される。一覧の側
 # (api-surface.py の --module) と同じ名指しをここでも要求する (ADR-0027 決定 1)。
 #
+# **面が名乗る名前も名指しする** (#561)。面の URL とページのモジュール表示はシンボル
+# グラフの module.name が決めるので、何もしなければそこに入るのはターゲット名 —
+# ADR-0016 の層の割り方の産物であって、面の名前として選んだものではない。名前を
+# 差し替える理由と、アンブレラのグラフをそのまま渡せない実測は scripts/reference-graphs.py
+# の冒頭にある。
+#
 # **手で書く層は Documentation/site/ を丸ごと被せる** (ADR-0027 決定 3)。どちら側でも
 # 選り分けをしないので、公開へ写す資産の列挙が現れない — 列挙は漏れ、漏れたときの症状は
 # 「そのファイルだけが公開されない」でビルドは緑のままである。
@@ -199,17 +205,18 @@ api-list: ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 # 多い壊れ方は「変換は成功し、警告も出ず、出力にだけ存在しない」である。
 REFERENCE_CATALOG := Documentation/mokume.docc
 REFERENCE_MODULES := MokumeCore
+# 面が名乗る名前。**ターゲット名ではなく、利用者が import する名前で名乗る**
+REFERENCE_SURFACE := mokume
 REFERENCE_GRAPHS := .build/reference-graphs
 REFERENCE_OUT := .build/reference
 
 reference: ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時の基準パス)
 	$(API_BUILD)
 	rm -rf "$(REFERENCE_GRAPHS)" "$(or $(OUT),$(REFERENCE_OUT))"
-	mkdir -p "$(REFERENCE_GRAPHS)" "$$(dirname "$(or $(OUT),$(REFERENCE_OUT))")"
-	for module in $(REFERENCE_MODULES); do \
-		cp "$(API_GRAPHS)/$$module.symbols.json" "$(REFERENCE_GRAPHS)/"; \
-		cp "$(API_GRAPHS)/$$module@"*.symbols.json "$(REFERENCE_GRAPHS)/" 2>/dev/null || true; \
-	done
+	mkdir -p "$$(dirname "$(or $(OUT),$(REFERENCE_OUT))")"
+	python3 scripts/reference-graphs.py \
+		--graphs "$(API_GRAPHS)" --out "$(REFERENCE_GRAPHS)" \
+		--surface "$(REFERENCE_SURFACE)" --module $(REFERENCE_MODULES)
 	xcrun docc convert "$(REFERENCE_CATALOG)" \
 		--additional-symbol-graph-dir "$(REFERENCE_GRAPHS)" \
 		--fallback-bundle-identifier org.mokume.reference \
