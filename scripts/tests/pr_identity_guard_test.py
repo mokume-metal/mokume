@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -37,8 +38,10 @@ def clean_env(**overrides):
 class GuardTest(unittest.TestCase):
     """PreToolUse フック: どのコマンドを差し戻し、どれを素通しするか。"""
 
-    def run_guard(self, command, **env):
-        payload = json.dumps({"tool_input": {"command": command}})
+    def run_guard(self, command, cwd=None, **env):
+        payload = json.dumps(
+            {"tool_input": {"command": command}, **({"cwd": cwd} if cwd else {})}
+        )
         proc = subprocess.run(
             ["/bin/bash", str(GUARD)],
             input=payload,
@@ -49,17 +52,60 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
 
-    def assert_denied(self, command, **env):
-        out = self.run_guard(command, **env)
+    def assert_denied(self, command, cwd=None, **env):
+        out = self.run_guard(command, cwd=cwd, **env)
         self.assertTrue(out, f"差し戻されるはずが素通しした: {command}")
         decision = json.loads(out)["hookSpecificOutput"]
         self.assertEqual(decision["permissionDecision"], "deny")
         return decision["permissionDecisionReason"]
 
-    def assert_passed(self, command, **env):
+    def assert_passed(self, command, cwd=None, **env):
         self.assertEqual(
-            self.run_guard(command, **env), "", f"素通しのはずが差し戻された: {command}"
+            self.run_guard(command, cwd=cwd, **env),
+            "",
+            f"素通しのはずが差し戻された: {command}",
         )
+
+    def other_repo_dir(self):
+        """別のリポジトリの作業ディレクトリを 1 つ用意する。"""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "theirs"
+        root.mkdir()
+        run = lambda *a: subprocess.run(["git", *a], cwd=root, check=True,
+                                        capture_output=True)
+        run("init", "-q")
+        # 使い捨てのリポジトリでは署名を切る (#344)
+        run("config", "commit.gpgsign", "false")
+        run("remote", "add", "origin", "git@github.com:shinyaoguri/setup.git")
+        return str(root)
+
+    # --- 宛先がこのリポジトリでないもの (#611) --------------------------
+
+    def test_other_repository_by_working_directory_is_passed(self):
+        """別リポジトリのディレクトリから打った PR 作成は、この規約の外。
+
+        -R が無いだけで差し戻していたのが #611。あちらに ADR-0007 の不変条件は
+        無いので、メンテナ名義で作って何も問題がない。
+        """
+        self.assert_passed("gh pr create --fill", cwd=self.other_repo_dir())
+
+    def test_this_repository_named_from_another_directory_is_denied(self):
+        """別リポのディレクトリからでも、-R でこのリポジトリを名指ししたら止める。"""
+        self.assert_denied(
+            "gh pr create -R mokume-metal/mokume --fill", cwd=self.other_repo_dir()
+        )
+
+    def test_undecidable_directory_is_denied_with_the_escape_hatch(self):
+        """宛先を決められないものは止めるが、逃げ道を示す。"""
+        with tempfile.TemporaryDirectory() as plain:
+            reason = self.assert_denied("gh pr create --fill", cwd=plain)
+        self.assertIn("-R owner/repo", reason, "逃げ道が案内されていない")
+
+    def test_reason_does_not_assert_what_may_be_false(self):
+        """「誰も承認できない PR になる」は、このリポジトリ宛てに限った話である。"""
+        reason = self.assert_denied("gh pr create --fill")
+        self.assertIn("このリポジトリ宛て", reason)
 
     # --- 差し戻すもの ---------------------------------------------------
 

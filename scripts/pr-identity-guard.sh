@@ -95,9 +95,10 @@ EOF
 
 identity_required_message() {
   cat <<'EOF'
-PR は GitHub App の identity で作成してください。素の gh (メンテナ名義) で作ると、
-**誰も承認できない PR** になります — GitHub は自分の PR を自分で承認できず、author は
-後から変えられないので close して作り直すしかありません (ADR-0007 / #88)。
+**このリポジトリ宛ての** PR は GitHub App の identity で作成してください。素の gh
+(メンテナ名義) で作ると、**誰も承認できない PR** になります — GitHub は自分の PR を
+自分で承認できず、author は後から変えられないので close して作り直すしかありません
+(ADR-0007 / #88)。
 
   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
 
@@ -127,6 +128,11 @@ command -v jq >/dev/null 2>&1 || exit 0
 command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
 [ -n "$command" ] || exit 0
 
+# -R が無いコマンドの宛先はカレントディレクトリのリポジトリ。payload の cwd は
+# シェルが実際に居るディレクトリを持つ (#611)
+cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""' 2>/dev/null)
+[ -n "$cwd" ] || cwd=$PWD
+
 is_gh_subcommand "$command" 'pr[[:space:]]+create' || exit 0
 
 # 使い方を尋ねているだけなら作成ではない
@@ -134,7 +140,7 @@ printf '%s' "$command" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)' &&
 
 # 他のリポジトリ宛ての PR はこのリポジトリの規約の外。判定は guard-lib.sh が持つ
 # (agent-comment-guard.sh と共有する。#188)
-targets_other_repo "$command" && exit 0
+targets_other_repo "$command" "$cwd" && exit 0
 
 # 同じ行で installation token を発行しているなら、それが常道の形 — ただし **発行の失敗が
 # 後段へ伝わる形** に限る (冒頭の解説と #122)。
@@ -177,4 +183,4 @@ fi
 # ここが先に通ると握り潰しを見逃す
 case "${GH_TOKEN:-}" in ghs_*) exit 0 ;; esac
 
-deny "$(identity_required_message)"
+deny "$(identity_required_message)$(other_repo_hint 'gh pr create')"

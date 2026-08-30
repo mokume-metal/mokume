@@ -46,8 +46,10 @@ def clean_env(**overrides):
 class GuardTest(unittest.TestCase):
     """PreToolUse フック: どのコマンドを差し戻し、どれを素通しするか。"""
 
-    def run_guard(self, command):
-        payload = json.dumps({"tool_input": {"command": command}})
+    def run_guard(self, command, cwd=None):
+        payload = json.dumps(
+            {"tool_input": {"command": command}, **({"cwd": cwd} if cwd else {})}
+        )
         proc = subprocess.run(
             ["/bin/bash", str(GUARD)],
             input=payload,
@@ -58,15 +60,50 @@ class GuardTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
 
-    def assert_denied(self, command):
-        out = self.run_guard(command)
+    def assert_denied(self, command, cwd=None):
+        out = self.run_guard(command, cwd=cwd)
         self.assertTrue(out, f"差し戻されるはずが素通しした: {command}")
         decision = json.loads(out)["hookSpecificOutput"]
         self.assertEqual(decision["permissionDecision"], "deny")
         self.assertIn("scripts/comment.sh", decision["permissionDecisionReason"])
+        return decision["permissionDecisionReason"]
 
-    def assert_passed(self, command):
-        self.assertEqual(self.run_guard(command), "", f"素通しのはずが差し戻された: {command}")
+    def assert_passed(self, command, cwd=None):
+        self.assertEqual(
+            self.run_guard(command, cwd=cwd), "", f"素通しのはずが差し戻された: {command}"
+        )
+
+    def other_repo_dir(self):
+        """別のリポジトリの作業ディレクトリを 1 つ用意する。"""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "theirs"
+        root.mkdir()
+        run = lambda *a: subprocess.run(["git", *a], cwd=root, check=True,
+                                        capture_output=True)
+        run("init", "-q")
+        # 使い捨てのリポジトリでは署名を切る (#344)
+        run("config", "commit.gpgsign", "false")
+        run("remote", "add", "origin", "git@github.com:shinyaoguri/setup.git")
+        return str(root)
+
+    # --- 宛先がこのリポジトリでないもの (#611) --------------------------
+
+    def test_other_repository_by_working_directory_is_passed(self):
+        """別リポジトリのディレクトリから打ったコメントは、この規約の外。
+
+        -R が無いだけで差し戻すと、投稿先が mokume 固定のラッパーへ誘導される —
+        逃げ道がどこにも無い状態だった。
+        """
+        self.assert_passed(
+            "gh issue com" + "ment 1 --body x", cwd=self.other_repo_dir()
+        )
+
+    def test_undecidable_directory_is_denied_with_the_escape_hatch(self):
+        """宛先を決められないものは止めるが、逃げ道を示す。"""
+        with tempfile.TemporaryDirectory() as plain:
+            reason = self.assert_denied("gh issue com" + "ment 1 --body x", cwd=plain)
+        self.assertIn("-R owner/repo", reason, "逃げ道が案内されていない")
 
     def test_bare_issue_comment_denied(self):
         self.assert_denied('gh issue comment 1 --body "x"')

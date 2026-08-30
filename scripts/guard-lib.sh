@@ -126,15 +126,97 @@ is_gh_subcommand() { # $1=コマンド $2=サブコマンド正規表現
 # **ヒアドキュメント本文は先に落とす。** そこに現れる --repo x/y は投稿する文章であって
 # 宛先ではない。落とさないと、本文にそう書くだけで guard を素通りできてしまう
 # (is_gh_subcommand が地の文を拾わないために本文を落としているのと同じ理由)。
-targets_other_repo() { # $1=コマンド
-  local this_repo target
+# ディレクトリの origin から owner/repo を取り出す (stdout)。解けなければ非 0。
+#
+# `-R` が無いとき gh が宛先にするのはカレントディレクトリのリポジトリなので、同じことを
+# ここで近似する。`gh repo set-default` による上書きは見ない — ずれたときは「解けなかった」
+# ではなく「別の宛先」と読む可能性があるが、その形は origin と既定が食い違うリポジトリに
+# 限られ、このリポジトリでは起きない。
+repo_of_dir() { # $1=ディレクトリ
+  local url slug
+  [ -n "${1:-}" ] || return 1
+  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 1
+  [ -n "$url" ] || return 1
+  # scheme://host/ と user@host: の 2 形を落とし、末尾の .git と / を落とす
+  slug=$(printf '%s' "$url" |
+    sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://[^/]+/##; s#^[^/@]+@[^:/]+:##; s#\.git$##; s#/$##')
+  # owner/repo ちょうど 2 段でなければ解けなかったものとして扱う (ローカルパスの
+  # remote などが該当する)。曖昧なものを宛先として採らない
+  case "$slug" in
+    */*/*) return 1 ;;
+    */*) printf '%s\n' "$slug" ;;
+    *) return 1 ;;
+  esac
+}
+
+# このコマンドの宛先は、このリポジトリの**外**か。
+#   $1 = コマンド文字列
+#   $2 = カレントディレクトリ (省略時は $PWD)。フックは payload の .cwd を渡す
+#
+# 基準は GITHUB_REPOSITORY (既定 mokume-metal/mokume)。
+#
+# 判定は gh の宛先解決と同じ順に見る:
+#
+#   1. -R / --repo が付いていれば、それが宛先 (複数書けて後勝ち)
+#   2. 付いていなければ、カレントディレクトリのリポジトリ
+#
+# **2 を見ずに「このリポジトリ宛て」と決めていたのが #611 だった。** 別のリポジトリの
+# ディレクトリから打った操作まで差し戻し、しかも差し戻しの文面は「誰も承認できない PR に
+# なる」と、そのリポジトリでは成り立たないことを断定していた。フックが受け取る payload の
+# cwd はシェルが実際に居るディレクトリなので (設定ファイルの読まれ方とは別)、これは
+# 判定できる。
+#
+# 次はすべて偽 = 「このリポジトリ宛て」として guard の判定が続く:
+#
+#   -R mokume-metal/mokume … 明示された自リポ
+#   --repo mokume          … owner を省いた指定。自リポか判定できないので、
+#                            曖昧なものは止める側に倒す
+#   cwd が git 管理外 / origin が無い / owner/repo に解けない
+#                          … 宛先を決められない。同じく止める側
+#
+# **同じコマンドの中の cd は追わない。** `cd <dir> && gh …` は横断作業で頻出だが、
+# コマンド文字列から cd 先を読むのは推測になる (変数展開・引用・複数の cd・サブシェル)。
+# 推測を permissive な向きに置くと、このリポジトリ宛ての操作を取りこぼしうる。曖昧なら
+# 止める側に倒すというこの guard の方針をここでも通し、逃げ道は -R の明示に一本化する
+# (差し戻しの文面がそう案内する)。
+#
+# **ヒアドキュメント本文は先に落とす。** そこに現れる --repo x/y は投稿する文章であって
+# 宛先ではない。落とさないと、本文にそう書くだけで guard を素通りできてしまう
+# (is_gh_subcommand が地の文を拾わないために本文を落としているのと同じ理由)。
+targets_other_repo() { # $1=コマンド  $2=cwd (省略可)
+  local this_repo target cwd
   this_repo="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+  cwd=${2:-}
+  [ -n "$cwd" ] || cwd=$PWD
   # -R は複数書ける。gh は後勝ちなので tail -1 で最後の指定を採る
   target=$(printf '%s' "$1" |
     strip_heredoc_bodies |
     grep -oE '(^|[[:space:]])(-R|--repo)([[:space:]]|=)[^[:space:];&|]+' |
     tail -1 | grep -oE '[^[:space:]=]+$') || target=""
-  [ -n "$target" ] || return 1
-  case "$target" in */*) ;; *) return 1 ;; esac
+  if [ -n "$target" ]; then
+    case "$target" in */*) ;; *) return 1 ;; esac
+    [ "$target" != "$this_repo" ]
+    return
+  fi
+  target=$(repo_of_dir "$cwd") || return 1
   [ "$target" != "$this_repo" ]
+}
+
+# 宛先がこのリポジトリでないときの逃げ道を案内する (stdout)。
+#
+# **文面は 2 つの guard で共有する。** 同じ逃げ道を書き分けると片方だけ古くなり、
+# しかも読む側は「こちらの guard には逃げ道が無い」と受け取る。差し戻しは読まれる
+# 前提の文章なので、判定と同じ重さで一本化しておく (#611)。
+other_repo_hint() { # $1=そのコマンドの例 (例: "gh pr view" のような gh の呼び出し)
+  cat <<EOF
+
+宛先がこのリポジトリでないなら、-R owner/repo を付けてください。
+
+  $1 -R owner/repo …
+
+-R が無いときの宛先は、**フックが受け取ったカレントディレクトリ**のリポジトリとして
+読みます。同じコマンドの中の cd は追いません — 判定を推測に寄せないためです。つまり
+cd 先のリポジトリ宛てのつもりでも、シェルがまだこのリポジトリに居るなら止まります。
+git 管理外・origin が無い・owner を省いた --repo も同じく止める側です。
+EOF
 }

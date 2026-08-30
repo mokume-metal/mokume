@@ -13,6 +13,7 @@
 
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -38,21 +39,40 @@ def judge(command, subcommand):
     return proc.returncode
 
 
-def targets_other_repo(command, **env):
+def targets_other_repo(command, cwd=None, **env):
     """宛先の判定を bash に任せ、終了コードを返す。
 
     基準リポは環境変数で決まるので、呼び出し元の env を引き継がずに立て直す
     (このテスト自体が CI = GITHUB_REPOSITORY が立っている環境からも走る)。
+
+    cwd は「-R が無いとき gh が宛先にするディレクトリ」で、既定は判定を
+    ディレクトリに依存させないための空ディレクトリではなく、明示を促すため
+    呼び出し側に決めさせる (省略すると guard-lib 側が $PWD を使う)。
     """
     child_env = {k: v for k, v in os.environ.items() if k != "GITHUB_REPOSITORY"}
     child_env.update(env)
     proc = subprocess.run(
-        ["bash", "-c", f'. "{LIB}"\ntargets_other_repo "$1"', "_", command],
+        ["bash", "-c", f'. "{LIB}"\ntargets_other_repo "$1" "$2"', "_", command, cwd or ""],
         capture_output=True,
         text=True,
         env=child_env,
+        cwd=cwd,
     )
     return proc.returncode
+
+
+def make_repo(root, origin):
+    """origin だけを持つ使い捨てリポジトリを作る。"""
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+    # 使い捨てのリポジトリでは署名を切る (#344)。ここは commit しないが、
+    # 検査の要求は「git を触るファイルは切る」なので揃えておく
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=root,
+                   check=True, capture_output=True)
+    if origin is not None:
+        subprocess.run(["git", "remote", "add", "origin", origin], cwd=root,
+                       check=True, capture_output=True)
+    return root
 
 
 class IsGhSubcommandTest(unittest.TestCase):
@@ -202,9 +222,57 @@ class TargetsOtherRepoTest(unittest.TestCase):
         self.assert_other(f"gh pr {CREATE} --repo=other/repo --fill")
         self.assert_other(f"gh -R other/repo issue {COMMENT} 5 --body x")
 
-    def test_no_repo_option_is_own(self):
-        """-R が無ければ宛先はカレントのリポジトリ。"""
-        self.assert_own(f"gh issue {COMMENT} 1 --body x")
+    def test_no_repo_option_falls_back_to_the_current_directory(self):
+        """-R が無いときの宛先は gh の既定 — カレントディレクトリのリポジトリ。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            here = make_repo(Path(tmp) / "mine", "git@github.com:mokume-metal/mokume.git")
+            self.assert_own(f"gh issue {COMMENT} 1 --body x", cwd=str(here))
+
+    def test_no_repo_option_in_another_repository_is_other(self):
+        """#611 の事象。別のリポジトリのディレクトリから打ったものまで止めない。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            there = make_repo(Path(tmp) / "theirs", "git@github.com:shinyaoguri/setup.git")
+            self.assert_other(f"gh pr {CREATE} --fill", cwd=str(there))
+
+    def test_https_and_ssh_remotes_resolve_the_same(self):
+        for origin in (
+            "https://github.com/mokume-metal/mokume.git",
+            "https://github.com/mokume-metal/mokume",
+            "ssh://git@github.com/mokume-metal/mokume.git",
+            "git@github.com:mokume-metal/mokume.git",
+        ):
+            with self.subTest(origin=origin), tempfile.TemporaryDirectory() as tmp:
+                here = make_repo(Path(tmp) / "mine", origin)
+                self.assert_own(f"gh issue {COMMENT} 1 --body x", cwd=str(here))
+
+    def test_undecidable_directory_is_own(self):
+        """判定できないものは止める側へ倒す — git 管理外と origin 無しの 2 つ。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = Path(tmp) / "plain"
+            plain.mkdir()
+            self.assert_own(f"gh pr {CREATE} --fill", cwd=str(plain))
+
+            no_origin = make_repo(Path(tmp) / "no-origin", None)
+            self.assert_own(f"gh pr {CREATE} --fill", cwd=str(no_origin))
+
+    def test_cd_inside_the_command_is_not_followed(self):
+        """cd 先は追わない — 意図した限界で、逃げ道は -R の明示に一本化する。
+
+        追うと判定が推測になり (変数展開・引用・複数の cd・サブシェル)、その推測を
+        permissive な向きに置くとこのリポジトリ宛ての操作を取りこぼす。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            here = make_repo(Path(tmp) / "mine", "git@github.com:mokume-metal/mokume.git")
+            there = make_repo(Path(tmp) / "theirs", "git@github.com:shinyaoguri/setup.git")
+            self.assert_own(f"cd {there} && gh pr {CREATE} --fill", cwd=str(here))
+
+    def test_repo_option_still_wins_over_the_directory(self):
+        """別リポのディレクトリからでも、-R でこのリポジトリを名指ししたなら止める。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            there = make_repo(Path(tmp) / "theirs", "git@github.com:shinyaoguri/setup.git")
+            self.assert_own(
+                f"gh pr {CREATE} -R mokume-metal/mokume --fill", cwd=str(there)
+            )
 
     def test_this_repo_explicitly_is_own(self):
         self.assert_own(f"gh issue {COMMENT} 1 -R mokume-metal/mokume --body x")
@@ -258,6 +326,18 @@ class WiringTest(unittest.TestCase):
         for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
             text = (REPO / "scripts" / name).read_text()
             self.assertNotIn("--repo)", text, f"{name} に自前の -R 抽出が残っている")
+
+    def test_both_guards_pass_the_working_directory(self):
+        """cwd を渡さないと、-R が無いコマンドの宛先を決められない (#611)。"""
+        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
+            text = (REPO / "scripts" / name).read_text()
+            self.assertIn(".cwd", text, f"{name} が payload の cwd を読んでいない")
+
+    def test_both_guards_show_the_shared_escape_hatch(self):
+        """逃げ道の文面を書き分けると片方だけ古くなる (#611)。"""
+        for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
+            text = (REPO / "scripts" / name).read_text()
+            self.assertIn("other_repo_hint", text, f"{name} が逃げ道を案内していない")
 
     def test_guards_do_not_keep_their_own_copy(self):
         """複製が残っていると、片方だけ直す事故が起きる。"""
