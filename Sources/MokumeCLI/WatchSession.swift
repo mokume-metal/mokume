@@ -21,8 +21,8 @@ final class WatchSession {
         var build: (URL) -> (status: Int32, output: String)
         /// 走らせるものの場所を決める。
         var resolveExecutable: (URL) -> URL?
-        /// 走らせる。世代の刻印を渡す。
-        var launch: (URL, URL, String?) -> Process?
+        /// 走らせる。世代の刻印と、速さの名乗り (一緒に出す構成の名前) を渡す。
+        var launch: (URL, URL, String?, String?) -> Process?
         /// いまの時刻 (秒)。
         var now: () -> Double
         /// 監視しているソースの世代。
@@ -35,15 +35,15 @@ final class WatchSession {
                     return (result?.status ?? 1, result?.output ?? "")
                 },
                 resolveExecutable: { directory in try? RunCommand.executablePath(in: directory) },
-                launch: { executable, directory, stamp in
+                launch: { executable, directory, stamp, rate in
                     let process = Process()
                     process.executableURL = executable
                     process.currentDirectoryURL = directory
-                    var environment = ProcessInfo.processInfo.environment
-                    // 観測はこれを応答へそのまま載せる。読み手は刻印の変化で
-                    // 「保存した内容が反映されたか」を待ち時間ではなく判定できる
-                    if let stamp { environment["MOKUME_SOURCE_STAMP"] = stamp }
-                    process.environment = environment
+                    // 観測は刻印を応答へそのまま載せる。読み手は刻印の変化で「保存した
+                    // 内容が反映されたか」を待ち時間ではなく判定できる。組み立ては
+                    // RunCommand が持つ — 子へ渡す環境の作り方を 2 通りにしない
+                    process.environment = RunCommand.childEnvironment(
+                        stamp: stamp, reportingRate: rate)
                     return (try? process.run()) == nil ? nil : process
                 },
                 now: { Date().timeIntervalSince1970 },
@@ -68,13 +68,19 @@ final class WatchSession {
     /// 変化に気付いた時刻。作り直しの直前に消す。
     private var noticedAt: Double?
 
+    /// 速さを名乗らせるか。**既定は名乗らせない** — 人が見ている前でだけ足す付け足しで、
+    /// 機械が読む経路 (窓口) の出力は 1 バイトも変えない ([ADR-0029] 決定 5 の 2 番目)。
+    let reportsRate: Bool
+
     init(
-        directory: URL, facetBase: URL? = nil, configuration: String = "debug",
-        hooks: Hooks = .live()
+        directory: URL, facetBase: URL? = nil,
+        configuration: String = RunCommand.defaultConfigurationName,
+        reportsRate: Bool = false, hooks: Hooks = .live()
     ) {
         self.directory = directory
         self.facetBase = facetBase ?? directory
         self.configuration = configuration
+        self.reportsRate = reportsRate
         self.hooks = hooks
     }
 
@@ -125,7 +131,8 @@ final class WatchSession {
         let relaunchStarted = hooks.now()
         stop()
         if let executable = hooks.resolveExecutable(directory) {
-            child = hooks.launch(executable, directory, stamp)
+            child = hooks.launch(
+                executable, directory, stamp, reportsRate ? configuration : nil)
         }
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
 
