@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// スケッチを作って走らせる。
 enum RunCommand {
+    /// 構成を渡さないときの名乗り。**道具立てへ渡す引数は変えない** — ここで名乗るのは
+    /// 「この数字がどの土俵のものか」だけで、`BuildReport.configuration` と同じ言葉を使う。
+    static let defaultConfigurationName = "debug"
+
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let directory = URL(
             fileURLWithPath: arguments.first ?? FileManager.default.currentDirectoryPath,
@@ -20,7 +25,8 @@ enum RunCommand {
 
         try build(in: directory)
         let executable = try executablePath(in: directory)
-        try launch(executable, in: directory)
+        // 走らせるのは人なので、速さを名乗らせる。窓口はここを通らない
+        try launch(executable, in: directory, reportingRate: defaultConfigurationName)
     }
 
     /// 作り直す。出力はそのまま流す — 失敗したときに読むのは人なので、道具が
@@ -80,10 +86,18 @@ enum RunCommand {
     }
 
     /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。
-    static func launch(_ executable: URL, in directory: URL) throws(CommandFailure) {
+    ///
+    /// - Parameter reportingRate: 速さを名乗らせるなら、**一緒に出す構成の名前**。
+    ///   渡さなければスケッチは何も出さない ([ADR-0029] 決定 3)。
+    ///
+    /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
+    static func launch(_ executable: URL, in directory: URL, reportingRate: String? = nil) throws(
+        CommandFailure
+    ) {
         let process = Process()
         process.executableURL = executable
         process.currentDirectoryURL = directory
+        process.environment = childEnvironment(reportingRate: reportingRate)
         do {
             try process.run()
         } catch {
@@ -93,6 +107,21 @@ enum RunCommand {
         if process.terminationStatus != 0 {
             exit(process.terminationStatus)
         }
+    }
+
+    /// 子へ渡す環境。
+    ///
+    /// **読むのではなく運ぶ。** 親の環境をそのまま複製し、道具が決めるものだけを載せる —
+    /// 世代の刻印 (観測が応答へ載せる) と、速さの名乗り (一緒に出す構成の名前)。渡され
+    /// なかったものは**置かない**ので、受け取る側は「無ければ黙る」だけで済む。
+    static func childEnvironment(
+        _ base: [String: String] = ProcessInfo.processInfo.environment,
+        stamp: String? = nil, reportingRate: String? = nil
+    ) -> [String: String] {
+        var environment = base
+        if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
+        if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
+        return environment
     }
 
     /// `swift` を呼ぶ。

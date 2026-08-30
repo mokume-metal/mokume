@@ -32,8 +32,8 @@ struct StartupReadsTests {
         "Sources/MokumeCLI/MCP/MCPServer.swift":
             "既定引数。読んだ環境はそのまま WorkDirectory.given(environment:) へ渡すので、"
             + "規則そのものは一覧を通っている",
-        "Sources/MokumeCLI/WatchSession.swift":
-            "子プロセスへ渡す環境の複製。読むのではなく運ぶ",
+        "Sources/MokumeCLI/RunCommand.swift":
+            "子プロセスへ渡す環境の複製。読むのではなく運ぶ (見張りもここを通す)",
         "Sources/MokumeCLI/BundleCommand.swift":
             "束ねるときに読む署名の名前。決まるのは配るものを組む瞬間で、走らせた"
             + "スケッチの起動とは関係が無い — 一覧に載せると走らせる側の話に混ざる",

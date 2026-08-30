@@ -65,6 +65,16 @@ mokume run             # 作って走らせる
 mokume watch           # 保存したら作り直して差し替える
 ```
 
+走らせている間は、**速さが構成と同じ行に出る**:
+
+```
+速さ: 58.7 fps (構成: debug)
+```
+
+**数字だけを見て重い / 軽いを決めない**ための並べ方である — 速さは構成で数倍変わる。
+フレームが進んでいないときは `測れない` と出る (0 とは書かない)。窓口 (`mokume mcp`)
+から立てたスケッチには出ない。
+
 スケッチは 1 ファイルから始められる:
 
 ```swift
@@ -81,7 +91,7 @@ final class MySketch: Sketch {
 MySketch.main()
 ```
 
-書ける口の説明は**参照の面**にある: <https://mokume.org/documentation/mokumecore/>
+書ける口の説明は**参照の面**にある: <https://mokume.org/documentation/mokume/>
 
 ## 動かないとき
 

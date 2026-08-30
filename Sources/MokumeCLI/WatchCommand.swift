@@ -23,7 +23,8 @@ enum WatchCommand {
 
         // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
         // パッケージの場所へ置くと観測とだけ場所が割れる (#331)
-        let session = WatchSession(directory: directory, facetBase: WorkDirectory.given ?? directory)
+        let session = WatchSession(
+            directory: directory, facetBase: WorkDirectory.given ?? directory, reportsRate: true)
         print("見張っている: \(directory.path)")
         // **常に名乗る。** 以前は基準がスケッチの場所と違うときだけ出していたが、それだと
         // 窓口の側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
