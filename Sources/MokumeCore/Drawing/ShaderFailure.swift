@@ -9,6 +9,8 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     case notCompilable(path: String, reason: String)
     /// 渡す値が列 1 つぶんの区画に収まらない。float 換算の数と上限を添える。
     case tooManyValues(path: String, count: Int, capacity: Int)
+    /// 渡す面が口の数に収まらない。枚数と上限を添える。
+    case tooManySurfaces(path: String, count: Int, capacity: Int)
 }
 
 extension ShaderFailure: CustomStringConvertible {
@@ -32,6 +34,13 @@ extension ShaderFailure: CustomStringConvertible {
                 (構造体の大きさは 4 個の倍数へ切り上がるので、数え上げが宣言より増えることがあります)。
                 値は列ごとに 1 区画へ載せるので上限は動かせません。数を減らすか、\
                 まとめられるものを 1 つの色・2 つ組へ束ねてください。
+                """
+        case .tooManySurfaces(let path, let count, let capacity):
+            return """
+                断片「\(path)」へ渡す面が多すぎます (\(count) 枚 / 上限 \(capacity) 枚)。
+                面は名前ごとに口を 1 つ使い、口の数は断片によらず決まっています。\
+                枚数を減らすか、複数の絵を 1 枚へまとめて (並べて焼いて、読む位置で\
+                切り替えて) 渡してください。
                 """
         }
     }

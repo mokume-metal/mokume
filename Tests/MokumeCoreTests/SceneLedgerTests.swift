@@ -237,6 +237,9 @@ enum Scene: String, CaseIterable, Sendable {
     /// 形自身の座標から模様を作った立体。**同じ形を 2 つ、違う角度で置いてある** —
     /// 模様が形について回っていることが 1 枚で読める。
     case surfaceShader
+    /// 名前で渡した 2 枚の面を掛け合わせた塗り。**平面と立体に同じ断片が効いている** —
+    /// 片方だけ面が届かなくなれば行が動く ([#407](https://github.com/mokume-metal/mokume/issues/407))。
+    case surfacesShader
     /// 粒が力を受けて飛ぶ。**時点を持つ最初のシーン。**
     case particles
     /// 計算が書いた数をそのまま絵にしたもの。**時点を持つ** — 場が時間で動くので、
@@ -282,6 +285,36 @@ enum Scene: String, CaseIterable, Sendable {
             return float4(tint * in.color.rgb, in.color.a);
         }
         """
+
+    /// 名前で渡した 2 枚の面を掛け合わせる断片 ([#407])。
+    ///
+    /// **2 枚は別の使われ方をする** — 木目は色として、汚しは濃さとして効く。片方だけが
+    /// 届かなくなったときに、絵の変わり方が違うので読み分けられる。
+    ///
+    /// [#407]: https://github.com/mokume-metal/mokume/issues/407
+    static let blended = """
+        float4 paint(Fragment in, Values values, Surfaces surfaces) {
+            float4 wood = mokume_sample(surfaces.grain, in.place * values.tiling);
+            float dirt = mokume_sample(surfaces.smudge, in.place).r;
+            return float4(
+                wood.rgb * mix(1.0, dirt, values.amount) * in.color.rgb, in.color.a);
+        }
+        """
+
+    /// 汚しの絵。**その場で焼く**ので毎回同じで、木目とは別の形にしてある
+    /// (掛け合わせた結果から、どちらが効いているかを読み分けるため)。
+    static func makeSmudge(on canvas: Canvas) -> Image? {
+        guard let image = try? canvas.createImage(32, 32) else { return nil }
+        for y in 0..<32 {
+            for x in 0..<32 {
+                // 斜めに流れる帯。木目 (縦縞) と重ならない向きにする
+                let band = 0.5 + 0.5 * sin(Float(x + y) * 0.35)
+                let level = min(1, 0.35 + band * 0.65)
+                image.set(x, y, .display(red: level, green: level, blue: level))
+            }
+        }
+        return image
+    }
 
     /// 縞を掛ける断片。**光を通したあとの色**が `in.color` に入っているので、
     /// 掛けるだけで陰影が残る。
@@ -1357,6 +1390,39 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.resetShader()
             canvas.fill(.display(red: 0.9, green: 0.45, blue: 0.35))
             canvas.rect(0, 62, 128, 4)
+
+        case .surfacesShader:
+            // **平面と立体に同じ断片を効かせる。** 名前で渡した 2 枚 (木目と汚し) が
+            // どちらの経路でも届いていることが、1 枚で読める
+            canvas.background(.display(red: 0.06, green: 0.07, blue: 0.09))
+            canvas.noStroke()
+            guard
+                let grain = Scene.makeGrain(on: canvas),
+                let smudge = Scene.makeSmudge(on: canvas),
+                let painted = try? canvas.makeShader(
+                    Scene.blended,
+                    values: ["amount": 0.85, "tiling": .pair(2, 2)],
+                    surfaces: ["grain": .image(grain), "smudge": .image(smudge)])
+            else { return }
+
+            canvas.shader(painted)
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            canvas.rect(8, 8, 112, 44)
+
+            // 同じ断片のまま立体へ。光を通した色に掛かるので、陰影は残る
+            canvas.lights()
+            canvas.directionalLight(.display(red: 1, green: 0.95, blue: 0.88), -0.4, 0.7, -0.6)
+            canvas.push()
+            canvas.translate(64, 88, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateY(0.7)
+            canvas.box(76, 30, 46)
+            canvas.pop()
+
+            // 組み込みの塗りへ戻すと、掛け合わせが消える
+            canvas.resetShader()
+            canvas.fill(.display(red: 0.9, green: 0.45, blue: 0.35))
+            canvas.rect(8, 56, 112, 4)
 
         case .customSolids:
             canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))

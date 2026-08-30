@@ -380,10 +380,12 @@ extension RenderDevice {
     ///
     /// **前置きは無条件。** 断片が既に宣言を持っているかは見ない (ShaderSource を参照)。
     func makeShapeLibrary(
-        named name: String, body: String, values: [String: ShaderValue] = [:]
+        named name: String, body: String, values: [String: ShaderValue] = [:],
+        surfaces: [String: ShaderSurface] = [:]
     ) throws(RenderFailure) -> any MTLLibrary {
         let common = try bundledShaderSource(named: "Common")
-        let source = ShaderSource.assemble(common: common, values: values, body: body)
+        let source = ShaderSource.assemble(
+            common: common, values: values, surfaces: surfaces, body: body)
         do {
             return try device.makeLibrary(source: source, options: nil)
         } catch {
