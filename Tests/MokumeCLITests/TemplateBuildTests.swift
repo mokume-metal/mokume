@@ -149,6 +149,12 @@ struct TemplateBuildTests {
             FileManager.default.fileExists(atPath: note.path),
             "開き方の紙が包みの隣に無い。作品と一緒に送れる物になっていない")
 
+        // 与えた名前が codesign へ**届いている**こと。本物の証明書はこの環境に無いので、
+        // 確かめられるのはここまで — 鍵束に無い名前なら止まる
+        #expect(throws: (any Error).self) {
+            try BundleCommand.sign(app, as: "mokume の検査が与えた、鍵束に無い名前")
+        }
+
         // 包みの中だけを起点にする。**組み上げた場所は見せない** — そこが見えていると、
         // 配った先で足りているかを確かめたことにならない
         let searched = ImageFile.candidates(
