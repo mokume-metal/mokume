@@ -25,7 +25,8 @@
   },
   "env": {
     "CLAUDE_PLAN_RECORD": "0",
-    "RS_CI_WATCH": "0"
+    "RS_CI_WATCH": "0",
+    "CLAUDE_GH_COMMENT_GUARD": "0"
   },
   "hooks": {
     "PreToolUse": [
@@ -43,6 +44,17 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/pr-identity-guard.sh\"",
             "timeout": 10,
             "statusMessage": "PR の作成主体を確認中"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/worktree-path-guard.sh\"",
+            "timeout": 10,
+            "statusMessage": "編集先の worktree を確認中"
           }
         ]
       }
