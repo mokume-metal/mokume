@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/review-gate.sh の検査 (#44 / #104 / #309)。
+"""scripts/review-gate.sh の検査 (#44 / #104 / #309 / #618)。
 
 このゲートが守るのは mokume 固有の四点だけ:
   1. PR が Issue に紐づいている (例外は no-issue ラベル)
   2. 対象 Issue に verify: ラベルがある (完了条件が固まっている)
-  3. 承認が要る PR の author が、唯一の承認者になっていない (ADR-0007 / #88)
-  4. verify: human なら人間の Approve がある
+  3. PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
+  4. 承認が要る PR の author が、唯一の承認者になっていない (ADR-0007 / #88)
 
-重要パスの承認要求そのものはルールセットの required_reviewers が担うので、ここでは見ない — 3 が
-その file_patterns を読むのは「承認が要る PR か」を知るためで、承認を重ねて要求するため
-ではない。`review: approved` ラベルの fallback は identity 分離 (ADR-0003) で
-廃止した。**外したことが戻らない**ことを最後の 2 ケースで固定する。
+重要パスの承認要求そのものはルールセットの required_reviewers が担うので、ここでは見ない —
+4 がその file_patterns を読むのは「承認が要る PR か」を知るためで、承認を重ねて要求するため
+ではない。
 
-終了コードは三つに分かれる — 0 (通過) / 20 (承認待ち) / 1 (差し戻し)。**承認待ちだけが
-正常な状態**で、これを 1 と同じにすると ci-gate が承認待ちで赤くなり、監視の誤検出
-(#111) と「承認しても自動で進まない」(#256) の二つが起きる。assert_pending がその
-区別を固定する。
+**承認待ちはもう無い。** verify: human の Issue に紐づく PR へ Approve を要求していた頃は、
+終了コード 20 で「承認待ち」を表し、それを 1 (差し戻し) と混ぜないことを固定していた
+(#111 / #256)。263 件のマージで測ったら、この経路が固有に承認を要求したのは 36 件・変更要求は
+0 件・初承認までの中央値は 11 分で、**止めていたのではなく待たせていただけ**だった (#618)。
+ADR-0031 が畳んだので終了コードは 0 と 1 だけである。承認の判定が減ったぶん、赤は本物の故障に
+近づいた。外したものが戻らないことは末尾の 2 ケースで押さえる。
 
 1 の紐づけは **GitHub が実際に作った紐づけ (closingIssuesReferences)** で判定する。本文の
 文字列を照合していた頃は、コードスパンに入れた `Closes #N` を通していた — GitHub は
 closing keyword をコードスパンの中では読まないので、緑のままマージされて Issue が開いた
 まま残った (#307 → #309)。偽 gh が返す紐づけは実測値をそのまま写す (下の closes 引数)。
+
+3 が見るのは**構造だけ**である。番号が節に現れることは見るが、書いてある内容が正しいかは
+見ない (check-drawing-evidence.sh と同じ形 — ADR-0019 決定 1)。
 
 gh は PATH の先頭に置いた偽物へ差し替え、ルールセットの定義も一時ファイルへ差し替えるので、
 ネットワークも認証も実ファイルの内容も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
@@ -68,7 +72,7 @@ RULESET = json.dumps(
 )
 
 # 偽 gh。review-gate が呼ぶのは 3 つだけ:
-#   gh pr view <n> -R <repo> --json labels,latestReviews,author,files,closingIssuesReferences
+#   gh pr view <n> -R <repo> --json body,labels,latestReviews,author,files,closingIssuesReferences
 #   gh issue view <n> -R <repo> --json labels --jq <query>
 #   gh api repos/<repo>/pulls/<n> --jq .author_association
 # 応答は環境変数で決める。--jq が付くときは本物と同じようにクエリを適用する
@@ -100,6 +104,9 @@ APP = ("app/mokume-agent", True, "CONTRIBUTOR")
 MAINTAINER = ("shinyaoguri", False, "MEMBER")
 OUTSIDER = ("drive-by-contributor", False, "NONE")
 
+# トリアージ済みの印。ADR-0031 より前は verify: machine / verify: human の 2 種類で、
+# 後者だけが承認を要求していた。いまラベルが表すのは「完了条件が固まっている」だけである
+TRIAGED = "verify: triaged"
 
 # 既定のリポジトリ。closingIssuesReferences は他リポジトリの Issue も指せるので、
 # review-gate は自リポの紐づけだけを採る (別リポの番号で verify ラベルを引くと、
@@ -115,18 +122,41 @@ def closing_refs(numbers, owner=REPO_OWNER, name=REPO_NAME):
     ]
 
 
+def verification_section(numbers):
+    """PR 本文の「確認方法」節 (ADR-0031 決定 2)。
+
+    実物の .github/pull_request_template.md と同じ形 — Issue ごとに小見出しを立て、
+    完了条件と確かめたことを並べる。**番号が小見出しにしか現れない**のが自然な書き方
+    なので、節の取り出しが内側の見出しを落とさないこともここで固定される。
+    """
+    if not numbers:
+        return ""
+    rows = "\n\n".join(
+        f"### Closes #{n}\n\n"
+        "| 完了条件 | 着手時の現況 | 確かめたこと |\n"
+        "| --- | --- | --- |\n"
+        "| 1. …… | まだ有効 | make ci-check が緑 |"
+        for n in numbers
+    )
+    return f"\n\n## 確認方法\n\n{rows}\n"
+
+
 def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, files=(),
-            refs=None):
+            refs=None, verified=None):
     """偽の gh pr view 応答。
 
-    body と closes は**別々に**渡す。ゲートは body を読まないので、両者が食い違う形
-    (書いてあるのに紐づいていない) をそのまま表現できる — それが #309 の事象である。
-    refs を渡すと closes を無視して紐づけをそのまま置く (他リポジトリの検査用)。
+    body と closes は**別々に**渡す。ゲートは closing keyword を body から読まないので、
+    両者が食い違う形 (書いてあるのに紐づいていない) をそのまま表現できる — それが #309 の
+    事象である。refs を渡すと closes を無視して紐づけをそのまま置く (他リポジトリの検査用)。
+
+    verified には「確認方法」節へ載せる番号を渡す。既定は closes と同じ (通常の PR は
+    閉じる Issue すべてに対応表を書く)。節ごと落とすには verified=() を渡す。
     """
     login, is_bot, assoc = author
+    numbers = closes if verified is None else verified
     return json.dumps(
         {
-            "body": body,
+            "body": body + verification_section(numbers),
             "labels": [{"name": n} for n in labels],
             "latestReviews": [{"state": s} for s in reviews],
             "author": {"login": login, "is_bot": is_bot},
@@ -162,7 +192,7 @@ class ReviewGateTest(unittest.TestCase):
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_PR_JSON"] = pr
-        env["FAKE_ISSUE_JSON"] = issue if issue is not None else issue_json()
+        env["FAKE_ISSUE_JSON"] = issue if issue is not None else issue_json(TRIAGED)
         env["FAKE_API_JSON"] = json.dumps(
             {"author_association": json.loads(pr)["authorAssociation"]}
         )
@@ -179,17 +209,6 @@ class ReviewGateTest(unittest.TestCase):
         self.assertIn(message, proc.stderr)
         self.assertIn("次にすること", proc.stderr)
 
-    def assert_pending(self, proc):
-        """承認待ち — 差し戻し (1) と区別できる終了コード 20 で抜ける (#111 / #256)。
-
-        1 と一緒にすると ci.yml が両者を見分けられず、承認待ちが ci-gate の赤に
-        なる。赤くなると監視が故障と誤検出し (#111)、承認しても古い失敗 run が
-        判定を固定して自動では進まなくなる (#256)。
-        """
-        self.assertEqual(proc.returncode, 20, f"承認待ちではない: {proc.stdout} {proc.stderr}")
-        self.assertIn("承認待ち", proc.stdout)
-        self.assertIn("次にすること", proc.stdout)
-
     # --- 1. Issue への紐づけ ------------------------------------------------
 
     def test_pr_without_issue_is_blocked(self):
@@ -202,9 +221,7 @@ class ReviewGateTest(unittest.TestCase):
 
     def test_plain_closes_passes(self):
         # 素の Closes #N。GitHub が紐づけを作るので通る (PR #313 / #316 の実測と同じ形)
-        proc = self.run_gate(
-            pr_json(body="Closes #12", closes=(12,)), issue_json("verify: machine")
-        )
+        proc = self.run_gate(pr_json(body="Closes #12", closes=(12,)), issue_json(TRIAGED))
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_closes_inside_a_code_span_is_blocked(self):
@@ -238,17 +255,80 @@ class ReviewGateTest(unittest.TestCase):
         proc = self.run_gate(pr_json(), issue_json("status: in progress"))
         self.assert_blocked(proc, "verify: ラベルが無い")
 
-    def test_verify_machine_passes_unattended(self):
-        proc = self.run_gate(pr_json(), issue_json("verify: machine"))
+    def test_triaged_issue_passes_unattended(self):
+        proc = self.run_gate(pr_json(), issue_json(TRIAGED))
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-    # --- 3. 承認可能性の不変条件 (ADR-0007 / #88) ---------------------------
+    # --- 3. 完了条件 × 検証の対応表 (ADR-0031 決定 2) -----------------------
 
-    def test_maintainer_authored_verify_human_pr_is_blocked(self):
+    def test_pr_without_a_verification_table_is_blocked(self):
+        """承認を外した代わりに置いた記録。無ければ通さない。
+
+        直近 100 PR に付いたコメントは 32 件・行単位のレビューは 0 件で、「何をどう
+        処理したか」がほとんど残っていなかった (#618)。承認が形式であっても「人が一度
+        見た」印ではあったので、外すなら代わりが要る。
+        """
+        proc = self.run_gate(pr_json(verified=()), issue_json(TRIAGED))
+        self.assert_blocked(proc, "対応表が無い")
+        self.assertIn("#12", proc.stderr)
+
+    def test_several_issues_can_be_closed_together(self):
+        """1 PR は「1 つの説明で筋が通る範囲」 (ADR-0031 決定 3)。
+
+        同じ親の sub-issue 群も、作業中に踏んで起票した障害もまとめて閉じてよい。
+        粒度が大きくなっても追跡が効くのは、Issue ごとに対応表を要求するからである。
+        """
+        proc = self.run_gate(
+            pr_json(body="Closes #12\nCloses #34", closes=(12, 34)), issue_json(TRIAGED)
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_table_must_cover_every_closed_issue(self):
+        # まとめて閉じたのに片方しか書いていない — 書き忘れた側が名指しで出る
+        proc = self.run_gate(
+            pr_json(body="Closes #12\nCloses #34", closes=(12, 34), verified=(12,)),
+            issue_json(TRIAGED),
+        )
+        self.assert_blocked(proc, "対応表が無い")
+        self.assertIn("#34", proc.stderr)
+        self.assertNotIn("#12)", proc.stderr)
+
+    def test_numbers_outside_the_section_do_not_count(self):
+        # 目的節の Closes #12 は節の外なので数えない。数えると「確認方法を書いた」が
+        # 「Closes を書いた」で満たされ、検査が何も要求しなくなる
+        proc = self.run_gate(
+            pr_json(body="Closes #12 に対応する", verified=()), issue_json(TRIAGED)
+        )
+        self.assert_blocked(proc, "対応表が無い")
+
+    def test_a_later_section_ends_the_verification_section(self):
+        # 「確認方法」の後に同階層の見出しが来たら、そこから先は節の外
+        body = "Closes #12" + verification_section([]) + "\n\n## 確認方法\n\n書いた\n\n## 補足\n\n#12 はここでは数えない\n"
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assert_blocked(proc, "対応表が無い")
+
+    def test_no_issue_pr_is_exempt_from_the_table(self):
+        # 閉じる Issue が無ければ、対応する完了条件も無い
+        proc = self.run_gate(
+            pr_json(body="紐づけなし", closes=(), labels=["no-issue"], verified=())
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_similar_number_does_not_satisfy_the_table(self):
+        # #6180 を書いても #618 の対応表にはならない (境界を見る)
+        proc = self.run_gate(
+            pr_json(body="Closes #618", closes=(618,), verified=(6180,)),
+            issue_json(TRIAGED),
+        )
+        self.assert_blocked(proc, "対応表が無い")
+
+    # --- 4. 承認可能性の不変条件 (ADR-0007 / #88) ---------------------------
+
+    def test_maintainer_authored_pr_touching_a_protected_path_is_blocked(self):
         # #88 と同じ形。唯一の承認者が author 本人なので、承認は永久に来ない
         proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=["README.md"]),
-            issue_json("verify: human"),
+            pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
+            issue_json(TRIAGED),
         )
         self.assert_blocked(proc, "誰も承認できない")
         # ADR-0007 決定 4 — 回復手順まで示し、待てば済むと読めてはいけない
@@ -256,38 +336,31 @@ class ReviewGateTest(unittest.TestCase):
         self.assertIn("作り直して", proc.stderr)
         self.assertIn("永久に来ません", proc.stderr)
 
-    def test_app_authored_verify_human_pr_passes(self):
+    def test_app_authored_pr_touching_a_protected_path_passes(self):
         # 同じ PR を App identity で作れば通る。App は org の外なので
-        # author_association が CONTRIBUTOR になり、承認者集合に入りようがない
+        # author_association が CONTRIBUTOR になり、承認者集合に入りようがない。
+        # 承認そのものはルールセットが要求し、GitHub 側で待つ
         proc = self.run_gate(
-            pr_json(author=APP, files=["README.md"]), issue_json("verify: human")
-        )
-        self.assert_pending(proc)  # 承認待ちであって詰みではない
-
-    def test_maintainer_authored_pr_without_required_approval_passes(self):
-        # verify: machine かつルールセットの file_patterns 対象外 — 承認が要らない
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=["README.md", "scripts/foo.sh"]),
-            issue_json("verify: machine"),
+            pr_json(author=APP, files=[".claude/settings.json"]), issue_json(TRIAGED)
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-    def test_maintainer_authored_pr_touching_a_protected_path_is_blocked(self):
-        # verify: machine でもルールセットが承認を要求するので同じく詰む
+    def test_maintainer_authored_pr_without_required_approval_passes(self):
+        # ルールセットの file_patterns 対象外 — 承認が要らないので詰みようがない
         proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
-            issue_json("verify: machine"),
+            pr_json(author=MAINTAINER, files=["README.md", "scripts/foo.sh"]),
+            issue_json(TRIAGED),
         )
-        self.assert_blocked(proc, "誰も承認できない")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_outside_contributor_is_not_blocked(self):
         # author が承認者集合の外 — メンテナが承認できるので詰んでいない。
         # 「author が bot でなければ差し戻す」という近似ではここを誤って止める
         proc = self.run_gate(
             pr_json(author=OUTSIDER, files=["docs/decisions/0009-x.md"]),
-            issue_json("verify: human"),
+            issue_json(TRIAGED),
         )
-        self.assert_pending(proc)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_protected_paths_come_from_the_ruleset_not_a_copy(self):
         """承認が要るパスの正本はルールセットで、写しを持たない (#530)。
@@ -301,7 +374,7 @@ class ReviewGateTest(unittest.TestCase):
         params["required_reviewers"][0]["file_patterns"] = ["docs/decisions/**"]
         proc = self.run_gate(
             pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
-            issue_json("verify: machine"),
+            issue_json(TRIAGED),
             ruleset=json.dumps(narrowed),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -310,46 +383,36 @@ class ReviewGateTest(unittest.TestCase):
         # 現に承認が付いているなら詰んでいない (自己承認はできないので他人が付けた)
         proc = self.run_gate(
             pr_json(author=MAINTAINER, files=[".claude/settings.json"], reviews=["APPROVED"]),
-            issue_json("verify: human"),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-
-    # --- 4. verify: human は人間の承認を待つ --------------------------------
-
-    def test_verify_human_without_review_is_pending_not_blocked(self):
-        # **赤ではなく承認待ち** (#111 / #256)。ここを 1 に戻すと二つの害が復活する
-        proc = self.run_gate(pr_json(), issue_json("verify: human"))
-        self.assert_pending(proc)
-
-    def test_verify_human_with_approval_passes(self):
-        proc = self.run_gate(
-            pr_json(reviews=["APPROVED"]), issue_json("verify: human")
+            issue_json(TRIAGED),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_changes_requested_blocks_even_with_an_approval(self):
         proc = self.run_gate(
-            pr_json(reviews=["APPROVED", "CHANGES_REQUESTED"]),
-            issue_json("verify: machine"),
+            pr_json(reviews=["APPROVED", "CHANGES_REQUESTED"]), issue_json(TRIAGED)
         )
         self.assert_blocked(proc, "変更要求")
 
     # --- 廃止したものが戻らないことの固定 -----------------------------------
 
-    def test_review_approved_label_no_longer_substitutes_for_a_review(self):
-        # identity 分離 (ADR-0003) までの暫定 fallback。ラベルはエージェント自身も
-        # 付けられるので、承認の代わりにはならない
+    def test_the_gate_no_longer_waits_for_a_human_approval(self):
+        """承認待ち (終了コード 20) が戻らないことの固定 (#618 / ADR-0031)。
+
+        移行の途中で verify: human が残っている Issue に当たっても、見るのはラベルの
+        有無だけである。ここが再び Approve を要求し始めたら、**承認を待つ状態が CI に
+        戻る** — それは #111 (監視の誤検出) と #256 (承認しても進まない) を連れてくる。
+        """
         proc = self.run_gate(
-            pr_json(labels=["review: approved"]), issue_json("verify: human")
+            pr_json(files=["README.md"]), issue_json("verify: human")
         )
-        self.assert_pending(proc)
+        self.assertEqual(proc.returncode, 0, f"承認を待っている: {proc.stdout} {proc.stderr}")
+        self.assertNotIn("承認待ち", proc.stdout + proc.stderr)
 
     def test_important_paths_are_left_to_the_ruleset(self):
-        # 重要パスに触れていても、対象 Issue が verify: machine で author が
-        # 承認者集合の外なら通す。承認を要求するのはルールセットの
-        # required_reviewers 側 (native の Review required)
+        # 重要パスに触れていても、author が承認者集合の外なら通す。承認を要求するのは
+        # ルールセットの required_reviewers 側 (native の Review required)
         proc = self.run_gate(
-            pr_json(files=[".github/workflows/ci.yml"]), issue_json("verify: machine")
+            pr_json(files=[".github/workflows/ci.yml"]), issue_json(TRIAGED)
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("重要パス", proc.stdout + proc.stderr)

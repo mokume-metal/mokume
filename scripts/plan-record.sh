@@ -9,6 +9,7 @@
 #   1. 置き場は GitHub のコメント (リポジトリにはコミットしない)
 #   2. 持ち出す前に落とす。秘密は落とさず投稿ごと止める
 #   3. 投稿はフックが行わず scripts/comment.sh を打たせる (人間の目を一度通す)
+#   4. 着手の瞬間に、完了条件がまだ妥当かを問う (ADR-0031 決定 4 — recheck_missing)
 #
 # 契約 (詳細は各関数の頭):
 #   capture   stdin に PostToolUse (ExitPlanMode) の JSON。記録し指示を stderr へ (exit 2)
@@ -225,8 +226,29 @@ post_command() { # $1=種別 $2=番号 $3=記録ファイル → 提示する投
 
 # --- capture ----------------------------------------------------------------
 
+# --- 着手時の再チェック -----------------------------------------------------
+# **トリアージ済みのラベルは、付いた時点の判断しか表さない** (ADR-0031 決定 4)。
+# 直近 100 Issue のうち 11 件で着手時に完了条件が動いており、#457 は起票時の 3 条件が
+# 着手前に既に満たされていた (別の PR が解消済みだった)。#448 は対象が 4 つではなく
+# 2 つだった。再チェックは実務では既に行われているのに、それを促すものが何も無かった。
+#
+# **見るのは構造の有無だけで、判定が正しいかは見ない** — scripts/review-gate.sh の
+# 対応表や scripts/check-drawing-evidence.sh の絵と同じ形である (ADR-0019 決定 1)。
+# 防いでいるのは書き忘れであって、意図的な迂回ではない。
+#
+# 現況の語彙は**広く取る**。狭いと正しく再チェックしたプランまで差し戻され、
+# MOKUME_PLAN_RECORD=0 で外す癖がついて機構ごと形骸化する (drawing-evidence の
+# has_evidence が広く取っているのと同じ理由)。
+recheck_missing() { # stdin=プラン本文。足りないものを 1 行 1 件で stdout へ
+  local body
+  body=$(cat)
+  grep -qE '#[0-9]+' <<<"$body" || echo '対象 Issue の番号 (#N)'
+  grep -qE 'まだ有効|なお有効|依然|既に満たされ|すでに満たされ|満たされている|残っている|差し替え|書き換え|更新し|変わっていない|変わって|ずれて|古くなって|現況|再チェック|突き合わせ' \
+    <<<"$body" || echo '完了条件の現況 (まだ有効 / 既に満たされている / 差し替えが要る)'
+}
+
 capture() {
-  local payload plan cwd session root branch dir id file body findings blocks warns target
+  local payload plan cwd session root branch dir id file body findings blocks warns target recheck
 
   payload=$(cat)
   if ! command -v jq >/dev/null 2>&1; then
@@ -276,6 +298,27 @@ $(printf '%s' "$blocks" | sed 's/^/  - /')
 
 その値を本文から外して (環境変数名や参照だけにして) からプランを立て直してください。
 本文は出力していません。行番号を頼りに手元のプランを確認してください。
+EOF
+    exit 2
+  fi
+
+  recheck=$(printf '%s' "$body" | recheck_missing)
+  if [ -n "$recheck" ]; then
+    # 記録は作らない。プランを直して ExitPlanMode を通し直させる
+    cat >&2 <<EOF
+着手プランに、完了条件の再チェックが見当たりません (ADR-0031 決定 4)。足りないのは:
+
+$(printf '%s' "$recheck" | sed 's/^/  - /')
+
+**トリアージ済みのラベルは、付いた時点の判断しか表しません。** 着手する前に Issue 本文の
+完了条件を現行のコードと突き合わせ、各条件が「まだ有効」「既に満たされている」「差し替えが
+要る」のどれかをプランに書いてください。ずれていれば Issue 本文のほうを先に更新します。
+
+  #457 — 起票時の 3 条件は、着手時点で既に別の PR が解消していた
+  #448 — 載せ替える対象は 4 つではなく 2 つだった
+
+**見ているのは書いてあることだけで、判定が正しいかは見ていません。** 記録は作っていないので、
+プランを直してもう一度 ExitPlanMode を通してください。
 EOF
     exit 2
   fi

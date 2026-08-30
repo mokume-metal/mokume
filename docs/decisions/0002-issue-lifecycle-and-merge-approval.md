@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-26) / 一部置換 (→ [ADR-0003](0003-agent-identity-separation.md)): 決定 4 / 一部置換 (→ [ADR-0004](0004-issue-classification-by-issue-type.md)): 決定 1 の分類の表現
+採用 (2026-08-26) / 一部置換 (→ [ADR-0003](0003-agent-identity-separation.md)): 決定 4 / 一部置換 (→ [ADR-0004](0004-issue-classification-by-issue-type.md)): 決定 1 の分類の表現 / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 1 のラベル分類・決定 3 のルーティング・決定 5
 
 ## 文脈
 

@@ -25,6 +25,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "plan-record.sh"
+
+# 着手時の再チェック (ADR-0031 決定 4)。capture はプランに「対象 Issue の番号」と
+# 「完了条件の現況」の両方を要求するので、主題でないテストにはこれを自動で足す
+RECHECK = "\n\n#12 の完了条件 1 は、着手時点でもまだ有効。\n"
 COMMENT = REPO / "scripts" / "comment.sh"
 SETTINGS = REPO / ".claude" / "settings.json"
 
@@ -123,7 +127,15 @@ class PlanRecordTestCase(unittest.TestCase):
             timeout=30,
         )
 
-    def capture(self, plan, **env):
+    def capture(self, plan, recheck=True, **env):
+        """capture を叩く。
+
+        recheck が真なら、完了条件の再チェック (ADR-0031 決定 4) をプランの末尾へ
+        自動で足す — 実際のプランには必ず書かれるものなので、ここが主題でないテストに
+        毎回書かせない。検査そのものを見るテストだけ recheck=False を渡す。
+        """
+        if recheck:
+            plan = plan + RECHECK
         return self.run_hook(
             "capture",
             {
@@ -296,6 +308,49 @@ class PlanRecordTestCase(unittest.TestCase):
         # 検出した値そのものを再掲しない (hook の出力も記録に残るため)
         self.assertNotIn("ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ", result.stderr)
 
+    # --- 着手時の再チェック (ADR-0031 決定 4) ---------------------------------
+
+    def test_capture_refuses_a_plan_without_a_recheck(self):
+        """トリアージ済みのラベルは、付いた時点の判断しか表さない (#618)。
+
+        直近 100 Issue のうち 11 件で着手時に完了条件が動いている。#457 は起票時の
+        3 条件が着手前に既に満たされており (別の PR が解消していた)、#448 は載せ替える
+        対象が 4 つではなく 2 つだった。再チェックは実務では既に行われているのに、
+        促すものが何も無かった。
+        """
+        result = self.capture("## 方針\n\n#12 を直す。\n", recheck=False, FAKE_GH_PR="42")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.records(), [])  # 記録は作らない — 書き直させる
+        self.assertIn("完了条件の現況", result.stderr)
+
+    def test_capture_refuses_a_plan_without_an_issue_number(self):
+        # どの Issue の完了条件を見たのかが分からないと、突き合わせたことにならない
+        result = self.capture(
+            "## 方針\n\n完了条件はまだ有効。\n", recheck=False, FAKE_GH_PR="42"
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.records(), [])
+        self.assertIn("対象 Issue の番号", result.stderr)
+
+    def test_capture_accepts_the_other_verdicts(self):
+        """現況は 3 通りある。「まだ有効」以外も通ること。
+
+        語彙を狭く取ると、正しく再チェックしたプランまで差し戻され、
+        MOKUME_PLAN_RECORD=0 で外す癖がついて機構ごと形骸化する
+        (check-drawing-evidence.sh が絵の参照を広く取っているのと同じ理由)。
+        """
+        for plan in (
+            "#12 の条件 2 は既に満たされている (PR #34 が解消済み)。\n",
+            "#12 の条件 3 は現実に合わないので、Issue 本文を先に更新した。\n",
+            "#12 の完了条件を現行コードと突き合わせた。差し替えは要らない。\n",
+        ):
+            with self.subTest(plan=plan):
+                for f in self.records():
+                    f.unlink()
+                result = self.capture(plan, recheck=False, FAKE_GH_PR="42")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(len(self.records()), 1, result.stderr)
+
     def test_capture_still_records_when_no_target_exists_yet(self):
         result = self.capture("PR も Issue もまだ無い状態の計画。\n")
         self.assertEqual(len(self.records()), 1)
@@ -326,7 +381,7 @@ class PlanRecordTestCase(unittest.TestCase):
         # tool_input だけを見ていると、ここで無言のまま記録が作られない
         result = self.capture_payload(
             tool_input={"_targetMode": "auto"},
-            tool_response={"plan": "## 方針\n\n却下案: 全面書き換え。\n", "isAgent": False},
+            tool_response={"plan": "## 方針\n\n却下案: 全面書き換え。#12 の完了条件はまだ有効。\n", "isAgent": False},
             FAKE_GH_PR="42",
         )
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -335,7 +390,10 @@ class PlanRecordTestCase(unittest.TestCase):
 
     def test_capture_reads_the_plan_from_the_file_it_was_written_to(self):
         plan_file = Path(self.workdir.name) / "plan.md"
-        plan_file.write_text("## 方針\n\nファイル越しに渡されたプラン。\n", encoding="utf-8")
+        plan_file.write_text(
+            "## 方針\n\nファイル越しに渡されたプラン。#12 の完了条件はまだ有効。\n",
+            encoding="utf-8",
+        )
         result = self.capture_payload(
             tool_input={"_targetMode": "auto"},
             tool_response={"filePath": str(plan_file)},
@@ -568,11 +626,10 @@ class SelfContainedTest(unittest.TestCase):
         self.assertEqual(self.settings.get("env", {}).get("CLAUDE_PLAN_RECORD"), "0")
 
     def test_ci_watch_hook_is_silenced_while_working_here(self):
-        # 承認待ちの赤は正常な状態である (ADR-0002 決定 3 — verify: human の Issue に
-        # 紐づく PR は Approve が付くまで review-gate が赤い)。個人環境の CI 見届け
-        # フックはその設計を知らないので、直す対象が無いまま「直せ」と鳴り続ける
-        # (#159 / #194)。CI の見届けはリポ側の ci-gate と merge queue が担うので、
-        # 個人側は黙らせる
+        # 重要パスの PR は承認が付くまでマージボックスで止まる (ADR-0002 決定 3 /
+        # ADR-0031 決定 1)。個人環境の CI 見届けフックはその設計を知らないので、直す
+        # 対象が無いまま「直せ」と鳴り続ける (#159 / #194)。CI の見届けはリポ側の
+        # ci-gate と merge queue が担うので、個人側は黙らせる
         self.assertEqual(self.settings.get("env", {}).get("RS_CI_WATCH"), "0")
 
 

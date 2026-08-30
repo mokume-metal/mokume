@@ -33,8 +33,10 @@ readonly TITLE="ci: ルールセットが定義とずれている"
 # 込んでいるので、議論を待たずに着手できる。機械が verify: を付けてよいのは
 # 「完了条件を知っている起票者」だけで、同じ根拠で sub-issue.sh --test も付ける
 # (ADR-0002 決定 1 / #205)。付け損ねても「着手できない」に倒れるだけで危険側には
-# 倒れない — status: needs-triage を廃止したときと同じ理由
-readonly VERIFY_LABEL="verify: machine"
+# 倒れない — status: needs-triage を廃止したときと同じ理由。
+# (かつては verify: machine と綴っていた。ADR-0031 が完了条件の性質による二分を畳んで
+#  以降、ラベルは「完了条件が固まっている」1 種類である)
+readonly VERIFY_LABEL="verify: triaged"
 
 # 本文に載せる差分の上限。ずれが大きいときに Issue 本文の上限へ当たって起票ごと
 # 失敗するより、頭を見せて run へ送る
@@ -120,7 +122,7 @@ BODY
   if [ -n "$run_url" ]; then
     printf '\n検出した run: %s\n' "$run_url"
   fi
-  printf '\n<sub>🤖 この Issue は .github/workflows/ruleset-drift.yml が自動起票した (#99)。完了条件が本文で確定しているため `verify: machine` も自動で付く (#205)</sub>\n'
+  printf '\n<sub>🤖 この Issue は .github/workflows/ruleset-drift.yml が自動起票した (#99)。完了条件が本文で確定しているため `verify: triaged` も自動で付く (#205)</sub>\n'
 } > "$tmp"
 
 url=$(gh issue create -R "$REPO" --title "$TITLE" --body-file "$tmp" --label "$VERIFY_LABEL")

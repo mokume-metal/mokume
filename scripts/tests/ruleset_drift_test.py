@@ -13,9 +13,9 @@
      タイトルの別 Issue を「既にある」と誤認すると、本物のドリフトが黙殺される
   4. 起票の後に triage を通す — GITHUB_TOKEN が作った Issue には workflow が
      発火しない (再帰防止の仕様) ので、triage.yml は走らない
-  5. 起票と同時に verify: machine が付く — 付かないと AGENTS.md の着手ゲートに
+  5. 起票と同時に verify: triaged が付く — 付かないと AGENTS.md の着手ゲートに
      引っかかって誰も対処できず、しかも重複抑止で翌日以降の起票まで止まる (#205)
-  6. 本文に解消の判定基準が載る — verify: machine は「どの検査で判定するか」の
+  6. 本文に解消の判定基準が載る — トリアージ済みの印は「どの検査で判定するか」の
      明記を要件にしている (ADR-0002 決定 1)。対処法だけ書いて判定基準の無い起票は、
      要件を満たさないまま印だけ付けることになる
   7. push 契機では起票せず、適用の手順をログへ出して終わる — 定義変更を merge した
@@ -168,9 +168,9 @@ class ReportDriftTest(unittest.TestCase):
         log = self.gh_log()
         self.assertIn("--type Task", log)
 
-    def test_起票に_verify_machine_を付ける(self):
+    def test_起票にトリアージ済みの印を付ける(self):
         self.report()
-        self.assertIn("--label verify: machine", self.gh_log())
+        self.assertIn("--label verify: triaged", self.gh_log())
 
     def test_本文に解消の判定基準が載る(self):
         self.report()

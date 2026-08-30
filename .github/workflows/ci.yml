@@ -65,13 +65,15 @@ jobs:
             exit 1
           fi
 
-  # ADR-0002 のマージ承認ルーティング (実体は scripts/review-gate.sh)。
-  # 承認ラベルの付け外し (labeled/unlabeled) で自動的に再評価される。
+  # ADR-0002 / ADR-0031 のマージ判定 (実体は scripts/review-gate.sh)。
+  # 本文の編集・ラベルの付け外し・レビューの投稿で自動的に再評価される。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
   #
-  # 終了コード 20 は「承認待ち」で、**故障ではないのでジョブは緑のまま**にする
-  # (#111 / #256)。承認の状態は approval-signal ジョブが human-approval check run
-  # として別に報告する。1 (差し戻し) はそのままジョブを赤くする。
+  # **終了コードは 0 か 1 だけである。** かつては承認待ちを 20 で表し、approval-signal
+  # ジョブが human-approval の commit status へ回していたが (#111 / #256 / #282)、
+  # ラベル由来の承認そのものを ADR-0031 が畳んだので、待つ状態が無くなった (#618)。
+  # 承認を要求するのはルールセットの required_reviewers だけで、それは GitHub 自身が
+  # 判定する — ここで報告するものは無い。
   review-gate:
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
@@ -79,139 +81,12 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    outputs:
-      pending: ${{ steps.gate.outputs.pending }}
     steps:
       - uses: actions/checkout@v7
-      - name: ADR-0002 ルーティング判定
-        id: gate
+      - name: マージ判定
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set +e
-          bash scripts/review-gate.sh "${{ github.event.pull_request.number }}"
-          code=$?
-          set -e
-          case "$code" in
-            0)  echo "pending=false" >> "$GITHUB_OUTPUT" ;;
-            20) echo "pending=true"  >> "$GITHUB_OUTPUT" ;;
-            *)  exit "$code" ;;
-          esac
-
-  # 承認の状態を human-approval として報告する (#111 / #256 / #259 / #282)。
-  #
-  # なぜ Actions のジョブそのものでは足りないか — ジョブの結論は終了コード由来
-  # (success / failure / cancelled / skipped) に限られ、「人の操作待ち」を表せない。
-  # 必須チェックの通過扱いは success / skipped / neutral なので、待ちを neutral や
-  # skipped で表すとゲートごと消える。
-  #
-  # ## check run ではなく commit status で報告する
-  #
-  # check run で表そうとすると、**作り足しても上書きしても詰む**ことが分かった (#282)。
-  #
-  # - 作り足す: 同じ SHA に同名の check run が 2 つ並び、古いほうが判定を固定する (#259)
-  # - 上書きする: check run は**最初に作った run の check suite に居続ける**。承認は
-  #   必ず後の run で届くので、最新の suite にはこの名前が現れない。マージボックスは
-  #   `Expected — Waiting for status to be reported` のまま止まり、**何度承認しても
-  #   解けない** (#279 で実測。API 側は success と言うのに画面は待ち続ける)
-  #
-  # commit status には suite が無く、**同じ context の最新が常に勝つ**。だから上書きが
-  # そのまま「最新の判定」になり、食い違いが起きない。`action_required` は使えないが、
-  # 待ちは `pending` で表せる — これは失敗ではないので #263 の要求 (承認待ちを故障として
-  # 数えない) はそのまま満たせる。むしろ「保留中」という言葉のほうが実態に合う。
-  #
-  # merge_group では PR 文脈が無いので無条件に success を報告する。承認は PR 段階で
-  # 必須チェックとして既に効いており、queue へ入れた時点で満たされている
-  # (pr-title / review-gate を skip して ci-gate が許容しているのと同じ理屈)。
-  # **必須チェックは merge queue でも報告が要る** — 報告が無いと queue が待ち続ける。
-  #
-  # ## 承認待ちを人にも届ける (#498)
-  #
-  # 上の報告の宛先はマージボックスであって、**人ではない**。承認が要る経路は 2 本あり
-  # (パス由来 = ルールセットの required_reviewers / ラベル由来 = 対象 Issue の
-  # verify: human)、**レビュー要求を作るのはパス由来だけ**だった。ラベル由来の
-  # PR は Reviewers 欄が空のまま human-approval だけが pending で止まり、メンテナは PR を
-  # 開くまで気付けない (#494 / #495 が実際に滞留した)。
-  #
-  # 宛先を足す場所はここでよい。同じ pending を読んで「待っている」と表明する係が既に
-  # このジョブで、増えるのは宛先が 1 つだけである (新しいジョブは作らない —
-  # ADR-0008 決定 5 の段 1「既存の機構の責務を広げる」)。
-  #
-  # **要求を飛ばすことと、ブロックすることは別である。** 要求の成否は ci-gate に影響せず、
-  # human-approval の state (pending / success) も動かさない。通知が届かないことを、
-  # マージできないことに化けさせない。
-  #
-  # **ただし黙らない** (#577)。赤くしないことと黙ることは別で、当初の形は要求が飛ばなくても
-  # success したジョブのログにしか残らず、メンテナは Reviewers 欄を目視して初めて気付いた
-  # (#575)。request-review.sh は「声が掛かっていない」を終了コード 20 で返し、ここが
-  # human-approval の **description** に載せる — マージボックスに出るので、ジョブを
-  # 開かなくても読める。新しい経路は 1 つも作っていない。
-  #
-  # **重要パスに触れる PR では、そもそも投げない** (#584)。ルールセットの
-  # required_reviewers が必ず team へ要求を飛ばすので、ここが投げれば同じ人へ 2 通目に
-  # なる。判定は「もう飛んでいるか」を API から読む形だったが、反映が遅れると見えない
-  # まま投げてしまった (#583 では 19 秒後でも見えなかった)。飛ぶかどうかは触れたパスで
-  # 決まっているので、scripts/protected-paths.sh の照合を review-gate と共有して
-  # **状態ではなく条件で**判定する。
-  approval-signal:
-    if: always() && github.event_name != 'push'
-    needs: [review-gate]
-    runs-on: ubuntu-latest
-    permissions:
-      statuses: write
-      pull-requests: write
-    steps:
-      # **要求が先で、報告が後。** 声が掛かったかを description に載せるので、この順序に
-      # 依存がある。checkout は要求を投げるときだけ要る (status は API だけで打てる)
-      - uses: actions/checkout@v7
-        if: needs.review-gate.outputs.pending == 'true' && github.event_name == 'pull_request'
-      - name: 承認待ちをメンテナへ要求する
-        id: request
-        if: needs.review-gate.outputs.pending == 'true' && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          # review-gate と同じ受け方。20 は「声が掛かっていない」で、故障ではないので
-          # ステップは緑のままにする (故障は case の外に落として赤くする)
-          set +e
-          bash scripts/request-review.sh "${{ github.event.pull_request.number }}"
-          code=$?
-          set -e
-          case "$code" in
-            0)  echo "delivered=true"  >> "$GITHUB_OUTPUT" ;;
-            20) echo "delivered=false" >> "$GITHUB_OUTPUT" ;;
-            *)  exit "$code" ;;
-          esac
-
-      # **要求が失敗しても待ちの表明は要る**ので always()。この status を打たないと、
-      # 承認が要る PR が「待っていること」を誰にも言わないまま止まる
-      - name: human-approval を報告
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
-          PENDING: ${{ needs.review-gate.outputs.pending }}
-          DELIVERED: ${{ steps.request.outputs.delivered }}
-        run: |
-          if [ "$PENDING" = "true" ]; then
-            state=pending
-            description="メンテナの承認待ち (故障ではありません)"
-            # 空のときは要求を投げていない (merge_group など)。**飛ばして失敗したとき
-            # だけ**名乗る — 投げていないことと、投げて届かなかったことは別である
-            if [ "$DELIVERED" = "false" ]; then
-              description="$description — ただし声は掛かっていません"
-            fi
-          else
-            state=success
-            description="承認は要らない、または承認済み"
-          fi
-          gh api -X POST "repos/$REPO/statuses/$SHA" \
-            -f state="$state" -f context=human-approval \
-            -f description="$description" \
-            -f target_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID" --silent
-          echo "報告: human-approval → $state ($description)"
+        run: bash scripts/review-gate.sh "${{ github.event.pull_request.number }}"
 
   # 描画を要する検査は、この世代のコマンド構造を持たない GPU の上では 1 本も走らない
   # (#180・ADR-0019 決定 7)。走ったことは **手元の make ci-check** が local-render
@@ -277,11 +152,10 @@ jobs:
   # ブランチ保護が要求する必須チェックのうち、**CI の健全性**を表す 1 つ。
   # ジョブが増えても required checks の登録名はこの 1 つを保つ。
   #
-  # もう 1 つの必須チェック human-approval は approval-signal ジョブが報告する。
-  # 名前を分けているのは種類が違うからで、ジョブが増えたからではない — ci-gate は
-  # 「検査が壊れていないか」、human-approval は「人の操作を待っているか」を表す。
-  # 混ぜると監視が承認待ちを故障と誤検出する (#111)。**承認待ちで ci-gate を赤く
-  # しない**ため、needs に approval-signal は入れない。
+  # かつてはもう 1 つ human-approval があり、「人の操作を待っているか」を別の名前で
+  # 表していた (混ぜると監視が承認待ちを故障と誤検出する — #111)。ADR-0031 が
+  # ラベル由来の承認を畳んで待つ状態そのものが無くなったので、必須チェックは
+  # ci-gate と local-render の 2 本になった (#618)。
   ci-gate:
     if: always()
     needs: [ci-check, pr-title, review-gate, drawing-evidence]
