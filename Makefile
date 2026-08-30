@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status catch-up shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status catch-up entry-check shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,7 +26,7 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
-ci-check: build test shaders params schemas api reference example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test shaders params schemas api reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -149,6 +149,11 @@ render-status:
 # PR・先に描画 PR が居る場合) ので、順番待ちの数分を無駄にしない
 catch-up: ## 弾かれた描画 PR を、合流後の姿を覆い直して merge queue へ戻す
 	bash scripts/catch-up.sh
+
+# 入口が面として成立しているかを見る (#482)。**組み立ての的は無い** — 手で書く層は
+# make reference が Documentation/site/. ごと被せるので、ここは中身だけを見る
+entry-check:
+	python3 scripts/check-entry.py Documentation/site
 
 # シェーダの原文はビルドに含まれない (SwiftPM は .metal を運ぶだけ) ので、誤りは
 # 実行するまで分からない。描画を要する検査は実行環境の制約で CI では走らない (#180)

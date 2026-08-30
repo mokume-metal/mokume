@@ -19,13 +19,15 @@ SPDX-License-Identifier: MIT
 ```swift
 import mokume
 
-struct Hello: Sketch {
+final class Hello: Sketch {
     func draw() {
-        background(0.1)
+        background(.display(red: 0.06, green: 0.07, blue: 0.09))
         circle(width / 2, height / 2, 120)
     }
 }
 ```
+
+[mokume の入口](../../) — 入れ方と最初の 1 本はこちら。
 
 **この面に出ている説明は、すべてソースの `///` から組み立てられている。** 説明を直したいときは実装の隣を直す。機械が一度に読むための一覧が要るときは、版ごとの Release に載る公開 API の一覧を使う — こちらは人が読むための面で、同じ説明の別の配り方になっている。
 
