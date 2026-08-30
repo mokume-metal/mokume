@@ -183,6 +183,10 @@ api-list: ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 # ターゲット (reference-sketches・frame-rate-probe) まで公開される。一覧の側
 # (api-surface.py の --module) と同じ名指しをここでも要求する (ADR-0027 決定 1)。
 #
+# **手で書く層は Documentation/site/ を丸ごと被せる** (ADR-0027 決定 3)。どちら側でも
+# 選り分けをしないので、公開へ写す資産の列挙が現れない — 列挙は漏れ、漏れたときの症状は
+# 「そのファイルだけが公開されない」でビルドは緑のままである。
+#
 # 組み立ての後に、置いたものが本当に出ているかを自分で確かめる — この道具のいちばん
 # 多い壊れ方は「変換は成功し、警告も出ず、出力にだけ存在しない」である。
 REFERENCE_CATALOG := Documentation/mokume.docc
@@ -204,7 +208,7 @@ reference: ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時�
 		--transform-for-static-hosting \
 		$(if $(BASE),--hosting-base-path "$(BASE)",) \
 		--output-path "$(or $(OUT),$(REFERENCE_OUT))"
-	cp Documentation/index.html "$(or $(OUT),$(REFERENCE_OUT))/index.html"
+	cp -R Documentation/site/. "$(or $(OUT),$(REFERENCE_OUT))/"
 	python3 scripts/check-published-reference.py \
 		"$(or $(OUT),$(REFERENCE_OUT))" --catalog "$(REFERENCE_CATALOG)"
 

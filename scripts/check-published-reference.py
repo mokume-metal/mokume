@@ -18,6 +18,11 @@
 ([ADR-0001](../docs/decisions/0001-founding-principles.md) 原則 9)。入口を書き換え
 れば期待も動く。
 
+**中間の経路も見る。** 面の道具はモジュールのページしか作らないので、`/documentation/`
+のような途中の階層には何も置かれない — URL を後ろから削って上へ行く読者はそこで
+行き止まりになる ([#549](https://github.com/mokume-metal/mokume/issues/549))。手で被せた
+1 枚が居ることと、その行き先が面のモジュールを指していることを、ここで一緒に見る。
+
 **索引を 1 回引いて突き合わせる。** 記号 1 つずつを引くと公開先へ数十回の要求が
 飛ぶうえ、索引に載っていない (どこからも辿れない) ページを「出ている」と誤って
 数える。索引は面の目次そのものなので、これを材料にすれば「置いたのに辿れない」も
@@ -149,6 +154,21 @@ def check(source: Source, catalog: pathlib.Path) -> list[str]:
     if source.read(f"documentation/{module.lower()}/index.html") is None:
         problems.append(
             f"documentation/{module.lower()}/index.html が無い — 静的配信の形に変換されていない"
+        )
+
+    # **中間の経路も行き止まりにしない** (#549)。道具はモジュールのページしか作らない
+    # ので、`/documentation/` には手で被せた 1 枚が要る。**その行き先まで見る** — 手で
+    # 書いた行き先はモジュールの名前が変われば黙って腐り、症状は「上の階層へ行くと
+    # 404」でビルドは緑のままである
+    middle = source.read("documentation/index.html")
+    if middle is None:
+        problems.append(
+            "documentation/index.html が無い — 面の中間の経路 (/documentation/) が行き止まりになる"
+        )
+    elif module.lower() not in middle.decode("utf-8", errors="replace").lower():
+        problems.append(
+            f"documentation/index.html が {module} を指していない — "
+            "モジュールの名前が変わったまま行き先が取り残されている"
         )
 
     for symbol in symbols:
