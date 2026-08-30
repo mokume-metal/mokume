@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "revision": 7,
+  "id": "agent-4711",
+  "params": [
+    { "name": "radius", "type": "float", "value": 120, "min": 0, "max": 200 },
+    { "name": "count", "type": "int", "value": 6, "min": 1, "max": 8 },
+    { "name": "spinning", "type": "bool", "value": false },
+    { "name": "shape", "type": "string", "value": "square", "choices": ["circle", "square"] },
+    { "name": "ink", "type": "color", "value": { "red": 0.8, "green": 0.2, "blue": 0.1, "alpha": 1 } },
+    { "name": "offset", "type": "vec2", "value": [12, -4] }
+  ],
+  "rejected": [],
+  "clamped": []
+}

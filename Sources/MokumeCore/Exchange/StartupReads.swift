@@ -75,6 +75,12 @@ public enum StartupReads {
         note: "起動の瞬間に在れば入力が届くようになる。走っている最中に作っても拾わない",
         readSite: "Sources/MokumeCore/Input/InputInbox.swift")
 
+    /// つまみの区画。
+    public static let params = Entry(
+        name: "つまみの区画", origin: .facet, key: "params", decidedBy: .user,
+        note: "起動の瞬間に在れば、宣言した値を外から読み書きできる。走っている最中に作っても拾わない",
+        readSite: "Sources/MokumeCore/Parameters/ParamSurface.swift")
+
     /// 走っている速さの名乗り。
     public static let frameRateNotice = Entry(
         name: "速さの名乗り", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
@@ -82,5 +88,7 @@ public enum StartupReads {
         readSite: "Sources/MokumeCore/Display/FrameRateNotice.swift")
 
     /// 全部。**案内も検査もここを読む。**
-    public static let all: [Entry] = [workDirectory, sourceStamp, frameRateNotice, observe, input]
+    public static let all: [Entry] = [
+        workDirectory, sourceStamp, frameRateNotice, observe, input, params,
+    ]
 }

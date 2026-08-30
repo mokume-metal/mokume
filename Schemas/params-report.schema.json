@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/params-report.schema.json",
+  "title": "つまみの面の応答",
+  "description": "宣言した値のいまの姿と、直前の書き換えをどう扱ったか。**宣言 (範囲・候補) も一緒に載る**ので、読み手は書ける値を別の面へ探しに行かなくてよい。起動したとき・書き換えに応えたとき・値が実際に変わったときに書き直される。",
+  "type": "object",
+  "required": ["schemaVersion", "revision", "params", "rejected", "clamped"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "内容が変わるたびに進む番号。**起動しただけでも進む** — プロセスが変われば宣言そのもの (つまみの数・範囲・候補) が変わりうるため。読み手はこれで自分の写しが古いかを知る。"
+    },
+    "id": {
+      "type": "string",
+      "description": "直近に応えた要求の識別子。まだ 1 つも応えていなければ省略される。**1 つも入らなかったときも echo される** — 「届いたが全部断られた」と「届いていない」を区別するため。"
+    },
+    "params": {
+      "type": "array",
+      "description": "宣言した値。**並びは書いた順** (基底の側から) で、面の情報の一部である。",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "type": {
+            "type": "string",
+            "enum": ["float", "int", "bool", "string", "color", "vec2", "vec3"]
+          },
+          "value": { "description": "いまの値。型はこの宣言の type が言っている。" },
+          "min": {
+            "type": "number",
+            "description": "動ける幅の下端。書かれていなければ範囲は宣言されていない — **その値には窓のつまみが出ない** (外からは書ける)。"
+          },
+          "max": { "type": "number", "description": "動ける幅の上端。" },
+          "choices": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "許した候補。合法値が面に出ているので、書き手は総当たりをしない。"
+          }
+        }
+      }
+    },
+    "rejected": {
+      "type": "array",
+      "description": "入らなかった書き込みと、その理由。何も断らなかったときは空配列。",
+      "items": {
+        "type": "object",
+        "required": ["name", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "reason": {
+            "type": "string",
+            "enum": ["unknownName", "typeMismatch", "notInChoices"],
+            "description": "unknownName = 宣言されていない名前 (綴りを確かめる) / typeMismatch = 宣言と型が違う / notInChoices = 許した候補の外。"
+          }
+        }
+      }
+    },
+    "clamped": {
+      "type": "array",
+      "description": "範囲へ収めて入れた書き込み。**収めたことは黙らない** — 書いた値と読める値が食い違う理由が分かるようにするため。収めていなければ空配列。",
+      "items": {
+        "type": "object",
+        "required": ["name", "requested", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "requested": { "type": "number", "description": "書き手が求めた値。" },
+          "value": { "type": "number", "description": "実際に入った値。" }
+        }
+      }
+    }
+  }
+}

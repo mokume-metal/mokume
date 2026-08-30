@@ -58,6 +58,8 @@ public final class SketchRuntime {
     private let observer: FrameObserver?
     /// 外から送られる入力の受け口。区画が無ければ `nil`。
     private let inbox: InputInbox?
+    /// つまみの面 (区画が在るときだけ働く)。
+    private let params: ParamSurface?
     /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
@@ -134,6 +136,7 @@ public final class SketchRuntime {
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
+        self.params = ParamSurface.makeIfEnabled(for: sketch)
     }
 
     /// 観測の窓口を差し替えられる入口 (検査用)。
@@ -143,7 +146,8 @@ public final class SketchRuntime {
         clock: Clock?,
         now: @escaping () -> Double,
         observer: FrameObserver?,
-        inbox: InputInbox? = nil
+        inbox: InputInbox? = nil,
+        params: ParamSurface? = nil
     ) throws(RenderFailure) {
         let settings = sketch.settings
         self.sketch = sketch
@@ -156,6 +160,7 @@ public final class SketchRuntime {
         self.now = now
         self.observer = observer
         self.inbox = inbox
+        self.params = params
     }
 
     // MARK: - 進める
@@ -167,6 +172,9 @@ public final class SketchRuntime {
         hasSetUp = true
         registerPlugins()
         withActiveRuntime { sketch.setup() }
+        // 最初の応答は setup のあとに書く。setup で決めた値が、外から読める最初の
+        // 姿になる
+        params?.start()
     }
 
     /// 宣言された束を差込口へ登録する。**組み立てのときに 1 度だけ。**
@@ -270,6 +278,7 @@ public final class SketchRuntime {
     /// 1 フレーム遅れて効く形にすると、外から動かして確かめるときに毎回 1 枚ぶんずれる。
     private func receiveInput() {
         inbox?.drain(into: input)
+        params?.drain()
         input.beginFrame()
     }
 

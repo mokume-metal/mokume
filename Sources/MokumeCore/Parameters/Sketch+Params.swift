@@ -21,23 +21,28 @@ extension Sketch {
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 enum ParamCatalog {
-    /// 宣言を集める。走らせている間に何度も呼ぶものではない (起動時に 1 度引き、
-    /// 以降は持ち回る)。
-    static func collect(from object: Any) -> [ParamDeclaration] {
-        var declarations: [ParamDeclaration] = []
+    /// 名前と置き場の組を集める。走らせている間に何度も呼ぶものではない
+    /// (起動時に 1 度引き、以降は ``ParamRegistry`` が持ち回る)。
+    static func indexed(from object: Any) -> [(name: String, box: any DeclaredParam)] {
+        var entries: [(name: String, box: any DeclaredParam)] = []
         var seen: Set<String> = []
         for box in boxes(of: object) {
-            let declaration = box.declaration
-            guard seen.insert(declaration.name).inserted else {
+            let name = box.declaration.name
+            guard seen.insert(name).inserted else {
                 // 同じ型の中の重複はビルドが止める。ここへ来るのは基底と派生で
                 // 同じ名前を宣言した場合だけで、機械では防げない。黙って片方を
                 // 落とすと「書いたのに動かない値」になるので名指しする。
-                Diagnostics.warn("つまみ \"\(declaration.name)\" が二重に宣言されている。先に宣言されたほうを使う")
+                Diagnostics.warn("つまみ \"\(name)\" が二重に宣言されている。先に宣言されたほうを使う")
                 continue
             }
-            declarations.append(declaration)
+            entries.append((name: name, box: box))
         }
-        return declarations
+        return entries
+    }
+
+    /// 宣言を集める。
+    static func collect(from object: Any) -> [ParamDeclaration] {
+        indexed(from: object).map(\.box.declaration)
     }
 
     /// 置き場を基底の側から順に拾う。
