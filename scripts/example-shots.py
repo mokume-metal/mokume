@@ -43,6 +43,20 @@
 実装が変わっても絵が変わったとは限らず、混ぜれば実装を触るたびに赤くなって、赤を
 無視する習慣が育つ。
 
+## 撮れた絵が何かを示しているか (#481)
+
+**絵があることと、その絵が説明になっていることは別である。** 向きを決める引数を間違えても
+同じ絵になるなら、その絵は引数の誤りを写せていない。撮った直後に上下・左右を反転した絵と
+比べ、見分けが付かないものを言う。
+
+**止めない。** 対称なのが正しい絵 (真円・正方形・放射状のもの) は普通にあるので、止めると
+作業が詰まる。分かっているものは撮影設定で軸ごとに黙らせる:
+
+    /// <!-- shot: 濃い灰色の下地の中央に、白い円 | symmetric=xy -->
+
+**この穴は絵を見比べても発見できない。** 人は「それらしい絵」を見ると納得してしまう。
+測り方と境目の当て方は `mirror_ratio` と `INDISTINGUISHABLE` が持つ。
+
 ## 撮る側
 
 スニペット全部で**実行ファイルを 1 個**作る (`Sketches/main.swift` と同じ形)。1 本ごとに
@@ -80,6 +94,29 @@ IMAGE = re.compile(r"^\s*///\s*!\[")
 SCAFFOLD = re.compile(r"^\s*(///\s*(@Row\b.*|@Column\b.*|\}|)\s*)?$")
 
 DEFAULT_SIZE = (400, 300)
+
+# 反転の軸。名前は撮影設定にそのまま出る (`symmetric=xy`)
+MIRROR_FILTERS = {"x": "hflip", "y": "vflip"}
+# 同じ軸で 1 画素ずらすときの、重ねる 2 枚の切り出し方 (`crop` の引数)。
+# **足した縁を持たない** — 両側から 1 画素ぶん切り落として重ねるので、
+# 空いた列を何色で埋めるかを決めずに済む
+SHIFT_CROPS = {"x": ("iw-1:ih:0:0", "iw-1:ih:1:0"), "y": ("iw:ih-1:0:0", "iw:ih-1:0:1")}
+
+# **反転しても見分けが付かない**と見なす境目。単位は「その絵を 1 画素ずらしたときの差の
+# 何倍か」で、0…255 の生の差ではない (理由は `mirror_ratio`)。
+#
+# 実測から決めてある。手元の 45 本を軸ごとに測る (90 通り) と、両側は次で分かれた:
+#
+# - 反転しても同じに見える側 — ほとんどが 1.00 前後に集まり、**最大は 2.00**
+#   (`circle(200, 150, 200)` に太い線を付けたもの。反転の差がちょうど 1 画素ずらし
+#   2 つぶんになる — 縁の乗り方が左右で 1 画素ずれていて、それ以上の違いは無い)
+# - 見分けが付く側 — **最小は 2.33** (太さ 8 の輪を 3 つ横に並べ、両端の色だけを
+#   橙と黄で入れ替えたもの。明るさが近いので比が伸びにくい)。次は 5.56 で、以降は離れる
+#
+# **谷は狭い (2.00 と 2.33)。** 境目はその中に置き、対称な側へ寄せる — 下へ外すと
+# 対称な絵が毎回鳴り、上へ外すと**黙らせようのない警告**が出る (本当に見分けが付く絵に
+# `symmetric=` を足すのは嘘になる)。両端は `--mirror-report` で撮り直すたびに見られる。
+INDISTINGUISHABLE = 2.2
 GYAZO_UPLOAD = "https://upload.gyazo.com/api/upload"
 
 
@@ -92,6 +129,9 @@ class Shot:
     width: int
     height: int
     frames: int  # 0 なら静止画
+    # 反転しても見分けが付かないことが**分かっている**軸 (#481)。指紋には入らない —
+    # 黙らせる指定を足しても絵は 1 画素も変わらないので、撮り直しを起こさない
+    symmetric: str
     snippet: list[str]
     index: int  # 同じ説明文の中で何番目か (記録の鍵)
     record_line: int | None
@@ -121,19 +161,35 @@ class Shot:
         return f"{self.path}:{self.open_line + 1}"
 
 
-def parse_attributes(text: str | None) -> tuple[int, int, int]:
-    """`frames=90 size=400x400` → (幅, 高さ, 枚数)。知らない鍵は落とす前に名乗る。"""
+def parse_attributes(text: str | None) -> tuple[int, int, int, str]:
+    """`frames=90 size=400x400 symmetric=x` → (幅, 高さ, 枚数, 黙らせる軸)。
+
+    知らない鍵は落とす前に名乗る。`symmetric` は**反転しても見分けが付かないことが
+    分かっている軸**で、真円・正方形・放射状のものに付く (#481)。
+    """
     width, height = DEFAULT_SIZE
     frames = 0
+    symmetric = ""
     for token in (text or "").split():
         key, _, value = token.partition("=")
         if key == "frames":
             frames = int(value)
         elif key == "size":
             width, height = (int(part) for part in value.lower().split("x"))
+        elif key == "symmetric":
+            symmetric = normalize_axes(value)
         else:
             raise ValueError(f"知らない撮影設定: {token}")
-    return width, height, frames
+    return width, height, frames, symmetric
+
+
+def normalize_axes(value: str) -> str:
+    """`xy` / `yx` / `x` → 並びを固定した軸。知らない軸は名乗って落とす。"""
+    axes = sorted(set(value))
+    unknown = [axis for axis in axes if axis not in MIRROR_FILTERS]
+    if unknown:
+        raise ValueError(f"知らない軸: {''.join(unknown)} (使えるのは {''.join(MIRROR_FILTERS)})")
+    return "".join(axes)
 
 
 def snippet_above(lines: list[str], open_line: int) -> list[str]:
@@ -189,7 +245,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
             close += 1
         if close >= len(lines):
             raise SystemExit(f"{path}:{number + 1} の囲みが閉じていない (<!-- /shot -->)")
-        width, height, frames = parse_attributes(match["attributes"])
+        width, height, frames, symmetric = parse_attributes(match["attributes"])
         pending.append(
             Shot(
                 path=path,
@@ -199,6 +255,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
                 width=width,
                 height=height,
                 frames=frames,
+                symmetric=symmetric,
                 snippet=snippet_above(lines, number),
                 index=0,
                 record_line=None,
@@ -403,6 +460,120 @@ def _bundle_gif(out: pathlib.Path, shot: Shot) -> None:
     )
 
 
+# ---------------------------------------------------------------- 何かを示しているか
+
+
+def average_difference(image: pathlib.Path, lavfi: str) -> float:
+    """`lavfi` が作った差の絵の、3 原色を通した平均 (0…255)。
+
+    引き算を ffmpeg にやらせているのは速さのためだけではない — 撮った絵を読むのに
+    画像の復号を自前で持たずに済む (ffmpeg は動きを束ねるのに既に要る)。
+
+    **受け取るのは色のままで、畳むのはこちら側でやる。** 明るさへ畳む指定を作る絵の側に
+    書くと、その要求が引き算より前へ遡り、**引く前に明るさへ畳まれる** (実測)。そうなると
+    明るさが同じで色だけ違う 2 枚が「差 0」になる — 例えば赤い円と青い円を入れ替えた絵は、
+    人には一目で違うのに差がほぼ出なくなる。3 原色を等しく数えるので、色だけの違いも残る。
+    """
+    result = subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-i", str(image), "-lavfi", lavfi,
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    data = result.stdout
+    if not data:
+        raise SystemExit(f"{image} の差を測れなかった")
+    return sum(data) / len(data)
+
+
+def mirror_ratio(image: pathlib.Path, axis: str) -> float:
+    """反転したときの差が、**その絵を 1 画素ずらしたときの差の何倍か**。
+
+    生の差をそのまま見ない理由が 2 つある。
+
+    **反転しても見分けが付かない絵でも、差は 0 にならない。** 面の中心と画素の中心は
+    半画素ずれるので、反転は縁に必ず 1 画素ぶんのずれを作る。この床は絵ごとに違う —
+    縁が長く濃い絵ほど高い — ので、**床そのものを測って割る**。1 倍前後なら「反転は
+    1 画素ずらしと同じ程度の違いしか作っていない」と読める。
+
+    **生の差は、描いたものが絵に占める広さに引きずられる。** 隅に小さく描いたものは、
+    反転で丸ごと動いても平均への効きが小さく、見分けが付かない側へ落ちる。割ると
+    その依存が消える (床も同じだけ小さくなるため)。
+    """
+    difference = average_difference(
+        image,
+        f"[0:v]split[a][b];[b]{MIRROR_FILTERS[axis]}[c];"
+        "[a][c]blend=all_mode=difference",
+    )
+    kept, shifted = SHIFT_CROPS[axis]
+    floor = average_difference(
+        image,
+        f"[0:v]split[a][b];[a]crop={kept}[a1];[b]crop={shifted}[b1];"
+        "[a1][b1]blend=all_mode=difference",
+    )
+    if floor == 0:
+        # その軸に縁が 1 本も無い (行または列が一色)。反転しても必ず同じ絵になる
+        return 0.0
+    return difference / floor
+
+
+def measured_image(out: pathlib.Path, shot: Shot) -> pathlib.Path:
+    """測る 1 枚。動きは**真ん中の 1 枚**を見る。
+
+    動きの全部を見ないのは、軸の対称は 1 枚ごとの性質だからである。時間の向きが
+    出ているかは別の問いで、ここでは扱わない。
+    """
+    if not shot.is_motion:
+        return out / f"{shot.name}.png"
+    frames = sorted((out / shot.name).glob("f.*.png"))
+    if not frames:
+        raise SystemExit(f"{shot.name} の連番が無い")
+    return frames[len(frames) // 2]
+
+
+def mirror_warnings(name: str, where: str, ratios: dict[str, float], silenced: str) -> list[str]:
+    """見分けが付かない軸を 1 行ずつ。**黙らせた軸は数えない。**
+
+    純関数にしてあるのは、境目の当て方を絵を撮らずに検められるようにするためである。
+    """
+    lines = []
+    for axis, ratio in sorted(ratios.items()):
+        if axis in silenced or ratio > INDISTINGUISHABLE:
+            continue
+        lines.append(
+            f"{where}: {name} は {axis} 軸で反転しても見分けが付かない "
+            f"(1 画素ずらしの {ratio:.2f} 倍 ≦ {INDISTINGUISHABLE} 倍)。"
+            f"向きを決める引数を間違えても同じ絵になる。"
+            f"対称なのが正しいなら撮影設定へ symmetric={axis} を足す"
+        )
+    return lines
+
+
+def report_mirrors(out: pathlib.Path, shots: list[Shot], verbose: bool = False) -> None:
+    """撮れた絵が**何かを示しているか**を測って言う (#481)。
+
+    **止めない。** 対称なのが正しい絵 (真円・正方形・放射状のもの) は普通にあるので、
+    エラーにすると作業が詰まる。分かっているものは軸ごとに黙らせられる。
+    """
+    warnings: list[str] = []
+    for shot in shots:
+        image = measured_image(out, shot)
+        ratios = {axis: mirror_ratio(image, axis) for axis in MIRROR_FILTERS}
+        if verbose:
+            measured = " ".join(f"{axis}={value:.2f}" for axis, value in sorted(ratios.items()))
+            silenced = f" symmetric={shot.symmetric}" if shot.symmetric else ""
+            print(f"  {shot.name} {measured}{silenced} {shot.where}")
+        warnings += mirror_warnings(shot.name, shot.where, ratios, shot.symmetric)
+    if not warnings:
+        print(f"ok: 撮れた絵 {len(shots)} 本は、どれも反転すれば見分けが付く")
+        return
+    print(f"注意: 反転しても見分けが付かない絵が {len(warnings)} 件", file=sys.stderr)
+    for line in warnings:
+        print(f"  {line}", file=sys.stderr)
+
+
 # ---------------------------------------------------------------- 上げる・書き戻す
 
 
@@ -505,6 +676,11 @@ def main() -> int:
     parser.add_argument("--render", type=pathlib.Path, help="撮って置き場へ書き出す (GPU が要る)")
     parser.add_argument("--capture", action="store_true", help="撮って上げて書き戻す (GPU と鍵が要る)")
     parser.add_argument("--token-command", help="Gyazo のトークンを標準出力に出すコマンド")
+    parser.add_argument(
+        "--mirror-report",
+        action="store_true",
+        help="反転したときの差を 1 本ずつ出す (境目を決め直すときに見る)",
+    )
     arguments = parser.parse_args()
 
     root = pathlib.Path(
@@ -531,6 +707,8 @@ def main() -> int:
 
     out = arguments.render or (root / ".build" / "example-shots-out")
     render(root, shots, out)
+    # **撮った直後に測る。** 上げてしまってからでは、直すのに撮り直しが要る
+    report_mirrors(out, shots, verbose=arguments.mirror_report)
     if not arguments.capture:
         print(f"書き出した: {out}")
         return 0
