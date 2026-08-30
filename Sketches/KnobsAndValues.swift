@@ -45,7 +45,7 @@ import mokume
 /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 final class KnobsAndValues: Sketch {
-    var settings = SketchSettings(width: 960, height: 720, title: "knobs and values")
+    var settings = SketchSettings(width: 1280, height: 1000, title: "knobs and values")
 
     /// 並びの数。範囲を書いたので、窓には刻みつきのスライダーが出る。
     @Param(1...12) var columns: Int = 6
