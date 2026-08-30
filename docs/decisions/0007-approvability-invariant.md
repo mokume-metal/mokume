@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27)
+採用 (2026-08-27) / 改訂 (2026-08-30): 承認者集合の代理を `author_association` にする
 
 ## 文脈
 
