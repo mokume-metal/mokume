@@ -23,7 +23,7 @@ struct TemplateBuildTests {
             .deletingLastPathComponent()  // リポジトリ直下
     }
 
-    @Test("作ったスケッチが、そのまま組み上がる", .timeLimit(.minutes(5)))
+    @Test("作ったスケッチが、そのまま組み上がる")
     func theGeneratedSketchBuilds() throws {
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-template-\(UUID().uuidString)", isDirectory: true)
@@ -40,22 +40,12 @@ struct TemplateBuildTests {
             try contents.write(to: url, atomically: true, encoding: .utf8)
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["swift", "build"]
-        process.currentDirectoryURL = root
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let output = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        process.waitUntilExit()
-
-        #expect(process.terminationStatus == 0, "ひな形から作ったものが組み上がらない:\n\(output)")
+        let built = try BuildProcess.build(in: root)
+        #expect(built.killed == false, "組み上げが終わらないまま期限に達した")
+        #expect(built.status == 0, "ひな形から作ったものが組み上がらない:\n\(built.output)")
     }
 
-    @Test("置いた資材が、絵を探す場所へ運ばれる", .timeLimit(.minutes(5)))
+    @Test("置いた資材が、絵を探す場所へ運ばれる")
     func assetsLandWhereImagesAreLookedFor() throws {
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-assets-\(UUID().uuidString)", isDirectory: true)
@@ -80,18 +70,9 @@ struct TemplateBuildTests {
         // 宣言があるので、走らせる前の検査は通る
         #expect(throws: Never.self) { try ResourceDeclaration.check(in: root) }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["swift", "build"]
-        process.currentDirectoryURL = root
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        let output = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        process.waitUntilExit()
-        #expect(process.terminationStatus == 0, "資材を置いたスケッチが組み上がらない:\n\(output)")
+        let built = try BuildProcess.build(in: root)
+        #expect(built.killed == false, "組み上げが終わらないまま期限に達した")
+        #expect(built.status == 0, "資材を置いたスケッチが組み上がらない:\n\(built.output)")
 
         // 実行ファイルの隣を起点に、絵を探す並びの中に運ばれた資材が入っている。
         // **ここが繋がっていないと、宣言は書かれているのに実行時に読めない**
@@ -115,7 +96,12 @@ struct TemplateBuildTests {
     /// **配ったときにしか通らない経路がある。** 包みの中では実行ファイルの隣が
     /// `Contents/MacOS/` になり、資材は `Contents/Resources/` へ入る。組み上げの
     /// 隣だけを見ていると、手元では動いて配った先だけで絵が出ない形になる。
-    @Test("束ねた包みの中でも、資材が絵を探す場所にある", .timeLimit(.minutes(10)))
+    ///
+    /// **ここだけ期限を持てない。** 組み上げるのは `BundleCommand.run` の中で、期限を
+    /// 置くとしたら製品のコードになる — 利用者の `mokume bundle` が時計で殺される形は
+    /// 採らない。外した `.timeLimit` はもともと効いていなかった (同期の本体が main actor
+    /// を塞ぐので、上限が鳴ってもプロセスは終わらない) ので、失うものは無い (#564)。
+    @Test("束ねた包みの中でも、資材が絵を探す場所にある")
     func assetsLandInsideTheBundledApplication() throws {
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-bundled-\(UUID().uuidString)", isDirectory: true)
@@ -175,5 +161,120 @@ struct TemplateBuildTests {
             resources: app.appendingPathComponent("Contents/Resources", isDirectory: true),
             lastResort: { _, _ in nil })
         #expect(shader != nil, "描くのに要る断片が包みの中に無い")
+    }
+}
+
+/// 組み上げのプロセスを、**期限つきで**待つ。
+///
+/// **止め木を待つ側に置く理由。** `.timeLimit` はこのパッケージでは使えない — 上限は
+/// 検査の走り出しからの時計で測られ、検査はすべて main actor に載っているので、どんな
+/// 値を書いても「検査**全体**が何秒で終わるか」を要求することになる ([#564])。実測では
+/// 905 件のうち 875 件が「60 秒超」を報告した。
+///
+/// **型ごと `nonisolated` にする。** `Package.swift` の `.defaultIsolation(MainActor.self)`
+/// はこのパッケージ全体に効くので、既定のままだと期限を数える閉包まで main actor 隔離と
+/// 推論され、別の走りで鳴った瞬間に `dispatch_assert_queue` で落ちる (実測: SIGTRAP で
+/// 検査バンドルごと死ぬ)。期限は main actor の外で数えなければ意味が無い。
+///
+/// [#564]: https://github.com/mokume-metal/mokume/issues/564
+nonisolated enum BuildProcess {
+    /// 既定の期限。組み上げは資材の取得から始まることもあるので長めに取るが、
+    /// **止め木であって速さの主張ではない**。
+    static let limit: Double = 600
+
+    /// 期限を越えたら殺す係。
+    ///
+    /// **`Process` は `Sendable` ではない**が、期限を数えるのは別の走りでなければ
+    /// ならない (main actor は `waitUntilExit()` で塞がっている)。殺す 1 手と殺した
+    /// かの印だけをここへ閉じて渡す — `terminate()` は別の走りから呼んでよい。
+    private final class Deadline: @unchecked Sendable {
+        private let lock = NSLock()
+        private let process: Process
+        private var killed = false
+        init(_ process: Process) { self.process = process }
+        var didKill: Bool { lock.withLock { killed } }
+        func kill() {
+            lock.withLock { killed = true }
+            process.terminate()
+        }
+    }
+
+    /// 走らせて待つ。**越えたら殺す。**
+    ///
+    /// 報告するだけでは足りない。`waitUntilExit()` は main actor を塞いだまま止まる
+    /// ので、殺さなければ後続の検査が 1 つも進まないまま run 全体が固まる。
+    static func run(
+        _ process: Process, reading pipe: Pipe, within seconds: Double = limit
+    ) throws -> (status: Int32, output: String, killed: Bool) {
+        try process.run()
+        let deadline = Deadline(process)
+        let alarm = DispatchWorkItem { deadline.kill() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: alarm)
+        defer { alarm.cancel() }
+
+        // **読み切ってから待つ。** 逆順にすると、出力が管を埋めた時点で子が書けなく
+        // なって止まる
+        let output =
+            String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+        return (process.terminationStatus, output, deadline.didKill)
+    }
+
+    /// `swift build` を、期限つきで。
+    static func build(in directory: URL) throws -> (status: Int32, output: String, killed: Bool) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["swift", "build"]
+        process.currentDirectoryURL = directory
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        return try run(process, reading: pipe)
+    }
+}
+
+/// 止め木そのものの検査。
+///
+/// **効くことを見ていない止め木は、止め木ではない。** 待ち続けるだけのヘルパを書いても、
+/// 組み上げが終わるうちは緑のまま通る — 効いていないと分かるのは本当に固まった日で、
+/// そのとき run は何も出さずに固まる。
+@Suite("組み上げの待ちには期限がある")
+struct BuildDeadlineTests {
+    /// **待たせる側は有限にする。** 永遠に眠る相手にすると、止め木が効かなくなった
+    /// 日にこの検査は赤くならず**固まる** — 壊れたことを知らせる手立てを、壊れ方の
+    /// 巻き添えにしないため。20 秒眠る相手を 0.5 秒で殺すので、効いていなければ
+    /// 20 秒後に赤く落ちる。
+    @Test("期限を越えたプロセスは、殺されて返る")
+    func aProcessThatOutlivesTheDeadlineIsKilled() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["20"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        let started = Date()
+        let result = try BuildProcess.run(process, reading: pipe, within: 0.5)
+        let waited = Date().timeIntervalSince(started)
+
+        #expect(result.killed, "期限を越えたのに殺されていない")
+        #expect(result.status != 0, "殺されたのに、終わり方が成功を名乗っている")
+        #expect(waited < 10, "期限を 0.5 秒にしたのに \(waited) 秒待っている")
+    }
+
+    @Test("期限の内に終わるプロセスは、殺されずそのまま返る")
+    func aProcessThatEndsInTimeIsNotKilled() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/echo")
+        process.arguments = ["木目"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        let result = try BuildProcess.run(process, reading: pipe, within: 60)
+
+        #expect(result.killed == false, "期限の内に終わったのに殺された")
+        #expect(result.status == 0)
+        #expect(result.output.contains("木目"), "出力が読み取れていない")
     }
 }

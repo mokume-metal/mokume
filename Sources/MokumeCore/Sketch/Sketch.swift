@@ -199,10 +199,39 @@ extension Sketch {
     ///
     /// `values` に書いた名前が、断片から `values.名前` で読める。後から名前を増やすと
     /// 断片ごと組み直しになるので、**名前は読み込むときに決め、値だけを後から変える**
-    /// (``Shader/set(_:_:)``)。
+    /// (``Shader/set(_:_:)-(_,ShaderValue)``)。
     ///
     /// 渡せるのは **float 換算で 64 個まで** (色は 4 個ぶん・2 つ組は 2 個ぶん) — 値は列
     /// ごとに 1 区画へ載せるので、上限は動かせない。超えた宣言は読み込みの時点で断られる。
+    ///
+    /// ## 面も名前で渡せる
+    ///
+    /// `surfaces` に書いた名前が、断片から `surfaces.名前` で読める。**渡せるのは
+    /// 読み込んだ絵と、自分で描いた面の両方**である。
+    ///
+    /// <!-- example: 文脈 var blended: Shader! -->
+    /// ```swift
+    /// // blended.metal
+    /// // float4 paint(Fragment in, Values values, Surfaces surfaces) {
+    /// //     float4 wood = mokume_sample(surfaces.grain, in.uv);
+    /// //     float4 dirt = mokume_sample(surfaces.smudge, in.place);
+    /// //     return float4(wood.rgb * mix(1.0, dirt.r, values.amount), wood.a);
+    /// // }
+    /// guard let bark = try? loadImage("assets/bark.png"),
+    ///     let smudge = try? createGraphics(256, 256)
+    /// else { return }
+    /// blended = try? loadShader(
+    ///     "assets/blended.metal",
+    ///     values: ["amount": 0.7],
+    ///     surfaces: ["grain": .image(bark), "smudge": .graphics(smudge)])
+    /// ```
+    ///
+    /// **面を宣言した断片だけ、受け取るものが 1 つ増える。** 宣言していない断片は
+    /// `paint(Fragment, Values)` のままで、書き換えなくてよい。
+    ///
+    /// 渡せるのは **4 枚まで** — 面は名前ごとに口を 1 つ使い、口の数は断片によらず
+    /// 決まっている。超えた宣言は読み込みの時点で断られる。値と同じく、**名前は
+    /// 読み込むときに決め、面だけを後から差し替える** (``Shader/set(_:_:)-(_,ShaderSurface)``)。
     ///
     /// ## 平面にも立体にも同じ断片が効く
     ///
@@ -221,20 +250,22 @@ extension Sketch {
     /// 前の断片がそのまま残り、失敗の理由は観測の警告に出る。平面と立体の両方が
     /// 組み上がってはじめて差し替わるので、片方だけ古い断片が効くことはない。
     ///
-    /// - Throws: 見つからないとき・組み立てられないとき・値が多すぎるときに ``ShaderFailure``。
+    /// - Throws: 見つからないとき・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     public func loadShader(
-        _ path: String, values: [String: ShaderValue] = [:]
+        _ path: String, values: [String: ShaderValue] = [:],
+        surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try canvas.loadShader(path, values: values)
+        try canvas.loadShader(path, values: values, surfaces: surfaces)
     }
 
     /// 文字列から断片を作る。保存の拾い直しは効かない (在処が無いため)。
     ///
-    /// - Throws: 組み立てられないとき・値が多すぎるときに ``ShaderFailure``。
+    /// - Throws: 組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     public func makeShader(
-        _ body: String, name: String = "shader", values: [String: ShaderValue] = [:]
+        _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
+        surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try canvas.makeShader(body, name: name, values: values)
+        try canvas.makeShader(body, name: name, values: values, surfaces: surfaces)
     }
 
     /// これから描くものを、この断片で塗る。

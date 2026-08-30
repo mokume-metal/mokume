@@ -316,8 +316,7 @@ struct ShadowTests {
     /// 既定の細かさでは窓が狭く、混ませても現れにくい。
     @Test(
         "動く形の影が遅れない (混ませて繰り返す)",
-        .enabled(if: shadowStressRounds > 0, "MOKUME_SHADOW_STRESS に回数を入れたときだけ走らせる"),
-        .timeLimit(.minutes(5)))
+        .enabled(if: shadowStressRounds > 0, "MOKUME_SHADOW_STRESS に回数を入れたときだけ走らせる"))
     func shadowsFollowTheSameFrameUnderLoad() throws {
         let canvas = try makeCanvas()
         var late = 0

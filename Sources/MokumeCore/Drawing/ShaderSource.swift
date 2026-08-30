@@ -13,8 +13,8 @@ import Foundation
 ///
 /// ## 並び
 ///
-/// 値の宣言 → 共通部分 → 断片。共通部分が値の型を使い、断片が共通部分の型を使うので、
-/// この順序でしか組み立てられない。
+/// 値の宣言 → 面の宣言 → 共通部分 → 断片。共通部分が値と面の型を使い、断片が共通部分の
+/// 型を使うので、この順序でしか組み立てられない。
 enum ShaderSource {
     /// 値の名前と、その形。
     ///
@@ -41,9 +41,49 @@ enum ShaderSource {
         return packed
     }
 
+    /// 面の名前と、断片からの受け取り方。
+    ///
+    /// 名前は断片の中で `surfaces.<名前>` として書ける。並べる順は名前順に固定する
+    /// (値と同じ理由に加えて、**この順で口が割り当たる** — 辞書の順序に依らせると、
+    /// 同じ断片が実行のたびに別の面を読む)。
+    ///
+    /// **1 枚も無ければ 1 バイトも出さない。** 面を宣言していない断片の原稿が動かない
+    /// ことが、`#ifdef` で入口を切り替える形の前提である ([#407])。
+    ///
+    /// 口は使う枚数によらず ``ShapePipeline/surfaceCapacity`` 個ぶん受け取る — 入口の
+    /// 側は断片ごとに口の数を変えられないので、余った口はここで捨てる。
+    ///
+    /// [#407]: https://github.com/mokume-metal/mokume/issues/407
+    static func declaration(of surfaces: [String: ShaderSurface]) -> String {
+        let names = surfaces.keys.sorted()
+        guard !names.isEmpty else { return "" }
+        // **名前空間ごと書く。** この前置きは共通部分より前に出るので、`using namespace
+        // metal;` がまだ効いていない (裸の `texture2d` は「そんな型は無い」で落ちる)
+        let fields = names.map { "    metal::texture2d<float> \($0);" }.joined(separator: "\n")
+        let slots = (0..<ShapePipeline.surfaceCapacity)
+            .map { "metal::texture2d<float> s\($0)" }.joined(separator: ", ")
+        let assignments = names.enumerated()
+            .map { "    surfaces.\($0.element) = s\($0.offset);" }.joined(separator: "\n")
+        return """
+            #define MOKUME_SURFACES \(names.count)
+            struct Surfaces {
+            \(fields)
+            };
+            static inline Surfaces mokume_surfaces(\(slots)) {
+                Surfaces surfaces;
+            \(assignments)
+                return surfaces;
+            }
+
+            """
+    }
+
     /// 原稿を組み立てる。
-    static func assemble(common: String, values: [String: ShaderValue], body: String) -> String {
-        declaration(of: values) + common + "\n" + body + "\n"
+    static func assemble(
+        common: String, values: [String: ShaderValue],
+        surfaces: [String: ShaderSurface] = [:], body: String
+    ) -> String {
+        declaration(of: values) + declaration(of: surfaces) + common + "\n" + body + "\n"
     }
 }
 

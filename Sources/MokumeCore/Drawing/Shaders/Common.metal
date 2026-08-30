@@ -299,6 +299,22 @@ constant uint kReplace = 9;
 constexpr sampler kGlyphSampler(
     coord::normalized, filter::linear, address::clamp_to_edge);
 
+/// 利用者が渡した面の読み取り方。**組み込みが `texel` を読むのと同じ規則**にしてある —
+/// 同じ絵を貼ったのに、断片から読むと縁や滑らかさが違う、が起きない。
+constexpr sampler kSurfaceSampler(
+    coord::normalized, filter::linear, address::clamp_to_edge);
+
+/// 渡した面から読む。位置は 0…1。
+///
+/// ```metal
+/// float4 paint(Fragment in, Values values, Surfaces surfaces) {
+///     return mokume_sample(surfaces.grain, in.uv) * mokume_sample(surfaces.dirt, in.place);
+/// }
+/// ```
+static inline float4 mokume_sample(texture2d<float> surface, float2 spot) {
+    return surface.sample(kSurfaceSampler, spot);
+}
+
 /// 1 画素ぶんの入力。**利用者の断片が受け取るのはこれだけ。**
 struct Fragment {
     /// 面の中の位置 (画素・左上が原点)。
@@ -471,9 +487,26 @@ static inline float4 mokume_composite(float4 source, float4 destination, uint mo
 }
 
 /// 画素の色を出す。**組み込みも利用者の断片も、書くのはこれ 1 本。**
+///
+/// **面を宣言した断片だけ、受け取るものが 1 つ増える。** 宣言していない断片は今までの
+/// 2 引数のままで、組み上がる原稿も 1 バイト変わらない ([#407])。
+///
+/// [#407]: https://github.com/mokume-metal/mokume/issues/407
+#ifdef MOKUME_SURFACES
+float4 paint(Fragment in, Values values, Surfaces surfaces);
+#else
 float4 paint(Fragment in, Values values);
+#endif
 
 fragment float4 mokume_fragmentMain(
+#ifdef MOKUME_SURFACES
+    // 利用者が宣言した面。**口の数は宣言した枚数によらず固定**で、余りには
+    // 別の面が束ねてある (何も束ねない口を作らないため)
+    texture2d<float> user_surface_0 [[texture(2)]],
+    texture2d<float> user_surface_1 [[texture(3)]],
+    texture2d<float> user_surface_2 [[texture(4)]],
+    texture2d<float> user_surface_3 [[texture(5)]],
+#endif
     ShapeFragmentIn in [[stage_in]],
     constant uint &mode [[buffer(2)]],
     constant Uniforms &uniforms [[buffer(4)]],
@@ -536,5 +569,11 @@ fragment float4 mokume_fragmentMain(
     f.noiseFalloff = uniforms.noiseFalloff;
     f.numbers = numbers;
 
+#ifdef MOKUME_SURFACES
+    Surfaces surfaces = mokume_surfaces(
+        user_surface_0, user_surface_1, user_surface_2, user_surface_3);
+    return mokume_composite(paint(f, values, surfaces), destination, mode);
+#else
     return mokume_composite(paint(f, values), destination, mode);
+#endif
 }

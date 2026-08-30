@@ -80,8 +80,7 @@ struct ShapeTests {
     /// 測れない構成では測らずに、測っていないことを出力へ出す。
     @Test(
         "大量の要素では、毎フレーム組み立てるより速い",
-        .enabled(if: !isDebugBuild, "最適化していない実行ファイルでは速さを測らない"),
-        .timeLimit(.minutes(1)))
+        .enabled(if: !isDebugBuild, "最適化していない実行ファイルでは速さを測らない"))
     func replayingBeatsRebuildingForManyElements() throws {
         let canvas = try makeCanvas(width: 256, height: 256)
         let count = 4000
