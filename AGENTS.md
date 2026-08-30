@@ -136,6 +136,8 @@ gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
 
 適用はエージェントの token では通らない (ADR-0003 決定 1 により `Administration` 権限を持たない)。定義ファイルの PR までがエージェントの仕事で、merge 後の `--apply` はメンテナが打つ。
 
+**必須チェックを消すときだけ、適用が先である。** 足す・変えるなら適用が後でも安全側に倒れる (新しい要求が効かないだけ) が、消す場合は**その PR 自身が消そうとしている必須チェックを満たせなくなる** — 報告する者を同じ PR で消すからで、承認が付いても `Expected — Waiting for status to be reported` から動かない ([#620](https://github.com/mokume-metal/mokume/pull/620) で実測・[ADR-0006](docs/decisions/0006-github-settings-as-code.md) 決定 3 の追補)。鮮度検査は作業ブランチを `editing` と判定するので、merge 前に打っても止まらない。
+
 照合も適用も読むのは手元にチェックアウトされている定義なので、古い版のツリーから打つと嘘をつく。照合は手元が古ければそう名乗り ([#311](https://github.com/mokume-metal/mokume/issues/311))、適用は古ければ赤で止まる ([#425](https://github.com/mokume-metal/mokume/issues/425))。押し通すためのフラグは無い。
 
 `bypass_actors` はルールセットへの write access がある認証にしか返らない。手元での照合は読めなければ赤にする (一番危ない項目を見ていない緑を作らないため)。CI にその鍵は置かないので、日次のドリフト検査 (`.github/workflows/ruleset-drift.yml`) は `--without-bypass-actors` で走り、見ていないことを出力が名乗る。**この項目を見張っているのは、メンテナが手元で `bash scripts/check-rulesets.sh` を打つときだけである** ([ADR-0006](docs/decisions/0006-github-settings-as-code.md) 決定 5)。機械で見張る仕組みは実害が出てから足す。
