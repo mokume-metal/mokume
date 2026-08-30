@@ -143,6 +143,12 @@ struct TemplateBuildTests {
         let app = root.appendingPathComponent("bundle/Grain.app", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: app.path), "包みが出来ていない")
 
+        // 開き方は包みの**隣**に出る。中にあっては、開けない人には読めない
+        let note = root.appendingPathComponent("bundle/Grain を開くには.txt")
+        #expect(
+            FileManager.default.fileExists(atPath: note.path),
+            "開き方の紙が包みの隣に無い。作品と一緒に送れる物になっていない")
+
         // 包みの中だけを起点にする。**組み上げた場所は見せない** — そこが見えていると、
         // 配った先で足りているかを確かめたことにならない
         let searched = ImageFile.candidates(

@@ -128,9 +128,35 @@ struct BundleCommandTests {
     /// 確かめ方まで言わないと、束ねた側の手元では成功したようにしか見えない。
     @Test("束ねた後の報せが、退避して起動する手順を含む")
     func theReportTellsHowToCheck() {
-        let report = BundleCommand.report(for: URL(fileURLWithPath: "/tmp/Demo.app"))
+        let report = BundleCommand.report(
+            for: URL(fileURLWithPath: "/tmp/Demo.app"),
+            note: URL(fileURLWithPath: "/tmp/Demo を開くには.txt"))
         #expect(report.contains("/tmp/Demo.app"))
         #expect(report.contains(".build"))
+    }
+
+    /// 受け取った側の往復は消せない。消せない代わりに、説明を**送り手の記憶から外す** —
+    /// 紙が作品と一緒に運べる形になっていることを見る。
+    @Test("開き方の紙が、作品名と踏む手順を持つ")
+    func theOpeningNoteCarriesTheSteps() {
+        let identity = AppIdentity(
+            name: "Grain", identifier: "org.example.grain", version: "0.1.0")
+        #expect(BundleCommand.noteFileName(for: identity) == "Grain を開くには.txt")
+
+        let note = BundleCommand.openingNote(for: identity)
+        #expect(note.contains("Grain.app"))
+        #expect(note.contains("プライバシーとセキュリティ"))
+        #expect(note.contains("このまま開く"))
+    }
+
+    /// 手順を報せに書くと、読んだ送り手が伝え直すことになる。名指しなら物が動く。
+    @Test("束ねた後の報せが、開き方の紙を名指しして一緒に送るよう言う")
+    func theReportPointsAtTheOpeningNote() {
+        let report = BundleCommand.report(
+            for: URL(fileURLWithPath: "/tmp/Demo.app"),
+            note: URL(fileURLWithPath: "/tmp/Demo を開くには.txt"))
+        #expect(report.contains("/tmp/Demo を開くには.txt"))
+        #expect(report.contains("一緒に送る"))
     }
 
     @Test("置き場を渡せる")
