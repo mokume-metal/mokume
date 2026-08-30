@@ -114,3 +114,6 @@ jobs:
           url="$(printf '%s' "$PAGE_URL" | sed -E 's#/+$##')"
           echo "引く先: $url"
           python3 scripts/check-published-reference.py "$url"
+          # 手で書いた層は別に引く。**面の内側が全部出ていても、被せた層が配られて
+          # いないことはある** — 片方だけが出ている状態を「公開できた」と読まない
+          python3 scripts/check-entry.py "$url"
