@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test drawing-evidence render-status shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test
+.PHONY: setup check ci-check build test drawing-evidence render-status catch-up shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adr-numbers hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -140,6 +140,12 @@ drawing-evidence:
 # 認証が無いので何もしない。報告しない理由を述べて必ず 0 で終える
 render-status:
 	bash scripts/render-status.sh local
+
+# merge queue から弾かれた描画 PR を queue へ戻す (#457)。取り込み → 検査 → push →
+# 報告 → 戻す の 5 手を 1 手にする。**打つ意味が無いときは走らない** (描画に触れない
+# PR・先に描画 PR が居る場合) ので、順番待ちの数分を無駄にしない
+catch-up: ## 弾かれた描画 PR を、合流後の姿を覆い直して merge queue へ戻す
+	bash scripts/catch-up.sh
 
 # シェーダの原文はビルドに含まれない (SwiftPM は .metal を運ぶだけ) ので、誤りは
 # 実行するまで分からない。描画を要する検査は実行環境の制約で CI では走らない (#180)
