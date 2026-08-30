@@ -52,6 +52,11 @@
 # 使い方: request-review.sh <PR番号> (要 GH_TOKEN / gh 認証)
 set -euo pipefail
 
+# パス由来の要求が飛ぶ PR かの判定。**照合は review-gate と 1 つを共有する**
+# (ADR-0001 原則 9)
+# shellcheck source=scripts/protected-paths.sh
+. "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
+
 PR="${1:?PR 番号が必要}"
 REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 # 宛先の user。承認を課している集合の正典は .github/rulesets/main-protection.json の
@@ -59,16 +64,29 @@ REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 # 綴りはここ 1 か所で持つ — team のメンバーが変わったらここも直す
 MAINTAINERS_USER="${MAINTAINERS_USER:-shinyaoguri}"
 
-if ! pr_json=$(gh pr view "$PR" -R "$REPO" --json author,reviewRequests,latestReviews 2>&1); then
+if ! pr_json=$(gh pr view "$PR" -R "$REPO" --json author,files,reviewRequests,latestReviews 2>&1); then
   # 投げようがないので、声が掛かっていないのは失敗したときと同じである
   echo "request-review: PR の情報を引けなかったので要求を投げない" >&2
   echo "$pr_json" >&2
   exit 20
 fi
 
+# **まず条件で見る** (#584)。重要パスに触れる PR にはルールセットの required_reviewers が
+# 必ず team へ要求を飛ばすので、ここが投げれば必ず 2 通目になる。#530 が畳んだ
+# 「同じ人へ 2 通」の再来である。
+#
+# 下の teams_requested (状態を読む判定) では間に合わない — API の反映が遅れると
+# 見えないまま投げてしまう (#583 では 19 秒後に読んでも team が返ってこなかった)。
+# **飛ぶかどうかは触れたパスで決まっている**ので、状態ではなく条件で判定する
+if jq -r '.files[]?.path // empty' <<<"$pr_json" | touches_protected_path; then
+  echo "request-review: 重要パスに触れているので投げない (パス由来が飛ぶ)"
+  exit 0
+fi
+
 # 保留中のチーム要求。**login を持たない要素がチーム**である — 綴り (name / slug /
 # __typename) に頼らないので、GitHub が形を変えても読み違えない。このリポジトリの
-# チームは maintainers 1 つなので、1 件でもあればパス由来が既に飛んでいる
+# チームは maintainers 1 つなので、1 件でもあればパス由来が既に飛んでいる。
+# 上の条件判定が漏れたとき (ルールセットを変えた直後など) の保険にあたる
 teams_requested=$(jq -r '[ .reviewRequests[]? | select(has("login") | not) ] | length' <<<"$pr_json")
 # 同じ user への保留中の要求。**この経路が既に投げた分**である。CI は Approve や
 # ラベルの付け外しでも走り直すので、見ないと同じ人へ 2 通目を作る

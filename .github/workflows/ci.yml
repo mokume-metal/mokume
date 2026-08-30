@@ -146,6 +146,13 @@ jobs:
   # (#575)。request-review.sh は「声が掛かっていない」を終了コード 20 で返し、ここが
   # human-approval の **description** に載せる — マージボックスに出るので、ジョブを
   # 開かなくても読める。新しい経路は 1 つも作っていない。
+  #
+  # **重要パスに触れる PR では、そもそも投げない** (#584)。ルールセットの
+  # required_reviewers が必ず team へ要求を飛ばすので、ここが投げれば同じ人へ 2 通目に
+  # なる。判定は「もう飛んでいるか」を API から読む形だったが、反映が遅れると見えない
+  # まま投げてしまった (#583 では 19 秒後でも見えなかった)。飛ぶかどうかは触れたパスで
+  # 決まっているので、scripts/protected-paths.sh の照合を review-gate と共有して
+  # **状態ではなく条件で**判定する。
   approval-signal:
     if: always() && github.event_name != 'push'
     needs: [review-gate]

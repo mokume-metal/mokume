@@ -51,8 +51,10 @@ readonly PENDING=20
 
 PR="${1:?PR 番号が必要}"
 REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
-# 承認が要るパスの正本 (下の「4.」を参照)。テストは別のファイルを指す
-RULESET_FILE="${RULESET_FILE:-$(cd "$(dirname "$0")/.." && pwd)/.github/rulesets/main-protection.json}"
+# 承認が要るパスの判定 (下の「4.」を参照)。**照合は 1 か所**に保つ — request-review.sh も
+# 同じ判定でパス由来の要求が飛ぶ PR を見分ける (#584・ADR-0001 原則 9)
+# shellcheck source=scripts/protected-paths.sh
+. "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
 
 fail() {
   echo "review-gate: 差し戻し — $1" >&2
@@ -91,42 +93,6 @@ unapprovable_message() {
 
 メンテナ自身の PR も同じです (ADR-0007 決定 2 — 例外を作らない)。
 EOF
-}
-
-# ルールセットが 1 承認を課しているパスのパターン。**写しを持たず正本を読む**
-required_patterns() {
-  [ -f "$RULESET_FILE" ] || return 0
-  jq -r '
-    .rules[]? | select(.type == "pull_request")
-    | .parameters.required_reviewers[]? | .file_patterns[]?
-  ' "$RULESET_FILE"
-}
-
-# 1 パターンが 1 ファイルに当たるか。ルールセットの file_patterns は gitignore 形式で、
-# このリポジトリが使うのは末尾 `/**` (ディレクトリ配下すべて) だけである。他の形が
-# 増えたらここを見る — 特に否定 (`!`) は無視すると過剰に一致し、承認の要らない PR を
-# 「誰も承認できない」と誤って差し戻す
-pattern_match() { # $1=パターン $2=ファイルパス
-  local pattern=$1 path=$2
-  if [[ $pattern == */\*\* ]]; then
-    [[ $path == "${pattern%/\*\*}"/* ]]
-  else
-    [[ $path == $pattern ]]
-  fi
-}
-
-# 標準入力のファイル群 (1 行 1 件) のどれかがルールセットの対象に当たるか
-touches_protected_path() {
-  local paths pattern path
-  paths=$(cat)
-  while IFS= read -r pattern; do
-    [ -n "$pattern" ] || continue
-    while IFS= read -r path; do
-      [ -n "$path" ] || continue
-      pattern_match "$pattern" "$path" && return 0
-    done <<<"$paths"
-  done < <(required_patterns)
-  return 1
 }
 
 pr_json=$(gh pr view "$PR" -R "$REPO" \
