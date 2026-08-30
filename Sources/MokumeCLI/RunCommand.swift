@@ -97,9 +97,13 @@ enum RunCommand {
 
     /// `swift` を呼ぶ。
     @discardableResult
-    static func swift(_ arguments: [String], in directory: URL, capturing: Bool) throws(
-        CommandFailure
-    ) -> (status: Int32, output: String) {
+    /// - Parameter discardingErrors: 道具立ての愚痴を捨てるか。**既定は流す** — 作り
+    ///   直しの失敗はそこにしか出ないので、黙らせるのは出力そのものを人へ見せる呼び
+    ///   出し (切り分けの口) だけにする。
+    static func swift(
+        _ arguments: [String], in directory: URL, capturing: Bool,
+        discardingErrors: Bool = false
+    ) throws(CommandFailure) -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["swift"] + arguments
@@ -107,6 +111,9 @@ enum RunCommand {
         let pipe = Pipe()
         if capturing {
             process.standardOutput = pipe
+        }
+        if discardingErrors {
+            process.standardError = FileHandle.nullDevice
         }
         do {
             try process.run()
