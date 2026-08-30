@@ -75,6 +75,12 @@ public enum StartupReads {
         note: "起動の瞬間に在れば入力が届くようになる。走っている最中に作っても拾わない",
         readSite: "Sources/MokumeCore/Input/InputInbox.swift")
 
+    /// 走っている速さの名乗り。
+    public static let frameRateNotice = Entry(
+        name: "速さの名乗り", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
+        note: "走っている速さを 1 秒ごとに名乗る。値は一緒に出す構成の名前で、道具が run / watch でだけ渡す",
+        readSite: "Sources/MokumeCore/Display/FrameRateNotice.swift")
+
     /// 全部。**案内も検査もここを読む。**
-    public static let all: [Entry] = [workDirectory, sourceStamp, observe, input]
+    public static let all: [Entry] = [workDirectory, sourceStamp, frameRateNotice, observe, input]
 }
