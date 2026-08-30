@@ -45,7 +45,7 @@ SPDX-License-Identifier: MIT
 
 ## 進め方
 
-1. 変更は Issue 起票から始める。起票は雑でよい (書式不要・分類は機械がタイトルから下書きする)。複数工程は親 Issue + sub-issue で構成し、本文チェックリストは使わない
+1. 変更は Issue 起票から始める。起票は雑でよい (書式不要・分類は機械がタイトルから下書きする)。複数工程は親 Issue + sub-issue で構成し、本文チェックリストは使わない。**印を付けられるのは完了条件を知っている起票者だけ**で、エージェントも自分が起票して本文に完了条件を書けた Issue には自分で付けてよい ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1 の追補)。他人が書いた Issue には付けない
 2. **着手できるのは `verify: triaged` が付いた Issue だけ。** ラベルが無ければ未トリアージなので着手しない — まず議論して「どうなれば解消か」を Issue 本文に固めてから付ける ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1・[ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 1)
 3. **着手時に完了条件がまだ妥当かを確かめる。** ラベルは付いた時点の判断しか表さない — 各条件を現行のコードと突き合わせ、「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書く。ずれていれば Issue 本文のほうを先に更新する ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 4。[#457](https://github.com/mokume-metal/mokume/issues/457) は起票時の 3 条件が着手前に既に満たされていた)
 4. その突き合わせを含むプラン (変更点・確認方法) を対象 Issue にコメントで残す。実装の過程で変わったら差分を残す (PR を出した後なら PR 側へ)。記憶がリセットされた次のセッションが、GitHub を読むだけで再開できる状態を保つため
