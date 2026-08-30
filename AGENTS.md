@@ -105,7 +105,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
 ```
 
-承認の要否は `reviewDecision` には現れないので `mergeStateStatus` を見る (承認待ちなら `BLOCKED`・承認されると `CLEAN`)。理由は [ADR-0003](docs/decisions/0003-agent-identity-separation.md) 決定 4。
+承認の要否は `reviewDecision` には現れないので `mergeStateStatus` を見る (承認待ちなら `BLOCKED`・承認されると `CLEAN`)。理由は [ADR-0003](docs/decisions/0003-agent-identity-separation.md) 決定 4。**`CLEAN` だけでは「承認された」と読めない** — 承認の要らない PR も `CLEAN` なので、承認が付いたかどうかは `latestReviews` を見る ([#573](https://github.com/mokume-metal/mokume/issues/573) はここを取り違えて、承認済みの PR を「承認 0 で入った」と報告している)。
 
 承認が要るのは次の 2 つで、どちらも承認待ちの間 `ci-gate` は緑のまま ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) / ADR-0003 決定 5):
 

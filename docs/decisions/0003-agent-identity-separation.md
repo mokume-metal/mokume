@@ -121,6 +121,10 @@ GitHub 自身は両者の併用を勧めている — required reviewer rule は
 
 `required_reviewers` と `required_approving_review_count: 0` は一字も動かさない。**この改訂が動かすのは要求経路だけで、ブロックの正本は上の決定のままである。**
 
+**畳んだ後も止まることを実測した ([#593](https://github.com/mokume-metal/mokume/issues/593))。** `docs/decisions/` に触れる使い捨て PR ([#594](https://github.com/mokume-metal/mokume/pull/594)) を `verify: machine` の Issue へ紐づけ (= `human-approval` は success になり、**残るブロック要因は `required_reviewers` だけ**)、必須チェック 3 本を含む 9 本すべてを緑にしたうえで Approve を 0 件のままにしたところ、`mergeStateStatus` は `BLOCKED`・REST の `mergeable_state` は `blocked` だった。
+
+**この段落が無い間、上の 1 行は測られていない主張だった。** [#249](https://github.com/mokume-metal/mokume/issues/249) の実測は CODEOWNERS が併存する構成で行われており、`reviewRequests` に team と user の両方が入っていたので `BLOCKED` の出どころを分離できていない。実際 [#573](https://github.com/mokume-metal/mokume/issues/573) はそこを突いて「重要パスの PR が承認 0 で通る」と結論している (前提の PR には Approve が付いていたので結論も誤りだったが、**測っていないこと自体は当たっていた**)。
+
 #### 再改訂 (2026-08-30) — ラベル由来の要求は user 宛に戻す
 
 **当初の決定**は、上の 4 つ目のとおり「ラベル由来のレビュー要求も team 宛へ揃える」だった。宛先を 1 つにすれば、パス由来と重なった PR で 2 通目を作らずに済むと考えたためである。
