@@ -25,22 +25,37 @@ enum RunCommand {
 
     /// 作り直す。出力はそのまま流す — 失敗したときに読むのは人なので、道具が
     /// 挟まって形を変えない方がよい。
-    static func build(in directory: URL) throws(CommandFailure) {
-        let status = try swift(["build"], in: directory, capturing: false).status
+    ///
+    /// 構成を渡さないときは道具立ての既定に任せる。**既定を書き固めない** — ここが
+    /// 名乗ると、道具立てが既定を変えたときに黙ってずれる。
+    static func build(in directory: URL, configuration: String? = nil) throws(CommandFailure) {
+        let status = try swift(
+            ["build"] + configurationArguments(configuration), in: directory, capturing: false
+        ).status
         guard status == 0 else { throw .buildFailed(status: status) }
+    }
+
+    /// 構成の指定を、道具立てへ渡す形にする。
+    static func configurationArguments(_ configuration: String?) -> [String] {
+        guard let configuration else { return [] }
+        return ["-c", configuration]
     }
 
     /// 走らせるものの場所。
     ///
     /// **宣言された実行ファイルの product から名前を取る。** ビルドの出力を漁って
     /// それらしいものを選ぶと、product が増えたときに黙って別のものを起動する。
-    static func executablePath(in directory: URL) throws(CommandFailure) -> URL {
+    static func executablePath(in directory: URL, configuration: String? = nil) throws(
+        CommandFailure
+    ) -> URL {
         let dump = try swift(["package", "dump-package"], in: directory, capturing: true).output
         guard let name = executableProductName(inDumpOf: dump) else {
             throw .noExecutable(path: directory.path)
         }
-        let binPath = try swift(["build", "--show-bin-path"], in: directory, capturing: true)
-            .output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let binPath = try swift(
+            ["build", "--show-bin-path"] + configurationArguments(configuration), in: directory,
+            capturing: true
+        ).output.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = URL(fileURLWithPath: binPath).appendingPathComponent(name)
         guard FileManager.default.isExecutableFile(atPath: url.path) else {
             throw .noExecutable(path: url.path)

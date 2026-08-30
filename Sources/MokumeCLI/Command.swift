@@ -48,6 +48,9 @@ enum Command {
           mcp [<場所>]
               エージェントの窓口を立てる (標準入出力でやりとりする)
 
+          bundle [<場所>] [--out <置き場>]
+              別の機械で動く形に束ねる (名乗りは \(AppIdentity.fileName) に書く)
+
           help
               これ
         """
@@ -65,6 +68,8 @@ enum Command {
             try WatchCommand.run(rest)
         case "mcp":
             try MCPCommand.run(rest)
+        case "bundle":
+            try BundleCommand.run(rest)
         case "help", "--help", "-h":
             print(usage())
         default:
