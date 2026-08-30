@@ -33,9 +33,20 @@
 # verify: human は「機械では判定できないから人が見る」ためのラベルなので、その人に
 # 声が掛からないなら、ラベルは待ち状態を作るだけで機能していない。
 #
-# **要求を飛ばすことと、ブロックすることは別である。** ここが失敗しても終了コードは
-# 0 のままにする — 通知の失敗をマージのブロックに変えない。fork からの PR では
-# GITHUB_TOKEN が read-only になるので、赤くしない性質がそのまま要る。
+# **要求を飛ばすことと、ブロックすることは別である。** 通知の失敗をマージのブロックに
+# 変えない。fork からの PR では GITHUB_TOKEN が read-only になるので、赤くしない性質が
+# そのまま要る。
+#
+# ## 声が掛かったかは終了コードで返す (#577)
+#
+# 当初は失敗しても 0 を返していたが、それでは**届かなかったことが success したジョブの
+# ログにしか残らない**。scripts/review-gate.sh と同じ流儀で、状態を終了コードに載せる:
+#
+#   0   投げた / 投げる必要が無かった (既に声が掛かっている・既にレビュー済み)
+#   20  投げようとして失敗した = **声が掛かっていない**
+#
+# ci.yml の approval-signal が set +e で受けて human-approval の description へ回すので、
+# **20 でもゲートは赤くならない**。赤くしないことと、黙ることは別である。
 #
 # 呼ぶのは ci.yml の approval-signal ジョブ (review-gate が pending を出したときだけ)。
 # 使い方: request-review.sh <PR番号> (要 GH_TOKEN / gh 認証)
@@ -49,9 +60,10 @@ REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 MAINTAINERS_USER="${MAINTAINERS_USER:-shinyaoguri}"
 
 if ! pr_json=$(gh pr view "$PR" -R "$REPO" --json author,reviewRequests,latestReviews 2>&1); then
+  # 投げようがないので、声が掛かっていないのは失敗したときと同じである
   echo "request-review: PR の情報を引けなかったので要求を投げない" >&2
   echo "$pr_json" >&2
-  exit 0
+  exit 20
 fi
 
 # 保留中のチーム要求。**login を持たない要素がチーム**である — 綴り (name / slug /
@@ -91,7 +103,9 @@ if gh api -X POST "repos/$REPO/pulls/$PR/requested_reviewers" \
      -f "reviewers[]=$MAINTAINERS_USER" --silent; then
   echo "request-review: レビューを要求した — @$MAINTAINERS_USER"
 else
-  # ここで止めない (冒頭のとおり、通知の失敗はブロックに変えない)
+  # ゲートは赤くしない (冒頭のとおり)。20 は「声が掛かっていない」の合図で、
+  # 受けた側が human-approval の description に載せる
   echo "request-review: レビュー要求に失敗した — @$MAINTAINERS_USER" >&2
   echo "次にすること: 承認は human-approval が引き続き待っているので、メンテナへ直接声を掛ける" >&2
+  exit 20
 fi

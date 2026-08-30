@@ -17,8 +17,11 @@
 スコープを持たないので team_reviewers は 422 で落ちた (#576)。ここは偽 gh なので
 422 自体は再現しないが、投げる先の綴りが変わったら気付ける。
 
-**失敗しても終了コードが 0 のまま**であることも固定する。要求の失敗がゲートの赤に
+**声が掛かったかを終了コードで返す**ことも固定する (#577)。0 は投げた / 投げる必要が
+無かった、20 は投げようとして失敗した。ci.yml が set +e で受けて human-approval の
+description へ回すので、**20 でもゲートは赤くならない** — 要求の失敗がゲートの赤に
 化けると「通知が届かない」が「マージできない」に化け、直したはずの害より大きくなる。
+赤くしないことと、黙ることは別である。
 
 gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワークも認証も要らない。
 実行は make hooks-test (CI もこれを呼ぶ)。
@@ -121,6 +124,7 @@ class RequestReviewTest(unittest.TestCase):
         ]
 
     def assert_requested(self, result, reviewers):
+        """投げた / 投げる必要が無かった側は 0 を返す (#577)。"""
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sorted(self.requested_reviewers()), sorted(reviewers))
 
@@ -180,22 +184,27 @@ class RequestReviewTest(unittest.TestCase):
         result = self.run_script(pr_json(users=["someone-else"]))
         self.assert_requested(result, [MAINTAINER])
 
-    # --- 失敗してもブロックに変えない ---
+    # --- 届かなかったことは 20 で返す (ブロックには変えない) ---
 
-    def test_survives_api_failure(self):
-        """要求 API が落ちても終了コードは 0。
+    def test_reports_undelivered_when_the_api_fails(self):
+        """要求 API が落ちたら 20。
 
-        通知の失敗をマージのブロックに変えないため。fork からの PR では
-        GITHUB_TOKEN が read-only になるので、この性質がそのまま要る。
+        ci.yml が set +e で受けて human-approval の description へ回すので、
+        ゲートは赤くならない。0 で返すと「届かなかった」が success したジョブの
+        ログにしか残らない (#577)。fork からの PR では GITHUB_TOKEN が read-only に
+        なるので、この経路は実際に通る。
         """
         result = self.run_script(pr_json(), api_status=1)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 20, result.stderr)
         self.assertEqual(self.requested_reviewers(), [MAINTAINER])
 
-    def test_survives_pr_view_failure(self):
-        """PR を引けなくても終了コードは 0 で、要求は投げない。"""
+    def test_reports_undelivered_when_the_pr_cannot_be_read(self):
+        """PR を引けなければ投げようがないので 20。要求も投げない。
+
+        声が掛かっていないという点で、投げて失敗したときと変わらない。
+        """
         result = self.run_script(pr_json(), pr_status=1)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 20, result.stderr)
         self.assertEqual(self.requested_reviewers(), [])
 
 
