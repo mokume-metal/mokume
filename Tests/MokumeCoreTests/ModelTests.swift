@@ -72,6 +72,64 @@ struct ModelTests {
         #expect(parsed.skippedLines == 2)
     }
 
+    @Test("書かれた展開 (vt) を読み、読み飛ばした行に数えない")
+    func textureCoordinatesAreRead() throws {
+        let parsed = ModelFile.parse(ModelFixture.unwrappedText)
+        // 板 2 枚 = 三角形 2 枚 = 6 点。読み取り位置は点と同じ数だけ並ぶ
+        #expect(parsed.positions.count == 6)
+        #expect(parsed.uvs.count == 6)
+        #expect(parsed.uvs.allSatisfy { $0 != nil }, "書いた展開が届いていない")
+        // 読み飛ばしたのは mtllib の 1 行だけ (vt 4 行は読めている)
+        #expect(parsed.skippedLines == 1)
+    }
+
+    @Test("読み取り位置の縦は裏返って乗る (OBJ は下から・この面は上から数える)")
+    func textureCoordinatesFlipVertically() throws {
+        let parsed = ModelFile.parse(ModelFixture.unwrappedText)
+        // 1 枚目の 3 点は vt 1・2・3。絵の下寄り (v = 0.8) を書いた角が、上寄り (0.2) に乗る
+        #expect(parsed.uvs[0] == SIMD2(0.25, Float(1) - 0.8))
+        #expect(parsed.uvs[1] == SIMD2(0.75, Float(1) - 0.8))
+        #expect(parsed.uvs[2] == SIMD2(0.75, Float(1) - 0.1))
+    }
+
+    @Test("読み取り位置の番号も 1 から数え、負の番号は末尾から数える")
+    func textureIndicesCountFromOneAndFromTheEnd() throws {
+        let parsed = ModelFile.parse(ModelFixture.unwrappedText)
+        // 2 枚目は負の番号で書いてある (-4 / -2 / -1 = vt 1 / 3 / 4)
+        #expect(parsed.uvs[3] == parsed.uvs[0])
+        #expect(parsed.uvs[4] == parsed.uvs[2])
+        #expect(parsed.uvs[5] == SIMD2(0.25, Float(1) - 0.1))
+    }
+
+    @Test("真ん中が空の角 (位置//向き) は、読み取り位置を持たない")
+    func cornersWithoutTextureIndexAreEmpty() throws {
+        let parsed = ModelFile.parse(ModelFixture.mixedUnwrapText)
+        // 1 枚目は書いてある・2 枚目は `位置//向き` なので持たない
+        #expect(parsed.uvs[0...2].allSatisfy { $0 != nil })
+        #expect(parsed.uvs[3...5].allSatisfy { $0 == nil })
+        // 向きのほうは 2 枚目も書かれているので、形から求めていない
+        #expect(parsed.hasWrittenNormals)
+    }
+
+    @Test("vt は u だけでも読め、3 つ目 (w) は無視する")
+    func textureLinesToleratePartialAndExtraNumbers() throws {
+        let parsed = ModelFile.parse(
+            """
+            v 0 0 0
+            v 1 0 0
+            v 0 1 0
+            vt 0.5
+            vt 0.25 0.5 0.75
+            vt 0.75 0.5
+            f 1/1 2/2 3/3
+            """)
+        // v が無ければ 0 と読む (裏返して 1)
+        #expect(parsed.uvs[0] == SIMD2(0.5, 1))
+        // 3 つ目があっても手前の 2 つは正しい展開なので使う
+        #expect(parsed.uvs[1] == SIMD2(0.25, 0.5))
+        #expect(parsed.skippedLines == 0)
+    }
+
     // MARK: - 整え方
 
     /// 面を作らずに整える。**GPU の無いところでも契約を確かめられる**ようにする —
@@ -130,6 +188,62 @@ struct ModelTests {
         #expect(!apex.isEmpty, "尖った先が見つからない")
         #expect(apex.allSatisfy { abs($0.position.y - lowest) < 0.001 }, "先が下を向いている")
         #expect(highest > lowest)
+    }
+
+    @Test("書かれた展開があれば、それが読み取り位置になる")
+    func writtenUnwrapBecomesTheReadingPosition() throws {
+        let model = Model.make(
+            name: "unwrapped", parsed: try ModelFile.load(ModelFixture.unwrapped),
+            fitting: 60, identity: 1)
+        // **囲みの箱から作る位置とは重ならない値**を書いてあるので、倒れていれば落ちる
+        #expect(model.mesh.points[0].uv == SIMD2(0.25, Float(1) - 0.8))
+        #expect(model.mesh.points[2].uv == SIMD2(0.75, Float(1) - 0.1))
+    }
+
+    @Test("展開を持たないモデルは、囲みの箱の位置に倒れる")
+    func modelsWithoutUnwrapFallBackToTheBoundingBox() throws {
+        let model = try normalized(fitting: 60)
+        // 四角錐の先 (ファイルで最も高いところ) は、絵の上端 (v = 0) を読む。
+        // 底面の 4 点は絵の下端 (v = 1) で、横は囲みの箱の x を 0…1 に写した値
+        let apex = model.mesh.points.filter {
+            abs($0.position.x) < 0.001 && abs($0.position.z) < 0.001
+        }
+        #expect(!apex.isEmpty, "尖った先が見つからない")
+        #expect(apex.allSatisfy { abs($0.uv.x - 0.5) < 0.001 && abs($0.uv.y) < 0.001 })
+        let base = model.mesh.points.filter { $0.uv.y > 0.5 }
+        #expect(!base.isEmpty)
+        #expect(base.allSatisfy { abs($0.uv.y - 1) < 0.001 })
+        #expect(base.allSatisfy { abs($0.uv.x) < 0.001 || abs($0.uv.x - 1) < 0.001 })
+    }
+
+    @Test("角ごとに混ざっていても、書かれた角だけが展開に従う")
+    func writtenCornersWinPerCorner() throws {
+        let model = Model.make(
+            name: "mixed", parsed: try ModelFile.load(ModelFixture.mixedUnwrap),
+            fitting: 60, identity: 1)
+        // 手前の 3 点は書かれた展開
+        #expect(model.mesh.points[0].uv == SIMD2(0.25, Float(1) - 0.75))
+        #expect(model.mesh.points[1].uv == SIMD2(0.75, Float(1) - 0.75))
+        #expect(model.mesh.points[2].uv == SIMD2(0.75, Float(1) - 0.25))
+        // 奥の 3 点は囲みの箱 (板は x が -1…1・y が 0…2 なので、角がそのまま四隅に来る)
+        #expect(model.mesh.points[3].uv == SIMD2(0, 1))
+        #expect(model.mesh.points[4].uv == SIMD2(1, 0))
+        #expect(model.mesh.points[5].uv == SIMD2(0, 0))
+    }
+
+    @Test("読み取り位置は整え方に依らない")
+    func readingPositionsDoNotDependOnNormalizing() throws {
+        // **貼る絵の読み取り位置は形の座標ではない**ので、整えても倒れ先も含めて同じ値に
+        // なる。整えたあとの座標から測っていた頃は、normalize: false でだけ絵が上下逆に
+        // 乗っていた (#406)
+        for path in [ModelFixture.pyramid, ModelFixture.unwrapped, ModelFixture.mixedUnwrap] {
+            let parsed = try ModelFile.load(path)
+            let fitted = Model.make(name: path, parsed: parsed, fitting: 60, identity: 1)
+            let raw = Model.make(name: path, parsed: parsed, fitting: nil, identity: 2)
+            #expect(
+                fitted.mesh.points.map(\.uv) == raw.mesh.points.map(\.uv),
+                "整え方で読み取り位置が動いた (\(path))")
+        }
     }
 
     /// 面へ置いてから確かめるもの。**GPU を要する検査はこの入れ子に集める** — 条件を
