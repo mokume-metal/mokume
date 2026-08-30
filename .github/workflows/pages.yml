@@ -88,6 +88,11 @@ jobs:
       - name: 参照の面を組み立てる
         run: make reference OUT=_site/reference BASE="${{ steps.base.outputs.path }}"
 
+      # 入口は root。参照の面と同じ _site へ、**別のディレクトリを侵さずに**並ぶ
+      # (ADR-0027 決定 3)。組み立ての実体は make 側にあり、ここは呼ぶだけ
+      - name: 入口のページを組み立てる
+        run: make entry OUT=_site
+
       # **公開の側に、どのコミットから組んだかを 1 行だけ残す** (#483)。この回の
       # 公開が緑だったことは Actions が知っているが、**いま配られているものが新しいか**
       # は外から引かないと分からない。印は面の root に置く (`/reference/` は参照の面の
@@ -113,3 +118,6 @@ jobs:
           url="$(printf '%s' "$PAGE_URL" | sed -E 's#/+$##')/reference"
           echo "引く先: $url"
           python3 scripts/check-published-reference.py "$url"
+          # 入口は root。参照の面とは別に引く — 片方だけが配られている状態を
+          # 「公開できた」と読まないため
+          python3 scripts/check-entry.py "$(printf '%s' "$PAGE_URL" | sed -E 's#/+$##')"

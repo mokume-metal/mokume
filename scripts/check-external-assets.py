@@ -46,6 +46,14 @@ import urllib.request
 # 素のリンク `[文字](https://…)` は拾わない (`!` の有無で分かれる)
 MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 DOCC_SOURCE = re.compile(r"@(?:Image|Video)\s*\(\s*source:\s*\"(https?://[^\"]+)\"")
+# HTML の絵 `<img src="https://…">`。入口のページ (#482) が絵を外に置くので、
+# **いちばん人目に付く絵だけが死活の外**にならないようここも見る
+HTML_IMAGE = re.compile(
+    # **`src` の直前で属性の切れ目を要求する。** 要求しないと `data-src=` の末尾に
+    # 一致してしまい、絵として飾ってあるだけのものを本物と数える
+    r"""<img\s[^>]*?(?<![-\w])src=["'](https?://[^"']+)["']""",
+    re.IGNORECASE,
+)
 
 # Swift の説明文。ADR-0027 決定 2 により、絵を指す行はここに置かれる
 DOC_COMMENT = re.compile(r"^\s*///")
@@ -92,7 +100,11 @@ def tracked_files(root: pathlib.Path) -> list[str]:
     説明文を持たない形式は、下の `readable` が素通りさせる。
     """
     completed = subprocess.run(
-        ["git", "ls-files", "*.swift", "*.md"], cwd=root, capture_output=True, text=True, check=True
+        ["git", "ls-files", "*.swift", "*.md", "*.html"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return [line for line in completed.stdout.splitlines() if line]
 
@@ -101,16 +113,28 @@ def readable(name: str, text: str) -> str:
     """指し先を探してよい部分だけを残す (行数と行番号はそのまま保つ)。"""
     if name.endswith(".swift"):
         return "\n".join(line if DOC_COMMENT.match(line) else "" for line in text.split("\n"))
+    if name.endswith(".html"):
+        # HTML にはコード塊の書式が無いので、そのまま見る
+        return text
     return mask_code(text)
 
 
 def references_in(text: str, path: str) -> list[Reference]:
+    """指し先と、その出所の行。
+
+    **1 行ずつではなく本文全体を見る。** HTML は属性を改行で分けて書けるので
+    (`<img` の次の行に `src="…"`)、行で切ると 2 つが別の行に落ちて 1 本も拾えない。
+    しかも拾えなかったことは緑で表れる。行番号は一致した位置から数える
+    (`readable` は行数を保つので、潰した後でも元の行と一致する)。
+    """
+    readable_text = readable(path, text)
     found = []
-    for number, line in enumerate(readable(path, text).splitlines(), start=1):
-        for pattern in (MARKDOWN_IMAGE, DOCC_SOURCE):
-            for url in pattern.findall(line):
-                found.append(Reference(url, path, number))
-    return found
+    for pattern in (MARKDOWN_IMAGE, DOCC_SOURCE, HTML_IMAGE):
+        for match in pattern.finditer(readable_text):
+            found.append(
+                Reference(match.group(1), path, readable_text.count("\n", 0, match.start()) + 1)
+            )
+    return sorted(found, key=lambda reference: reference.line)
 
 
 def collect(root: pathlib.Path) -> list[Reference]:
