@@ -915,27 +915,104 @@ extension Sketch {
     /// 4 つの数の読み方は ``rectMode(_:)`` が決める。既定は**左上の角と、幅と高さ**。
     ///
     /// ```swift
-    /// rect(20, 20, 60, 40)   // 左上 (20, 20) から 60x40
-    /// rectMode(.center)
-    /// rect(50, 40, 60, 40)   // 中心 (50, 40) の 60x40 — 上と同じ場所に出る
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// rect(80, 60, 240, 180)
     /// ```
+    /// <!-- shot: 濃い灰色の下地に、左上 (80, 60) から 240x180 の橙色の長方形 -->
+    /// ![濃い灰色の下地に、左上 (80, 60) から 240x180 の橙色の長方形](https://i.gyazo.com/91321fd926431913d8b41a1bc0877b10.png)
+    /// <!-- /shot -->
+    ///
+    /// 3 つ目と 4 つ目は幅と高さなので、片方だけ変えれば細長くなる。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// rect(60, 40, 280, 60)
+    /// rect(60, 130, 70, 130)
+    /// ```
+    /// <!-- shot: 横長の長方形が上、縦長の長方形が左下に並ぶ -->
+    /// ![横長の長方形が上、縦長の長方形が左下に並ぶ](https://i.gyazo.com/1af656b7596f944cb2736ebbf1a28039.png)
+    /// <!-- /shot -->
     ///
     /// 幅か高さが 0 以下になる指定では**何も描かない**。
+    // shot: 1 snippet=5f2f4b5f taken=8d814ff
+    // shot: 2 snippet=a1283c68 taken=8d814ff
     public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.rect(a, b, c, d) }
 
     /// 正方形を塗る。
     ///
     /// 読み方は ``rect(_:_:_:_:)`` と同じで、幅と高さに同じ値を渡すのに等しい。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// square(130, 80, 140)
+    /// ```
+    /// <!-- shot: 下地の中ほどに、一辺 140 の橙色の正方形 -->
+    /// ![下地の中ほどに、一辺 140 の橙色の正方形](https://i.gyazo.com/816a997e781a50e439a784d00f4f9374.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=0545e44d taken=8d814ff
     public func square(_ a: Float, _ b: Float, _ extent: Float) { canvas.square(a, b, extent) }
 
     /// 円を塗る。
     ///
     /// 3 つの数の読み方は ``ellipseMode(_:)`` が決める。既定は**中心と直径**。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// circle(200, 150, 160)
+    /// ```
+    /// <!-- shot: 濃い灰色の下地の中央に、直径 160 の橙色の円 -->
+    /// ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/9f85642dcfaf33847d61876f57ae2efe.png)
+    /// <!-- /shot -->
+    ///
+    /// 3 つ目は直径なので、変えても中心は動かない。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// circle(200, 150, 240)
+    /// fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    /// circle(200, 150, 160)
+    /// fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    /// circle(200, 150, 80)
+    /// ```
+    /// <!-- shot: 同じ中心に重なる、直径 240・160・80 の 3 つの円 -->
+    /// ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/0deb638d76e89a91dd47d6ce89d90fda.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=cc15d686 taken=8d814ff
+    // shot: 2 snippet=99563468 taken=8d814ff
     public func circle(_ a: Float, _ b: Float, _ diameter: Float) { canvas.circle(a, b, diameter) }
 
     /// 楕円を塗る。
     ///
     /// 4 つの数の読み方は ``ellipseMode(_:)`` が決める。既定は**中心と、幅と高さ**。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// ellipse(200, 150, 280, 140)
+    /// ```
+    /// <!-- shot: 画面の中央に、横に長い橙色の楕円 -->
+    /// ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/f22d63e7a8e424184eb7bb7a0bf24867.png)
+    /// <!-- /shot -->
+    ///
+    /// 幅と高さを入れ替えると、同じ中心のまま向きだけが変わる。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// ellipse(200, 150, 280, 140)
+    /// fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    /// ellipse(200, 150, 140, 280)
+    /// ```
+    /// <!-- shot: 同じ中心に、横長と縦長の楕円が十字に重なる -->
+    /// ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/81440c52fa93cc3f7f3ddd3d135e7529.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=660be063 taken=8d814ff
+    // shot: 2 snippet=4bc091fd taken=8d814ff
     public func ellipse(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.ellipse(a, b, c, d)
     }
@@ -947,11 +1024,57 @@ extension Sketch {
     /// 時計回りに見える (縦軸が下向きのため)。
     ///
     /// ```swift
-    /// arc(50, 50, 80, 80, 0, .pi / 2)   // 右から下へ 4 分の 1
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// arc(200, 150, 200, 200, 0, .pi / 2)
     /// ```
+    /// <!-- shot: 中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている -->
+    /// ![中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている](https://i.gyazo.com/09f809b037d513468da45aa923cc321e.png)
+    /// <!-- /shot -->
+    ///
+    /// 終わりの角度を伸ばすと、扇形はその向きへ広がる。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// arc(200, 150, 200, 200, 0, .pi * 1.5)
+    /// ```
+    /// <!-- shot: 同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている -->
+    /// ![同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている](https://i.gyazo.com/69c374878e71d1e6c950630393a8bfd3.png)
+    /// <!-- /shot -->
+    ///
+    /// 始まりの角度を動かすと、欠けている側が回る。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// arc(200, 150, 200, 200, .pi, .pi * 1.5)
+    /// ```
+    /// <!-- shot: 左から上へ 4 分の 1 だけの橙色の扇形 -->
+    /// ![左から上へ 4 分の 1 だけの橙色の扇形](https://i.gyazo.com/26d9569d49725ce3f3bfc4334f808132.png)
+    /// <!-- /shot -->
+    ///
+    /// 角度をフレーム番号から作れば、扇形は動く。**時計を実時間ではなくフレームに
+    /// 紐づけるので、何度撮っても同じ動きになる**。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// noStroke()
+    /// fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    /// let bite = Float.pi / 8
+    /// let start = bite * sin(Float(frameCount) * 0.06) + bite
+    /// arc(200, 150, 200, 200, start, .pi * 2 - start)
+    /// ```
+    /// <!-- shot: 黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする | frames=60 -->
+    /// ![黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする](https://i.gyazo.com/7c306f3edde7ca7f3157cbc5dd083a1f.gif)
+    /// <!-- /shot -->
     ///
     /// 塗りは**中心を含む扇形**になる。終わりの角度が始まりより小さいときは
     /// **何も描かず**、最初の 1 回だけ知らせる。
+    // shot: 1 snippet=b1d01c8d taken=8d814ff
+    // shot: 2 snippet=de19318a taken=8d814ff
+    // shot: 3 snippet=9301f40a taken=8d814ff
+    // shot: 4 snippet=305be8b5 taken=8d814ff
     public func arc(
         _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float
     ) {
@@ -959,6 +1082,16 @@ extension Sketch {
     }
 
     /// 三角形を塗る。3 つの頂点をそのまま与える。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// triangle(200, 50, 330, 250, 70, 250)
+    /// ```
+    /// <!-- shot: 下地の中央に、頂点を上に向けた橙色の三角形 -->
+    /// ![下地の中央に、頂点を上に向けた橙色の三角形](https://i.gyazo.com/9e0c0bcf222e3977d1dc13227e874eba.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=7d0adefe taken=8d814ff
     public func triangle(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float, _ x3: Float, _ y3: Float
     ) {
@@ -967,6 +1100,28 @@ extension Sketch {
 
     /// 四角形を塗る。4 つの頂点は**与えた順に結ばれる**ので、順序を入れ替えると
     /// 砂時計のような形にもなる。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// quad(70, 60, 330, 90, 310, 240, 90, 210)
+    /// ```
+    /// <!-- shot: 少し傾いた橙色の四角形 -->
+    /// ![少し傾いた橙色の四角形](https://i.gyazo.com/50f0f2f6adfcdaebe808bce6337edeb8.png)
+    /// <!-- /shot -->
+    ///
+    /// 後ろの 2 つを入れ替えると、同じ 4 点のまま辺が交差する。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// quad(70, 60, 330, 90, 90, 210, 310, 240)
+    /// ```
+    /// <!-- shot: 同じ 4 点で辺が交差し、砂時計のような形になっている -->
+    /// ![同じ 4 点で辺が交差し、砂時計のような形になっている](https://i.gyazo.com/68bbdf3c925be4e8eb5ba98e1a0b4cb3.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=8f205856 taken=8d814ff
+    // shot: 2 snippet=af89c551 taken=8d814ff
     public func quad(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,
         _ x3: Float, _ y3: Float, _ x4: Float, _ y4: Float
@@ -978,17 +1133,149 @@ extension Sketch {
     ///
     /// 大きさは ``strokeWeight(_:)`` で決めた太さ、色は ``stroke(_:)`` の色。
     /// 塗りの色ではないことに注意 — 点は「太さを持つ線の最小の形」として扱う。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    /// for index in 0..<5 {
+    ///     strokeWeight(Float(index) * 6 + 4)
+    ///     point(70 + Float(index) * 65, 150)
+    /// }
+    /// ```
+    /// <!-- shot: 左から右へ、だんだん大きくなる 5 つの白い点 -->
+    /// ![左から右へ、だんだん大きくなる 5 つの白い点](https://i.gyazo.com/85a4928d5f536bc3781c1f265bf2c2ea.png)
+    /// <!-- /shot -->
+    ///
+    /// 色を決めるのは ``stroke(_:)`` で、``fill(_:)`` は効かない。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    /// strokeWeight(18)
+    /// for index in 0..<5 {
+    ///     point(70 + Float(index) * 65, 150)
+    /// }
+    /// ```
+    /// <!-- shot: 橙色に塗る指定をしても、点は水色のまま並んでいる -->
+    /// ![橙色に塗る指定をしても、点は水色のまま並んでいる](https://i.gyazo.com/43f7f0bf9325519e41a492150390c392.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=de455ec9 taken=8d814ff
+    // shot: 2 snippet=35a5937e taken=8d814ff
     public func point(_ x: Float, _ y: Float) { canvas.point(x, y) }
 
     /// 矩形に渡す座標の読み方。既定は ``ShapeMode/corner``。
+    ///
+    /// 同じ 4 つの数を渡しても、モードが変われば出る場所と大きさが変わる。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// rectMode(.corner)
+    /// rect(120, 90, 160, 120)
+    /// ```
+    /// <!-- shot: 左上を (120, 90) とする 160x120 の橙色の長方形 -->
+    /// ![左上を (120, 90) とする 160x120 の橙色の長方形](https://i.gyazo.com/4897a176deed098645d6b8808791c91d.png)
+    /// <!-- /shot -->
+    ///
+    /// ``ShapeMode/corners`` は 4 つの数を**向かい合う 2 つの角**として読む。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// rectMode(.corners)
+    /// rect(120, 90, 160, 120)
+    /// ```
+    /// <!-- shot: (120, 90) と (160, 120) を対角とする、小さな橙色の長方形 -->
+    /// ![(120, 90) と (160, 120) を対角とする、小さな橙色の長方形](https://i.gyazo.com/387917c8b465595dea782dfc522edbad.png)
+    /// <!-- /shot -->
+    ///
+    /// ``ShapeMode/center`` は**中心と、幅と高さ**。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// rectMode(.center)
+    /// rect(120, 90, 160, 120)
+    /// ```
+    /// <!-- shot: (120, 90) を中心とする 160x120 の橙色の長方形 -->
+    /// ![(120, 90) を中心とする 160x120 の橙色の長方形](https://i.gyazo.com/f36d9de1076d83443e54fef36e915c7e.png)
+    /// <!-- /shot -->
+    ///
+    /// ``ShapeMode/radius`` は**中心と、中心から端までの長さ**なので倍の大きさになる。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// rectMode(.radius)
+    /// rect(120, 90, 160, 120)
+    /// ```
+    /// <!-- shot: 同じ中心のまま、center のときの倍の大きさになった橙色の長方形 -->
+    /// ![同じ中心のまま、center のときの倍の大きさになった橙色の長方形](https://i.gyazo.com/dc4d256a60d1292df561947039050001.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=8fd5ed99 taken=8d814ff
+    // shot: 2 snippet=88773cca taken=8d814ff
+    // shot: 3 snippet=c95457e8 taken=8d814ff
+    // shot: 4 snippet=39e1d7b6 taken=8d814ff
     public func rectMode(_ mode: ShapeMode) { canvas.rectMode(mode) }
 
     /// 楕円と円弧に渡す座標の読み方。既定は ``ShapeMode/center``。
     ///
     /// ``circle(_:_:_:)`` にも効く — 直径 1 つしか渡さないので、意味を持つのは
     /// 中心から測る 2 つ (``ShapeMode/center`` と ``ShapeMode/radius``) である。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// ellipseMode(.center)
+    /// ellipse(200, 150, 200, 140)
+    /// ```
+    /// <!-- shot: (200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円 -->
+    /// ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/3183dfa1e410e8670ca7f45cc055dd87.png)
+    /// <!-- /shot -->
+    ///
+    /// ``ShapeMode/corner`` にすると、同じ数が**左上の角と、幅と高さ**になる。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    /// ellipseMode(.corner)
+    /// ellipse(200, 150, 200, 140)
+    /// ```
+    /// <!-- shot: 同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円 -->
+    /// ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/e20e650ac074bbd0d7c3ca4a39bd29c9.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=ace05fd1 taken=8d814ff
+    // shot: 2 snippet=da8b31b4 taken=8d814ff
     public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }
     /// 線を引く。塗りは持たない。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    /// strokeWeight(6)
+    /// line(60, 60, 340, 240)
+    /// ```
+    /// <!-- shot: 左上から右下へ引かれた 1 本の白い線 -->
+    /// ![左上から右下へ引かれた 1 本の白い線](https://i.gyazo.com/b02fdde509a8e9b6db78a44b8623c1c7.png)
+    /// <!-- /shot -->
+    ///
+    /// 太さは ``strokeWeight(_:)``、端の形は ``strokeCap(_:)`` が決める。
+    ///
+    /// ```swift
+    /// background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    /// stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    /// for (index, cap) in [StrokeCap.square, .round, .project].enumerated() {
+    ///     strokeCap(cap)
+    ///     strokeWeight(Float(index) * 8 + 8)
+    ///     line(90, 70 + Float(index) * 60, 310, 70 + Float(index) * 60)
+    /// }
+    /// ```
+    /// <!-- shot: 太さの違う 3 本の白い線が、端の形を変えて横に並んでいる -->
+    /// ![太さの違う 3 本の白い線が、端の形を変えて横に並んでいる](https://i.gyazo.com/2f54b8bc10dd255977971f5679592cd1.png)
+    /// <!-- /shot -->
+    // shot: 1 snippet=5d41ed20 taken=8d814ff
+    // shot: 2 snippet=87c26840 taken=8d814ff
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
         canvas.line(x1, y1, x2, y2)
     }
