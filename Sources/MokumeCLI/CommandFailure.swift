@@ -25,6 +25,16 @@ enum CommandFailure: Error, Equatable {
 
     /// 資材の置き場があるのに、パッケージが宣言していない。
     case resourcesNotDeclared(directory: String)
+    /// 束ねようとしたが、名乗りが置かれていない。
+    case identityMissing(path: String)
+    /// 名乗りは在るが、読める形をしていない。
+    case identityUnreadable(path: String)
+    /// 名乗りに、名乗れる中身が揃っていない。
+    case identityIncomplete(path: String, missing: [String])
+    /// 宣言された資材の包みが、組み上がりに入っていない。
+    case bundledResourceMissing(name: String, path: String)
+    /// 署名に失敗した。
+    case codesignFailed(status: Int32)
 
     var message: String {
         switch self {
@@ -63,6 +73,44 @@ enum CommandFailure: Error, Equatable {
               resources: [.copy("\(ResourceDeclaration.directoryName)")],
 
             資材として運ばない置き場なら、名前を変える。
+            """
+        case .identityMissing(let path):
+            """
+            束ねるには名乗りが要る。無い: \(path)
+
+            \(AppIdentity.example)
+
+            ひな形には入っていない。書かなくても走るが、書かないまま配ると事故になる
+            もので、とくに識別子は権限の許可がぶら下がる鍵である — 仮の値のまま配ると、
+            許可の状態が別の作品と混ざる。作品ごとに違う値を書く。
+            """
+        case .identityUnreadable(let path):
+            """
+            名乗りを読めない: \(path)
+            JSON の形になっているか確かめる:
+
+            \(AppIdentity.example)
+            """
+        case .identityIncomplete(let path, let missing):
+            """
+            名乗りに足りないものがある: \(path)
+            書かれていない (または空): \(missing.joined(separator: " / "))
+
+            \(AppIdentity.example)
+            """
+        case .bundledResourceMissing(let name, let path):
+            """
+            宣言された資材の包みが、組み上がりに入っていない: \(name)
+            入れる場所: \(path)
+
+            このまま配ると、受け取った側では絵が出ないだけで、原因を指すものが何も
+            残らない。組み上げ直して、それでも入らないなら Package.swift の宣言と
+            出来上がったものの名前が合っているかを見る。
+            """
+        case .codesignFailed(let status):
+            """
+            署名に失敗した (終了コード \(status))。上の出力を見る
+            署名が無いと、別の機械では起動そのものが拒まれる
             """
         case .buildFailed(let status):
             "作り直しに失敗した (終了コード \(status))。上の出力を見る"

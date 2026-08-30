@@ -421,8 +421,13 @@ extension RenderDevice {
     }
 
     /// 同梱している断片を読む。
+    ///
+    /// **探すのは [ModuleResources] に任せる。** 道具立ての口だけを使うと、包みに入れて
+    /// 配ったときに組み上げた機械の絶対パスへ落ちる ([ADR-0029] 決定 4)。
+    ///
+    /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
     func bundledShaderSource(named name: String) throws(RenderFailure) -> String {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "metal"),
+        guard let url = ModuleResources.url(forResource: name, withExtension: "metal"),
             let source = try? String(contentsOf: url, encoding: .utf8)
         else {
             throw .shaderSourceMissing(name: "\(name).metal")

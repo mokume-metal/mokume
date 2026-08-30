@@ -71,6 +71,12 @@ nonisolated enum ImageFile {
     ///
     /// **同梱した資材は、実行ファイルの隣に置かれた包みの中にある。** 道具立てが
     /// 資材をそこへ写すので、作業ディレクトリだけを見ていると見つからない。
+    ///
+    /// 束ねて配ったときは隣の意味が変わる — 包み (`.app`) の中では実行ファイルの隣が
+    /// `Contents/MacOS/` で、資材は慣例どおり `Contents/Resources/` へ入る。だから
+    /// **資源の置き場の側も同じように走査する** ([ADR-0029] 決定 4)。
+    ///
+    /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
     static func candidates(for path: String) -> [URL] {
         candidates(
             for: path, workingDirectory: FileManager.default.currentDirectoryPath,
@@ -91,16 +97,25 @@ nonisolated enum ImageFile {
         if let resources {
             urls.append(resources.appendingPathComponent(path))
         }
+        for root in [neighbourhood, resources].compactMap({ $0 }) {
+            urls.append(contentsOf: bundled(path, in: root))
+        }
+        urls.append(neighbourhood.appendingPathComponent(path))
+        return urls
+    }
+
+    /// 置き場に並んだ包みの中を、探す場所として広げる。
+    private static func bundled(_ path: String, in root: URL) -> [URL] {
         let listing =
             (try? FileManager.default.contentsOfDirectory(
-                at: neighbourhood, includingPropertiesForKeys: nil)) ?? []
+                at: root, includingPropertiesForKeys: nil)) ?? []
+        var urls: [URL] = []
         for bundle in listing.sorted(by: { $0.path < $1.path })
         where bundle.pathExtension == "bundle" {
             urls.append(bundle.appendingPathComponent(path))
             urls.append(
                 bundle.appendingPathComponent("Contents/Resources").appendingPathComponent(path))
         }
-        urls.append(neighbourhood.appendingPathComponent(path))
         return urls
     }
 }
