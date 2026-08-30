@@ -9,16 +9,22 @@
 # 合流後の木を覆えなくなるためで、機構としては正しい (#435 が塞いだ事故を事前に
 # 止めている)。
 #
-# 困るのは**復旧が 5 手ある**ことである。1 手でも抜けると PR は全チェック緑・
+# 困るのは**復旧に手数がある**ことである。1 手でも抜けると PR は全チェック緑・
 # mergeStateStatus は CLEAN のまま止まり、外から見て異常に見えない。赤を見張る
-# 仕掛けは何も言わない。#533 では 4 手までやって 5 手目が抜けた — AGENTS.md に
-# 正しく書かれている手順を読み落として、である。
+# 仕掛けは何も言わない。**#533 では当時の 5 手のうち 4 手までやって最後が抜けた** —
+# AGENTS.md に正しく書かれている手順を読み落として、である。
 #
 #   1. git merge origin/main
-#   2. make ci-check          # 最後の render-status は「まだ push していない」で報告できない
-#   3. git push
-#   4. make render-status     # 同じ記録から報告し直す
-#   5. gh pr merge --auto --squash  # 弾かれた拍子に外れた auto-merge を掛け直す
+#   2. make ci-check          # 覆い直した報告は、この中の render-status が打つ
+#   3. gh pr merge --auto --squash  # 弾かれた拍子に外れた auto-merge を掛け直す
+#
+# **取り込みは手元だけで済ませ、push しない** (#612)。push するとルールセットの
+# dismiss_stale_reviews_on_push が承認を落とすので、承認が要る描画 PR は他の PR が
+# 入るたびに押し直しになっていた。覆いの判定に要るのは「どの木を回したか」だけで、
+# それは local-render の covers= が運ぶ (scripts/render-status.sh)。
+#
+# 例外は**衝突を解いた合流**で、そのときだけ push する — 解いた中身は remote に
+# 無いので、queue も同じ木を作れない。中身が本当に変わるので、承認のやり直しは正しい。
 #
 # ## 使い方
 #
@@ -126,12 +132,25 @@ fi
 say "make ci-check を回す (絵の検査を含むので数分かかる)"
 make ci-check || stop "make ci-check が通らなかった" "上の出力の失敗を直してから打ち直す"
 
-git push || stop "push できなかった"
-sha=$(git rev-parse HEAD)
-
-# ci-check の最後の報告は、取り込み直後の commit がまだ remote に無いので届かない。
-# 同じ記録から打ち直す (これが 4 手目)
-make render-status
+# **素直な取り込みなら push しない** (#612)。push するとルールセットの
+# dismiss_stale_reviews_on_push が承認を落とし、承認が要る描画 PR は他の PR が
+# 入るたびに押し直しになる。判定に要るのは「どの木を回したか」だけで、それは
+# local-render の covers= が運ぶので、head を動かす必要が無い。
+#
+# **push の要否をここで判定し直さない。** 報告先を決めるのと同じ問いなので、
+# render-status へ訊く (ADR-0001 原則 9)。HEAD が返るのは「push しないと誰も
+# 見られない木」— 衝突を解いた合流がこれに当たる
+sha=$(bash "$(dirname "${BASH_SOURCE[0]}")/render-status.sh" target)
+if [ "$sha" = "$(git rev-parse '@{u}')" ]; then
+  say "手元の木は queue が組む木と同じ — push しない (承認は落ちない・#612)"
+else
+  say "手元の木は queue が組む木と違う (衝突を解いてある) — push する"
+  say "承認済みなら押し直しが要る — 入る中身が変わるため"
+  git push || stop "push できなかった"
+  # ci-check の最後の報告は、その時点で commit が remote に無いので届かなかった。
+  # 同じ記録から打ち直す
+  make render-status
+fi
 
 # --- 4. 報告が実際に付いたことを確かめる -----------------------------------
 

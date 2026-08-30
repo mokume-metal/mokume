@@ -265,12 +265,16 @@ bash scripts/orphan-processes.sh
 
 | 判定 | `local-render` | 対処 |
 | --- | --- | --- |
-| PR head と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | `make catch-up` |
+| 手元が回した木と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | `make catch-up` |
 | 覆いを壊す open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | 先頭が merge されるまで待つ (待ちの間に打ち直しても無駄になる)。先頭が停滞しているならその PR を Draft に落とす |
 
 順番は番号順なので、**まだ作業中の描画 PR は Draft にしておく** — Draft は順番の外なので、完成して承認まで済んだ後続を番号だけの理由で待たせずに済む ([#497](https://github.com/mokume-metal/mokume/issues/497))。
 
-`make catch-up` は復旧の 5 手 — main を取り込む → `make ci-check` → push → `make render-status` → `--auto` を掛け直す — を 1 手にする ([#457](https://github.com/mokume-metal/mokume/issues/457))。**打つ意味が無いときは走らない**ので、上の表の 2 行目 (先に描画 PR が居る) では番号を名指しして断り、数分かかる検査を空費しない。手で 5 手を追ってもよいが、**1 手抜けても PR は全チェック緑・`CLEAN` のまま止まる**ので、それに気付く経路が無い。
+手元が何を回したかは、`local-render` の報告が `covers=` として名乗る ([#612](https://github.com/mokume-metal/mokume/issues/612))。**判定はその名乗りと合流後の木を突き合わせる** — PR の head の木は見ない。だから覆い直しに push が要らない。
+
+`make catch-up` は復旧の 3 手 — main を取り込む → `make ci-check` → `--auto` を掛け直す — を 1 手にする ([#457](https://github.com/mokume-metal/mokume/issues/457))。**打つ意味が無いときは走らない**ので、上の表の 2 行目 (先に描画 PR が居る) では番号を名指しして断り、数分かかる検査を空費しない。手で 3 手を追ってもよいが、**1 手抜けても PR は全チェック緑・`CLEAN` のまま止まる**ので、それに気付く経路が無い。
+
+**取り込みは手元だけで済ませ、push しない。** push するとルールセットの `dismiss_stale_reviews_on_push` が承認を落とし、承認が要る描画 PR は他の PR が入るたびに押し直しになっていた (#612)。例外は**衝突を解いた合流**で、そのときだけ push する — 解いた中身は remote に無いので queue も同じ木を作れず、中身が本当に変わる以上、承認のやり直しは正しい。
 
 壊れている絵は起票の時点でしか撮れないので、見た目・動きの事象を Issue に立てるときも証跡を添える。
 

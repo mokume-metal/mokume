@@ -17,6 +17,7 @@ gh は PATH の先頭に置いた偽物へ差し替え、git も使い捨ての�
 """
 
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -83,6 +84,12 @@ if [[ "$*" == *"/files"* ]]; then
     fi
   done
   printf '%s\\n' $FILES
+  exit 0
+fi
+# commit に付いた status。--jq が抜いた後の description (local-render の最新の success)
+if [[ "$*" == *"/commits/"*"/statuses"* ]]; then
+  [ -z "${STATUSES_FAILS:-}" ] || { echo "gh: 404" >&2; exit 1; }
+  printf '%s\n' "${COVERS_DESCRIPTION:-}"
   exit 0
 fi
 # PR そのもの (--jq .head.sha)
@@ -184,6 +191,13 @@ class RenderStatusTest(unittest.TestCase):
         self.assertIn("context=local-render", posted[0])
         self.assertIn("state=success", posted[0])
 
+    def test_報告は回した木の指紋を名乗る(self):
+        """#612。merge queue はこの値と合流後の木を突き合わせる。名乗らなくなると
+        判定が head の木へ落ちて、push を要求する形へ静かに戻る。"""
+        self.write_log(LOG_PASSED)
+        self.run_script("local")
+        self.assertRegex(self.posted()[0], r"covers=[0-9a-f]{12}")
+
     def test_台帳のsuiteが通っていなければ報告しない(self):
         self.write_log(LOG_SKIPPED)
         out = self.run_script("local")
@@ -273,9 +287,22 @@ class RenderStatusTest(unittest.TestCase):
             FILES_BY_PR="",
             OPEN_PRS_FAILS="",
             FILES_FAILS_FOR="",
+            COVERS_DESCRIPTION="",
+            STATUSES_FAILS="",
         )
         base.update(env)
         return self.run_script("proxy", **base)
+
+    def merged_fingerprint(self, **env):
+        """合流後の木の指紋を、スクリプト自身の名乗りから読む。
+
+        検査の側で指紋を組み立て直すと**判定の実体が 2 つ**になる (ADR-0001 原則 9)。
+        覆えていない回の「合流後=…」をそのまま使えば、綴りが動いてもここは追随する。"""
+        out = self.queue(TREE_HEAD=TREE_DRAWING_MOVED, **env)
+        self.calls.unlink(missing_ok=True)  # 下ごしらえの分を数えない
+        match = re.search(r"合流後=([0-9a-f]+)", out)
+        self.assertIsNotNone(match, out)
+        return match.group(1)
 
     def test_先に描画PRが居れば順番待ちで赤くする(self):
         out = self.turn()
@@ -366,9 +393,22 @@ class RenderStatusTest(unittest.TestCase):
             TREE_FAILS="",
             TREE_TRUNCATED="",
             FILES_FAILS_FOR="",
+            COVERS_DESCRIPTION="",
+            STATUSES_FAILS="",
         )
         base.update(env)
         return self.run_script("proxy", **base)
+
+    def merged_fingerprint(self, **env):
+        """合流後の木の指紋を、スクリプト自身の名乗りから読む。
+
+        検査の側で指紋を組み立て直すと**判定の実体が 2 つ**になる (ADR-0001 原則 9)。
+        覆えていない回の「合流後=…」をそのまま使えば、綴りが動いてもここは追随する。"""
+        out = self.queue(TREE_HEAD=TREE_DRAWING_MOVED, **env)
+        self.calls.unlink(missing_ok=True)  # 下ごしらえの分を数えない
+        match = re.search(r"合流後=([0-9a-f]+)", out)
+        self.assertIsNotNone(match, out)
+        return match.group(1)
 
     def test_覆えている描画PRは報告する(self):
         out = self.queue()
@@ -379,6 +419,43 @@ class RenderStatusTest(unittest.TestCase):
         # 何本を見た上で通したのかを名乗る (#441)
         self.assertIn("1 本の描画 PR", posted[0])
         self.assertIn("#5 は覆えている", out)
+
+    def test_手元が名乗る指紋で覆いを判定する(self):
+        """#612。覆い直しのたびに push させると、ルールセットが承認を落とす。判定に
+        要るのは「どの木を回したか」だけなので、それを報告そのものから読む。
+
+        ここで固定するのは**head の木が合流後と違っていても、報告が合流後の木を
+        名乗っていれば覆えている**こと — これが成り立つと push が要らなくなる。"""
+        fingerprint = self.merged_fingerprint()
+        out = self.queue(
+            TREE_HEAD=TREE_DRAWING_MOVED,
+            COVERS_DESCRIPTION=f"手元で全検査が通った skipped=0 ledger=abcd covers={fingerprint}",
+        )
+        posted = self.posted()
+        self.assertEqual(len(posted), 1, posted)
+        self.assertIn("state=success", posted[0])
+        self.assertIn("手元の報告=", out)
+
+    def test_名乗る指紋が合流後と違えば弾く(self):
+        """報告が head の木より**強い**ことの裏側。head の木が合流後と同じでも、
+        手元が別の木を回したと名乗っているなら覆えていない。"""
+        out = self.queue(
+            COVERS_DESCRIPTION="手元で全検査が通った skipped=0 ledger=abcd covers=000000000000",
+        )
+        self.assertEqual(len(self.posted()), 2, self.posted())
+        self.assertIn("state=failure", self.posted_to("cafe1234")[0])
+        self.assertIn("手元の報告=000000000000", out)
+
+    def test_指紋を名乗らない報告はheadの木で判定する(self):
+        """古い報告・手で打った status への逃がし。名乗りが無ければ今までどおり。"""
+        out = self.queue(COVERS_DESCRIPTION="手元で全検査が通った skipped=0 ledger=abcd")
+        self.assertIn("head の木=", out)
+        self.assertIn("state=success", self.posted_to("cafe1234")[0])
+
+    def test_statusを読めなくてもheadの木で判定できる(self):
+        out = self.queue(STATUSES_FAILS="1")
+        self.assertIn("head の木=", out)
+        self.assertIn("state=success", self.posted_to("cafe1234")[0])
 
     def test_覆えていない描画PRには失敗を打つ(self):
         """#432 を止める行。main 側で描画のファイルが動いていれば、手元で回した木は
@@ -514,6 +591,66 @@ class RenderStatusTest(unittest.TestCase):
         calls = self.calls.read_text()
         self.assertIn("/pulls/5/files", calls)
         self.assertIn("/pulls/6/files", calls)
+
+    # --- target (報告先) -------------------------------------------------
+    #
+    # 覆い直しのたびに push すると、ルールセットの dismiss_stale_reviews_on_push が
+    # 承認を落とす (#612)。**取り込みだけの木なら push 済み head へ報告する**ので
+    # push が要らない。ここで固定するのは「どこまでを取り込みだけと見るか」である。
+
+    def _upstream_scenario(self):
+        """push 済みの head (origin/topic) と、その先へ進んだ origin/main を作る。
+
+        **枝には自分の commit を持たせる。** 持たせないと取り込みが早送りになり、
+        合流の commit が生まれないので、判定したい形にならない。"""
+        self._git("checkout", "-qb", "topic")
+        (self.work / "topic.txt").write_text("枝の変更\n")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "枝の変更")
+        pushed = self._git("rev-parse", "HEAD").strip()
+        self._git("update-ref", "refs/remotes/origin/topic", pushed)
+        self._git("branch", "--set-upstream-to=origin/topic", "topic")
+        self._git("checkout", "-q", "main")
+        (self.work / "other.txt").write_text("main が進んだ\n")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "main が進む")
+        self._git("update-ref", "refs/remotes/origin/main", self._git("rev-parse", "HEAD").strip())
+        self._git("checkout", "-q", "topic")
+        return pushed
+
+    def test_取り込みだけの木はpush済みheadへ報告する(self):
+        seed = self._upstream_scenario()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self.assertEqual(self.run_script("target").strip(), seed)
+
+    def test_普通のcommitが乗っていたらHEADへ報告する(self):
+        """手元にしかない commit の木は誰も見られない。報告先を push 済み head へ
+        寄せると、報告とその中身が食い違う。"""
+        self._upstream_scenario()
+        (self.work / "later.txt").write_text("push していない変更\n")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "push していない変更")
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self.assertEqual(
+            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+        )
+
+    def test_衝突を解いた合流はHEADへ報告する(self):
+        """解いた中身は remote に無いので、queue も同じ木を作れない。そこは push が
+        要り、承認のやり直しも正しい。"""
+        self._upstream_scenario()
+        self._git("merge", "--no-commit", "--no-ff", "-q", "origin/main")
+        (self.work / "other.txt").write_text("解いた結果\n")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "解いて合流")
+        self.assertEqual(
+            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+        )
+
+    def test_追跡先が無ければHEADへ報告する(self):
+        self.assertEqual(
+            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+        )
 
 
 if __name__ == "__main__":
