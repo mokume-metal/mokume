@@ -48,6 +48,11 @@ command -v jq >/dev/null 2>&1 || exit 0
 command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
 [ -n "$command" ] || exit 0
 
+# -R が無いコマンドの宛先はカレントディレクトリのリポジトリ。payload の cwd は
+# シェルが実際に居るディレクトリを持つ (#611)
+cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""' 2>/dev/null)
+[ -n "$cwd" ] || cwd=$PWD
+
 # ラッパー自身の呼び出しは素通し (内部で gh を呼ぶが、それは別プロセスでここを通らない)
 printf '%s' "$command" | grep -qE '(^|[;&|[:space:]])(bash[[:space:]]+)?[^[:space:];&|]*scripts/comment\.sh([[:space:]]|$)' && exit 0
 
@@ -73,10 +78,10 @@ printf '%s' "$command" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)' &&
 # 他のリポジトリ宛てのコメントはこのリポジトリの規約の外 (#188)。あちらの署名の作法は
 # 別に決まっており、ラッパーの投稿先は mokume 固定なので、ここで止めると逃げ道が無くなる。
 # 判定は guard-lib.sh が持つ (pr-identity-guard.sh と共有する)
-targets_other_repo "$command" && exit 0
+targets_other_repo "$command" "$cwd" && exit 0
 
 deny "$(cat <<'EOF'
-Issue / PR へのコメントは scripts/comment.sh から投稿してください。
+このリポジトリの Issue / PR へのコメントは scripts/comment.sh から投稿してください。
 
 同じ Issue には人間も複数のエージェントも書き込みます。どの AI が書いたかを本文の
 署名で判別できる必要があり、ラッパーがそれを実行環境から判定して自動で付けます
@@ -95,4 +100,4 @@ close / reopen に --comment を添える場合は 2 手に分けます。発言
   bash scripts/comment.sh pr <番号> --body "<本文>"
   gh pr close <番号>
 EOF
-)"
+)$(other_repo_hint 'gh issue comment <番号>')"
