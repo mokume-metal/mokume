@@ -8,14 +8,24 @@
 区切る。囲みの中だけが機械の領域で、外は人の文章である
 ([ADR-0027](../docs/decisions/0027-readable-surfaces.md) 決定 2)。
 
-    /// ```swift
-    /// background(0.15)
-    /// circle(width / 2, height / 2, 200)
-    /// ```
-    /// <!-- shot: 濃い灰色の背景に、中央の白い円 -->
-    /// ![濃い灰色の背景に、中央の白い円](https://i.gyazo.com/xxxx.png)
-    /// <!-- /shot -->
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     circle(200, 150, 160)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 濃い灰色の下地の中央に、白い円 -->
+    ///     ![濃い灰色の下地の中央に、白い円](https://i.gyazo.com/xxxx.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     // shot: 1 snippet=3f9a1c8d taken=8d814ff
+
+**例と絵は左右に並べる。** 縦に積むと絵が本文の幅いっぱいに出て、目が例と結び付け
+にくい。列の重みを 3:1 にしてあるのは、**例の行が折り返さずに収まる幅**を先に確保する
+ためで、絵はその余りでちょうど手本 (p5.js) の小さなキャンバスくらいになる。
 
 **一文の説明は開く側にだけ書く。** 機械が作る `![…](…)` の行はその写しなので、人が
 直すのは 1 か所で済む。空の説明は落とす — 絵を見られない読者に何も渡らないうえ、
@@ -62,6 +72,8 @@ DOC = re.compile(r"^\s*///")
 # 撮影の記録。書くのも読むのもこの 1 行だけ
 RECORD = re.compile(r"^\s*//\s*shot:\s*(?P<index>\d+)\s+snippet=(?P<snippet>[0-9a-f]+)\s+taken=(?P<taken>\S+)\s*$")
 IMAGE = re.compile(r"^\s*///\s*!\[")
+# 囲みの上を遡るときに跨ぐ行 — 空の説明文行と、2 段組の足場
+SCAFFOLD = re.compile(r"^\s*(///\s*(@Row\b.*|@Column\b.*|\}|)\s*)?$")
 
 DEFAULT_SIZE = (400, 300)
 GYAZO_UPLOAD = "https://upload.gyazo.com/api/upload"
@@ -121,9 +133,13 @@ def parse_attributes(text: str | None) -> tuple[int, int, int]:
 
 
 def snippet_above(lines: list[str], open_line: int) -> list[str]:
-    """囲みの直前にある ```swift の中身。無ければ空を返す (呼び出し側が落とす)。"""
+    """囲みの直前にある ```swift の中身。無ければ空を返す (呼び出し側が落とす)。
+
+    **2 段組の足場 (`@Row` / `@Column` / 閉じ括弧) は跨ぐ。** 例と絵を左右に並べると、
+    例の塊と囲みの間にそれらの行が挟まる。
+    """
     index = open_line - 1
-    while index >= 0 and lines[index].strip() in ("///", ""):
+    while index >= 0 and SCAFFOLD.match(lines[index]):
         index -= 1
     if index < 0 or not FENCE_CLOSE.match(lines[index]):
         return []
@@ -131,9 +147,19 @@ def snippet_above(lines: list[str], open_line: int) -> list[str]:
     index -= 1
     while index >= 0 and DOC.match(lines[index]):
         if FENCE_OPEN.match(lines[index]):
-            return [strip_doc(line) for line in lines[index + 1 : end]]
+            return dedent([strip_doc(line) for line in lines[index + 1 : end]])
         index -= 1
     return []
+
+
+def dedent(snippet: list[str]) -> list[str]:
+    """共通の字下げを落とす。**指紋を入れ子の深さから独立させる** — 2 段組へ入れた
+    だけで撮り直しを要求されると、絵は同じなのに URL が動く。"""
+    body = [line for line in snippet if line.strip()]
+    if not body:
+        return snippet
+    common = min(len(line) - len(line.lstrip()) for line in body)
+    return [line[common:] if line.strip() else "" for line in snippet]
 
 
 def strip_doc(line: str) -> str:
@@ -447,6 +473,8 @@ def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str], take
         # 塊も囲みも**後ろから**書き換える。行が増減しても、まだ触っていない側の
         # 行番号が動かない
         for block in reversed(blocks_of(lines, [s for s in shots if s.path == path])):
+            # 記録の行は宣言と同じ深さ、絵の行は囲みと同じ深さに置く。囲みが
+            # 2 段組の中にあると両者は違う
             indent = re.match(r"^(\s*)", lines[block[0].open_line]).group(1)
             end = max(shot.close_line for shot in block)
             after = end + 1
@@ -460,7 +488,8 @@ def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str], take
                 for shot in block
             ]
             for shot in reversed(block):
-                image = f"{indent}/// ![{shot.alt}]({urls[shot.name]})"
+                prefix = lines[shot.open_line].split("<!--")[0]
+                image = f"{prefix}![{shot.alt}]({urls[shot.name]})"
                 lines[shot.open_line + 1 : shot.close_line] = [image]
         text = "\n".join(lines)
         if text != original:
