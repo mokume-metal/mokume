@@ -360,9 +360,19 @@ extension Sketch {
             let application = try SketchApplication(sketch: Self(), gpu: gpu)
             application.run()
         } catch {
-            FileHandle.standardError.write(
-                Data("スケッチを起動できませんでした: \(error)\n".utf8))
+            FileHandle.standardError.write(Data(startupFailureText(error).utf8))
             exit(1)
         }
     }
+}
+
+/// 起動できなかったときに標準エラーへ出す文面 (末尾の改行まで)。
+///
+/// **切り出してあるのは、`\(error)` へ戻る退行を検査が捕まえられるようにするため。**
+/// `Sketch.main()` はこの直後に `exit(1)` するので、そのままでは呼んで確かめられない。
+///
+/// 名乗りと中身を 2 行に分けるのは、``RenderFailure/message`` が多行だからである —
+/// 1 行に繋ぐと「起動できませんでした: 〜が見つからない: 〜」と冒頭に : が 2 つ並ぶ。
+func startupFailureText(_ failure: RenderFailure) -> String {
+    "スケッチを起動できませんでした。\n\(failure.message)\n"
 }
