@@ -22,6 +22,7 @@
 # GITHUB_TOKEN が read-only になるので、赤くしない性質がそのまま要る。
 #
 # 呼ぶのは ci.yml の approval-signal ジョブ (review-gate が pending を出したときだけ)。
+# この行は #531 の検証用で、この PR は merge しない。
 # 使い方: request-review.sh <PR番号> (要 GH_TOKEN / gh 認証)
 set -euo pipefail
 
