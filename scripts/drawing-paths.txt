@@ -5,14 +5,26 @@
 #
 # 用途は 2 つで、**一覧の実体はこの 1 つ**に保つ (ADR-0001 原則 9)。
 # 読む側の照合も 1 つで、scripts/drawing-paths.sh の touches_drawing がそれにあたる:
-#   - 手元の実行の報告 (local-render) を代理で済ませてよいかの判定 — scripts/render-status.sh
-#   - 絵の証跡を要求するかの判定 (#306) — scripts/check-drawing-evidence.sh
 #
-# 行は「先頭一致するパスの前置き」。# で始まる行と空行は無視する。
+#   evidence  絵の証跡を要求するかの判定 (#306) — scripts/check-drawing-evidence.sh
+#   coverage  手元の実行の報告 (local-render) を代理で済ませてよいか (#435) と、
+#             描画 PR の順番待ちに入るか (#467) の判定 — scripts/render-status.sh
+#
+# 行は「先頭一致するパスの前置き」に、任意の印を空白で区切って続けた形。
+# # で始まる行と空行は無視する。印はいま 1 つだけある:
+#
+#   evidence-only  絵は動きうるが、**台帳が描く絵は動かせない**場所 (#497)。
+#                  証跡は要求するが、手元の実行の覆いには数えない
+#
 # 迷ったら**広く**取る — 広すぎたときの代償は手元で make ci-check を打つことだけで、
-# 狭すぎたときの代償は絵の退行が誰にも見られずに main へ入ることである。
+# 狭すぎたときの代償は絵の退行が誰にも見られずに main へ入ることである。印も同じ向きで、
+# 付けないほうが広い (両方の問いに効く)。知らない印は無視される。
 
 Sources/MokumeCore/
 Sources/mokume/
-Sketches/
+# 参照スケッチは reference-sketches という独立した executableTarget で、どの product にも
+# 入らず、誰も依存しない (Package.swift)。台帳 suite (代表シーンの台帳) が描く絵を 1 画素も
+# 動かせないので、覆いの判定には数えない。合流後の木でビルドが破れれば merge queue の
+# ci-check が見る (ci.yml に merge_group: がある)。#497
+Sketches/  evidence-only
 Tests/MokumeCoreTests/

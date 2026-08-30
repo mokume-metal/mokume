@@ -26,7 +26,8 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "render-status.sh"
 
 LEDGER = "shapes 1111\ntransforms 2222\n"
-PATHS = "# 見出し\n\nSources/MokumeCore/\nSketches/\n"
+# `Sketches/` は印つきの行 — 絵の証跡は要るが、覆いの判定には数えない (#497)
+PATHS = "# 見出し\n\nSources/MokumeCore/\nSketches/  evidence-only\n"
 
 # 台帳の suite が通った実行の記録 (実際の出力の要点だけ)
 LOG_PASSED = """◇ Test run started.
@@ -93,9 +94,11 @@ exit 0
 """
 
 # 木の中身の作り物。描画に関わる 1 行が動くかどうかで覆いの判定が変わる
-TREE_BASE = "Sources/MokumeCore/Canvas.swift aaa1\\nAGENTS.md bbb1"
-TREE_DRAWING_MOVED = "Sources/MokumeCore/Canvas.swift aaa2\\nAGENTS.md bbb1"
-TREE_OTHER_MOVED = "Sources/MokumeCore/Canvas.swift aaa1\\nAGENTS.md bbb2"
+TREE_BASE = "Sources/MokumeCore/Canvas.swift aaa1\\nSketches/main.swift ccc1\\nAGENTS.md bbb1"
+TREE_DRAWING_MOVED = "Sources/MokumeCore/Canvas.swift aaa2\\nSketches/main.swift ccc1\\nAGENTS.md bbb1"
+TREE_OTHER_MOVED = "Sources/MokumeCore/Canvas.swift aaa1\\nSketches/main.swift ccc1\\nAGENTS.md bbb2"
+# 印つきの場所だけが動いた木。覆いの判定はここを見ない (#497)
+TREE_SKETCH_MOVED = "Sources/MokumeCore/Canvas.swift aaa1\\nSketches/main.swift ccc2\\nAGENTS.md bbb1"
 
 
 class RenderStatusTest(unittest.TestCase):
@@ -235,6 +238,23 @@ class RenderStatusTest(unittest.TestCase):
         self.assertEqual(self.posted(), [])
         self.assertIn("手元の報告を待つ", out)
 
+    def test_台帳の絵を動かさない場所だけの変更には代理で報告する(self):
+        """`Sketches/` は絵の証跡は要るが、手元の実行の覆いは壊せない (#497)。
+        覆いを壊さないなら手元の報告を待つ理由が無いので、代理で緑にする。"""
+        out = self.run_script(
+            "proxy",
+            GITHUB_REPOSITORY="mokume-metal/mokume",
+            GITHUB_EVENT_NAME="pull_request",
+            PR_NUMBER="5",
+            PR_HEAD_SHA="deadbeef",
+            FILES="Sketches/Shapes/Circles.swift",
+        )
+        posted = self.posted()
+        self.assertEqual(len(posted), 1)
+        self.assertIn("state=success", posted[0])
+        self.assertIn("覆いを壊さない", posted[0])
+        self.assertNotIn("手元の報告を待つ", out)
+
     # --- proxy / 描画 PR の順番 -----------------------------------------
     #
     # #435 の判定は「手元で回した木が合流後の姿を覆っているか」を見る。裏を返すと
@@ -278,6 +298,20 @@ class RenderStatusTest(unittest.TestCase):
         self.assertIn("#7 の merge を待つ", self.posted_to("deadbeef")[0])
         self.assertIn("先に #7 が居る", out)
 
+    def test_先に居るのが台帳の絵を動かさないPRなら先頭として扱う(self):
+        """#497 の実害そのもの — 完成した `Sketches/` の PR が、番号が若いだけの
+        作業中の PR を待たされていた。覆いを壊さない PR は行列を作らない。"""
+        out = self.turn(FILES_BY_PR="3=Sketches/main.swift")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("この PR が描画の先頭", out)
+
+    def test_台帳の絵を動かさないPRは順番待ちに並ばない(self):
+        out = self.turn(FILES="Sketches/main.swift")
+        posted = self.posted_to("deadbeef")
+        self.assertEqual(len(posted), 1)
+        self.assertIn("state=success", posted[0])
+        self.assertNotIn("先に #3 が居る", out)
+
     def test_自分より後ろの描画PRは順番を塞がない(self):
         out = self.turn(PR_NUMBER="3", OPEN_PRS="3 9")
         self.assertEqual(self.posted(), [])
@@ -309,7 +343,7 @@ class RenderStatusTest(unittest.TestCase):
         )
         posted = self.posted_to("deadbeef")
         self.assertEqual(len(posted), 1)
-        self.assertIn("描画に触れていない", posted[0])
+        self.assertIn("覆いを壊さない", posted[0])
         self.assertNotIn("先に #3 が居る", out)
 
     # --- proxy / merge queue -------------------------------------------
@@ -408,7 +442,7 @@ class RenderStatusTest(unittest.TestCase):
         self.assertIn("state=success", posted[0])
         # 読み飛ばすときも名乗る (#441)。黙って飛ばすと、通した回のログが
         # 「見た上で通した」のか「見る対象が無かった」のか読めない
-        self.assertIn("#5 は描画に触れない", out)
+        self.assertIn("#5 は台帳の絵を動かさない", out)
 
     def test_見る対象が無かった回は覆っていると名乗らない(self):
         """#439 自身の merge がこれだった — 描画 PR は 1 本も無いのに、報告だけが
@@ -434,6 +468,15 @@ class RenderStatusTest(unittest.TestCase):
     def test_描画に関わらないファイルが動いただけなら覆えている(self):
         self.queue(TREE_MERGED=TREE_OTHER_MOVED)
         posted = self.posted()
+        self.assertIn("state=success", posted[0])
+
+    def test_台帳の絵を動かさない場所が動いただけなら覆えている(self):
+        """`Sketches/` は台帳が描く絵を 1 画素も動かせないので、そこが合流後に
+        動いていても手元の実行は合流後の姿を覆っている (#497)。合流後の木の
+        ビルド破れは merge queue の ci-check が見る。"""
+        self.queue(TREE_MERGED=TREE_SKETCH_MOVED)
+        posted = self.posted()
+        self.assertEqual(len(posted), 1)
         self.assertIn("state=success", posted[0])
 
     def test_木が読めなければ名乗って通す(self):
