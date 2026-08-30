@@ -239,6 +239,15 @@ enum Scene: String, CaseIterable, Sendable {
     case surfaceShader
     /// 粒が力を受けて飛ぶ。**時点を持つ最初のシーン。**
     case particles
+    /// 計算が書いた数をそのまま絵にしたもの。**時点を持つ** — 場が時間で動くので、
+    /// 1 枚では計算が毎フレーム走っていることまでは読めない。
+    ///
+    /// 計算を 2 本繋いである (場を書く → その場を読んで縁を立てる)。**同じ並びに
+    /// 触れる計算どうし**なので口が切れ、切れ目が無ければ縁のほうが書き終わる前の
+    /// 場を読む ([#388])。上下に並べた 2 枚は同じ場の前後で、片方だけが動いても行が動く。
+    ///
+    /// [#388]: https://github.com/mokume-metal/mokume/issues/388
+    case field
     /// 描いた絵に効果を重ねたもの。
     case effects
     /// **描く細かさを半分にして拡大したもの。** 斜めと曲がりが多いので、拡大の質が出る。
@@ -326,6 +335,8 @@ enum Scene: String, CaseIterable, Sendable {
         case upscale
         /// 粒に効かせる力。
         case force
+        /// 描く前に走る計算。
+        case compute
 
         /// 質感の指定だけ。``MaterialTests`` が引数に使う。
         nonisolated static var materialAspects: [Ingredient] {
@@ -333,7 +344,7 @@ enum Scene: String, CaseIterable, Sendable {
         }
 
         /// 段だけ。**外すと絵が変わるはずの行**を、この要素自身が知っている。
-        nonisolated static var stages: [Ingredient] { [.effects, .upscale, .force] }
+        nonisolated static var stages: [Ingredient] { [.effects, .upscale, .force, .compute] }
 
         /// この要素を写しているはずの台帳の行。
         nonisolated var takes: [Take] {
@@ -343,6 +354,7 @@ enum Scene: String, CaseIterable, Sendable {
                 [Take(scene: .upscaled, moment: nil)]
                     + Scene.upscaledOverTime.moments.map { Take(scene: .upscaledOverTime, moment: $0) }
             case .force: Scene.particles.moments.map { Take(scene: .particles, moment: $0) }
+            case .compute: Scene.field.moments.map { Take(scene: .field, moment: $0) }
             default: []
             }
         }
@@ -362,6 +374,9 @@ enum Scene: String, CaseIterable, Sendable {
         // 描き場所は**消さずに積み上げる**ので、跡が伸びたところと、一周して
         // 重なり始めたところの 2 点を見る
         case .layered: [6, 20]
+        // 計算が書く場は**時刻から決まる**ので、位相の違う 2 点を見る。1 点だけだと、
+        // 計算が初回しか走っていなくても気付けない
+        case .field: [6, 30]
         default: []
         }
     }
@@ -396,6 +411,98 @@ enum Scene: String, CaseIterable, Sendable {
                 }
                 canvas.particles(dust)
             }
+        case .field:
+            // 場は 32 x 32。**位置と時刻だけから決まる**ので、前フレームの値は読まない —
+            // 読ませると、単独で描いた N と 0 から進めた N が食い違い、列が揃わなくなる
+            let cells = 32
+            let heat = try canvas.makeNumbers(count: cells * cells)
+            let banded = try canvas.makeNumbers(count: cells * cells)
+            // **計算を頼まなかったときの値**を置く。潰したときの絵が「平らな場」として
+            // 出るので、行が動いたことがそのまま読める
+            heat.fill(0)
+            banded.fill(0)
+            let stir = try canvas.makeComputation(
+                """
+                kernel void stir(device float *field [[buffer(0)]],
+                                 constant Values &values [[buffer(MOKUME_VALUES)]],
+                                 uint2 id [[thread_position_in_grid]])
+                {
+                    uint cells = uint(values.cells);
+                    float2 place = (float2(id) + 0.5) / values.cells;
+                    float wave = sin(place.x * 7.0 + values.time * 4.5)
+                        + cos(place.y * 5.0 - values.time * 3.0);
+                    field[id.y * cells + id.x] = 0.5 + 0.25 * wave;
+                }
+                """,
+                name: "stir", values: ["cells": .number(Float(cells)), "time": 0])
+            // **1 本目が書いた並びを読んで、段に落とす。** 触れる計算どうしなので口が
+            // 切れ、切れ目が無ければ書き終わる前の場を読む ([#388])。段に落とすのは
+            // なめらかな場との違いが 1 枚で読めるからで、縞の位置がそのまま場の等高線になる
+            let band = try canvas.makeComputation(
+                """
+                kernel void band(device const float *field [[buffer(0)]],
+                                 device float *out [[buffer(1)]],
+                                 constant Values &values [[buffer(MOKUME_VALUES)]],
+                                 uint2 id [[thread_position_in_grid]])
+                {
+                    uint cells = uint(values.cells);
+                    float here = saturate(field[id.y * cells + id.x]);
+                    out[id.y * cells + id.x] = min(floor(here * 6.0), 5.0) / 5.0;
+                }
+                """,
+                name: "band", values: ["cells": .number(Float(cells))])
+            // 並びを絵にする塗り。**どの矩形のどこを読むか**は値で渡すので、同じ塗りで
+            // 場の前後を並べられる
+            let show = try canvas.makeShader(
+                """
+                float4 paint(Fragment in, Values values) {
+                    uint cells = uint(values.cells);
+                    float2 place = (in.position - values.origin) / values.span * values.cells;
+                    uint2 cell = uint2(clamp(place, float2(0.0), float2(values.cells - 0.001)));
+                    float level = in.numbers[cell.y * cells + cell.x];
+                    return float4(mix(values.cool.rgb, values.warm.rgb, level), 1.0);
+                }
+                """,
+                values: [
+                    "cells": .number(Float(cells)),
+                    "origin": .pair(0, 0),
+                    "span": .pair(128, 88),
+                    "cool": .color(.display(red: 0.05, green: 0.09, blue: 0.28)),
+                    "warm": .color(.display(red: 1, green: 0.72, blue: 0.3)),
+                ])
+            var step = 0
+            return {
+                // **秒で送る。** 時点がそのまま位相になるので、台帳の 2 点は別の場になる
+                stir.set("time", .number(Float(step) / 60))
+                step += 1
+                // 潰したときは 1 本も頼まない。**並びは置いたときの値のまま**である
+                if suppressed != .compute {
+                    canvas.compute(stir, over: cells, by: cells, writes: [heat])
+                    canvas.compute(band, over: cells, by: cells, reads: [heat], writes: [banded])
+                }
+                canvas.background(.display(red: 0.04, green: 0.05, blue: 0.08))
+                // **塗りの指定はフレームをまたいで残る。** `noFill()` が残っていると、
+                // 矩形を置いても絵が出ないのに例外も出ない
+                canvas.noStroke()
+                canvas.fill(.display(red: 1, green: 1, blue: 1))
+
+                // 上: 段に落とした場 (2 本目の結果)
+                canvas.numbers(banded)
+                canvas.shader(show)
+                show.set("origin", .pair(0, 0))
+                show.set("span", .pair(128, 88))
+                canvas.rect(0, 0, 128, 88)
+
+                // 下: 素の場 (1 本目の結果)。**同じ場の前後を並べてある**ので、
+                // 片方だけが動いても行が動く
+                show.set("origin", .pair(0, 92))
+                show.set("span", .pair(128, 36))
+                canvas.numbers(heat)
+                canvas.rect(0, 92, 128, 36)
+
+                canvas.resetShader()
+                canvas.resetNumbers()
+            }
         case .layered:
             // **描き場所はフレームをまたいで持つ。** 毎フレーム作り直すと跡が
             // 積み上がらず、しかも絵は出るので気付けない
@@ -428,7 +535,7 @@ enum Scene: String, CaseIterable, Sendable {
     /// その質感を写していないということになる ([ADR-0019] 決定 4)。
     func draw(on canvas: Canvas, without suppressed: Ingredient?) {
         switch self {
-        case .particles, .layered:
+        case .particles, .layered, .field:
             // **1 枚では描けないシーン。** フレームをまたいで持つものがあるので、
             // 走らせ方は `session(on:)` が持つ
             break
