@@ -171,6 +171,13 @@ struct ObservationProtocolTests {
         #expect(names == names.sorted())
     }
 
+    /// 与えた時刻でフレームを数えた集計器を作る。
+    private static func tempo(recording moments: [Double]) -> FrameTempo {
+        var tempo = FrameTempo()
+        for moment in moments { tempo.record(now: moment) }
+        return tempo
+    }
+
     @Test("応答の鍵が、正典に置いた代表例と一致する")
     func staysInStepWithTheCanonicalExample() throws {
         // 実装 → 代表例 → スキーマの鎖のうち、ここは 1 本目を守る。実装に鍵を足して
@@ -184,7 +191,7 @@ struct ObservationProtocolTests {
             warnings: [],
             stats: FrameStats.summarize(
                 DisplayImage(width: 2, height: 2, bytes: [UInt8](repeating: 0, count: 16))),
-            load: RuntimeLoad.sample(frameDurations: [0.016, 0.017]),
+            load: RuntimeLoad.sample(tempo: Self.tempo(recording: [0, 0.016, 0.033]), now: 0.033),
             values: ["angle": .float(1.0)],
             stamp: "b3f1a20c")
         let encoded = try JSONEncoder().encode(full)

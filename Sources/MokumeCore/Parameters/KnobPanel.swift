@@ -28,6 +28,9 @@ import SwiftUI
 struct KnobPanel: View {
     /// 並べる値。並びは宣言した順 (基底の側から)。
     let boxes: [any DeclaredParam]
+    /// いまの数字を読む口。**窓は読み手である** ([ADR-0030] 決定 7) — 自分では
+    /// 数えず、観測の応答が返すのと同じ集計器を読む。
+    var numbers: (() -> FrameNumbers)?
 
     /// 面の横幅。行の折り返しではなく窓の隅に収まる大きさで決める。
     static let width: CGFloat = 260
@@ -37,6 +40,10 @@ struct KnobPanel: View {
         // ぶんは巻き取る — はみ出したまま置くと、下のつまみへ手が届かない
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 10) {
+                if let numbers {
+                    NumbersReadout(read: numbers)
+                    Divider()
+                }
                 ForEach(Array(boxes.enumerated()), id: \.offset) { _, box in
                     KnobRow(box: box)
                 }
@@ -52,6 +59,35 @@ struct KnobPanel: View {
         .controlSize(.small)
         .font(.system(size: 11))
     }
+}
+
+/// 走っている速さと時刻。
+///
+/// **自分の間隔で読み直す。** 数字はフレームごとに変わるが、フレームごとに引き直すと
+/// つまみの面が毎フレーム組み直される。読むのは既に数えてある値だけなので、間隔を
+/// 落としても数字そのものは正しい。
+private struct NumbersReadout: View {
+    let read: () -> FrameNumbers
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: Self.interval)) { _ in
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                ForEach(KnobText.numbers(read()), id: \.label) { cell in
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(cell.label)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                        Text(cell.value)
+                            .monospacedDigit()
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// 読み直す間隔 (秒)。人が読める速さで足り、これより速くしても読めない。
+    private static let interval: Double = 0.5
 }
 
 /// 宣言 1 つぶんの行。
@@ -245,8 +281,33 @@ extension Array {
     }
 }
 
-/// つまみの脇に出す値の表記。
+/// つまみの脇と数字の欄に出す表記。
 enum KnobText {
+    /// 測れていないことの表し方。**0 と書かない** ([ADR-0030] 決定 7) — 測れた 0 と
+    /// 区別が付かなくなる。綴りをここ 1 つに持ち、窓の中で表明の形を揃える。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    static let notMeasured = "—"
+
+    /// 測れた数を書く。**測れていなければ ``notMeasured``。**
+    static func measurement(_ value: Double?, fractionDigits: Int = 1) -> String {
+        guard let value else { return notMeasured }
+        return value.formatted(.number.precision(.fractionLength(fractionDigits)))
+    }
+
+    /// 数字の欄に並ぶもの。**組み立ては純関数**にして、窓を立てずに検められるようにする。
+    ///
+    /// 進めた枚数と時刻は常に測れている (どちらも数え上げなので)。速さとフレーム時間は
+    /// 起動直後と止めている間は測れていないので、**同じ 1 つの綴り**で欠測を表す。
+    static func numbers(_ numbers: FrameNumbers) -> [(label: String, value: String)] {
+        [
+            ("fps", measurement(numbers.frameRate)),
+            ("ms", measurement(numbers.frameTimeMs)),
+            ("frame", String(numbers.frameCount)),
+            ("t", measurement(numbers.time, fractionDigits: 2)),
+        ]
+    }
+
     /// 値を 1 行で。**桁を揃える** — 引いている最中に幅が伸び縮みすると読みにくい。
     static func value(of value: ParamValue) -> String {
         switch value {
