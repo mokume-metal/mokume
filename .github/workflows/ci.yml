@@ -137,9 +137,15 @@ jobs:
   # このジョブで、増えるのは宛先が 1 つだけである (新しいジョブは作らない —
   # ADR-0008 決定 5 の段 1「既存の機構の責務を広げる」)。
   #
-  # **要求を飛ばすことと、ブロックすることは別である。** 要求の成否は human-approval にも
-  # ci-gate にも影響せず、scripts/request-review.sh は失敗しても終了コード 0 を返す。
-  # 通知が届かないことを、マージできないことに化けさせない。
+  # **要求を飛ばすことと、ブロックすることは別である。** 要求の成否は ci-gate に影響せず、
+  # human-approval の state (pending / success) も動かさない。通知が届かないことを、
+  # マージできないことに化けさせない。
+  #
+  # **ただし黙らない** (#577)。赤くしないことと黙ることは別で、当初の形は要求が飛ばなくても
+  # success したジョブのログにしか残らず、メンテナは Reviewers 欄を目視して初めて気付いた
+  # (#575)。request-review.sh は「声が掛かっていない」を終了コード 20 で返し、ここが
+  # human-approval の **description** に載せる — マージボックスに出るので、ジョブを
+  # 開かなくても読める。新しい経路は 1 つも作っていない。
   approval-signal:
     if: always() && github.event_name != 'push'
     needs: [review-gate]
@@ -148,16 +154,48 @@ jobs:
       statuses: write
       pull-requests: write
     steps:
+      # **要求が先で、報告が後。** 声が掛かったかを description に載せるので、この順序に
+      # 依存がある。checkout は要求を投げるときだけ要る (status は API だけで打てる)
+      - uses: actions/checkout@v7
+        if: needs.review-gate.outputs.pending == 'true' && github.event_name == 'pull_request'
+      - name: 承認待ちをメンテナへ要求する
+        id: request
+        if: needs.review-gate.outputs.pending == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # review-gate と同じ受け方。20 は「声が掛かっていない」で、故障ではないので
+          # ステップは緑のままにする (故障は case の外に落として赤くする)
+          set +e
+          bash scripts/request-review.sh "${{ github.event.pull_request.number }}"
+          code=$?
+          set -e
+          case "$code" in
+            0)  echo "delivered=true"  >> "$GITHUB_OUTPUT" ;;
+            20) echo "delivered=false" >> "$GITHUB_OUTPUT" ;;
+            *)  exit "$code" ;;
+          esac
+
+      # **要求が失敗しても待ちの表明は要る**ので always()。この status を打たないと、
+      # 承認が要る PR が「待っていること」を誰にも言わないまま止まる
       - name: human-approval を報告
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
           PENDING: ${{ needs.review-gate.outputs.pending }}
+          DELIVERED: ${{ steps.request.outputs.delivered }}
         run: |
           if [ "$PENDING" = "true" ]; then
             state=pending
             description="メンテナの承認待ち (故障ではありません)"
+            # 空のときは要求を投げていない (merge_group など)。**飛ばして失敗したとき
+            # だけ**名乗る — 投げていないことと、投げて届かなかったことは別である
+            if [ "$DELIVERED" = "false" ]; then
+              description="$description — ただし声は掛かっていません"
+            fi
           else
             state=success
             description="承認は要らない、または承認済み"
@@ -166,18 +204,7 @@ jobs:
             -f state="$state" -f context=human-approval \
             -f description="$description" \
             -f target_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID" --silent
-          echo "報告: human-approval → $state"
-
-      # checkout はここまで要らない (status は API だけで打てる)。要求を投げるときだけ
-      # 要る — スクリプトを走らせるため
-      - uses: actions/checkout@v7
-        if: needs.review-gate.outputs.pending == 'true' && github.event_name == 'pull_request'
-      - name: 承認待ちをメンテナへ要求する
-        if: needs.review-gate.outputs.pending == 'true' && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: bash scripts/request-review.sh "${{ github.event.pull_request.number }}"
+          echo "報告: human-approval → $state ($description)"
 
   # 描画を要する検査は、この世代のコマンド構造を持たない GPU の上では 1 本も走らない
   # (#180・ADR-0019 決定 7)。走ったことは **手元の make ci-check** が local-render
