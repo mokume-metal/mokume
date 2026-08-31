@@ -216,6 +216,44 @@ posted() { # $1=種別 $2=番号 $3=記録 ID — GitHub 側にこの記録が�
     grep -qF "$MARKER: $id"
 }
 
+# 投稿済みかを、複数の投稿先で見る (#631)。
+#
+# guard が resolve_target を引き直すだけでは足りない。AGENTS.md 「進め方」は
+# 「プランを Issue へ → PR を作る」の順を求めるので、**規約どおりに進めると
+# guard の時点で解決が Issue から PR へ移っている** — 引き直した先 (PR) にプランは
+# 無く、投稿済みなのに差し戻していた。
+#
+# 見るのは 2 つだけに絞る (capture が指示した先と、いまの解決先)。「Issue にも PR にも
+# 無いこと」で判定すると、PR ができた後に取ったプランを Issue へ投稿しても黙ってしまい、
+# 「PR を出した後なら PR 側へ」(AGENTS.md 「進め方」4) が効かなくなる。
+#
+# 配列は使わない (/bin/bash は 3.2 で、set -u 下の空配列展開が落ちる)。パイプでは
+# なくヒアストリングで回す — パイプにするとサブシェルになり return が呼び手へ届かない。
+
+posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) → 載っていれば 0
+  local id="$1" candidate kind number seen=''
+
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    # 同じ先を 2 度問い合わせない (capture の指示といまの解決が同じことは普通にある)
+    case "$seen" in *"|$candidate|"*) continue ;; esac
+    seen="$seen|$candidate|"
+    kind=${candidate%% *} number=${candidate##* }
+    posted "$kind" "$number" "$id" && return 0
+  done <<< "$2"
+
+  return 1
+}
+
+# 記録の付帯情報。capture と guard の両方が書くので 1 箇所に持たせる — 催促のたびに
+# 書き戻すため、片方で target 行を落とすと 2 回目の Stop から効かなくなる。
+write_meta() { # $1=経路 $2=ブランチ $3=記録 ID $4=催促した回数 $5=capture が指示した先 (空可)
+  {
+    printf 'branch=%s\nid=%s\nnags=%s\n' "$2" "$3" "$4"
+    [ -z "$5" ] || printf 'target=%s\n' "$5"
+  } > "$1"
+}
+
 record_dir() {
   local common
   common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
@@ -386,7 +424,9 @@ EOF
   } > "$file"
 
   target=$(resolve_target "$branch" "$body")
-  printf 'branch=%s\nid=%s\nnags=0\n' "$branch" "$id" > "$dir/$id.meta"
+  # 指示した先を記録に残す。guard は解決を引き直すが、規約どおりに進めると解決は
+  # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)
+  write_meta "$dir/$id.meta" "$branch" "$id" 0 "$target"
 
   {
     echo "プランを GitHub 用に整えました: $file"
@@ -423,7 +463,7 @@ EOF
 # --- guard ------------------------------------------------------------------
 
 guard() {
-  local payload cwd dir branch meta id file nags target kind number pending='' round=0
+  local payload cwd dir branch meta id file nags captured target kind number pending='' round=0
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -459,7 +499,20 @@ guard() {
     file="${meta%.meta}.md"
     [ -f "$file" ] || { rm -f "$meta"; continue; }
 
+    captured=$(sed -n 's/^target=//p' "$meta")
     target=$(resolve_target "$branch" "$(cat "$file")")
+
+    # 投稿済みかは、capture が指示した先と、いまの解決先の両方で見る。順序は
+    # 「捕捉した先」が先 — 規約どおりに進めたセッションはそちらに載っている (#631)。
+    #
+    # target 行を持たない記録 (この仕組みが入る前のもの) では captured が空になり、
+    # 従来どおりいまの解決だけで判定される
+    if posted_anywhere "$id" "$captured
+$target"; then
+      rm -f "$meta" "$file"
+      continue
+    fi
+
     # 投稿先がまだ無いものは急かさない (PR を立てる前に終えるセッションもある)
     [ -n "$target" ] || continue
 
@@ -467,16 +520,11 @@ guard() {
     set -- $target
     kind="$1" number="$2"
 
-    if posted "$kind" "$number" "$id"; then
-      rm -f "$meta" "$file"
-      continue
-    fi
-
     if [ "$nags" -ge "$MAX_NAGS" ]; then
       rm -f "$meta" "$file"
       continue
     fi
-    printf 'branch=%s\nid=%s\nnags=%s\n' "$branch" "$id" "$((nags + 1))" > "$meta"
+    write_meta "$meta" "$branch" "$id" "$((nags + 1))" "$captured"
     # 表示する回数は最も催促の進んだ記録に合わせる (複数あっても数字が後戻りしない)
     [ "$((nags + 1))" -gt "$round" ] && round=$((nags + 1))
     pending="$pending  $(post_command "$kind" "$number" "$file")

@@ -44,7 +44,16 @@ for arg in "$@"; do
   prev=$arg
 done
 case "$*" in
-  *comments*) printf '%s\\n' "${FAKE_GH_COMMENTS:-}"; exit 0 ;;
+  # コメントは種別ごとに出し分けられるようにする。#631 の筋 (プランは Issue にあり
+  # PR には無い) は、両方が同じものを返す偽 gh では表現できない。
+  # ${VAR-...} はコロン無し — 空文字を渡せば「そちらには無い」を明示できる
+  *comments*)
+    case "$kind" in
+      pr)    printf '%s\\n' "${FAKE_GH_PR_COMMENTS-${FAKE_GH_COMMENTS:-}}" ;;
+      issue) printf '%s\\n' "${FAKE_GH_ISSUE_COMMENTS-${FAKE_GH_COMMENTS:-}}" ;;
+      *)     printf '%s\\n' "${FAKE_GH_COMMENTS:-}" ;;
+    esac
+    exit 0 ;;
 esac
 json=
 case "$kind" in
@@ -167,6 +176,12 @@ class PlanRecordTestCase(unittest.TestCase):
 
     def records(self):
         return sorted((self.repo / ".git" / "mokume-plan-records").glob("*.md"))
+
+    def metas(self):
+        return sorted((self.repo / ".git" / "mokume-plan-records").glob("*.meta"))
+
+    def marker(self):
+        return f"<!-- mokume-plan-record: {self.record_id()} -->"
 
     def record_id(self):
         text = self.records()[0].read_text(encoding="utf-8")
@@ -565,6 +580,98 @@ class PlanRecordTestCase(unittest.TestCase):
         self.capture("計画。\n", FAKE_GH_PR="42")
         result = self.guard(FAKE_GH_PR="42", MOKUME_PLAN_RECORD="0")
         self.assertEqual(result.returncode, 0)
+
+    # --- capture が指示した先も見る (#631) -----------------------------------
+    # AGENTS.md 「進め方」は 4 (プランを Issue へ) → 6 (PR) の順を求めるので、guard の
+    # 時点では resolve_target の答えが Issue から PR へ移っている。引き直した先だけを
+    # 見ていた頃は、規約どおりに進めたセッションが毎回差し戻されていた。
+
+    def test_capture_records_the_target_it_pointed_at(self):
+        """指示した先が記録に残ること。ここが空だと guard は引き直しだけに頼る。"""
+        self.capture("計画。\n", FAKE_GH_ISSUE="123")
+        self.assertIn("target=issue 123", self.metas()[0].read_text(encoding="utf-8"))
+
+    def test_guard_accepts_a_plan_posted_before_the_pull_request_existed(self):
+        """#631 の回帰 — Issue へ載せてから PR を立てたセッションを差し戻さない。"""
+        self.capture("計画。\n", FAKE_GH_ISSUE="123")  # PR はまだ無い
+        result = self.guard(
+            FAKE_GH_PR="42",  # ここで PR ができ、解決の先頭が PR へ移る
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_ISSUE_COMMENTS=self.marker(),
+            FAKE_GH_PR_COMMENTS="",  # PR 側には無い — プランは Issue にある
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.records(), [])
+
+    def test_guard_blocks_when_the_plan_is_on_neither(self):
+        """本当に未投稿なら、投稿先が動いていても従来どおり差し戻す。"""
+        self.capture("計画。\n", FAKE_GH_ISSUE="123")
+        result = self.guard(
+            FAKE_GH_PR="42",
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_ISSUE_COMMENTS="",
+            FAKE_GH_PR_COMMENTS="",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("scripts/comment.sh pr 42", result.stderr)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_guard_still_requires_the_pull_request_for_a_later_plan(self):
+        """PR ができた後に取ったプランは PR 側を要求する。
+
+        「Issue にも PR にも無いこと」で判定すると、ここが黙ってしまい
+        AGENTS.md 「進め方」4 の「PR を出した後なら PR 側へ」が効かなくなる。
+        """
+        self.capture("計画。\n", FAKE_GH_PR="42", FAKE_GH_ISSUE="123")
+        result = self.guard(
+            FAKE_GH_PR="42",
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_ISSUE_COMMENTS=self.marker(),  # Issue に載せても足りない
+            FAKE_GH_PR_COMMENTS="",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("scripts/comment.sh pr 42", result.stderr)
+
+    def test_guard_keeps_the_captured_target_across_nags(self):
+        """催促で記録を書き直しても、指示した先が消えないこと。
+
+        1 回目の差し戻しで target 行を落とすと、2 回目からこの仕組みが効かない。
+        """
+        self.capture("計画。\n", FAKE_GH_ISSUE="123")
+        marker = self.marker()
+        first = self.guard(
+            FAKE_GH_PR="42",
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_ISSUE_COMMENTS="",
+            FAKE_GH_PR_COMMENTS="",
+        )
+        self.assertEqual(first.returncode, 2)
+        second = self.guard(
+            FAKE_GH_PR="42",
+            FAKE_GH_ISSUE="123",
+            FAKE_GH_ISSUE_COMMENTS=marker,
+            FAKE_GH_PR_COMMENTS="",
+        )
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(self.records(), [])
+
+    def test_guard_falls_back_to_the_current_target_without_a_captured_one(self):
+        """target 行を持たない記録 (この仕組みが入る前のもの) は従来どおり。"""
+        self.capture("計画。\n", FAKE_GH_ISSUE="123")
+        meta = self.metas()[0]
+        kept = [
+            line
+            for line in meta.read_text(encoding="utf-8").splitlines()
+            if not line.startswith("target=")
+        ]
+        meta.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        result = self.guard(
+            FAKE_GH_PR="42",
+            FAKE_GH_PR_COMMENTS=self.marker(),  # 引き直した先に載っていれば黙る
+            FAKE_GH_ISSUE_COMMENTS="",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.records(), [])
 
 
 class SelfContainedTest(unittest.TestCase):
