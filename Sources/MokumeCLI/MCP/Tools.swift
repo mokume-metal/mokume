@@ -137,7 +137,15 @@ struct Tools {
 
         var lines: [String] = []
         let frames = (report["frames"] as? [[String: Any]]) ?? []
-        let names = frames.compactMap { $0["image"] as? String }
+        var names = frames.compactMap { $0["image"] as? String }
+        // **目録が無ければ単数形へ落ちる。** 目録 (#408) を書かない版のライブラリと繋がる
+        // ことは避けられない — 作品は再現のために版を固定してコミットし、道具は独立に
+        // 新しくなる。落ちなければ、絵が在るのに「採れませんでした」と答えることになる
+        // (#635)。**判定は形から行う** — 目録を足したとき schemaVersion は据え置かれたので、
+        // 版を名乗る値では新旧を分けられない (ADR-0018 決定 5 の追補)
+        let manifestMissing = names.isEmpty
+        if manifestMissing, let single = report["image"] as? String { names = [single] }
+
         if names.isEmpty {
             lines.append("絵は採れませんでした")
         } else if names.count == 1 {
@@ -150,8 +158,30 @@ struct Tools {
                   \(names.joined(separator: " "))
                 """)
         }
+        // **黙って寛容にはしない。** 目録は面の仕様が要求しているもの (ADR-0018 決定 4) で、
+        // 無いまま読めたのは読み手が補ったからである。補ったことは読み手が名乗る
+        if manifestMissing, !names.isEmpty {
+            lines.append(Self.manifestMissingNote(count: count))
+        }
         lines.append(pretty(report))
         return (lines.joined(separator: "\n\n"), false)
+    }
+
+    /// 目録を書かない書き手と繋がったときに添える。
+    ///
+    /// **頼んだ枚数が返らないときは、そちらを先に言う。** 絵が 1 枚返っている以上、読み手は
+    /// 成功と受け取る — 続けて撮ることは目録を書く版でしか成立しないので、黙っていると
+    /// 「動きを見た」と誤って判断される (#635)。
+    static func manifestMissingNote(count: Int) -> String {
+        let cause = """
+            この応答は目録 (frames) を持ちません。スケッチが依存している mokume が、
+            目録を足した版より前です。絵の名前は単数形の image から読みました。
+            """
+        guard count > 1 else { return cause }
+        return """
+            \(count) 枚を頼みましたが 1 枚しか返っていません。\(cause)
+            続けて撮るには、スケッチ側の依存を新しくしてください。
+            """
     }
 
     /// 列を撮り終えるまでにかかるぶん、待ちに足す時間。
