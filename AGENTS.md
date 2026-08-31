@@ -99,12 +99,16 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 | --- | --- | --- |
 | `autoMerge: false` + `BLOCKED` | 承認待ち、または auto-merge が外れた ([#114](https://github.com/mokume-metal/mokume/issues/114) に出来事ごとの実測) | 承認を待つ / `gh pr merge <番号> --auto --squash` を打ち直す |
 | 全 check が緑なのに進まない | 同じコミットに残る古い失敗 check run が判定を固定している ([#259](https://github.com/mokume-metal/mokume/issues/259)) | `gh run rerun <run-id> --failed` |
-| `autoMerge: false` + `CLEAN` + 全 check 緑 | 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用) | `make catch-up` |
+| `autoMerge: false` + `CLEAN` + 全 check 緑 で `isInMergeQueue: true` | 止まっていない — 予約が queue へ移ると `autoMergeRequest` は null になる ([#628](https://github.com/mokume-metal/mokume/issues/628)) | 何も打たない (queue が進めている) |
+| 同じ 3 つで `isInMergeQueue: false` | 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用) | `make catch-up` |
 | close して作り直した PR が、全 check 緑なのに赤い | close した側の run が付けた赤が**同じコミットに残っている** ([#513](https://github.com/mokume-metal/mokume/issues/513)) | **新しい PR の側**の run を rerun する。close した側を rerun すると同じ赤を再生産する — 上の行とは打つ先が逆 |
 
 ```bash
 gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
+gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullRequest(number:<番号>){isInMergeQueue mergeQueueEntry{position state}}}}' --jq '.data.repository.pullRequest'
 ```
+
+**`autoMerge: false` は「外れた」と「queue に入った」の両方を指す。** 予約が実際に merge queue へ移ると `autoMergeRequest` は null になるので、`CLEAN` + 全 check 緑と揃っても故障とは限らない ([#628](https://github.com/mokume-metal/mokume/issues/628))。分けるのは `isInMergeQueue` の 1 欄だけで、これは `gh pr view --json` に無いので上の GraphQL で引く — **`make catch-up` を打つ前にこれを見る。** eject が起きるのは描画 PR だけだが、**queue 入りはどの PR でも起きる** (#628 は `docs/decisions/` しか触らない PR で踏んだ)。取り違えたまま打つと、描画 PR では数分かかる `make ci-check` まで走って空費する (描画に触れない PR なら `catch-up` 自身が「台帳の絵を動かさない」で断る)。`autoMergeRequest` が null になるのが正常だということは `catch-up` も queue へ戻した後に名乗る。
 
 承認の要否は `reviewDecision` には現れないので `mergeStateStatus` を見る (承認待ちなら `BLOCKED`・承認されると `CLEAN`)。理由は [ADR-0003](docs/decisions/0003-agent-identity-separation.md) 決定 4。**`CLEAN` だけでは「承認された」と読めない** — 承認の要らない PR も `CLEAN` なので、承認が付いたかどうかは `latestReviews` を見る ([#573](https://github.com/mokume-metal/mokume/issues/573) はここを取り違えて、承認済みの PR を「承認 0 で入った」と報告している)。
 
