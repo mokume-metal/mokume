@@ -43,6 +43,8 @@ enum DoctorCommand {
         var canDraw: Bool?
         /// 道具立ての名乗り 1 行。読めなければ `nil`。
         var toolchain: String?
+        /// 道具自身の版。**在処から導く** (#634)。
+        var tool: String = ToolVersion.describe()
     }
 
     /// 手元の状態。
@@ -119,6 +121,7 @@ enum DoctorCommand {
                 + (environment.machine.hasPrefix("arm64") ? "" : " (Apple Silicon ではない)"),
             "描く道具: \(environment.canDraw.map { $0 ? "使える" : "使えない" } ?? unknown)",
             "道具立て: \(environment.toolchain ?? "\(unknown) — swift を起動できなかった")",
+            "道具: \(environment.tool)",
         ]
     }
 

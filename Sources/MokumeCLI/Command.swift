@@ -56,6 +56,8 @@ enum Command {
 
           help
               これ
+
+        道具: \(ToolVersion.describe())
         """
     }
 
@@ -78,6 +80,10 @@ enum Command {
             DoctorCommand.run(rest)
         case "help", "--help", "-h":
             print(usage())
+        // **どの版にもある口に載せる。** 古い版を持つ人はこの綴りを知らないので、
+        // 到達できる口は help である (#634 の完了条件 3)。ここは慣習の綴りを受けるだけ
+        case "version", "--version", "-v":
+            print(ToolVersion.describe())
         default:
             throw .usage("知らないコマンド: \(first)\n\n" + usage())
         }

@@ -29,4 +29,9 @@ struct CommandNameTests {
         #expect(Command.usage("mokume").hasPrefix("使い方: mokume <コマンド>"))
         #expect(Command.usage("mokume-cli").hasPrefix("使い方: mokume-cli <コマンド>"))
     }
+
+    @Test("使い方の案内は、道具の版を名乗る")
+    func theUsageNamesTheToolVersion() {
+        #expect(Command.usage().contains(ToolVersion.describe()))
+    }
 }

@@ -42,7 +42,10 @@ struct MCPServer {
                 result: [
                     "protocolVersion": Self.protocolVersion,
                     "capabilities": ["tools": [:] as [String: Any]],
-                    "serverInfo": ["name": "mokume", "version": "0"],
+                    // **繋いだ側が古い窓口を判別できる唯一の手掛かり。** 接続は
+                    // 張ったまま保たれるので、道具を更新しても繋がっている窓口は
+                    // 古いままである (#634)
+                    "serverInfo": ["name": "mokume", "version": ToolVersion.describe()],
                 ])
         case "tools/list":
             return JSONRPC.response(id: call.id, result: ["tools": Tools.definitions])
