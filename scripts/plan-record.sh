@@ -181,34 +181,62 @@ emit() { # $1=種別 $2=説明 $3=本文 $4=検出パターン $5=除外パタ�
 # gh には必ず -R を渡す。リポジトリを cwd から推定させると、直前に別ディレクトリへ
 # 移動していただけで別リポジトリの同じ番号へプランが飛ぶ (実際に起きた)。
 
-resolve_target() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" / ""
-  local branch="$1" body="$2" number
+# 投稿先の候補を、優先順に 1 行ずつ返す。
+#
+# **名乗りは 1 つに絞らない** (#646)。かつては最初の 1 件だけを採っていたが、プランは設計を
+# 説明する文書なので番号の例示が自然に出る。本来の対象が 2 番目以降に現れると、無関係な
+# Issue を投稿先として指した — 投稿済みプラン 112 件で測ると誤爆は 2 件で、どちらも
+# 「本来の対象が 2 番目以降」だった。原因は「最初を採る」規則ではなく、**番号が 2 つ以上
+# あることを問わなかった**ことにある。
+#
+# 測って捨てた案を 2 つ残す。**最後の 1 件を採る**のは悪化させる (曖昧な 5 件のうち 4 件で
+# 新たに誤爆する)。**コード類の中は拾わない**のは壊滅的で、47 件 (42%) で名乗りが消える —
+# `Closes #98` とインラインコードで書くのがこのリポジトリの標準的な書き方だからである。
+
+plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行ずつ (優先順)
+  local branch="$1" body="$2" number numbers seen=''
 
   number=$(gh pr view "$branch" -R "$REPO" --json number,state \
     -q 'select(.state != "CLOSED") | .number' 2>/dev/null)
   if [ -n "$number" ]; then
-    printf 'pr %s' "$number"
+    # PR は曖昧にならない (ブランチに対して 1 つ)。ここで打ち切る
+    printf 'pr %s\n' "$number"
     return 0
   fi
 
-  # Closes #12 / Refs #12 のように、プランが自分で名乗っている Issue
-  number=$(printf '%s' "$body" |
+  # Closes #12 / Refs #12 のように、プランが自分で名乗っている Issue を**全部**
+  numbers=$(printf '%s' "$body" |
     grep -ioE '(closes|fixes|resolves|refs|ref|issue)[[:space:]]*#[0-9]+' |
-    grep -oE '[0-9]+' | head -1)
+    grep -oE '[0-9]+')
+
   # 名乗りが無ければブランチ名の数字列 (issues-123 / fix/123-foo)。ただし採るのは
   # 区切りに接した数字だけにする。Claude Code が切るブランチ名の末尾 hex
   # (claude/<説明>-c936e5 → 936) や worktree の自動生成名に紛れる断片
   # (cse_0127aTN6... → 127) を番号と読むと、無関係な Issue へプランが飛ぶ。
   # 番号が実在することは、そこが投稿先として正しいことを意味しない
-  [ -n "$number" ] || number=$(printf '%s' "$branch" |
+  #
+  # ここは 1 つに絞ったままにする — ブランチ名から複数の番号を拾うと、候補の並びが
+  # ハッシュの断片で埋まる
+  [ -n "$numbers" ] || numbers=$(printf '%s' "$branch" |
     sed -E 's#^(claude/.*)-[0-9a-f]{6}$#\1#' |
     grep -oE '(^|[^0-9A-Za-z])[0-9]{1,6}([^0-9A-Za-z]|$)' |
     grep -oE '[0-9]+' | head -1)
-  [ -n "$number" ] || return 0
 
-  # 実在して open かを確かめる。ブランチ名の数字はハッシュの断片でもありうる
-  gh issue view "$number" -R "$REPO" --json number -q .number >/dev/null 2>&1 || return 0
-  printf 'issue %s' "$number"
+  while IFS= read -r number; do
+    [ -n "$number" ] || continue
+    case "$seen" in *"|$number|"*) continue ;; esac   # 同じ番号を 2 度並べない
+    seen="$seen|$number|"
+    # 実在するかを確かめる。ブランチ名の数字はハッシュの断片でもありうる
+    gh issue view "$number" -R "$REPO" --json number -q .number >/dev/null 2>&1 || continue
+    printf 'issue %s\n' "$number"
+  done <<< "$numbers"
+}
+
+# いま新しくプランを取るならどこへ投稿するか (1 つ)。候補が複数あるかどうかは呼び手が
+# plan_targets を数えて決める — こちらは「先頭」を返すだけにして、優先順の定義を
+# 2 箇所に持たせない
+resolve_target() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" / ""
+  plan_targets "$1" "$2" | head -1
 }
 
 posted() { # $1=種別 $2=番号 $3=記録 ID — GitHub 側にこの記録が既にあるか
@@ -293,10 +321,17 @@ concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → �
 
 # 記録の付帯情報。capture と guard の両方が書くので 1 箇所に持たせる — 催促のたびに
 # 書き戻すため、片方で target 行を落とすと 2 回目の Stop から効かなくなる。
-write_meta() { # $1=経路 $2=ブランチ $3=記録 ID $4=催促した回数 $5=capture が指示した先 (空可)
+write_meta() { # $1=経路 $2=ブランチ $3=記録 ID $4=催促した回数 $5=指示した先 (1 行 1 件・空可)
+  local line
   {
     printf 'branch=%s\nid=%s\nnags=%s\n' "$2" "$3" "$4"
-    [ -z "$5" ] || printf 'target=%s\n' "$5"
+    # 候補が複数のこともある (#646 — 番号が 2 つ以上あれば確定しない)。1 行 1 件で
+    # 書いておけば、読む側は sed で全部拾えて posted_anywhere にそのまま渡せる
+    if [ -n "$5" ]; then
+      while IFS= read -r line; do
+        [ -z "$line" ] || printf 'target=%s\n' "$line"
+      done <<< "$5"
+    fi
   } > "$1"
 }
 
@@ -375,7 +410,7 @@ recheck_missing() { # stdin=プラン本文。足りないものを 1 行 1 件�
 }
 
 capture() {
-  local payload plan cwd session root branch dir id file body findings blocks warns target recheck marks
+  local payload plan cwd session root branch dir id file body findings blocks warns targets target count recheck marks candidate
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -469,18 +504,22 @@ EOF
     # scripts/comment.sh が投稿時に判定して付ける (#18)
   } > "$file"
 
-  target=$(resolve_target "$branch" "$body")
+  targets=$(plan_targets "$branch" "$body")
+  target=$(printf '%s' "$targets" | head -1)
+  count=$(printf '%s' "$targets" | grep -c . || true)
 
   # 他のセッションが同じ Issue に既に着手していないかを見る (#642)。着手直後は PR が
-  # まだ無いので投稿先は Issue になり、二重着手が問題になるのもその時点である
+  # まだ無いので投稿先は Issue になり、二重着手が問題になるのもその時点である。
+  # 候補が複数のときは先頭だけを見る — どれが対象かは、まだ決まっていない
   marks=''
   case "$target" in
     'issue '*) marks=$(concurrent_marks "${target#issue }" "${id%-*}") ;;
   esac
 
   # 指示した先を記録に残す。guard は解決を引き直すが、規約どおりに進めると解決は
-  # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)
-  write_meta "$dir/$id.meta" "$branch" "$id" 0 "$target"
+  # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
+  # 確定していないときは候補を全部残す (#646)
+  write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
 
   {
     echo "プランを GitHub 用に整えました: $file"
@@ -494,12 +533,20 @@ EOF
       echo "並行が正しいこともあるので、判断はあなたに委ねます。"
       echo
     fi
-    if [ -n "$target" ]; then
-      # shellcheck disable=SC2086
-      set -- $target
+    if [ "$count" -gt 1 ]; then
+      # 番号が 2 つ以上あるプランでは、どれが対象かを機械が決めない (#646)。
+      # 決めると、本来の対象が 2 番目以降にあるときに無関係な Issue を指す
+      echo "投稿先を確定できません。プランが名乗る番号が $count 件あります。"
+      echo "どれが対象かを選んで、1 つに投稿してください:"
+      echo
+      while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        echo "  $(post_command "${candidate%% *}" "${candidate##* }" "$file")"
+      done <<< "$targets"
+    elif [ -n "$target" ]; then
       echo "次のコマンドで投稿してください:"
       echo
-      echo "  $(post_command "$1" "$2" "$file")"
+      echo "  $(post_command "${target%% *}" "${target##* }" "$file")"
     else
       echo "投稿先の PR / Issue がまだありません。対象の Issue か、PR を立てたらそこへ:"
       echo
@@ -525,7 +572,7 @@ EOF
 # --- guard ------------------------------------------------------------------
 
 guard() {
-  local payload cwd dir branch meta id file nags captured target kind number pending='' round=0
+  local payload cwd dir branch meta id file nags captured targets candidate pending='' round=0
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -562,25 +609,23 @@ guard() {
     [ -f "$file" ] || { rm -f "$meta"; continue; }
 
     captured=$(sed -n 's/^target=//p' "$meta")
-    target=$(resolve_target "$branch" "$(cat "$file")")
+    targets=$(plan_targets "$branch" "$(cat "$file")")
 
     # 投稿済みかは、capture が指示した先と、いまの解決先の両方で見る。順序は
     # 「捕捉した先」が先 — 規約どおりに進めたセッションはそちらに載っている (#631)。
+    # どちらも複数行のことがある (#646 で確定しなかったプラン) が、posted_anywhere は
+    # 1 行 1 件で受けるのでそのまま渡せる。
     #
     # target 行を持たない記録 (この仕組みが入る前のもの) では captured が空になり、
     # 従来どおりいまの解決だけで判定される
     if posted_anywhere "$id" "$captured
-$target"; then
+$targets"; then
       rm -f "$meta" "$file"
       continue
     fi
 
     # 投稿先がまだ無いものは急かさない (PR を立てる前に終えるセッションもある)
-    [ -n "$target" ] || continue
-
-    # shellcheck disable=SC2086
-    set -- $target
-    kind="$1" number="$2"
+    [ -n "$targets" ] || continue
 
     if [ "$nags" -ge "$MAX_NAGS" ]; then
       rm -f "$meta" "$file"
@@ -589,8 +634,15 @@ $target"; then
     write_meta "$meta" "$branch" "$id" "$((nags + 1))" "$captured"
     # 表示する回数は最も催促の進んだ記録に合わせる (複数あっても数字が後戻りしない)
     [ "$((nags + 1))" -gt "$round" ] && round=$((nags + 1))
-    pending="$pending  $(post_command "$kind" "$number" "$file")
+
+    # 催促する先は**いまの解決先**である。未投稿のまま PR ができたなら、プランは PR へ
+    # 載せるのが置き場の規律 (ADR-0002 決定 6)。captured は投稿済み判定にだけ使う。
+    # 確定していなければ複数並ぶので、こちらでも選ばせる (#646)
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      pending="$pending  $(post_command "${candidate%% *}" "${candidate##* }" "$file")
 "
+    done <<< "$targets"
   done
 
   [ -n "$pending" ] || exit 0
