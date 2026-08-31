@@ -44,13 +44,17 @@ for arg in "$@"; do
   prev=$arg
 done
 case "$*" in
-  # 二重着手の跡見 (#642) は labels と comments を一度に引く。生の JSON を返す —
-  # 呼び手は後段で jq を掛けるので、ここで絞り込まない。comments の分岐より前に置く
-  # (--json labels,comments は両方の語を含む)
-  *labels*)
-    [ -n "${FAKE_GH_ISSUE_STATE:-}" ] || exit 1
-    printf '%s' "$FAKE_GH_ISSUE_STATE" | jq -r "$query"
-    exit 0 ;;
+  # 二重着手の跡見 (#642) は comments を JSON のまま引く (url が要る)。呼び手は後段で
+  # jq を掛けるので、ここで絞り込まない。既存の *comments* 分岐 (本文だけを返す近道) と
+  # 区別するため、この変数が置かれているときだけ先に応える
+  *comments*)
+    if [ -n "${FAKE_GH_ISSUE_STATE:-}" ] && [ "$kind" = issue ]; then
+      printf '%s' "$FAKE_GH_ISSUE_STATE" | jq -r "$query"
+      exit 0
+    fi
+    ;;
+esac
+case "$*" in
   # コメントは種別ごとに出し分けられるようにする。#631 の筋 (プランは Issue にあり
   # PR には無い) は、両方が同じものを返す偽 gh では表現できない。
   # ${VAR-...} はコロン無し — 空文字を渡せば「そちらには無い」を明示できる
@@ -80,7 +84,11 @@ printf '%s' "$json" | jq -r "$query"
 """
 
 def issue_state(in_progress=False, plans=()):
-    """#642 の跡見が引く JSON を組む。plans は (記録 ID, URL) の並び。"""
+    """#642 の跡見が引く JSON を組む。plans は (記録 ID, URL) の並び。
+
+    in_progress は「ラベルが在っても名乗らない」ことを見るために残してある
+    (跡見はラベルを読まない — 付け主を判定できないため)。
+    """
     return json.dumps(
         {
             "labels": [{"name": "status: in progress"}] if in_progress else [],
@@ -610,15 +618,20 @@ class PlanRecordTestCase(unittest.TestCase):
     # 止めないことが要点。実例では、重複を知った側は知った時点で自分から畳んだので、
     # 要ったのは知らせることだった。自分で解けない差し戻しは押し通す口を要求する。
 
-    def test_capture_names_the_in_progress_label(self):
-        """着手を宣言する印が既に付いていれば名乗る (実例で見落とされたのがこれ)。"""
+    def test_capture_does_not_treat_the_in_progress_label_as_a_mark(self):
+        """ラベルは跡に数えない。
+
+        ラベルを付けるのは着手するセッション自身なので、規約どおり動くと capture の
+        時点で必ず自分が付けたものが在る。しかも付け主は判定できない (エージェントは
+        同じ認証で操作するので actor が同じ)。毎回出る注意は意味を失う。
+        """
         result = self.capture(
             "計画。\n",
             FAKE_GH_ISSUE="123",
             FAKE_GH_ISSUE_STATE=issue_state(in_progress=True),
         )
-        self.assertIn("二重着手かもしれません", result.stderr)
-        self.assertIn("status: in progress が付いている", result.stderr)
+        self.assertNotIn("二重着手", result.stderr)
+        self.assertIn("scripts/comment.sh issue 123", result.stderr)
 
     def test_capture_names_another_sessions_plan_with_its_url(self):
         """別のセッションが載せたプランを、読みに行ける形で名乗る。"""
@@ -659,7 +672,9 @@ class PlanRecordTestCase(unittest.TestCase):
         result = self.capture(
             "計画。\n",
             FAKE_GH_ISSUE="123",
-            FAKE_GH_ISSUE_STATE=issue_state(in_progress=True),
+            FAKE_GH_ISSUE_STATE=issue_state(
+                plans=[("other5678-1700000000", "https://example.invalid/c/1")]
+            ),
         )
         self.assertEqual(result.returncode, 2)  # capture は常に 2 (指示を出すため)
         self.assertIn("scripts/comment.sh issue 123", result.stderr)
@@ -667,11 +682,13 @@ class PlanRecordTestCase(unittest.TestCase):
         self.assertEqual(len(self.records()), 1)  # 記録も普通に作られる
 
     def test_capture_does_not_look_when_the_target_is_a_pull_request(self):
-        """投稿先が PR なら見ない (PR に着手印は無く、既に自分が着手している)。"""
+        """投稿先が PR なら見ない (既に自分が着手していて、跡を問う場面ではない)。"""
         result = self.capture(
             "計画。\n",
             FAKE_GH_PR="42",
-            FAKE_GH_ISSUE_STATE=issue_state(in_progress=True),
+            FAKE_GH_ISSUE_STATE=issue_state(
+                plans=[("other5678-1700000000", "https://example.invalid/c/1")]
+            ),
         )
         self.assertNotIn("二重着手", result.stderr)
 

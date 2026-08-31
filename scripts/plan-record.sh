@@ -28,9 +28,6 @@ REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 # 接頭辞を分ける — 両方が動いていても互いの記録を「投稿済み」と誤読しない
 readonly MARKER='mokume-plan-record'
 
-# 着手を宣言する印 (AGENTS.md 「進め方」・#642)。他のセッションが既に着手しているかを
-# 見るのに使う
-readonly IN_PROGRESS_LABEL='status: in progress'
 
 # 何もせず終わる経路の理由を見せる。既定は無言 (通常運転で喋ると邪魔になる)。
 # 仕組みが黙って効かなくなったときの切り分け用で、MOKUME_PLAN_RECORD_DEBUG=1 を
@@ -260,19 +257,22 @@ posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) 
 # **プランの書き直しでは解けない** — 自分で解けない差し戻しには押し通す口が要り、
 # それは「読まずに押し通す」癖を生む (#631 で見たのと同じ構造)。
 #
-# 跡は 2 つ見る。ラベルだけでは中断してラベルが残った Issue と区別できず、プランの
-# 目印だけではラベルより遅い (ラベルは着手直後に付く)。1 回の問い合わせで両方取る。
+# 見るのは**別のセッションが載せたプランの目印だけ**である。
+#
+# status: in progress ラベルは信号にならない。ラベルを付けるのは着手するセッション自身
+# なので、規約どおり動くと capture の時点で必ず自分が付けたラベルが在る。しかも付け主は
+# 判定できない — エージェントは同じ認証で操作するので、Issue events の actor が同じに
+# なる。毎回名乗る注意は意味を失うので、区別できない信号は採らない。
+#
+# **代償は既知である。** 他のセッションが着手してラベルを付け、まだプランを投稿していない
+# 窓 (数分) では何も見えない。埋めるには区別できないラベルを毎回名乗ることになり、
+# 割に合わない。実例 (#637) では A の投稿から B の着手まで 19 分あったので、目印で届く。
 
 concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → 跡を 1 行 1 件で stdout へ
   local number="$1" prefix="$2" json others count url
 
-  json=$(gh issue view "$number" -R "$REPO" --json labels,comments 2>/dev/null) || return 0
+  json=$(gh issue view "$number" -R "$REPO" --json comments 2>/dev/null) || return 0
   [ -n "$json" ] || return 0
-
-  if printf '%s' "$json" |
-      jq -e --arg l "$IN_PROGRESS_LABEL" 'any(.labels[]?; .name == $l)' >/dev/null 2>&1; then
-    printf '%s が付いている (誰かが着手を宣言している)\n' "$IN_PROGRESS_LABEL"
-  fi
 
   # 自分のセッションが載せたプランは除く。同じセッションで 2 度プランを取ったときに
   # 自分を指して「二重着手かもしれない」と言わないため
