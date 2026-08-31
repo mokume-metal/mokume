@@ -633,5 +633,63 @@ class SelfContainedTest(unittest.TestCase):
         self.assertEqual(self.settings.get("env", {}).get("RS_CI_WATCH"), "0")
 
 
+
+class StdinDeadlineTest(PlanRecordTestCase):
+    """stdin を待って無言に固まらない (#636)。
+
+    **固まるのは EOF が来ない stdin である。** 空を渡した場合 (< /dev/null) は
+    即座に EOF が来るので昔から返っていた — 手で打つと端末やパイプが開いたままで、
+    そこで永遠に待っていた。実際に 40 分放置された。
+    """
+
+    def test_capture_gives_up_on_a_stdin_that_never_closes(self):
+        proc = subprocess.Popen(
+            ["/bin/bash", str(SCRIPT), "capture"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(self.repo),
+            env=self.env(),
+        )
+        # **書かず・閉じない。** communicate() は stdin を閉じてしまうので使えない
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            self.fail("期限が効いていない — stdin を閉じるまで終わらない")
+        stderr = proc.stderr.read()
+        # プロセスは終わっているので閉じてよい (先に閉じると EOF が届いて検査の意味が消える)
+        proc.stdin.close()
+        proc.stdout.close()
+        proc.stderr.close()
+        self.assertEqual(proc.returncode, 64)
+        self.assertIn("stdin", stderr)
+
+    def test_capture_names_the_requirement(self):
+        result = self.run_hook("capture", stdin="")
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("stdin", result.stderr)
+
+    def test_guard_names_the_requirement(self):
+        result = self.run_hook("guard", stdin="")
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("stdin", result.stderr)
+
+    def test_scan_stays_out_of_the_way(self):
+        # パイプの途中で使われるので、空でも止めない
+        result = self.run_hook("scan", stdin="")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("stdin", result.stderr)
+
+    def test_sanitize_stays_out_of_the_way(self):
+        result = self.run_hook("sanitize", stdin="")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("stdin", result.stderr)
+
+    def test_usage_names_the_stdin_requirement(self):
+        result = self.run_hook("no-such-mode", stdin="")
+        self.assertIn("stdin", result.stderr)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

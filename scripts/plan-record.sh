@@ -46,8 +46,45 @@ STALE_DAYS=14   # 投稿先が現れないまま放置された記録を捨て�
 # 機械的に落とせるのは「場所」だけ。判断の要るもの (メールアドレス、1Password の
 # 参照) は scan で警告に回し、消すかどうかは本文を読めるエージェントと人間に委ねる。
 
+# --- stdin ------------------------------------------------------------------
+# **期限を持たせる。** 4 つの口はどれも呼び手が本文を即座に渡す前提で、手で打つと
+# 永遠に待つ。**固まるのは EOF が来ない stdin** である — 空を渡した場合 (< /dev/null)
+# は昔から返っていたので、端末やパイプが開いたまま打たれたときだけ無言で止まっていた
+# (実際に 40 分放置された・#636)。AGENTS.md の「固まりうる待ちには、待つ側が期限を
+# 持たせて越えたら殺す」がそのまま当たる。
+#
+# 5 秒にする根拠は、呼び手 (フック) が payload を即座に書くこと — 遅い機械でも届かない。
+readonly STDIN_DEADLINE=5
+
+read_stdin() { # → stdin の全体 (何も来なければ空)
+  local line body=''
+  while IFS= read -r -t "$STDIN_DEADLINE" line; do
+    body+="$line"$'\n'
+  done
+  # 最後の行が改行で終わらないとき、read は変数へ入れて非 0 を返す。ここで拾わないと
+  # 1 行落ちる
+  [ -n "$line" ] && body+="$line"
+  printf '%s' "$body"
+}
+
+explain_stdin() { # $1=口 $2=渡すもの。**その場で直せるところまで書く**
+  {
+    printf '%s は stdin から %s を読みます。%s 秒待って何も来ませんでした。\n\n' \
+      "$1" "$2" "$STDIN_DEADLINE"
+    printf 'capture と guard はフック (.claude/settings.json) が呼ぶ口で、手で打つものでは\n'
+    printf 'ありません。sanitize と scan は本文を渡して使います:\n\n'
+    printf '    bash scripts/%s %s < <ファイル>\n' "$(basename "$0")" "$1"
+  } >&2
+}
+
 sanitize() { # $@ = 畳むディレクトリ (短い順に効かせたいので渡した順に処理)
-  local script='' prefix
+  local script='' prefix body
+  body=$(read_stdin)
+  # **パイプの途中で使われるので止めない** (capture が 2 段で通す)。名乗って空を返す
+  if [ -z "$body" ]; then
+    explain_stdin sanitize 'プランの本文'
+    return 0
+  fi
 
   # リポジトリの絶対パスはリポジトリ相対に畳む。worktree で作業していると
   # /Users/foo/Repos/mokume/.claude/worktrees/wt-a1b2/scripts/comment.sh のような
@@ -65,7 +102,7 @@ sanitize() { # $@ = 畳むディレクトリ (短い順に効かせたいので�
   # 残った絶対パスからホームディレクトリを畳む。$HOME だけでなく他人のホームも
   # 対象にする (プランには他の開発者のパスが引用として混ざりうる)。
   # 区切りは # — ここは選択 (|) を使うので、区切りに | は選べない
-  sed -E "$script"'
+  printf '%s' "$body" | sed -E "$script"'
     s#/(Users|home)/[^/[:space:]"'"'"'`)]+#~#g
   '
 }
@@ -93,7 +130,12 @@ logical_root() { # $1=フックが渡してきた cwd → その表記のまま�
 
 scan() {
   local body
-  body=$(cat)
+  body=$(read_stdin)
+  # sanitize と同じ理由で止めない (capture が 2 段で通す)
+  if [ -z "$body" ]; then
+    explain_stdin scan 'プランの本文'
+    return 0
+  fi
 
   emit BLOCK 'GitHub のトークン' "$body" 'gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}'
   emit BLOCK 'API キー' "$body" 'sk-ant-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,}'
@@ -241,7 +283,8 @@ post_command() { # $1=種別 $2=番号 $3=記録ファイル → 提示する投
 # has_evidence が広く取っているのと同じ理由)。
 recheck_missing() { # stdin=プラン本文。足りないものを 1 行 1 件で stdout へ
   local body
-  body=$(cat)
+  # **内部からパイプで呼ばれるだけ**なので案内は出さない。読み方だけ揃える
+  body=$(read_stdin)
   grep -qE '#[0-9]+' <<<"$body" || echo '対象 Issue の番号 (#N)'
   grep -qE 'まだ有効|なお有効|依然|既に満たされ|すでに満たされ|満たされている|残っている|差し替え|書き換え|更新し|変わっていない|変わって|ずれて|古くなって|現況|再チェック|突き合わせ' \
     <<<"$body" || echo '完了条件の現況 (まだ有効 / 既に満たされている / 差し替えが要る)'
@@ -250,7 +293,11 @@ recheck_missing() { # stdin=プラン本文。足りないものを 1 行 1 件�
 capture() {
   local payload plan cwd session root branch dir id file body findings blocks warns target recheck
 
-  payload=$(cat)
+  payload=$(read_stdin)
+  if [ -z "$payload" ]; then
+    explain_stdin capture 'PostToolUse (ExitPlanMode) の JSON'
+    exit 64
+  fi
   if ! command -v jq >/dev/null 2>&1; then
     debug 'jq が無い'
     exit 0
@@ -378,7 +425,11 @@ EOF
 guard() {
   local payload cwd dir branch meta id file nags target kind number pending='' round=0
 
-  payload=$(cat)
+  payload=$(read_stdin)
+  if [ -z "$payload" ]; then
+    explain_stdin guard 'Stop の JSON'
+    exit 64
+  fi
   command -v jq >/dev/null 2>&1 || { debug 'jq が無い'; exit 0; }
   command -v gh >/dev/null 2>&1 || { debug 'gh が無い'; exit 0; }
 
@@ -455,5 +506,12 @@ case "${1:-}" in
   guard)    guard ;;
   sanitize) sanitize "${2:-}" ;;
   scan)     scan ;;
-  *) echo "usage: $(basename "$0") {capture|guard|sanitize [root]|scan}" >&2; exit 64 ;;
+  *)
+    {
+      echo "usage: $(basename "$0") {capture|guard|sanitize [root]|scan}"
+      echo "  4 つの口はすべて stdin から読む (フックが渡す JSON か、プランの本文)。"
+      echo "  手で打つと $STDIN_DEADLINE 秒待って、何を渡すべきかを言って終わる。"
+    } >&2
+    exit 64
+    ;;
 esac
