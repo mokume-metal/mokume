@@ -48,6 +48,10 @@ struct MCPServerTests {
         let result = try decode(try #require(recorder.written.first))["result"] as? [String: Any]
         #expect(result?["protocolVersion"] as? String == MCPServer.protocolVersion)
         #expect((result?["capabilities"] as? [String: Any])?["tools"] != nil)
+        // 繋いだ側が「古い窓口に繋がっている」と気付ける唯一の手掛かり (#634)
+        let info = result?["serverInfo"] as? [String: Any]
+        #expect(info?["version"] as? String == ToolVersion.describe())
+        #expect(info?["version"] as? String != "0")
     }
 
     @Test("道具立ての一覧を返す")
