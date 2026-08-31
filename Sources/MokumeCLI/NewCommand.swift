@@ -111,6 +111,12 @@ enum NewCommand {
                     のように名前で読める。**置き場を変えるなら宣言も変えること。**
                     """
                 ),
+                // エージェントに道具の使い方を渡す 1 枚。**作品の側の運用は決めない**
+                // (ADR-0022 決定 5) — 線は「道具の構造から導かれるか」で引く (#632)
+                ("AGENTS.md", try Templates.render("AGENTS.md.template", values)),
+                // Claude Code が自動で読むのは CLAUDE.md なので、案内を指す 1 行を置く。
+                // **写しは持たない** — 本体もこの形を採っている
+                ("CLAUDE.md", try Templates.render("CLAUDE.md.template", values)),
             ]
         } catch let failure as CommandFailure {
             throw failure
