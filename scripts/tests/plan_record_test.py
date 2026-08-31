@@ -75,6 +75,9 @@ case "$kind" in
     [ -n "$json" ] || [ -z "${FAKE_GH_PR:-}" ] || json='{"number":'$FAKE_GH_PR',"state":"OPEN"}'
     ;;
   issue)
+    # 実在しない番号を表現する (#646 — 候補は実在確認を通ったものだけが並ぶ)。
+    # 引数は issue view <番号> ... なので番号は $3
+    case " ${FAKE_GH_MISSING:-} " in *" $3 "*) exit 1 ;; esac
     json=${FAKE_GH_ISSUE_JSON:-}
     [ -n "$json" ] || [ -z "${FAKE_GH_ISSUE:-}" ] || json='{"number":'$FAKE_GH_ISSUE'}'
     ;;
@@ -613,6 +616,64 @@ class PlanRecordTestCase(unittest.TestCase):
     # AGENTS.md 「進め方」は 4 (プランを Issue へ) → 6 (PR) の順を求めるので、guard の
     # 時点では resolve_target の答えが Issue から PR へ移っている。引き直した先だけを
     # 見ていた頃は、規約どおりに進めたセッションが毎回差し戻されていた。
+
+    # --- 名乗りが 2 つ以上あれば確定しない (#646) ----------------------------
+    # プランは設計を説明する文書なので番号の例示が自然に出る。本来の対象が 2 番目以降に
+    # 現れると、最初の 1 件だけを採る規則では無関係な Issue を指した。投稿済みプラン
+    # 112 件で測ると誤爆は 2 件で、どちらも「本来の対象が 2 番目以降」だった。
+
+    AMBIGUOUS = "説明として `Closes #631` を引きつつ、対象は別。\n\nCloses #646\n"
+
+    def test_capture_does_not_pick_when_two_numbers_are_claimed(self):
+        result = self.capture(self.AMBIGUOUS, FAKE_GH_ISSUE="1")
+        self.assertIn("投稿先を確定できません", result.stderr)
+        self.assertIn("名乗る番号が 2 件", result.stderr)
+        # **両方**が候補として出る (どちらかを機械が選ばない)
+        self.assertIn("scripts/comment.sh issue 631", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+
+    def test_capture_records_every_candidate(self):
+        """確定しなかった候補は記録に残る — guard が取りこぼさないため。"""
+        self.capture(self.AMBIGUOUS, FAKE_GH_ISSUE="1")
+        meta = self.metas()[0].read_text(encoding="utf-8")
+        self.assertIn("target=issue 631", meta)
+        self.assertIn("target=issue 646", meta)
+
+    def test_capture_still_picks_a_single_claim(self):
+        """名乗りが 1 種類なら従来どおり確定する (112 件のうち 75 件がこれ)。"""
+        result = self.capture("対象は 1 つだけ。\n\nCloses #646\n", FAKE_GH_ISSUE="1")
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+
+    def test_capture_prefers_the_pull_request_over_many_claims(self):
+        """open PR があれば、名乗りが何件あっても PR 1 つに確定する。"""
+        result = self.capture(self.AMBIGUOUS, FAKE_GH_PR="42", FAKE_GH_ISSUE="1")
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh pr 42", result.stderr)
+
+    def test_capture_drops_candidates_that_do_not_exist(self):
+        """実在しない番号は候補に並べない (ハッシュの断片を拾うことがある)。"""
+        result = self.capture(self.AMBIGUOUS, FAKE_GH_ISSUE="1", FAKE_GH_MISSING="631")
+        self.assertNotIn("確定できません", result.stderr)  # 実在するのは 1 件だけ
+        self.assertNotIn("issue 631", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+
+    def test_guard_nags_with_every_candidate(self):
+        """確定しなかったプランも取りこぼさない — 催促のときも候補を並べる。"""
+        self.capture(self.AMBIGUOUS, FAKE_GH_ISSUE="1")
+        result = self.guard(FAKE_GH_ISSUE="1", FAKE_GH_ISSUE_COMMENTS="")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("scripts/comment.sh issue 631", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+
+    def test_guard_clears_a_record_posted_to_one_of_the_candidates(self):
+        """候補のどれかに載っていれば黙る (全部に投稿させない)。"""
+        self.capture(self.AMBIGUOUS, FAKE_GH_ISSUE="1")
+        result = self.guard(
+            FAKE_GH_ISSUE="1", FAKE_GH_ISSUE_COMMENTS=self.marker()
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.records(), [])
 
     # --- 二重着手の跡を名乗る (#642) -----------------------------------------
     # 止めないことが要点。実例では、重複を知った側は知った時点で自分から畳んだので、
