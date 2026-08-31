@@ -28,6 +28,7 @@ REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
 # 接頭辞を分ける — 両方が動いていても互いの記録を「投稿済み」と誤読しない
 readonly MARKER='mokume-plan-record'
 
+
 # 何もせず終わる経路の理由を見せる。既定は無言 (通常運転で喋ると邪魔になる)。
 # 仕組みが黙って効かなくなったときの切り分け用で、MOKUME_PLAN_RECORD_DEBUG=1 を
 # 付けて同じ payload を流し直せば理由が出る
@@ -245,6 +246,51 @@ posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) 
   return 1
 }
 
+# 他のセッションが同じ Issue に既に着手していないかを見る (#642)。
+#
+# 二重着手は実際に起きた — 2 つのセッションが同じ Issue に着手し、両方が実装を書いて
+# 片方が破棄された。見落とされたのは status: in progress ラベルで、**読むのは人の目だけ**
+# だったので、見落としても何も起きなかった。
+#
+# **止めない。名乗るだけである。** 実例では、重複を知った側は知った時点で自分から畳んだ
+# ので、要ったのは知らせることだった。加えて「他人が着手済み」という差し戻しは
+# **プランの書き直しでは解けない** — 自分で解けない差し戻しには押し通す口が要り、
+# それは「読まずに押し通す」癖を生む (#631 で見たのと同じ構造)。
+#
+# 見るのは**別のセッションが載せたプランの目印だけ**である。
+#
+# status: in progress ラベルは信号にならない。ラベルを付けるのは着手するセッション自身
+# なので、規約どおり動くと capture の時点で必ず自分が付けたラベルが在る。しかも付け主は
+# 判定できない — エージェントは同じ認証で操作するので、Issue events の actor が同じに
+# なる。毎回名乗る注意は意味を失うので、区別できない信号は採らない。
+#
+# **代償は既知である。** 他のセッションが着手してラベルを付け、まだプランを投稿していない
+# 窓 (数分) では何も見えない。埋めるには区別できないラベルを毎回名乗ることになり、
+# 割に合わない。実例 (#637) では A の投稿から B の着手まで 19 分あったので、目印で届く。
+
+concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → 跡を 1 行 1 件で stdout へ
+  local number="$1" prefix="$2" json others count url
+
+  json=$(gh issue view "$number" -R "$REPO" --json comments 2>/dev/null) || return 0
+  [ -n "$json" ] || return 0
+
+  # 自分のセッションが載せたプランは除く。同じセッションで 2 度プランを取ったときに
+  # 自分を指して「二重着手かもしれない」と言わないため
+  others=$(printf '%s' "$json" | jq -r --arg m "$MARKER: " --arg p "$prefix-" '
+    [ .comments[]? | select(.body | contains($m)) | select(.body | contains($m + $p) | not) ]
+    | "\(length)\t\(.[0].url // "")"' 2>/dev/null) || return 0
+
+  count=${others%%	*}
+  url=${others#*	}
+  case "$count" in
+    ''|0|*[!0-9]*) return 0 ;;
+  esac
+
+  printf '別のセッションのプランが %s 件載っている' "$count"
+  [ -z "$url" ] || printf ' (%s)' "$url"
+  printf '\n'
+}
+
 # 記録の付帯情報。capture と guard の両方が書くので 1 箇所に持たせる — 催促のたびに
 # 書き戻すため、片方で target 行を落とすと 2 回目の Stop から効かなくなる。
 write_meta() { # $1=経路 $2=ブランチ $3=記録 ID $4=催促した回数 $5=capture が指示した先 (空可)
@@ -329,7 +375,7 @@ recheck_missing() { # stdin=プラン本文。足りないものを 1 行 1 件�
 }
 
 capture() {
-  local payload plan cwd session root branch dir id file body findings blocks warns target recheck
+  local payload plan cwd session root branch dir id file body findings blocks warns target recheck marks
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -424,6 +470,14 @@ EOF
   } > "$file"
 
   target=$(resolve_target "$branch" "$body")
+
+  # 他のセッションが同じ Issue に既に着手していないかを見る (#642)。着手直後は PR が
+  # まだ無いので投稿先は Issue になり、二重着手が問題になるのもその時点である
+  marks=''
+  case "$target" in
+    'issue '*) marks=$(concurrent_marks "${target#issue }" "${id%-*}") ;;
+  esac
+
   # 指示した先を記録に残す。guard は解決を引き直すが、規約どおりに進めると解決は
   # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)
   write_meta "$dir/$id.meta" "$branch" "$id" 0 "$target"
@@ -432,6 +486,14 @@ EOF
     echo "プランを GitHub 用に整えました: $file"
     echo "(絶対パスとホームディレクトリは畳んであります。署名は投稿時に自動で付きます)"
     echo
+    if [ -n "$marks" ]; then
+      echo "注意: この Issue には既に他のセッションの着手の跡があります。二重着手かもしれません:"
+      printf '%s\n' "$marks" | sed 's/^/  - /'
+      echo
+      echo "先にそれを読み、同じ仕事なら畳んでください。**この注意は着手を止めません** —"
+      echo "並行が正しいこともあるので、判断はあなたに委ねます。"
+      echo
+    fi
     if [ -n "$target" ]; then
       # shellcheck disable=SC2086
       set -- $target
