@@ -37,10 +37,31 @@ public protocol Plugin {
 ///
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 public final class PluginRegistry {
-    private(set) var outlets: [any Outlet] = []
-    private(set) var inlets: [any Inlet] = []
+    /// 登録された出口。**足した順に並ぶ。**
+    public private(set) var outlets: [any Outlet] = []
 
-    init() {}
+    /// 登録された入り口。**足した順に並ぶ。**
+    public private(set) var inlets: [any Inlet] = []
+
+    /// 束の登録を検査するために、外から 1 つ作る。
+    ///
+    /// **開けてあるのは検査のためである** ([#605](https://github.com/mokume-metal/mokume/issues/605))。
+    /// 決定 3 が束の面を登録の 1 メソッドだけに絞った結果、**そのメソッドだけが外から
+    /// 検査できない**状態になっていた — 束を渡す先が作れず、何が登録されたかも読めない。
+    /// 走らせて確かめる道は組み立ての土台 (`SketchRuntime`) 越しにしか無く、それは GPU を
+    /// 要求するので、束の形を見るだけの検査が GPU の無い実行環境で丸ごと飛ぶ。
+    ///
+    /// 組み立ての中でこれを作るのは土台の仕事で、**スケッチを書く人が呼ぶものではない**。
+    ///
+    /// <!-- example: 文脈 final class MySender: Outlet { func receive(_ frame: OutputFrame) {} } -->
+    /// <!-- example: 文脈 final class MyReceiver: Inlet { func supply() {} } -->
+    /// <!-- example: 文脈 struct MyPlugin: Plugin { func register(into registry: PluginRegistry) { registry.add(outlet: MySender()); registry.add(inlet: MyReceiver()) } } -->
+    /// ```swift
+    /// let registry = PluginRegistry()
+    /// MyPlugin().register(into: registry)
+    /// // registry.outlets.count == 1 / registry.inlets.count == 1
+    /// ```
+    public init() {}
 
     /// 出口を足す。**足した順に呼ばれる。**
     public func add(outlet: any Outlet) { outlets.append(outlet) }
