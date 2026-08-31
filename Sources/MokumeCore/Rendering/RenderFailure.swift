@@ -50,9 +50,6 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 縮小を扱わないうえ、要求も出ていないためである。
     case invalidPixelDensity(Float)
 
-    /// 拡大の段を組み立てられない。
-    case upscalerUnavailable(reason: String)
-
     /// 同梱しているはずのシェーダの原文が見つからない。
     case shaderSourceMissing(name: String)
 
@@ -70,9 +67,6 @@ public enum RenderFailure: Error, Equatable, Sendable {
 
     /// テクスチャの読み取り方を作れない。
     case samplerUnavailable
-
-    /// 表示できる面を用意できない。
-    case displaySurfaceUnavailable
 }
 
 extension RenderFailure: CustomStringConvertible {
@@ -142,11 +136,6 @@ extension RenderFailure: CustomStringConvertible {
             描く細かさが正しくない: \(density)
             0 より大きく 1 以下にする (1 が出すとおりの細かさで、小さいほど粗く描いて拡大する)。
             """
-        case .upscalerUnavailable(let reason):
-            """
-            拡大の段を組み立てられない: \(reason)
-            描く細かさを 1 にすると、拡大の段そのものを通らなくなる。
-            """
         case .shaderSourceMissing(let name):
             """
             同梱しているはずのシェーダの原文が見つからない: \(name)
@@ -177,11 +166,6 @@ extension RenderFailure: CustomStringConvertible {
             """
         case .samplerUnavailable:
             Self.exhausted("テクスチャの読み取り方")
-        case .displaySurfaceUnavailable:
-            """
-            表示できる面を用意できない。
-            窓が閉じられたか、画面から外れている — 窓を出し直す。
-            """
         }
     }
 

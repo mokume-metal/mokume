@@ -35,7 +35,6 @@ struct StartupFailureTests {
         ("timedOut", .timedOut(seconds: 5)),
         ("invalidSize", .invalidSize(width: 0, height: 120)),
         ("invalidPixelDensity", .invalidPixelDensity(1.5)),
-        ("upscalerUnavailable", .upscalerUnavailable(reason: "拡大器を作れない")),
         ("shaderSourceMissing", .shaderSourceMissing(name: "Shapes.metal")),
         (
             "shaderCompilationFailed",
@@ -45,7 +44,6 @@ struct StartupFailureTests {
         ("pipelineUnavailable", .pipelineUnavailable(reason: "入口が見つからない")),
         ("argumentTableUnavailable", .argumentTableUnavailable(reason: "テーブルを作れない")),
         ("samplerUnavailable", .samplerUnavailable),
-        ("displaySurfaceUnavailable", .displaySurfaceUnavailable),
     ]
 
     /// リポジトリ直下。原文を読む検査が使う。
