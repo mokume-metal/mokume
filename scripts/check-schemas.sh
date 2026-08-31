@@ -1,8 +1,13 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# ワイヤフォーマットの正典 (Schemas/*.schema.json) と、その代表例
-# (Schemas/examples/) が食い違っていないかを見る (ADR-0018 決定 4)。
+# ワイヤフォーマットの正典 (Schemas/*.schema.json) が、周りと食い違っていないかを見る。
+# 食い違いは 2 通りあり、この検査は両方を持つ:
+#
+#   1. **代表例と食い違う** — 正典どおりに書けない例が残る (ADR-0018 決定 4)
+#   2. **名乗る版と食い違う** — 破壊的に動いたのに schemaVersion が据え置かれ、同じ版を
+#      名乗る応答が 2 通りになる (#637)。判定は JSON の再帰比較なので
+#      scripts/check-schema-versions.py が持つ (何を見て何を見ないかはあちらの冒頭)
 #
 # 例の名前は <スキーマ名>.json か <スキーマ名>-<変種>.json とする。
 # 対応が曖昧になる名前 (2 つのスキーマに掛かる) はここで落とす — 検査が
@@ -60,5 +65,9 @@ for example in "$EXAMPLE_DIR"/*.json; do
     status=1
   fi
 done
+
+# 版の据え置きを見る (段 2)。origin/main と突き合わせるので、比較の相手を引けない
+# 環境では黙って通る — 見ていないことは、あちらの出力が名乗る
+python3 scripts/check-schema-versions.py || status=1
 
 exit "$status"
