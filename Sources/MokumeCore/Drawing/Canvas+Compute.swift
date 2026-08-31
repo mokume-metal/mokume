@@ -229,7 +229,7 @@ extension Canvas {
         } catch {
             // 読み取りは落とさない (ADR-0020 決定 5)。次のフレームの描き切りが同じ理由で
             // 失敗し、そちらから外へ出る
-            Diagnostics.warn("計算の完了を待てませんでした: \(error)")
+            Diagnostics.warn("計算の完了を待てませんでした: \(error.headline)")
         }
     }
 

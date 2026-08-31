@@ -21,7 +21,7 @@ extension Canvas {
         } catch {
             // 読み取りは落とさない (ADR-0020 決定 5) ので、投げずに残す。次のフレームの
             // 描き切りが同じ理由で失敗し、そちらから外へ出る
-            Diagnostics.warn("画素を読む前の描き切りに失敗しました: \(error)")
+            Diagnostics.warn("画素を読む前の描き切りに失敗しました: \(error.headline)")
         }
         hasLoadedPixels = true
     }

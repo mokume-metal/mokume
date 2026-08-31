@@ -29,7 +29,7 @@ extension Canvas {
         } catch {
             guard !warnedUpscaleFailed else { return }
             warnedUpscaleFailed = true
-            Diagnostics.warn("拡大を通せませんでした: \(error)")
+            Diagnostics.warn("拡大を通せませんでした: \(error.headline)")
         }
     }
 

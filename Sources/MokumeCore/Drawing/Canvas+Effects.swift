@@ -98,7 +98,7 @@ extension Canvas {
             guard !warnedEffectFailed else { return }
             warnedEffectFailed = true
             Diagnostics.warn(
-                "効果を通せませんでした: \(error)。このフレームは効果をかける前の絵を出します")
+                "効果を通せませんでした: \(error.headline)。このフレームは効果をかける前の絵を出します")
         }
     }
 

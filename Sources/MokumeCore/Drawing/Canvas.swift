@@ -1948,7 +1948,7 @@ public final class Canvas {
         do {
             try endFrame()
         } catch {
-            Diagnostics.warn("endDraw(): 描き切れませんでした: \(error)")
+            Diagnostics.warn("endDraw(): 描き切れませんでした: \(error.headline)")
         }
     }
 
@@ -2049,7 +2049,7 @@ public final class Canvas {
             // 効果はフレームの終わりに立つ段なので、途中の描き切りでは通さない
             try flush(applyingEffects: false)
         } catch {
-            Diagnostics.warn("置いた描き場所が変わる前の描き切りに失敗しました: \(error)")
+            Diagnostics.warn("置いた描き場所が変わる前の描き切りに失敗しました: \(error.headline)")
         }
     }
 
