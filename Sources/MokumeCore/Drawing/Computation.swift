@@ -126,7 +126,7 @@ public final class Computation {
             generation += 1
         } catch {
             failure = "\(error)"
-            Diagnostics.warn("computation: 断片を組み立て直せませんでした: \(error)")
+            Diagnostics.warn("computation: 断片を組み立て直せませんでした: \(error.headline)")
         }
     }
 }

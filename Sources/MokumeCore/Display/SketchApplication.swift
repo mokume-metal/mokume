@@ -305,7 +305,7 @@ public final class SketchApplication: NSObject {
     private func noteFrameFailure(_ failure: RenderFailure) {
         consecutiveFailures += 1
         guard consecutiveFailures == 1 else { return }
-        Diagnostics.warn("フレームを描けませんでした: \(failure) — 次のリフレッシュで試し直します")
+        Diagnostics.warn("フレームを描けませんでした: \(failure.headline) — 次のリフレッシュで試し直します")
     }
 
     /// 描けるようになったことを言う。飛ばした数を添える。
@@ -368,11 +368,15 @@ extension Sketch {
 
 /// 起動できなかったときに標準エラーへ出す文面 (末尾の改行まで)。
 ///
-/// **切り出してあるのは、`\(error)` へ戻る退行を検査が捕まえられるようにするため。**
-/// `Sketch.main()` はこの直後に `exit(1)` するので、そのままでは呼んで確かめられない。
+/// **切り出してあるのは、検査が呼んで確かめられるようにするため。** `Sketch.main()` は
+/// この直後に `exit(1)` するので、そのままでは呼べない。
 ///
-/// 名乗りと中身を 2 行に分けるのは、``RenderFailure/message`` が多行だからである —
+/// 名乗りと中身を 2 行に分けるのは、``RenderFailure/description`` が多行だからである —
 /// 1 行に繋ぐと「起動できませんでした: 〜が見つからない: 〜」と冒頭に : が 2 つ並ぶ。
+///
+/// **ここは全文を出す。** 走っている最中の警告は 1 行に保つため
+/// ``RenderFailure/headline`` を使うが、起動の失敗はそこで終わりなので、次にすることまで
+/// 出さないと読む人に打つ手が残らない ([#600](https://github.com/mokume-metal/mokume/issues/600))。
 func startupFailureText(_ failure: RenderFailure) -> String {
-    "スケッチを起動できませんでした。\n\(failure.message)\n"
+    "スケッチを起動できませんでした。\n\(failure)\n"
 }

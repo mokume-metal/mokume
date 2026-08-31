@@ -343,7 +343,7 @@ public final class SketchRuntime {
             // 毎フレーム走る経路なので投げない (ADR-0020 決定 5)。1 度だけ言う
             guard !warnedEncodeFailed else { return }
             warnedEncodeFailed = true
-            Diagnostics.warn("出口へ渡す絵を取り出せませんでした: \(error)")
+            Diagnostics.warn("出口へ渡す絵を取り出せませんでした: \(error.headline)")
             return
         }
         let frame = OutputFrame(

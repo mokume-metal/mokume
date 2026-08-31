@@ -35,4 +35,24 @@ struct PackageStructureTests {
         // 落ちるので、厳密な一致で書くと**届いているのに赤くなる**。
         #expect(abs(atan2(Float(1), Float(0)) - .pi / 2) < 1e-6)
     }
+
+    // 起動できなかったときの文面が、アンブレラしか見えない場所から読めるか (#600)。
+    //
+    // **この suite でしか書けない検査である。** 文面の中身を見る `StartupFailureTests` は
+    // `@testable import MokumeCore` なので internal まで見えてしまい、「外から届くか」を
+    // 見られない。参照スケッチ (`Sketches/`) が見ているのはここと同じ視界で、届いて
+    // いなかったせいで内部の名前のまま落ちていた。
+    //
+    // 中身の網羅はあちらが持つので、ここでは**届いていること**だけを 1 つの case で見る。
+    @Test("アンブレラ 1 つで起動失敗の文面に届く")
+    func umbrellaReachesTheStartupFailureMessage() {
+        let text = "\(RenderFailure.shaderSourceMissing(name: "Shapes.metal"))"
+        // 何が足りないか (1 行目) と、次にすること (続く行) の 2 段になっている
+        #expect(text.split(separator: "\n").count >= 2)
+        #expect(text.contains("Shapes.metal"))
+        #expect(text.contains(".bundle"))
+        // 内部の名前が出ない。`\(...)` が case の綴りへ戻ったらここが赤くなる
+        #expect(!text.contains("shaderSourceMissing"))
+        #expect(!text.contains("RenderFailure"))
+    }
 }

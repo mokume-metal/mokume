@@ -36,40 +36,60 @@ let catalogue: [(name: String, make: () -> any Sketch)] = [
     ("crowd-and-model", { CrowdAndModel() }),
 ]
 
+/// 失敗したら、何が足りないかと次にすることを出して落ちる。
+///
+/// **裸の `try` に任せない。** top-level の throw は Swift ランタイムの既定処理へ落ち、
+/// `Fatal error: Error raised at top level: MokumeCore.RenderFailure.shaderSourceMissing(...)`
+/// の形で内部の姿をそのまま出す (終了コードも 1 ではなく trap になる)。この入口は
+/// リポジトリの開発者が絵を確かめるたびに通るので、配ったものへ通した規範
+/// ([#527](https://github.com/mokume-metal/mokume/issues/527)) がここでも要る
+/// ([#600](https://github.com/mokume-metal/mokume/issues/600))。
+///
+/// 名乗りを渡すのは、入口ごとに文脈が違うからである (起動と書き出し)。中身は失敗の側が
+/// 持っているので、ここでは文面を組まない。
+func exitReporting(_ headline: String, _ error: any Error) -> Never {
+    FileHandle.standardError.write(Data("\(headline)\n\(error)\n".utf8))
+    exit(1)
+}
+
 var arguments = Array(CommandLine.arguments.dropFirst())
 
 if arguments.first == "--render" {
-    let directory = URL(fileURLWithPath: arguments.count > 1 ? arguments[1] : "shots")
-    // 連番で出すのは**動きの証跡のため**。立体は静止画だと向きが読めないことがある。
-    // 観測の経路でも動きは撮れる (#312) が、あちらは走っている窓を外から覗くので間隔が
-    // 揃わない。ここは既に決定論でフレームを進めているので、同じ経路から連番を出せば
-    // **撮り直しても 1 枚ずつ同じ絵になる** — 参照スケッチの証跡はこちらで採る
-    let frames = arguments.firstIndex(of: "--frames").flatMap { index in
-        arguments.count > index + 1 ? Int(arguments[index + 1]) : nil
-    }
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let gpu = try RenderDevice()
-    for entry in catalogue {
-        let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu)
-        guard let frames else {
-            // **同じ番号のフレームを描く。** 時計はフレーム番号から導くので、
-            // 何度撮っても同じ絵になる
-            for _ in 0..<45 { try runtime.advance() }
-            let url = directory.appendingPathComponent("\(entry.name).png")
-            try runtime.target.writePNG(to: url)
-            print("\(entry.name) → \(url.path)")
-            continue
+    do {
+        let directory = URL(fileURLWithPath: arguments.count > 1 ? arguments[1] : "shots")
+        // 連番で出すのは**動きの証跡のため**。立体は静止画だと向きが読めないことがある。
+        // 観測の経路でも動きは撮れる (#312) が、あちらは走っている窓を外から覗くので間隔が
+        // 揃わない。ここは既に決定論でフレームを進めているので、同じ経路から連番を出せば
+        // **撮り直しても 1 枚ずつ同じ絵になる** — 参照スケッチの証跡はこちらで採る
+        let frames = arguments.firstIndex(of: "--frames").flatMap { index in
+            arguments.count > index + 1 ? Int(arguments[index + 1]) : nil
         }
-        let folder = directory.appendingPathComponent(entry.name)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        for index in 0..<frames {
-            try runtime.advance()
-            let name = String(format: "f.%04d.png", index)
-            try runtime.target.writePNG(to: folder.appendingPathComponent(name))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let gpu = try RenderDevice()
+        for entry in catalogue {
+            let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu)
+            guard let frames else {
+                // **同じ番号のフレームを描く。** 時計はフレーム番号から導くので、
+                // 何度撮っても同じ絵になる
+                for _ in 0..<45 { try runtime.advance() }
+                let url = directory.appendingPathComponent("\(entry.name).png")
+                try runtime.target.writePNG(to: url)
+                print("\(entry.name) → \(url.path)")
+                continue
+            }
+            let folder = directory.appendingPathComponent(entry.name)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            for index in 0..<frames {
+                try runtime.advance()
+                let name = String(format: "f.%04d.png", index)
+                try runtime.target.writePNG(to: folder.appendingPathComponent(name))
+            }
+            print("\(entry.name) → \(folder.path) (\(frames) 枚)")
         }
-        print("\(entry.name) → \(folder.path) (\(frames) 枚)")
+        exit(0)
+    } catch {
+        exitReporting("参照スケッチの書き出しに失敗しました。", error)
     }
-    exit(0)
 }
 
 guard let name = arguments.first, let entry = catalogue.first(where: { $0.name == name }) else {
@@ -80,6 +100,10 @@ guard let name = arguments.first, let entry = catalogue.first(where: { $0.name =
     exit(arguments.isEmpty ? 0 : 2)
 }
 
-let gpu = try RenderDevice()
-let application = try SketchApplication(sketch: entry.make(), gpu: gpu)
-application.run()
+do {
+    let gpu = try RenderDevice()
+    let application = try SketchApplication(sketch: entry.make(), gpu: gpu)
+    application.run()
+} catch {
+    exitReporting("参照スケッチを起動できませんでした。", error)
+}

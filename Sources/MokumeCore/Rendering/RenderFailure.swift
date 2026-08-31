@@ -75,7 +75,7 @@ public enum RenderFailure: Error, Equatable, Sendable {
     case displaySurfaceUnavailable
 }
 
-extension RenderFailure {
+extension RenderFailure: CustomStringConvertible {
     /// 人が読む文面。
     ///
     /// **どの失敗にも「次に何をすればよいか」を書く。** 起動できなかったときに出る行は
@@ -84,13 +84,21 @@ extension RenderFailure {
     /// 既に持っている規範を、ライブラリの側にも通す。
     ///
     /// **内部の名前をそのまま出さない。** case の綴りは実装の都合で決まっていて、読む人が
-    /// 次にすることを決める助けにならない。
+    /// 次にすることを決める助けにならない。準拠しているので `\(failure)` と書いた場所も
+    /// この文面になる — 内部の名前が出る経路が残らない。
     ///
-    /// 公開していないのは、外から読む必要がまだ出ていないため (ADR-0001 原則 4)。利用者の
-    /// catch で要ると分かった時点で広げる。
+    /// **姉妹型と同じ形で公開する。** ``ImageFailure`` / ``ModelFailure`` / ``ShaderFailure``
+    /// はいずれも `CustomStringConvertible` で人向けの文面を出しており、ここだけ internal
+    /// だったせいで、アンブレラしか見えない場所 (参照スケッチ) が同じ文面を出せなかった
+    /// ([#600])。実需ではなく**既にある規範が要求する一貫性の欠け**を埋めるもの
+    /// ([ADR-0022] 決定 6 の 2 行目)。
+    ///
+    /// 走っている最中の警告は多行を流せないので、そちらは ``headline`` を使う。
     ///
     /// [#527]: https://github.com/mokume-metal/mokume/issues/527
-    nonisolated var message: String {
+    /// [#600]: https://github.com/mokume-metal/mokume/issues/600
+    /// [ADR-0022]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0022-production-track.md
+    public var description: String {
         switch self {
         case .deviceUnavailable:
             """
@@ -175,6 +183,22 @@ extension RenderFailure {
             窓が閉じられたか、画面から外れている — 窓を出し直す。
             """
         }
+    }
+
+    /// 走っている最中に出す 1 行 (``description`` の先頭行 = 何が足りないか)。
+    ///
+    /// **`Diagnostics.warn` は 1 行しか流せない。** 宣言自身が「ライブラリからの注意を
+    /// 1 行、標準エラーへ書く」と名乗っており、毎フレーム起こりうる失敗に多行を流すと
+    /// 本当に読むべき行が埋まる (`SketchApplication.noteFrameFailure` のコメント)。
+    ///
+    /// **1 行に削るのは、人が端末で読む経路だけである** ([#600])。観測レポートの `warnings`
+    /// は JSON の配列なので行数の制約が無く、読み手も機械なので全文 (`\(failure)`) を載せる
+    /// — 組み立て直しの失敗はコンパイラの言葉が 2 行目に入るので、そこを削ると打つ手が
+    /// 消える。起動の失敗も全文を出す (そこで終わりなので、次にすることまで要る)。
+    ///
+    /// [#600]: https://github.com/mokume-metal/mokume/issues/600
+    nonisolated var headline: String {
+        String(description.prefix { $0 != "\n" })
     }
 
     /// GPU の資源を用意できなかったときの文面。

@@ -103,7 +103,7 @@ public final class EffectShader {
             generation += 1
         } catch {
             failure = "\(error)"
-            Diagnostics.warn("effect: 断片を組み立て直せませんでした: \(error)")
+            Diagnostics.warn("effect: 断片を組み立て直せませんでした: \(error.headline)")
         }
     }
 }
