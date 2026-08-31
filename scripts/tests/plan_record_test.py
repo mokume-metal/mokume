@@ -617,6 +617,74 @@ class PlanRecordTestCase(unittest.TestCase):
     # 時点では resolve_target の答えが Issue から PR へ移っている。引き直した先だけを
     # 見ていた頃は、規約どおりに進めたセッションが毎回差し戻されていた。
 
+    # --- 見出しの番号も候補にする (#655) -------------------------------------
+    # recheck_missing は本文のどこかに #N が在れば通すが、plan_targets は名乗りの綴りを
+    # 要求していた。`対象 Issue: #655` のように書くと片方だけを満たし、番号は本文に在るのに
+    # 投稿先が確定しなかった。投稿済みプラン 112 件で測ると、番号はプランのタイトルに書くのが
+    # 慣行 (90 件・当たり 98.9%) だったので、そこを見る。
+
+    def test_capture_reads_the_number_from_the_heading(self):
+        """見出しの番号で確定する (名乗りが無くてもブランチ名に頼らない)。"""
+        result = self.capture("# #646 見出しに番号がある\n\n本文。\n", FAKE_GH_ISSUE="1")
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+
+    def test_capture_treats_heading_and_claim_of_the_same_number_as_one(self):
+        """見出しと名乗りが同じ番号なら候補は 1 件 (同じ先を 2 度並べない)。"""
+        result = self.capture(
+            "# #646 見出しと名乗りが揃っている\n\nCloses #646\n", FAKE_GH_ISSUE="1"
+        )
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+
+    def test_capture_lists_both_when_heading_and_claim_disagree(self):
+        """食い違うときは並べる — 見出しを最優先で 1 つに決めると誤爆する (実測で 1 件)。"""
+        result = self.capture(
+            "# #646 見出しと名乗りが違う\n\nCloses #631\n", FAKE_GH_ISSUE="1"
+        )
+        self.assertIn("投稿先を確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+        self.assertIn("scripts/comment.sh issue 631", result.stderr)
+
+    def test_capture_puts_the_heading_first(self):
+        """見出しが先頭の候補になる (催促や跡見が見る「先頭」がそちらであること)。"""
+        self.capture("# #646 見出しが先\n\nCloses #631\n", FAKE_GH_ISSUE="1")
+        meta = self.metas()[0].read_text(encoding="utf-8")
+        targets = [l for l in meta.splitlines() if l.startswith("target=")]
+        self.assertEqual(targets, ["target=issue 646", "target=issue 631"])
+
+    def test_capture_ignores_headings_without_a_hash_number(self):
+        """`#N` の形でない見出しを拾わない。
+
+        **数字を含む見出しは普通にある** (`### 1. 決めたこと` / `## 3 つの案`)。そこを
+        番号と読むと、候補が本文の節番号で埋まって毎回「確定できません」に落ちる。
+        """
+        result = self.capture(
+            "# 番号の無いタイトル\n\n## 3 つの案\n\n### 1. 決めたこと\n\nCloses #646\n",
+            FAKE_GH_ISSUE="1",
+        )
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 646", result.stderr)
+        # 節番号が候補に混ざっていないこと
+        self.assertNotIn("issue 3", result.stderr)
+        self.assertNotIn("issue 1 ", result.stderr)
+
+    def test_capture_falls_back_to_the_branch_without_heading_or_claim(self):
+        """見出しも名乗りも無ければ従来どおりブランチ名 (実測で 6 件)。"""
+        result = self.capture("番号をどこにも書かない計画。\n", FAKE_GH_ISSUE="1")
+        # setUp のブランチは feat/plan-123
+        self.assertIn("scripts/comment.sh issue 123", result.stderr)
+
+    def test_recheck_message_tells_how_to_write_the_number(self):
+        """差し戻し文が、投稿先も確定する書き方を案内する。
+
+        案内が無いと「この検査は通ったのに投稿先が確定しない」綴りを書き手が当てる
+        ことになる (#655 で実際に 2 段踏んだ)。
+        """
+        result = self.capture("番号も現況も書かない計画。\n", recheck=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("# #N 短い説明", result.stderr)
+
     # --- 名乗りが 2 つ以上あれば確定しない (#646) ----------------------------
     # プランは設計を説明する文書なので番号の例示が自然に出る。本来の対象が 2 番目以降に
     # 現れると、最初の 1 件だけを採る規則では無関係な Issue を指した。投稿済みプラン
