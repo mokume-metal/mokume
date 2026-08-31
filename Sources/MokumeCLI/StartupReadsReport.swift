@@ -30,7 +30,10 @@ enum StartupReadsReport {
     ///
     /// **いまの値と、決まり方の両方を出す。** 値だけでは何と比べればよいか分からず、
     /// 決まり方だけでは自分の環境がどちらなのか分からない。
-    static func document(base: URL, given: Bool) -> String {
+    /// - Parameter package: スケッチのパッケージの場所。**区画の基準とは別の軸**で、渡されて
+    ///   いれば依存している版が持たない面まで名乗れる。渡されなければその判定はしない
+    ///   (`DependencyFacets` の規律 — 断定できないときは断定しない)。
+    static func document(base: URL, given: Bool, package: URL? = nil) -> String {
         var lines = [
             "起動の瞬間に決まるもの。**どれも走っている最中に変えても効かない** —",
             "効かせるにはスケッチを起動し直す。",
@@ -39,9 +42,16 @@ enum StartupReadsReport {
             "",
             "  \(baseLine(base: base, given: given))",
         ]
+        // 依存が持たない面は、区画が在っても応答が来ない。**在る / 無いだけでは足りない**
+        // (#647)。判定できなければ空のまま — 添えないことで「判定していない」を表す
+        let absent = package.flatMap { DependencyFacets.absent(forPackageAt: $0) } ?? []
         for entry in StartupReads.all where entry.origin == .facet {
             let facet = base.appendingPathComponent(".mokume/\(entry.key)", isDirectory: true)
-            lines.append("  \(entry.name): \(facet.path) (\(exists(facet) ? "在る" : "無い"))")
+            var line = "  \(entry.name): \(facet.path) (\(exists(facet) ? "在る" : "無い"))"
+            if absent.contains(entry) {
+                line += " — 依存している mokume はこの面を持たない"
+            }
+            lines.append(line)
         }
         lines += ["", "一覧:", ""]
         for entry in StartupReads.all {

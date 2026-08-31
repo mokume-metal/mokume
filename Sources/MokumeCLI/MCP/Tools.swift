@@ -132,7 +132,8 @@ struct Tools {
             return ("観測の要求を置けませんでした: \(error)", true)
         }
         guard let report = answer else {
-            return (facets.notRunning(StartupReads.observe, existed: existed), true)
+            return (facets.notRunning(
+                    StartupReads.observe, existed: existed, packageDirectory: packageDirectory), true)
         }
 
         var lines: [String] = []
@@ -221,7 +222,8 @@ struct Tools {
             return ("入力の要求を置けませんでした: \(error)", true)
         }
         guard let report = answer else {
-            return (facets.notRunning(StartupReads.input, existed: existed), true)
+            return (facets.notRunning(
+                    StartupReads.input, existed: existed, packageDirectory: packageDirectory), true)
         }
         return (pretty(report), false)
     }
@@ -277,7 +279,8 @@ struct Tools {
     /// 起動の瞬間に決まるものの一覧。
     func startupReference() -> String {
         StartupReadsReport.document(
-            base: facets.directory, given: facets.workDirectoryGiven)
+            base: facets.directory, given: facets.workDirectoryGiven,
+            package: packageDirectory)
     }
 
     /// 面の仕様が見つからないときの答え。**どこを見たかまで書く。**

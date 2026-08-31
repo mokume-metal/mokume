@@ -101,13 +101,21 @@ struct Facets {
     ///
     /// 文面は読む時点ごとに書き足さず、**起動の瞬間に決まるものの一覧を名指す**。一覧
     /// (``StartupReads``) に増えたものは `reference` の `startup` に自動で並ぶ。
-    func notRunning(_ entry: StartupReads.Entry, existed: Bool) -> String {
+    func notRunning(
+        _ entry: StartupReads.Entry, existed: Bool, packageDirectory: URL? = nil
+    ) -> String {
+        // **読めたなら原因は確定している。** 候補を 3 つ並べる前に、そう言う
+        if let package = packageDirectory,
+            DependencyFacets.lacks(entry, forPackageAt: package) == true
+        {
+            return lacksFacet(entry)
+        }
         let path = facet(entry).path
         let opening = existed
             ? """
             走っているスケッチが応えませんでした。\(entry.name) (\(path)) は
             要求を置く前から在ったので、区画を作る順序の問題ではありません。
-            考えられるのは 2 つで、打つ手が違います。
+            考えられるのは 3 つで、打つ手が違います。
 
             1. まだ立ち上がっていないか、応答が止まっている
                スケッチのディレクトリで `\(Command.name) watch` を起動してから、
@@ -116,7 +124,7 @@ struct Facets {
             : """
             走っているスケッチが応えませんでした。要求を置こうとしたとき\(entry.name)
             (\(path)) が無かったので、この呼び出しで作りました。
-            考えられるのは 2 つで、打つ手が違います。
+            考えられるのは 3 つで、打つ手が違います。
 
             1. スケッチが\(entry.name)を持たないまま立ち上がっている
                \(entry.note)。
@@ -137,7 +145,33 @@ struct Facets {
                **そのときは起動し直しても直りません。** `watch` と窓口の両方を、
                同じ \(StartupReads.workDirectory.key) の下で起動し直してください。
 
+            3. 依存している mokume が\(entry.name)を持たない版である
+               面は版によって増えているので、古い版を固定したスケッチには無いことがあります。
+               **そのときも起動し直しても直りません。** 依存している版が持たない面は、
+
+                   \(Command.name) doctor <スケッチの場所>
+
+               が名乗ります。
+
             起動の瞬間に決まるものは `reference` の `\(Tools.startupDocument)` に一覧があります。
             """
+    }
+    /// 依存がその面を持たないと読めたときの答え。
+    ///
+    /// **候補を並べない。** 原因が確定しているので、並べると読み手に選ばせることになる。
+    /// 書くのは打つ手だけで、どちらも走らせる側を変えるものである — 窓口の側では直らない。
+    func lacksFacet(_ entry: StartupReads.Entry) -> String {
+        """
+        走っているスケッチが応えませんでした。**スケッチが依存している mokume は\(entry.name)を
+        持ちません** — この面はもっと新しい版で足されたもので、依存として引かれている版の
+        仕様 (`Schemas/`) にありません。
+
+        **起動し直しても直りません。** 打つ手は 2 つで、どちらも走らせる側を変えることになります。
+
+        1. スケッチが依存する mokume を、この面を持つ版まで上げる
+        2. この面を使わずに済ませる
+
+        依存している版が持たない面は `\(Command.name) doctor <スケッチの場所>` が一覧で名乗ります。
+        """
     }
 }

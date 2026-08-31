@@ -264,46 +264,12 @@ struct MCPServerTests {
         #expect(SchemasLocator.contents(of: "そんなものは無い", in: root) == nil)
     }
 
-    /// 依存として mokume を引いた消費側の配置を模す。
-    ///
-    /// - Parameters:
-    ///   - name: 依存の `packageRef.name`。取り違えの検査から変える
-    ///   - local: パスで指した依存 (実体は作業ディレクトリの外) を模すなら `true`
-    private func makeConsumer(name: String = "mokume", local: Bool = false) throws -> (
-        work: URL, schemas: URL
-    ) {
-        let work = try makeDirectory()
-        let package = try local
-            ? makeDirectory()
-            : work.appendingPathComponent(".build/checkouts/mokume", isDirectory: true)
-        let schemas = package.appendingPathComponent("Schemas", isDirectory: true)
-        try FileManager.default.createDirectory(at: schemas, withIntermediateDirectories: true)
-        try Data(#"{"$id":"observe-report"}"#.utf8)
-            .write(to: schemas.appendingPathComponent("observe-report.schema.json"))
-
-        // 実測した形 (version 7)。パスで指したものは絶対パスがそのまま載る
-        let state = local
-            ? "{\"name\":\"fileSystem\",\"path\":\"\(package.path)\"}"
-            : "{\"name\":\"sourceControlCheckout\",\"checkoutState\":{\"revision\":\"0000\"}}"
-        let document = """
-            {"object":{"artifacts":[],"dependencies":[{"basedOn":null,\
-            "packageRef":{"identity":"\(local ? package.lastPathComponent : name)",\
-            "kind":"\(local ? "fileSystem" : "remoteSourceControl")",\
-            "location":"https://example.com/\(name).git","name":"\(name)"},\
-            "state":\(state),"subpath":"mokume"}],"prebuilts":[]},"version":7}
-            """
-        let build = work.appendingPathComponent(".build", isDirectory: true)
-        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
-        try Data(document.utf8).write(to: build.appendingPathComponent("workspace-state.json"))
-        return (work, schemas)
-    }
-
     /// 消費側では届かない場所。実行ファイル起点の探索が当たらないことを保証する。
     private let nowhere = URL(fileURLWithPath: "/nowhere/bin/mokume-cli")
 
     @Test("依存として引いた消費側から、解決された実体の仕様を読む")
     func findsTheSchemasInTheResolvedDependency() throws {
-        let consumer = try makeConsumer()
+        let consumer = try ConsumerFixture.make()
         let found = SchemasLocator.directory(
             workDirectory: consumer.work, executable: nowhere)
         #expect(found?.path == consumer.schemas.path)
@@ -313,7 +279,7 @@ struct MCPServerTests {
     @Test("パスで指した依存でも、実体の場所から仕様を読む")
     func findsTheSchemasInAPathDependency() throws {
         // パスで指すと identity は末尾のディレクトリ名になる。引くのは name の完全一致
-        let consumer = try makeConsumer(local: true)
+        let consumer = try ConsumerFixture.make(local: true)
         let found = SchemasLocator.directory(
             workDirectory: consumer.work, executable: nowhere)
         #expect(found?.path == consumer.schemas.path)
@@ -321,7 +287,7 @@ struct MCPServerTests {
 
     @Test("名前の似た依存を取り違えない")
     func doesNotMistakeASimilarlyNamedDependency() throws {
-        let consumer = try makeConsumer(name: "mokume-extras")
+        let consumer = try ConsumerFixture.make(name: "mokume-extras")
         #expect(
             SchemasLocator.directory(workDirectory: consumer.work, executable: nowhere) == nil)
     }
@@ -338,7 +304,7 @@ struct MCPServerTests {
 
     @Test("仕様が見つからないときは、見た場所を並べて答える")
     func listsWhereItLookedForTheSchemas() throws {
-        let consumer = try makeConsumer()
+        let consumer = try ConsumerFixture.make()
         // 実体はあるが、そこに Schemas/ が無い状態
         try FileManager.default.removeItem(at: consumer.schemas)
 
@@ -389,7 +355,7 @@ struct MCPServerTests {
 
     @Test("区画が別の場所でも、区画は区画から・仕様はパッケージの場所から読む")
     func readsEachAxisFromItsOwnBase() throws {
-        let consumer = try makeConsumer()
+        let consumer = try ConsumerFixture.make()
         let work = try makeDirectory()
         let status = work.appendingPathComponent(".mokume/build/status.json")
         try FileManager.default.createDirectory(
