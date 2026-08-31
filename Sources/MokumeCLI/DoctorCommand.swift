@@ -105,7 +105,8 @@ enum DoctorCommand {
         lines += stateLines(state).map { "  \($0)" }
         // 見出しは足さない。一覧は自分の名乗りを持っているので、重ねると 2 度言うことになる
         lines.append("")
-        lines.append(StartupReadsReport.document(base: base, given: given))
+        lines.append(
+            StartupReadsReport.document(base: base, given: given, package: state.place))
         return lines.joined(separator: "\n")
     }
 
