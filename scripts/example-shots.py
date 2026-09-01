@@ -79,7 +79,7 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from example_wrapping import LEVEL_BODY, dedent, strip_doc, wrap  # noqa: E402
+from example_wrapping import LEVEL_TYPE, dedent, level_of, strip_doc, wrap  # noqa: E402
 
 # 囲みの開き。`|` の後ろは撮影設定 (frames=90 / size=400x400)
 OPEN = re.compile(r"^(?P<indent>\s*)///\s*<!--\s*shot:\s*(?P<alt>[^|]*?)\s*(?:\|\s*(?P<attributes>[^>]*?)\s*)?-->\s*$")
@@ -133,6 +133,9 @@ class Shot:
     # 黙らせる指定を足しても絵は 1 画素も変わらないので、撮り直しを起こさない
     symmetric: str
     snippet: list[str]
+    # 例が前提にしているものの宣言 (<!-- example: 文脈 … -->)。読者には見せない補いで、
+    # 組めることを見る側 (check-examples.py) が前から渡していたもの (#667)
+    context: list[str]
     index: int  # 同じ説明文の中で何番目か (記録の鍵)
     record_line: int | None
     record_snippet: str | None
@@ -145,11 +148,16 @@ class Shot:
     @property
     def fingerprint(self) -> str:
         """スニペットと撮影設定だけから採る。**実装は入らない** (冒頭の注記)。"""
-        material = json.dumps(
-            {"snippet": self.snippet, "size": [self.width, self.height], "frames": self.frames},
-            ensure_ascii=False,
-            sort_keys=True,
-        )
+        parts: dict[str, object] = {
+            "snippet": self.snippet,
+            "size": [self.width, self.height],
+            "frames": self.frames,
+        }
+        # **文脈は在るときだけ足す。** 空でも鍵を置くと材料の JSON が変わり、文脈を
+        # 持たない既存の絵まで全部「撮り直し」になる (#667)
+        if self.context:
+            parts["context"] = self.context
+        material = json.dumps(parts, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(material.encode("utf-8")).hexdigest()[:8]
 
     @property
@@ -212,6 +220,36 @@ def snippet_above(lines: list[str], open_line: int) -> list[str]:
     return []
 
 
+MARK = re.compile(r"^\s*(?:///\s*)?<!--\s*example:\s*文脈\s+(?P<rest>.*?)\s*-->\s*$")
+
+
+def context_above(lines: list[str], open_line: int) -> list[str]:
+    """例の直前に積まれた `文脈` の宣言。
+
+    綴りは `check-examples.py` の印と同じ。**あちらが読むものをこちらも読む** —
+    片方だけが読むと、組める例と撮れる例がまた食い違う (#667)。
+    """
+    index = open_line - 1
+    while index >= 0 and SCAFFOLD.match(lines[index]):
+        index -= 1
+    if index < 0 or not FENCE_CLOSE.match(lines[index]):
+        return []
+    index -= 1
+    while index >= 0 and DOC.match(lines[index]):
+        if FENCE_OPEN.match(lines[index]):
+            break
+        index -= 1
+    found: list[str] = []
+    index -= 1
+    while index >= 0:
+        match = MARK.match(lines[index])
+        if not match:
+            break
+        found.insert(0, match["rest"])
+        index -= 1
+    return found
+
+
 def records_after(lines: list[str], close_line: int) -> dict[int, tuple[int, str, str]]:
     """説明文の塊の直後に積まれた記録。鍵は説明文の中での番号。"""
     index = close_line + 1
@@ -257,6 +295,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
                 frames=frames,
                 symmetric=symmetric,
                 snippet=snippet_above(lines, number),
+                context=context_above(lines, number),
                 index=0,
                 record_line=None,
                 record_snippet=None,
@@ -404,12 +443,20 @@ def generate(root: pathlib.Path, shots: list[Shot], package: pathlib.Path) -> No
     for shot in shots:
         # 包み方は example_wrapping が持つ。**組めることを見る側 (check-examples) と
         # 同じ規則**にしておかないと、撮れる例と組める例が食い違う (原則 9)。
-        # 段は見分けさせず本体で固定する — 撮る対象は `draw()` の中身だけである
+        # 段も文脈もあちらと同じに渡す — 絵を作る口はどれも投げるので、`draw()` の
+        # 本体に固定すると絵を持つ例が 1 枚も撮れない (#667)
+        level = level_of(shot.snippet)
+        if level == LEVEL_TYPE:
+            raise SystemExit(
+                f"{shot.where} の例は型の宣言から始まっている — 撮る側は例を Sketch として"
+                " 走らせるので、型の段は撮れない。setup() / draw() の段まで下ろすこと"
+            )
         body.append(f"/// {shot.where}")
         body += wrap(
             _type_name(shot),
             shot.snippet,
-            level=LEVEL_BODY,
+            level=level,
+            context=shot.context,
             members=[
                 f"var settings = SketchSettings(width: {shot.width}, height: {shot.height},"
                 f' title: "{shot.name}")'

@@ -13,6 +13,9 @@
   公開されるのが、この仕組みでいちばん困る壊れ方
 - **反転しても見分けが付かない絵の言い方** (#481) — 境目の当て方と、黙らせた軸の
   扱いをここで固定する。**絵を撮らずに検められる**ように、判定は純関数へ切ってある
+- **包み方が、組めることを見る側と同じである** (#667) — 段を見分けること・`文脈` を
+  渡すこと・型の段を落とすこと。ここが食い違うと、組める例が撮れない (あるいはその逆)
+  という無言の穴が空く
 
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
@@ -60,6 +63,51 @@ extension Sketch {
     /// <!-- shot: 中央の小さな円 -->
     /// <!-- /shot -->
     public func circle() {}
+}
+"""
+
+
+# `setup()` を持つ例。絵を作る口はどれも投げるので、この段が撮れないと画像の口には
+# 1 枚も絵が付けられない (#667)
+MEMBER_SOURCE = """\
+// SPDX-FileCopyrightText: 2026 mokume-metal
+// SPDX-License-Identifier: MIT
+
+extension Sketch {
+    /// 描き場所を作る。
+    ///
+    /// <!-- example: 文脈 var pad: Canvas! -->
+    /// ```swift
+    /// func setup() {
+    ///     pad = try! createGraphics(64, 64)
+    /// }
+    ///
+    /// func draw() {
+    ///     image(pad, 0, 0)
+    /// }
+    /// ```
+    /// <!-- shot: 左上に置かれた描き場所 -->
+    /// <!-- /shot -->
+    public func createGraphics() {}
+}
+"""
+
+# 型の宣言から始まる例。`enum` に包まれて Sketch にならないので撮れない
+TYPE_SOURCE = """\
+// SPDX-FileCopyrightText: 2026 mokume-metal
+// SPDX-License-Identifier: MIT
+
+extension Sketch {
+    /// 設定を持つ。
+    ///
+    /// ```swift
+    /// struct Knob {
+    ///     var size: Float
+    /// }
+    /// ```
+    /// <!-- shot: 撮れないはずの例 -->
+    /// <!-- /shot -->
+    public func knob() {}
 }
 """
 
@@ -164,6 +212,57 @@ class ExampleShotsTest(unittest.TestCase):
         self.assertEqual(
             (package / "Package.swift").read_text(encoding="utf-8").count(".executableTarget"), 1
         )
+
+
+    # ---------------------------------------------------------------- 包み方 (#667)
+
+    def test_メンバの段の例も撮れる(self):
+        """`setup()` を書いた例が、Sketch として組める形で生成物へ入る。"""
+        self.path.write_text(MEMBER_SOURCE, encoding="utf-8")
+        found = self.collect()
+        self.assertEqual(len(found), 1)
+        package = self.root / "generated"
+        shots.generate(self.root, found, package)
+        body = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
+        # 段が本体に固定されていれば `func setup()` が draw() の中へ入って組めなくなる
+        self.assertIn("func setup() {", body)
+        self.assertNotIn("func draw() {\n        func setup()", body)
+
+    def test_文脈の宣言が生成物へ入る(self):
+        self.path.write_text(MEMBER_SOURCE, encoding="utf-8")
+        found = self.collect()
+        self.assertEqual(found[0].context, ["var pad: Canvas!"])
+        package = self.root / "generated"
+        shots.generate(self.root, found, package)
+        body = (package / "Sources" / "example-shots" / "Shots.swift").read_text(encoding="utf-8")
+        self.assertIn("var pad: Canvas!", body)
+
+    def test_型の段は名乗って落ちる(self):
+        """`enum` に包まれると Sketch にならないので、走らせようがない。"""
+        self.path.write_text(TYPE_SOURCE, encoding="utf-8")
+        with self.assertRaises(SystemExit) as caught:
+            shots.generate(self.root, self.collect(), self.root / "generated")
+        self.assertIn("型の段", str(caught.exception))
+
+    def test_文脈が無ければ指紋は文脈を足す前のまま(self):
+        """**この 2 つの値は、文脈を材料に足す前 (#667 より前) に採ったものである。**
+
+        空の文脈でも材料に鍵を置くと JSON が変わり、文脈を持たない既存の絵が
+        全部「撮り直し」になる — 公開済みの URL がすべて差し替わるということでもある。
+        だから値そのものを留めておく。
+        """
+        self.assertEqual([shot.fingerprint for shot in self.collect()], ["0325b69b", "03251561"])
+        self.assertEqual([shot.context for shot in self.collect()], [[], []])
+
+    def test_文脈を書けば指紋が動く(self):
+        """文脈は絵を変えうるので、書き換えたら撮り直しが要る。"""
+        self.path.write_text(MEMBER_SOURCE, encoding="utf-8")
+        with_context = self.collect()[0]
+        self.assertEqual(with_context.context, ["var pad: Canvas!"])
+        other = self.path.read_text(encoding="utf-8").replace(
+            "var pad: Canvas!", "var pad: Canvas! = nil")
+        self.path.write_text(other, encoding="utf-8")
+        self.assertNotEqual(self.collect()[0].fingerprint, with_context.fingerprint)
 
     def test_黙らせる軸を読み並びを揃える(self):
         self.path.write_text(

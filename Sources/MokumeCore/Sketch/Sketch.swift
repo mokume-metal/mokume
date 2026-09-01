@@ -762,12 +762,62 @@ extension Sketch {
     ///
     /// ``pixels`` も ``get(_:_:)`` も ``set(_:_:_:)`` も必要なら自分で呼ぶので、
     /// **省いても結果は変わらない**。待つ時点を選びたいときに使う。
+    ///
+    /// > Note: この口には例の絵が付いていない。**呼んでも絵が 1 画素も変わらない**ので、
+    /// > 付けても呼ばなかった絵と見分けが付かないためである。
     public func loadPixels() { canvas.loadPixels() }
 
     /// 1 画素の色。原点は左上。範囲の外は透明を返す。索引は ``pixels`` と同じ。
+    ///
+    /// **そのフレームでそこまでに描いたもの**が読める。下の例は先に描いた円の中から
+    /// 色を 1 つ読み、その色で別の図形を塗っている — 2 つは同じ色で出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     circle(110, 100, 140)
+    ///     let picked = get(110, 100)   // 円の中の 1 画素
+    ///     fill(picked)
+    ///     rect(230, 160, 130, 100)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左上に橙色の円、右下に同じ橙色で塗られた四角 -->
+    ///     ![左上に橙色の円、右下に同じ橙色で塗られた四角](https://i.gyazo.com/7f2cf2912d36c99c25f51ea9671679f9.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=286bfc72 taken=c4b61d7
     public func get(_ x: Int, _ y: Int) -> LinearRGBA { canvas.get(x, y) }
 
     /// 1 画素の色を書き換える。範囲の外は何もしない。
+    ///
+    /// **書いた画素だけが変わる。** 図形を描く口と違って塗りも線も見ないので、
+    /// 下の例では書いた範囲の外が下地のまま残る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     for y in 60..<240 {
+    ///         for x in 100..<300 {
+    ///             if (x + y) % 12 < 6 {
+    ///                 set(x, y, .display(red: 0.95, green: 0.85, blue: 0.35))
+    ///             }
+    ///         }
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 黄色い斜めの縞が、四角い範囲の中にだけ並んでいる -->
+    ///     ![黄色い斜めの縞が、四角い範囲の中にだけ並んでいる](https://i.gyazo.com/893d0f3dcc2226810339c4d10df573a1.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=95cce64d taken=c4b61d7
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) { canvas.set(x, y, color) }
 }
 
@@ -808,8 +858,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a9a4b1c1 taken=ae9f89c
-    // shot: 2 snippet=06a34484 taken=ae9f89c
+    // shot: 1 snippet=a9a4b1c1 taken=c4b61d7
+    // shot: 2 snippet=06a34484 taken=c4b61d7
     public func background(_ color: LinearRGBA) { canvas.background(color) }
     /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -854,8 +904,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=4553e138 taken=ae9f89c
-    // shot: 2 snippet=471b5a72 taken=ae9f89c
+    // shot: 1 snippet=4553e138 taken=c4b61d7
+    // shot: 2 snippet=471b5a72 taken=c4b61d7
     public func fill(_ color: LinearRGBA) { canvas.fill(color) }
     /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     ///
@@ -898,8 +948,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=52e2382e taken=ae9f89c
-    // shot: 2 snippet=9fd52b82 taken=ae9f89c
+    // shot: 1 snippet=52e2382e taken=c4b61d7
+    // shot: 2 snippet=9fd52b82 taken=c4b61d7
     public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
     /// これから引く線の太さ (画素)。
     ///
@@ -942,8 +992,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7aee288f taken=ae9f89c
-    // shot: 2 snippet=c3229bad taken=ae9f89c
+    // shot: 1 snippet=7aee288f taken=c4b61d7
+    // shot: 2 snippet=c3229bad taken=c4b61d7
     public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
 
     /// 図形の内側を塗らない。輪郭だけの図形になる。
@@ -968,7 +1018,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=848590b4 taken=ae9f89c
+    // shot: 1 snippet=848590b4 taken=c4b61d7
     public func noFill() { canvas.noFill() }
 
     /// 線を引かない。図形の輪郭も出なくなる。
@@ -993,7 +1043,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5e1b5cf3 taken=ae9f89c
+    // shot: 1 snippet=5e1b5cf3 taken=c4b61d7
     public func noStroke() { canvas.noStroke() }
 
     /// 線の端の形。既定は丸。
@@ -1070,9 +1120,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5fd70319 taken=ae9f89c
-    // shot: 2 snippet=e12f5d6e taken=ae9f89c
-    // shot: 3 snippet=9387a57e taken=ae9f89c
+    // shot: 1 snippet=5fd70319 taken=c4b61d7
+    // shot: 2 snippet=e12f5d6e taken=c4b61d7
+    // shot: 3 snippet=9387a57e taken=c4b61d7
     public func strokeCap(_ cap: StrokeCap) { canvas.strokeCap(cap) }
 
     /// 頂点を並べ始める。``vertex(_:_:)`` で点を置き、``endShape(_:)`` で描く。
@@ -1225,11 +1275,11 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=088b2c60 taken=ae9f89c
-    // shot: 2 snippet=3c826cb4 taken=ae9f89c
-    // shot: 3 snippet=4f541c98 taken=ae9f89c
-    // shot: 4 snippet=2d751eab taken=ae9f89c
-    // shot: 5 snippet=c8cdea48 taken=ae9f89c
+    // shot: 1 snippet=088b2c60 taken=c4b61d7
+    // shot: 2 snippet=3c826cb4 taken=c4b61d7
+    // shot: 3 snippet=4f541c98 taken=c4b61d7
+    // shot: 4 snippet=2d751eab taken=c4b61d7
+    // shot: 5 snippet=c8cdea48 taken=c4b61d7
     public func beginShape(_ kind: VertexKind = .polygon) { canvas.beginShape(kind) }
 
     /// 頂点を 1 つ置く。
@@ -1283,8 +1333,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=1242029c taken=ae9f89c
-    // shot: 2 snippet=d106bd46 taken=ae9f89c
+    // shot: 1 snippet=1242029c taken=c4b61d7
+    // shot: 2 snippet=d106bd46 taken=c4b61d7
     public func vertex(_ x: Float, _ y: Float) { canvas.vertex(x, y) }
 
     /// 奥行きを持つ頂点を 1 つ置く。**この形は立体になる。**
@@ -1403,8 +1453,8 @@ extension Sketch {
     ///
     /// 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
     /// 始点が無ければ引きようがない。
-    // shot: 1 snippet=d80d93dd taken=ae9f89c
-    // shot: 2 snippet=3f38b979 taken=ae9f89c
+    // shot: 1 snippet=d80d93dd taken=c4b61d7
+    // shot: 2 snippet=3f38b979 taken=c4b61d7
     public func bezierVertex(
         _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
     ) {
@@ -1442,7 +1492,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=1b8fea51 taken=ae9f89c
+    // shot: 1 snippet=1b8fea51 taken=c4b61d7
     public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
         canvas.quadraticVertex(cx, cy, x, y)
     }
@@ -1513,8 +1563,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=51f26e08 taken=ae9f89c
-    // shot: 2 snippet=36f4228e taken=ae9f89c
+    // shot: 1 snippet=51f26e08 taken=c4b61d7
+    // shot: 2 snippet=36f4228e taken=c4b61d7
     public func curveVertex(_ x: Float, _ y: Float) { canvas.curveVertex(x, y) }
 
     /// 曲線をいくつの直線で近似するか。
@@ -1584,8 +1634,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=db839269 taken=ae9f89c
-    // shot: 2 snippet=b204de50 taken=ae9f89c
+    // shot: 1 snippet=db839269 taken=c4b61d7
+    // shot: 2 snippet=b204de50 taken=c4b61d7
     public func curveDetail(_ steps: Int) { canvas.curveDetail(steps) }
 
     /// 通過点を結ぶ曲線の張り具合。**0 が既定で、1 にすると点と点が直線で結ばれる。**
@@ -1686,9 +1736,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=fb27d368 taken=ae9f89c
-    // shot: 2 snippet=822d810e taken=ae9f89c
-    // shot: 3 snippet=a9f2f126 taken=ae9f89c
+    // shot: 1 snippet=fb27d368 taken=c4b61d7
+    // shot: 2 snippet=822d810e taken=c4b61d7
+    // shot: 3 snippet=a9f2f126 taken=c4b61d7
     public func curveTightness(_ amount: Float) { canvas.curveTightness(amount) }
 
     /// 穴を並べ始める。
@@ -1723,7 +1773,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=bec474a2 taken=ae9f89c
+    // shot: 1 snippet=bec474a2 taken=c4b61d7
     public func beginContour() { canvas.beginContour() }
 
     /// 穴を並べ終える。
@@ -1762,7 +1812,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=c326fc6d taken=ae9f89c
+    // shot: 1 snippet=c326fc6d taken=c4b61d7
     public func endContour() { canvas.endContour() }
 
     /// 並べ終えて描く。
@@ -1817,8 +1867,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=42050a4c taken=ae9f89c
-    // shot: 2 snippet=43d84742 taken=ae9f89c
+    // shot: 1 snippet=42050a4c taken=c4b61d7
+    // shot: 2 snippet=43d84742 taken=c4b61d7
     public func endShape(_ end: ShapeEnd = .open) { canvas.endShape(end) }
 
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
@@ -1942,11 +1992,11 @@ extension Sketch {
     ///
     /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
     /// 「どれだけ効かせるか」はアルファが決める。
-    // shot: 1 snippet=770dfac6 taken=ae9f89c
-    // shot: 2 snippet=739b6a04 taken=ae9f89c
-    // shot: 3 snippet=a57216c1 taken=ae9f89c
-    // shot: 4 snippet=ae76263d taken=ae9f89c
-    // shot: 5 snippet=ff14ef73 taken=ae9f89c
+    // shot: 1 snippet=770dfac6 taken=c4b61d7
+    // shot: 2 snippet=739b6a04 taken=c4b61d7
+    // shot: 3 snippet=a57216c1 taken=c4b61d7
+    // shot: 4 snippet=ae76263d taken=c4b61d7
+    // shot: 5 snippet=ff14ef73 taken=c4b61d7
     public func blendMode(_ mode: BlendMode) { canvas.blendMode(mode) }
 
     /// 線の折れ目の形。既定は尖らせる形。
@@ -2026,9 +2076,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=83ed7fe6 taken=ae9f89c
-    // shot: 2 snippet=6d2736cd taken=ae9f89c
-    // shot: 3 snippet=7fe6028f taken=ae9f89c
+    // shot: 1 snippet=83ed7fe6 taken=c4b61d7
+    // shot: 2 snippet=6d2736cd taken=c4b61d7
+    // shot: 3 snippet=7fe6028f taken=c4b61d7
     public func strokeJoin(_ join: StrokeJoin) { canvas.strokeJoin(join) }
     /// 矩形を塗る。
     ///
@@ -2068,8 +2118,8 @@ extension Sketch {
     /// }
     ///
     /// 幅か高さが 0 以下になる指定では**何も描かない**。
-    // shot: 1 snippet=5f2f4b5f taken=ae9f89c
-    // shot: 2 snippet=a1283c68 taken=ae9f89c
+    // shot: 1 snippet=5f2f4b5f taken=c4b61d7
+    // shot: 2 snippet=a1283c68 taken=c4b61d7
     public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.rect(a, b, c, d) }
 
     /// 正方形を塗る。
@@ -2090,7 +2140,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=0545e44d taken=ae9f89c
+    // shot: 1 snippet=0545e44d taken=c4b61d7
     public func square(_ a: Float, _ b: Float, _ extent: Float) { canvas.square(a, b, extent) }
 
     /// 円を塗る。
@@ -2132,8 +2182,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=cc15d686 taken=ae9f89c
-    // shot: 2 snippet=99563468 taken=ae9f89c
+    // shot: 1 snippet=cc15d686 taken=c4b61d7
+    // shot: 2 snippet=99563468 taken=c4b61d7
     public func circle(_ a: Float, _ b: Float, _ diameter: Float) { canvas.circle(a, b, diameter) }
 
     /// 楕円を塗る。
@@ -2173,8 +2223,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=660be063 taken=ae9f89c
-    // shot: 2 snippet=4bc091fd taken=ae9f89c
+    // shot: 1 snippet=660be063 taken=c4b61d7
+    // shot: 2 snippet=4bc091fd taken=c4b61d7
     public func ellipse(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.ellipse(a, b, c, d)
     }
@@ -2257,10 +2307,10 @@ extension Sketch {
     ///
     /// 塗りは**中心を含む扇形**になる。終わりの角度が始まりより小さいときは
     /// **何も描かず**、最初の 1 回だけ知らせる。
-    // shot: 1 snippet=b1d01c8d taken=ae9f89c
-    // shot: 2 snippet=de19318a taken=ae9f89c
-    // shot: 3 snippet=9301f40a taken=ae9f89c
-    // shot: 4 snippet=305be8b5 taken=ae9f89c
+    // shot: 1 snippet=b1d01c8d taken=c4b61d7
+    // shot: 2 snippet=de19318a taken=c4b61d7
+    // shot: 3 snippet=9301f40a taken=c4b61d7
+    // shot: 4 snippet=305be8b5 taken=c4b61d7
     public func arc(
         _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float
     ) {
@@ -2283,7 +2333,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7d0adefe taken=ae9f89c
+    // shot: 1 snippet=7d0adefe taken=c4b61d7
     public func triangle(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float, _ x3: Float, _ y3: Float
     ) {
@@ -2324,8 +2374,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8f205856 taken=ae9f89c
-    // shot: 2 snippet=af89c551 taken=ae9f89c
+    // shot: 1 snippet=8f205856 taken=c4b61d7
+    // shot: 2 snippet=af89c551 taken=c4b61d7
     public func quad(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,
         _ x3: Float, _ y3: Float, _ x4: Float, _ y4: Float
@@ -2376,8 +2426,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=de455ec9 taken=ae9f89c
-    // shot: 2 snippet=35a5937e taken=ae9f89c
+    // shot: 1 snippet=de455ec9 taken=c4b61d7
+    // shot: 2 snippet=35a5937e taken=c4b61d7
     public func point(_ x: Float, _ y: Float) { canvas.point(x, y) }
 
     /// 矩形に渡す座標の読み方。既定は ``ShapeMode/corner``。
@@ -2453,10 +2503,10 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8fd5ed99 taken=ae9f89c
-    // shot: 2 snippet=88773cca taken=ae9f89c
-    // shot: 3 snippet=c95457e8 taken=ae9f89c
-    // shot: 4 snippet=39e1d7b6 taken=ae9f89c
+    // shot: 1 snippet=8fd5ed99 taken=c4b61d7
+    // shot: 2 snippet=88773cca taken=c4b61d7
+    // shot: 3 snippet=c95457e8 taken=c4b61d7
+    // shot: 4 snippet=39e1d7b6 taken=c4b61d7
     public func rectMode(_ mode: ShapeMode) { canvas.rectMode(mode) }
 
     /// 楕円と円弧に渡す座標の読み方。既定は ``ShapeMode/center``。
@@ -2497,8 +2547,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=ace05fd1 taken=ae9f89c
-    // shot: 2 snippet=da8b31b4 taken=ae9f89c
+    // shot: 1 snippet=ace05fd1 taken=c4b61d7
+    // shot: 2 snippet=da8b31b4 taken=c4b61d7
     public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }
     /// 線を引く。塗りは持たない。
     ///
@@ -2538,8 +2588,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5d41ed20 taken=ae9f89c
-    // shot: 2 snippet=87c26840 taken=ae9f89c
+    // shot: 1 snippet=5d41ed20 taken=c4b61d7
+    // shot: 2 snippet=87c26840 taken=c4b61d7
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
         canvas.line(x1, y1, x2, y2)
     }
@@ -2618,9 +2668,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b049f853 taken=ae9f89c
-    // shot: 2 snippet=2e149d2f taken=ae9f89c
-    // shot: 3 snippet=b9761949 taken=ae9f89c
+    // shot: 1 snippet=b049f853 taken=c4b61d7
+    // shot: 2 snippet=2e149d2f taken=c4b61d7
+    // shot: 3 snippet=b9761949 taken=c4b61d7
     public func translate(_ x: Float, _ y: Float) { canvas.translate(x, y) }
     /// 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
     ///
@@ -2697,9 +2747,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=31999c20 taken=ae9f89c
-    // shot: 2 snippet=d8a6fbf0 taken=ae9f89c
-    // shot: 3 snippet=4d75c8fb taken=ae9f89c
+    // shot: 1 snippet=31999c20 taken=c4b61d7
+    // shot: 2 snippet=d8a6fbf0 taken=c4b61d7
+    // shot: 3 snippet=4d75c8fb taken=c4b61d7
     public func rotate(_ radians: Float) { canvas.rotate(radians) }
     /// 伸ばす・縮める。
     ///
@@ -2777,9 +2827,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=76d7590b taken=ae9f89c
-    // shot: 2 snippet=e61d2850 taken=ae9f89c
-    // shot: 3 snippet=fe738fca taken=ae9f89c
+    // shot: 1 snippet=76d7590b taken=c4b61d7
+    // shot: 2 snippet=e61d2850 taken=c4b61d7
+    // shot: 3 snippet=fe738fca taken=c4b61d7
     public func scale(_ x: Float, _ y: Float) { canvas.scale(x, y) }
 
     /// 原点を奥行きも含めてずらす。
@@ -2855,8 +2905,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=481117e9 taken=ae9f89c
-    // shot: 2 snippet=a1793d65 taken=ae9f89c
+    // shot: 1 snippet=481117e9 taken=c4b61d7
+    // shot: 2 snippet=a1793d65 taken=c4b61d7
     public func shearX(_ radians: Float) { canvas.shearX(radians) }
 
     /// 縦方向へ斜めに歪める。
@@ -2909,8 +2959,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8e8a2090 taken=ae9f89c
-    // shot: 2 snippet=f3fcdb4e taken=ae9f89c
+    // shot: 1 snippet=8e8a2090 taken=c4b61d7
+    // shot: 2 snippet=f3fcdb4e taken=c4b61d7
     public func shearY(_ radians: Float) { canvas.shearY(radians) }
 
     /// 与えた変換を、いまの変換の後に重ねる。
@@ -2943,7 +2993,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b928daab taken=ae9f89c
+    // shot: 1 snippet=b928daab taken=c4b61d7
     public func resetMatrix() { canvas.resetMatrix() }
 
     /// いまの変換を積んでおく。
@@ -3001,8 +3051,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5e812adb taken=ae9f89c
-    // shot: 2 snippet=4752a417 taken=ae9f89c
+    // shot: 1 snippet=5e812adb taken=c4b61d7
+    // shot: 2 snippet=4752a417 taken=c4b61d7
     public func pushMatrix() { canvas.pushMatrix() }
 
     /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
@@ -3031,7 +3081,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=cef51ea3 taken=ae9f89c
+    // shot: 1 snippet=cef51ea3 taken=c4b61d7
     public func popMatrix() { canvas.popMatrix() }
 
     /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
@@ -3665,7 +3715,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=92c18fef taken=ae9f89c
+    // shot: 1 snippet=92c18fef taken=c4b61d7
     public func push() { canvas.push() }
 
     /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
@@ -3700,7 +3750,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a8da334a taken=ae9f89c
+    // shot: 1 snippet=a8da334a taken=c4b61d7
     public func pop() { canvas.pop() }
 
     // MARK: - 文字
@@ -3750,8 +3800,8 @@ extension Sketch {
     /// }
     ///
     /// **塗りの色で描く**ので、``noFill()`` の状態では何も出ない。
-    // shot: 1 snippet=11c9d2b4 taken=ae9f89c
-    // shot: 2 snippet=361f9ffa taken=ae9f89c
+    // shot: 1 snippet=11c9d2b4 taken=c4b61d7
+    // shot: 2 snippet=361f9ffa taken=c4b61d7
     public func text(_ string: String, _ x: Float, _ y: Float) { canvas.text(string, x, y) }
 
     /// これから描く文字の大きさ (画素)。既定は 12。
@@ -3798,8 +3848,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7e61e41a taken=ae9f89c
-    // shot: 2 snippet=a1eaa157 taken=ae9f89c
+    // shot: 1 snippet=7e61e41a taken=c4b61d7
+    // shot: 2 snippet=a1eaa157 taken=c4b61d7
     public func textSize(_ size: Float) { canvas.textSize(size) }
 
     /// これから描く文字の書体。
@@ -3829,7 +3879,7 @@ extension Sketch {
     ///
     /// 指定した書体が覆えない文字 (欧文の書体に日本語を渡した場合など) は、
     /// この環境が持つ別の書体から引いて描く。
-    // shot: 1 snippet=8ee18157 taken=ae9f89c
+    // shot: 1 snippet=8ee18157 taken=c4b61d7
     public func textFont(_ name: String) { canvas.textFont(name) }
 
     /// 書体の指定をやめ、この環境の既定の書体へ戻す。
@@ -3857,7 +3907,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=bdbf4551 taken=ae9f89c
+    // shot: 1 snippet=bdbf4551 taken=c4b61d7
     public func noTextFont() { canvas.noTextFont() }
 
     /// これから描く文字の太さと傾き。既定はそのまま。
@@ -3895,7 +3945,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=00a4bd2e taken=ae9f89c
+    // shot: 1 snippet=00a4bd2e taken=c4b61d7
     public func textStyle(_ style: TextStyle) { canvas.textStyle(style) }
 
     /// 文字列を、指定した位置のどちら側へ置くか。既定は**左から右へ・基準線**。
@@ -3962,8 +4012,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=89de4578 taken=ae9f89c
-    // shot: 2 snippet=c4ea8b65 taken=ae9f89c
+    // shot: 1 snippet=89de4578 taken=c4b61d7
+    // shot: 2 snippet=c4ea8b65 taken=c4b61d7
     public func textAlign(
         _ horizontal: HorizontalTextAlign, _ vertical: VerticalTextAlign = .baseline
     ) {
@@ -4008,8 +4058,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a559294d taken=ae9f89c
-    // shot: 2 snippet=b071867c taken=ae9f89c
+    // shot: 1 snippet=a559294d taken=c4b61d7
+    // shot: 2 snippet=b071867c taken=c4b61d7
     public func textLeading(_ leading: Float) { canvas.textLeading(leading) }
 
     /// 文字列を描いたときの幅 (画素)。
@@ -4037,7 +4087,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=d0ab3923 taken=ae9f89c
+    // shot: 1 snippet=d0ab3923 taken=c4b61d7
     public func textWidth(_ string: String) -> Float { canvas.textWidth(string) }
 
     /// 基準線から上へ伸びる高さ (画素)。
@@ -4068,7 +4118,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a6eb7f98 taken=ae9f89c
+    // shot: 1 snippet=a6eb7f98 taken=c4b61d7
     public func textAscent() -> Float { canvas.textAscent() }
 
     /// 基準線から下へ伸びる深さ (画素)。
@@ -4099,7 +4149,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=798b905e taken=ae9f89c
+    // shot: 1 snippet=798b905e taken=c4b61d7
     public func textDescent() -> Float { canvas.textDescent() }
 
     /// 矩形の中へ文字列を流し込む。
@@ -4163,8 +4213,8 @@ extension Sketch {
     ///
     /// 縦の指定 (``textAlign(_:_:)``) は置いた塊全体に効く。矩形の中では基準線に
     /// 意味が無いので、基準線指定は上揃えと同じに扱う。
-    // shot: 1 snippet=5f51171b taken=ae9f89c
-    // shot: 2 snippet=c5aeaa7d taken=ae9f89c
+    // shot: 1 snippet=5f51171b taken=c4b61d7
+    // shot: 2 snippet=c5aeaa7d taken=c4b61d7
     @discardableResult
     public func text(_ string: String, _ a: Float, _ b: Float, _ c: Float, _ d: Float)
         -> TextFlow
@@ -4225,8 +4275,8 @@ extension Sketch {
     ///
     /// 語の切れ目で折るとき、**1 語が幅より長ければその語の中で折る** —
     /// でないと置き場所が無くなる。
-    // shot: 1 snippet=6d98185f taken=ae9f89c
-    // shot: 2 snippet=874d4026 taken=ae9f89c
+    // shot: 1 snippet=6d98185f taken=c4b61d7
+    // shot: 2 snippet=874d4026 taken=c4b61d7
     public func textWrap(_ mode: TextWrap) { canvas.textWrap(mode) }
 
     /// 文字列の輪郭を取り出す。
@@ -4258,7 +4308,7 @@ extension Sketch {
     ///
     /// 字ごとに、外側の周が先・穴が後の順で並ぶ。曲線は直線の並びにほどいてあり、
     /// 細かさは曲線の大きさから決まる。
-    // shot: 1 snippet=f29666de taken=ae9f89c
+    // shot: 1 snippet=f29666de taken=c4b61d7
     public func textOutline(_ string: String, _ x: Float, _ y: Float) -> [TextContour] {
         canvas.textOutline(string, x, y)
     }
@@ -4277,6 +4327,10 @@ extension Sketch {
     /// **読み込みは投げる。** 読めなかったときに別の道を選ぶ判断が要るので、黙って
     /// 既定へ倒さない。見つからないときの説明には**探した場所**が載る。
     ///
+    /// > Note: この口には例の絵が付いていない。読む先のファイルが要るが、このリポジトリは
+    /// > 生成物・バイナリを持たないためである。絵を手続きで作るなら ``createImage(_:_:)``
+    /// > か ``createGraphics(_:_:)`` を見ること — そちらには絵が付いている。
+    ///
     /// 名前は、作業ディレクトリと**実行ファイルの隣に置かれた資材の包み**から探す。
     /// スケッチのパッケージが資材の置き場を宣言していないと、ビルドは静かに通って
     /// 実行時に読めないだけになるので、宣言を確かめること。
@@ -4287,6 +4341,8 @@ extension Sketch {
     /// 絵を読む。**読んでいる間、他の仕事を止めない。**
     ///
     /// 復号を別の仕事として回すので、大きな絵を読んでもフレームが詰まらない。
+    ///
+    /// > Note: ``loadImage(_:)`` と同じ理由で、この口にも例の絵は付いていない。
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
         try await canvas.requestImage(path)
     }
@@ -4295,29 +4351,149 @@ extension Sketch {
     ///
     /// ``Image/set(_:_:_:)`` で書き換えると、**描くときに自動で送られる** —
     /// 送り直しを呼び忘れて絵が変わらない、という形の不具合が起きない。
+    ///
+    /// **投げるので `setup()` で作って持ち回る。** 下の例は 16 画素四方の絵を 1 度だけ
+    /// 作り、毎フレーム大きく引き伸ばして置いている。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(16, 16)
+    ///         for y in 0..<16 {
+    ///             for x in 0..<16 {
+    ///                 tile.set(x, y, .display(
+    ///                     red: Float(x) / 15, green: 0.35, blue: Float(y) / 15))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(tile, 80, 30, 240, 240)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 16 画素四方の絵を大きく置いたもの。右へ行くほど赤く、下へ行くほど青い -->
+    ///     ![16 画素四方の絵を大きく置いたもの。右へ行くほど赤く、下へ行くほど青い](https://i.gyazo.com/23113a03912ea1eb6254ef510a267466.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=b1cb4ca2 taken=c4b61d7
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
         try canvas.createImage(width, height)
     }
 
     /// 絵を等倍で置く。左上の角が (`x`, `y`) に来る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(tile, 90, 60)
+    ///         stroke(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         strokeWeight(2)
+    ///         line(50, 60, 90, 60)
+    ///         line(90, 20, 90, 60)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 64 画素四方の絵が等倍で置かれ、白い 2 本の線が外からその左上の角を指している -->
+    ///     ![64 画素四方の絵が等倍で置かれ、白い 2 本の線が外からその左上の角を指している](https://i.gyazo.com/cc4bdf044a32f8021840eef1b986431f.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=38e37457 taken=c4b61d7
     public func image(_ image: Image, _ x: Float, _ y: Float) { canvas.image(image, x, y) }
 
     /// 絵を、指定した寸法に合わせて置く。
     ///
-    /// 4 つの数の読み方は ``imageMode(_:)`` が決める。
+    /// 4 つの数の読み方は ``imageMode(_:)`` が決める。**絵の画素数と合っていなくてよい** —
+    /// 下の例は同じ 64 画素四方の絵を、等倍と 3 倍ほどで並べている。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(tile, 30, 40, 64, 64)
+    ///         image(tile, 140, 40, 200, 200)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ絵が 2 つ。左は小さく等倍、右は 3 倍ほどに引き伸ばされている -->
+    ///     ![同じ絵が 2 つ。左は小さく等倍、右は 3 倍ほどに引き伸ばされている](https://i.gyazo.com/000fd3d72844861557046e7bccfdf482.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=b6e9798c taken=c4b61d7
     public func image(_ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.image(image, a, b, c, d)
     }
 
     /// 絵の一部を切り出して置く。
     ///
-    /// <!-- example: 文脈 var sheet: Image! -->
-    /// ```swift
-    /// image(sheet, 0, 0, 32, 32, 64, 0, 32, 32)   // 右となりの駒を左上へ
-    /// ```
-    ///
     /// 前の 4 つが置き先、後の 4 つが**絵の中のどこを切り出すか**。切り出しが絵の
     /// 外へ出ても落ちず、重なった分だけが出る。
+    ///
+    /// 下の例は同じ絵を 2 度置いている — 左は全体、右は左上の 28 画素四方だけを
+    /// 同じ大きさへ引き伸ばしたもの。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(tile, 20, 40, 128, 128)
+    ///         image(tile, 190, 40, 128, 128, 4, 4, 28, 28)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左に絵の全体、右はその左上 28 画素四方だけを同じ大きさへ引き伸ばしたもの。右は橙色が大半を占め、下端にだけ青が残る -->
+    ///     ![左に絵の全体、右はその左上 28 画素四方だけを同じ大きさへ引き伸ばしたもの。右は橙色が大半を占め、下端にだけ青が残る](https://i.gyazo.com/26c7189551956678633bbf1645bd0105.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=91678c9a taken=c4b61d7
     public func image(
         _ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
         _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
@@ -4326,17 +4502,240 @@ extension Sketch {
     }
 
     /// 4 つの数を、絵のどこの寸法として読むか。既定は**左上の角と、幅と高さ**。
+    ///
+    /// 下の 4 枚はどれも同じ 4 つの数 `200, 150, 120, 90` を渡していて、変えたのは
+    /// 読み方だけである (白い点が `200, 150`)。``rectMode(_:)`` と同じ約束。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         imageMode(.corner)
+    ///         image(tile, 200, 150, 120, 90)
+    ///         noStroke()
+    ///         fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         circle(200, 150, 10)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白い点が絵の左上の角にあり、絵は点から右下へ広がっている -->
+    ///     ![白い点が絵の左上の角にあり、絵は点から右下へ広がっている](https://i.gyazo.com/be990dbb96d2d4a50ce13d375d0ae03d.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         imageMode(.corners)
+    ///         image(tile, 200, 150, 120, 90)
+    ///         noStroke()
+    ///         fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         circle(200, 150, 10)
+    ///         circle(120, 90, 10)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白い点が 2 つあり、それぞれ絵の右下と左上の角になっている -->
+    ///     ![白い点が 2 つあり、それぞれ絵の右下と左上の角になっている](https://i.gyazo.com/e19ef72d6dbbabe121f39eb1ccacb716.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         imageMode(.center)
+    ///         image(tile, 200, 150, 120, 90)
+    ///         noStroke()
+    ///         fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         circle(200, 150, 10)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白い点が絵のまん中にある -->
+    ///     ![白い点が絵のまん中にある](https://i.gyazo.com/6426d023a292164af1afeb8fc7866a36.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         imageMode(.radius)
+    ///         image(tile, 200, 150, 120, 90)
+    ///         noStroke()
+    ///         fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         circle(200, 150, 10)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白い点が絵のまん中にあり、絵は center のときの縦横 2 倍になっている -->
+    ///     ![白い点が絵のまん中にあり、絵は center のときの縦横 2 倍になっている](https://i.gyazo.com/af711f3205bcf02cc426619c69fe29ad.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=6071ac1e taken=c4b61d7
+    // shot: 2 snippet=b141b66f taken=c4b61d7
+    // shot: 3 snippet=97228423 taken=c4b61d7
+    // shot: 4 snippet=99e89cd7 taken=c4b61d7
     public func imageMode(_ mode: ShapeMode) { canvas.imageMode(mode) }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
     ///
-    /// ```swift
-    /// tint(.display(red: 1, green: 1, blue: 1, alpha: 0.5))   // 半分の濃さで置く
-    /// tint(.display(red: 1, green: 0.6, blue: 0.6))           // 赤みを乗せる
-    /// ```
+    /// 下の 2 枚はどちらも、左が掛ける前・右が掛けた後である。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(tile, 20, 90, 160, 120)
+    ///         tint(.display(red: 1, green: 1, blue: 1, alpha: 0.5))
+    ///         image(tile, 220, 90, 160, 120)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ絵が 2 つ。右は濃さが半分で、下地に沈んで見える -->
+    ///     ![同じ絵が 2 つ。右は濃さが半分で、下地に沈んで見える](https://i.gyazo.com/f2504860f4fedf20f011b3e8690ed0d9.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(tile, 20, 90, 160, 120)
+    ///         tint(.display(red: 1, green: 0.6, blue: 0.6))
+    ///         image(tile, 220, 90, 160, 120)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ絵が 2 つ。右は緑と青が抑えられて赤みが乗っている -->
+    ///     ![同じ絵が 2 つ。右は緑と青が抑えられて赤みが乗っている](https://i.gyazo.com/18238a312dbdd0f3a246680852aa475b.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=8554f87e taken=c4b61d7
+    // shot: 2 snippet=df73f03d taken=c4b61d7
     public func tint(_ color: LinearRGBA) { canvas.tint(color) }
 
     /// 色掛けをやめる。
+    ///
+    /// **1 つ目と 3 つ目は同じ色で出る** — 間で ``tint(_:)`` を掛けても、外せば元に帰る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var tile: Image! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         tile = try! createImage(64, 64)
+    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         for y in 0..<24 {
+    ///             for x in 0..<40 {
+    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(tile, 15, 100, 110, 110)
+    ///         tint(.display(red: 1, green: 0.5, blue: 0.5))
+    ///         image(tile, 145, 100, 110, 110)
+    ///         noTint()
+    ///         image(tile, 275, 100, 110, 110)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ絵が 3 つ横に並び、真ん中だけ赤みが乗っている。右は左と同じ色に戻っている -->
+    ///     ![同じ絵が 3 つ横に並び、真ん中だけ赤みが乗っている。右は左と同じ色に戻っている](https://i.gyazo.com/48e60fd99fd4e6335aef596effdec411.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=18365a53 taken=c4b61d7
     public func noTint() { canvas.noTint() }
 
     // MARK: - 描き場所
@@ -4359,6 +4758,34 @@ extension Sketch {
     /// }
     /// ```
     ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var pad: Canvas! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         pad = try! createGraphics(160, 160)
+    ///         pad.beginDraw()
+    ///         pad.background(.display(red: 0.15, green: 0.18, blue: 0.24))
+    ///         pad.noStroke()
+    ///         pad.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///         pad.circle(50, 50, 70)
+    ///         pad.endDraw()
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(pad, 20, 70)
+    ///         image(pad, 220, 90, 100, 100)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ描き場所が 2 つ。左は等倍で大きく、右は小さく。どちらも左上寄りに橙色の円 -->
+    ///     ![同じ描き場所が 2 つ。左は等倍で大きく、右は小さく。どちらも左上寄りに橙色の円](https://i.gyazo.com/c60d052e340a68caf0fb948173f12a35.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// ## 返るのは画面と同じ ``Canvas``
     ///
     /// **2D も立体も字も効果も、画面と同じように書ける。** 描き場所を別の型にすると、
@@ -4380,6 +4807,7 @@ extension Sketch {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    // shot: 1 snippet=82d426ed taken=c4b61d7
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
         try canvas.createGraphics(width, height)
     }
@@ -4388,6 +4816,37 @@ extension Sketch {
     ///
     /// 置くのは**そのとき描き切れている絵**なので、``Canvas/endDraw()`` を呼ぶ前に
     /// 置くと 1 フレーム前の絵が出る (そのときは警告が出る)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var pad: Canvas! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         pad = try! createGraphics(120, 120)
+    ///         pad.beginDraw()
+    ///         pad.background(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         pad.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///         pad.circle(40, 40, 60)
+    ///         pad.endDraw()
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(pad, 90, 60)
+    ///         stroke(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         strokeWeight(2)
+    ///         line(50, 60, 90, 60)
+    ///         line(90, 20, 90, 60)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 120 画素四方の描き場所が等倍で置かれ、白い 2 本の線が外からその左上の角を指している -->
+    ///     ![120 画素四方の描き場所が等倍で置かれ、白い 2 本の線が外からその左上の角を指している](https://i.gyazo.com/a335b3a5a2534f36798a0fc70bbb5979.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=3e16141c taken=c4b61d7
     public func image(_ graphics: Canvas, _ x: Float, _ y: Float) {
         canvas.image(graphics, x, y)
     }
@@ -4396,6 +4855,35 @@ extension Sketch {
     ///
     /// 4 つの数の読み方は ``imageMode(_:)`` が決める。絵と同じ扱いなので、
     /// ``tint(_:)`` の色掛けも同じように効く。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var pad: Canvas! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         pad = try! createGraphics(120, 120)
+    ///         pad.beginDraw()
+    ///         pad.background(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         pad.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///         pad.circle(40, 40, 60)
+    ///         pad.endDraw()
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(pad, 20, 60, 160, 160)
+    ///         tint(.display(red: 0.5, green: 1, blue: 1))
+    ///         image(pad, 210, 90, 100, 100)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左に大きく、右に小さく同じ描き場所。右は赤が抑えられて青緑に寄っている -->
+    ///     ![左に大きく、右に小さく同じ描き場所。右は赤が抑えられて青緑に寄っている](https://i.gyazo.com/474adea0157149f502f6bfb951428834.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=e6207d93 taken=c4b61d7
     public func image(_ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.image(graphics, a, b, c, d)
     }
@@ -4404,6 +4892,34 @@ extension Sketch {
     ///
     /// 前の 4 つが置き先、後の 4 つが**描き場所の中のどこを切り出すか**。切り出しが
     /// 外へ出ても落ちず、重なった分だけが出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var pad: Canvas! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         pad = try! createGraphics(120, 120)
+    ///         pad.beginDraw()
+    ///         pad.background(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         pad.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///         pad.circle(40, 40, 60)
+    ///         pad.endDraw()
+    ///     }
+    ///
+    ///     func draw() {
+    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         image(pad, 20, 60, 160, 160)
+    ///         image(pad, 210, 60, 160, 160, 0, 0, 60, 60)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左に描き場所の全体、右はその左上 4 分の 1 だけを同じ大きさへ引き伸ばしたもの -->
+    ///     ![左に描き場所の全体、右はその左上 4 分の 1 だけを同じ大きさへ引き伸ばしたもの](https://i.gyazo.com/8c7973a955f0f17d45697415c248b499.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=5b9df865 taken=c4b61d7
     public func image(
         _ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
         _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
