@@ -21,7 +21,7 @@
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=3f9a1c8d taken=8d814ff
+    // shot: 1 snippet=3f9a1c8d
 
 **例と絵は左右に並べる。** 縦に積むと絵が本文の幅いっぱいに出て、目が例と結び付け
 にくい。列の重みを 3:1 にしてあるのは、**例の行が折り返さずに収まる幅**を先に確保する
@@ -38,10 +38,25 @@
 ## 指紋が見ていない範囲
 
 指紋の材料は**スニペットと撮影設定だけ**で、実装は入らない。つまり実装だけが変わって
-絵が変わっても「変わっていない」と答える。埋め合わせに記録は撮った版を持ち、`--check`
-は「N 本は撮影後に実装が変わっている」と**要約だけ**伝える。**合否には混ぜない** —
+絵が変わっても「変わっていない」と答える。**ここは見ていないと名乗るだけにしてある** —
+かつては記録が撮った版 (`taken=`) を持ち、`--check` が「N 本は撮影後に実装が変わって
+いる」と要約していたが、判定が `Sources` 全体を見るので**常に全数が該当し、どの絵が
+疑わしいかを 1 本も絞れていなかった** (#671)。合否に混ぜるのはもとより避けている —
 実装が変わっても絵が変わったとは限らず、混ぜれば実装を触るたびに赤くなって、赤を
 無視する習慣が育つ。
+
+代わりに効くのは**撮り直しの差分そのもの**である。`--capture` を打つと、絵が実際に
+変わった囲みの `![…](…)` だけが書き換わる。
+
+## 冪等性を借りている先 (#671)
+
+**撮り直しても絵が変わっていなければ URL が動かないのは、Gyazo が同じ画素に同じ URL を
+返すからである。** こちらは毎回すべてを上げ直しており、同じ URL が返ることに依存して
+いる — つまり**この性質は借りものであって、こちらが保証しているのではない。**
+
+破れたら (同じ画素に別の URL が返るようになったら) 撮るたびに全数の URL が動く。その
+ときは**撮った絵の内容 (画素のハッシュ) を記録に持ち、変わった絵だけ上げ直す**形へ移る
+— #671 の候補 1 がそれで、そこまでは足さない (実害が出てから足す・ADR-0008)。
 
 ## 撮れた絵が何かを示しているか (#481)
 
@@ -88,7 +103,13 @@ FENCE_OPEN = re.compile(r"^\s*///\s*```swift\s*$")
 FENCE_CLOSE = re.compile(r"^\s*///\s*```\s*$")
 DOC = re.compile(r"^\s*///")
 # 撮影の記録。書くのも読むのもこの 1 行だけ
-RECORD = re.compile(r"^\s*//\s*shot:\s*(?P<index>\d+)\s+snippet=(?P<snippet>[0-9a-f]+)\s+taken=(?P<taken>\S+)\s*$")
+# 末尾の `taken=…` は #671 で落とした古い形。**読むだけ読んで、名乗って落とす** —
+# 読めないことにすると「まだ撮っていない」と誤診し、要らない撮り直しへ人を送る。
+# 古い形を持つ枝が残っていないと分かったら、この受けは消してよい
+RECORD = re.compile(
+    r"^\s*//\s*shot:\s*(?P<index>\d+)\s+snippet=(?P<snippet>[0-9a-f]+)"
+    r"(?P<legacy>\s+taken=\S+)?\s*$"
+)
 IMAGE = re.compile(r"^\s*///\s*!\[")
 # 囲みの上を遡るときに跨ぐ行 — 空の説明文行と、2 段組の足場
 SCAFFOLD = re.compile(r"^\s*(///\s*(@Row\b.*|@Column\b.*|\}|)\s*)?$")
@@ -139,7 +160,7 @@ class Shot:
     index: int  # 同じ説明文の中で何番目か (記録の鍵)
     record_line: int | None
     record_snippet: str | None
-    record_taken: str | None
+    record_legacy: bool
 
     @property
     def name(self) -> str:
@@ -255,12 +276,12 @@ def records_after(lines: list[str], close_line: int) -> dict[int, tuple[int, str
     index = close_line + 1
     while index < len(lines) and DOC.match(lines[index]):
         index += 1
-    found: dict[int, tuple[int, str, str]] = {}
+    found: dict[int, tuple[int, str, bool]] = {}
     while index < len(lines):
         match = RECORD.match(lines[index])
         if not match:
             break
-        found[int(match["index"])] = (index, match["snippet"], match["taken"])
+        found[int(match["index"])] = (index, match["snippet"], bool(match["legacy"]))
         index += 1
     return found
 
@@ -299,7 +320,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
                 index=0,
                 record_line=None,
                 record_snippet=None,
-                record_taken=None,
+                record_legacy=False,
             )
         )
     # 同じ説明文の塊に属するものへ 1 から番号を振り、記録と突き合わせる
@@ -308,7 +329,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
         shot.index = siblings.index(shot) + 1
         records = records_after(lines, max(other.close_line for other in siblings))
         if record := records.get(shot.index):
-            shot.record_line, shot.record_snippet, shot.record_taken = record
+            shot.record_line, shot.record_snippet, shot.record_legacy = record
         found.append(shot)
     return found
 
@@ -334,22 +355,8 @@ def collect(root: pathlib.Path) -> list[Shot]:
 # ---------------------------------------------------------------- 検査
 
 
-def touched_since(root: pathlib.Path, commit: str) -> bool | None:
-    """その版から今までに実装が動いたか。判定できなければ None (浅い clone など)。"""
-    result = subprocess.run(
-        ["git", "-C", str(root), "rev-list", "--count", f"{commit}..HEAD", "--", "Sources"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    return int(result.stdout.strip() or 0) > 0
-
-
 def check(root: pathlib.Path, shots: list[Shot]) -> list[str]:
     problems: list[str] = []
-    stale_implementation = 0
-    unknown_version = 0
     for shot in shots:
         if not shot.alt:
             problems.append(f"{shot.where}: 絵の一文の説明が空 (`<!-- shot: … -->` に書く)")
@@ -358,24 +365,24 @@ def check(root: pathlib.Path, shots: list[Shot]) -> list[str]:
         if shot.record_snippet is None:
             problems.append(f"{shot.where}: まだ撮っていない (make example-shots で撮る)")
             continue
+        if shot.record_legacy:
+            problems.append(
+                f"{shot.where}: 台帳が古い形 (末尾に taken= が付いている) — #671 で落とした。"
+                "その行から ` taken=…` を消す (絵は撮り直さなくてよい)"
+            )
         if shot.record_snippet != shot.fingerprint:
             problems.append(
                 f"{shot.where}: 例を書き換えたのに撮り直していない "
                 f"(記録 {shot.record_snippet} / いま {shot.fingerprint})"
             )
             continue
-        touched = touched_since(root, shot.record_taken or "")
-        if touched is None:
-            unknown_version += 1
-        elif touched:
-            stale_implementation += 1
 
     print(f"例の絵: {len(shots)} 本 (動き {sum(1 for s in shots if s.is_motion)} 本)")
-    if stale_implementation:
-        # **合否に混ぜない。** 実装が変わっても絵が変わったとは限らない (冒頭の注記)
-        print(f"  参考: {stale_implementation} 本は撮影後に実装が動いている (指紋はそこを見ていない)")
-    if unknown_version:
-        print(f"  参考: {unknown_version} 本は撮った版を辿れなかった (浅い clone では判定できない)")
+    # **見ていないことを名乗る** (#671)。かつてここには「N 本は撮影後に実装が動いている」
+    # が出ていたが、常に全数が該当して 1 本も絞れていなかった。数を出せないなら、境目を
+    # 1 行で言うほうが正確である
+    print("  実装が変わって絵が古くなっているかは見ていない")
+    print("  (手元の make example-shots が撮り直しで検める)")
     return problems
 
 
@@ -667,7 +674,7 @@ def blocks_of(lines: list[str], shots: list[Shot]) -> list[list[Shot]]:
     return grouped
 
 
-def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str], taken: str) -> int:
+def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str]) -> int:
     """囲みの中と記録を書き戻す。**囲みの外は 1 文字も触らない。**
 
     位置で対応づけるので、初回・撮り直し・中断後の再実行がすべて同じ操作になる。
@@ -692,7 +699,7 @@ def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str], take
             while records_end < len(lines) and RECORD.match(lines[records_end]):
                 records_end += 1
             lines[after:records_end] = [
-                f"{indent}// shot: {shot.index} snippet={shot.fingerprint} taken={taken}"
+                f"{indent}// shot: {shot.index} snippet={shot.fingerprint}"
                 for shot in block
             ]
             for shot in reversed(block):
@@ -704,15 +711,6 @@ def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str], take
             (root / path).write_text(text, encoding="utf-8")
             changed += 1
     return changed
-
-
-def head_commit(root: pathlib.Path) -> str:
-    return subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
 
 
 # ---------------------------------------------------------------- 入口
@@ -775,7 +773,7 @@ def main() -> int:
         image = out / (f"{shot.name}.gif" if shot.is_motion else f"{shot.name}.png")
         urls[shot.name] = upload(image, token, shot.alt)
         print(f"上げた: {shot.name} → {urls[shot.name]}")
-    changed = write_back(root, shots, urls, head_commit(root))
+    changed = write_back(root, shots, urls)
     print(f"書き戻した: {changed} ファイル")
     return 0
 
