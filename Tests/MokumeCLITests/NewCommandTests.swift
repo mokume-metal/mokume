@@ -51,14 +51,37 @@ struct NewCommandTests {
         #expect(NewCommand.packageIdentity(local: "/a/b/work-copy") == "work-copy")
     }
 
-    @Test("作られるのは 6 つ — 定義・スケッチ・無視の指定・資材の置き場・案内 2 枚")
+    @Test("作られるのは 7 つ — 定義・スケッチ・無視の指定・資材の置き場・案内 2 枚・窓口の登録")
     func writesThePackageTheSketchTheIgnoreFileTheAssetsDirectoryAndTheGuides() throws {
         let files = try NewCommand.files(for: .init(name: "my-sketch"))
         #expect(
             files.map(\.0) == [
                 "Package.swift", "Sources/my-sketch/MySketch.swift", ".gitignore",
-                "Sources/my-sketch/assets/README.md", "AGENTS.md", "CLAUDE.md",
+                "Sources/my-sketch/assets/README.md", "AGENTS.md", "CLAUDE.md", ".mcp.json",
             ])
+    }
+
+    /// **案内に書くだけでは届かない。** 窓口は呼ぶ側が起動する前に登録されているものしか
+    /// 使えないので、作った後で打っても、そのとき動いているエージェントからは呼べない
+    /// ([#683](https://github.com/mokume-metal/mokume/issues/683))。
+    @Test("窓口の登録が置かれ、道具の名前と mcp の呼び方だけを持つ")
+    func writesTheWindowRegistration() throws {
+        let files = try NewCommand.files(for: .init(name: "my-sketch"))
+        let text = try #require(files.first { $0.0 == ".mcp.json" }?.1)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        let servers = try #require(object["mcpServers"] as? [String: Any])
+        let entry = try #require(servers["mokume"] as? [String: Any])
+        #expect(entry["command"] as? String == "mokume")
+        #expect(entry["args"] as? [String] == ["mcp", "."])
+    }
+
+    /// **案内と実際の手順を食い違わせない。** 登録が置かれた後は、人が窓口を打つ必要は無い。
+    @Test("案内は、人が打つものとして窓口を挙げない")
+    func theGuideDoesNotAskThePersonToStartTheWindow() throws {
+        let text = try guide("AGENTS.md")
+        #expect(!text.contains("mokume mcp ."))
+        #expect(text.contains(".mcp.json"))
     }
 
     /// 案内の中身。
