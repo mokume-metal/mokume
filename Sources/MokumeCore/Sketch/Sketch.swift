@@ -3610,8 +3610,36 @@ extension Sketch {
     /// 白として出る」明るさで、それより明るい光は 1 を超える色で書く
     /// (`.opaque(red: 2, green: 2, blue: 2)`)。強さを表す別の数は持たない。
     ///
+    /// **向きを持たないので、丸いものも丸く見えない。** 下は同じ球を、底上げの光の
+    /// 明るさだけ変えて 3 つ描いたもの — どれも塗り 1 色の円板で、変わるのは明るさ
+    /// だけである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     for (index, level) in [Float(0.15), 0.4, 0.9].enumerated() {
+    ///         noLights()
+    ///         ambientLight(.opaque(red: level, green: level, blue: level))
+    ///         push()
+    ///         translate(70 + Float(index) * 130, 150, 0)
+    ///         sphere(55)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の円が 3 つ。左から右へ明るくなるが、どれも陰影が無く塗りつぶした円板に見える | symmetric=y -->
+    ///     ![橙色の円が 3 つ。左から右へ明るくなるが、どれも陰影が無く塗りつぶした円板に見える](https://i.gyazo.com/3763e86b68c96dbbc1984eb558372872.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。初期化の
     ///   ときに置いた光はどのフレームにも属さないので、警告して無視される。
+    // shot: 1 snippet=33e9275d taken=ef039e8
     public func ambientLight(_ color: LinearRGBA) { canvas.ambientLight(color) }
 
     /// 向きだけを持つ光を置く (無限に遠くから差す光)。
@@ -3619,25 +3647,71 @@ extension Sketch {
     /// 渡すのは**光が進む向き**である。縦軸は下向きなので、`(0, 1, 0)` が真上から
     /// 差す光になる。斜めの成分を入れると、陰の境目が左右どちらかへ寄る。
     ///
-    /// ```swift
-    /// func draw() {
-    ///     ambientLight(.opaque(red: 0.3, green: 0.3, blue: 0.3))
-    ///     directionalLight(.opaque(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.8, -0.4)
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     sphere(120)
-    ///     pop()
+    /// 下は同じ球を、光が進む向きだけ変えて 3 つ描いたもの。**明るくなるのは光が
+    /// 入ってくる側**である — 右へ進む光 `(1, …)` は球の左側を、下へ進む光 `(…, 1, …)`
+    /// は上側を照らす。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     let ways: [(Float, Float, Float)] = [(1, 0.25, -0.3), (0, 1, -0.3), (-1, -1, -0.3)]
+    ///     for (index, way) in ways.enumerated() {
+    ///         noLights()
+    ///         ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
+    ///         directionalLight(.opaque(red: 0.95, green: 0.95, blue: 0.95), way.0, way.1, way.2)
+    ///         push()
+    ///         translate(70 + Float(index) * 130, 150, 0)
+    ///         sphere(55)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の球が 3 つ。明るい側が左・上・右下と移り、反対側が暗く落ちている -->
+    ///     ![橙色の球が 3 つ。明るい側が左・上・右下と移り、反対側が暗く落ちている](https://i.gyazo.com/1a82908e97c3c99ef3d7093efd421e8d.png)
+    ///     <!-- /shot -->
+    ///   }
     /// }
-    /// ```
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    // shot: 1 snippet=2fb129d2 taken=ef039e8
     public func directionalLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
         canvas.directionalLight(color, x, y, z)
     }
 
     /// 位置を持つ光を置く。面から光源へ向かう向きで明るさが決まる。
     ///
+    /// **平行光と違い、当たり方が場所によって変わる。** 下は平らな面 1 枚を、左上に
+    /// 置いた光で照らしたもの — いちばん明るいのは光源の真下で、そこから四方へ
+    /// なだらかに暗くなる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
+    ///     // 面より手前 (z = 160) の、左上に置く
+    ///     pointLight(.opaque(red: 1.1, green: 1.1, blue: 1.1), 110, 90, 160)
+    ///     push()
+    ///     translate(200, 150, 0)
+    ///     plane(360, 260)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の面。左上が最も明るく、右下へ向かってなだらかに暗くなっている -->
+    ///     ![橙色の面。左上が最も明るく、右下へ向かってなだらかに暗くなっている](https://i.gyazo.com/94332772af480c9101862cd9caa23e22.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    // shot: 1 snippet=124cad8c taken=ef039e8
     public func pointLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
         canvas.pointLight(color, x, y, z)
     }
@@ -3654,7 +3728,65 @@ extension Sketch {
     ///   - directionZ: 光が進む向き。
     ///   - angle: 広がりの半分の角 (ラジアン)。
     ///
+    /// 下の 2 枚は同じ面を、同じ位置・同じ向きの光で照らしている。**違うのは広がりの
+    /// 角だけ**で、当たる輪の大きさがそれについて変わる。輪の外は底上げの光しか
+    /// 届かないので暗いままである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
+    ///     // 狭い光 (半分の角 15 度)
+    ///     spotLight(
+    ///         .opaque(red: 1.2, green: 1.2, blue: 1.2),
+    ///         160, 120, 200,
+    ///         0, 0, -1,
+    ///         angle: .pi / 12)
+    ///     push()
+    ///     translate(200, 150, 0)
+    ///     plane(360, 260)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 暗い橙色の面の左上寄りに、明るい小さな円が浮かんでいる -->
+    ///     ![暗い橙色の面の左上寄りに、明るい小さな円が浮かんでいる](https://i.gyazo.com/228198bdd5db252909cdc2373789c4c0.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
+    ///     // 広い光 (半分の角 25.7 度)
+    ///     spotLight(
+    ///         .opaque(red: 1.2, green: 1.2, blue: 1.2),
+    ///         160, 120, 200,
+    ///         0, 0, -1,
+    ///         angle: .pi / 7)
+    ///     push()
+    ///     translate(200, 150, 0)
+    ///     plane(360, 260)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ面の同じ場所だが、明るい円がひとまわり以上大きく広がっている -->
+    ///     ![同じ面の同じ場所だが、明るい円がひとまわり以上大きく広がっている](https://i.gyazo.com/f9a015f5bf1dfcf589cc459d8e9d296e.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    // shot: 1 snippet=c24e62c2 taken=ef039e8
+    // shot: 2 snippet=e0bd7283 taken=ef039e8
     public func spotLight(
         _ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float,
         _ directionX: Float, _ directionY: Float, _ directionZ: Float,
@@ -3668,10 +3800,82 @@ extension Sketch {
     /// 立体を「とりあえず立体らしく」見せるための組み合わせ。細かく決めたくなったら
     /// ``ambientLight(_:)`` と ``directionalLight(_:_:_:_:)`` を自分で並べる。
     ///
+    /// **中身は絵で確かめられる。** 下は左から、底上げの光だけ・斜め上から差す光だけ・
+    /// ``lights()`` の 3 つ。3 つ目には前の 2 つが両方出ている — **暗い側は 1 つ目と
+    /// 同じ明るさで止まり** (底上げの光がそこまでは持ち上げる)、明るい側には 2 つ目と
+    /// 同じ向きの傾きが出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     // ① 底上げの光だけ
+    ///     ambientLight(.opaque(red: 0.35, green: 0.35, blue: 0.35))
+    ///     push()
+    ///     translate(70, 150, 0)
+    ///     sphere(55)
+    ///     pop()
+    ///     // ② 斜め上から差す光だけ
+    ///     noLights()
+    ///     directionalLight(.opaque(red: 0.85, green: 0.85, blue: 0.85), -0.35, 0.75, -0.55)
+    ///     push()
+    ///     translate(200, 150, 0)
+    ///     sphere(55)
+    ///     pop()
+    ///     // ③ lights() = ① と ②
+    ///     noLights()
+    ///     lights()
+    ///     push()
+    ///     translate(330, 150, 0)
+    ///     sphere(55)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の球が 3 つ。左は陰影の無い円板、中央は右下が黒く落ちた球、右はその 2 つを重ねたように暗い側も残った球 -->
+    ///     ![橙色の球が 3 つ。左は陰影の無い円板、中央は右下が黒く落ちた球、右はその 2 つを重ねたように暗い側も残った球](https://i.gyazo.com/7964829651241d7b77827012f9006623.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    // shot: 1 snippet=8d465f91 taken=ef039e8
     public func lights() { canvas.lights() }
 
     /// 置いた光をすべて取り除く。以降の立体は塗り 1 色で描かれる。
+    ///
+    /// **効くのはこれより後に置いたものだけ。** 光を取り除くと列がその場で閉じるので、
+    /// 既に置いた立体は光が当たったまま残る。下は同じ球を、取り除く前と後に 1 つずつ
+    /// 描いたものである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     lights()
+    ///     push()
+    ///     translate(120, 150, 0)
+    ///     sphere(70)
+    ///     pop()
+    ///     // ここから先は塗り 1 色になる
+    ///     noLights()
+    ///     push()
+    ///     translate(280, 150, 0)
+    ///     sphere(70)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左は陰影の付いた橙色の球、右は同じ大きさだが影も艶も無い、のっぺりした橙色の円 -->
+    ///     ![左は陰影の付いた橙色の球、右は同じ大きさだが影も艶も無い、のっぺりした橙色の円](https://i.gyazo.com/82383f6d15fa64608ccda457a94a36ed.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=a4494cd7 taken=ef039e8
     public func noLights() { canvas.noLights() }
 
     // MARK: - モデル
@@ -3819,7 +4023,35 @@ extension Sketch {
     /// 「もう 1 つ置いた光」として足されるだけなので、絵が変わった理由はいつも
     /// 呼び出した行から読める。
     ///
+    /// 下は同じ金属の球を、備え付けの 3 つの周囲で照らしたもの。**光は 1 つも
+    /// 置いていない** — 映っているのは周囲だけである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.06, green: 0.06, blue: 0.07))
+    ///     noStroke()
+    ///     fill(.display(red: 0.90, green: 0.90, blue: 0.90))
+    ///     metalness(1)
+    ///     shininess(90)
+    ///     for (index, around) in [Surroundings.sky, .studio, .sunset].enumerated() {
+    ///         surroundings(around)
+    ///         push()
+    ///         translate(70 + Float(index) * 130, 150, 0)
+    ///         sphere(55)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 金属の球が 3 つ。左は青みがかり、中央は白っぽく、右は橙色を帯びている -->
+    ///     ![金属の球が 3 つ。左は青みがかり、中央は白っぽく、右は橙色を帯びている](https://i.gyazo.com/64d536a3e60c48f0acd8a3909b0c180b.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 周囲は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    // shot: 1 snippet=8533681f taken=ef039e8
     public func surroundings(_ surroundings: Surroundings) {
         canvas.surroundings(surroundings)
     }
@@ -3831,6 +4063,34 @@ extension Sketch {
     /// という親切は入れていない。
     ///
     /// 背景と映り込みは**同じ 1 本の式から読む**ので、上下・左右がずれることはない。
+    ///
+    /// **別なので、食い違わせることもできる。** 下は背景に空を描きながら、映り込む
+    /// 周囲には夕暮れを置いたもの — 背景は青いのに、球には橙が映る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     // 背景に描くのは空
+    ///     background(.sky)
+    ///     // 映り込むのは夕暮れ
+    ///     surroundings(.sunset)
+    ///     noStroke()
+    ///     fill(.display(red: 0.90, green: 0.90, blue: 0.90))
+    ///     metalness(1)
+    ///     shininess(90)
+    ///     push()
+    ///     translate(200, 150, 0)
+    ///     sphere(105)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 青白い空を背にした金属の球。球に映っているのは空ではなく、橙色の夕暮れ | symmetric=x -->
+    ///     ![青白い空を背にした金属の球。球に映っているのは空ではなく、橙色の夕暮れ](https://i.gyazo.com/8cdda6b7abb3c91fcb511032b5f668d7.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=b19cc57e taken=ef039e8
     public func background(_ surroundings: Surroundings) {
         canvas.background(surroundings)
     }
