@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "mokume": { "type": "stdio", "command": "mokume", "args": ["mcp", "."] }
+  }
+}
