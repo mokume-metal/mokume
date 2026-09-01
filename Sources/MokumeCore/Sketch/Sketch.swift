@@ -3237,8 +3237,40 @@ extension Sketch {
     /// 指定せずに置いた立体は画素の大きさで見え、奥行き 0 に置いたものは同じ座標に
     /// 描いた平面の図形とぴったり重なる。
     ///
+    /// **重なることは絵で確かめられる。** 下は斜めの視点にしてから `camera()` で
+    /// 戻し、奥行き 0 の面と、同じ座標に描いた平面の四角を重ねたものである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     // 斜めから見る視点にしてから、既定へ戻す
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     camera()
+    ///     lights()
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     push()
+    ///     translate(120, 100, 0)
+    ///     plane(120, 120)
+    ///     pop()
+    ///     // 同じ座標に描いた平面の図形。こちらは視点の影響を受けない
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     strokeWeight(3)
+    ///     square(60, 40, 120)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の正方形の面に、同じ大きさの水色の細い四角がずれなく重なっている -->
+    ///     ![橙色の正方形の面に、同じ大きさの水色の細い四角がずれなく重なっている](https://i.gyazo.com/2de6696ad418dc1815519342f4c15771.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
     ///   ときに書いた視点はどのフレームにも属さないので、警告して無視される。
+    // shot: 1 snippet=97d20b2d taken=a4c8c26
     public func camera() { canvas.camera() }
 
     /// 見る位置・見ている先・上方向を決める。
@@ -3246,21 +3278,36 @@ extension Sketch {
     /// 座標は世界の座標で、**いまの変換の影響を受けない** — 視点は「何をどう置くか」
     /// ではなく「どこから見るか」なので、積んだ変換とは別に決まる。
     ///
-    /// ```swift
-    /// func draw() {
-    ///     background(.display(red: 0.08, green: 0.09, blue: 0.12))
+    /// 下は**同じ高さに置いた 3 つの立方体を、上から見下ろした**もの。正面から見た絵
+    /// (``perspective()`` の 1 枚) では、どれが手前かは大きさの差でしか分からない —
+    /// 見下ろすと**奥行きが上下のずれになる**ので、並びがそのまま位置として読める。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
     ///     lights()
-    ///     // 斜め上から見下ろす
-    ///     camera(
-    ///         width / 2 + 260, height / 2 - 200, 420,
-    ///         width / 2, height / 2, 0,
-    ///         0, 1, 0)
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     box(140)
-    ///     pop()
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     // 上から見下ろす。奥行きの違いが上下のずれになる
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
+    ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
+    ///         push()
+    ///         translate(x, 150, z)
+    ///         rotateY(0.6)
+    ///         rotateX(0.35)
+    ///         box(48)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 3 つの立方体が左下から右上へ階段のように並んでいる。奥に置いたものほど画面の上に写っている -->
+    ///     ![3 つの立方体が左下から右上へ階段のように並んでいる。奥に置いたものほど画面の上に写っている](https://i.gyazo.com/077611e0ae638fb99709fdd0c0d73ddc.png)
+    ///     <!-- /shot -->
+    ///   }
     /// }
-    /// ```
     ///
     /// - Parameters:
     ///   - eyeX: 見る位置。
@@ -3276,6 +3323,7 @@ extension Sketch {
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     ///   見る位置と見ている先が同じ・上方向が視線と重なるといった成り立たない指定は、
     ///   警告してそれまでの視点のまま続ける。
+    // shot: 1 snippet=e2cc6454 taken=a4c8c26
     public func camera(
         _ eyeX: Float, _ eyeY: Float, _ eyeZ: Float,
         _ centerX: Float, _ centerY: Float, _ centerZ: Float,
@@ -3303,25 +3351,154 @@ extension Sketch {
 
     /// 作っておいた視点を当てる。
     ///
+    /// **1 つのフレームに複数の視点を混ぜられる。** 視点を当てると、そこまでに置いた
+    /// ものは**置いた時点の視点のまま**描き切られるためである。下は場面を斜めから
+    /// 見て、目盛りだけ既定の視点へ戻して描いたもの — 戻したほうは奥行き 0 なので、
+    /// 平面の図形と同じように座標どおりの長方形として出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     lights()
+    ///     noStroke()
+    ///     let front = currentCamera
+    ///     // 場面は斜めから見る
+    ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     push()
+    ///     translate(200, 150, 0)
+    ///     rotateY(0.6)
+    ///     box(120)
+    ///     pop()
+    ///     // 目盛りだけ既定の視点へ戻して描く
+    ///     setCamera(front)
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     push()
+    ///     translate(60, 250, 0)
+    ///     plane(80, 24)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 斜めから見た橙色の立方体の下に、水色の細長い長方形が画面と平行に置かれている -->
+    ///     ![斜めから見た橙色の立方体の下に、水色の細長い長方形が画面と平行に置かれている](https://i.gyazo.com/0f6b5f84dc947ede21aa5f8db8218136.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム当てる。
+    // shot: 1 snippet=378168f8 taken=a4c8c26
     public func setCamera(_ camera: Camera) { canvas.setCamera(camera) }
 
     /// 透視投影を既定へ戻す。
     ///
     /// 既定の画角・手前と奥の面は、**既定の視点の距離から導かれている**。
     ///
+    /// 下はこの節のほかの絵と同じ場面を、既定の透視投影で写したもの。比べるときの
+    /// 基準になる。**3 つの立方体は同じ大きさ**で、置いた奥行きだけが違う。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     lights()
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     // 投影を既定へ戻す
+    ///     perspective()
+    ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
+    ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
+    ///         push()
+    ///         translate(x, 150, z)
+    ///         rotateY(0.6)
+    ///         rotateX(0.35)
+    ///         box(48)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ大きさの立方体が 3 つ。手前に置いたものほど大きく写っている -->
+    ///     ![同じ大きさの立方体が 3 つ。手前に置いたものほど大きく写っている](https://i.gyazo.com/d5911bec26fda6b6d5467ba8a9b92323.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 1 snippet=0aacaded taken=a4c8c26
     public func perspective() { canvas.perspective() }
 
     /// 遠くのものほど小さく写す。
     ///
+    /// 下の 2 枚は ``perspective()`` の絵と同じ場面で、引数だけを変えている。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     lights()
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     // 画角を広げる (既定は π/3)
+    ///     perspective(1.6, width / height, 26, 2600)
+    ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
+    ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
+    ///         push()
+    ///         translate(x, 150, z)
+    ///         rotateY(0.6)
+    ///         rotateX(0.35)
+    ///         box(48)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 3 つの立方体がどれも小さくなり、画面の中央寄りに集まっている -->
+    ///     ![3 つの立方体がどれも小さくなり、画面の中央寄りに集まっている](https://i.gyazo.com/996f977e3616ed01224e30bedc6d88ae.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     lights()
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     // 奥の面を手前へ寄せる
+    ///     perspective(Float.pi / 3, width / height, 26, 300)
+    ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
+    ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
+    ///         push()
+    ///         translate(x, 150, z)
+    ///         rotateY(0.6)
+    ///         rotateX(0.35)
+    ///         box(48)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 立方体が 2 つしか写っていない。いちばん奥に置いた 3 つ目が消えている -->
+    ///     ![立方体が 2 つしか写っていない。いちばん奥に置いた 3 つ目が消えている](https://i.gyazo.com/77156723b2ab7429a314178d5f87c889.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Parameters:
-    ///   - fieldOfView: 縦方向の画角 (ラジアン)。広げるほど遠近が強く出る。
+    ///   - fieldOfView: 縦方向の画角 (ラジアン)。**広げるほど写る範囲が広がり、その
+    ///     ぶん被写体は小さくなる。** 視点を動かさずに画角だけ変えても**遠近の強さは
+    ///     変わらない** — 手前と奥の大きさの比を決めているのは、画角ではなく視点から
+    ///     の距離である。
     ///   - aspect: 横 ÷ 縦の比。ふつうは `width / height`。
     ///   - near: 手前の面までの距離。**これより手前は写らない。**
     ///   - far: 奥の面までの距離。**これより奥は写らない。**
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 1 snippet=75f86d22 taken=a4c8c26
+    // shot: 2 snippet=accb6544 taken=a4c8c26
     public func perspective(_ fieldOfView: Float, _ aspect: Float, _ near: Float, _ far: Float) {
         canvas.perspective(fieldOfView, aspect, near, far)
     }
@@ -3332,7 +3509,38 @@ extension Sketch {
     /// 被写体は隅へ寄らず、奥に置いたものも切れない。奥行き 0 に置いたものが平面の
     /// 図形と重なる性質も、透視投影の既定と同じように成り立つ。
     ///
+    /// ``perspective()`` の絵と同じ場面である。**奥行きが違っても大きさが変わらない**
+    /// ので、3 つの立方体は同じ幅で並ぶ。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     lights()
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     // 平行投影へ切り替える
+    ///     ortho()
+    ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
+    ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
+    ///         push()
+    ///         translate(x, 150, z)
+    ///         rotateY(0.6)
+    ///         rotateX(0.35)
+    ///         box(48)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 3 つの立方体が同じ大きさで横に並んでいる。奥に置いたものも小さくなっていない -->
+    ///     ![3 つの立方体が同じ大きさで横に並んでいる。奥に置いたものも小さくなっていない](https://i.gyazo.com/629a4b0cc5e5caaffe305b5ea3374f9c.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 1 snippet=4f7b76e3 taken=a4c8c26
     public func ortho() { canvas.ortho() }
 
     /// 距離によらず同じ大きさで写す。
@@ -3343,6 +3551,36 @@ extension Sketch {
     /// // 面 1 枚ぶんを、視点を中心に写す (ortho() と同じ範囲)
     /// ortho(-width / 2, width / 2, height / 2, -height / 2, 60, 6000)
     /// ```
+    ///
+    /// **範囲を広げるほど小さく写る。** 下は ``ortho()`` と同じ場面を、面 1 枚半ぶんの
+    /// 範囲で写したもの。3 つとも同じ幅である点は変わらない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     lights()
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     // 面 1 枚ぶんより広い範囲を写す (既定は 400×300 ぶん)
+    ///     ortho(-300, 300, 225, -225, 60, 2600)
+    ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
+    ///     for (x, z) in [(Float(105), Float(80)), (200, 0), (325, -80)] {
+    ///         push()
+    ///         translate(x, 150, z)
+    ///         rotateY(0.6)
+    ///         rotateX(0.35)
+    ///         box(48)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 3 つの立方体が同じ大きさで並んでいる。ortho() の絵より一回り小さく、中央へ寄っている -->
+    ///     ![3 つの立方体が同じ大きさで並んでいる。ortho() の絵より一回り小さく、中央へ寄っている](https://i.gyazo.com/daf137a448beb2f0a7737629a248b488.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// - Parameters:
     ///   - left: 画面の左端に来る位置。
@@ -3357,6 +3595,7 @@ extension Sketch {
     ///   上側ではない。取り違えても警告は出ず、絵が上下反転するだけなので注意する。
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 1 snippet=13b60e14 taken=a4c8c26
     public func ortho(
         _ left: Float, _ right: Float, _ bottom: Float, _ top: Float, _ near: Float, _ far: Float
     ) {
