@@ -98,9 +98,10 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
 | `autoMerge: false` + `BLOCKED` | 承認待ち、または auto-merge が外れた ([#114](https://github.com/mokume-metal/mokume/issues/114) に出来事ごとの実測) | 承認を待つ / `gh pr merge <番号> --auto --squash` を打ち直す |
-| 全 check が緑なのに進まない | 同じコミットに残る古い失敗 check run が判定を固定している ([#259](https://github.com/mokume-metal/mokume/issues/259)) | `gh run rerun <run-id> --failed` |
+| 全 check が緑なのに進まない | 同じコミットに残る古い失敗 check run が判定を固定している ([#259](https://github.com/mokume-metal/mokume/issues/259)) | `gh run rerun <run-id> --failed` — **ただし PR のメタデータを読むジョブ (`pr-title`) には打たない** ([#699](https://github.com/mokume-metal/mokume/issues/699)) |
 | `autoMerge: false` + `CLEAN` + 全 check 緑 で `isInMergeQueue: true` | 止まっていない — 予約が queue へ移ると `autoMergeRequest` は null になる ([#628](https://github.com/mokume-metal/mokume/issues/628)) | 何も打たない (queue が進めている) |
 | 同じ 3 つで `isInMergeQueue: false` | 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用) | `make catch-up` |
+| `pr-title` が落ちた | タイトルが Conventional Commits ではない。**`design` は Issue Type であって型ではない** (型は feat/fix/docs/refactor/test/chore/ci/perf/build) | タイトルを直す。**rerun しない** — `pull_request` の rerun は元のイベントを再生するので古いタイトルで判定し、その失敗が最新の結果になって**打つ前より悪くなる** ([#699](https://github.com/mokume-metal/mokume/issues/699))。直せば `edited` で新しい run が走る |
 | close して作り直した PR が、全 check 緑なのに赤い | close した側の run が付けた赤が**同じコミットに残っている** ([#513](https://github.com/mokume-metal/mokume/issues/513)) | **新しい PR の側**の run を rerun する。close した側を rerun すると同じ赤を再生産する — 上の行とは打つ先が逆 |
 
 ```bash
