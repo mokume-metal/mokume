@@ -132,21 +132,30 @@ public final class SketchApplication: NSObject {
             reason: "スケッチのフレームを一定の速さで進め続ける")
         // **与えられたときだけ仕掛ける。** 与えられなければ何も足さないので、窓口から
         // 立てたスケッチの出力は 1 バイトも変わらない ([ADR-0029] 決定 5 の 2 番目)
-        if let configuration = FrameRateNotice.configuration {
+        if FrameRateNotice.announces(
+            configuration: FrameRateNotice.configuration, isTerminal: FrameRateNotice.isTerminal),
+            let configuration = FrameRateNotice.configuration
+        {
             startFrameRateNotice(configuration: configuration)
         }
         app.run()
     }
 
-    /// 1 秒ごとに速さを 1 行。
+    /// 1 秒ごとに速さを名乗る。
     ///
     /// **付け足しは本体を妨げない** ([ADR-0029] 決定 5)。投げる経路を持たず、フレームの
     /// 進行にも触れない — 読むのは既に測ってある値だけである。
+    ///
+    /// **同じ 1 行を書き換える。** 積み上げると、見張りを付けっぱなしにしている間に
+    /// 作り直しの記録と失敗の出力が上へ流れていく — いちばん読みたいものが、いちばん
+    /// 流されやすくなる ([#685](https://github.com/mokume-metal/mokume/issues/685))。
     private func startFrameRateNotice(configuration: String) {
         frameRateNotice = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                print(FrameRateNotice.line(rate: self.currentFrameRate, configuration: configuration))
+                let line = FrameRateNotice.line(
+                    rate: self.currentFrameRate, configuration: configuration)
+                print(FrameRateNotice.rewrite + line, terminator: "")
                 fflush(stdout)
             }
         }
@@ -179,7 +188,14 @@ public final class SketchApplication: NSObject {
             backing: .buffered,
             defer: false)
         window.title = title
-        window.center()
+        // **覚えている位置があれば、そこへ戻す。** 無いときだけ中央に置く。覚えるのも
+        // 画面外へ出さないようにするのも AppKit が持っている ([WindowPlacement])
+        if !window.setFrameUsingName(WindowPlacement.autosaveName) { window.center() }
+        window.setFrameAutosaveName(WindowPlacement.autosaveName)
+
+        // 見張りが起こした入れ替えでは、窓を出しはするが前面は取らない (#679)
+        let takesFocus = WindowPlacement.takesFocus(
+            isRelaunch: WindowPlacement.isRelaunch(stamp: SourceStamp.current))
 
         let surface = SketchSurface(
             frame: NSRect(origin: .zero, size: contentSize), device: gpu.device,
@@ -194,7 +210,8 @@ public final class SketchApplication: NSObject {
         // (ADR-0030 決定 7)
         KnobOverlay.makeIfNeeded(for: runtime.sketch) { [runtime] in runtime.frameNumbers }?
             .attach(to: surface)
-        window.makeKeyAndOrderFront(nil)
+        // **前面を取らないときも、窓は出す。** 出さなければ、作り直すたびに絵が消える
+        if takesFocus { window.makeKeyAndOrderFront(nil) } else { window.orderFrontRegardless() }
         // **面を第一応答者にしないとキーが来ない。** 窓を出したあとに据える —
         // contentView を差し替えると応答者は窓へ戻る
         window.makeFirstResponder(surface)
@@ -203,7 +220,7 @@ public final class SketchApplication: NSObject {
         self.window = window
         self.surface = surface
 
-        NSApp.activate()
+        if takesFocus { NSApp.activate() }
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(windowChangedScreen(_:)),

@@ -3106,6 +3106,65 @@ extension Sketch {
     public func shearY(_ radians: Float) { canvas.shearY(radians) }
 
     /// 与えた変換を、いまの変換の後に重ねる。
+    ///
+    /// 渡す ``Transform`` は ``Transform/identity`` から積み上げて作る。積む順も向きも
+    /// ``translate(_:_:)`` や ``rotate(_:)`` を並べて呼ぶのと同じで、**結果も同じ**に
+    /// なる — 違うのは、その一連の変換を**値として持てる**ことである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(145, 95, 110)
+    ///     var moved = Transform.identity
+    ///     moved.translate(x: 200, y: 150)
+    ///     moved.rotate(by: 0.6)
+    ///     applyMatrix(moved)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(-55, -55, 110)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形に、同じ中心で右へ傾いた橙色の正方形が重なっている -->
+    ///     ![灰色の枠の正方形に、同じ中心で右へ傾いた橙色の正方形が重なっている](https://i.gyazo.com/6320710d6ce061aa8a49fbf841271445.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **値として持てると、同じ変換を何度も重ねられる。** 移動・回転・縮小を 1 つに
+    /// まとめた `step` を作り、図形を描くたびに重ねると、同じ間隔で少しずつ倒れて
+    /// 小さくなる並びになる。呼び出しを並べる書き方では、この「1 段ぶんの変換」を
+    /// 名前で指せない:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(120, 215)
+    ///     var step = Transform.identity
+    ///     step.translate(x: 46, y: -34)
+    ///     step.rotate(by: 0.3)
+    ///     step.scale(x: 0.86, y: 0.86)
+    ///     noStroke()
+    ///     for i in 0..<6 {
+    ///         fill(.display(red: 0.35 + Float(i) * 0.10, green: 0.78 - Float(i) * 0.07, blue: 0.95))
+    ///         square(-30, -30, 60)
+    ///         applyMatrix(step)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左下から右へ、少しずつ小さく傾きながら弧を描いて並ぶ 6 つの正方形。色は水色から桃色へ移る -->
+    ///     ![左下から右へ、少しずつ小さく傾きながら弧を描いて並ぶ 6 つの正方形。色は水色から桃色へ移る](https://i.gyazo.com/84d3726467a3f3fefee55ee7b16c35d8.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=f11076e6
+    // shot: 2 snippet=8a91459f
     public func applyMatrix(_ matrix: Transform) { canvas.applyMatrix(matrix) }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。

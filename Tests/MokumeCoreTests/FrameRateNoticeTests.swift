@@ -31,6 +31,24 @@ struct FrameRateNoticeTests {
         #expect(line.contains("debug"))
     }
 
+    /// **人が見ていない先へは出さない。** 記録に毎秒 1 行残っても情報にならず、その間に
+    /// 起きた作り直しの失敗を埋める ([#685](https://github.com/mokume-metal/mokume/issues/685))。
+    /// 機械が読む口は観測の側にある。
+    @Test("名乗るのは、鍵が与えられていて、かつ端末のときだけ")
+    func announcesOnlyToATerminalWithTheKey() {
+        #expect(FrameRateNotice.announces(configuration: "debug", isTerminal: true))
+        #expect(!FrameRateNotice.announces(configuration: "debug", isTerminal: false))
+        #expect(!FrameRateNotice.announces(configuration: nil, isTerminal: true))
+        #expect(!FrameRateNotice.announces(configuration: nil, isTerminal: false))
+    }
+
+    /// **積み上げない。** 行頭へ戻して消してから書く。
+    @Test("端末へ書く飾りは、行を消してから書く形をしている")
+    func theTerminalDecorationClearsTheLine() {
+        #expect(FrameRateNotice.rewrite.hasPrefix("\r"))
+        #expect(FrameRateNotice.rewrite.contains("[2K"))
+    }
+
     /// **欠測を 0 と書かない。** 0 は「測ったら 0 だった」と読めるが、実際は測れていない。
     @Test("進んでいないときは、0 と書かない")
     func aStoppedSketchIsNotWrittenAsZero() {

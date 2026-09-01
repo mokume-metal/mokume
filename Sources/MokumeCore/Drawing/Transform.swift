@@ -12,6 +12,19 @@ import simd
 /// すると、移動した先を中心に回る。順序を逆にすると原点で回してから移動することになり、
 /// 見える結果がまったく変わる。
 ///
+/// ## 外から組む
+///
+/// **組み立ての起点は ``identity`` である。** 行列を返す口は無く、`var` で受けた
+/// `identity` に `translate` や `rotate` を積んでいく。組み上がった値は
+/// ``Sketch/applyMatrix(_:)`` へ渡せる。
+///
+/// ```swift
+/// var step = Transform.identity
+/// step.translate(x: 46, y: -34)
+/// step.rotate(by: 0.3)
+/// applyMatrix(step)
+/// ```
+///
 /// ## 平面と立体で同じものを使う
 ///
 /// 行列は 4x4 で、**平面の図形も立体も同じ状態を通る** ([ADR-0020] 決定 3)。平面の
@@ -29,7 +42,7 @@ public struct Transform: Equatable, Sendable {
     /// 同次座標の 4x4 行列。4 行目は変換を重ねる限り常に (0, 0, 0, 1)。
     private(set) var matrix: simd_float4x4
 
-    /// 何も変換しない状態。
+    /// 何も変換しない状態。**外から変換を組み立てるときの起点でもある。**
     public static let identity = Transform(matrix: matrix_identity_float4x4)
 
     init(matrix: simd_float4x4) {
