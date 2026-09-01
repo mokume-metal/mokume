@@ -11,9 +11,8 @@ enum RunCommand {
     static let defaultConfigurationName = "debug"
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
-        let directory = URL(
-            fileURLWithPath: arguments.first ?? FileManager.default.currentDirectoryPath,
-            isDirectory: true)
+        let invocation = try Invocation.parse(arguments)
+        let directory = invocation.directory
         let package = directory.appendingPathComponent("Package.swift")
         guard FileManager.default.fileExists(atPath: package.path) else {
             throw .packageNotFound(path: directory.path)
@@ -23,10 +22,16 @@ enum RunCommand {
         // 後では「通ったのに絵が出ない」形になる
         try ResourceDeclaration.check(in: directory)
 
-        try build(in: directory)
-        let executable = try executablePath(in: directory)
-        // 走らせるのは人なので、速さを名乗らせる。窓口はここを通らない
-        try launch(executable, in: directory, reportingRate: defaultConfigurationName)
+        // どの道具で走らせているかを名乗る。**手元ビルドと配布版の取り違えは、解消済みの
+        // 不具合を新しい不具合として起票させる** (#633 が実際にそうなった)。名乗りが help と
+        // 切り分けの口にしか無いと、いちばん長く見ている画面に出ない (#684)
+        print("道具: \(ToolVersion.describe())")
+
+        try build(in: directory, configuration: invocation.configuration)
+        let executable = try executablePath(in: directory, configuration: invocation.configuration)
+        // 走らせるのは人なので、速さを名乗らせる。窓口はここを通らない。
+        // **名乗る名前は、いま走らせる構成と同じ値から出す**
+        try launch(executable, in: directory, reportingRate: invocation.configurationName)
     }
 
     /// 作り直す。出力はそのまま流す — 失敗したときに読むのは人なので、道具が

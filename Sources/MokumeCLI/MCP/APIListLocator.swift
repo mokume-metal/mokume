@@ -16,8 +16,8 @@ struct APIListLocator {
     /// 資産の置き場。
     static let releases = "https://github.com/mokume-metal/mokume/releases/download"
     /// 依存の識別子。**完全一致で選ぶ** — 前方一致にすると、別の依存 (`mokume-*`) が先に
-    /// 並んでいるときに取り違える。
-    static let identity = "mokume"
+    /// 並んでいるときに取り違える。綴りの正典は [DependencyVersion]。
+    static let identity = DependencyVersion.identity
     /// 取ってくるのを諦めるまで。窓口は同期で答えるので、上限が無いと応答ごと固まる。
     nonisolated static let fetchLimit: TimeInterval = 10
 
@@ -89,19 +89,9 @@ struct APIListLocator {
 
     /// 依存として解決された版。パスで指しているときは pin が無いので `nil`。
     ///
-    /// 形式は SwiftPM の版 2 以降 (`pins` が根にある) を読む。ひな形は tools-version 6.2 を
-    /// 宣言するので、それより古い形式は書かれない。
-    func resolvedVersion() -> String? {
-        let url = directory.appendingPathComponent("Package.resolved")
-        guard let data = try? Data(contentsOf: url),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let pins = object["pins"] as? [[String: Any]]
-        else { return nil }
-        for pin in pins where pin["identity"] as? String == Self.identity {
-            return (pin["state"] as? [String: Any])?["version"] as? String
-        }
-        return nil
-    }
+    /// **読み方は [DependencyVersion] が持つ。** 切り分けの口も同じものを読むので、
+    /// 実装は 1 つにする。
+    func resolvedVersion() -> String? { DependencyVersion.resolved(forPackageAt: directory) }
 
     /// 取り置きの置き場。版が引けないときは**手で置くための枠**を指す。
     func cacheURL(for version: String?) -> URL {

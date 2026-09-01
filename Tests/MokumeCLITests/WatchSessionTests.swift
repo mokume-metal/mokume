@@ -55,8 +55,21 @@ struct WatchSessionTests {
             directory: try makeDirectory(), configuration: "release", reportsRate: true,
             hooks: recorder.hooks())
 
-        _ = session.start()
+        let report = session.start()
         #expect(recorder.ratesGivenToChildren == ["release"])
+        // **名乗りは 1 つの値から出る。** 子へ渡す名前と記録の名前が別々に決まると、
+        // 読み手はどちらが実体か判定できない (#680)
+        #expect(report.configuration == "release")
+    }
+
+    /// **選ばれていなければ道具立ての既定に任せ、名乗りだけ既定の名前を使う。**
+    /// ここで `-c debug` と書き固めると、道具立てが既定を変えた日に黙ってずれる。
+    @Test("構成が選ばれていなければ、道具立てへ渡す指定を持たない")
+    func leavesTheDefaultConfigurationToTheToolchain() throws {
+        let session = WatchSession(directory: try makeDirectory(), hooks: Recorder().hooks())
+        #expect(session.configuration == nil)
+        #expect(session.configurationName == RunCommand.defaultConfigurationName)
+        #expect(RunCommand.configurationArguments(session.configuration).isEmpty)
     }
 
     private func makeDirectory() throws -> URL {
