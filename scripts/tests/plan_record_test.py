@@ -103,8 +103,23 @@ def issue_state(in_progress=False, plans=()):
     )
 
 
-MERGED_PR = '{"number":108,"state":"MERGED"}'
-CLOSED_PR = '{"number":108,"state":"CLOSED"}'
+def pr_json(number, closes=(), state="OPEN"):
+    """`gh pr view <ブランチ>` が返す JSON。
+
+    閉じる Issue まで組めるようにしてある — ブランチの PR がプランの対象と同じ仕事か
+    どうかは、そこでしか区別できない (#659)。
+    """
+    return json.dumps(
+        {
+            "number": number,
+            "state": state,
+            "closingIssuesReferences": [{"number": n} for n in closes],
+        }
+    )
+
+
+MERGED_PR = pr_json(108, state="MERGED")
+CLOSED_PR = pr_json(108, state="CLOSED")
 
 # エージェント検出・フック制御に関わる環境変数。呼び出し元 (このテストを走らせている
 # エージェントのセッション) の env が漏れると、検出できたのか漏れたのか区別できない
@@ -501,10 +516,12 @@ class PlanRecordTestCase(unittest.TestCase):
         # マージすると PR は MERGED になる。ここで見失うと、規約どおり PR へ
         # 投稿を済ませたセッションほど閉じた Issue へ催促される
         result = self.capture(
-            "Closes #77 のための計画。\n", FAKE_GH_PR_JSON=MERGED_PR, FAKE_GH_ISSUE="77"
+            "Closes #77 のための計画。\n",
+            FAKE_GH_PR_JSON=pr_json(108, [77], state="MERGED"),
+            FAKE_GH_ISSUE="77",
         )
         self.assertIn("scripts/comment.sh pr 108", result.stderr)
-        self.assertNotIn("issue 77", result.stderr)
+        self.assert_not_targeted(77, result.stderr)
 
     def test_capture_skips_an_abandoned_pull_request(self):
         # 放棄された PR (CLOSED) は器として死んでいるので、名乗った Issue へ回す
@@ -714,8 +731,14 @@ class PlanRecordTestCase(unittest.TestCase):
         self.assertIn("scripts/comment.sh issue 646", result.stderr)
 
     def test_capture_prefers_the_pull_request_over_many_claims(self):
-        """open PR があれば、名乗りが何件あっても PR 1 つに確定する。"""
-        result = self.capture(self.AMBIGUOUS, FAKE_GH_PR="42", FAKE_GH_ISSUE="1")
+        """名乗りが何件あっても、その全部を閉じる PR なら PR 1 つに確定する。
+
+        かつては PR が在るだけで打ち切っていたが、それだと別の仕事の PR まで採る
+        (#659)。「同じ仕事か」を分けるのは PR が閉じる Issue である。
+        """
+        result = self.capture(
+            self.AMBIGUOUS, FAKE_GH_PR_JSON=pr_json(42, [631, 646]), FAKE_GH_ISSUE="1"
+        )
         self.assertNotIn("確定できません", result.stderr)
         self.assertIn("scripts/comment.sh pr 42", result.stderr)
 
@@ -739,6 +762,106 @@ class PlanRecordTestCase(unittest.TestCase):
         self.capture(self.AMBIGUOUS, FAKE_GH_ISSUE="1")
         result = self.guard(
             FAKE_GH_ISSUE="1", FAKE_GH_ISSUE_COMMENTS=self.marker()
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.records(), [])
+
+    # --- ブランチの PR が別の仕事なら確定しない (#659) -----------------------
+    # AGENTS.md 「進め方」は 4 (プランを Issue へ) → 5 (ブランチを切る) → 6 (PR) の順
+    # なので、**前の作業の枝に居るまま次のプランを立てるのは規約どおりの流れ**である。
+    # かつては PR が見つかった時点で打ち切っていたため、見出しの番号も名乗りも見ずに
+    # 無関係な PR を指した。投稿済みプラン 123 件で測ると、投稿先が PR だったものは
+    # 0 件で、「PR ができた後に同じ Issue のプランを取る」ケースも 2 件しかない。
+
+    MISMATCHED = "# #658 変換の口に、引数を 1 つずつ動かした例と絵を付ける\n\n本文。\n"
+
+    def test_capture_lists_both_when_the_pull_request_closes_another_issue(self):
+        """#659 の再現 — PR #657 が閉じるのは #599 で、プランの対象は #658。"""
+        result = self.capture(
+            self.MISMATCHED, FAKE_GH_PR_JSON=pr_json(657, [599]), FAKE_GH_ISSUE="1"
+        )
+        self.assertIn("投稿先を確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 658", result.stderr)
+        self.assertIn("scripts/comment.sh pr 657", result.stderr)
+
+    def test_capture_lists_both_for_the_case_left_in_the_records(self):
+        """手元の記録に残っていた 2 例目 — PR #652 が閉じるのは #647、対象は #648。"""
+        result = self.capture(
+            "# #648 窓口の道具は、いまは足さない\n\n本文。\n",
+            FAKE_GH_PR_JSON=pr_json(652, [647]),
+            FAKE_GH_ISSUE="1",
+        )
+        self.assertIn("投稿先を確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 648", result.stderr)
+        self.assertIn("scripts/comment.sh pr 652", result.stderr)
+
+    def test_capture_lists_both_when_the_pull_request_closes_nothing(self):
+        """閉じる Issue を名乗らない PR は「同じ仕事」と確かめられない。"""
+        result = self.capture(
+            self.MISMATCHED, FAKE_GH_PR_JSON=pr_json(657), FAKE_GH_ISSUE="1"
+        )
+        self.assertIn("投稿先を確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh issue 658", result.stderr)
+        self.assertIn("scripts/comment.sh pr 657", result.stderr)
+
+    def test_capture_confirms_the_pull_request_that_closes_the_named_issue(self):
+        """同じ仕事の PR なら従来どおり確定する (ADR-0002 決定 6 を崩さない)。"""
+        result = self.capture(
+            "# #637 二重着手の跡を名乗る\n\n本文。\n",
+            FAKE_GH_PR_JSON=pr_json(641, [637]),
+            FAKE_GH_ISSUE="1",
+        )
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh pr 641", result.stderr)
+        self.assert_not_targeted(637, result.stderr)
+
+    def test_capture_confirms_the_pull_request_when_the_plan_names_no_issue(self):
+        """番号を名乗らないプランは従来どおり PR へ (置き場の規律)。"""
+        result = self.capture(
+            "番号を名乗らない計画。\n", FAKE_GH_PR_JSON=pr_json(42), FAKE_GH_ISSUE="1"
+        )
+        self.assertNotIn("確定できません", result.stderr)
+        self.assertIn("scripts/comment.sh pr 42", result.stderr)
+
+    def test_capture_does_not_read_the_branch_name_when_a_pull_request_exists(self):
+        """PR が在るならブランチ名の数字へは落ちない。
+
+        ブランチ名は最も脆い経路 (ハッシュの断片を拾うことがある) なので、PR のほうが
+        確かである。ここで落ちると、名乗りの無いプランが毎回「確定できません」になる。
+        """
+        # setUp のブランチは feat/plan-123
+        result = self.capture(
+            "番号を名乗らない計画。\n", FAKE_GH_PR_JSON=pr_json(42), FAKE_GH_ISSUE="1"
+        )
+        self.assert_not_targeted(123, result.stderr)
+
+    def test_capture_records_the_issue_before_the_pull_request(self):
+        """食い違ったときは両方が記録に残り、名乗った対象が先頭に来る。
+
+        先頭は催促と二重着手の跡見 (#642) が見る位置で、プランが明示した対象のほうが
+        ブランチから推定した PR より強い信号である。
+        """
+        self.capture(
+            self.MISMATCHED, FAKE_GH_PR_JSON=pr_json(657, [599]), FAKE_GH_ISSUE="1"
+        )
+        meta = self.metas()[0].read_text(encoding="utf-8")
+        targets = [l for l in meta.splitlines() if l.startswith("target=")]
+        self.assertEqual(targets, ["target=issue 658", "target=pr 657"])
+
+    def test_guard_clears_a_record_posted_to_the_named_issue(self):
+        """並べた候補のうち Issue 側へ投稿されていれば差し戻さない (#631)。
+
+        誤った先だけを記録していた頃は、投稿済みでも催促が止まらず、記録ファイルを
+        消して抜けることになっていた。
+        """
+        self.capture(
+            self.MISMATCHED, FAKE_GH_PR_JSON=pr_json(657, [599]), FAKE_GH_ISSUE="1"
+        )
+        result = self.guard(
+            FAKE_GH_PR_JSON=pr_json(657, [599]),
+            FAKE_GH_ISSUE="1",
+            FAKE_GH_ISSUE_COMMENTS=self.marker(),
+            FAKE_GH_PR_COMMENTS="",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.records(), [])

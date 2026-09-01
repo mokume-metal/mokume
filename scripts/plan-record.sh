@@ -207,16 +207,37 @@ emit() { # $1=種別 $2=説明 $3=本文 $4=検出パターン $5=除外パタ�
 #
 # 「見出しを最優先にして 1 つに確定する」案も測ったが、1 件で誤爆を作る (見出しと名乗りが
 # 食い違うプランが 1 件あった)。曖昧なら確定しないという上の方針を崩す理由が無い。
+#
+# **ブランチの PR で打ち切らない** (#659)。かつては PR が見つかった時点で return していたので、
+# 見出しの番号も名乗りも見なかった。AGENTS.md 「進め方」は 4 (プランを Issue へ) → 5 (ブランチ
+# を切る) → 6 (PR) の順なので、**前の作業の枝に居るまま次のプランを立てるのは規約どおりの
+# 流れ**である。そのとき指されるのは前の仕事の PR で、実害は 2 件出た (#659 と、手元の記録に
+# 残っていた「PR #652 が閉じるのは #647 なのに対象は #648」)。
+#
+# 分けるのは **PR が閉じる Issue** (closingIssuesReferences) である。プランが名乗る番号が
+# すべてそこに居れば同じ仕事なので PR に確定し (ADR-0002 決定 6 の「PR ができてからは PR」)、
+# 1 つでも外れれば別の仕事なので確定せず候補を並べる。Issue 本文の
+# 方向性 (「明示した対象と推定した PR が**食い違うとき**、黙って推定を採らない」) に当たる。
+#
+# 「番号が違えば必ず両方並べる」案は、通常の流れ (PR ができた後に同じ Issue のプランを取る)
+# でも毎回「確定できません」になる恐れがあった。投稿済みプラン 123 件で測ると、そのケースは
+# 2 件 (1.6%) しかなく、**投稿先が PR だったプランは 0 件**だった。恐れた副作用は小さいが、
+# 閉じる Issue を見れば副作用を 0 にできるのでそちらを採る。
+#
+# 食い違ったときの並びは Issue が先で PR が後。先頭は催促と二重着手の跡見 (#642) が見る位置で、
+# プランが明示した対象のほうが、ブランチから推定した PR より強い信号である。
 
 plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行ずつ (優先順)
-  local branch="$1" body="$2" number numbers seen=''
+  local branch="$1" body="$2" number numbers seen='' info pr='' closes='' found='' mismatch=0
 
-  number=$(gh pr view "$branch" -R "$REPO" --json number,state \
-    -q 'select(.state != "CLOSED") | .number' 2>/dev/null)
-  if [ -n "$number" ]; then
-    # PR は曖昧にならない (ブランチに対して 1 つ)。ここで打ち切る
-    printf 'pr %s\n' "$number"
-    return 0
+  # 番号と「その PR が閉じる Issue」を 1 行で受ける。閉じる Issue が無ければ番号のあとに
+  # 空白だけが続く (前後を空白で挟んでおき、` $number ` の部分一致で照合する)
+  info=$(gh pr view "$branch" -R "$REPO" --json number,state,closingIssuesReferences \
+    -q 'select(.state != "CLOSED") |
+        "\(.number) \([.closingIssuesReferences[]?.number] | join(" "))"' 2>/dev/null)
+  if [ -n "$info" ]; then
+    pr=${info%% *}
+    closes=" ${info#"$pr"} "
   fi
 
   # プランのタイトル (# #655 短い説明) の番号。80% がこう書いていて、当たりは 98.9%。
@@ -238,11 +259,16 @@ plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行
   #
   # ここは 1 つに絞ったままにする — ブランチ名から複数の番号を拾うと、候補の並びが
   # ハッシュの断片で埋まる
-  # 見出しも名乗りも無ければブランチ名へ (実測で 6 件)
-  [ -n "$(printf '%s' "$numbers" | tr -d '[:space:]')" ] || numbers=$(printf '%s' "$branch" |
-    sed -E 's#^(claude/.*)-[0-9a-f]{6}$#\1#' |
-    grep -oE '(^|[^0-9A-Za-z])[0-9]{1,6}([^0-9A-Za-z]|$)' |
-    grep -oE '[0-9]+' | head -1)
+  #
+  # 見出しも名乗りも無ければブランチ名へ (実測で 6 件)。ただし **PR が在るなら落ちない** —
+  # ブランチ名は最も脆い経路なので、そこで拾った数字と PR を突き合わせても食い違いを
+  # 名乗るだけになり、名乗りの無いプランが毎回「確定できません」に落ちる (#659)
+  if [ -z "$pr" ] && [ -z "$(printf '%s' "$numbers" | tr -d '[:space:]')" ]; then
+    numbers=$(printf '%s' "$branch" |
+      sed -E 's#^(claude/.*)-[0-9a-f]{6}$#\1#' |
+      grep -oE '(^|[^0-9A-Za-z])[0-9]{1,6}([^0-9A-Za-z]|$)' |
+      grep -oE '[0-9]+' | head -1)
+  fi
 
   while IFS= read -r number; do
     [ -n "$number" ] || continue
@@ -250,8 +276,28 @@ plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行
     seen="$seen|$number|"
     # 実在するかを確かめる。ブランチ名の数字はハッシュの断片でもありうる
     gh issue view "$number" -R "$REPO" --json number -q .number >/dev/null 2>&1 || continue
-    printf 'issue %s\n' "$number"
+    found="$found$number
+"
   done <<< "$numbers"
+
+  # 名乗る番号が無い / すべてこの PR が閉じる Issue なら、同じ仕事なので PR に確定する
+  if [ -n "$pr" ]; then
+    while IFS= read -r number; do
+      [ -n "$number" ] || continue
+      case "$closes" in *" $number "*) ;; *) mismatch=1 ;; esac
+    done <<< "$found"
+    if [ -z "$found" ] || [ "$mismatch" = 0 ]; then
+      printf 'pr %s\n' "$pr"
+      return 0
+    fi
+  fi
+
+  # 食い違うので確定しない。明示された対象を先に、推定した PR を後ろに並べる
+  while IFS= read -r number; do
+    [ -n "$number" ] || continue
+    printf 'issue %s\n' "$number"
+  done <<< "$found"
+  [ -z "$pr" ] || printf 'pr %s\n' "$pr"
 }
 
 # いま新しくプランを取るならどこへ投稿するか (1 つ)。候補が複数あるかどうかは呼び手が
