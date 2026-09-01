@@ -36,9 +36,8 @@ enum WatchCommand {
     static func run(
         _ arguments: [String], watching: (WatchSession) -> Void = { watch($0) }
     ) throws(CommandFailure) {
-        let directory = URL(
-            fileURLWithPath: arguments.first ?? FileManager.default.currentDirectoryPath,
-            isDirectory: true)
+        let invocation = try Invocation.parse(arguments)
+        let directory = invocation.directory
         guard FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("Package.swift").path)
         else {
@@ -57,8 +56,12 @@ enum WatchCommand {
         // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
         // パッケージの場所へ置くと観測とだけ場所が割れる (#331)
         let session = WatchSession(
-            directory: directory, facetBase: WorkDirectory.given ?? directory, reportsRate: true)
+            directory: directory, facetBase: WorkDirectory.given ?? directory,
+            configuration: invocation.configuration, reportsRate: true)
         say("見張っている: \(directory.path)")
+        // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
+        // ビルドと配布版の取り違えに気付けない** (#633 が実際にそうなった・#684)
+        say("道具: \(ToolVersion.describe())")
         // **常に名乗る。** 以前は基準がスケッチの場所と違うときだけ出していたが、それだと
         // 窓口の側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
         say(

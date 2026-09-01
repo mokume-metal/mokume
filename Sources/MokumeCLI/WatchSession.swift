@@ -28,13 +28,19 @@ final class WatchSession {
         /// 監視しているソースの世代。
         var stamp: (URL) -> String?
 
-        static func live() -> Hooks {
+        /// - Parameter configuration: 走らせる構成。**作り直しと実行ファイルの解決の両方へ
+        ///   渡す** — 片方だけに渡すと、名乗った構成と実際に起動するものが食い違う (#680)。
+        static func live(configuration: String? = nil) -> Hooks {
             Hooks(
                 build: { directory in
-                    let result = try? RunCommand.swift(["build"], in: directory, capturing: true)
+                    let result = try? RunCommand.swift(
+                        ["build"] + RunCommand.configurationArguments(configuration),
+                        in: directory, capturing: true)
                     return (result?.status ?? 1, result?.output ?? "")
                 },
-                resolveExecutable: { directory in try? RunCommand.executablePath(in: directory) },
+                resolveExecutable: { directory in
+                    try? RunCommand.executablePath(in: directory, configuration: configuration)
+                },
                 launch: { executable, directory, stamp, rate in
                     let process = Process()
                     process.executableURL = executable
@@ -56,7 +62,11 @@ final class WatchSession {
     /// 区画の基準。**パッケージの場所とは別の軸** — スケッチは `MOKUME_WORK_DIR` に従って
     /// 観測を書くので、作り直しの記録も同じ側へ置かないと読み手から見て割れる (#331)。
     let facetBase: URL
-    let configuration: String
+    /// 選ばれた構成。**渡されなければ道具立ての既定に任せる** — ここで既定の名前を
+    /// 書き固めると、道具立てが既定を変えた日に黙ってずれる。
+    let configuration: String?
+    /// 名乗るときの構成の名前。選ばれていなければ既定の名前。
+    var configurationName: String { configuration ?? RunCommand.defaultConfigurationName }
     private var hooks: Hooks
 
     /// いま走らせている子。
@@ -72,16 +82,17 @@ final class WatchSession {
     /// 機械が読む経路 (窓口) の出力は 1 バイトも変えない ([ADR-0029] 決定 5 の 2 番目)。
     let reportsRate: Bool
 
+    /// - Parameter hooks: 差し替える外側。**渡さなければ、選ばれた構成から組む** —
+    ///   既定引数では作れない (構成が決まるのは初期化の中である)。
     init(
-        directory: URL, facetBase: URL? = nil,
-        configuration: String = RunCommand.defaultConfigurationName,
-        reportsRate: Bool = false, hooks: Hooks = .live()
+        directory: URL, facetBase: URL? = nil, configuration: String? = nil,
+        reportsRate: Bool = false, hooks: Hooks? = nil
     ) {
         self.directory = directory
         self.facetBase = facetBase ?? directory
         self.configuration = configuration
         self.reportsRate = reportsRate
-        self.hooks = hooks
+        self.hooks = hooks ?? .live(configuration: configuration)
     }
 
     /// 1 巡する。変化が無ければ何もしない。
@@ -129,7 +140,7 @@ final class WatchSession {
             return finish(
                 BuildReport(
                     ok: false, status: status, output: output, stamp: stamp,
-                    configuration: configuration,
+                    configuration: configurationName,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
 
@@ -137,14 +148,14 @@ final class WatchSession {
         stop()
         if let executable = hooks.resolveExecutable(directory) {
             child = hooks.launch(
-                executable, directory, stamp, reportsRate ? configuration : nil)
+                executable, directory, stamp, reportsRate ? configurationName : nil)
         }
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
 
         return finish(
             BuildReport(
                 ok: true, status: 0, output: output, stamp: stamp,
-                configuration: configuration,
+                configuration: configurationName,
                 timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)))
     }
 

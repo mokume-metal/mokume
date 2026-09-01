@@ -57,6 +57,10 @@ enum DoctorCommand {
         var hasBuild: Bool
         /// 最後の作り直し。`watch` が書く。まだ無ければ `nil`。
         var lastBuild: LastBuild?
+        /// 依存として解決されている mokume の版。**読めなければ `nil`** (パスで指している
+        /// ときは pin が無い)。面を持たない理由に当たった人が、どこまで上げればよいかを
+        /// 知るために要る (#684)。
+        var dependency: String?
     }
 
     /// 最後の作り直し。**「区画が無い」と「`watch` が死んでいる」を分ける決め手**になる。
@@ -131,6 +135,7 @@ enum DoctorCommand {
         var lines = [
             "場所: \(state.place.path)",
             "スケッチ: Package.swift が\(state.hasPackage ? "在る" : "無い")",
+            "依存している mokume: \(state.dependency ?? "\(unknown) — Package.resolved に pin が無い (パスで指しているとこうなる)")",
             "組み上げた跡: .build が\(state.hasBuild ? "在る" : "無い")",
         ]
         guard let last = state.lastBuild else {
@@ -200,7 +205,8 @@ enum DoctorCommand {
             place: directory,
             hasPackage: exists(directory.appendingPathComponent("Package.swift")),
             hasBuild: exists(directory.appendingPathComponent(".build", isDirectory: true)),
-            lastBuild: lastBuild(in: directory))
+            lastBuild: lastBuild(in: directory),
+            dependency: DependencyVersion.resolved(forPackageAt: directory))
     }
 
     /// `watch` が置いた最後の作り直し。読めない・壊れているときは中身を `\(unknown)` に倒す。

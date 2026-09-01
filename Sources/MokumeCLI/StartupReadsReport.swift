@@ -45,11 +45,15 @@ enum StartupReadsReport {
         // 依存が持たない面は、区画が在っても応答が来ない。**在る / 無いだけでは足りない**
         // (#647)。判定できなければ空のまま — 添えないことで「判定していない」を表す
         let absent = package.flatMap { DependencyFacets.absent(forPackageAt: $0) } ?? []
+        // **持たないと言うなら、いくつなのかも言う。** 版が分からないと、読み手は
+        // どこまで上げればよいかを知れない (#684)
+        let version = package.flatMap { DependencyVersion.resolved(forPackageAt: $0) }
         for entry in StartupReads.all where entry.origin == .facet {
             let facet = base.appendingPathComponent(".mokume/\(entry.key)", isDirectory: true)
             var line = "  \(entry.name): \(facet.path) (\(exists(facet) ? "在る" : "無い"))"
             if absent.contains(entry) {
-                line += " — 依存している mokume はこの面を持たない"
+                let named = version.map { "mokume \($0)" } ?? "依存している mokume"
+                line += " — \(named) はこの面を持たない"
             }
             lines.append(line)
         }
