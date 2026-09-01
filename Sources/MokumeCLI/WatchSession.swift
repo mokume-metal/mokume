@@ -100,11 +100,16 @@ final class WatchSession {
     }
 
     /// 走らせているものを終わらせる。
-    func stop() {
-        guard let child, child.isRunning else { return }
+    ///
+    /// - Returns: 実際に止めたか。**既に居ない・既に死んでいる**ときは `false` で、
+    ///   呼ぶ側はそれを別の出来事として名乗れる (見張りの終わり方が 2 通りある)。
+    @discardableResult
+    func stop() -> Bool {
+        guard let child, child.isRunning else { return false }
         child.terminate()
         child.waitUntilExit()
         self.child = nil
+        return true
     }
 
     private func rebuildAndReplace(stamp: String?) -> BuildReport {
