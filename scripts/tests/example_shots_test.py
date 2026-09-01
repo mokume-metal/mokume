@@ -16,6 +16,9 @@
 - **包み方が、組めることを見る側と同じである** (#667) — 段を見分けること・`文脈` を
   渡すこと・型の段を落とすこと。ここが食い違うと、組める例が撮れない (あるいはその逆)
   という無言の穴が空く
+- **台帳が撮った版を持たない** (#671) — 持っていた頃は撮るたびに全数の行が動き、絵を
+  数枚足す PR が台帳 163 行を巻き込んでいた。古い形を読めることと、それを名乗って
+  落とすこともここで固定する
 
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
@@ -152,7 +155,7 @@ class ExampleShotsTest(unittest.TestCase):
     def write_back(self, found=None):
         found = found or self.collect()
         urls = {shot.name: f"https://example.invalid/{shot.name}.png" for shot in found}
-        return shots.write_back(self.root, found, urls, "abc1234")
+        return shots.write_back(self.root, found, urls)
 
     def test_書き戻しは囲みの中と記録だけを書く(self):
         self.write_back()
@@ -164,6 +167,45 @@ class ExampleShotsTest(unittest.TestCase):
         self.assertIn("/// 直径を変えても中心は動かない。", text)
         self.assertIn("/// 円を塗る。", text)
         self.assertIn("    public func circle() {}", text)
+
+    def test_台帳の行は撮った版を持たない(self):
+        """#671。`taken=` を書いていた頃は、撮るたびに全数の行が動いていた。"""
+        self.write_back()
+        records = [
+            line.strip()
+            for line in self.path.read_text(encoding="utf-8").split("\n")
+            if line.strip().startswith("// shot:")
+        ]
+        self.assertEqual(len(records), 2, records)
+        for record in records:
+            self.assertNotIn("taken=", record, record)
+            self.assertRegex(record, r"^// shot: \d+ snippet=[0-9a-f]{8}$")
+
+    def test_古い形の台帳は名乗って落ちる(self):
+        """#671。読めないことにすると「まだ撮っていない」と誤診してしまう。"""
+        self.write_back()
+        text = self.path.read_text(encoding="utf-8")
+        found = self.collect()
+        old = f"// shot: 1 snippet={found[0].fingerprint}"
+        self.path.write_text(text.replace(old, old + " taken=abc1234"), encoding="utf-8")
+        problems = shots.check(self.root, self.collect())
+        self.assertTrue(any("台帳が古い形" in problem for problem in problems), problems)
+        # 撮り直しを促してはいけない (絵は動いていない)
+        self.assertFalse(any("まだ撮っていない" in problem for problem in problems), problems)
+
+    def test_見ていないことを出力が名乗る(self):
+        """#671。数を出せないなら、境目を 1 行で言う。"""
+        self.write_back()
+        import contextlib
+        import io as _io
+
+        out = _io.StringIO()
+        with contextlib.redirect_stdout(out):
+            shots.check(self.root, self.collect())
+        text = out.getvalue()
+        self.assertIn("実装が変わって絵が古くなっているかは見ていない", text)
+        self.assertNotIn("撮影後に実装が動いている", text)
+        self.assertNotIn("撮った版を辿れなかった", text)
 
     def test_書き戻しはべき等(self):
         self.write_back()
