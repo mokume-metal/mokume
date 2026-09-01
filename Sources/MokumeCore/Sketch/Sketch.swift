@@ -808,8 +808,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a9a4b1c1 taken=88abc9a
-    // shot: 2 snippet=06a34484 taken=88abc9a
+    // shot: 1 snippet=a9a4b1c1 taken=cedd955
+    // shot: 2 snippet=06a34484 taken=cedd955
     public func background(_ color: LinearRGBA) { canvas.background(color) }
     /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -854,8 +854,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=4553e138 taken=88abc9a
-    // shot: 2 snippet=471b5a72 taken=88abc9a
+    // shot: 1 snippet=4553e138 taken=cedd955
+    // shot: 2 snippet=471b5a72 taken=cedd955
     public func fill(_ color: LinearRGBA) { canvas.fill(color) }
     /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     ///
@@ -898,8 +898,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=52e2382e taken=88abc9a
-    // shot: 2 snippet=9fd52b82 taken=88abc9a
+    // shot: 1 snippet=52e2382e taken=cedd955
+    // shot: 2 snippet=9fd52b82 taken=cedd955
     public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
     /// これから引く線の太さ (画素)。
     ///
@@ -942,8 +942,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7aee288f taken=88abc9a
-    // shot: 2 snippet=c3229bad taken=88abc9a
+    // shot: 1 snippet=7aee288f taken=cedd955
+    // shot: 2 snippet=c3229bad taken=cedd955
     public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
 
     /// 図形の内側を塗らない。輪郭だけの図形になる。
@@ -968,7 +968,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=848590b4 taken=88abc9a
+    // shot: 1 snippet=848590b4 taken=cedd955
     public func noFill() { canvas.noFill() }
 
     /// 線を引かない。図形の輪郭も出なくなる。
@@ -993,7 +993,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5e1b5cf3 taken=88abc9a
+    // shot: 1 snippet=5e1b5cf3 taken=cedd955
     public func noStroke() { canvas.noStroke() }
 
     /// 線の端の形。既定は丸。
@@ -1070,9 +1070,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5fd70319 taken=88abc9a
-    // shot: 2 snippet=e12f5d6e taken=88abc9a
-    // shot: 3 snippet=9387a57e taken=88abc9a
+    // shot: 1 snippet=5fd70319 taken=cedd955
+    // shot: 2 snippet=e12f5d6e taken=cedd955
+    // shot: 3 snippet=9387a57e taken=cedd955
     public func strokeCap(_ cap: StrokeCap) { canvas.strokeCap(cap) }
 
     /// 頂点を並べ始める。``vertex(_:_:)`` で点を置き、``endShape(_:)`` で描く。
@@ -1328,11 +1328,11 @@ extension Sketch {
     ///
     /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
     /// 「どれだけ効かせるか」はアルファが決める。
-    // shot: 1 snippet=770dfac6 taken=88abc9a
-    // shot: 2 snippet=739b6a04 taken=88abc9a
-    // shot: 3 snippet=a57216c1 taken=88abc9a
-    // shot: 4 snippet=ae76263d taken=88abc9a
-    // shot: 5 snippet=ff14ef73 taken=88abc9a
+    // shot: 1 snippet=770dfac6 taken=cedd955
+    // shot: 2 snippet=739b6a04 taken=cedd955
+    // shot: 3 snippet=a57216c1 taken=cedd955
+    // shot: 4 snippet=ae76263d taken=cedd955
+    // shot: 5 snippet=ff14ef73 taken=cedd955
     public func blendMode(_ mode: BlendMode) { canvas.blendMode(mode) }
 
     /// 線の折れ目の形。既定は尖らせる形。
@@ -1412,9 +1412,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=83ed7fe6 taken=88abc9a
-    // shot: 2 snippet=6d2736cd taken=88abc9a
-    // shot: 3 snippet=7fe6028f taken=88abc9a
+    // shot: 1 snippet=83ed7fe6 taken=cedd955
+    // shot: 2 snippet=6d2736cd taken=cedd955
+    // shot: 3 snippet=7fe6028f taken=cedd955
     public func strokeJoin(_ join: StrokeJoin) { canvas.strokeJoin(join) }
     /// 矩形を塗る。
     ///
@@ -1454,8 +1454,8 @@ extension Sketch {
     /// }
     ///
     /// 幅か高さが 0 以下になる指定では**何も描かない**。
-    // shot: 1 snippet=5f2f4b5f taken=88abc9a
-    // shot: 2 snippet=a1283c68 taken=88abc9a
+    // shot: 1 snippet=5f2f4b5f taken=cedd955
+    // shot: 2 snippet=a1283c68 taken=cedd955
     public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.rect(a, b, c, d) }
 
     /// 正方形を塗る。
@@ -1476,7 +1476,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=0545e44d taken=88abc9a
+    // shot: 1 snippet=0545e44d taken=cedd955
     public func square(_ a: Float, _ b: Float, _ extent: Float) { canvas.square(a, b, extent) }
 
     /// 円を塗る。
@@ -1518,8 +1518,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=cc15d686 taken=88abc9a
-    // shot: 2 snippet=99563468 taken=88abc9a
+    // shot: 1 snippet=cc15d686 taken=cedd955
+    // shot: 2 snippet=99563468 taken=cedd955
     public func circle(_ a: Float, _ b: Float, _ diameter: Float) { canvas.circle(a, b, diameter) }
 
     /// 楕円を塗る。
@@ -1559,8 +1559,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=660be063 taken=88abc9a
-    // shot: 2 snippet=4bc091fd taken=88abc9a
+    // shot: 1 snippet=660be063 taken=cedd955
+    // shot: 2 snippet=4bc091fd taken=cedd955
     public func ellipse(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.ellipse(a, b, c, d)
     }
@@ -1643,10 +1643,10 @@ extension Sketch {
     ///
     /// 塗りは**中心を含む扇形**になる。終わりの角度が始まりより小さいときは
     /// **何も描かず**、最初の 1 回だけ知らせる。
-    // shot: 1 snippet=b1d01c8d taken=88abc9a
-    // shot: 2 snippet=de19318a taken=88abc9a
-    // shot: 3 snippet=9301f40a taken=88abc9a
-    // shot: 4 snippet=305be8b5 taken=88abc9a
+    // shot: 1 snippet=b1d01c8d taken=cedd955
+    // shot: 2 snippet=de19318a taken=cedd955
+    // shot: 3 snippet=9301f40a taken=cedd955
+    // shot: 4 snippet=305be8b5 taken=cedd955
     public func arc(
         _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float
     ) {
@@ -1669,7 +1669,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7d0adefe taken=88abc9a
+    // shot: 1 snippet=7d0adefe taken=cedd955
     public func triangle(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float, _ x3: Float, _ y3: Float
     ) {
@@ -1710,8 +1710,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8f205856 taken=88abc9a
-    // shot: 2 snippet=af89c551 taken=88abc9a
+    // shot: 1 snippet=8f205856 taken=cedd955
+    // shot: 2 snippet=af89c551 taken=cedd955
     public func quad(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,
         _ x3: Float, _ y3: Float, _ x4: Float, _ y4: Float
@@ -1762,8 +1762,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=de455ec9 taken=88abc9a
-    // shot: 2 snippet=35a5937e taken=88abc9a
+    // shot: 1 snippet=de455ec9 taken=cedd955
+    // shot: 2 snippet=35a5937e taken=cedd955
     public func point(_ x: Float, _ y: Float) { canvas.point(x, y) }
 
     /// 矩形に渡す座標の読み方。既定は ``ShapeMode/corner``。
@@ -1839,10 +1839,10 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8fd5ed99 taken=88abc9a
-    // shot: 2 snippet=88773cca taken=88abc9a
-    // shot: 3 snippet=c95457e8 taken=88abc9a
-    // shot: 4 snippet=39e1d7b6 taken=88abc9a
+    // shot: 1 snippet=8fd5ed99 taken=cedd955
+    // shot: 2 snippet=88773cca taken=cedd955
+    // shot: 3 snippet=c95457e8 taken=cedd955
+    // shot: 4 snippet=39e1d7b6 taken=cedd955
     public func rectMode(_ mode: ShapeMode) { canvas.rectMode(mode) }
 
     /// 楕円と円弧に渡す座標の読み方。既定は ``ShapeMode/center``。
@@ -1883,8 +1883,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=ace05fd1 taken=88abc9a
-    // shot: 2 snippet=da8b31b4 taken=88abc9a
+    // shot: 1 snippet=ace05fd1 taken=cedd955
+    // shot: 2 snippet=da8b31b4 taken=cedd955
     public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }
     /// 線を引く。塗りは持たない。
     ///
@@ -1924,16 +1924,248 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5d41ed20 taken=88abc9a
-    // shot: 2 snippet=87c26840 taken=88abc9a
+    // shot: 1 snippet=5d41ed20 taken=cedd955
+    // shot: 2 snippet=87c26840 taken=cedd955
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
         canvas.line(x1, y1, x2, y2)
     }
     /// 原点をずらす。
+    ///
+    /// **図形の座標は変えない。** ずらすのは原点のほうで、同じ `square(0, 0, 80)` が
+    /// 違う場所に出る。下の例はどれも同じ 1 行で四角を描いていて、違うのは前に呼ぶ
+    /// ``translate(_:_:)`` だけである (薄い線が原点にいたときの位置)。
+    ///
+    /// 横だけずらす:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(40, 110, 80)
+    ///     translate(150, 0)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(40, 110, 80)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠だけの四角の右に、同じ大きさの橙色の四角が並んでいる | symmetric=y -->
+    ///     ![灰色の枠だけの四角の右に、同じ大きさの橙色の四角が並んでいる](https://i.gyazo.com/4a539ee108132857230c49f0902cb52f.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 縦だけずらす:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(160, 30, 80)
+    ///     translate(0, 140)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     square(160, 30, 80)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠だけの四角の下に、同じ大きさの水色の四角が並んでいる | symmetric=x -->
+    ///     ![灰色の枠だけの四角の下に、同じ大きさの水色の四角が並んでいる](https://i.gyazo.com/fc34d9ce032ae868920ada3421cd796f.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **重ねて呼ぶと足し合わさる。** 2 度呼べば 2 度ぶんずれる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     square(30, 30, 60)
+    ///     translate(100, 70)
+    ///     fill(.display(red: 0.55, green: 0.60, blue: 0.70))
+    ///     square(30, 30, 60)
+    ///     translate(100, 70)
+    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     square(30, 30, 60)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 濃い灰・薄い灰・黄の四角が、左上から右下へ等間隔の階段状に並んでいる -->
+    ///     ![濃い灰・薄い灰・黄の四角が、左上から右下へ等間隔の階段状に並んでいる](https://i.gyazo.com/61c3d3f1b24a6fa55c228934a366d4bb.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=b049f853 taken=cedd955
+    // shot: 2 snippet=2e149d2f taken=cedd955
+    // shot: 3 snippet=b9761949 taken=cedd955
     public func translate(_ x: Float, _ y: Float) { canvas.translate(x, y) }
     /// 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
+    ///
+    /// **回る中心は原点である。** 図形の真ん中ではないので、原点から離れた図形を回すと
+    /// 位置ごと動く。真ん中で回したいときは ``translate(_:_:)`` で原点を図形の
+    /// 中心へ運んでから回す — 下の例はどれもそうしている (薄い枠が回す前の位置)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-60, -60, 120)
+    ///     rotate(0.26)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(-60, -60, 120)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形に、少しだけ時計回りに傾いた橙色の正方形が重なっている -->
+    ///     ![灰色の枠の正方形に、少しだけ時計回りに傾いた橙色の正方形が重なっている](https://i.gyazo.com/3ac184de0bb8aacfbc75693bbbb93c85.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 45 度 (`0.79` ラジアン) 回すと、正方形は菱形に見える:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-60, -60, 120)
+    ///     rotate(0.79)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     square(-60, -60, 120)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形の上に、45 度傾いて菱形に見える水色の正方形が重なっている | symmetric=xy -->
+    ///     ![灰色の枠の正方形の上に、45 度傾いて菱形に見える水色の正方形が重なっている](https://i.gyazo.com/14ab1a48c0eb4df486f6f71d33d1c0a1.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **負の角度は反対向き** (画面の上で反時計回り):
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     rect(-90, -30, 180, 60)
+    ///     rotate(-0.52)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     rect(-90, -30, 180, 60)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 横長の灰色の枠に、左端が上がる向きに傾いた黄色の横長の四角が重なっている -->
+    ///     ![横長の灰色の枠に、左端が上がる向きに傾いた黄色の横長の四角が重なっている](https://i.gyazo.com/5c2c33811e5859573472d5b8bc53a96a.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=31999c20 taken=cedd955
+    // shot: 2 snippet=d8a6fbf0 taken=cedd955
+    // shot: 3 snippet=4d75c8fb taken=cedd955
     public func rotate(_ radians: Float) { canvas.rotate(radians) }
     /// 伸ばす・縮める。
+    ///
+    /// **基準は原点で、図形の中心ではない。** 倍率は軸ごとに別々に決まるので、片方だけ
+    /// 渡せば片方だけ伸びる。下の例は原点を面の中央へ運んでから掛けている (薄い枠が
+    /// 等倍のときの位置)。
+    ///
+    /// 横だけ 2 倍:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-45, -45, 90)
+    ///     scale(2, 1)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(-45, -45, 90)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形をまたいで、横に 2 倍伸びた橙色の長方形が重なっている | symmetric=xy -->
+    ///     ![灰色の枠の正方形をまたいで、横に 2 倍伸びた橙色の長方形が重なっている](https://i.gyazo.com/703913f942c9f3f394e33df6eef57665.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 縦だけ半分:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-45, -45, 90)
+    ///     scale(1, 0.5)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     square(-45, -45, 90)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形の中に、縦が半分に潰れた水色の横長の四角が収まっている | symmetric=xy -->
+    ///     ![灰色の枠の正方形の中に、縦が半分に潰れた水色の横長の四角が収まっている](https://i.gyazo.com/29546ac971a94e11b4b2859ccad1176f.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **線の太さも一緒に掛かる。** 掛けた後に引く線は、倍率のぶん太く (細く) 見える。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-45, -45, 90)
+    ///     scale(1.6, 1.6)
+    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     square(-45, -45, 90)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 細い灰色の枠の正方形の外側に、一回り大きく線も太い黄色の枠の正方形がある | symmetric=xy -->
+    ///     ![細い灰色の枠の正方形の外側に、一回り大きく線も太い黄色の枠の正方形がある](https://i.gyazo.com/30d87c6524acd2e85185dbe01c2cea82.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=76d7590b taken=cedd955
+    // shot: 2 snippet=e61d2850 taken=cedd955
+    // shot: 3 snippet=fe738fca taken=cedd955
     public func scale(_ x: Float, _ y: Float) { canvas.scale(x, y) }
 
     /// 原点を奥行きも含めてずらす。
@@ -1959,9 +2191,112 @@ extension Sketch {
     public func scale(_ x: Float, _ y: Float, _ z: Float) { canvas.scale(x, y, z) }
 
     /// 横方向へ斜めに歪める。
+    ///
+    /// **縦の辺だけが傾く。** 横の辺は水平のまま残るので、正方形は平行四辺形になる。
+    /// ずれる量は原点からの縦の距離に比例するので、**正の角度では下の辺ほど右へ**動く
+    /// (薄い枠が歪める前の位置)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-55, -55, 110)
+    ///     shearX(0.5)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(-55, -55, 110)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形に、下辺が右へずれた橙色の平行四辺形が重なっている -->
+    ///     ![灰色の枠の正方形に、下辺が右へずれた橙色の平行四辺形が重なっている](https://i.gyazo.com/df91781ca0dfd22959333bc36f37b5a4.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **負の角度は反対へ倒れる**:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-55, -55, 110)
+    ///     shearX(-0.5)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     square(-55, -55, 110)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形に、下辺が左へずれた水色の平行四辺形が重なっている -->
+    ///     ![灰色の枠の正方形に、下辺が左へずれた水色の平行四辺形が重なっている](https://i.gyazo.com/d7e5c29e1052867d86b3303375e5a1d5.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=481117e9 taken=cedd955
+    // shot: 2 snippet=a1793d65 taken=cedd955
     public func shearX(_ radians: Float) { canvas.shearX(radians) }
 
     /// 縦方向へ斜めに歪める。
+    ///
+    /// ``shearX(_:)`` と軸が入れ替わる — **横の辺だけが傾き**、縦の辺は垂直のまま残る。
+    /// ずれる量は原点からの横の距離に比例するので、**正の角度では右の辺ほど下へ**動く。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-55, -55, 110)
+    ///     shearY(0.5)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     square(-55, -55, 110)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形に、右辺が下へずれた黄色の平行四辺形が重なっている -->
+    ///     ![灰色の枠の正方形に、右辺が下へずれた黄色の平行四辺形が重なっている](https://i.gyazo.com/e1c57633ffff621e2e6a034ab1f19acd.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **負の角度は反対へ倒れる**:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(2)
+    ///     square(-55, -55, 110)
+    ///     shearY(-0.5)
+    ///     noStroke()
+    ///     fill(.display(red: 0.55, green: 0.85, blue: 0.55))
+    ///     square(-55, -55, 110)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の枠の正方形に、右辺が上へずれた緑色の平行四辺形が重なっている -->
+    ///     ![灰色の枠の正方形に、右辺が上へずれた緑色の平行四辺形が重なっている](https://i.gyazo.com/31825412975ecf1316a352efd44bc74f.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=8e8a2090 taken=cedd955
+    // shot: 2 snippet=f3fcdb4e taken=cedd955
     public func shearY(_ radians: Float) { canvas.shearY(radians) }
 
     /// 与えた変換を、いまの変換の後に重ねる。
@@ -1970,12 +2305,119 @@ extension Sketch {
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
     /// 積んである変換 (``pushMatrix()``) は捨てないので、戻す先は残る。
+    ///
+    /// **どれだけ重ねていても 1 回で戻る。** 下の例は原点を動かして回した後に呼んで
+    /// いるので、最後の四角は面の左上を原点とする素の座標で描かれる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     rotate(0.5)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(-50, -50, 100)
+    ///     resetMatrix()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     square(20, 20, 70)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 中央に傾いた橙色の正方形があり、左上の隅にまっすぐな水色の正方形がある -->
+    ///     ![中央に傾いた橙色の正方形があり、左上の隅にまっすぐな水色の正方形がある](https://i.gyazo.com/e38e62b49f5580c4209b966ed516c724.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=b928daab taken=cedd955
     public func resetMatrix() { canvas.resetMatrix() }
 
     /// いまの変換を積んでおく。
+    ///
+    /// ``popMatrix()`` と対で使う。**挟んだ中で何を掛けても、外へ出れば元に戻る** ので、
+    /// 図形ごとに変換を掛けたいときに前の状態を数えなくて済む。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     noStroke()
+    ///     pushMatrix()
+    ///     rotate(0.79)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(-55, -55, 110)
+    ///     popMatrix()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     square(-30, -30, 60)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 45 度傾いた橙色の正方形の中央に、傾いていない水色の小さな正方形が重なっている | symmetric=xy -->
+    ///     ![45 度傾いた橙色の正方形の中央に、傾いていない水色の小さな正方形が重なっている](https://i.gyazo.com/923ac5c1df5399eaec343b5344dc0132.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **積むのは何段でもよい。** 段ごとに戻る先が別々に残る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     translate(90, 150)
+    ///     pushMatrix()
+    ///     translate(110, 0)
+    ///     pushMatrix()
+    ///     translate(110, 0)
+    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     square(-30, -30, 60)
+    ///     popMatrix()
+    ///     fill(.display(red: 0.55, green: 0.60, blue: 0.70))
+    ///     square(-30, -30, 60)
+    ///     popMatrix()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(-30, -30, 60)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙・灰・黄の同じ大きさの正方形が、左から等間隔に 3 つ並んでいる | symmetric=y -->
+    ///     ![橙・灰・黄の同じ大きさの正方形が、左から等間隔に 3 つ並んでいる](https://i.gyazo.com/782c849f1510bab910e10317a0b8c128.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=5e812adb taken=cedd955
+    // shot: 2 snippet=4752a417 taken=cedd955
     public func pushMatrix() { canvas.pushMatrix() }
 
     /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
+    ///
+    /// **積んでいないときに呼んでも落ちない。** 何もせずそのまま進むので、対にし忘れた
+    /// 場合は「戻らない」ことだけが起きる — 下の例は ``pushMatrix()`` を呼んでいないので、
+    /// 2 つ目の四角も回した座標系のまま描かれる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     translate(200, 150)
+    ///     rotate(0.79)
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     square(-55, -55, 110)
+    ///     popMatrix()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     square(-30, -30, 60)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 45 度傾いた橙色の正方形の中央に、同じく傾いた水色の小さな正方形が重なっている | symmetric=xy -->
+    ///     ![45 度傾いた橙色の正方形の中央に、同じく傾いた水色の小さな正方形が重なっている](https://i.gyazo.com/75d1ddf1cbab5bdb7265ab44779d76e3.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=cef51ea3 taken=cedd955
     public func popMatrix() { canvas.popMatrix() }
 
     /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
@@ -2581,9 +3023,70 @@ extension Sketch {
     /// 変換とスタイルの**両方**を積んでおく。
     ///
     /// 片方だけを積みたいときは ``pushMatrix()`` / ``pushStyle()`` を使う。
+    ///
+    /// **``pushMatrix()`` との違いは、色や線の太さも一緒に戻ること。** 下の例は挟んだ
+    /// 中で原点も色も太さも変えているが、``pop()`` の後の四角は**どれも元のまま**で
+    /// 描かれる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noFill()
+    ///     stroke(.display(red: 0.55, green: 0.60, blue: 0.70))
+    ///     strokeWeight(3)
+    ///     translate(110, 150)
+    ///     push()
+    ///     translate(180, 0)
+    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     strokeWeight(12)
+    ///     square(-45, -45, 90)
+    ///     pop()
+    ///     square(-45, -45, 90)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 右に太い橙色の枠の正方形、左に細い灰色の枠の正方形が並んでいる | symmetric=y -->
+    ///     ![右に太い橙色の枠の正方形、左に細い灰色の枠の正方形が並んでいる](https://i.gyazo.com/5aa73f26bc698ad8e1edd3827d3c74f1.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=92c18fef taken=cedd955
     public func push() { canvas.push() }
 
     /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
+    ///
+    /// **``push()`` と対で使う。** 積んでいないときに呼んでも落ちず、何もせず進む。
+    /// 下の例は 2 段積んで 2 段戻しているので、3 つの四角がそれぞれ別の段の状態で
+    /// 描かれる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     translate(80, 150)
+    ///     fill(.display(red: 0.55, green: 0.60, blue: 0.70))
+    ///     push()
+    ///     translate(120, 0)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     push()
+    ///     translate(120, 0)
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     square(-35, -35, 70)
+    ///     pop()
+    ///     square(-35, -35, 70)
+    ///     pop()
+    ///     square(-35, -35, 70)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰・橙・水色の同じ大きさの正方形が、左から等間隔に 3 つ並んでいる | symmetric=y -->
+    ///     ![灰・橙・水色の同じ大きさの正方形が、左から等間隔に 3 つ並んでいる](https://i.gyazo.com/8cde6942eb1b51e484e0a87fd113a1ad.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=a8da334a taken=cedd955
     public func pop() { canvas.pop() }
 
     // MARK: - 文字
