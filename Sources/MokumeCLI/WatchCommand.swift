@@ -67,6 +67,10 @@ enum WatchCommand {
         say(
             StartupReadsReport.baseLine(
                 base: session.facetBase, given: WorkDirectory.given != nil))
+        // **作り直している間も、状態が読めるようにする。** 作り直しは終わってからしか
+        // 名乗らないので、これが無いと待っている間は画面が 1 文字も動かない (#695)
+        session.willRebuild = { initial in say(initial ? startingLine : rebuildingLine) }
+
         // 子を起こす前に受け口を置く。起こした後だと、その隙間に来た合図で
         // 既定の振る舞い (親だけが即座に終わる) に落ちて子が残る
         installStopHandlers()
@@ -126,6 +130,13 @@ enum WatchCommand {
             say("直前の版を走らせたまま待っている")
         }
     }
+
+    /// 最初の 1 回を始めるときの行。**いちばん長く待つのはここ**である (冷えた状態では
+    /// 依存の解決から走る)。
+    static let startingLine = "作っている… (初めの 1 回は時間がかかる)"
+
+    /// 変化を見つけて作り直すときの行。
+    static let rebuildingLine = "変更を見つけた — 作り直している…"
 
     /// 見張りが自分の行を書く。
     ///

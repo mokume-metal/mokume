@@ -23,10 +23,13 @@ struct WatchSessionTests {
         var ratesGivenToChildren: [String?] = []
         /// 作り直しを頼まれた場所。**パッケージの場所であることを見る** (#331)
         var builtIn: [URL] = []
+        /// 作り直しに入ったところ。**名乗りとの順序**を見るために要る。
+        var onBuild: () -> Void = {}
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
                 build: { directory in
+                    self.onBuild()
                     self.builds += 1
                     self.builtIn.append(directory)
                     // 作り直しには時間がかかる。刻む対象なので時計を進める
@@ -70,6 +73,33 @@ struct WatchSessionTests {
         #expect(session.configuration == nil)
         #expect(session.configurationName == RunCommand.defaultConfigurationName)
         #expect(RunCommand.configurationArguments(session.configuration).isEmpty)
+    }
+
+    /// **始めることを、始める前に言う。** 作り直しはこの流れを塞ぐので、後から言うと
+    /// 待っている間が無言になり、「見張れていない」と読まれる ([#695](https://github.com/mokume-metal/mokume/issues/695))。
+    @Test("作り直しは、始める前に名乗る")
+    func announcesBeforeItRebuilds() throws {
+        let recorder = Recorder()
+        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        var events: [String] = []
+        session.willRebuild = { events.append($0 ? "初回を始める" : "変更で始める") }
+        recorder.onBuild = { events.append("作り直す") }
+
+        session.start()
+        recorder.stamp = "bbb"
+        session.tick()
+
+        #expect(events == ["初回を始める", "作り直す", "変更で始める", "作り直す"])
+    }
+
+    /// **名乗らないのが既定。** 窓口はスケッチを起こさないが、口の側が何も渡さなければ
+    /// 何も起きないことを、ここで固定しておく。
+    @Test("名乗りを渡さなければ、何も起きない")
+    func staysSilentWithoutAListener() throws {
+        let recorder = Recorder()
+        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        session.start()
+        #expect(recorder.builds == 1)
     }
 
     private func makeDirectory() throws -> URL {
