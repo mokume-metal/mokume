@@ -40,6 +40,29 @@ public enum FrameRateNotice {
         configuration(environment: ProcessInfo.processInfo.environment)
     }
 
+    /// 名乗る先が端末か。
+    ///
+    /// **読むのはここだけ。** 判定は ``announces(configuration:isTerminal:)`` が持つ。
+    static var isTerminal: Bool { isatty(STDOUT_FILENO) != 0 }
+
+    /// 端末へ書くときの飾り。行頭へ戻して消してから書く — **同じ 1 行を書き換える。**
+    ///
+    /// 見張る道具の側にも同じ綴りがある。規約は文章で共有し、実装はそれぞれが持つ
+    /// (この綴りを外へ出すかは、外から使う人が現れてから決める)。
+    static let rewrite = "\r\u{1B}[2K"
+
+    /// 名乗るか。
+    ///
+    /// **鍵が与えられていて、かつ端末のときだけ。** 速さは走らせている間に人が読む
+    /// 生きた数字で、記録に毎秒 1 行残っても情報にならない — 1 時間で 3600 行になり、
+    /// その間に起きた作り直しの失敗を埋める ([#685])。機械が読む口は観測の側にあり、
+    /// そちらは 1 バイトも変わらない。
+    ///
+    /// [#685]: https://github.com/mokume-metal/mokume/issues/685
+    static func announces(configuration: String?, isTerminal: Bool) -> Bool {
+        configuration != nil && isTerminal
+    }
+
     /// 1 行。
     ///
     /// **進んでいないときに 0 と書かない。** 0 は「測ったら 0 だった」と読めるが、実際は

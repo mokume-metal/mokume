@@ -23,9 +23,13 @@ enum WatchCommand {
 
     /// 終わりの合図として受けるもの。
     ///
+    /// **端末が消える形 (SIGHUP) がいちばん多い。** 見張りを起こした端末やセッションが
+    /// 終わると、既定ではその場で親だけが消え、子が離れる — [#454](https://github.com/mokume-metal/mokume/issues/454)
+    /// が記録した孤児はこの形をしている ([#691](https://github.com/mokume-metal/mokume/issues/691))。
+    ///
     /// **捕まえられるものだけを捕まえる。** 強制終了 (SIGKILL) と、親ごと消える終わり方は
     /// 受け取れないので、そこは直したふりをしない ([#681](https://github.com/mokume-metal/mokume/issues/681))。
-    static let stopSignals: [Int32] = [SIGINT, SIGTERM]
+    static let stopSignals: [Int32] = [SIGINT, SIGTERM, SIGHUP]
 
     /// - Parameter watching: 巡回のしかた。**検査から差し替える** — 既定は合図が来るまで
     ///   回り続けるので、始める前に止まることを確かめる検査がここで固まらないようにする。
@@ -54,10 +58,10 @@ enum WatchCommand {
         // パッケージの場所へ置くと観測とだけ場所が割れる (#331)
         let session = WatchSession(
             directory: directory, facetBase: WorkDirectory.given ?? directory, reportsRate: true)
-        print("見張っている: \(directory.path)")
+        say("見張っている: \(directory.path)")
         // **常に名乗る。** 以前は基準がスケッチの場所と違うときだけ出していたが、それだと
         // 窓口の側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
-        print(
+        say(
             StartupReadsReport.baseLine(
                 base: session.facetBase, given: WorkDirectory.given != nil))
         // 子を起こす前に受け口を置く。起こした後だと、その隙間に来た合図で
@@ -109,14 +113,32 @@ enum WatchCommand {
     ///
     /// 止めたかどうかを名乗る — 子が既に死んでいた場合と、止めた場合は別の出来事である。
     static func finish(_ session: WatchSession) {
-        print(session.stop() ? "見張りを終える (走らせていたスケッチを止めた)" : "見張りを終える")
+        say(session.stop() ? "見張りを終える (走らせていたスケッチを止めた)" : "見張りを終える")
     }
 
     private static func report(_ outcome: BuildReport) {
-        print(outcome.summary)
+        say(outcome.summary)
         if !outcome.ok, !outcome.output.isEmpty {
-            print(outcome.output)
-            print("直前の版を走らせたまま待っている")
+            say(outcome.output)
+            say("直前の版を走らせたまま待っている")
         }
+    }
+
+    /// 見張りが自分の行を書く。
+    ///
+    /// **端末では、速さの行を消してから書く。** 走らせているスケッチは同じ 1 行を書き換え
+    /// 続けているので (`FrameRateNotice`)、消さずに書くと作り直しの記録がその行の**途中から
+    /// 続く**形になり読めなくなる ([#685](https://github.com/mokume-metal/mokume/issues/685))。
+    static func say(_ text: String, isTerminal: Bool = isatty(STDOUT_FILENO) != 0) {
+        print(line(text, isTerminal: isTerminal))
+    }
+
+    /// 書く 1 行。
+    ///
+    /// ライブラリ側にも同じ綴りがあるが、道具からは使えない (外へ出していない)。
+    /// 規約は文章で共有し、実装はそれぞれが持つ — 出すべきかどうかは、外から使う人が
+    /// 現れてから決める (`AtomicWrite` と同じ扱い)。
+    static func line(_ text: String, isTerminal: Bool) -> String {
+        isTerminal ? "\r\u{1B}[2K" + text : text
     }
 }

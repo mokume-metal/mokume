@@ -65,6 +65,24 @@ struct WatchCommandTests {
         }
     }
 
+    // MARK: - 書くとき
+
+    /// **端末では、速さの行を消してから書く。** 走らせているスケッチは同じ 1 行を書き換え
+    /// 続けているので、消さずに書くと作り直しの記録がその行の途中から続く形になる。
+    @Test("端末へ書くときは、速さの行を消してから書く")
+    func clearsTheRateLineOnATerminal() {
+        let line = WatchCommand.line("作り直した", isTerminal: true)
+        #expect(line.hasPrefix("\r"))
+        #expect(line.contains("[2K"))
+        #expect(line.hasSuffix("作り直した"))
+    }
+
+    /// **記録へ落とすときは飾らない。** 制御の文字がそのまま残ると読めない。
+    @Test("端末でなければ、飾りを付けない")
+    func doesNotDecorateARecord() {
+        #expect(WatchCommand.line("作り直した", isTerminal: false) == "作り直した")
+    }
+
     // MARK: - 終えるとき
 
     /// **合図はハンドラの外で効く。** ハンドラは印を立てるだけで、終わらせるのは巡回。
@@ -79,6 +97,15 @@ struct WatchCommandTests {
         #expect(watchStopRequested == 0)
         raise(SIGTERM)
         #expect(watchStopRequested != 0)
+    }
+
+    /// **端末が消える形がいちばん多い。** 見張りを起こしたセッションが終わる経路で、
+    /// [#454](https://github.com/mokume-metal/mokume/issues/454) の孤児はこの形をしている。
+    @Test("受ける合図に、端末が消える形が入っている")
+    func listensForTheHangUp() {
+        #expect(WatchCommand.stopSignals.contains(SIGHUP))
+        #expect(WatchCommand.stopSignals.contains(SIGINT))
+        #expect(WatchCommand.stopSignals.contains(SIGTERM))
     }
 
     @Test("印が立つと、巡回を抜ける")
