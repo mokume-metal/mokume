@@ -3960,22 +3960,78 @@ extension Sketch {
     /// }
     /// ```
     ///
+    /// 下は同じ球を、艶の鋭さだけ変えて 3 つ描いたもの。**光の当たる側に白い点が
+    /// 現れ、数を上げるほど小さく強くなる。**
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     lights()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     noStroke()
+    ///     for (index, amount) in [Float(0), 16, 128].enumerated() {
+    ///         shininess(amount)
+    ///         push()
+    ///         translate(70 + Float(index) * 130, 150, 0)
+    ///         sphere(55)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の球が 3 つ。左は艶が無く、中央は広くぼやけた白い光沢、右は小さく鋭い光沢が乗っている -->
+    ///     ![橙色の球が 3 つ。左は艶が無く、中央は広くぼやけた白い光沢、右は小さく鋭い光沢が乗っている](https://i.gyazo.com/2130395c3278efb4ccb1caecbed9be5a.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     ///   **光を 1 つも置かなければ立体は塗り 1 色で出る**ので、材質はどれも効かない
     ///   (書いてあれば警告が出る)。
+    // shot: 1 snippet=976efc57 taken=2d4b8ab
     public func shininess(_ amount: Float) { canvas.shininess(amount) }
 
     /// 金属らしさ。`0` が非金属 (既定)、`1` が金属。
     ///
-    /// 金属は拡散を持たず、**周りを映すことでしか見えない**。いまは映り込む先が
-    /// 無いので、``ambientLight(_:)`` で置いた底上げの光を一様な周りとして映す —
-    /// 底上げの光を 1 つも置かずに金属を上げると、艶だけが残って暗くなる
-    /// (このとき警告が出る)。
+    /// 金属は拡散を持たず、**周りを映すことでしか見えない**。映す先になるのは
+    /// ``surroundings(_:)`` で置いた周囲で、それが無ければ ``ambientLight(_:)`` で
+    /// 置いた底上げの光を一様な周りとして映す。**どちらも置かずに金属を上げると、
+    /// 艶だけが残って暗くなる** (このとき警告が出る)。
     ///
     /// 艶の色も変わる。非金属の艶は光の色のまま白く出るが、金属の艶は塗りの色に
     /// 染まる。
     ///
+    /// 下は同じ球を、金属らしさだけ変えて 3 つ描いたもの。光は 1 つも置かず、
+    /// ``surroundings(_:)`` だけを置いている。**上げるほど周囲の映り込みが強くなり、
+    /// その色は塗りに染まる** — 上下の明暗の差が開き、全体が塗りの色みへ寄っていく。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.06, green: 0.06, blue: 0.07))
+    ///     surroundings(.studio)
+    ///     noStroke()
+    ///     fill(.display(red: 0.90, green: 0.72, blue: 0.45))
+    ///     shininess(90)
+    ///     for (index, amount) in [Float(0), 0.5, 1].enumerated() {
+    ///         metalness(amount)
+    ///         push()
+    ///         translate(70 + Float(index) * 130, 150, 0)
+    ///         sphere(55)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 球が 3 つ。右へ行くほど上下の明暗の差がはっきりし、色みも濃い黄土色へ寄っていく -->
+    ///     ![球が 3 つ。右へ行くほど上下の明暗の差がはっきりし、色みも濃い黄土色へ寄っていく](https://i.gyazo.com/27ab3fd68a1afeddac4bf2ebdbddab1b.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 1 snippet=10d0313c taken=2d4b8ab
     public func metalness(_ amount: Float) { canvas.metalness(amount) }
 
     /// 周りの光 (``ambientLight(_:)``) をどれだけ返すか。既定は白 = 全部返す。
@@ -3987,7 +4043,37 @@ extension Sketch {
     /// ambient(.display(red: 0.3, green: 0.3, blue: 0.3))   // 周りの光を 3 割だけ返す
     /// ```
     ///
+    /// **動くのはほとんど暗い側である。** 下は同じ球を、返す量だけ変えて 3 つ描いた
+    /// もの — 陰の側が 6 分の 1 まで落ちるあいだ、直接の光が当たっている側は 1 割ほど
+    /// しか下がらない。結果として**陰影は深くなる**。``emissive(_:)`` とはここが逆に
+    /// なる (あちらは陰影を浅くする)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     ambientLight(.opaque(red: 0.45, green: 0.45, blue: 0.45))
+    ///     directionalLight(.opaque(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     noStroke()
+    ///     for (index, level) in [Float(1), 0.5, 0.1].enumerated() {
+    ///         ambient(.display(red: level, green: level, blue: level))
+    ///         push()
+    ///         translate(70 + Float(index) * 130, 150, 0)
+    ///         sphere(55)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の球が 3 つ。明るい側はほとんど変わらないまま、陰の側が左から右へ暗く沈んでいく -->
+    ///     ![橙色の球が 3 つ。明るい側はほとんど変わらないまま、陰の側が左から右へ暗く沈んでいく](https://i.gyazo.com/310b983eb22e64f26d243bb64a27f7de.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 1 snippet=c2ebed5d taken=2d4b8ab
     public func ambient(_ color: LinearRGBA) { canvas.ambient(color) }
 
     /// 自ら出す光。光が当たっていない側にも同じだけ出る。
@@ -3995,7 +4081,36 @@ extension Sketch {
     /// **周りを照らしはしない** — その面が明るく見えるだけで、ほかの立体には届かない。
     /// 明かりそのものを描きたいときは、同じ場所に ``pointLight(_:_:_:_:)`` も置く。
     ///
+    /// **足されるのは明暗を問わず同じ量である。** 下は同じ球を、自ら出す光だけ変えて
+    /// 3 つ描いたもの — 同じ量でも暗いところほど見た目の変化は大きいので、**陰影は
+    /// 浅くなっていく**。``ambient(_:)`` とはここが逆になる (あちらは陰影を深くする)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     ambientLight(.opaque(red: 0.10, green: 0.10, blue: 0.10))
+    ///     directionalLight(.opaque(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     noStroke()
+    ///     for (index, glow) in [Float(0), 0.15, 0.4].enumerated() {
+    ///         emissive(.display(red: glow, green: glow, blue: glow))
+    ///         push()
+    ///         translate(70 + Float(index) * 130, 150, 0)
+    ///         sphere(55)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の球が 3 つ。左から右へ、陰の側から先に明るくなり、陰影が浅く平らになっていく -->
+    ///     ![橙色の球が 3 つ。左から右へ、陰の側から先に明るくなり、陰影が浅く平らになっていく](https://i.gyazo.com/194cfd9c126347900e037e36cd06e868.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 1 snippet=2550be15 taken=2d4b8ab
     public func emissive(_ color: LinearRGBA) { canvas.emissive(color) }
 
     // MARK: - 周囲
@@ -4124,8 +4239,43 @@ extension Sketch {
     /// ``surroundings(_:)`` の光・``emissive(_:)`` の自発光は残り、``ambient(_:)`` は
     /// 影の内外を問わず効く。
     ///
+    /// 下はこのあとの 3 枚と同じ場面で、影の設定を何も足していないもの。比べるときの
+    /// 基準になる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     // 少し上から見下ろす
+    ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
+    ///     lights()
+    ///     shadows(true)
+    ///     noStroke()
+    ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
+    ///     castShadow(false)
+    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     push()
+    ///     translate(200, 250, -20)
+    ///     box(400, 8, 300)
+    ///     pop()
+    ///     castShadow(true)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     push()
+    ///     translate(180, 120, 20)
+    ///     sphere(75)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 見下ろした灰色の床の上に橙色の球が浮かび、床の左奥にその影が落ちている -->
+    ///     ![見下ろした灰色の床の上に橙色の球が浮かび、床の左奥にその影が落ちている](https://i.gyazo.com/c14865869e0a99b600596cad935e0124.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。毎フレーム
     ///   書いても焼き付け先は作り直さないので、繰り返しの負担にはならない。
+    // shot: 1 snippet=17289524 taken=2d4b8ab
     public func shadows(_ enabled: Bool) { canvas.shadows(enabled) }
 
     /// 影を焼き付ける範囲の一辺 (世界の長さ)。
@@ -4137,13 +4287,87 @@ extension Sketch {
     /// ずっと小さい世界 (1 単位を 1 メートルとして数十単位、など) を作るときは、
     /// その世界に合わせた長さを渡す。渡さないと影が数画素に潰れる。
     ///
+    /// **粗さを決めるのは 範囲 ÷ 画素数**である。下は ``shadows(_:)`` と同じ場面で
+    /// 範囲だけを広げたもので、``shadowDetail(_:)`` を下げたときと同じ形の粗さが出る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     // 少し上から見下ろす
+    ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
+    ///     lights()
+    ///     shadows(true)
+    ///     noStroke()
+    ///     // 面の対角 (既定) よりずっと広い範囲を焼く
+    ///     shadowRange(8000)
+    ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
+    ///     castShadow(false)
+    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     push()
+    ///     translate(200, 250, -20)
+    ///     box(400, 8, 300)
+    ///     pop()
+    ///     castShadow(true)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     push()
+    ///     translate(180, 120, 20)
+    ///     sphere(75)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ場面だが、影の縁が階段状にがたつき、影がひとまわり痩せている -->
+    ///     ![同じ場面だが、影の縁が階段状にがたつき、影がひとまわり痩せている](https://i.gyazo.com/95e2213c287a8493be11b1f160ce0a70.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 1 snippet=55bb3714 taken=2d4b8ab
     public func shadowRange(_ size: Float) { canvas.shadowRange(size) }
 
     /// 影を焼き付ける面の一辺の画素数。既定は 1024。
     ///
     /// 大きくすると縁が細かくなり、そのぶん焼くのに時間がかかる。**同じ数を渡し
     /// 続けるかぎり、焼き付け先は作り直されない。**
+    ///
+    /// 下は ``shadows(_:)`` と同じ場面で、画素数だけを落としたもの。``shadowRange(_:)``
+    /// を広げたときと同じ粗さになる — **効いているのは 範囲 ÷ 画素数の比**だからである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     // 少し上から見下ろす
+    ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
+    ///     lights()
+    ///     shadows(true)
+    ///     noStroke()
+    ///     // 下限まで落とす (64...4096 の範囲を取る)
+    ///     shadowDetail(64)
+    ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
+    ///     castShadow(false)
+    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     push()
+    ///     translate(200, 250, -20)
+    ///     box(400, 8, 300)
+    ///     pop()
+    ///     castShadow(true)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     push()
+    ///     translate(180, 120, 20)
+    ///     sphere(75)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 範囲を広げた絵とまったく同じ粗さで、影の縁が階段状にがたついている -->
+    ///     ![範囲を広げた絵とまったく同じ粗さで、影の縁が階段状にがたついている](https://i.gyazo.com/df96ed6e41c9ed077b68cecb9b3cf09a.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=48cf482c taken=2d4b8ab
     public func shadowDetail(_ size: Int) { canvas.shadowDetail(size) }
 
     /// 影の縁の破綻を抑える量。既定は `0.0025`。
@@ -4151,15 +4375,129 @@ extension Sketch {
     /// 焼いた 1 画素の中で奥行きが変わるので、そのままだと**自分の影が自分の上に
     /// 縞として出る**。それを避けるための余裕で、大きくしすぎると影が形から離れて
     /// 浮いて見える。
+    ///
+    /// 下は ``shadows(_:)`` と同じ場面で、余裕を 0 にしたもの。**球の明るい側に、
+    /// 自分の影が細かい縞になって浮く** — これが避けようとしている破綻である。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     // 少し上から見下ろす
+    ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
+    ///     lights()
+    ///     shadows(true)
+    ///     noStroke()
+    ///     // 余裕を外すと破綻が出る (既定は 0.0025)
+    ///     shadowBias(0)
+    ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
+    ///     castShadow(false)
+    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     push()
+    ///     translate(200, 250, -20)
+    ///     box(400, 8, 300)
+    ///     pop()
+    ///     castShadow(true)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     push()
+    ///     translate(180, 120, 20)
+    ///     sphere(75)
+    ///     pop()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ場面だが、球の明るい側に細かい縞状の汚れが浮いている -->
+    ///     ![同じ場面だが、球の明るい側に細かい縞状の汚れが浮いている](https://i.gyazo.com/8d49bfb070bb93f481a2a7a848ef6bef.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=c92ffd08 taken=2d4b8ab
     public func shadowBias(_ amount: Float) { canvas.shadowBias(amount) }
 
     /// これから置く形が、影を落とす側か。既定は落とす。
     ///
     /// 床のように「受けるだけ」の形は落とす側から外す。**全体を切るしか無いと、
     /// 自己遮蔽の強い形を置いた作品が影ごと諦めることになる。**
+    ///
+    /// **形ごとに決まる。** 下は同じ高さに球を 2 つ置き、右だけを落とす側から外した
+    /// もの — 影は左の球のぶんしか出ない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
+    ///     lights()
+    ///     shadows(true)
+    ///     noStroke()
+    ///     castShadow(false)
+    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     push()
+    ///     translate(200, 250, -20)
+    ///     box(400, 8, 300)
+    ///     pop()
+    ///     // 左の球だけが影を落とす
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     for (index, casts) in [true, false].enumerated() {
+    ///         castShadow(casts)
+    ///         push()
+    ///         translate(130 + Float(index) * 145, 120, 20)
+    ///         sphere(60)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 床の上に橙色の球が 2 つ並び、影は左の球の下にだけ落ちている -->
+    ///     ![床の上に橙色の球が 2 つ並び、影は左の球の下にだけ落ちている](https://i.gyazo.com/3ffbff84eee487311590fabd018885a4.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=3bf54063 taken=2d4b8ab
     public func castShadow(_ enabled: Bool) { canvas.castShadow(enabled) }
 
     /// これから置く形が、影を受ける側か。既定は受ける。
+    ///
+    /// **落とす側と同じく、形ごとに決まる。** 下は床を 2 枚に割って右だけを受ける側
+    /// から外し、それぞれの上に球を置いたもの — 落ちている影は左の床にしか出ない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
+    ///     lights()
+    ///     shadows(true)
+    ///     noStroke()
+    ///     // 床を 2 枚。右の 1 枚だけ受ける側から外す
+    ///     castShadow(false)
+    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     for (index, receives) in [true, false].enumerated() {
+    ///         receiveShadow(receives)
+    ///         push()
+    ///         translate(102 + Float(index) * 196, 250, -20)
+    ///         box(188, 8, 300)
+    ///         pop()
+    ///     }
+    ///     receiveShadow(true)
+    ///     // 球は 2 つとも同じように落とす
+    ///     castShadow(true)
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     for index in 0..<2 {
+    ///         push()
+    ///         translate(135 + Float(index) * 145, 120, 20)
+    ///         sphere(60)
+    ///         pop()
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 2 枚に割れた床の上に橙色の球が 2 つ。影が出ているのは左の床だけで、右の床は継ぎ目から先が一様に明るい -->
+    ///     ![2 枚に割れた床の上に橙色の球が 2 つ。影が出ているのは左の床だけで、右の床は継ぎ目から先が一様に明るい](https://i.gyazo.com/ef2bac62139783c79bfd8f6d6ef1ab3c.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=6a405215 taken=2d4b8ab
     public func receiveShadow(_ enabled: Bool) { canvas.receiveShadow(enabled) }
 
     // MARK: - 乱数と揺らぎ
