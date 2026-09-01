@@ -808,8 +808,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a9a4b1c1 taken=cedd955
-    // shot: 2 snippet=06a34484 taken=cedd955
+    // shot: 1 snippet=a9a4b1c1 taken=1b3aa1f
+    // shot: 2 snippet=06a34484 taken=1b3aa1f
     public func background(_ color: LinearRGBA) { canvas.background(color) }
     /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -854,8 +854,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=4553e138 taken=cedd955
-    // shot: 2 snippet=471b5a72 taken=cedd955
+    // shot: 1 snippet=4553e138 taken=1b3aa1f
+    // shot: 2 snippet=471b5a72 taken=1b3aa1f
     public func fill(_ color: LinearRGBA) { canvas.fill(color) }
     /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     ///
@@ -898,8 +898,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=52e2382e taken=cedd955
-    // shot: 2 snippet=9fd52b82 taken=cedd955
+    // shot: 1 snippet=52e2382e taken=1b3aa1f
+    // shot: 2 snippet=9fd52b82 taken=1b3aa1f
     public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
     /// これから引く線の太さ (画素)。
     ///
@@ -942,8 +942,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7aee288f taken=cedd955
-    // shot: 2 snippet=c3229bad taken=cedd955
+    // shot: 1 snippet=7aee288f taken=1b3aa1f
+    // shot: 2 snippet=c3229bad taken=1b3aa1f
     public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
 
     /// 図形の内側を塗らない。輪郭だけの図形になる。
@@ -968,7 +968,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=848590b4 taken=cedd955
+    // shot: 1 snippet=848590b4 taken=1b3aa1f
     public func noFill() { canvas.noFill() }
 
     /// 線を引かない。図形の輪郭も出なくなる。
@@ -993,7 +993,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5e1b5cf3 taken=cedd955
+    // shot: 1 snippet=5e1b5cf3 taken=1b3aa1f
     public func noStroke() { canvas.noStroke() }
 
     /// 線の端の形。既定は丸。
@@ -1070,22 +1070,118 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5fd70319 taken=cedd955
-    // shot: 2 snippet=e12f5d6e taken=cedd955
-    // shot: 3 snippet=9387a57e taken=cedd955
+    // shot: 1 snippet=5fd70319 taken=1b3aa1f
+    // shot: 2 snippet=e12f5d6e taken=1b3aa1f
+    // shot: 3 snippet=9387a57e taken=1b3aa1f
     public func strokeCap(_ cap: StrokeCap) { canvas.strokeCap(cap) }
 
     /// 頂点を並べ始める。``vertex(_:_:)`` で点を置き、``endShape(_:)`` で描く。
     ///
-    /// ```swift
-    /// beginShape()
-    /// vertex(20, 20)
-    /// vertex(80, 30)
-    /// vertex(50, 80)
-    /// endShape(.close)
-    /// ```
+    /// **同じ点の並びが、読み方 (``VertexKind``) で別の絵になる。** 下の 4 枚はどれも
+    /// まったく同じ 6 点を渡していて、変えたのは `beginShape` の引数だけである。
     ///
-    /// 既定の読み方 (``VertexKind/polygon``) では、**凹んでいても穴があってもよい**。
+    /// 既定の ``VertexKind/polygon`` は、置いた点を順に結んだ**周をなす 1 つの形**として
+    /// 読む。**凹んでいても穴があってもよい**。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     beginShape(.polygon)
+    ///     vertex(50, 60)
+    ///     vertex(230, 30)
+    ///     vertex(350, 90)
+    ///     vertex(340, 250)
+    ///     vertex(150, 275)
+    ///     vertex(60, 215)
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色に塗られた、角が 6 つのいびつな面が 1 つ -->
+    ///     ![水色に塗られた、角が 6 つのいびつな面が 1 つ](https://i.gyazo.com/63f8783d7f22a1edd1afaaccdaa3c78d.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``VertexKind/points`` は 1 点ずつ独立した点として読む。塗りではなく**線の色と
+    /// 太さ**で出るので、``noStroke()`` のままだと何も描かれない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     strokeWeight(18)
+    ///     beginShape(.points)
+    ///     vertex(50, 60)
+    ///     vertex(230, 30)
+    ///     vertex(350, 90)
+    ///     vertex(340, 250)
+    ///     vertex(150, 275)
+    ///     vertex(60, 215)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の丸い点が 6 つ、輪を描くように散らばっている -->
+    ///     ![水色の丸い点が 6 つ、輪を描くように散らばっている](https://i.gyazo.com/5e60f18f38f0e074989d518ca091b3b2.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``VertexKind/lines`` は 2 点ずつ独立した線として読む。**繋がらない** — 6 点なら
+    /// 3 本の線分になり、余った点は捨てられる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     strokeWeight(8)
+    ///     beginShape(.lines)
+    ///     vertex(50, 60)
+    ///     vertex(230, 30)
+    ///     vertex(350, 90)
+    ///     vertex(340, 250)
+    ///     vertex(150, 275)
+    ///     vertex(60, 215)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の太い線分が 3 本、互いに繋がらず離れて並んでいる -->
+    ///     ![水色の太い線分が 3 本、互いに繋がらず離れて並んでいる](https://i.gyazo.com/033b018714cb3207817871800b24cbf1.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``VertexKind/triangles`` は 3 点ずつ独立した三角形として読む。こちらは塗られる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     beginShape(.triangles)
+    ///     vertex(50, 60)
+    ///     vertex(230, 30)
+    ///     vertex(350, 90)
+    ///     vertex(340, 250)
+    ///     vertex(150, 275)
+    ///     vertex(60, 215)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の平たい三角形が 2 つ、上と下に離れて並んでいる -->
+    ///     ![水色の平たい三角形が 2 つ、上と下に離れて並んでいる](https://i.gyazo.com/d82039440a24ef5668f3fec4d71e5d2e.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
     ///
     /// ## 奥行きを持たせる
     ///
@@ -1107,9 +1203,88 @@ extension Sketch {
     /// 頂点を置く前に ``fill(_:)`` を変えると、**その頂点からの塗りが変わる** —
     /// 色は頂点の間でなめらかに移る。平面でも立体でも同じように効く。
     /// 線の色は形を閉じるときのものが使われる (頂点ごとには変わらない)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     beginShape()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     vertex(200, 40)
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     vertex(350, 250)
+    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     vertex(60, 230)
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙・水色・黄の 3 色が、1 つの三角形の中でなめらかに混ざっている -->
+    ///     ![橙・水色・黄の 3 色が、1 つの三角形の中でなめらかに混ざっている](https://i.gyazo.com/dbe1887aad37bbb36b2dab85b663f608.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=088b2c60 taken=1b3aa1f
+    // shot: 2 snippet=3c826cb4 taken=1b3aa1f
+    // shot: 3 snippet=4f541c98 taken=1b3aa1f
+    // shot: 4 snippet=2d751eab taken=1b3aa1f
+    // shot: 5 snippet=c8cdea48 taken=1b3aa1f
     public func beginShape(_ kind: VertexKind = .polygon) { canvas.beginShape(kind) }
 
     /// 頂点を 1 つ置く。
+    ///
+    /// **置いた順にそのまま結ばれる。** 周は凹んでいてもよく、へこみはへこみのまま塗られる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     beginShape()
+    ///     vertex(60, 40)
+    ///     vertex(340, 40)
+    ///     vertex(340, 130)
+    ///     vertex(200, 130)
+    ///     vertex(200, 260)
+    ///     vertex(60, 260)
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 上が横いっぱいに広がり、そこから左半分だけが下へ伸びた橙色の面 -->
+    ///     ![上が横いっぱいに広がり、そこから左半分だけが下へ伸びた橙色の面](https://i.gyazo.com/385be95c1bff7165c857831e334f3955.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **順が違えば別の形になる。** 同じ 4 点でも、2 番目と 3 番目を入れ替えると周が
+    /// 自分自身と交差する。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     strokeWeight(5)
+    ///     beginShape()
+    ///     vertex(80, 60)
+    ///     vertex(330, 250)
+    ///     vertex(320, 70)
+    ///     vertex(70, 240)
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の線が中央で交差し、左右に縦の辺を持つ蝶ネクタイのような形になっている -->
+    ///     ![水色の線が中央で交差し、左右に縦の辺を持つ蝶ネクタイのような形になっている](https://i.gyazo.com/1c4621f3d160c15325d59205f0715563.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=1242029c taken=1b3aa1f
+    // shot: 2 snippet=d106bd46 taken=1b3aa1f
     public func vertex(_ x: Float, _ y: Float) { canvas.vertex(x, y) }
 
     /// 奥行きを持つ頂点を 1 つ置く。**この形は立体になる。**
@@ -1173,8 +1348,63 @@ extension Sketch {
 
     /// 3 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
     ///
+    /// **2 つの制御点は通らない** — 曲線を引っぱる位置である。下の例では灰色の丸が
+    /// 制御点で、細い線がどちらの端から引っぱっているかを示している。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(1)
+    ///     line(60, 250, 100, 40)
+    ///     line(340, 220, 200, 90)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(100, 40, 12)
+    ///     circle(200, 90, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     vertex(60, 250)
+    ///     bezierVertex(100, 40, 200, 90, 340, 220)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の曲線が左下から右下へ弧を描き、灰色の細い線が 2 つの制御点へ伸びている -->
+    ///     ![橙色の曲線が左下から右下へ弧を描き、灰色の細い線が 2 つの制御点へ伸びている](https://i.gyazo.com/fe7006ac47c62f7b51f16f8bbbf46f09.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **繋げて呼べば、閉じた形も作れる。** 前の区間の終点が次の区間の始点になる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     beginShape()
+    ///     vertex(180, 50)
+    ///     bezierVertex(340, 70, 320, 230, 210, 260)
+    ///     bezierVertex(90, 230, 60, 110, 180, 50)
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の、木の葉のようにふくらんだ閉じた形 -->
+    ///     ![水色の、木の葉のようにふくらんだ閉じた形](https://i.gyazo.com/2f70a2339d3ed646904439376d90e4ea.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
     /// 始点が無ければ引きようがない。
+    // shot: 1 snippet=d80d93dd taken=1b3aa1f
+    // shot: 2 snippet=3f38b979 taken=1b3aa1f
     public func bezierVertex(
         _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
     ) {
@@ -1182,6 +1412,37 @@ extension Sketch {
     }
 
     /// 2 次の曲線で、いまの点から `x`・`y` まで繋ぐ。
+    ///
+    /// **制御点は 1 つ。** ``bezierVertex(_:_:_:_:_:_:)`` より書くことが少ない代わりに、
+    /// 両端で別々の曲がり方を与えることはできない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     strokeWeight(1)
+    ///     line(60, 250, 260, 40)
+    ///     line(340, 210, 260, 40)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(260, 40, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     vertex(60, 250)
+    ///     quadraticVertex(260, 40, 340, 210)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 黄色の曲線が 1 つの制御点へ引き寄せられ、灰色の細い線が両端からその点へ伸びている -->
+    ///     ![黄色の曲線が 1 つの制御点へ引き寄せられ、灰色の細い線が両端からその点へ伸びている](https://i.gyazo.com/55ebcbd9b72c0a21cb03b0b925e82bd3.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=1b8fea51 taken=1b3aa1f
     public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
         canvas.quadraticVertex(cx, cy, x, y)
     }
@@ -1189,22 +1450,375 @@ extension Sketch {
     /// 通過点を結ぶ曲線の制御点を置く。
     ///
     /// **4 つ揃って初めて 1 区間が引ける。** 最初と最後の点は曲がり方を決めるためだけに
-    /// 使われ、その間だけが描かれる — 端まで描きたいときは端の点を 2 度置く。
+    /// 使われ、その間だけが描かれる。下の 4 点 (灰色の丸) で引かれるのは、真ん中の
+    /// 2 点を結ぶ 1 区間だけである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(60, 230, 12)
+    ///     circle(140, 80, 12)
+    ///     circle(260, 220, 12)
+    ///     circle(350, 60, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     curveVertex(60, 230)
+    ///     curveVertex(140, 80)
+    ///     curveVertex(260, 220)
+    ///     curveVertex(350, 60)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の点が 4 つ散らばり、橙色の曲線は真ん中の 2 点の間にだけ引かれている -->
+    ///     ![灰色の点が 4 つ散らばり、橙色の曲線は真ん中の 2 点の間にだけ引かれている](https://i.gyazo.com/4ecda07ed6c5ce52abb7aebd230fdc88.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **端まで描きたいときは端の点を 2 度置く。** 点の位置は変えていない — 増やしたのは
+    /// 「曲がり方を決めるためだけの点」のほうである。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(60, 230, 12)
+    ///     circle(140, 80, 12)
+    ///     circle(260, 220, 12)
+    ///     circle(350, 60, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     curveVertex(60, 230)
+    ///     curveVertex(60, 230)
+    ///     curveVertex(140, 80)
+    ///     curveVertex(260, 220)
+    ///     curveVertex(350, 60)
+    ///     curveVertex(350, 60)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ 4 点を通る水色の曲線が、左下の端から右上の端まで引かれている -->
+    ///     ![同じ 4 点を通る水色の曲線が、左下の端から右上の端まで引かれている](https://i.gyazo.com/a85ebc2fbea9ebb9f307f8b7904328d5.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=51f26e08 taken=1b3aa1f
+    // shot: 2 snippet=36f4228e taken=1b3aa1f
     public func curveVertex(_ x: Float, _ y: Float) { canvas.curveVertex(x, y) }
 
     /// 曲線をいくつの直線で近似するか。
+    ///
+    /// **1 区間あたりの刻みの数**で、大きいほどなめらかになる (既定は 20)。
+    /// ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` / ``curveVertex(_:_:)``
+    /// のどれにも効く。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     curveDetail(2)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(60, 230, 12)
+    ///     circle(140, 80, 12)
+    ///     circle(260, 220, 12)
+    ///     circle(350, 60, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     curveVertex(60, 230)
+    ///     curveVertex(60, 230)
+    ///     curveVertex(140, 80)
+    ///     curveVertex(260, 220)
+    ///     curveVertex(350, 60)
+    ///     curveVertex(350, 60)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 刻みが粗く、黄色の曲線が数本の直線に折れて見える -->
+    ///     ![刻みが粗く、黄色の曲線が数本の直線に折れて見える](https://i.gyazo.com/b39b2023a2dbb9c79c32a02376fccadc.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     curveDetail(20)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(60, 230, 12)
+    ///     circle(140, 80, 12)
+    ///     circle(260, 220, 12)
+    ///     circle(350, 60, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     curveVertex(60, 230)
+    ///     curveVertex(60, 230)
+    ///     curveVertex(140, 80)
+    ///     curveVertex(260, 220)
+    ///     curveVertex(350, 60)
+    ///     curveVertex(350, 60)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 刻みが細かく、同じ黄色の曲線がなめらかな弧に見える -->
+    ///     ![刻みが細かく、同じ黄色の曲線がなめらかな弧に見える](https://i.gyazo.com/03a508f760532bcb7fcb5fdb12b05e41.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=db839269 taken=1b3aa1f
+    // shot: 2 snippet=b204de50 taken=1b3aa1f
     public func curveDetail(_ steps: Int) { canvas.curveDetail(steps) }
 
-    /// 通過点を結ぶ曲線の張り具合。0 が既定で、大きくすると曲がりが緩くなる。
+    /// 通過点を結ぶ曲線の張り具合。**0 が既定で、1 にすると点と点が直線で結ばれる。**
+    ///
+    /// 大きくするほど曲線は点の並び (折れ線) へ近づき、負にするほど**点と点の間での
+    /// ふくらみが深くなる**。通る点は変わらない — 変わるのは間の通り方だけで、
+    /// 負にしても通過点より外へは出ない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     curveTightness(-1)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(60, 230, 12)
+    ///     circle(140, 80, 12)
+    ///     circle(260, 220, 12)
+    ///     circle(350, 60, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     curveVertex(60, 230)
+    ///     curveVertex(60, 230)
+    ///     curveVertex(140, 80)
+    ///     curveVertex(260, 220)
+    ///     curveVertex(350, 60)
+    ///     curveVertex(350, 60)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の曲線が、点と点の間で既定よりも深くふくらんでいる -->
+    ///     ![橙色の曲線が、点と点の間で既定よりも深くふくらんでいる](https://i.gyazo.com/ea06c3fd1e492430bbd74bdcdbfddabc.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     curveTightness(0)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(60, 230, 12)
+    ///     circle(140, 80, 12)
+    ///     circle(260, 220, 12)
+    ///     circle(350, 60, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     curveVertex(60, 230)
+    ///     curveVertex(60, 230)
+    ///     curveVertex(140, 80)
+    ///     curveVertex(260, 220)
+    ///     curveVertex(350, 60)
+    ///     curveVertex(350, 60)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の曲線が 4 つの点をなめらかに通っている (既定) -->
+    ///     ![橙色の曲線が 4 つの点をなめらかに通っている (既定)](https://i.gyazo.com/fe197347b14c8a856edf8b6013c82d4e.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     curveTightness(1)
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     circle(60, 230, 12)
+    ///     circle(140, 80, 12)
+    ///     circle(260, 220, 12)
+    ///     circle(350, 60, 12)
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     strokeWeight(4)
+    ///     beginShape()
+    ///     curveVertex(60, 230)
+    ///     curveVertex(60, 230)
+    ///     curveVertex(140, 80)
+    ///     curveVertex(260, 220)
+    ///     curveVertex(350, 60)
+    ///     curveVertex(350, 60)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の線が点と点を直線で結び、曲がりの無い折れ線になっている -->
+    ///     ![橙色の線が点と点を直線で結び、曲がりの無い折れ線になっている](https://i.gyazo.com/b8922bca0875149df3c1557f15b4cb04.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=fb27d368 taken=1b3aa1f
+    // shot: 2 snippet=822d810e taken=1b3aa1f
+    // shot: 3 snippet=a9f2f126 taken=1b3aa1f
     public func curveTightness(_ amount: Float) { canvas.curveTightness(amount) }
 
     /// 穴を並べ始める。
+    ///
+    /// ``beginShape(_:)`` と ``endShape(_:)`` の間で開き、``endContour()`` で閉じる。
+    /// 挟んだ頂点は外周ではなく**穴**になる。
+    ///
+    /// **穴の頂点は外周と逆回りに並べる。** 下の例では外周が時計回り、穴が反時計回り。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     beginShape()
+    ///     vertex(60, 50)
+    ///     vertex(340, 40)
+    ///     vertex(300, 265)
+    ///     vertex(90, 240)
+    ///     beginContour()
+    ///     vertex(140, 200)
+    ///     vertex(255, 195)
+    ///     vertex(210, 110)
+    ///     endContour()
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色のいびつな四角形の中央に、三角形の穴が 1 つ開いている -->
+    ///     ![水色のいびつな四角形の中央に、三角形の穴が 1 つ開いている](https://i.gyazo.com/358b76f864f04b9ea7874fa9496ccdb9.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=bec474a2 taken=1b3aa1f
     public func beginContour() { canvas.beginContour() }
 
     /// 穴を並べ終える。
+    ///
+    /// **閉じてからもう一度 ``beginContour()`` を開けば、穴はいくつでも空けられる。**
+    /// 頂点が 3 つに満たない穴は捨てられる (面にならないため)。閉じ忘れても
+    /// ``endShape(_:)`` が畳む。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noStroke()
+    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     beginShape()
+    ///     vertex(50, 45)
+    ///     vertex(350, 60)
+    ///     vertex(330, 265)
+    ///     vertex(70, 250)
+    ///     beginContour()
+    ///     vertex(110, 190)
+    ///     vertex(180, 185)
+    ///     vertex(150, 110)
+    ///     endContour()
+    ///     beginContour()
+    ///     vertex(230, 210)
+    ///     vertex(300, 200)
+    ///     vertex(265, 120)
+    ///     endContour()
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 黄色い面に、三角形の穴が 2 つ横に並んで開いている -->
+    ///     ![黄色い面に、三角形の穴が 2 つ横に並んで開いている](https://i.gyazo.com/a2678c7238b5365705eab6dd72a3d002.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=c326fc6d taken=1b3aa1f
     public func endContour() { canvas.endContour() }
 
     /// 並べ終えて描く。
+    ///
+    /// 既定の ``ShapeEnd/open`` は、最後の点から最初の点へ戻らない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noFill()
+    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     strokeWeight(5)
+    ///     beginShape()
+    ///     vertex(70, 240)
+    ///     vertex(120, 70)
+    ///     vertex(230, 150)
+    ///     vertex(300, 60)
+    ///     vertex(345, 245)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の折れ線が 4 本つながってジグザグに走り、両端は結ばれていない -->
+    ///     ![橙色の折れ線が 4 本つながってジグザグに走り、両端は結ばれていない](https://i.gyazo.com/384db2b9bb170b9918b30e4c578ff793.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``ShapeEnd/close`` を渡すと戻る。**変わるのは線だけである** — 塗りは並べた点で
+    /// 決まるので、どちらで閉じても同じ面が塗られる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     noFill()
+    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     strokeWeight(5)
+    ///     beginShape()
+    ///     vertex(70, 240)
+    ///     vertex(120, 70)
+    ///     vertex(230, 150)
+    ///     vertex(300, 60)
+    ///     vertex(345, 245)
+    ///     endShape(.close)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じジグザグの両端が 1 本の辺で結ばれ、閉じた形になっている -->
+    ///     ![同じジグザグの両端が 1 本の辺で結ばれ、閉じた形になっている](https://i.gyazo.com/0322d55983df57eee540a944218b3355.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=42050a4c taken=1b3aa1f
+    // shot: 2 snippet=43d84742 taken=1b3aa1f
     public func endShape(_ end: ShapeEnd = .open) { canvas.endShape(end) }
 
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
@@ -1328,11 +1942,11 @@ extension Sketch {
     ///
     /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
     /// 「どれだけ効かせるか」はアルファが決める。
-    // shot: 1 snippet=770dfac6 taken=cedd955
-    // shot: 2 snippet=739b6a04 taken=cedd955
-    // shot: 3 snippet=a57216c1 taken=cedd955
-    // shot: 4 snippet=ae76263d taken=cedd955
-    // shot: 5 snippet=ff14ef73 taken=cedd955
+    // shot: 1 snippet=770dfac6 taken=1b3aa1f
+    // shot: 2 snippet=739b6a04 taken=1b3aa1f
+    // shot: 3 snippet=a57216c1 taken=1b3aa1f
+    // shot: 4 snippet=ae76263d taken=1b3aa1f
+    // shot: 5 snippet=ff14ef73 taken=1b3aa1f
     public func blendMode(_ mode: BlendMode) { canvas.blendMode(mode) }
 
     /// 線の折れ目の形。既定は尖らせる形。
@@ -1412,9 +2026,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=83ed7fe6 taken=cedd955
-    // shot: 2 snippet=6d2736cd taken=cedd955
-    // shot: 3 snippet=7fe6028f taken=cedd955
+    // shot: 1 snippet=83ed7fe6 taken=1b3aa1f
+    // shot: 2 snippet=6d2736cd taken=1b3aa1f
+    // shot: 3 snippet=7fe6028f taken=1b3aa1f
     public func strokeJoin(_ join: StrokeJoin) { canvas.strokeJoin(join) }
     /// 矩形を塗る。
     ///
@@ -1454,8 +2068,8 @@ extension Sketch {
     /// }
     ///
     /// 幅か高さが 0 以下になる指定では**何も描かない**。
-    // shot: 1 snippet=5f2f4b5f taken=cedd955
-    // shot: 2 snippet=a1283c68 taken=cedd955
+    // shot: 1 snippet=5f2f4b5f taken=1b3aa1f
+    // shot: 2 snippet=a1283c68 taken=1b3aa1f
     public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.rect(a, b, c, d) }
 
     /// 正方形を塗る。
@@ -1476,7 +2090,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=0545e44d taken=cedd955
+    // shot: 1 snippet=0545e44d taken=1b3aa1f
     public func square(_ a: Float, _ b: Float, _ extent: Float) { canvas.square(a, b, extent) }
 
     /// 円を塗る。
@@ -1518,8 +2132,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=cc15d686 taken=cedd955
-    // shot: 2 snippet=99563468 taken=cedd955
+    // shot: 1 snippet=cc15d686 taken=1b3aa1f
+    // shot: 2 snippet=99563468 taken=1b3aa1f
     public func circle(_ a: Float, _ b: Float, _ diameter: Float) { canvas.circle(a, b, diameter) }
 
     /// 楕円を塗る。
@@ -1559,8 +2173,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=660be063 taken=cedd955
-    // shot: 2 snippet=4bc091fd taken=cedd955
+    // shot: 1 snippet=660be063 taken=1b3aa1f
+    // shot: 2 snippet=4bc091fd taken=1b3aa1f
     public func ellipse(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.ellipse(a, b, c, d)
     }
@@ -1643,10 +2257,10 @@ extension Sketch {
     ///
     /// 塗りは**中心を含む扇形**になる。終わりの角度が始まりより小さいときは
     /// **何も描かず**、最初の 1 回だけ知らせる。
-    // shot: 1 snippet=b1d01c8d taken=cedd955
-    // shot: 2 snippet=de19318a taken=cedd955
-    // shot: 3 snippet=9301f40a taken=cedd955
-    // shot: 4 snippet=305be8b5 taken=cedd955
+    // shot: 1 snippet=b1d01c8d taken=1b3aa1f
+    // shot: 2 snippet=de19318a taken=1b3aa1f
+    // shot: 3 snippet=9301f40a taken=1b3aa1f
+    // shot: 4 snippet=305be8b5 taken=1b3aa1f
     public func arc(
         _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float
     ) {
@@ -1669,7 +2283,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7d0adefe taken=cedd955
+    // shot: 1 snippet=7d0adefe taken=1b3aa1f
     public func triangle(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float, _ x3: Float, _ y3: Float
     ) {
@@ -1710,8 +2324,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8f205856 taken=cedd955
-    // shot: 2 snippet=af89c551 taken=cedd955
+    // shot: 1 snippet=8f205856 taken=1b3aa1f
+    // shot: 2 snippet=af89c551 taken=1b3aa1f
     public func quad(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,
         _ x3: Float, _ y3: Float, _ x4: Float, _ y4: Float
@@ -1762,8 +2376,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=de455ec9 taken=cedd955
-    // shot: 2 snippet=35a5937e taken=cedd955
+    // shot: 1 snippet=de455ec9 taken=1b3aa1f
+    // shot: 2 snippet=35a5937e taken=1b3aa1f
     public func point(_ x: Float, _ y: Float) { canvas.point(x, y) }
 
     /// 矩形に渡す座標の読み方。既定は ``ShapeMode/corner``。
@@ -1839,10 +2453,10 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8fd5ed99 taken=cedd955
-    // shot: 2 snippet=88773cca taken=cedd955
-    // shot: 3 snippet=c95457e8 taken=cedd955
-    // shot: 4 snippet=39e1d7b6 taken=cedd955
+    // shot: 1 snippet=8fd5ed99 taken=1b3aa1f
+    // shot: 2 snippet=88773cca taken=1b3aa1f
+    // shot: 3 snippet=c95457e8 taken=1b3aa1f
+    // shot: 4 snippet=39e1d7b6 taken=1b3aa1f
     public func rectMode(_ mode: ShapeMode) { canvas.rectMode(mode) }
 
     /// 楕円と円弧に渡す座標の読み方。既定は ``ShapeMode/center``。
@@ -1883,8 +2497,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=ace05fd1 taken=cedd955
-    // shot: 2 snippet=da8b31b4 taken=cedd955
+    // shot: 1 snippet=ace05fd1 taken=1b3aa1f
+    // shot: 2 snippet=da8b31b4 taken=1b3aa1f
     public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }
     /// 線を引く。塗りは持たない。
     ///
@@ -1924,8 +2538,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5d41ed20 taken=cedd955
-    // shot: 2 snippet=87c26840 taken=cedd955
+    // shot: 1 snippet=5d41ed20 taken=1b3aa1f
+    // shot: 2 snippet=87c26840 taken=1b3aa1f
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
         canvas.line(x1, y1, x2, y2)
     }
@@ -2004,9 +2618,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b049f853 taken=cedd955
-    // shot: 2 snippet=2e149d2f taken=cedd955
-    // shot: 3 snippet=b9761949 taken=cedd955
+    // shot: 1 snippet=b049f853 taken=1b3aa1f
+    // shot: 2 snippet=2e149d2f taken=1b3aa1f
+    // shot: 3 snippet=b9761949 taken=1b3aa1f
     public func translate(_ x: Float, _ y: Float) { canvas.translate(x, y) }
     /// 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
     ///
@@ -2083,9 +2697,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=31999c20 taken=cedd955
-    // shot: 2 snippet=d8a6fbf0 taken=cedd955
-    // shot: 3 snippet=4d75c8fb taken=cedd955
+    // shot: 1 snippet=31999c20 taken=1b3aa1f
+    // shot: 2 snippet=d8a6fbf0 taken=1b3aa1f
+    // shot: 3 snippet=4d75c8fb taken=1b3aa1f
     public func rotate(_ radians: Float) { canvas.rotate(radians) }
     /// 伸ばす・縮める。
     ///
@@ -2163,9 +2777,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=76d7590b taken=cedd955
-    // shot: 2 snippet=e61d2850 taken=cedd955
-    // shot: 3 snippet=fe738fca taken=cedd955
+    // shot: 1 snippet=76d7590b taken=1b3aa1f
+    // shot: 2 snippet=e61d2850 taken=1b3aa1f
+    // shot: 3 snippet=fe738fca taken=1b3aa1f
     public func scale(_ x: Float, _ y: Float) { canvas.scale(x, y) }
 
     /// 原点を奥行きも含めてずらす。
@@ -2241,8 +2855,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=481117e9 taken=cedd955
-    // shot: 2 snippet=a1793d65 taken=cedd955
+    // shot: 1 snippet=481117e9 taken=1b3aa1f
+    // shot: 2 snippet=a1793d65 taken=1b3aa1f
     public func shearX(_ radians: Float) { canvas.shearX(radians) }
 
     /// 縦方向へ斜めに歪める。
@@ -2295,8 +2909,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8e8a2090 taken=cedd955
-    // shot: 2 snippet=f3fcdb4e taken=cedd955
+    // shot: 1 snippet=8e8a2090 taken=1b3aa1f
+    // shot: 2 snippet=f3fcdb4e taken=1b3aa1f
     public func shearY(_ radians: Float) { canvas.shearY(radians) }
 
     /// 与えた変換を、いまの変換の後に重ねる。
@@ -2329,7 +2943,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b928daab taken=cedd955
+    // shot: 1 snippet=b928daab taken=1b3aa1f
     public func resetMatrix() { canvas.resetMatrix() }
 
     /// いまの変換を積んでおく。
@@ -2387,8 +3001,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5e812adb taken=cedd955
-    // shot: 2 snippet=4752a417 taken=cedd955
+    // shot: 1 snippet=5e812adb taken=1b3aa1f
+    // shot: 2 snippet=4752a417 taken=1b3aa1f
     public func pushMatrix() { canvas.pushMatrix() }
 
     /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
@@ -2417,7 +3031,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=cef51ea3 taken=cedd955
+    // shot: 1 snippet=cef51ea3 taken=1b3aa1f
     public func popMatrix() { canvas.popMatrix() }
 
     /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
@@ -3051,7 +3665,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=92c18fef taken=cedd955
+    // shot: 1 snippet=92c18fef taken=1b3aa1f
     public func push() { canvas.push() }
 
     /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
@@ -3086,7 +3700,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a8da334a taken=cedd955
+    // shot: 1 snippet=a8da334a taken=1b3aa1f
     public func pop() { canvas.pop() }
 
     // MARK: - 文字
