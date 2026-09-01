@@ -82,6 +82,15 @@ final class WatchSession {
     /// 機械が読む経路 (窓口) の出力は 1 バイトも変えない ([ADR-0029] 決定 5 の 2 番目)。
     let reportsRate: Bool
 
+    /// 作り直しを**始めるとき**に呼ばれる。`initial` は最初の 1 回か。
+    ///
+    /// **知らせるだけで、判断も出力もここではしない。** 何を言うかは口の側が決める。
+    ///
+    /// なぜ要るか: 作り直しは終わってからしか名乗らないので、その間**画面が 1 文字も
+    /// 動かない**。使う側からは「見張れていない」と「作り直している」の区別が付かず、
+    /// 実際にそう読まれた ([#695](https://github.com/mokume-metal/mokume/issues/695))。
+    var willRebuild: (_ initial: Bool) -> Void = { _ in }
+
     /// - Parameter hooks: 差し替える外側。**渡さなければ、選ばれた構成から組む** —
     ///   既定引数では作れない (構成が決まるのは初期化の中である)。
     init(
@@ -107,7 +116,7 @@ final class WatchSession {
     /// 最初の 1 回。変化を待たずに作って走らせる。
     @discardableResult
     func start() -> BuildReport {
-        rebuildAndReplace(stamp: hooks.stamp(directory))
+        rebuildAndReplace(stamp: hooks.stamp(directory), initial: true)
     }
 
     /// 走らせているものを終わらせる。
@@ -123,9 +132,13 @@ final class WatchSession {
         return true
     }
 
-    private func rebuildAndReplace(stamp: String?) -> BuildReport {
+    private func rebuildAndReplace(stamp: String?, initial: Bool = false) -> BuildReport {
         let detectMs = noticedAt.map { (hooks.now() - $0) * 1000 }
         noticedAt = nil
+
+        // **始めることを、始める前に言う。** 作り直しはこの流れを塞ぐので、後から言うと
+        // 待っている間が無言になる (#695)
+        willRebuild(initial)
 
         let buildStarted = hooks.now()
         let (status, output) = hooks.build(directory)
