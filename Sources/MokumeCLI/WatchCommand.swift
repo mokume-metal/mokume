@@ -129,6 +129,11 @@ enum WatchCommand {
             say("窓は出せないので、スケッチに自分の窓を開かせる")
             return nil
         }
+        // **どちらの窓で触っても、同じ作品へ届く。** 送る前にキャンバスの座標へ写して
+        // あるので、窓の大きさの違いはそこで吸収されている — 指は 1 本しかないので、
+        // 2 つの窓が「いまの値」を同時に持つことにはならない ([ADR-0032] 決定 4)
+        window.onInput = { [weak session] in session?.send($0) }
+        preview.onInput = { [weak session] in session?.send($0) }
         // **プレビューを先に出す。** 後に出すと作品の窓の上に重なるので、本番へ送る
         // ほうを掴み直す手間がいちばん最初に生まれる
         preview.open()
@@ -147,6 +152,10 @@ enum WatchCommand {
     /// **印を 0 に書いてから置く。** 置いた後の最初の書き込みがハンドラからだと、
     /// 変数の初期化がハンドラの中で起きうる。
     static func installStopHandlers() {
+        // **畳まれた管へ書いても死なないようにする。** 道具は窓が拾った出来事を子へ
+        // 書くが、子は保存のたびに入れ替わる — 既定のままだと、入れ替えの隙間に触った
+        // だけで**見張りごと消える** ([ADR-0032] 決定 4)
+        signal(SIGPIPE, SIG_IGN)
         watchStopRequested = 0
         for number in stopSignals {
             signal(number, { _ in watchStopRequested = 1 })

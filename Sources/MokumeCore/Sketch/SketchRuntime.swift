@@ -58,6 +58,8 @@ public final class SketchRuntime {
     private let observer: FrameObserver?
     /// 外から送られる入力の受け口。区画が無ければ `nil`。
     private let inbox: InputInbox?
+    /// 道具の窓が拾った出来事の受け口。見張りから起こされたときだけ在る。
+    private let relayed: StandardInputEvents?
     /// つまみの面 (区画が在るときだけ働く)。
     private let params: ParamSurface?
     /// 合わせた値の保存。**区画とは無関係に既定で効く** (ADR-0030 決定 6)。
@@ -150,6 +152,7 @@ public final class SketchRuntime {
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
+        self.relayed = StandardInputEvents.makeIfDriven()
         // 索引は 1 度だけ引き、保存と面が同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
         let store = ParamStore.makeIfNeeded(for: registry)
@@ -179,6 +182,7 @@ public final class SketchRuntime {
         self.now = now
         self.observer = observer
         self.inbox = inbox
+        self.relayed = nil
         self.params = params
         self.paramStore = paramStore
     }
@@ -303,6 +307,10 @@ public final class SketchRuntime {
     /// **`draw()` の前に流す。** 送られた出来事が同じフレームの `draw()` から見える —
     /// 1 フレーム遅れて効く形にすると、外から動かして確かめるときに毎回 1 枚ぶんずれる。
     private func receiveInput() {
+        // **窓からのぶんを先に引き取る。** どちらも同じ待ち行列へ入るので、順は
+        // 「起きた順に近いほう」を選ぶ — 区画は要求 1 回ぶんをまとめて運ぶので、
+        // 窓の 1 件より古いことがある
+        relayed?.drain(into: input)
         inbox?.drain(into: input)
         params?.drain()
         paramStore?.tick()

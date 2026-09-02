@@ -113,11 +113,24 @@ final class SharedFrameSurface {
         gpu: RenderDevice, width: Int, height: Int,
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key)
     ) -> SharedFrameSurface? {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
-            isDirectory.boolValue
-        else { return nil }
+        guard isEnabled(at: directory) else { return nil }
         return try? SharedFrameSurface(gpu: gpu, width: width, height: height, at: directory)
+    }
+
+    /// 画面の出口が共有する面になっているか。
+    ///
+    /// **合図はこれ 1 つである** ([ADR-0032] 決定 1)。窓を開かないことも、道具から来る
+    /// 出来事を標準入力から受けることも ([ADR-0032] 決定 4)、同じ合図から従う — 経路
+    /// ごとに合図を持つと、片方だけが効いている状態が作れてしまう。
+    ///
+    /// 読む場所を 1 つに保つため、区画を見るのは**ここだけ**にする (一覧が名指しして
+    /// いるのもこのファイルである)。
+    static func isEnabled(at directory: URL = WorkDirectory.facet(StartupReads.viewport.key))
+        -> Bool
+    {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
     }
 
     init(gpu: RenderDevice, width: Int, height: Int, at directory: URL) throws(RenderFailure) {

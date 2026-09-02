@@ -45,6 +45,10 @@ final class WatchSession {
                     let process = Process()
                     process.executableURL = executable
                     process.currentDirectoryURL = directory
+                    // **管を 1 本引く。** 道具の窓が拾った出来事はここを通って子へ渡る
+                    // ([ADR-0032] 決定 4)。継がずに親の標準入力を渡すと、書き込む先が
+                    // 端末になってしまう
+                    process.standardInput = Pipe()
                     // 観測は刻印を応答へそのまま載せる。読み手は刻印の変化で「保存した
                     // 内容が反映されたか」を待ち時間ではなく判定できる。組み立ては
                     // RunCommand が持つ — 子へ渡す環境の作り方を 2 通りにしない
@@ -117,6 +121,23 @@ final class WatchSession {
     @discardableResult
     func start() -> BuildReport {
         rebuildAndReplace(stamp: hooks.stamp(directory), initial: true)
+    }
+
+    /// 走らせている子へ 1 行渡す。
+    ///
+    /// **書けなくても何も起きない。** 見張りは子を頻繁に入れ替えるので、既に居ない相手へ
+    /// 書くことは必ず起きる。溜めて後から流す形は採らない — 入力は古くなると意味が
+    /// 変わる (どこを指していたかは、いまの絵に対してしか意味が無い)。
+    ///
+    /// 呼ぶ側は既定で `SIGPIPE` を無視しておく必要がある ([WatchCommand] が置く) —
+    /// 無視しないと、畳まれた管へ書いた**こちらが死ぬ**。
+    func send(_ line: String) {
+        guard let pipe = child?.standardInput as? Pipe, let data = line.data(using: .utf8) else {
+            return
+        }
+        // **失敗を握り潰す。** 相手が畳んだ (EPIPE)・管が一杯 (EAGAIN) のどちらでも、
+        // することは同じ「この 1 件を捨てる」である
+        try? pipe.fileHandleForWriting.write(contentsOf: data)
     }
 
     /// 走らせているものを終わらせる。

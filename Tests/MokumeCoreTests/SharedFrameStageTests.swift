@@ -98,6 +98,25 @@ struct SharedFrameStageTests {
     /// 覚えた枠を引き継がないための、その場限りの名前。
     private func fresh() -> String { "fresh-\(UUID().uuidString)" }
 
+    /// **拾った 1 件は、合流点と運び先の両方へ行く。**
+    ///
+    /// 道具の窓では絵を描いているのが別のプロセスなので、運ばないと何も起きない
+    /// ([ADR-0032] 決定 4)。運ぶだけにすると、こんどは窓の側の合流点が空になる。
+    @Test("窓が拾った出来事は、合流点へも運び先へも行く")
+    func deliveredEventsGoBothWays() throws {
+        let gpu = try RenderDevice()
+        let state = InputState()
+        let surface = SketchSurface(
+            frame: NSRect(x: 0, y: 0, width: 10, height: 10), device: gpu.device, input: state,
+            canvasSize: (10, 10))
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+        surface.deliver(.mouseMoved(x: 3, y: 4))
+        state.beginFrame()
+        #expect(state.x == 3)
+        #expect(lines == [InputEvent.mouseMoved(x: 3, y: 4).wireLine])
+    }
+
     /// 2 枚が同じ名前で位置を覚えると、互いを上書きして重なって開く。
     @Test("作品の窓とプレビューは、別の名前で位置を覚える")
     func placementNamesDiffer() {
