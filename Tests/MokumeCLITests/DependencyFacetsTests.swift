@@ -75,7 +75,7 @@ struct DependencyFacetsTests {
     func judgesAPathDependency() throws {
         let consumer = try ConsumerFixture.make(local: true, facets: ["observe", "input"])
         let absent = try #require(DependencyFacets.absent(forPackageAt: consumer.work))
-        #expect(absent.map(\.key) == ["params"])
+        #expect(absent.map(\.key) == ["params", "viewport"])
     }
 
     @Test("面ごとの問いにも答え、判定できなければ nil を返す")

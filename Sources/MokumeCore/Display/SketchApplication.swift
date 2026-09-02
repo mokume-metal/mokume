@@ -63,6 +63,14 @@ public final class SketchApplication: NSObject {
 
     private var window: NSWindow?
     private var surface: SketchSurface?
+    /// 画面の出口が外のプロセスに在るときの差し出し先。**在れば窓を持たない。**
+    ///
+    /// 分岐は「ビューアあり / なし」というモードではなく、**与えられた出口の構成**である
+    /// ([ADR-0032] 決定 1)。合図は 1 つ (区画があるか) で、窓を開かないことも同じ合図から
+    /// 従う。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    private var sharedSurface: SharedFrameSurface?
     private var displayLink: CADisplayLink?
     /// 駆動源を紐づけている画面。張り替えの要否をこれで判断する。
     private var linkedScreen: NSScreen?
@@ -116,7 +124,11 @@ public final class SketchApplication: NSObject {
     /// アプリケーションとして走らせる。戻らない。
     public func run() {
         let app = NSApplication.shared
-        app.setActivationPolicy(.regular)
+        // **画面の出口を先に決める。** 活動の方針は `app.run()` より前にしか据えられない
+        // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
+        // 並ばない (`.accessory`) — 並ぶと、道具が出す窓と作品が 2 つ並んで見える
+        sharedSurface = attachSharedSurface()
+        app.setActivationPolicy(sharedSurface == nil ? .regular : .accessory)
         // **delegate と自分を強く持っておく。** AppKit は delegate を弱く参照するので、
         // ここで持たないと、delegate を渡した直後に解放され、以後の呼び出しが 1 つも
         // 来ない (窓が開かない形で表に出る)。走らせている間は生きているべきものなので、
@@ -176,8 +188,34 @@ public final class SketchApplication: NSObject {
     /// ADR-0012 決定 5 が要件にした性質そのものである。
     private var activity: (any NSObjectProtocol)?
 
+    /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
+    ///
+    /// **区画が在るのに用意できなかったときは、窓を開く側へ倒す** — 面も窓も無い実行は、
+    /// 外から見て「動いていない」としか見えない。倒したことは黙らずに言う。
+    private func attachSharedSurface() -> SharedFrameSurface? {
+        guard
+            let shared = SharedFrameSurface.makeIfEnabled(
+                gpu: gpu, width: runtime.target.width, height: runtime.target.height)
+        else { return nil }
+        do {
+            try shared.publishManifest()
+        } catch {
+            Diagnostics.warn(
+                "絵を渡す面の番号を置けませんでした: \(error.localizedDescription) — 窓を開いて続けます")
+            return nil
+        }
+        return shared
+    }
+
     /// 窓を開き、フレームの駆動源を繋ぐ。``SketchApplicationDelegate`` から呼ばれる。
+    ///
+    /// **画面の出口が外のプロセスに在れば、窓は作らない** ([ADR-0032] 決定 1)。駆動源は
+    /// 窓ではなく画面に紐づくので (下記)、窓が無くてもそのまま繋がる。
     func didFinishLaunching() {
+        if sharedSurface != nil {
+            attachDisplayLink(to: NSScreen.main)
+            return
+        }
         let settings = runtime.sketch.settings
         // 窓は描く解像度の半分で開く。描く解像度と窓の大きさは独立なので、
         // どちらに合わせてもよい — 大きな絵が画面からはみ出さない側を既定にする
@@ -293,14 +331,9 @@ public final class SketchApplication: NSObject {
     /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
     @objc private func step(_ link: CADisplayLink) {
-        guard let surface, let layer = surface.metalLayer else { return }
         do {
             try runtime.advance()
-            if FramePresenter.shouldPresent(
-                windowIsVisible: isWindowVisible, hasPresented: hasPresented)
-            {
-                if try presenter.present(runtime.target, to: layer) { hasPresented = true }
-            }
+            try presentFrame()
         } catch {
             // 1 フレーム描けなかったことでアプリケーションごと落とさない。
             // 次のリフレッシュでもう一度試す — ただし**黙って捨てない**
@@ -308,6 +341,25 @@ public final class SketchApplication: NSObject {
             return
         }
         noteFrameRecovery()
+    }
+
+    /// 進めた 1 フレームを、与えられた出口へ差し出す。
+    ///
+    /// **出口は 1 つに決まっている** — 窓を持つか、外の面へ差し出すかで、両方はしない
+    /// ([ADR-0032] 決定 1)。面へ差し出す側で見えているかを見ないのは、**誰が見ているかを
+    /// 知っているのが読む側 (道具) だから**である。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    private func presentFrame() throws(RenderFailure) {
+        if let sharedSurface {
+            try sharedSurface.write(runtime.target, using: presenter)
+            return
+        }
+        guard let surface, let layer = surface.metalLayer,
+            FramePresenter.shouldPresent(
+                windowIsVisible: isWindowVisible, hasPresented: hasPresented)
+        else { return }
+        if try presenter.present(runtime.target, to: layer) { hasPresented = true }
     }
 
     /// 続けて描けなかった数。始まりと終わりだけ言うために持つ。
