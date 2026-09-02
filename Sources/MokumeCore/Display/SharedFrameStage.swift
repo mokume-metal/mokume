@@ -72,6 +72,11 @@ final class SharedFrameStage: NSObject {
     private let look: Look
     private let presenter: FramePresenter
 
+    /// 窓が拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行。**
+    ///
+    /// 窓を出した後に差し替えてもよい (見張りは子を入れ替えるので、書き先は変わる)。
+    var onInput: ((String) -> Void)?
+
     private(set) var window: NSWindow?
     private var view: SketchSurface?
     private var displayLink: CADisplayLink?
@@ -133,6 +138,8 @@ final class SharedFrameStage: NSObject {
             device: gpu.device, input: InputState(), canvasSize: (1, 1))
         view.wantsLayer = true
         view.autoresizingMask = [.width, .height]
+        // **窓より先に繋ぐ。** 出してから繋ぐと、その隙間に触ったぶんが落ちる
+        view.relay = { [weak self] line in self?.onInput?(line) }
         window.contentView = view
         // **絵の面へ足す。** 別の窓にしないのは、重ねるものが絵と一緒に動く必要が
         // あるからで、経路そのものは絵と別のまま (AppKit の層) である

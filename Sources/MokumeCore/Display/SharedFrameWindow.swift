@@ -38,6 +38,15 @@ public final class SharedFrameWindow {
                 defaultSize: NSSize(width: 480, height: 270)))
     }
 
+    /// 作品の窓が拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行**で、
+    /// 受け取る側は中身を見ずに転送するだけでよい ([ADR-0032] 決定 4)。
+    ///
+    /// 繋がなければ、触っても何も起きない。
+    public var onInput: ((String) -> Void)? {
+        get { stage.onInput }
+        set { stage.onInput = newValue }
+    }
+
     /// 窓を出し、区画を見張り始める。
     public func open() {
         stage.open()

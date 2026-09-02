@@ -82,6 +82,14 @@ struct WatchCommandTests {
         #expect(handedOver?.lastReport == nil)
     }
 
+    /// **相手が居なくても落ちない。** 見張りは子を頻繁に入れ替えるので、既に居ない相手へ
+    /// 書くことは必ず起きる ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 4)。
+    @Test("走らせているものが居なければ、書いても何も起きない")
+    func sendingWithoutAChildIsHarmless() throws {
+        let session = WatchSession(directory: try makeDirectory(), hooks: Stub().hooks())
+        session.send("{\"type\":\"mouseMoved\",\"x\":1,\"y\":2}\n")
+    }
+
     // MARK: - プレビューへ重ねる行
 
     /// **端末が正で、プレビューはそれを映す。**

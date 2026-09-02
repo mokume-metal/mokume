@@ -41,6 +41,13 @@ final class SketchSurface: NSView {
     private var canvasWidth: Double
     private var canvasHeight: Double
 
+    /// 拾った出来事を、合流点のほかにもう 1 か所へ渡す口。
+    ///
+    /// **道具の窓のためにある。** 絵を描いているのは別のプロセスなので、拾っただけでは
+    /// 何も起きない — 運ばないと効かない ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 4)。
+    /// 渡すのは**そのまま子の標準入力へ書ける 1 行**で、道具は中身を見ずに転送する。
+    var relay: ((String) -> Void)?
+
     /// 自分が足した、押していない間の移動を配信させる領域 (``updateTrackingAreas()``)。
     /// 外すときにこれだけを名指しできるように覚えておく。
     fileprivate var pointerTracking: NSTrackingArea?
@@ -177,17 +184,24 @@ extension SketchSurface {
 
     private func notePress(_ event: NSEvent) {
         guard let point = canvasLocation(of: event) else { return }
-        input.enqueue(.mouseDown(x: point.x, y: point.y, button: event.buttonNumber))
+        deliver(.mouseDown(x: point.x, y: point.y, button: event.buttonNumber))
     }
 
     private func noteRelease(_ event: NSEvent) {
         guard let point = canvasLocation(of: event) else { return }
-        input.enqueue(.mouseUp(x: point.x, y: point.y, button: event.buttonNumber))
+        deliver(.mouseUp(x: point.x, y: point.y, button: event.buttonNumber))
     }
 
     private func noteMove(_ event: NSEvent) {
         guard let point = canvasLocation(of: event) else { return }
-        input.enqueue(.mouseMoved(x: point.x, y: point.y))
+        deliver(.mouseMoved(x: point.x, y: point.y))
+    }
+
+    /// 拾った 1 件の行き先。**ここ 1 つを通す** — 種別ごとに書くと、足した種別だけが
+    /// 運ばれない形になる。
+    func deliver(_ event: InputEvent) {
+        input.enqueue(event)
+        relay?(event.wireLine)
     }
 
     // MARK: スクロール
@@ -198,20 +212,19 @@ extension SketchSurface {
     /// 窓の大きさで割り増すと同じ手つきが窓の大きさによって違う意味になる
     /// (``Orbit/radiansPerPixel`` が面の大きさに依らない割合を選んでいるのと同じ理由)。
     override func scrollWheel(with event: NSEvent) {
-        input.enqueue(
-            .scrolled(dx: Float(event.scrollingDeltaX), dy: Float(event.scrollingDeltaY)))
+        deliver(.scrolled(dx: Float(event.scrollingDeltaX), dy: Float(event.scrollingDeltaY)))
     }
 
     // MARK: キー
 
     override func keyDown(with event: NSEvent) {
-        input.enqueue(
+        deliver(
             .keyDown(
                 code: Int(event.keyCode), characters: event.characters ?? "",
                 isRepeat: event.isARepeat))
     }
 
     override func keyUp(with event: NSEvent) {
-        input.enqueue(.keyUp(code: Int(event.keyCode)))
+        deliver(.keyUp(code: Int(event.keyCode)))
     }
 }
