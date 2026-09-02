@@ -13,6 +13,8 @@ gh は PATH のスタブに差し替えるので、ネットワークも認証�
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -35,6 +37,154 @@ AGENT_ENV = [
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "CODEX_HOME",
 ]
+
+
+# --- gh が持つ「本文を伴う口」の数え上げ (#708) --------------------------
+#
+# ガードは以前「gh が発言を伴うサブコマンドを増やしたらここに足す」と書いていた。
+# 数え上げないと決めた記述が残っている間は、掛かっているかを現物を読まずに疑える —
+# #708 はそうして起票された (診断は外れており、close / reopen は #127 が塞いでいた)。
+#
+# **代わりに gh 自身から口を導き、この表と照合する。** 下の
+# test_body_bearing_surfaces_are_enumerated が gh の --help を読んで
+# 導出集合を作るので、gh が口を増やした日に赤くなって分類を促す。
+#
+# 導出を手元で再現する (gh 2.98.0 で 15 行):
+#
+#   for g in issue pr; do
+#     for s in $(gh $g --help | sed -n 's/^  \([a-z-]*\):.*/\1/p'); do
+#       printf '%s %s %s\n' "$g" "$s" \
+#         "$(gh $g $s --help | grep -oE -- '--(body-file|comments|comment|body)' | sort -u | tr '\n' ' ')"
+#     done
+#   done
+#
+# 行の意味: (グループ, サブコマンド): (gh が与える本文系フラグ, 扱い, 代表コマンド, 理由)
+#
+# **境界は「スレッドへの発言か」の 1 本。** Issue / PR の本文・マージコミットの本文は
+# 発言ではないので素通しする (署名の作法はスレッドに並ぶコメントを対象にしている)。
+BODY_BEARING_SURFACES = {
+    ("issue", "comment"): (
+        {"--body", "--body-file"},
+        "deny",
+        'gh issue comment 42 --body "発言"',
+        "スレッドへの発言そのもの",
+    ),
+    ("issue", "close"): (
+        {"--comment"},
+        "deny",
+        'gh issue close 42 --comment "対応済み"',
+        "閉じながらの発言も発言 (#123)",
+    ),
+    ("issue", "reopen"): (
+        {"--comment"},
+        "deny",
+        'gh issue reopen 42 --comment "やり直す"',
+        "開け直しながらの発言も発言 (#708 が踏んだ形)",
+    ),
+    ("issue", "create"): (
+        {"--body", "--body-file"},
+        "pass",
+        'gh issue create --title "題" --body "本文"',
+        "Issue の本文。スレッドへの発言ではない",
+    ),
+    ("issue", "edit"): (
+        {"--body", "--body-file"},
+        "pass",
+        "gh issue edit 42 --body-file body.md",
+        "既存本文の書き換え。新しい発言は増えない",
+    ),
+    ("issue", "view"): (
+        {"--comments"},
+        "pass",
+        "gh issue view 42 --comments",
+        "読み取り。-c の意味の衝突は test_c_option_meaning_something_else_passes",
+    ),
+    ("pr", "comment"): (
+        {"--body", "--body-file"},
+        "deny",
+        "gh pr comment 42 --body-file body.md",
+        "スレッドへの発言そのもの",
+    ),
+    ("pr", "close"): (
+        {"--comment"},
+        "deny",
+        'gh pr close 42 --comment "閉じる"',
+        "閉じながらの発言も発言 (#123)",
+    ),
+    ("pr", "reopen"): (
+        {"--comment"},
+        "deny",
+        'gh pr reopen 42 --comment "取り消す"',
+        "開け直しながらの発言も発言",
+    ),
+    ("pr", "review"): (
+        {"--body", "--body-file", "--comment"},
+        "deny",
+        'gh pr review 42 --comment --body "見ました"',
+        "本文を伴うレビューは発言。--comment はレビュー種別で本文ではない",
+    ),
+    ("pr", "create"): (
+        {"--body", "--body-file"},
+        "pass",
+        'gh pr create --title "題" --body "本文"',
+        "PR の本文。スレッドへの発言ではない",
+    ),
+    ("pr", "edit"): (
+        {"--body", "--body-file"},
+        "pass",
+        'gh pr edit 42 --body "本文"',
+        "既存本文の書き換え",
+    ),
+    ("pr", "merge"): (
+        {"--body", "--body-file"},
+        "pass",
+        'gh pr merge 42 --squash --body "マージ本文"',
+        "マージコミットの本文",
+    ),
+    ("pr", "revert"): (
+        {"--body", "--body-file"},
+        "pass",
+        'gh pr revert 42 --body "戻す理由"',
+        "revert として作る PR の本文",
+    ),
+    ("pr", "view"): (
+        {"--comments"},
+        "pass",
+        "gh pr view 42 --comments",
+        "読み取り",
+    ),
+}
+
+# 導出が空振りしていないことを確かめる錨。gh のヘルプの書式が変わって解析が壊れたら、
+# 「口が 1 つも無い」で緑になるのではなく、ここで赤くする
+SURFACE_ANCHORS = (("issue", "comment"), ("issue", "close"), ("pr", "review"))
+
+GH = shutil.which("gh")
+
+_SUBCOMMAND = re.compile(r"^  ([a-z][a-z-]*):\s", re.M)
+_BODY_FLAG = re.compile(r"--(?:body-file|comments|comment|body)(?![\w-])")
+
+
+def derive_body_bearing_surfaces():
+    """gh の --help から「本文系フラグを持つ口」を導く。
+
+    返すのは {(グループ, サブコマンド): {フラグ, …}}。認証もネットワークも要らない
+    (--help しか読まない)。
+    """
+
+    def helptext(*args):
+        proc = subprocess.run(
+            ["gh", *args, "--help"], capture_output=True, text=True
+        )
+        return proc.stdout + proc.stderr
+
+    derived = {}
+    for group in ("issue", "pr"):
+        for sub in _SUBCOMMAND.findall(helptext(group)):
+            flags = set(_BODY_FLAG.findall(helptext(group, sub)))
+            if flags:
+                derived[(group, sub)] = flags
+    return derived
 
 
 def clean_env(**overrides):
@@ -250,6 +400,62 @@ class GuardTest(unittest.TestCase):
 
     def test_non_gh_command_passes(self):
         self.assert_passed("make ci-check")
+
+    # --- 口の数え上げ (#708) --------------------------------------------
+
+    @unittest.skipUnless(GH, "gh が PATH に無い")
+    def test_body_bearing_surfaces_are_enumerated(self):
+        """gh 自身が持つ口と、BODY_BEARING_SURFACES の数え上げが一致する。
+
+        ガードの取りこぼしは「人が気付いたら足す」で支えていた。gh が口を増やした日に
+        ここが赤くなり、分類を促す — 発言なら deny 側へ足し、本文なら理由を添えて
+        素通し側へ足す。どちらにしても代表コマンドの扱いを 1 行書く。
+        """
+        derived = derive_body_bearing_surfaces()
+
+        for anchor in SURFACE_ANCHORS:
+            self.assertIn(
+                anchor,
+                derived,
+                "gh --help の解析が壊れている (錨が導出できない)。"
+                "_SUBCOMMAND / _BODY_FLAG を gh の書式に合わせ直す",
+            )
+
+        appeared = sorted(set(derived) - set(BODY_BEARING_SURFACES))
+        vanished = sorted(set(BODY_BEARING_SURFACES) - set(derived))
+        self.assertEqual(
+            ([], []),
+            (appeared, vanished),
+            f"gh の口が動いた (増: {appeared} / 減: {vanished})。"
+            "BODY_BEARING_SURFACES を直し、増えた口はスレッドへの発言かで分類する",
+        )
+
+        for surface, flags in sorted(derived.items()):
+            with self.subTest(surface=" ".join(("gh", *surface))):
+                self.assertEqual(BODY_BEARING_SURFACES[surface][0], flags)
+
+    def test_every_enumerated_surface_is_handled_as_declared(self):
+        """数え上げた口が、表の宣言どおりに差し戻される / 素通しする。
+
+        表が扱いの一覧であることを、実際にガードへ流して確かめる。gh は要らない
+        (代表コマンドは文字列で、ガードは文字列だけを読む)。
+        """
+        for surface, (_, expect, command, why) in sorted(
+            BODY_BEARING_SURFACES.items()
+        ):
+            with self.subTest(surface=" ".join(("gh", *surface)), why=why):
+                if expect == "deny":
+                    self.assert_denied(command)
+                else:
+                    self.assert_passed(command)
+
+    def test_review_comment_flag_alone_passes(self):
+        """gh pr review の --comment はレビュー**種別**で、本文ではない (境界)。
+
+        名前が同じなので close / reopen の --comment と同じに見えるが、こちらは
+        本文を伴わなければ発言が無い (--approve だけのレビューと同じ扱い)。
+        """
+        self.assert_passed("gh pr review 42 --comment")
 
 
 class SignatureTest(unittest.TestCase):
