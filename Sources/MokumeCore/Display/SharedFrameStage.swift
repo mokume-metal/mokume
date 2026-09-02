@@ -77,8 +77,18 @@ final class SharedFrameStage: NSObject {
     /// 窓を出した後に差し替えてもよい (見張りは子を入れ替えるので、書き先は変わる)。
     var onInput: ((String) -> Void)?
 
+    /// 表示のリフレッシュごとに呼ばれる。**絵が来ていなくても呼ぶ** — 面を読み直す側は
+    /// 絵の有無と関係なく進む必要がある。
+    var onTick: (() -> Void)?
+
     private(set) var window: NSWindow?
     private var view: SketchSurface?
+
+    /// 重ねる面を足す先。**窓が出ている間だけ在る。**
+    ///
+    /// 後から差し替えられるようにしてあるのは、宣言の顔ぶれが変わったらつまみを
+    /// 組み直すためである ([ADR-0032] 決定 5)。
+    var host: NSView? { view }
     private var displayLink: CADisplayLink?
     private var linkedScreen: NSScreen?
 
@@ -188,6 +198,7 @@ final class SharedFrameStage: NSObject {
     }
 
     @objc private func step(_ link: CADisplayLink) {
+        onTick?()
         reloadSourceIfChanged()
         guard let source, let view, let layer = view.metalLayer,
             let newest = SharedFrameSurface.newest(among: source.ids),

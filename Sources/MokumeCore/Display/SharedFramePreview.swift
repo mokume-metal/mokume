@@ -39,12 +39,19 @@ public final class SharedFramePreview {
 
     private let stage: SharedFrameStage
     private let notice = NoticeOverlay()
+    /// 面越しのつまみ。区画を渡されたときだけ在る。
+    private let params: RemoteParams?
+    /// いま重ねているつまみの面。宣言の顔ぶれが変われば作り直す。
+    private var knobs: KnobOverlay?
 
     /// - Parameters:
     ///   - facet: 差し出し元の番号が置かれる区画 (`.mokume/viewport`)。
-    ///   - title: 窓の名前。**作品の窓と見分けが付く形にする** — 並んで出るので、
-    ///     同じ名前だとどちらを本番へ送るのか分からない。
-    public init(gpu: RenderDevice, facet: URL, title: String) throws(RenderFailure) {
+    ///   - params: つまみの区画 (`.mokume/params`)。渡さなければつまみは出ない。
+    ///   - title: 窓の名前。
+    public init(gpu: RenderDevice, facet: URL, params: URL? = nil, title: String)
+        throws(RenderFailure)
+    {
+        self.params = params.map { RemoteParams(directory: $0) }
         self.stage = try SharedFrameStage(
             gpu: gpu, facet: facet,
             look: SharedFrameStage.Look(
@@ -64,11 +71,37 @@ public final class SharedFramePreview {
     /// 窓を出し、区画を見張り始める。
     public func open() {
         stage.open(overlay: notice)
+        // **1 拍ごとに面を読み直す。** 走っている側が値を変えることもあるので、
+        // こちらから動かしたときだけ見に行く形にはしない
+        stage.onTick = { [weak self] in self?.refreshKnobs() }
+        refreshKnobs(force: true)
     }
 
     /// 畳む。
     public func close() {
+        stage.onTick = nil
+        knobs = nil
         stage.close()
+    }
+
+    /// つまみが出ているか。**検査から見る** — 「作品の窓には出ない」を機械で確かめるには、
+    /// 出ている側も見えている必要がある。
+    var hasKnobs: Bool { knobs != nil }
+
+    /// つまみを面と合わせる。
+    ///
+    /// **宣言が 1 つも無ければ何も足さない** ([ADR-0030] 決定 8 の振る舞いをそのまま
+    /// 保つ)。顔ぶれが変わったときだけ組み直すのは、値が変わるたびに作り直すと
+    /// 触っている手からつまみが消えるためである。
+    private func refreshKnobs(force: Bool = false) {
+        guard let params, let host = stage.host else { return }
+        guard params.refresh() || force else { return }
+        knobs?.removeFromSuperview()
+        knobs = nil
+        guard !params.boxes.isEmpty else { return }
+        let overlay = KnobOverlay(boxes: params.boxes)
+        overlay.attach(to: host)
+        knobs = overlay
     }
 
     /// 重ねる 1 行を差し替える。

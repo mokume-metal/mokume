@@ -101,6 +101,9 @@ enum WatchCommand {
         // **置いていかない。** 区画は「画面の出口は共有面」という合図なので、残すと
         // 次に `run` で走らせたスケッチまで窓を開かなくなる — しかも黙って開かない
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
+        if viewer?.createdParams == true {
+            try? FileManager.default.removeItem(at: paramsFacet(for: session))
+        }
     }
 
     /// 作品の窓を出し、絵を渡す区画を置く。
@@ -118,11 +121,19 @@ enum WatchCommand {
         let facet = viewportFacet(for: session)
         // **前の見張りが残したものを引き継がない。** 置かれている番号は死んだ面を指す
         try? FileManager.default.removeItem(at: facet)
+        // **つまみの区画は、無ければこちらで作る。** 走らせている子は区画が在るときだけ
+        // 宣言を差し出すので ([ADR-0030] 決定 2)、作らないとプレビューに並べるものが
+        // 何も来ない。**元から在ったものは畳まない** — 外から動かすために人が置いた
+        // 区画かもしれない
+        let params = paramsFacet(for: session)
+        let paramsWasThere = FileManager.default.fileExists(atPath: params.path)
+        try? FileManager.default.createDirectory(at: params, withIntermediateDirectories: true)
+
         let name = session.directory.lastPathComponent
         guard let gpu = try? RenderDevice(),
             let window = try? SharedFrameWindow(gpu: gpu, facet: facet, title: name),
             let preview = try? SharedFramePreview(
-                gpu: gpu, facet: facet, title: "\(name) — プレビュー"),
+                gpu: gpu, facet: facet, params: params, title: "\(name) — プレビュー"),
             (try? FileManager.default.createDirectory(
                 at: facet, withIntermediateDirectories: true)) != nil
         else {
@@ -138,13 +149,19 @@ enum WatchCommand {
         // ほうを掴み直す手間がいちばん最初に生まれる
         preview.open()
         window.open()
-        return Viewer(window: window, preview: preview)
+        return Viewer(window: window, preview: preview, createdParams: !paramsWasThere)
     }
 
     /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業
     /// ディレクトリへ置くと、子と別の区画を見ることになる (#331)。
     static func viewportFacet(for session: WatchSession) -> URL {
         WorkDirectory.facet(StartupReads.viewport.key, under: session.facetBase)
+    }
+
+    /// つまみの区画の場所。**絵を渡す区画と同じ基準へ置く** — 走らせている子が書く先と
+    /// 揃っていないと、宣言が 1 つも見えない (#331)。
+    static func paramsFacet(for session: WatchSession) -> URL {
+        WorkDirectory.facet(StartupReads.params.key, under: session.facetBase)
     }
 
     /// 終わりの合図の受け口を置く。
@@ -267,8 +284,10 @@ enum WatchCommand {
     struct Viewer {
         /// 作品の窓。**道具の都合を何も載せない。**
         let window: SharedFrameWindow
-        /// 制作を助ける窓。状態と印、この先はつまみが載る。
+        /// 制作を助ける窓。状態と印とつまみが載る。
         let preview: SharedFramePreview
+        /// つまみの区画をこちらで作ったか。**作ったものだけ畳む。**
+        let createdParams: Bool
 
         func close() {
             window.close()
