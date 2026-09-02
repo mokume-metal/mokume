@@ -105,6 +105,11 @@ final class SharedFrameStage: NSObject {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = look.title
+        // **畳んだときに窓が自分を解放しないようにする。** 素の `NSWindow` の既定は
+        // 「閉じたら解放する」で、こちらは強い参照を持ったまま `close()` を呼ぶので、
+        // そのままだと二重に解放される — 症状は検査の走り終わりでの落下 (signal 11) と
+        // いう、原因から遠いところにしか出ない
+        window.isReleasedWhenClosed = false
         if !window.setFrameUsingName(look.autosaveName) { window.center() }
         window.setFrameAutosaveName(look.autosaveName)
 
