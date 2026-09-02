@@ -79,7 +79,7 @@ class DrawingEvidenceTest(unittest.TestCase):
         }))
         self.env.update(env)
         return subprocess.run(
-            ["bash", str(SCRIPT), *args], cwd=self.root, env=self.env,
+            ["/bin/bash", str(SCRIPT), *args], cwd=self.root, env=self.env,
             capture_output=True, text=True, encoding="utf-8"
         )
 

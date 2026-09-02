@@ -106,7 +106,7 @@ class OrphanProcessesTest(unittest.TestCase):
         environment["PS_LINES"] = ps_lines
         environment.update(env)
         return subprocess.run(
-            ["bash", str(SCRIPT)],
+            ["/bin/bash", str(SCRIPT)],
             cwd=self.work,
             capture_output=True,
             text=True,

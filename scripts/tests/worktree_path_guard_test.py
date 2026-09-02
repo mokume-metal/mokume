@@ -56,7 +56,7 @@ class HookTestCase(unittest.TestCase):
 
     def run_hook(self, cwd, tool="Edit", **tool_input):
         return subprocess.run(
-            ["bash", str(GUARD)],
+            ["/bin/bash", str(GUARD)],
             input=json.dumps(
                 {"tool_name": tool, "cwd": str(cwd), "tool_input": tool_input}
             ),
@@ -154,7 +154,7 @@ class HookTestCase(unittest.TestCase):
     def test_falls_back_to_process_cwd(self):
         # cwd をペイロードに載せない版のホストでも効く
         result = subprocess.run(
-            ["bash", str(GUARD)],
+            ["/bin/bash", str(GUARD)],
             input=json.dumps(
                 {
                     "tool_name": "Edit",

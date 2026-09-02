@@ -32,7 +32,7 @@ def judge(command, subcommand):
     コマンド本文には " も ' も改行も入るので、シェルへは argv で渡す。
     """
     proc = subprocess.run(
-        ["bash", "-c", f'. "{LIB}"\nis_gh_subcommand "$1" "$2"', "_", command, subcommand],
+        ["/bin/bash", "-c", f'. "{LIB}"\nis_gh_subcommand "$1" "$2"', "_", command, subcommand],
         capture_output=True,
         text=True,
     )
@@ -52,7 +52,7 @@ def targets_other_repo(command, cwd=None, **env):
     child_env = {k: v for k, v in os.environ.items() if k != "GITHUB_REPOSITORY"}
     child_env.update(env)
     proc = subprocess.run(
-        ["bash", "-c", f'. "{LIB}"\ntargets_other_repo "$1" "$2"', "_", command, cwd or ""],
+        ["/bin/bash", "-c", f'. "{LIB}"\ntargets_other_repo "$1" "$2"', "_", command, cwd or ""],
         capture_output=True,
         text=True,
         env=child_env,

@@ -43,7 +43,7 @@ class DrawingPathsTest(unittest.TestCase):
         """drawing_files を通したあとに残るファイルの並び。"""
         script = f'. "{LIB}"\nprintf \'%s\\n\' "$@" | drawing_files {purpose}\n'
         proc = subprocess.run(
-            ["bash", "-c", script, "bash", *inputs],
+            ["/bin/bash", "-c", script, "bash", *inputs],
             capture_output=True, text=True, encoding="utf-8",
             env={"DRAWING_PATHS": str(self.paths), "PATH": "/usr/bin:/bin"},
         )
@@ -54,7 +54,7 @@ class DrawingPathsTest(unittest.TestCase):
         """touches_drawing の真偽。"""
         script = f'. "{LIB}"\nprintf \'%s\\n\' "$@" | touches_drawing {purpose}\n'
         proc = subprocess.run(
-            ["bash", "-c", script, "bash", *inputs],
+            ["/bin/bash", "-c", script, "bash", *inputs],
             capture_output=True, text=True, encoding="utf-8",
             env={"DRAWING_PATHS": str(self.paths), "PATH": "/usr/bin:/bin"},
         )
@@ -105,7 +105,7 @@ class DrawingPathsTest(unittest.TestCase):
         """新しい読み手が用途を渡し忘れたら、狭いほうへ黙って倒れてはいけない。"""
         script = f'. "{LIB}"\nprintf \'%s\\n\' Sketches/main.swift | drawing_files\n'
         proc = subprocess.run(
-            ["bash", "-c", script],
+            ["/bin/bash", "-c", script],
             capture_output=True, text=True, encoding="utf-8",
             env={"DRAWING_PATHS": str(self.paths), "PATH": "/usr/bin:/bin"},
         )
