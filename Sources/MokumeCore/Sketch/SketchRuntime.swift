@@ -152,7 +152,7 @@ public final class SketchRuntime {
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
-        self.relayed = StandardInputEvents.makeIfEnabled()
+        self.relayed = StandardInputEvents.makeIfDriven()
         // 索引は 1 度だけ引き、保存と面が同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
         let store = ParamStore.makeIfNeeded(for: registry)

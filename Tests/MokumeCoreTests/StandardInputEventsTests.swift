@@ -116,11 +116,21 @@ struct StandardInputEventsTests {
     }
 
     /// 直に走らせた子の標準入力 (端末) を横取りしないことは、**合図が 1 つ**であること
-    /// から従う ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1)。
-    @Test("区画が無ければ、標準入力に触らない")
-    func staysAwayWithoutTheFacet() {
+    /// から従う ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1・4)。
+    @Test("道具が動かしていなければ、標準入力に触らない")
+    func staysAwayWhenNotDriven() {
+        #expect(StandardInputEvents.makeIfDriven(by: false) == nil)
+        #expect(StandardInputEvents.makeIfDriven(by: true) != nil)
+    }
+
+    /// 合図そのものは**区画が在るかどうか**で、見る場所は 1 つに寄せてある。
+    @Test("合図は、画面の出口が共有する面になっていること")
+    func theSignalIsTheViewportFacet() throws {
         let absent = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-absent-\(UUID().uuidString)", isDirectory: true)
-        #expect(StandardInputEvents.makeIfEnabled(at: absent) == nil)
+        #expect(!SharedFrameSurface.isEnabled(at: absent))
+        try FileManager.default.createDirectory(at: absent, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: absent) }
+        #expect(SharedFrameSurface.isEnabled(at: absent))
     }
 }

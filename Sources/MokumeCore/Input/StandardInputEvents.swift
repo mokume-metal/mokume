@@ -25,7 +25,8 @@ import Foundation
 ///
 /// 読むのは**共有面へ差し出しているときだけ**である。区画 (`viewport`) の在ることが
 /// 既に「見張りから起こされた子」を表しているので ([ADR-0032] 決定 1)、直に走らせた
-/// 子の標準入力 (端末) を横取りしないことも同じ合図から従う。
+/// 子の標準入力 (端末) を横取りしないことも同じ合図から従う。**区画を見るのは
+/// ``SharedFrameSurface/isEnabled(at:)`` だけ**で、こちらはその答えを受け取る。
 ///
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
@@ -53,16 +54,16 @@ final class StandardInputEvents {
     /// 相手が管を畳んだか。畳んだ後は読みに行かない。
     private(set) var isClosed = false
 
-    /// 区画があるときだけ働く。
-    static func makeIfEnabled(
-        at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
+    /// 共有面へ差し出しているときだけ働く。
+    ///
+    /// **合図を自分では見ない。** 見る場所は ``SharedFrameSurface/isEnabled(at:)`` 1 つに
+    /// してある — 経路ごとに合図を持つと、窓は道具のものなのに触っても効かない、という
+    /// 片側だけ効いた状態が作れてしまう。
+    static func makeIfDriven(
+        by isDriven: Bool = SharedFrameSurface.isEnabled(),
         descriptor: Int32 = FileHandle.standardInput.fileDescriptor
     ) -> StandardInputEvents? {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
-            isDirectory.boolValue
-        else { return nil }
-        return StandardInputEvents(descriptor: descriptor)
+        isDriven ? StandardInputEvents(descriptor: descriptor) : nil
     }
 
     init(descriptor: Int32) {
