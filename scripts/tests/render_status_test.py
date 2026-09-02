@@ -158,7 +158,7 @@ class RenderStatusTest(unittest.TestCase):
     def run_script(self, mode, **env):
         self.env.update(env)
         proc = subprocess.run(
-            ["bash", str(SCRIPT), mode],
+            ["/bin/bash", str(SCRIPT), mode],
             cwd=self.work,
             env=self.env,
             capture_output=True,

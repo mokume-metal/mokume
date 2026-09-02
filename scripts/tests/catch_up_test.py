@@ -152,7 +152,7 @@ class CatchUpTest(unittest.TestCase):
     def run_script(self, **env):
         self.env.update({k: str(v) for k, v in env.items()})
         return subprocess.run(
-            ["bash", str(SCRIPT)],
+            ["/bin/bash", str(SCRIPT)],
             cwd=self.work, env=self.env, capture_output=True, text=True,
             encoding="utf-8",
         )

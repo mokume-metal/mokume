@@ -39,7 +39,7 @@ class AdrNumbersTest(unittest.TestCase):
 
     def run_script(self, *args):
         return subprocess.run(
-            ["bash", str(SCRIPT), *(args or (str(self.dir),))],
+            ["/bin/bash", str(SCRIPT), *(args or (str(self.dir),))],
             capture_output=True, text=True, encoding="utf-8"
         )
 
@@ -80,7 +80,7 @@ class AdrNumbersTest(unittest.TestCase):
         # 既定の配線 (git root の docs/decisions) が生きていることを見る。
         # ここが切れると、テストだけが緑で ci-check は何も検査しない状態になる
         r = subprocess.run(
-            ["bash", str(SCRIPT)], cwd=str(REPO),
+            ["/bin/bash", str(SCRIPT)], cwd=str(REPO),
             capture_output=True, text=True, encoding="utf-8"
         )
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -102,7 +102,7 @@ class AdrStatusTest(unittest.TestCase):
 
     def run_script(self):
         return subprocess.run(
-            ["bash", str(SCRIPT), str(self.dir)],
+            ["/bin/bash", str(SCRIPT), str(self.dir)],
             capture_output=True, text=True, encoding="utf-8"
         )
 
