@@ -35,7 +35,8 @@ enum WatchCommand {
     /// - Parameter watching: 巡回のしかた。**検査から差し替える** — 既定は合図が来るまで
     ///   回り続けるので、始める前に止まることを確かめる検査がここで固まらないようにする。
     static func run(
-        _ arguments: [String], watching: (WatchSession) -> Void = { watch($0) }
+        _ arguments: [String],
+        watching: (WatchSession, Viewer?) -> Void = { watch($0, viewer: $1) }
     ) throws(CommandFailure) {
         let invocation = try Invocation.parse(arguments)
         let directory = invocation.directory
@@ -70,21 +71,31 @@ enum WatchCommand {
                 base: session.facetBase, given: WorkDirectory.given != nil))
         // **作り直している間も、状態が読めるようにする。** 作り直しは終わってからしか
         // 名乗らないので、これが無いと待っている間は画面が 1 文字も動かない (#695)
-        session.willRebuild = { initial in say(initial ? startingLine : rebuildingLine) }
+        //
+        // **端末が正で、プレビューはそれを映す。** 同じ 1 本の文言を両方へ渡すので、
+        // 二か所で別のことを言う形にはならない (#705 の未決だったところ)
+        var viewer: Viewer?
+        session.willRebuild = { initial in
+            let line = initial ? startingLine : rebuildingLine
+            say(line)
+            viewer?.preview.report(line, spinning: true)
+        }
 
         // **窓を先に出す。** 出せたときだけ区画ができ、子は窓を持たずに走る
         // ([ADR-0032] 決定 1)。子を起こしてからでは間に合わない — 区画は起動の瞬間に
         // しか読まれない
         //
         // [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-        let viewer = openViewer(for: session)
+        viewer = openViewer(for: session)
 
         // 子を起こす前に受け口を置く。起こした後だと、その隙間に来た合図で
         // 既定の振る舞い (親だけが即座に終わる) に落ちて子が残る
         installStopHandlers()
-        report(session.start())
 
-        watching(session)
+        // **最初の作り直しも巡回の中で始める。** ここで直に呼ぶと、窓が画面に出るのは
+        // 作り直しが終わってからになる — いちばん長く待つのが初回なのに、待っている間
+        // だけ状態がどこにも出ない (#695 が端末で直したことが、窓では直らない)
+        watching(session, viewer)
         finish(session)
         viewer?.close()
         // **置いていかない。** 区画は「画面の出口は共有面」という合図なので、残すと
@@ -102,22 +113,27 @@ enum WatchCommand {
     /// 回っている印も、別に立てるプレビューの仕事である。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    static func openViewer(for session: WatchSession) -> SharedFrameWindow? {
+    static func openViewer(for session: WatchSession) -> Viewer? {
         NSApplication.shared.setActivationPolicy(.regular)
         let facet = viewportFacet(for: session)
         // **前の見張りが残したものを引き継がない。** 置かれている番号は死んだ面を指す
         try? FileManager.default.removeItem(at: facet)
+        let name = session.directory.lastPathComponent
         guard let gpu = try? RenderDevice(),
-            let window = try? SharedFrameWindow(
-                gpu: gpu, facet: facet, title: session.directory.lastPathComponent),
+            let window = try? SharedFrameWindow(gpu: gpu, facet: facet, title: name),
+            let preview = try? SharedFramePreview(
+                gpu: gpu, facet: facet, title: "\(name) — プレビュー"),
             (try? FileManager.default.createDirectory(
                 at: facet, withIntermediateDirectories: true)) != nil
         else {
             say("窓は出せないので、スケッチに自分の窓を開かせる")
             return nil
         }
+        // **プレビューを先に出す。** 後に出すと作品の窓の上に重なるので、本番へ送る
+        // ほうを掴み直す手間がいちばん最初に生まれる
+        preview.open()
         window.open()
-        return window
+        return Viewer(window: window, preview: preview)
     }
 
     /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業
@@ -149,11 +165,12 @@ enum WatchCommand {
     /// - Returns: 続けるなら `true`。**合図を見てからは作り直さない** — 見ないと、
     ///   終われと言われた後に 1 回だけ作り直して子を起こすことになる。
     @discardableResult
-    static func step(_ session: WatchSession, stopped: () -> Bool = { watchStopRequested != 0 })
-        -> Bool
-    {
+    static func step(
+        _ session: WatchSession, viewer: Viewer? = nil,
+        stopped: () -> Bool = { watchStopRequested != 0 }
+    ) -> Bool {
         if stopped() { return false }
-        if let outcome = session.tick() { report(outcome) }
+        if let outcome = session.tick() { report(outcome, on: viewer) }
         return true
     }
 
@@ -164,14 +181,22 @@ enum WatchCommand {
     /// 巡回の上で起きるので、そこを止めて眠ると窓が固まる。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    static func watch(_ session: WatchSession) {
+    static func watch(_ session: WatchSession, viewer: Viewer? = nil) {
         let application = NSApplication.shared
+        // **最初の 1 拍で子を起こす。** 巡回に入る前に起こすと、窓が出るのは初回の
+        // 作り直しが終わってからになる
+        var started = false
         // **`.common` へ載せる。** `Timer.scheduledTimer` は `.default` にしか載らず、
         // 窓を掴んで動かしている間や大きさを変えている間は巡回が**止まる** — その間に
         // 保存しても作り直されない
         let timer = Timer(timeInterval: interval, repeats: true) { _ in
             MainActor.assumeIsolated {
-                if !step(session) { leave(application) }
+                if !started {
+                    started = true
+                    report(session.start(), on: viewer)
+                    return
+                }
+                if !step(session, viewer: viewer) { leave(application) }
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -200,11 +225,45 @@ enum WatchCommand {
         say(session.stop() ? "見張りを終える (走らせていたスケッチを止めた)" : "見張りを終える")
     }
 
-    private static func report(_ outcome: BuildReport) {
+    private static func report(_ outcome: BuildReport, on viewer: Viewer?) {
         say(outcome.summary)
         if !outcome.ok, !outcome.output.isEmpty {
             say(outcome.output)
-            say("直前の版を走らせたまま待っている")
+            say(holdingLine)
+        }
+        // **回っている印は止める。** 作り直しは終わっているので、回り続ける印は
+        // 「まだ待たされている」と読める
+        viewer?.preview.report(notice(for: outcome), spinning: false)
+    }
+
+    /// 作り直しが通らなかったとき、走り続けているものを名乗る行。
+    static let holdingLine = "直前の版を走らせたまま待っている"
+
+    /// プレビューへ重ねる 1 行。**端末に出ている言葉だけで組む** — プレビューは端末の
+    /// 代わりではないので、ここだけで名乗る事実を作らない。
+    ///
+    /// - Returns: 通ったら `nil` (畳む)。通らなかったら**出したままにする行** — 消すと
+    ///   「保存したのに絵が変わらない」が「変えた結果が同じだった」と見分けられない。
+    static func notice(for outcome: BuildReport) -> String? {
+        outcome.ok ? nil : "作り直しに失敗 — " + holdingLine
+    }
+
+    /// 道具が出す窓。
+    ///
+    /// **作品の窓とプレビューは兄弟**で、同じ区画を独立に見る ([ADR-0032] 決定 1)。
+    /// 親子にしないのは、作品が窓を持たない日 (Syphon で外へ流すなど) にプレビューだけを
+    /// 出せる形にしておくためである。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    struct Viewer {
+        /// 作品の窓。**道具の都合を何も載せない。**
+        let window: SharedFrameWindow
+        /// 制作を助ける窓。状態と印、この先はつまみが載る。
+        let preview: SharedFramePreview
+
+        func close() {
+            window.close()
+            preview.close()
         }
     }
 
