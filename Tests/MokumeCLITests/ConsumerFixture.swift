@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 依存として mokume を引いた消費側の配置を模す。
 ///
@@ -35,8 +36,11 @@ enum ConsumerFixture {
         let schemas = package.appendingPathComponent("Schemas", isDirectory: true)
         try FileManager.default.createDirectory(at: schemas, withIntermediateDirectories: true)
         for facet in facets {
-            try Data(#"{"$id":"\#(facet)-report"}"#.utf8)
-                .write(to: schemas.appendingPathComponent("\(facet)-report.schema.json"))
+            // **仕様の名前は一覧が名乗る。** 組み立てると、応答を持たない一方通行の面
+            // (`viewport`) がどの版でも「持たない」側に落ちる (#703)
+            let name = StartupReads.all.first { $0.key == facet }?.schemaName ?? "\(facet)-report"
+            try Data(#"{"$id":"\#(name)"}"#.utf8)
+                .write(to: schemas.appendingPathComponent("\(name).schema.json"))
         }
 
         // 実測した形 (version 7)。パスで指したものは絶対パスがそのまま載る

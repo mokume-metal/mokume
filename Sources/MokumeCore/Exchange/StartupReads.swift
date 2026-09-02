@@ -49,6 +49,27 @@ public enum StartupReads {
         /// **読むのは検査だけ**なので公開しない。一覧から漏れた読み手を見つけるには、
         /// 一覧の側が「どこで読むか」まで名乗っている必要がある。
         let readSite: String
+
+        /// この面の仕様の名前 (`Schemas/<これ>.schema.json`)。
+        ///
+        /// **既定は `<key>-report`。** 要求に応える面はみなその形をしている。一方通行の
+        /// 面は応答を持たないので、自分の綴りを名乗る — 依存が持つ面を数える読み手
+        /// (`DependencyFacets`) が、実在しない名前を探して「持たない」と誤って断定
+        /// しないため ([#703](https://github.com/mokume-metal/mokume/issues/703))。
+        public let schemaName: String
+
+        init(
+            name: String, origin: Origin, key: String, decidedBy: Decider, note: String,
+            readSite: String, schemaName: String? = nil
+        ) {
+            self.name = name
+            self.origin = origin
+            self.key = key
+            self.decidedBy = decidedBy
+            self.note = note
+            self.readSite = readSite
+            self.schemaName = schemaName ?? "\(key)-report"
+        }
     }
 
     /// やりとりのファイルを置く親。
@@ -81,6 +102,20 @@ public enum StartupReads {
         note: "起動の瞬間に在れば、宣言した値を外から読み書きできる。走っている最中に作っても拾わない",
         readSite: "Sources/MokumeCore/Parameters/ParamSurface.swift")
 
+    /// 絵を渡す面の区画。
+    ///
+    /// **区画で道具が決めるのはこれだけである。** 他の区画は利用者が作るかどうかで
+    /// 決まるが、これは見張り (`watch`) が子を起こす前に作る — 画面の出口をどこに
+    /// 置くかは、起こした側にしか決められないからである ([ADR-0032] 決定 1)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    public static let viewport = Entry(
+        name: "絵を渡す面の区画", origin: .facet, key: "viewport", decidedBy: .tool,
+        note: "起動の瞬間に在れば、窓を開かずに焼いた絵を共有できる面へ差し出す。走っている最中に作っても拾わない",
+        readSite: "Sources/MokumeCore/Display/SharedFrameSurface.swift",
+        // 一方通行の面なので応答を持たない。仕様が名乗るのは置いた面の番号である
+        schemaName: "viewport-surface")
+
     /// 走っている速さの名乗り。
     public static let frameRateNotice = Entry(
         name: "速さの名乗り", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
@@ -89,6 +124,6 @@ public enum StartupReads {
 
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
-        workDirectory, sourceStamp, frameRateNotice, observe, input, params,
+        workDirectory, sourceStamp, frameRateNotice, observe, input, params, viewport,
     ]
 }

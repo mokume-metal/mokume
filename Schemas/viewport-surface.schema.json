@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/viewport-surface.schema.json",
+  "title": "絵を渡す面の番号",
+  "description": "画面の出口が外のプロセスに在るとき、走っているスケッチが起動の直後に書く。読み手は番号から面を引き、面の属性 mokume.frame がいちばん大きいものを掴む (ADR-0032 決定 3)。中身が変わるのは大きさが変わったときだけで、フレームごとには書かれない。",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "ids",
+    "width",
+    "height"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "この形式の版。上げ方は ADR-0018 決定 5。"
+    },
+    "ids": {
+      "type": "array",
+      "description": "面の番号 (IOSurfaceGetID)。並びが書く順である。途中の絵を掴ませないために複数ある。",
+      "minItems": 1,
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "面の幅 (画素)。描く解像度と同じで、帯は入っていない。"
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "面の高さ (画素)。描く解像度と同じで、帯は入っていない。"
+    }
+  }
+}
