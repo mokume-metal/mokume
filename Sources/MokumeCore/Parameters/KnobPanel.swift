@@ -30,7 +30,10 @@ struct KnobPanel: View {
     let boxes: [any DeclaredParam]
     /// いまの数字を読む口。**窓は読み手である** ([ADR-0030] 決定 7) — 自分では
     /// 数えず、観測の応答が返すのと同じ集計器を読む。
-    var numbers: (() -> FrameNumbers)?
+    ///
+    /// **`nil` を返してよい。** 走っているのが別のプロセスのときは「まだ何も届いていない」
+    /// 「もう届かなくなった」があり、そのとき数字を出せば嘘になる (``RemoteTempo``)。
+    var numbers: (() -> FrameNumbers?)?
 
     /// 面の横幅。行の折り返しではなく窓の隅に収まる大きさで決める。
     static let width: CGFloat = 260
@@ -42,7 +45,10 @@ struct KnobPanel: View {
             VStack(alignment: .leading, spacing: 10) {
                 if let numbers {
                     NumbersReadout(read: numbers)
-                    Divider()
+                    // **並ぶものが無ければ仕切らない。** つまみを 1 つも宣言していない
+                    // スケッチでも数字は出す (道具の窓に限る — ADR-0032 決定 1) ので、
+                    // 何も無い側を仕切る線が残る
+                    if !boxes.isEmpty { Divider() }
                 }
                 ForEach(Array(boxes.enumerated()), id: \.offset) { _, box in
                     KnobRow(box: box)
@@ -67,7 +73,7 @@ struct KnobPanel: View {
 /// つまみの面が毎フレーム組み直される。読むのは既に数えてある値だけなので、間隔を
 /// 落としても数字そのものは正しい。
 private struct NumbersReadout: View {
-    let read: () -> FrameNumbers
+    let read: () -> FrameNumbers?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: Self.interval)) { _ in
@@ -304,8 +310,16 @@ enum KnobText {
     ///
     /// 進めた枚数と時刻は常に測れている (どちらも数え上げなので)。速さとフレーム時間は
     /// 起動直後と止めている間は測れていないので、**同じ 1 つの綴り**で欠測を表す。
-    static func numbers(_ numbers: FrameNumbers) -> [(label: String, value: String)] {
-        [
+    ///
+    /// **数字そのものが届いていないこともある。** 走っているのが別のプロセスのときは、
+    /// まだ 1 枚も来ていない・もう来なくなった、が起きる (``RemoteTempo``)。そのときは
+    /// 枚数と時刻まで欠測なので、**4 つとも同じ綴りで出す** — 進んでいない相手の枚数を
+    /// 0 と書けば、「1 枚目を描いたところ」と区別が付かなくなる。
+    static func numbers(_ numbers: FrameNumbers?) -> [(label: String, value: String)] {
+        guard let numbers else {
+            return ["fps", "ms", "frame", "t"].map { (label: $0, value: notMeasured) }
+        }
+        return [
             ("fps", measurement(numbers.frameRate)),
             ("ms", measurement(numbers.frameTimeMs)),
             ("frame", String(numbers.frameCount)),

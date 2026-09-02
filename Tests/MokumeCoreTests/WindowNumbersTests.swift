@@ -124,6 +124,59 @@ struct WindowNumbersTextTests {
         #expect(shown["frame"] == "0")
         #expect(shown["t"] == "0.00")
     }
+
+    /// 走っているのが別のプロセスのときは、数字そのものが届いていないことがある (#718)。
+    /// **そのときは枚数も時刻も欠測である** — 進んでいない相手の枚数を 0 と書くと、
+    /// 「1 枚目を描いたところ」と区別が付かなくなる。
+    @Test("数字が届いていなければ、4 つとも同じ綴りで出る")
+    func nothingArrivedShowsOneSpellingEverywhere() {
+        let shown = KnobText.numbers(nil)
+        #expect(shown.map(\.label) == ["fps", "ms", "frame", "t"])
+        #expect(shown.allSatisfy { $0.value == KnobText.notMeasured })
+    }
+}
+
+/// 別のプロセスが数えた速さを保つ側 (#718)。
+///
+/// **面に載った数字は、書いた側が消えても残り続ける。** 子が死んでも固まっても最後の
+/// 数字はそこに在るので、受け取ってからの古さで打ち切る。
+@Suite("面から届いた速さ")
+struct RemoteTempoTests {
+    private let numbers = FrameNumbers(
+        frameCount: 12, time: 0.2, frameRate: 60, frameTimeMs: 16.7)
+
+    @Test("まだ何も届いていなければ、測れていない")
+    func nothingArrivedYet() {
+        #expect(RemoteTempo().numbers(now: 0) == nil)
+        #expect(RemoteTempo().numbers(now: 1000) == nil)
+    }
+
+    /// **数え直さない** (ADR-0030 決定 7)。受け取ったものをそのまま返す。
+    @Test("届いた数字はそのまま返る")
+    func whatArrivedComesBackUnchanged() throws {
+        var tempo = RemoteTempo()
+        tempo.record(numbers, at: 100)
+        #expect(try #require(tempo.numbers(now: 100)) == numbers)
+    }
+
+    /// しきい値は集計器と**同じもの**を使う (`FrameTempo.staleAfter`) — 同じ問いに 2 つの
+    /// しきい値を持つと、片方だけ直した日に窓と応答が違うことを言い始める。
+    @Test("しばらく届かなければ、測れていないへ戻る")
+    func stopsClaimingAStaleNumber() {
+        var tempo = RemoteTempo()
+        tempo.record(numbers, at: 100)
+        #expect(tempo.numbers(now: 100 + FrameTempo.staleAfter - 0.001) != nil)
+        #expect(tempo.numbers(now: 100 + FrameTempo.staleAfter) == nil)
+    }
+
+    @Test("また届けば、また名乗る")
+    func aFreshNumberRevivesIt() {
+        var tempo = RemoteTempo()
+        tempo.record(numbers, at: 100)
+        #expect(tempo.numbers(now: 100 + FrameTempo.staleAfter) == nil)
+        tempo.record(numbers, at: 100 + FrameTempo.staleAfter)
+        #expect(tempo.numbers(now: 100 + FrameTempo.staleAfter) != nil)
+    }
 }
 
 /// **窓に出る数字と、面が返す数字が同じ源から来ること** (決定 7)。
