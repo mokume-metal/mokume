@@ -117,6 +117,50 @@ struct SharedFrameStageTests {
         #expect(lines == [InputEvent.mouseMoved(x: 3, y: 4).wireLine])
     }
 
+    /// **つまみはプレビューにだけ出る** ([ADR-0032] 決定 5)。見張りから本番を回している
+    /// 間、つまみが本番の画面に出てはならない。
+    @Test("宣言があればプレビューにつまみが出て、作品の窓には出ない")
+    func knobsGoToThePreviewOnly() throws {
+        try withFacet { facet in
+            let params = facet.appendingPathComponent("params", isDirectory: true)
+            try FileManager.default.createDirectory(at: params, withIntermediateDirectories: true)
+            let report = ParamReport(
+                revision: 1, id: nil,
+                params: [ParamDeclaration(name: "size", value: .float(12))],
+                rejected: [], clamped: [], discarded: [])
+            try AtomicFile.write(
+                try JSONEncoder().encode(report),
+                to: params.appendingPathComponent(ParamSurface.reportFileName))
+
+            let gpu = try RenderDevice()
+            let preview = try SharedFramePreview(
+                gpu: gpu, facet: facet, params: params, title: "つまみ")
+            let artwork = try SharedFrameStage(gpu: gpu, facet: facet, look: look("bare-knobs"))
+            preview.open()
+            artwork.open()
+            defer {
+                preview.close()
+                artwork.close()
+            }
+            #expect(preview.hasKnobs)
+            #expect(try #require(artwork.window?.contentView).subviews.isEmpty)
+        }
+    }
+
+    /// いまの `KnobOverlay.makeIfNeeded` の振る舞いを保つ (ADR-0030 決定 8)。
+    @Test("宣言が 1 つも無ければ、つまみは足さない")
+    func addsNothingWithoutDeclarations() throws {
+        try withFacet { facet in
+            let params = facet.appendingPathComponent("params", isDirectory: true)
+            try FileManager.default.createDirectory(at: params, withIntermediateDirectories: true)
+            let preview = try SharedFramePreview(
+                gpu: try RenderDevice(), facet: facet, params: params, title: "空")
+            preview.open()
+            defer { preview.close() }
+            #expect(!preview.hasKnobs)
+        }
+    }
+
     /// 2 枚が同じ名前で位置を覚えると、互いを上書きして重なって開く。
     @Test("作品の窓とプレビューは、別の名前で位置を覚える")
     func placementNamesDiffer() {

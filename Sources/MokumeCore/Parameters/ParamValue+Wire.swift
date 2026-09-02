@@ -104,7 +104,7 @@ extension ParamValue: Codable {
     }
 }
 
-extension ParamDeclaration: Encodable {
+extension ParamDeclaration: Codable {
     private enum CodingKeys: String, CodingKey {
         case name, type, value, min, max, choices
     }
@@ -124,5 +124,28 @@ extension ParamDeclaration: Encodable {
         if let choices {
             try container.encode(choices, forKey: .choices)
         }
+    }
+
+    /// 宣言 1 つぶんを読む。
+    ///
+    /// **読む側が要るのは道具である** — 見張りが出すプレビューはスケッチを持っていないので、
+    /// つまみに並べる宣言をこの面から引く ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 5)。
+    ///
+    /// 型と値は**書いた側と同じ組**として読む — 宣言は `type` と `value` を隣に持つので、
+    /// 値の読み方 (``ParamValue/init(from:)``) をそのまま当てられる。書き方だけを 2 度
+    /// 書かないのと同じ理由で、読み方も 1 つにする。
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let name = try container.decode(String.self, forKey: .name)
+        let value = try ParamValue(from: decoder)
+        let lower = try container.decodeIfPresent(Double.self, forKey: .min)
+        let upper = try container.decodeIfPresent(Double.self, forKey: .max)
+        // **片側だけの幅は幅ではない。** 書く側は両方揃えて出すので、揃っていなければ
+        // 幅が無いものとして扱う (誤った端で動きを縛るより、縛らないほうが害が小さい)
+        var range: ParamRange?
+        if let lower, let upper, lower <= upper { range = ParamRange(lower...upper) }
+        self.init(
+            name: name, value: value, range: range,
+            choices: try container.decodeIfPresent([String].self, forKey: .choices))
     }
 }
