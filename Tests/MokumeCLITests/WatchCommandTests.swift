@@ -112,11 +112,9 @@ struct WatchCommandTests {
     func leavesTheLoopWhenStopped() throws {
         let stub = Stub()
         let session = WatchSession(directory: try makeDirectory(), hooks: stub.hooks())
-        var sleeps = 0
 
-        WatchCommand.watch(session, sleep: { _ in sleeps += 1 }, stopped: { sleeps >= 2 })
-
-        #expect(sleeps == 2)
+        #expect(WatchCommand.step(session, stopped: { false }))
+        #expect(!WatchCommand.step(session, stopped: { true }))
     }
 
     /// **終われと言われた後に、もう一度作り直さない。** 待っている間に来た合図を
@@ -129,10 +127,12 @@ struct WatchCommandTests {
         #expect(stub.builds == 1)
 
         stub.stamp = "bbb"  // 変化はある。合図が無ければ作り直す状況
-        var sleeps = 0
-        WatchCommand.watch(session, sleep: { _ in sleeps += 1 }, stopped: { sleeps >= 1 })
+        WatchCommand.step(session, stopped: { true })
 
         #expect(stub.builds == 1)
+        // 合図が無ければ作り直す状況であることを、同じ場面で確かめる
+        WatchCommand.step(session, stopped: { false })
+        #expect(stub.builds == 2)
     }
 
     /// **止めたかどうかは別の出来事。** 走らせていたものが既に死んでいた場合と、

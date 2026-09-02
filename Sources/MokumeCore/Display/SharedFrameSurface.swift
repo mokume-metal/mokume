@@ -134,17 +134,39 @@ final class SharedFrameSurface {
         self.ids = slots.map { IOSurfaceGetID($0.surface) }
     }
 
-    /// 面を 1 枚作り、テクスチャを被せる。
-    private static func makeSlot(
-        gpu: RenderDevice, width: Int, height: Int
-    ) throws(RenderFailure) -> Slot {
-        let properties: [CFString: Any] = [
+    /// 番号だけで引けるようにする印。
+    ///
+    /// **これが無いと `IOSurfaceLookup` は同じプロセスからしか通らない。** 外から引くと
+    /// 黙って `nil` が返るので、症状は「窓は出ているのに真っ白」としてしか現れない —
+    /// 実際にそう踏んだ ([#704](https://github.com/mokume-metal/mokume/issues/704))。
+    /// 番号を渡すやり方 ([ADR-0032] 決定 3) は、これが在って初めて成り立つ。
+    ///
+    /// **綴りを直に書いてある。** 対応する定数 `kIOSurfaceIsGlobal` は macOS 10.11 で
+    /// 非推奨になり (`Global surfaces are insecure`)、参照すると警告が出る。代わりの道は
+    /// 「番号ではなく mach port を渡す」ことで、それは**通信路を 1 本増やす**ことに等しく、
+    /// 決定 3 が避けたものそのものである。隠すためではなく、**選んだことをここに書き切って
+    /// 建物の警告を静かに保つ**ために綴りで持つ。同じ機械の上で Syphon も同じ道を通る。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static let globalKey = "IOSurfaceIsGlobal" as CFString
+
+    /// 面に与える性質。**検査から読めるように切り出してある** — 番号で引けるかどうかは
+    /// 別のプロセスからしか確かめられないので、せめて印が載っていることは見ておく。
+    static func properties(width: Int, height: Int) -> CFDictionary {
+        [
             kIOSurfaceWidth: width,
             kIOSurfaceHeight: height,
             kIOSurfacePixelFormat: Self.surfaceFormat,
             kIOSurfaceBytesPerElement: Self.bytesPerPixel,
-        ]
-        guard let surface = IOSurfaceCreate(properties as CFDictionary) else {
+            globalKey: true,
+        ] as [CFString: Any] as CFDictionary
+    }
+
+    /// 面を 1 枚作り、テクスチャを被せる。
+    private static func makeSlot(
+        gpu: RenderDevice, width: Int, height: Int
+    ) throws(RenderFailure) -> Slot {
+        guard let surface = IOSurfaceCreate(properties(width: width, height: height)) else {
             throw .textureUnavailable(width: width, height: height)
         }
 
@@ -184,6 +206,25 @@ final class SharedFrameSurface {
         frameNumber += 1
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
+    }
+
+    /// 置かれている面の番号を読む。読み手の側の規則。
+    ///
+    /// **書く側と同じ綴りをここで持つ。** 読み手は別のプロセスなので、綴りが 2 か所へ
+    /// 分かれると片方だけ直したときに静かに食い違う。
+    ///
+    /// - Returns: 読めなければ `nil`。**版が違えば読まない** — 知らない形を推測で解くと、
+    ///   食い違いが絵の壊れ方として出る。
+    static func readManifest(at facet: URL) -> (ids: [UInt32], width: Int, height: Int)? {
+        let url = facet.appendingPathComponent(manifestName)
+        guard let data = try? Data(contentsOf: url),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["schemaVersion"] as? Int == Manifest.schemaVersion,
+            let ids = object["ids"] as? [UInt32], !ids.isEmpty,
+            let width = object["width"] as? Int, width > 0,
+            let height = object["height"] as? Int, height > 0
+        else { return nil }
+        return (ids, width, height)
     }
 
     /// いま読むべき面の番号と、その面が名乗っている枚数。読み手の側の規則。

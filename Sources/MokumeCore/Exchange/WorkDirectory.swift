@@ -32,11 +32,25 @@ public enum WorkDirectory {
     public static let given: URL? = given(environment: ProcessInfo.processInfo.environment)
 
     /// `<base>/.mokume`。
-    public static var root: URL { base.appendingPathComponent(".mokume", isDirectory: true) }
+    public static var root: URL { root(under: base) }
+
+    /// 与えた基準の下の `.mokume`。
+    ///
+    /// **基準を外から渡せる形も要る。** 道具は自分の作業ディレクトリではなく、見張って
+    /// いるスケッチの側の基準へ置く — 割れると両者は別の区画を見る (#331)。綴りは
+    /// ここ 1 箇所に保つ。
+    public static func root(under base: URL) -> URL {
+        base.appendingPathComponent(".mokume", isDirectory: true)
+    }
 
     /// `<base>/.mokume/<name>`。用途ごとの区画。
     public static func facet(_ name: String) -> URL {
-        root.appendingPathComponent(name, isDirectory: true)
+        facet(name, under: base)
+    }
+
+    /// 与えた基準の下の区画。
+    public static func facet(_ name: String, under base: URL) -> URL {
+        root(under: base).appendingPathComponent(name, isDirectory: true)
     }
 
     /// `<base>/.mokume/state`。ライブラリが自分の続きを置く場所。

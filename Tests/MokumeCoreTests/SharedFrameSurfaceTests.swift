@@ -49,6 +49,81 @@ struct SharedFrameSurfaceFacetTests {
             #expect(entry.decidedBy == .user, "\(entry.key) が道具の決めるものになっている")
         }
     }
+
+    /// **番号だけで引ける印が載っていること。** 載っていないと `IOSurfaceLookup` は同じ
+    /// プロセスからしか通らず、外から引くと黙って `nil` が返る — 症状は「窓は出ているのに
+    /// 真っ白」としてしか現れない (#704)。同じプロセスからの検査では捕まらないので、
+    /// せめて印が載っていることをここで見る。
+    @Test("面には、番号だけで引ける印が載っている")
+    func theSurfaceIsMarkedGlobal() {
+        let properties = SharedFrameSurface.properties(width: 16, height: 8)
+        let dictionary = properties as NSDictionary
+        #expect(dictionary[SharedFrameSurface.globalKey] as? Bool == true)
+        // 綴りは非推奨の定数と同じもの。**直に書いてあるので、ここで釘を刺す**
+        #expect(SharedFrameSurface.globalKey as String == "IOSurfaceIsGlobal")
+        #expect(dictionary[kIOSurfaceWidth] as? Int == 16)
+        #expect(dictionary[kIOSurfaceHeight] as? Int == 8)
+    }
+
+    @Test("区画の場所は、基準を外から渡しても同じ形になる")
+    func theFacetPathIsTheSameShapeUnderAnyBase() {
+        let base = URL(fileURLWithPath: "/tmp/sketch", isDirectory: true)
+        let facet = WorkDirectory.facet("viewport", under: base)
+        #expect(facet.path == "/tmp/sketch/.mokume/viewport")
+        // 既定の基準でも同じ規則を通る (綴りが 2 か所に分かれていない)
+        #expect(
+            WorkDirectory.facet("viewport")
+                == WorkDirectory.facet("viewport", under: WorkDirectory.base))
+    }
+}
+
+/// 置かれた番号を読む側の検査。**GPU は要らない。**
+@Suite("絵を渡す面 (番号を読む)")
+struct SharedFrameManifestTests {
+    private func withManifest<T>(_ json: String?, _ body: (URL) throws -> T) throws -> T {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-manifest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        if let json {
+            try Data(json.utf8).write(
+                to: directory.appendingPathComponent(SharedFrameSurface.manifestName))
+        }
+        return try body(directory)
+    }
+
+    @Test("置かれた番号と大きさを読む")
+    func readsWhatWasPublished() throws {
+        try withManifest(#"{"schemaVersion":1,"ids":[7,8,9],"width":960,"height":540}"#) {
+            let manifest = try #require(SharedFrameSurface.readManifest(at: $0))
+            #expect(manifest.ids == [7, 8, 9])
+            #expect(manifest.width == 960)
+            #expect(manifest.height == 540)
+        }
+    }
+
+    /// **知らない版は読まない。** 推測で解くと、食い違いが絵の壊れ方として出る。
+    @Test("版が違えば読まない")
+    func refusesAnUnknownVersion() throws {
+        try withManifest(#"{"schemaVersion":2,"ids":[7],"width":16,"height":8}"#) {
+            #expect(SharedFrameSurface.readManifest(at: $0) == nil)
+        }
+    }
+
+    @Test("番号が空・大きさが 0 なら読まない")
+    func refusesAnEmptyOrDegenerateManifest() throws {
+        try withManifest(#"{"schemaVersion":1,"ids":[],"width":16,"height":8}"#) {
+            #expect(SharedFrameSurface.readManifest(at: $0) == nil)
+        }
+        try withManifest(#"{"schemaVersion":1,"ids":[7],"width":0,"height":8}"#) {
+            #expect(SharedFrameSurface.readManifest(at: $0) == nil)
+        }
+    }
+
+    @Test("置かれていなければ読まない")
+    func refusesAMissingManifest() throws {
+        try withManifest(nil) { #expect(SharedFrameSurface.readManifest(at: $0) == nil) }
+    }
 }
 
 @Suite(

@@ -8,6 +8,24 @@ import QuartzCore
 ///
 /// 描画とは別のパスにしてある。**描く解像度と、それを映す面の大きさを切り離す**ため
 /// で、面をどうリサイズしてもスケッチは同じ解像度で描き続け、余った領域は帯になる。
+/// 画面へ差し出せる 1 枚。
+///
+/// **差し出す経路が源に求めるものは 4 つだけ**である。走っているスケッチの描画先
+/// (``RenderTarget``) も、別のプロセスが書いた共有の面 (``SharedFrameWindow``) も、
+/// 同じ経路を通れる — [ADR-0012] 決定 1 の「成果物はテクスチャ」がそのまま効く。
+///
+/// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
+protocol PresentableFrame {
+    var texture: any MTLTexture { get }
+    var width: Int { get }
+    var height: Int { get }
+    /// 明るさを画面へ写す段の設定。**既に焼かれている絵は既定を名乗る** — 既定は
+    /// 断片が早期に返す設定なので、二度目の経路で画素が動かない。
+    var brightness: Brightness { get }
+}
+
+extension RenderTarget: PresentableFrame {}
+
 @MainActor
 final class FramePresenter {
     private let gpu: RenderDevice
@@ -47,7 +65,7 @@ final class FramePresenter {
     ///
     /// - Returns: 差し出したら `true`。面を取れずに見送ったら `false`。
     @discardableResult
-    func present(_ source: RenderTarget, to layer: CAMetalLayer) throws(RenderFailure) -> Bool {
+    func present(_ source: some PresentableFrame, to layer: CAMetalLayer) throws(RenderFailure) -> Bool {
         guard let drawable = layer.nextDrawable() else {
             missedFrames += 1
             return false
@@ -76,7 +94,7 @@ final class FramePresenter {
     ///
     /// 面へ差し出すのと**同じ経路**で、行き先だけが違う。画面を持たない実行から
     /// 「画面に出るはずの絵」を取り出せるので、収まり方を機械で検められる。
-    func draw(_ source: RenderTarget, into destination: any MTLTexture) throws(RenderFailure) {
+    func draw(_ source: some PresentableFrame, into destination: any MTLTexture) throws(RenderFailure) {
         let commands = try gpu.beginCommands()
         try encode(source, into: destination, using: commands)
         try gpu.commitAndWait(commands)
@@ -84,7 +102,7 @@ final class FramePresenter {
 
     /// 収まる矩形を決めて、1 枚のパスとして書き込む。
     private func encode(
-        _ source: RenderTarget, into destination: any MTLTexture,
+        _ source: some PresentableFrame, into destination: any MTLTexture,
         using commands: any MTL4CommandBuffer
     ) throws(RenderFailure) {
         let descriptor = MTL4RenderPassDescriptor()

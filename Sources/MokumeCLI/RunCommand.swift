@@ -26,6 +26,16 @@ enum RunCommand {
         // 不具合を新しい不具合として起票させる** (#633 が実際にそうなった)。名乗りが help と
         // 切り分けの口にしか無いと、いちばん長く見ている画面に出ない (#684)
         print("道具: \(ToolVersion.describe())")
+        // **黙って窓が出ないことを許さない。** 区画が在ればスケッチは窓を開かず共有面へ
+        // 差し出す。置いたのはふつう見張りで、見張りは終わるときに畳む — 残っているのは
+        // 畳めずに終わったときなので、そう言わないと「起動したのに何も出ない」になる
+        if FileManager.default.fileExists(
+            atPath: WorkDirectory.facet(StartupReads.viewport.key, under: directory).path)
+        {
+            print(
+                "画面の出口が共有する面になっている (.mokume/\(StartupReads.viewport.key) が在る) —"
+                    + " 窓は出ない。窓で見たいなら、その区画を消す")
+        }
 
         try build(in: directory, configuration: invocation.configuration)
         let executable = try executablePath(in: directory, configuration: invocation.configuration)

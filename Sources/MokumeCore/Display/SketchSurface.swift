@@ -33,9 +33,13 @@ final class SketchSurface: NSView {
     /// 「窓は出ているのに触っても効かない」がまた作れてしまう
     /// ([#217](https://github.com/mokume-metal/mokume/issues/217))。
     private let input: InputState
-    /// 描く解像度。窓の大きさとは独立で、走っている間は変わらない。
-    private let canvasWidth: Double
-    private let canvasHeight: Double
+    /// 描く解像度。窓の大きさとは独立。
+    ///
+    /// **走っているスケッチの窓では変わらない**が、道具が出す窓では**差し替わる** —
+    /// 見張りが起こし直した子が別の解像度を名乗ることがあるためである
+    /// ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1)。
+    private var canvasWidth: Double
+    private var canvasHeight: Double
 
     /// 自分が足した、押していない間の移動を配信させる領域 (``updateTrackingAreas()``)。
     /// 外すときにこれだけを名指しできるように覚えておく。
@@ -51,6 +55,13 @@ final class SketchSurface: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("使わない") }
+
+    /// 描く解像度を差し替える。**触った操作を写す規則がこれに依る**ので、絵の出どころが
+    /// 入れ替わったら一緒に更新する。
+    func setCanvasSize(_ size: (width: Int, height: Int)) {
+        canvasWidth = Double(size.width)
+        canvasHeight = Double(size.height)
+    }
 
     override func makeBackingLayer() -> CALayer {
         let layer = CAMetalLayer()

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Foundation
 import mokume
 
@@ -71,6 +72,13 @@ enum WatchCommand {
         // 名乗らないので、これが無いと待っている間は画面が 1 文字も動かない (#695)
         session.willRebuild = { initial in say(initial ? startingLine : rebuildingLine) }
 
+        // **窓を先に出す。** 出せたときだけ区画ができ、子は窓を持たずに走る
+        // ([ADR-0032] 決定 1)。子を起こしてからでは間に合わない — 区画は起動の瞬間に
+        // しか読まれない
+        //
+        // [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+        let viewer = openViewer(for: session)
+
         // 子を起こす前に受け口を置く。起こした後だと、その隙間に来た合図で
         // 既定の振る舞い (親だけが即座に終わる) に落ちて子が残る
         installStopHandlers()
@@ -78,6 +86,44 @@ enum WatchCommand {
 
         watching(session)
         finish(session)
+        viewer?.close()
+        // **置いていかない。** 区画は「画面の出口は共有面」という合図なので、残すと
+        // 次に `run` で走らせたスケッチまで窓を開かなくなる — しかも黙って開かない
+        if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
+    }
+
+    /// 作品の窓を出し、絵を渡す区画を置く。
+    ///
+    /// **順序に意味がある。** 区画を先に作ると、窓を出せなかったときに子も窓を開かず、
+    /// **どこにも絵が出ない実行**になる。出せたときだけ区画を作るので、失敗はいままでの
+    /// 振る舞い (スケッチが自分の窓を開く) に落ちる。
+    ///
+    /// 窓には**道具の都合を何も載せない** ([ADR-0032] 決定 1)。つまみも作り直しの状態も
+    /// 回っている印も、別に立てるプレビューの仕事である。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static func openViewer(for session: WatchSession) -> SharedFrameWindow? {
+        NSApplication.shared.setActivationPolicy(.regular)
+        let facet = viewportFacet(for: session)
+        // **前の見張りが残したものを引き継がない。** 置かれている番号は死んだ面を指す
+        try? FileManager.default.removeItem(at: facet)
+        guard let gpu = try? RenderDevice(),
+            let window = try? SharedFrameWindow(
+                gpu: gpu, facet: facet, title: session.directory.lastPathComponent),
+            (try? FileManager.default.createDirectory(
+                at: facet, withIntermediateDirectories: true)) != nil
+        else {
+            say("窓は出せないので、スケッチに自分の窓を開かせる")
+            return nil
+        }
+        window.open()
+        return window
+    }
+
+    /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業
+    /// ディレクトリへ置くと、子と別の区画を見ることになる (#331)。
+    static func viewportFacet(for session: WatchSession) -> URL {
+        WorkDirectory.facet(StartupReads.viewport.key, under: session.facetBase)
     }
 
     /// 終わりの合図の受け口を置く。
@@ -91,7 +137,7 @@ enum WatchCommand {
         }
     }
 
-    /// 巡回する。**終わりの合図が来るまで回り、来たら抜ける。**
+    /// 1 巡ぶんの判断。**駆動のしかたから切り離してある。**
     ///
     /// 合図を別のキューで受けて `WatchSession` を触る形は採らない — main actor 既定
     /// ([ADR-0010]) の上で隔離を跨ぐことになる。印を見て抜けるだけなら、終わらせる処理は
@@ -99,21 +145,52 @@ enum WatchCommand {
     ///
     /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
     ///
-    /// - Parameters:
-    ///   - sleep: 待ち方。検査から差し替える。
-    ///   - stopped: 終わりの合図が来たか。検査から差し替える。
-    static func watch(
-        _ session: WatchSession,
-        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
-        stopped: () -> Bool = { watchStopRequested != 0 }
-    ) {
-        while !stopped() {
-            sleep(interval)
-            // **待っている間に来た合図は、作り直しより先に効く。** ここを見ないと、
-            // 終われと言われた後に 1 回だけ作り直して子を起こすことになる
-            if stopped() { break }
-            if let outcome = session.tick() { report(outcome) }
+    /// - Parameter stopped: 終わりの合図が来たか。検査から差し替える。
+    /// - Returns: 続けるなら `true`。**合図を見てからは作り直さない** — 見ないと、
+    ///   終われと言われた後に 1 回だけ作り直して子を起こすことになる。
+    @discardableResult
+    static func step(_ session: WatchSession, stopped: () -> Bool = { watchStopRequested != 0 })
+        -> Bool
+    {
+        if stopped() { return false }
+        if let outcome = session.tick() { report(outcome) }
+        return true
+    }
+
+    /// 巡回する。**終わりの合図が来るまで回り、来たら抜ける。**
+    ///
+    /// 眠って回るのではなく**アプリケーションの巡回に乗る**のは、道具が窓を持つように
+    /// なったからである ([ADR-0032] 決定 1)。窓の描き直しも画面の切り替えも AppKit の
+    /// 巡回の上で起きるので、そこを止めて眠ると窓が固まる。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static func watch(_ session: WatchSession) {
+        let application = NSApplication.shared
+        // **`.common` へ載せる。** `Timer.scheduledTimer` は `.default` にしか載らず、
+        // 窓を掴んで動かしている間や大きさを変えている間は巡回が**止まる** — その間に
+        // 保存しても作り直されない
+        let timer = Timer(timeInterval: interval, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                if !step(session) { leave(application) }
+            }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        application.run()
+        timer.invalidate()
+    }
+
+    /// アプリケーションの巡回を抜けさせる。
+    ///
+    /// **空のイベントを 1 つ投げる。** `stop(_:)` は次のイベントを処理したときに効くので、
+    /// 何も起きていない画面では合図を出しただけでは終わらない。
+    private static func leave(_ application: NSApplication) {
+        application.stop(nil)
+        guard
+            let wake = NSEvent.otherEvent(
+                with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)
+        else { return }
+        application.postEvent(wake, atStart: true)
     }
 
     /// 終わる。**走らせていたものを置いていかない。**
