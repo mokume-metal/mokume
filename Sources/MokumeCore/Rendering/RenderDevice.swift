@@ -187,6 +187,21 @@ public final class RenderDevice {
         residencySet.requestResidency()
     }
 
+    /// 常駐から外す。**寿命が実行より短いリソースだけが通る。**
+    ///
+    /// 確保したものは基本ずっと生きるので、外す口はふつう要らない。要るのは**外から来る
+    /// リソース**である — 別のプロセスが持つ面を引いて使う側は、相手が入れ替わるたびに
+    /// 新しい面を引く。外さないと、見張っている間ずっと死んだ面が積み上がる。
+    ///
+    /// **GPU が空になってから外す。** 実行中のコマンドが踏んでいるリソースを常駐から
+    /// 外すと、そのコマンドの結果が未定義になる (``releaseDrawableResidency()`` と同じ)。
+    func releaseResidency(of allocations: [any MTLAllocation]) throws(RenderFailure) {
+        guard !allocations.isEmpty else { return }
+        try waitUntilIdle()
+        for allocation in allocations { residencySet.removeAllocation(allocation) }
+        residencySet.commit()
+    }
+
     /// 表示に差し出す面を常駐させる。差し出す面へ書く前に呼ぶ。
     ///
     /// **既に入っていれば何もしない。** 集合なので入れ直しても数は増えないが、確定
