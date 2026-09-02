@@ -65,6 +65,23 @@ struct WatchCommandTests {
         }
     }
 
+    /// **窓を出してから、最初の作り直しに入る。**
+    ///
+    /// 直に呼ぶと、窓が画面に出るのは初回の作り直しが終わってからになる — いちばん長く
+    /// 待つのが初回なのに、待っている間だけ状態がどこにも出ない。端末では #695 が直した
+    /// ことが、窓では直らない ([#705](https://github.com/mokume-metal/mokume/issues/705))。
+    @Test("最初の作り直しは、巡回へ渡してから始まる")
+    func firstBuildStartsInsideTheLoop() throws {
+        let root = try makeDirectory()
+        try Data(#"// swift-tools-version: 6.2"#.utf8)
+            .write(to: root.appendingPathComponent("Package.swift"))
+        var handedOver: WatchSession?
+        try WatchCommand.run([root.path], watching: { session, _ in handedOver = session })
+        // 渡した時点で 1 度も作り直していない = 作り直しは巡回の中で始まる
+        #expect(handedOver != nil)
+        #expect(handedOver?.lastReport == nil)
+    }
+
     // MARK: - プレビューへ重ねる行
 
     /// **端末が正で、プレビューはそれを映す。**

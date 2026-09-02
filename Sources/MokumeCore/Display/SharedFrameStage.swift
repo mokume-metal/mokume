@@ -41,6 +41,12 @@ final class SharedFrameStage: NSObject {
         let autosaveName: String
         /// 覚えている枠が無いときの大きさ。
         let defaultSize: NSSize
+        /// 覚えている枠が無いとき、中央からどれだけずらすか。
+        ///
+        /// **2 枚が重なって開くのを避ける。** 作品の窓とプレビューは同じ大きさで中央へ
+        /// 出るので、ずらさないと**寸分違わず重なり**、窓が 1 つしか無いように見える (実測)。
+        /// 一度動かせば以後は覚えた位置が使われるので、効くのは初めての 1 回だけである。
+        var nudge: NSSize = .zero
     }
 
     /// 面の 1 枚を、差し出せる形にしたもの。
@@ -110,7 +116,14 @@ final class SharedFrameStage: NSObject {
         // そのままだと二重に解放される — 症状は検査の走り終わりでの落下 (signal 11) と
         // いう、原因から遠いところにしか出ない
         window.isReleasedWhenClosed = false
-        if !window.setFrameUsingName(look.autosaveName) { window.center() }
+        if !window.setFrameUsingName(look.autosaveName) {
+            window.center()
+            if look.nudge != .zero {
+                let origin = window.frame.origin
+                window.setFrameOrigin(
+                    NSPoint(x: origin.x + look.nudge.width, y: origin.y + look.nudge.height))
+            }
+        }
         window.setFrameAutosaveName(look.autosaveName)
 
         // **面はスケッチの窓と同じものを使う。** 画素形式・色空間・EDR の既定を 1 か所に

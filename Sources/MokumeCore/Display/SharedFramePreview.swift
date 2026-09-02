@@ -27,6 +27,16 @@ import AppKit
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 public final class SharedFramePreview {
+    /// 覚えている枠が無いときの大きさ。作品の窓と揃える。
+    static let defaultSize = NSSize(width: 480, height: 270)
+
+    /// 覚えている枠が無いとき、中央からどれだけずらすか。
+    ///
+    /// **作品の窓の下へ出す。** どちらも同じ大きさで中央へ出るので、ずらさないと 2 枚が
+    /// 寸分違わず重なり、窓が 1 つしか無いように見える (実測)。丈のぶんに窓枠と隙間を
+    /// 足しただけずらす。
+    static let nudge = NSSize(width: 0, height: -(defaultSize.height + 44))
+
     private let stage: SharedFrameStage
     private let notice = NoticeOverlay()
 
@@ -39,7 +49,7 @@ public final class SharedFramePreview {
             gpu: gpu, facet: facet,
             look: SharedFrameStage.Look(
                 title: title, autosaveName: WindowPlacement.previewAutosaveName,
-                defaultSize: NSSize(width: 480, height: 270)))
+                defaultSize: Self.defaultSize, nudge: Self.nudge))
     }
 
     /// 窓を出し、区画を見張り始める。

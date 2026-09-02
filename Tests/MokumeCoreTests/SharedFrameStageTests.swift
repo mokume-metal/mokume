@@ -72,6 +72,32 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **覚えている枠が無いときに、寸分違わず重ならない。**
+    ///
+    /// どちらも同じ大きさで中央へ出るので、ずらさないと 2 枚が完全に重なり、窓が 1 つしか
+    /// 無いように見える (実測)。**その場限りの覚え名で開く** — 覚えた枠が残っている機械では
+    /// 中央へ出ないので、それでは初めての 1 回を見たことにならない。
+    @Test("初めて開くとき、2 枚は重ならない")
+    func freshWindowsDoNotOverlap() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let artwork = try SharedFrameStage(gpu: gpu, facet: facet, look: look(fresh()))
+            var previewLook = look(fresh())
+            previewLook.nudge = SharedFramePreview.nudge
+            let preview = try SharedFrameStage(gpu: gpu, facet: facet, look: previewLook)
+            artwork.open()
+            preview.open()
+            defer {
+                artwork.close()
+                preview.close()
+            }
+            #expect(try #require(artwork.window?.frame) != #require(preview.window?.frame))
+        }
+    }
+
+    /// 覚えた枠を引き継がないための、その場限りの名前。
+    private func fresh() -> String { "fresh-\(UUID().uuidString)" }
+
     /// 2 枚が同じ名前で位置を覚えると、互いを上書きして重なって開く。
     @Test("作品の窓とプレビューは、別の名前で位置を覚える")
     func placementNamesDiffer() {

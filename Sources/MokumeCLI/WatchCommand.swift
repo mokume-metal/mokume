@@ -91,8 +91,10 @@ enum WatchCommand {
         // 子を起こす前に受け口を置く。起こした後だと、その隙間に来た合図で
         // 既定の振る舞い (親だけが即座に終わる) に落ちて子が残る
         installStopHandlers()
-        report(session.start(), on: viewer)
 
+        // **最初の作り直しも巡回の中で始める。** ここで直に呼ぶと、窓が画面に出るのは
+        // 作り直しが終わってからになる — いちばん長く待つのが初回なのに、待っている間
+        // だけ状態がどこにも出ない (#695 が端末で直したことが、窓では直らない)
         watching(session, viewer)
         finish(session)
         viewer?.close()
@@ -181,11 +183,19 @@ enum WatchCommand {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static func watch(_ session: WatchSession, viewer: Viewer? = nil) {
         let application = NSApplication.shared
+        // **最初の 1 拍で子を起こす。** 巡回に入る前に起こすと、窓が出るのは初回の
+        // 作り直しが終わってからになる
+        var started = false
         // **`.common` へ載せる。** `Timer.scheduledTimer` は `.default` にしか載らず、
         // 窓を掴んで動かしている間や大きさを変えている間は巡回が**止まる** — その間に
         // 保存しても作り直されない
         let timer = Timer(timeInterval: interval, repeats: true) { _ in
             MainActor.assumeIsolated {
+                if !started {
+                    started = true
+                    report(session.start(), on: viewer)
+                    return
+                }
                 if !step(session, viewer: viewer) { leave(application) }
             }
         }

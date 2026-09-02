@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import QuartzCore
 
 /// 短い 1 行を、絵の上に重ねる。
 ///
@@ -94,6 +95,21 @@ final class NoticeOverlay: NSView {
         if spinning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         spinner.isHidden = !spinning
         reposition()
+        drawNow()
+    }
+
+    /// いますぐ描かせる。
+    ///
+    /// **立てただけでは 1 度も描かれない。** 呼ぶ側はこの直後に作り直しへ入り、それが
+    /// 終わるまで巡回へ戻らない — 描くのは巡回の仕事なので、印は出ないまま作り直しが
+    /// 終わり、そこで畳まれる (実測: 1 フレームも出なかった)。
+    ///
+    /// **描いた結果を送り出すところまでやる。** 描画の束 (`CATransaction`) が閉じるのも
+    /// 巡回の中なので、閉じさせないと画面には届かない。ついでに、送り出した後の
+    /// 回っている印は**描画サーバ側で回り続ける** — 主たる流れが止まっている間も動く。
+    private func drawNow() {
+        window?.displayIfNeeded()
+        CATransaction.flush()
     }
 
     /// 収める大きさ。**窓を立てずに決められる形にしてある。**
