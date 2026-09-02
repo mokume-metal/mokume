@@ -61,7 +61,8 @@ public final class SketchApplication: NSObject {
     private let presenter: FramePresenter
     private let title: String
 
-    private var window: NSWindow?
+    /// 開いている窓。**読むだけを内へ開けてある** — 検査が実際の経路の窓を閉じるため (#714)。
+    private(set) var window: NSWindow?
     private var surface: SketchSurface?
     /// 画面の出口が外のプロセスに在るときの差し出し先。**在れば窓を持たない。**
     ///
@@ -226,6 +227,12 @@ public final class SketchApplication: NSObject {
             backing: .buffered,
             defer: false)
         window.title = title
+        // **閉じたときに窓が自分を解放しないようにする。** 素の `NSWindow` の既定は
+        // 「閉じたら解放する」で、こちらは強い参照を持ったまま使う人に閉じさせるので、
+        // そのままだと解放が 1 回余分になる。しかも駆動源は窓ではなく画面に紐づいて
+        // いるので (下記)、窓を閉じてもプロセスが消えるまで `step` は回り続け、その
+        // 間ずっと消えた先を触る — 症状は原因から遠いところにしか出ない (#714)
+        window.isReleasedWhenClosed = false
         // **覚えている位置があれば、そこへ戻す。** 無いときだけ中央に置く。覚えるのも
         // 画面外へ出さないようにするのも AppKit が持っている ([WindowPlacement])
         if !window.setFrameUsingName(WindowPlacement.autosaveName) { window.center() }
