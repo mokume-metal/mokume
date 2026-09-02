@@ -375,6 +375,7 @@ FOREIGN_ALLOWLIST = {
     "WorkDirectory.root(under:)": "基準を外から渡す形の根 (WorkDirectory.base と同じ理由)",
     "WorkDirectory.facet(_:under:)": "基準を外から渡す形の区画 (WorkDirectory.base と同じ理由)",
     "SharedFrameWindow.init(gpu:facet:title:)": "見張っているスケッチ側の区画を指す。道具は自分の作業場所ではなくそこへ置くので、場所を渡す口が要る (WorkDirectory.facet と同じ理由)",
+    "SharedFramePreview.init(gpu:facet:title:)": "作品の窓と同じ区画を独立に見るプレビュー (SharedFrameWindow.init と同じ理由)",
 }
 
 

@@ -32,6 +32,12 @@ enum WindowPlacement {
     /// 別の場所に覚えられる。
     static let autosaveName = "mokume.sketch.window"
 
+    /// プレビューの位置を覚えるときの名前。
+    ///
+    /// **作品の窓と別にする。** 同じ名前だと互いの位置を上書きし合い、2 枚が重なって
+    /// 開く ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1)。
+    static let previewAutosaveName = "mokume.watch.preview"
+
     /// 見張りが起こした入れ替えか。
     static func isRelaunch(stamp: String?) -> Bool { stamp != nil }
 

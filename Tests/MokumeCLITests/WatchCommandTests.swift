@@ -61,8 +61,33 @@ struct WatchCommandTests {
         // 巡回は差し替える。**始める前に止まることを見る検査**なので、止まらなかった
         // ときに合図待ちで固まってはいけない (固まった検査は赤より読みにくい)
         #expect(throws: CommandFailure.resourcesNotDeclared(directory: "Sources/demo/assets")) {
-            try WatchCommand.run([root.path], watching: { _ in })
+            try WatchCommand.run([root.path], watching: { _, _ in })
         }
+    }
+
+    // MARK: - プレビューへ重ねる行
+
+    /// **端末が正で、プレビューはそれを映す。**
+    ///
+    /// プレビューは端末の代わりではないので ([#705](https://github.com/mokume-metal/mokume/issues/705)
+    /// 完了条件 5)、ここだけで名乗る事実を作らない。
+    @Test("作り直しが通ったら、重ねる行は畳む")
+    func clearsTheNoticeOnSuccess() {
+        #expect(WatchCommand.notice(for: report(ok: true)) == nil)
+    }
+
+    /// **消すと見分けが付かなくなる。** 保存して印が消え、絵が変わらなければ、作り直しに
+    /// 失敗したのか、変えた結果が同じだったのかが読めない。
+    @Test("作り直しが通らなかったら、重ねる行は出したままにする")
+    func keepsTheNoticeOnFailure() throws {
+        let line = try #require(WatchCommand.notice(for: report(ok: false)))
+        #expect(line.contains(WatchCommand.holdingLine))
+    }
+
+    private func report(ok: Bool) -> BuildReport {
+        BuildReport(
+            ok: ok, status: ok ? 0 : 1, output: "", stamp: nil, configuration: "debug",
+            timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
     }
 
     // MARK: - 書くとき
