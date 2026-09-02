@@ -97,6 +97,11 @@ final class SharedFrameStage: NSObject {
     private var manifestReadAt: Date?
     /// 最後に画面へ出した枚数。**同じ絵を二度出さない**ための目印。
     private var lastFrame = 0
+    /// 最後に面から読んだ枚数。**出せた枚数とは別に持つ** — 差し出しに失敗した回でも
+    /// 数字は届いているので、`lastFrame` に相乗りさせると失敗した回だけ数字が古くなる。
+    private var lastSeenFrame = 0
+    /// 走っている側が数えた速さ。**自分では数えない** ([ADR-0030] 決定 7)。
+    private var tempo = RemoteTempo()
     /// 続けて差し出せなかった数。始まりと終わりだけ言うために持つ。
     private var consecutiveFailures = 0
 
@@ -201,10 +206,10 @@ final class SharedFrameStage: NSObject {
         onTick?()
         reloadSourceIfChanged()
         guard let source, let view, let layer = view.metalLayer,
-            let newest = SharedFrameSurface.newest(among: source.ids),
-            newest.frame != lastFrame,
-            let frame = source.frames[newest.id]
+            let newest = SharedFrameSurface.newest(among: source.ids)
         else { return }
+        readNumbers(from: newest)
+        guard newest.frame != lastFrame, let frame = source.frames[newest.id] else { return }
         do {
             // **出せた枚数だけを覚える。** 面を取れずに見送ったときに覚えると、次の
             // リフレッシュで「同じ枚数だから出さない」と判断して 1 枚落とす
@@ -213,6 +218,22 @@ final class SharedFrameStage: NSObject {
         } catch {
             noteFailure(error)
         }
+    }
+
+    // MARK: - 速さ
+
+    /// いま名乗ってよい速さ。**しばらく新しい絵が来なければ `nil`** (``RemoteTempo``)。
+    var numbers: FrameNumbers? { tempo.numbers(now: CACurrentMediaTime()) }
+
+    /// 新しい絵が来ていれば、その面に載っている速さを読む。
+    ///
+    /// **新しい枚数のときだけ引く。** 同じ絵に対して引き直しても数字は変わらないので、
+    /// 毎リフレッシュ読むぶんだけ無駄になる。
+    private func readNumbers(from newest: (id: UInt32, frame: Int)) {
+        guard newest.frame != lastSeenFrame else { return }
+        lastSeenFrame = newest.frame
+        guard let numbers = SharedFrameSurface.numbers(of: newest.id) else { return }
+        tempo.record(numbers, at: CACurrentMediaTime())
     }
 
     // MARK: - 差し出し元
@@ -254,8 +275,10 @@ final class SharedFrameStage: NSObject {
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((manifest.width, manifest.height))
         // **枚数の数え直しに備える。** 新しい子は 1 から数えるので、前の子の枚数を
-        // 覚えたままだと、そこへ追い付くまで 1 枚も出さないことになる
+        // 覚えたままだと、そこへ追い付くまで 1 枚も出さないことになる (速さも同じで、
+        // 追い付くまで前の子の数字を名乗り続けることになる)
         lastFrame = 0
+        lastSeenFrame = 0
     }
 
     /// 番号から面を引き、差し出せる形にする。

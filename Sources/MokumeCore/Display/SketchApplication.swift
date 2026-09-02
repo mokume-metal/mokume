@@ -359,7 +359,10 @@ public final class SketchApplication: NSObject {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private func presentFrame() throws(RenderFailure) {
         if let sharedSurface {
-            try sharedSurface.write(runtime.target, using: presenter)
+            // **速さも一緒に渡す。** 数えているのはこちらで、読むのは道具である
+            // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない
+            try sharedSurface.write(
+                runtime.target, using: presenter, numbers: runtime.frameNumbers)
             return
         }
         guard let surface, let layer = surface.metalLayer,

@@ -84,22 +84,33 @@ public final class SharedFramePreview {
         stage.close()
     }
 
-    /// つまみが出ているか。**検査から見る** — 「作品の窓には出ない」を機械で確かめるには、
+    /// 重ねる面が出ているか。**検査から見る** — 「作品の窓には出ない」を機械で確かめるには、
     /// 出ている側も見えている必要がある。
-    var hasKnobs: Bool { knobs != nil }
+    var hasPanel: Bool { knobs != nil }
 
-    /// つまみを面と合わせる。
+    /// 並んでいるつまみの数。**面が出ていることとは別に見る** — 宣言が 1 つも無いときは
+    /// 「面は出るがつまみは 0」であり、これを 1 つの真偽で表すと区別が付かない。
+    var knobCount: Int { knobs?.knobCount ?? 0 }
+
+    /// つまみと速さの読み出しを面と合わせる。
     ///
-    /// **宣言が 1 つも無ければ何も足さない** ([ADR-0030] 決定 8 の振る舞いをそのまま
-    /// 保つ)。顔ぶれが変わったときだけ組み直すのは、値が変わるたびに作り直すと
-    /// 触っている手からつまみが消えるためである。
+    /// **宣言が 1 つも無くても、速さは出す。** つまみが宣言から出る ([ADR-0030] 決定 8) のは
+    /// そのままだが、速さは宣言ではない — ここは**道具の窓**なので、宣言の有無と関係なく
+    /// 制作を助けるものが載る ([ADR-0032] 決定 1)。作品の窓 (`run` の窓) の振る舞いは
+    /// 変わらない。
+    ///
+    /// 顔ぶれが変わったときだけ組み直すのは、値が変わるたびに作り直すと触っている手から
+    /// つまみが消えるためである。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private func refreshKnobs(force: Bool = false) {
         guard let params, let host = stage.host else { return }
         guard params.refresh() || force else { return }
         knobs?.removeFromSuperview()
-        knobs = nil
-        guard !params.boxes.isEmpty else { return }
-        let overlay = KnobOverlay(boxes: params.boxes)
+        // **数字は面から読む。** 数えているのは走っている側で、こちらは読み手である
+        // ([ADR-0030] 決定 7) — 届いていなければ `nil` が返り、面は「—」と描く
+        let overlay = KnobOverlay(boxes: params.boxes) { [stage] in stage.numbers }
         overlay.attach(to: host)
         knobs = overlay
     }

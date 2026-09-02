@@ -61,6 +61,35 @@ final class SharedFrameSurface {
     /// 書き終わった枚数を載せる属性の名前。
     static let frameAttribute = "mokume.frame"
 
+    /// 走っている速さを載せる属性の名前。
+    ///
+    /// **数えるのは走らせている側である** ([ADR-0030] 決定 7)。道具は読み手であって、自分で
+    /// 平均を取らない — 窓が同じプロセスに在るときは集計器 (``FrameTempo``) を直に読めるが、
+    /// プロセスが分かれるとそれができないので、走らせている側が載せる側になる。
+    ///
+    /// ## なぜ絵と同じ面に載せるのか
+    ///
+    /// **通信路が 1 本も増えない** ([ADR-0032] 決定 3)。道具はどの面が新しいかを決めるために、
+    /// 既に毎リフレッシュこの面の属性を引いている (``newest(among:)``) — そこへ数個足すだけ
+    /// なので、読む側の往復は 0 回のままである。
+    ///
+    /// 観測の面 (`.mokume/observe`) にも同じ数字は在る (`load.frameRate`) が、そちらは要求と
+    /// 応答の往復で、応答を組む手間 (メモリ・熱の問い合わせ) が毎フレームの描画に乗る。窓を
+    /// ファイルの応答の読み手にしないのは [ADR-0030] 決定 7 が名指しで断っているところである。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    enum TempoAttribute {
+        /// 進めた枚数。**面が名乗る枚数とは別物** — こちらはスケッチが数えたフレームの数で、
+        /// ``frameAttribute`` は面へ書き終えた回数である。
+        static let frameCount = "mokume.frameCount"
+        /// スケッチの時刻 (秒)。
+        static let time = "mokume.time"
+        /// 直近で実際に出ている速さ。**測れていなければ載らない。**
+        static let frameRate = "mokume.frameRate"
+        /// 直近のフレーム時間の平均 (ミリ秒)。**測れていなければ載らない。**
+        static let frameTimeMs = "mokume.frameTimeMs"
+    }
+
     /// 面の番号を置くファイルの名前。
     static let manifestName = "surface.json"
 
@@ -213,12 +242,44 @@ final class SharedFrameSurface {
     /// **書き終わってから名乗る。** 属性を先に載せると、読み手が書きかけの面を掴む。
     /// ``FramePresenter/draw(_:into:)`` は GPU の完了まで待つので、返った時点で面の
     /// 中身は揃っている。
-    func write(_ source: RenderTarget, using presenter: FramePresenter) throws(RenderFailure) {
+    /// - Parameter numbers: この絵を描いたときの速さ。**枚数より先に載せる** (下記)。
+    func write(
+        _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers
+    ) throws(RenderFailure) {
         let slot = slots[frameNumber % slots.count]
         try presenter.draw(source, into: slot.texture)
         frameNumber += 1
+        // **速さを枚数より先に載せる。** 読み手は枚数がいちばん大きい面を選ぶので、枚数を
+        // 最後にすれば、選ばれた面の速さは必ずその枚数のときのものになる。属性を 1 つずつ
+        // 載せる以上まとめて差し替わることはないが、順序だけで「古い速さと新しい枚数」の
+        // 組み合わせは起きなくなる
+        Self.publish(numbers, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
+    }
+
+    /// 速さを面へ載せる。
+    ///
+    /// **測れていない値は属性ごと消す。** 観測の応答が鍵ごと省くのと同じ形にする
+    /// ([ADR-0030] 決定 7) — 0 を載せると「測ったら 0 だった」と読めてしまい、前のフレームの
+    /// 値を残すと止まった瞬間の数字を名乗り続ける (面は使い回されるので、消さなければ残る)。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    private static func publish(_ numbers: FrameNumbers, to surface: IOSurfaceRef) {
+        IOSurfaceSetValue(
+            surface, TempoAttribute.frameCount as CFString, NSNumber(value: numbers.frameCount))
+        IOSurfaceSetValue(surface, TempoAttribute.time as CFString, NSNumber(value: numbers.time))
+        set(numbers.frameRate, as: TempoAttribute.frameRate, on: surface)
+        set(numbers.frameTimeMs, as: TempoAttribute.frameTimeMs, on: surface)
+    }
+
+    /// 測れた数だけを載せる。測れていなければ**消す**。
+    private static func set(_ value: Double?, as name: String, on surface: IOSurfaceRef) {
+        guard let value else {
+            IOSurfaceRemoveValue(surface, name as CFString)
+            return
+        }
+        IOSurfaceSetValue(surface, name as CFString, NSNumber(value: value))
     }
 
     /// 置かれている面の番号を読む。読み手の側の規則。
@@ -264,5 +325,28 @@ final class SharedFrameSurface {
             if frame > chosen.frame { best = (id, frame) }
         }
         return best
+    }
+
+    /// 面が名乗っている速さ。読み手の側の規則。
+    ///
+    /// **書き手と同じ綴りをここで持つ** (``publish(_:to:)`` と対になっている)。読む側は別の
+    /// プロセスなので、綴りが 2 か所に分かれると片方だけ直したときに静かに食い違う。
+    ///
+    /// - Returns: 面が引けない・まだ何も載っていなければ `nil`。**速さとフレーム時間は
+    ///   載っていないことがある** — 起動直後と止めている間は測れていないので、書き手が
+    ///   鍵ごと省く。
+    static func numbers(of id: UInt32) -> FrameNumbers? {
+        guard let surface = IOSurfaceLookup(id),
+            let count = number(TempoAttribute.frameCount, on: surface)?.intValue,
+            let time = number(TempoAttribute.time, on: surface)?.doubleValue
+        else { return nil }
+        return FrameNumbers(
+            frameCount: count, time: time,
+            frameRate: number(TempoAttribute.frameRate, on: surface)?.doubleValue,
+            frameTimeMs: number(TempoAttribute.frameTimeMs, on: surface)?.doubleValue)
+    }
+
+    private static func number(_ name: String, on surface: IOSurfaceRef) -> NSNumber? {
+        IOSurfaceCopyValue(surface, name as CFString) as? NSNumber
     }
 }

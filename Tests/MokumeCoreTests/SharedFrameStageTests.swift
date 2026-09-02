@@ -142,14 +142,15 @@ struct SharedFrameStageTests {
                 preview.close()
                 artwork.close()
             }
-            #expect(preview.hasKnobs)
+            #expect(preview.knobCount == 1)
             #expect(try #require(artwork.window?.contentView).subviews.isEmpty)
         }
     }
 
-    /// いまの `KnobOverlay.makeIfNeeded` の振る舞いを保つ (ADR-0030 決定 8)。
-    @Test("宣言が 1 つも無ければ、つまみは足さない")
-    func addsNothingWithoutDeclarations() throws {
+    /// つまみが宣言から出るのは変わらない (ADR-0030 決定 8)。**速さは宣言ではない**ので、
+    /// 宣言が 1 つも無くても読み出しの面は出る — ここは道具の窓である (ADR-0032 決定 1)。
+    @Test("宣言が 1 つも無ければ、つまみは足さない (速さの面は出る)")
+    func addsNoKnobsWithoutDeclarations() throws {
         try withFacet { facet in
             let params = facet.appendingPathComponent("params", isDirectory: true)
             try FileManager.default.createDirectory(at: params, withIntermediateDirectories: true)
@@ -157,7 +158,21 @@ struct SharedFrameStageTests {
                 gpu: try RenderDevice(), facet: facet, params: params, title: "空")
             preview.open()
             defer { preview.close() }
-            #expect(!preview.hasKnobs)
+            #expect(preview.knobCount == 0)
+            #expect(preview.hasPanel)
+        }
+    }
+
+    /// **絵が 1 枚も来ていないうちは、速さを名乗らない** (#718)。0 を出すと「とても重い」と
+    /// 誤読され、前の子の数字を出すと死んだ相手を名乗り続ける。
+    @Test("絵が来ていないうちは、速さを名乗らない")
+    func noNumbersBeforeAnyFrame() throws {
+        try withFacet { facet in
+            let stage = try SharedFrameStage(
+                gpu: try RenderDevice(), facet: facet, look: look("no-numbers"))
+            stage.open(overlay: nil)
+            defer { stage.close() }
+            #expect(stage.numbers == nil)
         }
     }
 

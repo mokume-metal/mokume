@@ -143,6 +143,15 @@ struct SharedFrameSurfaceTests {
         return try body(directory)
     }
 
+    /// 面へ載せる速さ。**枚数だけ動かして、他は測れているところに固定する** — この suite が
+    /// 見ているのは運び方であって、数え方 (`FrameTempoTests`) ではない。
+    static func numbers(frame: Int = 1, rate: Double? = 60, frameTimeMs: Double? = 16.7)
+        -> FrameNumbers
+    {
+        FrameNumbers(
+            frameCount: frame, time: Double(frame) / 60, frameRate: rate, frameTimeMs: frameTimeMs)
+    }
+
     /// 与えた色で埋めた絵を、面へ 1 枚差し出す。
     private func written(
         color: LinearRGBA, size: (width: Int, height: Int) = (16, 8), times: Int = 1,
@@ -155,7 +164,9 @@ struct SharedFrameSurfaceTests {
         let shared = try SharedFrameSurface(
             gpu: gpu, width: size.width, height: size.height, at: directory)
         try shared.publishManifest()
-        for _ in 0..<times { try shared.write(source, using: presenter) }
+        for frame in 1..<(times + 1) {
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
+        }
         return shared
     }
 
@@ -248,10 +259,86 @@ struct SharedFrameSurfaceTests {
             let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
             let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
             for expected in 1...(SharedFrameSurface.slotCount + 2) {
-                try shared.write(source, using: presenter)
+                try shared.write(source, using: presenter, numbers: Self.numbers(frame: expected))
                 let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
                 #expect(newest.frame == expected)
             }
+        }
+    }
+
+    /// **数字は絵と同じ面に乗って運ばれる** (#718)。道具は面を選ぶために毎リフレッシュ
+    /// 属性を引いているので、そこへ相乗りさせれば往復が 1 回も増えない。
+    @Test("面に載った速さが、番号から読める")
+    func theSurfaceCarriesTheTempo() throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .opaque(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            try shared.write(
+                source, using: presenter,
+                numbers: FrameNumbers(
+                    frameCount: 7, time: 0.25, frameRate: 59.5, frameTimeMs: 16.8))
+
+            let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
+            let read = try #require(SharedFrameSurface.numbers(of: newest.id))
+            #expect(read.frameCount == 7)
+            #expect(read.time == 0.25)
+            #expect(read.frameRate == 59.5)
+            #expect(read.frameTimeMs == 16.8)
+        }
+    }
+
+    /// **測れていない値は鍵ごと省く** (ADR-0030 決定 7)。0 を載せると「測ったら 0 だった」と
+    /// 読めてしまう。
+    @Test("測れていない速さは、面に載らない")
+    func unmeasuredValuesAreAbsent() throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .opaque(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            try shared.write(
+                source, using: presenter,
+                numbers: Self.numbers(frame: 1, rate: nil, frameTimeMs: nil))
+
+            let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
+            let read = try #require(SharedFrameSurface.numbers(of: newest.id))
+            // 数え上げ (枚数・時刻) はいつでも在る。測るもの 2 つだけが無い
+            #expect(read.frameCount == 1)
+            #expect(read.frameRate == nil)
+            #expect(read.frameTimeMs == nil)
+            let surface = try #require(IOSurfaceLookup(newest.id))
+            let key = SharedFrameSurface.TempoAttribute.frameRate as CFString
+            #expect(IOSurfaceCopyValue(surface, key) == nil, "0 ではなく鍵ごと無いこと")
+        }
+    }
+
+    /// 面は使い回されるので、**前に載った値が残ると止まった瞬間の数字を名乗り続ける。**
+    @Test("測れなくなったら、前に載っていた速さは消える")
+    func aMeasuredValueIsRemovedWhenItStops() throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .opaque(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            // 面を 1 周させてから、同じ面へ「測れていない」を書く
+            for frame in 1...SharedFrameSurface.slotCount {
+                try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
+            }
+            let reused = shared.ids[0]
+            #expect(try #require(SharedFrameSurface.numbers(of: reused)).frameRate != nil)
+
+            try shared.write(
+                source, using: presenter,
+                numbers: Self.numbers(
+                    frame: SharedFrameSurface.slotCount + 1, rate: nil, frameTimeMs: nil))
+            let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
+            #expect(newest.id == reused, "面が 1 周していない — この検査が何も見ていない")
+            #expect(try #require(SharedFrameSurface.numbers(of: reused)).frameRate == nil)
         }
     }
 

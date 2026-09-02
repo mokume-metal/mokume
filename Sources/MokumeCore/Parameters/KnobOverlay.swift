@@ -28,7 +28,12 @@ final class KnobOverlay: NSView {
 
     private let hosting: NSHostingView<KnobPanel>
 
-    init(boxes: [any DeclaredParam], numbers: (() -> FrameNumbers)? = nil) {
+    /// 並んでいるつまみの数。**検査から見る** — 面が出ていることと、つまみが並んでいることは
+    /// 別の問いである (数字だけの面が出る場合がある)。
+    let knobCount: Int
+
+    init(boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil) {
+        knobCount = boxes.count
         hosting = NSHostingView(rootView: KnobPanel(boxes: boxes, numbers: numbers))
         super.init(frame: NSRect(origin: .zero, size: hosting.fittingSize))
         hosting.frame = bounds
@@ -46,7 +51,7 @@ final class KnobOverlay: NSView {
     /// 宣言があればつまみの面を作る。1 つも無ければ `nil`。
     ///
     /// **宣言だけでつまみが出る** ([ADR-0030] 決定 8) — 並べ方を書かせない。
-    static func makeIfNeeded(for sketch: any Sketch, numbers: (() -> FrameNumbers)? = nil)
+    static func makeIfNeeded(for sketch: any Sketch, numbers: (() -> FrameNumbers?)? = nil)
         -> KnobOverlay?
     {
         let boxes = ParamCatalog.indexed(from: sketch).map(\.box)
