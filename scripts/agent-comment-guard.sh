@@ -24,8 +24,23 @@
 #   gh issue develop -c               → --checkout
 #
 # --comment は --comments の前方一致でもあるので、オプション側も後ろを区切りで留める。
-# gh が発言を伴うサブコマンドを増やしたらここに足す。取りこぼしを後から足すほうが、
-# 誤検知で読み取りを止めるより安い。
+#
+# **口は数え上げてある (#708)。** 以前ここには「gh が発言を伴うサブコマンドを増やしたら
+# ここに足す」と書いてあった。取りこぼしを後から足すほうが安いのは今も同じだが、数え上げ
+# ないと決めた記述が残っている間は、掛かっているかを現物を読まずに疑える — #708 はそうして
+# 起票された (診断は外れており、close / reopen は #127 が既に塞いでいた)。
+#
+# 数え上げは scripts/tests/comment_test.py の BODY_BEARING_SURFACES が持ち、そこの
+# test_body_bearing_surfaces_are_enumerated が **gh の --help から導いた集合と照合する**。
+# gh が口を増やせば赤くなるので、この一覧を人が見張らなくてよい。
+#
+# 境界は「スレッドへの発言か」の 1 本で、本文を伴っても次は素通しする:
+#
+#   gh {issue,pr} create --body   → Issue / PR の本文 (スレッドに並ぶ発言ではない)
+#   gh {issue,pr} edit --body     → 既存本文の書き換え。新しい発言は増えない
+#   gh pr merge --body            → マージコミットの本文
+#   gh pr revert --body           → revert として作る PR の本文
+#   gh {issue,pr} view --comments → 読み取り
 #
 # 契約: stdin に PreToolUse の JSON。素通しは無出力 + 終了コード 0。
 # 配線は .claude/settings.json、テストは scripts/tests/comment_test.py。
