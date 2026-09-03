@@ -90,6 +90,9 @@ public final class Computation {
     /// **書き換えたその場で写す。** 走らせる直前にまとめて写す形にすると、値を変えた
     /// フレームと効くフレームがずれる余地が残る。
     private func writeValues() {
+        // 前のフレームの計算がまだこの置き場を読んでいるかもしれない (描き切りは待たずに
+        // 返る・#727)。書く直前に投入済みのものが終わるのを待つ
+        gpu.settleQuietly(before: "計算の値を書く")
         var packed = ShaderSource.pack(values)
         let capacity = valuesBuffer.length / MemoryLayout<Float>.stride
         while packed.count < capacity { packed.append(0) }

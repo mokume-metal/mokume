@@ -28,8 +28,22 @@ import MokumeDiagnostics
 /// try gpu.commitAndWait(commands)
 /// ```
 ///
-/// `commitAndWait(_:)` は GPU の完了まで呼び出し元を止める。フレームを回す経路では
-/// なく、1 枚だけ描く経路と検証で使う形である。
+/// `commitAndWait(_:)` は GPU の完了まで呼び出し元を止める。1 枚だけ描く経路と検証で
+/// 使う形で、フレームを回す経路は待たない `commit(_:retaining:)` を使う
+/// ([#727](https://github.com/mokume-metal/mokume/issues/727))。
+///
+/// ## 待たない投入が守る 2 つのこと
+///
+/// 1. **CPU が GPU 可視メモリに触る (書く・GPU の結果を読む) 直前には、投入済みの
+///    コマンドがすべて終わっている。** 触る側が直前に `settle()` を呼ぶ。投入済みの
+///    ものが全部終わっていれば何もせずに返るので、触らないフレームは 1 度も待たない
+/// 2. **GPU 上でも、投入したコマンドは投入順に実行される。** この世代は別々に投入した
+///    コマンドの間の順序を自動では保証しない (encoder の間と同じ・#341)。投入のたびに
+///    「直前の番号を GPU 側で待つ」を積んで、順序を明示する
+///
+/// 投入したコマンドが読むリソースは、**投入した側が参照を手放しても**終わるまで生きて
+/// いなければならない (この世代のコマンドはリソースを保持しない)。手放す予定のものは
+/// `commit(_:retaining:)` に渡し、この型が完了まで抱える。
 public final class RenderDevice {
     /// GPU が完了するのを待つ上限 (秒)。
     ///
@@ -96,6 +110,22 @@ public final class RenderDevice {
     private(set) var resetsWhileInFlight = 0
     /// 診断: 置き場が空くのを待った回数。
     private(set) var slotWaits = 0
+    /// 診断: ``settle()`` を頼まれた回数。GPU 可視メモリに触る経路が待ちを要求した数。
+    private(set) var settleCalls = 0
+    /// 診断: ``settle()`` が実際に止まった回数 (頼まれた時点で GPU が終わっていなかった)。
+    private(set) var blockingWaits = 0
+
+    /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。
+    ///
+    /// **番号の順に並ぶ。** 番号 n までが終わったと分かったら、先頭から n 以下のものを
+    /// 落とす。投入した側が参照を手放しても、ここが抱えている間は解放されない。
+    private var held: [(submission: UInt64, resources: [AnyObject])] = []
+
+    /// 診断: 完了を待って抱えているリソースの数。
+    var heldResourceCount: Int { held.reduce(0) { $0 + $1.resources.count } }
+
+    /// 投入したコマンドがすべて終わっているか。**問い合わせるだけで待たない。**
+    var isIdle: Bool { completion.signaledValue >= submissionCount }
 
     /// 常駐させるリソースの集合。この型を通して確保したものがすべて入る。
     let residencySet: any MTLResidencySet
@@ -175,6 +205,24 @@ public final class RenderDevice {
         self.completion = completion
     }
 
+    /// **実行中のものが終わる前に土台を畳まない。**
+    ///
+    /// 投入は GPU の完了を待たずに返る (``commit(_:retaining:)``) ので、最後の投入の直後に
+    /// この型が手放されると、発行口・合図・常駐の集合・抱えているリソースが GPU の実行中に
+    /// 消える。実測では、それが同じ GPU の**別の**発行口に積まれた仕事まで巻き添えにした —
+    /// 合図は進むのに絵が空のまま読める形で、しかも負荷のかかったときだけ出る (#727 の
+    /// 検査で 3 本が同時に落ちた)。畳む前に待てば、投入した側は寿命を気にしなくてよい。
+    ///
+    /// 詰まっていたら諦めて畳む。ここで投げる先は無いので、警告だけ残す。
+    isolated deinit {
+        guard !isIdle else { return }
+        let limit = UInt64(Self.waitLimitSeconds * 1000)
+        if !completion.wait(untilSignaledValue: submissionCount, timeoutMS: limit) {
+            Diagnostics.warn(
+                "GPU の完了を \(Self.waitLimitSeconds) 秒待っても返らないまま、描画の土台を畳みます")
+        }
+    }
+
     // MARK: - リソース
 
     /// リソースを常駐させる。確保したリソースは必ずここを通す。
@@ -197,7 +245,7 @@ public final class RenderDevice {
     /// 外すと、そのコマンドの結果が未定義になる (``releaseDrawableResidency()`` と同じ)。
     func releaseResidency(of allocations: [any MTLAllocation]) throws(RenderFailure) {
         guard !allocations.isEmpty else { return }
-        try waitUntilIdle()
+        try settle()
         for allocation in allocations { residencySet.removeAllocation(allocation) }
         residencySet.commit()
     }
@@ -221,7 +269,7 @@ public final class RenderDevice {
     /// この待ちが毎フレームの経路に乗ることはない。
     func releaseDrawableResidency() throws(RenderFailure) {
         guard drawableResidency.allocationCount > 0 else { return }
-        try waitUntilIdle()
+        try settle()
         drawableResidency.removeAllAllocations()
         drawableResidency.commit()
     }
@@ -305,6 +353,9 @@ public final class RenderDevice {
             resetsWhileInFlight += 1
         }
         slots[index].allocator.reset()
+        // 終わった番号のぶんは、ここで手放す。settle を 1 度も呼ばない経路 (表示だけを
+        // 繰り返す) でも、抱えたものが際限なく溜まらない
+        releaseHeld(through: completion.signaledValue)
 
         guard let commands = device.makeCommandBuffer() else {
             throw .commandBufferUnavailable
@@ -328,19 +379,57 @@ public final class RenderDevice {
         }
     }
 
-    /// 投入したコマンドがすべて終わるまで待つ。
+    /// 投入したコマンドがすべて終わるまで待つ。**GPU 可視メモリに触る直前に呼ぶ。**
     ///
-    /// 待たない経路 (``commit(_:signalling:)``) も番号を進めているので、最後の番号まで
-    /// 待てば「この GPU に積んだものが全部終わった」ことになる。
-    private func waitUntilIdle() throws(RenderFailure) {
+    /// 待たない経路も番号を進めているので、最後の番号まで待てば「この GPU に積んだものが
+    /// 全部終わった」ことになる。全部終わっていれば何もせずに返るので、呼ぶ側は
+    /// 「待つかもしれない」ことだけを知っていればよい。終わった番号ぶんの抱えている
+    /// リソースはここで手放す。
+    func settle() throws(RenderFailure) {
+        settleCalls += 1
+        defer { releaseHeld(through: completion.signaledValue) }
         guard submissionCount > 0, completion.signaledValue < submissionCount else { return }
 
+        blockingWaits += 1
         let limit = UInt64(Self.waitLimitSeconds * 1000)
         guard completion.wait(untilSignaledValue: submissionCount, timeoutMS: limit) else {
+            // **黙って捨てない。** 詰まったことが分からないと、症状 (絵が止まる・
+            // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
             Diagnostics.warn(
-                "GPU が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
+                "GPU の完了を \(Self.waitLimitSeconds) 秒待っても返りませんでした")
             throw .timedOut(seconds: Self.waitLimitSeconds)
         }
+    }
+
+    /// 投げられない口のための ``settle()``。詰まっていたら理由を残して進む。
+    ///
+    /// フレームごとに呼ばれる口は投げない ([ADR-0020] 決定 5) ので、そこから待つときは
+    /// この形を使う。5 秒返らない GPU は壊れているので、ここで凝らない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    func settleQuietly(before what: String) {
+        do {
+            try settle()
+        } catch {
+            Diagnostics.warn("\(what)の前に GPU の完了を待てませんでした: \(error.headline)")
+        }
+    }
+
+    /// 番号 `finished` までの投入が抱えていたリソースを手放す。
+    private func releaseHeld(through finished: UInt64) {
+        guard let last = held.lastIndex(where: { $0.submission <= finished }) else { return }
+        held.removeSubrange(...last)
+    }
+
+    /// 直前に投入した番号を GPU 側で待つ命令を積む。
+    ///
+    /// この世代は別々に投入したコマンドの間の順序を自動では保証しない。CPU が毎回
+    /// 待っていた間はそれで偶然成り立っていたが、待たなくなると「前のフレームが描画先を
+    /// 読み終える前に次のフレームが消す」が起きうる。投入の直前にこれを積めば、GPU 上の
+    /// 順序が投入順のまま保たれる。
+    private func orderAfterPreviousSubmission() {
+        guard submissionCount > 0 else { return }
+        queue.waitForEvent(completion, value: submissionCount)
     }
 
     /// 投入に番号を振り、合図を出し、置き場へ書き戻す。
@@ -357,21 +446,34 @@ public final class RenderDevice {
         return submissionCount
     }
 
-    /// 組み立てたコマンドを投入し、GPU が終わるまで待つ。
-    func commitAndWait(_ commands: any MTL4CommandBuffer) throws(RenderFailure) {
+    /// 組み立てたコマンドを投入する。**GPU の完了を待たない。**
+    ///
+    /// フレームを回す経路はこれで投入し、次に GPU 可視メモリへ触る直前に ``settle()``
+    /// で待つ。その間の CPU の仕事 (次のフレームの頂点組み立て) が GPU と重なる。
+    ///
+    /// - Parameter resources: このコマンドが読むもののうち、投入した側がすぐ手放す参照。
+    ///   終わるまでこの型が抱える。
+    /// - Returns: 振った番号。
+    @discardableResult
+    func commit(_ commands: any MTL4CommandBuffer, retaining resources: [AnyObject] = []) -> UInt64 {
         commands.endCommandBuffer()
+        orderAfterPreviousSubmission()
         queue.commit([commands])
-
         let submission = recordSubmission(of: commands)
+        // **投入した本体も、終わるまで抱える。** 記録の実体は置き場 (allocator) にあるが、
+        // 本体の寿命を GPU の実行より短くしない — 投入した側は直後に手放すので、
+        // ここで抱えなければ実行中に消える
+        held.append((submission, resources + [commands]))
+        return submission
+    }
 
-        let limit = UInt64(Self.waitLimitSeconds * 1000)
-        guard completion.wait(untilSignaledValue: submission, timeoutMS: limit) else {
-            // **黙って捨てない。** 詰まったことが分からないと、症状 (絵が止まる・
-            // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
-            Diagnostics.warn(
-                "GPU の完了を \(Self.waitLimitSeconds) 秒待っても返りませんでした。このフレームは捨てます")
-            throw .timedOut(seconds: Self.waitLimitSeconds)
-        }
+    /// 組み立てたコマンドを投入し、GPU が終わるまで待つ。
+    ///
+    /// ``commit(_:retaining:)`` と ``settle()`` の合成。1 枚だけ描く経路と、読み戻すために
+    /// その場で結果が要る経路のための形。
+    func commitAndWait(_ commands: any MTL4CommandBuffer) throws(RenderFailure) {
+        commit(commands)
+        try settle()
     }
 }
 
@@ -470,8 +572,10 @@ extension RenderDevice {
     /// 踏む ([#222](https://github.com/mokume-metal/mokume/issues/222))。
     func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) {
         commands.endCommandBuffer()
+        orderAfterPreviousSubmission()
         queue.commit([commands])
-        recordSubmission(of: commands)
+        let submission = recordSubmission(of: commands)
+        held.append((submission, [commands]))
         queue.signalDrawable(drawable)
     }
 }

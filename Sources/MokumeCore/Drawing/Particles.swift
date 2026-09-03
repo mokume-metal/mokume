@@ -156,16 +156,17 @@ public final class Particles {
 
     /// 粒を `count` 個置く。
     ///
-    /// **書けるのは、フレームの末尾が必ず GPU の完了を待つからである。** 前のフレームで
-    /// 頼んだ計算はもう終わっているので、いま CPU が同じ場所へ書いても走っている計算の
-    /// 足元を書き換えることにならない。フレームの終わりが待たなくなったら、ここは
-    /// 成り立たなくなる。
+    /// **書く直前に GPU の完了を待つ。** 前のフレームで頼んだ計算がまだ同じ場所を
+    /// 読んでいるかもしれない — 描き切りは待たずに返る (#727) — ので、待ってから
+    /// 書く。全部終わっていれば待ちは無い。かつては「フレームの末尾が必ず待つ」ことに
+    /// 寄りかかっていたが、その前提はもう無い。
     func emit(
         _ count: Int, from source: Emitter, speed: ClosedRange<Float>,
         angle: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
         color: LinearRGBA, at now: Float, using randomness: inout Randomness
     ) {
         guard count > 0 else { return }
+        state.gpu.settleQuietly(before: "粒を置く")
         let slots = state.storage.contents().assumingMemoryBound(to: Particle.self)
         for _ in 0..<count {
             let slot = cursor % capacity
@@ -194,6 +195,8 @@ public final class Particles {
     /// 形で組み立てるビルド時のシェーダ検査から外れてしまう — 組み込みの計算こそ、
     /// 走らせる前に壊れていることが分かってほしい。
     func write(transform: simd_float4x4, step: Float, frame: Int, forces: [Force]) {
+        // 前のフレームの計算がまだ指定を読んでいるかもしれない。書く直前に待つ (#727)
+        parameters.gpu.settleQuietly(before: "粒の指定を書く")
         let values = parameters.storage.contents().assumingMemoryBound(to: Float.self)
         for column in 0..<4 {
             let vector = transform[column]

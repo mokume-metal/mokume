@@ -28,6 +28,13 @@ public final class Numbers {
     /// 実体。**同じメモリを GPU も見る** (統一メモリの機械でしか成立しない)。
     let storage: any MTLBuffer
 
+    /// 書く前に待つ相手。
+    ///
+    /// 描き切りは GPU の完了を待たずに返る (#727) ので、前のフレームの計算がまだこの
+    /// 並びを読んでいるかもしれない。CPU から書く口は、書く直前に投入済みのものが
+    /// 全部終わるのを待つ (全部終わっていれば何もしない)。
+    let gpu: RenderDevice
+
     private var warnedOutOfRange = false
 
     /// 取り出し先。**1 度だけ確保して詰め直す** ([ADR-0023] 決定 5 が「読み戻しの置き場」を
@@ -43,7 +50,13 @@ public final class Numbers {
         let count = max(1, count)
         self.count = count
         self.storage = try gpu.makeReadableBuffer(byteCount: count * MemoryLayout<Float>.stride)
+        self.gpu = gpu
         fill(0)
+    }
+
+    /// CPU から書く直前の待ち。**書く口はすべてここを通す。**
+    private func settleBeforeWriting() {
+        gpu.settleQuietly(before: "数の並びへ書く")
     }
 
     /// 1 つ書く。
@@ -54,12 +67,14 @@ public final class Numbers {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func set(_ value: Float, at index: Int) {
         guard index >= 0, index < count else { return warnOutOfRange(index) }
+        settleBeforeWriting()
         contents[index] = value
     }
 
     /// 先頭から詰める。**入り切らないぶんは捨てる** (並びの外と同じ扱い)。
     public func set(_ values: [Float]) {
         if values.count > count { warnOutOfRange(values.count - 1) }
+        settleBeforeWriting()
         let contents = self.contents
         for (index, value) in values.enumerated() where index < count {
             contents[index] = value
@@ -68,6 +83,7 @@ public final class Numbers {
 
     /// 全部を同じ値にする。
     public func fill(_ value: Float) {
+        settleBeforeWriting()
         let contents = self.contents
         for index in 0..<count { contents[index] = value }
     }

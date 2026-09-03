@@ -31,6 +31,8 @@ public final class Image {
     var pixels: [SIMD4<Float16>]
     /// GPU 側の面。
     let texture: any MTLTexture
+    /// 面へ送る前に待つ相手 (前のフレームがまだこの面を読んでいるかもしれない・#727)。
+    private let gpu: RenderDevice
     /// CPU 側が GPU 側より新しいか。
     private var needsUpload = false
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
@@ -51,6 +53,7 @@ public final class Image {
         let texture = try gpu.makeTexture(descriptor: descriptor)
         texture.label = "mokume.image"
         self.texture = texture
+        self.gpu = gpu
         upload()
     }
 
@@ -157,6 +160,10 @@ public final class Image {
     }
 
     private func upload() {
+        // 描き切りは GPU の完了を待たずに返る (#727)。前のフレームがまだこの面を読んで
+        // いるかもしれないので、書き換える直前に投入済みのものが終わるのを待つ。
+        // 書き換えないフレームはここへ来ないので、待ちも払わない
+        gpu.settleQuietly(before: "画像を面へ送る")
         pixels.withUnsafeBytes { source in
             texture.replace(
                 region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,

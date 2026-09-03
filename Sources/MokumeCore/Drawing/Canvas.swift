@@ -1913,7 +1913,9 @@ public final class Canvas {
     /// 1 フレーム分を描く。
     ///
     /// `body` の中で呼んだ図形が溜められ、抜けるときにまとめて描画先へ落ちる。
-    /// GPU が終わるまで待ってから返る。
+    /// **返った時点で GPU はまだ描いていることがある。** 待つのは結果に触る口
+    /// (画素の読み出し・数の並びの読み書き) と、次の描き切りの書く直前で、どちらも
+    /// 自分で待つ。だから呼ぶ側は待ちを意識しなくてよい (#727)。
     public func draw(_ body: () -> Void) throws(RenderFailure) {
         beginFrame()
         body()
@@ -2085,6 +2087,15 @@ public final class Canvas {
         isFlushing = true
         defer { isFlushing = false }
         if let failureForTesting { throw failureForTesting }
+        // **書く前に待つ。** ここから先は GPU 可視メモリへ CPU が書く (頂点・列ごとの値・
+        // 効果の値・置き場の取り直し)。前の描き切りがまだそこを読んでいるかもしれない
+        // ので、投入済みのものが全部終わるのを待つ — 全部終わっていれば何もせず返る。
+        // 待つ位置をここ (書く直前) にしたので、末尾では待たない。利用者の `draw()` の
+        // CPU 仕事が前のフレームの GPU と重なる ([#727])。詰まっていたら 1 バイトも
+        // 書かずに投げ、このフレームは捨てる (`draw(_:)` の `defer` が片付ける)
+        //
+        // [#727]: https://github.com/mokume-metal/mokume/issues/727
+        try gpu.settle()
         closeBatch()
         // 段の枠の採番は描き切りごとに 0 から。**1 本のコマンドの中でだけ衝突しない
         // ことが要る**ので、コマンドと同じ寿命で数える
@@ -2337,7 +2348,11 @@ public final class Canvas {
         // 細かさを変えるたびに効き方が変わる
         if applyingEffects { applyUpscale(into: commands) }
 
-        try gpu.commitAndWait(commands)
+        // **投入して、待たない。** 直後の片付けで列が抱えていた参照 (面・数の並び・
+        // 断片・外の置き場所) が落ちるので、GPU が終わるまで抱えておく側へ渡す —
+        // この世代のコマンドはリソースを保持しないため、渡さないと利用者が `draw()` の
+        // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
+        gpu.commit(commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる。
@@ -2345,6 +2360,21 @@ public final class Canvas {
         // `defer` が同じことをする (#342) — 途中の描き切り (`loadPixels()`) が
         // 一時的に失敗しただけなら、溜めたものはフレーム末尾の描き切りに残す
         discardFrame()
+    }
+
+    /// 描き切りが GPU に読ませる参照のうち、この型が所有していないもの。
+    ///
+    /// 列 (`Batch`) は面・数の並び・断片・外の置き場所を抱え、効果は断片を抱える。
+    /// どちらも描き切りの直後に空になるので、GPU が終わるまで生かしておく入れ物と
+    /// して ``RenderDevice/commit(_:retaining:)`` へ渡す。頂点や列ごとの値の置き場は
+    /// この型が持ち続けるので、ここには要らない。
+    private final class HeldFrame {
+        let batches: [Batch]
+        let effects: [Effect]
+        init(batches: [Batch], effects: [Effect]) {
+            self.batches = batches
+            self.effects = effects
+        }
     }
 
     /// 列ごとの値を置く領域。足りなければ取り直す。

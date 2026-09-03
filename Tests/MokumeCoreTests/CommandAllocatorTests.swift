@@ -49,6 +49,33 @@ struct CommandAllocatorTests {
         #expect(gpu.slotWaits > 0, "一度も待っていない — 待たない経路が置き場を返していない")
     }
 
+    /// **実際の描き切りで**回す。`fill` は待つ経路なので、描き切りが待たなくなった
+    /// ([#727](https://github.com/mokume-metal/mokume/issues/727)) ことをそちらでは見られない。
+    /// 描き切り (待たない) → 差し出し (待たない) と、待たない経路が 2 つ続く形になる。
+    @Test("描き切りと差し出しが続いても、置き場が 1 本なら待ってから巻き戻す")
+    func waitsBetweenUnwaitedFlushAndPresent() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
+        let gpu = try RenderDevice(device: device, slotCount: 1)
+        let target = try RenderTarget(gpu: gpu, width: 64, height: 64)
+        let canvas = try Canvas(target: target, gpu: gpu)
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        let layer = SurfaceFixture.make(device, size: 64)
+
+        var presented = 0
+        for index in 0..<60 {
+            try canvas.draw {
+                canvas.background(.opaque(red: Float(index % 2), green: 0.2, blue: 0.3))
+                canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+                canvas.rect(8, 8, 48, 48)
+            }
+            if try presenter.present(target, to: layer) { presented += 1 }
+        }
+        try #require(presented > 0, "面を 1 度も取れていない — この検査は何も見ていない")
+
+        #expect(gpu.resetsWhileInFlight == 0)
+        #expect(gpu.slotWaits > 0, "一度も待っていない — 待たない経路が置き場を返していない")
+    }
+
     @Test("環の既定の本数でも、実行中のものを巻き戻さない")
     func neverResetsAnAllocatorInFlightWithTheDefaultRing() throws {
         let (gpu, presented) = try runFrames(120, slotCount: RenderDevice.defaultSlotCount)

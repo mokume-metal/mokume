@@ -35,8 +35,10 @@ import simd
 /// ## 書き込んでよい時機
 ///
 /// 焼き付けは CPU からこの面へ直接書き込む。**GPU がこの面を読んでいる間に書き換えて
-/// はならない。** 面への描画は 1 フレームごとに GPU の完了を待ってから返るので、
-/// 焼き付けはフレームの境目で行われる形になっている。
+/// はならない。** 面への描画は投入しても GPU の完了を待たずに返る (#727) ので、焼く
+/// 直前に投入済みのものが全部終わるのを待つ。新しい字形が出ないフレームは焼かない
+/// ので、待ちも払わない。広げるとき (`grow`) は新しい面を作るだけなので待たない —
+/// 前の面は、そこを指している列が GPU の完了まで抱える。
 final class GlyphAtlas {
     /// 最初の一辺 (画素)。
     static let initialSize = 256
@@ -89,8 +91,11 @@ final class GlyphAtlas {
     private var cursorX: Int
     private var cursorY: Int
     private var rowHeight: Int
+    /// 焼く前に待つ相手 (「書き込んでよい時機」を参照)。
+    private let gpu: RenderDevice
 
     init(gpu: RenderDevice) throws(RenderFailure) {
+        self.gpu = gpu
         self.size = Self.initialSize
         self.texture = try Self.makeTexture(side: size, gpu: gpu)
         self.cursorX = Self.whiteBlock + Self.padding
@@ -189,6 +194,8 @@ final class GlyphAtlas {
                 penY: -bottom)
         else { return nil }
 
+        // 前のフレームがまだこの面を読んでいるかもしれない。書く直前に待つ
+        gpu.settleQuietly(before: "字形を焼く")
         texture.replace(
             region: MTLRegionMake2D(origin.x, origin.y, width, height), mipmapLevel: 0,
             withBytes: pixels, bytesPerRow: width * Self.bytesPerPixel)
