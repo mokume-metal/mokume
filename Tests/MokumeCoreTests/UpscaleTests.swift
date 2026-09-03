@@ -247,8 +247,9 @@ struct UpscaleTests {
         }
         let affected = fingerprint(try canvas.output.encodeForDisplay().bytes)
         #expect(plain != affected)
-        // 効果 2 つ (3 枠: 反転・周辺減光・写し戻し) + 拡大の 1 枠
-        #expect(canvas.stagePassesUsed == 4)
+        // 効果 2 つ (2 枠: 反転・周辺減光。最後の段が描く先へ直接書くので写し戻しは無い)
+        // + 拡大の 1 枠
+        #expect(canvas.stagePassesUsed == 3)
         #expect(canvas.output.width == Self.width)
     }
 
