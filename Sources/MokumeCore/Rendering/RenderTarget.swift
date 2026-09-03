@@ -114,10 +114,13 @@ public final class RenderTarget {
 
     /// 描いた結果を画素として読み書きする面。返るのは描画先そのものへの窓である。
     ///
-    /// 中身が確定しているのは GPU の仕事が終わったあとだけだが、描画の経路は投入の
-    /// たびに完了まで待つので、呼び出し側へ制御が戻った時点では常に確定している。
+    /// 中身が確定しているのは GPU の仕事が終わったあとだけで、描画の経路は投入しても
+    /// 待たない (#727)。だから**ここで待つ** — 投入済みのものが全部終わっていれば
+    /// 何もせず返る。窓は生のポインタなので、**取ったフレームの中で使い切る**。次の
+    /// フレームへ持ち越すと、GPU が書いている途中の面へ触ることになる。
     var pixels: Pixels {
-        Pixels(
+        gpu.settleQuietly(before: "画素を読む")
+        return Pixels(
             base: storage.contents(), width: width, height: height, bytesPerRow: bytesPerRow)
     }
 
@@ -202,9 +205,11 @@ public final class RenderTarget {
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// 読み出しには GPU の仕事が要らない。描画先は CPU から読める領域の上に載って
-    /// いるので、**ここでするのは行の詰め直しだけ**である。行の間隔が幅ぶんより広い
+    /// いるので、**ここでするのは待つことと行の詰め直しだけ**である。待つのは投入済みの
+    /// 描画が終わるまで (全部終わっていれば何もしない・#727)。行の間隔が幅ぶんより広い
     /// ことがあるので、値としての ``PixelBuffer`` へ移すときに詰める。
     public func readPixels() throws(RenderFailure) -> PixelBuffer {
+        try gpu.settle()
         let componentsPerRow = width * 4
         var components = [Float16](repeating: 0, count: componentsPerRow * height)
         let source = storage.contents()

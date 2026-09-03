@@ -211,15 +211,17 @@ extension Canvas {
     /// [#389]: https://github.com/mokume-metal/mokume/issues/389
     public func read(_ numbers: Numbers) -> [Float] {
         runPendingComputations()
+        // **読む直前に待つ。** 描き切りは投入しても待たない (#727) ので、溜め場が空でも
+        // 前のフレームの計算がまだ走っているかもしれない。全部終わっていれば何もしない
+        gpu.settleQuietly(before: "計算の結果を読む")
         return numbers.snapshot()
     }
 
     /// 溜まっている計算を、その場で走らせて待つ。
     ///
-    /// **残っていなければ何もしない。** 走らせたものはコマンドの完了まで待ってから
-    /// 返っている (描き切りの末尾も、ここも) ので、溜め場が空なら「走らせたものは
-    /// 全部終わっている」が成り立つ。待つ必要があるのは、まだ走っていないものが
-    /// 残っているときだけである。
+    /// **残っていなければ何もしない。** 走らせるものが無いときの待ちは呼ぶ側 (`read`)
+    /// が持つ — 描き切りが待たなくなったので、溜め場が空でも「走らせたものは全部
+    /// 終わっている」とは言えない (#727)。
     private func runPendingComputations() {
         guard !pendingComputations.isEmpty else { return }
         do {
