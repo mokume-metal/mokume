@@ -208,7 +208,11 @@ public final class Canvas {
     /// 溜め場ではなく、外の置き場から置き場所を取る指定。
     struct ExternalInstances {
         var buffer: any MTLBuffer
+        /// 置き場所の上限 (置き場の大きさ)。**実際に描く数は GPU が `arguments` に書く。**
         var count: Int
+        /// 描く引数 (`MTLDrawPrimitivesIndirectArguments`)。GPU が書くので、描く側は
+        /// 個数を読まずにそのまま indirect draw へ渡す。
+        var arguments: any MTLBuffer
     }
 
     /// 立体の頂点が何から来たか。
@@ -612,6 +616,11 @@ public final class Canvas {
         var instanceCount: Int = 1
         /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。
         var instances: (any MTLBuffer)?
+        /// 描く個数を GPU が書いた引数。`nil` なら `instanceCount` で描く (いつもの経路)。
+        ///
+        /// 粒だけがここを使う — 生きている粒の数は CPU が知らないので、数えた GPU が
+        /// 書いた引数をそのまま indirect draw に渡す。
+        var indirectArguments: (any MTLBuffer)?
         /// 輪郭の頂点が始まる位置 (並び全体での番号)。**平面だけが使う。**
         ///
         /// 頂点関数はここより手前に塗りの色を、ここから後ろに輪郭の色を掛ける。
@@ -1086,6 +1095,7 @@ public final class Canvas {
                 instanceStart: open.external == nil ? open.instanceStart : 0,
                 instanceCount: instanceCount,
                 instances: open.external?.buffer,
+                indirectArguments: open.external?.arguments,
                 cullMode: cullMode(for: open),
                 solidSource: open.source))
         warnIfMaterialCannotShow()
@@ -2404,10 +2414,18 @@ public final class Canvas {
                         surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
                 }
                 encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
-                encoder.drawPrimitives(
-                    primitiveType: .triangle,
-                    vertexStart: run.start, vertexCount: run.count,
-                    instanceCount: batch.instanceCount)
+                if let arguments = batch.indirectArguments {
+                    // **個数は GPU が書いた引数から読む。** 計算の段の末尾の仕掛け
+                    // (`encodeComputeBarrier`) が頂点段の前で待つので、引数の読み出しは
+                    // 書き終わった後になる
+                    encoder.drawPrimitives(
+                        primitiveType: .triangle, indirectBuffer: arguments.gpuAddress)
+                } else {
+                    encoder.drawPrimitives(
+                        primitiveType: .triangle,
+                        vertexStart: run.start, vertexCount: run.count,
+                        instanceCount: batch.instanceCount)
+                }
             }
         }
 
@@ -2599,10 +2617,16 @@ public final class Canvas {
             // 裏面を捨てても焼き付く奥行きは変わらない
             encoder.setCullMode(batch.cullMode)
             encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
-            encoder.drawPrimitives(
-                primitiveType: .triangle,
-                vertexStart: batch.run.start, vertexCount: batch.run.count,
-                instanceCount: batch.instanceCount)
+            if let arguments = batch.indirectArguments {
+                // 粒は影の側でも GPU が書いた個数で描く (本描画と同じ)
+                encoder.drawPrimitives(
+                    primitiveType: .triangle, indirectBuffer: arguments.gpuAddress)
+            } else {
+                encoder.drawPrimitives(
+                    primitiveType: .triangle,
+                    vertexStart: batch.run.start, vertexCount: batch.run.count,
+                    instanceCount: batch.instanceCount)
+            }
         }
         encodeShadowBarrier(on: encoder)
         encoder.endEncoding()
