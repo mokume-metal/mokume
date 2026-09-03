@@ -23,10 +23,15 @@ public nonisolated enum StrokeCap: Sendable, Equatable {
 public nonisolated enum StrokeJoin: Sendable, Equatable {
     /// 角を尖らせる (既定)。
     ///
-    /// - Note: 鋭い角では尖りが極端に伸びるため、いまの実装は ``bevel`` と同じ形で
-    ///   埋める。伸びの限界を持つ尖りは、輪郭の作り込みが進んでから足す。
+    /// - Note: 矩形の角 (直角) では尖りが線幅の半分だけ伸びる。任意多角形
+    ///   (``Sketch/beginShape(_:)``) の折れ目は鋭い角で尖りが極端に伸びるため、いまの
+    ///   実装は ``bevel`` と同じ形で埋める。伸びの限界を持つ尖りは、輪郭の作り込みが
+    ///   進んでから足す。扇形の角は折れ目の形によらず丸く出る。
     case miter
     /// 角を削ぐ。
+    ///
+    /// 矩形の角は 45° で削がれる。任意多角形の折れ目は、いまの実装では正方形で埋める
+    /// (``miter`` の注記)。
     case bevel
     /// 角を丸める。
     case round

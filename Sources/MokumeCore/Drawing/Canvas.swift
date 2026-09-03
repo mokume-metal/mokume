@@ -67,7 +67,7 @@ public final class Canvas {
     let pipeline: ShapePipeline
 
     /// 描画先の座標へ落とす行列。半画素のずらしを含む。
-    private let projection: simd_float4x4
+    let projection: simd_float4x4
     private let projectionBuffer: any MTLBuffer
 
     /// 溜めている頂点と、その置き場。
@@ -110,6 +110,18 @@ public final class Canvas {
     /// 雛形を開かないのは、**平面が元から 1 つの列にまとまる**ためで、図形ごとに列を
     /// 割ると畳む前より遅くなる場面 (矩形と円を交互に置く絵) が出る。
     private var pendingFlat: PendingFlat?
+
+    /// 平面の基本図形の置き場所。列は自分の区間を指す ([#752])。
+    ///
+    /// 矩形・楕円・扇形・線・点はここに載る。頂点は 1 つも積まない — 形も寸法も置き場所が
+    /// 持ち、断片が距離関数で描く (`Canvas+Form.swift`)。
+    ///
+    /// [#752]: https://github.com/mokume-metal/mokume/issues/752
+    var formInstances: [FormInstance] = []
+    private var formInstanceBuffer: (any MTLBuffer)?
+    private var formInstanceCapacity = 0
+    /// いま開いている基本図形の列。
+    var openForm: OpenForm?
 
     /// 畳む相手を待っている図形ひとつぶん。
     private struct PendingFlat {
@@ -632,10 +644,14 @@ public final class Canvas {
 
     /// 列がどちらの並びから描かれるか。
     enum VertexSource {
-        /// 奥行きを持たない図形・字・画像。
+        /// 奥行きを持たない図形・字・画像 (三角形で組み立てるもの)。
         case flat
         /// 奥行きを持つ立体。
         case solid
+        /// 平面の基本図形。頂点を持たず、置き場所 (``FormInstance``) が形を持つ。
+        ///
+        /// 区間の `start` / `count` は頂点ではなく**置き場所の並び**の中の位置である。
+        case form
     }
 
     /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
@@ -945,7 +961,7 @@ public final class Canvas {
     /// 遠いほど `w` が大きく、定数を足すと奥ほど揺れなくなる。
     ///
     /// 空間方向では揺らさない (``UpscaleStage/jitter`` が 0)。
-    private func jittered(_ matrix: simd_float4x4) -> simd_float4x4 {
+    func jittered(_ matrix: simd_float4x4) -> simd_float4x4 {
         guard let offset = upscaleStage?.jitter, offset != .zero else { return matrix }
         var shift = matrix_identity_float4x4
         shift.columns.3.x = offset.x * 2 / Float(pixelWidth)
@@ -992,6 +1008,7 @@ public final class Canvas {
     /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
         if openSource == .solid { return closeSolidBatch() }
+        if openSource == .form { return closeFormBatch() }
         // **雛形は列と一緒に閉じる。** 開いたままにすると、次に来た同じ形が「もう閉じた
         // 列の頂点」を指す置き場所を足してしまう
         let template = openFlat
@@ -1143,7 +1160,7 @@ public final class Canvas {
         // **平面の頂点はどれもここを通る。** 畳めない頂点が開いている雛形へ紛れ込むのを
         // 止める場所を、1 つに保つ
         closeFlatTemplate()
-        guard openSource == .solid else { return }
+        guard openSource != .flat else { return }
         closeBatch()
         openSource = .flat
     }
@@ -1234,9 +1251,11 @@ public final class Canvas {
         // 空のまま次の列を閉じると、束ねる先の無い添字が残る
         flatInstances.removeAll(keepingCapacity: true)
         flatInstances.append(.identity)
+        formInstances.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
         openSolid = nil
         openFlat = nil
+        openForm = nil
         pendingFlat = nil
         buildingFlatTemplate = false
         openSource = .flat
@@ -1279,14 +1298,20 @@ public final class Canvas {
         guard box.width > 0, box.height > 0 else { return }
         let w = box.width
         let h = box.height
+        // 距離関数で描ける間は頂点を組み立てない (`Canvas+Form.swift`)
+        if formAllowed(fills: true) {
+            return appendForm(
+                .rect, center: SIMD2(box.x + w / 2, box.y + h / 2), half: SIMD2(w / 2, h / 2),
+                fills: true)
+        }
         // 周は**形自身の座標**で作り、左上の角を置き場所として渡す。畳まないときは
         // 角を足し戻すだけなので、絵は 1 ビットも変わらない (足す順が入れ替わるだけ)
-        draw(
+        draw(folding: .rect(width: w, height: h), at: SIMD2(box.x, box.y)) {
             Outline(
                 points: [
                     SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
-                ], isClosed: true),
-            folding: .rect(width: w, height: h), at: SIMD2(box.x, box.y))
+                ], isClosed: true)
+        }
     }
 
     /// 正方形。座標の読み方は ``rectMode(_:)`` が決める。
@@ -1305,15 +1330,19 @@ public final class Canvas {
         let radiusX = box.width / 2
         let radiusY = box.height / 2
         guard radiusX > 0, radiusY > 0 else { return }
-        // 周は**形自身の座標**で作り、中心を置き場所として渡す
-        draw(
+        let center = SIMD2(box.x + radiusX, box.y + radiusY)
+        if formAllowed(fills: true) {
+            return appendForm(.ellipse, center: center, half: SIMD2(radiusX, radiusY), fills: true)
+        }
+        // 周は**形自身の座標**で作り、中心を置き場所として渡す。**周を作るのは畳めない
+        // と分かってから** — 畳めるときは置き場所を 1 つ足すだけで、周は要らない
+        draw(folding: .ellipse(radiusX: radiusX, radiusY: radiusY), at: center) {
             Outline(
                 points: Self.arcPoints(
                     center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
                     from: 0, sweep: 2 * .pi),
-                isClosed: true, fanCenter: SIMD2(0, 0)),
-            folding: .ellipse(radiusX: radiusX, radiusY: radiusY),
-            at: SIMD2(box.x + radiusX, box.y + radiusY))
+                isClosed: true, fanCenter: SIMD2(0, 0))
+        }
     }
 
     /// 円弧。座標の読み方は ``ellipseMode(_:)`` が決める。
@@ -1331,18 +1360,27 @@ public final class Canvas {
             return
         }
         let sweep = min(stop - start, 2 * .pi)
-        let arcPoints = Self.arcPoints(
-            center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
-            from: start, sweep: sweep)
         // 一周ぶんなら中心は周に含めない (楕円と同じ形になる)
         let isFullTurn = sweep >= 2 * .pi
+        let center = SIMD2(box.x + radiusX, box.y + radiusY)
+        if formAllowed(fills: true) {
+            return isFullTurn
+                ? appendForm(.ellipse, center: center, half: SIMD2(radiusX, radiusY), fills: true)
+                : appendForm(
+                    .arc, center: center, half: SIMD2(radiusX, radiusY),
+                    arc: SIMD2(start, sweep), fills: true)
+        }
         draw(
-            Outline(
+            folding: .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep),
+            at: center
+        ) {
+            let arcPoints = Self.arcPoints(
+                center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
+                from: start, sweep: sweep)
+            return Outline(
                 points: isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints,
-                isClosed: true, fanCenter: SIMD2(0, 0)),
-            folding: .arc(
-                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep),
-            at: SIMD2(box.x + radiusX, box.y + radiusY))
+                isClosed: true, fanCenter: SIMD2(0, 0))
+        }
     }
 
     /// 三角形。
@@ -1367,6 +1405,9 @@ public final class Canvas {
 
     // 線。塗りは持たない。
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
+        if formAllowed(fills: false) {
+            return appendLineForm(SIMD2(x1, y1), SIMD2(x2, y2))
+        }
         draw(
             Outline(
                 points: [SIMD2(x1, y1), SIMD2(x2, y2)], isClosed: false, fills: false))
@@ -1374,6 +1415,9 @@ public final class Canvas {
 
     /// 点。大きさは線の太さ、形は端点の形 (``strokeCap(_:)``) が決める。
     public func point(_ x: Float, _ y: Float) {
+        if formAllowed(fills: false) {
+            return appendPointForm(SIMD2(x, y))
+        }
         draw(Outline(points: [SIMD2(x, y)], isClosed: false, fills: false))
     }
 
@@ -1413,6 +1457,7 @@ public final class Canvas {
 
     /// 周から、塗りと輪郭を出す。
     private func draw(_ outline: Outline) {
+        outlinesAssembledThisFrame += 1
         if outline.fills, hasFill { fillInterior(outline) }
         if hasStroke, currentStrokeWeight > 0 { strokeOutline(outline) }
     }
@@ -1422,10 +1467,15 @@ public final class Canvas {
     /// 畳めるときは頂点を 1 組も積まず、置き場所を 1 つ足すだけで済む。畳めないときは
     /// 周を置き場所ぶんずらして今までどおり積む — 足す順が入れ替わるだけなので、
     /// **絵は 1 ビットも変わらない**。
-    private func draw(_ outline: Outline, folding form: FlatForm, at anchor: SIMD2<Float>) {
+    ///
+    /// **周は閉包で受け取る。** 開いている雛形と同じ形なら置き場所を 1 つ足すだけで、
+    /// 周は 1 度も作らない (#752 — 畳めても無条件に周を組んでいたのを直した)。
+    private func draw(
+        folding form: FlatForm, at anchor: SIMD2<Float>, outline makeOutline: () -> Outline
+    ) {
         let key = FlatKey(
             form: form,
-            hasFill: outline.fills && hasFill,
+            hasFill: hasFill,
             hasStroke: hasStroke && currentStrokeWeight > 0,
             strokeWeight: currentStrokeWeight,
             strokeCap: currentStrokeCap,
@@ -1438,7 +1488,7 @@ public final class Canvas {
         //
         // 保持する形を記録している最中も畳まない (`recordingShape`)
         guard !(key.textured && key.hasFill && key.hasStroke), !recordingShape else {
-            return draw(outline.moved(by: anchor))
+            return draw(makeOutline().moved(by: anchor))
         }
 
         // 開いている雛形と同じ形なら、置き場所を足すだけで済む
@@ -1449,10 +1499,11 @@ public final class Canvas {
             }
             // 上限に達したら**同じ形のまま**列を開き直す。ここで畳まない経路へ落とすと、
             // 上限をまたいだ図形だけ組み立て方が変わってしまう
-            openFlatTemplate(key: key, outline: outline)
+            openFlatTemplate(key: key, outline: makeOutline())
             flatInstances.append(placement(at: anchor))
             return
         }
+        let outline = makeOutline()
 
         // **2 つ目が来てから畳む。** 1 つ目で雛形を開くと、矩形と円を交互に置いた絵で
         // 図形の数だけ列が分かれる — 平面は元から 1 つの列にまとまるので、それは
@@ -1506,6 +1557,7 @@ public final class Canvas {
         currentFill = Self.unchangedTint
         currentStroke = Self.unchangedTint
         buildingFlatTemplate = true
+        outlinesAssembledThisFrame += 1
         if key.hasFill { fillInterior(outline) }
         let strokeStart = vertices.count
         if key.hasStroke { strokeOutline(outline) }
@@ -2107,6 +2159,17 @@ public final class Canvas {
     /// 組み立てて積む頂点の数のほうで、それが #424 で律速だったものである。
     private(set) var flatVerticesInLastFrame = 0
 
+    /// 直前のフレームで、周 (`Outline`) から三角形を組み立てた回数。
+    ///
+    /// **基本図形が頂点を組み立てていないことを数える値** ([#752])。距離関数で描く
+    /// 図形は周を作らないので、矩形と円だけの絵ならここは 0 になる。0 でなければ、
+    /// どこかで三角形の経路 (任意多角形・貼る絵・利用者の断片、あるいは畳めなかった
+    /// 雛形) を通っている。
+    ///
+    /// [#752]: https://github.com/mokume-metal/mokume/issues/752
+    private(set) var flatOutlinesInLastFrame = 0
+    private var outlinesAssembledThisFrame = 0
+
     /// 検査から「描けなかったフレーム」を作るための差し込み。製品の経路では常に `nil`。
     ///
     /// 描画の失敗は環境か資源が枯れたときにしか起きず、検査から自然には作れない。
@@ -2179,11 +2242,16 @@ public final class Canvas {
             throw .encoderUnavailable
         }
 
-        if !vertices.isEmpty || !solidVertices.isEmpty {
+        if !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty {
             let buffer = try vertexBufferHolding(vertices.count)
             vertices.withUnsafeBytes { source in
-                buffer.contents().copyMemory(
-                    from: source.baseAddress!, byteCount: source.count)
+                guard let base = source.baseAddress, source.count > 0 else { return }
+                buffer.contents().copyMemory(from: base, byteCount: source.count)
+            }
+            let formBuffer = try formInstanceBufferHolding(max(formInstances.count, 1))
+            formInstances.withUnsafeBytes { source in
+                guard let base = source.baseAddress, source.count > 0 else { return }
+                formBuffer.contents().copyMemory(from: base, byteCount: source.count)
             }
             let instanceBuffer = try solidInstanceBufferHolding(max(solidInstances.count, 1))
             solidInstances.withUnsafeBytes { source in
@@ -2331,6 +2399,15 @@ public final class Canvas {
                         flatInstanceBuffer.gpuAddress
                             + UInt64(batch.instanceStart * MemoryLayout<FlatInstance>.stride),
                         index: ShapePipeline.instanceBufferIndex)
+                case .form:
+                    // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
+                    // 平面と同じ (常に通し・書かない)
+                    encoder.setRenderPipelineState(pipeline.formState)
+                    encoder.setDepthStencilState(pipeline.flatDepthState)
+                    pipeline.argumentTable.setAddress(
+                        formBuffer.gpuAddress
+                            + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
+                        index: ShapePipeline.instanceBufferIndex)
                 case .solid:
                     // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
                     encoder.setRenderPipelineState(run.shader?.solidState ?? pipeline.solidState)
@@ -2383,15 +2460,21 @@ public final class Canvas {
                         surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
                 }
                 encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
+                // 基本図形はクアッド 1 枚 (頂点 6 つ) を置き場所の数だけ描く。頂点関数が
+                // `vertex_id` から角を決めるので、頂点の並びは読まない
                 encoder.drawPrimitives(
                     primitiveType: .triangle,
-                    vertexStart: run.start, vertexCount: run.count,
+                    vertexStart: batch.source == .form ? 0 : run.start,
+                    vertexCount: batch.source == .form ? Self.formQuadVertexCount : run.count,
                     instanceCount: batch.instanceCount)
             }
         }
 
-        drawCallsInLastFrame = vertices.isEmpty && solidVertices.isEmpty ? 0 : batches.count
+        drawCallsInLastFrame =
+            vertices.isEmpty && solidVertices.isEmpty && formInstances.isEmpty ? 0 : batches.count
         flatVerticesInLastFrame = vertices.count
+        flatOutlinesInLastFrame = outlinesAssembledThisFrame
+        outlinesAssembledThisFrame = 0
         encoder.endEncoding()
 
         // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
@@ -2472,6 +2555,20 @@ public final class Canvas {
             byteCount: capacity * MemoryLayout<SolidInstance>.stride)
         solidInstanceBuffer = buffer
         solidInstanceCapacity = capacity
+        return buffer
+    }
+
+    /// 基本図形のクアッドを組む頂点の数 (三角形 2 枚)。
+    static let formQuadVertexCount = 6
+
+    /// 基本図形の置き場所を置く領域。足りなければ取り直す。
+    private func formInstanceBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
+        if let buffer = formInstanceBuffer, formInstanceCapacity >= count { return buffer }
+        let capacity = max(count, max(formInstanceCapacity * 2, 256))
+        let buffer = try gpu.makeReadableBuffer(
+            byteCount: capacity * MemoryLayout<FormInstance>.stride)
+        formInstanceBuffer = buffer
+        formInstanceCapacity = capacity
         return buffer
     }
 

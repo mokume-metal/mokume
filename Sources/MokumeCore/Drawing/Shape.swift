@@ -28,6 +28,11 @@ public struct Shape {
     let vertices: [ShapeVertex]
     /// 焼き付けた立体の頂点。同じく形自身の座標で、面の向きも変換前のもの。
     let solidVertices: [SolidVertex]
+    /// 焼き付けた平面の基本図形 (矩形・楕円・扇形・線・点)。形自身の座標での置き場所。
+    ///
+    /// 頂点を持たない — 置くときは 2x2 と平行移動に置き場所の変換を掛けるだけで、
+    /// 円をいくつ含む形でも置く費用は同じである (``FormInstance``)。
+    let forms: [FormInstance]
     /// 頂点の並びを、面と混ぜ方の変わり目で区切ったもの。
     let runs: [Run]
 
@@ -53,9 +58,13 @@ public struct Shape {
         var count: Int
     }
 
-    init(vertices: [ShapeVertex], solidVertices: [SolidVertex] = [], runs: [Run]) {
+    init(
+        vertices: [ShapeVertex], solidVertices: [SolidVertex] = [], forms: [FormInstance] = [],
+        runs: [Run]
+    ) {
         self.vertices = vertices
         self.solidVertices = solidVertices
+        self.forms = forms
         self.runs = runs
     }
 
@@ -63,10 +72,13 @@ public struct Shape {
     public static let empty = Shape(vertices: [], runs: [])
 
     /// 三角形を組み立てるのに使った頂点の数。
+    ///
+    /// 距離関数で描く基本図形 (矩形・楕円・扇形・線・点) は頂点を持たないので数えない —
+    /// 円を 1000 個含む形でもここは 0 でありうる。
     public var vertexCount: Int { vertices.count + solidVertices.count }
 
     /// 何も入っていないか。
-    public var isEmpty: Bool { vertices.isEmpty && solidVertices.isEmpty }
+    public var isEmpty: Bool { vertices.isEmpty && solidVertices.isEmpty && forms.isEmpty }
 
     /// この形を描くのに要する描画の回数。
     ///
@@ -84,20 +96,28 @@ public struct Shape {
     public static func group(_ shapes: [Shape]) -> Shape {
         var vertices: [ShapeVertex] = []
         var solidVertices: [SolidVertex] = []
+        var forms: [FormInstance] = []
         var runs: [Run] = []
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
+        forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
 
         for shape in shapes {
             let flatOffset = vertices.count
             let solidOffset = solidVertices.count
+            let formOffset = forms.count
             vertices.append(contentsOf: shape.vertices)
             solidVertices.append(contentsOf: shape.solidVertices)
+            forms.append(contentsOf: shape.forms)
             for var run in shape.runs {
-                run.start += run.source == .flat ? flatOffset : solidOffset
+                switch run.source {
+                case .flat: run.start += flatOffset
+                case .solid: run.start += solidOffset
+                case .form: run.start += formOffset
+                }
                 append(run, to: &runs)
             }
         }
-        return Shape(vertices: vertices, solidVertices: solidVertices, runs: runs)
+        return Shape(vertices: vertices, solidVertices: solidVertices, forms: forms, runs: runs)
     }
 
     /// 2 つの形を 1 つに畳む。
