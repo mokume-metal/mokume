@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test examples drawing-evidence render-status catch-up entry-check shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
+.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -132,6 +132,15 @@ METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=n
 test:
 	@mkdir -p .build
 	set -o pipefail; env $(METAL_VALIDATION) swift test 2>&1 | tee .build/test-log.txt
+
+# release でテストを回す — 性能を測るための器 (#761)。**ci-check には入れない** (計測の
+# ためだけで、常時のゲートに要る検査は debug の test が全部持つ)。
+#
+# `-enable-testing` を渡すのは、SwiftPM が release では testability を有効にしないため
+# (`@testable import` が `not compiled for testing` で落ちる)。Metal の検証レイヤは
+# 載せない — 計測の器なので、検証レイヤの費用で時間を歪ませない
+test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
+	swift test -c release -Xswiftc -enable-testing
 
 # 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
 # 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは

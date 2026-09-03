@@ -4,6 +4,13 @@
 import Metal
 import MokumeDiagnostics
 
+// `@MainActor` はターゲットの既定隔離 (`Package.swift` の `.defaultIsolation`) と同じ意味で、
+// 付けなくても隔離は変わらない。**明示しているのは release のテストビルドのため**である —
+// `swift test -c release` では、この型を外から読むターゲット (`frame-rate-probe` や
+// `@testable import` する検査) が module を deserialize する際に暗黙の既定隔離を見失い、
+// `isolated deinit` が「隔離されていないクラスに付いている」として compile を止める
+// (#761)。debug と製品の release では出ない。明示すれば取り込み側にも隔離が伝わる。
+
 /// GPU 側の一式を束ねる — デバイス・コマンドの発行口・コマンドの置き場・リソースの常駐。
 ///
 /// ## なぜ常駐をここに集めるのか
@@ -44,7 +51,7 @@ import MokumeDiagnostics
 /// 投入したコマンドが読むリソースは、**投入した側が参照を手放しても**終わるまで生きて
 /// いなければならない (この世代のコマンドはリソースを保持しない)。手放す予定のものは
 /// `commit(_:retaining:)` に渡し、この型が完了まで抱える。
-public final class RenderDevice {
+@MainActor public final class RenderDevice {
     /// GPU が完了するのを待つ上限 (秒)。
     ///
     /// 待ちが返らないときに永久に止まらないための上限で、**検証がこの値そのものを
