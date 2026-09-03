@@ -67,6 +67,19 @@ enum SolidShape: Hashable {
         values.allSatisfy { $0.isFinite && $0 >= 0 }
     }
 
+    /// 閉じた形か — 中身が詰まっていて、どの向きから見ても表の面が裏の面を隠す。
+    ///
+    /// 閉じた形の不透明な列だけが、裏を向いた面を描かずに済ませられる
+    /// (``Canvas/Batch/cullMode``)。平らな面は片面しか無く、裏から見たときに
+    /// 描かれなくなるので閉じていない。**巻き方が外向きに揃っていることが前提**で、
+    /// それは `SolidMeshTests` が形ごとに見る。
+    var isClosed: Bool {
+        switch self {
+        case .box, .sphere, .cylinder, .cone, .torus: true
+        case .plane: false
+        }
+    }
+
     /// この形を組み立てる。
     func make() -> SolidMesh {
         switch self {

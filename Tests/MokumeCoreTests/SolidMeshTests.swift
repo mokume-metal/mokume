@@ -201,4 +201,58 @@ struct SolidMeshTests {
             #expect(dot(point.normal, point.position) > 0)
         }
     }
+
+    // MARK: - 閉じているか (背面カリングの前提)
+
+    @Test("閉じた形とそうでない形を、形自身が名乗る")
+    func closednessIsDeclaredByTheShape() {
+        // 閉じた形の列だけが裏面を捨てられる。平らな面は片面で、裏から見えなくなる
+        #expect(SolidShape.box(width: 1, height: 1, depth: 1).isClosed)
+        #expect(SolidShape.sphere(radius: 1, detail: 8).isClosed)
+        #expect(SolidShape.cylinder(radius: 1, height: 1, detail: 8).isClosed)
+        #expect(SolidShape.cone(radius: 1, height: 1, detail: 8).isClosed)
+        #expect(SolidShape.torus(ringRadius: 2, tubeRadius: 1, detail: 8).isClosed)
+        #expect(!SolidShape.plane(width: 1, height: 1).isClosed)
+    }
+
+    @Test("閉じた形は、巻き方そのものが外を向いている", arguments: [
+        SolidShape.box(width: 10, height: 20, depth: 30),
+        .sphere(radius: 10, detail: 8),
+        .sphere(radius: 3, detail: 3),
+        .cylinder(radius: 10, height: 20, detail: 6),
+        .cylinder(radius: 1, height: 100, detail: 3),
+        .cone(radius: 10, height: 20, detail: 6),
+        .cone(radius: 1, height: 100, detail: 3),
+        .torus(ringRadius: 30, tubeRadius: 10, detail: 6),
+        .torus(ringRadius: 30, tubeRadius: 10, detail: 128),
+    ])
+    func closedShapesWindOutward(_ shape: SolidShape) {
+        // **裏面を捨てる判定は書かれた向きを読まない** — 読むのは 3 点を巻いた向き
+        // だけである。上の検査は書かれた向きとの一致を見ているが、書かれた向きが
+        // 内向きに揃って間違っていれば両方が揃って通る。ここでは 3 点だけから向きを
+        // 求め、それが形の中心 (輪は管の中心) から外へ向くことを見る。1 枚でも内向き
+        // なら、その面はカリングで消え、絵に穴が空く
+        precondition(shape.isClosed)
+        let points = shape.make().points
+        var checked = 0
+        for index in stride(from: 0, to: points.count - 2, by: 3) {
+            let a = points[index].position
+            let b = points[index + 1].position
+            let c = points[index + 2].position
+            let face = cross(b - a, c - a)
+            guard length_squared(face) > 1e-6 else { continue }
+            let centroid = (a + b + c) / 3
+            let outward = centroid - Self.center(of: shape, near: centroid)
+            #expect(dot(face, outward) > 0, "\(index / 3) 枚目が内向きに巻かれている")
+            checked += 1
+        }
+        #expect(checked > 0)
+    }
+
+    /// 「外」を測る基準の点。中身の詰まった形は原点、輪は管の中心。
+    private static func center(of shape: SolidShape, near point: SIMD3<Float>) -> SIMD3<Float> {
+        guard case .torus(let ringRadius, _, _) = shape else { return .zero }
+        let inPlane = SIMD3<Float>(point.x, point.y, 0)
+        return normalize(inPlane) * ringRadius
+    }
 }

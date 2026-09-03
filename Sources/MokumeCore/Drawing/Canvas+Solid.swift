@@ -164,6 +164,8 @@ extension Canvas {
             SolidInstance(
                 matrix: transform.matrix, normalMatrix: transform.normalMatrix,
                 color: currentFill))
+        // 半透明の塗りが 1 つでも入ったら、この列は裏面を捨てられない (`Batch.cullMode`)
+        if currentFill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
     }
 
     /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから

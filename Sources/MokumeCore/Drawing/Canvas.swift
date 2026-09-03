@@ -197,6 +197,12 @@ public final class Canvas {
         /// `nil` なら溜め場の並び (いつもの経路)。粒だけがここを使う — 置き場所を
         /// 埋めるのが GPU なので、CPU の溜め場を通らない。
         var external: ExternalInstances?
+        /// 半透明の塗りの置き場所を 1 つでも足したか。
+        ///
+        /// 塗りを変えても列は閉じないので、1 つの列に不透明と半透明が同居する。
+        /// 半透明の形は奥の面が手前の面を通して見えるので、1 つでも居れば列ごと
+        /// 両面で描く (``Batch/cullMode``)。
+        var hasTranslucentInstance = false
     }
 
     /// 溜め場ではなく、外の置き場から置き場所を取る指定。
@@ -603,6 +609,21 @@ public final class Canvas {
         /// 畳んでいない列は塗りしか無い扱いでよい — 置き場所の 2 色がどちらも白で、
         /// どちらを掛けても値が変わらないためである。
         var strokeStart: Int = .max
+        /// 裏を向いた面をどう扱うか。
+        ///
+        /// 既定は両面を描く (`.none`)。**閉じた組み込みの形の、不透明な列だけ**が裏面を
+        /// 捨てる (`.back`) — 閉じた形では表の面が必ず裏の面を隠すので、捨てても絵は
+        /// 変わらず、断片の仕事 (影の読み取りを含む) が裏面のぶんだけ減る
+        /// ([#756](https://github.com/mokume-metal/mokume/issues/756))。動きうるのは輪郭の
+        /// 縁で表と裏が同じ奥行きを争っていた画素だけで、それは表の色に確定する
+        /// (台帳の `shadows` で 1 画素・2 階調が動いた実測が #756 の PR にある)。
+        ///
+        /// 裏面が絵に出うるものは全部 `.none` に居続ける: 片面の形 (`plane`)・自分で並べた
+        /// 頂点・保持した形・読み込んだモデル (閉じているか分からない)・半透明の置き場所を
+        /// 含む列・貼る絵 (透けた画素から奥が見える)・重ねる混ぜ方・利用者の断片 (透明を
+        /// 返したり画素を捨てたりできる)。**判定は列を閉じる側 (`closeSolidBatch`) が
+        /// 1 箇所で行い**、描く側はこの値を掛けるだけにする。
+        var cullMode: MTLCullMode = .none
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -1051,8 +1072,26 @@ public final class Canvas {
                 castsShadow: castsShadow,
                 instanceStart: open.external == nil ? open.instanceStart : 0,
                 instanceCount: instanceCount,
-                instances: open.external?.buffer))
+                instances: open.external?.buffer,
+                cullMode: cullMode(for: open)))
         warnIfMaterialCannotShow()
+    }
+
+    /// 閉じようとしている立体の列が、裏を向いた面を捨ててよいか (``Batch/cullMode``)。
+    ///
+    /// **捨ててよいのは、裏面が絵に出ようのない列だけ**である。閉じた組み込みの形で、
+    /// 置き場所が全部不透明で、混ぜ方が普通の重ね方で、貼る絵も利用者の断片も無い —
+    /// どれか 1 つでも欠けると、裏面が絵の一部になりうる (半透明の奥・透けた画素・
+    /// 足し合わせへの寄与・断片が捨てる画素の奥) ので両面で描く。**迷う側は両面**で、
+    /// 捨てないことは遅くなるだけで絵を間違えない。
+    private func cullMode(for open: OpenSolid) -> MTLCullMode {
+        guard case .mesh(let shape) = open.source, shape.isClosed,
+            !open.hasTranslucentInstance,
+            currentBlendMode == .blend,
+            currentPicture == nil,
+            currentShader == nil
+        else { return .none }
+        return .back
     }
 
     /// 効きようのない材質を、初回だけ知らせる ([ADR-0020] 決定 5)。
@@ -2292,6 +2331,9 @@ public final class Canvas {
                             + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                         index: ShapePipeline.instanceBufferIndex)
                 }
+                // 裏を向いた面を描くかは列が決めている (`Batch.cullMode`)。表の向きは
+                // 上で 1 度だけ決めてあるので、ここは捨て方を掛けるだけ
+                encoder.setCullMode(batch.cullMode)
                 pipeline.argumentTable.setAddress(
                     matrices.gpuAddress + UInt64(index * Self.valuesStride),
                     index: ShapePipeline.projectionBufferIndex)
@@ -2495,6 +2537,9 @@ public final class Canvas {
                 (batch.instances ?? instanceBuffer).gpuAddress
                     + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                 index: ShapePipeline.instanceBufferIndex)
+            // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
+            // 裏面を捨てても焼き付く奥行きは変わらない
+            encoder.setCullMode(batch.cullMode)
             encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
             encoder.drawPrimitives(
                 primitiveType: .triangle,
