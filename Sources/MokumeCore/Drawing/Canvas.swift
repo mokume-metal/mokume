@@ -351,6 +351,13 @@ public final class Canvas {
     ///
     /// [#341]: https://github.com/mokume-metal/mokume/issues/341
     private(set) var shadowBarriersEncoded = 0
+    /// 影を実際に焼いた回数 (作ってから通算)。
+    private(set) var shadowBakesEncoded = 0
+    /// 前のフレームで焼いた面をそのまま読んだ回数 (作ってから通算)。
+    ///
+    /// **焼き直していないことを数える値。** 焼き直しても絵は同じなので、省略が
+    /// 効いているかは絵では分からない。
+    private(set) var shadowBakesReused = 0
     /// 溜めた計算。描く前に流し、フレームの終わりに空になる。
     var pendingComputations: [ComputeDispatch] = []
     /// この面が作った計算。観測へ失敗を載せるために持つ。
@@ -409,6 +416,8 @@ public final class Canvas {
     var warnedTooManyComputeBuffers = false
     /// 影の行列を置く領域。
     private var shadowMatrixBuffer: (any MTLBuffer)?
+    /// 焼いていないフレームに影の口へ束ねる 1 画素の奥行きの面。
+    private var unbakedShadowTexture: (any MTLTexture)?
     /// フレームの外で影の設定を書いたことを知らせたか。
     var warnedShadowOutsideFrame = false
     /// 受け取れない影の値を知らせたか。
@@ -624,6 +633,10 @@ public final class Canvas {
         /// 返したり画素を捨てたりできる)。**判定は列を閉じる側 (`closeSolidBatch`) が
         /// 1 箇所で行い**、描く側はこの値を掛けるだけにする。
         var cullMode: MTLCullMode = .none
+        /// 立体の列が、何の頂点を並べているか。**影の焼き付けの指紋が読む** — 組み込みの
+        /// 形と読み込んだモデルは頂点が出どころから決まるので、頂点の中身を舐めずに
+        /// 出どころで代表できる。平面の列は `nil`。
+        var solidSource: SolidSource?
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -1073,7 +1086,8 @@ public final class Canvas {
                 instanceStart: open.external == nil ? open.instanceStart : 0,
                 instanceCount: instanceCount,
                 instances: open.external?.buffer,
-                cullMode: cullMode(for: open)))
+                cullMode: cullMode(for: open),
+                solidSource: open.source))
         warnIfMaterialCannotShow()
     }
 
@@ -2258,10 +2272,17 @@ public final class Canvas {
                 .assumingMemoryBound(to: Float.self)
                 .update(from: [noiseSettings.falloff, 0], count: 2)
             // **焼いていなくても、読む先は必ず束ねる。** 束ねない口を作ると、断片が
-            // 触った瞬間に何が起きるかが土台任せになる
+            // 触った瞬間に何が起きるかが土台任せになる。口は奥行きの面 (`depth2d`) なので、
+            // 焼いていないフレームには同じ形の 1 画素の面を束ねる — 色の面を束ねると
+            // 型が合わず、検証層が止める
+            let shadowTexture: any MTLTexture
+            if let bakedShadow {
+                shadowTexture = bakedShadow.map.texture
+            } else {
+                shadowTexture = try unbakedShadowTextureHolding()
+            }
             pipeline.argumentTable.setTexture(
-                (bakedShadow?.map.texture ?? currentTexture).gpuResourceID,
-                index: ShapePipeline.shadowTextureIndex)
+                shadowTexture.gpuResourceID, index: ShapePipeline.shadowTextureIndex)
             pipeline.argumentTable.setAddress(
                 uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
 
@@ -2510,6 +2531,14 @@ public final class Canvas {
     ///
     /// 焼くのは**落とす側の列だけ**。分けられないと、自己遮蔽の強い形を置いた作品が
     /// 「影を切る」以外の逃げ道を失う。
+    ///
+    /// **前のフレームと同じ入力なら焼かず、前に焼いた面をそのまま返す** (ADR-0021 決定 4
+    /// の「同じ宣言なら実体を作り直さない」の焼き付け側・[#757])。毎フレーム `shadows(true)`
+    /// と書く作品で、動いていないフレームの焼き付けを丸ごと省く。省いたフレームは待つ
+    /// 仕掛けも積まない — 面は前のコマンドで書き終わっていて、コマンドどうしの順は
+    /// 土台が張っている。
+    ///
+    /// [#757]: https://github.com/mokume-metal/mokume/issues/757
     private func bakeShadow(
         into commands: any MTL4CommandBuffer
     ) throws(RenderFailure) -> (map: ShadowMap, matrix: simd_float4x4)? {
@@ -2517,7 +2546,17 @@ public final class Canvas {
         let casting = batches.filter(\.castsShadow)
         guard !casting.isEmpty else { return nil }
 
-        let map = try shadowMapHolding(shadowDetailValue)
+        // **前のフレームと同じ入力なら焼き直さない。** 光の行列・細かさ・落とす列の
+        // 頂点と置き場所が 1 バイトも変わっていなければ、焼いても同じ奥行きが出るだけ
+        // である。指紋は焼く直前に取り、焼き終えてから覚える — 途中で投げたフレームの
+        // 指紋を覚えると、次のフレームが焼けていない面を読む
+        let detail = shadowDetailValue
+        let key = shadowBakeKey(matrix: matrix, detail: detail, casting: casting)
+        if let key, key == lastShadowBakeKey, let shadowMap, shadowMap.detail == detail {
+            shadowBakesReused += 1
+            return (shadowMap, matrix)
+        }
+        let map = try shadowMapHolding(detail)
         let solidBuffer = try solidVertexBufferHolding(solidVertices.count)
         solidVertices.withUnsafeBytes { source in
             guard let base = source.baseAddress, source.count > 0 else { return }
@@ -2548,9 +2587,9 @@ public final class Canvas {
             solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
         pipeline.argumentTable.setAddress(
             matrixBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
-        pipeline.argumentTable.setAddress(
-            emptyNumbers.storage.gpuAddress, index: ShapePipeline.numbersBufferIndex)
-        encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
+        // **束ねるのは頂点段だけ。** 焼くパイプラインは断片を持たない (奥行きの面へは
+        // 前後判定が書く) ので、断片段に渡すものが無い
+        encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
         for batch in casting {
             pipeline.argumentTable.setAddress(
                 (batch.instances ?? instanceBuffer).gpuAddress
@@ -2559,7 +2598,7 @@ public final class Canvas {
             // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
             // 裏面を捨てても焼き付く奥行きは変わらない
             encoder.setCullMode(batch.cullMode)
-            encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
+            encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
             encoder.drawPrimitives(
                 primitiveType: .triangle,
                 vertexStart: batch.run.start, vertexCount: batch.run.count,
@@ -2567,8 +2606,67 @@ public final class Canvas {
         }
         encodeShadowBarrier(on: encoder)
         encoder.endEncoding()
+        shadowBakesEncoded += 1
+        lastShadowBakeKey = key
         return (map, matrix)
     }
+
+    /// 焼き付けの入力の指紋。**焼く側が読むものを全部**入れる — 光の行列・細かさ・
+    /// 落とす列ごとの (頂点の区間・置き場所の区間・捨て方) と、その区間の頂点と置き場所の
+    /// 中身。焼く側が読まないもの (受ける側の材質・縁の余裕・視点) は入れない。
+    ///
+    /// GPU が埋める置き場所 (粒) を含む列があれば `nil` — CPU からは前のフレームと同じか
+    /// どうかが分からないので、分からないものは焼く側に倒す。
+    ///
+    /// 指紋は 64 bit で、続けて描いたフレームどうしを比べるためだけに使う。**衝突すると
+    /// 前のフレームの影が 1 フレーム残る**が、続く 2 フレームの入力が偶然同じ 64 bit に
+    /// 落ちる確率は絵に出ない大きさである。
+    private func shadowBakeKey(
+        matrix: simd_float4x4, detail: Int, casting: [Batch]
+    ) -> UInt64? {
+        var hasher = ShadowBakeHasher()
+        withUnsafeBytes(of: matrix) { hasher.mix($0) }
+        hasher.mix(UInt64(detail))
+        hasher.mix(UInt64(casting.count))
+        for batch in casting {
+            guard batch.instances == nil else { return nil }
+            hasher.mix(UInt64(batch.run.start))
+            hasher.mix(UInt64(batch.run.count))
+            hasher.mix(UInt64(batch.instanceStart))
+            hasher.mix(UInt64(batch.instanceCount))
+            hasher.mix(UInt64(batch.cullMode.rawValue))
+            // **頂点は出どころで代表できるなら舐めない。** 組み込みの形の頂点は寸法から
+            // 決まり、読み込んだモデルは読んだ後に変わらない。その場で並べた頂点と
+            // 保持した形 (置くたびに番号が変わる) だけ中身を読む
+            switch batch.solidSource {
+            case .mesh(let shape):
+                hasher.mix(1)
+                hasher.mix(UInt64(bitPattern: Int64(shape.hashValue)))
+            case .model(let identity):
+                hasher.mix(2)
+                hasher.mix(UInt64(identity))
+            case .freeform, .retained, nil:
+                hasher.mix(3)
+                solidVertices.withUnsafeBytes { bytes in
+                    let stride = MemoryLayout<SolidVertex>.stride
+                    let end = min(bytes.count, (batch.run.start + batch.run.count) * stride)
+                    let start = min(end, batch.run.start * stride)
+                    hasher.mix(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
+                }
+            }
+            solidInstances.withUnsafeBytes { bytes in
+                let stride = MemoryLayout<SolidInstance>.stride
+                let end = min(bytes.count, (batch.instanceStart + batch.instanceCount) * stride)
+                let start = min(end, batch.instanceStart * stride)
+                hasher.mix(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
+            }
+        }
+        return hasher.finish()
+    }
+
+    /// 前のフレームで焼いた入力の指紋。焼かなかったフレームでは触らない — 焼いた面は
+    /// 誰にも書き換えられないので、影を切って戻したフレームも同じ指紋ならそのまま読める。
+    private var lastShadowBakeKey: UInt64?
 
     /// 焼き上がりを待つ仕掛けを積む。**焼いた面を画面のパスが読む前に置く。**
     ///
@@ -2576,7 +2674,8 @@ public final class Canvas {
     /// コマンドに順に積んだだけでは焼き付けと画面が重なりうる。重なると画面は
     /// 書き終わる前の焼き付け先を読み、**前のフレームの影が混ざる** ([#341])。
     ///
-    /// - `afterStages`: 奥行きを書くのは断片段
+    /// - `afterStages`: 奥行きを書くのは断片段 (断片関数は無いが、前後判定の書き込みは
+    ///   この段に属する)
     /// - `beforeQueueStages`: 焼いた面を読むのも断片段
     /// - `visibilityOptions`: `.device` を渡す。既定の「流さない」側にすると
     ///   実行順だけ揃えて**中身が見えない**ことになる
@@ -2605,6 +2704,19 @@ public final class Canvas {
         let buffer = try gpu.makeReadableBuffer(byteCount: Self.valuesStride)
         shadowMatrixBuffer = buffer
         return buffer
+    }
+
+    /// 焼いていないフレームに、影の口へ束ねる面。**最初に要ったときに 1 度だけ作る。**
+    ///
+    /// 焼いた面と同じ形 (奥行きの面) の 1 画素。断片は `shadowParams.x` が 0 なら
+    /// 読まないので中身は問わないが、口の型に合う面を束ねておかないと、触らなくても
+    /// 型の不一致として検証層が止める
+    private func unbakedShadowTextureHolding() throws(RenderFailure) -> any MTLTexture {
+        if let unbakedShadowTexture { return unbakedShadowTexture }
+        let texture = try gpu.makeTexture(descriptor: ShadowMap.descriptor(side: 1))
+        texture.label = "mokume.shadow.unbaked"
+        unbakedShadowTexture = texture
+        return texture
     }
 
     /// 列ごとの周囲を置く領域。足りなければ取り直す。
