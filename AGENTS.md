@@ -252,6 +252,7 @@ bash scripts/orphan-processes.sh
 - Conventional Commits: `<type>(<scope>): <要約>`。type は feat / fix / docs / refactor / test / chore / ci / perf / build。type と scope は英語、要約は日本語でよい
 - 1 コミット 1 関心。**1 PR は「1 つの説明で筋が通る範囲」** — 同じ親の sub-issue 群も、作業中に踏んで起票した障害もまとめて閉じてよい ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 3)。閉じる Issue ごとに「確認方法」へ対応表を置く
 - **検証は `make ci-check` に集約する。push 前に通す — これは作法ではなく merge の条件である。** 全部が通ったときだけ `local-render` が commit status に打たれ、描画に触れる PR はそれが無いと merge できない (報告されないときは理由が出る。よくあるのは作業ツリーが汚れているまま打った場合)
+- **性能は release で測る。** debug の数字を性能の根拠にしない。検査を release で回す入口は `make test-release` の 1 つで、`ci-check` には含めない (計測のためだけ・[#761](https://github.com/mokume-metal/mokume/issues/761))
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 ファイル置く (CHANGELOG を直接編集しない)
 - **検査の「待たない」は待つ側が持つ。`.timeLimit` は使わない。** 上限は検査の走り出しからの時計で測られ、このパッケージの検査はすべて main actor に載っているので、どんな値を書いても「検査**全体**が何秒で終わるか」を要求することになる — 検査が増えた日に、無関係な変更が無関係な検査を赤くする ([#564](https://github.com/mokume-metal/mokume/issues/564) の実測: 905 件のうち 875 件が「60 秒超」を報告した)。固まりうる待ちには、待つ側が期限を持たせて越えたら殺す
 
