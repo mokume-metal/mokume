@@ -97,6 +97,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
+| `autoMerge: true` + `UNKNOWN` で **check が 1 本も付かない** (`local-render` のような手元の commit status を除く) | main と衝突していて合流後の木が作れず、`pull_request` の workflow が起動していない ([#694](https://github.com/mokume-metal/mokume/issues/694)) | `git merge-tree --write-tree origin/main HEAD` で確かめ、手元で解いて push する。**ラベルの付け直しも close → reopen も効かない** (下の段落) |
 | `autoMerge: false` + `BLOCKED` | 承認待ち、または auto-merge が外れた ([#114](https://github.com/mokume-metal/mokume/issues/114) に出来事ごとの実測) | 承認を待つ / `gh pr merge <番号> --auto --squash` を打ち直す |
 | 全 check が緑なのに進まない | 同じコミットに残る古い失敗 check run が判定を固定している ([#259](https://github.com/mokume-metal/mokume/issues/259)) | `gh run rerun <run-id> --failed` — **ただし PR のメタデータを読むジョブ (`pr-title`) には打たない** ([#699](https://github.com/mokume-metal/mokume/issues/699)) |
 | `autoMerge: false` + `CLEAN` + 全 check 緑 で `isInMergeQueue: true` | 止まっていない — 予約が queue へ移ると `autoMergeRequest` は null になる ([#628](https://github.com/mokume-metal/mokume/issues/628)) | 何も打たない (queue が進めている) |
@@ -108,6 +109,8 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
 gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullRequest(number:<番号>){isInMergeQueue mergeQueueEntry{position state}}}}' --jq '.data.repository.pullRequest'
 ```
+
+**check が 1 本も付かないのは「まだ来ていない」ではなく「来ない」。** GitHub は合流後の木を作れないと `pull_request` の workflow を起こさないので、main と衝突した PR は赤くならず**無音**になる (`gh run list --branch <名前>` も空を返す)。`mergeStateStatus` も `DIRTY` ではなく `UNKNOWN` のままなので、状態欄からも衝突とは読めない ([#690](https://github.com/mokume-metal/mokume/pull/690) はここで 45 分止まった)。**ラベルの付け外しも close → reopen も効かない** — `labeled` も `reopened` も起動条件には在るが、どちらも既にある head の SHA に対するイベントで、合流後の木が作れない事情は変わらないからである。判定は手元で `git merge-tree --write-tree origin/main HEAD` を打てば付く。解いた合流だけは push する (「取り込みは手元だけで済ませ、push しない」の、既に在る例外 — 「描画に影響する変更」節)。**踏みやすいのは絵に触る PR である** — `Sketch.swift` の台帳を大きく書き換えるので、並行すると衝突しやすい。
 
 **`autoMerge: false` は「外れた」と「queue に入った」の両方を指す。** 予約が実際に merge queue へ移ると `autoMergeRequest` は null になるので、`CLEAN` + 全 check 緑と揃っても故障とは限らない ([#628](https://github.com/mokume-metal/mokume/issues/628))。分けるのは `isInMergeQueue` の 1 欄だけで、これは `gh pr view --json` に無いので上の GraphQL で引く — **`make catch-up` を打つ前にこれを見る。** eject が起きるのは描画 PR だけだが、**queue 入りはどの PR でも起きる** (#628 は `docs/decisions/` しか触らない PR で踏んだ)。取り違えたまま打つと、描画 PR では数分かかる `make ci-check` まで走って空費する (描画に触れない PR なら `catch-up` 自身が「台帳の絵を動かさない」で断る)。`autoMergeRequest` が null になるのが正常だということは `catch-up` も queue へ戻した後に名乗る。
 
