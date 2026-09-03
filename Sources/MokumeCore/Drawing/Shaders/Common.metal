@@ -114,17 +114,21 @@ struct Uniforms {
     float noisePadding;
 };
 
-/// 焼き付けた影の読み方。**奥行きを数として比べる**ので、混ぜずにそのまま読む
-/// (混ぜると、比べる相手が「どこにも無い奥行き」になって縁が濁る)。
+/// 焼き付けた影の読み方。**比べるのは採取器で、混ぜるのは比べた結果**である。
+///
+/// 奥行きの面を `compare_func` 付きで読むと、採取器が「比べる値 <= 焼いた奥行き」を
+/// 4 近傍それぞれで判定し、その 0 / 1 を bilinear で混ぜて返す (HW PCF)。奥行きそのもの
+/// を混ぜてから比べるのではない — それだと比べる相手が「どこにも無い奥行き」になって
+/// 縁が濁る。`less_equal` は、かつて手で書いていた `limit <= recorded` の写しである。
 constexpr sampler kShadowSampler(
-    coord::normalized, filter::nearest, address::clamp_to_edge);
+    coord::normalized, filter::linear, address::clamp_to_edge, compare_func::less_equal);
 
 /// その点が光から見えているか (1 = 見えている, 0 = 遮られている)。
 ///
 /// **焼いた範囲の外は遮らない。** 範囲は作品が決めるものなので、外側を「影」に
 /// すると、範囲を小さくしただけで世界の端が黒く沈む。
 static inline float mokume_shadowFactor(
-    texture2d<float> baked, float4x4 lightMatrix, float texel, float bias,
+    depth2d<float> baked, float4x4 lightMatrix, float texel, float bias,
     float3 worldPosition, float3 normal, float3 toLight)
 {
     float4 clip = lightMatrix * float4(worldPosition, 1.0);
@@ -137,15 +141,19 @@ static inline float mokume_shadowFactor(
     float slope = clamp(1.0 - dot(normal, toLight), 0.0, 1.0);
     float limit = ndc.z - (bias + bias * 4.0 * slope);
 
-    // 近くの 9 点を数えて、縁を少しなめらかにする
+    // **半画素ずらした 4 点を平均する。** 1 点 (bilinear 4 近傍) だけだと縁は 2×2 画素の
+    // 幅で移り、かつて 9 点で数えていた 3×3 の箱より硬くなる。半画素ずらした 4 点は
+    // それぞれ 2×2 を混ぜるので、足すと 3×3 (中心 4/16・辺 2/16・角 1/16 のテント) に
+    // なり、同じ広さの縁をタップ 4 つで得る ([#757])
+    //
+    // [#757]: https://github.com/mokume-metal/mokume/issues/757
+    float half_texel = texel * 0.5;
     float lit = 0.0;
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            float recorded = baked.sample(kShadowSampler, uv + float2(x, y) * texel).r;
-            lit += limit <= recorded ? 1.0 : 0.0;
-        }
-    }
-    return lit / 9.0;
+    lit += baked.sample_compare(kShadowSampler, uv + float2(-half_texel, -half_texel), limit);
+    lit += baked.sample_compare(kShadowSampler, uv + float2(half_texel, -half_texel), limit);
+    lit += baked.sample_compare(kShadowSampler, uv + float2(-half_texel, half_texel), limit);
+    lit += baked.sample_compare(kShadowSampler, uv + float2(half_texel, half_texel), limit);
+    return lit * 0.25;
 }
 
 /// アルファの乗算を戻す。完全に透明な画素には戻すべき色が無いので 0 を返す。
@@ -180,7 +188,7 @@ static inline float3 mokume_shade(
     constant Light *lights, uint offset, uint count,
     float3 worldPosition, float3 normal, float4 viewer,
     float4 color, Material material, Surroundings surroundings,
-    texture2d<float> baked, constant Uniforms &uniforms)
+    depth2d<float> baked, constant Uniforms &uniforms)
 {
     float3 base = color.rgb;
     float3 ambientResponse = material.ambientAndShininess.rgb;
@@ -517,7 +525,7 @@ fragment float4 mokume_fragmentMain(
     constant Surroundings &surroundings [[buffer(9)]],
     device const float *numbers [[buffer(11)]],
     texture2d<float> source_texture [[texture(0)]],
-    texture2d<float> shadow_texture [[texture(1)]],
+    depth2d<float> shadow_texture [[texture(1)]],
     bool isFrontFacing [[front_facing]],
     float4 destination [[color(0)]])
 {

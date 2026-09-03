@@ -55,7 +55,10 @@ final class ShapePipeline {
     /// 立体を組み込みの塗りで描くパイプライン。頂点の落とし方だけが違う。
     let solidState: any MTLRenderPipelineState
 
-    /// 光から見た奥行きを焼き付けるパイプライン。
+    /// 光から見た奥行きを焼き付けるパイプライン。**頂点だけで、断片を持たない。**
+    ///
+    /// 焼くのは奥行きの面 1 枚で、それは前後判定が書く。色の面が無いので断片には
+    /// 書く先が無く、置かない ([#757](https://github.com/mokume-metal/mokume/issues/757))。
     let shadowState: any MTLRenderPipelineState
 
     /// 平面の奥行きの扱い — **常に通し、書かない**。
@@ -96,11 +99,9 @@ final class ShapePipeline {
             pixelFormat: pixelFormat, label: "mokume.solids",
             vertexFunctionName: Self.solidVertexFunctionName)
 
-        self.shadowState = try Self.makeState(
-            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
-            pixelFormat: ShadowMap.pixelFormat, label: "mokume.shadow",
-            vertexFunctionName: Self.solidVertexFunctionName,
-            fragmentFunctionName: Self.shadowFragmentFunctionName)
+        self.shadowState = try Self.makeDepthOnlyState(
+            compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
+            vertexFunctionName: Self.solidVertexFunctionName)
 
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
@@ -129,8 +130,6 @@ final class ShapePipeline {
     static let flatVertexFunctionName = "shapeVertexMain"
     /// 立体の頂点を落とす関数の名前。
     static let solidVertexFunctionName = "solidVertexMain"
-    /// 影を焼き付ける断片の名前。
-    static let shadowFragmentFunctionName = "mokume_shadowFragment"
 
     /// 利用者の断片で塗るパイプラインを組む。
     func makeState(
@@ -168,6 +167,30 @@ final class ShapePipeline {
         let attachment = descriptor.colorAttachments[0]!
         attachment.pixelFormat = pixelFormat
         attachment.blendingState = .disabled
+
+        do {
+            return try compiler.makeRenderPipelineState(descriptor: descriptor)
+        } catch {
+            throw .pipelineUnavailable(reason: error.localizedDescription)
+        }
+    }
+
+    /// 奥行きだけを書くパイプラインを組む (影の焼き付け)。
+    ///
+    /// 断片を渡さないと、ラスタライズと前後判定だけが走る。色の面は 1 つも宣言しない —
+    /// 宣言すると、書く断片が無いのに面が付いている形になる。
+    private static func makeDepthOnlyState(
+        compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary, label: String,
+        vertexFunctionName: String
+    ) throws(RenderFailure) -> any MTLRenderPipelineState {
+        let vertexFunction = MTL4LibraryFunctionDescriptor()
+        vertexFunction.name = vertexFunctionName
+        vertexFunction.library = vertexLibrary
+
+        let descriptor = MTL4RenderPipelineDescriptor()
+        descriptor.label = label
+        descriptor.vertexFunctionDescriptor = vertexFunction
+        descriptor.fragmentFunctionDescriptor = nil
 
         do {
             return try compiler.makeRenderPipelineState(descriptor: descriptor)
