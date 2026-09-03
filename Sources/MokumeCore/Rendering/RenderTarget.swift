@@ -300,7 +300,7 @@ public final class RenderTarget: EffectSurface {
     /// 表示・書き出しのための変換は出力段が 1 度だけ行う ([ADR-0011] 決定 3)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-    /// 読むのは写し (``pixels`` と同じ置き場) である。待つのは投入済みの描画が終わる
+    /// 読むのは写し (`pixels` と同じ置き場) である。待つのは投入済みの描画が終わる
     /// まで (全部終わっていれば何もしない・#727) で、写しが古ければ読み戻しを 1 本積んで
     /// 待つ。行の間隔が幅ぶんより広いことがあるので、値としての ``PixelBuffer`` へ移す
     /// ときに詰める。
