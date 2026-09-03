@@ -78,17 +78,20 @@ extension Canvas {
 
     /// 頼まれた効果を、描き終えた絵へ通す。
     ///
-    /// **入りの絵には最後まで書かない。** 段は控えの間だけを往復し、最後に 1 度だけ
-    /// 写し戻す。だから**途中で失敗しても「途中の絵」は出ない** — 写し戻す手前で
-    /// 止まれば、入りの絵は 1 ビットも変わっていない。
+    /// **入りの絵へ書くのは最後の 1 段だけ。** 段は控えの間を往復し、並びの最後の段が
+    /// 入りの絵へ書く (その段が入りの絵を読んでいるときだけ、控えへ書いてから写し戻す)。
+    /// 段の失敗はすべてコマンドを組む時点で起きるので、最後の段の組み立てに失敗すれば
+    /// 入りの絵へは 1 命令も積まれない。だから**途中で失敗しても「途中の絵」は出ない** —
+    /// 入りの絵は 1 ビットも変わっていない (#755 で書き戻しの段を消しても、ここは
+    /// 変わらない)。
     ///
     /// 頼まれていなければ段を 1 つも立てないので、効果を使わないスケッチはここで
     /// 何も払わない (代表シーンの台帳が動かないのもこれによる)。
     /// 効果を通す。**失敗しても投げない。**
     ///
     /// 効果は毎フレーム走るので、投げると 1 段の失敗でフレームごと落ちる ([ADR-0020]
-    /// 決定 5)。書き戻す手前で止まれば入りの絵は無傷なので、**入りをそのまま通して**
-    /// 理由を知らせる。
+    /// 決定 5)。入りの絵を書く段の手前で止まれば入りの絵は無傷なので、**入りをそのまま
+    /// 通して**理由を知らせる。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     func applyEffects(into commands: any MTL4CommandBuffer) {
@@ -108,7 +111,8 @@ extension Canvas {
         let pipeline = try effectPipeline()
         // **このフレームで使う枠を、1 枠も書かないうちに数え切る。** 取り直すと領域が
         // 入れ替わるので、既に束ねた番地の指す先を生かしておくことに頼ることになる。
-        // 数え切っておけば、そもそも途中で取り直さない (写し戻しと拡大のぶんを足す)
+        // 数え切っておけば、そもそも途中で取り直さない (要るかもしれない写し戻しと
+        // 拡大のぶんを足す — 上限で数えてよい)
         try pipeline.reservePasses(
             stagePassesUsed + passes.count + 1 + upscalePassCount)
 
@@ -120,16 +124,26 @@ extension Canvas {
             switch slot {
             case .current: return current
             case .next: return try pipeline.scratch(at: nextSlot)
-            // 脇は往復の 2 枚の後ろに置く
-            case .side(let index): return try pipeline.scratch(at: 2 + index)
+            // 全解像度の脇は往復の 2 枚の後ろに置く。縮めた絵は別の列なので先頭から
+            case .side(let index, let level):
+                return try pipeline.scratch(at: level == 0 ? 2 + index : index, level: level)
             }
         }
 
-        for pass in passes {
+        for (position, pass) in passes.enumerated() {
             let source = try image(of: pass.input) ?? (target as any EffectSurface)
             let paired = try image(of: pass.paired ?? pass.input) ?? (target as any EffectSurface)
-            guard let destination = try image(of: pass.output) else {
-                throw .encoderUnavailable
+            let destination: any EffectSurface
+            if position == passes.count - 1, pass.output == .next,
+                source !== target, paired !== target
+            {
+                // **最後の段は入りの絵へ直接書く** (#755)。ただし、その段が入りの絵を読んで
+                // いるときは除く — 同じ面を読みながら描くのは Metal では未定義で、
+                // 決定論が守れない (1 段だけの並びと、にじみ単独の合成がこれに当たる)
+                destination = target
+            } else {
+                guard let image = try image(of: pass.output) else { throw .encoderUnavailable }
+                destination = image
             }
             try encode(
                 pass, at: takeStagePass(), from: source.texture, paired: paired.texture,
@@ -140,8 +154,9 @@ extension Canvas {
             }
         }
 
-        // **ここではじめて入りの絵へ書く。** 1 度きりで、途中で失敗すればここへ来ない
-        guard let result = current else { return }
+        // **入りの絵へ書くのはここまでで 1 度きり。** 最後の段が入りの絵を読んでいた並び
+        // だけが控えで終わるので、そのときだけ写し戻す。途中で失敗すればここへ来ない
+        guard let result = current, result !== target else { return }
         try encode(
             EffectPass(control: (SIMD4(0, 0, 0, 0), SIMD4(0, 0, 0, 0))), at: takeStagePass(),
             from: result.texture, paired: result.texture, into: target,

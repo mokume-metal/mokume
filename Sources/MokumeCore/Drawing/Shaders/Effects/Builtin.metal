@@ -7,6 +7,8 @@
 //
 // 拡大 (種類 11・12) だけは利用者の並びに現れない — 解像度の決め方の一部であって
 // 後処理の 1 つではないため (ADR-0015 決定 1)。**通る道は同じ段**なので、ここに置く。
+// 縮める / 広げる (種類 13) も利用者の並びには現れない — 大きなぼかしが縮めた絵の上で
+// 回るための内側の段で、Swift 側の `Effect.passes` が組む (#755)。
 //
 // 設定の並び (Swift 側の `Effect` が正本):
 //   control[0] = (種類, p0, p1, p2)
@@ -35,6 +37,47 @@ static inline float4 mokume_blurAlong(Pixel in, float2 step, float radius) {
 /// 明るさ (乗算済みのまま測る)。
 static inline float mokume_luminance(float3 color) {
     return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
+
+/// 箱で縮める。`factor` は縮め幅 (2 のべき)。
+///
+/// **2×2 の箱 1 つを線形の読み 1 回で取る** — 縮めた画素の中心は元の 2×2 の境目に
+/// 落ちるので、線形補間がそのまま 4 画素の平均になる。縮め幅が 4・8 なら、その箱を
+/// (factor / 2)² 個並べて平均する。読む回数は元の画素数の 1/4 で済む。
+static inline float4 mokume_shrink(Pixel in, float factor) {
+    float2 sourceSize = float2(in.source.get_width(), in.source.get_height());
+    float2 centre = in.place * sourceSize;
+    int boxes = max(int(factor) / 2, 1);
+    float4 sum = float4(0.0);
+    for (int j = 0; j < boxes; j++) {
+        for (int i = 0; i < boxes; i++) {
+            float2 offset = float2(2 * i + 1 - boxes, 2 * j + 1 - boxes);
+            sum += mokume_at(in, (centre + offset) / sourceSize);
+        }
+    }
+    return sum / float(boxes * boxes);
+}
+
+/// にじみの種: 明るいところだけを取り出しながら、箱で縮める。
+///
+/// **しきい値は元の画素ごとに掛ける。** 平均してから掛けると、小さな明点 (にじみの種
+/// そのもの) が周りの暗さに薄められてしきい値を越えず、光を漏らさなくなる。だから
+/// 線形の読みでは済まず、factor² 画素を 1 つずつ読む — それでも読む回数は元の画素数と
+/// 同じで、全解像度で 17 タップ読んでいた頃の 1/17 である。
+static inline float4 mokume_brightShrink(Pixel in, float threshold, float factor) {
+    float2 sourceSize = float2(in.source.get_width(), in.source.get_height());
+    int size = max(int(factor), 1);
+    int2 origin = int2(floor(in.place * sourceSize - float(size) * 0.5 + 0.5));
+    float3 sum = float3(0.0);
+    for (int j = 0; j < size; j++) {
+        for (int i = 0; i < size; i++) {
+            float4 sample = mokume_texel(in, origin + int2(i, j));
+            float over = max(mokume_luminance(sample.rgb) - threshold, 0.0);
+            sum += sample.rgb * over;
+        }
+    }
+    // アルファは持たない。合成の段は色だけを足し、アルファは元の絵のものを使う
+    return float4(sum / float(size * size), 0.0);
 }
 
 /// 描く細かさの絵を、出す細かさへ広げる (Catmull-Rom の三次補間)。
@@ -136,21 +179,9 @@ float4 effect(Pixel in, Values values) {
         return float4(straight * alpha, alpha);
     }
 
-    // にじみ: 明るいところだけを取り出して横へぼかす
-    if (kind == 8) {
-        float4 bright = float4(0.0);
-        float total = 0.0;
-        float sigma = max(p1, 1e-4) * 0.5;
-        for (int i = -8; i <= 8; i++) {
-            float offset = float(i) * p1 / 8.0;
-            float weight = exp(-0.5 * (offset * offset) / (sigma * sigma));
-            float4 sample = mokume_at(in, in.place + float2(offset / in.size.x, 0.0));
-            float over = max(mokume_luminance(sample.rgb) - p0, 0.0);
-            bright += float4(sample.rgb * over, 0.0) * weight;
-            total += weight;
-        }
-        return bright / max(total, 1e-6);
-    }
+    // にじみ: 明るいところだけを取り出しながら縮める (p0 しきい値・p1 縮め幅)。
+    // ぼかしはこの後ろに、縮めた絵の上で横・縦 (種類 1・2) が続く
+    if (kind == 8) { return mokume_brightShrink(in, p0, p1); }
 
     // にじみ: ぼかした明るいところを元へ足す。**足すのは色だけ**でアルファは動かさない
     if (kind == 9) {
@@ -161,6 +192,14 @@ float4 effect(Pixel in, Values values) {
 
     // 拡大: 描く細かさの絵を、出す細かさへ広げる
     if (kind == 11) { return mokume_enlarge(in, float2(p0, p1)); }
+
+    // 縮める / 広げる (p0 は縮め幅)。大きなぼかしが縮めた絵の上で回るための段 (#755)。
+    // 縮めるときは箱、広げるとき (p0 ≤ 1) は線形の読み 1 回 — 出りの画素の中心で
+    // 読むので、縮めた絵が出りの大きさへ滑らかに戻る
+    if (kind == 13) {
+        if (p0 > 1.0) { return mokume_shrink(in, p0); }
+        return mokume_at(in, in.place);
+    }
 
     // 拡大して、前のフレームの結果と混ぜる (時間方向)。**p2 がいまのフレームの重み**で、
     // 1 なら前を捨てる (最初の 1 枚)

@@ -62,6 +62,13 @@ final class EffectPipeline {
     private var scratch: [StageImage] = []
     /// 中間の絵を確保した回数。
     private(set) var scratchBuilt = 0
+    /// 縮めた中間の絵。`reduced[level - 1]` が 1 / 2^level の絵の列 (#755)。
+    private var reduced: [[StageImage]] = Array(repeating: [], count: maxReductionLevel)
+    /// 縮めた絵を確保した回数。**長回しで増えないことを検査が見る。**
+    private(set) var reducedBuilt = 0
+    /// いちばん小さい段。1/8 より下は持たない (半径から段を選ぶ側 ``Effect/reductionLevel(for:)`` も
+    /// ここで止まる)。
+    static let maxReductionLevel = 3
     private let width: Int
     private let height: Int
 
@@ -154,13 +161,34 @@ final class EffectPipeline {
     }
 
     /// `index` 枚目の中間の絵。足りなければ確保する。
-    func scratch(at index: Int) throws(RenderFailure) -> StageImage {
-        while scratch.count <= index {
-            // 段は全画素を書くので、塗っておく必要が無い (コマンドの組み立て中なので塗れもしない)
-            scratch.append(
-                try StageImage(gpu: gpu, width: width, height: height, startingTransparent: false))
-            scratchBuilt += 1
+    ///
+    /// `level` が 1 以上なら **1 / 2^level に縮めた絵** (#755)。大きなぼかしはそこで回す。
+    /// 縮めた絵も段ごとではなくここで 1 か所で持ち、フレームをまたいで使い回す。
+    func scratch(at index: Int, level: Int = 0) throws(RenderFailure) -> StageImage {
+        precondition(
+            level >= 0 && level <= Self.maxReductionLevel, "縮め幅 \(level) は持っていない")
+        guard level > 0 else {
+            while scratch.count <= index {
+                // 段は全画素を書くので、塗っておく必要が無い (コマンドの組み立て中なので塗れもしない)
+                scratch.append(
+                    try StageImage(
+                        gpu: gpu, width: width, height: height, startingTransparent: false))
+                scratchBuilt += 1
+            }
+            return scratch[index]
         }
-        return scratch[index]
+        while reduced[level - 1].count <= index {
+            reduced[level - 1].append(
+                try StageImage(
+                    gpu: gpu, width: Self.reduce(width, by: level),
+                    height: Self.reduce(height, by: level), startingTransparent: false))
+            reducedBuilt += 1
+        }
+        return reduced[level - 1][index]
+    }
+
+    /// 縮めた絵の一辺。**上へ丸める**ので、元の絵の画素を 1 つも切り捨てない。
+    static func reduce(_ size: Int, by level: Int) -> Int {
+        max(1, (size + (1 << level) - 1) >> level)
     }
 }
