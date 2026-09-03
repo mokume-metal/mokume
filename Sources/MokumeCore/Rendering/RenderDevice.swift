@@ -149,7 +149,9 @@ import MokumeDiagnostics
 
     /// GPU の完了を知るための合図。投入のたびに 1 つ進める。
     private let completion: any MTLSharedEvent
-    private var submissionCount: UInt64 = 0
+    /// これまでに投入した本数。**写しが「どこまで映したか」を照らす物差し**にもなる
+    /// (``RenderTarget/pixels``)。
+    private(set) var submissionCount: UInt64 = 0
 
     /// 既定の GPU で作る。
     public convenience init() throws(RenderFailure) {
@@ -287,6 +289,40 @@ import MokumeDiagnostics
             throw .textureUnavailable(width: descriptor.width, height: descriptor.height)
         }
         makeResident(texture)
+        return texture
+    }
+
+    /// GPU 専用 (`.private`) の色の面を確保して常駐させ、**透明な黒で塗っておく**。
+    ///
+    /// GPU 専用の面の初期値は未定義で、CPU から読める置き場 (作られた時点で 0) とは違う。
+    /// 塗り直しを頼まずに描き足す最初のフレーム (`background(_:)` を周囲で置く絵) や、
+    /// 前のフレームの控えを最初のフレームから読む段 (時間方向の拡大) は、その未定義の
+    /// 値を読む — 台帳の `surroundings` がこれで実際に動いた (#753)。作った時点で
+    /// 1 度塗れば、置き場に載せていた頃と同じ「透明な黒から始まる」になる。
+    ///
+    /// 塗る仕事は投入するだけで待たない。続く投入は GPU 側で順に並ぶ。
+    ///
+    /// **コマンドを組み立てている最中には呼べない。** 塗るのに自分のコマンドを 1 本
+    /// 開くので、開いたまま環を 1 周すると同じ置き場をもう一度開くことになる (検証層が
+    /// 止める。層が無ければ未定義)。組み立ての最中に作る面 (効果の控え) は、全画素を
+    /// 書く段しか通らないので塗らずに作る (``StageImage``)。
+    func makeClearedTexture(descriptor: MTLTextureDescriptor) throws(RenderFailure)
+        -> any MTLTexture
+    {
+        guard slotOfOpenCommands.isEmpty else { throw .commandBufferUnavailable }
+        let texture = try makeTexture(descriptor: descriptor)
+        let pass = MTL4RenderPassDescriptor()
+        let attachment = pass.colorAttachments[0]!
+        attachment.texture = texture
+        attachment.loadAction = .clear
+        attachment.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        attachment.storeAction = .store
+        let commands = try beginCommands()
+        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+            throw .encoderUnavailable
+        }
+        encoder.endEncoding()
+        commit(commands)
         return texture
     }
 

@@ -47,16 +47,20 @@ extension RenderTarget {
         pass.setBrightness(brightness)
 
         let commands = try gpu.beginCommands()
+        // **CPU が画素へ書いたものがあれば、読む前に描画先へ戻す。** 描き切りを挟まずに
+        // `pixels` へ書いてここへ来る経路 (フレームの外で書いて書き出す) のため (#753)
+        try encodePixelWriteBack(into: commands)
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: image.makeRenderPass())
         else {
             throw .encoderUnavailable
         }
-        // **描き終えた絵を読むので、前の書き込みが終わるのを待つ。** この世代の
-        // コマンド構造は口をまたぐ依存を自動では張らない ([#341])
+        // **描き終えた絵を読むので、前の書き込み (描画と、直前の書き戻し) が終わるのを
+        // 待つ。** この世代のコマンド構造は口をまたぐ依存を自動では張らない ([#341])
         //
         // [#341]: https://github.com/mokume-metal/mokume/issues/341
         encoder.barrier(
-            afterQueueStages: .fragment, beforeStages: .fragment, visibilityOptions: .device)
+            afterQueueStages: [.fragment, .blit], beforeStages: .fragment,
+            visibilityOptions: .device)
         encoder.setRenderPipelineState(pass.state)
         encoder.setViewport(
             MTLViewport(

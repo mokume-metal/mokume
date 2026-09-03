@@ -205,6 +205,17 @@ struct UpscaleTests {
 
     // MARK: - 増えないこと
 
+    /// 前のフレームの控えは色だけの GPU 専用の絵で、奥行きも CPU から読める置き場も伴わない (#753)。
+    @Test("時間方向の控えは色だけの GPU 専用の絵")
+    func historyIsColourOnlyAndPrivate() throws {
+        let canvas = try makeCanvas(density: 0.5, upscale: .temporal)
+        let history = try #require(canvas.upscaleStage?.history)
+        #expect(history.texture.storageMode == .private)
+        #expect(history.texture.buffer == nil, "控えが置き場の上に載っている")
+        #expect(history.width == Self.width)
+        #expect(history.height == Self.height)
+    }
+
     @Test("長く回しても、段の置き場が積み上がらない")
     func nothingGrowsWhileItRuns() throws {
         let canvas = try makeCanvas(density: 0.5)

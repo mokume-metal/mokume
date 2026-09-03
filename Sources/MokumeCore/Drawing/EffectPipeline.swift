@@ -56,7 +56,10 @@ final class EffectPipeline {
     private(set) var buffersBuilt = 0
 
     /// 中間の絵。**使い回す**ので、フレームごとには作らない。
-    private var scratch: [RenderTarget] = []
+    ///
+    /// 色だけの絵 (``StageImage``) である。描画先と同じ型にすると、段が見ない奥行きの
+    /// 面が 1 枚ずつ付いてくる (#753)。
+    private var scratch: [StageImage] = []
     /// 中間の絵を確保した回数。
     private(set) var scratchBuilt = 0
     private let width: Int
@@ -151,9 +154,11 @@ final class EffectPipeline {
     }
 
     /// `index` 枚目の中間の絵。足りなければ確保する。
-    func scratch(at index: Int) throws(RenderFailure) -> RenderTarget {
+    func scratch(at index: Int) throws(RenderFailure) -> StageImage {
         while scratch.count <= index {
-            scratch.append(try RenderTarget(gpu: gpu, width: width, height: height))
+            // 段は全画素を書くので、塗っておく必要が無い (コマンドの組み立て中なので塗れもしない)
+            scratch.append(
+                try StageImage(gpu: gpu, width: width, height: height, startingTransparent: false))
             scratchBuilt += 1
         }
         return scratch[index]

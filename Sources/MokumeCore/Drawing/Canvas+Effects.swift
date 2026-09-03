@@ -113,10 +113,10 @@ extension Canvas {
             stagePassesUsed + passes.count + 1 + upscalePassCount)
 
         /// いまの絵。`nil` は入りの絵 (描き終えた描画先)。
-        var current: RenderTarget?
+        var current: (any EffectSurface)?
         var nextSlot = 0
 
-        func image(of slot: EffectPass.Slot) throws(RenderFailure) -> RenderTarget? {
+        func image(of slot: EffectPass.Slot) throws(RenderFailure) -> (any EffectSurface)? {
             switch slot {
             case .current: return current
             case .next: return try pipeline.scratch(at: nextSlot)
@@ -126,8 +126,8 @@ extension Canvas {
         }
 
         for pass in passes {
-            let source = try image(of: pass.input) ?? target
-            let paired = try image(of: pass.paired ?? pass.input) ?? target
+            let source = try image(of: pass.input) ?? (target as any EffectSurface)
+            let paired = try image(of: pass.paired ?? pass.input) ?? (target as any EffectSurface)
             guard let destination = try image(of: pass.output) else {
                 throw .encoderUnavailable
             }
@@ -156,7 +156,7 @@ extension Canvas {
 
     func encode(
         _ pass: EffectPass, at index: Int, from source: any MTLTexture,
-        paired: any MTLTexture, into destination: RenderTarget,
+        paired: any MTLTexture, into destination: any EffectSurface,
         using pipeline: EffectPipeline, in commands: any MTL4CommandBuffer
     ) throws(RenderFailure) {
         if failEffectPassForTesting == index { throw .encoderUnavailable }

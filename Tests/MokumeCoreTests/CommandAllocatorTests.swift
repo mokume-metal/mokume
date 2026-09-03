@@ -49,9 +49,27 @@ struct CommandAllocatorTests {
         #expect(gpu.slotWaits > 0, "一度も待っていない — 待たない経路が置き場を返していない")
     }
 
+    /// GPU を数 ms 以上占める計算。**1 本の糸が長い依存の鎖をたどる**ので、幅を広げても
+    /// 速くならず、最適化で畳まれもしない (`FrameSyncTests` と同じ手)。
+    private static let spin = """
+        kernel void spin(device float *out [[buffer(0)]],
+                         uint id [[thread_position_in_grid]])
+        {
+            float acc = 0.5;
+            for (uint i = 0; i < 2000000u; ++i) { acc = fma(acc, 1.0000001f, 0.25f); }
+            out[id] = acc;
+        }
+        """
+
     /// **実際の描き切りで**回す。`fill` は待つ経路なので、描き切りが待たなくなった
     /// ([#727](https://github.com/mokume-metal/mokume/issues/727)) ことをそちらでは見られない。
     /// 描き切り (待たない) → 差し出し (待たない) と、待たない経路が 2 つ続く形になる。
+    ///
+    /// **待ちが起きることを構造で作る。** 64×64 の描き切りは GPU が数十 µs で終えるので、
+    /// CPU が次の `beginCommands()` へ戻る前に終わっていれば待ちは 0 になる — 負荷の
+    /// かかった機械 (CPU が押されている) では実際にそうなった
+    /// ([#765](https://github.com/mokume-metal/mokume/issues/765))。毎フレームの描き切りに
+    /// GPU を占める計算を積めば、機械の速さと負荷に依らず「まだ終わっていない」が立つ。
     @Test("描き切りと差し出しが続いても、置き場が 1 本なら待ってから巻き戻す")
     func waitsBetweenUnwaitedFlushAndPresent() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
@@ -60,17 +78,23 @@ struct CommandAllocatorTests {
         let canvas = try Canvas(target: target, gpu: gpu)
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         let layer = SurfaceFixture.make(device, size: 64)
+        let scratch = try canvas.makeNumbers(count: 1)
+        let spin = try canvas.makeComputation(Self.spin, name: "spin")
 
         var presented = 0
-        for index in 0..<60 {
+        var busyAfterFlush = 0
+        for index in 0..<20 {
             try canvas.draw {
+                canvas.compute(spin, over: 1, writes: [scratch])
                 canvas.background(.opaque(red: Float(index % 2), green: 0.2, blue: 0.3))
                 canvas.fill(.opaque(red: 1, green: 1, blue: 1))
                 canvas.rect(8, 8, 48, 48)
             }
+            if !gpu.isIdle { busyAfterFlush += 1 }
             if try presenter.present(target, to: layer) { presented += 1 }
         }
         try #require(presented > 0, "面を 1 度も取れていない — この検査は何も見ていない")
+        try #require(busyAfterFlush > 0, "描き切りが返った時点で GPU が毎回終わっている — 回転が短く、この検査は何も見ていない")
 
         #expect(gpu.resetsWhileInFlight == 0)
         #expect(gpu.slotWaits > 0, "一度も待っていない — 待たない経路が置き場を返していない")

@@ -43,7 +43,10 @@ final class UpscaleStage {
     let kind: Upscale
 
     /// 前のフレームの結果。時間方向のときだけ持つ。
-    let history: RenderTarget?
+    ///
+    /// 色だけの絵 (``StageImage``)。混ぜる相手として読まれ、出した絵を写して控えるだけ
+    /// なので、奥行きも CPU から読む口も要らない (#753)。
+    let history: StageImage?
 
     /// 描く先の大きさ (画素)。揺らす量をここで測る。
     private let drawnWidth: Int
@@ -72,8 +75,9 @@ final class UpscaleStage {
         case .spatial:
             self.history = nil
         case .temporal:
-            self.history = try RenderTarget(
-                gpu: gpu, width: output.width, height: output.height)
+            // 最初のフレームから混ぜる相手として読まれるので、透明な黒から始める
+            self.history = try StageImage(
+                gpu: gpu, width: output.width, height: output.height, startingTransparent: true)
             // **代償は有効化の時点で告げる** ([ADR-0015] 決定 2)。doc に書くだけでは、
             // 決定論が要る使い方をしている人が読むとは限らない
             Diagnostics.warn(
