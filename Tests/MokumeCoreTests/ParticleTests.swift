@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -67,6 +68,19 @@ struct ParticleEmissionTests {
         // 幅が揃っていないと、2 つめ以降の力が別の力として読まれる
         #expect(Force.gravity(0, 0).packed.count == Force.slotCount)
     }
+
+    /// 生存数を数える段は容量から一意に決まる。**GPU は要らない** — 段の数がそのまま
+    /// 1 フレームに積む計算の数になるので、ここで形を固定する。
+    @Test("数える段は、256 で割り上げて 1 になるまで重ねる")
+    func stacksScanLevelsUntilOneRemains() {
+        #expect(Particles.levelLengths(capacity: 1) == [1])
+        #expect(Particles.levelLengths(capacity: 256) == [256, 1])
+        // 区画を 1 つ超えた瞬間に段が 1 つ増える
+        #expect(Particles.levelLengths(capacity: 257) == [257, 2, 1])
+        #expect(Particles.levelLengths(capacity: 1_000_000) == [1_000_000, 3907, 16, 1])
+        // 0 以下は 1 個として扱う (makeParticles と同じ丸め)
+        #expect(Particles.levelLengths(capacity: 0) == [1])
+    }
 }
 
 /// 粒。GPU を要する。
@@ -101,14 +115,15 @@ struct ParticleTests {
 
     /// 1 フレームぶんの絵と動きを回す。
     private func spray(
-        on canvas: Canvas, _ dust: Particles, randomness: inout Randomness, frames: Int
+        on canvas: Canvas, _ dust: Particles, randomness: inout Randomness, frames: Int,
+        rate: Float = 600
     ) throws {
         for _ in 0..<frames {
             var stream = randomness
             try canvas.draw {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
                 canvas.emit(
-                    dust, from: .point(32, 12), rate: 600, speed: 20...45,
+                    dust, from: .point(32, 12), rate: rate, speed: 20...45,
                     angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
                     color: .opaque(red: 1, green: 0.6, blue: 0.2), using: &stream)
                 canvas.force(dust, [.gravity(0, 60), .drag(0.5)])
@@ -135,14 +150,33 @@ struct ParticleTests {
             name: Canvas.particleLayoutKernelName)
         let particleProbe = try canvas.makeNumbers(count: 64)
         let placeProbe = try canvas.makeNumbers(count: 128)
+        let argumentProbe = try canvas.makeNumbers(count: 8)
 
         var particleValues: [Float] = []
         var placeValues: [Float] = []
+        var argumentValues: [Float] = []
         try canvas.draw {
-            canvas.compute(probe, over: 1, writes: [particleProbe, placeProbe])
+            canvas.compute(probe, over: 1, writes: [particleProbe, placeProbe, argumentProbe])
             particleValues = canvas.read(particleProbe)
             placeValues = canvas.read(placeProbe)
+            argumentValues = canvas.read(argumentProbe)
         }
+
+        // 描く引数。GPU は項目へ 1…4 を名前で入れた。Metal 自身の構造体として読めること
+        let argumentWords = argumentValues.map(\.bitPattern)
+        #expect(Array(argumentWords[0..<4]) == [1, 2, 3, 4])
+        let arguments = argumentValues.withUnsafeBytes {
+            $0.load(as: MTLDrawPrimitivesIndirectArguments.self)
+        }
+        #expect(arguments.vertexCount == 1)
+        #expect(arguments.instanceCount == 2)
+        #expect(arguments.vertexStart == 3)
+        #expect(arguments.baseInstance == 4)
+        #expect(
+            MemoryLayout<MTLDrawPrimitivesIndirectArguments>.stride
+                == Particles.argumentFloats * MemoryLayout<Float>.stride)
+        // 2 つめの先頭はスキャンの区画の大きさ。**両側に手で書いた定数がここで突き合わさる**
+        #expect(Int(argumentWords[4]) == Particles.scanBlock)
 
         // 粒。GPU は項目へ 1…14 を名前で入れた
         let particleFloats = MemoryLayout<Particle>.stride / MemoryLayout<Float>.stride
@@ -168,14 +202,18 @@ struct ParticleTests {
 
     // MARK: - 2 つの経路
 
-    @Test("速い経路と参照の経路は、同じ絵を出す")
-    func bothRoutesDrawTheSamePicture() throws {
+    /// 容量は数える段の数が変わるところを踏む: 1 (段 0)・256 (段 1)・257 (段 2)・
+    /// 70000 (段 3)。最後は枠を全部使って出すので、区画をまたぐ順位の足し上げが絵に出る。
+    @Test(
+        "速い経路と参照の経路は、同じ絵を出す",
+        arguments: [(1, Float(600)), (256, 600), (257, 600), (70_000, 4_000_000)])
+    func bothRoutesDrawTheSamePicture(capacity: Int, rate: Float) throws {
         func picture(_ route: Canvas.ParticleRoute) throws -> [UInt8] {
             let canvas = try makeCanvas()
             canvas.particleRoute = route
             var randomness = Randomness(seed: 20_260_829)
-            let dust = try canvas.makeParticles(count: 256)
-            try spray(on: canvas, dust, randomness: &randomness, frames: 10)
+            let dust = try canvas.makeParticles(count: capacity)
+            try spray(on: canvas, dust, randomness: &randomness, frames: 10, rate: rate)
             return try canvas.target.encodeForDisplay().bytes
         }
 
@@ -247,6 +285,98 @@ struct ParticleTests {
         #expect(brightest(spent) <= 8)
     }
 
+    // MARK: - 描く個数は GPU が決める
+
+    /// GPU が書いた描く引数を読む。`UInt32` のビット列で置かれているのでそのまま読み替える。
+    private func drawArguments(of dust: Particles, on canvas: Canvas) -> (
+        vertexCount: Int, instanceCount: Int, vertexStart: Int, baseInstance: Int
+    ) {
+        let words = canvas.read(dust.arguments).map { Int($0.bitPattern) }
+        return (words[0], words[1], words[2], words[3])
+    }
+
+    /// 1 フレームで `count` 個を寿命 `life` で出して進める。0 なら進めるだけ。
+    private func emitBatch(
+        on canvas: Canvas, _ dust: Particles, count: Int, life: Float,
+        randomness: inout Randomness
+    ) throws {
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            if count > 0 {
+                canvas.emit(
+                    dust, from: .point(32, 32), rate: Float(count) * 60, speed: 0...10,
+                    angle: 0...(2 * Float.pi), life: life...life, size: 2...4,
+                    color: .opaque(red: 1, green: 0.5, blue: 0.2), using: &randomness)
+            }
+            canvas.particles(dust)
+        }
+    }
+
+    /// **描く数が容量ではなく生存数であること**と、**詰める順が枠の番号順であること**
+    /// (#760)。順序が固定でないと、半透明の粒の重なりが毎フレーム動いて絵が動く。
+    ///
+    /// 容量は段の数が 2 と 3 のところを踏む。並びは 長生き 1 割 → すぐ尽きる 4 割 →
+    /// 長生き 1 割 で、中抜けがあり、区画 (256) の境もまたぐ。
+    @Test("描く個数は容量ではなく生存数で、詰める順は枠の番号順", arguments: [1000, 70_000])
+    func drawsOnlyTheLivingInSlotOrder(capacity: Int) throws {
+        let canvas = try makeCanvas()
+        var randomness = Randomness(seed: 760)
+        let dust = try canvas.makeParticles(count: capacity)
+        let tenth = capacity / 10
+        try emitBatch(on: canvas, dust, count: tenth, life: 100, randomness: &randomness)
+        try emitBatch(on: canvas, dust, count: tenth * 4, life: 0.02, randomness: &randomness)
+        try emitBatch(on: canvas, dust, count: tenth, life: 100, randomness: &randomness)
+        // 短い寿命が尽きるまで進める
+        for _ in 0..<3 {
+            try emitBatch(on: canvas, dust, count: 0, life: 1, randomness: &randomness)
+        }
+
+        let living = dust.living(from: canvas.read(dust.state))
+        #expect(living.count == tenth * 2)
+        let arguments = drawArguments(of: dust, on: canvas)
+        #expect(arguments.instanceCount == living.count)
+        #expect(arguments.vertexCount == dust.quad.runs.first?.count)
+        #expect(arguments.baseInstance == 0)
+
+        // 詰めた置き場所は、枠の番号順に読んだ生きている粒と 1 つずつ一致する。
+        // 行列の 4 列目が位置、[0][0] が大きさ (変換は単位行列なので値がそのまま出る)
+        let places = canvas.read(dust.instances)
+        let placeFloats = MemoryLayout<SolidInstance>.stride / MemoryLayout<Float>.stride
+        var mismatched = 0
+        for (index, particle) in living.enumerated() {
+            let base = index * placeFloats
+            if places[base] != particle.scale || places[base + 12] != particle.x
+                || places[base + 13] != particle.y || places[base + 15] != 1
+            {
+                mismatched += 1
+            }
+        }
+        #expect(mismatched == 0)
+    }
+
+    /// 生存 0 は詰めた並びが空になる端で、描く個数 0 の indirect draw が通ることを見る。
+    @Test("生きている粒が 1 つも無いフレームは、描く個数 0 で通る", arguments: [1, 300])
+    func drawsNothingWhenNothingLives(capacity: Int) throws {
+        let canvas = try makeCanvas()
+        var randomness = Randomness(seed: 0)
+        let dust = try canvas.makeParticles(count: capacity)
+
+        // 何も出していない
+        try emitBatch(on: canvas, dust, count: 0, life: 1, randomness: &randomness)
+        #expect(drawArguments(of: dust, on: canvas).instanceCount == 0)
+        #expect(brightest(try canvas.target.encodeForDisplay().bytes) <= 8)
+
+        // 出したものが全部尽きたあとも同じ
+        try emitBatch(
+            on: canvas, dust, count: min(capacity, 100), life: 0.02, randomness: &randomness)
+        #expect(drawArguments(of: dust, on: canvas).instanceCount == min(capacity, 100))
+        for _ in 0..<3 {
+            try emitBatch(on: canvas, dust, count: 0, life: 1, randomness: &randomness)
+        }
+        #expect(drawArguments(of: dust, on: canvas).instanceCount == 0)
+        #expect(brightest(try canvas.target.encodeForDisplay().bytes) <= 8)
+    }
+
     // MARK: - 断る・積み上げない
 
     @Test("持てない数の指定は、確保の失敗として返る")
@@ -310,8 +440,10 @@ struct ParticleTests {
         // **単発では出ない。** 毎フレーム確保していれば、ここで増える
         #expect(try canvas.computePipeline().tablesBuilt == tables)
         #expect(dust.state.readbackAllocations == 0)
-        // 1 フレームに開く口は 1 つ (頼んでいる計算が 1 つなので)
-        #expect(canvas.computeEncodersOpened == 201)
+        // 1 フレームに開く口は積む計算の数 (旗 1 + 段 2 + 進める 1)。どれも前の計算が
+        // 書いた並びに触れるので、1 つずつ口が切れる
+        #expect(dust.dispatchCount == 4)
+        #expect(canvas.computeEncodersOpened == 201 * dust.dispatchCount)
         #expect(canvas.computeEncodersClosed == canvas.computeEncodersOpened)
     }
 
