@@ -81,7 +81,8 @@ struct TextureTests {
                 }
                 canvas.fill(self.red)
                 canvas.stroke(self.white)
-                canvas.rect(4, 4, 20, 12)
+                // 四角形は三角形の経路で積まれる (矩形は距離関数で描くので頂点を持たない — #752)
+                canvas.quad(4, 4, 24, 4, 24, 16, 4, 16)
                 canvas.push()
                 canvas.translate(32, 32, 0)
                 canvas.box(10)

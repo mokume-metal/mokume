@@ -735,7 +735,9 @@ struct CanvasTests {
             canvas.rect(8, 8, 8, 24)
         }
         let image = try pixels(of: canvas)
-        #expect(image[20, 12].red == 255)  // y=12 では x が 12 ぶんずれる
+        // y=12 では x が 12 ぶんずれて 20…28 になる。傾いた縁 (20) は滑らかにする領域なので、
+        // 1 画素内側を見る
+        #expect(image[21, 12].red == 255)
         #expect(image[12, 12].red == 0)  // ずれる前の位置には無い
     }
 
@@ -845,9 +847,10 @@ struct CanvasTests {
 
     @Test("丸める形は、四角い端では届く角に届かない")
     func roundCapCutsTheCorners() throws {
-        // (55, 36) は中心 (50, 32) から 6.4 画素 — 半径 6 の円の外、四角の内
-        #expect(try endOfThickLine(cap: .round, probe: (55, 36)) == 0)
-        #expect(try endOfThickLine(cap: .project, probe: (55, 36)) == 255)
+        // (55, 37) は中心 (50, 32) から 7.1 画素 — 半径 6 の円の 1 画素外、四角の 1 画素内。
+        // 縁の上 (6.4 画素の (55, 36)) は滑らかにする領域なので見ない (ADR-0019 決定 4)
+        #expect(try endOfThickLine(cap: .round, probe: (55, 37)) == 0)
+        #expect(try endOfThickLine(cap: .project, probe: (55, 37)) == 255)
         #expect(try endOfThickLine(cap: .round, probe: (54, 32)) == 255)  // 真横は円の内
     }
 
@@ -872,14 +875,15 @@ struct CanvasTests {
     @Test("角を丸めると、四角い角には出る画素が出ない")
     func roundJoinCutsTheOuterCorner() throws {
         #expect(try outerCornerOfBend(join: .round) == 0)
-        #expect(try outerCornerOfBend(join: .bevel) == 255)
+        #expect(try outerCornerOfBend(join: .miter) == 255)
     }
 
-    @Test("尖らせる形は、いまは削ぐ形と同じ")
-    func miterMatchesBevelForNow() throws {
-        // 伸びの限界を持つ尖りはまだ実装していない (StrokeJoin.miter の注記)。
-        // 作り込んだときにこの検査が赤くなり、意図した変更として扱える
-        #expect(try outerCornerOfBend(join: .miter) == outerCornerOfBend(join: .bevel))
+    @Test("削ぐ形は矩形の角を落とし、尖らせる形は残す")
+    func bevelCutsTheCornerAndMiterKeepsIt() throws {
+        // 矩形の角は距離関数で描くので、3 つの折れ目の形が区別される (#752)。任意多角形の
+        // 折れ目はまだ正方形で埋める (StrokeJoin.miter の注記)
+        #expect(try outerCornerOfBend(join: .bevel) == 0)
+        #expect(try outerCornerOfBend(join: .miter) == 255)
     }
 
     @Test("閉じた図形の輪郭に隙間が無い")
@@ -1104,8 +1108,19 @@ struct CanvasTests {
         }
 
         let image = try pixels(of: canvas)
-        let painted = (0..<64).filter { image[$0, 32].red == 255 }
-        #expect(painted == [18, 19, 20, 21])
+        // 太さ 4 の帯は 18…22 を覆う。偶数の太さは整数の座標では両端の画素に半分ずつ
+        // 掛かる (整数は画素の中心なので)。覆いの合計が 4 画素ぶんであることを見る
+        let covered = (0..<64).map { Double(image[$0, 32].red) }
+        let outside = (0..<64).filter { $0 < 18 || $0 > 22 }.map { Double(image[$0, 32].red) }
+        #expect(outside.allSatisfy { $0 == 0 }, "帯の外が塗られている")
+        #expect(image[20, 32].red == 255)
+        #expect(image[19, 32].red == 255)
+        #expect(image[21, 32].red == 255)
+        #expect(image[18, 32].red == image[22, 32].red, "両端の覆いが対称でない")
+        #expect(image[18, 32].red > 0 && image[18, 32].red < 255, "両端は半分だけ覆われる")
+        // 線形の覆いの合計 (出力段の変換を戻す)
+        let total = covered.map { TransferFunction.decode(Float($0 / 255)) }.reduce(0, +)
+        #expect(abs(total - 4) < 0.05, "覆いの合計が太さと合わない: \(total)")
     }
 
     // MARK: - 変換

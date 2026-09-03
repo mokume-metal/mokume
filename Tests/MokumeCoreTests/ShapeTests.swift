@@ -44,7 +44,9 @@ struct ShapeTests {
             canvas.shape(group, 8, 8)
         }
         #expect(canvas.drawCallsInLastFrame == 1)
-        #expect(group.vertexCount == 500 * 6)
+        // 矩形は距離関数で描く基本図形なので、頂点ではなく置き場所として記録される (#752)
+        #expect(group.vertexCount == 0)
+        #expect(group.forms.count == 500)
     }
 
     @Test("組にしても、区切りの数は増えない")
