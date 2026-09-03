@@ -230,6 +230,76 @@ struct PixelsTests {
         #expect(!canvas.hasLoadedPixels)
     }
 
+    // MARK: - 写し (#753)
+
+    /// 完了条件「読まないスケッチは 1 バイトも払わない」。描画先は GPU 専用の面で、
+    /// 画素の窓はその写しである。写しは画素を頼まれたときにだけ作られる。
+    @Test("画素を触らない面は、何フレーム描いても写しを持たない")
+    func aCanvasThatNeverReadsPixelsHasNoMirror() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        for _ in 0..<3 {
+            try canvas.draw {
+                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.rect(2, 2, 8, 8)
+            }
+        }
+        #expect(canvas.target.pixelMirror == nil)
+        #expect(canvas.target.pixelReadbacksEncoded == 0)
+        #expect(canvas.target.pixelWriteBacksEncoded == 0)
+    }
+
+    /// 読む前の描き切りが読み戻しを同じコマンドに積むので、続けて何画素読んでも blit は増えない。
+    @Test("画素を読むフレームは、読み戻しを 1 本だけ積む")
+    func aFrameThatReadsPixelsEncodesOneReadback() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            for y in 0..<16 {
+                for x in 0..<16 { _ = canvas.get(x, y) }
+            }
+            _ = canvas.pixels
+        }
+        #expect(canvas.target.pixelReadbacksEncoded == 1)
+        #expect(canvas.target.pixelWriteBacksEncoded == 0, "読むだけなのに書き戻している")
+    }
+
+    /// 書き戻しは `set` を使ったフレームだけが払う。
+    @Test("書き戻しは、画素へ書いたフレームだけが積む")
+    func onlyFramesThatWritePixelsEncodeAWriteBack() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            _ = canvas.get(0, 0)
+        }
+        #expect(canvas.target.pixelWriteBacksEncoded == 0)
+
+        try canvas.draw {
+            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.set(3, 3, .opaque(red: 1, green: 0, blue: 0))
+        }
+        #expect(canvas.target.pixelWriteBacksEncoded == 1)
+        // 書いた画素は、次に読むときに描画先から戻ってくる (写しをそのまま返したのではない)
+        try canvas.draw { _ = canvas.get(0, 0) }
+        #expect(canvas.target.pixelWriteBacksEncoded == 1, "書いていないフレームが書き戻している")
+        #expect(canvas.get(3, 3) == .opaque(red: 1, green: 0, blue: 0))
+    }
+
+    /// 書いた画素の上に、そのフレームの続きの図形が載る (書き戻しが描画より先に積まれる)。
+    @Test("画素へ書いたあとに描いた図形が、書いた画素の上に載る")
+    func shapesDrawnAfterWritingLandOnTopOfTheWrittenPixels() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.pixels.fill(.opaque(red: 1, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.fill(.opaque(red: 0, green: 1, blue: 0))
+            canvas.rect(0, 0, 8, 16)
+        }
+        let pixels = try canvas.target.readPixels()
+        #expect(pixels[4, 8] == .opaque(red: 0, green: 1, blue: 0), "図形が書いた画素の下に隠れた")
+        #expect(pixels[12, 8] == .opaque(red: 1, green: 0, blue: 0), "書いた画素が戻っていない")
+    }
+
     // MARK: - 面としての振る舞い
 
     @Test("範囲の外を読むと透明が返り、範囲の外へ書いても何も起きない")

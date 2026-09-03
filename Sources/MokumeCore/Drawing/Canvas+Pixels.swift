@@ -16,8 +16,10 @@ extension Canvas {
     public func loadPixels() {
         do {
             // **効果はフレームの終わりに立つ段**なので、途中で読む画素には効いていない
-            // (通すと、効果のかかった絵の上に続きが描かれる)
-            try flush(applyingEffects: false)
+            // (通すと、効果のかかった絵の上に続きが描かれる)。**読み戻しも同じコマンドに
+            // 積む** — 描画先は GPU 専用の面なので、読むには写しへ blit する必要がある。
+            // ここで積めば、続く `pixels` は blit を積み直さず待つだけで済む (#753)
+            try flush(applyingEffects: false, mirroringPixels: true)
         } catch {
             // 読み取りは落とさない (ADR-0020 決定 5) ので、投げずに残す。次のフレームの
             // 描き切りが同じ理由で失敗し、そちらから外へ出る

@@ -3,16 +3,15 @@
 
 import simd
 
-/// 画素の面 — 描画先のメモリそのものへの窓。
+/// 画素の面 — 描画先の写しへの窓。
 ///
-/// 読むときに写しは作られず、書き換えは描画先へそのまま届く。使い方と、そう作った
-/// 理由は ``Sketch/pixels`` にある。
+/// 読むときに写しは作られず、書き換えは次に GPU が描画先へ触る前に自動で戻される
+/// (送り直しの手順は無い)。使い方と、そう作った理由は ``Sketch/pixels`` にある。
 ///
 /// ## 行の間隔
 ///
-/// 行の先頭は整列している必要があるので、**1 行が幅ぶんより広いことがある**。
-/// 位置から場所を求めるのに `bytesPerRow` を使うのはこのためで、`y * width + x`
-/// では届かない幅がある (幅 3・13・63 など)。
+/// 位置から場所を求めるのに `bytesPerRow` を使う。いまは幅ぶんそのままだが、
+/// 置き場の都合で広くなりうる値なので `y * width + x` では届かない形にしてある。
 ///
 public struct Pixels {
     /// 横の画素数。
@@ -23,13 +22,27 @@ public struct Pixels {
     let base: UnsafeMutableRawPointer
     /// 1 行あたりのバイト数。
     let bytesPerRow: Int
+    /// 書いたことを知らせる先。**書く口はすべてここへ旗を立てる** — 立て忘れると、
+    /// 書いた画素が描画先へ戻らない。
+    let mirror: PixelMirror?
 
-    init(base: UnsafeMutableRawPointer, width: Int, height: Int, bytesPerRow: Int) {
+    init(
+        base: UnsafeMutableRawPointer, width: Int, height: Int, bytesPerRow: Int,
+        mirror: PixelMirror?
+    ) {
         self.base = base
         self.width = width
         self.height = height
         self.bytesPerRow = bytesPerRow
+        self.mirror = mirror
     }
+
+    /// 大きさ 0 の窓。写しを用意できなかったときに返す — 読むと透明、書いても何も起きない。
+    static let unavailable = Pixels(
+        base: unavailableBase, width: 0, height: 0, bytesPerRow: 0, mirror: nil)
+    /// 大きさ 0 の窓が指す先。大きさが 0 なので触られることはない。
+    private static let unavailableBase = UnsafeMutableRawPointer.allocate(
+        byteCount: 8, alignment: 8)
 
     /// 画素の総数。
     public var count: Int { width * height }
@@ -53,6 +66,7 @@ public struct Pixels {
             address(x, y).pointee = SIMD4<Float16>(
                 Float16(newValue.red), Float16(newValue.green),
                 Float16(newValue.blue), Float16(newValue.alpha))
+            mirror?.hasPendingWrites = true
         }
     }
 
@@ -65,6 +79,7 @@ public struct Pixels {
                 .assumingMemoryBound(to: SIMD4<Float16>.self)
             for x in 0..<width { row[x] = texel }
         }
+        if count > 0 { mirror?.hasPendingWrites = true }
     }
 
     private func contains(_ x: Int, _ y: Int) -> Bool {

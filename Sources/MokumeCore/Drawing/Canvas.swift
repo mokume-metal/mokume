@@ -2076,10 +2076,18 @@ public final class Canvas {
     /// 穴を空けてある。公開はしない。
     var failureForTesting: RenderFailure?
 
-    /// - Parameter applyingEffects: 効果を通すか。**フレームの終わりだけ通す** —
-    ///   フレームの途中の描き切り (`loadPixels()`) で通すと、効果のかかった絵の上に
-    ///   続きが描かれ、しかもフレームの終わりにもう一度かかる。
-    func flush(applyingEffects: Bool = true) throws(RenderFailure) {
+    /// - Parameters:
+    ///   - applyingEffects: 効果を通すか。**フレームの終わりだけ通す** —
+    ///     フレームの途中の描き切り (`loadPixels()`) で通すと、効果のかかった絵の上に
+    ///     続きが描かれ、しかもフレームの終わりにもう一度かかる。
+    ///   - mirroringPixels: 描き終えた絵を画素の写しへ読み戻す blit を末尾に積むか。
+    ///     **画素を読む直前の描き切りだけ** `true` — 読まないフレームは 1 バイトも払わない
+    ///     ([#753])。
+    ///
+    /// [#753]: https://github.com/mokume-metal/mokume/issues/753
+    func flush(applyingEffects: Bool = true, mirroringPixels: Bool = false)
+        throws(RenderFailure)
+    {
         // **自分の絵が変わる直前がここ。** 自分を溜めている面を先に描き切らせると、
         // その面には「置いた時点の絵」が残る。`beginDraw()` ではなくここに置くのは、
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため
@@ -2108,6 +2116,11 @@ public final class Canvas {
             keepingDepth: !applyingEffects)
         passesThisFrame += 1
         let commands = try gpu.beginCommands()
+
+        // **CPU が画素へ書いたものがあれば、描く前に描画先へ戻す。** 描画先は GPU 専用の
+        // 面なので、`pixels` への書き込みは写しに載っている。書いていないフレームは
+        // 何も積まない (#753)
+        try target.encodePixelWriteBack(into: commands)
 
         // **描くより前に、頼まれた計算を流す** (ADR-0023 決定 3 — 計算はフレームの
         // 前置き)。頼まれていなければ口も開かないので、計算を使わないスケッチは
@@ -2348,11 +2361,17 @@ public final class Canvas {
         // 細かさを変えるたびに効き方が変わる
         if applyingEffects { applyUpscale(into: commands) }
 
+        // **画素を読む直前の描き切りなら、描き終えた絵を写しへ読み戻す blit を末尾に積む。**
+        // 別のコマンドにすると投入が 1 本増えるので、同じコマンドの末尾に置く (#753)
+        if mirroringPixels { try target.encodePixelReadback(into: commands) }
+
         // **投入して、待たない。** 直後の片付けで列が抱えていた参照 (面・数の並び・
         // 断片・外の置き場所) が落ちるので、GPU が終わるまで抱えておく側へ渡す —
         // この世代のコマンドはリソースを保持しないため、渡さないと利用者が `draw()` の
         // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
-        gpu.commit(commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
+        let submission = gpu.commit(
+            commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
+        if mirroringPixels { target.markPixelsMirrored(through: submission) }
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる。

@@ -222,6 +222,18 @@ struct EffectTests {
 
     // MARK: - 置き場
 
+    /// 控えは色だけの GPU 専用の絵で、奥行きも CPU から読める置き場も伴わない (#753)。
+    @Test("控えは色だけの GPU 専用の絵")
+    func scratchImagesAreColourOnlyAndPrivate() throws {
+        let canvas = try makeCanvas()
+        _ = try picture([.blur(radius: 2)], on: canvas)
+        let pipeline = try canvas.effectPipeline()
+        let scratch = try pipeline.scratch(at: 0)
+        #expect(scratch.texture.storageMode == .private)
+        #expect(scratch.texture.buffer == nil, "控えが置き場の上に載っている")
+        #expect(scratch.texture.pixelFormat == RenderTarget.pixelFormat)
+    }
+
     @Test("長く回しても、置き場の確保が積み上がらない")
     func doesNotGrowWhileItRuns() throws {
         let canvas = try makeCanvas()

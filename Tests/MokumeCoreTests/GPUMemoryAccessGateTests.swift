@@ -54,7 +54,7 @@ struct GPUMemoryAccessGateTests {
             reason: "書く口がすべて settle を通る。読む口 (snapshot) は Canvas.read が settle してから呼ぶ"),
         Permit(
             file: "Rendering/RenderTarget.swift", settles: true,
-            reason: "画素を読む直前に settle する"),
+            reason: "画素の写しを読む直前に settle する (写しへの読み戻しを積んだときは、その完了まで)"),
         Permit(
             file: "Output/EncodedImage.swift", settles: false,
             reason: "encodeToImage が commitAndWait してから読む"),
