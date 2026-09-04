@@ -82,17 +82,14 @@ enum DoctorCommand {
     ///   割れていても誰も気付けない
     ///   ([#730](https://github.com/mokume-metal/mokume/issues/730))。
     static func text(for arguments: [String], workDirectory: URL? = WorkDirectory.given) -> String {
-        var place: String?
-        var ignored: [String] = []
-        for argument in arguments {
-            if place == nil, !argument.hasPrefix("-") {
-                place = argument
-            } else {
-                ignored.append(argument)
-            }
-        }
+        // 引数を解く骨格も、走らせる口と同じ 1 本を通る (#814)。**切り分けの口だけは
+        // 止まらない** — 知らない引数で使い方を出して終わると、いちばん要るときに読めない。
+        // その特例は `Surplus.ignore` という**宣言の 1 値**で、別のパーサではない。
+        // 値を取る選択肢が無いので投げどころは無いが、万一のときも止まらない側へ倒す
+        let parsed = (try? Arguments.parse(arguments, surplus: .ignore)) ?? Arguments.Parsed()
+        let ignored = parsed.ignored
         // 場所と区画の基準は、走らせる口と同じ 1 つの計算から出す (#791)
-        let invocation = Invocation(place: place)
+        let invocation = Invocation(place: parsed.positional)
         let directory = invocation.directory
         let base = invocation.facetBase(workDirectory: workDirectory)
         return report(
