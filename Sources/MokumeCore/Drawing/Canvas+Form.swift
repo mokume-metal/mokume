@@ -86,9 +86,10 @@ extension Canvas {
         axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero,
         fills: Bool, cap: StrokeCap? = nil
     ) {
-        let fill: LinearRGBA? = fills && hasFill ? currentFill : nil
-        let stroke: LinearRGBA? = hasStroke && currentStrokeWeight > 0 ? currentStroke : nil
-        guard fill != nil || stroke != nil else { return }
+        // **色は `Optional` にしない。** 持つかどうかは旗で渡す (``FormInstance/init``)
+        let drawsFill = fills && hasFill
+        let drawsStroke = hasStroke && currentStrokeWeight > 0
+        guard drawsFill || drawsStroke else { return }
 
         // いまの変換の 2x2 に、形自身の横軸の向きを掛ける (線以外は単位)
         let columns = transform.matrix.columns
@@ -99,7 +100,9 @@ extension Canvas {
         let instance = FormInstance(
             kind: kind, linear: SIMD4(x.x, x.y, y.x, y.y),
             offset: transform.apply(x: center.x, y: center.y), half: half, arc: arc,
-            halfWeight: currentStrokeWeight / 2, fill: fill, stroke: stroke,
+            halfWeight: currentStrokeWeight / 2,
+            fill: currentFill.components, stroke: currentStroke.components,
+            fills: drawsFill, strokes: drawsStroke,
             cap: cap ?? currentStrokeCap, join: currentStrokeJoin)
         // 数でない値・潰れた変換は置かない。三角形のときも面積が無くて何も出なかった
         guard instance.isPlaceable, half.x.isFinite, half.y.isFinite,

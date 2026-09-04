@@ -576,6 +576,30 @@ struct FormShapeTests {
 
     // MARK: - 並びの取り決め
 
+    /// **色を持つかは旗が決める。** 旗が下りていれば、渡した色も線幅も置き場所に
+    /// 残らない — `Optional` を畳んだときに落としやすい所なので名指しで見る ([#771])。
+    @Test("旗が下りていれば、渡した色と線幅は置き場所に残らない")
+    func flagsDropTheColours() {
+        let colour = SIMD4<Float>(0.25, 0.5, 0.75, 1)
+        let onlyFill = FormInstance(
+            kind: .rect, linear: SIMD4(1, 0, 0, 1), offset: .zero, half: SIMD2(4, 4),
+            halfWeight: 3, fill: colour, stroke: colour, fills: true, strokes: false,
+            cap: .round, join: .miter)
+        #expect(onlyFill.fill == colour)
+        #expect(onlyFill.stroke == .zero, "輪郭を持たないのに輪郭の色が残っている")
+        #expect(onlyFill.size.z == 0, "輪郭を持たないのに線幅が残っている")
+        #expect(onlyFill.meta.w == FormInstance.fillsFlag)
+
+        let onlyStroke = FormInstance(
+            kind: .rect, linear: SIMD4(1, 0, 0, 1), offset: .zero, half: SIMD2(4, 4),
+            halfWeight: 3, fill: colour, stroke: colour, fills: false, strokes: true,
+            cap: .round, join: .miter)
+        #expect(onlyStroke.fill == .zero, "塗りを持たないのに塗りの色が残っている")
+        #expect(onlyStroke.stroke == colour)
+        #expect(onlyStroke.size.z == 3)
+        #expect(onlyStroke.meta.w == FormInstance.strokesFlag)
+    }
+
     @Test("置き場所の並びは、シェーダ側と同じ大きさである")
     func theInstanceLayoutMatchesTheShader() throws {
         #expect(MemoryLayout<FormInstance>.stride == FormInstance.expectedStride)
