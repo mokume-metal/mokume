@@ -69,11 +69,19 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 ### 下地と色
 
 - ``Sketch/background(_:)-2yb9n``
+- ``Sketch/background(_:_:)``
+- ``Sketch/background(_:_:_:_:)``
 - ``Sketch/fill(_:)``
+- ``Sketch/fill(_:_:)``
+- ``Sketch/fill(_:_:_:_:)``
 - ``Sketch/noFill()``
 - ``Sketch/stroke(_:)``
+- ``Sketch/stroke(_:_:)``
+- ``Sketch/stroke(_:_:_:_:)``
 - ``Sketch/noStroke()``
 - ``Sketch/tint(_:)``
+- ``Sketch/tint(_:_:)``
+- ``Sketch/tint(_:_:_:_:)``
 - ``Sketch/noTint()``
 - ``Sketch/blendMode(_:)``
 - ``Sketch/exposure(_:)``
@@ -81,6 +89,18 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``LinearRGBA``
 - ``BlendMode``
 - ``ToneMapping``
+
+### 色を作る・読む
+
+素の数値は 0–255 の目盛りで、ラベル付きの口は名前が目盛りを名乗る ([ADR-0033](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md))。
+
+- ``color(_:_:)``
+- ``color(_:_:_:_:)``
+- ``color(hex:)``
+- ``red(_:)``
+- ``green(_:)``
+- ``blue(_:)``
+- ``alpha(_:)``
 
 ### 線の引き方
 
