@@ -97,10 +97,14 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``color(_:_:)``
 - ``color(_:_:_:_:)``
 - ``color(hex:)``
+- ``color(hue:saturation:brightness:alpha:)``
 - ``red(_:)``
 - ``green(_:)``
 - ``blue(_:)``
 - ``alpha(_:)``
+- ``hue(_:)``
+- ``saturation(_:)``
+- ``brightness(_:)``
 
 ### 線の引き方
 
