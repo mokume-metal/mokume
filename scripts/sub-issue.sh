@@ -29,7 +29,8 @@ while [ $# -gt 0 ]; do
     --label)     LABELS+=("$2"); shift 2 ;;
     --type)      TYPE="$2"; shift 2 ;;
     --test)      IS_TEST=true; shift ;;
-    *) echo "不明な引数: $1" >&2; exit 2 ;;
+    # usage は 64 (sysexits の EX_USAGE) で揃える (#820)
+    *) echo "不明な引数: $1" >&2; exit 64 ;;
   esac
 done
 

@@ -141,7 +141,7 @@ SHIFT_CROPS = {"x": ("iw-1:ih:0:0", "iw-1:ih:1:0"), "y": ("iw:ih-1:0:0", "iw:ih-
 #
 # **谷は狭い (2.00 と 2.33)。** 境目はその中に置き、対称な側へ寄せる — 下へ外すと
 # 対称な絵が毎回鳴り、上へ外すと**黙らせようのない警告**が出る (本当に見分けが付く絵に
-# `symmetric=` を足すのは嘘になる)。両端は `--mirror-report` で撮り直すたびに見られる。
+# `symmetric=` を足すのは嘘になる)。両端は `--mirror-report` を付けて撮ると 1 本ずつ見られる (境目を決め直すときの道具で、Makefile からは渡していない)。
 INDISTINGUISHABLE = 2.2
 GYAZO_UPLOAD = "https://upload.gyazo.com/api/upload"
 
