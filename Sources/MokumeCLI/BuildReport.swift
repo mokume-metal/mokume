@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 直近の作り直しの結果。
 ///
@@ -11,6 +12,16 @@ import Foundation
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 struct BuildReport: Encodable, Equatable {
     static let schemaVersion = 1
+
+    /// 与えた基準の下の、記録の在処。
+    ///
+    /// **綴りはここ 1 つ。** 書くのは見張り、読むのは切り分けの口と窓口の 3 者いるので、
+    /// 別々に組むと基準を揃えても同じ形で割れる
+    /// ([#730](https://github.com/mokume-metal/mokume/issues/730))。
+    static func statusURL(under facetBase: URL) -> URL {
+        WorkDirectory.facet("build", under: facetBase)
+            .appendingPathComponent("status.json", isDirectory: false)
+    }
 
     /// 分解した所要時間 (ミリ秒)。
     struct Timings: Encodable, Equatable {

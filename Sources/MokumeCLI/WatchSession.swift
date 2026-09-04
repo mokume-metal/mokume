@@ -201,10 +201,7 @@ final class WatchSession {
 
     /// 結果を区画へ置く。観測と同じ流儀 (原子的に書く)。
     private func write(_ report: BuildReport) {
-        let url = facetBase
-            .appendingPathComponent(".mokume", isDirectory: true)
-            .appendingPathComponent("build", isDirectory: true)
-            .appendingPathComponent("status.json")
+        let url = BuildReport.statusURL(under: facetBase)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(report) else { return }
