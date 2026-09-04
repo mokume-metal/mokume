@@ -156,6 +156,22 @@ public final class Canvas {
     ///
     /// 変換も色も入っていない — どちらも置き場所が持つためである。円の分割数は半径から
     /// 決まる (``segmentCount(forRadius:)``) ので、寸法が入った時点で分割数も一致する。
+    ///
+    /// **効く相手は基本図形の全部ではない。** 矩形・楕円・扇形・線・点は [#752] で距離
+    /// 関数の経路 (`FormInstance`) へ移り、素のままではここへ来ない — 境目は
+    /// `formAllowed(fills:)` (`Canvas+Form.swift`) で、そこが断るときだけ三角形を積む
+    /// 経路へ落ちる。だからこの鍵が畳むのは次の 2 つだけである:
+    ///
+    /// - **貼る絵** (`texture()`) が効いた塗りを持つ図形。輪郭も持つものは 1 つの図形の
+    ///   途中で読む面が割れるので、`draw(folding:at:outline:)` が畳まずに落とす
+    /// - **利用者の断片** (`shader()`) が効いている間の図形 (塗りも輪郭も畳める)
+    ///
+    /// 字・画像・任意多角形は元からここへ来ない。**「基本図形の畳み」と読むと外れる** —
+    /// #424 が置いた当時はそれで正しかったが、いまはスプライトを大量に置く書き方
+    /// (貼る絵 + 矩形を数千) が実需で、それがこの機構を残している相手である ([#770])。
+    ///
+    /// [#752]: https://github.com/mokume-metal/mokume/issues/752
+    /// [#770]: https://github.com/mokume-metal/mokume/issues/770
     struct FlatKey: Equatable {
         var form: FlatForm
         var hasFill: Bool
