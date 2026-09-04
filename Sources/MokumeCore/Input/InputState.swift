@@ -44,8 +44,10 @@ public final class InputState {
     /// 数えるので、1 フレームにまとめて届いても取りこぼしも重複も起きない。
     public private(set) var dragX: Float = 0
     public private(set) var dragY: Float = 0
-    /// 押されているキーの符号。
-    public private(set) var pressedKeys: Set<Int> = []
+    /// 押されているキー。
+    public private(set) var pressedKeys: Set<Key> = []
+    /// 最後に押されたか離されたキー。まだ何も来ていなければ `nil`。
+    public private(set) var lastKey: Key?
     /// 最後に入力された文字。
     public private(set) var characters: String = ""
 
@@ -133,9 +135,11 @@ public final class InputState {
             scrollY += dy
         case .keyDown(let code, let characters, _):
             pressedKeys.insert(code)
+            lastKey = code
             if !characters.isEmpty { self.characters = characters }
         case .keyUp(let code):
             pressedKeys.remove(code)
+            lastKey = code
         }
     }
 }

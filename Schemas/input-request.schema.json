@@ -100,7 +100,7 @@
           },
           "code": {
             "type": "integer",
-            "description": "キーの符号。"
+            "description": "キーの符号。**macOS の仮想キーコード** (49 = Space・0 = A・126 = ↑) で、ブラウザや Java の符号とは体系が違う。スケッチの面ではこの数が `Key` の綴り (`.space` など) として読める。"
           },
           "characters": {
             "type": "string"

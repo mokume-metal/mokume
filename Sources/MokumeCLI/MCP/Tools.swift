@@ -63,7 +63,7 @@ struct Tools {
             case .buildStatus:
                 "直近の作り直しの結果 (成否・終了コード・出力・分解した所要時間・版の刻印) を返す。絵が変わらない理由を知りたいときに読む。"
             case .input:
-                "走っているスケッチへ入力の出来事を送る。座標はキャンバスの座標系。種別は mouseDown / mouseUp / mouseMoved / scrolled / keyDown / keyUp。位置の 3 種には x と y、キーの 2 種には code が要る (欠けた 1 件は ignored に数えられ、残りは通る)。button / dx / dy / characters / isRepeat は省略できる。"
+                "走っているスケッチへ入力の出来事を送る。座標はキャンバスの座標系。種別は mouseDown / mouseUp / mouseMoved / scrolled / keyDown / keyUp。位置の 3 種には x と y、キーの 2 種には code (macOS の仮想キーコード。49 = Space・0 = A・126 = ↑) が要る (欠けた 1 件は ignored に数えられ、残りは通る)。button / dx / dy / characters / isRepeat は省略できる。"
             case .reference:
                 "窓口が配る文書を返す。引数を省くと一覧、name を渡すとその 1 つ。name に api を渡すと、いま依存している版の公開 API (どんな型と関数があり、どう呼ぶか)。startup を渡すと、起動の瞬間に決まるもの (走っている最中に変えても効かないもの) の一覧。ほかは面の仕様 (要求と応答の形)。"
             }

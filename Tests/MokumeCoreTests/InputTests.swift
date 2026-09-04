@@ -113,14 +113,14 @@ struct InputStateTests {
     @Test("押されているキーを覚え、離したら忘れる")
     func tracksHeldKeys() {
         let state = InputState()
-        state.enqueue(.keyDown(code: 49, characters: " ", isRepeat: false))
+        state.enqueue(.keyDown(code: .space, characters: " ", isRepeat: false))
         state.beginFrame()
-        #expect(state.pressedKeys.contains(49))
+        #expect(state.pressedKeys.contains(.space))
         #expect(state.characters == " ")
 
-        state.enqueue(.keyUp(code: 49))
+        state.enqueue(.keyUp(code: .space))
         state.beginFrame()
-        #expect(!state.pressedKeys.contains(49))
+        #expect(!state.pressedKeys.contains(.space))
     }
 
     @Test("送りすぎても、溜めた量は上限で頭打ちになる")
@@ -185,8 +185,8 @@ struct InputCallbackTests {
         let events: [InputEvent] = [
             .mouseMoved(x: 1, y: 2),
             .scrolled(dx: 1, dy: 2),
-            .keyDown(code: 49, characters: " ", isRepeat: false),
-            .keyUp(code: 49),
+            .keyDown(code: .space, characters: " ", isRepeat: false),
+            .keyUp(code: .space),
         ]
         #expect(callbacks(from: events).isEmpty)
     }
@@ -369,7 +369,7 @@ struct InputInboxTests {
         #expect(state.button == 0)
         #expect(state.scrollX == 0)
         #expect(state.scrollY == 0)
-        #expect(state.pressedKeys.contains(49))
+        #expect(state.pressedKeys.contains(.space))
         #expect(state.characters.isEmpty)
     }
 
