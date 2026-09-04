@@ -88,10 +88,17 @@ if [ "$1" = "ci-check" ] && [ -n "${CI_CHECK_FAILS:-}" ]; then
   echo "make: 検査が落ちた" >&2
   exit 2
 fi
+# **検査の最中に外の世界が動く場面**を作る口 (#830)。ci-check は数分かかるので、
+# その間に main へ別の PR が入ることは珍しくない
+if [ "$1" = "ci-check" ] && [ -n "${CI_CHECK_HOOK:-}" ]; then
+  /bin/bash "$CI_CHECK_HOOK" || exit $?
+fi
 exit 0
 """
 
 DRAWING = "Sources/MokumeCore/Canvas.swift"
+# main の側だけが動かす描画のファイル (覆いが古くなる場面を作る)
+OTHER_DRAWING = "Sources/MokumeCore/Palette.swift"
 NOT_DRAWING = "AGENTS.md"
 
 
@@ -167,17 +174,44 @@ class CatchUpTest(unittest.TestCase):
             return []
         return [c for c in self.gh_calls.read_text().splitlines() if c.startswith("pr merge")]
 
-    def advance_main(self, name="theirs.txt"):
-        """main を 1 コミット進める (合流後の姿が動いた状況を作る)。"""
-        other = self.root / "other"
+    def _clone_of_origin(self, name):
+        other = self.root / name
         subprocess.run(["git", "clone", "-q", str(self.origin), str(other)], check=True)
         for key, value in (("user.email", "t@example.invalid"), ("user.name", "t"),
                            ("commit.gpgsign", "false")):
             subprocess.run(["git", "config", key, value], cwd=other, check=True)
+        return other
+
+    def advance_main(self, name="theirs.txt"):
+        """main を 1 コミット進める (合流後の姿が動いた状況を作る)。"""
+        other = self._clone_of_origin("other")
         (other / name).write_text("theirs\n")
         subprocess.run(["git", "add", "-A"], cwd=other, check=True)
         subprocess.run(["git", "commit", "-qm", "theirs"], cwd=other, check=True)
         subprocess.run(["git", "push", "-q"], cwd=other, check=True)
+
+    def hook_advancing_main(self, name):
+        """`make ci-check` の最中に main が動く場面を作るフックを置く (#830)。
+
+        検査は数分かかるので、その間に別の PR が main へ入ることは珍しくない。
+        手元の `refs/remotes/origin/main` も ref にすぎないので、**同じリポジトリを
+        共有する別の worktree が fetch しただけ**でその先へ動く。手元は 1 バイトも
+        触っていないのに、判定の相手だけが動く — それがこの Issue の現場である。"""
+        other = self._clone_of_origin("during")
+        hook = self.root / "during.sh"
+        hook.write_text(
+            "#!/bin/bash\nset -e\n"
+            f'cd "{other}"\n'
+            f'mkdir -p "$(dirname "{name}")"\n'
+            f'printf "検査の最中に入った\\n" > "{name}"\n'
+            "git add -A\n"
+            'git commit -qm "検査の最中に入った PR"\n'
+            "git push -q\n"
+            f'cd "{self.work}"\n'
+            "git fetch -q origin\n"
+        )
+        hook.chmod(0o755)
+        return str(hook)
 
     # --- 打つ意味が無い場面 (3) ------------------------------------------
 
@@ -301,11 +335,50 @@ class CatchUpTest(unittest.TestCase):
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("push しない", proc.stdout)
+        self.assertIn("衝突を解いていない", proc.stdout)
         # push 済みの head が動いていないこと — 承認が落ちない条件そのもの
         self.assertNotEqual(
             self._git("rev-parse", "HEAD").strip(),
             self._git("rev-parse", "origin/work").strip())
         self.assertEqual(self.made(), ["ci-check"])
+
+    def test_検査の最中に_main_が動いても素直な取り込みは_push_しない(self):
+        """#830。**push の要否は取り込みの時点で決まっている。**
+
+        検査の最中に main へ別の PR が入ると、判定の相手 (origin/main) だけが先へ
+        動く。動いた相手と比べると素直な取り込みまで「衝突を解いてある」と読めて
+        しまい、解いた中身が 1 バイトも無い合流を push して承認を落とす (#612 が
+        そのまま戻る)。ここが赤くなる形に戻ったら、それが起きている。"""
+        self.advance_main()
+        proc = self.run_script(CI_CHECK_HOOK=self.hook_advancing_main("docs/後から.md"))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("push しない", proc.stdout)
+        # 判定の理由も名乗る (誤診したときに名乗りだけが正しく見えないため)
+        self.assertIn("衝突を解いていない", proc.stdout)
+        # push 済みの head が動いていないこと — 承認が落ちない条件そのもの
+        self.assertNotEqual(
+            self._git("rev-parse", "HEAD").strip(),
+            self._git("rev-parse", "origin/work").strip())
+        self.assertEqual(self.merged_calls(), ["pr merge 7 --auto --squash"])
+
+    def test_検査の最中に動いた_main_が描画に触れなければ覆いはそのまま(self):
+        """覆い (covers=) が見ているのは描画に関わるファイルの中身だけなので、
+        描画に触れない PR が入っても手元の実行はまだ合流後の姿を覆っている。"""
+        self.advance_main()
+        proc = self.run_script(CI_CHECK_HOOK=self.hook_advancing_main("docs/後から.md"))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("覆いはそのまま有効", proc.stdout)
+
+    def test_検査の最中に動いた_main_が描画に触れたら覆いが古いと名乗って止まる(self):
+        """このまま queue へ戻しても local-render が failure に転んで弾かれるだけで、
+        CI と queue の 1 周ぶんを空費する。**打ち直すのが正しい次の一手**なので、
+        待てを意味する 3 ではなく 1 で止める。"""
+        self.advance_main()
+        proc = self.run_script(CI_CHECK_HOOK=self.hook_advancing_main(OTHER_DRAWING))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("覆いが古い", proc.stderr)
+        self.assertIn("make catch-up", proc.stderr)
+        self.assertEqual(self.merged_calls(), [])
 
     def test_衝突を解いた合流は_push_する(self):
         """解いた中身は remote に無いので、queue も同じ木を作れない。ここは push が
@@ -322,6 +395,7 @@ class CatchUpTest(unittest.TestCase):
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("push する", proc.stdout)
+        self.assertIn("push 済みの head から作り直せない", proc.stdout)
         self.assertEqual(self.made(), ["ci-check", "render-status"])
         self.assertEqual(
             self._git("rev-parse", "HEAD").strip(),

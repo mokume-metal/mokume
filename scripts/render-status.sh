@@ -15,9 +15,10 @@
 #
 # ## 使い方
 #
-#   bash scripts/render-status.sh local   # make ci-check の最後。全検査が通ったときだけ打つ
-#   bash scripts/render-status.sh proxy   # CI から。打たなくてよい場合の代理報告だけ
-#   bash scripts/render-status.sh target  # 報告先の commit を出すだけ (catch-up が push の要否を訊く)
+#   bash scripts/render-status.sh local     # make ci-check の最後。全検査が通ったときだけ打つ
+#   bash scripts/render-status.sh proxy     # CI から。打たなくてよい場合の代理報告だけ
+#   bash scripts/render-status.sh target    # 報告先の commit を出すだけ (catch-up が push の要否を訊く)
+#   bash scripts/render-status.sh coverage  # 手元の覆いがいまの origin/main にまだ効くか (#830)
 #
 # ## 何を防いでいるか
 #
@@ -100,16 +101,23 @@ drawing_fingerprint() {
   printf '%s\n' "$tree" | drawing_files coverage | sort | shasum -a 256 | cut -c1-12
 }
 
-# 手元の木の同じ指紋。**綴りは drawing_fingerprint と一字一句同じでなければならない**
-# — merge queue はこの値と合流後の木の指紋を突き合わせるので、どちらかの書式が動くと
-# 全部の描画 PR が常時弾かれる。tree API が返すのと同じ「path sha」の並びを作るために
-# `--format` を使う (既定の出力はモードと型が混ざり、空白を含むパスを引用符で囲む)。
+# 手元にある木の同じ指紋。**綴りは drawing_fingerprint と一字一句同じでなければ
+# ならない** — merge queue はこの値と合流後の木の指紋を突き合わせるので、どちらかの
+# 書式が動くと全部の描画 PR が常時弾かれる。tree API が返すのと同じ「path sha」の
+# 並びを作るために `--format` を使う (既定の出力はモードと型が混ざり、空白を含む
+# パスを引用符で囲む)。
 #
 # 同じ commit で 2 経路が同じ 12 桁を返すことは実測してある (#612)。
-local_drawing_fingerprint() {
-  git ls-tree -r HEAD --format='%(path) %(objectname)' \
+#
+# 引数は commit でも木そのものでもよい。`git merge-tree --write-tree` が書いた木を
+# そのまま渡せることが要る (#830 の coverage は、queue がこれから組む木の指紋を
+# **手元の git だけで**取る)
+tree_drawing_fingerprint() {
+  git ls-tree -r "$1" --format='%(path) %(objectname)' \
     | drawing_files coverage | sort | shasum -a 256 | cut -c1-12
 }
+
+local_drawing_fingerprint() { tree_drawing_fingerprint HEAD; }
 
 # 報告先の commit (#612)。
 #
@@ -121,33 +129,84 @@ local_drawing_fingerprint() {
 # なっていた (#612)。判定に要るのは「どの木を回したか」だけで、それは description の
 # covers= が運ぶので、**head を動かす必要が無い**。
 #
-# 条件は「**手元の木が、queue がこれから組む木と同じ**」である。同じなら、報告先を
-# push 済み head にしても報告とその中身は食い違わない — covers= が名乗るのは手元が
-# 実際に回した木で、それは queue が組む木そのものだからである。
+# 条件は「**手元の木が、push 済み head から機械的に作り直せるか**」である。作り直せる
+# なら remote に無い中身は 1 バイトも無いので、報告先を push 済み head にしても報告と
+# その中身は食い違わない。
 #
-# 違えば HEAD を返す。その木は remote に無いので、今までどおり「まだ push して
-# いない」として報告が付かない。
+# 作り直せなければ HEAD を返す。その木は remote に無いので、今までどおり「まだ push
+# していない」として報告が付かない — 衝突を解いた合流と、手元だけの commit がこれに
+# 当たる (どちらも push が要り、承認の押し直しも正しい)。
+#
+# **比べる相手は「手元が取り込んだ main」で、いま origin/main が指すものではない**
+# (#830)。origin/main は ref にすぎず、同じリポジトリを共有する別の worktree が
+# fetch しただけで先へ動く。動いた相手と比べていた頃は、`make ci-check` の 9 分間に
+# 別の PR が main へ入るだけで素直な取り込みまで「衝突を解いてある」と誤診し、解いた
+# 中身が 1 バイトも無い合流を push して承認を落としていた (#612 がそのまま戻る)。
 report_target() {
-  local head upstream automatic
+  local head upstream taken automatic
   head=$(git rev-parse HEAD)
   upstream=$(git rev-parse --verify --quiet '@{u}' 2>/dev/null) || upstream=''
   if [ -z "$upstream" ] || [ "$upstream" = "$head" ]; then
     printf '%s' "$head"
     return 0
   fi
-  # **queue がこれから作る木と、手元の木が同じか**を直接見る。commit の数え方では
-  # 決まらない — 取り込みは main の commit を丸ごと連れてくるので、「合流だけか」を
-  # 履歴の形から判定しようとすると main の commit を数えてしまう (実測)。
+  # 手元が取り込んだ main を、控えではなく履歴から取り直す。**main は fast-forward で
+  # しか進まない**ので、HEAD に入っているいちばん新しい main の commit は merge-base
+  # そのもので、origin/main が先へ動いてもこの値は動かない。
   #
-  # 木が同じなら、手元が回したのは queue がこれから組む木そのものである。違うなら
-  # queue は同じ木を作れない — 衝突を解いた合流がこれに当たり、解いた中身は remote に
-  # 無いので push しない限り誰も再現できない (押し直しが要るのは正しい)。
-  if ! automatic=$(git merge-tree --write-tree "$upstream" origin/main 2>/dev/null) ||
+  # 合流の第 2 親 (HEAD^2) では 1 段の合流しか見られない — catch-up は 2 回打たれる
+  # ことがあり、そのとき第 1 親は push 済み head ではなく前回の合流 commit になる。
+  if ! taken=$(git merge-base HEAD origin/main 2>/dev/null) || [ -z "$taken" ]; then
+    printf '%s' "$head"
+    return 0
+  fi
+  # commit の数え方では決まらない — 取り込みは main の commit を丸ごと連れてくるので、
+  # 「合流だけか」を履歴の形から判定しようとすると main の commit を数えてしまう
+  # (実測)。木そのものを突き合わせる。
+  if ! automatic=$(git merge-tree --write-tree "$upstream" "$taken" 2>/dev/null) ||
     [ "$automatic" != "$(git rev-parse "$head^{tree}")" ]; then
     printf '%s' "$head"
     return 0
   fi
   printf '%s' "$upstream"
+}
+
+# 手元の実行の覆いが、いまの origin/main で組まれる合流後の姿にまだ効くか (#830)。
+#
+# push の要否から origin/main を切り離すと (report_target)、**覆いが古くなるかは別の
+# 問いとして残る** — queue が組むのは動いた後の origin/main との合流だからである。
+# 見ているのは描画に関わるファイルの中身だけなので、動いた main がそこを触っていな
+# ければ手元の実行はまだ合流後の姿を覆っている。
+#
+# 判定は**手元の git だけで付く**。`git merge-tree --write-tree` は組んだ木を手元の
+# object DB へ書くので、その木の指紋を tree_drawing_fingerprint がそのまま読める。
+#
+# 名乗りは 1 行目の 1 語で、fresh / stale / conflict / unknown。**判定できないときは
+# 通す** (冒頭の宣言と同じ向き) ので、読めなかった側は unknown で名乗る。
+report_coverage() {
+  local head base queue_tree
+  head=$(git rev-parse HEAD)
+  # 覆いが載る先 = 報告先。push した後なら @{u} は HEAD に追いついている
+  base=$(git rev-parse --verify --quiet '@{u}' 2>/dev/null) || base=$head
+  if ! git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+    echo "unknown origin/main を読めない (覆いが古くなるかは見ていない)"
+    return 0
+  fi
+  if git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
+    echo "fresh main は手元が取り込んだままで動いていない"
+    return 0
+  fi
+  # 衝突していれば queue は合流後の木を作れない。覆いの話ではないので、そちらを先に
+  # 名乗る (取り込んで解いて push する、が正しい次の一手になる)
+  if ! queue_tree=$(git merge-tree --write-tree "$base" origin/main 2>/dev/null); then
+    echo "conflict 動いた main と衝突している"
+    return 0
+  fi
+  if [ "$(tree_drawing_fingerprint "$queue_tree")" = "$(tree_drawing_fingerprint HEAD)" ]; then
+    echo "fresh 動いた main は描画に関わるファイルを動かしていない"
+  else
+    echo "stale 動いた main が描画に関わるファイルを動かした"
+  fi
 }
 
 # 手元の実行が「どの木を回したか」を、報告そのものから読む (#612)。
@@ -350,8 +409,14 @@ case "$mode" in
     echo
     ;;
 
+  coverage)
+    # 覆いがまだ効くかを出すだけ (#830)。target と同じ形で catch-up が訊く —
+    # 覆いの綴りを持っているのはこちらなので、判定もこちらに置く
+    report_coverage
+    ;;
+
   *)
-    echo "使い方: $0 local|proxy|target" >&2
+    echo "使い方: $0 local|proxy|target|coverage" >&2
     exit 2
     ;;
 esac
