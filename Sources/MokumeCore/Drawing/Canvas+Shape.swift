@@ -19,6 +19,7 @@ extension Canvas {
         closeBatch()
         let vertexStart = vertices.count
         let solidStart = solidVertices.count
+        let formStart = formInstances.count
         let instanceStart = solidInstances.count
         let runStart = batches.count
 
@@ -40,9 +41,14 @@ extension Canvas {
         closeBatch()
         let recorded = Array(vertices[vertexStart...])
         let recordedSolid = Array(solidVertices[solidStart...])
+        let recordedForms = Array(formInstances[formStart...])
         let runs = batches[runStart...].map {
             var run = $0.run
-            run.start -= run.source == .flat ? vertexStart : solidStart
+            switch run.source {
+            case .flat: run.start -= vertexStart
+            case .solid: run.start -= solidStart
+            case .form: run.start -= formStart
+            }
             return run
         }
 
@@ -50,6 +56,7 @@ extension Canvas {
         // 記録した頂点が戻したあとの設定で閉じられる
         vertices.removeLast(vertices.count - vertexStart)
         solidVertices.removeLast(solidVertices.count - solidStart)
+        formInstances.removeLast(formInstances.count - formStart)
         // 記録の間に開いた置き場所も抜く。**形は何も動かさない置き場所で置き直される**
         // ので、記録側で持ち歩く必要が無い
         solidInstances.removeLast(solidInstances.count - instanceStart)
@@ -58,7 +65,9 @@ extension Canvas {
         popMatrix()
         popStyle()
 
-        return Shape(vertices: recorded, solidVertices: recordedSolid, runs: Array(runs))
+        return Shape(
+            vertices: recorded, solidVertices: recordedSolid, forms: recordedForms,
+            runs: Array(runs))
     }
 
     // 保持した形を置く。
@@ -73,8 +82,9 @@ extension Canvas {
 
     /// 保持した形を、渡した置き場所ぶんだけ置く。
     ///
-    /// **立体の区間は、頂点を 1 度だけ置いて置き場所を並べる。** 平面の区間は
-    /// 置き場所ごとに展開する (平面には置き場所の仕組みが無い)。どちらも、同じ
+    /// **立体の区間は、頂点を 1 度だけ置いて置き場所を並べる。** 基本図形の区間も
+    /// 置き場所に変換を掛けるだけで、頂点は触らない。三角形で組み立てた平面の区間だけは
+    /// 置き場所ごとに頂点を展開する (その区間には置き場所の仕組みが無い)。どれも、同じ
     /// 置き場所を 1 つずつ書いたときと同じ絵になる。
     private func place(_ shape: Shape, at placements: [Placement]) {
         guard !shape.isEmpty else { return }
@@ -95,6 +105,8 @@ extension Canvas {
                 for placement in usable { place(run, of: shape, at: placement) }
             case .solid:
                 placeSolid(run, of: shape, at: usable)
+            case .form:
+                for placement in usable { placeForms(run, of: shape, at: placement) }
             }
         }
 
@@ -127,6 +139,21 @@ extension Canvas {
                         color.w * tint.alpha)
                 }
             }
+        }
+    }
+
+    /// 基本図形の区間を置く。**開いている平面・立体の列は閉じる** (呼び出し順どおりに重ねる)。
+    ///
+    /// 記録した置き場所は形自身の座標なので、いまの変換と置き場所の変換を合成して
+    /// 掛ける。頂点を 1 つも触らないので、**円を含む形も、頂点を並べた形と同じ速さで置ける**。
+    private func placeForms(_ run: Shape.Run, of shape: Shape, at placement: Placement) {
+        let matrix = transform.matrix * placement.transform.matrix
+        for form in shape.forms[run.start..<(run.start + run.count)] {
+            let moved = form.placed(by: matrix, tint: placement.fill)
+            // 潰れた変換で置いた形は面積を持たない (直に描いたときと同じく何も出ない)
+            guard moved.isPlaceable else { continue }
+            beginForm()
+            formInstances.append(moved)
         }
     }
 

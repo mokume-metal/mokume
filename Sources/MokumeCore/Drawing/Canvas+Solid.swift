@@ -171,7 +171,7 @@ extension Canvas {
     /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから
     /// 置いた立体が先に描かれる。
     func beginSolids() {
-        guard openSource == .flat else { return }
+        guard openSource != .solid else { return }
         closeBatch()
         useFillTexture()
         openSource = .solid

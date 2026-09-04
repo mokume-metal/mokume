@@ -130,12 +130,17 @@ struct UpscaleTests {
     }
 
     /// 描く細かさでは捉えきれない細かさの模様。**低い細かさで描くと嘘の絵になる。**
+    ///
+    /// 縞は `quad` (三角形の経路) で描く。`rect` は距離関数で縁を滑らかにする (#752) ので、
+    /// 描く細かさに収まらない縞を 1 枚の中で平均してしまい、「嘘の縞」が出ない —
+    /// ここで見たいのは、縁を滑らかにしない絵の嘘を時間方向が平均へ収めることである
     private func tooFine(on canvas: Canvas) {
         canvas.background(.display(red: 0, green: 0, blue: 0))
         canvas.noStroke()
         canvas.fill(.display(red: 1, green: 1, blue: 1))
         for column in stride(from: 0, to: Self.width, by: 3) {
-            canvas.rect(Float(column), 0, 1, Float(Self.height))
+            let left = Float(column), right = left + 1, bottom = Float(Self.height)
+            canvas.quad(left, 0, right, 0, right, bottom, left, bottom)
         }
     }
 

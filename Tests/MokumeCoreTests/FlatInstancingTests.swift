@@ -15,6 +15,10 @@ import Testing
 /// ある — 畳んでも畳まなくても回数は変わらず、変わるのは積む頂点の数のほうで、それが
 /// [#424](https://github.com/mokume-metal/mokume/issues/424) で律速だったものである。
 ///
+/// 基本図形 (矩形・楕円・扇形・線・点) は [#752](https://github.com/mokume-metal/mokume/issues/752)
+/// で距離関数の経路へ移り、頂点を 1 つも積まなくなった (`FormShapeTests`)。ここに残る
+/// 雛形の畳みが効くのは、貼る絵か利用者の断片が効いている図形だけである。
+///
 /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
 @Suite(
     "平面のまとめ描き",
@@ -60,21 +64,6 @@ struct FlatInstancingTests {
         }
         #expect(many.flatVerticesInLastFrame == one.flatVerticesInLastFrame)
         #expect(many.drawCallsInLastFrame == 1, "畳んだのに列が分かれている")
-    }
-
-    @Test("寸法が変われば畳まれない")
-    func changingTheSizeStacksAgain() throws {
-        let same = try makeCanvas()
-        _ = try scene(same) { canvas in
-            for place in grid(4) { canvas.circle(place.x, place.y, 14) }
-        }
-        let varied = try makeCanvas()
-        _ = try scene(varied) { canvas in
-            for (index, place) in grid(4).enumerated() {
-                canvas.circle(place.x, place.y, 14 + Float(index))
-            }
-        }
-        #expect(varied.flatVerticesInLastFrame > same.flatVerticesInLastFrame)
     }
 
     @Test("矩形と円を交互に置いても、列は分かれない")

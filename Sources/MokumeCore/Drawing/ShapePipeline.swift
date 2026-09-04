@@ -61,6 +61,14 @@ final class ShapePipeline {
     /// 書く先が無く、置かない ([#757](https://github.com/mokume-metal/mokume/issues/757))。
     let shadowState: any MTLRenderPipelineState
 
+    /// 平面の基本図形を距離関数で描くパイプライン ([#752])。
+    ///
+    /// 頂点も断片も専用で、利用者の断片は差し替えられない — 断片が読む面・頂点の
+    /// 属性を契約に持つ利用者の断片は、三角形の経路 (``state``) に居続ける。
+    ///
+    /// [#752]: https://github.com/mokume-metal/mokume/issues/752
+    let formState: any MTLRenderPipelineState
+
     /// 平面の奥行きの扱い — **常に通し、書かない**。
     ///
     /// 平面は奥行きを持たない挿入レイヤーなので ([ADR-0021] 決定 2)、書かないことで
@@ -102,6 +110,11 @@ final class ShapePipeline {
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
+        self.formState = try Self.makeState(
+            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.forms",
+            vertexFunctionName: Self.formVertexFunctionName,
+            fragmentFunctionName: Self.formFragmentFunctionName)
 
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
@@ -130,6 +143,10 @@ final class ShapePipeline {
     static let flatVertexFunctionName = "shapeVertexMain"
     /// 立体の頂点を落とす関数の名前。
     static let solidVertexFunctionName = "solidVertexMain"
+    /// 基本図形のクアッドを置く頂点関数の名前。
+    static let formVertexFunctionName = "formVertexMain"
+    /// 基本図形を距離関数で塗る断片の名前。
+    static let formFragmentFunctionName = "mokume_formFragment"
 
     /// 利用者の断片で塗るパイプラインを組む。
     func makeState(

@@ -204,7 +204,9 @@ struct RecordMovieTests {
 
             let movie = try await decodeMovie(path)
             #expect(movie.frames.count == fromTheRoad.count)
-            // 符号化は可逆ではないので、差が残るなら**測って名乗る** (ADR-0025 決定 3)
+            // 符号化は可逆ではないので、差が残るなら**測って名乗る** (ADR-0025 決定 3)。
+            // 縁がくっきりしていた頃は最大 1 階調だった。基本図形の縁が滑らかになって
+            // (#752) 中間の値を持つ画素が並ぶようになり、ProRes 4444 の差は最大 2 階調 (実測)
             var worst = 0
             for (written, expected) in zip(movie.frames, fromTheRoad) {
                 #expect(written.width == expected.width)
@@ -213,7 +215,7 @@ struct RecordMovieTests {
                     worst = max(worst, abs(Int(written.bytes[index]) - Int(expected.bytes[index])))
                 }
             }
-            #expect(worst <= 1)
+            #expect(worst <= 2)
         }
     }
 
