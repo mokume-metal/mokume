@@ -56,7 +56,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 # 読み口とタイムアウトは site_source が持つ (#815)。**この 3 本は必ず一緒に呼ばれる**
 # ので、写しを持つと「手元では通るが公開先だけ落ちる」が起きる
-from site_source import FETCH_TIMEOUT_SECONDS, HTML_IMAGE, Source  # noqa: E402,F401
+from site_source import (  # noqa: E402,F401
+    FETCH_TIMEOUT_SECONDS,
+    HTML_IMAGE,
+    Source,
+    Unreachable,
+)
 
 ENTRY_NAME = "index.html"
 # 面へ入る道。**相対で書く**ので、基準パスに依らずこの形になる。モジュール名までは
@@ -133,7 +138,14 @@ def main() -> int:
     )
     arguments = parser.parse_args()
 
-    problems = check(Source(arguments.target), arguments.readme)
+    try:
+        problems = check(Source(arguments.target), arguments.readme)
+    except Unreachable as unreachable:
+        # **「出ていない」ではなく「読めなかった」。** 混ぜると直す先を間違える
+        # (置き忘れを直すのか、配信を直すのか)。向きは site_source の冒頭が持つ
+        print(f"入口を検められない — {unreachable}", file=sys.stderr)
+        return 1
+
     if problems:
         print("入口が面として成立していない:", file=sys.stderr)
         for problem in problems:

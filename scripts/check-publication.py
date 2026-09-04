@@ -55,16 +55,13 @@ import re
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-# 相手を待つ上限は site_source が持つ (#815)。この検査と面の 3 本は同じ公開先を見るので、
-# 値が食い違うと「手元では通るが公開先だけ落ちる」が起きる。
-# **読み方までは寄せていない** — read_stamp は引けなかった理由を文字列で返す契約で、
-# Source.read は 404 以外を投げる。向きを揃えるのは #820
-from site_source import FETCH_TIMEOUT_SECONDS  # noqa: E402
+# 読み口・相手を待つ上限・引けなかったときの向きは site_source が持つ (#815 / #865)。
+# この検査と面の 3 本は同じ公開先を見るので、値や向きが食い違うと「手元では通るが
+# 公開先だけ落ちる」が起きる
+from site_source import FETCH_TIMEOUT_SECONDS, Source, Unreachable  # noqa: E402,F401
 
 # 面を向ける先。ここが意図の正典で、GitHub 側の設定はその写し
 DOMAIN = "mokume.org"
@@ -109,23 +106,19 @@ def read_stamp(site: str) -> tuple[str | None, str | None]:
 
     **引く先はディレクトリでもよい。** 手元で組んだ `_site` にそのまま当てられると、
     配信の事故と組み立ての事故を切り分けられる (`check-published-reference.py` が
-    同じ形をとっているのに倣う)。
+    同じ形をとっているのに倣う) — その分岐は `Source` が持つ。
+
+    **引けなかったときの向きも `Source` が持つ** (#865)。ここで受け直して文字列にするのは、
+    この口だけが「(SHA, 理由)」を返す契約だからである — 呼び出し側が猶予 (`GRACE_SECONDS`)
+    の判定と並べて名乗る。**「無い」と「引けなかった」は Source の側で既に分かれている**
+    ので、ここでは 404 とディレクトリの取り違えが起きない。
     """
-    if site.startswith(("http://", "https://")):
-        url = f"{site.rstrip('/')}/{STAMP_NAME}"
-        try:
-            with urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_SECONDS) as response:
-                raw = response.read()
-        except urllib.error.HTTPError as error:
-            error.close()  # 例外そのものが応答なので、閉じないと警告が残る
-            return None, f"{url} が引けない (HTTP {error.code})"
-        except Exception as error:  # 証明書・名前解決・接続の失敗をここで名乗る
-            return None, f"{url} が引けない: {error}"
-    else:
-        path = stamp_path(pathlib.Path(site))
-        if not path.is_file():
-            return None, f"{path} に印が無い"
-        raw = path.read_bytes()
+    try:
+        raw = Source(site).read(STAMP_NAME)
+    except Unreachable as unreachable:
+        return None, str(unreachable)
+    if raw is None:
+        return None, f"{site} に印 ({STAMP_NAME}) が無い"
 
     text = raw.decode("utf-8", errors="replace").strip()
     if not COMMIT.match(text):
