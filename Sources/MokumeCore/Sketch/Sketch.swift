@@ -98,11 +98,14 @@ public protocol Sketch: AnyObject {
     /// **押しっぱなしでは連射される** (手本 — Processing / p5.js — と同じ)。1 回だけ
     /// 効かせたいなら、押されているキーの集合 (``isKeyDown(_:)``) を自分で見る。
     ///
-    /// どのキーかを符号で知る口は、まだ無い ([#806](https://github.com/mokume-metal/mokume/issues/806)
-    /// で体系を決めてから足す)。文字を打つ用途には ``keyTyped()`` と ``key`` を使う。
+    /// どのキーが動いたかは ``keyCode`` から読む。文字を打つ用途には ``keyTyped()`` と
+    /// ``key`` を使う。
     func keyPressed()
 
     /// キーが離された瞬間に呼ばれる。
+    ///
+    /// 離されたキーも ``keyCode`` が指す — **最後に動いたキー**なので、押した側と同じ
+    /// 口から読める。
     func keyReleased()
 
     /// **文字を生むキー**が押されたとき、``keyPressed()`` の直後に続けて呼ばれる。

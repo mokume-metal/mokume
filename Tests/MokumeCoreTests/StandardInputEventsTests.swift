@@ -148,9 +148,9 @@ struct StandardInputEventsTests {
                 .mouseDown(x: 10, y: 10, button: 0),
                 .mouseMoved(x: 40, y: 30),
                 .mouseUp(x: 40, y: 30, button: 0),
-                .keyDown(code: 0, characters: "a", isRepeat: false),
-                .keyDown(code: 126, characters: "\u{F700}", isRepeat: false),
-                .keyUp(code: 0),
+                .keyDown(code: .a, characters: "a", isRepeat: false),
+                .keyDown(code: .arrowUp, characters: "\u{F700}", isRepeat: false),
+                .keyUp(code: .a),
             ]
             let viaPipe = InputState()
             for event in events { try write(event.wireLine, to: writer) }
