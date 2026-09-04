@@ -56,9 +56,9 @@ enum WatchCommand {
         try ResourceDeclaration.check(in: directory)
 
         // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
-        // パッケージの場所へ置くと観測とだけ場所が割れる (#331)
+        // パッケージの場所へ置くと観測とだけ場所が割れる (#331)。**計算は 1 つ** (#791)
         let session = WatchSession(
-            directory: directory, facetBase: WorkDirectory.given ?? directory,
+            directory: directory, facetBase: invocation.facetBase(),
             configuration: invocation.configuration, reportsRate: true)
         say("見張っている: \(directory.path)")
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
@@ -155,7 +155,16 @@ enum WatchCommand {
     /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業
     /// ディレクトリへ置くと、子と別の区画を見ることになる (#331)。
     static func viewportFacet(for session: WatchSession) -> URL {
-        WorkDirectory.facet(StartupReads.viewport.key, under: session.facetBase)
+        viewportFacet(under: session.facetBase)
+    }
+
+    /// 与えた基準の下の、絵を渡す区画の場所。
+    ///
+    /// **綴りはここ 1 つ。** 置くのは見張りだが、`run` も「区画が残っていないか」を同じ
+    /// 場所へ見に行く — 別々に組むと、片方だけが基準を取り違えても誰も気付けない
+    /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。
+    static func viewportFacet(under base: URL) -> URL {
+        WorkDirectory.facet(StartupReads.viewport.key, under: base)
     }
 
     /// つまみの区画の場所。**絵を渡す区画と同じ基準へ置く** — 走らせている子が書く先と

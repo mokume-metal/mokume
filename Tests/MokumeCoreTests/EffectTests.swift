@@ -336,7 +336,7 @@ struct EffectTests {
 
         // 途中の絵 (反転だけ効いた絵) ではなく、効果をかける前の絵が出ている
         #expect(fingerprint(try canvas.target.encodeForDisplay().bytes) == plain)
-        #expect(canvas.warnedEffectFailed)
+        #expect(canvas.warnings.hasWarned(.effectFailed))
     }
 
     /// 入りの絵へ書くのは最後の 1 段だけで、その段の組み立てに失敗すれば 1 命令も
@@ -358,7 +358,7 @@ struct EffectTests {
         canvas.failEffectPassForTesting = nil
 
         #expect(fingerprint(try canvas.target.encodeForDisplay().bytes) == plain)
-        #expect(canvas.warnedEffectFailed)
+        #expect(canvas.warnings.hasWarned(.effectFailed))
     }
 
     // MARK: - 置き場

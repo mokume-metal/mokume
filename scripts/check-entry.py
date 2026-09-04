@@ -51,20 +51,20 @@ import argparse
 import pathlib
 import re
 import sys
-import urllib.error
-import urllib.request
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# 読み口とタイムアウトは site_source が持つ (#815)。**この 3 本は必ず一緒に呼ばれる**
+# ので、写しを持つと「手元では通るが公開先だけ落ちる」が起きる
+from site_source import FETCH_TIMEOUT_SECONDS, HTML_IMAGE, Source  # noqa: E402,F401
 
 ENTRY_NAME = "index.html"
 # 面へ入る道。**相対で書く**ので、基準パスに依らずこの形になる。モジュール名までは
 # 見ない (上の「責務の線」) ので、面の入口である documentation/ で止める
 FACE_LINK = re.compile(r"""<a\s[^>]*href=["']\.?/?documentation/[^"']*["']""", re.IGNORECASE)
-# 絵。src が外部 URL のものだけを資産と数える
-IMAGE_SOURCE = re.compile(
-    # **`src` の直前で属性の切れ目を要求する。** 要求しないと `data-src=` の末尾に
-    # 一致してしまい、絵として飾ってあるだけのものを本物と数える
-    r"""<img\s[^>]*?(?<![-\w])src=["'](https?://[^"']+)["']""",
-    re.IGNORECASE,
-)
+# 絵。src が外部 URL のものだけを資産と数える。綴りは site_source が持つ (#815) —
+# 死活を見る側 (check-external-assets.py) と同じものを読まないと、片方だけが数える
+IMAGE_SOURCE = HTML_IMAGE
 # 外部ホストから持ってくる実行物と装飾。**絵とは別に扱う** — 絵が消えてもページは
 # 読めるが、これらが消えるとページの意味が変わる
 EXTERNAL_SCRIPT = re.compile(r"""<script\s[^>]*src=["']https?://""", re.IGNORECASE)
@@ -75,33 +75,6 @@ EXTERNAL_STYLE = re.compile(
 # HTML では直後に閉じ札が続き、Markdown ではインラインコードの縁が続くので、
 # 空白だけを区切りにすると両者で違う文字列が取れて必ず食い違う
 BREW_LINE = re.compile(r"brew install [^\s<`]+")
-
-FETCH_TIMEOUT_SECONDS = 30
-
-
-class Source:
-    """出力の読み口。ディレクトリでも URL でも同じ形で引けるようにする。"""
-
-    def __init__(self, target: str) -> None:
-        self.target = target.rstrip("/")
-        self.is_url = self.target.startswith(("http://", "https://"))
-        if not self.is_url:
-            self.root = pathlib.Path(self.target)
-
-    def read(self, relative: str) -> bytes | None:
-        """無ければ None。**例外は握り潰さない** — 読めなかった理由は呼び出し側が言う。"""
-        if self.is_url:
-            request = urllib.request.Request(f"{self.target}/{relative}")
-            try:
-                with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
-                    return response.read()
-            except urllib.error.HTTPError as error:
-                if error.code == 404:
-                    return None
-                raise
-        path = self.root / relative
-        return path.read_bytes() if path.is_file() else None
-
 
 def brew_line(text: str) -> str | None:
     """入れ方の 1 行。**最初の 1 本だけを見る** — README は他の入れ方も持つが、

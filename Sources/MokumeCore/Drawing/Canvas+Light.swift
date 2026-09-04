@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 // 光を置く。明るさの単位と寿命は ``Light`` と [ADR-0021] 決定 4 が定める。
@@ -75,9 +74,8 @@ extension Canvas {
 
     /// フレームの外で光を置いたことを、初回だけ知らせる。
     private func warnLightOutsideFrame() {
-        guard !warnedLightOutsideFrame else { return }
-        warnedLightOutsideFrame = true
-        Diagnostics.warn(
+        warnOnce(
+            .lightOutsideFrame,
             "光はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
                 + "初期化のときに置いた光はどのフレームにも属さないため、無視しました")
     }

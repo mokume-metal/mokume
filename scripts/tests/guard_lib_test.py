@@ -11,7 +11,9 @@
 実行は make ci-check (CI もこれを呼ぶ)。
 """
 
+import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -328,10 +330,15 @@ class WiringTest(unittest.TestCase):
             self.assertNotIn("--repo)", text, f"{name} に自前の -R 抽出が残っている")
 
     def test_both_guards_pass_the_working_directory(self):
-        """cwd を渡さないと、-R が無いコマンドの宛先を決められない (#611)。"""
+        """cwd を渡さないと、-R が無いコマンドの宛先を決められない (#611)。
+
+        payload から取り出すのは hook_payload の仕事になった (#815) ので、guard 側で
+        見るのは「共有の口から受け取っているか」である。
+        """
+        self.assertIn(".cwd", LIB.read_text(), "guard-lib.sh が payload の cwd を読んでいない")
         for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
             text = (REPO / "scripts" / name).read_text()
-            self.assertIn(".cwd", text, f"{name} が payload の cwd を読んでいない")
+            self.assertIn("HOOK_CWD", text, f"{name} が cwd を宛先の判定へ渡していない")
 
     def test_both_guards_show_the_shared_escape_hatch(self):
         """逃げ道の文面を書き分けると片方だけ古くなる (#611)。"""
@@ -344,6 +351,188 @@ class WiringTest(unittest.TestCase):
         for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
             text = (REPO / "scripts" / name).read_text()
             self.assertNotIn("readonly GH=", text, f"{name} に古い正規表現が残っている")
+
+
+# --- フックの入口と出口 -------------------------------------------------------
+
+
+def run_lib(script, stdin="", **kwargs):
+    """guard-lib.sh を source した bash で 1 行走らせる。"""
+    return subprocess.run(
+        ["/bin/bash", "-c", f'. "{LIB}"\n{script}'],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        **kwargs,
+    )
+
+
+class HookSurfaceTest(unittest.TestCase):
+    """差し戻しと payload の解き方 (#815)。
+
+    **綴りは Claude Code 側の仕様に張り付いている。** 直し漏れた 1 本は「JSON を
+    返さない = 素通し」になり、guard が黙って効かなくなる (#160 で実際に踏んだ形)。
+    """
+
+    def test_deny_returns_the_shape_claude_code_reads(self):
+        proc = run_lib('hook_deny "理由の本文"')
+        self.assertEqual(proc.returncode, 0, "deny は 0 で終える (非 0 は故障と読まれる)")
+        out = json.loads(proc.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["hookEventName"], "PreToolUse")
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertEqual(out["permissionDecisionReason"], "理由の本文")
+
+    def test_deny_carries_a_multiline_reason_verbatim(self):
+        """差し戻しは読まれる前提の文章。改行・引用符で JSON が壊れない。"""
+        reason = '1 行目\n"引用" と $(展開) と \'単引用\'\n3 行目'
+        # 引数は argv で渡す (本文に " も ' も入るため)
+        proc = subprocess.run(
+            ["/bin/bash", "-c", f'. "{LIB}"\nhook_deny "$1"', "_", reason],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecisionReason"], reason
+        )
+
+    def test_payload_falls_back_to_the_process_directory(self):
+        """cwd を持たない payload でも宛先を決められる (省略は $PWD)。"""
+        proc = run_lib('hook_payload; printf "%s" "$HOOK_CWD"', stdin="{}", cwd=str(REPO))
+        self.assertEqual(proc.stdout, str(REPO))
+
+    def test_payload_reads_the_cwd_the_hook_received(self):
+        proc = run_lib(
+            'hook_payload; printf "%s" "$HOOK_CWD"', stdin='{"cwd":"/tmp/elsewhere"}'
+        )
+        self.assertEqual(proc.stdout, "/tmp/elsewhere")
+
+    def test_missing_jq_passes_through(self):
+        """**fail open。** guard が壊れてツールが使えなくなるほうが害が大きい。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            # jq だけが無い PATH を組む (cat は payload の読み取りに要る)
+            os.symlink("/bin/cat", Path(tmp) / "cat")
+            proc = run_lib(
+                'hook_payload; echo 通ってはいけない',
+                stdin='{"cwd":"/tmp"}',
+                env={"PATH": tmp},
+            )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "", "jq が無いのに判定を続けている")
+
+    def test_command_absent_passes_through(self):
+        """Edit / Write のようにコマンドを持たない入力では素通しで終わる。"""
+        proc = run_lib(
+            'hook_payload; hook_command; echo 通ってはいけない',
+            stdin='{"tool_input":{"file_path":"/x"}}',
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "")
+
+    def test_command_is_taken_from_the_tool_input(self):
+        proc = run_lib(
+            'hook_payload; hook_command; printf "%s" "$HOOK_COMMAND"',
+            stdin='{"tool_input":{"command":"gh pr view 1"}}',
+        )
+        self.assertEqual(proc.stdout, "gh pr view 1")
+
+    def test_help_request(self):
+        for command, expected in (
+            ("gh pr " + CREATE + " --help", True),
+            ("gh pr " + CREATE + " -h", True),
+            ("gh pr " + CREATE + " -h --fill", True),
+            ("gh pr " + CREATE + " --fill", False),
+            # --help を含む語は違う (--helper のような綴りで素通しさせない)
+            ("gh pr " + CREATE + " --helper x", False),
+            # 引用符の中の -h は独立した語ではないので当たらない。本文で -h に言及した
+            # だけの呼び出しを素通しさせない (guard-lib の誤検知の方針と同じ向き)
+            ("gh pr " + CREATE + " --body '-h'", False),
+        ):
+            with self.subTest(command=command):
+                proc = subprocess.run(
+                    ["/bin/bash", "-c", f'. "{LIB}"\nis_help_request "$1"', "_", command],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(proc.returncode == 0, expected)
+
+
+class HookExitIsSharedTest(unittest.TestCase):
+    """**フックの出口が 1 箇所であることを構造で見る (#815)。**
+
+    #160 は `pr-identity-guard.sh` が bash 3.2 のパースに失敗して JSON を返さず、
+    PreToolUse フックとしては**素通しと同じ**になった事故である。あのときフックは
+    1 本だったから気付けた。綴りが 3 本に散った状態で仕様が動けば、直し漏れた 1 本は
+    黙って効かなくなる。
+
+    **一覧は数え上げない** — `scripts/*-guard.sh` を glob するので、4 本目を足した人が
+    ここを直さなくても掛かる (`bash_invocation_test.py` が検査ファイル全体を glob して
+    `/bin/bash` を見張っているのと同じ構え)。
+    """
+
+    def hooks(self):
+        found = sorted(p for p in (REPO / "scripts").glob("*-guard.sh"))
+        # 対象が 0 件の緑は、通っていることに意味が無い (置き場の移動を緑のまま
+        # 見逃さないため。bash_invocation_test.py と同じ構え)
+        self.assertTrue(found, "検査対象のフックが 1 つも無い")
+        return found
+
+    def offending(self, path, predicate):
+        """条件に当たる行を「行番号: 中身」で返す。**散文は見ない。**
+
+        差し戻しの向き (`ask ではなく deny なのは…`) は解説として書かれているので、
+        コメント行を数えると直せない赤になる。
+        """
+        found = []
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if predicate(line):
+                found.append(f"  {path.name}:{number}: {line.strip()}")
+        return found
+
+    def test_no_hook_spells_the_json_itself(self):
+        for path in self.hooks():
+            with self.subTest(hook=path.name):
+                lines = self.offending(path, lambda line: "permissionDecision" in line)
+                if lines:
+                    self.fail(
+                        f"{path.name} が差し戻しの JSON を自前で組んでいる:\n"
+                        + "\n".join(lines)
+                        + "\n\n直し方: guard-lib.sh の hook_deny <理由> を通す。"
+                        "綴りが散ると、仕様が動いたとき直し漏れた 1 本が素通しになる (#160)。"
+                    )
+
+    def test_no_hook_defines_its_own_deny(self):
+        for path in self.hooks():
+            with self.subTest(hook=path.name):
+                lines = self.offending(path, lambda line: re.match(r"\s*deny\(\)", line))
+                if lines:
+                    self.fail(
+                        f"{path.name} に自前の deny() が残っている:\n"
+                        + "\n".join(lines)
+                        + "\n\n直し方: 定義を落として hook_deny を呼ぶ。"
+                    )
+
+    def test_every_hook_goes_through_the_shared_exit(self):
+        for path in self.hooks():
+            with self.subTest(hook=path.name):
+                text = path.read_text()
+                self.assertIn("guard-lib.sh", text, f"{path.name} が共有ライブラリを読んでいない")
+                self.assertIn("hook_deny", text, f"{path.name} が共有の出口を通っていない")
+
+    def test_every_hook_fails_open_when_the_library_is_missing(self):
+        """source に失敗したら素通し。ライブラリを共有した代償を guard 側で払わない。"""
+        for path in self.hooks():
+            with self.subTest(hook=path.name):
+                self.assertRegex(
+                    path.read_text(),
+                    r'guard-lib\.sh" 2>/dev/null \|\| exit 0',
+                    f"{path.name} の source が fail open になっていない",
+                )
+
+    def test_the_shared_exit_lives_in_the_library(self):
+        """畳んだ先が空になっていない (この検査自身が空回りしていたら赤くする)。"""
+        self.assertIn("permissionDecision", LIB.read_text())
 
 
 if __name__ == "__main__":

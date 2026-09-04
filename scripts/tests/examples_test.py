@@ -39,6 +39,8 @@ def _load(name: str, path: Path):
 
 wrapping = _load("example_wrapping", REPO / "scripts" / "example_wrapping.py")
 examples = _load("check_examples", SCRIPT)
+# 綴りを共有しているかを見るために、撮る側も読む (#815)
+shots = _load("example_shots", REPO / "scripts" / "example-shots.py")
 
 # 落とす例には目印を置き、差し替えた swiftc がそれを見て error を吐く。
 # 本物の型検査は make examples が受け持つ (こちらは仕組みの側だけを見る)
@@ -375,6 +377,58 @@ class 通しで(unittest.TestCase):
         (self.root / "Sources/Untracked.swift").write_text("/// ```swift\n/// BROKEN()\n/// ```\n")
         self.置く("Sources/A.swift", "public func a() {}\n")
         self.assertEqual(self.打つ().returncode, 0)
+
+
+class 綴りの共有(unittest.TestCase):
+    """**組めることを見る側と撮る側が、同じ印を読むこと** (#667・#815)。
+
+    #667 は「片方だけが `文脈` を読んだ」事故である。あのとき撮る側のコメントには
+    「あちらが読むものをこちらも読む」と書かれていたが、**綴りは写しだった** —
+    書いてあることと実物が食い違っていても、誰も赤くならなかった。
+
+    ここで固定するのは「同じ物を読んでいる」という**同一性**だけで、印の意味は
+    上の 集める が見る。同一性は `is` で見る (等しい正規表現ではなく、同じ物)。
+    """
+
+    def test_印は_1_本しかない(self):
+        self.assertIs(examples.MARK, wrapping.MARK, "組めることを見る側が自前の印を持っている")
+        self.assertIs(shots.MARK, wrapping.MARK, "撮る側が自前の印を持っている")
+
+    def test_囲みは_2_綴りだけで_どちらも共有の置き場から来る(self):
+        # `.md` も読む側は `///` を任意にし、説明文だけを読む側は必須にする。
+        # **どちらも example_wrapping の中の綴りである**ことを見る
+        self.assertIs(examples.FENCE_OPEN, wrapping.FENCE_OPEN)
+        self.assertIs(examples.FENCE_CLOSE, wrapping.FENCE_CLOSE)
+        self.assertIs(shots.FENCE_OPEN, wrapping.DOC_FENCE_OPEN)
+        self.assertIs(shots.FENCE_CLOSE, wrapping.DOC_FENCE_CLOSE)
+
+    def test_2_綴りの違いは_説明文の外を読むかだけ(self):
+        """畳めない理由が本物であること。緩い側だけが素の Markdown を読む。"""
+        fence = "`" * 3 + "swift"
+        self.assertTrue(wrapping.FENCE_OPEN.match(fence))
+        self.assertFalse(wrapping.DOC_FENCE_OPEN.match(fence), "説明文の外まで拾っている")
+        self.assertTrue(wrapping.DOC_FENCE_OPEN.match(f"/// {fence}"))
+
+    def test_文脈の印を両者が同じに読む(self):
+        """同じ 1 行から、両者が同じ `文脈` の宣言を取り出す。"""
+        line = "/// <!-- example: 文脈 let radius = 3.0 -->"
+        for name, module in (("組めることを見る側", examples), ("撮る側", shots)):
+            with self.subTest(reader=name):
+                match = module.MARK.match(line)
+                self.assertIsNotNone(match, f"{name} が印を読めていない")
+                self.assertEqual(match["kind"], "文脈")
+                self.assertEqual(match["rest"], "let radius = 3.0")
+
+    def test_撮る側は組めない印を宣言として積まない(self):
+        """印が 1 本になっても、`組めない` を `文脈` の代わりに積んではいけない。"""
+        lines = [
+            "/// <!-- example: 組めない 投げる呼び出し -->",
+            "/// ```swift",
+            "/// try thing()",
+            "/// ```",
+            "/// <!-- shot: 絵 -->",
+        ]
+        self.assertEqual(shots.context_above(lines, len(lines) - 1), [])
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 /// 並べている途中の頂点 1 つぶん。
@@ -486,16 +485,14 @@ extension Canvas {
     }
 
     private func warnVertexOutsideShapeOnce() {
-        guard !warnedVertexOutsideShape else { return }
-        warnedVertexOutsideShape = true
-        Diagnostics.warn(
+        warnOnce(
+            .vertexOutsideShape,
             "vertex(): beginShape() と endShape() の間で呼んでください。この呼び出しは何もしません")
     }
 
     private func warnBadVertexOnce() {
-        guard !warnedBadVertex else { return }
-        warnedBadVertex = true
-        Diagnostics.warn(
+        warnOnce(
+            .badVertex,
             "vertex(): 数でない座標・無限の座標が渡されたので、その頂点は置きませんでした")
     }
 }

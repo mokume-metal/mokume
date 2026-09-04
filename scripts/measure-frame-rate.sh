@@ -54,28 +54,10 @@ if [ "${1:-}" = "--observe" ]; then
   sleep 1
 
   # 識別子を変えながら要求を置き続ける。置き方と待ち方は ADR-0018 決定 3 の規約で、
-  # scripts/check-observation-roundtrip.sh と同じ形にしてある
-  python3 - "$WORK/.mokume/observe" "$SECONDS_TO_MEASURE" <<'REQUEST' &
-import json, os, pathlib, sys, time
-
-observe, limit = pathlib.Path(sys.argv[1]), float(sys.argv[2])
-deadline = time.time() + limit
-index = 0
-while time.time() < deadline:
-    index += 1
-    identifier = f"m{index}"
-    temporary = observe / ".request.json.tmp"
-    temporary.write_text(json.dumps({"id": identifier, "scale": 0.5}))
-    os.replace(temporary, observe / "request.json")
-    answer = time.time() + 5
-    while time.time() < answer:
-        try:
-            if json.loads((observe / "report.json").read_text()).get("id") == identifier:
-                break
-        except Exception:
-            pass
-        time.sleep(0.005)
-REQUEST
+  # **実装は scripts/observe_lib.py の 1 つだけ**である (#817 まではここと
+  # check-observation-roundtrip.sh に写しがあり、コメントがそれを自白していた)
+  python3 scripts/frame_rate_observe.py pressure \
+    "$WORK/.mokume/observe" "$SECONDS_TO_MEASURE" &
   requester_pid=$!
 
   wait "$probe_pid" 2>/dev/null || true
@@ -83,40 +65,10 @@ REQUEST
   kill "$requester_pid" 2>/dev/null || true
   requester_pid=""
 
-  python3 - "$FPS_LOG" "$BASELINE_SECONDS" "$FLOOR_RATIO" <<'JUDGE'
-import re, statistics, sys
-
-log, baseline_seconds, floor_ratio = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
-matches = (re.match(r"fps=([\d.]+)", line) for line in open(log))
-rates = [float(m.group(1)) for m in matches if m]
-
-# 観測が始まるまでの立ち上がりを落としてから基準を取る。**観測そのものの費用
-# (60fps → 8fps) は基準の側に入る**ので、判定に残るのは「そこからさらに落ちるぶん」
-# だけになる — #370 が見たいものはそれである
-warmup = 5
-sample = rates[warmup:]
-if len(sample) < baseline_seconds + 10:
-    print(f"NG 測れた秒数が足りない ({len(sample)} 行)")
-    sys.exit(1)
-
-baseline = statistics.median(sample[:baseline_seconds])
-floor = baseline * floor_ratio
-print(f"観測を始めた直後の水準 ({baseline_seconds} 秒ぶんの中央値): {baseline:.1f} fps")
-print(f"下回ったら赤にする値: {floor:.1f} fps ({floor_ratio:.0%})")
-
-after = sample[baseline_seconds:]
-fell = [(warmup + baseline_seconds + i + 1, rate)
-        for i, rate in enumerate(after) if rate < floor]
-if fell:
-    at, rate = fell[0]
-    print(f"NG {at} 秒あたりで {rate:.1f} fps へ落ちた ({len(fell)} 秒ぶんが基準の下)")
-    sys.exit(1)
-
-print(f"ok 落ちなかった (以後の最低 {min(after):.1f} fps / 測った {len(sample)} 秒)")
-# **緑はこの 1 回について以上のことを言わない。** 落ちるのは間欠なので、完了条件は
-# 3 回続けて緑になることである (#370)
-print("注意: 落ちるのは間欠 — 緑 1 回では足りない。3 回続けて回すこと (#370)")
-JUDGE
+  # 判定は純関数なので .py に出してある。中央値 → 閾値 → 最初に割った秒という組み立ては
+  # 絵も GPU も無しに unittest で固定できる (#817)
+  python3 scripts/frame_rate_observe.py judge \
+    "$FPS_LOG" "$BASELINE_SECONDS" "$FLOOR_RATIO"
   exit $?
 fi
 

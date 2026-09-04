@@ -480,8 +480,112 @@ recheck_missing() { # stdin=プラン本文。足りないものを 1 行 1 件�
     <<<"$body" || echo '完了条件の現況 (まだ有効 / 既に満たされている / 差し替えが要る)'
 }
 
+# --- 差し戻しの文言と指示文 -------------------------------------------------
+#
+# **文言は関数に切り出す。** scripts/review-gate.sh と scripts/pr-identity-guard.sh が
+# 同じ形をとっており、あちらには bash 3.2 の理由がある — `f "$(cat <<'EOF' … EOF)"` と
+# 書くと 3.2 は $( … ) の中の here-document の本文まで閉じ括弧の探索対象にするので、
+# 本文に $( が現れるとネストを誤認して no closing ')' になる (#160)。
+#
+# こちらの文言はいま $( を含まないが、**含んだ日に壊れる**のは同じである。加えて
+# capture() が 159 行あったのはこの 4 つを抱えていたからで、出すと 80 行台に落ちる
+# (#815)。
+
+plan_body_missing_message() { # $1=payload
+  cat <<EOF
+ExitPlanMode は通りましたが、プラン本文を取り出せませんでした。GitHub 用の記録は作れていません。
+
+プランは手元に残っているので、対象の PR / Issue へ scripts/comment.sh で投稿してください。
+そのうえで、フックが受け取る形が変わっていないか scripts/plan-record.sh の plan_body() を確かめてください。
+
+  受け取ったキー: tool_input=$(payload_keys "$1" tool_input) / tool_response=$(payload_keys "$1" tool_response)
+EOF
+}
+
+secrets_found_message() { # $1=見つかった箇所 (1 行 1 件)
+  cat <<EOF
+プランに秘密情報らしき文字列があるため、GitHub 用の記録を作りませんでした。
+
+$(printf '%s' "$1" | sed 's/^/  - /')
+
+その値を本文から外して (環境変数名や参照だけにして) からプランを立て直してください。
+本文は出力していません。行番号を頼りに手元のプランを確認してください。
+EOF
+}
+
+recheck_missing_message() { # $1=足りないもの (1 行 1 件)
+  cat <<EOF
+着手プランに、完了条件の再チェックが見当たりません (ADR-0031 決定 4)。足りないのは:
+
+$(printf '%s' "$1" | sed 's/^/  - /')
+
+**トリアージ済みのラベルは、付いた時点の判断しか表しません。** 着手する前に Issue 本文の
+完了条件を現行のコードと突き合わせ、各条件が「まだ有効」「既に満たされている」「差し替えが
+要る」のどれかをプランに書いてください。ずれていれば Issue 本文のほうを先に更新します。
+
+  #457 — 起票時の 3 条件は、着手時点で既に別の PR が解消していた
+  #448 — 載せ替える対象は 4 つではなく 2 つだった
+
+**見ているのは書いてあることだけで、判定が正しいかは見ていません。** 記録は作っていないので、
+プランを直してもう一度 ExitPlanMode を通してください。
+EOF
+}
+
+# 投稿の指示。**投稿先が確定しているかで 3 通りに分かれる** (#646)。
+#   $1=記録ファイル $2=他セッションの着手の跡 $3=候補の件数 $4=候補すべて
+#   $5=確定した候補 $6=自動では判断できなかった箇所
+post_instructions() {
+  local file=$1 marks=$2 count=$3 targets=$4 target=$5 warns=$6 candidate
+  echo "プランを GitHub 用に整えました: $file"
+  echo "(絶対パスとホームディレクトリは畳んであります。署名は投稿時に自動で付きます)"
+  echo
+  if [ -n "$marks" ]; then
+    echo "注意: この Issue には既に他のセッションの着手の跡があります。二重着手かもしれません:"
+    printf '%s\n' "$marks" | sed 's/^/  - /'
+    echo
+    echo "先にそれを読み、同じ仕事なら畳んでください。**この注意は着手を止めません** —"
+    echo "並行が正しいこともあるので、判断はあなたに委ねます。"
+    echo
+  fi
+  if [ "$count" -gt 1 ]; then
+    # 番号が 2 つ以上あるプランでは、どれが対象かを機械が決めない (#646)。
+    # 決めると、本来の対象が 2 番目以降にあるときに無関係な Issue を指す
+    echo "投稿先を確定できません。プランが名乗る番号が $count 件あります。"
+    echo "どれが対象かを選んで、1 つに投稿してください:"
+    echo
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      echo "  $(post_command "${candidate%% *}" "${candidate##* }" "$file")"
+    done <<< "$targets"
+  elif [ -n "$target" ]; then
+    echo "次のコマンドで投稿してください:"
+    echo
+    echo "  $(post_command "${target%% *}" "${target##* }" "$file")"
+  else
+    echo "投稿先の PR / Issue がまだありません。対象の Issue か、PR を立てたらそこへ:"
+    echo
+    echo "  $(post_command issue '<番号>' "$file")"
+    echo
+    echo "(このセッションを終えようとしたときに、まだ投稿されていなければ差し戻します)"
+  fi
+  echo
+  echo "投稿の前に本文を読み、他の開発者が読む前提で次を確かめてください。"
+  echo "気になる箇所は $file を直接編集してから投稿して構いません (--dry-run で確認できます)。"
+  echo "  - 自分の環境でだけ成り立つ手順 (個人の設定、ローカルのポート、手元のディレクトリ構成)"
+  echo "  - 他の開発者には不要な個人情報 (メールアドレス、社内 URL、1Password の参照)"
+  echo "  - 未公開の計画や、まだ相談していない他人の名前"
+  if [ -n "$warns" ]; then
+    echo
+    echo "次の箇所は自動では判断できませんでした。残すかどうか本文を見て決めてください:"
+    printf '%s\n' "$warns" | sed 's/^/  - /'
+  fi
+}
+
 capture() {
-  local payload plan cwd session root branch dir id file body findings blocks warns targets target count recheck marks candidate
+  # 指示文の組み立ては post_instructions が持つので、その中でしか使わない変数
+  # (candidate) はここには無い
+  local payload plan cwd session root branch dir id file body findings
+  local blocks warns targets target count recheck marks
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -498,14 +602,7 @@ capture() {
     # ExitPlanMode が通った以上プランは必ず存在するので、本文が取れないこと自体が異常。
     # ここだけは黙って諦めない — 無言で終わると guard も黙り、「プランを GitHub に
     # 残す」仕組みが誰にも気付かれないまま無効化される
-    cat >&2 <<EOF
-ExitPlanMode は通りましたが、プラン本文を取り出せませんでした。GitHub 用の記録は作れていません。
-
-プランは手元に残っているので、対象の PR / Issue へ scripts/comment.sh で投稿してください。
-そのうえで、フックが受け取る形が変わっていないか scripts/plan-record.sh の plan_body() を確かめてください。
-
-  受け取ったキー: tool_input=$(payload_keys "$payload" tool_input) / tool_response=$(payload_keys "$payload" tool_response)
-EOF
+    plan_body_missing_message "$payload" >&2
     exit 2
   fi
 
@@ -528,35 +625,14 @@ EOF
 
   if [ -n "$blocks" ]; then
     # 保存もしない。秘密情報を含むファイルを .git の中に置き去りにしないため
-    cat >&2 <<EOF
-プランに秘密情報らしき文字列があるため、GitHub 用の記録を作りませんでした。
-
-$(printf '%s' "$blocks" | sed 's/^/  - /')
-
-その値を本文から外して (環境変数名や参照だけにして) からプランを立て直してください。
-本文は出力していません。行番号を頼りに手元のプランを確認してください。
-EOF
+    secrets_found_message "$blocks" >&2
     exit 2
   fi
 
   recheck=$(printf '%s' "$body" | recheck_missing)
   if [ -n "$recheck" ]; then
     # 記録は作らない。プランを直して ExitPlanMode を通し直させる
-    cat >&2 <<EOF
-着手プランに、完了条件の再チェックが見当たりません (ADR-0031 決定 4)。足りないのは:
-
-$(printf '%s' "$recheck" | sed 's/^/  - /')
-
-**トリアージ済みのラベルは、付いた時点の判断しか表しません。** 着手する前に Issue 本文の
-完了条件を現行のコードと突き合わせ、各条件が「まだ有効」「既に満たされている」「差し替えが
-要る」のどれかをプランに書いてください。ずれていれば Issue 本文のほうを先に更新します。
-
-  #457 — 起票時の 3 条件は、着手時点で既に別の PR が解消していた
-  #448 — 載せ替える対象は 4 つではなく 2 つだった
-
-**見ているのは書いてあることだけで、判定が正しいかは見ていません。** 記録は作っていないので、
-プランを直してもう一度 ExitPlanMode を通してください。
-EOF
+    recheck_missing_message "$recheck" >&2
     exit 2
   fi
 
@@ -592,51 +668,7 @@ EOF
   # 確定していないときは候補を全部残す (#646)
   write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
 
-  {
-    echo "プランを GitHub 用に整えました: $file"
-    echo "(絶対パスとホームディレクトリは畳んであります。署名は投稿時に自動で付きます)"
-    echo
-    if [ -n "$marks" ]; then
-      echo "注意: この Issue には既に他のセッションの着手の跡があります。二重着手かもしれません:"
-      printf '%s\n' "$marks" | sed 's/^/  - /'
-      echo
-      echo "先にそれを読み、同じ仕事なら畳んでください。**この注意は着手を止めません** —"
-      echo "並行が正しいこともあるので、判断はあなたに委ねます。"
-      echo
-    fi
-    if [ "$count" -gt 1 ]; then
-      # 番号が 2 つ以上あるプランでは、どれが対象かを機械が決めない (#646)。
-      # 決めると、本来の対象が 2 番目以降にあるときに無関係な Issue を指す
-      echo "投稿先を確定できません。プランが名乗る番号が $count 件あります。"
-      echo "どれが対象かを選んで、1 つに投稿してください:"
-      echo
-      while IFS= read -r candidate; do
-        [ -n "$candidate" ] || continue
-        echo "  $(post_command "${candidate%% *}" "${candidate##* }" "$file")"
-      done <<< "$targets"
-    elif [ -n "$target" ]; then
-      echo "次のコマンドで投稿してください:"
-      echo
-      echo "  $(post_command "${target%% *}" "${target##* }" "$file")"
-    else
-      echo "投稿先の PR / Issue がまだありません。対象の Issue か、PR を立てたらそこへ:"
-      echo
-      echo "  $(post_command issue '<番号>' "$file")"
-      echo
-      echo "(このセッションを終えようとしたときに、まだ投稿されていなければ差し戻します)"
-    fi
-    echo
-    echo "投稿の前に本文を読み、他の開発者が読む前提で次を確かめてください。"
-    echo "気になる箇所は $file を直接編集してから投稿して構いません (--dry-run で確認できます)。"
-    echo "  - 自分の環境でだけ成り立つ手順 (個人の設定、ローカルのポート、手元のディレクトリ構成)"
-    echo "  - 他の開発者には不要な個人情報 (メールアドレス、社内 URL、1Password の参照)"
-    echo "  - 未公開の計画や、まだ相談していない他人の名前"
-    if [ -n "$warns" ]; then
-      echo
-      echo "次の箇所は自動では判断できませんでした。残すかどうか本文を見て決めてください:"
-      printf '%s\n' "$warns" | sed 's/^/  - /'
-    fi
-  } >&2
+  post_instructions "$file" "$marks" "$count" "$targets" "$target" "$warns" >&2
   exit 2
 }
 

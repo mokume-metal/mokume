@@ -68,65 +68,7 @@ else
 fi
 
 echo "== 観測と入力の要求を $ROUNDS 回続けて置く =="
-python3 - "$FACETS/.mokume" "$ROUNDS" "$DEADLINE" <<'PY'
-import json, os, pathlib, sys, time
-
-root = pathlib.Path(sys.argv[1])
-rounds, deadline = int(sys.argv[2]), float(sys.argv[3])
-observe, inbox = root / "observe", root / "input"
-
-
-def place(facet, payload):
-    """要求を原子的に置く (ADR-0018 決定 3)。"""
-    temporary = facet / ".request.json.tmp"
-    temporary.write_text(json.dumps(payload))
-    os.replace(temporary, facet / "request.json")
-
-
-def answered(facet, identifier):
-    """同じ識別子の応答が返るまで待つ。壁時計ではなく識別子の一致で完了を知る。"""
-    limit = time.time() + deadline
-    while time.time() < limit:
-        try:
-            report = json.loads((facet / "report.json").read_text())
-            if report.get("id") == identifier:
-                return report
-        except Exception:
-            pass
-        time.sleep(0.01)
-    return None
-
-
-missed = {"観測": [], "入力": []}
-# フレームが進み続けているか。**応答が返るだけでは足りない** — 止まったランタイムでも
-# 観測には応えられる (ADR-0018) ので、番号が動いていることまで見て絵の生死を分ける
-frames = []
-for index in range(1, rounds + 1):
-    identifier = f"r{index}"
-    place(observe, {"id": identifier})
-    place(inbox, {"id": identifier, "events": [{"type": "mouseMoved", "x": 1, "y": 2}]})
-
-    report = answered(observe, identifier)
-    if report is None:
-        missed["観測"].append(index)
-    else:
-        frames.append(report.get("frame", 0))
-    if answered(inbox, identifier) is None:
-        missed["入力"].append(index)
-
-failed = False
-for name, indexes in missed.items():
-    if indexes:
-        failed = True
-        shown = ", ".join(str(i) for i in indexes[:10])
-        print(f"{name}: 応答が返らなかった回 {shown}{' …' if len(indexes) > 10 else ''}")
-    print(f"{'NG' if indexes else 'ok'} {name} {rounds - len(indexes)}/{rounds}")
-
-if len(frames) >= 2 and frames[-1] <= frames[0]:
-    failed = True
-    print(f"NG フレームが進んでいない ({frames[0]} → {frames[-1]})")
-elif frames:
-    print(f"ok フレームは進み続けた ({frames[0]} → {frames[-1]})")
-
-sys.exit(1 if failed else 0)
-PY
+# 置き方・待ち方は ADR-0018 決定 3 の規約で、実装は scripts/observe_lib.py の 1 つだけ。
+# 数える側も .py へ出してある — 埋まったままでは lint も unittest も見ず、この手順は
+# 画面と GPU が要るので make ci-check にも入っていない (#817)
+python3 scripts/observation_roundtrip.py "$FACETS/.mokume" "$ROUNDS" "$DEADLINE"

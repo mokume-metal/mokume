@@ -21,7 +21,9 @@ import MokumeDiagnostics
 /// 書く向き (CPU → GPU) は、フレームの外でも中でも意味が変わらないのでここで開ける。
 ///
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
-public final class Numbers {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor public final class Numbers {
     /// 並びの長さ。
     public let count: Int
 
@@ -53,6 +55,12 @@ public final class Numbers {
         self.gpu = gpu
         fill(0)
     }
+
+    /// **置き場を常駐から退かせる** ([#738])。常駐の集合が抱えている限り、並びを
+    /// 手放しても解放されない。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    isolated deinit { gpu.retire(storage) }
 
     /// CPU から書く直前の待ち。**書く口はすべてここを通す。**
     private func settleBeforeWriting() {

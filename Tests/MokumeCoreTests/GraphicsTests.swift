@@ -371,7 +371,7 @@ struct GraphicsTests {
             layer.endDraw()
         }
 
-        #expect(canvas.warnedPlacingWhileDrawing)
+        #expect(canvas.warnings.hasWarned(.placingWhileDrawing))
     }
 
     @Test("描き切りに失敗しても投げず、前の絵が残る")

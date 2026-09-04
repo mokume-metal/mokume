@@ -18,6 +18,7 @@ PATH の先頭に偽の gh を置いて振る舞いを環境変数で決める�
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -138,29 +139,73 @@ LEAKY_ENV = [
 ]
 
 
-class PlanRecordTestCase(unittest.TestCase):
+# --- 道具立ての雛形 ----------------------------------------------------------
+# **1 度だけ組んで、検査ごとに写す** (#829)。用意の実体は git の起動 6 回
+# (init + config 3 + add + commit) で、1 件あたり 144ms かかっていた — 160 件ぶんで
+# 23 秒、検査そのものより重い。写しなら 6.4ms で、git を 1 回起動する下限 (8.1ms) を
+# 下回る。
+#
+# **署名を切る宣言は雛形の側に残す** (#344)。3 回の git config を環境変数
+# (GIT_AUTHOR_* / --no-gpg-sign) へ寄せても 55ms までは下がるが、その形では
+# scripts/tests/temp_repo_signing_test.py が要求するソース上の綴り
+# (commit.gpgsign=false) が消える。写しなら宣言を残したまま速くなるので、
+# 速さと担保が競合しない。
+_template: tempfile.TemporaryDirectory | None = None
+
+
+def setUpModule():
+    global _template
+    _template = tempfile.TemporaryDirectory()
+    root = Path(_template.name)
+
+    repo = root / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    git("init", "-q", "-b", "feat/plan-123")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    # 使い捨てのリポジトリは手元の署名設定から独立させる (#344)
+    git("config", "commit.gpgsign", "false")
+    (repo / "README.md").write_text("hi\n")
+    git("add", "-A")
+    git("commit", "-qm", "init")
+
+    # 偽 gh は**振る舞いを環境変数で決める**設計なので、雛形に 1 つ置けば足りる
+    # (ファイルそのものを書き換える検査は 1 件も無い)
+    bindir = root / "bin"
+    bindir.mkdir()
+    gh = bindir / "gh"
+    gh.write_text(FAKE_GH)
+    gh.chmod(0o755)
+
+
+def tearDownModule():
+    global _template
+    if _template is not None:
+        _template.cleanup()
+        _template = None
+
+
+class HookFixture:
+    """フックを叩く道具立て。**`unittest.TestCase` ではない** (#829)。
+
+    `TestCase` にすると、道具立てだけを借りたいクラスが**検査まで継承する**。実際
+    `StdinDeadlineTest` がそうなっていて、自前 6 件のために 73 件を 2 回走らせていた
+    (160 件走って別物は 87 件)。`self.addCleanup` や `self.assertIn` は、これを混ぜる
+    側が `TestCase` を継ぐので MRO 経由で届く。
+    """
+
     def setUp(self):
         self.workdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.workdir.cleanup)
-        root = Path(self.workdir.name)
+        root = Path(self.workdir.name) / "work"
+        shutil.copytree(_template.name, root)
 
         self.repo = root / "repo"
-        self.repo.mkdir()
-        self.git("init", "-q", "-b", "feat/plan-123")
-        self.git("config", "user.email", "t@example.com")
-        self.git("config", "user.name", "t")
-        # 使い捨てのリポジトリは手元の署名設定から独立させる (#344)
-        self.git("config", "commit.gpgsign", "false")
-        (self.repo / "README.md").write_text("hi\n")
-        self.git("add", "-A")
-        self.git("commit", "-qm", "init")
-
-        bindir = root / "bin"
-        bindir.mkdir()
-        gh = bindir / "gh"
-        gh.write_text(FAKE_GH)
-        gh.chmod(0o755)
-        self.bindir = bindir
+        self.bindir = root / "bin"
 
     def git(self, *args):
         subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
@@ -244,6 +289,8 @@ class PlanRecordTestCase(unittest.TestCase):
         for kind in ("issue", "pr"):
             self.assertNotIn(f"scripts/comment.sh {kind} {number}", stderr)
 
+
+class PlanRecordTestCase(HookFixture, unittest.TestCase):
     # --- サニタイズ (完了条件 3) ---------------------------------------------
 
     def test_sanitize_collapses_repo_and_home_paths(self):
@@ -1105,7 +1152,7 @@ class SelfContainedTest(unittest.TestCase):
 
 
 
-class StdinDeadlineTest(PlanRecordTestCase):
+class StdinDeadlineTest(HookFixture, unittest.TestCase):
     """stdin を待って無言に固まらない (#636)。
 
     **固まるのは EOF が来ない stdin である。** 空を渡した場合 (< /dev/null) は

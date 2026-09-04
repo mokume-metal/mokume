@@ -13,7 +13,7 @@ extension Sketch {
     ///
     /// ```swift
     /// func draw() {
-    ///     background(.display(red: 0.08, green: 0.09, blue: 0.12))
+    ///     background(20, 23, 31)
     ///     orbitControl()
     ///     lights()
     ///     push()

@@ -113,6 +113,126 @@ struct FrameGrowthTests {
             """)
     }
 
+    // MARK: - 死んだ資源が常駐から外れる
+
+    // 上の 2 本と見ているものが違う。あちらは「毎フレーム確保しない」で、こちらは
+    // **確保したものが死んだときに常駐から外れるか**である。常駐の集合は入れたものを
+    // 抱えるので、外す手を通さない限り、持ち主が死んでも中身は解放されない (#738)。
+
+    /// 字形の面を広げさせる回数。256 → 2048 まで 3 段。**上限まで行かせない** —
+    /// 4096 の面は 1 枚で 128 MiB あり、検査の費用が跳ね上がる。
+    private static let atlasGrowths = 3
+
+    @Test("字形の面を広げても、常駐の集合が増え続けない")
+    func regrowingTheGlyphAtlasDoesNotPileUpResidency() throws {
+        let gpu = try RenderDevice()
+        let atlas = try GlyphAtlas(gpu: gpu)
+        let settled = gpu.residencySet.allocationCount
+
+        for _ in 0..<Self.atlasGrowths { try atlas.grow(gpu: gpu) }
+        // 退かせたものが外れるのは、投入済みのコマンドが終わってからである
+        try gpu.settle()
+        let after = gpu.residencySet.allocationCount
+
+        #expect(
+            after == settled,
+            """
+            字形の面を \(Self.atlasGrowths) 回広げたら、常駐の集合が \(after - settled) 個増えた
+            (広げるのは取り直しなので、増減 0 のはず)。
+
+            `GlyphAtlas.grow` が前の面を常駐から退かせていない
+            ([#738](https://github.com/mokume-metal/mokume/issues/738))。面は 256 から
+            4096 まで倍々に育つので、外さないと最後は 1 枚 128 MiB の面まで全部残る。
+            """)
+        #expect(atlas.size == GlyphAtlas.initialSize << Self.atlasGrowths)
+    }
+
+    /// 作っては手放す回数。
+    private static let churns = 32
+
+    @Test("絵を作っては手放しても、常駐の集合が増え続けない")
+    func discardedImagesLeaveTheResidencySet() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
+        let canvas = try Canvas(target: target, gpu: gpu)
+
+        // 1 枚目は作って当たり前。2 枚目からの伸びを見る
+        do {
+            let first = try canvas.createImage(16, 16)
+            try canvas.draw { canvas.image(first, 0, 0) }
+        }
+        try gpu.settle()
+        let settled = gpu.residencySet.allocationCount
+
+        for _ in 0..<Self.churns {
+            let picture = try canvas.createImage(16, 16)
+            try canvas.draw { canvas.image(picture, 0, 0) }
+        }
+        try gpu.settle()
+        let after = gpu.residencySet.allocationCount
+
+        #expect(
+            after == settled,
+            """
+            絵を \(Self.churns) 枚作って手放したら、常駐の集合が \(after - settled) 個残った
+            (手放した絵の面は外れるはずなので、増減 0)。
+
+            `Image` が死んでも面が常駐の集合に抱えられたままだと、絵そのものが解放されない
+            ([#738](https://github.com/mokume-metal/mokume/issues/738))。`draw()` の中で
+            `loadImage` を呼ぶ書き方は、これでフレームごとに 1 枚ずつ積む。
+            """)
+    }
+
+    /// 断片と計算を作っては手放す回数。**組み立てが要るので少なくする。**
+    private static let shaderChurns = 8
+
+    @Test("断片・計算を作っては手放しても、常駐の集合と控えが増え続けない")
+    func discardedShadersLeaveTheCanvas() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
+        let canvas = try Canvas(target: target, gpu: gpu)
+
+        func churn() throws {
+            let computation = try canvas.makeComputation(
+                """
+                kernel void churn(device float *field [[buffer(0)]],
+                                  constant Values &values [[buffer(MOKUME_VALUES)]],
+                                  uint id [[thread_position_in_grid]])
+                {
+                    field[id] = values.tone;
+                }
+                """,
+                name: "churn", values: ["tone": .number(1)])
+            let field = try canvas.makeNumbers(count: 16)
+            try canvas.draw { canvas.compute(computation, over: 16, writes: [field]) }
+        }
+
+        try churn()
+        try gpu.settle()
+        let settled = gpu.residencySet.allocationCount
+
+        for _ in 0..<Self.shaderChurns { try churn() }
+        try gpu.settle()
+        let after = gpu.residencySet.allocationCount
+
+        #expect(
+            after == settled,
+            """
+            計算と数の並びを \(Self.shaderChurns) 回作って手放したら、
+            常駐の集合が \(after - settled) 個残った (増減 0 のはず)。
+
+            作った計算を面が強く抱え続けると、値の置き場も数の並びも死ねない
+            ([#738](https://github.com/mokume-metal/mokume/issues/738))。
+            """)
+        #expect(
+            canvas.computations.count <= 1,
+            """
+            手放した計算の控えが \(canvas.computations.count) 個ぶん面に残っている
+            (残ってよいのは、いちばん最後に足した 1 つの入れ物だけ)。
+            観測へ失敗を載せるための控えは、**弱く**持てば足りる。
+            """)
+    }
+
     /// 段を全部載せた 1 フレーム。**フレームをまたいで持つものは、ここで 1 度だけ作る。**
     private final class Stage {
         /// 場の細かさ。

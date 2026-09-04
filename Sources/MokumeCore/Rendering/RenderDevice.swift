@@ -147,6 +147,15 @@ import MokumeDiagnostics
     /// 診断: 完了を待って抱えているリソースの数。
     var heldResourceCount: Int { held.reduce(0) { $0 + $1.resources.count } }
 
+    /// 持ち主が死んだリソースを、常駐から外す番が来るまで並べておく列。
+    ///
+    /// **上の列と同じ形で番号順に並ぶ。** あちらが「終わるまで抱える」なら、こちらは
+    /// 「終わったら外す」で、契機は同じ ``releaseFinished(through:)`` である。
+    private var retired: [(submission: UInt64, allocation: any MTLAllocation)] = []
+
+    /// 診断: 常駐から外す番を待っているリソースの数。
+    var retiredResourceCount: Int { retired.count }
+
     /// 投入したコマンドがすべて終わっているか。**問い合わせるだけで待たない。**
     var isIdle: Bool { completion.signaledValue >= submissionCount }
 
@@ -273,6 +282,25 @@ import MokumeDiagnostics
         try settle()
         for allocation in allocations { residencySet.removeAllocation(allocation) }
         residencySet.commit()
+    }
+
+    /// 常駐から外す番を待たせる。**待たずに返る** ([#738])。
+    ///
+    /// 上の口との違いは待ち方だけである。あちらは呼んだその場で全完了を待つので、
+    /// **呼べるのは待ってよい場所からだけ**になる — 持ち主が死ぬ瞬間 (`deinit`) や、
+    /// 字形の面を広げる途中は待ってよい場所ではない。こちらは番号を控えて並べるだけで、
+    /// 実際に外れるのは、そのとき投入済みだったコマンドが終わってからである。
+    ///
+    /// **確保したものは、持ち主が死んでも常駐の集合が抱えている。** 集合が参照を持つので、
+    /// ここを通さない限り解放されない — 症状は「絵は正しいのにメモリが減らない」だけで、
+    /// 原因からは遠い。フレームごとに絵を読む・計算を作り直す書き方はこれで積み続ける。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    func retire(_ allocation: any MTLAllocation) {
+        // **組み立て中のコマンドは、まだ番号を持っていない。** 開いている最中に死んだ
+        // ものは、その 1 本が投入されて終わるまで外せないので 1 つ先の番号で待たせる
+        let after = slotOfOpenCommands.isEmpty ? submissionCount : submissionCount + 1
+        retired.append((after, allocation))
     }
 
     /// 表示に差し出す面を常駐させる。差し出す面へ書く前に呼ぶ。
@@ -414,7 +442,7 @@ import MokumeDiagnostics
         slots[index].allocator.reset()
         // 終わった番号のぶんは、ここで手放す。settle を 1 度も呼ばない経路 (表示だけを
         // 繰り返す) でも、抱えたものが際限なく溜まらない
-        releaseHeld(through: completion.signaledValue)
+        releaseFinished(through: completion.signaledValue)
 
         guard let commands = device.makeCommandBuffer() else {
             throw .commandBufferUnavailable
@@ -446,7 +474,7 @@ import MokumeDiagnostics
     /// リソースはここで手放す。
     func settle() throws(RenderFailure) {
         settleCalls += 1
-        defer { releaseHeld(through: completion.signaledValue) }
+        defer { releaseFinished(through: completion.signaledValue) }
         guard submissionCount > 0, completion.signaledValue < submissionCount else { return }
 
         blockingWaits += 1
@@ -475,7 +503,7 @@ import MokumeDiagnostics
     func waitForSubmission(_ submission: UInt64) throws(RenderFailure) {
         // 終わった番号ぶんの抱えているリソースは、待ちの有無によらずここで手放す。
         // 描き切りが settle を通らなくなったので、手放す契機をこちらにも置く
-        defer { releaseHeld(through: completion.signaledValue) }
+        defer { releaseFinished(through: completion.signaledValue) }
         guard submission > 0, completion.signaledValue < submission else { return }
 
         ringWaits += 1
@@ -501,10 +529,21 @@ import MokumeDiagnostics
         }
     }
 
-    /// 番号 `finished` までの投入が抱えていたリソースを手放す。
-    private func releaseHeld(through finished: UInt64) {
-        guard let last = held.lastIndex(where: { $0.submission <= finished }) else { return }
-        held.removeSubrange(...last)
+    /// 番号 `finished` までの投入が終わったときの後片付け。
+    ///
+    /// **2 つを 1 か所で行う** — 終わるまで抱えていたリソースを手放すことと、持ち主が
+    /// 死んだリソースを常駐から外すこと ([#738])。契機が同じ (「番号 n まで終わった」) なので、
+    /// 呼ぶ場所を分けると片方だけを呼ぶ経路ができる。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    private func releaseFinished(through finished: UInt64) {
+        if let last = held.lastIndex(where: { $0.submission <= finished }) {
+            held.removeSubrange(...last)
+        }
+        guard let last = retired.lastIndex(where: { $0.submission <= finished }) else { return }
+        for entry in retired[...last] { residencySet.removeAllocation(entry.allocation) }
+        residencySet.commit()
+        retired.removeSubrange(...last)
     }
 
     /// 直前に投入した番号を GPU 側で待つ命令を積む。

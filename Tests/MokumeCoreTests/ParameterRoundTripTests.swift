@@ -80,7 +80,7 @@ struct ParameterRoundTripTests {
     /// 窓で候補を選ぶ。
     private func choose(_ run: Run, _ name: String, _ text: String) throws {
         let box = try knob(run, name)
-        KnobBinding.text(box, box.declaration.value).wrappedValue = text
+        KnobBinding.text(box).wrappedValue = text
     }
 
     /// 窓に出る文字。行が描くのと同じ組み立てを通して読む。

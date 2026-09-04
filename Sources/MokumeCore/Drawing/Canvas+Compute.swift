@@ -73,7 +73,7 @@ extension Canvas {
             let pipeline = try computePipeline()
             let computation = try Computation(
                 name: name, url: url, body: body, values: values, gpu: gpu, pipeline: pipeline)
-            computations.append(computation)
+            remember(computation)
             return computation
         } catch {
             throw .notCompilable(path: url?.path ?? name, reason: "\(error)")
@@ -269,17 +269,15 @@ extension Canvas {
     // MARK: - 断る
 
     private func warnComputeOutsideFrame() {
-        guard !warnedComputeOutsideFrame else { return }
-        warnedComputeOutsideFrame = true
-        Diagnostics.warn(
+        warnOnce(
+            .computeOutsideFrame,
             "計算は描くところ (draw) の前置きなので、そこで頼んでください。"
                 + "初期化のときに頼んだ計算はどのフレームにも属さないため、無視しました")
     }
 
     private func warnTooManyBuffers(_ count: Int) {
-        guard !warnedTooManyComputeBuffers else { return }
-        warnedTooManyComputeBuffers = true
-        Diagnostics.warn(
+        warnOnce(
+            .tooManyComputeBuffers,
             "1 回の計算に束ねられる並びは \(ComputePipeline.maximumBufferCount) 本までです "
                 + "(\(count) 本頼まれました)。この計算は無視しました")
     }

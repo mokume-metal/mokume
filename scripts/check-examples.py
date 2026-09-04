@@ -62,14 +62,21 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from example_wrapping import dedent, split_imports, strip_doc, wrap  # noqa: E402
-
-FENCE_OPEN = re.compile(r"^\s*(?:///\s*)?```swift\s*$")
-FENCE_CLOSE = re.compile(r"^\s*(?:///\s*)?```\s*$")
-MARK = re.compile(
-    r"^\s*(?:///\s*)?<!--\s*example:\s*(?P<kind>文脈|組めない)(?:\s+(?P<rest>.*?))?\s*-->\s*$"
+# **囲みと印の綴りも example_wrapping から取る** (#815)。撮る側 (example-shots.py) と
+# 同じものを読まないと、組める例と撮れる例が食い違う (#667)
+from example_wrapping import (  # noqa: E402
+    FENCE_CLOSE,
+    FENCE_OPEN,
+    MARK,
+    MARK_CONTEXT,
+    dedent,
+    split_imports,
+    strip_doc,
+    wrap,
 )
-# 印を名乗りかけて綴りを外したもの。黙って素通しにすると「書いたのに効かない」になる
+
+# 印を名乗りかけて綴りを外したもの。黙って素通しにすると「書いたのに効かない」になる。
+# **これを読むのはこちらだけ** — 撮る側は綴りを外した印を「印ではない」と読んで素通しする
 MARK_LOOSE = re.compile(r"^\s*(?:///\s*)?<!--\s*example:")
 
 CATALOG = "Documentation/mokume.docc"
@@ -118,7 +125,7 @@ def examples_in(text: str, path: pathlib.Path) -> tuple[list[Example], list[str]
             rest = (match["rest"] or "").strip()
             if not rest:
                 kind = match["kind"]
-                need = "宣言" if kind == "文脈" else "理由"
+                need = "宣言" if kind == MARK_CONTEXT else "理由"
                 problems.append(f"{path}:{index + 1} 印 `{kind}` に{need}が書かれていない")
             pending.append((match["kind"], rest, index + 1))
             index += 1

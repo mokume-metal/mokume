@@ -56,7 +56,7 @@ swift run mokume-cli mcp <スケッチの場所>    # エージェントの窓�
 
 窓口を立てずに区画へ直接置いてもよい。`.mokume/observe/request.json` へ `{"id": "<毎回変える>"}` を
 原子的に置き、`.mokume/observe/report.json` の `id` が一致するまで待つ (仕様は
-`Schemas/observe-request.schema.json`)。
+`Schemas/observe-request.schema.json`、置き方と待ち方の実装は `scripts/observe_lib.py`)。
 
 ### 動きも A で撮る
 
@@ -64,9 +64,14 @@ swift run mokume-cli mcp <スケッチの場所>    # エージェントの窓�
 これを繰り返せば連番がそのまま手に入る。B のように録画から起こす必要は無い。要求に `scale` を
 添えると書き出しの時点で縮むので、束ねる前の縮小も要らない。
 
+**リポジトリの根から打つ** (`scripts/observe_lib.py` を読むため)。
+
 ```bash
 python3 - <スケッチの場所>/.mokume/observe frames 70 0.5 <<'CAPTURE'
-import json, os, pathlib, shutil, sys, time
+import json, pathlib, shutil, sys, time
+
+sys.path.insert(0, "scripts")
+from observe_lib import answered, place          # 置き方と待ち方の正典はこれ 1 つ
 
 facet, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 rounds, scale = int(sys.argv[3]), float(sys.argv[4])
@@ -75,22 +80,14 @@ previous, timing = None, []
 
 for index in range(1, rounds + 1):
     identifier = f"f{index:04d}"
-    temporary = facet / ".request.json.tmp"           # 原子的に置く
-    temporary.write_text(json.dumps({"id": identifier, "scale": scale}))
-    os.replace(temporary, facet / "request.json")
+    place(facet, {"id": identifier, "scale": scale})
 
-    name, taken, limit = f"f.{index:04d}.png", None, time.time() + 1.5
-    while time.time() < limit:                        # 壁時計ではなく識別子の一致で完了を知る
-        try:
-            report = json.loads((facet / "report.json").read_text())
-            if report.get("id") == identifier and report.get("image"):
-                taken = shutil.copy(facet / report["image"], out / name)
-                break
-        except Exception:
-            pass
-        time.sleep(0.01)
+    name, taken = f"f.{index:04d}.png", None
+    report = answered(facet, identifier, 1.5)     # 壁時計ではなく識別子の一致で完了を知る
+    if report and report.get("image"):
+        taken = shutil.copy(facet / report["image"], out / name)
 
-    if taken is None and previous:                    # 返らなかったら直前の絵を置く
+    if taken is None and previous:                # 返らなかったら直前の絵を置く
         shutil.copy(previous, out / name)
     previous = taken or previous
     timing.append({"file": name, "at": time.time()})  # 何時に採れたか = その絵が出ていた長さ
@@ -99,7 +96,10 @@ for index in range(1, rounds + 1):
 CAPTURE
 ```
 
-置き方と待ち方は `scripts/check-observation-roundtrip.sh` と同じで、**形式の正典は `Schemas/` の
+**置き方と待ち方をここに写さない** ([#817](https://github.com/mokume-metal/mokume/issues/817))。
+実装は `scripts/observe_lib.py` の 1 つで、`scripts/check-observation-roundtrip.sh` と
+`scripts/measure-frame-rate.sh` も同じものを読む — 以前はこの 3 か所と文章の 4 通りに散っており、
+ADR-0018 決定 3 の正典がどれなのか誰にも分からなかった。**形式の正典は `Schemas/` の
 `observe-request` / `observe-report`** である (絵のファイル名も応答の `image` が名乗る — 決め打ちしない)。
 
 > **応答が返らなかった回は直前の絵で埋める。抜けを詰めない。** 詰めると「面が黙った」ことが動きから

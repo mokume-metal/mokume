@@ -44,10 +44,6 @@ fi
 if [[ "$*" == "repo view"* ]]; then
   printf '%s\\n' "mokume-metal/mokume"; exit 0
 fi
-if [[ "$*" == "pr view"* && "$*" == *"files"* ]]; then
-  printf '%s\\n' ${PR_FILES:-}
-  exit 0
-fi
 if [[ "$*" == "pr view"* ]]; then
   [ -z "${NO_PR:-}" ] || { echo "gh: no pull requests found" >&2; exit 1; }
   printf '%s\\n' "${PR_INFO:-7 OPEN false}"
@@ -65,6 +61,12 @@ if [[ "$*" == *"/files"* ]]; then
       exit 0
     fi
   done
+  # この PR 自身の一覧。#793 以降 catch-up.sh もここから引く — gh pr view の files は
+  # 上限のある口で、大きな PR では後半が落ちる
+  self=${PR_INFO:-7 OPEN false}
+  if [[ "$*" == *"/pulls/${self%% *}/files"* ]]; then
+    printf '%s\\n' ${PR_FILES:-}
+  fi
   exit 0
 fi
 if [[ "$*" == *"/statuses"* ]]; then
@@ -88,10 +90,17 @@ if [ "$1" = "ci-check" ] && [ -n "${CI_CHECK_FAILS:-}" ]; then
   echo "make: 検査が落ちた" >&2
   exit 2
 fi
+# **検査の最中に外の世界が動く場面**を作る口 (#830)。ci-check は数分かかるので、
+# その間に main へ別の PR が入ることは珍しくない
+if [ "$1" = "ci-check" ] && [ -n "${CI_CHECK_HOOK:-}" ]; then
+  /bin/bash "$CI_CHECK_HOOK" || exit $?
+fi
 exit 0
 """
 
 DRAWING = "Sources/MokumeCore/Canvas.swift"
+# main の側だけが動かす描画のファイル (覆いが古くなる場面を作る)
+OTHER_DRAWING = "Sources/MokumeCore/Palette.swift"
 NOT_DRAWING = "AGENTS.md"
 
 
@@ -167,17 +176,44 @@ class CatchUpTest(unittest.TestCase):
             return []
         return [c for c in self.gh_calls.read_text().splitlines() if c.startswith("pr merge")]
 
-    def advance_main(self, name="theirs.txt"):
-        """main を 1 コミット進める (合流後の姿が動いた状況を作る)。"""
-        other = self.root / "other"
+    def _clone_of_origin(self, name):
+        other = self.root / name
         subprocess.run(["git", "clone", "-q", str(self.origin), str(other)], check=True)
         for key, value in (("user.email", "t@example.invalid"), ("user.name", "t"),
                            ("commit.gpgsign", "false")):
             subprocess.run(["git", "config", key, value], cwd=other, check=True)
+        return other
+
+    def advance_main(self, name="theirs.txt"):
+        """main を 1 コミット進める (合流後の姿が動いた状況を作る)。"""
+        other = self._clone_of_origin("other")
         (other / name).write_text("theirs\n")
         subprocess.run(["git", "add", "-A"], cwd=other, check=True)
         subprocess.run(["git", "commit", "-qm", "theirs"], cwd=other, check=True)
         subprocess.run(["git", "push", "-q"], cwd=other, check=True)
+
+    def hook_advancing_main(self, name):
+        """`make ci-check` の最中に main が動く場面を作るフックを置く (#830)。
+
+        検査は数分かかるので、その間に別の PR が main へ入ることは珍しくない。
+        手元の `refs/remotes/origin/main` も ref にすぎないので、**同じリポジトリを
+        共有する別の worktree が fetch しただけ**でその先へ動く。手元は 1 バイトも
+        触っていないのに、判定の相手だけが動く — それがこの Issue の現場である。"""
+        other = self._clone_of_origin("during")
+        hook = self.root / "during.sh"
+        hook.write_text(
+            "#!/bin/bash\nset -e\n"
+            f'cd "{other}"\n'
+            f'mkdir -p "$(dirname "{name}")"\n'
+            f'printf "検査の最中に入った\\n" > "{name}"\n'
+            "git add -A\n"
+            'git commit -qm "検査の最中に入った PR"\n'
+            "git push -q\n"
+            f'cd "{self.work}"\n'
+            "git fetch -q origin\n"
+        )
+        hook.chmod(0o755)
+        return str(hook)
 
     # --- 打つ意味が無い場面 (3) ------------------------------------------
 
@@ -186,6 +222,30 @@ class CatchUpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 3, proc.stderr)
         self.assertIn("台帳の絵を動かさない", proc.stdout)
         self.assertNotIn("ci-check", self.made())
+
+    def test_後半にだけ描画のパスがある大きな_PR_でも走る(self):
+        """**上限を越える PR** (#793)。
+
+        `gh pr view --json files` は GraphQL の接続を引くので上限があり、大きな PR では
+        後半のファイルが落ちる。落ちれば「台帳の絵を動かさない」と読んで
+        `打つ意味が無い` で断り、**本当は要る打ち直しをしないまま止まる**。
+
+        上限のある口を読んでいれば、この PR は 3 (走らない) で返ってしまう。
+        """
+        many = ",".join(f"docs/note{i}.md" for i in range(100))
+        proc = self.run_script(PR_FILES=f"{many},{DRAWING}".replace(",", " "))
+        self.assertNotEqual(proc.returncode, 3, proc.stdout)
+        self.assertIn("ci-check", self.made())
+
+    def test_一覧はページングを通して引く(self):
+        """判定の結果だけを見ていると、上限に収まる PR では**付け忘れても緑**になる。"""
+        self.run_script(PR_FILES=DRAWING)
+        # **記録全体ではなく、一覧を引いたその行を見る。** 順番の判定が引く open な PR の
+        # 一覧 (drawing-queue.sh) も --paginate を使うので、全体を見ると付け忘れても緑になる
+        lines = [l for l in self.gh_calls.read_text(encoding="utf-8").splitlines() if "/files" in l]
+        self.assertTrue(lines, "変更ファイルの一覧を引いていない")
+        for line in lines:
+            self.assertIn("--paginate", line, f"ページングを通していない呼び出し: {line}")
 
     def test_先に描画_PR_が居るときは走らない(self):
         proc = self.run_script(OPEN_PRS="5 7", FILES_BY_PR=f"5={DRAWING}")
@@ -268,6 +328,19 @@ class CatchUpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertEqual(self.merged_calls(), [])
 
+    # --- 報告の context の綴り -------------------------------------------
+
+    def test_報告を探す綴りは共有の出どころに従う(self):
+        """打つのは render-status.sh・探すのはここ、と役割が分かれている (#785)。
+        ここが直書きに戻ると、改名した綴りで打たれた報告を永久に見つけられない。"""
+        proc = self.run_script(RENDER_CONTEXT="別の綴り")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        queries = [c for c in self.gh_calls.read_text().splitlines()
+                   if "/statuses" in c]
+        self.assertEqual(len(queries), 1, queries)
+        self.assertIn("別の綴り", queries[0])
+        self.assertNotIn("local-render", queries[0])
+
     # --- 通る場面 (0) -----------------------------------------------------
 
     def test_main_を取り込んで_queue_へ戻す(self):
@@ -288,11 +361,50 @@ class CatchUpTest(unittest.TestCase):
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("push しない", proc.stdout)
+        self.assertIn("衝突を解いていない", proc.stdout)
         # push 済みの head が動いていないこと — 承認が落ちない条件そのもの
         self.assertNotEqual(
             self._git("rev-parse", "HEAD").strip(),
             self._git("rev-parse", "origin/work").strip())
         self.assertEqual(self.made(), ["ci-check"])
+
+    def test_検査の最中に_main_が動いても素直な取り込みは_push_しない(self):
+        """#830。**push の要否は取り込みの時点で決まっている。**
+
+        検査の最中に main へ別の PR が入ると、判定の相手 (origin/main) だけが先へ
+        動く。動いた相手と比べると素直な取り込みまで「衝突を解いてある」と読めて
+        しまい、解いた中身が 1 バイトも無い合流を push して承認を落とす (#612 が
+        そのまま戻る)。ここが赤くなる形に戻ったら、それが起きている。"""
+        self.advance_main()
+        proc = self.run_script(CI_CHECK_HOOK=self.hook_advancing_main("docs/後から.md"))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("push しない", proc.stdout)
+        # 判定の理由も名乗る (誤診したときに名乗りだけが正しく見えないため)
+        self.assertIn("衝突を解いていない", proc.stdout)
+        # push 済みの head が動いていないこと — 承認が落ちない条件そのもの
+        self.assertNotEqual(
+            self._git("rev-parse", "HEAD").strip(),
+            self._git("rev-parse", "origin/work").strip())
+        self.assertEqual(self.merged_calls(), ["pr merge 7 --auto --squash"])
+
+    def test_検査の最中に動いた_main_が描画に触れなければ覆いはそのまま(self):
+        """覆い (covers=) が見ているのは描画に関わるファイルの中身だけなので、
+        描画に触れない PR が入っても手元の実行はまだ合流後の姿を覆っている。"""
+        self.advance_main()
+        proc = self.run_script(CI_CHECK_HOOK=self.hook_advancing_main("docs/後から.md"))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("覆いはそのまま有効", proc.stdout)
+
+    def test_検査の最中に動いた_main_が描画に触れたら覆いが古いと名乗って止まる(self):
+        """このまま queue へ戻しても local-render が failure に転んで弾かれるだけで、
+        CI と queue の 1 周ぶんを空費する。**打ち直すのが正しい次の一手**なので、
+        待てを意味する 3 ではなく 1 で止める。"""
+        self.advance_main()
+        proc = self.run_script(CI_CHECK_HOOK=self.hook_advancing_main(OTHER_DRAWING))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("覆いが古い", proc.stderr)
+        self.assertIn("make catch-up", proc.stderr)
+        self.assertEqual(self.merged_calls(), [])
 
     def test_衝突を解いた合流は_push_する(self):
         """解いた中身は remote に無いので、queue も同じ木を作れない。ここは push が
@@ -309,6 +421,7 @@ class CatchUpTest(unittest.TestCase):
         proc = self.run_script()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("push する", proc.stdout)
+        self.assertIn("push 済みの head から作り直せない", proc.stdout)
         self.assertEqual(self.made(), ["ci-check", "render-status"])
         self.assertEqual(
             self._git("rev-parse", "HEAD").strip(),
@@ -327,6 +440,50 @@ class CatchUpTest(unittest.TestCase):
         self.assertIn("isInMergeQueue=true", proc.stdout)
         # autoMergeRequest が null でも正常だと伝えること (#457 で取り違えた)
         self.assertIn("autoMergeRequest", proc.stdout)
+
+
+class MakeTargetTest(unittest.TestCase):
+    """`make catch-up` が 3 を成功として扱うことを固定する (#786)。
+
+    スクリプトの契約 (0 / 1 / 3) は他の呼び手のために保つが、入口を打つ人が
+    受け取るのは「赤いか否か」の 1 ビットである。素で呼ぶと「先に描画 PR が
+    居るので待て」が `make: *** [catch-up] Error 3` として出て、**このスクリプトが
+    最も避けたかった取り違えが、いちばん使われる入口で起きる**。
+
+    見るのは **リポジトリの本物の Makefile** で、recipe を写さない (写しは腐る)。
+    使い捨てディレクトリを cwd にすれば、recipe の `scripts/catch-up.sh` は
+    そこに置いた代役へ解決される。`catch-up` は前提を持たないので他の的は走らない。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        (self.root / "scripts").mkdir()
+
+    def run_make(self, exit_code, message="打つ意味が無い — #5 の merge を待つ"):
+        stub = self.root / "scripts" / "catch-up.sh"
+        stub.write_text(f'#!/bin/bash\necho "catch-up: {message}"\nexit {exit_code}\n')
+        stub.chmod(0o755)
+        return subprocess.run(
+            ["make", "-f", str(REPO / "Makefile"), "catch-up"],
+            cwd=self.root, capture_output=True, text=True, encoding="utf-8",
+        )
+
+    def test_打つ意味が無い_3_は_make_を赤くしない(self):
+        proc = self.run_make(3)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        # 理由の案内は握り潰さない — 何を待てばよいかは人が読む
+        self.assertIn("#5 の merge を待つ", proc.stdout)
+        self.assertNotIn("Error 3", proc.stderr)
+
+    def test_途中で止まった_1_は_make_を赤くする(self):
+        proc = self.run_make(1, message="止まった — 衝突")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+
+    def test_queue_へ戻した_0_は_make_を赤くしない(self):
+        proc = self.run_make(0, message="queue へ戻した")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
 if __name__ == "__main__":

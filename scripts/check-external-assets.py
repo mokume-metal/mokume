@@ -40,6 +40,11 @@ import sys
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# タイムアウトと `<img>` の綴りは site_source が持つ (#815)
+from site_source import FETCH_TIMEOUT_SECONDS, HTML_IMAGE  # noqa: E402
+
 # 資産として参照している外部 URL の書き方は 2 つある。
 #   - Markdown の画像 `![説明](https://…)` — `///` の中も普通の .md も同じ書式
 #   - docc の `@Image(source: "https://…")` / `@Video(source: "https://…")`
@@ -47,18 +52,12 @@ import urllib.request
 MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 DOCC_SOURCE = re.compile(r"@(?:Image|Video)\s*\(\s*source:\s*\"(https?://[^\"]+)\"")
 # HTML の絵 `<img src="https://…">`。入口のページ (#482) が絵を外に置くので、
-# **いちばん人目に付く絵だけが死活の外**にならないようここも見る
-HTML_IMAGE = re.compile(
-    # **`src` の直前で属性の切れ目を要求する。** 要求しないと `data-src=` の末尾に
-    # 一致してしまい、絵として飾ってあるだけのものを本物と数える
-    r"""<img\s[^>]*?(?<![-\w])src=["'](https?://[^"']+)["']""",
-    re.IGNORECASE,
-)
+# **いちばん人目に付く絵だけが死活の外**にならないようここも見る。
+# 綴りは site_source が持つ (#815) — 入口を検める側 (check-entry.py) と同じものを読む
 
 # Swift の説明文。ADR-0027 決定 2 により、絵を指す行はここに置かれる
 DOC_COMMENT = re.compile(r"^\s*///")
 
-FETCH_TIMEOUT_SECONDS = 30
 # 相手が bot を弾かないように名乗る。無名の要求を落とす配信は珍しくない
 USER_AGENT = "mokume-external-assets-check (+https://github.com/mokume-metal/mokume)"
 
