@@ -77,6 +77,42 @@ public protocol Sketch: AnyObject {
     /// 押下を伴わない解放 (窓の外で押して中で離した、など) では呼ばれない。
     /// 時刻を見ないので、外から送った出来事でも窓での実操作と同じように起きる。
     func mouseClicked()
+
+    /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged()`` が呼ばれる。
+    func mouseMoved()
+
+    /// 押したまま動いたとき呼ばれる。
+    ///
+    /// **``dragX`` / ``dragY`` はフレームの累計であって、1 件ぶんではない。**
+    /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれ、そのたびに読む ``dragX`` は
+    /// その時点までの部分累計になる。
+    ///
+    /// とくに ``orbitControl(_:_:_:)`` を**ここから呼んではいけない。** あちらは
+    /// 1 フレームに 1 回しか引きずった量を食わないので、最初の 1 件までの部分累計だけ
+    /// 食って残りが黙って捨てられる — 回る量が減るだけなので、絵を見ても気付けない。
+    /// 視点を回すのは `draw()` の中で 1 回呼ぶ形のままにする。
+    func mouseDragged()
+
+    /// キーが押された瞬間に呼ばれる。
+    ///
+    /// **押しっぱなしでは連射される** (手本 — Processing / p5.js — と同じ)。1 回だけ
+    /// 効かせたいなら、押されているキーの集合 (``isKeyDown(_:)``) を自分で見る。
+    ///
+    /// どのキーが動いたかは ``keyCode`` から読む。文字を打つ用途には ``keyTyped()`` と
+    /// ``key`` を使う。
+    func keyPressed()
+
+    /// キーが離された瞬間に呼ばれる。
+    ///
+    /// 離されたキーも ``keyCode`` が指す — **最後に動いたキー**なので、押した側と同じ
+    /// 口から読める。
+    func keyReleased()
+
+    /// **文字を生むキー**が押されたとき、``keyPressed()`` の直後に続けて呼ばれる。
+    ///
+    /// 矢印・ファンクションキー・Escape・Delete・Tab では呼ばれない (手本と同じ)。
+    /// 打たれた文字は ``key`` から読む。
+    func keyTyped()
 }
 
 extension Sketch {
@@ -87,6 +123,11 @@ extension Sketch {
     public func mousePressed() {}
     public func mouseReleased() {}
     public func mouseClicked() {}
+    public func mouseMoved() {}
+    public func mouseDragged() {}
+    public func keyPressed() {}
+    public func keyReleased() {}
+    public func keyTyped() {}
 }
 
 /// スケッチの設定。

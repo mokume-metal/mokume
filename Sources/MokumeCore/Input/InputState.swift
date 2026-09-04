@@ -105,8 +105,42 @@ public final class InputState {
             // **押下を伴う解放だけがクリックになる。** 押していないところで離しても
             // 解放は起きる (窓の外で押して中で離す・上限で押下が捨てられた、など)
             if wasMouseDown { dispatch(.mouseClicked) }
-        case .mouseMoved, .scrolled, .keyDown, .keyUp:
+        case .mouseMoved:
+            // **窓にしか無い情報を使わずに、押下状態から導く。** 窓は押している間の
+            // 移動を `mouseDragged` として拾うが、合流点へは 6 種別しか流れないので
+            // (`SketchSurface` が `.mouseMoved` へ写す)、外から送れるものと同じ材料で
+            // 分けられる。移動は押下状態を変えないので、当てる前と後で同じ
+            dispatch(wasMouseDown ? .mouseDragged : .mouseMoved)
+        case .keyDown(_, let characters, _):
+            dispatch(.keyPressed)
+            // **文字を生むキーだけが打鍵になる。** 矢印やファンクションキーでは呼ばない
+            if Self.producesText(characters) { dispatch(.keyTyped) }
+        case .keyUp:
+            dispatch(.keyReleased)
+        case .scrolled:
             break
+        }
+    }
+
+    /// 文字を生むキーか。**「`characters` が空でない」では判定できない。**
+    ///
+    /// AppKit の `NSEvent.characters` は矢印やファンクションキーに Unicode の私用領域
+    /// (`NSUpArrowFunctionKey` = U+F700 など) を返し、Escape には U+001B、Delete には
+    /// U+007F を返す。どれも `isEmpty` は `false` なので、空でないことを打鍵の合図に
+    /// すると**手本 (p5 / Processing) では呼ばれないキーで発火する**
+    /// ([#805](https://github.com/mokume-metal/mokume/issues/805))。
+    ///
+    /// 判定は「制御文字でも私用領域でもないスカラを 1 つ以上含むこと」。打鍵の合図と、
+    /// ``characters`` (``Sketch/key``) の更新が同じここを見る — 割れていた頃は、矢印を
+    /// 押すと `key` が見えない文字になっていた。
+    static func producesText(_ characters: String) -> Bool {
+        characters.unicodeScalars.contains { scalar in
+            let value = scalar.value
+            // 制御文字 (Escape・Delete・Tab・改行など)
+            if value < 0x20 || value == 0x7F { return false }
+            // AppKit が矢印・ファンクションキー・Home などへ返す私用領域
+            if (0xF700...0xF8FF).contains(value) { return false }
+            return true
         }
     }
 
@@ -136,7 +170,9 @@ public final class InputState {
         case .keyDown(let code, let characters, _):
             pressedKeys.insert(code)
             lastKey = code
-            if !characters.isEmpty { self.characters = characters }
+            // **打鍵と同じ判定を使う。** 空でないことで見ていた頃は、矢印を押すと
+            // ここが私用領域の文字になっていた (#805)
+            if Self.producesText(characters) { self.characters = characters }
         case .keyUp(let code):
             pressedKeys.remove(code)
             lastKey = code

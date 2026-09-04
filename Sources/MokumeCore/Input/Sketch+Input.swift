@@ -31,12 +31,22 @@ extension Sketch {
     /// **押した瞬間には増えない。** `mouseX - pmouseX` を回す量に使うと、押した場所が
     /// 前のフレームの位置と離れているときに絵が飛ぶ — 押下は移動ではないのに、位置の
     /// 差としては現れてしまうためである。引きずって動かす道具はこちらを使う。
+    ///
+    /// **これはフレームの累計であって、1 件ぶんではない。** ``Sketch/mouseDragged()``
+    /// の中から読むと、1 フレームに移動が 3 件届いたときそれぞれの時点までの部分累計に
+    /// なる (呼び出しも 3 回)。フレームぶんをまとめて食う道具 —
+    /// ``orbitControl(_:_:_:)`` — は `draw()` の中から呼ぶ。
     public var dragX: Float { Self.input.dragX }
     /// このフレームに、押したまま引きずった量 (縦)。
     public var dragY: Float { Self.input.dragY }
     /// そのキーが押されているか。
     public func isKeyDown(_ key: Key) -> Bool { Self.input.pressedKeys.contains(key) }
     /// 最後に入力された文字。
+    ///
+    /// **文字を生むキーでだけ変わる。** 矢印・ファンクションキー・Escape・Delete では
+    /// 更新されない — AppKit がそれらへ返すのは私用領域や制御文字なので、そのまま
+    /// 入れると画面に見えない文字が出る。打鍵そのものを受け取る口は
+    /// ``Sketch/keyTyped()``。
     public var key: String { Self.input.characters }
     /// 最後に押されたか離されたキー。まだ何も来ていなければ `nil`。
     ///
