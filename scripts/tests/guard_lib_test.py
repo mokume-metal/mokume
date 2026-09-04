@@ -323,6 +323,12 @@ class WiringTest(unittest.TestCase):
             text = (REPO / "scripts" / name).read_text()
             self.assertIn("targets_other_repo", text, f"{name} が宛先を見ていない")
 
+    def test_the_library_borrows_the_repository_resolution(self):
+        """「どのリポジトリか」の解き方は repo-slug.sh が持つ (#818)。"""
+        text = LIB.read_text(encoding="utf-8")
+        self.assertIn("repo-slug.sh", text, "guard-lib.sh が repo-slug.sh を読んでいない")
+        self.assertNotIn("remote get-url", text, "guard-lib.sh が自前で origin を剥がしている")
+
     def test_guards_do_not_extract_the_repo_option_themselves(self):
         """複製が残っていると、片方だけ直す事故が起きる (#128 と同じ理由)。"""
         for name in ("agent-comment-guard.sh", "pr-identity-guard.sh"):
@@ -409,8 +415,11 @@ class HookSurfaceTest(unittest.TestCase):
     def test_missing_jq_passes_through(self):
         """**fail open。** guard が壊れてツールが使えなくなるほうが害が大きい。"""
         with tempfile.TemporaryDirectory() as tmp:
-            # jq だけが無い PATH を組む (cat は payload の読み取りに要る)
-            os.symlink("/bin/cat", Path(tmp) / "cat")
+            # **jq だけが無い PATH** を組む。cat は payload の読み取りに、dirname は
+            # ライブラリが隣のファイルを source するのに要る — 落とすと「jq が無い」
+            # ではなく別の理由で止まり、この検査が見たいものを見なくなる
+            for tool in ("/bin/cat", "/usr/bin/dirname"):
+                os.symlink(tool, Path(tmp) / Path(tool).name)
             proc = run_lib(
                 'hook_payload; echo 通ってはいけない',
                 stdin='{"cwd":"/tmp"}',
@@ -418,6 +427,26 @@ class HookSurfaceTest(unittest.TestCase):
             )
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, "", "jq が無いのに判定を続けている")
+
+    def test_a_missing_repo_slug_library_fails_open(self):
+        """**借りている側が読めなくても素通しに倒す** (#818)。
+
+        `guard-lib.sh` は「どのリポジトリか」の解き方を `repo-slug.sh` から借りる。
+        読めなければ **何も定義せずに非 0 で返る** ので、フック側の
+        `. guard-lib.sh 2>/dev/null || exit 0` がそのまま発火する — 判定できないまま
+        差し戻す側へ倒れない。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            # guard-lib.sh だけを写した置き場 (隣に repo-slug.sh が無い)
+            alone = Path(tmp) / "guard-lib.sh"
+            alone.write_text(LIB.read_text(encoding="utf-8"), encoding="utf-8")
+            proc = subprocess.run(
+                ["/bin/bash", "-c", f'. "{alone}" 2>/dev/null || exit 0\necho 通ってはいけない'],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "", "ライブラリが読めないのに判定を続けている")
 
     def test_command_absent_passes_through(self):
         """Edit / Write のようにコマンドを持たない入力では素通しで終わる。"""

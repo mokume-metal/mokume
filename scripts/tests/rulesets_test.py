@@ -30,6 +30,8 @@ LIB = REPO / "scripts" / "rulesets_lib.py"
 CHECK = REPO / "scripts" / "check-rulesets.sh"
 APPLY = REPO / "scripts" / "apply-rulesets.sh"
 FRESHNESS = REPO / "scripts" / "rulesets-freshness.sh"
+# 2 本の shell が「どのリポジトリか」を借りる先 (#818)。**写さないと source に失敗する**
+SLUG = REPO / "scripts" / "repo-slug.sh"
 DEFS = REPO / ".github" / "rulesets"
 
 # 偽 gh。実設定は FAKE_LIVE_DIR の <id>.json が正本という約束にする。
@@ -398,7 +400,7 @@ class TreeFixture(unittest.TestCase):
         (self.repo / "scripts").mkdir(parents=True)
         self.defs = self.repo / ".github" / "rulesets"
         self.defs.mkdir(parents=True)
-        for src in (CHECK, APPLY, LIB, FRESHNESS):
+        for src in (CHECK, APPLY, LIB, FRESHNESS, SLUG):
             shutil.copy(src, self.repo / "scripts" / src.name)
 
         self.git("init", "-q")
