@@ -44,13 +44,7 @@
 # 配線は .claude/settings.json、テストは scripts/tests/pr_identity_guard_test.py。
 set -uo pipefail
 
-deny() { # $1=理由
-  jq -n --arg r "$1" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-  exit 0
-}
-
-# 差し戻しの文言は関数に切り出す。`deny "$(cat <<'EOF' … EOF)"` と書くと macOS の
+# 差し戻しの文言は関数に切り出す。`hook_deny "$(cat <<'EOF' … EOF)"` と書くと macOS の
 # bash 3.2 が壊れる — $( … ) の中の here-document の本文まで閉じ括弧の探索対象に
 # するため、本文に $( が現れるとネストを誤認して no closing ')' になる。ここの文言は
 # 案内として GH_TOKEN="$(…)" を含むので、正しく書くほど壊れるという噛み合わせだった
@@ -120,26 +114,21 @@ identity_required_message() {
 EOF
 }
 
-# コマンド文字列の読み方は agent-comment-guard.sh と共有する (#128)。
-# 読めなければ素通し — guard が壊れて Bash ツール全体が使えなくなるほうが害が大きい
-# (下の jq と同じ fail open の考え方)
+# payload の解き方・差し戻し方・コマンド文字列の読み方は guard-lib.sh と共有する
+# (#128・#815)。読めなければ素通し — guard が壊れて Bash ツール全体が使えなくなるほうが
+# 害が大きい (hook_payload の jq と同じ fail open の考え方)
 # shellcheck source=scripts/guard-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
 
-payload=$(cat)
-command -v jq >/dev/null 2>&1 || exit 0
-command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
-[ -n "$command" ] || exit 0
-
-# -R が無いコマンドの宛先はカレントディレクトリのリポジトリ。payload の cwd は
-# シェルが実際に居るディレクトリを持つ (#611)
-cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""' 2>/dev/null)
-[ -n "$cwd" ] || cwd=$PWD
+hook_payload
+hook_command
+command=$HOOK_COMMAND
+cwd=$HOOK_CWD
 
 is_gh_subcommand "$command" 'pr[[:space:]]+create' || exit 0
 
-# 使い方を尋ねているだけなら作成ではない
-printf '%s' "$command" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)' && exit 0
+# 使い方を尋ねているだけなら作成ではない (判定は guard-lib.sh が持つ)
+is_help_request "$command" && exit 0
 
 # 他のリポジトリ宛ての PR はこのリポジトリの規約の外。判定は guard-lib.sh が持つ
 # (agent-comment-guard.sh と共有する。#188)
@@ -173,12 +162,12 @@ if printf '%s' "$command" | grep -qE '[^[:space:];&|`)]*scripts/gh-app-token\.sh
     printf '%s' "$command" | grep -qE "$EXPORT_FORM" && exit 0
 
     # 発行の形は正しいが、gh へ渡っていない
-    deny "$(token_not_exported_message)"
+    hook_deny "$(token_not_exported_message)"
   fi
 
   # token を発行しようとはしている。汎用の差し戻しだと「使っているのに止められた」と
   # 読めて直し方が分からないので、何がまずいかを名指しする
-  deny "$(unsafe_token_form_message)"
+  hook_deny "$(unsafe_token_form_message)"
 fi
 
 # 常設している環境 (GH_TOKEN に installation token を置いてある) も常道。
@@ -186,4 +175,4 @@ fi
 # ここが先に通ると握り潰しを見逃す
 case "${GH_TOKEN:-}" in ghs_*) exit 0 ;; esac
 
-deny "$(identity_required_message)$(other_repo_hint 'gh pr create')"
+hook_deny "$(identity_required_message)$(other_repo_hint 'gh pr create')"

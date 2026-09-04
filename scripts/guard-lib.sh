@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# PreToolUse フックが共有する、Bash コマンド文字列の読み方 (#128)。
+# PreToolUse フックが共有する、payload の解き方・差し戻し方・Bash コマンド文字列の
+# 読み方 (#128・#815)。
 #
 # agent-comment-guard.sh と pr-identity-guard.sh は「このコマンドは gh の
 # どのサブコマンドを実行するか」を同じやり方で判定する。以前は両者が同一の正規表現を
@@ -36,11 +37,73 @@
 # の投稿先は mokume 固定なので、**逃げ道がどこにも無い**状態だった。
 #
 # 使い方 (source する側):
-#   . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh"
-#   is_gh_subcommand "$command" 'pr[[:space:]]+create' && …
-#   targets_other_repo "$command" && exit 0
+#   . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
+#   hook_payload            # HOOK_PAYLOAD / HOOK_CWD を置く。jq が無ければ素通し
+#   hook_command            # HOOK_COMMAND を置く。コマンドを持たないツールなら素通し
+#   is_help_request "$HOOK_COMMAND" && exit 0
+#   is_gh_subcommand "$HOOK_COMMAND" 'pr[[:space:]]+create' || exit 0
+#   targets_other_repo "$HOOK_COMMAND" "$HOOK_CWD" && exit 0
+#   hook_deny "<理由>"
 #
 # テストは scripts/tests/guard_lib_test.py。
+
+# --- フックの入口と出口 -------------------------------------------------------
+#
+# 3 本のフック (agent-comment-guard / pr-identity-guard / worktree-path-guard) は、
+# 同じ前置きと同じ差し戻しの形を持つ。以前はそれぞれが写しを抱えていた (#815)。
+#
+# **写しのうち一番危ないのは差し戻しの JSON である。** 綴りは Claude Code 側の仕様
+# (hookSpecificOutput.permissionDecision) に張り付いており、仕様が動いたときに直し漏れた
+# 1 本は **「JSON を返さない = 素通し」**になる — ガードが黙って効かなくなる形である。
+# #160 で実際に踏んだのがこれで (pr-identity-guard.sh が bash 3.2 のパースに失敗して
+# JSON を返さなかった)、あのときは 1 本だったから気付けた。
+#
+# 3 本がここを通っているかは scripts/tests/guard_lib_test.py が構造で見る。
+
+# 差し戻して終わる。**フックの出口はここだけ。**
+#   $1 = 理由 (差し戻しの文面。そのまま読み手に出る)
+#
+# 終了コードは 0 — deny は JSON で伝える。非 0 で終えると Claude Code は「フックが
+# 壊れた」と読み、判定として扱わない。
+hook_deny() { # $1=理由
+  jq -n --arg r "$1" \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+  exit 0
+}
+
+# stdin の payload を読み、HOOK_PAYLOAD と HOOK_CWD を置く。
+#
+# **jq が無ければ素通しで終わる** (fail open)。ガードが壊れて Bash ツール全体が使えなく
+# なるほうが害が大きい。
+#
+# HOOK_CWD はフックが受け取ったカレントディレクトリで、payload に無ければ $PWD へ倒す。
+# `-R` が無いときの gh の宛先はカレントのリポジトリなので、それを真似るのに要る (#611)。
+#
+# **サブシェルの中から呼ばない。** 素通しを exit で表すので、$( … ) の中では効かない。
+hook_payload() {
+  HOOK_PAYLOAD=$(cat)
+  command -v jq >/dev/null 2>&1 || exit 0
+  HOOK_CWD=$(printf '%s' "$HOOK_PAYLOAD" | jq -r '.cwd // ""' 2>/dev/null)
+  [ -n "$HOOK_CWD" ] || HOOK_CWD=$PWD
+}
+
+# payload の 1 項目を stdout へ。読めなければ空を返す (理由は呼び出し側が決める)。
+#   $1 = jq のフィルタ
+hook_field() { # $1=jq のフィルタ
+  printf '%s' "${HOOK_PAYLOAD:-}" | jq -r "$1" 2>/dev/null || printf ''
+}
+
+# Bash ツールが実行しようとしているコマンド文字列を HOOK_COMMAND へ。
+# **コマンドを持たないツール (Edit / Write など) では素通しで終わる。**
+hook_command() {
+  HOOK_COMMAND=$(hook_field '.tool_input.command // ""')
+  [ -n "$HOOK_COMMAND" ] || exit 0
+}
+
+# 使い方を尋ねているだけか。投稿でも作成でもないので、3 本とも素通しの判定に使う。
+is_help_request() { # $1=コマンド
+  printf '%s' "$1" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)'
+}
 
 # ヒアドキュメントの本文を落とす (stdin → stdout)。
 #

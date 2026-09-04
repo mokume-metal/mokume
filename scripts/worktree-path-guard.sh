@@ -36,21 +36,19 @@
 
 set -uo pipefail
 
-deny() { # $1=理由
-  jq -n --arg r "$1" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-  exit 0
-}
+# payload の解き方と差し戻し方は guard-lib.sh と共有する (#815)。読めなければ素通し —
+# guard が壊れて書き込みが一切できなくなるほうが害が大きい (hook_payload の jq と同じ
+# fail open の考え方。他 2 本のフックと同じ形)
+# shellcheck source=scripts/guard-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
 
-payload=$(cat)
+hook_payload
+cwd=$HOOK_CWD
 
 # Edit/Write は file_path、NotebookEdit は notebook_path。書き込み先を持たない
 # ツール (Bash など) は素通し
-target=$(printf '%s' "$payload" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""' 2>/dev/null) || exit 0
+target=$(hook_field '.tool_input.file_path // .tool_input.notebook_path // ""')
 [ -n "$target" ] || exit 0
-
-cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""' 2>/dev/null)
-[ -n "$cwd" ] || cwd=$PWD
 
 # 実在する最も近い親ディレクトリの物理パス (新規ファイルの作成にも効かせるため、
 # ファイル自身の実在は前提にしない)
@@ -102,7 +100,7 @@ suggested=$current_root${relative:+/$relative}/$(basename "$target")
 note="（訂正先はまだ存在しません。新規作成ならこのままで問題ありません）"
 [ -e "$suggested" ] && note="（訂正先は存在します）"
 
-deny "$(cat <<EOF
+hook_deny "$(cat <<EOF
 同じリポジトリの**別 worktree** へ書き込もうとしています。パスの取り違えです。
 
   このセッションの worktree : $current_root
