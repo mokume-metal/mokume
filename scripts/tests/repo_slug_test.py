@@ -68,7 +68,13 @@ class RepoOfDirTest(unittest.TestCase):
 
     def resolve(self, origin=None):
         with tempfile.TemporaryDirectory() as tmp:
-            subprocess.run(["git", "init", "-q", str(Path(tmp) / "r")], check=True)
+            # **署名は切る** (#344)。ここは commit しないが、一時リポジトリを作る
+            # ファイルには一律で要求される — 取りこぼして「ときどき赤い」に戻るほうが
+            # 高くつく、という判断 (temp_repo_signing_test.py の冒頭)
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", "init", "-q", str(Path(tmp) / "r")],
+                check=True,
+            )
             root = Path(tmp) / "r"
             if origin is not None:
                 subprocess.run(
