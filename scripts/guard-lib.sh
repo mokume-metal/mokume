@@ -36,6 +36,9 @@
 # -R other/repo を付けたコメントまで差し戻していた — しかもラッパー (scripts/comment.sh)
 # の投稿先は mokume 固定なので、**逃げ道がどこにも無い**状態だった。
 #
+# 「どのリポジトリか」の解き方は scripts/repo-slug.sh が持つ (#818)。フックに限った話では
+# ないので、フックが共有する読み方・返し方の置き場であるここには置かない。
+#
 # 使い方 (source する側):
 #   . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
 #   hook_payload            # HOOK_PAYLOAD / HOOK_CWD を置く。jq が無ければ素通し
@@ -46,6 +49,12 @@
 #   hook_deny "<理由>"
 #
 # テストは scripts/tests/guard_lib_test.py。
+
+# 「どのリポジトリか」の解き方を借りる (#818)。**source は || return 1** —
+# 読めなければ、この先の判定ができないまま進むのではなく、source した側の
+# `|| exit 0` (fail open) を発火させる
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh" 2>/dev/null || return 1
 
 # --- フックの入口と出口 -------------------------------------------------------
 #
@@ -173,28 +182,6 @@ is_gh_subcommand() { # $1=コマンド $2=サブコマンド正規表現
     grep -qE "^gh([[:space:]]+[^[:space:]]+)*[[:space:]]+$2([[:space:]]|$)"
 }
 
-# ディレクトリの origin から owner/repo を取り出す (stdout)。解けなければ非 0。
-#
-# `-R` が無いとき gh が宛先にするのはカレントディレクトリのリポジトリなので、同じことを
-# ここで近似する。`gh repo set-default` による上書きは見ない — ずれたときは「解けなかった」
-# ではなく「別の宛先」と読む可能性があるが、その形は origin と既定が食い違うリポジトリに
-# 限られ、このリポジトリでは起きない。
-repo_of_dir() { # $1=ディレクトリ
-  local url slug
-  [ -n "${1:-}" ] || return 1
-  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 1
-  [ -n "$url" ] || return 1
-  # scheme://host/ と user@host: の 2 形を落とし、末尾の .git と / を落とす
-  slug=$(printf '%s' "$url" |
-    sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://[^/]+/##; s#^[^/@]+@[^:/]+:##; s#\.git$##; s#/$##')
-  # owner/repo ちょうど 2 段でなければ解けなかったものとして扱う (ローカルパスの
-  # remote などが該当する)。曖昧なものを宛先として採らない
-  case "$slug" in
-    */*/*) return 1 ;;
-    */*) printf '%s\n' "$slug" ;;
-    *) return 1 ;;
-  esac
-}
 
 # このコマンドの宛先は、このリポジトリの**外**か。
 #   $1 = コマンド文字列
@@ -231,8 +218,8 @@ repo_of_dir() { # $1=ディレクトリ
 # 宛先ではない。落とさないと、本文にそう書くだけで guard を素通りできてしまう
 # (is_gh_subcommand が地の文を拾わないために本文を落としているのと同じ理由)。
 targets_other_repo() { # $1=コマンド  $2=cwd (省略可)
-  local this_repo target cwd
-  this_repo="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+  local base target cwd
+  base="$(this_repo)"
   cwd=${2:-}
   [ -n "$cwd" ] || cwd=$PWD
   # -R は複数書ける。gh は後勝ちなので tail -1 で最後の指定を採る
@@ -242,11 +229,11 @@ targets_other_repo() { # $1=コマンド  $2=cwd (省略可)
     tail -1 | grep -oE '[^[:space:]=]+$') || target=""
   if [ -n "$target" ]; then
     case "$target" in */*) ;; *) return 1 ;; esac
-    [ "$target" != "$this_repo" ]
+    [ "$target" != "$base" ]
     return
   fi
   target=$(repo_of_dir "$cwd") || return 1
-  [ "$target" != "$this_repo" ]
+  [ "$target" != "$base" ]
 }
 
 # 宛先がこのリポジトリでないときの逃げ道を案内する (stdout)。
