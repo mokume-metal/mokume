@@ -19,6 +19,7 @@
 import http.server
 import functools
 import importlib.util
+import os
 import subprocess
 import tempfile
 import threading
@@ -150,12 +151,15 @@ class CommandTest(unittest.TestCase):
         self.site = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
 
-    def run_script(self, *arguments):
+    def run_script(self, *arguments, **env):
+        child = {k: v for k, v in os.environ.items() if k != "GITHUB_REPOSITORY"}
+        child.update(env)
         return subprocess.run(
             ["python3", str(SCRIPT), *arguments],
             capture_output=True,
             text=True,
             cwd=REPO,
+            env=child,
         )
 
     def head(self):
@@ -170,6 +174,38 @@ class CommandTest(unittest.TestCase):
         result = self.run_script("--site", str(self.site), "--skip-domain")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("追随している", result.stdout)
+
+    def test_設定を読む先は環境から取る(self):
+        """**fork や rename の後に他リポジトリの Pages を読んで緑にしない** (#818)。
+
+        `--repo` の既定が literal だった頃は、`GITHUB_REPOSITORY` が別のリポジトリを
+        指していても本家の設定を読んでいた。--help の既定表示で環境が効くことを見る
+        (実際に API を叩かずに済む唯一の口)。
+        """
+        shown = self.run_script("--help", GITHUB_REPOSITORY="other/name")
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertIn("GITHUB_REPOSITORY", shown.stdout)
+
+        # 既定そのものを読む — 環境を立てたときと立てないときで変わること
+        with_env = self.default_repo(GITHUB_REPOSITORY="other/name")
+        without = self.default_repo()
+        self.assertEqual(with_env, "other/name")
+        self.assertEqual(without, "mokume-metal/mokume")
+
+    def default_repo(self, **env):
+        """`--repo` の既定を、引数の解析だけ走らせて読み出す。"""
+        code = (
+            "import importlib.util, sys;"
+            f"spec = importlib.util.spec_from_file_location('pub', {str(SCRIPT)!r});"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"
+            "p = m.build_parser() if hasattr(m, 'build_parser') else None;"
+            "print(p.get_default('repo') if p else '')"
+        )
+        child = {k: v for k, v in os.environ.items() if k != "GITHUB_REPOSITORY"}
+        child.update(env)
+        return subprocess.run(
+            ["python3", "-c", code], capture_output=True, text=True, cwd=REPO, env=child
+        ).stdout.strip()
 
     def test_印が無ければ赤になる(self):
         result = self.run_script("--site", str(self.site), "--skip-domain")
