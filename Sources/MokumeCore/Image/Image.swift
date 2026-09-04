@@ -21,7 +21,9 @@ import simd
 /// という形の不具合が起きない。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-public final class Image {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor public final class Image {
     /// 横の画素数。
     public let width: Int
     /// 縦の画素数。
@@ -56,6 +58,16 @@ public final class Image {
         self.gpu = gpu
         upload()
     }
+
+    /// **面を常駐から退かせる** ([#738])。
+    ///
+    /// 常駐の集合は入れたものを抱えるので、絵を手放しても面は解放されない。`draw()` の
+    /// 中で `loadImage` を呼ぶ書き方は、これでフレームごとに 1 枚ずつ積んでいた
+    /// (実測: 256x256 を 200 フレームで +108 MiB)。退かせるだけで待たないので、
+    /// 手放す側は寿命を気にしなくてよい。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    isolated deinit { gpu.retire(texture) }
 
     /// 1 画素の色。範囲の外は透明を返す (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
     ///

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 // 影を落とす。焼き付けの仕組みは ``ShadowMap``、寿命は [ADR-0021] 決定 4 が定める。
@@ -88,18 +87,16 @@ extension Canvas {
 
     /// フレームの外で影の設定を書いたことを、初回だけ知らせる。
     private func warnShadowOutsideFrame() {
-        guard !warnedShadowOutsideFrame else { return }
-        warnedShadowOutsideFrame = true
-        Diagnostics.warn(
+        warnOnce(
+            .shadowOutsideFrame,
             "影はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
                 + "初期化のときに書いた影はどのフレームにも属さないため、無視しました")
     }
 
     /// 受け取れない値を、初回だけ知らせる。
     private func warnBadShadow(_ name: String) {
-        guard !warnedBadShadow else { return }
-        warnedBadShadow = true
-        Diagnostics.warn(
+        warnOnce(
+            .badShadow,
             "\(name)(): 数でない値・範囲の外の値が渡されたので、影の設定を変えませんでした")
     }
 }

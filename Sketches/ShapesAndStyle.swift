@@ -8,28 +8,28 @@ final class ShapesAndStyle: Sketch {
     var settings = SketchSettings(width: 960, height: 540, title: "shapes and style")
 
     func draw() {
-        background(.display(red: 0.07, green: 0.08, blue: 0.10))
+        background(18, 20, 26)
 
         // 図形をひととおり
         noStroke()
-        fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+        fill(242, 115, 64)
         rect(48, 48, 140, 90)
         rectMode(.center)
-        fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+        fill(89, 191, 242)
         rect(280, 93, 120, 80)
         rectMode(.corner)
-        fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+        fill(242, 217, 89)
         circle(430, 93, 90)
-        fill(.display(red: 0.6, green: 0.5, blue: 0.9))
+        fill(153, 128, 230)
         arc(560, 93, 100, 100, 0.4, 4.2)
-        fill(.display(red: 0.4, green: 0.85, blue: 0.5))
+        fill(102, 217, 128)
         triangle(660, 138, 720, 48, 780, 138)
-        fill(.display(red: 0.9, green: 0.4, blue: 0.6))
+        fill(230, 102, 153)
         quad(820, 48, 900, 62, 890, 138, 810, 120)
 
         // 輪郭 — 太さ・端点・角
         noFill()
-        stroke(.display(red: 0.85, green: 0.9, blue: 1))
+        stroke(217, 230, 255)
         for (index, cap) in [StrokeCap.square, .round, .project].enumerated() {
             strokeCap(cap)
             strokeWeight(Float(index) * 6 + 6)
@@ -52,7 +52,7 @@ final class ShapesAndStyle: Sketch {
         for _ in 0..<12 {
             rotate(.pi / 6)
             scale(0.92, 0.92)
-            stroke(.display(red: 1, green: 0.6, blue: 0.3, alpha: 0.9))
+            stroke(255, 153, 76, 230)
             strokeWeight(3)
             noFill()
             rect(-60, -60, 120, 120)
@@ -61,9 +61,9 @@ final class ShapesAndStyle: Sketch {
 
         // 混ぜ方
         noStroke()
-        fill(.display(red: 0.2, green: 0.25, blue: 0.35))
+        fill(51, 64, 89)
         rect(48, 330, 420, 160)
-        let ink = LinearRGBA.display(red: 0.95, green: 0.5, blue: 0.35, alpha: 0.85)
+        let ink = color(242, 128, 89, 217)
         for (index, mode) in [BlendMode.blend, .add, .multiply, .screen, .difference].enumerated() {
             blendMode(mode)
             fill(ink)
@@ -75,8 +75,8 @@ final class ShapesAndStyle: Sketch {
         push()
         translate(560, 330)
         clip(560, 330, 360, 170)
-        fill(.display(red: 0.45, green: 0.85, blue: 0.75))
-        stroke(.display(red: 0.1, green: 0.3, blue: 0.3))
+        fill(115, 217, 191)
+        stroke(26, 76, 76)
         strokeWeight(3)
         beginShape()
         vertex(20, 140)

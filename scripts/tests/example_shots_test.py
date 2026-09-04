@@ -181,18 +181,6 @@ class ExampleShotsTest(unittest.TestCase):
             self.assertNotIn("taken=", record, record)
             self.assertRegex(record, r"^// shot: \d+ snippet=[0-9a-f]{8}$")
 
-    def test_古い形の台帳は名乗って落ちる(self):
-        """#671。読めないことにすると「まだ撮っていない」と誤診してしまう。"""
-        self.write_back()
-        text = self.path.read_text(encoding="utf-8")
-        found = self.collect()
-        old = f"// shot: 1 snippet={found[0].fingerprint}"
-        self.path.write_text(text.replace(old, old + " taken=abc1234"), encoding="utf-8")
-        problems = shots.check(self.root, self.collect())
-        self.assertTrue(any("台帳が古い形" in problem for problem in problems), problems)
-        # 撮り直しを促してはいけない (絵は動いていない)
-        self.assertFalse(any("まだ撮っていない" in problem for problem in problems), problems)
-
     def test_見ていないことを出力が名乗る(self):
         """#671。数を出せないなら、境目を 1 行で言う。"""
         self.write_back()

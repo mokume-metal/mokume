@@ -57,6 +57,14 @@ import time
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# 相手を待つ上限は site_source が持つ (#815)。この検査と面の 3 本は同じ公開先を見るので、
+# 値が食い違うと「手元では通るが公開先だけ落ちる」が起きる。
+# **読み方までは寄せていない** — read_stamp は引けなかった理由を文字列で返す契約で、
+# Source.read は 404 以外を投げる。向きを揃えるのは #820
+from site_source import FETCH_TIMEOUT_SECONDS  # noqa: E402
+
 # 面を向ける先。ここが意図の正典で、GitHub 側の設定はその写し
 DOMAIN = "mokume.org"
 # 公開の印の名前。root に置く — 読む面ではなく機械が引く 1 本である (ADR-0027 決定 3)
@@ -64,7 +72,6 @@ STAMP_NAME = "publish-stamp.txt"
 # 公開が走っている最中を赤にしないための猶予。main への push から公開が終わるまでの
 # 時間 (swift build を含むので数分〜十数分) に、ランナーの混雑ぶんの余裕を足した幅
 GRACE_SECONDS = 45 * 60
-FETCH_TIMEOUT_SECONDS = 30
 
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 

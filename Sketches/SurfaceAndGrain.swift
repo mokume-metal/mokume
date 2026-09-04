@@ -39,8 +39,8 @@ final class SurfaceAndGrain: Sketch {
     private var settingsForWood: [String: ShaderValue] {
         [
             "pitch": 0.26,
-            "early": .color(.display(red: 0.82, green: 0.64, blue: 0.44)),
-            "late": .color(.display(red: 0.45, green: 0.29, blue: 0.17)),
+            "early": .color(color(209, 163, 112)),
+            "late": .color(color(115, 74, 43)),
         ]
     }
 
@@ -61,7 +61,7 @@ final class SurfaceAndGrain: Sketch {
         background(.studio)
         surroundings(.studio)
         ambientLight(.opaque(red: 0.10, green: 0.10, blue: 0.12))
-        directionalLight(.display(red: 1.0, green: 0.95, blue: 0.88), -0.4, 0.7, -0.6)
+        directionalLight(color(255, 242, 224), -0.4, 0.7, -0.6)
         noStroke()
 
         // **同じ姿勢で 2 枚**。時計はフレーム番号から導かれるので、何度撮っても同じ動き
@@ -73,13 +73,13 @@ final class SurfaceAndGrain: Sketch {
             rotateY(spin)
             if let painted { shader(painted) }
             // 断片は `in.color` を掛けて使う。白で塗っておくと、そこに光の強さだけが載る
-            fill(.display(red: 1, green: 1, blue: 1))
+            fill(255, 255, 255)
             box(300, 18, 190)
             resetShader()
             pop()
         }
 
-        fill(.display(red: 0.92, green: 0.92, blue: 0.88))
+        fill(235, 235, 224)
         textFont("Helvetica")
         textSize(18)
         textAlign(.center)

@@ -46,27 +46,16 @@
 # 配線は .claude/settings.json、テストは scripts/tests/comment_test.py。
 set -uo pipefail
 
-deny() { # $1=理由
-  jq -n --arg r "$1" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-  exit 0
-}
-
-# コマンド文字列の読み方は pr-identity-guard.sh と共有する (#128)。
-# 読めなければ素通し — guard が壊れて Bash ツール全体が使えなくなるほうが害が大きい
-# (下の jq と同じ fail open の考え方)
+# payload の解き方・差し戻し方・コマンド文字列の読み方は guard-lib.sh と共有する
+# (#128・#815)。読めなければ素通し — guard が壊れて Bash ツール全体が使えなくなるほうが
+# 害が大きい (hook_payload の jq と同じ fail open の考え方)
 # shellcheck source=scripts/guard-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
 
-payload=$(cat)
-command -v jq >/dev/null 2>&1 || exit 0
-command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
-[ -n "$command" ] || exit 0
-
-# -R が無いコマンドの宛先はカレントディレクトリのリポジトリ。payload の cwd は
-# シェルが実際に居るディレクトリを持つ (#611)
-cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""' 2>/dev/null)
-[ -n "$cwd" ] || cwd=$PWD
+hook_payload
+hook_command
+command=$HOOK_COMMAND
+cwd=$HOOK_CWD
 
 # ラッパー自身の呼び出しは素通し (内部で gh を呼ぶが、それは別プロセスでここを通らない)
 printf '%s' "$command" | grep -qE '(^|[;&|[:space:]])(bash[[:space:]]+)?[^[:space:];&|]*scripts/comment\.sh([[:space:]]|$)' && exit 0
@@ -87,15 +76,15 @@ is_comment_command() {
 
 is_comment_command || exit 0
 
-# 使い方を尋ねているだけなら投稿ではない
-printf '%s' "$command" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)' && exit 0
+# 使い方を尋ねているだけなら投稿ではない (判定は guard-lib.sh が持つ)
+is_help_request "$command" && exit 0
 
 # 他のリポジトリ宛てのコメントはこのリポジトリの規約の外 (#188)。あちらの署名の作法は
 # 別に決まっており、ラッパーの投稿先は mokume 固定なので、ここで止めると逃げ道が無くなる。
 # 判定は guard-lib.sh が持つ (pr-identity-guard.sh と共有する)
 targets_other_repo "$command" "$cwd" && exit 0
 
-deny "$(cat <<'EOF'
+hook_deny "$(cat <<'EOF'
 このリポジトリの Issue / PR へのコメントは scripts/comment.sh から投稿してください。
 
 同じ Issue には人間も複数のエージェントも書き込みます。どの AI が書いたかを本文の

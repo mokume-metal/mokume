@@ -72,6 +72,16 @@ enum DoctorCommand {
     }
 
     static func run(_ arguments: [String]) {
+        print(text(for: arguments))
+    }
+
+    /// 打った結果の全文。
+    ///
+    /// - Parameter workDirectory: 環境変数が与えた区画の基準 (`nil` なら与えられていない)。
+    ///   **渡せる形にしてある** — 割れている状況を検査から作れないと、切り分けの口自身が
+    ///   割れていても誰も気付けない
+    ///   ([#730](https://github.com/mokume-metal/mokume/issues/730))。
+    static func text(for arguments: [String], workDirectory: URL? = WorkDirectory.given) -> String {
         var place: String?
         var ignored: [String] = []
         for argument in arguments {
@@ -81,15 +91,16 @@ enum DoctorCommand {
                 ignored.append(argument)
             }
         }
-        let directory = URL(
-            fileURLWithPath: place ?? FileManager.default.currentDirectoryPath, isDirectory: true)
-        print(
-            report(
-                environment: probeEnvironment(in: directory),
-                state: probeState(in: directory),
-                base: WorkDirectory.given ?? directory,
-                given: WorkDirectory.given != nil,
-                ignored: ignored))
+        // 場所と区画の基準は、走らせる口と同じ 1 つの計算から出す (#791)
+        let invocation = Invocation(place: place)
+        let directory = invocation.directory
+        let base = invocation.facetBase(workDirectory: workDirectory)
+        return report(
+            environment: probeEnvironment(in: directory),
+            state: probeState(in: directory, facetBase: base),
+            base: base,
+            given: workDirectory != nil,
+            ignored: ignored)
     }
 
     // MARK: - 文
@@ -200,18 +211,26 @@ enum DoctorCommand {
     }
 
     /// 手元の状態を読む。**何も作らない。**
-    static func probeState(in directory: URL) -> State {
+    ///
+    /// - Parameter directory: スケッチの場所。`Package.swift` も `.build/` もここにある。
+    /// - Parameter facetBase: 区画の基準。**スケッチの場所とは別の軸** — `watch` は
+    ///   `MOKUME_WORK_DIR` を基準に記録を置くので、こちらを分けないと基準を与えた環境で
+    ///   常に「まだ無い」と読むことになる (#730)。
+    static func probeState(in directory: URL, facetBase: URL) -> State {
         State(
             place: directory,
             hasPackage: exists(directory.appendingPathComponent("Package.swift")),
             hasBuild: exists(directory.appendingPathComponent(".build", isDirectory: true)),
-            lastBuild: lastBuild(in: directory),
+            lastBuild: lastBuild(under: facetBase),
             dependency: DependencyVersion.resolved(forPackageAt: directory))
     }
 
     /// `watch` が置いた最後の作り直し。読めない・壊れているときは中身を `\(unknown)` に倒す。
-    static func lastBuild(in directory: URL) -> LastBuild? {
-        let url = directory.appendingPathComponent(".mokume/build/status.json")
+    ///
+    /// **読む先は書く側と同じ綴りから出す** — 場所を別々に組むと、基準を揃えても同じ形で
+    /// 割れる (#730)。
+    static func lastBuild(under facetBase: URL) -> LastBuild? {
+        let url = BuildReport.statusURL(under: facetBase)
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
             let at = attributes[.modificationDate] as? Date
         else { return nil }

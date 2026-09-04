@@ -47,6 +47,28 @@ public final class SharedFrameWindow {
         set { stage.onInput = newValue }
     }
 
+    /// × と `⌘W` を押されたときに確かめ、確定したら知らせる。
+    ///
+    /// **確かめている間は閉じない。** 繋がなければ AppKit の既定で閉じるので、絵の出口
+    /// だけが消えて誰も止まらない ([#826](https://github.com/mokume-metal/mokume/issues/826))。
+    ///
+    /// **窓を畳むのはここではない** — 受け取った側が後始末の順で畳む。
+    ///
+    /// - Parameters:
+    ///   - message: 見出し。
+    ///   - detail: 押した後どうなるか。
+    ///   - confirm: 閉じる側の押しどころ。
+    ///   - cancel: 閉じない側の押しどころ。
+    ///   - confirmed: 閉じてよいと確定したときに呼ばれる。
+    public func askBeforeClosing(
+        message: String, detail: String, confirm: String, cancel: String,
+        then confirmed: @escaping () -> Void
+    ) {
+        stage.askBeforeClosing(
+            .init(message: message, detail: detail, confirm: confirm, cancel: cancel),
+            then: confirmed)
+    }
+
     /// 窓を出し、区画を見張り始める。
     public func open() {
         stage.open()

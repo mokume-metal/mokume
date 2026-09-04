@@ -26,8 +26,8 @@ final class NoiseAndSeed: Sketch {
     /// 板 1 枚に何周ぶんの木目を写すか。
     private let span: Float = 6
     /// 早材と晩材の色。
-    private let early = LinearRGBA.display(red: 0.82, green: 0.64, blue: 0.44)
-    private let late = LinearRGBA.display(red: 0.46, green: 0.30, blue: 0.18)
+    private let early = color(209, 163, 112)
+    private let late = color(117, 76, 46)
     /// CPU 側を引く刻み (画素)。細かくするほど右に近づく。
     private let cell: Float = 4
 
@@ -66,7 +66,7 @@ final class NoiseAndSeed: Sketch {
     }
 
     func draw() {
-        background(.display(red: 0.09, green: 0.09, blue: 0.11))
+        background(23, 23, 28)
         noStroke()
 
         // 左: CPU の揺らぎ。同じ座標には何度呼んでも同じ値が返るので、

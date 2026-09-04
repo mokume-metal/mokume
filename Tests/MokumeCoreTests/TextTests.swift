@@ -590,6 +590,54 @@ struct TextTests {
 
         #expect(try pixels(of: alone).bytes == pixels(of: crowded).bytes)
     }
+
+    /// 上限の面にも収まらない大きさ。**倍にして、丸めや余白では届かない側へ振る。**
+    private var overwhelmingSize: Float { Float(GlyphAtlas.maximumSize) * 2 }
+
+    @Test("焼き場に入りきらない字形は、理由を『大きすぎる』として名乗る")
+    func anOversizedGlyphNamesItsReason() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(overwhelmingSize)
+        let face = canvas.typeface
+        let resolved = try #require(face.glyph(for: "M"))
+        let key = GlyphAtlas.Key(
+            fontKey: resolved.fontKey, size: overwhelmingSize, style: .normal,
+            glyph: resolved.glyph)
+
+        let lookup = canvas.atlas.entry(for: key, font: resolved.font)
+        guard case .tooLarge = lookup else {
+            Issue.record(
+                """
+                上限の面より大きい字形を頼んだのに、面は「\(lookup)」と答えた。
+
+                引けなかった理由が「満杯」と「字形が面より大きい」で分かれていないと、
+                受け取る側は広げれば入ると読んで、入らないものを追って広げ続ける
+                ([#738](https://github.com/mokume-metal/mokume/issues/738))。
+                """)
+            return
+        }
+    }
+
+    @Test("上限の面にも入らない字形を頼んでも、焼き場は広がらない")
+    func anOversizedGlyphDoesNotGrowTheAtlas() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(self.black)
+            canvas.fill(self.white)
+            canvas.textSize(self.overwhelmingSize)
+            canvas.text("M", 10, 100)
+        }
+        #expect(
+            canvas.atlas.size == GlyphAtlas.initialSize,
+            """
+            広げても入らない字形のために、焼き場が \(canvas.atlas.size) まで広がった。
+
+            広げるたびに焼いた字形は全部捨てられるので、これは入らない 1 字のために
+            他の字を焼き直させ続ける形になる。上限まで行っても入らないので、回復もしない
+            ([#738](https://github.com/mokume-metal/mokume/issues/738))。
+            """)
+    }
+
     // MARK: - 色を持つ字形
 
     /// 色を持つ字形を検査に使う。**その字が無い環境なら見送る** — 検査の対象は

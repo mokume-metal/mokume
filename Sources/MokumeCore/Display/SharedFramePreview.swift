@@ -68,6 +68,23 @@ public final class SharedFramePreview {
         set { stage.onInput = newValue }
     }
 
+    /// × と `⌘W` を押されたときに確かめ、確定したら知らせる。
+    ///
+    /// **作品の窓と同じ経路を通す** ([ADR-0032] 決定 7)。プレビューだけが消える形を作ると、
+    /// 決定 7 が作らないと決めた「既定を外す口」がここに開く
+    /// ([#826](https://github.com/mokume-metal/mokume/issues/826))。
+    ///
+    /// 引数の意味は ``SharedFrameWindow/askBeforeClosing(message:detail:confirm:cancel:then:)``
+    /// と同じ。
+    public func askBeforeClosing(
+        message: String, detail: String, confirm: String, cancel: String,
+        then confirmed: @escaping () -> Void
+    ) {
+        stage.askBeforeClosing(
+            .init(message: message, detail: detail, confirm: confirm, cancel: cancel),
+            then: confirmed)
+    }
+
     /// 窓を出し、区画を見張り始める。
     public func open() {
         stage.open(overlay: notice)
@@ -87,6 +104,11 @@ public final class SharedFramePreview {
     /// 重ねる面が出ているか。**検査から見る** — 「作品の窓には出ない」を機械で確かめるには、
     /// 出ている側も見えている必要がある。
     var hasPanel: Bool { knobs != nil }
+
+    /// 閉じる前に問うようになっているか。**検査から見る** — 「プレビューだけが消える形を
+    /// 作らない」(ADR-0032 決定 7) を機械で確かめるには、繋がっていることが見えている
+    /// 必要がある。
+    var asksBeforeClosing: Bool { stage.asksBeforeClosing }
 
     /// 並んでいるつまみの数。**面が出ていることとは別に見る** — 宣言が 1 つも無いときは
     /// 「面は出るがつまみは 0」であり、これを 1 つの真偽で表すと区別が付かない。

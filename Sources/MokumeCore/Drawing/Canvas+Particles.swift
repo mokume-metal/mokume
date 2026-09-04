@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 // 粒。意味の説明は利用者が最初に触る層 (`Sketch`) が正本で、ここは受け口である
@@ -84,7 +83,7 @@ extension Canvas {
         let computation = try Computation(
             name: entry, url: nil, body: source, values: [:],
             gpu: gpu, pipeline: try computePipeline())
-        computations.append(computation)
+        remember(computation)
         return computation
     }
 
@@ -196,9 +195,8 @@ extension Canvas {
     }
 
     private func warnParticlesOutsideFrame() {
-        guard !warnedParticlesOutsideFrame else { return }
-        warnedParticlesOutsideFrame = true
-        Diagnostics.warn(
+        warnOnce(
+            .particlesOutsideFrame,
             "粒は描くところ (draw) で扱います。初期化のときに出した粒はどのフレームにも"
                 + "属さないため、無視しました")
     }

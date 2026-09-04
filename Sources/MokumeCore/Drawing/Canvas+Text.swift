@@ -3,7 +3,6 @@
 
 import CoreGraphics
 import CoreText
-import MokumeDiagnostics
 import simd
 
 extension Canvas {
@@ -122,9 +121,7 @@ extension Canvas {
 
     /// 無い書体を指定されたことを、初回だけ知らせる。
     private func warnMissingFontOnce(_ name: String) {
-        guard !warnedMissingFont else { return }
-        warnedMissingFont = true
-        Diagnostics.warn("textFont(): 「\(name)」という書体はこの環境にありません。書体は変えません")
+        warnOnce(.missingFont, "textFont(): 「\(name)」という書体はこの環境にありません。書体は変えません")
     }
 }
 

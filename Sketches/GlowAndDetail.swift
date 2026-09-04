@@ -24,7 +24,7 @@ final class GlowAndDetail: Sketch {
     private let spokes = 72
 
     func draw() {
-        background(.display(red: 0.02, green: 0.03, blue: 0.05))
+        background(5, 8, 13)
 
         let centre = (x: width / 2, y: height / 2)
         let turn = time * 0.35
@@ -51,7 +51,7 @@ final class GlowAndDetail: Sketch {
         for index in 0..<24 {
             let angle = Float(index) / 24 * 2 * Float.pi - turn * 2.2
             let radius = 250 + sin(angle * 4 + time * 0.8) * 30
-            fill(.display(red: 1, green: 0.92, blue: 0.7))
+            fill(255, 235, 178)
             circle(centre.x + cos(angle) * radius, centre.y + sin(angle) * radius, 7)
         }
 
@@ -68,7 +68,7 @@ final class GlowAndDetail: Sketch {
 
         // 真ん中の芯。**にじみがいちばん強く出る場所**を絵の中心に置く
         noStroke()
-        fill(.display(red: 1, green: 0.95, blue: 0.8))
+        fill(255, 242, 204)
         circle(centre.x, centre.y, 34 + 6 * sin(time * 1.7))
 
         // にじみの強さだけを振る。**並べた順にかかる**ので、色ずれは
