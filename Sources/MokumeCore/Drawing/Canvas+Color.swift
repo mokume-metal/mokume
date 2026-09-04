@@ -17,9 +17,11 @@ extension Canvas {
         _ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255
     ) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: alpha,
-            from: "background()", fallingBackTo: "色を変えませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: alpha)
+        else {
+            return warnOnce(
+                .notANumberBackground, "background(): 数でない値・無限の値が渡されたので、色を変えませんでした")
+        }
         background(color)
     }
 
@@ -29,9 +31,11 @@ extension Canvas {
 
     public func fill(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: alpha,
-            from: "fill()", fallingBackTo: "色を変えませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: alpha)
+        else {
+            return warnOnce(
+                .notANumberFill, "fill(): 数でない値・無限の値が渡されたので、色を変えませんでした")
+        }
         fill(color)
     }
 
@@ -41,9 +45,11 @@ extension Canvas {
 
     public func stroke(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: alpha,
-            from: "stroke()", fallingBackTo: "色を変えませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: alpha)
+        else {
+            return warnOnce(
+                .notANumberStroke, "stroke(): 数でない値・無限の値が渡されたので、色を変えませんでした")
+        }
         stroke(color)
     }
 
@@ -53,9 +59,11 @@ extension Canvas {
 
     public func tint(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: alpha,
-            from: "tint()", fallingBackTo: "色を変えませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: alpha)
+        else {
+            return warnOnce(
+                .notANumberTint, "tint(): 数でない値・無限の値が渡されたので、色を変えませんでした")
+        }
         tint(color)
     }
 }

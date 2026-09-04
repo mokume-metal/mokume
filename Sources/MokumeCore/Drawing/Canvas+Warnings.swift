@@ -15,6 +15,27 @@ extension Canvas {
     ///
     /// [#734]: https://github.com/mokume-metal/mokume/issues/734
     enum Warning: Hashable {
+        /// 塗りに、数でない値・無限の値が渡された。
+        case notANumberFill
+        /// 線の色に、数でない値・無限の値が渡された。
+        case notANumberStroke
+        /// 下地に、数でない値・無限の値が渡された。
+        case notANumberBackground
+        /// 画像に掛ける色に、数でない値・無限の値が渡された。
+        case notANumberTint
+        /// 底上げの光に、数でない値・無限の値が渡された。
+        case notANumberAmbientLight
+        /// 向きを持つ光に、数でない値・無限の値が渡された。
+        case notANumberDirectionalLight
+        /// 位置を持つ光に、数でない値・無限の値が渡された。
+        case notANumberPointLight
+        /// 広がりを持つ光に、数でない値・無限の値が渡された。
+        case notANumberSpotLight
+        /// 光を受けて返す色に、数でない値・無限の値が渡された。
+        case notANumberAmbient
+        /// 自分で出す光に、数でない値・無限の値が渡された。
+        case notANumberEmissive
+
         /// 面の無いモデルを置いた。
         case emptyModel
         /// 置けない置き場所が混ざっていた。
