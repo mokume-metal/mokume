@@ -82,8 +82,8 @@ import mokume
 
 final class MySketch: Sketch {
     func draw() {
-        background(.display(red: 0.06, green: 0.07, blue: 0.09))
-        fill(.display(red: 0.95, green: 0.45, blue: 0.2))
+        background(15, 18, 23)
+        fill(242, 115, 51)
         circle(mouseX, mouseY, 120)
     }
 }

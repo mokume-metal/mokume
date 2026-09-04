@@ -70,6 +70,11 @@ set -euo pipefail
 # 報告の context の綴り。**探す側だけが直書きだと、打つ側の改名に付いていけない** (#785)
 # shellcheck source=scripts/render-context.sh
 . "$(dirname "${BASH_SOURCE[0]}")/render-context.sh"
+# 報告先と、覆いがまだ効くかの判定 (#819)。**以前は render-status.sh を別プロセスで
+# 起こして訊いていた** — 判定の実体が 1 つである点は正しかったが、そのために CLI に
+# 2 つのモードが生えていた
+# shellcheck source=scripts/render-coverage.sh
+. "$(dirname "${BASH_SOURCE[0]}")/render-coverage.sh"
 
 readonly SKIPPED=3
 
@@ -156,12 +161,12 @@ make ci-check || stop "make ci-check が通らなかった" "上の出力の失�
 # local-render の covers= が運ぶので、head を動かす必要が無い。
 #
 # **push の要否をここで判定し直さない。** 報告先を決めるのと同じ問いなので、
-# render-status へ訊く (ADR-0001 原則 9)。HEAD が返るのは「push しないと誰も
+# 共有の判定 (render-coverage.sh) を呼ぶ (ADR-0001 原則 9)。HEAD が返るのは「push しないと誰も
 # 見られない木」— 衝突を解いた合流と、手元だけの commit がこれに当たる。
 #
 # **判定は取り込みの時点で決まっていて、検査の最中に動く origin/main には依らない**
-# (#830。判定の中身は render-status.sh の report_target が持つ)
-sha=$(bash "$(dirname "${BASH_SOURCE[0]}")/render-status.sh" target)
+# (#830。判定の中身は scripts/render-coverage.sh の report_target が持つ)
+sha=$(report_target)
 if [ "$sha" = "$(git rev-parse '@{u}')" ]; then
   say "手元の木は push 済みの head から作り直せる (衝突を解いていない) — push しない"
   say "承認は落ちない (dismiss_stale_reviews_on_push を踏まない・#612)"
@@ -188,7 +193,7 @@ if ! git fetch -q origin; then
 else
   # 名乗りが出なくても set -u で落ちないよう、先に空を置く (判定できないときは通す)
   verdict='' reason=''
-  read -r verdict reason <<<"$(bash "$(dirname "${BASH_SOURCE[0]}")/render-status.sh" coverage)" || true
+  read -r verdict reason <<<"$(report_coverage)" || true
   case "$verdict" in
     fresh) say "覆いはそのまま有効 — $reason" ;;
     # **止めるのは 1 である。** 正しい次の一手は「待つ」ではなく「打ち直す」なので、

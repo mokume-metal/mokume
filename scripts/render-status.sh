@@ -17,7 +17,6 @@
 #
 #   bash scripts/render-status.sh local     # make ci-check の最後。全検査が通ったときだけ打つ
 #   bash scripts/render-status.sh proxy     # CI から。打たなくてよい場合の代理報告だけ
-#   bash scripts/render-status.sh target    # 報告先の commit を出すだけ (catch-up が push の要否を訊く)
 #   bash scripts/render-status.sh coverage  # 手元の覆いがいまの origin/main にまだ効くか (#830)
 #
 # ## 何を防いでいるか
@@ -48,6 +47,10 @@ set -euo pipefail
 # 空を返さないので逃がしにも掛からず、報告が黙って届かなかった
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+# 手元の木から覆いを判定する部分 (#819)。**git だけで決まるもの**はあちらが持ち、
+# catch-up.sh も同じものを source する (以前はあちらが別プロセスでここへ訊いていた)
+# shellcheck source=scripts/render-coverage.sh
+. "$(dirname "${BASH_SOURCE[0]}")/render-coverage.sh"
 # 変更ファイルの取り方 (#793)。drawing-queue.sh も使うが、あちらは自分で読み込まない
 # ので読み手が source する (drawing-paths.sh とまったく同じ形)
 # shellcheck source=scripts/pr-files.sh
@@ -100,114 +103,6 @@ drawing_fingerprint() {
   printf '%s\n' "$tree" | drawing_files coverage | sort | shasum -a 256 | cut -c1-12
 }
 
-# 手元にある木の同じ指紋。**綴りは drawing_fingerprint と一字一句同じでなければ
-# ならない** — merge queue はこの値と合流後の木の指紋を突き合わせるので、どちらかの
-# 書式が動くと全部の描画 PR が常時弾かれる。tree API が返すのと同じ「path sha」の
-# 並びを作るために `--format` を使う (既定の出力はモードと型が混ざり、空白を含む
-# パスを引用符で囲む)。
-#
-# 同じ commit で 2 経路が同じ 12 桁を返すことは実測してある (#612)。
-#
-# 引数は commit でも木そのものでもよい。`git merge-tree --write-tree` が書いた木を
-# そのまま渡せることが要る (#830 の coverage は、queue がこれから組む木の指紋を
-# **手元の git だけで**取る)
-tree_drawing_fingerprint() {
-  git ls-tree -r "$1" --format='%(path) %(objectname)' \
-    | drawing_files coverage | sort | shasum -a 256 | cut -c1-12
-}
-
-local_drawing_fingerprint() { tree_drawing_fingerprint HEAD; }
-
-# 報告先の commit (#612)。
-#
-# 既定は HEAD。ただし**手元が「push 済みの head に main を取り込んだだけ」の木**なら、
-# その push 済み head へ報告する。
-#
-# 覆い直しのために push すると、ルールセットの dismiss_stale_reviews_on_push が
-# **承認を落とす**。承認が要る描画 PR は、他の PR が入るたびにこれを繰り返すことに
-# なっていた (#612)。判定に要るのは「どの木を回したか」だけで、それは description の
-# covers= が運ぶので、**head を動かす必要が無い**。
-#
-# 条件は「**手元の木が、push 済み head から機械的に作り直せるか**」である。作り直せる
-# なら remote に無い中身は 1 バイトも無いので、報告先を push 済み head にしても報告と
-# その中身は食い違わない。
-#
-# 作り直せなければ HEAD を返す。その木は remote に無いので、今までどおり「まだ push
-# していない」として報告が付かない — 衝突を解いた合流と、手元だけの commit がこれに
-# 当たる (どちらも push が要り、承認の押し直しも正しい)。
-#
-# **比べる相手は「手元が取り込んだ main」で、いま origin/main が指すものではない**
-# (#830)。origin/main は ref にすぎず、同じリポジトリを共有する別の worktree が
-# fetch しただけで先へ動く。動いた相手と比べていた頃は、`make ci-check` の 9 分間に
-# 別の PR が main へ入るだけで素直な取り込みまで「衝突を解いてある」と誤診し、解いた
-# 中身が 1 バイトも無い合流を push して承認を落としていた (#612 がそのまま戻る)。
-report_target() {
-  local head upstream taken automatic
-  head=$(git rev-parse HEAD)
-  upstream=$(git rev-parse --verify --quiet '@{u}' 2>/dev/null) || upstream=''
-  if [ -z "$upstream" ] || [ "$upstream" = "$head" ]; then
-    printf '%s' "$head"
-    return 0
-  fi
-  # 手元が取り込んだ main を、控えではなく履歴から取り直す。**main は fast-forward で
-  # しか進まない**ので、HEAD に入っているいちばん新しい main の commit は merge-base
-  # そのもので、origin/main が先へ動いてもこの値は動かない。
-  #
-  # 合流の第 2 親 (HEAD^2) では 1 段の合流しか見られない — catch-up は 2 回打たれる
-  # ことがあり、そのとき第 1 親は push 済み head ではなく前回の合流 commit になる。
-  if ! taken=$(git merge-base HEAD origin/main 2>/dev/null) || [ -z "$taken" ]; then
-    printf '%s' "$head"
-    return 0
-  fi
-  # commit の数え方では決まらない — 取り込みは main の commit を丸ごと連れてくるので、
-  # 「合流だけか」を履歴の形から判定しようとすると main の commit を数えてしまう
-  # (実測)。木そのものを突き合わせる。
-  if ! automatic=$(git merge-tree --write-tree "$upstream" "$taken" 2>/dev/null) ||
-    [ "$automatic" != "$(git rev-parse "$head^{tree}")" ]; then
-    printf '%s' "$head"
-    return 0
-  fi
-  printf '%s' "$upstream"
-}
-
-# 手元の実行の覆いが、いまの origin/main で組まれる合流後の姿にまだ効くか (#830)。
-#
-# push の要否から origin/main を切り離すと (report_target)、**覆いが古くなるかは別の
-# 問いとして残る** — queue が組むのは動いた後の origin/main との合流だからである。
-# 見ているのは描画に関わるファイルの中身だけなので、動いた main がそこを触っていな
-# ければ手元の実行はまだ合流後の姿を覆っている。
-#
-# 判定は**手元の git だけで付く**。`git merge-tree --write-tree` は組んだ木を手元の
-# object DB へ書くので、その木の指紋を tree_drawing_fingerprint がそのまま読める。
-#
-# 名乗りは 1 行目の 1 語で、fresh / stale / conflict / unknown。**判定できないときは
-# 通す** (冒頭の宣言と同じ向き) ので、読めなかった側は unknown で名乗る。
-report_coverage() {
-  local head base queue_tree
-  head=$(git rev-parse HEAD)
-  # 覆いが載る先 = 報告先。push した後なら @{u} は HEAD に追いついている
-  base=$(git rev-parse --verify --quiet '@{u}' 2>/dev/null) || base=$head
-  if ! git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
-    echo "unknown origin/main を読めない (覆いが古くなるかは見ていない)"
-    return 0
-  fi
-  if git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
-    echo "fresh main は手元が取り込んだままで動いていない"
-    return 0
-  fi
-  # 衝突していれば queue は合流後の木を作れない。覆いの話ではないので、そちらを先に
-  # 名乗る (取り込んで解いて push する、が正しい次の一手になる)
-  if ! queue_tree=$(git merge-tree --write-tree "$base" origin/main 2>/dev/null); then
-    echo "conflict 動いた main と衝突している"
-    return 0
-  fi
-  if [ "$(tree_drawing_fingerprint "$queue_tree")" = "$(tree_drawing_fingerprint HEAD)" ]; then
-    echo "fresh 動いた main は描画に関わるファイルを動かしていない"
-  else
-    echo "stale 動いた main が描画に関わるファイルを動かした"
-  fi
-}
-
 # 手元の実行が「どの木を回したか」を、報告そのものから読む (#612)。
 #
 # 覆いの判定は本来「手元が回した木 == 合流後の木」であり、**PR の head の木では
@@ -243,87 +138,60 @@ covered_fingerprint() {
 #
 # **判定できないときは通す。** 防いでいるのは事故であって偽装ではない (冒頭の宣言)
 # ので、queue を止めるより名乗って通すほうを取る。何を見ていないかは必ず述べる。
-report_merge_group() {
-  local repo=$1 merged=$2 head_ref=$3
-  local numbers number head files fp_head covered source checked=0 blind=''
-  local fp_merged='' rejected=''
+# 1 PR ぶんの「見る対象か」の判定。
+#   0 = 台帳の絵を動かす / 1 = 動かさない / 2 = 読めなかった
+#
+# **合流後の木を引く前にこれを訊く** (#441)。描画 PR が 1 本も無い回に「木を読めなかった」
+# という無関係な名乗りを出さないため、木の取得は見る対象が現れて初めて行う。
+pr_touches_drawing() { # $1=repo $2=PR 番号
+  local files
+  files=$(pr_files "$1" "$2") || return 2
+  printf '%s\n' "$files" | touches_drawing coverage
+}
 
-  # queue の枝は gh-readonly-queue/<base>/pr-<番号>-<base sha>。まとめて積まれた
-  # ときに備えて pr-<番号> は全件拾う (1 本でも覆えていなければ通さない)
-  numbers=$(printf '%s\n' "$head_ref" | grep -oE 'pr-[0-9]+' | cut -d- -f2 || true)
-  if [ -z "$numbers" ]; then
-    say "queue の枝から PR 番号を読めなかった ($head_ref)"
-    post "$repo" "$merged" success "merge queue (覆いは見ていない)"
+# 1 PR ぶんの覆いの判定。判定の結果を stdout へ 1 行で返す。
+# 出力はタブ区切りの 3 欄 `<判定>\t<内訳>\t<head>`:
+#   covered   <出どころ>=<指紋>   —      覆えている
+#   rejected  <出どころ>=<指紋>   <head> 覆えていない (呼ぶ側が弾く)
+#   blind     <理由>              —      判定できなかった
+#
+# **空白ではなくタブで区切る。** 理由の文には空白が入るので、空白区切りにすると
+# 「blind head を読めなかった」が 3 語に割れて名乗りが壊れる
+#
+# **弾いた PR の head へ failure を打つのは呼ぶ側**である。ここは判定だけを返す —
+# 打つかどうかは queue 全体を見てから決まる (#462)。
+pr_coverage() { # $1=repo $2=PR 番号 $3=合流後の指紋
+  local repo=$1 number=$2 fp_merged=$3 head covered fp_head source
+  if ! head=$(gh api "repos/$repo/pulls/$number" --jq '.head.sha'); then
+    printf 'blind\thead を読めなかった\t-\n'
     return
   fi
+  # **手元が回した木の指紋を、報告そのものから読む** (#612)。名乗っていない報告
+  # (古いもの・手で打った status) は今までどおり head の木で判定する
+  covered=$(covered_fingerprint "$repo" "$head") || covered=''
+  if [ -n "$covered" ]; then
+    fp_head=$covered
+    source='手元の報告'
+  elif fp_head=$(drawing_fingerprint "$repo" "$head"); then
+    source='head の木'
+  else
+    printf 'blind\thead の木を読めなかった (指紋を取れない)\t-\n'
+    return
+  fi
+  if [ "$fp_head" != "$fp_merged" ]; then
+    printf 'rejected\t%s=%s\t%s\n' "$source" "$fp_head" "$head"
+    return
+  fi
+  printf 'covered\t%s=%s\t-\n' "$source" "$fp_head"
+}
 
-  # **覆えていない PR を見つけても、そこで切り上げない** (#462)。queue はまとめて
-  # 積む (max_entries_to_build: 5) ので、1 本目で return すると 2 本目以降の作者に
-  # とっては何も変わらない — 自分の PR は緑のまま、理由もどこにも出ないまま弾かれる。
-  # 判定は rejected に畳んで、queue への報告はループの後に 1 回だけ打つ。
-  #
-  # 読めなくなったら見るのをやめる (blind)。ただし**既に決まった failure は
-  # 上書きしない** — 「読めなければ名乗って通す」は判定できなかったときの逃がしで
-  # あって、判定できた failure を取り消す口ではない。
-  for number in $numbers; do
-    if ! files=$(pr_files "$repo" "$number"); then
-      say "#$number の変更ファイルを読めなかった"
-      blind=1
-      break
-    fi
-    # 読み飛ばすときも名乗る (#441)。止めなかった回のログが「見た上で通した」のか
-    # 「見る対象が無かった」のかを分けて読めるようにするため
-    if ! printf '%s\n' "$files" | touches_drawing coverage; then
-      say "#$number は台帳の絵を動かさない (覆いを見る対象ではない)"
-      continue
-    fi
-
-    # 合流後の木は、見る対象が現れて初めて引く。描画 PR が 1 本も無い回に
-    # 「木を読めなかった」という無関係な名乗りが出ないため (#441)
-    if [ -z "$fp_merged" ] && ! fp_merged=$(drawing_fingerprint "$repo" "$merged"); then
-      say "合流後の木を読めなかった (指紋を取れない)"
-      blind=1
-      break
-    fi
-
-    if ! head=$(gh api "repos/$repo/pulls/$number" --jq '.head.sha'); then
-      say "#$number の head を読めなかった"
-      blind=1
-      break
-    fi
-
-    # **手元が回した木の指紋を、報告そのものから読む** (#612)。名乗っていない報告
-    # (古いもの・手で打った status) は今までどおり head の木で判定する
-    covered=$(covered_fingerprint "$repo" "$head") || covered=''
-    if [ -n "$covered" ]; then
-      fp_head=$covered
-      source='手元の報告'
-    elif fp_head=$(drawing_fingerprint "$repo" "$head"); then
-      source='head の木'
-    else
-      say "#$number の head の木を読めなかった (指紋を取れない)"
-      blind=1
-      break
-    fi
-
-    if [ "$fp_head" != "$fp_merged" ]; then
-      say "#$number の手元の実行は合流後の姿を覆っていない ($source=$fp_head 合流後=$fp_merged)"
-      say "main を取り込んで手元で make ci-check を打ち直すと、この報告が付き直す"
-      # **PR の head にも打つ** (#462)。queue のコミットに付けた failure は
-      # gh pr checks にもタイムラインにも現れないので、弾かれたことに気付く経路が
-      # 人間しか無かった。ここが赤くなれば、見届けの仕組みがそのまま拾う。
-      #
-      # **CI がここへ打つのは failure だけである。** success は手元の実行しか
-      # 打たない (#304) — その不変条件を、報告先を広げるついでに崩さない。
-      post "$repo" "$head" failure \
-        "merge queue で弾かれた — main を取り込んで make ci-check を打ち直す"
-      rejected="$rejected #$number"
-      continue
-    fi
-    say "#$number は覆えている ($source=$fp_head)"
-    checked=$((checked + 1))
-  done
-
+# queue へ 1 回だけ打つ。**優先順は rejected > blind > 見る対象なし > 覆えている。**
+#
+# 弾いた PR が 1 本でもあれば failure である。「読めなかった」で上書きしない —
+# 読めなければ名乗って通すのは判定できなかったときの逃がしで、判定できた failure を
+# 取り消す口ではない。
+post_queue_verdict() { # $1=repo $2=合流後の sha $3=弾いた PR $4=読めなかったか $5=覆えていた本数
+  local repo=$1 merged=$2 rejected=$3 blind=$4 checked=$5
   if [ -n "$rejected" ]; then
     post "$repo" "$merged" failure \
       "${rejected# } の手元の実行が合流後の姿を覆っていない — main を取り込んで打ち直す"
@@ -335,6 +203,80 @@ report_merge_group() {
   else
     post "$repo" "$merged" success "merge queue ($checked 本の描画 PR が合流後の姿を覆っている)"
   fi
+}
+
+# merge queue へ 1 回だけ報告する。合流後の木を、積まれた PR ぜんぶと突き合わせる。
+#
+# **覆えていない PR を見つけても、そこで切り上げない** (#462)。queue はまとめて積む
+# (max_entries_to_build: 5) ので、1 本目で return すると 2 本目以降の作者にとっては
+# 何も変わらない — 自分の PR は緑のまま、理由もどこにも出ないまま弾かれる。判定は
+# rejected に畳んで、queue への報告はループの後に 1 回だけ打つ。
+#
+# **読み飛ばすときも名乗る** (#441)。止めなかった回のログが「見た上で通した」のか
+# 「見る対象が無かった」のかを分けて読めるようにするため。
+#
+# 読めなくなったら見るのをやめる (blind)。
+#
+# **弾いた PR の head にも打つ** (#462)。queue のコミットに付けた failure は
+# gh pr checks にもタイムラインにも現れないので、弾かれたことに気付く経路が人間しか
+# 無かった。head が赤くなれば、見届けの仕組みがそのまま拾う。**CI がここへ打つのは
+# failure だけである** — success は手元の実行しか打たない (#304)。
+report_merge_group() {
+  local repo=$1 merged=$2 head_ref=$3
+  local numbers number touches line verdict detail head
+  local checked=0 blind='' fp_merged='' rejected=''
+
+  # queue の枝は gh-readonly-queue/<base>/pr-<番号>-<base sha>。まとめて積まれた
+  # ときに備えて pr-<番号> は全件拾う (1 本でも覆えていなければ通さない)
+  numbers=$(printf '%s\n' "$head_ref" | grep -oE 'pr-[0-9]+' | cut -d- -f2 || true)
+  if [ -z "$numbers" ]; then
+    say "queue の枝から PR 番号を読めなかった ($head_ref)"
+    post "$repo" "$merged" success "merge queue (覆いは見ていない)"
+    return
+  fi
+
+  for number in $numbers; do
+    # **`$?` を素で見ない。** set -e の下では非 0 を返した時点で script が落ちる
+    touches=0
+    pr_touches_drawing "$repo" "$number" || touches=$?
+    case $touches in
+      2) say "#$number の変更ファイルを読めなかった"; blind=1; break ;;
+      1) say "#$number は台帳の絵を動かさない (覆いを見る対象ではない)"; continue ;;
+    esac
+
+    if [ -z "$fp_merged" ] && ! fp_merged=$(drawing_fingerprint "$repo" "$merged"); then
+      say "合流後の木を読めなかった (指紋を取れない)"
+      blind=1
+      break
+    fi
+
+    # **判定を先に受け取ってから読む。** `IFS=$'\t' read … <<<"$(pr_coverage …)"` と
+    # 1 文で書くと、前置きの IFS が**同じコマンドの中のコマンド置換にも効く** —
+    # drawing_files の `for tag in $rest` が空白で分割されなくなり、`evidence-only` の
+    # 印が読めずに覆いの判定が別の問い (evidence) の答えを返していた (#819 で実測)
+    line=$(pr_coverage "$repo" "$number" "$fp_merged")
+    IFS=$'\t' read -r verdict detail head <<<"$line"
+    case $verdict in
+      blind)
+        say "#$number の $detail"
+        blind=1
+        break
+        ;;
+      rejected)
+        say "#$number の手元の実行は合流後の姿を覆っていない ($detail 合流後=$fp_merged)"
+        say "main を取り込んで手元で make ci-check を打ち直すと、この報告が付き直す"
+        post "$repo" "$head" failure \
+          "merge queue で弾かれた — main を取り込んで make ci-check を打ち直す"
+        rejected="$rejected #$number"
+        ;;
+      *)
+        say "#$number は覆えている ($detail)"
+        checked=$((checked + 1))
+        ;;
+    esac
+  done
+
+  post_queue_verdict "$repo" "$merged" "$rejected" "$blind" "$checked"
 }
 
 mode=${1:-}
@@ -401,21 +343,11 @@ case "$mode" in
     post "$GITHUB_REPOSITORY" "${PR_HEAD_SHA:?}" success "手元の実行の覆いを壊さない"
     ;;
 
-  target)
-    # 報告先を出すだけ。**push の要否の判定を 2 か所に書かない**ため、catch-up は
-    # ここへ訊く (ADR-0001 原則 9)。HEAD が返れば「push しないと誰も見られない木」
-    report_target
-    echo
-    ;;
-
-  coverage)
-    # 覆いがまだ効くかを出すだけ (#830)。target と同じ形で catch-up が訊く —
-    # 覆いの綴りを持っているのはこちらなので、判定もこちらに置く
-    report_coverage
-    ;;
-
   *)
-    echo "使い方: $0 local|proxy|target|coverage" >&2
+    # **口は「打つ」2 つだけである** (#819)。以前は catch-up が別プロセスで訊くための
+    # target / coverage があったが、判定は scripts/render-coverage.sh に移り、
+    # あちらは source して直に呼ぶ
+    echo "使い方: $0 local|proxy" >&2
     exit 2
     ;;
 esac

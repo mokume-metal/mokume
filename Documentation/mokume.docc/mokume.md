@@ -21,7 +21,7 @@ import mokume
 
 final class Hello: Sketch {
     func draw() {
-        background(.display(red: 0.06, green: 0.07, blue: 0.09))
+        background(15, 18, 23)
         circle(width / 2, height / 2, 120)
     }
 }
