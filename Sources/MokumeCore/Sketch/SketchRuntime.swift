@@ -281,18 +281,9 @@ public final class SketchRuntime {
             serveObservationIfRequested()
             return
         }
-        start()
-        timing.advance()
-        beginFrame()
-        receiveInput()
-
-        supplyFromInlets()
-
         var drawFailure: RenderFailure?
-        canvas.time = timing.time
-        canvas.deltaTime = timing.deltaTime
         do {
-            try canvas.draw { withActiveRuntime { sketch.draw() } }
+            try drawSketchFrame()
         } catch {
             drawFailure = error
         }
@@ -300,6 +291,26 @@ public final class SketchRuntime {
         detachRecorderIfDone()
         serveObservationIfRequested(drawFailure: drawFailure)
         if let drawFailure { throw drawFailure }
+    }
+
+    /// フレームを 1 枚描く手順。**正本はここ 1 つ。**
+    ///
+    /// 通常のフレーム (``runFrame()``) と、観測がまだ 1 枚も描いていないスケッチを
+    /// 叩いたときの 1 枚 (``serveObservationIfRequested(drawFailure:)``) が、同じここを
+    /// 通る。**かつては 2 か所に書かれており、観測の側だけが腐っていた** — 入り口の
+    /// 供給と面への時刻の受け渡しが落ちていて、しかも窓で走らせている限り再現しな
+    /// かった ([#808](https://github.com/mokume-metal/mokume/issues/808))。
+    ///
+    /// 段を足すときはここへ書けば、両方の経路に等しく効く。
+    private func drawSketchFrame() throws(RenderFailure) {
+        start()
+        timing.advance()
+        beginFrame()
+        receiveInput()
+        supplyFromInlets()
+        canvas.time = timing.time
+        canvas.deltaTime = timing.deltaTime
+        try canvas.draw { withActiveRuntime { sketch.draw() } }
     }
 
     /// 溜まった入力をこのフレームへ流し込む。
@@ -555,12 +566,10 @@ public final class SketchRuntime {
             return
         }
         guard let request = observer.pendingRequest() else { return }
+        // **通常のフレームと同じ手順で描く。** 手順をここへ写すと、段を足すたびに
+        // 片方だけ腐る (#808)
         if drawFailure == nil, timing.frameCount == 0 {
-            start()
-            timing.advance()
-            beginFrame()
-            receiveInput()
-            try? canvas.draw { withActiveRuntime { sketch.draw() } }
+            try? drawSketchFrame()
         }
         beginCapture(for: request, through: observer, drawFailure: drawFailure)
     }
