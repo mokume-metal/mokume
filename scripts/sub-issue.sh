@@ -12,7 +12,10 @@
 #            本文が無ければ検証用の雛形を入れる (確認後に close する前提)
 set -euo pipefail
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 
 PARENT="${1:?親 Issue 番号が必要}"; shift
 TITLE="${1:?タイトルが必要}"; shift

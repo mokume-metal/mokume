@@ -103,8 +103,8 @@ final class FieldAndFlow: Sketch {
             """,
             values: [
                 "grid": .pair(Float(columns), Float(rows)),
-                "low": .color(.display(red: 0.05, green: 0.07, blue: 0.13)),
-                "high": .color(.display(red: 1, green: 0.76, blue: 0.36)),
+                "low": .color(color(13, 18, 33)),
+                "high": .color(color(255, 194, 92)),
             ])
     }
 
@@ -118,10 +118,10 @@ final class FieldAndFlow: Sketch {
         // 毎フレーム引けば CPU と GPU が交互に動く形になる
         if frameCount % readEvery == 1 { findPeak(in: read(field)) }
 
-        background(.display(red: 0.04, green: 0.05, blue: 0.08))
+        background(10, 13, 20)
         // **塗りの指定はフレームをまたいで残る。** 下で `noFill()` にしているので、
         // ここで戻さないと 2 フレーム目から矩形が 1 枚も出ない (絵は出るので気付きにくい)
-        fill(.display(red: 1, green: 1, blue: 1))
+        fill(255, 255, 255)
         noStroke()
         numbers(field)
         shader(paint)
@@ -131,7 +131,7 @@ final class FieldAndFlow: Sketch {
 
         // CPU が置く側。**GPU が書いた数を CPU が読んで初めて置ける印**である
         noFill()
-        stroke(.display(red: 1, green: 1, blue: 1, alpha: 0.85))
+        stroke(255, 255, 255, 217)
         strokeWeight(2 + peakHeight * 3)
         circle(peak.x, peak.y, 54 + peakHeight * 26)
         strokeWeight(1)

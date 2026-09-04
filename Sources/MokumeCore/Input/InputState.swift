@@ -61,7 +61,20 @@ public final class InputState {
     }
 
     /// 溜めたものを流し込む。フレームの頭で 1 回呼ぶ。
-    func beginFrame() {
+    ///
+    /// **畳みながら配る。** 1 件適用するごとに、その 1 件が生む呼び出しを `dispatch` へ
+    /// 渡す。畳むだけにすると、1 フレームに `mouseDown` → `mouseUp` が収まったとき
+    /// 押されたことがどこにも残らない — 窓を人が触るぶんには押下と解放の間に数フレーム
+    /// 入るので滅多に踏まないが、外から送る経路では 1 回の要求がまとめて 1 フレームへ
+    /// 入るので、**クリックを 1 件送るという最も素直な使い方が常に消える**
+    /// ([#723](https://github.com/mokume-metal/mokume/issues/723))。
+    ///
+    /// 規則は 1 つ — **状態はその出来事まで適用した値**。配られた側から読む位置や押下
+    /// 状態は、その出来事を当てた直後の姿になっている。`draw()` から見える最終状態は
+    /// 畳んだときと変わらない。
+    ///
+    /// - Parameter dispatch: 呼び出しの配り先。既定では何もしない (状態を進めるだけ)。
+    func beginFrame(dispatch: (InputCallback) -> Void = { _ in }) {
         previousX = x
         previousY = y
         scrollX = 0
@@ -70,7 +83,29 @@ public final class InputState {
         dragY = 0
         let events = pending
         pending.removeAll(keepingCapacity: true)
-        for event in events { apply(event) }
+        for event in events {
+            // 判定に要る「適用する前」を控えてから状態を進め、**進めた後の値で**配る
+            let wasMouseDown = isMouseDown
+            apply(event)
+            dispatchCallbacks(for: event, wasMouseDown: wasMouseDown, to: dispatch)
+        }
+    }
+
+    /// その 1 件が生む呼び出しを、生む順に配る。**写し方の正本はここ 1 つ。**
+    private func dispatchCallbacks(
+        for event: InputEvent, wasMouseDown: Bool, to dispatch: (InputCallback) -> Void
+    ) {
+        switch event {
+        case .mouseDown:
+            dispatch(.mousePressed)
+        case .mouseUp:
+            dispatch(.mouseReleased)
+            // **押下を伴う解放だけがクリックになる。** 押していないところで離しても
+            // 解放は起きる (窓の外で押して中で離す・上限で押下が捨てられた、など)
+            if wasMouseDown { dispatch(.mouseClicked) }
+        case .mouseMoved, .scrolled, .keyDown, .keyUp:
+            break
+        }
     }
 
     private func apply(_ event: InputEvent) {

@@ -23,13 +23,13 @@ final class PixelsAndPaint: Sketch {
             """,
             values: [
                 "density": 60,
-                "deep": .color(.display(red: 0.1, green: 0.15, blue: 0.35)),
-                "shallow": .color(.display(red: 0.6, green: 0.9, blue: 0.95)),
+                "deep": .color(color(26, 38, 89)),
+                "shallow": .color(color(153, 230, 242)),
             ])
     }
 
     func draw() {
-        background(.display(red: 0.06, green: 0.07, blue: 0.09))
+        background(15, 18, 23)
         noStroke()
 
         // 左: 自分で書いた塗り
@@ -38,19 +38,19 @@ final class PixelsAndPaint: Sketch {
             // **値は前のフレームのまま残る。** 毎フレーム決め直さないと、上の帯が
             // 下の帯の値で描かれる (前のフレームの終わりの値がそのまま効く)
             ripple.set("density", 60)
-            ripple.set("shallow", .color(.display(red: 0.6, green: 0.9, blue: 0.95)))
+            ripple.set("shallow", .color(color(153, 230, 242)))
             rect(0, 0, 480, 400)
             // 値を変えると、そこで区切られる — 上に置いたものは変わらない
             ripple.set("density", 18)
-            ripple.set("shallow", .color(.display(red: 0.95, green: 0.8, blue: 0.4)))
+            ripple.set("shallow", .color(color(242, 204, 102)))
             rect(0, 400, 480, 140)
             resetShader()
         }
 
         // 右: 組み込みの塗りで図形を置く
-        fill(.display(red: 0.95, green: 0.45, blue: 0.3))
+        fill(242, 115, 76)
         circle(700, 180, 220)
-        fill(.display(red: 0.4, green: 0.8, blue: 0.6, alpha: 0.75))
+        fill(102, 204, 153, 191)
         rect(620, 200, 240, 200)
 
         // その上から、画素を読んで書き換える。**そのフレームでそこまでに描いたものが読める**
@@ -68,7 +68,7 @@ final class PixelsAndPaint: Sketch {
         }
 
         // 読み書きのあとにも描ける
-        fill(.display(red: 0.95, green: 0.95, blue: 0.9))
+        fill(242, 242, 230)
         textFont("Helvetica")
         textSize(16)
         text("右半分は、描いてから画素を読んで書き換えたもの", 500, 500)

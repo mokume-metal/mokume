@@ -293,16 +293,25 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 
 ### 光と質感
 
-- ``Sketch/ambientLight(_:)``
+- ``Sketch/ambientLight(_:)-fvb5``
+- ``Sketch/ambientLight(_:)-8zz3g``
+- ``Sketch/ambientLight(_:_:_:)``
 - ``Sketch/directionalLight(_:_:_:_:)``
+- ``Sketch/directionalLight(_:_:_:_:_:_:)``
 - ``Sketch/pointLight(_:_:_:_:)``
+- ``Sketch/pointLight(_:_:_:_:_:_:)``
 - ``Sketch/spotLight(_:_:_:_:_:_:_:angle:)``
+- ``Sketch/spotLight(_:_:_:_:_:_:_:_:_:angle:)``
 - ``Sketch/lights()``
 - ``Sketch/noLights()``
 - ``Sketch/shininess(_:)``
 - ``Sketch/metalness(_:)``
-- ``Sketch/ambient(_:)``
-- ``Sketch/emissive(_:)``
+- ``Sketch/ambient(_:)-9anin``
+- ``Sketch/ambient(_:)-6gfzl``
+- ``Sketch/ambient(_:_:_:)``
+- ``Sketch/emissive(_:)-uyuh``
+- ``Sketch/emissive(_:)-609c2``
+- ``Sketch/emissive(_:_:_:)``
 - ``Sketch/surroundings(_:)``
 - ``Sketch/background(_:)-1085h``
 - ``Surroundings``
@@ -376,6 +385,9 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``Sketch/dragY``
 - ``Sketch/isKeyDown(_:)``
 - ``Sketch/key``
+- ``Sketch/mousePressed()``
+- ``Sketch/mouseReleased()``
+- ``Sketch/mouseClicked()``
 
 ### 走らせたまま値を動かす
 

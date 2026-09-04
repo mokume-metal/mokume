@@ -49,6 +49,22 @@ final class SharedFrameStage: NSObject {
         var nudge: NSSize = .zero
     }
 
+    /// × を押された人に問う言葉。
+    ///
+    /// **台は言葉を決めない。** 何と言うかは窓を持つ側 (道具) の仕事で、ここは出し方だけを
+    /// 持つ — 端末に出ている言葉と揃える必要があるからである
+    /// (``SharedFramePreview/report(_:spinning:)`` と同じ規律)。
+    struct CloseQuestion {
+        /// 見出し。
+        let message: String
+        /// 添える説明。**押した後どうなるかを書く場所**である。
+        let detail: String
+        /// 閉じる側の押しどころ。
+        let confirm: String
+        /// 閉じない側の押しどころ。
+        let cancel: String
+    }
+
     /// 面の 1 枚を、差し出せる形にしたもの。
     private struct Frame: PresentableFrame {
         let texture: any MTLTexture
@@ -80,6 +96,40 @@ final class SharedFrameStage: NSObject {
     /// 表示のリフレッシュごとに呼ばれる。**絵が来ていなくても呼ぶ** — 面を読み直す側は
     /// 絵の有無と関係なく進む必要がある。
     var onTick: (() -> Void)?
+
+    /// × を押されたときに問うこと。**無ければ素直に閉じる** — 窓を持つ側が終わり方を
+    /// 決めていないなら、AppKit の既定を変える理由が無い。
+    private var closeQuestion: CloseQuestion?
+    /// 閉じてよいと確定したときの行き先。
+    ///
+    /// **実際に窓を畳むのはここではない。** 見張りは子を止め、区画を片付けてから畳む
+    /// 必要があるので、台が先に閉じると後始末の順が壊れる ([ADR-0032] 決定 1)。
+    private var onCloseConfirmed: (() -> Void)?
+    /// 問いを持っているか。**検査から見る** (`SharedFramePreview.hasPanel` と同じ扱い)。
+    var asksBeforeClosing: Bool { closeQuestion != nil }
+
+    /// 問いの出し方。**検査から差し替える** — 既定は窓へシートを下ろすので、そのままでは
+    /// 「押した後どうなるか」を検められない (`WatchSession.Hooks` と同じ流儀)。
+    var presentQuestion: (CloseQuestion, NSWindow, @escaping (Bool) -> Void) -> Void = {
+        question, window, answer in
+        let alert = NSAlert()
+        alert.messageText = question.message
+        alert.informativeText = question.detail
+        // **続ける側を先に置く。** AppKit は最初のボタンを既定にする (Return で通る) ので、
+        // 順序がそのまま「うっかり押したときにどちらへ倒れるか」を決める — 見張りから
+        // 本番を回していることがあるので、倒れる先は**終えない側**でなければならない
+        // ([ADR-0032] 決定 1)
+        alert.addButton(withTitle: question.cancel)
+        alert.addButton(withTitle: question.confirm)
+        // **Esc は割り当てない。** `NSAlert` が Esc を自前で足すのは "Cancel" という綴りの
+        // ボタンだけなので、日本語のままでは効かない。手で足すと Return を持つ既定ボタンと
+        // 同じ 1 つの割り当てを奪い合い、**安全側の Return が消える** — 押しどころは
+        // どちらも見えているので、失うほうが高い
+        //
+        // **窓へ下ろす。** 別の窓として出すと、どの窓を閉じようとしたのかが消える —
+        // 道具は同じ見た目の窓を 2 つ出している
+        alert.beginSheetModal(for: window) { answer($0 == .alertSecondButtonReturn) }
+    }
 
     private(set) var window: NSWindow?
     private var view: SketchSurface?
@@ -120,6 +170,28 @@ final class SharedFrameStage: NSObject {
 
     private let relay = DisplayLinkRelay()
 
+    /// 窓の出来事を、台を強く持たずに中継する。
+    ///
+    /// **窓の delegate に台を直に据えない。** AppKit は delegate を弱く持つが、呼ぶ前に
+    /// 一時的な強い参照を作る (autorelease) ので、**手放した台の解放がプールの掃除まで
+    /// 遅れる** — [#738] が入れた検査 (`close()` を呼ばずに手放したら解放される) は、直に
+    /// 据えた版で実際に落ちた。中継の形は ``DisplayLinkRelay`` と同じである。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    @MainActor private final class WindowRelay: NSObject, NSWindowDelegate {
+        weak var stage: SharedFrameStage?
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            stage?.shouldClose(sender) ?? true
+        }
+
+        func windowWillClose(_ notification: Notification) {
+            stage?.willClose()
+        }
+    }
+
+    private let windowRelay = WindowRelay()
+
     /// - Parameter facet: 差し出し元の番号が置かれる区画 (`.mokume/viewport`)。
     init(gpu: RenderDevice, facet: URL, look: Look) throws(RenderFailure) {
         self.gpu = gpu
@@ -128,6 +200,7 @@ final class SharedFrameStage: NSObject {
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         super.init()
         relay.stage = self
+        windowRelay.stage = self
     }
 
     /// **畳み忘れても、手放した時点で畳む。** 仕掛けを止めない限り、走り続ける
@@ -179,6 +252,11 @@ final class SharedFrameStage: NSObject {
         // **絵の面へ足す。** 別の窓にしないのは、重ねるものが絵と一緒に動く必要が
         // あるからで、経路そのものは絵と別のまま (AppKit の層) である
         if let overlay { view.addSubview(overlay) }
+        // **閉じようとしたことを受け取る。** 繋がないと × は AppKit の既定で通り、絵の
+        // 出口だけが消えて誰も止まらない ([#826])。窓は delegate を弱く持つので環にならない
+        //
+        // [#826]: https://github.com/mokume-metal/mokume/issues/826
+        window.delegate = windowRelay
         window.makeKeyAndOrderFront(nil)
         view.synchronizeDrawableSize()
 
@@ -191,14 +269,34 @@ final class SharedFrameStage: NSObject {
         attachDisplayLink(to: window.screen ?? NSScreen.main)
     }
 
+    /// × を押されたら、確かめてから知らせる。**確かめている間は閉じない。**
+    ///
+    /// - Parameters:
+    ///   - question: 問う言葉。
+    ///   - confirmed: 閉じてよいと確定したときに呼ばれる。**窓を畳むのは受け取った側**で、
+    ///     台はここでは何も畳まない。
+    func askBeforeClosing(_ question: CloseQuestion, then confirmed: @escaping () -> Void) {
+        closeQuestion = question
+        onCloseConfirmed = confirmed
+    }
+
     /// 畳む。
     func close() {
         displayLink?.invalidate()
         displayLink = nil
         NotificationCenter.default.removeObserver(self)
+        // **下りているシートを先に畳む。** 兄弟窓 (作品の窓とプレビュー) は独立に × を
+        // 押せるので、片方で確定した後始末が**もう片方のシートが出たままの窓**を閉じる
+        if let window, let sheet = window.attachedSheet { window.endSheet(sheet) }
+        // **先に受け口を外す。** `close()` は問いを通らない経路 (delegate を経ずに閉じる)
+        // だが、繋いだまま手放すと閉じた窓から呼ばれうる余地を残す
+        window?.delegate = nil
         window?.close()
         window = nil
         view = nil
+        // **閉じ手を手放す。** 畳んだ後に呼ばれる余地を残さない (この台は #738 で
+        // 環を切ったばかりなので、持ち続ける参照はここで切る)
+        onCloseConfirmed = nil
     }
 
     // MARK: - 駆動
@@ -330,5 +428,43 @@ final class SharedFrameStage: NSObject {
         guard consecutiveFailures > 0 else { return }
         Diagnostics.warn("差し出しが回復しました (\(consecutiveFailures) 枚ぶん飛ばしました)")
         consecutiveFailures = 0
+    }
+}
+
+// MARK: - 閉じようとしたとき
+
+extension SharedFrameStage {
+    /// × が通る。**`⌘W` はメインメニューを組んだ日に通る** — 割り当てを配るのは
+    /// メニューなので、道具が窓だけを出しているいまは配送されない。
+    ///
+    /// **問いを持っているなら、ここでは閉じない。** 確かめてから知らせ、実際に畳むのは
+    /// 受け取った側である — 見張りは子を止め、区画を片付けてから畳む必要がある
+    /// ([#826](https://github.com/mokume-metal/mokume/issues/826))。
+    ///
+    /// 持っていなければ `true`。**AppKit の既定を変えない** — 窓を持つ側が終わり方を
+    /// 決めていない場合に、閉じられない窓を作る理由が無い。
+    ///
+    /// `close()` はこの経路を通らない (delegate を経ずに閉じる) ので、後始末が問いを
+    /// もう一度出すことはない。
+    fileprivate func shouldClose(_ sender: NSWindow) -> Bool {
+        guard let question = closeQuestion else { return true }
+        // **問いを二重に出さない。** 下りている間 AppKit は親窓の操作を吸うが、閉じるよう
+        // 頼む経路は残る (`performClose(_:)` など)
+        guard sender.attachedSheet == nil else { return false }
+        presentQuestion(question, sender) { [weak self] confirmed in
+            guard confirmed else { return }
+            self?.onCloseConfirmed?()
+        }
+        return false
+    }
+
+    /// 窓が閉じられた。**問いを繋いでいない窓でも、駆動はここで畳む。**
+    ///
+    /// 表示のリフレッシュは**画面**に紐づいているので、窓が消えても止まらない — 閉じた窓の
+    /// 面へ差し出し続け、しかも見えない面への差し出しは待たされる。`close()` を通らずに
+    /// 閉じられる経路 (問いを繋がずに出した窓の ×) を、費用だけ払い続ける形にしない (#826)。
+    fileprivate func willClose() {
+        displayLink?.invalidate()
+        displayLink = nil
     }
 }

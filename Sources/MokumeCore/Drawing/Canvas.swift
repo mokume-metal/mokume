@@ -22,8 +22,8 @@ import simd
 /// <!-- example: 組めない Canvas を直に回す例で、投げられる場所に置かれる (draw() の中には貼れない) -->
 /// ```swift
 /// try canvas.draw {
-///     canvas.background(.display(red: 0.1, green: 0.1, blue: 0.12))
-///     canvas.fill(.display(red: 1, green: 0.4, blue: 0.2))
+///     canvas.background(26, 26, 31)
+///     canvas.fill(255, 102, 51)
 ///     canvas.circle(400, 300, 200)
 /// }
 /// ```

@@ -44,10 +44,17 @@
 set -euo pipefail
 
 PR="${1:?PR 番号が必要}"
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 # 承認が要るパスの判定 (下の「4.」を参照)。**照合は 1 か所**に保つ (ADR-0001 原則 9)
 # shellcheck source=scripts/protected-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
+# 変更ファイルの取り方も 1 か所に保つ。**照合の手前が割れていた** (#793) — gh pr view の
+# files は上限のある口なので、大きな PR では保護パスが一覧から落ちて素通りする
+# shellcheck source=scripts/pr-files.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 
 fail() {
   echo "review-gate: 差し戻し — $1" >&2
@@ -111,8 +118,13 @@ EOF
 }
 
 pr_json=$(gh pr view "$PR" -R "$REPO" \
-  --json body,labels,latestReviews,author,files,closingIssuesReferences)
+  --json body,labels,latestReviews,author,closingIssuesReferences)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
+# **変更ファイルだけ別の口から取る** (#793)。同じ gh pr view にまとめると呼び出しは
+# 1 回で済むが、files は GraphQL の接続で上限があり、大きな PR では後半が落ちる —
+# 落ちても赤くならず、保護パスの判定が黙って素通りする。呼び出しが 1 回増えるのは
+# 正しさとの引き換えである。読めなければここで落ちる (上の pr_json と同じ向き)
+pr_paths=$(pr_files "$REPO" "$PR")
 
 # 1. 対象 Issue の解決 — **GitHub が実際に作った紐づけを読む** (複数あれば全て検査)。
 #
@@ -256,7 +268,7 @@ fi
 #    ADR-0007 影響が言うとおり、そのとき別途判断する。
 if ! grep -qx "APPROVED" <<<"$reviews"; then
   author=$(jq -r '.author.login // ""' <<<"$pr_json")
-  if jq -r '.files[]?.path // empty' <<<"$pr_json" | touches_protected_path; then
+  if printf '%s\n' "$pr_paths" | touches_protected_path; then
     assoc=$(gh api "repos/$REPO/pulls/$PR" --jq '.author_association' 2>/dev/null || true)
     if [ "$assoc" = "MEMBER" ] || [ "$assoc" = "OWNER" ]; then
       fail "この PR は誰も承認できない — 承認が要る PR の author ($author) が、唯一の承認者になっている (ADR-0007 / #88)" \

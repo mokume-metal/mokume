@@ -18,14 +18,14 @@ final class PointerAndKeys: Sketch {
     var size: Float = 120
 
     func draw() {
-        background(.display(red: 0.06, green: 0.07, blue: 0.09))
+        background(15, 18, 23)
 
         size = min(max(size + scrollY * 4, 20), 400)
 
         // 描く解像度の縁。窓をどう変えてもここが動かないことが、座標系が
         // 独立していることの見え方になる
         noFill()
-        stroke(.display(red: 0.30, green: 0.34, blue: 0.42))
+        stroke(76, 87, 107)
         strokeWeight(4)
         rect(2, 2, width - 4, height - 4)
 
@@ -33,17 +33,17 @@ final class PointerAndKeys: Sketch {
         noStroke()
         fill(
             isMousePressed
-                ? .display(red: 0.95, green: 0.85, blue: 0.35, alpha: 0.9)
-                : .display(red: 0.35, green: 0.75, blue: 0.95, alpha: 0.6))
+                ? color(242, 217, 89, 230)
+                : color(89, 191, 242, 153))
         circle(mouseX, mouseY, size)
 
-        stroke(.display(red: 0.85, green: 0.9, blue: 1, alpha: 0.5))
+        stroke(217, 230, 255, 128)
         strokeWeight(1)
         line(mouseX, 0, mouseX, height)
         line(0, mouseY, width, mouseY)
 
         // 読めている値をそのまま出す。範囲外になったことも、ここに出る
-        fill(.display(red: 0.9, green: 0.93, blue: 1))
+        fill(230, 237, 255)
         noStroke()
         textSize(22)
         text("x \(Int(mouseX))   y \(Int(mouseY))", 24, 44)

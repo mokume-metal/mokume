@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 走らせる口が受け取るもの。
 ///
@@ -31,6 +32,35 @@ struct Invocation: Equatable {
 
     /// 名乗るときの構成の名前。
     var configurationName: String { configuration ?? RunCommand.defaultConfigurationName }
+
+    /// 区画の基準。**スケッチの場所とは別の軸である。**
+    ///
+    /// - Parameter workDirectory: 環境変数が与えた基準 (`nil` なら与えられていない)。
+    ///   **検査から渡せる形にしてある** — 既定の ``WorkDirectory/given`` はプロセス起動時に
+    ///   一度だけ評価されるので、環境変数を与えた状況を検査から作れない。
+    func facetBase(workDirectory: URL? = WorkDirectory.given) -> URL {
+        Self.facetBase(under: directory, workDirectory: workDirectory)
+    }
+
+    /// 区画の基準を決める、**ただ 1 つの計算**。
+    ///
+    /// 走らせるスケッチは `MOKUME_WORK_DIR` に従って区画を読み書きするので、道具も同じ
+    /// 側を見ないと**両者が別の区画を指す** (#331)。同じ判断が `run` / `watch` / `doctor` /
+    /// 窓口の 4 箇所に写されていて、そのうち 2 箇所が黙って別の値を使っていた
+    /// ([#791](https://github.com/mokume-metal/mokume/issues/791)・
+    /// [#730](https://github.com/mokume-metal/mokume/issues/730))。**写しを作らない。**
+    ///
+    /// **環境そのものは読まない。** 環境変数から基準を解く規則は ``WorkDirectory`` が
+    /// 持つ 1 箇所である ([ADR-0018] 決定 2)。ここが受け取るのは解かれた結果で、道具は
+    /// それに自分の既定値を当てるだけでよい。
+    ///
+    /// - Parameter directory: 環境変数が基準を与えていないときに使う既定値。道具ごとに
+    ///   違う (スケッチの場所・窓口へ渡された場所) ので、呼ぶ側が持つ。
+    ///
+    /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+    static func facetBase(under directory: URL, workDirectory: URL? = WorkDirectory.given) -> URL {
+        workDirectory ?? directory
+    }
 
     /// 構成を選ぶ綴り。**道具立てに合わせる** — 渡す先が同じものなので、ここで別の名前を
     /// 作ると読み替えが要る。
