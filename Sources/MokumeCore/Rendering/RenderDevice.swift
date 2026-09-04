@@ -113,6 +113,13 @@ import MokumeDiagnostics
     /// 本数に依らない** (足りなければ待つ) ので、ここは速さのための値である。
     static let defaultSlotCount = 3
 
+    /// この土台が持つ置き場の本数。
+    ///
+    /// **フレームごとに書く置き場の環 (``FrameRing``) も同じ本数にする。** 置き場を
+    /// 1 本にした土台 (検査用) ではコマンドの環が既に全部を直列にするので、データ側
+    /// だけ深くしても意味がない。1 つの値から引けば、どちらの環も同じ深さを名乗る。
+    var slotCount: Int { slots.count }
+
     /// 診断: 実行中のコマンドが載った置き場を巻き戻した回数。**常に 0 でなければならない。**
     private(set) var resetsWhileInFlight = 0
     /// 診断: 置き場が空くのを待った回数。
@@ -121,6 +128,15 @@ import MokumeDiagnostics
     private(set) var settleCalls = 0
     /// 診断: ``settle()`` が実際に止まった回数 (頼まれた時点で GPU が終わっていなかった)。
     private(set) var blockingWaits = 0
+    /// 診断: フレームごとに書く置き場の環が、スロットの空きを実際に待った回数。
+    ///
+    /// ``blockingWaits`` と分けてある。**あちらは「投入済みの全部」を待った回数**で、
+    /// 環が効いているフレームでは 0 のままでなければならない ([#754])。こちらは
+    /// 「そのスロットを読む投入 1 本」を待った回数で、環が浅い (置き場が 1 本の土台・
+    /// CPU が GPU を追い越した) ときに増える。
+    ///
+    /// [#754]: https://github.com/mokume-metal/mokume/issues/754
+    private(set) var ringWaits = 0
 
     /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。
     ///
@@ -440,6 +456,33 @@ import MokumeDiagnostics
             // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
             Diagnostics.warn(
                 "GPU の完了を \(Self.waitLimitSeconds) 秒待っても返りませんでした")
+            throw .timedOut(seconds: Self.waitLimitSeconds)
+        }
+    }
+
+    /// 番号 `submission` の投入が終わるまで待つ。**フレームごとに書く置き場の環が使う。**
+    ///
+    /// ``settle()`` との違いは待つ範囲だけである。あちらは投入済みの**全部**を待ち、
+    /// こちらは**名指しした 1 本**を待つ。環にした置き場は「そのスロットを最後に読んだ
+    /// 投入」さえ終わっていれば CPU が書いてよいので、その先に積まれた新しいフレームの
+    /// 仕事まで待つ理由が無い ([#754])。
+    ///
+    /// **緩めてよいのは環にした置き場だけである。** 環にしていない置き場 (粒・数の
+    /// 並び・画像・字形の面) は今までどおり ``settle()`` で全完了を待つ — どのスロットに
+    /// 属するかを名乗れないものは、いつ読まれ終わるかも名乗れない。
+    ///
+    /// [#754]: https://github.com/mokume-metal/mokume/issues/754
+    func waitForSubmission(_ submission: UInt64) throws(RenderFailure) {
+        // 終わった番号ぶんの抱えているリソースは、待ちの有無によらずここで手放す。
+        // 描き切りが settle を通らなくなったので、手放す契機をこちらにも置く
+        defer { releaseHeld(through: completion.signaledValue) }
+        guard submission > 0, completion.signaledValue < submission else { return }
+
+        ringWaits += 1
+        let limit = UInt64(Self.waitLimitSeconds * 1000)
+        guard completion.wait(untilSignaledValue: submission, timeoutMS: limit) else {
+            Diagnostics.warn(
+                "フレームの置き場が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
             throw .timedOut(seconds: Self.waitLimitSeconds)
         }
     }

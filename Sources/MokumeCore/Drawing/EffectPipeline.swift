@@ -49,11 +49,20 @@ final class EffectPipeline {
     /// テーブルを組んだ回数。**使い回せているかを数で見る。**
     private(set) var tablesBuilt = 0
 
-    /// 段ごとの設定・面・値を置く領域。足りなければ伸ばす。
+    /// 段ごとの設定・面・値を置く領域。**フレームごとに書くので環に載る** ([#754])。
+    ///
+    /// 載る環は `Canvas` のものである — 段は描き切りと同じコマンドに積まれ、**同じ投入が
+    /// 読む**ので、待つ相手も同じでよい。
+    ///
+    /// [#754]: https://github.com/mokume-metal/mokume/issues/754
+    private let passStorage: GrowableBuffer
+    /// このフレームで使う置き場。``reservePasses(_:)`` が決める。
+    ///
+    /// **段を 1 つでも組む前に必ず ``reservePasses(_:)`` を通る** (効果の並びも拡大も
+    /// そうしている)。通らずにここを読むと、前のスロットの置き場を指したままになる。
     private(set) var passBuffer: any MTLBuffer
-    private var passCapacity: Int
     /// 置き場を取り直した回数。**長回しで増えないことを検査が見る。**
-    private(set) var buffersBuilt = 0
+    var buffersBuilt: Int { passStorage.reallocations }
 
     /// 中間の絵。**使い回す**ので、フレームごとには作らない。
     ///
@@ -72,13 +81,16 @@ final class EffectPipeline {
     private let width: Int
     private let height: Int
 
-    init(gpu: RenderDevice, width: Int, height: Int, pixelFormat: MTLPixelFormat)
-        throws(RenderFailure)
-    {
+    init(
+        gpu: RenderDevice, ring: FrameRing, width: Int, height: Int, pixelFormat: MTLPixelFormat
+    ) throws(RenderFailure) {
         self.gpu = gpu
         self.width = width
         self.height = height
         self.pixelFormat = pixelFormat
+        self.passStorage = GrowableBuffer(
+            gpu: gpu, ring: ring, stride: Self.passStride, minimumCapacity: 8,
+            label: "mokume.effect.passes")
 
         let descriptor = MTL4CompilerDescriptor()
         descriptor.label = "mokume.effect.compiler"
@@ -93,9 +105,7 @@ final class EffectPipeline {
             compiler: compiler, library: library, pixelFormat: pixelFormat,
             label: "mokume.effect.builtin")
 
-        passCapacity = 8
-        passBuffer = try gpu.makeReadableBuffer(byteCount: passCapacity * Self.passStride)
-        buffersBuilt = 1
+        passBuffer = try passStorage.buffer(holding: 8)
     }
 
     /// 利用者の効果のパイプラインを組む。
@@ -152,12 +162,11 @@ final class EffectPipeline {
     }
 
     /// 段の数だけ置き場を確保する。**足りているうちは取り直さない。**
+    ///
+    /// **このフレームのスロットを選び直す口でもある。** 環は描き切りごとに進むので、
+    /// 段を組む前にここを通って ``passBuffer`` を引き直す必要がある。
     func reservePasses(_ count: Int) throws(RenderFailure) {
-        guard count > passCapacity else { return }
-        let capacity = max(count, passCapacity * 2)
-        passBuffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.passStride)
-        passCapacity = capacity
-        buffersBuilt += 1
+        passBuffer = try passStorage.buffer(holding: count)
     }
 
     /// `index` 枚目の中間の絵。足りなければ確保する。

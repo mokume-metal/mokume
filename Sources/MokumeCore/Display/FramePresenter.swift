@@ -86,6 +86,9 @@ final class FramePresenter {
         try encode(source, into: drawable.texture, using: commands)
         // GPU の完了を待たない — 待てば表示のたびに CPU が止まる
         gpu.commit(commands, signalling: drawable)
+        // **この投入が、いまのスロットの設定を読む。** 次に同じスロットが回ってきた
+        // ときの待ち先になる (#754)
+        pipeline.noteSubmission()
         drawable.present()
         return true
     }
@@ -98,6 +101,7 @@ final class FramePresenter {
         let commands = try gpu.beginCommands()
         try encode(source, into: destination, using: commands)
         try gpu.commitAndWait(commands)
+        pipeline.noteSubmission()
     }
 
     /// 収まる矩形を決めて、1 枚のパスとして書き込む。
@@ -123,7 +127,7 @@ final class FramePresenter {
         }
         pipeline.setSource(source.texture)
         // 明るさを写す段は**画面が持つ**。行き先が窓でも面でも同じ設定が効く
-        pipeline.setBrightness(source.brightness)
+        try pipeline.setBrightness(source.brightness)
         encoder.setRenderPipelineState(pipeline.state)
         encoder.setViewport(
             MTLViewport(
