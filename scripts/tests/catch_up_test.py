@@ -44,10 +44,6 @@ fi
 if [[ "$*" == "repo view"* ]]; then
   printf '%s\\n' "mokume-metal/mokume"; exit 0
 fi
-if [[ "$*" == "pr view"* && "$*" == *"files"* ]]; then
-  printf '%s\\n' ${PR_FILES:-}
-  exit 0
-fi
 if [[ "$*" == "pr view"* ]]; then
   [ -z "${NO_PR:-}" ] || { echo "gh: no pull requests found" >&2; exit 1; }
   printf '%s\\n' "${PR_INFO:-7 OPEN false}"
@@ -65,6 +61,12 @@ if [[ "$*" == *"/files"* ]]; then
       exit 0
     fi
   done
+  # この PR 自身の一覧。#793 以降 catch-up.sh もここから引く — gh pr view の files は
+  # 上限のある口で、大きな PR では後半が落ちる
+  self=${PR_INFO:-7 OPEN false}
+  if [[ "$*" == *"/pulls/${self%% *}/files"* ]]; then
+    printf '%s\\n' ${PR_FILES:-}
+  fi
   exit 0
 fi
 if [[ "$*" == *"/statuses"* ]]; then
@@ -186,6 +188,30 @@ class CatchUpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 3, proc.stderr)
         self.assertIn("台帳の絵を動かさない", proc.stdout)
         self.assertNotIn("ci-check", self.made())
+
+    def test_後半にだけ描画のパスがある大きな_PR_でも走る(self):
+        """**上限を越える PR** (#793)。
+
+        `gh pr view --json files` は GraphQL の接続を引くので上限があり、大きな PR では
+        後半のファイルが落ちる。落ちれば「台帳の絵を動かさない」と読んで
+        `打つ意味が無い` で断り、**本当は要る打ち直しをしないまま止まる**。
+
+        上限のある口を読んでいれば、この PR は 3 (走らない) で返ってしまう。
+        """
+        many = ",".join(f"docs/note{i}.md" for i in range(100))
+        proc = self.run_script(PR_FILES=f"{many},{DRAWING}".replace(",", " "))
+        self.assertNotEqual(proc.returncode, 3, proc.stdout)
+        self.assertIn("ci-check", self.made())
+
+    def test_一覧はページングを通して引く(self):
+        """判定の結果だけを見ていると、上限に収まる PR では**付け忘れても緑**になる。"""
+        self.run_script(PR_FILES=DRAWING)
+        # **記録全体ではなく、一覧を引いたその行を見る。** 順番の判定が引く open な PR の
+        # 一覧 (drawing-queue.sh) も --paginate を使うので、全体を見ると付け忘れても緑になる
+        lines = [l for l in self.gh_calls.read_text(encoding="utf-8").splitlines() if "/files" in l]
+        self.assertTrue(lines, "変更ファイルの一覧を引いていない")
+        for line in lines:
+            self.assertIn("--paginate", line, f"ページングを通していない呼び出し: {line}")
 
     def test_先に描画_PR_が居るときは走らない(self):
         proc = self.run_script(OPEN_PRS="5 7", FILES_BY_PR=f"5={DRAWING}")

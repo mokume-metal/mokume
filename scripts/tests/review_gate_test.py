@@ -71,12 +71,17 @@ RULESET = json.dumps(
     }
 )
 
-# 偽 gh。review-gate が呼ぶのは 3 つだけ:
-#   gh pr view <n> -R <repo> --json body,labels,latestReviews,author,files,closingIssuesReferences
+# 偽 gh。review-gate が呼ぶのは 4 つだけ:
+#   gh pr view <n> -R <repo> --json body,labels,latestReviews,author,closingIssuesReferences
 #   gh issue view <n> -R <repo> --json labels --jq <query>
 #   gh api repos/<repo>/pulls/<n> --jq .author_association
-# 応答は環境変数で決める。--jq が付くときは本物と同じようにクエリを適用する
+#   gh api repos/<repo>/pulls/<n>/files --paginate --jq .[].filename   ← #793 で分かれた
+# 応答は環境変数で決める。--jq が付くときは本物と同じようにクエリを適用する。
+#
+# **2 つの api を綴りで分ける。** 変更ファイルの一覧は別の口になったので (#793)、
+# 一緒に返すと author_association の判定に一覧が流れ込む
 FAKE_GH = """#!/bin/sh
+printf '%s\\n' "$*" >> "${GH_CALLS:-/dev/null}"
 kind=$2
 query=
 prev=
@@ -87,7 +92,10 @@ done
 case "$1 $2" in
   "pr view") json=$FAKE_PR_JSON ;;
   "issue view") json=$FAKE_ISSUE_JSON ;;
-  "api "*) json=$FAKE_API_JSON ;;
+  "api "*) case "$*" in
+             *"/files"*) json=$FAKE_FILES_JSON ;;
+             *) json=$FAKE_API_JSON ;;
+           esac ;;
   *) exit 1 ;;
 esac
 if [ -n "$query" ]; then
@@ -170,6 +178,19 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
     )
 
 
+def assert_files_call_paginates(case, calls):
+    """一覧を引く**その呼び出し**が `--paginate` を通っていること (#793)。
+
+    記録全体に `--paginate` が現れるかを見てはいけない — 順番の判定が引く open な PR の
+    一覧 (`drawing-queue.sh`) も `--paginate` を使うので、**付け忘れても緑になる**
+    (最初にこの検査を書いたとき、まさにそれで空回りしていた)。
+    """
+    lines = [l for l in calls.read_text(encoding="utf-8").splitlines() if "/files" in l]
+    case.assertTrue(lines, "変更ファイルの一覧を引いていない")
+    for line in lines:
+        case.assertIn("--paginate", line, f"ページングを通していない呼び出し: {line}")
+
+
 def issue_json(*labels):
     return json.dumps({"labels": [{"name": n} for n in labels]})
 
@@ -186,17 +207,26 @@ class ReviewGateTest(unittest.TestCase):
         self.ruleset = Path(self.tmp.name) / "main-protection.json"
         self.ruleset.write_text(RULESET, encoding="utf-8")
 
-    def run_gate(self, pr, issue=None, ruleset=None):
+    def run_gate(self, pr, issue=None, ruleset=None, all_files=None, record_calls=None):
+        """`all_files` は **`--paginate` を通した一覧** (#793)。
+
+        省略すると `pr` が持つ `files` と同じものになる。上限を越える PR を装うときだけ
+        別に渡す — `gh pr view` の側は上限で切られた前半を、こちらは全件を返す形になる。
+        """
         if ruleset is not None:
             self.ruleset.write_text(ruleset, encoding="utf-8")
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_PR_JSON"] = pr
+        if all_files is None:
+            all_files = [f["path"] for f in json.loads(pr)["files"]]
+        env["FAKE_FILES_JSON"] = json.dumps([{"filename": p} for p in all_files])
         env["FAKE_ISSUE_JSON"] = issue if issue is not None else issue_json(TRIAGED)
         env["FAKE_API_JSON"] = json.dumps(
             {"author_association": json.loads(pr)["authorAssociation"]}
         )
         env["RULESET_FILE"] = str(self.ruleset)
+        env["GH_CALLS"] = str(record_calls) if record_calls else "/dev/null"
         # 紐づけの所属リポジトリ判定に効くので、環境に左右されないよう固定する
         env["GITHUB_REPOSITORY"] = f"{REPO_OWNER}/{REPO_NAME}"
         return subprocess.run(
@@ -361,6 +391,38 @@ class ReviewGateTest(unittest.TestCase):
             issue_json(TRIAGED),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_protected_path_beyond_the_graphql_cap_is_still_seen(self):
+        """**上限を越える PR** (#793)。
+
+        `gh pr view --json files` は GraphQL の接続を引くので上限があり、大きな PR では
+        後半のファイルが落ちる。落ちた先で起きるのは「保護パスに触れているのに触れて
+        いないと読む」で、**赤くならずに緩む** — 誰も承認できない PR がそのまま作られる。
+
+        ここでは `gh pr view` の側に無害な 100 件だけを持たせ、`--paginate` の側にだけ
+        保護パスを 101 件目として置く。上限のある口を読んでいれば緑で通ってしまう。
+        """
+        truncated = [f"Sources/MokumeCore/Filler{i}.swift" for i in range(100)]
+        proc = self.run_gate(
+            pr_json(author=MAINTAINER, files=truncated),
+            issue_json(TRIAGED),
+            all_files=truncated + [".github/rulesets/main-protection.json"],
+        )
+        self.assert_blocked(proc, "誰も承認できない")
+
+    def test_the_file_list_is_paginated(self):
+        """一覧を引く呼び出しに `--paginate` が載っていること (#793)。
+
+        判定の結果だけを見ていると、上限に収まる PR では**付け忘れても緑**になる。
+        """
+        calls = self.bindir.parent / "gh-calls.txt"
+        proc = self.run_gate(
+            pr_json(author=APP, files=["README.md"]),
+            issue_json(TRIAGED),
+            record_calls=calls,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        assert_files_call_paginates(self, calls)
 
     def test_protected_paths_come_from_the_ruleset_not_a_copy(self):
         """承認が要るパスの正本はルールセットで、写しを持たない (#530)。
