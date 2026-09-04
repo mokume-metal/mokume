@@ -29,8 +29,15 @@ while [ $# -gt 0 ]; do
     --label)     LABELS+=("$2"); shift 2 ;;
     --type)      TYPE="$2"; shift 2 ;;
     --test)      IS_TEST=true; shift ;;
-    # usage は 64 (sysexits の EX_USAGE) で揃える (#820)
-    *) echo "不明な引数: $1" >&2; exit 64 ;;
+    # usage は 64 (sysexits の EX_USAGE) で揃える (#820)。**使い方も出す** —
+    # 終了コードだけ揃えても、読む人はその場で直せない
+    *)
+      {
+        echo "不明な引数: $1"
+        echo "使い方: sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--test]"
+      } >&2
+      exit 64
+      ;;
   esac
 done
 

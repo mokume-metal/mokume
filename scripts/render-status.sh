@@ -348,6 +348,7 @@ case "$mode" in
     # target / coverage があったが、判定は scripts/render-coverage.sh に移り、
     # あちらは source して直に呼ぶ
     echo "使い方: $0 local|proxy" >&2
-    exit 2
+    # usage は 64 (sysexits の EX_USAGE) で揃える (#820)
+    exit 64
     ;;
 esac
