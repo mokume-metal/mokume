@@ -338,7 +338,13 @@ static inline FormField mokume_ellipseField(float2 p, float2 radii) {
 static inline FormField mokume_segmentField(float2 p, float2 end) {
     float h = saturate(dot(p, end) / max(dot(end, end), 1e-12));
     float2 away = p - end * h;
-    return mokume_field(length(away), mokume_direction(away, float2(-end.y, end.x)));
+    // **控えの向きも長さ 1 に揃える。** 線分の上に乗った点では `away` が 0 になって控えが
+    // 使われるが、`end` は「中心から弧の端まで」なので長さは半径ぶん (この節の他の
+    // 距離関数と違い 1 ではない)。長さがそのまま `mokume_formCoverage` の「画素あたり
+    // 距離がいくら進むか」に化けるので、渡しが半径の倍だけ間延びし、扇の直線の縁では
+    // **輪郭の帯の真ん中の 1 画素だけが薄く抜ける** ([#752](https://github.com/mokume-metal/mokume/issues/752))
+    float2 fallback = mokume_direction(float2(-end.y, end.x), float2(0.0, 1.0));
+    return mokume_field(length(away), mokume_direction(away, fallback));
 }
 
 /// 楕円の扇形 (中心を含む) の距離場。

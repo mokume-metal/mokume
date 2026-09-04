@@ -375,6 +375,31 @@ struct FormShapeTests {
         #expect(image.bytes == blank.bytes)
     }
 
+    /// 扇の**直線の縁**の輪郭は、帯の幅いっぱいが塗り切られている。
+    ///
+    /// 距離場は線分の上でちょうど 0 になり、そこでは「外へ向かう向き」が決まらないので
+    /// 控えの向きが使われる。控えが長さ 1 でないと、被覆の渡し (`mokume_formCoverage`) が
+    /// その長さのぶんだけ間延びし、**帯の真ん中の 1 画素だけが薄く抜ける** — 縁の上の
+    /// 1 画素なので台帳の指紋は動くが、絵を拡大するまで気付けない ([#752])。
+    ///
+    /// [#752]: https://github.com/mokume-metal/mokume/issues/752
+    @Test("扇の直線の縁は、輪郭の帯の真ん中が抜けない")
+    func sectorStraightEdgeHasSolidStroke() throws {
+        let image = try picture(try makeCanvas()) { canvas in
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(6)
+            // 始まりの角度 0 = 中心から右へ伸びる水平な半径。帯はその上下 3 画素ぶん
+            canvas.arc(48, 48, 60, 60, 0, .pi * 0.75)
+        }
+        // 半径の途中を横切る縦の並び。帯の内側は端から端まで塗り切られている
+        for y in 46...50 {
+            #expect(
+                image[64, y].red == 255,
+                "扇の直線の縁の帯 (y=\(y)) が抜けている: \(image[64, y].red)")
+        }
+    }
+
     @Test("巨大な寸法でも数が壊れず、面を覆う")
     func hugeSizesStayFinite() throws {
         func scene(_ canvas: Canvas) throws -> DisplayImage {
