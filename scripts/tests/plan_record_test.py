@@ -320,39 +320,8 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertIn("scripts/comment.sh を直す", out.stdout)
 
     # --- 検査 (完了条件 3) ---------------------------------------------------
-
-    def test_scan_flags_secrets_and_leaves_prose_alone(self):
-        body = (
-            "export GITHUB_TOKEN=ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789\n"
-            "token は環境変数で渡す (値は書かない)\n"
-            "参照は $API_KEY と <your-token> のまま\n"
-        )
-        out = subprocess.run(
-            ["/bin/bash", str(SCRIPT), "scan"],
-            input=body, capture_output=True, text=True, check=True,
-        ).stdout
-        self.assertIn("BLOCK", out)
-        self.assertIn("行 1", out)
-        # 2〜3 行目は説明文と伏せ字なので、秘密情報として拾ってはいけない
-        self.assertNotIn("行 2", out)
-        self.assertNotIn("行 3", out)
-
-    def test_scan_warns_without_blocking(self):
-        body = "連絡は alice@example.com。参照は op://Vault/item/credential\n"
-        out = subprocess.run(
-            ["/bin/bash", str(SCRIPT), "scan"],
-            input=body, capture_output=True, text=True, check=True,
-        ).stdout
-        self.assertIn("WARN", out)
-        self.assertNotIn("BLOCK", out)
-
-    def test_scan_ignores_github_noreply(self):
-        out = subprocess.run(
-            ["/bin/bash", str(SCRIPT), "scan"],
-            input="Assisted-by: Claude <noreply@anthropic.com>\n",
-            capture_output=True, text=True, check=True,
-        ).stdout
-        self.assertEqual(out.strip(), "")
+    # 探索そのものの検査は scripts/tests/secret_scan_test.py が持つ (#819)。
+    # ここで見るのは **capture が探索の結果をどう扱うか** だけ (下の capture の節)
 
     # --- capture (完了条件 1) -------------------------------------------------
 
@@ -1192,12 +1161,6 @@ class StdinDeadlineTest(HookFixture, unittest.TestCase):
     def test_guard_names_the_requirement(self):
         result = self.run_hook("guard", stdin="")
         self.assertEqual(result.returncode, 64)
-        self.assertIn("stdin", result.stderr)
-
-    def test_scan_stays_out_of_the_way(self):
-        # パイプの途中で使われるので、空でも止めない
-        result = self.run_hook("scan", stdin="")
-        self.assertEqual(result.returncode, 0)
         self.assertIn("stdin", result.stderr)
 
     def test_sanitize_stays_out_of_the_way(self):
