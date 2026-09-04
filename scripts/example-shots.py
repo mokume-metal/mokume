@@ -94,13 +94,24 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from example_wrapping import LEVEL_TYPE, dedent, level_of, strip_doc, wrap  # noqa: E402
+# **例の囲みと印の綴りは example_wrapping から取る** (#815)。組めることを見る側
+# (check-examples.py) と同じものを読まないと、組める例と撮れる例が食い違う (#667)。
+# こちらは説明文の中しか見ないので、`///` を必須にした綴りを使う
+from example_wrapping import (  # noqa: E402
+    DOC_FENCE_CLOSE as FENCE_CLOSE,
+    DOC_FENCE_OPEN as FENCE_OPEN,
+    LEVEL_TYPE,
+    MARK,
+    MARK_CONTEXT,
+    dedent,
+    level_of,
+    strip_doc,
+    wrap,
+)
 
 # 囲みの開き。`|` の後ろは撮影設定 (frames=90 / size=400x400)
 OPEN = re.compile(r"^(?P<indent>\s*)///\s*<!--\s*shot:\s*(?P<alt>[^|]*?)\s*(?:\|\s*(?P<attributes>[^>]*?)\s*)?-->\s*$")
 CLOSE = re.compile(r"^\s*///\s*<!--\s*/shot\s*-->\s*$")
-FENCE_OPEN = re.compile(r"^\s*///\s*```swift\s*$")
-FENCE_CLOSE = re.compile(r"^\s*///\s*```\s*$")
 DOC = re.compile(r"^\s*///")
 # 撮影の記録。書くのも読むのもこの 1 行だけ
 # 末尾の `taken=…` は #671 で落とした古い形。**読むだけ読んで、名乗って落とす** —
@@ -241,14 +252,12 @@ def snippet_above(lines: list[str], open_line: int) -> list[str]:
     return []
 
 
-MARK = re.compile(r"^\s*(?:///\s*)?<!--\s*example:\s*文脈\s+(?P<rest>.*?)\s*-->\s*$")
-
-
 def context_above(lines: list[str], open_line: int) -> list[str]:
     """例の直前に積まれた `文脈` の宣言。
 
-    綴りは `check-examples.py` の印と同じ。**あちらが読むものをこちらも読む** —
-    片方だけが読むと、組める例と撮れる例がまた食い違う (#667)。
+    印は `example_wrapping.MARK` の 1 本で、**あちらが読むものをこちらも読む** —
+    片方だけが読むと、組める例と撮れる例がまた食い違う (#667)。かつてここには
+    `文脈` だけを拾う 3 つ目の綴りがあった (#815 が畳んだ)。
     """
     index = open_line - 1
     while index >= 0 and SCAFFOLD.match(lines[index]):
@@ -264,9 +273,10 @@ def context_above(lines: list[str], open_line: int) -> list[str]:
     index -= 1
     while index >= 0:
         match = MARK.match(lines[index])
-        if not match:
+        # `組めない` の印はここで止める — 積み上がる宣言ではない
+        if not match or match["kind"] != MARK_CONTEXT:
             break
-        found.insert(0, match["rest"])
+        found.insert(0, match["rest"] or "")
         index -= 1
     return found
 
