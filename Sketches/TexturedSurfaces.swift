@@ -38,7 +38,7 @@ final class TexturedSurfaces: Sketch {
     }
 
     func draw() {
-        background(.display(red: 0.07, green: 0.07, blue: 0.09))
+        background(18, 18, 23)
         guard let grain else { return }
 
         let angle = time * 0.5
@@ -92,20 +92,20 @@ final class TexturedSurfaces: Sketch {
         // **貼る絵は塗りにしか効かない。** 輪郭は線の色のまま出る
         rect(40, 40, 150, 110)
 
-        stroke(.display(red: 0.95, green: 0.85, blue: 0.4))
+        stroke(242, 217, 102)
         strokeWeight(4)
         rect(210, 40, 150, 110)
         noStroke()
 
         // 塗りが色掛けになる
-        fill(.display(red: 0.45, green: 0.8, blue: 1))
+        fill(115, 204, 255)
         circle(440, 95, 110)
-        fill(.display(red: 1, green: 1, blue: 1))
+        fill(255, 255, 255)
 
         // 外せば、そのあとの図形には貼られない
         noTexture()
-        fill(.display(red: 0.95, green: 0.4, blue: 0.45))
+        fill(242, 102, 115)
         rect(520, 40, 150, 110)
-        fill(.display(red: 1, green: 1, blue: 1))
+        fill(255, 255, 255)
     }
 }

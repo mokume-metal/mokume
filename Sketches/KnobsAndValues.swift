@@ -66,7 +66,7 @@ final class KnobsAndValues: Sketch {
     @Param(choices: ["circle", "square", "triangle"]) var shape: String = "square"
 
     /// 色。作業空間の色をそのまま宣言できる。
-    @Param var tint: LinearRGBA = .display(red: 0.98, green: 0.62, blue: 0.24)
+    @Param var tint: LinearRGBA = color(250, 158, 61)
 
     /// 並び全体のずれ。組は成分ごとのスライダーになる。
     @Param(-1...1) var drift: SIMD2<Float> = SIMD2(0, 0)
@@ -79,7 +79,7 @@ final class KnobsAndValues: Sketch {
     @Param var seed: Int = 7
 
     func draw() {
-        background(.display(red: 0.07, green: 0.08, blue: 0.11))
+        background(18, 20, 28)
         noiseSeed(seed)
 
         let stepX = width / Float(columns + 1)

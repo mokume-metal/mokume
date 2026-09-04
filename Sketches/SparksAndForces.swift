@@ -43,7 +43,7 @@ final class SparksAndForces: Sketch {
 
     func draw() {
         guard let sparks else { return }
-        background(.display(red: 0.03, green: 0.04, blue: 0.07))
+        background(8, 10, 18)
 
         // 噴き口は 2 つ、輪の上を向かい合って回る。**出る向きはでたらめ**なので、
         // 腕の形は噴き口の動きではなく力のほうから出ている
@@ -55,7 +55,7 @@ final class SparksAndForces: Sketch {
                 sparks, from: .point(eye.x + cos(angle) * ring, eye.y + sin(angle) * ring),
                 rate: 800, speed: 30...90, angle: 0...(2 * Float.pi), life: 2.4...4,
                 size: 1.5...4,
-                color: .display(red: 1, green: 0.68, blue: 0.28))
+                color: color(255, 173, 71))
         }
 
         // **積んだぶんがまとめて効く。** 4 つのうちどれを外しても、絵は別物になる。
@@ -71,15 +71,15 @@ final class SparksAndForces: Sketch {
         // 渦の目と、粒が生まれる輪。**力と生まれる場所が見えていないと、
         // 円盤ができる理由が絵から読めない**
         noFill()
-        stroke(.display(red: 0.45, green: 0.75, blue: 1, alpha: 0.7))
+        stroke(115, 191, 255, 178)
         strokeWeight(1.5)
         circle(eye.x, eye.y, 72)
         circle(eye.x, eye.y, 18)
-        stroke(.display(red: 0.4, green: 0.6, blue: 0.9, alpha: 0.3))
+        stroke(102, 153, 230, 76)
         strokeWeight(1)
         circle(eye.x, eye.y, ring * 2)
         // 噴き口そのもの。**動いていることが 1 枚でも読める**ようにする
-        stroke(.display(red: 1, green: 1, blue: 1, alpha: 0.45))
+        stroke(255, 255, 255, 115)
         for side in 0..<2 {
             let angle = sweep + Float(side) * Float.pi
             circle(eye.x + cos(angle) * ring, eye.y + sin(angle) * ring, 16)

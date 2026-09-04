@@ -72,7 +72,7 @@ final class SurfacesAndBlend: Sketch {
         background(.studio)
         surroundings(.studio)
         ambientLight(.opaque(red: 0.10, green: 0.10, blue: 0.12))
-        directionalLight(.display(red: 1.0, green: 0.95, blue: 0.88), -0.4, 0.7, -0.6)
+        directionalLight(color(255, 242, 224), -0.4, 0.7, -0.6)
         noStroke()
 
         // **同じ姿勢で 2 枚**。時計はフレーム番号から導かれるので、何度撮っても同じ動き
@@ -84,7 +84,7 @@ final class SurfacesAndBlend: Sketch {
             rotateY(spin)
             if let painted { shader(painted) }
             // 断片は `in.color` を掛けて使う。白で塗っておくと、そこに光の強さだけが載る
-            fill(.display(red: 1, green: 1, blue: 1))
+            fill(255, 255, 255)
             box(Self.board.width, 18, Self.board.depth)
             resetShader()
             pop()
@@ -115,7 +115,7 @@ final class SurfacesAndBlend: Sketch {
     private func paintSmudge() -> Canvas? {
         guard let canvas = try? createGraphics(256, 256) else { return nil }
         canvas.beginDraw()
-        canvas.background(.display(red: 1, green: 1, blue: 1))
+        canvas.background(255, 255, 255)
         canvas.noStroke()
         // 濃さの違う染みを重ねる。**位置は式で決める** — 何度描いても同じ絵になる
         for index in 0..<48 {

@@ -14,7 +14,7 @@ extension Sketch {
     ///
     /// ```swift
     /// func draw() {
-    ///     background(.display(red: 0.1, green: 0.1, blue: 0.12))
+    ///     background(26, 26, 31)
     ///     circle(width / 2, height / 2, 200)
     ///     if frameCount == 1 { save("first.png") }
     /// }
@@ -59,7 +59,7 @@ extension Sketch {
     ///
     /// ```swift
     /// func draw() {
-    ///     background(.display(red: 0.1, green: 0.1, blue: 0.12))
+    ///     background(26, 26, 31)
     ///     circle(width / 2 + cos(time) * 200, height / 2, 80)
     ///
     ///     if frameCount == 1 { beginRecord("out/motion.mov") }  // 動きを 1 本にする
