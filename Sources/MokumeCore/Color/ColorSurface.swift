@@ -49,34 +49,46 @@ enum DisplayScale {
 
     /// 素の数値から作業空間の色を作る。**非有限の値が混じっていたら作らない。**
     ///
-    /// 弾くのは [ADR-0020] 決定 5 (フレームごとに呼ばれるものは投げず、受け口で
-    /// 検証して安全側へ倒す) の適用で、`nil` を受けた側が「何もしない」へ倒す。
-    /// 0–1 のつもりで書かれた値を推測で咎める仕組みは持たない ([ADR-0033] 決定 9)。
+    /// **ここは黙って `nil` を返す。** 何と言うかは受け口が決める — 文面に入る口の名前を
+    /// ここへ渡すと、鍵ではなく文字列で注意を数えることになる (``WarningLog`` の但し書き)。
+    /// 弾くこと自体は [ADR-0020] 決定 5 の適用で、0–1 のつもりで書かれた値を推測で
+    /// 咎める仕組みは持たない ([ADR-0033] 決定 9)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-    static func color(
-        red: Float, green: Float, blue: Float, alpha: Float,
-        from entry: String, fallingBackTo effect: String
-    ) -> LinearRGBA? {
-        guard red.isFinite, green.isFinite, blue.isFinite, alpha.isFinite else {
-            warnNotANumberOnce(entry, effect)
-            return nil
-        }
+    static func color(red: Float, green: Float, blue: Float, alpha: Float) -> LinearRGBA? {
+        guard red.isFinite, green.isFinite, blue.isFinite, alpha.isFinite else { return nil }
         return LinearRGBA(
             straightRed: linear(red),
             green: linear(green),
             blue: linear(blue),
             alpha: alpha / maximum)
     }
+}
 
-    /// 何度も言わない — 毎フレーム起きうるので (``Diagnostics/warn(_:)`` の但し書き)。
-    static var warnedNotANumber = false
+// MARK: - 値を作る口が言う注意
 
-    static func warnNotANumberOnce(_ entry: String, _ effect: String) {
-        guard !warnedNotANumber else { return }
-        warnedNotANumber = true
-        Diagnostics.warn("\(entry): 数でない値・無限の値が渡されたので、\(effect)")
+/// 色の**値**を作る口が 1 度だけ言う注意。
+///
+/// 描く口の注意は面が持つ (``Canvas/Warning``) が、``color(_:_:_:_:)`` のような値を
+/// 作る口には持ち主が無い。鍵で数える形は同じで、控えだけをここに置く ([#833])。
+///
+/// [#833]: https://github.com/mokume-metal/mokume/issues/833
+enum ColorValues {
+    /// 1 度だけ言う注意の種類。**口ごとに数える** — 1 つの旗を共有すると、
+    /// 先に鳴った口が後の口を永久に黙らせる。
+    enum Warning: Hashable {
+        /// 素の数値の口に、数でない値・無限の値が渡された。
+        case notANumber
+        /// 色相・彩度・明度の口に、数でない値・無限の値が渡された。
+        case notANumberHSB
+    }
+
+    /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
+    private(set) static var warnings = WarningLog<Warning>()
+
+    static func warnOnce(_ warning: Warning, _ message: @autoclosure () -> String) {
+        warnings.warnOnce(warning, message())
     }
 }
 
@@ -103,9 +115,13 @@ enum DisplayScale {
 public func color(
     _ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255
 ) -> LinearRGBA {
-    DisplayScale.color(
-        red: red, green: green, blue: blue, alpha: alpha,
-        from: "color()", fallingBackTo: "透明を返しました") ?? .transparent
+    guard let made = DisplayScale.color(red: red, green: green, blue: blue, alpha: alpha)
+    else {
+        ColorValues.warnOnce(
+            .notANumber, "color(): 数でない値・無限の値が渡されたので、透明を返しました")
+        return .transparent
+    }
+    return made
 }
 
 /// 灰色を作る。**素の数値は 0–255**、2 つ目は不透明度。
