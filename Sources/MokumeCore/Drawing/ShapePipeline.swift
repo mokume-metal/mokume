@@ -13,6 +13,33 @@ import simd
 /// 頂点を組み立てる側は組み込みのものしかない — 利用者が差し替えるのは塗りだけなので、
 /// **利用者の断片から作るパイプラインも、頂点側は同じものを使う。**
 final class ShapePipeline {
+    /// 同じ絵を描く、**混ぜ方ごとに分かれたパイプラインの組**。
+    ///
+    /// 断片が `[[color(0)]]` を宣言すると、同じ画素へ来る断片は順に並べる必要が
+    /// あり、重なりの多い絵ではそれ自体が費用になる。既定の重ね方 (`.blend`) は
+    /// 乗算済みの source-over なので**固定機能のブレンドと式が一致し**、置き換え
+    /// (`.replace`) はそもそも下地を見ない — この 2 つは下地を読まない断片で描く
+    /// ([#758](https://github.com/mokume-metal/mokume/issues/758))。
+    ///
+    /// 残りの混ぜ方は固定機能では表せないので、今までどおり断片が下地を読んで混ぜる。
+    struct BlendStates {
+        /// 断片が下地を読んで混ぜる列 (`.blend` と `.replace` 以外)。
+        let composite: any MTLRenderPipelineState
+        /// 重ねる列。断片は下地を読まず、固定機能のブレンドが混ぜる。
+        let blend: any MTLRenderPipelineState
+        /// 置き換える列。断片は下地を読まず、混ぜずにそのまま置く。
+        let replace: any MTLRenderPipelineState
+
+        /// その混ぜ方で描くパイプライン。
+        func state(for mode: BlendMode) -> any MTLRenderPipelineState {
+            switch mode {
+            case .blend: blend
+            case .replace: replace
+            default: composite
+            }
+        }
+    }
+
     /// 頂点の並びを渡す口の番号 (シェーダ側の `buffer(0)`)。
     static let vertexBufferIndex = 0
     /// 描画先の座標へ落とす行列を渡す口の番号 (シェーダ側の `buffer(1)`)。
@@ -49,11 +76,11 @@ final class ShapePipeline {
     /// 宣言より多く読もうとした断片も、絵が乱れるだけで異常終了はしない。
     static let surfaceCapacity = 4
 
-    /// 組み込みの塗りで描くパイプライン。
-    let state: any MTLRenderPipelineState
+    /// 組み込みの塗りで描くパイプライン。**混ぜ方ごとに 3 本ある** (``BlendStates``)。
+    let states: BlendStates
 
     /// 立体を組み込みの塗りで描くパイプライン。頂点の落とし方だけが違う。
-    let solidState: any MTLRenderPipelineState
+    let solidStates: BlendStates
 
     /// 光から見た奥行きを焼き付けるパイプライン。**頂点だけで、断片を持たない。**
     ///
@@ -61,13 +88,13 @@ final class ShapePipeline {
     /// 書く先が無く、置かない ([#757](https://github.com/mokume-metal/mokume/issues/757))。
     let shadowState: any MTLRenderPipelineState
 
-    /// 平面の基本図形を距離関数で描くパイプライン ([#752])。
+    /// 平面の基本図形を距離関数で描くパイプライン ([#752])。**混ぜ方ごとに 3 本ある。**
     ///
     /// 頂点も断片も専用で、利用者の断片は差し替えられない — 断片が読む面・頂点の
     /// 属性を契約に持つ利用者の断片は、三角形の経路 (``state``) に居続ける。
     ///
     /// [#752]: https://github.com/mokume-metal/mokume/issues/752
-    let formState: any MTLRenderPipelineState
+    let formStates: BlendStates
 
     /// 平面の奥行きの扱い — **常に通し、書かない**。
     ///
@@ -99,10 +126,11 @@ final class ShapePipeline {
         }
         self.compiler = compiler
 
-        self.state = try Self.makeState(
+        self.states = try Self.makeBlendStates(
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
-            pixelFormat: pixelFormat, label: "mokume.shapes")
-        self.solidState = try Self.makeState(
+            pixelFormat: pixelFormat, label: "mokume.shapes",
+            vertexFunctionName: Self.flatVertexFunctionName)
+        self.solidStates = try Self.makeBlendStates(
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
             pixelFormat: pixelFormat, label: "mokume.solids",
             vertexFunctionName: Self.solidVertexFunctionName)
@@ -110,11 +138,13 @@ final class ShapePipeline {
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
-        self.formState = try Self.makeState(
+        self.formStates = try Self.makeBlendStates(
             compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
             pixelFormat: pixelFormat, label: "mokume.forms",
             vertexFunctionName: Self.formVertexFunctionName,
-            fragmentFunctionName: Self.formFragmentFunctionName)
+            fragmentFunctionName: Self.formFragmentFunctionName,
+            blendFragmentFunctionName: Self.formBlendFragmentFunctionName,
+            replaceFragmentFunctionName: Self.formReplaceFragmentFunctionName)
 
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
@@ -143,26 +173,72 @@ final class ShapePipeline {
     static let flatVertexFunctionName = "shapeVertexMain"
     /// 立体の頂点を落とす関数の名前。
     static let solidVertexFunctionName = "solidVertexMain"
+    /// 三角形の経路の断片の名前 (下地を読む側)。
+    static let flatFragmentFunctionName = "mokume_fragmentMain"
+    /// 三角形の経路の断片の名前 (**下地を読まない側**)。
+    ///
+    /// 三角形は塗る所だけを覆うので、置き換える列でも捨てる必要が無い — 重ねる列と
+    /// 同じ入口で足りる (基本図形の経路は余白を持つので分かれる)。
+    static let flatDirectFragmentFunctionName = "mokume_fragmentDirect"
     /// 基本図形のクアッドを置く頂点関数の名前。
     static let formVertexFunctionName = "formVertexMain"
-    /// 基本図形を距離関数で塗る断片の名前。
+    /// 基本図形を距離関数で塗る断片の名前 (下地を読む側)。
     static let formFragmentFunctionName = "mokume_formFragment"
+    /// 基本図形を距離関数で塗る断片の名前 (**重ねる列** — 下地を読まず、捨てもしない)。
+    static let formBlendFragmentFunctionName = "mokume_formFragmentBlend"
+    /// 基本図形を距離関数で塗る断片の名前 (**置き換える列** — 下地を読まず、余白は捨てる)。
+    static let formReplaceFragmentFunctionName = "mokume_formFragmentReplace"
 
-    /// 利用者の断片で塗るパイプラインを組む。
-    func makeState(
+    /// 利用者の断片で塗るパイプラインを組む。**組み込みと同じく混ぜ方ごとに 3 本**。
+    ///
+    /// 組み込みだけを固定機能のブレンドへ載せると、同じ `paint` を書いても経路で速さが
+    /// 変わる — 「組み込みも利用者の断片も同じ合成を通る」(`Common.metal`) を、速さの
+    /// 側でも保つ。
+    func makeStates(
         fragmentLibrary: any MTLLibrary, label: String,
         vertexFunctionName: String = ShapePipeline.flatVertexFunctionName
-    ) throws(RenderFailure) -> any MTLRenderPipelineState {
-        try Self.makeState(
+    ) throws(RenderFailure) -> BlendStates {
+        try Self.makeBlendStates(
             compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary,
             pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName)
+    }
+
+    /// 同じ絵を描く 3 本を組む (``BlendStates``)。
+    ///
+    /// 断片の名前を渡さなければ、三角形の経路の入口 (`mokume_fragmentMain` /
+    /// `mokume_fragmentDirect`) を使う — 利用者の断片もここから組む。
+    private static func makeBlendStates(
+        compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
+        fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String,
+        vertexFunctionName: String,
+        fragmentFunctionName: String = ShapePipeline.flatFragmentFunctionName,
+        blendFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName,
+        replaceFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName
+    ) throws(RenderFailure) -> BlendStates {
+        BlendStates(
+            composite: try makeState(
+                compiler: compiler, vertexLibrary: vertexLibrary,
+                fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
+                label: label, vertexFunctionName: vertexFunctionName,
+                fragmentFunctionName: fragmentFunctionName),
+            blend: try makeState(
+                compiler: compiler, vertexLibrary: vertexLibrary,
+                fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
+                label: "\(label).blend", vertexFunctionName: vertexFunctionName,
+                fragmentFunctionName: blendFragmentFunctionName, sourceOver: true),
+            replace: try makeState(
+                compiler: compiler, vertexLibrary: vertexLibrary,
+                fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
+                label: "\(label).replace", vertexFunctionName: vertexFunctionName,
+                fragmentFunctionName: replaceFragmentFunctionName))
     }
 
     private static func makeState(
         compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
         fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String,
         vertexFunctionName: String = ShapePipeline.flatVertexFunctionName,
-        fragmentFunctionName: String = "mokume_fragmentMain"
+        fragmentFunctionName: String = "mokume_fragmentMain",
+        sourceOver: Bool = false
     ) throws(RenderFailure) -> any MTLRenderPipelineState {
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = vertexFunctionName
@@ -177,13 +253,29 @@ final class ShapePipeline {
         descriptor.vertexFunctionDescriptor = vertexFunction
         descriptor.fragmentFunctionDescriptor = fragmentFunction
 
-        // **固定機能のブレンドは使わない。** 混ぜ方はすべてフラグメントで行う
-        // (フラグメントが描画先を読めることは実測で確認済み)。係数で処理される分と
-        // シェーダで処理される分に割れると、アルファの扱いがモードごとにばらつく
-        // 余地が残るためである。
+        // **固定機能のブレンドを使うのは、乗算済みの source-over だけ。** 色は
+        // アルファ乗算済みなので ([ADR-0011] 決定 4)、重ねるのは
+        // `source + destination × (1 − source.a)` の 1 本で、係数の組
+        // (`one` / `oneMinusSourceAlpha`) がそのままこの式になる — 断片が書いていた
+        // 式と一致するので、割ったことでアルファの扱いがばらつく余地は無い。
+        //
+        // 残りの混ぜ方は係数の組では表せないので、今までどおり断片が下地を読んで
+        // 混ぜる (`mokume_composite`)。
+        //
+        // [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
         let attachment = descriptor.colorAttachments[0]!
         attachment.pixelFormat = pixelFormat
-        attachment.blendingState = .disabled
+        if sourceOver {
+            attachment.blendingState = .enabled
+            attachment.rgbBlendOperation = .add
+            attachment.alphaBlendOperation = .add
+            attachment.sourceRGBBlendFactor = .one
+            attachment.sourceAlphaBlendFactor = .one
+            attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
+            attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        } else {
+            attachment.blendingState = .disabled
+        }
 
         do {
             return try compiler.makeRenderPipelineState(descriptor: descriptor)

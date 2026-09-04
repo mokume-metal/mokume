@@ -72,4 +72,7 @@ public struct LinearRGBA: Equatable, Sendable {
     /// 完全に透明な色。
     public static let transparent = LinearRGBA(
         premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
+
+    /// 4 成分を GPU へ渡す並びのまま (乗算済み・線形)。
+    var components: SIMD4<Float> { SIMD4(red, green, blue, alpha) }
 }

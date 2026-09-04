@@ -506,29 +506,64 @@ float4 paint(Fragment in, Values values, Surfaces surfaces);
 float4 paint(Fragment in, Values values);
 #endif
 
-fragment float4 mokume_fragmentMain(
+// 入口が束ねるものの一覧。**入口は 2 つあるが、束ね方は 1 つしかない。**
+//
+// 下地を読む入口と読まない入口 (`mokume_fragmentMain` / `mokume_fragmentDirect`) は、
+// 束ねる口が 1 つでも食い違うと**絵が壊れたまま組み上がる** — 番号は Swift 側
+// (`ShapePipeline`) と合っていればよく、2 つの入口が互いに合っている必要は
+// コンパイラには分からない。だから並びを写さず、1 つの綴りを両方が使う。
 #ifdef MOKUME_SURFACES
-    // 利用者が宣言した面。**口の数は宣言した枚数によらず固定**で、余りには
-    // 別の面が束ねてある (何も束ねない口を作らないため)
-    texture2d<float> user_surface_0 [[texture(2)]],
-    texture2d<float> user_surface_1 [[texture(3)]],
-    texture2d<float> user_surface_2 [[texture(4)]],
+// 利用者が宣言した面。**口の数は宣言した枚数によらず固定**で、余りには
+// 別の面が束ねてある (何も束ねない口を作らないため)
+#define MOKUME_SURFACE_PARAMS \
+    texture2d<float> user_surface_0 [[texture(2)]], \
+    texture2d<float> user_surface_1 [[texture(3)]], \
+    texture2d<float> user_surface_2 [[texture(4)]], \
     texture2d<float> user_surface_3 [[texture(5)]],
+#define MOKUME_SURFACE_ARGS \
+    , mokume_surfaces(user_surface_0, user_surface_1, user_surface_2, user_surface_3)
+#else
+#define MOKUME_SURFACE_PARAMS
+#define MOKUME_SURFACE_ARGS
 #endif
-    ShapeFragmentIn in [[stage_in]],
-    constant uint &mode [[buffer(2)]],
-    constant Uniforms &uniforms [[buffer(4)]],
-    constant Values &values [[buffer(5)]],
-    constant Lighting &lighting [[buffer(6)]],
-    constant Light *lights [[buffer(7)]],
-    constant Material &material [[buffer(8)]],
-    constant Surroundings &surroundings [[buffer(9)]],
-    device const float *numbers [[buffer(11)]],
-    texture2d<float> source_texture [[texture(0)]],
-    depth2d<float> shadow_texture [[texture(1)]],
-    bool isFrontFacing [[front_facing]],
-    float4 destination [[color(0)]])
-{
+
+#define MOKUME_SHAPE_PARAMS \
+    ShapeFragmentIn in [[stage_in]], \
+    constant Uniforms &uniforms [[buffer(4)]], \
+    constant Values &values [[buffer(5)]], \
+    constant Lighting &lighting [[buffer(6)]], \
+    constant Light *lights [[buffer(7)]], \
+    constant Material &material [[buffer(8)]], \
+    constant Surroundings &surroundings [[buffer(9)]], \
+    device const float *numbers [[buffer(11)]], \
+    texture2d<float> source_texture [[texture(0)]], \
+    depth2d<float> shadow_texture [[texture(1)]], \
+    bool isFrontFacing [[front_facing]]
+
+#define MOKUME_SHAPE_ARGS \
+    in, uniforms, values, lighting, lights, material, surroundings, numbers, \
+    source_texture, shadow_texture, isFrontFacing
+
+/// この画素が出す色。**下地は見ない。**
+///
+/// 下地との混ぜ方は呼ぶ側が決める — 固定機能のブレンドへ渡す入口と、自分で混ぜる
+/// 入口があるので、色を出す仕事はここ 1 本にする。
+static inline float4 mokume_shapeColor(
+    ShapeFragmentIn in,
+    constant Uniforms &uniforms,
+    constant Values &values,
+    constant Lighting &lighting,
+    constant Light *lights,
+    constant Material &material,
+    constant Surroundings &surroundings,
+    device const float *numbers,
+    texture2d<float> source_texture,
+    depth2d<float> shadow_texture,
+    bool isFrontFacing
+#ifdef MOKUME_SURFACES
+    , Surfaces surfaces
+#endif
+) {
     // **形から求めた向きだけは、どちらの側から見ても光を受ける。** 裏を向いている面
     // では向きを裏返す — 利用者が頂点を並べる向き (巻き方) で絵が真っ黒になるのを
     // 避けるため。書かれた向きは裏返さない (書いた指定を黙って覆さない)。
@@ -578,10 +613,37 @@ fragment float4 mokume_fragmentMain(
     f.numbers = numbers;
 
 #ifdef MOKUME_SURFACES
-    Surfaces surfaces = mokume_surfaces(
-        user_surface_0, user_surface_1, user_surface_2, user_surface_3);
-    return mokume_composite(paint(f, values, surfaces), destination, mode);
+    return paint(f, values, surfaces);
 #else
-    return mokume_composite(paint(f, values), destination, mode);
+    return paint(f, values);
 #endif
+}
+
+/// 画素を描く入口。**下地を読み、混ぜ方で分岐する。**
+///
+/// 使うのは固定機能のブレンドで表せない混ぜ方の列だけである (`ShapePipeline`)。
+fragment float4 mokume_fragmentMain(
+    MOKUME_SURFACE_PARAMS
+    MOKUME_SHAPE_PARAMS,
+    constant uint &mode [[buffer(2)]],
+    float4 destination [[color(0)]])
+{
+    return mokume_composite(
+        mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS), destination, mode);
+}
+
+/// 画素を描く入口。**下地を読まない。**
+///
+/// 重ねる (`.blend`) 列と置き換える (`.replace`) 列が使う。前者は乗算済みの
+/// source-over なので固定機能のブレンドが同じ式で混ぜ、後者は下地を見ない —
+/// どちらも断片が下地を読む必要が無い ([#758])。
+///
+/// **出す色は入口によらず同じ**である (`mokume_shapeColor` が 1 本)。
+///
+/// [#758]: https://github.com/mokume-metal/mokume/issues/758
+fragment float4 mokume_fragmentDirect(
+    MOKUME_SURFACE_PARAMS
+    MOKUME_SHAPE_PARAMS)
+{
+    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
 }

@@ -48,19 +48,31 @@ struct FormInstance {
     /// 輪郭を持つ。
     static let strokesFlag: UInt32 = 2
 
+    /// 置き場所を 1 つ組む。**色は「持つか」を旗で渡し、`Optional` にしない。**
+    ///
+    /// `LinearRGBA?` を受け取る形だと、図形 1 つあたり 67 ns かかっていた (10 万個で
+    /// 6.7 ms・実測)。`Float` に余った表現が無いので `Optional<LinearRGBA>` は別の
+    /// 印を抱えることになり、渡すたびに印の読み書きが挟まる — 中身は 16 バイトの
+    /// 数の並びなのに、束ねる側と解く側の両方が値の型を跨ぐ ([#771])。
+    ///
+    /// 旗は塗り・輪郭の有無をそのまま表すので、呼ぶ側が既に持っている真偽値が
+    /// そのまま入る (`hasFill` / `hasStroke`)。
+    ///
+    /// [#771]: https://github.com/mokume-metal/mokume/issues/771
     init(
         kind: Kind, linear: SIMD4<Float>, offset: SIMD2<Float>, half: SIMD2<Float>,
         arc: SIMD2<Float> = .zero, halfWeight: Float,
-        fill: LinearRGBA?, stroke: LinearRGBA?, cap: StrokeCap, join: StrokeJoin
+        fill: SIMD4<Float>, stroke: SIMD4<Float>, fills: Bool, strokes: Bool,
+        cap: StrokeCap, join: StrokeJoin
     ) {
         self.linear = linear
         self.offset = SIMD4(offset.x, offset.y, arc.x, arc.y)
-        self.size = SIMD4(half.x, half.y, stroke == nil ? 0 : halfWeight, 0)
-        self.fill = fill.map { SIMD4($0.red, $0.green, $0.blue, $0.alpha) } ?? .zero
-        self.stroke = stroke.map { SIMD4($0.red, $0.green, $0.blue, $0.alpha) } ?? .zero
+        self.size = SIMD4(half.x, half.y, strokes ? halfWeight : 0, 0)
+        self.fill = fills ? fill : .zero
+        self.stroke = strokes ? stroke : .zero
         self.meta = SIMD4(
             kind.rawValue, Self.code(of: cap), Self.code(of: join),
-            (fill == nil ? 0 : Self.fillsFlag) | (stroke == nil ? 0 : Self.strokesFlag))
+            (fills ? Self.fillsFlag : 0) | (strokes ? Self.strokesFlag : 0))
     }
 
     /// 端の形の番号。シェーダ側の `kFormCap*` と同じ。
