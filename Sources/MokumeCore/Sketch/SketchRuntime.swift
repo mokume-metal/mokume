@@ -332,6 +332,11 @@ public final class SketchRuntime {
         case .mousePressed: sketch.mousePressed()
         case .mouseReleased: sketch.mouseReleased()
         case .mouseClicked: sketch.mouseClicked()
+        case .mouseMoved: sketch.mouseMoved()
+        case .mouseDragged: sketch.mouseDragged()
+        case .keyPressed: sketch.keyPressed()
+        case .keyReleased: sketch.keyReleased()
+        case .keyTyped: sketch.keyTyped()
         }
     }
 

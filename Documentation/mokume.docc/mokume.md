@@ -379,6 +379,11 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``Sketch/mousePressed()``
 - ``Sketch/mouseReleased()``
 - ``Sketch/mouseClicked()``
+- ``Sketch/mouseMoved()``
+- ``Sketch/mouseDragged()``
+- ``Sketch/keyPressed()``
+- ``Sketch/keyReleased()``
+- ``Sketch/keyTyped()``
 
 ### 走らせたまま値を動かす
 

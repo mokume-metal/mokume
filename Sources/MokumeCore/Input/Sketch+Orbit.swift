@@ -35,6 +35,11 @@ extension Sketch {
     /// - Note: 変えるのは**視点だけ**で、投影 (``perspective()`` / ``ortho()``) は
     ///   書き換えない。細かく決めたいときは ``orbit`` を直接書く。
     ///   慣性は既定で入っていない (``Orbit/inertia``)。
+    ///
+    /// - Important: **``Sketch/mouseDragged()`` の中から呼ばない。** ここは 1 フレームに
+    ///   1 回しか引きずった量を食わないので、1 フレームに移動が複数件届いたとき最初の
+    ///   1 件までの部分累計だけを食い、残りが黙って捨てられる。回る量が減るだけなので
+    ///   絵を見ても気付けない。`draw()` の中で 1 回呼ぶ形にする。
     public func orbitControl(
         _ sensitivityX: Float = 1, _ sensitivityY: Float = 1, _ sensitivityZ: Float = 1
     ) {

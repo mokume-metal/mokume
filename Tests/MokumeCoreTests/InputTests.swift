@@ -177,18 +177,18 @@ struct InputCallbackTests {
             .mouseMoved(x: 20, y: 20),
             .mouseUp(x: 20, y: 20, button: 0),
         ]
-        #expect(callbacks(from: events) == [.mousePressed, .mouseReleased, .mouseClicked])
+        #expect(
+            callbacks(from: events) == [
+                .mousePressed, .mouseDragged, .mouseReleased, .mouseClicked,
+            ])
     }
 
-    @Test("押しっぱなしの移動やスクロール、キーでは、まだ何も配らない")
-    func staysQuietForTheEventsThatHaveNoCallbackYet() {
-        let events: [InputEvent] = [
-            .mouseMoved(x: 1, y: 2),
-            .scrolled(dx: 1, dy: 2),
-            .keyDown(code: 49, characters: " ", isRepeat: false),
-            .keyUp(code: 49),
-        ]
-        #expect(callbacks(from: events).isEmpty)
+    /// スクロールの「1 件ぶんの量」を名乗る面が決まっていないので、`mouseWheel()` は
+    /// まだ無い ([#807](https://github.com/mokume-metal/mokume/issues/807))。`scrollY` は
+    /// フレームの累計なので、引数なしで足すと 3 件届いたときに部分累計を足し込む形になる。
+    @Test("スクロールでは、まだ何も配らない")
+    func staysQuietForScrolling() {
+        #expect(callbacks(from: [.scrolled(dx: 1, dy: 2)]).isEmpty)
     }
 
     /// 規則は 1 つ — **状態はその出来事まで適用した値**。
@@ -216,6 +216,91 @@ struct InputCallbackTests {
         // クリックは解放と同じ姿を見る
         #expect(seen[2].0 == .mouseClicked)
         #expect(seen[2].1 == 70)
+    }
+
+    @Test("押していない移動は移動、押したままの移動は引きずり")
+    func splitsMotionByWhetherTheButtonIsDown() {
+        // 押す前の移動 → 移動。押した後の移動 → 引きずり。離した後の移動 → 移動
+        let events: [InputEvent] = [
+            .mouseMoved(x: 10, y: 10),
+            .mouseDown(x: 10, y: 10, button: 0),
+            .mouseMoved(x: 30, y: 25),
+            .mouseUp(x: 30, y: 25, button: 0),
+            .mouseMoved(x: 60, y: 60),
+        ]
+        #expect(
+            callbacks(from: events) == [
+                .mouseMoved, .mousePressed, .mouseDragged, .mouseReleased, .mouseClicked,
+                .mouseMoved,
+            ])
+    }
+
+    /// **窓にしか無い情報を使っていない。** 窓は押している間の移動を `mouseDragged` と
+    /// して拾うが、合流点へ流れるのは `.mouseMoved` だけなので、外から送れるものと
+    /// 同じ材料 (押下状態) で分けている。
+    @Test("引きずりの判定は、外から送れる材料だけで決まる")
+    func derivesDraggingWithoutWindowOnlyInformation() {
+        let held: [InputEvent] = [.mouseDown(x: 0, y: 0, button: 0), .mouseMoved(x: 5, y: 5)]
+        #expect(callbacks(from: held) == [.mousePressed, .mouseDragged])
+        #expect(callbacks(from: [.mouseMoved(x: 5, y: 5)]) == [.mouseMoved])
+    }
+
+    @Test("キーは、押した瞬間と離した瞬間に配られる")
+    func deliversKeyPressAndRelease() {
+        let events: [InputEvent] = [
+            .keyDown(code: 49, characters: " ", isRepeat: false),
+            .keyUp(code: 49),
+        ]
+        #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyReleased])
+    }
+
+    /// **押しっぱなしは連射する** (手本 — Processing / p5.js — と同じ)。
+    @Test("押しっぱなしのキーは、届いたぶんだけ配られる")
+    func repeatsWhileHeld() {
+        let events: [InputEvent] = [
+            .keyDown(code: 0, characters: "a", isRepeat: false),
+            .keyDown(code: 0, characters: "a", isRepeat: true),
+        ]
+        #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyPressed, .keyTyped])
+    }
+
+    /// **「`characters` が空でない」では判定できない。** AppKit は矢印に私用領域
+    /// (U+F700 台)、Escape に U+001B、Delete に U+007F を返す — どれも空ではないので、
+    /// 空でないことを打鍵の合図にすると手本では呼ばれないキーで発火する。
+    @Test(
+        "文字を生まないキーでは、打鍵にならない",
+        arguments: [
+            ("\u{F700}", "上矢印"), ("\u{F701}", "下矢印"), ("\u{F702}", "左矢印"),
+            ("\u{F704}", "F1"), ("\u{001B}", "Escape"), ("\u{007F}", "Delete"),
+            ("\u{0009}", "Tab"), ("\u{000D}", "Return"), ("", "文字を持たないキー"),
+        ])
+    func doesNotTypeForKeysThatProduceNoText(_ characters: String, _ name: String) {
+        let event = InputEvent.keyDown(code: 126, characters: characters, isRepeat: false)
+        #expect(callbacks(from: [event]) == [.keyPressed], "\(name) で打鍵になった")
+    }
+
+    @Test(
+        "文字を生むキーでは、押下の直後に打鍵が続く",
+        arguments: ["a", "あ", " ", "1", "🌱"])
+    func typesForKeysThatProduceText(_ characters: String) {
+        let event = InputEvent.keyDown(code: 0, characters: characters, isRepeat: false)
+        #expect(callbacks(from: [event]) == [.keyPressed, .keyTyped])
+    }
+
+    /// 同じ判定が ``InputState/characters`` にも効く。割れていた頃は、矢印を押すと
+    /// 画面に見えない文字が出ていた ([#805](https://github.com/mokume-metal/mokume/issues/805))。
+    @Test("矢印キーを押しても、読める文字が壊れない")
+    func keepsTheReadableCharacterIntact() {
+        let state = InputState()
+        state.enqueue(.keyDown(code: 0, characters: "a", isRepeat: false))
+        state.beginFrame()
+        #expect(state.characters == "a")
+
+        // 上矢印。押されているキーの集合には入るが、読める文字は変わらない
+        state.enqueue(.keyDown(code: 126, characters: "\u{F700}", isRepeat: false))
+        state.beginFrame()
+        #expect(state.pressedKeys.contains(126))
+        #expect(state.characters == "a")
     }
 
     /// 配ることで畳み方が変わっていないか。**`draw()` から見える最終状態は今までどおり。**
