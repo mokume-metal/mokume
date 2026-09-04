@@ -22,11 +22,11 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct FormShapeTests {
-    private let black = LinearRGBA.opaque(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
-    private let red = LinearRGBA.opaque(red: 1, green: 0, blue: 0)
-    private let green = LinearRGBA.opaque(red: 0, green: 1, blue: 0)
-    private let blue = LinearRGBA.opaque(red: 0, green: 0, blue: 1)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
 
     private func makeCanvas(width: Int = 96, height: Int = 96) throws -> Canvas {
         let gpu = try RenderDevice()
@@ -96,8 +96,8 @@ struct FormShapeTests {
                 canvas.translate(10 + step * 1.3, 10 + step)
                 canvas.rotate(step * 0.1)
                 canvas.scale(1 + step * 0.01, 1)
-                canvas.fill(.opaque(red: step / 60, green: 0.5, blue: 1 - step / 60))
-                canvas.stroke(.opaque(red: 1, green: step / 60, blue: 0))
+                canvas.fill(.linear(red: step / 60, green: 0.5, blue: 1 - step / 60))
+                canvas.stroke(.linear(red: 1, green: step / 60, blue: 0))
                 canvas.strokeWeight(1 + step * 0.05)
                 switch index % 3 {
                 case 0: canvas.rect(0, 0, 6 + step * 0.1, 4)
@@ -178,7 +178,7 @@ struct FormShapeTests {
                         LinearRGBA(
                             straightRed: scatter.next(0...1), green: scatter.next(0...1),
                             blue: scatter.next(0...1), alpha: scatter.next(0.2...1)))
-                    canvas.stroke(.opaque(red: 1, green: 1, blue: scatter.next(0...1)))
+                    canvas.stroke(.linear(red: 1, green: 1, blue: scatter.next(0...1)))
                     canvas.strokeWeight(scatter.next(0...6))
                     canvas.strokeCap([.round, .square, .project][index % 3])
                     canvas.strokeJoin([.miter, .bevel, .round][index % 3])
@@ -577,7 +577,7 @@ struct FormShapeTests {
             }
             let placements = (0..<200).map { index in
                 var placement = Placement(x: 8 + Float(index % 10) * 9, y: 8 + Float(index / 10) * 4)
-                placement.fill = index % 2 == 0 ? .opaque(red: 1, green: 0, blue: 0) : nil
+                placement.fill = index % 2 == 0 ? .linear(red: 1, green: 0, blue: 0) : nil
                 return placement
             }
             canvas.shape(dot, at: placements)

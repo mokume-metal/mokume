@@ -33,8 +33,8 @@ final class MaterialsAndSurroundings: Sketch {
         background(place.surroundings)
 
         // 底上げの光だけ足す。**金属は周囲を映す**ので、差す光が無くても形が出る
-        ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.14))
-        directionalLight(.opaque(red: 0.7, green: 0.68, blue: 0.62), -0.4, 0.8, -0.4)
+        ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.14))
+        directionalLight(.linear(red: 0.7, green: 0.68, blue: 0.62), -0.4, 0.8, -0.4)
 
         // 明るさを画面へ写す段。**丸め方を折り返しにすると、明るいところが白へ飛ばずに色を残す**
         exposure(1.15)

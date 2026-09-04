@@ -32,7 +32,7 @@ extension Canvas {
         backdrop = surroundings
         inSolidBatch {
             // 面の向きは持たせない。この列は光も材質も見ずに、周囲の色をそのまま出す
-            let white = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+            let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
             for index in [0, 1, 2, 0, 2, 3] {
                 appendSolidVertex(position: corners[index], normal: .zero, color: white)
             }

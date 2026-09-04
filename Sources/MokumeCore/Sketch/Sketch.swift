@@ -3750,7 +3750,7 @@ extension Sketch {
     ///
     /// **色そのものが明るさの倍率**である。`1.0` は「その光を正面から受けた白い面が
     /// 白として出る」明るさで、それより明るい光は 1 を超える色で書く
-    /// (`.opaque(red: 2, green: 2, blue: 2)`)。強さを表す別の数は持たない。
+    /// (`.linear(red: 2, green: 2, blue: 2)`)。強さを表す別の数は持たない。
     ///
     /// **向きを持たないので、丸いものも丸く見えない。** 下は同じ球を、底上げの光の
     /// 明るさだけ変えて 3 つ描いたもの — どれも塗り 1 色の円板で、変わるのは明るさ
@@ -3764,7 +3764,7 @@ extension Sketch {
     ///     fill(242, 115, 64)
     ///     for (index, level) in [Float(0.15), 0.4, 0.9].enumerated() {
     ///         noLights()
-    ///         ambientLight(.opaque(red: level, green: level, blue: level))
+    ///         ambientLight(.linear(red: level, green: level, blue: level))
     ///         push()
     ///         translate(70 + Float(index) * 130, 150, 0)
     ///         sphere(55)
@@ -3781,7 +3781,7 @@ extension Sketch {
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。初期化の
     ///   ときに置いた光はどのフレームにも属さないので、警告して無視される。
-    // shot: 1 snippet=a6356345
+    // shot: 1 snippet=5e98096a
     public func ambientLight(_ color: LinearRGBA) { canvas.ambientLight(color) }
 
     /// 向きだけを持つ光を置く (無限に遠くから差す光)。
@@ -3802,8 +3802,8 @@ extension Sketch {
     ///     let ways: [(Float, Float, Float)] = [(1, 0.25, -0.3), (0, 1, -0.3), (-1, -1, -0.3)]
     ///     for (index, way) in ways.enumerated() {
     ///         noLights()
-    ///         ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
-    ///         directionalLight(.opaque(red: 0.95, green: 0.95, blue: 0.95), way.0, way.1, way.2)
+    ///         ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
+    ///         directionalLight(.linear(red: 0.95, green: 0.95, blue: 0.95), way.0, way.1, way.2)
     ///         push()
     ///         translate(70 + Float(index) * 130, 150, 0)
     ///         sphere(55)
@@ -3819,7 +3819,7 @@ extension Sketch {
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=70365ab8
+    // shot: 1 snippet=97d91466
     public func directionalLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
         canvas.directionalLight(color, x, y, z)
     }
@@ -3836,9 +3836,9 @@ extension Sketch {
     ///     background(23, 26, 31)
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
+    ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     // 面より手前 (z = 160) の、左上に置く
-    ///     pointLight(.opaque(red: 1.1, green: 1.1, blue: 1.1), 110, 90, 160)
+    ///     pointLight(.linear(red: 1.1, green: 1.1, blue: 1.1), 110, 90, 160)
     ///     push()
     ///     translate(200, 150, 0)
     ///     plane(360, 260)
@@ -3853,7 +3853,7 @@ extension Sketch {
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=8df4de06
+    // shot: 1 snippet=ebd428d6
     public func pointLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
         canvas.pointLight(color, x, y, z)
     }
@@ -3880,10 +3880,10 @@ extension Sketch {
     ///     background(23, 26, 31)
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
+    ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     // 狭い光 (半分の角 15 度)
     ///     spotLight(
-    ///         .opaque(red: 1.2, green: 1.2, blue: 1.2),
+    ///         .linear(red: 1.2, green: 1.2, blue: 1.2),
     ///         160, 120, 200,
     ///         0, 0, -1,
     ///         angle: .pi / 12)
@@ -3906,10 +3906,10 @@ extension Sketch {
     ///     background(23, 26, 31)
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
+    ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     // 広い光 (半分の角 25.7 度)
     ///     spotLight(
-    ///         .opaque(red: 1.2, green: 1.2, blue: 1.2),
+    ///         .linear(red: 1.2, green: 1.2, blue: 1.2),
     ///         160, 120, 200,
     ///         0, 0, -1,
     ///         angle: .pi / 7)
@@ -3927,8 +3927,8 @@ extension Sketch {
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=1df07a52
-    // shot: 2 snippet=23f0f743
+    // shot: 1 snippet=983fe8fa
+    // shot: 2 snippet=86fdc61c
     public func spotLight(
         _ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float,
         _ directionX: Float, _ directionY: Float, _ directionZ: Float,
@@ -3954,14 +3954,14 @@ extension Sketch {
     ///     noStroke()
     ///     fill(242, 115, 64)
     ///     // ① 底上げの光だけ
-    ///     ambientLight(.opaque(red: 0.35, green: 0.35, blue: 0.35))
+    ///     ambientLight(.linear(red: 0.35, green: 0.35, blue: 0.35))
     ///     push()
     ///     translate(70, 150, 0)
     ///     sphere(55)
     ///     pop()
     ///     // ② 斜め上から差す光だけ
     ///     noLights()
-    ///     directionalLight(.opaque(red: 0.85, green: 0.85, blue: 0.85), -0.35, 0.75, -0.55)
+    ///     directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.35, 0.75, -0.55)
     ///     push()
     ///     translate(200, 150, 0)
     ///     sphere(55)
@@ -3983,7 +3983,7 @@ extension Sketch {
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=a6af79d5
+    // shot: 1 snippet=44052481
     public func lights() { canvas.lights() }
 
     /// 置いた光をすべて取り除く。以降の立体は塗り 1 色で描かれる。
@@ -4194,8 +4194,8 @@ extension Sketch {
     ///   @Column(size: 3) {
     ///     ```swift
     ///     background(23, 26, 31)
-    ///     ambientLight(.opaque(red: 0.45, green: 0.45, blue: 0.45))
-    ///     directionalLight(.opaque(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
+    ///     ambientLight(.linear(red: 0.45, green: 0.45, blue: 0.45))
+    ///     directionalLight(.linear(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
     ///     fill(242, 115, 64)
     ///     noStroke()
     ///     for (index, level) in [Float(1), 0.5, 0.1].enumerated() {
@@ -4215,7 +4215,7 @@ extension Sketch {
     /// }
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=925181fd
+    // shot: 1 snippet=14b30e32
     public func ambient(_ color: LinearRGBA) { canvas.ambient(color) }
 
     /// 自ら出す光。光が当たっていない側にも同じだけ出る。
@@ -4231,8 +4231,8 @@ extension Sketch {
     ///   @Column(size: 3) {
     ///     ```swift
     ///     background(23, 26, 31)
-    ///     ambientLight(.opaque(red: 0.10, green: 0.10, blue: 0.10))
-    ///     directionalLight(.opaque(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
+    ///     ambientLight(.linear(red: 0.10, green: 0.10, blue: 0.10))
+    ///     directionalLight(.linear(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
     ///     fill(242, 115, 64)
     ///     noStroke()
     ///     for (index, glow) in [Float(0), 0.15, 0.4].enumerated() {
@@ -4252,7 +4252,7 @@ extension Sketch {
     /// }
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=f1ac2d33
+    // shot: 1 snippet=c69f18e1
     public func emissive(_ color: LinearRGBA) { canvas.emissive(color) }
 
     // MARK: - 周囲

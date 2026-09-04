@@ -149,7 +149,7 @@ extension Canvas {
                         // 貼る絵が無ければ焼き場の白い区画を読む。**そのときの頂点は
                         // 貼る口が無かった頃と 1 ビットも変わらない**
                         uv: textured ? point.uv : whiteUV,
-                        color: .opaque(red: 1, green: 1, blue: 1)))
+                        color: .linear(red: 1, green: 1, blue: 1)))
             }
             openSolid = OpenSolid(
                 source: source, vertexStart: start, vertexCount: mesh.points.count,
