@@ -15,7 +15,7 @@ final class SolidsAndLight: Sketch {
     private var center: (x: Float, y: Float) { (width / 2, height / 2) }
 
     func draw() {
-        background(.display(red: 0.06, green: 0.07, blue: 0.09))
+        background(15, 18, 23)
 
         // **注視点のまわりを回る。** 時計はフレーム番号から導かれるので、何度撮っても同じ動き
         let angle = time * 0.5
@@ -41,7 +41,7 @@ final class SolidsAndLight: Sketch {
 
         // 床。**受けるだけで落とさない** — 落とす側に入れると自分の影で暗くなる
         castShadow(false)
-        fill(.display(red: 0.5, green: 0.5, blue: 0.55))
+        fill(128, 128, 140)
         push()
         translate(center.x, center.y + 130, 0)
         rotateX(.pi / 2)
@@ -72,12 +72,12 @@ final class SolidsAndLight: Sketch {
     private var solids: [(color: LinearRGBA, tilt: Float, spin: Float, draw: (SolidsAndLight) -> Void)]
     {
         [
-            (.display(red: 0.95, green: 0.45, blue: 0.3), 0.3, 0.6, { $0.box(90) }),
-            (.display(red: 0.4, green: 0.85, blue: 0.5), 0, 0.6, { $0.sphere(52) }),
-            (.display(red: 0.35, green: 0.6, blue: 0.95), 0.5, .pi / 2, { $0.plane(120, 100) }),
-            (.display(red: 0.9, green: 0.8, blue: 0.2), 0.25, 0.6, { $0.cylinder(38, 96) }),
-            (.display(red: 0.85, green: 0.4, blue: 0.75), 0.25, 0.6, { $0.cone(44, 100) }),
-            (.display(red: 0.4, green: 0.85, blue: 0.9), 1.25, 0.6, { $0.torus(46, 17) }),
+            (color(242, 115, 76), 0.3, 0.6, { $0.box(90) }),
+            (color(102, 217, 128), 0, 0.6, { $0.sphere(52) }),
+            (color(89, 153, 242), 0.5, .pi / 2, { $0.plane(120, 100) }),
+            (color(230, 204, 51), 0.25, 0.6, { $0.cylinder(38, 96) }),
+            (color(217, 102, 191), 0.25, 0.6, { $0.cone(44, 100) }),
+            (color(102, 217, 230), 1.25, 0.6, { $0.torus(46, 17) }),
         ]
     }
 }

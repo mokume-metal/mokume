@@ -52,7 +52,7 @@ final class CrowdAndModel: Sketch {
     }
 
     func draw() {
-        background(.display(red: 0.06, green: 0.07, blue: 0.10))
+        background(15, 18, 26)
         orbitControl()
 
         ambientLight(.opaque(red: 0.16, green: 0.16, blue: 0.2))
@@ -80,7 +80,7 @@ final class CrowdAndModel: Sketch {
         shape(crowd, at: places)
 
         // **頂点を並べた自由な立体。** 穴も向きも立体で効く
-        fill(.display(red: 0.95, green: 0.6, blue: 0.28))
+        fill(242, 153, 71)
         push()
         translate(width / 2 - 250, height / 2 - 110, 0)
         rotateY(time * 0.6)
@@ -102,7 +102,7 @@ final class CrowdAndModel: Sketch {
         // **読み込んだモデル。** 既定の整え方で、この面に見える大きさへ揃う
         if let gem {
             // **貼る絵は塗りに掛かる**ので、模様をそのまま見せるために白で塗る
-            fill(.display(red: 1, green: 1, blue: 1))
+            fill(255, 255, 255)
             push()
             // **貼る絵は描き方なので push / pop で積める。** ここを抜ければ元へ戻る
             if let pattern { texture(pattern) }

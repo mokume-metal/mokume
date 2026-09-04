@@ -6,8 +6,8 @@
 /// ```swift
 /// final class MySketch: Sketch {
 ///     func draw() {
-///         background(.display(red: 0.1, green: 0.1, blue: 0.12))
-///         fill(.display(red: 1, green: 0.4, blue: 0.2))
+///         background(26, 26, 31)
+///         fill(255, 102, 51)
 ///         circle(width / 2, height / 2, 200)
 ///     }
 /// }
@@ -182,7 +182,7 @@ extension Sketch {
     /// // }
     /// waves = try? loadShader(
     ///     "assets/waves.metal",
-    ///     values: ["speed": 2, "tint": .color(.display(red: 1, green: 0.5, blue: 0.2))])
+    ///     values: ["speed": 2, "tint": .color(color(255, 128, 51))])
     /// ```
     ///
     /// ## 書くのは「その画素の色」だけ
@@ -644,7 +644,7 @@ extension Sketch {
     /// func setup() {
     ///     leaf = createShape {
     ///         noStroke()
-    ///         fill(.display(red: 0.4, green: 0.8, blue: 0.35))
+    ///         fill(102, 204, 89)
     ///         beginShape()
     ///         vertex(0, -20)
     ///         bezierVertex(14, -14, 14, 14, 0, 20)
@@ -781,9 +781,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     circle(110, 100, 140)
     ///     let picked = get(110, 100)   // 円の中の 1 画素
     ///     fill(picked)
@@ -792,11 +792,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左上に橙色の円、右下に同じ橙色で塗られた四角 -->
-    ///     ![左上に橙色の円、右下に同じ橙色で塗られた四角](https://i.gyazo.com/7f2cf2912d36c99c25f51ea9671679f9.png)
+    ///     ![左上に橙色の円、右下に同じ橙色で塗られた四角](https://i.gyazo.com/35bd0b0f4986455379e3e42755c8ae44.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=286bfc72
+    // shot: 1 snippet=6fc06851
     public func get(_ x: Int, _ y: Int) -> LinearRGBA { canvas.get(x, y) }
 
     /// 1 画素の色を書き換える。範囲の外は何もしない。
@@ -807,11 +807,11 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     for y in 60..<240 {
     ///         for x in 100..<300 {
     ///             if (x + y) % 12 < 6 {
-    ///                 set(x, y, .display(red: 0.95, green: 0.85, blue: 0.35))
+    ///                 set(x, y, color(242, 217, 89))
     ///             }
     ///         }
     ///     }
@@ -823,7 +823,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=95cce64d
+    // shot: 1 snippet=e62332bb
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) { canvas.set(x, y, color) }
 }
 
@@ -835,7 +835,7 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.10, green: 0.35, blue: 0.55))
+    ///     background(26, 89, 140)
     ///     ```
     ///   }
     ///   @Column {
@@ -851,21 +851,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     circle(200, 150, 260)
-    ///     background(.display(red: 0.10, green: 0.35, blue: 0.55))
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     background(26, 89, 140)
+    ///     fill(242, 217, 89)
     ///     circle(200, 150, 120)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている | symmetric=xy -->
-    ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/9d79996d003e77b264444ebb7b60c5a5.png)
+    ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/e029756fe495d29926176cb2dce1b6e5.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a9a4b1c1
-    // shot: 2 snippet=06a34484
+    // shot: 1 snippet=45bd9950
+    // shot: 2 snippet=f68cd749
     public func background(_ color: LinearRGBA) { canvas.background(color) }
     /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -874,19 +874,19 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     circle(110, 150, 130)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     circle(200, 150, 130)
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     circle(290, 150, 130)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる | symmetric=y -->
-    ///     ![橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/d9561feaaaf61c716a934b9b9becbe2d.png)
+    ///     ![橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/fa67f8d215df306400d938cca49bafb4.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -896,42 +896,42 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     circle(150, 150, 200)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95, alpha: 0.6))
+    ///     fill(89, 191, 242, 153)
     ///     circle(250, 150, 200)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている | symmetric=y -->
-    ///     ![橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている](https://i.gyazo.com/3b22aa622e4e116813827c7506e2a344.png)
+    ///     ![橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている](https://i.gyazo.com/11c4ac43fa8b7aa9f7aff5b4dc8991a8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=4553e138
-    // shot: 2 snippet=471b5a72
+    // shot: 1 snippet=a705bbfd
+    // shot: 2 snippet=bedf025c
     public func fill(_ color: LinearRGBA) { canvas.fill(color) }
     /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
     ///     strokeWeight(8)
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     circle(110, 150, 130)
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     stroke(89, 191, 242)
     ///     circle(200, 150, 130)
-    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     stroke(242, 217, 89)
     ///     circle(290, 150, 130)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる | symmetric=y -->
-    ///     ![橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/d52d48c8a4994693b679569e0715a2d4.png)
+    ///     ![橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/d18e00bca1eb95424ab87c36a9bba024.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -941,29 +941,29 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(89, 191, 242)
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(16)
     ///     circle(200, 150, 200)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 水色に塗られた円を、太い橙色の輪郭が囲んでいる | symmetric=xy -->
-    ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/848e15edffad8dc14dbb347850c5d64b.png)
+    ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/9b76ba5c17e2ad76aa6460fb63c1576f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=52e2382e
-    // shot: 2 snippet=9fd52b82
+    // shot: 1 snippet=4c4fa3bb
+    // shot: 2 snippet=fbfeb1bb
     public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
     /// これから引く線の太さ (画素)。
     ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     stroke(217, 230, 255)
     ///     for index in 0..<5 {
     ///         strokeWeight(Float(index) * 7 + 2)
     ///         line(70, 60 + Float(index) * 45, 330, 60 + Float(index) * 45)
@@ -972,7 +972,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 上から下へ、だんだん太くなる 5 本の白い横線 | symmetric=x -->
-    ///     ![上から下へ、だんだん太くなる 5 本の白い横線](https://i.gyazo.com/54213d17507b422557afb9541f29ce0a.png)
+    ///     ![上から下へ、だんだん太くなる 5 本の白い横線](https://i.gyazo.com/890dce0704f422b7a97bba8da5a47bea.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -983,9 +983,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(2)
     ///     square(60, 100, 100)
     ///     strokeWeight(30)
@@ -994,12 +994,12 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている | symmetric=y -->
-    ///     ![同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている](https://i.gyazo.com/8e17f246f704030ea38dca747306e122.png)
+    ///     ![同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている](https://i.gyazo.com/23f026f2a7694e42780dceada175d1f4.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7aee288f
-    // shot: 2 snippet=c3229bad
+    // shot: 1 snippet=1f8ee8eb
+    // shot: 2 snippet=edd890f7
     public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
 
     /// 図形の内側を塗らない。輪郭だけの図形になる。
@@ -1009,10 +1009,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     stroke(217, 230, 255)
     ///     strokeWeight(8)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     circle(110, 150, 150)
     ///     noFill()
     ///     circle(290, 150, 150)
@@ -1020,11 +1020,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円 | symmetric=y -->
-    ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/c1c94cc4ba3fb68f29dad4b295a95eba.png)
+    ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/7c54b002459baa15f3c67537a866cfe9.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=848590b4
+    // shot: 1 snippet=8bdd372c
     public func noFill() { canvas.noFill() }
 
     /// 線を引かない。図形の輪郭も出なくなる。
@@ -1034,9 +1034,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
+    ///     stroke(217, 230, 255)
     ///     strokeWeight(8)
     ///     circle(110, 150, 150)
     ///     noStroke()
@@ -1045,11 +1045,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円 | symmetric=y -->
-    ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/24370476c54c4b0bf6f2e035fd25fa6c.png)
+    ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/d0bd6b957452c857ee0843bc2320a49c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5e1b5cf3
+    // shot: 1 snippet=ddde199c
     public func noStroke() { canvas.noStroke() }
 
     /// 線の端の形。既定は丸。
@@ -1063,12 +1063,12 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     stroke(217, 230, 255)
     ///     strokeWeight(2)
     ///     line(140, 40, 140, 260)
     ///     line(260, 40, 260, 260)
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(60)
     ///     strokeCap(.round)
     ///     line(140, 150, 260, 150)
@@ -1076,7 +1076,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している | symmetric=xy -->
-    ///     ![太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している](https://i.gyazo.com/b8fff97556114a1c9a4fac48bf3658df.png)
+    ///     ![太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している](https://i.gyazo.com/30f60dd0e811851ab37489895bd68875.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1086,12 +1086,12 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     stroke(217, 230, 255)
     ///     strokeWeight(2)
     ///     line(140, 40, 140, 260)
     ///     line(260, 40, 260, 260)
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(60)
     ///     strokeCap(.square)
     ///     line(140, 150, 260, 150)
@@ -1099,7 +1099,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太い橙色の線が、白い目印の線のところでまっすぐ切れている | symmetric=xy -->
-    ///     ![太い橙色の線が、白い目印の線のところでまっすぐ切れている](https://i.gyazo.com/27e91f36498415fe4c700fb3954854e0.png)
+    ///     ![太い橙色の線が、白い目印の線のところでまっすぐ切れている](https://i.gyazo.com/f490ccd70812fee1a733777d8fcba71d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1109,12 +1109,12 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     stroke(217, 230, 255)
     ///     strokeWeight(2)
     ///     line(140, 40, 140, 260)
     ///     line(260, 40, 260, 260)
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(60)
     ///     strokeCap(.project)
     ///     line(140, 150, 260, 150)
@@ -1122,13 +1122,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太い橙色の線が、白い目印の線より外へ四角くはみ出している | symmetric=xy -->
-    ///     ![太い橙色の線が、白い目印の線より外へ四角くはみ出している](https://i.gyazo.com/84aafb115c492ac744db4e9232630252.png)
+    ///     ![太い橙色の線が、白い目印の線より外へ四角くはみ出している](https://i.gyazo.com/5471180214c3bf8620991d5b1bd193f0.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5fd70319
-    // shot: 2 snippet=e12f5d6e
-    // shot: 3 snippet=9387a57e
+    // shot: 1 snippet=a8be414a
+    // shot: 2 snippet=1620a3e0
+    // shot: 3 snippet=ee04ab7c
     public func strokeCap(_ cap: StrokeCap) { canvas.strokeCap(cap) }
 
     /// 頂点を並べ始める。``vertex(_:_:)`` で点を置き、``endShape(_:)`` で描く。
@@ -1142,9 +1142,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     beginShape(.polygon)
     ///     vertex(50, 60)
     ///     vertex(230, 30)
@@ -1168,8 +1168,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 191, 242)
     ///     strokeWeight(18)
     ///     beginShape(.points)
     ///     vertex(50, 60)
@@ -1194,8 +1194,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 191, 242)
     ///     strokeWeight(8)
     ///     beginShape(.lines)
     ///     vertex(50, 60)
@@ -1219,9 +1219,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     beginShape(.triangles)
     ///     vertex(50, 60)
     ///     vertex(230, 30)
@@ -1263,29 +1263,29 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
     ///     beginShape()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     vertex(200, 40)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     vertex(350, 250)
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     vertex(60, 230)
     ///     endShape(.close)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙・水色・黄の 3 色が、1 つの三角形の中でなめらかに混ざっている -->
-    ///     ![橙・水色・黄の 3 色が、1 つの三角形の中でなめらかに混ざっている](https://i.gyazo.com/dbe1887aad37bbb36b2dab85b663f608.png)
+    ///     ![橙・水色・黄の 3 色が、1 つの三角形の中でなめらかに混ざっている](https://i.gyazo.com/647d74d316aa1320886e1f84268065fa.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=088b2c60
-    // shot: 2 snippet=3c826cb4
-    // shot: 3 snippet=4f541c98
-    // shot: 4 snippet=2d751eab
-    // shot: 5 snippet=c8cdea48
+    // shot: 1 snippet=445ca5af
+    // shot: 2 snippet=c3c942c1
+    // shot: 3 snippet=603b8a4f
+    // shot: 4 snippet=67509c80
+    // shot: 5 snippet=1eefdc11
     public func beginShape(_ kind: VertexKind = .polygon) { canvas.beginShape(kind) }
 
     /// 頂点を 1 つ置く。
@@ -1295,9 +1295,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     beginShape()
     ///     vertex(60, 40)
     ///     vertex(340, 40)
@@ -1321,9 +1321,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     stroke(89, 191, 242)
     ///     strokeWeight(5)
     ///     beginShape()
     ///     vertex(80, 60)
@@ -1339,8 +1339,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=1242029c
-    // shot: 2 snippet=d106bd46
+    // shot: 1 snippet=c25c6dcf
+    // shot: 2 snippet=be9944e2
     public func vertex(_ x: Float, _ y: Float) { canvas.vertex(x, y) }
 
     /// 奥行きを持つ頂点を 1 つ置く。**この形は立体になる。**
@@ -1410,17 +1410,17 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(60, 250, 100, 40)
     ///     line(340, 220, 200, 90)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(100, 40, 12)
     ///     circle(200, 90, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     vertex(60, 250)
@@ -1430,7 +1430,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の曲線が左下から右下へ弧を描き、灰色の細い線が 2 つの制御点へ伸びている -->
-    ///     ![橙色の曲線が左下から右下へ弧を描き、灰色の細い線が 2 つの制御点へ伸びている](https://i.gyazo.com/fe7006ac47c62f7b51f16f8bbbf46f09.png)
+    ///     ![橙色の曲線が左下から右下へ弧を描き、灰色の細い線が 2 つの制御点へ伸びている](https://i.gyazo.com/4aebe18f7d672ce9909b0f0433f4a44b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1440,9 +1440,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     beginShape()
     ///     vertex(180, 50)
     ///     bezierVertex(340, 70, 320, 230, 210, 260)
@@ -1459,8 +1459,8 @@ extension Sketch {
     ///
     /// 手前に点が無いときは何もしない — 曲線は「いまの点から」繋ぐものなので、
     /// 始点が無ければ引きようがない。
-    // shot: 1 snippet=d80d93dd
-    // shot: 2 snippet=3f38b979
+    // shot: 1 snippet=0439d7b3
+    // shot: 2 snippet=74fd9077
     public func bezierVertex(
         _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
     ) {
@@ -1475,16 +1475,16 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(60, 250, 260, 40)
     ///     line(340, 210, 260, 40)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(260, 40, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     stroke(242, 217, 89)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     vertex(60, 250)
@@ -1494,11 +1494,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 黄色の曲線が 1 つの制御点へ引き寄せられ、灰色の細い線が両端からその点へ伸びている -->
-    ///     ![黄色の曲線が 1 つの制御点へ引き寄せられ、灰色の細い線が両端からその点へ伸びている](https://i.gyazo.com/55ebcbd9b72c0a21cb03b0b925e82bd3.png)
+    ///     ![黄色の曲線が 1 つの制御点へ引き寄せられ、灰色の細い線が両端からその点へ伸びている](https://i.gyazo.com/6568a2ea60f2657f9040541f38cca68f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=1b8fea51
+    // shot: 1 snippet=03aa6a6a
     public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
         canvas.quadraticVertex(cx, cy, x, y)
     }
@@ -1512,15 +1512,15 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(60, 230, 12)
     ///     circle(140, 80, 12)
     ///     circle(260, 220, 12)
     ///     circle(350, 60, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     curveVertex(60, 230)
@@ -1532,7 +1532,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の点が 4 つ散らばり、橙色の曲線は真ん中の 2 点の間にだけ引かれている -->
-    ///     ![灰色の点が 4 つ散らばり、橙色の曲線は真ん中の 2 点の間にだけ引かれている](https://i.gyazo.com/4ecda07ed6c5ce52abb7aebd230fdc88.png)
+    ///     ![灰色の点が 4 つ散らばり、橙色の曲線は真ん中の 2 点の間にだけ引かれている](https://i.gyazo.com/3640f28b150b4326142e1d3c91fd9e85.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1543,15 +1543,15 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(60, 230, 12)
     ///     circle(140, 80, 12)
     ///     circle(260, 220, 12)
     ///     circle(350, 60, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     stroke(89, 191, 242)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     curveVertex(60, 230)
@@ -1565,12 +1565,12 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ 4 点を通る水色の曲線が、左下の端から右上の端まで引かれている -->
-    ///     ![同じ 4 点を通る水色の曲線が、左下の端から右上の端まで引かれている](https://i.gyazo.com/a85ebc2fbea9ebb9f307f8b7904328d5.png)
+    ///     ![同じ 4 点を通る水色の曲線が、左下の端から右上の端まで引かれている](https://i.gyazo.com/280c2c590340ab4bea27568dd270688a.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=51f26e08
-    // shot: 2 snippet=36f4228e
+    // shot: 1 snippet=398e30fc
+    // shot: 2 snippet=794ad9dd
     public func curveVertex(_ x: Float, _ y: Float) { canvas.curveVertex(x, y) }
 
     /// 曲線をいくつの直線で近似するか。
@@ -1582,16 +1582,16 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     curveDetail(2)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(60, 230, 12)
     ///     circle(140, 80, 12)
     ///     circle(260, 220, 12)
     ///     circle(350, 60, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     stroke(242, 217, 89)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     curveVertex(60, 230)
@@ -1605,7 +1605,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 刻みが粗く、黄色の曲線が数本の直線に折れて見える -->
-    ///     ![刻みが粗く、黄色の曲線が数本の直線に折れて見える](https://i.gyazo.com/b39b2023a2dbb9c79c32a02376fccadc.png)
+    ///     ![刻みが粗く、黄色の曲線が数本の直線に折れて見える](https://i.gyazo.com/71287196821956aef25f3375c2bf47de.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1613,16 +1613,16 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     curveDetail(20)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(60, 230, 12)
     ///     circle(140, 80, 12)
     ///     circle(260, 220, 12)
     ///     circle(350, 60, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     stroke(242, 217, 89)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     curveVertex(60, 230)
@@ -1636,12 +1636,12 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 刻みが細かく、同じ黄色の曲線がなめらかな弧に見える -->
-    ///     ![刻みが細かく、同じ黄色の曲線がなめらかな弧に見える](https://i.gyazo.com/03a508f760532bcb7fcb5fdb12b05e41.png)
+    ///     ![刻みが細かく、同じ黄色の曲線がなめらかな弧に見える](https://i.gyazo.com/8872d068b4236c5f8eb9347e3e99f91e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=db839269
-    // shot: 2 snippet=b204de50
+    // shot: 1 snippet=73597f78
+    // shot: 2 snippet=04b76040
     public func curveDetail(_ steps: Int) { canvas.curveDetail(steps) }
 
     /// 通過点を結ぶ曲線の張り具合。**0 が既定で、1 にすると点と点が直線で結ばれる。**
@@ -1653,16 +1653,16 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     curveTightness(-1)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(60, 230, 12)
     ///     circle(140, 80, 12)
     ///     circle(260, 220, 12)
     ///     circle(350, 60, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     curveVertex(60, 230)
@@ -1676,7 +1676,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の曲線が、点と点の間で既定よりも深くふくらんでいる -->
-    ///     ![橙色の曲線が、点と点の間で既定よりも深くふくらんでいる](https://i.gyazo.com/ea06c3fd1e492430bbd74bdcdbfddabc.png)
+    ///     ![橙色の曲線が、点と点の間で既定よりも深くふくらんでいる](https://i.gyazo.com/590b35296709642ec563cce2f892b8aa.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1684,16 +1684,16 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     curveTightness(0)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(60, 230, 12)
     ///     circle(140, 80, 12)
     ///     circle(260, 220, 12)
     ///     circle(350, 60, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     curveVertex(60, 230)
@@ -1707,7 +1707,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の曲線が 4 つの点をなめらかに通っている (既定) -->
-    ///     ![橙色の曲線が 4 つの点をなめらかに通っている (既定)](https://i.gyazo.com/fe197347b14c8a856edf8b6013c82d4e.png)
+    ///     ![橙色の曲線が 4 つの点をなめらかに通っている (既定)](https://i.gyazo.com/26f4c0101556920ffba94dd1ff85d56a.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1715,16 +1715,16 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     curveTightness(1)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     circle(60, 230, 12)
     ///     circle(140, 80, 12)
     ///     circle(260, 220, 12)
     ///     circle(350, 60, 12)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(4)
     ///     beginShape()
     ///     curveVertex(60, 230)
@@ -1738,13 +1738,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の線が点と点を直線で結び、曲がりの無い折れ線になっている -->
-    ///     ![橙色の線が点と点を直線で結び、曲がりの無い折れ線になっている](https://i.gyazo.com/b8922bca0875149df3c1557f15b4cb04.png)
+    ///     ![橙色の線が点と点を直線で結び、曲がりの無い折れ線になっている](https://i.gyazo.com/7fee9a3b7726cc6749f5fd307659baf6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=fb27d368
-    // shot: 2 snippet=822d810e
-    // shot: 3 snippet=a9f2f126
+    // shot: 1 snippet=37de9468
+    // shot: 2 snippet=a33d48f9
+    // shot: 3 snippet=6f809d80
     public func curveTightness(_ amount: Float) { canvas.curveTightness(amount) }
 
     /// 穴を並べ始める。
@@ -1757,9 +1757,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     beginShape()
     ///     vertex(60, 50)
     ///     vertex(340, 40)
@@ -1779,7 +1779,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=bec474a2
+    // shot: 1 snippet=aefc2c81
     public func beginContour() { canvas.beginContour() }
 
     /// 穴を並べ終える。
@@ -1791,9 +1791,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     beginShape()
     ///     vertex(50, 45)
     ///     vertex(350, 60)
@@ -1818,7 +1818,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=c326fc6d
+    // shot: 1 snippet=eac40026
     public func endContour() { canvas.endContour() }
 
     /// 並べ終えて描く。
@@ -1828,9 +1828,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(5)
     ///     beginShape()
     ///     vertex(70, 240)
@@ -1854,9 +1854,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     stroke(89, 191, 242)
     ///     strokeWeight(5)
     ///     beginShape()
     ///     vertex(70, 240)
@@ -1873,8 +1873,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=42050a4c
-    // shot: 2 snippet=43d84742
+    // shot: 1 snippet=ba1ee5bb
+    // shot: 2 snippet=35422e2c
     public func endShape(_ end: ShapeEnd = .open) { canvas.endShape(end) }
 
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
@@ -1895,18 +1895,18 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.55, green: 0.55, blue: 0.58))
+    ///     background(140, 140, 148)
     ///     noStroke()
     ///     blendMode(.blend)
-    ///     fill(.display(red: 0.95, green: 0.30, blue: 0.20))
+    ///     fill(242, 76, 51)
     ///     circle(160, 130, 190)
-    ///     fill(.display(red: 0.20, green: 0.45, blue: 0.95))
+    ///     fill(51, 115, 242)
     ///     circle(240, 175, 190)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の下地に赤い円と青い円が並び、青い円が赤い円の上に重なっている -->
-    ///     ![灰色の下地に赤い円と青い円が並び、青い円が赤い円の上に重なっている](https://i.gyazo.com/ef8f694c336b8fffb31ac6a6cf323a21.png)
+    ///     ![灰色の下地に赤い円と青い円が並び、青い円が赤い円の上に重なっている](https://i.gyazo.com/fe2288a524130e51bb18ea6be92d7ec8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1916,18 +1916,18 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.55, green: 0.55, blue: 0.58))
+    ///     background(140, 140, 148)
     ///     noStroke()
     ///     blendMode(.add)
-    ///     fill(.display(red: 0.95, green: 0.30, blue: 0.20))
+    ///     fill(242, 76, 51)
     ///     circle(160, 130, 190)
-    ///     fill(.display(red: 0.20, green: 0.45, blue: 0.95))
+    ///     fill(51, 115, 242)
     ///     circle(240, 175, 190)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ 2 つの円が明るくなり、重なった部分が白に近い桃色になっている -->
-    ///     ![同じ 2 つの円が明るくなり、重なった部分が白に近い桃色になっている](https://i.gyazo.com/b9d96d70ac9f6d147b768bd89d1f4564.png)
+    ///     ![同じ 2 つの円が明るくなり、重なった部分が白に近い桃色になっている](https://i.gyazo.com/2cbff1c1cbfbb7e7bfc2982e9ff09194.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1937,18 +1937,18 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.55, green: 0.55, blue: 0.58))
+    ///     background(140, 140, 148)
     ///     noStroke()
     ///     blendMode(.multiply)
-    ///     fill(.display(red: 0.95, green: 0.30, blue: 0.20))
+    ///     fill(242, 76, 51)
     ///     circle(160, 130, 190)
-    ///     fill(.display(red: 0.20, green: 0.45, blue: 0.95))
+    ///     fill(51, 115, 242)
     ///     circle(240, 175, 190)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ 2 つの円が暗くなり、重なった部分がいちばん暗い -->
-    ///     ![同じ 2 つの円が暗くなり、重なった部分がいちばん暗い](https://i.gyazo.com/79347a038e72078aa342c5036af65e6a.png)
+    ///     ![同じ 2 つの円が暗くなり、重なった部分がいちばん暗い](https://i.gyazo.com/4a2141c572badcb62394b3d91de83221.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1958,18 +1958,18 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.55, green: 0.55, blue: 0.58))
+    ///     background(140, 140, 148)
     ///     noStroke()
     ///     blendMode(.difference)
-    ///     fill(.display(red: 0.95, green: 0.30, blue: 0.20))
+    ///     fill(242, 76, 51)
     ///     circle(160, 130, 190)
-    ///     fill(.display(red: 0.20, green: 0.45, blue: 0.95))
+    ///     fill(51, 115, 242)
     ///     circle(240, 175, 190)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 赤い円は桃色、青い円は紫へ転び、重なった部分が鮮やかな赤紫になっている -->
-    ///     ![赤い円は桃色、青い円は紫へ転び、重なった部分が鮮やかな赤紫になっている](https://i.gyazo.com/dc91d8f98368175099b77a6942906989.png)
+    ///     ![赤い円は桃色、青い円は紫へ転び、重なった部分が鮮やかな赤紫になっている](https://i.gyazo.com/7250b40c643c6acc9a880001be774c10.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -1979,30 +1979,30 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.06, green: 0.06, blue: 0.09))
+    ///     background(15, 15, 23)
     ///     noStroke()
     ///     blendMode(.add)
     ///     let sweep = 90 * sin(Float(frameCount) * 0.05)
-    ///     fill(.display(red: 0.95, green: 0.20, blue: 0.15))
+    ///     fill(242, 51, 38)
     ///     circle(200 - sweep, 150, 170)
-    ///     fill(.display(red: 0.15, green: 0.45, blue: 0.95))
+    ///     fill(38, 115, 242)
     ///     circle(200 + sweep, 150, 170)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る | frames=60 symmetric=y -->
-    ///     ![赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る](https://i.gyazo.com/1e5b770dc68ce2340e1e2addb7e725d3.gif)
+    ///     ![赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る](https://i.gyazo.com/905bebca900be3c8189cf81c8426afc1.gif)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
     /// 「どれだけ効かせるか」はアルファが決める。
-    // shot: 1 snippet=770dfac6
-    // shot: 2 snippet=739b6a04
-    // shot: 3 snippet=a57216c1
-    // shot: 4 snippet=ae76263d
-    // shot: 5 snippet=ff14ef73
+    // shot: 1 snippet=579fbd41
+    // shot: 2 snippet=519aa11b
+    // shot: 3 snippet=0f727a4c
+    // shot: 4 snippet=b5a144fd
+    // shot: 5 snippet=43e3e4b7
     public func blendMode(_ mode: BlendMode) { canvas.blendMode(mode) }
 
     /// 線の折れ目の形。既定は尖らせる形。
@@ -2016,9 +2016,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(44)
     ///     strokeJoin(.miter)
     ///     beginShape()
@@ -2040,9 +2040,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(44)
     ///     strokeJoin(.bevel)
     ///     beginShape()
@@ -2064,9 +2064,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(44)
     ///     strokeJoin(.round)
     ///     beginShape()
@@ -2082,9 +2082,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=83ed7fe6
-    // shot: 2 snippet=6d2736cd
-    // shot: 3 snippet=7fe6028f
+    // shot: 1 snippet=dc0e1fbc
+    // shot: 2 snippet=449f0a0c
+    // shot: 3 snippet=6ea17290
     public func strokeJoin(_ join: StrokeJoin) { canvas.strokeJoin(join) }
     /// 矩形を塗る。
     ///
@@ -2093,8 +2093,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     rect(80, 60, 240, 180)
     ///     ```
     ///   }
@@ -2110,8 +2110,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     rect(60, 40, 280, 60)
     ///     rect(60, 130, 70, 130)
     ///     ```
@@ -2124,8 +2124,8 @@ extension Sketch {
     /// }
     ///
     /// 幅か高さが 0 以下になる指定では**何も描かない**。
-    // shot: 1 snippet=5f2f4b5f
-    // shot: 2 snippet=a1283c68
+    // shot: 1 snippet=74598101
+    // shot: 2 snippet=60541771
     public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.rect(a, b, c, d) }
 
     /// 正方形を塗る。
@@ -2135,8 +2135,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     square(130, 80, 140)
     ///     ```
     ///   }
@@ -2146,7 +2146,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=0545e44d
+    // shot: 1 snippet=a14bfc0d
     public func square(_ a: Float, _ b: Float, _ extent: Float) { canvas.square(a, b, extent) }
 
     /// 円を塗る。
@@ -2156,14 +2156,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     circle(200, 150, 160)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 濃い灰色の下地の中央に、直径 160 の橙色の円 | symmetric=xy -->
-    ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/9f85642dcfaf33847d61876f57ae2efe.png)
+    ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/1cc45c1fa382c2acb3415a57aab75770.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2173,23 +2173,23 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     circle(200, 150, 240)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     circle(200, 150, 160)
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     circle(200, 150, 80)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心に重なる、直径 240・160・80 の 3 つの円 | symmetric=xy -->
-    ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/0deb638d76e89a91dd47d6ce89d90fda.png)
+    ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/df5fa3cd289c445abe4e14e4bb62dc9a.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=cc15d686
-    // shot: 2 snippet=99563468
+    // shot: 1 snippet=dddecdb4
+    // shot: 2 snippet=ccc7b2b7
     public func circle(_ a: Float, _ b: Float, _ diameter: Float) { canvas.circle(a, b, diameter) }
 
     /// 楕円を塗る。
@@ -2199,14 +2199,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     ellipse(200, 150, 280, 140)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 画面の中央に、横に長い橙色の楕円 | symmetric=xy -->
-    ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/f22d63e7a8e424184eb7bb7a0bf24867.png)
+    ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/7294388a4964ec73975ee3ae3893b42d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2216,21 +2216,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     ellipse(200, 150, 280, 140)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     ellipse(200, 150, 140, 280)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心に、横長と縦長の楕円が十字に重なる | symmetric=xy -->
-    ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/81440c52fa93cc3f7f3ddd3d135e7529.png)
+    ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/fa1d8bb830b64a2d3889be1071bbd5e6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=660be063
-    // shot: 2 snippet=4bc091fd
+    // shot: 1 snippet=5db22851
+    // shot: 2 snippet=b47c6582
     public func ellipse(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.ellipse(a, b, c, d)
     }
@@ -2244,14 +2244,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     arc(200, 150, 200, 200, 0, .pi / 2)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている -->
-    ///     ![中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている](https://i.gyazo.com/09f809b037d513468da45aa923cc321e.png)
+    ///     ![中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている](https://i.gyazo.com/f05a83df616e766bf61b02e7000c8f12.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2261,14 +2261,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     arc(200, 150, 200, 200, 0, .pi * 1.5)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている -->
-    ///     ![同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている](https://i.gyazo.com/69c374878e71d1e6c950630393a8bfd3.png)
+    ///     ![同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている](https://i.gyazo.com/114fe261f94c658091628c78ed7324d9.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2278,14 +2278,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     arc(200, 150, 200, 200, .pi, .pi * 1.5)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 左から上へ 4 分の 1 だけの橙色の扇形 -->
-    ///     ![左から上へ 4 分の 1 だけの橙色の扇形](https://i.gyazo.com/26d9569d49725ce3f3bfc4334f808132.png)
+    ///     ![左から上へ 4 分の 1 だけの橙色の扇形](https://i.gyazo.com/fdaa962a2366d3af7dc5539767cbdff5.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2296,9 +2296,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     let bite = Float.pi / 8
     ///     let start = bite * sin(Float(frameCount) * 0.06) + bite
     ///     arc(200, 150, 200, 200, start, .pi * 2 - start)
@@ -2306,17 +2306,17 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする | frames=60 symmetric=y -->
-    ///     ![黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする](https://i.gyazo.com/7c306f3edde7ca7f3157cbc5dd083a1f.gif)
+    ///     ![黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする](https://i.gyazo.com/400c7dfd652b5b06d6852aa30886e074.gif)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// 塗りは**中心を含む扇形**になる。終わりの角度が始まりより小さいときは
     /// **何も描かず**、最初の 1 回だけ知らせる。
-    // shot: 1 snippet=b1d01c8d
-    // shot: 2 snippet=de19318a
-    // shot: 3 snippet=9301f40a
-    // shot: 4 snippet=305be8b5
+    // shot: 1 snippet=1f67f389
+    // shot: 2 snippet=e00e11b7
+    // shot: 3 snippet=600285f4
+    // shot: 4 snippet=27105ca4
     public func arc(
         _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float
     ) {
@@ -2328,8 +2328,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     triangle(200, 50, 330, 250, 70, 250)
     ///     ```
     ///   }
@@ -2339,7 +2339,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7d0adefe
+    // shot: 1 snippet=f5d478e8
     public func triangle(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float, _ x3: Float, _ y3: Float
     ) {
@@ -2352,8 +2352,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     quad(70, 60, 330, 90, 310, 240, 90, 210)
     ///     ```
     ///   }
@@ -2369,8 +2369,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     quad(70, 60, 330, 90, 90, 210, 310, 240)
     ///     ```
     ///   }
@@ -2380,8 +2380,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8f205856
-    // shot: 2 snippet=af89c551
+    // shot: 1 snippet=34577789
+    // shot: 2 snippet=23b24af9
     public func quad(
         _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,
         _ x3: Float, _ y3: Float, _ x4: Float, _ y4: Float
@@ -2397,8 +2397,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     stroke(217, 230, 255)
     ///     for index in 0..<5 {
     ///         strokeWeight(Float(index) * 6 + 4)
     ///         point(70 + Float(index) * 65, 150)
@@ -2407,7 +2407,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左から右へ、だんだん大きくなる 5 つの白い点 | symmetric=y -->
-    ///     ![左から右へ、だんだん大きくなる 5 つの白い点](https://i.gyazo.com/85a4928d5f536bc3781c1f265bf2c2ea.png)
+    ///     ![左から右へ、だんだん大きくなる 5 つの白い点](https://i.gyazo.com/8ba9f92afc2b850ec0c6bee16468efbf.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2417,9 +2417,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
+    ///     stroke(89, 191, 242)
     ///     strokeWeight(18)
     ///     for index in 0..<5 {
     ///         point(70 + Float(index) * 65, 150)
@@ -2428,12 +2428,12 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色に塗る指定をしても、点は水色のまま並んでいる | symmetric=xy -->
-    ///     ![橙色に塗る指定をしても、点は水色のまま並んでいる](https://i.gyazo.com/43f7f0bf9325519e41a492150390c392.png)
+    ///     ![橙色に塗る指定をしても、点は水色のまま並んでいる](https://i.gyazo.com/be20303d3bdb4dda91afc87b5233ee1e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=de455ec9
-    // shot: 2 snippet=35a5937e
+    // shot: 1 snippet=72c60508
+    // shot: 2 snippet=8602b4e7
     public func point(_ x: Float, _ y: Float) { canvas.point(x, y) }
 
     /// 矩形に渡す座標の読み方。既定は ``ShapeMode/corner``。
@@ -2443,8 +2443,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     rectMode(.corner)
     ///     rect(120, 90, 160, 120)
     ///     ```
@@ -2461,8 +2461,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     rectMode(.corners)
     ///     rect(120, 90, 160, 120)
     ///     ```
@@ -2479,8 +2479,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     rectMode(.center)
     ///     rect(120, 90, 160, 120)
     ///     ```
@@ -2497,8 +2497,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     rectMode(.radius)
     ///     rect(120, 90, 160, 120)
     ///     ```
@@ -2509,10 +2509,10 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8fd5ed99
-    // shot: 2 snippet=88773cca
-    // shot: 3 snippet=c95457e8
-    // shot: 4 snippet=39e1d7b6
+    // shot: 1 snippet=bdc059c4
+    // shot: 2 snippet=93b69e1a
+    // shot: 3 snippet=76535701
+    // shot: 4 snippet=f9d3d420
     public func rectMode(_ mode: ShapeMode) { canvas.rectMode(mode) }
 
     /// 楕円と円弧に渡す座標の読み方。既定は ``ShapeMode/center``。
@@ -2523,15 +2523,15 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     ellipseMode(.center)
     ///     ellipse(200, 150, 200, 140)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: (200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円 | symmetric=xy -->
-    ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/3183dfa1e410e8670ca7f45cc055dd87.png)
+    ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/a93e72193a029fcd3333328a96fbe291.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2541,35 +2541,35 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
     ///     ellipseMode(.corner)
     ///     ellipse(200, 150, 200, 140)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円 -->
-    ///     ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/e20e650ac074bbd0d7c3ca4a39bd29c9.png)
+    ///     ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/4cfb7fee1ff44c5487734333161ebf04.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=ace05fd1
-    // shot: 2 snippet=da8b31b4
+    // shot: 1 snippet=7bc89b05
+    // shot: 2 snippet=09181c0f
     public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }
     /// 線を引く。塗りは持たない。
     ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     stroke(217, 230, 255)
     ///     strokeWeight(6)
     ///     line(60, 60, 340, 240)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 左上から右下へ引かれた 1 本の白い線 -->
-    ///     ![左上から右下へ引かれた 1 本の白い線](https://i.gyazo.com/b02fdde509a8e9b6db78a44b8623c1c7.png)
+    ///     ![左上から右下へ引かれた 1 本の白い線](https://i.gyazo.com/120912ee096c296b2ad0f761ba14f0da.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2579,8 +2579,8 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.85, green: 0.90, blue: 1.00))
+    ///     background(23, 26, 31)
+    ///     stroke(217, 230, 255)
     ///     for (index, cap) in [StrokeCap.square, .round, .project].enumerated() {
     ///         strokeCap(cap)
     ///         strokeWeight(Float(index) * 8 + 8)
@@ -2590,12 +2590,12 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太さの違う 3 本の白い線が、端の形を変えて横に並んでいる | symmetric=x -->
-    ///     ![太さの違う 3 本の白い線が、端の形を変えて横に並んでいる](https://i.gyazo.com/2f54b8bc10dd255977971f5679592cd1.png)
+    ///     ![太さの違う 3 本の白い線が、端の形を変えて横に並んでいる](https://i.gyazo.com/68d0eaf648d2832387f34292a65687bb.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5d41ed20
-    // shot: 2 snippet=87c26840
+    // shot: 1 snippet=f2777671
+    // shot: 2 snippet=055b0309
     public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
         canvas.line(x1, y1, x2, y2)
     }
@@ -2610,20 +2610,20 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(40, 110, 80)
     ///     translate(150, 0)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(40, 110, 80)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠だけの四角の右に、同じ大きさの橙色の四角が並んでいる | symmetric=y -->
-    ///     ![灰色の枠だけの四角の右に、同じ大きさの橙色の四角が並んでいる](https://i.gyazo.com/4a539ee108132857230c49f0902cb52f.png)
+    ///     ![灰色の枠だけの四角の右に、同じ大きさの橙色の四角が並んでいる](https://i.gyazo.com/6b7f66c9c1fd5934b194d5a77b8a1fc8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2633,20 +2633,20 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(160, 30, 80)
     ///     translate(0, 140)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     square(160, 30, 80)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠だけの四角の下に、同じ大きさの水色の四角が並んでいる | symmetric=x -->
-    ///     ![灰色の枠だけの四角の下に、同じ大きさの水色の四角が並んでいる](https://i.gyazo.com/fc34d9ce032ae868920ada3421cd796f.png)
+    ///     ![灰色の枠だけの四角の下に、同じ大きさの水色の四角が並んでいる](https://i.gyazo.com/238b97fd21f3e932dfb0abec4d5cf220.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2656,15 +2656,15 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     fill(89, 97, 115)
     ///     square(30, 30, 60)
     ///     translate(100, 70)
-    ///     fill(.display(red: 0.55, green: 0.60, blue: 0.70))
+    ///     fill(140, 153, 178)
     ///     square(30, 30, 60)
     ///     translate(100, 70)
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     square(30, 30, 60)
     ///     ```
     ///   }
@@ -2674,9 +2674,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b049f853
-    // shot: 2 snippet=2e149d2f
-    // shot: 3 snippet=b9761949
+    // shot: 1 snippet=e1676e34
+    // shot: 2 snippet=0dab2481
+    // shot: 3 snippet=58a41dae
     public func translate(_ x: Float, _ y: Float) { canvas.translate(x, y) }
     /// 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
     ///
@@ -2687,21 +2687,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-60, -60, 120)
     ///     rotate(0.26)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(-60, -60, 120)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形に、少しだけ時計回りに傾いた橙色の正方形が重なっている -->
-    ///     ![灰色の枠の正方形に、少しだけ時計回りに傾いた橙色の正方形が重なっている](https://i.gyazo.com/3ac184de0bb8aacfbc75693bbbb93c85.png)
+    ///     ![灰色の枠の正方形に、少しだけ時計回りに傾いた橙色の正方形が重なっている](https://i.gyazo.com/1ba7f44dbc590ef606af6e97647a9610.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2711,21 +2711,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-60, -60, 120)
     ///     rotate(0.79)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     square(-60, -60, 120)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形の上に、45 度傾いて菱形に見える水色の正方形が重なっている | symmetric=xy -->
-    ///     ![灰色の枠の正方形の上に、45 度傾いて菱形に見える水色の正方形が重なっている](https://i.gyazo.com/14ab1a48c0eb4df486f6f71d33d1c0a1.png)
+    ///     ![灰色の枠の正方形の上に、45 度傾いて菱形に見える水色の正方形が重なっている](https://i.gyazo.com/91e1a80dd3096e71aa16c1587ffadfec.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2735,27 +2735,27 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     rect(-90, -30, 180, 60)
     ///     rotate(-0.52)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     rect(-90, -30, 180, 60)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 横長の灰色の枠に、左端が上がる向きに傾いた黄色の横長の四角が重なっている -->
-    ///     ![横長の灰色の枠に、左端が上がる向きに傾いた黄色の横長の四角が重なっている](https://i.gyazo.com/5c2c33811e5859573472d5b8bc53a96a.png)
+    ///     ![横長の灰色の枠に、左端が上がる向きに傾いた黄色の横長の四角が重なっている](https://i.gyazo.com/da6b93c581407544fc09c4c76845aae8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=31999c20
-    // shot: 2 snippet=d8a6fbf0
-    // shot: 3 snippet=4d75c8fb
+    // shot: 1 snippet=27bff880
+    // shot: 2 snippet=00e07a33
+    // shot: 3 snippet=8ea7daa7
     public func rotate(_ radians: Float) { canvas.rotate(radians) }
     /// 伸ばす・縮める。
     ///
@@ -2768,21 +2768,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-45, -45, 90)
     ///     scale(2, 1)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(-45, -45, 90)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形をまたいで、横に 2 倍伸びた橙色の長方形が重なっている | symmetric=xy -->
-    ///     ![灰色の枠の正方形をまたいで、横に 2 倍伸びた橙色の長方形が重なっている](https://i.gyazo.com/703913f942c9f3f394e33df6eef57665.png)
+    ///     ![灰色の枠の正方形をまたいで、横に 2 倍伸びた橙色の長方形が重なっている](https://i.gyazo.com/1ab5ed147baaabe2437c3bdd0e13038e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2792,21 +2792,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-45, -45, 90)
     ///     scale(1, 0.5)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     square(-45, -45, 90)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形の中に、縦が半分に潰れた水色の横長の四角が収まっている | symmetric=xy -->
-    ///     ![灰色の枠の正方形の中に、縦が半分に潰れた水色の横長の四角が収まっている](https://i.gyazo.com/29546ac971a94e11b4b2859ccad1176f.png)
+    ///     ![灰色の枠の正方形の中に、縦が半分に潰れた水色の横長の四角が収まっている](https://i.gyazo.com/06b01ca7c797cf14e41a0ab56a6eadfe.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -2816,26 +2816,26 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-45, -45, 90)
     ///     scale(1.6, 1.6)
-    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     stroke(242, 217, 89)
     ///     square(-45, -45, 90)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 細い灰色の枠の正方形の外側に、一回り大きく線も太い黄色の枠の正方形がある | symmetric=xy -->
-    ///     ![細い灰色の枠の正方形の外側に、一回り大きく線も太い黄色の枠の正方形がある](https://i.gyazo.com/30d87c6524acd2e85185dbe01c2cea82.png)
+    ///     ![細い灰色の枠の正方形の外側に、一回り大きく線も太い黄色の枠の正方形がある](https://i.gyazo.com/56248ec967bb5061f49f3a581e03bd2c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=76d7590b
-    // shot: 2 snippet=e61d2850
-    // shot: 3 snippet=fe738fca
+    // shot: 1 snippet=6b558fd6
+    // shot: 2 snippet=2941aa4a
+    // shot: 3 snippet=5ae25e26
     public func scale(_ x: Float, _ y: Float) { canvas.scale(x, y) }
 
     /// 原点を奥行きも含めてずらす。
@@ -2849,10 +2849,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     for (index, depth) in [Float(-110), 0, 80].enumerated() {
     ///         push()
     ///         translate(90 + Float(index) * 105, 150, depth)
@@ -2863,11 +2863,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ半径の橙色の球が 3 つ。左から右へ、奥から手前へ置いてあり、右へ行くほど大きく見える -->
-    ///     ![同じ半径の橙色の球が 3 つ。左から右へ、奥から手前へ置いてあり、右へ行くほど大きく見える](https://i.gyazo.com/e197b11cec722ba8b16852986cdf813e.png)
+    ///     ![同じ半径の橙色の球が 3 つ。左から右へ、奥から手前へ置いてあり、右へ行くほど大きく見える](https://i.gyazo.com/7c4da0e9ed15bfc9959122a25a5e16b7.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=0c95f4e0
+    // shot: 1 snippet=ceef2b2d
     public func translate(_ x: Float, _ y: Float, _ z: Float) { canvas.translate(x, y, z) }
 
     /// 横軸まわりに回す。
@@ -2879,10 +2879,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
     ///         push()
     ///         translate(70 + Float(index) * 130, 150, 0)
@@ -2894,11 +2894,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の横長の板が 3 つ。左から右へ、縦だけが詰まって奥へ倒れていく -->
-    ///     ![橙色の横長の板が 3 つ。左から右へ、縦だけが詰まって奥へ倒れていく](https://i.gyazo.com/38501d547b91f7a4b02377af00cd8caa.png)
+    ///     ![橙色の横長の板が 3 つ。左から右へ、縦だけが詰まって奥へ倒れていく](https://i.gyazo.com/0b718b9946a4d0a2bd7ea3ea7650edf4.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=84ddd42c
+    // shot: 1 snippet=54abaf07
     public func rotateX(_ radians: Float) { canvas.rotateX(radians) }
 
     /// 縦軸まわりに回す。
@@ -2910,10 +2910,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
     ///         push()
     ///         translate(70 + Float(index) * 130, 150, 0)
@@ -2929,7 +2929,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a0e2a911
+    // shot: 1 snippet=d031c80c
     public func rotateY(_ radians: Float) { canvas.rotateY(radians) }
 
     /// 奥行きの軸まわりに回す。``rotate(_:)`` と同じ。
@@ -2939,10 +2939,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     for (index, angle) in [Float(0), 0.6, 1.2].enumerated() {
     ///         push()
     ///         translate(70 + Float(index) * 130, 150, 0)
@@ -2958,7 +2958,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=e95a52a6
+    // shot: 1 snippet=7f65053a
     public func rotateZ(_ radians: Float) { canvas.rotateZ(radians) }
 
     /// 奥行きも含めて伸ばす・縮める。
@@ -2970,10 +2970,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     push()
     ///     translate(200, 55, 0)
     ///     rotateY(0.35)
@@ -2995,11 +2995,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の箱が縦に 3 つ。上は立方体、真ん中は横へ広く、下は奥へ伸びていて上より少しだけ広い -->
-    ///     ![橙色の箱が縦に 3 つ。上は立方体、真ん中は横へ広く、下は奥へ伸びていて上より少しだけ広い](https://i.gyazo.com/6b1bc92b37837419450260289e1540d5.png)
+    ///     ![橙色の箱が縦に 3 つ。上は立方体、真ん中は横へ広く、下は奥へ伸びていて上より少しだけ広い](https://i.gyazo.com/1672ffc1b39a19db5c84caea42525d89.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=c7877b94
+    // shot: 1 snippet=e3260042
     public func scale(_ x: Float, _ y: Float, _ z: Float) { canvas.scale(x, y, z) }
 
     /// 横方向へ斜めに歪める。
@@ -3011,21 +3011,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-55, -55, 110)
     ///     shearX(0.5)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(-55, -55, 110)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形に、下辺が右へずれた橙色の平行四辺形が重なっている -->
-    ///     ![灰色の枠の正方形に、下辺が右へずれた橙色の平行四辺形が重なっている](https://i.gyazo.com/df91781ca0dfd22959333bc36f37b5a4.png)
+    ///     ![灰色の枠の正方形に、下辺が右へずれた橙色の平行四辺形が重なっている](https://i.gyazo.com/7d5ea847ced83942e0aa7a94d742d8eb.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -3035,26 +3035,26 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-55, -55, 110)
     ///     shearX(-0.5)
     ///     noStroke()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     square(-55, -55, 110)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形に、下辺が左へずれた水色の平行四辺形が重なっている -->
-    ///     ![灰色の枠の正方形に、下辺が左へずれた水色の平行四辺形が重なっている](https://i.gyazo.com/d7e5c29e1052867d86b3303375e5a1d5.png)
+    ///     ![灰色の枠の正方形に、下辺が左へずれた水色の平行四辺形が重なっている](https://i.gyazo.com/3df067879805ccbc71ac945d4a4aa427.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=481117e9
-    // shot: 2 snippet=a1793d65
+    // shot: 1 snippet=ecea4b47
+    // shot: 2 snippet=1e816167
     public func shearX(_ radians: Float) { canvas.shearX(radians) }
 
     /// 縦方向へ斜めに歪める。
@@ -3065,21 +3065,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-55, -55, 110)
     ///     shearY(0.5)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     square(-55, -55, 110)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形に、右辺が下へずれた黄色の平行四辺形が重なっている -->
-    ///     ![灰色の枠の正方形に、右辺が下へずれた黄色の平行四辺形が重なっている](https://i.gyazo.com/e1c57633ffff621e2e6a034ab1f19acd.png)
+    ///     ![灰色の枠の正方形に、右辺が下へずれた黄色の平行四辺形が重なっている](https://i.gyazo.com/f52d5f4d2c00bed5bccf11df5831479d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -3089,26 +3089,26 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(-55, -55, 110)
     ///     shearY(-0.5)
     ///     noStroke()
-    ///     fill(.display(red: 0.55, green: 0.85, blue: 0.55))
+    ///     fill(140, 217, 140)
     ///     square(-55, -55, 110)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形に、右辺が上へずれた緑色の平行四辺形が重なっている -->
-    ///     ![灰色の枠の正方形に、右辺が上へずれた緑色の平行四辺形が重なっている](https://i.gyazo.com/31825412975ecf1316a352efd44bc74f.png)
+    ///     ![灰色の枠の正方形に、右辺が上へずれた緑色の平行四辺形が重なっている](https://i.gyazo.com/f57c9f495ec581e2ffb032b8c7ce4e0e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8e8a2090
-    // shot: 2 snippet=f3fcdb4e
+    // shot: 1 snippet=e8584e7d
+    // shot: 2 snippet=305667e2
     public func shearY(_ radians: Float) { canvas.shearY(radians) }
 
     /// 与えた変換を、いまの変換の後に重ねる。
@@ -3120,9 +3120,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(2)
     ///     square(145, 95, 110)
     ///     var moved = Transform.identity
@@ -3130,13 +3130,13 @@ extension Sketch {
     ///     moved.rotate(by: 0.6)
     ///     applyMatrix(moved)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(-55, -55, 110)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の正方形に、同じ中心で右へ傾いた橙色の正方形が重なっている -->
-    ///     ![灰色の枠の正方形に、同じ中心で右へ傾いた橙色の正方形が重なっている](https://i.gyazo.com/6320710d6ce061aa8a49fbf841271445.png)
+    ///     ![灰色の枠の正方形に、同じ中心で右へ傾いた橙色の正方形が重なっている](https://i.gyazo.com/7484af7f1a5af1537e130f5f933b1dc6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -3149,7 +3149,7 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(120, 215)
     ///     var step = Transform.identity
     ///     step.translate(x: 46, y: -34)
@@ -3165,12 +3165,12 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左下から右へ、少しずつ小さく傾きながら弧を描いて並ぶ 6 つの正方形。色は水色から桃色へ移る -->
-    ///     ![左下から右へ、少しずつ小さく傾きながら弧を描いて並ぶ 6 つの正方形。色は水色から桃色へ移る](https://i.gyazo.com/84d3726467a3f3fefee55ee7b16c35d8.png)
+    ///     ![左下から右へ、少しずつ小さく傾きながら弧を描いて並ぶ 6 つの正方形。色は水色から桃色へ移る](https://i.gyazo.com/bc8d997966f7fbd6f39178b8c396c8dd.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=f11076e6
-    // shot: 2 snippet=8a91459f
+    // shot: 1 snippet=9c067b7f
+    // shot: 2 snippet=ad0cc1bf
     public func applyMatrix(_ matrix: Transform) { canvas.applyMatrix(matrix) }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
@@ -3183,24 +3183,24 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     rotate(0.5)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(-50, -50, 100)
     ///     resetMatrix()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     square(20, 20, 70)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 中央に傾いた橙色の正方形があり、左上の隅にまっすぐな水色の正方形がある -->
-    ///     ![中央に傾いた橙色の正方形があり、左上の隅にまっすぐな水色の正方形がある](https://i.gyazo.com/e38e62b49f5580c4209b966ed516c724.png)
+    ///     ![中央に傾いた橙色の正方形があり、左上の隅にまっすぐな水色の正方形がある](https://i.gyazo.com/e6c7f75fd4d027176b3fe66b47fdbfa9.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b928daab
+    // shot: 1 snippet=a95c28ee
     public func resetMatrix() { canvas.resetMatrix() }
 
     /// いまの変換を積んでおく。
@@ -3211,21 +3211,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     noStroke()
     ///     pushMatrix()
     ///     rotate(0.79)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(-55, -55, 110)
     ///     popMatrix()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     square(-30, -30, 60)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 45 度傾いた橙色の正方形の中央に、傾いていない水色の小さな正方形が重なっている | symmetric=xy -->
-    ///     ![45 度傾いた橙色の正方形の中央に、傾いていない水色の小さな正方形が重なっている](https://i.gyazo.com/923ac5c1df5399eaec343b5344dc0132.png)
+    ///     ![45 度傾いた橙色の正方形の中央に、傾いていない水色の小さな正方形が重なっている](https://i.gyazo.com/4377b69fad78187ce978235c3118b202.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -3235,20 +3235,20 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
     ///     translate(90, 150)
     ///     pushMatrix()
     ///     translate(110, 0)
     ///     pushMatrix()
     ///     translate(110, 0)
-    ///     fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     fill(242, 217, 89)
     ///     square(-30, -30, 60)
     ///     popMatrix()
-    ///     fill(.display(red: 0.55, green: 0.60, blue: 0.70))
+    ///     fill(140, 153, 178)
     ///     square(-30, -30, 60)
     ///     popMatrix()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(-30, -30, 60)
     ///     ```
     ///   }
@@ -3258,8 +3258,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5e812adb
-    // shot: 2 snippet=4752a417
+    // shot: 1 snippet=ec08da66
+    // shot: 2 snippet=f32daf1c
     public func pushMatrix() { canvas.pushMatrix() }
 
     /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
@@ -3271,24 +3271,24 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     translate(200, 150)
     ///     rotate(0.79)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     square(-55, -55, 110)
     ///     popMatrix()
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     square(-30, -30, 60)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 45 度傾いた橙色の正方形の中央に、同じく傾いた水色の小さな正方形が重なっている | symmetric=xy -->
-    ///     ![45 度傾いた橙色の正方形の中央に、同じく傾いた水色の小さな正方形が重なっている](https://i.gyazo.com/75d1ddf1cbab5bdb7265ab44779d76e3.png)
+    ///     ![45 度傾いた橙色の正方形の中央に、同じく傾いた水色の小さな正方形が重なっている](https://i.gyazo.com/d2415bfd8c77364c26ad07011a41e26c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=cef51ea3
+    // shot: 1 snippet=2d914404
     public func popMatrix() { canvas.popMatrix() }
 
     /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
@@ -3308,20 +3308,20 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     // 斜めから見る視点にしてから、既定へ戻す
     ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
     ///     camera()
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     push()
     ///     translate(120, 100, 0)
     ///     plane(120, 120)
     ///     pop()
     ///     // 同じ座標に描いた平面の図形。こちらは視点の影響を受けない
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     stroke(89, 191, 242)
     ///     strokeWeight(3)
     ///     square(60, 40, 120)
     ///     ```
@@ -3335,7 +3335,7 @@ extension Sketch {
     ///
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
     ///   ときに書いた視点はどのフレームにも属さないので、警告して無視される。
-    // shot: 1 snippet=97d20b2d
+    // shot: 1 snippet=f5f742f6
     public func camera() { canvas.camera() }
 
     /// 見る位置・見ている先・上方向を決める。
@@ -3350,10 +3350,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     // 上から見下ろす。奥行きの違いが上下のずれになる
     ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
@@ -3369,7 +3369,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 3 つの立方体が左下から右上へ階段のように並んでいる。奥に置いたものほど画面の上に写っている -->
-    ///     ![3 つの立方体が左下から右上へ階段のように並んでいる。奥に置いたものほど画面の上に写っている](https://i.gyazo.com/077611e0ae638fb99709fdd0c0d73ddc.png)
+    ///     ![3 つの立方体が左下から右上へ階段のように並んでいる。奥に置いたものほど画面の上に写っている](https://i.gyazo.com/8e1448cf397e51559ec8d1ea14f025c3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -3388,7 +3388,7 @@ extension Sketch {
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     ///   見る位置と見ている先が同じ・上方向が視線と重なるといった成り立たない指定は、
     ///   警告してそれまでの視点のまま続ける。
-    // shot: 1 snippet=e2cc6454
+    // shot: 1 snippet=471a8642
     public func camera(
         _ eyeX: Float, _ eyeY: Float, _ eyeZ: Float,
         _ centerX: Float, _ centerY: Float, _ centerZ: Float,
@@ -3424,13 +3424,13 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
     ///     let front = currentCamera
     ///     // 場面は斜めから見る
     ///     camera(200, -150, 300, 200, 150, 0, 0, 1, 0)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     push()
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
@@ -3438,7 +3438,7 @@ extension Sketch {
     ///     pop()
     ///     // 目盛りだけ既定の視点へ戻して描く
     ///     setCamera(front)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     push()
     ///     translate(60, 250, 0)
     ///     plane(80, 24)
@@ -3447,13 +3447,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 斜めから見た橙色の立方体の下に、水色の細長い長方形が画面と平行に置かれている -->
-    ///     ![斜めから見た橙色の立方体の下に、水色の細長い長方形が画面と平行に置かれている](https://i.gyazo.com/0f6b5f84dc947ede21aa5f8db8218136.png)
+    ///     ![斜めから見た橙色の立方体の下に、水色の細長い長方形が画面と平行に置かれている](https://i.gyazo.com/4322d6720064e052c68ca6846f85e06b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム当てる。
-    // shot: 1 snippet=378168f8
+    // shot: 1 snippet=1911c7b0
     public func setCamera(_ camera: Camera) { canvas.setCamera(camera) }
 
     /// 透視投影を既定へ戻す。
@@ -3466,10 +3466,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     // 投影を既定へ戻す
     ///     perspective()
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
@@ -3491,7 +3491,7 @@ extension Sketch {
     /// }
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=0aacaded
+    // shot: 1 snippet=2f8f127f
     public func perspective() { canvas.perspective() }
 
     /// 遠くのものほど小さく写す。
@@ -3501,10 +3501,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     // 画角を広げる (既定は π/3)
     ///     perspective(1.6, width / height, 26, 2600)
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
@@ -3528,10 +3528,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     // 奥の面を手前へ寄せる
     ///     perspective(Float.pi / 3, width / height, 26, 300)
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
@@ -3562,8 +3562,8 @@ extension Sketch {
     ///   - far: 奥の面までの距離。**これより奥は写らない。**
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=75f86d22
-    // shot: 2 snippet=accb6544
+    // shot: 1 snippet=9980d6cc
+    // shot: 2 snippet=3ae634c3
     public func perspective(_ fieldOfView: Float, _ aspect: Float, _ near: Float, _ far: Float) {
         canvas.perspective(fieldOfView, aspect, near, far)
     }
@@ -3580,10 +3580,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     // 平行投影へ切り替える
     ///     ortho()
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
@@ -3605,7 +3605,7 @@ extension Sketch {
     /// }
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=4f7b76e3
+    // shot: 1 snippet=3a4c652b
     public func ortho() { canvas.ortho() }
 
     /// 距離によらず同じ大きさで写す。
@@ -3623,10 +3623,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     // 面 1 枚ぶんより広い範囲を写す (既定は 400×300 ぶん)
     ///     ortho(-300, 300, 225, -225, 60, 2600)
     ///     // 同じ大きさの立方体を、横と奥行きだけ変えて 3 つ
@@ -3660,7 +3660,7 @@ extension Sketch {
     ///   上側ではない。取り違えても警告は出ず、絵が上下反転するだけなので注意する。
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=13b60e14
+    // shot: 1 snippet=722294b1
     public func ortho(
         _ left: Float, _ right: Float, _ bottom: Float, _ top: Float, _ near: Float, _ far: Float
     ) {
@@ -3682,9 +3682,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     for (index, level) in [Float(0.15), 0.4, 0.9].enumerated() {
     ///         noLights()
     ///         ambientLight(.opaque(red: level, green: level, blue: level))
@@ -3697,14 +3697,14 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の円が 3 つ。左から右へ明るくなるが、どれも陰影が無く塗りつぶした円板に見える | symmetric=y -->
-    ///     ![橙色の円が 3 つ。左から右へ明るくなるが、どれも陰影が無く塗りつぶした円板に見える](https://i.gyazo.com/3763e86b68c96dbbc1984eb558372872.png)
+    ///     ![橙色の円が 3 つ。左から右へ明るくなるが、どれも陰影が無く塗りつぶした円板に見える](https://i.gyazo.com/971b738c795d1905e28fd7c6c5d174bd.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。初期化の
     ///   ときに置いた光はどのフレームにも属さないので、警告して無視される。
-    // shot: 1 snippet=33e9275d
+    // shot: 1 snippet=a6356345
     public func ambientLight(_ color: LinearRGBA) { canvas.ambientLight(color) }
 
     /// 向きだけを持つ光を置く (無限に遠くから差す光)。
@@ -3719,9 +3719,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     let ways: [(Float, Float, Float)] = [(1, 0.25, -0.3), (0, 1, -0.3), (-1, -1, -0.3)]
     ///     for (index, way) in ways.enumerated() {
     ///         noLights()
@@ -3736,13 +3736,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球が 3 つ。明るい側が左・上・右下と移り、反対側が暗く落ちている -->
-    ///     ![橙色の球が 3 つ。明るい側が左・上・右下と移り、反対側が暗く落ちている](https://i.gyazo.com/1a82908e97c3c99ef3d7093efd421e8d.png)
+    ///     ![橙色の球が 3 つ。明るい側が左・上・右下と移り、反対側が暗く落ちている](https://i.gyazo.com/0e2db7dd10c5fe0a5902f8304dec7eb6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=2fb129d2
+    // shot: 1 snippet=70365ab8
     public func directionalLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
         canvas.directionalLight(color, x, y, z)
     }
@@ -3756,9 +3756,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
     ///     // 面より手前 (z = 160) の、左上に置く
     ///     pointLight(.opaque(red: 1.1, green: 1.1, blue: 1.1), 110, 90, 160)
@@ -3770,13 +3770,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の面。左上が最も明るく、右下へ向かってなだらかに暗くなっている -->
-    ///     ![橙色の面。左上が最も明るく、右下へ向かってなだらかに暗くなっている](https://i.gyazo.com/94332772af480c9101862cd9caa23e22.png)
+    ///     ![橙色の面。左上が最も明るく、右下へ向かってなだらかに暗くなっている](https://i.gyazo.com/2062f8a8326572d835d52626245b33ee.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=124cad8c
+    // shot: 1 snippet=8df4de06
     public func pointLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
         canvas.pointLight(color, x, y, z)
     }
@@ -3800,9 +3800,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
     ///     // 狭い光 (半分の角 15 度)
     ///     spotLight(
@@ -3818,7 +3818,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 暗い橙色の面の左上寄りに、明るい小さな円が浮かんでいる -->
-    ///     ![暗い橙色の面の左上寄りに、明るい小さな円が浮かんでいる](https://i.gyazo.com/228198bdd5db252909cdc2373789c4c0.png)
+    ///     ![暗い橙色の面の左上寄りに、明るい小さな円が浮かんでいる](https://i.gyazo.com/321061ddff57f0145fd76203e114f530.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -3826,9 +3826,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     ambientLight(.opaque(red: 0.12, green: 0.12, blue: 0.12))
     ///     // 広い光 (半分の角 25.7 度)
     ///     spotLight(
@@ -3844,14 +3844,14 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ面の同じ場所だが、明るい円がひとまわり以上大きく広がっている -->
-    ///     ![同じ面の同じ場所だが、明るい円がひとまわり以上大きく広がっている](https://i.gyazo.com/f9a015f5bf1dfcf589cc459d8e9d296e.png)
+    ///     ![同じ面の同じ場所だが、明るい円がひとまわり以上大きく広がっている](https://i.gyazo.com/d878e17cf6be30fff494b806fb03b894.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=c24e62c2
-    // shot: 2 snippet=e0bd7283
+    // shot: 1 snippet=1df07a52
+    // shot: 2 snippet=23f0f743
     public func spotLight(
         _ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float,
         _ directionX: Float, _ directionY: Float, _ directionZ: Float,
@@ -3873,9 +3873,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     // ① 底上げの光だけ
     ///     ambientLight(.opaque(red: 0.35, green: 0.35, blue: 0.35))
     ///     push()
@@ -3900,13 +3900,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球が 3 つ。左は陰影の無い円板、中央は右下が黒く落ちた球、右はその 2 つを重ねたように暗い側も残った球 -->
-    ///     ![橙色の球が 3 つ。左は陰影の無い円板、中央は右下が黒く落ちた球、右はその 2 つを重ねたように暗い側も残った球](https://i.gyazo.com/7964829651241d7b77827012f9006623.png)
+    ///     ![橙色の球が 3 つ。左は陰影の無い円板、中央は右下が黒く落ちた球、右はその 2 つを重ねたように暗い側も残った球](https://i.gyazo.com/32875bdcdbe626d723c0fc0e95f5f9d0.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=8d465f91
+    // shot: 1 snippet=a6af79d5
     public func lights() { canvas.lights() }
 
     /// 置いた光をすべて取り除く。以降の立体は塗り 1 色で描かれる。
@@ -3918,9 +3918,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     lights()
     ///     push()
     ///     translate(120, 150, 0)
@@ -3936,11 +3936,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は陰影の付いた橙色の球、右は同じ大きさだが影も艶も無い、のっぺりした橙色の円 -->
-    ///     ![左は陰影の付いた橙色の球、右は同じ大きさだが影も艶も無い、のっぺりした橙色の円](https://i.gyazo.com/82383f6d15fa64608ccda457a94a36ed.png)
+    ///     ![左は陰影の付いた橙色の球、右は同じ大きさだが影も艶も無い、のっぺりした橙色の円](https://i.gyazo.com/5a39d483beceaa7b529cba56af940aba.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a4494cd7
+    // shot: 1 snippet=a55d02ef
     public func noLights() { canvas.noLights() }
 
     // MARK: - モデル
@@ -4016,7 +4016,7 @@ extension Sketch {
     /// ```swift
     /// func draw() {
     ///     lights()
-    ///     fill(.display(red: 0.9, green: 0.85, blue: 0.8))
+    ///     fill(230, 217, 204)
     ///     shininess(64)        // 磨いた面
     ///     push()
     ///     translate(width / 2, height / 2, 0)
@@ -4031,9 +4031,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     noStroke()
     ///     for (index, amount) in [Float(0), 16, 128].enumerated() {
     ///         shininess(amount)
@@ -4046,7 +4046,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球が 3 つ。左は艶が無く、中央は広くぼやけた白い光沢、右は小さく鋭い光沢が乗っている -->
-    ///     ![橙色の球が 3 つ。左は艶が無く、中央は広くぼやけた白い光沢、右は小さく鋭い光沢が乗っている](https://i.gyazo.com/2130395c3278efb4ccb1caecbed9be5a.png)
+    ///     ![橙色の球が 3 つ。左は艶が無く、中央は広くぼやけた白い光沢、右は小さく鋭い光沢が乗っている](https://i.gyazo.com/be1ce514b17b5130287aa42a7943faca.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -4054,7 +4054,7 @@ extension Sketch {
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     ///   **光を 1 つも置かなければ立体は塗り 1 色で出る**ので、材質はどれも効かない
     ///   (書いてあれば警告が出る)。
-    // shot: 1 snippet=976efc57
+    // shot: 1 snippet=d8f1f5d4
     public func shininess(_ amount: Float) { canvas.shininess(amount) }
 
     /// 金属らしさ。`0` が非金属 (既定)、`1` が金属。
@@ -4074,10 +4074,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.06, green: 0.06, blue: 0.07))
+    ///     background(15, 15, 18)
     ///     surroundings(.studio)
     ///     noStroke()
-    ///     fill(.display(red: 0.90, green: 0.72, blue: 0.45))
+    ///     fill(230, 184, 115)
     ///     shininess(90)
     ///     for (index, amount) in [Float(0), 0.5, 1].enumerated() {
     ///         metalness(amount)
@@ -4090,13 +4090,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 球が 3 つ。右へ行くほど上下の明暗の差がはっきりし、色みも濃い黄土色へ寄っていく -->
-    ///     ![球が 3 つ。右へ行くほど上下の明暗の差がはっきりし、色みも濃い黄土色へ寄っていく](https://i.gyazo.com/27ab3fd68a1afeddac4bf2ebdbddab1b.png)
+    ///     ![球が 3 つ。右へ行くほど上下の明暗の差がはっきりし、色みも濃い黄土色へ寄っていく](https://i.gyazo.com/29e5163ee3334c81b0922480653348c6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=10d0313c
+    // shot: 1 snippet=06e03582
     public func metalness(_ amount: Float) { canvas.metalness(amount) }
 
     /// 周りの光 (``ambientLight(_:)-fvb5``) をどれだけ返すか。既定は白 = 全部返す。
@@ -4105,7 +4105,7 @@ extension Sketch {
     /// ところを表す**のに使う。塗りに掛かるので、白は何も変えない。
     ///
     /// ```swift
-    /// ambient(.display(red: 0.3, green: 0.3, blue: 0.3))   // 周りの光を 3 割だけ返す
+    /// ambient(76, 76, 76)   // 周りの光を 3 割だけ返す
     /// ```
     ///
     /// **動くのはほとんど暗い側である。** 下は同じ球を、返す量だけ変えて 3 つ描いた
@@ -4116,10 +4116,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     ambientLight(.opaque(red: 0.45, green: 0.45, blue: 0.45))
     ///     directionalLight(.opaque(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     noStroke()
     ///     for (index, level) in [Float(1), 0.5, 0.1].enumerated() {
     ///         ambient(.display(red: level, green: level, blue: level))
@@ -4132,13 +4132,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球が 3 つ。明るい側はほとんど変わらないまま、陰の側が左から右へ暗く沈んでいく -->
-    ///     ![橙色の球が 3 つ。明るい側はほとんど変わらないまま、陰の側が左から右へ暗く沈んでいく](https://i.gyazo.com/310b983eb22e64f26d243bb64a27f7de.png)
+    ///     ![橙色の球が 3 つ。明るい側はほとんど変わらないまま、陰の側が左から右へ暗く沈んでいく](https://i.gyazo.com/3bfd3f8f6df201f6c998b7a9395fed2d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=c2ebed5d
+    // shot: 1 snippet=925181fd
     public func ambient(_ color: LinearRGBA) { canvas.ambient(color) }
 
     /// 自ら出す光。光が当たっていない側にも同じだけ出る。
@@ -4153,10 +4153,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     ambientLight(.opaque(red: 0.10, green: 0.10, blue: 0.10))
     ///     directionalLight(.opaque(red: 0.9, green: 0.9, blue: 0.9), -0.4, 0.5, -0.6)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     noStroke()
     ///     for (index, glow) in [Float(0), 0.15, 0.4].enumerated() {
     ///         emissive(.display(red: glow, green: glow, blue: glow))
@@ -4169,13 +4169,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球が 3 つ。左から右へ、陰の側から先に明るくなり、陰影が浅く平らになっていく -->
-    ///     ![橙色の球が 3 つ。左から右へ、陰の側から先に明るくなり、陰影が浅く平らになっていく](https://i.gyazo.com/194cfd9c126347900e037e36cd06e868.png)
+    ///     ![橙色の球が 3 つ。左から右へ、陰の側から先に明るくなり、陰影が浅く平らになっていく](https://i.gyazo.com/b381c5a8f93ead6e14161fbfa647ae77.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=2550be15
+    // shot: 1 snippet=f1ac2d33
     public func emissive(_ color: LinearRGBA) { canvas.emissive(color) }
 
     // MARK: - 周囲
@@ -4209,9 +4209,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.06, green: 0.06, blue: 0.07))
+    ///     background(15, 15, 18)
     ///     noStroke()
-    ///     fill(.display(red: 0.90, green: 0.90, blue: 0.90))
+    ///     fill(230, 230, 230)
     ///     metalness(1)
     ///     shininess(90)
     ///     for (index, around) in [Surroundings.sky, .studio, .sunset].enumerated() {
@@ -4225,13 +4225,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 金属の球が 3 つ。左は青みがかり、中央は白っぽく、右は橙色を帯びている -->
-    ///     ![金属の球が 3 つ。左は青みがかり、中央は白っぽく、右は橙色を帯びている](https://i.gyazo.com/64d536a3e60c48f0acd8a3909b0c180b.png)
+    ///     ![金属の球が 3 つ。左は青みがかり、中央は白っぽく、右は橙色を帯びている](https://i.gyazo.com/323d13551c98f40083a134d04aa209c8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 周囲は**フレームを越えない**。`draw()` の中で毎フレーム置く。
-    // shot: 1 snippet=8533681f
+    // shot: 1 snippet=f1ee1778
     public func surroundings(_ surroundings: Surroundings) {
         canvas.surroundings(surroundings)
     }
@@ -4255,7 +4255,7 @@ extension Sketch {
     ///     // 映り込むのは夕暮れ
     ///     surroundings(.sunset)
     ///     noStroke()
-    ///     fill(.display(red: 0.90, green: 0.90, blue: 0.90))
+    ///     fill(230, 230, 230)
     ///     metalness(1)
     ///     shininess(90)
     ///     push()
@@ -4266,11 +4266,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 青白い空を背にした金属の球。球に映っているのは空ではなく、橙色の夕暮れ | symmetric=x -->
-    ///     ![青白い空を背にした金属の球。球に映っているのは空ではなく、橙色の夕暮れ](https://i.gyazo.com/8cdda6b7abb3c91fcb511032b5f668d7.png)
+    ///     ![青白い空を背にした金属の球。球に映っているのは空ではなく、橙色の夕暮れ](https://i.gyazo.com/ee4bac5632737a4adabc740d6b5f06d6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b19cc57e
+    // shot: 1 snippet=0713ef18
     public func background(_ surroundings: Surroundings) {
         canvas.background(surroundings)
     }
@@ -4310,7 +4310,7 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     // 少し上から見下ろす
     ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
     ///     lights()
@@ -4318,13 +4318,13 @@ extension Sketch {
     ///     noStroke()
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
-    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     fill(191, 191, 199)
     ///     push()
     ///     translate(200, 250, -20)
     ///     box(400, 8, 300)
     ///     pop()
     ///     castShadow(true)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     push()
     ///     translate(180, 120, 20)
     ///     sphere(75)
@@ -4333,14 +4333,14 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 見下ろした灰色の床の上に橙色の球が浮かび、床の左奥にその影が落ちている -->
-    ///     ![見下ろした灰色の床の上に橙色の球が浮かび、床の左奥にその影が落ちている](https://i.gyazo.com/c14865869e0a99b600596cad935e0124.png)
+    ///     ![見下ろした灰色の床の上に橙色の球が浮かび、床の左奥にその影が落ちている](https://i.gyazo.com/7ad07dae8af9bc1fa9ba80b50ff260a3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。毎フレーム
     ///   書いても焼き付け先は作り直さないので、繰り返しの負担にはならない。
-    // shot: 1 snippet=17289524
+    // shot: 1 snippet=1a72b4f9
     public func shadows(_ enabled: Bool) { canvas.shadows(enabled) }
 
     /// 影を焼き付ける範囲の一辺 (世界の長さ)。
@@ -4358,7 +4358,7 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     // 少し上から見下ろす
     ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
     ///     lights()
@@ -4368,13 +4368,13 @@ extension Sketch {
     ///     shadowRange(8000)
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
-    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     fill(191, 191, 199)
     ///     push()
     ///     translate(200, 250, -20)
     ///     box(400, 8, 300)
     ///     pop()
     ///     castShadow(true)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     push()
     ///     translate(180, 120, 20)
     ///     sphere(75)
@@ -4383,13 +4383,13 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ場面だが、影の縁が階段状にがたつき、影がひとまわり痩せている -->
-    ///     ![同じ場面だが、影の縁が階段状にがたつき、影がひとまわり痩せている](https://i.gyazo.com/95e2213c287a8493be11b1f160ce0a70.png)
+    ///     ![同じ場面だが、影の縁が階段状にがたつき、影がひとまわり痩せている](https://i.gyazo.com/17478d4fd235be134daa18cb1de5d457.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=55bb3714
+    // shot: 1 snippet=10cc6754
     public func shadowRange(_ size: Float) { canvas.shadowRange(size) }
 
     /// 影を焼き付ける面の一辺の画素数。既定は 1024。
@@ -4403,7 +4403,7 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     // 少し上から見下ろす
     ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
     ///     lights()
@@ -4413,13 +4413,13 @@ extension Sketch {
     ///     shadowDetail(64)
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
-    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     fill(191, 191, 199)
     ///     push()
     ///     translate(200, 250, -20)
     ///     box(400, 8, 300)
     ///     pop()
     ///     castShadow(true)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     push()
     ///     translate(180, 120, 20)
     ///     sphere(75)
@@ -4428,11 +4428,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 範囲を広げた絵とまったく同じ粗さで、影の縁が階段状にがたついている -->
-    ///     ![範囲を広げた絵とまったく同じ粗さで、影の縁が階段状にがたついている](https://i.gyazo.com/df96ed6e41c9ed077b68cecb9b3cf09a.png)
+    ///     ![範囲を広げた絵とまったく同じ粗さで、影の縁が階段状にがたついている](https://i.gyazo.com/9b3971b8f3b327719b032323eb5d7969.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=48cf482c
+    // shot: 1 snippet=6803da11
     public func shadowDetail(_ size: Int) { canvas.shadowDetail(size) }
 
     /// 影の縁の破綻を抑える量。既定は `0.0025`。
@@ -4447,7 +4447,7 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     // 少し上から見下ろす
     ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
     ///     lights()
@@ -4457,13 +4457,13 @@ extension Sketch {
     ///     shadowBias(0)
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
-    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     fill(191, 191, 199)
     ///     push()
     ///     translate(200, 250, -20)
     ///     box(400, 8, 300)
     ///     pop()
     ///     castShadow(true)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     push()
     ///     translate(180, 120, 20)
     ///     sphere(75)
@@ -4472,11 +4472,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ場面だが、球の明るい側に細かい縞状の汚れが浮いている -->
-    ///     ![同じ場面だが、球の明るい側に細かい縞状の汚れが浮いている](https://i.gyazo.com/8d49bfb070bb93f481a2a7a848ef6bef.png)
+    ///     ![同じ場面だが、球の明るい側に細かい縞状の汚れが浮いている](https://i.gyazo.com/3ac34ff089fca6d3574a9f9c8841272a.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=c92ffd08
+    // shot: 1 snippet=704ae6de
     public func shadowBias(_ amount: Float) { canvas.shadowBias(amount) }
 
     /// これから置く形が、影を落とす側か。既定は落とす。
@@ -4490,19 +4490,19 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
     ///     lights()
     ///     shadows(true)
     ///     noStroke()
     ///     castShadow(false)
-    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     fill(191, 191, 199)
     ///     push()
     ///     translate(200, 250, -20)
     ///     box(400, 8, 300)
     ///     pop()
     ///     // 左の球だけが影を落とす
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     for (index, casts) in [true, false].enumerated() {
     ///         castShadow(casts)
     ///         push()
@@ -4514,11 +4514,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 床の上に橙色の球が 2 つ並び、影は左の球の下にだけ落ちている -->
-    ///     ![床の上に橙色の球が 2 つ並び、影は左の球の下にだけ落ちている](https://i.gyazo.com/3ffbff84eee487311590fabd018885a4.png)
+    ///     ![床の上に橙色の球が 2 つ並び、影は左の球の下にだけ落ちている](https://i.gyazo.com/d5975cb46d1fb2a6e86e7c21cacda5b5.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=3bf54063
+    // shot: 1 snippet=95162799
     public func castShadow(_ enabled: Bool) { canvas.castShadow(enabled) }
 
     /// これから置く形が、影を受ける側か。既定は受ける。
@@ -4529,14 +4529,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     camera(200, -70, 320, 200, 200, 0, 0, 1, 0)
     ///     lights()
     ///     shadows(true)
     ///     noStroke()
     ///     // 床を 2 枚。右の 1 枚だけ受ける側から外す
     ///     castShadow(false)
-    ///     fill(.display(red: 0.75, green: 0.75, blue: 0.78))
+    ///     fill(191, 191, 199)
     ///     for (index, receives) in [true, false].enumerated() {
     ///         receiveShadow(receives)
     ///         push()
@@ -4547,7 +4547,7 @@ extension Sketch {
     ///     receiveShadow(true)
     ///     // 球は 2 つとも同じように落とす
     ///     castShadow(true)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     for index in 0..<2 {
     ///         push()
     ///         translate(135 + Float(index) * 145, 120, 20)
@@ -4558,11 +4558,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 2 枚に割れた床の上に橙色の球が 2 つ。影が出ているのは左の床だけで、右の床は継ぎ目から先が一様に明るい -->
-    ///     ![2 枚に割れた床の上に橙色の球が 2 つ。影が出ているのは左の床だけで、右の床は継ぎ目から先が一様に明るい](https://i.gyazo.com/ef2bac62139783c79bfd8f6d6ef1ab3c.png)
+    ///     ![2 枚に割れた床の上に橙色の球が 2 つ。影が出ているのは左の床だけで、右の床は継ぎ目から先が一様に明るい](https://i.gyazo.com/db139c7e8cee4c6060490750969a9231.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=6a405215
+    // shot: 1 snippet=86dc1877
     public func receiveShadow(_ enabled: Bool) { canvas.receiveShadow(enabled) }
 
     // MARK: - 乱数と揺らぎ
@@ -4668,8 +4668,8 @@ extension Sketch {
     ///
     /// ```swift
     /// func draw() {
-    ///     background(.display(red: 0.08, green: 0.09, blue: 0.12))
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.3))
+    ///     background(20, 23, 31)
+    ///     fill(242, 115, 76)
     ///     push()
     ///     translate(width / 2, height / 2, 0)
     ///     rotateY(0.6)
@@ -4687,10 +4687,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4703,7 +4703,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=89bfb603
+    // shot: 1 snippet=8d592c84
     public func box(_ size: Float) { canvas.box(size) }
 
     /// 幅・高さ・奥行きを別々に決めた箱を置く。
@@ -4711,10 +4711,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4727,7 +4727,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=23718862
+    // shot: 1 snippet=2553ebe3
     public func box(_ width: Float, _ height: Float, _ depth: Float) {
         canvas.box(width, height, depth)
     }
@@ -4740,10 +4740,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4752,7 +4752,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球。左上から光が当たり、右下へ向かって暗くなっている -->
-    ///     ![橙色の球。左上から光が当たり、右下へ向かって暗くなっている](https://i.gyazo.com/b05b424da02517dd96374ae6a694a5ef.png)
+    ///     ![橙色の球。左上から光が当たり、右下へ向かって暗くなっている](https://i.gyazo.com/a41688b790f72b5f015bbd73914b8938.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -4760,10 +4760,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4772,7 +4772,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ大きさの立体だが、面が数えられるほど粗く、丸みが多角形になっている -->
-    ///     ![同じ大きさの立体だが、面が数えられるほど粗く、丸みが多角形になっている](https://i.gyazo.com/f7b3f1ebc4f0c232108c9af02ca7ff2d.png)
+    ///     ![同じ大きさの立体だが、面が数えられるほど粗く、丸みが多角形になっている](https://i.gyazo.com/51cad4630b3a8e0811a5fa040d7da37e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -4780,8 +4780,8 @@ extension Sketch {
     /// - Parameters:
     ///   - radius: 半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 上下は半周なので、その半分で割る。
-    // shot: 1 snippet=e0b936c2
-    // shot: 2 snippet=d021273a
+    // shot: 1 snippet=51775b2d
+    // shot: 2 snippet=3c04508e
     public func sphere(_ radius: Float, detail: Int = Canvas.defaultSolidDetail) {
         canvas.sphere(radius, detail: detail)
     }
@@ -4795,10 +4795,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4811,7 +4811,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=9aeefd09
+    // shot: 1 snippet=3ddae47c
     public func plane(_ width: Float, _ height: Float) { canvas.plane(width, height) }
 
     /// 円柱を置く。軸は縦。
@@ -4822,10 +4822,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4834,7 +4834,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の円柱が斜めに立っていて、上の蓋が楕円に見えている -->
-    ///     ![橙色の円柱が斜めに立っていて、上の蓋が楕円に見えている](https://i.gyazo.com/563c968f429d67974de3ea69f6596365.png)
+    ///     ![橙色の円柱が斜めに立っていて、上の蓋が楕円に見えている](https://i.gyazo.com/b54fc2f6740904ad8d6801766334053b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -4842,10 +4842,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4854,7 +4854,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ寸法だが一周が 6 つに割られ、六角柱になっている -->
-    ///     ![同じ寸法だが一周が 6 つに割られ、六角柱になっている](https://i.gyazo.com/08a4787b75e86f5973c5698f118904b5.png)
+    ///     ![同じ寸法だが一周が 6 つに割られ、六角柱になっている](https://i.gyazo.com/faa3bb488c01c389af0fc11cbfaf8f4d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -4863,8 +4863,8 @@ extension Sketch {
     ///   - radius: 半径 (画素)。
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
-    // shot: 1 snippet=d5dd0e40
-    // shot: 2 snippet=0d372704
+    // shot: 1 snippet=3382160f
+    // shot: 2 snippet=14bac537
     public func cylinder(
         _ radius: Float, _ height: Float, detail: Int = Canvas.defaultSolidDetail
     ) {
@@ -4876,10 +4876,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4888,7 +4888,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の円錐が斜めに立っていて、先が上を向き、底の円が楕円に見えている -->
-    ///     ![橙色の円錐が斜めに立っていて、先が上を向き、底の円が楕円に見えている](https://i.gyazo.com/c5c1d800f172015c2f31a6e644550948.png)
+    ///     ![橙色の円錐が斜めに立っていて、先が上を向き、底の円が楕円に見えている](https://i.gyazo.com/a4a2bab72baba4966ef53867169c51a4.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -4897,7 +4897,7 @@ extension Sketch {
     ///   - radius: 底の半径 (画素)。
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
-    // shot: 1 snippet=629b0d9b
+    // shot: 1 snippet=c6e05232
     public func cone(_ radius: Float, _ height: Float, detail: Int = Canvas.defaultSolidDetail) {
         canvas.cone(radius, height, detail: detail)
     }
@@ -4910,10 +4910,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4922,7 +4922,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の細い輪が斜めに傾いていて、中央に大きな穴が空いている -->
-    ///     ![橙色の細い輪が斜めに傾いていて、中央に大きな穴が空いている](https://i.gyazo.com/8069cdfa773d799bcd1da70f459ca73e.png)
+    ///     ![橙色の細い輪が斜めに傾いていて、中央に大きな穴が空いている](https://i.gyazo.com/dcced26e4c6232faa9f9c2acdd4637eb.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -4930,10 +4930,10 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     lights()
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     translate(200, 150, 0)
     ///     rotateY(0.6)
     ///     rotateX(0.35)
@@ -4942,7 +4942,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ大きさの輪だが管が太く、中央の穴が小さくなっている -->
-    ///     ![同じ大きさの輪だが管が太く、中央の穴が小さくなっている](https://i.gyazo.com/da3b4140dcdb6e812a690063f594ad02.png)
+    ///     ![同じ大きさの輪だが管が太く、中央の穴が小さくなっている](https://i.gyazo.com/130e20336fa72465415c533485985343.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -4951,8 +4951,8 @@ extension Sketch {
     ///   - radius: 中心から管の中心までの距離 (画素)。
     ///   - tubeRadius: 管の半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 輪の一周も管の一周も同じ数で割る。
-    // shot: 1 snippet=63060d33
-    // shot: 2 snippet=6b681e80
+    // shot: 1 snippet=7978e71b
+    // shot: 2 snippet=21763f89
     public func torus(
         _ radius: Float, _ tubeRadius: Float, detail: Int = Canvas.defaultSolidDetail
     ) {
@@ -4973,14 +4973,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.55, green: 0.60, blue: 0.70))
+    ///     stroke(140, 153, 178)
     ///     strokeWeight(3)
     ///     translate(110, 150)
     ///     push()
     ///     translate(180, 0)
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(12)
     ///     square(-45, -45, 90)
     ///     pop()
@@ -4989,11 +4989,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 右に太い橙色の枠の正方形、左に細い灰色の枠の正方形が並んでいる | symmetric=y -->
-    ///     ![右に太い橙色の枠の正方形、左に細い灰色の枠の正方形が並んでいる](https://i.gyazo.com/5aa73f26bc698ad8e1edd3827d3c74f1.png)
+    ///     ![右に太い橙色の枠の正方形、左に細い灰色の枠の正方形が並んでいる](https://i.gyazo.com/3315f71280d99820f19ae0e5a01401ee.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=92c18fef
+    // shot: 1 snippet=2665a2c3
     public func push() { canvas.push() }
 
     /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
@@ -5005,16 +5005,16 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
     ///     translate(80, 150)
-    ///     fill(.display(red: 0.55, green: 0.60, blue: 0.70))
+    ///     fill(140, 153, 178)
     ///     push()
     ///     translate(120, 0)
-    ///     fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     fill(242, 115, 64)
     ///     push()
     ///     translate(120, 0)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     square(-35, -35, 70)
     ///     pop()
     ///     square(-35, -35, 70)
@@ -5028,7 +5028,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a8da334a
+    // shot: 1 snippet=45e99a0e
     public func pop() { canvas.pop() }
 
     // MARK: - 文字
@@ -5041,19 +5041,19 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(0, 170, 400, 170)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(56)
     ///     text("mokume", 40, 170)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の横線のちょうど上に、白い大きな mokume が乗っている -->
-    ///     ![灰色の横線のちょうど上に、白い大きな mokume が乗っている](https://i.gyazo.com/6bfff58c6f3b88d797718b12e60c9022.png)
+    ///     ![灰色の横線のちょうど上に、白い大きな mokume が乗っている](https://i.gyazo.com/fe969b6fb9f7ae6bad63c019a50a51da.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5063,23 +5063,23 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(40)
     ///     text("mokume\nmetal", 40, 110)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い文字が 2 行に分かれ、左端を揃えて縦に並んでいる -->
-    ///     ![白い文字が 2 行に分かれ、左端を揃えて縦に並んでいる](https://i.gyazo.com/027952e745878babd9d7310e3d842ef9.png)
+    ///     ![白い文字が 2 行に分かれ、左端を揃えて縦に並んでいる](https://i.gyazo.com/7f75a9cee673a0c12a7c761f3e19377e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// **塗りの色で描く**ので、``noFill()`` の状態では何も出ない。
-    // shot: 1 snippet=11c9d2b4
-    // shot: 2 snippet=361f9ffa
+    // shot: 1 snippet=0c8959e5
+    // shot: 2 snippet=3044f8bc
     public func text(_ string: String, _ x: Float, _ y: Float) { canvas.text(string, x, y) }
 
     /// これから描く文字の大きさ (画素)。既定は 12。
@@ -5090,19 +5090,19 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(0, 200, 400, 200)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(24)
     ///     text("mokume", 40, 200)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の線の上に、小さめの白い mokume が乗っている -->
-    ///     ![灰色の線の上に、小さめの白い mokume が乗っている](https://i.gyazo.com/9a963c8a9130fa24838a42cefe99e710.png)
+    ///     ![灰色の線の上に、小さめの白い mokume が乗っている](https://i.gyazo.com/bed29d4c29e5ecfd5c288f2d2e8470ec.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5110,24 +5110,24 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(0, 200, 400, 200)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(64)
     ///     text("mokume", 40, 200)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ位置の灰色の線の上に、ずっと大きな白い mokume が乗っている -->
-    ///     ![同じ位置の灰色の線の上に、ずっと大きな白い mokume が乗っている](https://i.gyazo.com/c193cb2547db95504c8d1e7ac0865a1c.png)
+    ///     ![同じ位置の灰色の線の上に、ずっと大きな白い mokume が乗っている](https://i.gyazo.com/9ee88ae6a7bf082fe8654ca5267089d9.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7e61e41a
-    // shot: 2 snippet=a1eaa157
+    // shot: 1 snippet=a8143a74
+    // shot: 2 snippet=02dd14ba
     public func textSize(_ size: Float) { canvas.textSize(size) }
 
     /// これから描く文字の書体。
@@ -5135,9 +5135,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(34)
     ///     text("mokume 123", 30, 110)
     ///     textFont("Courier")
@@ -5146,7 +5146,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ語が 2 行。上は既定の書体、下は字幅の揃った書体で描かれている -->
-    ///     ![同じ語が 2 行。上は既定の書体、下は字幅の揃った書体で描かれている](https://i.gyazo.com/0ed7b61b333d5d35b83cf5ec3082122a.png)
+    ///     ![同じ語が 2 行。上は既定の書体、下は字幅の揃った書体で描かれている](https://i.gyazo.com/ec22d871ad2611b4d627ac62e5d32792.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5157,7 +5157,7 @@ extension Sketch {
     ///
     /// 指定した書体が覆えない文字 (欧文の書体に日本語を渡した場合など) は、
     /// この環境が持つ別の書体から引いて描く。
-    // shot: 1 snippet=8ee18157
+    // shot: 1 snippet=38a1d815
     public func textFont(_ name: String) { canvas.textFont(name) }
 
     /// 書体の指定をやめ、この環境の既定の書体へ戻す。
@@ -5168,9 +5168,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(30)
     ///     text("mokume", 30, 80)
     ///     textFont("Courier")
@@ -5181,11 +5181,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ語が 3 行。1 行目と 3 行目は同じ書体で、真ん中の 1 行だけ違う -->
-    ///     ![同じ語が 3 行。1 行目と 3 行目は同じ書体で、真ん中の 1 行だけ違う](https://i.gyazo.com/ebe920bd60120ef4be9a91d7409f7211.png)
+    ///     ![同じ語が 3 行。1 行目と 3 行目は同じ書体で、真ん中の 1 行だけ違う](https://i.gyazo.com/2556f54db965d96a7cd836d96d3ff054.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=bdbf4551
+    // shot: 1 snippet=92702e23
     public func noTextFont() { canvas.noTextFont() }
 
     /// これから描く文字の太さと傾き。既定はそのまま。
@@ -5196,17 +5196,17 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(18)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     text("normal", 20, 70)
     ///     text("bold", 20, 135)
     ///     text("italic", 20, 200)
     ///     text("boldItalic", 20, 265)
     ///     textSize(44)
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textStyle(.normal)
     ///     text("Mokume", 130, 70)
     ///     textStyle(.bold)
@@ -5219,11 +5219,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左に水色の指定名、右に白い Mokume が 4 行。下 2 行は右へ傾き、2 行目と 4 行目は画が太い -->
-    ///     ![左に水色の指定名、右に白い Mokume が 4 行。下 2 行は右へ傾き、2 行目と 4 行目は画が太い](https://i.gyazo.com/afb42350b56971b8be3665c8ea2da73c.png)
+    ///     ![左に水色の指定名、右に白い Mokume が 4 行。下 2 行は右へ傾き、2 行目と 4 行目は画が太い](https://i.gyazo.com/16d812f6ddaf11fff08f543cf65f0681.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=00a4bd2e
+    // shot: 1 snippet=dad4af7f
     public func textStyle(_ style: TextStyle) { canvas.textStyle(style) }
 
     /// 文字列を、指定した位置のどちら側へ置くか。既定は**左から右へ・基準線**。
@@ -5239,12 +5239,12 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(200, 0, 200, 300)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(28)
     ///     textAlign(.left)
     ///     text("left", 200, 90)
@@ -5256,7 +5256,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 1 本の縦線に対し、右へ出る・線をまたぐ・線で終わる の 3 語が上から並んでいる -->
-    ///     ![1 本の縦線に対し、右へ出る・線をまたぐ・線で終わる の 3 語が上から並んでいる](https://i.gyazo.com/832ef217b81799dec8e4dc6b53e91fc0.png)
+    ///     ![1 本の縦線に対し、右へ出る・線をまたぐ・線で終わる の 3 語が上から並んでいる](https://i.gyazo.com/f7d48c6258ea121365b590483af5eb6c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5267,12 +5267,12 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     background(23, 26, 31)
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(0, 150, 400, 150)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(22)
     ///     textAlign(.left, .top)
     ///     text("top", 20, 150)
@@ -5286,12 +5286,12 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 1 本の横線に対し、下へぶら下がる・線をまたぐ・線に乗る・線の上に載る の 4 語が左から並んでいる -->
-    ///     ![1 本の横線に対し、下へぶら下がる・線をまたぐ・線に乗る・線の上に載る の 4 語が左から並んでいる](https://i.gyazo.com/f8976a14a1bb15eb04bc126245d4de59.png)
+    ///     ![1 本の横線に対し、下へぶら下がる・線をまたぐ・線に乗る・線の上に載る の 4 語が左から並んでいる](https://i.gyazo.com/bda78fe4da8ce167d0bb7446dfc8b14b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=89de4578
-    // shot: 2 snippet=c4ea8b65
+    // shot: 1 snippet=ee229cc3
+    // shot: 2 snippet=ad72b9a7
     public func textAlign(
         _ horizontal: HorizontalTextAlign, _ vertical: VerticalTextAlign = .baseline
     ) {
@@ -5305,16 +5305,16 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(28)
     ///     text("one\ntwo\nthree", 40, 80)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い 3 行が、詰まった間隔で縦に並んでいる -->
-    ///     ![白い 3 行が、詰まった間隔で縦に並んでいる](https://i.gyazo.com/ab0be0edb70be3204d0e2c72821539ec.png)
+    ///     ![白い 3 行が、詰まった間隔で縦に並んでいる](https://i.gyazo.com/60fbf69ea1ac41029a3c32d107a041ee.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5322,9 +5322,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(28)
     ///     textLeading(70)
     ///     text("one\ntwo\nthree", 40, 80)
@@ -5332,12 +5332,12 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ 3 行が、倍ほど離れた間隔で縦に並んでいる -->
-    ///     ![同じ 3 行が、倍ほど離れた間隔で縦に並んでいる](https://i.gyazo.com/cc20d16f281696966191c89fbfa3eb09.png)
+    ///     ![同じ 3 行が、倍ほど離れた間隔で縦に並んでいる](https://i.gyazo.com/8d9bf47f4cb581aca54c68e1b2bbfe03.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a559294d
-    // shot: 2 snippet=b071867c
+    // shot: 1 snippet=c1e64917
+    // shot: 2 snippet=26cf4f8a
     public func textLeading(_ leading: Float) { canvas.textLeading(leading) }
 
     /// 文字列を描いたときの幅 (画素)。
@@ -5348,24 +5348,24 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(44)
     ///     text("mokume", 40, 150)
     ///     let w = textWidth("mokume")
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(3)
     ///     line(40, 168, 40 + w, 168)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い mokume のすぐ下に、語と同じ長さの橙色の線が引かれている -->
-    ///     ![白い mokume のすぐ下に、語と同じ長さの橙色の線が引かれている](https://i.gyazo.com/e781eaf7128c2bc83a5dd33d93b65a09.png)
+    ///     ![白い mokume のすぐ下に、語と同じ長さの橙色の線が引かれている](https://i.gyazo.com/9de2422d96c08e453703cae91c47accd.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=d0ab3923
+    // shot: 1 snippet=ebe1b460
     public func textWidth(_ string: String) -> Float { canvas.textWidth(string) }
 
     /// 基準線から上へ伸びる高さ (画素)。
@@ -5376,27 +5376,27 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     textSize(64)
     ///     let base: Float = 200
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(0, base, 400, base)
-    ///     stroke(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     stroke(89, 191, 242)
     ///     strokeWeight(2)
     ///     line(0, base - textAscent(), 400, base - textAscent())
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     text("Mokume", 40, base)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の基準線に字が乗り、その上に引かれた水色の線を字が越えていない -->
-    ///     ![灰色の基準線に字が乗り、その上に引かれた水色の線を字が越えていない](https://i.gyazo.com/fd7a39121db7a5eb2a4a236b13f4a01d.png)
+    ///     ![灰色の基準線に字が乗り、その上に引かれた水色の線を字が越えていない](https://i.gyazo.com/f86f6d9fb6c33c2fa194202b0f4b5293.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=a6eb7f98
+    // shot: 1 snippet=f70f460d
     public func textAscent() -> Float { canvas.textAscent() }
 
     /// 基準線から下へ伸びる深さ (画素)。
@@ -5407,27 +5407,27 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     textSize(64)
     ///     let base: Float = 150
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     line(0, base, 400, base)
-    ///     stroke(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///     stroke(242, 115, 64)
     ///     strokeWeight(2)
     ///     line(0, base + textDescent(), 400, base + textDescent())
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     text("mokugy", 40, base)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の基準線から g と y が下へ伸び、その先を橙色の線が受け止めている -->
-    ///     ![灰色の基準線から g と y が下へ伸び、その先を橙色の線が受け止めている](https://i.gyazo.com/8f7f757454acd91ab42d06605c61e75b.png)
+    ///     ![灰色の基準線から g と y が下へ伸び、その先を橙色の線が受け止めている](https://i.gyazo.com/e70bb9120406f546faa8158fdaa40acd.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=798b905e
+    // shot: 1 snippet=cce8b3db
     public func textDescent() -> Float { canvas.textDescent() }
 
     /// 矩形の中へ文字列を流し込む。
@@ -5439,21 +5439,21 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     let long = "矩形へ流し込むと、指定した幅で折り返し、指定した高さに収まる行だけが置かれる。入りきらなかった分は remainder に残るので、続きを別の場所へ流せる。"
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     rect(30, 40, 160, 220)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(18)
     ///     text(long, 30, 40, 160, 220)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の縦長の枠の中に、折り返された白い日本語の文が収まっている -->
-    ///     ![灰色の縦長の枠の中に、折り返された白い日本語の文が収まっている](https://i.gyazo.com/21d9dfe8844b5743d5dd2ac6c0a10340.png)
+    ///     ![灰色の縦長の枠の中に、折り返された白い日本語の文が収まっている](https://i.gyazo.com/22a66d00f08e753735e77e420cecb1a7.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5464,24 +5464,24 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     let long = "矩形へ流し込むと、指定した幅で折り返し、指定した高さに収まる行だけが置かれる。入りきらなかった分は remainder に残るので、続きを別の場所へ流せる。"
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     rect(20, 40, 170, 100)
     ///     rect(210, 40, 170, 100)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(18)
     ///     let flow = text(long, 20, 40, 170, 100)
-    ///     fill(.display(red: 0.35, green: 0.75, blue: 0.95))
+    ///     fill(89, 191, 242)
     ///     text(flow.remainder, 210, 40, 170, 100)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 左の枠に白い文が収まり、右の枠にその続きが水色で流れている -->
-    ///     ![左の枠に白い文が収まり、右の枠にその続きが水色で流れている](https://i.gyazo.com/a57da60dddbf2fe85ff8ce27aa9680a3.png)
+    ///     ![左の枠に白い文が収まり、右の枠にその続きが水色で流れている](https://i.gyazo.com/c299d0a2c333736f566d17f5a5102a4c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5491,8 +5491,8 @@ extension Sketch {
     ///
     /// 縦の指定 (``textAlign(_:_:)``) は置いた塊全体に効く。矩形の中では基準線に
     /// 意味が無いので、基準線指定は上揃えと同じに扱う。
-    // shot: 1 snippet=5f51171b
-    // shot: 2 snippet=c5aeaa7d
+    // shot: 1 snippet=82f3bb5e
+    // shot: 2 snippet=6b763151
     @discardableResult
     public func text(_ string: String, _ a: Float, _ b: Float, _ c: Float, _ d: Float)
         -> TextFlow
@@ -5508,14 +5508,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     let words = "mokume renders declarative sketches"
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     rect(60, 50, 150, 200)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(20)
     ///     textWrap(.word)
     ///     text(words, 60, 50, 150, 200)
@@ -5523,7 +5523,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 枠の中の英文が語の切れ目で折り返され、行末が不揃いになっている -->
-    ///     ![枠の中の英文が語の切れ目で折り返され、行末が不揃いになっている](https://i.gyazo.com/5845d1221557dd0cd1e52136478c67a7.png)
+    ///     ![枠の中の英文が語の切れ目で折り返され、行末が不揃いになっている](https://i.gyazo.com/d43fcff337558a959ce774c30a5b942a.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5531,14 +5531,14 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     let words = "mokume renders declarative sketches"
     ///     noFill()
-    ///     stroke(.display(red: 0.35, green: 0.38, blue: 0.45))
+    ///     stroke(89, 97, 115)
     ///     strokeWeight(1)
     ///     rect(60, 50, 150, 200)
     ///     noStroke()
-    ///     fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///     fill(242, 242, 242)
     ///     textSize(20)
     ///     textWrap(.character)
     ///     text(words, 60, 50, 150, 200)
@@ -5546,15 +5546,15 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ英文が文字の切れ目で折り返され、行末が枠の右辺近くで揃っている -->
-    ///     ![同じ英文が文字の切れ目で折り返され、行末が枠の右辺近くで揃っている](https://i.gyazo.com/ce2fa802eb9d76da9d61b785a5111013.png)
+    ///     ![同じ英文が文字の切れ目で折り返され、行末が枠の右辺近くで揃っている](https://i.gyazo.com/73fe4cc1b409eba3e8f80f78fdd321e8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// 語の切れ目で折るとき、**1 語が幅より長ければその語の中で折る** —
     /// でないと置き場所が無くなる。
-    // shot: 1 snippet=6d98185f
-    // shot: 2 snippet=874d4026
+    // shot: 1 snippet=9d76cf16
+    // shot: 2 snippet=36f2b043
     public func textWrap(_ mode: TextWrap) { canvas.textWrap(mode) }
 
     /// 文字列の輪郭を取り出す。
@@ -5562,9 +5562,9 @@ extension Sketch {
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
-    ///     background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///     background(23, 26, 31)
     ///     noFill()
-    ///     stroke(.display(red: 0.95, green: 0.85, blue: 0.35))
+    ///     stroke(242, 217, 89)
     ///     strokeWeight(2)
     ///     textSize(72)
     ///     for contour in textOutline("mokume", 20, 190) {
@@ -5586,7 +5586,7 @@ extension Sketch {
     ///
     /// 字ごとに、外側の周が先・穴が後の順で並ぶ。曲線は直線の並びにほどいてあり、
     /// 細かさは曲線の大きさから決まる。
-    // shot: 1 snippet=f29666de
+    // shot: 1 snippet=e9e2ccf8
     public func textOutline(_ string: String, _ x: Float, _ y: Float) -> [TextContour] {
         canvas.textOutline(string, x, y)
     }
@@ -5648,7 +5648,7 @@ extension Sketch {
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(tile, 80, 30, 240, 240)
     ///     }
     ///     ```
@@ -5659,7 +5659,7 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b1cb4ca2
+    // shot: 1 snippet=f455cc89
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
         try canvas.createImage(width, height)
     }
@@ -5672,18 +5672,18 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(tile, 90, 60)
-    ///         stroke(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         stroke(242, 242, 242)
     ///         strokeWeight(2)
     ///         line(50, 60, 90, 60)
     ///         line(90, 20, 90, 60)
@@ -5692,11 +5692,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 64 画素四方の絵が等倍で置かれ、白い 2 本の線が外からその左上の角を指している -->
-    ///     ![64 画素四方の絵が等倍で置かれ、白い 2 本の線が外からその左上の角を指している](https://i.gyazo.com/cc4bdf044a32f8021840eef1b986431f.png)
+    ///     ![64 画素四方の絵が等倍で置かれ、白い 2 本の線が外からその左上の角を指している](https://i.gyazo.com/94f54734ee6cc0a42dfab068c7bf18e2.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=38e37457
+    // shot: 1 snippet=484b5a23
     public func image(_ image: Image, _ x: Float, _ y: Float) { canvas.image(image, x, y) }
 
     /// 絵を、指定した寸法に合わせて置く。
@@ -5710,16 +5710,16 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(tile, 30, 40, 64, 64)
     ///         image(tile, 140, 40, 200, 200)
     ///     }
@@ -5727,11 +5727,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ絵が 2 つ。左は小さく等倍、右は 3 倍ほどに引き伸ばされている -->
-    ///     ![同じ絵が 2 つ。左は小さく等倍、右は 3 倍ほどに引き伸ばされている](https://i.gyazo.com/000fd3d72844861557046e7bccfdf482.png)
+    ///     ![同じ絵が 2 つ。左は小さく等倍、右は 3 倍ほどに引き伸ばされている](https://i.gyazo.com/c7416c8ac28379800fdfad620bd0f32d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b6e9798c
+    // shot: 1 snippet=6c035e1b
     public func image(_ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.image(image, a, b, c, d)
     }
@@ -5750,16 +5750,16 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(tile, 20, 40, 128, 128)
     ///         image(tile, 190, 40, 128, 128, 4, 4, 28, 28)
     ///     }
@@ -5767,11 +5767,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左に絵の全体、右はその左上 28 画素四方だけを同じ大きさへ引き伸ばしたもの。右は橙色が大半を占め、下端にだけ青が残る -->
-    ///     ![左に絵の全体、右はその左上 28 画素四方だけを同じ大きさへ引き伸ばしたもの。右は橙色が大半を占め、下端にだけ青が残る](https://i.gyazo.com/26c7189551956678633bbf1645bd0105.png)
+    ///     ![左に絵の全体、右はその左上 28 画素四方だけを同じ大きさへ引き伸ばしたもの。右は橙色が大半を占め、下端にだけ青が残る](https://i.gyazo.com/b5b141dafb763161b546b61ca2cc152e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=91678c9a
+    // shot: 1 snippet=b02a0f10
     public func image(
         _ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
         _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
@@ -5790,27 +5790,27 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         imageMode(.corner)
     ///         image(tile, 200, 150, 120, 90)
     ///         noStroke()
-    ///         fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         fill(242, 242, 242)
     ///         circle(200, 150, 10)
     ///     }
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い点が絵の左上の角にあり、絵は点から右下へ広がっている -->
-    ///     ![白い点が絵の左上の角にあり、絵は点から右下へ広がっている](https://i.gyazo.com/be990dbb96d2d4a50ce13d375d0ae03d.png)
+    ///     ![白い点が絵の左上の角にあり、絵は点から右下へ広がっている](https://i.gyazo.com/93cf7dab5d61fb2ff2984033eb16f6b0.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5821,20 +5821,20 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         imageMode(.corners)
     ///         image(tile, 200, 150, 120, 90)
     ///         noStroke()
-    ///         fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         fill(242, 242, 242)
     ///         circle(200, 150, 10)
     ///         circle(120, 90, 10)
     ///     }
@@ -5842,7 +5842,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い点が 2 つあり、それぞれ絵の右下と左上の角になっている -->
-    ///     ![白い点が 2 つあり、それぞれ絵の右下と左上の角になっている](https://i.gyazo.com/e19ef72d6dbbabe121f39eb1ccacb716.png)
+    ///     ![白い点が 2 つあり、それぞれ絵の右下と左上の角になっている](https://i.gyazo.com/6cf1dd506ad84c3445ce927576bd5fdd.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5853,27 +5853,27 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         imageMode(.center)
     ///         image(tile, 200, 150, 120, 90)
     ///         noStroke()
-    ///         fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         fill(242, 242, 242)
     ///         circle(200, 150, 10)
     ///     }
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い点が絵のまん中にある -->
-    ///     ![白い点が絵のまん中にある](https://i.gyazo.com/6426d023a292164af1afeb8fc7866a36.png)
+    ///     ![白い点が絵のまん中にある](https://i.gyazo.com/dfbbf32976cabfcd95f00c8b68f31b43.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5884,34 +5884,34 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         imageMode(.radius)
     ///         image(tile, 200, 150, 120, 90)
     ///         noStroke()
-    ///         fill(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         fill(242, 242, 242)
     ///         circle(200, 150, 10)
     ///     }
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い点が絵のまん中にあり、絵は center のときの縦横 2 倍になっている -->
-    ///     ![白い点が絵のまん中にあり、絵は center のときの縦横 2 倍になっている](https://i.gyazo.com/af711f3205bcf02cc426619c69fe29ad.png)
+    ///     ![白い点が絵のまん中にあり、絵は center のときの縦横 2 倍になっている](https://i.gyazo.com/c43c94a65c7d0253e1cf349c6e795c42.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=6071ac1e
-    // shot: 2 snippet=b141b66f
-    // shot: 3 snippet=97228423
-    // shot: 4 snippet=99e89cd7
+    // shot: 1 snippet=3489d6ec
+    // shot: 2 snippet=1c6055c2
+    // shot: 3 snippet=bbc7b35e
+    // shot: 4 snippet=04e1e495
     public func imageMode(_ mode: ShapeMode) { canvas.imageMode(mode) }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
@@ -5924,25 +5924,25 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(tile, 20, 90, 160, 120)
-    ///         tint(.display(red: 1, green: 1, blue: 1, alpha: 0.5))
+    ///         tint(255, 255, 255, 128)
     ///         image(tile, 220, 90, 160, 120)
     ///     }
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ絵が 2 つ。右は濃さが半分で、下地に沈んで見える -->
-    ///     ![同じ絵が 2 つ。右は濃さが半分で、下地に沈んで見える](https://i.gyazo.com/f2504860f4fedf20f011b3e8690ed0d9.png)
+    ///     ![同じ絵が 2 つ。右は濃さが半分で、下地に沈んで見える](https://i.gyazo.com/87d4061dddb98fd5ad315d423ac8b612.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -5953,30 +5953,30 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(tile, 20, 90, 160, 120)
-    ///         tint(.display(red: 1, green: 0.6, blue: 0.6))
+    ///         tint(255, 153, 153)
     ///         image(tile, 220, 90, 160, 120)
     ///     }
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ絵が 2 つ。右は緑と青が抑えられて赤みが乗っている -->
-    ///     ![同じ絵が 2 つ。右は緑と青が抑えられて赤みが乗っている](https://i.gyazo.com/18238a312dbdd0f3a246680852aa475b.png)
+    ///     ![同じ絵が 2 つ。右は緑と青が抑えられて赤みが乗っている](https://i.gyazo.com/bb37aac80ea19d3ee416c5fd02e881fc.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=8554f87e
-    // shot: 2 snippet=df73f03d
+    // shot: 1 snippet=25c42a96
+    // shot: 2 snippet=4775cb21
     public func tint(_ color: LinearRGBA) { canvas.tint(color) }
 
     /// 色掛けをやめる。
@@ -5989,18 +5989,18 @@ extension Sketch {
     ///     ```swift
     ///     func setup() {
     ///         tile = try! createImage(64, 64)
-    ///         tile.fill(.display(red: 0.20, green: 0.28, blue: 0.40))
+    ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<40 {
-    ///                 tile.set(x, y, .display(red: 0.95, green: 0.45, blue: 0.25))
+    ///                 tile.set(x, y, color(242, 115, 64))
     ///             }
     ///         }
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(tile, 15, 100, 110, 110)
-    ///         tint(.display(red: 1, green: 0.5, blue: 0.5))
+    ///         tint(255, 128, 128)
     ///         image(tile, 145, 100, 110, 110)
     ///         noTint()
     ///         image(tile, 275, 100, 110, 110)
@@ -6009,11 +6009,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ絵が 3 つ横に並び、真ん中だけ赤みが乗っている。右は左と同じ色に戻っている -->
-    ///     ![同じ絵が 3 つ横に並び、真ん中だけ赤みが乗っている。右は左と同じ色に戻っている](https://i.gyazo.com/48e60fd99fd4e6335aef596effdec411.png)
+    ///     ![同じ絵が 3 つ横に並び、真ん中だけ赤みが乗っている。右は左と同じ色に戻っている](https://i.gyazo.com/a945802560d325a9b9bb53d60f5b8871.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=18365a53
+    // shot: 1 snippet=82db2864
     public func noTint() { canvas.noTint() }
 
     // MARK: - 描き場所
@@ -6028,7 +6028,7 @@ extension Sketch {
     ///
     /// func draw() {
     ///     trail.beginDraw()
-    ///     trail.fill(.display(red: 1, green: 0.4, blue: 0.2))
+    ///     trail.fill(255, 102, 51)
     ///     trail.circle(mouseX, mouseY, 20)   // 消さないので跡が残る
     ///     trail.endDraw()
     ///
@@ -6043,15 +6043,15 @@ extension Sketch {
     ///     func setup() {
     ///         pad = try! createGraphics(160, 160)
     ///         pad.beginDraw()
-    ///         pad.background(.display(red: 0.15, green: 0.18, blue: 0.24))
+    ///         pad.background(38, 46, 61)
     ///         pad.noStroke()
-    ///         pad.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///         pad.fill(242, 115, 64)
     ///         pad.circle(50, 50, 70)
     ///         pad.endDraw()
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(pad, 20, 70)
     ///         image(pad, 220, 90, 100, 100)
     ///     }
@@ -6059,7 +6059,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ描き場所が 2 つ。左は等倍で大きく、右は小さく。どちらも左上寄りに橙色の円 -->
-    ///     ![同じ描き場所が 2 つ。左は等倍で大きく、右は小さく。どちらも左上寄りに橙色の円](https://i.gyazo.com/c60d052e340a68caf0fb948173f12a35.png)
+    ///     ![同じ描き場所が 2 つ。左は等倍で大きく、右は小さく。どちらも左上寄りに橙色の円](https://i.gyazo.com/606d841b2d2b83c964e3f9a1e7491381.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -6085,7 +6085,7 @@ extension Sketch {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
-    // shot: 1 snippet=82d426ed
+    // shot: 1 snippet=952dfdc7
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
         try canvas.createGraphics(width, height)
     }
@@ -6102,16 +6102,16 @@ extension Sketch {
     ///     func setup() {
     ///         pad = try! createGraphics(120, 120)
     ///         pad.beginDraw()
-    ///         pad.background(.display(red: 0.20, green: 0.28, blue: 0.40))
-    ///         pad.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///         pad.background(51, 71, 102)
+    ///         pad.fill(242, 115, 64)
     ///         pad.circle(40, 40, 60)
     ///         pad.endDraw()
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(pad, 90, 60)
-    ///         stroke(.display(red: 0.95, green: 0.95, blue: 0.95))
+    ///         stroke(242, 242, 242)
     ///         strokeWeight(2)
     ///         line(50, 60, 90, 60)
     ///         line(90, 20, 90, 60)
@@ -6120,11 +6120,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 120 画素四方の描き場所が等倍で置かれ、白い 2 本の線が外からその左上の角を指している -->
-    ///     ![120 画素四方の描き場所が等倍で置かれ、白い 2 本の線が外からその左上の角を指している](https://i.gyazo.com/a335b3a5a2534f36798a0fc70bbb5979.png)
+    ///     ![120 画素四方の描き場所が等倍で置かれ、白い 2 本の線が外からその左上の角を指している](https://i.gyazo.com/f804371a6e909e246cec01104e3f565b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=3e16141c
+    // shot: 1 snippet=b01c8b0c
     public func image(_ graphics: Canvas, _ x: Float, _ y: Float) {
         canvas.image(graphics, x, y)
     }
@@ -6141,27 +6141,27 @@ extension Sketch {
     ///     func setup() {
     ///         pad = try! createGraphics(120, 120)
     ///         pad.beginDraw()
-    ///         pad.background(.display(red: 0.20, green: 0.28, blue: 0.40))
-    ///         pad.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///         pad.background(51, 71, 102)
+    ///         pad.fill(242, 115, 64)
     ///         pad.circle(40, 40, 60)
     ///         pad.endDraw()
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(pad, 20, 60, 160, 160)
-    ///         tint(.display(red: 0.5, green: 1, blue: 1))
+    ///         tint(128, 255, 255)
     ///         image(pad, 210, 90, 100, 100)
     ///     }
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 左に大きく、右に小さく同じ描き場所。右は赤が抑えられて青緑に寄っている -->
-    ///     ![左に大きく、右に小さく同じ描き場所。右は赤が抑えられて青緑に寄っている](https://i.gyazo.com/474adea0157149f502f6bfb951428834.png)
+    ///     ![左に大きく、右に小さく同じ描き場所。右は赤が抑えられて青緑に寄っている](https://i.gyazo.com/5b6f3f97e602e14c11974eccd3bb9063.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=e6207d93
+    // shot: 1 snippet=eca56bd9
     public func image(_ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
         canvas.image(graphics, a, b, c, d)
     }
@@ -6178,14 +6178,14 @@ extension Sketch {
     ///     func setup() {
     ///         pad = try! createGraphics(120, 120)
     ///         pad.beginDraw()
-    ///         pad.background(.display(red: 0.20, green: 0.28, blue: 0.40))
-    ///         pad.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+    ///         pad.background(51, 71, 102)
+    ///         pad.fill(242, 115, 64)
     ///         pad.circle(40, 40, 60)
     ///         pad.endDraw()
     ///     }
     ///
     ///     func draw() {
-    ///         background(.display(red: 0.09, green: 0.10, blue: 0.12))
+    ///         background(23, 26, 31)
     ///         image(pad, 20, 60, 160, 160)
     ///         image(pad, 210, 60, 160, 160, 0, 0, 60, 60)
     ///     }
@@ -6193,11 +6193,11 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左に描き場所の全体、右はその左上 4 分の 1 だけを同じ大きさへ引き伸ばしたもの -->
-    ///     ![左に描き場所の全体、右はその左上 4 分の 1 だけを同じ大きさへ引き伸ばしたもの](https://i.gyazo.com/8c7973a955f0f17d45697415c248b499.png)
+    ///     ![左に描き場所の全体、右はその左上 4 分の 1 だけを同じ大きさへ引き伸ばしたもの](https://i.gyazo.com/0327e1ed6bf37fd144de1c21c9b417f7.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=5b9df865
+    // shot: 1 snippet=625e4d78
     public func image(
         _ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
         _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float

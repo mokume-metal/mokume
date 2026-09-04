@@ -16,8 +16,8 @@ final class TypeAndImagery: Sketch {
 
     func setup() {
         leaf = createShape {
-            fill(.display(red: 0.45, green: 0.85, blue: 0.5))
-            stroke(.display(red: 0.12, green: 0.35, blue: 0.22))
+            fill(115, 217, 128)
+            stroke(31, 89, 56)
             strokeWeight(2)
             beginShape()
             vertex(0, -22)
@@ -48,16 +48,16 @@ final class TypeAndImagery: Sketch {
     }
 
     func draw() {
-        background(.display(red: 0.07, green: 0.08, blue: 0.11))
+        background(18, 20, 28)
         textFont("Helvetica")
 
         // 見出しと、揃え方
         noStroke()
-        fill(.display(red: 0.95, green: 0.92, blue: 0.85))
+        fill(242, 235, 217)
         textSize(46)
         text("mokume", 48, 90)
         textSize(18)
-        fill(.display(red: 0.6, green: 0.65, blue: 0.75))
+        fill(153, 166, 191)
         textAlign(.left)
         text("左に揃える", 48, 130)
         textAlign(.center)
@@ -67,12 +67,12 @@ final class TypeAndImagery: Sketch {
         textAlign(.left)
 
         // 矩形へ流し込む
-        stroke(.display(red: 0.25, green: 0.3, blue: 0.4))
+        stroke(64, 76, 102)
         strokeWeight(1)
         noFill()
         rect(48, 160, 380, 150)
         noStroke()
-        fill(.display(red: 0.85, green: 0.88, blue: 0.95))
+        fill(217, 224, 242)
         textSize(17)
         textLeading(26)
         _ = text(
@@ -83,7 +83,7 @@ final class TypeAndImagery: Sketch {
         // 字の輪郭を図形として扱う
         push()
         translate(48, 380)
-        stroke(.display(red: 0.95, green: 0.6, blue: 0.3))
+        stroke(242, 153, 76)
         strokeWeight(2)
         noFill()
         textSize(72)
@@ -97,14 +97,14 @@ final class TypeAndImagery: Sketch {
         // 自分の色を持つ字形。**塗りの色は掛からない** ので、同じ 1 行の中で
         // 単色の字は塗りの色で出て、絵文字だけが自分の色で出る
         textSize(30)
-        fill(.display(red: 0.6, green: 0.65, blue: 0.75))
+        fill(153, 166, 191)
         text("色を持つ字形 🔴 🙂 🌿", 48, 500)
 
         // 絵を置く — 等倍・引き伸ばし・色掛け
         if let swatch {
             image(swatch, 480, 170)
             image(swatch, 560, 170, 128, 128)
-            tint(.display(red: 1, green: 0.55, blue: 0.2))
+            tint(255, 140, 51)
             image(swatch, 704, 170, 128, 128)
             noTint()
         }

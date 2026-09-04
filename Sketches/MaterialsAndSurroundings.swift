@@ -49,9 +49,9 @@ final class MaterialsAndSurroundings: Sketch {
                 // 4 つとも既定へ戻してから 1 つだけ動かす — 混ざると何が効いたか読めない
                 shininess(0)
                 metalness(0)
-                emissive(.display(red: 0, green: 0, blue: 0))
-                ambient(.display(red: 1, green: 1, blue: 1))
-                fill(.display(red: 0.72, green: 0.7, blue: 0.68))
+                emissive(0, 0, 0)
+                ambient(255, 255, 255)
+                fill(184, 178, 173)
                 knob.apply(self, amount)
                 translate(200 + Float(column) * 140, 130 + Float(row) * 100, 0)
                 sphere(42)
@@ -61,7 +61,7 @@ final class MaterialsAndSurroundings: Sketch {
 
         // 見出し。**2D の文字はそのまま重ねられる**
         noStroke()
-        fill(.display(red: 0.98, green: 0.98, blue: 1))
+        fill(250, 250, 255)
         textSize(18)
         for (row, knob) in knobs.enumerated() {
             text(knob.name, 24, 138 + Float(row) * 100)
