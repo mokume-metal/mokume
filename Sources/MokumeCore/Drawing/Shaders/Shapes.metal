@@ -103,15 +103,11 @@ struct SolidInstance {
     float4 color;
 };
 
-/// 光から見た奥行きを焼き付ける。
+/// 立体の頂点を落とす。
 ///
-/// 頂点を落とすのは**画面と同じ関数**で、渡す行列だけが光から見たものになる —
-/// 焼き付けた形と画面に出る形が違ってしまわないよう、経路を分けない。
-fragment float4 mokume_shadowFragment(ShapeFragmentIn in [[stage_in]]) {
-    // 落とした後の奥行き (0…1)。読む側は同じ数と比べる
-    return float4(in.position.z, 0.0, 0.0, 1.0);
-}
-
+/// **影の焼き付けもこの関数で行う** — 渡す行列だけが光から見たものになり、断片は
+/// 付けない (奥行きの面へは前後判定が書く)。焼き付けた形と画面に出る形が違って
+/// しまわないよう、経路を分けない。
 vertex ShapeFragmentIn solidVertexMain(
     uint index [[vertex_id]],
     uint instance [[instance_id]],

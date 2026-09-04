@@ -105,6 +105,65 @@ struct ShadowTests {
         #expect(first.bytes != second.bytes, "動かしても絵が変わっていない")
     }
 
+    @Test("影の縁は 1 画素で切れず、なめらかに移る")
+    func shadowEdgesAreSoft() throws {
+        // **縁の柔らかさは PCF が作る。** 読む側を 1 点にすると縁は 1 画素で明暗が
+        // 切り替わり、中間の明るさが消える。焼き方・読み方を差し替えたときに
+        // 柔らかさが落ちていないことを、「影なしとの差が最大の 2〜8 割に収まる画素」
+        // の数で見る ([#757])
+        //
+        // [#757]: https://github.com/mokume-metal/mokume/issues/757
+        // 焼き付け先を粗くして、読む 1 画素の footprint が画面の画素より大きくなるように
+        // する。既定の細かさでは footprint が画面の 1 画素に収まり、縁の移りが見えない
+        let coarse: (Canvas) -> Void = { $0.shadowDetail(64) }
+        let lit = try floorAndSphere(try makeCanvas(), shadows: false, extra: coarse)
+        let shadowed = try floorAndSphere(try makeCanvas(), shadows: true, extra: coarse)
+        var drops: [Int] = []
+        for y in 0..<lit.height {
+            for x in 0..<lit.width {
+                drops.append(Int(lit[x, y].red) - Int(shadowed[x, y].red))
+            }
+        }
+        let deepest = drops.max() ?? 0
+        #expect(deepest > 20, "床に影が落ちていない")
+        let partial = drops.filter { $0 > deepest / 5 && $0 < deepest * 4 / 5 }.count
+        #expect(partial > 20, "影の縁に中間の明るさが無い (\(partial) 画素) — PCF が効いていない")
+    }
+
+    // MARK: - 焼き方と読み方
+
+    @Test("焼き付け先は奥行きの面 1 枚で、パスに色の面が無い")
+    func theShadowMapIsDepthOnly() throws {
+        // 奥行きは色の面に数として書くのではなく、**奥行きの面そのものを読む**。色の面を
+        // 持つと 1 画素 4 バイトの書き込みと、それを書く断片の実行が余計にかかる ([#757])
+        //
+        // [#757]: https://github.com/mokume-metal/mokume/issues/757
+        let gpu = try RenderDevice()
+        let map = try ShadowMap(gpu: gpu, detail: 128)
+        #expect(map.texture.pixelFormat == .depth32Float)
+        #expect(map.texture.usage.contains(.shaderRead), "焼いた奥行きを読めない")
+        let pass = map.makeRenderPass()
+        #expect(pass.colorAttachments[0]?.texture == nil, "色の面が付いている")
+        #expect(pass.depthAttachment?.texture === map.texture)
+        #expect(pass.depthAttachment?.storeAction == .store, "焼いた奥行きを捨てている")
+    }
+
+    @Test("影は奥行きの面を compare sampler で読み、焼く側に断片は無い")
+    func shadowsAreReadWithACompareSampler() throws {
+        // パイプラインの中身は組んだ後からは見えないので、組む前の原稿で見る。
+        // 読む側は `depth2d` + `sample_compare` (比較と補間を採取器が行う HW PCF)、
+        // 焼く側は頂点だけで断片を持たない ([#757])
+        //
+        // [#757]: https://github.com/mokume-metal/mokume/issues/757
+        let gpu = try RenderDevice()
+        let common = try gpu.bundledShaderSource(named: "Common")
+        #expect(common.contains("depth2d<float> shadow_texture"), "影の口が奥行きの面ではない")
+        #expect(common.contains("sample_compare("), "影を compare sampler で読んでいない")
+        #expect(!common.contains("texture2d<float> shadow_texture"))
+        let shapes = try gpu.bundledShaderSource(named: "Shapes")
+        #expect(!shapes.contains("mokume_shadowFragment"), "焼く側に断片が残っている")
+    }
+
     // MARK: - 影が減衰させるもの
 
     @Test("影が減衰させるのは直接の光だけ")
@@ -287,12 +346,93 @@ struct ShadowTests {
         // (見る方法は下の「混ませて繰り返す」に書いた)。
         //
         // [#341]: https://github.com/mokume-metal/mokume/issues/341
+        // 形を動かして、3 フレームとも焼き直させる (同じ形なら焼かないので — 下の
+        // 「焼き直さない」)。**焼いた回数と仕掛けの数が一致する**ことを見る
         let canvas = try makeCanvas()
-        for _ in 0..<3 { _ = try floorAndSphere(canvas) }
+        for offset in [-30, 0, 30] as [Float] { _ = try floorAndSphere(canvas, offset: offset) }
+        #expect(canvas.shadowBakesEncoded == 3)
         #expect(canvas.shadowBarriersEncoded == 3, "焼いたのに、待つ仕掛けが積まれていない")
 
         _ = try floorAndSphere(canvas, shadows: false)
         #expect(canvas.shadowBarriersEncoded == 3, "焼いていないフレームにまで積んでいる")
+    }
+
+    // MARK: - 焼き直さない
+
+    @Test("同じ形と光を続けて描いたら、焼くのは最初の 1 回で、絵は毎回焼いたときと同じ")
+    func anUnchangedSceneIsBakedOnce() throws {
+        // **同じ宣言なら実体を作り直さない** (ADR-0021 決定 4) の焼き付け側。光の行列・
+        // 細かさ・落とす列の形と置き場所が前のフレームと同じなら、焼いた面をそのまま
+        // 読む。**絵は焼き直したときと 1 ビットも違わない**ことも見る — 違えば省略では
+        // なく別の絵になる ([#757])
+        //
+        // [#757]: https://github.com/mokume-metal/mokume/issues/757
+        let canvas = try makeCanvas()
+        var pictures: [DisplayImage] = []
+        for _ in 0..<3 { pictures.append(try floorAndSphere(canvas)) }
+        #expect(canvas.shadowBakesEncoded == 1, "同じ形なのに焼き直している")
+        #expect(canvas.shadowBakesReused == 2)
+        let fresh = try floorAndSphere(try makeCanvas())
+        #expect(pictures[2].bytes == fresh.bytes, "焼き直さなかったフレームの絵が違う")
+        #expect(pictures[1].bytes == pictures[0].bytes)
+    }
+
+    @Test("形・光・細かさのどれかが動いたら焼き直す")
+    func changesForceARebake() throws {
+        let canvas = try makeCanvas()
+        _ = try floorAndSphere(canvas)
+        #expect(canvas.shadowBakesEncoded == 1)
+        _ = try floorAndSphere(canvas, offset: 10)
+        #expect(canvas.shadowBakesEncoded == 2, "形を動かしたのに焼き直していない")
+        _ = try floorAndSphere(canvas, offset: 10) {
+            $0.directionalLight(.opaque(red: 0.5, green: 0.5, blue: 0.5), 0.6, 0.6, -0.5)
+        }
+        // extra は floorAndSphere 自身の光の**後**に置くので、落とす光 (最初の向きを
+        // 持つ光) は変わらない — 焼き直さないのが正しい
+        #expect(canvas.shadowBakesEncoded == 2, "落とす光が変わっていないのに焼き直した")
+        _ = try floorAndSphere(canvas, offset: 10) { $0.shadowDetail(512) }
+        #expect(canvas.shadowBakesEncoded == 3, "細かさを変えたのに焼き直していない")
+        _ = try floorAndSphere(canvas, offset: 10, range: 300)
+        #expect(canvas.shadowBakesEncoded == 4, "範囲を変えたのに焼き直していない")
+    }
+
+    @Test("落とす側の切り替えと、影を切った後の復帰でも正しく焼く")
+    func castingChangesAndResumingAreHandled() throws {
+        let canvas = try makeCanvas()
+        let casting = try floorAndSphere(canvas)
+        // 落とす形を 1 つ足す — 落とす列が増えるので焼き直す (extra は床より先に
+        // 置かれ、落とす側の既定 true のまま列になる)
+        _ = try floorAndSphere(canvas) { canvas in
+            canvas.push()
+            canvas.translate(100, 8, 30)
+            canvas.sphere(6)
+            canvas.pop()
+        }
+        #expect(canvas.shadowBakesEncoded == 2, "落とす列が変わったのに焼き直していない")
+        // 影を切ったフレームは焼かない。戻したら、前に焼いたものと同じ形なら焼き直さなくてよいが、
+        // 絵は焼いたときと同じでなければならない
+        _ = try floorAndSphere(canvas, shadows: false)
+        let resumed = try floorAndSphere(canvas)
+        #expect(resumed.bytes == casting.bytes, "影を戻したフレームの絵が違う")
+    }
+
+    @Test("GPU が埋める置き場所 (粒) を落とす側に含む列は、毎フレーム焼く")
+    func externallyPlacedInstancesAlwaysRebake() throws {
+        // 粒の置き場所は GPU が書くので、CPU からは前のフレームと同じかどうかが分からない。
+        // 分からないものは焼く側に倒す (遅くなるだけで絵を間違えない)
+        let canvas = try makeCanvas()
+        let dust = try canvas.makeParticles(count: 64)
+        var randomness = Randomness(seed: 7)
+        for _ in 0..<3 {
+            _ = try floorAndSphere(canvas) { canvas in
+                canvas.emit(
+                    dust, from: .point(64, 0), rate: 300, speed: 20...45,
+                    angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                    color: .opaque(red: 1, green: 0.6, blue: 0.2), using: &randomness)
+                canvas.particles(dust)
+            }
+        }
+        #expect(canvas.shadowBakesEncoded == 3, "粒を含むのに焼き直していない")
     }
 
     /// 焼き付けと画面が重なっていないことを、繰り返して確かめる。

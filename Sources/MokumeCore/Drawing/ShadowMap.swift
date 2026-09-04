@@ -25,16 +25,24 @@ import simd
 /// 書いても確保は最初の 1 回だけになる。
 ///
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+/// ## 面は奥行きの 1 枚だけ
+///
+/// **当初は 2 枚だった** — 奥行きを数として読むために `r32Float` の色の面へ断片が
+/// `position.z` を書き、前後判定のために同じ大きさの奥行きの面をもう 1 枚添えていた。
+/// 前後判定が書き込む奥行きと、断片が色の面に書く数は**同じ値**なので、奥行きの面を
+/// 読める形で持てば色の面も断片も要らない。1 画素 4 バイトの書き込みと断片の実行が
+/// 焼き付けから消え、読む側は比較を採取器に任せられる (`Common.metal` の
+/// `kShadowSampler`)。焼き付けるパイプラインは頂点だけで組む ([#757])。
+///
+/// [#757]: https://github.com/mokume-metal/mokume/issues/757
 final class ShadowMap {
     /// 一辺の画素数。
     let detail: Int
-    /// 光から見た奥行きを入れる面。
+    /// 光から見た奥行き。焼くときは前後判定の面、読むときは `depth2d` の面。
     let texture: any MTLTexture
-    /// 焼き付けるときの前後判定に使う面。
-    private let depthTexture: any MTLTexture
 
-    /// 焼き付け先の画素の形式。**奥行きを数として読む**ので色の面を使う。
-    static let pixelFormat: MTLPixelFormat = .r32Float
+    /// 焼き付け先の画素の形式。奥行きの面そのもので、色の面は持たない。
+    static let pixelFormat: MTLPixelFormat = RenderTarget.depthFormat
 
     /// 一辺の画素数の下限と上限。
     static let detailRange = 64...4096
@@ -43,42 +51,33 @@ final class ShadowMap {
 
     init(gpu: RenderDevice, detail: Int) throws(RenderFailure) {
         self.detail = detail
-
-        let color = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: Self.pixelFormat, width: detail, height: detail, mipmapped: false)
-        color.usage = [.renderTarget, .shaderRead]
-        color.storageMode = .private
-        let texture = try gpu.makeTexture(descriptor: color)
+        let texture = try gpu.makeTexture(descriptor: Self.descriptor(side: detail))
         texture.label = "mokume.shadow"
         self.texture = texture
-
-        let depth = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: RenderTarget.depthFormat, width: detail, height: detail,
-            mipmapped: false)
-        depth.usage = [.renderTarget]
-        depth.storageMode = .private
-        let depthTexture = try gpu.makeTexture(descriptor: depth)
-        depthTexture.label = "mokume.shadow.depth"
-        self.depthTexture = depthTexture
     }
 
-    /// 焼き付けるパスの記述。
+    /// 奥行きの面の記述。**読める奥行きの面**なので、焼いていないフレームに束ねる
+    /// 1 画素の面 (`Canvas`) も同じ形で作る — 口の型 (`depth2d`) に合わないものを
+    /// 束ねないため。
+    static func descriptor(side: Int) -> MTLTextureDescriptor {
+        let depth = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: pixelFormat, width: side, height: side, mipmapped: false)
+        depth.usage = [.renderTarget, .shaderRead]
+        depth.storageMode = .private
+        return depth
+    }
+
+    /// 焼き付けるパスの記述。**色の面は付けない。**
     ///
     /// **いちばん奥 (1) で塗り潰してから始める。** 何も焼かれなかったところは
     /// 「無限に遠い」= 何にも遮られていない、という意味になる。
     func makeRenderPass() -> MTL4RenderPassDescriptor {
         let pass = MTL4RenderPassDescriptor()
-        let attachment = pass.colorAttachments[0]!
-        attachment.texture = texture
-        attachment.loadAction = .clear
-        attachment.clearColor = MTLClearColor(red: 1, green: 1, blue: 1, alpha: 1)
-        attachment.storeAction = .store
-
         let depth = pass.depthAttachment!
-        depth.texture = depthTexture
+        depth.texture = texture
         depth.loadAction = .clear
         depth.clearDepth = 1
-        depth.storeAction = .dontCare
+        depth.storeAction = .store
         return pass
     }
 
