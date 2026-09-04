@@ -181,4 +181,29 @@ struct SharedFrameStageTests {
     func placementNamesDiffer() {
         #expect(WindowPlacement.autosaveName != WindowPlacement.previewAutosaveName)
     }
+
+    /// **畳み忘れが、黙って残り続ける形にしない** (#738)。
+    ///
+    /// 表示のリフレッシュに紐づけた仕掛けは相手を強く持つので、台が自分でそれを持つと
+    /// 環になる。環になっている間、台は手放しても解放されず、しかもリフレッシュのたびに
+    /// 区画を読み直し続ける — 症状は「メモリが減らない」だけで、原因からは遠い。
+    @Test("close() を呼ばずに手放しても、台は解放される")
+    func droppingTheStageReleasesIt() throws {
+        weak var dropped: SharedFrameStage?
+        try withFacet { facet in
+            let stage = try SharedFrameStage(
+                gpu: RenderDevice(), facet: facet, look: look("dropped"))
+            stage.open()
+            stage.window?.orderOut(nil)
+            dropped = stage
+        }
+        #expect(
+            dropped == nil,
+            """
+            close() を呼ばずに手放した台が、まだ生きている。
+
+            表示のリフレッシュの仕掛けが台を強く持っていると、手放しても解放されず、
+            リフレッシュのたびに走り続ける ([#738](https://github.com/mokume-metal/mokume/issues/738))。
+            """)
+    }
 }

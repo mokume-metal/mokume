@@ -277,7 +277,7 @@ struct ComputeTests {
         canvas.compute(ramp, over: 32, writes: [heat])
         #expect(canvas.pendingComputations.isEmpty)
         // **黙って何も起きるのではない** — 理由を 1 度知らせたことが残る
-        #expect(canvas.warnedComputeOutsideFrame)
+        #expect(canvas.warnings.hasWarned(.computeOutsideFrame))
 
         try canvas.draw { canvas.background(.display(red: 0, green: 0, blue: 0)) }
         #expect(canvas.computeEncodersOpened == 0)
@@ -310,7 +310,7 @@ struct ComputeTests {
 
         try canvas.draw { canvas.compute(ramp, over: 32, writes: many) }
         #expect(canvas.computeEncodersOpened == 0)
-        #expect(canvas.warnedTooManyComputeBuffers)
+        #expect(canvas.warnings.hasWarned(.tooManyComputeBuffers))
     }
 
     @Test("並びを渡していない塗りは、読んでも落ちない")

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 // 表面の質感を決める。式と寿命は ``Material`` と [ADR-0021] 決定 4 が定める。
@@ -65,18 +64,16 @@ extension Canvas {
 
     /// フレームの外で材質を書いたことを、初回だけ知らせる。
     private func warnMaterialOutsideFrame() {
-        guard !warnedMaterialOutsideFrame else { return }
-        warnedMaterialOutsideFrame = true
-        Diagnostics.warn(
+        warnOnce(
+            .materialOutsideFrame,
             "材質はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
                 + "初期化のときに書いた材質はどのフレームにも属さないため、無視しました")
     }
 
     /// 受け取れない値を、初回だけ知らせる。
     private func warnBadMaterial(_ name: String) {
-        guard !warnedBadMaterial else { return }
-        warnedBadMaterial = true
-        Diagnostics.warn(
+        warnOnce(
+            .badMaterial,
             "\(name)(): 数でない値・無限・範囲の外の値が渡されたので、材質を変えませんでした")
     }
 }

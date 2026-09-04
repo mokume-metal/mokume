@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import Metal
-import MokumeDiagnostics
 import simd
 
 // 拡大。意味の説明は利用者が最初に触る層 (`Sketch`) が正本で、ここは受け口である
@@ -27,9 +26,7 @@ extension Canvas {
         do {
             try encodeUpscale(stage, into: commands)
         } catch {
-            guard !warnedUpscaleFailed else { return }
-            warnedUpscaleFailed = true
-            Diagnostics.warn("拡大を通せませんでした: \(error.headline)")
+            warnOnce(.upscaleFailed, "拡大を通せませんでした: \(error.headline)")
         }
     }
 

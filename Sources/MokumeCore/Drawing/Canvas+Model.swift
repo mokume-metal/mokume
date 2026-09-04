@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 // 外で作ったモデルを読んで置く。整え方は ``Model`` が定める。
@@ -65,9 +64,8 @@ extension Canvas {
     /// **読めなかったのとは違う。** 投げてしまうと、利用者は読み込みの側を直そうと
     /// して、実際には空のファイルを渡しているという事実に辿り着けない。
     private func warnEmptyModel(_ model: Model) {
-        guard !warnedEmptyModel else { return }
-        warnedEmptyModel = true
-        Diagnostics.warn(
+        warnOnce(
+            .emptyModel,
             "「\(model.name)」は読めましたが、面が 1 つもありません "
                 + "(読み飛ばした行 \(model.skippedLines))。置いても何も出ません")
     }

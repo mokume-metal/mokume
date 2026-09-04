@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 // 保持した形。意味の説明は利用者が最初に触る層 (`Sketch`) が正本で、ここは受け口である
@@ -194,9 +193,8 @@ extension Canvas {
 
     /// 置けない置き場所を、初回だけ知らせる。
     private func warnBadPlacement() {
-        guard !warnedBadPlacement else { return }
-        warnedBadPlacement = true
-        Diagnostics.warn(
+        warnOnce(
+            .badPlacement,
             "shape(at:): 数でない値・無限を含む置き場所があったので、その分は置きませんでした")
     }
 }
