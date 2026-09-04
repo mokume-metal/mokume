@@ -56,7 +56,10 @@ struct FixedFunctionBlendTests {
     func eachBlendKindHasItsOwnPipeline() throws {
         let gpu = try RenderDevice()
         let pipeline = try ShapePipeline(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
-        for states in [pipeline.states, pipeline.solidStates, pipeline.formStates] {
+        let groups =
+            [pipeline.states, pipeline.solidStates]
+            + (1...3).map { pipeline.formStates(for: UInt32($0)) }
+        for states in groups {
             let blend = states.state(for: .blend)
             let replace = states.state(for: .replace)
             let multiply = states.state(for: .multiply)

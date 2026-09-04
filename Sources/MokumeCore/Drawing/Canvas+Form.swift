@@ -18,6 +18,13 @@ extension Canvas {
     struct OpenForm {
         /// 置き場所の並びの中で、この列が始まる位置。
         var instanceStart: Int
+        /// この列の図形が持つもの (塗り・輪郭)。**列の中で揃っている。**
+        ///
+        /// 断片は有無で特化してあり (`kFormHasFill` / `kFormHasStroke`)、パイプラインが
+        /// 組ごとに分かれるので、変わったら列を閉じる ([#771])。
+        ///
+        /// [#771]: https://github.com/mokume-metal/mokume/issues/771
+        var flags: UInt32
     }
 
     /// 基本図形をこの経路で描いてよいか。
@@ -33,16 +40,26 @@ extension Canvas {
     ///
     /// 列に入る置き場所が上限 (``instanceCapacity``) に達したら閉じて開き直す。
     /// 描く回数が増えるだけで、絵は 1 ビットも変わらない。
-    func beginForm() {
+    ///
+    /// **塗り / 輪郭の有無が変わっても閉じる。** 断片は有無で特化してあるので、
+    /// 組ごとにパイプラインが違う ([#771])。寸法違い・種別違い・色違い・変換違いは
+    /// 今までどおり 1 列に並ぶ — 切れるのは「塗りを持つ図形」と「持たない図形 (線と点)」
+    /// の境目だけで、これは #424 の畳みが `hasFill` / `hasStroke` を鍵に含めていた
+    /// 頃と同じ粒度である。
+    ///
+    /// [#771]: https://github.com/mokume-metal/mokume/issues/771
+    func beginForm(flags: UInt32) {
         if openSource != .form {
             closeBatch()
             openSource = .form
         }
-        if let open = openForm, formInstances.count - open.instanceStart >= instanceCapacity {
+        if let open = openForm,
+            open.flags != flags || formInstances.count - open.instanceStart >= instanceCapacity
+        {
             closeBatch()
         }
         if openForm == nil {
-            openForm = OpenForm(instanceStart: formInstances.count)
+            openForm = OpenForm(instanceStart: formInstances.count, flags: flags)
         }
     }
 
@@ -69,7 +86,8 @@ extension Canvas {
                 surroundings: .none,
                 castsShadow: false,
                 instanceStart: open.instanceStart,
-                instanceCount: count))
+                instanceCount: count,
+                formFlags: open.flags))
     }
 
     /// 基本図形を 1 つ置く。
@@ -109,7 +127,7 @@ extension Canvas {
             currentStrokeWeight.isFinite, arc.x.isFinite, arc.y.isFinite
         else { return }
 
-        beginForm()
+        beginForm(flags: instance.meta.w)
         formInstances.append(instance)
     }
 

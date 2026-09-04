@@ -152,7 +152,7 @@ extension Canvas {
             let moved = form.placed(by: matrix, tint: placement.fill)
             // 潰れた変換で置いた形は面積を持たない (直に描いたときと同じく何も出ない)
             guard moved.isPlaceable else { continue }
-            beginForm()
+            beginForm(flags: moved.meta.w)
             formInstances.append(moved)
         }
     }

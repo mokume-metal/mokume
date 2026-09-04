@@ -182,6 +182,21 @@ constant uint kFormJoinRound = 2;
 constant uint kFormFills = 1;
 constant uint kFormStrokes = 2;
 
+/// この列の図形が塗りを持つか・輪郭を持つか。**列ごとに決まる** ([#771])。
+///
+/// 旗を置き場所から読んで枝で分けていた頃は、輪郭を 1 本も描かない絵でも輪郭の距離場と
+/// 被覆の式が組み上がった原稿に残っていた。**この GPU では、走らない綴りも居るだけで
+/// 費用になる** — 面を覆う矩形 200 枚で 2.6 ms が、実行時には 1 度も通らない輪郭の綴りに
+/// 押さえられていた (枝を実行時に飛ばす形では 1 ミリ秒も縮まなかった)。組で特化すると、
+/// その列に無い側の綴りは原稿から消える。
+///
+/// 代償は列が塗り / 輪郭の有無で切れること (`Canvas.beginForm`)。寸法違い・種別違い・
+/// 色違い・変換違いは今までどおり 1 列に並ぶ。
+///
+/// [#771]: https://github.com/mokume-metal/mokume/issues/771
+constant bool kFormHasFill [[function_constant(0)]];
+constant bool kFormHasStroke [[function_constant(1)]];
+
 /// 縁を滑らかにする余白 (画素)。被覆が 0 になるのは縁から 0.5 画素なので、微分の
 /// 揺れを見込んで 2 画素取る
 constant float kFormMargin = 2.0;
@@ -398,8 +413,6 @@ static inline FormPaint mokume_formPaint(
     float2 p = in.local;
     float halfWeight = form.size.z;
     uint kind = form.meta.x;
-    bool fills = (form.meta.w & kFormFills) != 0;
-    bool strokes = (form.meta.w & kFormStrokes) != 0;
 
     // 塗りの距離場と、輪郭の**外縁**・**内縁**の距離場。輪郭は「外縁の内側で内縁の外側」
     FormField fill = mokume_field(1e6, float2(1.0, 0.0));
@@ -408,11 +421,8 @@ static inline FormPaint mokume_formPaint(
     if (kind == kFormRect) {
         float2 extent = form.size.xy;
         // 塗りだけ半画素戻す (頂点関数の説明)。輪郭は戻さない
-        if (fills) { fill = mokume_boxField(p + in.fillShift, extent); }
-        // **輪郭を持たないときは 2 つの箱を評価しない。** 使わない値なので絵は 1 ビットも
-        // 変わらないが、面を覆う矩形を重ねる絵では距離の評価が丸ごと断片の費用になる
-        // (輪郭なしの矩形で箱が 3 つから 1 つに減る)
-        if (strokes) {
+        if (kFormHasFill) { fill = mokume_boxField(p + in.fillShift, extent); }
+        if (kFormHasStroke) {
             // 角の形は外縁だけが持つ。内縁は帯が重なって必ず直角 (三角形のときと同じ)
             if (form.meta.z == kFormJoinRound) {
                 outer = mokume_grown(mokume_boxField(p, extent), halfWeight);
@@ -440,7 +450,7 @@ static inline FormPaint mokume_formPaint(
         fill = mokume_sectorField(p, form.size.xy, form.offset.z, form.offset.w);
         outer = mokume_grown(fill, halfWeight);
         inner = mokume_grown(fill, -halfWeight);
-    } else {
+    } else if (kFormHasStroke) {
         // 線。塗りは持たず、線そのものの距離場を輪郭の外縁として使う
         float halfLength = form.size.x;
         if (form.meta.y == kFormCapRound) {
@@ -454,15 +464,20 @@ static inline FormPaint mokume_formPaint(
             outer = mokume_boxField(p, float2(halfLength + halfWeight, halfWeight));
         }
         // 内縁は無い (被覆 0 にするため、必ず外側に置いたまま)
-        fills = false;
     }
 
     FormPaint paint;
-    paint.fillCoverage = fills ? mokume_formCoverage(fill, in.inverseRows) : 0.0;
-    paint.strokeCoverage = strokes
-        ? mokume_formCoverage(outer, in.inverseRows)
-            * (1.0 - mokume_formCoverage(inner, in.inverseRows))
-        : 0.0;
+    paint.fillCoverage = 0.0;
+    paint.strokeCoverage = 0.0;
+    // **線と点は塗りを持たない。** 旗で列が切れるので塗りのある列には混ざらないが、
+    // 種別は列の中で混ざるので、ここで名指しして外す
+    if (kFormHasFill && kind != kFormLine) {
+        paint.fillCoverage = mokume_formCoverage(fill, in.inverseRows);
+    }
+    if (kFormHasStroke) {
+        paint.strokeCoverage = mokume_formCoverage(outer, in.inverseRows)
+            * (1.0 - mokume_formCoverage(inner, in.inverseRows));
+    }
     paint.fill = form.fill * paint.fillCoverage;
     paint.stroke = form.stroke * paint.strokeCoverage;
     return paint;

@@ -626,6 +626,12 @@ public final class Canvas {
         /// 畳めない列は**何も動かさない置き場所を 1 つ**指す (平面なら添字 0)。
         var instanceStart: Int = 0
         var instanceCount: Int = 1
+        /// 基本図形の列が持つもの (塗り・輪郭)。**基本図形の列だけが使う。**
+        ///
+        /// 断片は有無で特化してあるので、この組がパイプラインを選ぶ ([#771])。
+        ///
+        /// [#771]: https://github.com/mokume-metal/mokume/issues/771
+        var formFlags: UInt32 = 0
         /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。
         var instances: (any MTLBuffer)?
         /// 描く個数を GPU が書いた引数。`nil` なら `instanceCount` で描く (いつもの経路)。
@@ -2481,7 +2487,8 @@ public final class Canvas {
                 case .form:
                     // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
                     // 平面と同じ (常に通し・書かない)
-                    encoder.setRenderPipelineState(pipeline.formStates.state(for: run.mode))
+                    encoder.setRenderPipelineState(
+                        pipeline.formStates(for: batch.formFlags).state(for: run.mode))
                     encoder.setDepthStencilState(pipeline.flatDepthState)
                     pipeline.argumentTable.setAddress(
                         formBuffer.gpuAddress
