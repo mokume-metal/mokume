@@ -67,6 +67,9 @@ extension Canvas {
     ///
     /// 光も材質も周囲も効かない (平面は光を受けない)。読む面も無いが、区間の形を
     /// 保持した形と揃えるため `texture` にはいまの面を入れておく。
+    ///
+    /// **塗りは常に組み込みのもの。** この経路へ来られるのは断片が効いていない図形だけで
+    /// (``formAllowed(fills:)``)、描くのも基本図形専用のパイプラインである。
     func closeFormBatch() {
         guard let open = openForm else { return }
         openForm = nil
@@ -76,7 +79,7 @@ extension Canvas {
             Batch(
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
-                    shader: nil, values: [], surfaces: [], numbers: nil,
+                    paint: .builtIn,
                     source: .form, start: open.instanceStart, count: count),
                 clip: currentClip,
                 matrix: jittered(projection),
