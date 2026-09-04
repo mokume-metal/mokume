@@ -20,7 +20,9 @@
 # 画面が要る。ヘッドレスの実行環境では走らない。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+# **自分の隣を基準にする。** `$0` は source されると呼び出し側を指し、cwd にも依存する
+# (#820)。`BASH_SOURCE` はこのファイル自身の場所で、`pwd -P` が symlink も解く
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 if [ "${1:-}" = "--observe" ]; then
   shift
