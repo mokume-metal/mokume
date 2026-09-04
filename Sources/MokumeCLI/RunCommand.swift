@@ -26,22 +26,35 @@ enum RunCommand {
         // 不具合を新しい不具合として起票させる** (#633 が実際にそうなった)。名乗りが help と
         // 切り分けの口にしか無いと、いちばん長く見ている画面に出ない (#684)
         print("道具: \(ToolVersion.describe())")
-        // **黙って窓が出ないことを許さない。** 区画が在ればスケッチは窓を開かず共有面へ
-        // 差し出す。置いたのはふつう見張りで、見張りは終わるときに畳む — 残っているのは
-        // 畳めずに終わったときなので、そう言わないと「起動したのに何も出ない」になる
-        if FileManager.default.fileExists(
-            atPath: WorkDirectory.facet(StartupReads.viewport.key, under: directory).path)
-        {
-            print(
-                "画面の出口が共有する面になっている (.mokume/\(StartupReads.viewport.key) が在る) —"
-                    + " 窓は出ない。窓で見たいなら、その区画を消す")
-        }
+        if let notice = sharedSurfaceNotice(for: invocation) { print(notice) }
 
         try build(in: directory, configuration: invocation.configuration)
         let executable = try executablePath(in: directory, configuration: invocation.configuration)
         // 走らせるのは人なので、速さを名乗らせる。窓口はここを通らない。
         // **名乗る名前は、いま走らせる構成と同じ値から出す**
         try launch(executable, in: directory, reportingRate: invocation.configurationName)
+    }
+
+    /// 画面の出口が共有する面になっていることを名乗る 1 行。区画が無ければ `nil`。
+    ///
+    /// **黙って窓が出ないことを許さない。** 区画が在ればスケッチは窓を開かず共有面へ
+    /// 差し出す。置いたのはふつう見張りで、見張りは終わるときに畳む — 残っているのは
+    /// 畳めずに終わったときなので、そう言わないと「起動したのに何も出ない」になる。
+    ///
+    /// **見に行く先は、見張りが置く先と同じ計算から出す。** ここが自前で場所を組んで
+    /// いたために、`MOKUME_WORK_DIR` を与えた環境ではまさにその「起動したのに何も
+    /// 出ない」が名乗られないまま起きていた
+    /// ([#791](https://github.com/mokume-metal/mokume/issues/791))。
+    static func sharedSurfaceNotice(
+        for invocation: Invocation, workDirectory: URL? = WorkDirectory.given
+    ) -> String? {
+        let base = invocation.facetBase(workDirectory: workDirectory)
+        let facet = WatchCommand.viewportFacet(under: base)
+        guard FileManager.default.fileExists(atPath: facet.path) else { return nil }
+        // **在処をそのまま出す。** 基準は環境変数が動かせるので、`.mokume/…` とだけ
+        // 言うとスケッチの場所を探して「無い」と読まれる (#791)
+        return "画面の出口が共有する面になっている (\(facet.path) が在る) —"
+            + " 窓は出ない。窓で見たいなら、その区画を消す"
     }
 
     /// 作り直す。出力はそのまま流す — 失敗したときに読むのは人なので、道具が

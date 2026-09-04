@@ -22,7 +22,10 @@
 
 set -uo pipefail
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 
 # 投稿済み判定の目印。個人環境の同種フック (plan-record: <id>) と混ざらないよう
 # 接頭辞を分ける — 両方が動いていても互いの記録を「投稿済み」と誤読しない

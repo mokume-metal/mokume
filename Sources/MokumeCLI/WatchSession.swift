@@ -61,6 +61,38 @@ final class WatchSession {
         }
     }
 
+    /// 子を止めた結果。
+    enum StopOutcome: Equatable {
+        /// 居なかった (まだ起こしていない・既に死んでいた)。
+        case notRunning
+        /// 頼んだら止まった。
+        case terminated
+        /// 頼んでも止まらないので、期限で強制的に落とした。
+        case killed
+        /// **強制終了しても消えなかった。** 置いていくしかない。
+        ///
+        /// `SIGKILL` は捕まえられないが、割り込めない待ち (GPU の中で固まった子など) に
+        /// 入っているものは即座には消えない。**ここを `killed` と名乗ると「置いていかない」
+        /// が黙って破れる**ので、別の結果として持つ (#732)。
+        ///
+        /// 番号を載せるのは、**残ったものを人が落とせるようにする**ためである
+        /// (`scripts/orphan-processes.sh` が出すものと同じ数字)。
+        case abandoned(pid: Int32)
+    }
+
+    /// 止まるのを待つ上限 (秒)。
+    ///
+    /// **3 秒という値に意味があるのではなく、桁が離れていることに意味がある** — 素直に
+    /// 終わるスケッチは数ミリ秒で消え、応えないものは永久に消えない。人が「固まった」と
+    /// 感じる前に決着する側へ寄せる。
+    static let defaultStopTimeout: TimeInterval = 3
+
+    /// 強制終了した後に、消えるのを待つ上限 (秒)。
+    ///
+    /// **短く取る。** `SIGKILL` は届けば即座に効くので、ここで長く待って得るものが無い —
+    /// この待ちは差し替えのたびにも払うので、最悪値をそのぶん押し上げる。
+    static let killGrace: TimeInterval = 0.5
+
     /// スケッチのパッケージの場所。ビルドと世代の判定はここで行う。
     let directory: URL
     /// 区画の基準。**パッケージの場所とは別の軸** — スケッチは `MOKUME_WORK_DIR` に従って
@@ -75,6 +107,14 @@ final class WatchSession {
 
     /// いま走らせている子。
     private(set) var child: Process?
+    /// 止まるのを待つ上限 (秒)。**検査から縮める** — 既定で待つと、期限を確かめる検査が
+    /// そのぶん遅くなる。
+    let stopTimeout: TimeInterval
+    /// 直前に子を止めたときの結果。**差し替えのときも入る。**
+    ///
+    /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。期限に
+    /// 掛かったことは保存のたびにも起こりうるので、終わるときだけ見ても足りない (#732)。
+    private(set) var lastStop: StopOutcome?
     /// 最後に作り直したときのソースの世代。
     private(set) var lastStamp: String?
     /// 直近の作り直しの結果。
@@ -99,13 +139,15 @@ final class WatchSession {
     ///   既定引数では作れない (構成が決まるのは初期化の中である)。
     init(
         directory: URL, facetBase: URL? = nil, configuration: String? = nil,
-        reportsRate: Bool = false, hooks: Hooks? = nil
+        reportsRate: Bool = false, hooks: Hooks? = nil,
+        stopTimeout: TimeInterval = WatchSession.defaultStopTimeout
     ) {
         self.directory = directory
         self.facetBase = facetBase ?? directory
         self.configuration = configuration
         self.reportsRate = reportsRate
         self.hooks = hooks ?? .live(configuration: configuration)
+        self.stopTimeout = stopTimeout
     }
 
     /// 1 巡する。変化が無ければ何もしない。
@@ -142,20 +184,65 @@ final class WatchSession {
 
     /// 走らせているものを終わらせる。
     ///
-    /// - Returns: 実際に止めたか。**既に居ない・既に死んでいる**ときは `false` で、
-    ///   呼ぶ側はそれを別の出来事として名乗れる (見張りの終わり方が 2 通りある)。
+    /// **期限を持つ。** 頼んで止まらなければ強制的に落とす — 子は人が書いたスケッチなので、
+    /// `SIGTERM` を捕まえて戻らない形はいつでも作れる。期限が無いと**終われないだけでなく、
+    /// 保存のたびに固まる**: 差し替えもこの経路を通るからである
+    /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。
+    ///
+    /// - Returns: 3 通りの結果。呼ぶ側はそれぞれを別の出来事として名乗れる。
     @discardableResult
-    func stop() -> Bool {
-        guard let child, child.isRunning else { return false }
-        child.terminate()
-        child.waitUntilExit()
-        self.child = nil
+    func stop() -> StopOutcome {
+        guard let running = child, running.isRunning else {
+            child = nil
+            lastStop = .notRunning
+            return .notRunning
+        }
+        running.terminate()
+        if waitForExit(running, timeout: stopTimeout) {
+            child = nil
+            lastStop = .terminated
+            return .terminated
+        }
+        // **宛先を確かめてから撃つ。** 起動していない `Process` の番号は 0 で、
+        // `kill(0, …)` は**自分のプロセスグループごと**落とす。上の guard が弾いている
+        // 形だが、暗黙に頼らない
+        let pid = running.processIdentifier
+        if pid > 0, running.isRunning { kill(pid, SIGKILL) }
+        // **消えたことを確かめる。** 捕まえられない合図でも、割り込めない待ちに入って
+        // いるものは即座には消えない — 確かめずに名乗ると、置いていったものを
+        // 「止めた」と言うことになる (#732)
+        let gone = waitForExit(running, timeout: Self.killGrace)
+        child = nil
+        let outcome: StopOutcome = gone ? .killed : .abandoned(pid: pid)
+        lastStop = outcome
+        return outcome
+    }
+
+    /// 終わるのを、期限まで待つ。
+    ///
+    /// **時計は ``Hooks`` に載せない。** 差し替えられた時計で測ると、期限が永久に来ないか
+    /// 即座に来るかのどちらかになる (検査の時計は 0 を返す) — ここで見ているのは
+    /// 「実際にどれだけ待ったか」であって、記録に載る所要時間ではない。
+    ///
+    /// - Parameter timeout: 待つ上限 (秒)。
+    /// - Returns: 期限までに終わったか。
+    private func waitForExit(_ child: Process, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while child.isRunning {
+            if Date() >= deadline { return false }
+            // **細かく刻む。** 差し替えのときもここを通るので、粗いと保存の反映が
+            // そのぶん遅れて見える
+            Thread.sleep(forTimeInterval: 0.005)
+        }
         return true
     }
 
     private func rebuildAndReplace(stamp: String?, initial: Bool = false) -> BuildReport {
         let detectMs = noticedAt.map { (hooks.now() - $0) * 1000 }
         noticedAt = nil
+        // **前の巡回の止め方を持ち越さない。** 作り直しが通らなければこの回は子を止めない
+        // ので、消さずにおくと**何も止めていない回に**「強制終了した」と名乗ることになる
+        lastStop = nil
 
         // **始めることを、始める前に言う。** 作り直しはこの流れを塞ぐので、後から言うと
         // 待っている間が無言になる (#695)
@@ -201,10 +288,7 @@ final class WatchSession {
 
     /// 結果を区画へ置く。観測と同じ流儀 (原子的に書く)。
     private func write(_ report: BuildReport) {
-        let url = facetBase
-            .appendingPathComponent(".mokume", isDirectory: true)
-            .appendingPathComponent("build", isDirectory: true)
-            .appendingPathComponent("status.json")
+        let url = BuildReport.statusURL(under: facetBase)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(report) else { return }
