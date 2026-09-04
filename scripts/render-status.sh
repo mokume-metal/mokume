@@ -45,8 +45,11 @@ set -euo pipefail
 # 描画 PR の順番の判定も catch-up.sh と共有する (#457)
 # shellcheck source=scripts/drawing-queue.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-queue.sh"
+# 報告の context の綴りも catch-up.sh と共有する。**打つ側と探す側で割れると、覆いが
+# 永久に見つからない** — 割れ方は render-context.sh の冒頭が持つ (#785)
+# shellcheck source=scripts/render-context.sh
+. "$(dirname "${BASH_SOURCE[0]}")/render-context.sh"
 
-readonly CONTEXT=local-render
 # scene-ledger の suite 名。**この名前が走って通ったこと**を、GPU のある機械で
 # 全検査が回った証拠として使う (SceneLedgerTests.swift の @Suite 名と一致させる)。
 readonly LEDGER_SUITE='代表シーンの台帳'
@@ -54,7 +57,7 @@ readonly LEDGER_SUITE='代表シーンの台帳'
 TEST_LOG=${RENDER_TEST_LOG:-.build/test-log.txt}
 LEDGER=${RENDER_LEDGER:-Tests/MokumeCoreTests/scene-ledger.txt}
 
-say() { echo "$CONTEXT: $*"; }
+say() { echo "$RENDER_CONTEXT: $*"; }
 give_up() { say "報告しない — $1"; exit 0; }
 
 # 対象リポジトリを origin から導く (owner/repo)。
@@ -74,7 +77,7 @@ resolve_repo() {
 post() {
   local repo=$1 sha=$2 state=$3 description=$4
   if gh api -X POST "repos/$repo/statuses/$sha" \
-    -f state="$state" -f context="$CONTEXT" -f description="$description" --silent; then
+    -f state="$state" -f context="$RENDER_CONTEXT" -f description="$description" --silent; then
     say "報告: $sha → $state ($description)"
   else
     say "報告できなかった — この commit がまだ remote に無いか、権限が無い"
@@ -159,9 +162,11 @@ report_target() {
 # 呼ぶ側が今までどおり head の木で判定する。
 covered_fingerprint() {
   local repo=$1 head=$2 description
+  # **綴りは打つ側と同じ出どころから取る** (#785)。gh api に --arg は無いので、
+  # フィルタへシェルが展開する (gh-app-token.sh / report-ruleset-drift.sh と同じ形)
   description=$(gh api "repos/$repo/commits/$head/statuses" \
-    --jq 'map(select(.context == "local-render" and .state == "success"))
-          | first | .description // ""') || return 1
+    --jq "map(select(.context == \"$RENDER_CONTEXT\" and .state == \"success\"))
+          | first | .description // \"\"") || return 1
   printf '%s' "$description" | sed -n 's/.*covers=\([0-9a-f][0-9a-f]*\).*/\1/p'
 }
 

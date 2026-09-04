@@ -268,6 +268,19 @@ class CatchUpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertEqual(self.merged_calls(), [])
 
+    # --- 報告の context の綴り -------------------------------------------
+
+    def test_報告を探す綴りは共有の出どころに従う(self):
+        """打つのは render-status.sh・探すのはここ、と役割が分かれている (#785)。
+        ここが直書きに戻ると、改名した綴りで打たれた報告を永久に見つけられない。"""
+        proc = self.run_script(RENDER_CONTEXT="別の綴り")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        queries = [c for c in self.gh_calls.read_text().splitlines()
+                   if "/statuses" in c]
+        self.assertEqual(len(queries), 1, queries)
+        self.assertIn("別の綴り", queries[0])
+        self.assertNotIn("local-render", queries[0])
+
     # --- 通る場面 (0) -----------------------------------------------------
 
     def test_main_を取り込んで_queue_へ戻す(self):
