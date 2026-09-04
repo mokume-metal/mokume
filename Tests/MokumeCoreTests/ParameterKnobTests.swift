@@ -83,6 +83,27 @@ struct KnobTextTests {
         #expect(KnobText.value(of: .color(.opaque(red: 1, green: 0, blue: 0))) == "#FF0000")
     }
 
+    @Test("窓の 16 進は、書いた色の綴りと一致する")
+    func hexMatchesTheColorAsWritten() {
+        // **1.0 と 0.0 は線形でもエンコード値でも同じ**なので、上の検査だけでは
+        // 転送関数を通し忘れても気付けなかった (#746)。中間調で見る
+        #expect(KnobText.value(of: .color(.display(red: 0.5, green: 0.5, blue: 0.5))) == "#808080")
+        #expect(KnobText.value(of: .color(color(hex: 0xFF_CC00))) == "#FFCC00")
+    }
+
+    @Test("半透明の色も、書いた綴りのまま出る")
+    func hexIgnoresTheAlphaMultiplication() {
+        // 作業空間はアルファ乗算済み (ADR-0011 決定 4) なので、掛け戻さないと
+        // 薄い色ほど暗い綴りになる
+        #expect(KnobText.value(of: .color(color(255, 204, 0, 128))) == "#FFCC00")
+    }
+
+    @Test("色域の外の色は、綴れる範囲へ寄せて出す")
+    func hexClampsWhatItCannotSpell() {
+        // 24 bit の綴りに範囲外は書けない。**丸めるのは窓だけ**で、値は保たれている
+        #expect(KnobText.value(of: .color(color(510, -20, 0))) == "#FF0000")
+    }
+
     @Test("組は成分を並べる")
     func vectorsShowComponents() {
         #expect(KnobText.value(of: .vector2(SIMD2(1, 2))) == "1.00, 2.00")

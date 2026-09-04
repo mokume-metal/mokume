@@ -334,9 +334,12 @@ enum KnobText {
         case .int(let number): String(number)
         case .bool(let flag): flag ? "true" : "false"
         case .string(let text): text
-        case .color(let color):
-            "#" + [color.red, color.green, color.blue]
-                .map { String(format: "%02X", Int((min(max($0, 0), 1) * 255).rounded())) }
+        case .color(let value):
+            // 出口の境界を通してから綴る ([ADR-0011] 決定 3)。作業空間の成分は線形で
+            // アルファを乗算済みなので、そのまま 255 倍すると転送関数のぶんだけずれ、
+            // **窓の綴りをコードへ写すと別の色になる** (#746)
+            "#" + [red(value), green(value), blue(value)]
+                .map { String(format: "%02X", Int(min(max($0, 0), 255).rounded())) }
                 .joined()
         case .vector2(let vector): Self.pair(vector.x, vector.y)
         case .vector3(let vector): Self.pair(vector.x, vector.y, vector.z)
