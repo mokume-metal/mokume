@@ -380,12 +380,19 @@ static inline FormField mokume_grown(FormField field, float amount) {
     return mokume_field(field.distance - amount, field.gradient);
 }
 
-/// 基本図形の断片。距離関数で塗りと輪郭の被覆率を出し、下地と混ぜる。
-fragment float4 mokume_formFragment(
-    FormFragmentIn in [[stage_in]],
-    constant uint &mode [[buffer(2)]],
-    constant FormInstance *instances [[buffer(10)]],
-    float4 destination [[color(0)]])
+/// この画素が出す塗りと輪郭 (どちらも被覆率を掛けた乗算済みの色)。
+struct FormPaint {
+    float4 fill;
+    float4 stroke;
+    float fillCoverage;
+    float strokeCoverage;
+};
+
+/// 距離関数で塗りと輪郭の被覆率を出す。**下地は見ない。**
+///
+/// 下地を読む入口と読まない入口が同じ形を出すよう、形を決める仕事はここ 1 本にする。
+static inline FormPaint mokume_formPaint(
+    FormFragmentIn in, constant FormInstance *instances)
 {
     FormInstance form = instances[in.instance];
     float2 p = in.local;
@@ -450,30 +457,81 @@ fragment float4 mokume_formFragment(
         fills = false;
     }
 
-    float fillCoverage = fills ? mokume_formCoverage(fill, in.inverseRows) : 0.0;
-    float strokeCoverage = strokes
+    FormPaint paint;
+    paint.fillCoverage = fills ? mokume_formCoverage(fill, in.inverseRows) : 0.0;
+    paint.strokeCoverage = strokes
         ? mokume_formCoverage(outer, in.inverseRows)
             * (1.0 - mokume_formCoverage(inner, in.inverseRows))
         : 0.0;
+    paint.fill = form.fill * paint.fillCoverage;
+    paint.stroke = form.stroke * paint.strokeCoverage;
+    return paint;
+}
 
-    // 形の外の余白は 1 画素も触らない (置き換える混ぜ方で余白が書かれないように)
-    if (fillCoverage <= 0.0 && strokeCoverage <= 0.0) {
+/// 塗りと輪郭を**先に重ねた**、この画素 1 つぶんの色 (乗算済み)。
+///
+/// 重ねる (`over`) は結合的なので、下地へ 2 回置くのと「先に重ねてから 1 回置く」のは
+/// 同じ式である。**下地を読まない入口はこちらを使う** — 下地に触れるのが 1 回だけに
+/// なるので、混ぜるのを固定機能のブレンドへ渡せる。
+static inline float4 mokume_formLayered(FormPaint paint) {
+    return paint.stroke + paint.fill * (1.0 - paint.stroke.a);
+}
+
+/// 形の外の余白か (1 画素も触らない — 置き換える混ぜ方で余白が書かれないように)。
+static inline bool mokume_formIsBlank(FormPaint paint) {
+    return paint.fillCoverage <= 0.0 && paint.strokeCoverage <= 0.0;
+}
+
+/// 基本図形の断片。**下地を読み、混ぜ方で分岐する。**
+///
+/// 使うのは固定機能のブレンドで表せない混ぜ方の列だけである (`ShapePipeline`)。
+fragment float4 mokume_formFragment(
+    FormFragmentIn in [[stage_in]],
+    constant uint &mode [[buffer(2)]],
+    constant FormInstance *instances [[buffer(10)]],
+    float4 destination [[color(0)]])
+{
+    FormPaint paint = mokume_formPaint(in, instances);
+    if (mokume_formIsBlank(paint)) {
         discard_fragment();
         return destination;
     }
-
-    // **置き換える混ぜ方だけは、塗りと輪郭を先に重ねてから置く。** 順に置き換えると
-    // 輪郭の内縁で「輪郭 × 被覆」だけが残り、塗りとの継ぎ目に 1 画素の筋が出る
-    float4 fillColor = form.fill * fillCoverage;
-    float4 strokeColor = form.stroke * strokeCoverage;
-    if (mode == kReplace) {
-        return strokeColor + fillColor * (1.0 - strokeColor.a);
-    }
-    // それ以外は**塗りの上に輪郭**の順で、それぞれ下地と混ぜる — 塗りの三角形の上に
-    // 輪郭の三角形を置いていたときと同じ順序・同じ式。被覆 0 の側は掛けない
+    // **塗りの上に輪郭**の順で、それぞれ下地と混ぜる — 塗りの三角形の上に輪郭の
+    // 三角形を置いていたときと同じ順序・同じ式。被覆 0 の側は掛けない
     // (乗算を戻して掛け直す往復で最下位ビットが動くのを避ける)
     float4 result = destination;
-    if (fillCoverage > 0.0) { result = mokume_composite(fillColor, result, mode); }
-    if (strokeCoverage > 0.0) { result = mokume_composite(strokeColor, result, mode); }
+    if (paint.fillCoverage > 0.0) { result = mokume_composite(paint.fill, result, mode); }
+    if (paint.strokeCoverage > 0.0) { result = mokume_composite(paint.stroke, result, mode); }
     return result;
+}
+
+/// 基本図形の断片 (重ねる列)。**下地を読まず、捨てもしない。**
+///
+/// 混ぜるのは固定機能のブレンドで、乗算済みの `source + destination × (1 − source.a)`
+/// を計算する ([#758])。**形の外の余白では出す色が 0 になり、式は下地をそのまま返す** —
+/// だから捨てる必要が無い (捨てないほうが速い。実測 7.4 ms / 8.2 ms・[#771])。
+///
+/// [#758]: https://github.com/mokume-metal/mokume/issues/758
+/// [#771]: https://github.com/mokume-metal/mokume/issues/771
+fragment float4 mokume_formFragmentBlend(
+    FormFragmentIn in [[stage_in]],
+    constant FormInstance *instances [[buffer(10)]])
+{
+    return mokume_formLayered(mokume_formPaint(in, instances));
+}
+
+/// 基本図形の断片 (置き換える列)。**下地を読まないが、余白は捨てる。**
+///
+/// 置き換える混ぜ方は下地を見ないので読む必要は無い。ただし**書けば下地が消える**ので、
+/// 形の外の余白は捨てなければならない (重ねる列との違いはここ 1 点)。
+fragment float4 mokume_formFragmentReplace(
+    FormFragmentIn in [[stage_in]],
+    constant FormInstance *instances [[buffer(10)]])
+{
+    FormPaint paint = mokume_formPaint(in, instances);
+    if (mokume_formIsBlank(paint)) {
+        discard_fragment();
+        return float4(0.0);
+    }
+    return mokume_formLayered(paint);
 }

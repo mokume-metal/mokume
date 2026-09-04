@@ -2420,7 +2420,8 @@ public final class Canvas {
                 // 書かない**ので、あとから来た立体の前後関係を汚さない (ADR-0021 決定 2)
                 switch batch.source {
                 case .flat:
-                    encoder.setRenderPipelineState(run.shader?.state ?? pipeline.state)
+                    encoder.setRenderPipelineState(
+                        (run.shader?.states ?? pipeline.states).state(for: run.mode))
                     encoder.setDepthStencilState(pipeline.flatDepthState)
                     pipeline.argumentTable.setAddress(
                         buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
@@ -2433,7 +2434,7 @@ public final class Canvas {
                 case .form:
                     // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
                     // 平面と同じ (常に通し・書かない)
-                    encoder.setRenderPipelineState(pipeline.formState)
+                    encoder.setRenderPipelineState(pipeline.formStates.state(for: run.mode))
                     encoder.setDepthStencilState(pipeline.flatDepthState)
                     pipeline.argumentTable.setAddress(
                         formBuffer.gpuAddress
@@ -2441,7 +2442,8 @@ public final class Canvas {
                         index: ShapePipeline.instanceBufferIndex)
                 case .solid:
                     // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
-                    encoder.setRenderPipelineState(run.shader?.solidState ?? pipeline.solidState)
+                    encoder.setRenderPipelineState(
+                        (run.shader?.solidStates ?? pipeline.solidStates).state(for: run.mode))
                     encoder.setDepthStencilState(pipeline.solidDepthState)
                     pipeline.argumentTable.setAddress(
                         solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
