@@ -131,6 +131,137 @@ struct MovieWriterTests {
     }
 }
 
+/// 撮り終わりに分かった失敗が、人へ届くか ([#789])。**GPU を要さない。**
+///
+/// 見ているのは 4 つ — 閉じられなかったことを ``FrameRecorder/endRecord()`` が言う・
+/// 書き込み先が読み取り専用でも黙らない・静止画と動画の**両方**の理由が載る・
+/// 2 本目の録りが 1 本目のせいで黙らない。
+///
+/// **どれも撮り終わりでしか見られない。** 動画は閉じた時点で手放すので、そこで
+/// 読まなかった書き損じは ``FrameRecorder/receive(_:)`` からも読めない。
+///
+/// [#789]: https://github.com/mokume-metal/mokume/issues/789
+@Suite(
+    "撮り終わりの失敗",
+    .enabled(
+        if: MovieFile.isAvailable,
+        "この機械には ProRes 4444 の符号化器が無い")
+)
+struct RecordingFailureTests {
+
+    /// 一色で塗った 1 枚。
+    private func image(_ level: UInt8, width: Int = 64, height: Int = 48) -> DisplayImage {
+        DisplayImage(
+            width: width, height: height,
+            bytes: [UInt8](repeating: level, count: width * height * 4))
+    }
+
+    @Test("閉じられなかったことを、endRecord() の後に言う")
+    func endRecordSpeaksWhenTheMovieCouldNotBeClosed() async throws {
+        try await withTemporaryDirectory("mokume-movie-close-failure") { directory in
+            let path = directory.appendingPathComponent("broken.mov").path
+            let recorder = FrameRecorder(frameRate: 60)
+            recorder.beginRecord(path)
+            let movie = try #require(recorder.recordingMovie)
+
+            movie.write(image(80), frame: 1, time: 0)
+            movie.write(image(120), frame: 2, time: 1.0 / 60)
+            // **時刻が戻るフレーム。** 符号化器はこれを受けた時点で失敗状態に入り、
+            // 閉じるところまで立ち直らない (手元で実測)。読み取り専用の書き込み先は
+            // ここでは効かない — 開いた後の fd への書き込みは権限に縛られないので、
+            // 閉じるほうは成功してしまう
+            movie.write(image(160), frame: 3, time: -1)
+
+            recorder.endRecord()
+
+            // 動画はもう手放されているので、ここで言わなければ誰も読まない
+            let said = try #require(
+                recorder.warnings.message(for: .movieFailure),
+                "閉じられなかったことが誰にも読まれていない")
+            #expect(said.contains(path))
+            #expect(said.contains("閉じられませんでした"))
+        }
+    }
+
+    @Test("書き込み先が読み取り専用でも、endRecord() は黙らない")
+    func endRecordSpeaksWhenTheDestinationIsReadOnly() async throws {
+        try await withTemporaryDirectory("mokume-movie-readonly") { directory in
+            let locked = directory.appendingPathComponent("locked")
+            try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o500], ofItemAtPath: locked.path)
+            // **戻してから抜ける。** 読み取り専用のまま残すと、この検査の後片付けも
+            // 同じ場所を使う後続の検査も転ぶ
+            defer {
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755], ofItemAtPath: locked.path)
+            }
+
+            let path = locked.appendingPathComponent("still.mov").path
+            let recorder = FrameRecorder(frameRate: 60)
+            recorder.beginRecord(path)
+            try #require(recorder.recordingMovie).write(image(120), frame: 1, time: 0)
+
+            recorder.endRecord()
+
+            let said = try #require(
+                recorder.warnings.message(for: .movieFailure),
+                "書き込み先が開けなかったことが誰にも読まれていない")
+            #expect(said.contains(path))
+        }
+    }
+
+    @Test("静止画と動画が同じフレームで転んだら、理由は両方載る")
+    func bothReasonsSurviveTheSameFrame() async throws {
+        try await withTemporaryDirectory("mokume-both-failures") { directory in
+            // 書き先の親をファイルにしておく。ディレクトリを作ることも書くこともできない
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder(frameRate: 60)
+            recorder.writer.write(
+                image(10, width: 8, height: 8),
+                to: blocker.appendingPathComponent("still.png").path)
+            recorder.writer.drain()
+
+            recorder.beginRecord(blocker.appendingPathComponent("motion.mov").path)
+            let movie = try #require(recorder.recordingMovie)
+            // **背圧を使って待つ。** 抱える枚数の上限を超えて頼めば、頼んだ側は空くまで
+            // 返らない = 少なくとも 2 枚は符号化の側を通っていて、書き損じは置かれている
+            for frame in 1...(movie.limit + 2) {
+                movie.write(image(20), frame: frame, time: Double(frame - 1) / 60)
+            }
+
+            // **`??` で繋ぐと、ここで動画の理由が落ちる。** 左が非 nil なら右を評価しない
+            let both = try #require(recorder.takeFailures())
+            #expect(both.contains("still.png"))
+            #expect(both.contains("motion.mov"), "動画の書き損じが落ちている")
+
+            recorder.close()
+        }
+    }
+
+    @Test("2 本目の録りが転んでも、1 本目で言ったからと黙らない")
+    func aSecondRecordingIsNotSilencedByTheFirst() async throws {
+        try await withTemporaryDirectory("mokume-second-recording") { directory in
+            // 書き先の親をファイルにしておく。どちらの録りも開けない
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder(frameRate: 60)
+            for name in ["first.mov", "second.mov"] {
+                recorder.beginRecord(blocker.appendingPathComponent(name).path)
+                try #require(recorder.recordingMovie).write(image(60), frame: 1, time: 0)
+                recorder.endRecord()
+
+                // 控えを録りごとに戻さないと、2 周目はここで 1 本目の名前を返す
+                let said = try #require(recorder.warnings.message(for: .movieFailure))
+                #expect(said.contains(name))
+            }
+        }
+    }
+}
+
 /// スケッチから動きをファイルにする経路。GPU を要する。
 @Suite(
     "動きをファイルにする",
