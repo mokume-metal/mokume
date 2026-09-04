@@ -8,7 +8,9 @@ import MokumeDiagnostics
 /// 利用者が書いた計算。
 ///
 /// 使い方は ``Sketch/makeComputation(_:name:values:)`` にある。
-public final class Computation {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor public final class Computation {
     /// この計算の名前。**断片の中の入口の関数もこの名前**で書く。
     public let name: String
     /// 直近の差し替えが失敗していれば、その理由。
@@ -62,6 +64,12 @@ public final class Computation {
             watcher = FileWatcher(url: url) { [weak self] in self?.reload() }
         }
     }
+
+    /// **値の置き場を常駐から退かせる** ([#738])。常駐の集合が抱えている限り、計算を
+    /// 手放しても解放されない。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    isolated deinit { gpu.retire(valuesBuffer) }
 
     /// 渡す値を書き換える。
     ///

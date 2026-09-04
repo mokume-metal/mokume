@@ -34,7 +34,7 @@ extension Canvas {
             throw .notCompilable(path: path, reason: "\(error)")
         }
         shader.canvas = self
-        shaders.append(shader)
+        remember(shader)
         return shader
     }
 
@@ -55,7 +55,7 @@ extension Canvas {
             throw .notCompilable(path: name, reason: "\(error)")
         }
         shader.canvas = self
-        shaders.append(shader)
+        remember(shader)
         return shader
     }
 
@@ -107,9 +107,26 @@ extension Canvas {
     /// **塗りと計算をまとめて返す。** 呼ぶ側 (観測) が「どの種類の断片が壊れているか」で
     /// 経路を分けることはないので、分けると呼び忘れる側ができるだけになる。
     var shaderFailures: [String] {
-        shaders.compactMap { shader in
-            shader.failure.map { "shader \(shader.name): \($0)" }
+        shaders.compactMap { held in
+            guard let shader = held.value else { return nil }
+            return shader.failure.map { "shader \(shader.name): \($0)" }
         } + computationFailures
+    }
+
+    /// 作ったものを控えへ足す。**足すついでに、死んだ入れ物を落とす。**
+    ///
+    /// 入れ物そのものは弱く持っても残るので、足す契機で掃く。作るのは組み立てを伴う
+    /// 稀な操作なので、ここで一舐めする費用は問題にならない ([#738])。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    func remember(_ shader: Shader) {
+        shaders.removeAll { $0.value == nil }
+        shaders.append(Weak(shader))
+    }
+
+    func remember(_ computation: Computation) {
+        computations.removeAll { $0.value == nil }
+        computations.append(Weak(computation))
     }
 
     /// 渡す値が変わった。**列を閉じてから変える** — そうしないと、既に置いた図形まで
