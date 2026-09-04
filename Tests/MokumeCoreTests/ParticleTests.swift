@@ -405,14 +405,14 @@ struct ParticleTests {
                 dust, from: .point(32, 32), rate: 240, speed: 0...0, angle: 0...0,
                 life: 10...10, size: 2...2, color: nil, using: &randomness)
         }
-        #expect(!dust.warnedOverwrite)
+        #expect(!dust.warnings.hasWarned(.overwrite))
 
         try canvas.draw {
             canvas.emit(
                 dust, from: .point(32, 32), rate: 60, speed: 0...0, angle: 0...0,
                 life: 10...10, size: 2...2, color: nil, using: &randomness)
         }
-        #expect(dust.warnedOverwrite)
+        #expect(dust.warnings.hasWarned(.overwrite))
     }
 
     @Test("効かせられる数を超えた力は、断って知らせる")
@@ -424,7 +424,7 @@ struct ParticleTests {
                 canvas.force(dust, [.drag(0.1)])
             }
         }
-        #expect(dust.warnedTooManyForces)
+        #expect(dust.warnings.hasWarned(.tooManyForces))
     }
 
     @Test("長く回しても、置き場の確保が積み上がらない")
@@ -452,7 +452,7 @@ struct ParticleTests {
         let canvas = try makeCanvas()
         let dust = try canvas.makeParticles(count: 4)
         canvas.particles(dust)
-        #expect(canvas.warnedParticlesOutsideFrame)
+        #expect(canvas.warnings.hasWarned(.particlesOutsideFrame))
         #expect(canvas.computeEncodersOpened == 0)
     }
 }

@@ -249,13 +249,9 @@ public final class Canvas {
     var modelCache: [ModelRequest: Model] = [:]
     /// モデルを読むたびに増える番号。
     var nextModelIdentity = 0
-    /// 面の無いモデルを置いたことを知らせたか。
-    var warnedEmptyModel = false
 
     /// 保持した形を置くたびに増える番号。
     var retainedSerial = 0
-    /// 置けない置き場所を知らせたか。
-    var warnedBadPlacement = false
     private let solidVertexStorage: GrowableBuffer
 
     /// いま開いている列が、どちらの並びから描かれるか。
@@ -275,9 +271,6 @@ public final class Canvas {
     /// 一周を割る数の既定。
     public static let defaultSolidDetail = 24
 
-    /// 置けない寸法を知らせたか。
-    var warnedBadSolidSize = false
-
     /// いま効いている光。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
     /// 上限を持たない — 固定の枠を持つと、超えた光が黙って捨てられる。列が「置き場の
@@ -294,8 +287,6 @@ public final class Canvas {
     private let lightStorageBuffer: GrowableBuffer
     /// 列ごとの「光がどこから何個か」の置き場。
     private let lightingStorage: GrowableBuffer
-    /// フレームの外で光が置かれたことを知らせたか。
-    var warnedLightOutsideFrame = false
 
     /// いま効いている材質。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
@@ -303,12 +294,6 @@ public final class Canvas {
     var currentMaterial = Material.default
     /// 列ごとの材質の置き場。列 1 つにつき 1 区画。
     private let materialStorage: GrowableBuffer
-    /// フレームの外で材質が書かれたことを知らせたか。
-    var warnedMaterialOutsideFrame = false
-    /// 受け取れない材質の値を知らせたか。
-    var warnedBadMaterial = false
-    /// 受け取れない露出を知らせたか。
-    var warnedBadExposure = false
 
     /// いま置かれている周囲。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
@@ -323,12 +308,6 @@ public final class Canvas {
     var backdrop: Surroundings?
     /// 列ごとの周囲の置き場。列 1 つにつき 1 区画。
     private let surroundingsStorage: GrowableBuffer
-    /// フレームの外で周囲が置かれたことを知らせたか。
-    var warnedSurroundingsOutsideFrame = false
-    /// 受け取れない周囲を知らせたか。
-    var warnedBadSurroundings = false
-    /// 受け取れない揺らぎの設定を知らせたか。
-    var warnedBadNoise = false
 
     /// 影を落とすか。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
@@ -393,7 +372,6 @@ public final class Canvas {
     /// **途中で失敗したときに何が出るか**は、この Issue の完了条件そのものなので、
     /// ここに 1 つだけ穴を空けてある (`failureForTesting` と同じ形)。公開はしない。
     var failEffectPassForTesting: Int?
-    var warnedEffectFailed = false
     /// 通した段の数。
     var effectPassesEncoded = 0
     /// このフレームで使った段の枠の数。**効果と拡大が同じ採番から取る。**
@@ -402,14 +380,12 @@ public final class Canvas {
     /// 書き換えると、まだ走っていない枠の束ね先まで変わる (#391 で実際に踏んだ)。
     /// 採番を 2 系統に分けると、効果と拡大が同じ番号を取り合う。
     var stagePassesUsed = 0
-    var warnedUpscaleFailed = false
 
     /// 粒の置き場所を誰が埋めるか。**製品では GPU 側 (速い経路)。**
     ///
     /// 公開しない — 利用者が選ぶものではなく、速い経路を照らす物差しを検査から
     /// 差し替えるための口である。
     var particleRoute: ParticleRoute = .instanced
-    var warnedParticlesOutsideFrame = false
     /// 計算のパイプライン。**最初に計算を作るときだけ組む** — 使わないスケッチに
     /// 組み立て器と引数のテーブルを持たせないため。
     private var computePipelineStorage: ComputePipeline?
@@ -426,44 +402,22 @@ public final class Canvas {
     /// 出て、GPU が混んだときだけ稀に書き終わる前の並びが読まれる。積む 1 行と同じ場所で
     /// 数え、**その行を消したら数も減る**。
     var computeBarriersEncoded = 0
-    /// フレームの外で計算を頼んだことを知らせたか。
-    var warnedComputeOutsideFrame = false
-    /// 束ねられる本数を超えたことを知らせたか。
-    var warnedTooManyComputeBuffers = false
     /// 影の行列を置く領域。
     private let shadowMatrixStorage: GrowableBuffer
     /// 焼いていないフレームに影の口へ束ねる 1 画素の奥行きの面。
     private var unbakedShadowTexture: (any MTLTexture)?
-    /// フレームの外で影の設定を書いたことを知らせたか。
-    var warnedShadowOutsideFrame = false
-    /// 受け取れない影の値を知らせたか。
-    var warnedBadShadow = false
-    /// 光の無いところで材質を書いたことを知らせたか。
-    private var warnedMaterialWithoutLight = false
-    /// 映す先が無いまま金属を上げたことを知らせたか。
-    private var warnedMetalWithoutSurroundings = false
 
     /// いま効いている視点。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
     /// `nil` の間は面に合わせた既定を使う。既定を実体で持たないのは、面の大きさが
     /// 変わったときに古い既定が残らないようにするため。
     var cameraStorage: Camera?
-    /// フレームの外で視点が書かれたことを知らせたか。
-    var warnedCameraOutsideFrame = false
-    /// 成り立たない視点・投影を知らせたか。
-    var warnedBadCamera = false
 
     /// いま `draw(_:)` の中か。
     ///
     /// シーンの記述 (光・視点) は、フレームの外で書かれてもどのフレームにも属さない。
     /// 黙って捨てず警告するために、内と外を知る必要がある ([ADR-0021] 決定 4)。
     private(set) var isDrawing = false
-
-    /// 対になっていない ``beginDraw()`` / ``endDraw()`` を知らせたか。
-    private var warnedAlreadyDrawing = false
-    private var warnedNotDrawing = false
-    /// 描き切る前の描き場所を置いたことを知らせたか。
-    private(set) var warnedPlacingWhileDrawing = false
 
     /// いま描き切っている最中か。**入れ子の描き場所で戻ってくるのを止める。**
     private var isFlushing = false
@@ -490,6 +444,24 @@ public final class Canvas {
     /// このフレームで塗り直す色。`nil` なら前の内容の上に描き足す。
     private var pendingBackground: LinearRGBA?
 
+    // MARK: - 初回だけ言う注意
+
+    /// 言った注意の控え。**種類ごとの旗を持たない** ([#734])。
+    ///
+    /// 書き換えるのは ``warnOnce(_:_:)`` だけで、外からは読むことしかできない —
+    /// 「言った」を直に立てられると、注意を出さずに黙らせる道ができてしまう。
+    ///
+    /// [#734]: https://github.com/mokume-metal/mokume/issues/734
+    private(set) var warnings = WarningLog<Warning>()
+
+    /// まだ言っていなければ、その注意を 1 度だけ言う。
+    ///
+    /// 文面はここに書く — 鍵に持たせると、値を差し込む文面 (寸法・書体の名前) が
+    /// 鍵の一部になり、値が違うだけで**同じ注意を何度も言う**ようになる。
+    func warnOnce(_ warning: Warning, _ message: @autoclosure () -> String) {
+        warnings.warnOnce(warning, message())
+    }
+
     // MARK: - 描く状態
 
     var currentFill = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
@@ -512,10 +484,6 @@ public final class Canvas {
     var currentClip: MTLScissorRect?
     /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
     var hasLoadedPixels = false
-
-    private var warnedReversedArc = false
-    var warnedVertexOutsideShape = false
-    var warnedBadVertex = false
 
     // MARK: 文字
 
@@ -561,8 +529,6 @@ public final class Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var currentPicture: Picture?
-    var warnedMissingFont = false
-    var warnedAtlasFull = false
 
     // MARK: - 組み立て中の形
 
@@ -1191,15 +1157,13 @@ public final class Canvas {
         case nil:
             return
         case .noLight:
-            guard !warnedMaterialWithoutLight else { return }
-            warnedMaterialWithoutLight = true
-            Diagnostics.warn(
+            warnOnce(
+                .materialWithoutLight,
                 "材質を書いていますが、光も周囲も 1 つも置いていません。"
                     + "どちらも無い立体は塗り 1 色で出るので、材質はどれも効きません")
         case .metalWithoutSurroundings:
-            guard !warnedMetalWithoutSurroundings else { return }
-            warnedMetalWithoutSurroundings = true
-            Diagnostics.warn(
+            warnOnce(
+                .metalWithoutSurroundings,
                 "金属を上げていますが、映す先がありません。金属は周りを映すことでしか"
                     + "見えないので、surroundings() で周囲を置くか ambientLight() を"
                     + "置かないと、艶だけが残って暗くなります")
@@ -1859,9 +1823,8 @@ public final class Canvas {
     ///
     /// 毎フレーム起きうるので繰り返さない (``Diagnostics/warn(_:)`` の但し書き)。
     private func warnReversedArcOnce() {
-        guard !warnedReversedArc else { return }
-        warnedReversedArc = true
-        Diagnostics.warn(
+        warnOnce(
+            .reversedArc,
             "arc(): 終わりの角度は始まりより大きくしてください。この呼び出しは何も描きません")
     }
 
@@ -2009,9 +1972,8 @@ public final class Canvas {
 
     /// 焼き場が埋まったことを、初回だけ知らせる。
     private func warnAtlasFullOnce() {
-        guard !warnedAtlasFull else { return }
-        warnedAtlasFull = true
-        Diagnostics.warn(
+        warnOnce(
+            .atlasFull,
             "text(): 字形を焼く場所が上限まで埋まりました。これ以上の新しい字は描かれません")
     }
 
@@ -2155,15 +2117,12 @@ public final class Canvas {
     }
 
     private func warnAlreadyDrawing() {
-        guard !warnedAlreadyDrawing else { return }
-        warnedAlreadyDrawing = true
-        Diagnostics.warn("beginDraw(): まだ endDraw() を呼んでいません。この呼び出しは効きません")
+        warnOnce(
+            .alreadyDrawing, "beginDraw(): まだ endDraw() を呼んでいません。この呼び出しは効きません")
     }
 
     private func warnNotDrawing() {
-        guard !warnedNotDrawing else { return }
-        warnedNotDrawing = true
-        Diagnostics.warn("endDraw(): beginDraw() を呼ぶ前でした。この呼び出しは効きません")
+        warnOnce(.notDrawing, "endDraw(): beginDraw() を呼ぶ前でした。この呼び出しは効きません")
     }
 
     // MARK: - 置いた時点の絵を守る
@@ -2174,9 +2133,9 @@ public final class Canvas {
         // **描き切る前に置いたら知らせる。** 出るのは前のフレームの絵で、しかも
         // 「それらしい絵」なので、黙っていると自分のコードを疑うしかない
         // ([ADR-0020] 決定 5)
-        if graphics.isDrawing, !warnedPlacingWhileDrawing {
-            warnedPlacingWhileDrawing = true
-            Diagnostics.warn(
+        if graphics.isDrawing {
+            warnOnce(
+                .placingWhileDrawing,
                 "image(): endDraw() を呼ぶ前の描き場所を置きました。出るのは描き切る前の絵です")
         }
         placedGraphics.insert(ObjectIdentifier(graphics))
