@@ -52,11 +52,11 @@ extension Canvas {
                 reason: "1 つの効果に渡せる値は \(EffectPipeline.valueSlotCapacity / 4) 個までです")
         }
         do {
-            let shader = try EffectShader(
+            // **作ったものを面の側で抱えない** ([#738])。効果の断片は控えに足されるだけで
+            // 読み手が 1 つも無く、利用者が手放したものを面と同じ寿命にしていた
+            return try EffectShader(
                 name: name, url: url, body: body, values: values,
                 gpu: gpu, pipeline: try effectPipeline())
-            effectShaders.append(shader)
-            return shader
         } catch {
             throw .notCompilable(path: url?.path ?? name, reason: "\(error)")
         }

@@ -84,7 +84,7 @@ extension Canvas {
         let computation = try Computation(
             name: entry, url: nil, body: source, values: [:],
             gpu: gpu, pipeline: try computePipeline())
-        computations.append(computation)
+        remember(computation)
         return computation
     }
 

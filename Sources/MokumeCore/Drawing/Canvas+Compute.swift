@@ -73,7 +73,7 @@ extension Canvas {
             let pipeline = try computePipeline()
             let computation = try Computation(
                 name: name, url: url, body: body, values: values, gpu: gpu, pipeline: pipeline)
-            computations.append(computation)
+            remember(computation)
             return computation
         } catch {
             throw .notCompilable(path: url?.path ?? name, reason: "\(error)")

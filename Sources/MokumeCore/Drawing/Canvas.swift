@@ -376,13 +376,11 @@ public final class Canvas {
     private(set) var shadowBakesReused = 0
     /// 溜めた計算。描く前に流し、フレームの終わりに空になる。
     var pendingComputations: [ComputeDispatch] = []
-    /// この面が作った計算。観測へ失敗を載せるために持つ。
-    var computations: [Computation] = []
+    /// この面が作った計算。観測へ失敗を載せるために持つ。**弱く持つ** (``Canvas/shaders``)。
+    var computations: [Weak<Computation>] = []
 
     /// このフレームにかける効果の並び。**フレームを越えない** (ADR-0021 決定 4)。
     var pendingEffects: [Effect] = []
-    /// 作った効果の断片。保存の拾い直しのために持ち続ける。
-    var effectShaders: [EffectShader] = []
     /// 効果のパイプライン。**頼まれてはじめて作る。**
     var effectPipelineStorage: EffectPipeline?
     /// 積んだ待つ仕掛けの数。**積む 1 行と同じ場所で数える。**
@@ -533,7 +531,13 @@ public final class Canvas {
     /// 絵の乱れではなく異常終了になる。
     private var emptyNumbers: Numbers
     /// この面が作った塗り。観測へ失敗を載せるために持つ。
-    var shaders: [Shader] = []
+    ///
+    /// **弱く持つ** ([#738])。強く持つと、利用者が手放した断片まで面と同じだけ生き、
+    /// GPU 側の置き場ごと解放されない。手放された断片はもう描かれないので、その失敗を
+    /// 観測へ載せる理由も無い。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    var shaders: [Weak<Shader>] = []
     /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
     var whiteUV: SIMD2<Float>
     /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。
@@ -1353,8 +1357,9 @@ public final class Canvas {
 
     /// 組み立てに失敗している計算の理由。
     var computationFailures: [String] {
-        computations.compactMap { computation in
-            computation.failure.map { "computation \(computation.name): \($0)" }
+        computations.compactMap { held in
+            guard let computation = held.value else { return nil }
+            return computation.failure.map { "computation \(computation.name): \($0)" }
         }
     }
 
@@ -1890,15 +1895,26 @@ public final class Canvas {
         return face
     }
 
-    /// 焼いてある字形を引く。入りきらなければ面を広げる。
+    /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる。
     ///
     /// **面を広げると、そこを読む列が変わる。** 既に置いた字は前の面を指しているので、
     /// 広げる前に列を閉じ、前の面はその列が抱えたまま残す。
+    ///
+    /// **広げても入らないものは広げない** ([#738])。広げるたびに焼いた字形は全部
+    /// 捨てられるので、入らない 1 字のために他の全部を焼き直させることになる。
+    /// どちらなのかは面が名乗る (``GlyphAtlas/Lookup``)。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
         let key = GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: currentTextSize, style: currentTextStyle,
             glyph: resolved.glyph)
-        if let entry = atlas.entry(for: key, font: resolved.font) { return entry }
+        switch atlas.entry(for: key, font: resolved.font) {
+        case .found(let entry): return entry
+        // 理由は面の側が名乗っている。広げても変わらないので、ここは黙って諦める
+        case .tooLarge, .unbakeable: return nil
+        case .full: break
+        }
 
         guard atlas.canGrow else {
             warnAtlasFullOnce()
@@ -1912,7 +1928,10 @@ public final class Canvas {
         }
         currentTexture = atlas.texture
         whiteUV = atlas.whiteUV
-        return atlas.entry(for: key, font: resolved.font)
+        guard case .found(let entry) = atlas.entry(for: key, font: resolved.font) else {
+            return nil
+        }
+        return entry
     }
 
     /// 字形 1 つを四角として置く。

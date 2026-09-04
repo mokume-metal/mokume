@@ -39,7 +39,9 @@ import simd
 /// 直前に投入済みのものが全部終わるのを待つ。新しい字形が出ないフレームは焼かない
 /// ので、待ちも払わない。広げるとき (`grow`) は新しい面を作るだけなので待たない —
 /// 前の面は、そこを指している列が GPU の完了まで抱える。
-final class GlyphAtlas {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor final class GlyphAtlas {
     /// 最初の一辺 (画素)。
     static let initialSize = 256
     /// 広げられる上限 (画素)。
@@ -77,6 +79,25 @@ final class GlyphAtlas {
         var isColored: Bool
     }
 
+    /// 字形を引いた結果。**引けなかったときは理由を名乗る** ([#738])。
+    ///
+    /// 理由が要るのは、受け取る側が「面を広げれば入るのか」を判断できないためである。
+    /// 分けないと、広げても入らない 1 字のために面を広げ続けることになる — 広げるたびに
+    /// 焼いた字形は全部捨てられるので、**入らない字が他の全部を焼き直させる**形になり、
+    /// 上限まで行き着いた後は回復もしない。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    enum Lookup {
+        /// 焼いてある (あるいはいま焼いた) 字形。
+        case found(Entry)
+        /// いまの面に場所が無い。**広げれば入る。**
+        case full
+        /// 上限の面 (``maximumSize``) より大きい。**広げても入らない。**
+        case tooLarge(width: Int, height: Int)
+        /// 焼き場を用意できなかった。広げても変わらない。
+        case unbakeable
+    }
+
     /// 焼き分けの鍵。
     struct Key: Hashable {
         var fontKey: String
@@ -93,6 +114,11 @@ final class GlyphAtlas {
     private var rowHeight: Int
     /// 焼く前に待つ相手 (「書き込んでよい時機」を参照)。
     private let gpu: RenderDevice
+    /// 大きすぎる字形のことを、もう知らせたか。
+    ///
+    /// **毎フレーム起きうる** — 入らない字は焼かれないので、次のフレームでも同じ道を
+    /// 通る。1 度だけ言うのは ``Diagnostics/warn(_:)`` の但し書きに従う。
+    private var warnedTooLarge = false
 
     init(gpu: RenderDevice) throws(RenderFailure) {
         self.gpu = gpu
@@ -103,6 +129,12 @@ final class GlyphAtlas {
         self.rowHeight = Self.whiteBlock + Self.padding
         paintWhiteBlock()
     }
+
+    /// **いまの面も常駐から退かせる** ([#738])。焼き場は描き場所ごとに 1 つ立つので、
+    /// 描き場所を作っては捨てる書き方は、外さないとここで積む。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    isolated deinit { gpu.retire(texture) }
 
     private static func makeTexture(side: Int, gpu: RenderDevice) throws(RenderFailure)
         -> any MTLTexture
@@ -146,9 +178,19 @@ final class GlyphAtlas {
     /// **焼いた字形は引き継がない。** 新しい面の中では場所が変わるので、位置を
     /// 計算し直すより、要るものをもう一度焼くほうが単純である。前の面は、そこを
     /// 指している列が抱えたまま残る。
+    ///
+    /// **前の面は常駐から退かせる** ([#738])。列が抱えているのは GPU が読み終わるまでで、
+    /// 常駐の集合はそれと関係なく抱え続ける — 外さないと 256 から 4096 までの面が全部
+    /// 残り、最後の 1 枚だけで 128 MiB になる。ここで待たないのは、広げるのが列を閉じた
+    /// 直後 = フレームの途中だからで、外れるのは投入済みのものが終わってからである。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     func grow(gpu: RenderDevice) throws(RenderFailure) {
         let next = min(Self.maximumSize, size * 2)
+        let previous = texture
+        // **新しい面を先に作る。** 作れずに投げたときも、前の面はそのまま使える
         texture = try Self.makeTexture(side: next, gpu: gpu)
+        gpu.retire(previous)
         size = next
         entries.removeAll(keepingCapacity: true)
         cursorX = Self.whiteBlock + Self.padding
@@ -157,25 +199,26 @@ final class GlyphAtlas {
         paintWhiteBlock()
     }
 
-    /// 焼いてある字形。まだ無ければ焼く。入りきらなければ `nil`。
-    func entry(for key: Key, font: CTFont) -> Entry? {
-        if let found = entries[key] { return found }
-        guard let baked = bake(key: key, font: font) else { return nil }
-        entries[key] = baked
+    /// 焼いてある字形。まだ無ければ焼く。**引けなければ理由を返す。**
+    func entry(for key: Key, font: CTFont) -> Lookup {
+        if let found = entries[key] { return .found(found) }
+        let baked = bake(key: key, font: font)
+        if case .found(let entry) = baked { entries[key] = entry }
         return baked
     }
 
     /// 字形を焼いて面へ置く。
-    private func bake(key: Key, font: CTFont) -> Entry? {
+    private func bake(key: Key, font: CTFont) -> Lookup {
         var glyph = CGGlyph(key.glyph)
         let bounds = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyph, nil, 1)
 
         // 絵を持たない字 (空白)。場所は取らないが、送り幅は持つ
         guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
         else {
-            return Entry(
-                uvMin: .zero, uvMax: .zero, offset: .zero, size: .zero, isBlank: true,
-                isColored: false)
+            return .found(
+                Entry(
+                    uvMin: .zero, uvMax: .zero, offset: .zero, size: .zero, isBlank: true,
+                    isColored: false))
         }
 
         let pad = Self.padding
@@ -185,14 +228,21 @@ final class GlyphAtlas {
         let top = Int(bounds.maxY.rounded(.up)) + pad
         let width = right - left
         let height = top - bottom
-        guard width > 0, height > 0, width <= size, height <= size else { return nil }
+        guard width > 0, height > 0 else { return .unbakeable }
+        // **上限の面にも入らないなら、広げても入らない。** ここで名乗って諦める
+        guard width <= Self.maximumSize, height <= Self.maximumSize else {
+            warnTooLargeOnce(width: width, height: height)
+            return .tooLarge(width: width, height: height)
+        }
+        // いまの面より大きいだけなら、広げれば入る
+        guard width <= size, height <= size else { return .full }
 
-        guard let origin = reserve(width: width, height: height) else { return nil }
+        guard let origin = reserve(width: width, height: height) else { return .full }
         guard
             let pixels = render(
                 glyph: glyph, font: font, width: width, height: height, penX: -left,
                 penY: -bottom)
-        else { return nil }
+        else { return .unbakeable }
 
         // 前のフレームがまだこの面を読んでいるかもしれない。書く直前に待つ
         gpu.settleQuietly(before: "字形を焼く")
@@ -201,14 +251,30 @@ final class GlyphAtlas {
             withBytes: pixels, bytesPerRow: width * Self.bytesPerPixel)
 
         let side = Float(size)
-        return Entry(
-            uvMin: SIMD2(Float(origin.x) / side, Float(origin.y) / side),
-            uvMax: SIMD2(Float(origin.x + width) / side, Float(origin.y + height) / side),
-            // 縦は下向きに測るので、基準線から上端までの距離が負のずれになる
-            offset: SIMD2(Float(left), Float(-top)),
-            size: SIMD2(Float(width), Float(height)),
-            isBlank: false,
-            isColored: Self.hasOwnColor(pixels))
+        return .found(
+            Entry(
+                uvMin: SIMD2(Float(origin.x) / side, Float(origin.y) / side),
+                uvMax: SIMD2(Float(origin.x + width) / side, Float(origin.y + height) / side),
+                // 縦は下向きに測るので、基準線から上端までの距離が負のずれになる
+                offset: SIMD2(Float(left), Float(-top)),
+                size: SIMD2(Float(width), Float(height)),
+                isBlank: false,
+                isColored: Self.hasOwnColor(pixels)))
+    }
+
+    /// 広げても入らない字形を頼まれたことを、**最初の 1 度だけ**知らせる。
+    ///
+    /// 黙って何も描かないと、利用者は書体か色か位置を疑う ([ADR-0020] 決定 5)。
+    /// 大きさが理由だと分かれば、`textSize()` を下げるという次の一手が打てる。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    private func warnTooLargeOnce(width: Int, height: Int) {
+        guard !warnedTooLarge else { return }
+        warnedTooLarge = true
+        Diagnostics.warn(
+            "text(): 字形 1 つが \(width)x\(height) 画素あり、焼き場の上限 "
+                + "\(Self.maximumSize)x\(Self.maximumSize) に入りません。"
+                + "この字は描かれません — textSize() を下げてください")
     }
 
     /// 焼いた画素が、字形自身の色を持っているか。
