@@ -24,8 +24,8 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct TextTests {
-    private let black = LinearRGBA.opaque(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
 
     /// 検査で使う書体。**版が変わりにくいものを選ぶ** — 環境の既定の書体は
     /// 更新で字形が動きうるので、位置の検査の土台には使わない。
@@ -663,7 +663,7 @@ struct TextTests {
     }
 
     /// 色を持つ字を 1 つ描いて読み戻す。この環境にその字が無ければ `nil`。
-    private func drawColoredGlyph(fill: LinearRGBA, background: LinearRGBA = .opaque(
+    private func drawColoredGlyph(fill: LinearRGBA, background: LinearRGBA = .linear(
         red: 0, green: 0, blue: 0)) throws -> DisplayImage? {
         let canvas = try makeCanvas(width: 64, height: 64)
         canvas.noTextFont()
@@ -690,7 +690,7 @@ struct TextTests {
     @Test("色を持つ字形に、塗りの色は掛からない")
     func theFillColorDoesNotTintAColoredGlyph() throws {
         guard let onWhite = try drawColoredGlyph(fill: white),
-            let onBlue = try drawColoredGlyph(fill: .opaque(red: 0, green: 0, blue: 1))
+            let onBlue = try drawColoredGlyph(fill: .linear(red: 0, green: 0, blue: 1))
         else { return }
         // 塗りを青にしても、字形の色は動かない。
         // **画素の並びごとではなく代表の 1 点で比べる** — 食い違ったときに、
@@ -719,7 +719,7 @@ struct TextTests {
         let canvas = try makeCanvas(width: 64, height: 64)
         try canvas.draw {
             canvas.background(self.black)
-            canvas.fill(.opaque(red: 0, green: 1, blue: 0))
+            canvas.fill(.linear(red: 0, green: 1, blue: 0))
             canvas.text("A", 8, 48)
         }
         let image = try pixels(of: canvas)

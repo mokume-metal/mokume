@@ -80,10 +80,10 @@ struct FrameGrowthTests {
         /// ``GrowableBuffer`` が全スロットを取り直す。
         func frame(shapes count: Int) throws {
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.noStroke()
                 for index in 0..<count {
-                    canvas.fill(.opaque(red: Float(index % 8) / 8, green: 0.4, blue: 0.6))
+                    canvas.fill(.linear(red: Float(index % 8) / 8, green: 0.4, blue: 0.6))
                     canvas.rect(Float(index % 64), Float((index / 64) % 64), 1, 1)
                 }
             }
@@ -306,7 +306,7 @@ struct FrameGrowthTests {
                 canvas.emit(
                     dust, from: .point(64, 120), rate: 900, speed: 60...140,
                     angle: (-2.4)...(-0.75), life: 0.6...1.4, size: 2...4,
-                    color: .opaque(red: 1, green: 0.72, blue: 0.35), using: &randomness)
+                    color: .linear(red: 1, green: 0.72, blue: 0.35), using: &randomness)
                 canvas.force(dust, [.gravity(0, 200), .drag(0.25)])
                 canvas.particles(dust)
 

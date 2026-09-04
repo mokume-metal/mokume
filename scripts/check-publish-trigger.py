@@ -38,15 +38,34 @@ REQUIRED_BRANCH = "main"
 NARROWING_KEYS = ("paths", "paths-ignore")
 
 
-def load_yaml(path: pathlib.Path) -> dict:
-    """YAML を JSON 経由で読む。パスは ARGV で渡す (コードに埋めるとクォートが壊れる)。"""
+def read_document(path: pathlib.Path) -> tuple[dict | None, str | None]:
+    """YAML を JSON 経由で読む。読めなければ (None, 理由)。
+
+    パスは ARGV で渡す (コードに埋めるとクォートが壊れる)。
+
+    **読めなかったことは自分で名乗る。** `check=True` にすると構文エラーが
+    `CalledProcessError` の traceback になり、しかも ruby の診断は `capture_output` に
+    入ったまま捨てられる — どのファイルの何行目が壊れているかが出ない。読める形で
+    止まっていたのは `make github-yaml-lint` が的の並びで先に走るからで、その依存は
+    どこにも書かれていなかった (#863)。順序の約束ではなく、**この検査自身が名乗る**
+    形にする ([ADR-0001](../docs/decisions/0001-founding-principles.md) 原則 8 の
+    「規約でなく構造で保証する」)。
+    """
     completed = subprocess.run(
         ["ruby", "-ryaml", "-rjson", "-e", "puts YAML.load_file(ARGV[0]).to_json", "--", str(path)],
         capture_output=True,
         text=True,
-        check=True,
     )
-    return json.loads(completed.stdout)
+    if completed.returncode != 0:
+        # ruby の診断の 1 行目が「何行目の何が壊れているか」を持つ。捨てずに見せる
+        detail = next((line for line in completed.stderr.splitlines() if line.strip()), "理由不明")
+        return None, f"{path}: YAML として読めない — {detail.strip()}"
+
+    document = json.loads(completed.stdout)
+    # 空のファイルは null になる。対応表でないものを下へ流すと `on:` を探す側が落ちる
+    if not isinstance(document, dict):
+        return None, f"{path}: YAML の最上位が対応表ではない ({type(document).__name__})"
+    return document, None
 
 
 def triggers_of(document: dict) -> dict:
@@ -120,7 +139,16 @@ def main() -> int:
 
     problems: list[str] = []
     for path in candidates:
-        problems += problems_of(path, load_yaml(path))
+        document, unreadable = read_document(path)
+        if unreadable is not None:
+            print(unreadable, file=sys.stderr)
+            print(
+                "起動条件を見る前に、YAML として読める形にする "
+                "(make github-yaml-lint が .github/ 配下すべての構文を見る)。",
+                file=sys.stderr,
+            )
+            return 1
+        problems += problems_of(path, document)
 
     if problems:
         print("公開の起動条件が面の入力を覆っていない:", file=sys.stderr)

@@ -49,7 +49,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 # 読み口とタイムアウトは site_source が持つ (#815)。**この 3 本は必ず一緒に呼ばれる**
 # ので、写しを持つと「手元では通るが公開先だけ落ちる」が起きる
-from site_source import FETCH_TIMEOUT_SECONDS, Source  # noqa: E402,F401
+from site_source import FETCH_TIMEOUT_SECONDS, Source, Unreachable  # noqa: E402,F401
 
 # 入口の見出し `# ``MokumeCore``` — カタログの中でモジュールの面を上書きするファイル
 LANDING_TITLE = re.compile(r"^#\s*``([A-Za-z_][A-Za-z0-9_]*)``\s*$", re.MULTILINE)
@@ -214,7 +214,14 @@ def main() -> int:
         print(f"カタログが無い: {arguments.catalog}", file=sys.stderr)
         return 1
 
-    problems = check(Source(arguments.target), arguments.catalog)
+    try:
+        problems = check(Source(arguments.target), arguments.catalog)
+    except Unreachable as unreachable:
+        # **「出ていない」ではなく「読めなかった」。** 混ぜると直す先を間違える
+        # (入口の書き方を直すのか、配信を直すのか)。向きは site_source の冒頭が持つ
+        print(f"参照の面を検められない — {unreachable}", file=sys.stderr)
+        return 1
+
     if problems:
         print("参照の面に出ていないものがある:", file=sys.stderr)
         for problem in problems:

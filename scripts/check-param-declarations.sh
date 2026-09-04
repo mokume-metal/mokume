@@ -13,14 +13,15 @@
 # 検査どうしが CPU を奪い合い、時間の上限を持つ別の検査を巻き添えにするため。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+# **自分の隣を基準にする。** `$0` は source されると呼び出し側を指し、cwd にも依存する
+# (#820)。`BASH_SOURCE` はこのファイル自身の場所で、`pwd -P` が symlink も解く
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 readonly BUILD_DIR=".build/debug"
 readonly MODULES="$BUILD_DIR/Modules"
-readonly PLUGIN="$BUILD_DIR/MokumeMacros-tool"
 
-if [[ ! -d "$MODULES" || ! -x "$PLUGIN" ]]; then
-  echo "check-param-declarations: 組み上げたものが見つからない ($MODULES / $PLUGIN)" >&2
+if [[ ! -d "$MODULES" ]]; then
+  echo "check-param-declarations: 組み上げたものが見つからない ($MODULES)" >&2
   echo "次にすること: swift build を先に走らせる (make ci-check なら自動で先に走る)" >&2
   exit 1
 fi
@@ -34,12 +35,11 @@ check() {
   local file="$workspace/snippet.swift" output status
   printf '%s\n' "$source" > "$file"
   set +e
-  # 利用者のパッケージと同じ言語設定で見る (ひな形の Package.swift に揃える)。
-  # ここが揃っていないと、利用者の手元では出ない食い違いを検査が拾ってしまう
-  output="$(swiftc -typecheck -swift-version 6 -default-isolation MainActor \
-    -I "$MODULES" \
-    -load-plugin-executable "$PLUGIN#MokumeMacros" \
-    "$file" 2>&1)"
+  # **型検査の呼び方は scripts/swift_typecheck.py が持つ** (#820)。以前はここが
+  # macro の plugin 名 (`MokumeMacros-tool` / `#MokumeMacros`) を直書きしており、
+  # 的を改名すると examples は追随して params だけが落ちる状態だった。言語設定
+  # (利用者のパッケージに揃える) もあちらが正典
+  output="$(python3 scripts/swift_typecheck.py "$file" "$MODULES" 2>&1)"
   status=$?
   set -e
 

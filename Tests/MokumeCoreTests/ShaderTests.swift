@@ -36,7 +36,7 @@ struct ShaderTests {
             "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }")
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             // 矩形と円を続けて置く。まとめて描く経路に載らないと、ここが対象外になる
@@ -44,8 +44,8 @@ struct ShaderTests {
             canvas.circle(24, 16, 12)
         }
         #expect(canvas.drawCallsInLastFrame == 1)
-        #expect(canvas.get(8, 16) == .opaque(red: 0, green: 1, blue: 0))
-        #expect(canvas.get(24, 16) == .opaque(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(8, 16) == .linear(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(24, 16) == .linear(red: 0, green: 1, blue: 0))
     }
 
     @Test("断片は、字と画像を描く経路にも載る")
@@ -59,19 +59,19 @@ struct ShaderTests {
             }
             """)
         let image = try canvas.createImage(8, 8)
-        image.fill(.opaque(red: 1, green: 0, blue: 0))
+        image.fill(.linear(red: 1, green: 0, blue: 0))
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.shader(shader)
             canvas.textFont("Helvetica")
             canvas.textSize(24)
-            canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
             canvas.text("I", 8, 26)
             canvas.image(image, 40, 8, 16, 16)
         }
         // 画像の面を読む経路でも断片が効いている (赤ではなく青になる)
-        #expect(canvas.get(48, 16) == .opaque(red: 0, green: 0, blue: 1))
+        #expect(canvas.get(48, 16) == .linear(red: 0, green: 0, blue: 1))
         // 字を読む経路でも同じ断片が効いている (白ではなく青が出ている)
         var sawBlueGlyph = false
         for y in 8..<26 {
@@ -90,16 +90,16 @@ struct ShaderTests {
             "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }")
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 32)
             canvas.resetShader()
-            canvas.fill(.opaque(red: 1, green: 0, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.rect(16, 0, 16, 32)
         }
-        #expect(canvas.get(8, 16) == .opaque(red: 0, green: 1, blue: 0))
-        #expect(canvas.get(24, 16) == .opaque(red: 1, green: 0, blue: 0))
+        #expect(canvas.get(8, 16) == .linear(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(24, 16) == .linear(red: 1, green: 0, blue: 0))
     }
 
     @Test("断片で塗っても、混ぜ方は組み込みと同じに効く")
@@ -109,7 +109,7 @@ struct ShaderTests {
             "float4 paint(Fragment in, Values values) { return float4(0.25, 0.0, 0.0, 1.0); }")
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0.5, green: 0, blue: 0))
+            canvas.background(.linear(red: 0.5, green: 0, blue: 0))
             canvas.noStroke()
             canvas.blendMode(.add)
             canvas.shader(shader)
@@ -130,7 +130,7 @@ struct ShaderTests {
         let shader = try canvas.makeShader(Self.valueShader, values: ["level": 0.25])
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
@@ -148,7 +148,7 @@ struct ShaderTests {
         shader.set("unknown", 1)
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
@@ -168,7 +168,7 @@ struct ShaderTests {
         canvas.time = 0.5
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 32, 16)
@@ -189,7 +189,7 @@ struct ShaderTests {
     private static func fullSlotValues(last: LinearRGBA) -> [String: ShaderValue] {
         var values: [String: ShaderValue] = ["c00": .color(last)]
         for index in 1..<16 {
-            values["c\(index)"] = .color(.opaque(red: 0, green: 0, blue: 0))
+            values["c\(index)"] = .color(.linear(red: 0, green: 0, blue: 0))
         }
         return values
     }
@@ -204,13 +204,13 @@ struct ShaderTests {
         let canvas = try makeCanvas(width: 32, height: 16)
         let green = try canvas.makeShader(
             Self.lastValueShader, name: "full-green",
-            values: Self.fullSlotValues(last: .opaque(red: 0, green: 1, blue: 0)))
+            values: Self.fullSlotValues(last: .linear(red: 0, green: 1, blue: 0)))
         let blue = try canvas.makeShader(
             Self.lastValueShader, name: "full-blue",
-            values: Self.fullSlotValues(last: .opaque(red: 0, green: 0, blue: 1)))
+            values: Self.fullSlotValues(last: .linear(red: 0, green: 0, blue: 1)))
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             // 塗りを変えると列が切れるので、区画が 2 つ並ぶ。はみ出していれば後の列が前の列を潰す
             canvas.shader(green)
@@ -218,8 +218,8 @@ struct ShaderTests {
             canvas.shader(blue)
             canvas.rect(16, 0, 16, 16)
         }
-        #expect(canvas.get(8, 8) == .opaque(red: 0, green: 1, blue: 0))
-        #expect(canvas.get(24, 8) == .opaque(red: 0, green: 0, blue: 1))
+        #expect(canvas.get(8, 8) == .linear(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(24, 8) == .linear(red: 0, green: 0, blue: 1))
     }
 
     /// 完了条件「1 つ超えると断られ、置き場への書き込みまで到達しない」(#348)。
@@ -230,7 +230,7 @@ struct ShaderTests {
     func moreValuesThanASlotHoldsAreRefusedAtLoad() throws {
         let canvas = try makeCanvas()
         // 色 16 個 (64 個) に数を 1 つ足して 65 個。詰め物込みで 68 個になり、区画 (64) を超える
-        var values = Self.fullSlotValues(last: .opaque(red: 0, green: 1, blue: 0))
+        var values = Self.fullSlotValues(last: .linear(red: 0, green: 1, blue: 0))
         values["extra"] = 1
 
         // 詰め物込みで 68 個。何個で上限が何個かが、断る文から読めること
@@ -271,16 +271,16 @@ struct ShaderTests {
         // **2 枚は別の成分で見分けられるようにしておく。** 名前と面が入れ替わったら
         // 赤も緑も 1 になるので、取り違えがそのまま出る
         let grain = try canvas.createImage(4, 4)
-        grain.fill(.opaque(red: 0.25, green: 1, blue: 0))
+        grain.fill(.linear(red: 0.25, green: 1, blue: 0))
         let smudge = try canvas.createImage(4, 4)
-        smudge.fill(.opaque(red: 1, green: 0.5, blue: 0))
+        smudge.fill(.linear(red: 1, green: 0.5, blue: 0))
 
         let shader = try canvas.makeShader(
             Self.blendShader,
             surfaces: ["grain": .image(grain), "smudge": .image(smudge)])
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
@@ -296,7 +296,7 @@ struct ShaderTests {
         let canvas = try makeCanvas(width: 16, height: 16)
         let scratch = try canvas.createGraphics(8, 8)
         scratch.beginDraw()
-        scratch.background(.opaque(red: 0, green: 0, blue: 1))
+        scratch.background(.linear(red: 0, green: 0, blue: 1))
         scratch.endDraw()
 
         let shader = try canvas.makeShader(
@@ -308,12 +308,12 @@ struct ShaderTests {
             surfaces: ["painted": .graphics(scratch)])
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
         }
-        #expect(canvas.get(8, 8) == .opaque(red: 0, green: 0, blue: 1))
+        #expect(canvas.get(8, 8) == .linear(red: 0, green: 0, blue: 1))
     }
 
     /// 完了条件 6「差し替えは列を閉じてから効く」。値と同じ規則であることを見る。
@@ -321,9 +321,9 @@ struct ShaderTests {
     func shapesKeepTheSurfaceTheyWereDrawnWith() throws {
         let canvas = try makeCanvas(width: 32, height: 16)
         let first = try canvas.createImage(4, 4)
-        first.fill(.opaque(red: 1, green: 0, blue: 0))
+        first.fill(.linear(red: 1, green: 0, blue: 0))
         let second = try canvas.createImage(4, 4)
-        second.fill(.opaque(red: 0, green: 1, blue: 0))
+        second.fill(.linear(red: 0, green: 1, blue: 0))
 
         let shader = try canvas.makeShader(
             """
@@ -334,15 +334,15 @@ struct ShaderTests {
             surfaces: ["tone": .image(first)])
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
             shader.set("tone", .image(second))
             canvas.rect(16, 0, 16, 16)
         }
-        #expect(canvas.get(8, 8) == .opaque(red: 1, green: 0, blue: 0))
-        #expect(canvas.get(24, 8) == .opaque(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(8, 8) == .linear(red: 1, green: 0, blue: 0))
+        #expect(canvas.get(24, 8) == .linear(red: 0, green: 1, blue: 0))
     }
 
     /// 完了条件 5 の後半「宣言していない名前は警告して無視する」。
@@ -350,9 +350,9 @@ struct ShaderTests {
     func undeclaredSurfaceNamesAreRefused() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         let declared = try canvas.createImage(4, 4)
-        declared.fill(.opaque(red: 1, green: 0, blue: 0))
+        declared.fill(.linear(red: 1, green: 0, blue: 0))
         let stranger = try canvas.createImage(4, 4)
-        stranger.fill(.opaque(red: 0, green: 1, blue: 0))
+        stranger.fill(.linear(red: 0, green: 1, blue: 0))
 
         let shader = try canvas.makeShader(
             """
@@ -366,13 +366,13 @@ struct ShaderTests {
         shader.set("astray", .image(stranger))
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
         }
         // 宣言した面がそのまま効いている (知らない名前は捨てられた)
-        #expect(canvas.get(8, 8) == .opaque(red: 1, green: 0, blue: 0))
+        #expect(canvas.get(8, 8) == .linear(red: 1, green: 0, blue: 0))
     }
 
     /// 完了条件 5 の前半「上限を超えた宣言は読み込みの時点で断る」。
@@ -471,13 +471,13 @@ struct ShaderTests {
 
         #expect(shader.failure != nil)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
         }
         // 壊れた断片を保存しても、前の断片で描かれ続ける
-        #expect(canvas.get(8, 8) == .opaque(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(8, 8) == .linear(red: 0, green: 1, blue: 0))
         #expect(canvas.shaderFailures.count == 1)
     }
 
@@ -517,7 +517,7 @@ struct ShaderTests {
             #expect(shader.failure == nil)
 
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.noStroke()
                 canvas.shader(shader)
                 canvas.rect(0, 0, 16, 16)

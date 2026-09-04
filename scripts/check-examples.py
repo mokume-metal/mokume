@@ -54,7 +54,6 @@ from __future__ import annotations
 import argparse
 import bisect
 import dataclasses
-import os
 import pathlib
 import re
 import subprocess
@@ -64,6 +63,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 # **囲みと印の綴りも example_wrapping から取る** (#815)。撮る側 (example-shots.py) と
 # 同じものを読まないと、組める例と撮れる例が食い違う (#667)
+# 型検査の呼び方は swift_typecheck が持つ (#820)。**片方だけが macro の plugin 名を
+# 動的に解いている状態**を畳んだ — check-param-declarations.sh も同じ呼び方を通る
+from swift_typecheck import typecheck  # noqa: E402,F401
+
 from example_wrapping import (  # noqa: E402
     FENCE_CLOSE,
     FENCE_OPEN,
@@ -81,9 +84,6 @@ MARK_LOOSE = re.compile(r"^\s*(?:///\s*)?<!--\s*example:")
 
 CATALOG = "Documentation/mokume.docc"
 GENERATED = pathlib.Path(".build") / "example-check" / "examples.swift"
-# Package.swift の SwiftSetting.mokume と揃える。SwiftPM を通さないので写しになるが、
-# 食い違えば「本体では通るのに例だけ落ちる」で気付く (逆は起きない)
-SWIFT_FLAGS = ["-swift-version", "6", "-default-isolation", "MainActor"]
 
 
 @dataclasses.dataclass
@@ -194,41 +194,6 @@ def build_source(examples: list[Example]) -> tuple[str, list[int], list[Example]
         lines += wrap(f"Example{number:03d}", example.body, context=example.context)
         lines.append("")
     return "\n".join(lines) + "\n", starts, ordered
-
-
-def plugin_flags(modules: pathlib.Path) -> list[str]:
-    """macro を使う例のために、組み上がった plugin を渡す。
-
-    **名前は決め打ちしない。** SwiftPM は macro の的を `<的の名前>-tool` という実行
-    ファイルにするので、置き場を見て拾う — Package.swift の写しを持たない (原則 9)。
-    渡さないと、macro を使う例は `external macro implementation … could not be found`
-    で落ちる。SwiftPM を通さずに型検査する代償で、ここだけは手で繋ぐ必要がある。
-    """
-    flags: list[str] = []
-    for path in sorted(modules.parent.glob("*-tool")):
-        if path.is_file() and os.access(path, os.X_OK):
-            flags += ["-load-plugin-executable", f"{path}#{path.name.removesuffix('-tool')}"]
-    return flags
-
-
-def typecheck(source: pathlib.Path, modules: pathlib.Path) -> list[tuple[int, str]]:
-    """`(行, 言い分)` の並び。**error だけを拾う。**"""
-    result = subprocess.run(
-        ["swiftc", "-typecheck", *SWIFT_FLAGS, *plugin_flags(modules), "-I", str(modules), str(source)],
-        capture_output=True,
-        text=True,
-    )
-    reported = re.compile(rf"^{re.escape(str(source))}:(\d+):\d+: error: (.*)$")
-    found = [
-        (int(match[1]), match[2])
-        for line in result.stderr.splitlines()
-        if (match := reported.match(line))
-    ]
-    if not found and result.returncode != 0:
-        # 型検査が例のせいでなく落ちた (成果物が無い・道具が壊れている)。黙って
-        # 緑にしないよう、そのまま見せる
-        raise SystemExit(f"swiftc が落ちた:\n{result.stderr.strip()}")
-    return found
 
 
 def main() -> int:

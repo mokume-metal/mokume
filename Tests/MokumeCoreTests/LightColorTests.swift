@@ -32,9 +32,9 @@ struct LightColorTests {
         let target = try RenderTarget(gpu: gpu, width: 64, height: 64)
         let canvas = try Canvas(target: target, gpu: gpu)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             scene(canvas)
-            canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
             canvas.push()
             canvas.translate(32, 32, 0)
             canvas.sphere(22)

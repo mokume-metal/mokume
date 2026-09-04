@@ -19,14 +19,14 @@ struct LinearRGBATests {
     @Test("不透明なら乗算しても値は変わらない")
     func opaqueIsUnchanged() {
         let straight = LinearRGBA(straightRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
-        #expect(straight == LinearRGBA.opaque(red: 0.25, green: 0.5, blue: 0.75))
+        #expect(straight == LinearRGBA.linear(red: 0.25, green: 0.5, blue: 0.75))
     }
 
     @Test("表示できる範囲の外側を切り捨てない")
     func keepsValuesOutsideTheDisplayableRange() {
         // 1.0 を超える明るさと負値は、出力段まで持ち越す値として保持する
         // (ADR-0011 決定 1)。ここで丸めると、後段のトーンマップが効かなくなる。
-        let bright = LinearRGBA.opaque(red: 4, green: 0, blue: -0.25)
+        let bright = LinearRGBA.linear(red: 4, green: 0, blue: -0.25)
         #expect(bright.red == 4)
         #expect(bright.blue == -0.25)
     }

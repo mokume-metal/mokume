@@ -40,10 +40,10 @@ struct InstancingTests {
     /// 光と塗りを揃えた場面で、渡した中身を描く。
     private func scene(_ canvas: Canvas, _ body: (Canvas) -> Void) throws -> DisplayImage {
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.lights()
             canvas.noStroke()
-            canvas.fill(.opaque(red: 0.8, green: 0.6, blue: 0.4))
+            canvas.fill(.linear(red: 0.8, green: 0.6, blue: 0.4))
             body(canvas)
         }
         return try canvas.target.encodeForDisplay()
@@ -107,12 +107,12 @@ struct InstancingTests {
         // まとめた形が全部同じ色 (あるいは白) になる
         let canvas = try makeCanvas()
         let image = try scene(canvas) { canvas in
-            canvas.fill(.opaque(red: 1, green: 0.15, blue: 0.15))
+            canvas.fill(.linear(red: 1, green: 0.15, blue: 0.15))
             canvas.push()
             canvas.translate(26, 48, 0)
             canvas.box(20)
             canvas.pop()
-            canvas.fill(.opaque(red: 0.15, green: 0.3, blue: 1))
+            canvas.fill(.linear(red: 0.15, green: 0.3, blue: 1))
             canvas.push()
             canvas.translate(70, 48, 0)
             canvas.box(20)
@@ -189,8 +189,8 @@ struct InstancingTests {
             canvas.shape(
                 shape,
                 at: [
-                    Placement(x: 26, y: 48, fill: .opaque(red: 1, green: 0.2, blue: 0.2)),
-                    Placement(x: 70, y: 48, fill: .opaque(red: 0.2, green: 0.4, blue: 1)),
+                    Placement(x: 26, y: 48, fill: .linear(red: 1, green: 0.2, blue: 0.2)),
+                    Placement(x: 70, y: 48, fill: .linear(red: 0.2, green: 0.4, blue: 1)),
                 ])
         }
         #expect(canvas.drawCallsInLastFrame == 1)
@@ -235,7 +235,7 @@ struct InstancingTests {
         let around = try picture { $0.surroundings(.studio) }
         let shadowed = try picture {
             $0.shadows(true)
-            $0.directionalLight(.opaque(red: 0.8, green: 0.8, blue: 0.8), -0.5, 0.7, -0.5)
+            $0.directionalLight(.linear(red: 0.8, green: 0.8, blue: 0.8), -0.5, 0.7, -0.5)
         }
 
         #expect(metal.bytes != plain.bytes, "まとめた描画に材質が効いていない")

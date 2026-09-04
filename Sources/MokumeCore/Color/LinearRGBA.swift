@@ -64,8 +64,26 @@ public struct LinearRGBA: Equatable, Sendable {
             alpha: alpha)
     }
 
-    /// 不透明な色 (アルファ 1)。乗算済みと乗算前が一致するので変換は起きない。
-    public static func opaque(red: Float, green: Float, blue: Float) -> LinearRGBA {
+    /// **線形の値**から作る不透明な色 (アルファ 1)。
+    ///
+    /// 成分は光の量そのもので、伝達関数を通さない — `0.5` は「光の量が半分」であって、
+    /// 画面で見える中くらいの灰色ではない (それは ``display(red:green:blue:alpha:)``)。
+    /// **1 を超えられる**ので、光の強さを表すのに使える (`linear(red: 2, green: 2, blue: 2)`
+    /// は白の 2 倍の明るさ)。
+    ///
+    /// 名前が名乗るのは**目盛り**である ([ADR-0033] 決定 2)。同じ `red` という語で
+    /// 3 つの目盛りが並ぶので、どれなのかは口の名前だけが区別できる:
+    ///
+    /// | 口 | `red` の意味 |
+    /// | --- | --- |
+    /// | ``linear(red:green:blue:)`` | 線形の 0–1 (1 を超えてよい) |
+    /// | ``display(red:green:blue:alpha:)`` | エンコード値の 0–1 |
+    /// | ``color(_:_:_:_:)`` | エンコード値の 0–255 |
+    ///
+    /// アルファが 1 なので、乗算済みと乗算前が一致し変換は起きない。
+    ///
+    /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
+    public static func linear(red: Float, green: Float, blue: Float) -> LinearRGBA {
         LinearRGBA(premultipliedRed: red, green: green, blue: blue, alpha: 1)
     }
 

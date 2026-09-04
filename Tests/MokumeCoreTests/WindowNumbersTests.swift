@@ -194,7 +194,7 @@ struct WindowNumbersSourceTests {
     final class Blank: Sketch {
         var settings = SketchSettings(width: 8, height: 8, frameRate: 60)
         init() {}
-        func draw() { background(.opaque(red: 0, green: 0, blue: 0)) }
+        func draw() { background(.linear(red: 0, green: 0, blue: 0)) }
     }
 
     private func makeFacet() throws -> URL {

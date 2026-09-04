@@ -280,7 +280,7 @@ struct ParameterStoreTests {
             @Param(0...10) var whole: Int = 2
             @Param var flag: Bool = false
             @Param(choices: ["a", "b"]) var word: String = "a"
-            @Param var tint: LinearRGBA = .opaque(red: 0.1, green: 0.2, blue: 0.3)
+            @Param var tint: LinearRGBA = .linear(red: 0.1, green: 0.2, blue: 0.3)
             @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0, 0)
             @Param(-1...1) var triple: SIMD3<Float> = SIMD3(0, 0, 0)
         }
@@ -292,7 +292,7 @@ struct ParameterStoreTests {
         before.whole = 7
         before.flag = true
         before.word = "b"
-        before.tint = .opaque(red: 0.4, green: 0.5, blue: 0.6)
+        before.tint = .linear(red: 0.4, green: 0.5, blue: 0.6)
         before.pair = SIMD2(0.25, -0.5)
         before.triple = SIMD3(0.1, 0.2, 0.3)
         await settle(saving)
@@ -303,7 +303,7 @@ struct ParameterStoreTests {
         #expect(after.whole == 7)
         #expect(after.flag == true)
         #expect(after.word == "b")
-        #expect(after.tint == .opaque(red: 0.4, green: 0.5, blue: 0.6))
+        #expect(after.tint == .linear(red: 0.4, green: 0.5, blue: 0.6))
         #expect(after.pair == SIMD2(0.25, -0.5))
         #expect(after.triple == SIMD3(0.1, 0.2, 0.3))
     }
@@ -373,7 +373,7 @@ struct ParameterStoreRuntimeTests {
         func setup() { seenInSetup = radius }
         func draw() {
             seenInDraw = radius
-            background(.opaque(red: 0, green: 0, blue: 0))
+            background(.linear(red: 0, green: 0, blue: 0))
         }
     }
 

@@ -19,7 +19,9 @@
 # --minimized は #223 の受け入れ条件。窓を畳んでも面が応答し続けることを見る。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+# **自分の隣を基準にする。** `$0` は source されると呼び出し側を指し、cwd にも依存する
+# (#820)。`BASH_SOURCE` はこのファイル自身の場所で、`pwd -P` が symlink も解く
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 REPO="$(pwd)"
 
 MINIMIZED=0

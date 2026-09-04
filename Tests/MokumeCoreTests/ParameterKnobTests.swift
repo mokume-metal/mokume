@@ -80,7 +80,7 @@ struct KnobTextTests {
 
     @Test("色は 16 進で出る")
     func colorsShowAsHex() {
-        #expect(KnobText.value(of: .color(.opaque(red: 1, green: 0, blue: 0))) == "#FF0000")
+        #expect(KnobText.value(of: .color(.linear(red: 1, green: 0, blue: 0))) == "#FF0000")
     }
 
     @Test("窓の 16 進は、書いた色の綴りと一致する")
