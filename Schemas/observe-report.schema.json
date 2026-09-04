@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/observe-report.schema.json",
   "title": "観測の応答",
-  "description": "観測の結果と、撮った絵の目録。画像は別ファイルで、この応答が最後に原子的に書かれる。読み手は「目録 (frames) が在り、id が一致し、数が要求の count と合う」で完成を判定する。採取できなかったときも応答は必ず書かれ、理由が warnings に載る (ADR-0018 決定 3)。",
+  "description": "観測の結果と、撮った絵の目録。画像は別ファイルで、この応答が最後に原子的に書かれる。読み手は「目録 (frames) が在り、id が一致し、数が要求の count と合う」で完成を判定する — **上限で切られたときは切った後の枚数と合う**ので、要求の count とだけ突き合わせると揃った応答を失敗と読む (切ったことは warnings に載る)。採取できなかったときも応答は必ず書かれ、理由が warnings に載る (ADR-0018 決定 3)。",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -168,7 +168,7 @@
   "$defs": {
     "stats": {
       "type": "object",
-      "description": "絵の要約。画像を開かずに「真っ黒ではないか」「隅に寄っていないか」を判定するために載せる。出力段を通した後の表示できる形で数える。採れなかったときは省略される。",
+      "description": "絵の要約。画像を開かずに「真っ黒ではないか」「隅に寄っていないか」を判定するために載せる。出力段を通した後の表示できる形で数える。**省かれる条件は載る場所ごとに違う** — 目録 (frames) の各要素には絵がある以上必ず在り、上の階では image と同じ条件 (宣言した枚数が揃わなかったとき) で省かれる。",
       "required": [
         "meanColor",
         "meanLuminance",
