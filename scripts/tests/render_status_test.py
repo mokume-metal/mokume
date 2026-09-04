@@ -592,6 +592,33 @@ class RenderStatusTest(unittest.TestCase):
         self.assertIn("/pulls/5/files", calls)
         self.assertIn("/pulls/6/files", calls)
 
+    # --- 報告の context の綴り -------------------------------------------
+    #
+    # 打つ側 (post) と探す側 (covered_fingerprint) が同じ綴りを使うこと (#785)。
+    # 割れると「打ち直しても覆いが見つからず、すべての描画 PR が常時弾かれる」形で
+    # 壊れ、症状から原因が読めない。綴りを差し替えて**両側が一緒に動く**ことを見る。
+
+    def statuses_queries(self):
+        """status を探した呼び出し (打った呼び出しは /statuses/<sha> で別)。"""
+        if not self.calls.exists():
+            return []
+        return [c for c in self.calls.read_text().splitlines() if "/statuses" in c
+                and "/statuses/" not in c]
+
+    def test_打つ側の綴りは共有の出どころに従う(self):
+        self.write_log(LOG_PASSED)
+        self.run_script("local", RENDER_CONTEXT="別の綴り")
+        self.assertIn("context=別の綴り", self.posted()[0])
+        self.assertNotIn("local-render", self.posted()[0])
+
+    def test_探す側の綴りは共有の出どころに従う(self):
+        """探す側だけが直書きに戻ると、ここが local-render を探し続けて赤くなる。"""
+        self.queue(RENDER_CONTEXT="別の綴り")
+        queries = self.statuses_queries()
+        self.assertEqual(len(queries), 1, queries)
+        self.assertIn("別の綴り", queries[0])
+        self.assertNotIn("local-render", queries[0])
+
     # --- target (報告先) -------------------------------------------------
     #
     # 覆い直しのたびに push すると、ルールセットの dismiss_stale_reviews_on_push が

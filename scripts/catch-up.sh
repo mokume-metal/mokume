@@ -55,6 +55,9 @@ set -euo pipefail
 # 描画 PR の順番の判定 (render-status.sh と共有する)
 # shellcheck source=scripts/drawing-queue.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-queue.sh"
+# 報告の context の綴り。**探す側だけが直書きだと、打つ側の改名に付いていけない** (#785)
+# shellcheck source=scripts/render-context.sh
+. "$(dirname "${BASH_SOURCE[0]}")/render-context.sh"
 
 readonly SKIPPED=3
 
@@ -82,7 +85,7 @@ gh auth status >/dev/null 2>&1 || stop "gh が認証されていない" "gh auth
 # 作業の途中というだけ) なので、気付かないまま先へ進んでしまう — #533 で踏んだ。
 # /user は installation token では通らないので、ここで安く分けられる。
 gh api user --jq '.login' >/dev/null 2>&1 || stop \
-  "いまの認証では local-render を打てない (App の installation token を掴んでいる)" \
+  "いまの認証では $RENDER_CONTEXT を打てない (App の installation token を掴んでいる)" \
   "GH_TOKEN を外して打ち直す — 手元の報告は本人の認証でしか付かない"
 
 git rev-parse --git-dir >/dev/null 2>&1 || stop "git リポジトリの中で打つ"
@@ -159,11 +162,14 @@ fi
 
 # **確かめてから戻す。** render-status は報告できなくても 0 で終えるので、確かめずに
 # 進むと弾かれた状態のまま queue へ入り、同じことをもう一度繰り返すことになる
+#
+# 綴りは打つ側と同じ出どころから取る (#785)。gh api に --arg は無いので、フィルタへ
+# シェルが展開する (render-status.sh の covered_fingerprint と同じ形)
 reported=$(gh api "repos/$repo/commits/$sha/statuses" \
-  --jq 'map(select(.context == "local-render")) | first | .state // "無い"') \
-  || stop "local-render の状態を読めなかった"
+  --jq "map(select(.context == \"$RENDER_CONTEXT\")) | first | .state // \"無い\"") \
+  || stop "$RENDER_CONTEXT の状態を読めなかった"
 [ "$reported" = success ] || stop \
-  "local-render が $reported のまま — このまま戻しても弾かれる" \
+  "$RENDER_CONTEXT が $reported のまま — このまま戻しても弾かれる" \
   "make render-status の出力に、報告できなかった理由が出ている"
 
 # --- 5. queue へ戻す -------------------------------------------------------
