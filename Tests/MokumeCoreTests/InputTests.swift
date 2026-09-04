@@ -136,6 +136,113 @@ struct InputStateTests {
     }
 }
 
+@Suite("出来事がコールバックになる")
+struct InputCallbackTests {
+    /// 溜めて 1 フレームぶん流し込み、配られた呼び出しの並びを返す。
+    private func callbacks(from events: [InputEvent]) -> [InputCallback] {
+        let state = InputState()
+        for event in events { state.enqueue(event) }
+        var seen: [InputCallback] = []
+        state.beginFrame { seen.append($0) }
+        return seen
+    }
+
+    /// **これが #723 の実害そのもの。** 畳むだけにすると `isMouseDown` は `false` へ
+    /// 戻り、押されたことがどこにも残らない。外から送る経路では 1 回の要求がまとめて
+    /// 1 フレームへ入るので、クリックを 1 件送るという最も素直な使い方が常に消える。
+    @Test("1 フレームに押して離しても、押下が消えない")
+    func keepsAPressThatFitsInOneFrame() {
+        let state = InputState()
+        state.enqueue(.mouseDown(x: 200, y: 250, button: 0))
+        state.enqueue(.mouseUp(x: 200, y: 250, button: 0))
+
+        var seen: [InputCallback] = []
+        state.beginFrame { seen.append($0) }
+
+        #expect(seen == [.mousePressed, .mouseReleased, .mouseClicked])
+        // 畳んだ結果は今までどおり「押されていない」
+        #expect(!state.isMouseDown)
+    }
+
+    @Test("押下を伴わない解放は、クリックにならない")
+    func doesNotClickWithoutAPress() {
+        // 窓の外で押して中で離した、溜める上限で押下だけ捨てられた、など
+        #expect(callbacks(from: [.mouseUp(x: 10, y: 10, button: 0)]) == [.mouseReleased])
+    }
+
+    @Test("クリックは、解放の直後に続く")
+    func clickFollowsTheRelease() {
+        let events: [InputEvent] = [
+            .mouseDown(x: 10, y: 10, button: 0),
+            .mouseMoved(x: 20, y: 20),
+            .mouseUp(x: 20, y: 20, button: 0),
+        ]
+        #expect(callbacks(from: events) == [.mousePressed, .mouseReleased, .mouseClicked])
+    }
+
+    @Test("押しっぱなしの移動やスクロール、キーでは、まだ何も配らない")
+    func staysQuietForTheEventsThatHaveNoCallbackYet() {
+        let events: [InputEvent] = [
+            .mouseMoved(x: 1, y: 2),
+            .scrolled(dx: 1, dy: 2),
+            .keyDown(code: 49, characters: " ", isRepeat: false),
+            .keyUp(code: 49),
+        ]
+        #expect(callbacks(from: events).isEmpty)
+    }
+
+    /// 規則は 1 つ — **状態はその出来事まで適用した値**。
+    @Test("配られた時点で読める値は、その出来事を当てた直後の姿")
+    func readsTheStateAsOfThatEvent() {
+        let state = InputState()
+        state.enqueue(.mouseDown(x: 30, y: 40, button: 1))
+        state.enqueue(.mouseUp(x: 70, y: 80, button: 1))
+
+        var seen: [(InputCallback, Float, Float, Bool, Int)] = []
+        state.beginFrame { seen.append(($0, state.x, state.y, state.isMouseDown, state.button)) }
+
+        #expect(seen.count == 3)
+        // 押した瞬間は、押した場所で押されている
+        #expect(seen[0].0 == .mousePressed)
+        #expect(seen[0].1 == 30)
+        #expect(seen[0].2 == 40)
+        #expect(seen[0].3)
+        #expect(seen[0].4 == 1)
+        // 離した瞬間は、離した場所で押されていない
+        #expect(seen[1].0 == .mouseReleased)
+        #expect(seen[1].1 == 70)
+        #expect(seen[1].2 == 80)
+        #expect(!seen[1].3)
+        // クリックは解放と同じ姿を見る
+        #expect(seen[2].0 == .mouseClicked)
+        #expect(seen[2].1 == 70)
+    }
+
+    /// 配ることで畳み方が変わっていないか。**`draw()` から見える最終状態は今までどおり。**
+    @Test("配っても、フレームの終わりに見える状態は変わらない")
+    func foldingIsUnchangedByDispatching() {
+        let events: [InputEvent] = [
+            .mouseMoved(x: 10, y: 10),
+            .mouseDown(x: 10, y: 10, button: 0),
+            .mouseMoved(x: 30, y: 25),
+            .scrolled(dx: 1, dy: 2),
+        ]
+        let dispatching = InputState()
+        for event in events { dispatching.enqueue(event) }
+        dispatching.beginFrame { _ in }
+
+        let quiet = InputState()
+        for event in events { quiet.enqueue(event) }
+        quiet.beginFrame()
+
+        #expect(dispatching.x == quiet.x)
+        #expect(dispatching.dragX == quiet.dragX)
+        #expect(dispatching.dragY == quiet.dragY)
+        #expect(dispatching.scrollY == quiet.scrollY)
+        #expect(dispatching.isMouseDown == quiet.isMouseDown)
+    }
+}
+
 @Suite("外から送られた入力")
 struct InputInboxTests {
     private func makeFacet() throws -> URL {
@@ -311,6 +418,101 @@ struct SketchInputTests {
             background(.display(red: 0, green: 0, blue: 0))
             seen.append((mouseX, mouseY, isMousePressed))
         }
+    }
+
+    /// コールバックが呼ばれた順と、呼ばれた時点で読める値を控える。
+    final class Callbacks: Sketch {
+        struct Seen: Equatable {
+            let name: String
+            let x: Float
+            let y: Float
+            let pressed: Bool
+        }
+        var seen: [Seen] = []
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        func draw() { background(.display(red: 0, green: 0, blue: 0)) }
+        func mousePressed() { note("pressed") }
+        func mouseReleased() { note("released") }
+        func mouseClicked() { note("clicked") }
+        private func note(_ name: String) {
+            seen.append(Seen(name: name, x: mouseX, y: mouseY, pressed: isMousePressed))
+        }
+    }
+
+    private func makeFacet() throws -> URL {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-input-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        return facet
+    }
+
+    private func send(_ events: String, to facet: URL) throws {
+        try AtomicFile.write(
+            Data(#"{"id":"a1","events":[\#(events)]}"#.utf8),
+            to: facet.appendingPathComponent("request.json"))
+    }
+
+    /// **#723 が測った実害を、直った側で踏む。** 1 回の要求へ押下と解放を並べて送ると、
+    /// 畳むだけの頃は 1 つも植わらなかった (`accepted: 5` / `dropped: 0` で受理されて
+    /// いるので、送った側からは成功に見えた)。
+    @Test("1 回の要求に並べたクリックが、そのぶんだけ届く")
+    func deliversClicksThatArriveTogether() throws {
+        let facet = try makeFacet()
+        let sketch = Callbacks()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+
+        try send(
+            #"""
+            {"type":"mouseMoved","x":200,"y":250},
+            {"type":"mouseDown","x":200,"y":250,"button":0},
+            {"type":"mouseUp","x":200,"y":250,"button":0},
+            {"type":"mouseDown","x":40,"y":60,"button":0},
+            {"type":"mouseUp","x":40,"y":60,"button":0}
+            """#, to: facet)
+        try runtime.advance()
+
+        #expect(sketch.seen.filter { $0.name == "clicked" }.count == 2)
+        // コールバックの中で読む位置は、その出来事を当てた直後の値
+        #expect(
+            sketch.seen == [
+                .init(name: "pressed", x: 200, y: 250, pressed: true),
+                .init(name: "released", x: 200, y: 250, pressed: false),
+                .init(name: "clicked", x: 200, y: 250, pressed: false),
+                .init(name: "pressed", x: 40, y: 60, pressed: true),
+                .init(name: "released", x: 40, y: 60, pressed: false),
+                .init(name: "clicked", x: 40, y: 60, pressed: false),
+            ])
+    }
+
+    /// 観測がまだ 1 枚も描いていないスケッチを叩いたときの 1 枚も、通常のフレームと
+    /// 同じ手順で描かれる ([#808](https://github.com/mokume-metal/mokume/issues/808))。
+    /// **配布を片方の経路にだけ書くと、外から観測したときだけ飛ばない**という、窓では
+    /// 再現しない壊れ方になる。
+    @Test("観測が最初に叩いた 1 枚でも、コールバックが飛ぶ")
+    func deliversOnTheFirstObservedFrame() throws {
+        // 入力と観測は区画が別なので、要求を置く場所も分ける
+        let inputFacet = try makeFacet()
+        let observeFacet = try makeFacet()
+        let sketch = Callbacks()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: observeFacet),
+            inbox: InputInbox(directory: inputFacet))
+        runtime.pause()
+
+        try send(
+            #"""
+            {"type":"mouseDown","x":5,"y":6,"button":0},
+            {"type":"mouseUp","x":5,"y":6,"button":0}
+            """#, to: inputFacet)
+        try AtomicFile.write(
+            Data(#"{"id":"o1"}"#.utf8), to: observeFacet.appendingPathComponent("request.json"))
+        try runtime.advance()
+
+        #expect(sketch.seen.map(\.name) == ["pressed", "released", "clicked"])
     }
 
     @Test("送った出来事が、同じフレームの draw から見える")

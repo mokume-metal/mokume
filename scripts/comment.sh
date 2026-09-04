@@ -24,7 +24,10 @@
 # 人間が直接 gh を使う分にはこのラッパーは不要 (署名の意味が無い)。
 set -euo pipefail
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 
 # 署名の検知キー。リンク先や絵文字が変わっても効き続けるよう、固定の語で見る。
 # scripts/agent-comment-guard.sh と .github の検査もこの文字列を共有する

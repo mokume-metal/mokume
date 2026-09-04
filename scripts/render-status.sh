@@ -43,6 +43,11 @@ set -euo pipefail
 # 答えが違う場所がある (#497)
 # shellcheck source=scripts/drawing-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
+# 「どのリポジトリか」の解き方 (#818)。ここには `git@github.com:` と `https://github.com/`
+# の 2 形だけを落とす劣化版があり、ssh:// 形や ssh alias の origin を解けなかった —
+# 空を返さないので逃がしにも掛からず、報告が黙って届かなかった
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
 # 変更ファイルの取り方 (#793)。drawing-queue.sh も使うが、あちらは自分で読み込まない
 # ので読み手が source する (drawing-paths.sh とまったく同じ形)
 # shellcheck source=scripts/pr-files.sh
@@ -65,16 +70,6 @@ LEDGER=${RENDER_LEDGER:-Tests/MokumeCoreTests/scene-ledger.txt}
 say() { echo "$RENDER_CONTEXT: $*"; }
 give_up() { say "報告しない — $1"; exit 0; }
 
-# 対象リポジトリを origin から導く (owner/repo)。
-resolve_repo() {
-  local url
-  url=$(git config --get remote.origin.url || true)
-  [ -n "$url" ] || return 1
-  url=${url%.git}
-  url=${url#git@github.com:}
-  url=${url#https://github.com/}
-  printf '%s' "$url"
-}
 
 # 報告できなくても**失敗しない**。いちばん多い理由は「まだ push していない」で、
 # それは作業の途中というだけである (remote に無い commit へは status を打てない)。
@@ -360,7 +355,8 @@ case "$mode" in
     # 4. 報告先と資格情報。CI からここへ来ても、認証が無いのでここで止まる
     command -v gh >/dev/null 2>&1 || give_up "gh が無い"
     gh auth status >/dev/null 2>&1 || give_up "gh が認証されていない"
-    repo=$(resolve_repo) || give_up "origin が無い"
+    # **解けなければ名乗って諦める。** 劣化版はごみを宛先にして黙って失敗していた
+    repo=$(repo_of_dir "$PWD") || give_up "origin から owner/repo を解けない"
 
     skipped=$(grep -c 'skipped:' "$TEST_LOG" || true)
     ledger_digest=$(grep -vE '^[[:space:]]*(#|$)' "$LEDGER" | shasum -a 256 | cut -c1-8)
