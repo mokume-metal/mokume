@@ -20,6 +20,7 @@ import http.server
 import functools
 import importlib.util
 import os
+import socket
 import subprocess
 import tempfile
 import threading
@@ -137,10 +138,23 @@ class StampTest(unittest.TestCase):
         base = f"http://127.0.0.1:{server.server_address[1]}"
         self.assertEqual(publication.read_stamp(base), (NEW, None))
 
+        # **URL でもディレクトリでも「印が無い」は同じ理由になる** (#865)。
+        # 404 は Source が None にするので、この口へ来る時点で「引けなかった」とは
+        # 分かれている
         (self.site / publication.STAMP_NAME).unlink()
         found, reason = publication.read_stamp(base)
         self.assertIsNone(found)
-        self.assertIn("404", reason)
+        self.assertIn(publication.STAMP_NAME, reason)
+        self.assertIn("印", reason)
+
+    def test_引けない先は理由に引けないと書く(self):
+        """**「無い」と混ぜない。** 誰も listen していない口を狙う (#865)。"""
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        found, reason = publication.read_stamp(f"http://127.0.0.1:{port}")
+        self.assertIsNone(found)
+        self.assertIn("が引けない", reason)
 
 
 class CommandTest(unittest.TestCase):

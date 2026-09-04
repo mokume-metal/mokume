@@ -22,6 +22,7 @@ URL 版は実際に HTTP で引く経路を通す — 公開の後に走るの�
 import functools
 import http.server
 import json
+import socket
 import subprocess
 import tempfile
 import threading
@@ -247,6 +248,21 @@ class PublishedReferenceTest(unittest.TestCase):
 
         (self.out / "documentation" / "mod" / "index.html").unlink()
         self.assertEqual(self.run_check(target=base).returncode, 1)
+
+
+    def test_引けない先は_traceback_ではなく_1_行で名乗る(self):
+        """**「出ていない」と「読めなかった」を混ぜない** (#865)。
+
+        誰も listen していない口を狙う。かつては Python の traceback が出ていて、
+        問題を 1 行ずつ並べる他の出力と揃っていなかった。
+        """
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        result = self.run_check(target=f"http://127.0.0.1:{port}")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("が引けない", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 if __name__ == "__main__":
