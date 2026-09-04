@@ -155,6 +155,30 @@ class RenderStatusTest(unittest.TestCase):
             encoding="utf-8", check=True
         ).stdout
 
+    def run_coverage(self, function, **env):
+        """`scripts/render-coverage.sh` の判定を直に呼ぶ (#819)。
+
+        以前は `render-status.sh target` / `coverage` という CLI のモードだった。
+        **判定は catch-up.sh も要る**ので共有ライブラリへ移り、口は消えた — 検査も
+        あちらと同じ呼び方 (source して呼ぶ) に合わせる。
+        """
+        self.env.update(env)
+        proc = subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                f'. "{REPO / "scripts" / "drawing-paths.sh"}"\n'
+                f'. "{REPO / "scripts" / "render-coverage.sh"}"\n{function}',
+            ],
+            cwd=self.work,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(proc.returncode, 0, f"0 で終えるべき: {proc.stderr}")
+        return proc.stdout
+
     def run_script(self, mode, **env):
         self.env.update(env)
         proc = subprocess.run(
@@ -663,7 +687,7 @@ class RenderStatusTest(unittest.TestCase):
     def test_取り込みだけの木はpush済みheadへ報告する(self):
         seed = self._upstream_scenario()
         self._git("merge", "--no-edit", "-q", "origin/main")
-        self.assertEqual(self.run_script("target").strip(), seed)
+        self.assertEqual(self.run_coverage("report_target").strip(), seed)
 
     def test_取り込んだ後にmainが動いても報告先は動かない(self):
         """#830。判定の相手は**手元が取り込んだ main** で、いま origin/main が指す
@@ -673,7 +697,7 @@ class RenderStatusTest(unittest.TestCase):
         seed = self._upstream_scenario()
         self._git("merge", "--no-edit", "-q", "origin/main")
         self._advance_main()
-        self.assertEqual(self.run_script("target").strip(), seed)
+        self.assertEqual(self.run_coverage("report_target").strip(), seed)
 
     def test_取り込みを2回重ねても報告先は動かない(self):
         """catch-up は 2 回打たれる。2 段目の合流では第 1 親が push 済み head では
@@ -682,7 +706,7 @@ class RenderStatusTest(unittest.TestCase):
         self._git("merge", "--no-edit", "-q", "origin/main")
         self._advance_main()
         self._git("merge", "--no-edit", "-q", "origin/main")
-        self.assertEqual(self.run_script("target").strip(), seed)
+        self.assertEqual(self.run_coverage("report_target").strip(), seed)
 
     def test_普通のcommitが乗っていたらHEADへ報告する(self):
         """手元にしかない commit の木は誰も見られない。報告先を push 済み head へ
@@ -693,7 +717,7 @@ class RenderStatusTest(unittest.TestCase):
         self._git("commit", "-qm", "push していない変更")
         self._git("merge", "--no-edit", "-q", "origin/main")
         self.assertEqual(
-            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+            self.run_coverage("report_target").strip(), self._git("rev-parse", "HEAD").strip()
         )
 
     def test_衝突を解いた合流はHEADへ報告する(self):
@@ -705,12 +729,12 @@ class RenderStatusTest(unittest.TestCase):
         self._git("add", "-A")
         self._git("commit", "-qm", "解いて合流")
         self.assertEqual(
-            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+            self.run_coverage("report_target").strip(), self._git("rev-parse", "HEAD").strip()
         )
 
     def test_追跡先が無ければHEADへ報告する(self):
         self.assertEqual(
-            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+            self.run_coverage("report_target").strip(), self._git("rev-parse", "HEAD").strip()
         )
 
     # --- coverage (覆いがまだ効くか) -------------------------------------
@@ -723,13 +747,13 @@ class RenderStatusTest(unittest.TestCase):
     def test_mainが動いていなければ覆いはそのまま(self):
         self._upstream_scenario()
         self._git("merge", "--no-edit", "-q", "origin/main")
-        self.assertEqual(self.run_script("coverage").split()[0], "fresh")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "fresh")
 
     def test_動いたmainが描画に触れなければ覆いはそのまま(self):
         self._upstream_scenario()
         self._git("merge", "--no-edit", "-q", "origin/main")
         self._advance_main("docs/後から.md")
-        out = self.run_script("coverage")
+        out = self.run_coverage("report_coverage")
         self.assertEqual(out.split()[0], "fresh")
         self.assertIn("描画に関わるファイル", out)
 
@@ -737,7 +761,7 @@ class RenderStatusTest(unittest.TestCase):
         self._upstream_scenario()
         self._git("merge", "--no-edit", "-q", "origin/main")
         self._advance_main("Sources/MokumeCore/Palette.swift")
-        self.assertEqual(self.run_script("coverage").split()[0], "stale")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "stale")
 
     def test_動いたmainが台帳の絵を動かさない場所だけなら覆いはそのまま(self):
         """`Sketches/` は印つきの行 — 絵の証跡は要るが覆いは壊せない (#497)。
@@ -745,7 +769,7 @@ class RenderStatusTest(unittest.TestCase):
         self._upstream_scenario()
         self._git("merge", "--no-edit", "-q", "origin/main")
         self._advance_main("Sketches/後から.swift")
-        self.assertEqual(self.run_script("coverage").split()[0], "fresh")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "fresh")
 
     def test_動いたmainと衝突するなら覆いを見る前に衝突を名乗る(self):
         """衝突していれば queue は合流後の木を作れない。覆いの話ではないので、
@@ -759,11 +783,11 @@ class RenderStatusTest(unittest.TestCase):
         self._git("update-ref", "refs/remotes/origin/topic",
                   self._git("rev-parse", "HEAD").strip())
         self._advance_main("ぶつかる.txt", "main の側\n")
-        self.assertEqual(self.run_script("coverage").split()[0], "conflict")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "conflict")
 
     def test_origin_mainが無ければ見ていないと名乗る(self):
         """判定できないときは通す — 防いでいるのは事故であって偽装ではない。"""
-        self.assertEqual(self.run_script("coverage").split()[0], "unknown")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "unknown")
 
 
 if __name__ == "__main__":
