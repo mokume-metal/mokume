@@ -103,13 +103,7 @@ FENCE_OPEN = re.compile(r"^\s*///\s*```swift\s*$")
 FENCE_CLOSE = re.compile(r"^\s*///\s*```\s*$")
 DOC = re.compile(r"^\s*///")
 # 撮影の記録。書くのも読むのもこの 1 行だけ
-# 末尾の `taken=…` は #671 で落とした古い形。**読むだけ読んで、名乗って落とす** —
-# 読めないことにすると「まだ撮っていない」と誤診し、要らない撮り直しへ人を送る。
-# 古い形を持つ枝が残っていないと分かったら、この受けは消してよい
-RECORD = re.compile(
-    r"^\s*//\s*shot:\s*(?P<index>\d+)\s+snippet=(?P<snippet>[0-9a-f]+)"
-    r"(?P<legacy>\s+taken=\S+)?\s*$"
-)
+RECORD = re.compile(r"^\s*//\s*shot:\s*(?P<index>\d+)\s+snippet=(?P<snippet>[0-9a-f]+)\s*$")
 IMAGE = re.compile(r"^\s*///\s*!\[")
 # 囲みの上を遡るときに跨ぐ行 — 空の説明文行と、2 段組の足場
 SCAFFOLD = re.compile(r"^\s*(///\s*(@Row\b.*|@Column\b.*|\}|)\s*)?$")
@@ -160,7 +154,6 @@ class Shot:
     index: int  # 同じ説明文の中で何番目か (記録の鍵)
     record_line: int | None
     record_snippet: str | None
-    record_legacy: bool
 
     @property
     def name(self) -> str:
@@ -276,12 +269,12 @@ def records_after(lines: list[str], close_line: int) -> dict[int, tuple[int, str
     index = close_line + 1
     while index < len(lines) and DOC.match(lines[index]):
         index += 1
-    found: dict[int, tuple[int, str, bool]] = {}
+    found: dict[int, tuple[int, str]] = {}
     while index < len(lines):
         match = RECORD.match(lines[index])
         if not match:
             break
-        found[int(match["index"])] = (index, match["snippet"], bool(match["legacy"]))
+        found[int(match["index"])] = (index, match["snippet"])
         index += 1
     return found
 
@@ -320,7 +313,6 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
                 index=0,
                 record_line=None,
                 record_snippet=None,
-                record_legacy=False,
             )
         )
     # 同じ説明文の塊に属するものへ 1 から番号を振り、記録と突き合わせる
@@ -329,7 +321,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
         shot.index = siblings.index(shot) + 1
         records = records_after(lines, max(other.close_line for other in siblings))
         if record := records.get(shot.index):
-            shot.record_line, shot.record_snippet, shot.record_legacy = record
+            shot.record_line, shot.record_snippet = record
         found.append(shot)
     return found
 
@@ -365,11 +357,6 @@ def check(root: pathlib.Path, shots: list[Shot]) -> list[str]:
         if shot.record_snippet is None:
             problems.append(f"{shot.where}: まだ撮っていない (make example-shots で撮る)")
             continue
-        if shot.record_legacy:
-            problems.append(
-                f"{shot.where}: 台帳が古い形 (末尾に taken= が付いている) — #671 で落とした。"
-                "その行から ` taken=…` を消す (絵は撮り直さなくてよい)"
-            )
         if shot.record_snippet != shot.fingerprint:
             problems.append(
                 f"{shot.where}: 例を書き換えたのに撮り直していない "
