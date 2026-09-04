@@ -30,7 +30,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 DEFS=.github/rulesets
 
 # REPO / DEFS を読むので、代入の後に置く

@@ -44,7 +44,10 @@
 set -euo pipefail
 
 PR="${1:?PR 番号が必要}"
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 # 承認が要るパスの判定 (下の「4.」を参照)。**照合は 1 か所**に保つ (ADR-0001 原則 9)
 # shellcheck source=scripts/protected-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"

@@ -23,7 +23,10 @@
 # 検査は scripts/tests/ruleset_drift_test.py。
 set -euo pipefail
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 
 # 重複起票を防ぐための固定タイトル。文言を変えると、変える前に立った Issue が
 # 見つからなくなり二重に立つので、変えるときは open な分を先に畳む
