@@ -333,7 +333,10 @@ public final class SketchRuntime {
         case .mouseReleased: sketch.mouseReleased()
         case .mouseClicked: sketch.mouseClicked()
         case .mouseMoved: sketch.mouseMoved()
-        case .mouseDragged: sketch.mouseDragged()
+        case .mouseDragged(let deltaX, let deltaY):
+            sketch.mouseDragged(deltaX: deltaX, deltaY: deltaY)
+        case .mouseWheel(let deltaX, let deltaY):
+            sketch.mouseWheel(deltaX: deltaX, deltaY: deltaY)
         case .keyPressed: sketch.keyPressed()
         case .keyReleased: sketch.keyReleased()
         case .keyTyped: sketch.keyTyped()
