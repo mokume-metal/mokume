@@ -183,16 +183,16 @@ struct ShapeTests {
         let painted = canvas.createShape {
             canvas.noStroke()
             // 断片が落ちていれば、この頂点の色 (赤) がそのまま出る
-            canvas.fill(.opaque(red: 1, green: 0, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.rect(0, 0, 16, 16)
         }
         canvas.resetShader()
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.shape(painted)
         }
-        #expect(canvas.get(8, 8) == .opaque(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(8, 8) == .linear(red: 0, green: 1, blue: 0))
     }
 
     /// 完了条件 1 の逆向き。**置く側の断片は形に届かない。**
@@ -202,7 +202,7 @@ struct ShapeTests {
         // 任意多角形は距離関数の経路に載らないので、三角形の列として記録される
         let plain = canvas.createShape {
             canvas.noStroke()
-            canvas.fill(.opaque(red: 1, green: 0, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.beginShape()
             canvas.vertex(0, 0)
             canvas.vertex(16, 0)
@@ -214,11 +214,11 @@ struct ShapeTests {
             "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }")
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.shader(green)
             canvas.shape(plain)
         }
-        #expect(canvas.get(8, 8) == .opaque(red: 1, green: 0, blue: 0))
+        #expect(canvas.get(8, 8) == .linear(red: 1, green: 0, blue: 0))
     }
 
     /// 完了条件 2。**面だけ差し替えた 2 区間は、組にしても 1 本に畳まれない。**
@@ -229,9 +229,9 @@ struct ShapeTests {
     func groupingKeepsTheSurfaceOfEachRun() throws {
         let canvas = try makeCanvas(width: 32, height: 16)
         let first = try canvas.createImage(4, 4)
-        first.fill(.opaque(red: 1, green: 0, blue: 0))
+        first.fill(.linear(red: 1, green: 0, blue: 0))
         let second = try canvas.createImage(4, 4)
-        second.fill(.opaque(red: 0, green: 1, blue: 0))
+        second.fill(.linear(red: 0, green: 1, blue: 0))
         let shader = try canvas.makeShader(
             Self.toneShader, surfaces: ["tone": .image(first)])
 
@@ -252,11 +252,11 @@ struct ShapeTests {
         #expect(both.drawCallCount == 2)
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 1))
+            canvas.background(.linear(red: 0, green: 0, blue: 1))
             canvas.shape(both)
         }
-        #expect(canvas.get(8, 8) == .opaque(red: 1, green: 0, blue: 0))
-        #expect(canvas.get(24, 8) == .opaque(red: 0, green: 1, blue: 0))
+        #expect(canvas.get(8, 8) == .linear(red: 1, green: 0, blue: 0))
+        #expect(canvas.get(24, 8) == .linear(red: 0, green: 1, blue: 0))
     }
 
     /// 完了条件 3。**畳み判定が塗りの設定を全部見ている**ことを、1 つずつ変えて見る。
