@@ -133,7 +133,8 @@ struct StandardInputEventsTests {
             #expect(fromPipe == fromDirect)
             #expect(
                 fromPipe == [
-                    .mouseMoved, .mousePressed, .mouseDragged, .mouseReleased, .mouseClicked,
+                    .mouseMoved, .mousePressed, .mouseDragged(deltaX: 20, deltaY: 10),
+                    .mouseReleased, .mouseClicked,
                 ])
         }
     }
@@ -166,7 +167,8 @@ struct StandardInputEventsTests {
             #expect(fromPipe == fromDirect)
             #expect(
                 fromPipe == [
-                    .mouseMoved, .mousePressed, .mouseDragged, .mouseReleased, .mouseClicked,
+                    .mouseMoved, .mousePressed, .mouseDragged(deltaX: 30, deltaY: 20),
+                    .mouseReleased, .mouseClicked,
                     .keyPressed, .keyTyped, .keyPressed, .keyReleased,
                 ])
         }

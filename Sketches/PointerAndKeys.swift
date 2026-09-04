@@ -17,10 +17,19 @@ final class PointerAndKeys: Sketch {
     /// スクロールで積み上がる大きさ。フレームを越える。
     var size: Float = 120
 
+    /// スクロールされた 1 件ぶんで大きさを積む。
+    ///
+    /// **`draw()` の中で `scrollY` を読む形から移した。** あちらはフレームの合計なので、
+    /// 1 フレームに 3 件届くと部分累計を 3 回足し込むことになる ([#807]) — 窓を人が
+    /// 触るぶんには 1 フレームに 1 件しか入らないので、ここを間違えても気付けない。
+    ///
+    /// [#807]: https://github.com/mokume-metal/mokume/issues/807
+    func mouseWheel(deltaX: Float, deltaY: Float) {
+        size = min(max(size + deltaY * 4, 20), 400)
+    }
+
     func draw() {
         background(15, 18, 23)
-
-        size = min(max(size + scrollY * 4, 20), 400)
 
         // 描く解像度の縁。窓をどう変えてもここが動かないことが、座標系が
         // 独立していることの見え方になる

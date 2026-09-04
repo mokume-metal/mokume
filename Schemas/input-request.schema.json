@@ -93,10 +93,12 @@
             "description": "釦 (0 = 主釦)。"
           },
           "dx": {
-            "type": "number"
+            "type": "number",
+            "description": "スクロールされた量 (横)。**その 1 件ぶん**で、スケッチの mouseWheel(deltaX:deltaY:) にこの値がそのまま渡る。"
           },
           "dy": {
-            "type": "number"
+            "type": "number",
+            "description": "スクロールされた量 (縦)。dx と同じく 1 件ぶん。"
           },
           "code": {
             "type": "integer",

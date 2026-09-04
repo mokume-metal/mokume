@@ -179,16 +179,71 @@ struct InputCallbackTests {
         ]
         #expect(
             callbacks(from: events) == [
-                .mousePressed, .mouseDragged, .mouseReleased, .mouseClicked,
+                .mousePressed, .mouseDragged(deltaX: 10, deltaY: 10), .mouseReleased,
+                .mouseClicked,
             ])
     }
 
-    /// スクロールの「1 件ぶんの量」を名乗る面が決まっていないので、`mouseWheel()` は
-    /// まだ無い ([#807](https://github.com/mokume-metal/mokume/issues/807))。`scrollY` は
-    /// フレームの累計なので、引数なしで足すと 3 件届いたときに部分累計を足し込む形になる。
-    @Test("スクロールでは、まだ何も配らない")
-    func staysQuietForScrolling() {
-        #expect(callbacks(from: [.scrolled(dx: 1, dy: 2)]).isEmpty)
+    /// **足し込みで数える量は、呼び出しが自分で運ぶ** ([ADR-0034] 決定 5)。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    @Test("スクロールは、その 1 件ぶんの量を配る")
+    func deliversTheAmountOfEachScroll() {
+        let events: [InputEvent] = [
+            .scrolled(dx: 1, dy: 2),
+            .scrolled(dx: 3, dy: 4),
+            .scrolled(dx: 5, dy: 6),
+        ]
+        #expect(
+            callbacks(from: events) == [
+                .mouseWheel(deltaX: 1, deltaY: 2),
+                .mouseWheel(deltaX: 3, deltaY: 4),
+                .mouseWheel(deltaX: 5, deltaY: 6),
+            ])
+    }
+
+    /// **これが #807 の実害そのもの。** フレーム合計 (`scrollY`) をコールバックの中から
+    /// 読むと、1 フレームに 3 件届いたとき `a` + `(a+b)` + `(a+b+c)` = `3a + 2b + c` を
+    /// 足し込む形になる。欲しいのは `a+b+c` である。
+    ///
+    /// **フレームに 1 件しか届かない環境では、間違えた側も正しく動く** ので、窓を触って
+    /// 確かめている限り気付けない。外から送る経路では 1 回の要求がまとめて 1 フレームへ
+    /// 入るので、そこで初めて出る。
+    @Test("まとめて届いても、配られた量の合計は送った合計と一致する")
+    func deliveredAmountsSumToWhatWasSent() {
+        let sent: [(Float, Float)] = [(1, 2), (3, 4), (5, 6)]
+        let delivered = callbacks(from: sent.map { .scrolled(dx: $0.0, dy: $0.1) })
+            .compactMap { callback -> (Float, Float)? in
+                guard case .mouseWheel(let deltaX, let deltaY) = callback else { return nil }
+                return (deltaX, deltaY)
+            }
+
+        #expect(delivered.map(\.0).reduce(0, +) == sent.map(\.0).reduce(0, +))
+        #expect(delivered.map(\.1).reduce(0, +) == sent.map(\.1).reduce(0, +))
+        // 部分累計を配っていれば 3a + 2b + c = 3*1 + 2*3 + 5 = 14 になる
+        #expect(delivered.map(\.0).reduce(0, +) == 9)
+    }
+
+    /// 引きずりも同じ規則で、**1 件ぶんを足し合わせるとフレーム合計 (``InputState/dragX``)
+    /// と一致する**。用途の違う 2 つが、食い違わずに並んでいる。
+    @Test("引きずりの 1 件ぶんを足すと、フレーム合計と一致する")
+    func draggedAmountsSumToTheFrameTotal() {
+        let state = InputState()
+        state.enqueue(.mouseDown(x: 10, y: 10, button: 0))
+        state.enqueue(.mouseMoved(x: 20, y: 15))
+        state.enqueue(.mouseMoved(x: 50, y: 35))
+        state.enqueue(.mouseMoved(x: 60, y: 60))
+        var deltaX: Float = 0
+        var deltaY: Float = 0
+        state.beginFrame { callback in
+            guard case .mouseDragged(let x, let y) = callback else { return }
+            deltaX += x
+            deltaY += y
+        }
+
+        #expect(deltaX == state.dragX)
+        #expect(deltaY == state.dragY)
+        #expect(deltaX == 50)
     }
 
     /// 規則は 1 つ — **状態はその出来事まで適用した値**。
@@ -230,8 +285,8 @@ struct InputCallbackTests {
         ]
         #expect(
             callbacks(from: events) == [
-                .mouseMoved, .mousePressed, .mouseDragged, .mouseReleased, .mouseClicked,
-                .mouseMoved,
+                .mouseMoved, .mousePressed, .mouseDragged(deltaX: 20, deltaY: 15),
+                .mouseReleased, .mouseClicked, .mouseMoved,
             ])
     }
 
@@ -241,7 +296,7 @@ struct InputCallbackTests {
     @Test("引きずりの判定は、外から送れる材料だけで決まる")
     func derivesDraggingWithoutWindowOnlyInformation() {
         let held: [InputEvent] = [.mouseDown(x: 0, y: 0, button: 0), .mouseMoved(x: 5, y: 5)]
-        #expect(callbacks(from: held) == [.mousePressed, .mouseDragged])
+        #expect(callbacks(from: held) == [.mousePressed, .mouseDragged(deltaX: 5, deltaY: 5)])
         #expect(callbacks(from: [.mouseMoved(x: 5, y: 5)]) == [.mouseMoved])
     }
 

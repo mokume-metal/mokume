@@ -23,6 +23,12 @@ extension Sketch {
     /// 最後に押された釦 (0 = 主釦)。
     public var mouseButton: Int { Self.input.button }
     /// このフレームのスクロール量 (横)。
+    ///
+    /// **これはフレームの合計で、`draw()` から読むためのもの。** 出来事 1 件ぶんの量が
+    /// 要るなら ``Sketch/mouseWheel(deltaX:deltaY:)`` が引数で受け取る。あちらの中から
+    /// ここを読むと、その出来事までの部分累計を何度も足し込む形になる ([ADR-0034] 決定 5)。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     public var scrollX: Float { Self.input.scrollX }
     /// このフレームのスクロール量 (縦)。
     public var scrollY: Float { Self.input.scrollY }
@@ -32,10 +38,9 @@ extension Sketch {
     /// 前のフレームの位置と離れているときに絵が飛ぶ — 押下は移動ではないのに、位置の
     /// 差としては現れてしまうためである。引きずって動かす道具はこちらを使う。
     ///
-    /// **これはフレームの累計であって、1 件ぶんではない。** ``Sketch/mouseDragged()``
-    /// の中から読むと、1 フレームに移動が 3 件届いたときそれぞれの時点までの部分累計に
-    /// なる (呼び出しも 3 回)。フレームぶんをまとめて食う道具 —
-    /// ``orbitControl(_:_:_:)`` — は `draw()` の中から呼ぶ。
+    /// **これはフレームの合計で、`draw()` から読むためのもの。** 出来事 1 件ぶんの量が
+    /// 要るなら ``Sketch/mouseDragged(deltaX:deltaY:)`` が引数で受け取る — 1 フレーム
+    /// ぶんを足し合わせればここと一致する。
     public var dragX: Float { Self.input.dragX }
     /// このフレームに、押したまま引きずった量 (縦)。
     public var dragY: Float { Self.input.dragY }

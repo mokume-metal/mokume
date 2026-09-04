@@ -36,10 +36,10 @@ extension Sketch {
     ///   書き換えない。細かく決めたいときは ``orbit`` を直接書く。
     ///   慣性は既定で入っていない (``Orbit/inertia``)。
     ///
-    /// - Important: **``Sketch/mouseDragged()`` の中から呼ばない。** ここは 1 フレームに
-    ///   1 回しか引きずった量を食わないので、1 フレームに移動が複数件届いたとき最初の
-    ///   1 件までの部分累計だけを食い、残りが黙って捨てられる。回る量が減るだけなので
-    ///   絵を見ても気付けない。`draw()` の中で 1 回呼ぶ形にする。
+    /// - Important: **``Sketch/mouseDragged(deltaX:deltaY:)`` の中から呼ばない。** ここが
+    ///   食うのは ``Sketch/dragX`` — フレームの合計 — なので、1 フレームに移動が複数件
+    ///   届くと同じ量を何度も食うことになる (2 度目からは食わない作りにしてあるが、
+    ///   そのぶん残りの呼び出しでは何も起きない)。`draw()` の中で 1 回呼ぶ形にする。
     public func orbitControl(
         _ sensitivityX: Float = 1, _ sensitivityY: Float = 1, _ sensitivityZ: Float = 1
     ) {

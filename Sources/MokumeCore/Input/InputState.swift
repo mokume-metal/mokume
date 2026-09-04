@@ -87,15 +87,25 @@ public final class InputState {
         pending.removeAll(keepingCapacity: true)
         for event in events {
             // 判定に要る「適用する前」を控えてから状態を進め、**進めた後の値で**配る
-            let wasMouseDown = isMouseDown
+            let before = Before(isMouseDown: isMouseDown, x: x, y: y)
             apply(event)
-            dispatchCallbacks(for: event, wasMouseDown: wasMouseDown, to: dispatch)
+            dispatchCallbacks(for: event, before: before, to: dispatch)
         }
+    }
+
+    /// 出来事を当てる前の姿。**呼び出しを決めるのに要るぶんだけ持つ。**
+    ///
+    /// 配るのは当てた後だが、「押下を伴う解放か」も「1 件で何画素動いたか」も、当てる
+    /// 前の値がないと決まらない。
+    private struct Before {
+        let isMouseDown: Bool
+        let x: Float
+        let y: Float
     }
 
     /// その 1 件が生む呼び出しを、生む順に配る。**写し方の正本はここ 1 つ。**
     private func dispatchCallbacks(
-        for event: InputEvent, wasMouseDown: Bool, to dispatch: (InputCallback) -> Void
+        for event: InputEvent, before: Before, to dispatch: (InputCallback) -> Void
     ) {
         switch event {
         case .mouseDown:
@@ -104,21 +114,28 @@ public final class InputState {
             dispatch(.mouseReleased)
             // **押下を伴う解放だけがクリックになる。** 押していないところで離しても
             // 解放は起きる (窓の外で押して中で離す・上限で押下が捨てられた、など)
-            if wasMouseDown { dispatch(.mouseClicked) }
-        case .mouseMoved:
+            if before.isMouseDown { dispatch(.mouseClicked) }
+        case .mouseMoved(let x, let y):
             // **窓にしか無い情報を使わずに、押下状態から導く。** 窓は押している間の
             // 移動を `mouseDragged` として拾うが、合流点へは 6 種別しか流れないので
             // (`SketchSurface` が `.mouseMoved` へ写す)、外から送れるものと同じ材料で
             // 分けられる。移動は押下状態を変えないので、当てる前と後で同じ
-            dispatch(wasMouseDown ? .mouseDragged : .mouseMoved)
+            //
+            // **引きずった量は当てる前との差**。dragX はフレームの頭から足し込むので、
+            // ここから読むとその出来事までの部分累計になる ([ADR-0034] 決定 5)
+            dispatch(
+                before.isMouseDown
+                    ? .mouseDragged(deltaX: x - before.x, deltaY: y - before.y)
+                    : .mouseMoved)
         case .keyDown(_, let characters, _):
             dispatch(.keyPressed)
             // **文字を生むキーだけが打鍵になる。** 矢印やファンクションキーでは呼ばない
             if Self.producesText(characters) { dispatch(.keyTyped) }
         case .keyUp:
             dispatch(.keyReleased)
-        case .scrolled:
-            break
+        case .scrolled(let dx, let dy):
+            // 1 件ぶんが出来事にそのまま載っているので、控えずに渡せる
+            dispatch(.mouseWheel(deltaX: dx, deltaY: dy))
         }
     }
 

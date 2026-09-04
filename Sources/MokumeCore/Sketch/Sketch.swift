@@ -78,20 +78,47 @@ public protocol Sketch: AnyObject {
     /// 時刻を見ないので、外から送った出来事でも窓での実操作と同じように起きる。
     func mouseClicked()
 
-    /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged()`` が呼ばれる。
+    /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged(deltaX:deltaY:)`` が呼ばれる。
     func mouseMoved()
 
-    /// 押したまま動いたとき呼ばれる。
+    /// 押したまま動いたとき呼ばれる。**その 1 件で動いた量**を受け取る。
     ///
-    /// **``dragX`` / ``dragY`` はフレームの累計であって、1 件ぶんではない。**
-    /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれ、そのたびに読む ``dragX`` は
-    /// その時点までの部分累計になる。
+    /// ```swift
+    /// var angle: Float = 0
     ///
-    /// とくに ``orbitControl(_:_:_:)`` を**ここから呼んではいけない。** あちらは
-    /// 1 フレームに 1 回しか引きずった量を食わないので、最初の 1 件までの部分累計だけ
-    /// 食って残りが黙って捨てられる — 回る量が減るだけなので、絵を見ても気付けない。
-    /// 視点を回すのは `draw()` の中で 1 回呼ぶ形のままにする。
-    func mouseDragged()
+    /// func mouseDragged(deltaX: Float, deltaY: Float) {
+    ///     angle += deltaX * 0.01
+    /// }
+    /// ```
+    ///
+    /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれ、渡る量はそれぞれの 1 件ぶんに
+    /// なる。**3 つ足せばフレーム合計 (``dragX``) と一致する** — 面から読む量とここへ
+    /// 渡る量は、用途が違うだけで食い違わない ([ADR-0034] 決定 5)。
+    ///
+    /// ただし ``orbitControl(_:_:_:)`` は `draw()` の中で 1 回呼ぶ形のままにする。
+    /// あちらが食うのはフレーム合計なので、ここから呼ぶと**同じフレームの量を何度も
+    /// 食う**ことになり、回りすぎる。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    func mouseDragged(deltaX: Float, deltaY: Float)
+
+    /// スクロールされたとき呼ばれる。**その 1 件ぶんの量**を受け取る。
+    ///
+    /// ```swift
+    /// var size: Float = 120
+    ///
+    /// func mouseWheel(deltaX: Float, deltaY: Float) {
+    ///     size = min(max(size + deltaY * 4, 20), 400)
+    /// }
+    /// ```
+    ///
+    /// **``scrollY`` をここで読んではいけない。** あちらはフレームの頭から足し込む
+    /// 合計なので、1 フレームに 3 件届くと `a` + `(a+b)` + `(a+b+c)` を足し込む形に
+    /// なる。欲しいのは `a+b+c` である ([ADR-0034] 決定 5)。
+    ///
+    /// フレームに 1 件しか届かない環境では**間違えた側も正しく動く**ので、窓を触って
+    /// 確かめている限り気付けない。
+    func mouseWheel(deltaX: Float, deltaY: Float)
 
     /// キーが押された瞬間に呼ばれる。
     ///
@@ -124,7 +151,8 @@ extension Sketch {
     public func mouseReleased() {}
     public func mouseClicked() {}
     public func mouseMoved() {}
-    public func mouseDragged() {}
+    public func mouseDragged(deltaX: Float, deltaY: Float) {}
+    public func mouseWheel(deltaX: Float, deltaY: Float) {}
     public func keyPressed() {}
     public func keyReleased() {}
     public func keyTyped() {}
