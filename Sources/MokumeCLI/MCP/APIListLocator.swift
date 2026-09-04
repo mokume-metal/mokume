@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 公開 API の一覧の在処。
 ///
@@ -47,7 +48,13 @@ struct APIListLocator {
 
     /// 取り置きの区画。`.mokume/` は ADR-0018 決定 2 の共通の屋根で、ひな形の `.gitignore` が
     /// 既に外している。
-    var facet: URL { directory.appendingPathComponent(".mokume/reference", isDirectory: true) }
+    ///
+    /// **屋根の綴りは持たない。** 共通の屋根である以上、綴りの正典は ``WorkDirectory`` 1 つで
+    /// ある — 手打ちすると、屋根を動かした日にここだけが取り残される (#814)。
+    var facet: URL { WorkDirectory.facet(Self.facetName, under: directory) }
+
+    /// 取り置きの区画の名前。
+    static let facetName = "reference"
 
     /// 一覧を読む。
     func read() throws -> (text: String, source: Source) {

@@ -68,31 +68,22 @@ struct Invocation: Equatable {
 
     /// 引数を解く。
     ///
-    /// **知らない選択肢は黙って場所にしない。** `-c` が場所として解釈された結果が
-    /// 「スケッチが見つからない: …/-c」で、これは何を直せばよいか分からない ([#680])。
+    /// **骨格は ``Arguments`` が持つ。** ここに書くのは宣言 — どの綴りが値を取るかと、
+    /// 足りないときの言い方だけである。知らない選択肢を黙って場所にしない規律
+    /// (`-c` が場所として解釈され「スケッチが見つからない: …/-c」になっていた [#680]) は
+    /// あちらが全員に効かせる。
     ///
     /// [#680]: https://github.com/mokume-metal/mokume/issues/680
     static func parse(_ arguments: [String]) throws(CommandFailure) -> Invocation {
-        var invocation = Invocation()
-        var index = 0
-        while index < arguments.count {
-            let argument = arguments[index]
-            if configurationFlags.contains(argument) {
-                index += 1
-                guard index < arguments.count else {
-                    throw .usage("\(argument) のあとに構成の名前が要る (debug / release)")
+        let parsed = try Arguments.parse(
+            arguments,
+            options: [
+                Arguments.Option(configurationFlags) {
+                    "\($0) のあとに構成の名前が要る (debug / release)"
                 }
-                invocation.configuration = arguments[index]
-            } else if argument.hasPrefix("-") {
-                throw .usage("知らない選択肢: \(argument)\n\n" + Command.usage())
-            } else {
-                guard invocation.place == nil else {
-                    throw .usage("場所は 1 つだけ: \(argument)")
-                }
-                invocation.place = argument
-            }
-            index += 1
-        }
-        return invocation
+            ],
+            surplus: .reject { "場所は 1 つだけ: \($0)" })
+        return Invocation(
+            place: parsed.positional, configuration: parsed.values[configurationFlags[0]])
     }
 }

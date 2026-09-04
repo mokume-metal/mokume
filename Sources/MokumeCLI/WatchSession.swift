@@ -295,19 +295,3 @@ final class WatchSession {
         try? AtomicWrite.write(data, to: url)
     }
 }
-
-/// 読み手が書きかけを掴まないように書く (ADR-0018 決定 3)。
-///
-/// ライブラリ側にも同じものがあるが、道具からは使えない (外へ出していない)。
-/// 規約は文章で共有し、実装はそれぞれが持つ — 出すべきかどうかは、外から使う人が
-/// 現れてから決める。
-enum AtomicWrite {
-    static func write(_ data: Data, to url: URL) throws {
-        let directory = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let temporary = directory.appendingPathComponent(
-            ".\(url.lastPathComponent).tmp", isDirectory: false)
-        try data.write(to: temporary)
-        _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
-    }
-}
