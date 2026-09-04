@@ -509,6 +509,14 @@ public final class Canvas {
     var currentShader: Shader?
     /// いま塗りが読む数の並び。`nil` なら読まない。
     var currentNumbers: Numbers?
+    /// 保持した形を置いている間だけ効く、**記録した塗り**。`nil` なら生きている状態を使う。
+    ///
+    /// 置く時点の ``currentShader`` で塗ると、組み立てるコードを読んでも何色になるかが
+    /// 分からない形になる — ``createShape(_:)`` が `fill` / `stroke` について約束して
+    /// いることを、断片についても守るための控えである ([#788])。
+    ///
+    /// [#788]: https://github.com/mokume-metal/mokume/issues/788
+    var replayedPaint: Shape.Paint?
     /// 渡されていないときに読ませる並び。**1 個の 0。**
     ///
     /// 何も束ねない口を作らないために置く — 束ねずに走らせると、断片が読んだ瞬間に
@@ -1071,9 +1079,7 @@ public final class Canvas {
             Batch(
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
-                    shader: currentShader,
-                    values: currentShader?.packedValues ?? [], surfaces: snapshotSurfaces(),
-                    numbers: currentNumbers,
+                    paint: effectivePaint,
                     source: openSource, start: start, count: count),
                 clip: currentClip,
                 matrix: jittered(openSource == .flat ? projection : viewProjection),
@@ -1102,6 +1108,40 @@ public final class Canvas {
         }
     }
 
+    /// いま生きている状態 (``shader(_:)`` / ``numbers(_:)``) から作る塗り。
+    private var livePaint: Shape.Paint {
+        Shape.Paint(
+            shader: currentShader, values: currentShader?.packedValues ?? [],
+            surfaces: snapshotSurfaces(), numbers: currentNumbers)
+    }
+
+    /// いま列を閉じたら、その列が持つ塗り。
+    ///
+    /// **保持した形を置いている間は、記録した塗りが勝つ。** 生きている状態から作るのは、
+    /// 記録した塗りが無いとき (いつもの描画) だけである。
+    var effectivePaint: Shape.Paint { replayedPaint ?? livePaint }
+
+    /// 記録した塗りへ移る。
+    ///
+    /// **同じなら列は閉じない**ので、続けて置いた形は前の形と同じ列に並び、描く回数は
+    /// 増えない (``blendMode(_:)`` / ``useTexture(_:)`` と同じ規則)。
+    func usePaint(_ paint: Shape.Paint) {
+        guard paint != effectivePaint else { return }
+        // **先に閉じる。** ここまでに置いた頂点は、移る前の塗りのものである
+        closeBatch()
+        replayedPaint = paint
+    }
+
+    /// 記録した塗りを外し、生きている状態へ戻す。
+    ///
+    /// **戻す操作が列を閉じる**ので、いま置いた頂点は記録した塗りで描かれる。閉じるのは
+    /// 生きている塗りと違うときだけで、同じなら次に描くものと 1 列に並ぶ。
+    func stopReplayingPaint() {
+        guard let replayed = replayedPaint else { return }
+        if replayed != livePaint { closeBatch() }
+        replayedPaint = nil
+    }
+
     /// 開いている雛形を閉じる。**畳めない頂点を置く前に呼ぶ。**
     ///
     /// 字・画像・その場で並べた頂点が雛形の列へ紛れ込むと、置き場所の数だけ**それらも
@@ -1125,9 +1165,7 @@ public final class Canvas {
             Batch(
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
-                    shader: currentShader,
-                    values: currentShader?.packedValues ?? [], surfaces: snapshotSurfaces(),
-                    numbers: currentNumbers,
+                    paint: effectivePaint,
                     source: .solid,
                     start: open.vertexStart, count: open.vertexCount),
                 clip: currentClip,
@@ -2449,10 +2487,10 @@ public final class Canvas {
                 // 一度も書かれない欄」が残り、絵が永久に間違ったまま出るためである
                 let slot = values.contents().advanced(by: index * Self.valuesStride)
                     .assumingMemoryBound(to: Float.self)
-                if batch.run.values.isEmpty {
+                if batch.run.paint.values.isEmpty {
                     slot.update(repeating: 0, count: 4)
                 } else {
-                    slot.update(from: batch.run.values, count: batch.run.values.count)
+                    slot.update(from: batch.run.paint.values, count: batch.run.paint.values.count)
                 }
             }
             // **どちら回りを表とするかを明示する。** 断片は表裏を見て面の向きを裏返す
@@ -2468,7 +2506,7 @@ public final class Canvas {
                 switch batch.source {
                 case .flat:
                     encoder.setRenderPipelineState(
-                        (run.shader?.states ?? pipeline.states).state(for: run.mode))
+                        (run.paint.shader?.states ?? pipeline.states).state(for: run.mode))
                     encoder.setDepthStencilState(pipeline.flatDepthState)
                     pipeline.argumentTable.setAddress(
                         buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
@@ -2491,7 +2529,7 @@ public final class Canvas {
                 case .solid:
                     // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
                     encoder.setRenderPipelineState(
-                        (run.shader?.solidStates ?? pipeline.solidStates).state(for: run.mode))
+                        (run.paint.shader?.solidStates ?? pipeline.solidStates).state(for: run.mode))
                     encoder.setDepthStencilState(pipeline.solidDepthState)
                     pipeline.argumentTable.setAddress(
                         solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
@@ -2528,7 +2566,7 @@ public final class Canvas {
                 // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
                 // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
                 pipeline.argumentTable.setAddress(
-                    (run.numbers ?? emptyNumbers).storage.gpuAddress,
+                    (run.paint.numbers ?? emptyNumbers).storage.gpuAddress,
                     index: ShapePipeline.numbersBufferIndex)
                 pipeline.argumentTable.setTexture(
                     run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
@@ -2536,7 +2574,7 @@ public final class Canvas {
                 // 読む面を束ねる。束ねずに走らせると、宣言より多く読んだ断片が
                 // 絵の乱れではなく異常終了になる (数の並びと同じ扱い)
                 for slot in 0..<ShapePipeline.surfaceCapacity {
-                    let surface = slot < run.surfaces.count ? run.surfaces[slot] : run.texture
+                    let surface = slot < run.paint.surfaces.count ? run.paint.surfaces[slot] : run.texture
                     pipeline.argumentTable.setTexture(
                         surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
                 }

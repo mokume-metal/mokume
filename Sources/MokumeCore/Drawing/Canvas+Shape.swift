@@ -99,6 +99,9 @@ extension Canvas {
             // 前の形と同じ列に並び、描く回数は増えない
             blendMode(run.mode)
             useTexture(run.texture)
+            // **塗りも記録したものへ戻す。** 置く時点の shader() で塗ると、組み立てる
+            // コードを読んでも何色になるかが分からない形になる (#788)
+            usePaint(run.paint)
             switch run.source {
             case .flat:
                 for placement in usable { place(run, of: shape, at: placement) }
@@ -113,6 +116,7 @@ extension Canvas {
         // 頂点は区間の設定で描かれる
         blendMode(savedMode)
         useTexture(savedTexture)
+        stopReplayingPaint()
     }
 
     /// 平面の区間を置く。**立体の列が開いていれば閉じる** (呼び出し順どおりに重ねる)。
