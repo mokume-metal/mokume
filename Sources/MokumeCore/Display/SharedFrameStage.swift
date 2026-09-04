@@ -105,6 +105,21 @@ final class SharedFrameStage: NSObject {
     /// 続けて差し出せなかった数。始まりと終わりだけ言うために持つ。
     private var consecutiveFailures = 0
 
+    /// 表示のリフレッシュを、台を強く持たずに中継する。
+    ///
+    /// **`CADisplayLink` は自分の target を強く持ち、走らせる実行ループがその仕掛けを
+    /// 持つ。** 台が自分で仕掛けを持つと環になり、`close()` を呼ばずに手放した台は
+    /// 永久に解放されない — しかもリフレッシュのたびに区画を読み直し続ける ([#738])。
+    /// 中継を挟むと環が切れるので、手放した時点で `deinit` が走り、そこで畳める。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    @MainActor private final class DisplayLinkRelay: NSObject {
+        weak var stage: SharedFrameStage?
+        @objc func step(_ link: CADisplayLink) { stage?.step(link) }
+    }
+
+    private let relay = DisplayLinkRelay()
+
     /// - Parameter facet: 差し出し元の番号が置かれる区画 (`.mokume/viewport`)。
     init(gpu: RenderDevice, facet: URL, look: Look) throws(RenderFailure) {
         self.gpu = gpu
@@ -112,7 +127,12 @@ final class SharedFrameStage: NSObject {
         self.look = look
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         super.init()
+        relay.stage = self
     }
+
+    /// **畳み忘れても、手放した時点で畳む。** 仕掛けを止めない限り、走り続ける
+    /// ([#738](https://github.com/mokume-metal/mokume/issues/738))。
+    isolated deinit { close() }
 
     /// 窓を出し、区画を見張り始める。
     ///
@@ -191,7 +211,9 @@ final class SharedFrameStage: NSObject {
     private func attachDisplayLink(to screen: NSScreen?) {
         guard let screen else { return }
         displayLink?.invalidate()
-        let link = screen.displayLink(target: self, selector: #selector(step(_:)))
+        // **仕掛けへ渡すのは中継である** (``DisplayLinkRelay``)。台を直に渡すと環になる
+        let link = screen.displayLink(
+            target: relay, selector: #selector(DisplayLinkRelay.step(_:)))
         link.add(to: .main, forMode: .common)
         displayLink = link
         linkedScreen = screen
@@ -202,7 +224,7 @@ final class SharedFrameStage: NSObject {
         attachDisplayLink(to: screen)
     }
 
-    @objc private func step(_ link: CADisplayLink) {
+    fileprivate func step(_ link: CADisplayLink) {
         onTick?()
         reloadSourceIfChanged()
         guard let source, let view, let layer = view.metalLayer,
