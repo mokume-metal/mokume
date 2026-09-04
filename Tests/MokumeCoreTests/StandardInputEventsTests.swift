@@ -104,6 +104,37 @@ struct StandardInputEventsTests {
         }
     }
 
+    /// **同じ出来事の並びは、同じ呼び出しの並びを生む。**
+    ///
+    /// 窓は 1 件ずつ複数フレームに散り、外から送る経路は 1 フレームにまとめて届く。
+    /// 出来事ごとに配れば、どちらも同じ列になる — [#218](https://github.com/mokume-metal/mokume/issues/218)
+    /// が置いた「合流点は 1 つ」の約束が、状態だけでなく呼び出しの側でも成り立つ
+    /// ([#723](https://github.com/mokume-metal/mokume/issues/723))。
+    @Test("配られる呼び出しの並びが、直に入れたときと同じ")
+    func callbacksMatchTheDirectPath() throws {
+        try withPipe { reader, writer in
+            let events: [InputEvent] = [
+                .mouseMoved(x: 0, y: 0),
+                .mouseDown(x: 100, y: 50, button: 0),
+                .mouseMoved(x: 120, y: 60),
+                .mouseUp(x: 120, y: 60, button: 0),
+            ]
+            let viaPipe = InputState()
+            for event in events { try write(event.wireLine, to: writer) }
+            reader.drain(into: viaPipe)
+            var fromPipe: [InputCallback] = []
+            viaPipe.beginFrame { fromPipe.append($0) }
+
+            let direct = InputState()
+            for event in events { direct.enqueue(event) }
+            var fromDirect: [InputCallback] = []
+            direct.beginFrame { fromDirect.append($0) }
+
+            #expect(fromPipe == fromDirect)
+            #expect(fromPipe == [.mousePressed, .mouseReleased, .mouseClicked])
+        }
+    }
+
     /// **待たない。** 塞ぐ読み方をすると、次の 1 件が来るまでフレームが進まなくなる。
     @Test("何も来ていなければ、待たずに戻る")
     func doesNotBlockWhenEmpty() throws {

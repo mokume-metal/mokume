@@ -306,18 +306,41 @@ public final class SketchRuntime {
         start()
         timing.advance()
         beginFrame()
-        receiveInput()
-        supplyFromInlets()
+        collectInput()
         canvas.time = timing.time
         canvas.deltaTime = timing.deltaTime
-        try canvas.draw { withActiveRuntime { sketch.draw() } }
+        // **入力の配布も入り口の供給も、描き始めた中で行う。**
+        //
+        // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
+        // 落ちる。描き始めた中でないと、コールバックの中の `circle()` が無言で効かない
+        // (描く口は `guard isDrawing` で守られている)
+        try canvas.draw {
+            withActiveRuntime {
+                input.beginFrame { deliver($0) }
+                supplyFromInlets()
+                sketch.draw()
+            }
+        }
     }
 
-    /// 溜まった入力をこのフレームへ流し込む。
+    /// 配られた 1 件を、スケッチの書いた口へ渡す。
     ///
-    /// **`draw()` の前に流す。** 送られた出来事が同じフレームの `draw()` から見える —
-    /// 1 フレーム遅れて効く形にすると、外から動かして確かめるときに毎回 1 枚ぶんずれる。
-    private func receiveInput() {
+    /// **どの出来事がどの呼び出しになるかは ``InputState`` が決める。** ここは受け取った
+    /// 並びをそのまま流すだけで、押下状態の写しを持たない。
+    private func deliver(_ callback: InputCallback) {
+        switch callback {
+        case .mousePressed: sketch.mousePressed()
+        case .mouseReleased: sketch.mouseReleased()
+        case .mouseClicked: sketch.mouseClicked()
+        }
+    }
+
+    /// 送られてきた入力を、このフレームの待ち行列へ集める。
+    ///
+    /// **集めるだけで、当てるのは描き始めてから** (``drawSketchFrame()``)。当てるのと
+    /// 同時にコールバックを配るので、配る先がランタイムの差さった描画の中である必要が
+    /// ある。集めるほうにその制約は無い。
+    private func collectInput() {
         // **窓からのぶんを先に引き取る。** どちらも同じ待ち行列へ入るので、順は
         // 「起きた順に近いほう」を選ぶ — 区画は要求 1 回ぶんをまとめて運ぶので、
         // 窓の 1 件より古いことがある
@@ -325,7 +348,6 @@ public final class SketchRuntime {
         inbox?.drain(into: input)
         params?.drain()
         paramStore?.tick()
-        input.beginFrame()
     }
 
     /// 入り口に値を供給させる。**`draw()` の直前** ([ADR-0024] 決定 6)。
