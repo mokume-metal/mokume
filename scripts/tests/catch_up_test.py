@@ -329,5 +329,49 @@ class CatchUpTest(unittest.TestCase):
         self.assertIn("autoMergeRequest", proc.stdout)
 
 
+class MakeTargetTest(unittest.TestCase):
+    """`make catch-up` が 3 を成功として扱うことを固定する (#786)。
+
+    スクリプトの契約 (0 / 1 / 3) は他の呼び手のために保つが、入口を打つ人が
+    受け取るのは「赤いか否か」の 1 ビットである。素で呼ぶと「先に描画 PR が
+    居るので待て」が `make: *** [catch-up] Error 3` として出て、**このスクリプトが
+    最も避けたかった取り違えが、いちばん使われる入口で起きる**。
+
+    見るのは **リポジトリの本物の Makefile** で、recipe を写さない (写しは腐る)。
+    使い捨てディレクトリを cwd にすれば、recipe の `scripts/catch-up.sh` は
+    そこに置いた代役へ解決される。`catch-up` は前提を持たないので他の的は走らない。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        (self.root / "scripts").mkdir()
+
+    def run_make(self, exit_code, message="打つ意味が無い — #5 の merge を待つ"):
+        stub = self.root / "scripts" / "catch-up.sh"
+        stub.write_text(f'#!/bin/bash\necho "catch-up: {message}"\nexit {exit_code}\n')
+        stub.chmod(0o755)
+        return subprocess.run(
+            ["make", "-f", str(REPO / "Makefile"), "catch-up"],
+            cwd=self.root, capture_output=True, text=True, encoding="utf-8",
+        )
+
+    def test_打つ意味が無い_3_は_make_を赤くしない(self):
+        proc = self.run_make(3)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        # 理由の案内は握り潰さない — 何を待てばよいかは人が読む
+        self.assertIn("#5 の merge を待つ", proc.stdout)
+        self.assertNotIn("Error 3", proc.stderr)
+
+    def test_途中で止まった_1_は_make_を赤くする(self):
+        proc = self.run_make(1, message="止まった — 衝突")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout)
+
+    def test_queue_へ戻した_0_は_make_を赤くしない(self):
+        proc = self.run_make(0, message="queue へ戻した")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
