@@ -36,7 +36,8 @@ struct Facets {
     func facet(_ entry: StartupReads.Entry) -> URL {
         directory.appendingPathComponent(".mokume/\(entry.key)", isDirectory: true)
     }
-    var buildStatus: URL { directory.appendingPathComponent(".mokume/build/status.json") }
+    // 作り直しの記録の在処も、書く側と同じ綴りから出す (#730)
+    var buildStatus: URL { BuildReport.statusURL(under: directory) }
 
     /// 要求を置き、同じ識別子の応答が返るまで待つ。
     ///

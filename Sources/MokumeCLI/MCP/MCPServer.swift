@@ -90,7 +90,12 @@ enum MCPCommand {
     ) -> (package: URL, facets: URL) {
         let package = arguments.first.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? currentDirectory
-        return (package, WorkDirectory.given(environment: environment) ?? package)
+        // 区画の基準を決める計算は、走らせる口と同じ 1 つを通る (#791)
+        return (
+            package,
+            Invocation.facetBase(
+                under: package, workDirectory: WorkDirectory.given(environment: environment))
+        )
     }
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
