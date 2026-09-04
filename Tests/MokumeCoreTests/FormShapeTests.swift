@@ -80,7 +80,13 @@ struct FormShapeTests {
         #expect(canvas.flatOutlinesInLastFrame == 0, "基本図形が周を組み立てている")
     }
 
-    @Test("種別・色・変換を混ぜても、1 列に収まる")
+    /// **塗りを持つ図形どうしなら、種別を混ぜても 1 列。**
+    ///
+    /// 断片は塗り / 輪郭の有無で特化してあるので、そこだけが列を切る ([#771])。寸法・
+    /// 種別・色・変換はどれも列を切らない — #752 が狙ったのはここで、失っていない。
+    ///
+    /// [#771]: https://github.com/mokume-metal/mokume/issues/771
+    @Test("寸法・種別・色・変換を混ぜても、1 列に収まる")
     func mixedKindsShareOneDrawCall() throws {
         let canvas = try makeCanvas()
         _ = try picture(canvas) { canvas in
@@ -93,17 +99,45 @@ struct FormShapeTests {
                 canvas.fill(.opaque(red: step / 60, green: 0.5, blue: 1 - step / 60))
                 canvas.stroke(.opaque(red: 1, green: step / 60, blue: 0))
                 canvas.strokeWeight(1 + step * 0.05)
-                switch index % 5 {
+                switch index % 3 {
                 case 0: canvas.rect(0, 0, 6 + step * 0.1, 4)
                 case 1: canvas.circle(0, 0, 5 + step * 0.1)
-                case 2: canvas.arc(0, 0, 8, 6, 0.2, 2 + step * 0.02)
-                case 3: canvas.line(0, 0, 6, 3 + step * 0.05)
-                default: canvas.point(0, 0)
+                default: canvas.arc(0, 0, 8, 6, 0.2, 2 + step * 0.02)
                 }
                 canvas.pop()
             }
         }
         #expect(canvas.drawCallsInLastFrame == 1, "種別か色か変換で列が分かれている")
+        #expect(canvas.flatOutlinesInLastFrame == 0)
+    }
+
+    /// **塗りの有無が変わると列が切れる。** これは [#771] で受け入れた代償である。
+    ///
+    /// 断片は塗り / 輪郭の有無で特化してあり (`kFormHasFill` / `kFormHasStroke`)、組ごとに
+    /// パイプラインが違う。線と点は塗りを持たないので、塗りを持つ図形と混ぜると列が切れる。
+    /// **黙って切れる状態にしない**ために、切れることをここで名指しで見る。
+    ///
+    /// 1 列あたりの費用は口を束ね直して描く 20 呼び出しほどで、交互に 1 万回置くような
+    /// 極端な形でだけ効く。#752 が狙った「寸法違いで畳めない」は戻らない。
+    ///
+    /// [#771]: https://github.com/mokume-metal/mokume/issues/771
+    @Test("塗りの有無が変わると列が切れる")
+    func fillPresenceSplitsTheRun() throws {
+        let canvas = try makeCanvas()
+        _ = try picture(canvas) { canvas in
+            canvas.fill(white)
+            canvas.stroke(blue)
+            canvas.strokeWeight(1)
+            // 塗りを持つ図形が続く間は 1 列
+            canvas.rect(10, 10, 12, 12)
+            canvas.circle(40, 16, 12)
+            // 線は塗りを持たない — ここで列が切れる
+            canvas.line(10, 40, 60, 40)
+            canvas.point(70, 40)
+            // 塗りが戻るのでもう一度切れる
+            canvas.rect(10, 60, 12, 12)
+        }
+        #expect(canvas.drawCallsInLastFrame == 3, "塗りの有無で列が切れていない")
         #expect(canvas.flatOutlinesInLastFrame == 0)
     }
 
@@ -519,7 +553,8 @@ struct FormShapeTests {
                 canvas.rect(-20, 10, 40, 8)
                 canvas.line(-25, -25, 25, -20)
             }
-            #expect(shape.drawCallCount == 1)
+            // 線は塗りを持たないので、円・矩形とは別の列になる (`fillPresenceSplitsTheRun`)
+            #expect(shape.drawCallCount == 2)
             #expect(shape.vertexCount == 0, "基本図形は頂点を持たない")
             canvas.push()
             canvas.translate(48, 48)
@@ -528,7 +563,7 @@ struct FormShapeTests {
             canvas.pop()
         }
         #expect(direct.bytes == retained.bytes)
-        #expect(canvas.drawCallsInLastFrame == 1)
+        #expect(canvas.drawCallsInLastFrame == 2)
     }
 
     @Test("組にした形をたくさん置いても、1 列に収まり色掛けが効く")

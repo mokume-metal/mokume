@@ -88,13 +88,24 @@ final class ShapePipeline {
     /// 書く先が無く、置かない ([#757](https://github.com/mokume-metal/mokume/issues/757))。
     let shadowState: any MTLRenderPipelineState
 
-    /// 平面の基本図形を距離関数で描くパイプライン ([#752])。**混ぜ方ごとに 3 本ある。**
+    /// 平面の基本図形を距離関数で描くパイプライン ([#752])。
     ///
     /// 頂点も断片も専用で、利用者の断片は差し替えられない — 断片が読む面・頂点の
-    /// 属性を契約に持つ利用者の断片は、三角形の経路 (``state``) に居続ける。
+    /// 属性を契約に持つ利用者の断片は、三角形の経路 (``states``) に居続ける。
+    ///
+    /// **塗り / 輪郭の有無でも分かれる。** 断片は無い側の綴りを持たないほうが速く
+    /// (面を覆う矩形 200 枚で 1.4 ms)、有無は列ごとに決まっているので function constant
+    /// で特化できる ([#771])。並びは旗 (``FormInstance/fillsFlag`` | `strokesFlag`) から
+    /// 1 を引いた番号 — 塗りも輪郭も無い図形は置かれないので 0 は使わない。
     ///
     /// [#752]: https://github.com/mokume-metal/mokume/issues/752
-    let formStates: BlendStates
+    /// [#771]: https://github.com/mokume-metal/mokume/issues/771
+    private let formStatesByFlags: [BlendStates]
+
+    /// その旗の組で描くパイプラインの 3 本組。
+    func formStates(for flags: UInt32) -> BlendStates {
+        formStatesByFlags[Int(flags) - 1]
+    }
 
     /// 平面の奥行きの扱い — **常に通し、書かない**。
     ///
@@ -138,13 +149,20 @@ final class ShapePipeline {
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
-        self.formStates = try Self.makeBlendStates(
-            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
-            pixelFormat: pixelFormat, label: "mokume.forms",
-            vertexFunctionName: Self.formVertexFunctionName,
-            fragmentFunctionName: Self.formFragmentFunctionName,
-            blendFragmentFunctionName: Self.formBlendFragmentFunctionName,
-            replaceFragmentFunctionName: Self.formReplaceFragmentFunctionName)
+        // 塗り / 輪郭の有無ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方)
+        var formStates: [BlendStates] = []
+        for flags in 1...3 {
+            formStates.append(
+                try Self.makeBlendStates(
+                    compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+                    pixelFormat: pixelFormat, label: "mokume.forms.\(flags)",
+                    vertexFunctionName: Self.formVertexFunctionName,
+                    fragmentFunctionName: Self.formFragmentFunctionName,
+                    blendFragmentFunctionName: Self.formBlendFragmentFunctionName,
+                    replaceFragmentFunctionName: Self.formReplaceFragmentFunctionName,
+                    formFlags: UInt32(flags)))
+        }
+        self.formStatesByFlags = formStates
 
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
@@ -213,24 +231,50 @@ final class ShapePipeline {
         vertexFunctionName: String,
         fragmentFunctionName: String = ShapePipeline.flatFragmentFunctionName,
         blendFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName,
-        replaceFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName
+        replaceFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName,
+        formFlags: UInt32? = nil
     ) throws(RenderFailure) -> BlendStates {
         BlendStates(
             composite: try makeState(
                 compiler: compiler, vertexLibrary: vertexLibrary,
                 fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
                 label: label, vertexFunctionName: vertexFunctionName,
-                fragmentFunctionName: fragmentFunctionName),
+                fragmentFunctionName: fragmentFunctionName, formFlags: formFlags),
             blend: try makeState(
                 compiler: compiler, vertexLibrary: vertexLibrary,
                 fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
                 label: "\(label).blend", vertexFunctionName: vertexFunctionName,
-                fragmentFunctionName: blendFragmentFunctionName, sourceOver: true),
+                fragmentFunctionName: blendFragmentFunctionName, sourceOver: true,
+                formFlags: formFlags),
             replace: try makeState(
                 compiler: compiler, vertexLibrary: vertexLibrary,
                 fragmentLibrary: fragmentLibrary, pixelFormat: pixelFormat,
                 label: "\(label).replace", vertexFunctionName: vertexFunctionName,
-                fragmentFunctionName: replaceFragmentFunctionName))
+                fragmentFunctionName: replaceFragmentFunctionName, formFlags: formFlags))
+    }
+
+    /// 塗りの有無を渡す function constant の番号 (シェーダ側の `kFormHasFill`)。
+    static let formHasFillConstantIndex = 0
+    /// 輪郭の有無を渡す function constant の番号 (シェーダ側の `kFormHasStroke`)。
+    static let formHasStrokeConstantIndex = 1
+
+    /// 断片を旗の組で特化する記述。
+    ///
+    /// **渡さない断片は特化しない** — 三角形の経路の断片は `kFormHas*` を読まないので、
+    /// 値を渡す先が無い。
+    private static func specialized(
+        _ function: MTL4LibraryFunctionDescriptor, formFlags: UInt32
+    ) -> MTL4FunctionDescriptor {
+        let values = MTLFunctionConstantValues()
+        var hasFill = (formFlags & FormInstance.fillsFlag) != 0
+        var hasStroke = (formFlags & FormInstance.strokesFlag) != 0
+        values.setConstantValue(&hasFill, type: .bool, index: formHasFillConstantIndex)
+        values.setConstantValue(&hasStroke, type: .bool, index: formHasStrokeConstantIndex)
+
+        let descriptor = MTL4SpecializedFunctionDescriptor()
+        descriptor.functionDescriptor = function
+        descriptor.constantValues = values
+        return descriptor
     }
 
     private static func makeState(
@@ -238,7 +282,8 @@ final class ShapePipeline {
         fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String,
         vertexFunctionName: String = ShapePipeline.flatVertexFunctionName,
         fragmentFunctionName: String = "mokume_fragmentMain",
-        sourceOver: Bool = false
+        sourceOver: Bool = false,
+        formFlags: UInt32? = nil
     ) throws(RenderFailure) -> any MTLRenderPipelineState {
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = vertexFunctionName
@@ -251,7 +296,8 @@ final class ShapePipeline {
         let descriptor = MTL4RenderPipelineDescriptor()
         descriptor.label = label
         descriptor.vertexFunctionDescriptor = vertexFunction
-        descriptor.fragmentFunctionDescriptor = fragmentFunction
+        descriptor.fragmentFunctionDescriptor =
+            formFlags.map { specialized(fragmentFunction, formFlags: $0) } ?? fragmentFunction
 
         // **固定機能のブレンドを使うのは、乗算済みの source-over だけ。** 色は
         // アルファ乗算済みなので ([ADR-0011] 決定 4)、重ねるのは
