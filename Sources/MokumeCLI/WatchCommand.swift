@@ -95,7 +95,24 @@ enum WatchCommand {
         // **最初の作り直しも巡回の中で始める。** ここで直に呼ぶと、窓が画面に出るのは
         // 作り直しが終わってからになる — いちばん長く待つのが初回なのに、待っている間
         // だけ状態がどこにも出ない (#695 が端末で直したことが、窓では直らない)
+        // **道具立ての終わり方も受ける。** Dock からの終了・ログアウト・システム終了は
+        // 窓を閉じる経路を通らない (`windowShouldClose` も巡回も通らない) ので、受けないと
+        // 子と区画が置き去りになる — 窓を持つ道具は `.regular` なので Dock に出ている
+        // ([#826](https://github.com/mokume-metal/mokume/issues/826))
+        let delegate = ApplicationDelegate { teardown(session, viewer) }
+        NSApplication.shared.delegate = delegate
+
         watching(session, viewer)
+        teardown(session, viewer)
+    }
+
+    /// 後始末。**走らせていたものも、置いた区画も残さない。**
+    ///
+    /// **2 度通っても、言うことは 1 度きり。** 巡回を抜けた後と、道具立てが終わるとき
+    /// (Dock・ログアウト) の両方から呼ばれうるので、片方だけを正しい順序にしても足りない。
+    static func teardown(_ session: WatchSession, _ viewer: Viewer?) {
+        guard !teardownDone else { return }
+        teardownDone = true
         finish(session)
         viewer?.close()
         // **置いていかない。** 区画は「画面の出口は共有面」という合図なので、残すと
@@ -103,6 +120,27 @@ enum WatchCommand {
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
         if viewer?.createdParams == true {
             try? FileManager.default.removeItem(at: paramsFacet(for: session))
+        }
+    }
+
+    /// 後始末を済ませたか。**印は 1 プロセスに 1 つ** (終わりの合図と同じ扱い)。
+    static var teardownDone = false
+
+    /// 道具立ての終わり方を受ける。
+    ///
+    /// **窓を閉じる経路を通らない終わり方がある。** `NSApplication` を終わらせる経路
+    /// (Dock の「終了」・ログアウト・システム終了) は `windowShouldClose` を問わず、
+    /// `run()` からも戻らない — 後始末はここでしか通れない。
+    final class ApplicationDelegate: NSObject, NSApplicationDelegate {
+        private let teardown: () -> Void
+
+        init(teardown: @escaping () -> Void) {
+            self.teardown = teardown
+            super.init()
+        }
+
+        func applicationWillTerminate(_ notification: Notification) {
+            teardown()
         }
     }
 
@@ -145,11 +183,15 @@ enum WatchCommand {
         // 2 つの窓が「いまの値」を同時に持つことにはならない ([ADR-0032] 決定 4)
         window.onInput = { [weak session] in session?.send($0) }
         preview.onInput = { [weak session] in session?.send($0) }
+        let viewer = Viewer(window: window, preview: preview, createdParams: !paramsWasThere)
+        // **出す前に繋ぐ。** 出してから繋ぐと、その隙間に閉じられたぶんが素通りする
+        // (窓の中身を繋ぐ順序と同じ理由)
+        askBeforeClosing(viewer)
         // **プレビューを先に出す。** 後に出すと作品の窓の上に重なるので、本番へ送る
         // ほうを掴み直す手間がいちばん最初に生まれる
         preview.open()
         window.open()
-        return Viewer(window: window, preview: preview, createdParams: !paramsWasThere)
+        return viewer
     }
 
     /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業
@@ -171,6 +213,32 @@ enum WatchCommand {
     /// 揃っていないと、宣言が 1 つも見えない (#331)。
     static func paramsFacet(for session: WatchSession) -> URL {
         WorkDirectory.facet(StartupReads.params.key, under: session.facetBase)
+    }
+
+    /// 窓から終わりを頼まれた。
+    ///
+    /// **合図の置き場を増やさない。** シグナルと同じ印を立てるだけなので、この後は既に
+    /// ある道 (巡回が抜ける → 子を止める → 窓を畳む → 区画を片付ける) がそのまま通る。
+    /// 窓を閉じるのもここではない — 順序は `run` の後始末が持っている ([#826])。
+    ///
+    /// [#826]: https://github.com/mokume-metal/mokume/issues/826
+    static func requestStop() {
+        watchStopRequested = 1
+    }
+
+    /// 窓の × を押した人に問うことを、2 つの窓へ同じように繋ぐ。
+    ///
+    /// **作品の窓とプレビューで意味を分けない** ([ADR-0032] 決定 7)。プレビューだけが
+    /// 消える形は、決定 7 が作らないと決めた「既定を外す口」そのものである。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static func askBeforeClosing(_ viewer: Viewer) {
+        viewer.window.askBeforeClosing(
+            message: closeMessage, detail: closeDetail, confirm: closeConfirm,
+            cancel: closeCancel, then: { requestStop() })
+        viewer.preview.askBeforeClosing(
+            message: closeMessage, detail: closeDetail, confirm: closeConfirm,
+            cancel: closeCancel, then: { requestStop() })
     }
 
     /// 終わりの合図の受け口を置く。
@@ -205,7 +273,16 @@ enum WatchCommand {
         stopped: () -> Bool = { watchStopRequested != 0 }
     ) -> Bool {
         if stopped() { return false }
-        if let outcome = session.tick() { report(outcome, on: viewer) }
+        if let outcome = session.tick() {
+            report(outcome, on: viewer)
+            // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
+            // 通るので、保存のたびにも起こりうる (#732)
+            switch session.lastStop {
+            case .killed: say(killedLine)
+            case .abandoned(let pid): say(abandonedLine(pid: pid))
+            default: break
+            }
+        }
         return true
     }
 
@@ -255,9 +332,18 @@ enum WatchCommand {
 
     /// 終わる。**走らせていたものを置いていかない。**
     ///
-    /// 止めたかどうかを名乗る — 子が既に死んでいた場合と、止めた場合は別の出来事である。
+    /// どう止まったかを名乗る — 既に死んでいた・頼んで止まった・期限で落とした の 3 つは
+    /// 別の出来事である。とくに 3 つ目は子の側の事情なので、黙って終わると
+    /// 「止めた」と見分けが付かない (#732)。
     static func finish(_ session: WatchSession) {
-        say(session.stop() ? "見張りを終える (走らせていたスケッチを止めた)" : "見張りを終える")
+        switch session.stop() {
+        case .notRunning: say("見張りを終える")
+        case .terminated: say("見張りを終える (走らせていたスケッチを止めた)")
+        case .killed: say("見張りを終える (止まらないスケッチを強制終了した)")
+        // **置いていくことを言う。** 黙って終わると「止めた」と見分けが付かず、残ったものが
+        // #454 の孤児として次の人に渡る
+        case .abandoned(let pid): say("見張りを終える — " + abandonedLine(pid: pid))
+        }
     }
 
     private static func report(_ outcome: BuildReport, on viewer: Viewer?) {
@@ -273,6 +359,35 @@ enum WatchCommand {
 
     /// 作り直しが通らなかったとき、走り続けているものを名乗る行。
     static let holdingLine = "直前の版を走らせたまま待っている"
+
+    /// 窓を閉じようとした人に問う言葉。
+    ///
+    /// **窓に出る言葉も、端末に出ている言葉と同じ側で持つ** (#695 が `startingLine` で
+    /// 定めた規律)。窓の側 (`SharedFrame*`) は出し方だけを持ち、何と言うかは決めない。
+    static let closeMessage = "見張りを終えますか？"
+    /// 押した後どうなるか。**両方の窓が畳まれることを言う** — 押した人が閉じようとしたのは
+    /// 片方だが、終わるのは見張りごとである。
+    static let closeDetail = "走らせているスケッチも止まり、作品の窓とプレビューの両方が畳まれます。"
+    /// 終わる側の押しどころ。
+    static let closeConfirm = "終える"
+    /// 続ける側の押しどころ。**「キャンセル」と言わない** — 押した人が取り消すのは「閉じる」
+    /// ことであって、走っているものは続く。
+    static let closeCancel = "続ける"
+
+    /// 差し替えのときに、頼んでも止まらない子を強制終了したと名乗る行。
+    ///
+    /// **終わるときだけの話ではない。** 止め方は終わるときと同じ経路なので、期限に
+    /// 掛かったことは保存のたびにも起こりうる
+    /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。
+    static let killedLine = "止まらないスケッチを強制終了した (SIGTERM に応えない)"
+
+    /// 強制終了しても消えなかったことを名乗る行。
+    ///
+    /// **番号を出す。** ここまで来ると道具にできることは無いので、落とすのは人である —
+    /// 番号は `scripts/orphan-processes.sh` が出すものと同じ (#454)。
+    static func abandonedLine(pid: Int32) -> String {
+        "強制終了しても消えないスケッチが残った (PID \(pid)) — 手で落とす必要がある"
+    }
 
     /// プレビューへ重ねる 1 行。**端末に出ている言葉だけで組む** — プレビューは端末の
     /// 代わりではないので、ここだけで名乗る事実を作らない。

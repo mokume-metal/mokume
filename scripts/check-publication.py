@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -213,7 +214,8 @@ def head_commit() -> str:
     return completed.stdout.strip()
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """口の定義。**既定を検められるように切り出してある** (#818)。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--write-stamp",
@@ -227,7 +229,14 @@ def main() -> int:
         default=f"https://{DOMAIN}",
         help=f"引く先の URL かディレクトリ (既定: https://{DOMAIN})",
     )
-    parser.add_argument("--repo", default="mokume-metal/mokume", help="Pages の設定を読む先")
+    # **既定は環境から取る** (#818)。literal を既定にしていたので、fork や rename の後に
+    # 「他リポジトリの Pages 設定を読んで緑」になり得た。CI は GITHUB_REPOSITORY を
+    # 立てるので、literal が効くのは手元だけである
+    parser.add_argument(
+        "--repo",
+        default=os.environ.get("GITHUB_REPOSITORY", "mokume-metal/mokume"),
+        help="Pages の設定を読む先 (既定: GITHUB_REPOSITORY)",
+    )
     parser.add_argument(
         "--print-site",
         action="store_true",
@@ -244,7 +253,11 @@ def main() -> int:
         action="store_true",
         help="GitHub 側の設定との照合を飛ばす (gh の認証が無い手元から追随だけ見るとき)",
     )
-    arguments = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    arguments = build_parser().parse_args()
 
     if arguments.print_site:
         print(arguments.site)

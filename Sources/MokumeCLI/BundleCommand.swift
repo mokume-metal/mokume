@@ -87,27 +87,17 @@ enum BundleCommand {
 
     // MARK: - 引数
 
+    /// 引数を解く。骨格は ``Arguments`` が持ち、ここは宣言だけを書く。
     static func parse(_ arguments: [String]) throws(CommandFailure) -> Options {
-        var path: String?
-        var out: String?
-        var index = arguments.startIndex
-        while index < arguments.endIndex {
-            switch arguments[index] {
-            case "--out":
-                index += 1
-                guard index < arguments.endIndex else {
-                    throw .usage("--out には置き場が要る\n\n" + Command.usage())
-                }
-                out = arguments[index]
-            case let argument where argument.hasPrefix("-"):
-                throw .usage("知らない選択肢: \(argument)\n\n" + Command.usage())
-            case let argument:
-                guard path == nil else { throw .usage("場所は 1 つだけ: \(argument)") }
-                path = argument
-            }
-            index += 1
-        }
-        return Options(path: path ?? FileManager.default.currentDirectoryPath, out: out)
+        let parsed = try Arguments.parse(
+            arguments,
+            options: [
+                Arguments.Option(["--out"]) { "\($0) には置き場が要る\n\n" + Command.usage() }
+            ],
+            surplus: .reject { "場所は 1 つだけ: \($0)" })
+        return Options(
+            path: parsed.positional ?? FileManager.default.currentDirectoryPath,
+            out: parsed.values["--out"])
     }
 
     // MARK: - 組み立て

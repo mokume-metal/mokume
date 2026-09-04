@@ -39,35 +39,19 @@ enum NewCommand {
             """)
     }
 
-    /// 引数を解く。
+    /// 引数を解く。骨格は ``Arguments`` が持ち、ここは宣言だけを書く。
     static func parse(_ arguments: [String]) throws(CommandFailure) -> Options {
-        var name: String?
-        var path = "."
-        var local: String?
-        var index = 0
-        while index < arguments.count {
-            switch arguments[index] {
-            case "--path":
-                index += 1
-                guard index < arguments.count else { throw .usage("--path のあとに場所が要る") }
-                path = arguments[index]
-            case "--local":
-                index += 1
-                guard index < arguments.count else {
-                    throw .usage("--local のあとにライブラリの場所が要る")
-                }
-                local = arguments[index]
-            case let argument where argument.hasPrefix("-"):
-                throw .usage("知らない選択肢: \(argument)\n\n" + Command.usage())
-            case let argument:
-                guard name == nil else { throw .usage("名前は 1 つだけ: \(argument)") }
-                name = argument
-            }
-            index += 1
-        }
-        guard let name else { throw .nameMissing }
+        let parsed = try Arguments.parse(
+            arguments,
+            options: [
+                Arguments.Option(["--path"]) { "\($0) のあとに場所が要る" },
+                Arguments.Option(["--local"]) { "\($0) のあとにライブラリの場所が要る" },
+            ],
+            surplus: .reject { "名前は 1 つだけ: \($0)" })
+        guard let name = parsed.positional else { throw .nameMissing }
         guard isValid(name: name) else { throw .invalidName(name) }
-        return Options(name: name, path: path, local: local)
+        return Options(
+            name: name, path: parsed.values["--path"] ?? ".", local: parsed.values["--local"])
     }
 
     /// 作るファイルと中身。

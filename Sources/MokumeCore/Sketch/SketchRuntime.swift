@@ -281,18 +281,9 @@ public final class SketchRuntime {
             serveObservationIfRequested()
             return
         }
-        start()
-        timing.advance()
-        beginFrame()
-        receiveInput()
-
-        supplyFromInlets()
-
         var drawFailure: RenderFailure?
-        canvas.time = timing.time
-        canvas.deltaTime = timing.deltaTime
         do {
-            try canvas.draw { withActiveRuntime { sketch.draw() } }
+            try drawSketchFrame()
         } catch {
             drawFailure = error
         }
@@ -302,11 +293,59 @@ public final class SketchRuntime {
         if let drawFailure { throw drawFailure }
     }
 
-    /// 溜まった入力をこのフレームへ流し込む。
+    /// フレームを 1 枚描く手順。**正本はここ 1 つ。**
     ///
-    /// **`draw()` の前に流す。** 送られた出来事が同じフレームの `draw()` から見える —
-    /// 1 フレーム遅れて効く形にすると、外から動かして確かめるときに毎回 1 枚ぶんずれる。
-    private func receiveInput() {
+    /// 通常のフレーム (``runFrame()``) と、観測がまだ 1 枚も描いていないスケッチを
+    /// 叩いたときの 1 枚 (``serveObservationIfRequested(drawFailure:)``) が、同じここを
+    /// 通る。**かつては 2 か所に書かれており、観測の側だけが腐っていた** — 入り口の
+    /// 供給と面への時刻の受け渡しが落ちていて、しかも窓で走らせている限り再現しな
+    /// かった ([#808](https://github.com/mokume-metal/mokume/issues/808))。
+    ///
+    /// 段を足すときはここへ書けば、両方の経路に等しく効く。
+    private func drawSketchFrame() throws(RenderFailure) {
+        start()
+        timing.advance()
+        beginFrame()
+        collectInput()
+        canvas.time = timing.time
+        canvas.deltaTime = timing.deltaTime
+        // **入力の配布も入り口の供給も、描き始めた中で行う。**
+        //
+        // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
+        // 落ちる。描き始めた中でないと、コールバックの中の `circle()` が無言で効かない
+        // (描く口は `guard isDrawing` で守られている)
+        try canvas.draw {
+            withActiveRuntime {
+                input.beginFrame { deliver($0) }
+                supplyFromInlets()
+                sketch.draw()
+            }
+        }
+    }
+
+    /// 配られた 1 件を、スケッチの書いた口へ渡す。
+    ///
+    /// **どの出来事がどの呼び出しになるかは ``InputState`` が決める。** ここは受け取った
+    /// 並びをそのまま流すだけで、押下状態の写しを持たない。
+    private func deliver(_ callback: InputCallback) {
+        switch callback {
+        case .mousePressed: sketch.mousePressed()
+        case .mouseReleased: sketch.mouseReleased()
+        case .mouseClicked: sketch.mouseClicked()
+        case .mouseMoved: sketch.mouseMoved()
+        case .mouseDragged: sketch.mouseDragged()
+        case .keyPressed: sketch.keyPressed()
+        case .keyReleased: sketch.keyReleased()
+        case .keyTyped: sketch.keyTyped()
+        }
+    }
+
+    /// 送られてきた入力を、このフレームの待ち行列へ集める。
+    ///
+    /// **集めるだけで、当てるのは描き始めてから** (``drawSketchFrame()``)。当てるのと
+    /// 同時にコールバックを配るので、配る先がランタイムの差さった描画の中である必要が
+    /// ある。集めるほうにその制約は無い。
+    private func collectInput() {
         // **窓からのぶんを先に引き取る。** どちらも同じ待ち行列へ入るので、順は
         // 「起きた順に近いほう」を選ぶ — 区画は要求 1 回ぶんをまとめて運ぶので、
         // 窓の 1 件より古いことがある
@@ -314,7 +353,6 @@ public final class SketchRuntime {
         inbox?.drain(into: input)
         params?.drain()
         paramStore?.tick()
-        input.beginFrame()
     }
 
     /// 入り口に値を供給させる。**`draw()` の直前** ([ADR-0024] 決定 6)。
@@ -555,12 +593,10 @@ public final class SketchRuntime {
             return
         }
         guard let request = observer.pendingRequest() else { return }
+        // **通常のフレームと同じ手順で描く。** 手順をここへ写すと、段を足すたびに
+        // 片方だけ腐る (#808)
         if drawFailure == nil, timing.frameCount == 0 {
-            start()
-            timing.advance()
-            beginFrame()
-            receiveInput()
-            try? canvas.draw { withActiveRuntime { sketch.draw() } }
+            try? drawSketchFrame()
         }
         beginCapture(for: request, through: observer, drawFailure: drawFailure)
     }

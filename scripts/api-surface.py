@@ -15,6 +15,10 @@
 **件数を文書へ直書きしない。** 直書きした数は API が増えた瞬間に嘘になり、しかも
 嘘になったことが誰にも分からない。数える必要があるものはここから出す。
 
+その直書きを見張る側は `scripts/tests/written_counts_test.py` にある (#819)。判定は
+`*.md` を読むだけでシンボルグラフを使わないので、ここに置くとドキュメントだけ直した
+PR までパッケージのフル再ビルド (`api: build`) を待つことになる。
+
 材料はコンパイラが出すシンボルグラフで、ソースの見た目ではない。公開されているかの
 判定を自前の構文解析に持たせると、ソースの書き方が変わるたびに判定が狂う。
 
@@ -434,24 +438,6 @@ def check_foreign_vocabulary(
     return problems
 
 
-COUNT_PATTERN = re.compile(r"公開\s*(?:されている)?\s*(?:シンボル|API)[^\n。]{0,16}?(\d+)\s*(?:個|本)")
-
-
-def check_no_written_counts(root: pathlib.Path) -> list[str]:
-    """件数を文書へ直書きしない。数える必要があるものは生成側から出す。"""
-    problems = []
-    for path in sorted(root.rglob("*.md")):
-        if any(part in {".build", ".git", "LICENSES"} for part in path.parts):
-            continue
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if COUNT_PATTERN.search(line):
-                problems.append(
-                    f"{path.relative_to(root)}:{number}: 公開 API の件数が直書きされている。"
-                    "数える必要があるものは scripts/api-surface.py から出す"
-                )
-    return problems
-
-
 # ---------------------------------------------------------------- 入口
 
 
@@ -482,7 +468,6 @@ def main() -> int:
             sys.stdout.write(text)
         return 0
 
-    root = pathlib.Path(__file__).resolve().parent.parent
     owned = load_owned_identifiers(arguments.graphs)
     problems = (
         check_onoff(symbols)
@@ -490,7 +475,6 @@ def main() -> int:
         + check_doc_canon(symbols)
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
-        + check_no_written_counts(root)
     )
     if problems:
         print("公開 API が規範に沿っていない:", file=sys.stderr)

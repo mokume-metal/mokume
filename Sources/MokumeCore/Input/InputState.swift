@@ -61,7 +61,20 @@ public final class InputState {
     }
 
     /// 溜めたものを流し込む。フレームの頭で 1 回呼ぶ。
-    func beginFrame() {
+    ///
+    /// **畳みながら配る。** 1 件適用するごとに、その 1 件が生む呼び出しを `dispatch` へ
+    /// 渡す。畳むだけにすると、1 フレームに `mouseDown` → `mouseUp` が収まったとき
+    /// 押されたことがどこにも残らない — 窓を人が触るぶんには押下と解放の間に数フレーム
+    /// 入るので滅多に踏まないが、外から送る経路では 1 回の要求がまとめて 1 フレームへ
+    /// 入るので、**クリックを 1 件送るという最も素直な使い方が常に消える**
+    /// ([#723](https://github.com/mokume-metal/mokume/issues/723))。
+    ///
+    /// 規則は 1 つ — **状態はその出来事まで適用した値**。配られた側から読む位置や押下
+    /// 状態は、その出来事を当てた直後の姿になっている。`draw()` から見える最終状態は
+    /// 畳んだときと変わらない。
+    ///
+    /// - Parameter dispatch: 呼び出しの配り先。既定では何もしない (状態を進めるだけ)。
+    func beginFrame(dispatch: (InputCallback) -> Void = { _ in }) {
         previousX = x
         previousY = y
         scrollX = 0
@@ -70,7 +83,63 @@ public final class InputState {
         dragY = 0
         let events = pending
         pending.removeAll(keepingCapacity: true)
-        for event in events { apply(event) }
+        for event in events {
+            // 判定に要る「適用する前」を控えてから状態を進め、**進めた後の値で**配る
+            let wasMouseDown = isMouseDown
+            apply(event)
+            dispatchCallbacks(for: event, wasMouseDown: wasMouseDown, to: dispatch)
+        }
+    }
+
+    /// その 1 件が生む呼び出しを、生む順に配る。**写し方の正本はここ 1 つ。**
+    private func dispatchCallbacks(
+        for event: InputEvent, wasMouseDown: Bool, to dispatch: (InputCallback) -> Void
+    ) {
+        switch event {
+        case .mouseDown:
+            dispatch(.mousePressed)
+        case .mouseUp:
+            dispatch(.mouseReleased)
+            // **押下を伴う解放だけがクリックになる。** 押していないところで離しても
+            // 解放は起きる (窓の外で押して中で離す・上限で押下が捨てられた、など)
+            if wasMouseDown { dispatch(.mouseClicked) }
+        case .mouseMoved:
+            // **窓にしか無い情報を使わずに、押下状態から導く。** 窓は押している間の
+            // 移動を `mouseDragged` として拾うが、合流点へは 6 種別しか流れないので
+            // (`SketchSurface` が `.mouseMoved` へ写す)、外から送れるものと同じ材料で
+            // 分けられる。移動は押下状態を変えないので、当てる前と後で同じ
+            dispatch(wasMouseDown ? .mouseDragged : .mouseMoved)
+        case .keyDown(_, let characters, _):
+            dispatch(.keyPressed)
+            // **文字を生むキーだけが打鍵になる。** 矢印やファンクションキーでは呼ばない
+            if Self.producesText(characters) { dispatch(.keyTyped) }
+        case .keyUp:
+            dispatch(.keyReleased)
+        case .scrolled:
+            break
+        }
+    }
+
+    /// 文字を生むキーか。**「`characters` が空でない」では判定できない。**
+    ///
+    /// AppKit の `NSEvent.characters` は矢印やファンクションキーに Unicode の私用領域
+    /// (`NSUpArrowFunctionKey` = U+F700 など) を返し、Escape には U+001B、Delete には
+    /// U+007F を返す。どれも `isEmpty` は `false` なので、空でないことを打鍵の合図に
+    /// すると**手本 (p5 / Processing) では呼ばれないキーで発火する**
+    /// ([#805](https://github.com/mokume-metal/mokume/issues/805))。
+    ///
+    /// 判定は「制御文字でも私用領域でもないスカラを 1 つ以上含むこと」。打鍵の合図と、
+    /// ``characters`` (``Sketch/key``) の更新が同じここを見る — 割れていた頃は、矢印を
+    /// 押すと `key` が見えない文字になっていた。
+    static func producesText(_ characters: String) -> Bool {
+        characters.unicodeScalars.contains { scalar in
+            let value = scalar.value
+            // 制御文字 (Escape・Delete・Tab・改行など)
+            if value < 0x20 || value == 0x7F { return false }
+            // AppKit が矢印・ファンクションキー・Home などへ返す私用領域
+            if (0xF700...0xF8FF).contains(value) { return false }
+            return true
+        }
     }
 
     private func apply(_ event: InputEvent) {
@@ -98,7 +167,9 @@ public final class InputState {
             scrollY += dy
         case .keyDown(let code, let characters, _):
             pressedKeys.insert(code)
-            if !characters.isEmpty { self.characters = characters }
+            // **打鍵と同じ判定を使う。** 空でないことで見ていた頃は、矢印を押すと
+            // ここが私用領域の文字になっていた (#805)
+            if Self.producesText(characters) { self.characters = characters }
         case .keyUp(let code):
             pressedKeys.remove(code)
         }

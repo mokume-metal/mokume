@@ -915,7 +915,7 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.pop()
             }
 
-            // 下段: 組にしたものを 1 回で置く
+            // 中段: 組にしたものを 1 回で置く
             let branch = Shape.group(
                 (0..<6).map { index in
                     canvas.createShape {
@@ -926,6 +926,37 @@ enum Scene: String, CaseIterable, Sendable {
                     }
                 })
             canvas.shape(branch, 16, 76)
+
+            // 下段: **断片も形の中に焼き付く** ([#788])。組み立ての間だけ塗りを効かせ、
+            // 置くときには外してある — それでも記録した塗りで出る。面だけ差し替えた
+            // 2 枚を組にしてあるので、畳まれていれば左右が同じ色になる
+            //
+            // [#788]: https://github.com/mokume-metal/mokume/issues/788
+            guard let warm = try? canvas.createImage(4, 4),
+                let cool = try? canvas.createImage(4, 4)
+            else { return }
+            warm.fill(.display(red: 1, green: 0.72, blue: 0.3))
+            cool.fill(.display(red: 0.35, green: 0.75, blue: 1))
+            guard
+                let tone = try? canvas.makeShader(
+                    """
+                    float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                        float wave = 0.55 + 0.45 * sin(in.place.x * 26.0);
+                        return float4(mokume_sample(surfaces.tone, in.place).rgb * wave, 1.0);
+                    }
+                    """,
+                    surfaces: ["tone": .image(warm)])
+            else { return }
+
+            canvas.noStroke()
+            // 断片が落ちていれば、この塗り (青) がそのまま出る
+            canvas.fill(.display(red: 0.1, green: 0.15, blue: 0.9))
+            canvas.shader(tone)
+            let warmBand = canvas.createShape { canvas.rect(0, 0, 46, 16) }
+            tone.set("tone", .image(cool))
+            let coolBand = canvas.createShape { canvas.rect(50, 0, 46, 16) }
+            canvas.resetShader()
+            canvas.shape(Shape.group([warmBand, coolBand]), 16, 106)
 
         case .userShader:
             canvas.background(.display(red: 0.06, green: 0.07, blue: 0.09))

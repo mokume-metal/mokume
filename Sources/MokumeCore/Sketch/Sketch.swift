@@ -45,6 +45,71 @@ public protocol Sketch: AnyObject {
 
     /// フレームごとに呼ばれる。
     func draw()
+
+    /// 押された瞬間に呼ばれる。
+    ///
+    /// **1 フレームに押して離しても、両方とも呼ばれる。** 状態 (``isMousePressed``) を
+    /// 毎フレーム読む形では、押下と解放が同じフレームに収まると押されたことがどこにも
+    /// 残らない — 外から送る経路では 1 回の要求がまとめて 1 フレームへ入るので、
+    /// これは構造的に起きる ([#723])。
+    ///
+    /// 読める値 (``mouseX`` / ``mouseY`` / ``isMousePressed`` / ``mouseButton``) は、
+    /// **その出来事を当てた直後の姿**である。`draw()` の直前に、届いた順で呼ばれる。
+    ///
+    /// **押下と解放の対は保証されない。** 溜める上限を越えたぶんは古いほうから捨てられる
+    /// ので、描画が長く停滞すれば押下だけ・解放だけが届くことがある。
+    ///
+    /// <!-- example: 文脈 var seeds: [(Float, Float)] = [] -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     seeds.append((mouseX, mouseY))
+    /// }
+    /// ```
+    ///
+    /// [#723]: https://github.com/mokume-metal/mokume/issues/723
+    func mousePressed()
+
+    /// 離された瞬間に呼ばれる。読める値の約束は ``mousePressed()`` と同じ。
+    func mouseReleased()
+
+    /// 押して離されたときに、``mouseReleased()`` の**直後に続けて**呼ばれる。
+    ///
+    /// 押下を伴わない解放 (窓の外で押して中で離した、など) では呼ばれない。
+    /// 時刻を見ないので、外から送った出来事でも窓での実操作と同じように起きる。
+    func mouseClicked()
+
+    /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged()`` が呼ばれる。
+    func mouseMoved()
+
+    /// 押したまま動いたとき呼ばれる。
+    ///
+    /// **``dragX`` / ``dragY`` はフレームの累計であって、1 件ぶんではない。**
+    /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれ、そのたびに読む ``dragX`` は
+    /// その時点までの部分累計になる。
+    ///
+    /// とくに ``orbitControl(_:_:_:)`` を**ここから呼んではいけない。** あちらは
+    /// 1 フレームに 1 回しか引きずった量を食わないので、最初の 1 件までの部分累計だけ
+    /// 食って残りが黙って捨てられる — 回る量が減るだけなので、絵を見ても気付けない。
+    /// 視点を回すのは `draw()` の中で 1 回呼ぶ形のままにする。
+    func mouseDragged()
+
+    /// キーが押された瞬間に呼ばれる。
+    ///
+    /// **押しっぱなしでは連射される** (手本 — Processing / p5.js — と同じ)。1 回だけ
+    /// 効かせたいなら、押されているキーの集合 (``isKeyDown(_:)``) を自分で見る。
+    ///
+    /// どのキーかを符号で知る口は、まだ無い ([#806](https://github.com/mokume-metal/mokume/issues/806)
+    /// で体系を決めてから足す)。文字を打つ用途には ``keyTyped()`` と ``key`` を使う。
+    func keyPressed()
+
+    /// キーが離された瞬間に呼ばれる。
+    func keyReleased()
+
+    /// **文字を生むキー**が押されたとき、``keyPressed()`` の直後に続けて呼ばれる。
+    ///
+    /// 矢印・ファンクションキー・Escape・Delete・Tab では呼ばれない (手本と同じ)。
+    /// 打たれた文字は ``key`` から読む。
+    func keyTyped()
 }
 
 extension Sketch {
@@ -52,6 +117,14 @@ extension Sketch {
     public var plugins: [any Plugin] { [] }
     public func setup() {}
     public func draw() {}
+    public func mousePressed() {}
+    public func mouseReleased() {}
+    public func mouseClicked() {}
+    public func mouseMoved() {}
+    public func mouseDragged() {}
+    public func keyPressed() {}
+    public func keyReleased() {}
+    public func keyTyped() {}
 }
 
 /// スケッチの設定。
@@ -664,6 +737,10 @@ extension Sketch {
     /// **だから塗りや輪郭は形の中で決める** — 置くときに外から ``fill(_:)`` を変えても
     /// 形の色は変わらない。組み立てるコードを読めば何色になるかが分かり、置く側の
     /// コードを読んでも分からない、という形にしてある。
+    ///
+    /// **焼き付くのは色だけではない。** 組み立ての間に効いていた ``shader(_:)`` と、
+    /// そのとき渡していた値・面・数の並びも形が持ち歩く。置く前に ``resetShader()``
+    /// しても、別の断片へ切り替えても、形は記録した塗りで出る。
     ///
     /// 置く場所は別で、``translate(_:_:)`` や ``rotate(_:)`` は置くときに効く。
     /// 色は形のもので、場所は置き方のもの、という切り分けである。
