@@ -5,7 +5,13 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
+.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
+
+# **並行では走らせない** (#784)。ci-check の的の並びには意味があり、-j を付けると壊れる
+# — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
+# ためで (下記)、並行に走れば落ちた検査があっても報告が出うる。swift の置き場
+# (.build/.lock) の取り合いも同時に避けられる
+.NOTPARALLEL:
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
 # 順に選ばれ、charset_normalizer が選ばれた環境だけ日本語の厚いヘッダを持つ
@@ -26,6 +32,12 @@ check: setup
 
 # render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
 # ため (途中で落ちれば make がそこで止まり、報告は行われない)
+#
+# **この並びは「CI と同一」から 2 つだけ意図的にずれている。** drawing-evidence と
+# render-status は CI では必ず no-op になる — ci-check のジョブへ GH_TOKEN を持ち込まない
+# 設計 (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため両者が理由を
+# 述べて 0 で抜け、本物の判定は同じファイルの独立したジョブ (drawing-evidence /
+# render-signal) が持つ。ここに置いてあるのは手元のためである
 ci-check: build test examples shaders params schemas api reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
@@ -104,10 +116,29 @@ adrs:
 hooks-test:
 	python3 -m unittest discover -s scripts/tests -p '*_test.py'
 
+# 公開 API の面 (api) と参照の面 (reference) が読む材料。**普段のビルドに出させ、
+# 置き場は 1 本に保つ** (#784)。
+#
+# かつては「シンボルグラフを出す指定が普段のビルドと食い違う」ことを避けて scratch path
+# ごと分けていたが (build は .build / api は .build/api)、その代償が clean な runner での
+# **パッケージのフルコンパイル 2 回**だった (手元の実測で 2 本目に 20 秒)。食い違いは
+# **build と test の両方へ同じ指定を渡せば消える** ので、置き場を分ける理由も消える。
+# 出させたことによる増分は clean build で 19 秒 → 25 秒 (手元の実測)。
+#
+# **テストのモジュールのグラフも同じ置き場に並ぶ。** swift test にも同じ指定が要るため
+# (渡さないとそこで作り直しが起きて、分けていた頃と同じ二重コンパイルに戻る)。
+# scripts/api-surface.py の own_modules() は置き場のファイル名から「自前のモジュール」を
+# 読むので集合はそのぶん広がるが、**ライブラリの公開署名にテストの型は出られない**
+# (依存の向きが逆) ので判定は動かない — 一覧も検査も分けていた頃と 1 記号も違わないことを
+# 実測した。参照の面のほうは reference-graphs.py が --module で名指しするので無関係
+SYMBOL_GRAPHS := .build/symbol-graphs
+SYMBOL_GRAPH_FLAGS := -Xswiftc -emit-symbol-graph \
+	-Xswiftc -emit-symbol-graph-dir -Xswiftc $(SYMBOL_GRAPHS)
+
 # ライブラリのビルドとテスト。ツールチェーンの要求は ADR-0009 が定める
 # (macOS 26 / Xcode 26 / Swift 6 言語モード)。満たさない環境ではここで落ちる
 build:
-	swift build
+	swift build $(SYMBOL_GRAPH_FLAGS)
 
 # テストの記録を残す。何が走って何がスキップされたかを、手元の実行の報告
 # (local-render・#304) が読む
@@ -131,7 +162,7 @@ METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=n
 
 test:
 	@mkdir -p .build
-	set -o pipefail; env $(METAL_VALIDATION) swift test 2>&1 | tee .build/test-log.txt
+	set -o pipefail; env $(METAL_VALIDATION) swift test $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log.txt
 
 # release でテストを回す — 性能を測るための器 (#761)。**ci-check には入れない** (計測の
 # ためだけで、常時のゲートに要る検査は debug の test が全部持つ)。
@@ -186,27 +217,24 @@ shaders:
 # つまみの宣言の書き間違い (名前の重なり・型の書き忘れ) は「ビルドで止まる」約束
 # なので、止まることは実行しては確かめられない (ADR-0030 決定 5)。組み上げ済みの
 # モジュールに対して型検査を通し、通るものと止まるものを見る。**テストの中で
-# package を組み直さない** — 時間の上限を持つ他の検査と CPU を奪い合う
-params:
+# package を組み直さない** — 時間の上限を持つ他の検査と CPU を奪い合う。
+#
+# **組み上げ済みを prerequisite で要求する** (examples と同じ形・#784)。スクリプト側の
+# 実行時チェックは残す — あちらは単体で打った人へ「次にすること」を言う案内である
+params: build
 	bash scripts/check-param-declarations.sh
 
 # 公開 API の面。**一覧はリポジトリへ置かない** — 置くと「それが古くないことを守る
 # 検査」が要るようになり、以後すべての変更がその検査に引っかかる (ADR-0001 原則 8)。
 # 要るときに組み立てれば、そのクラスの検査ごと不要になる。
 #
-# 置き場を分けるのは、シンボルグラフを出す指定が普段のビルドと食い違うため。同じ
-# 置き場を使うと build / test と api が互いを作り直させ続ける
-API_GRAPHS := .build/api/symbol-graphs
-API_BUILD := swift build --scratch-path .build/api \
-	-Xswiftc -emit-symbol-graph -Xswiftc -emit-symbol-graph-dir -Xswiftc $(API_GRAPHS)
+# **組み直さない。** build が出したシンボルグラフをそのまま読む (examples と同じ形)。
+# 材料の出どころと、置き場を 1 本にした理由は SYMBOL_GRAPHS の宣言にある
+api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
+	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS)
 
-api: ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
-	$(API_BUILD)
-	python3 scripts/api-surface.py check --graphs $(API_GRAPHS)
-
-api-list: ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
-	$(API_BUILD)
-	python3 scripts/api-surface.py list --graphs $(API_GRAPHS) \
+api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
+	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) \
 		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",)
 
 # 参照の面 (人が読む API の面)。**説明文 (`///`) が唯一の入力**で、面はその生成物
@@ -253,12 +281,11 @@ REFERENCE_OMIT := \
 	ObservationRequest ObservationReport ExposedValue FrameStats \
 	ParamBox
 
-reference: ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時の基準パス)
-	$(API_BUILD)
+reference: build ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時の基準パス)
 	rm -rf "$(REFERENCE_GRAPHS)" "$(or $(OUT),$(REFERENCE_OUT))"
 	mkdir -p "$$(dirname "$(or $(OUT),$(REFERENCE_OUT))")"
 	python3 scripts/reference-graphs.py \
-		--graphs "$(API_GRAPHS)" --out "$(REFERENCE_GRAPHS)" \
+		--graphs "$(SYMBOL_GRAPHS)" --out "$(REFERENCE_GRAPHS)" \
 		--surface "$(REFERENCE_SURFACE)" --module $(REFERENCE_MODULES) \
 		--omit $(REFERENCE_OMIT)
 	xcrun docc convert "$(REFERENCE_CATALOG)" \
