@@ -60,6 +60,10 @@ set -euo pipefail
 # 「描画に触れているか」の判定 (照合の実体は 1 つ)
 # shellcheck source=scripts/drawing-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
+# 変更ファイルの取り方 (#793)。drawing-queue.sh も使うが、あちらは自分で読み込まない
+# ので読み手が source する (drawing-paths.sh とまったく同じ形)
+# shellcheck source=scripts/pr-files.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 # 描画 PR の順番の判定 (render-status.sh と共有する)
 # shellcheck source=scripts/drawing-queue.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-queue.sh"
@@ -115,7 +119,7 @@ repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') \
 
 # 描画に触れない PR は合流後の木を動かさないので、BEHIND のまま merge できる。
 # 取り込みは queue がこれからやることの前借りにしかならない (AGENTS.md)
-gh pr view --json files --jq '.files[].path' | touches_drawing coverage \
+pr_files "$repo" "$number" | touches_drawing coverage \
   || skip "PR #$number は台帳の絵を動かさない — main を取り込む必要が無い"
 
 # 描画 PR は番号順に 1 本ずつ。順番でないうちに打ち直しても、先頭が入った時点で

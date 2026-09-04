@@ -12,7 +12,8 @@
 #   . "$(dirname "${BASH_SOURCE[0]}")/drawing-queue.sh"
 #   ahead=$(ahead_drawing_pr "$repo" "$number")
 #
-# 判定に要る touches_drawing は drawing-paths.sh が持つ。訊く問いは coverage の側で、
+# 判定に要る touches_drawing は drawing-paths.sh が持ち、変更ファイルの取り方は
+# pr-files.sh が持つ (#793)。訊く問いは coverage の側で、
 # 順番の理由 (下記) がそのまま覆いの判定だからである — 覆いを壊さない場所は、行列に
 # 並ぶ理由も持たない (#497)。読み込む側が両方を source
 # する (このファイルは source されるだけで、自分では読み込まない — 二重に読み込んで
@@ -60,7 +61,7 @@ ahead_drawing_pr() {
 
   for n in $open; do
     [ "$n" -lt "$number" ] || continue
-    if ! files=$(gh api "repos/$repo/pulls/$n/files" --paginate --jq '.[].filename'); then
+    if ! files=$(pr_files "$repo" "$n"); then
       printf '?'
       return 0
     fi

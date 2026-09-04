@@ -43,6 +43,10 @@ set -euo pipefail
 # 答えが違う場所がある (#497)
 # shellcheck source=scripts/drawing-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
+# 変更ファイルの取り方 (#793)。drawing-queue.sh も使うが、あちらは自分で読み込まない
+# ので読み手が source する (drawing-paths.sh とまったく同じ形)
+# shellcheck source=scripts/pr-files.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 # 描画 PR の順番の判定も catch-up.sh と共有する (#457)
 # shellcheck source=scripts/drawing-queue.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-queue.sh"
@@ -267,7 +271,7 @@ report_merge_group() {
   # 上書きしない** — 「読めなければ名乗って通す」は判定できなかったときの逃がしで
   # あって、判定できた failure を取り消す口ではない。
   for number in $numbers; do
-    if ! files=$(gh api "repos/$repo/pulls/$number/files" --paginate --jq '.[].filename'); then
+    if ! files=$(pr_files "$repo" "$number"); then
       say "#$number の変更ファイルを読めなかった"
       blind=1
       break
@@ -380,8 +384,7 @@ case "$mode" in
       exit 0
     fi
 
-    if gh api "repos/$GITHUB_REPOSITORY/pulls/${PR_NUMBER:?}/files" --paginate \
-      --jq '.[].filename' | touches_drawing coverage; then
+    if pr_files "$GITHUB_REPOSITORY" "${PR_NUMBER:?}" | touches_drawing coverage; then
       # 描画 PR は番号順に 1 本ずつ merge する (#467)。順番でなければここで赤くする
       # — queue で弾かれるのを待つと、待ち時間も手元の打ち直しも無駄になる
       ahead=$(ahead_drawing_pr "$GITHUB_REPOSITORY" "$PR_NUMBER")
