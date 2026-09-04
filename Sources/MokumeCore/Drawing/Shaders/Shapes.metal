@@ -395,24 +395,30 @@ fragment float4 mokume_formFragment(
     if (kind == kFormRect) {
         float2 extent = form.size.xy;
         // 塗りだけ半画素戻す (頂点関数の説明)。輪郭は戻さない
-        fill = mokume_boxField(p + in.fillShift, extent);
-        // 角の形は外縁だけが持つ。内縁は帯が重なって必ず直角 (三角形のときと同じ)
-        if (form.meta.z == kFormJoinRound) {
-            outer = mokume_grown(mokume_boxField(p, extent), halfWeight);
-        } else {
-            outer = mokume_boxField(p, extent + halfWeight);
-            if (form.meta.z == kFormJoinBevel) {
-                // 尖りを 45° で削ぐ。削ぐ線は角から線幅の半分だけ離れた所を通る
-                float chamfer = (abs(p.x) + abs(p.y) - (extent.x + extent.y + halfWeight * M_SQRT2_F))
-                    * M_SQRT1_2_F;
-                float2 gradient = float2(p.x < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F,
-                                         p.y < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F);
-                outer = mokume_intersect(outer, mokume_field(chamfer, gradient));
+        if (fills) { fill = mokume_boxField(p + in.fillShift, extent); }
+        // **輪郭を持たないときは 2 つの箱を評価しない。** 使わない値なので絵は 1 ビットも
+        // 変わらないが、面を覆う矩形を重ねる絵では距離の評価が丸ごと断片の費用になる
+        // (輪郭なしの矩形で箱が 3 つから 1 つに減る)
+        if (strokes) {
+            // 角の形は外縁だけが持つ。内縁は帯が重なって必ず直角 (三角形のときと同じ)
+            if (form.meta.z == kFormJoinRound) {
+                outer = mokume_grown(mokume_boxField(p, extent), halfWeight);
+            } else {
+                outer = mokume_boxField(p, extent + halfWeight);
+                if (form.meta.z == kFormJoinBevel) {
+                    // 尖りを 45° で削ぐ。削ぐ線は角から線幅の半分だけ離れた所を通る
+                    float chamfer =
+                        (abs(p.x) + abs(p.y) - (extent.x + extent.y + halfWeight * M_SQRT2_F))
+                        * M_SQRT1_2_F;
+                    float2 gradient = float2(p.x < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F,
+                                             p.y < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F);
+                    outer = mokume_intersect(outer, mokume_field(chamfer, gradient));
+                }
             }
+            // 線幅が形より太いと半幅が負になり、内縁は「どこにも無い」(被覆 0) になる —
+            // 帯が重なって全部塗られる、三角形のときと同じ絵
+            inner = mokume_boxField(p, extent - halfWeight);
         }
-        // 線幅が形より太いと半幅が負になり、内縁は「どこにも無い」(被覆 0) になる —
-        // 帯が重なって全部塗られる、三角形のときと同じ絵
-        inner = mokume_boxField(p, extent - halfWeight);
     } else if (kind == kFormEllipse) {
         fill = mokume_ellipseField(p, form.size.xy);
         outer = mokume_grown(fill, halfWeight);
