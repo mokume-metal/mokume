@@ -17,4 +17,14 @@ enum InputCallback: Equatable, Sendable {
     case mouseReleased
     /// 押して離された。``mouseReleased`` の直後に続く。
     case mouseClicked
+    /// 押していない間に動いた。
+    case mouseMoved
+    /// 押したまま動いた。
+    case mouseDragged
+    /// キーが押された。
+    case keyPressed
+    /// キーが離された。
+    case keyReleased
+    /// 文字を生むキーが押された。``keyPressed`` の直後に続く。
+    case keyTyped
 }
