@@ -41,12 +41,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 import pathlib
 import re
 import sys
-import urllib.error
-import urllib.request
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# 読み口とタイムアウトは site_source が持つ (#815)。**この 3 本は必ず一緒に呼ばれる**
+# ので、写しを持つと「手元では通るが公開先だけ落ちる」が起きる
+from site_source import FETCH_TIMEOUT_SECONDS, Source  # noqa: E402,F401
 
 # 入口の見出し `# ``MokumeCore``` — カタログの中でモジュールの面を上書きするファイル
 LANDING_TITLE = re.compile(r"^#\s*``([A-Za-z_][A-Za-z0-9_]*)``\s*$", re.MULTILINE)
@@ -55,37 +58,6 @@ LANDING_TITLE = re.compile(r"^#\s*``([A-Za-z_][A-Za-z0-9_]*)``\s*$", re.MULTILIN
 # **狭いと黙って見なくなる** — 並べたのに拾えなかった記号は期待から落ち、出ていなくても
 # 誰も言わない (索引が型の粒度だった頃はこの形が現れなかった・#582)
 CURATED_SYMBOL = re.compile(r"^\s*-\s*``([A-Za-z_][A-Za-z0-9_/(:)-]*)``\s*$", re.MULTILINE)
-
-FETCH_TIMEOUT_SECONDS = 30
-
-
-class Source:
-    """出力の読み口。ディレクトリでも URL でも同じ形で引けるようにする。"""
-
-    def __init__(self, target: str) -> None:
-        self.target = target.rstrip("/")
-        self.is_url = self.target.startswith(("http://", "https://"))
-        if not self.is_url:
-            self.root = pathlib.Path(self.target)
-
-    def read(self, relative: str) -> bytes | None:
-        """無ければ None。**例外は握り潰さない** — 読めなかった理由は呼び出し側が言う。"""
-        if self.is_url:
-            request = urllib.request.Request(f"{self.target}/{relative}")
-            try:
-                with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
-                    return response.read()
-            except urllib.error.HTTPError as error:
-                if error.code == 404:
-                    return None
-                raise
-        path = self.root / relative
-        return path.read_bytes() if path.is_file() else None
-
-    def read_json(self, relative: str) -> dict | None:
-        raw = self.read(relative)
-        return json.loads(raw.decode("utf-8")) if raw is not None else None
-
 
 def landing_of(catalog: pathlib.Path) -> tuple[pathlib.Path, str]:
     """カタログの中の、モジュールの面を上書きするファイルとモジュール名。"""
