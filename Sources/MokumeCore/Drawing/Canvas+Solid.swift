@@ -24,9 +24,6 @@ extension Canvas {
         currentCamera.viewProjection(width: width, height: height)
     }
 
-    /// 見る位置 (世界の座標)。
-    var eyePosition: SIMD3<Float> { currentCamera.eye }
-
     /// 断片へ渡す「見ている場所」。
     var viewer: SIMD4<Float> { currentCamera.viewer }
 
