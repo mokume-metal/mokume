@@ -50,7 +50,7 @@ struct SolidCullingTests {
     ])
     func opaqueClosedMeshesCullBackFaces(_ shape: SolidShape) throws {
         let modes = try cullModes { canvas in
-            canvas.fill(.opaque(red: 1, green: 0.5, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             canvas.place(shape)
         }
         #expect(modes == [.back])
@@ -59,7 +59,7 @@ struct SolidCullingTests {
     @Test("同じ形を何個置いても、列は 1 つで裏面を捨てる")
     func manyInstancesShareOneCulledBatch() throws {
         let modes = try cullModes { canvas in
-            canvas.fill(.opaque(red: 1, green: 0.5, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             for index in 0..<8 {
                 canvas.push()
                 canvas.translate(Float(index) * 6, 0, 0)
@@ -75,7 +75,7 @@ struct SolidCullingTests {
     @Test("平らな面は片面なので、裏面を捨てない")
     func planeKeepsBothFaces() throws {
         let modes = try cullModes { canvas in
-            canvas.fill(.opaque(red: 1, green: 0.5, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             canvas.plane(20, 20)
         }
         #expect(modes == [.none])
@@ -84,7 +84,7 @@ struct SolidCullingTests {
     @Test("自分で並べた頂点の列は、裏面を捨てない")
     func freeformKeepsBothFaces() throws {
         let modes = try cullModes { canvas in
-            canvas.fill(.opaque(red: 1, green: 0.5, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             canvas.beginShape()
             canvas.vertex(-10, -10, 0)
             canvas.vertex(10, -10, 0)
@@ -100,7 +100,7 @@ struct SolidCullingTests {
         // 塗りを変えても列は閉じないので、不透明と半透明が同じ列に同居する。
         // 半透明の球は奥の面が手前の面を通して見えるので、列ごと両面で描く
         let modes = try cullModes { canvas in
-            canvas.fill(.opaque(red: 1, green: 0.5, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             canvas.sphere(10)
             canvas.fill(LinearRGBA(straightRed: 1, green: 0.5, blue: 0, alpha: 0.5))
             canvas.push()
@@ -116,11 +116,11 @@ struct SolidCullingTests {
         // 貼った絵に透けている画素があれば、そこから奥の面が見える
         let canvas = try makeCanvas()
         let picture = try canvas.createGraphics(8, 8)
-        try picture.draw { picture.background(.opaque(red: 1, green: 1, blue: 1)) }
+        try picture.draw { picture.background(.linear(red: 1, green: 1, blue: 1)) }
         var modes: [MTLCullMode] = []
         try canvas.draw {
             canvas.noStroke()
-            canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
             canvas.texture(picture)
             canvas.box(20)
             canvas.closeBatch()
@@ -134,7 +134,7 @@ struct SolidCullingTests {
         // 足し合わせる混ぜ方では奥の面も色に寄与するので、捨てると絵が暗くなる
         let modes = try cullModes { canvas in
             canvas.blendMode(.add)
-            canvas.fill(.opaque(red: 1, green: 0.5, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             canvas.sphere(10)
         }
         #expect(modes == [.none])
@@ -154,7 +154,7 @@ struct SolidCullingTests {
         try canvas.draw {
             canvas.noStroke()
             canvas.shader(shader)
-            canvas.fill(.opaque(red: 1, green: 0.5, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             canvas.sphere(10)
             canvas.closeBatch()
             modes = canvas.batches.filter { $0.source == .solid }.map(\.cullMode)
@@ -167,7 +167,7 @@ struct SolidCullingTests {
         let canvas = try makeCanvas()
         var modes: [MTLCullMode] = []
         try canvas.draw {
-            canvas.fill(.opaque(red: 1, green: 0.5, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0.5, blue: 0))
             canvas.rect(4, 4, 20, 20)
             canvas.closeBatch()
             modes = canvas.batches.map(\.cullMode)
@@ -184,7 +184,7 @@ struct SolidCullingTests {
         // 巻き方そのものは SolidMeshTests が見ている
         let canvas = try makeCanvas()
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.fill(.display(red: 1, green: 0, blue: 0))
             canvas.push()

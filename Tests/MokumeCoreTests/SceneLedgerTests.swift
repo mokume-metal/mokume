@@ -437,7 +437,7 @@ enum Scene: String, CaseIterable, Sendable {
                 canvas.emit(
                     dust, from: .point(64, 116), rate: 900, speed: 70...150,
                     angle: (-2.4)...(-0.75), life: 0.5...1.2, size: 2...5,
-                    color: .opaque(red: 1, green: 0.72, blue: 0.35), using: &randomness)
+                    color: .linear(red: 1, green: 0.72, blue: 0.35), using: &randomness)
                 // 潰したときは力を 1 つも効かせない。**出た向きのまま飛ぶ**
                 if suppressed != .force {
                     canvas.force(dust, [.gravity(0, 240), .drag(0.2)])
@@ -1064,10 +1064,10 @@ enum Scene: String, CaseIterable, Sendable {
         case .lighting:
             canvas.background(.display(red: 0.05, green: 0.05, blue: 0.07))
             // 底上げ + 斜め上から差す光。縦軸は下向きなので、上から差す光の向きは +y
-            canvas.ambientLight(.opaque(red: 0.18, green: 0.18, blue: 0.22))
-            canvas.directionalLight(.opaque(red: 0.9, green: 0.85, blue: 0.75), -0.45, 0.8, -0.4)
+            canvas.ambientLight(.linear(red: 0.18, green: 0.18, blue: 0.22))
+            canvas.directionalLight(.linear(red: 0.9, green: 0.85, blue: 0.75), -0.45, 0.8, -0.4)
             // 手前の右下から当てる差し色
-            canvas.pointLight(.opaque(red: 0.25, green: 0.4, blue: 0.9), 120, 110, 90)
+            canvas.pointLight(.linear(red: 0.25, green: 0.4, blue: 0.9), 120, 110, 90)
 
             canvas.fill(.display(red: 0.9, green: 0.9, blue: 0.92))
             canvas.push()
@@ -1093,9 +1093,9 @@ enum Scene: String, CaseIterable, Sendable {
         case .materials:
             // 上の列が非金属、下の列が金属。左から右へ、粗い面から滑らかな面へ
             canvas.background(.display(red: 0.04, green: 0.05, blue: 0.07))
-            canvas.ambientLight(.opaque(red: 0.16, green: 0.16, blue: 0.18))
+            canvas.ambientLight(.linear(red: 0.16, green: 0.16, blue: 0.18))
             canvas.directionalLight(
-                .opaque(red: 0.7, green: 0.68, blue: 0.62), -0.35, 0.5, -0.8)
+                .linear(red: 0.7, green: 0.68, blue: 0.62), -0.35, 0.5, -0.8)
             canvas.noStroke()
 
             let sharpness: [Float] = [3, 24, 160]
@@ -1117,7 +1117,7 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.fill(.display(red: 0.3, green: 0.32, blue: 0.4))
             canvas.emissive(
                 suppressed == .emissive
-                    ? .opaque(red: 0, green: 0, blue: 0)
+                    ? .linear(red: 0, green: 0, blue: 0)
                     : .display(red: 0.55, green: 0.25, blue: 0.1))
             canvas.push()
             canvas.translate(38, 106, 0)
@@ -1126,10 +1126,10 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.box(30)
             canvas.pop()
 
-            canvas.emissive(.opaque(red: 0, green: 0, blue: 0))
+            canvas.emissive(.linear(red: 0, green: 0, blue: 0))
             canvas.ambient(
                 suppressed == .ambient
-                    ? .opaque(red: 1, green: 1, blue: 1)
+                    ? .linear(red: 1, green: 1, blue: 1)
                     : .display(red: 0.2, green: 0.2, blue: 0.25))
             canvas.push()
             canvas.translate(90, 106, 0)
@@ -1143,9 +1143,9 @@ enum Scene: String, CaseIterable, Sendable {
             // 非金属は光で陰影が付き、金属は周囲だけで形が出る
             canvas.surroundings(.sky)
             canvas.background(.sky)
-            canvas.ambientLight(.opaque(red: 0.16, green: 0.16, blue: 0.18))
+            canvas.ambientLight(.linear(red: 0.16, green: 0.16, blue: 0.18))
             canvas.directionalLight(
-                .opaque(red: 0.6, green: 0.58, blue: 0.5), -0.4, 0.5, -0.75)
+                .linear(red: 0.6, green: 0.58, blue: 0.5), -0.4, 0.5, -0.75)
             canvas.noStroke()
 
             // 上の列: 非金属 / 粗い金属 / 磨いた金属。金属は上下に染まって形が出る
@@ -1176,9 +1176,9 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.background(.display(red: 0.06, green: 0.07, blue: 0.09))
             // 床が見えるように、少し上から見下ろす
             canvas.camera(64, -46, 205, 64, 74, 0, 0, 1, 0)
-            canvas.ambientLight(.opaque(red: 0.14, green: 0.14, blue: 0.17))
+            canvas.ambientLight(.linear(red: 0.14, green: 0.14, blue: 0.17))
             canvas.directionalLight(
-                .opaque(red: 0.85, green: 0.82, blue: 0.72), -0.62, 0.6, -0.5)
+                .linear(red: 0.85, green: 0.82, blue: 0.72), -0.62, 0.6, -0.5)
             canvas.shadows(true)
             canvas.noStroke()
 

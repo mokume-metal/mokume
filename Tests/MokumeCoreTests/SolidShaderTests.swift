@@ -37,14 +37,14 @@ struct SolidShaderTests {
     func theSameShaderPaintsBothKinds() throws {
         let canvas = try makeCanvas()
         let painted = try canvas.makeShader(
-            flat, values: ["tint": .color(.opaque(red: 0.1, green: 0.9, blue: 0.3))])
+            flat, values: ["tint": .color(.linear(red: 0.1, green: 0.9, blue: 0.3))])
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.lights()
             canvas.noStroke()
             canvas.shader(painted)
             // 左に平面、右に立体
-            canvas.fill(.opaque(red: 1, green: 0, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.rect(4, 20, 24, 24)
             canvas.push()
             canvas.translate(46, 32, 0)
@@ -61,12 +61,12 @@ struct SolidShaderTests {
     func theBuiltInPaintComesBack() throws {
         let canvas = try makeCanvas()
         let painted = try canvas.makeShader(
-            flat, values: ["tint": .color(.opaque(red: 0.1, green: 0.9, blue: 0.3))])
+            flat, values: ["tint": .color(.linear(red: 0.1, green: 0.9, blue: 0.3))])
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.lights()
             canvas.noStroke()
-            canvas.fill(.opaque(red: 0.9, green: 0.2, blue: 0.2))
+            canvas.fill(.linear(red: 0.9, green: 0.2, blue: 0.2))
             canvas.shader(painted)
             canvas.push()
             canvas.translate(18, 32, 0)
@@ -97,10 +97,10 @@ struct SolidShaderTests {
         func picture(_ apply: (Canvas) -> Void) throws -> DisplayImage {
             let canvas = try makeCanvas()
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.lights()
                 canvas.noStroke()
-                canvas.fill(.opaque(red: 0.8, green: 0.7, blue: 0.5))
+                canvas.fill(.linear(red: 0.8, green: 0.7, blue: 0.5))
                 apply(canvas)
                 canvas.push()
                 canvas.translate(32, 32, 0)
@@ -122,9 +122,9 @@ struct SolidShaderTests {
         // 頂点の側 (置き場所) と塗りの側は別の仕組みなので、混ざらない
         let canvas = try makeCanvas(width: 96, height: 96)
         let painted = try canvas.makeShader(
-            flat, values: ["tint": .color(.opaque(red: 0.2, green: 0.5, blue: 0.9))])
+            flat, values: ["tint": .color(.linear(red: 0.2, green: 0.5, blue: 0.9))])
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.lights()
             canvas.noStroke()
             canvas.shader(painted)
@@ -166,7 +166,7 @@ struct SolidShaderTests {
 
         func brightness() throws -> Int {
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.lights()
                 canvas.noStroke()
                 canvas.shader(shader)
@@ -209,7 +209,7 @@ struct SolidShaderTests {
 
         func picture() throws -> DisplayImage {
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.lights()
                 canvas.noStroke()
                 canvas.shader(shader)
@@ -265,10 +265,10 @@ struct SolidShaderTests {
         let painted = try canvas.makeShader(body, values: values)
         var screen = SIMD2<Float>.zero
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(painted)
-            canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
             canvas.push()
             canvas.translate(64, 64, 0)
             canvas.rotateX(0.6)
@@ -352,10 +352,10 @@ struct SolidShaderTests {
             }
             """)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(probe)
-            canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
             canvas.push()
             canvas.translate(32, 32, 0)
             // **面ごとに向きが違う形**で見る。球なら 1 つの絵で多くの向きを通る
@@ -382,7 +382,7 @@ struct SolidShaderTests {
             }
             """)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.shader(probe)
             canvas.rect(8, 8, 48, 48)
@@ -406,8 +406,8 @@ struct SolidShaderTests {
             """,
             values: ["extent": 128])
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
-            canvas.stroke(.opaque(red: 1, green: 1, blue: 1))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.stroke(.linear(red: 1, green: 1, blue: 1))
             canvas.strokeWeight(9)
             canvas.shader(probe)
             // **変換を通して置く。** 頂点を並べた形は変換を頂点へ焼き込むので、
@@ -437,10 +437,10 @@ struct SolidShaderTests {
             let painted = try canvas.makeShader(Self.surface, values: ["extent": 120])
             var screen = SIMD2<Float>.zero
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.noStroke()
                 canvas.shader(painted)
-                canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+                canvas.fill(.linear(red: 1, green: 1, blue: 1))
                 canvas.push()
                 canvas.translate(64, 64, 0)
                 canvas.rotateX(0.6)

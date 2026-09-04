@@ -311,10 +311,10 @@ struct ModelTests {
             let canvas = try makeCanvas(width: 128, height: 128)
             let model = try canvas.loadModel(ModelFixture.pyramid)
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.lights()
                 canvas.noStroke()
-                canvas.fill(.opaque(red: 0.9, green: 0.7, blue: 0.4))
+                canvas.fill(.linear(red: 0.9, green: 0.7, blue: 0.4))
                 canvas.push()
                 canvas.translate(64, 64, 0)
                 canvas.model(model)
@@ -334,7 +334,7 @@ struct ModelTests {
             let canvas = try makeCanvas(width: 128, height: 128)
             let model = try canvas.loadModel(ModelFixture.pyramid)
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.lights()
                 canvas.noStroke()
                 for index in 0..<8 {

@@ -478,8 +478,8 @@ public final class Canvas {
 
     // MARK: - 描く状態
 
-    var currentFill = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
-    var currentStroke = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+    var currentFill = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    var currentStroke = LinearRGBA.linear(red: 1, green: 1, blue: 1)
     var currentStrokeWeight: Float = 1
     var transform = Transform.identity
     private var transformStack: [Transform] = []
@@ -540,7 +540,7 @@ public final class Canvas {
 
     var currentImageMode = ShapeMode.corner
     /// 画像に掛ける色。既定は掛けない (白・不透明)。
-    var currentTint = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+    var currentTint = LinearRGBA.linear(red: 1, green: 1, blue: 1)
     /// これから置く**塗り**に貼る絵。`nil` なら貼らない。
     ///
     /// **描き方なのでフレームを越える** ([ADR-0021] 決定 4) — 塗り・線・混ぜ方と

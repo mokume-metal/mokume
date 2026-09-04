@@ -91,7 +91,7 @@ struct NoiseParityTests {
             ])
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.blendMode(.replace)
             canvas.noStroke()
             canvas.shader(shader)

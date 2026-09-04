@@ -70,7 +70,7 @@ extension Canvas {
     /// 粒 1 つを描く形。**保持した形をそのまま使う**ので、粒だけ別の頂点経路を持たない。
     private func particleQuad() -> Shape {
         createShape {
-            fill(.opaque(red: 1, green: 1, blue: 1))
+            fill(.linear(red: 1, green: 1, blue: 1))
             plane(1, 1)
         }
     }
