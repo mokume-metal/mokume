@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import Metal
-import MokumeDiagnostics
 import simd
 
 // 立体を置く。空間の取り方・重ね順・設定の寿命は [ADR-0021] が定める。
@@ -254,9 +253,8 @@ extension Canvas {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     private func warnBadSize(_ name: String) {
-        guard !warnedBadSolidSize else { return }
-        warnedBadSolidSize = true
-        Diagnostics.warn(
+        warnOnce(
+            .badSolidSize,
             "\(name)(): 寸法に数でない値・無限・負の値が渡されたので、何も置きませんでした")
     }
 }

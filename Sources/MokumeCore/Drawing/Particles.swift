@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import Metal
-import MokumeDiagnostics
 import simd
 
 /// 粒 1 つぶんの状態。
@@ -166,11 +165,26 @@ public final class Particles {
     /// **CPU だけが読む。** 寿命を配ったのは CPU なので、GPU から読み戻さなくても
     /// 「まだ生きている粒を上書きした」が分かる。
     private var deadline: [Float]
-    /// 生きている粒を上書きしたことを知らせたか。**検査が読む。**
-    private(set) var warnedOverwrite = false
-    private(set) var warnedTooManyForces = false
     /// この フレームで積まれた力。**進めるときに空になる。**
     private var pendingForces: [Force] = []
+
+    /// 1 度だけ言う注意の種類。仕組みは ``WarningLog`` が持つ ([#734])。
+    ///
+    /// [#734]: https://github.com/mokume-metal/mokume/issues/734
+    enum Warning: Hashable {
+        /// まだ生きている粒を上書きした。
+        case overwrite
+        /// 効かせられる数を超えた力を渡された。
+        case tooManyForces
+    }
+
+    /// 言った注意の控え。**検査が読む。**
+    private(set) var warnings = WarningLog<Warning>()
+
+    /// まだ言っていなければ、その注意を 1 度だけ言う。
+    private func warnOnce(_ warning: Warning, _ message: @autoclosure () -> String) {
+        warnings.warnOnce(warning, message())
+    }
 
     init(
         capacity: Int, state: Numbers, instances: Numbers, parameters: Numbers,
@@ -328,18 +342,16 @@ public final class Particles {
     }
 
     private func warnOverwrite() {
-        guard !warnedOverwrite else { return }
-        warnedOverwrite = true
-        Diagnostics.warn(
+        warnOnce(
+            .overwrite,
             "粒の枠 \(capacity) 個をひと回りして、まだ生きている粒を上書きしました。"
                 + "出す数 (rate) × 寿命 (life) が枠より多いので、"
                 + "makeParticles(count:) を増やすか、rate か life を下げてください")
     }
 
     private func warnTooManyForces(_ count: Int) {
-        guard !warnedTooManyForces else { return }
-        warnedTooManyForces = true
-        Diagnostics.warn(
+        warnOnce(
+            .tooManyForces,
             "1 回に渡せる力は \(Self.maximumForces) 個までです (\(count) 個渡されました)。"
                 + "先頭から \(Self.maximumForces) 個だけ効かせました")
     }

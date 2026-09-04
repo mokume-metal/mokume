@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 // どこから、どう見るかを決める。**視点はシーンの記述なのでフレームを越えない**
@@ -98,32 +97,29 @@ extension Canvas {
 
     /// フレームの外で視点を書いたことを、初回だけ知らせる。
     private func warnCameraOutsideFrame() {
-        guard !warnedCameraOutsideFrame else { return }
-        warnedCameraOutsideFrame = true
-        Diagnostics.warn(
+        warnOnce(
+            .cameraOutsideFrame,
             "視点と投影はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
                 + "初期化のときに書いた視点はどのフレームにも属さないため、無視しました")
     }
 
     /// 成り立たない視点を、初回だけ知らせる。描画は投げずに、いまの視点のまま続ける。
     private func warnBadCamera(_ name: String) {
-        guard !warnedBadCamera else { return }
-        warnedBadCamera = true
-        Diagnostics.warn(
+        warnOnce(
+            .badCamera,
             "\(name)(): 見る位置と見ている先が同じ・上方向が視線と重なる・数でない値の"
                 + "いずれかなので、視点を変えませんでした")
     }
 
     /// 成り立たない投影を、初回だけ知らせる。
     private func warnBadProjection(_ projection: Camera.Projection) {
-        guard !warnedBadCamera else { return }
-        warnedBadCamera = true
         let name: String
         switch projection {
         case .perspective: name = "perspective"
         case .orthographic: name = "ortho"
         }
-        Diagnostics.warn(
+        warnOnce(
+            .badCamera,
             "\(name)(): 写す範囲が潰れている・数でない値が渡されたので、投影を変えませんでした")
     }
 }

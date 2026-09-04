@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 
 // 揺らぎ。説明文の正本は ``Sketch`` 側にある (ADR-0020 決定 4)。
 //
@@ -32,9 +31,8 @@ extension Canvas {
 
     /// 受け取れない値を、初回だけ知らせる。
     private func warnBadNoise(_ name: String) {
-        guard !warnedBadNoise else { return }
-        warnedBadNoise = true
-        Diagnostics.warn(
+        warnOnce(
+            .badNoise,
             "\(name)(): 数でない値・範囲の外の値が渡されたので、揺らぎの設定を変えませんでした")
     }
 }

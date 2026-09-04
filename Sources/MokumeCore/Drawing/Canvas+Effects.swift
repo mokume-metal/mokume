@@ -3,7 +3,6 @@
 
 import Foundation
 import Metal
-import MokumeDiagnostics
 import simd
 
 // 効果。意味の説明は利用者が最初に触る層 (`Sketch`) が正本で、ここは受け口である
@@ -98,9 +97,8 @@ extension Canvas {
         do {
             try encodeEffects(into: commands)
         } catch {
-            guard !warnedEffectFailed else { return }
-            warnedEffectFailed = true
-            Diagnostics.warn(
+            warnOnce(
+                .effectFailed,
                 "効果を通せませんでした: \(error.headline)。このフレームは効果をかける前の絵を出します")
         }
     }

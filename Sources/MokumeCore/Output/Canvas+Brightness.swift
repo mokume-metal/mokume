@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 
 // 明るさを画面へ写す段。設定は**画面 (描画先) が持つ** — 効く範囲と寿命は
 // ``Brightness`` が定める。
@@ -22,9 +21,8 @@ extension Canvas {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     private func warnBadExposure() {
-        guard !warnedBadExposure else { return }
-        warnedBadExposure = true
-        Diagnostics.warn(
+        warnOnce(
+            .badExposure,
             "exposure(): 数でない値・無限・負の値が渡されたので、明るさを変えませんでした")
     }
 }

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import MokumeDiagnostics
 import simd
 
 // 周囲を置く・周囲を背景として描く。単位と寿命は ``Surroundings`` が定める。
@@ -46,18 +45,16 @@ extension Canvas {
 
     /// フレームの外で周囲を置いたことを、初回だけ知らせる。
     private func warnSurroundingsOutsideFrame() {
-        guard !warnedSurroundingsOutsideFrame else { return }
-        warnedSurroundingsOutsideFrame = true
-        Diagnostics.warn(
+        warnOnce(
+            .surroundingsOutsideFrame,
             "周囲はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
                 + "初期化のときに置いた周囲はどのフレームにも属さないため、無視しました")
     }
 
     /// 受け取れない周囲を、初回だけ知らせる。
     private func warnBadSurroundings() {
-        guard !warnedBadSurroundings else { return }
-        warnedBadSurroundings = true
-        Diagnostics.warn(
+        warnOnce(
+            .badSurroundings,
             "surroundings(): 数でない値・負の色が渡されたので、周囲を変えませんでした")
     }
 }
