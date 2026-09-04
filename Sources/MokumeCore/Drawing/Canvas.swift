@@ -64,6 +64,14 @@ public final class Canvas {
         return usesFrameHistory ? 2 : 1
     }
     let gpu: RenderDevice
+
+    /// フレームごとに CPU が書く置き場の環。
+    ///
+    /// **描き切り 1 回につきスロットを 1 つ進める** (フレームではなく描き切り単位 —
+    /// 画素の読み出しはフレームの途中でも描き切りを起こすので、投入 1 本 = スロット
+    /// 1 つが対応の正しい粒度である)。効果の段の置き場も同じ環に載る (同じ投入が読む)。
+    let frameRing: FrameRing
+
     let pipeline: ShapePipeline
 
     /// 描画先の座標へ落とす行列。半画素のずらしを含む。
@@ -72,16 +80,14 @@ public final class Canvas {
 
     /// 溜めている頂点と、その置き場。
     var vertices: [ShapeVertex] = []
-    private var vertexBuffer: (any MTLBuffer)?
-    private var vertexCapacity = 0
+    private let vertexStorage: GrowableBuffer
 
     /// 平面の置き場所。列は自分の区間を指す。
     ///
     /// **添字 0 は常に何も動かさない置き場所**で、畳めない列 (字・画像・その場で並べた
     /// 頂点) はここを指す。毎フレーム置き直すので、溜め場を捨てても消えない。
     var flatInstances: [FlatInstance] = [.identity]
-    private var flatInstanceBuffer: (any MTLBuffer)?
-    private var flatInstanceCapacity = 0
+    private let flatInstanceStorage: GrowableBuffer
 
     /// いま開いている平面の雛形。
     ///
@@ -118,8 +124,7 @@ public final class Canvas {
     ///
     /// [#752]: https://github.com/mokume-metal/mokume/issues/752
     var formInstances: [FormInstance] = []
-    private var formInstanceBuffer: (any MTLBuffer)?
-    private var formInstanceCapacity = 0
+    private let formInstanceStorage: GrowableBuffer
     /// いま開いている基本図形の列。
     var openForm: OpenForm?
 
@@ -251,8 +256,7 @@ public final class Canvas {
     var retainedSerial = 0
     /// 置けない置き場所を知らせたか。
     var warnedBadPlacement = false
-    private var solidVertexBuffer: (any MTLBuffer)?
-    private var solidVertexCapacity = 0
+    private let solidVertexStorage: GrowableBuffer
 
     /// いま開いている列が、どちらの並びから描かれるか。
     var openSource = VertexSource.flat
@@ -287,11 +291,9 @@ public final class Canvas {
     /// 既に置いた立体の明るさまで変わる (記録した列だけで絵が決まらなくなる)。
     private var lightStorage: [Light] = []
     /// 光の置き場。
-    private var lightBuffer: (any MTLBuffer)?
-    private var lightCapacity = 0
+    private let lightStorageBuffer: GrowableBuffer
     /// 列ごとの「光がどこから何個か」の置き場。
-    private var lightingBuffer: (any MTLBuffer)?
-    private var lightingCapacity = 0
+    private let lightingStorage: GrowableBuffer
     /// フレームの外で光が置かれたことを知らせたか。
     var warnedLightOutsideFrame = false
 
@@ -300,8 +302,7 @@ public final class Canvas {
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var currentMaterial = Material.default
     /// 列ごとの材質の置き場。列 1 つにつき 1 区画。
-    private var materialBuffer: (any MTLBuffer)?
-    private var materialCapacity = 0
+    private let materialStorage: GrowableBuffer
     /// フレームの外で材質が書かれたことを知らせたか。
     var warnedMaterialOutsideFrame = false
     /// 受け取れない材質の値を知らせたか。
@@ -321,8 +322,7 @@ public final class Canvas {
     /// 映り込む周囲は、別々に選べる (片方だけ呼んでもよい)。
     var backdrop: Surroundings?
     /// 列ごとの周囲の置き場。列 1 つにつき 1 区画。
-    private var surroundingsBuffer: (any MTLBuffer)?
-    private var surroundingsCapacity = 0
+    private let surroundingsStorage: GrowableBuffer
     /// フレームの外で周囲が置かれたことを知らせたか。
     var warnedSurroundingsOutsideFrame = false
     /// 受け取れない周囲を知らせたか。
@@ -431,7 +431,7 @@ public final class Canvas {
     /// 束ねられる本数を超えたことを知らせたか。
     var warnedTooManyComputeBuffers = false
     /// 影の行列を置く領域。
-    private var shadowMatrixBuffer: (any MTLBuffer)?
+    private let shadowMatrixStorage: GrowableBuffer
     /// 焼いていないフレームに影の口へ束ねる 1 画素の奥行きの面。
     private var unbakedShadowTexture: (any MTLTexture)?
     /// フレームの外で影の設定を書いたことを知らせたか。
@@ -677,15 +677,15 @@ public final class Canvas {
     }
 
     /// 混ぜ方の番号を置いた領域。列ごとに番地をずらして指す。
+    ///
+    /// **環に載せない。** 作成時に全部を並べて書いたきり、以後 CPU は触らない。
     private let blendModeBuffer: any MTLBuffer
     /// フレームを通して変わらない値 (時刻・面の大きさ) の置き場。
-    private let uniformsBuffer: any MTLBuffer
+    private let uniformsStorage: GrowableBuffer
     /// 列ごとの、利用者が渡した値の置き場。列 1 つにつき 1 区画。
-    private var valuesBuffer: (any MTLBuffer)?
-    private var valuesCapacity = 0
+    private let valuesStorage: GrowableBuffer
     /// 列ごとの、描画先の座標へ落とす行列の置き場。列 1 つにつき 1 区画。
-    private var matrixBuffer: (any MTLBuffer)?
-    private var matrixCapacity = 0
+    private let matrixStorage: GrowableBuffer
     /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
     private static let valuesStride = 256
     /// 1 区画に収まる値の数 (float 換算)。**塗りへ渡せる値の上限**でもある。
@@ -839,6 +839,45 @@ public final class Canvas {
             target === output
             ? nil : try UpscaleStage(gpu: gpu, kind: upscale, from: target, to: output)
         self.gpu = gpu
+
+        // **フレームごとに書く置き場は、この 1 つの環に載る。** 描き切り 1 回につき
+        // スロットを 1 つ進め、そのスロットを読む投入だけを待つ (#754)
+        let ring = FrameRing(gpu: gpu)
+        self.frameRing = ring
+        func storage(stride: Int, minimum: Int, label: String) -> GrowableBuffer {
+            GrowableBuffer(
+                gpu: gpu, ring: ring, stride: stride, minimumCapacity: minimum,
+                label: "mokume.\(label)")
+        }
+        self.vertexStorage = storage(
+            stride: MemoryLayout<ShapeVertex>.stride, minimum: 1024, label: "vertices")
+        self.solidVertexStorage = storage(
+            stride: MemoryLayout<SolidVertex>.stride, minimum: 1024, label: "solidVertices")
+        self.flatInstanceStorage = storage(
+            stride: MemoryLayout<FlatInstance>.stride, minimum: 256, label: "flatInstances")
+        self.formInstanceStorage = storage(
+            stride: MemoryLayout<FormInstance>.stride, minimum: 256, label: "formInstances")
+        self.solidInstanceStorage = storage(
+            stride: MemoryLayout<SolidInstance>.stride, minimum: 256, label: "solidInstances")
+        self.lightStorageBuffer = storage(
+            stride: MemoryLayout<Light>.stride, minimum: 8, label: "lights")
+        self.lightingStorage = storage(
+            stride: Self.valuesStride, minimum: 16, label: "lighting")
+        self.materialStorage = storage(
+            stride: Self.valuesStride, minimum: 16, label: "materials")
+        self.surroundingsStorage = storage(
+            stride: Self.valuesStride, minimum: 16, label: "surroundings")
+        self.matrixStorage = storage(
+            stride: Self.valuesStride, minimum: 16, label: "matrices")
+        self.valuesStorage = storage(
+            stride: Self.valuesStride, minimum: 16, label: "values")
+        // 時刻・面の大きさ・影の行列はフレームに 1 区画。**大きさが変わらなくても
+        // 環には載る** — 毎フレーム CPU が書き換えるという性質が同じだからである
+        self.uniformsStorage = storage(
+            stride: Self.valuesStride, minimum: 1, label: "uniforms")
+        self.shadowMatrixStorage = storage(
+            stride: Self.valuesStride, minimum: 1, label: "shadowMatrix")
+
         self.width = Float(output.width)
         self.height = Float(output.height)
         self.pipeline = try ShapePipeline(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
@@ -868,9 +907,6 @@ public final class Canvas {
             slot.pointee = mode.rawIndex
         }
         self.blendModeBuffer = modeBuffer
-
-        // 時刻と面の大きさ。フレームごとに書き換わるので 1 区画だけ持つ
-        self.uniformsBuffer = try gpu.makeReadableBuffer(byteCount: Self.valuesStride)
     }
 
     /// 出す先の大きさと細かさから、描く先の大きさを決める。
@@ -2221,15 +2257,22 @@ public final class Canvas {
         isFlushing = true
         defer { isFlushing = false }
         if let failureForTesting { throw failureForTesting }
-        // **書く前に待つ。** ここから先は GPU 可視メモリへ CPU が書く (頂点・列ごとの値・
-        // 効果の値・置き場の取り直し)。前の描き切りがまだそこを読んでいるかもしれない
-        // ので、投入済みのものが全部終わるのを待つ — 全部終わっていれば何もせず返る。
-        // 待つ位置をここ (書く直前) にしたので、末尾では待たない。利用者の `draw()` の
-        // CPU 仕事が前のフレームの GPU と重なる ([#727])。詰まっていたら 1 バイトも
-        // 書かずに投げ、このフレームは捨てる (`draw(_:)` の `defer` が片付ける)
+        // **書く前に、環を 1 つ進めて待つ。** ここから先は GPU 可視メモリへ CPU が書く
+        // (頂点・列ごとの値・効果の値・置き場の取り直し)。書き先はこれから進むスロットの
+        // 置き場なので、待つのは**そのスロットを最後に読んだ投入**だけでよい — その先に
+        // 積まれた新しいフレームの仕事まで待つ理由が無い ([#754])。
+        //
+        // 当初は `gpu.settle()` で投入済みの**全部**を待っていた ([#727])。置き場が
+        // 1 本しか無かったので、それ以外に書ける場所が無かったためである。環にしたので、
+        // 待ちは「1 周ぶん前の自分」に縮む — 置いた描き場所を N 枚使う絵で、フレーム
+        // ごとに N+1 回の全ドレインが起きていたのがそれで消える。
+        //
+        // 詰まっていたら 1 バイトも書かずに投げ、このフレームは捨てる (`draw(_:)` の
+        // `defer` が片付ける)。
         //
         // [#727]: https://github.com/mokume-metal/mokume/issues/727
-        try gpu.settle()
+        // [#754]: https://github.com/mokume-metal/mokume/issues/754
+        try frameRing.advance()
         closeBatch()
         // 段の枠の採番は描き切りごとに 0 から。**1 本のコマンドの中でだけ衝突しない
         // ことが要る**ので、コマンドと同じ寿命で数える
@@ -2267,34 +2310,37 @@ public final class Canvas {
         }
 
         if !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty {
-            let buffer = try vertexBufferHolding(vertices.count)
+            let buffer = try vertexStorage.buffer(holding: vertices.count)
             vertices.withUnsafeBytes { source in
                 guard let base = source.baseAddress, source.count > 0 else { return }
                 buffer.contents().copyMemory(from: base, byteCount: source.count)
             }
-            let formBuffer = try formInstanceBufferHolding(max(formInstances.count, 1))
+            let formBuffer = try formInstanceStorage.buffer(
+                holding: max(formInstances.count, 1))
             formInstances.withUnsafeBytes { source in
                 guard let base = source.baseAddress, source.count > 0 else { return }
                 formBuffer.contents().copyMemory(from: base, byteCount: source.count)
             }
-            let instanceBuffer = try solidInstanceBufferHolding(max(solidInstances.count, 1))
+            let instanceBuffer = try solidInstanceStorage.buffer(
+                holding: max(solidInstances.count, 1))
             solidInstances.withUnsafeBytes { source in
                 guard let base = source.baseAddress, source.count > 0 else { return }
                 instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
             }
-            let flatInstanceBuffer = try flatInstanceBufferHolding(flatInstances.count)
+            let flatInstanceBuffer = try flatInstanceStorage.buffer(
+                holding: flatInstances.count)
             flatInstances.withUnsafeBytes { source in
                 guard let base = source.baseAddress, source.count > 0 else { return }
                 flatInstanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
             }
 
-            let solidBuffer = try solidVertexBufferHolding(solidVertices.count)
+            let solidBuffer = try solidVertexStorage.buffer(holding: solidVertices.count)
             solidVertices.withUnsafeBytes { source in
                 guard let base = source.baseAddress else { return }
                 solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
             }
             // 光の置き場。列は自分の区間を指す
-            let lightsBuffer = try lightBufferHolding(max(lightStorage.count, 1))
+            let lightsBuffer = try lightStorageBuffer.buffer(holding: max(lightStorage.count, 1))
             lightStorage.withUnsafeBytes { source in
                 guard let base = source.baseAddress, source.count > 0 else { return }
                 lightsBuffer.contents().copyMemory(from: base, byteCount: source.count)
@@ -2303,7 +2349,7 @@ public final class Canvas {
                 lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
 
             // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
-            let matrices = try matrixBufferHolding(batches.count)
+            let matrices = try matrixStorage.buffer(holding: batches.count)
             for (index, batch) in batches.enumerated() {
                 var matrix = batch.matrix
                 let slot = matrices.contents().advanced(by: index * Self.valuesStride)
@@ -2326,6 +2372,7 @@ public final class Canvas {
             // 時刻と面の大きさは、フレームの中で変わらない。**大きさは実際に刻む
             // 画素**である — 断片が受け取る位置 (`position`) がその数で来るので、
             // 割って出す 0…1 の位置がここと食い違うと面からはみ出す
+            let uniformsBuffer = try uniformsStorage.buffer(holding: 1)
             uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
                 .update(
                     from: [time, 0, Float(pixelWidth), Float(pixelHeight), shadowBiasValue],
@@ -2365,7 +2412,7 @@ public final class Canvas {
                 uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
 
             // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている
-            let lighting = try lightingBufferHolding(batches.count)
+            let lighting = try lightingStorage.buffer(holding: batches.count)
             for (index, batch) in batches.enumerated() {
                 let slot = lighting.contents().advanced(by: index * Self.valuesStride)
                     .assumingMemoryBound(to: UInt32.self)
@@ -2379,7 +2426,7 @@ public final class Canvas {
             }
 
             // 列ごとの材質。**列が閉じた時点のもの**がそのまま入る
-            let materials = try materialBufferHolding(batches.count)
+            let materials = try materialStorage.buffer(holding: batches.count)
             for (index, batch) in batches.enumerated() {
                 var packed = batch.material.packed
                 materials.contents().advanced(by: index * Self.valuesStride)
@@ -2387,14 +2434,14 @@ public final class Canvas {
             }
 
             // 列ごとの周囲。**列が閉じた時点のもの**がそのまま入る
-            let surroundings = try surroundingsBufferHolding(batches.count)
+            let surroundings = try surroundingsStorage.buffer(holding: batches.count)
             for (index, batch) in batches.enumerated() {
                 var packed = batch.surroundings
                 surroundings.contents().advanced(by: index * Self.valuesStride)
                     .copyMemory(from: &packed, byteCount: PackedSurroundings.expectedStride)
             }
 
-            let values = try valuesBufferHolding(batches.count)
+            let values = try valuesStorage.buffer(holding: batches.count)
             for (index, batch) in batches.enumerated() {
                 // **区画に収まることは入口で保証されている** (`Canvas.loadShader` /
                 // `makeShader` が `valueSlotCapacity` を超える宣言を断る・#348)。ここで
@@ -2539,6 +2586,10 @@ public final class Canvas {
         // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
         let submission = gpu.commit(
             commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
+        // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
+        // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
+        // まま書いてよい」ことになる (#754)
+        frameRing.noteSubmission()
         if mirroringPixels { target.markPixelsMirrored(through: submission) }
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
@@ -2564,87 +2615,11 @@ public final class Canvas {
         }
     }
 
-    /// 列ごとの値を置く領域。足りなければ取り直す。
-    private func valuesBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = valuesBuffer, valuesCapacity >= count { return buffer }
-        let capacity = max(count, max(valuesCapacity * 2, 16))
-        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
-        valuesBuffer = buffer
-        valuesCapacity = capacity
-        return buffer
-    }
-
-    /// 頂点を置く領域。足りなければ取り直す。
     /// 立体の置き場所の置き場。
-    private var solidInstanceBuffer: (any MTLBuffer)?
-    private var solidInstanceCapacity = 0
-
-    /// 立体の頂点を置く領域。足りなければ取り直す。
-    private func solidVertexBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = solidVertexBuffer, solidVertexCapacity >= count { return buffer }
-        let capacity = max(count, max(solidVertexCapacity * 2, 1024))
-        let buffer = try gpu.makeReadableBuffer(
-            byteCount: capacity * MemoryLayout<SolidVertex>.stride)
-        solidVertexBuffer = buffer
-        solidVertexCapacity = capacity
-        return buffer
-    }
-
-    /// 立体の置き場所を置く領域。足りなければ取り直す。
-    private func solidInstanceBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = solidInstanceBuffer, solidInstanceCapacity >= count { return buffer }
-        let capacity = max(count, max(solidInstanceCapacity * 2, 256))
-        let buffer = try gpu.makeReadableBuffer(
-            byteCount: capacity * MemoryLayout<SolidInstance>.stride)
-        solidInstanceBuffer = buffer
-        solidInstanceCapacity = capacity
-        return buffer
-    }
+    private let solidInstanceStorage: GrowableBuffer
 
     /// 基本図形のクアッドを組む頂点の数 (三角形 2 枚)。
     static let formQuadVertexCount = 6
-
-    /// 基本図形の置き場所を置く領域。足りなければ取り直す。
-    private func formInstanceBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = formInstanceBuffer, formInstanceCapacity >= count { return buffer }
-        let capacity = max(count, max(formInstanceCapacity * 2, 256))
-        let buffer = try gpu.makeReadableBuffer(
-            byteCount: capacity * MemoryLayout<FormInstance>.stride)
-        formInstanceBuffer = buffer
-        formInstanceCapacity = capacity
-        return buffer
-    }
-
-    /// 平面の置き場所を置く領域。足りなければ取り直す。
-    private func flatInstanceBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = flatInstanceBuffer, flatInstanceCapacity >= count { return buffer }
-        let capacity = max(count, max(flatInstanceCapacity * 2, 256))
-        let buffer = try gpu.makeReadableBuffer(
-            byteCount: capacity * MemoryLayout<FlatInstance>.stride)
-        flatInstanceBuffer = buffer
-        flatInstanceCapacity = capacity
-        return buffer
-    }
-
-    /// 光を置く領域。足りなければ取り直す。
-    private func lightBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = lightBuffer, lightCapacity >= count { return buffer }
-        let capacity = max(count, max(lightCapacity * 2, 8))
-        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * MemoryLayout<Light>.stride)
-        lightBuffer = buffer
-        lightCapacity = capacity
-        return buffer
-    }
-
-    /// 列ごとの「光がどこから何個か」を置く領域。足りなければ取り直す。
-    private func lightingBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = lightingBuffer, lightingCapacity >= count { return buffer }
-        let capacity = max(count, max(lightingCapacity * 2, 16))
-        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
-        lightingBuffer = buffer
-        lightingCapacity = capacity
-        return buffer
-    }
 
     /// 光から見た奥行きを焼く。焼かなかったら `nil`。
     ///
@@ -2676,17 +2651,18 @@ public final class Canvas {
             return (shadowMap, matrix)
         }
         let map = try shadowMapHolding(detail)
-        let solidBuffer = try solidVertexBufferHolding(solidVertices.count)
+        let solidBuffer = try solidVertexStorage.buffer(holding: solidVertices.count)
         solidVertices.withUnsafeBytes { source in
             guard let base = source.baseAddress, source.count > 0 else { return }
             solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
         }
-        let instanceBuffer = try solidInstanceBufferHolding(max(solidInstances.count, 1))
+        let instanceBuffer = try solidInstanceStorage.buffer(
+            holding: max(solidInstances.count, 1))
         solidInstances.withUnsafeBytes { source in
             guard let base = source.baseAddress, source.count > 0 else { return }
             instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
         }
-        let matrixBuffer = try shadowMatrixBufferHolding()
+        let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
         var value = matrix
         matrixBuffer.contents().copyMemory(
             from: &value, byteCount: MemoryLayout<simd_float4x4>.size)
@@ -2823,14 +2799,6 @@ public final class Canvas {
         return map
     }
 
-    /// 影の行列を置く領域。
-    private func shadowMatrixBufferHolding() throws(RenderFailure) -> any MTLBuffer {
-        if let shadowMatrixBuffer { return shadowMatrixBuffer }
-        let buffer = try gpu.makeReadableBuffer(byteCount: Self.valuesStride)
-        shadowMatrixBuffer = buffer
-        return buffer
-    }
-
     /// 焼いていないフレームに、影の口へ束ねる面。**最初に要ったときに 1 度だけ作る。**
     ///
     /// 焼いた面と同じ形 (奥行きの面) の 1 画素。断片は `shadowParams.x` が 0 なら
@@ -2844,43 +2812,4 @@ public final class Canvas {
         return texture
     }
 
-    /// 列ごとの周囲を置く領域。足りなければ取り直す。
-    private func surroundingsBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = surroundingsBuffer, surroundingsCapacity >= count { return buffer }
-        let capacity = max(count, max(surroundingsCapacity * 2, 16))
-        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
-        surroundingsBuffer = buffer
-        surroundingsCapacity = capacity
-        return buffer
-    }
-
-    /// 列ごとの材質を置く領域。足りなければ取り直す。
-    private func materialBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = materialBuffer, materialCapacity >= count { return buffer }
-        let capacity = max(count, max(materialCapacity * 2, 16))
-        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
-        materialBuffer = buffer
-        materialCapacity = capacity
-        return buffer
-    }
-
-    /// 列ごとの行列を置く領域。足りなければ取り直す。
-    private func matrixBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = matrixBuffer, matrixCapacity >= count { return buffer }
-        let capacity = max(count, max(matrixCapacity * 2, 16))
-        let buffer = try gpu.makeReadableBuffer(byteCount: capacity * Self.valuesStride)
-        matrixBuffer = buffer
-        matrixCapacity = capacity
-        return buffer
-    }
-
-    private func vertexBufferHolding(_ count: Int) throws(RenderFailure) -> any MTLBuffer {
-        if let buffer = vertexBuffer, vertexCapacity >= count { return buffer }
-        let capacity = max(count, max(vertexCapacity * 2, 1024))
-        let buffer = try gpu.makeReadableBuffer(
-            byteCount: capacity * MemoryLayout<ShapeVertex>.stride)
-        vertexBuffer = buffer
-        vertexCapacity = capacity
-        return buffer
-    }
 }

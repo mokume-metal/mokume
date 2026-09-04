@@ -67,6 +67,52 @@ struct FrameGrowthTests {
             """)
     }
 
+    /// 置き場を取り直させる回数。倍増で伸びるので、**要求を毎回倍にする**。
+    private static let regrowths = 6
+
+    @Test("置き場を何度も取り直しても、常駐の集合が増え続けない")
+    func regrowingBuffersDoesNotPileUpResidency() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 64, height: 64)
+        let canvas = try Canvas(target: target, gpu: gpu)
+
+        /// 図形を `count` 個置く 1 フレーム。数を増やすと置き場が足りなくなり、
+        /// ``GrowableBuffer`` が全スロットを取り直す。
+        func frame(shapes count: Int) throws {
+            try canvas.draw {
+                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.noStroke()
+                for index in 0..<count {
+                    canvas.fill(.opaque(red: Float(index % 8) / 8, green: 0.4, blue: 0.6))
+                    canvas.rect(Float(index % 64), Float((index / 64) % 64), 1, 1)
+                }
+            }
+        }
+
+        // **環のスロットが全部埋まるまで温める。** 最初にそのスロットが回ってきた
+        // フレームは確保して当たり前である
+        for _ in 0..<RenderDevice.defaultSlotCount { try frame(shapes: 64) }
+        let settled = gpu.residencySet.allocationCount
+
+        var shapes = 64
+        for _ in 0..<Self.regrowths {
+            shapes *= 2
+            for _ in 0..<RenderDevice.defaultSlotCount { try frame(shapes: shapes) }
+        }
+        let after = gpu.residencySet.allocationCount
+
+        #expect(
+            after == settled,
+            """
+            置き場を \(Self.regrowths) 回取り直したら、常駐の集合が \(after - settled) 個増えた
+            (取り直しは古いほうを外すので、増減 0 のはず)。
+
+            倍増で使い回す置き場が、取り直した古いほうを常駐の集合から外していない
+            ([#738](https://github.com/mokume-metal/mokume/issues/738))。絵は正しく出たまま、
+            長く走らせたときにだけメモリを食う。
+            """)
+    }
+
     /// 段を全部載せた 1 フレーム。**フレームをまたいで持つものは、ここで 1 度だけ作る。**
     private final class Stage {
         /// 場の細かさ。

@@ -9,11 +9,19 @@ import Testing
 // ## なぜ要るか
 //
 // 描き切りは GPU の完了を待たずに返る ([#727](https://github.com/mokume-metal/mokume/issues/727))。
-// だから CPU が GPU 可視メモリに触る (書く・GPU の結果を読む) 場所は、触る直前に
-// `RenderDevice.settle()` で待たなければならない。触る口は `MTLBuffer.contents()` と
-// `MTLTexture.replace(region:…)` の 2 つしかないので、その出現を数えれば規律の適用範囲が
-// 機械で分かる。待ち忘れの症状は「絵がたまに乱れる・値がたまに古い」で、再現しないので
-// 原文で見る。
+// だから CPU が GPU 可視メモリに触る (書く・GPU の結果を読む) 場所は、触る直前に**待って
+// いなければならない**。触る口は `MTLBuffer.contents()` と `MTLTexture.replace(region:…)` の
+// 2 つしかないので、その出現を数えれば規律の適用範囲が機械で分かる。待ち忘れの症状は
+// 「絵がたまに乱れる・値がたまに古い」で、再現しないので原文で見る。
+//
+// ## 待ち方は 2 通りある
+//
+// `RenderDevice.settle()` は**投入済みの全部**を待つ。フレームごとに書く置き場は
+// [#754](https://github.com/mokume-metal/mokume/issues/754) で環 (`FrameRing`) に載り、
+// 待つ範囲が「そのスロットを読む投入 1 本」へ縮んだ。**どちらで待っているかを一覧が
+// 名乗る** — 名乗りを `settles` の真偽 1 つで表していた頃は、`settle` という語が原文に
+// あるだけで honest と判定されてしまい、`Canvas.swift` が置いた描き場所を描き切らせる
+// 別物 (`settlePlacersBeforeChange`) で緑になれた。
 //
 // ## 規則
 //
@@ -26,49 +34,69 @@ import Testing
 /// GPU 可視メモリに触る場所が、待ちの規律の一覧に載っているかを原文から見る。
 @Suite("GPU 可視メモリに触る場所")
 struct GPUMemoryAccessGateTests {
+    /// 触る場所が名乗れる待ち方。
+    private enum Discipline {
+        /// 触る直前に ``RenderDevice/settle()`` で**投入済みの全部**を待つ。
+        case settles
+        /// フレームごとに書く置き場の環に載せ、**そのスロットを読む投入**だけを待つ。
+        case ring
+        /// 自分では待たない。**呼ぶ側の経路が待っている**ことが理由に書かれている。
+        case waitedElsewhere
+
+        /// 名乗りが本当かを原文から見るための語。無ければ見ない。
+        var evidence: String? {
+            switch self {
+            case .settles: "settle"
+            case .ring: "FrameRing"
+            case .waitedElsewhere: nil
+            }
+        }
+    }
+
     /// 触ってよい場所と、その理由。
     ///
-    /// `settles` は「そのファイル自身が `settle` を呼ぶ」ことを要求する。呼ばない側の理由は
-    /// 「作成時だけ書く」か「自前で待つ別の経路の中で書く」のどちらかでなければならない。
+    /// `discipline` は原文に現れる語で裏を取る (``Discipline/evidence``)。裏の取れない
+    /// `waitedElsewhere` の理由は「作成時だけ書く」か「自前で待つ別の経路の中で書く」の
+    /// どちらかでなければならない。
     private struct Permit {
         let file: String
-        let settles: Bool
+        let discipline: Discipline
         let reason: String
     }
 
     private static let permits: [Permit] = [
         Permit(
-            file: "Drawing/Canvas.swift", settles: true,
-            reason: "描き切りの先頭で settle してから頂点・列ごとの値・uniforms を書く。init の書き込みは作成時だけ"),
+            file: "Drawing/Canvas.swift", discipline: .ring,
+            reason: "描き切りの先頭で環を 1 つ進め、そのスロットを読む投入だけを待ってから頂点・列ごとの値・uniforms を書く (#754)。init の書き込みは作成時だけ"),
         Permit(
-            file: "Drawing/Canvas+Effects.swift", settles: false,
-            reason: "描き切りの中 (settle の後) で効果の値を書く"),
+            file: "Drawing/Canvas+Effects.swift", discipline: .waitedElsewhere,
+            reason: "描き切りの中 (環を進めた後) で効果の値を書く。書き先は Canvas と同じ環に載った置き場"),
         Permit(
-            file: "Drawing/Computation.swift", settles: true,
+            file: "Drawing/Computation.swift", discipline: .settles,
             reason: "値を書く直前に settle する"),
         Permit(
-            file: "Drawing/Particles.swift", settles: true,
+            file: "Drawing/Particles.swift", discipline: .settles,
             reason: "粒と指定を書く直前に settle する"),
         Permit(
-            file: "Rendering/Numbers.swift", settles: true,
+            file: "Rendering/Numbers.swift", discipline: .settles,
             reason: "書く口がすべて settle を通る。読む口 (snapshot) は Canvas.read が settle してから呼ぶ"),
         Permit(
-            file: "Rendering/RenderTarget.swift", settles: true,
+            file: "Rendering/RenderTarget.swift", discipline: .settles,
             reason: "画素の写しを読む直前に settle する (写しへの読み戻しを積んだときは、その完了まで)"),
         Permit(
-            file: "Output/EncodedImage.swift", settles: false,
+            file: "Output/EncodedImage.swift", discipline: .waitedElsewhere,
             reason: "encodeToImage が commitAndWait してから読む"),
         Permit(
-            file: "Output/OutputPass.swift", settles: false,
+            file: "Output/OutputPass.swift", discipline: .waitedElsewhere,
             reason: "encodeToImage が毎回 commitAndWait するので、前の出力段は終わっている"),
         Permit(
-            file: "Display/PresentPipeline.swift", settles: false,
-            reason: "差し出しの前には必ず描き切りの settle が挟まるので、前の差し出しは終わっている"),
+            file: "Display/PresentPipeline.swift", discipline: .ring,
+            reason: "差し出しごとに自分の環を 1 つ進める。描き切りが全完了を待たなくなった時点で、前の差し出しが終わっている保証は他に無い (#754)"),
         Permit(
-            file: "Text/GlyphAtlas.swift", settles: true,
+            file: "Text/GlyphAtlas.swift", discipline: .settles,
             reason: "焼く直前に settle する。面の作成時の書き込みは新しい面へ"),
         Permit(
-            file: "Image/Image.swift", settles: true,
+            file: "Image/Image.swift", discipline: .settles,
             reason: "面へ送る直前に settle する"),
     ]
 
@@ -111,7 +139,8 @@ struct GPUMemoryAccessGateTests {
 
             \(unlisted.map { "Sources/MokumeCore/\($0)" }.joined(separator: "\n"))
 
-            触る直前に gpu.settle() (投げない口では settleQuietly) を置き、
+            触る直前に待ちを置き (投入済みの全部なら gpu.settle() / 投げない口では
+            settleQuietly、フレームごとに書く置き場なら FrameRing に載せる)、
             GPUMemoryAccessGateTests.permits に理由ごと足す。
             """)
     }
@@ -124,11 +153,10 @@ struct GPUMemoryAccessGateTests {
                 Issue.record("\(permit.file) はもう GPU 可視メモリに触っていない。一覧から外す")
                 continue
             }
-            if permit.settles {
-                #expect(
-                    source.contains("settle"),
-                    "\(permit.file) は「settle する」と名乗っているが、settle を呼んでいない")
-            }
+            guard let evidence = permit.discipline.evidence else { continue }
+            #expect(
+                source.contains(evidence),
+                "\(permit.file) は \(permit.discipline) と名乗っているが、原文に \(evidence) が無い")
         }
     }
 }

@@ -10,7 +10,7 @@ import Metal
 /// テクスチャを受け取る経路の 1 つにすぎない。
 ///
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
-final class PresentPipeline {
+@MainActor final class PresentPipeline {
     /// 写す元のテクスチャを渡す口の番号 (シェーダ側の `texture(0)`)。
     static let sourceTextureIndex = 0
     /// 読み取り方を渡す口の番号 (シェーダ側の `sampler(0)`)。
@@ -21,8 +21,19 @@ final class PresentPipeline {
     let state: any MTLRenderPipelineState
     let argumentTable: any MTL4ArgumentTable
     private let sampler: any MTLSamplerState
-    /// 明るさを写す段の設定を置く領域。フレームごとに書き換える。
-    private let brightnessBuffer: any MTLBuffer
+
+    /// 差し出しごとに書く置き場の環。
+    ///
+    /// **描き切りの環とは別に持つ。** 差し出しは描き切りとは別の投入で、しかも
+    /// ``RenderDevice/commit(_:signalling:)`` は GPU の完了を待たない — 描き切りが
+    /// 投入済みの全部を待っていた間はその待ちに守られていたが、待ちを環へ縮めた
+    /// 時点で、次の差し出しが前の差し出しの読んでいる置き場を書き潰す ([#754] が
+    /// 「深さを増やした瞬間に競合する」と名指しした潜在ハザード)。
+    ///
+    /// [#754]: https://github.com/mokume-metal/mokume/issues/754
+    private let ring: FrameRing
+    /// 明るさを写す段の設定を置く領域。差し出しごとに書き換える。
+    private let brightnessStorage: GrowableBuffer
 
     init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
         let library = try gpu.makeLibrary(named: "Present")
@@ -63,7 +74,11 @@ final class PresentPipeline {
         }
         self.sampler = sampler
 
-        brightnessBuffer = try gpu.makeReadableBuffer(byteCount: 16)
+        let ring = FrameRing(gpu: gpu)
+        self.ring = ring
+        brightnessStorage = GrowableBuffer(
+            gpu: gpu, ring: ring, stride: 16, minimumCapacity: 1,
+            label: "mokume.present.brightness")
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.present.arguments"
@@ -83,18 +98,24 @@ final class PresentPipeline {
         argumentTable.setTexture(texture.gpuResourceID, index: Self.sourceTextureIndex)
     }
 
-    /// 明るさを写す段の設定を差し替える。
+    /// 明るさを写す段の設定を差し替える。**書く前に環を 1 つ進める。**
     ///
     /// **折れ始める明るさも一緒に渡す。** 断片の側に同じ定数を書くと、片方だけ
     /// 直したときに画面と書き出しが静かに食い違う。
-    func setBrightness(_ brightness: Brightness) {
-        let slot = brightnessBuffer.contents().assumingMemoryBound(to: Float.self)
+    func setBrightness(_ brightness: Brightness) throws(RenderFailure) {
+        try ring.advance()
+        let buffer = try brightnessStorage.buffer(holding: 1)
+        let slot = buffer.contents().assumingMemoryBound(to: Float.self)
         slot[0] = brightness.exposure
         slot[1] = Brightness.knee
-        brightnessBuffer.contents().advanced(by: 8)
+        buffer.contents().advanced(by: 8)
             .assumingMemoryBound(to: UInt32.self)
             .pointee = brightness.toneMapping.rawIndex
-        argumentTable.setAddress(
-            brightnessBuffer.gpuAddress, index: Self.brightnessBufferIndex)
+        argumentTable.setAddress(buffer.gpuAddress, index: Self.brightnessBufferIndex)
+    }
+
+    /// 直前の投入を、いまのスロットを読む投入として覚える。**投入した直後に呼ぶ。**
+    func noteSubmission() {
+        ring.noteSubmission()
     }
 }

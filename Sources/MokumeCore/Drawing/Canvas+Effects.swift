@@ -68,7 +68,7 @@ extension Canvas {
         // **控えは描く細かさで作る。** 効果は描き終えた絵の上で働くので、拡大より
         // 手前 = 描く細かさの側にいる
         let made = try EffectPipeline(
-            gpu: gpu, width: pixelWidth, height: pixelHeight,
+            gpu: gpu, ring: frameRing, width: pixelWidth, height: pixelHeight,
             pixelFormat: RenderTarget.pixelFormat)
         effectPipelineStorage = made
         return made
