@@ -95,7 +95,7 @@ extension Canvas {
     ) {
         // **描くところの外からは効かない** (ADR-0023 決定 3)。黙って何も起きるのでは
         // なく、初回に理由を知らせる
-        guard isDrawing else { return warnComputeOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.compute) }
         guard width > 0, height > 0 else { return }
         let buffers = reads + writes
         guard buffers.count <= ComputePipeline.maximumBufferCount else {
@@ -260,13 +260,6 @@ extension Canvas {
     }
 
     // MARK: - 断る
-
-    private func warnComputeOutsideFrame() {
-        warnOnce(
-            .computeOutsideFrame,
-            "計算は描くところ (draw) の前置きなので、そこで頼んでください。"
-                + "初期化のときに頼んだ計算はどのフレームにも属さないため、無視しました")
-    }
 
     private func warnTooManyBuffers(_ count: Int) {
         warnOnce(

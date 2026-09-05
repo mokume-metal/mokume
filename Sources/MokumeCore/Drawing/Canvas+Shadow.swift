@@ -10,14 +10,14 @@ extension Canvas {
 
     // 影を落とすかどうか。
     public func shadows(_ enabled: Bool) {
-        guard isDrawing else { return warnShadowOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.shadow) }
         closeBatch()
         shadowsEnabled = enabled
     }
 
     // 影を焼き付ける範囲の一辺 (世界の長さ)。
     public func shadowRange(_ size: Float) {
-        guard isDrawing else { return warnShadowOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.shadow) }
         guard size.isFinite, size > 0 else { return warnBadShadow("shadowRange") }
         closeBatch()
         shadowRangeValue = size
@@ -25,7 +25,7 @@ extension Canvas {
 
     // 影の細かさ (焼き付け先の一辺の画素数)。
     public func shadowDetail(_ size: Int) {
-        guard isDrawing else { return warnShadowOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.shadow) }
         guard ShadowMap.detailRange.contains(size) else { return warnBadShadow("shadowDetail") }
         closeBatch()
         shadowDetailValue = size
@@ -33,7 +33,7 @@ extension Canvas {
 
     // 影の縁の破綻を抑える量。
     public func shadowBias(_ amount: Float) {
-        guard isDrawing else { return warnShadowOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.shadow) }
         guard amount.isFinite, amount >= 0 else { return warnBadShadow("shadowBias") }
         closeBatch()
         shadowBiasValue = amount
@@ -41,14 +41,14 @@ extension Canvas {
 
     // これから置く形が、影を落とす側か。
     public func castShadow(_ enabled: Bool) {
-        guard isDrawing else { return warnShadowOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.shadow) }
         closeBatch()
         castsShadow = enabled
     }
 
     // これから置く形が、影を受ける側か。
     public func receiveShadow(_ enabled: Bool) {
-        guard isDrawing else { return warnShadowOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.shadow) }
         closeBatch()
         receivesShadow = enabled
     }
@@ -83,14 +83,6 @@ extension Canvas {
                 caster.directionAndCone.x, caster.directionAndCone.y, caster.directionAndCone.z),
             center: currentCamera.center,
             range: effectiveShadowRange)
-    }
-
-    /// フレームの外で影の設定を書いたことを、初回だけ知らせる。
-    private func warnShadowOutsideFrame() {
-        warnOnce(
-            .shadowOutsideFrame,
-            "影はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
-                + "初期化のときに書いた影はどのフレームにも属さないため、無視しました")
     }
 
     /// 受け取れない値を、初回だけ知らせる。

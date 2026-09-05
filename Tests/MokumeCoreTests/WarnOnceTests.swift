@@ -6,6 +6,63 @@ import Testing
 
 @testable import MokumeCore
 
+/// 畳む前に 7 つの `warn*OutsideFrame()` が持っていた文面 ([#947])。
+///
+/// **実装とは別の場所に写して突き合わせる。** 利用者が読む 1 行なので、畳んだ拍子に
+/// 変わっていないことをここで見る — 実際、7 本を 1 つの型へ畳んだとき「頼んだ」が
+/// 「頼んた」になった (語幹だけを差し替えて音便を落とした)。
+///
+/// [#947]: https://github.com/mokume-metal/mokume/issues/947
+private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
+    .camera:
+        "視点と投影はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
+            + "初期化のときに書いた視点はどのフレームにも属さないため、無視しました",
+    .light:
+        "光はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
+            + "初期化のときに置いた光はどのフレームにも属さないため、無視しました",
+    .surroundings:
+        "周囲はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
+            + "初期化のときに置いた周囲はどのフレームにも属さないため、無視しました",
+    .shadow:
+        "影はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
+            + "初期化のときに書いた影はどのフレームにも属さないため、無視しました",
+    .material:
+        "材質はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
+            + "初期化のときに書いた材質はどのフレームにも属さないため、無視しました",
+    .particles:
+        "粒は描くところ (draw) で扱います。"
+            + "初期化のときに出した粒はどのフレームにも属さないため、無視しました",
+    .compute:
+        "計算は描くところ (draw) の前置きなので、そこで頼んでください。"
+            + "初期化のときに頼んだ計算はどのフレームにも属さないため、無視しました",
+]
+
+/// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
+@Suite("フレームの外で置き直したときの文面")
+struct OutsideFrameNoticeTests {
+    @Test("7 つとも原文のまま")
+    func noticesKeepTheirWording() {
+        for (subject, original) in outsideFrameNotices {
+            #expect(subject.notice == original, "\(subject) の文面が変わっている")
+        }
+    }
+
+    @Test("種類を足したら、原文も足すことになる")
+    func everySubjectHasAnOriginal() {
+        for subject in Canvas.OutsideFrame.allCases {
+            #expect(outsideFrameNotices[subject] != nil, "\(subject) の原文が検査に無い")
+        }
+    }
+
+    @Test("鍵は種類ごとに分かれている")
+    func keysAreDistinct() {
+        // 畳むときに鍵を取り違えると、ある注意が別の注意を黙らせる。振る舞いの側は
+        // 「光の注意は、視点の注意を黙らせない」が見ているので、ここは構造で見る
+        let keys = Set(Canvas.OutsideFrame.allCases.map(\.warning))
+        #expect(keys.count == Canvas.OutsideFrame.allCases.count)
+    }
+}
+
 /// 「初回だけ知らせる」控えそのものの検査。GPU は要らない。
 ///
 /// 見るのは 3 つ — **同じ注意を繰り返さない**・**別の注意を黙らせない**・**言った文面が
@@ -82,17 +139,10 @@ struct WarningLogTests {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct CanvasWarningTests {
-    /// 畳む前に `Diagnostics.warn` へ渡していた文面 (`Canvas+Light.swift`)。
-    ///
-    /// **検査の側に写して突き合わせる。** 利用者が読む 1 行なので、畳んだ拍子に
-    /// 変わっていないことを、実装とは別の場所に置いた原文で見る。
-    private let lightOutsideFrame =
-        "光はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
-        + "初期化のときに置いた光はどのフレームにも属さないため、無視しました"
-    /// 同じく `Canvas+Camera.swift` の文面。
-    private let cameraOutsideFrame =
-        "視点と投影はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
-        + "初期化のときに書いた視点はどのフレームにも属さないため、無視しました"
+    /// 畳む前に `Diagnostics.warn` へ渡していた文面。**原文は `outsideFrameNotices`
+    /// が 7 つまとめて持つ** ので、ここでは引くだけにする (写しを 2 つ持たない)。
+    private let lightOutsideFrame = outsideFrameNotices[.light]!
+    private let cameraOutsideFrame = outsideFrameNotices[.camera]!
     /// 同じく `Canvas+Material.swift` の文面。**呼んだ関数の名前が入る。**
     private let badShininess =
         "shininess(): 数でない値・無限・範囲の外の値が渡されたので、材質を変えませんでした"

@@ -107,7 +107,7 @@ extension Canvas {
         speed: ClosedRange<Float>, angle: ClosedRange<Float>, life: ClosedRange<Float>,
         size: ClosedRange<Float>, color: LinearRGBA?, using randomness: inout Randomness
     ) {
-        guard isDrawing else { return warnParticlesOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.particles) }
         let count = particles.count(rate: rate, over: deltaTime)
         particles.emit(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
@@ -116,13 +116,13 @@ extension Canvas {
 
     /// 力を積む。
     public func force(_ particles: Particles, _ forces: [Force]) {
-        guard isDrawing else { return warnParticlesOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.particles) }
         particles.add(forces)
     }
 
     /// 1 フレーム進めて、生きている粒を描く。
     public func particles(_ particles: Particles) {
-        guard isDrawing else { return warnParticlesOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.particles) }
         // **速い経路は列を先に開く。** 描く引数 (頂点の頭と数) を GPU が書くので、
         // 四角をどこへ置いたかを計算へ渡す前に知っておく必要がある。列は閉じた時点の
         // 混ぜ方と変換で描かれるので、順序を入れ替えても絵は変わらない
@@ -194,10 +194,4 @@ extension Canvas {
         shape(particles.quad, at: particles.living(from: read(particles.state)))
     }
 
-    private func warnParticlesOutsideFrame() {
-        warnOnce(
-            .particlesOutsideFrame,
-            "粒は描くところ (draw) で扱います。初期化のときに出した粒はどのフレームにも"
-                + "属さないため、無視しました")
-    }
 }
