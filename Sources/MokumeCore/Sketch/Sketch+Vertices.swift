@@ -5,7 +5,7 @@
 extension Sketch {
     /// 頂点を並べ始める。``vertex(_:_:)`` で点を置き、``endShape(_:)`` で描く。
     ///
-    /// **同じ点の並びが、読み方 (``VertexKind``) で別の絵になる。** 下の 4 枚はどれも
+    /// **同じ点の並びが、読み方 (``VertexKind``) で別の絵になる。** 下の 6 枚はどれも
     /// まったく同じ 6 点を渡していて、変えたのは `beginShape` の引数だけである。
     ///
     /// 既定の ``VertexKind/polygon`` は、置いた点を順に結んだ**周をなす 1 つの形**として
@@ -111,6 +111,67 @@ extension Sketch {
     ///   }
     /// }
     ///
+    /// ``VertexKind/triangleStrip`` は**帯**として読む。3 つ目からは直前の 2 点を
+    /// 使い回すので、6 点で 4 枚が繋がって出る。**同じ頂点を書き直さなくてよい** —
+    /// `.triangles` で同じ絵を出すには 12 点を置くことになる。
+    ///
+    /// 下では**下地と同じ色の線**を引いて、1 枚ずつの切れ目を見せている。この 6 点は
+    /// 輪をなすので、帯は輪の内側を左右に折り返しながら進む。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(89, 191, 242)
+    ///     stroke(23, 26, 31)
+    ///     strokeWeight(4)
+    ///     beginShape(.triangleStrip)
+    ///     vertex(50, 60)
+    ///     vertex(230, 30)
+    ///     vertex(350, 90)
+    ///     vertex(340, 250)
+    ///     vertex(150, 275)
+    ///     vertex(60, 215)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の三角形が 4 枚、辺を共有しながら左右へ折り返して繋がっている -->
+    ///     ![水色の三角形が 4 枚、辺を共有しながら左右へ折り返して繋がっている](https://i.gyazo.com/4eb792a32354409873b2bef97afc0fe5.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ``VertexKind/triangleFan`` は**扇**として読む。**最初の 1 点がすべての三角形の
+    /// 要になる**ので、輪や円盤を要から開いていくときに使う。
+    ///
+    /// この 6 点は凸なので、**覆う面は ``VertexKind/polygon`` と同じ**になる。違うのは
+    /// 中の分け方で、頂点ごとの色や立体の面の向きはそれに従う。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(89, 191, 242)
+    ///     stroke(23, 26, 31)
+    ///     strokeWeight(4)
+    ///     beginShape(.triangleFan)
+    ///     vertex(50, 60)
+    ///     vertex(230, 30)
+    ///     vertex(350, 90)
+    ///     vertex(340, 250)
+    ///     vertex(150, 275)
+    ///     vertex(60, 215)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の面が、左上の 1 点から放射状に伸びる暗い線で 4 枚に分かれている -->
+    ///     ![水色の面が、左上の 1 点から放射状に伸びる暗い線で 4 枚に分かれている](https://i.gyazo.com/390229dc175429a154f0013d6388419d.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// ## 奥行きを持たせる
     ///
     /// 頂点を ``vertex(_:_:_:)`` (奥行きつき) で置くと、その形は**立体**になる。
@@ -157,7 +218,9 @@ extension Sketch {
     // shot: 2 snippet=c3c942c1
     // shot: 3 snippet=603b8a4f
     // shot: 4 snippet=67509c80
-    // shot: 5 snippet=1eefdc11
+    // shot: 5 snippet=1ca6f605
+    // shot: 6 snippet=6500dbc8
+    // shot: 7 snippet=1eefdc11
     public func beginShape(_ kind: VertexKind = .polygon) { canvas.beginShape(kind) }
 
     /// 頂点を 1 つ置く。

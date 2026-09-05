@@ -14,6 +14,10 @@ public nonisolated enum VertexKind: Sendable, Equatable {
     case lines
     /// 3 点ずつ独立した三角形として読む。余りは捨てる。
     case triangles
+    /// 帯として読む。**3 つ目からは直前の 2 点を使い回す** — n 点で n-2 枚。
+    case triangleStrip
+    /// 扇として読む。**最初の 1 点と直前の 1 点を使い回す** — n 点で n-2 枚。
+    case triangleFan
 }
 
 /// 並べ終えた形を閉じるか。

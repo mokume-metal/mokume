@@ -251,6 +251,24 @@ extension Canvas {
                 Primitive(ring: Array(outer[$0..<($0 + 3)]), isClosed: true, fills: true)
             }
 
+        case .triangleStrip:
+            // **1 枚ずつ巻きを揃える** (帯の規約は OpenGL と同じ)。交互のまま出すと、
+            // 隣り合う面の外積が打ち消し合って、書かれていない面の向きが求まらなくなる
+            // (`placedVertices`)
+            return (0..<max(0, outer.count - 2)).map { start in
+                let ring =
+                    start.isMultiple(of: 2)
+                    ? [outer[start], outer[start + 1], outer[start + 2]]
+                    : [outer[start + 1], outer[start], outer[start + 2]]
+                return Primitive(ring: ring, isClosed: true, fills: true)
+            }
+
+        case .triangleFan:
+            return (1..<max(1, outer.count - 1)).map { step in
+                Primitive(
+                    ring: [outer[0], outer[step], outer[step + 1]], isClosed: true, fills: true)
+            }
+
         case .lines:
             return stride(from: 0, to: max(0, outer.count - 1), by: 2).map {
                 Primitive(ring: Array(outer[$0..<($0 + 2)]), isClosed: false, fills: false)
