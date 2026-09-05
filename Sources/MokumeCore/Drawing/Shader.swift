@@ -9,10 +9,19 @@ import MokumeDiagnostics
 ///
 /// 使い方は ``Sketch/loadShader(_:values:surfaces:)`` にある。
 public final class Shader {
+    /// 断片・値・保存の拾い直しを持つ骨。**3 者で 1 つ** (``ShaderBox``)。
+    private let box: ShaderBox
+
     /// 断片の在処。保存を拾い直すのに使う。
-    public let url: URL?
+    public var url: URL? { box.url }
+    /// 直近の差し替えが失敗していれば、その理由。
+    public var failure: String? { box.failure }
+    /// 何度差し替わったか。**外から「届いたか」を待ち時間ではなく数で判定できる。**
+    public var generation: Int { box.generation }
+    let name: String
     /// いま効いている値。
-    private(set) var values: [String: ShaderValue]
+    var values: [String: ShaderValue] { box.values }
+    var watcher: FileWatcher? { box.watcher }
 
     /// いま渡している面。**名前ごとに口を 1 つ使う** ([#407])。
     ///
@@ -36,20 +45,10 @@ public final class Shader {
     /// 組み立てると、同じ断片なのに片方だけ差し替わる状態が作れてしまう。
     private(set) var solidStates: ShapePipeline.BlendStates
 
-    /// 直近の差し替えが失敗していれば、その理由。
-    public private(set) var failure: String?
-
-    /// 何度差し替わったか。**外から「届いたか」を待ち時間ではなく数で判定できる。**
-    public private(set) var generation = 0
-
     private let pipeline: ShapePipeline
     private let gpu: RenderDevice
-    let name: String
     /// この塗りを作った面。値を変えるときに列を閉じてもらう。
     weak var canvas: Canvas?
-    private(set) var watcher: FileWatcher?
-    /// 最後に組み上がった断片の中身。**同じものを組み直さない**ための控え。
-    private var compiledBody: String
 
     init(
         name: String, url: URL?, body: String, values: [String: ShaderValue],
@@ -57,11 +56,12 @@ public final class Shader {
         gpu: RenderDevice, pipeline: ShapePipeline
     ) throws(RenderFailure) {
         self.name = name
-        self.url = url
-        self.values = values
         self.surfaces = surfaces
         self.gpu = gpu
         self.pipeline = pipeline
+        self.box = ShaderBox(
+            name: name, url: url, body: body, values: values,
+            label: "shader", valuesHint: "loadShader の values")
 
         let library = try gpu.makeShapeLibrary(
             named: name, body: body, values: values, surfaces: surfaces)
@@ -70,11 +70,8 @@ public final class Shader {
         self.solidStates = try pipeline.makeStates(
             fragmentLibrary: library, label: "mokume.shader.\(name).solid",
             vertexFunctionName: ShapePipeline.solidVertexFunctionName)
-        self.compiledBody = body
 
-        if let url {
-            watcher = FileWatcher(url: url) { [weak self] in self?.reload() }
-        }
+        box.watch { [weak self] in self?.reload() }
     }
 
     /// 渡す値を書き換える。
@@ -84,18 +81,7 @@ public final class Shader {
     /// 読み込むときに決める。
     public func set(_ name: String, _ value: ShaderValue) {
         canvas?.shaderValuesWillChange()
-        guard let existing = values[name] else {
-            Diagnostics.warn(
-                "shader: 宣言していない値 \"\(name)\" は渡せません。"
-                    + "loadShader の values に書いてください (いまの値: \(values.keys.sorted().joined(separator: ", ")))")
-            return
-        }
-        guard existing.componentCount == value.componentCount else {
-            Diagnostics.warn(
-                "shader: 値 \"\(name)\" の形が宣言と違います (\(existing.metalType) のところへ \(value.metalType))")
-            return
-        }
-        values[name] = value
+        box.assign(name, value)
     }
 
     /// 渡す面を差し替える。
@@ -115,26 +101,13 @@ public final class Shader {
     }
 
     /// いまの値を、シェーダへ渡す並びに詰めたもの。
-    var packedValues: [Float] { ShaderSource.pack(values) }
+    var packedValues: [Float] { box.packedValues }
 
     // MARK: - 差し替え
 
-    /// 断片を読み直して組み直す。
-    ///
-    /// **失敗しても前のものを消さない。** 削ってから入れ直す形にすると、組み立てに
-    /// 失敗した瞬間に元の断片ごと消えて絵が出なくなる。ここでは新しいものが組み上がって
-    /// はじめて差し替える。
+    /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(_:)``)。
     func reload() {
-        guard let url else { return }
-        guard let body = try? String(contentsOf: url, encoding: .utf8) else {
-            failure = "断片を読めませんでした: \(url.path)"
-            Diagnostics.warn("shader: \(failure!)")
-            return
-        }
-        // **同じ中身なら組み直さない。** 1 度の保存でファイル側と親ディレクトリ側の
-        // 両方が反応するので、素直に組み直すと 1 度の保存で 2 度組み立てることになる
-        guard body != compiledBody else { return }
-        do {
+        box.reload { (body: String) throws(RenderFailure) in
             let library = try gpu.makeShapeLibrary(
                 named: name, body: body, values: values, surfaces: surfaces)
             // **両方が組み上がってから差し替える。** 片方だけ差し替わると、平面と
@@ -146,12 +119,6 @@ public final class Shader {
                 vertexFunctionName: ShapePipeline.solidVertexFunctionName)
             states = flat
             solidStates = solid
-            compiledBody = body
-            failure = nil
-            generation += 1
-        } catch {
-            failure = "\(error)"
-            Diagnostics.warn("shader: 断片を組み立て直せませんでした: \(error.headline)")
         }
     }
 }
