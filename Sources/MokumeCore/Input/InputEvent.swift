@@ -51,29 +51,32 @@ struct RawInputEvent: Decodable {
     }
 
     /// 知っている形なら出来事にする。知らない種別も、必須の値が欠けたものも `nil`。
+    ///
+    /// **綴りは ``InputEventType`` から引く。** 知らない綴りを落とすのは
+    /// `init(rawValue:)` の仕事で、そこから先は `default` を持たない — 書く側が
+    /// 送れる種別を、読む側が知らないままにできなくするためである。
     var event: InputEvent? {
+        guard let type = InputEventType(rawValue: type) else { return nil }
         switch type {
-        case "mouseDown":
+        case .mouseDown:
             guard let x, let y else { return nil }
             return .mouseDown(x: x, y: y, button: button ?? 0)
-        case "mouseUp":
+        case .mouseUp:
             guard let x, let y else { return nil }
             return .mouseUp(x: x, y: y, button: button ?? 0)
-        case "mouseMoved":
+        case .mouseMoved:
             guard let x, let y else { return nil }
             return .mouseMoved(x: x, y: y)
-        case "scrolled":
+        case .scrolled:
             return .scrolled(dx: dx ?? 0, dy: dy ?? 0)
-        case "keyDown":
+        case .keyDown:
             guard let code else { return nil }
             return .keyDown(
                 code: Key(rawValue: code), characters: characters ?? "",
                 isRepeat: isRepeat ?? false)
-        case "keyUp":
+        case .keyUp:
             guard let code else { return nil }
             return .keyUp(code: Key(rawValue: code))
-        default:
-            return nil
         }
     }
 }
