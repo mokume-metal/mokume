@@ -96,7 +96,7 @@ final class SharedFrameSurface {
     /// 面の番号と大きさ。**読み手が最初に読むもの。**
     ///
     /// 毎フレームは書かない — 中身が変わるのは大きさが変わったときだけである。
-    struct Manifest: Encodable, Equatable {
+    struct Manifest: Encodable {
         static let schemaVersion = 1
 
         /// 面の番号。並びが**書く順**である。

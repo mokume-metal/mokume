@@ -36,12 +36,16 @@ public struct Shape {
     /// 頂点の並びを、面と混ぜ方の変わり目で区切ったもの。
     let runs: [Run]
 
-    /// 同じ設定で続けて描ける区間。
-    struct Run {
-        var mode: BlendMode
-        var texture: any MTLTexture
+    /// 区間を塗るもの一式。
+    ///
+    /// **4 つで 1 つの意味 (何で塗るか) を成すので、まとめて持つ。** 別々に持つと
+    /// 「一部だけ戻す」「一部だけ比べる」実装が書けてしまう — [#788] の (1) は置く側が
+    /// 4 つのうち 0 個しか戻さず、(2) は畳む側が `surfaces` だけ比べていなかった。
+    ///
+    /// [#788]: https://github.com/mokume-metal/mokume/issues/788
+    struct Paint: Equatable {
         /// この区間を塗るもの。`nil` なら組み込みの塗り。
-        var shader: Shader?
+        @ByIdentityOrNone var shader: Shader?
         /// 利用者が渡した値。**区間の先頭で取り込んだもの**を持ち歩く。
         var values: [Float]
         /// 利用者が渡した面。値と同じく**区間の先頭で取り込んだもの**を、宣言と同じ
@@ -49,13 +53,50 @@ public struct Shape {
         ///
         /// 描くときに生きている ``Shader`` から読み直さないのは、**後から差し替えた面で
         /// 前の図形まで描かれる**からである (値がここに写し取られているのと同じ理由)。
-        var surfaces: [any MTLTexture]
+        @ByIdentities var surfaces: [any MTLTexture]
         /// この区間の塗りが読む数の並び。`nil` なら読まない。
-        var numbers: Numbers?
+        @ByIdentityOrNone var numbers: Numbers?
+
+        /// 組み込みの塗り。**利用者の断片が効いていない区間**が持つ。
+        static let builtIn = Paint(shader: nil, values: [], surfaces: [], numbers: nil)
+    }
+
+    /// 同じ設定で続けて描ける区間。
+    ///
+    /// フィールドは 2 つの役に分かれる — **区間の設定** (`mode` / `texture` / `paint` /
+    /// `source`) と、**並びの中での位置** (`start` / `count`)。畳めるかは前者の一致で
+    /// 決まるので、判定 (``sameSettings(as:)``) は後者だけを外して残り全部を比べる。
+    struct Run: Equatable {
+        var mode: BlendMode
+        @ByIdentity var texture: any MTLTexture
+        /// この区間を塗るもの。
+        var paint: Paint
         /// どちらの並びから描くか。
         var source: Canvas.VertexSource
         var start: Int
         var count: Int
+
+        /// 位置と長さを除いた設定が同じか。**続けて 1 本に伸ばせるかの判定。**
+        ///
+        /// 見るものを 1 つずつ並べないのは、`Run` にフィールドを足したときに
+        /// **ここへ足し忘れる**からである ([#788] の (2) は `surfaces` を並べ忘れた
+        /// 判定が原因で、面だけ差し替えた 2 区間が 1 本に畳まれていた)。
+        ///
+        /// 合成された `==` に委ねると、足したフィールドの行き先が 2 通りに定まる —
+        /// 比べられるもの (値型) は**黙って判定に入り**、比べられないもの (参照型) は
+        /// **`Equatable` を合成できないとコンパイラが名乗る**。判定側に書き足す場所が
+        /// 無いので、更新漏れという状態が作れない。
+        ///
+        /// [#788]: https://github.com/mokume-metal/mokume/issues/788
+        func sameSettings(as other: Run) -> Bool {
+            var mine = self
+            var theirs = other
+            mine.start = 0
+            mine.count = 0
+            theirs.start = 0
+            theirs.count = 0
+            return mine == theirs
+        }
     }
 
     init(
@@ -125,15 +166,52 @@ public struct Shape {
 
     /// 区間を足す。直前と設定が同じなら伸ばすだけにする。
     private static func append(_ run: Run, to runs: inout [Run]) {
-        if var last = runs.last, last.mode == run.mode, last.texture === run.texture,
-            last.shader === run.shader,
-            last.values == run.values, last.numbers === run.numbers, last.source == run.source,
-            last.start + last.count == run.start
-        {
+        if var last = runs.last, last.sameSettings(as: run), last.start + last.count == run.start {
             last.count += run.count
             runs[runs.count - 1] = last
             return
         }
         runs.append(run)
+    }
+}
+
+// MARK: - 参照を同一性で比べる包み
+
+// 面も断片も数の並びも参照型で、**値としての等しさを持たない**。包まずに ``Shape/Run``
+// へ置くと `Equatable` を合成できず、比べる側を手で書くことになる — 手で書いた判定は
+// フィールドを足したときに書き足し忘れる (#788)。
+//
+// 包みは呼び出し側の綴りを変えない (`run.texture` はそのまま `any MTLTexture`)。
+
+/// 参照 1 つを同一性で比べる。
+@propertyWrapper
+struct ByIdentity<Object: AnyObject>: Equatable {
+    var wrappedValue: Object
+
+    init(wrappedValue: Object) { self.wrappedValue = wrappedValue }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.wrappedValue === rhs.wrappedValue }
+}
+
+/// 参照 1 つ、または無しを同一性で比べる。
+@propertyWrapper
+struct ByIdentityOrNone<Object: AnyObject>: Equatable {
+    var wrappedValue: Object?
+
+    init(wrappedValue: Object?) { self.wrappedValue = wrappedValue }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.wrappedValue === rhs.wrappedValue }
+}
+
+/// 参照の並びを、順番どおりに同一性で比べる。
+@propertyWrapper
+struct ByIdentities<Object: AnyObject>: Equatable {
+    var wrappedValue: [Object]
+
+    init(wrappedValue: [Object]) { self.wrappedValue = wrappedValue }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.wrappedValue.count == rhs.wrappedValue.count
+            && zip(lhs.wrappedValue, rhs.wrappedValue).allSatisfy { $0 === $1 }
     }
 }

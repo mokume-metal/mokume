@@ -27,8 +27,8 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct FixedFunctionBlendTests {
-    private let black = LinearRGBA.opaque(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         let gpu = try RenderDevice()

@@ -24,9 +24,6 @@ extension Canvas {
         currentCamera.viewProjection(width: width, height: height)
     }
 
-    /// 見る位置 (世界の座標)。
-    var eyePosition: SIMD3<Float> { currentCamera.eye }
-
     /// 断片へ渡す「見ている場所」。
     var viewer: SIMD4<Float> { currentCamera.viewer }
 
@@ -152,7 +149,7 @@ extension Canvas {
                         // 貼る絵が無ければ焼き場の白い区画を読む。**そのときの頂点は
                         // 貼る口が無かった頃と 1 ビットも変わらない**
                         uv: textured ? point.uv : whiteUV,
-                        color: .opaque(red: 1, green: 1, blue: 1)))
+                        color: .linear(red: 1, green: 1, blue: 1)))
             }
             openSolid = OpenSolid(
                 source: source, vertexStart: start, vertexCount: mesh.points.count,

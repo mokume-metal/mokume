@@ -220,11 +220,11 @@ extension SketchSurface {
     override func keyDown(with event: NSEvent) {
         deliver(
             .keyDown(
-                code: Int(event.keyCode), characters: event.characters ?? "",
+                code: Key(rawValue: Int(event.keyCode)), characters: event.characters ?? "",
                 isRepeat: event.isARepeat))
     }
 
     override func keyUp(with event: NSEvent) {
-        deliver(.keyUp(code: Int(event.keyCode)))
+        deliver(.keyUp(code: Key(rawValue: Int(event.keyCode))))
     }
 }

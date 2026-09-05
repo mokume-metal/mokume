@@ -54,9 +54,9 @@ struct FrameSyncTests {
         return Bench(gpu: gpu, canvas: canvas, scratch: scratch, spin: spin)
     }
 
-    private let red = LinearRGBA.opaque(red: 1, green: 0, blue: 0)
-    private let white = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
-    private let black = LinearRGBA.opaque(red: 0, green: 0, blue: 0)
+    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
 
     @Test("描き切りは GPU の完了を待たずに返り、画素を読むときに待つ")
     func flushReturnsBeforeTheGPUFinishes() throws {
@@ -362,7 +362,7 @@ struct FrameSyncTests {
     /// 帯ごとの色。**帯どうしを区別できる**ように、番号から作る。
     private static func bandColor(at index: Int, of count: Int) -> LinearRGBA {
         let step = Float(index + 1) / Float(count + 1)
-        return .opaque(red: step, green: 1 - step, blue: 0.5)
+        return .linear(red: step, green: 1 - step, blue: 0.5)
     }
 
     /// その帯を代表する画素。帯の真ん中を見る (縁の丸めを踏まない)。

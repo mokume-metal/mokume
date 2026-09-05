@@ -125,7 +125,7 @@ struct ParticleTests {
                 canvas.emit(
                     dust, from: .point(32, 12), rate: rate, speed: 20...45,
                     angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
-                    color: .opaque(red: 1, green: 0.6, blue: 0.2), using: &stream)
+                    color: .linear(red: 1, green: 0.6, blue: 0.2), using: &stream)
                 canvas.force(dust, [.gravity(0, 60), .drag(0.5)])
                 canvas.particles(dust)
             }
@@ -269,7 +269,7 @@ struct ParticleTests {
                     canvas.emit(
                         dust, from: .point(32, 32), rate: 60, speed: 0...0,
                         angle: 0...0, life: 0.05...0.05, size: 24...24,
-                        color: .opaque(red: 1, green: 1, blue: 1), using: &randomness)
+                        color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 }
                 canvas.particles(dust)
             }
@@ -306,7 +306,7 @@ struct ParticleTests {
                 canvas.emit(
                     dust, from: .point(32, 32), rate: Float(count) * 60, speed: 0...10,
                     angle: 0...(2 * Float.pi), life: life...life, size: 2...4,
-                    color: .opaque(red: 1, green: 0.5, blue: 0.2), using: &randomness)
+                    color: .linear(red: 1, green: 0.5, blue: 0.2), using: &randomness)
             }
             canvas.particles(dust)
         }

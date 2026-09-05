@@ -127,21 +127,21 @@ private struct KnobRow: View {
                 value: KnobBinding.number(box, declaration.value),
                 in: range.lowerBound...range.upperBound, step: 1)
         case .toggle:
-            Toggle("", isOn: KnobBinding.flag(box, declaration.value))
+            Toggle("", isOn: KnobBinding.flag(box))
                 .labelsHidden()
         case .color:
-            ColorPicker("", selection: KnobBinding.color(box, declaration.value))
+            ColorPicker("", selection: KnobBinding.color(box))
                 .labelsHidden()
         case .components(let count, let range):
             VStack(spacing: 2) {
                 ForEach(0..<count, id: \.self) { index in
                     Slider(
-                        value: KnobBinding.component(box, declaration.value, at: index),
+                        value: KnobBinding.component(box, at: index),
                         in: range.lowerBound...range.upperBound)
                 }
             }
         case .choice(let choices):
-            Picker("", selection: KnobBinding.text(box, declaration.value)) {
+            Picker("", selection: KnobBinding.text(box)) {
                 ForEach(choices, id: \.self) { Text($0).tag($0) }
             }
             .labelsHidden()
@@ -180,13 +180,13 @@ enum KnobBinding {
             set: { _ = box.write(isInteger ? .int(Int($0.rounded())) : .float($0)) })
     }
 
-    static func flag(_ box: any DeclaredParam, _ current: ParamValue) -> Binding<Bool> {
+    static func flag(_ box: any DeclaredParam) -> Binding<Bool> {
         Binding(
             get: { if case .bool(let value) = box.declaration.value { value } else { false } },
             set: { _ = box.write(.bool($0)) })
     }
 
-    static func text(_ box: any DeclaredParam, _ current: ParamValue) -> Binding<String> {
+    static func text(_ box: any DeclaredParam) -> Binding<String> {
         Binding(
             get: { if case .string(let value) = box.declaration.value { value } else { "" } },
             set: { _ = box.write(.string($0)) })
@@ -194,9 +194,7 @@ enum KnobBinding {
 
     /// 組の 1 成分。**他の成分は読み直した値をそのまま置く** — 窓が組を丸ごと持つと、
     /// 外から 1 成分だけ書き換えられたときに古い成分で上書きしてしまう。
-    static func component(
-        _ box: any DeclaredParam, _ current: ParamValue, at index: Int
-    ) -> Binding<Double> {
+    static func component(_ box: any DeclaredParam, at index: Int) -> Binding<Double> {
         Binding(
             get: { Double(box.declaration.value.components?[safe: index] ?? 0) },
             set: { moved in
@@ -211,7 +209,7 @@ enum KnobBinding {
     /// 色。**作業空間の値と画面の色の変換は境界の 1 箇所** ([ADR-0011] 決定 3・4) を通す。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-    static func color(_ box: any DeclaredParam, _ current: ParamValue) -> Binding<Color> {
+    static func color(_ box: any DeclaredParam) -> Binding<Color> {
         Binding(
             get: {
                 guard case .color(let value) = box.declaration.value else { return .clear }
@@ -334,9 +332,12 @@ enum KnobText {
         case .int(let number): String(number)
         case .bool(let flag): flag ? "true" : "false"
         case .string(let text): text
-        case .color(let color):
-            "#" + [color.red, color.green, color.blue]
-                .map { String(format: "%02X", Int((min(max($0, 0), 1) * 255).rounded())) }
+        case .color(let value):
+            // 出口の境界を通してから綴る ([ADR-0011] 決定 3)。作業空間の成分は線形で
+            // アルファを乗算済みなので、そのまま 255 倍すると転送関数のぶんだけずれ、
+            // **窓の綴りをコードへ写すと別の色になる** (#746)
+            "#" + [red(value), green(value), blue(value)]
+                .map { String(format: "%02X", Int(min(max($0, 0), 255).rounded())) }
                 .joined()
         case .vector2(let vector): Self.pair(vector.x, vector.y)
         case .vector3(let vector): Self.pair(vector.x, vector.y, vector.z)

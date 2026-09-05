@@ -34,7 +34,9 @@
 # 前置きを足したのに使う断片が無い、という状態は作らない。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+# **自分の隣を基準にする。** `$0` は source されると呼び出し側を指し、cwd にも依存する
+# (#820)。`BASH_SOURCE` はこのファイル自身の場所で、`pwd -P` が symlink も解く
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 if ! xcrun --find metal >/dev/null 2>&1; then
   echo "metal コンパイラが見つからない (Xcode のツールチェーンが要る)" >&2

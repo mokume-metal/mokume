@@ -24,11 +24,8 @@ enum SchemasLocator {
         workDirectory: URL,
         executable: URL = URL(fileURLWithPath: CommandLine.arguments.first ?? "")
     ) -> URL? {
-        candidates(workDirectory: workDirectory, executable: executable).first { url in
-            var isDirectory: ObjCBool = false
-            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-                && isDirectory.boolValue
-        }
+        candidates(workDirectory: workDirectory, executable: executable)
+            .first { DirectoryPresence.exists($0) }
     }
 
     /// 探す場所。**見つからなかったときに並べて返す** — 窓口の失敗は、次の一手を含む形にする。

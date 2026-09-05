@@ -30,7 +30,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 DEFS=.github/rulesets
 
 # REPO / DEFS を読むので、代入の後に置く
@@ -43,7 +46,8 @@ case "${1:-}" in
   --shape) mode=shape ;;
   --without-bypass-actors) diff_flags+=("--without-bypass-actors") ;;
   "") ;;
-  *) echo "使い方: check-rulesets.sh [--shape | --without-bypass-actors]" >&2; exit 2 ;;
+  # usage は 64 (sysexits の EX_USAGE) で揃える (#820)
+  *) echo "使い方: check-rulesets.sh [--shape | --without-bypass-actors]" >&2; exit 64 ;;
 esac
 
 # 形が壊れていれば実設定を見るまでもない
@@ -57,18 +61,14 @@ fi
 # 結果より先に、その結果がどの版についてのものかを言う (#311)
 report_tree_freshness
 
-# 実設定を 1 本ずつ引く。一覧の応答には rules も bypass_actors も含まれないため、
-# id を取ってから個別に GET する必要がある。
+# 実設定を引く。引き方は rulesets-freshness.sh が持つ (#820) —
+# apply-rulesets.sh と同じ 2 段 (一覧 → id ごとに GET) だったので畳んだ
 live=$(mktemp -d)
 trap 'rm -rf "$live"' EXIT
 
-ids=$(gh api "repos/$REPO/rulesets" --jq '.[].id')
-if [ -z "$ids" ]; then
+if ! fetch_live_rulesets "$live"; then
   echo "NG: $REPO にルールセットが 1 つも無い (定義はあるが未適用)" >&2
   exit 1
 fi
-for id in $ids; do
-  gh api "repos/$REPO/rulesets/$id" > "$live/$id.json"
-done
 
 python3 scripts/rulesets_lib.py diff "$DEFS" "$live" "${diff_flags[@]+"${diff_flags[@]}"}"

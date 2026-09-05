@@ -12,7 +12,10 @@
 #            本文が無ければ検証用の雛形を入れる (確認後に close する前提)
 set -euo pipefail
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 
 PARENT="${1:?親 Issue 番号が必要}"; shift
 TITLE="${1:?タイトルが必要}"; shift
@@ -26,7 +29,15 @@ while [ $# -gt 0 ]; do
     --label)     LABELS+=("$2"); shift 2 ;;
     --type)      TYPE="$2"; shift 2 ;;
     --test)      IS_TEST=true; shift ;;
-    *) echo "不明な引数: $1" >&2; exit 2 ;;
+    # usage は 64 (sysexits の EX_USAGE) で揃える (#820)。**使い方も出す** —
+    # 終了コードだけ揃えても、読む人はその場で直せない
+    *)
+      {
+        echo "不明な引数: $1"
+        echo "使い方: sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--test]"
+      } >&2
+      exit 64
+      ;;
   esac
 done
 

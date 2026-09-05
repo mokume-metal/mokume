@@ -21,7 +21,7 @@ import mokume
 
 final class Hello: Sketch {
     func draw() {
-        background(.display(red: 0.06, green: 0.07, blue: 0.09))
+        background(15, 18, 23)
         circle(width / 2, height / 2, 120)
     }
 }
@@ -385,6 +385,17 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``Sketch/dragY``
 - ``Sketch/isKeyDown(_:)``
 - ``Sketch/key``
+- ``Sketch/keyCode``
+- ``Key``
+- ``Sketch/mousePressed()``
+- ``Sketch/mouseReleased()``
+- ``Sketch/mouseClicked()``
+- ``Sketch/mouseWheel(deltaX:deltaY:)``
+- ``Sketch/mouseMoved()``
+- ``Sketch/mouseDragged(deltaX:deltaY:)``
+- ``Sketch/keyPressed()``
+- ``Sketch/keyReleased()``
+- ``Sketch/keyTyped()``
 
 ### 走らせたまま値を動かす
 

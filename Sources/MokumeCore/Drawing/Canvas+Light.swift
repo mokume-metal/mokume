@@ -41,8 +41,8 @@ extension Canvas {
     // ひととおりの光を置く (底上げ + 斜め上から差す光)。
     public func lights() {
         // 縦軸は下向きなので、上から差す光が進む向きは +y
-        ambientLight(.opaque(red: 0.35, green: 0.35, blue: 0.35))
-        directionalLight(.opaque(red: 0.85, green: 0.85, blue: 0.85), -0.35, 0.75, -0.55)
+        ambientLight(.linear(red: 0.35, green: 0.35, blue: 0.35))
+        directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.35, 0.75, -0.55)
     }
 
     // 置いた光をすべて取り除く。

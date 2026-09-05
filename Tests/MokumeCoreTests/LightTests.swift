@@ -17,9 +17,9 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct LightTests {
-    private let black = LinearRGBA.opaque(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
-    private let grey = LinearRGBA.opaque(red: 0.5, green: 0.5, blue: 0.5)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let grey = LinearRGBA.linear(red: 0.5, green: 0.5, blue: 0.5)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         let gpu = try RenderDevice()
@@ -104,7 +104,7 @@ struct LightTests {
     @Test("1 を超える色の光は、白い面を白へ飽和させる")
     func lightBrighterThanWhiteSaturates() throws {
         let canvas = try makeCanvas()
-        try sphereScene(canvas) { $0.ambientLight(.opaque(red: 4, green: 4, blue: 4)) }
+        try sphereScene(canvas) { $0.ambientLight(.linear(red: 4, green: 4, blue: 4)) }
 
         #expect(try pixels(of: canvas)[32, 32] == (255, 255, 255, 255))
     }
@@ -131,7 +131,7 @@ struct LightTests {
     @Test("たくさん置いても、全部の光が効く")
     func everyLightCounts() throws {
         // 上限を持たないので、置いた数だけ明るくなる。黙って捨てられる光は無い
-        let dim = LinearRGBA.opaque(red: 0.05, green: 0.05, blue: 0.05)
+        let dim = LinearRGBA.linear(red: 0.05, green: 0.05, blue: 0.05)
 
         let few = try makeCanvas()
         try sphereScene(few) { canvas in
@@ -225,7 +225,7 @@ struct LightTests {
             canvas.background(black)
             canvas.fill(white)
             // 左側の真上から、狭い広がりで下向きに当てる
-            canvas.spotLight(.opaque(red: 3, green: 3, blue: 3), 24, -40, 0, 0, 1, 0, angle: 0.5)
+            canvas.spotLight(.linear(red: 3, green: 3, blue: 3), 24, -40, 0, 0, 1, 0, angle: 0.5)
             canvas.push()
             canvas.translate(24, 32, 0)
             canvas.sphere(14)

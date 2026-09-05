@@ -118,7 +118,9 @@ public func color(
     hue: Float, saturation: Float, brightness: Float, alpha: Float = 255
 ) -> LinearRGBA {
     guard hue.isFinite, saturation.isFinite, brightness.isFinite else {
-        DisplayScale.warnNotANumberOnce("color(hue:saturation:brightness:)", "透明を返しました")
+        ColorValues.warnOnce(
+            .notANumberHSB,
+            "color(hue:saturation:brightness:): 数でない値・無限の値が渡されたので、透明を返しました")
         return .transparent
     }
     let parts = HueSaturationBrightness.components(

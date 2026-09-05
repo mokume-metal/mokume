@@ -39,76 +39,97 @@ struct Tools {
         self.makeID = makeID
     }
 
+    /// 差し出す道具。
+    ///
+    /// **綴りの正典はここ 1 つ。** かつては道具の名前が一覧の定義と ``call(_:arguments:)``
+    /// の `switch` に別々の文字列リテラルで並んでいて、対応を保つ機械が居なかった
+    /// ([#814](https://github.com/mokume-metal/mokume/issues/814))。いまは道具を足すと
+    /// 定義と呼び出しの両方が**コンパイラに問われる**。
+    enum ToolName: String, CaseIterable {
+        case observe
+        case buildStatus = "build_status"
+        case input
+        case reference
+
+        /// 名前と説明と引数の形。一覧 (`tools/list`) はこれを並べたものである。
+        var definition: [String: Any] {
+            ["name": rawValue, "description": description, "inputSchema": inputSchema]
+        }
+
+        var description: String {
+            switch self {
+            case .observe:
+                "走っているスケッチを撮り、絵の場所と内訳 (フレーム番号・時刻・大きさ・絵の要約・走らせている重さ・スケッチが差し出した値・版の刻印) を返す。既定は現在のフレーム 1 枚。count を 2 以上にすると、フレームを止めずに続けて撮り、撮った順の目録が返る — 動きが正しいかは 1 枚では判定できないので、動くものを見るときはこちらを使う。止まっているスケッチでも最後に描いた絵が返る。"
+            case .buildStatus:
+                "直近の作り直しの結果 (成否・終了コード・出力・分解した所要時間・版の刻印) を返す。絵が変わらない理由を知りたいときに読む。"
+            case .input:
+                "走っているスケッチへ入力の出来事を送る。座標はキャンバスの座標系。種別は mouseDown / mouseUp / mouseMoved / scrolled / keyDown / keyUp。位置の 3 種には x と y、キーの 2 種には code (macOS の仮想キーコード。49 = Space・0 = A・126 = ↑) が要る (欠けた 1 件は ignored に数えられ、残りは通る)。button / dx / dy / characters / isRepeat は省略できる。"
+            case .reference:
+                "窓口が配る文書を返す。引数を省くと一覧、name を渡すとその 1 つ。name に api を渡すと、いま依存している版の公開 API (どんな型と関数があり、どう呼ぶか)。startup を渡すと、起動の瞬間に決まるもの (走っている最中に変えても効かないもの) の一覧。ほかは面の仕様 (要求と応答の形)。"
+            }
+        }
+
+        var inputSchema: [String: Any] {
+            switch self {
+            case .observe:
+                [
+                    "type": "object",
+                    "properties": [
+                        "scale": [
+                            "type": "number",
+                            "description": "書き出す絵の縮小率 (0 より大きく 1 以下)。省略すると実寸。",
+                        ],
+                        "count": [
+                            "type": "integer",
+                            "description": "撮る枚数 (1…120)。省略すると 1 枚。",
+                        ],
+                        "every": [
+                            "type": "integer",
+                            "description": "何フレームおきに撮るか (1…60)。省略すると毎フレーム。秒ではなくフレームで数えるので、同じスケッチを 2 回走らせれば同じ列が返る。",
+                        ],
+                    ],
+                ]
+            case .buildStatus:
+                ["type": "object", "properties": [:]]
+            case .input:
+                [
+                    "type": "object",
+                    "required": ["events"],
+                    "properties": [
+                        "events": [
+                            "type": "array",
+                            "description": "送る出来事の並び。1 回にいくつでも入れられる。",
+                            "items": ["type": "object"],
+                        ]
+                    ],
+                ]
+            case .reference:
+                [
+                    "type": "object",
+                    "properties": [
+                        "name": [
+                            "type": "string",
+                            "description": "文書の名前 (例: api, startup, observe-report)。",
+                        ]
+                    ],
+                ]
+            }
+        }
+    }
+
     /// 一覧。名前と説明と引数の形。
-    static let definitions: [[String: Any]] = [
-        [
-            "name": "observe",
-            "description":
-                "走っているスケッチを撮り、絵の場所と内訳 (フレーム番号・時刻・大きさ・絵の要約・走らせている重さ・スケッチが差し出した値・版の刻印) を返す。既定は現在のフレーム 1 枚。count を 2 以上にすると、フレームを止めずに続けて撮り、撮った順の目録が返る — 動きが正しいかは 1 枚では判定できないので、動くものを見るときはこちらを使う。止まっているスケッチでも最後に描いた絵が返る。",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "scale": [
-                        "type": "number",
-                        "description": "書き出す絵の縮小率 (0 より大きく 1 以下)。省略すると実寸。",
-                    ],
-                    "count": [
-                        "type": "integer",
-                        "description": "撮る枚数 (1…120)。省略すると 1 枚。",
-                    ],
-                    "every": [
-                        "type": "integer",
-                        "description": "何フレームおきに撮るか (1…60)。省略すると毎フレーム。秒ではなくフレームで数えるので、同じスケッチを 2 回走らせれば同じ列が返る。",
-                    ],
-                ],
-            ],
-        ],
-        [
-            "name": "build_status",
-            "description":
-                "直近の作り直しの結果 (成否・終了コード・出力・分解した所要時間・版の刻印) を返す。絵が変わらない理由を知りたいときに読む。",
-            "inputSchema": ["type": "object", "properties": [:]],
-        ],
-        [
-            "name": "input",
-            "description":
-                "走っているスケッチへ入力の出来事を送る。座標はキャンバスの座標系。種別は mouseDown / mouseUp / mouseMoved / scrolled / keyDown / keyUp。位置の 3 種には x と y、キーの 2 種には code が要る (欠けた 1 件は ignored に数えられ、残りは通る)。button / dx / dy / characters / isRepeat は省略できる。",
-            "inputSchema": [
-                "type": "object",
-                "required": ["events"],
-                "properties": [
-                    "events": [
-                        "type": "array",
-                        "description": "送る出来事の並び。1 回にいくつでも入れられる。",
-                        "items": ["type": "object"],
-                    ]
-                ],
-            ],
-        ],
-        [
-            "name": "reference",
-            "description":
-                "窓口が配る文書を返す。引数を省くと一覧、name を渡すとその 1 つ。name に api を渡すと、いま依存している版の公開 API (どんな型と関数があり、どう呼ぶか)。startup を渡すと、起動の瞬間に決まるもの (走っている最中に変えても効かないもの) の一覧。ほかは面の仕様 (要求と応答の形)。",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "name": [
-                        "type": "string",
-                        "description": "文書の名前 (例: api, startup, observe-report)。",
-                    ]
-                ],
-            ],
-        ],
-    ]
+    static let definitions: [[String: Any]] = ToolName.allCases.map(\.definition)
 
     /// 道具を呼ぶ。
     func call(_ name: String, arguments: [String: Any]) -> (text: String, isError: Bool) {
-        switch name {
-        case "observe": observe(arguments)
-        case "build_status": buildStatus()
-        case "input": sendInput(arguments)
-        case "reference": reference(arguments)
-        default: ("知らない道具です: \(name)", true)
+        guard let tool = ToolName(rawValue: name) else {
+            return ("知らない道具です: \(name)", true)
+        }
+        switch tool {
+        case .observe: return observe(arguments)
+        case .buildStatus: return buildStatus()
+        case .input: return sendInput(arguments)
+        case .reference: return reference(arguments)
         }
     }
 

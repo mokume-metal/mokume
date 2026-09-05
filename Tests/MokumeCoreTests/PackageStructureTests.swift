@@ -13,7 +13,7 @@ struct PackageStructureTests {
     func umbrellaReExportsCore() {
         // 層をまたいだ依存はビルドが担保するので (ADR-0016 影響)、ここで見るのは
         // 「利用者の入口が 1 つで済んでいるか」だけ。
-        let color = LinearRGBA.opaque(red: 1, green: 0, blue: 0)
+        let color = LinearRGBA.linear(red: 1, green: 0, blue: 0)
         #expect(color.alpha == 1)
     }
 

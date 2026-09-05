@@ -508,3 +508,107 @@ struct ObservationTests {
         #expect(left.sorted() == ["frame-000.png", "frame-001.png"])
     }
 }
+
+/// 観測が**まだ 1 枚も描いていない**スケッチを叩いたときの 1 枚。
+///
+/// 通常のフレームと同じ手順で描かれることを見る。かつてはここだけが別に書かれており、
+/// 入り口の供給と面への時刻の受け渡しが落ちていた
+/// ([#808](https://github.com/mokume-metal/mokume/issues/808))。**窓で走らせている限り
+/// 再現しない**ので、外から観測する側でしか気付けない。
+@Suite(
+    "観測が最初に叩いた 1 枚",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct FirstObservedFrameTests {
+    /// 描いた瞬間の**面の**時刻を控える。
+    ///
+    /// `Sketch/time` ではなく面の側を見る — 落ちていたのは面への受け渡しで、
+    /// `timing` はどちらの経路でも進んでいたためである。面の時刻は利用者の断片と
+    /// 粒が読むので、ここが前の値のままだと動くものだけが止まる。
+    final class SurfaceClock: Sketch {
+        init() {}
+        private(set) var times: [Float] = []
+        private(set) var deltas: [Float] = []
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        func draw() {
+            background(.display(red: 0, green: 0, blue: 0))
+            times.append(canvas.time)
+            deltas.append(canvas.deltaTime)
+        }
+    }
+
+    /// 呼ばれた回数を数える入り口。
+    final class CountingInlet: Inlet {
+        private(set) var supplied = 0
+        func supply() { supplied += 1 }
+    }
+
+    struct InletPlugin: Plugin {
+        let inlet: any Inlet
+        func register(into registry: PluginRegistry) { registry.add(inlet: inlet) }
+    }
+
+    /// 入り口を 1 本だけ持つスケッチ。`Sketch` は引数なしで作れる必要があるので、
+    /// 走らせる前に差し込む。
+    final class InletSketch: Sketch {
+        nonisolated(unsafe) static var declared: [any Plugin] = []
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        var plugins: [any Plugin] { Self.declared }
+        func draw() { background(.display(red: 0, green: 0, blue: 0)) }
+    }
+
+    private func makeFacet() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-first-frame-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func request(id: String, in facet: URL) throws {
+        try AtomicFile.write(
+            Data(#"{"id":"\#(id)"}"#.utf8), to: facet.appendingPathComponent("request.json"))
+    }
+
+    @Test("面の時刻が、そのフレームの値になっている")
+    func handsTheSurfaceThisFramesClock() throws {
+        let facet = try makeFacet()
+        let sketch = SurfaceClock()
+        // 実時間の時計を差し、進めた先を検査から決める。フレーム番号から導く時計だと
+        // 最初の 1 枚がちょうど面の既定値と重なり、落ちていても気付けない
+        nonisolated(unsafe) var clockReading = 0.0
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: { clockReading },
+            observer: FrameObserver(directory: facet))
+        runtime.pause()
+
+        clockReading = 2
+        try request(id: "a1", in: facet)
+        try runtime.advance()
+
+        #expect(sketch.times == [2])
+        #expect(sketch.deltas == [2])
+    }
+
+    @Test("入り口が、この 1 枚にも値を供給する")
+    func suppliesFromInletsForThisFrameToo() throws {
+        let facet = try makeFacet()
+        let inlet = CountingInlet()
+        InletSketch.declared = [InletPlugin(inlet: inlet)]
+        defer { InletSketch.declared = [] }
+
+        let runtime = try SketchRuntime(
+            sketch: InletSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: facet))
+        runtime.pause()
+
+        try request(id: "a1", in: facet)
+        try runtime.advance()
+
+        // 入り口は `draw()` の直前に供給する (ADR-0024 決定 6)。ここが 0 だと、
+        // 最初の 1 枚だけ値の入っていない絵が返る
+        #expect(inlet.supplied == 1)
+    }
+}

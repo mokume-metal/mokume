@@ -19,6 +19,8 @@
 import http.server
 import functools
 import importlib.util
+import os
+import socket
 import subprocess
 import tempfile
 import threading
@@ -136,10 +138,23 @@ class StampTest(unittest.TestCase):
         base = f"http://127.0.0.1:{server.server_address[1]}"
         self.assertEqual(publication.read_stamp(base), (NEW, None))
 
+        # **URL でもディレクトリでも「印が無い」は同じ理由になる** (#865)。
+        # 404 は Source が None にするので、この口へ来る時点で「引けなかった」とは
+        # 分かれている
         (self.site / publication.STAMP_NAME).unlink()
         found, reason = publication.read_stamp(base)
         self.assertIsNone(found)
-        self.assertIn("404", reason)
+        self.assertIn(publication.STAMP_NAME, reason)
+        self.assertIn("印", reason)
+
+    def test_引けない先は理由に引けないと書く(self):
+        """**「無い」と混ぜない。** 誰も listen していない口を狙う (#865)。"""
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        found, reason = publication.read_stamp(f"http://127.0.0.1:{port}")
+        self.assertIsNone(found)
+        self.assertIn("が引けない", reason)
 
 
 class CommandTest(unittest.TestCase):
@@ -150,12 +165,15 @@ class CommandTest(unittest.TestCase):
         self.site = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
 
-    def run_script(self, *arguments):
+    def run_script(self, *arguments, **env):
+        child = {k: v for k, v in os.environ.items() if k != "GITHUB_REPOSITORY"}
+        child.update(env)
         return subprocess.run(
             ["python3", str(SCRIPT), *arguments],
             capture_output=True,
             text=True,
             cwd=REPO,
+            env=child,
         )
 
     def head(self):
@@ -170,6 +188,38 @@ class CommandTest(unittest.TestCase):
         result = self.run_script("--site", str(self.site), "--skip-domain")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("追随している", result.stdout)
+
+    def test_設定を読む先は環境から取る(self):
+        """**fork や rename の後に他リポジトリの Pages を読んで緑にしない** (#818)。
+
+        `--repo` の既定が literal だった頃は、`GITHUB_REPOSITORY` が別のリポジトリを
+        指していても本家の設定を読んでいた。--help の既定表示で環境が効くことを見る
+        (実際に API を叩かずに済む唯一の口)。
+        """
+        shown = self.run_script("--help", GITHUB_REPOSITORY="other/name")
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertIn("GITHUB_REPOSITORY", shown.stdout)
+
+        # 既定そのものを読む — 環境を立てたときと立てないときで変わること
+        with_env = self.default_repo(GITHUB_REPOSITORY="other/name")
+        without = self.default_repo()
+        self.assertEqual(with_env, "other/name")
+        self.assertEqual(without, "mokume-metal/mokume")
+
+    def default_repo(self, **env):
+        """`--repo` の既定を、引数の解析だけ走らせて読み出す。"""
+        code = (
+            "import importlib.util, sys;"
+            f"spec = importlib.util.spec_from_file_location('pub', {str(SCRIPT)!r});"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"
+            "p = m.build_parser() if hasattr(m, 'build_parser') else None;"
+            "print(p.get_default('repo') if p else '')"
+        )
+        child = {k: v for k, v in os.environ.items() if k != "GITHUB_REPOSITORY"}
+        child.update(env)
+        return subprocess.run(
+            ["python3", "-c", code], capture_output=True, text=True, cwd=REPO, env=child
+        ).stdout.strip()
 
     def test_印が無ければ赤になる(self):
         result = self.run_script("--site", str(self.site), "--skip-domain")

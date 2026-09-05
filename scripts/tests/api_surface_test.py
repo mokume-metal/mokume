@@ -297,19 +297,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(api.module_of("s:Sf"), "Swift")
         self.assertEqual(api.module_of("s:s5SIMD2V"), "Swift")
 
-    def test_件数の直書きを見つける(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "README.md").write_text("公開 API は 128 個ある。\n", encoding="utf-8")
-            problems = api.check_no_written_counts(root)
-            self.assertEqual(len(problems), 1)
-            self.assertIn("README.md:1", problems[0])
-
-    def test_件数を書いていなければ通す(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "README.md").write_text("公開 API の一覧は版ごとに配る。\n", encoding="utf-8")
-            self.assertEqual(api.check_no_written_counts(root), [])
+    # 件数の直書きを見張る検査は scripts/tests/written_counts_test.py へ移した (#819)。
+    # 判定は *.md を読むだけでシンボルグラフを使わないので、ここに置くとドキュメントだけ
+    # 直した PR までフル再ビルド (api: build) を待つことになる
 
     def test_一覧に件数が載る(self):
         text = api.render([symbol("Sketch", kind="swift.protocol")], "v1.2.3")

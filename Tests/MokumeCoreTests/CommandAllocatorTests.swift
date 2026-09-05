@@ -32,7 +32,7 @@ struct CommandAllocatorTests {
         var presented = 0
         for index in 0..<count {
             // 描く経路 (GPU の完了まで待つ)
-            try source.fill(with: .opaque(red: Float(index % 2), green: 0.2, blue: 0.3))
+            try source.fill(with: .linear(red: Float(index % 2), green: 0.2, blue: 0.3))
             // 差し出す経路 (待たない)
             if try presenter.present(source, to: layer) { presented += 1 }
         }
@@ -85,8 +85,8 @@ struct CommandAllocatorTests {
         for index in 0..<20 {
             try canvas.draw {
                 canvas.compute(spin, over: 1, writes: [scratch])
-                canvas.background(.opaque(red: Float(index % 2), green: 0.2, blue: 0.3))
-                canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+                canvas.background(.linear(red: Float(index % 2), green: 0.2, blue: 0.3))
+                canvas.fill(.linear(red: 1, green: 1, blue: 1))
                 canvas.rect(8, 8, 48, 48)
             }
             if !gpu.isIdle { busyAfterFlush += 1 }

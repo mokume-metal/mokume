@@ -37,7 +37,7 @@ struct ImageOutputTests {
                 // 「2 回走らせて再現する」ことの証明にならない。
                 let gpu = try RenderDevice()
                 let target = try RenderTarget(gpu: gpu, width: 32, height: 16)
-                try target.fill(with: .opaque(red: 0.2, green: 0.4, blue: 0.6))
+                try target.fill(with: .linear(red: 0.2, green: 0.4, blue: 0.6))
 
                 let url = directory.appendingPathComponent("frame-\(attempt).png")
                 try target.writePNG(to: url)
@@ -52,7 +52,7 @@ struct ImageOutputTests {
         try withTemporaryDirectory { directory in
             let gpu = try RenderDevice()
             let target = try RenderTarget(gpu: gpu, width: 4, height: 4)
-            try target.fill(with: .opaque(red: 1, green: 1, blue: 1))
+            try target.fill(with: .linear(red: 1, green: 1, blue: 1))
 
             let url = directory.appendingPathComponent("frame.png")
             try target.writePNG(to: url)
@@ -67,7 +67,7 @@ struct ImageOutputTests {
     func linearFillLandsOnTheExpectedByteValues() throws {
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: 4, height: 4)
-        try target.fill(with: .opaque(red: 0.5, green: 1, blue: 0))
+        try target.fill(with: .linear(red: 0.5, green: 1, blue: 0))
 
         let image = try target.encodeForDisplay()
         #expect(image[0, 0] == (188, 255, 0, 255))
@@ -77,7 +77,7 @@ struct ImageOutputTests {
     func brightnessBeyondTheRangeIsClampedOnTheWayOut() throws {
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: 2, height: 2)
-        try target.fill(with: .opaque(red: 4, green: 0.5, blue: 0))
+        try target.fill(with: .linear(red: 4, green: 0.5, blue: 0))
 
         // 描画先には 4.0 のまま残っているが (ADR-0011 決定 2)、
         // 出力段で標準レンジへ収まる (同 決定 5 の既定)

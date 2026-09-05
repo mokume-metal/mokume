@@ -11,8 +11,8 @@ public enum InputEvent: Equatable, Sendable {
     case mouseUp(x: Float, y: Float, button: Int)
     case mouseMoved(x: Float, y: Float)
     case scrolled(dx: Float, dy: Float)
-    case keyDown(code: Int, characters: String, isRepeat: Bool)
-    case keyUp(code: Int)
+    case keyDown(code: Key, characters: String, isRepeat: Bool)
+    case keyUp(code: Key)
 }
 
 /// 外から送られてきた 1 件を解く。
@@ -67,10 +67,11 @@ struct RawInputEvent: Decodable {
         case "keyDown":
             guard let code else { return nil }
             return .keyDown(
-                code: code, characters: characters ?? "", isRepeat: isRepeat ?? false)
+                code: Key(rawValue: code), characters: characters ?? "",
+                isRepeat: isRepeat ?? false)
         case "keyUp":
             guard let code else { return nil }
-            return .keyUp(code: code)
+            return .keyUp(code: Key(rawValue: code))
         default:
             return nil
         }

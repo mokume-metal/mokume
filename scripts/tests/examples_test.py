@@ -212,39 +212,10 @@ class 集める(unittest.TestCase):
         self.assertEqual(found[0].body, ["import mokume", "", "final class A: Sketch {}"])
 
 
-class Macroの口(unittest.TestCase):
-    """macro を使う例は plugin を渡さないと落ちる。**名前は決め打ちしない。**"""
-
-    def test_組み上がった_plugin_を拾って渡す(self):
-        with tempfile.TemporaryDirectory() as directory:
-            build = Path(directory) / "debug"
-            modules = build / "Modules"
-            modules.mkdir(parents=True)
-            tool = build / "MokumeMacros-tool"
-            tool.write_text("")
-            tool.chmod(0o755)
-            (build / "notes.txt").write_text("")
-            self.assertEqual(
-                examples.plugin_flags(modules),
-                ["-load-plugin-executable", f"{tool}#MokumeMacros"],
-            )
-
-    def test_同じ綴りのディレクトリは拾わない(self):
-        """実際の置き場には `Modules-tool` というディレクトリが並ぶ (実測)。
-        渡すと swiftc がそこで落ちる。"""
-        with tempfile.TemporaryDirectory() as directory:
-            build = Path(directory) / "debug"
-            modules = build / "Modules"
-            modules.mkdir(parents=True)
-            (build / "Modules-tool").mkdir()
-            self.assertEqual(examples.plugin_flags(modules), [])
-
-    def test_plugin_が無ければ何も渡さない(self):
-        with tempfile.TemporaryDirectory() as directory:
-            modules = Path(directory) / "debug" / "Modules"
-            modules.mkdir(parents=True)
-            self.assertEqual(examples.plugin_flags(modules), [])
-
+# macro の plugin の解決と swiftc の呼び方の検査は
+# scripts/tests/swift_typecheck_test.py へ移した (#820)。**呼び方は
+# check-param-declarations.sh とも共有している**ので、片方のテストに置くと
+# もう片方から見て他人の検査になる
 
 class 通しで(unittest.TestCase):
     def setUp(self):

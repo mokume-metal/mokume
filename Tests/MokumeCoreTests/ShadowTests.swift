@@ -37,28 +37,28 @@ struct ShadowTests {
     ) throws -> DisplayImage {
         let center: Float = 64
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             // **世界を縮めたら、見る位置も同じだけ縮める。** そうしないと縮尺の違いが
             // 「遠くなった」だけになり、影の細かさの話にならない
             canvas.camera(
                 center, -24 * scale, 170 * scale, center, 14 * scale, 0, 0, 1, 0)
             canvas.perspective(.pi / 3, 1, 1 * scale, 500 * scale)
-            canvas.ambientLight(.opaque(red: 0.15, green: 0.15, blue: 0.15))
-            canvas.directionalLight(.opaque(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
+            canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
+            canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
             canvas.shadows(shadows)
             if let range { canvas.shadowRange(range) }
             extra(canvas)
             canvas.noStroke()
 
             canvas.castShadow(false)
-            canvas.fill(.opaque(red: 0.7, green: 0.7, blue: 0.7))
+            canvas.fill(.linear(red: 0.7, green: 0.7, blue: 0.7))
             canvas.push()
             canvas.translate(center, 40 * scale, -20 * scale)
             canvas.box(190 * scale, 8 * scale, 190 * scale)
             canvas.pop()
 
             canvas.castShadow(true)
-            canvas.fill(.opaque(red: 0.85, green: 0.5, blue: 0.3))
+            canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
             canvas.push()
             canvas.translate(center + offset * scale, 8 * scale, 0)
             canvas.sphere(28 * scale)
@@ -174,7 +174,7 @@ struct ShadowTests {
             $0.surroundings(.studio)
         }
         let withEmissive = try floorAndSphere(try makeCanvas()) {
-            $0.emissive(.opaque(red: 0.2, green: 0.2, blue: 0.2))
+            $0.emissive(.linear(red: 0.2, green: 0.2, blue: 0.2))
         }
 
         // **影がいちばん濃いところは、影なしの絵との差から探す。** 座標を決め打ちに
@@ -209,17 +209,17 @@ struct ShadowTests {
             let canvas = try makeCanvas(width: 64, height: 64)
             var read = LinearRGBA.transparent
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.lights()
                 canvas.shadows(shadows)
                 canvas.noStroke()
-                canvas.fill(.opaque(red: 0.9, green: 0.2, blue: 0.2))
+                canvas.fill(.linear(red: 0.9, green: 0.2, blue: 0.2))
                 canvas.push()
                 canvas.translate(32, 32, 0)
                 canvas.sphere(24)
                 canvas.pop()
                 // **あとに置いた平面が、先に置いた立体の上に来る** (呼び出し順どおり)
-                canvas.fill(.opaque(red: 0.2, green: 0.4, blue: 0.9))
+                canvas.fill(.linear(red: 0.2, green: 0.4, blue: 0.9))
                 canvas.rect(24, 24, 16, 16)
                 // 同じフレームの中で画素を読み戻せる
                 canvas.loadPixels()
@@ -385,7 +385,7 @@ struct ShadowTests {
         _ = try floorAndSphere(canvas, offset: 10)
         #expect(canvas.shadowBakesEncoded == 2, "形を動かしたのに焼き直していない")
         _ = try floorAndSphere(canvas, offset: 10) {
-            $0.directionalLight(.opaque(red: 0.5, green: 0.5, blue: 0.5), 0.6, 0.6, -0.5)
+            $0.directionalLight(.linear(red: 0.5, green: 0.5, blue: 0.5), 0.6, 0.6, -0.5)
         }
         // extra は floorAndSphere 自身の光の**後**に置くので、落とす光 (最初の向きを
         // 持つ光) は変わらない — 焼き直さないのが正しい
@@ -428,7 +428,7 @@ struct ShadowTests {
                 canvas.emit(
                     dust, from: .point(64, 0), rate: 300, speed: 20...45,
                     angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
-                    color: .opaque(red: 1, green: 0.6, blue: 0.2), using: &randomness)
+                    color: .linear(red: 1, green: 0.6, blue: 0.2), using: &randomness)
                 canvas.particles(dust)
             }
         }
@@ -477,10 +477,10 @@ struct ShadowTests {
     func theFirstDirectionalLightCasts() throws {
         let canvas = try makeCanvas()
         try canvas.draw {
-            canvas.ambientLight(.opaque(red: 0.2, green: 0.2, blue: 0.2))
+            canvas.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
             #expect(canvas.shadowCaster == nil, "底上げの光が影を落とすことになっている")
-            canvas.directionalLight(.opaque(red: 1, green: 1, blue: 1), 0, 1, 0)
-            canvas.directionalLight(.opaque(red: 0.5, green: 0.5, blue: 0.5), 1, 0, 0)
+            canvas.directionalLight(.linear(red: 1, green: 1, blue: 1), 0, 1, 0)
+            canvas.directionalLight(.linear(red: 0.5, green: 0.5, blue: 0.5), 1, 0, 0)
             let caster = canvas.shadowCaster
             #expect(caster?.colorAndKind.x == 1, "2 つ目の光が影を落としている")
         }

@@ -17,14 +17,24 @@
 `importlib` で「写さずに借りて」おり、その理由 (「2 箇所に置くと片方だけが直る」) が
 そのままここに当たる。こちらはハイフンを含まない名前なので素の import で足りる。
 
-## ここに無いもの
+## 引けなかったときの向き ([#865](https://github.com/mokume-metal/mokume/issues/865))
 
-**引けなかったときの向きは、まだ 1 つになっていない。** `Source.read` は 404 を
-`None`、それ以外を `raise` にするが、`check-publication.py` の `read_stamp` は
-理由を文字列で返して例外を投げない。向きを揃えるのは
-[#820](https://github.com/mokume-metal/mokume/issues/820) で扱う — 502 を 1 回
-引いただけで赤が立つかどうかという**振る舞いの変更**を含むので、写しを畳む話とは
-分けてある。
+**「無い」と「引けなかった」は混ぜない。** 404 は `None`、それ以外は `Unreachable` を
+投げる。混ぜると [#478](https://github.com/mokume-metal/mokume/issues/478) が塞いだ
+「置いても出ない」の検出が緩む — 公開物が置かれていないことと、公開先が落ちている
+ことは、直す人も直し方も違う。
+
+**引けなかったことは 1 行で名乗る。** 呼び出し側はどちらも問題を 1 行ずつ並べる形なのに、
+引けなかったときだけ Python の traceback が出ていた ([ADR-0027](../docs/decisions/0027-readable-surfaces.md)
+の読める面と揃っていない)。`check-external-assets.py` の `reachable` は元から理由を
+文字列で名乗っており、そちらが先例である。
+
+**判定は赤のままにする。** この読み口を呼ぶ 3 経路 — `pages.yml` (公開の直後)・
+`publication.yml` (日次)・`Makefile` (手元の `_site`) — は**どれも merge の条件では
+ない**ので、赤が誰かの作業を止めない。`publication.yml` が「相手側の一時的な不調が
+こちらの赤になる」と書いているのは**置き場の切り分け**であって (ネットワークを踏む検査を
+merge の条件に混ぜない)、赤にしないという意味ではない — 同じ節が「赤くするだけで、
+起票はしない」と続けている。
 """
 
 from __future__ import annotations
@@ -49,6 +59,14 @@ HTML_IMAGE = re.compile(
 )
 
 
+class Unreachable(Exception):
+    """公開先を引けなかった。**「置いていない」とは混ぜない** (上の節)。
+
+    受けるのは呼び出し側の `main` で、1 行に落として赤で返す。握り潰さないのは
+    「引けなかった」を緑にすると、配信の事故が誰にも見られなくなるためである。
+    """
+
+
 class Source:
     """出力の読み口。ディレクトリでも URL でも同じ形で引けるようにする。"""
 
@@ -59,16 +77,25 @@ class Source:
             self.root = pathlib.Path(self.target)
 
     def read(self, relative: str) -> bytes | None:
-        """無ければ None。**例外は握り潰さない** — 読めなかった理由は呼び出し側が言う。"""
+        """無ければ None、引けなければ `Unreachable`。向きは冒頭の節が持つ。"""
         if self.is_url:
-            request = urllib.request.Request(f"{self.target}/{relative}")
+            url = f"{self.target}/{relative}"
             try:
-                with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
+                with urllib.request.urlopen(
+                    urllib.request.Request(url), timeout=FETCH_TIMEOUT_SECONDS
+                ) as response:
                     return response.read()
             except urllib.error.HTTPError as error:
+                # **例外そのものが応答なので閉じる。** 閉じないと ResourceWarning が
+                # 残る (check-publication.py の read_stamp が同じ理由で閉じている)
+                error.close()
                 if error.code == 404:
                     return None
-                raise
+                raise Unreachable(f"{url} が引けない (HTTP {error.code})") from error
+            except Exception as error:
+                # 証明書・名前解決・接続断・待ち切れ。**HTTPError の後ろに置く**
+                # (HTTPError は URLError の派生なので、上の枝で先に捕まる)
+                raise Unreachable(f"{url} が引けない: {error}") from error
         path = self.root / relative
         return path.read_bytes() if path.is_file() else None
 

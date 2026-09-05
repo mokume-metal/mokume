@@ -108,7 +108,7 @@ struct CanvasWarningTests {
         let canvas = try makeCanvas()
         #expect(!canvas.warnings.hasWarned(.lightOutsideFrame))
 
-        canvas.ambientLight(.opaque(red: 1, green: 1, blue: 1))
+        canvas.ambientLight(.linear(red: 1, green: 1, blue: 1))
         #expect(canvas.warnings.hasWarned(.lightOutsideFrame))
         #expect(canvas.warnings.message(for: .lightOutsideFrame) == lightOutsideFrame)
         #expect(canvas.activeLights.isEmpty)
@@ -132,7 +132,7 @@ struct CanvasWarningTests {
     @Test("光の注意は、視点の注意を黙らせない")
     func oneWarningDoesNotSilenceAnother() throws {
         let canvas = try makeCanvas()
-        canvas.ambientLight(.opaque(red: 1, green: 1, blue: 1))
+        canvas.ambientLight(.linear(red: 1, green: 1, blue: 1))
         #expect(!canvas.warnings.hasWarned(.cameraOutsideFrame))
 
         canvas.camera()
@@ -146,7 +146,7 @@ struct CanvasWarningTests {
     func countsPerCanvas() throws {
         let first = try makeCanvas()
         let second = try makeCanvas()
-        first.ambientLight(.opaque(red: 1, green: 1, blue: 1))
+        first.ambientLight(.linear(red: 1, green: 1, blue: 1))
         #expect(first.warnings.hasWarned(.lightOutsideFrame))
         #expect(!second.warnings.hasWarned(.lightOutsideFrame))
     }

@@ -36,6 +36,10 @@ set -euo pipefail
 # 「描画に触れているか」の判定は #304 と共有する (照合の実体は 1 つ・ADR-0001 原則 9)
 # shellcheck source=scripts/drawing-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
+# 変更ファイルの取り方も 1 つに保つ。**照合の手前が割れていた** (#793) — gh pr view の
+# files は上限のある口なので、大きな PR では描画のパスが一覧から落ち、絵の要求が外れる
+# shellcheck source=scripts/pr-files.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 
 # 逃がしのラベル。描画のパスに居るが絵が変わらない変更 (コメントの修正・内部の
 # リファクタ) のための例外印で、**読み手はこのスクリプトだけ**である
@@ -65,7 +69,9 @@ pr=${1:-${PR_NUMBER:-}}
 command -v gh >/dev/null 2>&1 || give_up "gh が無い"
 gh auth status >/dev/null 2>&1 || give_up "gh が認証されていない"
 
-args=(--json "body,labels,files")
+# **番号も取る。** 変更ファイルは別の口から引くので (#793)、その口に渡す番号が要る —
+# 同じ応答から読めるので、リポジトリや PR の解決は増えない
+args=(--json "body,labels,number")
 # 素の && で足すと、REPO が空のときに全体が 1 を返して set -e が script ごと止める
 if [ -n "$REPO" ]; then args+=(-R "$REPO"); fi
 if [ -n "$pr" ]; then args=("$pr" "${args[@]}"); fi
@@ -79,7 +85,12 @@ if jq -e --arg l "$ESCAPE_LABEL" '.labels[]? | select(.name == $l)' >/dev/null <
   exit 0
 fi
 
-if ! jq -r '.files[]?.path // empty' <<<"$pr_json" | touches_drawing evidence; then
+number=$(jq -r '.number' <<<"$pr_json")
+# REPO は手元では空 (GITHUB_REPOSITORY が無い)。pr_files が gh のプレースホルダへ倒す
+pr_paths=$(pr_files "$REPO" "$number") \
+  || give_up "PR #$number の変更ファイルを読めなかった"
+
+if ! printf '%s\n' "$pr_paths" | touches_drawing evidence; then
   say "描画に触れていない PR — 絵は要らない"
   exit 0
 fi

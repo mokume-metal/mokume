@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 直近の作り直しの結果。
 ///
@@ -10,7 +11,27 @@ import Foundation
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 struct BuildReport: Encodable, Equatable {
-    static let schemaVersion = 1
+    /// 面の版。
+    ///
+    /// **格納プロパティで持つ。** `CodingKeys` と手書きの `encode(to:)` で注入していた頃は、
+    /// フィールドを 1 つ足すたびに宣言・鍵・書き出しの 3 箇所を手で合わせることになって
+    /// いた ([#814](https://github.com/mokume-metal/mokume/issues/814))。`ParamStore.Saved`
+    /// が既にこの形で、**同じリポジトリに流儀が 2 つ並んでいた**。
+    ///
+    /// 出力は変わらない — 合成された `encode(to:)` は宣言順に書き、`Optional` には
+    /// `encodeIfPresent` を使う (同じ形の ``Timings`` が既に合成で通っている)。
+    /// 既定値のある `let` はメンバーワイズの初期化子に現れないので、組む側も変わらない。
+    let schemaVersion = 1
+
+    /// 与えた基準の下の、記録の在処。
+    ///
+    /// **綴りはここ 1 つ。** 書くのは見張り、読むのは切り分けの口と窓口の 3 者いるので、
+    /// 別々に組むと基準を揃えても同じ形で割れる
+    /// ([#730](https://github.com/mokume-metal/mokume/issues/730))。
+    static func statusURL(under facetBase: URL) -> URL {
+        WorkDirectory.facet("build", under: facetBase)
+            .appendingPathComponent("status.json", isDirectory: false)
+    }
 
     /// 分解した所要時間 (ミリ秒)。
     struct Timings: Encodable, Equatable {
@@ -34,21 +55,6 @@ struct BuildReport: Encodable, Equatable {
     let configuration: String
     /// 分解した所要時間。
     let timings: Timings
-
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion, ok, status, output, stamp, configuration, timings
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(Self.schemaVersion, forKey: .schemaVersion)
-        try container.encode(ok, forKey: .ok)
-        try container.encode(status, forKey: .status)
-        try container.encode(output, forKey: .output)
-        try container.encodeIfPresent(stamp, forKey: .stamp)
-        try container.encode(configuration, forKey: .configuration)
-        try container.encode(timings, forKey: .timings)
-    }
 
     /// 1 行の要約。端末に出す形で、測定の道具もこれを読める。
     var summary: String {

@@ -43,7 +43,7 @@ extension Canvas {
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
     public func tint(_ color: LinearRGBA) { currentTint = color }
 
-    public func noTint() { currentTint = .opaque(red: 1, green: 1, blue: 1) }
+    public func noTint() { currentTint = .linear(red: 1, green: 1, blue: 1) }
 
     // MARK: - 貼る
 

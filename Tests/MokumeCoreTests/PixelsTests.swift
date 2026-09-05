@@ -61,7 +61,7 @@ struct PixelsTests {
         let canvas = try makeCanvas(width: 32, height: 32)
         let color = LinearRGBA.display(red: 0.25, green: 0.5, blue: 0.75)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.fill(color)
             canvas.rect(8, 8, 16, 16)
@@ -88,7 +88,7 @@ struct PixelsTests {
         arguments: [1, 3, 7, 13, 63, 129, 963])
     func readsCorrectlyAtWidthsThatDoNotMeetTheAlignment(width: Int) throws {
         let canvas = try makeCanvas(width: width, height: 5)
-        try canvas.draw { canvas.background(.opaque(red: 0, green: 0, blue: 0)) }
+        try canvas.draw { canvas.background(.linear(red: 0, green: 0, blue: 0)) }
 
         // 行ごとに違う色を置き、行が混ざっていないことを見る
         try canvas.draw {
@@ -96,7 +96,7 @@ struct PixelsTests {
                 for x in 0..<width {
                     canvas.set(
                         x, y,
-                        .opaque(red: Float(y) / 4, green: Float(x % 8) / 8, blue: 0.5))
+                        .linear(red: Float(y) / 4, green: Float(x % 8) / 8, blue: 0.5))
                 }
             }
         }
@@ -105,7 +105,7 @@ struct PixelsTests {
             for x in 0..<width {
                 #expect(
                     canvas.get(x, y)
-                        == .opaque(red: Float(y) / 4, green: Float(x % 8) / 8, blue: 0.5),
+                        == .linear(red: Float(y) / 4, green: Float(x % 8) / 8, blue: 0.5),
                     "(\(x), \(y)) / 幅 \(width)")
             }
         }
@@ -115,7 +115,7 @@ struct PixelsTests {
     func writtenImageAgreesWithThePixelsAtUnalignedWidths(width: Int) throws {
         let canvas = try makeCanvas(width: width, height: 3)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.fill(.display(red: 1, green: 0, blue: 0))
             canvas.rect(0, 1, Float(width), 1)
@@ -135,26 +135,26 @@ struct PixelsTests {
         let canvas = try makeCanvas(width: 16, height: 16)
         var sampled = LinearRGBA.transparent
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
-            canvas.fill(.opaque(red: 1, green: 0, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.rect(0, 0, 16, 16)
             sampled = canvas.get(8, 8)
         }
-        #expect(sampled == .opaque(red: 1, green: 0, blue: 0))
+        #expect(sampled == .linear(red: 1, green: 0, blue: 0))
     }
 
     @Test("画素を読んだあとに描いた図形も、同じフレームの絵に残る")
     func shapesDrawnAfterReadingStillLandInTheFrame() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             _ = canvas.get(0, 0)
             canvas.noStroke()
-            canvas.fill(.opaque(red: 0, green: 1, blue: 0))
+            canvas.fill(.linear(red: 0, green: 1, blue: 0))
             canvas.rect(0, 0, 16, 16)
         }
-        #expect(try canvas.target.readPixels()[8, 8] == .opaque(red: 0, green: 1, blue: 0))
+        #expect(try canvas.target.readPixels()[8, 8] == .linear(red: 0, green: 1, blue: 0))
     }
 
     /// **描き切りをフレームの途中で挟んでも、図形が 2 度描かれない。**
@@ -167,7 +167,7 @@ struct PixelsTests {
         let translucent = LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 0.5)
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.fill(translucent)
             canvas.rect(0, 0, 16, 16)
@@ -175,7 +175,7 @@ struct PixelsTests {
         let once = try canvas.target.readPixels()[8, 8]
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
             canvas.fill(translucent)
             canvas.rect(0, 0, 16, 16)
@@ -192,13 +192,13 @@ struct PixelsTests {
     func readingMidFrameDoesNotRepaintTheBackground() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
-            canvas.fill(.opaque(red: 1, green: 0, blue: 0))
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.rect(0, 0, 16, 16)
             _ = canvas.get(0, 0)
         }
-        #expect(try canvas.target.readPixels()[8, 8] == .opaque(red: 1, green: 0, blue: 0))
+        #expect(try canvas.target.readPixels()[8, 8] == .linear(red: 1, green: 0, blue: 0))
     }
 
     /// **待つ印はフレームごとに戻る。** 戻らないと、2 フレーム目以降の読み取りが
@@ -209,15 +209,15 @@ struct PixelsTests {
         var sampled: [LinearRGBA] = []
         for green in [Float(0.25), 0.5, 0.75] {
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: green, blue: 0))
+                canvas.background(.linear(red: 0, green: green, blue: 0))
                 sampled.append(canvas.get(8, 8))
             }
         }
         #expect(
             sampled == [
-                .opaque(red: 0, green: 0.25, blue: 0),
-                .opaque(red: 0, green: 0.5, blue: 0),
-                .opaque(red: 0, green: 0.75, blue: 0),
+                .linear(red: 0, green: 0.25, blue: 0),
+                .linear(red: 0, green: 0.5, blue: 0),
+                .linear(red: 0, green: 0.75, blue: 0),
             ])
     }
 
@@ -239,7 +239,7 @@ struct PixelsTests {
         let canvas = try makeCanvas(width: 16, height: 16)
         for _ in 0..<3 {
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.rect(2, 2, 8, 8)
             }
         }
@@ -253,7 +253,7 @@ struct PixelsTests {
     func aFrameThatReadsPixelsEncodesOneReadback() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             for y in 0..<16 {
                 for x in 0..<16 { _ = canvas.get(x, y) }
             }
@@ -268,20 +268,20 @@ struct PixelsTests {
     func onlyFramesThatWritePixelsEncodeAWriteBack() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
             _ = canvas.get(0, 0)
         }
         #expect(canvas.target.pixelWriteBacksEncoded == 0)
 
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
-            canvas.set(3, 3, .opaque(red: 1, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.set(3, 3, .linear(red: 1, green: 0, blue: 0))
         }
         #expect(canvas.target.pixelWriteBacksEncoded == 1)
         // 書いた画素は、次に読むときに描画先から戻ってくる (写しをそのまま返したのではない)
         try canvas.draw { _ = canvas.get(0, 0) }
         #expect(canvas.target.pixelWriteBacksEncoded == 1, "書いていないフレームが書き戻している")
-        #expect(canvas.get(3, 3) == .opaque(red: 1, green: 0, blue: 0))
+        #expect(canvas.get(3, 3) == .linear(red: 1, green: 0, blue: 0))
     }
 
     /// 書いた画素の上に、そのフレームの続きの図形が載る (書き戻しが描画より先に積まれる)。
@@ -289,15 +289,15 @@ struct PixelsTests {
     func shapesDrawnAfterWritingLandOnTopOfTheWrittenPixels() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         try canvas.draw {
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
-            canvas.pixels.fill(.opaque(red: 1, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.pixels.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.noStroke()
-            canvas.fill(.opaque(red: 0, green: 1, blue: 0))
+            canvas.fill(.linear(red: 0, green: 1, blue: 0))
             canvas.rect(0, 0, 8, 16)
         }
         let pixels = try canvas.target.readPixels()
-        #expect(pixels[4, 8] == .opaque(red: 0, green: 1, blue: 0), "図形が書いた画素の下に隠れた")
-        #expect(pixels[12, 8] == .opaque(red: 1, green: 0, blue: 0), "書いた画素が戻っていない")
+        #expect(pixels[4, 8] == .linear(red: 0, green: 1, blue: 0), "図形が書いた画素の下に隠れた")
+        #expect(pixels[12, 8] == .linear(red: 1, green: 0, blue: 0), "書いた画素が戻っていない")
     }
 
     // MARK: - 面としての振る舞い
@@ -305,24 +305,24 @@ struct PixelsTests {
     @Test("範囲の外を読むと透明が返り、範囲の外へ書いても何も起きない")
     func outOfRangeAccessIsHarmless() throws {
         let canvas = try makeCanvas(width: 4, height: 4)
-        try canvas.draw { canvas.background(.opaque(red: 1, green: 1, blue: 1)) }
+        try canvas.draw { canvas.background(.linear(red: 1, green: 1, blue: 1)) }
 
         #expect(canvas.get(-1, 0) == .transparent)
         #expect(canvas.get(4, 0) == .transparent)
         #expect(canvas.get(0, -1) == .transparent)
         #expect(canvas.get(0, 4) == .transparent)
 
-        canvas.set(-1, 0, .opaque(red: 0, green: 0, blue: 0))
-        canvas.set(4, 4, .opaque(red: 0, green: 0, blue: 0))
-        #expect(canvas.get(0, 0) == .opaque(red: 1, green: 1, blue: 1))
+        canvas.set(-1, 0, .linear(red: 0, green: 0, blue: 0))
+        canvas.set(4, 4, .linear(red: 0, green: 0, blue: 0))
+        #expect(canvas.get(0, 0) == .linear(red: 1, green: 1, blue: 1))
     }
 
     @Test("画素の面は描画先そのもので、写しではない")
     func thePixelSurfaceIsTheTargetItself() throws {
         let canvas = try makeCanvas(width: 8, height: 8)
-        try canvas.draw { canvas.background(.opaque(red: 0, green: 0, blue: 0)) }
+        try canvas.draw { canvas.background(.linear(red: 0, green: 0, blue: 0)) }
 
-        canvas.pixels[2, 3] = .opaque(red: 1, green: 0, blue: 0)
+        canvas.pixels[2, 3] = .linear(red: 1, green: 0, blue: 0)
         // 送り直しの手順を挟まずに、書き出した絵へ届く
         #expect(try canvas.target.encodeForDisplay()[2, 3] == (255, 0, 0, 255))
     }
@@ -330,12 +330,12 @@ struct PixelsTests {
     @Test("面全体を 1 色で埋められる")
     func fillsTheWholeSurface() throws {
         let canvas = try makeCanvas(width: 13, height: 3)
-        try canvas.draw { canvas.background(.opaque(red: 0, green: 0, blue: 0)) }
+        try canvas.draw { canvas.background(.linear(red: 0, green: 0, blue: 0)) }
 
-        canvas.pixels.fill(.opaque(red: 0, green: 0.5, blue: 1))
+        canvas.pixels.fill(.linear(red: 0, green: 0.5, blue: 1))
         for y in 0..<3 {
             for x in 0..<13 {
-                #expect(canvas.pixels[x, y] == .opaque(red: 0, green: 0.5, blue: 1))
+                #expect(canvas.pixels[x, y] == .linear(red: 0, green: 0.5, blue: 1))
             }
         }
     }

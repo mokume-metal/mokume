@@ -72,10 +72,10 @@ struct FlatInstancingTests {
         switch paint {
         case .textured:
             let sheet = try canvas.createImage(8, 8)
-            sheet.fill(.opaque(red: 1, green: 1, blue: 1))
+            sheet.fill(.linear(red: 1, green: 1, blue: 1))
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
-                canvas.fill(.opaque(red: 0.8, green: 0.6, blue: 0.4))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.fill(.linear(red: 0.8, green: 0.6, blue: 0.4))
                 canvas.noStroke()
                 canvas.texture(sheet)
                 body(canvas)
@@ -84,9 +84,9 @@ struct FlatInstancingTests {
             let shader = try canvas.makeShader(
                 "float4 paint(Fragment in, Values values) { return in.color; }")
             try canvas.draw {
-                canvas.background(.opaque(red: 0, green: 0, blue: 0))
-                canvas.fill(.opaque(red: 0.8, green: 0.6, blue: 0.4))
-                canvas.stroke(.opaque(red: 0.1, green: 0.3, blue: 0.9))
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.fill(.linear(red: 0.8, green: 0.6, blue: 0.4))
+                canvas.stroke(.linear(red: 0.1, green: 0.3, blue: 0.9))
                 canvas.strokeWeight(2)
                 canvas.shader(shader)
                 body(canvas)
@@ -121,10 +121,10 @@ struct FlatInstancingTests {
         // 輪郭も畳める側の塗り (利用者の断片) で見る
         let canvas = try makeCanvas()
         let image = try scene(canvas, .shaded) { canvas in
-            canvas.stroke(.opaque(red: 0.1, green: 0.9, blue: 0.1))
-            canvas.fill(.opaque(red: 1, green: 0.15, blue: 0.15))
+            canvas.stroke(.linear(red: 0.1, green: 0.9, blue: 0.1))
+            canvas.fill(.linear(red: 1, green: 0.15, blue: 0.15))
             canvas.circle(26, 48, 20)
-            canvas.fill(.opaque(red: 0.15, green: 0.15, blue: 1))
+            canvas.fill(.linear(red: 0.15, green: 0.15, blue: 1))
             canvas.circle(70, 48, 20)
         }
         // 色は鍵に入らないので、**2 つで雛形 1 つぶん**しか積まない

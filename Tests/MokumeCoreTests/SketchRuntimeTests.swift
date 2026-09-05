@@ -100,7 +100,7 @@ struct SketchRuntimeTests {
             drawCalls += 1
             seenFrameCounts.append(frameCount)
             seenTimes.append(time)
-            background(.opaque(red: 0, green: 0, blue: 0))
+            background(.linear(red: 0, green: 0, blue: 0))
         }
     }
 
@@ -166,7 +166,7 @@ struct SketchRuntimeTests {
             init() {}
             func draw() {
                 seenDeltas.append(deltaTime)
-                background(.opaque(red: 0, green: 0, blue: 0))
+                background(.linear(red: 0, green: 0, blue: 0))
             }
         }
 
