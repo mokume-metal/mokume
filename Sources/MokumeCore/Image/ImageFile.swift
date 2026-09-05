@@ -24,14 +24,54 @@ nonisolated enum ImageFile {
         var pixels: [SIMD4<Float16>]
     }
 
+    /// 読んだ結果と、**どこから読んだか**。控えが鮮度を見るのに要る ([#886])。
+    ///
+    /// [#886]: https://github.com/mokume-metal/mokume/issues/886
+    struct Read: Sendable {
+        var url: URL
+        var stamp: Date?
+        var decoded: Decoded
+    }
+
     /// 名前から探して復号する。
     static func decode(_ path: String) throws(ImageFailure) -> Decoded {
+        try decode(at: locate(path), name: path)
+    }
+
+    /// 名前から探して復号し、**読んだ場所と更新時刻も返す。**
+    ///
+    /// 隔離の外で 1 度に済ませる形にしてあるのは、待たない読み込みが探索・更新時刻の
+    /// 読み・復号をまとめて別の仕事へ回すためである。
+    static func read(_ path: String) throws(ImageFailure) -> Read {
+        let url = try locate(path)
+        let stamp = stamp(of: url)
+        return Read(url: url, stamp: stamp, decoded: try decode(at: url, name: path))
+    }
+
+    /// 名前を、実際に在るファイルへ解く。
+    ///
+    /// 復号と分けてあるのは、**控えが「同じファイルか」を確かめるため** — 場所が分かれば
+    /// 復号せずに更新時刻だけを見られる ([#886])。
+    ///
+    /// [#886]: https://github.com/mokume-metal/mokume/issues/886
+    static func locate(_ path: String) throws(ImageFailure) -> URL {
         let searched = candidates(for: path)
         guard let url = searched.first(where: { FileManager.default.fileExists(atPath: $0.path) })
         else {
             throw .notFound(path: path, searched: searched.map(\.path))
         }
-        return try decode(at: url, name: path)
+        return url
+    }
+
+    /// ファイルの更新時刻。読めなければ nil。
+    ///
+    /// **控えの鮮度はこれで見る。** 名前だけを鍵にすると、走らせたまま絵を差し替える
+    /// 書き方が黙って効かなくなる ([#886])。読めなかったときに nil を返すのは、
+    /// 読み直す側 (安全な側) へ倒すためである。
+    ///
+    /// [#886]: https://github.com/mokume-metal/mokume/issues/886
+    static func stamp(of url: URL) -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
     }
 
     /// 場所が分かっている絵を復号する。

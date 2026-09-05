@@ -526,4 +526,191 @@ struct ImageTests {
         let image = try canvas.createImage(RenderDevice.maxTextureSide, 1)
         #expect(image.width == RenderDevice.maxTextureSide)
     }
+
+    // MARK: - 控え ([#886](https://github.com/mokume-metal/mokume/issues/886))
+
+    /// 更新時刻を確実に動かして書き直す。
+    ///
+    /// **同じ秒の中で書き換わると、控えが古いままかどうかを見分けられない。** ファイル
+    /// システムの刻みに検査の判別力を預けないよう、時刻はこちらで指定する。
+    private func rewritePNG(
+        _ url: URL, _ colors: [(red: Double, green: Double, blue: Double, alpha: Double)],
+        width: Int, height: Int
+    ) throws {
+        let stamp = ImageFile.stamp(of: url)
+        let rewritten = try writePNG(colors, width: width, height: height)
+        defer { try? FileManager.default.removeItem(at: rewritten) }
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.copyItem(at: rewritten, to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: (stamp ?? Date()).addingTimeInterval(1)], ofItemAtPath: url.path)
+    }
+
+    @Test("同じ絵を二度読んでも、探して復号するのは一度だけ")
+    func loadingTheSameImageTwiceDecodesOnce() throws {
+        let url = try writePNG([(1, 0, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let canvas = try makeCanvas()
+        let first = try canvas.loadImage(url.path)
+        let second = try canvas.loadImage(url.path)
+
+        #expect(
+            canvas.imagesDecoded == 1,
+            """
+            同じ絵を 2 回読んだのに \(canvas.imagesDecoded) 回復号した (1 回のはず)。
+
+            `draw()` の中で `loadImage` を呼ぶ書き方は現に踏まれており、探索
+            (`ImageFile.candidates` は包みの中まで走査する) と復号が毎フレーム走る。
+            """)
+        #expect(canvas.imageCache.count == 1)
+        // **返る絵は別物である。** 同じものを配ると、読んで塗り替える書き方が
+        // 2 フレーム目から元の絵を失う
+        #expect(first !== second)
+    }
+
+    @Test("読んだ絵を塗り替えても、次に読んだ絵はファイルの中身のまま")
+    func paintingOverALoadedImageDoesNotChangeTheNextLoad() throws {
+        let url = try writePNG([(1, 0, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let canvas = try makeCanvas()
+        let first = try canvas.loadImage(url.path)
+        first.fill(white)
+
+        let second = try canvas.loadImage(url.path)
+        #expect(second.get(0, 0).red > 0.9)
+        #expect(second.get(0, 0).green < 0.1)
+        #expect(canvas.imagesDecoded == 1)
+    }
+
+    @Test("走らせたままファイルを差し替えると、次に読んだ絵に出る")
+    func replacingTheFileShowsUpOnTheNextLoad() throws {
+        let url = try writePNG([(1, 0, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let canvas = try makeCanvas()
+        let before = try canvas.loadImage(url.path)
+        #expect(before.get(0, 0).red > 0.9)
+
+        try rewritePNG(url, [(0, 0, 1, 1)], width: 1, height: 1)
+
+        let after = try canvas.loadImage(url.path)
+        #expect(
+            after.get(0, 0).blue > 0.9,
+            """
+            走らせたまま絵を差し替えたのに、控えが古い中身を返した。
+
+            名前だけを鍵にすると、いま毎フレーム読み直すことで成り立っている
+            「差し替えたら出る」が黙って効かなくなる。
+            """)
+        #expect(canvas.imagesDecoded == 2)
+    }
+
+    /// 1 色で塗った PNG を書き出す。**大きい絵を速く用意するための道具。**
+    ///
+    /// 画素ごとに置く ``writePNG(_:width:height:space:)`` は色を検査するためのもので、
+    /// 1024 画素四方には向かない (100 万回の塗りになる)。ここは中身を見ないので 1 度で塗る。
+    private func writeSolidPNG(red: Double, side: Int) throws -> URL {
+        let space = CGColorSpace(name: CGColorSpace.displayP3)!
+        let context = CGContext(
+            data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(
+            CGColor(colorSpace: space, components: [CGFloat(red), 0.2, 0.3, 1])!)
+        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-solid-\(UUID().uuidString).png")
+        let destination = CGImageDestinationCreateWithURL(
+            url as CFURL, UTType.png.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return url
+    }
+
+    @Test("控えが量の上限を超えたら、収まるまで古い順に捨てる")
+    func theImageCacheDropsTheOldestUntilItFits() throws {
+        // 1024 画素四方 1 枚が 8 MiB。上限を超えるだけの枚数を読む
+        let side = 1024
+        let each = side * side * MemoryLayout<SIMD4<Float16>>.stride
+        let count = Canvas.imageCacheBudget / each + 1
+        var urls: [URL] = []
+        defer { for url in urls { try? FileManager.default.removeItem(at: url) } }
+
+        let canvas = try makeCanvas()
+        for index in 0..<count {
+            let url = try writeSolidPNG(red: Double(index) / Double(count), side: side)
+            urls.append(url)
+            _ = try canvas.loadImage(url.path)
+        }
+
+        #expect(
+            canvas.imageCacheBytes <= Canvas.imageCacheBudget,
+            """
+            \(count) 枚読んだあとの控えが \(canvas.imageCacheBytes) バイトで、
+            上限 \(Canvas.imageCacheBudget) を超えている。
+
+            名前を組み立てて読む書き方 (連番のコマ) で際限なく増えると、控えのほうが重くなる
+            (ADR-0023 決定 5)。枚数ではなく量で切るのは、絵 1 枚の大きさが揃わないため。
+            """)
+        // 捨てられたのは古いほうで、最後に読んだものは残っている。
+        // **真偽値にしてから渡す。** 控えの中身をそのまま `#expect` に渡すと、失敗した
+        // ときの説明に画素が 100 万個並ぶ (実際に 42 MB 出た)
+        let keptNewest = canvas.imageCache[ImageRequest(path: urls.last!.path)] != nil
+        let droppedOldest = canvas.imageCache[ImageRequest(path: urls.first!.path)] == nil
+        #expect(keptNewest)
+        #expect(droppedOldest)
+        #expect(canvas.imagesDecoded == count)
+    }
+
+    @Test("同じ絵を読み直しても、控えの量は二重に数えない")
+    func rereadingAnImageDoesNotDoubleCountTheCache() throws {
+        let url = try writePNG([(1, 0, 0, 1), (0, 1, 0, 1)], width: 2, height: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let canvas = try makeCanvas()
+        _ = try canvas.loadImage(url.path)
+        let once = canvas.imageCacheBytes
+        #expect(once == 2 * MemoryLayout<SIMD4<Float16>>.stride)
+
+        try rewritePNG(url, [(0, 0, 1, 1), (1, 1, 0, 1)], width: 2, height: 1)
+        _ = try canvas.loadImage(url.path)
+
+        #expect(canvas.imagesDecoded == 2)
+        #expect(canvas.imageCacheBytes == once)
+    }
+
+    @Test("待たない読み込みも同じ控えを使い、当たれば別の仕事を起こさない")
+    func theNonBlockingLoadSharesTheCache() async throws {
+        let url = try writePNG([(0, 1, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let canvas = try makeCanvas()
+        _ = try canvas.loadImage(url.path)
+        let requested = try await canvas.requestImage(url.path)
+
+        #expect(canvas.imagesDecoded == 1)
+        #expect(requested.get(0, 0).green > 0.9)
+    }
+
+    @Test("待たない読み込みが先でも、あとの読み込みは復号し直さない")
+    func theBlockingLoadReusesWhatTheNonBlockingOneRead() async throws {
+        let url = try writePNG([(0, 1, 0, 1)], width: 1, height: 1)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let canvas = try makeCanvas()
+        _ = try await canvas.requestImage(url.path)
+        _ = try canvas.loadImage(url.path)
+
+        #expect(canvas.imagesDecoded == 1)
+    }
+
+    @Test("見つからない絵は控えない")
+    func missingImagesAreNotRemembered() throws {
+        let canvas = try makeCanvas()
+        #expect(throws: ImageFailure.self) { try canvas.loadImage("nowhere/at/all.png") }
+        #expect(throws: ImageFailure.self) { try canvas.loadImage("nowhere/at/all.png") }
+        #expect(canvas.imageCache.isEmpty)
+        #expect(canvas.imagesDecoded == 0)
+    }
 }
