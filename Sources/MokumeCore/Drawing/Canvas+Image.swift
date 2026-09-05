@@ -1,29 +1,88 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import simd
 
 extension Canvas {
     // MARK: - 読む・作る
 
     /// 絵を読む。読み終わるまで返らない。
+    ///
+    /// **同じファイルを二度読んでも、探索と復号は一度だけ。** 返る絵は毎回新しいので、
+    /// 読んでから塗り替えても次の読み込みには影響しない ([#886])。
+    ///
+    /// [#886]: https://github.com/mokume-metal/mokume/issues/886
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
-        try makeImage(ImageFile.decode(path))
+        if let fresh = freshDecoded(for: path) { return try makeImage(fresh) }
+        let url = try ImageFile.locate(path)
+        let stamp = ImageFile.stamp(of: url)
+        let decoded = try ImageFile.decode(at: url, name: path)
+        remember(decoded, path: path, url: url, stamp: stamp)
+        return try makeImage(decoded)
     }
 
     /// 絵を読む。**読んでいる間、他の仕事を止めない。**
+    ///
+    /// 控えに当たれば別の仕事を起こさない (`requestModel` と同じ形)。
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
-        let decoded: ImageFile.Decoded
+        if let fresh = freshDecoded(for: path) { return try makeImage(fresh) }
+        let read: ImageFile.Read
         do {
-            decoded = try await Task.detached(priority: .utility) {
-                try ImageFile.decode(path)
+            read = try await Task.detached(priority: .utility) {
+                try ImageFile.read(path)
             }.value
         } catch let failure as ImageFailure {
             throw failure
         } catch {
             throw .undecodable(path: path)
         }
-        return try makeImage(decoded)
+        remember(read.decoded, path: path, url: read.url, stamp: read.stamp)
+        return try makeImage(read.decoded)
+    }
+
+    // MARK: - 控え
+
+    /// 控えのうち、**いまもファイルと一致しているもの**を返す。
+    ///
+    /// 名前だけを鍵にしない。走らせたまま絵を差し替える書き方は、いまは毎フレーム読み直す
+    /// ことで成り立っており、名前だけで引くとそれが黙って効かなくなる。更新時刻を読めな
+    /// かったときも当たりにしない — 読み直す側 (安全な側) へ倒す。
+    private func freshDecoded(for path: String) -> ImageFile.Decoded? {
+        let request = ImageRequest(path: path)
+        guard let cached = imageCache[request],
+            let stamp = ImageFile.stamp(of: cached.url), stamp == cached.stamp
+        else { return nil }
+        touch(request)
+        return cached.decoded
+    }
+
+    /// 復号したものを控えに入れる。**量が上限を超えたら、収まるまで古い順に捨てる**
+    /// (追い出しの形は `solidMesh(for:)` と同じで、数える単位だけが違う)。
+    private func remember(
+        _ decoded: ImageFile.Decoded, path: String, url: URL, stamp: Date?
+    ) {
+        let request = ImageRequest(path: path)
+        imageCacheBytes -= imageCache[request]?.bytes ?? 0
+        let entry = DecodedImage(url: url, stamp: stamp, decoded: decoded)
+        imageCache[request] = entry
+        imageCacheBytes += entry.bytes
+        imagesDecoded += 1
+        touch(request)
+        // **いま読んだものは残す。** 1 枚で上限を超える絵はありうるが、そこで空にしても
+        // 読み直しが増えるだけで、抱える量は減らない (その絵は読んだ側が持っている)
+        while imageCacheBytes > Canvas.imageCacheBudget, imageCache.count > 1,
+            let oldest = imageCacheUse.min(by: { $0.value < $1.value })?.key
+        {
+            imageCacheBytes -= imageCache.removeValue(forKey: oldest)?.bytes ?? 0
+            imageCacheUse.removeValue(forKey: oldest)
+        }
+    }
+
+    /// 最後に使った時刻を進める。
+    private func touch(_ request: ImageRequest) {
+        imageCacheUse[request] = imageCacheClock
+        imageCacheClock += 1
     }
 
     /// 空の絵を作る。中身は透明。
@@ -150,4 +209,19 @@ extension Canvas {
             uvMax: SIMD2(right / full.x, bottom / full.y),
             color: currentTint)
     }
+}
+
+/// 控えの鍵。**整え方の選択肢が無いので、名前だけ** (`ModelRequest` は整え方も含む)。
+struct ImageRequest: Hashable {
+    var path: String
+}
+
+/// 控えた復号結果。**読んだ場所と更新時刻も持つ** — 差し替えを見逃さないため。
+struct DecodedImage {
+    var url: URL
+    var stamp: Date?
+    var decoded: ImageFile.Decoded
+
+    /// 画素が占める大きさ (バイト)。控えの量を数えるのに使う。
+    var bytes: Int { decoded.pixels.count * MemoryLayout<SIMD4<Float16>>.stride }
 }

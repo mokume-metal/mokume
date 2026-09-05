@@ -261,6 +261,34 @@ public final class Canvas {
         case model(identity: Int)
     }
 
+    /// 読み込んだ絵の復号結果の控え。**同じファイルの中身が変わっていなければ復号し直さない。**
+    ///
+    /// 控えるのは**復号したところまで**で、``Image`` そのものではない ([#886])。絵は可変
+    /// なので (``Image/set(_:_:_:)``・``Image/write(_:)``・``Image/fill(_:)``)、同じものを
+    /// 配ると「読んで塗り替える」書き方が 2 フレーム目から元の絵を失う。読み込みは
+    /// **常にファイルの中身を返す**、を保ったまま探索と復号だけを省く。
+    ///
+    /// [#886]: https://github.com/mokume-metal/mokume/issues/886
+    var imageCache: [ImageRequest: DecodedImage] = [:]
+    var imageCacheUse: [ImageRequest: Int] = [:]
+    var imageCacheClock = 0
+    /// いま控えている画素の総量 (バイト)。
+    var imageCacheBytes = 0
+    /// 控えに置いておく画素の総量 (バイト)。超えたら、収まるまで古い順に捨てる。
+    ///
+    /// **数ではなく量で切る。** 立体の形は 1 つの大きさが揃っているので枚数で足りるが
+    /// (``solidMeshCacheLimit``)、絵は 16 画素四方のことも 4096 画素四方のこともある —
+    /// 枚数で切ると、同じ上限が 8 KiB にも 2 GiB にもなる。上限を持つこと自体は
+    /// [ADR-0023] 決定 5 (名前を組み立てて読む書き方で際限なく増えない) の要求である。
+    ///
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    static let imageCacheBudget = 64 << 20
+    /// 絵を復号した回数 (作ってから通算)。
+    ///
+    /// **控えが効いているかを、絵ではなく数で確かめる値。** 絵は同じでも毎フレーム復号し
+    /// 直していれば費用は払っているので、``solidMeshesBuilt`` と同じ形で数える。
+    var imagesDecoded = 0
+
     /// 読み込んだモデルの控え。**同じファイル・同じ整え方なら読み直さない。**
     var modelCache: [ModelRequest: Model] = [:]
     /// モデルを読むたびに増える番号。
