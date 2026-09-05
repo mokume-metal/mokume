@@ -383,10 +383,15 @@ import MokumeDiagnostics
     /// 開くので、開いたまま環を 1 周すると同じ置き場をもう一度開くことになる (検証層が
     /// 止める。層が無ければ未定義)。組み立ての最中に作る面 (効果の控え) は、全画素を
     /// 書く段しか通らないので塗らずに作る (``StageImage``)。
+    ///
+    /// **断るときは ``RenderFailure/commandsAlreadyOpen`` を投げる。** これは呼び出し順の
+    /// 誤りであって資源の不足ではないので、資源枯渇の case を借りない — 借りていた頃の
+    /// 文面は「走ったままのスケッチを閉じてから試す」で、踏んだ人を必ず間違った方向へ
+    /// 送っていた ([#792](https://github.com/mokume-metal/mokume/issues/792))。
     func makeClearedTexture(descriptor: MTLTextureDescriptor) throws(RenderFailure)
         -> any MTLTexture
     {
-        guard slotOfOpenCommands.isEmpty else { throw .commandBufferUnavailable }
+        guard slotOfOpenCommands.isEmpty else { throw .commandsAlreadyOpen }
         let texture = try makeTexture(descriptor: descriptor)
         let pass = MTL4RenderPassDescriptor()
         let attachment = pass.colorAttachments[0]!

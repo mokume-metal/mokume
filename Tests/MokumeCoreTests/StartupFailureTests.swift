@@ -27,6 +27,7 @@ struct StartupFailureTests {
         ("commandQueueUnavailable", .commandQueueUnavailable),
         ("commandAllocatorUnavailable", .commandAllocatorUnavailable),
         ("commandBufferUnavailable", .commandBufferUnavailable),
+        ("commandsAlreadyOpen", .commandsAlreadyOpen),
         ("residencySetUnavailable", .residencySetUnavailable(reason: "常駐の宣言が多すぎる")),
         ("synchronizationUnavailable", .synchronizationUnavailable),
         ("textureUnavailable", .textureUnavailable(width: 8192, height: 8192)),

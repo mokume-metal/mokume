@@ -4,9 +4,18 @@
 /// 描画の土台で起こりうる失敗。
 ///
 /// 起こりうる失敗が列挙できるので typed throws で運ぶ ([ADR-0010] 決定 7)。
-/// どれも「環境かリソースが足りない」形の失敗で、呼び出し側の引数の誤りではない。
+///
+/// **大半は「環境かリソースが足りない」形だが、それに限らない。** 頼んだ値が通らないもの
+/// (``invalidSize(width:height:)`` / ``invalidPixelDensity(_:)``) と、呼ぶ順序が誤っているもの
+/// (``commandsAlreadyOpen``) も同じ型で運ぶ。呼び出し側から見ればどれも `try` した先で
+/// 起きたことで、運び方を分けても受け取る場所が増えるだけだからである ([#792])。
+///
+/// **区別を持つのは ``description`` のほうである。** 資源が足りないなら「走ったままの
+/// スケッチを閉じてから試す」、呼び方が誤っているなら「呼ぶ場所を直す」と、次にすることが
+/// 文面で分かれる — そこが揃っていないと、踏んだ人を間違った方向へ送る。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
+/// [#792]: https://github.com/mokume-metal/mokume/issues/792
 public enum RenderFailure: Error, Equatable, Sendable {
     /// GPU が見つからない (仮想環境・GPU を持たない実行環境)。
     case deviceUnavailable
@@ -19,6 +28,14 @@ public enum RenderFailure: Error, Equatable, Sendable {
 
     /// コマンドを 1 本作れない。
     case commandBufferUnavailable
+
+    /// コマンドを組み立てている最中に、それを許さない口を呼んだ。**呼び出し順の誤り**で、
+    /// 資源は足りている。
+    ///
+    /// 許さないのは、その口が自分のコマンドをもう 1 本開くからである。開いたまま置き場の
+    /// 環を 1 周すると同じ置き場を二重に開くことになり、検証層が止める (層が無ければ
+    /// 未定義)。いま該当するのは `RenderDevice.makeClearedTexture(descriptor:)` の 1 つ。
+    case commandsAlreadyOpen
 
     /// 常駐させる集合を作れない。
     case residencySetUnavailable(reason: String)
@@ -111,6 +128,14 @@ extension RenderFailure: CustomStringConvertible {
             Self.exhausted("コマンドの置き場")
         case .commandBufferUnavailable:
             Self.exhausted("コマンドを運ぶ 1 本")
+        case .commandsAlreadyOpen:
+            // **資源枯渇の共通文面 (`Self.exhausted`) へ寄せない。** あちらは「走ったままの
+            // スケッチを閉じてから試す」で終わるが、ここで閉じても何も変わらない (#792)
+            """
+            コマンドを組み立てている最中に、塗った面を作ろうとした。
+            資源の不足ではなく呼び出し順の誤りで、面を作るのは組み立てを始める前か、
+            投入し終えたあとにする。
+            """
         case .residencySetUnavailable(let reason):
             Self.exhausted("常駐させる集合", reason: reason)
         case .synchronizationUnavailable:
