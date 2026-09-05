@@ -1899,69 +1899,19 @@ public final class Canvas {
         return entry
     }
 
-    /// 字形 1 つを四角として置く。
+    /// 画素の境目に合わせた四角を 1 枚積む。
     ///
     /// **半画素ぶん戻して置く。** 整数の座標は画素の中心を指すので (``makeProjection``)、
     /// そのまま四角の縁に使うと縁の画素が半分だけ覆われ、焼いた絵が滲む。縁を画素の
     /// 境目へ寄せると、焼いた画素と描く画素がちょうど 1 対 1 になる。
-    func appendGlyphQuad(
-        _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
-    ) {
-        useGlyphTexture()
-        // **色を持つ字形には塗りの色を掛けない。** 焼き場の値に頂点の色を掛けるのが
-        // 合成の唯一の式なので、掛けても変わらない色 — 白 — を積めば、字形の色が
-        // そのまま出る。塗りの透明度だけは効かせたいので、白をその透明度で乗算した
-        // 値にする (乗算済みの白 α は 4 成分すべて α)。
-        //
-        // 「どちらの式を使うか」を描画側へ伝える道が要らないのはこのためで、
-        // 判断は積む側でここだけに閉じている (#271)
-        let color = entry.isColored ? Self.whiteScaled(byAlphaOf: color) : color
-        let shift: Float = -0.5
-        let left = penX + entry.offset.x + shift
-        let top = baseline + entry.offset.y + shift
-        let right = left + entry.size.x
-        let bottom = top + entry.size.y
-
-        let topLeft = transform.apply(x: left, y: top)
-        let topRight = transform.apply(x: right, y: top)
-        let bottomRight = transform.apply(x: right, y: bottom)
-        let bottomLeft = transform.apply(x: left, y: bottom)
-        let uvMin = entry.uvMin
-        let uvMax = entry.uvMax
-
-        appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
-        appendGlyphVertex(topRight, SIMD2(uvMax.x, uvMin.y), color)
-        appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
-        appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
-        appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
-        appendGlyphVertex(bottomLeft, SIMD2(uvMin.x, uvMax.y), color)
-    }
-
-    /// 塗りの透明度だけを持つ白 (乗算済み)。掛けても字形の色を変えない。
-    private static func whiteScaled(byAlphaOf color: LinearRGBA) -> LinearRGBA {
-        let alpha = color.alpha
-        return LinearRGBA(
-            premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
-    }
-
-    private func appendGlyphVertex(
-        _ position: SIMD2<Float>, _ uv: SIMD2<Float>, _ color: LinearRGBA
-    ) {
-        beginFlat()
-        vertices.append(ShapeVertex(position: position, uv: uv, color: color))
-    }
-
-    /// 画像を四角として置く。
     ///
-    /// **字形と同じく半画素ぶん戻して置く** — 整数の座標は画素の中心を指すので、
-    /// そのまま四角の縁に使うと縁が半分だけ覆われ、等倍で置いた絵が滲む。
-    func appendImageQuad(
-        _ picture: Picture, x: Float, y: Float, width: Float, height: Float,
+    /// **字形と画像はどちらもここを通る。** 半画素の約束を 2 箇所に置くと、片方だけ
+    /// 直した日に字と画像がずれる — どちらも同じ座標系に載るので、ずれても「なんとなく
+    /// 滲む」としか見えない ([#948](https://github.com/mokume-metal/mokume/issues/948))。
+    private func appendPixelAlignedQuad(
+        x: Float, y: Float, width: Float, height: Float,
         uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
     ) {
-        picture.prepare()
-        useTexture(picture.texture)
-
         let shift: Float = -0.5
         let left = x + shift
         let top = y + shift
@@ -1979,6 +1929,52 @@ public final class Canvas {
         appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
         appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
         appendGlyphVertex(bottomLeft, SIMD2(uvMin.x, uvMax.y), color)
+    }
+
+    /// 字形 1 つを四角として置く。
+    func appendGlyphQuad(
+        _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
+    ) {
+        useGlyphTexture()
+        // **色を持つ字形には塗りの色を掛けない。** 焼き場の値に頂点の色を掛けるのが
+        // 合成の唯一の式なので、掛けても変わらない色 — 白 — を積めば、字形の色が
+        // そのまま出る。塗りの透明度だけは効かせたいので、白をその透明度で乗算した
+        // 値にする (乗算済みの白 α は 4 成分すべて α)。
+        //
+        // 「どちらの式を使うか」を描画側へ伝える道が要らないのはこのためで、
+        // 判断は積む側でここだけに閉じている (#271)
+        let color = entry.isColored ? Self.whiteScaled(byAlphaOf: color) : color
+        appendPixelAlignedQuad(
+            x: penX + entry.offset.x, y: baseline + entry.offset.y,
+            width: entry.size.x, height: entry.size.y,
+            uvMin: entry.uvMin, uvMax: entry.uvMax, color: color)
+    }
+
+    /// 塗りの透明度だけを持つ白 (乗算済み)。掛けても字形の色を変えない。
+    private static func whiteScaled(byAlphaOf color: LinearRGBA) -> LinearRGBA {
+        let alpha = color.alpha
+        return LinearRGBA(
+            premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
+    }
+
+    private func appendGlyphVertex(
+        _ position: SIMD2<Float>, _ uv: SIMD2<Float>, _ color: LinearRGBA
+    ) {
+        beginFlat()
+        vertices.append(ShapeVertex(position: position, uv: uv, color: color))
+    }
+
+    /// 画像を四角として置く。**字形と同じ半画素の約束**で置かれる
+    /// (``appendPixelAlignedQuad(x:y:width:height:uvMin:uvMax:color:)``)。
+    func appendImageQuad(
+        _ picture: Picture, x: Float, y: Float, width: Float, height: Float,
+        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
+    ) {
+        picture.prepare()
+        useTexture(picture.texture)
+        appendPixelAlignedQuad(
+            x: x, y: y, width: width, height: height,
+            uvMin: uvMin, uvMax: uvMax, color: color)
     }
 
     /// 復号した中身から絵を作る。
