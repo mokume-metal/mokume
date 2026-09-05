@@ -29,7 +29,7 @@ final class Hello: Sketch {
 
 ### `import mokume` で通る語彙
 
-**面に記号のページが無くても、この 1 行で書けるものがある。** 三角関数 7 本 — `sin` / `cos` / `tan` / `asin` / `acos` / `atan` / `atan2` — は名指しで通してあるので、`import Foundation` を足さずにそのまま呼べる。角度の単位は radian で、``Sketch/rotate(_:)`` に渡す値と同じである。
+**面に記号のページが無くても、この 1 行で書けるものがある。** 三角関数 7 本 — `sin` / `cos` / `tan` / `asin` / `acos` / `atan` / `atan2` — は名指しで通してあるので、`import Foundation` を足さずにそのまま呼べる。角度の単位は radian で、``Sketch/rotate(_:)`` に渡す値と同じである。度で書きたいときは ``radians(_:)`` を通す (こちらは mokume 自身の口なので、下にページがある)。
 
 ```swift
 circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
@@ -334,6 +334,12 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``Sketch/noise(_:_:_:)``
 - ``Sketch/noiseSeed(_:)``
 - ``Sketch/noiseDetail(_:_:)``
+
+### 角度と数を直す
+
+- ``radians(_:)``
+- ``degrees(_:)``
+- ``map(_:_:_:_:_:)``
 
 ### GPU に計算させる
 

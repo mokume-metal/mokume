@@ -22,8 +22,16 @@
 //
 // 名指しの境界は手本に置く — Processing / p5 が持つ三角関数はこの 7 本ちょうどで、
 // mokume は既に radians を採っている (`rotate(_ radians: Float)`) ので単位の齟齬が無い。
-// 角度の単位変換・補間・写像は**ここに足さない**。「毎回書いている」ものが作品トラック
-// (ADR-0022) から見えてから決める (ADR-0001 原則 4・#193)。
+//
+// **角度の単位変換と写像は、ここではなく自前で書いた** (#883)。`radians` / `degrees` /
+// `map` に対応する関数は Darwin に無いので、名指しで通せる先が最初から無い。実装は
+// MokumeCore の側 (Math/NumberSurface.swift) にあり、上の行が MokumeCore を丸ごと
+// 再エクスポートするのでそのまま通る。保留していた理由 — 「毎回書いている」ものが
+// 作品トラック (ADR-0022) から見えていない — は、2 作品が同じ 1 行を書いたことで
+// 解けた (ADR-0020 決定 7 の 2026-09-05 改訂・ADR-0001 原則 4・#193)。
+//
+// 補間 (`lerp`) と締め (`constrain`) はまだ踏んでいないので作っていない。足す日に
+// やることは同じ改訂の表にある。
 @_exported import func Darwin.sin
 @_exported import func Darwin.cos
 @_exported import func Darwin.tan
