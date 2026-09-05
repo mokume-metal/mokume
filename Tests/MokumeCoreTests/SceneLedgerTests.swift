@@ -221,9 +221,14 @@ enum Scene: String, CaseIterable, Sendable {
     /// 奥行きを持つ折れ線の輪郭。端の形と折れ目の形を組で振ったもの。
     ///
     /// **平面の ``caps`` / ``joins`` に対する立体側の対。** あちらは `line()` と
-    /// `triangle()` なので平面の経路を通り、`Canvas+Solid.swift` の
-    /// `appendSolidJoin` / `appendSolidSquare` にはどのシーンも届いていなかった
+    /// `triangle()` なので平面の経路を通り、`Canvas+Solid.swift` の折れ目と
+    /// `appendSolidSquare` にはどのシーンも届いていなかった
     /// ([#890](https://github.com/mokume-metal/mokume/issues/890))。
+    ///
+    /// **その覆いの上で、端と折れ目の規則を平面と 1 本に畳んだ**
+    /// (`Canvas+Outline.swift` の `strokeRing`・
+    /// [#891](https://github.com/mokume-metal/mokume/issues/891))。このシーンが動けば、
+    /// 畳んだ骨か立体側の差し込み点のどちらかが壊れている。
     case solidStrokes
     /// 同じ立体を、透視・平行・動かした視点の 3 通りで見たもの。
     case viewpoints
