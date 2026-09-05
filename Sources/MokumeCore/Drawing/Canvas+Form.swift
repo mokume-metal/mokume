@@ -70,6 +70,11 @@ extension Canvas {
     ///
     /// **塗りは常に組み込みのもの。** この経路へ来られるのは断片が効いていない図形だけで
     /// (``formAllowed(fills:)``)、描くのも基本図形専用のパイプラインである。
+    ///
+    /// **光・材質・周囲は既定を置く — 断片が受け取らないからである。** 基本図形の断片
+    /// (`Shapes.metal` の `mokume_formFragment`) の引数は混ぜ方と置き場所と下地だけで、
+    /// 平面・立体が使う `MOKUME_SHAPE_PARAMS` (`Common.metal`) にある光 (buffer 6) ・
+    /// 材質 (8) ・周囲 (9) を持たない。だから平面の列との差は写し忘れではない。
     func closeFormBatch() {
         guard let open = openForm else { return }
         openForm = nil

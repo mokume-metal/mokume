@@ -1114,8 +1114,13 @@ public final class Canvas {
     /// 位置は**その並びの中で**数える。平面と立体は別の並びに溜まるので、それぞれの
     /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
-        if openSource == .solid { return closeSolidBatch() }
-        if openSource == .form { return closeFormBatch() }
+        // **`switch` で振る。** `if` 連鎖だと `VertexSource` にケースが増えた日、
+        // ここだけ黙って平面の経路へ落ちる (他の 5 箇所は `switch` なので止まる)
+        switch openSource {
+        case .solid: return closeSolidBatch()
+        case .form: return closeFormBatch()
+        case .flat: break
+        }
         // **雛形は列と一緒に閉じる。** 開いたままにすると、次に来た同じ形が「もう閉じた
         // 列の頂点」を指す置き場所を足してしまう
         let template = openFlat
@@ -1129,11 +1134,13 @@ public final class Canvas {
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     paint: effectivePaint,
-                    source: openSource, start: start, count: count),
+                    source: .flat, start: start, count: count),
                 clip: currentClip,
-                matrix: jittered(openSource == .flat ? projection : viewProjection),
-                // 平面は光を受けない。立体は**閉じた時点に効いていた光**で描かれる
-                lightRange: openSource == .flat ? 0..<0 : bakeActiveLights(),
+                // ここへ来るのは平面だけ (上の `switch` が他を返している)。**平面は
+                // 奥行きを持たないので視点行列を通さず、光も受けない** — 立体の側は
+                // `closeSolidBatch` が視点行列と閉じた時点の光を持って閉じる
+                matrix: jittered(projection),
+                lightRange: 0..<0,
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),
                 surroundings: bakeSurroundings(),
