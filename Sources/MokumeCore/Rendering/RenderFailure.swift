@@ -41,7 +41,13 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 物差しにできるようにするため。
     case timedOut(seconds: Int)
 
-    /// 描画先の大きさが正しくない (幅・高さは 1 以上でなければならない)。
+    /// 描画先の大きさが正しくない (幅・高さは 1 以上、面の一辺の上限以下でなければ
+    /// ならない)。上限そのものは ``description`` が名乗る。
+    ///
+    /// **上限も同じ case で運ぶ。** 呼び出し側がすることは下限を割ったときと同じ
+    /// (頼む大きさを直す) で、分けても選び分ける先が無い ([#885])。
+    ///
+    /// [#885]: https://github.com/mokume-metal/mokume/issues/885
     case invalidSize(width: Int, height: Int)
 
     /// 描く細かさが正しくない (0 より大きく 1 以下でなければならない)。
@@ -129,7 +135,7 @@ extension RenderFailure: CustomStringConvertible {
         case .invalidSize(let width, let height):
             """
             描画先の大きさが正しくない: \(width)×\(height)
-            幅・高さはどちらも 1 以上にする。
+            幅・高さはどちらも 1 以上 \(RenderDevice.maxTextureSide) 以下にする。
             """
         case .invalidPixelDensity(let density):
             """

@@ -144,4 +144,43 @@ struct RenderTargetTests {
             _ = try RenderTarget(gpu: gpu, width: size.width, height: size.height)
         }
     }
+
+    /// **この検査が見ているのは「落ちないこと」である** ([#885])。
+    ///
+    /// 上限を超えた descriptor に Metal は `nil` を返さず、検証層がアサーションで
+    /// プロセスを終了させる。だから守りが無いと `#expect(throws:)` は失敗ではなく
+    /// **SIGABRT で検査プロセスごと消える** — `try?` でも捕まらない。返ってきて
+    /// この行を評価できること自体が、確かめたいことの半分である。
+    ///
+    /// [#885]: https://github.com/mokume-metal/mokume/issues/885
+    @Test(
+        "上限を超えた描画先は、落ちずに失敗として返る",
+        arguments: [
+            (RenderDevice.maxTextureSide + 1, 4),
+            (4, RenderDevice.maxTextureSide + 1),
+            (20000, 20000),
+        ])
+    func rejectsSizesBeyondTheLimit(size: (width: Int, height: Int)) throws {
+        let gpu = try RenderDevice()
+        #expect(throws: RenderFailure.invalidSize(width: size.width, height: size.height)) {
+            _ = try RenderTarget(gpu: gpu, width: size.width, height: size.height)
+        }
+    }
+
+    /// **境界を 1 つ内側で切っていないこと。**
+    ///
+    /// 軸ごとに細長く見るのは、正方形の 16384² が色だけで 2 GiB・奥行きと合わせて
+    /// 3 GiB になるためである。上限は軸ごとに効くので、1 軸ずつで確かめられる。
+    @Test(
+        "上限ちょうどの描画先は作れる",
+        arguments: [
+            (RenderDevice.maxTextureSide, 1),
+            (1, RenderDevice.maxTextureSide),
+        ])
+    func acceptsSizesAtTheLimit(size: (width: Int, height: Int)) throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: size.width, height: size.height)
+        #expect(target.width == size.width)
+        #expect(target.height == size.height)
+    }
 }
