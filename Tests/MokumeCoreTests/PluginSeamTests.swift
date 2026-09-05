@@ -79,6 +79,8 @@ struct PluginSeamTests {
 
     final class Log {
         var names: [String] = []
+        /// 開く・閉じるの順 (``LifecycleOutlet`` が書く)。
+        var lifecycle: [String] = []
     }
 
     /// 出口と入り口の**両方**を足す束 ([#438](https://github.com/mokume-metal/mokume/issues/438) が最初にそうする形)。
@@ -94,6 +96,49 @@ struct PluginSeamTests {
     struct OutletOnlyPlugin: Plugin {
         let outlet: any Outlet
         func register(into registry: PluginRegistry) { registry.add(outlet: outlet) }
+    }
+
+    /// 開く・閉じるの順を 1 本の並びへ書き込む出口。`failsOnOpen` なら開くのに失敗する。
+    ///
+    /// **転んだ側も書く。** そうすると「開いていない差込口が閉じられていない」ことを、
+    /// 同じ並びの中で見られる ([#926](https://github.com/mokume-metal/mokume/issues/926))。
+    final class LifecycleOutlet: Outlet {
+        struct Failure: Error {}
+        let name: String
+        let log: Log
+        let failsOnOpen: Bool
+
+        init(_ name: String, _ log: Log, failsOnOpen: Bool = false) {
+            self.name = name
+            self.log = log
+            self.failsOnOpen = failsOnOpen
+        }
+
+        func open() throws {
+            if failsOnOpen {
+                log.lifecycle.append("fail:\(name)")
+                throw Failure()
+            }
+            log.lifecycle.append("open:\(name)")
+        }
+
+        func receive(_ frame: OutputFrame) {}
+        func close() { log.lifecycle.append("close:\(name)") }
+    }
+
+    /// 開くのに失敗する入り口。
+    final class BrokenInlet: Inlet {
+        struct Failure: Error {}
+        func open() throws { throw Failure() }
+        func supply() {}
+    }
+
+    /// 出口を**複数**足す束。
+    struct OutletsPlugin: Plugin {
+        let outlets: [any Outlet]
+        func register(into registry: PluginRegistry) {
+            for outlet in outlets { registry.add(outlet: outlet) }
+        }
     }
 
     // MARK: - 検査用のスケッチ
@@ -258,6 +303,38 @@ struct PluginSeamTests {
 
         // 半分だけ生きた束は、書いた人の想定にない状態である
         #expect(inlet.supplied == 0)
+    }
+
+    @Test("出口が開いた後で入り口が転ぶと、開いた出口が閉じられる")
+    func openedSeamsAreClosedWhenALaterSeamFails() throws {
+        let log = Log()
+        let runtime = try makeRuntime([
+            BothPlugin(outlet: LifecycleOutlet("a", log), inlet: BrokenInlet())
+        ])
+
+        try runtime.advance()
+
+        // 外すのを登録簿からだけにすると、先に開けた出口が掴んだ外の資源
+        // (映像の口・音の装置) が誰にも閉じられないまま残る
+        #expect(log.lifecycle == ["open:a", "close:a"])
+    }
+
+    @Test("開いた逆順に閉じる。開いていない差込口は閉じない")
+    func openedSeamsAreClosedInReverseOrder() throws {
+        let log = Log()
+        let runtime = try makeRuntime([
+            OutletsPlugin(outlets: [
+                LifecycleOutlet("a", log),
+                LifecycleOutlet("b", log),
+                LifecycleOutlet("c", log, failsOnOpen: true),
+            ])
+        ])
+
+        try runtime.advance()
+
+        // c は開いていないので閉じない。b → a と戻すのは、後から開いたものが先に
+        // 開いたものに依っていても順序が壊れないため
+        #expect(log.lifecycle == ["open:a", "open:b", "fail:c", "close:b", "close:a"])
     }
 
     @Test("続けて転んだ出口は外れる。フレームは止まらない")

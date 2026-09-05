@@ -220,10 +220,27 @@ public final class SketchRuntime {
             plugin.register(into: registry)
             // **束の単位で開く。** 出口と入り口の両方を持つ束は、片方が開けなければ
             // 束ごと外れる — 半分だけ生きた束は、書いた人の想定にない状態である
+            //
+            // **外すのは登録簿からだけでは足りない。** 先に開けた差込口が掴んだ外の資源
+            // (映像の口・音の装置) は、ここで閉じないと誰も閉じない — 外した束は下の並びに
+            // 載らないので、``closePlugins()`` が届かないためである ([#926])。戻すのは開いた
+            // 逆順で、後から開いたものが先に開いたものに依っていても順序が壊れないようにする
+            //
+            // [#926]: https://github.com/mokume-metal/mokume/issues/926
+            var openedOutlets: [any Outlet] = []
+            var openedInlets: [any Inlet] = []
             do {
-                for outlet in registry.outlets { try outlet.open() }
-                for inlet in registry.inlets { try inlet.open() }
+                for outlet in registry.outlets {
+                    try outlet.open()
+                    openedOutlets.append(outlet)
+                }
+                for inlet in registry.inlets {
+                    try inlet.open()
+                    openedInlets.append(inlet)
+                }
             } catch {
+                for inlet in openedInlets.reversed() { inlet.close() }
+                for outlet in openedOutlets.reversed() { outlet.close() }
                 Diagnostics.warn(
                     "\(type(of: plugin)) を開けませんでした: \(error)。この束は外して続けます")
                 continue
