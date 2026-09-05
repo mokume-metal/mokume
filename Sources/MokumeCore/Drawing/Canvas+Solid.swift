@@ -133,7 +133,7 @@ extension Canvas {
         useFillTexture()
 
         if openSolid?.source != source
-            || solidInstances.count - (openSolid?.instanceStart ?? 0) >= instanceCapacity
+            || isBatchFull(solidInstances.count, since: openSolid?.instanceStart ?? 0)
         {
             // 出どころが変わった (か、1 列に入る上限に達した)。列を閉じて頂点を置き直す
             closeBatch()

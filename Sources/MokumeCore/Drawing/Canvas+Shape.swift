@@ -183,19 +183,11 @@ extension Canvas {
         beginSolids()
         var placed = 0
         while placed < placements.count {
-            // **頂点は 1 度だけ置く。** 上限に達したら列を閉じて置き直す — 描く
-            // 回数が増えるだけで、絵は 1 ビットも変わらない
-            closeBatch()
-            let start = solidVertices.count
-            solidVertices.append(
-                contentsOf: shape.solidVertices[run.start..<(run.start + run.count)])
-            retainedSerial += 1
-            openSolid = OpenSolid(
-                source: .retained(serial: retainedSerial), vertexStart: start,
-                vertexCount: run.count, instanceStart: solidInstances.count)
-
-            let room = min(instanceCapacity, placements.count - placed)
-            for placement in placements[placed..<(placed + room)] {
+            // **頂点は列ごとに 1 度だけ置く。** 上限に達したら列を閉じて置き直す —
+            // 描く回数が増えるだけで、絵は 1 ビットも変わらない
+            let start = openRetainedSolid(run, of: shape)
+            while placed < placements.count, !isBatchFull(solidInstances.count, since: start) {
+                let placement = placements[placed]
                 let combined = Transform(
                     matrix: transform.matrix * placement.transform.matrix)
                 solidInstances.append(
@@ -205,9 +197,26 @@ extension Canvas {
                         // 変わらない)。渡された色があればそれを掛ける
                         color: placement.fill
                             ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
+                placed += 1
             }
-            placed += room
         }
+    }
+
+    /// 保持した形の頂点を積んで、置き場所を入れる列を開く。返すのはその列の先頭。
+    ///
+    /// **先頭を返すのは、上限に達したかを同じ形で数えるため** (``Canvas/isBatchFull(_:since:)``)。
+    /// `openSolid` から読み直すと、開いた直後に強制開示が要る。
+    private func openRetainedSolid(_ run: Shape.Run, of shape: Shape) -> Int {
+        closeBatch()
+        let start = solidVertices.count
+        solidVertices.append(
+            contentsOf: shape.solidVertices[run.start..<(run.start + run.count)])
+        retainedSerial += 1
+        let instanceStart = solidInstances.count
+        openSolid = OpenSolid(
+            source: .retained(serial: retainedSerial), vertexStart: start,
+            vertexCount: run.count, instanceStart: instanceStart)
+        return instanceStart
     }
 
     /// 置けない置き場所を、初回だけ知らせる。
