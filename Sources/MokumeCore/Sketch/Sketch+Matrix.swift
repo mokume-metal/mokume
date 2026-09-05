@@ -61,6 +61,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=9c067b7f
     // shot: 2 snippet=ad0cc1bf
     public func applyMatrix(_ matrix: Transform) { canvas.applyMatrix(matrix) }
@@ -92,6 +94,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=a95c28ee
     public func resetMatrix() { canvas.resetMatrix() }
 
@@ -150,6 +154,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 積んだ変換も**フレームを越えない**。フレームの頭で空に戻るので、戻し忘れても次のフレームへは残らない。
     // shot: 1 snippet=ec08da66
     // shot: 2 snippet=f32daf1c
     public func pushMatrix() { canvas.pushMatrix() }
@@ -180,6 +186,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 積んだ変換も**フレームを越えない**。フレームの頭で空に戻る。
     // shot: 1 snippet=2d914404
     public func popMatrix() { canvas.popMatrix() }
 
@@ -214,6 +222,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 積んだ**変換**はフレームを越えない — フレームの頭で空に戻る。
     // shot: 1 snippet=2665a2c3
     public func push() { canvas.push() }
 
@@ -249,6 +259,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 積んだ**変換**はフレームを越えない — フレームの頭で空に戻る。
     // shot: 1 snippet=45e99a0e
     public func pop() { canvas.pop() }
 }

@@ -84,6 +84,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=a705bbfd
     // shot: 2 snippet=bedf025c
     public func fill(_ color: LinearRGBA) { canvas.fill(color) }
@@ -129,6 +131,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=4c4fa3bb
     // shot: 2 snippet=fbfeb1bb
     public func stroke(_ color: LinearRGBA) { canvas.stroke(color) }
@@ -174,6 +178,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 線の太さは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=1f8ee8eb
     // shot: 2 snippet=edd890f7
     public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
@@ -200,6 +206,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=8bdd372c
     public func noFill() { canvas.noFill() }
 
@@ -225,6 +233,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=ddde199c
     public func noStroke() { canvas.noStroke() }
 
@@ -302,6 +312,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 端の形は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=a8be414a
     // shot: 2 snippet=1620a3e0
     // shot: 3 snippet=ee04ab7c
@@ -428,6 +440,8 @@ extension Sketch {
     ///
     /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
     /// 「どれだけ効かせるか」はアルファが決める。
+    ///
+    /// - Note: 混ぜ方は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=579fbd41
     // shot: 2 snippet=519aa11b
     // shot: 3 snippet=0f727a4c
@@ -512,6 +526,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 折れ目の形は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=dc0e1fbc
     // shot: 2 snippet=449f0a0c
     // shot: 3 snippet=6ea17290

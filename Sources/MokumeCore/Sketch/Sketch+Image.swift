@@ -328,6 +328,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 座標の読み方は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=3489d6ec
     // shot: 2 snippet=1c6055c2
     // shot: 3 snippet=bbc7b35e
@@ -395,6 +397,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=25c42a96
     // shot: 2 snippet=4775cb21
     public func tint(_ color: LinearRGBA) { canvas.tint(color) }
@@ -433,6 +437,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=82db2864
     public func noTint() { canvas.noTint() }
 }

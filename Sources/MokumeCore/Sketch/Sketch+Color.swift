@@ -42,6 +42,8 @@ extension Sketch {
     ///
     /// - Note: 引数は `Float` なので `Int` の変数はそのまま渡せない (`fill(Float(i), 0, 0)`)。
     ///   0–1 で書きたいときは ``LinearRGBA/display(red:green:blue:alpha:)`` を渡す。
+    ///
+    /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     public func fill(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
         canvas.fill(red, green, blue, alpha)
     }
@@ -53,6 +55,8 @@ extension Sketch {
     /// fill(230)
     /// circle(200, 150, 180)
     /// ```
+    ///
+    /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     public func fill(_ gray: Float, _ alpha: Float = 255) {
         canvas.fill(gray, alpha)
     }
@@ -69,6 +73,8 @@ extension Sketch {
     /// stroke(255, 204, 0)
     /// circle(200, 150, 180)
     /// ```
+    ///
+    /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func stroke(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
         canvas.stroke(red, green, blue, alpha)
     }
@@ -81,6 +87,8 @@ extension Sketch {
     /// stroke(200)
     /// line(60, 90, 340, 210)
     /// ```
+    ///
+    /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func stroke(_ gray: Float, _ alpha: Float = 255) {
         canvas.stroke(gray, alpha)
     }
@@ -92,6 +100,8 @@ extension Sketch {
     /// ```swift
     /// tint(255, 204, 0)
     /// ```
+    ///
+    /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func tint(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
         canvas.tint(red, green, blue, alpha)
     }
@@ -101,6 +111,8 @@ extension Sketch {
     /// ```swift
     /// tint(255, 128)
     /// ```
+    ///
+    /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func tint(_ gray: Float, _ alpha: Float = 255) {
         canvas.tint(gray, alpha)
     }
