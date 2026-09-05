@@ -58,7 +58,7 @@ extension Canvas {
     /// フレームの外 (初期化のとき) に置かれた光は、どのフレームにも属さないので
     /// 警告して無視する (同 決定 4)。黙って捨てると「書いたのに効かない」だけが残る。
     private func addLight(_ light: Light) {
-        guard isDrawing else { return warnLightOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.light) }
         closeBatch()
         activeLights.append(light)
     }
@@ -72,11 +72,4 @@ extension Canvas {
         return length_squared(direction) > 0 ? normalize(direction) : SIMD3<Float>(0, 1, 0)
     }
 
-    /// フレームの外で光を置いたことを、初回だけ知らせる。
-    private func warnLightOutsideFrame() {
-        warnOnce(
-            .lightOutsideFrame,
-            "光はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
-                + "初期化のときに置いた光はどのフレームにも属さないため、無視しました")
-    }
 }

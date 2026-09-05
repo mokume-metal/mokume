@@ -44,7 +44,7 @@ extension Canvas {
     /// フレームの外 (初期化のとき) に書かれた材質は、どのフレームにも属さないので
     /// 警告して無視する (同 決定 4)。光・視点と同じ扱いである。
     private func apply(_ change: (inout Material) -> Void) {
-        guard isDrawing else { return warnMaterialOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.material) }
         closeBatch()
         change(&currentMaterial)
     }
@@ -60,14 +60,6 @@ extension Canvas {
         guard (0..<3).allSatisfy({ components[$0].isFinite && components[$0] >= 0 })
         else { return nil }
         return components
-    }
-
-    /// フレームの外で材質を書いたことを、初回だけ知らせる。
-    private func warnMaterialOutsideFrame() {
-        warnOnce(
-            .materialOutsideFrame,
-            "材質はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
-                + "初期化のときに書いた材質はどのフレームにも属さないため、無視しました")
     }
 
     /// 受け取れない値を、初回だけ知らせる。

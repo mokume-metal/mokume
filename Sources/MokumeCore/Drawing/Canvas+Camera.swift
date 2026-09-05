@@ -66,7 +66,7 @@ extension Canvas {
     /// フレームの外 (初期化のとき) に書かれた視点は、どのフレームにも属さないので
     /// 警告して無視する (同 決定 4)。黙って捨てると「書いたのに効かない」だけが残る。
     private func apply(_ camera: Camera, name: String) {
-        guard isDrawing else { return warnCameraOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.camera) }
         guard camera.isUsable else { return warnBadCamera(name) }
         closeBatch()
         cameraStorage = camera
@@ -75,7 +75,7 @@ extension Canvas {
     /// 投影だけを差し替える。**視点の位置は動かさない** — どこから見るかと、どう写すかは
     /// 別の指定なので、片方を書いたときにもう片方が既定へ戻ると驚きになる。
     private func apply(replacingProjection projection: Camera.Projection) {
-        guard isDrawing else { return warnCameraOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.camera) }
         guard Self.isUsable(projection) else { return warnBadProjection(projection) }
         var camera = currentCamera
         camera.projection = projection
@@ -93,14 +93,6 @@ extension Canvas {
             guard Camera.isDrawable(left, right, bottom, top, near, far) else { return false }
             return left != right && bottom != top && near != far
         }
-    }
-
-    /// フレームの外で視点を書いたことを、初回だけ知らせる。
-    private func warnCameraOutsideFrame() {
-        warnOnce(
-            .cameraOutsideFrame,
-            "視点と投影はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
-                + "初期化のときに書いた視点はどのフレームにも属さないため、無視しました")
     }
 
     /// 成り立たない視点を、初回だけ知らせる。描画は投げずに、いまの視点のまま続ける。

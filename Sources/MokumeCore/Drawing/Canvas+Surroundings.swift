@@ -8,7 +8,7 @@ extension Canvas {
 
     // 立体を取り巻く周囲を置く。
     public func surroundings(_ surroundings: Surroundings) {
-        guard isDrawing else { return warnSurroundingsOutsideFrame() }
+        guard isDrawing else { return warnOutsideFrame(.surroundings) }
         guard surroundings.isUsable else { return warnBadSurroundings() }
         closeBatch()
         activeSurroundings = surroundings
@@ -41,14 +41,6 @@ extension Canvas {
         // この面が「ただの立体」として閉じられ、周囲ではなく塗りで出る
         closeBatch()
         backdrop = nil
-    }
-
-    /// フレームの外で周囲を置いたことを、初回だけ知らせる。
-    private func warnSurroundingsOutsideFrame() {
-        warnOnce(
-            .surroundingsOutsideFrame,
-            "周囲はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
-                + "初期化のときに置いた周囲はどのフレームにも属さないため、無視しました")
     }
 
     /// 受け取れない周囲を、初回だけ知らせる。
