@@ -70,6 +70,24 @@ import Metal
         return buffers[ring.slot]
     }
 
+    /// いまのスロットの置き場を `count` 個ぶん取って、並びをそのまま写す。
+    ///
+    /// **写しは 8 か所で同文だった** ([#895])。空の並びは `baseAddress` が nil になり
+    /// うるうえ、`byteCount: 0` の複写も避けたいので、どちらも写さずに抜ける — その
+    /// 判定が 1 か所だけ抜けていたのが、畳む前の姿である。
+    ///
+    /// [#895]: https://github.com/mokume-metal/mokume/issues/895
+    func write<Element>(_ source: [Element], holding count: Int) throws(RenderFailure)
+        -> any MTLBuffer
+    {
+        let buffer = try buffer(holding: count)
+        source.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress, bytes.count > 0 else { return }
+            buffer.contents().copyMemory(from: base, byteCount: bytes.count)
+        }
+        return buffer
+    }
+
     /// 全スロットを取り直す。
     private func grow(to count: Int) throws(RenderFailure) {
         let wanted = max(count, max(capacity * 2, minimumCapacity))

@@ -2467,41 +2467,18 @@ public final class Canvas {
 
     /// Swift の並びに溜めた頂点・置き場所・光を、GPU の置き場へ写す。
     private func uploadGeometry() throws(RenderFailure) -> GeometryBuffers {
-        let buffer = try vertexStorage.buffer(holding: vertices.count)
-        vertices.withUnsafeBytes { source in
-            guard let base = source.baseAddress, source.count > 0 else { return }
-            buffer.contents().copyMemory(from: base, byteCount: source.count)
-        }
-        let formBuffer = try formInstanceStorage.buffer(
-            holding: max(formInstances.count, 1))
-        formInstances.withUnsafeBytes { source in
-            guard let base = source.baseAddress, source.count > 0 else { return }
-            formBuffer.contents().copyMemory(from: base, byteCount: source.count)
-        }
-        let instanceBuffer = try solidInstanceStorage.buffer(
-            holding: max(solidInstances.count, 1))
-        solidInstances.withUnsafeBytes { source in
-            guard let base = source.baseAddress, source.count > 0 else { return }
-            instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
-        }
-        let flatInstanceBuffer = try flatInstanceStorage.buffer(
-            holding: flatInstances.count)
-        flatInstances.withUnsafeBytes { source in
-            guard let base = source.baseAddress, source.count > 0 else { return }
-            flatInstanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
-        }
-
-        let solidBuffer = try solidVertexStorage.buffer(holding: solidVertices.count)
-        solidVertices.withUnsafeBytes { source in
-            guard let base = source.baseAddress else { return }
-            solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
-        }
+        let buffer = try vertexStorage.write(vertices, holding: vertices.count)
+        let formBuffer = try formInstanceStorage.write(
+            formInstances, holding: max(formInstances.count, 1))
+        let instanceBuffer = try solidInstanceStorage.write(
+            solidInstances, holding: max(solidInstances.count, 1))
+        let flatInstanceBuffer = try flatInstanceStorage.write(
+            flatInstances, holding: flatInstances.count)
+        let solidBuffer = try solidVertexStorage.write(
+            solidVertices, holding: solidVertices.count)
         // 光の置き場。列は自分の区間を指す
-        let lightsBuffer = try lightStorageBuffer.buffer(holding: max(lightStorage.count, 1))
-        lightStorage.withUnsafeBytes { source in
-            guard let base = source.baseAddress, source.count > 0 else { return }
-            lightsBuffer.contents().copyMemory(from: base, byteCount: source.count)
-        }
+        let lightsBuffer = try lightStorageBuffer.write(
+            lightStorage, holding: max(lightStorage.count, 1))
         pipeline.argumentTable.setAddress(
             lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
         return GeometryBuffers(
@@ -2687,17 +2664,10 @@ public final class Canvas {
             return (shadowMap, matrix)
         }
         let map = try shadowMapHolding(detail)
-        let solidBuffer = try solidVertexStorage.buffer(holding: solidVertices.count)
-        solidVertices.withUnsafeBytes { source in
-            guard let base = source.baseAddress, source.count > 0 else { return }
-            solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
-        }
-        let instanceBuffer = try solidInstanceStorage.buffer(
-            holding: max(solidInstances.count, 1))
-        solidInstances.withUnsafeBytes { source in
-            guard let base = source.baseAddress, source.count > 0 else { return }
-            instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
-        }
+        let solidBuffer = try solidVertexStorage.write(
+            solidVertices, holding: solidVertices.count)
+        let instanceBuffer = try solidInstanceStorage.write(
+            solidInstances, holding: max(solidInstances.count, 1))
         let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
         var value = matrix
         matrixBuffer.contents().copyMemory(

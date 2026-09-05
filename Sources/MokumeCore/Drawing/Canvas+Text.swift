@@ -76,20 +76,44 @@ extension Canvas {
         let face = typeface
         let lines = string.split(separator: "\n", omittingEmptySubsequences: false)
         let leading = resolvedTextLeading
-        // 最初の行の基準線から、最後の行の基準線までの距離
-        let span = Float(lines.count - 1) * leading
-
-        var baseline = y
-        switch currentVerticalTextAlign {
-        case .baseline: break
-        case .top: baseline = y + face.ascent
-        case .bottom: baseline = y - face.descent - span
-        case .center: baseline = y + (face.ascent - face.descent - span) / 2
-        }
+        var baseline = firstBaseline(at: y, face: face, lines: lines.count)
 
         for line in lines {
             drawLine(line, face: face, x: x, baseline: baseline, color: color)
             baseline += leading
+        }
+    }
+
+    /// 最初の行の基準線。**縦の整列と行数から決まる。**
+    ///
+    /// 描くとき (``text(_:_:_:)``) と輪郭を返すとき (``textOutline(_:_:_:)``) で
+    /// **同じ値でなければならない** — 後者の doc が「描くときと同じ送りで並ぶ」と
+    /// 保証しているのに、畳む前はその保証を 2 つの独立した写しが支えていた ([#895])。
+    ///
+    /// 矩形へ流し込む側 (``textFlow(_:in:)``) は畳んでいない — あちらは塊全体を矩形の
+    /// 中へ置く計算で、基準線ではなく上端から決まる。
+    ///
+    /// [#895]: https://github.com/mokume-metal/mokume/issues/895
+    private func firstBaseline(at y: Float, face: Typeface, lines: Int) -> Float {
+        // 最初の行の基準線から、最後の行の基準線までの距離
+        let span = Float(lines - 1) * resolvedTextLeading
+        switch currentVerticalTextAlign {
+        case .baseline: return y
+        case .top: return y + face.ascent
+        case .bottom: return y - face.descent - span
+        case .center: return y + (face.ascent - face.descent - span) / 2
+        }
+    }
+
+    /// 1 行の書き始め。**横の整列と、その行の幅から決まる。**
+    ///
+    /// 幅は ``Typeface/advance(of:)`` が数える — 描くときと輪郭を返すときで別々に
+    /// 数えると、整列が数画素ずれる形で食い違う。
+    private func penStart(at x: Float, face: Typeface, line: some StringProtocol) -> Float {
+        switch currentHorizontalTextAlign {
+        case .left: return x
+        case .center: return x - face.advance(of: line) / 2
+        case .right: return x - face.advance(of: line)
         }
     }
 
@@ -103,12 +127,7 @@ extension Canvas {
     ) {
         guard !line.isEmpty else { return }
 
-        var pen = x
-        switch currentHorizontalTextAlign {
-        case .left: break
-        case .center: pen -= face.advance(of: line) / 2
-        case .right: pen -= face.advance(of: line)
-        }
+        var pen = penStart(at: x, face: face, line: line)
 
         for scalar in line.unicodeScalars {
             guard let resolved = face.glyph(for: scalar) else { continue }
@@ -264,15 +283,7 @@ extension Canvas {
         let face = typeface
         let lines = string.split(separator: "\n", omittingEmptySubsequences: false)
         let leading = resolvedTextLeading
-        let span = Float(lines.count - 1) * leading
-
-        var baseline = y
-        switch currentVerticalTextAlign {
-        case .baseline: break
-        case .top: baseline = y + face.ascent
-        case .bottom: baseline = y - face.descent - span
-        case .center: baseline = y + (face.ascent - face.descent - span) / 2
-        }
+        var baseline = firstBaseline(at: y, face: face, lines: lines.count)
 
         var contours: [TextContour] = []
         for line in lines {
@@ -286,12 +297,7 @@ extension Canvas {
     private func outline(
         of line: some StringProtocol, face: Typeface, x: Float, baseline: Float
     ) -> [TextContour] {
-        var pen = x
-        switch currentHorizontalTextAlign {
-        case .left: break
-        case .center: pen -= face.advance(of: line) / 2
-        case .right: pen -= face.advance(of: line)
-        }
+        var pen = penStart(at: x, face: face, line: line)
 
         var contours: [TextContour] = []
         for scalar in line.unicodeScalars {
