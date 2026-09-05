@@ -29,9 +29,7 @@ struct FormShapeTests {
     private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
 
     private func makeCanvas(width: Int = 96, height: Int = 96) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 黒地に描いて、出力段を通した画素を返す。

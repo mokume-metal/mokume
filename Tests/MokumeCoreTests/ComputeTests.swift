@@ -115,9 +115,7 @@ struct ComputeTests {
         """
 
     private func makeCanvas(width: Int = 32, height: Int = 8) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     private func gray(_ image: DisplayImage, atColumn column: Int) -> Double {

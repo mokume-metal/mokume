@@ -24,9 +24,7 @@ struct SurroundingsTests {
     private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 中央に球を 1 つ置く。周囲・光・材質だけを差し替えられる形にしてある。

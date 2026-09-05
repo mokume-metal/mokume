@@ -92,9 +92,7 @@ struct ParticleEmissionTests {
 )
 struct ParticleTests {
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 絵の指紋。**食い違ったときに画素が丸ごと並ばない**ようにするため、比べるのは

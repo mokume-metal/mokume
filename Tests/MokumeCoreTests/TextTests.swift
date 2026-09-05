@@ -32,9 +32,7 @@ struct TextTests {
     private let fontName = "Helvetica"
 
     private func makeCanvas(width: Int = 160, height: Int = 96) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        let canvas = try Canvas(target: target, gpu: gpu)
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
         canvas.textFont(fontName)
         canvas.textSize(32)
         return canvas

@@ -22,9 +22,7 @@ struct LightTests {
     private let grey = LinearRGBA.linear(red: 0.5, green: 0.5, blue: 0.5)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     private func pixels(of canvas: Canvas) throws -> DisplayImage {

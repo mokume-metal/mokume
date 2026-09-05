@@ -25,9 +25,7 @@ struct BrightnessTests {
     }
 
     private func makeCanvas(width: Int = 32, height: Int = 32) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 一様な灰色 1 枚を描く。
