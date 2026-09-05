@@ -493,17 +493,35 @@ class HookExitIsSharedTest(unittest.TestCase):
     1 本だったから気付けた。綴りが 3 本に散った状態で仕様が動けば、直し漏れた 1 本は
     黙って効かなくなる。
 
-    **一覧は数え上げない** — `scripts/*-guard.sh` を glob するので、4 本目を足した人が
-    ここを直さなくても掛かる (`bash_invocation_test.py` が検査ファイル全体を glob して
-    `/bin/bash` を見張っているのと同じ構え)。
+    **一覧は数え上げない** — `.claude/settings.json` の PreToolUse 配線から引くので、
+    4 本目を足して配線した人がここを直さなくても掛かる (`bash_invocation_test.py` が
+    検査ファイル全体を glob して `/bin/bash` を見張っているのと同じ構え)。
     """
 
     def hooks(self):
-        found = sorted(p for p in (REPO / "scripts").glob("*-guard.sh"))
+        """フックの一覧は **配線**から引く。名前の綴りでは決めない (#944)。
+
+        以前は `scripts/*-guard.sh` を glob していたが、それが見ていたのは「フックで
+        ある」ことではなく名前だった。CI から呼ぶ `scripts/parent-guard.sh` (Issue
+        ツリーの見張り・#798) を置いた日に、フックでないスクリプトが下の 4 つの検査へ
+        巻き込まれた — `guard-lib.sh` が持つのは「Claude Code へ返す JSON の綴りと
+        fail open」で、CI のスクリプトには意味が無い。
+
+        **glob より広い。** 配線されていれば名前が `-guard.sh` でなくても掛かる。
+        逆に配線されていないフックは**そもそも効いていない**ので、その出口の綴りを
+        見張る意味が無い (同じ読み方の前例は pr_identity_guard_test.py の WiringTest)。
+        """
+        settings = json.loads((REPO / ".claude" / "settings.json").read_text())
+        found = set()
+        for entry in settings["hooks"]["PreToolUse"]:
+            for hook in entry["hooks"]:
+                named = re.search(r"scripts/([A-Za-z0-9_.-]+\.sh)", hook["command"])
+                if named:
+                    found.add(REPO / "scripts" / named.group(1))
         # 対象が 0 件の緑は、通っていることに意味が無い (置き場の移動を緑のまま
         # 見逃さないため。bash_invocation_test.py と同じ構え)
         self.assertTrue(found, "検査対象のフックが 1 つも無い")
-        return found
+        return sorted(found)
 
     def offending(self, path, predicate):
         """条件に当たる行を「行番号: 中身」で返す。**散文は見ない。**
