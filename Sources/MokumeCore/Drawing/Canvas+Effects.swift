@@ -51,11 +51,18 @@ extension Canvas {
                 reason: "1 つの効果に渡せる値は \(EffectPipeline.valueSlotCapacity / 4) 個までです")
         }
         do {
-            // **作ったものを面の側で抱えない** ([#738])。効果の断片は控えに足されるだけで
-            // 読み手が 1 つも無く、利用者が手放したものを面と同じ寿命にしていた
-            return try EffectShader(
+            // **弱く持って、失敗だけを読む** ([#787])。強く持つと利用者が手放した断片まで
+            // 面と同じ寿命になるので抱えない ([#738]) が、抱えないだけにすると差し替えに
+            // 失敗した効果が黙って前の絵を出し続ける。控えは観測 (`shaderFailures`) の
+            // ためにある
+            //
+            // [#787]: https://github.com/mokume-metal/mokume/issues/787
+            // [#738]: https://github.com/mokume-metal/mokume/issues/738
+            let effect = try EffectShader(
                 name: name, url: url, body: body, values: values,
                 gpu: gpu, pipeline: try effectPipeline())
+            remember(effect)
+            return effect
         } catch {
             throw .notCompilable(path: url?.path ?? name, reason: "\(error)")
         }
