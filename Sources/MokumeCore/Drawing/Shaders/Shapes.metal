@@ -168,20 +168,6 @@ struct FormInstance {
     uint4 meta;
 };
 
-// 種別・端・折れ目・旗の番号。Swift 側の FormInstance と対応する
-constant uint kFormRect = 0;
-constant uint kFormEllipse = 1;
-constant uint kFormArc = 2;
-constant uint kFormLine = 3;
-constant uint kFormCapRound = 0;
-constant uint kFormCapSquare = 1;
-constant uint kFormCapProject = 2;
-constant uint kFormJoinMiter = 0;
-constant uint kFormJoinBevel = 1;
-constant uint kFormJoinRound = 2;
-constant uint kFormFills = 1;
-constant uint kFormStrokes = 2;
-
 /// この列の図形が塗りを持つか・輪郭を持つか。**列ごとに決まる** ([#771])。
 ///
 /// 旗を置き場所から読んで枝で分けていた頃は、輪郭を 1 本も描かない絵でも輪郭の距離場と

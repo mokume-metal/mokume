@@ -29,13 +29,18 @@ struct FormInstance {
     var fill: SIMD4<Float>
     /// 輪郭 (乗算済み線形)。輪郭が無ければ 0。
     var stroke: SIMD4<Float>
-    /// x: 種別, y: 端の形, z: 折れ目の形, w: 旗。番号はシェーダ側の定数と対応する。
+    /// x: 種別, y: 端の形, z: 折れ目の形, w: 旗。番号の正本は `Shaders/Kinds.metal`。
     var meta: SIMD4<UInt32>
 
     /// シェーダ側の構造体と一致すべき大きさ (バイト)。
     static let expectedStride = 96
 
-    /// 形の種別。シェーダ側の `kForm*` と同じ番号。
+    /// 形の種別。
+    ///
+    /// **正本は `Shaders/Kinds.metal`** (`kFormRect` …)。割れたら `KindLayoutTests`
+    /// が落ちる ([#802])。
+    ///
+    /// [#802]: https://github.com/mokume-metal/mokume/issues/802
     enum Kind: UInt32 {
         case rect = 0
         case ellipse = 1
@@ -75,7 +80,7 @@ struct FormInstance {
             (fills ? Self.fillsFlag : 0) | (strokes ? Self.strokesFlag : 0))
     }
 
-    /// 端の形の番号。シェーダ側の `kFormCap*` と同じ。
+    /// 端の形の番号。正本は `Shaders/Kinds.metal` の `kFormCap*`。
     static func code(of cap: StrokeCap) -> UInt32 {
         switch cap {
         case .round: 0
@@ -84,7 +89,7 @@ struct FormInstance {
         }
     }
 
-    /// 折れ目の形の番号。シェーダ側の `kFormJoin*` と同じ。
+    /// 折れ目の形の番号。正本は `Shaders/Kinds.metal` の `kFormJoin*`。
     static func code(of join: StrokeJoin) -> UInt32 {
         switch join {
         case .miter: 0

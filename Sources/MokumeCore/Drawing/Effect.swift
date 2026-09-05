@@ -46,8 +46,8 @@ public enum Effect {
             guard level > 0 else {
                 // 小さなぼかしは全解像度で横 → 縦。これまでと同じ 2 段
                 return [
-                    EffectPass(control: Self.control(kind: 1, radius)),
-                    EffectPass(control: Self.control(kind: 2, radius)),
+                    EffectPass(control: Self.control(kind: .blurX, radius)),
+                    EffectPass(control: Self.control(kind: .blurY, radius)),
                 ]
             }
             // 大きなぼかしは縮めた絵の上で回す (#755): 箱で縮める → 横 → 縦 → 線形に広げる。
@@ -57,16 +57,16 @@ public enum Effect {
             return [
                 EffectPass(
                     input: .current, output: .side(0, level: level),
-                    control: Self.control(kind: 13, factor)),
+                    control: Self.control(kind: .resize, factor)),
                 EffectPass(
                     input: .side(0, level: level), output: .side(1, level: level),
-                    control: Self.control(kind: 1, small)),
+                    control: Self.control(kind: .blurX, small)),
                 EffectPass(
                     input: .side(1, level: level), output: .side(0, level: level),
-                    control: Self.control(kind: 2, small)),
+                    control: Self.control(kind: .blurY, small)),
                 EffectPass(
                     input: .side(0, level: level), output: .next,
-                    control: Self.control(kind: 13, 1)),
+                    control: Self.control(kind: .resize, 1)),
             ]
         case .bloom(let amount, let threshold, let radius):
             // 明るいところを取りながら縮める → 横へぼかす → 縦へぼかす → 元へ足す。
@@ -78,44 +78,33 @@ public enum Effect {
             return [
                 EffectPass(
                     input: .current, output: .side(0, level: level),
-                    control: Self.control(kind: 8, threshold, factor)),
+                    control: Self.control(kind: .bloomExtract, threshold, factor)),
                 EffectPass(
                     input: .side(0, level: level), output: .side(1, level: level),
-                    control: Self.control(kind: 1, radius / factor)),
+                    control: Self.control(kind: .blurX, radius / factor)),
                 EffectPass(
                     input: .side(1, level: level), output: .side(0, level: level),
-                    control: Self.control(kind: 2, radius / factor)),
+                    control: Self.control(kind: .blurY, radius / factor)),
                 EffectPass(
                     input: .current, paired: .side(0, level: level), output: .next,
-                    control: Self.control(kind: 9, amount)),
+                    control: Self.control(kind: .bloomCombine, amount)),
             ]
         case .invert(let amount):
-            return [EffectPass(control: Self.control(kind: 3, amount))]
+            return [EffectPass(control: Self.control(kind: .invert, amount))]
         case .monochrome(let amount):
-            return [EffectPass(control: Self.control(kind: 4, amount))]
+            return [EffectPass(control: Self.control(kind: .monochrome, amount))]
         case .vignette(let amount):
-            return [EffectPass(control: Self.control(kind: 5, amount))]
+            return [EffectPass(control: Self.control(kind: .vignette, amount))]
         case .fringe(let amount):
-            return [EffectPass(control: Self.control(kind: 6, amount))]
+            return [EffectPass(control: Self.control(kind: .fringe, amount))]
         case .adjust(let brightness, let contrast, let saturation):
             return [
-                EffectPass(control: Self.control(kind: 7, brightness, contrast, saturation))
+                EffectPass(control: Self.control(kind: .adjust, brightness, contrast, saturation))
             ]
         case .custom(let shader):
-            return [EffectPass(control: Self.control(kind: 0), shader: shader)]
+            return [EffectPass(control: Self.control(kind: .copy), shader: shader)]
         }
     }
-
-    /// 拡大の段が使う種別の番号。**利用者の並びには現れない。**
-    ///
-    /// 拡大は解像度の決め方の一部で、後処理の 1 つではない ([ADR-0015] 決定 1)。
-    /// それでも通る道は同じ段なので、種別だけをここで名乗る — 番号がこの並びの外に
-    /// あると、組み込みの効果を 1 つ足したときに黙って衝突する。
-    ///
-    /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
-    static let enlargeKind: Float = 11
-    /// 拡大して、前のフレームの結果と混ぜる種別の番号 (時間方向)。
-    static let accumulateKind: Float = 12
 
     /// 半径 (画素) から、ぼかしを回す段の縮め幅 (2 のべき) を決める。
     ///
@@ -136,9 +125,10 @@ public enum Effect {
     /// 組み込みの効果に渡す設定を詰める。**並びの正本はここ**で、読む側は
     /// `Shaders/Effects/Builtin.metal` にある。
     private static func control(
-        kind: Float, _ p0: Float = 0, _ p1: Float = 0, _ p2: Float = 0, _ p3: Float = 0
+        kind: BuiltinEffectKind, _ p0: Float = 0, _ p1: Float = 0, _ p2: Float = 0,
+        _ p3: Float = 0
     ) -> (SIMD4<Float>, SIMD4<Float>) {
-        (SIMD4(kind, p0, p1, p2), SIMD4(p3, 0, 0, 0))
+        (SIMD4(kind.value, p0, p1, p2), SIMD4(p3, 0, 0, 0))
     }
 }
 
@@ -167,4 +157,66 @@ struct EffectPass {
     var control: (SIMD4<Float>, SIMD4<Float>)
     /// 利用者の効果。`nil` なら組み込み。
     var shader: EffectShader?
+}
+
+/// 組み込みの効果の種別番号。
+///
+/// **正本は `Shaders/Kinds.metal`** で、こちらは同じ数を名前で持つ写しである。写しを
+/// 許しているのは、Swift と Metal が別の言語で同じ表を読む必要があるからで、割れたら
+/// `KindLayoutTests` が赤くなる ([#802])。番号を足すときは両方へ足す。
+///
+/// **10 は欠番で、再利用してよい。** かつて中間段が使っていた番号で、[#755] が大きな
+/// ぼかしを縮めた絵の上で回す形へ変えたときに空いた。飛んでいるのは歴史の跡であって、
+/// 空き番号を避ける決まりがあるわけではない。
+///
+/// ``enlarge`` と ``accumulate`` は**利用者の並びには現れない** — 拡大は解像度の
+/// 決め方の一部で、後処理の 1 つではない ([ADR-0015] 決定 1)。それでも通る道は同じ段
+/// なので、番号はここで一緒に名乗る。この並びの外に置くと、組み込みの効果を 1 つ
+/// 足したときに黙って衝突する。
+///
+/// [#755]: https://github.com/mokume-metal/mokume/issues/755
+/// [#802]: https://github.com/mokume-metal/mokume/issues/802
+/// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
+enum BuiltinEffectKind: UInt32, CaseIterable {
+    /// そのまま写す。段の連なりの最後に 1 度だけ通る。
+    case copy = 0
+    case blurX = 1
+    case blurY = 2
+    case invert = 3
+    case monochrome = 4
+    case vignette = 5
+    case fringe = 6
+    case adjust = 7
+    /// にじみ: 明るいところだけを取り出しながら縮める。
+    case bloomExtract = 8
+    /// にじみ: ぼかした明るいところを元へ足す。
+    case bloomCombine = 9
+    /// 描く細かさの絵を、出す細かさへ広げる。
+    case enlarge = 11
+    /// 拡大して、前のフレームの結果と混ぜる (時間方向)。
+    case accumulate = 12
+    /// 縮める / 広げる。大きなぼかしが縮めた絵の上で回るための段 ([#755])。
+    case resize = 13
+
+    /// 断片へ渡す形。設定の枠が `Float` なので、そこへ入る形で名乗る。
+    var value: Float { Float(rawValue) }
+
+    /// `Kinds.metal` での名前。検査が突き合わせる鍵になる。
+    var metalName: String {
+        switch self {
+        case .copy: "kEffectCopy"
+        case .blurX: "kEffectBlurX"
+        case .blurY: "kEffectBlurY"
+        case .invert: "kEffectInvert"
+        case .monochrome: "kEffectMonochrome"
+        case .vignette: "kEffectVignette"
+        case .fringe: "kEffectFringe"
+        case .adjust: "kEffectAdjust"
+        case .bloomExtract: "kEffectBloomExtract"
+        case .bloomCombine: "kEffectBloomCombine"
+        case .enlarge: "kEffectEnlarge"
+        case .accumulate: "kEffectAccumulate"
+        case .resize: "kEffectResize"
+        }
+    }
 }

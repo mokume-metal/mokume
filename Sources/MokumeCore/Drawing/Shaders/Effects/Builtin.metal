@@ -123,30 +123,30 @@ float4 effect(Pixel in, Values values) {
     float p2 = in.control[0].w;
 
     // そのまま写す。段の連なりの最後に 1 度だけ通り、入りの絵へ書き戻す
-    if (kind == 0) { return in.color; }
+    if (kind == kEffectCopy) { return in.color; }
 
     // ぼかし (横・縦)。半径は画素
-    if (kind == 1 || kind == 2) {
+    if (kind == kEffectBlurX || kind == kEffectBlurY) {
         if (p0 <= 0.0) { return in.color; }
-        float2 step = kind == 1 ? float2(1.0 / in.size.x, 0.0) : float2(0.0, 1.0 / in.size.y);
+        float2 step = kind == kEffectBlurX ? float2(1.0 / in.size.x, 0.0) : float2(0.0, 1.0 / in.size.y);
         return mokume_blurAlong(in, step, p0);
     }
 
     // 反転。**乗算済みなので、色はアルファから引く** — 透明なところは透明のまま
-    if (kind == 3) {
+    if (kind == kEffectInvert) {
         if (p0 <= 0.0) { return in.color; }
         return float4(mix(in.color.rgb, in.color.a - in.color.rgb, p0), in.color.a);
     }
 
     // 単色化
-    if (kind == 4) {
+    if (kind == kEffectMonochrome) {
         if (p0 <= 0.0) { return in.color; }
         float grey = mokume_luminance(in.color.rgb);
         return float4(mix(in.color.rgb, float3(grey), p0), in.color.a);
     }
 
     // 周辺減光。**色だけを落とし、アルファは動かさない**
-    if (kind == 5) {
+    if (kind == kEffectVignette) {
         if (p0 <= 0.0) { return in.color; }
         float2 fromCentre = (in.place - 0.5) * 2.0;
         float falloff = 1.0 - p0 * smoothstep(0.4, 1.45, length(fromCentre));
@@ -154,7 +154,7 @@ float4 effect(Pixel in, Values values) {
     }
 
     // 色ずれ。赤と青を反対向きへずらす。ずれ幅は面の短辺の 2% を最大とする
-    if (kind == 6) {
+    if (kind == kEffectFringe) {
         if (p0 <= 0.0) { return in.color; }
         float2 shift = (in.place - 0.5) * p0 * 0.04;
         float4 red = mokume_at(in, in.place + shift);
@@ -167,7 +167,7 @@ float4 effect(Pixel in, Values values) {
     }
 
     // 色調整。明るさ・対比・彩度。**どれも 0 で無効**
-    if (kind == 7) {
+    if (kind == kEffectAdjust) {
         if (p0 == 0.0 && p1 == 0.0 && p2 == 0.0) { return in.color; }
         float alpha = in.color.a;
         // 掛け戻してから調整する。乗算済みのまま対比を掛けると、半透明のところだけ
@@ -181,29 +181,29 @@ float4 effect(Pixel in, Values values) {
 
     // にじみ: 明るいところだけを取り出しながら縮める (p0 しきい値・p1 縮め幅)。
     // ぼかしはこの後ろに、縮めた絵の上で横・縦 (種類 1・2) が続く
-    if (kind == 8) { return mokume_brightShrink(in, p0, p1); }
+    if (kind == kEffectBloomExtract) { return mokume_brightShrink(in, p0, p1); }
 
     // にじみ: ぼかした明るいところを元へ足す。**足すのは色だけ**でアルファは動かさない
-    if (kind == 9) {
+    if (kind == kEffectBloomCombine) {
         if (p0 <= 0.0) { return in.color; }
         float3 glow = mokume_paired(in, in.place).rgb * p0;
         return float4(in.color.rgb + glow * in.color.a, in.color.a);
     }
 
     // 拡大: 描く細かさの絵を、出す細かさへ広げる
-    if (kind == 11) { return mokume_enlarge(in, float2(p0, p1)); }
+    if (kind == kEffectEnlarge) { return mokume_enlarge(in, float2(p0, p1)); }
 
     // 縮める / 広げる (p0 は縮め幅)。大きなぼかしが縮めた絵の上で回るための段 (#755)。
     // 縮めるときは箱、広げるとき (p0 ≤ 1) は線形の読み 1 回 — 出りの画素の中心で
     // 読むので、縮めた絵が出りの大きさへ滑らかに戻る
-    if (kind == 13) {
+    if (kind == kEffectResize) {
         if (p0 > 1.0) { return mokume_shrink(in, p0); }
         return mokume_at(in, in.place);
     }
 
     // 拡大して、前のフレームの結果と混ぜる (時間方向)。**p2 がいまのフレームの重み**で、
     // 1 なら前を捨てる (最初の 1 枚)
-    if (kind == 12) {
+    if (kind == kEffectAccumulate) {
         float4 current = mokume_enlarge(in, float2(p0, p1));
         if (p2 >= 1.0) { return current; }
         return mix(mokume_paired(in, in.place), current, p2);

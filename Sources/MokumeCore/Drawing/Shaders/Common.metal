@@ -39,12 +39,6 @@ struct Light {
     float4 directionAndCone;
 };
 
-// 光の種類。Light.Kind と対応する
-constant uint kAmbientLight = 0;
-constant uint kDirectionalLight = 1;
-constant uint kPointLight = 2;
-constant uint kSpotLight = 3;
-
 /// この列に効く光が、置き場のどこから何個あるか。と、どこから見ているか。
 struct Lighting {
     uint offset;
@@ -289,18 +283,6 @@ static inline float3 mokume_shade(
     // 艶は乗算済みの世界へ入れ直す (半透明の面では、その分だけ薄く乗る)
     return emissive + base * total + gloss * color.a;
 }
-
-// 混ぜ方の番号は BlendMode.rawIndex と対応する。ここを増やしたら向こうも増やす。
-constant uint kBlend = 0;
-constant uint kAdd = 1;
-constant uint kSubtract = 2;
-constant uint kLightest = 3;
-constant uint kDarkest = 4;
-constant uint kDifference = 5;
-constant uint kExclusion = 6;
-constant uint kMultiply = 7;
-constant uint kScreen = 8;
-constant uint kReplace = 9;
 
 // 字形を焼いた面の読み取り方。字の縁を滑らかにするため線形に読み、
 // 端では外側へはみ出さない
