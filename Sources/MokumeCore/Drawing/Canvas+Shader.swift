@@ -104,13 +104,20 @@ extension Canvas {
 
     /// 組み立てに失敗している断片の理由。観測に載せる。
     ///
-    /// **塗りと計算をまとめて返す。** 呼ぶ側 (観測) が「どの種類の断片が壊れているか」で
-    /// 経路を分けることはないので、分けると呼び忘れる側ができるだけになる。
+    /// **塗りと効果と計算をまとめて返す。** 呼ぶ側 (観測) が「どの種類の断片が壊れて
+    /// いるか」で経路を分けることはないので、分けると呼び忘れる側ができるだけになる。
+    /// 実際に効果がその「呼び忘れられた側」だった ([#787])。
+    ///
+    /// [#787]: https://github.com/mokume-metal/mokume/issues/787
     var shaderFailures: [String] {
         shaders.compactMap { held in
             guard let shader = held.value else { return nil }
             return shader.failure.map { "shader \(shader.name): \($0)" }
-        } + computationFailures
+        }
+            + effectShaders.compactMap { held in
+                guard let effect = held.value else { return nil }
+                return effect.failure.map { "effect \(effect.name): \($0)" }
+            } + computationFailures
     }
 
     /// 作ったものを控えへ足す。**足すついでに、死んだ入れ物を落とす。**
@@ -127,6 +134,11 @@ extension Canvas {
     func remember(_ computation: Computation) {
         computations.removeAll { $0.value == nil }
         computations.append(Weak(computation))
+    }
+
+    func remember(_ effect: EffectShader) {
+        effectShaders.removeAll { $0.value == nil }
+        effectShaders.append(Weak(effect))
     }
 
     /// 渡す値が変わった。**列を閉じてから変える** — そうしないと、既に置いた図形まで

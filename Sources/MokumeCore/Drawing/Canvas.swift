@@ -530,6 +530,15 @@ public final class Canvas {
     ///
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     var shaders: [Weak<Shader>] = []
+    /// この面が作った効果。観測へ失敗を載せるために持つ。**弱く持つ** (``Canvas/shaders``)。
+    ///
+    /// 控えを置く理由は失敗を読むことにしかない ([#787])。読み手を持たないまま積むと、
+    /// 差し替えに失敗した効果が黙って前の絵を出し続ける — それが実際に起きていたので、
+    /// 一度は控えごと畳まれた ([#738])。
+    ///
+    /// [#787]: https://github.com/mokume-metal/mokume/issues/787
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    var effectShaders: [Weak<EffectShader>] = []
     /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
     var whiteUV: SIMD2<Float>
     /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。

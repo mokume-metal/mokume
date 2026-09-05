@@ -440,4 +440,30 @@ struct EffectTests {
             try canvas.makeEffect("float4 effect(Pixel in, Values values) { return")
         }
     }
+
+    /// 完了条件「効果を壊して保存すると、観測の警告にその理由が出る」([#787])。
+    ///
+    /// 差し替えの失敗そのものは前から `failure` に載っていた。**載っているだけで
+    /// 誰も読まなかった**ので、効果だけが黙って前の絵を出し続けていた — 見るのは
+    /// `Canvas/shaderFailures` に届くところである。
+    ///
+    /// [#787]: https://github.com/mokume-metal/mokume/issues/787
+    @Test("差し替えに失敗した効果の理由が、観測へ届く")
+    func failedEffectReloadReachesObservation() throws {
+        let canvas = try makeCanvas()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-effect-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("tint.metal")
+        try "float4 effect(Pixel in, Values values) { return in.color; }"
+            .write(to: url, atomically: true, encoding: .utf8)
+
+        let effect = try canvas.loadEffect(url.path)
+        try "これは MSL ではない".write(to: url, atomically: true, encoding: .utf8)
+        effect.reload()
+
+        #expect(effect.failure != nil)
+        #expect(canvas.shaderFailures.count == 1, "観測へ載っていない")
+        #expect(canvas.shaderFailures.first?.hasPrefix("effect tint: ") == true)
+    }
 }
