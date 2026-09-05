@@ -183,22 +183,22 @@ kernel void mokume_particles(
         // 減速 (velocity を読む) だけは順序が効く
         for (int i = 0; i < count; i++) {
             const device float *f = parameters + 32 + i * 8;
-            int kind = int(f[0]);
-            if (kind == 0) {
+            uint kind = uint(f[0]);
+            if (kind == kForceGravity) {
                 push += float3(f[1], f[2], f[3]);
-            } else if (kind == 1) {
+            } else if (kind == kForceAttract) {
                 float3 toward = float3(f[1], f[2], f[3]) - position;
                 push += toward / max(length(toward), 1e-4) * f[4];
-            } else if (kind == 2) {
+            } else if (kind == kForceWander) {
                 float3 drift = float3(
                     mokume_particleDrift(salt, frame, 0),
                     mokume_particleDrift(salt, frame, 1),
                     mokume_particleDrift(salt, frame, 2)) * 2.0 - 1.0;
                 push += drift * f[4];
-            } else if (kind == 3) {
+            } else if (kind == kForceSwirl) {
                 float2 away = position.xy - float2(f[1], f[2]);
                 push += float3(-away.y, away.x, 0.0) / max(length(away), 1e-4) * f[4];
-            } else if (kind == 4) {
+            } else if (kind == kForceDrag) {
                 push -= velocity * f[4];
             }
         }

@@ -17,7 +17,12 @@ import simd
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 struct Light {
-    /// 光の種類。数はシェーダ側の定数と対応する。
+    /// 光の種類。
+    ///
+    /// **正本は `Shaders/Kinds.metal`** (`kAmbientLight` …)。割れたら `KindLayoutTests`
+    /// が落ちる ([#802])。
+    ///
+    /// [#802]: https://github.com/mokume-metal/mokume/issues/802
     enum Kind: UInt32 {
         /// 全体を底上げする光。向きを持たない。
         case ambient = 0

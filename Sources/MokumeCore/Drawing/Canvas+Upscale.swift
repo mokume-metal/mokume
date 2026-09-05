@@ -47,7 +47,7 @@ extension Canvas {
             let index = takeStagePass()
             try pipeline.reservePasses(index + upscalePassCount)
             try encode(
-                EffectPass(control: (SIMD4(Effect.enlargeKind, 0, 0, 0), .zero)),
+                EffectPass(control: (SIMD4(BuiltinEffectKind.enlarge.value, 0, 0, 0), .zero)),
                 at: index, from: target.texture, paired: target.texture,
                 into: output, using: pipeline, in: commands)
             return
@@ -61,14 +61,14 @@ extension Canvas {
         try encode(
             EffectPass(
                 control: (
-                    SIMD4(Effect.accumulateKind, offset.x, offset.y, stage.weight), .zero
+                    SIMD4(BuiltinEffectKind.accumulate.value, offset.x, offset.y, stage.weight), .zero
                 )),
             at: blend, from: target.texture, paired: history.texture,
             into: output, using: pipeline, in: commands)
         // **控えるのは出した絵そのもの。** 別に作り直すと、次のフレームが混ぜる相手が
         // 出した絵と食い違う
         try encode(
-            EffectPass(control: (SIMD4(0, 0, 0, 0), .zero)),
+            EffectPass(control: (SIMD4(BuiltinEffectKind.copy.value, 0, 0, 0), .zero)),
             at: keep, from: output.texture, paired: output.texture,
             into: history, using: pipeline, in: commands)
     }

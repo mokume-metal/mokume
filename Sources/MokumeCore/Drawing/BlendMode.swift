@@ -36,7 +36,12 @@ public nonisolated enum BlendMode: Sendable, Equatable, CaseIterable {
     /// 下地を見ずに置き換える。
     case replace
 
-    /// シェーダへ渡す番号。**並びは `Shapes.metal` の分岐と対応する。**
+    /// シェーダへ渡す番号。
+    ///
+    /// **正本は `Shaders/Kinds.metal`** (`kBlend` …) で、ここはその写しである。割れたら
+    /// `KindLayoutTests` が GPU 自身に書かせた表と突き合わせて落ちる ([#802])。
+    ///
+    /// [#802]: https://github.com/mokume-metal/mokume/issues/802
     var rawIndex: UInt32 {
         switch self {
         case .blend: return 0

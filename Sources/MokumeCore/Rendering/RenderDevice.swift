@@ -643,7 +643,7 @@ extension RenderDevice {
         named name: String, body: String, values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
     ) throws(RenderFailure) -> any MTLLibrary {
-        let common = try bundledShaderSource(named: "Common")
+        let common = try preludedShaderSource(named: "Common")
         let source = ShaderSource.assemble(
             common: common, values: values, surfaces: surfaces, body: body)
         do {
@@ -661,7 +661,7 @@ extension RenderDevice {
     func makeComputeLibrary(
         named name: String, body: String, values: [String: ShaderValue] = [:]
     ) throws(RenderFailure) -> any MTLLibrary {
-        let common = try bundledShaderSource(named: "Compute")
+        let common = try preludedShaderSource(named: "Compute")
         let source = ShaderSource.assemble(common: common, values: values, body: body)
         do {
             return try device.makeLibrary(source: source, options: nil)
@@ -674,7 +674,7 @@ extension RenderDevice {
     func makeEffectLibrary(
         named name: String, body: String, values: [String: ShaderValue] = [:]
     ) throws(RenderFailure) -> any MTLLibrary {
-        let common = try bundledShaderSource(named: "Effect")
+        let common = try preludedShaderSource(named: "Effect")
         let source = ShaderSource.assemble(common: common, values: values, body: body)
         do {
             return try device.makeLibrary(source: source, options: nil)
@@ -689,6 +689,17 @@ extension RenderDevice {
     /// 配ったときに組み上げた機械の絶対パスへ落ちる ([ADR-0029] 決定 4)。
     ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
+    /// 前置きの断片を、種別番号の正本 (`Kinds.metal`) 付きで読む。
+    ///
+    /// **3 本の前置き (Common / Compute / Effect) すべてに入る。** 番号は断片が
+    /// `switch` する数で、ずれても例外は出ず別の種別として効くだけなので、Metal 側でも
+    /// 1 箇所に集めて `mokume_kindLayout` が書き出せるようにしてある ([#802])。
+    ///
+    /// [#802]: https://github.com/mokume-metal/mokume/issues/802
+    func preludedShaderSource(named name: String) throws(RenderFailure) -> String {
+        try bundledShaderSource(named: "Kinds") + "\n" + bundledShaderSource(named: name)
+    }
+
     func bundledShaderSource(named name: String) throws(RenderFailure) -> String {
         guard let url = ModuleResources.url(forResource: name, withExtension: "metal"),
             let source = try? String(contentsOf: url, encoding: .utf8)

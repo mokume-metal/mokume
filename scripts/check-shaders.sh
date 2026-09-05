@@ -21,13 +21,16 @@
 #
 # どの前置きを付けるかは置き場で決まる。
 #
-#   Shaders/               図形を塗る断片   値の宣言 + Common.metal
-#   Shaders/Computations/  計算の断片       値の宣言 + Compute.metal
-#   Shaders/Effects/       効果の断片       値の宣言 + Effect.metal
+#   Shaders/               図形を塗る断片   値の宣言 + Kinds.metal + Common.metal
+#   Shaders/Computations/  計算の断片       値の宣言 + Kinds.metal + Compute.metal
+#   Shaders/Effects/       効果の断片       値の宣言 + Kinds.metal + Effect.metal
 #   それ以外               単体で組み立てられる
 #
 # 前置きが 3 通りあるのは、書く側が受け取るものと返すものが違うためである (それぞれの
 # 前置きの冒頭が理由を持つ)。置き場で分けているので、判定に中身を読む必要が無い。
+#
+# **Kinds.metal は 3 通りすべてに入る。** 種別番号の正本で、どの断片からも同じ名前で
+# 読める必要があるためである (#802)。
 #
 # **前置きそのものは単体では確かめない。** どれも「呼ぶ先を利用者が書く」形なので
 # 単体では組み上がらず、代わりに**その前置きを使う断片が 1 つでもあれば確かめられる**。
@@ -51,6 +54,8 @@ if [ ${#shaders[@]} -eq 0 ]; then
   exit 0
 fi
 
+kinds=$(find Sources -name 'Kinds.metal' | head -1)
+
 common=$(find Sources -name 'Common.metal' | head -1)
 common_dir=""
 if [ -n "$common" ]; then common_dir=$(dirname "$common"); fi
@@ -73,16 +78,16 @@ printf 'struct Values {\n    float4 mokume_unused;\n};\n' > "$work/values.metal"
 failed=0
 for shader in "${shaders[@]}"; do
   # 前置きは飛ばす (上の理由)
-  case "$shader" in "$common" | "$compute" | "$effect") continue ;; esac
+  case "$shader" in "$common" | "$compute" | "$effect" | "$kinds") continue ;; esac
   source="$work/$(basename "$shader")"
   if [ -n "$effect_dir" ] && [ "$(dirname "$shader")" = "$effect_dir" ]; then
-    cat "$work/values.metal" "$effect" "$shader" > "$source"
+    cat "$work/values.metal" ${kinds:+"$kinds"} "$effect" "$shader" > "$source"
     label="$shader (効果の前置きつき)"
   elif [ -n "$compute_dir" ] && [ "$(dirname "$shader")" = "$compute_dir" ]; then
-    cat "$work/values.metal" "$compute" "$shader" > "$source"
+    cat "$work/values.metal" ${kinds:+"$kinds"} "$compute" "$shader" > "$source"
     label="$shader (計算の前置きつき)"
   elif [ -n "$common_dir" ] && [ "$(dirname "$shader")" = "$common_dir" ]; then
-    cat "$work/values.metal" "$common" "$shader" > "$source"
+    cat "$work/values.metal" ${kinds:+"$kinds"} "$common" "$shader" > "$source"
     label="$shader (共通部分つき)"
   else
     cp "$shader" "$source"
