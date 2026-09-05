@@ -106,6 +106,21 @@ extension Canvas {
             case .flat:
                 for placement in usable { place(run, of: shape, at: placement) }
             case .solid:
+                // **立体は区間を先に開いてから、記録した面を束ね直す。**
+                // `beginSolids` は `useFillTexture()` を通るので、**置く側の**
+                // `currentPicture` で面を選び直してしまう — 置く側は普通 `texture()` を
+                // 呼んでいないので焼き場へ倒れ、記録した面が捨てられる ([#914])。
+                //
+                // 直後に置くと描かれていたのは、`createShape` が `openSource` を
+                // `.solid` のまま抜けて `beginSolids` が早期 return するからで、
+                // **フレームをまたぐと上書きされる**という非対称になっていた。
+                //
+                // `beginSolids` の側は触らない。あちらの `useFillTexture()` は
+                // その場で並べる頂点 (`inSolidBatch`) にとっては正しい振る舞いである。
+                //
+                // [#914]: https://github.com/mokume-metal/mokume/issues/914
+                beginSolids()
+                useTexture(run.texture)
                 placeSolid(run, of: shape, at: usable)
             case .form:
                 for placement in usable { placeForms(run, of: shape, at: placement) }
