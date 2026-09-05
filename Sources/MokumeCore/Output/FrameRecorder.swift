@@ -82,6 +82,9 @@ final class FrameRecorder: Outlet {
     /// 連番か動画を撮っている最中か。
     var isRecording: Bool { sequence != nil || movie != nil }
 
+    /// 撮っている動画 (検査から中を見るため)。
+    var recordingMovie: MovieWriter? { movie }
+
     // MARK: - 頼まれる
 
     /// このフレームの絵を 1 枚だけ頼む。
