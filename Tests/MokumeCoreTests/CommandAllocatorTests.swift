@@ -138,6 +138,32 @@ struct CommandAllocatorTests {
         try gpu.settle()
     }
 
+    /// 塗った面を頼む口 (`RenderDevice.makeClearedTexture`) は自分のコマンドを 1 本開くので、
+    /// 組み立て中に呼ぶと環が二重に開かれる。断ること自体は前からしていたが、投げていたのが
+    /// 資源枯渇の case で、文面が「走ったままのスケッチを閉じてから試す」と言っていた —
+    /// 閉じても何も変わらないので、踏んだ人を必ず間違った方向へ送っていた
+    /// ([#792](https://github.com/mokume-metal/mokume/issues/792))。
+    @Test("コマンドを組み立てている最中に塗った面を頼むと、呼び出し順の誤りとして断る")
+    func refusesAClearedTextureWhileCommandsAreOpen() throws {
+        let gpu = try RenderDevice()
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: RenderTarget.pixelFormat, width: 8, height: 8, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .private
+
+        // 開いていなければ通る。**「いつでも投げる」を見ていない**ことの担保
+        _ = try gpu.makeClearedTexture(descriptor: descriptor)
+
+        let commands = try gpu.beginCommands()
+        #expect(throws: RenderFailure.commandsAlreadyOpen) {
+            _ = try gpu.makeClearedTexture(descriptor: descriptor)
+        }
+
+        // 開いたままにしない (この 1 本は絵を持たないので、空のまま投入して畳む)
+        gpu.commit(commands)
+        try gpu.settle()
+    }
+
     @Test("環が既定の本数なら、毎フレームは待たない")
     func theDefaultRingDoesNotWaitEveryFrame() throws {
         let (gpu, presented) = try runFrames(120, slotCount: RenderDevice.defaultSlotCount)
