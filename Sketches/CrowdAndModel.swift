@@ -55,8 +55,8 @@ final class CrowdAndModel: Sketch {
         background(15, 18, 26)
         orbitControl()
 
-        ambientLight(.opaque(red: 0.16, green: 0.16, blue: 0.2))
-        directionalLight(.opaque(red: 0.85, green: 0.82, blue: 0.75), -0.4, 0.8, -0.35)
+        ambientLight(.linear(red: 0.16, green: 0.16, blue: 0.2))
+        directionalLight(.linear(red: 0.85, green: 0.82, blue: 0.75), -0.4, 0.8, -0.35)
         noStroke()
 
         // **まとめ描き。** 2400 個置いても、頂点は 1 組・描く回数は 1 回

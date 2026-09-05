@@ -155,6 +155,30 @@ class RenderStatusTest(unittest.TestCase):
             encoding="utf-8", check=True
         ).stdout
 
+    def run_coverage(self, function, **env):
+        """`scripts/render-coverage.sh` の判定を直に呼ぶ (#819)。
+
+        以前は `render-status.sh target` / `coverage` という CLI のモードだった。
+        **判定は catch-up.sh も要る**ので共有ライブラリへ移り、口は消えた — 検査も
+        あちらと同じ呼び方 (source して呼ぶ) に合わせる。
+        """
+        self.env.update(env)
+        proc = subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                f'. "{REPO / "scripts" / "drawing-paths.sh"}"\n'
+                f'. "{REPO / "scripts" / "render-coverage.sh"}"\n{function}',
+            ],
+            cwd=self.work,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(proc.returncode, 0, f"0 で終えるべき: {proc.stderr}")
+        return proc.stdout
+
     def run_script(self, mode, **env):
         self.env.update(env)
         proc = subprocess.run(
@@ -645,10 +669,44 @@ class RenderStatusTest(unittest.TestCase):
         self._git("checkout", "-q", "topic")
         return pushed
 
+    def _advance_main(self, name="later-main.txt", body="main がさらに進んだ\n"):
+        """origin/main を 1 コミット先へ進める (誰かが fetch した後の状態)。
+
+        `refs/remotes/origin/main` は ref なので、同じリポジトリを共有する別の
+        worktree が fetch しただけでも動く。**手元は何もしていない。**"""
+        here = self._git("rev-parse", "--abbrev-ref", "HEAD").strip()
+        self._git("checkout", "-q", "main")
+        (self.work / name).parent.mkdir(parents=True, exist_ok=True)
+        (self.work / name).write_text(body)
+        self._git("add", "-A")
+        self._git("commit", "-qm", "main がさらに進む")
+        self._git("update-ref", "refs/remotes/origin/main",
+                  self._git("rev-parse", "HEAD").strip())
+        self._git("checkout", "-q", here)
+
     def test_取り込みだけの木はpush済みheadへ報告する(self):
         seed = self._upstream_scenario()
         self._git("merge", "--no-edit", "-q", "origin/main")
-        self.assertEqual(self.run_script("target").strip(), seed)
+        self.assertEqual(self.run_coverage("report_target").strip(), seed)
+
+    def test_取り込んだ後にmainが動いても報告先は動かない(self):
+        """#830。判定の相手は**手元が取り込んだ main** で、いま origin/main が指す
+        ものではない。ここが動く相手を見ていると、`make ci-check` の最中に main へ
+        別の PR が入るだけで「衝突を解いてある」と誤診し、解いた中身が 1 バイトも
+        無い合流まで push して承認を落とす (#612 が戻る)。"""
+        seed = self._upstream_scenario()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self._advance_main()
+        self.assertEqual(self.run_coverage("report_target").strip(), seed)
+
+    def test_取り込みを2回重ねても報告先は動かない(self):
+        """catch-up は 2 回打たれる。2 段目の合流では第 1 親が push 済み head では
+        なく前回の合流 commit になるので、親を数える判定では答えが出ない。"""
+        seed = self._upstream_scenario()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self._advance_main()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self.assertEqual(self.run_coverage("report_target").strip(), seed)
 
     def test_普通のcommitが乗っていたらHEADへ報告する(self):
         """手元にしかない commit の木は誰も見られない。報告先を push 済み head へ
@@ -659,7 +717,7 @@ class RenderStatusTest(unittest.TestCase):
         self._git("commit", "-qm", "push していない変更")
         self._git("merge", "--no-edit", "-q", "origin/main")
         self.assertEqual(
-            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+            self.run_coverage("report_target").strip(), self._git("rev-parse", "HEAD").strip()
         )
 
     def test_衝突を解いた合流はHEADへ報告する(self):
@@ -671,13 +729,65 @@ class RenderStatusTest(unittest.TestCase):
         self._git("add", "-A")
         self._git("commit", "-qm", "解いて合流")
         self.assertEqual(
-            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+            self.run_coverage("report_target").strip(), self._git("rev-parse", "HEAD").strip()
         )
 
     def test_追跡先が無ければHEADへ報告する(self):
         self.assertEqual(
-            self.run_script("target").strip(), self._git("rev-parse", "HEAD").strip()
+            self.run_coverage("report_target").strip(), self._git("rev-parse", "HEAD").strip()
         )
+
+    # --- coverage (覆いがまだ効くか) -------------------------------------
+    #
+    # push の要否を origin/main から切り離すと (#830)、**覆いが古くなるかは別の問い
+    # として残る** — queue が組むのは動いた後の origin/main との合流だからである。
+    # 見るのは描画に関わるファイルの中身だけなので、動いた main がそこを触って
+    # いなければ手元の実行はまだ合流後の姿を覆っている。
+
+    def test_mainが動いていなければ覆いはそのまま(self):
+        self._upstream_scenario()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "fresh")
+
+    def test_動いたmainが描画に触れなければ覆いはそのまま(self):
+        self._upstream_scenario()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self._advance_main("docs/後から.md")
+        out = self.run_coverage("report_coverage")
+        self.assertEqual(out.split()[0], "fresh")
+        self.assertIn("描画に関わるファイル", out)
+
+    def test_動いたmainが描画に触れたら覆いは古い(self):
+        self._upstream_scenario()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self._advance_main("Sources/MokumeCore/Palette.swift")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "stale")
+
+    def test_動いたmainが台帳の絵を動かさない場所だけなら覆いはそのまま(self):
+        """`Sketches/` は印つきの行 — 絵の証跡は要るが覆いは壊せない (#497)。
+        覆いの判定は 2 つの問いのうち coverage の側だけを見る。"""
+        self._upstream_scenario()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        self._advance_main("Sketches/後から.swift")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "fresh")
+
+    def test_動いたmainと衝突するなら覆いを見る前に衝突を名乗る(self):
+        """衝突していれば queue は合流後の木を作れない。覆いの話ではないので、
+        「描画に触れたか」ではなく衝突そのものを名乗る。"""
+        self._upstream_scenario()
+        self._git("merge", "--no-edit", "-q", "origin/main")
+        # 手元の枝と main が同じファイルを別々に動かす
+        (self.work / "ぶつかる.txt").write_text("枝の側\n")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "枝がぶつかるファイルを作る")
+        self._git("update-ref", "refs/remotes/origin/topic",
+                  self._git("rev-parse", "HEAD").strip())
+        self._advance_main("ぶつかる.txt", "main の側\n")
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "conflict")
+
+    def test_origin_mainが無ければ見ていないと名乗る(self):
+        """判定できないときは通す — 防いでいるのは事故であって偽装ではない。"""
+        self.assertEqual(self.run_coverage("report_coverage").split()[0], "unknown")
 
 
 if __name__ == "__main__":

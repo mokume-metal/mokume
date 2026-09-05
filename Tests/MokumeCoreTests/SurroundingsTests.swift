@@ -21,7 +21,7 @@ import simd
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SurroundingsTests {
-    private let black = LinearRGBA.opaque(red: 0, green: 0, blue: 0)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         let gpu = try RenderDevice()
@@ -36,7 +36,7 @@ struct SurroundingsTests {
             canvas.background(black)
             canvas.noStroke()
             scene(canvas)
-            canvas.fill(.opaque(red: 0.8, green: 0.8, blue: 0.82))
+            canvas.fill(.linear(red: 0.8, green: 0.8, blue: 0.82))
             canvas.push()
             canvas.translate(32, 32, 0)
             canvas.sphere(26)
@@ -65,7 +65,7 @@ struct SurroundingsTests {
     @Test("周囲を切ると、金属は特徴のない塊に戻る")
     func metalWithoutSurroundingsIsFeatureless() throws {
         let metal: (Canvas) -> Void = {
-            $0.ambientLight(.opaque(red: 0.25, green: 0.25, blue: 0.25))
+            $0.ambientLight(.linear(red: 0.25, green: 0.25, blue: 0.25))
             $0.metalness(1)
         }
         let withSurroundings = try sphere(try makeCanvas()) {
@@ -88,7 +88,7 @@ struct SurroundingsTests {
     @Test("周囲と底上げの光を、二重に数えない")
     func surroundingsAndAmbientAreCountedOnce() throws {
         // **足し算が成り立つことで示す。** どちらか一方でも 2 回数えていれば破れる
-        let ambient = LinearRGBA.opaque(red: 0.3, green: 0.3, blue: 0.35)
+        let ambient = LinearRGBA.linear(red: 0.3, green: 0.3, blue: 0.35)
         let onlySurroundings = try sphere(try makeCanvas()) { $0.surroundings(.sky) }
         let onlyAmbient = try sphere(try makeCanvas()) { $0.ambientLight(ambient) }
         let both = try sphere(try makeCanvas()) {
@@ -159,7 +159,7 @@ struct SurroundingsTests {
             canvas.noStroke()
             canvas.surroundings(.sky)
             canvas.metalness(1)
-            canvas.fill(.opaque(red: 0.9, green: 0.9, blue: 0.9))
+            canvas.fill(.linear(red: 0.9, green: 0.9, blue: 0.9))
             canvas.push()
             canvas.translate(32, 32, 0)
             canvas.sphere(26)
@@ -184,7 +184,7 @@ struct SurroundingsTests {
         canvas.exposure(1.4)
         canvas.toneMapping(.roll)
         try canvas.draw {
-            canvas.ambientLight(.opaque(red: 0.2, green: 0.2, blue: 0.2))
+            canvas.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
             canvas.metalness(0.5)
             let lightsBefore = canvas.activeLights.count
             let materialBefore = canvas.currentMaterial
@@ -203,7 +203,7 @@ struct SurroundingsTests {
         // 背景にだけ出す (映り込みには効かない)
         let backdropOnly = try sphere(try makeCanvas()) {
             $0.background(.sky)
-            $0.ambientLight(.opaque(red: 0.2, green: 0.2, blue: 0.2))
+            $0.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
             $0.metalness(1)
         }
         let (top, bottom) = topAndBottom(backdropOnly)
@@ -241,12 +241,12 @@ struct SurroundingsTests {
             canvas.surroundings(.sky)
             canvas.surroundings(
                 Surroundings(
-                    top: .opaque(red: .nan, green: 0, blue: 0), horizon: .opaque(red: 0, green: 0, blue: 0),
-                    bottom: .opaque(red: 0, green: 0, blue: 0)))
+                    top: .linear(red: .nan, green: 0, blue: 0), horizon: .linear(red: 0, green: 0, blue: 0),
+                    bottom: .linear(red: 0, green: 0, blue: 0)))
             canvas.surroundings(
                 Surroundings(
-                    top: .opaque(red: -1, green: 0, blue: 0), horizon: .opaque(red: 0, green: 0, blue: 0),
-                    bottom: .opaque(red: 0, green: 0, blue: 0)))
+                    top: .linear(red: -1, green: 0, blue: 0), horizon: .linear(red: 0, green: 0, blue: 0),
+                    bottom: .linear(red: 0, green: 0, blue: 0)))
             #expect(canvas.activeSurroundings == .sky)
         }
     }

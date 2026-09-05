@@ -26,6 +26,10 @@
 # 例外は**衝突を解いた合流**で、そのときだけ push する — 解いた中身は remote に
 # 無いので、queue も同じ木を作れない。中身が本当に変わるので、承認のやり直しは正しい。
 #
+# **その要否は取り込みの時点で決まっていて、検査の最中に動く origin/main には依らない**
+# (#830)。動く相手と比べていた頃は、ci-check の 9 分間に別の PR が main へ入るだけで
+# 素直な取り込みまで push され、#612 が塞いだ事故がそのまま戻っていた。
+#
 # ## 使い方
 #
 #   bash scripts/catch-up.sh        # = make catch-up
@@ -34,7 +38,8 @@
 #
 #   0  queue へ戻した
 #   3  打つ意味が無い (描画に触れない / 先に描画 PR が居る / Draft)。**待つのが正解**
-#   1  途中で止まった (衝突・検査の失敗・報告が付かない)。直してから打ち直す
+#   1  途中で止まった (衝突・検査の失敗・報告が付かない・検査の最中に main が動いて
+#      覆いが古くなった)。直してから打ち直す
 #
 # 3 を 1 と分けるのは、「待て」と「壊れている」を取り違えないためである。
 # **入口の `make catch-up` は 3 を成功に均す** (#786) — 終了コードを読まない人にとって
@@ -55,12 +60,21 @@ set -euo pipefail
 # 「描画に触れているか」の判定 (照合の実体は 1 つ)
 # shellcheck source=scripts/drawing-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
+# 変更ファイルの取り方 (#793)。drawing-queue.sh も使うが、あちらは自分で読み込まない
+# ので読み手が source する (drawing-paths.sh とまったく同じ形)
+# shellcheck source=scripts/pr-files.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 # 描画 PR の順番の判定 (render-status.sh と共有する)
 # shellcheck source=scripts/drawing-queue.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-queue.sh"
 # 報告の context の綴り。**探す側だけが直書きだと、打つ側の改名に付いていけない** (#785)
 # shellcheck source=scripts/render-context.sh
 . "$(dirname "${BASH_SOURCE[0]}")/render-context.sh"
+# 報告先と、覆いがまだ効くかの判定 (#819)。**以前は render-status.sh を別プロセスで
+# 起こして訊いていた** — 判定の実体が 1 つである点は正しかったが、そのために CLI に
+# 2 つのモードが生えていた
+# shellcheck source=scripts/render-coverage.sh
+. "$(dirname "${BASH_SOURCE[0]}")/render-coverage.sh"
 
 readonly SKIPPED=3
 
@@ -110,7 +124,7 @@ repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') \
 
 # 描画に触れない PR は合流後の木を動かさないので、BEHIND のまま merge できる。
 # 取り込みは queue がこれからやることの前借りにしかならない (AGENTS.md)
-gh pr view --json files --jq '.files[].path' | touches_drawing coverage \
+pr_files "$repo" "$number" | touches_drawing coverage \
   || skip "PR #$number は台帳の絵を動かさない — main を取り込む必要が無い"
 
 # 描画 PR は番号順に 1 本ずつ。順番でないうちに打ち直しても、先頭が入った時点で
@@ -147,13 +161,17 @@ make ci-check || stop "make ci-check が通らなかった" "上の出力の失�
 # local-render の covers= が運ぶので、head を動かす必要が無い。
 #
 # **push の要否をここで判定し直さない。** 報告先を決めるのと同じ問いなので、
-# render-status へ訊く (ADR-0001 原則 9)。HEAD が返るのは「push しないと誰も
-# 見られない木」— 衝突を解いた合流がこれに当たる
-sha=$(bash "$(dirname "${BASH_SOURCE[0]}")/render-status.sh" target)
+# 共有の判定 (render-coverage.sh) を呼ぶ (ADR-0001 原則 9)。HEAD が返るのは「push しないと誰も
+# 見られない木」— 衝突を解いた合流と、手元だけの commit がこれに当たる。
+#
+# **判定は取り込みの時点で決まっていて、検査の最中に動く origin/main には依らない**
+# (#830。判定の中身は scripts/render-coverage.sh の report_target が持つ)
+sha=$(report_target)
 if [ "$sha" = "$(git rev-parse '@{u}')" ]; then
-  say "手元の木は queue が組む木と同じ — push しない (承認は落ちない・#612)"
+  say "手元の木は push 済みの head から作り直せる (衝突を解いていない) — push しない"
+  say "承認は落ちない (dismiss_stale_reviews_on_push を踏まない・#612)"
 else
-  say "手元の木は queue が組む木と違う (衝突を解いてある) — push する"
+  say "手元の木は push 済みの head から作り直せない (衝突を解いてある) — push する"
   say "承認済みなら押し直しが要る — 入る中身が変わるため"
   git push || stop "push できなかった"
   # ci-check の最後の報告は、その時点で commit が remote に無いので届かなかった。
@@ -161,7 +179,34 @@ else
   make render-status
 fi
 
-# --- 4. 報告が実際に付いたことを確かめる -----------------------------------
+# --- 4. 覆いがまだ効くかを確かめる ------------------------------------------
+#
+# push の要否から origin/main を切り離した以上 (#830)、**覆いが古くなるかは別の問い
+# として残る** — queue が組むのは、いまの origin/main との合流だからである。検査は
+# 数分かかるので、その間に main が動くことは珍しくない。
+#
+# ここで見ておくと、弾かれてから気付くのに比べて CI と queue の 1 周ぶんが浮く。
+# **引き直すのは push の判定を済ませた後**である (前に打つと、いま塞いだ依存が形を
+# 変えて戻る)。判定の綴りは覆いを持っている側 (render-status) に置き、ここは訊くだけ
+if ! git fetch -q origin; then
+  say "origin を引き直せなかった — 覆いが古くなっていないかは見ていない"
+else
+  # 名乗りが出なくても set -u で落ちないよう、先に空を置く (判定できないときは通す)
+  verdict='' reason=''
+  read -r verdict reason <<<"$(report_coverage)" || true
+  case "$verdict" in
+    fresh) say "覆いはそのまま有効 — $reason" ;;
+    # **止めるのは 1 である。** 正しい次の一手は「待つ」ではなく「打ち直す」なので、
+    # 待てを意味する 3 で返すと人はそのまま待ってしまう。なお描画 PR は番号順に 1 本
+    # ずつ入る規約なので (AGENTS.md)、ここに落ちるのは追い越しが起きたときだけである
+    stale) stop "覆いが古い — $reason" "main を取り込み直す: make catch-up" ;;
+    conflict) stop "$reason — queue は合流後の木を作れない" \
+      "手元で取り込んで衝突を解き、push する (解いた中身は remote に無い)" ;;
+    *) say "覆いが古くなるかを判定できなかった — ${reason:-理由が出ていない} (そのまま進む)" ;;
+  esac
+fi
+
+# --- 5. 報告が実際に付いたことを確かめる -----------------------------------
 
 # **確かめてから戻す。** render-status は報告できなくても 0 で終えるので、確かめずに
 # 進むと弾かれた状態のまま queue へ入り、同じことをもう一度繰り返すことになる
@@ -175,7 +220,7 @@ reported=$(gh api "repos/$repo/commits/$sha/statuses" \
   "$RENDER_CONTEXT が $reported のまま — このまま戻しても弾かれる" \
   "make render-status の出力に、報告できなかった理由が出ている"
 
-# --- 5. queue へ戻す -------------------------------------------------------
+# --- 6. queue へ戻す -------------------------------------------------------
 
 gh pr merge "$number" --auto --squash || stop "queue へ戻せなかった"
 

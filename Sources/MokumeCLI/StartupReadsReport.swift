@@ -49,8 +49,10 @@ enum StartupReadsReport {
         // どこまで上げればよいかを知れない (#684)
         let version = package.flatMap { DependencyVersion.resolved(forPackageAt: $0) }
         for entry in StartupReads.all where entry.origin == .facet {
-            let facet = base.appendingPathComponent(".mokume/\(entry.key)", isDirectory: true)
-            var line = "  \(entry.name): \(facet.path) (\(exists(facet) ? "在る" : "無い"))"
+            // 区画の URL は ``WorkDirectory`` から出す。`.mokume` を綴り直すと、
+            // 一覧が名乗る場所とスケッチが書く場所が黙って割れうる (#814)
+            let facet = WorkDirectory.facet(entry.key, under: base)
+            var line = "  \(entry.name): \(facet.path) (\(DirectoryPresence.exists(facet) ? "在る" : "無い"))"
             if absent.contains(entry) {
                 let named = version.map { "mokume \($0)" } ?? "依存している mokume"
                 line += " — \(named) はこの面を持たない"
@@ -77,6 +79,7 @@ enum StartupReadsReport {
     private static func source(_ entry: StartupReads.Entry) -> String {
         switch entry.origin {
         case .environment: "環境変数 \(entry.key)"
+        // ここの `.mokume` は**人が読む文面**で、URL の組み立てではない
         case .facet: "区画 .mokume/\(entry.key) が在るか"
         }
     }
@@ -87,11 +90,5 @@ enum StartupReadsReport {
         case .user: "利用者が決める"
         case .tool: "道具が渡す"
         }
-    }
-
-    private static func exists(_ url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-            && isDirectory.boolValue
     }
 }

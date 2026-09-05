@@ -206,4 +206,104 @@ struct SharedFrameStageTests {
             リフレッシュのたびに走り続ける ([#738](https://github.com/mokume-metal/mokume/issues/738))。
             """)
     }
+
+    // MARK: - 閉じようとしたとき
+
+    /// 窓に据えられた受け口へ、「閉じてよいか」を訊く。
+    ///
+    /// **台を直に呼ばない。** 窓が持っているのは中継なので (#738 と同じ形)、そこまで
+    /// 含めて訊かないと配線が外れたことに気付けない。
+    private func asksToClose(_ stage: SharedFrameStage) throws -> Bool {
+        let window = try #require(stage.window)
+        let delegate = try #require(window.delegate)
+        return try #require(delegate.windowShouldClose?(window))
+    }
+
+    /// 検査で使う問い。**中身は問わない** — ここで見ているのは言葉ではなく経路である。
+    private var question: SharedFrameStage.CloseQuestion {
+        .init(message: "終えますか？", detail: "止まります。", confirm: "終える", cancel: "続ける")
+    }
+
+    /// **問いを持たない窓の × は、いままでどおり通る。** 窓を持つ側が終わり方を決めて
+    /// いないのに、閉じられない窓を作る理由が無い。
+    @Test("問いを繋がなければ、× はそのまま閉じる")
+    func closesWithoutAQuestion() throws {
+        try withFacet { facet in
+            let stage = try SharedFrameStage(
+                gpu: RenderDevice(), facet: facet, look: look("plain-close"))
+            stage.open()
+            defer { stage.close() }
+            #expect(!stage.asksBeforeClosing)
+            #expect(try asksToClose(stage), "問いを持たない窓が閉じられない")
+        }
+    }
+
+    /// **× を押した瞬間には閉じない** ([#826](https://github.com/mokume-metal/mokume/issues/826))。
+    ///
+    /// 閉じてしまうと絵の出口が消え、開き直す経路が無い — 見張りは子を止め、区画を
+    /// 片付けてから畳む必要がある。
+    @Test("問いを繋ぐと、× ではまだ閉じず、問いが出る")
+    func asksInsteadOfClosing() throws {
+        try withFacet { facet in
+            let stage = try SharedFrameStage(
+                gpu: RenderDevice(), facet: facet, look: look("asking"))
+            var asked: SharedFrameStage.CloseQuestion?
+            stage.presentQuestion = { question, _, _ in asked = question }
+            stage.askBeforeClosing(question) {}
+            stage.open()
+            defer { stage.close() }
+            #expect(try !asksToClose(stage), "問いを出す前に閉じている")
+            #expect(asked?.confirm == question.confirm)
+        }
+    }
+
+    /// **確定するまで、誰にも知らせない。** 取り消したのに知らせると、続けるつもりで
+    /// 押した人の作品が止まる。
+    @Test("閉じてよいと確定したときだけ、知らせる")
+    func tellsOnlyWhenConfirmed() throws {
+        for confirmed in [true, false] {
+            try withFacet { facet in
+                let stage = try SharedFrameStage(
+                    gpu: RenderDevice(), facet: facet, look: look("answer-\(confirmed)"))
+                var told = 0
+                stage.presentQuestion = { _, _, answer in answer(confirmed) }
+                stage.askBeforeClosing(question) { told += 1 }
+                stage.open()
+                defer { stage.close() }
+                #expect(try !asksToClose(stage))
+                #expect(told == (confirmed ? 1 : 0))
+            }
+        }
+    }
+
+    /// **後始末は問いを通らない。** 通ると、終わろうとしている最中にもう一度
+    /// 「終えますか？」と訊くことになる。
+    @Test("畳むときは、問いが出ない")
+    func closingDoesNotAsk() throws {
+        try withFacet { facet in
+            let stage = try SharedFrameStage(
+                gpu: RenderDevice(), facet: facet, look: look("teardown"))
+            var asked = 0
+            stage.presentQuestion = { _, _, _ in asked += 1 }
+            stage.askBeforeClosing(question) {}
+            stage.open()
+            stage.close()
+            #expect(asked == 0)
+        }
+    }
+
+    /// **プレビューも同じ経路を通る** (ADR-0032 決定 7)。プレビューだけが消える形は、
+    /// 決定 7 が作らないと決めた「既定を外す口」そのものである。
+    @Test("プレビューにも、閉じる前の問いが繋がる")
+    func previewAsksBeforeClosingToo() throws {
+        try withFacet { facet in
+            let preview = try SharedFramePreview(gpu: RenderDevice(), facet: facet, title: "問い")
+            #expect(!preview.asksBeforeClosing)
+            preview.askBeforeClosing(
+                message: question.message, detail: question.detail, confirm: question.confirm,
+                cancel: question.cancel
+            ) {}
+            #expect(preview.asksBeforeClosing)
+        }
+    }
 }

@@ -246,6 +246,116 @@ struct WatchSessionTests {
         // ビルドと世代の判定は動かない
         #expect(recorder.builtIn == [package])
     }
+    // MARK: - 止め方
+
+    /// 起こした子が「仕掛け終わった」と名乗る先。
+    @MainActor
+    final class Ready {
+        /// 起こした順に溜まる管。
+        ///
+        /// **子ごとに新しい管を渡す。** 1 本を使い回すと、2 人目を起こすときには親側の端が
+        /// 既に閉じられていて、道具立てが例外を投げる (実測: `NSFileHandleOperationException`)。
+        var pipes: [Pipe] = []
+
+        /// 最後に起こした子が仕掛け終わるのを待つ。
+        ///
+        /// **起こした直後は、まだ仕掛かっていない。** 数ミリ秒のうちに `SIGTERM` を送ると
+        /// 既定の振る舞い (死ぬ) に落ちるので、応えない子を渡したつもりで**素直に止まる子**を
+        /// 検めることになる (実測でそうなった)。
+        ///
+        /// 待ちは名乗りの 1 行で切れる。子が死んでいれば端が閉じるので、戻らなくならない。
+        func waitForLast() {
+            _ = pipes.last?.fileHandleForReading.availableData
+        }
+    }
+
+    /// 実際に子を起こす外側。
+    ///
+    /// **`SIGTERM` を捕まえて何もしない子は、人が書けてしまう。** 待つ側が期限を持たないと、
+    /// 終わるときだけでなく**保存のたびに**見張りが固まる
+    /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。
+    ///
+    /// - Parameters:
+    ///   - ignores: 止めてくれと頼まれても応えないか。
+    ///   - ready: 仕掛け終わったことを子が名乗る先。
+    @MainActor
+    private func hooks(ignoringTermination ignores: Bool, ready: Ready) -> WatchSession.Hooks {
+        WatchSession.Hooks(
+            build: { _ in (0, "") },
+            resolveExecutable: { _ in URL(fileURLWithPath: "/bin/sh") },
+            launch: { executable, _, _, _ in
+                let process = Process()
+                process.executableURL = executable
+                // **眠らせずに、来ない入力を待たせる。** 眠らせると、強制終了した後に
+                // 眠りだけが残る (親を失った `sleep` は生き続ける)
+                process.arguments = [
+                    "-c", (ignores ? "trap '' TERM; " : "") + "echo ready; read line",
+                ]
+                let pipe = Pipe()
+                process.standardInput = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                guard (try? process.run()) != nil else { return nil }
+                ready.pipes.append(pipe)
+                return process
+            },
+            now: { 0 },
+            stamp: { _ in UUID().uuidString })
+    }
+
+    @Test("頼んで止まる子は、止めたと名乗る")
+    func stopsAChildThatListens() throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), hooks: hooks(ignoringTermination: false, ready: ready),
+            stopTimeout: 1)
+        session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        #expect(child.isRunning)
+
+        #expect(session.stop() == .terminated)
+        #expect(!child.isRunning)
+    }
+
+    /// **待つ側が期限を持つ。** 期限が無ければ、ここは永久に戻らない (#732)。
+    @Test("止めてくれと頼んでも応えない子は、期限で強制終了する")
+    func killsAChildThatIgnoresTermination() throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), hooks: hooks(ignoringTermination: true, ready: ready),
+            stopTimeout: 0.2)
+        session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        #expect(child.isRunning)
+
+        let started = Date()
+        #expect(session.stop() == .killed)
+        #expect(!child.isRunning)
+        // 数字は「戻ってきた」ことの確認でしかない — 期限が効いていなければ戻らないので
+        #expect(Date().timeIntervalSince(started) < 2)
+    }
+
+    /// **差し替えも同じ経路を通る。** 期限が無いと、終われないだけでなく**保存のたびに**
+    /// 固まる (#732)。
+    @Test("応えない子でも、差し替えは進む")
+    func replacesEvenWhenTheChildIgnoresTermination() throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), hooks: hooks(ignoringTermination: true, ready: ready),
+            stopTimeout: 0.2)
+        session.start()
+        let first = try #require(session.child)
+        ready.waitForLast()
+        defer { session.stop() }
+
+        session.tick()
+        #expect(!first.isRunning, "前の子が残っている")
+        #expect(session.lastStop == .killed, "期限に掛かったことが残っていない")
+        #expect(session.child !== first, "差し替わっていない")
+    }
+
 }
 
 @Suite("ソースの世代")
@@ -334,4 +444,5 @@ struct FrameRateHandoffTests {
         #expect(carried[StartupReads.sourceStamp.key] == "abc")
         #expect(RunCommand.childEnvironment(["A": "1"])["A"] == "1", "親の環境は運ぶ")
     }
+
 }

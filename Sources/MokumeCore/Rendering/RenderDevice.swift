@@ -120,9 +120,17 @@ import MokumeDiagnostics
     /// だけ深くしても意味がない。1 つの値から引けば、どちらの環も同じ深さを名乗る。
     var slotCount: Int { slots.count }
 
-    /// 診断: 実行中のコマンドが載った置き場を巻き戻した回数。**常に 0 でなければならない。**
-    private(set) var resetsWhileInFlight = 0
     /// 診断: 置き場が空くのを待った回数。
+    ///
+    /// **「実行中の置き場を巻き戻さなかった回数」は数えない。** かつてそういう診断
+    /// (`resetsWhileInFlight`) を ``beginCommands()`` の待ちの**あと**に置いていたが、
+    /// 判定は ``waitForSlot(_:)`` と同じ合図を 1 行あとで読むので、`waitForSlot` の
+    /// 事後条件の自己申告以上にはならなかった — 0 が「待ちが守った」と「そもそも
+    /// 危なくなかった」を分けないので、それを `== 0` で読んでいた 6 本の検査のうち
+    /// 3 本は、待ちを丸ごと外しても緑のままだった ([#790])。数えるのは**実際に待った
+    /// 回数**だけにして、事後条件のほうは検査が外から見る (`CommandAllocatorTests`)。
+    ///
+    /// [#790]: https://github.com/mokume-metal/mokume/issues/790
     private(set) var slotWaits = 0
     /// 診断: ``settle()`` を頼まれた回数。GPU 可視メモリに触る経路が待ちを要求した数。
     private(set) var settleCalls = 0
@@ -435,10 +443,6 @@ import MokumeDiagnostics
         nextSlot = (nextSlot + 1) % slots.count
 
         try waitForSlot(index)
-        if slots[index].submission > 0, completion.signaledValue < slots[index].submission {
-            // ここに来たら、待ちの規律が壊れている。数えて検査から読めるようにする
-            resetsWhileInFlight += 1
-        }
         slots[index].allocator.reset()
         // 終わった番号のぶんは、ここで手放す。settle を 1 度も呼ばない経路 (表示だけを
         // 繰り返す) でも、抱えたものが際限なく溜まらない
@@ -453,6 +457,20 @@ import MokumeDiagnostics
     }
 
     /// 指定した置き場から投入したコマンドが終わるまで待つ。
+    ///
+    /// **#222 の不変条件 (実行中の置き場を巻き戻さない) を守っているのは、この待ち
+    /// 1 つだけである。** 待てなければ投げるので、``beginCommands()`` の
+    /// `allocator.reset()` へ進めるのは「この置き場へ積んだ投入は終わっている」
+    /// ときだけになる。
+    ///
+    /// **その事後条件を確かめる者は、この型の中には置けない。** 判定に使える合図は
+    /// ここが待っているのと同じ `completion` で、この世代には allocator の実行状態を
+    /// 別経路で問う口が無いためである。見張りは検査が外から掛ける —
+    /// `CommandAllocatorTests` の「置き場を取り直す口は、その置き場を読む投入が
+    /// 終わってから巻き戻す」が、置き場を 1 本にして
+    /// ``beginCommands()`` を直に呼び、返った時点の ``isIdle`` を見る ([#790])。
+    ///
+    /// [#790]: https://github.com/mokume-metal/mokume/issues/790
     private func waitForSlot(_ index: Int) throws(RenderFailure) {
         let pending = slots[index].submission
         guard pending > 0, completion.signaledValue < pending else { return }

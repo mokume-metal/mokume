@@ -180,7 +180,7 @@ struct SharedFrameSurfaceTests {
 
     @Test("面から読んだ画素が、同じ経路で普通のテクスチャへ書いたものと一致する")
     func surfaceMatchesTheOrdinaryDestination() throws {
-        let color = LinearRGBA.opaque(red: 0.25, green: 0.5, blue: 0.75)
+        let color = LinearRGBA.linear(red: 0.25, green: 0.5, blue: 0.75)
         let gpu = try RenderDevice()
         let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
         try source.fill(with: color)
@@ -205,7 +205,7 @@ struct SharedFrameSurfaceTests {
     func noLetterboxIsBakedIn() throws {
         // 2:1 の絵。窓へ出すときは帯が要る比だが、面は同じ大きさなので入らない
         let shared = try withFacet {
-            try written(color: .opaque(red: 1, green: 1, blue: 1), size: (32, 16), in: $0)
+            try written(color: .linear(red: 1, green: 1, blue: 1), size: (32, 16), in: $0)
         }
         for point in [(0, 0), (31, 0), (0, 15), (31, 15), (16, 8)] {
             let pixel = try #require(
@@ -218,7 +218,7 @@ struct SharedFrameSurfaceTests {
     func valuesAboveTheDisplayRangeSurvive() throws {
         // 8 bit へ落とす断片へ差し替えると、ここが 1.0 に切られて赤くなる
         let shared = try withFacet {
-            try written(color: .opaque(red: 4, green: 2, blue: 1.5), in: $0)
+            try written(color: .linear(red: 4, green: 2, blue: 1.5), in: $0)
         }
         let pixel = try #require(SharedSurfaceReader.pixel(id: shared.ids[0], x: 8, y: 4))
         #expect(pixel.red == 4)
@@ -229,7 +229,7 @@ struct SharedFrameSurfaceTests {
     @Test("面を順に使うので、書いたばかりの面と直前の面が別になる")
     func consecutiveFramesLandOnDifferentSurfaces() throws {
         let shared = try withFacet {
-            try written(color: .opaque(red: 0.5, green: 0.5, blue: 0.5), times: 2, in: $0)
+            try written(color: .linear(red: 0.5, green: 0.5, blue: 0.5), times: 2, in: $0)
         }
         #expect(shared.ids.count == SharedFrameSurface.slotCount)
         #expect(Set(shared.ids).count == shared.ids.count, "面の番号が重複している")
@@ -255,7 +255,7 @@ struct SharedFrameSurfaceTests {
         try withFacet { directory in
             let gpu = try RenderDevice()
             let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
-            try source.fill(with: .opaque(red: 0, green: 0, blue: 0))
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
             let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
             let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
             for expected in 1...(SharedFrameSurface.slotCount + 2) {
@@ -273,7 +273,7 @@ struct SharedFrameSurfaceTests {
         try withFacet { directory in
             let gpu = try RenderDevice()
             let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
-            try source.fill(with: .opaque(red: 0, green: 0, blue: 0))
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
             let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
             let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
             try shared.write(
@@ -297,7 +297,7 @@ struct SharedFrameSurfaceTests {
         try withFacet { directory in
             let gpu = try RenderDevice()
             let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
-            try source.fill(with: .opaque(red: 0, green: 0, blue: 0))
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
             let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
             let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
             try shared.write(
@@ -322,7 +322,7 @@ struct SharedFrameSurfaceTests {
         try withFacet { directory in
             let gpu = try RenderDevice()
             let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
-            try source.fill(with: .opaque(red: 0, green: 0, blue: 0))
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
             let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
             let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
             // 面を 1 周させてから、同じ面へ「測れていない」を書く
@@ -345,7 +345,7 @@ struct SharedFrameSurfaceTests {
     @Test("面の番号と大きさが区画に置かれる")
     func theManifestCarriesTheIdsAndSize() throws {
         try withFacet { directory in
-            let shared = try written(color: .opaque(red: 0, green: 0, blue: 0), in: directory)
+            let shared = try written(color: .linear(red: 0, green: 0, blue: 0), in: directory)
             let url = directory.appendingPathComponent(SharedFrameSurface.manifestName)
             let object =
                 try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]

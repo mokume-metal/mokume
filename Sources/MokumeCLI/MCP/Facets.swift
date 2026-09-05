@@ -33,10 +33,13 @@ struct Facets {
     var observeFacet: URL { facet(StartupReads.observe) }
     var inputFacet: URL { facet(StartupReads.input) }
 
+    // 区画の URL の組み立ても ``WorkDirectory`` を通す。`.mokume` の綴りをここに持つと、
+    // スケッチが書く場所と黙って割れうる (#814)
     func facet(_ entry: StartupReads.Entry) -> URL {
-        directory.appendingPathComponent(".mokume/\(entry.key)", isDirectory: true)
+        WorkDirectory.facet(entry.key, under: directory)
     }
-    var buildStatus: URL { directory.appendingPathComponent(".mokume/build/status.json") }
+    // 作り直しの記録の在処も、書く側と同じ綴りから出す (#730)
+    var buildStatus: URL { BuildReport.statusURL(under: directory) }
 
     /// 要求を置き、同じ識別子の応答が返るまで待つ。
     ///
@@ -77,11 +80,12 @@ struct Facets {
     ///
     /// **要求を置く前に見る。** ``exchange`` は待つ前に区画を自分で作るので、後から見ても
     /// 必ず在る。走っているスケッチが観測を持っているかどうかは、**この呼び出しが区画を
-    /// 作ったのかどうか**にそのまま出る。判定は `FrameObserver.makeIfEnabled` と同じ形にする。
+    /// 作ったのかどうか**にそのまま出る。
+    ///
+    /// 判定そのものは ``DirectoryPresence`` が持つ — かつてここは「`FrameObserver.makeIfEnabled`
+    /// と同じ形にする」と文章で約束していたが、守る機械は居なかった (#814)。
     func hasFacet(_ facet: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: facet.path, isDirectory: &isDirectory)
-            && isDirectory.boolValue
+        DirectoryPresence.exists(facet)
     }
 
     /// 走っているスケッチが応えないときの答え。**その場で直せるところまで書く。**

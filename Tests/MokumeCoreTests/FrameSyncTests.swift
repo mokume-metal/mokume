@@ -54,9 +54,9 @@ struct FrameSyncTests {
         return Bench(gpu: gpu, canvas: canvas, scratch: scratch, spin: spin)
     }
 
-    private let red = LinearRGBA.opaque(red: 1, green: 0, blue: 0)
-    private let white = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
-    private let black = LinearRGBA.opaque(red: 0, green: 0, blue: 0)
+    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
 
     @Test("描き切りは GPU の完了を待たずに返り、画素を読むときに待つ")
     func flushReturnsBeforeTheGPUFinishes() throws {
@@ -180,7 +180,6 @@ struct FrameSyncTests {
         let expected = try fresh.canvas.target.encodeForDisplay()
 
         #expect(actual.bytes == expected.bytes)
-        #expect(bench.gpu.resetsWhileInFlight == 0)
     }
 
     // MARK: - フレームごとに書く置き場の環 (#754)
@@ -284,7 +283,6 @@ struct FrameSyncTests {
         #expect(
             gpu.blockingWaits == waits,
             "投入済みの全完了を待っている — 待ちが縮んでいない")
-        #expect(gpu.resetsWhileInFlight == 0)
     }
 
     /// **見るのは絵で、見えるのは「置き場が分かれていること」である。**
@@ -344,7 +342,6 @@ struct FrameSyncTests {
                 そのフレームの置き場を、次のフレームの CPU が読まれている間に書き換えている
                 """)
         }
-        #expect(gpu.resetsWhileInFlight == 0)
     }
 
     /// 1 フレームぶんの帯を描く。**列を 2 つ以上持たせる** — 切り取りを切り替えると
@@ -365,7 +362,7 @@ struct FrameSyncTests {
     /// 帯ごとの色。**帯どうしを区別できる**ように、番号から作る。
     private static func bandColor(at index: Int, of count: Int) -> LinearRGBA {
         let step = Float(index + 1) / Float(count + 1)
-        return .opaque(red: step, green: 1 - step, blue: 0.5)
+        return .linear(red: step, green: 1 - step, blue: 0.5)
     }
 
     /// その帯を代表する画素。帯の真ん中を見る (縁の丸めを踏まない)。

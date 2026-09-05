@@ -193,6 +193,39 @@ struct WatchCommandTests {
         let session = WatchSession(directory: try makeDirectory(), hooks: stub.hooks())
         session.start()  // launch が nil を返すので子は居ない
 
-        #expect(session.stop() == false)
+        #expect(session.stop() == .notRunning)
+    }
+
+    /// **窓から頼まれても、印は 1 つのまま。** 合図の置き場が増えると「終われと言われたか」
+    /// の判定が経路ごとに分かれ、片方だけ直る形になる
+    /// ([#826](https://github.com/mokume-metal/mokume/issues/826))。
+    @Test("窓から終わりを頼まれると、シグナルと同じ印が立ち、巡回が抜ける")
+    func raisesTheStopFlagFromTheWindow() throws {
+        watchStopRequested = 0
+        defer { watchStopRequested = 0 }
+        let stub = Stub()
+        let session = WatchSession(directory: try makeDirectory(), hooks: stub.hooks())
+
+        #expect(WatchCommand.step(session), "印が立つ前に抜けている")
+        WatchCommand.requestStop()
+        #expect(watchStopRequested != 0)
+        #expect(!WatchCommand.step(session), "窓から頼まれた印で抜けていない")
+    }
+
+    /// **押しどころの言葉を、窓の側で決めない** (#695 が端末の行で定めた規律)。
+    ///
+    /// 見ているのは綴りではなく、**続ける側と終える側が別の言葉であること**である。
+    @Test("窓に出す問いは、口の側が持つ")
+    func theQuestionComesFromTheCommand() {
+        #expect(!WatchCommand.closeMessage.isEmpty)
+        #expect(!WatchCommand.closeDetail.isEmpty)
+        #expect(WatchCommand.closeConfirm != WatchCommand.closeCancel)
+    }
+
+    /// **置いていったものは、番号で名乗る。** ここまで来ると道具にできることは無いので、
+    /// 落とすのは人である (#732)。
+    @Test("消えなかったスケッチは、番号を添えて名乗る")
+    func namesTheProcessItHadToAbandon() {
+        #expect(WatchCommand.abandonedLine(pid: 4321).contains("4321"))
     }
 }

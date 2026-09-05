@@ -104,6 +104,76 @@ struct StandardInputEventsTests {
         }
     }
 
+    /// **同じ出来事の並びは、同じ呼び出しの並びを生む。**
+    ///
+    /// 窓は 1 件ずつ複数フレームに散り、外から送る経路は 1 フレームにまとめて届く。
+    /// 出来事ごとに配れば、どちらも同じ列になる — [#218](https://github.com/mokume-metal/mokume/issues/218)
+    /// が置いた「合流点は 1 つ」の約束が、状態だけでなく呼び出しの側でも成り立つ
+    /// ([#723](https://github.com/mokume-metal/mokume/issues/723))。
+    @Test("配られる呼び出しの並びが、直に入れたときと同じ")
+    func callbacksMatchTheDirectPath() throws {
+        try withPipe { reader, writer in
+            let events: [InputEvent] = [
+                .mouseMoved(x: 0, y: 0),
+                .mouseDown(x: 100, y: 50, button: 0),
+                .mouseMoved(x: 120, y: 60),
+                .mouseUp(x: 120, y: 60, button: 0),
+            ]
+            let viaPipe = InputState()
+            for event in events { try write(event.wireLine, to: writer) }
+            reader.drain(into: viaPipe)
+            var fromPipe: [InputCallback] = []
+            viaPipe.beginFrame { fromPipe.append($0) }
+
+            let direct = InputState()
+            for event in events { direct.enqueue(event) }
+            var fromDirect: [InputCallback] = []
+            direct.beginFrame { fromDirect.append($0) }
+
+            #expect(fromPipe == fromDirect)
+            #expect(
+                fromPipe == [
+                    .mouseMoved, .mousePressed, .mouseDragged(deltaX: 20, deltaY: 10),
+                    .mouseReleased, .mouseClicked,
+                ])
+        }
+    }
+
+    /// 移動・引きずり・キーも同じ機構に載る。**窓は 1 件ずつ複数フレームに散り、外から
+    /// 送る経路は 1 フレームにまとめて届く**が、出来事ごとに配れば列は一致する。
+    @Test("移動とキーも、直に入れたときと同じ呼び出しになる")
+    func motionAndKeyCallbacksMatchTheDirectPath() throws {
+        try withPipe { reader, writer in
+            let events: [InputEvent] = [
+                .mouseMoved(x: 10, y: 10),
+                .mouseDown(x: 10, y: 10, button: 0),
+                .mouseMoved(x: 40, y: 30),
+                .mouseUp(x: 40, y: 30, button: 0),
+                .keyDown(code: .a, characters: "a", isRepeat: false),
+                .keyDown(code: .arrowUp, characters: "\u{F700}", isRepeat: false),
+                .keyUp(code: .a),
+            ]
+            let viaPipe = InputState()
+            for event in events { try write(event.wireLine, to: writer) }
+            reader.drain(into: viaPipe)
+            var fromPipe: [InputCallback] = []
+            viaPipe.beginFrame { fromPipe.append($0) }
+
+            let direct = InputState()
+            for event in events { direct.enqueue(event) }
+            var fromDirect: [InputCallback] = []
+            direct.beginFrame { fromDirect.append($0) }
+
+            #expect(fromPipe == fromDirect)
+            #expect(
+                fromPipe == [
+                    .mouseMoved, .mousePressed, .mouseDragged(deltaX: 30, deltaY: 20),
+                    .mouseReleased, .mouseClicked,
+                    .keyPressed, .keyTyped, .keyPressed, .keyReleased,
+                ])
+        }
+    }
+
     /// **待たない。** 塞ぐ読み方をすると、次の 1 件が来るまでフレームが進まなくなる。
     @Test("何も来ていなければ、待たずに戻る")
     func doesNotBlockWhenEmpty() throws {

@@ -60,7 +60,7 @@ final class SurfaceAndGrain: Sketch {
     func draw() {
         background(.studio)
         surroundings(.studio)
-        ambientLight(.opaque(red: 0.10, green: 0.10, blue: 0.12))
+        ambientLight(.linear(red: 0.10, green: 0.10, blue: 0.12))
         directionalLight(color(255, 242, 224), -0.4, 0.7, -0.6)
         noStroke()
 

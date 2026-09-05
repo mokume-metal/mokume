@@ -55,11 +55,11 @@ extension InputEvent {
             [("dx", Self.number(dx)), ("dy", Self.number(dy))]
         case .keyDown(let code, let characters, let isRepeat):
             [
-                ("code", "\(code)"), ("characters", Self.quoted(characters)),
+                ("code", "\(code.rawValue)"), ("characters", Self.quoted(characters)),
                 ("isRepeat", isRepeat ? "true" : "false"),
             ]
         case .keyUp(let code):
-            [("code", "\(code)")]
+            [("code", "\(code.rawValue)")]
         }
     }
 

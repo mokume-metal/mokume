@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# ルールセットの定義を読む道具が、「どの版の定義を読んでいるか」を名乗るための
-# library (#311 / #425)。`source scripts/rulesets-freshness.sh` して使う。
+# ルールセットの定義を読む道具が共有する library (#311 / #425 / #820)。
+# `source scripts/rulesets-freshness.sh` して使う。持っているのは 2 つ:
+#
+#   fetch_live_rulesets   実設定を引いてファイルへ置く (#820 で畳んだ)
+#   report_tree_freshness 「どの版の定義を読んでいるか」を名乗る (#311 / #425)
 #
 # 照合も適用も、見ているのは **手元にチェックアウトされている定義** である。だから
 # 古い版のツリーから打つと、照合は古い定義と古い実設定を突き合わせて緑になり (#311)、
@@ -14,6 +17,32 @@
 # 照合は名乗るだけ、適用は stale のときだけ止める。同じ判定に別の重みを与えたいのは
 # 読むのと書くのとで代償が違うからで、判定そのものを分ける理由は無い。
 set -euo pipefail
+
+# 実設定を引いて、1 ルールセット 1 ファイルで置き場へ書く (#820)。
+#   $1 = 置き場 (mktemp -d したディレクトリ)
+#
+# **一覧の応答には rules も bypass_actors も含まれない**ので、id を取ってから 1 本ずつ
+# GET する必要がある。この 2 段が `check-rulesets.sh` と `apply-rulesets.sh` に写しで
+# あり、差は「name→id の表を組むか」だけだった。
+#
+# 表は `<置き場>/index.tsv` に `<名前><TAB><id>` で置く。**連想配列で返さない** —
+# macOS の bash 3.2 に `declare -A` は無く、CI の `/bin/bash` はその 3.2 である。
+# `.tsv` なので、置き場を `*.json` で読む `rulesets_lib.py diff` は拾わない。
+#
+# id は org ごとに変わるので定義ファイルには持たせず、毎回引く。
+#
+# 1 つも無ければ非 0。定義はあるのに未適用、という状態を呼び手が名乗れるようにする。
+fetch_live_rulesets() { # $1=置き場
+  local into=$1 name id found=''
+  : > "$into/index.tsv"
+  while IFS=$'\t' read -r name id; do
+    [ -n "$id" ] || continue
+    found=1
+    gh api "repos/$REPO/rulesets/$id" > "$into/$id.json"
+    printf '%s\t%s\n' "$name" "$id" >> "$into/index.tsv"
+  done < <(gh api "repos/$REPO/rulesets" --jq '.[] | "\(.name)\t\(.id)"')
+  [ -n "$found" ]
+}
 
 # 呼び出し後の判定。呼び手はこれを見て、止めるかどうかを決める
 #   same    手元の定義は main と同じ

@@ -14,9 +14,11 @@ extension Canvas {
 
     public func ambientLight(_ red: Float, _ green: Float, _ blue: Float) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: 255,
-            from: "ambientLight()", fallingBackTo: "光を置きませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: 255)
+        else {
+            return warnOnce(
+                .notANumberAmbientLight, "ambientLight(): 数でない値・無限の値が渡されたので、光を置きませんでした")
+        }
         ambientLight(color)
     }
 
@@ -24,9 +26,11 @@ extension Canvas {
         _ red: Float, _ green: Float, _ blue: Float, _ x: Float, _ y: Float, _ z: Float
     ) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: 255,
-            from: "directionalLight()", fallingBackTo: "光を置きませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: 255)
+        else {
+            return warnOnce(
+                .notANumberDirectionalLight, "directionalLight(): 数でない値・無限の値が渡されたので、光を置きませんでした")
+        }
         directionalLight(color, x, y, z)
     }
 
@@ -34,9 +38,11 @@ extension Canvas {
         _ red: Float, _ green: Float, _ blue: Float, _ x: Float, _ y: Float, _ z: Float
     ) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: 255,
-            from: "pointLight()", fallingBackTo: "光を置きませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: 255)
+        else {
+            return warnOnce(
+                .notANumberPointLight, "pointLight(): 数でない値・無限の値が渡されたので、光を置きませんでした")
+        }
         pointLight(color, x, y, z)
     }
 
@@ -47,9 +53,11 @@ extension Canvas {
         angle: Float = .pi / 6
     ) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: 255,
-            from: "spotLight()", fallingBackTo: "光を置きませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: 255)
+        else {
+            return warnOnce(
+                .notANumberSpotLight, "spotLight(): 数でない値・無限の値が渡されたので、光を置きませんでした")
+        }
         spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
 
@@ -59,9 +67,11 @@ extension Canvas {
 
     public func ambient(_ red: Float, _ green: Float, _ blue: Float) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: 255,
-            from: "ambient()", fallingBackTo: "質感を変えませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: 255)
+        else {
+            return warnOnce(
+                .notANumberAmbient, "ambient(): 数でない値・無限の値が渡されたので、質感を変えませんでした")
+        }
         ambient(color)
     }
 
@@ -71,9 +81,11 @@ extension Canvas {
 
     public func emissive(_ red: Float, _ green: Float, _ blue: Float) {
         guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: 255,
-            from: "emissive()", fallingBackTo: "質感を変えませんでした")
-        else { return }
+            red: red, green: green, blue: blue, alpha: 255)
+        else {
+            return warnOnce(
+                .notANumberEmissive, "emissive(): 数でない値・無限の値が渡されたので、質感を変えませんでした")
+        }
         emissive(color)
     }
 }

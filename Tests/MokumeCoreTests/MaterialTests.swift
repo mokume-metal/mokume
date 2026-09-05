@@ -19,8 +19,8 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct MaterialTests {
-    private let black = LinearRGBA.opaque(red: 0, green: 0, blue: 0)
-    private let white = LinearRGBA.opaque(red: 1, green: 1, blue: 1)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         let gpu = try RenderDevice()
@@ -40,14 +40,14 @@ struct MaterialTests {
             if let lights {
                 lights(canvas)
             } else {
-                canvas.ambientLight(.opaque(red: 0.15, green: 0.15, blue: 0.15))
+                canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
                 canvas.directionalLight(
-                    .opaque(red: 0.55, green: 0.55, blue: 0.55), -0.3, 0.4, -0.85)
+                    .linear(red: 0.55, green: 0.55, blue: 0.55), -0.3, 0.4, -0.85)
             }
             material(canvas)
             // **飽和した面の上には艶が乗らない。** 明るさに余地を残しておかないと、
             // 艶が出ているのに絵が変わらず、検査は「効いていない」と読めてしまう
-            canvas.fill(.opaque(red: 0.45, green: 0.42, blue: 0.4))
+            canvas.fill(.linear(red: 0.45, green: 0.42, blue: 0.4))
             canvas.push()
             canvas.translate(32, 32, 0)
             canvas.sphere(24)
@@ -91,8 +91,8 @@ struct MaterialTests {
         let written = try sphere(try makeCanvas()) {
             $0.shininess(0)
             $0.metalness(0)
-            $0.ambient(.opaque(red: 1, green: 1, blue: 1))
-            $0.emissive(.opaque(red: 0, green: 0, blue: 0))
+            $0.ambient(.linear(red: 1, green: 1, blue: 1))
+            $0.emissive(.linear(red: 0, green: 0, blue: 0))
         }
         // 既定が「何も変えない」でなければ、材質を足すだけで既にある絵が動く
         #expect(plain.bytes == written.bytes)
@@ -163,11 +163,11 @@ struct MaterialTests {
                 let canvas = try makeCanvas()
                 try canvas.draw {
                     canvas.background(black)
-                    canvas.ambientLight(.opaque(red: 0.08, green: 0.08, blue: 0.08))
-                    canvas.directionalLight(.opaque(red: 0.03, green: 0.03, blue: 0.5), 0, 0, -1)
+                    canvas.ambientLight(.linear(red: 0.08, green: 0.08, blue: 0.08))
+                    canvas.directionalLight(.linear(red: 0.03, green: 0.03, blue: 0.5), 0, 0, -1)
                     canvas.shininess(shininess)
                     canvas.metalness(metalness)
-                    canvas.fill(.opaque(red: 0.8, green: 0.02, blue: 0.02))
+                    canvas.fill(.linear(red: 0.8, green: 0.02, blue: 0.02))
                     canvas.push()
                     canvas.translate(32, 32, 0)
                     canvas.sphere(24)
@@ -194,11 +194,11 @@ struct MaterialTests {
     @Test("周りへの返しを下げると、底上げの光の分だけ暗くなる")
     func ambientResponseDarkensTheSurroundings() throws {
         let onlySurroundings: (Canvas) -> Void = {
-            $0.ambientLight(.opaque(red: 0.6, green: 0.6, blue: 0.6))
+            $0.ambientLight(.linear(red: 0.6, green: 0.6, blue: 0.6))
         }
         let full = try sphere(try makeCanvas(), lights: onlySurroundings) { _ in }
         let occluded = try sphere(try makeCanvas(), lights: onlySurroundings) {
-            $0.ambient(.opaque(red: 0.25, green: 0.25, blue: 0.25))
+            $0.ambient(.linear(red: 0.25, green: 0.25, blue: 0.25))
         }
         // 比べるのは**エンコードを経た値**なので、線形での 0.25 倍はここでは
         // 半分ほどにしか見えない。それでもはっきり暗いことは読める
@@ -212,7 +212,7 @@ struct MaterialTests {
         let lights: (Canvas) -> Void = { $0.directionalLight(white, 0, 0, -1) }
         let plain = try sphere(try makeCanvas(), lights: lights) { _ in }
         let glowing = try sphere(try makeCanvas(), lights: lights) {
-            $0.emissive(.opaque(red: 0.5, green: 0.5, blue: 0.5))
+            $0.emissive(.linear(red: 0.5, green: 0.5, blue: 0.5))
         }
         // 球のいちばん暗いところ (光が斜めにしか当たらない縁) で比べる
         var darkest = (x: 0, y: 0, value: 256)
@@ -283,10 +283,10 @@ struct MaterialTests {
         let canvas = try makeCanvas(width: 96, height: 64)
         try canvas.draw {
             canvas.background(black)
-            canvas.ambientLight(.opaque(red: 0.15, green: 0.15, blue: 0.15))
+            canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
             canvas.directionalLight(
-                .opaque(red: 0.55, green: 0.55, blue: 0.55), -0.3, 0.4, -0.85)
-            canvas.fill(.opaque(red: 0.45, green: 0.42, blue: 0.4))
+                .linear(red: 0.55, green: 0.55, blue: 0.55), -0.3, 0.4, -0.85)
+            canvas.fill(.linear(red: 0.45, green: 0.42, blue: 0.4))
             canvas.push()
             canvas.translate(24, 32, 0)
             canvas.sphere(18)
@@ -362,8 +362,8 @@ struct MaterialTests {
     func metalWithoutSurroundingsIsReported() throws {
         var metal = Material.default
         metal.metalness = 1
-        let directional = Light(kind: .directional, color: .opaque(red: 1, green: 1, blue: 1))
-        let ambient = Light(kind: .ambient, color: .opaque(red: 0.2, green: 0.2, blue: 0.2))
+        let directional = Light(kind: .directional, color: .linear(red: 1, green: 1, blue: 1))
+        let ambient = Light(kind: .ambient, color: .linear(red: 0.2, green: 0.2, blue: 0.2))
         #expect(
             Material.unusableReason(metal, lights: [directional], surroundings: nil)
                 == .metalWithoutSurroundings)
@@ -387,8 +387,8 @@ struct MaterialTests {
             canvas.shininess(.infinity)
             canvas.metalness(2)
             canvas.metalness(-0.5)
-            canvas.ambient(.opaque(red: -1, green: 0, blue: 0))
-            canvas.emissive(.opaque(red: .nan, green: 0, blue: 0))
+            canvas.ambient(.linear(red: -1, green: 0, blue: 0))
+            canvas.emissive(.linear(red: .nan, green: 0, blue: 0))
             #expect(canvas.currentMaterial.shininess == 30)
             #expect(canvas.currentMaterial.metalness == 0)
             #expect(canvas.currentMaterial.ambient == SIMD3(1, 1, 1))

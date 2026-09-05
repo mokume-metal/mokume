@@ -14,7 +14,9 @@
 # 「どちらで検証したか」を推測し始めると、通っていることの意味が薄れる。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+# **自分の隣を基準にする。** `$0` は source されると呼び出し側を指し、cwd にも依存する
+# (#820)。`BASH_SOURCE` はこのファイル自身の場所で、`pwd -P` が symlink も解く
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 SCHEMA_DIR=Schemas
 EXAMPLE_DIR=Schemas/examples

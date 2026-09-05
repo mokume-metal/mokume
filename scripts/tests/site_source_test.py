@@ -8,7 +8,8 @@
 それぞれ写しで持っていた。畳んだので、ここで固定するのは 2 つ:
 
 1. **読み口の契約** — ディレクトリでも URL でも同じ形で引け、無いものは `None`、
-   引けなかったものは投げる (握り潰すと「置いても出ない」が緑のまま通る)
+   引けなかったものは `Unreachable` で名乗る (握り潰すと「置いても出ない」が緑のまま
+   通り、traceback にすると読める面と揃わない。向きは #865 で宣言した)
 2. **写しが戻ってこないこと** — 検査のどれかがまた自前の綴りを持ったら赤くする
 
 **新しい検査 (Makefile の的) は足さない。** `make hooks-test` が `-p '*_test.py'` で
@@ -19,13 +20,15 @@ discover するので、ここに 1 ファイル置けば CI にも載る (`bash
 """
 
 import functools
+import gc
 import http.server
 import importlib.util
 import re
+import socket
 import tempfile
 import threading
 import unittest
-import urllib.error
+import warnings
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -94,14 +97,43 @@ class SourceTest(unittest.TestCase):
                 # (URL の側は ASCII の綴りで引く。相対パスの百分率符号化はしていない)
                 self.assertIsNone(source.read("missing.txt"))
                 # 404 以外は投げる。握り潰すと、配信の事故が緑のまま通る。
-                # **HTTPError と符号まで見る** — 素の Exception で受けると、接続断でも
-                # 緑になる (最初にこの検査を書いたとき、まさにそれで空回りしていた)
-                with self.assertRaises(urllib.error.HTTPError) as raised:
+                # **符号まで見る** — 素の Exception で受けると、接続断でも緑になる
+                # (最初にこの検査を書いたとき、まさにそれで空回りしていた)
+                with self.assertRaises(site_source.Unreachable) as raised:
                     source.read("500")
-                self.assertEqual(raised.exception.code, 500)
+                self.assertIn("500", str(raised.exception))
+                # 502 も同じ向き。**日次の公開検査が踏むのはこちらである** (#865)
+                with self.assertRaises(site_source.Unreachable) as raised:
+                    source.read("502")
+                self.assertIn("502", str(raised.exception))
+                self.assertIn("が引けない", str(raised.exception))
+
+                # **応答を閉じる。** 例外そのものが応答なので、閉じないと
+                # ResourceWarning が残る (read_stamp が同じ理由で閉じている)
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    self.assertIsNone(source.read("missing.txt"))
+                    gc.collect()
+                leaked = [w for w in caught if issubclass(w.category, ResourceWarning)]
+                self.assertEqual(leaked, [], [str(w.message) for w in leaked])
             finally:
                 server.shutdown()
                 server.server_close()
+
+    def test_引けない先は_Unreachable_で名乗る(self):
+        """**traceback にしない。** 名前解決・接続断・証明書はどれもこの枝を通る (#865)。
+
+        誰も listen していない口を狙う。`HTTPError` ではないので、`URLError` を
+        受けていなければここで素の traceback が上がる。
+        """
+        # 空いている口を借りてすぐ閉じる。**閉じた後の番号を狙う**のが要点
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        source = site_source.Source(f"http://127.0.0.1:{port}")
+        with self.assertRaises(site_source.Unreachable) as raised:
+            source.read("a.txt")
+        self.assertIn("が引けない", str(raised.exception))
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -111,6 +143,9 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
     def do_GET(self):  # noqa: N802
+        if self.path == "/502":
+            self.send_error(502, "bad gateway on purpose")
+            return
         if self.path == "/500":
             # 理由句は ASCII で書く。非 ASCII を渡すと send_error 自身が latin-1 の
             # 符号化で落ち、応答ではなく接続断になる
@@ -193,6 +228,8 @@ class NoCopyTest(unittest.TestCase):
         self.assertIn("FETCH_TIMEOUT_SECONDS", text)
         self.assertIn("class Source", text)
         self.assertIn("<img", text)
+        # 向きの宣言 (#865)。畳んだ先から消えたら、読み手はまた自分で決め始める
+        self.assertIn("class Unreachable", text)
 
 
 if __name__ == "__main__":

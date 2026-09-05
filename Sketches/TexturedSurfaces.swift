@@ -48,8 +48,8 @@ final class TexturedSurfaces: Sketch {
             0, 1, 0)
         perspective(.pi / 3, width / height, 10, 2000)
 
-        ambientLight(.opaque(red: 0.2, green: 0.2, blue: 0.24))
-        directionalLight(.opaque(red: 0.9, green: 0.86, blue: 0.78), -0.4, 0.8, -0.35)
+        ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.24))
+        directionalLight(.linear(red: 0.9, green: 0.86, blue: 0.78), -0.4, 0.8, -0.35)
 
         // MARK: 立体に貼る
         noStroke()

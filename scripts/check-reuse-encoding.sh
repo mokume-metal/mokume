@@ -43,44 +43,10 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/LICENSES"
 cp "$ROOT/LICENSES/MIT.txt" "$WORK/LICENSES/MIT.txt"
 
-# ASCII のパディングを 0/1/2 バイト入れて、2048 バイト目の落ち位置を 1 バイトずつ
-# ずらした 3 通りを置く。3 文字なら 1 つは文字の切れ目に乗り、残り 2 つは文字を割る
-# — ヘッダの長さが変わっても、割れるケースを必ず含められる
-# REUSE-IgnoreStart — 下の雛形に書く SPDX タグは、このファイル自身の帰属宣言
-# ではなく検査用のデータ
-python3 - "$WORK" <<'PY'
-import sys, pathlib
-
-work = pathlib.Path(sys.argv[1])
-HEADER = (
-    "# SPDX-FileCopyrightText: 2026 mokume-metal\n"
-    "# SPDX-License-Identifier: MIT\n"
-    "# "
-).encode("utf-8")
-# 日本語のコメントブロックを模した詰め物 (1 文字 3 バイト)
-FILLER = "この行は日本語のコメントヘッダを模した検査用の詰め物である。".encode("utf-8")
-CHUNK = 2048
-
-split = []
-for pad in (0, 1, 2):
-    prefix = HEADER + b"x" * pad
-    body = FILLER * (((CHUNK * 2) // len(FILLER)) + 1)
-    data = prefix + body + b"\n"
-    (work / f"header-{pad}.txt").write_bytes(data)
-    try:
-        data[:CHUNK].decode("utf-8")
-    except UnicodeDecodeError:
-        split.append(pad)
-
-# 詰め物を書き換えた結果、どの雛形も境界で文字を割らなくなると、この検査は何も
-# 検査しないまま緑になる。それを防ぐために雛形自身を検査する
-if len(split) < 2:
-    sys.exit(
-        f"検査用ファイルが 2048 バイト境界で文字を割っていない (割れたのは {split})。"
-        " 詰め物 (FILLER) をマルチバイト文字だけで構成すること"
-    )
-PY
-# REUSE-IgnoreEnd
+# 雛形は .py に出してある (#817)。組み方と、**雛形自身が 2048 バイト境界で文字を割って
+# いること**の自己検査はあちらが持つ — 埋まったままでは lint も unittest も見ず、
+# 詰め物が ASCII に変わって「何も検査しないまま緑」になっても気付けなかった
+python3 "$ROOT/scripts/reuse_encoding_fixtures.py" "$WORK"
 
 OUTPUT="$(reuse --root "$WORK" lint 2>&1)" && STATUS=0 || STATUS=$?
 

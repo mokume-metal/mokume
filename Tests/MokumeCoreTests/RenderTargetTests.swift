@@ -22,7 +22,7 @@ struct RenderTargetTests {
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: 8, height: 4)
 
-        let color = LinearRGBA.opaque(red: 0.25, green: 0.5, blue: 0.75)
+        let color = LinearRGBA.linear(red: 0.25, green: 0.5, blue: 0.75)
         try target.fill(with: color)
 
         let pixels = try target.readPixels()
@@ -41,7 +41,7 @@ struct RenderTargetTests {
 
         // 半精度浮動小数の描画先を選んだ理由そのもの (ADR-0011 決定 2)。
         // 8 bit の描画先ならここで 1.0 に潰れる。
-        try target.fill(with: .opaque(red: 4, green: 2, blue: 1))
+        try target.fill(with: .linear(red: 4, green: 2, blue: 1))
 
         let pixels = try target.readPixels()
         #expect(pixels[0, 0].red == 4)
@@ -53,7 +53,7 @@ struct RenderTargetTests {
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: 2, height: 2)
 
-        try target.fill(with: .opaque(red: 1, green: 0, blue: 0))
+        try target.fill(with: .linear(red: 1, green: 0, blue: 0))
         // 塗り直さないパスを 1 本流しても内容は変わらない
         let commands = try gpu.beginCommands()
         let encoder = try #require(
@@ -61,7 +61,7 @@ struct RenderTargetTests {
         encoder.endEncoding()
         try gpu.commitAndWait(commands)
 
-        #expect(try target.readPixels()[0, 0] == LinearRGBA.opaque(red: 1, green: 0, blue: 0))
+        #expect(try target.readPixels()[0, 0] == LinearRGBA.linear(red: 1, green: 0, blue: 0))
     }
 
     /// 完了条件「`RenderTarget.texture` が `.private`」(#753)。
@@ -116,12 +116,12 @@ struct RenderTargetTests {
     func pixelMirrorIsMadeOnlyWhenAskedAndOnlyOnce() throws {
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: 8, height: 4)
-        try target.fill(with: .opaque(red: 1, green: 0, blue: 0))
-        try target.fill(with: .opaque(red: 0, green: 1, blue: 0))
+        try target.fill(with: .linear(red: 1, green: 0, blue: 0))
+        try target.fill(with: .linear(red: 0, green: 1, blue: 0))
         #expect(target.pixelMirror == nil, "画素を読んでいないのに写しがある")
         #expect(target.pixelMirrorsMade == 0)
 
-        #expect(try target.readPixels()[0, 0] == LinearRGBA.opaque(red: 0, green: 1, blue: 0))
+        #expect(try target.readPixels()[0, 0] == LinearRGBA.linear(red: 0, green: 1, blue: 0))
         #expect(target.pixelMirrorsMade == 1)
         #expect(target.pixelReadbacksEncoded == 1)
 
@@ -131,8 +131,8 @@ struct RenderTargetTests {
         #expect(target.pixelReadbacksEncoded == 1, "GPU に新しい仕事が無いのに読み戻している")
 
         // 絵が変わったら読み戻す
-        try target.fill(with: .opaque(red: 0, green: 0, blue: 1))
-        #expect(try target.readPixels()[7, 3] == LinearRGBA.opaque(red: 0, green: 0, blue: 1))
+        try target.fill(with: .linear(red: 0, green: 0, blue: 1))
+        #expect(try target.readPixels()[7, 3] == LinearRGBA.linear(red: 0, green: 0, blue: 1))
         #expect(target.pixelReadbacksEncoded == 2)
         #expect(target.pixelMirrorsMade == 1)
     }

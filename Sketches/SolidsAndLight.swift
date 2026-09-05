@@ -27,11 +27,11 @@ final class SolidsAndLight: Sketch {
         perspective(.pi / 3, width / height, 10, 2000)
 
         // 光を 4 種そろえて置く。縦軸は下向きなので、上から差す光の向きは +y
-        ambientLight(.opaque(red: 0.16, green: 0.17, blue: 0.22))
-        directionalLight(.opaque(red: 0.9, green: 0.86, blue: 0.78), -0.45, 0.85, -0.35)
-        pointLight(.opaque(red: 0.25, green: 0.45, blue: 0.95), center.x - 260, center.y - 60, 220)
+        ambientLight(.linear(red: 0.16, green: 0.17, blue: 0.22))
+        directionalLight(.linear(red: 0.9, green: 0.86, blue: 0.78), -0.45, 0.85, -0.35)
+        pointLight(.linear(red: 0.25, green: 0.45, blue: 0.95), center.x - 260, center.y - 60, 220)
         spotLight(
-            .opaque(red: 0.95, green: 0.35, blue: 0.4),
+            .linear(red: 0.95, green: 0.35, blue: 0.4),
             center.x + 240, center.y - 300, 160,
             -0.35, 1, -0.25,
             angle: 0.5)

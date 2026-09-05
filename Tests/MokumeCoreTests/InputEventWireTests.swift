@@ -28,8 +28,8 @@ struct InputEventWireTests {
             .mouseUp(x: 0, y: 0, button: 0),
             .mouseMoved(x: -4.25, y: 719.5),
             .scrolled(dx: 1.5, dy: -2.25),
-            .keyDown(code: 36, characters: "a", isRepeat: true),
-            .keyUp(code: 53),
+            .keyDown(code: .enter, characters: "a", isRepeat: true),
+            .keyUp(code: .escape),
         ])
     func survivesTheRoundTrip(event: InputEvent) throws {
         #expect(try roundTrip(event) == event)
@@ -41,7 +41,7 @@ struct InputEventWireTests {
         "囲みを壊す文字が入っていても、行は壊れない",
         arguments: ["\"", "\\", "改\n行", "\t", "\u{01}", "あ"])
     func escapesTroublesomeCharacters(characters: String) throws {
-        let event = InputEvent.keyDown(code: 1, characters: characters, isRepeat: false)
+        let event = InputEvent.keyDown(code: .s, characters: characters, isRepeat: false)
         #expect(try roundTrip(event) == event)
     }
 

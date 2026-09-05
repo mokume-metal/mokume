@@ -25,7 +25,7 @@ struct FramePresenterTests {
     ) throws -> PixelBuffer {
         let gpu = try RenderDevice()
         let source = try RenderTarget(gpu: gpu, width: content.width, height: content.height)
-        try source.fill(with: .opaque(red: 1, green: 1, blue: 1))
+        try source.fill(with: .linear(red: 1, green: 1, blue: 1))
 
         let destination = try RenderTarget(
             gpu: gpu, width: surface.width, height: surface.height)
@@ -67,7 +67,7 @@ struct FramePresenterTests {
     func contentResolutionIsIndependentOfTheSurface() throws {
         let gpu = try RenderDevice()
         let source = try RenderTarget(gpu: gpu, width: 32, height: 16)
-        try source.fill(with: .opaque(red: 1, green: 1, blue: 1))
+        try source.fill(with: .linear(red: 1, green: 1, blue: 1))
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
 
         for size in [(64, 64), (256, 32), (17, 200)] {
@@ -124,7 +124,7 @@ struct DrawableResidencyTests {
     ) {
         let gpu = try RenderDevice()
         let source = try RenderTarget(gpu: gpu, width: 32, height: 32)
-        try source.fill(with: .opaque(red: 1, green: 1, blue: 1))
+        try source.fill(with: .linear(red: 1, green: 1, blue: 1))
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         return (gpu, source, presenter, SurfaceFixture.make(gpu.device, size: surface))
     }

@@ -33,7 +33,7 @@ struct BrightnessTests {
     /// 一様な灰色 1 枚を描く。
     private func flat(_ canvas: Canvas, _ value: Float = 0.25) throws {
         try canvas.draw {
-            canvas.background(.opaque(red: value, green: value, blue: value))
+            canvas.background(.linear(red: value, green: value, blue: value))
         }
     }
 
@@ -175,12 +175,12 @@ struct BrightnessTests {
         canvas.exposure(1.7)
         canvas.toneMapping(mode)
         try canvas.draw {
-            canvas.background(.opaque(red: 0.1, green: 0.2, blue: 0.3))
+            canvas.background(.linear(red: 0.1, green: 0.2, blue: 0.3))
             canvas.noStroke()
             // 範囲を超えた明るさを含める (ここでしか丸め方の違いが出ない)
-            canvas.fill(.opaque(red: 2.5, green: 1.2, blue: 0.4))
+            canvas.fill(.linear(red: 2.5, green: 1.2, blue: 0.4))
             canvas.rect(4, 4, 10, 24)
-            canvas.fill(.opaque(red: 0.6, green: 0.6, blue: 0.6))
+            canvas.fill(.linear(red: 0.6, green: 0.6, blue: 0.6))
             canvas.rect(18, 4, 10, 24)
         }
 

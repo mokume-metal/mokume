@@ -34,14 +34,6 @@ import mokume
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [#647]: https://github.com/mokume-metal/mokume/issues/647
 enum DependencyFacets {
-    /// 面の仕様の名前 (``SchemasLocator/names(in:)`` が返す綴り)。
-    ///
-    /// **綴りを組み立てない。** 面はみな `<key>-report` だと思って組み立てていたが、
-    /// 一方通行の面 (`viewport`) は応答を持たないので当たらない — 実在しない名前を
-    /// 探すと、その面はどの版でも「持たない」と答えることになる (#703)。名乗るのは
-    /// 一覧の側である。
-    static func schemaName(for entry: StartupReads.Entry) -> String { entry.schemaName }
-
     /// v0.1.0 から在る面。**そこが本当に仕様の置き場かを確かめる錨**にする。
     static let anchor = StartupReads.observe
 
@@ -54,9 +46,9 @@ enum DependencyFacets {
         let names = Set(SchemasLocator.names(in: root))
         // 錨が居ないなら、そこは仕様の置き場ではない (構造が変わった・まだ取ってきていない)。
         // 「面を 1 つも持たない」と答えるより、判定しないほうがよい
-        guard names.contains(schemaName(for: anchor)) else { return nil }
+        guard names.contains(anchor.schemaName) else { return nil }
         return StartupReads.all.filter {
-            $0.origin == .facet && !names.contains(schemaName(for: $0))
+            $0.origin == .facet && !names.contains($0.schemaName)
         }
     }
 

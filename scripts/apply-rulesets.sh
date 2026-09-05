@@ -21,7 +21,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-REPO="${GITHUB_REPOSITORY:-mokume-metal/mokume}"
+# リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
+# shellcheck source=scripts/repo-slug.sh
+. "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
+REPO="$(this_repo)"
 DEFS=.github/rulesets
 
 # REPO / DEFS を読むので、代入の後に置く
@@ -32,7 +35,8 @@ apply=false
 case "${1:-}" in
   --apply) apply=true ;;
   "") ;;
-  *) echo "使い方: apply-rulesets.sh [--apply]" >&2; exit 2 ;;
+  # usage は 64 (sysexits の EX_USAGE) で揃える (#820)
+  *) echo "使い方: apply-rulesets.sh [--apply]" >&2; exit 64 ;;
 esac
 
 # 壊れた定義を GitHub へ送らない
@@ -52,14 +56,10 @@ fi
 live=$(mktemp -d)
 trap 'rm -rf "$live"' EXIT
 
-# name → id の対応。id は org ごとに変わるので定義ファイルには持たせず、毎回引く
-declare -a names=() ids=()
-while IFS=$'\t' read -r name id; do
-  [ -n "$name" ] || continue
-  names+=("$name")
-  ids+=("$id")
-  gh api "repos/$REPO/rulesets/$id" > "$live/$id.json"
-done < <(gh api "repos/$REPO/rulesets" --jq '.[] | "\(.name)\t\(.id)"')
+# 実設定を引く。引き方は rulesets-freshness.sh が持つ (#820) —
+# check-rulesets.sh と同じ 2 段 (一覧 → id ごとに GET) だったので畳んだ。
+# **name→id の表は $live/index.tsv に置かれる** (連想配列で返せない理由はあちらの解説)
+fetch_live_rulesets "$live" || true
 
 echo "== 定義と実設定の差分 =="
 diff_status=0
@@ -81,13 +81,8 @@ echo
 echo "== 適用 =="
 for f in "$DEFS"/*.json; do
   name=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$f")
-  id=""
-  for i in "${!names[@]}"; do
-    if [ "${names[$i]}" = "$name" ]; then
-      id="${ids[$i]}"
-      break
-    fi
-  done
+  # 表から id を引く。**タブで区切って名前の完全一致を見る** — 名前に空白が入りうる
+  id=$(awk -F'\t' -v want="$name" '$1 == want { print $2 }' "$live/index.tsv")
 
   if [ -n "$id" ]; then
     gh api -X PUT "repos/$REPO/rulesets/$id" --input "$f" >/dev/null
@@ -99,12 +94,12 @@ for f in "$DEFS"/*.json; do
 done
 
 # 定義に無いルールセットが残っていても消さない。存在だけ知らせる
-for name in "${names[@]:-}"; do
+while IFS=$'\t' read -r name _; do
   [ -n "$name" ] || continue
   if [ ! -f "$DEFS/$name.json" ]; then
     echo "注意: 実設定の $name は定義に無い (このスクリプトは削除しない)" >&2
   fi
-done
+done < "$live/index.tsv"
 
 echo
 echo "== 適用後の照合 =="

@@ -32,20 +32,19 @@ struct CommandAllocatorTests {
         var presented = 0
         for index in 0..<count {
             // 描く経路 (GPU の完了まで待つ)
-            try source.fill(with: .opaque(red: Float(index % 2), green: 0.2, blue: 0.3))
+            try source.fill(with: .linear(red: Float(index % 2), green: 0.2, blue: 0.3))
             // 差し出す経路 (待たない)
             if try presenter.present(source, to: layer) { presented += 1 }
         }
         return (gpu, presented)
     }
 
-    @Test("置き場が 1 本しか無くても、実行中のものを巻き戻さない")
+    @Test("置き場が 1 本しか無いと、待たない経路の直後に必ず待ちが起きる")
     func waitsBeforeReusingTheOnlyAllocator() throws {
         // 1 本にすると、待たない経路の**直後に必ず**同じ置き場が回ってくる
         let (gpu, presented) = try runFrames(60, slotCount: 1)
         try #require(presented > 0, "面を 1 度も取れていない — この検査は何も見ていない")
 
-        #expect(gpu.resetsWhileInFlight == 0)
         #expect(gpu.slotWaits > 0, "一度も待っていない — 待たない経路が置き場を返していない")
     }
 
@@ -70,7 +69,7 @@ struct CommandAllocatorTests {
     /// かかった機械 (CPU が押されている) では実際にそうなった
     /// ([#765](https://github.com/mokume-metal/mokume/issues/765))。毎フレームの描き切りに
     /// GPU を占める計算を積めば、機械の速さと負荷に依らず「まだ終わっていない」が立つ。
-    @Test("描き切りと差し出しが続いても、置き場が 1 本なら待ってから巻き戻す")
+    @Test("描き切りと差し出しが続いても、置き場が 1 本なら待ちが起きる")
     func waitsBetweenUnwaitedFlushAndPresent() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
         let gpu = try RenderDevice(device: device, slotCount: 1)
@@ -86,8 +85,8 @@ struct CommandAllocatorTests {
         for index in 0..<20 {
             try canvas.draw {
                 canvas.compute(spin, over: 1, writes: [scratch])
-                canvas.background(.opaque(red: Float(index % 2), green: 0.2, blue: 0.3))
-                canvas.fill(.opaque(red: 1, green: 1, blue: 1))
+                canvas.background(.linear(red: Float(index % 2), green: 0.2, blue: 0.3))
+                canvas.fill(.linear(red: 1, green: 1, blue: 1))
                 canvas.rect(8, 8, 48, 48)
             }
             if !gpu.isIdle { busyAfterFlush += 1 }
@@ -96,18 +95,57 @@ struct CommandAllocatorTests {
         try #require(presented > 0, "面を 1 度も取れていない — この検査は何も見ていない")
         try #require(busyAfterFlush > 0, "描き切りが返った時点で GPU が毎回終わっている — 回転が短く、この検査は何も見ていない")
 
-        #expect(gpu.resetsWhileInFlight == 0)
         #expect(gpu.slotWaits > 0, "一度も待っていない — 待たない経路が置き場を返していない")
     }
 
-    @Test("環の既定の本数でも、実行中のものを巻き戻さない")
-    func neverResetsAnAllocatorInFlightWithTheDefaultRing() throws {
+    /// **#222 の不変条件そのものを見る、唯一の検査。**
+    ///
+    /// 上の 2 本が見ているのは「待ちが起きたこと」(`slotWaits`) までで、その待ちが
+    /// **実際に終わりまで待ったか**は見ていない。土台の側にも置けない — 判定に使える
+    /// 合図は `waitForSlot` が待っているのと同じもの 1 つきりなので、中に書くと待ちの
+    /// 事後条件を 1 行あとで自己申告するだけになる ([#790](https://github.com/mokume-metal/mokume/issues/790))。
+    ///
+    /// **外から見るために、置き場を 1 本にする。** 1 本なら「その置き場へ積んだ投入」と
+    /// 「投入済みの全部」が一致するので、`beginCommands()` が返った時点の `isIdle` が
+    /// そのまま事後条件になる。待ちを外すとここが赤くなる (実測)。
+    @Test("置き場を取り直す口は、その置き場を読む投入が終わってから巻き戻す")
+    func beginCommandsWaitsForTheSubmissionThatReadsTheSlot() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
+        let gpu = try RenderDevice(device: device, slotCount: 1)
+        let target = try RenderTarget(gpu: gpu, width: 64, height: 64)
+        let canvas = try Canvas(target: target, gpu: gpu)
+        let scratch = try canvas.makeNumbers(count: 1)
+        let spin = try canvas.makeComputation(Self.spin, name: "spin")
+
+        // **「まだ終わっていない」を構造で作る** (この suite の他の検査と同じ手)
+        try canvas.draw {
+            canvas.compute(spin, over: 1, writes: [scratch])
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+        }
+        try #require(!gpu.isIdle, "回転が短い — この検査は何も見ていない")
+
+        let waits = gpu.slotWaits
+        let commands = try gpu.beginCommands()
+        #expect(
+            gpu.slotWaits == waits + 1,
+            "実行中の置き場を取り直したのに、待ちに入っていない")
+        #expect(
+            gpu.isIdle,
+            "置き場を巻き戻したのに、そこへ積んだ投入がまだ走っている — #222 の不変条件が破れている")
+
+        // 開いたままにしない (この 1 本は絵を持たないので、空のまま投入して畳む)
+        gpu.commit(commands)
+        try gpu.settle()
+    }
+
+    @Test("環が既定の本数なら、毎フレームは待たない")
+    func theDefaultRingDoesNotWaitEveryFrame() throws {
         let (gpu, presented) = try runFrames(120, slotCount: RenderDevice.defaultSlotCount)
         try #require(presented > 0, "面を 1 度も取れていない — この検査は何も見ていない")
 
-        #expect(gpu.resetsWhileInFlight == 0)
-        // 環の本数は速さのための値なので、**待ちが常態になっていない**ことも見る。
-        // 1 本に減らすとここが赤くなり、既定の 3 本が効いていることが分かる
+        // 環の本数は速さのための値なので、**待ちが常態になっていない**ことを見る。
+        // 1 本に減らすとここが赤くなり、既定の 3 本が効いていることが分かる。
+        // 正しさ (待つべきときに待つ) の側は 1 つ上の検査が持つ
         #expect(
             gpu.slotWaits < presented,
             "既定の環でも毎回待っている — 本数が足りていない")
