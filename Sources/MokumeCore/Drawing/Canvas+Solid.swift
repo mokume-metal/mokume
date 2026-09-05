@@ -276,32 +276,16 @@ extension Canvas {
         let half = currentStrokeWeight / 2
         guard !points.isEmpty, shapePoints.count == points.count else { return }
 
-        // 点が 1 つだけなら、端点の形そのものを置く
-        if points.count == 1 {
-            appendSolidCap(at: points[0], shape: shapePoints[0], half: half, isolated: true)
-            return
-        }
-
-        let segmentCount = isClosed ? points.count : points.count - 1
-        for index in 0..<segmentCount {
-            let next = (index + 1) % points.count
-            appendSolidBand(
-                points[index], points[next],
-                shape: (shapePoints[index], shapePoints[next]), half: half)
-        }
-
-        if isClosed {
-            for index in points.indices {
-                appendSolidJoin(at: points[index], shape: shapePoints[index], half: half)
-            }
-        } else {
-            for index in 1..<(points.count - 1) {
-                appendSolidJoin(at: points[index], shape: shapePoints[index], half: half)
-            }
-            appendSolidCap(at: points[0], shape: shapePoints[0], half: half, isolated: false)
-            let last = points.count - 1
-            appendSolidCap(at: points[last], shape: shapePoints[last], half: half, isolated: false)
-        }
+        // 端と折れ目の規則は平面と共有する (`strokeRing`)
+        strokeRing(
+            count: points.count, isClosed: isClosed,
+            band: {
+                appendSolidBand(
+                    points[$0], points[$1],
+                    shape: (shapePoints[$0], shapePoints[$1]), half: half)
+            },
+            disc: { appendSolidDisc(at: points[$0], shape: shapePoints[$0], half: half) },
+            square: { appendSolidSquare(at: points[$0], shape: shapePoints[$0], half: half) })
     }
 
     /// 線分 1 本を帯にする。
@@ -321,28 +305,6 @@ extension Canvas {
             a + atA, b + atB, b - atB, shape: (shape.0, shape.1, shape.1))
         appendSolidStrokeTriangle(
             a + atA, b - atB, a - atA, shape: (shape.0, shape.1, shape.0))
-    }
-
-    /// 折れ目を埋める。帯は線分ごとに独立して置くので、曲がったところに隙間が空く。
-    private func appendSolidJoin(at point: SIMD3<Float>, shape: SIMD3<Float>, half: Float) {
-        switch currentStrokeJoin {
-        case .round: appendSolidDisc(at: point, shape: shape, half: half)
-        case .bevel, .miter: appendSolidSquare(at: point, shape: shape, half: half)
-        }
-    }
-
-    /// 端を仕上げる。
-    private func appendSolidCap(
-        at point: SIMD3<Float>, shape: SIMD3<Float>, half: Float, isolated: Bool
-    ) {
-        switch currentStrokeCap {
-        case .square where !isolated:
-            return  // 線の長さちょうどで切る
-        case .round:
-            appendSolidDisc(at: point, shape: shape, half: half)
-        case .square, .project:
-            appendSolidSquare(at: point, shape: shape, half: half)
-        }
     }
 
     /// 視線に正対する円板を置く (丸い端点と丸い角)。
