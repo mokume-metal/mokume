@@ -45,9 +45,10 @@ final class EffectPipeline {
 
     /// 段ごとの引数のテーブル。**段ごとに別のものを使う** — 1 枚を使い回して番地を
     /// 書き換えると、まだ走っていない段の束ね先まで変わる (計算の段と同じ理由)。
-    private var tables: [any MTL4ArgumentTable] = []
-    /// テーブルを組んだ回数。**使い回せているかを数で見る。**
-    private(set) var tablesBuilt = 0
+    private var tablePool: ArgumentTablePool
+    /// テーブルを作った回数。**毎フレーム確保していないことを検査が数で見る**
+    /// (``ArgumentTablePool/built``)。
+    var tablesBuilt: Int { tablePool.built }
 
     /// 段ごとの設定・面・値を置く領域。**フレームごとに書くので環に載る** ([#754])。
     ///
@@ -106,6 +107,9 @@ final class EffectPipeline {
             label: "mokume.effect.builtin")
 
         passBuffer = try passStorage.buffer(holding: 8)
+        tablePool = ArgumentTablePool(
+            gpu: gpu, label: "mokume.effect.arguments",
+            bufferBindCount: 3, textureBindCount: 2)
     }
 
     /// 利用者の効果のパイプラインを組む。
@@ -145,20 +149,9 @@ final class EffectPipeline {
         }
     }
 
-    /// `index` 段目のテーブル。足りなければ伸ばす。
+    /// `index` 段目のテーブル。足りなければ伸ばす (``ArgumentTablePool``)。
     func table(at index: Int) throws(RenderFailure) -> any MTL4ArgumentTable {
-        while tables.count <= index {
-            let descriptor = MTL4ArgumentTableDescriptor()
-            descriptor.label = "mokume.effect.arguments.\(tables.count)"
-            descriptor.maxBufferBindCount = 3
-            descriptor.maxTextureBindCount = 2
-            guard let table = try? gpu.device.makeArgumentTable(descriptor: descriptor) else {
-                throw .argumentTableUnavailable(reason: "効果の段 \(tables.count) 枚目")
-            }
-            tables.append(table)
-            tablesBuilt += 1
-        }
-        return tables[index]
+        try tablePool.table(at: index)
     }
 
     /// 段の数だけ置き場を確保する。**足りているうちは取り直さない。**
