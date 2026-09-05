@@ -24,8 +24,7 @@ struct CustomSolidTests {
     private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
 
     private func makeCanvas(width: Int = 96, height: Int = 96) throws -> Canvas {
-        let gpu = try RenderDevice()
-        return try Canvas(target: try RenderTarget(gpu: gpu, width: width, height: height), gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     private func pixels(of canvas: Canvas) throws -> DisplayImage {

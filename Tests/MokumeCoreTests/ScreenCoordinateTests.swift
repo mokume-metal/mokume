@@ -23,9 +23,7 @@ struct ScreenCoordinateTests {
     private let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
 
     private func makeCanvas(width: Int = 256, height: Int = 256) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 塗られた画素の重心。**位置が絵に出ているか**を数で言うための物差し

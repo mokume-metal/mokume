@@ -21,9 +21,7 @@ import Testing
 )
 struct ShadowTests {
     private func makeCanvas(width: Int = 128, height: Int = 128) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 床の上に球を 1 つ置く絵。**世界の尺度を丸ごう変えられる**ようにしてある。

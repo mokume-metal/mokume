@@ -204,9 +204,7 @@ struct OutputStageTests {
 )
 struct OutputEncodeTests {
     private func makeCanvas(width: Int = 48, height: Int = 32) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 出力段の 4 手を全部踏ませる絵を描く。
@@ -342,9 +340,7 @@ struct OutputEncodeTests {
 )
 struct ObservationRoadTests {
     private func makeCanvas(width: Int = 48, height: Int = 32) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 明暗と半透明が混ざった絵。**一様な色では間引きの違いが出ない。**

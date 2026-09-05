@@ -20,9 +20,7 @@ import Testing
 )
 struct ColorWarningTests {
     private func makeCanvas() throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: 16, height: 16)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
     }
 
     @Test("塗りで鳴っても、下地は黙らない")

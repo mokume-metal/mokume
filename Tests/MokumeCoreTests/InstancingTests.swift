@@ -21,9 +21,7 @@ import simd
 )
 struct InstancingTests {
     private func makeCanvas(width: Int = 96, height: Int = 96) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 置き場所を格子状に並べる。

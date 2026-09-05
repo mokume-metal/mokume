@@ -26,9 +26,7 @@ struct SolidShaderTests {
         """
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     // MARK: - 平面と立体で同じ規約

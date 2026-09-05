@@ -98,9 +98,7 @@ struct CanvasWarningTests {
         "shininess(): 数でない値・無限・範囲の外の値が渡されたので、材質を変えませんでした"
 
     private func makeCanvas() throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: 16, height: 16)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
     }
 
     @Test("フレームの外で光を置くと、原文のまま知らせる")

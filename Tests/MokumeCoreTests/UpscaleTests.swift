@@ -18,6 +18,10 @@ struct UpscaleTests {
     private static let width = 128
     private static let height = 96
 
+    /// ここだけ `CanvasFixture` を通さない。**細かさと拡大の仕方が引数**なので、
+    /// `Canvas(output:gpu:pixelDensity:upscale:)` を直に呼ぶ必要がある — fixture が
+    /// 使う `Canvas(target:gpu:)` は細かさ 1・`.spatial` に決め打った convenience で、
+    /// ここで確かめたいものがそこで潰れる。
     private func makeCanvas(density: Float, upscale: Upscale = .spatial) throws -> Canvas {
         let gpu = try RenderDevice()
         let output = try RenderTarget(gpu: gpu, width: Self.width, height: Self.height)

@@ -21,9 +21,7 @@ import Testing
 )
 struct SolidCullingTests {
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
-        let gpu = try RenderDevice()
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
-        return try Canvas(target: target, gpu: gpu)
+        try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
     /// 1 フレームの中で置いたものを列に閉じ、その列の捨て方を返す。
