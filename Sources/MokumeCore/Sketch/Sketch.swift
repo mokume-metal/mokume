@@ -255,8 +255,28 @@ extension Sketch {
     /// これまでに描いたフレームの数。最初の ``draw()`` の最中は 1。
     public var frameCount: Int { Self.requireRuntime().frameCount }
     /// いまのフレームの時刻 (秒)。最初のフレームは 0。
+    ///
+    /// 窓に出して動かしている間は**実際に流れた時間**で、フレームが何枚落ちても
+    /// 復帰した瞬間に追いつく。**揃えたいものはここから導く** ([ADR-0025] 決定 6) —
+    /// 複数の実行を並べたときに合うのはこの値で、``deltaTime`` を足し込んで作った
+    /// 状態ではない。
+    ///
+    /// ```swift
+    /// circle(sin(time) * 200 + width / 2, height / 2, 40)
+    /// ```
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     public var time: Float { Self.requireRuntime().time }
     /// 前のフレームからの経過 (秒)。
+    ///
+    /// **止まっていた時間まるごとは渡らない。** ディスプレイのスリープなどでフレームが
+    /// 長く途切れたとき、その間の秒数がそのまま 1 枚に乗ると、これで積分している側
+    /// (粒・視点) が 1 回で吹き飛ぶ。目標フレーム間隔の 10 倍を上限にしてある
+    /// ([#874](https://github.com/mokume-metal/mokume/issues/874))。
+    ///
+    /// **足し込んだ合計は ``time`` と一致しない。** 揃えたいものをこれで作らない
+    /// ([ADR-0025] 決定 6) — 同じ合計時間でも刻み方が違えば結果が変わるので、
+    /// フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない。
     public var deltaTime: Float { Self.requireRuntime().deltaTime }
 
     // 描画 API が Sketch+*.swift に分かれているので private にはできない。

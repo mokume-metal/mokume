@@ -584,12 +584,15 @@ struct FirstObservedFrameTests {
             observer: FrameObserver(directory: facet))
         runtime.pause()
 
-        clockReading = 2
+        // 経過の上限 (目標フレーム間隔の 10 倍・#874) に当たらない値を選ぶ。ここで
+        // 見たいのは「面へ渡る時刻がこのフレームの値か」で、上限の振る舞いは
+        // FrameTimingTests が別に固定している
+        clockReading = 0.1
         try request(id: "a1", in: facet)
         try runtime.advance()
 
-        #expect(sketch.times == [2])
-        #expect(sketch.deltas == [2])
+        #expect(sketch.times == [0.1])
+        #expect(sketch.deltas == [0.1])
     }
 
     @Test("入り口が、この 1 枚にも値を供給する")

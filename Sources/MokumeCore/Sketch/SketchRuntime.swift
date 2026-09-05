@@ -148,7 +148,9 @@ public final class SketchRuntime {
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
         self.timing = FrameTiming(
-            clock: clock ?? .frameIndex(frameRate: settings.frameRate), now: now)
+            clock: clock ?? .frameIndex(frameRate: settings.frameRate),
+            maximumDeltaTime: FrameTiming.maximumDeltaTime(frameRate: settings.frameRate),
+            now: now)
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
@@ -178,7 +180,9 @@ public final class SketchRuntime {
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
         self.timing = FrameTiming(
-            clock: clock ?? .frameIndex(frameRate: settings.frameRate), now: now)
+            clock: clock ?? .frameIndex(frameRate: settings.frameRate),
+            maximumDeltaTime: FrameTiming.maximumDeltaTime(frameRate: settings.frameRate),
+            now: now)
         self.now = now
         self.observer = observer
         self.inbox = inbox

@@ -15,8 +15,15 @@
 # 使い方:
 #   scripts/check-observation-roundtrip.sh [回数] [1 回あたりの待ちの上限 (秒)]
 #   scripts/check-observation-roundtrip.sh --minimized [回数] [待ちの上限]
+#   scripts/check-observation-roundtrip.sh --display-asleep [回数] [待ちの上限]
 #
 # --minimized は #223 の受け入れ条件。窓を畳んでも面が応答し続けることを見る。
+#
+# --display-asleep は #874 の受け入れ条件。**打つと画面が実際に消える** — 他の条件と
+# 違って、測っている間じゅう打った人の画面が暗いままになる (終わると戻る)。ディスプレイ
+# のスリープは自プロセスからは作れないので `pmset displaysleepnow` で作り、復帰は
+# `caffeinate -u` で行う。測る側は --allow-display-sleep で断りを外して走らせる —
+# 断ったまま測ると「スリープを作れなかったのに緑」という嘘が出る。
 set -euo pipefail
 
 # **自分の隣を基準にする。** `$0` は source されると呼び出し側を指し、cwd にも依存する
@@ -25,8 +32,12 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 REPO="$(pwd)"
 
 MINIMIZED=0
+DISPLAY_ASLEEP=0
 if [ "${1:-}" = "--minimized" ]; then
   MINIMIZED=1
+  shift
+elif [ "${1:-}" = "--display-asleep" ]; then
+  DISPLAY_ASLEEP=1
   shift
 fi
 
@@ -37,11 +48,27 @@ WORK="$(mktemp -d)"
 SKETCH_PID=""
 cleanup() {
   [ -n "$SKETCH_PID" ] && kill "$SKETCH_PID" 2>/dev/null
+  # **画面を戻してから終わる。** 途中で落ちても暗いままにしない
+  [ "$DISPLAY_ASLEEP" = 1 ] && caffeinate -u -t 1 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
 
-if [ "$MINIMIZED" = 1 ]; then
+if [ "$DISPLAY_ASLEEP" = 1 ]; then
+  # **測る側の断りを外す。** 外さないと `pmset displaysleepnow` を打っても
+  # すぐ戻ってしまい、測っていないのに緑になる (#874)
+  echo "== 測るための窓を出す (この後に画面を消す) =="
+  swift build >/dev/null
+  FACETS="$WORK"
+  mkdir -p "$FACETS/.mokume/observe" "$FACETS/.mokume/input"
+  MOKUME_WORK_DIR="$FACETS" ./.build/debug/frame-rate-probe \
+    --seconds "$((ROUNDS * 2 + 60))" --allow-display-sleep >/dev/null &
+  SKETCH_PID=$!
+  sleep 6
+  echo "== 画面を消す (測り終わるまで暗いまま) =="
+  pmset displaysleepnow
+  sleep 3
+elif [ "$MINIMIZED" = 1 ]; then
   # **測る側に自分で畳ませる。** よそのプロセスの窓を osascript から畳むには
   # アクセシビリティの許可が要り、許可の無い環境では「面が応答しなかった」と
   # 「窓を畳めなかった」を区別できない (#223)

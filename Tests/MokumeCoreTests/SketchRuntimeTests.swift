@@ -37,22 +37,47 @@ struct FrameTimingTests {
     func wallClockReportsElapsedTime() {
         let clock = ManualClock(100)
         let timing = FrameTiming(clock: .wallClock, now: clock.provider)
-        clock.now = 100.5
+        // 上限 (目標フレーム間隔の 10 倍) に当たらない範囲で見る。当たったときの
+        // 振る舞いは「止めていた時間は上限で頭打ちになる」が別に固定している
+        clock.now = 100.1
         timing.advance()
-        #expect(abs(timing.time - 0.5) < 1e-5)
-        #expect(abs(timing.deltaTime - 0.5) < 1e-5)
+        #expect(abs(timing.time - 0.1) < 1e-5)
+        #expect(abs(timing.deltaTime - 0.1) < 1e-5)
     }
 
-    @Test("寄せ直さないと、止めていた時間が 1 フレームの経過に化ける")
-    func withoutResyncTheGapLandsOnOneFrame() {
+    /// **寄せ直せない止まり方がある。** ディスプレイのスリープや駆動源の停止は
+    /// `pause()` を通らないので ``FrameTiming/resync()`` が呼ばれない
+    /// ([#874](https://github.com/mokume-metal/mokume/issues/874))。上限が無いと、
+    /// 止まっていた時間まるごとが 1 枚に乗って積分する側が吹き飛ぶ。
+    @Test("寄せ直せなくても、止めていた時間は上限で頭打ちになる")
+    func theGapIsCappedEvenWithoutResync() {
         let clock = ManualClock(0)
-        let timing = FrameTiming(clock: .wallClock, now: clock.provider)
+        let cap = FrameTiming.maximumDeltaTime(frameRate: 60)
+        let timing = FrameTiming(clock: .wallClock, maximumDeltaTime: cap, now: clock.provider)
         clock.now = 0.016
         timing.advance()
         // 10 秒止めてから再開した、を寄せ直さずに再現する
         clock.now = 10.016
         timing.advance()
-        #expect(timing.deltaTime > 9)
+        #expect(timing.deltaTime <= Float(cap))
+        // **時刻のほうは詰めない。** 止まっていた 10 秒は経過として残る
+        #expect(abs(timing.time - 10.016) < 1e-2)
+    }
+
+    /// 複数の実行を揃えるときに合うのは ``FrameTiming/time`` である ([ADR-0025])。
+    /// **止まった長さによらず追いつく**ことを固定する — 追いつかない実装にすると、
+    /// 端末ごとにフレーム落ちの起き方が違うだけで位相がずれる。
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    @Test("どれだけ止まっても、実時間の時刻は追いつく", arguments: [0.5, 10.0, 600.0])
+    func wallClockCatchesUpAfterAnyStall(gap: Double) {
+        let clock = ManualClock(0)
+        let timing = FrameTiming(clock: .wallClock, now: clock.provider)
+        clock.now = 0.016
+        timing.advance()
+        clock.now = 0.016 + gap
+        timing.advance()
+        #expect(abs(Double(timing.time) - (0.016 + gap)) < 1e-2)
     }
 
     @Test("寄せ直せば、再開後の最初の経過は 1 フレームぶんに収まる")

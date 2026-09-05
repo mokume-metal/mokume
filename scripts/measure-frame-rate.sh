@@ -2,8 +2,14 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# フレームレートを前面・背面・最小化の 3 条件で測る。--observe を付けると、4 つ目の条件
-# 「背面 + 観測を続ける」だけを測って**数字ではなく合否**を返す (#370 の完了条件がこの判定)。
+# フレームレートを前面・背面・最小化・画面スリープの 4 条件で測る。--observe を付けると、
+# 5 つ目の条件「背面 + 観測を続ける」だけを測って**数字ではなく合否**を返す
+# (#370 の完了条件がこの判定)。
+#
+# **画面スリープの条件では、測っている間じゅう画面が実際に消える** (終わると戻る)。
+# ディスプレイのスリープは自プロセスからは作れないので `pmset displaysleepnow` で作り、
+# 復帰は `caffeinate -u` で行う。測る側は --allow-display-sleep で断りを外して走らせる —
+# 断ったまま測ると「スリープを作れなかったのに緑」という嘘が出る (#874)。
 #
 # ADR-0012 決定 5 は「アプリの窓が画面に出ていない状態でも描画のフレームレートが
 # 落ちない」ことを機能要件として固定している。ここはその要件を確かめる手順で、
@@ -94,3 +100,17 @@ echo "== 最小化 =="
 # アクセシビリティの許可が要り、許可の無い環境では「フレームが落ちた」と
 # 「窓を畳めなかった」を区別できない (#223)
 swift run frame-rate-probe --seconds "$SECONDS_TO_MEASURE" --minimize-after 3
+
+echo
+echo "== 画面スリープ (この間、画面は暗いまま) =="
+# **断りを外して走らせる。** 外さないと画面が消えず、測っていないのに数字が出る (#874)
+swift build >/dev/null
+./.build/debug/frame-rate-probe --seconds "$SECONDS_TO_MEASURE" --allow-display-sleep &
+probe_pid=$!
+sleep 3
+pmset displaysleepnow
+# **落ちても画面を戻す。** 測り終わりを待つ前に仕掛けておく
+trap 'caffeinate -u -t 1 2>/dev/null || true' EXIT
+wait "$probe_pid"
+caffeinate -u -t 1 2>/dev/null || true
+trap - EXIT
