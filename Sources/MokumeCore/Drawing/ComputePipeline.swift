@@ -23,15 +23,19 @@ final class ComputePipeline {
     /// 持ち、**要るところまで伸ばしてからは作り直さない** ([ADR-0023] 決定 5)。
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
-    private var tables: [any MTL4ArgumentTable] = []
-    /// テーブルを作った回数 (組んでから通算)。**毎フレーム確保していないことを数える。**
-    private(set) var tablesBuilt = 0
+    private var tablePool: ArgumentTablePool
+    /// テーブルを作った回数。**毎フレーム確保していないことを検査が数で見る**
+    /// (``ArgumentTablePool/built``)。
+    var tablesBuilt: Int { tablePool.built }
 
     private let gpu: RenderDevice
     private let compiler: any MTL4Compiler
 
     init(gpu: RenderDevice) throws(RenderFailure) {
         self.gpu = gpu
+        self.tablePool = ArgumentTablePool(
+            gpu: gpu, label: "mokume.compute.arguments",
+            bufferBindCount: Self.valuesBufferIndex + 1)
         let compilerDescriptor = MTL4CompilerDescriptor()
         compilerDescriptor.label = "mokume.compute.compiler"
         guard let compiler = try? gpu.device.makeCompiler(descriptor: compilerDescriptor) else {
@@ -41,20 +45,9 @@ final class ComputePipeline {
 
     }
 
-    /// 位置に対応するテーブル。**足りなければ伸ばす。**
+    /// 位置に対応するテーブル。**足りなければ伸ばす** (``ArgumentTablePool``)。
     func table(at index: Int) throws(RenderFailure) -> any MTL4ArgumentTable {
-        while tables.count <= index {
-            let descriptor = MTL4ArgumentTableDescriptor()
-            descriptor.label = "mokume.compute.arguments.\(tables.count)"
-            descriptor.maxBufferBindCount = Self.valuesBufferIndex + 1
-            do {
-                tables.append(try gpu.device.makeArgumentTable(descriptor: descriptor))
-            } catch {
-                throw .argumentTableUnavailable(reason: error.localizedDescription)
-            }
-            tablesBuilt += 1
-        }
-        return tables[index]
+        try tablePool.table(at: index)
     }
 
     /// 利用者の断片から計算のパイプラインを組む。
