@@ -215,6 +215,13 @@ enum Scene: String, CaseIterable, Sendable {
     case lighting
     /// 頂点を並べて作った立体。穴・頂点ごとの色・線と点・書いた面の向きを並べたもの。
     case customSolids
+    /// 奥行きを持つ折れ線の輪郭。端の形と折れ目の形を組で振ったもの。
+    ///
+    /// **平面の ``caps`` / ``joins`` に対する立体側の対。** あちらは `line()` と
+    /// `triangle()` なので平面の経路を通り、`Canvas+Solid.swift` の
+    /// `appendSolidJoin` / `appendSolidSquare` にはどのシーンも届いていなかった
+    /// ([#890](https://github.com/mokume-metal/mokume/issues/890))。
+    case solidStrokes
     /// 同じ立体を、透視・平行・動かした視点の 3 通りで見たもの。
     case viewpoints
     /// 質感を振った立体。粗い/滑らか × 金属/非金属 と、自発光・遮蔽。
@@ -603,6 +610,7 @@ enum Scene: String, CaseIterable, Sendable {
         case .surfaceShader: drawSurfaceShader(on: canvas)
         case .surfacesShader: drawSurfacesShader(on: canvas)
         case .customSolids: drawCustomSolids(on: canvas)
+        case .solidStrokes: drawSolidStrokes(on: canvas)
         case .viewpoints: drawViewpoints(on: canvas)
         }
     }
@@ -1579,6 +1587,38 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.vertex(74 + Float(step) * 12, 94, Float(step) * 14 - 30)
         }
         canvas.endShape()
+    }
+
+    private func drawSolidStrokes(on canvas: Canvas) {
+        // **奥行きを持つ折れ線の輪郭。** 平面の caps / joins は line() と triangle() で
+        // 平面の経路に乗るので、立体側の端と折れ目はどのシーンも通っていなかった (#890)
+        canvas.background(.display(red: 0.09, green: 0.1, blue: 0.13))
+        canvas.noFill()
+        canvas.strokeWeight(9)
+
+        // 端と折れ目を**組で**振る。3 本で cap 3 種・join 3 種がすべて通る
+        let styles: [(cap: StrokeCap, join: StrokeJoin, tint: (Float, Float, Float))] = [
+            (.round, .miter, (0.95, 0.85, 0.35)),
+            (.square, .bevel, (0.4, 0.85, 0.95)),
+            (.project, .round, (0.95, 0.5, 0.6)),
+        ]
+        for (index, style) in styles.enumerated() {
+            canvas.push()
+            canvas.translate(30, 26 + Float(index) * 38, 0)
+            canvas.rotateY(0.5)
+            canvas.strokeCap(style.cap)
+            canvas.strokeJoin(style.join)
+            canvas.stroke(
+                .display(red: style.tint.0, green: style.tint.1, blue: style.tint.2))
+            // **中間の頂点があるので折れ目が効く。** 奥行きを振ってあるので、
+            // 横向きが視線から出ていることも絵に現れる
+            canvas.beginShape()
+            canvas.vertex(0, 0, -14)
+            canvas.vertex(34, -18, 8)
+            canvas.vertex(68, 6, -8)
+            canvas.endShape()
+            canvas.pop()
+        }
     }
 
     private func drawViewpoints(on canvas: Canvas) {
