@@ -104,6 +104,36 @@ struct FrameWriterTests {
     }
 }
 
+/// 終わるときに残っていた書き損じ ([#789])。GPU を要さない。
+///
+/// ``FrameRecorder/close()`` は**最後の呼び出し**なので、ここで読まなかったものを
+/// 読む ``FrameRecorder/receive(_:)`` はもう来ない。
+///
+/// [#789]: https://github.com/mokume-metal/mokume/issues/789
+@Suite("終わるときの書き損じ")
+struct ClosingFailureTests {
+    @Test("close() は、最後まで残った書き損じを言う")
+    func closeSpeaksTheFailureNobodyElseWillRead() throws {
+        try withTemporaryDirectory("mokume-close-still-failure") { directory in
+            // 書き先の親をファイルにしておく。ディレクトリを作ることも書くこともできない
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            recorder.writer.write(
+                DisplayImage(width: 8, height: 8, bytes: [UInt8](repeating: 200, count: 8 * 8 * 4)),
+                to: blocker.appendingPathComponent("last.png").path)
+
+            recorder.close()
+
+            let said = try #require(
+                recorder.warnings.message(for: .imageFailure),
+                "撮り終わりの書き損じが誰にも読まれていない")
+            #expect(said.contains("last.png"))
+        }
+    }
+}
+
 /// スケッチから絵をファイルにする経路。GPU を要する。
 @Suite(
     "絵をファイルにする",
