@@ -179,6 +179,26 @@ struct InstancingTests {
         #expect(together.bytes == apart.bytes)
     }
 
+    @Test("まとめて渡した置き場所が上限を跨いでも、絵は変わらず描く回数だけが増える")
+    func explicitPlacementsSplitAtTheCapacity() throws {
+        // **まとめて渡す経路にも、上限を跨ぐ分岐がある** ([#894])。1 つずつ置く経路とは
+        // 別の場所に書かれているので、別に踏ませないと通らない
+        //
+        // [#894]: https://github.com/mokume-metal/mokume/issues/894
+        let places = grid(12)
+        func form(_ canvas: Canvas) -> Shape { canvas.createShape { canvas.box(9) } }
+
+        let full = try makeCanvas()
+        let together = try scene(full) { canvas in canvas.shape(form(canvas), at: places) }
+        #expect(full.drawCallsInLastFrame == 1)
+
+        let limited = try makeCanvas()
+        limited.instanceCapacity = 3
+        let split = try scene(limited) { canvas in canvas.shape(form(canvas), at: places) }
+        #expect(limited.drawCallsInLastFrame == 4, "上限で列が分かれていない")
+        #expect(together.bytes == split.bytes, "まとめ方で絵が変わっている")
+    }
+
     @Test("置き場所ごとに色を変えられる")
     func eachPlacementCanCarryItsOwnColor() throws {
         let canvas = try makeCanvas()

@@ -54,7 +54,7 @@ extension Canvas {
             openSource = .form
         }
         if let open = openForm,
-            open.flags != flags || formInstances.count - open.instanceStart >= instanceCapacity
+            open.flags != flags || isBatchFull(formInstances.count, since: open.instanceStart)
         {
             closeBatch()
         }

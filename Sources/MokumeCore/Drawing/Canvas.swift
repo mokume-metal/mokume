@@ -216,6 +216,18 @@ public final class Canvas {
     /// 上限の既定。
     static let defaultInstanceCapacity = 8192
 
+    /// 開いている列が、置き場所の上限に達したか。
+    ///
+    /// **上限を跨いだときだけ通る経路なので、判定を場所ごとに書くと 1 本だけ
+    /// off-by-one していても絵に出ない** ([#894])。数えるのは「その列を開いてから
+    /// 積んだ数」で、**達したら**閉じる — 超えてから閉じると、その列は上限より
+    /// 1 つ多く抱えている。
+    ///
+    /// [#894]: https://github.com/mokume-metal/mokume/issues/894
+    func isBatchFull(_ count: Int, since start: Int) -> Bool {
+        count - start >= instanceCapacity
+    }
+
     /// 開いている立体の列ひとつぶん。
     struct OpenSolid {
         /// 何の頂点を並べているか。**これが変わったら列を閉じる。**
@@ -1618,15 +1630,8 @@ public final class Canvas {
         }
 
         // 開いている雛形と同じ形なら、置き場所を足すだけで済む
-        if let open = openFlat, open.key == key {
-            if flatInstances.count - open.instanceStart < instanceCapacity {
-                flatInstances.append(placement(at: anchor))
-                return
-            }
-            // 上限に達したら**同じ形のまま**列を開き直す。ここで畳まない経路へ落とすと、
-            // 上限をまたいだ図形だけ組み立て方が変わってしまう
-            openFlatTemplate(key: key, outline: makeOutline())
-            flatInstances.append(placement(at: anchor))
+        if openFlat?.key == key {
+            appendFolded(placement(at: anchor), key: key, outline: makeOutline)
             return
         }
         let outline = makeOutline()
@@ -1643,12 +1648,7 @@ public final class Canvas {
             pendingFlat = nil
             openFlatTemplate(key: key, outline: outline)
             flatInstances.append(waiting.placement)
-            if flatInstances.count - openFlat!.instanceStart < instanceCapacity {
-                flatInstances.append(placement(at: anchor))
-            } else {
-                openFlatTemplate(key: key, outline: outline)
-                flatInstances.append(placement(at: anchor))
-            }
+            appendFolded(placement(at: anchor), key: key, outline: { outline })
             return
         }
 
@@ -1664,6 +1664,19 @@ public final class Canvas {
         pendingFlat = PendingFlat(
             key: key, outline: outline, placement: placement(at: anchor),
             vertexStart: vertexStart, vertexEnd: vertices.count, batchCount: batches.count)
+    }
+
+    /// 畳んだ置き場所を 1 つ足す。**上限に達していたら、同じ形のまま雛形を開き直す。**
+    ///
+    /// 開き直すのは、畳まない経路へ落とすと**上限をまたいだ図形だけ組み立て方が
+    /// 変わってしまう**ためである。周は上限に達したときしか要らないので閉包で受け取る。
+    private func appendFolded(
+        _ placement: FlatInstance, key: FlatKey, outline makeOutline: () -> Outline
+    ) {
+        if let open = openFlat, isBatchFull(flatInstances.count, since: open.instanceStart) {
+            openFlatTemplate(key: key, outline: makeOutline())
+        }
+        flatInstances.append(placement)
     }
 
     /// 雛形を 1 つ積んで開く。**開いていた列は閉じる。**
