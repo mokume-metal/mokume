@@ -191,6 +191,36 @@ struct CustomSolidTests {
         #expect(try differingPixels(draw(writingNormalBefore: true), draw(writingNormalBefore: false)) == 0)
     }
 
+    @Test("帯の内側の頂点にも、面の向きが付く")
+    func triangleStripDerivesNormalsAtSharedVertices() throws {
+        // 屋根の形に折った帯。**巻きが 1 枚おきに反転していると**、2 枚に挟まれた頂点で
+        // 外積が打ち消し合い、向きの定まらない面が残る (`placedVertices`)。打ち消しが
+        // 起きるのは左右の裾の頂点なので、そこが暗く落ちれば読み取れる
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.directionalLight(white, 0, 0, -1)  // 画面の手前を向く面が明るい
+            canvas.fill(white)
+            canvas.noStroke()
+            canvas.push()
+            canvas.translate(48, 48, 0)
+            canvas.beginShape(.triangleStrip)
+            canvas.vertex(-30, -30, 0)
+            canvas.vertex(-30, 30, 0)
+            canvas.vertex(0, -30, 30)
+            canvas.vertex(0, 30, 30)
+            canvas.vertex(30, -30, 0)
+            canvas.vertex(30, 30, 0)
+            canvas.endShape()
+            canvas.pop()
+        }
+
+        let image = try pixels(of: canvas)
+        #expect(image[24, 70].red > 100, "左の裾が暗い")
+        #expect(image[72, 26].red > 100, "右の裾が暗い")
+        #expect(image[48, 48].red > 100, "折り目が暗い")
+    }
+
     // MARK: - 線と点
 
     @Test("線と点のモードは、塗りではなく線の色で描かれる")

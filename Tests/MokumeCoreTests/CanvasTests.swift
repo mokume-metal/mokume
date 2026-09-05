@@ -264,6 +264,71 @@ struct CanvasTests {
         #expect(image[32, 32] == (0, 0, 0, 255))  // 間は埋まらない
     }
 
+    @Test("帯として読むと、直前の 2 点を使い回した三角形が繋がる")
+    func triangleStripReusesTheLastTwoPoints() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            // 上下に交互に置いた 5 点。使い回しが効けば 3 枚が隙間なく繋がる
+            canvas.beginShape(.triangleStrip)
+            canvas.vertex(8, 8)
+            canvas.vertex(8, 56)
+            canvas.vertex(32, 8)
+            canvas.vertex(32, 56)
+            canvas.vertex(56, 8)
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 32].red == 255)  // 1 枚目
+        #expect(image[28, 32].red == 255)  // 2 枚目 (直前の 2 点を使い回す)
+        // 3 枚目。5 点を 3 点ずつ独立に読んだのなら、ここまでは届かない
+        #expect(image[40, 20].red == 255)
+        #expect(image[48, 14].red == 255)
+        #expect(image[50, 50] == (0, 0, 0, 255))  // 帯の外
+    }
+
+    @Test("扇として読むと、最初の 1 点をすべての三角形が共有する")
+    func triangleFanSharesTheFirstPoint() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            // 左下の要から右上へ開く 4 点。3 点目からは要と直前の点を使い回す
+            canvas.beginShape(.triangleFan)
+            canvas.vertex(8, 56)
+            canvas.vertex(8, 8)
+            canvas.vertex(32, 8)
+            canvas.vertex(56, 8)
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[14, 24].red == 255)  // 1 枚目 (要のそば)
+        // 2 枚目。4 点を 3 点ずつ独立に読んだのなら 1 枚しか出ないので、ここは黒のまま
+        #expect(image[32, 24].red == 255)
+        #expect(image[50, 50] == (0, 0, 0, 255))  // 扇の外
+    }
+
+    @Test("帯も扇も、3 点に満たなければ何も描かれない")
+    func reusingKindsNeedThreePoints() throws {
+        for kind in [VertexKind.triangleStrip, .triangleFan] {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noStroke()
+                canvas.fill(white)
+                canvas.beginShape(kind)
+                canvas.vertex(8, 8)
+                canvas.vertex(56, 56)
+                canvas.endShape()
+            }
+            let image = try pixels(of: canvas)
+            #expect(image[32, 32] == (0, 0, 0, 255), "\(kind) が 2 点で何かを描いた")
+        }
+    }
+
     @Test("閉じない指定では、最後の点から最初へ戻らない")
     func openShapesDoNotCloseTheOutline() throws {
         let canvas = try makeCanvas()

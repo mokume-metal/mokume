@@ -185,6 +185,9 @@ enum Scene: String, CaseIterable, Sendable {
     case blends
     /// 自由に並べた頂点・曲線・穴・切り抜き。
     case freeform
+    /// 直前の頂点を使い回す読み方。**同じ点の並びを帯と扇で読み分けてある** —
+    /// 畳み方が動けば、平面の 2 枚と立体の 1 枚のどれかが必ず動く。
+    case reusedVertices
     /// 書体・大きさ・整列・行送りを振った文字。
     ///
     /// **このシーンだけは、この環境が持つ書体の字形に依る。** 環境の更新で字形が
@@ -581,6 +584,7 @@ enum Scene: String, CaseIterable, Sendable {
         case .origins: drawOrigins(on: canvas)
         case .caps: drawCaps(on: canvas)
         case .freeform: drawFreeform(on: canvas)
+        case .reusedVertices: drawReusedVertices(on: canvas)
         case .blends: drawBlends(on: canvas)
         case .text: drawText(on: canvas)
         case .textFlow: drawTextFlow(on: canvas)
@@ -784,6 +788,46 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.circle(32, 32, 56)
         canvas.pop()
         canvas.noClip()
+    }
+
+    private func drawReusedVertices(on canvas: Canvas) {
+        canvas.background(.display(red: 0.08, green: 0.08, blue: 0.1))
+        // 切れ目が見えるよう、下地と同じ色の線で 1 枚ずつ区切る
+        canvas.stroke(.display(red: 0.08, green: 0.08, blue: 0.1))
+        canvas.strokeWeight(2)
+
+        // 上段: 帯。上下に交互に置いた 6 点が 4 枚になる
+        canvas.fill(.display(red: 0.95, green: 0.45, blue: 0.3))
+        canvas.beginShape(.triangleStrip)
+        for step in 0..<6 {
+            canvas.vertex(8 + Float(step) * 22, step.isMultiple(of: 2) ? 6 : 40)
+        }
+        canvas.endShape()
+
+        // 中段: 扇。左端の 1 点をすべての三角形が共有する
+        canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.5))
+        canvas.beginShape(.triangleFan)
+        canvas.vertex(8, 84)
+        for step in 0..<5 {
+            canvas.vertex(40 + Float(step) * 20, 48 + Float(step) * 9)
+        }
+        canvas.endShape()
+
+        // 下段: 立体の帯。**書かなかった面の向きが形から求まる** — 巻きが揃って
+        // いないと、内側の頂点で打ち消し合って光を受けなくなる
+        canvas.lights()
+        canvas.noStroke()
+        canvas.fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+        canvas.push()
+        canvas.translate(64, 106, 0)
+        canvas.rotateX(0.5)
+        canvas.beginShape(.triangleStrip)
+        for step in 0..<6 {
+            let across = -50 + Float(step) * 20
+            canvas.vertex(across, step.isMultiple(of: 2) ? -16 : 16, step.isMultiple(of: 2) ? 18 : -18)
+        }
+        canvas.endShape()
+        canvas.pop()
     }
 
     private func drawBlends(on canvas: Canvas) {
