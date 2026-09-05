@@ -426,6 +426,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 座標の読み方は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=bdc059c4
     // shot: 2 snippet=93b69e1a
     // shot: 3 snippet=76535701
@@ -470,6 +472,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 座標の読み方は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=7bc89b05
     // shot: 2 snippet=09181c0f
     public func ellipseMode(_ mode: ShapeMode) { canvas.ellipseMode(mode) }

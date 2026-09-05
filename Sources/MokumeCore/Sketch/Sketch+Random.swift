@@ -54,6 +54,8 @@ extension Sketch {
     ///
     /// 乱数の種 (``randomSeed(_:)``) とは別に持つ。片方を決め直しても、もう片方の
     /// 模様は動かない。
+    ///
+    /// - Note: 揺らぎの種は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func noiseSeed(_ seed: Int) { canvas.noiseSeed(seed) }
 
     /// 揺らぎの細かさ — 重ねる枚数 `lod` と、1 枚ごとの弱まり `falloff`。
@@ -62,6 +64,8 @@ extension Sketch {
     /// 既定は 4 枚・0.5。枚数は 1…16、弱まりは 0…1 で、外れた値は無視して知らせる。
     ///
     /// **断片にも同じ細かさが届く。**
+    ///
+    /// - Note: 揺らぎの細かさは**フレームを越える**。一度書けば、書き換えるまで残る。
     public func noiseDetail(_ lod: Int, _ falloff: Float = 0.5) {
         canvas.noiseDetail(lod, falloff)
     }

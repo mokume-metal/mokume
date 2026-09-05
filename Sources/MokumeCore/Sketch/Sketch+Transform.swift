@@ -78,6 +78,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=e1676e34
     // shot: 2 snippet=0dab2481
     // shot: 3 snippet=58a41dae
@@ -158,6 +160,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=27bff880
     // shot: 2 snippet=00e07a33
     // shot: 3 snippet=8ea7daa7
@@ -239,6 +243,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=6b558fd6
     // shot: 2 snippet=2941aa4a
     // shot: 3 snippet=5ae25e26
@@ -273,6 +279,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=ceef2b2d
     public func translate(_ x: Float, _ y: Float, _ z: Float) { canvas.translate(x, y, z) }
 
@@ -304,6 +312,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=54abaf07
     public func rotateX(_ radians: Float) { canvas.rotateX(radians) }
 
@@ -335,6 +345,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=d031c80c
     public func rotateY(_ radians: Float) { canvas.rotateY(radians) }
 
@@ -364,6 +376,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=7f65053a
     public func rotateZ(_ radians: Float) { canvas.rotateZ(radians) }
 
@@ -405,6 +419,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=e3260042
     public func scale(_ x: Float, _ y: Float, _ z: Float) { canvas.scale(x, y, z) }
 
@@ -459,6 +475,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=ecea4b47
     // shot: 2 snippet=1e816167
     public func shearX(_ radians: Float) { canvas.shearX(radians) }
@@ -513,6 +531,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=e8584e7d
     // shot: 2 snippet=305667e2
     public func shearY(_ radians: Float) { canvas.shearY(radians) }

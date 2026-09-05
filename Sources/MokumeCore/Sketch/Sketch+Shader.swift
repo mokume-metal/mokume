@@ -104,8 +104,12 @@ extension Sketch {
     ///
     /// **溜めている図形はその場で区切られる**ので、これより前に置いた図形が
     /// 後から差し替わることはない。
+    ///
+    /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func shader(_ shader: Shader) { canvas.shader(shader) }
 
     /// 組み込みの塗りへ戻す。
+    ///
+    /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func resetShader() { canvas.resetShader() }
 }

@@ -96,6 +96,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 文字の大きさは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=a8143a74
     // shot: 2 snippet=02dd14ba
     public func textSize(_ size: Float) { canvas.textSize(size) }
@@ -127,6 +129,8 @@ extension Sketch {
     ///
     /// 指定した書体が覆えない文字 (欧文の書体に日本語を渡した場合など) は、
     /// この環境が持つ別の書体から引いて描く。
+    ///
+    /// - Note: 書体は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=38a1d815
     public func textFont(_ name: String) { canvas.textFont(name) }
 
@@ -155,6 +159,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 書体は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=92702e23
     public func noTextFont() { canvas.noTextFont() }
 
@@ -193,6 +199,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 字の太さと傾きは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=dad4af7f
     public func textStyle(_ style: TextStyle) { canvas.textStyle(style) }
 
@@ -260,6 +268,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 揃えは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=ee229cc3
     // shot: 2 snippet=ad72b9a7
     public func textAlign(
@@ -306,6 +316,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 行送りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=c1e64917
     // shot: 2 snippet=26cf4f8a
     public func textLeading(_ leading: Float) { canvas.textLeading(leading) }
@@ -523,6 +535,8 @@ extension Sketch {
     ///
     /// 語の切れ目で折るとき、**1 語が幅より長ければその語の中で折る** —
     /// でないと置き場所が無くなる。
+    ///
+    /// - Note: 折り返し方は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=9d76cf16
     // shot: 2 snippet=36f2b043
     public func textWrap(_ mode: TextWrap) { canvas.textWrap(mode) }

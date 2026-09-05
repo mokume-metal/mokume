@@ -224,8 +224,12 @@ extension Sketch {
     /// texture(dial)
     /// box(200)
     /// ```
+    ///
+    /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func texture(_ graphics: Canvas) { canvas.texture(graphics) }
 
     /// 絵を貼るのをやめる。
+    ///
+    /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     public func noTexture() { canvas.noTexture() }
 }
