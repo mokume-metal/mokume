@@ -31,14 +31,7 @@ extension Canvas {
     public func loadEffect(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        let candidates = ImageFile.candidates(for: path)
-        guard
-            let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
-            let body = try? String(contentsOf: url, encoding: .utf8)
-        else {
-            throw .notFound(path: path, searched: candidates.map(\.path))
-        }
-        let name = url.deletingPathExtension().lastPathComponent
+        let (url, body, name) = try ShaderSource.read(at: path)
         return try makeEffect(name: name, url: url, body: body, values: values)
     }
 

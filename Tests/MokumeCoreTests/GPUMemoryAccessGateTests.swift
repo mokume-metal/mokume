@@ -78,6 +78,9 @@ struct GPUMemoryAccessGateTests {
             file: "Drawing/Particles.swift", discipline: .settles,
             reason: "粒と指定を書く直前に settle する"),
         Permit(
+            file: "Rendering/GrowableBuffer.swift", discipline: .ring,
+            reason: "環に載った置き場へ、いまのスロットぶんだけ写す (write)。待ちは呼ぶ側が持つ — 描き切りの先頭で環を 1 つ進め、そのスロットを読む投入だけを待ってから呼ばれる (#754)"),
+        Permit(
             file: "Rendering/Numbers.swift", discipline: .settles,
             reason: "書く口がすべて settle を通る。読む口 (snapshot) は Canvas.read が settle してから呼ぶ"),
         Permit(

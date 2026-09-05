@@ -16,6 +16,28 @@ import Foundation
 /// 値の宣言 → 面の宣言 → 共通部分 → 断片。共通部分が値と面の型を使い、断片が共通部分の
 /// 型を使うので、この順序でしか組み立てられない。
 enum ShaderSource {
+    /// 断片をファイルから読む。**塗り・効果・計算で 1 つ** ([#895])。
+    ///
+    /// 探す場所は貼る絵と同じ並び (``ImageFile/candidates(for:)``)。名前は拡張子を
+    /// 落としたファイル名で、計算ではこれが**断片の中の入口の関数の名前**にもなる。
+    ///
+    /// 3 者が同じ 7 行を持っていたので畳んだ — 候補の探し方が割れると、「読めない」が
+    /// 断片の種類によって別の理由で出るようになる。
+    ///
+    /// [#895]: https://github.com/mokume-metal/mokume/issues/895
+    static func read(at path: String) throws(ShaderFailure) -> (
+        url: URL, body: String, name: String
+    ) {
+        let candidates = ImageFile.candidates(for: path)
+        guard
+            let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
+            let body = try? String(contentsOf: url, encoding: .utf8)
+        else {
+            throw .notFound(path: path, searched: candidates.map(\.path))
+        }
+        return (url, body, url.deletingPathExtension().lastPathComponent)
+    }
+
     /// 値の名前と、その形。
     ///
     /// 名前は**断片の中でそのまま書ける識別子**になる。並べる順は名前順に固定する
