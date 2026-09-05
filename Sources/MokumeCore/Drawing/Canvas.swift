@@ -2183,6 +2183,17 @@ public final class Canvas {
     /// 穴を空けてある。公開はしない。
     var failureForTesting: RenderFailure?
 
+    /// 溜めた図形が 1 つでもあるか。
+    ///
+    /// **描き切りはこれを 2 度読む** — 列を積むかどうかと、描画の呼び出し回数の
+    /// 計上である。かつては後者がド・モルガンで反転した三項演算子として書かれて
+    /// おり、同じことを言っているのに字面が一致しなかった ([#893])。
+    ///
+    /// [#893]: https://github.com/mokume-metal/mokume/issues/893
+    private var hasPendingGeometry: Bool {
+        !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty
+    }
+
     /// - Parameters:
     ///   - applyingEffects: 効果を通すか。**フレームの終わりだけ通す** —
     ///     フレームの途中の描き切り (`loadPixels()`) で通すと、効果のかかった絵の上に
@@ -2254,262 +2265,10 @@ public final class Canvas {
             throw .encoderUnavailable
         }
 
-        if !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty {
-            let buffer = try vertexStorage.buffer(holding: vertices.count)
-            vertices.withUnsafeBytes { source in
-                guard let base = source.baseAddress, source.count > 0 else { return }
-                buffer.contents().copyMemory(from: base, byteCount: source.count)
-            }
-            let formBuffer = try formInstanceStorage.buffer(
-                holding: max(formInstances.count, 1))
-            formInstances.withUnsafeBytes { source in
-                guard let base = source.baseAddress, source.count > 0 else { return }
-                formBuffer.contents().copyMemory(from: base, byteCount: source.count)
-            }
-            let instanceBuffer = try solidInstanceStorage.buffer(
-                holding: max(solidInstances.count, 1))
-            solidInstances.withUnsafeBytes { source in
-                guard let base = source.baseAddress, source.count > 0 else { return }
-                instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
-            }
-            let flatInstanceBuffer = try flatInstanceStorage.buffer(
-                holding: flatInstances.count)
-            flatInstances.withUnsafeBytes { source in
-                guard let base = source.baseAddress, source.count > 0 else { return }
-                flatInstanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
-            }
+        try encodeBatches(into: encoder, shadow: bakedShadow)
 
-            let solidBuffer = try solidVertexStorage.buffer(holding: solidVertices.count)
-            solidVertices.withUnsafeBytes { source in
-                guard let base = source.baseAddress else { return }
-                solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
-            }
-            // 光の置き場。列は自分の区間を指す
-            let lightsBuffer = try lightStorageBuffer.buffer(holding: max(lightStorage.count, 1))
-            lightStorage.withUnsafeBytes { source in
-                guard let base = source.baseAddress, source.count > 0 else { return }
-                lightsBuffer.contents().copyMemory(from: base, byteCount: source.count)
-            }
-            pipeline.argumentTable.setAddress(
-                lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
 
-            // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
-            let matrices = try matrixStorage.buffer(holding: batches.count)
-            for (index, batch) in batches.enumerated() {
-                var matrix = batch.matrix
-                let slot = matrices.contents().advanced(by: index * Self.valuesStride)
-                slot.copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
-                // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
-                // 読まない**ので、同じ区画に足しても効かない
-                var strokeStart = UInt32(min(batch.strokeStart, Int(UInt32.max)))
-                slot.advanced(by: MemoryLayout<simd_float4x4>.size)
-                    .copyMemory(from: &strokeStart, byteCount: MemoryLayout<UInt32>.size)
-            }
-            // **見る窓は実際に刻む画素で測る。** 落とす行列は出す細かさで書かれた
-            // 座標を -1…1 へ正規化するので、窓を狭めればそのまま細かく刻まれる。
-            //
-            encoder.setViewport(
-                MTLViewport(
-                    originX: 0, originY: 0,
-                    width: Double(pixelWidth), height: Double(pixelHeight),
-                    znear: 0, zfar: 1))
-
-            // 時刻と面の大きさは、フレームの中で変わらない。**大きさは実際に刻む
-            // 画素**である — 断片が受け取る位置 (`position`) がその数で来るので、
-            // 割って出す 0…1 の位置がここと食い違うと面からはみ出す
-            let uniformsBuffer = try uniformsStorage.buffer(holding: 1)
-            uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
-                .update(
-                    from: [time, 0, Float(pixelWidth), Float(pixelHeight), shadowBiasValue],
-                    count: 5)
-            // 影の行列と設定。**フレームに 1 つ**で、列ごとには変わらない
-            // **置き場所は断片側の詰め方で決まる。** 4x4 の行列は 16 バイト境界へ
-            // 揃うので、その前の 1 つの数 (縁の余裕) の後ろに詰め物が入る
-            var matrix = bakedShadow?.matrix ?? matrix_identity_float4x4
-            uniformsBuffer.contents().advanced(by: 32)
-                .copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
-            let shadowTexel = 1 / Float(bakedShadow?.map.detail ?? 1)
-            uniformsBuffer.contents().advanced(by: 96)
-                .assumingMemoryBound(to: Float.self)
-                .update(from: [bakedShadow == nil ? 0 : 1, shadowTexel, 0, 0], count: 4)
-            // 揺らぎの種と細かさ。**断片が種を受け取る**ので、利用者が値として
-            // 配線しなくても CPU の `noise()` と同じ模様が出る。種と枚数は整数の
-            // まま送る (`Float` を経由すると大きな種で丸めが起きる)
-            uniformsBuffer.contents().advanced(by: 112)
-                .assumingMemoryBound(to: UInt32.self)
-                .update(from: [noiseSettings.seed, UInt32(noiseSettings.octaves)], count: 2)
-            uniformsBuffer.contents().advanced(by: 120)
-                .assumingMemoryBound(to: Float.self)
-                .update(from: [noiseSettings.falloff, 0], count: 2)
-            // **焼いていなくても、読む先は必ず束ねる。** 束ねない口を作ると、断片が
-            // 触った瞬間に何が起きるかが土台任せになる。口は奥行きの面 (`depth2d`) なので、
-            // 焼いていないフレームには同じ形の 1 画素の面を束ねる — 色の面を束ねると
-            // 型が合わず、検証層が止める
-            let shadowTexture: any MTLTexture
-            if let bakedShadow {
-                shadowTexture = bakedShadow.map.texture
-            } else {
-                shadowTexture = try unbakedShadowTextureHolding()
-            }
-            pipeline.argumentTable.setTexture(
-                shadowTexture.gpuResourceID, index: ShapePipeline.shadowTextureIndex)
-            pipeline.argumentTable.setAddress(
-                uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
-
-            // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている
-            let lighting = try lightingStorage.buffer(holding: batches.count)
-            for (index, batch) in batches.enumerated() {
-                let slot = lighting.contents().advanced(by: index * Self.valuesStride)
-                    .assumingMemoryBound(to: UInt32.self)
-                slot.update(
-                    from: [UInt32(batch.lightRange.lowerBound), UInt32(batch.lightRange.count)],
-                    count: 2)
-                // 見ている場所は 16 バイト境界から (断片の側も詰め物を空けている)
-                var viewer = batch.viewer
-                lighting.contents().advanced(by: index * Self.valuesStride + 16)
-                    .copyMemory(from: &viewer, byteCount: MemoryLayout<SIMD4<Float>>.size)
-            }
-
-            // 列ごとの材質。**列が閉じた時点のもの**がそのまま入る
-            let materials = try materialStorage.buffer(holding: batches.count)
-            for (index, batch) in batches.enumerated() {
-                var packed = batch.material.packed
-                materials.contents().advanced(by: index * Self.valuesStride)
-                    .copyMemory(from: &packed, byteCount: PackedMaterial.expectedStride)
-            }
-
-            // 列ごとの周囲。**列が閉じた時点のもの**がそのまま入る
-            let surroundings = try surroundingsStorage.buffer(holding: batches.count)
-            for (index, batch) in batches.enumerated() {
-                var packed = batch.surroundings
-                surroundings.contents().advanced(by: index * Self.valuesStride)
-                    .copyMemory(from: &packed, byteCount: PackedSurroundings.expectedStride)
-            }
-
-            let values = try valuesStorage.buffer(holding: batches.count)
-            for (index, batch) in batches.enumerated() {
-                // **区画に収まることは入口で保証されている** (`Canvas.loadShader` /
-                // `makeShader` が `valueSlotCapacity` を超える宣言を断る・#348)。ここで
-                // 切り詰めないのは、黙って切り詰めると断片の `Values` に「宣言したのに
-                // 一度も書かれない欄」が残り、絵が永久に間違ったまま出るためである
-                let slot = values.contents().advanced(by: index * Self.valuesStride)
-                    .assumingMemoryBound(to: Float.self)
-                if batch.run.paint.values.isEmpty {
-                    slot.update(repeating: 0, count: 4)
-                } else {
-                    slot.update(from: batch.run.paint.values, count: batch.run.paint.values.count)
-                }
-            }
-            // **どちら回りを表とするかを明示する。** 断片は表裏を見て面の向きを裏返す
-            // (両面) ので、ここが黙っていると「表」の意味が土台の既定に委ねられる。
-            // 形は外向きに巻いてあり (`SolidMeshBuilder`)、縦軸を下向きへ戻す補正が
-            // 画面での巻き方を反転させるので、時計回りが表になる
-            encoder.setFrontFacing(.clockwise)
-
-            for (index, batch) in batches.enumerated() {
-                let run = batch.run
-                // 並びごとに、頂点の落とし方と奥行きの扱いを切り替える。**平面は奥行きを
-                // 書かない**ので、あとから来た立体の前後関係を汚さない (ADR-0021 決定 2)
-                switch batch.source {
-                case .flat:
-                    encoder.setRenderPipelineState(
-                        (run.paint.shader?.states ?? pipeline.states).state(for: run.mode))
-                    encoder.setDepthStencilState(pipeline.flatDepthState)
-                    pipeline.argumentTable.setAddress(
-                        buffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
-                    // **口は立体と共用する。** 同じ列で平面と立体の両方を描くことは
-                    // 無いので、置き場所の口を 2 つ持つ理由が無い
-                    pipeline.argumentTable.setAddress(
-                        flatInstanceBuffer.gpuAddress
-                            + UInt64(batch.instanceStart * MemoryLayout<FlatInstance>.stride),
-                        index: ShapePipeline.instanceBufferIndex)
-                case .form:
-                    // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
-                    // 平面と同じ (常に通し・書かない)
-                    encoder.setRenderPipelineState(
-                        pipeline.formStates(for: batch.formFlags).state(for: run.mode))
-                    encoder.setDepthStencilState(pipeline.flatDepthState)
-                    pipeline.argumentTable.setAddress(
-                        formBuffer.gpuAddress
-                            + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
-                        index: ShapePipeline.instanceBufferIndex)
-                case .solid:
-                    // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
-                    encoder.setRenderPipelineState(
-                        (run.paint.shader?.solidStates ?? pipeline.solidStates).state(for: run.mode))
-                    encoder.setDepthStencilState(pipeline.solidDepthState)
-                    pipeline.argumentTable.setAddress(
-                        solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
-                    // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
-                    // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
-                    pipeline.argumentTable.setAddress(
-                        (batch.instances ?? instanceBuffer).gpuAddress
-                            + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
-                        index: ShapePipeline.instanceBufferIndex)
-                }
-                // 裏を向いた面を描くかは列が決めている (`Batch.cullMode`)。表の向きは
-                // 上で 1 度だけ決めてあるので、ここは捨て方を掛けるだけ
-                encoder.setCullMode(batch.cullMode)
-                pipeline.argumentTable.setAddress(
-                    matrices.gpuAddress + UInt64(index * Self.valuesStride),
-                    index: ShapePipeline.projectionBufferIndex)
-                pipeline.argumentTable.setAddress(
-                    values.gpuAddress + UInt64(index * Self.valuesStride),
-                    index: ShapePipeline.valuesBufferIndex)
-                pipeline.argumentTable.setAddress(
-                    lighting.gpuAddress + UInt64(index * Self.valuesStride),
-                    index: ShapePipeline.lightingBufferIndex)
-                pipeline.argumentTable.setAddress(
-                    materials.gpuAddress + UInt64(index * Self.valuesStride),
-                    index: ShapePipeline.materialBufferIndex)
-                pipeline.argumentTable.setAddress(
-                    surroundings.gpuAddress + UInt64(index * Self.valuesStride),
-                    index: ShapePipeline.surroundingsBufferIndex)
-                encoder.setScissorRect(scissor(batch.clip))
-                pipeline.argumentTable.setAddress(
-                    blendModeBuffer.gpuAddress
-                        + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
-                    index: ShapePipeline.blendModeBufferIndex)
-                // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
-                // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
-                pipeline.argumentTable.setAddress(
-                    (run.paint.numbers ?? emptyNumbers).storage.gpuAddress,
-                    index: ShapePipeline.numbersBufferIndex)
-                pipeline.argumentTable.setTexture(
-                    run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
-                // 利用者が宣言した面。**口は毎回すべて束ねる** — 渡していない口には
-                // 読む面を束ねる。束ねずに走らせると、宣言より多く読んだ断片が
-                // 絵の乱れではなく異常終了になる (数の並びと同じ扱い)
-                for slot in 0..<ShapePipeline.surfaceCapacity {
-                    let surface = slot < run.paint.surfaces.count ? run.paint.surfaces[slot] : run.texture
-                    pipeline.argumentTable.setTexture(
-                        surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
-                }
-                encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
-                if let arguments = batch.indirectArguments {
-                    // **個数は GPU が書いた引数から読む。** 計算の段の末尾の仕掛け
-                    // (`encodeComputeBarrier`) が頂点段の前で待つので、引数の読み出しは
-                    // 書き終わった後になる
-                    encoder.drawPrimitives(
-                        primitiveType: .triangle, indirectBuffer: arguments.gpuAddress)
-                } else if batch.source == .form {
-                    // 基本図形はクアッド 1 枚 (頂点 6 つ) を置き場所の数だけ描く。頂点関数が
-                    // `vertex_id` から角を決めるので、頂点の並びは読まない
-                    encoder.drawPrimitives(
-                        primitiveType: .triangle,
-                        vertexStart: 0, vertexCount: Self.formQuadVertexCount,
-                        instanceCount: batch.instanceCount)
-                } else {
-                    encoder.drawPrimitives(
-                        primitiveType: .triangle,
-                        vertexStart: run.start, vertexCount: run.count,
-                        instanceCount: batch.instanceCount)
-                }
-            }
-        }
-
-        drawCallsInLastFrame =
-            vertices.isEmpty && solidVertices.isEmpty && formInstances.isEmpty ? 0 : batches.count
+        drawCallsInLastFrame = hasPendingGeometry ? batches.count : 0
         flatVerticesInLastFrame = vertices.count
         flatOutlinesInLastFrame = outlinesAssembledThisFrame
         outlinesAssembledThisFrame = 0
@@ -2546,6 +2305,307 @@ public final class Canvas {
         // `defer` が同じことをする (#342) — 途中の描き切り (`loadPixels()`) が
         // 一時的に失敗しただけなら、溜めたものはフレーム末尾の描き切りに残す
         discardFrame()
+    }
+
+    /// 溜めた列を 1 つずつ積む。**溜めたものが 1 つも無ければ何も積まない** —
+    /// 置き場を取ることも、encoder の状態を変えることもしない。
+    private func encodeBatches(
+        into encoder: any MTL4RenderCommandEncoder,
+        shadow bakedShadow: (map: ShadowMap, matrix: simd_float4x4)?
+    ) throws(RenderFailure) {
+        guard hasPendingGeometry else { return }
+
+        // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
+        // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
+        let geometry = try uploadGeometry()
+        let perBatch = try uploadPerBatch(shadow: bakedShadow)
+
+        // **見る窓は実際に刻む画素で測る。** 落とす行列は出す細かさで書かれた
+        // 座標を -1…1 へ正規化するので、窓を狭めればそのまま細かく刻まれる。
+        //
+        encoder.setViewport(
+            MTLViewport(
+                originX: 0, originY: 0,
+                width: Double(pixelWidth), height: Double(pixelHeight),
+                znear: 0, zfar: 1))
+
+        // **どちら回りを表とするかを明示する。** 断片は表裏を見て面の向きを裏返す
+        // (両面) ので、ここが黙っていると「表」の意味が土台の既定に委ねられる。
+        // 形は外向きに巻いてあり (`SolidMeshBuilder`)、縦軸を下向きへ戻す補正が
+        // 画面での巻き方を反転させるので、時計回りが表になる
+        encoder.setFrontFacing(.clockwise)
+
+        for (index, batch) in batches.enumerated() {
+            let run = batch.run
+            // 並びごとに、頂点の落とし方と奥行きの扱いを切り替える。**平面は奥行きを
+            // 書かない**ので、あとから来た立体の前後関係を汚さない (ADR-0021 決定 2)
+            switch batch.source {
+            case .flat:
+                encoder.setRenderPipelineState(
+                    (run.paint.shader?.states ?? pipeline.states).state(for: run.mode))
+                encoder.setDepthStencilState(pipeline.flatDepthState)
+                pipeline.argumentTable.setAddress(
+                    geometry.flatVertices.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+                // **口は立体と共用する。** 同じ列で平面と立体の両方を描くことは
+                // 無いので、置き場所の口を 2 つ持つ理由が無い
+                pipeline.argumentTable.setAddress(
+                    geometry.flatInstances.gpuAddress
+                        + UInt64(batch.instanceStart * MemoryLayout<FlatInstance>.stride),
+                    index: ShapePipeline.instanceBufferIndex)
+            case .form:
+                // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
+                // 平面と同じ (常に通し・書かない)
+                encoder.setRenderPipelineState(
+                    pipeline.formStates(for: batch.formFlags).state(for: run.mode))
+                encoder.setDepthStencilState(pipeline.flatDepthState)
+                pipeline.argumentTable.setAddress(
+                    geometry.formInstances.gpuAddress
+                        + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
+                    index: ShapePipeline.instanceBufferIndex)
+            case .solid:
+                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
+                encoder.setRenderPipelineState(
+                    (run.paint.shader?.solidStates ?? pipeline.solidStates).state(for: run.mode))
+                encoder.setDepthStencilState(pipeline.solidDepthState)
+                pipeline.argumentTable.setAddress(
+                    geometry.solidVertices.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+                // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
+                // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
+                pipeline.argumentTable.setAddress(
+                    (batch.instances ?? geometry.solidInstances).gpuAddress
+                        + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
+                    index: ShapePipeline.instanceBufferIndex)
+            }
+            // 裏を向いた面を描くかは列が決めている (`Batch.cullMode`)。表の向きは
+            // 上で 1 度だけ決めてあるので、ここは捨て方を掛けるだけ
+            encoder.setCullMode(batch.cullMode)
+            pipeline.argumentTable.setAddress(
+                perBatch.matrices.gpuAddress + UInt64(index * Self.valuesStride),
+                index: ShapePipeline.projectionBufferIndex)
+            pipeline.argumentTable.setAddress(
+                perBatch.values.gpuAddress + UInt64(index * Self.valuesStride),
+                index: ShapePipeline.valuesBufferIndex)
+            pipeline.argumentTable.setAddress(
+                perBatch.lighting.gpuAddress + UInt64(index * Self.valuesStride),
+                index: ShapePipeline.lightingBufferIndex)
+            pipeline.argumentTable.setAddress(
+                perBatch.materials.gpuAddress + UInt64(index * Self.valuesStride),
+                index: ShapePipeline.materialBufferIndex)
+            pipeline.argumentTable.setAddress(
+                perBatch.surroundings.gpuAddress + UInt64(index * Self.valuesStride),
+                index: ShapePipeline.surroundingsBufferIndex)
+            encoder.setScissorRect(scissor(batch.clip))
+            pipeline.argumentTable.setAddress(
+                blendModeBuffer.gpuAddress
+                    + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
+                index: ShapePipeline.blendModeBufferIndex)
+            // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
+            // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
+            pipeline.argumentTable.setAddress(
+                (run.paint.numbers ?? emptyNumbers).storage.gpuAddress,
+                index: ShapePipeline.numbersBufferIndex)
+            pipeline.argumentTable.setTexture(
+                run.texture.gpuResourceID, index: ShapePipeline.textureIndex)
+            // 利用者が宣言した面。**口は毎回すべて束ねる** — 渡していない口には
+            // 読む面を束ねる。束ねずに走らせると、宣言より多く読んだ断片が
+            // 絵の乱れではなく異常終了になる (数の並びと同じ扱い)
+            for slot in 0..<ShapePipeline.surfaceCapacity {
+                let surface = slot < run.paint.surfaces.count ? run.paint.surfaces[slot] : run.texture
+                pipeline.argumentTable.setTexture(
+                    surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
+            }
+            encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
+            if let arguments = batch.indirectArguments {
+                // **個数は GPU が書いた引数から読む。** 計算の段の末尾の仕掛け
+                // (`encodeComputeBarrier`) が頂点段の前で待つので、引数の読み出しは
+                // 書き終わった後になる
+                encoder.drawPrimitives(
+                    primitiveType: .triangle, indirectBuffer: arguments.gpuAddress)
+            } else if batch.source == .form {
+                // 基本図形はクアッド 1 枚 (頂点 6 つ) を置き場所の数だけ描く。頂点関数が
+                // `vertex_id` から角を決めるので、頂点の並びは読まない
+                encoder.drawPrimitives(
+                    primitiveType: .triangle,
+                    vertexStart: 0, vertexCount: Self.formQuadVertexCount,
+                    instanceCount: batch.instanceCount)
+            } else {
+                encoder.drawPrimitives(
+                    primitiveType: .triangle,
+                    vertexStart: run.start, vertexCount: run.count,
+                    instanceCount: batch.instanceCount)
+            }
+        }
+    }
+
+    /// Swift の並びに溜めた頂点・置き場所・光を、GPU の置き場へ写す。
+    private func uploadGeometry() throws(RenderFailure) -> GeometryBuffers {
+        let buffer = try vertexStorage.buffer(holding: vertices.count)
+        vertices.withUnsafeBytes { source in
+            guard let base = source.baseAddress, source.count > 0 else { return }
+            buffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
+        let formBuffer = try formInstanceStorage.buffer(
+            holding: max(formInstances.count, 1))
+        formInstances.withUnsafeBytes { source in
+            guard let base = source.baseAddress, source.count > 0 else { return }
+            formBuffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
+        let instanceBuffer = try solidInstanceStorage.buffer(
+            holding: max(solidInstances.count, 1))
+        solidInstances.withUnsafeBytes { source in
+            guard let base = source.baseAddress, source.count > 0 else { return }
+            instanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
+        let flatInstanceBuffer = try flatInstanceStorage.buffer(
+            holding: flatInstances.count)
+        flatInstances.withUnsafeBytes { source in
+            guard let base = source.baseAddress, source.count > 0 else { return }
+            flatInstanceBuffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
+
+        let solidBuffer = try solidVertexStorage.buffer(holding: solidVertices.count)
+        solidVertices.withUnsafeBytes { source in
+            guard let base = source.baseAddress else { return }
+            solidBuffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
+        // 光の置き場。列は自分の区間を指す
+        let lightsBuffer = try lightStorageBuffer.buffer(holding: max(lightStorage.count, 1))
+        lightStorage.withUnsafeBytes { source in
+            guard let base = source.baseAddress, source.count > 0 else { return }
+            lightsBuffer.contents().copyMemory(from: base, byteCount: source.count)
+        }
+        pipeline.argumentTable.setAddress(
+            lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
+        return GeometryBuffers(
+            flatVertices: buffer, formInstances: formBuffer,
+            solidInstances: instanceBuffer, flatInstances: flatInstanceBuffer,
+            solidVertices: solidBuffer)
+    }
+
+    /// 列ごとの値と、フレームに 1 つの値 (時刻・面の大きさ・影・揺らぎ) を置く。
+    private func uploadPerBatch(
+        shadow bakedShadow: (map: ShadowMap, matrix: simd_float4x4)?
+    ) throws(RenderFailure) -> BatchBuffers {
+        // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
+        let matrices = try matrixStorage.buffer(holding: batches.count)
+        for (index, batch) in batches.enumerated() {
+            var matrix = batch.matrix
+            let slot = matrices.contents().advanced(by: index * Self.valuesStride)
+            slot.copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
+            // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
+            // 読まない**ので、同じ区画に足しても効かない
+            var strokeStart = UInt32(min(batch.strokeStart, Int(UInt32.max)))
+            slot.advanced(by: MemoryLayout<simd_float4x4>.size)
+                .copyMemory(from: &strokeStart, byteCount: MemoryLayout<UInt32>.size)
+        }
+
+        // 時刻と面の大きさは、フレームの中で変わらない。**大きさは実際に刻む
+        // 画素**である — 断片が受け取る位置 (`position`) がその数で来るので、
+        // 割って出す 0…1 の位置がここと食い違うと面からはみ出す
+        let uniformsBuffer = try uniformsStorage.buffer(holding: 1)
+        uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
+            .update(
+                from: [time, 0, Float(pixelWidth), Float(pixelHeight), shadowBiasValue],
+                count: 5)
+        // 影の行列と設定。**フレームに 1 つ**で、列ごとには変わらない
+        // **置き場所は断片側の詰め方で決まる。** 4x4 の行列は 16 バイト境界へ
+        // 揃うので、その前の 1 つの数 (縁の余裕) の後ろに詰め物が入る
+        var matrix = bakedShadow?.matrix ?? matrix_identity_float4x4
+        uniformsBuffer.contents().advanced(by: 32)
+            .copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
+        let shadowTexel = 1 / Float(bakedShadow?.map.detail ?? 1)
+        uniformsBuffer.contents().advanced(by: 96)
+            .assumingMemoryBound(to: Float.self)
+            .update(from: [bakedShadow == nil ? 0 : 1, shadowTexel, 0, 0], count: 4)
+        // 揺らぎの種と細かさ。**断片が種を受け取る**ので、利用者が値として
+        // 配線しなくても CPU の `noise()` と同じ模様が出る。種と枚数は整数の
+        // まま送る (`Float` を経由すると大きな種で丸めが起きる)
+        uniformsBuffer.contents().advanced(by: 112)
+            .assumingMemoryBound(to: UInt32.self)
+            .update(from: [noiseSettings.seed, UInt32(noiseSettings.octaves)], count: 2)
+        uniformsBuffer.contents().advanced(by: 120)
+            .assumingMemoryBound(to: Float.self)
+            .update(from: [noiseSettings.falloff, 0], count: 2)
+        // **焼いていなくても、読む先は必ず束ねる。** 束ねない口を作ると、断片が
+        // 触った瞬間に何が起きるかが土台任せになる。口は奥行きの面 (`depth2d`) なので、
+        // 焼いていないフレームには同じ形の 1 画素の面を束ねる — 色の面を束ねると
+        // 型が合わず、検証層が止める
+        let shadowTexture: any MTLTexture
+        if let bakedShadow {
+            shadowTexture = bakedShadow.map.texture
+        } else {
+            shadowTexture = try unbakedShadowTextureHolding()
+        }
+        pipeline.argumentTable.setTexture(
+            shadowTexture.gpuResourceID, index: ShapePipeline.shadowTextureIndex)
+        pipeline.argumentTable.setAddress(
+            uniformsBuffer.gpuAddress, index: ShapePipeline.uniformsBufferIndex)
+
+        // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている
+        let lighting = try lightingStorage.buffer(holding: batches.count)
+        for (index, batch) in batches.enumerated() {
+            let slot = lighting.contents().advanced(by: index * Self.valuesStride)
+                .assumingMemoryBound(to: UInt32.self)
+            slot.update(
+                from: [UInt32(batch.lightRange.lowerBound), UInt32(batch.lightRange.count)],
+                count: 2)
+            // 見ている場所は 16 バイト境界から (断片の側も詰め物を空けている)
+            var viewer = batch.viewer
+            lighting.contents().advanced(by: index * Self.valuesStride + 16)
+                .copyMemory(from: &viewer, byteCount: MemoryLayout<SIMD4<Float>>.size)
+        }
+
+        // 列ごとの材質。**列が閉じた時点のもの**がそのまま入る
+        let materials = try materialStorage.buffer(holding: batches.count)
+        for (index, batch) in batches.enumerated() {
+            var packed = batch.material.packed
+            materials.contents().advanced(by: index * Self.valuesStride)
+                .copyMemory(from: &packed, byteCount: PackedMaterial.expectedStride)
+        }
+
+        // 列ごとの周囲。**列が閉じた時点のもの**がそのまま入る
+        let surroundings = try surroundingsStorage.buffer(holding: batches.count)
+        for (index, batch) in batches.enumerated() {
+            var packed = batch.surroundings
+            surroundings.contents().advanced(by: index * Self.valuesStride)
+                .copyMemory(from: &packed, byteCount: PackedSurroundings.expectedStride)
+        }
+
+        let values = try valuesStorage.buffer(holding: batches.count)
+        for (index, batch) in batches.enumerated() {
+            // **区画に収まることは入口で保証されている** (`Canvas.loadShader` /
+            // `makeShader` が `valueSlotCapacity` を超える宣言を断る・#348)。ここで
+            // 切り詰めないのは、黙って切り詰めると断片の `Values` に「宣言したのに
+            // 一度も書かれない欄」が残り、絵が永久に間違ったまま出るためである
+            let slot = values.contents().advanced(by: index * Self.valuesStride)
+                .assumingMemoryBound(to: Float.self)
+            if batch.run.paint.values.isEmpty {
+                slot.update(repeating: 0, count: 4)
+            } else {
+                slot.update(from: batch.run.paint.values, count: batch.run.paint.values.count)
+            }
+        }
+        return BatchBuffers(
+            matrices: matrices, lighting: lighting, materials: materials,
+            surroundings: surroundings, values: values)
+    }
+
+    /// 頂点と置き場所の置き場。``uploadGeometry()`` が満たし、列を積むときに読む。
+    private struct GeometryBuffers {
+        let flatVertices: any MTLBuffer
+        let formInstances: any MTLBuffer
+        let solidInstances: any MTLBuffer
+        let flatInstances: any MTLBuffer
+        let solidVertices: any MTLBuffer
+    }
+
+    /// 列ごとの値の置き場。**どれも列の番号 × `valuesStride` で区切って読む。**
+    private struct BatchBuffers {
+        let matrices: any MTLBuffer
+        let lighting: any MTLBuffer
+        let materials: any MTLBuffer
+        let surroundings: any MTLBuffer
+        let values: any MTLBuffer
     }
 
     /// 描き切りが GPU に読ませる参照のうち、この型が所有していないもの。
