@@ -35,6 +35,7 @@ final class Probe: Sketch {
 
 var seconds = 6.0
 var minimizeAfter: Double?
+var allowsDisplaySleep = false
 var arguments = CommandLine.arguments.dropFirst().makeIterator()
 while let argument = arguments.next() {
     switch argument {
@@ -45,6 +46,10 @@ while let argument = arguments.next() {
         // 許可が要り、許可の無い環境では「検査が落ちた」と「窓を畳めなかった」を
         // 区別できない (#223)
         if let value = arguments.next(), let parsed = Double(value) { minimizeAfter = parsed }
+    case "--allow-display-sleep":
+        // **画面が消えることそのものを測るときだけ外す。** 断ったまま測ると
+        // 「スリープを作れなかったのに緑」という嘘が出る (#874)
+        allowsDisplaySleep = true
     default:
         FileHandle.standardError.write(Data("知らない引数: \(argument)\n".utf8))
         exit(2)
@@ -53,6 +58,7 @@ while let argument = arguments.next() {
 
 let gpu = try RenderDevice()
 let application = try SketchApplication(sketch: Probe(), gpu: gpu)
+application.blocksDisplaySleep = !allowsDisplaySleep
 
 if let minimizeAfter {
     Timer.scheduledTimer(withTimeInterval: minimizeAfter, repeats: false) { _ in

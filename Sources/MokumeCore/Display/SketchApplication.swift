@@ -141,8 +141,18 @@ public final class SketchApplication: NSObject {
         // **省電力の間引きを断る** (上記・ADR-0012 決定 5)。走らせている間ずっと保持し、
         // 終わるときに返す — 途中で手放すと、そこから先だけ間引かれる
         activity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            options: [.userInitiated, .latencyCritical],
             reason: "スケッチのフレームを一定の速さで進め続ける")
+        // **画面が消えると絵が止まる。** 駆動源は画面のリフレッシュに紐づいているので、
+        // ディスプレイがスリープすると絵も観測も入力も同時に黙る (#874)。断りを立てて
+        // おく — `beginActivity` から `AllowingIdleSystemSleep` を外したのは、片方で
+        // 「寝てよい」と言いながら片方で断るコードにしないためである
+        if blocksDisplaySleep {
+            displaySleepBlock = DisplaySleepBlock(reason: "スケッチを画面に出し続ける")
+        }
+        // **断りは保証ではない。** 外部ディスプレイの電源を切る・蓋を閉じるといった
+        // 経路は断れないので、止まったときに拾う側も併せて持つ
+        startFallbackDriver()
         // **与えられたときだけ仕掛ける。** 与えられなければ何も足さないので、窓口から
         // 立てたスケッチの出力は 1 バイトも変わらない ([ADR-0029] 決定 5 の 2 番目)
         if FrameRateNotice.announces(
@@ -188,6 +198,20 @@ public final class SketchApplication: NSObject {
     /// 足さないため。`.latencyCritical` は「この周期処理は時刻に縛られている」という名乗りで、
     /// ADR-0012 決定 5 が要件にした性質そのものである。
     private var activity: (any NSObjectProtocol)?
+    /// ディスプレイが勝手に消えるのを断っているもの。**窓を出す経路でだけ持つ。**
+    private var displaySleepBlock: DisplaySleepBlock?
+    /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。
+    ///
+    /// 外してよいのは、**画面が消えることそのものを測る検査**だけである
+    /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。断ったまま測ると
+    /// 「スリープを作れなかったのに緑」という嘘が出る。
+    public var blocksDisplaySleep = true
+    /// 予備の駆動源。表示のリフレッシュが止まっても進め続けるために回す。
+    private var fallbackTimer: Timer?
+    /// 最後にフレームを進めた時刻。**どちらの駆動源が進めたかは問わない。**
+    private var lastAdvancedAt: Double = 0
+    /// 予備の駆動源が引き受けている最中か。表示のリフレッシュが戻れば下りる。
+    private var isDrivenByFallback = false
 
     /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
     ///
@@ -325,6 +349,11 @@ public final class SketchApplication: NSObject {
         runtime.closePlugins()
         displayLink?.invalidate()
         displayLink = nil
+        fallbackTimer?.invalidate()
+        fallbackTimer = nil
+        // **返し忘れると、プロセスが終わるまで画面が消えなくなる**
+        displaySleepBlock?.release()
+        displaySleepBlock = nil
         if let activity {
             ProcessInfo.processInfo.endActivity(activity)
             self.activity = nil
@@ -338,6 +367,45 @@ public final class SketchApplication: NSObject {
     /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
     @objc private func step(_ link: CADisplayLink) {
+        // **表示のリフレッシュが生きている。** 予備が引き受けていたなら、ここで下りる
+        isDrivenByFallback = false
+        advanceAndPresent()
+    }
+
+    /// 予備の駆動源を回し始める。
+    ///
+    /// **表示のリフレッシュが生きている間は空振りするだけ**なので、目標フレーム間隔で
+    /// 細かく回してよい。止まっている間はこの間隔がそのままフレームレートになる。
+    ///
+    /// `.common` へ載せるのは、メニューを開いている間も回すためである — 名乗りの
+    /// メニューを開いたまま画面が消えることは普通に起きる。
+    private func startFallbackDriver() {
+        let rate = max(1, runtime.sketch.settings.frameRate)
+        let timer = Timer(
+            timeInterval: FrameDriver.fallbackInterval(frameRate: rate), repeats: true
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fallbackTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        fallbackTimer = timer
+    }
+
+    /// 予備の駆動源から 1 回。**止まっていなければ何もしない。**
+    private func fallbackTick() {
+        let rate = max(1, runtime.sketch.settings.frameRate)
+        guard
+            FrameDriver.shouldAdvanceFromFallback(
+                now: CACurrentMediaTime(), lastAdvancedAt: lastAdvancedAt,
+                stallThreshold: FrameDriver.stallThreshold(frameRate: rate),
+                isAlreadyDriving: isDrivenByFallback)
+        else { return }
+        isDrivenByFallback = true
+        advanceAndPresent()
+    }
+
+    /// 1 フレーム進めて差し出す。**どちらの駆動源から来ても、通る道は同じ。**
+    private func advanceAndPresent() {
+        lastAdvancedAt = CACurrentMediaTime()
         do {
             try runtime.advance()
             try presentFrame()
