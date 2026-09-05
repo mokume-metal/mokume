@@ -125,6 +125,10 @@ SPDX-License-Identifier: MIT
 | PR の変更ファイル一覧 ([#793](https://github.com/mokume-metal/mokume/issues/793)) | 上限のある口を使った側で、大きな PR の保護パス判定と絵の要求が**緩む** |
 | 秘密情報の探索 ([#819](https://github.com/mokume-metal/mokume/issues/819)) | `grep` がパターンをオプションと解釈して落ち、`\|\| return 0` が飲み込み、**秘密鍵の検出は一度も発火していなかった** |
 | 報告の context の綴り (`scripts/render-context.sh`) | 打つ側と探す側で割れると、手元の実行の覆いが**永久に見つからない** |
+| 出来事の種別の綴り ([#803](https://github.com/mokume-metal/mokume/issues/803)) | 書く側は網羅 `switch`・読む側は `String` の `switch` + `default: return nil` だった。新しい出来事を足すと「送れるが受け取れない」が成立し、症状は**「触っても効かない」**としか出ない |
+| つまみの型名の綴り ([#803](https://github.com/mokume-metal/mokume/issues/803)) | 書く側の `typeName` と読む側の `switch` が別々にリテラルを持っていた。片方を直すと**書いたものを自分で読めなくなる**が、コンパイルは通る |
+| 観測の値の `{type, value}` ([#803](https://github.com/mokume-metal/mokume/issues/803)) | `ExposedValue` が `ParamValue` と同じ形を手書きしていた。片方だけが動くと、観測の応答とつまみの応答で**同じ値が違う名前で出る** |
+| `{name, type, value}` の Codable 3 つ ([#803](https://github.com/mokume-metal/mokume/issues/803)) | 外からの要求・道具の要求・保存が別々に書いていた (順序依存の `encode` を含む)。型を足したとき直り漏れた 1 つが、**その経路でだけ値を落とす** |
 
 **畳まないのは、割れが出力に見えるもの、または写しが呼び出し側の契約であるものである。**
 

@@ -21,17 +21,28 @@ struct InputEventWireTests {
         return raw.event
     }
 
+    /// 種別 1 つぶんの代表値。
+    ///
+    /// **`default` を持たない。** 種別を足した人はここでコンパイルが止まり、代表値を
+    /// 書くまで進めない — 手打ちの配列だった頃は、足しても検査が緑のままだった
+    /// ([#803](https://github.com/mokume-metal/mokume/issues/803))。
+    private func sample(of type: InputEventType) -> InputEvent {
+        switch type {
+        case .mouseDown: .mouseDown(x: 12.5, y: 30, button: 1)
+        case .mouseUp: .mouseUp(x: 0, y: 0, button: 0)
+        case .mouseMoved: .mouseMoved(x: -4.25, y: 719.5)
+        case .scrolled: .scrolled(dx: 1.5, dy: -2.25)
+        case .keyDown: .keyDown(code: .enter, characters: "a", isRepeat: true)
+        case .keyUp: .keyUp(code: .escape)
+        }
+    }
+
     @Test(
         "どの種別も、書いて読み戻すと同じ出来事になる",
-        arguments: [
-            InputEvent.mouseDown(x: 12.5, y: 30, button: 1),
-            .mouseUp(x: 0, y: 0, button: 0),
-            .mouseMoved(x: -4.25, y: 719.5),
-            .scrolled(dx: 1.5, dy: -2.25),
-            .keyDown(code: .enter, characters: "a", isRepeat: true),
-            .keyUp(code: .escape),
-        ])
-    func survivesTheRoundTrip(event: InputEvent) throws {
+        arguments: InputEventType.allCases)
+    func survivesTheRoundTrip(type: InputEventType) throws {
+        let event = sample(of: type)
+        #expect(event.wireType == type, "代表値がその種別のものになっている")
         #expect(try roundTrip(event) == event)
     }
 

@@ -71,35 +71,38 @@ extension ParamValue: Codable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try container.decode(String.self, forKey: .type)
+        let name = try container.decode(String.self, forKey: .type)
+        // 綴りは書く側と同じ正典から引く。知らない綴りを落とすのは `init(rawValue:)` の
+        // 仕事で、そこから先は `default` を持たない — 書けるのに読めない型を作らせない
+        guard let type = ParamTypeName(rawValue: name) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .type, in: container, debugDescription: "知らない型: \(name)")
+        }
         switch type {
-        case "float": self = .float(try container.decode(Double.self, forKey: .value))
-        case "int": self = .int(try container.decode(Int.self, forKey: .value))
-        case "bool": self = .bool(try container.decode(Bool.self, forKey: .value))
-        case "string": self = .string(try container.decode(String.self, forKey: .value))
-        case "color":
+        case .float: self = .float(try container.decode(Double.self, forKey: .value))
+        case .int: self = .int(try container.decode(Int.self, forKey: .value))
+        case .bool: self = .bool(try container.decode(Bool.self, forKey: .value))
+        case .string: self = .string(try container.decode(String.self, forKey: .value))
+        case .color:
             let color = try container.decode(WireColor.self, forKey: .value)
             self = .color(
                 LinearRGBA(
                     premultipliedRed: color.red, green: color.green, blue: color.blue,
                     alpha: color.alpha))
-        case "vec2":
+        case .vec2:
             let components = try container.decode([Float].self, forKey: .value)
             guard components.count == 2 else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .value, in: container, debugDescription: "vec2 は 2 つの成分で書く")
             }
             self = .vector2(SIMD2(components[0], components[1]))
-        case "vec3":
+        case .vec3:
             let components = try container.decode([Float].self, forKey: .value)
             guard components.count == 3 else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .value, in: container, debugDescription: "vec3 は 3 つの成分で書く")
             }
             self = .vector3(SIMD3(components[0], components[1], components[2]))
-        default:
-            throw DecodingError.dataCorruptedError(
-                forKey: .type, in: container, debugDescription: "知らない型: \(type)")
         }
     }
 }

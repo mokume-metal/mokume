@@ -18,15 +18,19 @@ public enum ParamValue: Equatable, Sendable {
     case vector3(SIMD3<Float>)
 
     /// 形式の中で名乗る型の名前。
-    public var typeName: String {
+    public var typeName: String { paramType.rawValue }
+
+    /// 名乗る型。**綴りの正典は ``ParamTypeName``** で、読む側も同じものを引く —
+    /// 書いたものを自分で読めない状態が、この網羅 `switch` から先へ進めない。
+    var paramType: ParamTypeName {
         switch self {
-        case .float: "float"
-        case .int: "int"
-        case .bool: "bool"
-        case .string: "string"
-        case .color: "color"
-        case .vector2: "vec2"
-        case .vector3: "vec3"
+        case .float: .float
+        case .int: .int
+        case .bool: .bool
+        case .string: .string
+        case .color: .color
+        case .vector2: .vec2
+        case .vector3: .vec3
         }
     }
 

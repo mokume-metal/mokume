@@ -221,30 +221,7 @@ extension ParamStore {
         var schemaVersion = ParamStore.schemaVersion
         let values: [Entry]
 
-        struct Entry: Codable {
-            let name: String
-            let value: ParamValue
-
-            private enum CodingKeys: String, CodingKey {
-                case name
-            }
-
-            init(name: String, value: ParamValue) {
-                self.name = name
-                self.value = value
-            }
-
-            init(from decoder: any Decoder) throws {
-                let container = try decoder.container(keyedBy: CodingKeys.self)
-                name = try container.decode(String.self, forKey: .name)
-                value = try ParamValue(from: decoder)
-            }
-
-            func encode(to encoder: any Encoder) throws {
-                try value.encode(to: encoder)
-                var container = encoder.container(keyedBy: CodingKeys.self)
-                try container.encode(name, forKey: .name)
-            }
-        }
+        /// 1 件ぶん。**面が読み書きするものと同じ形** (``NamedParamValue``)。
+        typealias Entry = NamedParamValue
     }
 }

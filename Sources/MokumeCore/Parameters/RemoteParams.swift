@@ -118,22 +118,8 @@ final class RemoteParams {
         let id: String
         let values: [Entry]
 
-        struct Entry: Encodable {
-            let name: String
-            let value: ParamValue
-
-            private enum CodingKeys: String, CodingKey {
-                case name, type, value
-            }
-
-            func encode(to encoder: any Encoder) throws {
-                var container = encoder.container(keyedBy: CodingKeys.self)
-                try container.encode(name, forKey: .name)
-                // 型と値は 1 つの組で書く (`{"type", "value"}`)。読む側と同じ綴り
-                try container.encode(value.typeName, forKey: .type)
-                try container.encode(ParamValue.Body(value), forKey: .value)
-            }
-        }
+        /// 1 件ぶん。**読む側 (``ParamRequest``) と同じ形** (``NamedParamValue``)。
+        typealias Entry = NamedParamValue
     }
 }
 

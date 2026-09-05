@@ -27,20 +27,21 @@ extension InputEvent {
     ///
     /// **必ず作れる。** 送るのは自分が組み立てた出来事なので、組めない値は入ってこない。
     var wireLine: String {
-        var fields: [(String, String)] = [("type", Self.quoted(wireType))]
+        var fields: [(String, String)] = [("type", Self.quoted(wireType.rawValue))]
         for (key, value) in wireFields { fields.append((key, value)) }
         return "{" + fields.map { "\(Self.quoted($0.0)):\($0.1)" }.joined(separator: ",") + "}\n"
     }
 
-    /// 種別の名前。**読み手の `switch` と同じ綴り。**
-    private var wireType: String {
+    /// 種別の名前。**綴りの正典は ``InputEventType``** で、読み手も同じものを引く —
+    /// 書けるのに読めない出来事は、この網羅 `switch` から先へ進めない。
+    var wireType: InputEventType {
         switch self {
-        case .mouseDown: "mouseDown"
-        case .mouseUp: "mouseUp"
-        case .mouseMoved: "mouseMoved"
-        case .scrolled: "scrolled"
-        case .keyDown: "keyDown"
-        case .keyUp: "keyUp"
+        case .mouseDown: .mouseDown
+        case .mouseUp: .mouseUp
+        case .mouseMoved: .mouseMoved
+        case .scrolled: .scrolled
+        case .keyDown: .keyDown
+        case .keyUp: .keyUp
         }
     }
 

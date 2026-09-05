@@ -9,22 +9,8 @@ struct ParamRequest: ExchangeRequest {
     let id: String
     let values: [Entry]
 
-    struct Entry: Decodable {
-        let name: String
-        let value: ParamValue
-
-        private enum CodingKeys: String, CodingKey {
-            case name
-        }
-
-        init(from decoder: any Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            name = try container.decode(String.self, forKey: .name)
-            // 型と値は 1 つの組として読む (`{"type", "value"}`)。同じ書き方を
-            // 観測の値・応答の値と分け合う
-            value = try ParamValue(from: decoder)
-        }
-    }
+    /// 1 件ぶん。**書く側 (道具・保存) と同じ形を読む** (``NamedParamValue``)。
+    typealias Entry = NamedParamValue
 }
 
 /// つまみの面が返す応答。
