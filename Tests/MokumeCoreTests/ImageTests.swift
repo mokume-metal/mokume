@@ -506,4 +506,26 @@ struct ImageTests {
             }
         }
     }
+
+    // MARK: - 大きすぎる指定は失敗として返る (#885)
+
+    /// **落ちないことを見ている。** 守りが無いと Metal の検証層がアサーションで
+    /// プロセスを終わらせるので、この検査は失敗ではなく SIGABRT で消える
+    /// ([#885](https://github.com/mokume-metal/mokume/issues/885))。
+    ///
+    /// 画素を組む前に断るので、20000×20000 でも 3.2 GB は確保されない。
+    @Test("大きすぎる絵を頼んでも、落ちずに失敗として返る")
+    func rejectsOversizedImages() throws {
+        let canvas = try makeCanvas()
+        #expect(throws: ImageFailure.unplaceable(width: 20000, height: 20000)) {
+            _ = try canvas.createImage(20000, 20000)
+        }
+    }
+
+    @Test("上限ちょうどの絵は作れる")
+    func acceptsImagesAtTheLimit() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(RenderDevice.maxTextureSide, 1)
+        #expect(image.width == RenderDevice.maxTextureSide)
+    }
 }

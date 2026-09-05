@@ -58,6 +58,18 @@ import MokumeDiagnostics
     /// 物差しにできるよう**定数で持つ (壁時計の絶対値をテストに書かない)。
     public static let waitLimitSeconds = 5
 
+    /// 面の一辺に取れる画素数の上限。
+    ///
+    /// **`MTLDevice` から引ける口が無いので定数で持つ。** 世代ごとに分けていないのは
+    /// ADR-0001 原則 5 (macOS / Apple Silicon 専用) による — Apple Silicon はどの世代も
+    /// 16384 なので、分岐は「起こりえない場合」を書き足すことにしかならない。
+    ///
+    /// `nonisolated` にしてあるのは ``RenderFailure/description`` から読むためである。
+    /// あちらはプロトコルの証人なので隔離の外に居る。
+    ///
+    /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
+    nonisolated static let maxTextureSide = 16384
+
     /// この実行環境で描画の土台を組み立てられるか。
     ///
     /// **GPU があるかだけでは足りない。** 仮想化された実行環境には、GPU としては
@@ -336,7 +348,20 @@ import MokumeDiagnostics
     }
 
     /// 描画先にできるテクスチャを確保して常駐させる。
+    ///
+    /// **大きすぎる寸法は、渡す前にここで断る。** 上限を超えた descriptor に Metal は
+    /// `nil` を返さず、検証層がアサーションで**プロセスを終了させる** — だから下の
+    /// `guard let` では捕まえられず、`throws(RenderFailure)` を宣言していても投げる前に
+    /// 死ぬ。利用者から見ると `try` を書いても書かなくても結果が同じになっていた
+    /// ([#885](https://github.com/mokume-metal/mokume/issues/885))。
+    ///
+    /// **外から任意の寸法が入る口 (描き場所・絵・窓の大きさ) は、いずれもここへ集まる。**
+    /// 3 つを個別に守ると、面を作る道が 1 本増えるたびに守り忘れが生まれる。
     func makeTexture(descriptor: MTLTextureDescriptor) throws(RenderFailure) -> any MTLTexture {
+        guard descriptor.width <= Self.maxTextureSide, descriptor.height <= Self.maxTextureSide
+        else {
+            throw .invalidSize(width: descriptor.width, height: descriptor.height)
+        }
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             throw .textureUnavailable(width: descriptor.width, height: descriptor.height)
         }

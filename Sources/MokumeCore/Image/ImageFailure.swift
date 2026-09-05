@@ -14,7 +14,7 @@ public enum ImageFailure: Error, Equatable, Sendable {
     case notFound(path: String, searched: [String])
     /// 見つかったが、画像として読めない。
     case undecodable(path: String)
-    /// 読めたが、GPU 側へ置けない。
+    /// GPU 側へ置けない — 読めたが置き場が足りない、あるいは面の上限より大きい。
     case unplaceable(width: Int, height: Int)
 }
 
@@ -36,7 +36,10 @@ extension ImageFailure: CustomStringConvertible {
         case .undecodable(let path):
             return "「\(path)」は画像として読めません。形式が対応しているか確かめてください"
         case .unplaceable(let width, let height):
-            return "\(width)x\(height) の画像を GPU 側へ置けません"
+            return """
+                \(width)x\(height) の画像を GPU 側へ置けません。
+                一辺は \(RenderDevice.maxTextureSide) 画素までです — それより小さいか確かめてください
+                """
         }
     }
 }

@@ -439,4 +439,24 @@ struct GraphicsTests {
         #expect(canvas.placedGraphics.isEmpty)
         #expect(canvas.placers.isEmpty)
     }
+
+    // MARK: - 大きすぎる指定は失敗として返る (#885)
+
+    /// **落ちないことを見ている。** 守りが無いと Metal の検証層がアサーションで
+    /// プロセスを終わらせるので、この検査は失敗ではなく SIGABRT で消える
+    /// ([#885](https://github.com/mokume-metal/mokume/issues/885))。
+    @Test("大きすぎる描き場所を頼んでも、落ちずに失敗として返る")
+    func rejectsOversizedGraphics() throws {
+        let canvas = try makeCanvas()
+        #expect(throws: RenderFailure.invalidSize(width: 20000, height: 20000)) {
+            _ = try canvas.createGraphics(20000, 20000)
+        }
+    }
+
+    @Test("上限ちょうどの描き場所は作れる")
+    func acceptsGraphicsAtTheLimit() throws {
+        let canvas = try makeCanvas()
+        let graphics = try canvas.createGraphics(RenderDevice.maxTextureSide, 1)
+        #expect(graphics.output.width == RenderDevice.maxTextureSide)
+    }
 }
