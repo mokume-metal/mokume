@@ -120,7 +120,7 @@ struct CommandAllocatorTests {
         // **「まだ終わっていない」を構造で作る** (この suite の他の検査と同じ手)
         try canvas.draw {
             canvas.compute(spin, over: 1, writes: [scratch])
-            canvas.background(.opaque(red: 0, green: 0, blue: 0))
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
         }
         try #require(!gpu.isIdle, "回転が短い — この検査は何も見ていない")
 
