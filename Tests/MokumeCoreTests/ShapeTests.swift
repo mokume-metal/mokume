@@ -462,6 +462,159 @@ struct ShapeTests {
         #expect(try retained.target.readPixels() == immediate.target.readPixels())
     }
 
+    // MARK: - 貼る絵が記録に残ること
+
+    /// 縞の絵を焼く。
+    ///
+    /// **一色にしない。** 焼き場 (字形の面) の空いている区画は白なので、白い絵を貼ると
+    /// 「記録した面を読んだ」と「焼き場を読んだ」が同じ絵になり、[#914] を見分けられない。
+    ///
+    /// [#914]: https://github.com/mokume-metal/mokume/issues/914
+    private func makeStripes(_ canvas: Canvas) throws -> Image {
+        let picture = try canvas.createImage(8, 8)
+        for y in 0..<8 {
+            for x in 0..<8 {
+                picture.set(
+                    x, y,
+                    (x + y) % 2 == 0
+                        ? .linear(red: 0.9, green: 0.1, blue: 0.1)
+                        : .linear(red: 0.1, green: 0.2, blue: 0.9))
+            }
+        }
+        return picture
+    }
+
+    /// 完了条件 1・2。**組んだフレームより後で置いても、記録した絵で出る。**
+    ///
+    /// 置く側は `texture()` を呼んでいないので、面を置く側の状態で選び直す実装では
+    /// 焼き場へ倒れる ([#914])。その場で描いた絵と突き合わせれば、倒れたことが画素に出る。
+    ///
+    /// [#914]: https://github.com/mokume-metal/mokume/issues/914
+    @Test("絵を貼った立体は、組んだフレームより後で置いても記録した絵で出る")
+    func retainedTexturedSolidKeepsItsPicture() throws {
+        func paint(_ canvas: Canvas, _ picture: Image) {
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.texture(picture)
+            canvas.beginShape(.triangles)
+            canvas.normal(0, 0, 1)
+            canvas.vertex(-20, -20, 0, 0, 0)
+            canvas.normal(0, 0, 1)
+            canvas.vertex(20, -20, 0, 8, 0)
+            canvas.normal(0, 0, 1)
+            canvas.vertex(0, 20, 0, 4, 8)
+            canvas.endShape()
+        }
+
+        let immediate = try makeCanvas()
+        let immediatePicture = try makeStripes(immediate)
+        try immediate.draw {
+            immediate.background(.linear(red: 0, green: 0, blue: 0))
+            immediate.push()
+            immediate.translate(32, 32, 0)
+            paint(immediate, immediatePicture)
+            immediate.pop()
+        }
+
+        let retained = try makeCanvas()
+        let retainedPicture = try makeStripes(retained)
+        // **フレームの外で組む。** ここが #914 の要である
+        let shape = retained.createShape { paint(retained, retainedPicture) }
+        try retained.draw {
+            retained.background(.linear(red: 0, green: 0, blue: 0))
+            retained.push()
+            retained.translate(32, 32, 0)
+            retained.shape(shape)
+            retained.pop()
+        }
+
+        #expect(try retained.target.readPixels() == immediate.target.readPixels())
+    }
+
+    /// 完了条件 3。**平面の区間でも同じことが成り立つ。**
+    ///
+    /// `beginFlat` は面を触らないので現状でも通るが、検査が無かった — 立体だけ直して
+    /// 平面が割れる (あるいはその逆) を捕まえる場所として置く。
+    @Test("絵を貼った平面の形も、組んだフレームより後で置いても記録した絵で出る")
+    func retainedTexturedFlatKeepsItsPicture() throws {
+        func paint(_ canvas: Canvas, _ picture: Image) {
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.texture(picture)
+            canvas.beginShape()
+            canvas.vertex(8, 8, 0, 0)
+            canvas.vertex(56, 8, 8, 0)
+            canvas.vertex(56, 56, 8, 8)
+            canvas.vertex(8, 56, 0, 8)
+            canvas.endShape(.close)
+        }
+
+        let immediate = try makeCanvas()
+        let immediatePicture = try makeStripes(immediate)
+        try immediate.draw {
+            immediate.background(.linear(red: 0, green: 0, blue: 0))
+            paint(immediate, immediatePicture)
+        }
+
+        let retained = try makeCanvas()
+        let retainedPicture = try makeStripes(retained)
+        let shape = retained.createShape { paint(retained, retainedPicture) }
+        try retained.draw {
+            retained.background(.linear(red: 0, green: 0, blue: 0))
+            retained.shape(shape)
+        }
+
+        #expect(try retained.target.readPixels() == immediate.target.readPixels())
+    }
+
+    /// 完了条件 4。**その場で並べる頂点は、その場で束ねた絵で決まる。**
+    ///
+    /// 記録した形とは向きが逆で、こちらは置く側 (= その場) の状態が正しい。
+    /// これを守っているのは `appendSolidVertex` で、頂点ごとに `uv` の有無を見て
+    /// 面を選び直している — つまり `beginSolids` の `useFillTexture()` は
+    /// **この経路にとっては冗長である** (外しても本検査は通る。実測した)。
+    ///
+    /// それでも置くのは、#914 の直しがこちらの向きを壊していないことを見るためである。
+    @Test("その場で並べる立体は、その場で束ねた絵で決まる")
+    func immediateSolidUsesTheBoundPicture() throws {
+        func paint(_ canvas: Canvas) {
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.beginShape(.triangles)
+            canvas.normal(0, 0, 1)
+            canvas.vertex(-20, -20, 0, 0, 0)
+            canvas.normal(0, 0, 1)
+            canvas.vertex(20, -20, 0, 8, 0)
+            canvas.normal(0, 0, 1)
+            canvas.vertex(0, 20, 0, 4, 8)
+            canvas.endShape()
+        }
+
+        let bound = try makeCanvas()
+        let picture = try makeStripes(bound)
+        try bound.draw {
+            bound.background(.linear(red: 0, green: 0, blue: 0))
+            bound.texture(picture)
+            bound.push()
+            bound.translate(32, 32, 0)
+            paint(bound)
+            bound.pop()
+        }
+
+        let unbound = try makeCanvas()
+        try unbound.draw {
+            unbound.background(.linear(red: 0, green: 0, blue: 0))
+            unbound.noTexture()
+            unbound.push()
+            unbound.translate(32, 32, 0)
+            paint(unbound)
+            unbound.pop()
+        }
+
+        // 束ねた側は縞を読み、束ねていない側は焼き場を読む — **同じ絵にはならない**
+        #expect(try bound.target.readPixels() != unbound.target.readPixels())
+    }
+
     @Test("何も入っていない形を置いても、何も起きない")
     func placingAnEmptyShapeDoesNothing() throws {
         let canvas = try makeCanvas(width: 8, height: 8)
