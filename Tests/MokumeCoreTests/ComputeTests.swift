@@ -114,6 +114,19 @@ struct ComputeTests {
         }
         """
 
+    /// 並びの**先頭だけ**を読む塗り。
+    ///
+    /// 渡していない列に束ねられるのは 1 個の置き場 (``Canvas`` の `emptyNumbers`) なので、
+    /// `show` のように添字を振って読むと**範囲外読み出し**になる — 返る値は保証されず、
+    /// 実行ごとに変わる ([#919](https://github.com/mokume-metal/mokume/issues/919))。
+    /// 「渡していない並びを読んでも落ちない」を見るのに、範囲外まで読む必要は無い。
+    private static let showFirst = """
+        float4 paint(Fragment in, Values values) {
+            float v = in.numbers[0];
+            return float4(v, v, v, 1);
+        }
+        """
+
     private func makeCanvas(width: Int = 32, height: Int = 8) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
@@ -314,7 +327,7 @@ struct ComputeTests {
     @Test("並びを渡していない塗りは、読んでも落ちない")
     func survivesAShaderThatReadsNumbersItWasNeverGiven() throws {
         let canvas = try makeCanvas()
-        let show = try canvas.makeShader(Self.show)
+        let show = try canvas.makeShader(Self.showFirst)
 
         // 何も束ねない口を作らない — 束ねずに走らせると、読んだ断片が
         // 絵の乱れではなく異常終了になる
@@ -323,6 +336,8 @@ struct ComputeTests {
             canvas.shader(show)
             canvas.rect(0, 0, 32, 8)
         }
+        // **束ねた置き場の 1 個目は 0** なので黒が出る。ここで添字を振って読むと
+        // 範囲外になり、返る値が実行ごとに変わる (`showFirst` の doc・#919)
         let image = try canvas.target.encodeForDisplay()
         #expect(gray(image, atColumn: 16) < 0.1)
     }
