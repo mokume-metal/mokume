@@ -56,9 +56,11 @@ REPO="$(this_repo)"
 # shellcheck source=scripts/pr-files.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 
-fail() {
+fail() { # $1=理由 $2=次にすること (省略可)
   echo "review-gate: 差し戻し — $1" >&2
-  echo "次にすること: $2" >&2
+  # **省いた呼び出しを bash のエラーにしない。** set -u の下で素の $2 を読むと、
+  # 理由の行の直後に「unbound variable」が並ぶ (#864。catch-up.sh が同じ守りを持つ)
+  [ $# -lt 2 ] || echo "次にすること: $2" >&2
   exit 1
 }
 

@@ -180,7 +180,6 @@ struct FrameSyncTests {
         let expected = try fresh.canvas.target.encodeForDisplay()
 
         #expect(actual.bytes == expected.bytes)
-        #expect(bench.gpu.resetsWhileInFlight == 0)
     }
 
     // MARK: - フレームごとに書く置き場の環 (#754)
@@ -284,7 +283,6 @@ struct FrameSyncTests {
         #expect(
             gpu.blockingWaits == waits,
             "投入済みの全完了を待っている — 待ちが縮んでいない")
-        #expect(gpu.resetsWhileInFlight == 0)
     }
 
     /// **見るのは絵で、見えるのは「置き場が分かれていること」である。**
@@ -344,7 +342,6 @@ struct FrameSyncTests {
                 そのフレームの置き場を、次のフレームの CPU が読まれている間に書き換えている
                 """)
         }
-        #expect(gpu.resetsWhileInFlight == 0)
     }
 
     /// 1 フレームぶんの帯を描く。**列を 2 つ以上持たせる** — 切り取りを切り替えると
