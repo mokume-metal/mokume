@@ -579,6 +579,46 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
 
     # --- guard (完了条件 2) ---------------------------------------------------
 
+    def test_GitHubを待っている間に殺されても記録は残る(self):
+        """capture が GitHub の区間で timeout に殺されても、.meta が残って guard が拾う (#1024)。
+
+        .meta を書くのが GitHub を叩いた**後**だった頃は、そこで殺されると .md だけが
+        残った。guard は .meta しか歩かないので未投稿のまま黙って終わり、STALE_DAYS の
+        掃除も届かない — 「プランを GitHub に残す」仕組みが、そのセッションだけ無言で
+        無効化される。plan_body が空のときの差し戻し (:567-572) が警戒したのと同じ状態が、
+        別経路で成立していた。
+        """
+        gh = self.bindir / "gh"
+        original = gh.read_text(encoding="utf-8")
+        gh.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8")  # 返らない gh
+
+        with self.assertRaises(subprocess.TimeoutExpired):
+            subprocess.run(
+                ["/bin/bash", str(SCRIPT), "capture"],
+                input=json.dumps(
+                    {
+                        "tool_name": "ExitPlanMode",
+                        "cwd": str(self.repo),
+                        "session_id": "abcd1234-ef56-7890",
+                        "tool_input": {"plan": "計画。\n" + RECHECK},
+                    }
+                ),
+                capture_output=True,
+                text=True,
+                cwd=str(self.repo),
+                env=self.env(),
+                timeout=3,
+            )
+
+        self.assertEqual(len(self.metas()), 1, "GitHub を待つ前に .meta が置かれている")
+        self.assertEqual(len(self.records()), 1)
+
+        # 投稿先が空の .meta でも、guard は plan_targets で引き直すので催促は成り立つ
+        gh.write_text(original, encoding="utf-8")
+        result = self.guard(FAKE_GH_PR="42")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("scripts/comment.sh pr 42", result.stderr)
+
     def test_guard_blocks_stop_while_the_plan_is_unposted(self):
         self.capture("計画。\n", FAKE_GH_PR="42")
         result = self.guard(FAKE_GH_PR="42")
