@@ -650,6 +650,12 @@ capture() {
     # scripts/comment.sh が投稿時に判定して付ける (#18)
   } > "$file"
 
+  # **投稿先を引く前に記録を残す。** この下の GitHub の区間はフックの中で最も遅く、
+  # そこで timeout に殺されると .meta が無いまま .md だけが残る — guard は .meta しか
+  # 歩かないので未投稿のまま黙って終わり、STALE_DAYS の掃除も届かない (#1024)。
+  # 投稿先が空でも guard は plan_targets で引き直すので、催促はそれで成り立つ
+  write_meta "$dir/$id.meta" "$branch" "$id" 0 ''
+
   targets=$(plan_targets "$branch" "$body")
   target=$(printf '%s' "$targets" | head -1)
   count=$(printf '%s' "$targets" | grep -c . || true)
@@ -662,7 +668,7 @@ capture() {
     'issue '*) marks=$(concurrent_marks "${target#issue }" "${id%-*}") ;;
   esac
 
-  # 指示した先を記録に残す。guard は解決を引き直すが、規約どおりに進めると解決は
+  # 指示した先を書き戻す。guard は解決を引き直すが、規約どおりに進めると解決は
   # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
   # 確定していないときは候補を全部残す (#646)
   write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
