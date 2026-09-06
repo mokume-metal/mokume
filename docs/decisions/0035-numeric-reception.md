@@ -143,4 +143,4 @@ circle(x, y, 1 / 2)         // v0.6.0: 0.5     v0.7.0: 0   ← 何も描かれ�
 - **説明文の例と参照スケッチの綴りは書き換えない。** `Float(i)` はそのまま通る。書き換えると `// shot:` 台帳の指紋が動き、絵の撮り直しが付いてくる
 - 作者に薦める数値型の案内は [#924](https://github.com/mokume-metal/mokume/issues/924) が書く (本 ADR の決定待ちで止めてある)
 - **破壊的な影響を持つ変更は、`changelog.d` の `.breaking.md` で名乗る (2026-09-07)。** 本 ADR を実装した [#983](https://github.com/mokume-metal/mokume/pull/983) は 6-a を `.feature.md` の本文に書いたので、`v0.7.0` のノートに `## 破壊的変更` の節が立たなかった。`changelog.d/README.md` は既にそう定めており、規律の不在ではなく従い損ねである ([#1017](https://github.com/mokume-metal/mokume/issues/1017))
-- **面の変更の影響を測る標本は、このリポジトリの内側では足りない (2026-09-07)。** 6-a は 6 箇所と測って 23 箇所だった。手本を移す層を持つのは制作トラックの側なので、面を動かしたら [works](https://github.com/mokume-metal/works) の追随結果まで見て初めて影響が数えられる
+- **面の変更の影響を測る標本は、このリポジトリの内側では足りない (2026-09-07)。** 6-a は 6 箇所と測って 23 箇所だった。手本を移す層を持つのは制作トラックの側なので、面を動かしたら [works](https://github.com/mokume-metal/works) の追随結果まで見て初めて影響が数えられる。**これを仕様として引き受けた判断は [ADR-0022](0022-production-track.md) 決定 2 の追補が持つ** — 標本の由来が変わらない以上、上流の台帳を厚くしても塞げない ([#1027](https://github.com/mokume-metal/mokume/issues/1027))
