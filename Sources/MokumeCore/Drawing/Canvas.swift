@@ -1064,9 +1064,13 @@ public final class Canvas {
     }
 
     /// いまのスタイルを積んでおく。
-    public func pushStyle() { styleStack.append(currentStyle) }
+    public func pushStyle() {
+        guard isDrawing else { return warnOutsideFrame(.style) }
+        styleStack.append(currentStyle)
+    }
 
     public func popStyle() {
+        guard isDrawing else { return warnOutsideFrame(.style) }
         guard let restored = styleStack.popLast() else { return }
         currentStyle = restored
     }
@@ -1199,7 +1203,13 @@ public final class Canvas {
         // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
         pendingEffects.removeAll(keepingCapacity: true)
         transform = .identity
+        // **積んだ履歴もフレームを越えない** (同 決定 4 の追補・[#925])。積むのは変換と
+        // スタイルの 2 つで、どちらの寿命に属する状態を積んだかによらず、積んだ事実は
+        // フレームに属する — 片方だけ残すと `push()` が半分だけ効く形になる
+        //
+        // [#925]: https://github.com/mokume-metal/mokume/issues/925
         transformStack.removeAll(keepingCapacity: true)
+        styleStack.removeAll(keepingCapacity: true)
         hasLoadedPixels = false
         // 光もフレームを越えない (同 決定 4)。ここで空に戻る
         activeLights.removeAll(keepingCapacity: true)

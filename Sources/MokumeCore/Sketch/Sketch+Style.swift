@@ -534,6 +534,10 @@ extension Sketch {
     public func strokeJoin(_ join: StrokeJoin) { canvas.strokeJoin(join) }
 
     /// いまのスタイル (塗り・線・端と折れ目の形・座標の読み方) を積んでおく。
+    ///
+    /// - Note: **積んだ履歴はフレームを越えない。** スタイルそのものは越えるが、積んだ
+    ///   事実は `draw()` の頭で捨てられるので、`pushStyle()` と `popStyle()` は同じ
+    ///   フレームの中で釣り合わせる。降ろし忘れても次のフレームへは積み上がらない。
     public func pushStyle() { canvas.pushStyle() }
 
     /// 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
