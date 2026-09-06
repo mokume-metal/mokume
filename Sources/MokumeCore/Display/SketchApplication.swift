@@ -55,7 +55,7 @@ import QuartzCore
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 @MainActor
-public final class SketchApplication: NSObject {
+public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private let gpu: RenderDevice
     private let runtime: SketchRuntime
     private let presenter: FramePresenter
@@ -92,9 +92,8 @@ public final class SketchApplication: NSObject {
         if case .window(let window, _, _) = outlet { window } else { nil }
     }
 
-    private var displayLink: CADisplayLink?
-    /// 駆動源を紐づけている画面。張り替えの要否をこれで判断する。
-    private var linkedScreen: NSScreen?
+    /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。
+    private let screenLink: ScreenDisplayLink
 
     /// 名乗ってよい速さ。**測れていなければ `nil`。**
     ///
@@ -137,7 +136,10 @@ public final class SketchApplication: NSObject {
         self.title = sketch.settings.title
         self.runtime = try SketchRuntime(sketch: sketch, gpu: gpu, clock: .wallClock)
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        self.screenLink = ScreenDisplayLink(
+            frameRate: Float(max(1, sketch.settings.frameRate)))
         super.init()
+        screenLink.owner = self
     }
 
     /// アプリケーションとして走らせる。戻らない。
@@ -261,7 +263,7 @@ public final class SketchApplication: NSObject {
     func didFinishLaunching() {
         switch outlet {
         case .shared:
-            attachDisplayLink(to: NSScreen.main)
+            screenLink.attach(to: NSScreen.main)
             return
         // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る
         case .window: return
@@ -316,55 +318,10 @@ public final class SketchApplication: NSObject {
 
         if takesFocus { NSApp.activate() }
 
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(windowChangedScreen(_:)),
-            name: NSWindow.didChangeScreenNotification, object: window)
-
-        attachDisplayLink(to: window.screen ?? NSScreen.main)
+        screenLink.attach(to: window.screen ?? NSScreen.main, following: window)
         // 窓を開く時刻は起点にしない。速さを数え始めるのは最初のフレームが
         // 来たときである ([FrameTempo]) — 進み始める前に測ったことにすると、
         // 1 枚目で「1 枚 ÷ 待っていた時間」が出て 0.0 という嘘の数字になる
-    }
-
-    /// フレームの駆動源を画面のリフレッシュに紐づける。
-    ///
-    /// **面 (`NSView`) からではなく画面 (`NSScreen`) から取る。** 面から取った駆動源は
-    /// 面が hidden になると呼ばれなくなる — AppKit のヘッダが `NSView` の側にだけ
-    /// 「If the view is hidden, or not on any display, the callback will not be invoked」と
-    /// 書いている。窓を最小化すると面は hidden になるので、フレームループごと止まり、
-    /// 絵だけでなく観測も入力も応答しなくなっていた (#223)。
-    ///
-    /// 画面に紐づければ、最小化・被覆・Space の切り替えのどれでも止まらない。**最小化を
-    /// 特別扱いする経路も、時間で叩く 2 本目の駆動源も要らない** — どれも「駆動源を
-    /// どこに紐づけるか」1 つの問題だった (ADR-0012 決定 3 の「表示のリフレッシュは
-    /// その駆動源の 1 つ」はそのまま)。
-    private func attachDisplayLink(to screen: NSScreen?) {
-        guard let screen else { return }
-        displayLink?.invalidate()
-
-        let link = screen.displayLink(target: self, selector: #selector(step(_:)))
-        // **表示のリフレッシュ率をそのまま使わない。** 画面が 120 Hz なら 120 回
-        // 呼ばれてしまい、スケッチが求めたフレームレートが無視される。求めた値を
-        // 上限にも下限にも据えて、画面の性能に引きずられないようにする
-        let rate = Float(max(1, runtime.sketch.settings.frameRate))
-        link.preferredFrameRateRange = CAFrameRateRange(
-            minimum: rate, maximum: rate, preferred: rate)
-        link.add(to: .main, forMode: .common)
-
-        displayLink = link
-        linkedScreen = screen
-    }
-
-    /// 窓が別の画面へ移ったら駆動源を張り替える。
-    ///
-    /// 画面ごとにリフレッシュ率が違うので、移った先に付け替えないと駆動が噛み合わない。
-    ///
-    /// **窓がどの画面にも乗っていないときは触らない。** 最小化でも同じ通知が飛び、その
-    /// とき `window.screen` は `nil` を返す — 素直に張り替えると、直そうとした最小化で
-    /// こそ駆動源を失う。
-    @objc private func windowChangedScreen(_ notification: Notification) {
-        guard let screen = window?.screen, screen !== linkedScreen else { return }
-        attachDisplayLink(to: screen)
     }
 
     /// 駆動源を畳む。``SketchApplicationDelegate`` から呼ばれる。
@@ -372,8 +329,7 @@ public final class SketchApplication: NSObject {
         // **差込口を先に閉じる。** 送り先のアプリや機材から見ると、こちらが消えるより
         // 先に「終わる」と言われるほうが行儀がよい
         runtime.closePlugins()
-        displayLink?.invalidate()
-        displayLink = nil
+        screenLink.invalidate()
         fallbackTimer?.invalidate()
         fallbackTimer = nil
         // **返し忘れると、プロセスが終わるまで画面が消えなくなる**
@@ -391,7 +347,7 @@ public final class SketchApplication: NSObject {
     /// 返すのは「最後に描いた絵」ではなく「いま描いた絵」で (ADR-0018)、進めるのを
     /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
-    @objc private func step(_ link: CADisplayLink) {
+    func displayLinkFired() {
         // **表示のリフレッシュが生きている。** 予備が引き受けていたなら、ここで下りる
         isDrivenByFallback = false
         advanceAndPresent()
