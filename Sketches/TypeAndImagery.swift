@@ -113,7 +113,7 @@ final class TypeAndImagery: Sketch {
         push()
         translate(560, 360)
         for index in 0..<4 {
-            shape(leaf, Float(index) * 52, 0)
+            shape(leaf, index * 52, 0)
         }
         pop()
         shape(cluster, 790, 340)

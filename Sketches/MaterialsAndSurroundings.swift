@@ -53,7 +53,7 @@ final class MaterialsAndSurroundings: Sketch {
                 ambient(255, 255, 255)
                 fill(184, 178, 173)
                 knob.apply(self, amount)
-                translate(200 + Float(column) * 140, 130 + Float(row) * 100, 0)
+                translate(200 + column * 140, 130 + row * 100, 0)
                 sphere(42)
                 pop()
             }
@@ -64,7 +64,7 @@ final class MaterialsAndSurroundings: Sketch {
         fill(250, 250, 255)
         textSize(18)
         for (row, knob) in knobs.enumerated() {
-            text(knob.name, 24, 138 + Float(row) * 100)
+            text(knob.name, 24, 138 + row * 100)
         }
         text("surroundings: \(place.name)", 24, 500)
         text("0", 200, 60)
