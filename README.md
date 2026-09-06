@@ -2,6 +2,14 @@
 
 Creative coding for Swift + Metal.
 
+![濃い紺の地に、中心から放射状に伸びる無数の細い線。中心へ向かうほど明るく、周辺は暗く落ちている](https://i.gyazo.com/f7c28eb4c8f3251a8934729267de57ff.png)
+
+2D の図形と文字、立体と光、粒と力、画素の読み書き、GPU の計算とポストエフェクトを、
+1 つの `Sketch` の中で書く。**1 ファイルから始められて、保存するたびに走っている絵が
+差し替わる。** 走らせたスケッチは外から観測でき、エージェントからも同じ口で触れる。
+
+絵と最初の 1 本は入口の 1 枚にも並んでいる: <https://mokume.org>
+
 ## 入れる
 
 macOS 26 (Tahoe) 以上・Apple Silicon 専用。スケッチを作り直すのに Xcode 26 が要る。
@@ -12,7 +20,7 @@ brew install mokume-metal/tap/mokume
 
 **入るのも打つのも `mokume`** という名前の道具ひとつ。`mokume-cli` はこのリポジトリを
 自分でビルドしたときだけの名前なので、Homebrew では見つからない
-([手元のビルドを使う](#手元のビルドを使う))。更新は `brew upgrade mokume`。
+([手元で作る](CONTRIBUTING.md#手元で作る))。更新は `brew upgrade mokume`。
 
 Homebrew を使わないなら、同じ配布物を直に展開してもよい:
 
@@ -26,35 +34,6 @@ curl -fsSL https://github.com/mokume-metal/mokume/releases/latest/download/mokum
 通っていなければ通す。更新は同じコマンドを打ち直す。
 
 ライブラリ本体は入れなくてよい。`mokume new` が作るスケッチが依存として引く。
-
-### 手元のビルドを使う
-
-リリースを待たずに試すとき、ライブラリを触りながらスケッチで確かめるときは、この
-リポジトリから道具を作る:
-
-```bash
-git clone https://github.com/mokume-metal/mokume.git
-cd mokume
-swift build -c release --product mokume-cli
-export PATH="$PWD/.build/release:$PATH"   # この shell の間だけ
-```
-
-できるのは `mokume-cli` — 配布物の `mokume` と同じ道具で、名前だけが違う (道具は
-起動された名前で名乗るので、印字される行はそのまま打てる)。ひな形の入った
-`mokume_MokumeCLI.bundle` は隣に作られるので、実行ファイルだけを別の場所へ移さない。
-
-スケッチにも手元のライブラリを引かせるなら、`--local` でこのリポジトリの場所を渡す:
-
-```bash
-cd ..
-mokume-cli new --local ../mokume my-sketch
-cd my-sketch
-mokume-cli run
-```
-
-渡した場所は生成される `Package.swift` の `.package(path:)` へそのまま入るので、
-**作られるスケッチから見た相対**で書く (絶対パスでもよい)。`--local` を付けなければ、
-公開済みの版を引く。
 
 ## 使う
 
@@ -160,8 +139,7 @@ MOKUME_SIGN_IDENTITY="Developer ID Application: 名前 (TEAMID)" mokume bundle
 出力が名乗る。
 
 **公証そのものは打たない。** 名前のある署名を当てただけでは受け取った側の往復は消えず、
-`notarytool` に提出して `stapler` で結果を添付するまでが要る — そこは道具の外にある
-(段の切り方は [ADR-0029](docs/decisions/0029-post-run-surfaces.md) 決定 4)。
+`notarytool` に提出して `stapler` で結果を添付するまでが要る — そこは道具の外にある。
 
 配る前に、作者の環境に依存した解決が残っていないかを確かめる — 組み上げた場所を
 退避してから起動する:
@@ -184,5 +162,7 @@ claude mcp add mokume -- mokume mcp
 一覧だけは版ごとに [Releases](https://github.com/mokume-metal/mokume/releases) の
 資産として配られ、窓口が `.mokume/reference/` へ取り置いて返す。
 
+## もっと読む
+
 - 開発の見通し: [mokume Roadmap](https://github.com/orgs/mokume-metal/projects/1)
-- 貢献の入口: [CONTRIBUTING.md](CONTRIBUTING.md)
+- mokume 自体を触る (手元で作る・貢献の入口): [CONTRIBUTING.md](CONTRIBUTING.md)

@@ -5,8 +5,9 @@ SPDX-License-Identifier: MIT
 公開する面の入口 (root)。**手で書く層はこのディレクトリに集め**、面の出力へ丸ごと
 被せる (ADR-0027 決定 3・#552)。被せるのは make reference で、公開の側は呼ぶだけ。
 
-**本文の正本はこのファイルである。** README と重なるのは brew の 1 行と短いコード片
-だけにしてあり、その 1 行が README と一致していることは scripts/check-entry.py が見る。
+**本文の正本はこのファイルである。** README と重なるのは brew の 1 行・短いコード片・
+主図の絵 1 枚だけにしてあり、その 1 行が README と一致していることは
+scripts/check-entry.py が見る (絵は URL を借りているだけで、下の gallery は写さない)。
 重ねる量を増やすと二重管理になる (ADR-0001 原則 9)。
 
 **リンクは相対で書く。** 公開先の基準パス (github.io の /mokume/ か、独自ドメインの
@@ -284,8 +285,13 @@ scripts/check-external-assets.py が定期で見る。画像とフォントは�
       <p>macOS 26 (Tahoe) 以上・Apple Silicon 専用。</p>
       <pre><code>brew install mokume-metal/tap/mokume</code></pre>
       <p>
-        Homebrew を使わない入れ方と、このリポジトリから道具を作る手順は
-        <a href="https://github.com/mokume-metal/mokume#入れる">README</a> にある。
+        Homebrew を使わない入れ方は
+        <a href="https://github.com/mokume-metal/mokume#入れる">README</a>、
+        このリポジトリから道具を作る手順は
+        <a href="https://github.com/mokume-metal/mokume/blob/main/CONTRIBUTING.md#手元で作る"
+          >CONTRIBUTING</a
+        >
+        にある。
       </p>
 
       <h2>最初の 1 本</h2>
