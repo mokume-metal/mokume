@@ -47,18 +47,35 @@ struct Facets {
     /// - Parameter extraWait: 応答が返るまでにフレームが何枚も進む要求 (続けて撮る観測
     ///   など) で、``waitLimit`` に**足す**ぶん。上書きではなく加算にしてある —
     ///   上書きにすると、検査が短く設定した上限を呼ぶ側が知らずに戻してしまう。
+    /// - Throws: 置けなかったときだけ。**型が付いているので、窓口は `\(error)` を
+    ///   そのまま返さずに済む** — untyped だったころは `NSCocoaErrorDomain Code=513 …`
+    ///   がエージェントへ届いていた。`CommandFailure` は「どの失敗にも次に何をすれば
+    ///   よいかを書く」と宣言しているのに、窓口の 2 箇所だけがその規律の外だった。
     func exchange(
         facet: URL, request: [String: Any], id: String, extraWait: TimeInterval = 0,
         sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
         now: () -> Date = { Date() }
-    ) throws -> [String: Any]? {
+    ) throws(CommandFailure) -> [String: Any]? {
         let waitLimit = self.waitLimit + max(0, extraWait)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let requestURL = WorkDirectory.requestURL(under: facet)
+        do {
+            try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+            // 鍵の並びは ``AtomicFile/writeJSON(_:to:)`` と揃える。ここは辞書を直に
+            // 書くので `Encodable` の口を通せない (#989)。**形を先に見る** — JSON に
+            // できない値を渡すと `JSONSerialization` は Swift の error ではなく ObjC の
+            // 例外を出すので、`try` では捕まらず窓口ごと落ちる
+            guard JSONSerialization.isValidJSONObject(request) else {
+                throw CommandFailure.facetUnwritable(
+                    path: requestURL.path, reason: "要求が JSON にならない形をしている")
+            }
+            let data = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+            try AtomicFile.write(data, to: requestURL)
+        } catch let failure as CommandFailure {
+            throw failure
+        } catch {
+            throw CommandFailure.facetUnwritable(path: requestURL.path, reason: "\(error)")
+        }
         let reportURL = WorkDirectory.reportURL(under: facet)
-        // 鍵の並びは ``AtomicFile/writeJSON(_:to:)`` と揃える。ここは辞書を直に
-        // 書くので `Encodable` の口を通せない (#989)
-        let data = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
-        try AtomicFile.write(data, to: WorkDirectory.requestURL(under: facet))
 
         let deadline = now().addingTimeInterval(waitLimit)
         while now() < deadline {

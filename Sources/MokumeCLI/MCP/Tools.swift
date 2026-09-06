@@ -77,15 +77,23 @@ struct Tools {
                     "properties": [
                         "scale": [
                             "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 1,
                             "description": "書き出す絵の縮小率 (0 より大きく 1 以下)。省略すると実寸。",
                         ],
                         "count": [
                             "type": "integer",
-                            "description": "撮る枚数 (1…120)。省略すると 1 枚。",
+                            "minimum": 1,
+                            "maximum": ObservationRequest.maximumCount,
+                            "description":
+                                "撮る枚数 (1…\(ObservationRequest.maximumCount))。省略すると 1 枚。",
                         ],
                         "every": [
                             "type": "integer",
-                            "description": "何フレームおきに撮るか (1…60)。省略すると毎フレーム。秒ではなくフレームで数えるので、同じスケッチを 2 回走らせれば同じ列が返る。",
+                            "minimum": 1,
+                            "maximum": ObservationRequest.maximumEvery,
+                            "description":
+                                "何フレームおきに撮るか (1…\(ObservationRequest.maximumEvery))。省略すると毎フレーム。秒ではなくフレームで数えるので、同じスケッチを 2 回走らせれば同じ列が返る。",
                         ],
                     ],
                 ]
@@ -141,20 +149,13 @@ struct Tools {
         let every = max(1, arguments["every"] as? Int ?? 1)
         if count > 1 { request["count"] = count }
         if every > 1 { request["every"] = every }
-        // 区画の有無は **要求を置く前**に控える — exchange は待つ前に自分で作るので、
-        // 後から見ても分からなくなる (#227)
-        let existed = facets.hasFacet(facets.observeFacet)
-        let answer: [String: Any]?
-        do {
-            answer = try facets.exchange(
-                facet: facets.observeFacet, request: request, id: id,
-                extraWait: Self.extraWait(count: count, every: every))
-        } catch {
-            return ("観測の要求を置けませんでした: \(error)", true)
-        }
-        guard let report = answer else {
-            return (facets.notRunning(
-                    StartupReads.observe, existed: existed, packageDirectory: packageDirectory), true)
+        let report: [String: Any]
+        switch roundTrip(
+            facet: facets.observeFacet, entry: StartupReads.observe, request: request, id: id,
+            extraWait: Self.extraWait(count: count, every: every))
+        {
+        case .refused(let text): return (text, true)
+        case .answered(let answer): report = answer
         }
 
         var lines: [String] = []
@@ -234,19 +235,51 @@ struct Tools {
             return ("events に出来事の並びが要ります", true)
         }
         let id = makeID()
-        let existed = facets.hasFacet(facets.inputFacet)
-        let answer: [String: Any]?
+        switch roundTrip(
+            facet: facets.inputFacet, entry: StartupReads.input,
+            request: ["id": id, "events": events], id: id)
+        {
+        case .refused(let text): return (text, true)
+        case .answered(let report): return (pretty(report), false)
+        }
+    }
+
+    /// 区画へ 1 往復した結果。
+    private enum Exchange {
+        /// 応答が返った。
+        case answered([String: Any])
+        /// 返らなかった。**何が起きたのかと、次に何をすればよいか**を持つ。
+        case refused(String)
+    }
+
+    /// 区画へ要求を置き、応答が返るまで待つ。
+    ///
+    /// **観測と入力で骨格を 2 度書かない。** 置く → 待つ → 返らなければ「なぜ返らないか」を
+    /// 名乗る、という並びは同じで、違うのは区画と要求の中身だけである。2 度書いていたころ、
+    /// 片方だけが `existed` を控え忘れる形の間違いが成立していた。
+    ///
+    /// **区画の有無は要求を置く前に控える。** ``Facets/exchange(facet:request:id:...)`` は
+    /// 待つ前に自分で区画を作るので、後から見ても「元から在ったのか」が分からなくなる
+    /// ([#227](https://github.com/mokume-metal/mokume/issues/227)) — その区別で案内が
+    /// 変わるので、控える場所を間違えると読み手を直らない道へ送る。
+    private func roundTrip(
+        facet: URL, entry: StartupReads.Entry, request: [String: Any], id: String,
+        extraWait: TimeInterval = 0
+    ) -> Exchange {
+        let existed = facets.hasFacet(facet)
         do {
-            answer = try facets.exchange(
-                facet: facets.inputFacet, request: ["id": id, "events": events], id: id)
+            guard
+                let report = try facets.exchange(
+                    facet: facet, request: request, id: id, extraWait: extraWait)
+            else {
+                return .refused(
+                    facets.notRunning(
+                        entry, existed: existed, packageDirectory: packageDirectory))
+            }
+            return .answered(report)
         } catch {
-            return ("入力の要求を置けませんでした: \(error)", true)
+            return .refused(error.message)
         }
-        guard let report = answer else {
-            return (facets.notRunning(
-                    StartupReads.input, existed: existed, packageDirectory: packageDirectory), true)
-        }
-        return (pretty(report), false)
     }
 
     private func reference(_ arguments: [String: Any]) -> (String, Bool) {
