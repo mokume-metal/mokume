@@ -96,7 +96,12 @@ final class SharedFrameSurface {
     /// 面の番号と大きさ。**読み手が最初に読むもの。**
     ///
     /// 毎フレームは書かない — 中身が変わるのは大きさが変わったときだけである。
-    struct Manifest: Encodable {
+    /// **書く側と読む側で 1 つの型である。** かつては書くのが `Encodable`、読むのが
+    /// `JSONSerialization` + 鍵の手打ちで、鍵の綴りが 2 か所に分かれていた — 読む側の doc は
+    /// 「綴りが 2 か所へ分かれると片方だけ直したときに静かに食い違う」と危うさを名乗って
+    /// いたが、**注意書きは分かれることを止めない**
+    /// ([#960](https://github.com/mokume-metal/mokume/issues/960) の 4)。
+    struct Manifest: Codable {
         static let schemaVersion = 1
 
         /// 面の番号。並びが**書く順**である。
@@ -108,12 +113,44 @@ final class SharedFrameSurface {
             case schemaVersion, ids, width, height
         }
 
+        init(ids: [UInt32], width: Int, height: Int) {
+            self.ids = ids
+            self.width = width
+            self.height = height
+        }
+
         func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(Self.schemaVersion, forKey: .schemaVersion)
             try container.encode(ids, forKey: .ids)
             try container.encode(width, forKey: .width)
             try container.encode(height, forKey: .height)
+        }
+
+        /// **版が違えば読まない。** 知らない形を推測で解くと、食い違いが絵の壊れ方として出る。
+        ///
+        /// 絵にならない値もここで止める — 面が 1 枚も無い、大きさが 0 以下。**持ち回ってから
+        /// 気付くと、落ちる場所が読んだ所から遠ざかる。**
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let version = try container.decode(Int.self, forKey: .schemaVersion)
+            guard version == Self.schemaVersion else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .schemaVersion, in: container,
+                    debugDescription: "知らない版: \(version) (読めるのは \(Self.schemaVersion))")
+            }
+            ids = try container.decode([UInt32].self, forKey: .ids)
+            width = try container.decode(Int.self, forKey: .width)
+            height = try container.decode(Int.self, forKey: .height)
+            guard !ids.isEmpty else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .ids, in: container, debugDescription: "面が 1 枚も無い")
+            }
+            guard width > 0, height > 0 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .width, in: container,
+                    debugDescription: "絵にならない大きさ: \(width)x\(height)")
+            }
         }
     }
 
@@ -284,21 +321,16 @@ final class SharedFrameSurface {
 
     /// 置かれている面の番号を読む。読み手の側の規則。
     ///
-    /// **書く側と同じ綴りをここで持つ。** 読み手は別のプロセスなので、綴りが 2 か所へ
-    /// 分かれると片方だけ直したときに静かに食い違う。
+    /// **綴りを持っているのは ``Manifest`` 1 つである。** 読み手は別のプロセスなので、鍵の
+    /// 綴りが書く側と 2 か所へ分かれると片方だけ直したときに静かに食い違う — かつては
+    /// ここが `JSONSerialization` で鍵を手打ちしており、その危うさを doc で注意していた。
     ///
-    /// - Returns: 読めなければ `nil`。**版が違えば読まない** — 知らない形を推測で解くと、
-    ///   食い違いが絵の壊れ方として出る。
-    static func readManifest(at facet: URL) -> (ids: [UInt32], width: Int, height: Int)? {
+    /// - Returns: 読めなければ `nil`。版・面の枚数・大きさの検めは ``Manifest/init(from:)``
+    ///   が持つ。
+    static func readManifest(at facet: URL) -> Manifest? {
         let url = facet.appendingPathComponent(manifestName)
-        guard let data = try? Data(contentsOf: url),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            object["schemaVersion"] as? Int == Manifest.schemaVersion,
-            let ids = object["ids"] as? [UInt32], !ids.isEmpty,
-            let width = object["width"] as? Int, width > 0,
-            let height = object["height"] as? Int, height > 0
-        else { return nil }
-        return (ids, width, height)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(Manifest.self, from: data)
     }
 
     /// いま読むべき面の番号と、その面が名乗っている枚数。読み手の側の規則。
