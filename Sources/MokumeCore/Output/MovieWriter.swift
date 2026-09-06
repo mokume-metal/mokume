@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// 動きをファイルにする係。**符号化をフレームの外で行う。**
 ///
@@ -14,7 +15,7 @@ import Foundation
 /// | 使うもの | 役目 |
 /// | --- | --- |
 /// | `AsyncStream` と 1 本の仕事 | **順番**。詰めた順に届く ([ADR-0010] 決定 4) |
-/// | `slots` | **背圧**。抱える枚数が上限を超えない → 長く撮ってもメモリが伸びない |
+/// | ``Backpressure`` | **背圧**。抱える枚数が上限を超えない → 長く撮ってもメモリが伸びない |
 /// | `closed` | **終わりを待つ形**。``finish()`` はファイルが閉じてから返る |
 ///
 /// 待つ側が semaphore なのは、完了を待つのが main actor の上で `await` が使えない
@@ -30,7 +31,18 @@ import Foundation
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 final class MovieWriter {
     /// 同時に抱える枚数の既定の上限。
-    static let defaultLimit = 4
+    static let defaultLimit = Backpressure.defaultLimit
+
+    /// ファイルを閉じるのを待つ上限 (秒)。
+    ///
+    /// **進捗では測れないので平らな数である。** 閉じる合図 (`closed`) は 1 回きりで、その間に
+    /// 何枚進んだかを外から見る手が無い。だから「1 つも進まない」ではなく「全体で何秒」で
+    /// 測るしかなく、長い動画の最終化を途中で諦めないだけの幅を取ってある。
+    ///
+    /// **越えても殺さない。** mp4 は末尾のメタデータが要るので、途中で止めると再生できない
+    /// ファイルになる。待つのをやめても符号化は走り続けるので、失うのは「返ってきた時点で
+    /// 出来ている」という保証だけである。
+    static let closeLimitSeconds = 30.0
 
     /// 符号化へ渡す 1 枚。
     private struct Job: Sendable {
@@ -38,10 +50,8 @@ final class MovieWriter {
         let time: Double
     }
 
-    /// 空いている枠。**取れなければ待つ** — これが背圧そのものである。
-    private let slots: DispatchSemaphore
-    /// 符号化し終わった枚数。抱えている枚数を数え直すのに使う。
-    private let finished = DispatchSemaphore(value: 0)
+    /// 抱える枚数の上限と、終わったものの数え方。
+    private let pressure: Backpressure
     /// ファイルが閉じた合図。
     private let closed = DispatchSemaphore(value: 0)
     /// 直近の書き損じ。**隔離の外から書かれる**ので錠で守る。
@@ -51,11 +61,11 @@ final class MovieWriter {
     /// 書き出し先。
     let path: String
     /// 抱えている枚数の上限。
-    let limit: Int
+    var limit: Int { pressure.limit }
     /// いま抱えている枚数。
-    private(set) var outstanding = 0
+    var outstanding: Int { pressure.outstanding }
     /// 抱えた枚数の最大。**背圧が効いたことを検査から見るための目印。**
-    private(set) var peakOutstanding = 0
+    var peakOutstanding: Int { pressure.peak }
     /// 受け取った枚数。
     private(set) var acceptedFrames = 0
 
@@ -65,14 +75,12 @@ final class MovieWriter {
 
     init(path: String, frameRate: Int, limit: Int = MovieWriter.defaultLimit) {
         self.path = path
-        self.limit = max(1, limit)
-        slots = DispatchSemaphore(value: self.limit)
+        pressure = Backpressure(limit: limit)
 
         let (stream, continuation) = AsyncStream<Job>.makeStream()
         self.continuation = continuation
 
-        let slots = self.slots
-        let finished = self.finished
+        let release = pressure.release
         let closed = self.closed
         let failure = lastFailure
         Task.detached(priority: .utility) {
@@ -96,10 +104,7 @@ final class MovieWriter {
                 } catch {
                     failure.set("\(path) を書けませんでした: \(error)")
                 }
-                // **終わりの合図を先に出す。** 枠を先に返すと、待っていた側が起きた
-                // 時点でまだ合図が出ておらず、抱えている枚数を数え損なう
-                finished.signal()
-                slots.signal()
+                release()
             }
             if let file {
                 do {
@@ -120,12 +125,7 @@ final class MovieWriter {
     ///   - time: このフレームの時刻 (秒)。**そのまま動画の時刻になる。**
     func write(_ image: DisplayImage, frame: Int, time: Double) {
         guard !hasFinished else { return }
-        harvest()
-        slots.wait()
-        harvest()
-
-        outstanding += 1
-        peakOutstanding = max(peakOutstanding, outstanding)
+        pressure.take()
         acceptedFrames += 1
         if firstFrame == nil { firstFrame = frame }
         lastFrame = frame
@@ -136,12 +136,27 @@ final class MovieWriter {
     ///
     /// 「呼んだら出来ている」ように見える面が「あとで出来る」実装だと、止めた直後に
     /// プロセスを終えた人は動画そのものを失う。2 度呼んでも安全。
+    ///
+    /// **待ちは 2 段で、期限の測り方が違う。** 積んだぶんを符号化しきる段は 1 枚ごとに
+    /// 合図が来るので進捗で測れる (``Backpressure/drain()``)。ファイルを閉じる段は合図が
+    /// 1 回きりなので、平らな ``closeLimitSeconds`` で測るしかない。
+    ///
+    /// どちらも**越えても殺さない** — 名乗って窓を返すだけである。
     func finish() {
         guard !hasFinished else { return }
         hasFinished = true
         continuation.finish()
-        closed.wait()
-        outstanding = 0
+        if let stranded = pressure.drain() {
+            Diagnostics.warn(
+                "\(path): 符号化が \(Int(pressure.stallLimitSeconds)) 秒進みませんでした "
+                    + "(\(stranded) 枚が残っています) — 待つのをやめます")
+        }
+        if closed.wait(timeout: .now() + Self.closeLimitSeconds) != .success {
+            Diagnostics.warn(
+                "\(path): 動画を閉じるのに \(Int(Self.closeLimitSeconds)) 秒待っても返りません "
+                    + "— 待つのをやめます。このまま終了すると再生できないファイルが残ります "
+                    + "(書き込みは続いているので、少し待てば閉じるかもしれません)")
+        }
     }
 
     /// 出口へ届かなかったフレームの数。
@@ -155,11 +170,4 @@ final class MovieWriter {
 
     /// 直近の書き損じを取り出す。**取り出したら消える。**
     func takeFailure() -> String? { lastFailure.take() }
-
-    /// 終わっているものを取り込む。**待たない。**
-    private func harvest() {
-        while outstanding > 0, finished.wait(timeout: .now()) == .success {
-            outstanding -= 1
-        }
-    }
 }
