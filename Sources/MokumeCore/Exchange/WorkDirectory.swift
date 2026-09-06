@@ -12,8 +12,10 @@ import Foundation
 /// ログイン項目から)、変わったことは書き込み失敗としてしか現れない。基準を外から
 /// 与えられれば、どんな起動のされ方でも道具が場所を指定できる。
 ///
-/// **プロセス起動時に一度だけ評価する。** 走っている間に基準が動くと、同じ要求が
-/// どこへ応答されたのか追えなくなる。
+/// **基準 (``base`` / ``given``) はプロセス起動時に一度だけ評価する。** 走っている間に
+/// 基準が動くと、同じ要求がどこへ応答されたのか追えなくなる。一度きりなのは基準だけで、
+/// 場所を組み立てる口も、そこに在るかを見る口 (``directoryExists(at:)``) も、呼ばれる
+/// たびに今を答える。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 public enum WorkDirectory {
@@ -51,6 +53,42 @@ public enum WorkDirectory {
     /// 与えた基準の下の区画。
     public static func facet(_ name: String, under base: URL) -> URL {
         root(under: base).appendingPathComponent(name, isDirectory: true)
+    }
+
+    /// 区画の中の要求ファイル。
+    ///
+    /// **綴りはここ 1 箇所。** 書く側 (スケッチ) と読む側 (道具) が別々にリテラルを持つと、
+    /// 片方を動かした瞬間に互いが別のファイルを見る — 要求は置かれるのに、応答は永久に
+    /// 返らない ([#988](https://github.com/mokume-metal/mokume/issues/988))。
+    public static func requestURL(under facet: URL) -> URL {
+        facet.appendingPathComponent("request.json")
+    }
+
+    /// 区画の中の応答ファイル (``requestURL(under:)`` と同じ理由で、綴りはここ 1 箇所)。
+    public static func reportURL(under facet: URL) -> URL {
+        facet.appendingPathComponent("report.json")
+    }
+
+    /// その場所がディレクトリとして在るか。
+    ///
+    /// **ファイルが在るだけでは真にしない。** 区画は必ずディレクトリなので、同じ名前の
+    /// ファイルを「在る」と読むと、要求を置けないまま待ちに入ることになる。
+    ///
+    /// **いつ呼んでも今を答える。** 区画を見るのは起動の瞬間だけ、という規律
+    /// ([#227](https://github.com/mokume-metal/mokume/issues/227)) は呼ぶ側 (`makeIfEnabled`)
+    /// が持つ。ここはその規律を知らない。
+    ///
+    /// **区画に限らない。** 面の仕様の置き場を選ぶ道具もこれを通るので、受けるのは
+    /// 「場所」であって区画ではない。
+    ///
+    /// 1 本にしてあるのは、`ObjCBool` の受け渡しが書き間違えると**常に `false`** になる
+    /// 形だからである (`&isDirectory` を渡し忘れる・`.boolValue` を見ない)。区画が在るのに
+    /// 「無い」と読むと、観測も入力もつまみも黙って効かなくなり、症状は「触っても応えない」
+    /// としか出ない ([#988](https://github.com/mokume-metal/mokume/issues/988))。
+    public static func directoryExists(at url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
     }
 
     /// `<base>/.mokume/state`。ライブラリが自分の続きを置く場所。

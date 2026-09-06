@@ -189,14 +189,14 @@ final class SharedFrameSurface {
     /// 出来事を標準入力から受けることも ([ADR-0032] 決定 4)、同じ合図から従う — 経路
     /// ごとに合図を持つと、片方だけが効いている状態が作れてしまう。
     ///
-    /// 読む場所を 1 つに保つため、区画を見るのは**ここだけ**にする (一覧が名指しして
-    /// いるのもこのファイルである)。
+    /// 読む場所を 1 つに保つため、**viewport の区画を渡すのはここだけ**にする (一覧が
+    /// 名指ししているのもこのファイルである)。判定そのものの綴りは
+    /// ``WorkDirectory/directoryExists(at:)`` が持つ — 5 箇所が同じ 3 行を書いていた
+    /// ([#988](https://github.com/mokume-metal/mokume/issues/988))。
     static func isEnabled(at directory: URL = WorkDirectory.facet(StartupReads.viewport.key))
         -> Bool
     {
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory)
-            && isDirectory.boolValue
+        WorkDirectory.directoryExists(at: directory)
     }
 
     init(gpu: RenderDevice, width: Int, height: Int, at directory: URL) throws(RenderFailure) {

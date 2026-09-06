@@ -55,7 +55,7 @@ final class RemoteParams {
     /// - Returns: 箱の顔ぶれが変わったら `true` (重ねる面を作り直す合図)。
     @discardableResult
     func refresh() -> Bool {
-        let url = directory.appendingPathComponent(ParamSurface.reportFileName)
+        let url = WorkDirectory.reportURL(under: directory)
         let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[
             .modificationDate] as? Date
         guard let modified, modified != readAt else { return false }
@@ -105,8 +105,7 @@ final class RemoteParams {
         let request = Request(id: id, values: [Request.Entry(name: name, value: value)])
         guard let data = try? JSONEncoder().encode(request) else { return }
         do {
-            try AtomicFile.write(
-                data, to: directory.appendingPathComponent(ParamSurface.requestFileName))
+            try AtomicFile.write(data, to: WorkDirectory.requestURL(under: directory))
             pendingId = id
         } catch {
             // 書けなければ、この 1 回を捨てる。次に動かせばまた書く

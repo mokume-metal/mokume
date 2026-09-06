@@ -26,9 +26,6 @@ import Foundation
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 @MainActor
 final class FrameObserver {
-    /// 区画の中の名前。読み手はこれを直に開く。
-    static let requestFileName = "request.json"
-    static let reportFileName = "report.json"
     /// 撮った絵の名前の頭。
     static let imagePrefix = "frame-"
 
@@ -53,18 +50,14 @@ final class FrameObserver {
     static func makeIfEnabled(
         at directory: URL = WorkDirectory.facet(StartupReads.observe.key)
     ) -> FrameObserver? {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
-            isDirectory.boolValue
-        else { return nil }
+        guard WorkDirectory.directoryExists(at: directory) else { return nil }
         return FrameObserver(directory: directory)
     }
 
     init(directory: URL) {
         self.directory = directory
-        self.requests = RequestFile(
-            url: directory.appendingPathComponent(Self.requestFileName))
-        self.reportURL = directory.appendingPathComponent(Self.reportFileName)
+        self.requests = RequestFile(url: WorkDirectory.requestURL(under: directory))
+        self.reportURL = WorkDirectory.reportURL(under: directory)
     }
 
     /// まだ応えていない要求があれば返す。規約は ``RequestFile`` が守る。

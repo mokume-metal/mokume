@@ -31,11 +31,11 @@ struct RemoteParamsTests {
             discarded: [])
         try AtomicFile.write(
             try JSONEncoder().encode(report),
-            to: facet.appendingPathComponent(ParamSurface.reportFileName))
+            to: facet.appendingPathComponent("report.json"))
     }
 
     private func request(at facet: URL) throws -> [String: Any]? {
-        let url = facet.appendingPathComponent(ParamSurface.requestFileName)
+        let url = facet.appendingPathComponent("request.json")
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try JSONSerialization.jsonObject(with: data) as? [String: Any]
     }

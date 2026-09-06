@@ -52,7 +52,7 @@ enum StartupReadsReport {
             // 区画の URL は ``WorkDirectory`` から出す。`.mokume` を綴り直すと、
             // 一覧が名乗る場所とスケッチが書く場所が黙って割れうる (#814)
             let facet = WorkDirectory.facet(entry.key, under: base)
-            var line = "  \(entry.name): \(facet.path) (\(DirectoryPresence.exists(facet) ? "在る" : "無い"))"
+            var line = "  \(entry.name): \(facet.path) (\(WorkDirectory.directoryExists(at: facet) ? "在る" : "無い"))"
             if absent.contains(entry) {
                 let named = version.map { "mokume \($0)" } ?? "依存している mokume"
                 line += " — \(named) はこの面を持たない"

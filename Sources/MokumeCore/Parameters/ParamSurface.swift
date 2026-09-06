@@ -91,9 +91,6 @@ struct ParamReport: Encodable {
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 @MainActor
 final class ParamSurface {
-    static let requestFileName = "request.json"
-    static let reportFileName = "report.json"
-
     let directory: URL
     private let requests: RequestFile<ParamRequest>
     private let reportURL: URL
@@ -115,17 +112,14 @@ final class ParamSurface {
         store: ParamStore? = nil,
         at directory: URL = WorkDirectory.facet(StartupReads.params.key)
     ) -> ParamSurface? {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
-            isDirectory.boolValue
-        else { return nil }
+        guard WorkDirectory.directoryExists(at: directory) else { return nil }
         return ParamSurface(directory: directory, registry: registry, store: store)
     }
 
     init(directory: URL, registry: ParamRegistry, store: ParamStore? = nil) {
         self.directory = directory
-        self.requests = RequestFile(url: directory.appendingPathComponent(Self.requestFileName))
-        self.reportURL = directory.appendingPathComponent(Self.reportFileName)
+        self.requests = RequestFile(url: WorkDirectory.requestURL(under: directory))
+        self.reportURL = WorkDirectory.reportURL(under: directory)
         self.registry = registry
         self.store = store
     }
