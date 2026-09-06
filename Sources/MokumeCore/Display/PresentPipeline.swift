@@ -100,12 +100,12 @@ import Metal
 
     /// 明るさを写す段の設定を差し替える。**書く前に環を 1 つ進める。**
     ///
-    /// 並びを持っているのは ``Brightness/write(into:)`` である — 折れ始める明るさまで
+    /// 並びを持っているのは ``Brightness/write(to:)`` である — 折れ始める明るさまで
     /// 一緒に渡すのも含め、断片が読む形の正本はあちら 1 つ。
     func setBrightness(_ brightness: Brightness) throws(RenderFailure) {
         try ring.advance()
         let buffer = try brightnessStorage.buffer(holding: 1)
-        brightness.write(into: buffer)
+        brightness.write(to: buffer.contents())
         argumentTable.setAddress(buffer.gpuAddress, index: Self.brightnessBufferIndex)
     }
 

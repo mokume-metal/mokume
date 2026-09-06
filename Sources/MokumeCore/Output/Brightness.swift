@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
-import Metal
 import simd
 
 /// 表示できる範囲を超えた明るさの丸め方。
@@ -50,7 +49,7 @@ struct Brightness: Equatable, Sendable {
     /// 断片が読む構造体のバイト数。
     static let byteCount = 16
 
-    /// 断片が読む形で置き場へ書く。
+    /// 断片が読む形で ``byteCount`` バイトを書く。
     ///
     /// **並びの正本はここ 1 つである。** 画面へ差し出す経路 (``PresentPipeline``) と
     /// 書き出す経路 (``OutputPass``) は同じ断片のファイルを読むので、**片方だけ並べ替えると
@@ -59,12 +58,19 @@ struct Brightness: Equatable, Sendable {
     /// ([#957](https://github.com/mokume-metal/mokume/issues/957)) — 注意書きで守る形を
     /// やめ、並べ替えようがない形にした。
     ///
-    /// - Parameter buffer: 少なくとも ``byteCount`` バイトある置き場。
-    func write(into buffer: any MTLBuffer) {
-        let slot = buffer.contents().assumingMemoryBound(to: Float.self)
+    /// **置き場ではなく生のポインタを取る。** `MTLBuffer` の中身を指すポインタを取り出すのは、
+    /// その置き場を**いつ触ってよいかを知っている側**の仕事である — 差し出す側は自分の環を 1 つ進めてから
+    /// 触り、書き出す側は `commitAndWait` の後で触る (`GPUMemoryAccessGateTests` が原文から
+    /// 見張っている待ちの規律)。ここが置き場を受け取ると触る場所が 1 つに集まってしまい、
+    /// **どちらの待ち方で守られているかが呼ぶ側から読めなくなる。** 畳んでよいのは並べ方
+    /// だけで、触る場所ではない。
+    ///
+    /// - Parameter destination: 少なくとも ``byteCount`` バイトある書き先。
+    func write(to destination: UnsafeMutableRawPointer) {
+        let slot = destination.assumingMemoryBound(to: Float.self)
         slot[0] = exposure
         slot[1] = Self.knee
-        buffer.contents().advanced(by: 8)
+        destination.advanced(by: 8)
             .assumingMemoryBound(to: UInt32.self)
             .pointee = toneMapping.rawIndex
     }

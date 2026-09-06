@@ -84,10 +84,10 @@ final class OutputPass {
 
     /// 明るさを写す段の設定を差し替える。
     ///
-    /// 並びを持っているのは ``Brightness/write(into:)`` である。画面へ差し出す経路と
+    /// 並びを持っているのは ``Brightness/write(to:)`` である。画面へ差し出す経路と
     /// 同じ断片のファイルを読む以上、**組み立ての正本も 1 つでなければならない。**
     func setBrightness(_ brightness: Brightness) {
-        brightness.write(into: brightnessBuffer)
+        brightness.write(to: brightnessBuffer.contents())
         argumentTable.setAddress(
             brightnessBuffer.gpuAddress, index: Self.brightnessBufferIndex)
     }
