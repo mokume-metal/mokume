@@ -152,7 +152,7 @@ enum DoctorCommand {
             return lines
         }
         let result = last.ok.map { $0 ? "通った" : "落ちた" } ?? unknown
-        lines.append("最後の作り直し: \(stamp(last.at)) に \(result)")
+        lines.append("最後の作り直し: \(Timestamp.text(last.at, seconds: true)) に \(result)")
         return lines
     }
 
@@ -167,12 +167,6 @@ enum DoctorCommand {
             if a != b { return a > b }
         }
         return true
-    }
-
-    static func stamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter.string(from: date)
     }
 
     // MARK: - 読み取り

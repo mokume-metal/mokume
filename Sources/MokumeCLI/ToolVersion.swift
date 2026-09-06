@@ -43,7 +43,7 @@ enum ToolVersion {
     static func describe(executable: URL?, modified: Date?) -> String {
         guard let executable else { return DoctorCommand.unknown }
         if let version = homebrewVersion(in: executable) { return "\(version) (Homebrew)" }
-        return "手元ビルド (\(modified.map(format) ?? DoctorCommand.unknown))"
+        return "手元ビルド (\(modified.map { Timestamp.text($0) } ?? DoctorCommand.unknown))"
     }
 
     /// Homebrew が置いた版。読めなければ `nil`。
@@ -76,13 +76,5 @@ enum ToolVersion {
     static func fileDate(_ url: URL) -> Date? {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         return attributes?[.modificationDate] as? Date
-    }
-
-    /// 日時の書式。**分までにする** — 秒は読み手の判断を変えない。
-    static func format(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: date)
     }
 }
