@@ -537,6 +537,16 @@ import MokumeDiagnostics
         }
     }
 
+    /// 検査から「GPU の完了を待てなかった」を作るための差し込み。製品の経路では常に `nil`。
+    ///
+    /// 待ちが期限切れになるのは GPU が 5 秒返らないときだけなので、検査から自然には
+    /// 作れない。一方で**待てなかった後に何を書かないか**は [#934] の完了条件そのもの
+    /// なので、ここに 1 つだけ穴を空けてある (`Canvas.failureForTesting` と同じ形)。
+    /// 公開はしない。
+    ///
+    /// [#934]: https://github.com/mokume-metal/mokume/issues/934
+    var failSettleForTesting: RenderFailure?
+
     /// 投入したコマンドがすべて終わるまで待つ。**GPU 可視メモリに触る直前に呼ぶ。**
     ///
     /// 待たない経路も番号を進めているので、最後の番号まで待てば「この GPU に積んだものが
@@ -546,6 +556,7 @@ import MokumeDiagnostics
     func settle() throws(RenderFailure) {
         settleCalls += 1
         defer { releaseFinished(through: completion.signaledValue) }
+        if let failSettleForTesting { throw failSettleForTesting }
         guard submissionCount > 0, completion.signaledValue < submissionCount else { return }
 
         blockingWaits += 1
@@ -614,6 +625,32 @@ import MokumeDiagnostics
             try waitForSubmission(submission)
         } catch {
             Diagnostics.warn("\(what)の前に GPU の完了を待てませんでした: \(error.headline)")
+        }
+    }
+
+    /// 共有しているメモリへ**書く前**の待ち。待てたかを返す。
+    ///
+    /// **`false` を返したら書かない。** 待ちが期限切れになったことは、GPU がそのメモリを
+    /// 使い終えた証拠ではない — 書けば、走っているかもしれない仕事の足元で入力が変わる
+    /// ([#934])。5 秒返らない GPU は壊れているのでここで凝らないのは
+    /// ``settleQuietly(before:)`` と同じだが、**投げないことと書いてよいことは別**である。
+    ///
+    /// 読む側はこちらを使わない。読みは取りやめようが無い (何かを返さねばならない) ので、
+    /// 古い値が返ることを警告で名乗るところまでが限界になる。
+    ///
+    /// **`@discardableResult` は付けない。** 返り値を捨てるには `_ =` と書くことになり、
+    /// 「待たずに書いた」経路が字面に残る。
+    ///
+    /// [#934]: https://github.com/mokume-metal/mokume/issues/934
+    func settleBeforeWriting(_ what: String) -> Bool {
+        do {
+            try settle()
+            return true
+        } catch {
+            Diagnostics.warn(
+                "\(what)前に GPU の完了を待てなかったので、書き込みを取りやめました: "
+                    + error.headline)
+            return false
         }
     }
 

@@ -94,7 +94,10 @@ import simd
         case full
         /// 上限の面 (``maximumSize``) より大きい。**広げても入らない。**
         case tooLarge(width: Int, height: Int)
-        /// 焼き場を用意できなかった。広げても変わらない。
+        /// 焼けなかった。**広げても変わらない** — 焼き場を用意できなかったか、
+        /// GPU の完了を待てなくて面へ書かなかった ([#934])。
+        ///
+        /// [#934]: https://github.com/mokume-metal/mokume/issues/934
         case unbakeable
     }
 
@@ -244,8 +247,10 @@ import simd
                 penY: -bottom)
         else { return .unbakeable }
 
-        // 前のフレームがまだこの面を読んでいるかもしれない。書く直前に待つ
-        gpu.settleQuietly(before: "字形を焼く")
+        // 前のフレームがまだこの面を読んでいるかもしれない。書く直前に待つ。
+        // **待てなければ焼かない** (#934) — 取った場所は捨てる (漏れるだけで絵は壊れ
+        // ない)。引けなかった字形は控えに残らないので、次の機会に焼き直せる
+        guard gpu.settleBeforeWriting("字形を焼く") else { return .unbakeable }
         texture.replace(
             region: MTLRegionMake2D(origin.x, origin.y, width, height), mipmapLevel: 0,
             withBytes: pixels, bytesPerRow: width * Self.bytesPerPixel)

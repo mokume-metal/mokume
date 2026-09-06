@@ -261,7 +261,9 @@ extension Canvas {
         // 進める `frameRing.advance()` の待ちが効かない — 直前のフレームの投入が、
         // これから書くスロットをまだ読んでいるかもしれない (#932 で値の置き場を計算から
         // 環へ移したときに、`Computation` が持っていた待ちをここへ引き取った)
-        gpu.settleQuietly(before: "計算の値を書く")
+        // **待てなければ、値を書かず口も開かない** (#934)。頼みは溜め場に残るので、
+        // このフレームの描き切りか、次の読み戻しが同じものを流し直す
+        guard gpu.settleBeforeWriting("計算の値を書く") else { return }
         do {
             let commands = try gpu.beginCommands()
             try encodeComputations(into: commands)

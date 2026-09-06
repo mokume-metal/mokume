@@ -291,6 +291,24 @@ struct ImageTests {
 
     // MARK: - 作る・書き換える
 
+    @Test("待てなかったら、画像を面へ送らない")
+    func doesNotUploadWhenTheWaitFails() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(2, 2)
+        image.set(0, 0, .linear(red: 1, green: 0, blue: 0))
+        #expect(image.needsUpload)
+
+        canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
+        image.uploadIfNeeded()
+        canvas.gpu.failSettleForTesting = nil
+
+        // 旗が下りると、送っていない画素が「送り済み」になって二度と届かない
+        #expect(image.needsUpload, "面へ送っていないのに、送り直しの旗が下りている")
+
+        image.uploadIfNeeded()
+        #expect(!image.needsUpload, "待てるようになった後も送っていない")
+    }
+
     @Test("作った絵に書き込むと、送り直しを呼ばなくても描かれる")
     func writingToACreatedImageShowsUpWithoutAnExplicitUpload() throws {
         let canvas = try makeCanvas()

@@ -600,6 +600,35 @@ struct TextTests {
     /// 上限の面にも収まらない大きさ。**倍にして、丸めや余白では届かない側へ振る。**
     private var overwhelmingSize: Float { Float(GlyphAtlas.maximumSize) * 2 }
 
+    @Test("待てなかったら、字形を焼かない")
+    func doesNotBakeAGlyphWhenTheWaitFails() throws {
+        let canvas = try makeCanvas()
+        let resolved = try #require(canvas.typeface.glyph(for: "M"))
+        let key = GlyphAtlas.Key(
+            fontKey: resolved.fontKey, size: 32, style: .normal, glyph: resolved.glyph)
+
+        canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
+        let refused = canvas.atlas.entry(for: key, font: resolved.font)
+        canvas.gpu.failSettleForTesting = nil
+        guard case .unbakeable = refused else {
+            Issue.record(
+                """
+                GPU の完了を待てなかったのに、面は「\(refused)」と答えた。
+
+                焼いていない場所を字形として返すと、前のフレームがまだ読んでいるかも
+                しれない面へ書いたうえ、その領域をそのまま描くことになる
+                ([#934](https://github.com/mokume-metal/mokume/issues/934))。
+                """)
+            return
+        }
+
+        // 引けなかった字形は控えに残らないので、次の機会に焼き直せる
+        guard case .found = canvas.atlas.entry(for: key, font: resolved.font) else {
+            Issue.record("待てるようになった後も焼けていない")
+            return
+        }
+    }
+
     @Test("焼き場に入りきらない字形は、理由を『大きすぎる』として名乗る")
     func anOversizedGlyphNamesItsReason() throws {
         let canvas = try makeCanvas()
