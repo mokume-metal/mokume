@@ -103,13 +103,13 @@ final class RemoteParams {
     private func send(name: String, value: ParamValue) {
         let id = UUID().uuidString
         let request = Request(id: id, values: [Request.Entry(name: name, value: value)])
-        guard let data = try? JSONEncoder().encode(request) else { return }
-        do {
-            try AtomicFile.write(data, to: WorkDirectory.requestURL(under: directory))
-            pendingId = id
-        } catch {
-            // 書けなければ、この 1 回を捨てる。次に動かせばまた書く
-        }
+        // 置けなければこの 1 回を捨てる (次に動かせばまた書く)。**捨てたことは
+        // 口が 1 度だけ名乗る** — つまみを掴んでいる間は入力のたびにここへ来るので、
+        // 毎回言うと標準エラーが流れる (#989)
+        guard AtomicFile.publishJSON(
+            request, to: WorkDirectory.requestURL(under: directory), "つまみの要求")
+        else { return }
+        pendingId = id
     }
 
     /// 置く要求。読む側 (``ParamRequest``) と同じ形を、書く側から見たもの。

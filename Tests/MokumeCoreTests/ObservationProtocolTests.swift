@@ -63,7 +63,7 @@ struct ObservationProtocolTests {
         #expect(first?.id == "a1")
         #expect(first?.scale == 1)
 
-        try observer.finish(report(id: "a1", image: "frame-000.png"))
+        observer.finish(report(id: "a1", image: "frame-000.png"))
 
         // **同じ内容を置き直しても** (最終更新時刻は変わる) 応えた識別子なら処理しない。
         // 置き直さずに確かめると、最終更新時刻の判定だけで nil になってしまい、
@@ -98,7 +98,7 @@ struct ObservationProtocolTests {
     func writesTheReportAtomically() throws {
         let facet = try makeFacet()
         let observer = FrameObserver(directory: facet)
-        try observer.finish(report(id: "a1", image: nil))
+        observer.finish(report(id: "a1", image: nil))
 
         let names = try FileManager.default.contentsOfDirectory(atPath: facet.path)
         #expect(names.contains("report.json"))
@@ -116,7 +116,7 @@ struct ObservationProtocolTests {
         let observer = FrameObserver(directory: facet)
         let stale = ["frame-000.png", "frame-001.png"].map(facet.appendingPathComponent)
         for url in stale { try Data("古い絵".utf8).write(to: url) }
-        try observer.finish(report(id: "a1", image: "frame-000.png"))
+        observer.finish(report(id: "a1", image: "frame-000.png"))
 
         observer.clearProducts()
 
@@ -135,7 +135,7 @@ struct ObservationProtocolTests {
         for name in ["frame-000.png", "frame-001.png"] {
             try Data("古い絵".utf8).write(to: facet.appendingPathComponent(name))
         }
-        try observer.finish(report(id: "a1", image: "frame-000.png"))
+        observer.finish(report(id: "a1", image: "frame-000.png"))
 
         let removed = observer.clearProducts().map(\.lastPathComponent)
 
@@ -251,7 +251,7 @@ struct ObservationProtocolTests {
             let id = "r\(index)"
             try write(request: #"{"id":"\#(id)"}"#, to: facet)
             guard let request = observer.pendingRequest() else { continue }
-            try observer.finish(report(id: request.id, image: nil))
+            observer.finish(report(id: request.id, image: nil))
             answered.append(request.id)
         }
 
@@ -267,9 +267,10 @@ struct ObservationProtocolTests {
 
         // 書き込み先を塞ぐ。応答は書けないが、応えようとしたことは残る
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: facet.path)
-        #expect(throws: (any Error).self) {
-            try observer.finish(report(id: "a1", image: nil))
-        }
+        observer.finish(report(id: "a1", image: nil))
+        // **投げる代わりに名乗る。** かつては `throws` だったが、唯一の呼び手が `try?` で
+        // 握り潰しており、置けなかったことがどこにも現れなかった (#989)
+        #expect(AtomicFile.hasWarned(about: WorkDirectory.reportURL(under: facet)))
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: facet.path)
 
         #expect(observer.pendingRequest() == nil)

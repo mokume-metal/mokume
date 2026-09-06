@@ -90,9 +90,6 @@ final class InputInbox {
     }
 
     private func write(_ report: InputReport) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(report) else { return }
-        try? AtomicFile.write(data, to: reportURL)
+        AtomicFile.publishJSON(report, to: reportURL, "入力の応答")
     }
 }

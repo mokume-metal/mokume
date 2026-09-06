@@ -720,7 +720,7 @@ public final class SketchRuntime {
         frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String]
     ) {
         let last = complete ? frames.last : nil
-        try? observer.finish(
+        observer.finish(
             ObservationReport(
                 id: id,
                 image: last?.image,

@@ -138,6 +138,8 @@ SPDX-License-Identifier: MIT
 | コマンドを投入する並び ([#959](https://github.com/mokume-metal/mokume/issues/959)) | 5 行が同文。並びに 1 段足して片方だけ直すと、**そのコマンドが抱えられないまま GPU の実行中に消える** — 負荷のかかったときだけ出る ([#222](https://github.com/mokume-metal/mokume/issues/222) が踏んだ形) |
 | 区画が在るかの判定 ([#988](https://github.com/mokume-metal/mokume/issues/988)) | 5 箇所が `ObjCBool` の同じ 3 行を書いていた。`&isDirectory` を渡し忘れる・`.boolValue` を見ないと**常に `false`** になる形なので、区画が在るのに「無い」と読む。**観測も入力もつまみも黙って効かなくなり**、症状は「道具から触っても応えない」だけ — 区画が無いときと見分けが付かず、起動し直しても直らない |
 | 区画の中の要求と応答の綴り ([#988](https://github.com/mokume-metal/mokume/issues/988)) | `request.json` / `report.json` を 3 クラスと窓口が別々に持っていた。片方だけ動かすと**書く側と読む側が別のファイルを見る** — 要求は置かれるのに応答は永久に返らず、これも「応えない」としか出ない |
+| JSON を区画へ置く処理 ([#989](https://github.com/mokume-metal/mokume/issues/989)) | 8 箇所が「組んで原子的に置く」を各自書き、失敗の扱いが `try?` で捨てる / `warn` で名乗る / `throws` の 3 通りに割れていた。**投げていた 2 つのうち片方は呼び手が `try?` で完全に握り潰しており**、観測の目録が置けなかったことは標準エラーにも応答にも現れない。加えて `.sortedKeys` の有無も割れていて、**付けていない面はどれも並びが決定的ですらなかった** — `JSONEncoder` は辞書の走査順で書くので、同じ型でもプロセスごとに変わる |
+| 原子的な書き込みの 2 実装 ([#989](https://github.com/mokume-metal/mokume/issues/989)) | `AtomicFile` と CLI の `AtomicWrite` が逐語同文だった。**それは理由ではない** — 畳んだのは、片方が `replaceItemAt` を落として「消してから rename」になると、読み手が一瞬**ファイルが無い**状態を掴むからで、それは [ADR-0018](0018-observation-and-control-surface.md) 決定 3 が名指しした「相手が死んでいる」と区別が付かない |
 
 **畳まないのは、割れが出力に見えるもの、または写しが呼び出し側の契約であるものである。**
 

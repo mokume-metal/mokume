@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 保存したら作り直して差し替える、その中身。
 ///
@@ -288,10 +289,6 @@ final class WatchSession {
 
     /// 結果を区画へ置く。観測と同じ流儀 (原子的に書く)。
     private func write(_ report: BuildReport) {
-        let url = BuildReport.statusURL(under: facetBase)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(report) else { return }
-        try? AtomicWrite.write(data, to: url)
+        AtomicFile.publishJSON(report, to: BuildReport.statusURL(under: facetBase), "作り直しの記録")
     }
 }

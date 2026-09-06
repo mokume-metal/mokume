@@ -90,7 +90,7 @@ struct APIListLocator {
                 advice: advice(reason: "取ってきたものが読めませんでした (\(remote))", cache: cache))
         }
         // 取り置けなくても、いま得たものは返す。**答えを返すほうが先** (ADR-0018 決定 3)
-        try? AtomicWrite.write(data, to: cache)
+        try? AtomicFile.write(data, to: cache)
         return (text, .downloaded(cache, from: remote))
     }
 

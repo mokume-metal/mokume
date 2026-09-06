@@ -439,7 +439,8 @@ enum WatchCommand {
     ///
     /// ライブラリ側にも同じ綴りがあるが、道具からは使えない (外へ出していない)。
     /// 規約は文章で共有し、実装はそれぞれが持つ — 出すべきかどうかは、外から使う人が
-    /// 現れてから決める (`AtomicWrite` と同じ扱い)。
+    /// 現れてから決める。**同じ扱いだった `AtomicWrite` は、道具の側に使い手が 3 人
+    /// 現れた時点で畳んだ** ([#989](https://github.com/mokume-metal/mokume/issues/989))。
     static func line(_ text: String, isTerminal: Bool) -> String {
         isTerminal ? "\r\u{1B}[2K" + text : text
     }

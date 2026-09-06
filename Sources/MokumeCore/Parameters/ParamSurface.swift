@@ -222,9 +222,6 @@ final class ParamSurface {
     }
 
     private func write(_ report: ParamReport) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
-        guard let data = try? encoder.encode(report) else { return }
-        try? AtomicFile.write(data, to: reportURL)
+        AtomicFile.publishJSON(report, to: reportURL, "つまみの応答")
     }
 }
