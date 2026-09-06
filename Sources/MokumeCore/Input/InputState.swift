@@ -54,9 +54,22 @@ public final class InputState {
     public init() {}
 
     /// 出来事を溜める。**窓からも外からも、入口はここ 1 つ。**
+    ///
+    /// **溢れたら、捨てる前にその 1 件を状態へ当てる。** 落とすのは呼び出し
+    /// (`mouseReleased` などの配り) であって状態ではない — そのまま捨てていた頃は、
+    /// 解放が押し出されると**離したキーが押されたまま残り**、次に同じキーを押して
+    /// 離すまで直らなかった ([#935])。
+    ///
+    /// 種別ごとに捨て方を分けはしない。失ってよいものは種別で違う (位置は最新だけ
+    /// 効けばよく、押下と解放は落とすと状態が壊れる) が、**どの種別も状態だけは
+    /// 残す**なら、上限に達したときだけ通る経路を種別の数だけ持たなくて済む。
+    /// 引きずりとスクロールはフレームの頭で 0 に戻る量なので、捨てた分は失われる —
+    /// 捨てた以上それが正しい。
+    ///
+    /// [#935]: https://github.com/mokume-metal/mokume/issues/935
     public func enqueue(_ event: InputEvent) {
         if pending.count >= Self.queueLimit {
-            pending.removeFirst()
+            apply(pending.removeFirst())
             droppedEvents += 1
         }
         pending.append(event)
