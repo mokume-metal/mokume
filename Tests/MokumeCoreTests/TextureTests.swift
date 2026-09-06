@@ -247,6 +247,46 @@ struct TextureTests {
         #expect(written.contains(SIMD2(1, 1)))
     }
 
+    @Test("全部の頂点に読み取り位置を書いても、貼った絵は消えない", arguments: [false, true])
+    func writingEveryCoordinateStillPastesTheImage(hasDepth: Bool) throws {
+        // **倒れ先を作らない経路。** 書かれていない点が 1 つも無ければ囲みの箱は
+        // 1 度も引かれないので求めないが、それを「貼る絵が無い」と取り違えると、
+        // 平面は焼き場の白い区画を読み、立体も頂点ごとに面を切り替えてしまう。
+        // どちらも**貼った絵が消える**形で出る ([#915])
+        //
+        // [#915]: https://github.com/mokume-metal/mokume/issues/915
+        func render(writingAll: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(self.black)
+                guard let image = try? self.makeQuadrants(canvas, size: 16) else { return }
+                canvas.texture(image)
+                canvas.fill(self.white)
+                canvas.noStroke()
+                canvas.beginShape()
+                let corners: [(Float, Float)] = [(8, 8), (56, 8), (56, 56), (8, 56)]
+                let reads: [(Float, Float)] = [(0, 0), (16, 0), (16, 16), (0, 16)]
+                for (corner, read) in zip(corners, reads) {
+                    switch (writingAll, hasDepth) {
+                    case (true, true): canvas.vertex(corner.0, corner.1, 0, read.0, read.1)
+                    case (true, false): canvas.vertex(corner.0, corner.1, read.0, read.1)
+                    case (false, true): canvas.vertex(corner.0, corner.1, 0)
+                    case (false, false): canvas.vertex(corner.0, corner.1)
+                    }
+                }
+                canvas.endShape(.close)
+            }
+            return try pixels(of: canvas)
+        }
+
+        // 4 隅を四角の 4 隅へ写す書き方は、囲みの箱の倒れ先と同じ位置になる。
+        // **書いても書かなくても同じ絵**が出るのが正しい
+        let pasted = try render(writingAll: true)
+        #expect(try pasted.bytes == render(writingAll: false).bytes)
+        // 貼れていること自体も見る (両方とも消えていたら上は緑のままになる)
+        #expect(pasted[20, 20] != pasted[44, 44], "4 区画の絵が 1 色に潰れている")
+    }
+
     @Test("書かなかった頂点は形の囲みの箱から決まる")
     func unwrittenVerticesFallBackToTheBoundingBox() throws {
         let canvas = try makeCanvas()

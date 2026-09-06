@@ -579,6 +579,46 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
 
     # --- guard (完了条件 2) ---------------------------------------------------
 
+    def test_GitHubを待っている間に殺されても記録は残る(self):
+        """capture が GitHub の区間で timeout に殺されても、.meta が残って guard が拾う (#1024)。
+
+        .meta を書くのが GitHub を叩いた**後**だった頃は、そこで殺されると .md だけが
+        残った。guard は .meta しか歩かないので未投稿のまま黙って終わり、STALE_DAYS の
+        掃除も届かない — 「プランを GitHub に残す」仕組みが、そのセッションだけ無言で
+        無効化される。plan_body が空のときの差し戻し (:567-572) が警戒したのと同じ状態が、
+        別経路で成立していた。
+        """
+        gh = self.bindir / "gh"
+        original = gh.read_text(encoding="utf-8")
+        gh.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8")  # 返らない gh
+
+        with self.assertRaises(subprocess.TimeoutExpired):
+            subprocess.run(
+                ["/bin/bash", str(SCRIPT), "capture"],
+                input=json.dumps(
+                    {
+                        "tool_name": "ExitPlanMode",
+                        "cwd": str(self.repo),
+                        "session_id": "abcd1234-ef56-7890",
+                        "tool_input": {"plan": "計画。\n" + RECHECK},
+                    }
+                ),
+                capture_output=True,
+                text=True,
+                cwd=str(self.repo),
+                env=self.env(),
+                timeout=3,
+            )
+
+        self.assertEqual(len(self.metas()), 1, "GitHub を待つ前に .meta が置かれている")
+        self.assertEqual(len(self.records()), 1)
+
+        # 投稿先が空の .meta でも、guard は plan_targets で引き直すので催促は成り立つ
+        gh.write_text(original, encoding="utf-8")
+        result = self.guard(FAKE_GH_PR="42")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("scripts/comment.sh pr 42", result.stderr)
+
     def test_guard_blocks_stop_while_the_plan_is_unposted(self):
         self.capture("計画。\n", FAKE_GH_PR="42")
         result = self.guard(FAKE_GH_PR="42")
@@ -1052,6 +1092,95 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.records(), [])
+
+
+class ForeignRepositoryTest(HookFixture, unittest.TestCase):
+    """他のリポジトリで立てたプランには手を出さない (#991)。
+
+    記録の置き場は cwd の .git から、投稿先は literal (`this_repo`) から取るので、
+    mokume を主として開いたセッションが別のリポジトリで作業していると、**他リポ向けの
+    プランに mokume の番号が割り当てられる**。実際に `shinyaoguri/setup#148` のプランが
+    `mokume-metal/mokume#148` (無関係な closed Issue) への投稿として案内された。
+
+    ADR-0017 決定 1 の改訂が「守る場面がこのリポジトリの外にあるもの」を外側に残すと
+    明示している以上、mokume のセッションが他リポを触るのは想定内で、この形は必ず起きる。
+    """
+
+    FOREIGN = "git@github.com:shinyaoguri/setup.git"
+    OURS = "git@github.com:mokume-metal/mokume.git"
+
+    def set_origin(self, url):
+        self.git("remote", "add", "origin", url)
+
+    def test_capture_is_silent_in_another_repository(self):
+        self.set_origin(self.FOREIGN)
+        result = self.capture("# #148 別のリポジトリの話\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "", "他リポで喋っている")
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.metas(), [], "他リポの .git に記録を置いている")
+        self.assertEqual(self.records(), [])
+
+    def test_capture_says_why_when_asked(self):
+        """黙る経路は、切り分けのために理由を読めるようにしておく。"""
+        self.set_origin(self.FOREIGN)
+        result = self.capture("# #148 別のリポジトリの話\n", MOKUME_PLAN_RECORD_DEBUG="1")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("shinyaoguri/setup", result.stderr)
+
+    def test_the_branch_name_number_does_not_leak(self):
+        """実際に踏んだ形。番号を運んでいたのは本文ではなくブランチ名だった。
+
+        `plan_targets` のブランチ名からの推定は #659 が入れた正しい経路で、外れて
+        いるのは「どのリポジトリの番号として読むか」だけである。
+        """
+        self.set_origin(self.FOREIGN)
+        self.git("checkout", "-q", "-b", "feat/retreat-then-allow-148")
+        result = self.capture("# setup#148 判定軸を変える\n")
+        self.assert_not_targeted(148, result.stderr)
+        self.assertEqual(self.metas(), [])
+
+    def test_guard_does_not_nag_in_another_repository(self):
+        """他リポに置き去られた記録を催促しない (催促されると終われなくなる)。"""
+        self.capture("計画。\n", FAKE_GH_PR="42")  # origin 未設定のうちに 1 件作る
+        self.assertEqual(len(self.records()), 1, "前提が崩れている")
+        self.set_origin(self.FOREIGN)
+        result = self.guard(FAKE_GH_PR="42")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_guard_still_nags_in_this_repository(self):
+        """自リポでは従来どおり差し戻す (黙る側へ倒しすぎていないことの対)。"""
+        self.capture("計画。\n", FAKE_GH_PR="42")
+        self.set_origin(self.OURS)
+        result = self.guard(FAKE_GH_PR="42")
+        self.assertEqual(result.returncode, 2, result.stdout)
+
+    def test_capture_still_works_in_this_repository(self):
+        self.set_origin(self.OURS)
+        result = self.capture("# #123 いつもの作業\n")
+        self.assertEqual(result.returncode, 2, result.stdout)  # 投稿を指示する差し戻し
+        self.assertEqual(len(self.records()), 1)
+
+    def test_a_repository_without_origin_is_unchanged(self):
+        """解けないものは従来どおり進める — 使い捨てリポでの検証を黙って壊さない。"""
+        result = self.capture("# #123 いつもの作業\n")
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_a_qualified_number_is_not_a_target(self):
+        """回帰の固定 — 修飾つきの番号 (owner/repo#N) は投稿先の候補にならない。
+
+        起票時の完了条件 3 は着手時に測ったら既に満たされていた。新しいロジックでは
+        なく、**満たされたままであること**をここで留める。
+        """
+        self.set_origin(self.OURS)
+        self.git("checkout", "-q", "-b", "feat/no-number")
+        result = self.capture(
+            "# shinyaoguri/setup#148 別のリポジトリの話\n\n"
+            "対象 Issue: [shinyaoguri/setup#148](https://github.com/shinyaoguri/setup/issues/148)\n"
+        )
+        self.assert_not_targeted(148, result.stderr)
 
 
 class SelfContainedTest(unittest.TestCase):

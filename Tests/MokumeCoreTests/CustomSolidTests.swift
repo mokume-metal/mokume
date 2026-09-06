@@ -361,6 +361,105 @@ struct CustomSolidTests {
         #expect(try pixels(of: canvas).width == 96)
     }
 
+    // MARK: - 1 度に渡す量
+
+    @Test("同じ総量なら、1 度に渡す塊の大きさを変えても組み立ての費用が動かない")
+    func foldingCostFollowsTheTotalOnly() throws {
+        // #915 の本体。**時間ではなく数で見る** — 時間は release でしか測れず、機械の
+        // 都合で揺れるので `ci-check` に載せられない。舐めた点の延べ回数なら、
+        // 二乗が戻った瞬間に塊の大きさに比例して動く
+        //
+        // 直す前はこの 3 通りが 1,536 / 49,152 / 196,608 に開いていた
+        // (塊 1 枚 → 512 枚で 128 倍)
+        func scans(chunk: Int) throws -> Int {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.noStroke()
+                canvas.fill(red)
+                stripes(on: canvas, triangles: 512, chunk: chunk)
+            }
+            return canvas.pointScansInLastFrame
+        }
+
+        let one = try scans(chunk: 1)
+        #expect(try scans(chunk: 64) == one)
+        #expect(try scans(chunk: 512) == one)
+    }
+
+    @Test("塊の大きさを変えても、絵は 1 画素も違わない")
+    func chunkingDoesNotChangeThePicture() throws {
+        // 費用の話が絵を動かしていないこと。**塊を変えると列の切れ目は動く**が、
+        // 描かれる三角形は同じである
+        func render(chunk: Int) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.lights()
+                canvas.noStroke()
+                canvas.fill(red)
+                stripes(on: canvas, triangles: 512, chunk: chunk)
+            }
+            return try pixels(of: canvas)
+        }
+        #expect(try differingPixels(render(chunk: 1), render(chunk: 512)) == 0)
+    }
+
+    @Test("番号と穴を同時に使っても、番号を使わない同じ形と同じ絵になる")
+    func indicesAndContoursWorkTogether() throws {
+        // **穴があるときだけ全点を平らへ落とす**経路。番号を渡すと環の番号が飛び飛びに
+        // なるので、穴の番号 (置いた点の数から数える) と混ざったまま引ける並びが
+        // 要る。この組み合わせはこれまでどこにも検査が無かった
+        func render(indexed: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.lights()
+                canvas.noStroke()
+                canvas.fill(red)
+                canvas.beginShape()
+                canvas.normal(0, 0, 1)
+                // 外周は 5 点置くが、読むのは 4 点だけ (番号を使う側)
+                for corner in [(14, 14), (48, 8), (82, 14), (82, 82), (14, 82)]
+                    as [(Float, Float)]
+                {
+                    canvas.vertex(corner.0, corner.1, 0)
+                }
+                canvas.beginContour()
+                for corner in [(38, 38), (38, 58), (58, 58), (58, 38)] as [(Float, Float)] {
+                    canvas.vertex(corner.0, corner.1, 0)
+                }
+                canvas.endContour()
+                if indexed {
+                    for number in [0, 2, 3, 4] { canvas.index(number) }
+                }
+                canvas.endShape(.close)
+            }
+            return try pixels(of: canvas)
+        }
+
+        // 番号で 1 番を飛ばした形は、その点を置かなかった形と同じ絵になる
+        let indexed = try render(indexed: true)
+        let plain = try makeCanvas()
+        try plain.draw {
+            plain.background(black)
+            plain.lights()
+            plain.noStroke()
+            plain.fill(red)
+            plain.beginShape()
+            plain.normal(0, 0, 1)
+            for corner in [(14, 14), (82, 14), (82, 82), (14, 82)] as [(Float, Float)] {
+                plain.vertex(corner.0, corner.1, 0)
+            }
+            plain.beginContour()
+            for corner in [(38, 38), (38, 58), (58, 58), (58, 38)] as [(Float, Float)] {
+                plain.vertex(corner.0, corner.1, 0)
+            }
+            plain.endContour()
+            plain.endShape(.close)
+        }
+        #expect(try differingPixels(indexed, pixels(of: plain)) == 0)
+    }
+
     // MARK: - 番号で読む
 
     @Test(
@@ -582,6 +681,29 @@ struct CustomSolidTests {
             }
         }
         canvas.endShape()
+    }
+
+    /// 細い三角形を `triangles` 枚並べる。
+    ///
+    /// **`chunk` 枚ごとに `beginShape` を切り直す** — 描かれる三角形は塊の大きさに
+    /// よらず同じで、変わるのは「1 度に渡す量」だけである。連続した `endShape` は
+    /// 同じ列へ積まれるので、絵も描く回数も動かない。
+    private func stripes(on canvas: Canvas, triangles: Int, chunk: Int) {
+        var placed = 0
+        while placed < triangles {
+            let count = min(chunk, triangles - placed)
+            canvas.beginShape(.triangles)
+            canvas.normal(0, 0, 1)
+            for step in placed..<(placed + count) {
+                let x = 8 + Float(step % 40) * 2
+                let y = 8 + Float(step / 40) * 6
+                canvas.vertex(x, y, 0)
+                canvas.vertex(x + 1.6, y, 0)
+                canvas.vertex(x + 0.8, y + 5, 0)
+            }
+            canvas.endShape()
+            placed += count
+        }
     }
 
     /// 4 隅を 2 枚の三角形で張った小さな面。番号で指すかを選べる。

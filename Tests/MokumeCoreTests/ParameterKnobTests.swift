@@ -200,7 +200,7 @@ struct KnobQuietTests {
         let notice = Notice()
         watch(sketch, notice)
 
-        let panel = KnobOverlay.makeIfNeeded(for: sketch)
+        let panel = KnobOverlay.makeIfNeeded(for: ParamRegistry(of: sketch))
         #expect(panel != nil)
         // **組み直すたびに本体が引き直る。** 窓が値を持っていれば、ここで書き戻しが起きる
         for _ in 0..<10 {
@@ -228,7 +228,7 @@ struct KnobQuietTests {
     @Test("宣言が 1 つも無ければ、面を作らない")
     func noDeclarationsMeansNoPanel() {
         final class Plain: Sketch {}
-        #expect(KnobOverlay.makeIfNeeded(for: Plain()) == nil)
+        #expect(KnobOverlay.makeIfNeeded(for: ParamRegistry(of: Plain())) == nil)
     }
 }
 
@@ -250,7 +250,7 @@ struct KnobOverlayLayoutTests {
 
     private func place(inHostOfHeight height: CGFloat) throws -> (KnobOverlay, NSView) {
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: height))
-        let panel = try #require(KnobOverlay.makeIfNeeded(for: Many()))
+        let panel = try #require(KnobOverlay.makeIfNeeded(for: ParamRegistry(of: Many())))
         panel.attach(to: host)
         return (panel, host)
     }
@@ -340,7 +340,7 @@ struct KnobOverlayRenderingTests {
             // 数字も一緒に出す。**窓に出す表示は、どれも描画の出力に入らない**
             // (#517 の全体に効く条件 1) — 数字が焼き付くと、撮り直すたびに違う絵になる
             let panel = try #require(
-                KnobOverlay.makeIfNeeded(for: sketch) {
+                KnobOverlay.makeIfNeeded(for: ParamRegistry(of: sketch)) {
                     FrameNumbers(frameCount: 7, time: 0.25, frameRate: 59.9, frameTimeMs: 16.7)
                 })
             panel.attach(to: surface)

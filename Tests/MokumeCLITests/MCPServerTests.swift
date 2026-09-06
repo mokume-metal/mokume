@@ -555,3 +555,53 @@ struct MCPServerTests {
         #expect(failure["code"] as? Int == JSONRPC.internalError)
     }
 }
+
+/// 区画へ置けなかったときに、窓口が何を返すか。
+///
+/// `Facets.exchange` は untyped `throws` だったので、窓口は `\(error)` をそのまま
+/// 返していた — `NSCocoaErrorDomain Code=513 …` がエージェントへ届いていたということで、
+/// `CommandFailure` が「**どの失敗にも次に何をすればよいかを書く**」と宣言している
+/// のに、窓口の 2 箇所だけがその規律の外だった ([#994](https://github.com/mokume-metal/mokume/issues/994) の 6)。
+@Suite("区画へ置けなかったとき")
+struct FacetExchangeFailureTests {
+    /// 親がファイルなので、区画のディレクトリを作れない置き場。
+    private func blockedPlace() throws -> URL {
+        let place = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-blocked-\(UUID().uuidString)", isDirectory: false)
+        try Data().write(to: place)
+        return place
+    }
+
+    @Test("型の付いた失敗になり、次に何をすればよいかを言う")
+    func theFailureSaysWhatToDo() throws {
+        let facets = Facets(directory: try blockedPlace())
+        var thrown: CommandFailure?
+        do {
+            _ = try facets.exchange(
+                facet: facets.observeFacet, request: ["id": "x"], id: "x")
+        } catch {
+            thrown = error
+        }
+
+        let failure = try #require(thrown)
+        guard case .facetUnwritable = failure else {
+            Issue.record("置けなかった失敗として返っていない: \(failure)")
+            return
+        }
+        // **生の Error を素通しさせない。** 打つ手が書かれていることを見る
+        #expect(failure.message.contains("権限"))
+        #expect(!failure.message.hasPrefix("Error Domain="))
+    }
+
+    @Test("窓口の答えにも、打つ手が出る")
+    func theWindowPassesTheAdviceOn() throws {
+        let tools = Tools(facets: Facets(directory: try blockedPlace()), makeID: { "x" })
+        let outcome = tools.call("observe", arguments: [:])
+        #expect(outcome.isError)
+        // **打つ手が出ている。** 生の Error は原因として添えるだけで、答えの本体では
+        // ない — 素通しだったころは、届くのがそれ 1 行だけだった
+        #expect(outcome.text.contains("権限"))
+        #expect(outcome.text.contains("MOKUME_WORK_DIR"))
+        #expect(outcome.text.hasPrefix("要求を置けなかった: "))
+    }
+}

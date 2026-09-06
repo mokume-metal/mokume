@@ -20,7 +20,9 @@ struct ParamRequest: ExchangeRequest {
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 struct ParamReport: Encodable {
-    static let schemaVersion = 1
+    /// この形式の版。**先頭の格納プロパティである** — 合成の `encode` は宣言順に
+    /// 書き出すので、置き場所が鍵の並びを決める。
+    let schemaVersion = 1
 
     /// 内容が変わるたびに進む番号。
     let revision: Int
@@ -57,21 +59,6 @@ struct ParamReport: Encodable {
         let requested: Double
         let value: Double
     }
-
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion, revision, id, params, rejected, clamped, discarded
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(Self.schemaVersion, forKey: .schemaVersion)
-        try container.encode(revision, forKey: .revision)
-        try container.encodeIfPresent(id, forKey: .id)
-        try container.encode(params, forKey: .params)
-        try container.encode(rejected, forKey: .rejected)
-        try container.encode(clamped, forKey: .clamped)
-        try container.encode(discarded, forKey: .discarded)
-    }
 }
 
 /// 宣言した値を外から読み書きする区画 (`.mokume/params`)。
@@ -90,11 +77,12 @@ struct ParamReport: Encodable {
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 @MainActor
-final class ParamSurface {
+final class ParamSurface: DeclarationWatcher {
     let directory: URL
     private let requests: RequestFile<ParamRequest>
     private let reportURL: URL
-    private let registry: ParamRegistry
+    /// 見張る先 (``DeclarationWatcher``)。
+    let registry: ParamRegistry
 
     /// 内容が変わるたびに進む番号。
     ///
@@ -105,6 +93,10 @@ final class ParamSurface {
     private var lastHandledID: String?
     /// 値が変わったことを Observation から受け取る印。
     private var valuesChanged = false
+
+    /// 値が変わったという知らせを受けた。**印を立てるだけ** — 実際の書き出しは
+    /// 次のフレームで行う (描いている最中にファイルを書かない)。
+    func declarationsChanged() { valuesChanged = true }
 
     /// 区画があるときだけ働く (観測・入力と同じ。区画の名前は ``StartupReads`` が正典)。
     static func makeIfEnabled(
@@ -122,6 +114,9 @@ final class ParamSurface {
         self.reportURL = WorkDirectory.reportURL(under: directory)
         self.registry = registry
         self.store = store
+        // **見張りは持ち主と同時に立つ。** 書き出しの経路で張っていたころは、
+        // そこを通らない道ができた瞬間に死んだ (#994 の 12)
+        watchDeclarations()
     }
 
     /// 検査から 1 行で組むための入口。
@@ -188,7 +183,7 @@ final class ParamSurface {
         return publish(rejected: rejected, clamped: clamped)
     }
 
-    /// いまの姿を書き出し、次の変化を見張り直す。
+    /// いまの姿を書き出す。
     @discardableResult
     private func publish(
         rejected: [ParamReport.Rejection] = [], clamped: [ParamReport.Clamp] = [],
@@ -201,24 +196,7 @@ final class ParamSurface {
             revision: revision, id: lastHandledID, params: declarations,
             rejected: rejected, clamped: clamped, discarded: discarded)
         write(report)
-        watchValues()
         return report
-    }
-
-    /// 値が変わったことを Observation から受け取る。
-    ///
-    /// **フレームごとに値を数え直さない。** 見張りは 1 回きりなので、知らせを受けた
-    /// 後に張り直す。
-    private func watchValues() {
-        withObservationTracking {
-            _ = registry.declarations
-        } onChange: { [weak self] in
-            // 知らせは隔離の外から届く。印を立てるだけにして、実際の書き出しは
-            // 次のフレームで行う (描いている最中にファイルを書かない)
-            Task { @MainActor [weak self] in
-                self?.valuesChanged = true
-            }
-        }
     }
 
     private func write(_ report: ParamReport) {

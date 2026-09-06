@@ -368,6 +368,32 @@ write_meta() { # $1=経路 $2=ブランチ $3=記録 ID $4=催促した回数 $5
   } > "$1"
 }
 
+# いま居るリポジトリが自分でないと確認できるか。**他のリポジトリで立てたプランには
+# 手を出さない** (#991)。
+#
+# 記録の置き場 (record_dir) は cwd の .git から、投稿先 (REPO) は literal から取るので、
+# 2 つが別のリポジトリを指すと**他リポ向けのプランに mokume の番号が割り当てられる**。
+# 実際に shinyaoguri/setup#148 のプランが mokume#148 (無関係な closed Issue) への投稿と
+# して案内された。番号を運んだのは本文ではなく**ブランチ名** (feat/…-148) で、その推定は
+# mokume の中では正しい経路である (#659) — 外れているのは「どのリポジトリの番号として
+# 読むか」だけなので、直すのはここ 1 箇所でよい。
+#
+# ADR-0017 決定 1 の改訂が「守る場面がこのリポジトリの外にあるもの」を外側に残すと明示して
+# いる以上、mokume のセッションが setup や claude-plugins を触るのは想定内で、この形は
+# 必ず起きる。しかも .claude/settings.json の CLAUDE_PLAN_RECORD=0 が個人環境側の同種
+# フックを黙らせているので、逃げ場も無い。
+#
+# **問いに答える関数は既にある** — repo-slug.sh の repo_of_dir で、そのコメント自身が
+# 「plan-record.sh や worktree-path-guard.sh が知りたいのはこれ」と名指ししている (#820)。
+#
+# **解けないときは従来どおり進める。** origin を持たない使い捨てリポでの検証を黙って
+# 壊さないため。ここを黙る側へ倒すと、効かなくなったことに誰も気付けない。
+in_another_repository() { # → 他リポだと確認できたときだけ 0
+  local here
+  here=$(repo_of_dir .) || return 1
+  [ "$here" != "$REPO" ]
+}
+
 record_dir() {
   local common
   common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
@@ -562,6 +588,18 @@ capture() {
     exit 0
   fi
 
+  cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""')
+  session=$(printf '%s' "$payload" | jq -r '.session_id // "nosession"')
+  [ -n "$cwd" ] && cd "$cwd" 2>/dev/null
+
+  # **どのリポジトリに居るかを、本文を読むより先に見る** (#991)。順序に意味がある —
+  # 後ろに置くと、他リポで本文を取り出せなかったときに下の exit 2 が他リポ相手に出る。
+  # 他リポでは何も言わないのが正しい
+  if in_another_repository; then
+    debug "別のリポジトリ ($(repo_of_dir .)) — このフックは $REPO のためのもの"
+    exit 0
+  fi
+
   plan=$(plan_body "$payload")
   if [ -z "$plan" ]; then
     # ExitPlanMode が通った以上プランは必ず存在するので、本文が取れないこと自体が異常。
@@ -570,10 +608,6 @@ capture() {
     plan_body_missing_message "$payload" >&2
     exit 2
   fi
-
-  cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""')
-  session=$(printf '%s' "$payload" | jq -r '.session_id // "nosession"')
-  [ -n "$cwd" ] && cd "$cwd" 2>/dev/null
 
   # git リポジトリの外で立てたプランには投稿先が無い。黙って通す
   if ! root=$(git rev-parse --show-toplevel 2>/dev/null); then
@@ -616,6 +650,12 @@ capture() {
     # scripts/comment.sh が投稿時に判定して付ける (#18)
   } > "$file"
 
+  # **投稿先を引く前に記録を残す。** この下の GitHub の区間はフックの中で最も遅く、
+  # そこで timeout に殺されると .meta が無いまま .md だけが残る — guard は .meta しか
+  # 歩かないので未投稿のまま黙って終わり、STALE_DAYS の掃除も届かない (#1024)。
+  # 投稿先が空でも guard は plan_targets で引き直すので、催促はそれで成り立つ
+  write_meta "$dir/$id.meta" "$branch" "$id" 0 ''
+
   targets=$(plan_targets "$branch" "$body")
   target=$(printf '%s' "$targets" | head -1)
   count=$(printf '%s' "$targets" | grep -c . || true)
@@ -628,7 +668,7 @@ capture() {
     'issue '*) marks=$(concurrent_marks "${target#issue }" "${id%-*}") ;;
   esac
 
-  # 指示した先を記録に残す。guard は解決を引き直すが、規約どおりに進めると解決は
+  # 指示した先を書き戻す。guard は解決を引き直すが、規約どおりに進めると解決は
   # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
   # 確定していないときは候補を全部残す (#646)
   write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
@@ -653,6 +693,11 @@ guard() {
   cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""')
   [ -n "$cwd" ] || { debug 'payload に cwd が無い'; exit 0; }
   cd "$cwd" 2>/dev/null || { debug "cwd へ移動できない ($cwd)"; exit 0; }
+  # 他のリポジトリに置き去られた記録を催促しない (#991)。催促されると終われなくなる
+  if in_another_repository; then
+    debug "別のリポジトリ ($(repo_of_dir .)) — このフックは $REPO のためのもの"
+    exit 0
+  fi
   dir=$(record_dir) || { debug 'git リポジトリの外'; exit 0; }
   [ -d "$dir" ] || { debug "未投稿の記録が無い ($dir)"; exit 0; }
 

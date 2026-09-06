@@ -236,12 +236,18 @@ extension Canvas {
         let placed = shapeHasDepth
             ? placedVertices(points, triangles: triangles.flatMap { $0 })
             : []
+        // **形に 1 度だけ求める。** 囲みの箱は原始形によらず同じ (見るのは置いた点の
+        // 全体) なので、原始形ごとに作り直すと置いた量の二乗で効く ([#915])
+        let hasPicture = currentPicture != nil
+        let fallback = uvFallback(points)
 
         emit {
             for (primitive, triangles) in zip(primitives, triangles) {
                 // **原始形ごとに 塗り → 線。** 種類によらず同じ順序なので、線が
                 // 隣の原始形の塗りに隠れることがない
-                emitFill(triangles, points: points, placed: placed)
+                emitFill(
+                    triangles, points: points, placed: placed,
+                    hasPicture: hasPicture, fallback: fallback)
                 if hasStroke, currentStrokeWeight > 0 {
                     emitStroke(primitive, points: points, placed: placed)
                 }
@@ -323,29 +329,76 @@ extension Canvas {
     }
 
     /// 原始形を三角形へ分ける。返すのは頂点の番号の 3 つ組。
+    ///
+    /// **写すのは環の点だけ。** 平らな座標を点番号で引ける並びとして作ると、原始形ごとに
+    /// 置いた点を全部舐めることになり、`.triangles` のように**三角形 1 枚が原始形 1 つ**に
+    /// なる読み方では「1 度に渡した量」の二乗で効いた ([#915])。
+    ///
+    /// 全部を写すのは**穴があるときだけ**である。穴を持てるのは周をなす読み方だけで、
+    /// その原始形は 1 つしかない。`Triangulation/mergeHoles(outer:holes:points:)` は点番号で
+    /// 引く前提なので並びが要り、落とし方を渡す形にすると橋の判定が環の長さの二乗ぶん
+    /// 引き直すことになって逆に遅くなる。
+    ///
+    /// [#915]: https://github.com/mokume-metal/mokume/issues/915
     private func fillTriangles(of primitive: Primitive, points: [BuildingVertex])
         -> [(Int, Int, Int)]
     {
         guard primitive.fills, hasFill, primitive.ring.count >= 3 else { return [] }
-        guard let flattened = flattened(primitive, points: points) else { return [] }
-        let merged =
-            primitive.holes.isEmpty
-            ? primitive.ring
-            : Triangulation.mergeHoles(
-                outer: primitive.ring, holes: primitive.holes, points: flattened)
-        return Triangulation.triangulate(merged.map { flattened[$0] })
+        guard let basis = flatBasis(of: primitive, points: points) else { return [] }
+        let merged: [Int]
+        if primitive.holes.isEmpty {
+            merged = primitive.ring
+        } else {
+            let all = points.map { basis.flatten($0.position) }
+            pointScansThisFrame += points.count
+            merged = Triangulation.mergeHoles(
+                outer: primitive.ring, holes: primitive.holes, points: all)
+        }
+        pointScansThisFrame += merged.count
+        return Triangulation.triangulate(merged.map { basis.flatten(points[$0].position) })
             .map { (merged[$0.0], merged[$0.1], merged[$0.2]) }
     }
 
-    /// 三角形へ分けるための、平らな座標。
+    /// 書かれていない読み取り位置の倒れ先。**形に 1 度だけ求める。**
+    ///
+    /// 全部の点に書かれていれば作らない — 囲みの箱は 1 度も引かれないので、求めるだけ
+    /// 無駄である。**貼る絵が無いこととは別**なので、呼ぶ側は 2 つを分けて持つ
+    /// (``Canvas/emitFill(_:points:placed:hasPicture:fallback:)``)。
+    ///
+    /// 判定は**実際の読み取り位置の有無**で行う。「利用者が 4 引数の `vertex` を呼んだか」
+    /// では代われない — ``textureUV(_:_:)`` は絵の幅か高さが 0 のときや数でない値が
+    /// 渡されたときにも書かれていないことにするので、呼んだのに持たない点がある。
+    private func uvFallback(_ points: [BuildingVertex]) -> ((SIMD2<Float>) -> SIMD2<Float>)? {
+        guard currentPicture != nil, points.contains(where: { $0.uv == nil }) else { return nil }
+        pointScansThisFrame += points.count
+        return Canvas.boxUV(of: points.map { SIMD2($0.position.x, $0.position.y) })
+    }
+
+    /// 三角形へ分けるための、平らな座標の取り方。
+    ///
+    /// **点番号で引ける並びを作らない。** 要る点だけを落とせるように、落とし方のほうを
+    /// 持ち歩く (``Canvas/fillTriangles(of:points:)``)。
+    private struct FlatBasis {
+        /// `nil` なら平面 — xy をそのまま使う。
+        ///
+        /// **単位ベクトルとの内積へ畳まない。** `x * 1 + y * 0 + z * 0` にすると、`x` が
+        /// `-0.0` の点で `+0.0` に変わる。絵は動かないはずだが、台帳を賭ける理由が無い。
+        var across: SIMD3<Float>?
+        var along: SIMD3<Float>?
+
+        func flatten(_ position: SIMD3<Float>) -> SIMD2<Float> {
+            guard let across, let along else { return SIMD2(position.x, position.y) }
+            return SIMD2(dot(position, across), dot(position, along))
+        }
+    }
+
+    /// 三角形へ分けるための、平らな座標の取り方を決める。
     ///
     /// 立体は**外周のなす平面へ落としてから**、平面と同じ三角形化の道具へ通す。穴も
     /// 同じ平面へ落とすので、穴が「一部の経路でだけ効く」ことにならない。
     /// 平面が決まらない (点が一直線に並ぶ・重なる) ときは `nil` を返して塗らない。
-    private func flattened(_ primitive: Primitive, points: [BuildingVertex]) -> [SIMD2<Float>]? {
-        guard shapeHasDepth else {
-            return points.map { SIMD2($0.position.x, $0.position.y) }
-        }
+    private func flatBasis(of primitive: Primitive, points: [BuildingVertex]) -> FlatBasis? {
+        guard shapeHasDepth else { return FlatBasis() }
 
         // 周をひと回りしながら面の向きを積む。三角形 1 つから求めると、少しでも
         // 平らでない形で平面を取り違える
@@ -366,7 +419,7 @@ extension Canvas {
         let seed = abs(normal.x) < 0.9 ? SIMD3<Float>(1, 0, 0) : SIMD3<Float>(0, 1, 0)
         let across = normalize(cross(seed, normal))
         let along = cross(normal, across)
-        return points.map { SIMD2(dot($0.position, across), dot($0.position, along)) }
+        return FlatBasis(across: across, along: along)
     }
 
     /// 変換を掛け、書かれていない面の向きを形から求める。
@@ -432,14 +485,21 @@ extension Canvas {
     /// 共有の寿命が「形」ではなく「列」なのは、原始形が三角形 1 枚ずつに割れる読み方
     /// (`.triangles`) でも効かせるためである — 形の側で閉じると、原始形ごとに相異なる
     /// 点が 3 つしか無いので 1 つも減らない。
+    ///
+    /// **貼る絵の有無と、倒れ先の有無は別のことである。** 一緒にすると、読み取り位置を
+    /// 全部書いた形で倒れ先を省いた瞬間に「貼る絵が無い」と読まれ、焼き場の白い区画が
+    /// 選ばれて**貼った絵が消える**。しかも面の切り替えが列を閉じるので、形ごとに
+    /// 列が割れて新しい二乗が生える。だから 2 つを別々に受け取る。
     private func emitFill(
-        _ triangles: [(Int, Int, Int)], points: [BuildingVertex], placed: [PlacedVertex]
+        _ triangles: [(Int, Int, Int)], points: [BuildingVertex], placed: [PlacedVertex],
+        hasPicture: Bool, fallback: ((SIMD2<Float>) -> SIMD2<Float>)?
     ) {
-        let fallback = currentPicture == nil
-            ? nil : Canvas.boxUV(of: points.map { SIMD2($0.position.x, $0.position.y) })
         func uv(_ index: Int) -> SIMD2<Float>? {
-            guard let fallback else { return nil }
-            return points[index].uv ?? fallback(
+            guard hasPicture else { return nil }
+            if let written = points[index].uv { return written }
+            // 倒れ先は「1 つでも書かれていない点がある」ときに作られるので、ここへ来た
+            // 時点で必ず在る (`uvFallback`)
+            return fallback?(
                 SIMD2(points[index].position.x, points[index].position.y))
         }
 
@@ -471,9 +531,9 @@ extension Canvas {
                     flat[0], flat[1], flat[2],
                     colors: (points[indices[0]].fill, points[indices[1]].fill,
                         points[indices[2]].fill),
-                    uvs: fallback == nil
-                        ? nil
-                        : (uv(indices[0])!, uv(indices[1])!, uv(indices[2])!))
+                    uvs: hasPicture
+                        ? (uv(indices[0])!, uv(indices[1])!, uv(indices[2])!)
+                        : nil)
             }
         }
     }
