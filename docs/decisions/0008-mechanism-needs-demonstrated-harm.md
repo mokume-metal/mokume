@@ -129,6 +129,8 @@ SPDX-License-Identifier: MIT
 | つまみの型名の綴り ([#803](https://github.com/mokume-metal/mokume/issues/803)) | 書く側の `typeName` と読む側の `switch` が別々にリテラルを持っていた。片方を直すと**書いたものを自分で読めなくなる**が、コンパイルは通る |
 | 観測の値の `{type, value}` ([#803](https://github.com/mokume-metal/mokume/issues/803)) | `ExposedValue` が `ParamValue` と同じ形を手書きしていた。片方だけが動くと、観測の応答とつまみの応答で**同じ値が違う名前で出る** |
 | `{name, type, value}` の Codable 3 つ ([#803](https://github.com/mokume-metal/mokume/issues/803)) | 外からの要求・道具の要求・保存が別々に書いていた (順序依存の `encode` を含む)。型を足したとき直り漏れた 1 つが、**その経路でだけ値を落とす** |
+| 画面に紐づけた駆動源 ([#956](https://github.com/mokume-metal/mokume/issues/956)) | 張り替えの判定は逐語同文なのに、「最小化でも同じ通知が飛び、そのとき `window.screen` は `nil` を返す」という理由は片方の doc にしか無かった。読める側を「整理」すると、**道具の窓を最小化した瞬間に駆動源が消えて二度と戻らない** — 症状は「固まった」だけ |
+| 続けて失敗した数の数え方 ([#956](https://github.com/mokume-metal/mokume/issues/956)) | 「回復したら 0 へ戻す」を落とすと**以後 1 度も言わなくなる**。[#221](https://github.com/mokume-metal/mokume/issues/221) が塞いだ「絵が止まったのに理由がどこにも残らない」へそのまま戻る |
 
 **畳まないのは、割れが出力に見えるもの、または写しが呼び出し側の契約であるものである。**
 
@@ -137,6 +139,8 @@ SPDX-License-Identifier: MIT
 | 名乗り関数 5 本 ([#864](https://github.com/mokume-metal/mokume/issues/864)) | 割れても変わるのは出力の文面だけで、その場で目に見える。加えて**終了コードが呼び出し側の契約**である (`give_up` = 0・`skip` = 3・`stop` = 1) — 共有の置き場へ移すと、読み手はこの script が 1 で終わるのか 3 なのかを別ファイルを開くまで判定できない |
 | 例の囲みの綴り 2 種 ([#815](https://github.com/mokume-metal/mokume/issues/815)) | 一方はカタログの `.md` を読み、他方は `///` だけを読む。**読む範囲が違う**ので、1 つにすると片方の範囲が動く |
 | `catch-up.sh` の `gh repo view` ([#818](https://github.com/mokume-metal/mokume/issues/818)) | `git rev-parse --show-toplevel` は「いま作業しているリポジトリはどこか」、`gh repo view` は「`gh` はどこへ送るか」— **別の問いに答えている** |
+| 失敗を言う文面 4 本 ([#956](https://github.com/mokume-metal/mokume/issues/956)) | `Diagnostics.warn` は標準エラーへ直に書き、控えを持たない。[#953](https://github.com/mokume-metal/mokume/pull/953) が 7 本の文面ごと畳めたのは `WarningLog` が文面を控えていて検査が原文と突き合わせられたからで、**ここには読む口が無い** — 畳んで壊しても確かめる手段が無い。組み立てた文が壊れるのは実際に起きている ([#947](https://github.com/mokume-metal/mokume/issues/947) の「頼んた」) |
+| 窓に面を載せる並び ([#956](https://github.com/mokume-metal/mokume/issues/956)) | 面の大きさの取り方 (設定の半分 / 復元した窓の `contentLayoutRect`)・入力の繋ぎ方・重ねるもの・delegate・第一応答者・前面の取り方が経路ごとに違い、引き受けると引数が 6 つ・うち 1 つは closure になる。**窓の生成と配置だけ**を畳んだ — そこは黙って壊れる (`isReleasedWhenClosed` を落とすと消えた窓を触り続ける) |
 
 **線を引く問いは 1 つ**である — 片方だけが直ったとき、誰かがそれに気付くか。気付かない
 なら畳む。気付くなら、写しのままにして**割れても直せる形** (検査) を置くほうが、読み手に

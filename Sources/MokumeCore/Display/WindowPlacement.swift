@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-import Foundation
+import AppKit
 
 /// 窓をどう出すか。
 ///
@@ -43,4 +43,56 @@ enum WindowPlacement {
 
     /// 前面を取ってよいか。**入れ替えでは取らない。**
     static func takesFocus(isRelaunch: Bool) -> Bool { !isRelaunch }
+
+    /// 覚えた位置に立てた窓を返す。**面は載せない。**
+    ///
+    /// ## 持っている契約は 2 つ
+    ///
+    /// **閉じたときに窓が自分を解放しないようにする。** 素の `NSWindow` の既定は「閉じたら
+    /// 解放する」で、窓を出す 2 つの経路はどちらも強い参照を持ったまま閉じるので、そのままだと
+    /// 解放が 1 回余分になる。しかも駆動源は窓ではなく画面に紐づいているので
+    /// (``ScreenDisplayLink``)、窓を閉じてもプロセスが消えるまでフレームは回り続け、その間
+    /// ずっと消えた先を触る。**症状は原因から遠いところにしか出ない** — 走っている
+    /// スケッチでは #714、道具の台では検査の走り終わりでの落下 (signal 11) として出た。
+    ///
+    /// **覚えている位置があれば、そこへ戻す。** 無いときだけ中央に置き、ずらしを足す。
+    /// `setFrameAutosaveName` は**位置を決めた後**に打つ。覚えることも、画面構成が変わって
+    /// 画面外になる場合の扱いも AppKit が持っている (上の「位置は自分で覚えない」)。
+    ///
+    /// ## 面を載せないのはなぜか
+    ///
+    /// 2 つの経路で違いすぎるからである — 面の大きさの取り方 (設定の半分 / 復元した窓の
+    /// `contentLayoutRect`)、入力の繋ぎ方、重ねるもの、delegate、第一応答者、前面の取り方。
+    /// 引き受けると引数が 6 つになり、そのうち 1 つは「窓を受け取って面を作る」closure に
+    /// なる。畳んでよいのは**割れたときに黙って壊れる**写しだけである
+    /// ([ADR-0008](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md)
+    /// 決定 6)。
+    ///
+    /// - Parameters:
+    ///   - title: 窓の名前。
+    ///   - autosaveName: 位置を覚えるときの名前。
+    ///   - defaultSize: 覚えている位置が無いときの大きさ。
+    ///   - nudge: 中央に置いたときにずらす量。**覚えた位置へ戻したときは足さない** —
+    ///     開くたびにずれていく。
+    @MainActor
+    static func makeWindow(
+        title: String, autosaveName: String, defaultSize: NSSize, nudge: NSSize = .zero
+    ) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: defaultSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = title
+        window.isReleasedWhenClosed = false
+        if !window.setFrameUsingName(autosaveName) {
+            window.center()
+            if nudge != .zero {
+                let origin = window.frame.origin
+                window.setFrameOrigin(
+                    NSPoint(x: origin.x + nudge.width, y: origin.y + nudge.height))
+            }
+        }
+        window.setFrameAutosaveName(autosaveName)
+        return window
+    }
 }

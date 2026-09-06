@@ -158,6 +158,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。毎フレーム
+    ///   同じ数を書いても焼き付け先は作り直さないので、繰り返しの負担にはならない。
     // shot: 1 snippet=6803da11
     public func shadowDetail(_ size: Int) { canvas.shadowDetail(size) }
 
@@ -202,6 +205,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=704ae6de
     public func shadowBias(_ amount: Float) { canvas.shadowBias(amount) }
 
@@ -244,6 +249,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=95162799
     public func castShadow(_ enabled: Bool) { canvas.castShadow(enabled) }
 
@@ -288,6 +295,8 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=86dc1877
     public func receiveShadow(_ enabled: Bool) { canvas.receiveShadow(enabled) }
 }

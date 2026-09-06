@@ -32,7 +32,29 @@
 #
 # ## 使い方
 #
-#   bash scripts/catch-up.sh        # = make catch-up
+#   bash scripts/catch-up.sh              # = make catch-up      (いま居る枝の PR)
+#   bash scripts/catch-up.sh --pr 965     # = make catch-up PR=965 (番号で指す)
+#
+# ## 代打ち (#967)
+#
+# 持ち主のセッションが居ない描画 PR は、**別のセッションが代わりに打てる**。枝が別の
+# worktree に取られていても構わない — git が禁じているのは同じ**ローカル枝**の二重
+# チェックアウトだけなので、`origin/<相手の枝>` から新しい木を切れば触れる:
+#
+#   git worktree add -b catchup/<何か> <path> origin/<相手の枝>
+#   cd <path> && make catch-up PR=<番号>
+#
+# **相手の worktree には一切触れない。** そして素直な取り込みなら **push もしない**
+# ので、承認も落ちない (#612) — 報告先を決める report_target が「手元の木が push 済み
+# head から機械的に作り直せるか」だけを見ており、代打ちの木でもその条件が満たされる
+# ためである (#857 で実測)。
+#
+# **番号を渡すときは、いま居る木がその PR の枝から切られていることを要求する** (下記の
+# 追跡先の照合)。覆いは「この木を回した」という主張なので、木と PR がずれたまま報告
+# すると嘘の報告になる。枝の**名前**は違ってよい (代打ちの木は同じ名前を名乗れない)。
+#
+# **この道具は木を作らない。** 責務を「いま居る木の PR を覆い直す」1 つに保つ
+# (作れば後片付けと失敗の面倒まで持つことになる)。上の 2 行は打つ人が打つ。
 #
 # ## 終了コード
 #
@@ -91,6 +113,25 @@ skip() {
   exit "$SKIPPED"
 }
 
+# --- 0. 引数 ---------------------------------------------------------------
+
+# **口は --pr 1 つだけ。** 代打ち (冒頭) のために「どの PR を覆うか」を渡せる。
+# 渡さなければ従来どおり、いま居る枝から PR を引く
+pr_number=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --pr)
+      pr_number="${2:-}"
+      case "$pr_number" in
+        '' | *[!0-9]*) stop "--pr には PR 番号を渡す (受け取った: '${2:-}')" \
+          "例: make catch-up PR=965" ;;
+      esac
+      shift 2
+      ;;
+    *) stop "知らない引数: $1" "使えるのは --pr <番号> だけ" ;;
+  esac
+done
+
 # --- 1. 打てる状態か -------------------------------------------------------
 
 command -v gh >/dev/null 2>&1 || stop "gh が無い" "brew install gh"
@@ -112,9 +153,29 @@ git rev-parse --git-dir >/dev/null 2>&1 || stop "git リポジトリの中で打
 
 # --- 2. 打つ意味があるか ---------------------------------------------------
 
-info=$(gh pr view --json number,state,isDraft --jq '"\(.number) \(.state) \(.isDraft)"') \
-  || stop "この枝に PR が無い" "先に PR を作る"
-read -r number state draft <<<"$info"
+if [ -n "$pr_number" ]; then
+  # **番号で指すときは、いま居る木がその PR の枝から切られていることを要求する** (#967)。
+  # 覆いは「この木を回した」という主張なので、木と PR がずれたまま報告すると嘘になる。
+  # 枝の**名前**は違ってよい — 代打ちの木は同じ名前を名乗れない (git が同じローカル枝の
+  # 二重チェックアウトを禁じる) ので、照合するのは**追跡先**である
+  info=$(gh pr view "$pr_number" --json number,state,isDraft,headRefName \
+    --jq '"\(.number) \(.state) \(.isDraft) \(.headRefName)"') \
+    || stop "PR #$pr_number を読めなかった" "番号を確かめる"
+  read -r number state draft head_ref <<<"$info"
+
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) \
+    || stop "いまの枝が追跡先を持たない" \
+      "git worktree add -b catchup/$number <path> origin/$head_ref して、その中で打つ"
+  [ "$upstream" = "origin/$head_ref" ] || stop \
+    "いまの枝の追跡先は $upstream で、PR #$number の枝 (origin/$head_ref) ではない" \
+    "git worktree add -b catchup/$number <path> origin/$head_ref して、その中で打つ"
+
+  say "PR #$number ($head_ref) を覆う — いまの枝 $(git rev-parse --abbrev-ref HEAD) は origin/$head_ref から切られている"
+else
+  info=$(gh pr view --json number,state,isDraft --jq '"\(.number) \(.state) \(.isDraft)"') \
+    || stop "この枝に PR が無い" "先に PR を作る"
+  read -r number state draft <<<"$info"
+fi
 
 [ "$state" = OPEN ] || skip "PR #$number が OPEN でない ($state)"
 [ "$draft" != true ] || skip "PR #$number は Draft — 順番の外なので queue へ入れられない"
