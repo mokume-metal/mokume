@@ -64,7 +64,7 @@ final class OutputPass {
             throw .pipelineUnavailable(reason: error.localizedDescription)
         }
 
-        brightnessBuffer = try gpu.makeReadableBuffer(byteCount: 16)
+        brightnessBuffer = try gpu.makeReadableBuffer(byteCount: Brightness.byteCount)
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.output.arguments"
@@ -84,15 +84,10 @@ final class OutputPass {
 
     /// 明るさを写す段の設定を差し替える。
     ///
-    /// **並びは ``PresentPipeline/setBrightness(_:)`` と同じ。** 断片の側が同じ
-    /// 構造体を読むので、片方だけ並べ替えると絵が静かに食い違う。
+    /// 並びを持っているのは ``Brightness/write(into:)`` である。画面へ差し出す経路と
+    /// 同じ断片のファイルを読む以上、**組み立ての正本も 1 つでなければならない。**
     func setBrightness(_ brightness: Brightness) {
-        let slot = brightnessBuffer.contents().assumingMemoryBound(to: Float.self)
-        slot[0] = brightness.exposure
-        slot[1] = Brightness.knee
-        brightnessBuffer.contents().advanced(by: 8)
-            .assumingMemoryBound(to: UInt32.self)
-            .pointee = brightness.toneMapping.rawIndex
+        brightness.write(into: brightnessBuffer)
         argumentTable.setAddress(
             brightnessBuffer.gpuAddress, index: Self.brightnessBufferIndex)
     }

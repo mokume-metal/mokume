@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Metal
 import simd
 
 /// 表示できる範囲を超えた明るさの丸め方。
@@ -45,6 +46,28 @@ struct Brightness: Equatable, Sendable {
 
     /// 寄せ始める明るさ。ここより暗いところは ``ToneMapping/roll`` でも動かない。
     static let knee: Float = 0.8
+
+    /// 断片が読む構造体のバイト数。
+    static let byteCount = 16
+
+    /// 断片が読む形で置き場へ書く。
+    ///
+    /// **並びの正本はここ 1 つである。** 画面へ差し出す経路 (``PresentPipeline``) と
+    /// 書き出す経路 (``OutputPass``) は同じ断片のファイルを読むので、**片方だけ並べ替えると
+    /// 絵が静かに食い違う**。かつては 9 行の同じ組み立てが 2 箇所にあり、片方の doc が
+    /// その危うさを注意書きで名乗っていた
+    /// ([#957](https://github.com/mokume-metal/mokume/issues/957)) — 注意書きで守る形を
+    /// やめ、並べ替えようがない形にした。
+    ///
+    /// - Parameter buffer: 少なくとも ``byteCount`` バイトある置き場。
+    func write(into buffer: any MTLBuffer) {
+        let slot = buffer.contents().assumingMemoryBound(to: Float.self)
+        slot[0] = exposure
+        slot[1] = Self.knee
+        buffer.contents().advanced(by: 8)
+            .assumingMemoryBound(to: UInt32.self)
+            .pointee = toneMapping.rawIndex
+    }
 
     /// 乗算を戻した色 1 つを、表示へ向けて写す。
     ///

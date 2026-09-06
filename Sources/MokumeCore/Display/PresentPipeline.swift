@@ -77,7 +77,7 @@ import Metal
         let ring = FrameRing(gpu: gpu)
         self.ring = ring
         brightnessStorage = GrowableBuffer(
-            gpu: gpu, ring: ring, stride: 16, minimumCapacity: 1,
+            gpu: gpu, ring: ring, stride: Brightness.byteCount, minimumCapacity: 1,
             label: "mokume.present.brightness")
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
@@ -100,17 +100,12 @@ import Metal
 
     /// 明るさを写す段の設定を差し替える。**書く前に環を 1 つ進める。**
     ///
-    /// **折れ始める明るさも一緒に渡す。** 断片の側に同じ定数を書くと、片方だけ
-    /// 直したときに画面と書き出しが静かに食い違う。
+    /// 並びを持っているのは ``Brightness/write(into:)`` である — 折れ始める明るさまで
+    /// 一緒に渡すのも含め、断片が読む形の正本はあちら 1 つ。
     func setBrightness(_ brightness: Brightness) throws(RenderFailure) {
         try ring.advance()
         let buffer = try brightnessStorage.buffer(holding: 1)
-        let slot = buffer.contents().assumingMemoryBound(to: Float.self)
-        slot[0] = brightness.exposure
-        slot[1] = Brightness.knee
-        buffer.contents().advanced(by: 8)
-            .assumingMemoryBound(to: UInt32.self)
-            .pointee = brightness.toneMapping.rawIndex
+        brightness.write(into: buffer)
         argumentTable.setAddress(buffer.gpuAddress, index: Self.brightnessBufferIndex)
     }
 
