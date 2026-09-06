@@ -49,34 +49,22 @@ public struct DisplayImage: Equatable, Sendable {
         self.bytes = bytes
     }
 
-    /// 間引いて小さくする。
+    /// 間引いて小さくする。**拾い方は ``NearestNeighbor`` が持つ** —
+    /// ``PixelBuffer/scaled(by:)`` と同じ実装を通る。
     ///
-    /// **拾い方は ``PixelBuffer/scaled(by:)`` と同じ**で、いちばん近い元の画素を
-    /// そのまま拾う。出力段は画素ごとの純関数なので、**間引いてから変換しても、
-    /// 変換してから間引いても出るバイト列は同じ**である ([#382])。だから観測は
-    /// 出口が受け取るのと同じ道を通ったうえで、ここで小さくできる。
+    /// 出力段は画素ごとの純関数なので、**間引いてから変換しても、変換してから間引いても
+    /// 出るバイト列は同じ**である ([#382])。だから観測は出口が受け取るのと同じ道を
+    /// 通ったうえで、ここで小さくできる。
     ///
     /// - Parameter factor: 縮小率 (1 = 実寸)。1 以上または 0 以下は実寸として扱う。
     ///
     /// [#382]: https://github.com/mokume-metal/mokume/issues/382
     func scaled(by factor: Double) -> DisplayImage {
-        guard factor > 0, factor < 1 else { return self }
-        let newWidth = Swift.max(1, Int((Double(width) * factor).rounded()))
-        let newHeight = Swift.max(1, Int((Double(height) * factor).rounded()))
-        var scaled = [UInt8](repeating: 0, count: newWidth * newHeight * 4)
-        for y in 0..<newHeight {
-            let sourceY = Swift.min(height - 1, y * height / newHeight)
-            for x in 0..<newWidth {
-                let sourceX = Swift.min(width - 1, x * width / newWidth)
-                let source = (sourceY * width + sourceX) * 4
-                let destination = (y * newWidth + x) * 4
-                scaled[destination] = bytes[source]
-                scaled[destination + 1] = bytes[source + 1]
-                scaled[destination + 2] = bytes[source + 2]
-                scaled[destination + 3] = bytes[source + 3]
-            }
-        }
-        return DisplayImage(width: newWidth, height: newHeight, bytes: scaled)
+        guard let small = NearestNeighbor.scaled(
+            bytes, width: width, height: height, by: factor)
+        else { return self }
+        return DisplayImage(
+            width: small.width, height: small.height, bytes: small.components)
     }
 
     /// 指定した位置の 4 成分。原点は左上。
