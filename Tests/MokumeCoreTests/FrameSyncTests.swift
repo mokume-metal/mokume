@@ -421,4 +421,105 @@ struct FrameSyncTests {
         // ここで消えるかどうかは常駐の集合が面を保持するかで決まる。保持するなら消えず、
         // それはそれで安全 (#738 が別に見ている)。だから消えることは要求しない
     }
+
+    // MARK: - 出口へ渡す道 (#927)
+
+    /// GPU を占めながら、フレームごとに白と黒を交互に塗るスケッチ。
+    ///
+    /// **色でフレームを言えるようにしてある。** 白と黒は 8 bit へ落ちても 255 と 0 の
+    /// ままなので、受け取った絵がどのフレームのものかを画素 1 つで判定できる。
+    final class BusyOutletSketch: Sketch {
+        /// 走らせる前に差し込む (``Sketch`` は引数なしで作れる必要がある)。
+        nonisolated(unsafe) static var declared: [any Outlet] = []
+
+        private var spin: Computation?
+        private var scratch: Numbers?
+
+        var settings: SketchSettings { SketchSettings(width: 32, height: 32) }
+        var plugins: [any Plugin] { [OutletPlugin(outlets: Self.declared)] }
+
+        /// フレーム `frame` で塗る明るさ (8 bit)。偶数フレームが白。
+        static func brightness(atFrame frame: Int) -> UInt8 { frame % 2 == 0 ? 255 : 0 }
+
+        func setup() {
+            scratch = try? makeNumbers(count: 1)
+            spin = try? makeComputation(FrameSyncTests.spin, name: "spin")
+        }
+
+        func draw() {
+            if let spin, let scratch { compute(spin, over: 1, writes: [scratch]) }
+            // 0〜255 の灰色で塗る (255 = 白・0 = 黒)
+            background(Double(Self.brightness(atFrame: frameCount)))
+        }
+    }
+
+    struct OutletPlugin: Plugin {
+        let outlets: [any Outlet]
+        func register(into registry: PluginRegistry) {
+            for outlet in outlets { registry.add(outlet: outlet) }
+        }
+    }
+
+    /// 受け取ったフレームの番号と、絵の明るさを覚える出口。
+    ///
+    /// `readsBytes` が false なら ``OutputFrame/bytes()`` を呼ばない — **読み戻しを
+    /// 払わない出口** (Syphon のように texture をそのまま渡す側) を模す。
+    final class WatchingOutlet: Outlet {
+        let readsBytes: Bool
+        private(set) var frames: [(frame: Int, level: UInt8)] = []
+
+        init(readsBytes: Bool) { self.readsBytes = readsBytes }
+
+        func receive(_ frame: OutputFrame) {
+            frames.append((frame.frame, readsBytes ? frame.bytes()[0, 0].0 : 0))
+        }
+    }
+
+    private func makeOutletRuntime(_ outlets: [any Outlet]) throws -> (SketchRuntime, RenderDevice)
+    {
+        BusyOutletSketch.declared = outlets
+        let gpu = try RenderDevice()
+        return (try SketchRuntime(sketch: BusyOutletSketch(), gpu: gpu), gpu)
+    }
+
+    @Test("出口が刺さっていても、フレームは GPU の完了を待たずに返る")
+    func framesWithOutletsDoNotDrainTheGPU() throws {
+        // 読み戻しを払わない出口。**この形が毎フレーム全ドレインを踏んでいた** (#927)
+        let outlet = WatchingOutlet(readsBytes: false)
+        let (runtime, gpu) = try makeOutletRuntime([outlet])
+
+        // **先に温める。** 置き場を初めて取るフレームは取り直しの中で待つ
+        for _ in 0..<framesPastOneLap { try runtime.advance() }
+        let drains = gpu.blockingWaits
+
+        for _ in 0..<4 { try runtime.advance() }
+
+        #expect(!gpu.isIdle, "フレームから返った時点で GPU が終わっている — 道が待っている")
+        #expect(gpu.blockingWaits == drains, "出口へ渡す道が投入済みの全完了を待っている")
+        #expect(outlet.frames.count > 0, "1 枚も配られていない")
+    }
+
+    @Test("出口が受け取る絵は 1 枚遅れで届き、中身は確定している")
+    func outletsReceiveASettledPictureOneFrameLate() throws {
+        let outlet = WatchingOutlet(readsBytes: true)
+        let (runtime, gpu) = try makeOutletRuntime([outlet])
+
+        try runtime.advance()
+        try #require(!gpu.isIdle, "回転が短い — この検査は何も見ていない")
+        #expect(outlet.frames.isEmpty, "組んだフレームでそのまま配っている")
+
+        try runtime.advance()
+        try runtime.advance()
+        // 閉じるときに、まだ配っていない最後の 1 枚が届く
+        runtime.closePlugins()
+
+        #expect(outlet.frames.map(\.frame) == [1, 2, 3], "1 枚遅れの並びになっていない")
+        for received in outlet.frames {
+            // **待たずに渡していれば、ここに 1 つ前のフレームの色が出る** (白黒が交互
+            // なので、1 枚ずれれば必ず食い違う)
+            #expect(
+                received.level == BusyOutletSketch.brightness(atFrame: received.frame),
+                "\(received.frame) 枚目の絵が組み上がる前に配られている")
+        }
+    }
 }

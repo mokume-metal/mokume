@@ -42,14 +42,26 @@ public final class SketchRuntime {
     /// 登録された出口。**宣言順**に呼ぶ ([ADR-0024] 決定 4)。
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    private var outlets: [(outlet: any Outlet, health: SeamHealth)] = []
+    private var outlets: [(seam: any Outlet, health: SeamHealth)] = []
     /// 登録された入り口。同じく宣言順。
-    private var inlets: [(inlet: any Inlet, health: SeamHealth)] = []
+    private var inlets: [(seam: any Inlet, health: SeamHealth)] = []
 
     /// 絵をファイルにする組み込みの出口。**頼まれてはじめて作る。**
     ///
     /// 頼まれている間だけ ``outlets`` に居る (``attachRecorderIfNeeded()``)。
     private var recorder: FrameRecorder?
+
+    /// 組んだけれどまだ配っていない絵。**出口へ渡すのは 1 枚遅らせる** ([#927])。
+    ///
+    /// 組んだフレームでそのまま配ると、配る側が GPU の完了を待つことになり、フレーム
+    /// ごとに CPU が GPU に追いつく。1 枚遅らせると、待つ番号は前のフレームのもので、
+    /// そこまでに積んだ CPU の仕事 (このフレームの組み立て) が GPU と重なる。
+    ///
+    /// 絵は使い回している 1 枚なので (ADR-0023 決定 5)、ここが持つのは参照である。
+    /// 配る前に次のフレームを組むことはない — 配ってから組む順を ``runFrame()`` が持つ。
+    ///
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    private var pendingOutletFrame: (image: EncodedImage, frame: Int, time: Double)?
     /// 絵を取り出せなかったことを、既に言ったか。**毎フレーム言わない。**
     private var warnedEncodeFailed = false
 
@@ -234,20 +246,21 @@ public final class SketchRuntime {
             // 逆順で、後から開いたものが先に開いたものに依っていても順序が壊れないようにする
             //
             // [#926]: https://github.com/mokume-metal/mokume/issues/926
-            var openedOutlets: [any Outlet] = []
-            var openedInlets: [any Inlet] = []
+            // **戻す手を、開いた順に積む。** 開いた側ごとに別の並びを持つと、
+            // 差込口の種類が増えた日に巻き戻しの手当てだけが抜ける — 抜けても
+            // コンパイルは通り、症状は「掴んだ外の資源が誰にも閉じられない」だけになる
+            var undo: [() -> Void] = []
             do {
                 for outlet in registry.outlets {
                     try outlet.open()
-                    openedOutlets.append(outlet)
+                    undo.append(outlet.close)
                 }
                 for inlet in registry.inlets {
                     try inlet.open()
-                    openedInlets.append(inlet)
+                    undo.append(inlet.close)
                 }
             } catch {
-                for inlet in openedInlets.reversed() { inlet.close() }
-                for outlet in openedOutlets.reversed() { outlet.close() }
+                for close in undo.reversed() { close() }
                 Diagnostics.warn(
                     "\(type(of: plugin)) を開けませんでした: \(error)。この束は外して続けます")
                 continue
@@ -261,8 +274,10 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func closePlugins() {
-        for entry in outlets { entry.outlet.close() }
-        for entry in inlets { entry.inlet.close() }
+        // **閉じる前に控えを配る。** 最後のフレームの絵はまだ誰にも渡っていない (#927)
+        deliverPendingToOutlets()
+        for entry in outlets { entry.seam.close() }
+        for entry in inlets { entry.seam.close() }
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
         // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
         recorder?.close()
@@ -315,8 +330,13 @@ public final class SketchRuntime {
         } catch {
             drawFailure = error
         }
-        if drawFailure == nil { deliverToOutlets() }
+        // **配ってから組む。** 配るのは前のフレームで組んだ絵で、待つ番号もそれなので、
+        // ここまでの CPU の仕事が前のフレームの GPU と重なる (#927)
+        if drawFailure == nil { deliverPendingToOutlets() }
+        // **外すのは配った後、組む前。** 1 枚だけ撮ったスケッチは配った時点で用済みに
+        // なるので、この順なら道を 2 回通らない (ADR-0023 決定 5)
         detachRecorderIfDone()
+        if drawFailure == nil { encodeForOutlets() }
         serveObservationIfRequested(drawFailure: drawFailure)
         if let drawFailure { throw drawFailure }
     }
@@ -393,25 +413,56 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     private func supplyFromInlets() {
-        for index in inlets.indices where inlets[index].health.isAttached {
-            inlets[index].inlet.supply()
-            if inlets[index].health.note(inlets[index].inlet.failure) {
+        visit(&inlets) { $0.supply() } failure: { $0.failure }
+    }
+
+    /// 差込口を 1 巡し、**続けて転んだものを外す**。
+    ///
+    /// ## なぜ入り口と出口で 1 つなのか
+    ///
+    /// [ADR-0024] 決定 7 の「毎フレーム呼ばれるものは投げない。続けて転んだらその
+    /// 差込口を外し、外したことを診断に出す」は**対で守るもの**である。2 度書いて
+    /// いたころ、片方だけ手当てが抜ければ**転び続ける差込口が外れないまま毎フレーム
+    /// 費用を払い続ける**形が成立していた — 落ちも警告も出ず、症状は「触っても
+    /// 効かない」だけになる。
+    ///
+    /// **文面もここに置く。** 入り口と出口で 1 バイトも違わなかったので、動かしたのは
+    /// 置き場だけである — [#956](https://github.com/mokume-metal/mokume/issues/956) が
+    /// 文面 4 本を畳まなかったのは、あちらが**違うことを言っており**、畳むには語幹から
+    /// 組み立てる必要があったからで ([#947](https://github.com/mokume-metal/mokume/issues/947)
+    /// の「頼んた」)、ここには組み立てが無い。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    private func visit<Seam>(
+        _ seams: inout [(seam: Seam, health: SeamHealth)], calling act: (Seam) -> Void,
+        failure: (Seam) -> String?
+    ) {
+        for index in seams.indices where seams[index].health.isAttached {
+            let seam = seams[index].seam
+            act(seam)
+            // **理由は 1 度だけ読む。** 2 度読むと、外した判断と言う理由が別の値になりうる
+            let reason = failure(seam)
+            if seams[index].health.note(reason) {
                 Diagnostics.warn(
-                    "\(type(of: inlets[index].inlet)) が続けて転んだので外しました"
-                        + " (最後の理由: \(inlets[index].inlet.failure ?? "不明"))")
+                    "\(type(of: seam)) が続けて転んだので外しました"
+                        + " (最後の理由: \(reason ?? "不明"))")
             }
         }
     }
 
-    /// 描いた絵を出口へ渡す。
+    /// 描いた絵を組んで、次のフレームで配れるように控える。
     ///
     /// **道を通るのは 1 フレームに 1 回**で、出口が何本あっても同じ 1 枚を配る
     /// ([ADR-0024] 決定 6 の「全ての出口が同じ道から受け取る」)。出口が 1 つも
     /// 付いていなければ**道を 1 回も通らない** — 使わない機能の費用を、使っていない
     /// スケッチが払わない。
     ///
+    /// 組むだけで、GPU の完了は待たない。配るのは次のフレームの
+    /// ``deliverPendingToOutlets()`` である ([#927])。
+    ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    private func deliverToOutlets() {
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    private func encodeForOutlets() {
         guard outlets.contains(where: { $0.health.isAttached }) else { return }
         let image: EncodedImage
         do {
@@ -423,16 +474,29 @@ public final class SketchRuntime {
             Diagnostics.warn("出口へ渡す絵を取り出せませんでした: \(error.headline)")
             return
         }
-        let frame = OutputFrame(
-            image: image, frame: timing.frameCount, time: Double(timing.time))
-        for index in outlets.indices where outlets[index].health.isAttached {
-            outlets[index].outlet.receive(frame)
-            if outlets[index].health.note(outlets[index].outlet.failure) {
-                Diagnostics.warn(
-                    "\(type(of: outlets[index].outlet)) が続けて転んだので外しました"
-                        + " (最後の理由: \(outlets[index].outlet.failure ?? "不明"))")
-            }
-        }
+        pendingOutletFrame = (image, timing.frameCount, Double(timing.time))
+    }
+
+    /// 控えてある絵を出口へ配る。控えが無ければ何もしない。
+    ///
+    /// **配る絵は中身が確定している。** 組んだ投入を名指しで待ってから渡すので、出口は
+    /// 受け取った ``OutputFrame/texture`` をそのまま別のプロセスや機材へ手渡せる —
+    /// 外の出口はこの保証に寄りかかっている ([#927])。1 枚遅らせているぶん、この待ちは
+    /// ふつう何もせずに返る。
+    ///
+    /// **転んだフレームでは配らない** ([ADR-0024] 決定 10)。控えはそのまま持ち越して、
+    /// 次に描けたフレームか終わり (``closePlugins()``) で配る — 描けた絵を落とさない。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    private func deliverPendingToOutlets() {
+        guard let pending = pendingOutletFrame else { return }
+        pendingOutletFrame = nil
+        guard outlets.contains(where: { $0.health.isAttached }) else { return }
+        target.gpu.waitForSubmissionQuietly(
+            pending.image.pendingSubmission, before: "出口へ絵を渡す")
+        let frame = OutputFrame(image: pending.image, frame: pending.frame, time: pending.time)
+        visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
     }
 
     // MARK: - 名乗り
@@ -541,7 +605,9 @@ public final class SketchRuntime {
 
     /// このフレームの絵を 1 枚だけ書き出すよう頼む。転送 (正本は ``Sketch/save(_:)``)。
     public func save(_ path: String) {
-        requireRecorder().save(path)
+        // **頼まれたフレームを一緒に渡す。** 配るのは 1 枚遅れるので、番号が無いと
+        // 「そのフレームの絵」ではなく 1 つ前の絵が書かれる (#927)
+        requireRecorder().save(path, at: timing.frameCount)
         attachRecorderIfNeeded()
     }
 
@@ -557,6 +623,9 @@ public final class SketchRuntime {
             Diagnostics.warn("endRecord(): 撮っていません")
             return
         }
+        // **控えを先に配る。** 撮り終わりは描き切りの中から呼ばれるので、ここで配らないと
+        // 前のフレームの絵が誰にも渡らないまま録りが閉じる = 最後の 1 枚が落ちる (#927)
+        deliverPendingToOutlets()
         recorder.endRecord()
     }
 
@@ -575,7 +644,7 @@ public final class SketchRuntime {
     /// 仕切り直しになる。
     private func attachRecorderIfNeeded() {
         guard let recorder, !recorder.isIdle,
-            !outlets.contains(where: { $0.outlet === recorder })
+            !outlets.contains(where: { $0.seam === recorder })
         else { return }
         outlets.append((recorder, SeamHealth()))
     }
@@ -588,10 +657,10 @@ public final class SketchRuntime {
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     private func detachRecorderIfDone() {
         guard let recorder,
-            let entry = outlets.first(where: { $0.outlet === recorder }),
+            let entry = outlets.first(where: { $0.seam === recorder }),
             recorder.isIdle || !entry.health.isAttached
         else { return }
-        outlets.removeAll { $0.outlet === recorder }
+        outlets.removeAll { $0.seam === recorder }
     }
 
     // MARK: - 観測に応える

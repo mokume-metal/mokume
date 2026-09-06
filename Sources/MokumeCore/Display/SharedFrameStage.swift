@@ -228,6 +228,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // [#826]: https://github.com/mokume-metal/mokume/issues/826
         window.delegate = windowRelay
         window.makeKeyAndOrderFront(nil)
+        // **面を第一応答者に据える。** 据わっていない窓にはキーが 1 件も来ない —
+        // 理由と、AppKit の自動選択に頼らない訳は `SketchSurface.acceptsFirstResponder`
+        // が持つ
+        window.makeFirstResponder(view)
         view.synchronizeDrawableSize()
 
         self.window = window

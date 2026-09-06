@@ -53,4 +53,35 @@ struct SketchApplicationTests {
         window.close()
         #expect(!application.isWindowOnScreen)
     }
+
+    /// **スケッチ自身の窓でも、キーは面へ届く。**
+    ///
+    /// キーは第一応答者へ配られるので、面がそこに居ない窓では `keyDown` が 1 度も呼ばれず、
+    /// 警告も出ない。据え方は道具が出す窓と揃えてあるが ([#963])、揃っていることを人の目に
+    /// 委ねると片方だけが直る形になるので、**両方の経路で同じ形の検査を持つ**。
+    ///
+    /// 合流点ではなく運び先 (`relay`) から見るのは、走らせている入れ物が `private` で
+    /// 検査から触れないためである。見たい区間 (窓 → 第一応答者 → 面) はどちらでも同じだけ
+    /// 通る。
+    ///
+    /// [#963]: https://github.com/mokume-metal/mokume/issues/963
+    @Test("スケッチの窓へ送ったキーも、面へ届く")
+    func keysReachTheSurfaceThroughTheWindow() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        let window = try #require(application.window)
+        let surface = try #require(window.contentView as? SketchSurface)
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+
+        let event = try #require(KeyEventFixture.keyDown(in: window, characters: "a", keyCode: 0))
+        window.sendEvent(event)
+        #expect(
+            lines == [
+                InputEvent.keyDown(code: Key(rawValue: 0), characters: "a", isRepeat: false)
+                    .wireLine
+            ])
+    }
 }

@@ -155,14 +155,16 @@ import MokumeDiagnostics
     private(set) var settleCalls = 0
     /// 診断: ``settle()`` が実際に止まった回数 (頼まれた時点で GPU が終わっていなかった)。
     private(set) var blockingWaits = 0
-    /// 診断: フレームごとに書く置き場の環が、スロットの空きを実際に待った回数。
+    /// 診断: 名指しの待ち (``waitForSubmission(_:)``) が実際に止まった回数。
     ///
     /// ``blockingWaits`` と分けてある。**あちらは「投入済みの全部」を待った回数**で、
     /// 環が効いているフレームでは 0 のままでなければならない ([#754])。こちらは
-    /// 「そのスロットを読む投入 1 本」を待った回数で、環が浅い (置き場が 1 本の土台・
-    /// CPU が GPU を追い越した) ときに増える。
+    /// 「名指しした投入 1 本」を待った回数で、環が浅い (置き場が 1 本の土台・CPU が
+    /// GPU を追い越した) ときと、出口へ渡す絵がまだ組み上がっていないとき ([#927])
+    /// に増える。
     ///
     /// [#754]: https://github.com/mokume-metal/mokume/issues/754
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     private(set) var ringWaits = 0
 
     /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。
@@ -567,18 +569,21 @@ import MokumeDiagnostics
         }
     }
 
-    /// 番号 `submission` の投入が終わるまで待つ。**フレームごとに書く置き場の環が使う。**
+    /// 番号 `submission` の投入が終わるまで待つ。
     ///
     /// ``settle()`` との違いは待つ範囲だけである。あちらは投入済みの**全部**を待ち、
     /// こちらは**名指しした 1 本**を待つ。環にした置き場は「そのスロットを最後に読んだ
     /// 投入」さえ終わっていれば CPU が書いてよいので、その先に積まれた新しいフレームの
     /// 仕事まで待つ理由が無い ([#754])。
     ///
-    /// **緩めてよいのは環にした置き場だけである。** 環にしていない置き場 (粒・数の
-    /// 並び・画像・字形の面) は今までどおり ``settle()`` で全完了を待つ — どのスロットに
-    /// 属するかを名乗れないものは、いつ読まれ終わるかも名乗れない。
+    /// **緩めてよいのは、どの投入が書いたかを自分で憶えているものだけである。** いま
+    /// 名指しできるのは 2 つ — フレームごとに書く置き場の環 (#754) と、出口へ渡す絵
+    /// ([#927])。それ以外の置き場 (粒・数の並び・画像・字形の面) は今までどおり
+    /// ``settle()`` で全完了を待つ — どの投入に属するかを名乗れないものは、いつ
+    /// 読まれ終わるかも名乗れない。
     ///
     /// [#754]: https://github.com/mokume-metal/mokume/issues/754
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     func waitForSubmission(_ submission: UInt64) throws(RenderFailure) {
         // 終わった番号ぶんの抱えているリソースは、待ちの有無によらずここで手放す。
         // 描き切りが settle を通らなくなったので、手放す契機をこちらにも置く
@@ -602,6 +607,22 @@ import MokumeDiagnostics
     func settleQuietly(before what: String) {
         do {
             try settle()
+        } catch {
+            Diagnostics.warn("\(what)の前に GPU の完了を待てませんでした: \(error.headline)")
+        }
+    }
+
+    /// 投げられない口のための ``waitForSubmission(_:)``。詰まっていたら理由を残して進む。
+    ///
+    /// ``settleQuietly(before:)`` と同じ作法で、待つ範囲だけが違う。出口へ絵を渡す経路と
+    /// 絵を読み戻す口は毎フレーム走るので投げられない ([ADR-0020] 決定 5) が、待つべき
+    /// 投入は名指しできる ([#927])。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    func waitForSubmissionQuietly(_ submission: UInt64, before what: String) {
+        do {
+            try waitForSubmission(submission)
         } catch {
             Diagnostics.warn("\(what)の前に GPU の完了を待てませんでした: \(error.headline)")
         }

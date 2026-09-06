@@ -98,6 +98,11 @@ struct PluginSeamTests {
         func register(into registry: PluginRegistry) { registry.add(outlet: outlet) }
     }
 
+    struct InletOnlyPlugin: Plugin {
+        let inlet: any Inlet
+        func register(into registry: PluginRegistry) { registry.add(inlet: inlet) }
+    }
+
     /// 開く・閉じるの順を 1 本の並びへ書き込む出口。`failsOnOpen` なら開くのに失敗する。
     ///
     /// **転んだ側も書く。** そうすると「開いていない差込口が閉じられていない」ことを、
@@ -174,7 +179,9 @@ struct PluginSeamTests {
         try runtime.advance()
 
         #expect(outlet.opened == 1)
-        #expect(outlet.received.count == 2)
+        // 配られるのは 1 枚遅れなので、2 フレームで 1 枚 (#927。遅れそのものは
+        // 「出口が受け取る絵は 1 枚遅れる」が見る)
+        #expect(outlet.received.count == 1)
         #expect(inlet.supplied == 2)
     }
 
@@ -188,11 +195,13 @@ struct PluginSeamTests {
             BothPlugin(outlet: second, inlet: inlet),
         ])
 
+        // 配りは 1 枚遅れるので、1 枚届かせるには 2 フレーム要る (#927)
+        try runtime.advance()
         try runtime.advance()
 
         #expect(first.received.count == 1)
         #expect(second.received.count == 1)
-        #expect(inlet.supplied == 1)
+        #expect(inlet.supplied == 2)
     }
 
     @Test("呼ばれる順は宣言順")
@@ -204,6 +213,8 @@ struct PluginSeamTests {
             OutletOnlyPlugin(outlet: OrderedOutlet("c", log)),
         ])
 
+        // 配りは 1 枚遅れる (#927)
+        try runtime.advance()
         try runtime.advance()
 
         #expect(log.names == ["a", "b", "c"])
@@ -249,6 +260,8 @@ struct PluginSeamTests {
         let outlet = RecordingOutlet()
         let runtime = try makeRuntime([OutletOnlyPlugin(outlet: outlet)])
 
+        // 配りは 1 枚遅れる (#927)。毎フレーム同じ絵なので、比べる相手は変わらない
+        try runtime.advance()
         try runtime.advance()
         let fromRoad = try runtime.target.encodeToImage().read()[0, 0]
 
@@ -289,6 +302,8 @@ struct PluginSeamTests {
             OutletOnlyPlugin(outlet: healthy),
         ])
 
+        // 配りは 1 枚遅れる (#927)
+        try runtime.advance()
         try runtime.advance()
 
         #expect(healthy.received.count == 1)
@@ -316,6 +331,42 @@ struct PluginSeamTests {
 
         // 外すのを登録簿からだけにすると、先に開けた出口が掴んだ外の資源
         // (映像の口・音の装置) が誰にも閉じられないまま残る
+        #expect(log.lifecycle == ["open:a", "close:a"])
+    }
+
+    /// **入り口も巻き戻しの並びに載る。**
+    ///
+    /// 開いた側ごとに別の並びを持っていたころは、差込口の種類が増えた日に巻き戻しの
+    /// 手当てだけが抜ける形だった — 抜けてもコンパイルは通り、症状は「掴んだ外の資源が
+    /// 誰にも閉じられない」だけになる ([#926](https://github.com/mokume-metal/mokume/issues/926)
+    /// が踏んだ形)。出口の側は上の検査が留めているので、入り口の側も留める。
+    @Test("先に開いた入り口も、後の差込口が転べば閉じられる")
+    func openedInletsAreRolledBackToo() throws {
+        final class LifecycleInlet: Inlet {
+            let name: String
+            let log: Log
+            init(_ name: String, _ log: Log) {
+                self.name = name
+                self.log = log
+            }
+            func open() throws { log.lifecycle.append("open:\(name)") }
+            func supply() {}
+            func close() { log.lifecycle.append("close:\(name)") }
+        }
+        struct InletsPlugin: Plugin {
+            let inlets: [any Inlet]
+            func register(into registry: PluginRegistry) {
+                for inlet in inlets { registry.add(inlet: inlet) }
+            }
+        }
+
+        let log = Log()
+        let runtime = try makeRuntime([
+            InletsPlugin(inlets: [LifecycleInlet("a", log), BrokenInlet()])
+        ])
+
+        try runtime.advance()
+
         #expect(log.lifecycle == ["open:a", "close:a"])
     }
 
@@ -354,8 +405,42 @@ struct PluginSeamTests {
         // 同じ数になってしまい、検査として成立しない)
         #expect(failing.received.count == 2)
         #expect(failing.calls == 2 + SeamHealth.limit)
-        // 他の出口とフレームは動き続ける
-        #expect(healthy.received.count == 8)
+        // 他の出口とフレームは動き続ける (配りは 1 枚遅れるので 8 フレームで 7 枚・#927)
+        #expect(healthy.received.count == 7)
+    }
+
+    /// **入り口にも同じ規律が効く。**
+    ///
+    /// 「続けて転んだら外す」は入り口と出口の対で守るもので、片方だけ手当てが抜けると
+    /// **転び続ける差込口が外れないまま毎フレーム費用を払い続ける** — 落ちも警告も
+    /// 出ず、症状は「触っても効かない」だけになる
+    /// ([#994](https://github.com/mokume-metal/mokume/issues/994) の 14)。出口の側
+    /// (上) だけを留めていたので、こちらも留める。
+    @Test("続けて転んだ入り口も外れる。フレームは止まらない")
+    func aRepeatedlyFailingInletIsDetached() throws {
+        final class FailingInlet: Inlet {
+            private(set) var calls = 0
+            private(set) var failure: String?
+            let failsFrom: Int
+            init(failsFrom: Int) { self.failsFrom = failsFrom }
+            func supply() {
+                calls += 1
+                failure = calls > failsFrom ? "わざと転ぶ" : nil
+            }
+        }
+        let failing = FailingInlet(failsFrom: 2)
+        let healthy = CountingInlet()
+        let runtime = try makeRuntime([
+            InletOnlyPlugin(inlet: failing), InletOnlyPlugin(inlet: healthy),
+        ])
+
+        for _ in 0..<8 { try runtime.advance() }
+
+        // 2 回まで順調に呼ばれ、そこから limit 回転んで外れる。**外れたら呼ばれなく
+        // なる**ので、呼ばれた回数がそこで止まる
+        #expect(failing.calls == 2 + SeamHealth.limit)
+        // 他の入り口とフレームは動き続ける
+        #expect(healthy.supplied == 8)
     }
 
     @Test("1 回転んだだけでは外れない")
@@ -373,6 +458,8 @@ struct PluginSeamTests {
         let runtime = try makeRuntime([OutletOnlyPlugin(outlet: flaky)])
 
         for _ in 0..<6 { try runtime.advance() }
+        // 最後の 1 枚は閉じるときに配られる (#927)
+        runtime.closePlugins()
 
         #expect(flaky.received == 6)
     }

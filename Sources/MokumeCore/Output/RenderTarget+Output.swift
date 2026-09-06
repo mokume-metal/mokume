@@ -21,9 +21,19 @@ extension RenderTarget {
     /// ([ADR-0023] 決定 5)。持ち帰って後で読む用途には ``EncodedImage/read()`` で
     /// 値にしてから渡す。
     ///
+    /// **GPU の完了を待たずに返る** ([#927])。返った時点で絵はまだ組み上がっていない
+    /// ことがあり、待つのは中身に触る側である — ``EncodedImage/read()`` と、出口へ渡す
+    /// 直前の ``SketchRuntime``。かつてはここで投入済みの全部を待っており、出口が 1 本
+    /// でも刺さっていると毎フレーム CPU が GPU に追いついてしまっていた。
+    ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     func encodeToImage() throws(RenderFailure) -> EncodedImage {
+        // **前の出力段が終わるのを、ここで待つ。** この後の `setBrightness` が GPU 可視の
+        // 置き場へ CPU で書くので、前の出力段が読んでいる最中には書けない。待つのは
+        // 名指しした 1 本だけで、出口へ渡す経路では既に待ち済みなので何も起きない (#927)
+        try gpu.waitForSubmission(lastEncodeSubmission)
         encodePassCount += 1
         let image: EncodedImage
         if let encodedStorage {
@@ -69,9 +79,11 @@ extension RenderTarget {
         encoder.setArgumentTable(pass.argumentTable, stages: [.vertex, .fragment])
         encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
-        // **読み戻せる状態まで待つ。** 呼び出し側へ制御が戻った時点で中身が確定して
-        // いなければ、取り出した絵はひとつ前のフレームのものになりうる
-        try gpu.commitAndWait(commands)
+        // **待たずに投入し、番号を憶える。** 中身が確定しているかを気にするのは触る側で、
+        // ``EncodedImage/read()`` と出口へ渡す直前がその番号を名指しで待つ (#927)
+        let submission = gpu.commit(commands, retaining: [image])
+        image.pendingSubmission = submission
+        lastEncodeSubmission = submission
         return image
     }
 
