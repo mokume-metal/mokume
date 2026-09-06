@@ -14,7 +14,9 @@ struct InputRequest: ExchangeRequest {
 /// **何件が届いて、何件が捨てられたかを返す。** 「送ったのに効かない」の切り分けが
 /// これだけで済む — 知らない種別を送っていたのか、溜めきれずに捨てられたのかが分かる。
 struct InputReport: Encodable, Equatable {
-    static let schemaVersion = 1
+    /// この形式の版。**先頭の格納プロパティである** — 合成の `encode` は宣言順に
+    /// 書き出すので、置き場所が鍵の並びを決める。
+    let schemaVersion = 1
 
     let id: String
     /// 受け取った数。
@@ -23,19 +25,6 @@ struct InputReport: Encodable, Equatable {
     let ignored: Int
     /// 溜めきれずに捨てた数 (このスケッチが起動してからの累計)。
     let dropped: Int
-
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion, id, accepted, ignored, dropped
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(Self.schemaVersion, forKey: .schemaVersion)
-        try container.encode(id, forKey: .id)
-        try container.encode(accepted, forKey: .accepted)
-        try container.encode(ignored, forKey: .ignored)
-        try container.encode(dropped, forKey: .dropped)
-    }
 }
 
 /// 外から送られた入力を受け取る区画 (`.mokume/input`)。

@@ -102,7 +102,15 @@ final class SharedFrameSurface {
     /// いたが、**注意書きは分かれることを止めない**
     /// ([#960](https://github.com/mokume-metal/mokume/issues/960) の 4)。
     struct Manifest: Codable {
-        static let schemaVersion = 1
+        /// この形の版。**先頭の格納プロパティである** — 合成の `encode` は宣言順に
+        /// 書き出すので、置き場所が鍵の並びを決める。
+        let schemaVersion = Manifest.readableVersion
+
+        /// 書く版であり、読める版でもある。**``init(from:)`` が突き合わせる先。**
+        ///
+        /// 格納プロパティと分けてあるのは、読むときには**まだ組み立てていない**値と
+        /// 比べる必要があるためである。
+        static let readableVersion = 1
 
         /// 面の番号。並びが**書く順**である。
         let ids: [UInt32]
@@ -119,14 +127,6 @@ final class SharedFrameSurface {
             self.height = height
         }
 
-        func encode(to encoder: any Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(Self.schemaVersion, forKey: .schemaVersion)
-            try container.encode(ids, forKey: .ids)
-            try container.encode(width, forKey: .width)
-            try container.encode(height, forKey: .height)
-        }
-
         /// **版が違えば読まない。** 知らない形を推測で解くと、食い違いが絵の壊れ方として出る。
         ///
         /// 絵にならない値もここで止める — 面が 1 枚も無い、大きさが 0 以下。**持ち回ってから
@@ -134,10 +134,10 @@ final class SharedFrameSurface {
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let version = try container.decode(Int.self, forKey: .schemaVersion)
-            guard version == Self.schemaVersion else {
+            guard version == Self.readableVersion else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .schemaVersion, in: container,
-                    debugDescription: "知らない版: \(version) (読めるのは \(Self.schemaVersion))")
+                    debugDescription: "知らない版: \(version) (読めるのは \(Self.readableVersion))")
             }
             ids = try container.decode([UInt32].self, forKey: .ids)
             width = try container.decode(Int.self, forKey: .width)

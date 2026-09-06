@@ -136,6 +136,7 @@ SPDX-License-Identifier: MIT
 | 背圧の数え方 ([#958](https://github.com/mokume-metal/mokume/issues/958)) | 取り込みの 5 行が逐語同文だったが、**それは理由ではない**。畳んだのは「終わりの合図を先に、枠を後に」という**順序が不変条件**だからで、片方だけ入れ替わると抱えている数を数え損ない、**待ちが書き終わる前に返る** — ファイルが欠けたまま「書けた」ことになり、コンパイルも検査も通る |
 | 待ちの期限と単位の変換 ([#959](https://github.com/mokume-metal/mokume/issues/959)) | 4 箇所が `UInt64(waitLimitSeconds * 1000)` を書いていた。1 箇所だけ直し漏れると **1000 倍長く待つ = 期限が無いのと同じ**になり、症状は「固まった」だけ。**期限を持っているつもりのコードが持っていないことは、読んでも分からない** |
 | コマンドを投入する並び ([#959](https://github.com/mokume-metal/mokume/issues/959)) | 5 行が同文。並びに 1 段足して片方だけ直すと、**そのコマンドが抱えられないまま GPU の実行中に消える** — 負荷のかかったときだけ出る ([#222](https://github.com/mokume-metal/mokume/issues/222) が踏んだ形) |
+| `schemaVersion` の注入 ([#992](https://github.com/mokume-metal/mokume/issues/992)) | 5 つの型が「版を先頭へ書いてから残りを並べる」手書きの `encode` を持っていた。プロパティを足したときに書き足し忘れると、**その鍵だけが面から消える** — 読み手はどれも「その値は無い」を正常系として扱うので、落ちも警告も出ない。合成へ戻したので書き忘れようがなくなった。**代わりに逆向きの危うさが増える** (足したプロパティが黙って面へ出る) ので、鍵を留める検査 (`WireShapeTests`) を同じ PR で置いた |
 | 区画が在るかの判定 ([#988](https://github.com/mokume-metal/mokume/issues/988)) | 5 箇所が `ObjCBool` の同じ 3 行を書いていた。`&isDirectory` を渡し忘れる・`.boolValue` を見ないと**常に `false`** になる形なので、区画が在るのに「無い」と読む。**観測も入力もつまみも黙って効かなくなり**、症状は「道具から触っても応えない」だけ — 区画が無いときと見分けが付かず、起動し直しても直らない |
 | 区画の中の要求と応答の綴り ([#988](https://github.com/mokume-metal/mokume/issues/988)) | `request.json` / `report.json` を 3 クラスと窓口が別々に持っていた。片方だけ動かすと**書く側と読む側が別のファイルを見る** — 要求は置かれるのに応答は永久に返らず、これも「応えない」としか出ない |
 
@@ -151,6 +152,7 @@ SPDX-License-Identifier: MIT
 | `PresentPipeline` と `OutputPass` のパイプライン組み立て ([#957](https://github.com/mokume-metal/mokume/issues/957)) | 2 つの `init` は約 30 行が同形だが、**共有部分が割れたときの壊れ方はどれも見える** — 頂点関数の名前を片方だけ直せば `makeRenderPipelineState` が投げ、画素形式が食い違えば絵で分かり、ラベルは表示だけである。silent なのは明るさの並びだけで、そこは畳んだ。加えて [#773](https://github.com/mokume-metal/mokume/pull/773) で片方が `FrameRing` + `GrowableBuffer` を持ったので、置き場の型そのものが違う |
 | 静止画と動画の**待ちの意味** ([#958](https://github.com/mokume-metal/mokume/issues/958)) | 背圧の数え方は畳んだが、待ちは畳まない。`drain()` は「頼んだ全部がファイルになった」、`finish()` は「ファイルが閉じた」で、保証しているものが違う — **静止画は finalize 前は「まだ無い」だけだが、mp4 は「あるが壊れている」** (末尾のメタデータが要る)。畳むと、期限を越えたときに何を失ったのかが呼ぶ側から読めなくなる |
 | 待ちが**言うこと** 4 本 ([#959](https://github.com/mokume-metal/mokume/issues/959)) | 期限と単位の変換は畳んだが、文言は畳まない。4 箇所で言うことが違い、`Diagnostics.warn` は控えを持たないので**畳んで壊しても確かめる手段が無い**。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す |
+| 観測の応答の 11 引数の `init` ([#992](https://github.com/mokume-metal/mokume/issues/992)) | 上位 5 フィールドが `frames.last` の写しに見えたが、**写しなのは正常系だけ**だった。途中で失敗すると `frames` は非空のまま `image` は `nil` になり (`complete` の判定)、`frame` / `time` は採取時ではなく finish 時の値である。計算プロパティにすると「鍵の有無だけで成否を言える」([ADR-0018](0018-observation-and-control-surface.md) 決定 3) が壊れる — **写しに見えるものが写しとは限らない** |
 | `scripts/observe_lib.py` の区画のファイル名 ([#988](https://github.com/mokume-metal/mokume/issues/988)) | Swift の定数を Python からは参照できないが、それは理由ではない。割れれば `check-observation-roundtrip.sh` / `measure-frame-rate.sh` が応答無しで落ちる — **割れが出力に見える**。検査の直書き 30 箇所超も同じで、面を外から叩く側は綴りを自分で持つのが正しい (畳むと、面が変わったことを検査が見逃す) |
 
 **線を引く問いは 1 つ**である — 片方だけが直ったとき、誰かがそれに気付くか。気付かない

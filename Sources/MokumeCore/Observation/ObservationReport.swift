@@ -23,8 +23,11 @@ import Foundation
 public struct ObservationReport: Encodable, Equatable, Sendable {
     /// この形式の版。上げ方は [ADR-0018] 決定 5。
     ///
+    /// **先頭の格納プロパティである** — 合成の `encode` は宣言順に書き出すので、
+    /// 置き場所が鍵の並びを決める。
+    ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
-    public static let schemaVersion = 1
+    public let schemaVersion = 1
 
     /// 大きさ。
     public struct Size: Encodable, Equatable, Sendable {
@@ -48,19 +51,6 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
         public let stats: FrameStats?
         /// このフレームでスケッチが差し出した値。1 つも無ければ `nil`。
         public let values: [String: ExposedValue]?
-
-        private enum CodingKeys: String, CodingKey {
-            case image, frame, time, stats, values
-        }
-
-        public func encode(to encoder: any Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(image, forKey: .image)
-            try container.encode(frame, forKey: .frame)
-            try container.encode(time, forKey: .time)
-            try container.encodeIfPresent(stats, forKey: .stats)
-            try container.encodeIfPresent(values, forKey: .values)
-        }
     }
 
     /// 応答した要求の識別子。
@@ -110,26 +100,5 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
         self.values = values
         self.stamp = stamp
         self.frames = frames
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion, id, image, frame, time, size, warnings, stats, load, values, stamp
-        case frames
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(Self.schemaVersion, forKey: .schemaVersion)
-        try container.encode(id, forKey: .id)
-        try container.encodeIfPresent(image, forKey: .image)
-        try container.encode(frame, forKey: .frame)
-        try container.encode(time, forKey: .time)
-        try container.encode(size, forKey: .size)
-        try container.encode(warnings, forKey: .warnings)
-        try container.encodeIfPresent(stats, forKey: .stats)
-        try container.encodeIfPresent(load, forKey: .load)
-        try container.encodeIfPresent(values, forKey: .values)
-        try container.encodeIfPresent(stamp, forKey: .stamp)
-        try container.encode(frames, forKey: .frames)
     }
 }
