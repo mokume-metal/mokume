@@ -131,6 +131,8 @@ SPDX-License-Identifier: MIT
 | `{name, type, value}` の Codable 3 つ ([#803](https://github.com/mokume-metal/mokume/issues/803)) | 外からの要求・道具の要求・保存が別々に書いていた (順序依存の `encode` を含む)。型を足したとき直り漏れた 1 つが、**その経路でだけ値を落とす** |
 | 画面に紐づけた駆動源 ([#956](https://github.com/mokume-metal/mokume/issues/956)) | 張り替えの判定は逐語同文なのに、「最小化でも同じ通知が飛び、そのとき `window.screen` は `nil` を返す」という理由は片方の doc にしか無かった。読める側を「整理」すると、**道具の窓を最小化した瞬間に駆動源が消えて二度と戻らない** — 症状は「固まった」だけ |
 | 続けて失敗した数の数え方 ([#956](https://github.com/mokume-metal/mokume/issues/956)) | 「回復したら 0 へ戻す」を落とすと**以後 1 度も言わなくなる**。[#221](https://github.com/mokume-metal/mokume/issues/221) が塞いだ「絵が止まったのに理由がどこにも残らない」へそのまま戻る |
+| 明るさ 16 バイトの並び ([#957](https://github.com/mokume-metal/mokume/issues/957)) | 画面へ差し出す経路と書き出す経路が、断片が読む構造体を同じ順で組み立てていた。**片方だけ並べ替えると絵が静かに食い違う** — その危うさは片方の doc が注意書きで名乗っていたが、注意書きは並べ替えを止めない |
+| 最近傍の間引き ([#960](https://github.com/mokume-metal/mokume/issues/960) の 3) | 観測が絵を軽くするために通る道が 2 つあり、片方だけ拾い方や丸め方が動くと**同じ要求に対して、通った道で違う絵が返る**。どちらももっともらしく見えるので気付けない。ここでも片方の doc が「拾い方は ``PixelBuffer/scaled(by:)`` と同じ」と契約を名乗っていた |
 
 **畳まないのは、割れが出力に見えるもの、または写しが呼び出し側の契約であるものである。**
 
@@ -141,6 +143,7 @@ SPDX-License-Identifier: MIT
 | `catch-up.sh` の `gh repo view` ([#818](https://github.com/mokume-metal/mokume/issues/818)) | `git rev-parse --show-toplevel` は「いま作業しているリポジトリはどこか」、`gh repo view` は「`gh` はどこへ送るか」— **別の問いに答えている** |
 | 失敗を言う文面 4 本 ([#956](https://github.com/mokume-metal/mokume/issues/956)) | `Diagnostics.warn` は標準エラーへ直に書き、控えを持たない。[#953](https://github.com/mokume-metal/mokume/pull/953) が 7 本の文面ごと畳めたのは `WarningLog` が文面を控えていて検査が原文と突き合わせられたからで、**ここには読む口が無い** — 畳んで壊しても確かめる手段が無い。組み立てた文が壊れるのは実際に起きている ([#947](https://github.com/mokume-metal/mokume/issues/947) の「頼んた」) |
 | 窓に面を載せる並び ([#956](https://github.com/mokume-metal/mokume/issues/956)) | 面の大きさの取り方 (設定の半分 / 復元した窓の `contentLayoutRect`)・入力の繋ぎ方・重ねるもの・delegate・第一応答者・前面の取り方が経路ごとに違い、引き受けると引数が 6 つ・うち 1 つは closure になる。**窓の生成と配置だけ**を畳んだ — そこは黙って壊れる (`isReleasedWhenClosed` を落とすと消えた窓を触り続ける) |
+| `PresentPipeline` と `OutputPass` のパイプライン組み立て ([#957](https://github.com/mokume-metal/mokume/issues/957)) | 2 つの `init` は約 30 行が同形だが、**共有部分が割れたときの壊れ方はどれも見える** — 頂点関数の名前を片方だけ直せば `makeRenderPipelineState` が投げ、画素形式が食い違えば絵で分かり、ラベルは表示だけである。silent なのは明るさの並びだけで、そこは畳んだ。加えて [#773](https://github.com/mokume-metal/mokume/pull/773) で片方が `FrameRing` + `GrowableBuffer` を持ったので、置き場の型そのものが違う |
 
 **線を引く問いは 1 つ**である — 片方だけが直ったとき、誰かがそれに気付くか。気付かない
 なら畳む。気付くなら、写しのままにして**割れても直せる形** (検査) を置くほうが、読み手に
