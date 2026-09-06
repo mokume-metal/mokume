@@ -154,11 +154,11 @@ struct ShadowTests {
         //
         // [#757]: https://github.com/mokume-metal/mokume/issues/757
         let gpu = try RenderDevice()
-        let common = try gpu.bundledShaderSource(named: "Common")
+        let common = try gpu.shaders.bundledShaderSource(named: "Common")
         #expect(common.contains("depth2d<float> shadow_texture"), "影の口が奥行きの面ではない")
         #expect(common.contains("sample_compare("), "影を compare sampler で読んでいない")
         #expect(!common.contains("texture2d<float> shadow_texture"))
-        let shapes = try gpu.bundledShaderSource(named: "Shapes")
+        let shapes = try gpu.shaders.bundledShaderSource(named: "Shapes")
         #expect(!shapes.contains("mokume_shadowFragment"), "焼く側に断片が残っている")
     }
 

@@ -144,7 +144,7 @@ struct ParticleTests {
         let target = try RenderTarget(gpu: gpu, width: 8, height: 8)
         let canvas = try Canvas(target: target, gpu: gpu)
         let probe = try canvas.makeComputation(
-            gpu.bundledShaderSource(named: Canvas.particleShaderName),
+            gpu.shaders.bundledShaderSource(named: Canvas.particleShaderName),
             name: Canvas.particleLayoutKernelName)
         let particleProbe = try canvas.makeNumbers(count: 64)
         let placeProbe = try canvas.makeNumbers(count: 128)

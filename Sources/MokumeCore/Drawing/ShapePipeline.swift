@@ -126,8 +126,8 @@ final class ShapePipeline {
 
     init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
         self.pixelFormat = pixelFormat
-        let library = try gpu.makeShapeLibrary(
-            named: "Shapes", body: gpu.bundledShaderSource(named: "Shapes"))
+        let library = try gpu.shaders.makeShapeLibrary(
+            named: "Shapes", body: gpu.shaders.bundledShaderSource(named: "Shapes"))
         self.vertexLibrary = library
 
         let compilerDescriptor = MTL4CompilerDescriptor()

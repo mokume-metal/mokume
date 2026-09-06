@@ -92,6 +92,13 @@ import MokumeDiagnostics
     let device: any MTLDevice
     let queue: any MTL4CommandQueue
 
+    /// シェーダの原文を読み、組み立てる係。
+    ///
+    /// **転送メソッドを置かない。** ここに `makeShapeLibrary` などを残すと「組み立てには
+    /// 描画の土台の状態が要る」という読みが残るが、実際に要るのは `device` だけである
+    /// ([#959](https://github.com/mokume-metal/mokume/issues/959))。呼ぶ側はここを通る。
+    var shaders: ShaderLibraries { ShaderLibraries(device: device) }
+
     /// コマンドの置き場ひとつぶん。
     ///
     /// 置き場は巻き戻して使い回すが、**巻き戻してよいのは、そこへ積んだコマンドを
@@ -270,8 +277,7 @@ import MokumeDiagnostics
     /// 詰まっていたら諦めて畳む。ここで投げる先は無いので、警告だけ残す。
     isolated deinit {
         guard !isIdle else { return }
-        let limit = UInt64(Self.waitLimitSeconds * 1000)
-        if !completion.wait(untilSignaledValue: submissionCount, timeoutMS: limit) {
+        if !signalReached(submissionCount) {
             Diagnostics.warn(
                 "GPU の完了を \(Self.waitLimitSeconds) 秒待っても返らないまま、描画の土台を畳みます")
         }
@@ -501,13 +507,28 @@ import MokumeDiagnostics
     /// ``beginCommands()`` を直に呼び、返った時点の ``isIdle`` を見る ([#790])。
     ///
     /// [#790]: https://github.com/mokume-metal/mokume/issues/790
+    /// 完了の合図が `value` まで進むのを待つ。**越えたら `false`。**
+    ///
+    /// 持っているのは**期限そのものと、秒からミリ秒への変換**だけである。畳んだのは
+    /// この 2 つが 4 箇所に書かれていたからで、1 箇所だけ直し漏れると **1000 倍長く待つ
+    /// = 期限が無いのと同じ**になる。しかも症状は「固まった」だけで、期限を持っている
+    /// つもりのコードが持っていないことは読んでも分からない
+    /// ([#959](https://github.com/mokume-metal/mokume/issues/959))。
+    ///
+    /// **言うことは持たない。** 4 つの呼び出し側で文言が違い、`Diagnostics.warn` は標準
+    /// エラーへ直に書いて控えを持たないので、畳んで壊しても確かめる手段が無い (#958 で
+    /// 同じ線を引いた)。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す。
+    private func signalReached(_ value: UInt64) -> Bool {
+        completion.wait(
+            untilSignaledValue: value, timeoutMS: UInt64(Self.waitLimitSeconds * 1000))
+    }
+
     private func waitForSlot(_ index: Int) throws(RenderFailure) {
         let pending = slots[index].submission
         guard pending > 0, completion.signaledValue < pending else { return }
 
         slotWaits += 1
-        let limit = UInt64(Self.waitLimitSeconds * 1000)
-        guard completion.wait(untilSignaledValue: pending, timeoutMS: limit) else {
+        guard signalReached(pending) else {
             Diagnostics.warn(
                 "コマンドの置き場が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
             throw .timedOut(seconds: Self.waitLimitSeconds)
@@ -526,8 +547,7 @@ import MokumeDiagnostics
         guard submissionCount > 0, completion.signaledValue < submissionCount else { return }
 
         blockingWaits += 1
-        let limit = UInt64(Self.waitLimitSeconds * 1000)
-        guard completion.wait(untilSignaledValue: submissionCount, timeoutMS: limit) else {
+        guard signalReached(submissionCount) else {
             // **黙って捨てない。** 詰まったことが分からないと、症状 (絵が止まる・
             // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
             Diagnostics.warn(
@@ -555,8 +575,7 @@ import MokumeDiagnostics
         guard submission > 0, completion.signaledValue < submission else { return }
 
         ringWaits += 1
-        let limit = UInt64(Self.waitLimitSeconds * 1000)
-        guard completion.wait(untilSignaledValue: submission, timeoutMS: limit) else {
+        guard signalReached(submission) else {
             Diagnostics.warn(
                 "フレームの置き場が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
             throw .timedOut(seconds: Self.waitLimitSeconds)
@@ -651,96 +670,6 @@ import MokumeDiagnostics
 }
 
 extension RenderDevice {
-    /// 同梱したシェーダを読み込む。
-    ///
-    /// シェーダの原文は資源として運ばれ、ここで組み立てる — この道具立てでは原文を
-    /// ビルドに含める手がないため。**原文の誤りはここまで来ないと分からない**ので、
-    /// `make ci-check` が別途ビルド時に組み立てて落とす (`scripts/check-shaders.sh`)。
-    func makeLibrary(named name: String) throws(RenderFailure) -> any MTLLibrary {
-        let source = try bundledShaderSource(named: name)
-        do {
-            return try device.makeLibrary(source: source, options: nil)
-        } catch {
-            throw .shaderCompilationFailed(
-                name: "\(name).metal", reason: error.localizedDescription)
-        }
-    }
-
-    /// 図形を塗る断片を、共通部分を前置きしてから組み立てる。
-    ///
-    /// **前置きは無条件。** 断片が既に宣言を持っているかは見ない (ShaderSource を参照)。
-    func makeShapeLibrary(
-        named name: String, body: String, values: [String: ShaderValue] = [:],
-        surfaces: [String: ShaderSurface] = [:]
-    ) throws(RenderFailure) -> any MTLLibrary {
-        let common = try preludedShaderSource(named: "Common")
-        let source = ShaderSource.assemble(
-            common: common, values: values, surfaces: surfaces, body: body)
-        do {
-            return try device.makeLibrary(source: source, options: nil)
-        } catch {
-            throw .shaderCompilationFailed(
-                name: name, reason: error.localizedDescription)
-        }
-    }
-
-    /// 計算の断片を、共通部分を前置きしてから組み立てる。
-    ///
-    /// **前置きは無条件** (塗りと同じ理由 — ShaderSource を参照)。塗りと違って入口の
-    /// 関数は用意せず、束ねる先の宣言ごと利用者が書く。
-    func makeComputeLibrary(
-        named name: String, body: String, values: [String: ShaderValue] = [:]
-    ) throws(RenderFailure) -> any MTLLibrary {
-        let common = try preludedShaderSource(named: "Compute")
-        let source = ShaderSource.assemble(common: common, values: values, body: body)
-        do {
-            return try device.makeLibrary(source: source, options: nil)
-        } catch {
-            throw .shaderCompilationFailed(name: name, reason: error.localizedDescription)
-        }
-    }
-
-    /// 効果の断片を、前置きと合わせて組み立てる。
-    func makeEffectLibrary(
-        named name: String, body: String, values: [String: ShaderValue] = [:]
-    ) throws(RenderFailure) -> any MTLLibrary {
-        let common = try preludedShaderSource(named: "Effect")
-        let source = ShaderSource.assemble(common: common, values: values, body: body)
-        do {
-            return try device.makeLibrary(source: source, options: nil)
-        } catch {
-            throw .shaderCompilationFailed(name: name, reason: error.localizedDescription)
-        }
-    }
-
-    /// 同梱している断片を読む。
-    ///
-    /// **探すのは [ModuleResources] に任せる。** 道具立ての口だけを使うと、包みに入れて
-    /// 配ったときに組み上げた機械の絶対パスへ落ちる ([ADR-0029] 決定 4)。
-    ///
-    /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
-    /// 前置きの断片を、種別番号の正本 (`Kinds.metal`) 付きで読む。
-    ///
-    /// **3 本の前置き (Common / Compute / Effect) すべてに入る。** 番号は断片が
-    /// `switch` する数で、ずれても例外は出ず別の種別として効くだけなので、Metal 側でも
-    /// 1 箇所に集めて `mokume_kindLayout` が書き出せるようにしてある ([#802])。
-    ///
-    /// [#802]: https://github.com/mokume-metal/mokume/issues/802
-    func preludedShaderSource(named name: String) throws(RenderFailure) -> String {
-        try bundledShaderSource(named: "Kinds") + "\n" + bundledShaderSource(named: name)
-    }
-
-    func bundledShaderSource(named name: String) throws(RenderFailure) -> String {
-        guard let url = ModuleResources.url(forResource: name, withExtension: "metal"),
-            let source = try? String(contentsOf: url, encoding: .utf8)
-        else {
-            throw .shaderSourceMissing(name: "\(name).metal")
-        }
-        return source
-    }
-}
-
-extension RenderDevice {
     /// 表示に使う面が空くのを待つよう予約する。差し出す面へ書く前に呼ぶ。
     func waitForDrawable(_ drawable: any MTLDrawable) {
         queue.waitForDrawable(drawable)
@@ -755,11 +684,10 @@ extension RenderDevice {
     /// 「いつ終わったか分からない」まま環へ戻り、次の巻き戻しが実行中のコマンドを
     /// 踏む ([#222](https://github.com/mokume-metal/mokume/issues/222))。
     func commit(_ commands: any MTL4CommandBuffer, signalling drawable: any MTLDrawable) {
-        commands.endCommandBuffer()
-        orderAfterPreviousSubmission()
-        queue.commit([commands])
-        let submission = recordSubmission(of: commands)
-        held.append((submission, [commands]))
+        // **投入の並びは ``commit(_:retaining:)`` が持つ。** かつてはここにも同じ 5 行が
+        // 書かれていた — 並びに 1 段足して片方だけ直すと、そのコマンドが抱えられないまま
+        // GPU の実行中に消える。負荷のかかったときだけ出る形である (#222 が踏んだ)
+        commit(commands)
         queue.signalDrawable(drawable)
     }
 }

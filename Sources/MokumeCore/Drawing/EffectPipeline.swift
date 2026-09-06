@@ -100,8 +100,8 @@ final class EffectPipeline {
         }
         self.compiler = compiler
 
-        let library = try gpu.makeEffectLibrary(
-            named: "builtin", body: try gpu.bundledShaderSource(named: "Builtin"))
+        let library = try gpu.shaders.makeEffectLibrary(
+            named: "builtin", body: try gpu.shaders.bundledShaderSource(named: "Builtin"))
         self.builtin = try Self.makeState(
             compiler: compiler, library: library, pixelFormat: pixelFormat,
             label: "mokume.effect.builtin")
