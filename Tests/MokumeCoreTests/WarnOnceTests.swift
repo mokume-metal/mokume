@@ -21,6 +21,9 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .transform:
         "変換はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
             + "初期化のときに書いた変換はどのフレームにも属さないため、無視しました",
+    .style:
+        "スタイルの積み降ろしはフレームの中でだけできます。"
+            + "初期化のときに積んだスタイルはどのフレームにも属さないため、無視しました",
     .light:
         "光はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
             + "初期化のときに置いた光はどのフレームにも属さないため、無視しました",
@@ -44,7 +47,7 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("フレームの外で置き直したときの文面")
 struct OutsideFrameNoticeTests {
-    @Test("8 つとも原文のまま")
+    @Test("9 つとも原文のまま")
     func noticesKeepTheirWording() {
         for (subject, original) in outsideFrameNotices {
             #expect(subject.notice == original, "\(subject) の文面が変わっている")

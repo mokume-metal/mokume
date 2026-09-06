@@ -17,6 +17,7 @@ extension Canvas {
     enum OutsideFrame: CaseIterable {
         case camera
         case transform
+        case style
         case light
         case surroundings
         case shadow
@@ -29,6 +30,7 @@ extension Canvas {
             switch self {
             case .camera: .cameraOutsideFrame
             case .transform: .transformOutsideFrame
+            case .style: .styleOutsideFrame
             case .light: .lightOutsideFrame
             case .surroundings: .surroundingsOutsideFrame
             case .shadow: .shadowOutsideFrame
@@ -43,12 +45,14 @@ extension Canvas {
             opening + "初期化のときに\(pastVerb)\(subject)はどのフレームにも属さないため、無視しました"
         }
 
-        /// なぜフレームの中で呼ぶのか。**5 つは同じ言い出しを共有する**が、粒と計算は
-        /// 「置き直すもの」ではない (出すもの・前置き) ので別の文を持つ。
+        /// なぜフレームの中で呼ぶのか。**6 つは同じ言い出しを共有する**が、スタイルの
+        /// 積み降ろし・粒・計算は「置き直すもの」ではない (積むもの・出すもの・
+        /// 前置き) ので別の文を持つ。
         private var opening: String {
             switch self {
             case .camera: Self.replacedEachFrame("視点と投影", "置き")
             case .transform: Self.replacedEachFrame("変換", "書き")
+            case .style: "スタイルの積み降ろしはフレームの中でだけできます。"
             case .light: Self.replacedEachFrame("光", "置き")
             case .surroundings: Self.replacedEachFrame("周囲", "置き")
             case .shadow: Self.replacedEachFrame("影", "書き")
@@ -68,6 +72,7 @@ extension Canvas {
             switch self {
             case .camera: "視点"
             case .transform: "変換"
+            case .style: "スタイル"
             case .light: "光"
             case .surroundings: "周囲"
             case .shadow: "影"
@@ -85,6 +90,7 @@ extension Canvas {
             switch self {
             case .camera, .transform, .shadow, .material: "書いた"
             case .light, .surroundings: "置いた"
+            case .style: "積んだ"
             case .particles: "出した"
             case .compute: "頼んだ"
             }

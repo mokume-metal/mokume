@@ -358,18 +358,26 @@ struct TextTests {
 
     @Test("文字の設定はスタイルと一緒に積み降ろしされる")
     func textSettingsRideOnTheStyleStack() throws {
+        // **積み降ろしはフレームの中で行う。** 積んだ履歴はフレームを越えないので
+        // (ADR-0021 決定 4 の追補・[#925])、フレームの外での `pushStyle()` は警告して
+        // 無視される。この検査が見たいのは「文字の設定が `Style` に載っているか」で、
+        // そこはフレームの中でも変わらない
+        //
+        // [#925]: https://github.com/mokume-metal/mokume/issues/925
         let canvas = try makeCanvas()
-        let before = canvas.textWidth("mokume")
-        canvas.pushStyle()
-        canvas.textSize(64)
-        canvas.textAlign(.right, .top)
-        canvas.textLeading(99)
-        #expect(canvas.textWidth("mokume") != before)
-        canvas.popStyle()
-        #expect(canvas.textWidth("mokume") == before)
-        #expect(canvas.currentHorizontalTextAlign == .left)
-        #expect(canvas.currentVerticalTextAlign == .baseline)
-        #expect(canvas.currentTextLeading == nil)
+        try canvas.draw {
+            let before = canvas.textWidth("mokume")
+            canvas.pushStyle()
+            canvas.textSize(64)
+            canvas.textAlign(.right, .top)
+            canvas.textLeading(99)
+            #expect(canvas.textWidth("mokume") != before)
+            canvas.popStyle()
+            #expect(canvas.textWidth("mokume") == before)
+            #expect(canvas.currentHorizontalTextAlign == .left)
+            #expect(canvas.currentVerticalTextAlign == .baseline)
+            #expect(canvas.currentTextLeading == nil)
+        }
     }
 
     // MARK: - 折り返し

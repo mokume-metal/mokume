@@ -748,6 +748,15 @@ struct CanvasTests {
 
     @Test("積んだスタイルは次のフレームへ漏れない")
     func styleDoesNotLeakIntoTheNextFrame() throws {
+        // **積んだ履歴はフレームを越えない** (ADR-0021 決定 4 の追補)。スタイルそのもの
+        // (塗り) は越えるが、「積んだ」という事実は次のフレームへ渡らない。
+        //
+        // **この検査は以前、逆のことを見ていた** ([#925]) — 2 フレーム目の `pop()` が
+        // 1 フレーム目の値へ戻ることを期待し、「積んだものは残っているが、戻せば
+        // 1 フレーム目の手前へ帰る」とコメントまで置いて、`styleStack` だけが越える
+        // という割れを契約として固定していた
+        //
+        // [#925]: https://github.com/mokume-metal/mokume/issues/925
         let canvas = try makeCanvas()
         // 1 フレーム目: 積んだまま降ろさずに終える
         try canvas.draw {
@@ -757,16 +766,84 @@ struct CanvasTests {
             canvas.fill(blue)
             canvas.translate(20, 20)
         }
-        // 2 フレーム目: 積んだものは残っているが、戻せば 1 フレーム目の手前へ帰る
+        // 2 フレーム目: 積んだものはもう無いので、降ろしても何も戻らない
         try canvas.draw {
             canvas.background(black)
             canvas.pop()
             canvas.rect(8, 8, 16, 16)
         }
         let image = try pixels(of: canvas)
-        #expect(image[16, 16].red == 255)  // 塗りは白 (1 フレーム目で積んだ値)
-        #expect(image[36, 36] == (0, 0, 0, 255))  // 変換も戻っている
+        // 塗りは青のまま — **スタイルそのものは越える**ので、1 フレーム目の最後の値が残る
+        #expect(image[16, 16].blue > 200)
+        #expect(image[16, 16].red < 60)
+        #expect(image[36, 36] == (0, 0, 0, 255))  // 変換も (フレームの頭で) 戻っている
     }
+
+    @Test("釣り合わない pushStyle は、毎フレーム積み上がらない")
+    func unbalancedPushStyleDoesNotGrow() throws {
+        // `Style` は 25 フィールドあり、60 fps で 1 時間積み続ければ 21 万個になる
+        // ([#925])。**伸びていないことは絵からは分からない**ので、降ろせるかで見る
+        let canvas = try makeCanvas()
+        for _ in 0..<3 {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noStroke()
+                canvas.fill(white)
+                canvas.pushStyle()  // 降ろさずに終える
+                canvas.fill(blue)
+            }
+        }
+        // 3 フレームぶん積み上がっていれば、ここで降ろせてしまう
+        try canvas.draw {
+            canvas.background(black)
+            canvas.popStyle()
+            canvas.rect(8, 8, 16, 16)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 16].blue > 200, "前のフレームで積んだスタイルが降ろせてしまう")
+        #expect(image[16, 16].red < 60)
+    }
+
+    @Test("push() の片肺が無い — 変換とスタイルは揃って戻らない")
+    func pushRestoresNeitherHalfAcrossFrames() throws {
+        // 以前は `push()` だけ書いて `pop()` を忘れると、次のフレームで**変換だけ**が
+        // 戻り、スタイルは戻らなかった ([#925])。同じ 1 つの呼び出しの結果が、フレームを
+        // またいだ瞬間に半分だけ効かなくなる形である
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.push()  // 降ろさずに終える
+            canvas.fill(blue)
+            canvas.translate(20, 20)
+        }
+        try canvas.draw {
+            canvas.background(black)
+            canvas.pop()  // どちらの半分も戻らない
+            canvas.rect(8, 8, 16, 16)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 16].blue > 200, "スタイルだけが戻っている")
+        #expect(image[36, 36] == (0, 0, 0, 255), "変換だけが戻っている")
+    }
+
+    @Test("フレームの外でスタイルを積み降ろしすると、警告して無視される")
+    func styleStackOutsideAFrameIsIgnored() throws {
+        // 積んだ履歴はフレームに属するので、初期化のときに積んでも捨てられる。
+        // #941 で変換について塞いだのと同じ形で知らせる ([#925])
+        for (name, write) in [
+            ("pushStyle", { (c: Canvas) in c.pushStyle() }),
+            ("popStyle", { (c: Canvas) in c.popStyle() }),
+        ] {
+            let canvas = try makeCanvas()
+            write(canvas)
+            #expect(
+                canvas.warnings.hasWarned(.styleOutsideFrame),
+                "\(name) がフレームの外で黙って捨てている")
+        }
+    }
+
 
     @Test("積んだ変換を捨てても、戻す先は残る")
     func resetMatrixKeepsTheStack() throws {

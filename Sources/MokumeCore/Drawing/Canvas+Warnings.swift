@@ -84,6 +84,8 @@ extension Canvas {
         case cameraOutsideFrame
         /// フレームの外で変換を書いた。
         case transformOutsideFrame
+        /// フレームの外でスタイルを積み降ろしした。
+        case styleOutsideFrame
         /// 成り立たない視点・投影が渡された。**入口が 2 つある 1 つの事情。**
         case badCamera
 
