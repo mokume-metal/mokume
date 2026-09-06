@@ -46,6 +46,35 @@ struct Brightness: Equatable, Sendable {
     /// 寄せ始める明るさ。ここより暗いところは ``ToneMapping/roll`` でも動かない。
     static let knee: Float = 0.8
 
+    /// 断片が読む構造体のバイト数。
+    static let byteCount = 16
+
+    /// 断片が読む形で ``byteCount`` バイトを書く。
+    ///
+    /// **並びの正本はここ 1 つである。** 画面へ差し出す経路 (``PresentPipeline``) と
+    /// 書き出す経路 (``OutputPass``) は同じ断片のファイルを読むので、**片方だけ並べ替えると
+    /// 絵が静かに食い違う**。かつては 9 行の同じ組み立てが 2 箇所にあり、片方の doc が
+    /// その危うさを注意書きで名乗っていた
+    /// ([#957](https://github.com/mokume-metal/mokume/issues/957)) — 注意書きで守る形を
+    /// やめ、並べ替えようがない形にした。
+    ///
+    /// **置き場ではなく生のポインタを取る。** `MTLBuffer` の中身を指すポインタを取り出すのは、
+    /// その置き場を**いつ触ってよいかを知っている側**の仕事である — 差し出す側は自分の環を 1 つ進めてから
+    /// 触り、書き出す側は `commitAndWait` の後で触る (`GPUMemoryAccessGateTests` が原文から
+    /// 見張っている待ちの規律)。ここが置き場を受け取ると触る場所が 1 つに集まってしまい、
+    /// **どちらの待ち方で守られているかが呼ぶ側から読めなくなる。** 畳んでよいのは並べ方
+    /// だけで、触る場所ではない。
+    ///
+    /// - Parameter destination: 少なくとも ``byteCount`` バイトある書き先。
+    func write(to destination: UnsafeMutableRawPointer) {
+        let slot = destination.assumingMemoryBound(to: Float.self)
+        slot[0] = exposure
+        slot[1] = Self.knee
+        destination.advanced(by: 8)
+            .assumingMemoryBound(to: UInt32.self)
+            .pointee = toneMapping.rawIndex
+    }
+
     /// 乗算を戻した色 1 つを、表示へ向けて写す。
     ///
     /// **この関数が曲線の正本である。** 画面へ差し出す経路は GPU 上の断片で同じ
