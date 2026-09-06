@@ -22,7 +22,7 @@
 # ために打っただけで auto-merge が掛かってしまうのを防ぐため。こちらは読み取りしか
 # しないので、いつ打っても安全である。
 #
-# ## 分類 (表の 7 行に対応する)
+# ## 分類 (表の 8 行に対応する)
 #
 #   分類                 別     表の行  なぜその別か
 #   bad-title            name   6       タイトルの修正は人手。**rerun を打つと悪化する**
@@ -30,12 +30,18 @@
 #   conflict             name   1       衝突の解消は人手
 #   in-queue             quiet  4       止まっていない (queue が進めている)
 #   stale-checks         act    3・7    古い失敗 check を打ち直す。冪等
+#   dismissed-approval   name   8       押し直しは人の操作。機械には打てない
 #   awaiting-approval    quiet  2       承認待ちは正常な状態
 #   auto-merge-dropped   act    2       予約を掛け直すだけ。ゲートは飛び越えない
 #
 # 表の行 3 と 7 が同じ分類になるのは、対処が同じ (失敗ジョブの rerun) だからである。
 # 7 が言う「**新しい PR の側**を rerun する」は、ここが open な PR しか見ないことで
 # 自動的に満たされる。
+#
+# **dismissed-approval が塞ぐのは「1 行も出ない」穴である** (#1033)。承認済みの PR へ
+# push すると dismiss_stale_reviews_on_push が承認を落とすが、checks は全部緑・衝突も
+# 無く・auto-merge も掛かったままなので、**どの行にも当たらず出力ゼロで終わっていた**
+# (#1019 は 69 分・#1020 は 17 分止まった)。
 #
 # ## 順序に意味がある
 #
@@ -49,9 +55,15 @@
 # 注意は意味を失う」(#642) を踏む。**閾値 (既定 60 分) を超えて続いているものがある
 # ときだけ 1 で終える。** それ以下は出力するだけで 0。
 #
+# **dismissed-approval だけ猶予が短い (既定 15 分)。** 実測すると 60 分では #1019 も
+# #1020 も赤くならなかった — #1019 は落ちてから 69 分で押し直されたが直前の run はまだ
+# 58 分で緑、#1020 は 17 分で終わった (#1033)。押し直しは Approve 1 回で、この状態自体が
+# 稀 (衝突を解いた合流と、規約を外れた push のときだけ) なので #642 には当たりにくい。
+#
 # 経過は「その状態を作った出来事の時刻」から測る — 失敗 check があればその completedAt、
-# check が 1 本も無い conflict では PR の updatedAt。**状態をどこにも記録しない**ので、
-# 当番が落ちていても復帰すればそのまま正しく測れる。
+# check が 1 本も無い conflict では PR の updatedAt、承認が落ちた PR では落とした出来事の
+# createdAt。**状態をどこにも記録しない**ので、当番が落ちていても復帰すればそのまま
+# 正しく測れる。
 #
 # ## 出力
 #
@@ -85,6 +97,9 @@ REPO="$(this_repo)"
 
 # 名乗りを赤へ上げるまでの猶予。**readonly にしない** — 検査が短い値で回すため
 STALL_MINUTES=${STALL_MINUTES:-60}
+
+# 落ちた承認だけの猶予。短い理由は冒頭の「騒がしさの上限」
+DISMISSED_APPROVAL_MINUTES=${DISMISSED_APPROVAL_MINUTES:-15}
 
 # 「まだ答えが出ていない」と読む check の結果。ここに無いものは失敗として扱う
 # (FAILURE / ERROR / CANCELLED / TIMED_OUT / ACTION_REQUIRED / STARTUP_FAILURE)
@@ -167,6 +182,20 @@ in_merge_queue() { # $1=PR 番号
     -f query='query($owner:String!,$name:String!,$number:Int!){
       repository(owner:$owner,name:$name){pullRequest(number:$number){isInMergeQueue}}}' \
     --jq '.data.repository.pullRequest.isInMergeQueue' 2>/dev/null || echo ""
+}
+
+# 承認が落とされた時刻。**latestReviews では足りない** — あれは「落ちた」と「まだ誰も
+# 見ていない」を分けられないので、落とした出来事そのものを見る (#1033)。in_merge_queue と
+# 同じく gh pr view --json に無い欄なので GraphQL で引く。読めなければ空を返し、
+# 呼び手が「落ちていない」ではなく「判定できない」に倒せるようにする
+dismissed_at() { # $1=PR 番号
+  # shellcheck disable=SC2016
+  gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$1" \
+    -f query='query($owner:String!,$name:String!,$number:Int!){
+      repository(owner:$owner,name:$name){pullRequest(number:$number){
+        timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT],last:1){
+          nodes{... on ReviewDismissedEvent{createdAt}}}}}}' \
+    --jq '.data.repository.pullRequest.timelineItems.nodes[-1].createdAt // ""' 2>/dev/null || echo ""
 }
 
 say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
@@ -252,9 +281,26 @@ for n in $numbers; do
     continue
   fi
 
+  # 一度承認された後の push は dismiss_stale_reviews_on_push で承認を落とす。checks は
+  # 全部緑・衝突も無く・auto-merge も掛かったままなので、**この分岐が無いと 1 行も出ない**
+  # (#1033)。**auto の値を見ないのはそのためである。** 新規の承認待ちとの分かれ目は
+  # 「落とした出来事があるか」の 1 点だけで、そこは latestReviews からは読めない
+  if [ "$state" = BLOCKED ] && [ "$approved" != true ]; then
+    dismissed=$(dismissed_at "$n")
+    if [ -n "$dismissed" ]; then
+      mins=$(minutes_since "$dismissed")
+      say_line "$n" dismissed-approval name "$mins" \
+        "承認が push で落ちている — Approve 1 回で入る (押し直しは機械にできない)"
+      [ "$mins" -lt "$DISMISSED_APPROVAL_MINUTES" ] || overdue=1
+      continue
+    fi
+  fi
+
   if [ "$auto" != true ]; then
     # BLOCKED は「承認待ち」と「auto-merge が外れた」の両方を指す。分けるのは
-    # 「承認が要るパスに触れているか」と「もう承認されたか」の 2 つである
+    # 「承認が要るパスに触れているか」と「もう承認されたか」の 2 つである。
+    # **「落ちた承認」は上で先に抜けている** — auto-merge も一緒に外れていたら、
+    # 押し直された次の run が auto-merge-dropped として掛け直す (2 手で収束する)
     if [ "$state" = BLOCKED ] && [ "$approved" != true ] &&
       pr_files "$REPO" "$n" | touches_protected_path; then
       say_line "$n" awaiting-approval quiet 0 "重要パスに触れる PR の承認待ち (正常)"
