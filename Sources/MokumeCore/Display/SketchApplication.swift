@@ -55,28 +55,80 @@ import QuartzCore
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 @MainActor
-public final class SketchApplication: NSObject {
+public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private let gpu: RenderDevice
     private let runtime: SketchRuntime
     private let presenter: FramePresenter
     private let title: String
 
-    /// 開いている窓。**読むだけを内へ開けてある** — 検査が実際の経路の窓を閉じるため (#714)。
-    private(set) var window: NSWindow?
-    private var surface: SketchSurface?
-    /// 画面の出口が外のプロセスに在るときの差し出し先。**在れば窓を持たない。**
+    /// 画面の出口。
     ///
     /// 分岐は「ビューアあり / なし」というモードではなく、**与えられた出口の構成**である
     /// ([ADR-0032] 決定 1)。合図は 1 つ (区画があるか) で、窓を開かないことも同じ合図から
     /// 従う。
     ///
+    /// **その 1 つの合図を 4 つの変数へ写さない。** かつては窓・面・共有面・出したかの
+    /// 4 つの Optional で持っており、片方だけ書き換えれば「窓も出るし面へも書く」が
+    /// 型として作れた — どちらの経路もそれを想定していないのに、である
+    /// ([#955](https://github.com/mokume-metal/mokume/issues/955))。
+    ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    private var sharedSurface: SharedFrameSurface?
-    private var displayLink: CADisplayLink?
-    /// 駆動源を紐づけている画面。張り替えの要否をこれで判断する。
-    private var linkedScreen: NSScreen?
-    /// これまでに 1 度でも画面へ出したか。最初の 1 枚の扱いに使う。
-    private var hasPresented = false
+    private enum ScreenOutlet {
+        /// 窓の経路だが、まだ建っていない。
+        ///
+        /// **``run()`` の既定であり、``didFinishLaunching()`` が置き換える。** 2 段階に
+        /// なるのは畳めない事情による — 活動の方針 (`setActivationPolicy`) は
+        /// `NSApplication.run()` より前にしか据えられず、窓はその後にしか建たない。
+        case pendingWindow
+        /// 自分の窓へ出す。付属の `hasPresented` は最初の 1 枚の扱いに使う。
+        case window(NSWindow, SketchSurface, hasPresented: Bool)
+        /// 外のプロセスが持つ区画へ差し出す。**窓は持たない。**
+        case shared(SharedFrameSurface)
+    }
+    private var outlet: ScreenOutlet = .pendingWindow
+
+    /// 開いている窓。**読むだけを内へ開けてある** — 検査が実際の経路の窓を閉じるため (#714)。
+    var window: NSWindow? {
+        if case .window(let window, _, _) = outlet { window } else { nil }
+    }
+
+    /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。
+    private let screenLink: ScreenDisplayLink
+
+    /// いま走らせているもの。``run()`` の間だけ入る。
+    private static var running: SketchApplication?
+
+    /// AppKit へ渡した delegate。弱く参照される先なので、こちらで寿命を持つ。
+    private var delegate: SketchApplicationDelegate?
+
+    /// 省電力の間引きを断っている印。**手放した時点で断りが切れる**ので、走らせている間は持つ。
+    ///
+    /// 取る組み合わせにも意味がある。間引きを断るのに要るのは「background ではない」ことだけ
+    /// なので、機械のスリープまで止める `.userInitiated` ではなく
+    /// `.userInitiatedAllowingIdleSystemSleep` を取る — 要件が求めていない約束を副作用で
+    /// 足さないため。`.latencyCritical` は「この周期処理は時刻に縛られている」という名乗りで、
+    /// ADR-0012 決定 5 が要件にした性質そのものである。
+    private var activity: (any NSObjectProtocol)?
+    /// ディスプレイが勝手に消えるのを断っているもの。**窓を出す経路でだけ持つ。**
+    private var displaySleepBlock: DisplaySleepBlock?
+    /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。
+    ///
+    /// 外してよいのは、**画面が消えることそのものを測る検査**だけである
+    /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。断ったまま測ると
+    /// 「スリープを作れなかったのに緑」という嘘が出る。
+    public var blocksDisplaySleep = true
+    /// 予備の駆動源。表示のリフレッシュが止まっても進め続けるために回す。
+    private var fallbackTimer: Timer?
+    /// 最後にフレームを進めた時刻。**どちらの駆動源が進めたかは問わない。**
+    private var lastAdvancedAt: Double = 0
+    /// 予備の駆動源が引き受けている最中か。表示のリフレッシュが戻れば下りる。
+    private var isDrivenByFallback = false
+
+    /// 速さを名乗る仕掛け。名乗りが与えられたときだけ持つ。
+    private var frameRateNotice: Timer?
+
+    /// 続けて描けなかった数。**始まりと終わりだけ**言うために持つ。
+    private var frameFailures = FrameFailureLog()
 
     /// 名乗ってよい速さ。**測れていなければ `nil`。**
     ///
@@ -91,9 +143,6 @@ public final class SketchApplication: NSObject {
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public var currentFrameRate: Double? { runtime.frameNumbers.frameRate }
-
-    /// 速さを名乗る仕掛け。名乗りが与えられたときだけ持つ。
-    private var frameRateNotice: Timer?
 
     /// 面を取れずに見送ったフレームの数。
     public var missedFrames: Int { presenter.missedFrames }
@@ -119,7 +168,10 @@ public final class SketchApplication: NSObject {
         self.title = sketch.settings.title
         self.runtime = try SketchRuntime(sketch: sketch, gpu: gpu, clock: .wallClock)
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        self.screenLink = ScreenDisplayLink(
+            frameRate: Float(max(1, sketch.settings.frameRate)))
         super.init()
+        screenLink.owner = self
     }
 
     /// アプリケーションとして走らせる。戻らない。
@@ -128,8 +180,12 @@ public final class SketchApplication: NSObject {
         // **画面の出口を先に決める。** 活動の方針は `app.run()` より前にしか据えられない
         // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
         // 並ばない (`.accessory`) — 並ぶと、道具が出す窓と作品が 2 つ並んで見える
-        sharedSurface = attachSharedSurface()
-        app.setActivationPolicy(sharedSurface == nil ? .regular : .accessory)
+        if let shared = attachSharedSurface() { outlet = .shared(shared) }
+        switch outlet {
+        case .shared: app.setActivationPolicy(.accessory)
+        // 窓はまだ建っていないが、建てると決まっている
+        case .pendingWindow, .window: app.setActivationPolicy(.regular)
+        }
         // **delegate と自分を強く持っておく。** AppKit は delegate を弱く参照するので、
         // ここで持たないと、delegate を渡した直後に解放され、以後の呼び出しが 1 つも
         // 来ない (窓が開かない形で表に出る)。走らせている間は生きているべきものなので、
@@ -184,35 +240,6 @@ public final class SketchApplication: NSObject {
         }
     }
 
-    /// いま走らせているもの。``run()`` の間だけ入る。
-    private static var running: SketchApplication?
-
-    /// AppKit へ渡した delegate。弱く参照される先なので、こちらで寿命を持つ。
-    private var delegate: SketchApplicationDelegate?
-
-    /// 省電力の間引きを断っている印。**手放した時点で断りが切れる**ので、走らせている間は持つ。
-    ///
-    /// 取る組み合わせにも意味がある。間引きを断るのに要るのは「background ではない」ことだけ
-    /// なので、機械のスリープまで止める `.userInitiated` ではなく
-    /// `.userInitiatedAllowingIdleSystemSleep` を取る — 要件が求めていない約束を副作用で
-    /// 足さないため。`.latencyCritical` は「この周期処理は時刻に縛られている」という名乗りで、
-    /// ADR-0012 決定 5 が要件にした性質そのものである。
-    private var activity: (any NSObjectProtocol)?
-    /// ディスプレイが勝手に消えるのを断っているもの。**窓を出す経路でだけ持つ。**
-    private var displaySleepBlock: DisplaySleepBlock?
-    /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。
-    ///
-    /// 外してよいのは、**画面が消えることそのものを測る検査**だけである
-    /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。断ったまま測ると
-    /// 「スリープを作れなかったのに緑」という嘘が出る。
-    public var blocksDisplaySleep = true
-    /// 予備の駆動源。表示のリフレッシュが止まっても進め続けるために回す。
-    private var fallbackTimer: Timer?
-    /// 最後にフレームを進めた時刻。**どちらの駆動源が進めたかは問わない。**
-    private var lastAdvancedAt: Double = 0
-    /// 予備の駆動源が引き受けている最中か。表示のリフレッシュが戻れば下りる。
-    private var isDrivenByFallback = false
-
     /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
     ///
     /// **区画が在るのに用意できなかったときは、窓を開く側へ倒す** — 面も窓も無い実行は、
@@ -237,30 +264,21 @@ public final class SketchApplication: NSObject {
     /// **画面の出口が外のプロセスに在れば、窓は作らない** ([ADR-0032] 決定 1)。駆動源は
     /// 窓ではなく画面に紐づくので (下記)、窓が無くてもそのまま繋がる。
     func didFinishLaunching() {
-        if sharedSurface != nil {
-            attachDisplayLink(to: NSScreen.main)
+        switch outlet {
+        case .shared:
+            screenLink.attach(to: NSScreen.main)
             return
+        // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る
+        case .window: return
+        case .pendingWindow: break
         }
         let settings = runtime.sketch.settings
         // 窓は描く解像度の半分で開く。描く解像度と窓の大きさは独立なので、
         // どちらに合わせてもよい — 大きな絵が画面からはみ出さない側を既定にする
         let contentSize = NSSize(width: settings.width / 2, height: settings.height / 2)
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: contentSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false)
-        window.title = title
-        // **閉じたときに窓が自分を解放しないようにする。** 素の `NSWindow` の既定は
-        // 「閉じたら解放する」で、こちらは強い参照を持ったまま使う人に閉じさせるので、
-        // そのままだと解放が 1 回余分になる。しかも駆動源は窓ではなく画面に紐づいて
-        // いるので (下記)、窓を閉じてもプロセスが消えるまで `step` は回り続け、その
-        // 間ずっと消えた先を触る — 症状は原因から遠いところにしか出ない (#714)
-        window.isReleasedWhenClosed = false
-        // **覚えている位置があれば、そこへ戻す。** 無いときだけ中央に置く。覚えるのも
-        // 画面外へ出さないようにするのも AppKit が持っている ([WindowPlacement])
-        if !window.setFrameUsingName(WindowPlacement.autosaveName) { window.center() }
-        window.setFrameAutosaveName(WindowPlacement.autosaveName)
+        let window = WindowPlacement.makeWindow(
+            title: title, autosaveName: WindowPlacement.autosaveName,
+            defaultSize: contentSize)
 
         // 見張りが起こした入れ替えでは、窓を出しはするが前面は取らない (#679)
         let takesFocus = WindowPlacement.takesFocus(
@@ -286,60 +304,14 @@ public final class SketchApplication: NSObject {
         window.makeFirstResponder(surface)
         surface.synchronizeDrawableSize()
 
-        self.window = window
-        self.surface = surface
+        outlet = .window(window, surface, hasPresented: false)
 
         if takesFocus { NSApp.activate() }
 
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(windowChangedScreen(_:)),
-            name: NSWindow.didChangeScreenNotification, object: window)
-
-        attachDisplayLink(to: window.screen ?? NSScreen.main)
+        screenLink.attach(to: window.screen ?? NSScreen.main, following: window)
         // 窓を開く時刻は起点にしない。速さを数え始めるのは最初のフレームが
         // 来たときである ([FrameTempo]) — 進み始める前に測ったことにすると、
         // 1 枚目で「1 枚 ÷ 待っていた時間」が出て 0.0 という嘘の数字になる
-    }
-
-    /// フレームの駆動源を画面のリフレッシュに紐づける。
-    ///
-    /// **面 (`NSView`) からではなく画面 (`NSScreen`) から取る。** 面から取った駆動源は
-    /// 面が hidden になると呼ばれなくなる — AppKit のヘッダが `NSView` の側にだけ
-    /// 「If the view is hidden, or not on any display, the callback will not be invoked」と
-    /// 書いている。窓を最小化すると面は hidden になるので、フレームループごと止まり、
-    /// 絵だけでなく観測も入力も応答しなくなっていた (#223)。
-    ///
-    /// 画面に紐づければ、最小化・被覆・Space の切り替えのどれでも止まらない。**最小化を
-    /// 特別扱いする経路も、時間で叩く 2 本目の駆動源も要らない** — どれも「駆動源を
-    /// どこに紐づけるか」1 つの問題だった (ADR-0012 決定 3 の「表示のリフレッシュは
-    /// その駆動源の 1 つ」はそのまま)。
-    private func attachDisplayLink(to screen: NSScreen?) {
-        guard let screen else { return }
-        displayLink?.invalidate()
-
-        let link = screen.displayLink(target: self, selector: #selector(step(_:)))
-        // **表示のリフレッシュ率をそのまま使わない。** 画面が 120 Hz なら 120 回
-        // 呼ばれてしまい、スケッチが求めたフレームレートが無視される。求めた値を
-        // 上限にも下限にも据えて、画面の性能に引きずられないようにする
-        let rate = Float(max(1, runtime.sketch.settings.frameRate))
-        link.preferredFrameRateRange = CAFrameRateRange(
-            minimum: rate, maximum: rate, preferred: rate)
-        link.add(to: .main, forMode: .common)
-
-        displayLink = link
-        linkedScreen = screen
-    }
-
-    /// 窓が別の画面へ移ったら駆動源を張り替える。
-    ///
-    /// 画面ごとにリフレッシュ率が違うので、移った先に付け替えないと駆動が噛み合わない。
-    ///
-    /// **窓がどの画面にも乗っていないときは触らない。** 最小化でも同じ通知が飛び、その
-    /// とき `window.screen` は `nil` を返す — 素直に張り替えると、直そうとした最小化で
-    /// こそ駆動源を失う。
-    @objc private func windowChangedScreen(_ notification: Notification) {
-        guard let screen = window?.screen, screen !== linkedScreen else { return }
-        attachDisplayLink(to: screen)
     }
 
     /// 駆動源を畳む。``SketchApplicationDelegate`` から呼ばれる。
@@ -347,8 +319,7 @@ public final class SketchApplication: NSObject {
         // **差込口を先に閉じる。** 送り先のアプリや機材から見ると、こちらが消えるより
         // 先に「終わる」と言われるほうが行儀がよい
         runtime.closePlugins()
-        displayLink?.invalidate()
-        displayLink = nil
+        screenLink.invalidate()
         fallbackTimer?.invalidate()
         fallbackTimer = nil
         // **返し忘れると、プロセスが終わるまで画面が消えなくなる**
@@ -366,7 +337,7 @@ public final class SketchApplication: NSObject {
     /// 返すのは「最後に描いた絵」ではなく「いま描いた絵」で (ADR-0018)、進めるのを
     /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
-    @objc private func step(_ link: CADisplayLink) {
+    func displayLinkFired() {
         // **表示のリフレッシュが生きている。** 予備が引き受けていたなら、ここで下りる
         isDrivenByFallback = false
         advanceAndPresent()
@@ -426,40 +397,37 @@ public final class SketchApplication: NSObject {
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private func presentFrame() throws(RenderFailure) {
-        if let sharedSurface {
+        switch outlet {
+        case .shared(let shared):
             // **速さも一緒に渡す。** 数えているのはこちらで、読むのは道具である
             // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない
-            try sharedSurface.write(
-                runtime.target, using: presenter, numbers: runtime.frameNumbers)
+            try shared.write(runtime.target, using: presenter, numbers: runtime.frameNumbers)
+        case .window(let window, let surface, let hasPresented):
+            guard let layer = surface.metalLayer,
+                FramePresenter.shouldPresent(
+                    windowIsVisible: isWindowVisible, hasPresented: hasPresented)
+            else { return }
+            // **書き戻すのは 1 度だけ。** 素直に毎回組み直すと、出すたびに窓と面の
+            // retain/release が乗る (秒 60 回)。`shouldPresent` は一度 true になれば
+            // 戻らないので、立てるのも 1 度でよい
+            if try presenter.present(runtime.target, to: layer), !hasPresented {
+                outlet = .window(window, surface, hasPresented: true)
+            }
+        case .pendingWindow:
             return
         }
-        guard let surface, let layer = surface.metalLayer,
-            FramePresenter.shouldPresent(
-                windowIsVisible: isWindowVisible, hasPresented: hasPresented)
-        else { return }
-        if try presenter.present(runtime.target, to: layer) { hasPresented = true }
     }
 
-    /// 続けて描けなかった数。始まりと終わりだけ言うために持つ。
-    private var consecutiveFailures = 0
-
     /// 描けなかったことを 1 度だけ言う。
-    ///
-    /// **握り潰すと「絵が止まったのに理由がどこにも残らない」になる** — 観測だけが
-    /// 黙ったように見える形の調査で、いちばん最初に欲しい 1 行がここだった
-    /// ([#221](https://github.com/mokume-metal/mokume/issues/221))。一方で毎フレーム
-    /// 言えば 1 秒に 60 行流れ、本当に読むべき行が埋まる。だから始まりと終わりだけ言う。
     private func noteFrameFailure(_ failure: RenderFailure) {
-        consecutiveFailures += 1
-        guard consecutiveFailures == 1 else { return }
+        guard frameFailures.note() else { return }
         Diagnostics.warn("フレームを描けませんでした: \(failure.headline) — 次のリフレッシュで試し直します")
     }
 
     /// 描けるようになったことを言う。飛ばした数を添える。
     private func noteFrameRecovery() {
-        guard consecutiveFailures > 0 else { return }
-        Diagnostics.warn("フレームの描画が回復しました (\(consecutiveFailures) 枚ぶん飛ばしました)")
-        consecutiveFailures = 0
+        guard let skipped = frameFailures.recovered() else { return }
+        Diagnostics.warn("フレームの描画が回復しました (\(skipped) 枚ぶん飛ばしました)")
     }
 
 }

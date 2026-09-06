@@ -31,7 +31,7 @@ import QuartzCore
 ///
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
-final class SharedFrameStage: NSObject {
+final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 窓の見た目。**台が決めないもの**をここへ集める。
     struct Look {
         /// 窓の名前。
@@ -139,8 +139,8 @@ final class SharedFrameStage: NSObject {
     /// 後から差し替えられるようにしてあるのは、宣言の顔ぶれが変わったらつまみを
     /// 組み直すためである ([ADR-0032] 決定 5)。
     var host: NSView? { view }
-    private var displayLink: CADisplayLink?
-    private var linkedScreen: NSScreen?
+    /// フレームの駆動源。**速さは据えない** (``ScreenDisplayLink/frameRate`` が理由を持つ)。
+    private let screenLink = ScreenDisplayLink()
 
     private var source: Source?
     /// 区画を最後に読んだときのファイルの更新時刻。**変わったときだけ読み直す。**
@@ -152,30 +152,16 @@ final class SharedFrameStage: NSObject {
     private var lastSeenFrame = 0
     /// 走っている側が数えた速さ。**自分では数えない** ([ADR-0030] 決定 7)。
     private var tempo = RemoteTempo()
-    /// 続けて差し出せなかった数。始まりと終わりだけ言うために持つ。
-    private var consecutiveFailures = 0
-
-    /// 表示のリフレッシュを、台を強く持たずに中継する。
-    ///
-    /// **`CADisplayLink` は自分の target を強く持ち、走らせる実行ループがその仕掛けを
-    /// 持つ。** 台が自分で仕掛けを持つと環になり、`close()` を呼ばずに手放した台は
-    /// 永久に解放されない — しかもリフレッシュのたびに区画を読み直し続ける ([#738])。
-    /// 中継を挟むと環が切れるので、手放した時点で `deinit` が走り、そこで畳める。
-    ///
-    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
-    @MainActor private final class DisplayLinkRelay: NSObject {
-        weak var stage: SharedFrameStage?
-        @objc func step(_ link: CADisplayLink) { stage?.step(link) }
-    }
-
-    private let relay = DisplayLinkRelay()
+    /// 続けて差し出せなかった数。**始まりと終わりだけ**言うために持つ。
+    private var failures = FrameFailureLog()
 
     /// 窓の出来事を、台を強く持たずに中継する。
     ///
     /// **窓の delegate に台を直に据えない。** AppKit は delegate を弱く持つが、呼ぶ前に
     /// 一時的な強い参照を作る (autorelease) ので、**手放した台の解放がプールの掃除まで
     /// 遅れる** — [#738] が入れた検査 (`close()` を呼ばずに手放したら解放される) は、直に
-    /// 据えた版で実際に落ちた。中継の形は ``DisplayLinkRelay`` と同じである。
+    /// 据えた版で実際に落ちた。駆動源が持ち主を弱く持つのも同じ理由である
+    /// (``ScreenDisplayLink/owner``)。
     ///
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     @MainActor private final class WindowRelay: NSObject, NSWindowDelegate {
@@ -199,7 +185,7 @@ final class SharedFrameStage: NSObject {
         self.look = look
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         super.init()
-        relay.stage = self
+        screenLink.owner = self
         windowRelay.stage = self
     }
 
@@ -219,25 +205,9 @@ final class SharedFrameStage: NSObject {
     func open(overlay: NSView? = nil) {
         // 大きさは差し出し元が来るまで分からない。**来てから合わせる**ので、ここは
         // 覚えている枠が無いときの初期値でしかない
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: look.defaultSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered, defer: false)
-        window.title = look.title
-        // **畳んだときに窓が自分を解放しないようにする。** 素の `NSWindow` の既定は
-        // 「閉じたら解放する」で、こちらは強い参照を持ったまま `close()` を呼ぶので、
-        // そのままだと二重に解放される — 症状は検査の走り終わりでの落下 (signal 11) と
-        // いう、原因から遠いところにしか出ない
-        window.isReleasedWhenClosed = false
-        if !window.setFrameUsingName(look.autosaveName) {
-            window.center()
-            if look.nudge != .zero {
-                let origin = window.frame.origin
-                window.setFrameOrigin(
-                    NSPoint(x: origin.x + look.nudge.width, y: origin.y + look.nudge.height))
-            }
-        }
-        window.setFrameAutosaveName(look.autosaveName)
+        let window = WindowPlacement.makeWindow(
+            title: look.title, autosaveName: look.autosaveName,
+            defaultSize: look.defaultSize, nudge: look.nudge)
 
         // **面はスケッチの窓と同じものを使う。** 画素形式・色空間・EDR の既定を 1 か所に
         // 保つためで、別に作ると片方だけが規範から外れる (ADR-0011)
@@ -263,10 +233,7 @@ final class SharedFrameStage: NSObject {
         self.window = window
         self.view = view
 
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(windowChangedScreen(_:)),
-            name: NSWindow.didChangeScreenNotification, object: window)
-        attachDisplayLink(to: window.screen ?? NSScreen.main)
+        screenLink.attach(to: window.screen ?? NSScreen.main, following: window)
     }
 
     /// × を押されたら、確かめてから知らせる。**確かめている間は閉じない。**
@@ -282,9 +249,7 @@ final class SharedFrameStage: NSObject {
 
     /// 畳む。
     func close() {
-        displayLink?.invalidate()
-        displayLink = nil
-        NotificationCenter.default.removeObserver(self)
+        screenLink.invalidate()
         // **下りているシートを先に畳む。** 兄弟窓 (作品の窓とプレビュー) は独立に × を
         // 押せるので、片方で確定した後始末が**もう片方のシートが出たままの窓**を閉じる
         if let window, let sheet = window.attachedSheet { window.endSheet(sheet) }
@@ -301,28 +266,7 @@ final class SharedFrameStage: NSObject {
 
     // MARK: - 駆動
 
-    /// 表示のリフレッシュに紐づける。
-    ///
-    /// **速さを指定しない。** こちらは絵を作っていないので、差し出し元より速く回っても
-    /// 出す枚数は増えない (同じ枚数なら出さない)。画面の速さに任せるほうが、相手が何 fps
-    /// でも遅れが最小になる。
-    private func attachDisplayLink(to screen: NSScreen?) {
-        guard let screen else { return }
-        displayLink?.invalidate()
-        // **仕掛けへ渡すのは中継である** (``DisplayLinkRelay``)。台を直に渡すと環になる
-        let link = screen.displayLink(
-            target: relay, selector: #selector(DisplayLinkRelay.step(_:)))
-        link.add(to: .main, forMode: .common)
-        displayLink = link
-        linkedScreen = screen
-    }
-
-    @objc private func windowChangedScreen(_ notification: Notification) {
-        guard let screen = window?.screen, screen !== linkedScreen else { return }
-        attachDisplayLink(to: screen)
-    }
-
-    fileprivate func step(_ link: CADisplayLink) {
+    func displayLinkFired() {
         onTick?()
         reloadSourceIfChanged()
         guard let source, let view, let layer = view.metalLayer,
@@ -419,15 +363,13 @@ final class SharedFrameStage: NSObject {
 
     /// 出せなかったことを 1 度だけ言う。**握り潰すと、絵が止まった理由がどこにも残らない。**
     private func noteFailure(_ failure: RenderFailure) {
-        consecutiveFailures += 1
-        guard consecutiveFailures == 1 else { return }
+        guard failures.note() else { return }
         Diagnostics.warn("差し出せませんでした: \(failure.headline) — 次のリフレッシュで試し直します")
     }
 
     private func noteRecovery() {
-        guard consecutiveFailures > 0 else { return }
-        Diagnostics.warn("差し出しが回復しました (\(consecutiveFailures) 枚ぶん飛ばしました)")
-        consecutiveFailures = 0
+        guard let skipped = failures.recovered() else { return }
+        Diagnostics.warn("差し出しが回復しました (\(skipped) 枚ぶん飛ばしました)")
     }
 }
 
@@ -464,7 +406,6 @@ extension SharedFrameStage {
     /// 面へ差し出し続け、しかも見えない面への差し出しは待たされる。`close()` を通らずに
     /// 閉じられる経路 (問いを繋がずに出した窓の ×) を、費用だけ払い続ける形にしない (#826)。
     fileprivate func willClose() {
-        displayLink?.invalidate()
-        displayLink = nil
+        screenLink.invalidate()
     }
 }
