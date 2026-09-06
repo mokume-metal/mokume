@@ -93,7 +93,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 
 **`BEHIND` でも "Update branch" は押さない。** 必須チェックは `strict` を切ってあり、queue が合流後の姿で再検証するので、追随しても得るものが無く auto-merge だけが外れる ([#110](https://github.com/mokume-metal/mokume/pull/110))。例外は描画 PR で `local-render` が failure になったときだけで、対処は「描画に影響する変更」節にある。
 
-止まって見えるときの読み分け:
+止まって見えるときの読み分け。**この表は `scripts/stall-watch.sh` が 15 分ごとに実行する** ([#961](https://github.com/mokume-metal/mokume/issues/961)) — 機械が打てる行 (auto-merge の掛け直し・古い失敗ジョブの rerun) は打たれ、人手が要る行だけが run の赤で名乗られる。どの行を打ちどの行を名乗るかはスクリプトの冒頭にある。**当番の対象外にしたい PR は Draft にする** (作業中の描画 PR を Draft にしておくのと同じ印である)。
 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
