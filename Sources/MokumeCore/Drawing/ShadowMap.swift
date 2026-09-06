@@ -48,6 +48,14 @@ final class ShadowMap {
     static let detailRange = 64...4096
     /// 何も指定しなかったときの細かさ。
     static let defaultDetail = 1024
+    /// 何も指定しなかったときの、縁の破綻を抑える量。
+    ///
+    /// ここに置くのは**フレームの境目で戻す先**でもあるためで、`Canvas` の宣言と
+    /// `endFrame()` が同じ 1 つを読む。別々に数を書くと、片方だけ動かした日に
+    /// 「宣言しないフレームだけ違う量になる」形で黙って割れる ([#940])。
+    ///
+    /// [#940]: https://github.com/mokume-metal/mokume/issues/940
+    static let defaultBias: Float = 0.0025
 
     init(gpu: RenderDevice, detail: Int) throws(RenderFailure) {
         self.detail = detail

@@ -283,23 +283,55 @@ struct ShadowTests {
 
     @Test("影の設定はフレームを越えない")
     func shadowSettingsDoNotCrossFrames() throws {
+        // **6 つとも、フレームの中で既定から動かしてから見る。** 動かさずに見ると
+        // 「戻った」と「もともと既定だった」が区別できない — ここは以前 `floorAndSphere`
+        // を 1 フレーム回すだけだったので、そのヘルパが呼ばない `shadowDetail` /
+        // `shadowBias` は**越えていても緑のまま**だった ([#940])。フレームの中での
+        // 検査は、動かせていることの確認である (動いていなければ下は何も見ていない)
+        //
+        // [#940]: https://github.com/mokume-metal/mokume/issues/940
         let canvas = try makeCanvas()
-        _ = try floorAndSphere(canvas, shadows: true)
+        try canvas.draw {
+            canvas.shadows(true)
+            canvas.shadowRange(40)
+            canvas.shadowDetail(512)
+            canvas.shadowBias(0.01)
+            canvas.castShadow(false)
+            canvas.receiveShadow(false)
+            #expect(canvas.shadowsEnabled)
+            #expect(canvas.shadowRangeValue == 40)
+            #expect(canvas.shadowDetailValue == 512)
+            #expect(canvas.shadowBiasValue == 0.01)
+            #expect(canvas.castsShadow == false)
+            #expect(canvas.receivesShadow == false)
+        }
         #expect(canvas.shadowsEnabled == false)
         #expect(canvas.shadowRangeValue == nil)
+        #expect(canvas.shadowDetailValue == ShadowMap.defaultDetail)
+        #expect(canvas.shadowBiasValue == ShadowMap.defaultBias)
         #expect(canvas.castsShadow)
         #expect(canvas.receivesShadow)
     }
 
     @Test("初期化のときに書いた影の設定は、どのフレームにも属さないので無視される")
     func shadowSettingsOutsideAFrameAreIgnored() throws {
+        // 上と同じく**6 つとも**見る。入口は 6 本とも同じ `guard isDrawing` で
+        // 塞がれているので、1 本だけ抜けても他の 5 本からは見えない ([#940])
+        //
+        // [#940]: https://github.com/mokume-metal/mokume/issues/940
         let canvas = try makeCanvas()
         canvas.shadows(true)
         canvas.shadowRange(40)
+        canvas.shadowDetail(512)
+        canvas.shadowBias(0.01)
         canvas.castShadow(false)
+        canvas.receiveShadow(false)
         #expect(canvas.shadowsEnabled == false)
         #expect(canvas.shadowRangeValue == nil)
+        #expect(canvas.shadowDetailValue == ShadowMap.defaultDetail)
+        #expect(canvas.shadowBiasValue == ShadowMap.defaultBias)
         #expect(canvas.castsShadow)
+        #expect(canvas.receivesShadow)
     }
 
     @Test("数でない値・範囲の外の値では、影の設定を変えない")
@@ -328,6 +360,22 @@ struct ShadowTests {
 
         _ = try floorAndSphere(canvas) { $0.shadowDetail(512) }
         #expect(canvas.shadowMapsBuilt == 2, "細かさを変えても作り直していない")
+
+        // **ここが決定 4 の釣り合いの本体である。** 細かさもフレームを越えないので
+        // ([#940])、既定でない細かさを使い続けるスケッチは毎フレーム宣言し直すことに
+        // なる。そのたびに焼き付け先を作り直していたら、越えないことの代償が重すぎて
+        // 「重いから越える」という例外に戻ってしまう
+        //
+        // **形は毎フレーム動かす。** 止めると `bakeShadow` が焼き直しごと省くので
+        // (下の「焼き直さない」)、焼き付け先を取りに行く経路を 1 度も通らない —
+        // 動かさない形で書くと、再利用を壊しても緑のままになる
+        //
+        // [#940]: https://github.com/mokume-metal/mokume/issues/940
+        for offset in [-20, 0, 20, 40] as [Float] {
+            _ = try floorAndSphere(canvas, offset: offset) { $0.shadowDetail(512) }
+        }
+        #expect(canvas.shadowBakesEncoded >= 4, "形を動かしたのに焼き直していない")
+        #expect(canvas.shadowMapsBuilt == 2, "毎フレーム同じ細かさを宣言したら作り直した")
     }
 
     // MARK: - 焼き付けと画面が重ならない
@@ -390,7 +438,11 @@ struct ShadowTests {
         #expect(canvas.shadowBakesEncoded == 2, "落とす光が変わっていないのに焼き直した")
         _ = try floorAndSphere(canvas, offset: 10) { $0.shadowDetail(512) }
         #expect(canvas.shadowBakesEncoded == 3, "細かさを変えたのに焼き直していない")
-        _ = try floorAndSphere(canvas, offset: 10, range: 300)
+        // **細かさも宣言し直す。** フレームを越えないので ([#940])、書かないと既定へ
+        // 戻り、下の行が「範囲を変えたから」ではなく「細かさが戻ったから」でも通る
+        //
+        // [#940]: https://github.com/mokume-metal/mokume/issues/940
+        _ = try floorAndSphere(canvas, offset: 10, range: 300) { $0.shadowDetail(512) }
         #expect(canvas.shadowBakesEncoded == 4, "範囲を変えたのに焼き直していない")
     }
 
