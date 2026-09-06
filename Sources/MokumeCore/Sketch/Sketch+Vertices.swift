@@ -276,13 +276,19 @@ extension Sketch {
     /// }
     // shot: 1 snippet=c25c6dcf
     // shot: 2 snippet=be9944e2
-    public func vertex(_ x: Float, _ y: Float) { canvas.vertex(x, y) }
+    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.vertex(x, y)
+    }
 
     /// 奥行きを持つ頂点を 1 つ置く。**この形は立体になる。**
     ///
     /// 1 つでもこの形で置けば、その形は最後まで立体として扱われる — 途中で
     /// ``vertex(_:_:)`` を混ぜてもよく、そちらは奥行き 0 の頂点になる。
-    public func vertex(_ x: Float, _ y: Float, _ z: Float) { canvas.vertex(x, y, z) }
+    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        canvas.vertex(x, y, z)
+    }
 
     /// 貼る絵の読み取り位置つきで頂点を 1 つ置く。
     ///
@@ -300,7 +306,8 @@ extension Sketch {
     /// vertex(0, 200, 0, Float(grain.height))
     /// endShape(.close)
     /// ```
-    public func vertex(_ x: Float, _ y: Float, _ u: Float, _ v: Float) {
+    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
+        let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
         canvas.vertex(x, y, u, v)
     }
 
@@ -311,7 +318,8 @@ extension Sketch {
     /// **書かなかった頂点は、形の囲みの箱から求まる** — 横と縦の広がりを 0…1 に写す。
     /// 一部にだけ書いた形では、書いた頂点だけがそのとおりに、残りが囲みの箱から
     /// 決まるので、混ぜて書くと絵が捻れる。書くなら全部に書く。
-    public func vertex(_ x: Float, _ y: Float, _ z: Float, _ u: Float, _ v: Float) {
+    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
+        let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)
         canvas.vertex(x, y, z, u, v)
     }
 
@@ -335,7 +343,10 @@ extension Sketch {
     ///
     /// 面は**どちらの側から見ても光を受ける**ので、向きの符号 (頂点を並べる向き) で
     /// 絵が真っ黒になることはない。
-    public func normal(_ x: Float, _ y: Float, _ z: Float) { canvas.normal(x, y, z) }
+    public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        canvas.normal(x, y, z)
+    }
 
     /// 穴を並べ始める。
     ///

@@ -83,7 +83,10 @@ extension Sketch {
     // shot: 1 snippet=e1676e34
     // shot: 2 snippet=0dab2481
     // shot: 3 snippet=58a41dae
-    public func translate(_ x: Float, _ y: Float) { canvas.translate(x, y) }
+    public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.translate(x, y)
+    }
 
     /// 回す。縦軸が下向きなので、正の角度は画面の上で時計回りに見える。
     ///
@@ -165,7 +168,10 @@ extension Sketch {
     // shot: 1 snippet=27bff880
     // shot: 2 snippet=00e07a33
     // shot: 3 snippet=8ea7daa7
-    public func rotate(_ radians: Float) { canvas.rotate(radians) }
+    public func rotate(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
+        canvas.rotate(radians)
+    }
 
     /// 伸ばす・縮める。
     ///
@@ -248,7 +254,10 @@ extension Sketch {
     // shot: 1 snippet=6b558fd6
     // shot: 2 snippet=2941aa4a
     // shot: 3 snippet=5ae25e26
-    public func scale(_ x: Float, _ y: Float) { canvas.scale(x, y) }
+    public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.scale(x, y)
+    }
 
     /// 原点を奥行きも含めてずらす。
     ///
@@ -282,7 +291,10 @@ extension Sketch {
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=ceef2b2d
-    public func translate(_ x: Float, _ y: Float, _ z: Float) { canvas.translate(x, y, z) }
+    public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        canvas.translate(x, y, z)
+    }
 
     /// 横軸まわりに回す。
     ///
@@ -315,7 +327,10 @@ extension Sketch {
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=54abaf07
-    public func rotateX(_ radians: Float) { canvas.rotateX(radians) }
+    public func rotateX(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
+        canvas.rotateX(radians)
+    }
 
     /// 縦軸まわりに回す。
     ///
@@ -348,7 +363,10 @@ extension Sketch {
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=d031c80c
-    public func rotateY(_ radians: Float) { canvas.rotateY(radians) }
+    public func rotateY(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
+        canvas.rotateY(radians)
+    }
 
     /// 奥行きの軸まわりに回す。``rotate(_:)`` と同じ。
     ///
@@ -379,7 +397,10 @@ extension Sketch {
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=7f65053a
-    public func rotateZ(_ radians: Float) { canvas.rotateZ(radians) }
+    public func rotateZ(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
+        canvas.rotateZ(radians)
+    }
 
     /// 奥行きも含めて伸ばす・縮める。
     ///
@@ -422,7 +443,10 @@ extension Sketch {
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=e3260042
-    public func scale(_ x: Float, _ y: Float, _ z: Float) { canvas.scale(x, y, z) }
+    public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        canvas.scale(x, y, z)
+    }
 
     /// 横方向へ斜めに歪める。
     ///
@@ -479,7 +503,10 @@ extension Sketch {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=ecea4b47
     // shot: 2 snippet=1e816167
-    public func shearX(_ radians: Float) { canvas.shearX(radians) }
+    public func shearX(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
+        canvas.shearX(radians)
+    }
 
     /// 縦方向へ斜めに歪める。
     ///
@@ -535,5 +562,8 @@ extension Sketch {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=e8584e7d
     // shot: 2 snippet=305667e2
-    public func shearY(_ radians: Float) { canvas.shearY(radians) }
+    public func shearY(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
+        canvas.shearY(radians)
+    }
 }

@@ -62,8 +62,9 @@ public struct Surroundings: Equatable, Sendable {
         bottom: .display(red: 0.2, green: 0.14, blue: 0.12))
 
     /// 明るさを倍率で変える。**色が明るさそのものなので、掛けるのが強さの指定になる。**
-    public func scaled(by factor: Float) -> Surroundings {
-        Surroundings(
+    public func scaled(by factor: some ScalarConvertible) -> Surroundings {
+        let factor = factor.asFloat
+        return Surroundings(
             top: Self.scale(top, factor),
             horizon: Self.scale(horizon, factor),
             bottom: Self.scale(bottom, factor))

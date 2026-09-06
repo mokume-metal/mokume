@@ -42,22 +42,26 @@ extension Canvas {
         holePoints = nil
     }
 
-    public func vertex(_ x: Float, _ y: Float) {
+    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
         appendVertex(SIMD3(x, y, 0), hasDepth: false)
     }
 
     // 奥行きを持つ頂点を 1 つ置く。
-    public func vertex(_ x: Float, _ y: Float, _ z: Float) {
+    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         appendVertex(SIMD3(x, y, z), hasDepth: true)
     }
 
     // 貼る絵の読み取り位置つきで頂点を 1 つ置く。
-    public func vertex(_ x: Float, _ y: Float, _ u: Float, _ v: Float) {
+    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
+        let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
         appendVertex(SIMD3(x, y, 0), hasDepth: false, uv: textureUV(u, v))
     }
 
     // 奥行きと読み取り位置を持つ頂点を 1 つ置く。
-    public func vertex(_ x: Float, _ y: Float, _ z: Float, _ u: Float, _ v: Float) {
+    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
+        let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)
         appendVertex(SIMD3(x, y, z), hasDepth: true, uv: textureUV(u, v))
     }
 
@@ -74,7 +78,8 @@ extension Canvas {
     }
 
     // これから置く頂点の面の向きを決める。
-    public func normal(_ x: Float, _ y: Float, _ z: Float) {
+    public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         let direction = SIMD3<Float>(x, y, z)
         // 長さを持たない向き・数でない向きは「書かれていない」に倒す。零ベクトルを
         // そのまま持たせると、光の計算で向きの定まらない面になる
@@ -88,8 +93,9 @@ extension Canvas {
     }
 
     public func bezierVertex(
-        _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
+        _ cx1: some ScalarConvertible, _ cy1: some ScalarConvertible, _ cx2: some ScalarConvertible, _ cy2: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible
     ) {
+        let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         guard isBuildingShape, let start = lastShapePoint else {
             warnVertexOutsideShapeOnce()
             return
@@ -103,7 +109,8 @@ extension Canvas {
         }
     }
 
-    public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
+    public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         guard isBuildingShape, let start = lastShapePoint else {
             warnVertexOutsideShapeOnce()
             return
@@ -120,7 +127,8 @@ extension Canvas {
     ///
     /// **4 つ揃って初めて 1 区間が引ける** — 最初と最後の点は曲がり方を決めるためだけに
     /// 使われ、その間だけが実際に描かれる。
-    public func curveVertex(_ x: Float, _ y: Float) {
+    public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
         guard isBuildingShape else {
             warnVertexOutsideShapeOnce()
             return
@@ -142,7 +150,10 @@ extension Canvas {
 
     public func curveDetail(_ steps: Int) { currentCurveDetail = max(1, steps) }
 
-    public func curveTightness(_ amount: Float) { currentCurveTightness = amount }
+    public func curveTightness(_ amount: some ScalarConvertible) {
+        let amount = amount.asFloat
+        currentCurveTightness = amount
+    }
 
     public func beginContour() {
         guard isBuildingShape else {

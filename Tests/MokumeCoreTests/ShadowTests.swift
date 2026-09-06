@@ -40,7 +40,7 @@ struct ShadowTests {
             // 「遠くなった」だけになり、影の細かさの話にならない
             canvas.camera(
                 center, -24 * scale, 170 * scale, center, 14 * scale, 0, 0, 1, 0)
-            canvas.perspective(.pi / 3, 1, 1 * scale, 500 * scale)
+            canvas.perspective(Float.pi / 3, 1, 1 * scale, 500 * scale)
             canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
             canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
             canvas.shadows(shadows)
@@ -339,11 +339,11 @@ struct ShadowTests {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.shadowRange(50)
-            canvas.shadowRange(.nan)
+            canvas.shadowRange(Float.nan)
             canvas.shadowRange(-1)
             canvas.shadowDetail(1)
             canvas.shadowDetail(99_999)
-            canvas.shadowBias(.infinity)
+            canvas.shadowBias(Float.infinity)
             #expect(canvas.shadowRangeValue == 50)
             #expect(canvas.shadowDetailValue == ShadowMap.defaultDetail)
             #expect(canvas.shadowBiasValue > 0)

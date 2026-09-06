@@ -232,10 +232,10 @@ struct ScreenCoordinateTests {
     func unusableNumbersReturnEmpty() throws {
         let canvas = try makeCanvas()
         try canvas.draw {
-            #expect(canvas.screenX(.nan, 0, 0) == 0)
-            #expect(canvas.screenY(0, .infinity, 0) == 0)
-            #expect(canvas.screenZ(0, 0, .nan) == 0)
-            #expect(canvas.spacePosition(screenX: .nan, screenY: 0, depth: 0) == .zero)
+            #expect(canvas.screenX(Float.nan, 0, 0) == 0)
+            #expect(canvas.screenY(0, Float.infinity, 0) == 0)
+            #expect(canvas.screenZ(0, 0, Float.nan) == 0)
+            #expect(canvas.spacePosition(screenX: Float.nan, screenY: 0, depth: 0) == .zero)
         }
     }
 
@@ -244,8 +244,8 @@ struct ScreenCoordinateTests {
         // 入力そのものは有限なので入口では見分けられない。行列を通した先で溢れる
         let canvas = try makeCanvas()
         try canvas.draw {
-            #expect(canvas.screenX(.greatestFiniteMagnitude, 0, 0) == 0)
-            #expect(canvas.screenY(0, .greatestFiniteMagnitude, 0) == 0)
+            #expect(canvas.screenX(Float.greatestFiniteMagnitude, 0, 0) == 0)
+            #expect(canvas.screenY(0, Float.greatestFiniteMagnitude, 0) == 0)
         }
     }
 }

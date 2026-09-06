@@ -8,11 +8,13 @@
 // 説明文として拾われないよう、宣言との間は必ず 1 行空ける。
 
 extension Canvas {
-    public func ambientLight(_ gray: Float) {
+    public func ambientLight(_ gray: some ScalarConvertible) {
+        let gray = gray.asFloat
         ambientLight(gray, gray, gray)
     }
 
-    public func ambientLight(_ red: Float, _ green: Float, _ blue: Float) {
+    public func ambientLight(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
+        let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
@@ -23,8 +25,9 @@ extension Canvas {
     }
 
     public func directionalLight(
-        _ red: Float, _ green: Float, _ blue: Float, _ x: Float, _ y: Float, _ z: Float
+        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
     ) {
+        let (red, green, blue, x, y, z) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
@@ -35,8 +38,9 @@ extension Canvas {
     }
 
     public func pointLight(
-        _ red: Float, _ green: Float, _ blue: Float, _ x: Float, _ y: Float, _ z: Float
+        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
     ) {
+        let (red, green, blue, x, y, z) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
@@ -47,11 +51,12 @@ extension Canvas {
     }
 
     public func spotLight(
-        _ red: Float, _ green: Float, _ blue: Float,
-        _ x: Float, _ y: Float, _ z: Float,
-        _ directionX: Float, _ directionY: Float, _ directionZ: Float,
-        angle: Float = .pi / 6
+        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible,
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
+        _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
+        angle: some ScalarConvertible = Float.pi / 6
     ) {
+        let (red, green, blue, x, y, z, directionX, directionY, directionZ, angle) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
@@ -61,11 +66,13 @@ extension Canvas {
         spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
 
-    public func ambient(_ gray: Float) {
+    public func ambient(_ gray: some ScalarConvertible) {
+        let gray = gray.asFloat
         ambient(gray, gray, gray)
     }
 
-    public func ambient(_ red: Float, _ green: Float, _ blue: Float) {
+    public func ambient(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
+        let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
@@ -75,11 +82,13 @@ extension Canvas {
         ambient(color)
     }
 
-    public func emissive(_ gray: Float) {
+    public func emissive(_ gray: some ScalarConvertible) {
+        let gray = gray.asFloat
         emissive(gray, gray, gray)
     }
 
-    public func emissive(_ red: Float, _ green: Float, _ blue: Float) {
+    public func emissive(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
+        let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {

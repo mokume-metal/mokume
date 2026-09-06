@@ -24,7 +24,10 @@ extension Canvas {
     public func noTextFont() { currentFontName = nil }
 
     /// これから描く文字の大きさ (画素)。
-    public func textSize(_ size: Float) { currentTextSize = max(0, size) }
+    public func textSize(_ size: some ScalarConvertible) {
+        let size = size.asFloat
+        currentTextSize = max(0, size)
+    }
 
     /// これから描く文字の太さと傾き。
     public func textStyle(_ style: TextStyle) { currentTextStyle = style }
@@ -38,7 +41,10 @@ extension Canvas {
     }
 
     /// 行と行の間隔 (画素)。
-    public func textLeading(_ leading: Float) { currentTextLeading = max(0, leading) }
+    public func textLeading(_ leading: some ScalarConvertible) {
+        let leading = leading.asFloat
+        currentTextLeading = max(0, leading)
+    }
 
     // MARK: - 寸法
 
@@ -71,7 +77,8 @@ extension Canvas {
     ///
     /// 縦の基準は ``textAlign(_:_:)`` が決める。既定は**基準線** — `y` が字の乗る線になる。
     /// 改行で行が分かれ、行の間隔は ``textLeading(_:)`` が決める。
-    public func text(_ string: String, _ x: Float, _ y: Float) {
+    public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
         guard let color = textFillColor, !string.isEmpty, currentTextSize > 0 else { return }
         let face = typeface
         let lines = string.split(separator: "\n", omittingEmptySubsequences: false)
@@ -155,9 +162,10 @@ extension Canvas {
     /// 4 つの数の読み方は ``rectMode(_:)`` が決める — ``rect(_:_:_:_:)`` と同じ約束である。
     /// 幅で折り返し、高さに収まる行だけを置く。
     @discardableResult
-    public func text(_ string: String, _ a: Float, _ b: Float, _ c: Float, _ d: Float)
+    public func text(_ string: String, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible)
         -> TextFlow
     {
+        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         let box = resolveRect(a, b, c, d)
         guard box.width > 0, box.height > 0, currentTextSize > 0, !string.isEmpty else {
             return TextFlow(lineCount: 0, height: 0, remainder: string)
@@ -278,7 +286,8 @@ extension Canvas {
     /// **描くときと同じ送り**で並ぶので、``text(_:_:_:)`` と同じ位置・同じ字間になる。
     /// 返る点は**いまの座標のまま**で、変換は掛かっていない — そのまま
     /// ``vertex(_:_:)`` へ渡せば、文字を描いたのと同じ場所に出る。
-    public func textOutline(_ string: String, _ x: Float, _ y: Float) -> [TextContour] {
+    public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
+        let (x, y) = (x.asFloat, y.asFloat)
         guard !string.isEmpty, currentTextSize > 0 else { return [] }
         let face = typeface
         let lines = string.split(separator: "\n", omittingEmptySubsequences: false)

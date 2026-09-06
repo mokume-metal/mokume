@@ -18,27 +18,37 @@ extension Canvas {
     // MARK: - 空間 → 画面
 
     /// 点が、いまの変換でどこへ移るか (横)。
-    public func screenX(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).x }
+    public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
+        let (x, y) = (x.asFloat, y.asFloat)
+        return transform.apply(x: x, y: y).x
+    }
 
-    public func screenY(_ x: Float, _ y: Float) -> Float { transform.apply(x: x, y: y).y }
+    public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
+        let (x, y) = (x.asFloat, y.asFloat)
+        return transform.apply(x: x, y: y).y
+    }
 
     // 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (横)。
-    public func screenX(_ x: Float, _ y: Float, _ z: Float) -> Float {
-        screenPosition(x, y, z).x
+    public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        return screenPosition(x, y, z).x
     }
 
-    public func screenY(_ x: Float, _ y: Float, _ z: Float) -> Float {
-        screenPosition(x, y, z).y
+    public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        return screenPosition(x, y, z).y
     }
 
-    public func screenZ(_ x: Float, _ y: Float, _ z: Float) -> Float {
-        screenPosition(x, y, z).z
+    public func screenZ(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        return screenPosition(x, y, z).z
     }
 
     // MARK: - 画面 → 空間
 
     // 面の位置が、いまの視点で空間のどこを指すか。
-    public func spacePosition(screenX: Float, screenY: Float, depth: Float) -> SIMD3<Float> {
+    public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> SIMD3<Float> {
+        let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
         // 潰れた変換 (どこかの軸を 0 倍したもの) には打ち消しが無い = 戻し先が決まらない
         guard let undo = transform.inverted else { return .zero }
         let inside =

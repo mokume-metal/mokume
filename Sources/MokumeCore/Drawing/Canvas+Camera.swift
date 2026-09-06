@@ -16,10 +16,11 @@ extension Canvas {
 
     // 見る位置・見ている先・上方向を決める。
     public func camera(
-        _ eyeX: Float, _ eyeY: Float, _ eyeZ: Float,
-        _ centerX: Float, _ centerY: Float, _ centerZ: Float,
-        _ upX: Float, _ upY: Float, _ upZ: Float
+        _ eyeX: some ScalarConvertible, _ eyeY: some ScalarConvertible, _ eyeZ: some ScalarConvertible,
+        _ centerX: some ScalarConvertible, _ centerY: some ScalarConvertible, _ centerZ: some ScalarConvertible,
+        _ upX: some ScalarConvertible, _ upY: some ScalarConvertible, _ upZ: some ScalarConvertible
     ) {
+        let (eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ) = (eyeX.asFloat, eyeY.asFloat, eyeZ.asFloat, centerX.asFloat, centerY.asFloat, centerZ.asFloat, upX.asFloat, upY.asFloat, upZ.asFloat)
         var camera = currentCamera
         camera.eye = SIMD3(eyeX, eyeY, eyeZ)
         camera.center = SIMD3(centerX, centerY, centerZ)
@@ -38,7 +39,8 @@ extension Canvas {
     }
 
     // 遠くのものほど小さく写す。
-    public func perspective(_ fieldOfView: Float, _ aspect: Float, _ near: Float, _ far: Float) {
+    public func perspective(_ fieldOfView: some ScalarConvertible, _ aspect: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible) {
+        let (fieldOfView, aspect, near, far) = (fieldOfView.asFloat, aspect.asFloat, near.asFloat, far.asFloat)
         apply(
             replacingProjection: .perspective(
                 fieldOfView: fieldOfView, aspect: aspect, near: near, far: far))
@@ -51,8 +53,9 @@ extension Canvas {
 
     // 距離によらず同じ大きさで写す。
     public func ortho(
-        _ left: Float, _ right: Float, _ bottom: Float, _ top: Float, _ near: Float, _ far: Float
+        _ left: some ScalarConvertible, _ right: some ScalarConvertible, _ bottom: some ScalarConvertible, _ top: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible
     ) {
+        let (left, right, bottom, top, near, far) = (left.asFloat, right.asFloat, bottom.asFloat, top.asFloat, near.asFloat, far.asFloat)
         apply(
             replacingProjection: .orthographic(
                 left: left, right: right, bottom: bottom, top: top, near: near, far: far))

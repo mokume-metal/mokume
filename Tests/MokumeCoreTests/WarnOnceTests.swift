@@ -177,10 +177,10 @@ struct CanvasWarningTests {
     @Test("同じ注意は、入口が違っても 2 度目からは黙る")
     func staysSilentTheSecondTimeEvenFromAnotherEntrance() throws {
         let canvas = try makeCanvas()
-        canvas.shininess(.nan)
+        canvas.shininess(Float.nan)
         #expect(canvas.warnings.message(for: .badMaterial) == badShininess)
 
-        canvas.metalness(.nan)
+        canvas.metalness(Float.nan)
         #expect(canvas.warnings.message(for: .badMaterial) == badShininess)
     }
 

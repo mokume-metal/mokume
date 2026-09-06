@@ -115,7 +115,7 @@ struct LightTests {
         let canvas = try makeCanvas()
         try sphereScene(canvas) { canvas in
             canvas.push()
-            canvas.rotateZ(.pi)  // 上下が入れ替わる
+            canvas.rotateZ(Float.pi)  // 上下が入れ替わる
             canvas.directionalLight(self.white, 0, 1, 0)
             canvas.pop()
         }

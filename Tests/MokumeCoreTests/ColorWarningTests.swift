@@ -27,8 +27,8 @@ struct ColorWarningTests {
     func fillDoesNotSilenceBackground() throws {
         let canvas = try makeCanvas()
         try canvas.draw {
-            canvas.fill(.nan, 0, 0)
-            canvas.background(.nan, 0, 0)
+            canvas.fill(Float.nan, 0, 0)
+            canvas.background(Float.nan, 0, 0)
         }
         #expect(canvas.warnings.hasWarned(.notANumberFill))
         #expect(canvas.warnings.hasWarned(.notANumberBackground))
@@ -42,9 +42,9 @@ struct ColorWarningTests {
     func lightsAndMaterialsCountSeparately() throws {
         let canvas = try makeCanvas()
         try canvas.draw {
-            canvas.ambientLight(.nan, 0, 0)
-            canvas.directionalLight(.nan, 0, 0, 0, 1, 0)
-            canvas.emissive(.nan, 0, 0)
+            canvas.ambientLight(Float.nan, 0, 0)
+            canvas.directionalLight(Float.nan, 0, 0, 0, 1, 0)
+            canvas.emissive(Float.nan, 0, 0)
         }
         #expect(canvas.warnings.hasWarned(.notANumberAmbientLight))
         #expect(canvas.warnings.hasWarned(.notANumberDirectionalLight))
@@ -55,8 +55,8 @@ struct ColorWarningTests {
     func theSameEntrySpeaksOnce() throws {
         let canvas = try makeCanvas()
         try canvas.draw {
-            canvas.fill(.nan, 0, 0)
-            canvas.fill(.infinity, 0, 0)
+            canvas.fill(Float.nan, 0, 0)
+            canvas.fill(Float.infinity, 0, 0)
         }
         // 文面が 1 度目のまま — 2 度目は組み立てられていない
         #expect(canvas.warnings.message(for: .notANumberFill)?.hasPrefix("fill()") == true)

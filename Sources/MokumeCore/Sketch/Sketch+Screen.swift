@@ -14,20 +14,22 @@ extension Sketch {
     ///
     /// ```swift
     /// translate(100, 50)
-    /// rotate(.pi / 4)
+    /// rotate(Float.pi / 4)
     /// let x = screenX(0, 0)   // 変換を積んだ後の原点が、面のどこにあるか
     /// ```
     ///
     /// **奥行きを渡さない形は視点を通さない。** 平面の図形が通る道と同じで、
     /// ``camera()`` をどう動かしてもこの値は変わらない。視点を通した位置が要るときは
     /// 奥行きまで渡す ``screenX(_:_:_:)`` を使う。
-    public func screenX(_ x: Float, _ y: Float) -> Float {
-        Self.drawingCanvas?.screenX(x, y) ?? 0
+    public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
+        let (x, y) = (x.asFloat, y.asFloat)
+        return Self.drawingCanvas?.screenX(x, y) ?? 0
     }
 
     /// 点が、いまの変換でどこへ移るか (縦)。
-    public func screenY(_ x: Float, _ y: Float) -> Float {
-        Self.drawingCanvas?.screenY(x, y) ?? 0
+    public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
+        let (x, y) = (x.asFloat, y.asFloat)
+        return Self.drawingCanvas?.screenY(x, y) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (横)。
@@ -42,13 +44,15 @@ extension Sketch {
     ///
     /// 変換を積んだ状態でも視点を変えた状態でも、**実際に描かれる画素の位置**が返る。
     /// 立体に文字や印を重ねる、当たり判定を面の座標で書く、といった用途のためにある。
-    public func screenX(_ x: Float, _ y: Float, _ z: Float) -> Float {
-        Self.drawingCanvas?.screenX(x, y, z) ?? 0
+    public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        return Self.drawingCanvas?.screenX(x, y, z) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (縦)。
-    public func screenY(_ x: Float, _ y: Float, _ z: Float) -> Float {
-        Self.drawingCanvas?.screenY(x, y, z) ?? 0
+    public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        return Self.drawingCanvas?.screenY(x, y, z) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの視点でどれだけ奥にあるか。
@@ -58,8 +62,9 @@ extension Sketch {
     ///
     /// この値がそのまま ``spacePosition(screenX:screenY:depth:)`` の `depth` になる —
     /// 前向きの 3 本が、後ろ向きの入力を過不足なく作る。
-    public func screenZ(_ x: Float, _ y: Float, _ z: Float) -> Float {
-        Self.drawingCanvas?.screenZ(x, y, z) ?? 0
+    public func screenZ(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        return Self.drawingCanvas?.screenZ(x, y, z) ?? 0
     }
 
     // MARK: - 画面 → 空間
@@ -83,8 +88,9 @@ extension Sketch {
     /// ```
     ///
     /// 平行投影でも透視投影でも同じように使える (式の違いは視点の側が持つ)。
-    public func spacePosition(screenX: Float, screenY: Float, depth: Float) -> SIMD3<Float> {
-        Self.drawingCanvas?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)
+    public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> SIMD3<Float> {
+        let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
+        return Self.drawingCanvas?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)
             ?? .zero
     }
 

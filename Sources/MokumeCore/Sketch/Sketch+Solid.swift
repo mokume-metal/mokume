@@ -48,7 +48,10 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=8d592c84
-    public func box(_ size: Float) { canvas.box(size) }
+    public func box(_ size: some ScalarConvertible) {
+        let size = size.asFloat
+        canvas.box(size)
+    }
 
     /// 幅・高さ・奥行きを別々に決めた箱を置く。
     ///
@@ -72,7 +75,8 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=2553ebe3
-    public func box(_ width: Float, _ height: Float, _ depth: Float) {
+    public func box(_ width: some ScalarConvertible, _ height: some ScalarConvertible, _ depth: some ScalarConvertible) {
+        let (width, height, depth) = (width.asFloat, height.asFloat, depth.asFloat)
         canvas.box(width, height, depth)
     }
 
@@ -126,7 +130,8 @@ extension Sketch {
     ///   - detail: **一周をいくつに割るか。** 上下は半周なので、その半分で割る。
     // shot: 1 snippet=51775b2d
     // shot: 2 snippet=3c04508e
-    public func sphere(_ radius: Float, detail: Int = Canvas.defaultSolidDetail) {
+    public func sphere(_ radius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail) {
+        let radius = radius.asFloat
         canvas.sphere(radius, detail: detail)
     }
 
@@ -156,7 +161,10 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=3ddae47c
-    public func plane(_ width: Float, _ height: Float) { canvas.plane(width, height) }
+    public func plane(_ width: some ScalarConvertible, _ height: some ScalarConvertible) {
+        let (width, height) = (width.asFloat, height.asFloat)
+        canvas.plane(width, height)
+    }
 
     /// 円柱を置く。軸は縦。
     ///
@@ -210,8 +218,9 @@ extension Sketch {
     // shot: 1 snippet=3382160f
     // shot: 2 snippet=14bac537
     public func cylinder(
-        _ radius: Float, _ height: Float, detail: Int = Canvas.defaultSolidDetail
+        _ radius: some ScalarConvertible, _ height: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail
     ) {
+        let (radius, height) = (radius.asFloat, height.asFloat)
         canvas.cylinder(radius, height, detail: detail)
     }
 
@@ -242,7 +251,11 @@ extension Sketch {
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
     // shot: 1 snippet=c6e05232
-    public func cone(_ radius: Float, _ height: Float, detail: Int = Canvas.defaultSolidDetail) {
+    public func cone(
+        _ radius: some ScalarConvertible, _ height: some ScalarConvertible,
+        detail: Int = Canvas.defaultSolidDetail
+    ) {
+        let (radius, height) = (radius.asFloat, height.asFloat)
         canvas.cone(radius, height, detail: detail)
     }
 
@@ -298,8 +311,9 @@ extension Sketch {
     // shot: 1 snippet=7978e71b
     // shot: 2 snippet=21763f89
     public func torus(
-        _ radius: Float, _ tubeRadius: Float, detail: Int = Canvas.defaultSolidDetail
+        _ radius: some ScalarConvertible, _ tubeRadius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail
     ) {
+        let (radius, tubeRadius) = (radius.asFloat, tubeRadius.asFloat)
         canvas.torus(radius, tubeRadius, detail: detail)
     }
 }

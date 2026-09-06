@@ -43,7 +43,10 @@ extension Sketch {
     /// 幅か高さが 0 以下になる指定では**何も描かない**。
     // shot: 1 snippet=74598101
     // shot: 2 snippet=60541771
-    public func rect(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.rect(a, b, c, d) }
+    public func rect(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        canvas.rect(a, b, c, d)
+    }
 
     /// 正方形を塗る。
     ///
@@ -64,7 +67,10 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=a14bfc0d
-    public func square(_ a: Float, _ b: Float, _ extent: Float) { canvas.square(a, b, extent) }
+    public func square(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ extent: some ScalarConvertible) {
+        let (a, b, extent) = (a.asFloat, b.asFloat, extent.asFloat)
+        canvas.square(a, b, extent)
+    }
 
     /// 円を塗る。
     ///
@@ -107,7 +113,10 @@ extension Sketch {
     /// }
     // shot: 1 snippet=dddecdb4
     // shot: 2 snippet=ccc7b2b7
-    public func circle(_ a: Float, _ b: Float, _ diameter: Float) { canvas.circle(a, b, diameter) }
+    public func circle(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ diameter: some ScalarConvertible) {
+        let (a, b, diameter) = (a.asFloat, b.asFloat, diameter.asFloat)
+        canvas.circle(a, b, diameter)
+    }
 
     /// 楕円を塗る。
     ///
@@ -148,7 +157,8 @@ extension Sketch {
     /// }
     // shot: 1 snippet=5db22851
     // shot: 2 snippet=b47c6582
-    public func ellipse(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+    public func ellipse(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.ellipse(a, b, c, d)
     }
 
@@ -163,7 +173,7 @@ extension Sketch {
     ///     ```swift
     ///     background(23, 26, 31)
     ///     fill(242, 115, 64)
-    ///     arc(200, 150, 200, 200, 0, .pi / 2)
+    ///     arc(200, 150, 200, 200, 0, Float.pi / 2)
     ///     ```
     ///   }
     ///   @Column {
@@ -197,7 +207,7 @@ extension Sketch {
     ///     ```swift
     ///     background(23, 26, 31)
     ///     fill(242, 115, 64)
-    ///     arc(200, 150, 200, 200, .pi, .pi * 1.5)
+    ///     arc(200, 150, 200, 200, Float.pi, Float.pi * 1.5)
     ///     ```
     ///   }
     ///   @Column {
@@ -230,13 +240,14 @@ extension Sketch {
     ///
     /// 塗りは**中心を含む扇形**になる。終わりの角度が始まりより小さいときは
     /// **何も描かず**、最初の 1 回だけ知らせる。
-    // shot: 1 snippet=1f67f389
+    // shot: 1 snippet=51c098c3
     // shot: 2 snippet=e00e11b7
-    // shot: 3 snippet=600285f4
+    // shot: 3 snippet=16db4ac0
     // shot: 4 snippet=27105ca4
     public func arc(
-        _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible
     ) {
+        let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
         canvas.arc(a, b, c, d, start, stop)
     }
 
@@ -258,8 +269,9 @@ extension Sketch {
     /// }
     // shot: 1 snippet=f5d478e8
     public func triangle(
-        _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float, _ x3: Float, _ y3: Float
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ x3: some ScalarConvertible, _ y3: some ScalarConvertible
     ) {
+        let (x1, y1, x2, y2, x3, y3) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat)
         canvas.triangle(x1, y1, x2, y2, x3, y3)
     }
 
@@ -300,9 +312,10 @@ extension Sketch {
     // shot: 1 snippet=34577789
     // shot: 2 snippet=23b24af9
     public func quad(
-        _ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float,
-        _ x3: Float, _ y3: Float, _ x4: Float, _ y4: Float
+        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
+        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
     ) {
+        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
         canvas.quad(x1, y1, x2, y2, x3, y3, x4, y4)
     }
 
@@ -351,7 +364,10 @@ extension Sketch {
     /// }
     // shot: 1 snippet=72c60508
     // shot: 2 snippet=8602b4e7
-    public func point(_ x: Float, _ y: Float) { canvas.point(x, y) }
+    public func point(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.point(x, y)
+    }
 
     /// 矩形に渡す座標の読み方。既定は ``ShapeMode/corner``。
     ///
@@ -518,7 +534,8 @@ extension Sketch {
     /// }
     // shot: 1 snippet=f2777671
     // shot: 2 snippet=055b0309
-    public func line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float) {
+    public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
+        let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
         canvas.line(x1, y1, x2, y2)
     }
 }

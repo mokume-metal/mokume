@@ -14,22 +14,25 @@ extension Canvas {
     }
 
     // 向きだけを持つ光を置く。
-    public func directionalLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
+    public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         addLight(
             Light(kind: .directional, color: color, direction: transformedDirection(x, y, z)))
     }
 
     // 位置を持つ光を置く。
-    public func pointLight(_ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float) {
+    public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         addLight(Light(kind: .point, color: color, position: transform.apply(x: x, y: y, z: z)))
     }
 
     // 位置と向きと広がりを持つ光を置く。
     public func spotLight(
-        _ color: LinearRGBA, _ x: Float, _ y: Float, _ z: Float,
-        _ directionX: Float, _ directionY: Float, _ directionZ: Float,
-        angle: Float = .pi / 6
+        _ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
+        _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
+        angle: some ScalarConvertible = Float.pi / 6
     ) {
+        let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
         addLight(
             Light(
                 kind: .spot, color: color,

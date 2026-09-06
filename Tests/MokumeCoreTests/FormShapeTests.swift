@@ -456,9 +456,9 @@ struct FormShapeTests {
         let blank = try picture(try makeCanvas()) { _ in }
         let image = try picture(try makeCanvas()) { canvas in
             canvas.fill(white)
-            canvas.circle(.nan, 48, 20)
-            canvas.rect(10, .infinity, 20, 20)
-            canvas.line(0, 0, .nan, 96)
+            canvas.circle(Float.nan, 48, 20)
+            canvas.rect(10, Float.infinity, 20, 20)
+            canvas.line(0, 0, Float.nan, 96)
             canvas.push()
             canvas.scale(1, 0)
             canvas.rect(10, 10, 40, 40)

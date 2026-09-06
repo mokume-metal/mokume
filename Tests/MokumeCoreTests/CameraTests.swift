@@ -376,7 +376,7 @@ struct CameraTests {
         // 視点を少し引いて、画角を狭めて元の見え方へ戻す
         let moved = try width { canvas in
             canvas.camera(64, 64, 300, 64, 64, 0, 0, 1, 0)
-            canvas.perspective(2 * atan(64 / 300), 1, 30, 3000)
+            canvas.perspective(2 * atan(Float(64) / 300), 1, 30, 3000)
         }
         let orthographic = try width { $0.ortho() }
 
@@ -403,7 +403,7 @@ struct CameraTests {
             canvas.camera(32, 32, 100, 32, 32, 0, 0, 0, 1)
             seen.append(canvas.currentCamera)
             // 数でない値
-            canvas.camera(.nan, 32, 100, 32, 32, 0, 0, 1, 0)
+            canvas.camera(Float.nan, 32, 100, 32, 32, 0, 0, 1, 0)
             seen.append(canvas.currentCamera)
             // 潰れた投影
             canvas.ortho(0, 0, 1, -1, 1, 100)
