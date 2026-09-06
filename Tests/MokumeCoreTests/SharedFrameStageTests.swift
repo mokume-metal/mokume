@@ -117,6 +117,38 @@ struct SharedFrameStageTests {
         #expect(lines == [InputEvent.mouseMoved(x: 3, y: 4).wireLine])
     }
 
+    /// **キーは、窓へ送っても運び先まで行く。**
+    ///
+    /// 上の検査は面を直に組んで `deliver` を叩くので、**窓 → 第一応答者 → 面**という区間を
+    /// 1 度も通らない。そこはキーだけが無音で落ちるところで、実際 [#963] は「道具が出す窓
+    /// では届いていないのではないか」を疑った (実測では届いていた — 落ちていないことを
+    /// 覆うものが無かった)。
+    ///
+    /// だから**台に窓を出させ、本物の `NSEvent` をその窓へ送る**。面が第一応答者に据わって
+    /// いなければ `keyDown` は 1 度も呼ばれず、運び先は空のままになる。
+    ///
+    /// [#963]: https://github.com/mokume-metal/mokume/issues/963
+    @Test("道具の窓へ送ったキーは、運び先へ行く")
+    func keysReachTheRelayThroughTheWindow() throws {
+        try withFacet { facet in
+            let stage = try SharedFrameStage(gpu: RenderDevice(), facet: facet, look: look("keys"))
+            var lines: [String] = []
+            stage.onInput = { lines.append($0) }
+            stage.open()
+            defer { stage.close() }
+            let window = try #require(stage.window)
+            #expect(window.firstResponder === window.contentView)
+            let event = try #require(
+                KeyEventFixture.keyDown(in: window, characters: "a", keyCode: 0))
+            window.sendEvent(event)
+            #expect(
+                lines == [
+                    InputEvent.keyDown(code: Key(rawValue: 0), characters: "a", isRepeat: false)
+                        .wireLine
+                ])
+        }
+    }
+
     /// **つまみはプレビューにだけ出る** ([ADR-0032] 決定 5)。見張りから本番を回している
     /// 間、つまみが本番の画面に出てはならない。
     @Test("宣言があればプレビューにつまみが出て、作品の窓には出ない")
