@@ -39,6 +39,14 @@ struct ParamRegistry {
     /// いまの姿。**並びは宣言した順** (基底の側から)。
     var declarations: [ParamDeclaration] { boxes.map(\.box.declaration) }
 
+    /// つまみへ渡す箱。**並びは宣言した順。**
+    ///
+    /// 窓がここから受け取るのは、**索引をもう 1 度引かせないため**である。引き直すと
+    /// 起動のたびに 2 度数えることになり、重複した宣言の警告まで 2 度出る — 読み手には
+    /// 「重複が 2 個ある」と読める
+    /// ([#994](https://github.com/mokume-metal/mokume/issues/994) の 13)。
+    var knobs: [any DeclaredParam] { boxes.map(\.box) }
+
     /// 名前を指して書き換える。
     func write(_ value: ParamValue, to name: String) -> ParamOutcome? {
         guard let entry = boxes.first(where: { $0.name == name }) else { return nil }
