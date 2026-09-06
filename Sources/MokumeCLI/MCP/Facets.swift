@@ -54,9 +54,9 @@ struct Facets {
     ) throws -> [String: Any]? {
         let waitLimit = self.waitLimit + max(0, extraWait)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
-        let reportURL = facet.appendingPathComponent("report.json")
+        let reportURL = WorkDirectory.reportURL(under: facet)
         let data = try JSONSerialization.data(withJSONObject: request)
-        try AtomicWrite.write(data, to: facet.appendingPathComponent("request.json"))
+        try AtomicWrite.write(data, to: WorkDirectory.requestURL(under: facet))
 
         let deadline = now().addingTimeInterval(waitLimit)
         while now() < deadline {
@@ -82,10 +82,13 @@ struct Facets {
     /// 必ず在る。走っているスケッチが観測を持っているかどうかは、**この呼び出しが区画を
     /// 作ったのかどうか**にそのまま出る。
     ///
-    /// 判定そのものは ``DirectoryPresence`` が持つ — かつてここは「`FrameObserver.makeIfEnabled`
-    /// と同じ形にする」と文章で約束していたが、守る機械は居なかった (#814)。
+    /// 判定そのものは ``WorkDirectory/directoryExists(at:)`` が持つ — かつてここは
+    /// 「`FrameObserver.makeIfEnabled` と同じ形にする」と文章で約束していたが、守る機械は
+    /// 居なかった (#814)。**道具とライブラリで割れると下の `notRunning` が嘘をつく** —
+    /// `existed` は区画を作ったのがこの呼び出し自身かどうかで案内を出し分けるので、割れた
+    /// 側では「起動し直せ」と言われた先で「まだ立ち上がっていない」と言われる (#380 の形)。
     func hasFacet(_ facet: URL) -> Bool {
-        DirectoryPresence.exists(facet)
+        WorkDirectory.directoryExists(at: facet)
     }
 
     /// 走っているスケッチが応えないときの答え。**その場で直せるところまで書く。**

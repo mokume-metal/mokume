@@ -48,9 +48,6 @@ struct InputReport: Encodable, Equatable {
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 @MainActor
 final class InputInbox {
-    static let requestFileName = "request.json"
-    static let reportFileName = "report.json"
-
     let directory: URL
     private let requests: RequestFile<InputRequest>
     private let reportURL: URL
@@ -59,17 +56,14 @@ final class InputInbox {
     static func makeIfEnabled(
         at directory: URL = WorkDirectory.facet(StartupReads.input.key)
     ) -> InputInbox? {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
-            isDirectory.boolValue
-        else { return nil }
+        guard WorkDirectory.directoryExists(at: directory) else { return nil }
         return InputInbox(directory: directory)
     }
 
     init(directory: URL) {
         self.directory = directory
-        self.requests = RequestFile(url: directory.appendingPathComponent(Self.requestFileName))
-        self.reportURL = directory.appendingPathComponent(Self.reportFileName)
+        self.requests = RequestFile(url: WorkDirectory.requestURL(under: directory))
+        self.reportURL = WorkDirectory.reportURL(under: directory)
     }
 
     /// 要求が来ていれば流し込み、応答を書く。

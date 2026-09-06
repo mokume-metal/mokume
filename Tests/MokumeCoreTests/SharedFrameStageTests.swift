@@ -130,7 +130,7 @@ struct SharedFrameStageTests {
                 rejected: [], clamped: [], discarded: [])
             try AtomicFile.write(
                 try JSONEncoder().encode(report),
-                to: params.appendingPathComponent(ParamSurface.reportFileName))
+                to: params.appendingPathComponent("report.json"))
 
             let gpu = try RenderDevice()
             let preview = try SharedFramePreview(

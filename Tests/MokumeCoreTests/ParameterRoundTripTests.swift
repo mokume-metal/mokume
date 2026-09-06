@@ -100,13 +100,13 @@ struct ParameterRoundTripTests {
 
     private func write(request: String, to workspace: Workspace) throws {
         try request.write(
-            to: workspace.facet.appendingPathComponent(ParamSurface.requestFileName),
+            to: workspace.facet.appendingPathComponent("request.json"),
             atomically: true, encoding: .utf8)
     }
 
     private func report(from workspace: Workspace) throws -> [String: Any] {
         let data = try Data(
-            contentsOf: workspace.facet.appendingPathComponent(ParamSurface.reportFileName))
+            contentsOf: workspace.facet.appendingPathComponent("report.json"))
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
     }
 

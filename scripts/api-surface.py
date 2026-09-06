@@ -378,6 +378,9 @@ FOREIGN_ALLOWLIST = {
     "WorkDirectory.root": "作業場所の根 (WorkDirectory.base と同じ理由)",
     "WorkDirectory.root(under:)": "基準を外から渡す形の根 (WorkDirectory.base と同じ理由)",
     "WorkDirectory.facet(_:under:)": "基準を外から渡す形の区画 (WorkDirectory.base と同じ理由)",
+    "WorkDirectory.requestURL(under:)": "区画の中の要求ファイルの在処。綴りを 1 箇所に保つには、場所を組んで返すしかない (WorkDirectory.base と同じ理由)",
+    "WorkDirectory.reportURL(under:)": "区画の中の応答ファイルの在処 (WorkDirectory.requestURL と同じ理由)",
+    "WorkDirectory.directoryExists(at:)": "見に行く場所の指定。返すのではなく受けるだけなので PNGFile.write(_:to:) と同じ向きで、在処の正典は標準ライブラリの外にある",
     "SharedFrameWindow.init(gpu:facet:title:)": "見張っているスケッチ側の区画を指す。道具は自分の作業場所ではなくそこへ置くので、場所を渡す口が要る (WorkDirectory.facet と同じ理由)",
     "SharedFramePreview.init(gpu:facet:params:title:)": "作品の窓と同じ区画を独立に見るプレビューと、つまみの区画 (SharedFrameWindow.init と同じ理由)",
 }
