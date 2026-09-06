@@ -16,6 +16,7 @@ extension Canvas {
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
     enum OutsideFrame: CaseIterable {
         case camera
+        case transform
         case light
         case surroundings
         case shadow
@@ -27,6 +28,7 @@ extension Canvas {
         var warning: Warning {
             switch self {
             case .camera: .cameraOutsideFrame
+            case .transform: .transformOutsideFrame
             case .light: .lightOutsideFrame
             case .surroundings: .surroundingsOutsideFrame
             case .shadow: .shadowOutsideFrame
@@ -46,6 +48,7 @@ extension Canvas {
         private var opening: String {
             switch self {
             case .camera: Self.replacedEachFrame("視点と投影", "置き")
+            case .transform: Self.replacedEachFrame("変換", "書き")
             case .light: Self.replacedEachFrame("光", "置き")
             case .surroundings: Self.replacedEachFrame("周囲", "置き")
             case .shadow: Self.replacedEachFrame("影", "書き")
@@ -64,6 +67,7 @@ extension Canvas {
         private var subject: String {
             switch self {
             case .camera: "視点"
+            case .transform: "変換"
             case .light: "光"
             case .surroundings: "周囲"
             case .shadow: "影"
@@ -79,7 +83,7 @@ extension Canvas {
         /// ある動詞が濁らない — 実際に畳んだとき「頼んだ」が「頼んた」になった。
         private var pastVerb: String {
             switch self {
-            case .camera, .shadow, .material: "書いた"
+            case .camera, .transform, .shadow, .material: "書いた"
             case .light, .surroundings: "置いた"
             case .particles: "出した"
             case .compute: "頼んだ"

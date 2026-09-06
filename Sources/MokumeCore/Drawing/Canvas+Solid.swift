@@ -92,19 +92,30 @@ extension Canvas {
 
     // 原点を奥行きも含めてずらす。
     public func translate(_ x: Float, _ y: Float, _ z: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
         transform.translate(x: x, y: y, z: z)
     }
 
     // 横軸まわりに回す。
-    public func rotateX(_ radians: Float) { transform.rotateX(by: radians) }
+    public func rotateX(_ radians: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.rotateX(by: radians)
+    }
 
     // 縦軸まわりに回す。
-    public func rotateY(_ radians: Float) { transform.rotateY(by: radians) }
+    public func rotateY(_ radians: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.rotateY(by: radians)
+    }
 
     // 奥行きの軸まわりに回す。
-    public func rotateZ(_ radians: Float) { transform.rotateZ(by: radians) }
+    public func rotateZ(_ radians: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.rotateZ(by: radians)
+    }
 
     public func scale(_ x: Float, _ y: Float, _ z: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
         transform.scale(x: x, y: y, z: z)
     }
 

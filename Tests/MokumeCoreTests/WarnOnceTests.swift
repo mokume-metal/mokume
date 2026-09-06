@@ -6,7 +6,8 @@ import Testing
 
 @testable import MokumeCore
 
-/// 畳む前に 7 つの `warn*OutsideFrame()` が持っていた文面 ([#947])。
+/// 畳む前に 7 つの `warn*OutsideFrame()` が持っていた文面 ([#947]) と、
+/// 後から同じ形で足した変換 ([#941])。
 ///
 /// **実装とは別の場所に写して突き合わせる。** 利用者が読む 1 行なので、畳んだ拍子に
 /// 変わっていないことをここで見る — 実際、7 本を 1 つの型へ畳んだとき「頼んだ」が
@@ -17,6 +18,9 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .camera:
         "視点と投影はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
             + "初期化のときに書いた視点はどのフレームにも属さないため、無視しました",
+    .transform:
+        "変換はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
+            + "初期化のときに書いた変換はどのフレームにも属さないため、無視しました",
     .light:
         "光はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
             + "初期化のときに置いた光はどのフレームにも属さないため、無視しました",
@@ -40,7 +44,7 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("フレームの外で置き直したときの文面")
 struct OutsideFrameNoticeTests {
-    @Test("7 つとも原文のまま")
+    @Test("8 つとも原文のまま")
     func noticesKeepTheirWording() {
         for (subject, original) in outsideFrameNotices {
             #expect(subject.notice == original, "\(subject) の文面が変わっている")
