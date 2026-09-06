@@ -37,7 +37,7 @@ final class OutputPass {
     private let brightnessBuffer: any MTLBuffer
 
     init(gpu: RenderDevice) throws(RenderFailure) {
-        let library = try gpu.makeLibrary(named: "Present")
+        let library = try gpu.shaders.makeLibrary(named: "Present")
 
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = "presentVertexMain"

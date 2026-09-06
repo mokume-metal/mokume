@@ -36,7 +36,7 @@ import Metal
     private let brightnessStorage: GrowableBuffer
 
     init(gpu: RenderDevice, pixelFormat: MTLPixelFormat) throws(RenderFailure) {
-        let library = try gpu.makeLibrary(named: "Present")
+        let library = try gpu.shaders.makeLibrary(named: "Present")
 
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = "presentVertexMain"

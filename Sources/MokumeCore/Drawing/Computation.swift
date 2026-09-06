@@ -59,7 +59,7 @@ import MokumeDiagnostics
             name: name, url: url, body: body, values: values,
             label: "computation", valuesHint: "作るときの values")
 
-        let library = try gpu.makeComputeLibrary(named: name, body: body, values: values)
+        let library = try gpu.shaders.makeComputeLibrary(named: name, body: body, values: values)
         self.state = try pipeline.makeState(
             library: library, functionName: name, label: "mokume.computation.\(name)")
         box.watch { [weak self] in self?.reload() }
@@ -83,7 +83,7 @@ import MokumeDiagnostics
     /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(_:)``)。
     func reload() {
         box.reload { (body: String) throws(RenderFailure) in
-            let library = try gpu.makeComputeLibrary(named: name, body: body, values: values)
+            let library = try gpu.shaders.makeComputeLibrary(named: name, body: body, values: values)
             state = try pipeline.makeState(
                 library: library, functionName: name, label: "mokume.computation.\(name)")
         }

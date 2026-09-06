@@ -63,7 +63,7 @@ public final class Shader {
             name: name, url: url, body: body, values: values,
             label: "shader", valuesHint: "loadShader の values")
 
-        let library = try gpu.makeShapeLibrary(
+        let library = try gpu.shaders.makeShapeLibrary(
             named: name, body: body, values: values, surfaces: surfaces)
         self.states = try pipeline.makeStates(
             fragmentLibrary: library, label: "mokume.shader.\(name)")
@@ -108,7 +108,7 @@ public final class Shader {
     /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(_:)``)。
     func reload() {
         box.reload { (body: String) throws(RenderFailure) in
-            let library = try gpu.makeShapeLibrary(
+            let library = try gpu.shaders.makeShapeLibrary(
                 named: name, body: body, values: values, surfaces: surfaces)
             // **両方が組み上がってから差し替える。** 片方だけ差し替わると、平面と
             // 立体で違う断片が効いている状態になる

@@ -49,7 +49,7 @@ public final class EffectShader {
             name: name, url: url, body: body, values: values,
             label: "effect", valuesHint: "作るときの values")
 
-        let library = try gpu.makeEffectLibrary(named: name, body: body, values: values)
+        let library = try gpu.shaders.makeEffectLibrary(named: name, body: body, values: values)
         self.state = try pipeline.makeState(library: library, label: "mokume.effect.\(name)")
 
         box.watch { [weak self] in self?.reload() }
@@ -69,7 +69,7 @@ public final class EffectShader {
     /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(_:)``)。
     func reload() {
         box.reload { (body: String) throws(RenderFailure) in
-            let library = try gpu.makeEffectLibrary(named: name, body: body, values: values)
+            let library = try gpu.shaders.makeEffectLibrary(named: name, body: body, values: values)
             state = try pipeline.makeState(library: library, label: "mokume.effect.\(name)")
         }
     }

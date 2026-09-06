@@ -48,7 +48,7 @@ extension Canvas {
         }
 
         let parameters = Particles.headerFloats + Particles.maximumForces * Force.slotCount
-        let source = try gpu.bundledShaderSource(named: Self.particleShaderName)
+        let source = try gpu.shaders.bundledShaderSource(named: Self.particleShaderName)
         var headers: [Numbers] = []
         for _ in 0..<(lengths.count - 1) { headers.append(try Numbers(gpu: gpu, count: 4)) }
         let particles = Particles(
