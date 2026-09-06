@@ -213,6 +213,10 @@ mokume 向けのエージェント支援 (スキル・hooks・設定) はこの�
 
 同種の機構が双方にあるときは、リポ側が担保して個人側を `env` で黙らせる (いま 3 本: `CLAUDE_PLAN_RECORD` / `RS_CI_WATCH` / `CLAUDE_GH_COMMENT_GUARD`)。リポ側に対応物が無いものは、受け取ってから黙らせる。
 
+**無人セッションの名乗りは `MOKUME_UNATTENDED=1` で、立てるのは外に居る起動側である** ([ADR-0036](docs/decisions/0036-unattended-issue-processing.md) 決定 2)。読むのは `scripts/plan-record.sh` で、変わるのは 2 つだけ — capture が「承認は待たない」と言い添え、guard が回数で諦めなくなる (諦めた先は「人間の判断へ返す」なので、返す先が居ないとプランが失われる)。
+
+**この 1 本だけは `env` に書けない。** `.claude/settings.json` の `env` は**そのリポジトリの全セッション**に効くので、「無人のときだけ」を静的な設定では表せない。個人環境側の plan gate を黙らせる env も、同じ理由で起動側が併せて立てる — リポジトリ側が担保できるのは、**綴りを 1 つに決めて読む側をここに置く**ところまでである。
+
 `PreToolUse` で止めているのは 3 本:
 
 | フック | 何を止めるか |
