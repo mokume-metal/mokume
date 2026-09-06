@@ -348,9 +348,9 @@ struct CustomSolidTests {
 
             // 数でない座標
             canvas.beginShape()
-            canvas.vertex(.nan, 10, 0)
-            canvas.vertex(10, .infinity, 0)
-            canvas.vertex(20, 20, .nan)
+            canvas.vertex(Float.nan, 10, 0)
+            canvas.vertex(10, Float.infinity, 0)
+            canvas.vertex(20, 20, Float.nan)
             canvas.vertex(30, 30, 10)
             canvas.endShape(.close)
 

@@ -29,13 +29,17 @@ extension Canvas {
     /// 線を引かない。図形の輪郭も出なくなる。
     public func noStroke() { hasStroke = false }
 
-    public func strokeWeight(_ weight: Float) { currentStrokeWeight = max(0, weight) }
+    public func strokeWeight(_ weight: some ScalarConvertible) {
+        let weight = weight.asFloat
+        currentStrokeWeight = max(0, weight)
+    }
 
     // 溜めている列をその場で閉じる (混ぜ方と同じ理由)。
     //
     // 面の外へ出た指定を面の内側へ収めるのは、この世代の GPU が範囲外の切り抜きを
     // 受け取ると検証で落ちるためである。指定をそのまま渡さない。
-    public func clip(_ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+    public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
         let left = min(max(0, Int(box.x)), Int(width))
         let top = min(max(0, Int(box.y)), Int(height))

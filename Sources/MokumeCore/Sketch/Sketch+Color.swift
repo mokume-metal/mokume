@@ -12,8 +12,9 @@ extension Sketch {
     ///
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public func background(
-        _ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255
+        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
     ) {
+        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.background(red, green, blue, alpha)
     }
 
@@ -22,7 +23,8 @@ extension Sketch {
     /// ```swift
     /// background(24)
     /// ```
-    public func background(_ gray: Float, _ alpha: Float = 255) {
+    public func background(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.background(gray, alpha)
     }
 
@@ -44,7 +46,8 @@ extension Sketch {
     ///   0–1 で書きたいときは ``LinearRGBA/display(red:green:blue:alpha:)`` を渡す。
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
-    public func fill(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
+    public func fill(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.fill(red, green, blue, alpha)
     }
 
@@ -57,7 +60,8 @@ extension Sketch {
     /// ```
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
-    public func fill(_ gray: Float, _ alpha: Float = 255) {
+    public func fill(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.fill(gray, alpha)
     }
 
@@ -75,7 +79,8 @@ extension Sketch {
     /// ```
     ///
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
-    public func stroke(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
+    public func stroke(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.stroke(red, green, blue, alpha)
     }
 
@@ -89,7 +94,8 @@ extension Sketch {
     /// ```
     ///
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
-    public func stroke(_ gray: Float, _ alpha: Float = 255) {
+    public func stroke(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.stroke(gray, alpha)
     }
 
@@ -102,7 +108,8 @@ extension Sketch {
     /// ```
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
-    public func tint(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
+    public func tint(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.tint(red, green, blue, alpha)
     }
 
@@ -113,7 +120,8 @@ extension Sketch {
     /// ```
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
-    public func tint(_ gray: Float, _ alpha: Float = 255) {
+    public func tint(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.tint(gray, alpha)
     }
 }

@@ -9,13 +9,15 @@ import simd
 extension Canvas {
 
     // 艶の鋭さ。0 なら艶を出さない。
-    public func shininess(_ amount: Float) {
+    public func shininess(_ amount: some ScalarConvertible) {
+        let amount = amount.asFloat
         guard amount.isFinite, amount >= 0 else { return warnBadMaterial("shininess") }
         apply { $0.shininess = amount }
     }
 
     // 金属らしさ。0 が非金属、1 が金属。
-    public func metalness(_ amount: Float) {
+    public func metalness(_ amount: some ScalarConvertible) {
+        let amount = amount.asFloat
         guard amount.isFinite, amount >= 0, amount <= 1 else {
             return warnBadMaterial("metalness")
         }

@@ -50,7 +50,10 @@ extension Sketch {
     /// **塗りの色で描く**ので、``noFill()`` の状態では何も出ない。
     // shot: 1 snippet=0c8959e5
     // shot: 2 snippet=3044f8bc
-    public func text(_ string: String, _ x: Float, _ y: Float) { canvas.text(string, x, y) }
+    public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.text(string, x, y)
+    }
 
     /// これから描く文字の大きさ (画素)。既定は 12。
     ///
@@ -100,7 +103,10 @@ extension Sketch {
     /// - Note: 文字の大きさは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=a8143a74
     // shot: 2 snippet=02dd14ba
-    public func textSize(_ size: Float) { canvas.textSize(size) }
+    public func textSize(_ size: some ScalarConvertible) {
+        let size = size.asFloat
+        canvas.textSize(size)
+    }
 
     /// これから描く文字の書体。
     ///
@@ -320,7 +326,10 @@ extension Sketch {
     /// - Note: 行送りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=c1e64917
     // shot: 2 snippet=26cf4f8a
-    public func textLeading(_ leading: Float) { canvas.textLeading(leading) }
+    public func textLeading(_ leading: some ScalarConvertible) {
+        let leading = leading.asFloat
+        canvas.textLeading(leading)
+    }
 
     /// 文字列を描いたときの幅 (画素)。
     ///
@@ -476,10 +485,11 @@ extension Sketch {
     // shot: 1 snippet=82f3bb5e
     // shot: 2 snippet=6b763151
     @discardableResult
-    public func text(_ string: String, _ a: Float, _ b: Float, _ c: Float, _ d: Float)
+    public func text(_ string: String, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible)
         -> TextFlow
     {
-        canvas.text(string, a, b, c, d)
+        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        return canvas.text(string, a, b, c, d)
     }
 
     /// 幅に収まらなくなったとき、どこで行を折るか。既定は語の切れ目。
@@ -571,7 +581,8 @@ extension Sketch {
     /// 字ごとに、外側の周が先・穴が後の順で並ぶ。曲線は直線の並びにほどいてあり、
     /// 細かさは曲線の大きさから決まる。
     // shot: 1 snippet=e9e2ccf8
-    public func textOutline(_ string: String, _ x: Float, _ y: Float) -> [TextContour] {
-        canvas.textOutline(string, x, y)
+    public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
+        let (x, y) = (x.asFloat, y.asFloat)
+        return canvas.textOutline(string, x, y)
     }
 }

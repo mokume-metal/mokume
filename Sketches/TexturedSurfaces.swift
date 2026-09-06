@@ -46,7 +46,7 @@ final class TexturedSurfaces: Sketch {
             480 + sin(angle) * 420, 150, cos(angle) * 420,
             480, 300, 0,
             0, 1, 0)
-        perspective(.pi / 3, width / height, 10, 2000)
+        perspective(Float.pi / 3, width / height, 10, 2000)
 
         ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.24))
         directionalLight(.linear(red: 0.9, green: 0.86, blue: 0.78), -0.4, 0.8, -0.35)
@@ -78,7 +78,7 @@ final class TexturedSurfaces: Sketch {
         // 自分で並べた面には、読み取り位置を書いて貼れる
         push()
         translate(480, 450, 0)
-        rotateX(.pi / 2)
+        rotateX(Float.pi / 2)
         beginShape()
         vertex(-260, -120, 0, 0, 0)
         vertex(260, -120, 0, Float(grain.width), 0)

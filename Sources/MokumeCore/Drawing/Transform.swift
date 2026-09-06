@@ -50,13 +50,15 @@ public struct Transform: Equatable, Sendable {
     }
 
     /// 点をこの変換で移す (奥行き 0 の面の上の点として)。
-    public func apply(x: Float, y: Float) -> SIMD2<Float> {
+    public func apply(x: some ScalarConvertible, y: some ScalarConvertible) -> SIMD2<Float> {
+        let (x, y) = (x.asFloat, y.asFloat)
         let moved = matrix * SIMD4<Float>(x, y, 0, 1)
         return SIMD2<Float>(moved.x, moved.y)
     }
 
     /// 奥行きを持つ点をこの変換で移す。
-    public func apply(x: Float, y: Float, z: Float) -> SIMD3<Float> {
+    public func apply(x: some ScalarConvertible, y: some ScalarConvertible, z: some ScalarConvertible) -> SIMD3<Float> {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         let moved = matrix * SIMD4<Float>(x, y, z, 1)
         return SIMD3<Float>(moved.x, moved.y, moved.z)
     }

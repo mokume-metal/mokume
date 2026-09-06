@@ -380,9 +380,9 @@ struct MaterialTests {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.shininess(30)
-            canvas.shininess(.nan)
+            canvas.shininess(Float.nan)
             canvas.shininess(-1)
-            canvas.shininess(.infinity)
+            canvas.shininess(Float.infinity)
             canvas.metalness(2)
             canvas.metalness(-0.5)
             canvas.ambient(.linear(red: -1, green: 0, blue: 0))

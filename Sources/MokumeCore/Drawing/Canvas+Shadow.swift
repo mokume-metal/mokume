@@ -16,7 +16,8 @@ extension Canvas {
     }
 
     // 影を焼き付ける範囲の一辺 (世界の長さ)。
-    public func shadowRange(_ size: Float) {
+    public func shadowRange(_ size: some ScalarConvertible) {
+        let size = size.asFloat
         guard isDrawing else { return warnOutsideFrame(.shadow) }
         guard size.isFinite, size > 0 else { return warnBadShadow("shadowRange") }
         closeBatch()
@@ -32,7 +33,8 @@ extension Canvas {
     }
 
     // 影の縁の破綻を抑える量。
-    public func shadowBias(_ amount: Float) {
+    public func shadowBias(_ amount: some ScalarConvertible) {
+        let amount = amount.asFloat
         guard isDrawing else { return warnOutsideFrame(.shadow) }
         guard amount.isFinite, amount >= 0 else { return warnBadShadow("shadowBias") }
         closeBatch()

@@ -182,7 +182,10 @@ extension Sketch {
     /// - Note: 線の太さは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=1f8ee8eb
     // shot: 2 snippet=edd890f7
-    public func strokeWeight(_ weight: Float) { canvas.strokeWeight(weight) }
+    public func strokeWeight(_ weight: some ScalarConvertible) {
+        let weight = weight.asFloat
+        canvas.strokeWeight(weight)
+    }
 
     /// 図形の内側を塗らない。輪郭だけの図形になる。
     ///
@@ -323,7 +326,10 @@ extension Sketch {
     ///
     /// 積み降ろし (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
     /// 面の外へ出た指定は面の内側へ収める。
-    public func clip(_ a: Float, _ b: Float, _ c: Float, _ d: Float) { canvas.clip(a, b, c, d) }
+    public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        canvas.clip(a, b, c, d)
+    }
 
     /// 切り抜きをやめる。
     public func noClip() { canvas.noClip() }

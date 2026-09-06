@@ -61,7 +61,7 @@ extension Sketch {
     ///     places.append(
     ///         Placement(
     ///             x: random(width), y: random(height),
-    ///             rotation: SIMD3(0, random(2 * .pi), 0)))
+    ///             rotation: SIMD3(0, random(2 * Float.pi), 0)))
     /// }
     /// shape(grain, at: places)
     /// ```
@@ -81,7 +81,8 @@ extension Sketch {
     ///
     /// **たくさん置くときは shape(_:at:) を使う。** こちらは 1 回ごとに頂点を
     /// 置き直すので、置く数だけ描く回数が増える。
-    public func shape(_ shape: Shape, _ x: Float = 0, _ y: Float = 0) {
+    public func shape(_ shape: Shape, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
+        let (x, y) = (x.asFloat, y.asFloat)
         canvas.shape(shape, x, y)
     }
 }

@@ -9,13 +9,15 @@
 // 拾われないよう、宣言との間は必ず 1 行空ける。
 
 extension Canvas {
-    public func background(_ gray: Float, _ alpha: Float = 255) {
+    public func background(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         background(gray, gray, gray, alpha)
     }
 
     public func background(
-        _ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255
+        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
     ) {
+        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: alpha)
         else {
@@ -25,11 +27,13 @@ extension Canvas {
         background(color)
     }
 
-    public func fill(_ gray: Float, _ alpha: Float = 255) {
+    public func fill(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         fill(gray, gray, gray, alpha)
     }
 
-    public func fill(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
+    public func fill(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: alpha)
         else {
@@ -39,11 +43,13 @@ extension Canvas {
         fill(color)
     }
 
-    public func stroke(_ gray: Float, _ alpha: Float = 255) {
+    public func stroke(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         stroke(gray, gray, gray, alpha)
     }
 
-    public func stroke(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
+    public func stroke(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: alpha)
         else {
@@ -53,11 +59,13 @@ extension Canvas {
         stroke(color)
     }
 
-    public func tint(_ gray: Float, _ alpha: Float = 255) {
+    public func tint(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         tint(gray, gray, gray, alpha)
     }
 
-    public func tint(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 255) {
+    public func tint(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: alpha)
         else {

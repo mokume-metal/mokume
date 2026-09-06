@@ -117,7 +117,10 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=484b5a23
-    public func image(_ image: Image, _ x: Float, _ y: Float) { canvas.image(image, x, y) }
+    public func image(_ image: Image, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.image(image, x, y)
+    }
 
     /// 絵を、指定した寸法に合わせて置く。
     ///
@@ -152,7 +155,8 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=6c035e1b
-    public func image(_ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+    public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(image, a, b, c, d)
     }
 
@@ -193,9 +197,10 @@ extension Sketch {
     /// }
     // shot: 1 snippet=b02a0f10
     public func image(
-        _ image: Image, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
-        _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
+        _ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
     ) {
+        let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         canvas.image(image, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 

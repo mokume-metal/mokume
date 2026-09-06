@@ -15,7 +15,10 @@ extension Sketch {
     ///     exposure(1.6)   // 全体を明るく写す。描く色は変えない
     /// }
     /// ```
-    public func exposure(_ multiplier: Float) { canvas.exposure(multiplier) }
+    public func exposure(_ multiplier: some ScalarConvertible) {
+        let multiplier = multiplier.asFloat
+        canvas.exposure(multiplier)
+    }
 
     /// 表示できる範囲を超えた明るさの丸め方。既定は ``ToneMapping/clip``。
     ///

@@ -95,7 +95,7 @@ struct CanvasTests {
             canvas.background(black)
             canvas.fill(white)
             // 右向きが 0、増える向きは画面の上で時計回り = 右下の 4 分の 1
-            canvas.arc(32, 32, 40, 40, 0, .pi / 2)
+            canvas.arc(32, 32, 40, 40, 0, Float.pi / 2)
         }
         let image = try pixels(of: canvas)
         #expect(image[40, 40] == (255, 255, 255, 255))  // 右下は扇の中
@@ -880,10 +880,10 @@ struct CanvasTests {
         let mouths: [(String, (Canvas) -> Void)] = [
             ("translate(x,y)", { $0.translate(10, 20) }),
             ("translate(x,y,z)", { $0.translate(10, 20, 30) }),
-            ("rotate", { $0.rotate(.pi / 4) }),
-            ("rotateX", { $0.rotateX(.pi / 4) }),
-            ("rotateY", { $0.rotateY(.pi / 4) }),
-            ("rotateZ", { $0.rotateZ(.pi / 4) }),
+            ("rotate", { $0.rotate(Float.pi / 4) }),
+            ("rotateX", { $0.rotateX(Float.pi / 4) }),
+            ("rotateY", { $0.rotateY(Float.pi / 4) }),
+            ("rotateZ", { $0.rotateZ(Float.pi / 4) }),
             ("scale(x,y)", { $0.scale(2, 3) }),
             ("scale(x,y,z)", { $0.scale(2, 3, 4) }),
             ("shearX", { $0.shearX(0.3) }),
@@ -935,7 +935,7 @@ struct CanvasTests {
             canvas.background(black)
             canvas.noStroke()
             canvas.fill(white)
-            canvas.shearX(.pi / 4)  // 45 度なら y のぶんだけ x がずれる
+            canvas.shearX(Float.pi / 4)  // 45 度なら y のぶんだけ x がずれる
             canvas.rect(8, 8, 8, 24)
         }
         let image = try pixels(of: canvas)
@@ -1211,7 +1211,7 @@ struct CanvasTests {
         try canvas.draw {
             canvas.background(black)
             canvas.fill(white)
-            canvas.arc(32, 32, 40, 40, .pi, 0)
+            canvas.arc(32, 32, 40, 40, Float.pi, 0)
         }
         let image = try pixels(of: canvas)
         for y in stride(from: 0, to: 64, by: 8) {

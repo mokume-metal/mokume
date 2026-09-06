@@ -50,7 +50,7 @@ final class ShapesAndStyle: Sketch {
         push()
         translate(760, 235)
         for _ in 0..<12 {
-            rotate(.pi / 6)
+            rotate(Float.pi / 6)
             scale(0.92, 0.92)
             stroke(255, 153, 76, 230)
             strokeWeight(3)

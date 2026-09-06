@@ -109,7 +109,7 @@ struct LightColorTests {
 
     @Test("数でない値を渡しても落ちず、絵は光を置かなかったときのままになる")
     func notANumberPlacesNoLight() throws {
-        let broken = try sphere { $0.directionalLight(.nan, 244, 214, -0.5, 1, -0.3) }
+        let broken = try sphere { $0.directionalLight(Float.nan, 244, 214, -0.5, 1, -0.3) }
         let none = try sphere { _ in }
         #expect(isSame(broken, none))
     }

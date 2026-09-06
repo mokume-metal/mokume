@@ -24,7 +24,7 @@ final class SolidsAndLight: Sketch {
             center.x + sin(angle) * distance, center.y - 210, cos(angle) * distance,
             center.x, center.y + 110, 0,
             0, 1, 0)
-        perspective(.pi / 3, width / height, 10, 2000)
+        perspective(Float.pi / 3, width / height, 10, 2000)
 
         // 光を 4 種そろえて置く。縦軸は下向きなので、上から差す光の向きは +y
         ambientLight(.linear(red: 0.16, green: 0.17, blue: 0.22))
@@ -44,7 +44,7 @@ final class SolidsAndLight: Sketch {
         fill(128, 128, 140)
         push()
         translate(center.x, center.y + 130, 0)
-        rotateX(.pi / 2)
+        rotateX(Float.pi / 2)
         plane(760, 760)
         pop()
 

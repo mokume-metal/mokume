@@ -1025,27 +1025,32 @@ public final class Canvas {
 
     // MARK: - 変換
 
-    public func translate(_ x: Float, _ y: Float) {
+    public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
         guard isDrawing else { return warnOutsideFrame(.transform) }
         transform.translate(x: x, y: y)
     }
 
-    public func rotate(_ radians: Float) {
+    public func rotate(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
         guard isDrawing else { return warnOutsideFrame(.transform) }
         transform.rotate(by: radians)
     }
 
-    public func scale(_ x: Float, _ y: Float) {
+    public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
         guard isDrawing else { return warnOutsideFrame(.transform) }
         transform.scale(x: x, y: y)
     }
 
-    public func shearX(_ radians: Float) {
+    public func shearX(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
         guard isDrawing else { return warnOutsideFrame(.transform) }
         transform.shearX(by: radians)
     }
 
-    public func shearY(_ radians: Float) {
+    public func shearY(_ radians: some ScalarConvertible) {
+        let radians = radians.asFloat
         guard isDrawing else { return warnOutsideFrame(.transform) }
         transform.shearY(by: radians)
     }

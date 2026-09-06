@@ -234,9 +234,9 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``Sketch/loadImage(_:)``
 - ``Sketch/requestImage(_:)``
 - ``Sketch/createImage(_:_:)``
-- ``Sketch/image(_:_:_:)-19wv0``
-- ``Sketch/image(_:_:_:_:_:)-882gd``
-- ``Sketch/image(_:_:_:_:_:_:_:_:_:)-2oyv8``
+- ``Sketch/image(_:_:_:)-7x24``
+- ``Sketch/image(_:_:_:_:_:)-4y6h0``
+- ``Sketch/image(_:_:_:_:_:_:_:_:_:)-1n37``
 - ``Sketch/texture(_:)-9gngo``
 - ``Sketch/noTexture()``
 - ``Image``
@@ -255,9 +255,9 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 ### 別の描き場所に描く
 
 - ``Sketch/createGraphics(_:_:)``
-- ``Sketch/image(_:_:_:)-54avl``
-- ``Sketch/image(_:_:_:_:_:)-5wi02``
-- ``Sketch/image(_:_:_:_:_:_:_:_:_:)-2crsz``
+- ``Sketch/image(_:_:_:)-967ro``
+- ``Sketch/image(_:_:_:_:_:)-3ps7b``
+- ``Sketch/image(_:_:_:_:_:_:_:_:_:)-8kr2y``
 - ``Sketch/texture(_:)-5gdhl``
 - ``Canvas``
 
@@ -311,7 +311,7 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 ### 光と質感
 
 - ``Sketch/ambientLight(_:)-fvb5``
-- ``Sketch/ambientLight(_:)-8zz3g``
+- ``Sketch/ambientLight(_:)-51q6x``
 - ``Sketch/ambientLight(_:_:_:)``
 - ``Sketch/directionalLight(_:_:_:_:)``
 - ``Sketch/directionalLight(_:_:_:_:_:_:)``
@@ -324,10 +324,10 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 - ``Sketch/shininess(_:)``
 - ``Sketch/metalness(_:)``
 - ``Sketch/ambient(_:)-9anin``
-- ``Sketch/ambient(_:)-6gfzl``
+- ``Sketch/ambient(_:)-9pxes``
 - ``Sketch/ambient(_:_:_:)``
 - ``Sketch/emissive(_:)-uyuh``
-- ``Sketch/emissive(_:)-609c2``
+- ``Sketch/emissive(_:)-55jid``
 - ``Sketch/emissive(_:_:_:)``
 - ``Sketch/surroundings(_:)``
 - ``Sketch/background(_:)-1085h``
@@ -435,6 +435,13 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 ### 観測へ差し出す
 
 - ``Sketch/expose(_:_:)-19rp8``
+
+### 数を渡す
+
+描画へ渡す数は `Float`・`Double`・`Int` のどれで持っていても構いません。受け口が広く取って
+あり、中では `Float` として扱われます。
+
+- ``ScalarConvertible``
 
 ### 外から機能を足す
 

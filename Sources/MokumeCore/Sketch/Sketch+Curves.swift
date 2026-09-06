@@ -63,8 +63,9 @@ extension Sketch {
     // shot: 1 snippet=0439d7b3
     // shot: 2 snippet=74fd9077
     public func bezierVertex(
-        _ cx1: Float, _ cy1: Float, _ cx2: Float, _ cy2: Float, _ x: Float, _ y: Float
+        _ cx1: some ScalarConvertible, _ cy1: some ScalarConvertible, _ cx2: some ScalarConvertible, _ cy2: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible
     ) {
+        let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         canvas.bezierVertex(cx1, cy1, cx2, cy2, x, y)
     }
 
@@ -100,7 +101,8 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=03aa6a6a
-    public func quadraticVertex(_ cx: Float, _ cy: Float, _ x: Float, _ y: Float) {
+    public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         canvas.quadraticVertex(cx, cy, x, y)
     }
 
@@ -172,7 +174,10 @@ extension Sketch {
     /// }
     // shot: 1 snippet=398e30fc
     // shot: 2 snippet=794ad9dd
-    public func curveVertex(_ x: Float, _ y: Float) { canvas.curveVertex(x, y) }
+    public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.curveVertex(x, y)
+    }
 
     /// 曲線をいくつの直線で近似するか。
     ///
@@ -346,5 +351,8 @@ extension Sketch {
     // shot: 1 snippet=37de9468
     // shot: 2 snippet=a33d48f9
     // shot: 3 snippet=6f809d80
-    public func curveTightness(_ amount: Float) { canvas.curveTightness(amount) }
+    public func curveTightness(_ amount: some ScalarConvertible) {
+        let amount = amount.asFloat
+        canvas.curveTightness(amount)
+    }
 }

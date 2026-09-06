@@ -110,7 +110,8 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=b01c8b0c
-    public func image(_ graphics: Canvas, _ x: Float, _ y: Float) {
+    public func image(_ graphics: Canvas, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        let (x, y) = (x.asFloat, y.asFloat)
         canvas.image(graphics, x, y)
     }
 
@@ -147,7 +148,8 @@ extension Sketch {
     ///   }
     /// }
     // shot: 1 snippet=eca56bd9
-    public func image(_ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float) {
+    public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(graphics, a, b, c, d)
     }
 
@@ -184,9 +186,10 @@ extension Sketch {
     /// }
     // shot: 1 snippet=625e4d78
     public func image(
-        _ graphics: Canvas, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
-        _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
+        _ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
+        _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
     ) {
+        let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         canvas.image(graphics, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 

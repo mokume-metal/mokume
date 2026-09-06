@@ -116,7 +116,10 @@ extension Sketch {
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=10cc6754
-    public func shadowRange(_ size: Float) { canvas.shadowRange(size) }
+    public func shadowRange(_ size: some ScalarConvertible) {
+        let size = size.asFloat
+        canvas.shadowRange(size)
+    }
 
     /// 影を焼き付ける面の一辺の画素数。既定は 1024。
     ///
@@ -208,7 +211,10 @@ extension Sketch {
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=704ae6de
-    public func shadowBias(_ amount: Float) { canvas.shadowBias(amount) }
+    public func shadowBias(_ amount: some ScalarConvertible) {
+        let amount = amount.asFloat
+        canvas.shadowBias(amount)
+    }
 
     /// これから置く形が、影を落とす側か。既定は落とす。
     ///

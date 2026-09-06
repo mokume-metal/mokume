@@ -50,7 +50,10 @@ extension Sketch {
     ///   **光を 1 つも置かなければ立体は塗り 1 色で出る**ので、材質はどれも効かない
     ///   (書いてあれば警告が出る)。
     // shot: 1 snippet=d8f1f5d4
-    public func shininess(_ amount: Float) { canvas.shininess(amount) }
+    public func shininess(_ amount: some ScalarConvertible) {
+        let amount = amount.asFloat
+        canvas.shininess(amount)
+    }
 
     /// 金属らしさ。`0` が非金属 (既定)、`1` が金属。
     ///
@@ -92,7 +95,10 @@ extension Sketch {
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=06e03582
-    public func metalness(_ amount: Float) { canvas.metalness(amount) }
+    public func metalness(_ amount: some ScalarConvertible) {
+        let amount = amount.asFloat
+        canvas.metalness(amount)
+    }
 
     /// 周りの光 (``ambientLight(_:)-fvb5``) をどれだけ返すか。既定は白 = 全部返す。
     ///

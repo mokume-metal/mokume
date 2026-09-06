@@ -13,13 +13,15 @@ extension Sketch {
     public func random() -> Float { Self.requireRuntime().randomness.unitValue() }
 
     /// 0 以上 `high` 未満の値。`high` が負なら `high` 以上 0 未満。
-    public func random(_ high: Float) -> Float {
-        Self.requireRuntime().randomness.value(from: 0, to: high)
+    public func random(_ high: some ScalarConvertible) -> Float {
+        let high = high.asFloat
+        return Self.requireRuntime().randomness.value(from: 0, to: high)
     }
 
     /// `low` 以上 `high` 未満の値。**順序が逆でも受け取る。**
-    public func random(_ low: Float, _ high: Float) -> Float {
-        Self.requireRuntime().randomness.value(from: low, to: high)
+    public func random(_ low: some ScalarConvertible, _ high: some ScalarConvertible) -> Float {
+        let (low, high) = (low.asFloat, high.asFloat)
+        return Self.requireRuntime().randomness.value(from: low, to: high)
     }
 
     /// 乱数の種。同じ種を置いてから同じ順に呼べば、いつでも同じ列が出る。
@@ -46,8 +48,9 @@ extension Sketch {
     ///
     /// 座標として扱えるのは ±1e6 くらいまで。それを超えると模様は破綻するが、
     /// 落ちはしない (数でない座標には 0 が返る)。
-    public func noise(_ x: Float, _ y: Float = 0, _ z: Float = 0) -> Float {
-        canvas.noise(x, y, z)
+    public func noise(_ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0) -> Float {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        return canvas.noise(x, y, z)
     }
 
     /// 揺らぎの種。**断片にも同じ種が届く**ので、配線しなくてよい。
@@ -66,7 +69,8 @@ extension Sketch {
     /// **断片にも同じ細かさが届く。**
     ///
     /// - Note: 揺らぎの細かさは**フレームを越える**。一度書けば、書き換えるまで残る。
-    public func noiseDetail(_ lod: Int, _ falloff: Float = 0.5) {
+    public func noiseDetail(_ lod: Int, _ falloff: some ScalarConvertible = 0.5) {
+        let falloff = falloff.asFloat
         canvas.noiseDetail(lod, falloff)
     }
 }
