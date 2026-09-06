@@ -29,7 +29,7 @@ import Observation
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 @MainActor
-final class ParamStore {
+final class ParamStore: DeclarationWatcher {
     /// 静かになったと見なすまでのフレーム数。
     ///
     /// **つまみを引いている最中に毎フレーム書かない** ([ADR-0030] 決定 6)。続けて
@@ -42,7 +42,8 @@ final class ParamStore {
     static let schemaVersion = 1
 
     let url: URL
-    private let registry: ParamRegistry
+    /// 見張る先 (``DeclarationWatcher``)。
+    let registry: ParamRegistry
     /// 静かになるまでの残り。`nil` なら書くものが無い。
     private var countdown: Int?
     /// 実際に書いた回数。**まとめられていることを検査から見るために持つ。**
@@ -70,7 +71,7 @@ final class ParamStore {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     @discardableResult
     func restore() -> Restoration {
-        defer { watchValues() }
+        defer { watchDeclarations() }
         guard let data = try? Data(contentsOf: url) else { return Restoration() }
         guard let saved = try? JSONDecoder().decode(Saved.self, from: data) else {
             // 読めない保存は捨てて既定値で立ち上げる。**黙って捨てない** — 「なぜか
@@ -157,28 +158,13 @@ final class ParamStore {
         write()
     }
 
+    /// 値が変わったという知らせを受けた。**静かになるまで待ってから書く。**
+    func declarationsChanged() { countdown = Self.quietFrames }
+
     /// まとめている途中のものがあれば書く。終わるときに呼ぶ。
     func flushIfPending() {
         guard countdown != nil else { return }
         flushNow()
-    }
-
-    /// 値が変わったことを Observation から受け取る。
-    ///
-    /// **フレームごとに値を数え直さない** ([ADR-0013] 決定 1)。見張りは 1 回きりなので、
-    /// 知らせを受けた後に張り直す。
-    ///
-    /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
-    private func watchValues() {
-        withObservationTracking {
-            _ = registry.declarations
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                countdown = Self.quietFrames
-                watchValues()
-            }
-        }
     }
 
     /// いまの値を置く。**原子的に書く** ([ADR-0018] 決定 3) — 読み手が書きかけを

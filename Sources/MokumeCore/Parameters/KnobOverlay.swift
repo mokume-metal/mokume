@@ -51,10 +51,14 @@ final class KnobOverlay: NSView {
     /// 宣言があればつまみの面を作る。1 つも無ければ `nil`。
     ///
     /// **宣言だけでつまみが出る** ([ADR-0030] 決定 8) — 並べ方を書かせない。
-    static func makeIfNeeded(for sketch: any Sketch, numbers: (() -> FrameNumbers?)? = nil)
-        -> KnobOverlay?
-    {
-        let boxes = ParamCatalog.indexed(from: sketch).map(\.box)
+    ///
+    /// **索引は受け取る。** ここが自分で引くと起動のたびに 2 度数えることになり、
+    /// 重複した宣言の警告まで 2 度出る (#994 の 13)。持ち回る形は
+    /// ``SketchRuntime`` が既に採っている。
+    static func makeIfNeeded(
+        for registry: ParamRegistry, numbers: (() -> FrameNumbers?)? = nil
+    ) -> KnobOverlay? {
+        let boxes = registry.knobs
         guard !boxes.isEmpty else { return nil }
         return KnobOverlay(boxes: boxes, numbers: numbers)
     }

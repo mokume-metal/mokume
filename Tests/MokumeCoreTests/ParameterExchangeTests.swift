@@ -42,6 +42,27 @@ struct ParameterExchangeTests {
         return Dictionary(uniqueKeysWithValues: entries.map { ($0["name"] as? String ?? "", $0) })
     }
 
+    /// **見張りは持ち主と同時に立つ。**
+    ///
+    /// かつては書き出しの経路 (`publish()`) が張り直していた。つまり**その経路を通る
+    /// 前は見張りが立っておらず**、通らない道ができればその先で黙って死ぬ形でもあった
+    /// ([#994](https://github.com/mokume-metal/mokume/issues/994) の 12)。死んでも落ちも
+    /// 警告も出ず、症状は「つまみを動かしても面が更新されない」だけになる。
+    @Test("書き出しの経路を通る前でも、値の変化は届く")
+    func theWatchIsArmedFromConstruction() async throws {
+        let facet = try makeFacet()
+        let sketch = Knobbed()
+        // **start() を呼ばない。** 呼べば書き出しの経路を通ってしまう
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+
+        sketch.radius = 120
+        // 知らせは隔離の外から届き、扱いは main actor へ渡ってから行われる
+        await Task.yield()
+
+        let report = try #require(surface.drain())
+        #expect(report.params.first { $0.name == "radius" }?.value == .float(120))
+    }
+
     @Test("いまの値と宣言が、要求を出さなくても読める")
     func publishesOnStart() throws {
         let facet = try makeFacet()

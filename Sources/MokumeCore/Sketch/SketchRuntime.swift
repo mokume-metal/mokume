@@ -63,6 +63,11 @@ public final class SketchRuntime {
     /// つまみの面 (区画が在るときだけ働く)。
     private let params: ParamSurface?
     /// 合わせた値の保存。**区画とは無関係に既定で効く** (ADR-0030 決定 6)。
+    /// 宣言された値の索引。**起動時に 1 度だけ引く。**
+    ///
+    /// 窓 (``KnobOverlay``) もここから受け取る — それぞれが引き直すと、重複した宣言の
+    /// 警告が数えた回数だけ出る ([#994](https://github.com/mokume-metal/mokume/issues/994) の 13)。
+    let paramRegistry: ParamRegistry
     private let paramStore: ParamStore?
     /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
@@ -155,8 +160,9 @@ public final class SketchRuntime {
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
         self.relayed = StandardInputEvents.makeIfDriven()
-        // 索引は 1 度だけ引き、保存と面が同じものを持ち回る
+        // 索引は 1 度だけ引き、保存と面と窓が同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
+        self.paramRegistry = registry
         let store = ParamStore.makeIfNeeded(for: registry)
         self.paramStore = store
         self.params = ParamSurface.makeIfEnabled(for: registry, store: store)
@@ -187,6 +193,7 @@ public final class SketchRuntime {
         self.observer = observer
         self.inbox = inbox
         self.relayed = nil
+        self.paramRegistry = ParamRegistry(of: sketch)
         self.params = params
         self.paramStore = paramStore
     }

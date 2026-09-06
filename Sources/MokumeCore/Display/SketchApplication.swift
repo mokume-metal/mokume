@@ -295,7 +295,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 成果物には 1 画素も触らない。宣言が 1 つも無ければ何も足さない
         // 数字は**読む口を渡すだけ**。窓が自分で数えると源が 2 つに割れる
         // (ADR-0030 決定 7)
-        KnobOverlay.makeIfNeeded(for: runtime.sketch) { [runtime] in runtime.frameNumbers }?
+        KnobOverlay.makeIfNeeded(for: runtime.paramRegistry) { [runtime] in runtime.frameNumbers }?
             .attach(to: surface)
         // **前面を取らないときも、窓は出す。** 出さなければ、作り直すたびに絵が消える
         if takesFocus { window.makeKeyAndOrderFront(nil) } else { window.orderFrontRegardless() }
