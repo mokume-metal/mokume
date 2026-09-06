@@ -41,8 +41,19 @@
 # worktree に取られていても構わない — git が禁じているのは同じ**ローカル枝**の二重
 # チェックアウトだけなので、`origin/<相手の枝>` から新しい木を切れば触れる:
 #
-#   git worktree add -b catchup/<何か> <path> origin/<相手の枝>
-#   cd <path> && make catch-up PR=<番号>
+#   git worktree add -b catchup/<番号> <path> origin/<相手の枝>
+#   cd <path> && git merge origin/main --no-edit
+#   make catch-up PR=<番号>
+#
+# **2 行目を飛ばすと動かない** (#971)。代打ちの木が読む scripts/catch-up.sh は**その木の
+# 版**であって main の版ではなく、止まっている描画 PR は定義上 main より古い
+# (local-render が failure なのは main が先へ動いたからである)。だから相手の枝には
+# --pr がまだ無いことがあり、引数は黙って無視されて枝の名前から PR を引きにいき、
+# 代打ちの木は元の枝と同じ名前を名乗れないので必ず空振りする。
+#
+# 取り込んだ後は下の「3. 合流後の姿を覆い直す」が「main は取り込み済み」で素通りする
+# だけなので、二度手間にはならない。衝突すればそこで分かる (この道具に入っても同じ
+# ところで止まる)。
 #
 # **相手の worktree には一切触れない。** そして素直な取り込みなら **push もしない**
 # ので、承認も落ちない (#612) — 報告先を決める report_target が「手元の木が push 済み
@@ -54,7 +65,7 @@
 # すると嘘の報告になる。枝の**名前**は違ってよい (代打ちの木は同じ名前を名乗れない)。
 #
 # **この道具は木を作らない。** 責務を「いま居る木の PR を覆い直す」1 つに保つ
-# (作れば後片付けと失敗の面倒まで持つことになる)。上の 2 行は打つ人が打つ。
+# (作れば後片付けと失敗の面倒まで持つことになる)。上の 3 行は打つ人が打つ。
 #
 # ## 終了コード
 #
@@ -165,10 +176,10 @@ if [ -n "$pr_number" ]; then
 
   upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) \
     || stop "いまの枝が追跡先を持たない" \
-      "git worktree add -b catchup/$number <path> origin/$head_ref して、その中で打つ"
+      "git worktree add -b catchup/$number <path> origin/$head_ref → その中で main を取り込んでから打つ (冒頭のレシピ)"
   [ "$upstream" = "origin/$head_ref" ] || stop \
     "いまの枝の追跡先は $upstream で、PR #$number の枝 (origin/$head_ref) ではない" \
-    "git worktree add -b catchup/$number <path> origin/$head_ref して、その中で打つ"
+    "git worktree add -b catchup/$number <path> origin/$head_ref → その中で main を取り込んでから打つ (冒頭のレシピ)"
 
   say "PR #$number ($head_ref) を覆う — いまの枝 $(git rev-parse --abbrev-ref HEAD) は origin/$head_ref から切られている"
 else

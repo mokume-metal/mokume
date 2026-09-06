@@ -290,9 +290,11 @@ bash scripts/orphan-processes.sh
 
 ```bash
 git worktree add -b catchup/<番号> <path> origin/<相手の枝>
+cd <path> && git merge origin/main --no-edit
+make catch-up PR=<番号>
 ```
 
-その木の中で `make catch-up PR=<番号>` を打つ。**相手の worktree には一切触れず、素直な取り込みなら push もしないので承認も落ちない** (#612) — 報告先を決める判定が見るのは「手元の木が push 済み head から機械的に作り直せるか」だけだからである。番号を渡したときは**いまの木がその PR の枝から切られていること** (追跡先の一致) を `catch-up` が要求する。枝の名前は違ってよい。
+**2 行目を飛ばすと動かない** ([#971](https://github.com/mokume-metal/mokume/issues/971))。代打ちの木が読む `scripts/catch-up.sh` は**その木の版**で、止まっている描画 PR は定義上 main より古いので、`--pr` がまだ無いことがある (引数は黙って無視され、枝の名前から PR を引いて空振りする)。取り込んだ後は `catch-up` 自身の取り込みが素通りするだけなので二度手間にはならない。**相手の worktree には一切触れず、素直な取り込みなら push もしないので承認も落ちない** (#612) — 報告先を決める判定が見るのは「手元の木が push 済み head から機械的に作り直せるか」だけだからである。番号を渡したときは**いまの木がその PR の枝から切られていること** (追跡先の一致) を `catch-up` が要求する。枝の名前は違ってよい。
 
 **取り込みは手元だけで済ませ、push しない。** push するとルールセットの `dismiss_stale_reviews_on_push` が承認を落とし、承認が要る描画 PR は他の PR が入るたびに押し直しになっていた (#612)。例外は**衝突を解いた合流**で、そのときだけ push する — 解いた中身は remote に無いので queue も同じ木を作れず、中身が本当に変わる以上、承認のやり直しは正しい。
 
