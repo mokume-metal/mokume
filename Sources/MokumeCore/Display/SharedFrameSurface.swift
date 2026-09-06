@@ -318,11 +318,16 @@ final class SharedFrameSurface {
         IOSurfaceSetValue(surface, name as CFString, NSNumber(value: value))
     }
 
-    /// 置かれている面の番号を読む。読み手の側の規則。
+    /// 置かれている面の番号を、その場で 1 回だけ読む。
     ///
     /// **綴りを持っているのは ``Manifest`` 1 つである。** 読み手は別のプロセスなので、鍵の
     /// 綴りが書く側と 2 か所へ分かれると片方だけ直したときに静かに食い違う — かつては
     /// ここが `JSONSerialization` で鍵を手打ちしており、その危うさを doc で注意していた。
+    ///
+    /// **見張る側はここを通らない。** 続けて読む読み手 (``SharedFrameStage``) は
+    /// ``WatchedFile`` を持つ — 最終更新時刻をいつ控えるかという規律が要り、それを口ごとに
+    /// 書き写すと落ちる ([#1048](https://github.com/mokume-metal/mokume/issues/1048))。
+    /// ここに残るのは、**置いた中身がそのまま読めることを見る**ための口である。
     ///
     /// - Returns: 読めなければ `nil`。版・面の枚数・大きさの検めは ``Manifest/init(from:)``
     ///   が持つ。

@@ -34,6 +34,12 @@ struct RemoteParamsTests {
             to: facet.appendingPathComponent("report.json"))
     }
 
+    /// 更新時刻を据える。**同じ改訂を掴み直せるか**を見るには、置き直しても更新時刻が
+    /// 動かない状況が要る。
+    private func stamp(_ url: URL, _ moment: Date) throws {
+        try FileManager.default.setAttributes([.modificationDate: moment], ofItemAtPath: url.path)
+    }
+
     private func request(at facet: URL) throws -> [String: Any]? {
         let url = facet.appendingPathComponent("request.json")
         guard let data = try? Data(contentsOf: url) else { return nil }
@@ -149,6 +155,30 @@ struct RemoteParamsTests {
             #expect(!params.refresh())
             #expect(params.boxes[0] === first)
             #expect(params.boxes[0].value == .float(30))
+        }
+    }
+
+    /// **読む前に「読んだ」と記録しない。** 書きかけを 1 回掴んだだけでその改訂が永久に
+    /// 読み飛ばされると、症状は「つまみが古い値のまま止まる」だけになり、次の書き込みが
+    /// 来るまで直らない ([#987](https://github.com/mokume-metal/mokume/issues/987))。
+    @Test("書きかけを掴んでも、その改訂を読み飛ばさない")
+    func rereadsARevisionItCouldNotDecode() throws {
+        try withFacet { facet in
+            let url = facet.appendingPathComponent("report.json")
+            let moment = Date(timeIntervalSince1970: 1_000_000)
+            // 置いている途中を掴んだ = 解けない
+            try Data(#"{"revision":1,"params":[{"nam"#.utf8).write(to: url)
+            try stamp(url, moment)
+
+            let params = RemoteParams(directory: facet)
+            #expect(!params.refresh())
+            #expect(params.boxes.isEmpty)
+
+            // 書き手が置き終わった。**更新時刻は動かさない** — 同じ改訂を掴み直せるかを見る
+            try publish([ParamDeclaration(name: "size", value: .float(12))], at: facet)
+            try stamp(url, moment)
+            #expect(params.refresh())
+            #expect(params.boxes.map(\.name) == ["size"])
         }
     }
 

@@ -41,13 +41,15 @@ final class RemoteParams {
     private(set) var boxes: [RemoteParam] = []
     /// 並んでいる宣言の顔ぶれ。名前と型が変わったかだけを見る。
     private(set) var signature: [String] = []
-    /// 応答を最後に読んだときの更新時刻。**変わったときだけ読み直す。**
-    private var readAt: Date?
+    /// 応答の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、確定させずに
+    /// 次の機会へ回る (``WatchedFile``)。
+    private let report: WatchedFile<Report>
     /// 最後に書いた要求の識別子。応答がこれを echo するまでは、自分の値を信じる。
     private var pendingId: String?
 
     init(directory: URL) {
         self.directory = directory
+        self.report = WatchedFile(url: WorkDirectory.reportURL(under: directory))
     }
 
     /// 応答が変わっていれば読み直す。
@@ -55,14 +57,7 @@ final class RemoteParams {
     /// - Returns: 箱の顔ぶれが変わったら `true` (重ねる面を作り直す合図)。
     @discardableResult
     func refresh() -> Bool {
-        let url = WorkDirectory.reportURL(under: directory)
-        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[
-            .modificationDate] as? Date
-        guard let modified, modified != readAt else { return false }
-        readAt = modified
-        guard let data = try? Data(contentsOf: url),
-            let report = try? JSONDecoder().decode(Report.self, from: data)
-        else { return false }
+        guard let report = report.changed() else { return false }
         return adopt(report)
     }
 
