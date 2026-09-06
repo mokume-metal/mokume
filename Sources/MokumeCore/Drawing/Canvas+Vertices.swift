@@ -37,6 +37,7 @@ extension Canvas {
         shapeHasDepth = false
         currentNormal = nil
         shapePoints.removeAll(keepingCapacity: true)
+        shapeIndices.removeAll(keepingCapacity: true)
         shapeHoles.removeAll(keepingCapacity: true)
         curveGuides.removeAll(keepingCapacity: true)
         holePoints = nil
@@ -173,6 +174,7 @@ extension Canvas {
         defer {
             isBuildingShape = false
             shapePoints.removeAll(keepingCapacity: true)
+            shapeIndices.removeAll(keepingCapacity: true)
             shapeHoles.removeAll(keepingCapacity: true)
             curveGuides.removeAll(keepingCapacity: true)
             holePoints = nil
@@ -182,6 +184,15 @@ extension Canvas {
         guard isBuildingShape else { return }
         endContour()  // 閉じ忘れた穴も畳む
         drawBuiltShape(closed: end == .close)
+    }
+
+    // 置いた頂点を 1 つ、番号で選ぶ。
+    public func index(_ number: Int) {
+        guard isBuildingShape else {
+            warnVertexOutsideShapeOnce()
+            return
+        }
+        shapeIndices.append(number)
     }
 
     // MARK: - 閉じる
@@ -239,14 +250,35 @@ extension Canvas {
     }
 
     /// 立体なら立体の並びへ溜める区間を開き、平面ならそのまま実行する。
+    ///
+    /// **添字を書いた立体は、添字で読む列を開く。** 平面は添字を書いても列の作りが
+    /// 変わらない — 三角形へ落とした時点で頂点が展開されるので、共有する先が無い。
     private func emit(_ body: () -> Void) {
         guard shapeHasDepth else { return body() }
-        inSolidBatch(body)
+        inSolidBatch(indexed: !shapeIndices.isEmpty, body)
     }
 
     /// 並べ終えた頂点を原始形の一覧へ畳む。
+    ///
+    /// **読む順は添字が決める。** 書かれていなければ置いた順 (`0, 1, 2, …`) で、これは
+    /// 添字を「一巡りする並び」と書いたのと同じ意味になる。だから読み方 (``VertexKind``)
+    /// の側は 1 つも分岐しない。
+    ///
+    /// **範囲外の番号は、それを含む原始形ごと落とす。** 1 つずつ落とすと `.triangles` の
+    /// ような束ねて読む種類で 3 つ組の区切りがずれ、**それ以降の面が全部別の頂点を指す**。
     private func builtPrimitives(closed: Bool) -> [Primitive] {
-        let outer = Array(shapePoints.indices)
+        guard shapeIndices.isEmpty else {
+            let range = shapePoints.indices
+            let built = primitives(reading: shapeIndices, closed: closed)
+            let kept = built.filter { $0.ring.allSatisfy { range.contains($0) } }
+            if kept.count != built.count { warnIndexOutOfRange() }
+            return kept
+        }
+        return primitives(reading: Array(shapePoints.indices), closed: closed)
+    }
+
+    /// 読む順を、読み方に従って原始形の一覧へ畳む。
+    private func primitives(reading outer: [Int], closed: Bool) -> [Primitive] {
         switch shapeKind {
         case .polygon:
             var holes: [[Int]] = []
@@ -394,6 +426,12 @@ extension Canvas {
     /// 貼る絵があれば読み取り位置を付ける。**書かれていない頂点は形の囲みの箱 (xy) から
     /// 作る** — 組み込みの図形と同じ既定に倒すためで、書き忘れた形が絵の 1 画素だけで
     /// 塗り潰される (手本がそうなる) のを避ける。
+    ///
+    /// 添字を書いた立体では、**同じ点を 2 度積まない** — 積むのは初めて参照されたときで、
+    /// 2 度目からは番号だけを積む (``Canvas/appendSharedSolidVertex(slot:position:shapePosition:normal:shapeNormal:isDerived:uv:color:)``)。
+    /// 共有の寿命が「形」ではなく「列」なのは、原始形が三角形 1 枚ずつに割れる読み方
+    /// (`.triangles`) でも効かせるためである — 形の側で閉じると、原始形ごとに相異なる
+    /// 点が 3 つしか無いので 1 つも減らない。
     private func emitFill(
         _ triangles: [(Int, Int, Int)], points: [BuildingVertex], placed: [PlacedVertex]
     ) {
@@ -412,10 +450,18 @@ extension Canvas {
                     let vertex = placed[index]
                     // **変換を焼き込む前の座標と向きも渡す。** 断片へ届くのはそちらで、
                     // 組み込みの立体と同じく「回しても模様が形に留まる」ようにする
-                    appendSolidVertex(
-                        position: vertex.position, shapePosition: points[index].position,
-                        normal: vertex.normal, shapeNormal: vertex.shapeNormal,
-                        isDerived: vertex.isDerived, uv: uv(index), color: vertex.color)
+                    if shapeIndices.isEmpty {
+                        appendSolidVertex(
+                            position: vertex.position, shapePosition: points[index].position,
+                            normal: vertex.normal, shapeNormal: vertex.shapeNormal,
+                            isDerived: vertex.isDerived, uv: uv(index), color: vertex.color)
+                    } else {
+                        appendSharedSolidVertex(
+                            slot: index,
+                            position: vertex.position, shapePosition: points[index].position,
+                            normal: vertex.normal, shapeNormal: vertex.shapeNormal,
+                            isDerived: vertex.isDerived, uv: uv(index), color: vertex.color)
+                    }
                 }
             } else {
                 let flat = indices.map {
@@ -523,5 +569,12 @@ extension Canvas {
         warnOnce(
             .badVertex,
             "vertex(): 数でない座標・無限の座標が渡されたので、その頂点は置きませんでした")
+    }
+
+    private func warnIndexOutOfRange() {
+        warnOnce(
+            .indexOutOfRange,
+            "index(): 置いていない頂点の番号が渡されたので、その番号を含む面は描きませんでした "
+                + "(番号は 0 から数え、beginContour() の穴の点は指せません)")
     }
 }

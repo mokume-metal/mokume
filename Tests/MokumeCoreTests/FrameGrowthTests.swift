@@ -310,6 +310,19 @@ struct FrameGrowthTests {
                 canvas.force(dust, [.gravity(0, 200), .drag(0.25)])
                 canvas.particles(dust)
 
+                // 番号で読む立体。**溜め場を捨て損ねると、ここだけがフレーム数に
+                // 比例して伸びる** — 番号の並びは頂点とは別の置き場なので、頂点の側を
+                // 捨てていても気づけない
+                canvas.lights()
+                canvas.fill(.display(red: 0.6, green: 0.8, blue: 1))
+                canvas.beginShape(.triangles)
+                canvas.normal(0, 0, 1)
+                for corner in [(20, 8), (44, 8), (44, 32), (20, 32)] as [(Float, Float)] {
+                    canvas.vertex(corner.0, corner.1, 4)
+                }
+                for number in [0, 1, 2, 0, 2, 3] { canvas.index(number) }
+                canvas.endShape()
+
                 canvas.effects([
                     .bloom(amount: 0.6, threshold: 0.4, radius: 8),
                     .vignette(amount: 0.5),

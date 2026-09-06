@@ -141,7 +141,7 @@ extension Canvas {
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     paint: effectivePaint,
-                    source: .flat, start: start, count: count),
+                    source: .flat, start: start, count: count, indexStart: 0, indexCount: 0),
                 clip: currentClip,
                 // ここへ来るのは平面だけ (上の `switch` が他を返している)。**平面は
                 // 奥行きを持たないので視点行列を通さず、光も受けない** — 立体の側は
@@ -219,18 +219,30 @@ extension Canvas {
     ///
     /// 頂点の区間と置き場所の区間を**両方**持って閉じる。頂点は形ごとに 1 組しか
     /// 無いので、「最後の列の終わりが次の始まり」という数え方はできない。
+    ///
+    /// 読む順の区間は置き場所と同じ数え方 (末尾までの差) で取る — この列の添字は
+    /// 開いてから閉じるまでの間に、並びの末尾へ順に積まれるためである。
     private func closeSolidBatch() {
         guard let open = openSolid else { return }
         openSolid = nil
         let instanceCount = open.external?.count ?? (solidInstances.count - open.instanceStart)
         guard open.vertexCount > 0, instanceCount > 0 else { return }
+        let indexStart = open.indexStart ?? 0
+        let indexCount = open.indexStart.map { solidIndices.count - $0 } ?? 0
+        // **外の置き場から置き場所を取る列は添字を持てない。** 粒が GPU に書かせる
+        // 引数は `MTLDrawPrimitivesIndirectArguments` で、添字版とは構造体が違う —
+        // 混ぜると引数を読み違えて、絵だけが黙って崩れる
+        precondition(
+            open.external == nil || indexCount == 0,
+            "外の置き場から置き場所を取る列に添字は持たせられない")
         batches.append(
             Batch(
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     paint: effectivePaint,
                     source: .solid,
-                    start: open.vertexStart, count: open.vertexCount),
+                    start: open.vertexStart, count: open.vertexCount,
+                    indexStart: indexStart, indexCount: indexCount),
                 clip: currentClip,
                 matrix: jittered(viewProjection),
                 lightRange: bakeActiveLights(),

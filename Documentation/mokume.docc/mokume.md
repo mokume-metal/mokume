@@ -196,6 +196,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/vertex(_:_:_:)``
 - ``Sketch/vertex(_:_:_:_:)``
 - ``Sketch/vertex(_:_:_:_:_:)``
+- ``Sketch/index(_:)``
 - ``Sketch/normal(_:_:_:)``
 - ``Sketch/bezierVertex(_:_:_:_:_:_:)``
 - ``Sketch/quadraticVertex(_:_:_:_:)``

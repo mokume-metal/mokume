@@ -102,6 +102,8 @@ extension Canvas {
         case vertexOutsideShape
         /// 受け取れない頂点の座標が渡された。
         case badVertex
+        /// ``Canvas/index(_:)`` に、置いていない頂点の番号が渡された。
+        case indexOutOfRange
 
         /// 無い書体を指定された。
         case missingFont
