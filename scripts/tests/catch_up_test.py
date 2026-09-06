@@ -28,6 +28,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "catch-up.sh"
@@ -512,6 +513,20 @@ class MakeTargetTest(unittest.TestCase):
     そこに置いた代役へ解決される。`catch-up` は前提を持たないので他の的は走らない。
     """
 
+    # **呼び出し元の環境は make へ渡さない** (#997)。この検査は `catch-up` →
+    # `make ci-check` → `hooks-test` → ここ → `make catch-up` という再帰の内側に
+    # 居るので、代打ちの入口 `make catch-up PR=<番号>` を打つと、いちばん外側の
+    # `PR=` がいちばん内側のこの make へ届いて「引数は増えない」が必ず落ちていた。
+    # 打った本人の変更とは無関係な赤なので、変更のほうが疑われる。
+    #
+    # **2 つとも落とさないと効かない** (実測)。コマンドライン変数は `MAKEFLAGS` に
+    # 載って子の make へ渡るので `PR` を消すだけでは復元され、make は環境変数も
+    # 変数として読むので `MAKEFLAGS` を消すだけでも届く。
+    #
+    # Makefile の側で `unexport PR` しても同じ理由で足りない。外から渡ってくる
+    # ものに影響されないのは、検査の側の責務である。
+    LEAKY_ENV = ("PR", "MAKEFLAGS")
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -525,9 +540,10 @@ class MakeTargetTest(unittest.TestCase):
             f'echo "catch-up: {message}"\nexit {exit_code}\n'
         )
         stub.chmod(0o755)
+        env = {k: v for k, v in os.environ.items() if k not in self.LEAKY_ENV}
         return subprocess.run(
             ["make", "-f", str(REPO / "Makefile"), "catch-up", *make_args],
-            cwd=self.root, capture_output=True, text=True, encoding="utf-8",
+            cwd=self.root, env=env, capture_output=True, text=True, encoding="utf-8",
         )
 
     def passed_args(self):
@@ -556,6 +572,17 @@ class MakeTargetTest(unittest.TestCase):
 
     def test_PR_を渡さなければ引数は増えない(self):
         self.run_make(0, "queue へ戻した")
+        self.assertEqual(self.passed_args(), "")
+
+    def test_呼び出し元の環境変数_PR_を拾わない(self):
+        with mock.patch.dict(os.environ, {"PR": "995"}):
+            self.run_make(0, "queue へ戻した")
+        self.assertEqual(self.passed_args(), "")
+
+    def test_呼び出し元の_MAKEFLAGS_が運ぶ_PR_を拾わない(self):
+        # `make catch-up PR=995` が子の make へ番号を運ぶ形そのもの
+        with mock.patch.dict(os.environ, {"MAKEFLAGS": " -- PR=995"}):
+            self.run_make(0, "queue へ戻した")
         self.assertEqual(self.passed_args(), "")
 
 
