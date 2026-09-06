@@ -133,6 +133,7 @@ SPDX-License-Identifier: MIT
 | 続けて失敗した数の数え方 ([#956](https://github.com/mokume-metal/mokume/issues/956)) | 「回復したら 0 へ戻す」を落とすと**以後 1 度も言わなくなる**。[#221](https://github.com/mokume-metal/mokume/issues/221) が塞いだ「絵が止まったのに理由がどこにも残らない」へそのまま戻る |
 | 明るさ 16 バイトの並び ([#957](https://github.com/mokume-metal/mokume/issues/957)) | 画面へ差し出す経路と書き出す経路が、断片が読む構造体を同じ順で組み立てていた。**片方だけ並べ替えると絵が静かに食い違う** — その危うさは片方の doc が注意書きで名乗っていたが、注意書きは並べ替えを止めない |
 | 最近傍の間引き ([#960](https://github.com/mokume-metal/mokume/issues/960) の 3) | 観測が絵を軽くするために通る道が 2 つあり、片方だけ拾い方や丸め方が動くと**同じ要求に対して、通った道で違う絵が返る**。どちらももっともらしく見えるので気付けない。ここでも片方の doc が「拾い方は ``PixelBuffer/scaled(by:)`` と同じ」と契約を名乗っていた |
+| 背圧の数え方 ([#958](https://github.com/mokume-metal/mokume/issues/958)) | 取り込みの 5 行が逐語同文だったが、**それは理由ではない**。畳んだのは「終わりの合図を先に、枠を後に」という**順序が不変条件**だからで、片方だけ入れ替わると抱えている数を数え損ない、**待ちが書き終わる前に返る** — ファイルが欠けたまま「書けた」ことになり、コンパイルも検査も通る |
 | 待ちの期限と単位の変換 ([#959](https://github.com/mokume-metal/mokume/issues/959)) | 4 箇所が `UInt64(waitLimitSeconds * 1000)` を書いていた。1 箇所だけ直し漏れると **1000 倍長く待つ = 期限が無いのと同じ**になり、症状は「固まった」だけ。**期限を持っているつもりのコードが持っていないことは、読んでも分からない** |
 | コマンドを投入する並び ([#959](https://github.com/mokume-metal/mokume/issues/959)) | 5 行が同文。並びに 1 段足して片方だけ直すと、**そのコマンドが抱えられないまま GPU の実行中に消える** — 負荷のかかったときだけ出る ([#222](https://github.com/mokume-metal/mokume/issues/222) が踏んだ形) |
 
@@ -146,6 +147,7 @@ SPDX-License-Identifier: MIT
 | 失敗を言う文面 4 本 ([#956](https://github.com/mokume-metal/mokume/issues/956)) | `Diagnostics.warn` は標準エラーへ直に書き、控えを持たない。[#953](https://github.com/mokume-metal/mokume/pull/953) が 7 本の文面ごと畳めたのは `WarningLog` が文面を控えていて検査が原文と突き合わせられたからで、**ここには読む口が無い** — 畳んで壊しても確かめる手段が無い。組み立てた文が壊れるのは実際に起きている ([#947](https://github.com/mokume-metal/mokume/issues/947) の「頼んた」) |
 | 窓に面を載せる並び ([#956](https://github.com/mokume-metal/mokume/issues/956)) | 面の大きさの取り方 (設定の半分 / 復元した窓の `contentLayoutRect`)・入力の繋ぎ方・重ねるもの・delegate・第一応答者・前面の取り方が経路ごとに違い、引き受けると引数が 6 つ・うち 1 つは closure になる。**窓の生成と配置だけ**を畳んだ — そこは黙って壊れる (`isReleasedWhenClosed` を落とすと消えた窓を触り続ける) |
 | `PresentPipeline` と `OutputPass` のパイプライン組み立て ([#957](https://github.com/mokume-metal/mokume/issues/957)) | 2 つの `init` は約 30 行が同形だが、**共有部分が割れたときの壊れ方はどれも見える** — 頂点関数の名前を片方だけ直せば `makeRenderPipelineState` が投げ、画素形式が食い違えば絵で分かり、ラベルは表示だけである。silent なのは明るさの並びだけで、そこは畳んだ。加えて [#773](https://github.com/mokume-metal/mokume/pull/773) で片方が `FrameRing` + `GrowableBuffer` を持ったので、置き場の型そのものが違う |
+| 静止画と動画の**待ちの意味** ([#958](https://github.com/mokume-metal/mokume/issues/958)) | 背圧の数え方は畳んだが、待ちは畳まない。`drain()` は「頼んだ全部がファイルになった」、`finish()` は「ファイルが閉じた」で、保証しているものが違う — **静止画は finalize 前は「まだ無い」だけだが、mp4 は「あるが壊れている」** (末尾のメタデータが要る)。畳むと、期限を越えたときに何を失ったのかが呼ぶ側から読めなくなる |
 | 待ちが**言うこと** 4 本 ([#959](https://github.com/mokume-metal/mokume/issues/959)) | 期限と単位の変換は畳んだが、文言は畳まない。4 箇所で言うことが違い、`Diagnostics.warn` は控えを持たないので**畳んで壊しても確かめる手段が無い**。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す |
 
 **線を引く問いは 1 つ**である — 片方だけが直ったとき、誰かがそれに気付くか。気付かない
