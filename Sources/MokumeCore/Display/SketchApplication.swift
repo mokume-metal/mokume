@@ -95,6 +95,41 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。
     private let screenLink: ScreenDisplayLink
 
+    /// いま走らせているもの。``run()`` の間だけ入る。
+    private static var running: SketchApplication?
+
+    /// AppKit へ渡した delegate。弱く参照される先なので、こちらで寿命を持つ。
+    private var delegate: SketchApplicationDelegate?
+
+    /// 省電力の間引きを断っている印。**手放した時点で断りが切れる**ので、走らせている間は持つ。
+    ///
+    /// 取る組み合わせにも意味がある。間引きを断るのに要るのは「background ではない」ことだけ
+    /// なので、機械のスリープまで止める `.userInitiated` ではなく
+    /// `.userInitiatedAllowingIdleSystemSleep` を取る — 要件が求めていない約束を副作用で
+    /// 足さないため。`.latencyCritical` は「この周期処理は時刻に縛られている」という名乗りで、
+    /// ADR-0012 決定 5 が要件にした性質そのものである。
+    private var activity: (any NSObjectProtocol)?
+    /// ディスプレイが勝手に消えるのを断っているもの。**窓を出す経路でだけ持つ。**
+    private var displaySleepBlock: DisplaySleepBlock?
+    /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。
+    ///
+    /// 外してよいのは、**画面が消えることそのものを測る検査**だけである
+    /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。断ったまま測ると
+    /// 「スリープを作れなかったのに緑」という嘘が出る。
+    public var blocksDisplaySleep = true
+    /// 予備の駆動源。表示のリフレッシュが止まっても進め続けるために回す。
+    private var fallbackTimer: Timer?
+    /// 最後にフレームを進めた時刻。**どちらの駆動源が進めたかは問わない。**
+    private var lastAdvancedAt: Double = 0
+    /// 予備の駆動源が引き受けている最中か。表示のリフレッシュが戻れば下りる。
+    private var isDrivenByFallback = false
+
+    /// 速さを名乗る仕掛け。名乗りが与えられたときだけ持つ。
+    private var frameRateNotice: Timer?
+
+    /// 続けて描けなかった数。**始まりと終わりだけ**言うために持つ。
+    private var frameFailures = FrameFailureLog()
+
     /// 名乗ってよい速さ。**測れていなければ `nil`。**
     ///
     /// 数えるのは**進めたフレーム**で、画面へ出した回数ではない。窓が見えていない間も
@@ -108,9 +143,6 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public var currentFrameRate: Double? { runtime.frameNumbers.frameRate }
-
-    /// 速さを名乗る仕掛け。名乗りが与えられたときだけ持つ。
-    private var frameRateNotice: Timer?
 
     /// 面を取れずに見送ったフレームの数。
     public var missedFrames: Int { presenter.missedFrames }
@@ -207,35 +239,6 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             }
         }
     }
-
-    /// いま走らせているもの。``run()`` の間だけ入る。
-    private static var running: SketchApplication?
-
-    /// AppKit へ渡した delegate。弱く参照される先なので、こちらで寿命を持つ。
-    private var delegate: SketchApplicationDelegate?
-
-    /// 省電力の間引きを断っている印。**手放した時点で断りが切れる**ので、走らせている間は持つ。
-    ///
-    /// 取る組み合わせにも意味がある。間引きを断るのに要るのは「background ではない」ことだけ
-    /// なので、機械のスリープまで止める `.userInitiated` ではなく
-    /// `.userInitiatedAllowingIdleSystemSleep` を取る — 要件が求めていない約束を副作用で
-    /// 足さないため。`.latencyCritical` は「この周期処理は時刻に縛られている」という名乗りで、
-    /// ADR-0012 決定 5 が要件にした性質そのものである。
-    private var activity: (any NSObjectProtocol)?
-    /// ディスプレイが勝手に消えるのを断っているもの。**窓を出す経路でだけ持つ。**
-    private var displaySleepBlock: DisplaySleepBlock?
-    /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。
-    ///
-    /// 外してよいのは、**画面が消えることそのものを測る検査**だけである
-    /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。断ったまま測ると
-    /// 「スリープを作れなかったのに緑」という嘘が出る。
-    public var blocksDisplaySleep = true
-    /// 予備の駆動源。表示のリフレッシュが止まっても進め続けるために回す。
-    private var fallbackTimer: Timer?
-    /// 最後にフレームを進めた時刻。**どちらの駆動源が進めたかは問わない。**
-    private var lastAdvancedAt: Double = 0
-    /// 予備の駆動源が引き受けている最中か。表示のリフレッシュが戻れば下りる。
-    private var isDrivenByFallback = false
 
     /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
     ///
@@ -427,9 +430,6 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             return
         }
     }
-
-    /// 続けて描けなかった数。**始まりと終わりだけ**言うために持つ。
-    private var frameFailures = FrameFailureLog()
 
     /// 描けなかったことを 1 度だけ言う。
     private func noteFrameFailure(_ failure: RenderFailure) {
