@@ -3,13 +3,17 @@
 # SPDX-License-Identifier: MIT
 """scripts/catch-up.sh の検査 (#457)。
 
-このスクリプトが守るのは 2 つ。
+このスクリプトが守るのは 3 つ。
 
 1. **打つ意味が無いときは走らない。** `make ci-check` は絵の検査を含むので数分
    かかる。描画に触れない PR や、順番でない PR で回してしまうと、その数分がまるごと
    無駄になる (順番でないうちは、先頭が入った時点でまた覆えなくなる)
 2. **報告が付いたことを確かめてから queue へ戻す。** render-status は報告できなくても
    0 で終える設計なので、確かめずに戻すと弾かれた状態のまま入り直す
+
+3. **木と PR がずれたまま覆わない** (#967)。番号を渡す口 (`--pr`) を開けた以上、
+   いま居る木が本当にその PR の枝から切られているかを確かめないと、覆いが嘘の報告になる。
+   照合するのは枝の**名前**ではなく**追跡先**である — 代打ちの木は同じ名前を名乗れない
 
 「待て (3)」と「壊れている (1)」を取り違えないことも併せて固定する — 取り違えると、
 待つのが正解の場面で人が直しにかかる。
@@ -158,10 +162,10 @@ class CatchUpTest(unittest.TestCase):
             encoding="utf-8", check=True
         ).stdout
 
-    def run_script(self, **env):
+    def run_script(self, *args, **env):
         self.env.update({k: str(v) for k, v in env.items()})
         return subprocess.run(
-            ["/bin/bash", str(SCRIPT)],
+            ["/bin/bash", str(SCRIPT), *args],
             cwd=self.work, env=self.env, capture_output=True, text=True,
             encoding="utf-8",
         )
@@ -175,6 +179,9 @@ class CatchUpTest(unittest.TestCase):
         if not self.gh_calls.exists():
             return []
         return [c for c in self.gh_calls.read_text().splitlines() if c.startswith("pr merge")]
+
+    def gh_log(self):
+        return self.gh_calls.read_text() if self.gh_calls.exists() else ""
 
     def _clone_of_origin(self, name):
         other = self.root / name
@@ -441,6 +448,56 @@ class CatchUpTest(unittest.TestCase):
         # autoMergeRequest が null でも正常だと伝えること (#457 で取り違えた)
         self.assertIn("autoMergeRequest", proc.stdout)
 
+    # --- 代打ち (--pr) -------------------------------------------------------
+
+    def test_番号を渡すと枝ではなく番号で_PR_を引く(self):
+        # PR_FILES を描画の外にして、番号の解決が済んだ直後に「待て」で抜けさせる
+        proc = self.run_script("--pr", "7", PR_INFO="7 OPEN false work", PR_FILES=NOT_DRAWING)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("pr view 7", self.gh_log())
+        self.assertIn("PR #7 (work) を覆う", proc.stdout)
+
+    def test_追跡先が違う_PR_の番号を渡したら止まる(self):
+        proc = self.run_script("--pr", "7", PR_INFO="7 OPEN false ほかの枝")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("origin/ほかの枝", proc.stderr)
+        # 覆いに関わることは何もしていない
+        self.assertNotIn("ci-check", self.made())
+
+    def test_枝の名前が違っても追跡先が同じなら通る(self):
+        # 代打ちの木は元の枝と同じ名前を名乗れない (git が二重チェックアウトを禁じる)
+        self._git("switch", "-qc", "catchup/7")
+        self._git("branch", "--set-upstream-to=origin/work")
+        proc = self.run_script("--pr", "7", PR_INFO="7 OPEN false work", PR_FILES=NOT_DRAWING)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("PR #7 (work) を覆う", proc.stdout)
+
+    def test_追跡先を持たない木で番号を渡したら止まる(self):
+        self._git("checkout", "-q", "--detach")
+        proc = self.run_script("--pr", "7", PR_INFO="7 OPEN false work")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("追跡先", proc.stderr)
+
+    def test_番号でない値を渡したら止まる(self):
+        proc = self.run_script("--pr", "abc")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("PR 番号", proc.stderr)
+
+    def test_知らない引数は止まる(self):
+        proc = self.run_script("--nope")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("知らない引数", proc.stderr)
+
+    def test_番号を渡さなければ枝から引く(self):
+        proc = self.run_script(PR_FILES=NOT_DRAWING)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        # 番号を付けずに引いている (代打ちの照合も走らない)
+        self.assertIn("pr view --json", self.gh_log())
+        self.assertNotIn("を覆う", proc.stdout)
+
+
+
+
 
 class MakeTargetTest(unittest.TestCase):
     """`make catch-up` が 3 を成功として扱うことを固定する (#786)。
@@ -461,14 +518,21 @@ class MakeTargetTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         (self.root / "scripts").mkdir()
 
-    def run_make(self, exit_code, message="打つ意味が無い — #5 の merge を待つ"):
+    def run_make(self, exit_code, message="打つ意味が無い — #5 の merge を待つ", *make_args):
         stub = self.root / "scripts" / "catch-up.sh"
-        stub.write_text(f'#!/bin/bash\necho "catch-up: {message}"\nexit {exit_code}\n')
+        stub.write_text(
+            f'#!/bin/bash\nprintf "%s\\n" "$*" > "$PWD/args.txt"\n'
+            f'echo "catch-up: {message}"\nexit {exit_code}\n'
+        )
         stub.chmod(0o755)
         return subprocess.run(
-            ["make", "-f", str(REPO / "Makefile"), "catch-up"],
+            ["make", "-f", str(REPO / "Makefile"), "catch-up", *make_args],
             cwd=self.root, capture_output=True, text=True, encoding="utf-8",
         )
+
+    def passed_args(self):
+        path = self.root / "args.txt"
+        return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
     def test_打つ意味が無い_3_は_make_を赤くしない(self):
         proc = self.run_make(3)
@@ -484,6 +548,15 @@ class MakeTargetTest(unittest.TestCase):
     def test_queue_へ戻した_0_は_make_を赤くしない(self):
         proc = self.run_make(0, message="queue へ戻した")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_PR_を渡すと代打ちの番号がスクリプトへ届く(self):
+        proc = self.run_make(0, "queue へ戻した", "PR=965")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.passed_args(), "--pr 965")
+
+    def test_PR_を渡さなければ引数は増えない(self):
+        self.run_make(0, "queue へ戻した")
+        self.assertEqual(self.passed_args(), "")
 
 
 if __name__ == "__main__":
