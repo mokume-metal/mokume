@@ -20,6 +20,8 @@ enum CommandFailure: Error, Equatable {
     case templateUnreadable(name: String)
     case packageNotFound(path: String)
     case buildFailed(status: Int32)
+    /// 走らせたスケッチが 0 以外で終わった。**道具の失敗ではない。**
+    case sketchExited(status: Int32)
     case noExecutable(path: String)
     case toolchainMissing(String)
 
@@ -35,6 +37,14 @@ enum CommandFailure: Error, Equatable {
     case bundledResourceMissing(name: String, path: String)
     /// 署名に失敗した。
     case codesignFailed(status: Int32)
+
+    /// 道具が返す終了コード。
+    ///
+    /// **`run` だけが子の終了コードを引き継ぐ。** 呼ぶ側が見ているのは道具の成否では
+    /// なくスケッチの成否なので、そのまま通す。ほかは道具自身の失敗なので 1 でよい。
+    var exitCode: Int32 {
+        if case .sketchExited(let status) = self { status } else { 1 }
+    }
 
     var message: String {
         switch self {
@@ -114,6 +124,11 @@ enum CommandFailure: Error, Equatable {
             """
         case .buildFailed(let status):
             "作り直しに失敗した (終了コード \(status))。上の出力を見る"
+        case .sketchExited(let status):
+            """
+            スケッチが終了コード \(status) で終わった。
+            道具が足した失敗ではない — 理由はスケッチ自身の出力にある
+            """
         case .noExecutable(let path):
             """
             走らせるものが見つからない: \(path)

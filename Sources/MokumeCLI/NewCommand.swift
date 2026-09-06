@@ -75,43 +75,37 @@ enum NewCommand {
             "DEPENDENCY": dependency,
             "PACKAGE": packageIdentity(local: options.local),
         ]
-        do {
-            return [
-                ("Package.swift", try Templates.render("Package.swift.template", values)),
-                (
-                    "Sources/\(target)/\(type).swift",
-                    try Templates.render("Sketch.swift.template", values)
-                ),
-                (".gitignore", try Templates.render("gitignore.template", values)),
-                // 宣言した置き場は実在しなければならない。空のままでも道具立てが
-                // 受け付けるよう、読み手への説明を 1 枚置く
-                (
-                    "Sources/\(target)/assets/README.md",
-                    """
-                    画像・音・データはこの場所へ置く。
+        return [
+            ("Package.swift", try Templates.render("Package.swift.template", values)),
+            (
+                "Sources/\(target)/\(type).swift",
+                try Templates.render("Sketch.swift.template", values)
+            ),
+            (".gitignore", try Templates.render("gitignore.template", values)),
+            // 宣言した置き場は実在しなければならない。空のままでも道具立てが
+            // 受け付けるよう、読み手への説明を 1 枚置く
+            (
+                "Sources/\(target)/assets/README.md",
+                """
+                画像・音・データはこの場所へ置く。
 
-                    `Package.swift` が `resources: [.copy("assets")]` と宣言しているので、
-                    ここへ置いたものは実行ファイルの隣へ運ばれ、`loadImage("assets/名前.png")`
-                    のように名前で読める。**置き場を変えるなら宣言も変えること。**
-                    """
-                ),
-                // エージェントに道具の使い方を渡す 1 枚。**作品の側の運用は決めない**
-                // (ADR-0022 決定 5) — 線は「道具の構造から導かれるか」で引く (#632)
-                ("AGENTS.md", try Templates.render("AGENTS.md.template", values)),
-                // Claude Code が自動で読むのは CLAUDE.md なので、案内を指す 1 行を置く。
-                // **写しは持たない** — 本体もこの形を採っている
-                ("CLAUDE.md", try Templates.render("CLAUDE.md.template", values)),
-                // 窓口の呼び方。**案内に書くだけでは届かない** — 窓口は呼ぶ側が起動する
-                // 前に登録されているものしか使えないので、作った後で打っても、そのとき
-                // 動いているエージェントからは呼べない (#683)。置くのは呼び方だけで、
-                // 道具の性質は変わらない (窓口は走っているスケッチを起こさない)
-                (".mcp.json", try Templates.render("mcp.json.template", values)),
-            ]
-        } catch let failure as CommandFailure {
-            throw failure
-        } catch {
-            throw .templatesMissing
-        }
+                `Package.swift` が `resources: [.copy("assets")]` と宣言しているので、
+                ここへ置いたものは実行ファイルの隣へ運ばれ、`loadImage("assets/名前.png")`
+                のように名前で読める。**置き場を変えるなら宣言も変えること。**
+                """
+            ),
+            // エージェントに道具の使い方を渡す 1 枚。**作品の側の運用は決めない**
+            // (ADR-0022 決定 5) — 線は「道具の構造から導かれるか」で引く (#632)
+            ("AGENTS.md", try Templates.render("AGENTS.md.template", values)),
+            // Claude Code が自動で読むのは CLAUDE.md なので、案内を指す 1 行を置く。
+            // **写しは持たない** — 本体もこの形を採っている
+            ("CLAUDE.md", try Templates.render("CLAUDE.md.template", values)),
+            // 窓口の呼び方。**案内に書くだけでは届かない** — 窓口は呼ぶ側が起動する
+            // 前に登録されているものしか使えないので、作った後で打っても、そのとき
+            // 動いているエージェントからは呼べない (#683)。置くのは呼び方だけで、
+            // 道具の性質は変わらない (窓口は走っているスケッチを起こさない)
+            (".mcp.json", try Templates.render("mcp.json.template", values)),
+        ]
     }
 
     /// 依存を指すときの名前 (package identity)。

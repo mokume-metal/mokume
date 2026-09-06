@@ -28,7 +28,7 @@ enum Templates {
     static let libraryMinimumVersion = "0.1.0"
 
     /// テンプレートの置き場。
-    static func directory() throws -> URL {
+    static func directory() throws(CommandFailure) -> URL {
         guard let url = Bundle.module.url(forResource: "Templates", withExtension: nil) else {
             throw CommandFailure.templatesMissing
         }
@@ -36,7 +36,9 @@ enum Templates {
     }
 
     /// テンプレートを読み、差し込みを済ませた中身を返す。
-    static func render(_ name: String, _ values: [String: String]) throws -> String {
+    static func render(_ name: String, _ values: [String: String]) throws(
+        CommandFailure
+    ) -> String {
         let url = try directory().appendingPathComponent(name)
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             throw CommandFailure.templateUnreadable(name: name)

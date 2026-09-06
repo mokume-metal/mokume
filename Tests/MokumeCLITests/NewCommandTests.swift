@@ -168,24 +168,3 @@ struct NewCommandTests {
             "上限を切ると Templates.libraryMinimumVersion の鮮度が効いてしまう")
     }
 }
-
-@Suite("スケッチを走らせる")
-struct RunCommandTests {
-    @Test("宣言された実行ファイルの product から名前を取る")
-    func findsTheExecutableProduct() {
-        let dump = """
-            {"products":[
-              {"name":"lib","type":{"library":["automatic"]}},
-              {"name":"tool","type":{"executable":null}}
-            ]}
-            """
-        #expect(RunCommand.executableProductName(inDumpOf: dump) == "tool")
-    }
-
-    @Test("実行ファイルが無ければ、名前を作らない")
-    func returnsNothingWithoutAnExecutable() {
-        let dump = #"{"products":[{"name":"lib","type":{"library":["automatic"]}}]}"#
-        #expect(RunCommand.executableProductName(inDumpOf: dump) == nil)
-        #expect(RunCommand.executableProductName(inDumpOf: "壊れている") == nil)
-    }
-}

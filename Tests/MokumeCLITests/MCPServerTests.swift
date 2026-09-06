@@ -524,4 +524,34 @@ struct MCPServerTests {
         #expect(!outcome.isError)
         #expect(outcome.text.contains("- api"))
     }
+
+    /// **組めなかった応答を空行で返さない。**
+    ///
+    /// 行区切りの JSON-RPC で空行を書くと、繋いでいる側からは「まだ応答が来ていない」
+    /// と見分けが付かず、呼び出しが返らないまま待ち続ける。
+    @Test("組めない応答は、空行ではなく失敗として返る")
+    func unencodableResultsBecomeFailures() throws {
+        // JSONSerialization は非数を受け付けない
+        let line = JSONRPC.response(id: 7, result: ["value": Double.nan])
+        #expect(!line.isEmpty)
+
+        let object = try decode(line)
+        #expect(object["id"] as? Int == 7)
+        #expect(object["result"] == nil)
+        let failure = try #require(object["error"] as? [String: Any])
+        #expect(failure["code"] as? Int == JSONRPC.internalError)
+    }
+
+    /// 失敗の 1 行だけは、何があっても組めなければならない — そこが空になると、
+    /// **失敗を伝える手段そのものが無くなる。**
+    @Test("id すら組めなくても、失敗の 1 行は返る")
+    func theFailureLineIsAlwaysBuildable() throws {
+        let line = JSONRPC.failure(id: Double.nan, code: -32602, message: "だめ")
+
+        let object = try decode(line)
+        // どの呼び出しへの応答かは照合できなくなるが、黙るよりはよい
+        #expect(object["id"] is NSNull)
+        let failure = try #require(object["error"] as? [String: Any])
+        #expect(failure["code"] as? Int == JSONRPC.internalError)
+    }
 }
