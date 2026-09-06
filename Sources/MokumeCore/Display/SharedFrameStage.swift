@@ -318,7 +318,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     }
 
     /// 新しい差し出し元へ乗り換える。
-    private func adopt(_ manifest: (ids: [UInt32], width: Int, height: Int)) {
+    private func adopt(_ manifest: SharedFrameSurface.Manifest) {
         // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる
         if let previous = source {
             try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
