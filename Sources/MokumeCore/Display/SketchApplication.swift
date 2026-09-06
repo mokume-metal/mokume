@@ -276,22 +276,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 窓は描く解像度の半分で開く。描く解像度と窓の大きさは独立なので、
         // どちらに合わせてもよい — 大きな絵が画面からはみ出さない側を既定にする
         let contentSize = NSSize(width: settings.width / 2, height: settings.height / 2)
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: contentSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false)
-        window.title = title
-        // **閉じたときに窓が自分を解放しないようにする。** 素の `NSWindow` の既定は
-        // 「閉じたら解放する」で、こちらは強い参照を持ったまま使う人に閉じさせるので、
-        // そのままだと解放が 1 回余分になる。しかも駆動源は窓ではなく画面に紐づいて
-        // いるので (下記)、窓を閉じてもプロセスが消えるまで `step` は回り続け、その
-        // 間ずっと消えた先を触る — 症状は原因から遠いところにしか出ない (#714)
-        window.isReleasedWhenClosed = false
-        // **覚えている位置があれば、そこへ戻す。** 無いときだけ中央に置く。覚えるのも
-        // 画面外へ出さないようにするのも AppKit が持っている ([WindowPlacement])
-        if !window.setFrameUsingName(WindowPlacement.autosaveName) { window.center() }
-        window.setFrameAutosaveName(WindowPlacement.autosaveName)
+        let window = WindowPlacement.makeWindow(
+            title: title, autosaveName: WindowPlacement.autosaveName,
+            defaultSize: contentSize)
 
         // 見張りが起こした入れ替えでは、窓を出しはするが前面は取らない (#679)
         let takesFocus = WindowPlacement.takesFocus(

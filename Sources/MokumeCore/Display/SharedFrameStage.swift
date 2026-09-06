@@ -205,25 +205,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     func open(overlay: NSView? = nil) {
         // 大きさは差し出し元が来るまで分からない。**来てから合わせる**ので、ここは
         // 覚えている枠が無いときの初期値でしかない
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: look.defaultSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered, defer: false)
-        window.title = look.title
-        // **畳んだときに窓が自分を解放しないようにする。** 素の `NSWindow` の既定は
-        // 「閉じたら解放する」で、こちらは強い参照を持ったまま `close()` を呼ぶので、
-        // そのままだと二重に解放される — 症状は検査の走り終わりでの落下 (signal 11) と
-        // いう、原因から遠いところにしか出ない
-        window.isReleasedWhenClosed = false
-        if !window.setFrameUsingName(look.autosaveName) {
-            window.center()
-            if look.nudge != .zero {
-                let origin = window.frame.origin
-                window.setFrameOrigin(
-                    NSPoint(x: origin.x + look.nudge.width, y: origin.y + look.nudge.height))
-            }
-        }
-        window.setFrameAutosaveName(look.autosaveName)
+        let window = WindowPlacement.makeWindow(
+            title: look.title, autosaveName: look.autosaveName,
+            defaultSize: look.defaultSize, nudge: look.nudge)
 
         // **面はスケッチの窓と同じものを使う。** 画素形式・色空間・EDR の既定を 1 か所に
         // 保つためで、別に作ると片方だけが規範から外れる (ADR-0011)
