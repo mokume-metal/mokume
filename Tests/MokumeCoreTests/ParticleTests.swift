@@ -222,6 +222,26 @@ struct ParticleTests {
         #expect(fingerprint(fast) == fingerprint(reference))
     }
 
+    @Test("待てなかったら、粒を置かない")
+    func doesNotEmitWhenTheWaitFails() throws {
+        let canvas = try makeCanvas()
+        var randomness = Randomness(seed: 934)
+        let dust = try canvas.makeParticles(count: 128)
+        try spray(on: canvas, dust, randomness: &randomness, frames: 1)
+        let placed = dust.cursor
+        #expect(placed > 0, "1 フレーム目で粒が出ていない — 以降の比較が成り立たない")
+
+        canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
+        try spray(on: canvas, dust, randomness: &randomness, frames: 1)
+        canvas.gpu.failSettleForTesting = nil
+
+        // 枠を進めてしまうと、書いていない区画が新しい寿命で生き返る
+        #expect(dust.cursor == placed, "待てなかったのに粒の区画へ書いている")
+
+        try spray(on: canvas, dust, randomness: &randomness, frames: 1)
+        #expect(dust.cursor > placed, "待てるようになった後も置けていない")
+    }
+
     @Test("速い経路は、粒を読み戻さない")
     func theFastRouteNeverReadsBack() throws {
         let canvas = try makeCanvas()

@@ -53,7 +53,12 @@ import MokumeDiagnostics
         self.count = count
         self.storage = try gpu.makeReadableBuffer(byteCount: count * MemoryLayout<Float>.stride)
         self.gpu = gpu
-        fill(0)
+        // **待たずに埋める。** いま確保したばかりの置き場を GPU はまだ知らないので、
+        // 読み終わるのを待つ相手が居ない。書く口 (`fill(_:)`) を通すと、詰まった GPU の
+        // 下では初期化されないまま出来上がる — あちらは待てなければ書かないので (#934)、
+        // 1 度きりの初期化には向かない
+        let contents = self.contents
+        for index in 0..<count { contents[index] = 0 }
     }
 
     /// **置き場を常駐から退かせる** ([#738])。常駐の集合が抱えている限り、並びを
@@ -63,26 +68,32 @@ import MokumeDiagnostics
     isolated deinit { gpu.retire(storage) }
 
     /// CPU から書く直前の待ち。**書く口はすべてここを通す。**
-    private func settleBeforeWriting() {
-        gpu.settleQuietly(before: "数の並びへ書く")
+    ///
+    /// **待てなければ書かない** ([#934])。待ちが期限切れになったことは、GPU がこの並びを
+    /// 読み終えた証拠ではない — 書けば、走っているかもしれない計算の足元で入力が変わる。
+    ///
+    /// [#934]: https://github.com/mokume-metal/mokume/issues/934
+    private func settledBeforeWriting() -> Bool {
+        gpu.settleBeforeWriting("数の並びへ書く")
     }
 
     /// 1 つ書く。
     ///
     /// **並びの外は何もしない** ([ADR-0020] 決定 5 — フレームごとに呼ばれるものは
-    /// 投げない)。初回だけ理由を知らせる。
+    /// 投げない)。初回だけ理由を知らせる。GPU の完了を待てなかったときも同じで、
+    /// 何も書かずに返る (`settledBeforeWriting()`)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func set(_ value: Float, at index: Int) {
         guard index >= 0, index < count else { return warnOutOfRange(index) }
-        settleBeforeWriting()
+        guard settledBeforeWriting() else { return }
         contents[index] = value
     }
 
     /// 先頭から詰める。**入り切らないぶんは捨てる** (並びの外と同じ扱い)。
     public func set(_ values: [Float]) {
         if values.count > count { warnOutOfRange(values.count - 1) }
-        settleBeforeWriting()
+        guard settledBeforeWriting() else { return }
         let contents = self.contents
         for (index, value) in values.enumerated() where index < count {
             contents[index] = value
@@ -91,7 +102,7 @@ import MokumeDiagnostics
 
     /// 全部を同じ値にする。
     public func fill(_ value: Float) {
-        settleBeforeWriting()
+        guard settledBeforeWriting() else { return }
         let contents = self.contents
         for index in 0..<count { contents[index] = value }
     }

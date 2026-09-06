@@ -36,7 +36,10 @@ import simd
     /// 面へ送る前に待つ相手 (前のフレームがまだこの面を読んでいるかもしれない・#727)。
     private let gpu: RenderDevice
     /// CPU 側が GPU 側より新しいか。
-    private var needsUpload = false
+    ///
+    /// **検査が読む。** 待てなくて送るのをやめたときは立ったままになり、次に描くときへ
+    /// 持ち越す ([#934](https://github.com/mokume-metal/mokume/issues/934))。
+    private(set) var needsUpload = false
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
     private var warnedMismatch = false
 
@@ -175,7 +178,9 @@ import simd
         // 描き切りは GPU の完了を待たずに返る (#727)。前のフレームがまだこの面を読んで
         // いるかもしれないので、書き換える直前に投入済みのものが終わるのを待つ。
         // 書き換えないフレームはここへ来ないので、待ちも払わない
-        gpu.settleQuietly(before: "画像を面へ送る")
+        // **待てなければ送らない** (#934)。送り直しの旗を立てたまま返るので、書き換えた
+        // 画素は次に描くときへ持ち越す
+        guard gpu.settleBeforeWriting("画像を面へ送る") else { return }
         pixels.withUnsafeBytes { source in
             texture.replace(
                 region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,

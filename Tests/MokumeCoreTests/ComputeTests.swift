@@ -351,6 +351,56 @@ struct ComputeTests {
         #expect(canvas.computeEncodersOpened == 0)
     }
 
+    @Test("待てなかったら、数の並びへ書かない")
+    func doesNotWriteNumbersWhenTheWaitFails() throws {
+        let canvas = try makeCanvas()
+        let heat = try canvas.makeNumbers(count: 4)
+        heat.fill(3)
+        #expect(canvas.read(heat) == [3, 3, 3, 3])
+
+        // 書く口は 3 つあり、**どれも**待てなければ書かない
+        canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
+        heat.set(9, at: 0)
+        heat.set([9, 9, 9, 9])
+        heat.fill(9)
+        canvas.gpu.failSettleForTesting = nil
+
+        #expect(
+            canvas.read(heat) == [3, 3, 3, 3],
+            """
+            GPU の完了を待てなかったのに、共有しているメモリへ書いている。
+
+            待ちが期限切れになったことは、GPU がそのメモリを使い終えた証拠ではない
+            ([#934](https://github.com/mokume-metal/mokume/issues/934))。
+            """)
+
+        heat.fill(9)
+        #expect(canvas.read(heat) == [9, 9, 9, 9], "待てるようになった後も書けていない")
+    }
+
+    @Test("待てなかったら、計算の値を書かず、口も開かない")
+    func doesNotOpenAnEncoderWhenTheWaitFails() throws {
+        let canvas = try makeCanvas()
+        let heat = try canvas.makeNumbers(count: 32)
+        let ramp = try canvas.makeComputation(Self.ramp, name: "ramp", values: ["scale": 1])
+        var opened = -1
+        var pending = -1
+
+        // 読み戻しの経路は描き切りを通らない (環の待ちが効かない) ので、値の区画へ書く
+        // 前の待ちはこちらが自分で持っている
+        canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
+        try canvas.draw {
+            canvas.compute(ramp, over: 32, writes: [heat])
+            _ = canvas.read(heat)
+            opened = canvas.computeEncodersOpened
+            pending = canvas.pendingComputations.count
+        }
+        canvas.gpu.failSettleForTesting = nil
+
+        #expect(opened == 0, "値を書けないのに口を開いて流している")
+        #expect(pending == 1, "投入していないのに、頼みが溜め場から消えている")
+    }
+
     @Test("描けなかったフレームの頼みは、次のフレームへ持ち越さない")
     func dropsTheWorkOfAFrameThatCouldNotBeDrawn() throws {
         let canvas = try makeCanvas()

@@ -14,14 +14,20 @@ import Testing
 // 2 つしかないので、その出現を数えれば規律の適用範囲が機械で分かる。待ち忘れの症状は
 // 「絵がたまに乱れる・値がたまに古い」で、再現しないので原文で見る。
 //
-// ## 待ち方は 2 通りある
+// ## 待ち方は 3 通りある
 //
 // `RenderDevice.settle()` は**投入済みの全部**を待つ。フレームごとに書く置き場は
 // [#754](https://github.com/mokume-metal/mokume/issues/754) で環 (`FrameRing`) に載り、
-// 待つ範囲が「そのスロットを読む投入 1 本」へ縮んだ。**どちらで待っているかを一覧が
+// 待つ範囲が「そのスロットを読む投入 1 本」へ縮んだ。**どれで待っているかを一覧が
 // 名乗る** — 名乗りを `settles` の真偽 1 つで表していた頃は、`settle` という語が原文に
 // あるだけで honest と判定されてしまい、`Canvas.swift` が置いた描き場所を描き切らせる
 // 別物 (`settlePlacersBeforeChange`) で緑になれた。
+//
+// **待てなかったときに何をするかも、名乗りの一部である。** 待ちは期限切れになりうるが、
+// 期限切れは「GPU がそのメモリを使い終えた」証拠ではない — にもかかわらず書く側は
+// 無条件に書いていた ([#934](https://github.com/mokume-metal/mokume/issues/934))。
+// **CPU が書く場所は `settleBeforeWriting` を通り、待てなければ書かない**
+// (`settlesOrSkips`)。読む場所は取りやめようが無いので `settles` のままである。
 //
 // ## 規則
 //
@@ -43,6 +49,10 @@ struct GPUMemoryAccessGateTests {
     private enum Discipline {
         /// 触る直前に ``RenderDevice/settle()`` で**投入済みの全部**を待つ。
         case settles
+        /// 触る直前に待ち、**待てなければ触らない** ([#934])。CPU が書く場所はこちら。
+        ///
+        /// [#934]: https://github.com/mokume-metal/mokume/issues/934
+        case settlesOrSkips
         /// フレームごとに書く置き場の環に載せ、**そのスロットを読む投入**だけを待つ。
         case ring
         /// 自分では待たない。**呼ぶ側の経路が待っている**ことが理由に書かれている。
@@ -52,6 +62,7 @@ struct GPUMemoryAccessGateTests {
         var evidence: String? {
             switch self {
             case .settles: "settle"
+            case .settlesOrSkips: "settleBeforeWriting"
             case .ring: "FrameRing"
             case .waitedElsewhere: nil
             }
@@ -77,17 +88,17 @@ struct GPUMemoryAccessGateTests {
             file: "Drawing/Canvas+Effects.swift", discipline: .waitedElsewhere,
             reason: "描き切りの中 (環を進めた後) で効果の値を書く。書き先は Canvas と同じ環に載った置き場"),
         Permit(
-            file: "Drawing/Canvas+Compute.swift", discipline: .settles,
-            reason: "頼みごとの値の区画へ書く。読み戻し (read) の経路は書く前に settleQuietly する — そこは描き切りを通らないので環の待ちが効かない。描き切りの経路は Canvas が環を 1 つ進めた後に呼ばれるので、書き先のスロットは待ち済み (#932)"),
+            file: "Drawing/Canvas+Compute.swift", discipline: .settlesOrSkips,
+            reason: "頼みごとの値の区画へ書く。読み戻し (read) の経路は書く前に自分で待つ — そこは描き切りを通らないので環の待ちが効かない (#932)。待てなければ値を書かず口も開かず、頼みを溜め場に残す (#934)。描き切りの経路は Canvas が環を 1 つ進めた後に呼ばれるので、書き先のスロットは待ち済み"),
         Permit(
-            file: "Drawing/Particles.swift", discipline: .settles,
-            reason: "粒と指定を書く直前に settle する"),
+            file: "Drawing/Particles.swift", discipline: .settlesOrSkips,
+            reason: "粒と指定を書く直前に待つ。待てなければ 1 つも置かず、枠と寿命も進めない (#934)"),
         Permit(
             file: "Rendering/GrowableBuffer.swift", discipline: .ring,
             reason: "環に載った置き場へ、いまのスロットぶんだけ写す (write)。待ちは呼ぶ側が持つ — 描き切りの先頭で環を 1 つ進め、そのスロットを読む投入だけを待ってから呼ばれる (#754)"),
         Permit(
-            file: "Rendering/Numbers.swift", discipline: .settles,
-            reason: "書く口がすべて settle を通る。読む口 (snapshot) は Canvas.read が settle してから呼ぶ"),
+            file: "Rendering/Numbers.swift", discipline: .settlesOrSkips,
+            reason: "書く口 3 つがすべて 1 つの待ちを通り、待てなければ書かない (#934)。読む口 (snapshot) は Canvas.read が settle してから呼ぶ"),
         Permit(
             file: "Rendering/RenderTarget.swift", discipline: .settles,
             reason: "画素の写しを読む直前に settle する (写しへの読み戻しを積んだときは、その完了まで)"),
@@ -101,11 +112,11 @@ struct GPUMemoryAccessGateTests {
             file: "Display/PresentPipeline.swift", discipline: .ring,
             reason: "差し出しごとに自分の環を 1 つ進める。描き切りが全完了を待たなくなった時点で、前の差し出しが終わっている保証は他に無い (#754)"),
         Permit(
-            file: "Text/GlyphAtlas.swift", discipline: .settles,
-            reason: "焼く直前に settle する。面の作成時の書き込みは新しい面へ"),
+            file: "Text/GlyphAtlas.swift", discipline: .settlesOrSkips,
+            reason: "焼く直前に待つ。待てなければ焼かず unbakeable を返す (#934)。面の作成時の書き込みは新しい面へ"),
         Permit(
-            file: "Image/Image.swift", discipline: .settles,
-            reason: "面へ送る直前に settle する"),
+            file: "Image/Image.swift", discipline: .settlesOrSkips,
+            reason: "面へ送る直前に待つ。待てなければ送らず、送り直しの旗を立てたままにする (#934)"),
     ]
 
     private static let tokens = [".contents()", ".replace(region"]
@@ -147,8 +158,9 @@ struct GPUMemoryAccessGateTests {
 
             \(unlisted.map { "Sources/MokumeCore/\($0)" }.joined(separator: "\n"))
 
-            触る直前に待ちを置き (投入済みの全部なら gpu.settle() / 投げない口では
-            settleQuietly、フレームごとに書く置き場なら FrameRing に載せる)、
+            触る直前に待ちを置き (CPU が書くなら gpu.settleBeforeWriting() で待てた
+            ときだけ書く / 読むだけなら gpu.settle() か settleQuietly / フレームごとに
+            書く置き場なら FrameRing に載せる)、
             GPUMemoryAccessGateTests.permits に理由ごと足す。
             """)
     }
