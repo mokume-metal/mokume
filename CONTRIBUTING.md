@@ -20,6 +20,30 @@ Issue の起票から PR のマージまで、守ることは [AGENTS.md](AGENTS
 | やってはいけないこと | **してはならないこと** — 帰属の不明なファイル・生成物のコミット・実需のない先回り |
 | 見た目が変わる変更 | **描画に影響する変更** — before/after の絵を PR に載せる (入力欄へ落とせば GitHub が保管する) |
 
+## 手元で作る
+
+入れ方 (`brew install`) は [README](README.md#入れる) にある。ここが持つのは、**このリポジトリから道具を作る手順**である — リリースを待たずに試すとき、ライブラリを触りながらスケッチで確かめるときに使う。
+
+```bash
+git clone https://github.com/mokume-metal/mokume.git
+cd mokume
+swift build -c release --product mokume-cli
+export PATH="$PWD/.build/release:$PATH"   # この shell の間だけ
+```
+
+できるのは `mokume-cli` — 配布物の `mokume` と同じ道具で、名前だけが違う (道具は起動された名前で名乗るので、印字される行はそのまま打てる)。ひな形の入った `mokume_MokumeCLI.bundle` は隣に作られるので、**実行ファイルだけを別の場所へ移さない**。
+
+スケッチにも手元のライブラリを引かせるなら、`--local` でこのリポジトリの場所を渡す:
+
+```bash
+cd ..
+mokume-cli new --local ../mokume my-sketch
+cd my-sketch
+mokume-cli run
+```
+
+渡した場所は生成される `Package.swift` の `.package(path:)` へそのまま入るので、**作られるスケッチから見た相対**で書く (絶対パスでもよい)。`--local` を付けなければ、公開済みの版を引く。
+
 ## 設計の背景
 
 - 土台となる原則: [ADR-0001 設計原則](docs/decisions/0001-founding-principles.md)
