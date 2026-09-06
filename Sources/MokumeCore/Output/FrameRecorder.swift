@@ -25,8 +25,14 @@ final class FrameRecorder: Outlet {
     /// 宣言されたフレームレート。**動画の時刻の刻みになる。**
     private let frameRate: Int
 
-    /// このフレームに頼まれた 1 枚ものの行き先。
-    private var oneShots: [String] = []
+    /// まだ書いていない 1 枚ものの行き先と、**頼まれたフレーム**。
+    ///
+    /// 番号を憶えるのは、絵が 1 枚遅れて届くためである ([#927])。届いた絵より後の
+    /// フレームで頼まれたものは、その絵では書かずに持ち越す — `save()` が書くのは
+    /// **それを呼んだフレームの絵**である。
+    ///
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    private var oneShots: [(frame: Int, path: String)] = []
     /// 撮っている連番。撮っていなければ `nil`。
     private var sequence: FrameSequence?
     /// 撮っている動画。撮っていなければ `nil`。
@@ -88,7 +94,9 @@ final class FrameRecorder: Outlet {
     // MARK: - 頼まれる
 
     /// このフレームの絵を 1 枚だけ頼む。
-    func save(_ path: String) { oneShots.append(path) }
+    ///
+    /// - Parameter frame: 頼まれたフレームの番号。**この番号の絵が届いたときに書く。**
+    func save(_ path: String, at frame: Int) { oneShots.append((frame, path)) }
 
     /// 連番か動画を始める。**行き先の綴りが形を決める。**
     ///
@@ -171,8 +179,12 @@ final class FrameRecorder: Outlet {
 
         // **1 フレームに 1 回だけ読み戻す。** 行き先が何個あっても同じ 1 枚を配る
         let image = frame.bytes()
-        for path in oneShots { writer.write(image, to: path) }
-        oneShots.removeAll(keepingCapacity: true)
+        // **届いた絵より後で頼まれたものは持ち越す。** 絵は 1 枚遅れて届くので、
+        // ここで全部書くと `save()` が 1 つ前のフレームの絵を書くことになる (#927)
+        for shot in oneShots where shot.frame <= frame.frame {
+            writer.write(image, to: shot.path)
+        }
+        oneShots.removeAll { $0.frame <= frame.frame }
         if sequence != nil { writer.write(image, to: sequence!.next()) }
         movie?.write(image, frame: frame.frame, time: frame.time)
     }

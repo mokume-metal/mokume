@@ -84,6 +84,15 @@ public final class RenderTarget: EffectSurface {
     /// 出力段を通すパイプライン。同じく頼まれてはじめて作る。
     var outputPassStorage: OutputPass?
 
+    /// 最後に出力段を投入した番号。まだ 1 度も通っていなければ 0。
+    ///
+    /// **次に出力段を組む前に、これを名指しで待つ** ([#927])。``OutputPass`` は明るさを
+    /// GPU 可視の置き場へ CPU で書くので、前の出力段が走っている最中には書けない。
+    /// 出力段は環に載っていないため、待つ範囲は「前の 1 本」で名乗る。
+    ///
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    var lastEncodeSubmission: UInt64 = 0
+
     /// 出力段を通した絵の置き場を作った回数。**作り直していないこと**を
     /// 検査から数えるための目印。
     var encodedImagesMade = 0

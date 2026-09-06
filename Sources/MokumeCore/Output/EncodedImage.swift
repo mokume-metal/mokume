@@ -13,8 +13,13 @@ import Metal
 /// **1 枚を作り、フレームをまたいで使い回す** ([ADR-0023] 決定 5)。毎フレーム
 /// 確保すると、長く回したときにだけ重くなる — 動かし始めは正常に見える。
 ///
+/// **中身を組んだ投入の番号を憶えている** ([#927])。組む側は GPU の完了を待たずに返り、
+/// 待つのは中身に触る側 — ``read()`` と、出口へ渡す直前の ``SketchRuntime`` である。
+/// 待つ範囲は名指しした 1 本なので、投入済みの全部を待つ全ドレインは起きない。
+///
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+/// [#927]: https://github.com/mokume-metal/mokume/issues/927
 final class EncodedImage {
     /// 幅 (画素)。
     let width: Int
@@ -27,10 +32,18 @@ final class EncodedImage {
     let texture: any MTLTexture
     /// テクスチャが載っている領域。**同じメモリ**なので、読み戻しは写しを取らない。
     private let storage: any MTLBuffer
+    /// 中身を組んだ土台。**読む直前に待つために持つ。**
+    private let gpu: RenderDevice
+
+    /// いまの中身を組んだ投入の番号。まだ 1 度も組まれていなければ 0。
+    ///
+    /// 組んだ側 (``RenderTarget/encodeToImage()``) が書き、中身に触る側が待つ。
+    var pendingSubmission: UInt64 = 0
 
     init(gpu: RenderDevice, width: Int, height: Int) throws(RenderFailure) {
         self.width = width
         self.height = height
+        self.gpu = gpu
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: OutputPass.pixelFormat, width: width, height: height, mipmapped: false)
@@ -70,7 +83,15 @@ final class EncodedImage {
     ///
     /// **画素ごとの計算は 1 つも無い。** 出力段は既に GPU が通しているので、ここで
     /// するのは行の詰め直しだけである (行の間隔が幅ぶんより広いことがある)。
+    ///
+    /// **中身を組んだ投入が終わるのを、読む直前に待つ** ([#927])。待つのは名指しした
+    /// 1 本だけで、既に終わっていれば何もせずに進む。毎フレーム呼ばれうるので投げない
+    /// ([ADR-0020] 決定 5) — 詰まったら理由を残して進む。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     func read() -> DisplayImage {
+        gpu.waitForSubmissionQuietly(pendingSubmission, before: "絵を読み戻す")
         readCount += 1
         var bytes = [UInt8](repeating: 0, count: width * height * OutputPass.bytesPerPixel)
         let source = storage.contents()

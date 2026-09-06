@@ -174,7 +174,9 @@ struct PluginSeamTests {
         try runtime.advance()
 
         #expect(outlet.opened == 1)
-        #expect(outlet.received.count == 2)
+        // 配られるのは 1 枚遅れなので、2 フレームで 1 枚 (#927。遅れそのものは
+        // 「出口が受け取る絵は 1 枚遅れる」が見る)
+        #expect(outlet.received.count == 1)
         #expect(inlet.supplied == 2)
     }
 
@@ -188,11 +190,13 @@ struct PluginSeamTests {
             BothPlugin(outlet: second, inlet: inlet),
         ])
 
+        // 配りは 1 枚遅れるので、1 枚届かせるには 2 フレーム要る (#927)
+        try runtime.advance()
         try runtime.advance()
 
         #expect(first.received.count == 1)
         #expect(second.received.count == 1)
-        #expect(inlet.supplied == 1)
+        #expect(inlet.supplied == 2)
     }
 
     @Test("呼ばれる順は宣言順")
@@ -204,6 +208,8 @@ struct PluginSeamTests {
             OutletOnlyPlugin(outlet: OrderedOutlet("c", log)),
         ])
 
+        // 配りは 1 枚遅れる (#927)
+        try runtime.advance()
         try runtime.advance()
 
         #expect(log.names == ["a", "b", "c"])
@@ -249,6 +255,8 @@ struct PluginSeamTests {
         let outlet = RecordingOutlet()
         let runtime = try makeRuntime([OutletOnlyPlugin(outlet: outlet)])
 
+        // 配りは 1 枚遅れる (#927)。毎フレーム同じ絵なので、比べる相手は変わらない
+        try runtime.advance()
         try runtime.advance()
         let fromRoad = try runtime.target.encodeToImage().read()[0, 0]
 
@@ -289,6 +297,8 @@ struct PluginSeamTests {
             OutletOnlyPlugin(outlet: healthy),
         ])
 
+        // 配りは 1 枚遅れる (#927)
+        try runtime.advance()
         try runtime.advance()
 
         #expect(healthy.received.count == 1)
@@ -354,8 +364,8 @@ struct PluginSeamTests {
         // 同じ数になってしまい、検査として成立しない)
         #expect(failing.received.count == 2)
         #expect(failing.calls == 2 + SeamHealth.limit)
-        // 他の出口とフレームは動き続ける
-        #expect(healthy.received.count == 8)
+        // 他の出口とフレームは動き続ける (配りは 1 枚遅れるので 8 フレームで 7 枚・#927)
+        #expect(healthy.received.count == 7)
     }
 
     @Test("1 回転んだだけでは外れない")
@@ -373,6 +383,8 @@ struct PluginSeamTests {
         let runtime = try makeRuntime([OutletOnlyPlugin(outlet: flaky)])
 
         for _ in 0..<6 { try runtime.advance() }
+        // 最後の 1 枚は閉じるときに配られる (#927)
+        runtime.closePlugins()
 
         #expect(flaky.received == 6)
     }
