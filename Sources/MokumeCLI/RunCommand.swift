@@ -79,11 +79,18 @@ enum RunCommand {
     ///
     /// **宣言された実行ファイルの product から名前を取る。** ビルドの出力を漁って
     /// それらしいものを選ぶと、product が増えたときに黙って別のものを起動する。
-    static func executablePath(in directory: URL, configuration: String? = nil) throws(
-        CommandFailure
-    ) -> URL {
-        let dump = try swift(["package", "dump-package"], in: directory, capturing: true).output
-        guard let name = executableProductName(inDumpOf: dump) else {
+    /// - Parameter declared: 既に読んである宣言。**渡せば `dump-package` を起こさない** —
+    ///   1 回が数百 ms かかるので、束ねる経路のように 2 度要る場所では持ち回る。
+    static func executablePath(
+        in directory: URL, configuration: String? = nil, declared: SwiftPM.Package? = nil
+    ) throws(CommandFailure) -> URL {
+        let package: SwiftPM.Package?
+        if let declared {
+            package = declared
+        } else {
+            package = try dumpPackage(in: directory)
+        }
+        guard let name = package?.executableProductName else {
             throw .noExecutable(path: directory.path)
         }
         let binPath = try swift(
@@ -97,20 +104,12 @@ enum RunCommand {
         return url
     }
 
-    /// `swift package dump-package` の中身から実行ファイルの product 名を取る。
-    static func executableProductName(inDumpOf dump: String) -> String? {
-        guard let data = dump.data(using: .utf8),
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let products = root["products"] as? [[String: Any]]
-        else { return nil }
-        for product in products {
-            guard let name = product["name"] as? String else { continue }
-            // 種別は {"executable": {...}} の形で入っている
-            if let type = product["type"] as? [String: Any], type["executable"] != nil {
-                return name
-            }
-        }
-        return nil
+    /// パッケージの宣言を読む。**読めなければ `nil`。**
+    ///
+    /// 起こすのは重い (数百 ms) ので、同じ実行の中で 2 度要るときは呼び手が持ち回る。
+    static func dumpPackage(in directory: URL) throws(CommandFailure) -> SwiftPM.Package? {
+        let dump = try swift(["package", "dump-package"], in: directory, capturing: true).output
+        return SwiftPM.package(inDumpOf: dump)
     }
 
     /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。

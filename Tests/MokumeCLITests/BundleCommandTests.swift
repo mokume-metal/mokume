@@ -103,28 +103,6 @@ struct BundleCommandTests {
         }
     }
 
-    @Test("宣言から、入っているべき包みの名前を導く")
-    func declaredBundlesComeFromTheManifest() {
-        let dump = """
-            {"name":"demo","targets":[
-              {"name":"demo","resources":[{"path":"assets","rule":{"copy":{}}}]},
-              {"name":"other","resources":[]},
-              {"name":"third"}
-            ]}
-            """
-        #expect(BundleCommand.declaredResourceBundles(inDumpOf: dump) == ["demo_demo.bundle"])
-    }
-
-    @Test("下限の版は、パッケージの宣言から取る")
-    func theMinimumVersionComesFromTheManifest() {
-        let dump = """
-            {"platforms":[{"platformName":"ios","version":"18.0"},
-                          {"platformName":"macos","version":"26.0"}]}
-            """
-        #expect(BundleCommand.minimumSystemVersion(inDumpOf: dump) == "26.0")
-        #expect(BundleCommand.minimumSystemVersion(inDumpOf: "{}") == nil)
-    }
-
     /// 確かめ方まで言わないと、束ねた側の手元では成功したようにしか見えない。
     @Test("束ねた後の報せが、退避して起動する手順を含む")
     func theReportTellsHowToCheck() {

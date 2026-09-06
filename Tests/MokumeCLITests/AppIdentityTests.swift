@@ -61,7 +61,8 @@ struct AppIdentityTests {
                 path: "/demo", missing: ["identifier", "version"])
         ) {
             try AppIdentity.make(
-                from: ["name": "Grain", "identifier": "  ", "version": ""], path: "/demo")
+                from: AppIdentity.Wire(name: "Grain", identifier: "  ", version: ""),
+                path: "/demo")
         }
     }
 

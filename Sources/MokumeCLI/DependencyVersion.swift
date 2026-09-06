@@ -30,13 +30,6 @@ enum DependencyVersion {
     /// 宣言するので、それより古い形式は書かれない。
     static func resolved(forPackageAt package: URL) -> String? {
         let url = package.appendingPathComponent("Package.resolved")
-        guard let data = try? Data(contentsOf: url),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let pins = object["pins"] as? [[String: Any]]
-        else { return nil }
-        for pin in pins where pin["identity"] as? String == identity {
-            return (pin["state"] as? [String: Any])?["version"] as? String
-        }
-        return nil
+        return SwiftPM.read(SwiftPM.Resolved.self, at: url)?.version(of: identity)
     }
 }

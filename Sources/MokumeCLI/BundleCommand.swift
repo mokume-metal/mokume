@@ -64,21 +64,20 @@ enum BundleCommand {
         let identity = try AppIdentity.read(in: directory)
 
         try RunCommand.build(in: directory, configuration: configuration)
-        let executable = try RunCommand.executablePath(in: directory, configuration: configuration)
-
-        let dump = try RunCommand.swift(
-            ["package", "dump-package"], in: directory, capturing: true
-        ).output
+        // **宣言は 1 度だけ読む。** 走らせるものを決めるのにも、下限の版と資材の包みを
+        // 知るのにも要る — 別々に引くと `dump-package` を 2 回起こすことになる
+        let declared = try RunCommand.dumpPackage(in: directory)
+        let executable = try RunCommand.executablePath(
+            in: directory, configuration: configuration, declared: declared)
         let out =
             options.out.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? directory.appendingPathComponent(defaultOutputDirectory, isDirectory: true)
 
         let app = try assemble(
             executable: executable, identity: identity,
-            minimumSystemVersion: minimumSystemVersion(inDumpOf: dump)
-                ?? defaultMinimumSystemVersion,
+            minimumSystemVersion: declared?.minimumMacOSVersion ?? defaultMinimumSystemVersion,
             into: out)
-        try check(app, contains: declaredResourceBundles(inDumpOf: dump))
+        try check(app, contains: declared?.declaredResourceBundles ?? [])
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
         try sign(app, as: signature)
         let note = try writeOpeningNote(for: identity, beside: app)
@@ -170,41 +169,6 @@ enum BundleCommand {
                 throw .bundledResourceMissing(name: name, path: resources.path)
             }
         }
-    }
-
-    /// パッケージの宣言から、入っているべき包みの名前を導く。
-    ///
-    /// 道具立ては資材を `<パッケージ>_<ターゲット>.bundle` の名前で作る。
-    static func declaredResourceBundles(inDumpOf dump: String) -> [String] {
-        guard let root = object(inDumpOf: dump),
-            let package = root["name"] as? String,
-            let targets = root["targets"] as? [[String: Any]]
-        else { return [] }
-        var names: [String] = []
-        for target in targets {
-            guard let name = target["name"] as? String,
-                let resources = target["resources"] as? [[String: Any]], !resources.isEmpty
-            else { continue }
-            names.append("\(package)_\(name).bundle")
-        }
-        return names
-    }
-
-    /// パッケージが名乗っている下限の版。
-    static func minimumSystemVersion(inDumpOf dump: String) -> String? {
-        guard let root = object(inDumpOf: dump),
-            let platforms = root["platforms"] as? [[String: Any]]
-        else { return nil }
-        for platform in platforms
-        where (platform["platformName"] as? String) == "macos" {
-            return platform["version"] as? String
-        }
-        return nil
-    }
-
-    private static func object(inDumpOf dump: String) -> [String: Any]? {
-        guard let data = dump.data(using: .utf8) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     // MARK: - 署名

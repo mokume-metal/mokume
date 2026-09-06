@@ -56,24 +56,8 @@ enum SchemasLocator {
     /// `.build/checkouts/` の下に置かれる。
     static func resolvedPackage(workDirectory: URL) -> URL? {
         let url = workDirectory.appendingPathComponent(".build/workspace-state.json")
-        guard let data = try? Data(contentsOf: url),
-            let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let dependencies = (document["object"] as? [String: Any])?["dependencies"]
-                as? [[String: Any]]
-        else { return nil }
-
-        for dependency in dependencies {
-            let reference = dependency["packageRef"] as? [String: Any]
-            guard reference?["name"] as? String == packageName else { continue }
-            let state = dependency["state"] as? [String: Any]
-            if state?["name"] as? String == "fileSystem", let path = state?["path"] as? String {
-                return URL(fileURLWithPath: path, isDirectory: true)
-            }
-            guard let subpath = dependency["subpath"] as? String else { return nil }
-            return workDirectory.appendingPathComponent(
-                ".build/checkouts/\(subpath)", isDirectory: true)
-        }
-        return nil
+        return SwiftPM.read(SwiftPM.WorkspaceState.self, at: url)?
+            .resolved(packageName, under: workDirectory)
     }
 
     /// 仕様の名前の一覧。
