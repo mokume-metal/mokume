@@ -1370,6 +1370,20 @@ public final class Canvas {
     private(set) var flatOutlinesInLastFrame = 0
     var outlinesAssembledThisFrame = 0
 
+    /// 直前のフレームで、並べた頂点を組み立てる間に点を舐めた延べ回数。
+    ///
+    /// **1 度に渡す量で二乗に効いていないことを、絵でも時間でもなく数で確かめる値**
+    /// ([#915])。同じ総量を 1 塊で渡しても小分けで渡してもここが動かないなら、費用は
+    /// 総量にしか比例していない。時間で見ると release でしか測れず、機械の都合で揺れる。
+    ///
+    /// 数えるのは 3 箇所 — 環を平らへ落とすとき・穴のために全点を落とすとき・
+    /// 読み取り位置の倒れ先を作るとき。**どれか 1 つでも抜くと、そこへ二乗が戻っても
+    /// 数が動かない。**
+    ///
+    /// [#915]: https://github.com/mokume-metal/mokume/issues/915
+    private(set) var pointScansInLastFrame = 0
+    var pointScansThisFrame = 0
+
     /// 検査から「描けなかったフレーム」を作るための差し込み。製品の経路では常に `nil`。
     ///
     /// 描画の失敗は環境か資源が枯れたときにしか起きず、検査から自然には作れない。
@@ -1467,6 +1481,8 @@ public final class Canvas {
         flatVerticesInLastFrame = vertices.count
         flatOutlinesInLastFrame = outlinesAssembledThisFrame
         outlinesAssembledThisFrame = 0
+        pointScansInLastFrame = pointScansThisFrame
+        pointScansThisFrame = 0
         encoder.endEncoding()
 
         // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
