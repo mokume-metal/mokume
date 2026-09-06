@@ -4,6 +4,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import MokumeCore
@@ -107,6 +108,61 @@ struct KnobTextTests {
     @Test("組は成分を並べる")
     func vectorsShowComponents() {
         #expect(KnobText.value(of: .vector2(SIMD2(1, 2))) == "1.00, 2.00")
+    }
+}
+
+/// 色を選ぶ欄と作業空間のあいだの変換。
+///
+/// **窓を立てずに検められる。** `ColorPicker` に載せる `Color` を組むのも、選ばれた
+/// `Color` を作業空間へ戻すのも純関数なので、画面を出さずに往復を見られる。
+@Suite("色を選ぶ欄との往復")
+struct KnobColorTests {
+    /// 選ぶ欄に載った色を、表示空間の 4 成分として読み直す。
+    private func picked(_ value: LinearRGBA) -> (
+        red: Float, green: Float, blue: Float, alpha: Float
+    ) {
+        let shown = NSColor(KnobColor.display(of: value)).usingColorSpace(.displayP3)!
+        return (
+            Float(shown.redComponent), Float(shown.greenComponent), Float(shown.blueComponent),
+            Float(shown.alphaComponent)
+        )
+    }
+
+    @Test("薄い色でも、選ぶ欄に出る色みは変わらない")
+    func alphaDoesNotDarkenTheSwatch() {
+        // 作業空間の成分はアルファ乗算済み (ADR-0011 決定 4)。**乗算を戻さずに符号化
+        // すると、透明な色ほど暗い色が欄に出る** — 濃さを直すたびに色みが動くので、
+        // 選んでいる最中には「そういうもの」に見えてしまう
+        let opaque = picked(color(255, 204, 0))
+        let faint = picked(color(255, 204, 0, 64))
+
+        #expect(abs(opaque.red - faint.red) < 0.01)
+        #expect(abs(opaque.green - faint.green) < 0.01)
+        #expect(abs(opaque.blue - faint.blue) < 0.01)
+        // 変わってよいのは濃さだけ
+        #expect(abs(faint.alpha - 64.0 / 255.0) < 0.01)
+    }
+
+    @Test("欄に出して選び直しても、色は同じところへ戻る")
+    func theRoundTripKeepsTheColor() {
+        for original in [color(255, 204, 0), color(255, 204, 0, 128), color(0, 0, 0), color(128)] {
+            let returned = KnobColor.working(of: KnobColor.display(of: original))
+            #expect(abs(returned.red - original.red) < 0.01)
+            #expect(abs(returned.green - original.green) < 0.01)
+            #expect(abs(returned.blue - original.blue) < 0.01)
+            #expect(abs(returned.alpha - original.alpha) < 0.01)
+        }
+    }
+
+    @Test("まっさらな透明は、色みを持たないまま出る")
+    func fullyTransparentStaysTransparent() {
+        // 乗算を戻す割り算は、アルファ 0 では成り立たない。**割ってはいけない側**を
+        // 落とすと 0 除算で色みが暴れる
+        let clear = picked(.transparent)
+        #expect(clear.alpha == 0)
+        #expect(clear.red == 0)
+        #expect(clear.green == 0)
+        #expect(clear.blue == 0)
     }
 }
 
