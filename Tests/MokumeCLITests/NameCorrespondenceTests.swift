@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -91,6 +92,50 @@ struct NameCorrespondenceTests {
         let listed = Tools.definitions.compactMap { $0["name"] as? String }
         #expect(listed == Tools.ToolName.allCases.map(\.rawValue))
         #expect(listed == ["observe", "build_status", "input", "reference"])
+    }
+
+    /// **窓口は面より狭くも広くもならない。**
+    ///
+    /// 上限の数値は面の仕様 (`Schemas/observe-request.schema.json`)・型の定数
+    /// (`ObservationRequest`)・窓口の `inputSchema`・窓口の散文の 4 箇所に現れていて、
+    /// **対応を見る機械が居なかった**。窓口が型の定数から出すようにしたので、残る
+    /// 突き合わせは仕様との一致だけである — そこがずれると、窓口が通した要求を
+    /// スケッチが切り詰めることになり、頼んだ側は窓口の説明からその理由を知れない。
+    @Test("窓口が名乗る上限は、面の仕様と一致する")
+    func theWindowAnnouncesTheSameLimitsAsTheSchema() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Schemas/observe-request.schema.json")
+        let document = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let declared = try #require(document["properties"] as? [String: Any])
+        let announced = try #require(
+            Tools.ToolName.observe.inputSchema["properties"] as? [String: Any])
+
+        for name in ["scale", "count", "every"] {
+            let fromSchema = try #require(declared[name] as? [String: Any], "\(name)")
+            let fromWindow = try #require(announced[name] as? [String: Any], "\(name)")
+            for bound in ["minimum", "maximum", "exclusiveMinimum"] {
+                #expect(
+                    "\(fromWindow[bound] ?? "—")" == "\(fromSchema[bound] ?? "—")",
+                    "\(name) の \(bound) が食い違う")
+            }
+        }
+    }
+
+    /// **数値は型の定数から出る。** 窓口の散文に手で書くと、上限を動かした日に
+    /// 説明だけが古い数を言い続ける。
+    @Test("窓口の説明に出る上限も、型の定数から出ている")
+    func theProseCarriesTheSameNumbers() throws {
+        let announced = try #require(
+            Tools.ToolName.observe.inputSchema["properties"] as? [String: Any])
+        let count = try #require(
+            (announced["count"] as? [String: Any])?["description"] as? String)
+        let every = try #require(
+            (announced["every"] as? [String: Any])?["description"] as? String)
+        #expect(count.contains("1…\(ObservationRequest.maximumCount)"))
+        #expect(every.contains("1…\(ObservationRequest.maximumEvery)"))
     }
 
     /// 名前だけでなく、一覧が差し出す 3 つの欄が全部埋まっていること。

@@ -20,7 +20,9 @@ struct ParamRequest: ExchangeRequest {
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 struct ParamReport: Encodable {
-    static let schemaVersion = 1
+    /// この形式の版。**先頭の格納プロパティである** — 合成の `encode` は宣言順に
+    /// 書き出すので、置き場所が鍵の並びを決める。
+    let schemaVersion = 1
 
     /// 内容が変わるたびに進む番号。
     let revision: Int
@@ -56,21 +58,6 @@ struct ParamReport: Encodable {
         let name: String
         let requested: Double
         let value: Double
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion, revision, id, params, rejected, clamped, discarded
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(Self.schemaVersion, forKey: .schemaVersion)
-        try container.encode(revision, forKey: .revision)
-        try container.encodeIfPresent(id, forKey: .id)
-        try container.encode(params, forKey: .params)
-        try container.encode(rejected, forKey: .rejected)
-        try container.encode(clamped, forKey: .clamped)
-        try container.encode(discarded, forKey: .discarded)
     }
 }
 

@@ -27,6 +27,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -518,6 +519,22 @@ class MakeTargetTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         (self.root / "scripts").mkdir()
 
+    @staticmethod
+    def isolated_environment():
+        """呼び出し元の make から独立した環境 (#997)。
+
+        **この検査は `make catch-up PR=<番号>` の中で走ることがある。** そのとき `PR` は
+        make のコマンドライン変数なので `MAKEFLAGS` 経由で子の make まで伝わり、ここが
+        起こす `make catch-up` が**外側の番号を拾う** — 「PR を渡さなければ引数は増えない」
+        が `--pr 995` を見て落ちていた。落ちるのは代打ちを打った人の手元だけで、しかも
+        赤くなるのは `catch_up_test` なので、**打った本人の変更が疑われる**。
+
+        `PR` だけ落としても足りない。`MAKEFLAGS` がコマンドライン変数を運ぶので、そこから
+        復活する。
+        """
+        outer = {"PR", "MAKEFLAGS", "MFLAGS"}
+        return {key: value for key, value in os.environ.items() if key not in outer}
+
     def run_make(self, exit_code, message="打つ意味が無い — #5 の merge を待つ", *make_args):
         stub = self.root / "scripts" / "catch-up.sh"
         stub.write_text(
@@ -528,6 +545,7 @@ class MakeTargetTest(unittest.TestCase):
         return subprocess.run(
             ["make", "-f", str(REPO / "Makefile"), "catch-up", *make_args],
             cwd=self.root, capture_output=True, text=True, encoding="utf-8",
+            env=self.isolated_environment(),
         )
 
     def passed_args(self):
@@ -556,6 +574,13 @@ class MakeTargetTest(unittest.TestCase):
 
     def test_PR_を渡さなければ引数は増えない(self):
         self.run_make(0, "queue へ戻した")
+        self.assertEqual(self.passed_args(), "")
+
+    def test_呼び出し元が渡した_PR_は拾わない(self):
+        """`make catch-up PR=<番号>` の中でこの検査が走っても、外側の番号は届かない (#997)。"""
+        outer = {"PR": "999", "MAKEFLAGS": " -- PR=999"}
+        with unittest.mock.patch.dict(os.environ, outer):
+            self.run_make(0, "queue へ戻した")
         self.assertEqual(self.passed_args(), "")
 
 

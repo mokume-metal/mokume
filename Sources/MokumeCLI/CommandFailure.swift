@@ -35,6 +35,8 @@ enum CommandFailure: Error, Equatable {
     case identityIncomplete(path: String, missing: [String])
     /// 宣言された資材の包みが、組み上がりに入っていない。
     case bundledResourceMissing(name: String, path: String)
+    /// 区画へ要求を置けなかった。
+    case facetUnwritable(path: String, reason: String)
     /// 署名に失敗した。
     case codesignFailed(status: Int32)
 
@@ -116,6 +118,14 @@ enum CommandFailure: Error, Equatable {
             このまま配ると、受け取った側では絵が出ないだけで、原因を指すものが何も
             残らない。組み上げ直して、それでも入らないなら Package.swift の宣言と
             出来上がったものの名前が合っているかを見る。
+            """
+        case .facetUnwritable(let path, let reason):
+            """
+            要求を置けなかった: \(path)
+            \(reason)
+
+            置き場に書ける権限があるか、ディスクに空きがあるかを確かめる。
+            置き場は MOKUME_WORK_DIR で移せる (走らせる側と窓口の両方に同じ値を渡すこと)
             """
         case .codesignFailed(let status):
             """
