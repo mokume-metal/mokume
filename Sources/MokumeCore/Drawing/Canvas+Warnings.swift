@@ -82,6 +82,8 @@ extension Canvas {
 
         /// フレームの外で視点を書いた。
         case cameraOutsideFrame
+        /// フレームの外で変換を書いた。
+        case transformOutsideFrame
         /// 成り立たない視点・投影が渡された。**入口が 2 つある 1 つの事情。**
         case badCamera
 

@@ -787,6 +787,70 @@ struct CanvasTests {
         #expect(image[38, 38].red == 255)
     }
 
+    @Test("フレームの外で書いた変換は、どの口でも警告して無視される")
+    func transformsOutsideAFrameAreIgnored() throws {
+        // 変換はシーンの記述なので、初期化のときに書いてもどのフレームにも属さない
+        // (ADR-0021 決定 4)。**黙って捨てると「書いたのに効かない」だけが残る**ので、
+        // 視点・光・周囲・材質・影と同じ形で知らせる ([#941])
+        //
+        // **口ごとに新しい面を作る。** 注意は初回だけ言う仕組みに載っているので、1 つの
+        // 面で 14 本を続けて呼ぶと最初の 1 本しか確かめられない — 残り 13 本の guard を
+        // 外しても緑のままになる
+        //
+        // [#941]: https://github.com/mokume-metal/mokume/issues/941
+        var moved = Transform.identity
+        moved.translate(x: 5, y: 5)
+        let mouths: [(String, (Canvas) -> Void)] = [
+            ("translate(x,y)", { $0.translate(10, 20) }),
+            ("translate(x,y,z)", { $0.translate(10, 20, 30) }),
+            ("rotate", { $0.rotate(.pi / 4) }),
+            ("rotateX", { $0.rotateX(.pi / 4) }),
+            ("rotateY", { $0.rotateY(.pi / 4) }),
+            ("rotateZ", { $0.rotateZ(.pi / 4) }),
+            ("scale(x,y)", { $0.scale(2, 3) }),
+            ("scale(x,y,z)", { $0.scale(2, 3, 4) }),
+            ("shearX", { $0.shearX(0.3) }),
+            ("shearY", { $0.shearY(0.3) }),
+            ("applyMatrix", { $0.applyMatrix(moved) }),
+            ("resetMatrix", { $0.resetMatrix() }),
+            ("pushMatrix", { $0.pushMatrix() }),
+            ("popMatrix", { $0.popMatrix() }),
+        ]
+        for (name, write) in mouths {
+            let canvas = try makeCanvas()
+            write(canvas)
+            #expect(
+                canvas.warnings.hasWarned(.transformOutsideFrame),
+                "\(name) がフレームの外で黙って捨てている")
+            #expect(canvas.transform == .identity, "\(name) がフレームの外で効いている")
+        }
+    }
+
+    @Test("初期化のときに変換を書いても、絵は変わらない")
+    func transformsOutsideAFrameLeaveThePictureAlone() throws {
+        // 警告を足したことで**絵まで変わっていない**ことを見る。フレームの外で書いた
+        // 変換はもともと `beginFrame()` に捨てられていたので、変わるのは注意の有無だけ
+        let plain = try makeCanvas()
+        try plain.draw {
+            plain.background(black)
+            plain.noStroke()
+            plain.fill(white)
+            plain.rect(8, 8, 16, 16)
+        }
+        let expected = try pixels(of: plain)
+
+        let written = try makeCanvas()
+        written.translate(20, 20)  // フレームの外なので効かない
+        written.pushMatrix()
+        try written.draw {
+            written.background(black)
+            written.noStroke()
+            written.fill(white)
+            written.rect(8, 8, 16, 16)
+        }
+        #expect(try pixels(of: written).bytes == expected.bytes)
+    }
+
     @Test("斜めに歪めると、まっすぐな辺が傾く")
     func shearTiltsStraightEdges() throws {
         let canvas = try makeCanvas()

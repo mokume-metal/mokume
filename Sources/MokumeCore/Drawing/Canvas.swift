@@ -1010,26 +1010,51 @@ public final class Canvas {
 
     // MARK: - 変換
 
-    public func translate(_ x: Float, _ y: Float) { transform.translate(x: x, y: y) }
+    public func translate(_ x: Float, _ y: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.translate(x: x, y: y)
+    }
 
-    public func rotate(_ radians: Float) { transform.rotate(by: radians) }
+    public func rotate(_ radians: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.rotate(by: radians)
+    }
 
-    public func scale(_ x: Float, _ y: Float) { transform.scale(x: x, y: y) }
+    public func scale(_ x: Float, _ y: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.scale(x: x, y: y)
+    }
 
-    public func shearX(_ radians: Float) { transform.shearX(by: radians) }
+    public func shearX(_ radians: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.shearX(by: radians)
+    }
 
-    public func shearY(_ radians: Float) { transform.shearY(by: radians) }
+    public func shearY(_ radians: Float) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.shearY(by: radians)
+    }
 
-    public func applyMatrix(_ other: Transform) { transform.concatenate(other) }
+    public func applyMatrix(_ other: Transform) {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.concatenate(other)
+    }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
     /// 積んである変換 (``pushMatrix()``) は捨てない — 戻す先は残る。
-    public func resetMatrix() { transform.reset() }
+    public func resetMatrix() {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transform.reset()
+    }
 
-    public func pushMatrix() { transformStack.append(transform) }
+    public func pushMatrix() {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
+        transformStack.append(transform)
+    }
 
     public func popMatrix() {
+        guard isDrawing else { return warnOutsideFrame(.transform) }
         guard let restored = transformStack.popLast() else { return }
         transform = restored
     }
