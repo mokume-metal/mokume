@@ -42,9 +42,9 @@ public final class SketchRuntime {
     /// 登録された出口。**宣言順**に呼ぶ ([ADR-0024] 決定 4)。
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    private var outlets: [(outlet: any Outlet, health: SeamHealth)] = []
+    private var outlets: [(seam: any Outlet, health: SeamHealth)] = []
     /// 登録された入り口。同じく宣言順。
-    private var inlets: [(inlet: any Inlet, health: SeamHealth)] = []
+    private var inlets: [(seam: any Inlet, health: SeamHealth)] = []
 
     /// 絵をファイルにする組み込みの出口。**頼まれてはじめて作る。**
     ///
@@ -234,20 +234,21 @@ public final class SketchRuntime {
             // 逆順で、後から開いたものが先に開いたものに依っていても順序が壊れないようにする
             //
             // [#926]: https://github.com/mokume-metal/mokume/issues/926
-            var openedOutlets: [any Outlet] = []
-            var openedInlets: [any Inlet] = []
+            // **戻す手を、開いた順に積む。** 開いた側ごとに別の並びを持つと、
+            // 差込口の種類が増えた日に巻き戻しの手当てだけが抜ける — 抜けても
+            // コンパイルは通り、症状は「掴んだ外の資源が誰にも閉じられない」だけになる
+            var undo: [() -> Void] = []
             do {
                 for outlet in registry.outlets {
                     try outlet.open()
-                    openedOutlets.append(outlet)
+                    undo.append(outlet.close)
                 }
                 for inlet in registry.inlets {
                     try inlet.open()
-                    openedInlets.append(inlet)
+                    undo.append(inlet.close)
                 }
             } catch {
-                for inlet in openedInlets.reversed() { inlet.close() }
-                for outlet in openedOutlets.reversed() { outlet.close() }
+                for close in undo.reversed() { close() }
                 Diagnostics.warn(
                     "\(type(of: plugin)) を開けませんでした: \(error)。この束は外して続けます")
                 continue
@@ -261,8 +262,8 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func closePlugins() {
-        for entry in outlets { entry.outlet.close() }
-        for entry in inlets { entry.inlet.close() }
+        for entry in outlets { entry.seam.close() }
+        for entry in inlets { entry.seam.close() }
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
         // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
         recorder?.close()
@@ -393,12 +394,39 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     private func supplyFromInlets() {
-        for index in inlets.indices where inlets[index].health.isAttached {
-            inlets[index].inlet.supply()
-            if inlets[index].health.note(inlets[index].inlet.failure) {
+        visit(&inlets) { $0.supply() } failure: { $0.failure }
+    }
+
+    /// 差込口を 1 巡し、**続けて転んだものを外す**。
+    ///
+    /// ## なぜ入り口と出口で 1 つなのか
+    ///
+    /// [ADR-0024] 決定 7 の「毎フレーム呼ばれるものは投げない。続けて転んだらその
+    /// 差込口を外し、外したことを診断に出す」は**対で守るもの**である。2 度書いて
+    /// いたころ、片方だけ手当てが抜ければ**転び続ける差込口が外れないまま毎フレーム
+    /// 費用を払い続ける**形が成立していた — 落ちも警告も出ず、症状は「触っても
+    /// 効かない」だけになる。
+    ///
+    /// **文面もここに置く。** 入り口と出口で 1 バイトも違わなかったので、動かしたのは
+    /// 置き場だけである — [#956](https://github.com/mokume-metal/mokume/issues/956) が
+    /// 文面 4 本を畳まなかったのは、あちらが**違うことを言っており**、畳むには語幹から
+    /// 組み立てる必要があったからで ([#947](https://github.com/mokume-metal/mokume/issues/947)
+    /// の「頼んた」)、ここには組み立てが無い。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    private func visit<Seam>(
+        _ seams: inout [(seam: Seam, health: SeamHealth)], calling act: (Seam) -> Void,
+        failure: (Seam) -> String?
+    ) {
+        for index in seams.indices where seams[index].health.isAttached {
+            let seam = seams[index].seam
+            act(seam)
+            // **理由は 1 度だけ読む。** 2 度読むと、外した判断と言う理由が別の値になりうる
+            let reason = failure(seam)
+            if seams[index].health.note(reason) {
                 Diagnostics.warn(
-                    "\(type(of: inlets[index].inlet)) が続けて転んだので外しました"
-                        + " (最後の理由: \(inlets[index].inlet.failure ?? "不明"))")
+                    "\(type(of: seam)) が続けて転んだので外しました"
+                        + " (最後の理由: \(reason ?? "不明"))")
             }
         }
     }
@@ -425,14 +453,7 @@ public final class SketchRuntime {
         }
         let frame = OutputFrame(
             image: image, frame: timing.frameCount, time: Double(timing.time))
-        for index in outlets.indices where outlets[index].health.isAttached {
-            outlets[index].outlet.receive(frame)
-            if outlets[index].health.note(outlets[index].outlet.failure) {
-                Diagnostics.warn(
-                    "\(type(of: outlets[index].outlet)) が続けて転んだので外しました"
-                        + " (最後の理由: \(outlets[index].outlet.failure ?? "不明"))")
-            }
-        }
+        visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
     }
 
     // MARK: - 名乗り
@@ -575,7 +596,7 @@ public final class SketchRuntime {
     /// 仕切り直しになる。
     private func attachRecorderIfNeeded() {
         guard let recorder, !recorder.isIdle,
-            !outlets.contains(where: { $0.outlet === recorder })
+            !outlets.contains(where: { $0.seam === recorder })
         else { return }
         outlets.append((recorder, SeamHealth()))
     }
@@ -588,10 +609,10 @@ public final class SketchRuntime {
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     private func detachRecorderIfDone() {
         guard let recorder,
-            let entry = outlets.first(where: { $0.outlet === recorder }),
+            let entry = outlets.first(where: { $0.seam === recorder }),
             recorder.isIdle || !entry.health.isAttached
         else { return }
-        outlets.removeAll { $0.outlet === recorder }
+        outlets.removeAll { $0.seam === recorder }
     }
 
     // MARK: - 観測に応える

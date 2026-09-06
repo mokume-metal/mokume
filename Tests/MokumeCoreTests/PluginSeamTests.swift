@@ -98,6 +98,11 @@ struct PluginSeamTests {
         func register(into registry: PluginRegistry) { registry.add(outlet: outlet) }
     }
 
+    struct InletOnlyPlugin: Plugin {
+        let inlet: any Inlet
+        func register(into registry: PluginRegistry) { registry.add(inlet: inlet) }
+    }
+
     /// 開く・閉じるの順を 1 本の並びへ書き込む出口。`failsOnOpen` なら開くのに失敗する。
     ///
     /// **転んだ側も書く。** そうすると「開いていない差込口が閉じられていない」ことを、
@@ -319,6 +324,42 @@ struct PluginSeamTests {
         #expect(log.lifecycle == ["open:a", "close:a"])
     }
 
+    /// **入り口も巻き戻しの並びに載る。**
+    ///
+    /// 開いた側ごとに別の並びを持っていたころは、差込口の種類が増えた日に巻き戻しの
+    /// 手当てだけが抜ける形だった — 抜けてもコンパイルは通り、症状は「掴んだ外の資源が
+    /// 誰にも閉じられない」だけになる ([#926](https://github.com/mokume-metal/mokume/issues/926)
+    /// が踏んだ形)。出口の側は上の検査が留めているので、入り口の側も留める。
+    @Test("先に開いた入り口も、後の差込口が転べば閉じられる")
+    func openedInletsAreRolledBackToo() throws {
+        final class LifecycleInlet: Inlet {
+            let name: String
+            let log: Log
+            init(_ name: String, _ log: Log) {
+                self.name = name
+                self.log = log
+            }
+            func open() throws { log.lifecycle.append("open:\(name)") }
+            func supply() {}
+            func close() { log.lifecycle.append("close:\(name)") }
+        }
+        struct InletsPlugin: Plugin {
+            let inlets: [any Inlet]
+            func register(into registry: PluginRegistry) {
+                for inlet in inlets { registry.add(inlet: inlet) }
+            }
+        }
+
+        let log = Log()
+        let runtime = try makeRuntime([
+            InletsPlugin(inlets: [LifecycleInlet("a", log), BrokenInlet()])
+        ])
+
+        try runtime.advance()
+
+        #expect(log.lifecycle == ["open:a", "close:a"])
+    }
+
     @Test("開いた逆順に閉じる。開いていない差込口は閉じない")
     func openedSeamsAreClosedInReverseOrder() throws {
         let log = Log()
@@ -356,6 +397,40 @@ struct PluginSeamTests {
         #expect(failing.calls == 2 + SeamHealth.limit)
         // 他の出口とフレームは動き続ける
         #expect(healthy.received.count == 8)
+    }
+
+    /// **入り口にも同じ規律が効く。**
+    ///
+    /// 「続けて転んだら外す」は入り口と出口の対で守るもので、片方だけ手当てが抜けると
+    /// **転び続ける差込口が外れないまま毎フレーム費用を払い続ける** — 落ちも警告も
+    /// 出ず、症状は「触っても効かない」だけになる
+    /// ([#994](https://github.com/mokume-metal/mokume/issues/994) の 14)。出口の側
+    /// (上) だけを留めていたので、こちらも留める。
+    @Test("続けて転んだ入り口も外れる。フレームは止まらない")
+    func aRepeatedlyFailingInletIsDetached() throws {
+        final class FailingInlet: Inlet {
+            private(set) var calls = 0
+            private(set) var failure: String?
+            let failsFrom: Int
+            init(failsFrom: Int) { self.failsFrom = failsFrom }
+            func supply() {
+                calls += 1
+                failure = calls > failsFrom ? "わざと転ぶ" : nil
+            }
+        }
+        let failing = FailingInlet(failsFrom: 2)
+        let healthy = CountingInlet()
+        let runtime = try makeRuntime([
+            InletOnlyPlugin(inlet: failing), InletOnlyPlugin(inlet: healthy),
+        ])
+
+        for _ in 0..<8 { try runtime.advance() }
+
+        // 2 回まで順調に呼ばれ、そこから limit 回転んで外れる。**外れたら呼ばれなく
+        // なる**ので、呼ばれた回数がそこで止まる
+        #expect(failing.calls == 2 + SeamHealth.limit)
+        // 他の入り口とフレームは動き続ける
+        #expect(healthy.supplied == 8)
     }
 
     @Test("1 回転んだだけでは外れない")
