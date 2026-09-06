@@ -175,7 +175,10 @@ extension Canvas {
         retainedSerial += 1
         openSolid = OpenSolid(
             source: .retained(serial: retainedSerial), vertexStart: start,
-            vertexCount: run.count, instanceStart: solidInstances.count,
+            vertexCount: run.count,
+            // 四角は添字を持たない。**外の置き場から置き場所を取る列は添字を持てない**
+            // ので、持てるようになっても `nil` のままである (`closeSolidBatch`)
+            indexStart: nil, instanceStart: solidInstances.count,
             external: ExternalInstances(
                 buffer: particles.instances.storage, count: particles.capacity,
                 arguments: particles.arguments.storage))

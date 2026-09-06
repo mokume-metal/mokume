@@ -200,6 +200,11 @@ public final class Canvas {
     /// 平面とは別の並びにする — 頂点の中身が違う (奥行きと面の向きを持つ) ためで、
     /// **順序は列が持つ**ので、別の並びにしても呼び出し順は崩れない。
     var solidVertices: [SolidVertex] = []
+    /// 溜めている「立体の頂点を読む順」。値は ``solidVertices`` の番号そのもので、
+    /// 列は自分の区間を指す (``Shape/solidIndices``)。
+    ///
+    /// **空でよい。** 添字を書かなかった形は、これまでどおり並べた順にそのまま描く。
+    var solidIndices: [UInt32] = []
     /// 立体の置き場所。列は自分の区間を指す。
     var solidInstances: [SolidInstance] = []
     /// いま開いている立体の列。
@@ -235,6 +240,14 @@ public final class Canvas {
         /// 頂点の並びの中での区間。
         var vertexStart: Int
         var vertexCount: Int
+        /// 読む順の並び (``solidIndices``) の中で、この列が始まる位置。
+        /// **`nil` が「添字を使わない」**を表す。
+        ///
+        /// 長さを持たないのは、この列の添字が常に並びの末尾に積まれるからである
+        /// (置き場所と同じ数え方で、閉じるときに `solidIndices.count` との差を取る)。
+        /// 既定値を持たせないのは、列を開く場所が増えた日に**黙って非添字へ倒れない**
+        /// ようにするためで、倒れた列は三角形の並びとして描かれて絵だけが崩れる。
+        var indexStart: Int?
         /// 置き場所の並びの中で、この列が始まる位置。
         var instanceStart: Int
         /// 置き場所を**外の置き場**から取るなら、その置き場と個数。
@@ -248,6 +261,14 @@ public final class Canvas {
         /// 半透明の形は奥の面が手前の面を通して見えるので、1 つでも居れば列ごと
         /// 両面で描く (``Batch/cullMode``)。
         var hasTranslucentInstance = false
+        /// いま組み立てている形の点番号が、この列のどの頂点になったか。
+        ///
+        /// **添字の列だけが使い、列と一緒に消える。** ``appendSolidVertex`` は貼る面の
+        /// 切り替えで列を閉じうる (貼る絵と輪郭が両方効いていると、原始形ごとに 2 回
+        /// 閉じる) ので、表を形の寿命で持つと 2 枚目以降の面が**閉じた列の頂点**を
+        /// 指してでたらめになる。列に紐づけておけば、最悪でも共有が効かずに
+        /// 3 点/三角形へ落ちるだけで、絵は必ず正しい。
+        var sharedSlots: [Int: UInt32] = [:]
     }
 
     /// 溜め場ではなく、外の置き場から置き場所を取る指定。
@@ -309,6 +330,7 @@ public final class Canvas {
     /// 保持した形を置くたびに増える番号。
     var retainedSerial = 0
     private let solidVertexStorage: GrowableBuffer
+    private let solidIndexStorage: GrowableBuffer
 
     /// いま開いている列が、どちらの並びから描かれるか。
     var openSource = VertexSource.flat
@@ -620,6 +642,10 @@ public final class Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var shapePoints: [BuildingVertex] = []
+    /// 並べている途中の「読む順」。空なら、置いた順にそのまま読む。
+    ///
+    /// 指せるのは ``shapePoints`` の番号だけで、穴の点は指せない (``index(_:)``)。
+    var shapeIndices: [Int] = []
     /// 並べ終えた穴。
     var shapeHoles: [[BuildingVertex]] = []
     /// 穴を並べている最中なら、その点。
@@ -915,6 +941,8 @@ public final class Canvas {
             stride: MemoryLayout<ShapeVertex>.stride, minimum: 1024, label: "vertices")
         self.solidVertexStorage = storage(
             stride: MemoryLayout<SolidVertex>.stride, minimum: 1024, label: "solidVertices")
+        self.solidIndexStorage = storage(
+            stride: MemoryLayout<UInt32>.stride, minimum: 4096, label: "solidIndices")
         self.flatInstanceStorage = storage(
             stride: MemoryLayout<FlatInstance>.stride, minimum: 256, label: "flatInstances")
         self.formInstanceStorage = storage(
@@ -1118,6 +1146,7 @@ public final class Canvas {
     func discardPending() {
         vertices.removeAll(keepingCapacity: true)
         solidVertices.removeAll(keepingCapacity: true)
+        solidIndices.removeAll(keepingCapacity: true)
         solidInstances.removeAll(keepingCapacity: true)
         // **何も動かさない置き場所は置き直す。** 畳めない列がこれを指すので、
         // 空のまま次の列を閉じると、束ねる先の無い添字が残る
@@ -1595,12 +1624,36 @@ public final class Canvas {
                     vertexStart: 0, vertexCount: Self.formQuadVertexCount,
                     instanceCount: batch.instanceCount)
             } else {
-                encoder.drawPrimitives(
-                    primitiveType: .triangle,
-                    vertexStart: run.start, vertexCount: run.count,
-                    instanceCount: batch.instanceCount)
+                encodeSolidDraw(
+                    run, instanceCount: batch.instanceCount, indices: geometry.solidIndices,
+                    on: encoder)
             }
         }
+    }
+
+    /// 列の三角形を出す。**添字を持つ列は添字で読む** (``Shape/Run/isIndexed``)。
+    ///
+    /// 画面と影の焼き付けで**同じ判定を通す**。片方だけ非添字のまま残すと、影だけが
+    /// 別の形 (頂点を 3 つずつ束ねた並び) で焼かれる — 絵は出るので、影が崩れるまで
+    /// 誰も気づけない。
+    ///
+    /// 添字は ``solidVertices`` の番号そのものなので `baseVertex` はずらさない。
+    private func encodeSolidDraw(
+        _ run: Shape.Run, instanceCount: Int, indices: any MTLBuffer,
+        on encoder: any MTL4RenderCommandEncoder
+    ) {
+        guard run.isIndexed else {
+            encoder.drawPrimitives(
+                primitiveType: .triangle,
+                vertexStart: run.start, vertexCount: run.count, instanceCount: instanceCount)
+            return
+        }
+        let stride = MemoryLayout<UInt32>.stride
+        encoder.drawIndexedPrimitives(
+            primitiveType: .triangle, indexCount: run.indexCount, indexType: .uint32,
+            indexBuffer: indices.gpuAddress + UInt64(run.indexStart * stride),
+            indexBufferLength: run.indexCount * stride,
+            instanceCount: instanceCount)
     }
 
     /// Swift の並びに溜めた頂点・置き場所・光を、GPU の置き場へ写す。
@@ -1614,6 +1667,11 @@ public final class Canvas {
             flatInstances, holding: flatInstances.count)
         let solidBuffer = try solidVertexStorage.write(
             solidVertices, holding: solidVertices.count)
+        // **影の焼き付けと同じ `holding:` を渡す** — 焼き付けはここより前に走って
+        // 自分で写すので、要求する大きさが食い違うと、束ねた後に取り直した置き場を
+        // 指すことになる (``GrowableBuffer/write(_:holding:)`` の順序の規律)
+        let solidIndexBuffer = try solidIndexStorage.write(
+            solidIndices, holding: solidIndices.count)
         // 光の置き場。列は自分の区間を指す
         let lightsBuffer = try lightStorageBuffer.write(
             lightStorage, holding: max(lightStorage.count, 1))
@@ -1622,7 +1680,7 @@ public final class Canvas {
         return GeometryBuffers(
             flatVertices: buffer, formInstances: formBuffer,
             solidInstances: instanceBuffer, flatInstances: flatInstanceBuffer,
-            solidVertices: solidBuffer)
+            solidVertices: solidBuffer, solidIndices: solidIndexBuffer)
     }
 
     /// 列ごとの値と、フレームに 1 つの値 (時刻・面の大きさ・影・揺らぎ) を置く。
@@ -1740,6 +1798,7 @@ public final class Canvas {
         let solidInstances: any MTLBuffer
         let flatInstances: any MTLBuffer
         let solidVertices: any MTLBuffer
+        let solidIndices: any MTLBuffer
     }
 
     /// 列ごとの値の置き場。**どれも列の番号 × `valuesStride` で区切って読む。**
@@ -1804,6 +1863,9 @@ public final class Canvas {
         let map = try shadowMapHolding(detail)
         let solidBuffer = try solidVertexStorage.write(
             solidVertices, holding: solidVertices.count)
+        // ``uploadGeometry()`` と同じ大きさを要求する (あちらの但し書きを参照)
+        let solidIndexBuffer = try solidIndexStorage.write(
+            solidIndices, holding: solidIndices.count)
         let instanceBuffer = try solidInstanceStorage.write(
             solidInstances, holding: max(solidInstances.count, 1))
         let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
@@ -1843,10 +1905,9 @@ public final class Canvas {
                 encoder.drawPrimitives(
                     primitiveType: .triangle, indirectBuffer: arguments.gpuAddress)
             } else {
-                encoder.drawPrimitives(
-                    primitiveType: .triangle,
-                    vertexStart: batch.run.start, vertexCount: batch.run.count,
-                    instanceCount: batch.instanceCount)
+                encodeSolidDraw(
+                    batch.run, instanceCount: batch.instanceCount, indices: solidIndexBuffer,
+                    on: encoder)
             }
         }
         encodeShadowBarrier(on: encoder)
@@ -1880,6 +1941,18 @@ public final class Canvas {
             hasher.mix(UInt64(batch.instanceStart))
             hasher.mix(UInt64(batch.instanceCount))
             hasher.mix(UInt64(batch.cullMode.rawValue))
+            // **読む順も焼く側が読むものである。** 頂点を 1 バイトも動かさずに添字だけを
+            // 組み直すフレーム (面の張り替え・粗さの切り替え) は `index(_:)` がまさに
+            // 誘う書き方で、これを混ぜないと前のフレームの影が居座る
+            hasher.mix(UInt64(batch.run.indexStart))
+            hasher.mix(UInt64(batch.run.indexCount))
+            solidIndices.withUnsafeBytes { bytes in
+                let stride = MemoryLayout<UInt32>.stride
+                let end = min(
+                    bytes.count, (batch.run.indexStart + batch.run.indexCount) * stride)
+                let start = min(end, batch.run.indexStart * stride)
+                hasher.mix(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
+            }
             // **頂点は出どころで代表できるなら舐めない。** 組み込みの形の頂点は寸法から
             // 決まり、読み込んだモデルは読んだ後に変わらない。その場で並べた頂点と
             // 保持した形 (置くたびに番号が変わる) だけ中身を読む

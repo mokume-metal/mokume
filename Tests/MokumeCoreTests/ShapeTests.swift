@@ -18,6 +18,25 @@ struct ShapeTests {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
 
+    /// 4 隅を 2 枚の三角形で張った立体の面。番号で指すかを選べる。
+    private func patch(_ canvas: Canvas, indexed: Bool, x: Float = 0) {
+        let corners: [SIMD2<Float>] = [
+            SIMD2(x, 0), SIMD2(x + 20, 0), SIMD2(x + 20, 20), SIMD2(x, 20),
+        ]
+        let order = [0, 1, 2, 0, 2, 3]
+        canvas.noStroke()
+        canvas.fill(.linear(red: 1, green: 0, blue: 0))
+        canvas.beginShape(.triangles)
+        canvas.normal(0, 0, 1)
+        if indexed {
+            for corner in corners { canvas.vertex(corner.x, corner.y, 0) }
+            for number in order { canvas.index(number) }
+        } else {
+            for number in order { canvas.vertex(corners[number].x, corners[number].y, 0) }
+        }
+        canvas.endShape()
+    }
+
     private func makeDot(_ canvas: Canvas, _ color: LinearRGBA) -> Shape {
         canvas.createShape {
             canvas.noStroke()
@@ -54,6 +73,59 @@ struct ShapeTests {
         #expect(one.drawCallCount == 1)
         #expect(Shape.group([one, one, one]).drawCallCount == 1)
         #expect((one + one).drawCallCount == 1)
+    }
+
+    @Test("番号で指した形を保持すると、持ち歩く頂点も面の数だけ増えない")
+    func indexedShapeHoldsSharedVertices() throws {
+        // #938 の完了条件を数で見る側。**保持した形が物差しになる** —
+        // ``Shape/vertexCount`` は公開されているので、利用者からも同じ数が読める
+        let canvas = try makeCanvas()
+        let expanded = canvas.createShape { patch(canvas, indexed: false) }
+        let indexed = canvas.createShape { patch(canvas, indexed: true) }
+
+        #expect(expanded.vertexCount == 6)  // 三角形 2 枚 × 3 点
+        #expect(indexed.vertexCount == 4)  // 四角の 4 隅
+    }
+
+    @Test("番号で指した形を組にしても、区切りの数は増えない")
+    func groupingIndexedShapesDoesNotAddRuns() throws {
+        // 番号は並びの位置そのものなので、繋ぐときに値をずらさないと畳めない。
+        // 畳めないと**組にしても描く回数が増えない**という ``Shape/drawCallCount`` の
+        // 宣言が、番号を使ったときだけ破れる
+        let canvas = try makeCanvas()
+        let one = canvas.createShape { patch(canvas, indexed: true) }
+        #expect(one.drawCallCount == 1)
+        #expect(Shape.group([one, one, one]).drawCallCount == 1)
+        #expect(Shape.group([one, one, one]).vertexCount == 12)
+    }
+
+    @Test("組にして置いた番号の形は、1 つずつ置いたのと同じ絵になる")
+    func groupedIndexedShapesMatchSeparatePlacements() throws {
+        // 畳むときに番号の値へ写し先のずれを足し忘れると、2 つ目以降が 1 つ目の点を
+        // 指す。**中身の違う形を組にしないと出ない** — 同じ形を 2 つ組にした場合は、
+        // 間違った先を指しても同じ頂点が並んでいるので絵が変わらない
+        let canvas = try makeCanvas()
+        let left = canvas.createShape { patch(canvas, indexed: true, x: 0) }
+        let right = canvas.createShape { patch(canvas, indexed: true, x: 26) }
+
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(Shape.group([left, right]), 4, 4)
+        }
+        let grouped = try canvas.target.encodeForDisplay()
+
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(left, 4, 4)
+            canvas.shape(right, 4, 4)
+        }
+        let separate = try canvas.target.encodeForDisplay()
+
+        var differing = 0
+        for y in 0..<grouped.height {
+            for x in 0..<grouped.width where grouped[x, y] != separate[x, y] { differing += 1 }
+        }
+        #expect(differing == 0)
     }
 
     @Test("続けて置いた形どうしも、同じ 1 度の描画に並ぶ")

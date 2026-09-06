@@ -85,7 +85,8 @@ extension Canvas {
                 run: Shape.Run(
                     mode: currentBlendMode, texture: currentTexture,
                     paint: .builtIn,
-                    source: .form, start: open.instanceStart, count: count),
+                    source: .form, start: open.instanceStart, count: count,
+                    indexStart: 0, indexCount: 0),
                 clip: currentClip,
                 matrix: jittered(projection),
                 lightRange: 0..<0,

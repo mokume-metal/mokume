@@ -182,6 +182,8 @@ extension Canvas {
             }
             openSolid = OpenSolid(
                 source: source, vertexStart: start, vertexCount: mesh.points.count,
+                // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
+                indexStart: nil,
                 instanceStart: solidInstances.count)
         }
 
@@ -206,19 +208,46 @@ extension Canvas {
     ///
     /// 置き場所は**何も動かさないもの 1 つ**。単位行列を掛けても値は変わらないので、
     /// 組み込みの形と同じ経路を通しても絵は 1 ビットも動かない。
-    func inSolidBatch(_ body: () -> Void) {
+    ///
+    /// `indexed` は「この形が添字で読まれるか」。**形ごとに対応表を空にする** —
+    /// 点番号は形の中でしか意味を持たないので、前の形の表が残っていると 2 つ目の形の
+    /// 点 0 が 1 つ目の点 0 を指す。
+    func inSolidBatch(indexed: Bool = false, _ body: () -> Void) {
         beginSolids()
-        openFreeformSolid()
+        if indexed {
+            openIndexedFreeformSolid()
+            openSolid?.sharedSlots.removeAll(keepingCapacity: true)
+        } else {
+            openFreeformSolid()
+        }
         body()
     }
 
     /// その場で並べる頂点の列を開く (既に開いていれば何もしない)。
+    ///
+    /// **開いているのが添字の列でも、そのまま使う。** 添字の列に並べただけの頂点が
+    /// 来ても ``appendSolidVertex(position:shapePosition:normal:shapeNormal:isDerived:uv:color:)``
+    /// が自分の番号を名乗らせるので、列を割らずに済む。
     func openFreeformSolid() {
         if openSolid?.source == .freeform { return }
         closeBatch()
         openSolid = OpenSolid(
             source: .freeform, vertexStart: solidVertices.count, vertexCount: 0,
-            instanceStart: solidInstances.count)
+            indexStart: nil, instanceStart: solidInstances.count)
+        solidInstances.append(.identity)
+    }
+
+    /// 添字で読む、その場で並べる頂点の列を開く (既に添字の列が開いていれば何もしない)。
+    ///
+    /// **添字を持たない列が開いていたら閉じる。** 開いたままの列へ添字を積むと、
+    /// 描くときに「並べた順」と「添字の順」が 1 つの区間に同居して、どちらで読んでも
+    /// 正しくない絵になる。
+    func openIndexedFreeformSolid() {
+        if openSolid?.source == .freeform, openSolid?.indexStart != nil { return }
+        closeBatch()
+        openSolid = OpenSolid(
+            source: .freeform, vertexStart: solidVertices.count, vertexCount: 0,
+            indexStart: solidIndices.count, instanceStart: solidInstances.count)
         solidInstances.append(.identity)
     }
 
@@ -244,6 +273,38 @@ extension Canvas {
                 shapeNormal: shapeNormal, isDerived: isDerived, uv: uv ?? whiteUV,
                 color: color))
         openSolid?.vertexCount += 1
+        // **添字の列では、並べただけの頂点も自分の番号を名乗る。** 名乗らないと
+        // 描くときに誰からも参照されず、その頂点だけが黙って消える (輪郭の帯と
+        // 端点は共有できないので、必ずこちらを通る)
+        if openSolid?.indexStart != nil { solidIndices.append(UInt32(solidVertices.count - 1)) }
+    }
+
+    /// 添字の列へ、形の点番号で頂点を積む。**同じ点は 1 度しか積まない。**
+    ///
+    /// 手順の順序に意味がある — 面の切り替え (列を閉じうる) → 添字の列を開き直す →
+    /// **開き直したあとの列の表を引く**。表は列が持つので、途中で列が閉じても閉じた列の
+    /// 頂点を指す添字は作れない (``Canvas/OpenSolid/sharedSlots``)。そのときは共有が
+    /// 効かずに積み直すだけで、絵は変わらない。
+    func appendSharedSolidVertex(
+        slot: Int, position: SIMD3<Float>, shapePosition: SIMD3<Float>,
+        normal: SIMD3<Float>, shapeNormal: SIMD3<Float>, isDerived: Bool,
+        uv: SIMD2<Float>?, color: LinearRGBA
+    ) {
+        if uv != nil { useFillTexture() } else { useGlyphTexture() }
+        openIndexedFreeformSolid()
+        if let shared = openSolid?.sharedSlots[slot] {
+            solidIndices.append(shared)
+            return
+        }
+        let number = UInt32(solidVertices.count)
+        solidVertices.append(
+            SolidVertex(
+                position: position, shapePosition: shapePosition, normal: normal,
+                shapeNormal: shapeNormal, isDerived: isDerived, uv: uv ?? whiteUV,
+                color: color))
+        openSolid?.vertexCount += 1
+        openSolid?.sharedSlots[slot] = number
+        solidIndices.append(number)
     }
 
     /// 形を使い回す。**同じ寸法なら組み立て直さない。**

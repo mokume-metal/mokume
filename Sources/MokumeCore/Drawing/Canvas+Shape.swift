@@ -18,6 +18,7 @@ extension Canvas {
         closeBatch()
         let vertexStart = vertices.count
         let solidStart = solidVertices.count
+        let solidIndexStart = solidIndices.count
         let formStart = formInstances.count
         let instanceStart = solidInstances.count
         let runStart = batches.count
@@ -40,12 +41,17 @@ extension Canvas {
         closeBatch()
         let recorded = Array(vertices[vertexStart...])
         let recordedSolid = Array(solidVertices[solidStart...])
+        // **添字の値も形自身の 0 起点へ引き戻す。** 値は頂点の並びの番号そのものなので、
+        // 区間だけずらすと記録した形が溜め場に残っていた頂点を指す (``Shape/solidIndices``)
+        let recordedIndices = solidIndices[solidIndexStart...].map { $0 - UInt32(solidStart) }
         let recordedForms = Array(formInstances[formStart...])
         let runs = batches[runStart...].map {
             var run = $0.run
             switch run.source {
             case .flat: run.start -= vertexStart
-            case .solid: run.start -= solidStart
+            case .solid:
+                run.start -= solidStart
+                if run.isIndexed { run.indexStart -= solidIndexStart }
             case .form: run.start -= formStart
             }
             return run
@@ -55,6 +61,7 @@ extension Canvas {
         // 記録した頂点が戻したあとの設定で閉じられる
         vertices.removeLast(vertices.count - vertexStart)
         solidVertices.removeLast(solidVertices.count - solidStart)
+        solidIndices.removeLast(solidIndices.count - solidIndexStart)
         formInstances.removeLast(formInstances.count - formStart)
         // 記録の間に開いた置き場所も抜く。**形は何も動かさない置き場所で置き直される**
         // ので、記録側で持ち歩く必要が無い
@@ -65,8 +72,8 @@ extension Canvas {
         popStyle()
 
         return Shape(
-            vertices: recorded, solidVertices: recordedSolid, forms: recordedForms,
-            runs: Array(runs))
+            vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,
+            forms: recordedForms, runs: Array(runs))
     }
 
     // 保持した形を置く。
@@ -212,11 +219,22 @@ extension Canvas {
         let start = solidVertices.count
         solidVertices.append(
             contentsOf: shape.solidVertices[run.start..<(run.start + run.count)])
+        // **読む順も一緒に積み直す。** 積まずに開くと、添字を持つ形が置いた瞬間に
+        // 非添字の経路へ落ち、頂点を 3 つずつ束ねただけの並びとして描かれる。
+        // 値は形自身の 0 起点なので、写した先までのずれを足す
+        let indexStart = run.isIndexed ? solidIndices.count : nil
+        if run.isIndexed {
+            // ずれは負にもなる (形の中での位置より、溜め場の末尾が手前のことがある)
+            let shift = start - run.start
+            solidIndices.append(
+                contentsOf: shape.solidIndices[run.indexStart..<(run.indexStart + run.indexCount)]
+                    .map { UInt32(Int($0) + shift) })
+        }
         retainedSerial += 1
         let instanceStart = solidInstances.count
         openSolid = OpenSolid(
             source: .retained(serial: retainedSerial), vertexStart: start,
-            vertexCount: run.count, instanceStart: instanceStart)
+            vertexCount: run.count, indexStart: indexStart, instanceStart: instanceStart)
         return instanceStart
     }
 

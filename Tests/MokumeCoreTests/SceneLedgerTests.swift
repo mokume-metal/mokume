@@ -218,6 +218,13 @@ enum Scene: String, CaseIterable, Sendable {
     case lighting
     /// 頂点を並べて作った立体。穴・頂点ごとの色・線と点・書いた面の向きを並べたもの。
     case customSolids
+    /// 番号で読む立体。**同じ形を、その場で置いたものと保持して置いたものが並ぶ** —
+    /// 番号を持つ列は `drawIndexedPrimitives` で描かれるので、非添字の経路とは
+    /// 描く口そのものが違う ([#938](https://github.com/mokume-metal/mokume/issues/938))。
+    ///
+    /// 輪郭も付けてある。輪郭の帯は共有できないので**番号の列に自分の番号を名乗って
+    /// 同居する** — 名乗りが落ちれば、面だけが残って輪郭が消える。
+    case indexedVertices
     /// 奥行きを持つ折れ線の輪郭。端の形と折れ目の形を組で振ったもの。
     ///
     /// **平面の ``caps`` / ``joins`` に対する立体側の対。** あちらは `line()` と
@@ -619,6 +626,7 @@ enum Scene: String, CaseIterable, Sendable {
         case .surfaceShader: drawSurfaceShader(on: canvas)
         case .surfacesShader: drawSurfacesShader(on: canvas)
         case .customSolids: drawCustomSolids(on: canvas)
+        case .indexedVertices: drawIndexedVertices(on: canvas)
         case .solidStrokes: drawSolidStrokes(on: canvas)
         case .viewpoints: drawViewpoints(on: canvas)
         }
@@ -1636,6 +1644,72 @@ enum Scene: String, CaseIterable, Sendable {
             canvas.vertex(74 + Float(step) * 12, 94, Float(step) * 14 - 30)
         }
         canvas.endShape()
+    }
+
+    private func drawIndexedVertices(on canvas: Canvas) {
+        canvas.background(.display(red: 0.06, green: 0.07, blue: 0.1))
+        canvas.lights()
+
+        /// 折れた帯を 1 枚。**角を共有する形**なので、番号で指すと点が 3 分の 1 に減る。
+        /// 面の向きは点ごとに書く — 共有した点で隣の面のぶんまで足し込まれると、
+        /// 書き出した形と違う陰影になり、このシーンが見たいものからずれる
+        func ribbon(indexed: Bool) {
+            let steps = 5
+            var corners: [SIMD3<Float>] = []
+            for step in 0...steps {
+                let across = -26 + Float(step) * 52 / Float(steps)
+                let depth = step.isMultiple(of: 2) ? Float(16) : Float(-16)
+                corners.append(SIMD3(across, -18, depth))
+                corners.append(SIMD3(across, 18, depth))
+            }
+            var order: [Int] = []
+            for step in 0..<steps {
+                let corner = step * 2
+                order += [corner, corner + 1, corner + 3, corner, corner + 3, corner + 2]
+            }
+
+            canvas.beginShape(.triangles)
+            if indexed {
+                for corner in corners {
+                    canvas.normal(0, 0, 1)
+                    canvas.vertex(corner.x, corner.y, corner.z)
+                }
+                for number in order { canvas.index(number) }
+            } else {
+                for number in order {
+                    canvas.normal(0, 0, 1)
+                    let corner = corners[number]
+                    canvas.vertex(corner.x, corner.y, corner.z)
+                }
+            }
+            canvas.endShape()
+        }
+
+        canvas.stroke(.display(red: 0.4, green: 0.95, blue: 0.75))
+        canvas.strokeWeight(2)
+        canvas.fill(.display(red: 0.95, green: 0.5, blue: 0.3))
+
+        // 上段: 番号で指して、その場で置く
+        canvas.push()
+        canvas.translate(64, 34, 0)
+        canvas.rotateX(0.55)
+        ribbon(indexed: true)
+        canvas.pop()
+
+        // 中段: 同じ形を保持してから置く。**切り出しと積み直しの経路**を通る
+        canvas.push()
+        canvas.translate(64, 72, 0)
+        canvas.rotateX(0.55)
+        let held = canvas.createShape { ribbon(indexed: true) }
+        canvas.shape(held)
+        canvas.pop()
+
+        // 下段: 番号を使わず点を書き出した同じ形。**上 2 段と同じ絵になる**のが正しい
+        canvas.push()
+        canvas.translate(64, 110, 0)
+        canvas.rotateX(0.55)
+        ribbon(indexed: false)
+        canvas.pop()
     }
 
     private func drawSolidStrokes(on canvas: Canvas) {

@@ -1471,6 +1471,16 @@ struct CanvasTests {
                 try canvas.draw {
                     canvas.fill(self.white)
                     canvas.rect(0, 0, 8, 8)
+                    // 番号で読む立体も置く。**番号の並びは頂点とは別の溜め場**なので、
+                    // 片方だけ捨てても絵には出ない — フレーム数に比例して伸びるだけ
+                    canvas.beginShape(.triangles)
+                    canvas.normal(0, 0, 1)
+                    canvas.vertex(0, 0, 1)
+                    canvas.vertex(8, 0, 1)
+                    canvas.vertex(8, 8, 1)
+                    canvas.vertex(0, 8, 1)
+                    for number in [0, 1, 2, 0, 2, 3] { canvas.index(number) }
+                    canvas.endShape()
                 }
             }
         }
@@ -1478,6 +1488,8 @@ struct CanvasTests {
         // **ここだけは絵ではなく溜め場を見る。** 「積み上がらない」は描かれなかった
         // ものの話なので、どのフレームの絵にも現れない
         #expect(canvas.vertices.isEmpty)
+        #expect(canvas.solidVertices.isEmpty)
+        #expect(canvas.solidIndices.isEmpty)
         #expect(canvas.batches.isEmpty)
     }
 }

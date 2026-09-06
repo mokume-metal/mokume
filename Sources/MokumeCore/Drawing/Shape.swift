@@ -28,6 +28,14 @@ public struct Shape {
     let vertices: [ShapeVertex]
     /// 焼き付けた立体の頂点。同じく形自身の座標で、面の向きも変換前のもの。
     let solidVertices: [SolidVertex]
+    /// 立体の頂点を読む順。**``solidVertices`` の番号そのもの** (区間の中での相対では
+    /// ない) なので、繋ぐときは値に写し先のずれを足す (``group(_:)``)。
+    ///
+    /// 相対にして描くときに `baseVertex` でずらす作り方もあるが、採らない —
+    /// ``append(_:to:)`` が畳んだ 2 区間で後半が別の頂点を指すことになり、添字を持つ
+    /// 形だけ ``drawCallCount`` の宣言 (組にしても増えない) が破れる。写す量は
+    /// 4 B/個で、隣で写している頂点 (96 B/個) に対して誤差である。
+    let solidIndices: [UInt32]
     /// 焼き付けた平面の基本図形 (矩形・楕円・扇形・線・点)。形自身の座標での置き場所。
     ///
     /// 頂点を持たない — 置くときは 2x2 と平行移動に置き場所の変換を掛けるだけで、
@@ -64,8 +72,9 @@ public struct Shape {
     /// 同じ設定で続けて描ける区間。
     ///
     /// フィールドは 2 つの役に分かれる — **区間の設定** (`mode` / `texture` / `paint` /
-    /// `source`) と、**並びの中での位置** (`start` / `count`)。畳めるかは前者の一致で
-    /// 決まるので、判定 (``sameSettings(as:)``) は後者だけを外して残り全部を比べる。
+    /// `source`) と、**並びの中での位置** (`start` / `count` / `indexStart` /
+    /// `indexCount`)。畳めるかは前者の一致で決まるので、判定 (``sameSettings(as:)``)
+    /// は後者だけを外して残り全部を比べる。
     struct Run: Equatable {
         var mode: BlendMode
         @ByIdentity var texture: any MTLTexture
@@ -75,6 +84,16 @@ public struct Shape {
         var source: Canvas.VertexSource
         var start: Int
         var count: Int
+        /// 読む順の並び (``Shape/solidIndices``) の中での区間。
+        ///
+        /// **`indexCount == 0` が「添字を使わない」**を表す。既定値を持たせないのは、
+        /// `Run` を組み立てる場所が増えた日に**黙って非添字へ倒れない**ようにするため
+        /// である (``sameSettings(as:)`` が合成された `==` に委ねているのと同じ向き)。
+        var indexStart: Int
+        var indexCount: Int
+
+        /// 添字で読む区間か。
+        var isIndexed: Bool { indexCount > 0 }
 
         /// 位置と長さを除いた設定が同じか。**続けて 1 本に伸ばせるかの判定。**
         ///
@@ -93,18 +112,23 @@ public struct Shape {
             var theirs = other
             mine.start = 0
             mine.count = 0
+            mine.indexStart = 0
+            mine.indexCount = 0
             theirs.start = 0
             theirs.count = 0
+            theirs.indexStart = 0
+            theirs.indexCount = 0
             return mine == theirs
         }
     }
 
     init(
-        vertices: [ShapeVertex], solidVertices: [SolidVertex] = [], forms: [FormInstance] = [],
-        runs: [Run]
+        vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
+        solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run]
     ) {
         self.vertices = vertices
         self.solidVertices = solidVertices
+        self.solidIndices = solidIndices
         self.forms = forms
         self.runs = runs
     }
@@ -137,6 +161,7 @@ public struct Shape {
     public static func group(_ shapes: [Shape]) -> Shape {
         var vertices: [ShapeVertex] = []
         var solidVertices: [SolidVertex] = []
+        var solidIndices: [UInt32] = []
         var forms: [FormInstance] = []
         var runs: [Run] = []
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
@@ -145,29 +170,45 @@ public struct Shape {
         for shape in shapes {
             let flatOffset = vertices.count
             let solidOffset = solidVertices.count
+            let indexOffset = solidIndices.count
             let formOffset = forms.count
             vertices.append(contentsOf: shape.vertices)
             solidVertices.append(contentsOf: shape.solidVertices)
+            // **値そのものにずれを足す。** 添字は写し先の並びの番号なので、区間だけ
+            // ずらすと繋いだ 2 つ目以降が 1 つ目の頂点を指す (``solidIndices``)
+            solidIndices.append(contentsOf: shape.solidIndices.map { $0 + UInt32(solidOffset) })
             forms.append(contentsOf: shape.forms)
             for var run in shape.runs {
                 switch run.source {
                 case .flat: run.start += flatOffset
-                case .solid: run.start += solidOffset
+                case .solid:
+                    run.start += solidOffset
+                    if run.isIndexed { run.indexStart += indexOffset }
                 case .form: run.start += formOffset
                 }
                 append(run, to: &runs)
             }
         }
-        return Shape(vertices: vertices, solidVertices: solidVertices, forms: forms, runs: runs)
+        return Shape(
+            vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
+            forms: forms, runs: runs)
     }
 
     /// 2 つの形を 1 つに畳む。
     public static func + (lhs: Shape, rhs: Shape) -> Shape { group([lhs, rhs]) }
 
     /// 区間を足す。直前と設定が同じなら伸ばすだけにする。
+    ///
+    /// **添字を使う区間は、読む順の並びの中でも連続していないと伸ばせない。** 頂点の
+    /// 区間だけを見て伸ばすと、伸ばした先が飛び飛びの添字を描くことになる。片方だけが
+    /// 添字を使う組も伸ばせない — 描く口が違う (``Shape/Run/isIndexed``)。
     private static func append(_ run: Run, to runs: inout [Run]) {
-        if var last = runs.last, last.sameSettings(as: run), last.start + last.count == run.start {
+        if var last = runs.last, last.sameSettings(as: run), last.start + last.count == run.start,
+            last.isIndexed == run.isIndexed,
+            !run.isIndexed || last.indexStart + last.indexCount == run.indexStart
+        {
             last.count += run.count
+            last.indexCount += run.indexCount
             runs[runs.count - 1] = last
             return
         }

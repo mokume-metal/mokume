@@ -423,6 +423,86 @@ struct ShadowTests {
         #expect(pictures[1].bytes == pictures[0].bytes)
     }
 
+    @Test("頂点を 1 つも動かさず、番号だけ変えても焼き直す")
+    func changingOnlyTheIndicesForcesARebake() throws {
+        // **`index(_:)` がまさに誘う書き方である。** 点を置き直さずに読む順だけを
+        // 組み替えるフレーム (面の張り替え・粗さの切り替え) では、頂点のバイト列が
+        // 1 バイトも動かない。焼き付けの指紋が番号を見ていないと「同じ入力」と読んで
+        // 焼き直しを省き、**前のフレームの影が居座る**
+        // **2 つの順は、同じ 4 点を同じ順で初めて参照する。** そうしないと積まれる頂点の
+        // 中身まで変わり、番号を見ない指紋でも見分けられてしまう (この検査が守りたいのは
+        // 「頂点が 1 バイトも動かないのに絵が変わる」場合である)。張る面だけが違うので、
+        // 落ちる影は 4 隅の四角と、その 4 分の 3 になる
+        let canvas = try makeCanvas()
+        let first = try floorAndIndexedCaster(canvas, order: [0, 1, 2, 1, 2, 3])
+        #expect(canvas.shadowBakesEncoded == 1)
+
+        let second = try floorAndIndexedCaster(canvas, order: [0, 1, 2, 0, 2, 3])
+        #expect(canvas.shadowBakesEncoded == 2, "番号を変えたのに焼き直していない")
+
+        // 影の形が変われば絵も変わる。同じままなら、焼き直しを省いた証拠になる
+        var differing = 0
+        for y in 0..<first.height {
+            for x in 0..<first.width where first[x, y] != second[x, y] { differing += 1 }
+        }
+        #expect(differing > 100, "番号を変えたのに影が追随していない")
+    }
+
+    @Test("番号で指した形の影は、点を書き出した形の影と同じ")
+    func indexedCasterCastsTheSameShadow() throws {
+        // **影は別のエンコーダで同じ列を描く。** 片方だけ非添字のまま残すと、影だけが
+        // 頂点を 3 つずつ束ねた別の形で焼かれる — 画面の側は正しいままなので、
+        // 「影の形がおかしい」としか見えない
+        let order = [0, 1, 2, 0, 2, 3]
+        let indexed = try floorAndIndexedCaster(try makeCanvas(), order: order)
+        let expanded = try floorAndIndexedCaster(try makeCanvas(), order: order, indexed: false)
+        #expect(indexed.bytes == expanded.bytes)
+    }
+
+    /// 床の上に、四角い面を 1 枚だけ浮かせる絵。
+    ///
+    /// **置く点は `order` によらず同じ 4 つ**にしてある (番号で指す側)。動くのは読む順
+    /// だけなので、頂点の中身しか見ない指紋はこの 2 フレームを見分けられない。
+    /// `indexed: false` は同じ面を、点を書き出して置く。
+    private func floorAndIndexedCaster(
+        _ canvas: Canvas, order: [Int], indexed: Bool = true
+    ) throws -> DisplayImage {
+        let center: Float = 64
+        let corners: [SIMD2<Float>] = [
+            SIMD2(center - 40, -30), SIMD2(center + 40, -30),
+            SIMD2(center + 40, 40), SIMD2(center - 40, 40),
+        ]
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.camera(center, -24, 170, center, 14, 0, 0, 1, 0)
+            canvas.perspective(Float.pi / 3, 1, 1, 500)
+            canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
+            canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
+            canvas.shadows(true)
+            canvas.noStroke()
+
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.7, green: 0.7, blue: 0.7))
+            canvas.push()
+            canvas.translate(center, 40, -20)
+            canvas.box(190, 8, 190)
+            canvas.pop()
+
+            canvas.castShadow(true)
+            canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
+            canvas.beginShape(.triangles)
+            canvas.normal(0, -1, 0)
+            if indexed {
+                for corner in corners { canvas.vertex(corner.x, corner.y, 30) }
+                for number in order { canvas.index(number) }
+            } else {
+                for number in order { canvas.vertex(corners[number].x, corners[number].y, 30) }
+            }
+            canvas.endShape()
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
     @Test("形・光・細かさのどれかが動いたら焼き直す")
     func changesForceARebake() throws {
         let canvas = try makeCanvas()
