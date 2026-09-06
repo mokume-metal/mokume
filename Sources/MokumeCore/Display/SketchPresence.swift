@@ -68,8 +68,14 @@ final class SketchPresence {
     ///
     /// **AppKit を 1 つも触らない純関数**にしてある。名乗りの判断は検査したいが、検査から
     /// メニューバーへ物を出したくはない (走らせるたびに増える)。
-    static func shouldAnnounce(runningFor elapsed: Double, announced: Bool) -> Bool {
-        !announced && elapsed >= grace
+    ///
+    /// **「もう名乗ったか」は見ない。** かつては `announced` を受け取って `!announced &&` を
+    /// 掛けていたが、唯一の呼び出し側が直前の `guard isAnnounced` で同じ判定を済ませており、
+    /// **本番から渡るのは常に `false`** だった。`true` を通していたのは検査だけで、その検査は
+    /// 二度名乗らないことではなく**その引数**を確かめていた
+    /// ([#960](https://github.com/mokume-metal/mokume/issues/960) の 7)。
+    static func shouldAnnounce(runningFor elapsed: Double) -> Bool {
+        elapsed >= grace
     }
 
     /// 名乗りの中身を組み立てる係。**ここも AppKit を触らない。**
@@ -165,8 +171,11 @@ final class SketchPresence {
     ///
     /// - Parameter elapsed: 最初のフレームからの経過 (秒)。
     func advanced(runningFor elapsed: Double) {
+        // **二度名乗らないのはこの `guard` だけが守っている。** 印が毎フレーム増えるのが
+        // 破れたときの姿である。検査では覆えない — 覆うには実際に名乗らせるしかなく、
+        // 走らせるたびにメニューバーへ物が増える
         guard isAnnounced else {
-            if Self.shouldAnnounce(runningFor: elapsed, announced: false) { announce() }
+            if Self.shouldAnnounce(runningFor: elapsed) { announce() }
             return
         }
         // 出た後は撫でるだけ。**回す人が別に居るなら触らない** (AppKit の event loop への再入)
@@ -185,6 +194,25 @@ final class SketchPresence {
     /// `until: nil` は「無ければすぐ返る」なので、待ちは 1 度も入らない。メニューが開けば
     /// `sendEvent` の中で AppKit が自前の追跡ループへ入り、閉じるまで戻らない — その間
     /// フレームは進まないが、見ている人が開けている間だけである。
+    ///
+    /// ## ここから走っているスケッチへ戻ってくる
+    ///
+    /// **`sendEvent` は返らないことがある**、というのが上の段落だが、返らない間に何も
+    /// 起きないわけではない。メニューが開くと ``liveTimer`` が回り始め、プレビューを
+    /// 動かすために**走っているスケッチのフレームを進めさせる**
+    /// (`SketchRuntime.advanceForPresence()`)。つまりこの 1 行は、**AppKit の追跡ループを
+    /// 挟んで自分を呼んだ側へ戻る**経路を開いている。
+    ///
+    /// 二重に進めないようにしているのは向こう側の 2 つで、こちらには何も無い:
+    ///
+    /// | 守り | 何を止めるか |
+    /// | --- | --- |
+    /// | `SketchRuntime.isAdvancingFrame` | フレームを描いている最中に入れ子で描き始めるのを止める |
+    /// | `SketchRuntime.presenceStallThreshold` | 窓の駆動源が進め続けているとき (`.common` モードなので追跡ループ中も止まらない) に、こちらが二重に進めるのを止める |
+    ///
+    /// **契約がこちらに書かれていなかった** ([#960](https://github.com/mokume-metal/mokume/issues/960) の 6)。
+    /// 危ないのはこの行で、守っているのは別ファイルの 2 つの目印である — 片方を「使われて
+    /// いない」と読んで外すと、**メニューを開けている間だけ絵が倍の速さで動く**。
     private func pump() {
         let app = NSApplication.shared
         while let event = app.nextEvent(matching: .any, until: nil, inMode: .default, dequeue: true)
