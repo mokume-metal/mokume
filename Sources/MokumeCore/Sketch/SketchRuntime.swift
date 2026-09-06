@@ -50,6 +50,18 @@ public final class SketchRuntime {
     ///
     /// 頼まれている間だけ ``outlets`` に居る (``attachRecorderIfNeeded()``)。
     private var recorder: FrameRecorder?
+
+    /// 組んだけれどまだ配っていない絵。**出口へ渡すのは 1 枚遅らせる** ([#927])。
+    ///
+    /// 組んだフレームでそのまま配ると、配る側が GPU の完了を待つことになり、フレーム
+    /// ごとに CPU が GPU に追いつく。1 枚遅らせると、待つ番号は前のフレームのもので、
+    /// そこまでに積んだ CPU の仕事 (このフレームの組み立て) が GPU と重なる。
+    ///
+    /// 絵は使い回している 1 枚なので (ADR-0023 決定 5)、ここが持つのは参照である。
+    /// 配る前に次のフレームを組むことはない — 配ってから組む順を ``runFrame()`` が持つ。
+    ///
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    private var pendingOutletFrame: (image: EncodedImage, frame: Int, time: Double)?
     /// 絵を取り出せなかったことを、既に言ったか。**毎フレーム言わない。**
     private var warnedEncodeFailed = false
 
@@ -262,6 +274,8 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func closePlugins() {
+        // **閉じる前に控えを配る。** 最後のフレームの絵はまだ誰にも渡っていない (#927)
+        deliverPendingToOutlets()
         for entry in outlets { entry.seam.close() }
         for entry in inlets { entry.seam.close() }
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
@@ -316,8 +330,13 @@ public final class SketchRuntime {
         } catch {
             drawFailure = error
         }
-        if drawFailure == nil { deliverToOutlets() }
+        // **配ってから組む。** 配るのは前のフレームで組んだ絵で、待つ番号もそれなので、
+        // ここまでの CPU の仕事が前のフレームの GPU と重なる (#927)
+        if drawFailure == nil { deliverPendingToOutlets() }
+        // **外すのは配った後、組む前。** 1 枚だけ撮ったスケッチは配った時点で用済みに
+        // なるので、この順なら道を 2 回通らない (ADR-0023 決定 5)
         detachRecorderIfDone()
+        if drawFailure == nil { encodeForOutlets() }
         serveObservationIfRequested(drawFailure: drawFailure)
         if let drawFailure { throw drawFailure }
     }
@@ -431,15 +450,19 @@ public final class SketchRuntime {
         }
     }
 
-    /// 描いた絵を出口へ渡す。
+    /// 描いた絵を組んで、次のフレームで配れるように控える。
     ///
     /// **道を通るのは 1 フレームに 1 回**で、出口が何本あっても同じ 1 枚を配る
     /// ([ADR-0024] 決定 6 の「全ての出口が同じ道から受け取る」)。出口が 1 つも
     /// 付いていなければ**道を 1 回も通らない** — 使わない機能の費用を、使っていない
     /// スケッチが払わない。
     ///
+    /// 組むだけで、GPU の完了は待たない。配るのは次のフレームの
+    /// ``deliverPendingToOutlets()`` である ([#927])。
+    ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    private func deliverToOutlets() {
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    private func encodeForOutlets() {
         guard outlets.contains(where: { $0.health.isAttached }) else { return }
         let image: EncodedImage
         do {
@@ -451,8 +474,28 @@ public final class SketchRuntime {
             Diagnostics.warn("出口へ渡す絵を取り出せませんでした: \(error.headline)")
             return
         }
-        let frame = OutputFrame(
-            image: image, frame: timing.frameCount, time: Double(timing.time))
+        pendingOutletFrame = (image, timing.frameCount, Double(timing.time))
+    }
+
+    /// 控えてある絵を出口へ配る。控えが無ければ何もしない。
+    ///
+    /// **配る絵は中身が確定している。** 組んだ投入を名指しで待ってから渡すので、出口は
+    /// 受け取った ``OutputFrame/texture`` をそのまま別のプロセスや機材へ手渡せる —
+    /// 外の出口はこの保証に寄りかかっている ([#927])。1 枚遅らせているぶん、この待ちは
+    /// ふつう何もせずに返る。
+    ///
+    /// **転んだフレームでは配らない** ([ADR-0024] 決定 10)。控えはそのまま持ち越して、
+    /// 次に描けたフレームか終わり (``closePlugins()``) で配る — 描けた絵を落とさない。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    private func deliverPendingToOutlets() {
+        guard let pending = pendingOutletFrame else { return }
+        pendingOutletFrame = nil
+        guard outlets.contains(where: { $0.health.isAttached }) else { return }
+        target.gpu.waitForSubmissionQuietly(
+            pending.image.pendingSubmission, before: "出口へ絵を渡す")
+        let frame = OutputFrame(image: pending.image, frame: pending.frame, time: pending.time)
         visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
     }
 
@@ -562,7 +605,9 @@ public final class SketchRuntime {
 
     /// このフレームの絵を 1 枚だけ書き出すよう頼む。転送 (正本は ``Sketch/save(_:)``)。
     public func save(_ path: String) {
-        requireRecorder().save(path)
+        // **頼まれたフレームを一緒に渡す。** 配るのは 1 枚遅れるので、番号が無いと
+        // 「そのフレームの絵」ではなく 1 つ前の絵が書かれる (#927)
+        requireRecorder().save(path, at: timing.frameCount)
         attachRecorderIfNeeded()
     }
 
@@ -578,6 +623,9 @@ public final class SketchRuntime {
             Diagnostics.warn("endRecord(): 撮っていません")
             return
         }
+        // **控えを先に配る。** 撮り終わりは描き切りの中から呼ばれるので、ここで配らないと
+        // 前のフレームの絵が誰にも渡らないまま録りが閉じる = 最後の 1 枚が落ちる (#927)
+        deliverPendingToOutlets()
         recorder.endRecord()
     }
 
