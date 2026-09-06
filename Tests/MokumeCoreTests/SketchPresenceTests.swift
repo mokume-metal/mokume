@@ -22,24 +22,26 @@ struct SketchPresenceTests {
 
     @Test("境目に届くまでは名乗らない")
     func staysQuietBeforeGrace() {
-        #expect(!SketchPresence.shouldAnnounce(runningFor: 0, announced: false))
-        #expect(
-            !SketchPresence.shouldAnnounce(
-                runningFor: SketchPresence.grace - 0.001, announced: false))
+        #expect(!SketchPresence.shouldAnnounce(runningFor: 0))
+        #expect(!SketchPresence.shouldAnnounce(runningFor: SketchPresence.grace - 0.001))
     }
 
     @Test("境目に届いたら名乗る")
     func announcesAtGrace() {
-        #expect(SketchPresence.shouldAnnounce(runningFor: SketchPresence.grace, announced: false))
-        #expect(SketchPresence.shouldAnnounce(runningFor: SketchPresence.grace * 100, announced: false))
+        #expect(SketchPresence.shouldAnnounce(runningFor: SketchPresence.grace))
+        #expect(SketchPresence.shouldAnnounce(runningFor: SketchPresence.grace * 100))
     }
 
-    /// 名乗りは毎フレーム判断されるので、**2 度目を弾けないと印が毎フレーム増える。**
-    @Test("既に名乗っていたら二度と名乗らない")
-    func announcesOnlyOnce() {
-        #expect(!SketchPresence.shouldAnnounce(runningFor: SketchPresence.grace, announced: true))
-        #expect(!SketchPresence.shouldAnnounce(runningFor: .infinity, announced: true))
-    }
+    // 「既に名乗っていたら二度と名乗らない」の検査はここに**無い**。
+    //
+    // かつては `shouldAnnounce` に `announced` を渡して確かめていたが、本番からそこへ渡る
+    // のは常に `false` で (直前の `guard isAnnounced` が同じ判定を済ませている)、**検査は
+    // 二度名乗らないことではなくその引数を確かめていた** (#960 の 7)。引数を落としたので
+    // 検査も落とした。
+    //
+    // 守っているのは `SketchPresence.advanced(runningFor:)` の `guard isAnnounced` 1 つで、
+    // 破れると印が毎フレーム増える。ここで覆えないのは、覆うには実際に名乗らせるしか
+    // なく、**走らせるたびにメニューバーへ物が増える**ためである。
 
     /// 境目は「待っている実行」と「離れた実行」の間に**桁で**空いている必要がある
     /// (実測: 一括処理は 10 秒弱・#454 の孤児は 1.5 時間以上)。
