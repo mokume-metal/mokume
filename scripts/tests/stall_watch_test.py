@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは七つ。
+固定したいのは八つ。
 
 1. **pr-title へ rerun を打たない。** pull_request の rerun は元のイベントを再生するので、
    古いタイトルで判定され、その失敗が最新の結果になって**打つ前より悪くなる** (#699)。
@@ -19,6 +19,9 @@
 6. **Draft は見ない。** 作業中の PR を Draft にしておくのが opt-out である
 7. **猶予の中の名乗りでは赤くしない。** 15 分ごとに通知が飛ぶと「毎回出る注意は意味を
    失う」(#642) を踏む
+8. **落ちた承認と、新規の承認待ちを分ける。** 承認済みの PR へ push すると承認が落ちるが、
+   checks は全部緑・auto-merge も掛かったままなので**どの行にも当たらず 1 行も出なかった**
+   (#1033)。分かれ目は「落とした出来事があるか」の 1 点で、latestReviews からは読めない
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -67,6 +70,17 @@ fi
 if [ "$1 $2" = "run rerun" ]; then exit 0; fi
 
 if [ "$1 $2" = "api graphql" ]; then
+  # **問い合わせは 2 種類ある。** 承認が落ちた時刻を引くほうは -F number=<n> を持つので、
+  # そこから PR 番号を取って $PR_DIR の応答へ振る (#1033)
+  case "$*" in
+    *REVIEW_DISMISSED_EVENT*)
+      n=""; prev=""
+      for a in "$@"; do
+        if [ "$prev" = "-F" ]; then case "$a" in number=*) n=${a#number=} ;; esac; fi
+        prev=$a
+      done
+      emit "$PR_DIR/$n.dismissed.json"; exit 0 ;;
+  esac
   printf '%s\\n' "${IN_QUEUE:-false}"; exit 0
 fi
 
@@ -134,6 +148,7 @@ class StallWatchTest(unittest.TestCase):
         state="CLEAN",
         checks=(),
         approved=False,
+        dismissed=None,
         updated=None,
         files=(),
     ):
@@ -157,6 +172,22 @@ class StallWatchTest(unittest.TestCase):
             },
         )
         self.write(f"{number}.files.json", [{"filename": f} for f in files])
+        # **落とした出来事が無いときも応答は返す** (nodes が空)。本物の gh もそう返すので、
+        # 判定側の `// ""` を素通りさせない
+        self.write(
+            f"{number}.dismissed.json",
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "timelineItems": {
+                                "nodes": [{"createdAt": dismissed}] if dismissed else []
+                            }
+                        }
+                    }
+                }
+            },
+        )
 
     def env(self, **extra):
         env = dict(os.environ)
@@ -308,6 +339,70 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch(STALL_MINUTES=60)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
 
+    def test_承認が_push_で落ちた_PR_を名乗る(self):
+        # **#1019 / #1020 の形。** auto-merge は掛かったまま・checks は全部緑・衝突も
+        # 無いので、この分岐が無いと 1 行も出なかった (#1033)
+        self.add_pr(
+            15,
+            auto=True,
+            state="BLOCKED",
+            checks=[check("ci-gate", "SUCCESS")],
+            dismissed=ago(5),
+        )
+        kind, action = self.classify(15, self.watch())
+        self.assertEqual((kind, action), ("dismissed-approval", "name"))
+
+    def test_落とした出来事が無ければ新規の承認待ちのまま(self):
+        # 分かれ目は「落とした出来事があるか」の 1 点。ここが効いていないと、
+        # まだ誰も見ていない PR まで名乗ってしまう
+        self.add_pr(
+            16,
+            auto=False,
+            state="BLOCKED",
+            checks=[check("ci-gate", "SUCCESS")],
+            files=[".github/workflows/ci.yml"],
+        )
+        kind, action = self.classify(16, self.watch())
+        self.assertEqual((kind, action), ("awaiting-approval", "quiet"))
+
+    def test_押し直された_PR_は落ちた承認と読まない(self):
+        # 落とした出来事は残ったままなので、**APPROVED があることで抜ける**
+        self.add_pr(
+            17,
+            auto=False,
+            state="BLOCKED",
+            approved=True,
+            checks=[check("ci-gate", "SUCCESS")],
+            dismissed=ago(90),
+            files=[".github/workflows/ci.yml"],
+        )
+        kind, action = self.classify(17, self.watch())
+        self.assertEqual((kind, action), ("auto-merge-dropped", "act"))
+
+    def test_落ちた承認は猶予の中なら赤くしない(self):
+        self.add_pr(
+            18,
+            auto=True,
+            state="BLOCKED",
+            checks=[check("ci-gate", "SUCCESS")],
+            dismissed=ago(5),
+        )
+        proc = self.watch(DISMISSED_APPROVAL_MINUTES=15)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_落ちた承認が猶予を超えたら赤くする(self):
+        # **既定の 60 分では #1019 も #1020 も赤くならなかった** ので、この分類だけ
+        # 猶予が短い (#1033)。STALL_MINUTES を長くしても効かないことまで固定する
+        self.add_pr(
+            19,
+            auto=True,
+            state="BLOCKED",
+            checks=[check("ci-gate", "SUCCESS")],
+            dismissed=ago(30),
+        )
+        proc = self.watch(STALL_MINUTES=600, DISMISSED_APPROVAL_MINUTES=15)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
     def test_打つ行だけでは赤くしない(self):
         self.add_pr(14, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
         proc = self.watch(STALL_MINUTES=1)
@@ -334,6 +429,14 @@ class StallWatchTest(unittest.TestCase):
 
     def test_名乗る行には何も打たない(self):
         proc = self.act(["21 conflict name 90 main と衝突している"])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        log = self.gh_log()
+        self.assertNotIn("pr merge", log)
+        self.assertNotIn("run rerun", log)
+
+    def test_落ちた承認には何も打たない(self):
+        # 押し直しは人の操作なので、3 列目が name である以上ここは黙る (#1033)
+        proc = self.act(["24 dismissed-approval name 30 承認が push で落ちている"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         log = self.gh_log()
         self.assertNotIn("pr merge", log)

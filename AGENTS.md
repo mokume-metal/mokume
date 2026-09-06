@@ -114,6 +114,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 | 同じ 3 つで `isInMergeQueue: false` | 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用) | `make catch-up` |
 | `pr-title` が落ちた | タイトルが Conventional Commits ではない。**`design` は Issue Type であって型ではない** (型は feat/fix/docs/refactor/test/chore/ci/perf/build) | タイトルを直す。**rerun しない** — `pull_request` の rerun は元のイベントを再生するので古いタイトルで判定し、その失敗が最新の結果になって**打つ前より悪くなる** ([#699](https://github.com/mokume-metal/mokume/issues/699))。直せば `edited` で新しい run が走る |
 | close して作り直した PR が、全 check 緑なのに赤い | close した側の run が付けた赤が**同じコミットに残っている** ([#513](https://github.com/mokume-metal/mokume/issues/513)) | **新しい PR の側**の run を rerun する。close した側を rerun すると同じ赤を再生産する — 上の行とは打つ先が逆 |
+| `autoMerge: true` + `BLOCKED` + 全 check 緑 で、**一度承認されたのに承認が無い** | 承認済みの PR へ push したので、ルールセットの `dismiss_stale_reviews_on_push` が承認を落とした ([#1033](https://github.com/mokume-metal/mokume/issues/1033)) | Approve を押し直す (**機械には打てない**)。予防は「取り込みは手元だけで済ませ、push しない」([#612](https://github.com/mokume-metal/mokume/issues/612)) — ただし衝突を解いた合流は push が要るので、そのときは落ちるのが正しい |
 
 ```bash
 gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
@@ -125,6 +126,8 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullReq
 **`autoMerge: false` は「外れた」と「queue に入った」の両方を指す。** 予約が実際に merge queue へ移ると `autoMergeRequest` は null になるので、`CLEAN` + 全 check 緑と揃っても故障とは限らない ([#628](https://github.com/mokume-metal/mokume/issues/628))。分けるのは `isInMergeQueue` の 1 欄だけで、これは `gh pr view --json` に無いので上の GraphQL で引く — **`make catch-up` を打つ前にこれを見る。** eject が起きるのは描画 PR だけだが、**queue 入りはどの PR でも起きる** (#628 は `docs/decisions/` しか触らない PR で踏んだ)。取り違えたまま打つと、描画 PR では数分かかる `make ci-check` まで走って空費する (描画に触れない PR なら `catch-up` 自身が「台帳の絵を動かさない」で断る)。`autoMergeRequest` が null になるのが正常だということは `catch-up` も queue へ戻した後に名乗る。
 
 承認の要否は `reviewDecision` には現れないので `mergeStateStatus` を見る (承認待ちなら `BLOCKED`・承認されると `CLEAN`)。理由は [ADR-0003](docs/decisions/0003-agent-identity-separation.md) 決定 4。**`CLEAN` だけでは「承認された」と読めない** — 承認の要らない PR も `CLEAN` なので、承認が付いたかどうかは `latestReviews` を見る ([#573](https://github.com/mokume-metal/mokume/issues/573) はここを取り違えて、承認済みの PR を「承認 0 で入った」と報告している)。
+
+**一度承認された PR も、push で承認が落ちれば `BLOCKED` へ戻る。** `required_reviewers` はレビュー依頼を送らないので、落ちたことは誰にも届かない ([#1033](https://github.com/mokume-metal/mokume/issues/1033) は 69 分と 17 分止まった)。当番が表の 8 行目として名乗る — **この分類だけ猶予が 15 分と短い**のは、既定の 60 分では実測の 2 件とも赤くならなかったためである。「まだ誰も見ていない」との分かれ目は落とした出来事 (`REVIEW_DISMISSED_EVENT`) があるかどうかで、`latestReviews` からは読めない。
 
 承認が要るのは **重要パス (`docs/decisions/`・`.github/`・`.claude/`) を触る PR だけ**で、要求もマージの停止も `.github/rulesets/main-protection.json` の `required_reviewers` が担う (team `maintainers` へ 1 承認を課す)。承認待ちの間も `ci-gate` は緑のままである。
 
