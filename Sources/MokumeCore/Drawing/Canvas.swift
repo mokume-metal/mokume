@@ -369,15 +369,19 @@ public final class Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var shadowsEnabled = false
-    /// 焼き付ける範囲の一辺。`nil` なら面から導く。
+    /// 焼き付ける範囲の一辺。`nil` なら面から導く。**フレームを越えない** (同 決定 4)。
     var shadowRangeValue: Float?
-    /// 焼き付け先の一辺の画素数。
+    /// 焼き付け先の一辺の画素数。**フレームを越えない** (同 決定 4)。
+    ///
+    /// 焼き付け先は重い下ごしらえだが、**それは越える理由にならない** — 決定 4 は
+    /// 「重いから越える」という例外を作らないと定め、代わりに**同じ宣言なら実体を
+    /// 作り直さない**ことで釣り合わせている (`shadowMapHolding`)。
     var shadowDetailValue = ShadowMap.defaultDetail
-    /// 縁の破綻を抑える量。
+    /// 縁の破綻を抑える量。**フレームを越えない** (同 決定 4)。
     ///
     /// 斜めに当たる面ほど、焼いた 1 画素の中で奥行きが大きく変わる。**自分の影が
     /// 自分の上に縞として出る**のを抑えるための余裕で、大きくしすぎると影が浮く。
-    var shadowBiasValue: Float = 0.0025
+    var shadowBiasValue = ShadowMap.defaultBias
 
     /// 揺らぎの種と細かさ。
     ///
@@ -2123,6 +2127,8 @@ public final class Canvas {
             currentMaterial = .default
             shadowsEnabled = false
             shadowRangeValue = nil
+            shadowDetailValue = ShadowMap.defaultDetail
+            shadowBiasValue = ShadowMap.defaultBias
             castsShadow = true
             receivesShadow = true
             // **溜めたものもフレームを越えない。** 描き切りは 6 箇所から投げるので、
