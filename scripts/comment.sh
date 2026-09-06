@@ -22,6 +22,11 @@
 #   GITHUB_REPOSITORY  投稿先リポジトリ (既定 mokume-metal/mokume)
 #
 # 人間が直接 gh を使う分にはこのラッパーは不要 (署名の意味が無い)。
+# **CI からもこのラッパーは通さない** (#798)。GitHub Actions が github.token で投稿すると
+# GitHub が bot として出所を描くので、上の穴 — 本人のトークンでの投稿に出所の表示が
+# 出ない — がそもそも空いていない。加えて CI から書く判定 (scripts/parent-guard.sh) は
+# AI ではないので、「どの AI が書いたか」を名乗らせると出所の記述として嘘になる。
+# 検出できないときに総称の an AI agent へ落ちる下の設計も、CI を想定していない。
 set -euo pipefail
 
 # リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)

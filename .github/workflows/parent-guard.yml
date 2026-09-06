@@ -3,6 +3,12 @@ name: Parent guard
 # open の sub-issue を残したまま親 Issue を completed で close したら、reopen して
 # 警告する (ツリーの不変条件: 親の close = 全作業完了。ADR-0002 / #23)。
 # not_planned での close は対象外 — ツリーごと畳む意図を妨げない。
+#
+# 判断は scripts/parent-guard.sh が持つ (検査は scripts/tests/parent_guard_test.py)。
+# issues イベントの workflow は既定ブランチのものしか走らないため、ロジックをここへ
+# 埋めると main に入れるまで誰も確かめられない (#66 で確認した性質)。**その性質を
+# 最初に踏んだのがこの判定である** — #23 で空振りし、それが scripts/check-workflows.sh
+# を生んだ。規律を作ったきっかけのファイルだけが規律の外に残っていた (#798)。
 
 # run-name が無いと GitHub は run 名にイベント既定 (issues → Issue タイトル) を使う
 # ため、同じタイトルの Issue が複数あるとどの Issue の run か Actions 一覧から辿れ
@@ -22,25 +28,19 @@ on:
 
 permissions:
   issues: write
+  contents: read
 
 jobs:
   guard:
+    # not planned はここで落とす。イベントの payload にしか無い値による切り分けで、
+    # 判定ではない (triage.yml の types: [opened] と同じ層) — スクリプトへ移すと、
+    # ツリーごと畳む close のたびに runner が立つ
     if: github.event.issue.state_reason == 'completed'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
       - name: open の sub-issue が残っていないか
         env:
           GH_TOKEN: ${{ github.token }}
           NUM: ${{ github.event.issue.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          open_children=$(gh api "repos/$REPO/issues/$NUM/sub_issues" \
-            --jq '[.[] | select(.state == "open")] | map("- #\(.number) \(.title)") | join("\n")' 2>/dev/null || true)
-          if [ -n "$open_children" ]; then
-            gh issue reopen "$NUM" -R "$REPO"
-            body="open の sub-issue が残っているため reopen した (親の close = 全作業完了がツリーの不変条件):"
-            body="$body"$'\n\n'"$open_children"$'\n\n'"ツリーごと畳む意図なら、先に子を閉じるか、親を **not planned** で close する。"
-            gh issue comment "$NUM" -R "$REPO" --body "$body"
-          else
-            echo "ok: open の sub-issue なし"
-          fi
+        run: bash scripts/parent-guard.sh "$NUM"
