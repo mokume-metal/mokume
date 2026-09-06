@@ -61,22 +61,40 @@ public final class SketchApplication: NSObject {
     private let presenter: FramePresenter
     private let title: String
 
-    /// 開いている窓。**読むだけを内へ開けてある** — 検査が実際の経路の窓を閉じるため (#714)。
-    private(set) var window: NSWindow?
-    private var surface: SketchSurface?
-    /// 画面の出口が外のプロセスに在るときの差し出し先。**在れば窓を持たない。**
+    /// 画面の出口。
     ///
     /// 分岐は「ビューアあり / なし」というモードではなく、**与えられた出口の構成**である
     /// ([ADR-0032] 決定 1)。合図は 1 つ (区画があるか) で、窓を開かないことも同じ合図から
     /// 従う。
     ///
+    /// **その 1 つの合図を 4 つの変数へ写さない。** かつては窓・面・共有面・出したかの
+    /// 4 つの Optional で持っており、片方だけ書き換えれば「窓も出るし面へも書く」が
+    /// 型として作れた — どちらの経路もそれを想定していないのに、である
+    /// ([#955](https://github.com/mokume-metal/mokume/issues/955))。
+    ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    private var sharedSurface: SharedFrameSurface?
+    private enum ScreenOutlet {
+        /// 窓の経路だが、まだ建っていない。
+        ///
+        /// **``run()`` の既定であり、``didFinishLaunching()`` が置き換える。** 2 段階に
+        /// なるのは畳めない事情による — 活動の方針 (`setActivationPolicy`) は
+        /// `NSApplication.run()` より前にしか据えられず、窓はその後にしか建たない。
+        case pendingWindow
+        /// 自分の窓へ出す。付属の `hasPresented` は最初の 1 枚の扱いに使う。
+        case window(NSWindow, SketchSurface, hasPresented: Bool)
+        /// 外のプロセスが持つ区画へ差し出す。**窓は持たない。**
+        case shared(SharedFrameSurface)
+    }
+    private var outlet: ScreenOutlet = .pendingWindow
+
+    /// 開いている窓。**読むだけを内へ開けてある** — 検査が実際の経路の窓を閉じるため (#714)。
+    var window: NSWindow? {
+        if case .window(let window, _, _) = outlet { window } else { nil }
+    }
+
     private var displayLink: CADisplayLink?
     /// 駆動源を紐づけている画面。張り替えの要否をこれで判断する。
     private var linkedScreen: NSScreen?
-    /// これまでに 1 度でも画面へ出したか。最初の 1 枚の扱いに使う。
-    private var hasPresented = false
 
     /// 名乗ってよい速さ。**測れていなければ `nil`。**
     ///
@@ -128,8 +146,12 @@ public final class SketchApplication: NSObject {
         // **画面の出口を先に決める。** 活動の方針は `app.run()` より前にしか据えられない
         // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
         // 並ばない (`.accessory`) — 並ぶと、道具が出す窓と作品が 2 つ並んで見える
-        sharedSurface = attachSharedSurface()
-        app.setActivationPolicy(sharedSurface == nil ? .regular : .accessory)
+        if let shared = attachSharedSurface() { outlet = .shared(shared) }
+        switch outlet {
+        case .shared: app.setActivationPolicy(.accessory)
+        // 窓はまだ建っていないが、建てると決まっている
+        case .pendingWindow, .window: app.setActivationPolicy(.regular)
+        }
         // **delegate と自分を強く持っておく。** AppKit は delegate を弱く参照するので、
         // ここで持たないと、delegate を渡した直後に解放され、以後の呼び出しが 1 つも
         // 来ない (窓が開かない形で表に出る)。走らせている間は生きているべきものなので、
@@ -237,9 +259,13 @@ public final class SketchApplication: NSObject {
     /// **画面の出口が外のプロセスに在れば、窓は作らない** ([ADR-0032] 決定 1)。駆動源は
     /// 窓ではなく画面に紐づくので (下記)、窓が無くてもそのまま繋がる。
     func didFinishLaunching() {
-        if sharedSurface != nil {
+        switch outlet {
+        case .shared:
             attachDisplayLink(to: NSScreen.main)
             return
+        // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る
+        case .window: return
+        case .pendingWindow: break
         }
         let settings = runtime.sketch.settings
         // 窓は描く解像度の半分で開く。描く解像度と窓の大きさは独立なので、
@@ -286,8 +312,7 @@ public final class SketchApplication: NSObject {
         window.makeFirstResponder(surface)
         surface.synchronizeDrawableSize()
 
-        self.window = window
-        self.surface = surface
+        outlet = .window(window, surface, hasPresented: false)
 
         if takesFocus { NSApp.activate() }
 
@@ -426,18 +451,25 @@ public final class SketchApplication: NSObject {
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private func presentFrame() throws(RenderFailure) {
-        if let sharedSurface {
+        switch outlet {
+        case .shared(let shared):
             // **速さも一緒に渡す。** 数えているのはこちらで、読むのは道具である
             // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない
-            try sharedSurface.write(
-                runtime.target, using: presenter, numbers: runtime.frameNumbers)
+            try shared.write(runtime.target, using: presenter, numbers: runtime.frameNumbers)
+        case .window(let window, let surface, let hasPresented):
+            guard let layer = surface.metalLayer,
+                FramePresenter.shouldPresent(
+                    windowIsVisible: isWindowVisible, hasPresented: hasPresented)
+            else { return }
+            // **書き戻すのは 1 度だけ。** 素直に毎回組み直すと、出すたびに窓と面の
+            // retain/release が乗る (秒 60 回)。`shouldPresent` は一度 true になれば
+            // 戻らないので、立てるのも 1 度でよい
+            if try presenter.present(runtime.target, to: layer), !hasPresented {
+                outlet = .window(window, surface, hasPresented: true)
+            }
+        case .pendingWindow:
             return
         }
-        guard let surface, let layer = surface.metalLayer,
-            FramePresenter.shouldPresent(
-                windowIsVisible: isWindowVisible, hasPresented: hasPresented)
-        else { return }
-        if try presenter.present(runtime.target, to: layer) { hasPresented = true }
     }
 
     /// 続けて描けなかった数。始まりと終わりだけ言うために持つ。
