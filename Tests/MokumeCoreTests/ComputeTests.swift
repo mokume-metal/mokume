@@ -37,6 +37,13 @@ struct ComputeDependencyTests {
         #expect(groups([(reads: [], writes: [1]), (reads: [], writes: [1])]) == [0..<1, 1..<2])
     }
 
+    @Test("前が読んだ並びを後から書くのも切れる")
+    func splitsOnWriteAfterRead() {
+        // 1 本目が並び 1 を読み終える前に、2 本目がそこを上書きしてはいけない。
+        // **前の書き込みだけを追っていると、この組み合わせだけが素通りする** (#933)
+        #expect(groups([(reads: [1], writes: [2]), (reads: [], writes: [1])]) == [0..<1, 1..<2])
+    }
+
     @Test("繋がった計算は、繋がった数だけ口が要る")
     func splitsEveryLinkOfAChain() {
         let chain: [(reads: [Int], writes: [Int])] = [
@@ -92,6 +99,16 @@ struct ComputeTests {
                          uint id [[thread_position_in_grid]])
         {
             out[id] = float(id) / 31.0 * values.scale;
+        }
+        """
+
+    /// 渡された値をそのまま並びへ書く。**頼んだ時点の値が効いているか**を見るための断片。
+    private static let stamp = """
+        kernel void stamp(device float *out [[buffer(0)]],
+                          constant Values &values [[buffer(MOKUME_VALUES)]],
+                          uint id [[thread_position_in_grid]])
+        {
+            out[id] = values.amount;
         }
         """
 
@@ -195,6 +212,46 @@ struct ComputeTests {
         let quarter = try brightest()
         #expect(abs(full - 30.0 / 31) < 0.01)
         #expect(abs(quarter - 30.0 / 31 * 0.25) < 0.01)
+    }
+
+    @Test("値は、頼んだ時点のものが効く")
+    func carriesTheValuesTheWorkWasAskedWith() throws {
+        let canvas = try makeCanvas()
+        let first = try canvas.makeNumbers(count: 1)
+        let second = try canvas.makeNumbers(count: 1)
+        let stamp = try canvas.makeComputation(Self.stamp, name: "stamp", values: ["amount": 0])
+
+        try canvas.draw {
+            stamp.set("amount", 1)
+            canvas.compute(stamp, over: 1, writes: [first])
+            stamp.set("amount", 2)
+            canvas.compute(stamp, over: 1, writes: [second])
+        }
+
+        // 頼みごとに値が焼き付いていなければ、溜めた頼みは流す段で**最後の値だけ**を
+        // 読むので、両方に 2 が出る (#932)
+        #expect(canvas.read(first) == [1])
+        #expect(canvas.read(second) == [2])
+    }
+
+    /// **区画に収まらない値は、作るときに断る。** 塗りと同じ理由 (#348) — 宣言した数は
+    /// 後から直せないので、切り詰めると断片の `Values` に一度も書かれない欄が残る。
+    ///
+    /// 見るのは `makeComputation` だけでよい。`loadComputation` も同じ入口へ落ちるので、
+    /// 断る場所は 1 か所しかない。
+    @Test("区画に収まらない数の値を宣言すると、作る時点で断られる")
+    func refusesMoreValuesThanASlotHolds() throws {
+        let canvas = try makeCanvas()
+        // 数を 65 個。詰め物込みで 68 個になり、区画 (64) を超える
+        var values: [String: ShaderValue] = [:]
+        for index in 0...Canvas.valueSlotCapacity { values["v\(index)"] = 0 }
+
+        // 何個で上限が何個かが、断る文から読めること
+        #expect(
+            throws: ShaderFailure.tooManyValues(path: "overflowing", count: 68, capacity: 64)
+        ) {
+            try canvas.makeComputation(Self.stamp, name: "overflowing", values: values)
+        }
     }
 
     @Test("繋がった計算は、順に効く")

@@ -32,7 +32,7 @@ extension ShaderFailure: CustomStringConvertible {
                 断片「\(path)」へ渡す値が多すぎます (float 換算 \(count) 個 / 上限 \(capacity) 個)。
                 色 (float4) は 4 個ぶん・2 つ組 (float2) は 2 個ぶんに数えます \
                 (構造体の大きさは 4 個の倍数へ切り上がるので、数え上げが宣言より増えることがあります)。
-                値は列ごとに 1 区画へ載せるので上限は動かせません。数を減らすか、\
+                値は列 (計算なら頼み) ごとに 1 区画へ載せるので上限は動かせません。数を減らすか、\
                 まとめられるものを 1 つの色・2 つ組へ束ねてください。
                 """
         case .tooManySurfaces(let path, let count, let capacity):

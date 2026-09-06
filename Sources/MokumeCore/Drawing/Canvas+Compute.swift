@@ -17,6 +17,13 @@ struct ComputeDispatch {
     let buffers: [Numbers]
     /// 末尾から何本が書く先か。
     let writeCount: Int
+    /// 頼まれた時点の値。**計算への参照ではなく写しを持つ** ([#932])。
+    ///
+    /// 計算は 1 つを何度も頼めるし、頼むたびに値を変えるのは素直な書き方である。参照
+    /// だけを持つと、溜めた頼みは流す段で**最後の値だけ**を読む。
+    ///
+    /// [#932]: https://github.com/mokume-metal/mokume/issues/932
+    let values: [Float]
 
     var reads: [ObjectIdentifier] {
         buffers.prefix(buffers.count - writeCount).map(ObjectIdentifier.init)
@@ -62,6 +69,9 @@ extension Canvas {
                 reason: "計算の名前は断片の中の入口の関数の名前にもなるので、"
                     + "英字か下線で始まり、英数字と下線だけでできている必要があります")
         }
+        // **区画に収まらない宣言は、ここで断る。** 値は頼みごとの区画へ載るので、塗りの
+        // 列と同じ上限が効く (#932)。断り方も塗りと 1 か所を共有する
+        try Self.checkValuesFit(values, path: url?.path ?? name)
         do {
             let pipeline = try computePipeline()
             let computation = try Computation(
@@ -104,7 +114,10 @@ extension Canvas {
         pendingComputations.append(
             ComputeDispatch(
                 computation: computation, width: width, height: height,
-                buffers: buffers, writeCount: writes.count))
+                buffers: buffers, writeCount: writes.count,
+                // **いまの値をここで写す。** 流す段まで読みに行くと、その後の
+                // `Computation/set(_:_:)` に引きずられる (#932)
+                values: computation.packedValues))
     }
 
     // MARK: - 流す
@@ -126,6 +139,9 @@ extension Canvas {
         // 描き切りだけを通る経路では `discardFrame()` が同じことをするので、挙動は変わらない
         defer { pendingComputations.removeAll(keepingCapacity: true) }
         let pipeline = try computePipeline()
+        // 頼みごとの値の区画。**要る数を先に 1 度だけ取る** — 番地を束ねたあとに取り直すと、
+        // 束ねた先が死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
+        let values = try computeValuesStorage.buffer(holding: pendingComputations.count)
         let groups = Self.groups(
             of: pendingComputations.map { (reads: $0.reads, writes: $0.writes) })
 
@@ -135,7 +151,9 @@ extension Canvas {
             }
             computeEncodersOpened += 1
             for index in group {
-                try encode(pendingComputations[index], at: index, on: encoder, using: pipeline)
+                try encode(
+                    pendingComputations[index], at: index, values: values,
+                    on: encoder, using: pipeline)
             }
             encodeComputeBarrier(on: encoder, isLast: order == groups.count - 1)
             encoder.endEncoding()
@@ -160,7 +178,7 @@ extension Canvas {
     }
 
     private func encode(
-        _ dispatch: ComputeDispatch, at index: Int,
+        _ dispatch: ComputeDispatch, at index: Int, values: any MTLBuffer,
         on encoder: any MTL4ComputeCommandEncoder, using pipeline: ComputePipeline
     ) throws(RenderFailure) {
         let state = dispatch.computation.state
@@ -172,14 +190,36 @@ extension Canvas {
         for (slot, numbers) in dispatch.buffers.enumerated() {
             table.setAddress(numbers.storage.gpuAddress, index: slot)
         }
+        // **値も頼みごとの区画へ写す。** テーブルを分ける理由と同じで、1 区画を使い回すと
+        // 走っている計算の足元で値が変わる (#932)
+        writeComputeValues(dispatch.values, into: values, at: index)
         table.setAddress(
-            dispatch.computation.valuesBuffer.gpuAddress, index: ComputePipeline.valuesBufferIndex)
+            values.gpuAddress + UInt64(index * Self.valuesStride),
+            index: ComputePipeline.valuesBufferIndex)
 
         encoder.setComputePipelineState(state)
         encoder.setArgumentTable(table)
         encoder.dispatchThreads(
             threadsPerGrid: MTLSize(width: dispatch.width, height: dispatch.height, depth: 1),
             threadsPerThreadgroup: Self.threadgroup(for: state, isFlat: dispatch.height == 1))
+    }
+
+    /// 頼まれた時点の値を、頼みの番号の区画へ写す。
+    ///
+    /// **区画に収まることは入口で保証されている** (`makeComputation` / `loadComputation`
+    /// が `valueSlotCapacity` を超える宣言を断る)。書くのは宣言した数だけで、区画の残りは
+    /// 触らない — 断片が読むのは自分が宣言した欄だけだからである (塗りの列と同じ扱い)。
+    private func writeComputeValues(
+        _ packed: [Float], into buffer: any MTLBuffer, at index: Int
+    ) {
+        let slot = buffer.contents().advanced(by: index * Self.valuesStride)
+            .assumingMemoryBound(to: Float.self)
+        // 値を 1 つも宣言していない断片にも、読める形の区画を渡す
+        if packed.isEmpty {
+            slot.update(repeating: 0, count: 4)
+        } else {
+            slot.update(from: packed, count: packed.count)
+        }
     }
 
     /// 1 組の大きさ。**GPU が受け取れる上限に収める。**
@@ -217,6 +257,11 @@ extension Canvas {
     /// 終わっている」とは言えない (#727)。
     private func runPendingComputations() {
         guard !pendingComputations.isEmpty else { return }
+        // **値の区画へ書く前に待つ。** ここは描き切りを通らないので、フレームの環を
+        // 進める `frameRing.advance()` の待ちが効かない — 直前のフレームの投入が、
+        // これから書くスロットをまだ読んでいるかもしれない (#932 で値の置き場を計算から
+        // 環へ移したときに、`Computation` が持っていた待ちをここへ引き取った)
+        gpu.settleQuietly(before: "計算の値を書く")
         do {
             let commands = try gpu.beginCommands()
             try encodeComputations(into: commands)
@@ -232,28 +277,40 @@ extension Canvas {
 
     /// 頼まれた並びを、同じ口へ載せてよいまとまりに切る。
     ///
-    /// **前の計算が書いたものに触れる計算が来たら、そこで切る。** 触れるとは読むことも
-    /// 書くことも含む — 2 つの計算が同じ並びへ同時に書くのも、読み書きが重なるのと
-    /// 同じく順序が要る。ぶつからない計算は同じ口に残り、並行に走る。
+    /// **前の計算とぶつかる計算が来たら、そこで切る。** ぶつかり方は 3 通りあって、
+    /// どれも順序が要る:
+    ///
+    /// - 前が書いたものを読む — 読む値が前の結果かどうかが決まらない
+    /// - 前が書いたものへ書く — どちらが残るかが決まらない
+    /// - **前が読んだものへ書く** — 前が読み終える前に上書きしうる ([#933])
+    ///
+    /// ぶつからない計算は同じ口に残り、並行に走る。**3 つめを見落としていた間、
+    /// 「前の状態を読んで次を書き、読み終えた側を作り直す」形が黙って並行に走っていた。**
     ///
     /// 新しいコマンド構造には**同じ口の中で待つ手段が無い**ので、依存は口を分けること
     /// でしか表せない。だから「どこで切るか」がそのまま依存の宣言の効き目になる。
     ///
     /// 識別子だけを見るので、GPU を持ち出さずに検査できる。
+    ///
+    /// [#933]: https://github.com/mokume-metal/mokume/issues/933
     static func groups<ID: Hashable>(
         of accesses: [(reads: [ID], writes: [ID])]
     ) -> [Range<Int>] {
         var groups: [Range<Int>] = []
         var start = 0
         var written: Set<ID> = []
+        var read: Set<ID> = []
         for (index, access) in accesses.enumerated() {
             let touched = Set(access.reads).union(access.writes)
-            if !touched.isDisjoint(with: written) {
+            let writes = Set(access.writes)
+            if !touched.isDisjoint(with: written) || !writes.isDisjoint(with: read) {
                 groups.append(start..<index)
                 start = index
                 written = []
+                read = []
             }
-            written.formUnion(access.writes)
+            written.formUnion(writes)
+            read.formUnion(access.reads)
         }
         if start < accesses.count { groups.append(start..<accesses.count) }
         return groups

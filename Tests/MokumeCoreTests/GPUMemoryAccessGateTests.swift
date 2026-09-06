@@ -72,8 +72,8 @@ struct GPUMemoryAccessGateTests {
             file: "Drawing/Canvas+Effects.swift", discipline: .waitedElsewhere,
             reason: "描き切りの中 (環を進めた後) で効果の値を書く。書き先は Canvas と同じ環に載った置き場"),
         Permit(
-            file: "Drawing/Computation.swift", discipline: .settles,
-            reason: "値を書く直前に settle する"),
+            file: "Drawing/Canvas+Compute.swift", discipline: .settles,
+            reason: "頼みごとの値の区画へ書く。読み戻し (read) の経路は書く前に settleQuietly する — そこは描き切りを通らないので環の待ちが効かない。描き切りの経路は Canvas が環を 1 つ進めた後に呼ばれるので、書き先のスロットは待ち済み (#932)"),
         Permit(
             file: "Drawing/Particles.swift", discipline: .settles,
             reason: "粒と指定を書く直前に settle する"),
