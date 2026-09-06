@@ -133,7 +133,7 @@ enum RunCommand {
         }
         process.waitUntilExit()
         if process.terminationStatus != 0 {
-            exit(process.terminationStatus)
+            throw .sketchExited(status: process.terminationStatus)
         }
     }
 

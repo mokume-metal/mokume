@@ -11,6 +11,8 @@ setvbuf(stdout, nil, _IOLBF, 0)
 do {
     try Command.dispatch(Array(CommandLine.arguments.dropFirst()))
 } catch {
+    // **終わる場所はここ 1 つ。** 途中で exit を呼ぶと、名乗りも後始末もこの
+    // catch を素通りする — 素通りしたことは出力からは読めない (#994 の 9)
     FileHandle.standardError.write(Data((error.message + "\n").utf8))
-    exit(1)
+    exit(error.exitCode)
 }
