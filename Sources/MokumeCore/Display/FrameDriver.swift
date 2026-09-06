@@ -5,8 +5,8 @@ import IOKit.pwr_mgt
 
 /// 表示のリフレッシュが止まっても、フレームを進め続けるための判断。
 ///
-/// **判断だけをここに置く。** 実際に叩くのは ``SketchApplication`` と
-/// ``SharedFrameStage`` で、どちらも同じ構造 (画面に紐づけた駆動源 1 本) を持つ。
+/// **判断だけをここに置く。** 実際に駆動源を回すのは ``ScreenDisplayLink`` で、窓を出す
+/// 2 つの経路 (``SketchApplication`` と ``SharedFrameStage``) はどちらもそれを使う。
 /// 純関数にしてあるのは **GPU 無しで検査できる**ようにするためで、
 /// ``FramePresenter/shouldPresent(windowIsVisible:hasPresented:)`` と同じ形である。
 ///
