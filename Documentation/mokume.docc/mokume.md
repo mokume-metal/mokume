@@ -58,6 +58,45 @@ circle(200 + cos(time) * 80, 150 + sin(time) * 80, 40)
 
 一つひとつの寿命は、それぞれの説明に付けた `Note` が持つ。
 
+### 数の型
+
+**渡すときは型を気にしなくて構いません。** 描画へ渡す数は `Float`・`Double`・`Int` のどれで
+持っていても通ります。
+
+```swift
+let gap = 120.0                      // Swift は Double に推論します
+circle(gap, gap, 40)                 // そのまま渡せます
+for i in 0..<255 { fill(i, 0, 0) }   // ループ変数 (Int) もそのまま
+```
+
+**中では `Float` として扱われます。** 面が返す数 — `width` / `height` / `time` / `random()` /
+`noise()` / `map()` — はすべて `Float` です。GPU が 32 bit で動くので、そこに合わせてあります。
+
+**変換が要るのは、面が返した数と自分の数を混ぜて計算するときだけです。** Swift は型の違う数
+どうしの計算を許さないので、片方を揃えます。
+
+```swift
+let columns = 6                          // Int
+let step = width / Float(columns)        // width は Float。Float へ揃えます
+for index in 0..<columns {
+    let ratio = Float(index) / Float(columns)
+    circle(step * Float(index), height * ratio, 20)
+}
+```
+
+**個数・添字・細かさは `Int` のままです。** `sphere(半径, detail:)` の `detail`、画素の添字
+(``Sketch/get(_:_:)``)、乱数の種 (``Sketch/randomSeed(_:)``) のような「数え上げ」は `Int` で
+受けます。半分の個数や 1.5 番目の画素は無いからです。
+
+**`.pi` のような書き方は、型を名乗ります。** 渡す先が型を決めなくなったので、`.pi` だけでは
+`Float` と `Double` のどちらか決まりません。
+
+```swift
+rotate(Float.pi / 2)                     // 型を名乗ります
+let turn = width / 400                   // Float
+rotate(turn * .pi)                       // 他の項が Float なら .pi のままで通ります
+```
+
 ## Topics
 
 ### スケッチを書く

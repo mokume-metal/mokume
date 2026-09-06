@@ -60,7 +60,7 @@ final class GlowAndDetail: Sketch {
         noFill()
         strokeWeight(1)
         for index in 0..<16 {
-            let radius = 96 + Float(index) * 9
+            let radius = 96 + index * 9
             let fade = 0.5 - Float(index) / 40
             stroke(.display(red: 0.3, green: 0.55, blue: 0.9, alpha: fade))
             circle(centre.x, centre.y, radius * 2)

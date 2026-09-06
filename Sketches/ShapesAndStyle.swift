@@ -32,13 +32,13 @@ final class ShapesAndStyle: Sketch {
         stroke(217, 230, 255)
         for (index, cap) in [StrokeCap.square, .round, .project].enumerated() {
             strokeCap(cap)
-            strokeWeight(Float(index) * 6 + 6)
-            line(60, 190 + Float(index) * 34, 300, 190 + Float(index) * 34)
+            strokeWeight(index * 6 + 6)
+            line(60, 190 + index * 34, 300, 190 + index * 34)
         }
         strokeWeight(10)
         for (index, join) in [StrokeJoin.miter, .round, .bevel].enumerated() {
             strokeJoin(join)
-            let x = 360 + Float(index) * 110
+            let x = 360 + index * 110
             beginShape()
             vertex(x, 280)
             vertex(x + 50, 180)
@@ -67,7 +67,7 @@ final class ShapesAndStyle: Sketch {
         for (index, mode) in [BlendMode.blend, .add, .multiply, .screen, .difference].enumerated() {
             blendMode(mode)
             fill(ink)
-            circle(110 + Float(index) * 80, 410, 110)
+            circle(110 + index * 80, 410, 110)
         }
         blendMode(.blend)
 
