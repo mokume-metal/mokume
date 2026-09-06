@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -12,23 +13,44 @@ import Testing
 /// 合成 `Codable` へ寄せた ([#854]・親は [#814])。**畳んだ結果として出力が変わったら
 /// 畳み方が間違い**なので、載る鍵と値をここで留める。
 ///
-/// **並びは留めない — 畳む前から決定的ではない。** 見張りは
-/// `[.prettyPrinted, .withoutEscapingSlashes]` で書き、`.sortedKeys` を付けていないので、
-/// `JSONEncoder` は辞書の走査順で書き出す (プロセスごとに変わる)。手書きの `encode(to:)`
-/// が `CodingKeys` の順に書いていても、届く並びはその順ではなかった。**並びを留める
-/// 検査を書くと、畳んだこととは関係なく落ちる。** 並びを揃えること自体は読み手に効く話
-/// だが、それは振る舞いを変えるので #814 に残る (節 3 — 面ごとに `.sortedKeys` の有無が
-/// 割れている)。
+/// **並びは辞書順で決まる ([#989] で留めた)。** かつては `.sortedKeys` を付けていなかった
+/// ので `JSONEncoder` が辞書の走査順で書き出し、**プロセスごとに変わっていた** — 手書きの
+/// `encode(to:)` が `CodingKeys` の順に書いていても、届く並びはその順ではなかった。だから
+/// 当時は「並びを留める検査を書くと、畳んだこととは関係なく落ちる」と書いてある。
+/// いまは組むところが 1 つ (``AtomicFile/writeJSON(_:to:)``) なので、下の検査が留められる。
+///
+/// [#989]: https://github.com/mokume-metal/mokume/issues/989
 ///
 /// [#854]: https://github.com/mokume-metal/mokume/issues/854
 /// [#814]: https://github.com/mokume-metal/mokume/issues/814
 @Suite("作り直しの記録の形")
 struct BuildReportTests {
-    /// 見張りが書くときと同じ組み方 (`WatchSession` と揃える)。
+    /// 見張りが書くときと**同じ口を通す**。かつてはここで `JSONEncoder` を組み直して
+    /// いたが、それは `WatchSession` の設定の写しで、割れても誰も気付かなかった (#989)。
     private func encoded(_ report: BuildReport) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-        return String(decoding: try encoder.encode(report), as: UTF8.self)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-build-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("status.json")
+        try AtomicFile.writeJSON(report, to: url)
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// **並びが決まっている。** 面ごとに `.sortedKeys` の有無が割れていた頃は、同じ型を
+    /// 書いても走査順で並びが変わった (#989 が畳んだ)。差分を取る読み手に効く。
+    @Test("鍵の並びが、辞書順で決まる")
+    func theKeyOrderIsDecided() throws {
+        let text = try encoded(
+            BuildReport(
+                ok: true, status: 0, output: "出力", stamp: "abc123", configuration: "debug",
+                timings: BuildReport.Timings(detectMs: 12, buildMs: 34, relaunchMs: 56)))
+        let top = text.split(separator: "\n").compactMap { line -> String? in
+            // 入れ子 (timings の中) は字下げが深いので、上の階だけを見る
+            guard line.hasPrefix("  \""), let end = line.dropFirst(3).firstIndex(of: "\"")
+            else { return nil }
+            return String(line.dropFirst(3)[..<end])
+        }
+        #expect(
+            top == ["configuration", "ok", "output", "schemaVersion", "stamp", "status", "timings"])
     }
 
     /// 手書きの `CodingKeys` が並べていた 7 つと、`Timings` の 3 つ。

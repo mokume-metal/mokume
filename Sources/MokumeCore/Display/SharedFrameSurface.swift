@@ -267,11 +267,10 @@ final class SharedFrameSurface {
     /// 面の番号を区画へ置く。**新しい通信路を作らない** ([ADR-0032] 決定 3)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    /// **投げる。** 置けなかったときに窓を開く側へ倒す判断は呼び手 (``SketchApplication``)
+    /// が持つので、ここは名乗らない — 判断が呼び手にある口だけが `throws` である (#989)。
     func publishManifest() throws {
-        let manifest = Manifest(ids: ids, width: width, height: height)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        try AtomicFile.write(try encoder.encode(manifest), to: manifestURL)
+        try AtomicFile.writeJSON(Manifest(ids: ids, width: width, height: height), to: manifestURL)
     }
 
     /// 描いた絵を、次の面へ焼いて差し出す。

@@ -104,10 +104,13 @@ final class FrameObserver {
     ///
     /// 応えようとしたことは、**書き込みに失敗しても**記録する。記録しないと同じ要求を
     /// 毎フレーム拾い直し、壊れた書き込み先の上でループになる。
-    func finish(_ report: ObservationReport) throws {
+    ///
+    /// **投げない。** かつては `throws` だったが、唯一の呼び手 (``SketchRuntime``) が
+    /// `try?` で握り潰しており、目録を置けなかったことがどこにも現れなかった。判断の
+    /// 余地が呼び手に無い以上、名乗るのは置く側の仕事である
+    /// ([#989](https://github.com/mokume-metal/mokume/issues/989))。
+    func finish(_ report: ObservationReport) {
         defer { requests.markHandled(report.id) }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-        try AtomicFile.write(try encoder.encode(report), to: reportURL)
+        AtomicFile.publishJSON(report, to: reportURL, "観測の目録")
     }
 }

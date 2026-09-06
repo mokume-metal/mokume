@@ -55,8 +55,10 @@ struct Facets {
         let waitLimit = self.waitLimit + max(0, extraWait)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         let reportURL = WorkDirectory.reportURL(under: facet)
-        let data = try JSONSerialization.data(withJSONObject: request)
-        try AtomicWrite.write(data, to: WorkDirectory.requestURL(under: facet))
+        // 鍵の並びは ``AtomicFile/writeJSON(_:to:)`` と揃える。ここは辞書を直に
+        // 書くので `Encodable` の口を通せない (#989)
+        let data = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+        try AtomicFile.write(data, to: WorkDirectory.requestURL(under: facet))
 
         let deadline = now().addingTimeInterval(waitLimit)
         while now() < deadline {
