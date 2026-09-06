@@ -299,8 +299,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             .attach(to: surface)
         // **前面を取らないときも、窓は出す。** 出さなければ、作り直すたびに絵が消える
         if takesFocus { window.makeKeyAndOrderFront(nil) } else { window.orderFrontRegardless() }
-        // **面を第一応答者にしないとキーが来ない。** 窓を出したあとに据える —
-        // contentView を差し替えると応答者は窓へ戻る
+        // **面を第一応答者に据える。** 据わっていない窓にはキーが 1 件も来ない —
+        // 理由と、AppKit の自動選択に頼らない訳は `SketchSurface.acceptsFirstResponder`
+        // が持つ
         window.makeFirstResponder(surface)
         surface.synchronizeDrawableSize()
 

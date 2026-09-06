@@ -116,6 +116,30 @@ final class SketchSurface: NSView {
 extension SketchSurface {
     /// **キーを受け取るために要る。** `false` のままだと `keyDown` は 1 度も呼ばれず、
     /// 警告も出ない — 「マウスは効くのにキーだけ効かない」という形でしか気付けない。
+    ///
+    /// ## 窓を出す側は、面を第一応答者に据える
+    ///
+    /// これを返すだけでは足りない。キーは第一応答者へ配られるので、面がそこに居ない窓では
+    /// 1 件も来ない。**据える責任は窓を出す側にある** —
+    /// `SharedFrameStage.open(overlay:)` と `SketchApplication.didFinishLaunching()` が
+    /// どちらも窓を前へ出した後に `makeFirstResponder(_:)` を呼ぶ。
+    ///
+    /// **AppKit の自動選択には頼らない。** 窓を最初に前へ出すとき、AppKit はキービューの
+    /// 環の先頭 — これを返す contentView — を `initialFirstResponder` に自分で選ぶので、
+    /// 呼ばなくてもキーは届く (`orderFrontRegardless` でも、応答者になりうる部品を重ねた
+    /// 窓でも届く。実測)。**それは文書化されていない挙動である**うえ、窓を出した**後**に
+    /// contentView を差し替えると応答者は窓へ戻る (実測) ので、頼ると破れ方が上の
+    /// 「キーだけ効かない」になる — 1 行で名乗るほうが安い ([#963])。
+    ///
+    /// **`makeFirstResponder(_:)` はこの値を見ない。** 拒む面でも据わり、キーはそこへ配られる
+    /// (実測)。この値が効くのは AppKit が応答者を**自分で選ぶ**ところ — 環の先頭の選定・
+    /// 押して焦点を移す・Tab で辿る — なので、両方が要る。
+    ///
+    /// 届くこと自体は、窓を出して本物の `NSEvent` を通す検査が覆っている
+    /// (`SharedFrameStageTests` / `SketchApplicationTests`)。面の `keyDown` を直に呼ぶ形では、
+    /// 窓 → 第一応答者 → 面という覆いたい区間を飛ばすことになる。
+    ///
+    /// [#963]: https://github.com/mokume-metal/mokume/issues/963
     override var acceptsFirstResponder: Bool { true }
 
     /// 窓が前に出ていなくても、最初の一撃をその場で拾う。
