@@ -152,11 +152,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private var lastSeenFrame = 0
     /// 走っている側が数えた速さ。**自分では数えない** ([ADR-0030] 決定 7)。
     private var tempo = RemoteTempo()
-    /// 続けて差し出せなかった数。始まりと終わりだけ言うために持つ。
-    private var consecutiveFailures = 0
+    /// 続けて差し出せなかった数。**始まりと終わりだけ**言うために持つ。
+    private var failures = FrameFailureLog()
 
-    /// 表示のリフレッシュを、台を強く持たずに中継する。
-    ///
     /// 窓の出来事を、台を強く持たずに中継する。
     ///
     /// **窓の delegate に台を直に据えない。** AppKit は delegate を弱く持つが、呼ぶ前に
@@ -381,15 +379,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     /// 出せなかったことを 1 度だけ言う。**握り潰すと、絵が止まった理由がどこにも残らない。**
     private func noteFailure(_ failure: RenderFailure) {
-        consecutiveFailures += 1
-        guard consecutiveFailures == 1 else { return }
+        guard failures.note() else { return }
         Diagnostics.warn("差し出せませんでした: \(failure.headline) — 次のリフレッシュで試し直します")
     }
 
     private func noteRecovery() {
-        guard consecutiveFailures > 0 else { return }
-        Diagnostics.warn("差し出しが回復しました (\(consecutiveFailures) 枚ぶん飛ばしました)")
-        consecutiveFailures = 0
+        guard let skipped = failures.recovered() else { return }
+        Diagnostics.warn("差し出しが回復しました (\(skipped) 枚ぶん飛ばしました)")
     }
 }
 
