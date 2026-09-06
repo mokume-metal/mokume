@@ -269,9 +269,7 @@ final class SharedFrameSurface {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     func publishManifest() throws {
         let manifest = Manifest(ids: ids, width: width, height: height)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        try AtomicFile.write(try encoder.encode(manifest), to: manifestURL)
+        try AtomicFile.write(json: manifest, to: manifestURL)
     }
 
     /// 描いた絵を、次の面へ焼いて差し出す。

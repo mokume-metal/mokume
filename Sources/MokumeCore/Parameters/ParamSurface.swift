@@ -106,6 +106,9 @@ final class ParamSurface {
     /// 値が変わったことを Observation から受け取る印。
     private var valuesChanged = false
 
+    /// 応答を置けなかったことを、始まりと終わりだけ言わせる。
+    private var reportFailures = FrameFailureLog()
+
     /// 区画があるときだけ働く (観測・入力と同じ。区画の名前は ``StartupReads`` が正典)。
     static func makeIfEnabled(
         for registry: ParamRegistry,
@@ -221,10 +224,10 @@ final class ParamSurface {
         }
     }
 
+    /// 応答を置く。**置けなくなったら名乗る** — 黙ると、道具のつまみが古い値を
+    /// 出し続けるだけになる。
     private func write(_ report: ParamReport) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
-        guard let data = try? encoder.encode(report) else { return }
-        try? AtomicFile.write(data, to: reportURL)
+        AtomicFile.place(
+            json: report, to: reportURL, naming: "つまみの応答", noting: &reportFailures)
     }
 }

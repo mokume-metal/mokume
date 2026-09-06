@@ -45,6 +45,8 @@ final class RemoteParams {
     private var readAt: Date?
     /// 最後に書いた要求の識別子。応答がこれを echo するまでは、自分の値を信じる。
     private var pendingId: String?
+    /// 要求を置けなかったことを、始まりと終わりだけ言わせる。
+    private var sendFailures = FrameFailureLog()
 
     init(directory: URL) {
         self.directory = directory
@@ -103,13 +105,13 @@ final class RemoteParams {
     private func send(name: String, value: ParamValue) {
         let id = UUID().uuidString
         let request = Request(id: id, values: [Request.Entry(name: name, value: value)])
-        guard let data = try? JSONEncoder().encode(request) else { return }
-        do {
-            try AtomicFile.write(data, to: WorkDirectory.requestURL(under: directory))
-            pendingId = id
-        } catch {
-            // 書けなければ、この 1 回を捨てる。次に動かせばまた書く
-        }
+        // **黙って捨てない。** つまみを動かしても何も起きない状態が続くとき、
+        // 権限が無いのか相手が居ないのかを切り分ける手掛かりがここにしか無い
+        guard AtomicFile.place(
+            json: request, to: WorkDirectory.requestURL(under: directory),
+            naming: "つまみの要求", noting: &sendFailures)
+        else { return }
+        pendingId = id
     }
 
     /// 置く要求。読む側 (``ParamRequest``) と同じ形を、書く側から見たもの。

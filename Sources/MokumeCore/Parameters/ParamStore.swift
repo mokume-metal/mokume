@@ -47,6 +47,8 @@ final class ParamStore {
     private var countdown: Int?
     /// 実際に書いた回数。**まとめられていることを検査から見るために持つ。**
     private(set) var writeCount = 0
+    /// 保存できなかったことを、始まりと終わりだけ言わせる。
+    private var saveFailures = FrameFailureLog()
 
     /// 保存を持たせる。宣言が 1 つも無ければ持たせない (書くものが無い)。
     static func makeIfNeeded(for registry: ParamRegistry, at url: URL = WorkDirectory.savedParams)
@@ -188,13 +190,11 @@ final class ParamStore {
     private func write() {
         let saved = Saved(
             values: registry.declarations.map { Saved.Entry(name: $0.name, value: $0.value) })
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
-        guard let data = try? encoder.encode(saved) else { return }
-        guard (try? AtomicFile.write(data, to: url)) != nil else {
-            Diagnostics.warn("合わせた値を保存できませんでした (\(url.path))")
-            return
-        }
+        // **毎回は言わない。** 保存はつまみを動かすたびに走るので、言い続けると
+        // 1 度の引きで何十行も流れて、本当に読むべき行が埋まる
+        guard AtomicFile.place(
+            json: saved, to: url, naming: "合わせた値", noting: &saveFailures)
+        else { return }
         writeCount += 1
     }
 }

@@ -106,8 +106,6 @@ final class FrameObserver {
     /// 毎フレーム拾い直し、壊れた書き込み先の上でループになる。
     func finish(_ report: ObservationReport) throws {
         defer { requests.markHandled(report.id) }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-        try AtomicFile.write(try encoder.encode(report), to: reportURL)
+        try AtomicFile.write(json: report, to: reportURL)
     }
 }

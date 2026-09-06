@@ -51,6 +51,8 @@ final class InputInbox {
     let directory: URL
     private let requests: RequestFile<InputRequest>
     private let reportURL: URL
+    /// 応答を置けなかったことを、始まりと終わりだけ言わせる。
+    private var reportFailures = FrameFailureLog()
 
     /// 区画があるときだけ働く (観測と同じ。区画の名前は ``StartupReads`` が正典)。
     static func makeIfEnabled(
@@ -89,10 +91,10 @@ final class InputInbox {
         return report
     }
 
+    /// 応答を置く。**置けなくなったら名乗る** — 黙ると、送った側からは
+    /// 「届いていない」と「応えられていない」の区別が付かない。
     private func write(_ report: InputReport) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(report) else { return }
-        try? AtomicFile.write(data, to: reportURL)
+        AtomicFile.place(
+            json: report, to: reportURL, naming: "入力の応答", noting: &reportFailures)
     }
 }
