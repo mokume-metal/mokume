@@ -8,8 +8,8 @@ import MokumeDiagnostics
 /// 利用者が書いた計算。
 ///
 /// 使い方は ``Sketch/makeComputation(_:name:values:)`` にある。
-// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
-// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+// `Canvas` と同じ隔離で使う型なので隔離を明示する。**理由は `RenderDevice` の冒頭が
+// 持つ** (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
 @MainActor public final class Computation {
     /// 断片・値・保存の拾い直しを持つ骨。**3 者で 1 つ** (``ShaderBox``)。
     private let box: ShaderBox
@@ -26,10 +26,15 @@ import MokumeDiagnostics
     /// いま効いている値。
     var values: [String: ShaderValue] { box.values }
     var watcher: FileWatcher? { box.watcher }
-    /// 値を載せる置き場。**1 度だけ確保して使い回す** ([ADR-0023] 決定 5)。
+    /// いま効いている値を、断片へ渡す並びに詰めたもの。
     ///
-    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
-    private(set) var valuesBuffer: any MTLBuffer
+    /// **GPU の置き場は持たない。** 頼み (``ComputeDispatch``) が積まれた時点でここを
+    /// 写し、流す段で頼みごとの区画へ書く ([#932])。1 本の置き場を持って書き換えて
+    /// いたときは、溜めた頼みが流す段で**最後の値だけ**を読んだので、同じ計算を値を
+    /// 変えて 2 度頼むと後の値が両方に効いた。
+    ///
+    /// [#932]: https://github.com/mokume-metal/mokume/issues/932
+    var packedValues: [Float] { box.packedValues }
 
     /// 断片の在処。保存を拾い直すのに使う。
     ///
@@ -57,45 +62,20 @@ import MokumeDiagnostics
         let library = try gpu.makeComputeLibrary(named: name, body: body, values: values)
         self.state = try pipeline.makeState(
             library: library, functionName: name, label: "mokume.computation.\(name)")
-        self.valuesBuffer = try gpu.makeReadableBuffer(
-            byteCount: max(ShaderSource.pack(values).count, 4) * MemoryLayout<Float>.stride)
-        writeValues()
-
         box.watch { [weak self] in self?.reload() }
     }
-
-    /// **値の置き場を常駐から退かせる** ([#738])。常駐の集合が抱えている限り、計算を
-    /// 手放しても解放されない。
-    ///
-    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
-    isolated deinit { gpu.retire(valuesBuffer) }
 
     /// 渡す値を書き換える。
     ///
     /// **宣言していない名前は受け付けない** — 断片は組み立てるときに値の宣言ごと
     /// 組み上がるので、後から名前を増やすと組み直しになる。増やすかどうかは作るときに決める。
-    public func set(_ name: String, _ value: ShaderValue) {
-        // **受け付けた値だけを写す。** 断られた値で置き場を書き直すと、宣言と違う形の
-        // 値が絵に出る余地が残る
-        if box.assign(name, value) { writeValues() }
-    }
-
-    /// いまの値を置き場へ写す。
     ///
-    /// **書き換えたその場で写す。** 走らせる直前にまとめて写す形にすると、値を変えた
-    /// フレームと効くフレームがずれる余地が残る。
-    private func writeValues() {
-        // 前のフレームの計算がまだこの置き場を読んでいるかもしれない (描き切りは待たずに
-        // 返る・#727)。書く直前に投入済みのものが終わるのを待つ
-        gpu.settleQuietly(before: "計算の値を書く")
-        var packed = box.packedValues
-        let capacity = valuesBuffer.length / MemoryLayout<Float>.stride
-        while packed.count < capacity { packed.append(0) }
-        packed.withUnsafeBytes { source in
-            guard let base = source.baseAddress else { return }
-            valuesBuffer.contents().copyMemory(
-                from: base, byteCount: min(source.count, valuesBuffer.length))
-        }
+    /// **効くのは、この後に頼んだ計算からである。** 既に頼んである計算は積まれた時点の
+    /// 値を持っているので、ここでの書き換えに引きずられない ([#932])。
+    ///
+    /// [#932]: https://github.com/mokume-metal/mokume/issues/932
+    public func set(_ name: String, _ value: ShaderValue) {
+        box.assign(name, value)
     }
 
     // MARK: - 差し替え

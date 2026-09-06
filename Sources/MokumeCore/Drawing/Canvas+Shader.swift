@@ -52,7 +52,7 @@ extension Canvas {
         return shader
     }
 
-    /// 渡す値が列 1 つぶんの区画に収まるかを見る ([#348](https://github.com/mokume-metal/mokume/issues/348))。
+    /// 渡す値が 1 区画に収まるかを見る ([#348](https://github.com/mokume-metal/mokume/issues/348))。
     ///
     /// **警告して切り詰めるのではなく、ここで断る。** 値の数は宣言した時点で決まり、
     /// ``Shader/set(_:_:)-(_,ShaderValue)`` は宣言済みの名前しか受け付けないので**後から直せない** —
@@ -61,7 +61,10 @@ extension Canvas {
     /// 絵が出続ける。
     ///
     /// 見るのは**詰め物込みの長さ** — そのまま区画へ書き込む長さになる。
-    private static func checkValuesFit(
+    ///
+    /// **計算の入口も同じここを通る** ([#932](https://github.com/mokume-metal/mokume/issues/932))。
+    /// 塗りは列ごと・計算は頼みごとに 1 区画を使うが、区画の大きさは同じである。
+    static func checkValuesFit(
         _ values: [String: ShaderValue], path: String
     ) throws(ShaderFailure) {
         let count = ShaderSource.pack(values).count

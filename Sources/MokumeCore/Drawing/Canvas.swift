@@ -739,12 +739,21 @@ public final class Canvas {
     private let valuesStorage: GrowableBuffer
     /// 列ごとの、描画先の座標へ落とす行列の置き場。列 1 つにつき 1 区画。
     private let matrixStorage: GrowableBuffer
-    /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
-    private static let valuesStride = 256
-    /// 1 区画に収まる値の数 (float 換算)。**塗りへ渡せる値の上限**でもある。
+    /// 計算の頼みごとの、利用者が渡した値の置き場。頼み 1 つにつき 1 区画。
     ///
-    /// 上限を超える宣言は読み込みの入口 (`Canvas.loadShader` / `makeShader`) で断る
-    /// ([#348](https://github.com/mokume-metal/mokume/issues/348))。
+    /// **塗りの列と同じ形で持つ** ([#932])。値を計算の側に 1 本だけ持たせると、溜めた
+    /// 頼みが流す段で最後の値だけを読む。
+    ///
+    /// [#932]: https://github.com/mokume-metal/mokume/issues/932
+    let computeValuesStorage: GrowableBuffer
+    /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
+    static let valuesStride = 256
+    /// 1 区画に収まる値の数 (float 換算)。**塗りと計算へ渡せる値の上限**でもある。
+    ///
+    /// 上限を超える宣言は作る入口 (`Canvas.loadShader` / `makeShader` /
+    /// `loadComputation` / `makeComputation`) で断る
+    /// ([#348](https://github.com/mokume-metal/mokume/issues/348)・
+    /// [#932](https://github.com/mokume-metal/mokume/issues/932))。
     static let valueSlotCapacity = valuesStride / MemoryLayout<Float>.stride
 
     /// いまのフレームの時刻 (秒)。利用者の断片から読める。
@@ -924,6 +933,8 @@ public final class Canvas {
             stride: Self.valuesStride, minimum: 16, label: "matrices")
         self.valuesStorage = storage(
             stride: Self.valuesStride, minimum: 16, label: "values")
+        self.computeValuesStorage = storage(
+            stride: Self.valuesStride, minimum: 16, label: "computeValues")
         // 時刻・面の大きさ・影の行列はフレームに 1 区画。**大きさが変わらなくても
         // 環には載る** — 毎フレーム CPU が書き換えるという性質が同じだからである
         self.uniformsStorage = storage(
