@@ -134,6 +134,29 @@ struct InputStateTests {
         state.beginFrame()
         #expect(state.x == Float(InputState.queueLimit + 499))
     }
+
+    /// 完了条件「送った解放が失われない」([#935](https://github.com/mokume-metal/mokume/issues/935))。
+    ///
+    /// **落とすのは呼び出しであって状態ではない。** 解放をそのまま捨てていた頃は、
+    /// 離したキーが押されたまま残り、次に同じキーを押して離すまで直らなかった。
+    @Test("押し出された解放も、状態には届く")
+    func keepsTheStateOfWhatItHadToDrop() {
+        let state = InputState()
+        state.enqueue(.keyDown(code: .a, characters: "a", isRepeat: false))
+        state.beginFrame()
+        #expect(state.pressedKeys == [.a])
+
+        // 解放を溜めてから、上限ぶんの移動でそれを押し出す
+        state.enqueue(.keyUp(code: .a))
+        for index in 0..<InputState.queueLimit {
+            state.enqueue(.mouseMoved(x: Float(index), y: 0))
+        }
+        state.beginFrame()
+
+        #expect(state.pressedKeys.isEmpty)
+        // 捨てた数の意味は変えない — 押し出したのは解放 1 件
+        #expect(state.droppedEvents == 1)
+    }
 }
 
 @Suite("出来事がコールバックになる")
