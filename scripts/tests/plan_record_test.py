@@ -666,12 +666,53 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_guard_gives_up_after_repeated_nags(self):
+        """**人が居るとき**は 3 回で諦める (無限に終われないセッションを作らない)。"""
         self.capture("計画。\n", FAKE_GH_PR="42")
         for _ in range(3):
             self.assertEqual(self.guard(FAKE_GH_PR="42").returncode, 2)
-        # 4 回目は諦めて人間の判断へ返す (無限に終われないセッションを作らない)
+        # 4 回目は諦めて人間の判断へ返す
         self.assertEqual(self.guard(FAKE_GH_PR="42").returncode, 0)
         self.assertEqual(self.records(), [])
+
+    # --- 無人セッション (ADR-0036 決定 2 / #1030) ----------------------------
+    # 名乗りは MOKUME_UNATTENDED=1 で、立てるのは外に居る起動側である。変わるのは
+    # 2 つだけ — capture の言い添えと、guard が諦めないこと。
+
+    def test_guard_never_gives_up_when_unattended(self):
+        """諦めた先は「人間の判断へ返す」で、無人には返す先が居ない。
+
+        黙ってしまうと、承認を外した代わりに残すはずのプランがそのまま失われる。
+        """
+        self.capture("計画。\n", FAKE_GH_PR="42", MOKUME_UNATTENDED="1")
+        for _ in range(6):  # MAX_NAGS=3 を十分に超える
+            self.assertEqual(
+                self.guard(FAKE_GH_PR="42", MOKUME_UNATTENDED="1").returncode, 2
+            )
+        # 記録も消えない (消えると投稿しようがなくなる)
+        self.assertNotEqual(self.records(), [])
+
+    def test_guard_says_it_will_not_fall_silent_when_unattended(self):
+        """回数で黙らないことが、差し戻しの文面からも読める。"""
+        self.capture("計画。\n", FAKE_GH_PR="42")
+        attended = self.guard(FAKE_GH_PR="42").stderr
+        self.assertIn("自動的に黙ります", attended)
+
+        self.capture("計画。\n", FAKE_GH_PR="42", MOKUME_UNATTENDED="1")
+        unattended = self.guard(FAKE_GH_PR="42", MOKUME_UNATTENDED="1").stderr
+        self.assertIn("回数で黙ることはしません", unattended)
+        self.assertNotIn("自動的に黙ります", unattended)
+
+    def test_capture_says_approval_is_not_awaited_when_unattended(self):
+        """承認を待たないことを capture が言い添える (待つ相手が居ない)。"""
+        attended = self.capture("計画。\n", FAKE_GH_PR="42").stderr
+        self.assertNotIn("承認は待ちません", attended)
+
+        unattended = self.capture(
+            "計画。\n", FAKE_GH_PR="42", MOKUME_UNATTENDED="1"
+        ).stderr
+        self.assertIn("承認は待ちません", unattended)
+        # 記録と投稿先の解決は変わらない — 変えたのは言い添えだけである
+        self.assertIn("scripts/comment.sh pr 42", unattended)
 
     def test_guard_shows_how_to_escape_a_wrong_target(self):
         # 投稿先の推定が外れたとき、差し戻しを読むだけで抜けられる必要がある

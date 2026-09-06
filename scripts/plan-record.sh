@@ -17,7 +17,24 @@
 #   sanitize  stdin の本文からパス類を落として stdout へ
 #   scan      stdin の本文から BLOCK / WARN 行を stdout へ
 #
-# 環境変数: MOKUME_PLAN_RECORD=0 / MOKUME_PLAN_RECORD_DEBUG=1 / GITHUB_REPOSITORY
+# 無人セッション (ADR-0036 決定 2):
+#   MOKUME_UNATTENDED=1 は「このセッションを起こしたのは人ではない」の名乗りである。
+#   立てるのは**外に居る起動側**で (どのリポジトリにも属さない場所で走る — ADR-0017
+#   決定 1 の類型 2)、読むのはここ。判定の根拠を持っている側が判定する、の向きに従う。
+#
+#   .claude/settings.json の env に書けないのは、あれが**そのリポジトリの全セッション**に
+#   効くためである。「無人のときだけ」を静的な設定では表せない。
+#
+#   変わるのは 2 つだけで、記録も投稿先の解決も投稿の仕方も変わらない:
+#     capture  「承認は待たない」と言い添える (待ってもらう相手が居ない)
+#     guard    **MAX_NAGS で諦めない** — 諦めた先が「人間の判断へ返す」なので、
+#              返す先が居ない無人では、そのままプランが投稿されずに終わる
+#
+#   **投稿はここでは代行しない** (下の設計の要点 3)。人が見ていなくてもエージェントの目は
+#   通るので、scripts/comment.sh を打たせる形のままでよい。
+#
+# 環境変数: MOKUME_PLAN_RECORD=0 / MOKUME_PLAN_RECORD_DEBUG=1 / MOKUME_UNATTENDED=1 /
+#           GITHUB_REPOSITORY
 # 配線は .claude/settings.json、テストは scripts/tests/plan_record_test.py。
 
 set -uo pipefail
@@ -43,7 +60,11 @@ if [ "${MOKUME_PLAN_RECORD:-1}" = "0" ]; then
   exit 0
 fi
 
+# 無人セッションの名乗り (ADR-0036 決定 2。詳細は冒頭)
+unattended() { [ "${MOKUME_UNATTENDED:-0}" = "1" ]; }
+
 MAX_NAGS=3      # guard が差し戻す回数の上限。超えたら諦めて人間の判断へ返す
+                # (**無人では諦めない** — 返す先が居ないため)
 STALE_DAYS=14   # 投稿先が現れないまま放置された記録を捨てるまでの日数
 
 # --- サニタイズ -------------------------------------------------------------
@@ -565,6 +586,11 @@ post_instructions() {
   echo "  - 自分の環境でだけ成り立つ手順 (個人の設定、ローカルのポート、手元のディレクトリ構成)"
   echo "  - 他の開発者には不要な個人情報 (メールアドレス、社内 URL、1Password の参照)"
   echo "  - 未公開の計画や、まだ相談していない他人の名前"
+  if unattended; then
+    echo
+    echo "**承認は待ちません** (無人セッション — ADR-0036 決定 2)。投稿したらそのまま実装へ"
+    echo "進んでください。記録が残るので、人は後から同じものを読めます。"
+  fi
   if [ -n "$warns" ]; then
     echo
     echo "次の箇所は自動では判断できませんでした。残すかどうか本文を見て決めてください:"
@@ -680,7 +706,7 @@ capture() {
 # --- guard ------------------------------------------------------------------
 
 guard() {
-  local payload cwd dir branch meta id file nags captured targets candidate pending='' round=0
+  local payload cwd dir branch meta id file nags captured targets candidate pending='' round=0 rounds closing
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -740,7 +766,10 @@ $targets"; then
     # 投稿先がまだ無いものは急かさない (PR を立てる前に終えるセッションもある)
     [ -n "$targets" ] || continue
 
-    if [ "$nags" -ge "$MAX_NAGS" ]; then
+    # **無人では諦めない。** 諦めた先は「人間の判断へ返す」なので、返す先が居ない
+    # セッションでは、そのままプランが投稿されずに終わることになる (ADR-0036 決定 2 は
+    # 「記録は 1 文字も減らない」を前提に承認を外している)
+    if [ "$nags" -ge "$MAX_NAGS" ] && ! unattended; then
       rm -f "$meta" "$file"
       continue
     fi
@@ -760,8 +789,26 @@ $targets"; then
 
   [ -n "$pending" ] || exit 0
 
+  if unattended; then
+    rounds="$round 回目"
+    closing="$(cat <<'EOF'
+このセッションは無人です (ADR-0036 決定 2)。**回数で黙ることはしません** — 黙った先は
+「人間の判断へ返す」ですが、返す先が居ないので、そのままプランが失われます。
+
+投稿する内容が無いなら、記録ファイル (--body-file に出ているもの) を消してください。
+EOF
+)"
+  else
+    rounds="$round/$MAX_NAGS 回目"
+    closing="$(cat <<EOF
+投稿しない判断をした場合 (プランが実装と食い違って役に立たない等) は、そのまま終えて
+構いません ($MAX_NAGS 回で自動的に黙ります)。
+EOF
+)"
+  fi
+
   cat >&2 <<EOF
-着手時のプランがまだ GitHub に残っていません ($round/$MAX_NAGS 回目)。終了せず投稿してください。
+着手時のプランがまだ GitHub に残っていません ($rounds)。終了せず投稿してください。
 
 $pending
 記憶がリセットされた次のセッションは、この PR / Issue を読むだけで再開できる必要があります。
@@ -770,8 +817,7 @@ $pending
 上の投稿先が違うと思うなら、ブランチ名から推定した番号かもしれません。正しい PR /
 Issue へ投稿したうえで、--body-file に出ている記録ファイルを消せばこの差し戻しは止まります。
 
-投稿しない判断をした場合 (プランが実装と食い違って役に立たない等) は、そのまま終えて
-構いません ($MAX_NAGS 回で自動的に黙ります)。
+$closing
 EOF
   exit 2
 }
