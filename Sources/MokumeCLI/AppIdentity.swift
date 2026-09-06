@@ -42,40 +42,53 @@ nonisolated struct AppIdentity: Equatable {
         }
         """
 
+    /// ファイルに書かれている中身。**鍵の綴りはここだけ。**
+    ///
+    /// 3 つとも省略できる形で読み、揃っているかは ``make(from:path:)`` が見る —
+    /// 「どれが足りないか」まで言うには、1 つ目で止まらずに全部を読む必要がある。
+    struct Wire: Decodable {
+        var name: String?
+        var identifier: String?
+        var version: String?
+    }
+
     /// スケッチの直下から読む。
     static func read(in root: URL) throws(CommandFailure) -> AppIdentity {
         let url = root.appendingPathComponent(fileName)
         guard let data = try? Data(contentsOf: url) else {
             throw .identityMissing(path: url.path)
         }
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let wire = try? JSONDecoder().decode(Wire.self, from: data) else {
             throw .identityUnreadable(path: url.path)
         }
-        return try make(from: object, path: url.path)
+        return try make(from: wire, path: url.path)
     }
 
     /// 読んだ中身から組み立てる。
     ///
     /// **空白だけの値は書かれていないものとして扱う。** 鍵があることではなく、名乗れる
     /// 中身があることを見る。
-    static func make(from object: [String: Any], path: String) throws(CommandFailure) -> AppIdentity
-    {
-        var missing: [String] = []
-        var values: [String: String] = [:]
-        for key in ["name", "identifier", "version"] {
-            let value = (object[key] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if value.isEmpty {
-                missing.append(key)
-            } else {
-                values[key] = value
-            }
-        }
-        guard missing.isEmpty else {
+    static func make(from wire: Wire, path: String) throws(CommandFailure) -> AppIdentity {
+        let name = written(wire.name)
+        let identifier = written(wire.identifier)
+        let version = written(wire.version)
+
+        guard let name, let identifier, let version else {
+            // **足りないものを全部名指しする。** 1 つ直すたびに次を言われるのでは、
+            // 直す側は何回やり直せば終わるのかを知れない
+            var missing: [String] = []
+            if name == nil { missing.append("name") }
+            if identifier == nil { missing.append("identifier") }
+            if version == nil { missing.append("version") }
             throw .identityIncomplete(path: path, missing: missing)
         }
-        return AppIdentity(
-            name: values["name"]!, identifier: values["identifier"]!, version: values["version"]!)
+        return AppIdentity(name: name, identifier: identifier, version: version)
+    }
+
+    /// 名乗れる中身があるなら、前後を落とした文字列。無ければ `nil`。
+    private static func written(_ value: String?) -> String? {
+        let text = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? nil : text
     }
 
     /// 包みが名乗るための一覧。

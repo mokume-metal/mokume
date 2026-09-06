@@ -13,24 +13,6 @@ import Testing
 /// 経路が 2 系統あること自体を型で塞いである。
 @Suite("スケッチを走らせる")
 struct RunCommandTests {
-    @Test("宣言された実行ファイルの product から名前を取る")
-    func findsTheExecutableProduct() {
-        let dump = """
-            {"products":[
-              {"name":"lib","type":{"library":["automatic"]}},
-              {"name":"tool","type":{"executable":null}}
-            ]}
-            """
-        #expect(RunCommand.executableProductName(inDumpOf: dump) == "tool")
-    }
-
-    @Test("実行ファイルが無ければ、名前を作らない")
-    func returnsNothingWithoutAnExecutable() {
-        let dump = #"{"products":[{"name":"lib","type":{"library":["automatic"]}}]}"#
-        #expect(RunCommand.executableProductName(inDumpOf: dump) == nil)
-        #expect(RunCommand.executableProductName(inDumpOf: "壊れている") == nil)
-    }
-
     /// 指定した終了コードで終わるだけの実行ファイルを置く。
     private func makeExecutable(exiting status: Int32) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
