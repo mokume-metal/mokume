@@ -338,4 +338,34 @@ struct SharedFrameStageTests {
             #expect(preview.asksBeforeClosing)
         }
     }
+
+    /// **読む前に「読んだ」と記録しない。** `surface.json` を書くのは走り出しの 1 回だけ
+    /// なので、書きかけを掴み損ねると**直る契機が来ない** — 症状は「プレビューが真っ白の
+    /// まま何も出ない」だけで、起こし直すまで直らない
+    /// ([#1048](https://github.com/mokume-metal/mokume/issues/1048))。
+    @Test("書きかけの目録を掴んでも、その改訂を読み飛ばさない")
+    func rereadsAManifestItCouldNotDecode() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+            let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+            let moment = Date(timeIntervalSince1970: 1_000_000)
+            // 置いている途中を掴んだ = 解けない
+            try Data(#"{"width":32,"ids":[1"#.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: moment], ofItemAtPath: url.path)
+
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("manifest"))
+            defer { stage.close() }
+            stage.displayLinkFired()
+            #expect(!stage.hasSource)
+
+            // 書き手が置き終わった。**更新時刻は動かさない** — 同じ改訂を掴み直せるかを見る
+            try surface.publishManifest()
+            try FileManager.default.setAttributes(
+                [.modificationDate: moment], ofItemAtPath: url.path)
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+        }
+    }
 }

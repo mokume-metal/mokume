@@ -108,6 +108,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 問いを持っているか。**検査から見る** (`SharedFramePreview.hasPanel` と同じ扱い)。
     var asksBeforeClosing: Bool { closeQuestion != nil }
 
+    /// 差し出し元を掴めているか。**検査から見る** — 目録を読み直せたかどうかは、外からは
+    /// 「絵が出るか」でしか見えない。
+    var hasSource: Bool { source != nil }
+
     /// 問いの出し方。**検査から差し替える** — 既定は窓へシートを下ろすので、そのままでは
     /// 「押した後どうなるか」を検められない (`WatchSession.Hooks` と同じ流儀)。
     var presentQuestion: (CloseQuestion, NSWindow, @escaping (Bool) -> Void) -> Void = {
@@ -143,8 +147,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private let screenLink = ScreenDisplayLink()
 
     private var source: Source?
-    /// 区画を最後に読んだときのファイルの更新時刻。**変わったときだけ読み直す。**
-    private var manifestReadAt: Date?
+    /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
+    /// 確定させずに次の機会へ回る (``WatchedFile``)。
+    private let manifest: WatchedFile<SharedFrameSurface.Manifest>
     /// 最後に画面へ出した枚数。**同じ絵を二度出さない**ための目印。
     private var lastFrame = 0
     /// 最後に面から読んだ枚数。**出せた枚数とは別に持つ** — 差し出しに失敗した回でも
@@ -183,6 +188,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         self.gpu = gpu
         self.facet = facet
         self.look = look
+        self.manifest = WatchedFile(
+            url: facet.appendingPathComponent(SharedFrameSurface.manifestName))
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         super.init()
         screenLink.owner = self
@@ -311,13 +318,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **更新時刻で見る。** 毎フレーム読み解くのは無駄で、中身が変わるのは子が入れ替わった
     /// ときだけである。
     private func reloadSourceIfChanged() {
-        let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
-        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[
-            .modificationDate] as? Date
-        guard let modified else { return }
-        guard modified != manifestReadAt else { return }
-        manifestReadAt = modified
-        guard let manifest = SharedFrameSurface.readManifest(at: facet) else { return }
+        guard let manifest = manifest.changed() else { return }
         adopt(manifest)
     }
 

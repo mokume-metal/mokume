@@ -33,6 +33,11 @@ nonisolated protocol ExchangeRequest: Decodable {
 /// 読む前に確定させると、書き手が原子的に置いていない一瞬を 1 回掴んだだけで
 /// **その要求が永久に失われ、応答も書かれない** ([#221](https://github.com/mokume-metal/mokume/issues/221))。
 ///
+/// **要求を持たない読み手は ``WatchedFile`` を使う。** 表のうち共有できるのは 1 行目
+/// (読めなければ確定させない) だけで、残りの 3 行は「要求に応える」という、この型に固有の
+/// 契約である。共有した 1 点を落として同じ穴に落ちたのが [#987](https://github.com/mokume-metal/mokume/issues/987) と
+/// [#1048](https://github.com/mokume-metal/mokume/issues/1048) である。
+///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 @MainActor
 final class RequestFile<Request: ExchangeRequest> {
