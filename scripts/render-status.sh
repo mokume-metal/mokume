@@ -329,7 +329,11 @@ case "$mode" in
     # 3. **台帳の検査が通っていること**を、絵の検査が実際に回った証拠にする。
     #    スキップの数を数えるのではなく、走ってほしいものが走ったかを見る —
     #    書式が変わったときに、黙って通る側へ倒れないため
-    read -r ledger_verdict skipped < <(read_record "$TEST_RECORD")
+    # **読めなくても失敗しない。** このスクリプトは 0 で終える約束なので (冒頭)、
+    # read が空を掴んで set -e に落ちる形にしない。空は下の `*)` が受ける
+    ledger_verdict=''
+    skipped=0
+    read -r ledger_verdict skipped < <(read_record "$TEST_RECORD") || true
     case "$ledger_verdict" in
       passed) ;;
       skipped) give_up "台帳の検査がスキップされている (この世代の GPU が無い機械の実行)" ;;

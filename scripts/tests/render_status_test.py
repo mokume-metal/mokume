@@ -34,22 +34,15 @@ PATHS = "# 見出し\n\nSources/MokumeCore/\nSketches/  evidence-only\n"
 # console は実行ごとに行を落とすので、そこに立った判定は嘘の理由で報告を止めていた。
 
 
-def _record(ledger_body, *, others=1):
+def _record(ledger_body):
     """xunit の記録を組む。台帳の検査の中身だけを差し替える。"""
-    ledger = (
-        '    <testcase classname="MokumeCoreTests.SceneLedgerTests" '
-        f'name="sceneMatchesLedger(_:)"{ledger_body}'
-    )
-    cases = [ledger]
-    for i in range(others):
-        cases.append(
-            f'    <testcase classname="MokumeCoreTests.CanvasTests" name="draws{i}()" time="0.1" />'
-        )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>\n'
         '  <testsuite name="TestResults" errors="0" tests="2" failures="0" skipped="0" time="1.0">\n'
-        + "\n".join(cases)
-        + "\n  </testsuite>\n</testsuites>\n"
+        '    <testcase classname="MokumeCoreTests.SceneLedgerTests" '
+        f'name="sceneMatchesLedger(_:)"{ledger_body}\n'
+        '    <testcase classname="MokumeCoreTests.CanvasTests" name="draws()" time="0.1" />\n'
+        '  </testsuite>\n</testsuites>\n'
     )
 
 
