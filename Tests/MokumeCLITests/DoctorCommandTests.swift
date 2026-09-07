@@ -126,24 +126,158 @@ struct DoctorCommandTests {
     }
 
     /// **共有を既定にすると `rm -rf .build` では消えないものが生まれる。** だから
-    /// 在処を言える口が要る (掃除の道具は足さない — 在処が分かれば `rm -rf` で足りる)。
-    @Test("共有の置き場は、在処と鍵の数と大きさを名乗る")
-    func theSharedStoreIsNamed() {
+    /// 在処を言える口が要る (掃除の口は足さない — 消すのは `rm -rf` に任せる)。
+    ///
+    /// **合計 1 行では足りない。** 版の出方が速いので、どの部屋が何MBで、どれをもう誰も
+    /// 使っていないかを名乗らないと「どれを消せばよいか」に答えられない
+    /// ([#1073](https://github.com/mokume-metal/mokume/issues/1073))。
+    @Test("共有の置き場は、部屋ごとの大きさと使われ方を名乗る")
+    func theSharedStoreIsNamedRoomByRoom() {
         let root = URL(fileURLWithPath: "/store", isDirectory: true)
-        let used = DoctorCommand.sharedStoreLine(
-            DoctorCommand.SharedStore(root: root, keys: 3, bytes: 3 * 414 * 1_048_576))
-        #expect(used.contains("/store"))
-        #expect(used.contains("3 通り"))
-        #expect(used.contains("1242MB"))
+        let lines = DoctorCommand.sharedStoreLines(
+            DoctorCommand.SharedStore(
+                root: root,
+                rooms: [
+                    Self.room("swiftlang-6.3.3.1.3/0.7.1", mb: 414, .used(2)),
+                    Self.room("swiftlang-6.3.3.1.3/0.6.0", mb: 414, .unused(recorded: 1)),
+                ],
+                resolve: Self.room(BuildDirectory.resolveSegment, mb: 200, .shared),
+                bytes: 1028 * 1_048_576))
+        let text = lines.joined(separator: "\n")
+        #expect(lines[0].contains("/store"))
+        #expect(lines[0].contains("2 通り"))
+        #expect(lines[0].contains("1028MB"))
+        // 部屋ごとの大きさ — これが無いと「どれを消せばよいか」に答えられない
+        #expect(text.contains("swiftlang-6.3.3.1.3/0.7.1: 414MB"))
+        #expect(text.contains("swiftlang-6.3.3.1.3/0.6.0: 414MB"))
+        // もう誰も使っていない部屋が、そう名乗る
+        #expect(text.contains("使っているスケッチは手元に無い"))
+        // 使われている部屋を「要らない」と読める文にしない
+        #expect(text.contains("使っているスケッチが 2 本ある"))
+        // **合計と内訳の差が説明されている。** 解決専用の部屋 (実測 200MB) が内訳に
+        // 現れないと、合計と足し合わない内訳になり、内訳そのものが信用できない
+        #expect(text.contains("\(BuildDirectory.resolveSegment): 200MB"))
+        #expect(text.contains("依存の解決用"))
+
         // まだ 1 つも無いときも在処は言う (どこを見ればよいか分かる形にする)
-        let empty = DoctorCommand.sharedStoreLine(
-            DoctorCommand.SharedStore(root: root, keys: 0, bytes: 0))
-        #expect(empty.contains("/store"))
+        let empty = DoctorCommand.sharedStoreLines(
+            DoctorCommand.SharedStore(root: root, rooms: [], bytes: 0))
+        #expect(empty.count == 1)
+        #expect(empty[0].contains("/store"))
         // **数え切れなかったら数を言わない** (規律 3)
-        let blind = DoctorCommand.sharedStoreLine(
-            DoctorCommand.SharedStore(root: root, keys: 1, bytes: nil))
-        #expect(blind.contains(DoctorCommand.unknown))
-        #expect(DoctorCommand.sharedStoreLine(nil).contains(DoctorCommand.unknown))
+        let blind = DoctorCommand.sharedStoreLines(
+            DoctorCommand.SharedStore(
+                root: root,
+                rooms: [
+                    DoctorCommand.Room(
+                        key: "swiftlang-6.3.3.1.3/0.7.1", bytes: nil, standing: .unrecorded)
+                ], bytes: nil))
+        #expect(blind.joined(separator: "\n").contains(DoctorCommand.unknown))
+        #expect(DoctorCommand.sharedStoreLines(nil).joined().contains(DoctorCommand.unknown))
+    }
+
+    /// 部屋の使われ方は、`owners/` に載っている持ち主が実在するかで決まる (#1073 の条件 2)。
+    ///
+    /// **読めない記録を「誰も使っていない」へ倒さない。** 倒すと人が現役の部屋を消す —
+    /// 席を押さえる側が読めない記録を「別人のもの」へ倒すのと同じ向きである (規律 3)。
+    @Test("使われ方は、記録と持ち主の実在から決まる")
+    func theStandingComesFromTheOwnerRecords() {
+        let alive = "/sketches/alive"
+        let gone = "/sketches/gone"
+        let exists: (String) -> Bool = { $0 == alive }
+
+        #expect(DoctorCommand.standing(owners: [alive, gone], exists: exists) == .used(1))
+        #expect(DoctorCommand.standing(owners: [gone], exists: exists) == .unused(recorded: 1))
+        #expect(DoctorCommand.standing(owners: [], exists: exists) == .unrecorded)
+        // 読めない記録・書きかけの記録があるときは、実在 0 でも断定しない
+        #expect(
+            DoctorCommand.standing(owners: [gone, nil], exists: exists)
+                == .unreadable(recorded: 1))
+        #expect(
+            DoctorCommand.standing(owners: [gone, "  \n"], exists: exists)
+                == .unreadable(recorded: 1))
+        // ただし 1 つでも実在すれば、使われていることは動かない
+        #expect(DoctorCommand.standing(owners: [alive, nil], exists: exists) == .used(1))
+
+        // **読めた記録が 1 件も無いなら、実在の数を言わない** (「実在 0」だけが残ると、
+        // 数えた末に 0 だったのか、そもそも数えられなかったのかが読めない)
+        #expect(
+            DoctorCommand.standingText(.unreadable(recorded: 0))
+                == "持ち主の記録が読めない (\(DoctorCommand.unknown))")
+        #expect(DoctorCommand.standingText(.unreadable(recorded: 2)).contains("実在 0"))
+    }
+
+    /// 置き場を読むところ。**記録の在処は席を押さえる側と同じ 1 本から出す** ので、
+    /// この検査も綴りを写さず `BuildDirectory.claim` で記録を置く (ADR-0037 決定 5)。
+    @Test("置き場を読むと、部屋ごとに大きさと持ち主の生死が付く")
+    func roomsAreReadFromTheStore() throws {
+        let root = try Self.emptyDirectory()
+        let sketch = try Self.emptyDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: sketch)
+        }
+        let live = root.appendingPathComponent("swiftlang-6.3.3.1.3/0.7.1", isDirectory: true)
+        let dead = root.appendingPathComponent("swiftlang-6.3.3.1.3/0.6.0", isDirectory: true)
+        // 実在するスケッチが持ち主の部屋と、消えたスケッチが持ち主の部屋
+        #expect(BuildDirectory.claim(["demo"], for: sketch, in: live) == .free)
+        #expect(
+            BuildDirectory.claim(
+                ["demo"], for: root.appendingPathComponent("消えたスケッチ", isDirectory: true),
+                in: dead) == .free)
+        try Data(repeating: 0x41, count: 4096).write(
+            to: live.appendingPathComponent("blob", isDirectory: false))
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(BuildDirectory.resolveSegment, isDirectory: true),
+            withIntermediateDirectories: true)
+
+        let store = DoctorCommand.sharedStore(at: root)
+        #expect(store.keys == 2)
+        #expect(
+            store.rooms.map(\.key) == [
+                "swiftlang-6.3.3.1.3/0.6.0", "swiftlang-6.3.3.1.3/0.7.1",
+            ], "部屋は名前の順に並ぶ")
+        #expect(store.rooms.first { $0.key.hasSuffix("0.7.1") }?.standing == .used(1))
+        #expect(
+            store.rooms.first { $0.key.hasSuffix("0.6.0") }?.standing == .unused(recorded: 1),
+            "持ち主のスケッチが消えている部屋を、使われていると読んでいる")
+        #expect((store.rooms.first { $0.key.hasSuffix("0.7.1") }?.bytes ?? 0) >= 4096)
+        // 解決専用の部屋は持ち主を持たないので、使われ方の判定をしない
+        #expect(store.resolve?.standing == .shared)
+        #expect(store.resolve?.key == BuildDirectory.resolveSegment)
+    }
+
+    /// **判定を出すだけで、何も作らず何も消さない** (規律 1 / #1073 の条件 3)。
+    ///
+    /// 席を押さえる側は消えた持ち主の記録を解放するが (それが正しい)、読むだけの口が
+    /// 同じことをすると、**打った人が次に打ったときには判定が変わっている。**
+    @Test("置き場を読んでも、部屋も記録も 1 つも変わらない")
+    func readingTheStoreChangesNothing() throws {
+        let root = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let room = root.appendingPathComponent("swiftlang-6.3.3.1.3/0.6.0", isDirectory: true)
+        // 持ち主が消えている記録 = 席を押さえる側なら解放する対象
+        #expect(
+            BuildDirectory.claim(
+                ["demo"], for: root.appendingPathComponent("消えたスケッチ", isDirectory: true),
+                in: room) == .free)
+
+        let before = Self.names(under: root)
+        _ = DoctorCommand.sharedStore(at: root)
+        #expect(
+            Self.names(under: root) == before, "切り分けの口が置き場を触っている (規律 1)")
+    }
+
+    static func room(_ key: String, mb: Int, _ standing: DoctorCommand.Standing)
+        -> DoctorCommand.Room
+    {
+        DoctorCommand.Room(key: key, bytes: Int64(mb) * 1_048_576, standing: standing)
+    }
+
+    /// 置き場の下に在るものの名前 (並べ替えて固定した一覧)。
+    static func names(under root: URL) -> [String] {
+        let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
+        return ((walker?.allObjects ?? []).compactMap { ($0 as? URL)?.path }).sorted()
     }
 
     /// 置き場が版ごとの共有へ移っても、切り分けの口は在処を答える。
