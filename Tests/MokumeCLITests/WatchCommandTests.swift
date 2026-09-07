@@ -20,11 +20,13 @@ struct WatchCommandTests {
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
-                build: { _ in
+                rebuild: { directory in
                     self.builds += 1
-                    return (0, "")
+                    // **建っていない回を模す。** 通ったのに走らせるものが無い形が、
+                    // かつて成功として記録されていた (#1066)
+                    return RunCommand.Rebuilt(
+                        status: 0, output: "", executable: nil, binPath: directory)
                 },
-                resolveExecutable: { _ in nil },
                 launch: { _, _, _, _ in nil },
                 now: { 0 },
                 stamp: { _ in self.stamp })
@@ -86,7 +88,7 @@ struct WatchCommandTests {
     /// 書くことは必ず起きる ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 4)。
     @Test("走らせているものが居なければ、書いても何も起きない")
     func sendingWithoutAChildIsHarmless() throws {
-        let session = WatchSession(directory: try makeDirectory(), hooks: Stub().hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: Stub().hooks())
         session.send("{\"type\":\"mouseMoved\",\"x\":1,\"y\":2}\n")
     }
 
@@ -112,6 +114,7 @@ struct WatchCommandTests {
     private func report(ok: Bool) -> BuildReport {
         BuildReport(
             ok: ok, status: ok ? 0 : 1, output: "", stamp: nil, configuration: "debug",
+            launched: ok,
             timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
     }
 
@@ -161,7 +164,7 @@ struct WatchCommandTests {
     @Test("印が立つと、巡回を抜ける")
     func leavesTheLoopWhenStopped() throws {
         let stub = Stub()
-        let session = WatchSession(directory: try makeDirectory(), hooks: stub.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
 
         #expect(WatchCommand.step(session, stopped: { false }))
         #expect(!WatchCommand.step(session, stopped: { true }))
@@ -172,7 +175,7 @@ struct WatchCommandTests {
     @Test("待っている間に来た合図は、作り直しより先に効く")
     func doesNotRebuildAfterTheStopSignal() throws {
         let stub = Stub()
-        let session = WatchSession(directory: try makeDirectory(), hooks: stub.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
         session.start()
         #expect(stub.builds == 1)
 
@@ -190,7 +193,7 @@ struct WatchCommandTests {
     @Test("走らせているものが居なければ、止めたとは名乗らない")
     func doesNotClaimToHaveStoppedNothing() throws {
         let stub = Stub()
-        let session = WatchSession(directory: try makeDirectory(), hooks: stub.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
         session.start()  // launch が nil を返すので子は居ない
 
         #expect(session.stop() == .notRunning)
@@ -204,7 +207,7 @@ struct WatchCommandTests {
         watchStopRequested = 0
         defer { watchStopRequested = 0 }
         let stub = Stub()
-        let session = WatchSession(directory: try makeDirectory(), hooks: stub.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
 
         #expect(WatchCommand.step(session), "印が立つ前に抜けている")
         WatchCommand.requestStop()

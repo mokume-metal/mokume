@@ -28,11 +28,97 @@ enum RunCommand {
         print("道具: \(ToolVersion.describe())")
         if let notice = sharedSurfaceNotice(for: invocation) { print(notice) }
 
-        try build(in: directory, configuration: invocation.configuration)
-        let executable = try executablePath(in: directory, configuration: invocation.configuration)
+        // **置き場は 1 度だけ決めて持ち回る。** 作り直しと実行ファイルの解決へ別々に
+        // 判断を渡すと、片方が共有・片方がパッケージ直下という組み合わせになる
+        let context = try context(in: directory, invocation: invocation)
+        if let notice = context.place.notice { print(notice) }
+
+        let executable = try buildAndResolve(in: directory, context: context)
         // 走らせるのは人なので、速さを名乗らせる。窓口はここを通らない。
         // **名乗る名前は、いま走らせる構成と同じ値から出す**
-        try launch(executable, in: directory, reportingRate: invocation.configurationName)
+        try launch(executable, in: directory, reportingRate: context.configurationName)
+    }
+
+    /// 1 回の実行で 1 度だけ、置き場と構成と product を決める。
+    ///
+    /// **順序に意味がある。** 宣言 (`dump-package`) は置き場を 1 バイトも作らないので先に
+    /// 読めるが、固定 (`Package.resolved`) は解決が済むまで存在しない。だから読めなかった
+    /// ときだけ解決を 1 回打ち、それでも読めなければ共有しない — **推測して後から直す形は
+    /// 採らない。** 推測は道具が最新でないときに必ず外れ、外れた置き場が 414MB のまま
+    /// 掃除の当てなく残る。
+    ///
+    /// - Parameters:
+    ///   - environment: 環境。**検査から渡せる形にしてある。**
+    ///   - home: ホームディレクトリ。同上。
+    static func context(
+        in directory: URL, invocation: Invocation,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+    ) throws(CommandFailure) -> BuildContext {
+        let declared = try dumpPackage(in: directory)
+        let product = declared?.executableProductName
+
+        // **明示されたら理由を確かめない。** 選んだのは人である
+        if let given = invocation.scratchPath {
+            let url = URL(
+                fileURLWithPath: NSString(string: given).expandingTildeInPath, isDirectory: true,
+                relativeTo: directory)
+            return BuildContext(
+                configuration: invocation.configuration,
+                place: .outside(url.standardizedFileURL, given: true), product: product)
+        }
+
+        // **宣言が読めないことを、断る理由にしない。** 壊した状態から直していく途中は
+        // まさに見張っていてほしい場面である。共有はできないので、置き場は今までどおり
+        // パッケージ直下に置く
+        guard let declared else {
+            return BuildContext(
+                configuration: invocation.configuration,
+                place: .inPackage(.unreadableManifest), product: nil)
+        }
+
+        let root = BuildDirectory.root(environment: environment, home: home)
+        let toolchain = Toolchain.describe(in: directory)
+        var pin = DependencyVersion.pin(forPackageAt: directory)
+        var shareability = BuildDirectory.shareability(
+            package: declared, pin: pin, toolchain: toolchain)
+        // 足りないのが固定だけなら、1 回だけ解決して取り直す
+        if shareability == .unshared(.unresolved) {
+            resolveDependencies(in: directory, root: root)
+            pin = DependencyVersion.pin(forPackageAt: directory)
+            shareability = BuildDirectory.shareability(
+                package: declared, pin: pin, toolchain: toolchain)
+        }
+
+        let place: BuildDirectory.Place
+        switch shareability {
+        case .unshared(let fallback):
+            place = .inPackage(fallback)
+        case .shareable(let name):
+            let store = root.appendingPathComponent(name, isDirectory: true)
+            switch BuildDirectory.claim(
+                BuildDirectory.contestedNames(of: declared), for: directory, in: store)
+            {
+            case .free: place = .outside(store, given: false)
+            case .taken(let owner): place = .inPackage(.nameTaken(by: owner))
+            }
+        }
+        return BuildContext(
+            configuration: invocation.configuration, place: place, product: product)
+    }
+
+    /// 依存を解決させて `Package.resolved` を書かせる。**失敗しても投げない** —
+    /// 読めなければ共有しないだけで、ビルドそのものは次の段が同じ失敗を人へ見せる。
+    ///
+    /// **置き場は共有の 1 つに固定する。** 解決に積まれるのは依存の複製と prebuilt
+    /// (実測 200MB) だけで、コンパイルの産物は 1 バイトも入らない — 取り違えようが
+    /// 無いので、鍵で分ける理由が無い。
+    private static func resolveDependencies(in directory: URL, root: URL) {
+        let store = root.appendingPathComponent(
+            BuildDirectory.resolveSegment, isDirectory: true)
+        _ = try? swift(
+            ["package", "resolve", "--scratch-path", store.path], in: directory,
+            capturing: true, discardingErrors: true)
     }
 
     /// 画面の出口が共有する面になっていることを名乗る 1 行。区画が無ければ `nil`。
@@ -57,16 +143,98 @@ enum RunCommand {
             + " 窓は出ない。窓で見たいなら、その区画を消す"
     }
 
-    /// 作り直す。出力はそのまま流す — 失敗したときに読むのは人なので、道具が
-    /// 挟まって形を変えない方がよい。
+    /// 1 回の作り直しの結果。
+    struct Rebuilt: Equatable {
+        /// 作り直しの終了コード。
+        let status: Int32
+        /// 出力。**掴んだときだけ中身が入る** (流したときは空)。
+        let output: String
+        /// 走らせるもの。**建っていなければ `nil`** — 作り直しが通ったことと、走らせる
+        /// ものが在ることは別である。
+        let executable: URL?
+        /// 出来上がりが置かれた場所。失敗を名乗るのに要る。
+        let binPath: URL
+    }
+
+    /// 作り直して、走らせるものの場所を返す。
     ///
-    /// 構成を渡さないときは道具立ての既定に任せる。**既定を書き固めない** — ここが
-    /// 名乗ると、道具立てが既定を変えたときに黙ってずれる。
-    static func build(in directory: URL, configuration: String? = nil) throws(CommandFailure) {
-        let status = try swift(
-            ["build"] + configurationArguments(configuration), in: directory, capturing: false
-        ).status
-        guard status == 0 else { throw .buildFailed(status: status) }
+    /// ## 「在るか」ではなく「いま建ったか」を見る
+    ///
+    /// 置き場の計画が古いと、`swift build` は**「Build complete!」と言って実行ファイルを
+    /// 1 つも作らない** ([#1055](https://github.com/mokume-metal/mokume/issues/1055) で
+    /// 再現)。そのとき置き場に前の実行ファイルが残っていれば、存在を見るだけの検査は
+    /// 通ってしまい、**中身が別のスケッチのものを起動する。**
+    ///
+    /// だから**先に消す。** 消えたものが建っていれば、それはこの作り直しの産物である。
+    /// 代償は再リンク 1 回で、見張りは毎回ソースが変わるので追加の費用は無い
+    /// (無変更のまま `run` を打ち直したときだけ増える)。
+    ///
+    /// - Parameter capturing: 出力を掴むか。**既定は流す** — 失敗の内容を読むのは人で、
+    ///   道具が挟まって形を変えない方がよい。掴むのは記録へ載せる見張りだけである。
+    static func rebuild(in directory: URL, context: BuildContext, capturing: Bool = false)
+        throws(CommandFailure) -> Rebuilt
+    {
+        let bin = try binPath(in: directory, context: context)
+        if let product = context.product {
+            let executable = bin.appendingPathComponent(product, isDirectory: false)
+            try? FileManager.default.removeItem(at: executable)
+            try? FileManager.default.removeItem(
+                at: bin.appendingPathComponent("\(product).dSYM", isDirectory: true))
+        }
+
+        let result = try swift(
+            ["build"] + context.arguments, in: directory, capturing: capturing)
+
+        // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
+        // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
+        // (先に消せていないので「いま建った」までは言えないが、他人の産物も居ない)
+        let product = context.product ?? (try? dumpPackage(in: directory))?.executableProductName
+        guard let product else {
+            return Rebuilt(status: result.status, output: result.output, executable: nil,
+                binPath: bin)
+        }
+        let executable = bin.appendingPathComponent(product, isDirectory: false)
+        let built = FileManager.default.isExecutableFile(atPath: executable.path)
+        return Rebuilt(
+            status: result.status, output: result.output, executable: built ? executable : nil,
+            binPath: bin)
+    }
+
+    /// 作り直して、走らせるものを返す。**通らなければ投げる** (人へ見せる経路の形)。
+    static func buildAndResolve(in directory: URL, context: BuildContext) throws(CommandFailure)
+        -> URL
+    {
+        try executable(from: rebuild(in: directory, context: context), context: context,
+            in: directory)
+    }
+
+    /// 作り直しの結果を、人へ見せる経路の形に読む。
+    ///
+    /// **3 つの失敗を混ぜない。** 作り直しが通らなかった / 通ったのに建っていない /
+    /// そもそも走らせるものを決められない は、次の一手が違う。
+    static func executable(from result: Rebuilt, context: BuildContext, in directory: URL)
+        throws(CommandFailure) -> URL
+    {
+        guard result.status == 0 else { throw .buildFailed(status: result.status) }
+        guard let executable = result.executable else {
+            // 名前が分からないままだったのなら、宣言が読めていない — 走らせるものを
+            // 決められないという、別の失敗である
+            guard let product = context.product else {
+                throw .noExecutable(path: directory.path)
+            }
+            throw .productNotBuilt(product: product, path: result.binPath.path)
+        }
+        return executable
+    }
+
+    /// 出来上がりが置かれる場所。**道具立てに聞く** — 置き場の中の構造を組み立てると、
+    /// 道具立てが並びを変えた日に黙って別の場所を指す。
+    static func binPath(in directory: URL, context: BuildContext) throws(CommandFailure) -> URL {
+        let output = try swift(
+            ["build", "--show-bin-path"] + context.arguments, in: directory, capturing: true
+        ).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !output.isEmpty else { throw .noExecutable(path: directory.path) }
+        return URL(fileURLWithPath: output, isDirectory: true)
     }
 
     /// 構成の指定を、道具立てへ渡す形にする。
@@ -75,29 +243,16 @@ enum RunCommand {
         return ["-c", configuration]
     }
 
-    /// 走らせるものの場所。
+    /// 走らせるものの場所。**建て直さずに、既に在るものを指す。**
     ///
     /// **宣言された実行ファイルの product から名前を取る。** ビルドの出力を漁って
     /// それらしいものを選ぶと、product が増えたときに黙って別のものを起動する。
-    /// - Parameter declared: 既に読んである宣言。**渡せば `dump-package` を起こさない** —
-    ///   1 回が数百 ms かかるので、束ねる経路のように 2 度要る場所では持ち回る。
-    static func executablePath(
-        in directory: URL, configuration: String? = nil, declared: SwiftPM.Package? = nil
-    ) throws(CommandFailure) -> URL {
-        let package: SwiftPM.Package?
-        if let declared {
-            package = declared
-        } else {
-            package = try dumpPackage(in: directory)
-        }
-        guard let name = package?.executableProductName else {
-            throw .noExecutable(path: directory.path)
-        }
-        let binPath = try swift(
-            ["build", "--show-bin-path"] + configurationArguments(configuration), in: directory,
-            capturing: true
-        ).output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let url = URL(fileURLWithPath: binPath).appendingPathComponent(name)
+    static func executablePath(in directory: URL, context: BuildContext) throws(CommandFailure)
+        -> URL
+    {
+        guard let product = context.product else { throw .noExecutable(path: directory.path) }
+        let url = try binPath(in: directory, context: context)
+            .appendingPathComponent(product, isDirectory: false)
         guard FileManager.default.isExecutableFile(atPath: url.path) else {
             throw .noExecutable(path: url.path)
         }

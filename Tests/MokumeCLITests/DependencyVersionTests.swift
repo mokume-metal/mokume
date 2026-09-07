@@ -70,11 +70,11 @@ struct DependencyVersionTests {
     func theDoctorListsTheDependencyVersion() {
         let place = URL(fileURLWithPath: "/tmp/sketch", isDirectory: true)
         let known = DoctorCommand.stateLines(
-            .init(place: place, hasPackage: true, hasBuild: true, dependency: "0.5.0"))
+            .init(place: place, hasPackage: true, buildDirectory: place.appendingPathComponent(".build"), dependency: "0.5.0"))
         #expect(known.contains { $0.contains("依存している mokume: 0.5.0") })
 
         let unknown = DoctorCommand.stateLines(
-            .init(place: place, hasPackage: true, hasBuild: true, dependency: nil))
+            .init(place: place, hasPackage: true, buildDirectory: place.appendingPathComponent(".build"), dependency: nil))
         #expect(
             unknown.contains {
                 $0.contains("依存している mokume") && $0.contains(DoctorCommand.unknown)

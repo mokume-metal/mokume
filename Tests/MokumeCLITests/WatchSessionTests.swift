@@ -25,18 +25,22 @@ struct WatchSessionTests {
         var builtIn: [URL] = []
         /// 作り直しに入ったところ。**名乗りとの順序**を見るために要る。
         var onBuild: () -> Void = {}
+        /// 走らせるものが建ったか。**通ったのに建っていない回**を作れるようにしてある。
+        var productBuilt = true
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
-                build: { directory in
+                rebuild: { directory in
                     self.onBuild()
                     self.builds += 1
                     self.builtIn.append(directory)
                     // 作り直しには時間がかかる。刻む対象なので時計を進める
                     self.clock += 0.5
-                    return (self.buildStatus, self.buildOutput)
+                    let bin = directory.appendingPathComponent("bin")
+                    return RunCommand.Rebuilt(
+                        status: self.buildStatus, output: self.buildOutput,
+                        executable: self.productBuilt ? bin : nil, binPath: directory)
                 },
-                resolveExecutable: { $0.appendingPathComponent("bin") },
                 launch: { _, _, stamp, rate in
                     self.launches += 1
                     self.stampsGivenToChildren.append(stamp)
@@ -55,7 +59,7 @@ struct WatchSessionTests {
     func aReportingSessionHandsTheConfigurationToTheChild() throws {
         let recorder = Recorder()
         let session = WatchSession(
-            directory: try makeDirectory(), configuration: "release", reportsRate: true,
+            directory: try makeDirectory(), context: testContext(configuration: "release"), reportsRate: true,
             hooks: recorder.hooks())
 
         let report = session.start()
@@ -69,10 +73,10 @@ struct WatchSessionTests {
     /// ここで `-c debug` と書き固めると、道具立てが既定を変えた日に黙ってずれる。
     @Test("構成が選ばれていなければ、道具立てへ渡す指定を持たない")
     func leavesTheDefaultConfigurationToTheToolchain() throws {
-        let session = WatchSession(directory: try makeDirectory(), hooks: Recorder().hooks())
-        #expect(session.configuration == nil)
-        #expect(session.configurationName == RunCommand.defaultConfigurationName)
-        #expect(RunCommand.configurationArguments(session.configuration).isEmpty)
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: Recorder().hooks())
+        #expect(session.context.configuration == nil)
+        #expect(session.context.configurationName == RunCommand.defaultConfigurationName)
+        #expect(RunCommand.configurationArguments(session.context.configuration).isEmpty)
     }
 
     /// **始めることを、始める前に言う。** 作り直しはこの流れを塞ぐので、後から言うと
@@ -80,7 +84,7 @@ struct WatchSessionTests {
     @Test("作り直しは、始める前に名乗る")
     func announcesBeforeItRebuilds() throws {
         let recorder = Recorder()
-        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         var events: [String] = []
         session.willRebuild = { events.append($0 ? "初回を始める" : "変更で始める") }
         recorder.onBuild = { events.append("作り直す") }
@@ -97,7 +101,7 @@ struct WatchSessionTests {
     @Test("名乗りを渡さなければ、何も起きない")
     func staysSilentWithoutAListener() throws {
         let recorder = Recorder()
-        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         session.start()
         #expect(recorder.builds == 1)
     }
@@ -109,11 +113,51 @@ struct WatchSessionTests {
         return url
     }
 
+    /// **通ったことと、走らせるものが在ることは別である。**
+    ///
+    /// かつてここは分かれていなかった — 実行ファイルを解決できなかった回も `ok: true` で
+    /// 記録され、症状は「保存した → 作り直したと出た → 絵が止まっている」で、**記録の
+    /// どこにも理由が出なかった** ([#1066](https://github.com/mokume-metal/mokume/issues/1066))。
+    /// 置き場を共有すると、他のプロセスが実行ファイルを消した瞬間にこれを踏める。
+    @Test("作り直しは通ったのに建っていない回は、成功として記録しない")
+    func aRebuildThatBuiltNothingIsNotRecordedAsSuccess() throws {
+        let recorder = Recorder()
+        recorder.productBuilt = false
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(product: "hello"),
+            hooks: recorder.hooks())
+
+        let report = session.start()
+        #expect(!report.ok, "建っていない回を成功として記録している")
+        #expect(!report.launched)
+        #expect(recorder.launches == 0, "走らせるものが無いのに起こそうとしている")
+        // **記録に理由が出る。** 終了コードは 0 なので、それだけでは読み手に何も届かない
+        #expect(report.output.contains("hello"))
+        #expect(report.output.contains("建っていない"))
+        #expect(report.summary.contains("失敗"))
+        // 走っているものは落とさない (作り直しの失敗と同じ扱い)
+        #expect(report.timings.relaunchMs == nil)
+    }
+
+    /// 起こせなかったことも記録に出る。**作り直しの失敗とは別の状態**である。
+    @Test("建ったのに起こせなかった回は、そう名乗る")
+    func aRebuildThatCouldNotLaunchSaysSo() throws {
+        let recorder = Recorder()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+
+        // Recorder の launch は常に nil を返す (子を作らない)
+        let report = session.start()
+        #expect(report.ok, "作り直し自体は通っている")
+        #expect(!report.launched)
+        #expect(report.summary.contains("起こせていない"))
+    }
+
     @Test("最初の 1 回は、変化を待たずに作って走らせる")
     func buildsOnceAtTheStart() throws {
         let recorder = Recorder()
         let session = WatchSession(
-            directory: try makeDirectory(), hooks: recorder.hooks())
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
 
         let report = session.start()
         #expect(recorder.builds == 1)
@@ -130,7 +174,7 @@ struct WatchSessionTests {
     @Test("変わっていなければ何もしない")
     func staysIdleWhenNothingChanged() throws {
         let recorder = Recorder()
-        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         session.start()
 
         #expect(session.tick() == nil)
@@ -142,7 +186,7 @@ struct WatchSessionTests {
     @Test("変わったら作り直して差し替え、所要時間を 3 つに分けて出す")
     func rebuildsAndReplacesOnChange() throws {
         let recorder = Recorder()
-        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         session.start()
 
         recorder.stamp = "bbb"
@@ -160,7 +204,7 @@ struct WatchSessionTests {
     @Test("新しい世代の刻印が、走らせる子へ渡る")
     func handsTheStampToTheChild() throws {
         let recorder = Recorder()
-        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         session.start()
         recorder.stamp = "bbb"
         session.tick()
@@ -172,7 +216,7 @@ struct WatchSessionTests {
     @Test("作り直しに失敗したら、差し替えない")
     func keepsTheRunningVersionWhenTheBuildFails() throws {
         let recorder = Recorder()
-        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         session.start()
 
         recorder.stamp = "bbb"
@@ -191,7 +235,7 @@ struct WatchSessionTests {
     @Test("壊れたままのソースで、作り直しを繰り返さない")
     func doesNotRetryTheSameBrokenSource() throws {
         let recorder = Recorder()
-        let session = WatchSession(directory: try makeDirectory(), hooks: recorder.hooks())
+        let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         session.start()
         recorder.stamp = "bbb"
         recorder.buildStatus = 1
@@ -211,7 +255,7 @@ struct WatchSessionTests {
     func leavesTheOutcomeInTheFacet() throws {
         let recorder = Recorder()
         let directory = try makeDirectory()
-        let session = WatchSession(directory: directory, hooks: recorder.hooks())
+        let session = WatchSession(directory: directory, context: testContext(), hooks: recorder.hooks())
         session.start()
 
         let url = directory
@@ -234,7 +278,7 @@ struct WatchSessionTests {
         let work = try makeDirectory()
         // 走らせたスケッチは MOKUME_WORK_DIR に従って観測を書く。記録だけパッケージの
         // 場所に残ると、読み手から見て観測と記録が割れる (#331)
-        let session = WatchSession(directory: package, facetBase: work, hooks: recorder.hooks())
+        let session = WatchSession(directory: package, context: testContext(), facetBase: work, hooks: recorder.hooks())
         session.start()
 
         #expect(
@@ -281,8 +325,11 @@ struct WatchSessionTests {
     @MainActor
     private func hooks(ignoringTermination ignores: Bool, ready: Ready) -> WatchSession.Hooks {
         WatchSession.Hooks(
-            build: { _ in (0, "") },
-            resolveExecutable: { _ in URL(fileURLWithPath: "/bin/sh") },
+            rebuild: { directory in
+                RunCommand.Rebuilt(
+                    status: 0, output: "", executable: URL(fileURLWithPath: "/bin/sh"),
+                    binPath: directory)
+            },
             launch: { executable, _, _, _ in
                 let process = Process()
                 process.executableURL = executable
@@ -307,7 +354,7 @@ struct WatchSessionTests {
     func stopsAChildThatListens() throws {
         let ready = Ready()
         let session = WatchSession(
-            directory: try makeDirectory(), hooks: hooks(ignoringTermination: false, ready: ready),
+            directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: false, ready: ready),
             stopTimeout: 1)
         session.start()
         let child = try #require(session.child)
@@ -323,7 +370,7 @@ struct WatchSessionTests {
     func killsAChildThatIgnoresTermination() throws {
         let ready = Ready()
         let session = WatchSession(
-            directory: try makeDirectory(), hooks: hooks(ignoringTermination: true, ready: ready),
+            directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: true, ready: ready),
             stopTimeout: 0.2)
         session.start()
         let child = try #require(session.child)
@@ -343,7 +390,7 @@ struct WatchSessionTests {
     func replacesEvenWhenTheChildIgnoresTermination() throws {
         let ready = Ready()
         let session = WatchSession(
-            directory: try makeDirectory(), hooks: hooks(ignoringTermination: true, ready: ready),
+            directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: true, ready: ready),
             stopTimeout: 0.2)
         session.start()
         let first = try #require(session.child)

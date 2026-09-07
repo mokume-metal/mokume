@@ -76,7 +76,10 @@ struct TemplateBuildTests {
 
         // 実行ファイルの隣を起点に、絵を探す並びの中に運ばれた資材が入っている。
         // **ここが繋がっていないと、宣言は書かれているのに実行時に読めない**
-        let executable = try RunCommand.executablePath(in: root)
+        // **置き場はパッケージ直下に固定する。** ここは素の `swift build` で建てた
+        // ものを見るので、道具が選ぶ置き場 (版ごとの共有) とは別の場所である
+        let executable = try RunCommand.executablePath(
+            in: root, context: testContext(product: "asset-sketch"))
         let neighbourhood = executable.deletingLastPathComponent()
         let searched = ImageFile.candidates(
             for: "assets/grain.txt", workingDirectory: root.path,

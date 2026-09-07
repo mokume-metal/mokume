@@ -29,6 +29,28 @@ struct InvocationTests {
             try Invocation.parse(["--configuration", "release", "/tmp/sketch"]) == expected)
     }
 
+    /// **既定を変えたので、戻す口が要る。** 置き場は既定で版ごとの共有になるが、
+    /// 隔離したい場面 (検査・計測) では従来どおりパッケージ直下を指せる。
+    @Test("置き場は、構成と同じ形で順序を問わずに受ける")
+    func takesTheScratchPathOnEitherSide() throws {
+        let expected = Invocation(place: "/tmp/sketch", scratchPath: ".build")
+        #expect(try Invocation.parse(["/tmp/sketch", "--scratch-path", ".build"]) == expected)
+        #expect(try Invocation.parse(["--scratch-path", ".build", "/tmp/sketch"]) == expected)
+        // 構成と併せて渡せる (どちらも道具立てへ通す指定である)
+        #expect(
+            try Invocation.parse(["-c", "release", "--scratch-path", "/store", "/tmp/sketch"])
+                == Invocation(
+                    place: "/tmp/sketch", configuration: "release", scratchPath: "/store"))
+    }
+
+    /// **知らない選択肢を黙って場所にしない** ([#680] が構成で踏んだ形と同じ)。
+    ///
+    /// [#680]: https://github.com/mokume-metal/mokume/issues/680
+    @Test("置き場の綴りのあとに値が無ければ、使い方を言う")
+    func aScratchPathWithoutAValueIsRefused() throws {
+        #expect(throws: CommandFailure.self) { try Invocation.parse(["--scratch-path"]) }
+    }
+
     /// **名乗りと実体は同じ値から出す。** 選ばれていなければ道具立ての既定に任せ、
     /// 名乗りだけ既定の名前を使う。
     @Test("選ばれていなければ、道具立てに任せて既定の名前を名乗る")
@@ -92,7 +114,7 @@ struct InvocationTests {
 
         // 見張りが置く先 (WatchCommand が窓を出せたときに作る区画)
         let session = WatchSession(
-            directory: sketch, facetBase: invocation.facetBase(workDirectory: given))
+            directory: sketch, context: testContext(), facetBase: invocation.facetBase(workDirectory: given))
         let placed = WatchCommand.viewportFacet(for: session)
         #expect(placed.path.hasPrefix(work.path), "見張りはスケッチの場所ではなく基準の下へ置く")
         try FileManager.default.createDirectory(at: placed, withIntermediateDirectories: true)
