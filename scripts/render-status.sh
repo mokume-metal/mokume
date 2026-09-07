@@ -287,34 +287,9 @@ report_merge_group() {
 }
 
 # 記録から「台帳の検査がどうなったか」と「スキップの数」を読む (#1056)。
-#
-# **XML を grep で読まない。** 見たいのは要素の入れ子 (`<testcase>` の子に `<skipped>` /
-# `<failure>` が居るか) で、行の並びに依らせると書式が変わった日に黙って通る側へ倒れる。
-# 出すのは「判定 スキップ数」の 1 行。読めなければ判定は `unreadable`。
+# 中身は scripts/read-test-record.py が持つ (heredoc に Python を埋めない・#817)。
 read_record() {
-  python3 - "$1" "$LEDGER_CLASS" <<'PY'
-import sys
-import xml.etree.ElementTree as ET
-
-path, klass = sys.argv[1], sys.argv[2]
-try:
-    cases = list(ET.parse(path).getroot().iter("testcase"))
-except Exception:
-    print("unreadable 0")
-    raise SystemExit(0)
-
-skipped = sum(1 for c in cases if c.find("skipped") is not None)
-mine = [c for c in cases if c.get("classname") == klass]
-if not mine:
-    verdict = "absent"
-elif any(c.find("failure") is not None or c.find("error") is not None for c in mine):
-    verdict = "failed"
-elif all(c.find("skipped") is not None for c in mine):
-    verdict = "skipped"
-else:
-    verdict = "passed"
-print(verdict, skipped)
-PY
+  python3 "$(dirname "${BASH_SOURCE[0]}")/read-test-record.py" "$1" "$LEDGER_CLASS"
 }
 
 mode=${1:-}
