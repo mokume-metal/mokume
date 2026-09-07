@@ -285,7 +285,7 @@ REFERENCE_OUT := .build/reference
 # public は 1 つも動かないので、一覧も ADR-0020 の検査も全部を見たままになる
 REFERENCE_OMIT := \
 	SketchApplication SharedFrameWindow SharedFramePreview SketchRuntime Clock FrameRateNotice OutputStage \
-	StartupReads WorkDirectory SourceStamp RuntimeLoad \
+	StartupReads WorkDirectory SourceStamp RuntimeLoad BundledShaders \
 	InputState InputEvent \
 	ObservationRequest ObservationReport ExposedValue FrameStats \
 	ParamBox
@@ -312,9 +312,17 @@ reference: build ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公�
 # リリースのワークフローが Release の資産として上げる — CI にステップを足さず、
 # 束ね方の実体は Makefile に置く (api-list と同じ形)。
 #
-# **2 つで 1 組**にする。ひな形は資源の束 (mokume_MokumeCLI.bundle) に入り、実行ファイル
-# は Bundle.module としてその束を**隣から**探す。片方だけ配ると、入れた人は new を
-# 打った瞬間に「ひな形が見つからない」を踏む。
+# **実行ファイルと、道具立てが作った資源の束を全部**入れる。束は実行ファイルの**隣から**
+# 探されるので (Bundle.module)、1 つでも欠けるとその資源を読む経路だけが配った先で落ちる。
+#
+# **名前を直書きしない。** ここが mokume_MokumeCLI.bundle だけを挙げていたために、
+# MokumeCore の束が v0.5.0 から 3 版にわたって欠け、v0.6.0 で窓の所有が道具側へ移った
+# 途端に watch が起動できなくなった (#1054)。入れるものの正典は Package.swift の宣言で、
+# 道具立てはそこから束を作る — その成果物をそのまま全部入れれば、資源が増えても
+# ここを touch せずに追随する (ADR-0029 決定 4)。
+#
+# **欠落は、配る前に分かる形にする** (同決定)。束ねた後に資産の中身と突き合わせ、作られた
+# 束が 1 つでも入っていなければ赤で止まる。束ねる手と確かめる手は同じ 1 つの列挙を読む。
 #
 # **実行ファイルは mokume という名前で入れる。** product 名が mokume-cli なのは
 # SwiftPM の制約 (ライブラリと同名の product を置けない) で、利用者が打つ名前とは別。
@@ -330,10 +338,22 @@ cli-dist: ## 道具の配布物を束ねる (OUT=path で置き場を指定)
 	rm -rf "$(CLI_STAGE)"
 	mkdir -p "$(CLI_STAGE)" "$(dir $(CLI_ASSET))"
 	cp .build/release/mokume-cli "$(CLI_STAGE)/mokume"
-	cp -R .build/release/mokume_MokumeCLI.bundle "$(CLI_STAGE)/"
-	COPYFILE_DISABLE=1 tar -czf "$(or $(OUT),$(CLI_ASSET))" \
-		-C "$(CLI_STAGE)" mokume mokume_MokumeCLI.bundle
-	@echo "束ねた: $(or $(OUT),$(CLI_ASSET))"
+	@set -eu; \
+	bundles="$$(cd .build/release && ls -d *.bundle 2>/dev/null || true)"; \
+	if [ -z "$$bundles" ]; then \
+		echo "道具立てが資源の束を 1 つも作っていない (.build/release に *.bundle が無い)" >&2; \
+		exit 1; \
+	fi; \
+	for bundle in $$bundles; do cp -R ".build/release/$$bundle" "$(CLI_STAGE)/"; done; \
+	asset="$(or $(OUT),$(CLI_ASSET))"; \
+	COPYFILE_DISABLE=1 tar -czf "$$asset" -C "$(CLI_STAGE)" mokume $$bundles; \
+	listed="$$(tar tzf "$$asset")"; \
+	for bundle in $$bundles; do \
+		printf '%s\n' "$$listed" | grep -q "^$$bundle/" || { \
+			echo "束ねたはずの $$bundle が資産に入っていない: $$asset" >&2; exit 1; }; \
+	done; \
+	echo "束ねた: $$asset"; \
+	echo "入れた束: $$(echo $$bundles | tr '\n' ' ')"
 
 # 説明文の中の例の絵。**人が貼るのではなく、コードから機械が撮って書き戻す**
 # (ADR-0027 決定 2)。`///` の中の ```swift の塊に囲み (<!-- shot: … -->) を付けると

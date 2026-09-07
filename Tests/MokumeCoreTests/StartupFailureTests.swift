@@ -101,11 +101,16 @@ struct StartupFailureTests {
         }
     }
 
-    @Test("同梱の断片が見つからないときは、包みの中を見るよう促す")
+    /// **配り方は 2 通りある。** 束ねた `.app` と、素の実行ファイルとして配ったもの
+    /// (Homebrew はこちら) で、文面が前者しか案内していないと、後者で読んだ人は
+    /// 自分の配布物の話だと分からない ([#1058](https://github.com/mokume-metal/mokume/issues/1058))。
+    @Test("同梱の断片が見つからないときは、包みの在処を両方の配り方で促す")
     func theMissingShaderMessagePointsIntoTheBundle() {
         let text = RenderFailure.shaderSourceMissing(name: "Shapes.metal").description
         #expect(text.contains("Shapes.metal"))
         #expect(text.contains("\(ModuleResources.bundleName).bundle"))
+        #expect(text.contains("実行ファイルの隣"))
+        #expect(text.contains(".app"))
     }
 
     @Test("起動できなかったときに出るのは、人が読む側の文面")

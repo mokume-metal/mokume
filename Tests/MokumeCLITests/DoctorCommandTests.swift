@@ -15,7 +15,9 @@ import mokume
 @Suite("切り分けの口")
 struct DoctorCommandTests {
     static let sound = DoctorCommand.Environment(
-        system: "26.1.0", machine: "arm64", canDraw: true, toolchain: "Apple Swift version 6.3.3")
+        system: "26.1.0", machine: "arm64", canDraw: true,
+        resources: URL(fileURLWithPath: "/opt/tool/mokume_MokumeCore.bundle", isDirectory: true),
+        toolchain: "Apple Swift version 6.3.3")
 
     static func state(_ place: URL) -> DoctorCommand.State {
         DoctorCommand.State(place: place, hasPackage: true, hasBuild: true, lastBuild: nil)
@@ -29,6 +31,27 @@ struct DoctorCommandTests {
         #expect(lines.contains("arm64"))
         #expect(lines.contains("使える"))
         #expect(lines.contains("Apple Swift version 6.3.3"))
+    }
+
+    /// **`canDraw` とは別の軸。** GPU が使えても、資源が配布物に入っていなければ描き
+    /// 始められない — v0.6.0 はまさにその形で `watch` が起動しなかった
+    /// ([#1054](https://github.com/mokume-metal/mokume/issues/1054))。
+    ///
+    /// **在処まで出す。** 実行ファイルの隣から読めているのか、組み上げた機械の作業用
+    /// ディレクトリから読めているのかが、配った形が成立しているかを決める
+    /// ([#1059](https://github.com/mokume-metal/mokume/issues/1059))。
+    @Test("同梱の資源は、読めるかと在処の両方を名乗る")
+    func theBundledResourcesAreNamedWithTheirLocation() {
+        let lines = DoctorCommand.environmentLines(Self.sound).joined(separator: "\n")
+        #expect(lines.contains("同梱の資源: 読める"))
+        #expect(lines.contains("/opt/tool/mokume_MokumeCore.bundle"))
+
+        var stripped = Self.sound
+        stripped.resources = nil
+        let missing = DoctorCommand.environmentLines(stripped).joined(separator: "\n")
+        #expect(missing.contains("同梱の資源: 読めない"))
+        // GPU の判定は別の軸なので、資源が欠けても「使える」のまま
+        #expect(missing.contains("描く道具: 使える"))
     }
 
     /// **足りないほうも名指しする。** 前提を満たしていない人は、区画の話を読んでも直せない。

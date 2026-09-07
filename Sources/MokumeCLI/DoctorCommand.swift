@@ -41,6 +41,12 @@ enum DoctorCommand {
         var machine: String
         /// 描く道具が使えるか。読めなければ `nil`。
         var canDraw: Bool?
+        /// 同梱のシェーダの原文が置かれている場所。読めなければ `nil`。
+        ///
+        /// **`canDraw` とは別の軸**である。GPU とコマンドの発行口が揃っていても、資源が
+        /// 配布物に入っていなければ描き始められない — v0.6.0 はまさにその形で `watch` が
+        /// 起動しなかった ([#1054](https://github.com/mokume-metal/mokume/issues/1054))。
+        var resources: URL?
         /// 道具立ての名乗り 1 行。読めなければ `nil`。
         var toolchain: String?
         /// 道具自身の版。**在処から導く** (#634)。
@@ -126,6 +132,10 @@ enum DoctorCommand {
     ///
     /// **足りないものは名指しし、読めないものは名乗らない。** 版が読めているときだけ
     /// 「満たしている / 足りない」を言う。
+    ///
+    /// 同梱の資源だけは**在処まで書く**。読めた場所が実行ファイルの隣か、組み上げた
+    /// 機械の作業用ディレクトリかで、配った形が成立しているかが決まるためである
+    /// ([#1059](https://github.com/mokume-metal/mokume/issues/1059))。
     static func environmentLines(_ environment: Environment) -> [String] {
         [
             "macOS: \(environment.system) (要 \(requiredSystemVersion) 以上 — "
@@ -133,6 +143,9 @@ enum DoctorCommand {
             "機種: \(environment.machine)"
                 + (environment.machine.hasPrefix("arm64") ? "" : " (Apple Silicon ではない)"),
             "描く道具: \(environment.canDraw.map { $0 ? "使える" : "使えない" } ?? unknown)",
+            "同梱の資源: "
+                + (environment.resources.map { "読める (\($0.path))" }
+                    ?? "読めない — 配布物に包みが入っていない (この状態では窓を出せない)"),
             "道具立て: \(environment.toolchain ?? "\(unknown) — swift を起動できなかった")",
             "道具: \(environment.tool)",
         ]
@@ -177,6 +190,7 @@ enum DoctorCommand {
             system: "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
             machine: machine(),
             canDraw: RenderDevice.isAvailable,
+            resources: BundledShaders.location,
             toolchain: toolchain(in: directory))
     }
 
