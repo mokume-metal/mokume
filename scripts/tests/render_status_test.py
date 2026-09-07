@@ -30,16 +30,33 @@ LEDGER = "shapes 1111\ntransforms 2222\n"
 # `Sketches/` は印つきの行 — 絵の証跡は要るが、覆いの判定には数えない (#497)
 PATHS = "# 見出し\n\nSources/MokumeCore/\nSketches/  evidence-only\n"
 
-# 台帳の suite が通った実行の記録 (実際の出力の要点だけ)
-LOG_PASSED = """◇ Test run started.
-✔ Suite "代表シーンの台帳" passed after 1.234 seconds.
-✔ Test run with 62 tests passed after 12.345 seconds.
-"""
-# GPU の無い機械の記録 — 台帳の suite はスキップされている
-LOG_SKIPPED = """◇ Test run started.
-➜ Suite "代表シーンの台帳" skipped: "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする"
-✔ Test run with 31 tests passed after 3.210 seconds.
-"""
+# 判定が読むのは console ではなく、SwiftPM が自分でファイルへ書く記録である (#1056)。
+# console は実行ごとに行を落とすので、そこに立った判定は嘘の理由で報告を止めていた。
+
+
+def _record(ledger_body):
+    """xunit の記録を組む。台帳の検査の中身だけを差し替える。"""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>\n'
+        '  <testsuite name="TestResults" errors="0" tests="2" failures="0" skipped="0" time="1.0">\n'
+        '    <testcase classname="MokumeCoreTests.SceneLedgerTests" '
+        f'name="sceneMatchesLedger(_:)"{ledger_body}\n'
+        '    <testcase classname="MokumeCoreTests.CanvasTests" name="draws()" time="0.1" />\n'
+        '  </testsuite>\n</testsuites>\n'
+    )
+
+
+# 台帳の検査が通った実行の記録
+RECORD_PASSED = _record(' time="1.234" />')
+# GPU の無い機械の記録 — 台帳の検査はスキップされている
+RECORD_SKIPPED = _record(
+    '>\n      <skipped>この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする</skipped>\n'
+    '    </testcase>'
+)
+# 台帳の検査が落ちた実行の記録
+RECORD_FAILED = _record(
+    '>\n      <failure message="台帳と絵が合わない" />\n    </testcase>'
+)
 
 FAKE_GH = """#!/bin/bash
 # 呼ばれた引数を記録する。auth status は通り、API は環境変数の作り物を返す
@@ -144,7 +161,7 @@ class RenderStatusTest(unittest.TestCase):
             PATH=f"{bin_dir}:{os.environ['PATH']}",
             GH_CALLS=str(self.calls),
             FILES="",
-            RENDER_TEST_LOG=".build/test-log.txt",
+            RENDER_TEST_RECORD=".build/test-results-swift-testing.xml",
             RENDER_LEDGER="ledger.txt",
             DRAWING_PATHS="paths.txt",
         )
@@ -201,13 +218,13 @@ class RenderStatusTest(unittest.TestCase):
     def posted_to(self, sha):
         return [c for c in self.posted() if f"/statuses/{sha}" in c]
 
-    def write_log(self, body):
-        (self.work / ".build" / "test-log.txt").write_text(body)
+    def write_record(self, body):
+        (self.work / ".build" / "test-results-swift-testing.xml").write_text(body)
 
     # --- local ---------------------------------------------------------
 
     def test_全部通った実行は報告する(self):
-        self.write_log(LOG_PASSED)
+        self.write_record(RECORD_PASSED)
         self.run_script("local")
         posted = self.posted()
         self.assertEqual(len(posted), 1)
@@ -218,23 +235,46 @@ class RenderStatusTest(unittest.TestCase):
     def test_報告は回した木の指紋を名乗る(self):
         """#612。merge queue はこの値と合流後の木を突き合わせる。名乗らなくなると
         判定が head の木へ落ちて、push を要求する形へ静かに戻る。"""
-        self.write_log(LOG_PASSED)
+        self.write_record(RECORD_PASSED)
         self.run_script("local")
         self.assertRegex(self.posted()[0], r"covers=[0-9a-f]{12}")
 
-    def test_台帳のsuiteが通っていなければ報告しない(self):
-        self.write_log(LOG_SKIPPED)
+    def test_台帳の検査がスキップされていれば報告しない(self):
+        """GPU がこの世代のコマンド構造を持たない機械の実行。**理由まで固定する** —
+        #1056 は「行が落ちただけ」を「GPU が無い」と名乗り、打ち手を誤らせた。"""
+        self.write_record(RECORD_SKIPPED)
         out = self.run_script("local")
         self.assertEqual(self.posted(), [])
-        self.assertIn("報告しない", out)
+        self.assertIn("スキップされている", out)
+
+    def test_台帳の検査が落ちていれば報告しない(self):
+        self.write_record(RECORD_FAILED)
+        out = self.run_script("local")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("落ちている", out)
+
+    def test_台帳の検査が記録に無ければ報告しない(self):
+        """検査ごと消えた記録を、通った実行と取り違えない。"""
+        self.write_record(_record(" time=\"1.0\" />").replace(
+            "MokumeCoreTests.SceneLedgerTests", "MokumeCoreTests.SomethingElse"))
+        out = self.run_script("local")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("記録に無い", out)
+
+    def test_記録が読めなければ報告しない(self):
+        """途中で切れた XML を、黙って通す側へ倒さない。"""
+        self.write_record(RECORD_PASSED[: len(RECORD_PASSED) // 2])
+        out = self.run_script("local")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("読めない", out)
 
     def test_テストの記録が無ければ報告しない(self):
         out = self.run_script("local")
         self.assertEqual(self.posted(), [])
-        self.assertIn("報告しない", out)
+        self.assertIn("記録が無い", out)
 
     def test_作業ツリーが汚れていれば報告しない(self):
-        self.write_log(LOG_PASSED)
+        self.write_record(RECORD_PASSED)
         (self.work / "seed.txt").write_text("触った\n")
         out = self.run_script("local")
         self.assertEqual(self.posted(), [])
@@ -243,7 +283,7 @@ class RenderStatusTest(unittest.TestCase):
     def test_報告に失敗しても検査は落ちない(self):
         """まだ push していない commit では status を打てない。それは作業の途中と
         いうだけなので、make ci-check をそこで赤くしない。"""
-        self.write_log(LOG_PASSED)
+        self.write_record(RECORD_PASSED)
         out = self.run_script("local", GH_STATUS_FAILS="1")
         self.assertIn("報告できなかった", out)
         self.assertIn("make render-status", out)
@@ -630,7 +670,7 @@ class RenderStatusTest(unittest.TestCase):
                 and "/statuses/" not in c]
 
     def test_打つ側の綴りは共有の出どころに従う(self):
-        self.write_log(LOG_PASSED)
+        self.write_record(RECORD_PASSED)
         self.run_script("local", RENDER_CONTEXT="別の綴り")
         self.assertIn("context=別の綴り", self.posted()[0])
         self.assertNotIn("local-render", self.posted()[0])
