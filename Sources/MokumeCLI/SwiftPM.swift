@@ -35,8 +35,12 @@ enum SwiftPM {
         let targets: [Target]
         /// 宣言された対応環境。
         let platforms: [Platform]
+        /// 宣言された依存。
+        let dependencies: [Dependency]
 
-        private enum CodingKeys: String, CodingKey { case name, products, targets, platforms }
+        private enum CodingKeys: String, CodingKey {
+            case name, products, targets, platforms, dependencies
+        }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -47,6 +51,8 @@ enum SwiftPM {
             products = try container.decodeIfPresent([Product].self, forKey: .products) ?? []
             targets = try container.decodeIfPresent([Target].self, forKey: .targets) ?? []
             platforms = try container.decodeIfPresent([Platform].self, forKey: .platforms) ?? []
+            dependencies =
+                try container.decodeIfPresent([Dependency].self, forKey: .dependencies) ?? []
         }
 
         /// 実行ファイルとして宣言された product の名前。
@@ -67,6 +73,39 @@ enum SwiftPM {
         /// 道具立ては資材を `<パッケージ>_<ターゲット>.bundle` の名前で作る。
         var declaredResourceBundles: [String] {
             targets.filter { !$0.resources.isEmpty }.map { "\(name)_\($0.name).bundle" }
+        }
+
+        /// パスで指した依存を 1 つでも持つか。
+        ///
+        /// **持つなら、ビルドの置き場を他のパッケージと共有できない。** 共有の置き場は
+        /// 「解決された版が同じなら中身も同じ」を前提に鍵を付けるが、パスで指した先は
+        /// 版を名乗らないまま中身が動く (`git checkout` を往復させれば同じ鍵で別物になる)。
+        ///
+        /// **どの依存がパスかは見ない。** パスで指すと identity が末尾のディレクトリ名に
+        /// なるので (``SchemasLocator/packageName`` が完全一致で選べない理由と同じ)、
+        /// 名前で mokume を狙い撃つと作業用の複製を取り逃す。1 つでも在れば共有しない、
+        /// という安全側の判定にしておく。
+        var hasFileSystemDependency: Bool {
+            dependencies.contains { $0.isFileSystem }
+        }
+    }
+
+    /// 宣言された依存。
+    ///
+    /// **中身は読まない。** 要るのは「パスで指しているか」だけで、位置も要求も
+    /// 解決の結果 (`Package.resolved`) のほうが正しい。
+    struct Dependency: Decodable, Equatable {
+        /// パスで指した依存か。
+        ///
+        /// ``Product/Kind/isExecutable`` と同じく**鍵が在るかどうかで決まる** —
+        /// 道具立ては種別を `{"fileSystem": [...]}` / `{"sourceControl": [...]}` の
+        /// 形で書き分けるので、値の中身まで降りる必要が無い。
+        let isFileSystem: Bool
+
+        private enum CodingKeys: String, CodingKey { case fileSystem }
+
+        init(from decoder: any Decoder) throws {
+            isFileSystem = try decoder.container(keyedBy: CodingKeys.self).contains(.fileSystem)
         }
     }
 
@@ -146,15 +185,19 @@ enum SwiftPM {
         }
 
         /// 名前で引いた依存の実体。
-        func resolved(_ name: String, under workDirectory: URL) -> URL? {
+        ///
+        /// - Parameter buildDirectory: **ビルドの置き場そのもの** (`.build` を足す前の姿では
+        ///   ない)。置き場はパッケージ直下に在るとは限らないので、`.build` をここで
+        ///   組み立てると、置き場を動かした環境で黙って空振りする — 在処を決める計算は
+        ///   ``BuildDirectory`` 1 箇所に置く。
+        func resolved(_ name: String, under buildDirectory: URL) -> URL? {
             guard let dependency = object.dependencies.first(where: { $0.packageRef.name == name })
             else { return nil }
             if dependency.state.name == "fileSystem", let path = dependency.state.path {
                 return URL(fileURLWithPath: path, isDirectory: true)
             }
             guard let subpath = dependency.subpath else { return nil }
-            return workDirectory.appendingPathComponent(
-                ".build/checkouts/\(subpath)", isDirectory: true)
+            return buildDirectory.appendingPathComponent("checkouts/\(subpath)", isDirectory: true)
         }
     }
 
@@ -171,12 +214,24 @@ enum SwiftPM {
             struct State: Decodable {
                 /// 版で固定したときだけ在る。枝や改訂で固定した依存には無い。
                 let version: String?
+                /// 固定された改訂。**版で固定したときも在る** — 道具立ては両方書く。
+                let revision: String?
             }
         }
 
         /// 識別子で引いた版。
         func version(of identity: String) -> String? {
             pins.first { $0.identity == identity }?.state.version
+        }
+
+        /// 識別子で引いた改訂。
+        ///
+        /// **版が読めなかったことと、そもそも固定されていないことを分けるために要る。**
+        /// 枝や改訂で固定した依存は版を名乗らないので、版だけを見ていると「まだ解決されて
+        /// いない」と同じ顔になる — ビルドの置き場の鍵はそこを分けないと、**違う改訂の
+        /// mokume を同じ置き場へ入れて互いに作り直させ続ける**ことになる。
+        func revision(of identity: String) -> String? {
+            pins.first { $0.identity == identity }?.state.revision
         }
     }
 

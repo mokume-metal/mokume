@@ -20,7 +20,7 @@ struct DoctorCommandTests {
         toolchain: "Apple Swift version 6.3.3")
 
     static func state(_ place: URL) -> DoctorCommand.State {
-        DoctorCommand.State(place: place, hasPackage: true, hasBuild: true, lastBuild: nil)
+        DoctorCommand.State(place: place, hasPackage: true, buildDirectory: place.appendingPathComponent(".build"), lastBuild: nil)
     }
 
     @Test("環境の前提は、読み取った値から組む")
@@ -125,6 +125,40 @@ struct DoctorCommandTests {
             "切り分けの口が区画を作っている (打ったら直る = 原因が消える)")
     }
 
+    /// **共有を既定にすると `rm -rf .build` では消えないものが生まれる。** だから
+    /// 在処を言える口が要る (掃除の道具は足さない — 在処が分かれば `rm -rf` で足りる)。
+    @Test("共有の置き場は、在処と鍵の数と大きさを名乗る")
+    func theSharedStoreIsNamed() {
+        let root = URL(fileURLWithPath: "/store", isDirectory: true)
+        let used = DoctorCommand.sharedStoreLine(
+            DoctorCommand.SharedStore(root: root, keys: 3, bytes: 3 * 414 * 1_048_576))
+        #expect(used.contains("/store"))
+        #expect(used.contains("3 通り"))
+        #expect(used.contains("1242MB"))
+        // まだ 1 つも無いときも在処は言う (どこを見ればよいか分かる形にする)
+        let empty = DoctorCommand.sharedStoreLine(
+            DoctorCommand.SharedStore(root: root, keys: 0, bytes: 0))
+        #expect(empty.contains("/store"))
+        // **数え切れなかったら数を言わない** (規律 3)
+        let blind = DoctorCommand.sharedStoreLine(
+            DoctorCommand.SharedStore(root: root, keys: 1, bytes: nil))
+        #expect(blind.contains(DoctorCommand.unknown))
+        #expect(DoctorCommand.sharedStoreLine(nil).contains(DoctorCommand.unknown))
+    }
+
+    /// 置き場が版ごとの共有へ移っても、切り分けの口は在処を答える。
+    /// **在る / 無いだけを名乗ると、共有で建っているスケッチに常に「無い」と言う。**
+    @Test("組み上げた跡は、パッケージ直下でなくても在処を名乗る")
+    func theBuildDirectoryIsNamedWhereverItIs() {
+        var state = Self.state(URL(fileURLWithPath: "/tmp/demo"))
+        state.buildDirectory = URL(
+            fileURLWithPath: "/store/swiftlang-6.3.3.1.3/0.7.1", isDirectory: true)
+        let lines = DoctorCommand.stateLines(state).joined(separator: "\n")
+        #expect(lines.contains("/store/swiftlang-6.3.3.1.3/0.7.1"))
+        state.buildDirectory = nil
+        #expect(DoctorCommand.stateLines(state).joined().contains("組み上げた跡: 無い"))
+    }
+
     /// 使い方の誤りで止まると、いちばん要るときに読めない。
     @Test("知らない引数は、投げずに無視したと言う")
     func unknownArgumentsAreReportedNotThrown() {
@@ -153,15 +187,23 @@ struct DoctorCommandTests {
         try Data(#"{"schemaVersion":1,"ok":true,"status":0,"output":""}"#.utf8).write(to: status)
 
         // 基準あり — MOKUME_WORK_DIR が解決する基準を渡すと、与えた側から読む
+        //
+        // **共有の置き場は打った人の手元へ向かせない。** 向かせると、この検査の結果が
+        // 機械の状態 (置き場が在るか) で変わる
         let base = WorkDirectory.given(environment: [StartupReads.workDirectory.key: work.path])
-        let given = DoctorCommand.text(for: [sketch.path], workDirectory: base)
+        let isolated = [BuildDirectory.environmentKey: work.appendingPathComponent("store").path]
+        let given = DoctorCommand.text(
+            for: [sketch.path], workDirectory: base, environment: isolated)
+        // **行を名指しで見る。** 「まだ無い」は他の行にも出るので、含まれないことを
+        // 全文へ問うと、無関係な行が増えた日に落ちる
         #expect(
-            given.contains("最後の作り直し:") && !given.contains("まだ無い"),
+            given.contains("最後の作り直し:") && !given.contains("最後の作り直し: まだ無い"),
             "基準を与えた環境で、doctor が watch の書いた記録を読めていない")
         #expect(given.contains("通った"))
 
         // 基準なし — スケッチの場所から読む (いままでどおり。あちらには何も無い)
-        let plain = DoctorCommand.text(for: [sketch.path], workDirectory: nil)
+        let plain = DoctorCommand.text(
+            for: [sketch.path], workDirectory: nil, environment: isolated)
         #expect(plain.contains("最後の作り直し: まだ無い"))
     }
 

@@ -51,13 +51,35 @@ enum SchemasLocator {
 
     /// 依存として解決された mokume の実体。
     ///
-    /// 正本は SwiftPM が作業ディレクトリへ残す `.build/workspace-state.json` で、引き方は
+    /// 正本は SwiftPM がビルドの置き場へ残す `workspace-state.json` で、引き方は
     /// 依存の種類で変わる — パスで指したものは絶対パスがそのまま載り、取ってきたものは
-    /// `.build/checkouts/` の下に置かれる。
-    static func resolvedPackage(workDirectory: URL) -> URL? {
-        let url = workDirectory.appendingPathComponent(".build/workspace-state.json")
-        return SwiftPM.read(SwiftPM.WorkspaceState.self, at: url)?
-            .resolved(packageName, under: workDirectory)
+    /// 置き場の `checkouts/` の下に置かれる。
+    ///
+    /// **置き場はパッケージ直下とは限らない。** 版ごとの共有へ移っているスケッチでは
+    /// `.build` が 1 つも無いので、ここで `.build` を組み立てていると**黙って空振りし、
+    /// 「mokume X はこの面を持たない」という名乗りごと消える** ([ADR-0037])。だから
+    /// ``BuildDirectory/plausibleDirectories(for:root:pin:toolchain:)`` が並べる場所を
+    /// 順に見る。
+    ///
+    /// [ADR-0037]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0037-shared-build-directory.md
+    static func resolvedPackage(
+        workDirectory: URL,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+    ) -> URL? {
+        let directories = BuildDirectory.plausibleDirectories(
+            for: workDirectory,
+            root: BuildDirectory.root(environment: environment, home: home),
+            pin: DependencyVersion.pin(forPackageAt: workDirectory))
+        for directory in directories {
+            let url = directory.appendingPathComponent("workspace-state.json")
+            if let resolved = SwiftPM.read(SwiftPM.WorkspaceState.self, at: url)?
+                .resolved(packageName, under: directory)
+            {
+                return resolved
+            }
+        }
+        return nil
     }
 
     /// 仕様の名前の一覧。

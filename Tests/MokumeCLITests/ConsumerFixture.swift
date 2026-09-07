@@ -4,6 +4,8 @@
 import Foundation
 import mokume
 
+@testable import MokumeCLI
+
 /// 依存として mokume を引いた消費側の配置を模す。
 ///
 /// **複数の suite が同じものを要る** — 面の仕様の在処を解く検査 (窓口) と、依存が持たない
@@ -59,4 +61,16 @@ enum ConsumerFixture {
         try Data(document.utf8).write(to: build.appendingPathComponent("workspace-state.json"))
         return (work, schemas)
     }
+}
+
+/// 検査で使う、作るときの土台。
+///
+/// **置き場はパッケージ直下に固定する。** 既定は版ごとの共有だが、検査がそこへ建てると
+/// 打った人の手元の置き場を汚し、しかも他の検査と名前を取り合う。`.build` に倒しておけば
+/// 使い捨てのディレクトリの中で完結する。
+func testContext(
+    configuration: String? = nil, product: String = "sketch",
+    place: BuildDirectory.Place = .inPackage(.localDependency)
+) -> BuildContext {
+    BuildContext(configuration: configuration, place: place, product: product)
 }

@@ -108,8 +108,14 @@ struct SwiftPMTests {
                "state":{"name":"sourceControlCheckout"},"subpath":"mokume"}
             ]}}
             """)
-        let work = URL(fileURLWithPath: "/sketch", isDirectory: true)
-        #expect(state.resolved("mokume", under: work)?.path == "/sketch/.build/checkouts/mokume")
+        // **受けるのは置き場そのもの。** `.build` を足すのは呼ぶ側の仕事ではない —
+        // 置き場はパッケージ直下とは限らない (ADR-0037)
+        let build = URL(fileURLWithPath: "/sketch/.build", isDirectory: true)
+        #expect(state.resolved("mokume", under: build)?.path == "/sketch/.build/checkouts/mokume")
+        let shared = URL(fileURLWithPath: "/store/swiftlang-1/0.7.1", isDirectory: true)
+        #expect(
+            state.resolved("mokume", under: shared)?.path == "/store/swiftlang-1/0.7.1/checkouts/mokume",
+            "共有の置き場でも同じ 1 本の計算で引ける")
     }
 
     @Test("名前の合わない依存は取り違えない")

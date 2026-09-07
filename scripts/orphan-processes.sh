@@ -34,6 +34,8 @@
 #
 # 環境変数:
 #   MOKUME_SCRATCHPAD_ROOT  scratchpad の根を差し替える (既定 /private/tmp/claude-<uid>)
+#   MOKUME_BUILD_DIR        共有ビルド置き場の根を差し替える
+#                           (既定 ~/Library/Caches/mokume/build・ADR-0037)
 set -euo pipefail
 
 # 「最近動いた」の境目。短すぎると考え込んでいるだけのセッションを死んだ側へ倒し、
@@ -43,6 +45,12 @@ readonly FRESH_MINUTES=30
 
 scratch_root="${MOKUME_SCRATCHPAD_ROOT:-/private/tmp/claude-$(id -u)}"
 scratch_root="${scratch_root%/}"
+
+# 共有のビルド置き場 (ADR-0037)。**ここから起きたスケッチも拾う** — 既定の置き場が
+# パッケージ直下ではなくなったので、`.build` だけを見ていると盲目になる。置いていくしか
+# なかった子の番号は WatchSession が「この道具が出すものと同じ」と約束している (#732)
+build_root="${MOKUME_BUILD_DIR:-$HOME/Library/Caches/mokume/build}"
+build_root="${build_root%/}"
 
 if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
   echo "git リポジトリの中で実行する (worktree の一覧から出所を引くため)" >&2
@@ -199,10 +207,11 @@ while IFS= read -r line; do
   # 孤児 = 親を失って launchd に引き取られたもの
   [ "$ppid" = "1" ] || continue
 
-  # SwiftPM が建てたもの (.build) と scratchpad 配下だけを候補にする。
-  # ppid=1 のプロセスは数百あり、その大半は OS の常駐である
+  # SwiftPM が建てたもの (パッケージ直下の .build と共有の置き場) と scratchpad
+  # 配下だけを候補にする。ppid=1 のプロセスは数百あり、その大半は OS の常駐である
   case "$command" in
     */.build/*) ;;
+    "$build_root"/*) ;;
     "$scratch_root"/*) ;;
     *) continue ;;
   esac

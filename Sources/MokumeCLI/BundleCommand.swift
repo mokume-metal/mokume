@@ -63,12 +63,18 @@ enum BundleCommand {
         try ResourceDeclaration.check(in: directory)
         let identity = try AppIdentity.read(in: directory)
 
-        try RunCommand.build(in: directory, configuration: configuration)
         // **宣言は 1 度だけ読む。** 走らせるものを決めるのにも、下限の版と資材の包みを
         // 知るのにも要る — 別々に引くと `dump-package` を 2 回起こすことになる
         let declared = try RunCommand.dumpPackage(in: directory)
-        let executable = try RunCommand.executablePath(
-            in: directory, configuration: configuration, declared: declared)
+        guard let product = declared?.executableProductName else {
+            throw .noExecutable(path: directory.path)
+        }
+        // **束ねるときは置き場を共有しない** (`BuildDirectory.Fallback.packaging` が理由を
+        // 持つ)。共有の置き場には同じ鍵の全スケッチの包みが並ぶので、隣にあるものを
+        // 全部入れる下の作りが**他人の資材を配ってしまう**
+        let context = BuildContext(
+            configuration: configuration, place: .inPackage(.packaging), product: product)
+        let executable = try RunCommand.buildAndResolve(in: directory, context: context)
         let out =
             options.out.map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? directory.appendingPathComponent(defaultOutputDirectory, isDirectory: true)

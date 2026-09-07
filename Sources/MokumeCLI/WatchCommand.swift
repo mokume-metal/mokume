@@ -55,12 +55,17 @@ enum WatchCommand {
         // (ADR-0008) — 見張ったまま資材を足して絵にならない理由へ辿れなかった実例が出た日に
         try ResourceDeclaration.check(in: directory)
 
+        // **置き場は見張り始める前に 1 度だけ決める。** 作り直しのたびに決め直すと、
+        // 途中で先客が現れたときに作り直しと解決が別の置き場を指しうる (#1055)
+        let context = try RunCommand.context(in: directory, invocation: invocation)
+
         // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
         // パッケージの場所へ置くと観測とだけ場所が割れる (#331)。**計算は 1 つ** (#791)
         let session = WatchSession(
-            directory: directory, facetBase: invocation.facetBase(),
-            configuration: invocation.configuration, reportsRate: true)
+            directory: directory, context: context, facetBase: invocation.facetBase(),
+            reportsRate: true)
         say("見張っている: \(directory.path)")
+        if let notice = context.place.notice { say(notice) }
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
         // ビルドと配布版の取り違えに気付けない** (#633 が実際にそうなった・#684)
         say("道具: \(ToolVersion.describe())")
