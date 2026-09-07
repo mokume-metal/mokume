@@ -248,7 +248,10 @@ for n in $numbers; do
     case "$ahead" in
       '' | draft) note="自分が先頭 — 手元で make catch-up を打つ" ;;
       '?') note="先に居る描画 PR を読めなかった (手元で make catch-up を試す)" ;;
-      *) note="先に #$ahead が居る — その merge を待つ (いま打っても無駄になる)" ;;
+      # **先頭の行を見る。** この PR にできることは無いが、先頭が予約を落としている
+      # だけなら掛け直せば入る (#1060)。先頭も open なのでこの走査に載っており、
+      # auto-merge-dropped / in-queue / awaiting-approval のどれかを名乗っている
+      *) note="先に #$ahead が居る — この PR では打てない。#$ahead の行を見る" ;;
     esac
     say_line "$n" ejected name "$mins" "$note"
     [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
