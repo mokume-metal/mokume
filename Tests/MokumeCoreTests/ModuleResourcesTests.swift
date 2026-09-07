@@ -57,7 +57,7 @@ struct ModuleResourcesTests {
         #expect(found?.lastPathComponent == "Shapes.metal")
     }
 
-    @Test("包みが 1 つも無ければ、道具立ての口へ譲る")
+    @Test("包みが 1 つも無ければ、組み上げた機械の上でだけ道具立ての口へ譲る")
     func nothingFoundFallsBackToTheToolchain() throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -65,11 +65,67 @@ struct ModuleResourcesTests {
         var asked = false
         _ = ModuleResources.resolve(
             name: "Shapes", extension: "metal", neighbourhood: root, resources: root,
+            onBuildMachine: true,
             lastResort: { _, _ in
                 asked = true
                 return nil
             })
         #expect(asked, "開発中と検査の経路が塞がっている")
+    }
+
+    /// 検査はこの機械の上で走るので、既定のままでも譲りは効く。**既定が塞がると開発中と
+    /// 検査の経路ごと止まる**ので、明示した側とは別に見る。
+    @Test("この機械の上に居ることは、既定で判定される")
+    func theBuildMachineIsDetectedByDefault() {
+        #expect(ModuleResources.isOnBuildMachine, "検査はソースツリーの上で走っている")
+    }
+
+    /// 譲る先が指すのは**組み上げた機械の絶対パス**で、配った先には無い。譲ると、
+    /// こちらの名乗りに変えられないまま作者のディレクトリを名指しして落ちる
+    /// (`Bundle.module` は見つからなければ `fatalError` を起こす)。
+    ///
+    /// **素の実行ファイルとして配った形**がここに当たる — Homebrew で入れた道具が
+    /// これで落ちていた ([#1058](https://github.com/mokume-metal/mokume/issues/1058))。
+    @Test("配った先では、道具立ての口へ譲らない")
+    func aDistributedExecutableNeverFallsBack() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var asked = false
+        let found = ModuleResources.resolve(
+            name: "Shapes", extension: "metal", neighbourhood: root, resources: root,
+            onBuildMachine: false,
+            lastResort: { _, _ in
+                asked = true
+                return nil
+            })
+        #expect(!asked, "配った先で、組み上げた機械の絶対パスへ落ちている")
+        #expect(found == nil)
+    }
+
+    @Test("在処は、資源を探すのと同じ並びから出る")
+    func theLocationComesFromTheSameSearch() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeBundle(
+            named: "\(ModuleResources.bundleName).bundle",
+            containing: "\(ModuleResources.probe.name).\(ModuleResources.probe.ext)", in: root)
+
+        let location = ModuleResources.location(
+            neighbourhood: root, resources: root, onBuildMachine: false,
+            lastResort: { _, _ in nil })
+        #expect(location?.lastPathComponent == "\(ModuleResources.bundleName).bundle")
+    }
+
+    @Test("読める包みが無ければ、在処は無い")
+    func theLocationIsAbsentWhenNothingIsReadable() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let location = ModuleResources.location(
+            neighbourhood: root, resources: root, onBuildMachine: false,
+            lastResort: { _, _ in nil })
+        #expect(location == nil)
     }
 
     /// 譲る先が指すのは**組み上げた機械の絶対パス**で、配った先には無い。譲ると、
@@ -81,9 +137,11 @@ struct ModuleResourcesTests {
         let app = root.appendingPathComponent("Demo.app", isDirectory: true)
         try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
 
+        // 組み上げた機械の上に居ても譲らない — 止めているのは束ねた形であること
         var asked = false
         let found = ModuleResources.resolve(
             name: "Shapes", extension: "metal", neighbourhood: app, resources: nil,
+            onBuildMachine: true,
             lastResort: { _, _ in
                 asked = true
                 return nil

@@ -170,9 +170,10 @@ extension RenderFailure: CustomStringConvertible {
         case .shaderSourceMissing(let name):
             """
             同梱しているはずのシェーダの原文が見つからない: \(name)
-            束ねて配ったときにいちばん起きやすい失敗で、包みの中に資源が入っていないと
-            こうなる — \(ModuleResources.bundleName).bundle が <名前>.app/Contents/Resources/ か
-            <名前>.app/ の直下にあるか確かめる。無ければ束ね直す。
+            配ったときにいちばん起きやすい失敗で、配布物に資源が入っていないとこうなる —
+            \(ModuleResources.bundleName).bundle が実行ファイルの隣 (束ねた作品なら
+            <名前>.app/Contents/Resources/ か <名前>.app/ の直下) にあるか確かめる。
+            無ければ配布物を組み直す。
             """
         case .shaderCompilationFailed(let name, let reason):
             """
