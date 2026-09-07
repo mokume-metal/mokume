@@ -141,7 +141,15 @@ build:
 	swift build $(SYMBOL_GRAPH_FLAGS)
 
 # テストの記録を残す。何が走って何がスキップされたかを、手元の実行の報告
-# (local-render・#304) が読む
+# (local-render・#304) が読む。
+#
+# **正本は console ではなく `--xunit-output` の XML である** (#1056)。swift-testing の
+# console 出力は実行ごとに数十〜数百行を落とす — 全件が緑で make が 0 を返しているのに
+# `◇ started` / `✔ passed` / `✔ Suite passed` / 最終要約 / `✘ failed after` が記録に無い、
+# という状態が起きる。落ちる集合は実行ごとに別物で、管を外しても Metal の nslog を切っても
+# 止まらない (書き先にも同居する出力にも依らない、上流の挙動)。SwiftPM が自分でファイルへ
+# 書く XML は同じ実行で全件を持っていたので、判定はそちらから読む。
+# `tee` の記録は残す — 人が実行中に読む先で、正本でなくなるだけである。
 #
 # **Metal の検証レイヤを有効にして走らせる** (#351)。新しい検査を足さず既存の責務を
 # 広げる形にしてあるのは、描画の検査が走る場所がここ 1 つだからである (ADR-0008 決定 5)。
@@ -160,9 +168,19 @@ build:
 # 意味を持つのは描画が実際に走る手元だけである
 METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=nslog)
 
+# 記録の綴りは render-status.sh の RENDER_TEST_RECORD と揃える。SwiftPM は渡した名前の
+# 末尾に検査ライブラリの名前を挟むので、こちらが渡すのは接尾辞の付く前の名前である
+TEST_RECORD_BASE := .build/test-results.xml
+TEST_RECORD := .build/test-results-swift-testing.xml
+
 test:
 	@mkdir -p .build
-	set -o pipefail; env $(METAL_VALIDATION) swift test $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log.txt
+	@rm -f $(TEST_RECORD)
+	set -o pipefail; env $(METAL_VALIDATION) swift test $(SYMBOL_GRAPH_FLAGS) --xunit-output $(TEST_RECORD_BASE) 2>&1 | tee .build/test-log.txt
+	@test -s $(TEST_RECORD) || { \
+		echo "記録が出来ていない ($(TEST_RECORD))。SwiftPM が --xunit-output の綴りを"; \
+		echo "変えた可能性がある — render-status.sh の RENDER_TEST_RECORD と併せて直す"; \
+		exit 1; }
 
 # release でテストを回す — 性能を測るための器 (#761)。**ci-check には入れない** (計測の
 # ためだけで、常時のゲートに要る検査は debug の test が全部持つ)。

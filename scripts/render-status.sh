@@ -63,11 +63,18 @@ set -euo pipefail
 # shellcheck source=scripts/render-context.sh
 . "$(dirname "${BASH_SOURCE[0]}")/render-context.sh"
 
-# scene-ledger の suite 名。**この名前が走って通ったこと**を、GPU のある機械で
-# 全検査が回った証拠として使う (SceneLedgerTests.swift の @Suite 名と一致させる)。
-readonly LEDGER_SUITE='代表シーンの台帳'
+# scene-ledger の検査の classname。**これが走って通ったこと**を、GPU のある機械で
+# 全検査が回った証拠として使う (SceneLedgerTests.swift の型の名前と一致させる)。
+#
+# **かつては console の `Suite "代表シーンの台帳" ... passed` を grep していた** (#1056)。
+# swift-testing の console 出力は実行ごとに行を落とし、`✔ Suite` は実測で 159 件中
+# 12〜17 件消えた — その 1 行が落ちた実行では、手元で全検査が通っているのに
+# 「GPU が無い機械の実行」という嘘の理由で報告が止まる。判定は、SwiftPM が自分で
+# ファイルへ書く記録 (`--xunit-output`) から読む。
+readonly LEDGER_CLASS='MokumeCoreTests.SceneLedgerTests'
 
-TEST_LOG=${RENDER_TEST_LOG:-.build/test-log.txt}
+# 綴りは Makefile の TEST_RECORD と揃える (SwiftPM が接尾辞を挟んだ後の名前)
+TEST_RECORD=${RENDER_TEST_RECORD:-.build/test-results-swift-testing.xml}
 LEDGER=${RENDER_LEDGER:-Tests/MokumeCoreTests/scene-ledger.txt}
 
 say() { echo "$RENDER_CONTEXT: $*"; }
@@ -279,6 +286,37 @@ report_merge_group() {
   post_queue_verdict "$repo" "$merged" "$rejected" "$blind" "$checked"
 }
 
+# 記録から「台帳の検査がどうなったか」と「スキップの数」を読む (#1056)。
+#
+# **XML を grep で読まない。** 見たいのは要素の入れ子 (`<testcase>` の子に `<skipped>` /
+# `<failure>` が居るか) で、行の並びに依らせると書式が変わった日に黙って通る側へ倒れる。
+# 出すのは「判定 スキップ数」の 1 行。読めなければ判定は `unreadable`。
+read_record() {
+  python3 - "$1" "$LEDGER_CLASS" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+path, klass = sys.argv[1], sys.argv[2]
+try:
+    cases = list(ET.parse(path).getroot().iter("testcase"))
+except Exception:
+    print("unreadable 0")
+    raise SystemExit(0)
+
+skipped = sum(1 for c in cases if c.find("skipped") is not None)
+mine = [c for c in cases if c.get("classname") == klass]
+if not mine:
+    verdict = "absent"
+elif any(c.find("failure") is not None or c.find("error") is not None for c in mine):
+    verdict = "failed"
+elif all(c.find("skipped") is not None for c in mine):
+    verdict = "skipped"
+else:
+    verdict = "passed"
+print(verdict, skipped)
+PY
+}
+
 mode=${1:-}
 case "$mode" in
   local)
@@ -286,13 +324,19 @@ case "$mode" in
     [ -z "$(git status --porcelain)" ] || give_up "作業ツリーが汚れている"
 
     # 2. テストの記録が要る (make の test ターゲットが残す)
-    [ -f "$TEST_LOG" ] || give_up "テストの記録が無い ($TEST_LOG)"
+    [ -f "$TEST_RECORD" ] || give_up "テストの記録が無い ($TEST_RECORD) — make test を通す"
 
-    # 3. **台帳の suite が通っていること**を、絵の検査が実際に回った証拠にする。
+    # 3. **台帳の検査が通っていること**を、絵の検査が実際に回った証拠にする。
     #    スキップの数を数えるのではなく、走ってほしいものが走ったかを見る —
-    #    出力の書式が変わったときに、黙って通る側へ倒れないため
-    grep -q "Suite \"$LEDGER_SUITE\".*passed" "$TEST_LOG" \
-      || give_up "「${LEDGER_SUITE}」が通っていない (この世代の GPU が無い機械の実行)"
+    #    書式が変わったときに、黙って通る側へ倒れないため
+    read -r ledger_verdict skipped < <(read_record "$TEST_RECORD")
+    case "$ledger_verdict" in
+      passed) ;;
+      skipped) give_up "台帳の検査がスキップされている (この世代の GPU が無い機械の実行)" ;;
+      absent) give_up "台帳の検査 ($LEDGER_CLASS) が記録に無い" ;;
+      failed) give_up "台帳の検査が落ちている" ;;
+      *) give_up "テストの記録を読めない ($TEST_RECORD)" ;;
+    esac
 
     # 4. 報告先と資格情報。CI からここへ来ても、認証が無いのでここで止まる
     command -v gh >/dev/null 2>&1 || give_up "gh が無い"
@@ -300,7 +344,6 @@ case "$mode" in
     # **解けなければ名乗って諦める。** 劣化版はごみを宛先にして黙って失敗していた
     repo=$(repo_of_dir "$PWD") || give_up "origin から owner/repo を解けない"
 
-    skipped=$(grep -c 'skipped:' "$TEST_LOG" || true)
     ledger_digest=$(grep -vE '^[[:space:]]*(#|$)' "$LEDGER" | shasum -a 256 | cut -c1-8)
     covers=$(local_drawing_fingerprint)
     target=$(report_target)
