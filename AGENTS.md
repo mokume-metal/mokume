@@ -295,7 +295,9 @@ bash scripts/orphan-processes.sh
 | 判定 | `local-render` | 対処 |
 | --- | --- | --- |
 | 手元が回した木と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | `make catch-up` |
-| 覆いを壊す open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | 先頭が merge されるまで待つ (待ちの間に打ち直しても無駄になる)。先頭が停滞しているならその PR を Draft に落とす |
+| 覆いを壊す open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | **先頭 #N を見てから決める** — 全 check 緑・`CLEAN` で `autoMerge: false` なら予約が無いだけなので `gh pr merge <N> --auto --squash` で入る / まだ作業中ならその PR を Draft に落とす / どちらでもなければ待つ (自分の側で打ち直しても無駄になる) |
+
+**待つ前に先頭を見るのは、赤の理由が先頭の側にあるからである。** [#1053](https://github.com/mokume-metal/mokume/pull/1053) が `#1047 の merge を待つ` で赤くなったとき、先頭の [#1047](https://github.com/mokume-metal/mokume/pull/1047) は全 check 緑・`CLEAN` で、**予約が掛かっていないだけ**だった (`isInMergeQueue` も `autoMergeRequest` も無し)。掛け直したらその場で merge され、後続の待ちも解けた ([#1060](https://github.com/mokume-metal/mokume/issues/1060))。Draft に落とすのは**先頭が本当に作業中のとき**の手で、そうでない先頭を落とすと、全部緑で承認も要らない PR を番号の順番だけの理由で棚上げすることになる。当番 (`scripts/stall-watch.sh`) も先頭を単独で見て予約を掛け直すが、走るのは 15 分ごとである。
 
 順番は番号順なので、**まだ作業中の描画 PR は Draft にしておく** — Draft は順番の外なので、完成して承認まで済んだ後続を番号だけの理由で待たせずに済む ([#497](https://github.com/mokume-metal/mokume/issues/497))。
 
