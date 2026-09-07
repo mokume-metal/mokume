@@ -167,6 +167,44 @@ import MokumeDiagnostics
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     private(set) var ringWaits = 0
 
+    /// GPU が積んだ仕事を打ち切ったことの記録。
+    ///
+    /// **合図は打ち切りでも進む。** だから上の 4 つ (待った回数) が正常に増えていても、絵が
+    /// 描き上がっているとは限らない — 打ち切られた仕事は 1 画素も書き残さないのに、待ちは
+    /// 成立し、空の絵がそのまま読める ([#1065])。区別が付くのはこの記録だけである。
+    ///
+    /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
+    private let commandFaults = CommandFaultLog()
+
+    /// 診断: GPU が積んだ仕事の実行を打ち切った回数。
+    var commandFaultCount: Int { commandFaults.count }
+
+    /// 診断: 最後に打ち切られた理由。
+    var lastCommandFault: String? { commandFaults.last }
+
+    /// 投入に添えるお願いを組む。**投入ごとに作る。**
+    ///
+    /// **1 つを作って使い回すと、ハンドラが 1 度も呼ばれない。** 実測では、打ち切られた
+    /// 仕事 (絵が空で返る) に対して ``commandFaultCount`` が 0 のままだった — 使い回す
+    /// 側と作り直す側を同じ木で入れ替えて確かめている。呼ばれていないことは症状からは
+    /// 分からず、「打ち切りが起きていない」と区別が付かないので、ここは節約しない。
+    /// 払うのは投入ごとに置き場 1 つとハンドラ 1 つである。
+    ///
+    /// ハンドラは Metal 側の糸から呼ばれるので、`@MainActor` のこの型ではなく**錠で
+    /// 守った器だけを掴む**。
+    private func makeCommitOptions() -> MTL4CommitOptions {
+        let options = MTL4CommitOptions()
+        options.addFeedbackHandler { [commandFaults] (feedback: any MTL4CommitFeedback) in
+            guard let error = feedback.error else { return }
+            let reason = CommandFaultLog.reason(of: error)
+            guard commandFaults.note(reason) else { return }
+            Diagnostics.warn(
+                "GPU が積んだ仕事を打ち切りました。この絵は描き上がっていません: \(reason)"
+                    + " — 同じ知らせは、これ以降黙ります")
+        }
+        return options
+    }
+
     /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。
     ///
     /// **番号の順に並ぶ。** 番号 n までが終わったと分かったら、先頭から n 以下のものを
@@ -708,7 +746,9 @@ import MokumeDiagnostics
     func commit(_ commands: any MTL4CommandBuffer, retaining resources: [AnyObject] = []) -> UInt64 {
         commands.endCommandBuffer()
         orderAfterPreviousSubmission()
-        queue.commit([commands])
+        // **結末を受け取るお願いを添える。** 添えなければ Metal は打ち切りを捨てるので、
+        // 描き上げられなかった仕事も「終わった」としか見えない (#1065)
+        queue.commit([commands], options: makeCommitOptions())
         let submission = recordSubmission(of: commands)
         // **投入した本体も、終わるまで抱える。** 記録の実体は置き場 (allocator) にあるが、
         // 本体の寿命を GPU の実行より短くしない — 投入した側は直後に手放すので、
