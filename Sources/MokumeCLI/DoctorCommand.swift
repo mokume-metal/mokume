@@ -59,14 +59,35 @@ enum DoctorCommand {
         var place: URL
         /// スケッチの体裁があるか。
         var hasPackage: Bool
-        /// 組み上げた跡があるか。
-        var hasBuild: Bool
+        /// 組み上げた跡の在処。まだ無ければ `nil`。
+        ///
+        /// **真偽ではなく在処を持つ。** 置き場は版ごとの共有へ移りうるので
+        /// ([ADR-0037])、「`.build` が在る / 無い」だけを名乗ると、共有で建っている
+        /// スケッチに対して**常に「無い」と言う**ことになる — 切り分けの口が嘘をつく。
+        ///
+        /// [ADR-0037]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0037-shared-build-directory.md
+        var buildDirectory: URL?
+        /// 共有の置き場の根と、そこに在る鍵の数と合計の大きさ。読めなければ `nil`。
+        ///
+        /// **共有を既定にすると `rm -rf .build` では消えないものが生まれる。** だから
+        /// 在処を言える口が要る (掃除の道具は足さない — 在処が分かれば `rm -rf` で足りる)。
+        var sharedStore: SharedStore?
         /// 最後の作り直し。`watch` が書く。まだ無ければ `nil`。
         var lastBuild: LastBuild?
         /// 依存として解決されている mokume の版。**読めなければ `nil`** (パスで指している
         /// ときは pin が無い)。面を持たない理由に当たった人が、どこまで上げればよいかを
         /// 知るために要る (#684)。
         var dependency: String?
+    }
+
+    /// 共有のビルド置き場の姿。
+    struct SharedStore: Equatable {
+        /// 根。
+        var root: URL
+        /// そこに在る鍵 (`<道具立て>/<版>`) の数。
+        var keys: Int
+        /// 合計の大きさ (バイト)。**数え切れなければ `nil`。**
+        var bytes: Int64?
     }
 
     /// 最後の作り直し。**「区画が無い」と「`watch` が死んでいる」を分ける決め手**になる。
@@ -87,7 +108,15 @@ enum DoctorCommand {
     ///   **渡せる形にしてある** — 割れている状況を検査から作れないと、切り分けの口自身が
     ///   割れていても誰も気付けない
     ///   ([#730](https://github.com/mokume-metal/mokume/issues/730))。
-    static func text(for arguments: [String], workDirectory: URL? = WorkDirectory.given) -> String {
+    /// - Parameters:
+    ///   - environment: 環境。**検査から渡せる形にしてある** — 既定のままだと打った人の
+    ///     手元の共有の置き場を覗くことになり、結果が機械によって変わる。
+    ///   - home: ホームディレクトリ。同上。
+    static func text(
+        for arguments: [String], workDirectory: URL? = WorkDirectory.given,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+    ) -> String {
         // 引数を解く骨格も、走らせる口と同じ 1 本を通る (#814)。**切り分けの口だけは
         // 止まらない** — 知らない引数で使い方を出して終わると、いちばん要るときに読めない。
         // その特例は `Surplus.ignore` という**宣言の 1 値**で、別のパーサではない。
@@ -100,7 +129,7 @@ enum DoctorCommand {
         let base = invocation.facetBase(workDirectory: workDirectory)
         return report(
             environment: probeEnvironment(in: directory),
-            state: probeState(in: directory, facetBase: base),
+            state: probeState(in: directory, facetBase: base, environment: environment, home: home),
             base: base,
             given: workDirectory != nil,
             ignored: ignored)
@@ -151,13 +180,32 @@ enum DoctorCommand {
         ]
     }
 
+    /// 共有の置き場を名乗る 1 行。
+    ///
+    /// **数え切れなかったら数を言わない** (規律 3 と同じ向き)。大きさが読めないことは
+    /// 「無い」ではない。
+    static func sharedStoreLine(_ store: SharedStore?) -> String {
+        guard let store else { return "\(unknown) — 根を決められなかった" }
+        guard store.keys > 0 else { return "まだ無い (\(store.root.path))" }
+        let size = store.bytes.map { " / 合計 \(megabytes($0))MB" } ?? " / 大きさは\(unknown)"
+        return "\(store.root.path) (\(store.keys) 通り\(size))"
+    }
+
+    /// バイトを MB の表示にする。
+    static func megabytes(_ bytes: Int64) -> String {
+        String(format: "%.0f", Double(bytes) / 1_048_576)
+    }
+
     /// 手元の状態の各行。
     static func stateLines(_ state: State) -> [String] {
         var lines = [
             "場所: \(state.place.path)",
             "スケッチ: Package.swift が\(state.hasPackage ? "在る" : "無い")",
             "依存している mokume: \(state.dependency ?? "\(unknown) — Package.resolved に pin が無い (パスで指しているとこうなる)")",
-            "組み上げた跡: .build が\(state.hasBuild ? "在る" : "無い")",
+            // **在処まで書く。** 置き場は版ごとの共有へ移りうるので、在る / 無いだけでは
+            // 「どこを消せばやり直せるのか」に答えられない (ADR-0037)
+            "組み上げた跡: " + (state.buildDirectory.map { "在る (\($0.path))" } ?? "無い"),
+            "共有の置き場: " + sharedStoreLine(state.sharedStore),
         ]
         guard let last = state.lastBuild else {
             lines.append(
@@ -205,14 +253,11 @@ enum DoctorCommand {
     }
 
     /// 道具立ての名乗り 1 行。**起動できなければ黙って諦める** (投げない)。
+    ///
+    /// **読み方は ``Toolchain`` が持つ。** ビルドの置き場も同じ文字列を鍵の一部にするので、
+    /// ここで別に読むと片方だけが追随しなくなる。
     static func toolchain(in directory: URL) -> String? {
-        guard
-            let result = try? RunCommand.swift(
-                ["--version"], in: directory, capturing: true, discardingErrors: true),
-            result.status == 0
-        else { return nil }
-        let first = result.output.split(separator: "\n").first.map(String.init)
-        return first?.trimmingCharacters(in: .whitespaces)
+        Toolchain.describe(in: directory)
     }
 
     /// 手元の状態を読む。**何も作らない。**
@@ -221,13 +266,53 @@ enum DoctorCommand {
     /// - Parameter facetBase: 区画の基準。**スケッチの場所とは別の軸** — `watch` は
     ///   `MOKUME_WORK_DIR` を基準に記録を置くので、こちらを分けないと基準を与えた環境で
     ///   常に「まだ無い」と読むことになる (#730)。
-    static func probeState(in directory: URL, facetBase: URL) -> State {
-        State(
+    static func probeState(
+        in directory: URL, facetBase: URL,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+    ) -> State {
+        let root = BuildDirectory.root(environment: environment, home: home)
+        return State(
             place: directory,
             hasPackage: exists(directory.appendingPathComponent("Package.swift")),
-            hasBuild: exists(directory.appendingPathComponent(".build", isDirectory: true)),
+            // **記録から決める。** 置き場は版ごとの共有へ移りうるが、共有の置き場が
+            // 在ることはこのスケッチがそこを使っている証拠にはならない — 先客に譲って
+            // パッケージ直下へ落ちた側にそれを名乗ると、この口が嘘をつく
+            buildDirectory: BuildDirectory.settled(
+                for: directory, root: root,
+                pin: DependencyVersion.pin(forPackageAt: directory)),
+            sharedStore: sharedStore(at: root),
             lastBuild: lastBuild(under: facetBase),
             dependency: DependencyVersion.resolved(forPackageAt: directory))
+    }
+
+    /// 共有の置き場を数える。**何も作らない** (根が無ければ 0 通りと名乗る)。
+    static func sharedStore(at root: URL) -> SharedStore {
+        let manager = FileManager.default
+        let toolchains =
+            (try? manager.contentsOfDirectory(atPath: root.path))?
+            .filter { $0.hasPrefix("swiftlang-") } ?? []
+        var keys = 0
+        for toolchain in toolchains {
+            let directory = root.appendingPathComponent(toolchain, isDirectory: true)
+            keys += (try? manager.contentsOfDirectory(atPath: directory.path))?.count ?? 0
+        }
+        return SharedStore(root: root, keys: keys, bytes: keys > 0 ? size(of: root) : 0)
+    }
+
+    /// ディレクトリの合計の大きさ。**数え切れなければ `nil`。**
+    static func size(of root: URL) -> Int64? {
+        guard
+            let walker = FileManager.default.enumerator(
+                at: root, includingPropertiesForKeys: [.totalFileAllocatedSizeKey],
+                options: [.skipsHiddenFiles])
+        else { return nil }
+        var total: Int64 = 0
+        for case let url as URL in walker {
+            let values = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey])
+            total += Int64(values?.totalFileAllocatedSize ?? 0)
+        }
+        return total
     }
 
     /// `watch` が置いた最後の作り直し。読めない・壊れているときは中身を `\(unknown)` に倒す。

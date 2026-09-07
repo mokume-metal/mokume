@@ -81,7 +81,7 @@ struct NameCorrespondenceTests {
         #expect(lines.last == "道具: \(ToolVersion.describe())")
         // 口の行は 2 字下げ、説明は 6 字下げ (畳む前と同じ)
         #expect(usage.contains("\n  new <名前> [--path <場所>] [--local <ライブラリの場所>]\n"))
-        #expect(usage.contains("\n      -c は debug / release (省くと道具立ての既定)\n"))
+        #expect(usage.contains("\n      -c は debug / release (省くと道具立ての既定)。\n"))
     }
 
     // ------------------------------------------------------------ 差し出す道具

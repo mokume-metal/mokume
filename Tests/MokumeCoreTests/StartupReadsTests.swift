@@ -37,6 +37,13 @@ struct StartupReadsTests {
         "Sources/MokumeCLI/BundleCommand.swift":
             "束ねるときに読む署名の名前。決まるのは配るものを組む瞬間で、走らせた"
             + "スケッチの起動とは関係が無い — 一覧に載せると走らせる側の話に混ざる",
+        "Sources/MokumeCLI/DoctorCommand.swift":
+            "ビルドの置き場の根 (MOKUME_BUILD_DIR)。決まるのは道具がビルドを始める"
+            + "瞬間で、走らせたスケッチは 1 度も読まない (ADR-0037)。既定引数として"
+            + "受け、検査からは隔離した値を渡す",
+        "Sources/MokumeCLI/MCP/SchemasLocator.swift":
+            "同上 — 置き場の在処を並べるために読む。規則そのものは BuildDirectory の"
+            + "1 箇所にあり、ここが読んだ環境はそこへそのまま渡す",
     ]
 
     /// 起動の瞬間に読んでいる疑いのある書き方と、それを名乗る言い方。

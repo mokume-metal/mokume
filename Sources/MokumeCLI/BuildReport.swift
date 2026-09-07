@@ -53,6 +53,13 @@ struct BuildReport: Encodable, Equatable {
     let stamp: String?
     /// どの構成で作ったか。数字がどの土俵のものか分からないと比べられない。
     let configuration: String
+    /// 差し替えたスケッチが立ち上がったか。
+    ///
+    /// **作り直せたことと、走っていることは別である。** かつてここが無かったとき、
+    /// 実行ファイルを解決できなかった回も `ok: true` で記録されていた — 症状は
+    /// 「保存した → 作り直したと出た → 絵が止まっている」で、**記録のどこにも理由が
+    /// 出なかった** ([#1066](https://github.com/mokume-metal/mokume/issues/1066))。
+    let launched: Bool
     /// 分解した所要時間。
     let timings: Timings
 
@@ -63,7 +70,15 @@ struct BuildReport: Encodable, Equatable {
         if let relaunch = timings.relaunchMs { parts.append("relaunch_ms=\(round(relaunch))") }
         parts.append("configuration=\(configuration)")
         if let stamp { parts.append("stamp=\(stamp)") }
-        return (ok ? "作り直した: " : "作り直しに失敗: ") + parts.joined(separator: " ")
+        // **起こせなかった回を「作り直した」で終わらせない。** そこが最も分かりにくい
+        // 壊れ方 (絵が止まっているのに成功と出る) だからである (#1066)
+        let lead =
+            switch (ok, launched) {
+            case (true, true): "作り直した: "
+            case (true, false): "作り直したが、起こせていない: "
+            case (false, _): "作り直しに失敗: "
+            }
+        return lead + parts.joined(separator: " ")
     }
 
     private func round(_ value: Double) -> String {

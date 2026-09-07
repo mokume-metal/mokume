@@ -22,6 +22,12 @@ struct Invocation: Equatable {
     var place: String?
     /// 選ばれた構成。渡されなければ道具立ての既定に任せる。
     var configuration: String?
+    /// 指定されたビルドの置き場。渡されなければ ``BuildDirectory`` が決める。
+    ///
+    /// **既定を変えたので、戻す口が要る。** 置き場は既定で版ごとの共有になるが、
+    /// 共有が都合の悪い場面 (検査・隔離したい計測) では従来どおりパッケージ直下を
+    /// 指せるようにしておく。
+    var scratchPath: String?
 
     /// スケッチの場所 (URL)。
     var directory: URL {
@@ -66,6 +72,9 @@ struct Invocation: Equatable {
     /// 作ると読み替えが要る。
     static let configurationFlags = ["-c", "--configuration"]
 
+    /// ビルドの置き場を選ぶ綴り。構成と同じ理由で道具立てに合わせる。
+    static let scratchPathFlags = ["--scratch-path"]
+
     /// 引数を解く。
     ///
     /// **骨格は ``Arguments`` が持つ。** ここに書くのは宣言 — どの綴りが値を取るかと、
@@ -80,10 +89,14 @@ struct Invocation: Equatable {
             options: [
                 Arguments.Option(configurationFlags) {
                     "\($0) のあとに構成の名前が要る (debug / release)"
-                }
+                },
+                Arguments.Option(scratchPathFlags) {
+                    "\($0) のあとにビルドの置き場が要る"
+                },
             ],
             surplus: .reject { "場所は 1 つだけ: \($0)" })
         return Invocation(
-            place: parsed.positional, configuration: parsed.values[configurationFlags[0]])
+            place: parsed.positional, configuration: parsed.values[configurationFlags[0]],
+            scratchPath: parsed.values[scratchPathFlags[0]])
     }
 }

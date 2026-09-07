@@ -168,7 +168,7 @@ struct DependencyFacetsTests {
         let report = DoctorCommand.report(
             environment: DoctorCommandTests.sound,
             state: DoctorCommand.State(
-                place: consumer.work, hasPackage: true, hasBuild: true, lastBuild: nil),
+                place: consumer.work, hasPackage: true, buildDirectory: consumer.work.appendingPathComponent(".build"), lastBuild: nil),
             base: consumer.work, given: false)
         #expect(report.contains("依存している mokume はこの面を持たない"))
     }

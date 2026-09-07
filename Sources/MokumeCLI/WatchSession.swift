@@ -18,10 +18,13 @@ import mokume
 final class WatchSession {
     /// 差し替えられる外側。
     struct Hooks {
-        /// 作り直す。
-        var build: (URL) -> (status: Int32, output: String)
-        /// 走らせるものの場所を決める。
-        var resolveExecutable: (URL) -> URL?
+        /// 作り直して、走らせるものの場所まで決める。
+        ///
+        /// **作り直しと解決を 1 本にしてある。** 別々の口にしていたときは、`live` が
+        /// 一方にだけ構成や置き場を渡す形が書けてしまい、**名乗ったものと実際に起動する
+        /// ものが食い違った** (#680 が構成で踏んだ形)。抱き合わせれば、その組み合わせを
+        /// 書けなくできる。
+        var rebuild: (URL) -> RunCommand.Rebuilt
         /// 走らせる。世代の刻印と、速さの名乗り (一緒に出す構成の名前) を渡す。
         var launch: (URL, URL, String?, String?) -> Process?
         /// いまの時刻 (秒)。
@@ -29,18 +32,18 @@ final class WatchSession {
         /// 監視しているソースの世代。
         var stamp: (URL) -> String?
 
-        /// - Parameter configuration: 走らせる構成。**作り直しと実行ファイルの解決の両方へ
-        ///   渡す** — 片方だけに渡すと、名乗った構成と実際に起動するものが食い違う (#680)。
-        static func live(configuration: String? = nil) -> Hooks {
+        /// - Parameter context: 1 度だけ決めた土台 (構成と置き場と product)。**作り直しと
+        ///   実行ファイルの解決の両方が同じ値から出る** — 片方だけに渡すと、名乗った構成と
+        ///   実際に起動するものが食い違う (#680)。
+        static func live(context: BuildContext) -> Hooks {
             Hooks(
-                build: { directory in
-                    let result = try? RunCommand.swift(
-                        ["build"] + RunCommand.configurationArguments(configuration),
-                        in: directory, capturing: true)
-                    return (result?.status ?? 1, result?.output ?? "")
-                },
-                resolveExecutable: { directory in
-                    try? RunCommand.executablePath(in: directory, configuration: configuration)
+                rebuild: { directory in
+                    // **起動できなかったことを、作り直しの失敗と同じ顔にする。**
+                    // 道具立てを起こせないときは終了コードを 1 に倒す
+                    (try? RunCommand.rebuild(in: directory, context: context, capturing: true))
+                        ?? RunCommand.Rebuilt(
+                            status: 1, output: "", executable: nil,
+                            binPath: context.directory(under: directory))
                 },
                 launch: { executable, directory, stamp, rate in
                     let process = Process()
@@ -99,11 +102,13 @@ final class WatchSession {
     /// 区画の基準。**パッケージの場所とは別の軸** — スケッチは `MOKUME_WORK_DIR` に従って
     /// 観測を書くので、作り直しの記録も同じ側へ置かないと読み手から見て割れる (#331)。
     let facetBase: URL
-    /// 選ばれた構成。**渡されなければ道具立ての既定に任せる** — ここで既定の名前を
-    /// 書き固めると、道具立てが既定を変えた日に黙ってずれる。
-    let configuration: String?
+    /// 1 度だけ決めた土台 (構成と置き場と product)。
+    ///
+    /// **構成だけを持っていた頃は、置き場を足したときに片方だけ渡す形が書けた。**
+    /// 抱き合わせた値で持てば、作り直しと解決が必ず同じものから出る。
+    let context: BuildContext
     /// 名乗るときの構成の名前。選ばれていなければ既定の名前。
-    var configurationName: String { configuration ?? RunCommand.defaultConfigurationName }
+    var configurationName: String { context.configurationName }
     private var hooks: Hooks
 
     /// いま走らせている子。
@@ -136,18 +141,18 @@ final class WatchSession {
     /// 実際にそう読まれた ([#695](https://github.com/mokume-metal/mokume/issues/695))。
     var willRebuild: (_ initial: Bool) -> Void = { _ in }
 
-    /// - Parameter hooks: 差し替える外側。**渡さなければ、選ばれた構成から組む** —
-    ///   既定引数では作れない (構成が決まるのは初期化の中である)。
+    /// - Parameter hooks: 差し替える外側。**渡さなければ、決めてある土台から組む** —
+    ///   既定引数では作れない (土台が決まるのは初期化の中である)。
     init(
-        directory: URL, facetBase: URL? = nil, configuration: String? = nil,
+        directory: URL, context: BuildContext, facetBase: URL? = nil,
         reportsRate: Bool = false, hooks: Hooks? = nil,
         stopTimeout: TimeInterval = WatchSession.defaultStopTimeout
     ) {
         self.directory = directory
         self.facetBase = facetBase ?? directory
-        self.configuration = configuration
+        self.context = context
         self.reportsRate = reportsRate
-        self.hooks = hooks ?? .live(configuration: configuration)
+        self.hooks = hooks ?? .live(context: context)
         self.stopTimeout = stopTimeout
     }
 
@@ -250,35 +255,60 @@ final class WatchSession {
         willRebuild(initial)
 
         let buildStarted = hooks.now()
-        let (status, output) = hooks.build(directory)
+        let rebuilt = hooks.rebuild(directory)
         let buildMs = (hooks.now() - buildStarted) * 1000
         // 壊れたままのソースで作り直しを繰り返さない。直したら世代が変わるので、
         // そのとき次の作り直しが走る
         lastStamp = stamp
 
-        guard status == 0 else {
+        // **通ったことと、走らせるものが在ることは別である。** 置き場を他の誰かと
+        // 共有していると、作り直しが「通った」のに実行ファイルが建っていないことが
+        // 起きる (#1055)。そこを成功として記録すると、症状は「作り直したと出たのに
+        // 絵が止まっている」になり、**記録のどこにも理由が出ない** (#1066)
+        guard rebuilt.status == 0, let executable = rebuilt.executable else {
             // **走っているものは落とさない。** 直前の版が動き続けるのが、
             // 作り直しが失敗したときに最も助かる振る舞いである
             return finish(
                 BuildReport(
-                    ok: false, status: status, output: output, stamp: stamp,
-                    configuration: configurationName,
+                    ok: false, status: rebuilt.status,
+                    output: unbuiltNotice(rebuilt) ?? rebuilt.output, stamp: stamp,
+                    configuration: configurationName, launched: false,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
 
         let relaunchStarted = hooks.now()
         stop()
-        if let executable = hooks.resolveExecutable(directory) {
-            child = hooks.launch(
-                executable, directory, stamp, reportsRate ? configurationName : nil)
-        }
+        child = hooks.launch(executable, directory, stamp, reportsRate ? configurationName : nil)
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
 
         return finish(
             BuildReport(
-                ok: true, status: 0, output: output, stamp: stamp,
-                configuration: configurationName,
+                ok: true, status: 0, output: rebuilt.output, stamp: stamp,
+                configuration: configurationName, launched: child != nil,
                 timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)))
+    }
+
+    /// 「通ったのに建っていない」ことを、記録の中で名乗る。
+    ///
+    /// **終了コードだけでは区別が付かない。** 作り直しが 0 で終わったのに実行ファイルが
+    /// 無い回は、出力に `Build complete!` としか書かれていない — 読み手 (切り分けの口と
+    /// 窓口) がそれを見ても、何が起きたのか分からない。
+    private func unbuiltNotice(_ rebuilt: RunCommand.Rebuilt) -> String? {
+        guard rebuilt.status == 0, rebuilt.executable == nil else { return nil }
+        guard let product = context.product else {
+            return """
+                作り直しは通ったが、走らせるものを決められない: \(directory.path)
+                Package.swift の products に実行ファイルが宣言されているか確かめる
+
+                \(rebuilt.output)
+                """
+        }
+        return """
+            作り直しは通ったが、\(product) が建っていない: \(rebuilt.binPath.path)
+            置き場に残っている古い計画が原因のことがある — その置き場を消してやり直す
+
+            \(rebuilt.output)
+            """
     }
 
     private func finish(_ report: BuildReport) -> BuildReport {

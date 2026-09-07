@@ -24,12 +24,34 @@ enum DependencyVersion {
     /// 依存の識別子。
     static let identity = "mokume"
 
+    /// 何で固定されているか。
+    ///
+    /// **版と改訂を分ける。** 版が読めないことには 2 つの意味があり (枝や改訂で固定した /
+    /// そもそもまだ解決されていない)、混ぜるとビルドの置き場の鍵が**違う改訂の mokume を
+    /// 同じ部屋へ入れる** — 実測で、そうすると互いを作り直させ続けて増分ビルドが 1.6 秒
+    /// から 8 秒へ落ちる ([#1055](https://github.com/mokume-metal/mokume/issues/1055))。
+    enum Pin: Equatable {
+        /// 版で固定されている。
+        case version(String)
+        /// 枝または改訂で固定されている。
+        case revision(String)
+    }
+
     /// 解決された版。読めなければ `nil`。
     ///
     /// 形式は SwiftPM の版 2 以降 (`pins` が根にある) を読む。ひな形は tools-version 6.2 を
     /// 宣言するので、それより古い形式は書かれない。
     static func resolved(forPackageAt package: URL) -> String? {
+        if case .version(let version) = pin(forPackageAt: package) { return version }
+        return nil
+    }
+
+    /// 何で固定されているか。固定が読めなければ `nil`。
+    static func pin(forPackageAt package: URL) -> Pin? {
         let url = package.appendingPathComponent("Package.resolved")
-        return SwiftPM.read(SwiftPM.Resolved.self, at: url)?.version(of: identity)
+        guard let resolved = SwiftPM.read(SwiftPM.Resolved.self, at: url) else { return nil }
+        if let version = resolved.version(of: identity) { return .version(version) }
+        if let revision = resolved.revision(of: identity) { return .revision(revision) }
+        return nil
     }
 }

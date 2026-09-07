@@ -41,7 +41,7 @@ struct BuildReportTests {
     func theKeyOrderIsDecided() throws {
         let text = try encoded(
             BuildReport(
-                ok: true, status: 0, output: "出力", stamp: "abc123", configuration: "debug",
+                ok: true, status: 0, output: "出力", stamp: "abc123", configuration: "debug", launched: true,
                 timings: BuildReport.Timings(detectMs: 12, buildMs: 34, relaunchMs: 56)))
         let top = text.split(separator: "\n").compactMap { line -> String? in
             // 入れ子 (timings の中) は字下げが深いので、上の階だけを見る
@@ -50,7 +50,7 @@ struct BuildReportTests {
             return String(line.dropFirst(3)[..<end])
         }
         #expect(
-            top == ["configuration", "ok", "output", "schemaVersion", "stamp", "status", "timings"])
+            top == ["configuration", "launched", "ok", "output", "schemaVersion", "stamp", "status", "timings"])
     }
 
     /// 手書きの `CodingKeys` が並べていた 7 つと、`Timings` の 3 つ。
@@ -58,13 +58,13 @@ struct BuildReportTests {
     func theKeysAreUnchanged() throws {
         let text = try encoded(
             BuildReport(
-                ok: true, status: 0, output: "出力", stamp: "abc123", configuration: "debug",
+                ok: true, status: 0, output: "出力", stamp: "abc123", configuration: "debug", launched: true,
                 timings: BuildReport.Timings(detectMs: 12, buildMs: 34, relaunchMs: 56)))
         let object = try #require(
             try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
         #expect(
             Set(object.keys)
-                == ["schemaVersion", "ok", "status", "output", "stamp", "configuration", "timings"])
+                == ["schemaVersion", "ok", "status", "output", "stamp", "configuration", "launched", "timings"])
         let timings = try #require(object["timings"] as? [String: Any])
         #expect(Set(timings.keys) == ["detectMs", "buildMs", "relaunchMs"])
 
@@ -83,7 +83,7 @@ struct BuildReportTests {
     func theSchemaVersionRidesAlong() throws {
         let text = try encoded(
             BuildReport(
-                ok: true, status: 0, output: "", stamp: nil, configuration: "debug",
+                ok: true, status: 0, output: "", stamp: nil, configuration: "debug", launched: true,
                 timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil)))
         #expect(text.contains("\"schemaVersion\" : 1"))
     }
@@ -94,7 +94,7 @@ struct BuildReportTests {
     func absentFieldsStayAbsent() throws {
         let text = try encoded(
             BuildReport(
-                ok: false, status: 1, output: "だめ", stamp: nil, configuration: "release",
+                ok: false, status: 1, output: "だめ", stamp: nil, configuration: "release", launched: true,
                 timings: BuildReport.Timings(detectMs: nil, buildMs: 2, relaunchMs: nil)))
         #expect(!text.contains("stamp"))
         #expect(!text.contains("detectMs"))
@@ -109,7 +109,7 @@ struct BuildReportTests {
         let text = try encoded(
             BuildReport(
                 ok: false, status: 1, output: "/tmp/sketch/Sources/main.swift:3: error",
-                stamp: nil, configuration: "debug",
+                stamp: nil, configuration: "debug", launched: true,
                 timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil)))
         #expect(text.contains("/tmp/sketch/Sources/main.swift:3: error"))
     }

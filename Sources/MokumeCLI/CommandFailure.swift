@@ -23,6 +23,13 @@ enum CommandFailure: Error, Equatable {
     /// 走らせたスケッチが 0 以外で終わった。**道具の失敗ではない。**
     case sketchExited(status: Int32)
     case noExecutable(path: String)
+    /// 作り直しは通ったのに、走らせるものが建っていない。
+    ///
+    /// **「ビルドが成功した」とは別の失敗である。** 置き場の計画が古いと道具立ては
+    /// 「Build complete!」と言って実行ファイルを 1 つも作らないので、終了コードだけを
+    /// 見ていると成功として通り、置き場に残っていた**別のスケッチの実行ファイル**を
+    /// 起動することになる ([#1055](https://github.com/mokume-metal/mokume/issues/1055))。
+    case productNotBuilt(product: String, path: String)
     case toolchainMissing(String)
 
     /// 資材の置き場があるのに、パッケージが宣言していない。
@@ -143,6 +150,11 @@ enum CommandFailure: Error, Equatable {
             """
             走らせるものが見つからない: \(path)
             Package.swift の products に実行ファイルが宣言されているか確かめる
+            """
+        case .productNotBuilt(let product, let path):
+            """
+            作り直しは通ったのに、\(product) が建っていない: \(path)
+            置き場に残っている古い計画が原因のことがある — その置き場を消してやり直す
             """
         case .toolchainMissing(let tool):
             "\(tool) が見つからない。Xcode のコマンドラインツールを入れる"
