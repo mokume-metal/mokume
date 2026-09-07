@@ -67,10 +67,15 @@ enum DoctorCommand {
         ///
         /// [ADR-0037]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0037-shared-build-directory.md
         var buildDirectory: URL?
-        /// 共有の置き場の根と、そこに在る鍵の数と合計の大きさ。読めなければ `nil`。
+        /// 共有の置き場の根と、部屋ごとの大きさと使われ方。読めなければ `nil`。
         ///
         /// **共有を既定にすると `rm -rf .build` では消えないものが生まれる。** だから
-        /// 在処を言える口が要る (掃除の道具は足さない — 在処が分かれば `rm -rf` で足りる)。
+        /// 在処を言える口が要る (掃除の口は足さない — 消すのは `rm -rf` に任せる)。
+        ///
+        /// **合計だけでは足りない。** 版の出方が速いので (直近 10 日で 6 版)、版をまたいで
+        /// 作る人には 1 部屋 414MB が版ごとに溜まる — どの部屋が何MBで、どれをもう誰も
+        /// 使っていないかを名乗らないと「どれを消せばよいか」に答えられない
+        /// ([#1073](https://github.com/mokume-metal/mokume/issues/1073))。
         var sharedStore: SharedStore?
         /// 最後の作り直し。`watch` が書く。まだ無ければ `nil`。
         var lastBuild: LastBuild?
@@ -84,10 +89,50 @@ enum DoctorCommand {
     struct SharedStore: Equatable {
         /// 根。
         var root: URL
-        /// そこに在る鍵 (`<道具立て>/<版>`) の数。
-        var keys: Int
-        /// 合計の大きさ (バイト)。**数え切れなければ `nil`。**
+        /// 鍵 (`<道具立て>/<版>`) ごとの部屋。**名前の順に並んでいる。**
+        var rooms: [Room]
+        /// 依存を解決するためだけの部屋 (`resolve`)。無ければ `nil`。
+        ///
+        /// **鍵の部屋とは別に持つ。** 合計と内訳の差が説明されないと、内訳そのものが
+        /// 信用できない — この部屋は実測 200MB あり、どの版のスケッチも使うので
+        /// (`RunCommand` が解決だけをここへ寄せる) 持ち主の記録を持たない。
+        var resolve: Room?
+        /// 根の全体の大きさ (バイト)。**数え切れなければ `nil`。**
         var bytes: Int64?
+
+        /// 鍵の数。
+        var keys: Int { rooms.count }
+    }
+
+    /// 共有の置き場に在る 1 部屋。
+    struct Room: Equatable {
+        /// 根からの相対の名前 (`<道具立て>/<版>`)。
+        var key: String
+        /// 大きさ (バイト)。**数え切れなければ `nil`。**
+        var bytes: Int64?
+        /// 使われ方。
+        var standing: Standing
+    }
+
+    /// 部屋の使われ方。
+    ///
+    /// **判定を名乗るだけで、消せるとは言わない** (規律 1 と同じ向き — 消すのは人が決める)。
+    ///
+    /// **読めない記録を「誰も使っていない」へ倒さない。** 倒すと人が現役の部屋を消す —
+    /// `BuildDirectory.unreadableOwner` が読めない記録を「別人のもの」へ倒すのと同じ
+    /// 向きである (規律 3)。
+    enum Standing: Equatable {
+        /// 使っているスケッチが手元にある (実在した持ち主の数)。
+        case used(Int)
+        /// 記録に載っている持ち主が 1 つも実在しない (記録の件数)。**この部屋を使う
+        /// スケッチは手元に無い。**
+        case unused(recorded: Int)
+        /// 持ち主の記録が 1 件も無い。
+        case unrecorded
+        /// 実在する持ち主は無いが、読めない記録が混ざっている (読めた記録の件数)。
+        case unreadable(recorded: Int)
+        /// 持ち主を持たない部屋である (依存の解決用)。
+        case shared
     }
 
     /// 最後の作り直し。**「区画が無い」と「`watch` が死んでいる」を分ける決め手**になる。
@@ -180,15 +225,42 @@ enum DoctorCommand {
         ]
     }
 
-    /// 共有の置き場を名乗る 1 行。
+    /// 共有の置き場を名乗る行。**1 行目が根と合計で、続く行が部屋の内訳。**
     ///
     /// **数え切れなかったら数を言わない** (規律 3 と同じ向き)。大きさが読めないことは
     /// 「無い」ではない。
-    static func sharedStoreLine(_ store: SharedStore?) -> String {
-        guard let store else { return "\(unknown) — 根を決められなかった" }
-        guard store.keys > 0 else { return "まだ無い (\(store.root.path))" }
+    static func sharedStoreLines(_ store: SharedStore?) -> [String] {
+        guard let store else { return ["\(unknown) — 根を決められなかった"] }
+        guard store.keys > 0 || store.resolve != nil else {
+            return ["まだ無い (\(store.root.path))"]
+        }
         let size = store.bytes.map { " / 合計 \(megabytes($0))MB" } ?? " / 大きさは\(unknown)"
-        return "\(store.root.path) (\(store.keys) 通り\(size))"
+        var lines = ["\(store.root.path) (\(store.keys) 通り\(size))"]
+        // 部屋は 1 つずつ行を持つ。**1 行に畳まない** — 畳むと鍵が増えた日に読めなくなり、
+        // 合計 1 行だったときと同じ「どれを消せばよいか分からない」に戻る
+        lines += (store.rooms + [store.resolve].compactMap { $0 }).map { "  \(roomLine($0))" }
+        return lines
+    }
+
+    /// 部屋 1 つを名乗る行。
+    static func roomLine(_ room: Room) -> String {
+        let size = room.bytes.map { "\(megabytes($0))MB" } ?? "大きさは\(unknown)"
+        return "\(room.key): \(size) — \(standingText(room.standing))"
+    }
+
+    /// 使われ方を名乗る語。
+    static func standingText(_ standing: Standing) -> String {
+        switch standing {
+        case .used(let count): "使っているスケッチが \(count) 本ある"
+        case .unused(let recorded):
+            "記録 \(recorded) 件のうち実在 0 (使っているスケッチは手元に無い)"
+        case .unrecorded: "持ち主の記録が無い (\(unknown))"
+        // 読めた記録が 1 件も無いなら、実在の数を言っても意味が無い
+        case .unreadable(0): "持ち主の記録が読めない (\(unknown))"
+        case .unreadable(let recorded):
+            "記録 \(recorded) 件のうち実在 0 だが、読めない記録もある (\(unknown))"
+        case .shared: "どの版のスケッチも使う (依存の解決用)"
+        }
     }
 
     /// バイトを MB の表示にする。
@@ -205,8 +277,10 @@ enum DoctorCommand {
             // **在処まで書く。** 置き場は版ごとの共有へ移りうるので、在る / 無いだけでは
             // 「どこを消せばやり直せるのか」に答えられない (ADR-0037)
             "組み上げた跡: " + (state.buildDirectory.map { "在る (\($0.path))" } ?? "無い"),
-            "共有の置き場: " + sharedStoreLine(state.sharedStore),
         ]
+        let store = sharedStoreLines(state.sharedStore)
+        lines.append("共有の置き場: \(store[0])")
+        lines += store.dropFirst()
         guard let last = state.lastBuild else {
             lines.append(
                 "最後の作り直し: まだ無い (\(Command.name) watch が一度も書いていない)")
@@ -286,18 +360,77 @@ enum DoctorCommand {
             dependency: DependencyVersion.resolved(forPackageAt: directory))
     }
 
-    /// 共有の置き場を数える。**何も作らない** (根が無ければ 0 通りと名乗る)。
+    /// 共有の置き場を読む。**何も作らず、何も消さない** (根が無ければ 0 通りと名乗る)。
     static func sharedStore(at root: URL) -> SharedStore {
         let manager = FileManager.default
-        let toolchains =
-            (try? manager.contentsOfDirectory(atPath: root.path))?
-            .filter { $0.hasPrefix("swiftlang-") } ?? []
-        var keys = 0
-        for toolchain in toolchains {
+        let entries = (try? manager.contentsOfDirectory(atPath: root.path)) ?? []
+        var rooms: [Room] = []
+        for toolchain in entries.filter({ $0.hasPrefix("swiftlang-") }).sorted() {
             let directory = root.appendingPathComponent(toolchain, isDirectory: true)
-            keys += (try? manager.contentsOfDirectory(atPath: directory.path))?.count ?? 0
+            let keys = (try? manager.contentsOfDirectory(atPath: directory.path)) ?? []
+            for key in keys.sorted() {
+                let store = directory.appendingPathComponent(key, isDirectory: true)
+                rooms.append(
+                    Room(
+                        key: "\(toolchain)/\(key)", bytes: size(of: store),
+                        standing: standing(of: store)))
+            }
         }
-        return SharedStore(root: root, keys: keys, bytes: keys > 0 ? size(of: root) : 0)
+        let name = BuildDirectory.resolveSegment
+        let resolve =
+            entries.contains(name)
+            ? Room(
+                key: name, bytes: size(of: root.appendingPathComponent(name, isDirectory: true)),
+                standing: .shared)
+            : nil
+        let empty = rooms.isEmpty && resolve == nil
+        return SharedStore(
+            root: root, rooms: rooms, resolve: resolve, bytes: empty ? 0 : size(of: root))
+    }
+
+    /// 部屋の持ち主の記録を読んで、使われ方を決める。**読むだけ。**
+    ///
+    /// **記録の在処は書く側と同じ 1 本から出す** (`BuildDirectory.ownersDirectory(in:)`)
+    /// — 自前で組むと、席を押さえる側だけが綴りを変えた日に黙って全部「記録が無い」に
+    /// なる (ADR-0037 決定 5 が言う写しの割れ)。
+    static func standing(of store: URL) -> Standing {
+        let owners = BuildDirectory.ownersDirectory(in: store)
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: owners.path)) ?? []
+        return standing(
+            owners: names.sorted().map { name in
+                try? String(
+                    contentsOf: owners.appendingPathComponent(name, isDirectory: false),
+                    encoding: .utf8)
+            })
+    }
+
+    /// 記録の中身 (読めなければ `nil`) から、使われ方を決める。**純関数。**
+    ///
+    /// - Parameter exists: 持ち主が実在するかの判定。**渡せる形にしてある** — 判定そのものは
+    ///   ``WorkDirectory/directoryExists(at:)`` が持つので、ここで別に組まない。
+    static func standing(
+        owners: [String?],
+        exists: (String) -> Bool = {
+            WorkDirectory.directoryExists(at: URL(fileURLWithPath: $0, isDirectory: true))
+        }
+    ) -> Standing {
+        var recorded = 0
+        var present = 0
+        var unreadable = false
+        for owner in owners {
+            let path = owner?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // 空は「書きかけ」でありうる。**読めなかったことと同じ顔にする**
+            guard !path.isEmpty else {
+                unreadable = true
+                continue
+            }
+            recorded += 1
+            if exists(path) { present += 1 }
+        }
+        // 1 つでも実在すれば使われている。読めない記録が混ざっていても、そこは動かない
+        if present > 0 { return .used(present) }
+        if unreadable { return .unreadable(recorded: recorded) }
+        return recorded > 0 ? .unused(recorded: recorded) : .unrecorded
     }
 
     /// ディレクトリの合計の大きさ。**数え切れなければ `nil`。**
