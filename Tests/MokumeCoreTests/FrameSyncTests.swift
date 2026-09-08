@@ -488,6 +488,22 @@ struct FrameSyncTests {
         }
     }
 
+    /// 出口を刺しただけの、**GPU を占めないスケッチ**。寿命の検査に使う。
+    ///
+    /// `BusyOutletSketch` を使い回せない — あちらは毎フレーム回転を積むので、
+    /// `await` で main actor を明け渡す検査から使うと、明け渡した先で走る検査と
+    /// GPU を取り合い、ドライバがどちらかを打ち切る ([#1063])。
+    ///
+    /// [#1063]: https://github.com/mokume-metal/mokume/issues/1063
+    final class QuietOutletSketch: Sketch {
+        nonisolated(unsafe) static var declared: [any Outlet] = []
+
+        var settings: SketchSettings { SketchSettings(width: 32, height: 32) }
+        var plugins: [any Plugin] { [OutletPlugin(outlets: Self.declared)] }
+
+        func draw() { background(0) }
+    }
+
     struct OutletPlugin: Plugin {
         let outlets: [any Outlet]
         func register(into registry: PluginRegistry) {
@@ -532,6 +548,21 @@ struct FrameSyncTests {
         #expect(!gpu.isIdle, "フレームから返った時点で GPU が終わっている — 道が待っている")
         #expect(gpu.blockingWaits == drains, "出口へ渡す道が投入済みの全完了を待っている")
         #expect(outlet.frames.count > 0, "1 枚も配られていない")
+
+        // **見終えたら GPU を空にして出る。** この検査は 10 フレームぶんの回転を投入したまま
+        // 返るので、片付けないと次の検査が自分の土台で回転を積む間ずっと GPU に居残る。
+        // 2 つの発行口が長い 1 糸の計算を持ち込むと、ドライバがどちらかを打ち切り、
+        // **打ち切られた側は 1 画素も書かないのに合図は進む** ([#1063])。実測では、この
+        // 1 行の有無で `FrameSyncTests` 30 回の打ち切りが 44 回と 0 回に分かれた。
+        //
+        // **土台の `isolated deinit` は当てにできない** ([#1076])。抱えている資源
+        // (`held`) が土台を抱え返している間は誰も土台を畳めないので、「実行中のものが
+        // 終わる前に畳まない」は**畳めるとき (= 待つものが無いとき) にしか発火しない**。
+        // 片付けはここで明示的に行う。
+        //
+        // [#1063]: https://github.com/mokume-metal/mokume/issues/1063
+        // [#1076]: https://github.com/mokume-metal/mokume/issues/1076
+        try gpu.settle()
     }
 
     @Test("出口が受け取る絵は 1 枚遅れで届き、中身は確定している")
@@ -556,5 +587,169 @@ struct FrameSyncTests {
                 received.level == BusyOutletSketch.brightness(atFrame: received.frame),
                 "\(received.frame) 枚目の絵が組み上がる前に配られている\(faultNote(gpu))")
         }
+    }
+
+    // MARK: - 抱えている資源の手放し (#1076)
+
+    /// 条件が満たされるまで待つ。
+    ///
+    /// **待つ側が main actor を明け渡す。** 完了の知らせは Metal 側の糸で届き、抱えて
+    /// いる資源を刈るのは main actor へ渡してからなので、待つ側が回り続けていると渡す
+    /// 先が空かない (`ShaderTests` の同名のヘルパと同じ理由・同じ形)。
+    ///
+    /// 期限は ``RenderDevice/waitLimitSeconds`` から取る — 壁時計の絶対値を検査に
+    /// 書かないため。越えたら「届かなかった」として赤くする (`.timeLimit` は使わない。
+    /// [#564](https://github.com/mokume-metal/mokume/issues/564))。
+    private func waitUntil(
+        _ condition: () -> Bool, within seconds: Double = Double(RenderDevice.waitLimitSeconds),
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !condition(), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(condition(), "\(seconds) 秒待っても届かなかった", sourceLocation: sourceLocation)
+    }
+
+    /// **これが [#1076] の芯である。** 抱えている資源を刈る契機が「次に誰かが土台へ
+    /// 頼んだとき」しか無いと、最後のフレームの後は永久に刈られない。抱えた資源が土台を
+    /// 抱え返している系統 (利用者の塗り・数の並び・利用者の効果・出口) では、それが
+    /// そのまま保持環になり、土台が畳まれず GPU の仕事が居残る。
+    ///
+    /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
+    @Test("抱えている資源は、誰も待たなくても完了の知らせで手放される")
+    func heldResourcesGoOnCompletionWithoutAnyoneWaiting() async throws {
+        let bench = try makeBench()
+        let canvas = bench.canvas
+
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(red)
+            canvas.rect(0, 0, 32, 32)
+        }
+        // **GPU を占めなくてよい。** 刈りは main actor へ渡ってから効くので、ここを
+        // 明け渡すまでは絶対に走れない — 回転を積んで「まだ終わっていない」を作る必要が
+        // ない。**積んではならない**でもある: 下の `await` で main actor を明け渡すと
+        // 他の検査が割り込んで走るので、そこへ数十 ms の計算を残すと 2 つの発行口が
+        // GPU を取り合い、打ち切りを招く (#1063)
+        try #require(bench.gpu.heldResourceCount > 0, "投入したのに何も抱えていない")
+        let settles = bench.gpu.settleCalls
+
+        try await waitUntil { bench.gpu.heldResourceCount == 0 }
+        #expect(bench.gpu.settleCalls == settles, "刈るために待ちを頼んでいる")
+        // **手放されたのは、仕事が終わった後である。** 刈る契機が完了そのものなので、
+        // 抱えていたものが無くなった時点で投入済みの仕事は全部終わっている — #727 の
+        // 「実行中のものが終わる前に畳まない」は、この形では待つのではなく順序で満たされる
+        #expect(bench.gpu.isIdle, "抱えているものが無いのに、まだ走っている")
+    }
+
+    /// 土台を抱え返す 4 系統。**どれも `held` から辿れる強参照の鎖である。**
+    ///
+    /// | 系統 | 鎖 |
+    /// | --- | --- |
+    /// | 利用者の塗り | `HeldFrame` → `Batch` → `Shape.Paint.shader` → `Shader.gpu` |
+    /// | 数の並び | 同 → `Shape.Paint.numbers` → `Numbers.gpu` |
+    /// | 利用者の効果 | `HeldFrame` → `Effect.custom` → `EffectShader.gpu` (と `.pipeline`) |
+    /// | 出口 | `commit(_:retaining:)` へ渡す `EncodedImage` → `EncodedImage.gpu` |
+    ///
+    /// **型ごとに参照を弱くする手は採れない** — 利用者の効果は鎖が 2 本あるので片方を
+    /// 弱くしても切れず、`Shape.Paint` に欄が増えるたびに漏れる。切るのは `held` の側で、
+    /// それがこの検査群が守っているものである。
+    enum HeldPath: String, CaseIterable {
+        case userShader = "利用者の塗り"
+        case numbers = "数の並び"
+        case userEffect = "利用者の効果"
+        case outlet = "出口"
+    }
+
+    @Test("土台を抱え返す資源を載せたフレームの後、土台は畳まれる", arguments: HeldPath.allCases)
+    func aFrameHoldingTheDeviceStillReleasesIt(_ path: HeldPath) async throws {
+        weak var device: RenderDevice?
+
+        try autoreleasepool {
+            if path == .outlet {
+                // 出口の経路は走りが組む (`encodeToImage` が `EncodedImage` を抱えさせる)。
+                // **GPU を占めないスケッチを使う** (`QuietOutletSketch` の doc の理由)
+                QuietOutletSketch.declared = [WatchingOutlet(readsBytes: false)]
+                let gpu = try RenderDevice()
+                device = gpu
+                let runtime = try SketchRuntime(sketch: QuietOutletSketch(), gpu: gpu)
+                try runtime.advance()
+                return
+            }
+
+            let gpu = try RenderDevice()
+            device = gpu
+            let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
+            let canvas = try Canvas(target: target, gpu: gpu)
+            switch path {
+            case .userShader:
+                let shader = try canvas.makeShader(Self.flatShader)
+                try canvas.draw {
+                    canvas.background(black)
+                    canvas.shader(shader)
+                    canvas.rect(0, 0, 32, 32)
+                }
+            case .numbers:
+                let shader = try canvas.makeShader(Self.flatShader)
+                let numbers = try canvas.makeNumbers(count: 4)
+                try canvas.draw {
+                    canvas.background(black)
+                    canvas.shader(shader)
+                    canvas.numbers(numbers)
+                    canvas.rect(0, 0, 32, 32)
+                }
+            case .userEffect:
+                let effect = try canvas.makeEffect(
+                    "float4 effect(Pixel in, Values values) { return mokume_at(in, in.place); }")
+                try canvas.draw {
+                    canvas.effects([.custom(effect)])
+                    canvas.background(black)
+                    canvas.fill(red)
+                    canvas.rect(0, 0, 32, 32)
+                }
+            case .outlet:
+                break
+            }
+        }
+
+        try await waitUntil { device == nil }
+    }
+
+    /// 塗りが読む並びを 1 つ持つ断片。**中身は何でもよい** — 見たいのは鎖であって絵ではない。
+    private static let flatShader =
+        "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }"
+
+    /// 二次被害のほう。**環が生きている間は `Numbers` の `deinit` も走らない**ので、
+    /// 置き場が常駐の集合から外れないまま残る ([#738] が閉じた穴が、その間だけ開く)。
+    ///
+    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    @Test("持ち主が死んだ置き場は、誰も待たなくても常駐から外れる")
+    func retiredStorageLeavesResidencyOnCompletion() async throws {
+        let bench = try makeBench()
+        let canvas = bench.canvas
+        let shader = try canvas.makeShader(Self.flatShader)
+        weak var numbers: Numbers?
+
+        try autoreleasepool {
+            let owned = try canvas.makeNumbers(count: 4)
+            numbers = owned
+            try canvas.draw {
+                // 回転は積まない (上の検査と同じ理由)
+                canvas.background(black)
+                canvas.shader(shader)
+                canvas.numbers(owned)
+                canvas.rect(0, 0, 32, 32)
+                // **面の手も離す。** ここを外すと `Canvas` が「これから描くものが読む並び」
+                // として持ち続けるので、見たい鎖 (`held` → `Paint` → `Numbers`) の
+                // 代わりに面の寿命を見てしまう
+                canvas.resetNumbers()
+            }
+        }
+        // GPU がまだ読んでいる間は、呼ぶ側が手放しても生きている
+        try #require(numbers != nil, "GPU が読んでいる途中で置き場が解放された")
+
+        try await waitUntil { numbers == nil }
+        #expect(bench.gpu.retiredResourceCount == 0, "常駐から外す番を待ったまま残っている")
     }
 }

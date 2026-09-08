@@ -191,10 +191,21 @@ import MokumeDiagnostics
     /// 払うのは投入ごとに置き場 1 つとハンドラ 1 つである。
     ///
     /// ハンドラは Metal 側の糸から呼ばれるので、`@MainActor` のこの型ではなく**錠で
-    /// 守った器だけを掴む**。
-    private func makeCommitOptions() -> MTL4CommitOptions {
+    /// 守った器だけを掴む**。自分を掴むのは弱い参照だけで、状態へ触るのは main actor へ
+    /// 渡してからである。
+    ///
+    /// **`@Sendable` を字面で書く。** 書かないとこのクロージャの隔離が輸入された型の
+    /// 注釈次第になり、main actor 隔離として推論された日には Metal 側の糸から呼ばれた
+    /// 瞬間に落ちる。書けばコンパイラが掴んだものを検査する。
+    ///
+    /// - Parameter submission: この投入の番号。終わったらここまでを刈る。
+    private func makeCommitOptions(finishing submission: UInt64) -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
-        options.addFeedbackHandler { [commandFaults] (feedback: any MTL4CommitFeedback) in
+        options.addFeedbackHandler {
+            @Sendable [commandFaults, weak self] (feedback: any MTL4CommitFeedback) in
+            // **抱えている資源を手放す契機は、完了そのものが持つ。** 実測では、成功した
+            // 投入でもハンドラは毎回呼ばれる (50 回の投入に対し 50 回)
+            Task { @MainActor in self?.releaseFinished(upTo: submission) }
             guard let error = feedback.error else { return }
             let reason = CommandFaultLog.reason(of: error)
             guard commandFaults.note(reason) else { return }
@@ -203,6 +214,18 @@ import MokumeDiagnostics
                     + " — 同じ知らせは、これ以降黙ります")
         }
         return options
+    }
+
+    /// 完了の知らせを受けて刈る。**番号と合図の、進んでいるほうまで刈る。**
+    ///
+    /// 番号だけを見ると、知らせが 1 本届かなかったときにその後ろが全部残る。合図だけを
+    /// 見ると、合図はコマンドバッファの**後**にキューが進めるので、最後の投入を刈り
+    /// 残す競走になる (それはこの Issue が直そうとしている状態そのものである)。
+    /// 片方が遅れてももう片方が埋めるので、両方の大きいほうを取る。
+    ///
+    /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
+    private func releaseFinished(upTo submission: UInt64) {
+        releaseFinished(through: max(submission, completion.signaledValue))
     }
 
     /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。
@@ -698,7 +721,20 @@ import MokumeDiagnostics
     /// 死んだリソースを常駐から外すこと ([#738])。契機が同じ (「番号 n まで終わった」) なので、
     /// 呼ぶ場所を分けると片方だけを呼ぶ経路ができる。
     ///
+    /// 呼ばれるのは 4 か所である — ``settle()`` / ``beginCommands()`` /
+    /// ``waitForSubmission(_:)`` と、投入の結末を受け取るハンドラ ([#1076])。
+    /// **前の 3 つは消せない。** ハンドラの知らせは main actor へ渡してから効くので、
+    /// main actor を明け渡さずに回り続ける経路 (フレームを連続で進める道具や検査) では
+    /// 着地できず、``held`` が伸びる。あちらは「溜まらないための刈り」で、こちらは
+    /// 「誰も頼まなくても畳めるようにするための刈り」である。
+    ///
+    /// **``held`` から辿れるものの `deinit` は、``settle()`` と
+    /// ``waitForSubmission(_:)`` を呼んではならない。** どちらも `defer` でここを呼ぶので、
+    /// `held.removeSubrange` の最中に再入し、同じ配列への排他アクセスが重なる。いま
+    /// 成立しているのは ``retire(_:)`` が待たずに返る形だからである (#738)。
+    ///
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
     private func releaseFinished(through finished: UInt64) {
         if let last = held.lastIndex(where: { $0.submission <= finished }) {
             held.removeSubrange(...last)
@@ -709,29 +745,38 @@ import MokumeDiagnostics
         retired.removeSubrange(...last)
     }
 
-    /// 直前に投入した番号を GPU 側で待つ命令を積む。
+    /// 番号 `previous` の投入を GPU 側で待つ命令を積む。
     ///
     /// この世代は別々に投入したコマンドの間の順序を自動では保証しない。CPU が毎回
     /// 待っていた間はそれで偶然成り立っていたが、待たなくなると「前のフレームが描画先を
     /// 読み終える前に次のフレームが消す」が起きうる。投入の直前にこれを積めば、GPU 上の
     /// 順序が投入順のまま保たれる。
-    private func orderAfterPreviousSubmission() {
-        guard submissionCount > 0 else { return }
-        queue.waitForEvent(completion, value: submissionCount)
+    ///
+    /// **待つ番号を引数で受け取る。** かつては `submissionCount` を「直前の番号」として
+    /// 直に読んでいたが、番号を振る場所が動くと**その投入が自分自身の合図を待つ**形に
+    /// 化ける (症状は GPU が 5 秒返らず空の絵が読める — #1063 とまったく同じ顔になる)。
+    /// 字面に出しておけば、黙って化けることがない。
+    private func orderAfter(_ previous: UInt64) {
+        guard previous > 0 else { return }
+        queue.waitForEvent(completion, value: previous)
     }
 
-    /// 投入に番号を振り、合図を出し、置き場へ書き戻す。
+    /// 投入に振った番号の合図を出し、置き場へ書き戻す。
     ///
     /// **待つ経路も待たない経路も必ずここを通す。** 通さない経路があると、その置き場は
-    /// 「終わったかどうか分からないまま巻き戻してよい」ことになってしまう。
-    @discardableResult
-    private func recordSubmission(of commands: any MTL4CommandBuffer) -> UInt64 {
-        submissionCount += 1
-        queue.signalEvent(completion, value: submissionCount)
+    /// 「終わったかどうか分からないまま巻き戻してよい」ことになってしまう。漏斗は
+    /// ``commit(_:retaining:)`` 1 つで、番号もそこで 1 か所だけ進む。
+    ///
+    /// **番号を振るのはここではない。** 結末を受け取るお願いは投入と同時に渡す必要が
+    /// あり、そのハンドラが「どこまで終わったか」を名乗るのに番号が要るので、振るのは
+    /// 投入の手前である ([#1076])。
+    ///
+    /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
+    private func recordSubmission(_ submission: UInt64, of commands: any MTL4CommandBuffer) {
+        queue.signalEvent(completion, value: submission)
         if let index = slotOfOpenCommands.removeValue(forKey: ObjectIdentifier(commands)) {
-            slots[index].submission = submissionCount
+            slots[index].submission = submission
         }
-        return submissionCount
     }
 
     /// 組み立てたコマンドを投入する。**GPU の完了を待たない。**
@@ -745,11 +790,16 @@ import MokumeDiagnostics
     @discardableResult
     func commit(_ commands: any MTL4CommandBuffer, retaining resources: [AnyObject] = []) -> UInt64 {
         commands.endCommandBuffer()
-        orderAfterPreviousSubmission()
+        // **増やす前に積む。** 順番が逆だと、この投入が自分自身の合図を待つ
+        orderAfter(submissionCount)
+        // **番号は投入の手前で振る。** お願いは投入と同時に渡すので、ハンドラが名乗る
+        // 番号がその時点で決まっていなければならない (#1076)
+        submissionCount += 1
+        let submission = submissionCount
         // **結末を受け取るお願いを添える。** 添えなければ Metal は打ち切りを捨てるので、
         // 描き上げられなかった仕事も「終わった」としか見えない (#1065)
-        queue.commit([commands], options: makeCommitOptions())
-        let submission = recordSubmission(of: commands)
+        queue.commit([commands], options: makeCommitOptions(finishing: submission))
+        recordSubmission(submission, of: commands)
         // **投入した本体も、終わるまで抱える。** 記録の実体は置き場 (allocator) にあるが、
         // 本体の寿命を GPU の実行より短くしない — 投入した側は直後に手放すので、
         // ここで抱えなければ実行中に消える
