@@ -192,9 +192,32 @@ import MokumeDiagnostics
     ///
     /// ハンドラは Metal 側の糸から呼ばれるので、`@MainActor` のこの型ではなく**錠で
     /// 守った器だけを掴む**。
+    ///
+    /// **抱えた資源を手放す契機も、このお願いが運ぶ。** ``held`` を刈る呼び手は
+    /// ``settle()`` / ``beginCommands()`` / ``waitForSubmission(_:)`` の 3 つしかなく、
+    /// **最後の投入の後に土台へ何も頼まなければ環が切れない** — 抱えた資源のいくつかは
+    /// 土台を強参照で持ち返すので (利用者の塗り・数の並び・利用者の効果・刻んだ絵の
+    /// 4 経路)、土台は手放されても畳まれず、`isolated deinit` の「実行中のものが終わる
+    /// 前に土台を畳まない」が一度も発火しない。居残った土台の GPU の仕事は次の実行と
+    /// 重なり、ドライバがどちらかを打ち切る ([#1076])。
+    ///
+    /// **資源そのものをここで手放すことはできない。** 抱えた資源には
+    /// `isolated deinit` を持つ型が混じっている (``Numbers`` は畳まれるときに
+    /// ``retire(_:)`` を呼ぶ) ので、最後の参照を Metal 側の糸で落とす形は
+    /// `sending` の検査が止める — 型システムの判定が正しい。だから運ぶのは**契機だけ**
+    /// にして、刈るのは main actor に戻ってからにする。
+    ///
+    /// 型ごとに `unowned` を付ける手は採らない — 経路 3 (利用者の効果) は 2 本あるので
+    /// 切れず、抱える型が増えるたびに漏れる。
+    ///
+    /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
     private func makeCommitOptions() -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
-        options.addFeedbackHandler { [commandFaults] (feedback: any MTL4CommitFeedback) in
+        options.addFeedbackHandler {
+            [commandFaults, weak self] (feedback: any MTL4CommitFeedback) in
+            // **契機を先に渡す。** 打ち切りでも結末は届くので、ここを警告の後ろに置くと
+            // 「2 度目からは黙る」の早期 return に隠れて刈られない
+            Task { @MainActor in self?.releaseSettledResources() }
             guard let error = feedback.error else { return }
             let reason = CommandFaultLog.reason(of: error)
             guard commandFaults.note(reason) else { return }
@@ -209,6 +232,13 @@ import MokumeDiagnostics
     ///
     /// **番号の順に並ぶ。** 番号 n までが終わったと分かったら、先頭から n 以下のものを
     /// 落とす。投入した側が参照を手放しても、ここが抱えている間は解放されない。
+    ///
+    /// **抱えたものの中には、土台を強参照で持ち返すものが混じっている** (利用者の
+    /// 塗り・数の並び・利用者の効果・刻んだ絵の 4 経路)。だから刈る契機が 1 つ欠けると
+    /// 土台が畳まれなくなる — 契機の一覧は ``releaseSettledResources()`` に在る
+    /// ([#1076])。
+    ///
+    /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
     private var held: [(submission: UInt64, resources: [AnyObject])] = []
 
     /// 診断: 完了を待って抱えているリソースの数。
@@ -699,6 +729,24 @@ import MokumeDiagnostics
     /// 呼ぶ場所を分けると片方だけを呼ぶ経路ができる。
     ///
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    /// 投入の結末が届いたことを受けて、終わった分を手放す。
+    ///
+    /// **これが無いと環が切れない経路がある。** ``held`` を刈る他の 3 つの呼び手
+    /// (``settle()`` / ``beginCommands()`` / ``waitForSubmission(_:)``) はどれも「次に
+    /// 土台へ何かを頼む」ときに走るので、**最後の投入の後に何も頼まない**経路では 1 度も
+    /// 走らない — 出口を刺したスケッチを手放す形と、1 枚だけ描いて手放す形がそれである
+    /// ([#1076])。
+    ///
+    /// **非同期になるのは避けられない。** 結末は Metal 側の糸で届き、抱えた資源には
+    /// `isolated deinit` を持つ型が混じっているので、最後の参照を落とせるのは main actor
+    /// に戻ってからである。つまり土台が畳まれるのは「手放した瞬間」ではなく「投入が
+    /// 終わり、この口が走った後」になる。
+    ///
+    /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
+    private func releaseSettledResources() {
+        releaseFinished(through: completion.signaledValue)
+    }
+
     private func releaseFinished(through finished: UInt64) {
         if let last = held.lastIndex(where: { $0.submission <= finished }) {
             held.removeSubrange(...last)
@@ -750,8 +798,8 @@ import MokumeDiagnostics
         // 描き上げられなかった仕事も「終わった」としか見えない (#1065)
         queue.commit([commands], options: makeCommitOptions())
         let submission = recordSubmission(of: commands)
-        // **投入した本体も、終わるまで抱える。** 記録の実体は置き場 (allocator) にあるが、
-        // 本体の寿命を GPU の実行より短くしない — 投入した側は直後に手放すので、
+        // **投入した本体は、終わるまでこちらで抱える。** 記録の実体は置き場 (allocator) に
+        // あるが、本体の寿命を GPU の実行より短くしない — 投入した側は直後に手放すので、
         // ここで抱えなければ実行中に消える
         held.append((submission, resources + [commands]))
         return submission
