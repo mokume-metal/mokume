@@ -246,7 +246,7 @@ extension Canvas {
         runPendingComputations()
         // **読む直前に待つ。** 描き切りは投入しても待たない (#727) ので、溜め場が空でも
         // 前のフレームの計算がまだ走っているかもしれない。全部終わっていれば何もしない
-        gpu.settleQuietly(before: "計算の結果を読む")
+        gpu.settleQuietly(orWarn: "Could not wait for the GPU before reading a compute result")
         return numbers.snapshot()
     }
 
@@ -263,7 +263,11 @@ extension Canvas {
         // 環へ移したときに、`Computation` が持っていた待ちをここへ引き取った)
         // **待てなければ、値を書かず口も開かない** (#934)。頼みは溜め場に残るので、
         // このフレームの描き切りか、次の読み戻しが同じものを流し直す
-        guard gpu.settleBeforeWriting("計算の値を書く") else { return }
+        guard
+            gpu.settleBeforeWriting(
+                orWarn: "Could not wait for the GPU before writing compute values, so the write "
+                    + "was called off")
+        else { return }
         do {
             let commands = try gpu.beginCommands()
             try encodeComputations(into: commands)

@@ -111,6 +111,6 @@ final class FrameObserver {
     /// ([#989](https://github.com/mokume-metal/mokume/issues/989))。
     func finish(_ report: ObservationReport) {
         defer { requests.markHandled(report.id) }
-        AtomicFile.publishJSON(report, to: reportURL, "観測の目録")
+        AtomicFile.publishJSON(report, to: reportURL, "the observation catalogue")
     }
 }

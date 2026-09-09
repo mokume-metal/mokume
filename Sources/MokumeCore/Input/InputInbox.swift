@@ -79,6 +79,6 @@ final class InputInbox {
     }
 
     private func write(_ report: InputReport) {
-        AtomicFile.publishJSON(report, to: reportURL, "入力の応答")
+        AtomicFile.publishJSON(report, to: reportURL, "the input reply")
     }
 }

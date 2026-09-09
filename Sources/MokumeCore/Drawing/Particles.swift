@@ -263,7 +263,11 @@ public final class Particles {
         guard count > 0 else { return }
         // **待てなければ 1 つも置かない** (#934)。枠と寿命だけ進めて諦めると、書いて
         // いない区画が新しい寿命で生き返る
-        guard state.gpu.settleBeforeWriting("粒を置く") else { return }
+        guard
+            state.gpu.settleBeforeWriting(
+                orWarn: "Could not wait for the GPU before placing particles, so the write was "
+                    + "called off")
+        else { return }
         let slots = state.storage.contents().assumingMemoryBound(to: Particle.self)
         for _ in 0..<count {
             let slot = cursor % capacity
@@ -301,7 +305,11 @@ public final class Particles {
         // 前のフレームの計算がまだ指定を読んでいるかもしれない。書く直前に待つ (#727)。
         // **待てなければ書かない** (#934) — このフレームで積まれた力も一緒に落ちるが、
         // フレームの頭で 0 に戻る量なので、捨てた以上それが正しい
-        guard parameters.gpu.settleBeforeWriting("粒の指定を書く") else { return }
+        guard
+            parameters.gpu.settleBeforeWriting(
+                orWarn: "Could not wait for the GPU before writing particle settings, so the "
+                    + "write was called off")
+        else { return }
         let values = parameters.storage.contents().assumingMemoryBound(to: Float.self)
         for column in 0..<4 {
             let vector = transform[column]

@@ -179,7 +179,7 @@ struct RecordingFailureTests {
                 recorder.warnings.message(for: .movieFailure),
                 "閉じられなかったことが誰にも読まれていない")
             #expect(said.contains(path))
-            #expect(said.contains("閉じられませんでした"))
+            #expect(said.contains("Could not close"))
         }
     }
 

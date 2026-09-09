@@ -93,8 +93,8 @@ package enum AtomicFile {
         } catch {
             failures.warnOnce(
                 url,
-                "\(what)を置けませんでした (\(url.path)): \(error.localizedDescription)"
-                    + " — 同じ置き場所の失敗は、これ以降黙ります")
+                "Could not place \(what) (\(url.path)): \(error.localizedDescription)"
+                    + " — further failures at the same place will not be reported")
             return false
         }
     }

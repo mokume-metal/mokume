@@ -180,7 +180,11 @@ import simd
         // 書き換えないフレームはここへ来ないので、待ちも払わない
         // **待てなければ送らない** (#934)。送り直しの旗を立てたまま返るので、書き換えた
         // 画素は次に描くときへ持ち越す
-        guard gpu.settleBeforeWriting("画像を面へ送る") else { return }
+        guard
+            gpu.settleBeforeWriting(
+                orWarn: "Could not wait for the GPU before sending an image to a surface, so "
+                    + "the write was called off")
+        else { return }
         pixels.withUnsafeBytes { source in
             texture.replace(
                 region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,

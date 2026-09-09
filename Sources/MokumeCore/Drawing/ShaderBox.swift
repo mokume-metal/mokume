@@ -67,15 +67,15 @@ final class ShaderBox {
     func assign(_ name: String, _ value: ShaderValue) -> Bool {
         guard let existing = values[name] else {
             Diagnostics.warn(
-                "\(label): 宣言していない値 \"\(name)\" は渡せません。"
-                    + "\(valuesHint) に書いてください "
-                    + "(いまの値: \(values.keys.sorted().joined(separator: ", ")))")
+                "\(label): \"\(name)\" was never declared, so it cannot be passed. "
+                    + "Write it in \(valuesHint) "
+                    + "(what is there now: \(values.keys.sorted().joined(separator: ", ")))")
             return false
         }
         guard existing.componentCount == value.componentCount else {
             Diagnostics.warn(
-                "\(label): 値 \"\(name)\" の形が宣言と違います "
-                    + "(\(existing.metalType) のところへ \(value.metalType))")
+                "\(label): \"\(name)\" has a different shape from its declaration "
+                    + "(\(value.metalType) where \(existing.metalType) was declared)")
             return false
         }
         values[name] = value
@@ -95,7 +95,7 @@ final class ShaderBox {
     func reload(_ rebuild: (String) throws(RenderFailure) -> Void) {
         guard let url else { return }
         guard let body = try? String(contentsOf: url, encoding: .utf8) else {
-            failure = "断片を読めませんでした: \(url.path)"
+            failure = "Could not read the fragment: \(url.path)"
             Diagnostics.warn("\(label): \(failure!)")
             return
         }
@@ -109,7 +109,7 @@ final class ShaderBox {
             generation += 1
         } catch {
             failure = "\(error)"
-            Diagnostics.warn("\(label): 断片を組み立て直せませんでした: \(error.headline)")
+            Diagnostics.warn("\(label): could not rebuild the fragment: \(error.headline)")
         }
     }
 }

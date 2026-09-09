@@ -102,7 +102,7 @@ final class RemoteParams {
         // 口が 1 度だけ名乗る** — つまみを掴んでいる間は入力のたびにここへ来るので、
         // 毎回言うと標準エラーが流れる (#989)
         guard AtomicFile.publishJSON(
-            request, to: WorkDirectory.requestURL(under: directory), "つまみの要求")
+            request, to: WorkDirectory.requestURL(under: directory), "the knob request")
         else { return }
         pendingId = id
     }

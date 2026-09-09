@@ -232,8 +232,8 @@ import MokumeDiagnostics
             let reason = CommandFaultLog.reason(of: error)
             guard commandFaults.note(reason) else { return }
             Diagnostics.warn(
-                "GPU が積んだ仕事を打ち切りました。この絵は描き上がっていません: \(reason)"
-                    + " — 同じ知らせは、これ以降黙ります")
+                "The GPU dropped the work it had queued, so this frame was never finished: \(reason)"
+                    + " — this notice will not be repeated")
         }
         return options
     }
@@ -364,7 +364,7 @@ import MokumeDiagnostics
         guard !isIdle else { return }
         if !signalReached(submissionCount) {
             Diagnostics.warn(
-                "GPU の完了を \(Self.waitLimitSeconds) 秒待っても返らないまま、描画の土台を畳みます")
+                "Waited \(Self.waitLimitSeconds) seconds for the GPU with no answer, and the drawing foundation is being taken down anyway")
         }
     }
 
@@ -615,7 +615,7 @@ import MokumeDiagnostics
         slotWaits += 1
         guard signalReached(pending) else {
             Diagnostics.warn(
-                "コマンドの置き場が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
+                "Waited \(Self.waitLimitSeconds) seconds for a command allocator to free up, with no answer")
             throw .timedOut(seconds: Self.waitLimitSeconds)
         }
     }
@@ -647,7 +647,7 @@ import MokumeDiagnostics
             // **黙って捨てない。** 詰まったことが分からないと、症状 (絵が止まる・
             // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
             Diagnostics.warn(
-                "GPU の完了を \(Self.waitLimitSeconds) 秒待っても返りませんでした")
+                "Waited \(Self.waitLimitSeconds) seconds for the GPU to finish, with no answer")
             throw .timedOut(seconds: Self.waitLimitSeconds)
         }
     }
@@ -676,7 +676,7 @@ import MokumeDiagnostics
         ringWaits += 1
         guard signalReached(submission) else {
             Diagnostics.warn(
-                "フレームの置き場が空くのを \(Self.waitLimitSeconds) 秒待っても返りませんでした")
+                "Waited \(Self.waitLimitSeconds) seconds for a frame slot to free up, with no answer")
             throw .timedOut(seconds: Self.waitLimitSeconds)
         }
     }
@@ -687,27 +687,29 @@ import MokumeDiagnostics
     /// この形を使う。5 秒返らない GPU は壊れているので、ここで凝らない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    func settleQuietly(before what: String) {
+    /// **文は呼ぶ側が完全な形で持つ。** かつては「\(何)の前に」という骨組みへ動詞句を
+    /// 流し込んでいたが、その形は語順の違う言語で組み替えられない (ADR-0038 決定 3)。
+    func settleQuietly(orWarn note: String) {
         do {
             try settle()
         } catch {
-            Diagnostics.warn("\(what)の前に GPU の完了を待てませんでした: \(error.headline)")
+            Diagnostics.warn("\(note): \(error.headline)")
         }
     }
 
     /// 投げられない口のための ``waitForSubmission(_:)``。詰まっていたら理由を残して進む。
     ///
-    /// ``settleQuietly(before:)`` と同じ作法で、待つ範囲だけが違う。出口へ絵を渡す経路と
+    /// ``settleQuietly(orWarn:)`` と同じ作法で、待つ範囲だけが違う。出口へ絵を渡す経路と
     /// 絵を読み戻す口は毎フレーム走るので投げられない ([ADR-0020] 決定 5) が、待つべき
     /// 投入は名指しできる ([#927])。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
-    func waitForSubmissionQuietly(_ submission: UInt64, before what: String) {
+    func waitForSubmissionQuietly(_ submission: UInt64, orWarn note: String) {
         do {
             try waitForSubmission(submission)
         } catch {
-            Diagnostics.warn("\(what)の前に GPU の完了を待てませんでした: \(error.headline)")
+            Diagnostics.warn("\(note): \(error.headline)")
         }
     }
 
@@ -716,7 +718,7 @@ import MokumeDiagnostics
     /// **`false` を返したら書かない。** 待ちが期限切れになったことは、GPU がそのメモリを
     /// 使い終えた証拠ではない — 書けば、走っているかもしれない仕事の足元で入力が変わる
     /// ([#934])。5 秒返らない GPU は壊れているのでここで凝らないのは
-    /// ``settleQuietly(before:)`` と同じだが、**投げないことと書いてよいことは別**である。
+    /// ``settleQuietly(orWarn:)`` と同じだが、**投げないことと書いてよいことは別**である。
     ///
     /// 読む側はこちらを使わない。読みは取りやめようが無い (何かを返さねばならない) ので、
     /// 古い値が返ることを警告で名乗るところまでが限界になる。
@@ -725,14 +727,12 @@ import MokumeDiagnostics
     /// 「待たずに書いた」経路が字面に残る。
     ///
     /// [#934]: https://github.com/mokume-metal/mokume/issues/934
-    func settleBeforeWriting(_ what: String) -> Bool {
+    func settleBeforeWriting(orWarn note: String) -> Bool {
         do {
             try settle()
             return true
         } catch {
-            Diagnostics.warn(
-                "\(what)前に GPU の完了を待てなかったので、書き込みを取りやめました: "
-                    + error.headline)
+            Diagnostics.warn("\(note): " + error.headline)
             return false
         }
     }

@@ -119,85 +119,108 @@ extension RenderFailure: CustomStringConvertible {
         switch self {
         case .deviceUnavailable:
             """
-            GPU が見つからない。
-            mokume が走るのは GPU を持つ Mac の上だけで、仮想環境では動かない。
+            No GPU here.
+            mokume runs only on a Mac that has one, and not inside a virtual machine.
             """
         case .commandQueueUnavailable:
-            Self.exhausted("コマンドの発行口")
-        case .commandAllocatorUnavailable:
-            Self.exhausted("コマンドの置き場")
-        case .commandBufferUnavailable:
-            Self.exhausted("コマンドを運ぶ 1 本")
-        case .commandsAlreadyOpen:
-            // **資源枯渇の共通文面 (`Self.exhausted`) へ寄せない。** あちらは「走ったままの
-            // スケッチを閉じてから試す」で終わるが、ここで閉じても何も変わらない (#792)
             """
-            コマンドを組み立てている最中に、塗った面を作ろうとした。
-            資源の不足ではなく呼び出し順の誤りで、面を作るのは組み立てを始める前か、
-            投入し終えたあとにする。
+            Cannot create a command queue.
+            \(Self.exhaustedAdvice)
+            """
+        case .commandAllocatorUnavailable:
+            """
+            Cannot create a command allocator.
+            \(Self.exhaustedAdvice)
+            """
+        case .commandBufferUnavailable:
+            """
+            Cannot create a command buffer.
+            \(Self.exhaustedAdvice)
+            """
+        case .commandsAlreadyOpen:
+            // **資源枯渇の共通文面 (`Self.exhaustedAdvice`) へ寄せない。** あちらは「走った
+            // ままのスケッチを閉じてから試す」で終わるが、ここで閉じても何も変わらない (#792)
+            """
+            Tried to make a painted surface while commands were still being assembled.
+            This is the order of the calls rather than a shortage: make surfaces before the
+            assembly begins, or after it has been submitted.
             """
         case .residencySetUnavailable(let reason):
-            Self.exhausted("常駐させる集合", reason: reason)
+            """
+            Cannot create a residency set: \(reason)
+            \(Self.exhaustedAdvice)
+            """
         case .synchronizationUnavailable:
-            Self.exhausted("GPU の完了を待つ合図")
+            """
+            Cannot create the signal that waits for the GPU to finish.
+            \(Self.exhaustedAdvice)
+            """
         case .encoderUnavailable:
-            Self.exhausted("コマンドを書き込む口")
+            """
+            Cannot create a command encoder.
+            \(Self.exhaustedAdvice)
+            """
         case .textureUnavailable(let width, let height):
             """
-            \(width)×\(height) の描画先を確保できない。
-            GPU のメモリが足りていない — 窓を小さくするか、描く細かさを下げる。
+            Cannot allocate a \(width)×\(height) render target.
+            The GPU is out of memory — make the window smaller, or draw at a lower density.
             """
         case .bufferUnavailable(let byteCount):
             """
-            \(byteCount) バイトの読み出し先を確保できない。
-            GPU のメモリが足りていない — 一度に扱う数を減らす。
+            Cannot allocate a \(byteCount)-byte buffer to read back into.
+            The GPU is out of memory — handle fewer things at once.
             """
         case .timedOut(let seconds):
             """
-            GPU の完了を \(seconds) 秒待ったが、終わらなかった。
-            1 フレームで描く量が多すぎる — 描く数を減らすか、シェーダを軽くする。
+            Waited \(seconds) seconds for the GPU and it never finished.
+            One frame is drawing too much — draw fewer things, or make the shader lighter.
             """
         case .invalidSize(let width, let height):
             """
-            描画先の大きさが正しくない: \(width)×\(height)
-            幅・高さはどちらも 1 以上 \(RenderDevice.maxTextureSide) 以下にする。
+            That is not a valid size for a render target: \(width)×\(height)
+            Width and height each have to be at least 1 and at most \(RenderDevice.maxTextureSide).
             """
         case .invalidPixelDensity(let density):
             """
-            描く細かさが正しくない: \(density)
-            0 より大きく 1 以下にする (1 が出すとおりの細かさで、小さいほど粗く描いて拡大する)。
+            That is not a valid pixel density: \(density)
+            It has to be above 0 and at most 1 (1 draws at exactly the density asked for, and
+            anything smaller draws coarser and scales up).
             """
         case .shaderSourceMissing(let name):
             """
-            同梱しているはずのシェーダの原文が見つからない: \(name)
-            配ったときにいちばん起きやすい失敗で、配布物に資源が入っていないとこうなる —
-            \(ModuleResources.bundleName).bundle が実行ファイルの隣 (束ねた作品なら
-            <名前>.app/Contents/Resources/ か <名前>.app/ の直下) にあるか確かめる。
-            無ければ配布物を組み直す。
+            Cannot find the source of a shader that ships with mokume: \(name)
+            This is the failure that shows up most often after handing a work to someone: the
+            resources did not make it into what was shipped. Check that
+            \(ModuleResources.bundleName).bundle sits next to the executable (for a bundled
+            work, in <name>.app/Contents/Resources/ or directly under <name>.app/). If it is
+            not there, build the distribution again.
             """
         case .shaderCompilationFailed(let name, let reason):
             """
-            シェーダを組み立てられない: \(name)
+            Cannot build the shader: \(name)
             \(reason)
-            上の理由が指す箇所を、書いた断片の側で直す。
+            Fix what the reason above points at, in the fragment you wrote.
             """
         case .shaderCompilerUnavailable:
             """
-            シェーダを組み立てる口を作れない。
-            この機械の Metal が要求に足りていない — macOS の版を確かめる。
+            Cannot make anything that compiles shaders.
+            This machine's Metal falls short of what mokume asks for — check the macOS version.
             """
         case .pipelineUnavailable(let reason):
             """
-            描画のパイプラインを作れない: \(reason)
-            シェーダの入口の名前と、渡している資源の並びが合っているか確かめる。
+            Cannot create the render pipeline: \(reason)
+            Check that the shader's entry point name and the resources being passed line up.
             """
         case .argumentTableUnavailable(let reason):
             """
-            資源を渡すテーブルを作れない: \(reason)
-            一度に渡す資源の数が多すぎないか確かめる。
+            Cannot create the table that passes resources: \(reason)
+            Check whether too many resources are being passed at once.
             """
         case .samplerUnavailable:
-            Self.exhausted("テクスチャの読み取り方")
+            """
+            Cannot create a way to read from a texture.
+            \(Self.exhaustedAdvice)
+            """
         }
     }
 
@@ -217,15 +240,12 @@ extension RenderFailure: CustomStringConvertible {
         String(description.prefix { $0 != "\n" })
     }
 
-    /// GPU の資源を用意できなかったときの文面。
+    /// GPU の資源が尽きているときに添える 1 行。
     ///
-    /// 用意できない口はいくつもあるが、**読む人が次にすることは同じ**なので 1 箇所で組む。
-    /// 何を用意できなかったかは名指しする — 同じ文面が並ぶと、どこで止まったか分からなくなる。
-    private nonisolated static func exhausted(_ what: String, reason: String? = nil) -> String {
-        let head = reason.map { "\(what)を用意できない: \($0)" } ?? "\(what)を用意できない。"
-        return """
-            \(head)
-            GPU の資源が尽きている疑いがある — 走ったままのスケッチを閉じてから試し直す。
-            """
-    }
+    /// **何が用意できなかったかは、各 case が完全な文で名乗る。** かつては骨組み 1 つに
+    /// 名詞を流し込んで 8 通りを作っていたが、その形は語順の違う言語で組み替えられない
+    /// (ADR-0038 決定 3)。共有するのは**独立した助言の 1 文**だけで、読む人が次にすること
+    /// が同じであることは、その 1 文が同じであることで表す。
+    private nonisolated static let exhaustedAdvice =
+        "The GPU may have run out of resources — close any sketch still running and try again."
 }

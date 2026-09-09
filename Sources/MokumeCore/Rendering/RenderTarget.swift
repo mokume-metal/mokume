@@ -148,14 +148,14 @@ public final class RenderTarget: EffectSurface {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     var pixels: Pixels {
-        gpu.settleQuietly(before: "画素を読む")
+        gpu.settleQuietly(orWarn: "Could not wait for the GPU before reading pixels")
         do {
             let mirror = try mirrorForReading()
             return Pixels(
                 base: mirror.storage.contents(), width: width, height: height,
                 bytesPerRow: mirror.bytesPerRow, mirror: mirror)
         } catch {
-            Diagnostics.warn("画素の写しを用意できませんでした: \(error.headline)")
+            Diagnostics.warn("Could not make a copy of the pixels: \(error.headline)")
             return .unavailable
         }
     }

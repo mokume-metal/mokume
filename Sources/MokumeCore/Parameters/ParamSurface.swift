@@ -200,6 +200,6 @@ final class ParamSurface: DeclarationWatcher {
     }
 
     private func write(_ report: ParamReport) {
-        AtomicFile.publishJSON(report, to: reportURL, "つまみの応答")
+        AtomicFile.publishJSON(report, to: reportURL, "the knob reply")
     }
 }
