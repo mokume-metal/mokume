@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -56,5 +57,24 @@ struct RunCommandTests {
         let message = CommandFailure.sketchExited(status: 3).message
         #expect(message.contains("3"))
         #expect(message.contains("the tool"))
+    }
+
+    /// **合図を渡すのは `run` だけである** ([#1120](https://github.com/mokume-metal/mokume/issues/1120))。
+    ///
+    /// 見張り (`watch`) は渡さない — 子は窓を持たず、確認は道具の側が出している
+    /// ([ADR-0032] 決定 1)。渡さなければ載らないので、受け取る側は「無ければ確かめない」
+    /// だけで済む。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    @Test("窓の × を確かめさせる合図は、渡したときだけ子の環境に載る")
+    func theCloseSignalLandsOnlyWhenGiven() {
+        #expect(RunCommand.childEnvironment([:])[StartupReads.closeConfirmation.key] == nil)
+        #expect(
+            RunCommand.childEnvironment([:], stamp: "abc", reportingRate: "debug")[
+                StartupReads.closeConfirmation.key] == nil,
+            "見張りが渡す組み合わせで合図が載っている")
+
+        let carried = RunCommand.childEnvironment([:], confirmingCloseFor: "mokume run")
+        #expect(carried[StartupReads.closeConfirmation.key] == "mokume run")
     }
 }

@@ -128,4 +128,66 @@ struct SketchApplicationTests {
         let delegate = SketchApplicationDelegate(application: application)
         #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(.shared))
     }
+
+    // MARK: - × を押した人に確かめる (#1120)
+
+    /// 検査で使う問い。**中身は問わない** — 見ているのは言葉ではなく経路である。
+    private static let question = CloseQuestion(
+        message: "Quit?", detail: "It stops.", confirm: "Quit", cancel: "Keep running")
+
+    /// 窓の × を押す。**中継まで含めて訊く** (`SharedFrameStageTests` と同じ形) — 台を直に
+    /// 呼ぶと、delegate を据える配線が外れたことに気付けない。
+    ///
+    /// delegate が据わっていない窓は AppKit の既定でそのまま閉じるので `true` を返す。
+    private func asksToClose(_ application: SketchApplication) throws -> Bool {
+        let window = try #require(application.window)
+        guard let delegate = window.delegate else { return true }
+        return try #require(delegate.windowShouldClose?(window))
+    }
+
+    /// **道具が起こしたのでなければ、何も足さない。** 直に走らせたスケッチと束ねた `.app`
+    /// は、いままでどおり × で終わる ([ADR-0032] 決定 1 の「作品は道具に依存しない」)。
+    @Test("合図が無ければ、× はそのまま閉じる")
+    func closesWithoutTheSignal() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        application.closeQuestion = nil
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        #expect(try #require(application.window).delegate == nil, "問いを持たない窓が受け口を持つ")
+        #expect(try asksToClose(application))
+    }
+
+    /// **× を押した瞬間には閉じない** (#1120)。窓はこの経路の唯一の出口なので、閉じれば
+    /// 制作中の作品がそのまま終わる。
+    @Test("合図があれば、× ではまだ閉じず、問いが出る")
+    func asksInsteadOfClosing() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        application.closeQuestion = Self.question
+        var asked: CloseQuestion?
+        application.presentQuestion = { question, _, _ in asked = question }
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        #expect(try !asksToClose(application), "問いを出す前に閉じている")
+        #expect(asked?.confirm == Self.question.confirm)
+    }
+
+    /// **確定するまで終わらせない。** 取り消したのに終わらせると、続けるつもりで押した人の
+    /// 作品が止まる。
+    @Test("終えると答えたときだけ、スケッチを終わらせる")
+    func endsOnlyWhenConfirmed() throws {
+        for confirmed in [true, false] {
+            let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+            var ended = 0
+            application.closeQuestion = Self.question
+            application.presentQuestion = { _, _, answer in answer(confirmed) }
+            application.onCloseConfirmed = { ended += 1 }
+            application.didFinishLaunching()
+            defer { application.willTerminate() }
+
+            #expect(try !asksToClose(application))
+            #expect(ended == (confirmed ? 1 : 0))
+        }
+    }
 }
