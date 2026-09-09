@@ -22,6 +22,24 @@ final class ShapePipeline {
     /// ([#758](https://github.com/mokume-metal/mokume/issues/758))。
     ///
     /// 残りの混ぜ方は固定機能では表せないので、今までどおり断片が下地を読んで混ぜる。
+    ///
+    /// ## どの混ぜ方がどちらの経路へ行くか
+    ///
+    /// **この表が一覧の実体である**
+    /// ([ADR-0001](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md)
+    /// 原則 9)。`BlendMode` の doc と `Shaders/Common.metal` の `mokume_composite` は
+    /// ここを指すだけで、写しを持たない
+    /// ([#887](https://github.com/mokume-metal/mokume/issues/887))。
+    ///
+    /// | 混ぜ方 | 列 | 描く断片 | 下地 | 混ぜる主体 |
+    /// | --- | --- | --- | --- | --- |
+    /// | `.blend` (0) | `blend` | `mokume_fragmentDirect` / `mokume_formFragmentBlend` | 読まない | 固定機能のブレンド |
+    /// | `.replace` (9) | `replace` | `mokume_fragmentDirect` / `mokume_formFragmentReplace` | 読まない | 混ぜない (そのまま置く) |
+    /// | `.add` … `.screen` (1–8) | `composite` | `mokume_fragmentMain` / `mokume_formFragment` | 読む | `mokume_composite` |
+    ///
+    /// 番号は `BlendMode.rawIndex` (正本は `Shaders/Kinds.metal`)。**`mokume_composite`
+    /// へ 0 と 9 が届く経路は無い** — 選び分けは `state(for:)` の 1 箇所で起き、
+    /// 前 2 者が使う断片は `mode` を引数に取らない。
     struct BlendStates {
         /// 断片が下地を読んで混ぜる列 (`.blend` と `.replace` 以外)。
         let composite: any MTLRenderPipelineState

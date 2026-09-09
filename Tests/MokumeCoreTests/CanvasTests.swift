@@ -606,8 +606,38 @@ struct CanvasTests {
         #expect(result.blue <= 1)
     }
 
-    @Test("範囲の外の成分を渡しても下地が壊れない")
-    func outOfRangeComponentsAreSaturated() throws {
+    /// **合成の出口では切らない。** 作業空間は 1.0 超を保ち、畳むのは出力段だけである
+    /// ([ADR-0011] 決定 1・決定 3)。下の
+    /// ``outOfRangeComponentsAreSaturatedByTheOutputStage`` と**対で読む** — あちらが
+    /// 「出力段が畳む」側、こちらが「作業空間には残る」側である。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    @Test("足す混ぜ方は、光を重ねるほど明るさを積み上げられる")
+    func addingLightAccumulatesBeyondTheDisplayRange() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.blendMode(.add)
+            canvas.fill(.linear(red: 0.6, green: 0, blue: 0))
+            canvas.rect(0, 0, 16, 16)
+            canvas.rect(0, 0, 16, 16)  // 同じところへもう 1 枚重ねる
+        }
+        // 0.6 を 2 回足せば 1.2。合成の出口で飽和させていると 1.0 で頭打ちになる
+        #expect(canvas.get(8, 8).red > 1.1)
+    }
+
+    /// **飽和の担い手は出力段である** (`OutputStage` の `clampToStandardRange`)。
+    ///
+    /// もとは #258 の「範囲の外の成分を渡しても下地が壊れない」という表題だったが、
+    /// 見ているのは `pixels(of:)` を通した 8 bit の画素なので、実際に守られているのは
+    /// 「**出力**が壊れない」である。合成の出口には飽和が無い (上の
+    /// ``addingLightAccumulatesBeyondTheDisplayRange`` が作業空間の側を見る) ので、
+    /// 名前が担い手を名乗るようにした ([#1057])。**#258 が守っていた保証は減っていない。**
+    ///
+    /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
+    @Test("範囲の外の成分を渡しても、出力段が飽和させるので絵が壊れない")
+    func outOfRangeComponentsAreSaturatedByTheOutputStage() throws {
         let result = try blended(
             mode: .add,
             base: .display(red: 0.5, green: 0.5, blue: 0.5),

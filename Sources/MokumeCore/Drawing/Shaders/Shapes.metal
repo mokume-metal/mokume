@@ -485,7 +485,8 @@ static inline bool mokume_formIsBlank(FormPaint paint) {
 
 /// 基本図形の断片。**下地を読み、混ぜ方で分岐する。**
 ///
-/// 使うのは固定機能のブレンドで表せない混ぜ方の列だけである (`ShapePipeline`)。
+/// 使うのは固定機能のブレンドで表せない混ぜ方の列だけである
+/// (一覧は `ShapePipeline.BlendStates` の doc)。
 fragment float4 mokume_formFragment(
     FormFragmentIn in [[stage_in]],
     constant uint &mode [[buffer(2)]],

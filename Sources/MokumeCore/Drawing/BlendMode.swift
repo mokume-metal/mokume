@@ -6,9 +6,18 @@
 /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
 /// 「どれだけ効かせるか」はアルファが決める、という規律を全モードで揃えてある。
 ///
-/// 合成はすべてフラグメントで行い、固定機能のブレンドは使わない。モードによって
-/// 「係数で処理される分」と「シェーダで処理される分」に割れると、アルファの扱いが
-/// モードごとにばらつく余地が残るためである。
+/// **合成は 2 つの経路に分かれる。** `blend` と `replace` は固定機能のブレンドが混ぜ、
+/// 残りはフラグメントが下地を読んで混ぜる ([#758])。アルファの扱いは経路によらず揃えて
+/// ある (乗算済みの source-over・[ADR-0011] 決定 4) ので、上の規律はどちらでも成立する。
+///
+/// **どのモードがどちらへ行くかの一覧の実体は `ShapePipeline.BlendStates` の doc**
+/// ([ADR-0001] 原則 9)。ここも `Shaders/Common.metal` の `mokume_composite` もそこを指す
+/// ([#887])。
+///
+/// [#758]: https://github.com/mokume-metal/mokume/issues/758
+/// [#887]: https://github.com/mokume-metal/mokume/issues/887
+/// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
+/// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// - Note: **隔離の外に置く。** ライブラリ全体が main actor を既定の隔離としているので
 ///   ([ADR-0010](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md) 決定 1)、
 ///   何も書かないと `Equatable` の準拠まで隔離され、隔離の外から比較できなくなる。
@@ -18,8 +27,20 @@ public nonisolated enum BlendMode: Sendable, Equatable, CaseIterable {
     /// 上に重ねる (既定)。
     case blend
     /// 足す。光を重ねたように明るくなる。
+    ///
+    /// **1.0 を超えた明るさはそのまま残る** ので、重ねるほど積み上がる — 飽和させるのは
+    /// 出力段だけである ([ADR-0011] 決定 1・[#1057])。光の芯が頭打ちにならないので、
+    /// 露出や滲みは合成と同じ目盛りの上で選べる。
+    ///
+    /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     case add
     /// 引く。暗くなる。
+    ///
+    /// **0 を下回った値もそのまま残る** (式は `下地 − アルファ × 塗り`)。負の値は出力段が
+    /// 0 へ畳むので、暗部は途中で折れずに黒へ着く ([#1057])。
+    ///
+    /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
     case subtract
     /// 明るいほうの成分を採る。
     case lightest
