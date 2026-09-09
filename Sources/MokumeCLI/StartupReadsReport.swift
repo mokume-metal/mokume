@@ -35,8 +35,8 @@ enum StartupReadsReport {
     ///   (`DependencyFacets` の規律 — 断定できないときは断定しない)。
     static func document(base: URL, given: Bool, package: URL? = nil) -> String {
         var lines = [
-            "Decided the moment the process starts. **None of these take effect while it**",
-            "**is running** — restart the sketch to apply a change.",
+            "Decided the moment the process starts.",
+            "**None of these take effect while the sketch is running** — restart it to apply a change.",
             "",
             "What is visible now:",
             "",
