@@ -10,8 +10,8 @@ SPDX-License-Identifier: MIT
 **`mokume doctor` が「同梱の資源」を 1 行で名乗るようになりました。** 読めるかどうかと、どこから読めているかを出します — GPU が使えても資源が欠けていれば窓は出せないので、その 2 つは別の行です ([#1059](https://github.com/mokume-metal/mokume/issues/1059))。
 
 ```
-環境の前提
+What the environment provides
 
-  描く道具: 使える
-  同梱の資源: 読める (/opt/homebrew/Cellar/mokume/0.7.0/libexec/mokume_MokumeCore.bundle/Contents/Resources)
+  Graphics: available
+  Bundled resources: readable (/opt/homebrew/Cellar/mokume/0.7.0/libexec/mokume_MokumeCore.bundle/Contents/Resources)
 ```

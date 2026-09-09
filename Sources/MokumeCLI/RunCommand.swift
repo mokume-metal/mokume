@@ -279,7 +279,14 @@ enum RunCommand {
         let process = Process()
         process.executableURL = executable
         process.currentDirectoryURL = directory
-        process.environment = childEnvironment(reportingRate: reportingRate)
+        // **窓の × は、確かめてから終わらせる。** 起こしたのが道具なので、押し間違いで
+        // 消えるのは制作中の作品である ([#1120])。渡すのは自分の名乗りで、押した後どう
+        // なるかを言う文面へそのまま入る
+        //
+        // [#1120]: https://github.com/mokume-metal/mokume/issues/1120
+        process.environment = childEnvironment(
+            reportingRate: reportingRate,
+            confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)")
         do {
             try process.run()
         } catch {
@@ -294,15 +301,23 @@ enum RunCommand {
     /// 子へ渡す環境。
     ///
     /// **読むのではなく運ぶ。** 親の環境をそのまま複製し、道具が決めるものだけを載せる —
-    /// 世代の刻印 (観測が応答へ載せる) と、速さの名乗り (一緒に出す構成の名前)。渡され
-    /// なかったものは**置かない**ので、受け取る側は「無ければ黙る」だけで済む。
+    /// 世代の刻印 (観測が応答へ載せる) と、速さの名乗り (一緒に出す構成の名前)、そして
+    /// 窓の × を確かめさせる合図。渡されなかったものは**置かない**ので、受け取る側は
+    /// 「無ければ黙る」だけで済む。
+    ///
+    /// - Parameter confirmingCloseFor: 窓の × を押した人に確かめさせるなら、**自分の
+    ///   名乗り**。見張り (`watch`) は渡さない — 子は窓を持たず、確認は道具の側が出す
+    ///   ([ADR-0032] 決定 1)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static func childEnvironment(
         _ base: [String: String] = ProcessInfo.processInfo.environment,
-        stamp: String? = nil, reportingRate: String? = nil
+        stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil
     ) -> [String: String] {
         var environment = base
         if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
         if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
+        if let tool { environment[StartupReads.closeConfirmation.key] = tool }
         return environment
     }
 

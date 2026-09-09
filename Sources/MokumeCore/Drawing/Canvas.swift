@@ -1236,7 +1236,7 @@ public final class Canvas {
         do {
             try endFrame()
         } catch {
-            Diagnostics.warn("endDraw(): 描き切れませんでした: \(error.headline)")
+            Diagnostics.warn("endDraw(): could not finish drawing: \(error.headline)")
         }
     }
 
@@ -1293,11 +1293,13 @@ public final class Canvas {
 
     private func warnAlreadyDrawing() {
         warnOnce(
-            .alreadyDrawing, "beginDraw(): まだ endDraw() を呼んでいません。この呼び出しは効きません")
+            .alreadyDrawing,
+            "beginDraw(): endDraw() has not been called yet. This call does nothing")
     }
 
     private func warnNotDrawing() {
-        warnOnce(.notDrawing, "endDraw(): beginDraw() を呼ぶ前でした。この呼び出しは効きません")
+        warnOnce(
+            .notDrawing, "endDraw(): this came before beginDraw(). This call does nothing")
     }
 
     // MARK: - 置いた時点の絵を守る
@@ -1311,7 +1313,8 @@ public final class Canvas {
         if graphics.isDrawing {
             warnOnce(
                 .placingWhileDrawing,
-                "image(): endDraw() を呼ぶ前の描き場所を置きました。出るのは描き切る前の絵です")
+                "image(): the drawing target was taken before endDraw() was called. What comes out "
+                    + "is the frame as it stood before it was finished")
         }
         placedGraphics.insert(ObjectIdentifier(graphics))
         graphics.note(placedBy: self)
@@ -1342,7 +1345,8 @@ public final class Canvas {
             // 効果はフレームの終わりに立つ段なので、途中の描き切りでは通さない
             try flush(applyingEffects: false)
         } catch {
-            Diagnostics.warn("置いた描き場所が変わる前の描き切りに失敗しました: \(error.headline)")
+            Diagnostics.warn(
+                "Could not finish drawing before the drawing target changed: \(error.headline)")
         }
     }
 

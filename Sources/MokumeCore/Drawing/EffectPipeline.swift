@@ -168,7 +168,7 @@ final class EffectPipeline {
     /// 縮めた絵も段ごとではなくここで 1 か所で持ち、フレームをまたいで使い回す。
     func scratch(at index: Int, level: Int = 0) throws(RenderFailure) -> StageImage {
         precondition(
-            level >= 0 && level <= Self.maxReductionLevel, "縮め幅 \(level) は持っていない")
+            level >= 0 && level <= Self.maxReductionLevel, "there is no reduction level \(level)")
         guard level > 0 else {
             while scratch.count <= index {
                 // 段は全画素を書くので、塗っておく必要が無い (コマンドの組み立て中なので塗れもしない)

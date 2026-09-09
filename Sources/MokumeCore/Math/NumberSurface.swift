@@ -80,12 +80,13 @@ public func map(
     guard value.isFinite, inLow.isFinite, inHigh.isFinite, outLow.isFinite, outHigh.isFinite
     else {
         NumberValues.warnOnce(
-            .notANumber, "map(): 数でない値・無限の値が渡されたので、写した先の下端を返しました")
+            .notANumber, "map(): got a value that is not a number, or an infinite one, so the low end of the destination was returned")
         return outLow.isFinite ? outLow : 0
     }
     guard inHigh != inLow else {
         NumberValues.warnOnce(
-            .emptyRange, "map(): 写す元の幅が 0 なので、写した先の下端を返しました")
+            .emptyRange,
+            "map(): the source range has zero width, so the low end of the destination was returned")
         return outLow
     }
     return outLow + (value - inLow) / (inHigh - inLow) * (outHigh - outLow)

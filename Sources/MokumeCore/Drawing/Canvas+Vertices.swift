@@ -622,19 +622,21 @@ extension Canvas {
     private func warnVertexOutsideShapeOnce() {
         warnOnce(
             .vertexOutsideShape,
-            "vertex(): beginShape() と endShape() の間で呼んでください。この呼び出しは何もしません")
+            "vertex(): call this between beginShape() and endShape(). This call does nothing")
     }
 
     private func warnBadVertexOnce() {
         warnOnce(
             .badVertex,
-            "vertex(): 数でない座標・無限の座標が渡されたので、その頂点は置きませんでした")
+            "vertex(): got a coordinate that is not a number, or an infinite one, so that vertex "
+                + "was not placed")
     }
 
     private func warnIndexOutOfRange() {
         warnOnce(
             .indexOutOfRange,
-            "index(): 置いていない頂点の番号が渡されたので、その番号を含む面は描きませんでした "
-                + "(番号は 0 から数え、beginContour() の穴の点は指せません)")
+            "index(): got the number of a vertex that was never placed, so any face holding that "
+                + "number was not drawn (numbers count from 0, and the points of a "
+                + "beginContour() hole cannot be pointed at)")
     }
 }

@@ -129,8 +129,25 @@ public enum StartupReads {
             + "name shown alongside, and the tool passes it only for run and watch",
         readSite: "Sources/MokumeCore/Display/FrameRateNotice.swift")
 
+    /// 窓の × を押した人に確かめるか。
+    ///
+    /// **道具が起こしたときだけ確かめる。** 直に走らせたスケッチと束ねた `.app` には渡ら
+    /// ないので、そちらの × はいままでどおり作品を終わらせる — 制作を助ける道具の都合を、
+    /// 配った作品の終わり方に持ち込まないためである ([ADR-0032] 決定 1)。
+    ///
+    /// 値は**渡した道具の名乗り**で、押した後どうなるかを言う文面へそのまま入る。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    public static let closeConfirmation = Entry(
+        name: "Close confirmation", origin: .environment, key: "MOKUME_CONFIRM_CLOSE",
+        decidedBy: .tool,
+        note: "Asks before the window's close button ends the sketch. The value is the name "
+            + "of the tool that started it, and the tool passes it only for run",
+        readSite: "Sources/MokumeCore/Display/CloseConfirmation.swift")
+
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
-        workDirectory, sourceStamp, frameRateNotice, observe, input, params, viewport,
+        workDirectory, sourceStamp, frameRateNotice, closeConfirmation, observe, input, params,
+        viewport,
     ]
 }

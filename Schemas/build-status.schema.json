@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/build-status.schema.json",
-  "title": "直近の作り直しの結果",
-  "description": "保存を見張っている道具が、作り直すたびに書く。窓口はこれを読んで「なぜ絵が変わらないのか」に答えられる (ADR-0018 と同じ流儀で原子的に置かれる)。",
+  "title": "The most recent build's result",
+  "description": "Written by the tool watching for saves, each time it rebuilds. The interface reads this to answer \"why has the drawing not changed\" (placed atomically, in the same manner as ADR-0018).",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -16,28 +16,28 @@
   "properties": {
     "schemaVersion": {
       "const": 1,
-      "description": "この形式の版。上げ方は ADR-0018 決定 5。"
+      "description": "The version of this format. How it is raised is ADR-0018 decision 5."
     },
     "ok": {
       "type": "boolean",
-      "description": "作り直せたか。false のときも直前の版は走り続けている。"
+      "description": "Whether the build succeeded. Even when false, the version from before keeps running."
     },
     "status": {
       "type": "integer",
-      "description": "作り直しの終了コード。"
+      "description": "The build's exit code."
     },
     "output": {
       "type": "string",
-      "description": "作り直しの出力。失敗の内容はここに入る。成功しても警告が入ることがある。"
+      "description": "The build's output. What went wrong goes here. Warnings can appear even on success."
     },
     "stamp": {
       "type": "string",
       "minLength": 1,
-      "description": "この作り直しが対象にしたソースの世代。観測の応答に載る刻印と同じ値。"
+      "description": "Which generation of the source this build was made from. The same value as the stamp in an observation reply."
     },
     "configuration": {
       "type": "string",
-      "description": "どの構成で作ったか。数字がどの土俵のものか分からないと比べられない。",
+      "description": "Which configuration it was built with. Numbers cannot be compared without knowing which ground they came from.",
       "examples": [
         "debug",
         "release"
@@ -45,11 +45,11 @@
     },
     "launched": {
       "type": "boolean",
-      "description": "差し替えたスケッチが立ち上がったか。無ければ、この欄より前の書き手である (ok だけで読む)。ok が true でこれが false なのは「作り直せたのに走っていない」で、絵が止まっているのに成功と読まれる唯一の形。required に入れないのは、入れると過去の書き手の記録が検証を通らなくなるためである (ADR-0018 決定 5 の改訂が frames で踏んだ形)。"
+      "description": "Whether the swapped-in sketch came up. If absent, the writer predates this field (read ok alone). ok true with this false means it built but is not running, which is the one shape where a frozen drawing reads as success. It is not in required because putting it there would stop older writers' records from validating (the shape ADR-0018 decision 5's revision hit with frames)."
     },
     "timings": {
       "type": "object",
-      "description": "分解した所要時間 (ミリ秒)。合計だけを見ていると律速を推測で決めて外す。",
+      "description": "How long it took, broken down (milliseconds). Looking only at the total means guessing at what is slow, and guessing wrong.",
       "required": [
         "buildMs"
       ],
@@ -58,17 +58,17 @@
         "detectMs": {
           "type": "number",
           "minimum": 0,
-          "description": "保存から気付くまで。最初の作り直しでは省かれる。"
+          "description": "From the save to noticing it. Omitted on the first build."
         },
         "buildMs": {
           "type": "number",
           "minimum": 0,
-          "description": "作り直しにかかった時間。"
+          "description": "How long the build itself took."
         },
         "relaunchMs": {
           "type": "number",
           "minimum": 0,
-          "description": "差し替え。失敗したときは省かれる。"
+          "description": "Swapping it in. Omitted when the build failed."
         }
       }
     }

@@ -68,6 +68,6 @@ extension Canvas {
     private func warnBadMaterial(_ name: String) {
         warnOnce(
             .badMaterial,
-            "\(name)(): 数でない値・無限・範囲の外の値が渡されたので、材質を変えませんでした")
+            "\(name)(): got a value that is not a number, or an infinite one, or one outside the range, so the material was left as it was")
     }
 }

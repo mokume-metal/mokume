@@ -35,8 +35,8 @@ struct APIListLocator {
 
         var text: String {
             switch self {
-            case .cached(let url): "取り置き (\(url.path))"
-            case .downloaded(let url, let remote): "取ってきて取り置いた (\(remote) → \(url.path))"
+            case .cached(let url): "cached (\(url.path))"
+            case .downloaded(let url, let remote): "fetched and cached (\(remote) → \(url.path))"
             }
         }
     }
@@ -87,7 +87,7 @@ struct APIListLocator {
         }
         guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
             throw Missing(
-                advice: advice(reason: "取ってきたものが読めませんでした (\(remote))", cache: cache))
+                advice: advice(reason: "what came back could not be read (\(remote))", cache: cache))
         }
         // 取り置けなくても、いま得たものは返す。**答えを返すほうが先** (ADR-0018 決定 3)
         try? AtomicFile.write(data, to: cache)
@@ -130,7 +130,7 @@ struct APIListLocator {
     /// 取り置いてしまう。
     nonisolated static func download(_ url: URL) throws -> Data {
         final class Box: @unchecked Sendable {
-            var outcome: Result<Data, Error> = .failure(FetchFailure("応答がありませんでした"))
+            var outcome: Result<Data, Error> = .failure(FetchFailure("no response came back"))
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = fetchLimit
@@ -144,7 +144,7 @@ struct APIListLocator {
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard status == 200 else {
-                box.outcome = .failure(FetchFailure("応答が \(status) でした"))
+                box.outcome = .failure(FetchFailure("the response was \(status)"))
                 return
             }
             box.outcome = .success(data ?? Data())

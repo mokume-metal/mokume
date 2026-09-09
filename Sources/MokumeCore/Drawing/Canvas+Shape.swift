@@ -242,6 +242,7 @@ extension Canvas {
     private func warnBadPlacement() {
         warnOnce(
             .badPlacement,
-            "shape(at:): 数でない値・無限を含む置き場所があったので、その分は置きませんでした")
+            "shape(at:): some positions held a value that is not a number, or an infinite one, so "
+                + "those were not placed")
     }
 }

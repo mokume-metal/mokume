@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/input-request.schema.json",
-  "title": "入力の要求",
-  "description": "走っているスケッチへ入力の出来事を送る。1 回にいくつでも並べられる (ドラッグのような連なりもそのまま送れる)。ADR-0018 決定 3 のとおり原子的に置き、id は要求ごとに変える。",
+  "title": "The input request",
+  "description": "Sends input events to the running sketch. Any number of them can go in one call (a run of them, such as a drag, goes as it is). Placed atomically as ADR-0018 decision 3 requires, and id changes with every request.",
   "type": "object",
   "required": [
     "id",
@@ -13,17 +13,17 @@
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "この要求の識別子。応答はこれを echo する。"
+      "description": "This request's identifier. The reply echoes it back."
     },
     "events": {
       "type": "array",
-      "description": "送る出来事。並んだ順に流し込まれる。**知らない種別は、その 1 件だけが捨てられる** (残りは通る)。",
+      "description": "The events to send. They are fed in the order they appear. **An unknown type costs only that one event** (the rest still go through).",
       "items": {
         "type": "object",
         "required": [
           "type"
         ],
-        "description": "知らない鍵は無視される。**意味を持つ既定値が無いフィールドは種別ごとに必須**で、欠けた 1 件は解けなかったものとして ignored に数えられる (残りは通る)。位置には x / y、キーには code が要る — 0 は面の左上であり A のキーであって「無い」ではないため。button (0 = 主釦) / dx / dy (0 = 動かない) / characters (空) / isRepeat (false) は省略が自然に読めるので任意。",
+        "description": "Unknown keys are ignored. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value. button (0 = the primary button), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional.",
         "allOf": [
           {
             "if": {
@@ -82,27 +82,27 @@
           },
           "x": {
             "type": "number",
-            "description": "キャンバスの座標 (横)。窓の座標からの変換は送り手の責務。"
+            "description": "The canvas coordinate, horizontal. Converting from window coordinates is the sender's job."
           },
           "y": {
             "type": "number",
-            "description": "キャンバスの座標 (縦)。"
+            "description": "The canvas coordinate, vertical."
           },
           "button": {
             "type": "integer",
-            "description": "釦 (0 = 主釦)。"
+            "description": "The button (0 = the primary one)."
           },
           "dx": {
             "type": "number",
-            "description": "スクロールされた量 (横)。**その 1 件ぶん**で、スケッチの mouseWheel(deltaX:deltaY:) にこの値がそのまま渡る。"
+            "description": "How much was scrolled, horizontally. **This is for that one event**, and the value reaches the sketch's mouseWheel(deltaX:deltaY:) unchanged."
           },
           "dy": {
             "type": "number",
-            "description": "スクロールされた量 (縦)。dx と同じく 1 件ぶん。"
+            "description": "How much was scrolled, vertically. For that one event, as with dx."
           },
           "code": {
             "type": "integer",
-            "description": "キーの符号。**macOS の仮想キーコード** (49 = Space・0 = A・126 = ↑) で、ブラウザや Java の符号とは体系が違う。スケッチの面ではこの数が `Key` の綴り (`.space` など) として読める。"
+            "description": "The key's code. **A macOS virtual key code** (49 = Space, 0 = A, 126 = up arrow), which is a different system from the codes browsers and Java use. On the sketch's own surface this number reads as a `Key` spelling, such as `.space`."
           },
           "characters": {
             "type": "string"

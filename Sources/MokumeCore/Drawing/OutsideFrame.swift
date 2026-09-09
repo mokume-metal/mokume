@@ -40,59 +40,44 @@ extension Canvas {
             }
         }
 
-        /// 言う中身。**第 2 文は 7 つで共通**で、変わるのは何が無視されたかだけ。
-        var notice: String {
-            opening + "初期化のときに\(pastVerb)\(subject)はどのフレームにも属さないため、無視しました"
-        }
-
-        /// なぜフレームの中で呼ぶのか。**6 つは同じ言い出しを共有する**が、スタイルの
-        /// 積み降ろし・粒・計算は「置き直すもの」ではない (積むもの・出すもの・
-        /// 前置き) ので別の文を持つ。
-        private var opening: String {
-            switch self {
-            case .camera: Self.replacedEachFrame("視点と投影", "置き")
-            case .transform: Self.replacedEachFrame("変換", "書き")
-            case .style: "スタイルの積み降ろしはフレームの中でだけできます。"
-            case .light: Self.replacedEachFrame("光", "置き")
-            case .surroundings: Self.replacedEachFrame("周囲", "置き")
-            case .shadow: Self.replacedEachFrame("影", "書き")
-            case .material: Self.replacedEachFrame("材質", "書き")
-            case .particles: "粒は描くところ (draw) で扱います。"
-            case .compute: "計算は描くところ (draw) の前置きなので、そこで頼んでください。"
-            }
-        }
-
-        private static func replacedEachFrame(_ subject: String, _ verb: String) -> String {
-            "\(subject)はフレームごとに\(verb)直すものなので、描くところ (draw) で呼んでください。"
-        }
-
-        /// 第 2 文が名指すもの。**言い出しの主語とは限らない** — 視点だけは
-        /// 「視点と投影」を相手に話しかけてから「視点」を無視したと言う。
-        private var subject: String {
-            switch self {
-            case .camera: "視点"
-            case .transform: "変換"
-            case .style: "スタイル"
-            case .light: "光"
-            case .surroundings: "周囲"
-            case .shadow: "影"
-            case .material: "材質"
-            case .particles: "粒"
-            case .compute: "計算"
-            }
-        }
-
-        /// 「初期化のときに◯◯」の◯◯。置くもの・書くもの・出すもの・頼むもので違う。
+        /// 言う中身。**9 通を完全な文として持つ。**
         ///
-        /// **「た」まで含めて持つ。** 語幹だけにして `\(pastVerb)た` と組むと、音便の
-        /// ある動詞が濁らない — 実際に畳んだとき「頼んだ」が「頼んた」になった。
-        private var pastVerb: String {
+        /// かつては `opening` +「初期化のときに」+ `pastVerb` + `subject` +「はどのフレーム
+        /// にも属さないため、無視しました」の 3 スロットで組んでいた。**その形は語順と助詞に
+        /// 依存していて、語順の違う言語では成り立たない** (ADR-0038 決定 3)。
+        ///
+        /// **日本語のままでも一度事故っている。** `pastVerb` を語幹だけにして `\(pastVerb)た`
+        /// と組んだとき、音便のある動詞が濁らず「頼んだ」が「頼んた」になった。骨組みを
+        /// 共有する節約より、1 文ずつ読めることを採る。
+        var notice: String {
             switch self {
-            case .camera, .transform, .shadow, .material: "書いた"
-            case .light, .surroundings: "置いた"
-            case .style: "積んだ"
-            case .particles: "出した"
-            case .compute: "頼んだ"
+            case .camera:
+                "The camera and projection are placed again every frame, so call this from "
+                    + "draw(). The camera placed during setup belongs to no frame, and was ignored"
+            case .transform:
+                "Transforms are written again every frame, so call this from draw(). The "
+                    + "transform written during setup belongs to no frame, and was ignored"
+            case .style:
+                "Pushing and popping style only works inside a frame. The style pushed during "
+                    + "setup belongs to no frame, and was ignored"
+            case .light:
+                "Lights are placed again every frame, so call this from draw(). The light "
+                    + "placed during setup belongs to no frame, and was ignored"
+            case .surroundings:
+                "The surroundings are placed again every frame, so call this from draw(). The "
+                    + "surroundings placed during setup belong to no frame, and were ignored"
+            case .shadow:
+                "Shadows are written again every frame, so call this from draw(). The shadow "
+                    + "written during setup belongs to no frame, and was ignored"
+            case .material:
+                "Materials are written again every frame, so call this from draw(). The "
+                    + "material written during setup belongs to no frame, and was ignored"
+            case .particles:
+                "Particles are handled where you draw, in draw(). The particles emitted during "
+                    + "setup belong to no frame, and were ignored"
+            case .compute:
+                "Compute is a preamble to drawing, so ask for it from draw(). The compute asked "
+                    + "for during setup belongs to no frame, and was ignored"
             }
         }
     }

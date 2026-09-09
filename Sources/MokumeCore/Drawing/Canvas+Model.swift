@@ -66,8 +66,8 @@ extension Canvas {
     private func warnEmptyModel(_ model: Model) {
         warnOnce(
             .emptyModel,
-            "「\(model.name)」は読めましたが、面が 1 つもありません "
-                + "(読み飛ばした行 \(model.skippedLines))。置いても何も出ません")
+            "\"\(model.name)\" could be read, but it has no faces at all "
+                + "(\(model.skippedLines) lines were skipped). Placing it shows nothing")
     }
 }
 

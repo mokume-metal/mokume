@@ -47,6 +47,7 @@ extension Canvas {
     private func warnBadSurroundings() {
         warnOnce(
             .badSurroundings,
-            "surroundings(): 数でない値・負の色が渡されたので、周囲を変えませんでした")
+            "surroundings(): got a value that is not a number, or a negative colour, so the "
+                + "surroundings were left as they were")
     }
 }

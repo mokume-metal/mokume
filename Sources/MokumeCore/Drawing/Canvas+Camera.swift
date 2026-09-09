@@ -102,8 +102,8 @@ extension Canvas {
     private func warnBadCamera(_ name: String) {
         warnOnce(
             .badCamera,
-            "\(name)(): 見る位置と見ている先が同じ・上方向が視線と重なる・数でない値の"
-                + "いずれかなので、視点を変えませんでした")
+            "\(name)(): the eye and what it looks at are the same, or up lines up with the view "
+                + "direction, or a value is not a number, so the camera was left as it was")
     }
 
     /// 成り立たない投影を、初回だけ知らせる。
@@ -115,6 +115,7 @@ extension Canvas {
         }
         warnOnce(
             .badCamera,
-            "\(name)(): 写す範囲が潰れている・数でない値が渡されたので、投影を変えませんでした")
+            "\(name)(): the range being captured is collapsed, or a value is not a number, so the "
+                + "projection was left as it was")
     }
 }

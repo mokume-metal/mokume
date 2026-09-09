@@ -59,13 +59,13 @@ struct Tools {
         var description: String {
             switch self {
             case .observe:
-                "走っているスケッチを撮り、絵の場所と内訳 (フレーム番号・時刻・大きさ・絵の要約・走らせている重さ・スケッチが差し出した値・版の刻印) を返す。既定は現在のフレーム 1 枚。count を 2 以上にすると、フレームを止めずに続けて撮り、撮った順の目録が返る — 動きが正しいかは 1 枚では判定できないので、動くものを見るときはこちらを使う。止まっているスケッチでも最後に描いた絵が返る。"
+                "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew."
             case .buildStatus:
-                "直近の作り直しの結果 (成否・終了コード・出力・分解した所要時間・版の刻印) を返す。絵が変わらない理由を知りたいときに読む。"
+                "Return the result of the most recent build (whether it passed, the exit code, the output, a breakdown of how long it took, and the source stamp). Read this when you want to know why the drawing did not change."
             case .input:
-                "走っているスケッチへ入力の出来事を送る。座標はキャンバスの座標系。種別は mouseDown / mouseUp / mouseMoved / scrolled / keyDown / keyUp。位置の 3 種には x と y、キーの 2 種には code (macOS の仮想キーコード。49 = Space・0 = A・126 = ↑) が要る (欠けた 1 件は ignored に数えられ、残りは通る)。button / dx / dy / characters / isRepeat は省略できる。"
+                "Send input events to the running sketch. Coordinates are in the canvas coordinate system. The types are mouseDown / mouseUp / mouseMoved / scrolled / keyDown / keyUp. The three positional types need x and y; the two key types need code (the macOS virtual key code: 49 = Space, 0 = A, 126 = up arrow). An event missing one is counted in ignored and the rest still go through. button / dx / dy / characters / isRepeat can be left out."
             case .reference:
-                "窓口が配る文書を返す。引数を省くと一覧、name を渡すとその 1 つ。name に api を渡すと、いま依存している版の公開 API (どんな型と関数があり、どう呼ぶか)。startup を渡すと、起動の瞬間に決まるもの (走っている最中に変えても効かないもの) の一覧。ほかは面の仕様 (要求と応答の形)。"
+                "Return a document this interface serves. With no argument you get the list; pass name for one of them. Pass api for the public API of the version currently depended on (which types and functions exist, and how to call them). Pass startup for the things decided the moment a process starts (the ones that have no effect while it runs). The rest are surface specs (the shape of requests and replies)."
             }
         }
 
@@ -79,21 +79,21 @@ struct Tools {
                             "type": "number",
                             "exclusiveMinimum": 0,
                             "maximum": 1,
-                            "description": "書き出す絵の縮小率 (0 より大きく 1 以下)。省略すると実寸。",
+                            "description": "How far to scale the written image down (above 0, up to 1). Omit for full size.",
                         ],
                         "count": [
                             "type": "integer",
                             "minimum": 1,
                             "maximum": ObservationRequest.maximumCount,
                             "description":
-                                "撮る枚数 (1…\(ObservationRequest.maximumCount))。省略すると 1 枚。",
+                                "How many shots to take (1…\(ObservationRequest.maximumCount)). Omit for one.",
                         ],
                         "every": [
                             "type": "integer",
                             "minimum": 1,
                             "maximum": ObservationRequest.maximumEvery,
                             "description":
-                                "何フレームおきに撮るか (1…\(ObservationRequest.maximumEvery))。省略すると毎フレーム。秒ではなくフレームで数えるので、同じスケッチを 2 回走らせれば同じ列が返る。",
+                                "Take a shot every N frames (1…\(ObservationRequest.maximumEvery)). Omit to take every frame. Counted in frames rather than seconds, so running the same sketch twice returns the same series.",
                         ],
                     ],
                 ]
@@ -106,7 +106,7 @@ struct Tools {
                     "properties": [
                         "events": [
                             "type": "array",
-                            "description": "送る出来事の並び。1 回にいくつでも入れられる。",
+                            "description": "The events to send. Any number of them in one call.",
                             "items": ["type": "object"],
                         ]
                     ],
@@ -117,7 +117,7 @@ struct Tools {
                     "properties": [
                         "name": [
                             "type": "string",
-                            "description": "文書の名前 (例: api, startup, observe-report)。",
+                            "description": "The document's name (for example api, startup, observe-report).",
                         ]
                     ],
                 ]
@@ -131,7 +131,7 @@ struct Tools {
     /// 道具を呼ぶ。
     func call(_ name: String, arguments: [String: Any]) -> (text: String, isError: Bool) {
         guard let tool = ToolName(rawValue: name) else {
-            return ("知らない道具です: \(name)", true)
+            return ("There is no such tool: \(name)", true)
         }
         switch tool {
         case .observe: return observe(arguments)
@@ -170,14 +170,14 @@ struct Tools {
         if manifestMissing, let single = report["image"] as? String { names = [single] }
 
         if names.isEmpty {
-            lines.append("絵は採れませんでした")
+            lines.append("No image could be taken")
         } else if names.count == 1 {
-            lines.append("絵: \(facets.observeFacet.appendingPathComponent(names[0]).path)")
+            lines.append("Image: \(facets.observeFacet.appendingPathComponent(names[0]).path)")
         } else {
             // 何枚あるかを先に言う。頼んだ枚数と食い違っていたら、そこで気付ける
             lines.append(
                 """
-                絵 \(names.count) 枚: \(facets.observeFacet.path)/
+                Images (\(names.count)): \(facets.observeFacet.path)/
                   \(names.joined(separator: " "))
                 """)
         }
@@ -197,13 +197,13 @@ struct Tools {
     /// 「動きを見た」と誤って判断される (#635)。
     static func manifestMissingNote(count: Int) -> String {
         let cause = """
-            この応答は目録 (frames) を持ちません。スケッチが依存している mokume が、
-            目録を足した版より前です。絵の名前は単数形の image から読みました。
+            This reply has no catalogue (frames). The mokume the sketch depends on predates
+            the version that added one. The image name was read from the singular image field.
             """
         guard count > 1 else { return cause }
         return """
-            \(count) 枚を頼みましたが 1 枚しか返っていません。\(cause)
-            続けて撮るには、スケッチ側の依存を新しくしてください。
+            \(count) shots were asked for and only one came back. \(cause)
+            To take a series, update the sketch's own dependency.
             """
     }
 
@@ -232,7 +232,7 @@ struct Tools {
 
     private func sendInput(_ arguments: [String: Any]) -> (String, Bool) {
         guard let events = arguments["events"] as? [[String: Any]] else {
-            return ("events に出来事の並びが要ります", true)
+            return ("events needs an array of events", true)
         }
         let id = makeID()
         switch roundTrip(
@@ -292,7 +292,7 @@ struct Tools {
         guard let name else { return (catalog(schemas: root), false) }
         guard let root else { return (schemasMissing(), true) }
         guard let text = SchemasLocator.contents(of: name, in: root) else {
-            return ("そういう名前の文書はありません: \(name)", true)
+            return ("There is no document by that name: \(name)", true)
         }
         return (text, false)
     }
@@ -300,15 +300,15 @@ struct Tools {
     /// 配っているものの一覧。
     func catalog(schemas root: URL?) -> String {
         var lines = [
-            "窓口が配る文書 (name に渡すと中身が返ります):",
+            "Documents this interface serves (pass one as name to get its contents):",
             "",
-            "公開 API:",
-            "- \(Self.apiDocument) — いま依存している版の公開 API の一覧",
+            "Public API:",
+            "- \(Self.apiDocument) — the public API of the version currently depended on",
             "",
-            "起動の瞬間に決まるもの:",
-            "- \(Self.startupDocument) — 走っている最中に変えても効かないものの一覧",
+            "Decided at launch:",
+            "- \(Self.startupDocument) — what has no effect while a process is running",
             "",
-            "面の仕様:",
+            "Surface specs:",
         ]
         if let root {
             lines += SchemasLocator.names(in: root).map { "- \($0)" }
@@ -322,11 +322,11 @@ struct Tools {
     private func apiReference() -> (String, Bool) {
         do {
             let found = try apiList.read()
-            return ("出所: \(found.source.text)\n\n\(found.text)", false)
+            return ("Source: \(found.source.text)\n\n\(found.text)", false)
         } catch let missing as APIListLocator.Missing {
             return (missing.advice, true)
         } catch {
-            return ("公開 API の一覧を読めませんでした: \(error)", true)
+            return ("Could not read the public API list: \(error)", true)
         }
     }
 

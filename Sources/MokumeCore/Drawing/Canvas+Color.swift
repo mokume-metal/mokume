@@ -22,7 +22,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: alpha)
         else {
             return warnOnce(
-                .notANumberBackground, "background(): 数でない値・無限の値が渡されたので、色を変えませんでした")
+                .notANumberBackground, "background(): got a value that is not a number, or an infinite one, so the colour was left as it was")
         }
         background(color)
     }
@@ -38,7 +38,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: alpha)
         else {
             return warnOnce(
-                .notANumberFill, "fill(): 数でない値・無限の値が渡されたので、色を変えませんでした")
+                .notANumberFill, "fill(): got a value that is not a number, or an infinite one, so the colour was left as it was")
         }
         fill(color)
     }
@@ -54,7 +54,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: alpha)
         else {
             return warnOnce(
-                .notANumberStroke, "stroke(): 数でない値・無限の値が渡されたので、色を変えませんでした")
+                .notANumberStroke, "stroke(): got a value that is not a number, or an infinite one, so the colour was left as it was")
         }
         stroke(color)
     }
@@ -70,7 +70,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: alpha)
         else {
             return warnOnce(
-                .notANumberTint, "tint(): 数でない値・無限の値が渡されたので、色を変えませんでした")
+                .notANumberTint, "tint(): got a value that is not a number, or an infinite one, so the colour was left as it was")
         }
         tint(color)
     }

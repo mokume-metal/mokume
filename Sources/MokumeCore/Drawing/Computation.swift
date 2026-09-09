@@ -57,7 +57,7 @@ import MokumeDiagnostics
         self.pipeline = pipeline
         self.box = ShaderBox(
             name: name, url: url, body: body, values: values,
-            label: "computation", valuesHint: "作るときの values")
+            label: "computation", valuesHint: "the values you pass when making it")
 
         let library = try gpu.shaders.makeComputeLibrary(named: name, body: body, values: values)
         self.state = try pipeline.makeState(

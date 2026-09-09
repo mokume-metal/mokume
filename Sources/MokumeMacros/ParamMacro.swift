@@ -24,11 +24,12 @@ public enum ParamMacro {
 
         var message: String {
             switch self {
-            case .notAVariable: "@Param はプロパティに付ける"
-            case .notStored: "@Param は自分で get / set を書いたプロパティには付けられない"
-            case .isLet: "@Param は var に付ける (動かせない値につまみは要らない)"
-            case .multipleBindings: "@Param は 1 つの宣言に 1 つの値だけ (var a: Int = 0, b: Int = 0 と並べない)"
-            case .missingType: "@Param を付ける値には型を書く (var radius: Double = 80)"
+            case .notAVariable: "@Param goes on a property"
+            case .notStored: "@Param cannot go on a property with its own get or set"
+            case .isLet: "@Param goes on a var (a value that cannot move needs no knob)"
+            case .multipleBindings:
+                "@Param takes one value per declaration (not var a: Int = 0, b: Int = 0)"
+            case .missingType: "write the type on a value you put @Param on (var radius: Double = 80)"
             }
         }
 

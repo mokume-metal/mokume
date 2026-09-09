@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/params-request.schema.json",
-  "title": "つまみの書き換えの要求",
-  "description": "走っているスケッチが宣言した値を書き換える。1 回にいくつでも並べられる。ADR-0018 決定 3 のとおり原子的に置き、id は要求ごとに変える。1 つの要求の中は名前順に処理されるので、同じ名前を二度書けば後のほうが残る。",
+  "title": "The request to write knob values",
+  "description": "Writes the values a running sketch declared. Any number of them can go in one call. Placed atomically as ADR-0018 decision 3 requires, and id changes with every request. Within one request they are processed in name order, so writing the same name twice leaves the later one standing.",
   "type": "object",
   "required": ["id", "values"],
   "additionalProperties": false,
@@ -10,11 +10,11 @@
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "この要求の識別子。応答はこれを echo する。"
+      "description": "This request's identifier. The reply echoes it back."
     },
     "values": {
       "type": "array",
-      "description": "書き換える値。**入らなかったものは応答の rejected に理由つきで載る** — 知らない名前も、型の違いも、候補の外も、黙って捨てられることはない。",
+      "description": "The values to write. **Whatever does not go in appears in the reply's rejected, with a reason** — an unknown name, a type that differs, a value outside the choices: none of them is dropped in silence.",
       "items": {
         "type": "object",
         "required": ["name", "type", "value"],
@@ -23,15 +23,15 @@
           "name": {
             "type": "string",
             "minLength": 1,
-            "description": "宣言したときの名前。応答の params で引ける。"
+            "description": "The name as it was declared. It can be looked up in the reply's params."
           },
           "type": {
             "type": "string",
             "enum": ["float", "int", "bool", "string", "color", "vec2", "vec3"],
-            "description": "値の型。**値の隣に書く** — JSON の数値表現だけでは実数と整数を、配列だけでは 2 成分と 3 成分を見分けられない。宣言と違う型は typeMismatch として断られる。"
+            "description": "The value's type. **Written next to the value**, because JSON's number representation alone cannot tell a real from an integer, and an array alone cannot tell two components from three. A type other than the declared one is refused as typeMismatch."
           },
           "value": {
-            "description": "値。float / int は数、bool は真偽、string は文字、color は red / green / blue / alpha を持つ組 (作業空間の乗算済みの値)、vec2 / vec3 は成分の並び。"
+            "description": "The value. float and int are numbers, bool is a boolean, string is text, color is a tuple with red, green, blue and alpha (premultiplied, in the working space), and vec2 and vec3 are arrays of components."
           }
         }
       }
