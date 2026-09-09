@@ -23,7 +23,9 @@
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import contextlib
 import importlib.util
+import io
 import subprocess
 import sys
 import tempfile
@@ -127,6 +129,19 @@ class ExampleShotsTest(unittest.TestCase):
     def collect(self):
         return shots.collect(self.root)
 
+    def check(self):
+        """検査を走らせる。**印字は伏せる** (#1098)。
+
+        `check()` は問題の一覧を返すついでに `例の絵: N 本` を印字するので、伏せずに
+        呼ぶと雛形の 2 本が make ci-check のログへ出る — 本物 (169 本) と行の形が同じで
+        見分けが付かない。出力そのものを検める側は self.check_output を読む。
+        """
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            problems = shots.check(self.root, self.collect())
+        self.check_output = out.getvalue()
+        return problems
+
     def test_囲みと直前の例を拾う(self):
         found = self.collect()
         self.assertEqual(len(found), 2)
@@ -184,13 +199,8 @@ class ExampleShotsTest(unittest.TestCase):
     def test_見ていないことを出力が名乗る(self):
         """#671。数を出せないなら、境目を 1 行で言う。"""
         self.write_back()
-        import contextlib
-        import io as _io
-
-        out = _io.StringIO()
-        with contextlib.redirect_stdout(out):
-            shots.check(self.root, self.collect())
-        text = out.getvalue()
+        self.check()
+        text = self.check_output
         self.assertIn("実装が変わって絵が古くなっているかは見ていない", text)
         self.assertNotIn("撮影後に実装が動いている", text)
         self.assertNotIn("撮った版を辿れなかった", text)
@@ -203,18 +213,18 @@ class ExampleShotsTest(unittest.TestCase):
 
     def test_撮った後は検査が通る(self):
         self.write_back()
-        self.assertEqual(shots.check(self.root, self.collect()), [])
+        self.assertEqual(self.check(), [])
 
     def test_例を書き換えたのに撮り直していなければ赤い(self):
         self.write_back()
         text = self.path.read_text(encoding="utf-8").replace("circle(200, 150, 160)", "circle(200, 150, 200)")
         self.path.write_text(text, encoding="utf-8")
-        problems = shots.check(self.root, self.collect())
+        problems = self.check()
         self.assertTrue(any("撮り直していない" in problem for problem in problems), problems)
 
     def test_一文の説明が空なら赤い(self):
         self.path.write_text(SOURCE.replace("<!-- shot: 中央の橙色の円 -->", "<!-- shot: -->"), encoding="utf-8")
-        problems = shots.check(self.root, self.collect())
+        problems = self.check()
         self.assertTrue(any("一文の説明が空" in problem for problem in problems), problems)
 
     def test_例の塊が無ければ赤い(self):
@@ -222,7 +232,7 @@ class ExampleShotsTest(unittest.TestCase):
             SOURCE.replace("    /// ```swift\n    /// circle(200, 150, 160)\n    /// ```\n", ""),
             encoding="utf-8",
         )
-        problems = shots.check(self.root, self.collect())
+        problems = self.check()
         self.assertTrue(any("```swift の塊が無い" in problem for problem in problems), problems)
 
     def test_囲みが閉じていなければ落ちる(self):
