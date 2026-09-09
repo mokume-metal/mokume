@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加 ([#193](https://github.com/mokume-metal/mokume/issues/193)) / 改訂 (2026-09-03): 決定 1 に、手本が割れている場合の段を追加 ([#669](https://github.com/mokume-metal/mokume/issues/669)) / 改訂 (2026-09-05): 決定 7 が保留していた語彙の置き場を決めた ([#883](https://github.com/mokume-metal/mokume/issues/883))
+採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加 ([#193](https://github.com/mokume-metal/mokume/issues/193)) / 改訂 (2026-09-03): 決定 1 に、手本が割れている場合の段を追加 ([#669](https://github.com/mokume-metal/mokume/issues/669)) / 改訂 (2026-09-05): 決定 7 が保留していた語彙の置き場を決めた ([#883](https://github.com/mokume-metal/mokume/issues/883)) / 改訂 (2026-09-09): 決定 3 が 3D をまだ無いものとして書いていた箇所を、実装が入った後の姿に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733))
 
 ## 文脈
 
@@ -62,7 +62,9 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 
 変換とスタイルは、**描く対象の次元によって作用先が変わらない**。
 
-いま 3D は無い。それでもここで宣言するのは、後から揃える変更が**シグネチャを変えずに描画結果だけを変える**種類の変更になるからである。利用者のコードはコンパイルが通ったまま、絵だけが変わる。この形の変更は移行の手立てが乏しく、事前に宣言しておく以外に払わない方法がない。
+3D の口は既にある — `box` 2 種と `sphere` (`Sources/MokumeCore/Drawing/Canvas+Solid.swift`・`Sources/MokumeCore/Sketch/Sketch+Solid.swift`)、`rotateX` / `rotateY` / `rotateZ` (`Sources/MokumeCore/Sketch/Sketch+Transform.swift`)。**変換とスタイルはそこでも同じ受け口を通り、次元ごとの分岐を持たない。**
+
+**当初の決定**は 3D が 1 本も無い時点で書かれ、「それでもここで宣言するのは、後から揃える変更が**シグネチャを変えずに描画結果だけを変える**種類の変更になるからである」と続けていた (2026-09-09 に現況へ合わせた・[#733](https://github.com/mokume-metal/mokume/issues/733))。**その理由は動いていない** — 揃えるのを後回しにすると、利用者のコードはコンパイルが通ったまま絵だけが変わる。この形の変更は移行の手立てが乏しく、事前に宣言しておく以外に払わない方法がない。**そして先に宣言してあったことは実際に効いた** — 3D を足すときに、2D と別の受け口を作る選択が最初から無かった。だから番号は増やさず、記述だけを現況に合わせる。
 
 一方にしか意味を持たない状態 (光・投影・奥行きの扱いなど) は、**API 自身が名前で示す**。例外を作るときは本 ADR を改訂する — 散文の但し書きで運用しない。
 

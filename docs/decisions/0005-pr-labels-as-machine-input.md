@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27)
+採用 (2026-08-27) / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 4 が承認の根拠として引いていた `verify: human` の判定 / 改訂 (2026-09-09): 決定 2 と影響節が挙げるラベルを現況に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733))
 
 ## 文脈
 
@@ -43,7 +43,9 @@ Issue と同じ分類軸を PR に持ち込む道も無い。**GitHub の Issue 
 
 PR ラベルの唯一の役目は、**機構への入力**である。新しい PR ラベルを提案するときは、それを読むスクリプト (またはワークフロー) を同時に示す。読み手のいないラベルは足さない (原則 4: 実需が機能を駆動する)。
 
-現時点で該当するのは `no-issue` の 1 種のみ。**ラベル語彙はこの決定によって増えない。**
+いま該当するのは 3 種で、それぞれ読み手が居る — `no-issue` (`scripts/review-gate.sh`)・`release:now` (`.github/workflows/release.yml`)・`no-visual-change` (`scripts/check-drawing-evidence.sh`)。**ラベル語彙が増えるのは、それを読む機構が増えたときだけである。**
+
+**当初の決定**は該当するラベルを `no-issue` 1 つだけ挙げ、「**ラベル語彙はこの決定によって増えない**」と書いていた (2026-09-09 に直した・[#733](https://github.com/mokume-metal/mokume/issues/733))。**基準のほうは動いていない** — 足りた 2 種はどちらも「読むスクリプトを同時に示す」この決定の条件を通って入っている。誤っていたのは**増えないという見込み**で、増やす条件ではない。だから番号は増やさず、数え上げを現況に合わせる。
 
 この基準は将来の追加を禁じるものではない。「ラベルでしか表現できず、機械がそれを読んで判定を変える」ものが現れたら足す。判断の順序は逆にしない — ラベルを先に作って用途を後から探さない。
 
@@ -59,7 +61,7 @@ PR ラベルの唯一の役目は、**機構への入力**である。新しい 
 
 **bot が自らゲートを外しているように見えるが、そうではない。**
 
-- `no-issue` は承認ゲートではなく、**Issue 紐づけの例外印**である。承認を担うのはルールセットの `required_reviewers` と `verify: human` の判定で、そちらは動かない
+- `no-issue` は承認ゲートではなく、**Issue 紐づけの例外印**である。承認を担うのはルールセットの `required_reviewers` で、そちらは動かない。**当初はここに `verify: human` の判定も並べていた**が、ラベル由来の承認は [ADR-0031](0031-triage-as-the-single-gate.md) 決定 1 に置き換わって無くなった (残るのは `verify: triaged` 1 つで、表すのは「完了条件が固まっている」ことだけ)。**この段の結論は動かない** — dependabot の PR が承認を免れないのは `.github/workflows/` を触るからで、根拠はパス由来の `required_reviewers` の側にある
 - `.github/dependabot.yml` 自体が `.github/` 配下にあり、**ルールセットの `required_reviewers` によりメンテナの承認なしには変えられない**。この自己申告は人の承認を一度通った設定であって、bot が実行時に選べるものではない
 - github-actions の更新は必ず `.github/workflows/` を触るため、**dependabot の PR は毎回メンテナの承認を要求される**。Issue 紐づけを免除しても、人の目は必ず一度入る
 
@@ -79,7 +81,7 @@ PR ラベルの唯一の役目は、**機構への入力**である。新しい 
 
 ## 影響
 
-- ラベル語彙は変わらない (8 種のまま)。dependabot 既定の `dependencies` も作らない
+- この決定が足すラベルは無い。dependabot 既定の `dependencies` も作らない。**当初は「ラベル語彙は変わらない」と書き、括弧で当時の 8 種を挙げていた** (2026-09-09 に直した・[#733](https://github.com/mokume-metal/mokume/issues/733))。**語彙は数ではなく中身で照合する** — いまの語彙は `status: *` (状態) と `verify: triaged` (完了条件が固まっている)、それに決定 2 が挙げる判定を変える 3 種である。当時から中身は入れ替わっており、`verify: machine` / `verify: human` が `verify: triaged` 1 つに畳まれ ([ADR-0031](0031-triage-as-the-single-gate.md))、`release:now` と `no-visual-change` が入った。**総数は偶然また 8 になるので、数で照合すると入れ替わった状態が「変わっていない」と読めてしまう。** 現に何が在るかの正典は AGENTS.md 「PR のラベル」節とラベル一覧である
 - `.github/dependabot.yml` に `labels` を追加する。これにより dependabot の PR は `review-gate` の Issue 紐づけ判定を通り、メンテナの承認だけを待つ状態になる
 - 自動付与の実測は、次の週次実行 (または Insights > Dependency graph > Dependabot の "Check for updates") を待つ。実測は sub-issue に切り、結果をそこに残す
 - `scripts/review-gate.sh` の挙動は変えない。`no-issue` を読む判定は既にあり、本 ADR はその位置づけを言語化しただけである
