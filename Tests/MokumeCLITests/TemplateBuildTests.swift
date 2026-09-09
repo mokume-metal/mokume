@@ -133,7 +133,7 @@ struct TemplateBuildTests {
         #expect(FileManager.default.fileExists(atPath: app.path), "包みが出来ていない")
 
         // 開き方は包みの**隣**に出る。中にあっては、開けない人には読めない
-        let note = root.appendingPathComponent("bundle/Grain を開くには.txt")
+        let note = root.appendingPathComponent("bundle/How to open Grain.txt")
         #expect(
             FileManager.default.fileExists(atPath: note.path),
             "開き方の紙が包みの隣に無い。作品と一緒に送れる物になっていない")

@@ -25,7 +25,7 @@ enum RunCommand {
         // どの道具で走らせているかを名乗る。**手元ビルドと配布版の取り違えは、解消済みの
         // 不具合を新しい不具合として起票させる** (#633 が実際にそうなった)。名乗りが help と
         // 切り分けの口にしか無いと、いちばん長く見ている画面に出ない (#684)
-        print("道具: \(ToolVersion.describe())")
+        print("Tool: \(ToolVersion.describe())")
         if let notice = sharedSurfaceNotice(for: invocation) { print(notice) }
 
         // **置き場は 1 度だけ決めて持ち回る。** 作り直しと実行ファイルの解決へ別々に
@@ -139,8 +139,8 @@ enum RunCommand {
         guard FileManager.default.fileExists(atPath: facet.path) else { return nil }
         // **在処をそのまま出す。** 基準は環境変数が動かせるので、`.mokume/…` とだけ
         // 言うとスケッチの場所を探して「無い」と読まれる (#791)
-        return "画面の出口が共有する面になっている (\(facet.path) が在る) —"
-            + " 窓は出ない。窓で見たいなら、その区画を消す"
+        return "The display output goes to a shared surface (\(facet.path) is there) —"
+            + " no window opens. Remove that facet to get a window"
     }
 
     /// 1 回の作り直しの結果。

@@ -108,7 +108,7 @@ struct BundleCommandTests {
     func theReportTellsHowToCheck() {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
-            note: URL(fileURLWithPath: "/tmp/Demo を開くには.txt"), signedAs: nil)
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil)
         #expect(report.contains("/tmp/Demo.app"))
         #expect(report.contains(".build"))
     }
@@ -119,12 +119,12 @@ struct BundleCommandTests {
     func theOpeningNoteCarriesTheSteps() {
         let identity = AppIdentity(
             name: "Grain", identifier: "org.example.grain", version: "0.1.0")
-        #expect(BundleCommand.noteFileName(for: identity) == "Grain を開くには.txt")
+        #expect(BundleCommand.noteFileName(for: identity) == "How to open Grain.txt")
 
         let note = BundleCommand.openingNote(for: identity)
         #expect(note.contains("Grain.app"))
-        #expect(note.contains("プライバシーとセキュリティ"))
-        #expect(note.contains("このまま開く"))
+        #expect(note.contains("Privacy & Security"))
+        #expect(note.contains("Open Anyway"))
     }
 
     /// 手順を報せに書くと、読んだ送り手が伝え直すことになる。名指しなら物が動く。
@@ -132,9 +132,9 @@ struct BundleCommandTests {
     func theReportPointsAtTheOpeningNote() {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
-            note: URL(fileURLWithPath: "/tmp/Demo を開くには.txt"), signedAs: nil)
-        #expect(report.contains("/tmp/Demo を開くには.txt"))
-        #expect(report.contains("一緒に送る"))
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil)
+        #expect(report.contains("/tmp/How to open Demo.txt"))
+        #expect(report.contains("Send it along with the work"))
     }
 
     /// 名前は**持っている人の環境の性質**なので、環境から受け取る。
@@ -174,7 +174,7 @@ struct BundleCommandTests {
         let named = BundleCommand.report(
             for: app, note: note, signedAs: "Developer ID Application: X")
         #expect(named.contains("Developer ID Application: X"))
-        #expect(named.contains("公証はまだ通っていない"))
+        #expect(named.contains("has not been notarized yet"))
     }
 
     @Test("置き場を渡せる")

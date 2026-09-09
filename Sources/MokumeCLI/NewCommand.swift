@@ -32,7 +32,7 @@ enum NewCommand {
         }
         print(
             """
-            \(root.path) を作った。
+            Created \(root.path)
 
               cd \(options.name)
               \(Command.name) run
