@@ -231,4 +231,15 @@ struct WatchCommandTests {
     func namesTheProcessItHadToAbandon() {
         #expect(WatchCommand.abandonedLine(pid: 4321).contains("4321"))
     }
+
+    /// **落ちたのか、自分から終わったのかで読む人の次の一手が変わる** (#1103)。落ちたのなら
+    /// 端末を遡る先があり、自分から終わったのならスケッチの側にそう書いてある。
+    @Test("勝手に消えたスケッチは、終わり方と数字を添えて名乗る")
+    func namesHowTheSketchDeparted() {
+        let ended = WatchCommand.departedLine(.init(status: 11, wasSignalled: false))
+        let crashed = WatchCommand.departedLine(.init(status: 11, wasSignalled: true))
+        #expect(ended != crashed, "落ちたことと自分から終わったことが同じ言葉になっている")
+        #expect(ended.contains("11"))
+        #expect(crashed.contains("11"))
+    }
 }

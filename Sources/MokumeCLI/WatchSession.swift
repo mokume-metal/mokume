@@ -84,6 +84,20 @@ final class WatchSession {
         case abandoned(pid: Int32)
     }
 
+    /// 子が、道具の知らないところで消えたこと。
+    ///
+    /// **道具が止めた終わり方 (``StopOutcome``) とは別の出来事である。** あちらは道具が
+    /// 起こした結果を名乗るもので、こちらは**誰も頼んでいないのに居なくなった**ことを言う。
+    struct Departure: Equatable {
+        /// 終了コード。合図で落ちたときは合図の番号。
+        var status: Int32
+        /// 落ちたのか (`true`)、自分から終わったのか (`false`)。
+        ///
+        /// **読む人が次にすることが変わる。** 落ちたのなら端末を遡る先があり、自分から
+        /// 終わったのならスケッチの側にそう書いてある。
+        var wasSignalled: Bool
+    }
+
     /// 止まるのを待つ上限 (秒)。
     ///
     /// **3 秒という値に意味があるのではなく、桁が離れていることに意味がある** — 素直に
@@ -112,7 +126,15 @@ final class WatchSession {
     private var hooks: Hooks
 
     /// いま走らせている子。
-    private(set) var child: Process?
+    ///
+    /// **入れ替わったら、消えたことの名乗りは畳む。** 止めるのも差し替えるのもここを通る
+    /// ので、印を下ろす場所はこの 1 つで足りる (``departed()``)。
+    private(set) var child: Process? {
+        didSet { hasNamedDeparture = false }
+    }
+
+    /// 消えたことを既に名乗ったか。**子が入れ替わると下りる。**
+    private var hasNamedDeparture = false
     /// 止まるのを待つ上限 (秒)。**検査から縮める** — 既定で待つと、期限を確かめる検査が
     /// そのぶん遅くなる。
     let stopTimeout: TimeInterval
@@ -186,6 +208,28 @@ final class WatchSession {
         // **失敗を握り潰す。** 相手が畳んだ (EPIPE)・管が一杯 (EAGAIN) のどちらでも、
         // することは同じ「この 1 件を捨てる」である
         try? pipe.fileHandleForWriting.write(contentsOf: data)
+    }
+
+    /// 子が、道具の知らないところで消えていたら 1 度だけ返す。
+    ///
+    /// **見張りは子の生死を見ていなかった。** 見ていたのは世代の刻印だけなので、走らせて
+    /// いるスケッチが自分で終わっても落ちても、道具は何も言わずに回り続ける — 窓は道具の
+    /// ものなので画面には残り、止まった絵のまま次の保存を待つ
+    /// ([#1103](https://github.com/mokume-metal/mokume/issues/1103))。
+    ///
+    /// **道具が自分で止めた回は返らない。** 終わるときも保存による差し替えも ``stop()``
+    /// を通り、そこは必ず ``child`` を `nil` にする。だから**「子は居るのに走っていない」
+    /// だけが、誰も頼んでいない消え方**である。
+    ///
+    /// **1 度きりなのは、巡回が 0.25 秒ごとに回るからである。** 消えた状態はそのまま続く
+    /// ので、印を持たないと同じ 1 行を毎秒 4 回出し続ける。印は子が入れ替われば下りる。
+    ///
+    /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。
+    func departed() -> Departure? {
+        guard let gone = child, !gone.isRunning, !hasNamedDeparture else { return nil }
+        hasNamedDeparture = true
+        return Departure(
+            status: gone.terminationStatus, wasSignalled: gone.terminationReason == .uncaughtSignal)
     }
 
     /// 走らせているものを終わらせる。
