@@ -74,7 +74,9 @@ import MokumeDiagnostics
     ///
     /// [#934]: https://github.com/mokume-metal/mokume/issues/934
     private func settledBeforeWriting() -> Bool {
-        gpu.settleBeforeWriting("数の並びへ書く")
+        gpu.settleBeforeWriting(
+            orWarn: "Could not wait for the GPU before writing into a number array, so the "
+                + "write was called off")
     }
 
     /// 1 つ書く。

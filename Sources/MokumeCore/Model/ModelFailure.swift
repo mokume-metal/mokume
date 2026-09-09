@@ -36,7 +36,7 @@ extension ModelFailure: CustomStringConvertible {
                 宣言が無いとビルドは静かに通り、実行時に読めないだけになります。
                 """
         case .unreadable(let path):
-            return "「\(path)」を文字として読めません。壊れていないか確かめてください"
+            return "\"\(path)\" cannot be read as text. Check whether it is damaged"
         case .unsupported(let path, let extensionName):
             return """
                 「\(path)」の形式 (.\(extensionName)) には対応していません。\

@@ -104,7 +104,7 @@ final class FrameRecorder: Outlet {
     /// 場所が無い連番を受けてしまうと全部が同じ名前になり、最後の 1 枚しか残らない。
     func beginRecord(_ pattern: String) {
         guard !isRecording else {
-            warnOnce(.alreadyRecording, "beginRecord(): すでに撮っています。いまの録りを続けます")
+            warnOnce(.alreadyRecording, "beginRecord(): already recording. Carrying on with the current one")
             return
         }
         if pattern.lowercased().hasSuffix(".mov") {
@@ -115,9 +115,9 @@ final class FrameRecorder: Outlet {
         guard let sequence = FrameSequence(pattern: pattern) else {
             warnOnce(
                 .patternWithoutNumber,
-                "beginRecord(\"\(pattern)\"): 連番なら番号の入る場所が要ります "
-                    + "(\"out/frame-####.png\" のように # を並べる)。"
-                    + "動きは \"out/motion.mov\" のように .mov で書きます。撮り始めません")
+                "beginRecord(\"\(pattern)\"): a numbered series needs somewhere for the number "
+                    + "to go (a run of # characters, as in \"out/frame-####.png\"). "
+                    + "Motion is written as .mov, as in \"out/motion.mov\". Not starting")
             return
         }
         self.sequence = sequence
@@ -127,7 +127,7 @@ final class FrameRecorder: Outlet {
     /// 連番か動画を止める。**頼んだ全部がファイルになってから返る。**
     func endRecord() {
         guard isRecording else {
-            warnOnce(.notRecording, "endRecord(): 撮っていません")
+            warnOnce(.notRecording, "endRecord(): nothing is being recorded")
             return
         }
         sequence = nil
@@ -164,9 +164,8 @@ final class FrameRecorder: Outlet {
         guard movie.droppedFrames > 0 else { return }
         warnOnce(
             .droppedFrames,
-            "\(movie.path): \(movie.acceptedFrames) 枚を書きました。"
-                + "\(movie.droppedFrames) 枚は描けなかったので入っていません "
-                + "(残った絵の時刻はずれていません)")
+            "\(movie.path): wrote \(movie.acceptedFrames) frames. \(movie.droppedFrames) could not "
+                + "be drawn and are not in it (the times of the frames that remain are not shifted)")
     }
 
     // MARK: - 差込口

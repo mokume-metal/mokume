@@ -34,7 +34,7 @@ extension ImageFailure: CustomStringConvertible {
                 宣言が無いとビルドは静かに通り、実行時に読めないだけになります。
                 """
         case .undecodable(let path):
-            return "「\(path)」は画像として読めません。形式が対応しているか確かめてください"
+            return "\"\(path)\" cannot be read as an image. Check that the format is one mokume handles"
         case .unplaceable(let width, let height):
             return """
                 \(width)x\(height) の画像を GPU 側へ置けません。

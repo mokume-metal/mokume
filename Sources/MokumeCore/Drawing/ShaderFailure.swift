@@ -26,7 +26,7 @@ extension ShaderFailure: CustomStringConvertible {
                 宣言が無いとビルドは静かに通り、実行時に読めないだけになります。
                 """
         case .notCompilable(let path, let reason):
-            return "断片「\(path)」を組み立てられません:\n\(reason)"
+            return "Cannot build the fragment at \"\(path)\":\n\(reason)"
         case .tooManyValues(let path, let count, let capacity):
             return """
                 断片「\(path)」へ渡す値が多すぎます (float 換算 \(count) 個 / 上限 \(capacity) 個)。

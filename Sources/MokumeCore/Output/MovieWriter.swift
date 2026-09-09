@@ -102,7 +102,7 @@ final class MovieWriter {
                     try await opened.append(job.image, at: job.time)
                     lastTime = job.time
                 } catch {
-                    failure.set("\(path) を書けませんでした: \(error)")
+                    failure.set("Could not write \(path): \(error)")
                 }
                 release()
             }
@@ -110,7 +110,7 @@ final class MovieWriter {
                 do {
                     try await file.finish(lastFrameAt: lastTime)
                 } catch {
-                    failure.set("\(path) を閉じられませんでした: \(error)")
+                    failure.set("Could not close \(path): \(error)")
                 }
             }
             closed.signal()
@@ -148,14 +148,14 @@ final class MovieWriter {
         continuation.finish()
         if let stranded = pressure.drain() {
             Diagnostics.warn(
-                "\(path): 符号化が \(Int(pressure.stallLimitSeconds)) 秒進みませんでした "
-                    + "(\(stranded) 枚が残っています) — 待つのをやめます")
+                "\(path): encoding has not moved for \(Int(pressure.stallLimitSeconds)) seconds "
+                    + "(\(stranded) frames are still waiting) — no longer waiting for it")
         }
         if closed.wait(timeout: .now() + Self.closeLimitSeconds) != .success {
             Diagnostics.warn(
-                "\(path): 動画を閉じるのに \(Int(Self.closeLimitSeconds)) 秒待っても返りません "
-                    + "— 待つのをやめます。このまま終了すると再生できないファイルが残ります "
-                    + "(書き込みは続いているので、少し待てば閉じるかもしれません)")
+                "\(path): waited \(Int(Self.closeLimitSeconds)) seconds to close the movie with no "
+                    + "answer — no longer waiting. Quitting now leaves a file that will not "
+                    + "play (writing is still going, so waiting a little may still close it)")
         }
     }
 

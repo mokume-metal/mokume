@@ -115,8 +115,8 @@ nonisolated final class MovieFile {
             compression[alphaMode] = kVTAlphaChannelMode_StraightAlpha as String
         } else {
             Diagnostics.warn(
-                "この機械の符号化器は乗算前のアルファを受けません。"
-                    + "透けたところの色は黒に合成されます")
+                "This machine's encoder does not take unpremultiplied alpha. "
+                    + "Anything transparent will be composited onto black")
         }
 
         input = AVAssetWriterInput(
@@ -146,7 +146,7 @@ nonisolated final class MovieFile {
         guard writer.canAdd(input) else { throw .destinationUnavailable(path: path) }
         writer.add(input)
         guard writer.startWriting() else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "不明")
+            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
         }
     }
 
@@ -155,7 +155,7 @@ nonisolated final class MovieFile {
     /// 詰まっているあいだは待つ。ここはフレームループの外なので、待っても絵は遅くならない。
     func append(_ image: DisplayImage, at time: Double) async throws(MovieWriteFailure) {
         guard image.width == width, image.height == height else {
-            throw .writeFailed(path: path, reason: "絵の大きさが撮り始めたときと違います")
+            throw .writeFailed(path: path, reason: "the frame size differs from when recording began")
         }
         let stamp = CMTime(seconds: time, preferredTimescale: Self.timescale)
         if !hasStarted {
@@ -175,7 +175,7 @@ nonisolated final class MovieFile {
 
         fill(buffer, with: image)
         guard adaptor.append(buffer, withPresentationTime: stamp) else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "不明")
+            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
         }
     }
 
@@ -187,7 +187,7 @@ nonisolated final class MovieFile {
         guard hasStarted else {
             // 1 枚も受け取っていない。中身の無いファイルを残さない
             writer.cancelWriting()
-            throw .writeFailed(path: path, reason: "1 枚も撮れていません")
+            throw .writeFailed(path: path, reason: "not a single frame was recorded")
         }
         input.markAsFinished()
         writer.endSession(
@@ -195,7 +195,7 @@ nonisolated final class MovieFile {
                 seconds: time + frameDuration, preferredTimescale: Self.timescale))
         await writer.finishWriting()
         guard writer.status == .completed else {
-            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "不明")
+            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
         }
     }
 

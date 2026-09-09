@@ -494,7 +494,8 @@ public final class SketchRuntime {
         pendingOutletFrame = nil
         guard outlets.contains(where: { $0.health.isAttached }) else { return }
         target.gpu.waitForSubmissionQuietly(
-            pending.image.pendingSubmission, before: "出口へ絵を渡す")
+            pending.image.pendingSubmission,
+            orWarn: "Could not wait for the GPU before handing the frame to an outlet")
         let frame = OutputFrame(image: pending.image, frame: pending.frame, time: pending.time)
         visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
     }

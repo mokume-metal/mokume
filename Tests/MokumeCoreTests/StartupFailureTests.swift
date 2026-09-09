@@ -109,7 +109,7 @@ struct StartupFailureTests {
         let text = RenderFailure.shaderSourceMissing(name: "Shapes.metal").description
         #expect(text.contains("Shapes.metal"))
         #expect(text.contains("\(ModuleResources.bundleName).bundle"))
-        #expect(text.contains("実行ファイルの隣"))
+        #expect(text.contains("next to the executable"))
         #expect(text.contains(".app"))
     }
 

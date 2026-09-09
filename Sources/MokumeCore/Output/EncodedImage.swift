@@ -91,7 +91,9 @@ final class EncodedImage {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     func read() -> DisplayImage {
-        gpu.waitForSubmissionQuietly(pendingSubmission, before: "絵を読み戻す")
+        gpu.waitForSubmissionQuietly(
+            pendingSubmission,
+            orWarn: "Could not wait for the GPU before reading the frame back")
         readCount += 1
         var bytes = [UInt8](repeating: 0, count: width * height * OutputPass.bytesPerPixel)
         let source = storage.contents()
