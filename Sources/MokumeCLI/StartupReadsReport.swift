@@ -22,8 +22,8 @@ enum StartupReadsReport {
     /// 基準を決めたものの言い方。
     static func origin(given: Bool) -> String {
         given
-            ? "\(StartupReads.workDirectory.key) が指している"
-            : "\(StartupReads.workDirectory.key) は未設定 — スケッチの場所を使っている"
+            ? "pointed at by \(StartupReads.workDirectory.key)"
+            : "\(StartupReads.workDirectory.key) is unset — using the sketch's own directory"
     }
 
     /// 一覧そのもの。`reference` の文書として配り、`doctor` が端末へも出す。
@@ -35,10 +35,10 @@ enum StartupReadsReport {
     ///   (`DependencyFacets` の規律 — 断定できないときは断定しない)。
     static func document(base: URL, given: Bool, package: URL? = nil) -> String {
         var lines = [
-            "起動の瞬間に決まるもの。**どれも走っている最中に変えても効かない** —",
-            "効かせるにはスケッチを起動し直す。",
+            "Decided the moment the process starts.",
+            "**None of these take effect while the sketch is running** — restart it to apply a change.",
             "",
-            "いま見えている値:",
+            "What is visible now:",
             "",
             "  \(baseLine(base: base, given: given))",
         ]
@@ -52,14 +52,15 @@ enum StartupReadsReport {
             // 区画の URL は ``WorkDirectory`` から出す。`.mokume` を綴り直すと、
             // 一覧が名乗る場所とスケッチが書く場所が黙って割れうる (#814)
             let facet = WorkDirectory.facet(entry.key, under: base)
-            var line = "  \(entry.name): \(facet.path) (\(WorkDirectory.directoryExists(at: facet) ? "在る" : "無い"))"
+            let presence = WorkDirectory.directoryExists(at: facet) ? "present" : "absent"
+            var line = "  \(entry.name): \(facet.path) (\(presence))"
             if absent.contains(entry) {
-                let named = version.map { "mokume \($0)" } ?? "依存している mokume"
-                line += " — \(named) はこの面を持たない"
+                let named = version.map { "mokume \($0)" } ?? "the mokume you depend on"
+                line += " — \(named) does not have this facet"
             }
             lines.append(line)
         }
-        lines += ["", "一覧:", ""]
+        lines += ["", "All of them:", ""]
         for entry in StartupReads.all {
             lines.append("  \(entry.name) — \(source(entry)) / \(decider(entry))")
             lines.append("    \(entry.note)")
@@ -67,9 +68,10 @@ enum StartupReadsReport {
         lines += [
             "",
             """
-            走らせる側 (`\(Command.name) watch`) は起動のときに「\(StartupReads.workDirectory.name)」を
-            名乗る。それがここの値と違っていたら、走らせる側と窓口は**別の区画を見ている** —
-            起動し直しても直らないので、同じ \(StartupReads.workDirectory.key) の下で両方を起動し直す。
+            The runner (`\(Command.name) watch`) names its "\(StartupReads.workDirectory.name)"
+            as it starts. If that differs from the value here, the runner and the interface
+            are **looking at different facets** — restarting alone does not fix it, so start
+            both under the same \(StartupReads.workDirectory.key).
             """,
         ]
         return lines.joined(separator: "\n")
@@ -78,17 +80,17 @@ enum StartupReadsReport {
     /// 何から読むか。
     private static func source(_ entry: StartupReads.Entry) -> String {
         switch entry.origin {
-        case .environment: "環境変数 \(entry.key)"
+        case .environment: "environment variable \(entry.key)"
         // ここの `.mokume` は**人が読む文面**で、URL の組み立てではない
-        case .facet: "区画 .mokume/\(entry.key) が在るか"
+        case .facet: "whether the facet .mokume/\(entry.key) exists"
         }
     }
 
     /// 誰が決めるか。
     private static func decider(_ entry: StartupReads.Entry) -> String {
         switch entry.decidedBy {
-        case .user: "利用者が決める"
-        case .tool: "道具が渡す"
+        case .user: "you decide it"
+        case .tool: "the tool passes it"
         }
     }
 }

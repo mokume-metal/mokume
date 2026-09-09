@@ -99,8 +99,8 @@ struct DependencyFacetsTests {
 
         let outcome = tools.call("observe", arguments: [:])
         #expect(outcome.isError)
-        #expect(outcome.text.contains("考えられるのは 3 つ"))
-        #expect(outcome.text.contains("持たない版"))
+        #expect(outcome.text.contains("There are three possibilities"))
+        #expect(outcome.text.contains("is a version without"))
         // 切り分けの口へ辿れること
         #expect(outcome.text.contains("doctor"))
     }
@@ -117,10 +117,10 @@ struct DependencyFacetsTests {
 
         let outcome = tools.call("input", arguments: ["events": [["type": "mouseDown"]]])
         #expect(outcome.isError)
-        #expect(outcome.text.contains("持ちません"))
-        #expect(outcome.text.contains("起動し直しても直りません"))
+        #expect(outcome.text.contains("does not have"))
+        #expect(outcome.text.contains("Restarting will not fix this"))
         // 候補を並べる形になっていない
-        #expect(!outcome.text.contains("考えられるのは"))
+        #expect(!outcome.text.contains("There are three possibilities"))
     }
 
     /// 持っている面では、いままでの案内のまま (断定を挟まない)。
@@ -133,8 +133,8 @@ struct DependencyFacetsTests {
 
         let outcome = tools.call("observe", arguments: [:])
         #expect(outcome.isError)
-        #expect(outcome.text.contains("考えられるのは 3 つ"))
-        #expect(!outcome.text.contains("持ちません"))
+        #expect(outcome.text.contains("There are three possibilities"))
+        #expect(!outcome.text.contains("does not have\n"))
     }
 
     // MARK: - 切り分けの口
@@ -147,11 +147,11 @@ struct DependencyFacetsTests {
         let document = StartupReadsReport.document(
             base: consumer.work, given: false, package: consumer.work)
 
-        #expect(document.contains("依存している mokume はこの面を持たない"))
+        #expect(document.contains("the mokume you depend on does not have this facet"))
         // 持っている面には添えない
         for line in document.split(separator: "\n")
         where line.contains(StartupReads.observe.name) {
-            #expect(!line.contains("持たない"))
+            #expect(!line.contains("does not have"))
         }
     }
 
@@ -159,7 +159,7 @@ struct DependencyFacetsTests {
     func addsNothingToTheListWhenItCannotJudge() throws {
         let bare = try ConsumerFixture.makeDirectory()
         let document = StartupReadsReport.document(base: bare, given: false, package: bare)
-        #expect(!document.contains("この面を持たない"))
+        #expect(!document.contains("does not have this facet"))
     }
 
     @Test("切り分けの口の出力にも現れる")
@@ -170,6 +170,6 @@ struct DependencyFacetsTests {
             state: DoctorCommand.State(
                 place: consumer.work, hasPackage: true, buildDirectory: consumer.work.appendingPathComponent(".build"), lastBuild: nil),
             base: consumer.work, given: false)
-        #expect(report.contains("依存している mokume はこの面を持たない"))
+        #expect(report.contains("the mokume you depend on does not have this facet"))
     }
 }

@@ -27,9 +27,9 @@ struct DoctorCommandTests {
     func theEnvironmentSectionComesFromWhatWasRead() {
         let lines = DoctorCommand.environmentLines(Self.sound).joined(separator: "\n")
         #expect(lines.contains("26.1.0"))
-        #expect(lines.contains("満たしている"))
+        #expect(lines.contains("meets the 26.0 floor"))
         #expect(lines.contains("arm64"))
-        #expect(lines.contains("使える"))
+        #expect(lines.contains("Graphics: available"))
         #expect(lines.contains("Apple Swift version 6.3.3"))
     }
 
@@ -43,15 +43,15 @@ struct DoctorCommandTests {
     @Test("同梱の資源は、読めるかと在処の両方を名乗る")
     func theBundledResourcesAreNamedWithTheirLocation() {
         let lines = DoctorCommand.environmentLines(Self.sound).joined(separator: "\n")
-        #expect(lines.contains("同梱の資源: 読める"))
+        #expect(lines.contains("Bundled resources: readable"))
         #expect(lines.contains("/opt/tool/mokume_MokumeCore.bundle"))
 
         var stripped = Self.sound
         stripped.resources = nil
         let missing = DoctorCommand.environmentLines(stripped).joined(separator: "\n")
-        #expect(missing.contains("同梱の資源: 読めない"))
+        #expect(missing.contains("Bundled resources: not readable"))
         // GPU の判定は別の軸なので、資源が欠けても「使える」のまま
-        #expect(missing.contains("描く道具: 使える"))
+        #expect(missing.contains("Graphics: available"))
     }
 
     /// **足りないほうも名指しする。** 前提を満たしていない人は、区画の話を読んでも直せない。
@@ -59,7 +59,7 @@ struct DoctorCommandTests {
     func anOldSystemIsNamed() {
         var old = Self.sound
         old.system = "25.9.0"
-        #expect(DoctorCommand.environmentLines(old).joined().contains("足りない"))
+        #expect(DoctorCommand.environmentLines(old).joined().contains("below the floor"))
 
         // 文字列の大小で比べると 26.10 が 26.9 より小さくなる
         #expect(DoctorCommand.meetsFloor("26.10", floor: "26.9"))
@@ -74,19 +74,19 @@ struct DoctorCommandTests {
         blind.canDraw = nil
         blind.toolchain = nil
         let lines = DoctorCommand.environmentLines(blind).joined(separator: "\n")
-        #expect(lines.contains("描く道具: \(DoctorCommand.unknown)"))
-        #expect(lines.contains("道具立て: \(DoctorCommand.unknown)"))
+        #expect(lines.contains("Graphics: \(DoctorCommand.unknown)"))
+        #expect(lines.contains("Toolchain: \(DoctorCommand.unknown)"))
     }
 
     /// 「区画が無い」と「`watch` が死んでいる」を分ける決め手。
     @Test("最後の作り直しは、まだ無いことも言う")
     func theLastBuildIsNamedEvenWhenAbsent() {
         let place = URL(fileURLWithPath: "/tmp/demo", isDirectory: true)
-        #expect(DoctorCommand.stateLines(Self.state(place)).joined().contains("まだ無い"))
+        #expect(DoctorCommand.stateLines(Self.state(place)).joined().contains("none yet"))
 
         var built = Self.state(place)
         built.lastBuild = DoctorCommand.LastBuild(ok: false, at: Date(timeIntervalSince1970: 0))
-        #expect(DoctorCommand.stateLines(built).joined().contains("落ちた"))
+        #expect(DoctorCommand.stateLines(built).joined().contains("failed at"))
 
         var unreadable = Self.state(place)
         unreadable.lastBuild = DoctorCommand.LastBuild(ok: nil, at: Date(timeIntervalSince1970: 0))
@@ -103,11 +103,11 @@ struct DoctorCommandTests {
             environment: Self.sound,
             state: DoctorCommand.probeState(in: place, facetBase: place),
             base: place, given: false)
-        #expect(text.contains("観測の区画"))
-        #expect(text.contains("入力の区画"))
-        #expect(text.contains("(無い)"))
+        #expect(text.contains("Observation facet"))
+        #expect(text.contains("Input facet"))
+        #expect(text.contains("(absent)"))
         // 割れているときの読み方も同じ出力に居ること (前提と区画を分けるための片割れ)
-        #expect(text.contains("別の区画を見ている"))
+        #expect(text.contains("looking at different facets"))
     }
 
     /// **何も直さない** (ADR-0029 決定 2 の規律 1)。打ったら直ってしまうと、直った理由が
@@ -145,19 +145,19 @@ struct DoctorCommandTests {
                 bytes: 1028 * 1_048_576))
         let text = lines.joined(separator: "\n")
         #expect(lines[0].contains("/store"))
-        #expect(lines[0].contains("2 通り"))
+        #expect(lines[0].contains("2 keys"))
         #expect(lines[0].contains("1028MB"))
         // 部屋ごとの大きさ — これが無いと「どれを消せばよいか」に答えられない
         #expect(text.contains("swiftlang-6.3.3.1.3/0.7.1: 414MB"))
         #expect(text.contains("swiftlang-6.3.3.1.3/0.6.0: 414MB"))
         // もう誰も使っていない部屋が、そう名乗る
-        #expect(text.contains("使っているスケッチは手元に無い"))
+        #expect(text.contains("none of them here"))
         // 使われている部屋を「要らない」と読める文にしない
-        #expect(text.contains("使っているスケッチが 2 本ある"))
+        #expect(text.contains("2 sketches use it"))
         // **合計と内訳の差が説明されている。** 解決専用の部屋 (実測 200MB) が内訳に
         // 現れないと、合計と足し合わない内訳になり、内訳そのものが信用できない
         #expect(text.contains("\(BuildDirectory.resolveSegment): 200MB"))
-        #expect(text.contains("依存の解決用"))
+        #expect(text.contains("resolving dependencies"))
 
         // まだ 1 つも無いときも在処は言う (どこを見ればよいか分かる形にする)
         let empty = DoctorCommand.sharedStoreLines(
@@ -203,8 +203,10 @@ struct DoctorCommandTests {
         // 数えた末に 0 だったのか、そもそも数えられなかったのかが読めない)
         #expect(
             DoctorCommand.standingText(.unreadable(recorded: 0))
-                == "持ち主の記録が読めない (\(DoctorCommand.unknown))")
-        #expect(DoctorCommand.standingText(.unreadable(recorded: 2)).contains("実在 0"))
+                == "owner records unreadable (\(DoctorCommand.unknown))")
+        #expect(
+            DoctorCommand.standingText(.unreadable(recorded: 2))
+                .contains("none of them here"))
     }
 
     /// 置き場を読むところ。**記録の在処は席を押さえる側と同じ 1 本から出す** ので、
@@ -290,7 +292,7 @@ struct DoctorCommandTests {
         let lines = DoctorCommand.stateLines(state).joined(separator: "\n")
         #expect(lines.contains("/store/swiftlang-6.3.3.1.3/0.7.1"))
         state.buildDirectory = nil
-        #expect(DoctorCommand.stateLines(state).joined().contains("組み上げた跡: 無い"))
+        #expect(DoctorCommand.stateLines(state).joined().contains("Build directory: none"))
     }
 
     /// 使い方の誤りで止まると、いちばん要るときに読めない。
@@ -299,7 +301,7 @@ struct DoctorCommandTests {
         let text = DoctorCommand.report(
             environment: Self.sound, state: Self.state(URL(fileURLWithPath: "/tmp/demo")),
             base: URL(fileURLWithPath: "/tmp/demo"), given: false, ignored: ["--wat"])
-        #expect(text.contains("無視した"))
+        #expect(text.contains("Ignored unknown arguments"))
         #expect(text.contains("--wat"))
     }
 
@@ -331,14 +333,14 @@ struct DoctorCommandTests {
         // **行を名指しで見る。** 「まだ無い」は他の行にも出るので、含まれないことを
         // 全文へ問うと、無関係な行が増えた日に落ちる
         #expect(
-            given.contains("最後の作り直し:") && !given.contains("最後の作り直し: まだ無い"),
+            given.contains("Last build:") && !given.contains("Last build: none yet"),
             "基準を与えた環境で、doctor が watch の書いた記録を読めていない")
-        #expect(given.contains("通った"))
+        #expect(given.contains("succeeded at"))
 
         // 基準なし — スケッチの場所から読む (いままでどおり。あちらには何も無い)
         let plain = DoctorCommand.text(
             for: [sketch.path], workDirectory: nil, environment: isolated)
-        #expect(plain.contains("最後の作り直し: まだ無い"))
+        #expect(plain.contains("Last build: none yet"))
     }
 
     static func emptyDirectory() throws -> URL {

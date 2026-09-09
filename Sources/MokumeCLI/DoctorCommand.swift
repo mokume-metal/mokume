@@ -28,7 +28,7 @@ import mokume
 /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
 enum DoctorCommand {
     /// 判定できなかったときの言い方。**綴りを 1 つに保つ** — 読む人はこの語を目印にする。
-    static let unknown = "判定できず"
+    static let unknown = "cannot tell"
 
     /// 走らせるのに要る OS の版。`Package.swift` の宣言と同じ。
     static let requiredSystemVersion = "26.0"
@@ -189,11 +189,11 @@ enum DoctorCommand {
         var lines: [String] = []
         if !ignored.isEmpty {
             // 投げずに言う。切り分けの口が使い方で止まると、いちばん要るときに読めない
-            lines += ["知らない引数は無視した: \(ignored.joined(separator: " "))", ""]
+            lines += ["Ignored unknown arguments: \(ignored.joined(separator: " "))", ""]
         }
-        lines += ["環境の前提", ""]
+        lines += ["What the environment provides", ""]
         lines += environmentLines(environment).map { "  \($0)" }
-        lines += ["", "手元の状態", ""]
+        lines += ["", "What is here", ""]
         lines += stateLines(state).map { "  \($0)" }
         // 見出しは足さない。一覧は自分の名乗りを持っているので、重ねると 2 度言うことになる
         lines.append("")
@@ -212,17 +212,52 @@ enum DoctorCommand {
     /// ([#1059](https://github.com/mokume-metal/mokume/issues/1059))。
     static func environmentLines(_ environment: Environment) -> [String] {
         [
-            "macOS: \(environment.system) (要 \(requiredSystemVersion) 以上 — "
-                + "\(meetsFloor(environment.system) ? "満たしている" : "足りない"))",
-            "機種: \(environment.machine)"
-                + (environment.machine.hasPrefix("arm64") ? "" : " (Apple Silicon ではない)"),
-            "描く道具: \(environment.canDraw.map { $0 ? "使える" : "使えない" } ?? unknown)",
-            "同梱の資源: "
-                + (environment.resources.map { "読める (\($0.path))" }
-                    ?? "読めない — 配布物に包みが入っていない (この状態では窓を出せない)"),
-            "道具立て: \(environment.toolchain ?? "\(unknown) — swift を起動できなかった")",
-            "道具: \(environment.tool)",
+            systemLine(environment.system),
+            machineLine(environment.machine),
+            graphicsLine(environment.canDraw),
+            resourcesLine(environment.resources),
+            toolchainLine(environment.toolchain),
+            "Tool: \(environment.tool)",
         ]
+    }
+
+    /// OS の版の行。**下限を満たすかで文ごと分ける** — 文の途中で語を選ぶと、語順の
+    /// 違う言語で組み替えられなくなる (ADR-0038 決定 3)。
+    static func systemLine(_ system: String) -> String {
+        meetsFloor(system)
+            ? "macOS: \(system) (meets the \(requiredSystemVersion) floor)"
+            : "macOS: \(system) (below the floor — mokume needs \(requiredSystemVersion) or newer)"
+    }
+
+    /// 機種の行。
+    static func machineLine(_ machine: String) -> String {
+        machine.hasPrefix("arm64")
+            ? "Machine: \(machine)"
+            : "Machine: \(machine) (not Apple Silicon)"
+    }
+
+    /// 描く道具の行。
+    static func graphicsLine(_ canDraw: Bool?) -> String {
+        switch canDraw {
+        case true: "Graphics: available"
+        case false: "Graphics: unavailable"
+        case nil: "Graphics: \(unknown)"
+        }
+    }
+
+    /// 同梱の資源の行。**在処まで書く** (#1059)。
+    static func resourcesLine(_ resources: URL?) -> String {
+        guard let resources else {
+            return "Bundled resources: not readable — the distribution carries no bundle "
+                + "(no window can open in this state)"
+        }
+        return "Bundled resources: readable (\(resources.path))"
+    }
+
+    /// 道具立ての行。
+    static func toolchainLine(_ toolchain: String?) -> String {
+        guard let toolchain else { return "Toolchain: \(unknown) — could not launch swift" }
+        return "Toolchain: \(toolchain)"
     }
 
     /// 共有の置き場を名乗る行。**1 行目が根と合計で、続く行が部屋の内訳。**
@@ -230,12 +265,13 @@ enum DoctorCommand {
     /// **数え切れなかったら数を言わない** (規律 3 と同じ向き)。大きさが読めないことは
     /// 「無い」ではない。
     static func sharedStoreLines(_ store: SharedStore?) -> [String] {
-        guard let store else { return ["\(unknown) — 根を決められなかった"] }
+        guard let store else { return ["\(unknown) — could not work out the root"] }
         guard store.keys > 0 || store.resolve != nil else {
-            return ["まだ無い (\(store.root.path))"]
+            return ["not there yet (\(store.root.path))"]
         }
-        let size = store.bytes.map { " / 合計 \(megabytes($0))MB" } ?? " / 大きさは\(unknown)"
-        var lines = ["\(store.root.path) (\(store.keys) 通り\(size))"]
+        let size = store.bytes.map { " / \(megabytes($0))MB in total" } ?? " / size: \(unknown)"
+        let keys = store.keys == 1 ? "1 key" : "\(store.keys) keys"
+        var lines = ["\(store.root.path) (\(keys)\(size))"]
         // 部屋は 1 つずつ行を持つ。**1 行に畳まない** — 畳むと鍵が増えた日に読めなくなり、
         // 合計 1 行だったときと同じ「どれを消せばよいか分からない」に戻る
         lines += (store.rooms + [store.resolve].compactMap { $0 }).map { "  \(roomLine($0))" }
@@ -244,22 +280,25 @@ enum DoctorCommand {
 
     /// 部屋 1 つを名乗る行。
     static func roomLine(_ room: Room) -> String {
-        let size = room.bytes.map { "\(megabytes($0))MB" } ?? "大きさは\(unknown)"
+        let size = room.bytes.map { "\(megabytes($0))MB" } ?? "size: \(unknown)"
         return "\(room.key): \(size) — \(standingText(room.standing))"
     }
 
     /// 使われ方を名乗る語。
     static func standingText(_ standing: Standing) -> String {
         switch standing {
-        case .used(let count): "使っているスケッチが \(count) 本ある"
+        case .used(1): "1 sketch uses it"
+        case .used(let count): "\(count) sketches use it"
+        case .unused(1): "1 sketch recorded, none of them here"
         case .unused(let recorded):
-            "記録 \(recorded) 件のうち実在 0 (使っているスケッチは手元に無い)"
-        case .unrecorded: "持ち主の記録が無い (\(unknown))"
+            "\(recorded) sketches recorded, none of them here"
+        case .unrecorded: "no owner recorded (\(unknown))"
         // 読めた記録が 1 件も無いなら、実在の数を言っても意味が無い
-        case .unreadable(0): "持ち主の記録が読めない (\(unknown))"
+        case .unreadable(0): "owner records unreadable (\(unknown))"
         case .unreadable(let recorded):
-            "記録 \(recorded) 件のうち実在 0 だが、読めない記録もある (\(unknown))"
-        case .shared: "どの版のスケッチも使う (依存の解決用)"
+            "\(recorded) sketches recorded and none of them here, but some records could not "
+            + "be read (\(unknown))"
+        case .shared: "sketches of every version use it (for resolving dependencies)"
         }
     }
 
@@ -271,24 +310,53 @@ enum DoctorCommand {
     /// 手元の状態の各行。
     static func stateLines(_ state: State) -> [String] {
         var lines = [
-            "場所: \(state.place.path)",
-            "スケッチ: Package.swift が\(state.hasPackage ? "在る" : "無い")",
-            "依存している mokume: \(state.dependency ?? "\(unknown) — Package.resolved に pin が無い (パスで指しているとこうなる)")",
+            "Place: \(state.place.path)",
+            sketchLine(state.hasPackage),
+            dependencyLine(state.dependency),
             // **在処まで書く。** 置き場は版ごとの共有へ移りうるので、在る / 無いだけでは
             // 「どこを消せばやり直せるのか」に答えられない (ADR-0037)
-            "組み上げた跡: " + (state.buildDirectory.map { "在る (\($0.path))" } ?? "無い"),
+            buildDirectoryLine(state.buildDirectory),
         ]
         let store = sharedStoreLines(state.sharedStore)
-        lines.append("共有の置き場: \(store[0])")
+        lines.append("Shared store: \(store[0])")
         lines += store.dropFirst()
         guard let last = state.lastBuild else {
             lines.append(
-                "最後の作り直し: まだ無い (\(Command.name) watch が一度も書いていない)")
+                "Last build: none yet (\(Command.name) watch has never written one)")
             return lines
         }
-        let result = last.ok.map { $0 ? "通った" : "落ちた" } ?? unknown
-        lines.append("最後の作り直し: \(Timestamp.text(last.at, seconds: true)) に \(result)")
+        lines.append(lastBuildLine(last))
         return lines
+    }
+
+    /// スケッチの体裁があるかの行。
+    static func sketchLine(_ hasPackage: Bool) -> String {
+        hasPackage ? "Sketch: Package.swift is here" : "Sketch: no Package.swift here"
+    }
+
+    /// 依存している版の行。
+    static func dependencyLine(_ dependency: String?) -> String {
+        guard let dependency else {
+            return "mokume dependency: \(unknown) — no pin in Package.resolved "
+                + "(pointing at a path does this)"
+        }
+        return "mokume dependency: \(dependency)"
+    }
+
+    /// 組み上げた跡の行。
+    static func buildDirectoryLine(_ directory: URL?) -> String {
+        guard let directory else { return "Build directory: none" }
+        return "Build directory: \(directory.path)"
+    }
+
+    /// 最後の作り直しの行。**結果ごとに文を持つ。**
+    static func lastBuildLine(_ last: LastBuild) -> String {
+        let at = Timestamp.text(last.at, seconds: true)
+        return switch last.ok {
+        case true: "Last build: succeeded at \(at)"
+        case false: "Last build: failed at \(at)"
+        case nil: "Last build: ran at \(at), and how it went is \(unknown)"
+        }
     }
 
     /// 版が下限を満たすか。**数の並びとして比べる** — 文字列の大小で比べると 26.10 が
