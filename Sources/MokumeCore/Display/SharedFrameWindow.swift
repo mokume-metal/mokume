@@ -25,6 +25,27 @@ import AppKit
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 public final class SharedFrameWindow {
+    /// 覚えている枠が無いときの大きさ。
+    ///
+    /// **この値はプレビューのずらし量の前提である。** `SharedFramePreview.nudge` は
+    /// `SharedFramePreview.defaultSize` の丈からずらす量を出しており、2 つの既定が
+    /// 揃っていることで初めて「プレビューが作品の窓の真下に並ぶ」が成立する — ここだけ
+    /// 大きくすると**プレビューが作品の窓に重なる**。割れたら
+    /// `SharedFrameStageTests` が赤くなる ([#964])。
+    ///
+    /// ## 写しは畳まない
+    ///
+    /// 同じ 480x270 は**3 つ目がある** — `SketchApplication` が `run` の窓を出すときの
+    /// `settings.width / 2` が、``SketchSettings`` の既定 960x540 の半分としてこの値に
+    /// なる。あちらはキャンバスの大きさで実行時に動くのに、道具の窓が出しているのは
+    /// 別プロセスが差し出す絵で、キャンバスの大きさを知らない。**3 つを寄せる先が無い**
+    /// ので、寄せずに「割れても直せる形」(検査) を置いた
+    /// ([ADR-0008] 決定 6・[#964])。
+    ///
+    /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
+    /// [#964]: https://github.com/mokume-metal/mokume/issues/964
+    static let defaultSize = NSSize(width: 480, height: 270)
+
     private let stage: SharedFrameStage
 
     /// - Parameters:
@@ -35,7 +56,7 @@ public final class SharedFrameWindow {
             gpu: gpu, facet: facet,
             look: SharedFrameStage.Look(
                 title: title, autosaveName: WindowPlacement.autosaveName,
-                defaultSize: NSSize(width: 480, height: 270)))
+                defaultSize: Self.defaultSize))
     }
 
     /// 作品の窓が拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行**で、

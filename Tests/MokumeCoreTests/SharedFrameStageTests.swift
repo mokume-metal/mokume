@@ -29,10 +29,17 @@ struct SharedFrameStageTests {
         return try body(directory)
     }
 
-    private func look(_ name: String) -> SharedFrameStage.Look {
+    /// 台へ渡す見た目。
+    ///
+    /// **大きさは本番の定数から取る。** 検査が自前の数字を持つと、本番の 2 つの既定が
+    /// 割れても緑のままになる — それが [#964] の状態だった (両方に 320x180 を渡していた)。
+    ///
+    /// [#964]: https://github.com/mokume-metal/mokume/issues/964
+    private func look(_ name: String, size: NSSize = SharedFrameWindow.defaultSize)
+        -> SharedFrameStage.Look
+    {
         SharedFrameStage.Look(
-            title: name, autosaveName: "mokume.test.\(name)",
-            defaultSize: NSSize(width: 320, height: 180))
+            title: name, autosaveName: "mokume.test.\(name)", defaultSize: size)
     }
 
     @Test("重ねる面を渡さなければ、絵の面には何も足されない")
@@ -72,17 +79,24 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **覚えている枠が無いときに、寸分違わず重ならない。**
+    /// **覚えている枠が無いときに、プレビューは作品の窓の真下に並ぶ。**
     ///
     /// どちらも同じ大きさで中央へ出るので、ずらさないと 2 枚が完全に重なり、窓が 1 つしか
     /// 無いように見える (実測)。**その場限りの覚え名で開く** — 覚えた枠が残っている機械では
     /// 中央へ出ないので、それでは初めての 1 回を見たことにならない。
-    @Test("初めて開くとき、2 枚は重ならない")
+    ///
+    /// **見るのは「枠が違う」ではなく「真下に並ぶ」である** ([#964])。`nudge` は
+    /// `SharedFramePreview.defaultSize` の丈から出る前計算なので、作品の窓の既定だけが
+    /// 大きくなると足りなくなり、2 枚は重なる — そのとき枠は違うので、`!=` では通って
+    /// しまう。**大きさは本番の定数から取る** (`look()` の doc)。
+    ///
+    /// [#964]: https://github.com/mokume-metal/mokume/issues/964
+    @Test("初めて開くとき、プレビューは作品の窓の真下に並ぶ")
     func freshWindowsDoNotOverlap() throws {
         try withFacet { facet in
             let gpu = try RenderDevice()
             let artwork = try SharedFrameStage(gpu: gpu, facet: facet, look: look(fresh()))
-            var previewLook = look(fresh())
+            var previewLook = look(fresh(), size: SharedFramePreview.defaultSize)
             previewLook.nudge = SharedFramePreview.nudge
             let preview = try SharedFrameStage(gpu: gpu, facet: facet, look: previewLook)
             artwork.open()
@@ -91,8 +105,49 @@ struct SharedFrameStageTests {
                 artwork.close()
                 preview.close()
             }
-            #expect(try #require(artwork.window?.frame) != #require(preview.window?.frame))
+            let above = try #require(artwork.window?.frame)
+            let below = try #require(preview.window?.frame)
+            #expect(
+                below.maxY <= above.minY,
+                """
+                プレビューが作品の窓の真下に並んでいない (\(below.maxY - above.minY)pt 重なっている)。
+
+                作品の窓 \(above) / プレビュー \(below)
+
+                SharedFrameWindow.defaultSize \(SharedFrameWindow.defaultSize) と
+                SharedFramePreview.defaultSize \(SharedFramePreview.defaultSize) が
+                揃っていることが、ずらし量 \(SharedFramePreview.nudge) の前提である
+                ([#964](https://github.com/mokume-metal/mokume/issues/964))。
+                """)
         }
+    }
+
+    /// **2 つの既定が揃っていることを直に見る** ([#964])。
+    ///
+    /// 上の「真下に並ぶ」だけでは片方向しか捕まらない — プレビュー側を大きくすると
+    /// `nudge` も一緒に伸びるので、重ならない関係は保たれてしまう。だが `defaultSize` の
+    /// doc が名乗っている契約は「作品の窓と揃える」であって「重ならない」ではない。
+    ///
+    /// **既定値は `setFrameUsingName` が false のときだけ効く**ので、覚えた枠を持つ機械
+    /// では割れても一度も現れない。目に見える症状があっても、気付く経路が無い
+    /// ([ADR-0008](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md)
+    /// 決定 6 — 写しのままにして、割れても直せる形を置く)。
+    ///
+    /// [#964]: https://github.com/mokume-metal/mokume/issues/964
+    @Test("作品の窓とプレビューは、同じ既定の大きさで開く")
+    func defaultSizesAgree() {
+        #expect(
+            SharedFrameWindow.defaultSize == SharedFramePreview.defaultSize,
+            """
+            作品の窓 \(SharedFrameWindow.defaultSize) とプレビュー \
+            \(SharedFramePreview.defaultSize) の既定が割れている。
+
+            SharedFramePreview.nudge は自分の defaultSize の丈からずらす量を出しているので、
+            揃っていないとプレビューが作品の窓の真下に来ない。同じ 480x270 は 3 つ目があり
+            (SketchApplication の settings.width / 2 = SketchSettings の既定 960x540 の半分)、
+            寄せる先が無いので写しのまま残している — 詳しくは SharedFrameWindow.defaultSize の
+            doc と [#964](https://github.com/mokume-metal/mokume/issues/964)。
+            """)
     }
 
     /// 覚えた枠を引き継がないための、その場限りの名前。
