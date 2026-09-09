@@ -76,12 +76,14 @@ struct NameCorrespondenceTests {
     func theUsageKeepsItsShape() {
         let usage = Command.usage("mokume")
         let lines = usage.split(separator: "\n", omittingEmptySubsequences: false)
-        #expect(lines.first == "使い方: mokume <コマンド>")
+        #expect(lines.first == "Usage: mokume <command>")
         #expect(lines.dropFirst().first == "")
-        #expect(lines.last == "道具: \(ToolVersion.describe())")
+        #expect(lines.last == "Tool: \(ToolVersion.describe())")
         // 口の行は 2 字下げ、説明は 6 字下げ (畳む前と同じ)
-        #expect(usage.contains("\n  new <名前> [--path <場所>] [--local <ライブラリの場所>]\n"))
-        #expect(usage.contains("\n      -c は debug / release (省くと道具立ての既定)。\n"))
+        #expect(usage.contains("\n  new <name> [--path <directory>] [--local <library path>]\n"))
+        #expect(
+            usage.contains(
+                "\n      -c takes debug or release (defaults to whatever the toolchain uses).\n"))
     }
 
     // ------------------------------------------------------------ 差し出す道具
