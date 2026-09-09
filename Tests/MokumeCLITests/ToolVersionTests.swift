@@ -27,7 +27,7 @@ struct ToolVersionTests {
     func namesALocalBuild() {
         let stamp = Date(timeIntervalSince1970: 1_756_000_000)
         let text = ToolVersion.describe(executable: url("/tmp/x/.build/debug/mokume-cli"), modified: stamp)
-        #expect(text.contains("手元ビルド"))
+        #expect(text.contains("local build"))
         #expect(!text.contains("Homebrew"))
     }
 
@@ -42,7 +42,7 @@ struct ToolVersionTests {
     @Test("日時が読めなければ、そこだけ判定できずと言う")
     func doesNotGuessTheBuildTime() {
         let text = ToolVersion.describe(executable: url("/tmp/x/.build/debug/mokume-cli"), modified: nil)
-        #expect(text.contains("手元ビルド"))
+        #expect(text.contains("local build"))
         #expect(text.contains(DoctorCommand.unknown))
     }
 

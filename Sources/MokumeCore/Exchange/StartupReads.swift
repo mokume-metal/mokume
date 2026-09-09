@@ -74,32 +74,37 @@ public enum StartupReads {
 
     /// やりとりのファイルを置く親。
     public static let workDirectory = Entry(
-        name: "区画の基準", origin: .environment, key: "MOKUME_WORK_DIR", decidedBy: .tool,
-        note: "やりとりのファイルを置く親。走らせる側と読む側で食い違うと、両者は別の区画を見る",
+        name: "Facet base", origin: .environment, key: "MOKUME_WORK_DIR", decidedBy: .tool,
+        note: "The parent that exchange files go under. If the runner and the reader "
+            + "disagree on it, the two look at different facets",
         readSite: "Sources/MokumeCore/Exchange/WorkDirectory.swift")
 
     /// この実行を生んだ入力の世代。
     public static let sourceStamp = Entry(
-        name: "版の刻印", origin: .environment, key: "MOKUME_SOURCE_STAMP", decidedBy: .tool,
-        note: "この実行を生んだ入力の世代。観測が応答へそのまま載せる",
+        name: "Source stamp", origin: .environment, key: "MOKUME_SOURCE_STAMP", decidedBy: .tool,
+        note: "Which generation of the source produced this run. Observation puts it "
+            + "into its reply as is",
         readSite: "Sources/MokumeCore/Observation/SourceStamp.swift")
 
     /// 観測の区画。
     public static let observe = Entry(
-        name: "観測の区画", origin: .facet, key: "observe", decidedBy: .user,
-        note: "起動の瞬間に在れば観測が有効になる。走っている最中に作っても拾わない",
+        name: "Observation facet", origin: .facet, key: "observe", decidedBy: .user,
+        note: "Present at launch turns observation on. Creating it while the sketch runs "
+            + "has no effect",
         readSite: "Sources/MokumeCore/Observation/FrameObserver.swift")
 
     /// 入力の区画。
     public static let input = Entry(
-        name: "入力の区画", origin: .facet, key: "input", decidedBy: .user,
-        note: "起動の瞬間に在れば入力が届くようになる。走っている最中に作っても拾わない",
+        name: "Input facet", origin: .facet, key: "input", decidedBy: .user,
+        note: "Present at launch lets input reach the sketch. Creating it while the sketch "
+            + "runs has no effect",
         readSite: "Sources/MokumeCore/Input/InputInbox.swift")
 
     /// つまみの区画。
     public static let params = Entry(
-        name: "つまみの区画", origin: .facet, key: "params", decidedBy: .user,
-        note: "起動の瞬間に在れば、宣言した値を外から読み書きできる。走っている最中に作っても拾わない",
+        name: "Knob facet", origin: .facet, key: "params", decidedBy: .user,
+        note: "Present at launch lets declared values be read and written from outside. "
+            + "Creating it while the sketch runs has no effect",
         readSite: "Sources/MokumeCore/Parameters/ParamSurface.swift")
 
     /// 絵を渡す面の区画。
@@ -110,16 +115,18 @@ public enum StartupReads {
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     public static let viewport = Entry(
-        name: "絵を渡す面の区画", origin: .facet, key: "viewport", decidedBy: .tool,
-        note: "起動の瞬間に在れば、窓を開かずに焼いた絵を共有できる面へ差し出す。走っている最中に作っても拾わない",
+        name: "Viewport facet", origin: .facet, key: "viewport", decidedBy: .tool,
+        note: "Present at launch hands baked frames to a shared surface instead of opening "
+            + "a window. Creating it while the sketch runs has no effect",
         readSite: "Sources/MokumeCore/Display/SharedFrameSurface.swift",
         // 一方通行の面なので応答を持たない。仕様が名乗るのは置いた面の番号である
         schemaName: "viewport-surface")
 
     /// 走っている速さの名乗り。
     public static let frameRateNotice = Entry(
-        name: "速さの名乗り", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
-        note: "走っている速さを 1 秒ごとに名乗る。値は一緒に出す構成の名前で、道具が run / watch でだけ渡す",
+        name: "Frame rate notice", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
+        note: "Says how fast it is running, once a second. The value is the configuration "
+            + "name shown alongside, and the tool passes it only for run and watch",
         readSite: "Sources/MokumeCore/Display/FrameRateNotice.swift")
 
     /// 全部。**案内も検査もここを読む。**

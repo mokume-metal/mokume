@@ -66,7 +66,7 @@ struct Facets {
             // 例外を出すので、`try` では捕まらず窓口ごと落ちる
             guard JSONSerialization.isValidJSONObject(request) else {
                 throw CommandFailure.facetUnwritable(
-                    path: requestURL.path, reason: "要求が JSON にならない形をしている")
+                    path: requestURL.path, reason: "the request is not in a shape that turns into JSON")
             }
             let data = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
             try AtomicFile.write(data, to: requestURL)
@@ -139,47 +139,45 @@ struct Facets {
         let path = facet(entry).path
         let opening = existed
             ? """
-            走っているスケッチが応えませんでした。\(entry.name) (\(path)) は
-            要求を置く前から在ったので、区画を作る順序の問題ではありません。
-            考えられるのは 3 つで、打つ手が違います。
+            The running sketch did not answer. \(entry.name) (\(path)) was already there
+            before the request was placed, so this is not about the order facets are created in.
+            There are three possibilities, and each takes a different move.
 
-            1. まだ立ち上がっていないか、応答が止まっている
-               スケッチのディレクトリで `\(Command.name) watch` を起動してから、
-               もう一度呼んでください。
+            1. Nothing is running yet, or it has stopped answering
+               Start `\(Command.name) watch` in the sketch's directory, then call again.
             """
             : """
-            走っているスケッチが応えませんでした。要求を置こうとしたとき\(entry.name)
-            (\(path)) が無かったので、この呼び出しで作りました。
-            考えられるのは 3 つで、打つ手が違います。
+            The running sketch did not answer. \(entry.name) (\(path)) was not there when
+            the request was placed, so this call created it.
+            There are three possibilities, and each takes a different move.
 
-            1. スケッチが\(entry.name)を持たないまま立ち上がっている
-               \(entry.note)。
-               **起動し直してください。** 区画はもう在るので、作り直す必要はありません。
+            1. The sketch launched without \(entry.name)
+               \(entry.note).
+               **Restart it.** The facet is there now, so it does not need creating again.
 
-                   \(Command.name) watch <スケッチの場所>
+                   \(Command.name) watch <sketch directory>
             """
         return """
             \(opening)
 
-            2. 窓口とスケッチで区画の基準が割れている
-               この窓口が見ているのは、
+            2. The interface and the sketch disagree on the facet base
+               What this interface is looking at:
 
                    \(StartupReadsReport.baseLine(base: directory, given: workDirectoryGiven))
 
-               です。`watch` が起動のときに名乗る「\(StartupReads.workDirectory.name)」が
-               これと違うなら、両者は別の区画を見ています。
-               **そのときは起動し直しても直りません。** `watch` と窓口の両方を、
-               同じ \(StartupReads.workDirectory.key) の下で起動し直してください。
+               If the "\(StartupReads.workDirectory.name)" that `watch` names as it starts
+               differs from that, the two are looking at different facets.
+               **Restarting will not fix that one.** Start both `watch` and the interface
+               under the same \(StartupReads.workDirectory.key).
 
-            3. 依存している mokume が\(entry.name)を持たない版である
-               面は版によって増えているので、古い版を固定したスケッチには無いことがあります。
-               **そのときも起動し直しても直りません。** 依存している版が持たない面は、
+            3. The mokume the sketch depends on is a version without \(entry.name)
+               Facets have been added over time, so a sketch pinned to an older version can
+               be missing one. **Restarting will not fix that one either.** Which facets the
+               pinned version lacks is named by
 
-                   \(Command.name) doctor <スケッチの場所>
+                   \(Command.name) doctor <sketch directory>
 
-               が名乗ります。
-
-            起動の瞬間に決まるものは `reference` の `\(Tools.startupDocument)` に一覧があります。
+            What gets decided at launch is listed in `reference`, under `\(Tools.startupDocument)`.
             """
     }
     /// 依存がその面を持たないと読めたときの答え。
@@ -188,16 +186,16 @@ struct Facets {
     /// 書くのは打つ手だけで、どちらも走らせる側を変えるものである — 窓口の側では直らない。
     func lacksFacet(_ entry: StartupReads.Entry) -> String {
         """
-        走っているスケッチが応えませんでした。**スケッチが依存している mokume は\(entry.name)を
-        持ちません** — この面はもっと新しい版で足されたもので、依存として引かれている版の
-        仕様 (`Schemas/`) にありません。
+        The running sketch did not answer. **The mokume this sketch depends on does not have
+        \(entry.name)** — that facet arrived in a later version, and it is not in the spec
+        (`Schemas/`) of the version pinned here.
 
-        **起動し直しても直りません。** 打つ手は 2 つで、どちらも走らせる側を変えることになります。
+        **Restarting will not fix this.** There are two moves, and both change the running side.
 
-        1. スケッチが依存する mokume を、この面を持つ版まで上げる
-        2. この面を使わずに済ませる
+        1. Raise the sketch's mokume dependency to a version that has this facet
+        2. Do without this facet
 
-        依存している版が持たない面は `\(Command.name) doctor <スケッチの場所>` が一覧で名乗ります。
+        `\(Command.name) doctor <sketch directory>` lists which facets the pinned version lacks.
         """
     }
 }

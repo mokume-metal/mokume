@@ -43,7 +43,7 @@ enum ToolVersion {
     static func describe(executable: URL?, modified: Date?) -> String {
         guard let executable else { return DoctorCommand.unknown }
         if let version = homebrewVersion(in: executable) { return "\(version) (Homebrew)" }
-        return "手元ビルド (\(modified.map { Timestamp.text($0) } ?? DoctorCommand.unknown))"
+        return "local build (\(modified.map { Timestamp.text($0) } ?? DoctorCommand.unknown))"
     }
 
     /// Homebrew が置いた版。読めなければ `nil`。

@@ -53,7 +53,7 @@ struct DependencyVersionTests {
 
         let document = StartupReadsReport.document(
             base: consumer.work, given: false, package: consumer.work)
-        #expect(document.contains("mokume 0.1.0 はこの面を持たない"))
+        #expect(document.contains("mokume 0.1.0 does not have this facet"))
     }
 
     /// **版が読めなくても、持たないことは言える。** 断定できないのは版のほうだけである。
@@ -62,7 +62,7 @@ struct DependencyVersionTests {
         let consumer = try ConsumerFixture.make(facets: ["observe"])
         let document = StartupReadsReport.document(
             base: consumer.work, given: false, package: consumer.work)
-        #expect(document.contains("依存している mokume はこの面を持たない"))
+        #expect(document.contains("the mokume you depend on does not have this facet"))
     }
 
     /// 切り分けの口は、読めた版をそのまま出し、読めなければ「判定できず」と言う。
@@ -71,13 +71,13 @@ struct DependencyVersionTests {
         let place = URL(fileURLWithPath: "/tmp/sketch", isDirectory: true)
         let known = DoctorCommand.stateLines(
             .init(place: place, hasPackage: true, buildDirectory: place.appendingPathComponent(".build"), dependency: "0.5.0"))
-        #expect(known.contains { $0.contains("依存している mokume: 0.5.0") })
+        #expect(known.contains { $0.contains("mokume dependency: 0.5.0") })
 
         let unknown = DoctorCommand.stateLines(
             .init(place: place, hasPackage: true, buildDirectory: place.appendingPathComponent(".build"), dependency: nil))
         #expect(
             unknown.contains {
-                $0.contains("依存している mokume") && $0.contains(DoctorCommand.unknown)
+                $0.contains("mokume dependency") && $0.contains(DoctorCommand.unknown)
             })
     }
 }

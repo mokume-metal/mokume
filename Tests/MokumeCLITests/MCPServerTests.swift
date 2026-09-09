@@ -119,10 +119,10 @@ struct MCPServerTests {
         let outcome = tools.call("observe", arguments: [:])
         #expect(outcome.isError)
         // 打つ手 — 案内どおりにすれば直る形になっていること (#227)
-        #expect(outcome.text.contains("この呼び出しで作りました"))
-        #expect(outcome.text.contains("**起動し直してください。**"))
+        #expect(outcome.text.contains("this call created it"))
+        #expect(outcome.text.contains("**Restart it.**"))
         // 理由 — これが無いと「走っている最中に作れば拾われる」と読まれる
-        #expect(outcome.text.contains("走っている最中に作っても"))
+        #expect(outcome.text.contains("Creating it while the sketch runs has no effect"))
         // 区画はこの呼び出しが作ったので、mkdir を促してはならない
         #expect(!outcome.text.contains("mkdir"))
     }
@@ -138,8 +138,8 @@ struct MCPServerTests {
         let outcome = tools.call("observe", arguments: [:])
         #expect(outcome.isError)
         // 順序は合っているので、そう言い切る。区画を作り直させる案内も出してはならない
-        #expect(outcome.text.contains("区画を作る順序の問題ではありません"))
-        #expect(!outcome.text.contains("この呼び出しで作りました"))
+        #expect(outcome.text.contains("not about the order facets are created in"))
+        #expect(!outcome.text.contains("this call created it"))
         #expect(outcome.text.contains("watch"))
     }
 
@@ -167,7 +167,7 @@ struct MCPServerTests {
             // 何がそれを決めたか。これが無いと、どちらを直せばよいか分からない
             #expect(outcome.text.contains("MOKUME_WORK_DIR"))
             // 起動し直しても直らない場合があること
-            #expect(outcome.text.contains("起動し直しても直りません"))
+            #expect(outcome.text.contains("Restarting will not fix that one"))
             // 一覧への辿り口 (読む時点ごとに文面を書き足す形にしない)
             #expect(outcome.text.contains(Tools.startupDocument))
         }
@@ -179,12 +179,12 @@ struct MCPServerTests {
         let given = Tools(
             facets: Facets(directory: directory, waitLimit: 0.2, workDirectoryGiven: true),
             makeID: { "fixed" })
-        #expect(given.call("observe", arguments: [:]).text.contains("が指している"))
+        #expect(given.call("observe", arguments: [:]).text.contains("pointed at by"))
 
         let notGiven = Tools(
             facets: Facets(directory: directory, waitLimit: 0.2, workDirectoryGiven: false),
             makeID: { "fixed" })
-        #expect(notGiven.call("observe", arguments: [:]).text.contains("は未設定"))
+        #expect(notGiven.call("observe", arguments: [:]).text.contains("is unset"))
     }
 
     @Test("起動の瞬間に決まるものを、reference が一覧で配る")
@@ -210,7 +210,7 @@ struct MCPServerTests {
         let outcome = tools.call(
             "input", arguments: ["events": [["type": "keyDown", "key": "a"]]])
         #expect(outcome.isError)
-        #expect(outcome.text.contains("起動し直して"))
+        #expect(outcome.text.contains("Restart it"))
         #expect(outcome.text.contains(".mokume/input"))
         #expect(!outcome.text.contains(".mokume/observe"))
     }

@@ -134,8 +134,8 @@ struct ArgumentsTests {
     @Test("切り分けの口は、知らない引数を無視したと言って続ける")
     func theDoctorVerbNeverStops() {
         let text = DoctorCommand.text(for: ["--fast", "-x"], workDirectory: nil)
-        #expect(text.hasPrefix("知らない引数は無視した: --fast -x\n"))
-        #expect(text.contains("環境の前提"))
+        #expect(text.hasPrefix("Ignored unknown arguments: --fast -x\n"))
+        #expect(text.contains("What the environment provides"))
     }
 
     /// 場所は取る。2 つ目からは余りへ回る (畳む前と同じ)。
