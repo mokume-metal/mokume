@@ -118,6 +118,41 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。
     private let screenLink: ScreenDisplayLink
 
+    /// × を押した人に問う言葉。**無ければ確かめずに閉じる。**
+    ///
+    /// 既定は起動の瞬間に決まる — 道具が起こしたときだけ問いを持つ
+    /// (``CloseConfirmation``)。**検査から差し替える**: 検査のプロセスに合図は渡らないので、
+    /// そのままでは問いの経路を 1 つも通れない。
+    var closeQuestion: CloseQuestion? = CloseConfirmation.startupQuestion()
+
+    /// 問いの出し方。**検査から差し替える** (``SharedFrameStage/presentQuestion`` と同じ流儀)。
+    var presentQuestion: @MainActor (CloseQuestion, NSWindow, @escaping (Bool) -> Void) -> Void =
+        CloseQuestion.presentSheet
+
+    /// 閉じてよいと確定したときの行き先。
+    ///
+    /// **道具立てごと終わらせる。** 窓を畳むだけでは後始末 (``willTerminate()``) を通らず、
+    /// 差込口も駆動源も生きたまま残る — 終わりの経路は `applicationWillTerminate` の 1 本
+    /// である。**検査から差し替える**: 既定のままでは、押した後を検めるたびに検査の
+    /// プロセスが終わる。
+    var onCloseConfirmed: @MainActor () -> Void = { NSApplication.shared.terminate(nil) }
+
+    /// 窓の出来事を、自分を強く持たせずに受ける。
+    ///
+    /// **窓の delegate に ``SketchApplication`` を直に据えない。** AppKit は delegate を
+    /// 弱く参照するが、呼ぶ前に一時的な強い参照を作る (autorelease) ので、据えた側の解放が
+    /// プールの掃除まで遅れる — 道具の台が同じ理由で中継を置いている
+    /// (`SharedFrameStage.WindowRelay`)。
+    @MainActor private final class WindowRelay: NSObject, NSWindowDelegate {
+        weak var application: SketchApplication?
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            application?.shouldClose(sender) ?? true
+        }
+    }
+
+    private let windowRelay = WindowRelay()
+
     /// いま走らせているもの。``run()`` の間だけ入る。
     private static var running: SketchApplication?
 
@@ -195,6 +230,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             frameRate: Float(max(1, sketch.settings.frameRate)))
         super.init()
         screenLink.owner = self
+        windowRelay.application = self
     }
 
     /// アプリケーションとして走らせる。戻らない。
@@ -337,6 +373,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // (ADR-0030 決定 7)
         KnobOverlay.makeIfNeeded(for: runtime.paramRegistry) { [runtime] in runtime.frameNumbers }?
             .attach(to: surface)
+        // **確かめるのは、道具が起こしたときだけ** ([ADR-0032] 決定 1)。合図が無ければ
+        // delegate を据えないので、直に走らせたスケッチと束ねた `.app` の × は、いままで
+        // どおり押した瞬間に作品を終わらせる
+        if closeQuestion != nil { window.delegate = windowRelay }
+
         // **前面を取らないときも、窓は出す。** 出さなければ、作り直すたびに絵が消える
         if takesFocus { window.makeKeyAndOrderFront(nil) } else { window.orderFrontRegardless() }
         // **面を第一応答者に据える。** 据わっていない窓にはキーが 1 件も来ない —
@@ -353,6 +394,26 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 窓を開く時刻は起点にしない。速さを数え始めるのは最初のフレームが
         // 来たときである ([FrameTempo]) — 進み始める前に測ったことにすると、
         // 1 枚目で「1 枚 ÷ 待っていた時間」が出て 0.0 という嘘の数字になる
+    }
+
+    /// × を押された。**確かめている間は閉じない。**
+    ///
+    /// 閉じてしまうと絵の出口が消え、開き直す経路が無い。窓は作品の唯一の出口なので
+    /// (メニューを組み立てないこの経路には `⌘Q` も `⌘W` も無い)、押し間違いで消えるのは
+    /// 制作中の作品そのものである ([#1120](https://github.com/mokume-metal/mokume/issues/1120))。
+    ///
+    /// **問いを持たない窓は、そのまま閉じる。** 道具が起こしたのでなければ、AppKit の既定を
+    /// 変える理由が無い (`SharedFrameStage.shouldClose(_:)` と同じ規律)。
+    fileprivate func shouldClose(_ sender: NSWindow) -> Bool {
+        guard let closeQuestion else { return true }
+        // **問いを二重に出さない。** 下りている間 AppKit は親窓の操作を吸うが、閉じるよう
+        // 頼む経路は残る (`performClose(_:)` など)
+        guard sender.attachedSheet == nil else { return false }
+        presentQuestion(closeQuestion, sender) { [weak self] confirmed in
+            guard confirmed else { return }
+            self?.onCloseConfirmed()
+        }
+        return false
     }
 
     /// 駆動源を畳む。``SketchApplicationDelegate`` から呼ばれる。
