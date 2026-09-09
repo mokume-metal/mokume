@@ -369,12 +369,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 出せなかったことを 1 度だけ言う。**握り潰すと、絵が止まった理由がどこにも残らない。**
     private func noteFailure(_ failure: RenderFailure) {
         guard failures.note() else { return }
-        Diagnostics.warn("差し出せませんでした: \(failure.headline) — 次のリフレッシュで試し直します")
+        Diagnostics.warn(
+            "Could not hand the frame over: \(failure.headline) — trying again on the next refresh")
     }
 
     private func noteRecovery() {
         guard let skipped = failures.recovered() else { return }
-        Diagnostics.warn("差し出しが回復しました (\(skipped) 枚ぶん飛ばしました)")
+        Diagnostics.warn("Handing frames over has recovered (\(skipped) were skipped)")
     }
 }
 

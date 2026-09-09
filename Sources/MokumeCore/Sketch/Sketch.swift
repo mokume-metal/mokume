@@ -287,8 +287,8 @@ extension Sketch {
             // 走っていないときに描く手立ては無い。返せる値も無いので、ここで止める。
             // 典型は init やプロパティの初期化子から呼んだ場合。
             fatalError(
-                "描画 API はスケッチが走っている間だけ使えます。"
-                    + "init やプロパティの初期化子ではなく setup() / draw() の中で呼んでください。")
+                "The drawing API only works while the sketch is running. "
+                    + "Call it from setup() or draw(), not from init or a property initialiser.")
         }
         return runtime
     }

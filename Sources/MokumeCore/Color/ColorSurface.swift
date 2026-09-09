@@ -118,7 +118,8 @@ public func color(
     guard let made = DisplayScale.color(red: red, green: green, blue: blue, alpha: alpha)
     else {
         ColorValues.warnOnce(
-            .notANumber, "color(): 数でない値・無限の値が渡されたので、透明を返しました")
+            .notANumber,
+            "color(): got a value that is not a number, or an infinite one, so transparent was returned")
         return .transparent
     }
     return made

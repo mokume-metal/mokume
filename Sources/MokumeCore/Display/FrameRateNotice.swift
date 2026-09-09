@@ -70,8 +70,8 @@ public enum FrameRateNotice {
     /// 誤読される。
     public static func line(rate: Double?, configuration: String) -> String {
         guard let rate else {
-            return "速さ: 測れない — フレームが進んでいない (構成: \(configuration))"
+            return "Rate: cannot tell — frames are not advancing (\(configuration))"
         }
-        return "速さ: \(String(format: "%.1f", rate)) fps (構成: \(configuration))"
+        return "Rate: \(String(format: "%.1f", rate)) fps (\(configuration))"
     }
 }

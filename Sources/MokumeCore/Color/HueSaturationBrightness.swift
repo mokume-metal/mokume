@@ -120,7 +120,8 @@ public func color(
     guard hue.isFinite, saturation.isFinite, brightness.isFinite else {
         ColorValues.warnOnce(
             .notANumberHSB,
-            "color(hue:saturation:brightness:): 数でない値・無限の値が渡されたので、透明を返しました")
+            "color(hue:saturation:brightness:): got a value that is not a number, or an infinite "
+                + "one, so transparent was returned")
         return .transparent
     }
     let parts = HueSaturationBrightness.components(

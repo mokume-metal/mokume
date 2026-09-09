@@ -262,7 +262,7 @@ public final class SketchRuntime {
             } catch {
                 for close in undo.reversed() { close() }
                 Diagnostics.warn(
-                    "\(type(of: plugin)) を開けませんでした: \(error)。この束は外して続けます")
+                    "Could not open \(type(of: plugin)): \(error). Carrying on without it")
                 continue
             }
             outlets += registry.outlets.map { ($0, SeamHealth()) }
@@ -444,8 +444,8 @@ public final class SketchRuntime {
             let reason = failure(seam)
             if seams[index].health.note(reason) {
                 Diagnostics.warn(
-                    "\(type(of: seam)) が続けて転んだので外しました"
-                        + " (最後の理由: \(reason ?? "不明"))")
+                    "\(type(of: seam)) failed again and again, so it was detached"
+                        + " (the last reason: \(reason ?? "unknown"))")
             }
         }
     }
@@ -471,7 +471,7 @@ public final class SketchRuntime {
             // 毎フレーム走る経路なので投げない (ADR-0020 決定 5)。1 度だけ言う
             guard !warnedEncodeFailed else { return }
             warnedEncodeFailed = true
-            Diagnostics.warn("出口へ渡す絵を取り出せませんでした: \(error.headline)")
+            Diagnostics.warn("Could not take the frame that goes to an outlet: \(error.headline)")
             return
         }
         pendingOutletFrame = (image, timing.frameCount, Double(timing.time))
@@ -621,7 +621,7 @@ public final class SketchRuntime {
     /// 連番を止める。転送 (正本は ``Sketch/endRecord()``)。
     public func endRecord() {
         guard let recorder else {
-            Diagnostics.warn("endRecord(): 撮っていません")
+            Diagnostics.warn("endRecord(): nothing is being recorded")
             return
         }
         // **控えを先に配る。** 撮り終わりは描き切りの中から呼ばれるので、ここで配らないと
@@ -720,7 +720,7 @@ public final class SketchRuntime {
         if let drawFailure {
             finish(
                 id: request.id, through: observer, frames: [], complete: false,
-                warnings: limits.warnings + ["このフレームの描画に失敗しました: \(drawFailure)"])
+                warnings: limits.warnings + ["Drawing this frame failed: \(drawFailure)"])
             return
         }
         capture = FrameCapture(
@@ -742,7 +742,7 @@ public final class SketchRuntime {
             capture = nil
             finish(
                 id: pending.id, through: observer, frames: pending.frames, complete: false,
-                warnings: pending.warnings + ["このフレームの描画に失敗しました: \(drawFailure)"])
+                warnings: pending.warnings + ["Drawing this frame failed: \(drawFailure)"])
             return
         }
 
@@ -770,7 +770,7 @@ public final class SketchRuntime {
             capture = nil
             finish(
                 id: pending.id, through: observer, frames: pending.frames, complete: false,
-                warnings: pending.warnings + ["絵を採れませんでした: \(error)"])
+                warnings: pending.warnings + ["Could not take the image: \(error)"])
             return
         }
 
@@ -821,7 +821,10 @@ public final class SketchRuntime {
     {
         let numbers = frames.map(\.frame)
         guard numbers.count > 1, Set(numbers).count < numbers.count else { return [] }
-        return ["同じフレームが並んでいます (進んでいないあいだに撮ると、絵は動きません)"]
+        return [
+            "The same frame appears more than once (shooting while nothing advances gives images "
+                + "that do not move)"
+        ]
     }
 
     /// 撮っている最中の列。

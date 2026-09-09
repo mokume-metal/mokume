@@ -123,9 +123,9 @@ struct ParameterStoreTests {
         let line = try! #require(notice)
         #expect(line.contains("count"))
         #expect(line.contains("radius"))
-        #expect(line.contains("もう宣言されていない"))
-        #expect(line.contains("宣言と型が違う"))
-        #expect(line.contains("2 個"))
+        #expect(line.contains("no longer declared"))
+        #expect(line.contains("a different type from the declaration"))
+        #expect(line.contains("Threw away 2 of the saved values"))
     }
 
     @Test("捨てていなければ、何も言わない")

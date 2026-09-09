@@ -32,7 +32,8 @@ enum ParamCatalog {
                 // 同じ型の中の重複はビルドが止める。ここへ来るのは基底と派生で
                 // 同じ名前を宣言した場合だけで、機械では防げない。黙って片方を
                 // 落とすと「書いたのに動かない値」になるので名指しする。
-                Diagnostics.warn("つまみ \"\(name)\" が二重に宣言されている。先に宣言されたほうを使う")
+                Diagnostics.warn(
+                    "The knob \"\(name)\" is declared twice. Using the one declared first")
                 continue
             }
             entries.append((name: name, box: box))

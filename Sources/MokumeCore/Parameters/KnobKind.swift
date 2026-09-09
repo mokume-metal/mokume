@@ -35,8 +35,8 @@ enum KnobKind: Equatable {
         /// 窓に添える 1 行。**次に何を書けばよいかまで書く。**
         var note: String {
             switch self {
-            case .rangeNotDeclared: "範囲を書くとつまみが出ます"
-            case .choicesNotDeclared: "候補を書くとつまみが出ます"
+            case .rangeNotDeclared: "declare a range and a knob appears"
+            case .choicesNotDeclared: "declare the choices and a knob appears"
             }
         }
     }

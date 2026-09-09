@@ -117,7 +117,7 @@ final class SketchPresence {
     ) -> Description {
         Description(
             title: title.isEmpty ? executable : title,
-            identity: "\(executable) · PID \(pid) · 経過 \(elapsedText(elapsed))",
+            identity: "\(executable) · PID \(pid) · up \(elapsedText(elapsed))",
             origin: shorten(directory, home: home))
     }
 

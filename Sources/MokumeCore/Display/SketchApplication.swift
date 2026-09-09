@@ -221,13 +221,13 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 終わるときに返す — 途中で手放すと、そこから先だけ間引かれる
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .latencyCritical],
-            reason: "スケッチのフレームを一定の速さで進め続ける")
+            reason: "keeping the sketch's frames advancing at a steady rate")
         // **画面が消えると絵が止まる。** 駆動源は画面のリフレッシュに紐づいているので、
         // ディスプレイがスリープすると絵も観測も入力も同時に黙る (#874)。断りを立てて
         // おく — `beginActivity` から `AllowingIdleSystemSleep` を外したのは、片方で
         // 「寝てよい」と言いながら片方で断るコードにしないためである
         if blocksDisplaySleep {
-            displaySleepBlock = DisplaySleepBlock(reason: "スケッチを画面に出し続ける")
+            displaySleepBlock = DisplaySleepBlock(reason: "keeping the sketch on screen")
         }
         // **断りは保証ではない。** 外部ディスプレイの電源を切る・蓋を閉じるといった
         // 経路は断れないので、止まったときに拾う側も併せて持つ
@@ -293,7 +293,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             try shared.publishManifest()
         } catch {
             Diagnostics.warn(
-                "絵を渡す面の番号を置けませんでした: \(error.localizedDescription) — 窓を開いて続けます")
+                "Could not place the identifiers of the surfaces frames go to: "
+                    + "\(error.localizedDescription) — opening a window and carrying on")
             return nil
         }
         return shared
@@ -462,13 +463,14 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 描けなかったことを 1 度だけ言う。
     private func noteFrameFailure(_ failure: RenderFailure) {
         guard frameFailures.note() else { return }
-        Diagnostics.warn("フレームを描けませんでした: \(failure.headline) — 次のリフレッシュで試し直します")
+        Diagnostics.warn(
+            "Could not draw the frame: \(failure.headline) — trying again on the next refresh")
     }
 
     /// 描けるようになったことを言う。飛ばした数を添える。
     private func noteFrameRecovery() {
         guard let skipped = frameFailures.recovered() else { return }
-        Diagnostics.warn("フレームの描画が回復しました (\(skipped) 枚ぶん飛ばしました)")
+        Diagnostics.warn("Drawing has recovered (\(skipped) frames were skipped)")
     }
 
 }
@@ -534,5 +536,5 @@ extension Sketch {
 /// ``RenderFailure/headline`` を使うが、起動の失敗はそこで終わりなので、次にすることまで
 /// 出さないと読む人に打つ手が残らない ([#600](https://github.com/mokume-metal/mokume/issues/600))。
 func startupFailureText(_ failure: RenderFailure) -> String {
-    "スケッチを起動できませんでした。\n\(failure)\n"
+    "The sketch could not start.\n\(failure)\n"
 }
