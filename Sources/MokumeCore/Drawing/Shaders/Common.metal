@@ -435,19 +435,18 @@ static inline float mokume_noise(Fragment f, float x) {
     return mokume_noise(f, float3(x, 0.0, 0.0));
 }
 
-/// 出した色を下地と混ぜる。
+/// 出した色を下地と混ぜる。**通るのは 8 種だけ** (`kAdd` … `kScreen`)。
+///
+/// **`kBlend` (0) と `kReplace` (9) はここへ来ない。** 前者は乗算済みの source-over で
+/// 固定機能のブレンドと式が一致し、後者は下地を見ない — どちらも下地を読まない断片
+/// (`mokume_fragmentDirect` / `mokume_formFragmentBlend` / `mokume_formFragmentReplace`) で
+/// 描かれる ([#758])。**どの混ぜ方がどちらの経路へ行くかの一覧は
+/// `ShapePipeline.BlendStates` の doc が持つ** ([#887])。
+///
+/// [#758]: https://github.com/mokume-metal/mokume/issues/758
+/// [#887]: https://github.com/mokume-metal/mokume/issues/887
 static inline float4 mokume_composite(float4 source, float4 destination, uint mode) {
-    // 置き換えるモードだけは下地を見ない
-    if (mode == kReplace) {
-        return source;
-    }
-
-    // 重ねるモードは、乗算済みのまま素直に足せる
-    if (mode == kBlend) {
-        return source + destination * (1.0 - source.a);
-    }
-
-    // 以降は「色そのもの」どうしを混ぜるので、両方の乗算を戻してから計算する。
+    // 「色そのもの」どうしを混ぜるので、両方の乗算を戻してから計算する。
     // 乗算済みのまま混ぜると、半透明の色が暗い色として扱われてしまう
     float3 s = straighten(source);
     float3 d = straighten(destination);
@@ -462,12 +461,23 @@ static inline float4 mokume_composite(float4 source, float4 destination, uint mo
         case kExclusion: mixed = s + d - 2.0 * s * d; break;
         case kMultiply: mixed = s * d; break;
         case kScreen: mixed = s + d - s * d; break;
-        default: mixed = s; break;
+        // **来ない番号を、無害な側で飲む。** 上の doc のとおり 0 と 9 は別の列へ行くので
+        // 届く経路が無く、`mixed` を置かないと未初期化になるので default は要る。以前は
+        // `s` だったので、万一届いたら置き換え相当で下地を消していた — 下地をそのまま
+        // 返せば、絵は動かないまま「消える」だけが起きなくなる (#887)
+        default: mixed = d; break;
     }
 
-    // 結果として出す値は飽和させる。作業空間は範囲外を許すが、
-    // ここで抑えないと混ぜた結果が下地を壊す
-    mixed = clamp(mixed, 0.0, 1.0);
+    // **飽和させない。** 作業空間は範囲外の値 (負値および 1.0 超) を捨てず、表示できる
+    // 範囲へ畳むのは出力段だけである — 規範は「線形で計算し、境界で変換する」で、
+    // 境界は入口と出口の 2 箇所しかない (ADR-0011 決定 1・決定 3)。ここは出口ではない。
+    //
+    // かつてこの位置に `clamp(mixed, 0.0, 1.0)` があり、`.add` が 1 描画ごとに 1.0 で
+    // 頭打ちになって光を積み上げられなかった (#1057)。切っていたのは 8 種だけなので、
+    // 固定機能の列へ移った `.blend` は最初から 1.0 超を保っていた (#758)。
+    //
+    // **`.subtract` の暗部が 0 へ落ちるのは、この決定に含まれる。** 式が `d - a*s` へ
+    // 単純化し、以前の「0 で折れる」非線形が消えるためで、退行ではない。
 
     // **どれだけ効かせるかはアルファが決める。** これを全モードで揃えるので、
     // アルファ 0 の色はどのモードでも下地を変えない
@@ -603,7 +613,8 @@ static inline float4 mokume_shapeColor(
 
 /// 画素を描く入口。**下地を読み、混ぜ方で分岐する。**
 ///
-/// 使うのは固定機能のブレンドで表せない混ぜ方の列だけである (`ShapePipeline`)。
+/// 使うのは固定機能のブレンドで表せない混ぜ方の列だけである
+/// (一覧は `ShapePipeline.BlendStates` の doc)。
 fragment float4 mokume_fragmentMain(
     MOKUME_SURFACE_PARAMS
     MOKUME_SHAPE_PARAMS,

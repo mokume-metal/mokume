@@ -447,6 +447,15 @@ extension Sketch {
     /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
     /// 「どれだけ効かせるか」はアルファが決める。
     ///
+    /// **混ぜた結果は、その場で表示できる範囲へ丸めない。** ``BlendMode/add`` は 1.0 を
+    /// 超えた明るさをそのまま残すので、光を重ねるほど積み上がる — 芯が頭打ちにならず、
+    /// 「重なっているところ」と「重なっていないところ」の差が消えない。``BlendMode/subtract``
+    /// は 0 を下回った値を残すので、暗部は途中で折れずに黒へ着く。表示できる範囲へ畳むのは
+    /// 出力段だけである ([ADR-0011] 決定 1・[#1057])。
+    ///
+    /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    ///
     /// - Note: 混ぜ方は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=579fbd41
     // shot: 2 snippet=519aa11b
