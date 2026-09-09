@@ -91,6 +91,6 @@ extension Canvas {
     private func warnBadShadow(_ name: String) {
         warnOnce(
             .badShadow,
-            "\(name)(): 数でない値・範囲の外の値が渡されたので、影の設定を変えませんでした")
+            "\(name)(): got a value that is not a number, or one outside the range, so the shadow settings were left as they were")
     }
 }

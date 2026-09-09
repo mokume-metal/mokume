@@ -19,7 +19,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: 255)
         else {
             return warnOnce(
-                .notANumberAmbientLight, "ambientLight(): 数でない値・無限の値が渡されたので、光を置きませんでした")
+                .notANumberAmbientLight, "ambientLight(): got a value that is not a number, or an infinite one, so no light was placed")
         }
         ambientLight(color)
     }
@@ -32,7 +32,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: 255)
         else {
             return warnOnce(
-                .notANumberDirectionalLight, "directionalLight(): 数でない値・無限の値が渡されたので、光を置きませんでした")
+                .notANumberDirectionalLight, "directionalLight(): got a value that is not a number, or an infinite one, so no light was placed")
         }
         directionalLight(color, x, y, z)
     }
@@ -45,7 +45,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: 255)
         else {
             return warnOnce(
-                .notANumberPointLight, "pointLight(): 数でない値・無限の値が渡されたので、光を置きませんでした")
+                .notANumberPointLight, "pointLight(): got a value that is not a number, or an infinite one, so no light was placed")
         }
         pointLight(color, x, y, z)
     }
@@ -61,7 +61,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: 255)
         else {
             return warnOnce(
-                .notANumberSpotLight, "spotLight(): 数でない値・無限の値が渡されたので、光を置きませんでした")
+                .notANumberSpotLight, "spotLight(): got a value that is not a number, or an infinite one, so no light was placed")
         }
         spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
@@ -77,7 +77,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: 255)
         else {
             return warnOnce(
-                .notANumberAmbient, "ambient(): 数でない値・無限の値が渡されたので、質感を変えませんでした")
+                .notANumberAmbient, "ambient(): got a value that is not a number, or an infinite one, so the surface qualities were left as they were")
         }
         ambient(color)
     }
@@ -93,7 +93,7 @@ extension Canvas {
             red: red, green: green, blue: blue, alpha: 255)
         else {
             return warnOnce(
-                .notANumberEmissive, "emissive(): 数でない値・無限の値が渡されたので、質感を変えませんでした")
+                .notANumberEmissive, "emissive(): got a value that is not a number, or an infinite one, so the surface qualities were left as they were")
         }
         emissive(color)
     }

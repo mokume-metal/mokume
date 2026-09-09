@@ -23,6 +23,6 @@ extension Canvas {
     private func warnBadExposure() {
         warnOnce(
             .badExposure,
-            "exposure(): 数でない値・無限・負の値が渡されたので、明るさを変えませんでした")
+            "exposure(): got a value that is not a number, or an infinite or negative one, so the brightness was left as it was")
     }
 }

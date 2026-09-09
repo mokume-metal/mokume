@@ -163,9 +163,9 @@ import simd
         guard !warnedMismatch else { return }
         warnedMismatch = true
         Diagnostics.warn(
-            "write(): 渡された絵の大きさ \(picture.width)x\(picture.height) が、"
-                + "この絵の大きさ \(width)x\(height) と違うので書き込みませんでした。"
-                + "送り元の大きさが変わったなら createImage() で作り直してください")
+            "write(): the picture passed is \(picture.width)x\(picture.height), which differs "
+                + "from this image's \(width)x\(height), so nothing was written. If the source "
+                + "changed size, make it again with createImage()")
     }
 
     /// 書き換えた画素を GPU 側へ送る。描く直前に呼ばれる。

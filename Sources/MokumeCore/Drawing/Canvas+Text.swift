@@ -147,7 +147,10 @@ extension Canvas {
 
     /// 無い書体を指定されたことを、初回だけ知らせる。
     private func warnMissingFontOnce(_ name: String) {
-        warnOnce(.missingFont, "textFont(): 「\(name)」という書体はこの環境にありません。書体は変えません")
+        warnOnce(
+            .missingFont,
+            "textFont(): there is no typeface called \"\(name)\" in this environment. "
+                + "The typeface is left as it is")
     }
 }
 

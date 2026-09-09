@@ -234,7 +234,7 @@ extension Canvas {
         // 混ぜると引数を読み違えて、絵だけが黙って崩れる
         precondition(
             open.external == nil || indexCount == 0,
-            "外の置き場から置き場所を取る列に添字は持たせられない")
+            "a run that takes its positions from an outside buffer cannot carry indices")
         batches.append(
             Batch(
                 run: Shape.Run(
@@ -292,14 +292,14 @@ extension Canvas {
         case .noLight:
             warnOnce(
                 .materialWithoutLight,
-                "材質を書いていますが、光も周囲も 1 つも置いていません。"
-                    + "どちらも無い立体は塗り 1 色で出るので、材質はどれも効きません")
+                "A material is being written, but not a single light or surrounding has been placed. "
+                    + "A solid with neither comes out as one flat colour, so no material takes effect")
         case .metalWithoutSurroundings:
             warnOnce(
                 .metalWithoutSurroundings,
-                "金属を上げていますが、映す先がありません。金属は周りを映すことでしか"
-                    + "見えないので、surroundings() で周囲を置くか ambientLight() を"
-                    + "置かないと、艶だけが残って暗くなります")
+                "Metalness is raised, but there is nothing to reflect. Metal is only visible by "
+                    + "reflecting what is around it, so without surroundings() or "
+                    + "ambientLight() only the sheen is left and it goes dark")
         }
     }
 

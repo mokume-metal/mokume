@@ -47,7 +47,7 @@ public final class EffectShader {
         self.pipeline = pipeline
         self.box = ShaderBox(
             name: name, url: url, body: body, values: values,
-            label: "effect", valuesHint: "作るときの values")
+            label: "effect", valuesHint: "the values you pass when making it")
 
         let library = try gpu.shaders.makeEffectLibrary(named: name, body: body, values: values)
         self.state = try pipeline.makeState(library: library, label: "mokume.effect.\(name)")

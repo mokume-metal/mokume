@@ -351,15 +351,15 @@ public final class Particles {
     private func warnOverwrite() {
         warnOnce(
             .overwrite,
-            "粒の枠 \(capacity) 個をひと回りして、まだ生きている粒を上書きしました。"
-                + "出す数 (rate) × 寿命 (life) が枠より多いので、"
-                + "makeParticles(count:) を増やすか、rate か life を下げてください")
+            "The ring of \(capacity) particle slots came all the way round and overwrote particles "
+                + "that were still alive. rate × life is larger than the ring, so raise "
+                + "makeParticles(count:), or lower rate or life")
     }
 
     private func warnTooManyForces(_ count: Int) {
         warnOnce(
             .tooManyForces,
-            "1 回に渡せる力は \(Self.maximumForces) 個までです (\(count) 個渡されました)。"
-                + "先頭から \(Self.maximumForces) 個だけ効かせました")
+            "At most \(Self.maximumForces) forces can go in one call (\(count) were passed). "
+                + "Only the first \(Self.maximumForces) took effect")
     }
 }

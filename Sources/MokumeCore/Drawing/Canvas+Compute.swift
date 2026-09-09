@@ -66,8 +66,9 @@ extension Canvas {
         guard Self.isUsableComputationName(name) else {
             throw .notCompilable(
                 path: name,
-                reason: "計算の名前は断片の中の入口の関数の名前にもなるので、"
-                    + "英字か下線で始まり、英数字と下線だけでできている必要があります")
+                reason: "A computation's name also becomes the name of the entry point inside the "
+                    + "fragment, so it has to start with a letter or an underscore and hold "
+                    + "only letters, digits and underscores")
         }
         // **区画に収まらない宣言は、ここで断る。** 値は頼みごとの区画へ載るので、塗りの
         // 列と同じ上限が効く (#932)。断り方も塗りと 1 か所を共有する
@@ -271,7 +272,7 @@ extension Canvas {
         } catch {
             // 読み取りは落とさない (ADR-0020 決定 5)。次のフレームの描き切りが同じ理由で
             // 失敗し、そちらから外へ出る
-            Diagnostics.warn("計算の完了を待てませんでした: \(error.headline)")
+            Diagnostics.warn("Could not wait for the computation to finish: \(error.headline)")
         }
     }
 
@@ -323,8 +324,8 @@ extension Canvas {
     private func warnTooManyBuffers(_ count: Int) {
         warnOnce(
             .tooManyComputeBuffers,
-            "1 回の計算に束ねられる並びは \(ComputePipeline.maximumBufferCount) 本までです "
-                + "(\(count) 本頼まれました)。この計算は無視しました")
+            "At most \(ComputePipeline.maximumBufferCount) arrays can be bound to one computation "
+                + "(\(count) were asked for). This computation was ignored")
     }
 }
 

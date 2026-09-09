@@ -6,42 +6,41 @@ import Testing
 
 @testable import MokumeCore
 
-/// 畳む前に 7 つの `warn*OutsideFrame()` が持っていた文面 ([#947]) と、
-/// 後から同じ形で足した変換 ([#941])。
+/// 利用者が読む 9 通の文面を、**実装とは別の場所に写して突き合わせる**。
 ///
-/// **実装とは別の場所に写して突き合わせる。** 利用者が読む 1 行なので、畳んだ拍子に
-/// 変わっていないことをここで見る — 実際、7 本を 1 つの型へ畳んだとき「頼んだ」が
-/// 「頼んた」になった (語幹だけを差し替えて音便を落とした)。
+/// 畳んだ拍子に変わっていないことをここで見る。実際に 2 度動いている — 7 本を 1 つの型へ
+/// 畳んだとき「頼んだ」が「頼んた」になり ([#947]・語幹だけを差し替えて音便を落とした)、
+/// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。
 ///
 /// [#947]: https://github.com/mokume-metal/mokume/issues/947
 private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .camera:
-        "視点と投影はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
-            + "初期化のときに書いた視点はどのフレームにも属さないため、無視しました",
+        "The camera and projection are placed again every frame, so call this from "
+            + "draw(). The camera placed during setup belongs to no frame, and was ignored",
     .transform:
-        "変換はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
-            + "初期化のときに書いた変換はどのフレームにも属さないため、無視しました",
+        "Transforms are written again every frame, so call this from draw(). The "
+            + "transform written during setup belongs to no frame, and was ignored",
     .style:
-        "スタイルの積み降ろしはフレームの中でだけできます。"
-            + "初期化のときに積んだスタイルはどのフレームにも属さないため、無視しました",
+        "Pushing and popping style only works inside a frame. The style pushed during "
+            + "setup belongs to no frame, and was ignored",
     .light:
-        "光はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
-            + "初期化のときに置いた光はどのフレームにも属さないため、無視しました",
+        "Lights are placed again every frame, so call this from draw(). The light "
+            + "placed during setup belongs to no frame, and was ignored",
     .surroundings:
-        "周囲はフレームごとに置き直すものなので、描くところ (draw) で呼んでください。"
-            + "初期化のときに置いた周囲はどのフレームにも属さないため、無視しました",
+        "The surroundings are placed again every frame, so call this from draw(). The "
+            + "surroundings placed during setup belong to no frame, and were ignored",
     .shadow:
-        "影はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
-            + "初期化のときに書いた影はどのフレームにも属さないため、無視しました",
+        "Shadows are written again every frame, so call this from draw(). The shadow "
+            + "written during setup belongs to no frame, and was ignored",
     .material:
-        "材質はフレームごとに書き直すものなので、描くところ (draw) で呼んでください。"
-            + "初期化のときに書いた材質はどのフレームにも属さないため、無視しました",
+        "Materials are written again every frame, so call this from draw(). The "
+            + "material written during setup belongs to no frame, and was ignored",
     .particles:
-        "粒は描くところ (draw) で扱います。"
-            + "初期化のときに出した粒はどのフレームにも属さないため、無視しました",
+        "Particles are handled where you draw, in draw(). The particles emitted during "
+            + "setup belong to no frame, and were ignored",
     .compute:
-        "計算は描くところ (draw) の前置きなので、そこで頼んでください。"
-            + "初期化のときに頼んだ計算はどのフレームにも属さないため、無視しました",
+        "Compute is a preamble to drawing, so ask for it from draw(). The compute asked "
+            + "for during setup belongs to no frame, and was ignored",
 ]
 
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
@@ -152,7 +151,8 @@ struct CanvasWarningTests {
     private let cameraOutsideFrame = outsideFrameNotices[.camera]!
     /// 同じく `Canvas+Material.swift` の文面。**呼んだ関数の名前が入る。**
     private let badShininess =
-        "shininess(): 数でない値・無限・範囲の外の値が渡されたので、材質を変えませんでした"
+        "shininess(): got a value that is not a number, or an infinite one, or one outside "
+            + "the range, so the material was left as it was"
 
     private func makeCanvas() throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)

@@ -61,7 +61,7 @@ public final class Shader {
         self.pipeline = pipeline
         self.box = ShaderBox(
             name: name, url: url, body: body, values: values,
-            label: "shader", valuesHint: "loadShader の values")
+            label: "shader", valuesHint: "loadShader's values")
 
         let library = try gpu.shaders.makeShapeLibrary(
             named: name, body: body, values: values, surfaces: surfaces)
@@ -92,9 +92,9 @@ public final class Shader {
         canvas?.shaderValuesWillChange()
         guard surfaces[name] != nil else {
             Diagnostics.warn(
-                "shader: 宣言していない面 \"\(name)\" は渡せません。"
-                    + "loadShader の surfaces に書いてください"
-                    + "(いまの面: \(surfaces.keys.sorted().joined(separator: ", ")))")
+                "shader: \"\(name)\" was never declared as a surface, so it cannot be passed. "
+                    + "Write it in loadShader's surfaces "
+                    + "(what is there now: \(surfaces.keys.sorted().joined(separator: ", ")))")
             return
         }
         surfaces[name] = surface

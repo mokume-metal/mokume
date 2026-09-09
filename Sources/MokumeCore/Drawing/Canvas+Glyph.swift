@@ -166,7 +166,7 @@ extension Canvas {
     private func warnAtlasFullOnce() {
         warnOnce(
             .atlasFull,
-            "text(): 字形を焼く場所が上限まで埋まりました。これ以上の新しい字は描かれません")
+            "text(): the place where glyphs are baked is full. No further new characters will be drawn")
     }
 
     func appendTriangle(

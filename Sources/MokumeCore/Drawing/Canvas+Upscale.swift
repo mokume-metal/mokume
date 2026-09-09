@@ -26,7 +26,7 @@ extension Canvas {
         do {
             try encodeUpscale(stage, into: commands)
         } catch {
-            warnOnce(.upscaleFailed, "拡大を通せませんでした: \(error.headline)")
+            warnOnce(.upscaleFailed, "Could not run the upscale: \(error.headline)")
         }
     }
 

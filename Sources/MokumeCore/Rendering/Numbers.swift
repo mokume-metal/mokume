@@ -130,6 +130,7 @@ import MokumeDiagnostics
     private func warnOutOfRange(_ index: Int) {
         guard !warnedOutOfRange else { return }
         warnedOutOfRange = true
-        Diagnostics.warn("数の並びは \(count) 個なので、\(index) 番目は書けません。無視しました")
+        Diagnostics.warn(
+            "The number array holds \(count), so index \(index) cannot be written. Ignored")
     }
 }
