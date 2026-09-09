@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/viewport-surface.schema.json",
-  "title": "絵を渡す面の番号",
-  "description": "画面の出口が外のプロセスに在るとき、走っているスケッチが起動の直後に書く。読み手は番号から面を引き、面の属性 mokume.frame がいちばん大きいものを掴む (ADR-0032 決定 3)。中身が変わるのは大きさが変わったときだけで、フレームごとには書かれない。",
+  "title": "The identifiers of the surfaces frames are handed to",
+  "description": "Written by the running sketch just after launch, when the display output lives in another process. A reader looks the surfaces up by identifier and takes the one whose mokume.frame attribute is largest (ADR-0032 decision 3). The contents change only when the size changes; this is not written per frame.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -14,11 +14,11 @@
   "properties": {
     "schemaVersion": {
       "const": 1,
-      "description": "この形式の版。上げ方は ADR-0018 決定 5。"
+      "description": "The version of this format. How it is raised is ADR-0018 decision 5."
     },
     "ids": {
       "type": "array",
-      "description": "面の番号 (IOSurfaceGetID)。並びが書く順である。途中の絵を掴ませないために複数ある。",
+      "description": "The surface identifiers (IOSurfaceGetID). The order is the order they are written in. There is more than one so that a half-written frame is never handed over.",
       "minItems": 1,
       "items": {
         "type": "integer",
@@ -28,12 +28,12 @@
     "width": {
       "type": "integer",
       "minimum": 1,
-      "description": "面の幅 (画素)。描く解像度と同じで、帯は入っていない。"
+      "description": "The surface's width in pixels. The same as the drawing resolution, with no bars included."
     },
     "height": {
       "type": "integer",
       "minimum": 1,
-      "description": "面の高さ (画素)。描く解像度と同じで、帯は入っていない。"
+      "description": "The surface's height in pixels. The same as the drawing resolution, with no bars included."
     }
   }
 }

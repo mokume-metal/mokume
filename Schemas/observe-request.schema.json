@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/observe-request.schema.json",
-  "title": "観測の要求",
-  "description": "走っているスケッチに観測を求める。書き手は一時ファイル経由で原子的に置き、id は要求ごとに変える (ADR-0018 決定 3)。count を 2 以上にすると、フレームループを止めずに続けて撮り、目録が最後に書かれる。",
+  "title": "The observation request",
+  "description": "Asks the running sketch to be observed. The writer places this atomically by way of a temporary file, and id changes with every request (ADR-0018 decision 3). With count at 2 or more, shots are taken in succession without stopping the frame loop, and the catalogue is written last.",
   "type": "object",
   "required": [
     "id"
@@ -12,27 +12,27 @@
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "この要求の識別子。応答はこれを echo する。同じ id の要求は再処理されない。"
+      "description": "This request's identifier. The reply echoes it back. A request with an id already seen is not processed again."
     },
     "scale": {
       "type": "number",
       "exclusiveMinimum": 0,
       "maximum": 1,
-      "description": "書き出す画像の縮小率 (1 = 実寸)。省略時は 1。"
+      "description": "How far to scale the written image down (1 = full size). 1 when omitted."
     },
     "count": {
       "type": "integer",
       "minimum": 1,
       "maximum": 120,
       "default": 1,
-      "description": "撮る枚数。省略時は 1。上限を超えて頼んでも黙って切り詰められることはなく、切った枚数が応答の warnings に載る。"
+      "description": "How many shots to take. 1 when omitted. Asking above the ceiling is never trimmed in silence: how many were cut appears in the reply's warnings."
     },
     "every": {
       "type": "integer",
       "minimum": 1,
       "maximum": 60,
       "default": 1,
-      "description": "何フレームおきに撮るか。省略時は毎フレーム。**秒ではなくフレームで数える** — 既定の時計はフレーム番号から導くので、フレームで数えれば同じスケッチを 2 回走らせれば同じ列が返る。"
+      "description": "Take a shot every this many frames. Every frame when omitted. **Counted in frames rather than seconds** — the default clock is derived from the frame number, so counting in frames means running the same sketch twice returns the same series."
     }
   }
 }

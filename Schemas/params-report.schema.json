@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/params-report.schema.json",
-  "title": "つまみの面の応答",
-  "description": "宣言した値のいまの姿と、直前の書き換えをどう扱ったか。**宣言 (範囲・候補) も一緒に載る**ので、読み手は書ける値を別の面へ探しに行かなくてよい。起動したとき・書き換えに応えたとき・値が実際に変わったときに書き直される。",
+  "title": "The knob surface's reply",
+  "description": "How the declared values stand now, and what was done with the most recent write. **The declarations themselves — ranges and choices — come along**, so a reader never goes to another surface to find out what can be written. Rewritten at launch, when a write is answered, and when a value actually changes.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -20,15 +20,15 @@
     "revision": {
       "type": "integer",
       "minimum": 1,
-      "description": "内容が変わるたびに進む番号。**起動しただけでも進む** — プロセスが変われば宣言そのもの (つまみの数・範囲・候補) が変わりうるため。読み手はこれで自分の写しが古いかを知る。"
+      "description": "A number that advances whenever the contents change. **It advances on launch alone**, because a new process can change the declarations themselves: how many knobs there are, their ranges, their choices. A reader tells whether its own copy is stale by this."
     },
     "id": {
       "type": "string",
-      "description": "直近に応えた要求の識別子。まだ 1 つも応えていなければ省略される。**1 つも入らなかったときも echo される** — 「届いたが全部断られた」と「届いていない」を区別するため。"
+      "description": "The identifier of the most recent request answered. Omitted when none has been answered yet. **Echoed even when nothing went in**, so that everything being refused is told apart from nothing arriving."
     },
     "params": {
       "type": "array",
-      "description": "宣言した値。**並びは書いた順** (基底の側から) で、面の情報の一部である。",
+      "description": "The declared values. **The order is the order they were written in**, from the base upward, and that order is part of what the surface says.",
       "items": {
         "type": "object",
         "required": [
@@ -55,29 +55,29 @@
             ]
           },
           "value": {
-            "description": "いまの値。型はこの宣言の type が言っている。"
+            "description": "The value now. Its type is what this declaration's type says."
           },
           "min": {
             "type": "number",
-            "description": "動ける幅の下端。書かれていなければ範囲は宣言されていない。**つまみが出るかは型で決まる** — 数と組 (float / int / vec2 / vec3) は範囲が宣言されていなければ窓のつまみが出ない (外からは書ける) が、真偽と色はこの鍵によらず出て、文字でつまみの有無を決めるのは choices である。"
+            "description": "The lower end of the range it can move in. If absent, no range was declared. **Whether a knob appears is decided by the type** — numbers and tuples (float, int, vec2, vec3) get no knob in the window without a declared range, though they can still be written from outside, while booleans and colours appear regardless of this key, and for strings it is choices that decides."
           },
           "max": {
             "type": "number",
-            "description": "動ける幅の上端。"
+            "description": "The upper end of the range it can move in."
           },
           "choices": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "許した候補。合法値が面に出ているので、書き手は総当たりをしない。"
+            "description": "The choices that are allowed. The legal values are on the surface, so a writer never has to try them all."
           }
         }
       }
     },
     "rejected": {
       "type": "array",
-      "description": "入らなかった書き込みと、その理由。何も断らなかったときは空配列。",
+      "description": "The writes that did not go in, and why. An empty array when nothing was refused.",
       "items": {
         "type": "object",
         "required": [
@@ -96,14 +96,14 @@
               "typeMismatch",
               "notInChoices"
             ],
-            "description": "unknownName = 宣言されていない名前 (綴りを確かめる) / typeMismatch = 宣言と型が違う / notInChoices = 許した候補の外。"
+            "description": "unknownName = a name that was never declared (check the spelling) / typeMismatch = a type other than the declared one / notInChoices = outside the choices that are allowed."
           }
         }
       }
     },
     "clamped": {
       "type": "array",
-      "description": "範囲へ収めて入れた書き込み。**収めたことは黙らない** — 書いた値と読める値が食い違う理由が分かるようにするため。収めていなければ空配列。",
+      "description": "The writes that went in after being brought into range. **Bringing them in is never done in silence**, so that the gap between what was written and what reads back has a reason. An empty array when nothing was brought in.",
       "items": {
         "type": "object",
         "required": [
@@ -118,18 +118,18 @@
           },
           "requested": {
             "type": "number",
-            "description": "書き手が求めた値。"
+            "description": "The value the writer asked for."
           },
           "value": {
             "type": "number",
-            "description": "実際に入った値。"
+            "description": "The value that actually went in."
           }
         }
       }
     },
     "discarded": {
       "type": "array",
-      "description": "保存されていた値のうち、宣言と合わなくて捨てたもの。**起動したときだけ入りうる** — 宣言を変えた (名前を変えた・型を変えた・候補を減らした) と、保存された値は採れなくなる。捨てたことを黙ると「なぜか既定値に戻る」としか見えない。捨てていなければ空配列。",
+      "description": "Saved values that were thrown away for not matching the declarations. **This can only fill at launch** — change a declaration by renaming it, changing its type, or narrowing its choices, and the saved value can no longer be taken. Throwing them away in silence would look like nothing but values mysteriously returning to their defaults. An empty array when nothing was thrown away.",
       "items": {
         "type": "object",
         "required": [
@@ -148,7 +148,7 @@
               "typeMismatch",
               "notInChoices"
             ],
-            "description": "unknownName = 宣言されていない名前 (綴りを確かめる) / typeMismatch = 宣言と型が違う / notInChoices = 許した候補の外。"
+            "description": "unknownName = a name that was never declared (check the spelling) / typeMismatch = a type other than the declared one / notInChoices = outside the choices that are allowed."
           }
         }
       }

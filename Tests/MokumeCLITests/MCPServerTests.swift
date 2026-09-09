@@ -424,7 +424,7 @@ struct MCPServerTests {
 
         #expect(!outcome.isError)
         #expect(fetches.urls.isEmpty)
-        #expect(outcome.text.contains("出所: 取り置き"))
+        #expect(outcome.text.contains("Source: cached"))
         #expect(outcome.text.contains("# 取り置かれた一覧"))
     }
 
@@ -437,7 +437,7 @@ struct MCPServerTests {
 
         let first = tools.call("reference", arguments: ["name": "api"])
         #expect(!first.isError)
-        #expect(first.text.contains("出所: 取ってきて取り置いた"))
+        #expect(first.text.contains("Source: fetched and cached"))
         #expect(
             fetches.urls.map(\.absoluteString) == [
                 "https://github.com/mokume-metal/mokume/releases/download/v0.2.0/mokume-api-v0.2.0.md"
@@ -449,7 +449,7 @@ struct MCPServerTests {
                 ).path))
 
         let second = tools.call("reference", arguments: ["name": "api"])
-        #expect(second.text.contains("出所: 取り置き"))
+        #expect(second.text.contains("Source: cached"))
         #expect(fetches.urls.count == 1)
     }
 
@@ -500,7 +500,7 @@ struct MCPServerTests {
         let outcome = makeTools(directory: directory, fetches: fetches)
             .call("reference", arguments: ["name": "api"])
         #expect(outcome.isError)
-        #expect(outcome.text.contains("応答が 404 でした"))
+        #expect(outcome.text.contains("the response was 404"))
         #expect(outcome.text.contains("make api-list"))
         // 取れなかったものを取り置かない
         #expect(

@@ -51,7 +51,7 @@ struct MCPServer {
             return JSONRPC.response(id: call.id, result: ["tools": Tools.definitions])
         case "tools/call":
             guard let name = call.params["name"] as? String else {
-                return JSONRPC.failure(id: call.id, code: -32602, message: "name が要ります")
+                return JSONRPC.failure(id: call.id, code: -32602, message: "name is required")
             }
             let arguments = call.params["arguments"] as? [String: Any] ?? [:]
             let outcome = tools.call(name, arguments: arguments)
@@ -65,7 +65,7 @@ struct MCPServer {
             // 通知 (答えを待たないもの) には黙って従う
             guard call.expectsResponse else { return nil }
             return JSONRPC.failure(
-                id: call.id, code: -32601, message: "知らない手続きです: \(call.method)")
+                id: call.id, code: -32601, message: "no such method: \(call.method)")
         }
     }
 }
