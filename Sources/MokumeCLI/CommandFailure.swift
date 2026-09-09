@@ -60,104 +60,109 @@ enum CommandFailure: Error, Equatable {
         case .usage(let text):
             text
         case .nameMissing:
-            "作るスケッチの名前が要る: \(Command.name) new <名前>"
+            "The sketch needs a name: \(Command.name) new <name>"
         case .invalidName(let name):
             """
-            スケッチの名前に使えない文字がある: \(name)
-            英数字とハイフン・下線で始まる名前にする (先頭は英字)
+            That name has characters a sketch cannot use: \(name)
+            Use letters, digits, hyphens and underscores, and start with a letter
             """
         case .directoryExists(let path):
-            "すでにある: \(path)\n別の名前にするか、先に消す"
+            "Already there: \(path)\nPick another name, or remove that one first"
         case .cannotCreate(let path, let reason):
-            "作れなかった: \(path)\n\(reason)"
+            "Could not create: \(path)\n\(reason)"
         case .templatesMissing:
             """
-            ひな形が見つからない。
-            道具は実行ファイルと mokume_MokumeCLI.bundle の 2 つで 1 組で、ひな形は
-            後者に入っている — 入れるときに片方だけ置いていないか確かめる
+            Cannot find the templates.
+            The tool is two pieces that belong together — the executable and
+            mokume_MokumeCLI.bundle — and the templates live in the second one.
+            Check that the install put both in place, not just one
             """
         case .templateUnreadable(let name):
-            "ひな形を読めない: \(name)"
+            "Cannot read the template: \(name)"
         case .packageNotFound(let path):
             """
-            スケッチが見つからない: \(path)
-            Package.swift のあるディレクトリを指す (\(Command.name) new <名前> で作れる)
+            Cannot find a sketch here: \(path)
+            Point at a directory that has Package.swift (\(Command.name) new <name> makes one)
             """
         case .resourcesNotDeclared(let directory):
             """
-            \(directory) に資材があるが、Package.swift が宣言していない。
-            このまま走らせるとビルドは通り、実行時に読めないだけになる (絵が出ないのに
-            描画側を疑うことになる)。target に 1 行足す:
+            \(directory) holds assets, but Package.swift does not declare them.
+            Running as is will build fine and only fail to read them once the sketch is
+            drawing (nothing appears, and the drawing code takes the blame). Add one line
+            to the target:
 
               resources: [.copy("\(ResourceDeclaration.directoryName)")],
 
-            資材として運ばない置き場なら、名前を変える。
+            If that directory is not meant to ship as assets, rename it.
             """
         case .identityMissing(let path):
             """
-            束ねるには名乗りが要る。無い: \(path)
+            Bundling needs an identity. There is none at: \(path)
 
             \(AppIdentity.example)
 
-            ひな形には入っていない。書かなくても走るが、書かないまま配ると事故になる
-            もので、とくに識別子は権限の許可がぶら下がる鍵である — 仮の値のまま配ると、
-            許可の状態が別の作品と混ざる。作品ごとに違う値を書く。
+            The templates do not ship one. A sketch runs without it, but shipping without
+            it causes trouble later: the identifier is the key that granted permissions
+            hang from, so leaving a placeholder in place mixes one work's permissions with
+            another's. Give every work its own values.
             """
         case .identityUnreadable(let path):
             """
-            名乗りを読めない: \(path)
-            JSON の形になっているか確かめる:
+            Cannot read the identity: \(path)
+            Check that it is well-formed JSON:
 
             \(AppIdentity.example)
             """
         case .identityIncomplete(let path, let missing):
             """
-            名乗りに足りないものがある: \(path)
-            書かれていない (または空): \(missing.joined(separator: " / "))
+            The identity is missing something: \(path)
+            Absent or empty: \(missing.joined(separator: " / "))
 
             \(AppIdentity.example)
             """
         case .bundledResourceMissing(let name, let path):
             """
-            宣言された資材の包みが、組み上がりに入っていない: \(name)
-            入れる場所: \(path)
+            A declared asset bundle did not make it into the build: \(name)
+            Where it belongs: \(path)
 
-            このまま配ると、受け取った側では絵が出ないだけで、原因を指すものが何も
-            残らない。組み上げ直して、それでも入らないなら Package.swift の宣言と
-            出来上がったものの名前が合っているかを見る。
+            Ship this and the other side gets no drawing and nothing that points at why.
+            Build again; if it still does not appear, check that the declaration in
+            Package.swift and the name of what was built agree.
             """
         case .facetUnwritable(let path, let reason):
             """
-            要求を置けなかった: \(path)
+            Could not place the request: \(path)
             \(reason)
 
-            置き場に書ける権限があるか、ディスクに空きがあるかを確かめる。
-            置き場は MOKUME_WORK_DIR で移せる (走らせる側と窓口の両方に同じ値を渡すこと)
+            Check that the directory can be written to and that the disk has room.
+            MOKUME_WORK_DIR moves it (pass the same value to the runner and to the
+            interface, or the two look in different places)
             """
         case .codesignFailed(let status):
             """
-            署名に失敗した (終了コード \(status))。上の出力を見る
-            署名が無いと、別の機械では起動そのものが拒まれる
+            Signing failed (exit code \(status)). Read the output above
+            Without a signature, another machine refuses to open it at all
             """
         case .buildFailed(let status):
-            "作り直しに失敗した (終了コード \(status))。上の出力を見る"
+            "The build failed (exit code \(status)). Read the output above"
         case .sketchExited(let status):
             """
-            スケッチが終了コード \(status) で終わった。
-            道具が足した失敗ではない — 理由はスケッチ自身の出力にある
+            The sketch exited with code \(status).
+            This is not a failure the tool added — the reason is in the sketch's own output
             """
         case .noExecutable(let path):
             """
-            走らせるものが見つからない: \(path)
-            Package.swift の products に実行ファイルが宣言されているか確かめる
+            Cannot find anything to run: \(path)
+            Check that Package.swift declares an executable in products
             """
         case .productNotBuilt(let product, let path):
             """
-            作り直しは通ったのに、\(product) が建っていない: \(path)
-            置き場に残っている古い計画が原因のことがある — その置き場を消してやり直す
+            The build succeeded, but \(product) was never built: \(path)
+            A stale plan left in the build directory can do this — remove that directory
+            and try again
             """
         case .toolchainMissing(let tool):
-            "\(tool) が見つからない。Xcode のコマンドラインツールを入れる"
+            "Cannot find \(tool). Install the Xcode command line tools"
         }
     }
 }

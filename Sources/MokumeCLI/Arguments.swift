@@ -78,7 +78,7 @@ enum Arguments {
                 // **知らない選択肢を黙って位置引数にしない。** `-c` が場所として解釈された
                 // 結果が「スケッチが見つからない: …/-c」で、何を直せばよいか分からない (#680)
                 switch surplus {
-                case .reject: throw .usage("知らない選択肢: \(argument)\n\n" + Command.usage())
+                case .reject: throw .usage("Unknown option: \(argument)\n\n" + Command.usage())
                 case .ignore: parsed.ignored.append(argument)
                 }
             } else if parsed.positional == nil {

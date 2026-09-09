@@ -36,7 +36,7 @@ struct ArgumentsTests {
     func onlyDeclaredFlagsTakeAValue() throws {
         let parsed = try Arguments.parse(
             ["--path", "/tmp", "--other", "x"],
-            options: [Arguments.Option(["--path"]) { "\($0) のあとに場所が要る" }],
+            options: [Arguments.Option(["--path"]) { "\($0) needs a directory after it" }],
             surplus: .ignore)
         // `--other` は宣言に無いので値を食わない。`x` は位置引数として残る
         #expect(parsed.values == ["--path": "/tmp"])
@@ -61,14 +61,14 @@ struct ArgumentsTests {
     /// しても、直す手がかりにならない。
     @Test("値が欠けたときは、打たれた綴りで言う")
     func namesTheSpellingAsTyped() {
-        let option = Arguments.Option(["-c", "--configuration"]) { "\($0) のあとに構成が要る" }
+        let option = Arguments.Option(["-c", "--configuration"]) { "\($0) needs a configuration" }
         #expect(
             usageMessage { _ = try Arguments.parse(["-c"], options: [option], surplus: .ignore) }
-                == "-c のあとに構成が要る")
+                == "-c needs a configuration")
         #expect(
             usageMessage {
                 _ = try Arguments.parse(["--configuration"], options: [option], surplus: .ignore)
-            } == "--configuration のあとに構成が要る")
+            } == "--configuration needs a configuration")
     }
 
     /// **余りの扱いは宣言の 1 値である。** `doctor` の特例が 4 本目の別実装として
@@ -84,8 +84,8 @@ struct ArgumentsTests {
     func rejectingSurplusStopsAtTheSecondPositional() {
         #expect(
             usageMessage {
-                _ = try Arguments.parse(["a", "b"], surplus: .reject { "場所は 1 つだけ: \($0)" })
-            } == "場所は 1 つだけ: b")
+                _ = try Arguments.parse(["a", "b"], surplus: .reject { "Only one directory: \($0)" })
+            } == "Only one directory: b")
     }
 
     // ------------------------------------------------ 口ごとの文面 (畳む前と同じか)
@@ -93,7 +93,7 @@ struct ArgumentsTests {
     /// **知らない選択肢の文面だけは、どの口でも同じ。** 畳んだ先が持つ唯一の文である。
     @Test("知らない選択肢は、3 つの口で同じ言い方と使い方を出す")
     func unknownOptionsReadTheSameEverywhere() {
-        let expected = "知らない選択肢: --fast\n\n" + Command.usage()
+        let expected = "Unknown option: --fast\n\n" + Command.usage()
         #expect(usageMessage { _ = try Invocation.parse(["--fast"]) } == expected)
         #expect(usageMessage { _ = try NewCommand.parse(["--fast"]) } == expected)
         #expect(usageMessage { _ = try BundleCommand.parse(["--fast"]) } == expected)
@@ -103,21 +103,21 @@ struct ArgumentsTests {
     func theRunningVerbsKeepTheirWording() {
         #expect(
             usageMessage { _ = try Invocation.parse(["-c"]) }
-                == "-c のあとに構成の名前が要る (debug / release)")
+                == "-c needs a configuration after it (debug / release)")
         #expect(
             usageMessage { _ = try Invocation.parse(["--configuration"]) }
-                == "--configuration のあとに構成の名前が要る (debug / release)")
-        #expect(usageMessage { _ = try Invocation.parse(["a", "b"]) } == "場所は 1 つだけ: b")
+                == "--configuration needs a configuration after it (debug / release)")
+        #expect(usageMessage { _ = try Invocation.parse(["a", "b"]) } == "Only one directory: b")
     }
 
     @Test("作る口の文面")
     func theNewVerbKeepsItsWording() {
         #expect(
-            usageMessage { _ = try NewCommand.parse(["--path"]) } == "--path のあとに場所が要る")
+            usageMessage { _ = try NewCommand.parse(["--path"]) } == "--path needs a directory after it")
         #expect(
             usageMessage { _ = try NewCommand.parse(["--local"]) }
-                == "--local のあとにライブラリの場所が要る")
-        #expect(usageMessage { _ = try NewCommand.parse(["a", "b"]) } == "名前は 1 つだけ: b")
+                == "--local needs the library's path after it")
+        #expect(usageMessage { _ = try NewCommand.parse(["a", "b"]) } == "Only one name: b")
     }
 
     /// **`--out` だけが使い方を連れてくる。** 揃っていないのは畳む前からで、揃えるのは
