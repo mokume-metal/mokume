@@ -282,7 +282,22 @@ struct BuildDirectoryTests {
             configuration: "release",
             place: .outside(URL(fileURLWithPath: "/store", isDirectory: true), given: false),
             product: "hello")
-        #expect(context.arguments == ["-c", "release", "--scratch-path", "/store"])
+        #expect(
+            context.arguments == ["-c", "release", "--scratch-path", "/store"]
+                + BuildContext.indexStoreArguments)
+    }
+
+    /// **編集器のための索引は、どの経路でも建てさせない。** 誰も読まないものに
+    /// 部屋ごと 32MB と、冷えた部屋の 1 秒を払っていた
+    /// ([#1070](https://github.com/mokume-metal/mokume/issues/1070))。
+    ///
+    /// 構成も置き場も渡さない — **他に何も言うことが無くても、この綴りだけは残る**
+    /// ことを見る。
+    @Test("作るときの引数は、構成も置き場も無くても索引を切る")
+    func theArgumentsAlwaysDisableTheIndexStore() {
+        let context = BuildContext(
+            configuration: nil, place: .inPackage(.localDependency), product: "hello")
+        #expect(context.arguments == ["--disable-index-store"])
     }
 
     // MARK: - 名乗り
