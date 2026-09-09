@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import Foundation
 import Testing
 
 @testable import MokumeCore
@@ -83,5 +84,48 @@ struct SketchApplicationTests {
                 InputEvent.keyDown(code: Key(rawValue: 0), characters: "a", isRepeat: false)
                     .wireLine
             ])
+    }
+
+    // MARK: - 最後の窓が閉じたときに終わるか (#1102)
+
+    /// 区画を 1 つ作って渡す。後片付けまで面倒を見る。
+    private func withFacet<T>(_ body: (URL) throws -> T) throws -> T {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        return try body(directory)
+    }
+
+    /// **窓を 1 枚も開かずに見る。** `didFinishLaunching()` を呼ばないので、この 2 本は
+    /// AppKit の窓を建てない — 見たいのは判定であって、窓の建ち方ではない。
+    ///
+    /// 名乗り (``SketchPresence``) を実際に出して確かめる形は採れない。出せば走らせるたびに
+    /// メニューバーへ物が増える (#473 の理由で、名乗り自体は検査から出さない)。
+    @Test("窓を道具が持つ経路では、最後の窓が閉じてもスケッチは終わらない")
+    func theSketchOutlivesTheLastWindowWhenTheToolOwnsIt() throws {
+        try withFacet { facet in
+            let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+            defer { application.willTerminate() }
+            application.resolveOutlet(at: facet)
+
+            let delegate = SketchApplicationDelegate(application: application)
+            #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(.shared))
+        }
+    }
+
+    /// **窓の経路は動かさない。** 作品の窓の × が作品を終えることは ADR-0032 の追補
+    /// (#826) が決めており、#1102 が触ってよいのは窓を持たない側だけである。
+    @Test("自分の窓を持つ経路では、最後の窓が閉じたらスケッチも終わる")
+    func theSketchEndsWithItsOwnLastWindow() throws {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        defer { application.willTerminate() }
+        // 区画が無いので、出口は窓のまま
+        application.resolveOutlet(at: missing)
+
+        let delegate = SketchApplicationDelegate(application: application)
+        #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(.shared))
     }
 }

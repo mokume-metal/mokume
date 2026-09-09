@@ -92,6 +92,29 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         if case .window(let window, _, _) = outlet { window } else { nil }
     }
 
+    /// 最後の窓が閉じたら、スケッチも終わってよいか。
+    ///
+    /// **窓を持たない経路では終わらない** ([ADR-0032] 決定 1)。窓が画面の出口である経路では
+    /// 「最後の窓が閉じた」は作品が終わったことと同じだが、出口が外のプロセスに在る経路では
+    /// 何も意味しない — そこで数えられる窓は作品のものではないからである。
+    ///
+    /// 実際に数えられていたのは**メニューバーの名乗り** (``SketchPresence``) が開くメニュー
+    /// だった。窓を 1 枚も持たないスケッチでは、それが開いて閉じた瞬間が「最後の窓が閉じた」
+    /// になり、名乗りを覗いただけでスケッチが終わっていた
+    /// ([#1102](https://github.com/mokume-metal/mokume/issues/1102))。窓は道具のものなので
+    /// 画面には残り、止まった絵のまま動かない。
+    ///
+    /// **終わらせる経路が無くなるわけではない。** 窓を持たない子を止めるのは道具で、
+    /// 窓の × も端末の `Ctrl-C` も同じ後始末 (`WatchSession.stop()`) を通る。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    var endsAfterLastWindowClosed: Bool {
+        switch outlet {
+        case .shared: false
+        case .pendingWindow, .window: true
+        }
+    }
+
     /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。
     private let screenLink: ScreenDisplayLink
 
@@ -180,7 +203,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **画面の出口を先に決める。** 活動の方針は `app.run()` より前にしか据えられない
         // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
         // 並ばない (`.accessory`) — 並ぶと、道具が出す窓と作品が 2 つ並んで見える
-        if let shared = attachSharedSurface() { outlet = .shared(shared) }
+        resolveOutlet()
         switch outlet {
         case .shared: app.setActivationPolicy(.accessory)
         // 窓はまだ建っていないが、建てると決まっている
@@ -240,14 +263,31 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
     }
 
+    /// 画面の出口を決める。``run()`` が `NSApplication.run()` より前に 1 度だけ呼ぶ。
+    ///
+    /// **切り出してあるのは、検査が窓を持たない経路を作れるようにするため。** 出口が
+    /// 決まるのが `run()` の中だけだと、そこは戻らない呼び出し (`app.run()`) を含むので
+    /// 検査から通せず、**窓 0 枚の経路の振る舞いを 1 つも見られない**
+    /// ([#1102](https://github.com/mokume-metal/mokume/issues/1102) がそこで見過ごされた)。
+    ///
+    /// 区画の在処を受けるのは同じ理由で、既定は本番の場所である
+    /// (`WorkDirectory.resolve(environment:)` などと同じ、既定引数で口を開ける形)。
+    ///
+    /// **活動の方針 (`setActivationPolicy`) はここに置かない。** 呼んだプロセス全体に
+    /// 効くので、検査から呼べる場所に混ぜると検査の走るプロセスの方針まで動く。
+    func resolveOutlet(at directory: URL = WorkDirectory.facet(StartupReads.viewport.key)) {
+        if let shared = attachSharedSurface(at: directory) { outlet = .shared(shared) }
+    }
+
     /// 画面の出口が外のプロセスに在れば、そこへ差し出す用意をする。
     ///
     /// **区画が在るのに用意できなかったときは、窓を開く側へ倒す** — 面も窓も無い実行は、
     /// 外から見て「動いていない」としか見えない。倒したことは黙らずに言う。
-    private func attachSharedSurface() -> SharedFrameSurface? {
+    private func attachSharedSurface(at directory: URL) -> SharedFrameSurface? {
         guard
             let shared = SharedFrameSurface.makeIfEnabled(
-                gpu: gpu, width: runtime.target.width, height: runtime.target.height)
+                gpu: gpu, width: runtime.target.width, height: runtime.target.height,
+                at: directory)
         else { return nil }
         do {
             try shared.publishManifest()
@@ -458,7 +498,7 @@ final class SketchApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        application.endsAfterLastWindowClosed
     }
 
     func applicationWillTerminate(_ notification: Notification) {
