@@ -78,13 +78,13 @@ final class Tunables: Sketch {
     @Param(name: "radius") var thickness: Double = 2
 }'
 
-check "型を書き忘れた宣言は、どう書くかを名指しして止まる" fail "@Param を付ける値には型を書く" 'import mokume
+check "型を書き忘れた宣言は、どう書くかを名指しして止まる" fail "write the type on a value you put @Param on" 'import mokume
 
 final class Tunables: Sketch {
     @Param(0...200) var radius = 80.0
 }'
 
-check "let に付けると、var に直すよう名指しして止まる" fail "@Param は var に付ける" 'import mokume
+check "let に付けると、var に直すよう名指しして止まる" fail "@Param goes on a var" 'import mokume
 
 final class Tunables: Sketch {
     @Param(0...200) let radius: Double = 80
