@@ -44,10 +44,10 @@ enum NewCommand {
         let parsed = try Arguments.parse(
             arguments,
             options: [
-                Arguments.Option(["--path"]) { "\($0) のあとに場所が要る" },
-                Arguments.Option(["--local"]) { "\($0) のあとにライブラリの場所が要る" },
+                Arguments.Option(["--path"]) { "\($0) needs a directory after it" },
+                Arguments.Option(["--local"]) { "\($0) needs the library's path after it" },
             ],
-            surplus: .reject { "名前は 1 つだけ: \($0)" })
+            surplus: .reject { "Only one name: \($0)" })
         guard let name = parsed.positional else { throw .nameMissing }
         guard isValid(name: name) else { throw .invalidName(name) }
         return Options(

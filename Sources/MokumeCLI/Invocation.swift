@@ -88,13 +88,13 @@ struct Invocation: Equatable {
             arguments,
             options: [
                 Arguments.Option(configurationFlags) {
-                    "\($0) のあとに構成の名前が要る (debug / release)"
+                    "\($0) needs a configuration after it (debug / release)"
                 },
                 Arguments.Option(scratchPathFlags) {
-                    "\($0) のあとにビルドの置き場が要る"
+                    "\($0) needs a build directory after it"
                 },
             ],
-            surplus: .reject { "場所は 1 つだけ: \($0)" })
+            surplus: .reject { "Only one directory: \($0)" })
         return Invocation(
             place: parsed.positional, configuration: parsed.values[configurationFlags[0]],
             scratchPath: parsed.values[scratchPathFlags[0]])
