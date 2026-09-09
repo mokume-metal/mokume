@@ -278,6 +278,14 @@ enum WatchCommand {
         stopped: () -> Bool = { watchStopRequested != 0 }
     ) -> Bool {
         if stopped() { return false }
+        // **作り直しの契機より先に見る。** 保存と同時に消えた回では、後に置くと新しい子が
+        // 起きて印が下り、消えたことを見逃す。名乗った行は作り直しが始まれば
+        // `willRebuild` が上書きする (#1103)
+        if let departure = session.departed() {
+            let line = departedLine(departure)
+            say(line)
+            viewer?.preview.report(line, spinning: false)
+        }
         if let outcome = session.tick() {
             report(outcome, on: viewer)
             // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
@@ -385,6 +393,25 @@ enum WatchCommand {
     /// 掛かったことは保存のたびにも起こりうる
     /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。
     static let killedLine = "止まらないスケッチを強制終了した (SIGTERM に応えない)"
+
+    /// 走らせていたスケッチが、誰も頼んでいないのに消えたことを名乗る行。
+    ///
+    /// **道具が止めた終わり方とは別の言葉にする。** ここに来るのは道具が何もしていない回で、
+    /// 起きたことはスケッチの側にしかない — 混ぜると、押した人は「道具が止めたのか」を
+    /// 読み取れない ([#1103](https://github.com/mokume-metal/mokume/issues/1103))。
+    ///
+    /// **終わり方と数字を載せる。** 落ちたのなら端末を遡る先があり、自分から終わったのなら
+    /// スケッチの側にそう書いてある — 読む人が次にすることが変わる。
+    ///
+    /// **次の一手まで言う。** 起こし直しはしないと決めてあるので (#1103)、黙って名乗るだけ
+    /// では「もう戻らない」と読める。絵は保存すれば戻る。
+    static func departedLine(_ departure: WatchSession.Departure) -> String {
+        let how =
+            departure.wasSignalled
+            ? "落ちた (signal \(departure.status))"
+            : "自分から終わった (終了コード \(departure.status))"
+        return "走らせていたスケッチが\(how) — 絵は止まったまま。保存すると作り直して起こし直す"
+    }
 
     /// 強制終了しても消えなかったことを名乗る行。
     ///

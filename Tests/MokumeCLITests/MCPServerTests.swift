@@ -589,7 +589,7 @@ struct FacetExchangeFailureTests {
             return
         }
         // **生の Error を素通しさせない。** 打つ手が書かれていることを見る
-        #expect(failure.message.contains("権限"))
+        #expect(failure.message.contains("written to"))
         #expect(!failure.message.hasPrefix("Error Domain="))
     }
 
@@ -600,8 +600,8 @@ struct FacetExchangeFailureTests {
         #expect(outcome.isError)
         // **打つ手が出ている。** 生の Error は原因として添えるだけで、答えの本体では
         // ない — 素通しだったころは、届くのがそれ 1 行だけだった
-        #expect(outcome.text.contains("権限"))
+        #expect(outcome.text.contains("written to"))
         #expect(outcome.text.contains("MOKUME_WORK_DIR"))
-        #expect(outcome.text.hasPrefix("要求を置けなかった: "))
+        #expect(outcome.text.hasPrefix("Could not place the request: "))
     }
 }

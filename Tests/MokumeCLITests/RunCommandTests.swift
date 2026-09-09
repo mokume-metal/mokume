@@ -55,6 +55,6 @@ struct RunCommandTests {
     func theMessageSaysWhoseFailureItIs() {
         let message = CommandFailure.sketchExited(status: 3).message
         #expect(message.contains("3"))
-        #expect(message.contains("道具"))
+        #expect(message.contains("the tool"))
     }
 }

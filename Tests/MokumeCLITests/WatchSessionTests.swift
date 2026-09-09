@@ -324,6 +324,17 @@ struct WatchSessionTests {
     ///   - ready: 仕掛け終わったことを子が名乗る先。
     @MainActor
     private func hooks(ignoringTermination ignores: Bool, ready: Ready) -> WatchSession.Hooks {
+        // **眠らせずに、来ない入力を待たせる。** 眠らせると、強制終了した後に
+        // 眠りだけが残る (親を失った `sleep` は生き続ける)
+        hooks(running: (ignores ? "trap '' TERM; " : "") + "echo ready; read line", ready: ready)
+    }
+
+    /// 実際に子を起こす外側。**走らせる中身を渡す。**
+    ///
+    /// 名乗り (`echo ready`) より後を差し替えれば、止め方だけでなく**終わり方**も作れる —
+    /// 応えない子・自分から終わる子・落ちる子は、どれもここから 1 行で組める。
+    @MainActor
+    private func hooks(running script: String, ready: Ready) -> WatchSession.Hooks {
         WatchSession.Hooks(
             rebuild: { directory in
                 RunCommand.Rebuilt(
@@ -333,11 +344,7 @@ struct WatchSessionTests {
             launch: { executable, _, _, _ in
                 let process = Process()
                 process.executableURL = executable
-                // **眠らせずに、来ない入力を待たせる。** 眠らせると、強制終了した後に
-                // 眠りだけが残る (親を失った `sleep` は生き続ける)
-                process.arguments = [
-                    "-c", (ignores ? "trap '' TERM; " : "") + "echo ready; read line",
-                ]
+                process.arguments = ["-c", script]
                 let pipe = Pipe()
                 process.standardInput = Pipe()
                 process.standardOutput = pipe
@@ -403,6 +410,108 @@ struct WatchSessionTests {
         #expect(session.child !== first, "差し替わっていない")
     }
 
+    // MARK: - 誰も頼んでいない消え方 (#1103)
+
+    /// 子が消えるのを待つ。
+    ///
+    /// **待つ側が期限を持つ。** 検査そのものに上限を書く形 (`.timeLimit`) は採らない —
+    /// あれは検査の走り出しからの時計で測るので、無関係な検査が増えた日にここが赤くなる
+    /// ([#564](https://github.com/mokume-metal/mokume/issues/564))。
+    private func waitUntilGone(_ process: Process, timeout: TimeInterval = 2) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.005) }
+    }
+
+    @Test("自分から終わった子は、1 度だけ名乗られる")
+    func namesTheChildThatEndedOnItsOwn() throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; exit 7", ready: ready))
+        session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        #expect(session.departed() == WatchSession.Departure(status: 7, wasSignalled: false))
+        // **同じ消え方を二度言わない。** 巡回は 0.25 秒ごとに回るので、印が無ければ
+        // 毎秒 4 回出し続ける
+        #expect(session.departed() == nil)
+    }
+
+    /// **黙るのはその 1 人についてだけである。** 印を下ろさないと、最初の消失を名乗った
+    /// 後は何度作り直しても二度と名乗らない — 見張りは付けっぱなしで使うものなので、
+    /// 実質「最初の 1 回しか効かない」ことになる。
+    @Test("作り直して起きた子が消えたら、もう一度名乗られる")
+    func namesEachDepartureOnce() throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; exit 7", ready: ready))
+        session.start()
+        let first = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(first)
+        #expect(session.departed() != nil)
+
+        // 世代が変わるので、作り直して起こし直す
+        session.tick()
+        let second = try #require(session.child)
+        #expect(second !== first)
+        ready.waitForLast()
+        waitUntilGone(second)
+        #expect(session.departed() != nil, "2 人目の消失が名乗られない")
+    }
+
+    /// **落ちたことは、自分から終わったことと別に読めなければならない。** 落ちたのなら
+    /// 端末を遡る先があり、自分から終わったのならスケッチの側にそう書いてある。
+    @Test("落ちた子は、落ちたと名乗られる")
+    func namesTheChildThatCrashed() throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; kill -SEGV $$", ready: ready))
+        session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        let departure = try #require(session.departed())
+        #expect(departure.wasSignalled)
+        #expect(departure.status == SIGSEGV)
+    }
+
+    /// **道具が止めた回は名乗らない。** 終わるときも保存による差し替えも同じ経路を通るので、
+    /// ここを分けないと「見張りを終える」たびに「勝手に消えた」と言うことになる。
+    @Test("道具が止めた子は、消えたことにしない")
+    func staysSilentWhenTheToolStoppedTheChild() throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(ignoringTermination: false, ready: ready), stopTimeout: 1)
+        session.start()
+        ready.waitForLast()
+
+        #expect(session.stop() == .terminated)
+        #expect(session.departed() == nil)
+    }
+
+    /// **差し替えでも名乗らない。** 保存のたびに古い子は止まるが、それは道具が起こした
+    /// 結果であって、誰も頼んでいない消え方ではない。
+    @Test("差し替えで入れ替わった子も、消えたことにしない")
+    func staysSilentWhenTheChildWasReplaced() throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(ignoringTermination: false, ready: ready), stopTimeout: 1)
+        session.start()
+        ready.waitForLast()
+        defer { session.stop() }
+
+        session.tick()
+        ready.waitForLast()
+        #expect(session.departed() == nil)
+    }
 }
 
 @Suite("ソースの世代")
