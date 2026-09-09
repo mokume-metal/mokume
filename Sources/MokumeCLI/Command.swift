@@ -65,35 +65,38 @@ enum Command {
             switch self {
             case .new:
                 (
-                    "new <名前> [--path <場所>] [--local <ライブラリの場所>]",
-                    "スケッチ一式を作る。--local はこのリポジトリを直に指すとき (開発時)"
+                    "new <name> [--path <directory>] [--local <library path>]",
+                    "Create a sketch package. Pass --local to point at this repository (for development)"
                 )
             case .run:
                 (
-                    "run [<場所>] [-c <構成>] [--scratch-path <置き場>]",
+                    "run [<directory>] [-c <configuration>] [--scratch-path <directory>]",
                     """
-                    スケッチを作って走らせる。場所を省くといまいるところ。
-                    -c は debug / release (省くと道具立ての既定)。
-                    ビルドの置き場は既定で版ごとに共有する — --scratch-path で
-                    従来どおりパッケージ直下にも戻せる (在処は doctor が名乗る)
+                    Build a sketch and run it. Defaults to the current directory.
+                    -c takes debug or release (defaults to whatever the toolchain uses).
+                    Build products are shared per version by default. Pass --scratch-path
+                    to keep them under the package instead (doctor reports where they are)
                     """
                 )
             case .watch:
                 (
-                    "watch [<場所>] [-c <構成>] [--scratch-path <置き場>]",
-                    "保存したら作り直して差し替える"
+                    "watch [<directory>] [-c <configuration>] [--scratch-path <directory>]",
+                    "Rebuild the sketch and swap it in whenever you save"
                 )
             case .mcp:
-                ("mcp [<場所>]", "エージェントの窓口を立てる (標準入出力でやりとりする)")
+                ("mcp [<directory>]", "Serve the agent interface (speaks over stdin and stdout)")
             case .bundle:
                 (
-                    "bundle [<場所>] [--out <置き場>]",
-                    "別の機械で動く形に束ねる (名乗りは \(AppIdentity.fileName) に書く)"
+                    "bundle [<directory>] [--out <directory>]",
+                    "Package the sketch to run on another machine (its identity goes in \(AppIdentity.fileName))"
                 )
             case .doctor:
-                ("doctor [<場所>]", "動かないときに、環境の前提と手元の状態を並べる")
+                (
+                    "doctor [<directory>]",
+                    "List what the environment provides and what is here, for when things do not run"
+                )
             case .help:
-                ("help", "これ")
+                ("help", "This message")
             case .version:
                 nil
             }
@@ -101,14 +104,14 @@ enum Command {
     }
 
     static func usage(_ name: String = name) -> String {
-        var lines = ["使い方: \(name) <コマンド>", ""]
+        var lines = ["Usage: \(name) <command>", ""]
         for verb in Verb.allCases {
             guard let entry = verb.usageEntry else { continue }
             lines.append("  \(entry.signature)")
             lines += entry.description.split(separator: "\n").map { "      \($0)" }
             lines.append("")
         }
-        lines.append("道具: \(ToolVersion.describe())")
+        lines.append("Tool: \(ToolVersion.describe())")
         return lines.joined(separator: "\n")
     }
 
@@ -116,7 +119,7 @@ enum Command {
         guard let first = arguments.first else { throw .usage(usage()) }
         let rest = Array(arguments.dropFirst())
         guard let verb = Verb.named(first) else {
-            throw .usage("知らないコマンド: \(first)\n\n" + usage())
+            throw .usage("Unknown command: \(first)\n\n" + usage())
         }
         switch verb {
         case .new:

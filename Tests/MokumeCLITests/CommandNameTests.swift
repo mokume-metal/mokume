@@ -26,8 +26,8 @@ struct CommandNameTests {
 
     @Test("使い方はその名前で名乗る")
     func theUsageAnnouncesThatName() {
-        #expect(Command.usage("mokume").hasPrefix("使い方: mokume <コマンド>"))
-        #expect(Command.usage("mokume-cli").hasPrefix("使い方: mokume-cli <コマンド>"))
+        #expect(Command.usage("mokume").hasPrefix("Usage: mokume <command>"))
+        #expect(Command.usage("mokume-cli").hasPrefix("Usage: mokume-cli <command>"))
     }
 
     @Test("使い方の案内は、道具の版を名乗る")
