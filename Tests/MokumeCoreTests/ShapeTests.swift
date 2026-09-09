@@ -147,25 +147,71 @@ struct ShapeTests {
     ///
     /// **最適化した実行ファイルでしか測らない。** 検査用の実行ファイルは既定では
     /// 最適化されておらず、そこで測ると再生側の行列計算が関数呼び出しのまま残り、
-    /// 組み立て側との差が実際と逆に出る (実測: 最適化なしで 62ms 対 53ms、
-    /// 最適化ありで逆転)。**速さの主張は最適化した実行ファイルについてのもの**なので、
-    /// 測れない構成では測らずに、測っていないことを出力へ出す。
+    /// 組み立て側との差が実際より小さく出る (実測: 最適化なしで 490ms 対 122ms = 4.0x、
+    /// 最適化ありで 28.6ms 対 1.9ms = 15x)。**速さの主張は最適化した実行ファイルに
+    /// ついてのもの**なので、測れない構成では測らずに、測っていないことを出力へ出す
+    /// (最適化なしでも壁 2 倍は越えるが、debug の数字は性能の根拠にしない)。
+    ///
+    /// ## なぜ曲線と輪郭を持つ形なのか
+    ///
+    /// 測る絵は `changelog.d/retained-shapes.feature.md` が数字を引いている形
+    /// (「曲線と輪郭を持つ形 2000 個」) と、参照シーンの `drawRetainedShapes`
+    /// (`SceneLedgerTests.swift`) が使っている葉に揃えてある。**公開した約束と同じ形で
+    /// 測る**のが選ぶ理由で、倍率が大きく出るからではない。
+    ///
+    /// ## この検査が見ていないもの
+    ///
+    /// **基本図形だけで組んだ形 (置き場所の経路) の速さは見ていない。** `circle()` や
+    /// `rect()` は 1 インスタンス 1 クアッド + 距離関数で描くようになったので
+    /// ([#772](https://github.com/mokume-metal/mokume/issues/772))、組み立て直しでも
+    /// 置き場所を 1 個 append するだけになった — 再生側 (`placeForms`) も同じ append で
+    /// **仕事量が一致し**、倍率は 2.15–2.43x に留まって壁 2 倍がノイズの中に入る
+    /// ([#1086](https://github.com/mokume-metal/mokume/issues/1086) で実測)。
+    /// **これは退行ではなく `circle()` が 60 倍速くなった成果の裏側**で、速さの根拠は
+    /// `placeForms` の実装コメント (「頂点を 1 つも触らないので、円を含む形も、頂点を
+    /// 並べた形と同じ速さで置ける」) が持つ。置き場所の経路が**畳まれている**ことは、
+    /// この suite の「組にした形は、何個入っていても 1 度の描画で出る」が
+    /// `drawCallsInLastFrame` と `Shape/forms` の数で**決定論的に (debug でも)** 見ている。
+    ///
+    /// ## 1 窓目は GPU のフレーム壁を測る
+    ///
+    /// 暖機で飛んでいるフレームがあると、`measure` の最初の窓は環にした置き場の
+    /// 空き待ち ([#754](https://github.com/mokume-metal/mokume/issues/754)) に毎回入り、
+    /// CPU の投入費用ではなく GPU のフレーム所要時間を測る。GPU の仕事は組み立て直しでも
+    /// 再生でも同じ絵なので、**壁に当たった窓では両方が同じ数字になり倍率が 1 へ潰れる**
+    /// (#1086 が報告した 0.446 対 0.450 がこれである)。だから **CPU の費用が壁より
+    /// 十分に高い絵で測る** — 葉 2000 個の組み立て直しは 28ms で、壁 (0.45ms) の 60 倍以上
+    /// ある。基本図形だけの絵では届かない。
     @Test(
         "大量の要素では、毎フレーム組み立てるより速い",
         .enabled(if: !isDebugBuild, "最適化していない実行ファイルでは速さを測らない"))
     func replayingBeatsRebuildingForManyElements() throws {
         let canvas = try makeCanvas(width: 256, height: 256)
-        let count = 4000
+        let count = 2000
 
+        // 曲線 (bezierVertex) と輪郭 (stroke) を持つ葉。参照シーンの drawRetainedShapes と
+        // 同じ組み立てで、頂点を三角形へ開く経路に乗る
         func build(on canvas: Canvas) {
-            canvas.noStroke()
             for index in 0..<count {
-                canvas.fill(.linear(red: 1, green: 0, blue: 0))
-                canvas.circle(Float(index % 250) + 3, Float(index / 250) + 3, 5)
+                canvas.fill(.linear(red: 0.4, green: 0.85, blue: 0.45))
+                canvas.stroke(.linear(red: 0.12, green: 0.35, blue: 0.2))
+                canvas.strokeWeight(2)
+                let x = Float(index % 50) * 4 + 20
+                let y = Float(index / 50) * 5 + 20
+                canvas.beginShape()
+                canvas.vertex(x, y - 14)
+                canvas.bezierVertex(x + 10, y - 9, x + 10, y + 9, x, y + 14)
+                canvas.bezierVertex(x - 10, y + 9, x - 10, y - 9, x, y - 14)
+                canvas.endShape(.close)
             }
         }
 
         let retained = canvas.createShape { build(on: canvas) }
+
+        // **測る前に、頂点の経路に乗っていることを数で確かめる。** 絵を基本図形だけの
+        // ものに替えると置き場所の経路へ移り、測っているものが変わったことに気付かないまま
+        // 倍率だけが通る (上の「この検査が見ていないもの」)
+        #expect(retained.vertexCount > 0)
 
         // 温める。1 回目には確保のぶんが混ざる
         for _ in 0..<3 {
