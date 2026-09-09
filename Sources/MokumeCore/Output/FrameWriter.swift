@@ -67,7 +67,7 @@ final class FrameWriter {
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try PNGFile.write(image, to: url)
             } catch {
-                lastFailure.set("\(path) を書けませんでした: \(error)")
+                lastFailure.set("Could not write \(path): \(error)")
             }
             release()
         }
@@ -86,8 +86,8 @@ final class FrameWriter {
     func drain() {
         guard let stranded = pressure.drain() else { return }
         Diagnostics.warn(
-            "絵の書き込みが \(Int(pressure.stallLimitSeconds)) 秒進みませんでした "
-                + "(\(stranded) 枚が残っています) — 待つのをやめます。書き込みは続いています")
+            "Writing images has not moved for \(Int(pressure.stallLimitSeconds)) seconds "
+                + "(\(stranded) are still waiting) — no longer waiting for it. Writing is still going")
     }
 
     /// 直近の書き損じを取り出す。**取り出したら消える。**

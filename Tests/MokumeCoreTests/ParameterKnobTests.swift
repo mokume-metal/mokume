@@ -64,8 +64,8 @@ struct KnobKindTests {
     /// が窓からは区別できない。理由は次に何を書けばよいかまで言う。
     @Test("つまみを出さない理由は、次に何を書けばよいかまで言う")
     func reasonsSayWhatToWrite() {
-        #expect(KnobKind.Reason.rangeNotDeclared.note.contains("範囲"))
-        #expect(KnobKind.Reason.choicesNotDeclared.note.contains("候補"))
+        #expect(KnobKind.Reason.rangeNotDeclared.note.contains("declare a range"))
+        #expect(KnobKind.Reason.choicesNotDeclared.note.contains("declare the choices"))
     }
 }
 

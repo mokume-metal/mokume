@@ -455,7 +455,7 @@ struct ObservationTests {
         #expect(numbers.count == 3)
         #expect(Set(numbers).count == 1)
         let warnings = try readReport(in: facet)["warnings"] as? [String] ?? []
-        #expect(warnings.contains { $0.contains("同じフレーム") })
+        #expect(warnings.contains { $0.contains("The same frame appears more than once") })
     }
 
     @Test("撮っているあいだは、次の要求を拾わない")

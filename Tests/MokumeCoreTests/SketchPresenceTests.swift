@@ -116,7 +116,7 @@ struct SketchPresenceTests {
         #expect(description.title == "夜の海")
         // 実行バイナリ名と PID を添えるのは、**題名だけでは見分けが付かない**ため。
         // 既定の題名は全スケッチ共通で、#454 で並んでいたのは同じ evidence が 4 本だった
-        #expect(description.identity == "evidence · PID 4321 · 経過 1:30:32")
+        #expect(description.identity == "evidence · PID 4321 · up 1:30:32")
         #expect(description.origin == "~/mokume")
     }
 

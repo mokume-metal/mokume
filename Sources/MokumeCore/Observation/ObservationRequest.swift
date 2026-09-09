@@ -55,12 +55,15 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         var warnings: [String] = []
         let count = max(1, min(count, Self.maximumCount))
         if count != self.count {
-            warnings.append("撮る枚数を \(self.count) から \(count) にしました (上限 \(Self.maximumCount) 枚)")
+            warnings.append(
+                "The number of shots went from \(self.count) to \(count) "
+                    + "(the ceiling is \(Self.maximumCount))")
         }
         let every = max(1, min(every, Self.maximumEvery))
         if every != self.every {
             warnings.append(
-                "撮る間隔を \(self.every) から \(every) フレームにしました (上限 \(Self.maximumEvery) フレーム)")
+                "The interval went from \(self.every) to \(every) frames "
+                    + "(the ceiling is \(Self.maximumEvery))")
         }
         return (count, every, warnings)
     }

@@ -76,7 +76,8 @@ final class ParamStore: DeclarationWatcher {
         guard let saved = try? JSONDecoder().decode(Saved.self, from: data) else {
             // 読めない保存は捨てて既定値で立ち上げる。**黙って捨てない** — 「なぜか
             // 既定値に戻る」は理由が出ないと追えない
-            Diagnostics.warn("保存された値を読めませんでした (\(url.path))。既定値で始めます")
+            Diagnostics.warn(
+                "Could not read the saved values (\(url.path)). Starting from the defaults")
             return Restoration()
         }
 
@@ -121,15 +122,15 @@ final class ParamStore: DeclarationWatcher {
         let listed = discarded
             .map { "\($0.name) (\(reason(for: $0.reason)))" }
             .joined(separator: " / ")
-        return "保存されていた値のうち \(discarded.count) 個を捨てました: \(listed)。"
-            + "宣言が変わっているので、これらは既定値のままです"
+        return "Threw away \(discarded.count) of the saved values: \(listed). "
+            + "The declarations have changed, so these stay at their defaults"
     }
 
     private static func reason(for reason: ParamReport.Rejection.Reason) -> String {
         switch reason {
-        case .unknownName: "もう宣言されていない"
-        case .typeMismatch: "宣言と型が違う"
-        case .notInChoices: "許した候補の外"
+        case .unknownName: "no longer declared"
+        case .typeMismatch: "a different type from the declaration"
+        case .notInChoices: "outside the choices that are allowed"
         }
     }
 
@@ -178,7 +179,7 @@ final class ParamStore: DeclarationWatcher {
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
         guard let data = try? encoder.encode(saved) else { return }
         guard (try? AtomicFile.write(data, to: url)) != nil else {
-            Diagnostics.warn("合わせた値を保存できませんでした (\(url.path))")
+            Diagnostics.warn("Could not save the values as they stand (\(url.path))")
             return
         }
         writeCount += 1

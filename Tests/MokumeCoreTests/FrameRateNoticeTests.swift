@@ -54,7 +54,7 @@ struct FrameRateNoticeTests {
     func aStoppedSketchIsNotWrittenAsZero() {
         let line = FrameRateNotice.line(rate: nil, configuration: "debug")
         #expect(!line.contains("0"))
-        #expect(line.contains("測れない"))
+        #expect(line.contains("cannot tell"))
         #expect(line.contains("debug"), "欠測でも構成は要る — 何の土俵の話かは変わらない")
     }
 }
