@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/observe-report.schema.json",
-  "title": "観測の応答",
-  "description": "観測の結果と、撮った絵の目録。画像は別ファイルで、この応答が最後に原子的に書かれる。読み手は「目録 (frames) が在り、id が一致し、数が要求の count と合う」で完成を判定する — **上限で切られたときは切った後の枚数と合う**ので、要求の count とだけ突き合わせると揃った応答を失敗と読む (切ったことは warnings に載る)。採取できなかったときも応答は必ず書かれ、理由が warnings に載る (ADR-0018 決定 3)。",
+  "title": "The observation reply",
+  "description": "The result of an observation and the catalogue of images taken. The images are separate files, and this reply is written atomically, last. A reader judges completeness by the catalogue (frames) being present, the id matching, and the count agreeing — **when the ceiling cut the request, it agrees with the count after cutting**, so checking against the requested count alone reads a complete reply as a failure (the cut appears in warnings). A reply is written even when nothing could be taken, with the reason in warnings (ADR-0018 decision 3).",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -17,26 +17,26 @@
   "properties": {
     "schemaVersion": {
       "const": 1,
-      "description": "この応答の形式の版。上げ方は ADR-0018 決定 5。"
+      "description": "The version of this reply's format. How it is raised is ADR-0018 decision 5."
     },
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "応答した要求の識別子。読み手はこの一致で完了を知る。"
+      "description": "The identifier of the request this answers. A reader knows it is done by this matching."
     },
     "image": {
       "type": "string",
       "minLength": 1,
-      "description": "最後に撮った絵のファイル名 (この応答からの相対)。宣言した枚数が揃わなかったときは省略される — 読み手は「この鍵が無ければ失敗」と判定してよい。名前は frames の各要素が持つので、読み手が名前の形を組み立てる必要は無い。"
+      "description": "The file name of the last image taken, relative to this reply. Omitted when the declared number of shots did not come together, so a reader may treat the absence of this key as failure. Each entry in frames carries its own name, so a reader never has to construct one."
     },
     "frame": {
       "type": "integer",
       "minimum": 0,
-      "description": "この応答を書いたフレームの番号。揃ったときは最後に撮ったフレームと同じ。"
+      "description": "The number of the frame this reply was written on. When everything came together, the same as the last frame taken."
     },
     "time": {
       "type": "number",
-      "description": "この応答を書いたフレームの時刻 (秒)。"
+      "description": "The time of the frame this reply was written on, in seconds."
     },
     "size": {
       "type": "object",
@@ -45,7 +45,7 @@
         "height"
       ],
       "additionalProperties": false,
-      "description": "描いた面の大きさ (ピクセル)。",
+      "description": "The size of the surface that was drawn, in pixels.",
       "properties": {
         "width": {
           "type": "integer",
@@ -62,15 +62,15 @@
       "items": {
         "type": "string"
       },
-      "description": "採取の過程で起きたことわり。失敗したときは理由がここに入る。何も無ければ空配列。"
+      "description": "Anything that had to be noted while taking the shots. When it failed, the reason is here. An empty array when there is nothing."
     },
     "stats": {
       "$ref": "#/$defs/stats",
-      "description": "最後に撮った絵の要約。**宣言した枚数が揃わなかったときは省略される** — 途中まで撮れていても省かれるので、条件は image と同じ。そこまでに撮れた絵の要約は frames の各要素が持つ。"
+      "description": "A summary of the last image taken. **Omitted when the declared number of shots did not come together** — omitted even if some were taken, so the condition is the same as image. Summaries of what was taken up to that point are carried by the entries in frames."
     },
     "load": {
       "type": "object",
-      "description": "走らせている重さ。速い遅いを絵からの推測ではなく数値で答えるために載せる。",
+      "description": "How hard it is working. Carried so that fast or slow is answered with a number rather than guessed from the picture.",
       "required": [
         "thermalState"
       ],
@@ -79,11 +79,11 @@
         "frameRate": {
           "type": "number",
           "minimum": 0,
-          "description": "直近で実際に出ているフレームレート。まだ測れていないとき・**しばらくフレームが進んでいないとき**は省略 (止まっている間に古い数字を名乗らないため)。"
+          "description": "The frame rate actually coming out just now. Omitted before it can be measured and **while frames have not advanced for a while**, so that a stale number is never named during a stall."
         },
         "frameTimeMs": {
           "type": "object",
-          "description": "直近のフレームの間隔 (ミリ秒)。まだ測れていないとき・**しばらくフレームが進んでいないとき**は省略 (frameRate と同じ条件)。",
+          "description": "The interval between recent frames, in milliseconds. Omitted before it can be measured and **while frames have not advanced for a while** (the same condition as frameRate).",
           "required": [
             "mean",
             "max"
@@ -103,11 +103,11 @@
         "memoryMB": {
           "type": "number",
           "minimum": 0,
-          "description": "プロセスが使っている物理メモリ (MB)。採れなければ省略。"
+          "description": "The physical memory the process is using, in MB. Omitted when it cannot be read."
         },
         "thermalState": {
           "type": "string",
-          "description": "熱の状態。読み手は知らない値を捨てず素通しすること (値域は広がりうる)。",
+          "description": "The thermal state. A reader should pass an unfamiliar value through rather than drop it, since the range can widen.",
           "examples": [
             "nominal",
             "fair",
@@ -120,16 +120,16 @@
     },
     "values": {
       "$ref": "#/$defs/values",
-      "description": "応答を書いたフレームでスケッチが差し出した値。1 つも無ければ省略される。"
+      "description": "The values the sketch exposed on the frame this reply was written on. Omitted when there are none."
     },
     "stamp": {
       "type": "string",
       "minLength": 1,
-      "description": "この絵を生んだ入力の世代。走らせる側が渡したものをそのまま返す。読み手は不透明な識別子として等値比較だけを行い、中身の意味や長さに依存しない。渡されていなければ省略。"
+      "description": "Which generation of input produced this image. Returned exactly as the running side passed it. A reader should compare it for equality as an opaque identifier and depend on neither its meaning nor its length. Omitted when nothing was passed."
     },
     "frames": {
       "type": "array",
-      "description": "撮った絵の目録。撮った順に並ぶ。1 枚だけ頼んだときも 1 要素の配列として必ず在る (枚数で応答の形が変わると、読み手はまず形を見分けるところから始めることになる)。打ち切られたときは、そこまでに撮れた絵だけが並ぶ。",
+      "description": "The catalogue of images taken, in the order they were taken. Present even when a single shot was asked for, as a one-element array, because a reply whose shape changed with the count would make every reader start by telling the shapes apart. When it was cut short, only what was taken appears.",
       "items": {
         "type": "object",
         "required": [
@@ -142,24 +142,24 @@
           "image": {
             "type": "string",
             "minLength": 1,
-            "description": "この絵のファイル名 (応答からの相対)。"
+            "description": "This image's file name, relative to the reply."
           },
           "frame": {
             "type": "integer",
             "minimum": 0,
-            "description": "この絵を描いたフレームの番号。同じ番号が並んでいたら、そのあいだ進んでいない。"
+            "description": "The number of the frame this image was drawn on. The same number twice in a row means nothing advanced in between."
           },
           "time": {
             "type": "number",
-            "description": "この絵を描いたフレームの時刻 (秒)。"
+            "description": "The time of the frame this image was drawn on, in seconds."
           },
           "stats": {
             "$ref": "#/$defs/stats",
-            "description": "この絵の要約。画像を開かずに動いたかどうかを判定するために載せる。"
+            "description": "A summary of this image. Carried so that whether anything moved can be judged without opening the picture."
           },
           "values": {
             "$ref": "#/$defs/values",
-            "description": "このフレームでスケッチが差し出した値。1 つも無ければ省略される。"
+            "description": "The values the sketch exposed on this frame. Omitted when there are none."
           }
         }
       }
@@ -168,7 +168,7 @@
   "$defs": {
     "stats": {
       "type": "object",
-      "description": "絵の要約。画像を開かずに「真っ黒ではないか」「隅に寄っていないか」を判定するために載せる。出力段を通した後の表示できる形で数える。**省かれる条件は載る場所ごとに違う** — 目録 (frames) の各要素には絵がある以上必ず在り、上の階では image と同じ条件 (宣言した枚数が揃わなかったとき) で省かれる。",
+      "description": "A summary of an image. Carried so that questions like whether it is entirely black, or crowded into a corner, can be judged without opening the picture. Counted in displayable form, after the output stage. **What omits it differs by where it sits** — an entry in the catalogue (frames) always has one, since it has an image, while at the level above it is omitted under the same condition as image (the declared number of shots did not come together).",
       "required": [
         "meanColor",
         "meanLuminance",
@@ -186,23 +186,23 @@
             "minimum": 0,
             "maximum": 1
           },
-          "description": "赤・緑・青の平均 (0…1)。"
+          "description": "The mean of red, green and blue (0…1)."
         },
         "meanLuminance": {
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "明るさの平均 (0…1)。"
+          "description": "The mean brightness (0…1)."
         },
         "contentFraction": {
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "地 (いちばん多い色) と違う色を持つ点の割合 (0…1)。0 なら一様な絵。**地は左上の点ではない** — 左上を地に取ると、そこに何か描かれている絵で内容と地が入れ替わる。"
+          "description": "The share of sampled points whose colour differs from the ground, meaning the most common colour (0…1). 0 is a uniform image. **The ground is not the top-left point** — taking the top left as the ground swaps content and ground for any image with something drawn there."
         },
         "contentBounds": {
           "type": "object",
-          "description": "内容のある点の外接範囲。左上が原点で、幅・高さで正規化してある。1 点も無ければ省略される。",
+          "description": "The bounding box of the points that carry content. The origin is the top left, normalised by width and height. Omitted when there is not a single point.",
           "required": [
             "x",
             "y",
@@ -235,7 +235,7 @@
         },
         "sampleGrid": {
           "type": "object",
-          "description": "数えた点の並び。全画素ではなくこの格子で間引いている。",
+          "description": "The grid of points that were counted. Sampled on this grid rather than over every pixel.",
           "required": [
             "width",
             "height"
@@ -256,7 +256,7 @@
     },
     "values": {
       "type": "object",
-      "description": "スケッチがこのフレームで差し出した値。名前ごとに型と値の組。1 つも無ければ省略される。",
+      "description": "The values the sketch exposed on this frame, as a type and value pair per name. Omitted when there are none.",
       "additionalProperties": {
         "type": "object",
         "required": [

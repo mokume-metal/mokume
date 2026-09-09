@@ -37,7 +37,7 @@ enum JSONRPC {
     /// 「応答が来ない」と見分けが付かず、呼び出しが返らないまま待ち続ける。
     static func response(id: Any?, result: [String: Any]) -> String {
         line(["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result])
-            ?? failure(id: id, code: internalError, message: "応答を JSON にできませんでした")
+            ?? failure(id: id, code: internalError, message: "could not turn the reply into JSON")
     }
 
     /// 失敗を返す 1 行。**この 1 行は必ず返る。**
@@ -53,7 +53,7 @@ enum JSONRPC {
     /// **組み立てを通らないので、失敗しようがない。** `id` を落とすので相手は
     /// どの呼び出しへの応答かを照合できなくなるが、黙るよりはよい。
     private static let lastResort = #"{"jsonrpc":"2.0","id":null,"error":"#
-        + #"{"code":-32603,"message":"応答を JSON にできませんでした"}}"#
+        + #"{"code":-32603,"message":"could not turn the reply into JSON"}}"#
 
     /// JSON の 1 行に組む。組めなければ `nil`。
     ///

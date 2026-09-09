@@ -56,10 +56,10 @@ struct ObserveTests {
         let (text, isError) = tools.call("observe", arguments: [:])
 
         #expect(!isError)
-        #expect(text.contains("絵: "))
+        #expect(text.contains("Image: "))
         #expect(text.contains("frame.png"))
         // 目録が在るのだから、古い書き手の名乗りは付かない
-        #expect(!text.contains("目録 (frames) を持ちません"))
+        #expect(!text.contains("has no catalogue (frames)"))
     }
 
     @Test("目録が無くても、単数形の image から絵の場所が返る")
@@ -71,7 +71,7 @@ struct ObserveTests {
         let (text, isError) = tools.call("observe", arguments: [:])
 
         #expect(!isError)
-        #expect(text.contains("絵: "))
+        #expect(text.contains("Image: "))
         #expect(text.contains("frame.png"))
     }
 
@@ -83,7 +83,7 @@ struct ObserveTests {
 
         let (text, _) = tools.call("observe", arguments: [:])
 
-        #expect(text.contains("目録 (frames) を持ちません"))
+        #expect(text.contains("has no catalogue (frames)"))
     }
 
     @Test("目録も単数形も無ければ、採れなかったと答える")
@@ -94,8 +94,8 @@ struct ObserveTests {
 
         let (text, _) = tools.call("observe", arguments: [:])
 
-        #expect(text.contains("絵は採れませんでした"))
-        #expect(!text.contains("目録 (frames) を持ちません"))
+        #expect(text.contains("No image could be taken"))
+        #expect(!text.contains("has no catalogue (frames)"))
     }
 
     @Test("目録が 2 枚以上なら、枚数と一覧を返す")
@@ -107,7 +107,7 @@ struct ObserveTests {
 
         let (text, _) = tools.call("observe", arguments: [:])
 
-        #expect(text.contains("絵 2 枚"))
+        #expect(text.contains("Images (2)"))
         #expect(text.contains("frame-0001.png frame-0002.png"))
     }
 
@@ -119,7 +119,7 @@ struct ObserveTests {
 
         let (text, _) = tools.call("observe", arguments: ["count": 8])
 
-        #expect(text.contains("8 枚"))
-        #expect(text.contains("1 枚しか"))
+        #expect(text.contains("8 shots were asked for"))
+        #expect(text.contains("only one came back"))
     }
 }
