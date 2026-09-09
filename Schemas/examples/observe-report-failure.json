@@ -8,7 +8,7 @@
     "height": 600
   },
   "warnings": [
-    "絵を採れませんでした: 1024 バイトの読み出し先を確保できない。\nGPU のメモリが足りていない — 一度に扱う数を減らす。"
+    "Could not take the image: Cannot allocate a 1024-byte buffer to read back into.\nThe GPU is out of memory — handle fewer things at once."
   ],
   "load": {
     "thermalState": "fair"
