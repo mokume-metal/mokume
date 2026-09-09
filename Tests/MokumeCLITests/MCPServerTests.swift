@@ -495,7 +495,7 @@ struct MCPServerTests {
         let directory = try makeDirectory()
         try writeResolved(directory, pins: pin("mokume", "0.1.0"))
         let fetches = Fetches()
-        fetches.answer = .failure(APIListLocator.FetchFailure("応答が 404 でした"))
+        fetches.answer = .failure(APIListLocator.FetchFailure("the response was 404"))
 
         let outcome = makeTools(directory: directory, fetches: fetches)
             .call("reference", arguments: ["name": "api"])
