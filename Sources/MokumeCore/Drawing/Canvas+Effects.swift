@@ -41,7 +41,7 @@ extension Canvas {
         guard values.count * 4 <= EffectPipeline.valueSlotCapacity else {
             throw .notCompilable(
                 path: url?.path ?? name,
-                reason: "1 つの効果に渡せる値は \(EffectPipeline.valueSlotCapacity / 4) 個までです")
+                reason: "At most \(EffectPipeline.valueSlotCapacity / 4) values can go into one effect")
         }
         do {
             // **弱く持って、失敗だけを読む** ([#787])。強く持つと利用者が手放した断片まで
@@ -99,7 +99,8 @@ extension Canvas {
         } catch {
             warnOnce(
                 .effectFailed,
-                "効果を通せませんでした: \(error.headline)。このフレームは効果をかける前の絵を出します")
+                "Could not run the effect: \(error.headline). This frame comes out as it stood before "
+                    + "the effect")
         }
     }
 

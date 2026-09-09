@@ -81,9 +81,9 @@ final class UpscaleStage {
             // **代償は有効化の時点で告げる** ([ADR-0015] 決定 2)。doc に書くだけでは、
             // 決定論が要る使い方をしている人が読むとは限らない
             Diagnostics.warn(
-                "時間方向の拡大を有効にしました。"
-                    + "同じフレーム番号から同じ絵は出ません (前のフレームの結果に依ります)。"
-                    + "止まっている絵は細かくなり、動くものは尾を引きます")
+                "Upscaling across time is on. The same frame number no longer gives the same image "
+                    + "(it depends on the previous frame's result). A still image comes out "
+                    + "finer, and anything moving trails")
         }
     }
 

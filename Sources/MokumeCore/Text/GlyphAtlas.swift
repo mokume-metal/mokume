@@ -281,9 +281,9 @@ import simd
         guard !warnedTooLarge else { return }
         warnedTooLarge = true
         Diagnostics.warn(
-            "text(): 字形 1 つが \(width)x\(height) 画素あり、焼き場の上限 "
-                + "\(Self.maximumSize)x\(Self.maximumSize) に入りません。"
-                + "この字は描かれません — textSize() を下げてください")
+            "text(): one glyph is \(width)x\(height) pixels, which does not fit the baking area's "
+                + "limit of \(Self.maximumSize)x\(Self.maximumSize). This character will not be "
+                + "drawn — lower textSize()")
     }
 
     /// 焼いた画素が、字形自身の色を持っているか。

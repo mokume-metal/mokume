@@ -283,7 +283,7 @@ extension Canvas {
     func warnReversedArcOnce() {
         warnOnce(
             .reversedArc,
-            "arc(): 終わりの角度は始まりより大きくしてください。この呼び出しは何も描きません")
+            "arc(): the ending angle has to be larger than the starting one. This call draws nothing")
     }
 
 }

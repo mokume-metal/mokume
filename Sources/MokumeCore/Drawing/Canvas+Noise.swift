@@ -35,6 +35,6 @@ extension Canvas {
     private func warnBadNoise(_ name: String) {
         warnOnce(
             .badNoise,
-            "\(name)(): 数でない値・範囲の外の値が渡されたので、揺らぎの設定を変えませんでした")
+            "\(name)(): got a value that is not a number, or one outside the range, so the noise settings were left as they were")
     }
 }

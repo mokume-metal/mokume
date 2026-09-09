@@ -342,7 +342,8 @@ extension Canvas {
     private func warnBadSize(_ name: String) {
         warnOnce(
             .badSolidSize,
-            "\(name)(): 寸法に数でない値・無限・負の値が渡されたので、何も置きませんでした")
+            "\(name)(): got a size that is not a number, or an infinite or negative one, so "
+                + "nothing was placed")
     }
 }
 
