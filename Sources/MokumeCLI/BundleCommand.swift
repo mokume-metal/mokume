@@ -97,9 +97,9 @@ enum BundleCommand {
         let parsed = try Arguments.parse(
             arguments,
             options: [
-                Arguments.Option(["--out"]) { "\($0) には置き場が要る\n\n" + Command.usage() }
+                Arguments.Option(["--out"]) { "\($0) needs a directory\n\n" + Command.usage() }
             ],
-            surplus: .reject { "場所は 1 つだけ: \($0)" })
+            surplus: .reject { "Only one directory: \($0)" })
         return Options(
             path: parsed.positional ?? FileManager.default.currentDirectoryPath,
             out: parsed.values["--out"])
@@ -136,7 +136,7 @@ enum BundleCommand {
                 fromPropertyList: plist, format: .xml, options: 0)
         else {
             throw .cannotCreate(path: contents.appendingPathComponent("Info.plist").path,
-                reason: "名乗りを書き出せなかった")
+                reason: "could not write the identity")
         }
         do {
             try data.write(to: contents.appendingPathComponent("Info.plist"))
@@ -241,20 +241,20 @@ enum BundleCommand {
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
     static func report(for app: URL, note: URL, signedAs signature: String?) -> String {
         """
-        束ねた: \(app.path)
+        Bundled: \(app.path)
 
-        保証しているのは「別の機械で起動して絵が出る」ところまで。
+        What this guarantees is that it launches on another machine and draws.
         \(signatureLine(signature))
-        受け取った側では初回の起動が止められるので、開き方を書いた紙を隣に出した。
-        **作品と一緒に送る**:
+        The first launch is blocked on the receiving side, so a note on how to open it went
+        next to the bundle. **Send it along with the work**:
 
           \(note.path)
 
-        配る前に、作者の環境に依存した解決が残っていないかを確かめる:
+        Before sending, check that nothing still resolves through the author's environment:
 
           mv .build .build-held && open "\(app.path)" ; mv .build-held .build
 
-        退避したまま絵が出れば、包みの中だけで足りている。
+        If it still draws with .build moved aside, the bundle carries all it needs.
         """
     }
 
@@ -264,9 +264,10 @@ enum BundleCommand {
     /// 往復は残るので、そこを先に言い切ってしまうと期待だけが先に行く。
     static func signatureLine(_ signature: String?) -> String {
         guard let signature else {
-            return "署名は名前を持たないもの (ad-hoc) を当てた。"
+            return "It is signed ad-hoc, with no identity."
         }
-        return "署名は「\(signature)」で、公証に出せる形で当てた。**公証はまだ通っていない。**"
+        return "It is signed as \"\(signature)\", in a form that can be notarized. "
+            + "**It has not been notarized yet.**"
     }
 
     // MARK: - 開き方
@@ -296,7 +297,7 @@ enum BundleCommand {
     /// **作品名を入れる。** 受け取った側のフォルダに落ちたとき、何についての紙かが
     /// 名前だけで分かる必要がある。
     static func noteFileName(for identity: AppIdentity) -> String {
-        "\(identity.name) を開くには.txt"
+        "How to open \(identity.name).txt"
     }
 
     /// 紙の中身。
@@ -305,17 +306,17 @@ enum BundleCommand {
     /// 断定できないことは書かない ([ADR-0029] 決定 2 と同じ規律)。
     static func openingNote(for identity: AppIdentity) -> String {
         """
-        \(identity.name) を開くには
+        How to open \(identity.name)
 
-        はじめの 1 回だけ、開く許可を自分で与える必要があります。
-        このアプリは、macOS が開発元を確認できない形で配られているためです。
+        The first time, you have to give it permission to open yourself.
+        This app is distributed in a form where macOS cannot verify who made it.
 
-        1. \(identity.name).app を二重クリックする (開けません、と出ます)
-        2. アップルメニュー → システム設定 → プライバシーとセキュリティ を開く
-        3. 下の方に \(identity.name) についての行があるので、「このまま開く」を押す
-        4. もう一度 \(identity.name).app を二重クリックする
+        1. Double-click \(identity.name).app (it will say it cannot be opened)
+        2. Apple menu -> System Settings -> Privacy & Security
+        3. Near the bottom there is a line about \(identity.name). Press "Open Anyway"
+        4. Double-click \(identity.name).app again
 
-        2 回目からは、そのまま開きます。
+        From the second time on, it just opens.
         """
     }
 

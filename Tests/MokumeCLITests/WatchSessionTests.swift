@@ -133,8 +133,8 @@ struct WatchSessionTests {
         #expect(recorder.launches == 0, "走らせるものが無いのに起こそうとしている")
         // **記録に理由が出る。** 終了コードは 0 なので、それだけでは読み手に何も届かない
         #expect(report.output.contains("hello"))
-        #expect(report.output.contains("建っていない"))
-        #expect(report.summary.contains("失敗"))
+        #expect(report.output.contains("was never built"))
+        #expect(report.summary.contains("Build failed"))
         // 走っているものは落とさない (作り直しの失敗と同じ扱い)
         #expect(report.timings.relaunchMs == nil)
     }
@@ -150,7 +150,7 @@ struct WatchSessionTests {
         let report = session.start()
         #expect(report.ok, "作り直し自体は通っている")
         #expect(!report.launched)
-        #expect(report.summary.contains("起こせていない"))
+        #expect(report.summary.contains("could not start it"))
     }
 
     @Test("最初の 1 回は、変化を待たずに作って走らせる")

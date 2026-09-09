@@ -64,11 +64,11 @@ enum WatchCommand {
         let session = WatchSession(
             directory: directory, context: context, facetBase: invocation.facetBase(),
             reportsRate: true)
-        say("見張っている: \(directory.path)")
+        say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
         // ビルドと配布版の取り違えに気付けない** (#633 が実際にそうなった・#684)
-        say("道具: \(ToolVersion.describe())")
+        say("Tool: \(ToolVersion.describe())")
         // **常に名乗る。** 以前は基準がスケッチの場所と違うときだけ出していたが、それだと
         // 窓口の側にだけ MOKUME_WORK_DIR が効いている向きで比べる材料が出ない (#380)
         say(
@@ -176,11 +176,11 @@ enum WatchCommand {
         guard let gpu = try? RenderDevice(),
             let window = try? SharedFrameWindow(gpu: gpu, facet: facet, title: name),
             let preview = try? SharedFramePreview(
-                gpu: gpu, facet: facet, params: params, title: "\(name) — プレビュー"),
+                gpu: gpu, facet: facet, params: params, title: "\(name) — Preview"),
             (try? FileManager.default.createDirectory(
                 at: facet, withIntermediateDirectories: true)) != nil
         else {
-            say("窓は出せないので、スケッチに自分の窓を開かせる")
+            say("No window can open here, so the sketch will open its own")
             return nil
         }
         // **どちらの窓で触っても、同じ作品へ届く。** 送る前にキャンバスの座標へ写して
@@ -350,12 +350,12 @@ enum WatchCommand {
     /// 「止めた」と見分けが付かない (#732)。
     static func finish(_ session: WatchSession) {
         switch session.stop() {
-        case .notRunning: say("見張りを終える")
-        case .terminated: say("見張りを終える (走らせていたスケッチを止めた)")
-        case .killed: say("見張りを終える (止まらないスケッチを強制終了した)")
+        case .notRunning: say("Stopped watching")
+        case .terminated: say("Stopped watching (the running sketch was stopped)")
+        case .killed: say("Stopped watching (a sketch that would not stop was killed)")
         // **置いていくことを言う。** 黙って終わると「止めた」と見分けが付かず、残ったものが
         // #454 の孤児として次の人に渡る
-        case .abandoned(let pid): say("見張りを終える — " + abandonedLine(pid: pid))
+        case .abandoned(let pid): say("Stopped watching — " + abandonedLine(pid: pid))
         }
     }
 
@@ -371,28 +371,28 @@ enum WatchCommand {
     }
 
     /// 作り直しが通らなかったとき、走り続けているものを名乗る行。
-    static let holdingLine = "直前の版を走らせたまま待っている"
+    static let holdingLine = "still running the version from before, and waiting"
 
     /// 窓を閉じようとした人に問う言葉。
     ///
     /// **窓に出る言葉も、端末に出ている言葉と同じ側で持つ** (#695 が `startingLine` で
     /// 定めた規律)。窓の側 (`SharedFrame*`) は出し方だけを持ち、何と言うかは決めない。
-    static let closeMessage = "見張りを終えますか？"
+    static let closeMessage = "Stop watching?"
     /// 押した後どうなるか。**両方の窓が畳まれることを言う** — 押した人が閉じようとしたのは
     /// 片方だが、終わるのは見張りごとである。
-    static let closeDetail = "走らせているスケッチも止まり、作品の窓とプレビューの両方が畳まれます。"
+    static let closeDetail = "The running sketch stops too, and both the work's window and the preview close."
     /// 終わる側の押しどころ。
-    static let closeConfirm = "終える"
+    static let closeConfirm = "Stop"
     /// 続ける側の押しどころ。**「キャンセル」と言わない** — 押した人が取り消すのは「閉じる」
     /// ことであって、走っているものは続く。
-    static let closeCancel = "続ける"
+    static let closeCancel = "Keep going"
 
     /// 差し替えのときに、頼んでも止まらない子を強制終了したと名乗る行。
     ///
     /// **終わるときだけの話ではない。** 止め方は終わるときと同じ経路なので、期限に
     /// 掛かったことは保存のたびにも起こりうる
     /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。
-    static let killedLine = "止まらないスケッチを強制終了した (SIGTERM に応えない)"
+    static let killedLine = "Killed a sketch that would not stop (it does not answer SIGTERM)"
 
     /// 走らせていたスケッチが、誰も頼んでいないのに消えたことを名乗る行。
     ///
@@ -406,11 +406,13 @@ enum WatchCommand {
     /// **次の一手まで言う。** 起こし直しはしないと決めてあるので (#1103)、黙って名乗るだけ
     /// では「もう戻らない」と読める。絵は保存すれば戻る。
     static func departedLine(_ departure: WatchSession.Departure) -> String {
-        let how =
-            departure.wasSignalled
-            ? "落ちた (signal \(departure.status))"
-            : "自分から終わった (終了コード \(departure.status))"
-        return "走らせていたスケッチが\(how) — 絵は止まったまま。保存すると作り直して起こし直す"
+        // **どちらも完全な文で持つ。** 文の途中で語を選ぶ形は、語順の違う言語で
+        // 組み替えられなくなる (ADR-0038 決定 3)
+        return departure.wasSignalled
+            ? "The running sketch crashed (signal \(departure.status)) — the drawing is "
+                + "frozen where it stopped. Save and it gets rebuilt and started again"
+            : "The running sketch exited on its own (code \(departure.status)) — the drawing "
+                + "is frozen where it stopped. Save and it gets rebuilt and started again"
     }
 
     /// 強制終了しても消えなかったことを名乗る行。
@@ -418,7 +420,7 @@ enum WatchCommand {
     /// **番号を出す。** ここまで来ると道具にできることは無いので、落とすのは人である —
     /// 番号は `scripts/orphan-processes.sh` が出すものと同じ (#454)。
     static func abandonedLine(pid: Int32) -> String {
-        "強制終了しても消えないスケッチが残った (PID \(pid)) — 手で落とす必要がある"
+        "A sketch outlived being killed (PID \(pid)) — it has to be brought down by hand"
     }
 
     /// プレビューへ重ねる 1 行。**端末に出ている言葉だけで組む** — プレビューは端末の
@@ -427,7 +429,7 @@ enum WatchCommand {
     /// - Returns: 通ったら `nil` (畳む)。通らなかったら**出したままにする行** — 消すと
     ///   「保存したのに絵が変わらない」が「変えた結果が同じだった」と見分けられない。
     static func notice(for outcome: BuildReport) -> String? {
-        outcome.ok ? nil : "作り直しに失敗 — " + holdingLine
+        outcome.ok ? nil : "The build failed — " + holdingLine
     }
 
     /// 道具が出す窓。
@@ -453,10 +455,10 @@ enum WatchCommand {
 
     /// 最初の 1 回を始めるときの行。**いちばん長く待つのはここ**である (冷えた状態では
     /// 依存の解決から走る)。
-    static let startingLine = "作っている… (初めの 1 回は時間がかかる)"
+    static let startingLine = "Building… (the first one takes a while)"
 
     /// 変化を見つけて作り直すときの行。
-    static let rebuildingLine = "変更を見つけた — 作り直している…"
+    static let rebuildingLine = "Change spotted — rebuilding…"
 
     /// 見張りが自分の行を書く。
     ///

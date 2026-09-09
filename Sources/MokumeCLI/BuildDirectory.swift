@@ -137,15 +137,15 @@ enum BuildDirectory {
             // 束ねるときは常にこうなるので黙る (選択ではなく設計である)
             case .packaging: nil
             case .unreadableManifest:
-                "パッケージの宣言が読めないので、置き場はこのパッケージの .build に置く"
+                "Cannot read the package manifest, so the build goes in this package's own .build"
             case .unresolved:
-                "依存の版が読めないので、置き場はこのパッケージの .build に置く"
-                    + " (共有すると版の違うものが混ざる)"
+                "Cannot read the dependency version, so the build goes in this package's own"
+                    + " .build (sharing it would mix versions)"
             case .unknownToolchain:
-                "toolchain の版が読めないので、置き場はこのパッケージの .build に置く"
+                "Cannot read the toolchain version, so the build goes in this package's own .build"
             case .nameTaken(let owner):
-                "同じ名前のスケッチが共有の置き場を先に使っている (\(owner)) —"
-                    + " このスケッチの置き場はこのパッケージの .build に置く"
+                "A sketch with the same name got to the shared store first (\(owner)) —"
+                    + " this sketch builds in its own .build"
             }
         }
     }
@@ -266,7 +266,7 @@ enum BuildDirectory {
     ///
     /// **読めなかったことと、書かれていないことを同じ顔にしない。** 空の claim を
     /// 「未使用」と読むと、書きかけを掴んだ側が先客を追い出す。
-    static let unreadableOwner = "読めない記録"
+    static let unreadableOwner = "an unreadable record"
 
     /// 共有の置き場で contested になる名前。
     ///

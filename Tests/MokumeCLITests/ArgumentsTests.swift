@@ -126,8 +126,8 @@ struct ArgumentsTests {
     func theBundleVerbKeepsItsWording() {
         #expect(
             usageMessage { _ = try BundleCommand.parse(["--out"]) }
-                == "--out には置き場が要る\n\n" + Command.usage())
-        #expect(usageMessage { _ = try BundleCommand.parse(["a", "b"]) } == "場所は 1 つだけ: b")
+                == "--out needs a directory\n\n" + Command.usage())
+        #expect(usageMessage { _ = try BundleCommand.parse(["a", "b"]) } == "Only one directory: b")
     }
 
     /// **切り分けの口は使い方で止まらない。** いちばん要るときに読めなくなるため。

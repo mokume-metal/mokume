@@ -348,7 +348,7 @@ final class WatchSession {
                 """
         }
         return """
-            作り直しは通ったが、\(product) が建っていない: \(rebuilt.binPath.path)
+            The build succeeded, but \(product) was never built: \(rebuilt.binPath.path)
             置き場に残っている古い計画が原因のことがある — その置き場を消してやり直す
 
             \(rebuilt.output)
@@ -363,6 +363,6 @@ final class WatchSession {
 
     /// 結果を区画へ置く。観測と同じ流儀 (原子的に書く)。
     private func write(_ report: BuildReport) {
-        AtomicFile.publishJSON(report, to: BuildReport.statusURL(under: facetBase), "作り直しの記録")
+        AtomicFile.publishJSON(report, to: BuildReport.statusURL(under: facetBase), "the build record")
     }
 }

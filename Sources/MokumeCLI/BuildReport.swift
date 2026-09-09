@@ -74,9 +74,9 @@ struct BuildReport: Encodable, Equatable {
         // 壊れ方 (絵が止まっているのに成功と出る) だからである (#1066)
         let lead =
             switch (ok, launched) {
-            case (true, true): "作り直した: "
-            case (true, false): "作り直したが、起こせていない: "
-            case (false, _): "作り直しに失敗: "
+            case (true, true): "Rebuilt: "
+            case (true, false): "Rebuilt, but could not start it: "
+            case (false, _): "Build failed: "
             }
         return lead + parts.joined(separator: " ")
     }
