@@ -39,8 +39,28 @@ jobs:
   # **承認では走らせない** (#623)。承認は PR の中身を 1 バイトも変えないので、macOS で
   # swift build / swift test を回し直す理由が無い。pull_request_review トリガーの目的は
   # review-gate の再評価だけである (on: のコメント)。
+  #
+  # **ラベルの付け外しでも走らせない** (#729)。labeled / unlabeled も PR の木を 1 バイトも
+  # 変えないので、#623 と同じ理由でここには居ない。types に残しているのは review-gate /
+  # drawing-evidence / pr-title の再評価に要るためである (on: のコメント)。規約どおり
+  # gh pr create --label でラベルを付けると opened と labeled が同じ秒に立ち、macOS の
+  # フルビルドが 2 本走っていた (保持期間ぶんの実測で余剰 198 本・19.6 時間)。
+  #
+  # **edited は外さない。** 本文・タイトルのほかに base ブランチの変更でも発火し、この
+  # ジョブの actions/checkout は ref を指定していないので pull_request では合流 ref
+  # (refs/pull/N/merge) を取る — base が変われば検査する木そのものが変わる。
+  #
+  # 括弧を 1 段深くして pull_request の中に閉じ込めるのは、**push に action の欄が無い**
+  # ためである。素直に並べると push では null と文字列を突き合わせることになり、可否が
+  # 式言語の型強制の解釈に乗る。外れたときの姿が「main への push で ci-check が黙って
+  # 走らない」なので、可否を決める比較は常に文字列同士にしておく — push と merge_group
+  # では github.event_name != 'pull_request' が真になって短絡する。
   ci-check:
-    if: github.event_name != 'pull_request_review'
+    if: >-
+      github.event_name != 'pull_request_review'
+      && (github.event_name != 'pull_request'
+      || (github.event.action != 'labeled'
+      && github.event.action != 'unlabeled'))
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
