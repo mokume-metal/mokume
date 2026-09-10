@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import mokume
 
 @testable import MokumeCLI
 
@@ -49,6 +50,63 @@ struct WatchCommandTests {
         try Data(#"// swift-tools-version: 6.2"#.utf8)
             .write(to: root.appendingPathComponent("Package.swift"))
         return root
+    }
+
+    // MARK: - 起動より前に置く区画
+
+    /// 窓口が使う区画は、子を起こす前に在る。
+    ///
+    /// 区画が在るかどうかを見るのは起動の瞬間だけなので、置き損ねると窓口の道具は初めて
+    /// 呼んだ回に必ず空振りし、道具ごとに 1 回ずつ起動し直させることになる ([#464])。
+    /// **窓も GPU も要さない** — 区画を置くのはただのファイル操作である。
+    ///
+    /// [#464]: https://github.com/mokume-metal/mokume/issues/464
+    @Test("窓口が使う区画は、子を起こす前に置かれる")
+    func facetsForTheAgentSurfaceArePlacedUpFront() throws {
+        let base = try makeDirectory()
+
+        let created = WatchCommand.prepareFacets(under: base)
+
+        for key in ["observe", "input", "params"] {
+            let facet = WorkDirectory.facet(key, under: base)
+            #expect(
+                WorkDirectory.directoryExists(at: facet),
+                "\(key) の区画が、子を起こす前に置かれていない")
+            #expect(created.contains(facet), "\(key) を作ったのに、畳む一覧へ入っていない")
+        }
+    }
+
+    /// **絵を渡す区画は先回りしない。** 在ると窓を開かず共有面へ差し出す区画なので、
+    /// 窓が出せなかった回に置くと絵がどこにも出ない ([ADR-0032] 決定 1)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    @Test("絵を渡す区画は、先回りしては置かない")
+    func theViewportFacetIsNotPlacedUpFront() throws {
+        let base = try makeDirectory()
+
+        _ = WatchCommand.prepareFacets(under: base)
+
+        #expect(!WorkDirectory.directoryExists(at: WatchCommand.viewportFacet(under: base)))
+    }
+
+    /// 人が置いた区画は、こちらの持ち物ではない。
+    ///
+    /// 外から動かすために人が置いた区画かもしれないので、**畳むのは自分が作ったものだけ**
+    /// にする ([#464])。
+    ///
+    /// [#464]: https://github.com/mokume-metal/mokume/issues/464
+    @Test("元から在った区画は、畳む一覧に入らない")
+    func facetsThatWereAlreadyThereAreNotOursToRemove() throws {
+        let base = try makeDirectory()
+        let observe = WorkDirectory.facet("observe", under: base)
+        try FileManager.default.createDirectory(at: observe, withIntermediateDirectories: true)
+
+        let created = WatchCommand.prepareFacets(under: base)
+
+        #expect(!created.contains(observe), "人が置いた区画を畳もうとしている")
+        #expect(WorkDirectory.directoryExists(at: observe), "人が置いた区画が消えている")
+        // 残りは今までどおり置く
+        #expect(created.contains(WorkDirectory.facet("input", under: base)))
     }
 
     // MARK: - 始める前

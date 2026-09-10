@@ -86,6 +86,10 @@ enum WatchCommand {
             viewer?.preview.report(line, spinning: true)
         }
 
+        // **窓口が使う区画は、窓より先に置く。** 窓が出せるかどうかと関係が無いうえ、
+        // 置き損ねると道具ごとに 1 回ずつ起動し直させることになる (#464)
+        let prepared = prepareFacets(under: session.facetBase)
+
         // **窓を先に出す。** 出せたときだけ区画ができ、子は窓を持たずに走る
         // ([ADR-0032] 決定 1)。子を起こしてからでは間に合わない — 区画は起動の瞬間に
         // しか読まれない
@@ -104,18 +108,51 @@ enum WatchCommand {
         // 窓を閉じる経路を通らない (`windowShouldClose` も巡回も通らない) ので、受けないと
         // 子と区画が置き去りになる — 窓を持つ道具は `.regular` なので Dock に出ている
         // ([#826](https://github.com/mokume-metal/mokume/issues/826))
-        let delegate = ApplicationDelegate { teardown(session, viewer) }
+        let delegate = ApplicationDelegate { teardown(session, viewer, created: prepared) }
         NSApplication.shared.delegate = delegate
 
         watching(session, viewer)
-        teardown(session, viewer)
+        teardown(session, viewer, created: prepared)
+    }
+
+    /// 窓口が使う区画を、子を起こす前に置く。**窓も GPU も要さない。**
+    ///
+    /// 区画が在るかどうかを見るのは起動の瞬間だけなので、誰も置かないと窓口の道具は
+    /// 初めて呼んだ回に必ず空振りし、道具ごとに 1 回ずつ起動し直すことになる ([#464])。
+    /// 置くのは要求を置く側 (`Facets.exchange`) だが、それでは間に合わない。
+    ///
+    /// **`viewport` は入れない。** あれは在ると窓を開かず共有面へ差し出す区画なので、
+    /// 窓が出せなかった回に置くと絵がどこにも出ない ([ADR-0032] 決定 1)。置く場所は
+    /// `openViewer` の中が正しい。
+    ///
+    /// - Returns: **こちらが作ったものだけ。** 元から在ったものは含めない — 人が置いた
+    ///   区画を後始末で畳まないためである。
+    ///
+    /// [#464]: https://github.com/mokume-metal/mokume/issues/464
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    static func prepareFacets(under base: URL) -> [URL] {
+        var created: [URL] = []
+        for entry in StartupReads.all
+        where entry.origin == .facet && entry.key != StartupReads.viewport.key {
+            let facet = WorkDirectory.facet(entry.key, under: base)
+            guard !WorkDirectory.directoryExists(at: facet) else { continue }
+            guard
+                (try? FileManager.default.createDirectory(
+                    at: facet, withIntermediateDirectories: true)) != nil
+            else { continue }
+            created.append(facet)
+        }
+        return created
     }
 
     /// 後始末。**走らせていたものも、置いた区画も残さない。**
     ///
     /// **2 度通っても、言うことは 1 度きり。** 巡回を抜けた後と、道具立てが終わるとき
     /// (Dock・ログアウト) の両方から呼ばれうるので、片方だけを正しい順序にしても足りない。
-    static func teardown(_ session: WatchSession, _ viewer: Viewer?) {
+    ///
+    /// - Parameter created: `prepareFacets(under:)` が置いた区画。**畳むのはこれだけ** —
+    ///   人が置いたものは残す。
+    static func teardown(_ session: WatchSession, _ viewer: Viewer?, created: [URL] = []) {
         guard !teardownDone else { return }
         teardownDone = true
         finish(session)
@@ -123,9 +160,7 @@ enum WatchCommand {
         // **置いていかない。** 区画は「画面の出口は共有面」という合図なので、残すと
         // 次に `run` で走らせたスケッチまで窓を開かなくなる — しかも黙って開かない
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
-        if viewer?.createdParams == true {
-            try? FileManager.default.removeItem(at: paramsFacet(for: session))
-        }
+        for facet in created { try? FileManager.default.removeItem(at: facet) }
     }
 
     /// 後始末を済ませたか。**印は 1 プロセスに 1 つ** (終わりの合図と同じ扱い)。
@@ -164,13 +199,10 @@ enum WatchCommand {
         let facet = viewportFacet(for: session)
         // **前の見張りが残したものを引き継がない。** 置かれている番号は死んだ面を指す
         try? FileManager.default.removeItem(at: facet)
-        // **つまみの区画は、無ければこちらで作る。** 走らせている子は区画が在るときだけ
-        // 宣言を差し出すので ([ADR-0030] 決定 2)、作らないとプレビューに並べるものが
-        // 何も来ない。**元から在ったものは畳まない** — 外から動かすために人が置いた
-        // 区画かもしれない
+        // つまみの区画は `prepareFacets(under:)` が既に置いている (#464)。走らせている子は
+        // 区画が在るときだけ宣言を差し出すので ([ADR-0030] 決定 2)、無いとプレビューに
+        // 並べるものが何も来ない
         let params = paramsFacet(for: session)
-        let paramsWasThere = FileManager.default.fileExists(atPath: params.path)
-        try? FileManager.default.createDirectory(at: params, withIntermediateDirectories: true)
 
         let name = session.directory.lastPathComponent
         guard let gpu = try? RenderDevice(),
@@ -188,7 +220,7 @@ enum WatchCommand {
         // 2 つの窓が「いまの値」を同時に持つことにはならない ([ADR-0032] 決定 4)
         window.onInput = { [weak session] in session?.send($0) }
         preview.onInput = { [weak session] in session?.send($0) }
-        let viewer = Viewer(window: window, preview: preview, createdParams: !paramsWasThere)
+        let viewer = Viewer(window: window, preview: preview)
         // **出す前に繋ぐ。** 出してから繋ぐと、その隙間に閉じられたぶんが素通りする
         // (窓の中身を繋ぐ順序と同じ理由)
         askBeforeClosing(viewer)
@@ -444,8 +476,6 @@ enum WatchCommand {
         let window: SharedFrameWindow
         /// 制作を助ける窓。状態と印とつまみが載る。
         let preview: SharedFramePreview
-        /// つまみの区画をこちらで作ったか。**作ったものだけ畳む。**
-        let createdParams: Bool
 
         func close() {
             window.close()

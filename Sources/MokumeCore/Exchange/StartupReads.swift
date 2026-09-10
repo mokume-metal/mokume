@@ -26,7 +26,13 @@ public enum StartupReads {
     /// 注入されるので、「起動した後に設定して効かない」という踏み方をしない — 代わりに
     /// **走らせる側と読む側で食い違う**という踏み方をする。
     public enum Decider: String, Sendable {
-        /// 利用者。区画を自分で作る。
+        /// 利用者。**在ることが利用者の意図を表す。**
+        ///
+        /// 見張り (`watch`) は空振りを避けるために先回りして置くことがあるが ([#464])、
+        /// それは「使いたくなったときに在る」ようにするだけで、在っても振る舞いは
+        /// 変わらない。置くかどうかで何かが決まるのは道具が決めるもの (下) である。
+        ///
+        /// [#464]: https://github.com/mokume-metal/mokume/issues/464
         case user
         /// 道具。子プロセスへ環境変数として渡す。
         case tool
@@ -109,10 +115,16 @@ public enum StartupReads {
 
     /// 絵を渡す面の区画。
     ///
-    /// **区画で道具が決めるのはこれだけである。** 他の区画は利用者が作るかどうかで
-    /// 決まるが、これは見張り (`watch`) が子を起こす前に作る — 画面の出口をどこに
-    /// 置くかは、起こした側にしか決められないからである ([ADR-0032] 決定 1)。
+    /// **在ることの意味を道具が決めるのは、この区画だけである。** 画面の出口をどこに
+    /// 置くかは、子を起こした側にしか決められないからで、見張り (`watch`) は窓を出せた
+    /// ときだけこれを作る ([ADR-0032] 決定 1)。
     ///
+    /// 見張りは窓口が使う区画 (`observe` / `input` / `params`) も子を起こす前に置くが
+    /// ([#464])、あれは初めて呼んだ回に空振りさせないための先回りで、**在っても振る舞いは
+    /// 変わらない**。こちらは在ると窓を開かず共有面へ差し出すので、置くこと自体が決定に
+    /// なる。
+    ///
+    /// [#464]: https://github.com/mokume-metal/mokume/issues/464
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     public static let viewport = Entry(
         name: "Viewport facet", origin: .facet, key: "viewport", decidedBy: .tool,
