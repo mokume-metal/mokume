@@ -116,6 +116,38 @@ class GuardTest(unittest.TestCase):
         """個人の token では author が人間になる。ghs_ 以外は通さない。"""
         self.assert_denied("gh pr create --fill", GH_TOKEN="gho_" + "x" * 36)
 
+    # --- PR を作る口は 1 つではない (#719) --------------------------------
+    #
+    # 綴りの一覧と、載せない口の理由は pr-identity-guard.sh の冒頭にある。
+    # ここは「載せる口は差し戻す / 載せない口は素通しする」を 1 件ずつ固定する。
+
+    def test_pr_new_denied(self):
+        """gh pr new は gh pr create の組み込みエイリアス。同じものが別の綴りで通っていた。"""
+        self.assert_denied('gh pr new --title "x" --body "y"')
+
+    def test_pr_revert_denied(self):
+        """revert PR も PR で、author は同じく承認できる集合に入る。"""
+        self.assert_denied("gh pr revert 42 --body 'x'")
+
+    def test_the_reason_names_the_port_that_was_typed(self):
+        """打っていない綴りで直し方を示すと、読み手が自分の行と突き合わせられない。"""
+        reason = self.assert_denied("gh pr new --fill")
+        self.assertIn("gh pr new", reason)
+        self.assertNotIn("gh pr create", reason)
+
+    def test_dry_run_passes(self):
+        """--dry-run は内容を出すだけで PR を作らない。"""
+        self.assert_passed("gh pr create --dry-run --fill")
+
+    def test_agent_task_create_passes(self):
+        """author が Copilot bot になるので、承認できる集合の外に自動的に居る。"""
+        self.assert_passed("gh agent-task create --base main 'なにかする'")
+
+    def test_gh_api_passes(self):
+        """任意の綴りで任意の API を叩けるので、ここで数え上げると必ず取りこぼす。
+        agent-comment-guard.sh が同じ理由で素通しと宣言している。"""
+        self.assert_passed("gh api repos/mokume-metal/mokume/pulls -f title=x")
+
     # --- 以前は見逃していた形 (#128) ------------------------------------
     #
     # 素通りすると **メンテナ名義の PR がそのまま作られる**。承認できる人が居ない
