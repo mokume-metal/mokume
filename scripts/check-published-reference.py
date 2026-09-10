@@ -49,31 +49,30 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 # 読み口とタイムアウトは site_source が持つ (#815)。**この 3 本は必ず一緒に呼ばれる**
 # ので、写しを持つと「手元では通るが公開先だけ落ちる」が起きる
-from site_source import FETCH_TIMEOUT_SECONDS, Source, Unreachable  # noqa: E402,F401
+from site_source import (  # noqa: E402,F401
+    FETCH_TIMEOUT_SECONDS,
+    Source,
+    Unreachable,
+    landing_of,
+)
 
-# 入口の見出し `# ``MokumeCore``` — カタログの中でモジュールの面を上書きするファイル
-LANDING_TITLE = re.compile(r"^#\s*``([A-Za-z_][A-Za-z0-9_]*)``\s*$", re.MULTILINE)
+# 中間の 1 枚が指す行き先の**名前の節**。`url=mokume/` / `href="mokume/"` /
+# `<link rel="canonical" href="mokume/">` の 3 つの綴りから、同じ 1 つの名前を取り出す。
+#
+# **substring では見たことにならない** ([#1101](https://github.com/mokume-metal/mokume/issues/1101))。
+# 以前は `module.lower() not in middle.lower()` で見ていたが、この 1 枚は SPDX ヘッダ・
+# 題・リンクの文字列にも面の名前を持つので、**行き先を架空の名前へ変えても判定は真に
+# ならなかった**。名前が `MokumeCore` だった頃は `mokumecore` が他の理由で現れないので
+# 効いていた判定が、名前を `mokume` へ短くした瞬間に空回りへ変わっている — 検査が守る
+# 対象そのものが検査を無効化した形である。
+MIDDLE_TARGET = re.compile(
+    r"""(?:url=|href=["'])\.?/?([A-Za-z0-9_.-]+)/""", re.IGNORECASE)
+
 # Topics に並べた記号 (``Foo``)。入れ子は `Foo/Bar` の形で書けるので `/` を、口 1 本は
 # `Foo/bar(_:_:)` の形になるので括弧・コロン・同名を分ける `-<印>` も拾う。
 # **狭いと黙って見なくなる** — 並べたのに拾えなかった記号は期待から落ち、出ていなくても
 # 誰も言わない (索引が型の粒度だった頃はこの形が現れなかった・#582)
 CURATED_SYMBOL = re.compile(r"^\s*-\s*``([A-Za-z_][A-Za-z0-9_/(:)-]*)``\s*$", re.MULTILINE)
-
-def landing_of(catalog: pathlib.Path) -> tuple[pathlib.Path, str]:
-    """カタログの中の、モジュールの面を上書きするファイルとモジュール名。"""
-    landings = []
-    for path in sorted(catalog.glob("*.md")):
-        match = LANDING_TITLE.search(path.read_text(encoding="utf-8"))
-        if match:
-            landings.append((path, match.group(1)))
-    if len(landings) != 1:
-        names = ", ".join(str(p) for p, _ in landings) or "(無し)"
-        raise SystemExit(
-            f"カタログ {catalog} のモジュールの入口が 1 つに決まらない: {names}\n"
-            "記号を題にした .md (# ``Module``) がちょうど 1 つある形を期待している"
-        )
-    return landings[0]
-
 
 def expectations(catalog: pathlib.Path) -> tuple[str, list[str], list[str]]:
     """(モジュール名, 入口に並べた記号, 記事のファイル名) を面の入口から導く。"""
@@ -149,11 +148,22 @@ def check(source: Source, catalog: pathlib.Path) -> list[str]:
         problems.append(
             "documentation/index.html が無い — 面の中間の経路 (/documentation/) が行き止まりになる"
         )
-    elif module.lower() not in middle.decode("utf-8", errors="replace").lower():
-        problems.append(
-            f"documentation/index.html が {module} を指していない — "
-            "モジュールの名前が変わったまま行き先が取り残されている"
-        )
+    else:
+        targets = {
+            match.group(1).lower()
+            for match in MIDDLE_TARGET.finditer(middle.decode("utf-8", errors="replace"))
+        }
+        if not targets:
+            problems.append(
+                "documentation/index.html に面への行き先が 1 つも無い "
+                "(綴りが変わって拾えていない可能性)"
+            )
+        elif targets != {module.lower()}:
+            stray = ", ".join(sorted(targets - {module.lower()})) or "(無し)"
+            problems.append(
+                f"documentation/index.html が {module} 以外を指している ({stray}) — "
+                "モジュールの名前が変わったまま行き先が取り残されている"
+            )
 
     for symbol in symbols:
         path = f"{root}/{symbol.lower()}"
