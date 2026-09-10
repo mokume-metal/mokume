@@ -23,7 +23,7 @@ enum Toolchain {
     static func describe(in directory: URL) -> String? {
         guard
             let result = try? RunCommand.swift(
-                ["--version"], in: directory, capturing: true, discardingErrors: true),
+                ["--version"], in: directory, capturing: true, errors: .discard),
             result.status == 0
         else { return nil }
         let first = result.output.split(separator: "\n").first.map(String.init)

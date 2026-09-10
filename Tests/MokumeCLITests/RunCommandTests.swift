@@ -26,6 +26,44 @@ struct RunCommandTests {
         return executable
     }
 
+    /// 両方の流れへ 1 行ずつ書くだけの子。
+    ///
+    /// **偽の道具立てを `PATH` へ置く形は採らない。** `swift(_:in:capturing:errors:)` は
+    /// 実行するものを `/usr/bin/env swift` に固定しているので、そちらからは差し替え
+    /// られない。管の配線は `capture(_:capturing:errors:)` が持つので、任意の子を
+    /// そこへ渡せば同じ配線を通せる。
+    private func makeTalkativeChild() -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "echo out; echo err >&2"]
+        return process
+    }
+
+    @Test("掴む形で愚痴を混ぜると、子が stderr にだけ書いた行も出力に載る")
+    func mergedErrorsReachTheOutput() throws {
+        let result = try RunCommand.capture(
+            makeTalkativeChild(), capturing: true, errors: .merge)
+
+        #expect(result.status == 0)
+        #expect(result.output.contains("err"), "stderr の行が出力に載っていない")
+        #expect(result.output.contains("out"), "stdout の行まで落としている")
+    }
+
+    /// 混ぜる先が広がっていないことの裏。
+    ///
+    /// 出力をファイルパスや JSON として解く呼び出し (`binPath` / `dumpPackage` /
+    /// `Toolchain.describe`) は、警告 1 行が混ざるだけで解けなくなる ([#731])。
+    ///
+    /// [#731]: https://github.com/mokume-metal/mokume/issues/731
+    @Test("愚痴を混ぜない形では、stderr の行は出力に載らない")
+    func inheritedErrorsStayOutOfTheOutput() throws {
+        let result = try RunCommand.capture(
+            makeTalkativeChild(), capturing: true, errors: .inherit)
+
+        #expect(result.output.contains("out"))
+        #expect(!result.output.contains("err"), "混ぜない形なのに stderr が出力へ入った")
+    }
+
     @Test("0 以外で終わったスケッチは、終了コードを載せて投げる")
     func nonZeroExitsAreThrown() throws {
         let executable = try makeExecutable(exiting: 3)
