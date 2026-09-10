@@ -3,6 +3,7 @@
 
 import CoreText
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -671,6 +672,58 @@ struct TextTests {
             他の字を焼き直させ続ける形になる。上限まで行っても入らないので、回復もしない
             ([#738](https://github.com/mokume-metal/mokume/issues/738))。
             """)
+    }
+
+    /// 0 埋めが面全体を覆う。
+    ///
+    /// 焼く前の場所が透明であることは、面を作るときの 0 埋めだけが担っている ([#796])。
+    /// **作りたての面を読んでも確かめられない** — Metal は 0 で返すので、埋めたのか
+    /// 初めからそうだったのかが分からない。だから**面を不透明で汚してから埋めさせて**、
+    /// 覆い残しが出ないことを見る。帯の分割を誤れば、覆えなかった行がここに出る。
+    ///
+    /// [#796]: https://github.com/mokume-metal/mokume/issues/796
+    @Test("0 埋めは、面のどの行も覆い残さない")
+    func fillingTransparentCoversEveryRow() throws {
+        let gpu = try RenderDevice()
+        let atlas = try GlyphAtlas(gpu: gpu)
+
+        // 一辺ごとに帯の分割が変わるので、上限まで含めて見る
+        for _ in 0...2 {
+            let side = atlas.size
+            paintOpaque(atlas.texture, side: side)
+            #expect(
+                opaquePixels(of: atlas.texture, side: side) == side * side,
+                "汚し切れていないなら、この後の判定が意味を持たない")
+
+            GlyphAtlas.fillTransparent(atlas.texture, side: side)
+            #expect(
+                opaquePixels(of: atlas.texture, side: side) == 0,
+                "一辺 \(side) の面に、0 埋めが覆えなかった画素が残った")
+
+            try atlas.grow(gpu: gpu)
+        }
+    }
+
+    /// 面全体を不透明で塗る。
+    private func paintOpaque(_ texture: any MTLTexture, side: Int) {
+        let opaque = [SIMD4<Float16>](repeating: SIMD4(1, 1, 1, 1), count: side * side)
+        texture.replace(
+            region: MTLRegionMake2D(0, 0, side, side), mipmapLevel: 0, withBytes: opaque,
+            bytesPerRow: side * GlyphAtlas.bytesPerPixel)
+    }
+
+    /// 面を読み戻して、不透明な画素がいくつ在るかを数える。
+    ///
+    /// **読み戻す先を 1 で埋めてから渡す。** 0 で埋めると、読み戻しが何も書かなくても
+    /// 「全部透明」に見えてしまう。
+    private func opaquePixels(of texture: any MTLTexture, side: Int) -> Int {
+        var pixels = [SIMD4<Float16>](repeating: SIMD4(1, 1, 1, 1), count: side * side)
+        pixels.withUnsafeMutableBytes { raw in
+            texture.getBytes(
+                raw.baseAddress!, bytesPerRow: side * GlyphAtlas.bytesPerPixel,
+                from: MTLRegionMake2D(0, 0, side, side), mipmapLevel: 0)
+        }
+        return pixels.count { $0.w != 0 }
     }
 
     // MARK: - 色を持つ字形
