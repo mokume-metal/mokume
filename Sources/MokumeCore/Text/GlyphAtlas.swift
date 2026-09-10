@@ -60,6 +60,16 @@ import simd
     static let pixelFormat: MTLPixelFormat = .rgba16Float
     /// 1 画素ぶんのバイト数。
     static let bytesPerPixel = MemoryLayout<SIMD4<Float16>>.stride
+    /// 面を 0 で埋めるとき、1 度に流す帯の上限 (バイト)。
+    ///
+    /// **面の画素数に比例させないための固定値** ([#796])。面と同じ大きさを CPU 側に
+    /// 持つと 4096 の面で 128 MiB を瞬間的に確保する。かといって 1 行ずつ流すと
+    /// `replace` の呼び出しが一辺の数だけ要り、4096 まで育てる経路が 6 倍遅くなる
+    /// (22.5 ms → 134.7 ms の実測)。帯にすると確保は 1 MiB で頭打ち、呼び出しは
+    /// 4096 の面でも 128 回で済む。
+    ///
+    /// [#796]: https://github.com/mokume-metal/mokume/issues/796
+    static let blankBandBytes = 1 << 20
 
     /// 焼いた字形 1 つぶん。
     struct Entry {
@@ -148,12 +158,35 @@ import simd
         descriptor.storageMode = .shared
         let texture = try gpu.makeTexture(descriptor: descriptor)
         texture.label = "mokume.glyphs"
-        // 面全体を 0 で埋める。字形を焼く前に読まれても、透明として振る舞う
-        let zeros = [SIMD4<Float16>](repeating: .zero, count: side * side)
-        texture.replace(
-            region: MTLRegionMake2D(0, 0, side, side), mipmapLevel: 0, withBytes: zeros,
-            bytesPerRow: side * Self.bytesPerPixel)
+        fillTransparent(texture, side: side)
         return texture
+    }
+
+    /// 面全体を 0 で埋める。字形を焼く前に読まれても、透明として振る舞う。
+    ///
+    /// **帯を使い回して流す** ([#796] — 上限は ``blankBandBytes`` が持つ)。面と同じ
+    /// 大きさを CPU 側に持つと、抜けた後も malloc が抱えた山が残る。
+    ///
+    /// 面を作る側から切り出してあるのは、**覆い残しを検査から見られるようにする**
+    /// ためである。作りたての面は Metal が 0 で返すので、`makeTexture` を通した後を
+    /// 読んでも、埋めたのか初めから 0 だったのかが分からない。
+    ///
+    /// [#796]: https://github.com/mokume-metal/mokume/issues/796
+    static func fillTransparent(_ texture: any MTLTexture, side: Int) {
+        let bytesPerRow = side * Self.bytesPerPixel
+        let bandRows = max(1, min(side, Self.blankBandBytes / bytesPerRow))
+        let blank = [SIMD4<Float16>](repeating: .zero, count: side * bandRows)
+        blank.withUnsafeBytes { source in
+            let bytes = source.baseAddress!
+            var row = 0
+            while row < side {
+                let height = min(bandRows, side - row)
+                texture.replace(
+                    region: MTLRegionMake2D(0, row, side, height), mipmapLevel: 0,
+                    withBytes: bytes, bytesPerRow: bytesPerRow)
+                row += height
+            }
+        }
     }
 
     /// 左上の隅を白く塗る。図形はここを指す。
