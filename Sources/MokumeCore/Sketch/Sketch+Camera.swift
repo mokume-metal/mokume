@@ -50,6 +50,12 @@ extension Sketch {
     /// 座標は世界の座標で、**いまの変換の影響を受けない** — 視点は「何をどう置くか」
     /// ではなく「どこから見るか」なので、積んだ変換とは別に決まる。
     ///
+    /// **平面の図形は視点を通らない。** `rect` / `circle` のような 2 次元の図形は、
+    /// 視点をどう動かしても面の座標へそのまま描かれる (奥行き 0 の立体と重なる様子は
+    /// ``camera()`` の絵にある)。視点を動かしたうえで 3 次元の点へ印を置くときは、
+    /// ``screenX(_:_:_:)`` / ``screenY(_:_:_:)`` で面の座標へ落として、2 次元の図形を
+    /// その座標のまま置く。
+    ///
     /// 下は**同じ高さに置いた 3 つの立方体を、上から見下ろした**もの。正面から見た絵
     /// (``perspective()`` の 1 枚) では、どれが手前かは大きさの差でしか分からない —
     /// 見下ろすと**奥行きが上下のずれになる**ので、並びがそのまま位置として読める。
@@ -161,6 +167,9 @@ extension Sketch {
     /// }
     ///
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム当てる。
+    ///
+    /// - Note: **平面の図形はこの指定を通らない** — 面の座標へそのまま描かれる
+    ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=1911c7b0
     public func setCamera(_ camera: Camera) { canvas.setCamera(camera) }
 
@@ -270,6 +279,9 @@ extension Sketch {
     ///   - far: 奥の面までの距離。**これより奥は写らない。**
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    ///
+    /// - Note: **平面の図形はこの指定を通らない** — 面の座標へそのまま描かれる
+    ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=9980d6cc
     // shot: 2 snippet=3ae634c3
     public func perspective(_ fieldOfView: some ScalarConvertible, _ aspect: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible) {
@@ -369,6 +381,9 @@ extension Sketch {
     ///   上側ではない。取り違えても警告は出ず、絵が上下反転するだけなので注意する。
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    ///
+    /// - Note: **平面の図形はこの指定を通らない** — 面の座標へそのまま描かれる
+    ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=722294b1
     public func ortho(
         _ left: some ScalarConvertible, _ right: some ScalarConvertible, _ bottom: some ScalarConvertible, _ top: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible
