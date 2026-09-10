@@ -16,9 +16,28 @@
 # (ADR-0031 より前は、これに加えて対象 Issue の verify ラベルを API で引く必要があった。
 #  ラベル由来の承認は畳まれたが、区別しない方針そのものは変わらない)
 #
+# **PR を作る口は 1 つではない。** gh 2.100.0 の `gh reference` から数え上げた (#719):
+#
+#   口                      | 作るか | 判定に載せるか
+#   ------------------------|--------|--------------------------------------------------
+#   gh pr create            | 作る   | 載せる
+#   gh pr new               | 作る   | 載せる — **create の組み込みエイリアス**
+#   gh pr revert            | 作る   | 載せる — revert PR。gh v2.83.0 (2025-11-04) で入った
+#   gh agent-task create    | 作る   | 載せない — author が Copilot bot なので、承認できる
+#                           |        |   集合の外に居る。不変条件を破りようがない
+#   gh api POST …/pulls     | 作れる | 載せない — agent-comment-guard.sh が同じ理由で素通しと
+#                           |        |   宣言している。任意の綴りで任意の API を叩けるので、
+#                           |        |   ここで数え上げると必ず取りこぼす
+#   gh alias / gh extension | 作れる | 載せない — 綴りが利用者の定義次第で、数え上げ不能
+#
+# **下の 3 つを載せないのは「安全だから」ではなく「この判定では捕まえられないから」である**
+# (bot の 1 行だけは理由が違う)。捕まえられないものを捕まえたふりをすると、通ったことが
+# 安全の証拠と読まれる。
+#
 # 素通しするもの:
-#   - gh pr create 以外 (view/list/diff/checks …)
+#   - 上の表で「載せない」もの / PR を作らない口 (view/list/diff/checks …)
 #   - --help / -h            → 使い方を尋ねているだけ
+#   - --dry-run              → PR を作らず内容を出すだけ (gh pr create の旗)
 #   - このリポジトリ以外宛て   → 規約の外
 #   - 同じ行で gh-app-token.sh を **失敗が後段へ伝わる形で** 通し、かつ **export で
 #     gh まで渡している**もの (実際の運用形)
@@ -89,19 +108,19 @@ export を挟んでください。代入・export・gh を && で繋ぐと、発
 EOF
 }
 
-identity_required_message() {
-  cat <<'EOF'
+identity_required_message() { # $1=実際に打たれた口 (例: gh pr create)
+  cat <<EOF
 **このリポジトリ宛ての** PR は GitHub App の identity で作成してください。素の gh
 (メンテナ名義) で作ると、**誰も承認できない PR** になります — GitHub は自分の PR を
 自分で承認できず、author は後から変えられないので close して作り直すしかありません
 (ADR-0007 / #88)。
 
-  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
+  GH_TOKEN="\$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && $1 …
 
 代入から始めるのが要点です。export を先頭に付けると終了コードが 0 に化けて、token の
 発行に失敗しても後段が走ってしまいます (#122)。
 
-`MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
+\`MOKUME_APP_PRIVATE_KEY_CMD\` が未設定でも「鍵が無い」と即断しないでください。手元の
 秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を
 引いて、このリポジトリの App の鍵が載っていないかを見ます。参照名が分かればその環境
 変数は 1 行で組めます (在処そのものを読む必要はありません)。
@@ -120,15 +139,39 @@ EOF
 # shellcheck source=scripts/guard-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
 
+# PR を作る口 (冒頭の表の「載せる」3 つ)。**判定と、打たれた口の取り出しが同じ綴りを
+# 読む** — 割れると「差し戻したのに、名乗る口が空」が起きる
+PR_CREATING_PORTS='pr[[:space:]]+(create|new|revert)'
+
+# 内容を出すだけで PR を作らない。`gh pr create --dry-run` の旗で、他の 2 つの口は
+# 持たない (持たない口に付ければ gh 自身が弾く)
+is_dry_run() { # $1=コマンド
+  printf '%s' "$1" |
+    strip_heredoc_bodies |
+    grep -qE '(^|[[:space:]])--dry-run([[:space:]]|$)'
+}
+
 hook_payload
 hook_command
 command=$HOOK_COMMAND
 cwd=$HOOK_CWD
 
-is_gh_subcommand "$command" 'pr[[:space:]]+create' || exit 0
+# **PR を作る口は 1 つではない** (冒頭の表)。create の別綴り (new) と revert も見る
+is_gh_subcommand "$command" "$PR_CREATING_PORTS" || exit 0
+
+# 実際に打たれた口。差し戻しの文言がこれを名乗る — 打っていない綴りで直し方を示すと、
+# 読み手が自分の行と突き合わせられない
+port="gh $(printf '%s' "$command" |
+  strip_heredoc_bodies |
+  grep -oE "$PR_CREATING_PORTS" |
+  head -1 |
+  tr -s '[:space:]' ' ')"
 
 # 使い方を尋ねているだけなら作成ではない (判定は guard-lib.sh が持つ)
 is_help_request "$command" && exit 0
+
+# 内容を出すだけで PR を作らない (gh pr create の旗)
+is_dry_run "$command" && exit 0
 
 # 他のリポジトリ宛ての PR はこのリポジトリの規約の外。判定は guard-lib.sh が持つ
 # (agent-comment-guard.sh と共有する。#188)
@@ -175,4 +218,4 @@ fi
 # ここが先に通ると握り潰しを見逃す
 case "${GH_TOKEN:-}" in ghs_*) exit 0 ;; esac
 
-hook_deny "$(identity_required_message)$(other_repo_hint 'gh pr create')"
+hook_deny "$(identity_required_message "$port")$(other_repo_hint "$port")"
