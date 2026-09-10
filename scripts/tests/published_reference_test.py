@@ -107,9 +107,38 @@ class PublishedReferenceTest(unittest.TestCase):
         if middle is None:
             stub.unlink(missing_ok=True)  # 組み直しなので、前に置いたものを消す
         else:
+            # **本物と同じ形の 1 枚を書く** ([#1101](https://github.com/mokume-metal/mokume/issues/1101))。
+            # 以前は転送の 1 行だけだったので、面の名前が**転送先にしか現れず**、
+            # substring の判定でも赤くなった。本物は SPDX ヘッダ・題・リンクの文字列にも
+            # 名前を持つので同じ判定が空回りする — 雛形でだけ効く判定を緑のまま通していた
+            # ここは帰属の宣言ではなく、本物と同じ形の 1 枚を組み立てる材料である。
+            # REUSE の走査から外さないと、雛形の SPDX がこのファイル自身の宣言と
+            # 読まれて reuse-lint が落ちる (先例: release_test.py の断片)
+            # REUSE-IgnoreStart
             stub.write_text(
-                f'<meta http-equiv="refresh" content="0; url={middle}" />', encoding="utf-8"
+                "<!--\n"
+                "SPDX-FileCopyrightText: 2026 mokume-metal\n"
+                "SPDX-License-Identifier: MIT\n"
+                "\n"
+                "面の中間の経路 (/documentation/) に来た読者を、モジュールの面へ送る。\n"
+                "**行き先は面の名前を含む。** 名前が変われば黙って腐るので、指し先が\n"
+                "面と合っているかは scripts/check-published-reference.py が機械で見る。\n"
+                "-->\n"
+                "<!doctype html>\n"
+                '<html lang="ja">\n'
+                "  <head>\n"
+                '    <meta charset="utf-8" />\n'
+                "    <title>Mod の参照</title>\n"
+                f'    <meta http-equiv="refresh" content="0; url={middle}" />\n'
+                f'    <link rel="canonical" href="{middle}" />\n'
+                "  </head>\n"
+                "  <body>\n"
+                f'    <p><a href="{middle}">Mod の面</a>へ移動します。</p>\n'
+                "  </body>\n"
+                "</html>\n",
+                encoding="utf-8",
             )
+            # REUSE-IgnoreEnd
 
     def run_check(self, target=None):
         return subprocess.run(
@@ -199,11 +228,21 @@ class PublishedReferenceTest(unittest.TestCase):
         self.assertIn("行き止まり", result.stderr)
 
     def test_中間の経路の行き先が腐っていれば赤い(self):
-        # モジュールの名前が変われば、手で書いた行き先は黙って取り残される
-        self.build_output(middle="別のなにか/")
+        # モジュールの名前が変われば、手で書いた行き先は黙って取り残される。
+        # **雛形は本物と同じく、行き先以外にも面の名前を持つ** (SPDX ヘッダ・題・
+        # リンクの文字列) ので、substring では通ってしまう形になっている (#1101)
+        self.build_output(middle="stale/")
         result = self.run_check()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("指していない", result.stderr)
+        self.assertIn("指している", result.stderr)
+
+    def test_行き先を拾えなければ赤い(self):
+        # 綴りが変わって 1 つも拾えなくなった状態は、行き先が腐った状態と同じ見え方を
+        # する。0 件を緑にしない
+        self.build_output(middle="名前ではない綴り/")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("行き先が 1 つも無い", result.stderr)
 
     def test_モジュールの面の題が違えば赤い(self):
         self.build_output(title="別物")

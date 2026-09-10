@@ -38,6 +38,16 @@ README = """\
 ```bash
 brew install mokume-metal/tap/mokume
 ```
+
+書ける口の説明は**参照の面**にある: <https://mokume.org/documentation/mokumecore/>
+"""
+
+# 面が名乗る名前の出どころ。**カタログの入口の記号見出しが正本**で、判定はここから導く
+# (site_source.landing_of。check-published-reference.py と同じ 1 本を読む)
+LANDING = """\
+# ``mokumecore``
+
+面の入口。
 """
 
 # 属性を改行で分けて書く。**この形で拾えること**が要件で、1 行に畳んだ作り物で
@@ -64,6 +74,9 @@ class EntryTest(unittest.TestCase):
 
         self.readme = self.root / "README.md"
         self.readme.write_text(README, encoding="utf-8")
+        self.catalog = self.root / "mokume.docc"
+        self.catalog.mkdir()
+        (self.catalog / "Landing.md").write_text(LANDING, encoding="utf-8")
         self.out = self.root / "out"
         self.out.mkdir()
         self.write(ENTRY)
@@ -73,7 +86,11 @@ class EntryTest(unittest.TestCase):
 
     def run_check(self, target=None):
         return subprocess.run(
-            ["python3", str(SCRIPT), target or str(self.out), "--readme", str(self.readme)],
+            [
+                "python3", str(SCRIPT), target or str(self.out),
+                "--readme", str(self.readme),
+                "--catalog", str(self.catalog),
+            ],
             capture_output=True,
             text=True,
         )
@@ -88,11 +105,45 @@ class EntryTest(unittest.TestCase):
         self.write(ENTRY.replace('href="documentation/', 'href="./documentation/'))
         self.assertEqual(self.run_check().returncode, 0)
 
-    def test_モジュール名までは見ない(self):
-        # 面の内側 (モジュールの名前) を見るのは check-published-reference.py の
-        # 責務。ここで重ねると同じことを 2 か所で見ることになる
-        self.write(ENTRY.replace('documentation/mokumecore/', 'documentation/'))
-        self.assertEqual(self.run_check().returncode, 0)
+    # --- 行き先の名前 (#568 で責務の線を引き直した) ----------------------
+    #
+    # **当初ここは「モジュール名までは見ない」を固定していた** — 面の内側を見るのは
+    # check-published-reference.py の責務で、重ねると同じことを 2 か所で見ることに
+    # なるからである。だが結果として入口と README の手書きリンクが誰の担当でもなく
+    # なり、名前が変われば 404 になるのに CI は緑のままだった。線は引き直した:
+    # あちらが見るのは**面の出力**、こちらが見るのは**手で書いた層と README** で、
+    # 名前の導出は site_source の 1 本を両者が読む
+
+    def test_入口の行き先が面の名前と違えば赤い(self):
+        self.write(ENTRY.replace("documentation/mokumecore/", "documentation/nonexistent/"))
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("nonexistent", result.stderr)
+
+    def test_入口の行き先に名前が無ければ赤い(self):
+        # 面の入口で止めた行き先は、面の中のどこにも着かない
+        self.write(ENTRY.replace("documentation/mokumecore/", "documentation/"))
+        self.assertEqual(self.run_check().returncode, 1)
+
+    def test_README_の面の_URL_が面の名前と違えば赤い(self):
+        # **面の出力を読むだけの道具では届かない場所である。** README は面の出力に無い
+        self.readme.write_text(
+            README.replace("/documentation/mokumecore/", "/documentation/nonexistent/"),
+            encoding="utf-8",
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("README", result.stderr)
+
+    def test_README_に面の_URL_が無ければ赤い(self):
+        self.readme.write_text(
+            README.replace(
+                "書ける口の説明は**参照の面**にある: <https://mokume.org/documentation/mokumecore/>",
+                "",
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.run_check().returncode, 1)
 
     # --- 行き来が切れる ---------------------------------------------------
 

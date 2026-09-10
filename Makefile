@@ -233,7 +233,7 @@ examples: build ## 説明文の中の例が組めるかを見る
 # 入口が面として成立しているかを見る (#482)。**組み立ての的は無い** — 手で書く層は
 # make reference が Documentation/site/. ごと被せるので、ここは中身だけを見る
 entry-check:
-	python3 scripts/check-entry.py Documentation/site
+	python3 scripts/check-entry.py Documentation/site --catalog "$(REFERENCE_CATALOG)"
 
 # シェーダの原文はビルドに含まれない (SwiftPM は .metal を運ぶだけ) ので、誤りは
 # 実行するまで分からない。描画を要する検査は実行環境の制約で CI では走らない (#180)

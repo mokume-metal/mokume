@@ -35,6 +35,18 @@
 こちらの赤になる」と書いているのは**置き場の切り分け**であって (ネットワークを踏む検査を
 merge の条件に混ぜない)、赤にしないという意味ではない — 同じ節が「赤くするだけで、
 起票はしない」と続けている。
+
+## 面が名乗る名前 ([#568](https://github.com/mokume-metal/mokume/issues/568))
+
+**手で書いた行き先が面の名前と合っているか**を見る検査が 2 本になった
+(`check-published-reference.py` が中間の 1 枚を、`check-entry.py` が入口と README を)。
+名前の導出をそれぞれが持つと、**片方が違う名前を導いたときに、そちらの検査だけが
+黙って空回りする** — 名前が変わったときに守られなくなるのは、まさに検査が守るはずの
+場面である。だから導出はここに 1 本だけ置く。
+
+**名前の出どころ自体は増やさない。** カタログの入口の記号見出し (`# ``mokume``) が
+正本で、`Makefile` の `REFERENCE_SURFACE` と食い違えば既に赤くなる。ここが読むのは
+前者だけである。
 """
 
 from __future__ import annotations
@@ -44,6 +56,26 @@ import pathlib
 import re
 import urllib.error
 import urllib.request
+
+# カタログの入口 (モジュールの面を上書きする .md) の記号見出し。題がモジュール名になる
+LANDING_TITLE = re.compile(r"^#\s*``([A-Za-z_][A-Za-z0-9_]*)``\s*$", re.MULTILINE)
+
+
+def landing_of(catalog: pathlib.Path) -> tuple[pathlib.Path, str]:
+    """カタログの中の、モジュールの面を上書きするファイルとモジュール名。"""
+    landings = []
+    for path in sorted(catalog.glob("*.md")):
+        match = LANDING_TITLE.search(path.read_text(encoding="utf-8"))
+        if match:
+            landings.append((path, match.group(1)))
+    if len(landings) != 1:
+        names = ", ".join(str(p) for p, _ in landings) or "(無し)"
+        raise SystemExit(
+            f"カタログ {catalog} のモジュールの入口が 1 つに決まらない: {names}\n"
+            "記号を題にした .md (# ``Module``) がちょうど 1 つある形を期待している"
+        )
+    return landings[0]
+
 
 # 相手を待つ上限。**3 本で同じ値である必要がある** — 揃っていないと、同じ公開先に
 # 対して「手元では通るが公開先だけ落ちる」が起きる

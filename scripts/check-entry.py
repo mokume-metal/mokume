@@ -16,10 +16,20 @@
 ## 責務の線
 
 **生成された面の内側は見ない。** モジュールの面・記号・記事・中間の 1 枚
-(`documentation/index.html`) が出ているかと、その行き先がモジュールを指しているかは
-`check-published-reference.py` が持つ (#549)。**こちらが持つのは手で書いた層の中身と、
-そこから外へ出る行き先**である。だから下の照合は「面へ入る道があるか」までを見て、
-**その先のモジュール名までは見ない** — 見ると同じことを 2 か所で見ることになる。
+(`documentation/index.html`) が出ているかは `check-published-reference.py` が持つ (#549)。
+**こちらが持つのは手で書いた層の中身と、そこから外へ出る行き先**である。
+
+**行き先の名前までは見る ([#568](https://github.com/mokume-metal/mokume/issues/568) で
+引き直した)。** 当初この線は「面へ入る道があるか」で止め、**その先のモジュール名までは
+見ない**と引いていた — 同じことを 2 か所で見ないためである。結果として**入口
+(`Documentation/site/index.html`) と `README.md` の手書きリンクが誰の担当でもなくなって
+いた**。面の名前が変われば 404 になるのに CI は緑のままで、気付く手掛かりは誰かが押す
+ことだけだった (#567 では人が 4 か所とも手で直した)。
+
+**重ならない。** あちらが見るのは**面の出力**の中の 1 枚で、こちらが見るのは**手で書いた
+層と README** である。とりわけ `README.md` は面の出力に無いので、出力だけを読む道具では
+原理的に届かない。名前の導出は `site_source.landing_of` の 1 本を両者が読むので、
+**片方だけが違う名前を導いて空回りする**ことは起きない。
 
 **同じ判定を、手元の出力ディレクトリにも公開された URL にも当てる。** 引数が
 `http://` / `https://` で始まれば引き、そうでなければ読む — `check-published-reference.py`
@@ -58,15 +68,25 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 # ので、写しを持つと「手元では通るが公開先だけ落ちる」が起きる
 from site_source import (  # noqa: E402,F401
     FETCH_TIMEOUT_SECONDS,
+    landing_of,
     HTML_IMAGE,
     Source,
     Unreachable,
 )
 
 ENTRY_NAME = "index.html"
-# 面へ入る道。**相対で書く**ので、基準パスに依らずこの形になる。モジュール名までは
-# 見ない (上の「責務の線」) ので、面の入口である documentation/ で止める
-FACE_LINK = re.compile(r"""<a\s[^>]*href=["']\.?/?documentation/[^"']*["']""", re.IGNORECASE)
+# 入口から面へ入る道。**相対で書く**ので、基準パスに依らずこの形になる (絶対 URL は
+# 下の EXTERNAL_FACE_LINK が別に赤くする)。**行き先の名前の節まで取り出す** — 面が
+# 名乗る名前と合っているかを見るため (#568)
+FACE_LINK = re.compile(
+    r"""<a\s[^>]*href=["']\.?/?documentation/([A-Za-z0-9_.-]*)/?[^"']*["']""",
+    re.IGNORECASE,
+)
+# README が指す面の URL。**絶対で書く** — README は GitHub 上でも読まれるので相対に
+# できない。入口とは綴りが違うので判定も別に持つ (1 本にまとめると、どちらかの側で
+# 意味が変わる)
+README_FACE_LINK = re.compile(
+    r"""https?://[^\s<>()"']+/documentation/([A-Za-z0-9_.-]+)/""", re.IGNORECASE)
 # 絵。src が外部 URL のものだけを資産と数える。綴りは site_source が持つ (#815) —
 # 死活を見る側 (check-external-assets.py) と同じものを読まないと、片方だけが数える
 IMAGE_SOURCE = HTML_IMAGE
@@ -88,16 +108,26 @@ def brew_line(text: str) -> str | None:
     return match.group(0) if match else None
 
 
-def check(source: Source, readme: pathlib.Path) -> list[str]:
+def check(source: Source, readme: pathlib.Path, catalog: pathlib.Path) -> list[str]:
     problems: list[str] = []
+    # 面が名乗る名前。**導出は site_source の 1 本**で、check-published-reference.py と
+    # 同じものを読む (#568)
+    _, surface = landing_of(catalog)
 
     raw = source.read(ENTRY_NAME)
     if raw is None:
         return [f"入口が無い ({source.target}/{ENTRY_NAME})"]
     page = raw.decode("utf-8")
 
-    if not FACE_LINK.search(page):
+    targets = {name.lower() for name in FACE_LINK.findall(page)}
+    if not targets:
         problems.append("面 (documentation/) へのリンクが無い — 入口から面へ入れない")
+    elif targets != {surface.lower()}:
+        stray = ", ".join(sorted(name or "(名前なし)" for name in targets - {surface.lower()}))
+        problems.append(
+            f"入口の面リンクが {surface} 以外を指している ({stray}) — "
+            "面の名前が変わったまま行き先が取り残されている"
+        )
 
     images = IMAGE_SOURCE.findall(page)
     if not images:
@@ -124,7 +154,31 @@ def check(source: Source, readme: pathlib.Path) -> list[str]:
     else:
         problems.append(f"README が無い ({readme})")
 
+    problems.extend(readme_face_problems(readme, surface))
     return problems
+
+
+def readme_face_problems(readme: pathlib.Path, surface: str) -> list[str]:
+    """README が指す面の URL が、面の名乗る名前と合っているか (#568)。
+
+    **面の出力を読むだけの道具では届かない場所である。** README は面の出力に無いので、
+    `check-published-reference.py` からは原理的に見えない。
+    """
+    if not readme.is_file():
+        return []  # 「README が無い」は上の枝が既に名乗っている
+    targets = {
+        name.lower()
+        for name in README_FACE_LINK.findall(readme.read_text(encoding="utf-8"))
+    }
+    if not targets:
+        return [f"README に面への URL (…/documentation/<名前>/) が無い ({readme})"]
+    if targets != {surface.lower()}:
+        stray = ", ".join(sorted(targets - {surface.lower()}))
+        return [
+            f"README の面の URL が {surface} 以外を指している ({stray}) — "
+            "面の名前が変わったまま行き先が取り残されている"
+        ]
+    return []
 
 
 def main() -> int:
@@ -136,10 +190,16 @@ def main() -> int:
         default=pathlib.Path("README.md"),
         help="入れ方の 1 行を突き合わせる相手 (既定: README.md)",
     )
+    parser.add_argument(
+        "--catalog",
+        type=pathlib.Path,
+        default=pathlib.Path("Documentation/mokume.docc"),
+        help="面が名乗る名前を導くカタログ (既定: Documentation/mokume.docc)",
+    )
     arguments = parser.parse_args()
 
     try:
-        problems = check(Source(arguments.target), arguments.readme)
+        problems = check(Source(arguments.target), arguments.readme, arguments.catalog)
     except Unreachable as unreachable:
         # **「出ていない」ではなく「読めなかった」。** 混ぜると直す先を間違える
         # (置き忘れを直すのか、配信を直すのか)。向きは site_source の冒頭が持つ
