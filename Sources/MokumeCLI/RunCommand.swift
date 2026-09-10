@@ -118,7 +118,7 @@ enum RunCommand {
             BuildDirectory.resolveSegment, isDirectory: true)
         _ = try? swift(
             ["package", "resolve", "--scratch-path", store.path], in: directory,
-            capturing: true, discardingErrors: true)
+            capturing: true, errors: .discard)
     }
 
     /// 画面の出口が共有する面になっていることを名乗る 1 行。区画が無ければ `nil`。
@@ -182,8 +182,11 @@ enum RunCommand {
                 at: bin.appendingPathComponent("\(product).dSYM", isDirectory: true))
         }
 
+        // **診断は stderr にしか出ない。** 掴む形 (watch) では混ぜないと、記録に
+        // 失敗の本文が載らない (#731)
         let result = try swift(
-            ["build"] + context.arguments, in: directory, capturing: capturing)
+            ["build"] + context.arguments, in: directory, capturing: capturing,
+            errors: .merge)
 
         // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
         // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
@@ -230,8 +233,11 @@ enum RunCommand {
     /// 出来上がりが置かれる場所。**道具立てに聞く** — 置き場の中の構造を組み立てると、
     /// 道具立てが並びを変えた日に黙って別の場所を指す。
     static func binPath(in directory: URL, context: BuildContext) throws(CommandFailure) -> URL {
+        // **愚痴を混ぜない。** 出力はファイルパスとして解くので、警告 1 行で別の
+        // 場所を指すことになる (#731)
         let output = try swift(
-            ["build", "--show-bin-path"] + context.arguments, in: directory, capturing: true
+            ["build", "--show-bin-path"] + context.arguments, in: directory, capturing: true,
+            errors: .inherit
         ).output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !output.isEmpty else { throw .noExecutable(path: directory.path) }
         return URL(fileURLWithPath: output, isDirectory: true)
@@ -263,7 +269,11 @@ enum RunCommand {
     ///
     /// 起こすのは重い (数百 ms) ので、同じ実行の中で 2 度要るときは呼び手が持ち回る。
     static func dumpPackage(in directory: URL) throws(CommandFailure) -> SwiftPM.Package? {
-        let dump = try swift(["package", "dump-package"], in: directory, capturing: true).output
+        // **愚痴を混ぜない。** 出力は JSON として厳密に解くので、警告 1 行で黙って
+        // nil になる (#731)
+        let dump = try swift(
+            ["package", "dump-package"], in: directory, capturing: true, errors: .inherit
+        ).output
         return SwiftPM.package(inDumpOf: dump)
     }
 
@@ -321,25 +331,64 @@ enum RunCommand {
         return environment
     }
 
+    /// 子の愚痴 (stderr) をどう扱うか。**3 つは排他である。**
+    ///
+    /// 旗を 2 本並べると「捨てながら混ぜる」という意味の無い組み合わせが表せてしまう
+    /// ので、1 つの型で持つ ([#731])。
+    ///
+    /// [#731]: https://github.com/mokume-metal/mokume/issues/731
+    enum ErrorStream {
+        /// 端末へそのまま流す。**既定** — 人が見ている経路。
+        case inherit
+        /// 捨てる。出力そのものを人へ見せる呼び出し (切り分けの口) だけで使う。
+        case discard
+        /// 掴んだ出力へ混ぜる。**作り直しの経路だけが使う。**
+        ///
+        /// `swiftc` の診断も SwiftPM 自身の診断も stderr に出るので、混ぜないと記録
+        /// (``BuildReport/output``) に失敗の本文が載らない。窓口から見ると「失敗した」
+        /// だけが届く。
+        case merge
+    }
+
     /// `swift` を呼ぶ。
     @discardableResult
-    /// - Parameter discardingErrors: 道具立ての愚痴を捨てるか。**既定は流す** — 作り
-    ///   直しの失敗はそこにしか出ないので、黙らせるのは出力そのものを人へ見せる呼び
-    ///   出し (切り分けの口) だけにする。
+    /// - Parameter errors: 子の愚痴の行き先。**混ぜてよいのは作り直しだけ** — 出力を
+    ///   パスや JSON として解く呼び出しに混ぜると、警告 1 行で解けなくなる。
     static func swift(
         _ arguments: [String], in directory: URL, capturing: Bool,
-        discardingErrors: Bool = false
+        errors: ErrorStream = .inherit
     ) throws(CommandFailure) -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["swift"] + arguments
         process.currentDirectoryURL = directory
+        return try capture(process, capturing: capturing, errors: errors)
+    }
+
+    /// 子を起こし、掴む形なら出力を読み切ってから待つ。
+    ///
+    /// **管の配線をここだけに置くのは、検査から任意の子を渡せるようにするためである**
+    /// ([#731])。`swift(_:in:capturing:errors:)` は実行するものを `/usr/bin/env swift`
+    /// に固定しているので、そちらからは偽の道具立てを渡せない。
+    ///
+    /// [#731]: https://github.com/mokume-metal/mokume/issues/731
+    static func capture(_ process: Process, capturing: Bool, errors: ErrorStream)
+        throws(CommandFailure) -> (status: Int32, output: String)
+    {
         let pipe = Pipe()
         if capturing {
             process.standardOutput = pipe
         }
-        if discardingErrors {
+        switch errors {
+        case .inherit:
+            break
+        case .discard:
             process.standardError = FileHandle.nullDevice
+        case .merge:
+            // **同じ管へ繋ぐので、2 つの流れの順序は保証されない** (子の側で別々に
+            // 緩衝される)。順序を保つ機構は足さない — 読みたいのは診断の中身である。
+            // 掴まないなら混ぜる先が無いので、流しっぱなしにする
+            if capturing { process.standardError = pipe }
         }
         do {
             try process.run()
@@ -348,6 +397,8 @@ enum RunCommand {
         }
         var output = ""
         if capturing {
+            // **読み切ってから待つ。** 逆順にすると、出力が管を埋めた時点で子が書けなく
+            // なって止まる
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             output = String(data: data, encoding: .utf8) ?? ""
         }
