@@ -136,6 +136,20 @@ def signature(symbol: dict) -> tuple[str, ...]:
     return tuple(types)
 
 
+def order(symbol: dict) -> tuple[str, tuple[str, ...]]:
+    """一覧に並べる順 (#880)。
+
+    **`title` だけを鍵にすると、同名オーバーロードは全部同じ鍵になる。** Python の
+    `sorted` は安定なので、同じ鍵の中ではシンボルグラフの順序 = ソースの並び順が
+    そのまま残り、**公開 API を 1 つも変えていないのに一覧が動く** (#797 で 8 行動いた)。
+    この一覧は版ごとのリリース資産なので、版の間で diff したときに並び替えがノイズになる。
+
+    割るのは `signature` — 引数の型の並びで、同名の宣言を見分ける鍵として既に
+    畳み込みの判定が使っているものである。
+    """
+    return (title(symbol), signature(symbol))
+
+
 def doc(symbol: dict) -> str:
     """宣言に付いた説明文。`///` は `docComment` に載り、`//` はソースから読む。
 
@@ -224,7 +238,7 @@ def render(symbols: list[dict], version: str) -> str:
             out.append("")
         out.append("```swift")
         out.append(declaration(parent))
-        for member in sorted(by_owner.get(name, []), key=title):
+        for member in sorted(by_owner.get(name, []), key=order):
             out.append("    " + declaration(member))
         out.append("```")
         out.append("")
@@ -235,7 +249,7 @@ def render(symbols: list[dict], version: str) -> str:
         out.append("")
         out.append("```swift")
         for parent in orphans:
-            for member in sorted(by_owner[parent], key=title):
+            for member in sorted(by_owner[parent], key=order):
                 out.append(f"{parent}.{declaration(member)}")
         out.append("```")
         out.append("")
