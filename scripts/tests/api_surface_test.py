@@ -306,6 +306,38 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("mokume v1.2.3", text)
         self.assertIn("公開シンボル 1 個", text)
 
+    def test_同名オーバーロードの並びが入力の順に依らない(self):
+        # #880: `title` だけを鍵にすると、同名オーバーロードは全部同じ鍵になり、
+        # 安定ソートがソースの並び順をそのまま残す。#797 で Sketch.swift を 24 ファイルに
+        # 分けたとき、公開 API を 1 つも変えていないのに一覧が 8 行動いた。
+        # **引数の型を `takes` でも渡す** — 一覧に出るのは宣言そのものなので、
+        # 宣言が同じ 2 本では並びが変わっても出力が変わらず、検査が何も固定しない
+        protocol_ = symbol("Sketch", kind="swift.protocol")
+        gray = symbol(
+            "ambientLight(_:)", owner="Sketch", precise="a",
+            takes=("Float", "s:Sf"), parameters=["Float"])
+        color = symbol(
+            "ambientLight(_:)", owner="Sketch", precise="b",
+            takes=("LinearRGBA", "s:10MokumeCore10LinearRGBAV"), parameters=["LinearRGBA"])
+        self.assertEqual(
+            api.render([protocol_, gray, color], "v1.2.3"),
+            api.render([protocol_, color, gray], "v1.2.3"),
+        )
+
+    def test_その他の節でも同名オーバーロードの並びが入力の順に依らない(self):
+        # 型そのものが一覧に無い所有者は「その他」節へ落ち、**別の枝で並べられる**。
+        # 片方だけ直しても残るので、両方を見る
+        picture = symbol(
+            "image(_:)", owner="Orphan", precise="a",
+            takes=("Picture", "s:10MokumeCore7PictureV"), parameters=["Picture"])
+        graphics = symbol(
+            "image(_:)", owner="Orphan", precise="b",
+            takes=("Graphics", "s:10MokumeCore8GraphicsC"), parameters=["Graphics"])
+        forward = api.render([picture, graphics], "v1.2.3")
+        backward = api.render([graphics, picture], "v1.2.3")
+        self.assertIn("## その他", forward)
+        self.assertEqual(forward, backward)
+
     def test_要件と既定の実装は一覧で畳まれる(self):
         with tempfile.TemporaryDirectory() as directory:
             graphs = Path(directory)
