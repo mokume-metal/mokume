@@ -64,7 +64,7 @@ enum BuildDirectory {
     // MARK: - どこに建てるか
 
     /// 置き場の決まり方。
-    enum Place: Equatable {
+    nonisolated enum Place: Equatable {
         /// パッケージ直下 (`.build`)。**道具立ての既定に任せる** = `--scratch-path` を渡さない。
         case inPackage(Fallback)
         /// パッケージの外。
@@ -102,7 +102,7 @@ enum BuildDirectory {
     }
 
     /// 共有しなかった理由。
-    enum Fallback: Equatable {
+    nonisolated enum Fallback: Equatable {
         /// パスで指した依存がある (mokume 自身の開発)。
         ///
         /// **共有できない。** 鍵はライブラリの固定から作るが、パスで指した先は版を

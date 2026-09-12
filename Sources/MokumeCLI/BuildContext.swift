@@ -25,7 +25,7 @@ import Foundation
 /// 見張るのを断ってはいけない — `Package.swift` を壊した状態から直していく途中は**まさに
 /// 見張っていてほしい場面**である。分からないときは `nil` にして、作り直しの後に読み直す。
 /// その場合の置き場は必ずパッケージ直下なので、取り違えの危険はそこには無い。
-struct BuildContext: Equatable {
+nonisolated struct BuildContext: Equatable {
     /// 選ばれた構成。**渡されなければ道具立ての既定に任せる** — ここで既定を書き固めると、
     /// 道具立てが既定を変えた日に黙ってずれる。
     let configuration: String?

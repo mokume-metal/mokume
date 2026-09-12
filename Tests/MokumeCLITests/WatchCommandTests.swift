@@ -220,39 +220,39 @@ struct WatchCommandTests {
     }
 
     @Test("印が立つと、巡回を抜ける")
-    func leavesTheLoopWhenStopped() throws {
+    func leavesTheLoopWhenStopped() async throws {
         let stub = Stub()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
 
-        #expect(WatchCommand.step(session, stopped: { false }))
-        #expect(!WatchCommand.step(session, stopped: { true }))
+        #expect(await WatchCommand.step(session, stopped: { false }))
+        #expect(await !WatchCommand.step(session, stopped: { true }))
     }
 
     /// **終われと言われた後に、もう一度作り直さない。** 待っている間に来た合図を
     /// 見ないと、抜ける直前に子を 1 つ起こしてから終わることになる。
     @Test("待っている間に来た合図は、作り直しより先に効く")
-    func doesNotRebuildAfterTheStopSignal() throws {
+    func doesNotRebuildAfterTheStopSignal() async throws {
         let stub = Stub()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
-        session.start()
+        await session.start()
         #expect(stub.builds == 1)
 
         stub.stamp = "bbb"  // 変化はある。合図が無ければ作り直す状況
-        WatchCommand.step(session, stopped: { true })
+        await WatchCommand.step(session, stopped: { true })
 
         #expect(stub.builds == 1)
         // 合図が無ければ作り直す状況であることを、同じ場面で確かめる
-        WatchCommand.step(session, stopped: { false })
+        await WatchCommand.step(session, stopped: { false })
         #expect(stub.builds == 2)
     }
 
     /// **止めたかどうかは別の出来事。** 走らせていたものが既に死んでいた場合と、
     /// こちらが止めた場合を同じ言い方にすると、孤児を追うときの手掛かりが消える。
     @Test("走らせているものが居なければ、止めたとは名乗らない")
-    func doesNotClaimToHaveStoppedNothing() throws {
+    func doesNotClaimToHaveStoppedNothing() async throws {
         let stub = Stub()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
-        session.start()  // launch が nil を返すので子は居ない
+        await session.start()  // launch が nil を返すので子は居ない
 
         #expect(session.stop() == .notRunning)
     }
@@ -261,16 +261,16 @@ struct WatchCommandTests {
     /// の判定が経路ごとに分かれ、片方だけ直る形になる
     /// ([#826](https://github.com/mokume-metal/mokume/issues/826))。
     @Test("窓から終わりを頼まれると、シグナルと同じ印が立ち、巡回が抜ける")
-    func raisesTheStopFlagFromTheWindow() throws {
+    func raisesTheStopFlagFromTheWindow() async throws {
         watchStopRequested = 0
         defer { watchStopRequested = 0 }
         let stub = Stub()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
 
-        #expect(WatchCommand.step(session), "印が立つ前に抜けている")
+        #expect(await WatchCommand.step(session), "印が立つ前に抜けている")
         WatchCommand.requestStop()
         #expect(watchStopRequested != 0)
-        #expect(!WatchCommand.step(session), "窓から頼まれた印で抜けていない")
+        #expect(await !WatchCommand.step(session), "窓から頼まれた印で抜けていない")
     }
 
     /// **押しどころの言葉を、窓の側で決めない** (#695 が端末の行で定めた規律)。

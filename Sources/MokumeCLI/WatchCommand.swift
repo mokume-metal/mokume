@@ -301,6 +301,12 @@ enum WatchCommand {
     ///
     /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
     ///
+    /// **作り直しの最中でも、抜けるのは即座である。** 作り直しは main actor の外で走る
+    /// ようになったので (#834)、ここで終わりを待つと「押したのに終わらない」時間が
+    /// ビルドの長さぶん残る — いちばん長いのは冷えた初回で、そこがまさに #834 が直した
+    /// 場面である。代わりに**終われと言われたことを ``WatchSession`` へ覚えさせ**、
+    /// 走っている作り直しが終わっても子を起こさないようにする。
+    ///
     /// - Parameter stopped: 終わりの合図が来たか。検査から差し替える。
     /// - Returns: 続けるなら `true`。**合図を見てからは作り直さない** — 見ないと、
     ///   終われと言われた後に 1 回だけ作り直して子を起こすことになる。
@@ -308,8 +314,11 @@ enum WatchCommand {
     static func step(
         _ session: WatchSession, viewer: Viewer? = nil,
         stopped: () -> Bool = { watchStopRequested != 0 }
-    ) -> Bool {
-        if stopped() { return false }
+    ) async -> Bool {
+        if stopped() {
+            session.noteStopRequested()
+            return false
+        }
         // **作り直しの契機より先に見る。** 保存と同時に消えた回では、後に置くと新しい子が
         // 起きて印が下り、消えたことを見逃す。名乗った行は作り直しが始まれば
         // `willRebuild` が上書きする (#1103)
@@ -318,7 +327,7 @@ enum WatchCommand {
             say(line)
             viewer?.preview.report(line, spinning: false)
         }
-        if let outcome = session.tick() {
+        if let outcome = await session.tick() {
             report(outcome, on: viewer)
             // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
             // 通るので、保存のたびにも起こりうる (#732)
@@ -329,6 +338,18 @@ enum WatchCommand {
             }
         }
         return true
+    }
+
+    /// 巡回が持つ印。
+    ///
+    /// **1 拍を `Task` へ渡すので、手続きの中の `var` では持てない** (送れる値ではない)。
+    /// どちらも 1 度きりの出来事を表す — 最初の作り直しを始めたか、抜ける手続きに入ったか。
+    @MainActor
+    final class LoopState {
+        /// 最初の作り直しを始めたか。
+        var started = false
+        /// 抜ける手続きに入ったか。**合図が立った後も拍は来続ける。**
+        var leaving = false
     }
 
     /// 巡回する。**終わりの合図が来るまで回り、来たら抜ける。**
@@ -342,18 +363,26 @@ enum WatchCommand {
         let application = NSApplication.shared
         // **最初の 1 拍で子を起こす。** 巡回に入る前に起こすと、窓が出るのは初回の
         // 作り直しが終わってからになる
-        var started = false
+        let state = LoopState()
         // **`.common` へ載せる。** `Timer.scheduledTimer` は `.default` にしか載らず、
         // 窓を掴んで動かしている間や大きさを変えている間は巡回が**止まる** — その間に
         // 保存しても作り直されない
         let timer = Timer(timeInterval: interval, repeats: true) { _ in
-            MainActor.assumeIsolated {
-                if !started {
-                    started = true
-                    report(session.start(), on: viewer)
-                    return
+            MainActor.assumeIsolated { () -> Void in
+                // **1 拍を `Task` へ渡す。** 作り直しを待つのはこの中で、待っている間
+                // main actor は空く — 窓の描き直しも × の問いもそこで捌かれる (#834)。
+                // 待っている間に来た拍は `WatchSession` の印が弾く
+                Task<Void, Never> {
+                    if !state.started {
+                        state.started = true
+                        report(await session.start(), on: viewer)
+                        return
+                    }
+                    if await step(session, viewer: viewer) { return }
+                    guard !state.leaving else { return }
+                    state.leaving = true
+                    leave(application)
                 }
-                if !step(session, viewer: viewer) { leave(application) }
             }
         }
         RunLoop.main.add(timer, forMode: .common)

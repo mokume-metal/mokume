@@ -24,7 +24,14 @@ final class WatchSession {
         /// 一方にだけ構成や置き場を渡す形が書けてしまい、**名乗ったものと実際に起動する
         /// ものが食い違った** (#680 が構成で踏んだ形)。抱き合わせれば、その組み合わせを
         /// 書けなくできる。
-        var rebuild: (URL) -> RunCommand.Rebuilt
+        ///
+        /// **待つのは main actor の外である。** 見張りは巡回の中からこれを呼ぶので、ここで
+        /// 塞ぐと `swift build` のあいだ画面が凍る (#834)。
+        ///
+        /// **`@Sendable` にはしない。** 境界を越えるのは ``live(context:)`` の内側だけで、
+        /// ここを送れる形にすると**検査の替え玉が main actor の数を数えられなくなる** —
+        /// 外へ出す場所は 1 箇所に閉じておく。
+        var rebuild: (URL) async -> RunCommand.Rebuilt
         /// 走らせる。世代の刻印と、速さの名乗り (一緒に出す構成の名前) を渡す。
         var launch: (URL, URL, String?, String?) -> Process?
         /// いまの時刻 (秒)。
@@ -38,12 +45,17 @@ final class WatchSession {
         static func live(context: BuildContext) -> Hooks {
             Hooks(
                 rebuild: { directory in
-                    // **起動できなかったことを、作り直しの失敗と同じ顔にする。**
-                    // 道具立てを起こせないときは終了コードを 1 に倒す
-                    (try? RunCommand.rebuild(in: directory, context: context, capturing: true))
-                        ?? RunCommand.Rebuilt(
-                            status: 1, output: "", executable: nil,
-                            binPath: context.directory(under: directory))
+                    // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
+                    // ここで待っても main actor は空く — ADR-0010 決定 4 の「明示的に分離
+                    // する」で、待ち行列は足していない (#834)
+                    await Task.detached(priority: .userInitiated) {
+                        // **起動できなかったことを、作り直しの失敗と同じ顔にする。**
+                        // 道具立てを起こせないときは終了コードを 1 に倒す
+                        (try? RunCommand.rebuild(in: directory, context: context, capturing: true))
+                            ?? RunCommand.Rebuilt(
+                                status: 1, output: "", executable: nil,
+                                binPath: context.directory(under: directory))
+                    }.value
                 },
                 launch: { executable, directory, stamp, rate in
                     let process = Process()
@@ -135,6 +147,20 @@ final class WatchSession {
 
     /// 消えたことを既に名乗ったか。**子が入れ替わると下りる。**
     private var hasNamedDeparture = false
+    /// いま作り直しているか。
+    ///
+    /// **作り直しが main actor を塞がなくなったので、印が要る。** 巡回は 0.25 秒ごとに
+    /// 来るので、これが無いと 1 つの変化に対して何本もの `swift build` が並ぶ (#834)。
+    private(set) var isRebuilding = false
+    /// 終われと言われたか。
+    ///
+    /// **作り直しを待っている間に、巡回が抜けうる。** 待ちが main actor の外へ出たので、
+    /// 合図を受けた巡回はビルドの終わりを待たずに畳まれる (#834) — そこで子を起こすと、
+    /// **誰も止めない子が残る** (#454 の孤児と同じ形)。
+    ///
+    /// 立てるのは口の側 (``WatchCommand/step(_:viewer:stopped:)``) である。**``stop()`` では
+    /// 立てない** — あれは差し替えのたびにも通るので、終わりの意味を載せると保存のたびに立つ。
+    private(set) var stopRequested = false
     /// 止まるのを待つ上限 (秒)。**検査から縮める** — 既定で待つと、期限を確かめる検査が
     /// そのぶん遅くなる。
     let stopTimeout: TimeInterval
@@ -179,19 +205,37 @@ final class WatchSession {
     }
 
     /// 1 巡する。変化が無ければ何もしない。
+    ///
+    /// **作り直している間に来た巡回は、何もせずに戻る。** 作り直しはもう main actor を
+    /// 塞がないので、巡回は 0.25 秒ごとに来続ける — 印が無ければ同じ変化に対して
+    /// 何本もの `swift build` が並ぶ (#834)。
+    ///
+    /// **その間に保存された内容は落ちない。** 世代の刻印を更新するのは作り直しの側なので、
+    /// 作り直しが終わった次の巡回が新しい刻印を見つけ、もう 1 度だけ作り直す。
+    ///
+    /// **順番待ちは気付いた時刻に含める。** 印を見るのを「気付いた時刻」を置いた**後**に
+    /// するのは、そうしないと順番待ちの時間が 3 つの数字のどこにも出ないためである —
+    /// 保存から絵が変わるまでの説明が付かなくなる。
     @discardableResult
-    func tick() -> BuildReport? {
+    func tick() async -> BuildReport? {
         let stamp = hooks.stamp(directory)
         guard stamp != lastStamp else { return nil }
         if noticedAt == nil { noticedAt = hooks.now() }
-        return rebuildAndReplace(stamp: stamp)
+        guard !isRebuilding else { return nil }
+        return await rebuildAndReplace(stamp: stamp)
     }
 
     /// 最初の 1 回。変化を待たずに作って走らせる。
     @discardableResult
-    func start() -> BuildReport {
-        rebuildAndReplace(stamp: hooks.stamp(directory), initial: true)
+    func start() async -> BuildReport {
+        await rebuildAndReplace(stamp: hooks.stamp(directory), initial: true)
     }
+
+    /// 終われと言われたことを覚える。
+    ///
+    /// **合図を読むのは口の側で、ここは覚えるだけである。** 何を合図とするか (シグナル・
+    /// 窓の ×) を知っているのは ``WatchCommand`` で、このクラスは判断だけを持つ。
+    func noteStopRequested() { stopRequested = true }
 
     /// 走らせている子へ 1 行渡す。
     ///
@@ -287,7 +331,9 @@ final class WatchSession {
         return true
     }
 
-    private func rebuildAndReplace(stamp: String?, initial: Bool = false) -> BuildReport {
+    private func rebuildAndReplace(stamp: String?, initial: Bool = false) async -> BuildReport {
+        isRebuilding = true
+        defer { isRebuilding = false }
         let detectMs = noticedAt.map { (hooks.now() - $0) * 1000 }
         noticedAt = nil
         // **前の巡回の止め方を持ち越さない。** 作り直しが通らなければこの回は子を止めない
@@ -298,12 +344,19 @@ final class WatchSession {
         // 待っている間が無言になる (#695)
         willRebuild(initial)
 
-        let buildStarted = hooks.now()
-        let rebuilt = hooks.rebuild(directory)
-        let buildMs = (hooks.now() - buildStarted) * 1000
-        // 壊れたままのソースで作り直しを繰り返さない。直したら世代が変わるので、
-        // そのとき次の作り直しが走る
+        // **始める前に置く。** 壊れたままのソースで作り直しを繰り返さないため (直したら
+        // 世代が変わるので、そのとき次の作り直しが走る) であり、かつ**作り直しの最中に来た
+        // 巡回が、いま作り直している世代を「変化」と読まない**ためである。
+        //
+        // 終わってから置いていた頃は、初回の作り直し (いちばん長い) の最中に来た巡回が
+        // 変化だと読んで「気付いた時刻」を置き、それが次の保存まで残った — 記録の
+        // `detect_ms` に、保存を待っていた時間がまるごと乗る (手元では 12 秒を実測)。
+        // 作り直しが main actor を塞がなくなって、初めて巡回がそこへ来るようになった (#834)
         lastStamp = stamp
+
+        let buildStarted = hooks.now()
+        let rebuilt = await hooks.rebuild(directory)
+        let buildMs = (hooks.now() - buildStarted) * 1000
 
         // **通ったことと、走らせるものが在ることは別である。** 置き場を他の誰かと
         // 共有していると、作り直しが「通った」のに実行ファイルが建っていないことが
@@ -316,6 +369,17 @@ final class WatchSession {
                 BuildReport(
                     ok: false, status: rebuilt.status,
                     output: unbuiltNotice(rebuilt) ?? rebuilt.output, stamp: stamp,
+                    configuration: configurationName, launched: false,
+                    timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
+        }
+
+        // **終われと言われた後は、起こさない。** ここへ来るのは作り直しを待っている間に
+        // 巡回が畳まれた回で、起こしても止める者がもう居ない (#834)。作り直し自体は通って
+        // いるので、記録には通ったと書いて「起こしていない」だけを名乗る
+        guard !stopRequested else {
+            return finish(
+                BuildReport(
+                    ok: true, status: 0, output: rebuilt.output, stamp: stamp,
                     configuration: configurationName, launched: false,
                     timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: nil)))
         }
