@@ -138,29 +138,38 @@ struct RunCommandTests {
     /// **掴んだ子は、終わったら手放す。** 手放さないと、次に止める口は終わった子を返し、
     /// 呼ぶ側は居ない相手に合図を撃つことになる。
     @Test("走っている子は止める口から取り出せて、終われば手放される")
-    func theRunningChildCanBeTakenOutAndStopped() async throws {
+    func theRunningChildCanBeTakenOutAndStopped() throws {
+        /// 糸をまたいで結果を受け渡す箱。**触るのは終わりの合図の後だけ**なので鍵は要らない。
+        nonisolated final class Outcome: @unchecked Sendable {
+            var status: Int32?
+            let done = DispatchSemaphore(value: 0)
+        }
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-running-build-\(UUID().uuidString)")
         let running = RunningBuild()
-        // **`Process` は閉じた中で作る** (送れる値ではない)。起きたことは子が印を置いて名乗る
-        let waiting = Task.detached {
+        let outcome = Outcome()
+        // **並行プールに載せず、専用の糸で待つ。** `Task.detached` で待たせたら、`make ci-check`
+        // の並列の下でプールの糸が他の検査に塞がれ、60 秒待っても子が起きなかった (CI で実測)。
+        // `Process` は閉じた中で作る (送れる値ではない)。起きたことは子が印を置いて名乗る
+        Thread.detachNewThread {
+            defer { outcome.done.signal() }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
             process.arguments = ["-c", "touch '\(marker.path)'; exec sleep 30"]
-            return try RunCommand.capture(
-                process, capturing: true, errors: .discard, running: running)
+            outcome.status = try? RunCommand.capture(
+                process, capturing: true, errors: .discard, running: running
+            ).status
         }
-        // **待つ側が期限を持つ** (#564)。**期限は安全網で、長く取る** — `make ci-check` の
-        // 並列の下では子が起きるまでに 5 秒を越え、起きる前に止めて赤くなった
-        let deadline = Date().addingTimeInterval(60)
+        // **待つ側が期限を持つ** (#564)。期限は安全網である
+        let deadline = Date().addingTimeInterval(30)
         while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
-            try await Task.sleep(for: .milliseconds(5))
+            Thread.sleep(forTimeInterval: 0.005)
         }
 
         let child = try #require(running.stop(), "走っている子を掴んでいない")
         child.interrupt()
-        let result = try await waiting.value
-        #expect(result.status == SIGINT, "取り出した子が、止めた合図で終わっていない")
+        #expect(outcome.done.wait(timeout: .now() + 30) == .success, "止めた子を待つ糸が戻らない")
+        #expect(outcome.status == SIGINT, "取り出した子が、止めた合図で終わっていない")
         #expect(running.stop() == nil, "終わった子を掴んだままでいる")
     }
 }
