@@ -106,6 +106,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 「絵が出るか」でしか見えない。
     var hasSource: Bool { source != nil }
 
+    /// まだ出していない世代を控えているか。**検査から見る。**
+    var hasIncoming: Bool { incoming != nil }
+
     /// 問いの出し方。**検査から差し替える** — 既定は窓へシートを下ろすので、そのままでは
     /// 「押した後どうなるか」を検められない (`WatchSession.Hooks` と同じ流儀)。
     var presentQuestion: @MainActor (CloseQuestion, NSWindow, @escaping (Bool) -> Void) -> Void =
@@ -123,6 +126,20 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private let screenLink = ScreenDisplayLink()
 
     private var source: Source?
+    /// 目録に現れたが、**まだ 1 枚も書いていない世代。**
+    ///
+    /// **前の世代を捨てずに持つ。** 目録が変わった瞬間に乗り換えると、新しい子が最初の
+    /// フレームを焼くまで出せる絵が無くなる — 手元では保存のたびに **417 ms** 画面が
+    /// 止まっていた ([#1142](https://github.com/mokume-metal/mokume/issues/1142))。
+    ///
+    /// **面は死なない。** `IOSurface` は参照計数なので、目録が上書きされても、置いた子が
+    /// 消えても、こちらが握っているテクスチャはそのまま出せる。
+    private var incoming: Source?
+    /// 出す世代が入れ替わったことの知らせ。
+    ///
+    /// **知らせるだけで、止めるのはここではない。** 古い子を止めるのは道具 (`WatchCommand`)
+    /// の仕事で、この台は絵の出口しか知らない。
+    var onGenerationPromoted: (() -> Void)?
     /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
     /// 確定させずに次の機会へ回る (``WatchedFile``)。
     private let manifest: WatchedFile<SharedFrameSurface.Manifest>
@@ -256,6 +273,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     func displayLinkFired() {
         onTick?()
         reloadSourceIfChanged()
+        promoteIfReady()
         guard let source, let view, let layer = view.metalLayer,
             let newest = SharedFrameSurface.newest(among: source.ids)
         else { return }
@@ -298,11 +316,15 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         adopt(manifest)
     }
 
-    /// 新しい差し出し元へ乗り換える。
+    /// 新しい差し出し元を**控える。** 出している世代には触らない。
+    ///
+    /// 乗り換えるのは ``promoteIfReady()`` で、控えた世代が 1 枚書いてからである。
     private func adopt(_ manifest: SharedFrameSurface.Manifest) {
-        // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる
-        if let previous = source {
-            try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
+        // **控えていた世代は捨てる。** 重ねるのは 2 つまでで、まだ 1 枚も出していない
+        // 世代を積み上げても、出る絵は増えない
+        if let waiting = incoming {
+            try? gpu.releaseResidency(of: waiting.frames.values.map(\.texture))
+            incoming = nil
         }
         var frames: [UInt32: Frame] = [:]
         for id in manifest.ids {
@@ -312,18 +334,37 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
         guard !frames.isEmpty else {
             // 引けなかった = 置いた側が既に居ない。**直前の絵はそのまま残す** (決定 6)
-            source = nil
             return
         }
-        source = Source(
+        incoming = Source(
             ids: manifest.ids, width: manifest.width, height: manifest.height, frames: frames)
+    }
+
+    /// 控えている世代が絵を出せるなら、そちらへ乗り換える。
+    ///
+    /// **待つのは「1 枚書いたか」だけで、時計は見ない** (ADR-0032 決定 3)。面は書き終わって
+    /// から `mokume.frame` を上げるので、``SharedFrameSurface/newest(among:)`` が掴めた時点で
+    /// 出せる絵が在る。
+    ///
+    /// **出している世代が無いときは待たない。** 待っても出るものが無く、見張りを始めた
+    /// 最初の 1 回がそれに当たる。
+    private func promoteIfReady() {
+        guard let waiting = incoming else { return }
+        if source != nil, SharedFrameSurface.newest(among: waiting.ids) == nil { return }
+        // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる
+        if let previous = source {
+            try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
+        }
+        source = waiting
+        incoming = nil
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
-        view?.setCanvasSize((manifest.width, manifest.height))
+        view?.setCanvasSize((waiting.width, waiting.height))
         // **枚数の数え直しに備える。** 新しい子は 1 から数えるので、前の子の枚数を
         // 覚えたままだと、そこへ追い付くまで 1 枚も出さないことになる (速さも同じで、
         // 追い付くまで前の子の数字を名乗り続けることになる)
         lastFrame = 0
         lastSeenFrame = 0
+        onGenerationPromoted?()
     }
 
     /// 番号から面を引き、差し出せる形にする。

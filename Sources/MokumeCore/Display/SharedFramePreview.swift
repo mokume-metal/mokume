@@ -68,6 +68,16 @@ public final class SharedFramePreview {
         set { stage.onInput = newValue }
     }
 
+    /// 出す世代が入れ替わったことの知らせ。
+    ///
+    /// **入れ替わるのは、新しい世代が最初のフレームを焼いたときである** — 目録に現れた
+    /// 瞬間ではない ([#1142](https://github.com/mokume-metal/mokume/issues/1142))。受け取る側は
+    /// これを合図に、前の世代を走らせていた子を止められる。
+    public var onGenerationPromoted: (() -> Void)? {
+        get { stage.onGenerationPromoted }
+        set { stage.onGenerationPromoted = newValue }
+    }
+
     /// × と `⌘W` を押されたときに確かめ、確定したら知らせる。
     ///
     /// **作品の窓と同じ経路を通す** ([ADR-0032] 決定 7)。プレビューだけが消える形を作ると、

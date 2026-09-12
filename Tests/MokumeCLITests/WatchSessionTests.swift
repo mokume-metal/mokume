@@ -518,6 +518,129 @@ struct WatchSessionTests {
         ready.waitForLast()
         #expect(session.departed() == nil)
     }
+
+    // MARK: - 世代の重なり
+
+    /// **止めてから起こすと、新しい子が最初の絵を焼くまで絵が途切れる** (手元では 417 ms・
+    /// [#1142](https://github.com/mokume-metal/mokume/issues/1142))。順序を入れ替えて、画面が
+    /// 入れ替わってから前の子を止める。
+    @Test("重ねる見張りは、差し替えても前の子をすぐには止めない")
+    func overlappingKeepsTheOutgoingChildAlive() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stop() }
+
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+
+        await session.tick()
+        ready.waitForLast()
+        #expect(session.outgoing === leaving, "前の子を控えていない")
+        #expect(leaving.isRunning, "画面が入れ替わる前に止めている")
+        #expect(session.child !== leaving)
+
+        session.retireOutgoing()
+        waitUntilGone(leaving)
+        #expect(!leaving.isRunning, "入れ替わりの合図で止まっていない")
+        #expect(session.outgoing == nil)
+    }
+
+    /// **合図が来ない回がある** (新しい世代が絵を出さずに消えた・窓がそもそも無い)。
+    /// 重ねるのは 1 世代だけなので、次の差し替えが来たらそこで必ず止める。
+    @Test("合図が来ないまま次の保存が来たら、そこで前の子を止める")
+    func theOutgoingChildIsStoppedAtTheNextSwap() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stop() }
+
+        await session.start()
+        ready.waitForLast()
+        let first = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let second = try #require(session.child)
+        #expect(session.outgoing === first)
+
+        // 合図を送らないまま、もう 1 度保存された
+        await session.tick()
+        ready.waitForLast()
+        waitUntilGone(first)
+        #expect(!first.isRunning, "1 世代前が置き去りになっている")
+        #expect(session.outgoing === second, "控えるのは直前の 1 世代だけである")
+    }
+
+    /// **窓が出せなかった実行では合図が来ない。** そこは今までどおり、止めてから起こす。
+    @Test("重ねない見張りは、いままでどおり止めてから起こす")
+    func withoutOverlapTheChildIsStoppedFirst() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; read line", ready: ready), stopTimeout: 0.5)
+        defer { session.stop() }
+
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        #expect(!leaving.isRunning, "止めずに起こしている")
+        #expect(session.outgoing == nil)
+    }
+
+    /// **入力の宛先は「画面に出ている世代」である。** 重なっている間はまだ前の世代が映って
+    /// いるので、そこへ届かないと、触った先と動く絵が食い違う。
+    @Test("入力は、画面に出ている世代へ行く")
+    func inputGoesToTheGenerationOnScreen() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stop() }
+
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+
+        // 子は 1 行読んだら終わる。**どちらが終わったか**で宛先が分かる
+        session.send("touch\n")
+        waitUntilGone(leaving)
+        #expect(!leaving.isRunning, "画面に出ている世代へ届いていない")
+        #expect(arriving.isRunning, "まだ映っていない世代へ送っている")
+    }
+
+    /// **置いていかない。** 入れ替わりの合図が来る前に終わることがある。
+    @Test("終わるときは、控えている子も置いていかない")
+    func stoppingAlsoBringsDownTheOutgoingChild() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        #expect(session.outgoing === leaving)
+
+        session.stop()
+        waitUntilGone(leaving)
+        waitUntilGone(arriving)
+        #expect(!leaving.isRunning, "控えていた子を置いていった")
+        #expect(!arriving.isRunning)
+        #expect(session.outgoing == nil)
+    }
+
+    /// 世代を重ねる見張りを組む。**実際に子を起こす** — 重なりは生きた子でしか見られない。
+    @MainActor
+    private func overlapping(ready: Ready) throws -> WatchSession {
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; read line", ready: ready), stopTimeout: 0.5)
+        session.overlapsGenerations = true
+        return session
+    }
+
 }
 
 @Suite("ソースの世代")

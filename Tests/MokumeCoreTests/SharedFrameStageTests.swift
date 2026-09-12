@@ -423,4 +423,86 @@ struct SharedFrameStageTests {
             #expect(stage.hasSource)
         }
     }
+
+    // MARK: - 世代の重なり
+
+    /// **止めてから起こすと、新しい子が最初の絵を焼くまで出せる絵が無くなる。** 目録が
+    /// 変わった瞬間に乗り換えていた頃は、保存のたびに画面が **417 ms** 止まっていた
+    /// ([#1142](https://github.com/mokume-metal/mokume/issues/1142))。
+    ///
+    /// 待つのは「1 枚焼いたか」だけで、時計は見ない (ADR-0032 決定 3)。
+    @Test("新しい世代が 1 枚も焼いていないうちは、前の世代を出したままにする")
+    func keepsShowingTheOldGenerationUntilTheNewOneDraws() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let leaving = try makeSurface(in: facet, gpu: gpu, drawing: 3)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("overlap"))
+            defer { stage.close() }
+            var promotions = 0
+            stage.onGenerationPromoted = { promotions += 1 }
+
+            stage.displayLinkFired()
+            #expect(stage.hasSource, "最初の世代を出していない")
+            #expect(promotions == 1)
+
+            // 新しい世代が目録を置いた。**まだ 1 枚も焼いていない**
+            let arriving = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            stage.displayLinkFired()
+            #expect(stage.hasIncoming, "控えていない")
+            #expect(stage.hasSource, "焼く前に前の世代を畳んでいる")
+            #expect(promotions == 1, "焼く前に入れ替わっている")
+
+            // 1 枚焼いた
+            try draw(arriving, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(!stage.hasIncoming, "入れ替わっていない")
+            #expect(stage.hasSource)
+            #expect(promotions == 2, "入れ替わりを知らせていない")
+            // 前の世代は、こちらが持っている限り生きている (IOSurface は参照計数)
+            #expect(SharedFrameSurface.newest(among: leaving.ids)?.frame == 3)
+        }
+    }
+
+    /// **最初の 1 回は待たない。** 出している世代が無いなら、待っても出るものが無い。
+    @Test("出している世代が無ければ、1 枚も焼いていなくても引き受ける")
+    func theFirstGenerationIsTakenWithoutWaiting() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let arriving = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("first"))
+            defer { stage.close() }
+
+            stage.displayLinkFired()
+            #expect(stage.hasSource, "最初の世代を待っている")
+            #expect(!stage.hasIncoming)
+            _ = arriving
+        }
+    }
+
+    /// 面を 1 つ作り、目録を置いて、`drawing` 枚だけ焼く。
+    ///
+    /// **同じ区画へ 2 つ作ると、目録は後から置いたほうで上書きされる** — それが子の
+    /// 入れ替えで起きることそのものである。
+    private func makeSurface(in facet: URL, gpu: RenderDevice, drawing frames: Int) throws
+        -> SharedFrameSurface
+    {
+        let shared = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+        try shared.publishManifest()
+        // **更新時刻を必ず動かす。** 見張りは時刻が変わったときだけ読み直すので、同じ刻みに
+        // 収まると 2 つ目の目録を読まない (``WatchedFile``)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date()],
+            ofItemAtPath: facet.appendingPathComponent(SharedFrameSurface.manifestName).path)
+        for frame in 0..<frames { try draw(shared, frame: frame + 1, gpu: gpu) }
+        return shared
+    }
+
+    /// 面へ 1 枚焼く。**中身は何でもよい** — 見ているのは枚数が上がることである。
+    private func draw(_ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice) throws {
+        let source = try RenderTarget(gpu: gpu, width: 32, height: 32)
+        try source.fill(with: .linear(red: 0, green: 0, blue: 0))
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        try shared.write(
+            source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame))
+    }
 }
