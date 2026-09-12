@@ -27,6 +27,11 @@ struct WatchSessionTests {
         var onBuild: () -> Void = {}
         /// 走らせるものが建ったか。**通ったのに建っていない回**を作れるようにしてある。
         var productBuilt = true
+        /// 作り直しの最中に待たせる口。**既定は何もしない。**
+        ///
+        /// 作り直しが main actor を離れたかどうかは、**離れている間に別の仕事が進むか**
+        /// でしか見えない (#834)。ここで待たせて、その隙に main actor の仕事を積む。
+        var whileBuilding: () async -> Void = {}
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
@@ -34,6 +39,7 @@ struct WatchSessionTests {
                     self.onBuild()
                     self.builds += 1
                     self.builtIn.append(directory)
+                    await self.whileBuilding()
                     // 作り直しには時間がかかる。刻む対象なので時計を進める
                     self.clock += 0.5
                     let bin = directory.appendingPathComponent("bin")
@@ -56,13 +62,13 @@ struct WatchSessionTests {
     /// **人が見ている前でだけ足す。** 見張りを打った人には速さが要るが、機械が読む経路の
     /// 出力は 1 バイトも変えない ([ADR-0029] 決定 5 の 2 番目)。
     @Test("名乗ると決めた見張りは、構成の名前を子へ渡す")
-    func aReportingSessionHandsTheConfigurationToTheChild() throws {
+    func aReportingSessionHandsTheConfigurationToTheChild() async throws {
         let recorder = Recorder()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(configuration: "release"), reportsRate: true,
             hooks: recorder.hooks())
 
-        let report = session.start()
+        let report = await session.start()
         #expect(recorder.ratesGivenToChildren == ["release"])
         // **名乗りは 1 つの値から出る。** 子へ渡す名前と記録の名前が別々に決まると、
         // 読み手はどちらが実体か判定できない (#680)
@@ -82,16 +88,16 @@ struct WatchSessionTests {
     /// **始めることを、始める前に言う。** 作り直しはこの流れを塞ぐので、後から言うと
     /// 待っている間が無言になり、「見張れていない」と読まれる ([#695](https://github.com/mokume-metal/mokume/issues/695))。
     @Test("作り直しは、始める前に名乗る")
-    func announcesBeforeItRebuilds() throws {
+    func announcesBeforeItRebuilds() async throws {
         let recorder = Recorder()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
         var events: [String] = []
         session.willRebuild = { events.append($0 ? "初回を始める" : "変更で始める") }
         recorder.onBuild = { events.append("作り直す") }
 
-        session.start()
+        await session.start()
         recorder.stamp = "bbb"
-        session.tick()
+        await session.tick()
 
         #expect(events == ["初回を始める", "作り直す", "変更で始める", "作り直す"])
     }
@@ -99,10 +105,10 @@ struct WatchSessionTests {
     /// **名乗らないのが既定。** 窓口はスケッチを起こさないが、口の側が何も渡さなければ
     /// 何も起きないことを、ここで固定しておく。
     @Test("名乗りを渡さなければ、何も起きない")
-    func staysSilentWithoutAListener() throws {
+    func staysSilentWithoutAListener() async throws {
         let recorder = Recorder()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
-        session.start()
+        await session.start()
         #expect(recorder.builds == 1)
     }
 
@@ -120,14 +126,14 @@ struct WatchSessionTests {
     /// どこにも理由が出なかった** ([#1066](https://github.com/mokume-metal/mokume/issues/1066))。
     /// 置き場を共有すると、他のプロセスが実行ファイルを消した瞬間にこれを踏める。
     @Test("作り直しは通ったのに建っていない回は、成功として記録しない")
-    func aRebuildThatBuiltNothingIsNotRecordedAsSuccess() throws {
+    func aRebuildThatBuiltNothingIsNotRecordedAsSuccess() async throws {
         let recorder = Recorder()
         recorder.productBuilt = false
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(product: "hello"),
             hooks: recorder.hooks())
 
-        let report = session.start()
+        let report = await session.start()
         #expect(!report.ok, "建っていない回を成功として記録している")
         #expect(!report.launched)
         #expect(recorder.launches == 0, "走らせるものが無いのに起こそうとしている")
@@ -141,25 +147,25 @@ struct WatchSessionTests {
 
     /// 起こせなかったことも記録に出る。**作り直しの失敗とは別の状態**である。
     @Test("建ったのに起こせなかった回は、そう名乗る")
-    func aRebuildThatCouldNotLaunchSaysSo() throws {
+    func aRebuildThatCouldNotLaunchSaysSo() async throws {
         let recorder = Recorder()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
 
         // Recorder の launch は常に nil を返す (子を作らない)
-        let report = session.start()
+        let report = await session.start()
         #expect(report.ok, "作り直し自体は通っている")
         #expect(!report.launched)
         #expect(report.summary.contains("could not start it"))
     }
 
     @Test("最初の 1 回は、変化を待たずに作って走らせる")
-    func buildsOnceAtTheStart() throws {
+    func buildsOnceAtTheStart() async throws {
         let recorder = Recorder()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
 
-        let report = session.start()
+        let report = await session.start()
         #expect(recorder.builds == 1)
         #expect(recorder.launches == 1)
         // 名乗ると決めていない見張りは、子へ速さの名乗りを渡さない (窓口の側の既定)
@@ -172,25 +178,25 @@ struct WatchSessionTests {
     }
 
     @Test("変わっていなければ何もしない")
-    func staysIdleWhenNothingChanged() throws {
+    func staysIdleWhenNothingChanged() async throws {
         let recorder = Recorder()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
-        session.start()
+        await session.start()
 
-        #expect(session.tick() == nil)
-        #expect(session.tick() == nil)
+        #expect(await session.tick() == nil)
+        #expect(await session.tick() == nil)
         #expect(recorder.builds == 1)
         #expect(recorder.launches == 1)
     }
 
     @Test("変わったら作り直して差し替え、所要時間を 3 つに分けて出す")
-    func rebuildsAndReplacesOnChange() throws {
+    func rebuildsAndReplacesOnChange() async throws {
         let recorder = Recorder()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
-        session.start()
+        await session.start()
 
         recorder.stamp = "bbb"
-        let report = try #require(session.tick())
+        let report = try #require(await session.tick())
 
         #expect(recorder.builds == 2)
         #expect(recorder.launches == 2)
@@ -202,27 +208,27 @@ struct WatchSessionTests {
     }
 
     @Test("新しい世代の刻印が、走らせる子へ渡る")
-    func handsTheStampToTheChild() throws {
+    func handsTheStampToTheChild() async throws {
         let recorder = Recorder()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
-        session.start()
+        await session.start()
         recorder.stamp = "bbb"
-        session.tick()
+        await session.tick()
 
         // 読み手はこの刻印の変化で「保存した内容が反映されたか」を判定する
         #expect(recorder.stampsGivenToChildren == ["aaa", "bbb"])
     }
 
     @Test("作り直しに失敗したら、差し替えない")
-    func keepsTheRunningVersionWhenTheBuildFails() throws {
+    func keepsTheRunningVersionWhenTheBuildFails() async throws {
         let recorder = Recorder()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
-        session.start()
+        await session.start()
 
         recorder.stamp = "bbb"
         recorder.buildStatus = 1
         recorder.buildOutput = "error: cannot find 'circl' in scope"
-        let report = try #require(session.tick())
+        let report = try #require(await session.tick())
 
         #expect(!report.ok)
         #expect(report.status == 1)
@@ -233,30 +239,30 @@ struct WatchSessionTests {
     }
 
     @Test("壊れたままのソースで、作り直しを繰り返さない")
-    func doesNotRetryTheSameBrokenSource() throws {
+    func doesNotRetryTheSameBrokenSource() async throws {
         let recorder = Recorder()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
-        session.start()
+        await session.start()
         recorder.stamp = "bbb"
         recorder.buildStatus = 1
-        session.tick()
+        await session.tick()
 
-        #expect(session.tick() == nil)
+        #expect(await session.tick() == nil)
         #expect(recorder.builds == 2)
 
         // 直せば、そのとき次の作り直しが走る
         recorder.stamp = "ccc"
         recorder.buildStatus = 0
-        #expect(session.tick() != nil)
+        #expect(await session.tick() != nil)
         #expect(recorder.builds == 3)
     }
 
     @Test("結果が区画のファイルに残る")
-    func leavesTheOutcomeInTheFacet() throws {
+    func leavesTheOutcomeInTheFacet() async throws {
         let recorder = Recorder()
         let directory = try makeDirectory()
         let session = WatchSession(directory: directory, context: testContext(), hooks: recorder.hooks())
-        session.start()
+        await session.start()
 
         let url = directory
             .appendingPathComponent(".mokume/build/status.json")
@@ -272,14 +278,14 @@ struct WatchSessionTests {
     }
 
     @Test("区画の基準が別なら、記録はそちらへ置き、作り直しはパッケージの場所で行う")
-    func writesTheOutcomeToTheFacetBase() throws {
+    func writesTheOutcomeToTheFacetBase() async throws {
         let recorder = Recorder()
         let package = try makeDirectory()
         let work = try makeDirectory()
         // 走らせたスケッチは MOKUME_WORK_DIR に従って観測を書く。記録だけパッケージの
         // 場所に残ると、読み手から見て観測と記録が割れる (#331)
         let session = WatchSession(directory: package, context: testContext(), facetBase: work, hooks: recorder.hooks())
-        session.start()
+        await session.start()
 
         #expect(
             FileManager.default.fileExists(
@@ -358,12 +364,12 @@ struct WatchSessionTests {
     }
 
     @Test("頼んで止まる子は、止めたと名乗る")
-    func stopsAChildThatListens() throws {
+    func stopsAChildThatListens() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: false, ready: ready),
             stopTimeout: 1)
-        session.start()
+        await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
         #expect(child.isRunning)
@@ -374,12 +380,12 @@ struct WatchSessionTests {
 
     /// **待つ側が期限を持つ。** 期限が無ければ、ここは永久に戻らない (#732)。
     @Test("止めてくれと頼んでも応えない子は、期限で強制終了する")
-    func killsAChildThatIgnoresTermination() throws {
+    func killsAChildThatIgnoresTermination() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: true, ready: ready),
             stopTimeout: 0.2)
-        session.start()
+        await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
         #expect(child.isRunning)
@@ -394,17 +400,17 @@ struct WatchSessionTests {
     /// **差し替えも同じ経路を通る。** 期限が無いと、終われないだけでなく**保存のたびに**
     /// 固まる (#732)。
     @Test("応えない子でも、差し替えは進む")
-    func replacesEvenWhenTheChildIgnoresTermination() throws {
+    func replacesEvenWhenTheChildIgnoresTermination() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(), hooks: hooks(ignoringTermination: true, ready: ready),
             stopTimeout: 0.2)
-        session.start()
+        await session.start()
         let first = try #require(session.child)
         ready.waitForLast()
         defer { session.stop() }
 
-        session.tick()
+        await session.tick()
         #expect(!first.isRunning, "前の子が残っている")
         #expect(session.lastStop == .killed, "期限に掛かったことが残っていない")
         #expect(session.child !== first, "差し替わっていない")
@@ -423,12 +429,12 @@ struct WatchSessionTests {
     }
 
     @Test("自分から終わった子は、1 度だけ名乗られる")
-    func namesTheChildThatEndedOnItsOwn() throws {
+    func namesTheChildThatEndedOnItsOwn() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(running: "echo ready; exit 7", ready: ready))
-        session.start()
+        await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
         waitUntilGone(child)
@@ -443,19 +449,19 @@ struct WatchSessionTests {
     /// 後は何度作り直しても二度と名乗らない — 見張りは付けっぱなしで使うものなので、
     /// 実質「最初の 1 回しか効かない」ことになる。
     @Test("作り直して起きた子が消えたら、もう一度名乗られる")
-    func namesEachDepartureOnce() throws {
+    func namesEachDepartureOnce() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(running: "echo ready; exit 7", ready: ready))
-        session.start()
+        await session.start()
         let first = try #require(session.child)
         ready.waitForLast()
         waitUntilGone(first)
         #expect(session.departed() != nil)
 
         // 世代が変わるので、作り直して起こし直す
-        session.tick()
+        await session.tick()
         let second = try #require(session.child)
         #expect(second !== first)
         ready.waitForLast()
@@ -466,12 +472,12 @@ struct WatchSessionTests {
     /// **落ちたことは、自分から終わったことと別に読めなければならない。** 落ちたのなら
     /// 端末を遡る先があり、自分から終わったのならスケッチの側にそう書いてある。
     @Test("落ちた子は、落ちたと名乗られる")
-    func namesTheChildThatCrashed() throws {
+    func namesTheChildThatCrashed() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(running: "echo ready; kill -SEGV $$", ready: ready))
-        session.start()
+        await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
         waitUntilGone(child)
@@ -484,12 +490,12 @@ struct WatchSessionTests {
     /// **道具が止めた回は名乗らない。** 終わるときも保存による差し替えも同じ経路を通るので、
     /// ここを分けないと「見張りを終える」たびに「勝手に消えた」と言うことになる。
     @Test("道具が止めた子は、消えたことにしない")
-    func staysSilentWhenTheToolStoppedTheChild() throws {
+    func staysSilentWhenTheToolStoppedTheChild() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(ignoringTermination: false, ready: ready), stopTimeout: 1)
-        session.start()
+        await session.start()
         ready.waitForLast()
 
         #expect(session.stop() == .terminated)
@@ -499,16 +505,16 @@ struct WatchSessionTests {
     /// **差し替えでも名乗らない。** 保存のたびに古い子は止まるが、それは道具が起こした
     /// 結果であって、誰も頼んでいない消え方ではない。
     @Test("差し替えで入れ替わった子も、消えたことにしない")
-    func staysSilentWhenTheChildWasReplaced() throws {
+    func staysSilentWhenTheChildWasReplaced() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
             hooks: hooks(ignoringTermination: false, ready: ready), stopTimeout: 1)
-        session.start()
+        await session.start()
         ready.waitForLast()
         defer { session.stop() }
 
-        session.tick()
+        await session.tick()
         ready.waitForLast()
         #expect(session.departed() == nil)
     }
