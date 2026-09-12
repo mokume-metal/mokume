@@ -181,12 +181,17 @@ enum RunCommand {
     ///
     /// 隔離を外すのは ADR-0010 決定 4 の「main actor の外で進める処理は明示的に分離する」で、
     /// **触るのは `Process` と `FileManager` だけ**である (main actor の状態は読まない)。
+    ///
+    /// - Parameter running: 走っている `swift` を外から止められるように掴む先。**見張りだけが
+    ///   渡す** — 終わるときに作り直しを止める者は見張りにしか居ない
+    ///   ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
     nonisolated static func rebuild(
-        in directory: URL, context: BuildContext, capturing: Bool = false
+        in directory: URL, context: BuildContext, capturing: Bool = false,
+        running: RunningBuild? = nil
     )
         throws(CommandFailure) -> Rebuilt
     {
-        let bin = try binPath(in: directory, context: context)
+        let bin = try binPath(in: directory, context: context, running: running)
         if let product = context.product {
             let executable = bin.appendingPathComponent(product, isDirectory: false)
             try? FileManager.default.removeItem(at: executable)
@@ -198,12 +203,14 @@ enum RunCommand {
         // 失敗の本文が載らない (#731)
         let result = try swift(
             ["build"] + context.arguments, in: directory, capturing: capturing,
-            errors: .merge)
+            errors: .merge, running: running)
 
         // **名前が分からなかったときは、建った後に読み直す。** 宣言が直っていることが
         // あるためで、この経路の置き場は必ずパッケージ直下なので取り違えは起きない
         // (先に消せていないので「いま建った」までは言えないが、他人の産物も居ない)
-        let product = context.product ?? (try? dumpPackage(in: directory))?.executableProductName
+        let product =
+            context.product
+            ?? (try? dumpPackage(in: directory, running: running))?.executableProductName
         guard let product else {
             return Rebuilt(status: result.status, output: result.output, executable: nil,
                 binPath: bin)
@@ -244,14 +251,16 @@ enum RunCommand {
 
     /// 出来上がりが置かれる場所。**道具立てに聞く** — 置き場の中の構造を組み立てると、
     /// 道具立てが並びを変えた日に黙って別の場所を指す。
-    nonisolated static func binPath(in directory: URL, context: BuildContext)
+    nonisolated static func binPath(
+        in directory: URL, context: BuildContext, running: RunningBuild? = nil
+    )
         throws(CommandFailure) -> URL
     {
         // **愚痴を混ぜない。** 出力はファイルパスとして解くので、警告 1 行で別の
         // 場所を指すことになる (#731)
         let output = try swift(
             ["build", "--show-bin-path"] + context.arguments, in: directory, capturing: true,
-            errors: .inherit
+            errors: .inherit, running: running
         ).output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !output.isEmpty else { throw .noExecutable(path: directory.path) }
         return URL(fileURLWithPath: output, isDirectory: true)
@@ -282,11 +291,14 @@ enum RunCommand {
     /// パッケージの宣言を読む。**読めなければ `nil`。**
     ///
     /// 起こすのは重い (数百 ms) ので、同じ実行の中で 2 度要るときは呼び手が持ち回る。
-    nonisolated static func dumpPackage(in directory: URL) throws(CommandFailure) -> SwiftPM.Package? {
+    nonisolated static func dumpPackage(
+        in directory: URL, running: RunningBuild? = nil
+    ) throws(CommandFailure) -> SwiftPM.Package? {
         // **愚痴を混ぜない。** 出力は JSON として厳密に解くので、警告 1 行で黙って
         // nil になる (#731)
         let dump = try swift(
-            ["package", "dump-package"], in: directory, capturing: true, errors: .inherit
+            ["package", "dump-package"], in: directory, capturing: true, errors: .inherit,
+            running: running
         ).output
         return SwiftPM.package(inDumpOf: dump)
     }
@@ -368,15 +380,16 @@ enum RunCommand {
     @discardableResult
     /// - Parameter errors: 子の愚痴の行き先。**混ぜてよいのは作り直しだけ** — 出力を
     ///   パスや JSON として解く呼び出しに混ぜると、警告 1 行で解けなくなる。
+    ///   - running: 起こした子を外から止められるように掴む先 (``RunningBuild``)。
     nonisolated static func swift(
         _ arguments: [String], in directory: URL, capturing: Bool,
-        errors: ErrorStream = .inherit
+        errors: ErrorStream = .inherit, running: RunningBuild? = nil
     ) throws(CommandFailure) -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["swift"] + arguments
         process.currentDirectoryURL = directory
-        return try capture(process, capturing: capturing, errors: errors)
+        return try capture(process, capturing: capturing, errors: errors, running: running)
     }
 
     /// 子を起こし、掴む形なら出力を読み切ってから待つ。
@@ -386,7 +399,11 @@ enum RunCommand {
     /// に固定しているので、そちらからは偽の道具立てを渡せない。
     ///
     /// [#731]: https://github.com/mokume-metal/mokume/issues/731
-    nonisolated static func capture(_ process: Process, capturing: Bool, errors: ErrorStream)
+    ///
+    /// - Parameter running: 起こした子を掴ませる先。**止められた後は起こさずに投げる。**
+    nonisolated static func capture(
+        _ process: Process, capturing: Bool, errors: ErrorStream, running: RunningBuild? = nil
+    )
         throws(CommandFailure) -> (status: Int32, output: String)
     {
         let pipe = Pipe()
@@ -404,11 +421,19 @@ enum RunCommand {
             // 掴まないなら混ぜる先が無いので、流しっぱなしにする
             if capturing { process.standardError = pipe }
         }
+        let launched: Bool
         do {
-            try process.run()
+            if let running {
+                launched = try running.launch(process)
+            } else {
+                try process.run()
+                launched = true
+            }
         } catch {
             throw .toolchainMissing("swift")
         }
+        guard launched else { throw .rebuildStopped }
+        defer { running?.finished() }
         var output = ""
         if capturing {
             // **読み切ってから待つ。** 逆順にすると、出力が管を埋めた時点で子が書けなく
@@ -418,5 +443,55 @@ enum RunCommand {
         }
         process.waitUntilExit()
         return (process.terminationStatus, output)
+    }
+}
+
+/// 走っている作り直しの `swift` を、外から止められるように掴んでおく先。
+///
+/// **見張りは作り直しを待たずに終われる** (#834) ので、終わるときに走っている `swift build` を
+/// 止める者が要る。止めないと子は launchd に付け替えられて残り、`.build` の鍵を握ったまま
+/// **起こし直した見張りを待たせる** — 手元の実測では、止めた直後に起こし直した見張りが
+/// `Another instance of SwiftPM is already running` で待たされた
+/// ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+///
+/// **撃つのは呼ぶ側である。** ここは「いま何が走っているか」と「止めると決めたか」だけを
+/// 持つ — 期限つきで落とす判断はスケッチを止める側 (`WatchSession`) に 1 つだけある。
+///
+/// **`@unchecked Sendable` の根拠は鍵である。** 作り直しは main actor の外で子を起こし、止める
+/// のは main actor なので、状態は 2 つの糸から触られる。触る場所はすべて `lock` の中にある。
+nonisolated final class RunningBuild: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Process?
+    private var stopped = false
+
+    init() {}
+
+    /// 止められていなければ起こし、掴む。
+    ///
+    /// **起動と登録を 1 つの鍵に入れる。** 隙間で止められると、止める側は起動していない
+    /// `Process` を受け取る — それに `terminate()` を打つと道具ごと落ちる。
+    ///
+    /// - Returns: 起こしたか。**止めると決めた後は起こさない** — 作り直しは `swift` を
+    ///   何度か呼ぶので、止めた後の 2 本目が新しく鍵を握ることになる。
+    func launch(_ process: Process) throws -> Bool {
+        try lock.withLock {
+            guard !stopped else { return false }
+            try process.run()
+            current = process
+            return true
+        }
+    }
+
+    /// 起こした子が終わった。
+    func finished() {
+        lock.withLock { current = nil }
+    }
+
+    /// 止めると決め、いま走っている子を返す。**居なければ `nil`。**
+    func stop() -> Process? {
+        lock.withLock {
+            stopped = true
+            return current
+        }
     }
 }

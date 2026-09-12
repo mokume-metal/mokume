@@ -38,12 +38,21 @@ final class WatchSession {
         var now: () -> Double
         /// 監視しているソースの世代。
         var stamp: (URL) -> String?
+        /// 走っている作り直しを止めると決め、いま走っている子を返す。**居なければ `nil`。**
+        ///
+        /// **撃つのは ``WatchSession`` である。** 期限つきで落とす判断はスケッチを止める
+        /// 側と同じ 1 つを使う ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+        /// 既定は「何も走っていない」 — 替え玉の作り直しは子を起こさない。
+        var stopRebuild: () -> Process? = { nil }
 
         /// - Parameter context: 1 度だけ決めた土台 (構成と置き場と product)。**作り直しと
         ///   実行ファイルの解決の両方が同じ値から出る** — 片方だけに渡すと、名乗った構成と
         ///   実際に起動するものが食い違う (#680)。
         static func live(context: BuildContext) -> Hooks {
-            Hooks(
+            // **1 つを作り直しと止める口で分け持つ。** 止めると決めたら二度と起こさない —
+            // 止めるのは見張りが終わるときだけなので、それで足りる (#1147)
+            let running = RunningBuild()
+            return Hooks(
                 rebuild: { directory in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
                     // ここで待っても main actor は空く — ADR-0010 決定 4 の「明示的に分離
@@ -51,7 +60,8 @@ final class WatchSession {
                     await Task.detached(priority: .userInitiated) {
                         // **起動できなかったことを、作り直しの失敗と同じ顔にする。**
                         // 道具立てを起こせないときは終了コードを 1 に倒す
-                        (try? RunCommand.rebuild(in: directory, context: context, capturing: true))
+                        (try? RunCommand.rebuild(
+                            in: directory, context: context, capturing: true, running: running))
                             ?? RunCommand.Rebuilt(
                                 status: 1, output: "", executable: nil,
                                 binPath: context.directory(under: directory))
@@ -73,7 +83,8 @@ final class WatchSession {
                     return (try? process.run()) == nil ? nil : process
                 },
                 now: { Date().timeIntervalSince1970 },
-                stamp: { SourceStamp.current(for: $0) })
+                stamp: { SourceStamp.current(for: $0) },
+                stopRebuild: { running.stop() })
         }
     }
 
@@ -177,6 +188,13 @@ final class WatchSession {
     /// 立てるのは口の側 (``WatchCommand/step(_:viewer:stopped:)``) である。**``stop()`` では
     /// 立てない** — あれは差し替えのたびにも通るので、終わりの意味を載せると保存のたびに立つ。
     private(set) var stopRequested = false
+    /// 作り直しを途中で止めたときに書いた記録。**立っていたら、作り直しの続きは何も決めない。**
+    ///
+    /// 止めた作り直しも、いずれ終了コードを持って戻ってくる — そこで失敗として書き直すと、
+    /// 「途中で止めた」が「壊れていた」に化ける (#1147)。
+    private var stoppedReport: BuildReport?
+    /// いまの作り直しを始めた時刻。止めた回の所要時間に使う。
+    private var rebuildStartedAt: Double?
     /// 止まるのを待つ上限 (秒)。**検査から縮める** — 既定で待つと、期限を確かめる検査が
     /// そのぶん遅くなる。
     let stopTimeout: TimeInterval
@@ -313,6 +331,49 @@ final class WatchSession {
         return outcome
     }
 
+    /// 走っている作り直しを、途中で止める。
+    ///
+    /// **見張りは作り直しを待たずに終われる** (#834) ので、止めないと `swift build` は
+    /// launchd に付け替えられて残る。自分から消えるのは閉じた管へ次の 1 行を書いたとき
+    /// なので、残る長さは出力が途切れている長さで決まり、その間 `.build` の鍵を握って
+    /// **起こし直した見張りを待たせる** (手元で実測・[#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+    ///
+    /// **止めたことを記録に書く。** 書かないと区画には前の回の記録が残り、読み手は
+    /// 何が起きたかを読めない。失敗 (`ok: false`) として書くが、**本文の先頭で「途中で
+    /// 止めた」と名乗る** — 建っていない回を `output` で名乗った #1066 と同じ形で、
+    /// 読み手が要るのは分岐する欄ではなく「なぜ絵が変わらないか」の本文である。
+    ///
+    /// - Returns: 作り直していなければ `nil`。止めた子の結果は ``bringDown(_:)`` と同じ
+    ///   分け方で、**`.notRunning` は「止めると決めたが、その瞬間に走っている `swift` が
+    ///   無かった」** (作り直しは `swift` を何度か呼ぶ) — 次の 1 本は起こされない。
+    @discardableResult
+    func stopRebuilding() -> StopOutcome? {
+        guard isRebuilding, stoppedReport == nil else { return nil }
+        let running = hooks.stopRebuild()
+        let outcome = bringDown(running, interrupting: true)
+        // **終わっていない子の終了コードは読まない** (読むと例外で落ちる)。置いていった回と、
+        // 走っている子が無かった回は、止めた合図の慣習の値で書く
+        let status =
+            running.flatMap { $0.isRunning ? nil : $0.terminationStatus } ?? (128 + SIGINT)
+        let report = BuildReport(
+            ok: false, status: status, output: Self.stoppedRebuildNotice, stamp: lastStamp,
+            configuration: configurationName, launched: false,
+            timings: .init(
+                detectMs: nil,
+                buildMs: rebuildStartedAt.map { (hooks.now() - $0) * 1000 } ?? 0,
+                relaunchMs: nil))
+        stoppedReport = finish(report)
+        return outcome
+    }
+
+    /// 作り直しを途中で止めた回の記録の本文。**失敗とは違う言葉で始める。**
+    ///
+    /// 建たなかった回の本文は道具立ての出力で始まり、端末の要約は `Build failed:` で
+    /// 始まる — そのどちらとも読み違えないように、止めたことと理由を先頭に置く (#1147)。
+    static let stoppedRebuildNotice =
+        "The rebuild was stopped partway because watching ended — this is not a build failure, "
+        + "and nothing was found wrong with the source"
+
     /// 退役待ちを止める。
     ///
     /// **何度呼んでもよい。** 入れ替わりの合図は窓ごとに来る (作品の窓とプレビューは独立に
@@ -329,11 +390,17 @@ final class WatchSession {
 
     /// 1 つの子を落とす。**期限を持つ。**
     ///
-    /// 呼び手が 2 つある (終わるとき・退役させるとき) ので、判断はここ 1 つに置く — 期限の
-    /// 値も刻みの細かさも `StopOutcome` の分け方も、2 通りに割れない。
-    private func bringDown(_ running: Process?) -> StopOutcome {
+    /// 呼び手が 3 つある (終わるとき・退役させるとき・作り直しを止めるとき) ので、判断は
+    /// ここ 1 つに置く — 期限の値も刻みの細かさも `StopOutcome` の分け方も、割れない。
+    ///
+    /// - Parameter interrupting: 頼むのに `SIGTERM` ではなく `SIGINT` を使うか。**作り直し
+    ///   (`swift build`) だけが使う。** SwiftPM が畳みの処理を持つのは `SIGINT` の側で、
+    ///   `SIGTERM` では本体だけが死んで `swift-driver` と `swift-frontend` が launchd に
+    ///   付け替えられて残る。手元の実測では `SIGINT` は配下ごと 0.4 秒で消え、`SIGTERM` は
+    ///   配下が 1〜4.5 秒残った ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+    private func bringDown(_ running: Process?, interrupting: Bool = false) -> StopOutcome {
         guard let running, running.isRunning else { return .notRunning }
-        running.terminate()
+        if interrupting { running.interrupt() } else { running.terminate() }
         if waitForExit(running, timeout: stopTimeout) { return .terminated }
         // **宛先を確かめてから撃つ。** 起動していない `Process` の番号は 0 で、
         // `kill(0, …)` は**自分のプロセスグループごと**落とす。上の guard が弾いている
@@ -389,8 +456,14 @@ final class WatchSession {
         lastStamp = stamp
 
         let buildStarted = hooks.now()
+        rebuildStartedAt = buildStarted
         let rebuilt = await hooks.rebuild(directory)
         let buildMs = (hooks.now() - buildStarted) * 1000
+
+        // **途中で止めた回は、戻ってきた結果で何も決めない。** 止めた子の終了コードで
+        // 失敗を書き直すと、止めた記録が「壊れていた」に化ける。子も起こさない — 止めるのは
+        // 見張りが終わるときだけである (#1147)
+        if let stoppedReport { return stoppedReport }
 
         // **通ったことと、走らせるものが在ることは別である。** 置き場を他の誰かと
         // 共有していると、作り直しが「通った」のに実行ファイルが建っていないことが

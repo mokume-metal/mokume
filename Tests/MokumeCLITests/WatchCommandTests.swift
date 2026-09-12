@@ -300,4 +300,27 @@ struct WatchCommandTests {
         #expect(ended.contains("11"))
         #expect(crashed.contains("11"))
     }
+
+    // MARK: - 作り直しを途中で止めたとき (#1147)
+
+    /// **失敗と読み違えない。** 端末の要約は `Build failed:` で始まるので、止めた回が同じ
+    /// 言葉で始まると「壊れていた」と読まれる。期限に掛かった回も「スケッチ」と言わない
+    /// (#732 の規律を作り直しにも効かせる)。
+    @Test("作り直しを止めた行は、作り直していなければ出ず、失敗やスケッチの言葉と混ざらない")
+    func theStoppedRebuildLine() throws {
+        #expect(WatchCommand.stoppedRebuildLine(nil) == nil, "作り直していないのに名乗っている")
+
+        let outcomes: [WatchSession.StopOutcome] = [
+            .notRunning, .terminated, .killed, .abandoned(pid: 4242),
+        ]
+        for outcome in outcomes {
+            let line = try #require(WatchCommand.stoppedRebuildLine(outcome))
+            #expect(
+                line.hasPrefix(WatchSession.stoppedRebuildNotice), "\(outcome) の行が止めたことから始まらない")
+            #expect(!line.contains("Build failed"), "\(outcome) の行が失敗の言葉を使っている")
+            #expect(!line.contains("sketch"), "\(outcome) の行がスケッチを止めたと読める")
+        }
+        let abandoned = try #require(WatchCommand.stoppedRebuildLine(.abandoned(pid: 4242)))
+        #expect(abandoned.contains("4242"), "残ったものを人が落とせる番号が無い")
+    }
 }

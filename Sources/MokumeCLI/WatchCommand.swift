@@ -432,6 +432,9 @@ enum WatchCommand {
     /// 別の出来事である。とくに 3 つ目は子の側の事情なので、黙って終わると
     /// 「止めた」と見分けが付かない (#732)。
     static func finish(_ session: WatchSession) {
+        // **作り直しを先に止める。** 見張りは作り直しを待たずに終われるので、止めないと
+        // `swift build` が残って `.build` の鍵を握り、起こし直した見張りを待たせる (#1147)
+        if let line = stoppedRebuildLine(session.stopRebuilding()) { say(line) }
         switch session.stop() {
         case .notRunning: say("Stopped watching")
         case .terminated: say("Stopped watching (the running sketch was stopped)")
@@ -439,6 +442,24 @@ enum WatchCommand {
         // **置いていくことを言う。** 黙って終わると「止めた」と見分けが付かず、残ったものが
         // #454 の孤児として次の人に渡る
         case .abandoned(let pid): say("Stopped watching — " + abandonedLine(pid: pid))
+        }
+    }
+
+    /// 作り直しを途中で止めたことを名乗る行。**作り直していなければ `nil`。**
+    ///
+    /// **スケッチを止めた言葉を使い回さない。** 期限に掛かった回も「スケッチ」と言うと、
+    /// 落としたのが何だったかを読み違える (#732 の規律を作り直しにも効かせる)。
+    ///
+    /// - Parameter outcome: ``WatchSession/stopRebuilding()`` の結果。
+    static func stoppedRebuildLine(_ outcome: WatchSession.StopOutcome?) -> String? {
+        switch outcome {
+        case nil: nil
+        case .notRunning, .terminated: WatchSession.stoppedRebuildNotice
+        case .killed:
+            WatchSession.stoppedRebuildNotice + " (it did not answer SIGINT and was killed)"
+        case .abandoned(let pid):
+            WatchSession.stoppedRebuildNotice
+                + " — but the build outlived being killed (PID \(pid)) and has to be brought down by hand"
         }
     }
 
