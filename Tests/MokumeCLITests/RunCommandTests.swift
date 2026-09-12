@@ -115,4 +115,52 @@ struct RunCommandTests {
         let carried = RunCommand.childEnvironment([:], confirmingCloseFor: "mokume run")
         #expect(carried[StartupReads.closeConfirmation.key] == "mokume run")
     }
+
+    // MARK: - 走っている作り直しを掴む (#1147)
+
+    /// **作り直しは `swift` を何度か呼ぶ** (`--show-bin-path` → `build` → 場合により
+    /// `dump-package`)。止めると決めた後に 2 本目を起こすと、それが新しく `.build` の鍵を
+    /// 握って、止めたはずの作り直しが続く ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+    @Test("止めると決めた後は、次の子を起こさずに投げる")
+    func aStoppedBuildLaunchesNothingMore() {
+        let running = RunningBuild()
+        #expect(running.stop() == nil, "何も起こしていないのに子を掴んでいる")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "exit 0"]
+        #expect(throws: CommandFailure.rebuildStopped) {
+            try RunCommand.capture(process, capturing: true, errors: .discard, running: running)
+        }
+        #expect(process.processIdentifier == 0, "止めると決めた後に子を起こした")
+    }
+
+    /// **掴んだ子は、終わったら手放す。** 手放さないと、次に止める口は終わった子を返し、
+    /// 呼ぶ側は居ない相手に合図を撃つことになる。
+    @Test("走っている子は止める口から取り出せて、終われば手放される")
+    func theRunningChildCanBeTakenOutAndStopped() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-running-build-\(UUID().uuidString)")
+        let running = RunningBuild()
+        // **`Process` は閉じた中で作る** (送れる値ではない)。起きたことは子が印を置いて名乗る
+        let waiting = Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", "touch '\(marker.path)'; exec sleep 30"]
+            return try RunCommand.capture(
+                process, capturing: true, errors: .discard, running: running)
+        }
+        // **待つ側が期限を持つ** (#564)。**期限は安全網で、長く取る** — `make ci-check` の
+        // 並列の下では子が起きるまでに 5 秒を越え、起きる前に止めて赤くなった
+        let deadline = Date().addingTimeInterval(60)
+        while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        let child = try #require(running.stop(), "走っている子を掴んでいない")
+        child.interrupt()
+        let result = try await waiting.value
+        #expect(result.status == SIGINT, "取り出した子が、止めた合図で終わっていない")
+        #expect(running.stop() == nil, "終わった子を掴んだままでいる")
+    }
 }

@@ -31,6 +31,12 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 起動することになる ([#1055](https://github.com/mokume-metal/mokume/issues/1055))。
     case productNotBuilt(product: String, path: String)
     case toolchainMissing(String)
+    /// 作り直しを途中で止めると決めた後に、次の `swift` を起こそうとした。
+    ///
+    /// **人へ届く失敗ではない。** 止めるのは見張りが終わるときだけで、この失敗を受ける
+    /// 作り直しの続きはもう誰にも読まれない — それでも成功の顔はさせない
+    /// ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+    case rebuildStopped
 
     /// 資材の置き場があるのに、パッケージが宣言していない。
     case resourcesNotDeclared(directory: String)
@@ -143,6 +149,8 @@ nonisolated enum CommandFailure: Error, Equatable {
             Signing failed (exit code \(status)). Read the output above
             Without a signature, another machine refuses to open it at all
             """
+        case .rebuildStopped:
+            "The rebuild was stopped partway, because watching ended"
         case .buildFailed(let status):
             "The build failed (exit code \(status)). Read the output above"
         case .sketchExited(let status):

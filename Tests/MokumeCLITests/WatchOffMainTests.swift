@@ -203,6 +203,117 @@ struct WatchOffMainTests {
         return await running.value
     }
 
+    // MARK: - 終えるときに作り直しを止める (#1147)
+
+    /// 区画に書かれた作り直しの記録の本文。**書かれていなければ `nil`。**
+    private func writtenOutput(of session: WatchSession) throws -> String? {
+        let url = BuildReport.statusURL(under: session.facetBase)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        return (object as? [String: Any])?["output"] as? String
+    }
+
+    /// **止めた作り直しも、いずれ終了コードを持って戻ってくる。** そこで失敗として書き直すと
+    /// 「途中で止めた」が「壊れていた」に化け、子を起こせば止める者の居ない子が残る
+    /// ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+    @Test("作り直しの最中に止めると、止めた記録を書き、戻ってきた結果で書き直さない")
+    @MainActor
+    func stoppingARebuildRecordsItAndIgnoresTheLateResult() async throws {
+        let (recorder, gate, session) = try makeWaitingSession()
+        // **戻ってきたら失敗として書かれる形にしておく** — 止めた子はふつう 0 以外で戻る
+        recorder.buildStatus = 2
+        recorder.buildOutput = "error: interrupted"
+
+        let building = Task { await session.start() }
+        try await waitUntil { gate.isWaiting }
+
+        // 替え玉の作り直しは子を起こさないので、止める相手は居ない
+        #expect(session.stopRebuilding() == .notRunning)
+        let stopped = try #require(session.lastReport, "止めた記録が残っていない")
+        #expect(!stopped.ok)
+        #expect(!stopped.launched)
+        #expect(stopped.output == WatchSession.stoppedRebuildNotice)
+        #expect(
+            try writtenOutput(of: session) == WatchSession.stoppedRebuildNotice,
+            "区画に止めた記録が書かれていない")
+        #expect(session.stopRebuilding() == nil, "同じ作り直しを 2 度止めた")
+
+        gate.open()
+        #expect(await building.value == stopped, "止めた記録が、戻ってきた結果で書き直された")
+        #expect(session.lastReport == stopped)
+        #expect(
+            try writtenOutput(of: session) == WatchSession.stoppedRebuildNotice,
+            "区画の記録が、戻ってきた結果で書き直された")
+        #expect(recorder.launches == 0, "止めた作り直しの後に子を起こした")
+    }
+
+    @Test("作り直していなければ、止めても何も書かない")
+    @MainActor
+    func stoppingWithoutARebuildWritesNothing() throws {
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: WatchSessionTests.Recorder().hooks())
+
+        #expect(session.stopRebuilding() == nil, "作り直していないのに止めたと答えた")
+        #expect(session.lastReport == nil)
+        #expect(try writtenOutput(of: session) == nil, "作り直していないのに記録を書いた")
+    }
+
+    /// **`SIGTERM` では `swift build` の配下が残る。** SwiftPM が畳みの処理を持つのは `SIGINT`
+    /// の側で、`SIGTERM` では本体だけが死に、`swift-driver` と `swift-frontend` が launchd に
+    /// 付け替えられて残った (#1147 の実測)。ここでは `SIGTERM` に応えず `SIGINT` にだけ応える
+    /// 子で模す — `SIGTERM` で頼めば期限まで待たされて `.killed` になる。
+    @Test("作り直しは SIGINT で頼んで止める")
+    @MainActor
+    func theRebuildIsAskedToStopWithAnInterrupt() async throws {
+        let recorder = WatchSessionTests.Recorder()
+        let gate = Gate()
+        recorder.whileBuilding = { await gate.wait() }
+
+        // **眠らせずに、来ない入力を待たせる。** 眠らせると、落とした後に眠りだけが残る
+        let build = Process()
+        build.executableURL = URL(fileURLWithPath: "/bin/sh")
+        build.arguments = ["-c", "trap '' TERM; trap 'exit 0' INT; echo ready; read line"]
+        let output = Pipe()
+        build.standardInput = Pipe()
+        build.standardOutput = output
+        build.standardError = FileHandle.nullDevice
+        try build.run()
+        defer { if build.isRunning { kill(build.processIdentifier, SIGKILL) } }
+        // **仕掛け終わるまで待つ。** 起こした直後に撃つと、罠を張る前の既定の振る舞いで死ぬ
+        _ = output.fileHandleForReading.availableData
+
+        var hooks = recorder.hooks()
+        hooks.stopRebuild = { build }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: hooks, stopTimeout: 1)
+        let building = Task { await session.start() }
+        try await waitUntil { gate.isWaiting }
+
+        #expect(session.stopRebuilding() == .terminated, "SIGINT で頼んでいない")
+        #expect(!build.isRunning)
+
+        gate.open()
+        _ = await building.value
+    }
+
+    /// **口から通す。** 止める判断が在っても、終えるときに呼ばれなければ `swift build` は残る。
+    @Test("見張りを終えると、走っている作り直しも止まる")
+    @MainActor
+    func finishingStopsTheRebuild() async throws {
+        let (_, gate, session) = try makeWaitingSession()
+        let building = Task { await session.start() }
+        try await waitUntil { gate.isWaiting }
+
+        WatchCommand.finish(session)
+        #expect(
+            session.lastReport?.output == WatchSession.stoppedRebuildNotice,
+            "終えるときに作り直しを止めていない")
+
+        gate.open()
+        _ = await building.value
+    }
+
     /// 条件が成り立つまで待つ。**期限は待つ側が持つ。**
     ///
     /// 綴りは `Tests/MokumeCoreTests/FrameSyncTests.swift` の同名の助けに合わせてある。
