@@ -220,6 +220,12 @@ enum WatchCommand {
         // 2 つの窓が「いまの値」を同時に持つことにはならない ([ADR-0032] 決定 4)
         window.onInput = { [weak session] in session?.send($0) }
         preview.onInput = { [weak session] in session?.send($0) }
+        // **窓が出せたときだけ世代を重ねる。** 前の世代を畳む合図はこの窓から来るので、
+        // 出せなかった実行で重ねると、止める者の居ない子が残る (#1142)
+        session.overlapsGenerations = true
+        // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
+        window.onGenerationPromoted = { [weak session] in retire(after: session) }
+        preview.onGenerationPromoted = { [weak session] in retire(after: session) }
         let viewer = Viewer(window: window, preview: preview)
         // **出す前に繋ぐ。** 出してから繋ぐと、その隙間に閉じられたぶんが素通りする
         // (窓の中身を繋ぐ順序と同じ理由)
@@ -278,6 +284,19 @@ enum WatchCommand {
             cancel: closeCancel, then: { requestStop() })
     }
 
+    /// 入れ替わった後ろの世代を畳み、期限に掛かったことがあれば名乗る。
+    ///
+    /// **名乗るのは口の側である** — ``WatchSession`` は判断だけを持ち、出力を持たない
+    /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。
+    static func retire(after session: WatchSession?) {
+        guard let outcome = session?.retireOutgoing() else { return }
+        switch outcome {
+        case .killed: say(killedLine)
+        case .abandoned(let pid): say(abandonedLine(pid: pid))
+        default: break
+        }
+    }
+
     /// 終わりの合図の受け口を置く。
     ///
     /// **印を 0 に書いてから置く。** 置いた後の最初の書き込みがハンドラからだと、
@@ -323,6 +342,9 @@ enum WatchCommand {
         // 起きて印が下り、消えたことを見逃す。名乗った行は作り直しが始まれば
         // `willRebuild` が上書きする (#1103)
         if let departure = session.departed() {
+            // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
+            // 合図はもう来ないので、ここで畳む (#1142)
+            retire(after: session)
             let line = departedLine(departure)
             say(line)
             viewer?.preview.report(line, spinning: false)

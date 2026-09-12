@@ -145,6 +145,22 @@ final class WatchSession {
         didSet { hasNamedDeparture = false }
     }
 
+    /// 退役待ちの子。**画面が新しい世代へ入れ替わるまで、走らせておく。**
+    ///
+    /// 止めてから起こすと、新しい子が最初のフレームを焼くまで絵が途切れる (手元では
+    /// **417 ms**・[#1142](https://github.com/mokume-metal/mokume/issues/1142))。順序を入れ替えて
+    /// **重ねるのは 1 世代だけ**で、次の差し替えが来たときに残っていたらそこで必ず止める。
+    ///
+    /// **消えたことは名乗らない。** 止めるつもりで生かしているので、``departed()`` が見るのは
+    /// ``child`` だけである。
+    private(set) var outgoing: Process?
+
+    /// 世代を重ねるか。**窓を出せた見張りだけが重ねる。**
+    ///
+    /// 入れ替わりの合図は道具の窓から来るので ([ADR-0032] 決定 1)、窓が出せなかった実行では
+    /// 誰も知らせてくれない — そこでは今までどおり、止めてから起こす。
+    var overlapsGenerations = false
+
     /// 消えたことを既に名乗ったか。**子が入れ替わると下りる。**
     private var hasNamedDeparture = false
     /// いま作り直しているか。
@@ -246,7 +262,10 @@ final class WatchSession {
     /// 呼ぶ側は既定で `SIGPIPE` を無視しておく必要がある ([WatchCommand] が置く) —
     /// 無視しないと、畳まれた管へ書いた**こちらが死ぬ**。
     func send(_ line: String) {
-        guard let pipe = child?.standardInput as? Pipe, let data = line.data(using: .utf8) else {
+        // **画面に出ている世代へ送る。** 退役待ちが居る間は、まだ前の世代が映っている —
+        // 入れ替わりと退役は同じ合図で起きるので、宛先は画面と一致する (#1142)
+        let target = outgoing ?? child
+        guard let pipe = target?.standardInput as? Pipe, let data = line.data(using: .utf8) else {
             return
         }
         // **失敗を握り潰す。** 相手が畳んだ (EPIPE)・管が一杯 (EAGAIN) のどちらでも、
@@ -286,17 +305,36 @@ final class WatchSession {
     /// - Returns: 3 通りの結果。呼ぶ側はそれぞれを別の出来事として名乗れる。
     @discardableResult
     func stop() -> StopOutcome {
-        guard let running = child, running.isRunning else {
-            child = nil
-            lastStop = .notRunning
-            return .notRunning
-        }
+        // **退役待ちも置いていかない。** 入れ替わりの合図が来る前に終わることがある
+        retireOutgoing()
+        let outcome = bringDown(child)
+        child = nil
+        lastStop = outcome
+        return outcome
+    }
+
+    /// 退役待ちを止める。
+    ///
+    /// **何度呼んでもよい。** 入れ替わりの合図は窓ごとに来る (作品の窓とプレビューは独立に
+    /// 見ている) ので、同じ入れ替えで 2 度呼ばれる。
+    ///
+    /// - Returns: 止めた結果。居なければ `nil` — **名乗るのは口の側**なので、期限に掛かった
+    ///   ことを言うために返す (#732 の規律は差し替えの経路にも効く)。
+    @discardableResult
+    func retireOutgoing() -> StopOutcome? {
+        guard let leaving = outgoing else { return nil }
+        outgoing = nil
+        return bringDown(leaving)
+    }
+
+    /// 1 つの子を落とす。**期限を持つ。**
+    ///
+    /// 呼び手が 2 つある (終わるとき・退役させるとき) ので、判断はここ 1 つに置く — 期限の
+    /// 値も刻みの細かさも `StopOutcome` の分け方も、2 通りに割れない。
+    private func bringDown(_ running: Process?) -> StopOutcome {
+        guard let running, running.isRunning else { return .notRunning }
         running.terminate()
-        if waitForExit(running, timeout: stopTimeout) {
-            child = nil
-            lastStop = .terminated
-            return .terminated
-        }
+        if waitForExit(running, timeout: stopTimeout) { return .terminated }
         // **宛先を確かめてから撃つ。** 起動していない `Process` の番号は 0 で、
         // `kill(0, …)` は**自分のプロセスグループごと**落とす。上の guard が弾いている
         // 形だが、暗黙に頼らない
@@ -305,11 +343,7 @@ final class WatchSession {
         // **消えたことを確かめる。** 捕まえられない合図でも、割り込めない待ちに入って
         // いるものは即座には消えない — 確かめずに名乗ると、置いていったものを
         // 「止めた」と言うことになる (#732)
-        let gone = waitForExit(running, timeout: Self.killGrace)
-        child = nil
-        let outcome: StopOutcome = gone ? .killed : .abandoned(pid: pid)
-        lastStop = outcome
-        return outcome
+        return waitForExit(running, timeout: Self.killGrace) ? .killed : .abandoned(pid: pid)
     }
 
     /// 終わるのを、期限まで待つ。
@@ -385,7 +419,15 @@ final class WatchSession {
         }
 
         let relaunchStarted = hooks.now()
-        stop()
+        if overlapsGenerations {
+            // **止めるのは、新しい世代が画面に出てからである** (#1142)。合図が来ないまま
+            // 次の保存が来た回は、ここで必ず止める — 重ねるのは 1 世代だけである
+            retireOutgoing()
+            outgoing = child
+            child = nil
+        } else {
+            stop()
+        }
         child = hooks.launch(executable, directory, stamp, reportsRate ? configurationName : nil)
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
 
