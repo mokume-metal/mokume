@@ -118,6 +118,27 @@ struct WatchOffMainTests {
         #expect(await session.tick() == nil, "同じ保存で 2 度追いかけている")
     }
 
+    @Test("作り直しの最中に来た巡回は、いま作っている世代を変化と読まない")
+    @MainActor
+    func theRebuildInFlightIsNotSeenAsAChange() async throws {
+        let log = Log()
+        let (recorder, gate, session) = try makeWaitingSession()
+
+        let building = Task { await session.start() }
+        try await waitUntil { gate.isWaiting }
+        #expect(try await returnsWithoutWaiting(log, "最中の巡回") { await session.tick() } == nil)
+        gate.open()
+        _ = await building.value
+
+        // **気付いた時刻を汚していない。** 汚れていると、次に保存したときの `detect_ms` に
+        // 作り直しを待っていた時間までが乗る (手元で 12 秒を実測したのがこの形である)
+        recorder.whileBuilding = {}
+        recorder.stamp = "bbb"
+        let report = try #require(await session.tick())
+        #expect(try #require(report.timings.detectMs) == 0, "気付いた時刻が作り直しの最中に置かれている")
+        #expect(recorder.builds == 2)
+    }
+
     @Test("終われと言われたら、作り直しの終わりを待たずに抜ける")
     @MainActor
     func leavesWithoutWaitingForTheBuild() async throws {
