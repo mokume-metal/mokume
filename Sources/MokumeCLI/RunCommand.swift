@@ -8,7 +8,7 @@ import mokume
 enum RunCommand {
     /// 構成を渡さないときの名乗り。**道具立てへ渡す引数は変えない** — ここで名乗るのは
     /// 「この数字がどの土俵のものか」だけで、`BuildReport.configuration` と同じ言葉を使う。
-    static let defaultConfigurationName = "debug"
+    nonisolated static let defaultConfigurationName = "debug"
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
         let invocation = try Invocation.parse(arguments)
@@ -144,7 +144,7 @@ enum RunCommand {
     }
 
     /// 1 回の作り直しの結果。
-    struct Rebuilt: Equatable {
+    nonisolated struct Rebuilt: Equatable {
         /// 作り直しの終了コード。
         let status: Int32
         /// 出力。**掴んだときだけ中身が入る** (流したときは空)。
@@ -171,7 +171,19 @@ enum RunCommand {
     ///
     /// - Parameter capturing: 出力を掴むか。**既定は流す** — 失敗の内容を読むのは人で、
     ///   道具が挟まって形を変えない方がよい。掴むのは記録へ載せる見張りだけである。
-    static func rebuild(in directory: URL, context: BuildContext, capturing: Bool = false)
+    ///
+    /// ## main actor の外で走る
+    ///
+    /// `Package.swift` は全ターゲットへ `.defaultIsolation(MainActor.self)` を敷いているので、
+    /// 黙っていればここも main actor 隔離になる — そして見張りは**巡回の中からこれを呼ぶ**
+    /// ので、`swift build` を待つ間じゅう画面が凍る
+    /// ([#834](https://github.com/mokume-metal/mokume/issues/834))。
+    ///
+    /// 隔離を外すのは ADR-0010 決定 4 の「main actor の外で進める処理は明示的に分離する」で、
+    /// **触るのは `Process` と `FileManager` だけ**である (main actor の状態は読まない)。
+    nonisolated static func rebuild(
+        in directory: URL, context: BuildContext, capturing: Bool = false
+    )
         throws(CommandFailure) -> Rebuilt
     {
         let bin = try binPath(in: directory, context: context)
@@ -232,7 +244,9 @@ enum RunCommand {
 
     /// 出来上がりが置かれる場所。**道具立てに聞く** — 置き場の中の構造を組み立てると、
     /// 道具立てが並びを変えた日に黙って別の場所を指す。
-    static func binPath(in directory: URL, context: BuildContext) throws(CommandFailure) -> URL {
+    nonisolated static func binPath(in directory: URL, context: BuildContext)
+        throws(CommandFailure) -> URL
+    {
         // **愚痴を混ぜない。** 出力はファイルパスとして解くので、警告 1 行で別の
         // 場所を指すことになる (#731)
         let output = try swift(
@@ -244,7 +258,7 @@ enum RunCommand {
     }
 
     /// 構成の指定を、道具立てへ渡す形にする。
-    static func configurationArguments(_ configuration: String?) -> [String] {
+    nonisolated static func configurationArguments(_ configuration: String?) -> [String] {
         guard let configuration else { return [] }
         return ["-c", configuration]
     }
@@ -268,7 +282,7 @@ enum RunCommand {
     /// パッケージの宣言を読む。**読めなければ `nil`。**
     ///
     /// 起こすのは重い (数百 ms) ので、同じ実行の中で 2 度要るときは呼び手が持ち回る。
-    static func dumpPackage(in directory: URL) throws(CommandFailure) -> SwiftPM.Package? {
+    nonisolated static func dumpPackage(in directory: URL) throws(CommandFailure) -> SwiftPM.Package? {
         // **愚痴を混ぜない。** 出力は JSON として厳密に解くので、警告 1 行で黙って
         // nil になる (#731)
         let dump = try swift(
@@ -337,7 +351,7 @@ enum RunCommand {
     /// ので、1 つの型で持つ ([#731])。
     ///
     /// [#731]: https://github.com/mokume-metal/mokume/issues/731
-    enum ErrorStream {
+    nonisolated enum ErrorStream {
         /// 端末へそのまま流す。**既定** — 人が見ている経路。
         case inherit
         /// 捨てる。出力そのものを人へ見せる呼び出し (切り分けの口) だけで使う。
@@ -354,7 +368,7 @@ enum RunCommand {
     @discardableResult
     /// - Parameter errors: 子の愚痴の行き先。**混ぜてよいのは作り直しだけ** — 出力を
     ///   パスや JSON として解く呼び出しに混ぜると、警告 1 行で解けなくなる。
-    static func swift(
+    nonisolated static func swift(
         _ arguments: [String], in directory: URL, capturing: Bool,
         errors: ErrorStream = .inherit
     ) throws(CommandFailure) -> (status: Int32, output: String) {
@@ -372,7 +386,7 @@ enum RunCommand {
     /// に固定しているので、そちらからは偽の道具立てを渡せない。
     ///
     /// [#731]: https://github.com/mokume-metal/mokume/issues/731
-    static func capture(_ process: Process, capturing: Bool, errors: ErrorStream)
+    nonisolated static func capture(_ process: Process, capturing: Bool, errors: ErrorStream)
         throws(CommandFailure) -> (status: Int32, output: String)
     {
         let pipe = Pipe()

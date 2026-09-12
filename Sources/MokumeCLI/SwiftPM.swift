@@ -22,7 +22,7 @@ import Foundation
 /// 要るわけではない。
 ///
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
-enum SwiftPM {
+nonisolated enum SwiftPM {
     // MARK: - swift package dump-package
 
     /// `swift package dump-package` が出すパッケージの宣言。

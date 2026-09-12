@@ -10,7 +10,7 @@ import Foundation
 /// なので、状態の報告だけでは足りない。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
-enum CommandFailure: Error, Equatable {
+nonisolated enum CommandFailure: Error, Equatable {
     case usage(String)
     case nameMissing
     case invalidName(String)
