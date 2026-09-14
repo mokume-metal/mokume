@@ -191,7 +191,19 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     /// **畳み忘れても、手放した時点で畳む。** 仕掛けを止めない限り、走り続ける
     /// ([#738](https://github.com/mokume-metal/mokume/issues/738))。
-    isolated deinit { close() }
+    ///
+    /// **引いた面を常駐から退かせるのは、`close()` ではなくここである** ([#795])。
+    /// 世代の差し替えでは外していたが、台そのものを手放したときは外していなかった。
+    /// `close()` に置かないのは、畳んだ窓をもう一度 `open()` できるからである — 畳んでも
+    /// 世代は捨てないので、そこで外すと開き直した窓が常駐していない面を読む。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit {
+        close()
+        for generation in [source, incoming].compactMap({ $0 }) {
+            for frame in generation.frames.values { gpu.retire(frame.texture) }
+        }
+    }
 
     /// 窓を出し、区画を見張り始める。
     ///

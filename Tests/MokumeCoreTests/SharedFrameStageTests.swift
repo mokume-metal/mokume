@@ -479,6 +479,73 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 手放したときの常駐
+
+    // 下の 2 本は、差し替えのときは面を常駐から外すが、持ち主ごと手放したときは外して
+    // いなかった形を見る ([#795])。どちらも `RenderDevice` を渡して持つので、窓や面を
+    // 畳んでも土台が生きていれば面が残り続けていた。
+    //
+    // [#795]: https://github.com/mokume-metal/mokume/issues/795
+
+    /// 作っては手放す回数。
+    private static let churns = 8
+
+    @Test("絵を渡す面を作っては手放しても、常駐の集合が増え続けない")
+    func discardedSurfacesLeaveTheResidencySet() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            _ = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+            try gpu.settle()
+            let settled = gpu.residencySet.allocationCount
+
+            for _ in 0..<Self.churns {
+                _ = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+            }
+            try gpu.settle()
+            let after = gpu.residencySet.allocationCount
+
+            #expect(
+                after == settled,
+                """
+                絵を渡す面を \(Self.churns) 個作って手放したら、常駐の集合が \(after - settled) 個
+                残った (増減 0 のはず)。面に被せたテクスチャが退いていない (#795)
+                """)
+            #expect(gpu.retiredResourceCount == 0)
+        }
+    }
+
+    @Test("差し出し元を引いた台を手放すと、引いた面が常駐から外れる")
+    func discardedStageLeavesTheResidencySet() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let surface = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+
+            @MainActor func churn() throws {
+                let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("churn"))
+                stage.displayLinkFired()
+                try #require(stage.hasSource, "差し出し元を引いていない (これでは何も測れない)")
+            }
+
+            try churn()
+            try gpu.settle()
+            let settled = gpu.residencySet.allocationCount
+
+            for _ in 0..<Self.churns { try churn() }
+            try gpu.settle()
+            let after = gpu.residencySet.allocationCount
+
+            #expect(
+                after == settled,
+                """
+                差し出し元を引いた台を \(Self.churns) 個作って手放したら、常駐の集合が
+                \(after - settled) 個残った (増減 0 のはず)。台は世代の差し替えでは面を外すが、
+                手放したときに外していない (#795)
+                """)
+            #expect(gpu.retiredResourceCount == 0)
+            _ = surface
+        }
+    }
+
     /// 面を 1 つ作り、目録を置いて、`drawing` 枚だけ焼く。
     ///
     /// **同じ区画へ 2 つ作ると、目録は後から置いたほうで上書きされる** — それが子の
