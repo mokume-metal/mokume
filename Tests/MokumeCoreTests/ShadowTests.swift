@@ -403,6 +403,44 @@ struct ShadowTests {
         #expect(canvas.shadowBarriersEncoded == 3, "焼いていないフレームにまで積んでいる")
     }
 
+    // MARK: - 投入されなかった焼き付け (#1183)
+
+    /// **焼き付けを積んだ後で投げたフレームの指紋を覚えない。** 覚えると、次のフレームが
+    /// 同じ形を置いたときに「焼いた」と読んで使い回し、**投入されなかった焼き付けの面**
+    /// (= その前に焼いた別の形の影) を読む ([#1183])。
+    ///
+    /// 投げさせる場所は焼き付けの**後**でなければ意味が無い — 焼き付けの中で投げる経路は
+    /// 前から守られていた。だから影の側の置き場は伸ばさず、形の置き場だけを伸ばして
+    /// その取り直しの待ちで投げさせる (`encodeBatches` は焼き付けの後に置き場を取る)。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    @Test("焼き付けを積んだ後で投げたフレームの影は、次のフレームで焼き直す")
+    func aFrameThatThrowsAfterBakingIsBakedAgain() throws {
+        let canvas = try makeCanvas()
+        // 形の置き場を 1 度取らせる (1 度目の取り直しは外す古い置き場が無いので待たない)。
+        // **面の外に置く** — 塗りはフレームを越えて残るので、見える所に置くと新しい面と色が違う
+        let dot: (Canvas) -> Void = { $0.rect(1000, 1000, 1, 1) }
+        _ = try floorAndSphere(canvas, offset: -30, extra: dot)
+
+        let baked = canvas.shadowBakesEncoded
+        canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+        #expect(throws: RenderFailure.self) {
+            _ = try self.floorAndSphere(canvas, offset: 30) { canvas in
+                for index in 0..<5000 { canvas.rect(1000 + index % 16, 1000, 1, 1) }
+            }
+        }
+        canvas.gpu.failSettleForTesting = nil
+        #expect(
+            canvas.shadowBakesEncoded == baked + 1,
+            "焼き付けを積む前に投げている — この検査は焼き付けの後で投げる経路を見ていない")
+
+        let after = try floorAndSphere(canvas, offset: 30, extra: dot)
+        let fresh = try floorAndSphere(try makeCanvas(), offset: 30, extra: dot)
+        #expect(
+            after.bytes == fresh.bytes,
+            "投入されなかった焼き付けを「焼いた」と覚え、前の形の影を読んでいる")
+    }
+
     // MARK: - 焼き直さない
 
     @Test("同じ形と光を続けて描いたら、焼くのは最初の 1 回で、絵は毎回焼いたときと同じ")

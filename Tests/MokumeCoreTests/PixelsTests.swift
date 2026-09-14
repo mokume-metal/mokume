@@ -343,4 +343,42 @@ struct PixelsTests {
         let canvas = try makeCanvas(width: 13, height: 3)
         #expect(canvas.pixels.count == 39)
     }
+
+    // MARK: - 投入されなかった書き戻し (#1183)
+
+    /// **書き戻しを積んだ後で描き切りが投げても、CPU の書き込みを「戻した」ことにしない。**
+    /// 戻したことにすると、次の描き切りは書き戻しを積まず、読み出しは描画先から写し直すので、
+    /// `set` した画素が黙って消える ([#1183])。
+    ///
+    /// 投げさせるのは書き戻しより後 — 形の置き場を伸ばし、その取り直しの待ちで投げる。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    @Test("書き戻しを積んだ後で描き切りが投げても、書いた画素は次のフレームで戻る")
+    func writesSurviveAFlushThatThrowsAfterEncodingTheWriteBack() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            // 形の置き場を 1 度取らせる。面の外に置くので絵には出ない
+            canvas.rect(100, 100, 1, 1)
+        }
+
+        let encoded = canvas.target.pixelWriteBacksEncoded
+        #expect(throws: RenderFailure.self) {
+            try canvas.draw {
+                canvas.set(3, 3, red)
+                canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+                for index in 0..<5000 { canvas.rect(100 + index % 16, 100, 1, 1) }
+            }
+        }
+        canvas.gpu.failSettleForTesting = nil
+        #expect(
+            canvas.target.pixelWriteBacksEncoded == encoded + 1,
+            "書き戻しを積む前に投げている — この検査は書き戻しの後で投げる経路を見ていない")
+
+        try canvas.draw {}
+        #expect(
+            try canvas.target.readPixels()[3, 3] == red,
+            "投入されなかった書き戻しを「戻した」ことにして、書いた画素を失っている")
+    }
 }

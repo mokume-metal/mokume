@@ -639,4 +639,44 @@ struct ComputeTests {
         }
         return true
     }
+
+    // MARK: - 投入されなかった計算 (#1183)
+
+    /// **途中の描き切りが計算を積んだ後で投げても、頼みを溜め場から降ろさない。**
+    /// `flush` は「途中の描き切りが一時的に失敗しただけなら、溜めたものはフレーム末尾の
+    /// 描き切りに残す」と約束している。降ろすとフレーム末尾の描き切りは何も流さず、
+    /// 計算は走らないまま読める ([#1183])。
+    ///
+    /// 投げさせるのは計算を積んだ後 — 形の置き場を伸ばし、その取り直しの待ちで投げる。
+    /// **読み戻し (`read(_:)`) の経路には差し込めない**: 値を書く前の待ちが同じ差し込みで
+    /// 先に断るので、組み立ての後まで進まない。溜め場を降ろす行は同じなので、ここで守る。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    @Test("途中の描き切りが計算を積んだ後で投げても、頼みはフレーム末尾で流れる")
+    func workSurvivesAMidFrameFlushThatThrowsAfterEncodingIt() throws {
+        let canvas = try makeCanvas()
+        let heat = try canvas.makeNumbers(count: 32)
+        let ramp = try canvas.makeComputation(Self.ramp, name: "ramp", values: ["scale": 1])
+        // 形の置き場を 1 度取らせる。面の外に置くので絵には出ない
+        try canvas.draw { canvas.rect(1000, 1000, 1, 1) }
+
+        var pending = -1
+        var opened = -1
+        try canvas.draw {
+            canvas.compute(ramp, over: 32, writes: [heat])
+            for index in 0..<5000 { canvas.rect(1000 + index % 16, 1000, 1, 1) }
+            canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+            canvas.loadPixels()
+            canvas.gpu.failSettleForTesting = nil
+            pending = canvas.pendingComputations.count
+            opened = canvas.computeEncodersOpened
+        }
+        #expect(opened == 1, "計算を積む前に投げている — この検査は計算の後で投げる経路を見ていない")
+        #expect(pending == 1, "投入されなかった計算の頼みが、溜め場から消えている")
+        // GPU の割り算は CPU と最後の桁で揃わないことがあるので、ずれは許して比べる
+        let read = canvas.read(heat)
+        #expect(
+            read.indices.allSatisfy { abs(read[$0] - Float($0) / 31) < 1e-5 },
+            "フレーム末尾の描き切りで計算が流れていない")
+    }
 }

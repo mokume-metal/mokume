@@ -222,8 +222,14 @@ public final class RenderTarget: EffectSurface {
     ///
     /// GPU がこの描画先へ触るコマンドの**先頭**に積む (描き切り・出力段)。積んだ blit を
     /// 後続の段が待つ仕掛けもここで積む。
-    func encodePixelWriteBack(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
-        guard let mirror = pixelMirror, mirror.hasPendingWrites else { return }
+    ///
+    /// - Returns: 積んだら `true`。**積んだコマンドを投入したら ``markPixelsWrittenBack()``
+    ///   で知らせる** — ここでは「戻した」ことにしない。積んだ後で組み立てが投げると
+    ///   コマンドは捨てられるので、ここで下ろすと CPU の書き込みが黙って失われる ([#1183])。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    func encodePixelWriteBack(into commands: any MTL4CommandBuffer) throws(RenderFailure) -> Bool {
+        guard let mirror = pixelMirror, mirror.hasPendingWrites else { return false }
         guard let encoder = commands.makeComputeCommandEncoder() else {
             throw .encoderUnavailable
         }
@@ -239,8 +245,16 @@ public final class RenderTarget: EffectSurface {
             afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
             visibilityOptions: .device)
         encoder.endEncoding()
-        mirror.hasPendingWrites = false
         pixelWriteBacksEncoded += 1
+        return true
+    }
+
+    /// 書き戻しを積んだコマンドが投入されたことを記録する。**投入の後でだけ呼ぶ。**
+    ///
+    /// 積んでから投入するまでの間に CPU が写しへ書く経路は無い (どちらも main actor の上で
+    /// 続けて走る) ので、ここで下ろしても書き込みは取りこぼさない。
+    func markPixelsWrittenBack() {
+        pixelMirror?.hasPendingWrites = false
     }
 
     // MARK: - 描く
