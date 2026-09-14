@@ -285,11 +285,16 @@ struct RunCommandTests {
         // **並行プールに載せず、専用の糸で待つ。** `Task.detached` で待たせたら、`make ci-check`
         // の並列の下でプールの糸が他の検査に塞がれ、60 秒待っても子が起きなかった (CI で実測)。
         // `Process` は閉じた中で作る (送れる値ではない)。起きたことは子が印を置いて名乗る
+        //
+        // **印は組み込みのリダイレクトで置き、`touch` を呼ばない。** `/bin/sh` (bash) は前面の子を
+        // 待つ間に SIGINT を受けても、子が普通に終われば「子が処理した」とみなして続きを実行する。
+        // `touch` が終わってから刈り取るまでの窓に撃つと `exec sleep 30` まで進んで眠り切り、
+        // 待ちの期限と同時に赤くなった — 負荷の下ほど窓は広い (#1166)。子を待たなければ窓は無い
         Thread.detachNewThread {
             defer { outcome.done.signal() }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", "touch '\(marker.path)'; exec sleep 30"]
+            process.arguments = ["-c", ": > '\(marker.path)'; exec sleep 30"]
             outcome.status = try? RunCommand.capture(
                 process, capturing: true, errors: .discard, running: running
             ).status
