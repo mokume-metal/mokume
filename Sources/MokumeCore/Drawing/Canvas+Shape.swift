@@ -25,10 +25,24 @@ extension Canvas {
 
         // 記録の間に触った状態は外へ出さない。**形自身の座標で記録する**ので、
         // 変換も畳んでおく — そうしないと、組み立てた場所でしか置けない形になる
-        pushStyle()
-        pushMatrix()
-        resetMatrix()
+        //
+        // **積み降ろし (`pushStyle()` / `pushMatrix()`) は使わず、写し取って戻す。**
+        // 積み降ろしはフレームの中でしか効かないので、`setup()` で組み立てると退避も
+        // 復帰も空振りし、中で置いた塗りが外へ残ったうえ、利用者が触っていない
+        // 積み降ろしの警告だけが出ていた ([#1041])。断片と数の並びはスタイルの一式に
+        // 無いので、積み降ろしが効いても戻らなかった ([#836])。
+        //
+        // 断片と並びは**入口では外さない** — 組み立ての間に効いている塗りは形に焼き付く
+        // (#788)。戻すのは出口だけで、読む面と同じ扱いである
+        //
+        // [#836]: https://github.com/mokume-metal/mokume/issues/836
+        // [#1041]: https://github.com/mokume-metal/mokume/issues/1041
+        let savedStyle = currentStyle
+        let savedTransform = transform
         let savedTexture = currentTexture
+        let savedShader = currentShader
+        let savedNumbers = currentNumbers
+        transform = .identity
         currentClip = nil
         // **記録の間は畳まない。** 畳むと置き場所が溜め場の側に残り、記録した頂点からは
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
@@ -68,8 +82,10 @@ extension Canvas {
         solidInstances.removeLast(solidInstances.count - instanceStart)
         batches.removeLast(batches.count - runStart)
         currentTexture = savedTexture
-        popMatrix()
-        popStyle()
+        currentShader = savedShader
+        currentNumbers = savedNumbers
+        transform = savedTransform
+        currentStyle = savedStyle
 
         return Shape(
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,

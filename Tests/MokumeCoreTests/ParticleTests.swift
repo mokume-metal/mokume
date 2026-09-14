@@ -472,4 +472,36 @@ struct ParticleTests {
         #expect(canvas.warnings.hasWarned(.particlesOutsideFrame))
         #expect(canvas.computeEncodersOpened == 0)
     }
+
+    // MARK: - 作るときに触らないもの (#1041)
+    //
+    // 粒の板は `createShape` で作る。組み立ての退避がフレームに縛られていると、
+    // `setup()` で粒を作るだけで、利用者が触っていない警告が出て、置いた塗りが白へ変わる。
+
+    @Test("フレームの外で粒を作っても、積み降ろしの警告は出ない")
+    func makingParticlesOutsideTheFrameSaysNothingAboutStyle() throws {
+        let canvas = try makeCanvas()
+        _ = try canvas.makeParticles(count: 4)
+        #expect(!canvas.warnings.hasWarned(.styleOutsideFrame))
+        #expect(!canvas.warnings.hasWarned(.transformOutsideFrame))
+    }
+
+    @Test("フレームの外で置いた塗りは、粒を作ったあとも残る")
+    func makingParticlesKeepsTheFillSetOutsideTheFrame() throws {
+        let canvas = try makeCanvas()
+        canvas.fill(.linear(red: 1, green: 0, blue: 0))
+        _ = try canvas.makeParticles(count: 8)
+        #expect(canvas.currentFill == .linear(red: 1, green: 0, blue: 0))
+    }
+
+    /// **焼き付くのは仕様である。** 粒の板は保持した形なので、作った瞬間の混ぜ方で描かれる —
+    /// `draw()` で後から置いた混ぜ方は届かない。「`setup()` からは混ぜ方を選べない」と
+    /// 取り違えないよう、作る前に置けば届くことを固定しておく。
+    @Test("粒を作る前に置いた混ぜ方が、粒に焼き付く")
+    func particlesBakeTheBlendModeSetBeforeMaking() throws {
+        let canvas = try makeCanvas()
+        canvas.blendMode(.add)
+        let dust = try canvas.makeParticles(count: 4)
+        #expect(dust.quad.runs.first?.mode == .add)
+    }
 }

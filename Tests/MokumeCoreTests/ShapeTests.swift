@@ -449,6 +449,80 @@ struct ShapeTests {
         #expect(canvas.get(8, 8) == .linear(red: 0, green: 0, blue: 1))
     }
 
+    /// 断片はスタイルの一式に含まれない (積み降ろしでは戻らない) ので、組み立てが
+    /// 自分で戻さないと外へ残る ([#836])。
+    ///
+    /// [#836]: https://github.com/mokume-metal/mokume/issues/836
+    @Test("組み立ての間に掛けた断片は、外へ残らない")
+    func buildingDoesNotLeakTheFragment() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        let green = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }")
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0, green: 0, blue: 1))
+            _ = canvas.createShape {
+                canvas.shader(green)
+                canvas.rect(0, 0, 4, 4)
+            }
+            // 組み立ての中で掛けた断片が残っていれば、ここが緑になる
+            canvas.rect(0, 0, 16, 16)
+        }
+        #expect(canvas.get(8, 8) == .linear(red: 0, green: 0, blue: 1))
+    }
+
+    /// 数の並びも断片と同じく、スタイルの一式に含まれない ([#836])。
+    ///
+    /// 断片は並びの**先頭だけ**を読む。渡していない列に束ねられるのは 1 個の 0 なので、
+    /// 添字を振って読むと範囲外読み出しになる ([#919])。
+    ///
+    /// [#836]: https://github.com/mokume-metal/mokume/issues/836
+    /// [#919]: https://github.com/mokume-metal/mokume/issues/919
+    @Test("組み立ての間に渡した並びは、外へ残らない")
+    func buildingDoesNotLeakTheNumbers() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        let showFirst = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                float v = in.numbers[0];
+                return float4(v, v, v, 1);
+            }
+            """)
+        let lit = try canvas.makeNumbers(count: 1)
+        lit.fill(1)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(showFirst)
+            _ = canvas.createShape {
+                canvas.numbers(lit)
+                canvas.rect(0, 0, 4, 4)
+            }
+            // 組み立ての中で渡した並びが残っていれば、ここが白くなる
+            canvas.rect(0, 0, 16, 16)
+        }
+        #expect(canvas.get(8, 8) == .linear(red: 0, green: 0, blue: 0))
+    }
+
+    /// 積み降ろし (`pushStyle()` / `pushMatrix()`) はフレームの中でしか効かない。組み立てが
+    /// それに頼ると、`setup()` で組み立てたときに退避も復帰も空振りし、利用者が触っていない
+    /// 積み降ろしの警告だけが出る ([#1041])。
+    ///
+    /// [#1041]: https://github.com/mokume-metal/mokume/issues/1041
+    @Test("フレームの外で組み立てても、中で触った塗りは外へ残らず、警告も出ない")
+    func buildingOutsideTheFrameDoesNotLeakStyle() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        canvas.fill(.linear(red: 0, green: 0, blue: 1))
+        _ = canvas.createShape {
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
+            canvas.rect(0, 0, 4, 4)
+        }
+        #expect(canvas.currentFill == .linear(red: 0, green: 0, blue: 1))
+        #expect(!canvas.warnings.hasWarned(.styleOutsideFrame))
+        #expect(!canvas.warnings.hasWarned(.transformOutsideFrame))
+    }
+
     @Test("組み立てたぶんが、そのフレームの絵に紛れ込まない")
     func buildingDoesNotDrawByItself() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
