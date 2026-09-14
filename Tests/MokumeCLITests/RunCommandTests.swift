@@ -116,6 +116,102 @@ struct RunCommandTests {
         try RunCommand.launch(executable, in: executable.deletingLastPathComponent())
     }
 
+    /// **道具の PID だけへ届く合図で、スケッチを孤児にしない**
+    /// ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
+    ///
+    /// 端末の Control + C はグループ全体に届くので人の操作では起きず、エージェントや
+    /// スクリプトが道具だけを止める経路で起きる。ここでは検査の走者そのものを道具に見立て、
+    /// **自分のプロセスへ**合図を送る。
+    ///
+    /// **壊れた実装で走者ごと死なせない。** 受け口が置かれていなければ合図を送らずに失敗を
+    /// 記録し、受け口が子へ渡さなければ期限で子を落として失敗を記録する — どちらでも
+    /// `launch` の待ちは戻る。
+    @Test(
+        "道具だけへ終わりの合図が届いても、走らせていたスケッチを残さずに終わる",
+        arguments: RunCommand.stopSignals)
+    func aStopSignalTakesTheSketchDownToo(stopSignal: Int32) throws {
+        /// 糸をまたいで結果を受け渡す箱。**触るのは終わりの合図の後だけ**なので鍵は要らない。
+        nonisolated final class Sender: @unchecked Sendable {
+            var failures: [String] = []
+            var pid: pid_t?
+            let done = DispatchSemaphore(value: 0)
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-signal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let marker = directory.appendingPathComponent("pid")
+        let executable = directory.appendingPathComponent("sketch")
+        // **番号を書き終えてから名乗る** (途中を読ませない)。`exec` で番号を保ったまま眠る
+        try """
+            #!/bin/sh
+            echo $$ > '\(marker.path).tmp' && mv '\(marker.path).tmp' '\(marker.path)'
+            exec sleep 30
+            """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        var before = sigaction()
+        sigaction(stopSignal, nil, &before)
+        let sender = Sender()
+        // **並行プールに載せず、専用の糸で送る** (上の `theRunningChildCanBeTakenOutAndStopped`
+        // と同じ理由)。期限はどれも安全網である (#564)
+        Thread.detachNewThread {
+            defer { sender.done.signal() }
+            let started = Date().addingTimeInterval(30)
+            while Date() < started {
+                if let text = try? String(contentsOf: marker, encoding: .utf8),
+                    let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                {
+                    sender.pid = pid
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            guard let pid = sender.pid else {
+                sender.failures.append("スケッチが起きない")
+                return
+            }
+            var current = sigaction()
+            sigaction(stopSignal, nil, &current)
+            guard current.__sigaction_u.__sa_handler != nil else {
+                sender.failures.append("走らせている間、合図の受け口が置かれていない")
+                kill(pid, SIGKILL)
+                return
+            }
+            kill(getpid(), stopSignal)
+            let gone = Date().addingTimeInterval(10)
+            while kill(pid, 0) == 0, Date() < gone {
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            if kill(pid, 0) == 0 {
+                sender.failures.append("道具が合図を受けたのに、スケッチが残っている")
+                kill(pid, SIGKILL)
+            }
+        }
+
+        #expect(throws: CommandFailure.stopped(signal: stopSignal)) {
+            try RunCommand.launch(executable, in: directory)
+        }
+        #expect(sender.done.wait(timeout: .now() + 60) == .success, "合図を送る糸が戻らない")
+        for failure in sender.failures { Issue.record(Comment(rawValue: failure)) }
+        let pid = try #require(sender.pid)
+        #expect(kill(pid, 0) != 0, "launch が戻った後もスケッチが残っている")
+
+        var after = sigaction()
+        sigaction(stopSignal, nil, &after)
+        #expect(
+            (after.__sigaction_u.__sa_handler == nil) == (before.__sigaction_u.__sa_handler == nil),
+            "走り終えた後に、合図の受け口を元へ戻していない")
+    }
+
+    /// **合図で止めた回は、慣習の 128 + 番号で終わる。** スケッチの成否として 15 を返すと、
+    /// 止めた側は「スケッチが自分で失敗した」と読む。
+    @Test("合図で止めた回は、スケッチの失敗とは別の終わり方を名乗る")
+    func aStoppedRunSaysItWasStopped() {
+        #expect(CommandFailure.stopped(signal: SIGTERM).exitCode == 128 + SIGTERM)
+        #expect(!CommandFailure.stopped(signal: SIGTERM).message.contains("sketch's own output"))
+    }
+
     /// **引き継ぐのはスケッチの終了コードだけ。**
     ///
     /// 呼ぶ側が `run` に見ているのは道具の成否ではなくスケッチの成否である。組み立ての
