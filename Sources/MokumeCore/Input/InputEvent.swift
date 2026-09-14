@@ -34,6 +34,10 @@ public enum InputEvent: Equatable, Sendable {
 /// **弾き方の機構は要らない。** `nil` を返せば知らない種別と同じ経路に乗り、
 /// ``InputInbox`` がその 1 件だけを `ignored` に数えて残りを通す。
 ///
+/// `type` の欠けや型の違う値のように**この型そのものが解けない 1 件**は、`nil` を返す
+/// 前に throw する。それを 1 件で済ませるのは包む側の仕事である (面は `InputRequest.Entry`・
+/// 標準入力は行ごとの `try?`)。
+///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 struct RawInputEvent: Decodable {
     let type: String

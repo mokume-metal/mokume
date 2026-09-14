@@ -556,6 +556,51 @@ struct InputInboxTests {
         #expect(state.characters.isEmpty)
     }
 
+    /// 1 件が解けないだけで要求ごと読めなくなると、応答が書かれず、送り手には
+    /// 「走っていない」と見分けが付かない ([#1132](https://github.com/mokume-metal/mokume/issues/1132))。
+    @Test(
+        "解けない 1 件だけを送っても、読んだが受け取らなかったことが返る",
+        arguments: [
+            // #1132 で実際に送った形 (type ではなく kind と書いた)
+            #"{"kind":"key","key":"a","action":"down"}"#,
+            #"{"x":1,"y":2}"#,
+            #"{"type":1}"#,
+            #"{"type":"mouseMoved","x":"1","y":2}"#,
+            "1",
+            "null",
+        ])
+    func answersAnEventThatCannotBeRead(_ event: String) throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(#"{"id":"a1","events":[\#(event)]}"#, to: facet)
+
+        let report = try #require(inbox.drain(into: state), "応答が書かれず、要求ごと黙った")
+        #expect(report.id == "a1")
+        #expect(report.accepted == 0)
+        #expect(report.ignored == 1)
+        state.beginFrame()
+        #expect(state.x == 0)
+        #expect(state.y == 0)
+    }
+
+    @Test("type の欠けた 1 件が混ざっても、残りは通る")
+    func skipsOnlyTheEventWithoutAType() throws {
+        let facet = try makeFacet()
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        try send(
+            #"{"id":"a1","events":[{"kind":"key","key":"a","action":"down"},{"type":"mouseMoved","x":5,"y":6}]}"#,
+            to: facet)
+
+        let report = try #require(inbox.drain(into: state))
+        #expect(report.accepted == 1)
+        #expect(report.ignored == 1)
+        state.beginFrame()
+        #expect(state.x == 5)
+        #expect(state.y == 6)
+    }
+
     @Test("壊れた要求で走っているスケッチを止めない")
     func survivesAMalformedRequest() throws {
         let facet = try makeFacet()
