@@ -4,8 +4,29 @@
 import Foundation
 import mokume
 
+/// 走らせているスケッチの番号。**居なければ 0。**
+///
+/// **シグナルのハンドラから読むので、置き場はグローバルに 1 つ。** ハンドラは文脈を
+/// 捕まえられない ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
+/// `private` にしないのは検査から読むため (`watchStopRequested` と同じ作法)。
+nonisolated(unsafe) var runChildPID: pid_t = 0
+
+/// 受けた終わりの合図の番号。**受けていなければ 0。**
+nonisolated(unsafe) var runStopSignal: sig_atomic_t = 0
+
 /// スケッチを作って走らせる。
 enum RunCommand {
+    /// 道具だけへ届いたら、スケッチへも渡す合図。
+    ///
+    /// **道具の PID だけに送る経路で孤児が残る。** 既定のままだと道具だけが死に、
+    /// スケッチは launchd に付け替えられて窓ごと残る — エージェントやスクリプトが止める
+    /// 経路で実際に踏んだ ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
+    ///
+    /// **SIGINT は入れない。** 端末の Control + C はプロセスグループ全体に届くので子へは
+    /// 既に届いている。背面 (`&`) で起こされて SIGINT を無視している起動の約束も、
+    /// 受け口を置くと上書きしてしまう。
+    nonisolated static let stopSignals: [Int32] = [SIGTERM, SIGHUP]
+
     /// 構成を渡さないときの名乗り。**道具立てへ渡す引数は変えない** — ここで名乗るのは
     /// 「この数字がどの土俵のものか」だけで、`BuildReport.configuration` と同じ言葉を使う。
     nonisolated static let defaultConfigurationName = "debug"
@@ -323,14 +344,64 @@ enum RunCommand {
         process.environment = childEnvironment(
             reportingRate: reportingRate,
             confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)")
+
+        // **起こす前に受け口を置く。** ハンドラ関数の設定は exec で既定へ戻るので子には
+        // 引き継がれない (無視 `SIG_IGN` にすると引き継がれ、スケッチが合図を無視する)。
+        // 戻すのは検査のため — 本番の道具はこの後すぐ終わる
+        let previous = installStopForwarding()
+        defer { restoreStopHandlers(previous) }
         do {
             try process.run()
         } catch {
             throw .noExecutable(path: executable.path)
         }
+        // **番号を置いてから印を見る。** 置く前に来た合図はハンドラが子へ撃てていないので、
+        // ここで拾う。逆順にすると、見た後・置く前に来た合図を誰も子へ渡さない
+        runChildPID = process.processIdentifier
+        if runStopSignal != 0 { process.terminate() }
         process.waitUntilExit()
+        runChildPID = 0
+        // **合図で止めた回は、スケッチの失敗として名乗らない。** 子は渡した SIGTERM で
+        // 終わるので終了コードは 15 になり、`sketchExited` の「スケッチ自身の出力を読め」になる
+        if runStopSignal != 0 { throw .stopped(signal: runStopSignal) }
         if process.terminationStatus != 0 {
             throw .sketchExited(status: process.terminationStatus)
+        }
+    }
+
+    /// 終わりの合図を受けたら、走らせているスケッチへ SIGTERM を渡す受け口を置く。
+    ///
+    /// **ハンドラでは印を立てて `kill` を撃つだけにする** (どちらも async-signal-safe)。
+    /// 子が消えれば待ちが戻り、後は ``launch(_:in:reportingRate:)`` が終わらせる。
+    ///
+    /// **子が SIGTERM に応えなければ、道具も待ち続ける。** 孤児は残らず道具ごと見えて
+    /// いるので、見張りのような期限つきの強制終了は踏まれてから足す (ADR-0008)。
+    ///
+    /// - Returns: 置き換える前の受け口。``restoreStopHandlers(_:)`` へ渡す。
+    static func installStopForwarding() -> [sigaction] {
+        runStopSignal = 0
+        return stopSignals.map { number in
+            var action = sigaction()
+            action.__sigaction_u.__sa_handler = { received in
+                runStopSignal = received
+                // **宛先を確かめてから撃つ。** `kill(0, …)` は自分のプロセスグループごと
+                // 落とす (`WatchSession` の強制終了と同じ注意)
+                let pid = runChildPID
+                if pid > 0 { kill(pid, SIGTERM) }
+            }
+            // 受け口が待ちへ割り込んでも、呼び出しが `EINTR` で失敗して見えないようにする
+            action.sa_flags = SA_RESTART
+            var previous = sigaction()
+            sigaction(number, &action, &previous)
+            return previous
+        }
+    }
+
+    /// ``installStopForwarding()`` が置き換えた受け口を戻す。
+    static func restoreStopHandlers(_ previous: [sigaction]) {
+        for (number, action) in zip(stopSignals, previous) {
+            var action = action
+            sigaction(number, &action, nil)
         }
     }
 

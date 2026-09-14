@@ -22,6 +22,12 @@ nonisolated enum CommandFailure: Error, Equatable {
     case buildFailed(status: Int32)
     /// 走らせたスケッチが 0 以外で終わった。**道具の失敗ではない。**
     case sketchExited(status: Int32)
+    /// 道具が終わりの合図を受け、走らせていたスケッチも止めて終わった。
+    ///
+    /// **`sketchExited` と分ける。** 子は渡した SIGTERM で終わるので終了コードは 15 になり、
+    /// そちらで名乗ると「スケッチ自身の出力を読め」と読み違えさせる
+    /// ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
+    case stopped(signal: Int32)
     case noExecutable(path: String)
     /// 作り直しは通ったのに、走らせるものが建っていない。
     ///
@@ -57,8 +63,15 @@ nonisolated enum CommandFailure: Error, Equatable {
     ///
     /// **`run` だけが子の終了コードを引き継ぐ。** 呼ぶ側が見ているのは道具の成否では
     /// なくスケッチの成否なので、そのまま通す。ほかは道具自身の失敗なので 1 でよい。
+    ///
+    /// **合図で止めた回は慣習の `128 + 番号` を返す。** 止めた側が読みたいのは
+    /// 「合図で終わった」ことで、スケッチの成否ではない。
     var exitCode: Int32 {
-        if case .sketchExited(let status) = self { status } else { 1 }
+        switch self {
+        case .sketchExited(let status): status
+        case .stopped(let signal): 128 + signal
+        default: 1
+        }
     }
 
     var message: String {
@@ -158,6 +171,8 @@ nonisolated enum CommandFailure: Error, Equatable {
             The sketch exited with code \(status).
             This is not a failure the tool added — the reason is in the sketch's own output
             """
+        case .stopped(let signal):
+            "Stopped by signal \(signal) — the running sketch was stopped too"
         case .noExecutable(let path):
             """
             Cannot find anything to run: \(path)
