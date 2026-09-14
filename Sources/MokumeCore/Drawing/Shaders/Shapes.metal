@@ -398,10 +398,15 @@ static inline FormField mokume_grown(FormField field, float amount) {
 
 /// `p` で出した距離場から、`p − shift` での距離場を 1 次の近似で出す。勾配は変わらない。
 ///
-/// **塗りと輪郭を両方持つ楕円・扇形で、距離場を 1 回で済ませる**ために使う。輪郭は塗りから
+/// **塗りと輪郭を両方持つ楕円で、距離場を 1 回で済ませる**ために使う。輪郭は塗りから
 /// 画面で半画素ずらした位置で評価する (頂点関数の説明) が、式をもう 1 度解くと、面を覆う
 /// 大きな円 200 個の絵で GPU 時間が 21% 増えた (実測)。ずらしは画素の 0.7 倍以下なので、
 /// 近似の誤差は曲率に比例して、半径 2 画素の円でも 0.13 画素を超えない。
+///
+/// **勾配が形の内でも外でも外向きの距離場にしか使えない。** 勾配の向きで距離を足し引き
+/// するためである。楕円はそうなっているが、扇形の直線の辺は内側で勾配が扇の中を向く
+/// (被覆率は勾配の長さしか読まないので、それで困らなかった)。扇形に使うと直線の辺の
+/// 輪郭が逆へずれ、塗りの下に消えた (#1174) — 扇形は式を輪郭の位置で解き直す。
 static inline FormField mokume_shifted(FormField field, float2 shift) {
     return mokume_field(field.distance - dot(field.gradient, shift), field.gradient);
 }
@@ -456,8 +461,8 @@ static inline FormPaint mokume_formPaint(
         }
     } else if (kind == kFormEllipse) {
         // 塗りと輪郭は評価する位置が違う。**両方を持つ列では式を 1 回だけ解き**、輪郭の側は
-        // 塗りの距離場を 1 次の近似でずらす (`mokume_shifted`)。輪郭しか持たない列では式を
-        // 輪郭の位置で解く
+        // 塗りの距離場を 1 次の近似でずらす (`mokume_shifted`。楕円の勾配は内外とも外向きなので
+        // 使える)。輪郭しか持たない列では式を輪郭の位置で解く
         if (kFormHasFill) { fill = mokume_ellipseField(p, form.size.xy); }
         if (kFormHasStroke) {
             FormField ring = kFormHasFill
@@ -466,11 +471,10 @@ static inline FormPaint mokume_formPaint(
             inner = mokume_grown(ring, -halfWeight);
         }
     } else if (kind == kFormArc) {
+        // 扇形は 1 次の近似でずらせない (`mokume_shifted` の説明)。塗りと輪郭で式を別々に解く
         if (kFormHasFill) { fill = mokume_sectorField(p, form.size.xy, form.offset.z, form.offset.w); }
         if (kFormHasStroke) {
-            FormField ring = kFormHasFill
-                ? mokume_shifted(fill, in.strokeShift)
-                : mokume_sectorField(q, form.size.xy, form.offset.z, form.offset.w);
+            FormField ring = mokume_sectorField(q, form.size.xy, form.offset.z, form.offset.w);
             outer = mokume_grown(ring, halfWeight);
             inner = mokume_grown(ring, -halfWeight);
         }

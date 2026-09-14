@@ -265,6 +265,60 @@ struct PixelGridTests {
         #expect(total / Double(counted) < 0.001, "継ぎ目で下地が漏れる: 平均 \(total / Double(counted))")
     }
 
+    @Test("塗りを足しても、輪郭で塗り切られる画素は輪郭の色のまま")
+    func fillNeverCoversTheStroke() throws {
+        // 形の経路は塗りと輪郭を 1 つの断片で重ねる。輪郭の位置の出し方や重ね方を
+        // 変えたとき、**輪郭だけで描けば塗り切られる画素**が、塗りを足した絵でも輪郭の色の
+        // ままであることを見る。扇形の直線の辺で、塗りの距離場から輪郭をずらす近似の向きを
+        // 取り違え、塗りと輪郭を両方持つ扇形からだけ直線の辺の輪郭が消えていた (#1174)
+        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+        let shapes: [(String, (Canvas) -> Void)] = [
+            ("rect", { $0.rect(-14, -9, 28, 18) }),
+            ("ellipse", { $0.ellipse(0, 0, 30, 20) }),
+            ("arc 0…1.25π", { $0.arc(0, 0, 36, 36, 0, .pi * 1.25) }),
+            ("arc 0.4…1.1π", { $0.arc(0, 0, 36, 30, 0.4, .pi * 1.1) }),
+            ("arc 1…2.6", { $0.arc(0, 0, 32, 32, 1, 2.6) }),
+        ]
+        for (name, shape) in shapes {
+            for angle: Float in [0, 0.35] {
+                // 太さ 1 は小数の位置や回転で 1 画素も塗り切らないことがあり、比べる画素が残らない
+                for weight: Float in [2, 3] {
+                    func picture(fills: Bool) throws -> PixelBuffer {
+                        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
+                        try canvas.draw {
+                            canvas.background(black)
+                            canvas.fill(red)
+                            canvas.stroke(white)
+                            canvas.strokeWeight(weight)
+                            if !fills { canvas.noFill() }
+                            canvas.translate(32.3, 31.6)
+                            canvas.rotate(angle)
+                            shape(canvas)
+                        }
+                        return try canvas.target.readPixels()
+                    }
+                    let strokeOnly = try picture(fills: false)
+                    let both = try picture(fills: true)
+                    var covered = 0
+                    var weakest: Float = 1
+                    for index in stride(from: 0, to: strokeOnly.components.count, by: 4)
+                    where strokeOnly.components[index + 1] >= 1 {
+                        // 輪郭だけで塗り切られた画素 (緑が 1)。塗りを足した絵でも白のまま
+                        covered += 1
+                        weakest = min(weakest, Float(both.components[index + 1]))
+                    }
+                    // **帯の縁の数 % は許す。** 塗りと輪郭を両方持つ楕円は、輪郭の距離場を塗りから
+                    // 1 次の近似でずらすので (`mokume_shifted`)、曲がりのきつい所で帯の縁の画素の
+                    // 被覆率が数 % 違う。取り違えは輪郭が塗りに置き換わる (緑が半分以下になる)
+                    #expect(covered > 0, "\(name): 輪郭が 1 画素も塗り切られていない")
+                    #expect(
+                        weakest >= 0.9,
+                        "\(name) (\(angle) rad・太さ \(weight)): 塗りが輪郭を覆った (輪郭の緑が \(weakest) まで落ちた)")
+                }
+            }
+        }
+    }
+
     // MARK: - 約束そのもの
 
     @Test("塗りの縁は、整数の座標で画素の境目に乗る")
