@@ -12,7 +12,7 @@ import simd
 /// でも種別違いでも 1 つの列に並ぶ。
 ///
 /// 並びは `Drawing/Shaders/Shapes.metal` の同名の構造体と一致していなければならない
-/// (``ShapeVertex`` と同じ理由で、大きさを ``expectedStride`` として持つ)。
+/// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
 ///
 /// [#752]: https://github.com/mokume-metal/mokume/issues/752
 struct FormInstance {
@@ -31,9 +31,6 @@ struct FormInstance {
     var stroke: SIMD4<Float>
     /// x: 種別, y: 端の形, z: 折れ目の形, w: 旗。番号の正本は `Shaders/Kinds.metal`。
     var meta: SIMD4<UInt32>
-
-    /// シェーダ側の構造体と一致すべき大きさ (バイト)。
-    static let expectedStride = 96
 
     /// 形の種別。
     ///

@@ -16,7 +16,7 @@ import simd
 /// `shapeVertexMain` を参照)。
 ///
 /// 並びは `Drawing/Shaders/Shapes.metal` の同名の構造体と一致していなければならない
-/// (``ShapeVertex`` と同じ理由で、大きさを ``expectedStride`` として持つ)。
+/// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
 struct FlatInstance {
     /// 形自身の座標を描画先の座標へ移す 2x2 (列 2 本を 4 成分に並べて持つ)。
     ///
@@ -30,9 +30,6 @@ struct FlatInstance {
     var fill: SIMD4<Float>
     /// この置き場所の輪郭。**輪郭の頂点の色に掛かる。**
     var stroke: SIMD4<Float>
-
-    /// シェーダ側の構造体と一致すべき大きさ (バイト)。
-    static let expectedStride = 64
 
     init(linear: SIMD4<Float>, offset: SIMD2<Float>, fill: LinearRGBA, stroke: LinearRGBA) {
         self.linear = linear

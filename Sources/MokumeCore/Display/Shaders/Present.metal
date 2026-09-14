@@ -28,7 +28,10 @@ constant uint kRoll = 1;
 
 /// 明るさを画面へ写す段の設定。**曲線の正本は Swift 側の `Brightness`** で、
 /// ここはその写しである。折れ始める明るさまで向こうから受け取るのは、定数を
-/// 二重に持たないため。写しがずれていないことは検査が突き合わせる。
+/// 二重に持たないため。
+///
+/// 並びは Swift 側の `PackedBrightness` と一致し、`ShaderInterfaceTests` が反射で
+/// 突き合わせる。曲線の写しがずれていないことは `OutputStageTests` が絵で突き合わせる。
 struct Brightness {
     float exposure;
     float knee;

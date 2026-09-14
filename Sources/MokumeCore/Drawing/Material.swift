@@ -104,7 +104,7 @@ struct Material: Equatable, Sendable {
 /// 材質をシェーダへ渡す形。
 ///
 /// 並びは `Drawing/Shaders/Common.metal` の同名の構造体と一致していなければならない
-/// (``ShapeVertex`` と同じ理由で、大きさを ``expectedStride`` として持つ)。
+/// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
 struct PackedMaterial {
     /// 周りの光への返し (rgb) と、艶の鋭さ (w)。
     var ambientAndShininess: SIMD4<Float>
@@ -112,7 +112,4 @@ struct PackedMaterial {
     var emissiveAndMetalness: SIMD4<Float>
     /// 旗 — x が 1 なら影を受ける。
     var flags: SIMD4<Float>
-
-    /// シェーダ側の構造体と一致すべき大きさ (バイト)。
-    static let expectedStride = 48
 }

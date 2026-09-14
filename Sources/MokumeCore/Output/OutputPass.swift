@@ -30,6 +30,10 @@ final class OutputPass {
     static let sourceTextureIndex = 0
     /// 明るさを写す段の設定を渡す口の番号 (シェーダ側の `buffer(0)`)。
     static let brightnessBufferIndex = 0
+    /// 引数のテーブルに束ねられる置き場・面の数。上の口の番号はすべてこれより小さい
+    /// (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
+    static let bufferBindCount = 1
+    static let textureBindCount = 1
 
     let state: any MTLRenderPipelineState
     let argumentTable: any MTL4ArgumentTable
@@ -68,8 +72,8 @@ final class OutputPass {
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.output.arguments"
-        tableDescriptor.maxBufferBindCount = 1
-        tableDescriptor.maxTextureBindCount = 1
+        tableDescriptor.maxBufferBindCount = Self.bufferBindCount
+        tableDescriptor.maxTextureBindCount = Self.textureBindCount
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
         } catch {

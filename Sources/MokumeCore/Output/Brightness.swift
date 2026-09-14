@@ -47,7 +47,7 @@ struct Brightness: Equatable, Sendable {
     static let knee: Float = 0.8
 
     /// 断片が読む構造体のバイト数。
-    static let byteCount = 16
+    static let byteCount = MemoryLayout<PackedBrightness>.stride
 
     /// 断片が読む形で ``byteCount`` バイトを書く。
     ///
@@ -67,12 +67,9 @@ struct Brightness: Equatable, Sendable {
     ///
     /// - Parameter destination: 少なくとも ``byteCount`` バイトある書き先。
     func write(to destination: UnsafeMutableRawPointer) {
-        let slot = destination.assumingMemoryBound(to: Float.self)
-        slot[0] = exposure
-        slot[1] = Self.knee
-        destination.advanced(by: 8)
-            .assumingMemoryBound(to: UInt32.self)
-            .pointee = toneMapping.rawIndex
+        var packed = PackedBrightness(
+            exposure: exposure, knee: Self.knee, toneMapping: toneMapping.rawIndex)
+        destination.copyMemory(from: &packed, byteCount: Self.byteCount)
     }
 
     /// 乗算を戻した色 1 つを、表示へ向けて写す。
@@ -105,4 +102,18 @@ struct Brightness: Equatable, Sendable {
         let over = (peak - knee) / (1 - knee)
         return knee + (1 - knee) * (1 - exp(-over))
     }
+}
+
+/// 明るさを断片へ渡す形。
+///
+/// 並びは `Display/Shaders/Present.metal` の `Brightness` と一致していなければならない
+/// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
+/// 組み立てるのは ``Brightness/write(to:)`` の 1 か所だけである。
+struct PackedBrightness {
+    /// 画面全体の明るさの倍率。
+    var exposure: Float
+    /// 寄せ始める明るさ (``Brightness/knee``)。
+    var knee: Float
+    /// 丸め方の番号 (``ToneMapping``)。
+    var toneMapping: UInt32
 }

@@ -6,7 +6,7 @@ import simd
 /// 置いた光 1 つぶん。
 ///
 /// 並びは `Drawing/Shaders/Common.metal` の同名の構造体と一致していなければならない
-/// (``ShapeVertex`` と同じ理由で、大きさを ``expectedStride`` として持つ)。
+/// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
 ///
 /// ## 明るさの単位
 ///
@@ -45,9 +45,6 @@ struct Light {
     ///
     /// 種類を別に持たないのは、**詰めた値と食い違う余地を残さない**ためである。
     var kind: Kind? { Kind(rawValue: UInt32(colorAndKind.w)) }
-
-    /// シェーダ側の構造体と一致すべき大きさ (バイト)。
-    static let expectedStride = 48
 
     init(
         kind: Kind, color: LinearRGBA, position: SIMD3<Float> = .zero,

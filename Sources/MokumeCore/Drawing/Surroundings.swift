@@ -98,7 +98,7 @@ public struct Surroundings: Equatable, Sendable {
 /// 周囲をシェーダへ渡す形。
 ///
 /// 並びは `Drawing/Shaders/Common.metal` の同名の構造体と一致していなければならない
-/// (``ShapeVertex`` と同じ理由で、大きさを ``expectedStride`` として持つ)。
+/// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
 struct PackedSurroundings {
     /// 上の色 (rgb) と、周囲が置かれているか (w)。
     var topAndPresence: SIMD4<Float>
@@ -111,7 +111,4 @@ struct PackedSurroundings {
     /// 分かれると、片方でしか成り立たない性質が生まれる。
     static let none = PackedSurroundings(
         topAndPresence: .zero, horizonAndBackdrop: .zero, bottom: .zero)
-
-    /// シェーダ側の構造体と一致すべき大きさ (バイト)。
-    static let expectedStride = 48
 }
