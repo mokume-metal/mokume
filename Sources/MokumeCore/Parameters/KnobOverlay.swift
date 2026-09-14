@@ -46,7 +46,7 @@ final class KnobOverlay: NSView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("使わない") }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// 宣言があればつまみの面を作る。1 つも無ければ `nil`。
     ///

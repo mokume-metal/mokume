@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
+.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
 
 # **並行では走らせない** (#784)。ci-check の的の並びには意味があり、-j を付けると壊れる
 # — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
@@ -38,7 +38,7 @@ check: setup
 # 設計 (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため両者が理由を
 # 述べて 0 で抜け、本物の判定は同じファイルの独立したジョブ (drawing-evidence /
 # render-signal) が持つ。ここに置いてあるのは手元のためである
-ci-check: build test examples shaders params schemas api reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+ci-check: build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
@@ -259,6 +259,11 @@ params: build
 # 材料の出どころと、置き場を 1 本にした理由は SYMBOL_GRAPHS の宣言にある
 api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
 	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS)
+
+# 道具が話す言葉は英語 (ADR-0038 決定 1)。Sources/ の Swift でコメントの外に日本語が無いかを見る。
+# 組み上げは要らない — 字句だけを読む (#1160)
+tool-language: ## Sources/ の Swift でコメントの外に日本語を置いていないかを検査する
+	python3 scripts/check-tool-language.py
 
 api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) \

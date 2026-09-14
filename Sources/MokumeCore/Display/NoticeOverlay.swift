@@ -74,7 +74,7 @@ final class NoticeOverlay: NSView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("使わない") }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// 出すものを差し替える。
     ///
