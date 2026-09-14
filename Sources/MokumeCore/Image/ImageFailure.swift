@@ -26,19 +26,21 @@ extension ImageFailure: CustomStringConvertible {
             // 正しく動いているのに絵にならない形で現れるので、実装を疑うと当たりが
             // 外れる。宣言の抜けを先に確かめられるようにする
             return """
-                「\(path)」が見つかりません。
-                探した場所:
+                Cannot find "\(path)".
+                Looked in:
                 \(searched.map { "  - \($0)" }.joined(separator: "\n"))
-                置いたはずなら、パッケージの宣言に資材の置き場が書かれているか確かめてください \
-                (`.executableTarget(..., resources: [.copy("assets")])`)。\
-                宣言が無いとビルドは静かに通り、実行時に読めないだけになります。
+                If you did put it there, check that the package declares where its resources are \
+                (`.executableTarget(..., resources: [.copy("assets")])`). \
+                Without that declaration the build still passes quietly, and the file just cannot \
+                be read at run time
                 """
         case .undecodable(let path):
             return "\"\(path)\" cannot be read as an image. Check that the format is one mokume handles"
         case .unplaceable(let width, let height):
             return """
-                \(width)x\(height) の画像を GPU 側へ置けません。
-                一辺は \(RenderDevice.maxTextureSide) 画素までです — それより小さいか確かめてください
+                Cannot place a \(width)x\(height) image on the GPU.
+                A side can be at most \(RenderDevice.maxTextureSide) pixels — check that it is \
+                within that
                 """
         }
     }

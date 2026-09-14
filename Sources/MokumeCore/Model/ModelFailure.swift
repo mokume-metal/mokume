@@ -28,19 +28,20 @@ extension ModelFailure: CustomStringConvertible {
         case .notFound(let path, let searched):
             // **切り分けの言葉を必ず添える** (``ImageFailure`` と同じ理由)。
             return """
-                「\(path)」が見つかりません。
-                探した場所:
+                Cannot find "\(path)".
+                Looked in:
                 \(searched.map { "  - \($0)" }.joined(separator: "\n"))
-                置いたはずなら、パッケージの宣言に資材の置き場が書かれているか確かめてください \
-                (`.executableTarget(..., resources: [.copy("assets")])`)。\
-                宣言が無いとビルドは静かに通り、実行時に読めないだけになります。
+                If you did put it there, check that the package declares where its resources are \
+                (`.executableTarget(..., resources: [.copy("assets")])`). \
+                Without that declaration the build still passes quietly, and the file just cannot \
+                be read at run time
                 """
         case .unreadable(let path):
             return "\"\(path)\" cannot be read as text. Check whether it is damaged"
         case .unsupported(let path, let extensionName):
             return """
-                「\(path)」の形式 (.\(extensionName)) には対応していません。\
-                いまは OBJ (.obj) だけを読みます。
+                The format of "\(path)" (.\(extensionName)) is not supported. \
+                Only OBJ (.obj) can be read for now
                 """
         }
     }

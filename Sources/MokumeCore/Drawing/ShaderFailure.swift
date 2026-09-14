@@ -18,29 +18,34 @@ extension ShaderFailure: CustomStringConvertible {
         switch self {
         case .notFound(let path, let searched):
             return """
-                断片「\(path)」が見つかりません。
-                探した場所:
+                Cannot find the fragment "\(path)".
+                Looked in:
                 \(searched.map { "  - \($0)" }.joined(separator: "\n"))
-                置いたはずなら、パッケージの宣言に資材の置き場が書かれているか確かめてください \
-                (`.executableTarget(..., resources: [.copy("assets")])`)。\
-                宣言が無いとビルドは静かに通り、実行時に読めないだけになります。
+                If you did put it there, check that the package declares where its resources are \
+                (`.executableTarget(..., resources: [.copy("assets")])`). \
+                Without that declaration the build still passes quietly, and the file just cannot \
+                be read at run time
                 """
         case .notCompilable(let path, let reason):
             return "Cannot build the fragment at \"\(path)\":\n\(reason)"
         case .tooManyValues(let path, let count, let capacity):
             return """
-                断片「\(path)」へ渡す値が多すぎます (float 換算 \(count) 個 / 上限 \(capacity) 個)。
-                色 (float4) は 4 個ぶん・2 つ組 (float2) は 2 個ぶんに数えます \
-                (構造体の大きさは 4 個の倍数へ切り上がるので、数え上げが宣言より増えることがあります)。
-                値は列 (計算なら頼み) ごとに 1 区画へ載せるので上限は動かせません。数を減らすか、\
-                まとめられるものを 1 つの色・2 つ組へ束ねてください。
+                Too many values for the fragment "\(path)" (\(count) counted as floats, but the \
+                limit is \(capacity)).
+                A color (float4) counts as 4 and a pair (float2) as 2 \
+                (a struct's size rounds up to a multiple of 4, so the count can come out higher \
+                than what you declared).
+                The values ride in one fixed-size block per batch (per request, for compute), so \
+                the limit cannot be raised. Pass fewer, or bundle what you can into a single color \
+                or pair
                 """
         case .tooManySurfaces(let path, let count, let capacity):
             return """
-                断片「\(path)」へ渡す面が多すぎます (\(count) 枚 / 上限 \(capacity) 枚)。
-                面は名前ごとに口を 1 つ使い、口の数は断片によらず決まっています。\
-                枚数を減らすか、複数の絵を 1 枚へまとめて (並べて焼いて、読む位置で\
-                切り替えて) 渡してください。
+                Too many surfaces for the fragment "\(path)" (\(count), but the limit is \
+                \(capacity)).
+                Each named surface takes one slot, and the number of slots is fixed whatever the \
+                fragment. Pass fewer, or combine several pictures into one (bake them side by \
+                side, and pick one by where you read)
                 """
         }
     }

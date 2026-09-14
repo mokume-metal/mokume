@@ -39,11 +39,11 @@ public struct DisplayImage: Equatable, Sendable {
     public init(width: Int, height: Int, bytes: [UInt8]) {
         precondition(
             width > 0 && height > 0,
-            "絵の大きさは 1 画素以上が要る: \(width)x\(height)")
+            "An image needs at least 1 pixel on each side: \(width)x\(height)")
         precondition(
             bytes.count == width * height * 4,
-            "バイト列の長さが大きさと合わない: \(bytes.count) バイト / \(width)x\(height) には "
-                + "\(width * height * 4) バイトが要る")
+            "The byte count does not match the size: \(bytes.count) bytes, but \(width)x\(height) "
+                + "needs \(width * height * 4) bytes")
         self.width = width
         self.height = height
         self.bytes = bytes
@@ -71,7 +71,7 @@ public struct DisplayImage: Equatable, Sendable {
     public subscript(x: Int, y: Int) -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {
         precondition(
             x >= 0 && x < width && y >= 0 && y < height,
-            "読み出す位置が絵の外にある: (\(x), \(y)) / \(width)x\(height)")
+            "The position to read is outside the image: (\(x), \(y)) / \(width)x\(height)")
         let base = (y * width + x) * 4
         return (bytes[base], bytes[base + 1], bytes[base + 2], bytes[base + 3])
     }

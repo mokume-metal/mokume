@@ -105,7 +105,7 @@ struct ImageTests {
             _ = try canvas.loadImage("nowhere/at/all.png")
         } catch {
             let text = String(describing: error)
-            #expect(text.contains("探した場所"))
+            #expect(text.contains("Looked in:"))
             #expect(text.contains("resources:"))
         }
     }

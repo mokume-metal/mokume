@@ -222,8 +222,8 @@ struct Tools {
         guard let status = facets.read(facets.buildStatus) else {
             return (
                 """
-                作り直しの記録がありません。見張る道具 (`\(Command.name) watch`) がまだ
-                走っていないか、一度も作り直していません。
+                No build has been recorded yet. Either `\(Command.name) watch` is not running,
+                or it has not built anything so far.
                 """, true
             )
         }
@@ -342,14 +342,14 @@ struct Tools {
         let searched = SchemasLocator.candidates(workDirectory: packageDirectory)
             .map { "- \($0.path)" }.joined(separator: "\n")
         return """
-            面の仕様が見つかりません。次の場所を見ました:
+            Cannot find the surface specs. Looked in:
 
             \(searched)
 
-            mokume を依存として引いているなら、そのディレクトリで一度 `swift build` を
-            打つと実体が置かれ、そこから読めるようになります。窓口を別のディレクトリで
-            立てているなら、スケッチのディレクトリを渡してください
-            (`\(Command.name) mcp <ディレクトリ>`)。
+            If you depend on mokume as a package, run `swift build` once in that directory —
+            that puts the files in place, and they can be read from there. If this interface
+            was started in a different directory, pass the sketch's directory
+            (`\(Command.name) mcp <directory>`).
             """
     }
 
