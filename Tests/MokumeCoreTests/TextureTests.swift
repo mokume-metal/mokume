@@ -32,7 +32,7 @@ import simd
 struct TextureTests {
     private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
     private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    private let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
+    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
@@ -45,6 +45,9 @@ struct TextureTests {
     /// 4 つの区画をそれぞれ 1 色で塗った絵。**どの隅がどこへ行ったかが読める。**
     ///
     /// 左上 赤 / 右上 緑 / 左下 青 / 右下 白。
+    ///
+    /// 色は作業空間の原色 (`.linear`) で書く。純色のまま 255 / 0 に出るので、どの区画が
+    /// どこへ行ったかを完全一致で読める (色の入口は ColorSurfaceTests が見る — #911)。
     private func makeQuadrants(_ canvas: Canvas, size: Int = 16) throws -> Image {
         let image = try canvas.createImage(size, size)
         let half = size / 2
@@ -52,10 +55,10 @@ struct TextureTests {
             for x in 0..<size {
                 let color: LinearRGBA =
                     switch (x < half, y < half) {
-                    case (true, true): .display(red: 1, green: 0, blue: 0)
-                    case (false, true): .display(red: 0, green: 1, blue: 0)
-                    case (true, false): .display(red: 0, green: 0, blue: 1)
-                    case (false, false): .display(red: 1, green: 1, blue: 1)
+                    case (true, true): .linear(red: 1, green: 0, blue: 0)
+                    case (false, true): .linear(red: 0, green: 1, blue: 0)
+                    case (true, false): .linear(red: 0, green: 0, blue: 1)
+                    case (false, false): .linear(red: 1, green: 1, blue: 1)
                     }
                 image.set(x, y, color)
             }

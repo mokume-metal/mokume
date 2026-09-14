@@ -183,7 +183,8 @@ struct ImageTests {
         let redImage = try red.loadImage(url.path)
         try red.draw {
             red.background(black)
-            red.tint(.display(red: 1, green: 0, blue: 0))
+            // 作業空間の原色で掛ける。白い絵に掛ければ純色のまま 255 / 0 に出る
+            red.tint(.linear(red: 1, green: 0, blue: 0))
             red.image(redImage, 8, 8, 16, 16)
         }
         let sample = try pixels(of: red)[12, 12]
@@ -228,6 +229,24 @@ struct ImageTests {
     }
 
     // MARK: - 色の規範
+
+    @Test("数で書いた色と sRGB の絵から読んだ色は、同じ作業空間の値になる")
+    func numericColorMatchesSRGBImage() throws {
+        // **sRGB を明示して書く。** writePNG の既定 (Display P3) では、画像の側でも原色の
+        // 変換が恒等になり、数値の入口が原色を移していなくても一致してしまう (#911)
+        let url = try writePNG(
+            [(204 / 255, 153 / 255, 0, 1)], width: 1, height: 1,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let canvas = try makeCanvas()
+        let loaded = try canvas.loadImage(url.path).get(0, 0)
+        let written = color(204, 153, 0)
+        // 画像は 16 bit 浮動小数で保たれるので、最下位の揺れだけを許す
+        #expect(abs(loaded.red - written.red) < 2e-3)
+        #expect(abs(loaded.green - written.green) < 2e-3)
+        #expect(abs(loaded.blue - written.blue) < 2e-3)
+    }
 
     @Test("元の絵が持つ色の記述が尊重される")
     func sourceColorSpaceIsHonoured() throws {
@@ -474,7 +493,7 @@ struct ImageTests {
             mixed.background(black)
             mixed.image(image, 0, 0, 16, 16)
             mixed.noStroke()
-            mixed.fill(.display(red: 1, green: 0, blue: 0))
+            mixed.fill(.linear(red: 1, green: 0, blue: 0))
             mixed.rect(32, 32, 16, 16)
         }
 
@@ -483,7 +502,7 @@ struct ImageTests {
         try alone.draw {
             alone.background(black)
             alone.noStroke()
-            alone.fill(.display(red: 1, green: 0, blue: 0))
+            alone.fill(.linear(red: 1, green: 0, blue: 0))
             alone.rect(32, 32, 16, 16)
         }
         #expect(try pixels(of: mixed)[40, 40] == pixels(of: alone)[40, 40])

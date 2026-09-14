@@ -49,6 +49,22 @@ struct ColorSurfaceTests {
         #expect(isSame(color(hex: 0xFFFF_CC00), color(255, 204, 0)))
     }
 
+    @Test("数で書いた色は sRGB の原色の値として作業空間へ入る")
+    func numbersAreSRGBPrimaries() {
+        // 期待値は CoreGraphics に変換させて導く。実装の行列を使わないので、行列の係数が
+        // 誤っていても一致しない (ADR-0011 決定 3)
+        let expected = SRGBReference.working(red: 204.0 / 255, green: 153.0 / 255, blue: 0)
+        #expect(isSame(color(204, 153, 0), expected, within: 1e-4))
+        #expect(isSame(LinearRGBA.display(red: 0.8, green: 0.6, blue: 0), expected, within: 1e-4))
+    }
+
+    @Test("灰色は原色の取り方に依らず、転送関数だけが効く")
+    func grayIgnoresPrimaries() {
+        let gray = color(128)
+        let level = TransferFunction.decode(128 / 255)
+        #expect(isSame(gray, .linear(red: level, green: level, blue: level), within: 1e-6))
+    }
+
     @Test("書いた目盛りで読み出せる")
     func readingReturnsTheWrittenScale() {
         let written = color(255, 204, 0)
@@ -56,6 +72,12 @@ struct ColorSurfaceTests {
         #expect(abs(green(written) - 204) < 0.01)
         #expect(abs(blue(written) - 0) < 0.01)
         #expect(abs(alpha(written) - 255) < 0.01)
+
+        // 原色の行列を往復しても、彩度のある色の 3 成分がそれぞれ戻る (ADR-0033 決定 6)
+        let saturated = color(129, 206, 15)
+        #expect(abs(red(saturated) - 129) < 0.01)
+        #expect(abs(green(saturated) - 206) < 0.01)
+        #expect(abs(blue(saturated) - 15) < 0.01)
     }
 
     @Test("半透明の色でも、書いた成分がそのまま読める")
@@ -81,6 +103,8 @@ struct ColorSurfaceTests {
     func valuesOutsideTheScaleSurvive() {
         // 「0–255」は目盛りであって上限ではない (ADR-0033 決定 6・ADR-0011 決定 1)
         #expect(abs(red(color(510, 0, 0)) - 510) < 0.01)
+        #expect(abs(green(color(510, 0, 0))) < 0.01)
+        #expect(abs(blue(color(510, 0, 0))) < 0.01)
         #expect(red(color(-255, 0, 0)) < 0)
     }
 
