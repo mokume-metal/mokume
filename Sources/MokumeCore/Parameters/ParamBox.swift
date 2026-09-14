@@ -58,21 +58,29 @@ extension ParamBox: DeclaredParam {
         return clamp
     }
 
-    /// 範囲へ収める。数でない値と、範囲を書いていない値はそのまま。
+    /// 範囲へ収める。範囲が意味を持たない型 (真偽・文字・色) と、範囲を書いていない値はそのまま。
+    ///
+    /// **組は成分ごとに、宣言した 1 つの範囲へ独立に収める。** 窓の成分スライダーが
+    /// 同じ 1 つの範囲で縛っているので、外から書ける幅をそれと揃える
+    /// ([#859](https://github.com/mokume-metal/mokume/issues/859))。
     private func clamped(_ incoming: ParamValue) -> (ParamValue, ParamOutcome) {
         guard let range else { return (incoming, .applied) }
+        let settled: ParamValue
         switch incoming {
         case .float(let number):
-            let settled = range.clamped(number)
-            guard settled != number else { return (incoming, .applied) }
-            return (.float(settled), .clamped(requested: number, applied: settled))
+            settled = .float(range.clamped(number))
         case .int(let number):
-            let settled = Int(range.clamped(Double(number)).rounded())
-            guard settled != number else { return (incoming, .applied) }
-            return (.int(settled), .clamped(requested: Double(number), applied: Double(settled)))
-        case .bool, .string, .color, .vector2, .vector3:
+            settled = .int(Int(range.clamped(Double(number)).rounded()))
+        case .vector2(let vector):
+            settled = .vector2(SIMD2(range.clamped(vector.x), range.clamped(vector.y)))
+        case .vector3(let vector):
+            settled = .vector3(
+                SIMD3(range.clamped(vector.x), range.clamped(vector.y), range.clamped(vector.z)))
+        case .bool, .string, .color:
             return (incoming, .applied)
         }
+        guard settled != incoming else { return (incoming, .applied) }
+        return (settled, .clamped(requested: incoming, applied: settled))
     }
 }
 

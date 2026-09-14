@@ -152,8 +152,34 @@ struct ParameterStoreTests {
         let narrow = Narrow()
         let restoration = store(for: narrow, at: url).restore()
         #expect(restoration.discarded.isEmpty)
-        #expect(restoration.clamped == [.init(name: "radius", requested: 180, value: 100)])
+        #expect(restoration.clamped == [.init(name: "radius", requested: .float(180), value: .float(100))])
         #expect(narrow.radius == 100)
+    }
+
+    /// 組も同じ合流点を通るので、復元でも成分ごとに収まる ([#859](https://github.com/mokume-metal/mokume/issues/859))。
+    @Test("範囲が縮んだ組は、成分ごとに収めたうえで収めたことを返す")
+    func narrowedRangesClampVectorsAndSaySo() async throws {
+        final class Wide: Sketch {
+            @Param(-4...4) var pair: SIMD2<Float> = SIMD2(0, 0)
+        }
+        final class Narrow: Sketch {
+            @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0, 0)
+        }
+        let url = try makeFile()
+        let wide = Wide()
+        let saving = store(for: wide, at: url)
+        saving.restore()
+        wide.pair = SIMD2(3, -0.5)
+        await settle(saving)
+
+        let narrow = Narrow()
+        let restoration = store(for: narrow, at: url).restore()
+        #expect(restoration.discarded.isEmpty)
+        #expect(
+            restoration.clamped == [
+                .init(name: "pair", requested: .vector2(SIMD2(3, -0.5)), value: .vector2(SIMD2(1, -0.5)))
+            ])
+        #expect(narrow.pair == SIMD2(1, -0.5))
     }
 
     @Test("読めない保存は捨てて、既定値で始まる")

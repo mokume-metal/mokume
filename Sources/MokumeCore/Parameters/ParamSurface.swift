@@ -43,7 +43,7 @@ struct ParamRequest: ExchangeRequest {
 struct ParamReport: Encodable {
     /// この形式の版。**先頭の格納プロパティである** — 合成の `encode` は宣言順に
     /// 書き出すので、置き場所が鍵の並びを決める。
-    let schemaVersion = 1
+    let schemaVersion = 2
 
     /// 内容が変わるたびに進む番号。
     let revision: Int
@@ -76,10 +76,27 @@ struct ParamReport: Encodable {
     }
 
     /// 範囲へ収めた 1 件。
+    ///
+    /// **値の形は宣言の型に従う** — 数は数、組は成分の配列で、`params` の値と同じ
+    /// 書き方をする (`ParamValue.Body`)。組は成分ごとに収めても 1 件で丸ごと載せ、
+    /// 範囲の内側だった成分は書いた値と入った値が同じになる。数だけだった形から
+    /// 組を載せられる形へ変えたので、版は 2 である ([#859](https://github.com/mokume-metal/mokume/issues/859)・
+    /// [ADR-0018](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md) 決定 5 の「型の変更」)。
     struct Clamp: Encodable, Equatable {
         let name: String
-        let requested: Double
-        let value: Double
+        let requested: ParamValue
+        let value: ParamValue
+
+        private enum CodingKeys: String, CodingKey {
+            case name, requested, value
+        }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(name, forKey: .name)
+            try container.encode(ParamValue.Body(requested), forKey: .requested)
+            try container.encode(ParamValue.Body(value), forKey: .value)
+        }
     }
 }
 
