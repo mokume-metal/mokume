@@ -127,9 +127,9 @@ final class MySketch: Sketch {
 
     // 1 秒に何十回も呼ばれ、そのたびに 1 枚を描く
     func draw() {
-        background(.display(red: 0.06, green: 0.07, blue: 0.09))  // 地を暗い色で塗る
-        fill(.display(red: 0.95, green: 0.45, blue: 0.2))        // これから描く図形の色 (橙)
-        let angle = time * 0.8                                     // time は走り始めてからの秒数
+        background(15, 18, 23)   // 地を暗い色で塗る (赤・緑・青を 0–255 で)
+        fill(242, 115, 51)       // これから描く図形の色 (橙)
+        let angle = time * 0.8   // time は走り始めてからの秒数
         circle(width / 2 + cos(angle) * 160, height / 2 + sin(angle) * 120, 80)  // 中心 x, 中心 y, 直径
     }
 }
@@ -146,7 +146,7 @@ mokume watch
 ```
 
 走らせたまま `MySketch.swift` を開き、`fill` の行の数字を変えて保存する — 例えば
-`red: 0.3, green: 0.75, blue: 0.95` にすると、**窓を開き直さなくても円が水色に変わる**
+`fill(77, 191, 242)` にすると、**窓を開き直さなくても円が水色に変わる**
 (冒頭の動きと同じ操作)。`circle` の最後の `80` を `140` にすれば大きくなる。
 
 保存するたびに作り直して、走っている絵を差し替える。**書き間違えて作れなかったときは、
