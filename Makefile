@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
+.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。的の並びには意味があり、-j を付けると壊れる
 # — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
@@ -39,7 +39,7 @@ check: setup
 # 設計 (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため両者が理由を
 # 述べて 0 で抜け、本物の判定は同じファイルの独立したジョブ (drawing-evidence /
 # render-signal) が持つ。ここに置いてあるのは手元のためである
-CI_CHECK_STEPS := build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status
+CI_CHECK_STEPS := build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence render-status
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
@@ -119,6 +119,10 @@ docs-links:
 # でもこれを呼ぶ
 adrs:
 	bash scripts/check-adrs.sh
+
+# AGENTS.md の分量をラチェット + 節ごとの上限で持つ (#737)。理由は検査スクリプトの冒頭
+agents-md-size:
+	python3 scripts/check-agents-md-size.py
 
 hooks-test:
 	python3 -m unittest discover -s scripts/tests -p '*_test.py'
