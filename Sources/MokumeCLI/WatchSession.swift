@@ -520,15 +520,16 @@ final class WatchSession {
         guard rebuilt.status == 0, rebuilt.executable == nil else { return nil }
         guard let product = context.product else {
             return """
-                作り直しは通ったが、走らせるものを決められない: \(directory.path)
-                Package.swift の products に実行ファイルが宣言されているか確かめる
+                Cannot find anything to run: \(directory.path)
+                Check that Package.swift declares an executable in products
 
                 \(rebuilt.output)
                 """
         }
         return """
             The build succeeded, but \(product) was never built: \(rebuilt.binPath.path)
-            置き場に残っている古い計画が原因のことがある — その置き場を消してやり直す
+            A stale plan left in the build directory can do this — remove that directory
+            and try again
 
             \(rebuilt.output)
             """

@@ -29,7 +29,7 @@ public struct PixelBuffer: Equatable, Sendable {
     public subscript(x: Int, y: Int) -> LinearRGBA {
         precondition(
             x >= 0 && x < width && y >= 0 && y < height,
-            "読み出す位置が描画先の外にある: (\(x), \(y)) / \(width)x\(height)")
+            "The position to read is outside the drawing target: (\(x), \(y)) / \(width)x\(height)")
         let base = (y * width + x) * 4
         return LinearRGBA(
             premultipliedRed: Float(components[base]),

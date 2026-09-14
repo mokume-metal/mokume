@@ -67,8 +67,9 @@ struct APIListLocator {
             throw Missing(
                 advice: advice(
                     reason: """
-                        依存している版が引けません。`Package.resolved` に `\(Self.identity)` の
-                        pin がないためです (開発中の本体をパスで指しているときはこうなります)。
+                        Cannot tell which version is depended on: `Package.resolved` has no pin
+                        for `\(Self.identity)` (this happens when you point at mokume by path
+                        while developing it).
                         """, cache: cache))
         }
 
@@ -80,9 +81,9 @@ struct APIListLocator {
             throw Missing(
                 advice: advice(
                     reason: """
-                        この版の資産を取ってこられませんでした (\(remote)): \(error)
-                        ネットワークが無いときのほか、**その版に資産が付いていない**ときにも起きます
-                        (一覧を配り始めたのは v0.1.0 より後)。
+                        Could not fetch the asset for this version (\(remote)): \(error)
+                        Besides having no network, this also happens when **that version has no
+                        such asset attached** (the list started shipping after v0.1.0).
                         """, cache: cache))
         }
         guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
@@ -114,11 +115,11 @@ struct APIListLocator {
     /// 得られなかった理由と、そこからの一手。
     private func advice(reason: String, cache: URL) -> String {
         """
-        公開 API の一覧が手元にありません。
+        The public API list is not available here.
 
         \(reason)
 
-        mokume のリポジトリで組み立てて置けば、次からはそれが返ります:
+        Build it in the mokume repository and put it here, and it is returned from then on:
 
           make api-list OUT="\(cache.path)"
         """
