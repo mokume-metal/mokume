@@ -333,11 +333,4 @@ struct FlatInstancingTests {
             "畳めるものが畳まれていない")
         #expect(folded.bytes == loose.bytes, "畳み方で絵が変わっている")
     }
-
-    // MARK: - 並びの取り決め
-
-    @Test("置き場所の並びは、シェーダ側と同じ大きさである")
-    func theInstanceLayoutMatchesTheShader() throws {
-        #expect(MemoryLayout<FlatInstance>.stride == FlatInstance.expectedStride)
-    }
 }

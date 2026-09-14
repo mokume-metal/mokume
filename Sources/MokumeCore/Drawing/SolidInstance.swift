@@ -10,7 +10,7 @@ import simd
 /// 展開すると、球 1 万個で数十万の頂点になり、確保だけで 1 フレームが終わる。
 ///
 /// 並びは `Drawing/Shaders/Shapes.metal` の同名の構造体と一致していなければならない
-/// (``ShapeVertex`` と同じ理由で、大きさを ``expectedStride`` として持つ)。
+/// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
 struct SolidInstance {
     /// 形自身の座標を世界の座標へ移す行列。
     var matrix: simd_float4x4
@@ -29,9 +29,6 @@ struct SolidInstance {
     /// 変えた形は白い置き場所を通るので、頂点の色がそのまま残る。**どちらも掛け算
     /// 1 本で通る**ので、色のために経路が 2 本に割れない。
     var color: SIMD4<Float>
-
-    /// シェーダ側の構造体と一致すべき大きさ (バイト)。
-    static let expectedStride = 128
 
     init(matrix: simd_float4x4, normalMatrix: simd_float3x3, color: LinearRGBA) {
         self.matrix = matrix

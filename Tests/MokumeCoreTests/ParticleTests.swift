@@ -195,7 +195,6 @@ struct ParticleTests {
         let placeFloats = MemoryLayout<SolidInstance>.stride / MemoryLayout<Float>.stride
         #expect(Array(placeValues[0..<placeFloats]) == (0..<placeFloats).map { Float($0) })
         #expect(placeValues[placeFloats] == 100)
-        #expect(placeFloats * MemoryLayout<Float>.stride == SolidInstance.expectedStride)
     }
 
     // MARK: - 2 つの経路

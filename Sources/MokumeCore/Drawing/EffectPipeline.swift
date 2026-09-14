@@ -23,6 +23,11 @@ final class EffectPipeline {
     static let sourceTextureIndex = 0
     /// 組み合わせる相手の絵の口の番号 (シェーダ側の `texture(1)`)。
     static let pairedTextureIndex = 1
+    /// 引数のテーブルに束ねられる置き場の数。上の口の番号はすべてこれより小さい
+    /// (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
+    static let bufferBindCount = 3
+    /// 引数のテーブルに束ねられる面の数。
+    static let textureBindCount = 2
 
     /// 入口の関数の名前。**組み込みも利用者の効果も同じ**。
     static let vertexFunctionName = "mokume_effectVertexMain"
@@ -109,7 +114,7 @@ final class EffectPipeline {
         passBuffer = try passStorage.buffer(holding: 8)
         tablePool = ArgumentTablePool(
             gpu: gpu, label: "mokume.effect.arguments",
-            bufferBindCount: 3, textureBindCount: 2)
+            bufferBindCount: Self.bufferBindCount, textureBindCount: Self.textureBindCount)
     }
 
     /// 利用者の効果のパイプラインを組む。

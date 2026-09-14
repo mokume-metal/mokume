@@ -140,11 +140,6 @@ struct SolidMeshTests {
 
     // MARK: - 頂点の並び
 
-    @Test("シェーダ側の構造体と大きさが一致する")
-    func vertexStrideMatchesShader() {
-        #expect(MemoryLayout<SolidVertex>.stride == SolidVertex.expectedStride)
-    }
-
     @Test("形は三角形の並びなので、点の数は 3 の倍数", arguments: [
         SolidShape.box(width: 1, height: 2, depth: 3),
         .sphere(radius: 1, detail: 7),

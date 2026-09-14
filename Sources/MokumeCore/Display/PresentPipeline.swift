@@ -17,6 +17,11 @@ import Metal
     static let samplerIndex = 0
     /// 明るさを写す段の設定を渡す口の番号 (シェーダ側の `buffer(0)`)。
     static let brightnessBufferIndex = 0
+    /// 引数のテーブルに束ねられる置き場・面・読み取り方の数。上の口の番号はすべて
+    /// これより小さい (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
+    static let bufferBindCount = 1
+    static let textureBindCount = 1
+    static let samplerBindCount = 1
 
     let state: any MTLRenderPipelineState
     let argumentTable: any MTL4ArgumentTable
@@ -82,9 +87,9 @@ import Metal
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.present.arguments"
-        tableDescriptor.maxBufferBindCount = 1
-        tableDescriptor.maxTextureBindCount = 1
-        tableDescriptor.maxSamplerStateBindCount = 1
+        tableDescriptor.maxBufferBindCount = Self.bufferBindCount
+        tableDescriptor.maxTextureBindCount = Self.textureBindCount
+        tableDescriptor.maxSamplerStateBindCount = Self.samplerBindCount
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
         } catch {

@@ -40,6 +40,7 @@ struct Light {
 };
 
 /// この列に効く光が、置き場のどこから何個あるか。と、どこから見ているか。
+/// 並びは Swift 側の `Lighting` と一致する。
 struct Lighting {
     uint offset;
     uint count;
@@ -89,7 +90,7 @@ static inline float3 mokume_surroundingsAverage(Surroundings surroundings) {
         + surroundings.bottom.rgb) * 0.25;
 }
 
-/// フレームを通して変わらない値。
+/// フレームを通して変わらない値。並びは Swift 側の `Uniforms` と一致する。
 struct Uniforms {
     float time;
     float2 resolution;
@@ -502,8 +503,9 @@ float4 paint(Fragment in, Values values);
 //
 // 下地を読む入口と読まない入口 (`mokume_fragmentMain` / `mokume_fragmentDirect`) は、
 // 束ねる口が 1 つでも食い違うと**絵が壊れたまま組み上がる** — 番号は Swift 側
-// (`ShapePipeline`) と合っていればよく、2 つの入口が互いに合っている必要は
-// コンパイラには分からない。だから並びを写さず、1 つの綴りを両方が使う。
+// (`ShapePipeline`) と合っていればよく (`ShaderInterfaceTests` が反射で突き合わせる)、
+// 2 つの入口が互いに合っている必要はコンパイラには分からない。だから並びを写さず、
+// 1 つの綴りを両方が使う。
 #ifdef MOKUME_SURFACES
 // 利用者が宣言した面。**口の数は宣言した枚数によらず固定**で、余りには
 // 別の面が束ねてある (何も束ねない口を作らないため)

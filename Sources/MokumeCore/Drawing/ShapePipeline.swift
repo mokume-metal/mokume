@@ -64,6 +64,10 @@ final class ShapePipeline {
     static let projectionBufferIndex = 1
     /// 混ぜ方の番号を渡す口の番号 (シェーダ側の `buffer(2)`)。
     static let blendModeBufferIndex = 2
+    // `buffer(3)` は欠番で、**再利用してよい**。面の中身の種類を渡していた口
+    // (`textureKindBufferIndex`) が、色を持つ字形を色のまま描く変更で要らなくなった跡である
+    // ([#468](https://github.com/mokume-metal/mokume/pull/468))。後ろを詰めなかっただけで、
+    // 空けておく理由は無い
     /// フレームを通して変わらない値を渡す口の番号 (シェーダ側の `buffer(4)`)。
     static let uniformsBufferIndex = 4
     /// 利用者が渡した値の口の番号 (シェーダ側の `buffer(5)`)。
@@ -93,6 +97,12 @@ final class ShapePipeline {
     /// 口は使う枚数によらず全部が束ねられる。**空きの口にも何かを束ねる**ので、
     /// 宣言より多く読もうとした断片も、絵が乱れるだけで異常終了はしない。
     static let surfaceCapacity = 4
+
+    /// 引数のテーブルに束ねられる置き場の数。上の口の番号はすべてこれより小さい
+    /// (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
+    static let bufferBindCount = 12
+    /// 引数のテーブルに束ねられる面の数。利用者の面の口が最後に並ぶ。
+    static let textureBindCount = surfaceTextureIndex + surfaceCapacity
 
     /// 組み込みの塗りで描くパイプライン。**混ぜ方ごとに 3 本ある** (``BlendStates``)。
     let states: BlendStates
@@ -196,8 +206,8 @@ final class ShapePipeline {
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"
-        tableDescriptor.maxBufferBindCount = 12
-        tableDescriptor.maxTextureBindCount = Self.surfaceTextureIndex + Self.surfaceCapacity
+        tableDescriptor.maxBufferBindCount = Self.bufferBindCount
+        tableDescriptor.maxTextureBindCount = Self.textureBindCount
         do {
             argumentTable = try gpu.device.makeArgumentTable(descriptor: tableDescriptor)
         } catch {

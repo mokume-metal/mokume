@@ -1710,43 +1710,34 @@ public final class Canvas {
         // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
         let matrices = try matrixStorage.buffer(holding: batches.count)
         for (index, batch) in batches.enumerated() {
-            var matrix = batch.matrix
-            let slot = matrices.contents().advanced(by: index * Self.valuesStride)
-            slot.copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
             // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
             // 読まない**ので、同じ区画に足しても効かない
-            var strokeStart = UInt32(min(batch.strokeStart, Int(UInt32.max)))
-            slot.advanced(by: MemoryLayout<simd_float4x4>.size)
-                .copyMemory(from: &strokeStart, byteCount: MemoryLayout<UInt32>.size)
+            var frame = FlatFrame(
+                projection: batch.matrix,
+                strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))))
+            matrices.contents().advanced(by: index * Self.valuesStride)
+                .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
         }
 
         // 時刻と面の大きさは、フレームの中で変わらない。**大きさは実際に刻む
         // 画素**である — 断片が受け取る位置 (`position`) がその数で来るので、
         // 割って出す 0…1 の位置がここと食い違うと面からはみ出す
         let uniformsBuffer = try uniformsStorage.buffer(holding: 1)
-        uniformsBuffer.contents().assumingMemoryBound(to: Float.self)
-            .update(
-                from: [time, 0, Float(pixelWidth), Float(pixelHeight), shadowBiasValue],
-                count: 5)
-        // 影の行列と設定。**フレームに 1 つ**で、列ごとには変わらない
-        // **置き場所は断片側の詰め方で決まる。** 4x4 の行列は 16 バイト境界へ
-        // 揃うので、その前の 1 つの数 (縁の余裕) の後ろに詰め物が入る
-        var matrix = bakedShadow?.matrix ?? matrix_identity_float4x4
-        uniformsBuffer.contents().advanced(by: 32)
-            .copyMemory(from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
-        let shadowTexel = 1 / Float(bakedShadow?.map.detail ?? 1)
-        uniformsBuffer.contents().advanced(by: 96)
-            .assumingMemoryBound(to: Float.self)
-            .update(from: [bakedShadow == nil ? 0 : 1, shadowTexel, 0, 0], count: 4)
-        // 揺らぎの種と細かさ。**断片が種を受け取る**ので、利用者が値として
-        // 配線しなくても CPU の `noise()` と同じ模様が出る。種と枚数は整数の
-        // まま送る (`Float` を経由すると大きな種で丸めが起きる)
-        uniformsBuffer.contents().advanced(by: 112)
-            .assumingMemoryBound(to: UInt32.self)
-            .update(from: [noiseSettings.seed, UInt32(noiseSettings.octaves)], count: 2)
-        uniformsBuffer.contents().advanced(by: 120)
-            .assumingMemoryBound(to: Float.self)
-            .update(from: [noiseSettings.falloff, 0], count: 2)
+        // 影の行列と設定も**フレームに 1 つ**で、列ごとには変わらない。揺らぎの種と
+        // 細かさは、**断片が種を受け取る**ので、利用者が値として配線しなくても CPU の
+        // `noise()` と同じ模様が出る
+        var uniforms = Uniforms(
+            time: time,
+            resolution: SIMD2(Float(pixelWidth), Float(pixelHeight)),
+            shadowBias: shadowBiasValue,
+            shadowMatrix: bakedShadow?.matrix ?? matrix_identity_float4x4,
+            shadowParams: SIMD4(
+                bakedShadow == nil ? 0 : 1, 1 / Float(bakedShadow?.map.detail ?? 1), 0, 0),
+            noiseSeed: noiseSettings.seed,
+            noiseOctaves: UInt32(noiseSettings.octaves),
+            noiseFalloff: noiseSettings.falloff)
+        uniformsBuffer.contents()
+            .copyMemory(from: &uniforms, byteCount: MemoryLayout<Uniforms>.stride)
         // **焼いていなくても、読む先は必ず束ねる。** 束ねない口を作ると、断片が
         // 触った瞬間に何が起きるかが土台任せになる。口は奥行きの面 (`depth2d`) なので、
         // 焼いていないフレームには同じ形の 1 画素の面を束ねる — 色の面を束ねると
@@ -1765,15 +1756,12 @@ public final class Canvas {
         // 列ごとの値を並べて置く。**列が閉じた時点の値**がそのまま入っている
         let lighting = try lightingStorage.buffer(holding: batches.count)
         for (index, batch) in batches.enumerated() {
-            let slot = lighting.contents().advanced(by: index * Self.valuesStride)
-                .assumingMemoryBound(to: UInt32.self)
-            slot.update(
-                from: [UInt32(batch.lightRange.lowerBound), UInt32(batch.lightRange.count)],
-                count: 2)
-            // 見ている場所は 16 バイト境界から (断片の側も詰め物を空けている)
-            var viewer = batch.viewer
-            lighting.contents().advanced(by: index * Self.valuesStride + 16)
-                .copyMemory(from: &viewer, byteCount: MemoryLayout<SIMD4<Float>>.size)
+            var packed = Lighting(
+                offset: UInt32(batch.lightRange.lowerBound),
+                count: UInt32(batch.lightRange.count),
+                viewer: batch.viewer)
+            lighting.contents().advanced(by: index * Self.valuesStride)
+                .copyMemory(from: &packed, byteCount: MemoryLayout<Lighting>.stride)
         }
 
         // 列ごとの材質。**列が閉じた時点のもの**がそのまま入る
@@ -1781,7 +1769,7 @@ public final class Canvas {
         for (index, batch) in batches.enumerated() {
             var packed = batch.material.packed
             materials.contents().advanced(by: index * Self.valuesStride)
-                .copyMemory(from: &packed, byteCount: PackedMaterial.expectedStride)
+                .copyMemory(from: &packed, byteCount: MemoryLayout<PackedMaterial>.stride)
         }
 
         // 列ごとの周囲。**列が閉じた時点のもの**がそのまま入る
@@ -1789,7 +1777,7 @@ public final class Canvas {
         for (index, batch) in batches.enumerated() {
             var packed = batch.surroundings
             surroundings.contents().advanced(by: index * Self.valuesStride)
-                .copyMemory(from: &packed, byteCount: PackedSurroundings.expectedStride)
+                .copyMemory(from: &packed, byteCount: MemoryLayout<PackedSurroundings>.stride)
         }
 
         let values = try valuesStorage.buffer(holding: batches.count)

@@ -5,10 +5,13 @@ import simd
 
 /// 立体を組み立てる頂点。
 ///
-/// 並びは `Drawing/Shaders/Solids.metal` の同名の構造体と一致していなければならない。
-/// 食い違うと絵が壊れるだけで、コンパイルは通ってしまう — ずれを起動時に見つけられる
-/// よう、大きさを ``expectedStride`` として持ち、検査で突き合わせる
-/// (``ShapeVertex`` と同じ理由・同じ手当て)。
+/// 並びは `Drawing/Shaders/Shapes.metal` の同名の構造体と一致していなければならない
+/// (``ShapeVertex`` と同じ理由・同じ手当て — `ShaderInterfaceTests` が反射と突き合わせる)。
+///
+/// `float3` は 16 バイト境界に揃うので、位置・形自身の座標・向き・形自身の向きで
+/// 64 バイト、読み取り位置が 8 バイト、色が 16 バイト境界へ揃うため 8 バイトの
+/// 詰め物が入って 96 バイトになる。
+/// (向きの 4 つ目の成分は、`float3` に元から入っていた詰め物に収まる。)
 struct SolidVertex {
     /// 描画先の座標 (変換を適用済み・奥行きを持つ)。
     var position: SIMD3<Float>
@@ -45,14 +48,6 @@ struct SolidVertex {
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     var color: SIMD4<Float>
-
-    /// シェーダ側の構造体と一致すべき大きさ (バイト)。
-    ///
-    /// `float3` は 16 バイト境界に揃うので、位置・形自身の座標・向き・形自身の向きで
-    /// 64 バイト、読み取り位置が 8 バイト、色が 16 バイト境界へ揃うため 8 バイトの
-    /// 詰め物が入って 96 バイトになる。
-    /// (向きの 4 つ目の成分は、`float3` に元から入っていた詰め物に収まる。)
-    static let expectedStride = 96
 
     /// 形自身の座標を**書かなければ、置いた座標がそのまま**入る。
     ///

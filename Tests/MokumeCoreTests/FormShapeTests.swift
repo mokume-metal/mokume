@@ -632,9 +632,4 @@ struct FormShapeTests {
         #expect(onlyStroke.size.z == 3)
         #expect(onlyStroke.meta.w == FormInstance.strokesFlag)
     }
-
-    @Test("置き場所の並びは、シェーダ側と同じ大きさである")
-    func theInstanceLayoutMatchesTheShader() throws {
-        #expect(MemoryLayout<FormInstance>.stride == FormInstance.expectedStride)
-    }
 }
