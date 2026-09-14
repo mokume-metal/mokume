@@ -70,7 +70,7 @@ struct ParameterExchangeTests {
         ParamSurface(directory: facet, sketch: sketch).start()
 
         let report = try report(from: facet)
-        #expect(report["schemaVersion"] as? Int == 1)
+        #expect(report["schemaVersion"] as? Int == 2)
         #expect(report["revision"] as? Int == 1)
         #expect(report["id"] == nil)
         let entries = report["params"] as? [[String: Any]] ?? []
@@ -162,6 +162,75 @@ struct ParameterExchangeTests {
         #expect(clamped.first?["name"] as? String == "radius")
         #expect(clamped.first?["requested"] as? Double == 999)
         #expect(clamped.first?["value"] as? Double == 200)
+    }
+
+    @Test("整数も、範囲の外は収めて入れ、収めたことを面に出す")
+    func clampsIntegersAndSaysSo() throws {
+        let facet = try makeFacet()
+        let sketch = Knobbed()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+        try write(
+            request: #"{"id":"a3","values":[{"name":"count","type":"int","value":99}]}"#,
+            to: facet)
+        surface.drain()
+
+        #expect(sketch.count == 8)
+        let clamped = try report(from: facet)["clamped"] as? [[String: Any]] ?? []
+        #expect(clamped.count == 1)
+        #expect(clamped.first?["name"] as? String == "count")
+        #expect(clamped.first?["requested"] as? Int == 99)
+        #expect(clamped.first?["value"] as? Int == 8)
+    }
+
+    /// 組の範囲は**成分ごとに、宣言した 1 つの範囲へ独立に**収める。窓の成分スライダーが
+    /// 同じ 1 つの範囲で縛っているので、外から書ける幅をそれと揃える ([#859](https://github.com/mokume-metal/mokume/issues/859))。
+    final class Paired: Sketch {
+        @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0, 0)
+        @Param(-1...1) var triple: SIMD3<Float> = SIMD3(0, 0, 0)
+    }
+
+    @Test("組は範囲の外を成分ごとに収めて入れ、収めたことを丸ごと面に出す")
+    func clampsVectorsPerComponentAndSaysSo() throws {
+        let facet = try makeFacet()
+        let sketch = Paired()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+        try write(
+            request: #"""
+                {"id":"v1","values":[
+                  {"name":"pair","type":"vec2","value":[5,-5]},
+                  {"name":"triple","type":"vec3","value":[0.5,3,-0.25]}
+                ]}
+                """#,
+            to: facet)
+        surface.drain()
+
+        #expect(sketch.pair == SIMD2(1, -1))
+        // 範囲の内側だった成分は触らない
+        #expect(sketch.triple == SIMD3(0.5, 1, -0.25))
+        let clamped = try report(from: facet)["clamped"] as? [[String: Any]] ?? []
+        #expect(clamped.map { $0["name"] as? String } == ["pair", "triple"])
+        #expect(clamped.first?["requested"] as? [Double] == [5, -5])
+        #expect(clamped.first?["value"] as? [Double] == [1, -1])
+        #expect(clamped.last?["requested"] as? [Double] == [0.5, 3, -0.25])
+        #expect(clamped.last?["value"] as? [Double] == [0.5, 1, -0.25])
+    }
+
+    @Test("範囲の内側の組は、収めたことにならない")
+    func vectorsInsideTheRangeAreNotClamped() throws {
+        let facet = try makeFacet()
+        let sketch = Paired()
+        let surface = ParamSurface(directory: facet, sketch: sketch)
+        surface.start()
+        try write(
+            request: #"{"id":"v2","values":[{"name":"pair","type":"vec2","value":[1,-1]}]}"#,
+            to: facet)
+        surface.drain()
+
+        #expect(sketch.pair == SIMD2(1, -1))
+        let clamped = try report(from: facet)["clamped"] as? [[String: Any]]
+        #expect(clamped?.isEmpty == true)
     }
 
     @Test("コードからの代入は、範囲へ収められない")

@@ -13,9 +13,28 @@
     "discarded"
   ],
   "additionalProperties": false,
+  "$defs": {
+    "clampedValue": {
+      "description": "**Shaped like the declaration's value**: a number for float and int, an array of components for vec2 and vec3. A tuple is brought in **component by component, each into the one declared range** — the same range the window's per-component sliders move in — and is reported as one entry, whole, so components that were already inside read back unchanged.",
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 3
+        }
+      ]
+    }
+  },
   "properties": {
     "schemaVersion": {
-      "const": 1
+      "const": 2,
+      "description": "2 since requested and value in clamped began taking the declaration's shape (an array for vec2 and vec3). Under 1 they were always numbers, and tuples were never brought into range."
     },
     "revision": {
       "type": "integer",
@@ -117,11 +136,11 @@
             "type": "string"
           },
           "requested": {
-            "type": "number",
+            "$ref": "#/$defs/clampedValue",
             "description": "The value the writer asked for."
           },
           "value": {
-            "type": "number",
+            "$ref": "#/$defs/clampedValue",
             "description": "The value that actually went in."
           }
         }

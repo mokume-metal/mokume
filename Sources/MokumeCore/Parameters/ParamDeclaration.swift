@@ -27,6 +27,11 @@ public struct ParamRange: Equatable, Sendable {
     public func clamped(_ value: Double) -> Double {
         min(max(value, lowerBound), upperBound)
     }
+
+    /// 組の成分 1 つを、この範囲の中へ収める。
+    func clamped(_ component: Float) -> Float {
+        Float(clamped(Double(component)))
+    }
 }
 
 /// 宣言された 1 つの値の、面から見える姿。

@@ -34,7 +34,10 @@ public enum ParamValue: Equatable, Sendable {
         }
     }
 
-    /// 数として読めるか (つまみの範囲が意味を持つのはこの 2 つだけ)。
+    /// 数として読めるか。
+    ///
+    /// **範囲が意味を持つかの判定には使わない** — 範囲は組にも成分ごとに効く
+    /// (つまみは `KnobKind.forDeclaration(_:)`、外からの収めは `ParamBox` が持つ)。
     public var isNumber: Bool {
         switch self {
         case .float, .int: true

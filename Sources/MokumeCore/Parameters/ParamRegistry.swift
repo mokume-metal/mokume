@@ -11,8 +11,9 @@
 enum ParamOutcome: Equatable {
     /// 書いたとおりに入った。
     case applied
-    /// 範囲へ収めて入った。**収めたことは黙らない。**
-    case clamped(requested: Double, applied: Double)
+    /// 範囲へ収めて入った。**収めたことは黙らない。** 値は宣言の型のまま持つ —
+    /// 組は成分ごとに収めるので、数 1 つでは表せない。
+    case clamped(requested: ParamValue, applied: ParamValue)
     /// 宣言と型が違う。
     case typeMismatch
     /// 許した候補の外。

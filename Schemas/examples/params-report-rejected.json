@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "revision": 8,
   "id": "agent-4712",
   "params": [
@@ -9,6 +9,16 @@
       "value": 200,
       "min": 0,
       "max": 200
+    },
+    {
+      "name": "offset",
+      "type": "vec2",
+      "value": [
+        1,
+        -0.25
+      ],
+      "min": -1,
+      "max": 1
     },
     {
       "name": "shape",
@@ -35,6 +45,17 @@
       "name": "radius",
       "requested": 999,
       "value": 200
+    },
+    {
+      "name": "offset",
+      "requested": [
+        4,
+        -0.25
+      ],
+      "value": [
+        1,
+        -0.25
+      ]
     }
   ],
   "discarded": []
