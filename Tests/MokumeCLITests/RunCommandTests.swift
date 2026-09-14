@@ -64,6 +64,44 @@ struct RunCommandTests {
         #expect(!result.output.contains("err"), "混ぜない形なのに stderr が出力へ入った")
     }
 
+    /// `env` 越しに起こす子。`swift` を実際に `PATH` から消さずに、同じ経路を通す。
+    private func makeChildThroughEnv(_ arguments: [String]) -> Process {
+        let process = Process()
+        process.executableURL = RunCommand.envURL
+        process.arguments = arguments
+        return process
+    }
+
+    /// `/usr/bin/env` 自体は必ず起動できるので、起動の失敗としては届かない。
+    /// **見逃すと空の出力が「走らせるものが無い」と読まれ、Package.swift を疑わせる**
+    /// ([#1157](https://github.com/mokume-metal/mokume/issues/1157))。
+    @Test("env 越しに探した道具が無ければ、道具が無いと投げる")
+    func aMissingToolIsThrownAsSuch() {
+        let tool = "mokume-no-such-tool-\(UUID().uuidString)"
+        #expect(throws: CommandFailure.toolchainMissing(tool)) {
+            try RunCommand.capture(
+                makeChildThroughEnv([tool, "build"]), capturing: true, errors: .discard)
+        }
+    }
+
+    /// 裏側。道具が在って失敗した回は今までどおり呼び手へ終了コードを返す — そこから先の
+    /// 「ビルドが通らない」「走らせるものが無い」の案内は、呼び手の経路が変わらず持つ。
+    @Test("env 越しに見つかった道具の失敗は、投げずに終了コードを返す")
+    func aFoundToolsFailureIsReturned() throws {
+        let result = try RunCommand.capture(
+            makeChildThroughEnv(["false"]), capturing: true, errors: .discard)
+        #expect(result.status == 1)
+    }
+
+    @Test("env 越しでない子の 127 は、その子の終了コードとして返す")
+    func a127FromAnyOtherChildIsReturned() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "exit 127"]
+        let result = try RunCommand.capture(process, capturing: true, errors: .discard)
+        #expect(result.status == 127)
+    }
+
     @Test("0 以外で終わったスケッチは、終了コードを載せて投げる")
     func nonZeroExitsAreThrown() throws {
         let executable = try makeExecutable(exiting: 3)

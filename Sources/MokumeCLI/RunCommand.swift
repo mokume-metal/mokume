@@ -386,7 +386,7 @@ enum RunCommand {
         errors: ErrorStream = .inherit, running: RunningBuild? = nil
     ) throws(CommandFailure) -> (status: Int32, output: String) {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.executableURL = envURL
         process.arguments = ["swift"] + arguments
         process.currentDirectoryURL = directory
         return try capture(process, capturing: capturing, errors: errors, running: running)
@@ -430,7 +430,7 @@ enum RunCommand {
                 launched = true
             }
         } catch {
-            throw .toolchainMissing("swift")
+            throw .toolchainMissing(toolName(of: process))
         }
         guard launched else { throw .rebuildStopped }
         defer { running?.finished() }
@@ -442,7 +442,31 @@ enum RunCommand {
             output = String(data: data, encoding: .utf8) ?? ""
         }
         process.waitUntilExit()
+        // **道具が無いことを、道具の失敗と取り違えない。** `/usr/bin/env` 自体は必ず起動
+        // できるので、上の catch には届かない — `env` は探したものが無いと 127 で終わる。
+        // 見逃すと空の出力が「宣言が読めない」「走らせるものが無い」と読まれ、原因が
+        // 道具立てなのに Package.swift を疑わせる
+        // ([#1157](https://github.com/mokume-metal/mokume/issues/1157))
+        if process.executableURL == envURL, process.terminationStatus == commandNotFound {
+            throw .toolchainMissing(toolName(of: process))
+        }
         return (process.terminationStatus, output)
+    }
+
+    /// 道具立てを探させる口。**`PATH` を引くのは `env` に任せる。**
+    nonisolated static let envURL = URL(fileURLWithPath: "/usr/bin/env")
+
+    /// `env` が「探したものが見つからなかった」ときの終了コード (POSIX)。
+    ///
+    /// **`env` 越しに起こしたときだけ読む。** 任意の子の 127 は、その子が決めた意味である。
+    nonisolated static let commandNotFound: Int32 = 127
+
+    /// 起こそうとした道具の名前。`env` 越しなら `env` が探す名前、そうでなければ実行ファイル名。
+    nonisolated static func toolName(of process: Process) -> String {
+        if process.executableURL == envURL, let tool = process.arguments?.first {
+            return tool
+        }
+        return process.executableURL?.lastPathComponent ?? "swift"
     }
 }
 
