@@ -276,6 +276,67 @@ struct ObservationProtocolTests {
         #expect(observer.pendingRequest() == nil)
     }
 
+    // MARK: - 起動し直しても二度処理しない (#1143)
+    //
+    // プロセスの入れ替わりは、同じ区画で 2 つ目を作ることで表す。記録は応答そのもので、
+    // **応答が同じ識別子を持っていれば応えた**、持っていなければ応えていない。
+
+    @Test("起動し直しても、応えた要求は二度処理しない")
+    func doesNotServeAnAnsweredRequestAfterRelaunch() throws {
+        let facet = try makeFacet()
+        let first = FrameObserver(directory: facet)
+        try write(request: #"{"id":"a1"}"#, to: facet)
+        let request = try #require(first.pendingRequest())
+        first.finish(report(id: request.id, image: nil))
+
+        let second = FrameObserver(directory: facet)
+        for _ in 0..<10 { #expect(second.pendingRequest() == nil) }
+        // 見送った要求を毎フレーム開き直さない — 要求が無いときと同じ費用へ戻る
+        #expect(second.readCount == 1)
+    }
+
+    @Test("残っている応答と識別子が違えば、起動し直した先で拾う")
+    func servesARequestTheReportDoesNotAnswer() throws {
+        let facet = try makeFacet()
+        let first = FrameObserver(directory: facet)
+        try write(request: #"{"id":"a1"}"#, to: facet)
+        let request = try #require(first.pendingRequest())
+        first.finish(report(id: request.id, image: nil))
+        // 誰も走っていない間に、次の要求が置かれた
+        try write(request: #"{"id":"a2"}"#, to: facet)
+
+        #expect(FrameObserver(directory: facet).pendingRequest()?.id == "a2")
+    }
+
+    @Test("撮り終える前に落ちた要求は、起動し直した先で応え直す")
+    func reanswersARequestThatWasNeverFinished() throws {
+        let facet = try makeFacet()
+        let first = FrameObserver(directory: facet)
+        try write(request: #"{"id":"a1"}"#, to: facet)
+        first.finish(report(id: try #require(first.pendingRequest()).id, image: nil))
+        try write(request: #"{"id":"a2"}"#, to: facet)
+        #expect(first.pendingRequest()?.id == "a2")
+        // 撮り始めに目録を消したところで落ちた。読み手は a2 の目録を待ったままである
+        first.clearProducts()
+
+        #expect(FrameObserver(directory: facet).pendingRequest()?.id == "a2")
+    }
+
+    @Test("応答を書けなかった要求は、起動し直した先で応え直す")
+    func reanswersARequestWhoseReportWasNeverWritten() throws {
+        let facet = try makeFacet()
+        let first = FrameObserver(directory: facet)
+        try write(request: #"{"id":"a1"}"#, to: facet)
+        #expect(first.pendingRequest()?.id == "a1")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: facet.path)
+        first.finish(report(id: "a1", image: nil))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: facet.path)
+
+        // 応えようとした記録は、落ちたプロセスの中にしか無かった。読み手に応答は
+        // 届いていないので、応え直すのが正しい
+        #expect(FrameObserver(directory: facet).pendingRequest()?.id == "a1")
+    }
+
     @Test("基準は作業ディレクトリで、環境から与えられれば上書きされる")
     func resolvesTheBaseDirectory() {
         let current = URL(

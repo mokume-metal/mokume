@@ -56,8 +56,8 @@ final class FrameObserver {
 
     init(directory: URL) {
         self.directory = directory
-        self.requests = RequestFile(url: WorkDirectory.requestURL(under: directory))
-        self.reportURL = WorkDirectory.reportURL(under: directory)
+        self.requests = RequestFile(facet: directory)
+        self.reportURL = requests.reportURL
     }
 
     /// まだ応えていない要求があれば返す。規約は ``RequestFile`` が守る。

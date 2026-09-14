@@ -24,7 +24,7 @@
     },
     "id": {
       "type": "string",
-      "description": "The identifier of the most recent request answered. Omitted when none has been answered yet. **Echoed even when nothing went in**, so that everything being refused is told apart from nothing arriving."
+      "description": "The identifier of the most recent request answered in this facet, including one answered before the sketch relaunched. Omitted when none has been answered yet. **Echoed even when nothing went in**, so that everything being refused is told apart from nothing arriving."
     },
     "params": {
       "type": "array",
