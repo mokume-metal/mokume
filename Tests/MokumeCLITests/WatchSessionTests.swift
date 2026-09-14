@@ -32,14 +32,17 @@ struct WatchSessionTests {
         /// 作り直しが main actor を離れたかどうかは、**離れている間に別の仕事が進むか**
         /// でしか見えない (#834)。ここで待たせて、その隙に main actor の仕事を積む。
         var whileBuilding: () async -> Void = {}
+        /// 作り直しを起こせなかったことにする誤り。**立っていれば、作り直しは投げる。**
+        var failure: CommandFailure?
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
-                rebuild: { directory in
+                rebuild: { directory throws(CommandFailure) in
                     self.onBuild()
                     self.builds += 1
                     self.builtIn.append(directory)
                     await self.whileBuilding()
+                    if let failure = self.failure { throw failure }
                     // 作り直しには時間がかかる。刻む対象なので時計を進める
                     self.clock += 0.5
                     let bin = directory.appendingPathComponent("bin")
@@ -236,6 +239,58 @@ struct WatchSessionTests {
         // 差し替えていない = 直前の版が走り続けている
         #expect(recorder.launches == 1)
         #expect(report.timings.relaunchMs == nil)
+    }
+
+    /// **起こせなかった回も、作り直しの失敗と同じ顔にして理由を載せる。**
+    ///
+    /// かつては顔だけ揃えて理由を捨てていた — `try?` が投げられた誤りを丸ごと落とすので、
+    /// 記録の `output` は空になり、読み手 (窓口) にも端末にも「失敗した」しか届かなかった
+    /// ([#1100](https://github.com/mokume-metal/mokume/issues/1100))。`swift` が見つからない
+    /// 手元で実際にそうなる。
+    @Test("作り直しを起こせなかった回は、理由を記録に載せる")
+    func aRebuildThatCouldNotStartKeepsTheReason() async throws {
+        let recorder = Recorder()
+        let directory = try makeDirectory()
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: recorder.hooks())
+        await session.start()
+
+        recorder.stamp = "bbb"
+        recorder.failure = .toolchainMissing("swift")
+        let report = try #require(await session.tick())
+
+        let reason = CommandFailure.toolchainMissing("swift").message
+        #expect(report.output == reason, "投げられた誤りの説明が記録に載っていない")
+        // **顔は作り直しの失敗と同じである。** 終了コードは 1 に倒し、差し替えない
+        #expect(!report.ok)
+        #expect(report.status == 1)
+        #expect(!report.launched)
+        #expect(recorder.launches == 1, "起こせなかったのに、走っている版を差し替えている")
+        #expect(report.timings.relaunchMs == nil)
+
+        // 区画のファイルにも同じ本文が載る — 窓口が読むのはこちらである
+        let data = try Data(
+            contentsOf: directory.appendingPathComponent(".mokume/build/status.json"))
+        let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(decoded?["output"] as? String == reason)
+        #expect(decoded?["status"] as? Int == 1)
+        #expect(decoded?["ok"] as? Bool == false)
+    }
+
+    /// **本物の口も、起こせなかった理由を捨てない。**
+    ///
+    /// 上の検査は替え玉が投げる形なので、`live` の側で誤りを握り潰す形に戻っても緑のまま
+    /// になる (#1100 の `try?` はそこに居た)。存在しない場所では `Process` が起動の時点で
+    /// 投げるので、`swift` を 1 本も起こさずにその経路を通せる。
+    @Test("本物の作り直しの口は、起こせなかった誤りを投げ返す")
+    func theLiveRebuildThrowsWhatStoppedIt() async throws {
+        let nowhere = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-nowhere-\(UUID().uuidString)", isDirectory: true)
+        let hooks = WatchSession.Hooks.live(context: testContext())
+
+        await #expect(throws: CommandFailure.toolchainMissing("swift")) {
+            try await hooks.rebuild(nowhere)
+        }
     }
 
     @Test("壊れたままのソースで、作り直しを繰り返さない")

@@ -31,7 +31,11 @@ final class WatchSession {
         /// **`@Sendable` にはしない。** 境界を越えるのは ``live(context:)`` の内側だけで、
         /// ここを送れる形にすると**検査の替え玉が main actor の数を数えられなくなる** —
         /// 外へ出す場所は 1 箇所に閉じておく。
-        var rebuild: (URL) async -> RunCommand.Rebuilt
+        ///
+        /// **起こせなければ投げる。** 記録の形へ直すのは ``WatchSession`` の側である —
+        /// ここで直す形だった頃は、`try?` が理由を捨てて記録の `output` が空になった
+        /// ([#1100](https://github.com/mokume-metal/mokume/issues/1100))。
+        var rebuild: (URL) async throws(CommandFailure) -> RunCommand.Rebuilt
         /// 走らせる。世代の刻印と、速さの名乗り (一緒に出す構成の名前) を渡す。
         var launch: (URL, URL, String?, String?) -> Process?
         /// いまの時刻 (秒)。
@@ -53,19 +57,20 @@ final class WatchSession {
             // 止めるのは見張りが終わるときだけなので、それで足りる (#1147)
             let running = RunningBuild()
             return Hooks(
-                rebuild: { directory in
+                rebuild: { directory throws(CommandFailure) in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
                     // ここで待っても main actor は空く — ADR-0010 決定 4 の「明示的に分離
                     // する」で、待ち行列は足していない (#834)
-                    await Task.detached(priority: .userInitiated) {
-                        // **起動できなかったことを、作り直しの失敗と同じ顔にする。**
-                        // 道具立てを起こせないときは終了コードを 1 に倒す
-                        (try? RunCommand.rebuild(
-                            in: directory, context: context, capturing: true, running: running))
-                            ?? RunCommand.Rebuilt(
-                                status: 1, output: "", executable: nil,
-                                binPath: context.directory(under: directory))
-                    }.value
+                    //
+                    // **誤りは `Result` に包んで持ち帰る。** `Task` の `value` は `any Error`
+                    // を投げるので、そのまま投げると型が落ちる (ADR-0010 決定 7)
+                    try await Task.detached(priority: .userInitiated) {
+                        Result { () throws(CommandFailure) in
+                            try RunCommand.rebuild(
+                                in: directory, context: context, capturing: true,
+                                running: running)
+                        }
+                    }.value.get()
                 },
                 launch: { executable, directory, stamp, rate in
                     let process = Process()
@@ -457,7 +462,17 @@ final class WatchSession {
 
         let buildStarted = hooks.now()
         rebuildStartedAt = buildStarted
-        let rebuilt = await hooks.rebuild(directory)
+        let rebuilt: RunCommand.Rebuilt
+        do throws(CommandFailure) {
+            rebuilt = try await hooks.rebuild(directory)
+        } catch {
+            // **起こせなかったことを、作り直しの失敗と同じ顔にする。** 終了コードは 1 に
+            // 倒し、**理由は本文に載せる** — 顔だけ揃えて理由を捨てていた頃は、記録の
+            // `output` が空になり、読み手にも端末にも「失敗した」しか届かなかった (#1100)
+            rebuilt = RunCommand.Rebuilt(
+                status: 1, output: error.message, executable: nil,
+                binPath: context.directory(under: directory))
+        }
         let buildMs = (hooks.now() - buildStarted) * 1000
 
         // **途中で止めた回は、戻ってきた結果で何も決めない。** 止めた子の終了コードで
