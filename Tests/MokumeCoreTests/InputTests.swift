@@ -438,6 +438,26 @@ struct InputInboxTests {
         #expect(state.isMouseDown)
     }
 
+    /// 窓口から入力を送れる以上、作業ディレクトリに要求が残っているのが普通の状態で
+    /// ある。`watch` は保存のたびにプロセスを差し替えるので、残った要求が流れ直すと
+    /// **保存するたびに過去の入力が再生される** ([#1143](https://github.com/mokume-metal/mokume/issues/1143))。
+    @Test("起動し直すたびに、応えた入力が流れ直さない")
+    func doesNotReplayAcrossRelaunches() throws {
+        let facet = try makeFacet()
+        try send(#"{"id":"feed","events":[{"type":"mouseDown","x":12,"y":34}]}"#, to: facet)
+        #expect(InputInbox(directory: facet).drain(into: InputState())?.accepted == 1)
+
+        // プロセスの入れ替わりは、同じ区画で作り直すことで表す
+        for relaunch in 1...3 {
+            let state = InputState()
+            #expect(
+                InputInbox(directory: facet).drain(into: state) == nil,
+                "\(relaunch) 回目の起動で、応えた入力が流れ直している")
+            state.beginFrame()
+            #expect(!state.isMouseDown)
+        }
+    }
+
     @Test("知らない種別は、その 1 件だけが捨てられる")
     func skipsOnlyTheUnknownOne() throws {
         let facet = try makeFacet()

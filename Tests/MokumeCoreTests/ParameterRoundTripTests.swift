@@ -192,4 +192,44 @@ struct ParameterRoundTripTests {
         #expect(values["radius"]?["value"] as? Double == 120)
         #expect(values["shape"]?["value"] as? String == "square")
     }
+
+    // MARK: - 起動をまたいだ要求 (#1143)
+
+    /// 面から書いた要求は、応えた後もファイルとして残る。次の起動がそれを当て直すと、
+    /// **その後に窓で動かした値が黙って戻される**。
+    @Test("面から書いた後に窓で動かした値が、次の起動で古い書き込みに戻されない")
+    func anOldWriteDoesNotUndoALaterTurn() async throws {
+        let workspace = try makeWorkspace()
+        let first = launch(in: workspace)
+        try write(
+            request: #"{"id":"r1","values":[{"name":"radius","type":"float","value":45.5}]}"#,
+            to: workspace)
+        first.surface.drain()
+        try turn(first, "radius", to: 120)
+        await settle(first.store)
+
+        let second = launch(in: workspace)
+        #expect(second.sketch.radius == 120)
+        second.surface.drain()
+        #expect(second.sketch.radius == 120, "応えた書き込みが、次の起動でもう一度当たっている")
+    }
+
+    /// 見張りは切り替えの瞬間だけ 2 世代を重ねる ([#1150](https://github.com/mokume-metal/mokume/pull/1150))。
+    /// 次の世代は既に保存から値を戻しているので、その後に前の世代が応えた書き込みは
+    /// **次の世代の値に入っていない**。「前の世代が応えた」を理由に見送ると、画面に残る
+    /// 世代からその書き込みが落ちる。
+    @Test("既に作られた次の世代にも、前の世代が後から応えた書き込みは当たる")
+    func aWriteTheOutgoingGenerationAnswersStillReachesTheIncoming() throws {
+        let workspace = try makeWorkspace()
+        let outgoing = launch(in: workspace)
+        let incoming = launch(in: workspace)
+        try write(
+            request: #"{"id":"r2","values":[{"name":"radius","type":"float","value":150}]}"#,
+            to: workspace)
+
+        outgoing.surface.drain()
+        #expect(outgoing.sketch.radius == 150)
+        incoming.surface.drain()
+        #expect(incoming.sketch.radius == 150, "戻した値に入っていない書き込みを見送っている")
+    }
 }

@@ -51,8 +51,8 @@ final class InputInbox {
 
     init(directory: URL) {
         self.directory = directory
-        self.requests = RequestFile(url: WorkDirectory.requestURL(under: directory))
-        self.reportURL = WorkDirectory.reportURL(under: directory)
+        self.requests = RequestFile(facet: directory)
+        self.reportURL = requests.reportURL
     }
 
     /// 要求が来ていれば流し込み、応答を書く。

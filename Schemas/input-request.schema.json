@@ -13,7 +13,7 @@
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "This request's identifier. The reply echoes it back."
+      "description": "This request's identifier. The reply echoes it back. An id already answered is not processed again, even after the sketch relaunches: the answer left in the reply is the record. Do not reuse an id while the facet remains."
     },
     "events": {
       "type": "array",

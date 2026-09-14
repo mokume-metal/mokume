@@ -38,7 +38,7 @@ struct WireShapeTests {
                 == ["schemaVersion", "id", "accepted", "ignored", "dropped"])
     }
 
-    @Test("つまみの応答。**まだ 1 つも応えていなければ id を出さない**")
+    @Test("つまみの応答。**区画でまだ 1 つも応えていなければ id を出さない**")
     func paramReport() throws {
         let base: Set<String> = [
             "schemaVersion", "revision", "params", "rejected", "clamped", "discarded",

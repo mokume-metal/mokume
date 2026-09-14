@@ -188,6 +188,44 @@ struct ParameterExchangeTests {
         #expect(sketch.count == 2, "同じ要求が二度当たっている")
     }
 
+    /// **起動し直しを 1 回で終わらせない。** 起動は応答を書き直すので、書き直した応答が
+    /// 応えた識別子を落とすと、再び当たるのは 2 回目の起動である ([#1143](https://github.com/mokume-metal/mokume/issues/1143))。
+    @Test("起動し直しても、応えた書き込みは二度当たらない")
+    func doesNotReapplyAcrossRelaunches() throws {
+        let facet = try makeFacet()
+        let first = ParamSurface(directory: facet, sketch: Knobbed())
+        first.start()
+        try write(
+            request: #"{"id":"a5","values":[{"name":"count","type":"int","value":7}]}"#, to: facet)
+        first.drain()
+
+        // プロセスの入れ替わりは、同じ区画で作り直すことで表す
+        for relaunch in 1...3 {
+            let sketch = Knobbed()
+            let surface = ParamSurface(directory: facet, sketch: sketch)
+            surface.start()
+            surface.drain()
+            #expect(sketch.count == 3, "\(relaunch) 回目の起動で、応えた書き込みがまた当たっている")
+        }
+    }
+
+    @Test("起動し直した最初の応答は、区画で最後に応えた識別子を返す")
+    func carriesTheAnsweredIdentifierAcrossRelaunches() throws {
+        let facet = try makeFacet()
+        let first = ParamSurface(directory: facet, sketch: Knobbed())
+        first.start()
+        try write(
+            request: #"{"id":"a6","values":[{"name":"count","type":"int","value":5}]}"#, to: facet)
+        first.drain()
+
+        for relaunch in 1...2 {
+            ParamSurface(directory: facet, sketch: Knobbed()).start()
+            #expect(
+                try report(from: facet)["id"] as? String == "a6",
+                "\(relaunch) 回目の起動の応答が、応えた識別子を落としている")
+        }
+    }
+
     @Test("1 つの要求の中は、名前順に当たる")
     func appliesInNameOrder() throws {
         // 辞書の並びに依ると、同じ要求で結果が揺れ、しかも環境で再現しない

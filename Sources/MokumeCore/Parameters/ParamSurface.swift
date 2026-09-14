@@ -26,7 +26,8 @@ struct ParamReport: Encodable {
 
     /// 内容が変わるたびに進む番号。
     let revision: Int
-    /// 直近に応えた要求の識別子。まだ 1 つも応えていなければ省略される。
+    /// 区画で直近に応えた要求の識別子。**前の起動が応えたものも含む** (#1143)。区画で
+    /// まだ 1 つも応えていなければ省略される。
     let id: String?
     /// 宣言。**並びは書いた順**で、面の情報の一部として保つ。
     let params: [ParamDeclaration]
@@ -110,8 +111,14 @@ final class ParamSurface: DeclarationWatcher {
 
     init(directory: URL, registry: ParamRegistry, store: ParamStore? = nil) {
         self.directory = directory
-        self.requests = RequestFile(url: WorkDirectory.requestURL(under: directory))
-        self.reportURL = WorkDirectory.reportURL(under: directory)
+        let requests = RequestFile<ParamRequest>(facet: directory)
+        self.requests = requests
+        self.reportURL = requests.reportURL
+        // **応えた識別子を起動をまたいで持ち越す。** 起動は応答を書き直す (``start(after:)``)
+        // ので、持ち越さないと書き直した応答が識別子を落とし、次の起動で応えた書き込みが
+        // もう一度当たる (#1143)。**init で受け取る** — 保存から戻すのは作った後なので、
+        // 持ち越した識別子の書き込みは戻した値に入っている
+        self.lastHandledID = requests.lastHandledID
         self.registry = registry
         self.store = store
         // **見張りは持ち主と同時に立つ。** 書き出しの経路で張っていたころは、
@@ -176,7 +183,9 @@ final class ParamSurface: DeclarationWatcher {
         }
         lastHandledID = request.id
         // **外からの書き込みは待たせずに保存する** (ADR-0030 決定 6)。書いた側は反映を
-        // 見に来るので、静かになるのを待ってから書くと、そのぶん待たせることになる
+        // 見に来るので、静かになるのを待ってから書くと、そのぶん待たせることになる。
+        // **保存は応答より先に書く** — 次の起動は応答にある識別子を「応えた」として
+        // 見送るので、応答に載った書き込みは保存にも入っていなければならない (#1143)
         store?.flushNow()
         // **1 つも入らなくても応答は書く。** 「届いたが全部断られた」と「届いていない」
         // が外から区別できる形にする (ADR-0030 決定 2)
