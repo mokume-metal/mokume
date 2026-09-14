@@ -85,4 +85,107 @@ struct AtomicFileTests {
         let other = facet.appendingPathComponent("other.json")
         #expect(AtomicFile.hasWarned(about: other) == false)
     }
+
+    /// 区画に残っている一時ファイルの名前。
+    private func temporaries(in facet: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: facet.path).filter { $0.hasSuffix(".tmp") }
+    }
+
+    /// **2 つのプロセスが同じ名前へ同時に書く並びを、1 プロセスで決定的に作る。**
+    ///
+    /// 作る → 相手が作る → 相手が置く → 自分が置く。`watch` は切り替えの瞬間だけ 2 世代を
+    /// 重ねるので、両方が同じ区画へ応答や絵を置くとこの並びになる。一時ファイルの名前が
+    /// 固定だった頃は相手が自分の一時ファイルを上書きして持ち去り、自分の置く段が
+    /// 「一時ファイルが無い」で投げていた (手元の 2 プロセスの実測で書き込みの 4 割強・
+    /// [#1198](https://github.com/mokume-metal/mokume/issues/1198))。
+    @Test("書いている途中に同じ名前への別の書き込みが割り込んでも、両方が置ける")
+    func survivesAnotherWriterOnTheSameName() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("report.json")
+
+        try AtomicFile.write(to: url) { temporary in
+            try Data("mine".utf8).write(to: temporary)
+            try AtomicFile.write(Data("theirs".utf8), to: url)
+        }
+
+        // 後から置いたほうが残る。読み手から見えるのは、どちらかの中身だけである
+        #expect(try String(contentsOf: url, encoding: .utf8) == "mine")
+        #expect(try temporaries(in: facet).isEmpty)
+    }
+
+    /// **置けなかった書き込みの後始末は、書いた側がする。** 名前を書き込みごとに変えると、
+    /// 誰も上書きしないので残った分がそのまま溜まる。
+    @Test("置けなかった一時ファイルは残さない")
+    func removesItsTemporaryWhenItFails() throws {
+        struct Interrupted: Error {}
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("frame-000.png")
+
+        #expect(throws: Interrupted.self) {
+            try AtomicFile.write(to: url) { temporary in
+                try Data("half".utf8).write(to: temporary)
+                throw Interrupted()
+            }
+        }
+        #expect(try temporaries(in: facet).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// 走らせた子のプロセス。`waitUntilExit` まで待てば、その番号にはもう誰も居ない。
+    private func launch(_ path: String, _ arguments: [String] = []) throws -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        return process
+    }
+
+    /// **書いている途中に落とされた書き手の分は、次に同じ名前を書くプロセスが片付ける。**
+    ///
+    /// スケッチは `SIGTERM` で即座に終わるので、見張りの差し替えのたびに一時ファイルが
+    /// 残りうる。名前を書き込みごとに変えた以上、片付ける者が居ないと溜まり続ける。
+    /// **重なっている別の世代が書いている途中のものは消さない** — 消すと、その世代の
+    /// 置く段が「一時ファイルが無い」で投げる (#1198 の症状そのもの)。
+    @Test("居なくなった書き手の一時ファイルは片付け、生きている書き手のものは残す")
+    func sweepsTemporariesOfWritersThatAreGone() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("frame-000.png")
+
+        let gone = try launch("/usr/bin/true")
+        gone.waitUntilExit()
+        let alive = try launch("/bin/sleep", ["30"])
+        defer { alive.terminate() }
+
+        let abandoned = AtomicFile.temporaryURL(for: url, writer: gone.processIdentifier, sequence: 7)
+        let inFlight = AtomicFile.temporaryURL(for: url, writer: alive.processIdentifier, sequence: 3)
+        // 別の名前の一時ファイルは、この名前を書いても触れない
+        let otherName = AtomicFile.temporaryURL(
+            for: facet.appendingPathComponent("frame-001.png"), writer: gone.processIdentifier,
+            sequence: 8)
+        for leftover in [abandoned, inFlight, otherName] {
+            try Data("half".utf8).write(to: leftover)
+        }
+
+        try AtomicFile.write(Data("frame".utf8), to: url)
+
+        #expect(try temporaries(in: facet).sorted()
+            == [inFlight.lastPathComponent, otherName.lastPathComponent].sorted())
+    }
+
+    @Test("一時ファイルの名前から書き手を引くのは、その置き場所の形をしたものだけ")
+    func readsTheWriterOnlyFromItsOwnTemporaries() {
+        let url = URL(fileURLWithPath: "/facet/report.json")
+        let own = AtomicFile.temporaryURL(for: url, writer: 4242, sequence: 1).lastPathComponent
+        #expect(AtomicFile.writer(ofTemporary: own, for: url) == 4242)
+
+        // 固定名だった頃の名前・別の置き場所・形の崩れたものは、誰のものとも言えない
+        for name in [
+            ".report.json.tmp", ".report.json.x.4242-1.tmp", ".report.json.0-1.tmp",
+            ".report.json.4242-.tmp", ".report.json.4242.tmp", ".other.json.4242-1.tmp",
+        ] {
+            #expect(AtomicFile.writer(ofTemporary: name, for: url) == nil, "\(name)")
+        }
+    }
 }

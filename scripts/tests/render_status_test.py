@@ -830,5 +830,127 @@ class RenderStatusTest(unittest.TestCase):
         self.assertEqual(self.run_coverage("report_coverage").split()[0], "unknown")
 
 
+# 叩く形として数える起動の綴り。**直前が起動の語であることを要求する** — 散文のコメントが
+# 経緯として `render-status.sh target` と書くのは叩く経路ではないので拾わない
+INVOCATION = re.compile(
+    r"(?P<launcher>\bbash|\bsh|\bexec|\bsource|(?:^|(?<=[\s;&|(]))\.)\s+"
+    r"(?:\"\$\(dirname [^)]*\)/|[^\s]*?)render-status\.sh[\"']?"
+    r"(?:[ \t]+(?P<arg>[^\s;&|)#]+))?"
+)
+
+
+def accepted_modes(script_text):
+    """`case "$mode" in` の腕から、受け付ける綴りを読む (写さない — 口が増えたら追随する)。"""
+    body = script_text.split('case "$mode" in', 1)[1].split("\nesac", 1)[0]
+    return set(re.findall(r"^  ([a-z][a-z-]*)\)$", body, re.MULTILINE))
+
+
+def bad_invocations(text, modes):
+    """口に無い綴り・引数なし・source で叩いている箇所を (行番号, 行, 理由) で返す。"""
+    found = []
+    for number, line in enumerate(text.splitlines(), 1):
+        for match in INVOCATION.finditer(line):
+            launcher, arg = match.group("launcher"), match.group("arg")
+            if launcher in (".", "source"):
+                found.append((number, line, "source している (mode が呼び手の $1 を読む)"))
+            elif arg is None:
+                found.append((number, line, "引数なしで叩いている"))
+            elif arg.strip("\"'") not in modes:
+                found.append((number, line, f"口に無い綴り {arg!r}"))
+    return found
+
+
+class CallersTest(unittest.TestCase):
+    """render-status.sh を叩く側が、口 (local / proxy) 以外の綴りを使っていないこと (#867)。
+
+    #867 では `make catch-up` の途中で `使い方: ... local|proxy` が出て止まり、どこから
+    知らない綴りで叩かれたのかを誰も辿れなかった。調べた時点で叩く経路は 3 つとも
+    引数つきだったが、それは grep で一度確かめただけで、**#819 で口を 4 つから 2 つへ
+    畳んだ後も、冒頭の「使い方」には畳んだ `coverage` が残っていた** — 読んだ人が
+    そのまま叩けば同じ 1 行に落ちる。確かめ続ける形にする。
+
+    見るのは追跡されたファイルのうち、実際に叩く場所 (Makefile・workflow・scripts の
+    .sh とその冒頭の使い方) である。検査 (`scripts/tests/`) は知らない綴りを
+    わざと渡すので除く。散文 (`*.md`・`docs/`・`changelog.d/`) は経緯として古い綴りを
+    書くことがあるので除く。**Python から subprocess で叩く形は見ていない** — いまその
+    呼び手は無い。
+    """
+
+    def test_口の綴りはスクリプト自身から読める(self):
+        modes = accepted_modes(SCRIPT.read_text(encoding="utf-8"))
+        self.assertEqual(modes, {"local", "proxy"})
+
+    def test_物差しは悪い呼び方を捕まえる(self):
+        modes = {"local", "proxy"}
+        bad = [
+            "#   bash scripts/render-status.sh coverage  # 覆い",
+            "\tbash scripts/render-status.sh",
+            '. "$(dirname "${BASH_SOURCE[0]}")/render-status.sh"',
+            "        run: bash scripts/render-status.sh target",
+        ]
+        for line in bad:
+            with self.subTest(line=line):
+                self.assertEqual(len(bad_invocations(line, modes)), 1)
+        good = [
+            "\tbash scripts/render-status.sh local",
+            "        run: bash scripts/render-status.sh proxy",
+            "# `catch-up.sh` は `render-status.sh target` と `render-status.sh coverage` を",
+            "  make render-status",
+        ]
+        for line in good:
+            with self.subTest(line=line):
+                self.assertEqual(bad_invocations(line, modes), [])
+
+    def test_叩く側は口の綴りだけを使う(self):
+        modes = accepted_modes(SCRIPT.read_text(encoding="utf-8"))
+        files = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=REPO, capture_output=True, check=True
+        ).stdout.decode("utf-8").split("\0")
+        seen, problems = 0, []
+        for name in filter(None, files):
+            if name.startswith(("scripts/tests/", "docs/", "changelog.d/")) or name.endswith(".md"):
+                continue
+            try:
+                text = (REPO / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
+                continue
+            seen += len(INVOCATION.findall(text))
+            problems += [f"{name}:{n}: {why}\n    {line.strip()}" for n, line, why in bad_invocations(text, modes)]
+        self.assertEqual(problems, [], "口に無い呼び方が残っている:\n" + "\n".join(problems))
+        # 物差しが空回りしていないこと — Makefile の local と ci.yml の proxy は必ず拾う
+        self.assertGreaterEqual(seen, 2, "叩く経路を 1 つも拾えていない (物差しが壊れている)")
+
+
+class UsageLineTest(unittest.TestCase):
+    """使い方の 1 行から、受け取った引数と呼び出し元が読めること (#867)。"""
+
+    def run_from_caller(self, *argv):
+        with tempfile.TemporaryDirectory() as tmp:
+            caller = Path(tmp) / "fake-caller.sh"
+            # exit $? を置くのは、bash が最後のコマンドを exec で置き換えて親が消えるのを避けるため
+            caller.write_text(f'#!/bin/bash\n/bin/bash "{SCRIPT}" "$@"\nexit $?\n')
+            proc = subprocess.run(
+                ["/bin/bash", str(caller), *argv], cwd=tmp, capture_output=True,
+                text=True, encoding="utf-8", errors="replace",
+            )
+        self.assertEqual(proc.returncode, 64, proc.stderr)
+        lines = [l for l in proc.stderr.splitlines() if l.startswith("使い方")]
+        self.assertEqual(len(lines), 1, proc.stderr)
+        return lines[0]
+
+    def test_知らない綴りと呼び出し元を名乗る(self):
+        line = self.run_from_caller("coverage")
+        self.assertIn("受け取った引数: 'coverage'", line)
+        self.assertRegex(line, r"呼び出し元: [^←]*fake-caller\.sh")
+
+    def test_引数なしはなしと名乗る(self):
+        line = self.run_from_caller()
+        self.assertIn("受け取った引数: なし", line)
+        self.assertIn("fake-caller.sh", line)
+
+    def test_空の引数も見分けられる(self):
+        self.assertIn("受け取った引数: ''", self.run_from_caller(""))
+
+
 if __name__ == "__main__":
     unittest.main()
