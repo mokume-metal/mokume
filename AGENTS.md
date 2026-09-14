@@ -20,7 +20,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 | 作業の経過・発見・残タスク | GitHub Issues / PR (ローカルファイルやセッション記憶に残さない) |
 | この文書がどこまで外のパッケージに効くか | [ADR-0026](docs/decisions/0026-plugin-repository-alignment.md) 決定 1 の 3 段。外のパッケージ側から読みに来た人はまずそこを読む |
 
-ADR の帰属は ADR 自身の先頭に SPDX ヘッダ (HTML コメント) を置いて宣言し、`REUSE.toml` には足さない — 共有ファイルに帰属を集めると、無関係な ADR 同士が必ず conflict する ([#149](https://github.com/mokume-metal/mokume/issues/149))。
+ADR の帰属は ADR 自身の先頭に SPDX ヘッダ (HTML コメント) を置いて宣言し、`REUSE.toml` には足さない ([#149](https://github.com/mokume-metal/mokume/issues/149))。
 
 ```markdown
 <!--
@@ -31,7 +31,7 @@ SPDX-License-Identifier: MIT
 
 ### ADR の状態欄
 
-**方針が変わったら、状態欄がそれを名乗る。** 本文で改訂を丁寧に追っていても状態欄が `採用` のままだと、「いま有効な決定はどれか」を本文の最後まで読まないと判定できない ([#545](https://github.com/mokume-metal/mokume/issues/545))。`採用 (日付)` に ` / ` で足す綴りは 3 つ:
+**方針が変わったら、状態欄がそれを名乗る** ([#545](https://github.com/mokume-metal/mokume/issues/545))。`採用 (日付)` に ` / ` で足す綴りは 3 つ:
 
 | 綴り | 使うとき |
 | --- | --- |
@@ -47,7 +47,7 @@ SPDX-License-Identifier: MIT
 
 1. 変更は Issue 起票から始める。起票は雑でよい (書式不要・分類は機械がタイトルから下書きする)。複数工程は親 Issue + sub-issue で構成し、本文チェックリストは使わない。**印を付けられるのは完了条件を知っている起票者だけ**で、エージェントも自分が起票して本文に完了条件を書けた Issue には自分で付けてよい ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1 の追補)。他人が書いた Issue には付けない。**在庫は着手を待たずに作ってよい** — 1 件ずつ調べて完了条件を本文へ書くなら、印を付けるのが着手の直前である必要は無い (同追補の 2026-09-07 改訂)。調べて在庫にする手順は [`.claude/skills/stock-triage/`](.claude/skills/stock-triage/SKILL.md) が持つ
 2. **着手できるのは `verify: triaged` が付いた Issue だけ。** ラベルが無ければ未トリアージなので着手しない — まず議論して「どうなれば解消か」を Issue 本文に固めてから付ける ([ADR-0002](docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1・[ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 1)
-3. **着手時に完了条件がまだ妥当かを確かめる。** ラベルは付いた時点の判断しか表さない — 各条件を現行のコードと突き合わせ、「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書く。ずれていれば Issue 本文のほうを先に更新する ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 4。[#457](https://github.com/mokume-metal/mokume/issues/457) は起票時の 3 条件が着手前に既に満たされていた)
+3. **着手時に完了条件がまだ妥当かを確かめる。** ラベルは付いた時点の判断しか表さない — 各条件を現行のコードと突き合わせ、「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書く。ずれていれば Issue 本文のほうを先に更新する ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 4)
 4. その突き合わせを含むプラン (変更点・確認方法) を対象 Issue にコメントで残す。実装の過程で変わったら差分を残す (PR を出した後なら PR 側へ)。記憶がリセットされた次のセッションが、GitHub を読むだけで再開できる状態を保つため
 5. `main` から `<type>/<短い説明>` ブランチを切る
 6. PR を出す。本文は 目的 / 変更点 / 確認方法。**「確認方法」には閉じる Issue ごとに完了条件と、それを何でどう確かめたかの対応表を置く** (承認の代わりに残す記録 — [ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 2。`review-gate` は番号が現れることだけを見る)。Issue を閉じる `Closes #N` は PR 本文に書く (squash merge ではコミット側の記述は GitHub に届かない)。Issue を閉じない例外 PR には `no-issue` ラベルを付ける
@@ -61,7 +61,7 @@ SPDX-License-Identifier: MIT
 | 筋が通らないが、完了条件は書ける | 起票し、**完了条件を本文へ書いて `verify: triaged` まで自分で付ける** |
 | 完了条件を自分で書けない (設計・判断が要る) | **無印で置く** — メンテナの判断を待つ |
 
-**印は起票の瞬間に付ける。** Issue の author は identity 分離の対象外なので ([ADR-0003](docs/decisions/0003-agent-identity-separation.md) が分けたのは PR の作成だけ)、エージェントが起票した Issue も次のセッションからはメンテナ名義に見える — **自分が起票したと言えるのはその瞬間だけ**で、後回しにすると誰も着手できない Issue になる。実測では未トリアージ 69 件のうち 34 件がこれである。
+**印は起票の瞬間に付ける。** エージェントが起票した Issue も次のセッションからはメンテナ名義に見えるので、**自分が起票したと言えるのはその瞬間だけ**で、後回しにすると誰も着手できない Issue になる ([ADR-0036](docs/decisions/0036-unattended-issue-processing.md) 決定 6)。
 
 Claude Code のセッションでは `scripts/plan-record.sh` がこれを見る — 完了条件の現況が書かれていないプランは差し戻し、書かれていればコメント投稿用に整えて投稿コマンドを示す。未投稿のままセッションを終えようとするのも差し戻す。投稿はエージェントが `scripts/comment.sh` で行う。
 
@@ -103,11 +103,19 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 
 **`BEHIND` でも "Update branch" は押さない。** 必須チェックは `strict` を切ってあり、queue が合流後の姿で再検証するので、追随しても得るものが無く auto-merge だけが外れる ([#110](https://github.com/mokume-metal/mokume/pull/110))。例外は描画 PR で `local-render` が failure になったときだけで、対処は「描画に影響する変更」節にある。
 
-止まって見えるときの読み分け。**この表は `scripts/stall-watch.sh` が定期に実行する** ([#961](https://github.com/mokume-metal/mokume/issues/961)) — 機械が打てる行 (auto-merge の掛け直し・古い失敗ジョブの rerun) は打たれ、人手が要る行だけが run の赤で名乗られる。どの行を打ちどの行を名乗るかはスクリプトの冒頭にある。**当番は数時間おきにしか回らない** — cron は 15 分ごとに頼んでいるが、GitHub の schedule は間引かれ、実測は 1 日 7 回前後だった ([#1197](https://github.com/mokume-metal/mokume/issues/1197))。**急ぐときは当番を待たず、自分でこの表を読んで打つ。** **当番の対象外にしたい PR は Draft にする** (作業中の描画 PR を Draft にしておくのと同じ印である)。
+承認の要否は `reviewDecision` には現れないので `mergeStateStatus` を見る (承認待ちなら `BLOCKED`・承認されると `CLEAN`)。**`CLEAN` だけでは「承認された」と読めない** — 承認の要らない PR も `CLEAN` なので、承認が付いたかどうかは `latestReviews` を見る ([#573](https://github.com/mokume-metal/mokume/issues/573))。
+
+承認が要るのは **重要パス (`docs/decisions/`・`.github/`・`.claude/`) を触る PR だけ**で、要求もマージの停止も `.github/rulesets/main-protection.json` の `required_reviewers` が担う (team `maintainers` へ 1 承認を課す)。承認待ちの間も `ci-gate` は緑のままである。
+
+承認は native の Approve レビューのみ。**承認が要る PR も要らない PR も App identity で作る** — author を承認者集合の外に置くのが不変条件で、要否は作成前に確定できない ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。
+
+## 止まって見えるときの読み分け
+
+**この表は `scripts/stall-watch.sh` が定期に実行する** ([#961](https://github.com/mokume-metal/mokume/issues/961)) — 機械が打てる行 (auto-merge の掛け直し・古い失敗ジョブの rerun) は打たれ、人手が要る行だけが run の赤で名乗られる。どの行を打ちどの行を名乗るかはスクリプトの冒頭にある。**当番は数時間おきにしか回らない** ([#1197](https://github.com/mokume-metal/mokume/issues/1197)) ので、**急ぐときは当番を待たず、自分でこの表を読んで打つ。** **当番の対象外にしたい PR は Draft にする** (作業中の描画 PR を Draft にしておくのと同じ印である)。
 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
-| `autoMerge: true` + `UNKNOWN` で **check が 1 本も付かない** (`local-render` のような手元の commit status を除く) | main と衝突していて合流後の木が作れず、`pull_request` の workflow が起動していない ([#694](https://github.com/mokume-metal/mokume/issues/694)) | `git merge-tree --write-tree origin/main HEAD` で確かめ、手元で解いて push する。**ラベルの付け直しも close → reopen も効かない** (下の段落) |
+| `autoMerge: true` + `UNKNOWN` で **check が 1 本も付かない** (`local-render` のような手元の commit status を除く) | main と衝突していて合流後の木が作れず、`pull_request` の workflow が起動していない ([#694](https://github.com/mokume-metal/mokume/issues/694)) | `git merge-tree --write-tree origin/main HEAD` で確かめ、手元で解いて push する。**ラベルの付け直しも close → reopen も効かない** |
 | `autoMerge: false` + `BLOCKED` | 承認待ち、または auto-merge が外れた ([#114](https://github.com/mokume-metal/mokume/issues/114) に出来事ごとの実測) | 承認を待つ / `gh pr merge <番号> --auto --squash` を打ち直す |
 | 全 check が緑なのに進まない | 同じコミットに残る古い失敗 check run が判定を固定している ([#259](https://github.com/mokume-metal/mokume/issues/259)) | `gh run rerun <run-id> --failed` — **ただし PR のメタデータを読むジョブ (`pr-title`) には打たない** ([#699](https://github.com/mokume-metal/mokume/issues/699)) |
 | `autoMerge: false` + `CLEAN` + 全 check 緑 で `isInMergeQueue: true` | 止まっていない — 予約が queue へ移ると `autoMergeRequest` は null になる ([#628](https://github.com/mokume-metal/mokume/issues/628)) | 何も打たない (queue が進めている) |
@@ -121,19 +129,9 @@ gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
 gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullRequest(number:<番号>){isInMergeQueue mergeQueueEntry{position state}}}}' --jq '.data.repository.pullRequest'
 ```
 
-**check が 1 本も付かないのは「まだ来ていない」ではなく「来ない」。** GitHub は合流後の木を作れないと `pull_request` の workflow を起こさないので、main と衝突した PR は赤くならず**無音**になる (`gh run list --branch <名前>` も空を返す)。`mergeStateStatus` も `DIRTY` ではなく `UNKNOWN` のままなので、状態欄からも衝突とは読めない ([#690](https://github.com/mokume-metal/mokume/pull/690) はここで 45 分止まった)。**ラベルの付け外しも close → reopen も効かない** — `labeled` も `reopened` も起動条件には在るが、どちらも既にある head の SHA に対するイベントで、合流後の木が作れない事情は変わらないからである。判定は手元で `git merge-tree --write-tree origin/main HEAD` を打てば付く。解いた合流だけは push する (「取り込みは手元だけで済ませ、push しない」の、既に在る例外 — 「描画に影響する変更」節)。**踏みやすいのは絵に触る PR である** — `Sketch.swift` の台帳を大きく書き換えるので、並行すると衝突しやすい。
+**check が 1 本も付かないのは「まだ来ていない」ではなく「来ない」。** 衝突しても赤くならず、`mergeStateStatus` も `DIRTY` ではなく `UNKNOWN` のままなので、状態欄からは衝突と読めない ([#690](https://github.com/mokume-metal/mokume/pull/690))。
 
-**`autoMerge: false` は「外れた」と「queue に入った」の両方を指す。** 予約が実際に merge queue へ移ると `autoMergeRequest` は null になるので、`CLEAN` + 全 check 緑と揃っても故障とは限らない ([#628](https://github.com/mokume-metal/mokume/issues/628))。分けるのは `isInMergeQueue` の 1 欄だけで、これは `gh pr view --json` に無いので上の GraphQL で引く — **`make catch-up` を打つ前にこれを見る。** eject が起きるのは描画 PR だけだが、**queue 入りはどの PR でも起きる** (#628 は `docs/decisions/` しか触らない PR で踏んだ)。取り違えたまま打つと、描画 PR では数分かかる `make ci-check` まで走って空費する (描画に触れない PR なら `catch-up` 自身が「台帳の絵を動かさない」で断る)。`autoMergeRequest` が null になるのが正常だということは `catch-up` も queue へ戻した後に名乗る。
-
-承認の要否は `reviewDecision` には現れないので `mergeStateStatus` を見る (承認待ちなら `BLOCKED`・承認されると `CLEAN`)。理由は [ADR-0003](docs/decisions/0003-agent-identity-separation.md) 決定 4。**`CLEAN` だけでは「承認された」と読めない** — 承認の要らない PR も `CLEAN` なので、承認が付いたかどうかは `latestReviews` を見る ([#573](https://github.com/mokume-metal/mokume/issues/573) はここを取り違えて、承認済みの PR を「承認 0 で入った」と報告している)。
-
-**一度承認された PR も、push で承認が落ちれば `BLOCKED` へ戻る。** `required_reviewers` はレビュー依頼を送らないので、落ちたことは誰にも届かない ([#1033](https://github.com/mokume-metal/mokume/issues/1033) は 69 分と 17 分止まった)。当番が表の 8 行目として名乗る — **この分類だけ猶予が 15 分と短い**のは、既定の 60 分では実測の 2 件とも赤くならなかったためである。「まだ誰も見ていない」との分かれ目は落とした出来事 (`REVIEW_DISMISSED_EVENT`) があるかどうかで、`latestReviews` からは読めない。
-
-承認が要るのは **重要パス (`docs/decisions/`・`.github/`・`.claude/`) を触る PR だけ**で、要求もマージの停止も `.github/rulesets/main-protection.json` の `required_reviewers` が担う (team `maintainers` へ 1 承認を課す)。承認待ちの間も `ci-gate` は緑のままである。
-
-かつては `verify: human` の Issue に紐づく PR にも Approve を要求していたが、263 件のマージで測ったら固有に承認を要求したのは 36 件・変更要求は 0 件・初承認までの中央値は 11 分で、止めてはいなかった ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) が畳んだ)。代わりに置いたのが PR 本文の対応表である。
-
-承認は native の Approve レビューのみ。**承認が要る PR も要らない PR も App identity で作る** — author を承認者集合の外に置くのが不変条件で、要否は作成前に確定できない ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。
+**`autoMerge: false` は「外れた」と「queue に入った」の両方を指す** ([#628](https://github.com/mokume-metal/mokume/issues/628))。分けるのは `isInMergeQueue` の 1 欄だけで、`gh pr view --json` に無いので上の GraphQL で引く — **`make catch-up` を打つ前にこれを見る。**
 
 ## 版の出方
 
@@ -157,13 +155,13 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullReq
 
 適用はエージェントの token では通らない (ADR-0003 決定 1 により `Administration` 権限を持たない)。定義ファイルの PR までがエージェントの仕事で、merge 後の `--apply` はメンテナが打つ。
 
-**必須チェックを消すときだけ、適用が先である。** 足す・変えるなら適用が後でも安全側に倒れる (新しい要求が効かないだけ) が、消す場合は**その PR 自身が消そうとしている必須チェックを満たせなくなる** — 報告する者を同じ PR で消すからで、承認が付いても `Expected — Waiting for status to be reported` から動かない ([#620](https://github.com/mokume-metal/mokume/pull/620) で実測・[ADR-0006](docs/decisions/0006-github-settings-as-code.md) 決定 3 の追補)。鮮度検査は作業ブランチを `editing` と判定するので、merge 前に打っても止まらない。
+**必須チェックを消すときだけ、適用が先である** — 消す PR 自身が、消そうとしている必須チェックを満たせなくなる ([ADR-0006](docs/decisions/0006-github-settings-as-code.md) 決定 3 の追補)。merge 前に打っても鮮度検査は止めない。
 
-照合も適用も読むのは手元にチェックアウトされている定義なので、古い版のツリーから打つと嘘をつく。照合は手元が古ければそう名乗り ([#311](https://github.com/mokume-metal/mokume/issues/311))、適用は古ければ赤で止まる ([#425](https://github.com/mokume-metal/mokume/issues/425))。押し通すためのフラグは無い。
+照合も適用も手元にチェックアウトされている定義を読むので、最新の main から打つ (古ければ照合はそう名乗り、適用は赤で止まる)。
 
-`bypass_actors` はルールセットへの write access がある認証にしか返らない。手元での照合は読めなければ赤にする (一番危ない項目を見ていない緑を作らないため)。CI にその鍵は置かないので、日次のドリフト検査 (`.github/workflows/ruleset-drift.yml`) は `--without-bypass-actors` で走り、見ていないことを出力が名乗る。**この項目を見張っているのは、メンテナが手元で `bash scripts/check-rulesets.sh` を打つときだけである** ([ADR-0006](docs/decisions/0006-github-settings-as-code.md) 決定 5)。機械で見張る仕組みは実害が出てから足す。
+**`bypass_actors` を見張っているのは、メンテナが手元で `bash scripts/check-rulesets.sh` を打つときだけである** — CI の日次ドリフト検査はその項目を読む鍵を持たず、見ていないことを出力が名乗る ([ADR-0006](docs/decisions/0006-github-settings-as-code.md) 決定 5)。
 
-定義を merge した直後にも同じ検査が走る。`--apply` を打つまでは定義だけが先行するので、その赤は故障ではなく催促で、この契機では Issue は立たない ([#381](https://github.com/mokume-metal/mokume/issues/381))。
+定義を merge した直後の検査の赤は、`--apply` を打つまでの催促であって故障ではない ([#381](https://github.com/mokume-metal/mokume/issues/381))。
 
 ## sub-issue の使い方
 
@@ -212,13 +210,13 @@ bash scripts/comment.sh pr    <番号> --body "<本文>"
 
 mokume 向けのエージェント支援 (スキル・hooks・設定) はこのリポジトリの `.claude/` で管理し、個人環境のプラグインやマシン設定には置かない (ADR-0017)。入れている人にだけ効く支援を前提にすると、規約が環境によって変わるためである。
 
-**外側に残るのは 2 類型だけで、どちらも「移し先が無い」のではなく「守る場面がここに無い」ことが理由である** ([ADR-0017](docs/decisions/0017-agent-support-locality.md) 決定 1 の改訂) — 仕様上、個人環境の設定にしか書けないもの / 守る場面がこのリポジトリの外にあるもの (clone する前・どのリポジトリにも属さない場所・公開面に置けないルールを持つもの)。**それ以外は実体ごとこちらが持つ。**
+外側に残るのは 2 類型だけ — 仕様上、個人環境の設定にしか書けないもの / 守る場面がこのリポジトリの外にあるもの ([ADR-0017](docs/decisions/0017-agent-support-locality.md) 決定 1)。**それ以外は実体ごとこちらが持つ。**
 
 同種の機構が双方にあるときは、リポ側が担保して個人側を `env` で黙らせる (いま 3 本: `CLAUDE_PLAN_RECORD` / `RS_CI_WATCH` / `CLAUDE_GH_COMMENT_GUARD`)。リポ側に対応物が無いものは、受け取ってから黙らせる。
 
 **無人セッションの名乗りは `MOKUME_UNATTENDED=1` で、立てるのは外に居る起動側である** ([ADR-0036](docs/decisions/0036-unattended-issue-processing.md) 決定 2)。読むのは `scripts/plan-record.sh` で、変わるのは 2 つだけ — capture が「承認は待たない」と言い添え、guard が回数で諦めなくなる (諦めた先は「人間の判断へ返す」なので、返す先が居ないとプランが失われる)。
 
-**この 1 本だけは `env` に書けない。** `.claude/settings.json` の `env` は**そのリポジトリの全セッション**に効くので、「無人のときだけ」を静的な設定では表せない。個人環境側の plan gate を黙らせる env も、同じ理由で起動側が併せて立てる — リポジトリ側が担保できるのは、**綴りを 1 つに決めて読む側をここに置く**ところまでである。
+**この 1 本だけは `env` に書けない** (`env` はそのリポジトリの全セッションに効く)。個人環境側の plan gate を黙らせる env も、起動側が併せて立てる。
 
 `PreToolUse` で止めているのは 3 本:
 
@@ -240,9 +238,9 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 
 この 1 行の形が要求すること:
 
-- **代入から始めて後続コマンドまで `&&` で繋ぐ。** `export GH_TOKEN="$(...)"` と書くと終了コードが `export` のもの (0) に化け、発行に失敗しても空の token でメンテナの認証へフォールバックする ([#122](https://github.com/mokume-metal/mokume/issues/122))。危険な形は `scripts/pr-identity-guard.sh` が差し戻す
-- **フックが黙っていることを「安全である」と読まない。** `pr-identity-guard.sh` の配線は `.claude/settings.json` にあり、読まれるのは**そのセッションが主として開いたディレクトリ**のものだけである。別のリポジトリを主とするセッションがこのリポジトリの worktree で作業しても効かない (途中で `cd` しても後から有効にはならない)。塞ぐ手が無いことは [ADR-0007](docs/decisions/0007-approvability-invariant.md) 決定 3 が示しているので、その場合はこの節を自分で守る ([#513](https://github.com/mokume-metal/mokume/issues/513))
-- push は `-u` を付ける。追跡先を持たないブランチは merge されても `[gone]` にならず手元に残り続ける ([#376](https://github.com/mokume-metal/mokume/issues/376))。`origin/main` を追跡している状態も同じなので、`git branch --unset-upstream` してから `-u` で押し直す
+- **代入から始めて後続コマンドまで `&&` で繋ぐ。** `export GH_TOKEN="$(...)"` の形は発行の失敗を握り潰す ([#122](https://github.com/mokume-metal/mokume/issues/122))。危険な形は `scripts/pr-identity-guard.sh` が差し戻す
+- **フックが黙っていることを「安全である」と読まない。** 配線が読まれるのは、そのセッションが主として開いたディレクトリの `.claude/settings.json` だけである — 別のリポジトリを主とするセッションでは効かないので、この節を自分で守る ([ADR-0007](docs/decisions/0007-approvability-invariant.md) 決定 3・[#513](https://github.com/mokume-metal/mokume/issues/513))
+- push は `-u` を付ける ([#376](https://github.com/mokume-metal/mokume/issues/376))。`origin/main` を追跡している枝は `git branch --unset-upstream` してから `-u` で押し直す
 
 手で揃える設定は `MOKUME_APP_PRIVATE_KEY_CMD` (App の秘密鍵 PEM を標準出力に出すコマンド) の 1 つだけ。秘密鍵の中身も在処もリポジトリに書かない。token は有効期限 1 時間で、キャッシュしない。App ID とインストール ID は `scripts/gh-app-token.sh` が org から自力で引く。
 
@@ -269,10 +267,10 @@ bash scripts/orphan-processes.sh
 - Conventional Commits: `<type>(<scope>): <要約>`。type は feat / fix / docs / refactor / test / chore / ci / perf / build。type と scope は英語、要約は日本語でよい
 - 1 コミット 1 関心。**1 PR は「1 つの説明で筋が通る範囲」** — 同じ親の sub-issue 群も、作業中に踏んで起票した障害もまとめて閉じてよい ([ADR-0031](docs/decisions/0031-triage-as-the-single-gate.md) 決定 3)。閉じる Issue ごとに「確認方法」へ対応表を置く
 - **検証は `make ci-check` に集約する。push 前に通す — これは作法ではなく merge の条件である。** 全部が通ったときだけ `local-render` が commit status に打たれ、描画に触れる PR はそれが無いと merge できない (報告されないときは理由が出る。よくあるのは作業ツリーが汚れているまま打った場合)
-- **何が走ったかの正本は `.build/test-results-swift-testing.xml` で、端末に流れる文字ではない** ([#1056](https://github.com/mokume-metal/mokume/issues/1056))。swift-testing の端末出力は実行ごとに数十〜数百行を落とす — 全件が緑で `make` が 0 を返しているのに、走った検査の行が記録に無い。落ちた検査を探すときも、緑を数えるときも、こちらの XML を読む (`local-render` の判定もここから読んでいる)。**赤を見たら、打ち直す前に `.build/test-log.txt` を退避する** — `tee` は開くたびに切り詰めるので、再現を試みる打ち直しそのものが記録を消す
-- **性能は release で測る。** debug の数字を性能の根拠にしない。検査を release で回す入口は `make test-release` の 1 つで、`ci-check` には含めない (計測のためだけ・[#761](https://github.com/mokume-metal/mokume/issues/761))
+- **何が走ったかの正本は `.build/test-results-swift-testing.xml` で、端末に流れる文字ではない** (端末出力は行を落とす・[#1056](https://github.com/mokume-metal/mokume/issues/1056))。**赤を見たら、打ち直す前に `.build/test-log.txt` を退避する** — 打ち直しが記録を切り詰める
+- **性能は release で測る。** debug の数字を性能の根拠にしない。入口は `make test-release` の 1 つ ([#761](https://github.com/mokume-metal/mokume/issues/761))
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 ファイル置く (CHANGELOG を直接編集しない)
-- **検査の「待たない」は待つ側が持つ。`.timeLimit` は使わない。** 上限は検査の走り出しからの時計で測られ、このパッケージの検査はすべて main actor に載っているので、どんな値を書いても「検査**全体**が何秒で終わるか」を要求することになる — 検査が増えた日に、無関係な変更が無関係な検査を赤くする ([#564](https://github.com/mokume-metal/mokume/issues/564) の実測: 905 件のうち 875 件が「60 秒超」を報告した)。固まりうる待ちには、待つ側が期限を持たせて越えたら殺す
+- **検査の「待たない」は待つ側が持つ。`.timeLimit` は使わない** — 検査はすべて main actor に載るので、どんな値も「検査**全体**が何秒で終わるか」を要求してしまう ([#564](https://github.com/mokume-metal/mokume/issues/564))。固まりうる待ちには、待つ側が期限を持たせて越えたら殺す
 
 ## してはならないこと
 
@@ -281,7 +279,7 @@ bash scripts/orphan-processes.sh
 - 想定だけの API を先回りで作らない。機能は実際の作品制作で踏まれた必要から正当化する (ADR-0001 原則 4)。作品はこのリポジトリの外で作り、依存は一方向で、このリポジトリは作品を参照しない (`Package.swift` にも CI にも入らない。[ADR-0022](docs/decisions/0022-production-track.md))。実需が入る口は `Feature` 型の Issue 1 本だけで、`Sketches/` で踏んだものは実需に数えない。作品で踏んだバグは `Bug` で普通に起票し実需を要求しないが、再現はこのリポジトリの中の最小のスケッチかテストに落とす。作品の側の運用はここでもあちらでも規約にしない (書けばドリフトする)
 - 新しいゲート・検査・hook・ラベル・ワークフローを足す PR は、それが塞ぐ実害を Issue 番号で示す ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md))。「あると良さそう」では足さない — 思いついたら起票して待たせる (順序は 実害 → Issue → 機構)。消すほうには実害を要求しない
 - 足すと決めた後も、まず既存で済まないかを見る — 既存の機構の責務を広げる / GitHub や既存ツールが native に持つもので済ませる / 置き換える、の順に検討し、選んだ段を PR 本文に書く (ADR-0008 決定 5)。理由を書けない重複は、どちらかが要らない
-- **写しを畳むのも部品を足すことである** — 畳むのは「割れたときに黙って壊れる」写しだけで、「同じものが 2 箇所にある」は実害ではない ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 6)。割れが出力に見えるもの・終了コードや読む範囲のような呼び出し側の契約を含むものは畳まない。畳む・畳まないの判断は、同じ導出を繰り返さないよう ADR-0008 の表へ足す
+- **写しを畳むのも部品を足すことである** — 畳むのは「割れたときに黙って壊れる」コードの写しだけで、判断は [ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 6 の表に照らし、新しい判断もそこへ足す
 
 ## 描画に影響する変更
 
@@ -289,34 +287,20 @@ bash scripts/orphan-processes.sh
 
 これは作法ではなく機械の要求で、`scripts/drawing-paths.txt` に載る場所を触った PR の本文に絵が 1 つも無ければ `drawing-evidence` が赤で差し戻す ([#306](https://github.com/mokume-metal/mokume/issues/306))。見るのは絵が用意されていることだけで、絵が正しいかは見ない — 正しさの担い手は人間と AI の目である ([ADR-0019](docs/decisions/0019-drawing-verification.md) 決定 1)。絵を出しようがない変更 (描画のパスに居るが絵は変わらないリファクタ・コメントの修正) は `no-visual-change` ラベルで外す (本文の編集でもラベルの付け外しでも CI は自動で再評価する)。
 
-**一覧は 1 つだが、答える問いは 2 つある。** 証跡を要求するかの問いと、下の「覆い」の問いで、`evidence-only` の印が付いた行は前者にだけ効く — 「絵は動きうるが、台帳が描く絵は動かせない」場所である ([#497](https://github.com/mokume-metal/mokume/issues/497))。いま印が付いているのは `Sketches/` だけで、参照スケッチは独立した executable target なので台帳の絵を 1 画素も動かせない (合流後の木でビルドが破れれば merge queue の `ci-check` が見る)。
-
-守っている不変条件は 1 行 — **main の絵に関わるファイルは、常に誰かが手元で実際に回して確かめた組み合わせのままである。** 手元の実行は合流前の枝でしか回らないので、`scripts/render-status.sh` が merge queue で 2 つを見る ([#435](https://github.com/mokume-metal/mokume/issues/435)・[#467](https://github.com/mokume-metal/mokume/issues/467)):
+守っている不変条件は 1 行 — **main の絵に関わるファイルは、常に誰かが手元で実際に回して確かめた組み合わせのままである。** `scripts/render-status.sh` が merge queue で 2 つを見る:
 
 | 判定 | `local-render` | 対処 |
 | --- | --- | --- |
 | 手元が回した木と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | `make catch-up` |
 | 覆いを壊す open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | **先頭 #N を見てから決める** — 全 check 緑・`CLEAN` で `autoMerge: false` なら予約が無いだけなので `gh pr merge <N> --auto --squash` で入る / まだ作業中ならその PR を Draft に落とす / どちらでもなければ待つ (自分の側で打ち直しても無駄になる) |
 
-**待つ前に先頭を見るのは、赤の理由が先頭の側にあるからである。** [#1053](https://github.com/mokume-metal/mokume/pull/1053) が `#1047 の merge を待つ` で赤くなったとき、先頭の [#1047](https://github.com/mokume-metal/mokume/pull/1047) は全 check 緑・`CLEAN` で、**予約が掛かっていないだけ**だった (`isInMergeQueue` も `autoMergeRequest` も無し)。掛け直したらその場で merge され、後続の待ちも解けた ([#1060](https://github.com/mokume-metal/mokume/issues/1060))。Draft に落とすのは**先頭が本当に作業中のとき**の手で、そうでない先頭を落とすと、全部緑で承認も要らない PR を番号の順番だけの理由で棚上げすることになる。当番 (`scripts/stall-watch.sh`) も先頭を単独で見て予約を掛け直すが、数時間おきにしか回らない (#1197) ので、先頭を見るのは待っている側の仕事である。
-
 順番は番号順なので、**まだ作業中の描画 PR は Draft にしておく** — Draft は順番の外なので、完成して承認まで済んだ後続を番号だけの理由で待たせずに済む ([#497](https://github.com/mokume-metal/mokume/issues/497))。
 
-手元が何を回したかは、`local-render` の報告が `covers=` として名乗る ([#612](https://github.com/mokume-metal/mokume/issues/612))。**判定はその名乗りと合流後の木を突き合わせる** — PR の head の木は見ない。だから覆い直しに push が要らない。
+`make catch-up` は復旧の 3 手 — main を取り込む → `make ci-check` → `--auto` を掛け直す — を 1 手にする。手で追うと **1 手抜けても PR は全チェック緑・`CLEAN` のまま止まる**ので、`catch-up` を使う ([#457](https://github.com/mokume-metal/mokume/issues/457))。
 
-`make catch-up` は復旧の 3 手 — main を取り込む → `make ci-check` → `--auto` を掛け直す — を 1 手にする ([#457](https://github.com/mokume-metal/mokume/issues/457))。**打つ意味が無いときは走らない**ので、上の表の 2 行目 (先に描画 PR が居る) では番号を名指しして断り、数分かかる検査を空費しない。手で 3 手を追ってもよいが、**1 手抜けても PR は全チェック緑・`CLEAN` のまま止まる**ので、それに気付く経路が無い。
+**持ち主のセッションが居ない描画 PR は、別のセッションが代打ちできる。** 枝が別の worktree に取られていても構わない。手順は `scripts/catch-up.sh` の冒頭にある ([#967](https://github.com/mokume-metal/mokume/issues/967))。
 
-**持ち主のセッションが居ない描画 PR は、別のセッションが代打ちできる** ([#967](https://github.com/mokume-metal/mokume/issues/967))。枝が別の worktree に取られていても構わない — git が禁じているのは同じ**ローカル枝**の二重チェックアウトだけなので、`origin/<相手の枝>` から新しい木を切れば触れる:
-
-```bash
-git worktree add -b catchup/<番号> <path> origin/<相手の枝>
-cd <path> && git merge origin/main --no-edit
-make catch-up PR=<番号>
-```
-
-**2 行目を飛ばすと動かない** ([#971](https://github.com/mokume-metal/mokume/issues/971))。代打ちの木が読む `scripts/catch-up.sh` は**その木の版**で、止まっている描画 PR は定義上 main より古いので、`--pr` がまだ無いことがある (引数は黙って無視され、枝の名前から PR を引いて空振りする)。取り込んだ後は `catch-up` 自身の取り込みが素通りするだけなので二度手間にはならない。**相手の worktree には一切触れず、素直な取り込みなら push もしないので承認も落ちない** (#612) — 報告先を決める判定が見るのは「手元の木が push 済み head から機械的に作り直せるか」だけだからである。番号を渡したときは**いまの木がその PR の枝から切られていること** (追跡先の一致) を `catch-up` が要求する。枝の名前は違ってよい。
-
-**取り込みは手元だけで済ませ、push しない。** push するとルールセットの `dismiss_stale_reviews_on_push` が承認を落とし、承認が要る描画 PR は他の PR が入るたびに押し直しになっていた (#612)。例外は**衝突を解いた合流**で、そのときだけ push する — 解いた中身は remote に無いので queue も同じ木を作れず、中身が本当に変わる以上、承認のやり直しは正しい。
+**取り込みは手元だけで済ませ、push しない** (push は承認を落とす・[#612](https://github.com/mokume-metal/mokume/issues/612))。例外は**衝突を解いた合流**で、そのときだけ push する。
 
 壊れている絵は起票の時点でしか撮れないので、見た目・動きの事象を Issue に立てるときも証跡を添える。
 
