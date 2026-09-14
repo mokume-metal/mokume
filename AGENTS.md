@@ -103,7 +103,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 
 **`BEHIND` でも "Update branch" は押さない。** 必須チェックは `strict` を切ってあり、queue が合流後の姿で再検証するので、追随しても得るものが無く auto-merge だけが外れる ([#110](https://github.com/mokume-metal/mokume/pull/110))。例外は描画 PR で `local-render` が failure になったときだけで、対処は「描画に影響する変更」節にある。
 
-止まって見えるときの読み分け。**この表は `scripts/stall-watch.sh` が 15 分ごとに実行する** ([#961](https://github.com/mokume-metal/mokume/issues/961)) — 機械が打てる行 (auto-merge の掛け直し・古い失敗ジョブの rerun) は打たれ、人手が要る行だけが run の赤で名乗られる。どの行を打ちどの行を名乗るかはスクリプトの冒頭にある。**当番の対象外にしたい PR は Draft にする** (作業中の描画 PR を Draft にしておくのと同じ印である)。
+止まって見えるときの読み分け。**この表は `scripts/stall-watch.sh` が定期に実行する** ([#961](https://github.com/mokume-metal/mokume/issues/961)) — 機械が打てる行 (auto-merge の掛け直し・古い失敗ジョブの rerun) は打たれ、人手が要る行だけが run の赤で名乗られる。どの行を打ちどの行を名乗るかはスクリプトの冒頭にある。**当番は数時間おきにしか回らない** — cron は 15 分ごとに頼んでいるが、GitHub の schedule は間引かれ、実測は 1 日 7 回前後だった ([#1197](https://github.com/mokume-metal/mokume/issues/1197))。**急ぐときは当番を待たず、自分でこの表を読んで打つ。** **当番の対象外にしたい PR は Draft にする** (作業中の描画 PR を Draft にしておくのと同じ印である)。
 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
@@ -298,7 +298,7 @@ bash scripts/orphan-processes.sh
 | 手元が回した木と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | `make catch-up` |
 | 覆いを壊す open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | **先頭 #N を見てから決める** — 全 check 緑・`CLEAN` で `autoMerge: false` なら予約が無いだけなので `gh pr merge <N> --auto --squash` で入る / まだ作業中ならその PR を Draft に落とす / どちらでもなければ待つ (自分の側で打ち直しても無駄になる) |
 
-**待つ前に先頭を見るのは、赤の理由が先頭の側にあるからである。** [#1053](https://github.com/mokume-metal/mokume/pull/1053) が `#1047 の merge を待つ` で赤くなったとき、先頭の [#1047](https://github.com/mokume-metal/mokume/pull/1047) は全 check 緑・`CLEAN` で、**予約が掛かっていないだけ**だった (`isInMergeQueue` も `autoMergeRequest` も無し)。掛け直したらその場で merge され、後続の待ちも解けた ([#1060](https://github.com/mokume-metal/mokume/issues/1060))。Draft に落とすのは**先頭が本当に作業中のとき**の手で、そうでない先頭を落とすと、全部緑で承認も要らない PR を番号の順番だけの理由で棚上げすることになる。当番 (`scripts/stall-watch.sh`) も先頭を単独で見て予約を掛け直すが、走るのは 15 分ごとである。
+**待つ前に先頭を見るのは、赤の理由が先頭の側にあるからである。** [#1053](https://github.com/mokume-metal/mokume/pull/1053) が `#1047 の merge を待つ` で赤くなったとき、先頭の [#1047](https://github.com/mokume-metal/mokume/pull/1047) は全 check 緑・`CLEAN` で、**予約が掛かっていないだけ**だった (`isInMergeQueue` も `autoMergeRequest` も無し)。掛け直したらその場で merge され、後続の待ちも解けた ([#1060](https://github.com/mokume-metal/mokume/issues/1060))。Draft に落とすのは**先頭が本当に作業中のとき**の手で、そうでない先頭を落とすと、全部緑で承認も要らない PR を番号の順番だけの理由で棚上げすることになる。当番 (`scripts/stall-watch.sh`) も先頭を単独で見て予約を掛け直すが、数時間おきにしか回らない (#1197) ので、先頭を見るのは待っている側の仕事である。
 
 順番は番号順なので、**まだ作業中の描画 PR は Draft にしておく** — Draft は順番の外なので、完成して承認まで済んだ後続を番号だけの理由で待たせずに済む ([#497](https://github.com/mokume-metal/mokume/issues/497))。
 
