@@ -7,10 +7,11 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := ci-check
 .PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
 
-# **並行では走らせない** (#784)。ci-check の的の並びには意味があり、-j を付けると壊れる
+# **並行では走らせない** (#784)。的の並びには意味があり、-j を付けると壊れる
 # — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
 # ためで (下記)、並行に走れば落ちた検査があっても報告が出うる。swift の置き場
-# (.build/.lock) の取り合いも同時に避けられる
+# (.build/.lock) の取り合いも同時に避けられる。ci-check は駆動役が 1 段ずつ make を
+# 起こすので並びは構造的に守られるが (#1182)、段を手で並べて打つ場合はこれが守る
 .NOTPARALLEL:
 
 # reuse の encoding 判定モジュールを固定する (#48)。指定が無いと環境にある物が
@@ -30,15 +31,21 @@ setup: ## 開発ツールを確認する
 
 check: setup
 
-# render-status は**最後**に置く。全部が通ったときだけ「手元で走った」と報告する
-# ため (途中で落ちれば make がそこで止まり、報告は行われない)
+# ci-check が走らせる段の並び。render-status は**最後**に置く。全部が通ったときだけ
+# 「手元で走った」と報告するため (途中で落ちればそこで止まり、報告は行われない)
 #
 # **この並びは「CI と同一」から 2 つだけ意図的にずれている。** drawing-evidence と
 # render-status は CI では必ず no-op になる — ci-check のジョブへ GH_TOKEN を持ち込まない
 # 設計 (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため両者が理由を
 # 述べて 0 で抜け、本物の判定は同じファイルの独立したジョブ (drawing-evidence /
 # render-signal) が持つ。ここに置いてあるのは手元のためである
-ci-check: build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status ## per-PR CI と同一の検査 — push 前に通す
+CI_CHECK_STEPS := build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status
+
+# 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
+# いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
+# 段ごとに build を組み直さないこと (-o build) は駆動役が持つ (scripts/ci-check.sh の冒頭)
+ci-check: ## per-PR CI と同一の検査 — push 前に通す
+	@MAKE='$(MAKE)' bash scripts/ci-check.sh $(CI_CHECK_STEPS)
 
 no-binaries:
 	bash scripts/check-no-binaries.sh
