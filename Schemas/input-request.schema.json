@@ -17,7 +17,7 @@
     },
     "events": {
       "type": "array",
-      "description": "The events to send. They are fed in the order they appear. **An unknown type costs only that one event** (the rest still go through).",
+      "description": "The events to send. They are fed in the order they appear. **An unknown type, or an event that cannot be read at all (one without type, or with a value of the wrong type), costs only that one event**: it counts in ignored and the rest still go through.",
       "items": {
         "type": "object",
         "required": [

@@ -6,7 +6,21 @@ import Foundation
 /// 外から送られてくる入力の要求。
 struct InputRequest: ExchangeRequest {
     let id: String
-    let events: [RawInputEvent]
+    let events: [Entry]
+
+    /// 並んだ 1 件。**解けなかった 1 件は、要求を道連れにせず `nil` になる。**
+    ///
+    /// 要素をそのまま ``RawInputEvent`` で解くと、`type` の欠けた 1 件や型の違う値が
+    /// 配列ごと・要求ごとのデコードを失敗させ、応答が書かれないまま黙る。送り手には
+    /// 「走っていない」と見分けが付かない ([#1132](https://github.com/mokume-metal/mokume/issues/1132))。
+    /// 失敗をここで吸収すれば、知らない種別と同じ経路で `ignored` に数えられる。
+    struct Entry: Decodable {
+        let event: InputEvent?
+
+        init(from decoder: Decoder) throws {
+            event = (try? RawInputEvent(from: decoder))?.event
+        }
+    }
 }
 
 /// 送られた入力に対する応答。
@@ -63,9 +77,9 @@ final class InputInbox {
         defer { requests.markHandled(request.id) }
         var accepted = 0
         var ignored = 0
-        for raw in request.events {
-            // **知らない種別は捨てるが、その 1 件だけ。** 残りは通す
-            guard let event = raw.event else {
+        for entry in request.events {
+            // **知らない種別も解けなかったものも捨てるが、その 1 件だけ。** 残りは通す
+            guard let event = entry.event else {
                 ignored += 1
                 continue
             }
