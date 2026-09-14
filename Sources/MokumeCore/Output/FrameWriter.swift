@@ -23,6 +23,10 @@ import Synchronization
 /// 使えない (`endRecord()` が同期の `draw()` から呼ばれる public API なので、`await` は
 /// 利用者のスケッチに現れてしまう。同 決定 1)。`DispatchQueue` は足さない (同 決定 4)。
 ///
+/// **塞いで待つのは `endRecord()` の経路だけである。** 終わりの経路は同じ合図を塞がずに
+/// 見に来る (``Patience/peek``・[#978])。
+///
+/// [#978]: https://github.com/mokume-metal/mokume/issues/978
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 final class FrameWriter {
@@ -80,14 +84,22 @@ final class FrameWriter {
     ///
     /// 2 度呼んでも安全 (抱えている枚数が 0 なら何もしない)。
     ///
-    /// **1 枚も進まなくなったら諦める** (``Backpressure/drain()``)。返らないディスクを
+    /// **1 枚も進まなくなったら諦める** (``Backpressure/drain(_:)``)。返らないディスクを
     /// 相手に永久に待つと、main actor が固まって絵も観測も入力も一緒に黙る。諦めても
     /// 書き込みは走り続けるので、失うのは「返ってきた時点で書けている」という保証だけ。
-    func drain() {
-        guard let stranded = pressure.drain() else { return }
-        Diagnostics.warn(
-            "Writing images has not moved for \(Int(pressure.stallLimitSeconds)) seconds "
-                + "(\(stranded) are still waiting) — no longer waiting for it. Writing is still going")
+    ///
+    /// - Parameter patience: まだ書けていないとき、塞いで待つか、その場で返るか。
+    /// - Returns: 決着したか (全部書けた・諦めた)。``Patience/block`` なら必ず `true`。
+    @discardableResult
+    func drain(_ patience: Patience = .block) -> Bool {
+        guard pressure.drain(patience) else { return false }
+        if pressure.outstanding > 0 {
+            Diagnostics.warn(
+                "Writing images has not moved for \(Int(pressure.stallLimitSeconds)) seconds "
+                    + "(\(pressure.outstanding) are still waiting) — no longer waiting for it. "
+                    + "Writing is still going")
+        }
+        return true
     }
 
     /// 直近の書き損じを取り出す。**取り出したら消える。**

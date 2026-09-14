@@ -34,6 +34,14 @@ import Foundation
 /// 落とす」という意味になり、このパッケージが選んでいる「待たせる」の反対側になる。時刻は
 /// フレーム自身のものなので、遅れても絵を落とす理由が無い ([ADR-0025] 決定 2)。
 ///
+/// ## 待ち方は 2 通りあるが、期限の測り方は 1 つ
+///
+/// 塞いで待つ (``Patience/block``) のは `endRecord()` の経路で、利用者の同期の `draw()` から
+/// 呼ばれるので塞ぐしかない。終わりの経路は塞がずに見に来る (``Patience/peek``・[#978])。
+/// **測り方をそれぞれに書かない** — 片方だけが「総時間で測る」へ戻っても、どちらの検査も
+/// 通ってしまう。
+///
+/// [#978]: https://github.com/mokume-metal/mokume/issues/978
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
@@ -83,6 +91,13 @@ import Foundation
     private(set) var outstanding = 0
     /// 抱えた数の最大。**背圧が効いたことを検査から見るための目印。**
     private(set) var peak = 0
+    /// 待っている最中の、最後に 1 つ進んだ時刻。**決着したら消す** — 次に待つときは測り直す。
+    ///
+    /// 持っているのは ``Patience/peek`` で呼び直されたときに続きから測るためである。呼ぶ
+    /// たびに測り直すと、見に来る間隔が期限より短い限り、止まった相手を永久に諦めない。
+    ///
+    /// 時計は semaphore の期限と同じ `DispatchTime` に揃える (スリープ中は進まない)。
+    private var lastProgressAt: DispatchTime?
 
     init(
         limit: Int = Backpressure.defaultLimit,
@@ -131,15 +146,58 @@ import Foundation
     ///
     /// - Returns: 諦めたときに**まだ残っていた数**。全部終わったなら `nil`。
     func drain() -> Int? {
-        while outstanding > 0 {
-            guard finished.wait(timeout: .now() + stallLimitSeconds) == .success else {
-                // **0 に戻さない。** 諦めた後に仕事が終わって合図を出すので、戻しておくと
-                // 次の取り込みがその合図を数えて、抱えている数が実態より小さくなる。
-                // 残しておけば、次に待つときが正しくまた待つ
-                return outstanding
-            }
-            outstanding -= 1
-        }
-        return nil
+        drain(.block)
+        return outstanding > 0 ? outstanding : nil
     }
+
+    /// 抱えている全部が終わるのを、選んだ待ち方で待つ。**1 つも進まなくなったら諦める。**
+    ///
+    /// 諦めたかどうかは ``outstanding`` が 0 でないことで分かる。
+    ///
+    /// - Parameter patience: まだ終わっていないとき、塞いで待つか、その場で返るか。
+    /// - Returns: 決着したか (全部終わった・諦めた)。``Patience/block`` なら必ず `true`。
+    @discardableResult
+    func drain(_ patience: Patience) -> Bool {
+        var lastProgress = lastProgressAt ?? .now()
+        while true {
+            let before = outstanding
+            harvest()
+            if outstanding < before { lastProgress = .now() }
+            let deadline = lastProgress + stallLimitSeconds
+            // **諦めても 0 に戻さない。** 諦めた後に仕事が終わって合図を出すので、戻して
+            // おくと次の取り込みがその合図を数えて、抱えている数が実態より小さくなる。
+            // 残しておけば、次に待つときが正しくまた待つ
+            if outstanding == 0 || DispatchTime.now() >= deadline {
+                lastProgressAt = nil
+                return true
+            }
+            guard case .block = patience else {
+                lastProgressAt = lastProgress
+                return false
+            }
+            if finished.wait(timeout: deadline) == .success {
+                outstanding -= 1
+                lastProgress = .now()
+            }
+        }
+    }
+}
+
+/// 終わりを待つときの、待ち方。
+///
+/// **変わるのは「まだ終わっていないときに塞ぐか」だけで、期限の測り方は変わらない**
+/// (``Backpressure`` の「待ち方は 2 通りあるが、期限の測り方は 1 つ」)。
+///
+/// `async` にしないのは、終わりの経路が main actor に頼れないためである。`terminate(_:)` が
+/// main actor の仕事の中から呼ばれると、AppKit が返事を待って run loop を回している間も
+/// main キューは入れ子では捌かれず、`await` の続きが永久に来ない ([#978] で実測)。
+///
+/// [#978]: https://github.com/mokume-metal/mokume/issues/978
+nonisolated enum Patience: Sendable {
+    /// 終わるか諦めるまで塞いで待つ。`endRecord()` の経路 (利用者の `draw()` は同期)。
+    case block
+    /// 塞がずに見て、まだならその場で返る。終わりの経路 ([#978])。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    case peek
 }

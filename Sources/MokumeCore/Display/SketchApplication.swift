@@ -38,7 +38,7 @@ import QuartzCore
 /// ## AppKit の delegate は別のオブジェクトが受ける
 ///
 /// `NSApplicationDelegate` への準拠は internal な `SketchApplicationDelegate` が持つ。
-/// **この型が直接準拠すると、delegate の 3 本が公開 API の一覧に載る** — 呼ぶのは OS で
+/// **この型が直接準拠すると、delegate のメソッドが公開 API の一覧に載る** — 呼ぶのは OS で
 /// あって利用者ではないのに「呼んでよい」顔で並ぶ ([ADR-0020] 決定 6 /
 /// [#324](https://github.com/mokume-metal/mokume/issues/324))。
 ///
@@ -131,11 +131,32 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 閉じてよいと確定したときの行き先。
     ///
-    /// **道具立てごと終わらせる。** 窓を畳むだけでは後始末 (``willTerminate()``) を通らず、
-    /// 差込口も駆動源も生きたまま残る — 終わりの経路は `applicationWillTerminate` の 1 本
-    /// である。**検査から差し替える**: 既定のままでは、押した後を検めるたびに検査の
-    /// プロセスが終わる。
+    /// **道具立てごと終わらせる。** 窓を畳むだけでは後始末を通らず、差込口も駆動源も
+    /// 生きたまま残る — 終わりの経路は `terminate(_:)` の 1 本で、後始末を待つ
+    /// ``shouldTerminate()`` から ``willTerminate()`` へ進む。**検査から差し替える**: 既定の
+    /// ままでは、押した後を検めるたびに検査のプロセスが終わる。
     var onCloseConfirmed: @MainActor () -> Void = { NSApplication.shared.terminate(nil) }
+
+    /// 後始末が済んだと AppKit へ返す口。
+    ///
+    /// **「終わってよい」しか返さない** — 待っている途中で終わりをやめる経路は作らない
+    /// ([#978])。**検査から差し替える**: 返事を待っている終了が無いプロセスで既定のまま
+    /// 呼ぶと、AppKit が何をするかをこちらで決められない。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    var replyToTermination: @MainActor () -> Void = {
+        NSApplication.shared.reply(toApplicationShouldTerminate: true)
+    }
+
+    /// 終わると決まったか。**立てたら下ろさない** — 終わりの意思は覆さない。
+    private var isTerminating = false
+    /// 後始末を見に来る仕掛け。**返事を待たせている間だけ持つ。**
+    private var terminationPoll: Timer?
+    /// 後始末を見に来る間隔 (秒)。
+    ///
+    /// 見に来るのは返事を待たせている間だけなので、細かく取っても払うのは終わり際の
+    /// 数回ぶんである。粗く取ると、そのぶん閉じ終えてから終わるまでが遅れる。
+    static let terminationPollInterval = 0.01
 
     /// 窓の出来事を、自分を強く持たせずに受ける。
     ///
@@ -405,22 +426,91 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **問いを持たない窓は、そのまま閉じる。** 道具が起こしたのでなければ、AppKit の既定を
     /// 変える理由が無い (`SharedFrameStage.shouldClose(_:)` と同じ規律)。
+    ///
+    /// **終わりに向かっている間は問わずに閉じる** ([#978])。問いの先は `terminate(_:)` で、
+    /// 後始末を待っている間にそれを重ねると、AppKit は問い直さずに**待ちを飛ばして**終わる
+    /// (実測)。窓を閉じるだけなら終わりは重ならない — 最後の窓が閉じても、返事を待っている
+    /// 間の AppKit は `applicationShouldTerminateAfterLastWindowClosed(_:)` を問わない (実測)。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
     fileprivate func shouldClose(_ sender: NSWindow) -> Bool {
-        guard let closeQuestion else { return true }
+        guard let closeQuestion, !isTerminating else { return true }
         // **問いを二重に出さない。** 下りている間 AppKit は親窓の操作を吸うが、閉じるよう
         // 頼む経路は残る (`performClose(_:)` など)
         guard sender.attachedSheet == nil else { return false }
         presentQuestion(closeQuestion, sender) { [weak self] confirmed in
-            guard confirmed else { return }
-            self?.onCloseConfirmed()
+            // **問いが出ている間に終わりが始まっていたら、答えで終わりを重ねない** —
+            // シートは窓にだけ掛かるので、出ている間も Dock からの終了は届く
+            guard confirmed, let self, !self.isTerminating else { return }
+            self.onCloseConfirmed()
         }
         return false
     }
 
+    /// 終わってよいかを問われた。**後始末が済むまで、main を塞がずに待たせる** ([#978])。
+    ///
+    /// これまでは ``willTerminate()`` の中で塞いで待っていた。そこで待つのは動画を閉じる
+    /// `AVAssetWriter.finishWriting` で、Apple は main を塞いだまま走らせると失敗しうると
+    /// 書いている。AppKit の正規の口は「後で返す」(`.terminateLater`) で、済んだら
+    /// ``replyToTermination`` で返す。
+    ///
+    /// ## 待ちは run loop から見に来る
+    ///
+    /// **main actor の仕事 (`Task`) では待たない。** `terminate(_:)` が main actor の仕事の中
+    /// から呼ばれると、返事を待っている間 AppKit は run loop を回すが、main キューは入れ子
+    /// では捌かれないので、**`await` の続きが永久に来ず、終わりが保留されたまま固まる**
+    /// (実測)。`.common` の Timer はどの呼ばれ方でも回ったので、そこから見に来る。
+    ///
+    /// ## 待つ長さ
+    ///
+    /// 別の期限は持たない。見に来る先 (``SketchRuntime/closePlugins(_:)``) は塞いで待つ
+    /// ときと同じ期限のコードを通るので、書き出しが止まっていても #958 の期限で諦めて
+    /// 返事に至る。
+    ///
+    /// ## 待っている間
+    ///
+    /// 駆動源は止まらずに呼んでくるが、フレームはランタイムの側で進めない。窓の × と
+    /// 問いへの答えは、終わりを重ねないよう ``shouldClose(_:)`` が受け流す。
+    ///
+    /// **何も書き出していなければ、その場で終わる** (`.terminateNow`) — いつもの終わり方は
+    /// 変わらない。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    func shouldTerminate() -> NSApplication.TerminateReply {
+        isTerminating = true
+        // **返事は 1 回だけ。** 既に待たせているなら、見に来る仕掛けがそのまま返す
+        guard terminationPoll == nil else { return .terminateLater }
+        if runtime.closePlugins(.peek) { return .terminateNow }
+        let timer = Timer(timeInterval: Self.terminationPollInterval, repeats: true) {
+            [weak self] _ in
+            MainActor.assumeIsolated { self?.pollTermination() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        terminationPoll = timer
+        return .terminateLater
+    }
+
+    /// 後始末を 1 回だけ見に来る。**塞がない。** 済んでいたら「終わってよい」と返す。
+    ///
+    /// 返事を待たせていなければ何もしない。検査は run loop を回さないので、Timer に
+    /// 代わってここを直に呼ぶ。
+    func pollTermination() {
+        guard let timer = terminationPoll, runtime.closePlugins(.peek) else { return }
+        timer.invalidate()
+        terminationPoll = nil
+        replyToTermination()
+    }
+
     /// 駆動源を畳む。``SketchApplicationDelegate`` から呼ばれる。
     func willTerminate() {
+        terminationPoll?.invalidate()
+        terminationPoll = nil
         // **差込口を先に閉じる。** 送り先のアプリや機材から見ると、こちらが消えるより
         // 先に「終わる」と言われるほうが行儀がよい
+        //
+        // ふつうは ``shouldTerminate()`` が済ませているので何もしない。塞いで待つことに
+        // なるのは、AppKit が返事を待たずに終わらせたとき (返事を待っている間に
+        // `terminate(_:)` が重なったとき) だけで、ここが最後の砦である
         runtime.closePlugins()
         screenLink.invalidate()
         fallbackTimer?.invalidate()
@@ -564,6 +654,10 @@ final class SketchApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         application.endsAfterLastWindowClosed
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        application.shouldTerminate()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
