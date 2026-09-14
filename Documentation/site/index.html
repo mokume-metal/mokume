@@ -6,9 +6,11 @@ SPDX-License-Identifier: MIT
 被せる (ADR-0027 決定 3・#552)。被せるのは make reference で、公開の側は呼ぶだけ。
 
 **本文の正本はこのファイルである。** README と重なるのは brew の 1 行・短いコード片・
-主図の絵 1 枚だけにしてあり、その 1 行が README と一致していることは
-scripts/check-entry.py が見る (絵は URL を借りているだけで、下の gallery は写さない)。
-重ねる量を増やすと二重管理になる (ADR-0001 原則 9)。
+絵だけにしてあり、その 1 行が README と一致していることは scripts/check-entry.py が
+見る。絵は主図と下の gallery の URL を README も借りている — 同じ URL を指すだけで
+中身は 1 つなので、撮り直すときは両方の URL を差し替える (#1168)。README はさらに、
+始める前の前提・最初の 1 本の手順・動きの絵を持つが、それは GitHub だけを見て試す人の
+ためのもので、ここへは写さない。重ねる量を増やすと二重管理になる (ADR-0001 原則 9)。
 
 **リンクは相対で書く。** 公開先の基準パス (github.io の /mokume/ か、独自ドメインの
 root か) はここでは決まらないため — 隣の documentation/index.html と同じ理由。
