@@ -22,6 +22,12 @@ import simd
 /// 半分ずつ塗って滲むためである。**寄せは経路によらない** — 距離関数で描く基本図形も、
 /// 三角形で描く図形も、畳んだ図形も、保持した形も、立体の輪郭も、同じ場所に乗る。
 ///
+/// **線の載り方は手本 (p5.js) と違う。** p5.js は線を寄せないので、`line(10, 0, 10, 100)`
+/// の太さ 1 の線は座標 10 の境目をまたぎ、2 列の画素に半分ずつ薄く乗る。mokume は
+/// 1 列に濃く乗せる。光の総量は同じで、置き場が半画素違う。**手本には寄せない** —
+/// 手本に倣うのは名前と引数の順序までで、同じ画素が出ることは約束しない ([ADR-0020] 決定 1)。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
 ///
 /// ## 描き方
