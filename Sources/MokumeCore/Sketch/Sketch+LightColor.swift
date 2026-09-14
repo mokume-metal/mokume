@@ -35,6 +35,17 @@ extension Sketch {
     /// - Note: 光には不透明度も灰色 1 つの形も無い — 手本が持たないためで、
     ///   「光の不透明度」が何を指すのかを説明できない ([ADR-0033] 決定 7)。
     ///
+    /// - Note: **手本と同じ数を渡しても、同じ明るさは出ない。** 素の数値は表示の目盛りで
+    ///   受け、**線形の値へ戻してから**面に掛け、表示の値へ戻して画面に出す
+    ///   ([ADR-0011] 決定 1)。手本は表示の値のまま掛けるので、光が斜めに当たって弱まる
+    ///   分も表示の値の上で効く。こちらはそれが線形の値の上で効くので、**斜めに光を受ける
+    ///   面ほど手本より明るく出る**。数値形の光の口
+    ///   (`ambientLight` / `directionalLight` / `pointLight` / `spotLight`) はどれもこの形で
+    ///   受ける。手本に揃えないのは、手本に従うのが名前と引数の順序までだからである
+    ///   ([ADR-0020] 決定 1)。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public func directionalLight(
         _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
