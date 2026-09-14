@@ -210,8 +210,26 @@ logical_root() { # $1=フックが渡してきた cwd → その表記のまま�
 # 2 件 (1.6%) しかなく、**投稿先が PR だったプランは 0 件**だった。恐れた副作用は小さいが、
 # 閉じる Issue を見れば副作用を 0 にできるのでそちらを採る。
 #
-# 食い違ったときの並びは Issue が先で PR が後。先頭は催促と二重着手の跡見 (#642) が見る位置で、
+# 食い違ったときの並びは Issue が先で PR が後。先頭は投稿の指示が最初に示す位置で、
 # プランが明示した対象のほうが、ブランチから推定した PR より強い信号である。
+
+# プランが名乗る番号を、見つけた順に 1 行ずつ返す (重複あり・実在は確かめない)。
+#
+# 投稿先の解決 (plan_targets) と、別のセッションのプランが何を名乗っているかを読む側
+# (concurrent_marks・#1216) の両方がこれを使う。**拾い方を 2 か所に持たない** — 片方だけ
+# 綴りを足すと、自分のプランは名乗っているのに相手のプランからは読めない形が黙って生まれる。
+named_numbers() { # $1=本文 → 番号を 1 行ずつ
+  # プランのタイトル (# #655 短い説明) の番号。80% がこう書いていて、当たりは 98.9%。
+  # 名乗りより先に置く — 番号の無い見出し (## 変更点) は拾わない
+  printf '%s' "$1" |
+    grep -oE '^#{1,6}[[:space:]]+#[0-9]+' |
+    grep -oE '[0-9]+'
+  # Closes #12 / Refs #12 のように、プランが自分で名乗っている Issue を**全部**
+  printf '%s' "$1" |
+    grep -ioE '(closes|fixes|resolves|refs|ref|issue)[[:space:]]*#[0-9]+' |
+    grep -oE '[0-9]+'
+  return 0
+}
 
 plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行ずつ (優先順)
   local branch="$1" body="$2" number numbers seen='' info pr='' closes='' found='' mismatch=0
@@ -226,16 +244,8 @@ plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行
     closes=" ${info#"$pr"} "
   fi
 
-  # プランのタイトル (# #655 短い説明) の番号。80% がこう書いていて、当たりは 98.9%。
-  # 名乗りより先に置く — 番号の無い見出し (## 変更点) は拾わない
-  numbers=$(printf '%s' "$body" |
-    grep -oE '^#{1,6}[[:space:]]+#[0-9]+' |
-    grep -oE '[0-9]+')
-
-  # Closes #12 / Refs #12 のように、プランが自分で名乗っている Issue を**全部**
-  numbers=$(printf '%s\n%s' "$numbers" "$(printf '%s' "$body" |
-    grep -ioE '(closes|fixes|resolves|refs|ref|issue)[[:space:]]*#[0-9]+' |
-    grep -oE '[0-9]+')")
+  # 見出しの番号 → 名乗りの順 (拾い方は named_numbers が持つ)
+  numbers=$(named_numbers "$body")
 
   # 名乗りが無ければブランチ名の数字列 (issues-123 / fix/123-foo)。ただし採るのは
   # 区切りに接した数字だけにする。Claude Code が切るブランチ名の末尾 hex
@@ -349,28 +359,82 @@ posted_anywhere() { # $1=記録 ID $2=候補 (1 行 1 件・空行は飛ばす) 
 # **代償は既知である。** 他のセッションが着手してラベルを付け、まだプランを投稿していない
 # 窓 (数分) では何も見えない。埋めるには区別できないラベルを毎回名乗ることになり、
 # 割に合わない。実例 (#637) では A の投稿から B の着手まで 19 分あったので、目印で届く。
+#
+# **まとめ先の Issue は、別の Issue に載ったプランからも見る** (#1216)。#912 と #913 は
+# どちらも「#1082 の段が入っていること」を完了条件に持ち、2 つのセッションが別々に #1082 を
+# まとめて、ADR の同じ段を 33 秒差で PR にした (#1205 / #1206)。跡見は 2 か所で見逃した:
+#   1. 候補が複数だと先頭しか見なかった (capture 側で全 Issue 候補を回すようにした)
+#   2. N のコメントしか見なかった。プランは #912 と #913 に載り、#1082 には誰も載せていない
+#
+# 2 に対して「まとめ先にも跡を残させる」は採らない。GitHub には「N を参照している Issue /
+# PR」の索引 (timeline の cross-referenced) が既にあり、読みに行けばコメントを増やさずに
+# 同じ情報が取れる。当て直すと、B のプランは A の capture より前に #912 に載っていた。
+#
+# 参照元のプランは、**N を名乗っているものだけ**を数える。名乗りの判定は投稿先の解決と同じ
+# named_numbers に任せる — 本文で N に触れているだけのプラン (範囲外・先例として引いた等)
+# まで数えると、注意が毎回出て意味を失う。閉じた参照元に載ったプランは終わった仕事なので
+# 数えない。
+#
+# GraphQL 1 回で N のコメントと参照元のコメントをまとめて引く (候補 1 件につき 1 回なので、
+# 呼び出しの回数は #642 のときと変わらない)。
+
+readonly MARKS_QUERY='query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      comments(last: 100) { nodes { body url } }
+      timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 50) {
+        nodes { ... on CrossReferencedEvent { source {
+          ... on Issue { number state comments(last: 50) { nodes { body url } } }
+          ... on PullRequest { number state comments(last: 50) { nodes { body url } } }
+        } } }
+      }
+    }
+  }
+}'
 
 concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → 跡を 1 行 1 件で stdout へ
-  local number="$1" prefix="$2" json others count url
+  local number="$1" prefix="$2" json others count url plans plan source seen=''
 
-  json=$(gh issue view "$number" -R "$REPO" --json comments 2>/dev/null) || return 0
+  json=$(gh api graphql -f query="$MARKS_QUERY" -f owner="${REPO%%/*}" -f name="${REPO#*/}" \
+    -F number="$number" 2>/dev/null) || return 0
   [ -n "$json" ] || return 0
 
-  # 自分のセッションが載せたプランは除く。同じセッションで 2 度プランを取ったときに
-  # 自分を指して「二重着手かもしれない」と言わないため
+  # N 自身に載ったプラン。自分のセッションが載せたものは除く — 同じセッションで 2 度
+  # プランを取ったときに自分を指して「二重着手かもしれない」と言わないため
   others=$(printf '%s' "$json" | jq -r --arg m "$MARKER: " --arg p "$prefix-" '
-    [ .comments[]? | select(.body | contains($m)) | select(.body | contains($m + $p) | not) ]
+    [ .data.repository.issue.comments.nodes[]? | select(.body | contains($m))
+      | select(.body | contains($m + $p) | not) ]
     | "\(length)\t\(.[0].url // "")"' 2>/dev/null) || return 0
 
   count=${others%%	*}
   url=${others#*	}
   case "$count" in
-    ''|0|*[!0-9]*) return 0 ;;
+    ''|0|*[!0-9]*) ;;
+    *)
+      printf '#%s に別のセッションのプランが %s 件載っている' "$number" "$count"
+      [ -z "$url" ] || printf ' (%s)' "$url"
+      printf '\n'
+      ;;
   esac
 
-  printf '別のセッションのプランが %s 件載っている' "$count"
-  [ -z "$url" ] || printf ' (%s)' "$url"
-  printf '\n'
+  # open な参照元に載った、別のセッションのプラン (1 行 1 件の JSON)
+  plans=$(printf '%s' "$json" | jq -c --arg m "$MARKER: " --arg p "$prefix-" --argjson n "$number" '
+    .data.repository.issue.timelineItems.nodes[]?.source?
+    | select(type == "object" and .state == "OPEN" and .number != $n)
+    | .number as $source
+    | .comments.nodes[]? | select(.body | contains($m)) | select(.body | contains($m + $p) | not)
+    | {source: $source, url, body}' 2>/dev/null) || return 0
+
+  while IFS= read -r plan; do
+    [ -n "$plan" ] || continue
+    url=$(printf '%s' "$plan" | jq -r .url)
+    # 同じ参照元が 2 度参照していると、同じコメントが 2 度並ぶ
+    case "$seen" in *"|$url|"*) continue ;; esac
+    seen="$seen|$url|"
+    named_numbers "$(printf '%s' "$plan" | jq -r .body)" | grep -qx "$number" || continue
+    source=$(printf '%s' "$plan" | jq -r .source)
+    printf '#%s を名乗る別のセッションのプランが #%s に載っている (%s)\n' "$number" "$source" "$url"
+  done <<< "$plans"
 }
 
 # 記録の付帯情報。capture と guard の両方が書くので 1 箇所に持たせる — 催促のたびに
@@ -552,7 +616,7 @@ post_instructions() {
   echo "(絶対パスとホームディレクトリは畳んであります。署名は投稿時に自動で付きます)"
   echo
   if [ -n "$marks" ]; then
-    echo "注意: この Issue には既に他のセッションの着手の跡があります。二重着手かもしれません:"
+    echo "注意: プランが名乗る Issue に、他のセッションの着手の跡があります。二重着手かもしれません:"
     printf '%s\n' "$marks" | sed 's/^/  - /'
     echo
     echo "先にそれを読み、同じ仕事なら畳んでください。**この注意は着手を止めません** —"
@@ -599,10 +663,8 @@ post_instructions() {
 }
 
 capture() {
-  # 指示文の組み立ては post_instructions が持つので、その中でしか使わない変数
-  # (candidate) はここには無い
   local payload plan cwd session root branch dir id file body findings
-  local blocks warns targets target count recheck marks
+  local blocks warns targets target count recheck marks mark candidate
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -688,11 +750,20 @@ capture() {
 
   # 他のセッションが同じ Issue に既に着手していないかを見る (#642)。着手直後は PR が
   # まだ無いので投稿先は Issue になり、二重着手が問題になるのもその時点である。
-  # 候補が複数のときは先頭だけを見る — どれが対象かは、まだ決まっていない
+  # **候補が複数なら Issue の候補を全部見る** (#1216) — 1 つのプランが複数の Issue を
+  # まとめるとき、重なるのはたいてい 2 件目以降のまとめ先である
   marks=''
-  case "$target" in
-    'issue '*) marks=$(concurrent_marks "${target#issue }" "${id%-*}") ;;
-  esac
+  while IFS= read -r candidate; do
+    case "$candidate" in
+      'issue '*)
+        mark=$(concurrent_marks "${candidate#issue }" "${id%-*}")
+        [ -z "$mark" ] || marks="$marks$mark
+"
+        ;;
+    esac
+  done <<< "$targets"
+  marks=${marks%
+}
 
   # 指示した先を書き戻す。guard は解決を引き直すが、規約どおりに進めると解決は
   # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
