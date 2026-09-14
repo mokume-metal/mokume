@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import CoreText
 import Testing
 import simd
 
@@ -75,6 +76,95 @@ struct TriangulationTests {
     func tooFewPointsProduceNothing(_ count: Int) {
         let points = (0..<count).map { SIMD2<Float>(Float($0), 0) }
         #expect(Triangulation.triangulate(points).isEmpty)
+    }
+
+    // MARK: - 字形の輪郭が持つ形
+
+    @Test("辺の上に別の角が載る形でも、形の外を塗らない")
+    func aCornerOnAnEdgeDoesNotLeakOutside() {
+        // T の輪郭。横棒の下辺 y = 51 の上に、縦棒の角 (106, 51) と (123, 51) が載る。
+        // 載った点を「含まない」と数えると、縦棒の下端から横棒の右端へ斜めに切った塊が
+        // 耳として通る (#1148)
+        let tee: [SIMD2<Float>] = [
+            SIMD2(106, 170), SIMD2(106, 51), SIMD2(64, 51), SIMD2(64, 36),
+            SIMD2(165, 36), SIMD2(165, 51), SIMD2(123, 51), SIMD2(123, 170),
+        ]
+        let triangles = Triangulation.triangulate(tee)
+        // 横棒 101 x 15 + 縦棒 17 x 119
+        #expect(abs(area(of: triangles, points: tee) - 3538) < 0.01)
+    }
+
+    @Test("切り口の辺に別の角が触れる形でも、形の外を塗らない")
+    func aCornerTouchingTheCutDoesNotLeakOutside() {
+        // 上から切り込んだ刻みの先 (5, 5) が、対角線 (0, 0)–(10, 10) に触れる。
+        // 触れた点を「含まない」と数えると、刻みに被さる三角形が耳として通る。
+        // T と違って辺が一直線に続かないので、折り返した角を落とすだけでは直らない
+        let notched: [SIMD2<Float>] = [
+            SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 10), SIMD2(6, 10),
+            SIMD2(5, 5), SIMD2(4, 10), SIMD2(0, 10),
+        ]
+        let triangles = Triangulation.triangulate(notched)
+        // 10 x 10 から、幅 2・深さ 5 の刻みを引く
+        #expect(abs(area(of: triangles, points: notched) - 95) < 0.01)
+    }
+
+    @Test("最後の点が最初の点と重なる周でも、途中で止まらない")
+    func aRepeatedClosingPointDoesNotStall() {
+        // 曲線で閉じる周 (字の o) は、最後の点が最初の点と重なる。同じ位置の点が続く角は
+        // 耳の候補にならないので、残りがその角でしか切れなくなると止まっていた (#1211)
+        func ring(radius: Float, clockwise: Bool) -> [SIMD2<Float>] {
+            var points = (0..<8).map { step -> SIMD2<Float> in
+                let angle = Float(step) / 8 * 2 * .pi * (clockwise ? -1 : 1)
+                return SIMD2(cos(angle) * radius + 30, sin(angle) * radius + 30)
+            }
+            points.append(points[0])
+            return points
+        }
+        let outer = ring(radius: 20, clockwise: false)
+        let hole = ring(radius: 12, clockwise: true)
+        let merged = mergeHoles(outer: outer, holes: [hole])
+        let triangles = Triangulation.triangulate(merged)
+        let expected = abs(Triangulation.signedArea(outer)) - abs(Triangulation.signedArea(hole))
+        #expect(abs(area(of: triangles, points: merged) - expected) < 0.5)
+    }
+
+    @Test("同じ点を 2 度通る周でも、形の外を塗らない")
+    func aRingTouchingItselfDoesNotLeakOutside() {
+        // 右辺の途中 (10, 5) から出た葉が、同じ点へ戻ってくる (Times の k の腕と脚)。
+        // 最後に「行って戻るだけ」の周が残り、そこから実在しない三角形を切っていた (#1211)
+        let pinched: [SIMD2<Float>] = [
+            SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 5), SIMD2(20, 0),
+            SIMD2(20, 10), SIMD2(10, 5), SIMD2(10, 10), SIMD2(0, 10),
+        ]
+        let triangles = Triangulation.triangulate(pinched)
+        // 本体 10 x 10 + 葉 10 x 10 / 2
+        #expect(abs(area(of: triangles, points: pinched) - 150) < 0.01)
+    }
+
+    /// **外周が 1 つの字だけを見る。** `i` や `%` のように外周を複数持つ字は、どの穴が
+    /// どの外周に属するかを決める手間が、ここで見たいもの (三角形化) と関係しない。
+    @Test(
+        "字の輪郭を塗ると、面積が外周から穴を引いたものに一致する",
+        arguments: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".map(String.init)
+    )
+    func glyphOutlinesKeepTheirArea(_ character: String) throws {
+        let font = CTFontCreateWithName("Helvetica" as CFString, 72, nil)
+        var codes = Array(character.utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: codes.count)
+        try #require(CTFontGetGlyphsForCharacters(font, &codes, &glyphs, codes.count))
+        let path = try #require(CTFontCreatePathForGlyph(font, glyphs[0], nil))
+        // 描くときと同じく、送りと基準線でずらした座標で見る
+        let rings = Canvas.rings(of: path, originX: 123.37, baseline: 456.71)
+        let outers = rings.filter { !$0.isHole }
+        guard outers.count == 1 else { return }
+        let holes = rings.filter(\.isHole).map(\.points)
+
+        let merged = mergeHoles(outer: outers[0].points, holes: holes)
+        let triangles = Triangulation.triangulate(merged)
+        let expected =
+            abs(Triangulation.signedArea(outers[0].points))
+            - holes.reduce(0) { $0 + abs(Triangulation.signedArea($1)) }
+        #expect(abs(area(of: triangles, points: merged) - expected) <= expected * 0.005)
     }
 
     // MARK: - 穴
