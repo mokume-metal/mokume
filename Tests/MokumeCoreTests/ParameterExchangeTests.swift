@@ -242,9 +242,44 @@ struct ParameterExchangeTests {
                 ]}
                 """, to: facet)
         surface.drain()
-        // 同じ名前が並んだら後のほうが残る (名前順に安定して当たる)
+        // 同じ名前が並んだら後のほうが残る。**これだけでは並べ替えの安定性に預けた実装も
+        // 通る** ので、預けていないことは次の検査が見る (#858)
         #expect(sketch.radius == 30)
         #expect(sketch.count == 2)
+    }
+
+    /// **同じ名前の前後を並べ替えの安定性に預けない。**
+    ///
+    /// 名前だけを鍵にしても、いまの標準ライブラリの `sorted(by:)` は安定なので上の検査は
+    /// 通る。しかし安定性は保証されておらず、破れたら同じ要求で残る値が変わり、応答にも
+    /// 何も出ない ([#858](https://github.com/mokume-metal/mokume/issues/858))。だから
+    /// 結果ではなく**順の決め方に引き分けが無いこと**を見る — 引き分けが無ければ、
+    /// どの並べ替えを使っても結果は 1 つに決まる。
+    @Test("同じ名前が並んでも、当てる順は並べ替えの安定性に預けない")
+    func applicationOrderHasNoTies() {
+        let request = ParamRequest(
+            id: "a7",
+            values: [
+                .init(name: "radius", value: .float(10)),
+                .init(name: "count", value: .int(2)),
+                .init(name: "radius", value: .float(30)),
+                .init(name: "radius", value: .float(20)),
+            ])
+
+        for i in request.values.indices {
+            for j in request.values.indices where i != j {
+                #expect(
+                    request.appliesBefore(i, j) != request.appliesBefore(j, i),
+                    "\(i) 件目と \(j) 件目の前後が決まっていない (並べ替えの安定性に預けている)")
+            }
+        }
+        #expect(
+            request.valuesInApplicationOrder == [
+                .init(name: "count", value: .int(2)),
+                .init(name: "radius", value: .float(10)),
+                .init(name: "radius", value: .float(30)),
+                .init(name: "radius", value: .float(20)),
+            ])
     }
 
     @Test("値が変わっていないフレームは、要求のファイルを 1 回見るだけ")

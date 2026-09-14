@@ -11,6 +11,27 @@ struct ParamRequest: ExchangeRequest {
 
     /// 1 件ぶん。**書く側 (道具・保存) と同じ形を読む** (``NamedParamValue``)。
     typealias Entry = NamedParamValue
+
+    /// 当てる順に並べた書き込み。**名前順で、同じ名前は書いた順**
+    /// ([ADR-0030] 決定 3)。
+    ///
+    /// **同じ名前の前後を並べ替えの安定性に預けない。** 標準ライブラリは `sorted(by:)`
+    /// が安定であることを保証していない。名前だけを鍵にすると同じ名前の 2 件は「等しい」
+    /// になり、どちらが後に当たるか — つまりどちらの値が残るか — が並べ替えの実装で
+    /// 決まる。破れても両方の書き込みは成功しているので、応答には何も出ない (#858)。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    var valuesInApplicationOrder: [Entry] {
+        values.indices.sorted(by: appliesBefore).map { values[$0] }
+    }
+
+    /// `values` の `i` 件目を `j` 件目より先に当てるか。
+    ///
+    /// **書いた位置を第 2 の鍵にする** ので、異なる 2 件は必ずどちらかが先になる。
+    /// 引き分けが無ければ、並べ替えが安定かどうかは結果に出ない。
+    func appliesBefore(_ i: Int, _ j: Int) -> Bool {
+        (values[i].name, i) < (values[j].name, j)
+    }
 }
 
 /// つまみの面が返す応答。
@@ -159,13 +180,14 @@ final class ParamSurface: DeclarationWatcher {
     /// 書き込みを当てる。
     ///
     /// **1 つの要求の中は名前順に処理する。** 並びが辞書の順に依ると、同じ要求で
-    /// 結果が揺れ、しかも環境によって再現しない ([ADR-0030] 決定 3)。
+    /// 結果が揺れ、しかも環境によって再現しない ([ADR-0030] 決定 3)。同じ名前は
+    /// 書いた順に当たるので、後のほうが残る (`ParamRequest.valuesInApplicationOrder`)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     private func apply(_ request: ParamRequest) -> ParamReport {
         var rejected: [ParamReport.Rejection] = []
         var clamped: [ParamReport.Clamp] = []
-        for entry in request.values.sorted(by: { $0.name < $1.name }) {
+        for entry in request.valuesInApplicationOrder {
             guard let outcome = registry.write(entry.value, to: entry.name) else {
                 rejected.append(.init(name: entry.name, reason: .unknownName))
                 continue
