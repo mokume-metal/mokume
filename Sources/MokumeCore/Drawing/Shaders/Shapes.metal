@@ -499,8 +499,30 @@ static inline FormPaint mokume_formPaint(
         paint.fillCoverage = mokume_formCoverage(fill, in.inverseRows);
     }
     if (kFormHasStroke) {
-        paint.strokeCoverage = mokume_formCoverage(outer, in.inverseRows)
-            * (1.0 - mokume_formCoverage(inner, in.inverseRows));
+        float outerCoverage = mokume_formCoverage(outer, in.inverseRows);
+        float innerCoverage = mokume_formCoverage(inner, in.inverseRows);
+        paint.strokeCoverage = outerCoverage * (1.0 - innerCoverage);
+        if (kFormHasFill && kind != kFormLine) {
+            // **塗りと輪郭の継ぎ目で下地を漏らさない。** 2 つの被覆率をそのまま重ねると、
+            // 画素の中で「塗り」と「輪郭の帯」が互いに無関係に散らばっているとみなすことに
+            // なり、2 つが接する画素 (塗りの縁が帯の内縁と揃う側) で下地が透ける — 輪郭を
+            // 画面で半画素寄せる約束 (ADR-0039 決定 2) では、塗りと帯の中心が半画素違うので
+            // 片側に必ず現れる (太さ 1 で最悪 25%・太さ 2 で 12% 暗くなった)。
+            //
+            // そこで、画素の中で塗りと帯が**重なる割合**を見積もる。縁が画素の幅では平行と
+            // みなせるので、平行な半平面どうしの共通部分の被覆率は小さいほうになる:
+            // 塗り ∩ 帯 = (塗り ∩ 外縁) − (塗り ∩ 内縁)。塗りが見える重みは「帯の外の塗り
+            // は全部、帯の下の塗りは輪郭が透ける分だけ」で、それを重ねる式 (輪郭 over 塗り)
+            // で割り戻したものを塗りの被覆率とする。塗りだけ・輪郭だけの列は旗が外すので、
+            // 絵は 1 ビットも変わらない
+            float overlap = max(
+                0.0,
+                min(paint.fillCoverage, outerCoverage) - min(paint.fillCoverage, innerCoverage));
+            float strokeAlpha = form.stroke.a;
+            float visible = paint.fillCoverage - overlap * strokeAlpha;
+            float behind = 1.0 - strokeAlpha * paint.strokeCoverage;
+            paint.fillCoverage = behind > 1e-4 ? saturate(visible / behind) : 0.0;
+        }
     }
     paint.fill = form.fill * paint.fillCoverage;
     paint.stroke = form.stroke * paint.strokeCoverage;

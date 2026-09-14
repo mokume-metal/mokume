@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import simd
 
 @testable import MokumeCore
 
@@ -211,6 +212,57 @@ struct PixelGridTests {
             expectSameGeometry(
                 form, triangles, "太さ \(weight) の線", allowedDifferingPixels: 3, tolerance: 0.25)
         }
+    }
+
+    // MARK: - 塗りと輪郭の継ぎ目
+
+    @Test("塗りと輪郭が接する所で、下地が漏れない", arguments: [Float(1), 2, 3])
+    func fillAndStrokeLeaveNoSeam(_ weight: Float) throws {
+        // 白い塗りに白い輪郭。塗りの中心は画素の角、帯の中心は画面で半画素寄る
+        // (ADR-0039 決定 2) ので、2 つは片側で接する。**塗り ∪ 帯に丸ごと入る画素**は
+        // 真っ白でなければならない — 被覆率を無関係な重なりとして掛けると、接する側で
+        // 下地が透ける (太さ 1 で最悪 25%・太さ 2 で 12% 暗くなった)
+        var worst = 0.0
+        var total = 0.0
+        var counted = 0
+        for index in 0..<6 {
+            let center = SIMD2<Float>(24 + Float(index) * 0.15, 24 + Float(index) * 0.11)
+            let radius = 10.3 + Float(index) * 0.37
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 48, height: 48)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.stroke(white)
+                canvas.strokeWeight(weight)
+                canvas.circle(center.x, center.y, radius * 2)
+            }
+            let pixels = try canvas.target.readPixels()
+            let fill = SIMD2<Double>(Double(center.x), Double(center.y))
+            let band = fill + 0.5
+            for y in 0..<48 {
+                for x in 0..<48 {
+                    // 画素の四角を 5x5 の標本で見て、全部が塗りか帯に入っているか
+                    var inside = true
+                    for j in 0..<5 where inside {
+                        for k in 0..<5 {
+                            let point = SIMD2(Double(x) + Double(k) * 0.25, Double(y) + Double(j) * 0.25)
+                            let inFill = simd_length(point - fill) <= Double(radius)
+                            let inBand = abs(simd_length(point - band) - Double(radius)) <= Double(weight) / 2
+                            if !(inFill || inBand) { inside = false; break }
+                        }
+                    }
+                    guard inside else { continue }
+                    let leak = 1 - Double(pixels.components[(y * 48 + x) * 4])
+                    worst = max(worst, leak)
+                    total += leak
+                    counted += 1
+                }
+            }
+        }
+        // 太さ 1 は帯が 1 画素幅しか無く、縁が平行とみなせない曲がり目で 6% ほど残る
+        // (直す前の main の円も同じ程度に残していた)
+        #expect(worst < (weight < 1.5 ? 0.08 : 0.02), "継ぎ目で下地が漏れる: 最悪 \(worst)")
+        #expect(total / Double(counted) < 0.001, "継ぎ目で下地が漏れる: 平均 \(total / Double(counted))")
     }
 
     // MARK: - 約束そのもの
