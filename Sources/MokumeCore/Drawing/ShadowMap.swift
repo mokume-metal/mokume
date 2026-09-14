@@ -35,11 +35,15 @@ import simd
 /// `kShadowSampler`)。焼き付けるパイプラインは頂点だけで組む ([#757])。
 ///
 /// [#757]: https://github.com/mokume-metal/mokume/issues/757
-final class ShadowMap {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor final class ShadowMap {
     /// 一辺の画素数。
     let detail: Int
     /// 光から見た奥行き。焼くときは前後判定の面、読むときは `depth2d` の面。
     let texture: any MTLTexture
+    /// 死ぬときに面を退かせる先。
+    private let gpu: RenderDevice
 
     /// 焼き付け先の画素の形式。奥行きの面そのもので、色の面は持たない。
     static let pixelFormat: MTLPixelFormat = RenderTarget.depthFormat
@@ -62,7 +66,14 @@ final class ShadowMap {
         let texture = try gpu.makeTexture(descriptor: Self.descriptor(side: detail))
         texture.label = "mokume.shadow"
         self.texture = texture
+        self.gpu = gpu
     }
+
+    /// **面を常駐から退かせる** ([#795])。細かさを変えて作り直したときも、前の面は
+    /// ここで退く — 作り直すのはコマンドを組み立てている最中なので、待たずに退かせる。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit { gpu.retire(texture) }
 
     /// 奥行きの面の記述。**読める奥行きの面**なので、焼いていないフレームに束ねる
     /// 1 画素の面 (`Canvas`) も同じ形で作る — 口の型 (`depth2d`) に合わないものを

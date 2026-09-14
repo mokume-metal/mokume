@@ -92,6 +92,49 @@ struct ResidencyReaderTests {
         try expectReleasedAfterSettling(bench, face)
     }
 
+    /// 描画先が死ぬと面を退かせるようになった ([#795]) ことで開きうる穴を見る。描き場所の
+    /// 投入はフレームの**内側で**出るので、束が描画先を抱えていないと、親の投入に番号が
+    /// 付く前に描き場所の番で外れる — 絵 (`Image`) と違い、描き場所は面を読む投入より
+    /// 前に自分の投入を持つ。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    @Test("draw の中で描いて置いて手放した描き場所の面は、親のフレームの投入が終わるまで外れない")
+    func graphicsDroppedInsideDrawStaysUntilRead() throws {
+        let bench = try makeBench()
+        let canvas = bench.canvas
+        var face: (any MTLTexture)?
+        var failure: (any Error)?
+
+        try canvas.draw {
+            do {
+                let graphics = try canvas.createGraphics(16, 16)
+                try graphics.draw {
+                    graphics.noStroke()
+                    graphics.circle(8, 8, 6)
+                }
+                face = graphics.output.texture
+                // 描き場所自身の投入を、手放す前に終わらせる。刈りが描き場所の番を確実に
+                // 過ぎるので、抱え方が壊れていれば必ず赤くなる
+                try bench.gpu.settle()
+                canvas.image(graphics, 0, 0)
+            } catch {
+                failure = error
+            }
+        }
+        try #require(failure == nil)
+
+        #expect(
+            bench.isResident(face),
+            """
+            draw の中で描いて置いて手放した描き場所の面が、親のフレームの投入が終わる前に
+            常駐から外れた。束が面だけを抱えて描画先 (RenderTarget) を抱えていないと、描画先が
+            死んだ時点の番号で外れる
+            ([#795](https://github.com/mokume-metal/mokume/issues/795) 条件 7・
+            [#1079](https://github.com/mokume-metal/mokume/issues/1079))。
+            """)
+        try expectReleasedAfterSettling(bench, face)
+    }
+
     @Test("1 フレームが投入を 2 つ以上出しても、置いて手放した絵の面は読み終わるまで外れない")
     func pictureSurvivesAnInterveningSubmission() throws {
         let bench = try makeBench()

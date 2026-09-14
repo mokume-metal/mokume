@@ -58,6 +58,17 @@ import Metal
         self.label = label
     }
 
+    /// **いまの世代の置き場を常駐から退かせる** ([#795])。
+    ///
+    /// 取り直しは古い世代を外すが、**最後の世代**は持ち主が死ぬまで残る。持ち主は
+    /// 描き場所・効果・表示の差し出しと複数あるので、外すのは確保した側のここに置く。
+    /// 待てない場所なので ``RenderDevice/retire(_:)`` を通す (取り直しの口とは待ち方が違う)。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit {
+        for buffer in buffers { gpu.retire(buffer) }
+    }
+
     /// いまのスロットの置き場。`count` 個ぶんが必ず入る。
     ///
     /// **1 フレームの中では、いちばん大きい要求を先に出す。** 番地を束ねたあとに

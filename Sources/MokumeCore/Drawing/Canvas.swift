@@ -1038,6 +1038,20 @@ public final class Canvas {
         self.blendModeBuffer = modeBuffer
     }
 
+    /// **自分で確保した置き場と面を常駐から退かせる** ([#795])。
+    ///
+    /// 退かせるのは `Canvas` が直に確保した 3 つ (投影行列・混ぜ方の番号・焼いていない
+    /// フレームの影の面) だけである。環に載る置き場・焼き付け先・効果の中間の絵・描く先は、
+    /// それぞれ確保した型が自分の `deinit` で退く — 片付ける中身は相手の `private` に
+    /// あり、しかも `Canvas` の外にも持ち主が居るため (`PresentPipeline` の置き場)。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit {
+        gpu.retire(projectionBuffer)
+        gpu.retire(blendModeBuffer)
+        if let unbakedShadowTexture { gpu.retire(unbakedShadowTexture) }
+    }
+
     /// 出す先の大きさと細かさから、描く先の大きさを決める。
     private static func drawnSize(of output: RenderTarget, at density: Float)
         -> (width: Int, height: Int)
