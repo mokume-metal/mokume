@@ -44,6 +44,15 @@ struct SolidVertex {
     /// 立体は面の**白い区画**を指す — 白を掛けても色は変わらないので、平面と同じ
     /// 塗りをそのまま通せる (``GlyphAtlas``)。
     var uv: SIMD2<Float>
+    /// 1 なら**輪郭の頂点**、0 なら塗りの頂点。
+    ///
+    /// 輪郭は画面で半画素寄せる ([ADR-0039] 決定 2) が、立体の輪郭は塗りと同じ列に
+    /// 呼び出し順で交互に積まれるので、区切りの番号では分けられない。頂点が名乗り、
+    /// 頂点関数が投影の後で寄せる (`Canvas.solidStrokeShift`)。**大きさは増えない** —
+    /// `uv` と `color` の間の詰め物に置いている。
+    ///
+    /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
+    var stroke: Float
     /// 色 — 線形・アルファ乗算済み ([ADR-0011] 決定 4)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
@@ -56,13 +65,14 @@ struct SolidVertex {
     init(
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
-        uv: SIMD2<Float>, color: LinearRGBA
+        uv: SIMD2<Float>, isStroke: Bool = false, color: LinearRGBA
     ) {
         self.position = position
         self.shapePosition = shapePosition ?? position
         self.normal = SIMD4<Float>(normal, isDerived ? 1 : 0)
         self.shapeNormal = shapeNormal ?? normal
         self.uv = uv
+        self.stroke = isStroke ? 1 : 0
         self.color = SIMD4<Float>(color.red, color.green, color.blue, color.alpha)
     }
 }

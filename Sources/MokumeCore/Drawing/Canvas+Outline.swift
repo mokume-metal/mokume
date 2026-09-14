@@ -94,11 +94,33 @@ extension Canvas {
     func strokeOutline(_ outline: Outline) {
         let half = currentStrokeWeight / 2
         let points = outline.points
+        let start = vertices.count
         strokeRing(
             count: points.count, isClosed: outline.isClosed,
             band: { appendBand(points[$0], points[$1], half: half) },
             disc: { appendDisc(at: points[$0], half: half) },
             square: { appendSquare(at: points[$0], half: half) })
+        // 記録の間は寄せられないので、積んだ区間を覚える (`recordedStrokeRanges`)
+        if recordingShape, vertices.count > start {
+            recordedStrokeRanges.append(start..<vertices.count)
+        }
+    }
+
+    /// 輪郭の頂点を描画先へ写す。**画面で (+0.5, +0.5) 画素寄せる** ([ADR-0039] 決定 2)。
+    ///
+    /// 塗りの縁は整数の座標で画素の境目に乗り、線の中心は画素の中心に乗る約束で、
+    /// 寄せるのは「線である」ことだけを理由にする。寄せは**最後の変換が決まる場所で
+    /// 1 回だけ**行う — ここで決まらない 2 つは寄せない:
+    ///
+    /// - 畳む雛形を積んでいる間 (`buildingFlatTemplate`): 置き場所ごとに変換が違うので、
+    ///   頂点関数が置いた後に寄せる (`shapeVertexMain`)
+    /// - 保持する形を記録している間 (`recordingShape`): 置くときに行列を掛けた直後に寄せる
+    ///   (`Canvas.place(_:of:at:)`)
+    ///
+    /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
+    private func strokePoint(x: Float, y: Float) -> SIMD2<Float> {
+        let placed = transform.apply(x: x, y: y)
+        return buildingFlatTemplate || recordingShape ? placed : placed + 0.5
     }
 
     /// 線分 1 本を帯にする。
@@ -107,10 +129,10 @@ extension Canvas {
         let length = (delta.x * delta.x + delta.y * delta.y).squareRoot()
         guard length > 0 else { return }
         let normal = SIMD2(-delta.y / length * half, delta.x / length * half)
-        let p1 = transform.apply(x: a.x + normal.x, y: a.y + normal.y)
-        let p2 = transform.apply(x: b.x + normal.x, y: b.y + normal.y)
-        let p3 = transform.apply(x: b.x - normal.x, y: b.y - normal.y)
-        let p4 = transform.apply(x: a.x - normal.x, y: a.y - normal.y)
+        let p1 = strokePoint(x: a.x + normal.x, y: a.y + normal.y)
+        let p2 = strokePoint(x: b.x + normal.x, y: b.y + normal.y)
+        let p3 = strokePoint(x: b.x - normal.x, y: b.y - normal.y)
+        let p4 = strokePoint(x: a.x - normal.x, y: a.y - normal.y)
         appendTriangle(p1, p2, p3, color: currentStroke)
         appendTriangle(p1, p3, p4, color: currentStroke)
     }
@@ -119,23 +141,23 @@ extension Canvas {
     private func appendDisc(at center: SIMD2<Float>, half: Float) {
         let points = Self.arcPoints(
             center: center, radiusX: half, radiusY: half, from: 0, sweep: 2 * .pi)
-        let hub = transform.apply(x: center.x, y: center.y)
-        var previous = transform.apply(x: points[0].x, y: points[0].y)
+        let hub = strokePoint(x: center.x, y: center.y)
+        var previous = strokePoint(x: points[0].x, y: points[0].y)
         for point in points.dropFirst() {
-            let current = transform.apply(x: point.x, y: point.y)
+            let current = strokePoint(x: point.x, y: point.y)
             appendTriangle(hub, previous, current, color: currentStroke)
             previous = current
         }
-        let first = transform.apply(x: points[0].x, y: points[0].y)
+        let first = strokePoint(x: points[0].x, y: points[0].y)
         appendTriangle(hub, previous, first, color: currentStroke)
     }
 
     /// 正方形を置く (四角い端点と削いだ角)。
     private func appendSquare(at center: SIMD2<Float>, half: Float) {
-        let a = transform.apply(x: center.x - half, y: center.y - half)
-        let b = transform.apply(x: center.x + half, y: center.y - half)
-        let c = transform.apply(x: center.x + half, y: center.y + half)
-        let d = transform.apply(x: center.x - half, y: center.y + half)
+        let a = strokePoint(x: center.x - half, y: center.y - half)
+        let b = strokePoint(x: center.x + half, y: center.y - half)
+        let c = strokePoint(x: center.x + half, y: center.y + half)
+        let d = strokePoint(x: center.x - half, y: center.y + half)
         appendTriangle(a, b, c, color: currentStroke)
         appendTriangle(a, c, d, color: currentStroke)
     }

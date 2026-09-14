@@ -9,13 +9,20 @@ import simd
 ///
 /// ## 座標の約束
 ///
-/// **原点は左上、単位は画素、縦軸は下向き。** そして**整数の座標は画素の中心に落ちる**。
+/// **原点は左上、単位は画素、縦軸は下向き。** 整数の座標は画素の**角**を指し、
+/// **塗りと線で乗る場所が違う** ([ADR-0039] 決定 2):
 ///
-/// 最後の約束が要るのは、輪郭の内側かどうかを画素の中心で判定するため。整数の座標を
-/// そのまま画面の座標へ写すと、`x = 10` に引いた太さ 1 の線は 9.5 から 10.5 までを
-/// 覆い、両端がちょうど画素の中心に乗る。どちらが塗られるかは境界の扱いに委ねられ、
-/// 引いた場所とは違う画素が 1 つ塗られる。半画素ずらしておくと 10 から 11 までを覆い、
-/// 中心 10.5 の画素だけがはっきり塗られる。
+/// - **塗りの縁は、整数の座標で画素の境目に乗る。** `rect(10, 20, 4, 8)` はちょうど
+///   4×8 画素を塗り、`circle(24, 24, 20)` は画素の角 (24, 24) を中心に上下左右が対称に
+///   塗られる。立体・字形・画像も同じ
+/// - **線・輪郭・点の中心は、整数の座標で画素の中心に乗る。** `x = 10` に引いた太さ 1 の
+///   線は 10 から 11 までを覆い、画素 1 列だけがはっきり塗られる
+///
+/// 線だけを画面で半画素寄せているのは、そのまま角に置くと太さ 1 の線が 2 列の画素を
+/// 半分ずつ塗って滲むためである。**寄せは経路によらない** — 距離関数で描く基本図形も、
+/// 三角形で描く図形も、畳んだ図形も、保持した形も、立体の輪郭も、同じ場所に乗る。
+///
+/// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
 ///
 /// ## 描き方
 ///
@@ -74,7 +81,7 @@ public final class Canvas {
 
     let pipeline: ShapePipeline
 
-    /// 描画先の座標へ落とす行列。半画素のずらしを含む。
+    /// 描画先の座標へ落とす行列。整数の座標を画素の角へ落とす。
     let projection: simd_float4x4
     private let projectionBuffer: any MTLBuffer
 
@@ -109,6 +116,15 @@ public final class Canvas {
     /// 記録するのは頂点と区間だけで、置き場所は持ち歩かない。記録の中で畳むと、形自身の
     /// 座標へ寄せた頂点だけが残り、**どこへ置くかが記録から落ちる**。
     var recordingShape = false
+
+    /// 保持する形を記録している間に、輪郭が積んだ平面の頂点の区間。
+    ///
+    /// 輪郭は画面で半画素寄せる ([ADR-0039] 決定 2) が、記録の間は置く場所の変換が
+    /// 決まっていないので寄せられない。**区間を覚えておき、置くときに行列を掛けた直後に
+    /// 寄せる** (`Shape.strokeRanges`)。記録を終えると `createShape` が抜く。
+    ///
+    /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
+    var recordedStrokeRanges: [Range<Int>] = []
 
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///
@@ -1043,16 +1059,26 @@ public final class Canvas {
 
     /// 描画先の座標へ落とす行列を作る。
     ///
-    /// 左上原点・縦軸下向きに写し、**半画素ずらして整数の座標を画素の中心へ**落とす
-    /// (型の説明を参照)。
+    /// 左上原点・縦軸下向きに写す。**ずらしは持たない** — 整数の座標は画素の角に落ち、
+    /// 線だけを輪郭の側で半画素寄せる (型の説明を参照)。立体の `Camera.clipAdjustment`
+    /// と揃っている必要がある (`screenX` は 2 つを往復して値を出すので、片方だけ変えると
+    /// 黙って半画素ずれる)。
     static func makeProjection(width: Float, height: Float) -> simd_float4x4 {
-        // x: 0…width → -1…1 を、半画素 (1/width) だけ右へ寄せる
-        // y: 0…height → 1…-1 を、半画素 (1/height) だけ下へ寄せる
+        // x: 0…width → -1…1、y: 0…height → 1…-1
         simd_float4x4(
             SIMD4<Float>(2 / width, 0, 0, 0),
             SIMD4<Float>(0, -2 / height, 0, 0),
             SIMD4<Float>(0, 0, 1, 0),
-            SIMD4<Float>(1 / width - 1, 1 - 1 / height, 0, 1))
+            SIMD4<Float>(-1, 1, 0, 1))
+    }
+
+    /// 立体の輪郭の頂点を、画面で (+0.5, +0.5) 画素寄せる量 (切り取り座標。`w` を掛けて足す)。
+    ///
+    /// 平面の輪郭は描画先の座標で 0.5 を足すが、立体の頂点は投影の後でしか画面の位置が
+    /// 決まらない。**単位は出す画素**で、描く細かさ (`pixelDensity`) によらない —
+    /// 平面の 0.5 も出す画素で測っているので、揃えないと細かさ < 1 で倍ずれる。
+    static func solidStrokeShift(width: Float, height: Float) -> SIMD4<Float> {
+        SIMD4<Float>(1 / width, -1 / height, 0, 0)
     }
 
     // MARK: - 変換
@@ -1149,6 +1175,7 @@ public final class Canvas {
     /// 出る、あるいは何も出ない、という形で現れる (#323)。
     func discardPending() {
         vertices.removeAll(keepingCapacity: true)
+        recordedStrokeRanges.removeAll(keepingCapacity: true)
         solidVertices.removeAll(keepingCapacity: true)
         solidIndices.removeAll(keepingCapacity: true)
         solidInstances.removeAll(keepingCapacity: true)
@@ -1718,7 +1745,8 @@ public final class Canvas {
             // 読まない**ので、同じ区画に足しても効かない
             var frame = FlatFrame(
                 projection: batch.matrix,
-                strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))))
+                strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
+                strokeShift: Self.solidStrokeShift(width: width, height: height))
             matrices.contents().advanced(by: index * Self.valuesStride)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
         }
@@ -1881,9 +1909,10 @@ public final class Canvas {
         let instanceBuffer = try solidInstanceStorage.write(
             solidInstances, holding: max(solidInstances.count, 1))
         let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
-        var value = matrix
+        // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い
+        var value = FlatFrame(projection: matrix, strokeStart: .max, strokeShift: .zero)
         matrixBuffer.contents().copyMemory(
-            from: &value, byteCount: MemoryLayout<simd_float4x4>.size)
+            from: &value, byteCount: MemoryLayout<FlatFrame>.stride)
 
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: map.makeRenderPass())
         else {

@@ -261,7 +261,7 @@ extension Canvas {
     func appendSolidVertex(
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
-        uv: SIMD2<Float>? = nil, color: LinearRGBA
+        uv: SIMD2<Float>? = nil, isStroke: Bool = false, color: LinearRGBA
     ) {
         // **面の切り替えが先。** 切り替えは列を閉じるので、開いてから切り替えると
         // 開いたばかりの列が閉じられ、この頂点がどの列にも属さなくなる
@@ -271,7 +271,7 @@ extension Canvas {
             SolidVertex(
                 position: position, shapePosition: shapePosition, normal: normal,
                 shapeNormal: shapeNormal, isDerived: isDerived, uv: uv ?? whiteUV,
-                color: color))
+                isStroke: isStroke, color: color))
         openSolid?.vertexCount += 1
         // **添字の列では、並べただけの頂点も自分の番号を名乗る。** 名乗らないと
         // 描くときに誰からも参照されず、その頂点だけが黙って消える (輪郭の帯と
@@ -426,8 +426,12 @@ extension Canvas {
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
         shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)
     ) {
-        appendSolidVertex(position: a, shapePosition: shape.0, normal: .zero, color: currentStroke)
-        appendSolidVertex(position: b, shapePosition: shape.1, normal: .zero, color: currentStroke)
-        appendSolidVertex(position: c, shapePosition: shape.2, normal: .zero, color: currentStroke)
+        // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)
+        appendSolidVertex(
+            position: a, shapePosition: shape.0, normal: .zero, isStroke: true, color: currentStroke)
+        appendSolidVertex(
+            position: b, shapePosition: shape.1, normal: .zero, isStroke: true, color: currentStroke)
+        appendSolidVertex(
+            position: c, shapePosition: shape.2, normal: .zero, isStroke: true, color: currentStroke)
     }
 }

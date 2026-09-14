@@ -43,6 +43,16 @@ public struct Shape {
     let forms: [FormInstance]
     /// 頂点の並びを、面と混ぜ方の変わり目で区切ったもの。
     let runs: [Run]
+    /// ``vertices`` のうち**輪郭の頂点**の区間。
+    ///
+    /// 輪郭は画面で半画素寄せる ([ADR-0039] 決定 2) が、記録した頂点は形自身の座標で、
+    /// 置く場所の変換がまだ決まっていない。置くときに行列を掛けた直後に、この区間だけを
+    /// 寄せる (`Canvas.place(_:of:at:)`)。**頂点の大きさは変えない** — GPU へ渡る頂点に印を
+    /// 足すと、字や画像を含む平面の全頂点が太る。立体の輪郭は頂点が名乗る
+    /// (`SolidVertex.stroke`) ので、ここには載らない。
+    ///
+    /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
+    let strokeRanges: [Range<Int>]
 
     /// 区間を塗るもの一式。
     ///
@@ -124,13 +134,15 @@ public struct Shape {
 
     init(
         vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
-        solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run]
+        solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
+        strokeRanges: [Range<Int>] = []
     ) {
         self.vertices = vertices
         self.solidVertices = solidVertices
         self.solidIndices = solidIndices
         self.forms = forms
         self.runs = runs
+        self.strokeRanges = strokeRanges
     }
 
     /// 何も入っていない形。
@@ -164,6 +176,7 @@ public struct Shape {
         var solidIndices: [UInt32] = []
         var forms: [FormInstance] = []
         var runs: [Run] = []
+        var strokeRanges: [Range<Int>] = []
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
         forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
 
@@ -178,6 +191,8 @@ public struct Shape {
             // ずらすと繋いだ 2 つ目以降が 1 つ目の頂点を指す (``solidIndices``)
             solidIndices.append(contentsOf: shape.solidIndices.map { $0 + UInt32(solidOffset) })
             forms.append(contentsOf: shape.forms)
+            strokeRanges.append(
+                contentsOf: shape.strokeRanges.map { ($0.lowerBound + flatOffset)..<($0.upperBound + flatOffset) })
             for var run in shape.runs {
                 switch run.source {
                 case .flat: run.start += flatOffset
@@ -191,7 +206,7 @@ public struct Shape {
         }
         return Shape(
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
-            forms: forms, runs: runs)
+            forms: forms, runs: runs, strokeRanges: strokeRanges)
     }
 
     /// 2 つの形を 1 つに畳む。

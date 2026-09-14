@@ -76,20 +76,20 @@ extension Canvas {
 
     /// 画素の境目に合わせた四角を 1 枚積む。
     ///
-    /// **半画素ぶん戻して置く。** 整数の座標は画素の中心を指すので (``makeProjection``)、
-    /// そのまま四角の縁に使うと縁の画素が半分だけ覆われ、焼いた絵が滲む。縁を画素の
-    /// 境目へ寄せると、焼いた画素と描く画素がちょうど 1 対 1 になる。
+    /// 字形と画像は**塗り**なので、縁は整数の座標で画素の境目に乗る ([ADR-0039] 決定 2)。
+    /// 焼いた画素と描く画素がそのまま 1 対 1 になるので、ずらしも戻しも要らない。
     ///
-    /// **字形と画像はどちらもここを通る。** 半画素の約束を 2 箇所に置くと、片方だけ
-    /// 直した日に字と画像がずれる — どちらも同じ座標系に載るので、ずれても「なんとなく
-    /// 滲む」としか見えない ([#948](https://github.com/mokume-metal/mokume/issues/948))。
+    /// **字形と画像はどちらもここを通る。** 置き方を 2 箇所に書くと、片方だけ直した日に
+    /// 字と画像がずれる — どちらも同じ座標系に載るので、ずれても「なんとなく滲む」としか
+    /// 見えない ([#948](https://github.com/mokume-metal/mokume/issues/948))。
+    ///
+    /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     private func appendPixelAlignedQuad(
         x: Float, y: Float, width: Float, height: Float,
         uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
     ) {
-        let shift: Float = -0.5
-        let left = x + shift
-        let top = y + shift
+        let left = x
+        let top = y
         let right = left + width
         let bottom = top + height
 
@@ -139,7 +139,7 @@ extension Canvas {
         vertices.append(ShapeVertex(position: position, uv: uv, color: color))
     }
 
-    /// 画像を四角として置く。**字形と同じ半画素の約束**で置かれる
+    /// 画像を四角として置く。**字形と同じ約束** (縁が画素の境目に乗る) で置かれる
     /// (``appendPixelAlignedQuad(x:y:width:height:uvMin:uvMax:color:)``)。
     func appendImageQuad(
         _ picture: Picture, x: Float, y: Float, width: Float, height: Float,

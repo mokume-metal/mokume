@@ -254,10 +254,8 @@ struct ShaderInterfaceTests {
                 [
                     .buffer(
                         "vertices", ShapePipeline.vertexBufferIndex, .layout(Self.solidVertex)),
-                    // 立体は区画の**先頭の行列だけ**を読む (`FlatFrame` の先頭と同じ位置)
-                    .buffer(
-                        "viewProjection", ShapePipeline.projectionBufferIndex,
-                        .scalar(simd_float4x4.self)),
+                    // 立体も平面と同じ区画を読む (行列と、輪郭の寄せ)
+                    .buffer("frame", ShapePipeline.projectionBufferIndex, .layout(Self.flatFrame)),
                     .buffer(
                         "instances", ShapePipeline.instanceBufferIndex,
                         .layout(Self.solidInstance)),
@@ -335,11 +333,12 @@ struct ShaderInterfaceTests {
         of: SolidVertex.self,
         [
             ("position", \.position), ("shapePosition", \.shapePosition), ("normal", \.normal),
-            ("shapeNormal", \.shapeNormal), ("uv", \.uv), ("color", \.color),
+            ("shapeNormal", \.shapeNormal), ("uv", \.uv), ("stroke", \.stroke), ("color", \.color),
         ])
 
     static let flatFrame = layout(
-        of: FlatFrame.self, [("projection", \.projection), ("strokeStart", \.strokeStart)])
+        of: FlatFrame.self,
+        [("projection", \.projection), ("strokeStart", \.strokeStart), ("strokeShift", \.strokeShift)])
 
     static let flatInstance = layout(
         of: FlatInstance.self,

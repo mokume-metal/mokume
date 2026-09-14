@@ -193,7 +193,9 @@ public struct Camera: Equatable, Sendable {
     /// 立体を落とす行列。
     ///
     /// **奥行き 0 の面は、平面の図形とぴったり重なる。** 既定の距離をそう選び、
-    /// 平面と同じ半画素のずらしを掛けているためで、そのことは検査で固定してある。
+    /// 平面と同じく整数の座標を画素の角へ落としているためで、そのことは検査で固定して
+    /// ある (`SolidTests.planeAtZeroDepthMatchesRect` と `PixelGridTests`)。立体の輪郭だけは
+    /// 頂点関数が画面で半画素寄せる (`Canvas.solidStrokeShift`)。
     func viewProjection(width: Float, height: Float) -> simd_float4x4 {
         Self.clipAdjustment(width: width, height: height) * projectionMatrix * viewMatrix
     }
@@ -235,16 +237,21 @@ public struct Camera: Equatable, Sendable {
         }
     }
 
-    /// 縦軸を下向きに保ち、平面と同じ半画素のずらしを掛ける。
+    /// 縦軸を下向きに保つ。**ずらしは持たない** — 平面の `Canvas.makeProjection` と同じく、
+    /// 整数の座標を画素の角へ落とす ([ADR-0039] 決定 2)。2 つは揃っている必要がある。
     ///
     /// 縦軸は 2 度反転する — 投影が持つ「上が +y」と、この行列の反転で、世界の +y が
     /// 画面の下になる。平面の約束をそのまま延長するための補正である ([ADR-0021] 決定 1)。
+    ///
+    /// 大きさを受け取るのは、画面の約束を持つ補正がここに集まるため (いまは使わない)。
+    ///
+    /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     static func clipAdjustment(width: Float, height: Float) -> simd_float4x4 {
         simd_float4x4(
             SIMD4<Float>(1, 0, 0, 0),
             SIMD4<Float>(0, -1, 0, 0),
             SIMD4<Float>(0, 0, 1, 0),
-            SIMD4<Float>(1 / width, -1 / height, 0, 1))
+            SIMD4<Float>(0, 0, 0, 1))
     }
 
     // MARK: - 置けるか
