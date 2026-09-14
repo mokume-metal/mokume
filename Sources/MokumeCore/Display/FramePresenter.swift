@@ -29,7 +29,7 @@ extension RenderTarget: PresentableFrame {}
 @MainActor
 final class FramePresenter {
     private let gpu: RenderDevice
-    private let pipeline: PresentPipeline
+    let pipeline: PresentPipeline
 
     /// 面を取れずに見送ったフレームの数。
     ///
@@ -101,9 +101,15 @@ final class FramePresenter {
     func draw(_ source: some PresentableFrame, into destination: any MTLTexture) throws(RenderFailure) {
         try gpu.withCommands { commands throws(RenderFailure) in
             try encode(source, into: destination, using: commands)
-            try gpu.commitAndWait(commands)
+            gpu.commit(commands)
         }
+        // **記録は待つより先に書く** ([#1183])。待ちが期限切れになっても投入は済んでいて、
+        // GPU はまだこのスロットの設定を読んでいるかもしれない。記録を飛ばすと、次にこの
+        // スロットへ書くときにその投入を待たない
+        //
+        // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         pipeline.noteSubmission()
+        try gpu.settle()
     }
 
     /// 収まる矩形を決めて、1 枚のパスとして書き込む。

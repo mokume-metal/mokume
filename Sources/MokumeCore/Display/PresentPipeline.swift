@@ -36,7 +36,7 @@ import Metal
     /// 「深さを増やした瞬間に競合する」と名指しした潜在ハザード)。
     ///
     /// [#754]: https://github.com/mokume-metal/mokume/issues/754
-    private let ring: FrameRing
+    let ring: FrameRing
     /// 明るさを写す段の設定を置く領域。差し出しごとに書き換える。
     private let brightnessStorage: GrowableBuffer
 

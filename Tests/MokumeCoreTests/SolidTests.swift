@@ -295,4 +295,48 @@ struct SolidTests {
         #expect(canvas.solidMeshesBuilt == 0)
         #expect(try pixels(of: canvas)[32, 32] == (0, 0, 0, 255))
     }
+
+    // MARK: - 投入されなかった描き切り (#1183)
+
+    /// **組み立ての後で投げた途中の描き切りを「このフレームで描き切った」と数えない。**
+    /// 数えると次の描き切りが続きのフレームとして奥行きを読むが、このフレームでは一度も
+    /// 消されていない — 読むのは前のフレームが残した奥行きで、奥の立体がそれに隠れる
+    /// ([#1183])。
+    ///
+    /// 前のフレームは途中の描き切りで手前の奥行きを残し、次のフレームは塗り直さずに
+    /// 最初の途中の描き切りを投げさせる (形の置き場を伸ばし、その取り直しの待ちで投げる)。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    @Test("組み立ての後で投げた途中の描き切りの次は、前のフレームの奥行きを読まない")
+    func aMidFrameFlushThatThrowsDoesNotCountAsAPass() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            // 形の置き場を 1 度取らせる。面の外に置くので絵には出ない
+            canvas.rect(1000, 1000, 1, 1)
+            canvas.fill(red)
+            canvas.push()
+            canvas.translate(32, 32, 20)
+            canvas.plane(30, 30)
+            canvas.pop()
+            // 手前の奥行きを残させる
+            canvas.loadPixels()
+        }
+
+        try canvas.draw {
+            for index in 0..<5000 { canvas.rect(1000 + index % 16, 1000, 1, 1) }
+            canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+            canvas.loadPixels()
+            canvas.gpu.failSettleForTesting = nil
+
+            canvas.fill(green)
+            canvas.push()
+            canvas.translate(32, 32, -20)
+            canvas.plane(30, 30)
+            canvas.pop()
+        }
+        #expect(
+            try pixels(of: canvas)[32, 32] == (0, 255, 0, 255),
+            "消していない奥行きを読み、前のフレームの手前の面に隠れた")
+    }
 }

@@ -1503,13 +1503,20 @@ public final class Canvas {
             clearColor: pendingBackground,
             continuingFrame: passesThisFrame > 0 && pendingBackground == nil,
             keepingDepth: !applyingEffects)
-        passesThisFrame += 1
-        // **途中で投げたら、組み立ての口が畳む** (#1180)。ここに片付けは書かない
-        let submission: UInt64 = try gpu.withCommands { commands throws(RenderFailure) in
+        // **途中で投げたら、組み立ての口が畳む** (#1180)。ここに片付けは書かない。
+        //
+        // **「投入された」ことにする記帳は、口から返った後でだけ書く** ([#1183])。組み立ての
+        // 途中で書くと、後続が投げたときに「積んだが投入されていない仕事」を済んだことに
+        // してしまい、次の描き切りがそれを踏む — 焼けていない影の面を読む・CPU の画素への
+        // 書き込みが失われる・消していない奥行きを読む。口の中では「何を積んだか」だけを
+        // 集めて持ち出す
+        //
+        // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+        let assembled = try gpu.withCommands { commands throws(RenderFailure) in
             // **CPU が画素へ書いたものがあれば、描く前に描画先へ戻す。** 描画先は GPU 専用の
             // 面なので、`pixels` への書き込みは写しに載っている。書いていないフレームは
             // 何も積まない (#753)
-            try target.encodePixelWriteBack(into: commands)
+            let wroteBack = try target.encodePixelWriteBack(into: commands)
 
             // **描くより前に、頼まれた計算を流す** (ADR-0023 決定 3 — 計算はフレームの
             // 前置き)。頼まれていなければ口も開かないので、計算を使わないスケッチは
@@ -1556,14 +1563,19 @@ public final class Canvas {
             // 断片・外の置き場所) が落ちるので、GPU が終わるまで抱えておく側へ渡す —
             // この世代のコマンドはリソースを保持しないため、渡さないと利用者が `draw()` の
             // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
-            return gpu.commit(
+            let submission = gpu.commit(
                 commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
+            return (submission: submission, wroteBack: wroteBack, shadow: bakedShadow)
         }
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
         // まま書いてよい」ことになる (#754)
         frameRing.noteSubmission()
-        if mirroringPixels { target.markPixelsMirrored(through: submission) }
+        passesThisFrame += 1
+        if assembled.wroteBack { target.markPixelsWrittenBack() }
+        if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
+        // 焼いたなら、その入力を覚える。使い回したフレームでは同じ値を書き直すだけになる
+        if let shadow = assembled.shadow { lastShadowBakeKey = shadow.key }
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる。
@@ -1577,7 +1589,7 @@ public final class Canvas {
     /// 置き場を取ることも、encoder の状態を変えることもしない。
     private func encodeBatches(
         into encoder: any MTL4RenderCommandEncoder,
-        shadow bakedShadow: (map: ShadowMap, matrix: simd_float4x4)?
+        shadow bakedShadow: BakedShadow?
     ) throws(RenderFailure) {
         guard hasPendingGeometry else { return }
 
@@ -1756,7 +1768,7 @@ public final class Canvas {
 
     /// 列ごとの値と、フレームに 1 つの値 (時刻・面の大きさ・影・揺らぎ) を置く。
     private func uploadPerBatch(
-        shadow bakedShadow: (map: ShadowMap, matrix: simd_float4x4)?
+        shadow bakedShadow: BakedShadow?
     ) throws(RenderFailure) -> BatchBuffers {
         // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
         let matrices = try matrixStorage.buffer(holding: batches.count)
@@ -1905,20 +1917,24 @@ public final class Canvas {
     /// [#757]: https://github.com/mokume-metal/mokume/issues/757
     private func bakeShadow(
         into commands: any MTL4CommandBuffer
-    ) throws(RenderFailure) -> (map: ShadowMap, matrix: simd_float4x4)? {
+    ) throws(RenderFailure) -> BakedShadow? {
         guard let matrix = shadowMatrix, !solidVertices.isEmpty else { return nil }
         let casting = batches.filter(\.castsShadow)
         guard !casting.isEmpty else { return nil }
 
         // **前のフレームと同じ入力なら焼き直さない。** 光の行列・細かさ・落とす列の
         // 頂点と置き場所が 1 バイトも変わっていなければ、焼いても同じ奥行きが出るだけ
-        // である。指紋は焼く直前に取り、焼き終えてから覚える — 途中で投げたフレームの
-        // 指紋を覚えると、次のフレームが焼けていない面を読む
+        // である。指紋は焼く直前に取り、**覚えるのは描き切りが投入した後** (`flush`) —
+        // 焼き付けを積んだ後で投げたフレームの指紋を覚えると、次のフレームが焼けていない
+        // 面を読む ([#1183])。投入されなかった焼き付けは面を書き換えていないので、前の
+        // 指紋のまま使い回して正しい
+        //
+        // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         let detail = shadowDetailValue
         let key = shadowBakeKey(matrix: matrix, detail: detail, casting: casting)
         if let key, key == lastShadowBakeKey, let shadowMap, shadowMap.detail == detail {
             shadowBakesReused += 1
-            return (shadowMap, matrix)
+            return BakedShadow(map: shadowMap, matrix: matrix, key: key)
         }
         let map = try shadowMapHolding(detail)
         let solidBuffer = try solidVertexStorage.write(
@@ -1974,8 +1990,16 @@ public final class Canvas {
         encodeShadowBarrier(on: encoder)
         encoder.endEncoding()
         shadowBakesEncoded += 1
-        lastShadowBakeKey = key
-        return (map, matrix)
+        return BakedShadow(map: map, matrix: matrix, key: key)
+    }
+
+    /// 焼いた (または使い回した) 影と、その入力の指紋。
+    private struct BakedShadow {
+        let map: ShadowMap
+        let matrix: simd_float4x4
+        /// 焼き付けの入力の指紋。**投入した後で `lastShadowBakeKey` へ覚える。**
+        /// 指紋を取れない入力 (粒) では `nil` で、覚えると次のフレームが使い回さない
+        let key: UInt64?
     }
 
     /// 焼き付けの入力の指紋。**焼く側が読むものを全部**入れる — 光の行列・細かさ・

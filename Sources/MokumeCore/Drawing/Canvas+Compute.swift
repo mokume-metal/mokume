@@ -135,10 +135,13 @@ extension Canvas {
     /// [#341]: https://github.com/mokume-metal/mokume/issues/341
     func encodeComputations(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
         guard !pendingComputations.isEmpty else { return }
-        // **流したものは溜め場から降ろす。** 読み戻し (`read(_:)`) がフレームの途中で
-        // ここを通るので、降ろさないとフレーム末尾の描き切りが同じ計算をもう一度走らせる。
-        // 描き切りだけを通る経路では `discardFrame()` が同じことをするので、挙動は変わらない
-        defer { pendingComputations.removeAll(keepingCapacity: true) }
+        // **溜め場から降ろすのは、呼んだ側が投入した後である** ([#1183])。積んだ後で
+        // 組み立てが投げるとコマンドは捨てられるので、ここで降ろすと頼みが消える — 途中の
+        // 描き切り (`loadPixels()`) が一時的に失敗しただけなら、フレーム末尾の描き切りが
+        // 同じものを流し直す約束である。降ろすのは描き切りでは投入後の `discardFrame()`、
+        // 読み戻しでは `runPendingComputations()` が持つ
+        //
+        // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         let pipeline = try computePipeline()
         // 頼みごとの値の区画。**要る数を先に 1 度だけ取る** — 番地を束ねたあとに取り直すと、
         // 束ねた先が死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
@@ -272,8 +275,13 @@ extension Canvas {
         do {
             try gpu.withCommands { commands throws(RenderFailure) in
                 try encodeComputations(into: commands)
-                try gpu.commitAndWait(commands)
+                gpu.commit(commands)
             }
+            // **流したものは溜め場から降ろす** — 降ろさないとフレーム末尾の描き切りが同じ計算を
+            // もう一度走らせる。**待つより先に降ろす**: 待ちが期限切れになっても投入は済んで
+            // いるので、残すと 2 度走る (#1183)
+            pendingComputations.removeAll(keepingCapacity: true)
+            try gpu.settle()
         } catch {
             // 読み取りは落とさない (ADR-0020 決定 5)。次のフレームの描き切りが同じ理由で
             // 失敗し、そちらから外へ出る

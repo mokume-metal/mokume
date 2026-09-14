@@ -78,6 +78,33 @@ struct FramePresenterTests {
             #expect(source.height == 16)
         }
     }
+
+    /// **投入した後で待てなかった差し出しも、そのスロットを読む投入として記録する。**
+    /// 記録を飛ばすと、次にこのスロットへ明るさを書くとき、まだ走っているかもしれない
+    /// 投入を待たない ([#1183])。待つかどうかは GPU の速さで振れるので、記録そのものを見る。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    @Test("投入した後で待てなかった差し出しも、スロットを読む投入として記録する")
+    func aDrawWhoseWaitFailsStillRecordsItsSubmission() throws {
+        let gpu = try RenderDevice()
+        let source = try RenderTarget(gpu: gpu, width: 8, height: 8)
+        try source.fill(with: .linear(red: 1, green: 1, blue: 1))
+        let destination = try RenderTarget(gpu: gpu, width: 8, height: 8)
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+
+        let submitted = gpu.submissionCount
+        gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+        #expect(throws: RenderFailure.self) {
+            try presenter.draw(source, into: destination.texture)
+        }
+        gpu.failSettleForTesting = nil
+        #expect(gpu.submissionCount == submitted + 1, "投入する前に投げている")
+
+        let ring = presenter.pipeline.ring
+        #expect(
+            ring.readers[ring.slot] == gpu.submissionCount,
+            "投入したのに、スロットを読む投入として記録していない")
+    }
 }
 
 /// 画面へ出すかどうかの判定。

@@ -49,7 +49,7 @@ import Metal
     private let gpu: RenderDevice
 
     /// スロットごとの「そのスロットの置き場を最後に読んだ投入の番号」。まだ無ければ 0。
-    private var readers: [UInt64]
+    private(set) var readers: [UInt64]
 
     /// いま CPU が書いてよいスロット。
     private(set) var slot: Int

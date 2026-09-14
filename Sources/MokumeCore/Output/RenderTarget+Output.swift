@@ -56,10 +56,10 @@ extension RenderTarget {
         // 明るさを写す段は**描画先が持つ**。画面へ差し出す経路と同じ設定が効く
         pass.setBrightness(brightness)
 
-        let submission = try gpu.withCommands { commands throws(RenderFailure) in
+        let assembled = try gpu.withCommands { commands throws(RenderFailure) in
             // **CPU が画素へ書いたものがあれば、読む前に描画先へ戻す。** 描き切りを挟まずに
             // `pixels` へ書いてここへ来る経路 (フレームの外で書いて書き出す) のため (#753)
-            try encodePixelWriteBack(into: commands)
+            let wroteBack = try encodePixelWriteBack(into: commands)
             guard
                 let encoder = commands.makeRenderCommandEncoder(descriptor: image.makeRenderPass())
             else {
@@ -82,8 +82,12 @@ extension RenderTarget {
             encoder.endEncoding()
             // **待たずに投入し、番号を憶える。** 中身が確定しているかを気にするのは触る側で、
             // ``EncodedImage/read()`` と出口へ渡す直前がその番号を名指しで待つ (#927)
-            return gpu.commit(commands, retaining: [image])
+            return (submission: gpu.commit(commands, retaining: [image]), wroteBack: wroteBack)
         }
+        // **戻したことにするのは投入の後** (#1183)。組み立ての途中で投げると書き戻しは
+        // 捨てられるので、次に触る段がもう一度積む
+        if assembled.wroteBack { markPixelsWrittenBack() }
+        let submission = assembled.submission
         image.pendingSubmission = submission
         lastEncodeSubmission = submission
         return image
