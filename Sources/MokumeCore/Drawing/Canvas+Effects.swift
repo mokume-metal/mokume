@@ -173,21 +173,13 @@ extension Canvas {
         paired: any MTLTexture, into destination: any EffectSurface,
         using pipeline: EffectPipeline, in commands: any MTL4CommandBuffer
     ) throws(RenderFailure) {
-        if failEffectPassForTesting == index { throw .encoderUnavailable }
-        guard let encoder = commands.makeRenderCommandEncoder(
-            descriptor: destination.makeEffectPass())
-        else {
-            throw .encoderUnavailable
-        }
-        // **前の段が書き終わるのを待つ。** この世代のコマンド構造は口をまたぐ依存を
-        // 自動では張らないので、積まなければ次の段が書き終わる前の絵を読む
-        // ([#341] で影の焼き付けと画面のパスが実際にそうなった)
+        // **投げうる仕事は、口を開く前に済ませる** ([#1184])。開いた後で投げると口が開いたまま
+        // `applyEffects` が握って投入し、検証層では投入の時点で落ちる。閉じてから抜ける
+        // のでも足りない — 書き込む先は前の内容を読まない (`.dontCare`) ので、最後の段が
+        // 入りの絵へ開いた口を閉じるだけで、入りの絵の中身が保証されなくなる。だから口を
+        // 開いた後には投げる行を置かない
         //
-        // [#341]: https://github.com/mokume-metal/mokume/issues/341
-        encoder.barrier(
-            afterQueueStages: .fragment, beforeStages: .fragment, visibilityOptions: .device)
-        effectBarriersEncoded += 1
-
+        // [#1184]: https://github.com/mokume-metal/mokume/issues/1184
         let base = index * EffectPipeline.passStride
         let block = pipeline.passBuffer.contents().advanced(by: base)
         var control = [pass.control.0, pass.control.1]
@@ -204,6 +196,9 @@ extension Canvas {
                 from: &values,
                 byteCount: EffectPipeline.valueSlotCapacity * MemoryLayout<Float>.stride)
 
+        if failEffectPassForTesting == index {
+            throw .argumentTableUnavailable(reason: "failed for testing")
+        }
         let table = try pipeline.table(at: index)
         let address = pipeline.passBuffer.gpuAddress + UInt64(base)
         table.setAddress(
@@ -217,6 +212,20 @@ extension Canvas {
             index: EffectPipeline.frameBufferIndex)
         table.setTexture(source.gpuResourceID, index: EffectPipeline.sourceTextureIndex)
         table.setTexture(paired.gpuResourceID, index: EffectPipeline.pairedTextureIndex)
+
+        guard let encoder = commands.makeRenderCommandEncoder(
+            descriptor: destination.makeEffectPass())
+        else {
+            throw .encoderUnavailable
+        }
+        // **前の段が書き終わるのを待つ。** この世代のコマンド構造は口をまたぐ依存を
+        // 自動では張らないので、積まなければ次の段が書き終わる前の絵を読む
+        // ([#341] で影の焼き付けと画面のパスが実際にそうなった)
+        //
+        // [#341]: https://github.com/mokume-metal/mokume/issues/341
+        encoder.barrier(
+            afterQueueStages: .fragment, beforeStages: .fragment, visibilityOptions: .device)
+        effectBarriersEncoded += 1
 
         encoder.setRenderPipelineState(pass.shader?.state ?? pipeline.builtin)
         // **窓は書き込む先の大きさで測る。** 段は入りと出りで大きさが違いうる

@@ -474,6 +474,11 @@ public final class Canvas {
     /// 段の失敗は資源が枯れたときにしか起きず、検査から自然には作れない。一方で
     /// **途中で失敗したときに何が出るか**は、この Issue の完了条件そのものなので、
     /// ここに 1 つだけ穴を空けてある (`failureForTesting` と同じ形)。公開はしない。
+    ///
+    /// **穴は本物の失敗が起きる位置 (番地表を引く直前) に空ける。** 前へずらすと、
+    /// 口を開いた後に投げる経路を検査が踏まなくなる ([#1184] はそこで見逃した)。
+    ///
+    /// [#1184]: https://github.com/mokume-metal/mokume/issues/1184
     var failEffectPassForTesting: Int?
     /// 通した段の数。
     var effectPassesEncoded = 0

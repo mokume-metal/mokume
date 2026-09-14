@@ -276,6 +276,29 @@ struct UpscaleTests {
         }
     }
 
+    // MARK: - 失敗
+
+    /// 拡大は効果と同じ `encode` を通るので、番地表を引けない失敗も同じ位置で起きる
+    /// (#1184)。出す先は前の内容を読まない (`.dontCare`) ので、口を開いてから投げると
+    /// 閉じても出す先の中身が保証されない — **投げるなら口を開く前**である。
+    @Test("拡大の段で失敗しても、落ちずに知らせ、出す先へは何も書かない")
+    func leavesTheOutputAloneWhenTheUpscaleFails() throws {
+        let canvas = try makeCanvas(density: 0.5)
+        try canvas.draw { quadrant(on: canvas) }
+        let before = fingerprint(try canvas.output.encodeForDisplay().bytes)
+
+        // 効果を頼んでいないので、拡大の段が枠の 0 番を取る
+        canvas.failEffectPassForTesting = 0
+        try canvas.draw {
+            canvas.background(.display(red: 1, green: 1, blue: 1))
+        }
+        canvas.failEffectPassForTesting = nil
+
+        #expect(canvas.warnings.hasWarned(.upscaleFailed))
+        // 白く塗った絵は出す先へ届かず、前のフレームの絵が残っている
+        #expect(fingerprint(try canvas.output.encodeForDisplay().bytes) == before)
+    }
+
     // MARK: - 出口が揃うこと
 
     @Test("画面へ差し出す絵も、書き出す絵も、同じ 1 枚から出る")
