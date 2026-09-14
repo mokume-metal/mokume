@@ -36,6 +36,12 @@ import Metal
 /// 「いちばん大きい枚数を名乗っている面」を選べばよい — 壁時計で待たない
 /// ([ADR-0018] 決定 3 と同じ規律)。
 ///
+/// **公開は 1 枚遅れる** ([#748])。焼く投入は待たずに出し、属性は**次の** ``write(_:using:numbers:)``
+/// の先頭でその投入を名指しで待ってから載せる — 待つ間の CPU の仕事 (次のフレームの
+/// `draw()`) が GPU と重なる。読み手は枚数がいちばん大きい面を選ぶので、遅れた公開と
+/// そのまま噛み合う。
+///
+/// [#748]: https://github.com/mokume-metal/mokume/issues/748
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
@@ -56,7 +62,16 @@ final class SharedFrameSurface {
     /// **2 枚では足りない。** 読み手が 1 枚を掴んでいる間に書き手が次を書き、その次で
     /// 掴まれている面へ戻ってくる。3 枚あれば、読み手が 1 枚遅れていても書き手は
     /// 空いている面を選べる。
-    static let slotCount = 3
+    ///
+    /// **公開を 1 枚遅らせたので 4 枚持つ** ([#748])。焼いている面は公開の手前にあるぶん
+    /// 1 枚先を回っており、3 枚のままだと読み手が最新として掴んだ面が 2 回目の書き込みで
+    /// 書き直される (遅らせる前は 3 回目)。読み手は掴んだ面を GPU の完了を待たずに差し出す
+    /// ので、この猶予が途中の絵を読ませないことの実体である — 縮めずに保つほうへ倒し、
+    /// 費用はキャンバス大の面 1 枚ぶんで払う。読み手は枚数を番号の並び (``Manifest``) から
+    /// 取るので、版の違う道具ともそのまま噛み合う。
+    ///
+    /// [#748]: https://github.com/mokume-metal/mokume/issues/748
+    static let slotCount = 4
 
     /// 書き終わった枚数を載せる属性の名前。
     static let frameAttribute = "mokume.frame"
@@ -167,8 +182,14 @@ final class SharedFrameSurface {
 
     private let slots: [Slot]
     private let manifestURL: URL
-    /// これまでに書き終わった枚数。**1 から数える** — 0 は「まだ 1 枚も書いていない」を
-    /// 表すので、読み手は属性が 0 の面を掴まずに済む。
+    /// 焼いた投入を名指しで待つために持つ。
+    private let gpu: RenderDevice
+    /// 焼いたがまだ名乗っていない 1 枚。**次の書き込みの先頭で公開する** ([#748])。
+    ///
+    /// [#748]: https://github.com/mokume-metal/mokume/issues/748
+    private var pending: (slot: Int, submission: UInt64, numbers: FrameNumbers)?
+    /// これまでに名乗った枚数。**1 から数える** — 0 は「まだ 1 枚も書いていない」を
+    /// 表すので、読み手は属性が 0 の面を掴まずに済む。**焼いて控えている 1 枚は数えない。**
     private(set) var frameNumber = 0
 
     /// 区画があるときだけ作る。**区画の名前は ``StartupReads`` が正典** (#380)。
@@ -203,6 +224,7 @@ final class SharedFrameSurface {
         guard width > 0, height > 0 else { throw .invalidSize(width: width, height: height) }
         self.width = width
         self.height = height
+        self.gpu = gpu
         self.manifestURL = directory.appendingPathComponent(Self.manifestName)
 
         var slots: [Slot] = []
@@ -273,26 +295,51 @@ final class SharedFrameSurface {
         try AtomicFile.writeJSON(Manifest(ids: ids, width: width, height: height), to: manifestURL)
     }
 
-    /// 描いた絵を、次の面へ焼いて差し出す。
+    /// 描いた絵を次の面へ焼き、**前に焼いた 1 枚を差し出す。**
     ///
-    /// **書き終わってから名乗る。** 属性を先に載せると、読み手が書きかけの面を掴む。
-    /// ``FramePresenter/draw(_:into:)`` は GPU の完了まで待つので、返った時点で面の
-    /// 中身は揃っている。
-    /// - Parameter numbers: この絵を描いたときの速さ。**枚数より先に載せる** (下記)。
+    /// 焼く投入は待たない。いま焼いた絵が名乗るのは次の書き込みのときである ([#748])。
+    /// 走っているスケッチは止めている間も毎リフレッシュここを通るので、控えた 1 枚は
+    /// 次のリフレッシュで必ず出る。
+    ///
+    /// [#748]: https://github.com/mokume-metal/mokume/issues/748
+    /// - Parameter numbers: この絵を描いたときの速さ。絵と一緒に控え、絵と一緒に載せる。
     func write(
         _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers
     ) throws(RenderFailure) {
-        let slot = slots[frameNumber % slots.count]
-        try presenter.draw(source, into: slot.texture)
+        try publishPending()
+        // **焼く面は、公開した枚数から決まる。** 控えを出した後なので、公開済みの最新面の
+        // 次を踏む — 最新面そのものへは戻らない
+        let index = frameNumber % slots.count
+        let submission = try presenter.draw(source, into: slots[index].texture)
+        pending = (index, submission, numbers)
+    }
+
+    /// 控えている 1 枚を名乗らせる。控えが無ければ何もしない。
+    ///
+    /// **書き終わってから名乗る。** 属性を先に載せると、読み手が書きかけの面を掴む。
+    /// 焼いた投入を名指しで待ってから載せるので、名乗った時点で面の中身は揃っている。
+    /// 待つのは 1 本だけで、1 枚遅らせているぶん普通は何もせずに返る。
+    ///
+    /// **待てなければ名乗らない。** 控えは先に手放すので、次の書き込みは同じ面を焼き直す。
+    func publishPending() throws(RenderFailure) {
+        guard let written = pending else { return }
+        pending = nil
+        try gpu.waitForSubmission(written.submission)
+        let slot = slots[written.slot]
         frameNumber += 1
         // **速さを枚数より先に載せる。** 読み手は枚数がいちばん大きい面を選ぶので、枚数を
         // 最後にすれば、選ばれた面の速さは必ずその枚数のときのものになる。属性を 1 つずつ
         // 載せる以上まとめて差し替わることはないが、順序だけで「古い速さと新しい枚数」の
         // 組み合わせは起きなくなる
-        Self.publish(numbers, to: slot.surface)
+        Self.publish(written.numbers, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
     }
+
+    /// 焼いたがまだ名乗っていない面の番号。控えが無ければ `nil`。
+    ///
+    /// 検査が読む — 「焼いている面が、読み手の掴んでいる面ではない」を確かめる口。
+    var pendingID: UInt32? { pending.map { ids[$0.slot] } }
 
     /// 速さを面へ載せる。
     ///

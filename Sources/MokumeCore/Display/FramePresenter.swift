@@ -94,22 +94,33 @@ final class FramePresenter {
         return true
     }
 
-    /// 描いた絵を、渡したテクスチャへ収める (帯を含む)。GPU の完了まで待つ。
+    /// 描いた絵を、渡したテクスチャへ収める (帯を含む)。**GPU の完了を待たない。**
     ///
     /// 面へ差し出すのと**同じ経路**で、行き先だけが違う。画面を持たない実行から
     /// 「画面に出るはずの絵」を取り出せるので、収まり方を機械で検められる。
-    func draw(_ source: some PresentableFrame, into destination: any MTLTexture) throws(RenderFailure) {
-        try gpu.withCommands { commands throws(RenderFailure) in
+    ///
+    /// 中身が確定しているかを気にするのは触る側で、返した番号を名指しで待つ
+    /// (``SharedFrameSurface`` が属性を載せる前に待つ・[#748])。かつてはここで投入済みの
+    /// **全部**を待っており、共有面へ差し出す実行だけが毎フレーム GPU に縛られていた。
+    ///
+    /// [#748]: https://github.com/mokume-metal/mokume/issues/748
+    /// - Returns: 振った投入番号。
+    @discardableResult
+    func draw(_ source: some PresentableFrame, into destination: any MTLTexture) throws(RenderFailure)
+        -> UInt64
+    {
+        let submission = try gpu.withCommands { commands throws(RenderFailure) in
             try encode(source, into: destination, using: commands)
-            gpu.commit(commands)
+            return gpu.commit(commands)
         }
-        // **記録は待つより先に書く** ([#1183])。待ちが期限切れになっても投入は済んでいて、
-        // GPU はまだこのスロットの設定を読んでいるかもしれない。記録を飛ばすと、次にこの
-        // スロットへ書くときにその投入を待たない
+        // **記録は投入の直後、名乗る側の待ちより先に書く** ([#1183])。待つのは中身に触る
+        // 側 (`SharedFrameSurface.publishPending()`) で、その待ちが期限切れになっても投入は
+        // 済んでおり、GPU はまだこのスロットの設定を読んでいるかもしれない。記録を飛ばすと、
+        // 次にこのスロットへ書くときにその投入を待たない
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         pipeline.noteSubmission()
-        try gpu.settle()
+        return submission
     }
 
     /// 収まる矩形を決めて、1 枚のパスとして書き込む。

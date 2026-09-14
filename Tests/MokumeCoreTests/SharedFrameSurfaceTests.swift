@@ -153,6 +153,10 @@ struct SharedFrameSurfaceTests {
     }
 
     /// 与えた色で埋めた絵を、面へ 1 枚差し出す。
+    ///
+    /// **控えも名乗らせてから返す。** 公開は 1 枚遅れる (#748) ので、書いただけでは最後の
+    /// 1 枚が読み手から見えない — ここの検査が見ているのは運び方と中身であって、遅れ方
+    /// (下の「枚数は〜」と `FrameSyncTests`) ではない。
     private func written(
         color: LinearRGBA, size: (width: Int, height: Int) = (16, 8), times: Int = 1,
         in directory: URL
@@ -167,6 +171,7 @@ struct SharedFrameSurfaceTests {
         for frame in 1..<(times + 1) {
             try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
         }
+        try shared.publishPending()
         return shared
     }
 
@@ -250,19 +255,65 @@ struct SharedFrameSurfaceTests {
         }
     }
 
-    @Test("枚数は書くたびに 1 つずつ増える")
-    func theFrameCountRisesByOne() throws {
+    /// **1 枚遅れで名乗る** (#748)。焼く投入を待たないので、書いた絵は次の書き込みで出る。
+    @Test("枚数は書くたびに 1 つずつ増え、名乗るのは 1 つ前に書いた絵である")
+    func theFrameCountRisesByOneAFrameLate() throws {
         try withFacet { directory in
             let gpu = try RenderDevice()
             let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
             try source.fill(with: .linear(red: 0, green: 0, blue: 0))
             let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
             let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
-            for expected in 1...(SharedFrameSurface.slotCount + 2) {
-                try shared.write(source, using: presenter, numbers: Self.numbers(frame: expected))
+
+            try shared.write(source, using: presenter, numbers: Self.numbers(frame: 1))
+            #expect(SharedFrameSurface.newest(among: shared.ids) == nil, "書いたその場で名乗っている")
+
+            for written in 2...(SharedFrameSurface.slotCount + 2) {
+                try shared.write(source, using: presenter, numbers: Self.numbers(frame: written))
                 let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
-                #expect(newest.frame == expected)
+                #expect(newest.frame == written - 1)
             }
+            // 控えを名乗らせれば、最後に書いた 1 枚が出る
+            try shared.publishPending()
+            let last = try #require(SharedFrameSurface.newest(among: shared.ids))
+            #expect(last.frame == SharedFrameSurface.slotCount + 2)
+            #expect(shared.pendingID == nil)
+            try gpu.settle()
+        }
+    }
+
+    /// **公開を 1 枚遅らせても、読み手が掴んだ面の猶予を縮めない** (#748 の完了条件 3)。
+    ///
+    /// 読み手 (`SharedFrameStage`) は掴んだ面を GPU の完了を待たずに差し出すので、掴んだ
+    /// 面が書き直されるまでの書き込み回数が「途中の絵を読ませない」ことの実体である。遅らせる
+    /// 前は掴んだ面が 3 回目の書き込みで書き直されていた — 面が 3 枚のまま遅らせると 2 回目に
+    /// 縮むので、`slotCount` を 3 に戻すとここが赤くなる。
+    @Test("読み手が最新として掴んだ面は、続く 2 回の書き込みでは書き直されない")
+    func theNewestSurfaceSurvivesTheNextTwoWrites() throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+
+            var grabbed: [UInt32?] = []
+            for frame in 1...(SharedFrameSurface.slotCount * 3) {
+                // 読み手は書き込みの合間に掴む
+                grabbed.append(SharedFrameSurface.newest(among: shared.ids)?.id)
+                try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
+                let burning = try #require(shared.pendingID, "書いたのに控えが無い")
+                // **いま焼いている面は、公開済みの最新面ではない**
+                if let newest = SharedFrameSurface.newest(among: shared.ids) {
+                    #expect(burning != newest.id, "\(frame) 回目: 最新として名乗っている面を焼いている")
+                }
+                // **直前 2 回の書き込みの前に掴まれた面も焼かない**
+                for held in grabbed.suffix(2).compactMap({ $0 }) {
+                    #expect(burning != held, "\(frame) 回目: 読み手が掴んだばかりの面へ戻っている")
+                }
+            }
+            #expect(grabbed.compactMap { $0 }.count > SharedFrameSurface.slotCount, "掴んだ面が少なく、何も見ていない")
+            try gpu.settle()
         }
     }
 
@@ -280,6 +331,7 @@ struct SharedFrameSurfaceTests {
                 source, using: presenter,
                 numbers: FrameNumbers(
                     frameCount: 7, time: 0.25, frameRate: 59.5, frameTimeMs: 16.8))
+            try shared.publishPending()
 
             let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
             let read = try #require(SharedFrameSurface.numbers(of: newest.id))
@@ -303,6 +355,7 @@ struct SharedFrameSurfaceTests {
             try shared.write(
                 source, using: presenter,
                 numbers: Self.numbers(frame: 1, rate: nil, frameTimeMs: nil))
+            try shared.publishPending()
 
             let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
             let read = try #require(SharedFrameSurface.numbers(of: newest.id))
@@ -329,6 +382,7 @@ struct SharedFrameSurfaceTests {
             for frame in 1...SharedFrameSurface.slotCount {
                 try shared.write(source, using: presenter, numbers: Self.numbers(frame: frame))
             }
+            try shared.publishPending()
             let reused = shared.ids[0]
             #expect(try #require(SharedFrameSurface.numbers(of: reused)).frameRate != nil)
 
@@ -336,6 +390,7 @@ struct SharedFrameSurfaceTests {
                 source, using: presenter,
                 numbers: Self.numbers(
                     frame: SharedFrameSurface.slotCount + 1, rate: nil, frameTimeMs: nil))
+            try shared.publishPending()
             let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
             #expect(newest.id == reused, "面が 1 周していない — この検査が何も見ていない")
             #expect(try #require(SharedFrameSurface.numbers(of: reused)).frameRate == nil)

@@ -79,13 +79,18 @@ struct FramePresenterTests {
         }
     }
 
-    /// **投入した後で待てなかった差し出しも、そのスロットを読む投入として記録する。**
-    /// 記録を飛ばすと、次にこのスロットへ明るさを書くとき、まだ走っているかもしれない
-    /// 投入を待たない ([#1183])。待つかどうかは GPU の速さで振れるので、記録そのものを見る。
+    /// **差し出しは、投入した直後にそのスロットを読む投入として記録する。** 記録を飛ばすと、
+    /// 次にこのスロットへ明るさを書くとき、まだ走っているかもしれない投入を待たない ([#1183])。
     ///
+    /// かつては `draw` が投入の後で GPU の完了を待っており、その待ちが期限切れになると
+    /// 記録を飛ばしていた。いまは待たずに返る ([#748]) — 待つのは面へ名乗る側
+    /// (`SharedFrameSurface.publishPending()`) で、そこで投げても記録は既に済んでいる。
+    /// 待つかどうかは GPU の速さで振れるので、記録そのものを見る。
+    ///
+    /// [#748]: https://github.com/mokume-metal/mokume/issues/748
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
-    @Test("投入した後で待てなかった差し出しも、スロットを読む投入として記録する")
-    func aDrawWhoseWaitFailsStillRecordsItsSubmission() throws {
+    @Test("差し出しは待たずに返り、返った時点でスロットを読む投入として記録している")
+    func aDrawRecordsItsSubmissionBeforeReturning() throws {
         let gpu = try RenderDevice()
         let source = try RenderTarget(gpu: gpu, width: 8, height: 8)
         try source.fill(with: .linear(red: 1, green: 1, blue: 1))
@@ -93,17 +98,16 @@ struct FramePresenterTests {
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
 
         let submitted = gpu.submissionCount
-        gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
-        #expect(throws: RenderFailure.self) {
-            try presenter.draw(source, into: destination.texture)
-        }
-        gpu.failSettleForTesting = nil
-        #expect(gpu.submissionCount == submitted + 1, "投入する前に投げている")
+        let settles = gpu.settleCalls
+        let submission = try presenter.draw(source, into: destination.texture)
+        #expect(submission == submitted + 1, "返した番号が、この投入のものではない")
+        #expect(gpu.settleCalls == settles, "差し出しが投入済みの全完了を待っている")
 
         let ring = presenter.pipeline.ring
         #expect(
-            ring.readers[ring.slot] == gpu.submissionCount,
+            ring.readers[ring.slot] == submission,
             "投入したのに、スロットを読む投入として記録していない")
+        try gpu.settle()
     }
 }
 
