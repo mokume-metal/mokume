@@ -55,11 +55,15 @@ struct RenderTargetTests {
 
         try target.fill(with: .linear(red: 1, green: 0, blue: 0))
         // 塗り直さないパスを 1 本流しても内容は変わらない
-        let commands = try gpu.beginCommands()
-        let encoder = try #require(
-            commands.makeRenderCommandEncoder(descriptor: target.makeRenderPass(clearColor: nil)))
-        encoder.endEncoding()
-        try gpu.commitAndWait(commands)
+        // `#require` は型付きの throws の中に書けないので、開けたかどうかを外へ持ち出す
+        let opened = try gpu.withCommands { commands throws(RenderFailure) in
+            let encoder = commands.makeRenderCommandEncoder(
+                descriptor: target.makeRenderPass(clearColor: nil))
+            encoder?.endEncoding()
+            try gpu.commitAndWait(commands)
+            return encoder != nil
+        }
+        try #require(opened)
 
         #expect(try target.readPixels()[0, 0] == LinearRGBA.linear(red: 1, green: 0, blue: 0))
     }

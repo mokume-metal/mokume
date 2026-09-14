@@ -51,7 +51,7 @@ import MokumeDiagnostics
 /// ``Sketch`` が土台ごと持つので、この形を書くのは 1 枚だけ描くときと、絵を回す道具を
 /// 自分で書くときである。
 // 以下は**面に出さない** (`///` ではなく `//`)。名指しているコマンドの口 —
-// `beginCommands()` / `commitAndWait(_:)` / `commit(_:retaining:)` / `settle()` — は
+// `withCommands(_:)` / `commitAndWait(_:)` / `commit(_:retaining:)` / `settle()` — は
 // どれも internal なので、外の読者には「待つほうと待たないほうのどちらを使うか」という
 // 選択そのものが成立しない。ADR-0020 決定 4 (説明文の正本は利用者が最初に触る層に置く)
 // の言う「利用者」は、この規律に関してはパッケージの中の実装者である。`///` に置いたまま
@@ -126,7 +126,13 @@ import MokumeDiagnostics
     /// 置き場は巻き戻して使い回すが、**巻き戻してよいのは、そこへ積んだコマンドを
     /// GPU が終えてから**である。だから「最後にここから投入した番号」を憶えておく。
     private struct Slot {
-        let allocator: any MTL4CommandAllocator
+        /// **`nil` は「投入されずに捨てたコマンドが載っていたので手放した」。**
+        ///
+        /// 捨てたコマンドの載った置き場は、巻き戻しても使えない — 検証層を載せた実行では
+        /// 次の `reset()` か `beginCommandBuffer` が表明で落ちる (encoder が開いていなくても
+        /// 落ちる)。巻き戻す字面そのものを書けなくするために、手放して空にしておき、次に
+        /// 回ってきたときに作り直す ([#1180](https://github.com/mokume-metal/mokume/issues/1180))。
+        var allocator: (any MTL4CommandAllocator)?
         /// この置き場から最後に投入したコマンドの番号。まだ無ければ 0。
         var submission: UInt64 = 0
     }
@@ -135,7 +141,7 @@ import MokumeDiagnostics
     ///
     /// 1 本を毎回巻き戻す形は、**待たない経路が 1 つでもあると壊れる** — 表示の経路
     /// (``commit(_:signalling:)``) は GPU の完了を待たないので、次の
-    /// ``beginCommands()`` がまだ実行中のコマンドの載った置き場を巻き戻していた
+    /// ``withCommands(_:)`` がまだ実行中のコマンドの載った置き場を巻き戻していた
     /// ([#222](https://github.com/mokume-metal/mokume/issues/222))。環にして 1 周ぶん
     /// 遅らせ、それでも終わっていなければ待つ。
     private var slots: [Slot]
@@ -145,6 +151,11 @@ import MokumeDiagnostics
     ///
     /// 投入のときに番号を書き戻す先を引くために持つ。同時に複数本を組み立てても
     /// 取り違えないよう、コマンドそのものを鍵にする。
+    ///
+    /// **消す口は 2 つで、どちらかを必ず通る** — 投入 (``recordSubmission(_:of:)``) と、
+    /// 投入されずに組み立ての口を抜けたとき (``forgetUnsubmitted(_:)``)。かつては前者しか
+    /// 無く、組み立ての途中で投げた 1 回で記録が残り、以後その土台は塗った面を作れなく
+    /// なっていた ([#1180](https://github.com/mokume-metal/mokume/issues/1180))。
     private var slotOfOpenCommands: [ObjectIdentifier: Int] = [:]
 
     /// 環の既定の本数。
@@ -173,6 +184,17 @@ import MokumeDiagnostics
     ///
     /// [#790]: https://github.com/mokume-metal/mokume/issues/790
     private(set) var slotWaits = 0
+    /// 診断: 組み立てたコマンドを投入せずに捨てた回数 (``forgetUnsubmitted(_:)`` が動いた数)。
+    ///
+    /// **検査の前提を見る見張りであって、片付けが正しい証拠ではない。** 数えているのは
+    /// 片付けそのものなので、これが増えたことは「捨てた後も塗った面を作れる」「捨てた
+    /// 置き場を次に使っても落ちない」を何も保証しない ([#790] と同じ線)。検査がこれを読む
+    /// のは、**組み立てを始めた後で投げた**ことを確かめるためだけで、正しさは作れた面と
+    /// 読めた絵のほうで見る ([#1180])。
+    ///
+    /// [#790]: https://github.com/mokume-metal/mokume/issues/790
+    /// [#1180]: https://github.com/mokume-metal/mokume/issues/1180
+    private(set) var abandonedCommands = 0
     /// 診断: ``settle()`` を頼まれた回数。GPU 可視メモリに触る経路が待ちを要求した数。
     private(set) var settleCalls = 0
     /// 診断: ``settle()`` が実際に止まった回数 (頼まれた時点で GPU が終わっていなかった)。
@@ -490,12 +512,13 @@ import MokumeDiagnostics
         attachment.loadAction = .clear
         attachment.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         attachment.storeAction = .store
-        let commands = try beginCommands()
-        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
-            throw .encoderUnavailable
+        try withCommands { commands throws(RenderFailure) in
+            guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+                throw .encoderUnavailable
+            }
+            encoder.endEncoding()
+            commit(commands)
         }
-        encoder.endEncoding()
-        commit(commands)
         return texture
     }
 
@@ -556,15 +579,65 @@ import MokumeDiagnostics
 
     // MARK: - コマンド
 
-    /// コマンドを 1 本組み立て始める。
+    /// コマンドを 1 本組み立てる。**コマンドを開く口はこれしか無い。**
+    ///
+    /// 環から次の置き場を取り (そこへ積んだ前回のコマンドが終わっていなければ待つ)、
+    /// 開いたコマンドを `assemble` に渡す。**投入は `assemble` の中で行う** — 投入の形は
+    /// 呼び出し側ごとに違う (抱えるものを渡す・表示の合図を出す・終わるまで待つ) ので、
+    /// この口に持たせるとその 3 通りをここの引数で表すことになる。
+    ///
+    /// ## 投入されずに抜けたら、この口が畳む
+    ///
+    /// `assemble` が投げても、投入し忘れて返っても、抜けるときに
+    /// ``forgetUnsubmitted(_:)`` が記録を消し、置き場を手放す。**呼び出し側は何も書かない。**
+    ///
+    /// かつては開く口 (`beginCommands()`) が外に開いていて、記録を消すのは投入だけだった。
+    /// 開いてから投入するまでの間で投げる経路が 7 か所にあり、そのどれか 1 回で記録が残ると、
+    /// 以後その土台では ``makeClearedTexture(descriptor:)`` が永久に断り
+    /// (`RenderTarget(gpu:)` も作れない)、検証層を載せた実行ではその置き場が次に回ってきた
+    /// ときにプロセスが落ちた ([#1180])。呼び出し側ごとに `defer` を書く形は採らない —
+    /// 8 か所目を足す人が書き忘れても、症状は「一時的な失敗の後で、関係の無い面が作れない」
+    /// になり、原因から遠い。
+    ///
+    /// ## 捨てたコマンドは閉じずに、置き場ごと手放す
+    ///
+    /// 閉じて (`endCommandBuffer()`) 巻き戻す形は使えない。**投げた時点で encoder が開いて
+    /// いるかを、この型は知らない** — 開いたまま閉じると検証層の表明で落ち、閉じずに同じ
+    /// 置き場を使うと、encoder の有無によらず次の巻き戻しか開き直しで落ちる。置き場ごと手放して
+    /// 作り直す形だけが、encoder の開閉・手放す順を問わず黙った (#1180 の実測)。手放す置き場は
+    /// 捨てたコマンドを開く前に巻き戻し済み (= その前の投入は終わっている) なので、走っている
+    /// 仕事を置き去りにしない。
+    ///
+    /// [#1180]: https://github.com/mokume-metal/mokume/issues/1180
+    func withCommands<Value>(
+        _ assemble: (any MTL4CommandBuffer) throws(RenderFailure) -> Value
+    ) throws(RenderFailure) -> Value {
+        let commands = try beginCommands()
+        defer { forgetUnsubmitted(commands) }
+        return try assemble(commands)
+    }
+
+    /// コマンドを 1 本開く。**呼んでよいのは ``withCommands(_:)`` だけ** (片付けがそこにある)。
     ///
     /// 環から次の置き場を取り、**そこへ積んだ前回のコマンドが終わっていなければ待つ**。
-    func beginCommands() throws(RenderFailure) -> any MTL4CommandBuffer {
+    private func beginCommands() throws(RenderFailure) -> any MTL4CommandBuffer {
         let index = nextSlot
         nextSlot = (nextSlot + 1) % slots.count
 
         try waitForSlot(index)
-        slots[index].allocator.reset()
+        let allocator: any MTL4CommandAllocator
+        if let reusable = slots[index].allocator {
+            reusable.reset()
+            allocator = reusable
+        } else {
+            // 捨てたコマンドの載っていた置き場は手放してある。**作れなければ空のまま残す** —
+            // 次にこの置き場が回ってきたときにもう一度作る
+            guard let fresh = device.makeCommandAllocator() else {
+                throw .commandAllocatorUnavailable
+            }
+            slots[index].allocator = fresh
+            allocator = fresh
+        }
         // 終わった番号のぶんは、ここで手放す。settle を 1 度も呼ばない経路 (表示だけを
         // 繰り返す) でも、抱えたものが際限なく溜まらない
         releaseFinished(through: completion.signaledValue)
@@ -572,26 +645,24 @@ import MokumeDiagnostics
         guard let commands = device.makeCommandBuffer() else {
             throw .commandBufferUnavailable
         }
-        commands.beginCommandBuffer(allocator: slots[index].allocator)
+        commands.beginCommandBuffer(allocator: allocator)
         slotOfOpenCommands[ObjectIdentifier(commands)] = index
         return commands
     }
 
-    /// 指定した置き場から投入したコマンドが終わるまで待つ。
+    /// 組み立ての口を抜けるとき、**投入されていなければ**記録を消して置き場を手放す。
     ///
-    /// **#222 の不変条件 (実行中の置き場を巻き戻さない) を守っているのは、この待ち
-    /// 1 つだけである。** 待てなければ投げるので、``beginCommands()`` の
-    /// `allocator.reset()` へ進めるのは「この置き場へ積んだ投入は終わっている」
-    /// ときだけになる。
-    ///
-    /// **その事後条件を確かめる者は、この型の中には置けない。** 判定に使える合図は
-    /// ここが待っているのと同じ `completion` で、この世代には allocator の実行状態を
-    /// 別経路で問う口が無いためである。見張りは検査が外から掛ける —
-    /// `CommandAllocatorTests` の「置き場を取り直す口は、その置き場を読む投入が
-    /// 終わってから巻き戻す」が、置き場を 1 本にして
-    /// ``beginCommands()`` を直に呼び、返った時点の ``isIdle`` を見る ([#790])。
-    ///
-    /// [#790]: https://github.com/mokume-metal/mokume/issues/790
+    /// **「投げたかどうか」ではなく「記録が残っているかどうか」で決める。** 投入した後に
+    /// 投げる経路 (``commitAndWait(_:)`` の待ちが期限切れになる) では、記録は投入が既に
+    /// 消している。投げたことを印にすると、そこで手放すのは**いま GPU が読んでいる**
+    /// コマンドの載った置き場になる。
+    private func forgetUnsubmitted(_ commands: any MTL4CommandBuffer) {
+        guard let index = slotOfOpenCommands.removeValue(forKey: ObjectIdentifier(commands))
+        else { return }
+        slots[index].allocator = nil
+        abandonedCommands += 1
+    }
+
     /// 完了の合図が `value` まで進むのを待つ。**越えたら `false`。**
     ///
     /// 持っているのは**期限そのものと、秒からミリ秒への変換**だけである。畳んだのは
@@ -608,6 +679,20 @@ import MokumeDiagnostics
             untilSignaledValue: value, timeoutMS: UInt64(Self.waitLimitSeconds * 1000))
     }
 
+    /// 指定した置き場から投入したコマンドが終わるまで待つ。
+    ///
+    /// **#222 の不変条件 (実行中の置き場を巻き戻さない) を守っているのは、この待ち
+    /// 1 つだけである。** 待てなければ投げるので、``beginCommands()`` の
+    /// `reset()` へ進めるのは「この置き場へ積んだ投入は終わっている」ときだけになる。
+    ///
+    /// **その事後条件を確かめる者は、この型の中には置けない。** 判定に使える合図は
+    /// ここが待っているのと同じ `completion` で、この世代には allocator の実行状態を
+    /// 別経路で問う口が無いためである。見張りは検査が外から掛ける —
+    /// `CommandAllocatorTests` の「置き場を取り直す口は、その置き場を読む投入が
+    /// 終わってから巻き戻す」が、置き場を 1 本にして ``withCommands(_:)`` を呼び、
+    /// 組み立ての最初の文で ``isIdle`` を見る ([#790])。
+    ///
+    /// [#790]: https://github.com/mokume-metal/mokume/issues/790
     private func waitForSlot(_ index: Int) throws(RenderFailure) {
         let pending = slots[index].submission
         guard pending > 0, completion.signaledValue < pending else { return }
@@ -788,6 +873,9 @@ import MokumeDiagnostics
     /// **待つ経路も待たない経路も必ずここを通す。** 通さない経路があると、その置き場は
     /// 「終わったかどうか分からないまま巻き戻してよい」ことになってしまう。漏斗は
     /// ``commit(_:retaining:)`` 1 つで、番号もそこで 1 か所だけ進む。
+    ///
+    /// **開く側の漏斗は ``withCommands(_:)`` である。** ここを通らずに組み立ての口を抜けた
+    /// コマンドは、あちらが記録を消して置き場を手放す (#1180)。
     ///
     /// **番号を振るのはここではない。** 結末を受け取るお願いは投入と同時に渡す必要が
     /// あり、そのハンドラが「どこまで終わったか」を名乗るのに番号が要るので、振るのは
