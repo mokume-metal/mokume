@@ -71,7 +71,9 @@ public struct Shape {
         ///
         /// 描くときに生きている ``Shader`` から読み直さないのは、**後から差し替えた面で
         /// 前の図形まで描かれる**からである (値がここに写し取られているのと同じ理由)。
-        @ByIdentities var surfaces: [any MTLTexture]
+        /// 写し取るのは面だけでなく持ち主も — 差し替えで断片が手放した絵を、この区間が
+        /// 読み終わるまで生かしておくため (``HeldTexture``)。
+        var surfaces: [HeldTexture]
         /// この区間の塗りが読む数の並び。`nil` なら読まない。
         @ByIdentityOrNone var numbers: Numbers?
 
@@ -87,7 +89,7 @@ public struct Shape {
     /// は後者だけを外して残り全部を比べる。
     struct Run: Equatable {
         var mode: BlendMode
-        @ByIdentity var texture: any MTLTexture
+        var texture: HeldTexture
         /// この区間を塗るもの。
         var paint: Paint
         /// どちらの並びから描くか。
@@ -233,21 +235,12 @@ public struct Shape {
 
 // MARK: - 参照を同一性で比べる包み
 
-// 面も断片も数の並びも参照型で、**値としての等しさを持たない**。包まずに ``Shape/Run``
+// 断片も数の並びも参照型で、**値としての等しさを持たない**。包まずに ``Shape/Run``
 // へ置くと `Equatable` を合成できず、比べる側を手で書くことになる — 手で書いた判定は
 // フィールドを足したときに書き足し忘れる (#788)。
 //
-// 包みは呼び出し側の綴りを変えない (`run.texture` はそのまま `any MTLTexture`)。
-
-/// 参照 1 つを同一性で比べる。
-@propertyWrapper
-struct ByIdentity<Object: AnyObject>: Equatable {
-    var wrappedValue: Object
-
-    init(wrappedValue: Object) { self.wrappedValue = wrappedValue }
-
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.wrappedValue === rhs.wrappedValue }
-}
+// 包みは呼び出し側の綴りを変えない (`run.paint.shader` はそのまま `Shader?`)。面は包みで
+// なく ``HeldTexture`` が同じ役を持つ — 比べ方が同じでも、持ち主を抱える責務が加わる。
 
 /// 参照 1 つ、または無しを同一性で比べる。
 @propertyWrapper
@@ -259,15 +252,39 @@ struct ByIdentityOrNone<Object: AnyObject>: Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.wrappedValue === rhs.wrappedValue }
 }
 
-/// 参照の並びを、順番どおりに同一性で比べる。
-@propertyWrapper
-struct ByIdentities<Object: AnyObject>: Equatable {
-    var wrappedValue: [Object]
+// MARK: - 面と持ち主の組
 
-    init(wrappedValue: [Object]) { self.wrappedValue = wrappedValue }
+/// 溜める側が読む面と、**その面を常駐させている持ち主**の組。
+///
+/// ## なぜ面だけを持たないか
+///
+/// 持ち主 (``Image`` / ``RenderTarget`` / 字形の頁) は、死ぬときに
+/// ``RenderDevice/retire(_:)`` で面を常駐から退かせる。外す番は**死んだ時点の投入番号**で
+/// 決まるので、溜める側 (束・保持した形) が面だけを抱えていると、面を読む投入に番号が
+/// 付く前に持ち主が死に、読み終わる前に面が外れる ([#1079]・[#1178])。常駐していない面を
+/// 読んだ結果は未定義で、しかも絵は多くの場合正しく出るので、症状から原因へ辿れない。
+///
+/// 持ち主ごと抱えれば、持ち主が死ぬのは読む側 (完了まで抱えられる束・形) が手放した後に
+/// なり、そのとき付く番号は必ず読む投入以降になる。**番号の決め方は変えずに済む。**
+///
+/// ## 持ち主なしでは作れない
+///
+/// 生の面を溜める場所を足した日に、持ち主を持たせ忘れると黙って壊れる。そこで
+/// ``Canvas/useTexture(_:)`` はこの組しか受け取らず、組は持ち主を渡さなければ作れない
+/// 形にしてある — 忘れる余地を型に残さない。
+///
+/// 比べるのは面の同一性だけである。同じ面なら持ち主も同じなので、畳めるかの判定
+/// (``Shape/Run/sameSettings(as:)``) は面だけを持っていた頃と変わらない。
+///
+/// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
+/// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
+struct HeldTexture: Equatable {
+    let texture: any MTLTexture
+    /// 死ぬと面を常駐から退かせるもの。この組が生きている間は死なない。
+    let owner: AnyObject
 
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.wrappedValue.count == rhs.wrappedValue.count
-            && zip(lhs.wrappedValue, rhs.wrappedValue).allSatisfy { $0 === $1 }
-    }
+    /// 引数表へ束ねる番地。
+    var gpuResourceID: MTLResourceID { texture.gpuResourceID }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.texture === rhs.texture }
 }

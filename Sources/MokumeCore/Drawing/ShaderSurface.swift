@@ -29,10 +29,11 @@ public enum ShaderSurface {
         }
     }
 
-    /// いま読める面。**読む直前に整えてから返す** — 書き換えた画素があればここで送られる。
-    var texture: any MTLTexture {
+    /// いま読める面を、持ち主と組にして返す。**読む直前に整えてから返す** — 書き換えた
+    /// 画素があればここで送られる。区間は面だけでなく持ち主も写し取る (`HeldTexture`)。
+    var held: HeldTexture {
         let picture = picture
         picture.prepare()
-        return picture.texture
+        return picture.held
     }
 }

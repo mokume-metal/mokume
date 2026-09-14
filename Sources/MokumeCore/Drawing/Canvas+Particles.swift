@@ -180,8 +180,8 @@ extension Canvas {
             // ので、持てるようになっても `nil` のままである (`closeSolidBatch`)
             indexStart: nil, instanceStart: solidInstances.count,
             external: ExternalInstances(
-                buffer: particles.instances.storage, count: particles.capacity,
-                arguments: particles.arguments.storage))
+                instances: particles.instances, count: particles.capacity,
+                arguments: particles.arguments))
         closeBatch()
 
         blendMode(savedMode)

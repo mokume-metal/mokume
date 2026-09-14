@@ -163,11 +163,11 @@ extension Canvas {
     /// 並びは宣言と同じ名前順。**描き場所を渡していたら、置いたことを知らせる** —
     /// 貼る口 (``texture(_:)``) と同じで、描き切る前の面を読んだときに黙っていると、
     /// 出るのは前のフレームの絵になる。
-    private func snapshotSurfaces() -> [any MTLTexture] {
+    private func snapshotSurfaces() -> [HeldTexture] {
         guard let shader = currentShader, !shader.surfaces.isEmpty else { return [] }
         return shader.orderedSurfaces.map { surface in
             if case .graphics(let graphics) = surface { note(placing: graphics) }
-            return surface.texture
+            return surface.held
         }
     }
 
@@ -252,7 +252,7 @@ extension Canvas {
                 castsShadow: castsShadow,
                 instanceStart: open.external == nil ? open.instanceStart : 0,
                 instanceCount: instanceCount,
-                instances: open.external?.buffer,
+                instances: open.external?.instances,
                 indirectArguments: open.external?.arguments,
                 cullMode: cullMode(for: open),
                 solidSource: open.source))

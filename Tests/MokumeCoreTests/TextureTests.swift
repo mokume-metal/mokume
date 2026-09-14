@@ -118,7 +118,7 @@ struct TextureTests {
             canvas.strokeWeight(4)
             canvas.rect(8, 8, 32, 32)
             canvas.closeBatch()
-            readsImage = canvas.batches.map { $0.run.texture === image.texture }
+            readsImage = canvas.batches.map { $0.run.texture.texture === image.texture }
         }
 
         // 塗りと輪郭で列が分かれ、**先に置いた塗りだけ**が絵を読む
@@ -137,7 +137,7 @@ struct TextureTests {
             canvas.textSize(12)
             canvas.text("あ", 4, 20)
             canvas.closeBatch()
-            readsImage = canvas.batches.map { $0.run.texture === image.texture }
+            readsImage = canvas.batches.map { $0.run.texture.texture === image.texture }
         }
         #expect(!readsImage.isEmpty)
         #expect(readsImage.allSatisfy { !$0 })
@@ -154,7 +154,7 @@ struct TextureTests {
             // 周囲そのものを出すのは「背景として描く」ほう
             canvas.background(Surroundings.sky)
             canvas.closeBatch()
-            readsImage = canvas.batches.map { $0.run.texture === image.texture }
+            readsImage = canvas.batches.map { $0.run.texture.texture === image.texture }
         }
         #expect(!readsImage.isEmpty)
         #expect(readsImage.allSatisfy { !$0 })
