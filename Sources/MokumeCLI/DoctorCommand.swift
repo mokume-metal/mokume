@@ -49,8 +49,25 @@ enum DoctorCommand {
         var resources: URL?
         /// 道具立ての名乗り 1 行。読めなければ `nil`。
         var toolchain: String?
+        /// シェーダを組む道具 (`metal`) の姿。確かめる道具 (`xcrun`) を起こせなければ `nil`。
+        ///
+        /// **`toolchain` とは別の軸**である。Xcode 26 では Metal Toolchain が別の
+        /// コンポーネントで、Swift が組めても最初のビルドが `unable to spawn process 'metal'`
+        /// で止まる ([#1169](https://github.com/mokume-metal/mokume/issues/1169))。
+        var shaderCompiler: ShaderCompiler? = nil
         /// 道具自身の版。**在処から導く** (#634)。
         var tool: String = ToolVersion.describe()
+    }
+
+    /// シェーダを組む道具の姿。
+    enum ShaderCompiler: Equatable {
+        /// 起こせた。版の名乗り 1 行を持つ。
+        case found(String)
+        /// 起こせなかった。**`xcrun` が言った理由の 1 行を持つ** (無ければ `nil`)。
+        ///
+        /// 理由を捨てない — 開発者ディレクトリが壊れているだけの環境にも同じ顔で出るので、
+        /// 入れ方だけを名乗ると断定しすぎる (規律 3)。
+        case missing(String?)
     }
 
     /// 手元の状態。
@@ -217,8 +234,7 @@ enum DoctorCommand {
             graphicsLine(environment.canDraw),
             resourcesLine(environment.resources),
             toolchainLine(environment.toolchain),
-            "Tool: \(environment.tool)",
-        ]
+        ] + shaderCompilerLines(environment.shaderCompiler) + ["Tool: \(environment.tool)"]
     }
 
     /// OS の版の行。**下限を満たすかで文ごと分ける** — 文の途中で語を選ぶと、語順の
@@ -258,6 +274,24 @@ enum DoctorCommand {
     static func toolchainLine(_ toolchain: String?) -> String {
         guard let toolchain else { return "Toolchain: \(unknown) — could not launch swift" }
         return "Toolchain: \(toolchain)"
+    }
+
+    /// Metal Toolchain の入れ方。**入れるのは人である** (規律 1)。
+    static let metalToolchainInstall =
+        "Install the Metal Toolchain: Xcode > Settings > Components, "
+        + "or run xcodebuild -downloadComponent MetalToolchain"
+
+    /// シェーダを組む道具の行。**見つからないときは入れ方を続く行で名乗る。**
+    static func shaderCompilerLines(_ compiler: ShaderCompiler?) -> [String] {
+        switch compiler {
+        case .found(let version):
+            return ["Shader compiler: \(version)"]
+        case .missing(let reason):
+            let because = reason.map { " (\($0))" } ?? ""
+            return ["Shader compiler: metal not found\(because)", "  \(metalToolchainInstall)"]
+        case nil:
+            return ["Shader compiler: \(unknown) — could not launch xcrun"]
+        }
     }
 
     /// 共有の置き場を名乗る行。**1 行目が根と合計で、続く行が部屋の内訳。**
@@ -381,7 +415,8 @@ enum DoctorCommand {
             machine: machine(),
             canDraw: RenderDevice.isAvailable,
             resources: BundledShaders.location,
-            toolchain: toolchain(in: directory))
+            toolchain: toolchain(in: directory),
+            shaderCompiler: shaderCompiler(in: directory))
     }
 
     /// 機種の名乗り。
@@ -400,6 +435,31 @@ enum DoctorCommand {
     /// ここで別に読むと片方だけが追随しなくなる。
     static func toolchain(in directory: URL) -> String? {
         Toolchain.describe(in: directory)
+    }
+
+    /// シェーダを組む道具を確かめる。**起こして版を聞くだけで、何も入れない。**
+    ///
+    /// **在処を探すだけ (`--find`) にしない。** Xcode 26 のスタブは在処を持ったまま、
+    /// 起こすとコンポーネントが無いと言って落ちうる — 実際に起こさないと見分けられない。
+    ///
+    /// - Parameter executable: 確かめる道具。**渡せる形にしてある** — 既定のままだと
+    ///   打った人の手元の姿しか作れず、見つからない側の判定を検査から固定できない (#731)。
+    static func shaderCompiler(
+        in directory: URL, executable: URL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    ) -> ShaderCompiler? {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["metal", "--version"]
+        process.currentDirectoryURL = directory
+        // 理由は stderr に出るので混ぜる。出力をパスや JSON として解かないので混ぜてよい
+        guard
+            let result = try? RunCommand.capture(process, capturing: true, errors: .merge)
+        else { return nil }
+        let first = result.output.split(separator: "\n").lazy
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        if result.status == 0 { return first.map(ShaderCompiler.found) ?? .found("metal") }
+        return .missing(first)
     }
 
     /// 手元の状態を読む。**何も作らない。**

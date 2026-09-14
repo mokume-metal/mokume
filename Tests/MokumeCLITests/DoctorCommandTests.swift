@@ -78,6 +78,83 @@ struct DoctorCommandTests {
         #expect(lines.contains("Toolchain: \(DoctorCommand.unknown)"))
     }
 
+    /// Xcode 26 では Metal Toolchain が別コンポーネントで、Swift が組めても最初のビルドが
+    /// `unable to spawn process 'metal'` で止まる
+    /// ([#1169](https://github.com/mokume-metal/mokume/issues/1169))。
+    @Test("シェーダを組む道具が無いときは、理由と入れ方を名乗る")
+    func aMissingShaderCompilerIsNamedWithHowToInstall() {
+        var bare = Self.sound
+        bare.shaderCompiler = .missing(
+            "xcrun: error: unable to find utility \"metal\", not a developer tool or in PATH")
+        let lines = DoctorCommand.environmentLines(bare)
+        let text = lines.joined(separator: "\n")
+        #expect(
+            text.contains(
+                "Shader compiler: metal not found (xcrun: error: unable to find utility \"metal\""))
+        #expect(text.contains("Xcode > Settings > Components"))
+        #expect(text.contains("xcodebuild -downloadComponent MetalToolchain"))
+        // 入れ方は理由の行に続く。「環境の前提」の中に並ぶ (道具の版より前)
+        let at = lines.firstIndex { $0.hasPrefix("Shader compiler:") }
+        #expect(at.map { lines[$0 + 1] } == "  \(DoctorCommand.metalToolchainInstall)")
+        #expect(lines.last?.hasPrefix("Tool:") == true)
+
+        // 理由が読めなくても、無いことと入れ方は名乗る
+        bare.shaderCompiler = .missing(nil)
+        let silent = DoctorCommand.environmentLines(bare)
+        #expect(silent.contains("Shader compiler: metal not found"))
+        #expect(silent.contains("  \(DoctorCommand.metalToolchainInstall)"))
+
+        // 見つかるときと判定できないときは、入れ方を名乗らない
+        var found = Self.sound
+        found.shaderCompiler = .found("Apple metal version 32023.883")
+        let present = DoctorCommand.environmentLines(found).joined(separator: "\n")
+        #expect(present.contains("Shader compiler: Apple metal version 32023.883"))
+        #expect(!present.contains("MetalToolchain"))
+        var blind = Self.sound
+        blind.shaderCompiler = nil
+        let unknown = DoctorCommand.environmentLines(blind).joined(separator: "\n")
+        #expect(unknown.contains("Shader compiler: \(DoctorCommand.unknown)"))
+        #expect(!unknown.contains("MetalToolchain"))
+    }
+
+    /// **在処を探すだけにせず、起こして確かめる。** 起こせた / 起こしたが落ちた /
+    /// 起こせなかった、の 3 通りが「見つかる / 見つからない / 判定できず」に写る。
+    @Test("シェーダを組む道具は、起こした結果から見つかるかを決める")
+    func theShaderCompilerIsJudgedByLaunchingIt() throws {
+        let place = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: place) }
+
+        func tool(_ name: String, _ body: String) throws -> URL {
+            let url = place.appendingPathComponent(name)
+            try "#!/bin/sh\n\(body)\n".write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: url.path)
+            return url
+        }
+
+        // 版は stdout に出る。**渡った引数も確かめる** — 別のものを起こしていたら見つかると言えない
+        let present = try tool(
+            "present",
+            #"[ "$*" = "metal --version" ] || exit 9; echo "Apple metal version 32023.883"; echo "Target: air64""#)
+        #expect(
+            DoctorCommand.shaderCompiler(in: place, executable: present)
+                == .found("Apple metal version 32023.883"))
+
+        // 理由は stderr に出る (手元で DEVELOPER_DIR を Command Line Tools に向けたときの実物)
+        let absent = try tool(
+            "absent",
+            #"echo 'xcrun: error: unable to find utility "metal", not a developer tool or in PATH' >&2; exit 72"#)
+        #expect(
+            DoctorCommand.shaderCompiler(in: place, executable: absent)
+                == .missing(
+                    #"xcrun: error: unable to find utility "metal", not a developer tool or in PATH"#))
+
+        // 起こせなければ判定できず。「無い」とは言わない
+        #expect(
+            DoctorCommand.shaderCompiler(
+                in: place, executable: place.appendingPathComponent("nowhere")) == nil)
+    }
+
     /// 「区画が無い」と「`watch` が死んでいる」を分ける決め手。
     @Test("最後の作り直しは、まだ無いことも言う")
     func theLastBuildIsNamedEvenWhenAbsent() {

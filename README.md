@@ -185,7 +185,8 @@ Swift の道具) と、**そのフォルダの状態** (`What is here` — ス�
 よく踏むもの:
 
 - **`unable to spawn process 'metal'` で作れない** — Metal Toolchain が入っていない。
-  [はじめる前に](#はじめる前に) の表のとおり入れる
+  [はじめる前に](#はじめる前に) の表のとおり入れる。`mokume doctor` を打つと
+  `Shader compiler` の行が「見つからない」と名乗り、入れ方を続けて出す
 - **`command not found: mokume`** — 道具が入っていない、または PATH が通っていない。
   `brew install` をやり直すか、ターミナルを開き直す
 
