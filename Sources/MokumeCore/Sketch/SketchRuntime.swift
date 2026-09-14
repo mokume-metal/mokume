@@ -360,8 +360,9 @@ public final class SketchRuntime {
         // **入力の配布も入り口の供給も、描き始めた中で行う。**
         //
         // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
-        // 落ちる。描き始めた中でないと、コールバックの中の `circle()` が無言で効かない
-        // (描く口は `guard isDrawing` で守られている)
+        // 落ちる。描き始めた中でないと、コールバックの中の `translate()` や `pushStyle()` が
+        // 無言で効かない (変換・スタイル・光の口は `guard isDrawing` で守られている)。
+        // 図形や絵の口は守られておらず、フレームの外で置いたものは次の描き切りまで溜まる
         try canvas.draw {
             withActiveRuntime {
                 input.beginFrame { deliver($0) }

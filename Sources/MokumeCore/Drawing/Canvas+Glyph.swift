@@ -38,7 +38,7 @@ extension Canvas {
     /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる。
     ///
     /// **面を広げると、そこを読む列が変わる。** 既に置いた字は前の面を指しているので、
-    /// 広げる前に列を閉じ、前の面はその列が抱えたまま残す。
+    /// 広げる前に列を閉じ、前の面はその列が頁ごと抱えたまま残す (``GlyphPage``)。
     ///
     /// **広げても入らないものは広げない** ([#738])。広げるたびに焼いた字形は全部
     /// 捨てられるので、入らない 1 字のために他の全部を焼き直させることになる。
@@ -66,7 +66,7 @@ extension Canvas {
         } catch {
             return nil
         }
-        currentTexture = atlas.texture
+        currentTexture = atlas.held
         whiteUV = atlas.whiteUV
         guard case .found(let entry) = atlas.entry(for: key, font: resolved.font) else {
             return nil
@@ -146,7 +146,7 @@ extension Canvas {
         uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
     ) {
         picture.prepare()
-        useTexture(picture.texture)
+        useTexture(picture.held)
         appendPixelAlignedQuad(
             x: x, y: y, width: width, height: height,
             uvMin: uvMin, uvMax: uvMax, color: color)

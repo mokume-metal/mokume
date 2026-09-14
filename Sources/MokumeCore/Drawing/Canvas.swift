@@ -272,13 +272,20 @@ public final class Canvas {
     }
 
     /// 溜め場ではなく、外の置き場から置き場所を取る指定。
+    ///
+    /// **置き場を持ち主 (``Numbers``) ごと持つ。** 生の置き場だけを持つと、粒を手放した後に
+    /// フレームの途中で読み戻し (``read(_:)``) が走ったとき、同じフレームの描き切りが
+    /// 読む前に置き場が常駐から外れる — 読み戻しが積んだ計算を先に流して、計算が抱えて
+    /// いた持ち主を降ろすからである ([#1079]。面の側は ``HeldTexture`` が同じ役を持つ)。
+    ///
+    /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
     struct ExternalInstances {
-        var buffer: any MTLBuffer
+        var instances: Numbers
         /// 置き場所の上限 (置き場の大きさ)。**実際に描く数は GPU が `arguments` に書く。**
         var count: Int
         /// 描く引数 (`MTLDrawPrimitivesIndirectArguments`)。GPU が書くので、描く側は
         /// 個数を読まずにそのまま indirect draw へ渡す。
-        var arguments: any MTLBuffer
+        var arguments: Numbers
     }
 
     /// 立体の頂点が何から来たか。
@@ -570,7 +577,11 @@ public final class Canvas {
     /// 字形を焼いて溜める面。**図形もここの白い区画を読む** (``GlyphAtlas``)。
     let atlas: GlyphAtlas
     /// いま列が読んでいる面。面を広げる・画像を描くと差し替わる。
-    var currentTexture: any MTLTexture
+    ///
+    /// **持ち主と組で持つ** (``HeldTexture``)。閉じた列はこれを写し取るので、ここで持ち主を
+    /// 落とすと、列が読む前に面が常駐から外れうる。フレームの終わりに焼き場へ戻す
+    /// (``discardFrame()``) — 戻さないと、最後に置いた絵の持ち主を次に面を替えるまで生かす。
+    var currentTexture: HeldTexture
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader?
     /// いま塗りが読む数の並び。`nil` なら読まない。
@@ -705,13 +716,14 @@ public final class Canvas {
         ///
         /// [#771]: https://github.com/mokume-metal/mokume/issues/771
         var formFlags: UInt32 = 0
-        /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。
-        var instances: (any MTLBuffer)?
+        /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。**持ち主ごと持つ**
+        /// (``ExternalInstances`` と同じ理由)。
+        var instances: Numbers?
         /// 描く個数を GPU が書いた引数。`nil` なら `instanceCount` で描く (いつもの経路)。
         ///
         /// 粒だけがここを使う — 生きている粒の数は CPU が知らないので、数えた GPU が
         /// 書いた引数をそのまま indirect draw に渡す。
-        var indirectArguments: (any MTLBuffer)?
+        var indirectArguments: Numbers?
         /// 輪郭の頂点が始まる位置 (並び全体での番号)。**平面だけが使う。**
         ///
         /// 頂点関数はここより手前に塗りの色を、ここから後ろに輪郭の色を掛ける。
@@ -982,7 +994,7 @@ public final class Canvas {
 
         let atlas = try GlyphAtlas(gpu: gpu)
         self.atlas = atlas
-        self.currentTexture = atlas.texture
+        self.currentTexture = atlas.held
         self.whiteUV = atlas.whiteUV
 
         var matrix = self.projection
@@ -1019,15 +1031,15 @@ public final class Canvas {
     /// これから置く頂点が読む面を決める。**変わるなら列を閉じる。**
     ///
     /// 閉じ忘れると、既に置いた図形や字が後から差し替わった面を読む。
-    func useTexture(_ texture: any MTLTexture) {
-        if texture === currentTexture { return }
+    func useTexture(_ texture: HeldTexture) {
+        if texture == currentTexture { return }
         closeBatch()
         currentTexture = texture
     }
 
     /// 図形と字が読む面 (字形の置き場) へ戻す。
     func useGlyphTexture() {
-        useTexture(atlas.texture)
+        useTexture(atlas.held)
     }
 
     /// **塗り**が読む面へ切り替える。貼る絵が束ねてあればその面、無ければ焼き場。
@@ -1038,7 +1050,7 @@ public final class Canvas {
     func useFillTexture() {
         guard let picture = currentPicture else { return useGlyphTexture() }
         picture.prepare()
-        useTexture(picture.texture)
+        useTexture(picture.held)
     }
 
     /// 描画先の座標へ落とす行列を作る。
@@ -1180,6 +1192,9 @@ public final class Canvas {
         // 溜めた計算もフレームを越えない。描けなかったフレームの頼みが次のフレームで
         // もう一度走ると、進み方が観測の有無で変わる
         pendingComputations.removeAll(keepingCapacity: true)
+        // **読む面も焼き場へ戻す。** 面は持ち主と組で持つので、最後に置いた絵を次に面を
+        // 替えるまで生かしてしまう。溜めたものは上で落ちているので、列を閉じずに替えてよい
+        currentTexture = atlas.held
     }
 
     /// 計算のパイプライン。**要るときだけ組む。**
@@ -1591,7 +1606,7 @@ public final class Canvas {
                 // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
                 // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
                 pipeline.argumentTable.setAddress(
-                    (batch.instances ?? geometry.solidInstances).gpuAddress
+                    (batch.instances?.storage ?? geometry.solidInstances).gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                     index: ShapePipeline.instanceBufferIndex)
             }
@@ -1634,7 +1649,7 @@ public final class Canvas {
                     surface.gpuResourceID, index: ShapePipeline.surfaceTextureIndex + slot)
             }
             encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex, .fragment])
-            if let arguments = batch.indirectArguments {
+            if let arguments = batch.indirectArguments?.storage {
                 // **個数は GPU が書いた引数から読む。** 計算の段の末尾の仕掛け
                 // (`encodeComputeBarrier`) が頂点段の前で待つので、引数の読み出しは
                 // 書き終わった後になる
@@ -1905,14 +1920,14 @@ public final class Canvas {
         encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
         for batch in casting {
             pipeline.argumentTable.setAddress(
-                (batch.instances ?? instanceBuffer).gpuAddress
+                (batch.instances?.storage ?? instanceBuffer).gpuAddress
                     + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                 index: ShapePipeline.instanceBufferIndex)
             // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
             // 裏面を捨てても焼き付く奥行きは変わらない
             encoder.setCullMode(batch.cullMode)
             encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
-            if let arguments = batch.indirectArguments {
+            if let arguments = batch.indirectArguments?.storage {
                 // 粒は影の側でも GPU が書いた個数で描く (本描画と同じ)
                 encoder.drawPrimitives(
                     primitiveType: .triangle, indirectBuffer: arguments.gpuAddress)

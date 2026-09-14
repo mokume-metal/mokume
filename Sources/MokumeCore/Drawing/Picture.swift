@@ -37,6 +37,14 @@ enum Picture {
         }
     }
 
+    /// 面を、持ち主と組にして渡す。**溜める側へ渡すときはこちら** (``HeldTexture``)。
+    var held: HeldTexture {
+        switch self {
+        case .loaded(let image): HeldTexture(texture: image.texture, owner: image)
+        case .drawn(let target): HeldTexture(texture: target.texture, owner: target)
+        }
+    }
+
     /// 読む直前に整える。**書き換えた画素があればここで送られる**ので、送り直しを
     /// 呼び忘れて絵が変わらない、が起きない。描いた場所は描き切りが済んでいる。
     func prepare() {

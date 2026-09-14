@@ -183,6 +183,84 @@ struct FrameGrowthTests {
             """)
     }
 
+    // 下の 2 本は、束や形が面を**持ち主ごと**抱えるようにした ([#1079]・[#1178]) ことで
+    // 開きうる穴を見る。持ち主を抱える側が手放し忘れると、今度は外れないまま積む。
+    //
+    // [#1079]: https://github.com/mokume-metal/mokume/issues/1079
+    // [#1178]: https://github.com/mokume-metal/mokume/issues/1178
+
+    @Test("draw の中で絵を作っては手放しても、常駐の集合が増え続けない")
+    func picturesDiscardedInsideDrawLeaveTheResidencySet() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
+        let canvas = try Canvas(target: target, gpu: gpu)
+
+        func frame() throws {
+            var failure: (any Error)?
+            try canvas.draw {
+                do {
+                    let picture = try canvas.createImage(16, 16)
+                    canvas.image(picture, 0, 0)
+                } catch {
+                    failure = error
+                }
+            }
+            if let failure { throw failure }
+        }
+
+        try frame()
+        try gpu.settle()
+        let settled = gpu.residencySet.allocationCount
+
+        for _ in 0..<Self.churns { try frame() }
+        try gpu.settle()
+        let after = gpu.residencySet.allocationCount
+
+        #expect(
+            after == settled,
+            """
+            draw の中で絵を \(Self.churns) 枚作って手放したら、常駐の集合が \(after - settled) 個
+            残った (増減 0 のはず)。
+
+            列や描き場所が、読み終えた後も絵の持ち主を抱え続けている。**最後に置いた 1 枚が
+            残るだけならここでは赤くならない** (温めた値にも 1 枚含まれる) — そちらは
+            `ResidencyReaderTests` の各検査の末尾 (読み終えた後に外れる) が見る。
+            """)
+        #expect(gpu.retiredResourceCount == 0)
+    }
+
+    @Test("絵や字を含む形を作っては手放しても、常駐の集合が増え続けない")
+    func discardedShapesLeaveTheResidencySet() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
+        let canvas = try Canvas(target: target, gpu: gpu)
+
+        func churn() throws {
+            let picture = try canvas.createImage(16, 16)
+            let shape = canvas.createShape {
+                canvas.image(picture, 0, 0)
+                canvas.text("mokume", 2, 16)
+            }
+            try canvas.draw { canvas.shape(shape, 0, 0) }
+        }
+
+        try churn()
+        try gpu.settle()
+        let settled = gpu.residencySet.allocationCount
+
+        for _ in 0..<Self.churns { try churn() }
+        try gpu.settle()
+        let after = gpu.residencySet.allocationCount
+
+        #expect(
+            after == settled,
+            """
+            絵と字を含む形を \(Self.churns) 個作って手放したら、常駐の集合が \(after - settled) 個
+            残った (増減 0 のはず)。形の区間が抱える持ち主が、形を手放しても解放されていない。
+            """)
+        #expect(gpu.retiredResourceCount == 0)
+    }
+
     /// 断片と計算を作っては手放す回数。**組み立てが要るので少なくする。**
     private static let shaderChurns = 8
 

@@ -37,10 +37,8 @@ import simd
 /// 焼き付けは CPU からこの面へ直接書き込む。**GPU がこの面を読んでいる間に書き換えて
 /// はならない。** 面への描画は投入しても GPU の完了を待たずに返る (#727) ので、焼く
 /// 直前に投入済みのものが全部終わるのを待つ。新しい字形が出ないフレームは焼かない
-/// ので、待ちも払わない。広げるとき (`grow`) は新しい面を作るだけなので待たない —
-/// 前の面は、そこを指している列が GPU の完了まで抱える。
-// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
-// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+/// ので、待ちも払わない。広げるとき (`grow`) は新しい頁 (``GlyphPage``) を作るだけなので
+/// 待たない — 前の頁は、そこを指している列や形が手放すまで生きる。
 @MainActor final class GlyphAtlas {
     /// 最初の一辺 (画素)。
     static let initialSize = 256
@@ -119,7 +117,8 @@ import simd
         var glyph: UInt16
     }
 
-    private(set) var texture: any MTLTexture
+    /// いま字形を焼いている頁。**広げると差し替わる。**
+    private(set) var page: GlyphPage
     private(set) var size: Int
     private var entries: [Key: Entry] = [:]
     private var cursorX: Int
@@ -136,20 +135,20 @@ import simd
     init(gpu: RenderDevice) throws(RenderFailure) {
         self.gpu = gpu
         self.size = Self.initialSize
-        self.texture = try Self.makeTexture(side: size, gpu: gpu)
+        self.page = try GlyphPage(side: size, gpu: gpu)
         self.cursorX = Self.whiteBlock + Self.padding
         self.cursorY = 0
         self.rowHeight = Self.whiteBlock + Self.padding
         paintWhiteBlock()
     }
 
-    /// **いまの面も常駐から退かせる** ([#738])。焼き場は描き場所ごとに 1 つ立つので、
-    /// 描き場所を作っては捨てる書き方は、外さないとここで積む。
-    ///
-    /// [#738]: https://github.com/mokume-metal/mokume/issues/738
-    isolated deinit { gpu.retire(texture) }
+    /// いまの頁の面。
+    var texture: any MTLTexture { page.texture }
 
-    private static func makeTexture(side: Int, gpu: RenderDevice) throws(RenderFailure)
+    /// いまの頁の面を、頁と組にして渡す。**列へ渡すときはこちら** (``HeldTexture``)。
+    var held: HeldTexture { HeldTexture(texture: page.texture, owner: page) }
+
+    fileprivate static func makeTexture(side: Int, gpu: RenderDevice) throws(RenderFailure)
         -> any MTLTexture
     {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -212,21 +211,26 @@ import simd
     /// 面を倍の大きさで取り直す。
     ///
     /// **焼いた字形は引き継がない。** 新しい面の中では場所が変わるので、位置を
-    /// 計算し直すより、要るものをもう一度焼くほうが単純である。前の面は、そこを
-    /// 指している列が抱えたまま残る。
+    /// 計算し直すより、要るものをもう一度焼くほうが単純である。前の頁は、そこを
+    /// 指している列や保持した形が抱えたまま残る。
     ///
-    /// **前の面は常駐から退かせる** ([#738])。列が抱えているのは GPU が読み終わるまでで、
-    /// 常駐の集合はそれと関係なく抱え続ける — 外さないと 256 から 4096 までの面が全部
-    /// 残り、最後の 1 枚だけで 128 MiB になる。ここで待たないのは、広げるのが列を閉じた
-    /// 直後 = フレームの途中だからで、外れるのは投入済みのものが終わってからである。
+    /// **前の頁を常駐から退かせるのは、頁自身が死ぬとき**である (``GlyphPage``)。ここで
+    /// 退かせないのは、外す番がその時点の投入番号で決まるからで、広げるのは列を閉じた
+    /// 直後 = フレームの途中なので、前の頁を指す列はまだ番号を持っていない — ここで
+    /// 退かせると、その列が読む前に外れた ([#1079])。保持した形はフレームをまたいで
+    /// 前の頁を読み続けるので、番号をどう遅らせても足りない ([#1178])。
+    ///
+    /// 外すこと自体をやめたわけではない。指す側が全部手放せば頁が死に、そこで外れる —
+    /// 外さないと 256 から 4096 までの面が全部残り、最後の 1 枚だけで 128 MiB になる
+    /// ([#738])。
     ///
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
+    /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
     func grow(gpu: RenderDevice) throws(RenderFailure) {
         let next = min(Self.maximumSize, size * 2)
-        let previous = texture
-        // **新しい面を先に作る。** 作れずに投げたときも、前の面はそのまま使える
-        texture = try Self.makeTexture(side: next, gpu: gpu)
-        gpu.retire(previous)
+        // **新しい頁を先に作る。** 作れずに投げたときも、前の頁はそのまま使える
+        page = try GlyphPage(side: next, gpu: gpu)
         size = next
         entries.removeAll(keepingCapacity: true)
         cursorX = Self.whiteBlock + Self.padding
@@ -390,4 +394,31 @@ import simd
         }
         return drawn ? pixels : nil
     }
+}
+
+/// 字形の面 1 枚。**死ぬときに面を常駐から退かせる** ([#738])。
+///
+/// ## なぜ置き場 (``GlyphAtlas``) と分けるか
+///
+/// 面の持ち主が置き場のままだと、広げたときに前の面を退かせる時機を置き場が決める
+/// ことになる。置き場は広げた後も同じ 1 つとして生き続けるので、「前の面を読む者が
+/// まだ居るか」を知らない。面ごとに持ち主を分ければ、読む側 (束・保持した形) が頁を
+/// 抱え (``HeldTexture``)、全員が手放した時点で頁が死ぬ — 退かせる時機を誰も判断
+/// しなくてよい ([#1079]・[#1178])。
+///
+/// [#738]: https://github.com/mokume-metal/mokume/issues/738
+/// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
+/// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor final class GlyphPage {
+    let texture: any MTLTexture
+    private let gpu: RenderDevice
+
+    init(side: Int, gpu: RenderDevice) throws(RenderFailure) {
+        self.gpu = gpu
+        self.texture = try GlyphAtlas.makeTexture(side: side, gpu: gpu)
+    }
+
+    isolated deinit { gpu.retire(texture) }
 }

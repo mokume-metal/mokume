@@ -67,9 +67,12 @@ import simd
     /// 常駐の集合は入れたものを抱えるので、絵を手放しても面は解放されない。`draw()` の
     /// 中で `loadImage` を呼ぶ書き方は、これでフレームごとに 1 枚ずつ積んでいた
     /// (実測: 256x256 を 200 フレームで +108 MiB)。退かせるだけで待たないので、
-    /// 手放す側は寿命を気にしなくてよい。
+    /// 手放す側は寿命を気にしなくてよい。置いた列や、置いて作った形がまだ読むなら、
+    /// それらが絵を抱えているのでここは走らない ([#1079]・[#1178])。
     ///
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
+    /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
     isolated deinit { gpu.retire(texture) }
 
     /// 1 画素の色。範囲の外は透明を返す (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
