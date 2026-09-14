@@ -60,7 +60,7 @@ class CiCheckTest(unittest.TestCase):
         # 管だと読み手が EOF を待って固まり、赤ではなく無言になる (管の検査は下に 1 本だけ置く)
         with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
             code = subprocess.call(
-                ["bash", str(SCRIPT), *steps],
+                ["/bin/bash", str(SCRIPT), *steps],
                 cwd=self.root, env=env, stdout=out, stderr=err, timeout=30,
             )
             out.seek(0)
@@ -128,7 +128,7 @@ class CiCheckTest(unittest.TestCase):
         # 継続中の行の sleep は kill された後も残りの間隔だけ生き延びる。出力を握らせると、
         # make ci-check を管で受ける読み手 (CI のログ・tee) が間隔ぶん EOF を待たされる
         proc = subprocess.Popen(
-            ["bash", str(SCRIPT), "build", "examples"],
+            ["/bin/bash", str(SCRIPT), "build", "examples"],
             cwd=self.root, env=self.env("30"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )

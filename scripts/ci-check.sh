@@ -116,7 +116,9 @@ for i in "${!steps[@]}"; do
       kill -0 "$parent" 2>/dev/null || exit 0
       line="   … $step 継続中 $(span $((SECONDS - step_started)))"
       [ -n "$prev" ] && line="$line (前回 $(span "$prev"))"
-      printf '%s\n' "$line"
+      # 前で改行する。段の出力は行の途中で止まっていることが多く (swift test の出力・
+      # unittest のドット)、そのまま書くと継続中の行がその尻に繋がって読めない
+      printf '\n%s\n' "$line"
     done
   ) &
   heartbeat_pid=$!
