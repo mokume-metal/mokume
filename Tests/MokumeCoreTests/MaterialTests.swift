@@ -206,18 +206,22 @@ struct MaterialTests {
 
     @Test("自ら出す光は、光の当たらない側にも出る")
     func emissiveShowsWhereNoLightReaches() throws {
-        // 手前から当てる光だけを置き、光の当たらない縁を見る
-        let lights: (Canvas) -> Void = { $0.directionalLight(white, 0, 0, -1) }
+        // 横から当てる光だけを置き、球の反対側の半分を光の当たらない側にする。
+        //
+        // **手前から当てて縁の暗さを見る形にはしない。** 縁のいちばん暗い画素は、画素の
+        // 中心が輪郭からどれだけ内側に入るかで決まり、球を半画素動かすだけで閾値をまたぐ
+        // (ADR-0039 で塗りが画素の角へ移ったとき、閾値 120 をまたいで 122 になった)
+        let lights: (Canvas) -> Void = { $0.directionalLight(white, 1, 0, 0) }
         let plain = try sphere(try makeCanvas(), lights: lights) { _ in }
         let glowing = try sphere(try makeCanvas(), lights: lights) {
             $0.emissive(.linear(red: 0.5, green: 0.5, blue: 0.5))
         }
-        // 球のいちばん暗いところ (光が斜めにしか当たらない縁) で比べる
+        // 球の上 (自ら光る絵で塗られた画素) のうち、光の当たらないいちばん暗いところで比べる
         var darkest = (x: 0, y: 0, value: 256)
         for y in 0..<plain.height {
-            for x in 0..<plain.width {
+            for x in 0..<plain.width where glowing[x, y].red > 0 {
                 let value = Int(plain[x, y].red)
-                if value > 0, value < darkest.value { darkest = (x, y, value) }
+                if value < darkest.value { darkest = (x, y, value) }
             }
         }
         #expect(darkest.value < 120, "光の当たらない側が見つからない")

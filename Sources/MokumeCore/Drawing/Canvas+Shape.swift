@@ -48,12 +48,19 @@ extension Canvas {
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
         let savedRecording = recordingShape
         recordingShape = true
+        let strokeRangeStart = recordedStrokeRanges.count
 
         body()
 
         recordingShape = savedRecording
         closeBatch()
         let recorded = Array(vertices[vertexStart...])
+        // 輪郭の区間も形自身の 0 起点へ引き戻し、覚えていた側からは抜く (入れ子の記録なら
+        // 外側の記録には、置き直した頂点の区間として `place(_:of:at:)` が積み直す)
+        let recordedStrokes = recordedStrokeRanges[strokeRangeStart...].map {
+            ($0.lowerBound - vertexStart)..<($0.upperBound - vertexStart)
+        }
+        recordedStrokeRanges.removeLast(recordedStrokeRanges.count - strokeRangeStart)
         let recordedSolid = Array(solidVertices[solidStart...])
         // **添字の値も形自身の 0 起点へ引き戻す。** 値は頂点の並びの番号そのものなので、
         // 区間だけずらすと記録した形が溜め場に残っていた頂点を指す (``Shape/solidIndices``)
@@ -89,7 +96,7 @@ extension Canvas {
 
         return Shape(
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,
-            forms: recordedForms, runs: Array(runs))
+            forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes)
     }
 
     // 保持した形を置く。
@@ -180,6 +187,20 @@ extension Canvas {
                         color.x * tint.red, color.y * tint.green, color.z * tint.blue,
                         color.w * tint.alpha)
                 }
+            }
+        }
+        // **輪郭は、行列を掛けた直後に画面で半画素寄せる** (`Shape.strokeRanges`)。記録の中で
+        // 置き直すときは変換がまだ決まらないので寄せず、外側の記録へ区間を渡す
+        let runRange = run.start..<(run.start + run.count)
+        for stroke in shape.strokeRanges where stroke.overlaps(runRange) {
+            let lower = max(stroke.lowerBound, runRange.lowerBound) - run.start + base
+            let upper = min(stroke.upperBound, runRange.upperBound) - run.start + base
+            if recordingShape {
+                recordedStrokeRanges.append(lower..<upper)
+                continue
+            }
+            vertices.withUnsafeMutableBufferPointer { buffer in
+                for index in lower..<upper { buffer[index].position += 0.5 }
             }
         }
     }

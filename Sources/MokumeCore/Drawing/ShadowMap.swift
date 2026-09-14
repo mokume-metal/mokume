@@ -117,8 +117,8 @@ final class ShadowMap {
             projection: .orthographic(
                 left: -half, right: half, bottom: half, top: -half,
                 near: 0.01, far: range * 2))
-        // **画面向けの補正 (半画素のずらし) は掛けない。** ここは画面ではないので、
-        // 掛けると焼き付けた位置と読む位置が半画素ずれる
+        // **画面向けの補正 (縦軸の反転) は掛けない。** ここは画面ではないので、掛けると
+        // 焼き付けた位置と読む位置が食い違う
         return camera.projectionMatrix * camera.viewMatrix
     }
 }

@@ -100,6 +100,13 @@ struct PixelGridTests {
         let angle: Float
         var testDescription: String { "(\(x), \(y)) を \(angle) rad" }
 
+        /// 重心まで比べるか。
+        ///
+        /// **軸に沿った縁を小数の座標に置いた組は、白黒の集合だけで見る。** AA の無い
+        /// 三角形では縁が画素の境目へ丸められ、重心が最大 0.5 画素動く — 幾何の不一致では
+        /// なく量子化である。半画素のずれは集合の食い違いとして出る (main では 40 画素)。
+        var comparesCentroid: Bool { angle != 0 }
+
         static let all = [
             Placement(x: 32, y: 32, angle: 0.3),
             Placement(x: 31.3, y: 32.6, angle: 1.1),
@@ -123,7 +130,8 @@ struct PixelGridTests {
             canvas.rotate(placement.angle)
             canvas.rect(-15, -10, 30, 20)
         }
-        expectSameGeometry(solid, flat, "plane と rect")
+        expectSameGeometry(
+            solid, flat, "plane と rect", tolerance: placement.comparesCentroid ? nil : .infinity)
     }
 
     @Test("立体の輪郭と平面の輪郭は、奥行き 0 で同じ場所に乗る", arguments: Placement.all)
@@ -171,7 +179,9 @@ struct PixelGridTests {
             canvas.texture(sheet)
             rect(on: canvas)
         }
-        expectSameGeometry(plain, textured, "rect と絵を貼った rect")
+        expectSameGeometry(
+            plain, textured, "rect と絵を貼った rect",
+            tolerance: placement.comparesCentroid ? nil : .infinity)
     }
 
     @Test("線は、断片を付けて三角形で描いても同じ場所に乗る", arguments: Placement.all)

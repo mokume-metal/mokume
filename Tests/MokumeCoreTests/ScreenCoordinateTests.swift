@@ -66,11 +66,12 @@ struct ScreenCoordinateTests {
             canvas.pop()
         }
 
-        // 面の座標の整数は**画素の中心**に乗る (``Canvas/makeProjection`` の半画素の
-        // ずらし)。だから画素の番号の平均は、そのまま面の座標として比べられる。
-        // 許す幅は半画素より狭く取る — そのずらしを落とした実装をここで捕まえるため
-        let drawn = try #require(
+        // 面の座標の整数は**画素の角**に乗る (ADR-0039 決定 2)。画素 i の中心は i + 0.5 なので、
+        // 画素の番号の平均に 0.5 を足すと面の座標になる。許す幅は半画素より狭く取る —
+        // 平面と立体の投影の片方だけを変えた実装をここで捕まえるため
+        let pixels = try #require(
             centroid(of: canvas.target.encodeForDisplay()), comment, sourceLocation: sourceLocation)
+        let drawn = (x: pixels.x + 0.5, y: pixels.y + 0.5)
         #expect(abs(drawn.x - told.x) < 0.4, comment, sourceLocation: sourceLocation)
         #expect(abs(drawn.y - told.y) < 0.4, comment, sourceLocation: sourceLocation)
     }

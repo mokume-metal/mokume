@@ -18,12 +18,14 @@ struct FlatInstance {
 };
 
 /// 列ごとに変わらないもの。並びは Swift 側の `FlatFrame` と一致する。
-/// **立体は先頭の行列だけを読む**ので、後ろに足しても効かない。
+/// **平面は行列と番号を、立体は行列と寄せを読む。**
 struct FlatFrame {
     float4x4 projection;
     /// 輪郭の頂点が始まる番号。**ここから後ろが輪郭**で、手前が塗りである。
     /// 畳めない列は塗りしか無い扱い (置き場所の 2 色がどちらも白なので同じ)。
     uint strokeStart;
+    /// 立体の輪郭の頂点を画面で (+0.5, +0.5) 画素寄せる量 (切り取り座標。`w` を掛けて足す)。
+    float4 strokeShift;
 };
 
 vertex ShapeFragmentIn shapeVertexMain(
@@ -40,6 +42,13 @@ vertex ShapeFragmentIn shapeVertexMain(
     // (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
     float2 placed = placement.linear.xy * vertex_in.position.x
         + placement.linear.zw * vertex_in.position.y + placement.offset.xy;
+    // **畳んだ雛形の輪郭は、置いた後・投影の前に半画素寄せる。** 塗りは整数の座標で
+    // 画素の境目、線は画素の中心に乗る約束で (ADR-0039 決定 2)、置き場所ごとに回転や
+    // 拡大が違っても画面でちょうど半画素になるよう、変換の後で足す。畳めない列は番号が
+    // 最大なので足さない — そちらは CPU が描画先の座標で足し終えている (`Canvas+Outline`)
+    if (index >= frame.strokeStart) {
+        placed += 0.5;
+    }
 
     ShapeFragmentIn out;
     out.position = frame.projection * float4(placed, 0.0, 1.0);
@@ -92,6 +101,8 @@ struct SolidVertex {
     /// 利用者の断片へ渡す、形自身の座標での面の向き。
     float3 shapeNormal;
     float2 uv;
+    /// 1 なら**輪郭の頂点**。頂点関数が画面で半画素寄せる (Swift 側の `SolidVertex` を参照)
+    float stroke;
     float4 color;
 };
 
@@ -113,7 +124,7 @@ vertex ShapeFragmentIn solidVertexMain(
     uint index [[vertex_id]],
     uint instance [[instance_id]],
     constant SolidVertex *vertices [[buffer(0)]],
-    constant float4x4 &viewProjection [[buffer(1)]],
+    constant FlatFrame &frame [[buffer(1)]],
     constant SolidInstance *instances [[buffer(10)]])
 {
     SolidVertex vertex_in = vertices[index];
@@ -127,7 +138,11 @@ vertex ShapeFragmentIn solidVertexMain(
         placement.normal0.xyz, placement.normal1.xyz, placement.normal2.xyz);
 
     ShapeFragmentIn out;
-    out.position = viewProjection * world;
+    out.position = frame.projection * world;
+    // **輪郭だけを画面で半画素寄せる** (ADR-0039 決定 2)。立体の頂点は投影の後でしか
+    // 画面の位置が決まらないので、切り取り座標で `w` を掛けて足す。影の焼き付けは
+    // 寄せ 0 を渡す
+    out.position.xy += vertex_in.stroke * frame.strokeShift.xy * out.position.w;
     out.uv = vertex_in.uv;
     // 置き場所の色は**頂点の色に掛かる**。組み込みの形は頂点が白、頂点ごとに色を
     // 変えた形は置き場所が白なので、どちらもこの 1 本で通る
@@ -198,8 +213,8 @@ struct FormFragmentIn {
     /// 描画先 → 形自身の座標の 2x2 (逆行列) の 2 行。xy が 1 行目、zw が 2 行目。
     /// 形自身の座標での勾配を画面の勾配へ写すのに使う (`mokume_formCoverage`)
     float4 inverseRows [[flat]];
-    /// 塗りを評価する位置のずらし (形自身の座標)。矩形だけが持つ (下の説明)
-    float2 fillShift [[flat]];
+    /// 輪郭と線を評価する位置のずらし (形自身の座標)。画面の (0.5, 0.5) を写したもの (下の説明)
+    float2 strokeShift [[flat]];
     uint instance [[flat]];
 };
 
@@ -240,17 +255,16 @@ vertex FormFragmentIn formVertexMain(
     out.position = frame.projection * float4(placed, 0.0, 1.0);
     out.local = local;
     out.inverseRows = inverseRows;
-    // **矩形の塗りは半画素ぶん戻して置く。** 整数の座標は画素の中心を指すので、そのまま
-    // 縁に使うと縁の画素が半分だけ覆われ、整数に置いた矩形が滲む。縁を画素の境目へ寄せる
-    // と、`rect(10, 20, 4, 8)` は三角形で描いていたときと同じ 4x8 画素ちょうどを塗る
-    // (字形と画像の四角も同じ理由で戻している — `Canvas.appendGlyphQuad`)。
+    // **輪郭と線は、画面で半画素寄せて評価する。** 整数の座標は画素の角に落ちるので、
+    // 塗りの縁は整数の座標で画素の境目に乗り、`rect(10, 20, 4, 8)` はちょうど 4x8 画素を
+    // 塗る。輪郭は縁の上に中心を持つ帯なので、そのまま置くと太さ 1 の線が 2 列の画素を
+    // 半分ずつ塗って滲む。だから線の側を寄せて、中心を画素の中心に乗せる (ADR-0039 決定 2)。
+    // 三角形で描く輪郭も同じだけ寄せている (`Canvas+Outline`・`shapeVertexMain`)。
     //
-    // 戻すのは**縁に基準を置く形の塗り**だけである。円・楕円・扇形は中心に基準があるので
-    // 戻すと中心が半画素ずれる。輪郭は縁の上に中心を持つ帯なので、これも戻さない (太さ 1
-    // の線が整数の座標で 1 画素に収まるのはそのため)。ずらしは画面の半画素を形自身の座標へ
-    // 逆行列で写したもの — 拡大しても回しても画面上で半画素になる
-    float shift = form.meta.x == kFormRect ? 0.5 : 0.0;
-    out.fillShift = shift * float2(inverseRows.x + inverseRows.y, inverseRows.z + inverseRows.w);
+    // ずらしは画面の (0.5, 0.5) を形自身の座標へ逆行列で写したもの — 拡大しても回しても
+    // 画面上で半画素になる。**長さの向きにも寄せる**ので、端点と点も三角形のときと同じ
+    // 画素に乗る。評価する位置を戻す向き (`p − ずらし`) で掛けるので、帯は画面で +0.5 動く
+    out.strokeShift = 0.5 * float2(inverseRows.x + inverseRows.y, inverseRows.z + inverseRows.w);
     out.instance = instance;
     return out;
 }
@@ -398,6 +412,8 @@ static inline FormPaint mokume_formPaint(
 {
     FormInstance form = instances[in.instance];
     float2 p = in.local;
+    // 輪郭と線を評価する位置 (頂点関数の説明)。塗りは `p` のまま
+    float2 q = p - in.strokeShift;
     float halfWeight = form.size.z;
     uint kind = form.meta.x;
 
@@ -407,48 +423,55 @@ static inline FormPaint mokume_formPaint(
     FormField inner = fill;
     if (kind == kFormRect) {
         float2 extent = form.size.xy;
-        // 塗りだけ半画素戻す (頂点関数の説明)。輪郭は戻さない
-        if (kFormHasFill) { fill = mokume_boxField(p + in.fillShift, extent); }
+        if (kFormHasFill) { fill = mokume_boxField(p, extent); }
         if (kFormHasStroke) {
             // 角の形は外縁だけが持つ。内縁は帯が重なって必ず直角 (三角形のときと同じ)
             if (form.meta.z == kFormJoinRound) {
-                outer = mokume_grown(mokume_boxField(p, extent), halfWeight);
+                outer = mokume_grown(mokume_boxField(q, extent), halfWeight);
             } else {
-                outer = mokume_boxField(p, extent + halfWeight);
+                outer = mokume_boxField(q, extent + halfWeight);
                 if (form.meta.z == kFormJoinBevel) {
                     // 尖りを 45° で削ぐ。削ぐ線は角から線幅の半分だけ離れた所を通る
                     float chamfer =
-                        (abs(p.x) + abs(p.y) - (extent.x + extent.y + halfWeight * M_SQRT2_F))
+                        (abs(q.x) + abs(q.y) - (extent.x + extent.y + halfWeight * M_SQRT2_F))
                         * M_SQRT1_2_F;
-                    float2 gradient = float2(p.x < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F,
-                                             p.y < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F);
+                    float2 gradient = float2(q.x < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F,
+                                             q.y < 0.0 ? -M_SQRT1_2_F : M_SQRT1_2_F);
                     outer = mokume_intersect(outer, mokume_field(chamfer, gradient));
                 }
             }
             // 線幅が形より太いと半幅が負になり、内縁は「どこにも無い」(被覆 0) になる —
             // 帯が重なって全部塗られる、三角形のときと同じ絵
-            inner = mokume_boxField(p, extent - halfWeight);
+            inner = mokume_boxField(q, extent - halfWeight);
         }
     } else if (kind == kFormEllipse) {
-        fill = mokume_ellipseField(p, form.size.xy);
-        outer = mokume_grown(fill, halfWeight);
-        inner = mokume_grown(fill, -halfWeight);
+        // 塗りと輪郭は評価する位置が違うので、距離場を別々に出す。片方しか持たない列では
+        // 旗がもう片方を消す
+        if (kFormHasFill) { fill = mokume_ellipseField(p, form.size.xy); }
+        if (kFormHasStroke) {
+            FormField ring = mokume_ellipseField(q, form.size.xy);
+            outer = mokume_grown(ring, halfWeight);
+            inner = mokume_grown(ring, -halfWeight);
+        }
     } else if (kind == kFormArc) {
-        fill = mokume_sectorField(p, form.size.xy, form.offset.z, form.offset.w);
-        outer = mokume_grown(fill, halfWeight);
-        inner = mokume_grown(fill, -halfWeight);
+        if (kFormHasFill) { fill = mokume_sectorField(p, form.size.xy, form.offset.z, form.offset.w); }
+        if (kFormHasStroke) {
+            FormField ring = mokume_sectorField(q, form.size.xy, form.offset.z, form.offset.w);
+            outer = mokume_grown(ring, halfWeight);
+            inner = mokume_grown(ring, -halfWeight);
+        }
     } else if (kFormHasStroke) {
         // 線。塗りは持たず、線そのものの距離場を輪郭の外縁として使う
         float halfLength = form.size.x;
         if (form.meta.y == kFormCapRound) {
             // カプセル: 線分からの距離 − 太さの半分
-            float2 away = float2(p.x < 0.0 ? min(p.x + halfLength, 0.0) : max(p.x - halfLength, 0.0), p.y);
+            float2 away = float2(q.x < 0.0 ? min(q.x + halfLength, 0.0) : max(q.x - halfLength, 0.0), q.y);
             outer = mokume_field(
                 length(away) - halfWeight, mokume_direction(away, float2(0.0, 1.0)));
         } else if (form.meta.y == kFormCapSquare) {
-            outer = mokume_boxField(p, float2(halfLength, halfWeight));
+            outer = mokume_boxField(q, float2(halfLength, halfWeight));
         } else {
-            outer = mokume_boxField(p, float2(halfLength + halfWeight, halfWeight));
+            outer = mokume_boxField(q, float2(halfLength + halfWeight, halfWeight));
         }
         // 内縁は無い (被覆 0 にするため、必ず外側に置いたまま)
     }

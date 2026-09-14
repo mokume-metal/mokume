@@ -202,24 +202,26 @@ struct FormShapeTests {
         let image = try picture(canvas) { canvas in
             canvas.noStroke()
             canvas.fill(white)
-            canvas.circle(48, 48, 60)
+            // 中心は画素の角 (48, 48)、半径 29.5。画素 i の中心は i + 0.5 なので、軸の上の縁
+            // (77.5 と 18.5) がちょうど画素 77 と 18 の中心を通り、そこが半分だけ覆われる
+            // (整数の半径だと縁が画素の境目に乗り、軸の上に中間値が出ない)
+            canvas.circle(48, 48, 59)
         }
         #expect(image[48, 48].red == 255)
-        #expect(image[76, 48].red == 255, "縁の 2 画素内は塗り切られている")
-        // 縁 (中心から 30) の画素は半分だけ覆われる
-        let edge = image[78, 48].red
+        #expect(image[75, 48].red == 255, "縁の 2 画素内は塗り切られている")
+        let edge = image[77, 48].red
         #expect(edge > 0 && edge < 255, "縁が滑らかになっていない: \(edge)")
-        #expect(image[80, 48].red == 0, "縁の 2 画素外に塗りが漏れている")
+        #expect(image[79, 48].red == 0, "縁の 2 画素外に塗りが漏れている")
         // 対称
         #expect(image[18, 48].red == edge)
         #expect(image[48, 18].red == edge)
-        #expect(image[48, 78].red == edge)
+        #expect(image[48, 77].red == edge)
     }
 
     @Test("整数の座標に置いた矩形は、三角形のときと同じ画素をちょうど塗る")
     func integerRectanglesStayCrisp() throws {
-        // 塗りは半画素戻して置くので (`formVertexMain`)、rect(10, 20, 4, 8) は 4x8 画素
-        // ちょうどになる。戻さないと縁の 1 画素が半分だけ覆われて滲む
+        // 塗りの縁は整数の座標で画素の境目に乗るので (ADR-0039 決定 2)、rect(10, 20, 4, 8) は
+        // 4x8 画素ちょうどになる。縁が画素の中心を通ると、縁の 1 画素が半分だけ覆われて滲む
         let canvas = try makeCanvas()
         let image = try picture(canvas) { canvas in
             canvas.noStroke()
@@ -239,7 +241,8 @@ struct FormShapeTests {
 
     @Test("拡大しても、整数に落ちる矩形の縁は画素の境目に乗る")
     func scaledRectanglesStayCrispToo() throws {
-        // ずらしは画面の半画素で測る。倍率 2 なら形自身の座標では 0.25 になる
+        // 倍率 2 でも、整数に落ちる縁は画素の境目に乗る (輪郭の寄せは画面の半画素で測るが、
+        // 塗りは寄せない)
         let canvas = try makeCanvas()
         let image = try picture(canvas) { canvas in
             canvas.noStroke()

@@ -1315,8 +1315,9 @@ struct CanvasTests {
 
     @Test("太さ 1 の線は、整数の座標では 1 画素に収まる")
     func hairlineCoversExactlyOneColumn() throws {
-        // 座標の約束のうち、半画素のずらしが効いているかを見る唯一の検査。
-        // ずらしが無いと、隣の列が塗られるか 2 列にまたがる。
+        // 座標の約束のうち、線を半画素寄せているかを見る検査 (ADR-0039 決定 2)。
+        // 寄せが無いと、縁が画素の中心に乗って隣の列が塗られるか 2 列にまたがる。
+        // 経路ごとの寄せは `PixelGridTests.strokesSitOnPixelCenters` が見る
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.background(black)
@@ -1342,8 +1343,8 @@ struct CanvasTests {
         }
 
         let image = try pixels(of: canvas)
-        // 太さ 4 の帯は 18…22 を覆う。偶数の太さは整数の座標では両端の画素に半分ずつ
-        // 掛かる (整数は画素の中心なので)。覆いの合計が 4 画素ぶんであることを見る
+        // 太さ 4 の帯は 18.5…22.5 を覆う。偶数の太さは整数の座標では両端の画素に半分ずつ
+        // 掛かる (線の中心は画素の中心に乗るので)。覆いの合計が 4 画素ぶんであることを見る
         let covered = (0..<64).map { Double(image[$0, 32].red) }
         let outside = (0..<64).filter { $0 < 18 || $0 > 22 }.map { Double(image[$0, 32].red) }
         #expect(outside.allSatisfy { $0 == 0 }, "帯の外が塗られている")
