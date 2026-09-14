@@ -802,7 +802,11 @@ public final class Canvas {
     ///
     /// 面の大きさや溜めている頂点は含まない — **積んで戻せるのは「これから描くものに
     /// 効く設定」だけ**であり、既に置いた図形や面そのものは戻らない。
-    private struct Style {
+    ///
+    /// 積み降ろしの外からも写し取れるよう internal に置く。保持した形の組み立ては
+    /// フレームの外でも状態を戻す必要があり、積み降ろしはフレームの中でしか効かない
+    /// (`Canvas.createShape`)。
+    struct Style {
         var fill: LinearRGBA
         var stroke: LinearRGBA
         var strokeWeight: Float
@@ -834,7 +838,7 @@ public final class Canvas {
         var receivesShadow: Bool
     }
 
-    private var currentStyle: Style {
+    var currentStyle: Style {
         get {
             Style(
                 fill: currentFill, stroke: currentStroke, strokeWeight: currentStrokeWeight,
