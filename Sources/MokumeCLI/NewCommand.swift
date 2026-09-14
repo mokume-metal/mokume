@@ -84,15 +84,11 @@ enum NewCommand {
             (".gitignore", try Templates.render("gitignore.template", values)),
             // 宣言した置き場は実在しなければならない。空のままでも道具立てが
             // 受け付けるよう、読み手への説明を 1 枚置く
+            // **中身は読み物なので日本語で、`Templates/` のファイルに置く** — Swift の中に
+            // 書くと、道具が話す言葉の検査 (`scripts/check-tool-language.py`) に掛かる
             (
                 "Sources/\(target)/assets/README.md",
-                """
-                画像・音・データはこの場所へ置く。
-
-                `Package.swift` が `resources: [.copy("assets")]` と宣言しているので、
-                ここへ置いたものは実行ファイルの隣へ運ばれ、`loadImage("assets/名前.png")`
-                のように名前で読める。**置き場を変えるなら宣言も変えること。**
-                """
+                try Templates.render("assets-README.md.template", values)
             ),
             // エージェントに道具の使い方を渡す 1 枚。**作品の側の運用は決めない**
             // (ADR-0022 決定 5) — 線は「道具の構造から導かれるか」で引く (#632)

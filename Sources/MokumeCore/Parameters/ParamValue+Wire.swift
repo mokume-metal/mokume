@@ -76,7 +76,7 @@ extension ParamValue: Codable {
         // 仕事で、そこから先は `default` を持たない — 書けるのに読めない型を作らせない
         guard let type = ParamTypeName(rawValue: name) else {
             throw DecodingError.dataCorruptedError(
-                forKey: .type, in: container, debugDescription: "知らない型: \(name)")
+                forKey: .type, in: container, debugDescription: "Unknown type: \(name)")
         }
         switch type {
         case .float: self = .float(try container.decode(Double.self, forKey: .value))
@@ -93,14 +93,14 @@ extension ParamValue: Codable {
             let components = try container.decode([Float].self, forKey: .value)
             guard components.count == 2 else {
                 throw DecodingError.dataCorruptedError(
-                    forKey: .value, in: container, debugDescription: "vec2 は 2 つの成分で書く")
+                    forKey: .value, in: container, debugDescription: "vec2 is written with 2 components")
             }
             self = .vector2(SIMD2(components[0], components[1]))
         case .vec3:
             let components = try container.decode([Float].self, forKey: .value)
             guard components.count == 3 else {
                 throw DecodingError.dataCorruptedError(
-                    forKey: .value, in: container, debugDescription: "vec3 は 3 つの成分で書く")
+                    forKey: .value, in: container, debugDescription: "vec3 is written with 3 components")
             }
             self = .vector3(SIMD3(components[0], components[1], components[2]))
         }

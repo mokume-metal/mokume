@@ -61,7 +61,7 @@ final class SketchSurface: NSView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("使わない") }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// 描く解像度を差し替える。**触った操作を写す規則がこれに依る**ので、絵の出どころが
     /// 入れ替わったら一緒に更新する。

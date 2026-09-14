@@ -137,19 +137,19 @@ final class SharedFrameSurface {
             guard version == Self.readableVersion else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .schemaVersion, in: container,
-                    debugDescription: "知らない版: \(version) (読めるのは \(Self.readableVersion))")
+                    debugDescription: "Unknown version: \(version) (readable: \(Self.readableVersion))")
             }
             ids = try container.decode([UInt32].self, forKey: .ids)
             width = try container.decode(Int.self, forKey: .width)
             height = try container.decode(Int.self, forKey: .height)
             guard !ids.isEmpty else {
                 throw DecodingError.dataCorruptedError(
-                    forKey: .ids, in: container, debugDescription: "面が 1 枚も無い")
+                    forKey: .ids, in: container, debugDescription: "There are no surfaces")
             }
             guard width > 0, height > 0 else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .width, in: container,
-                    debugDescription: "絵にならない大きさ: \(width)x\(height)")
+                    debugDescription: "Not a drawable size: \(width)x\(height)")
             }
         }
     }
