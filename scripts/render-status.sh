@@ -17,7 +17,10 @@
 #
 #   bash scripts/render-status.sh local     # make ci-check の最後。全検査が通ったときだけ打つ
 #   bash scripts/render-status.sh proxy     # CI から。打たなくてよい場合の代理報告だけ
-#   bash scripts/render-status.sh coverage  # 手元の覆いがいまの origin/main にまだ効くか (#830)
+#
+# **口はこの 2 つだけである** (#819)。手元の覆いがいまの origin/main にまだ効くか (#830)
+# は CLI の口ではなく、scripts/render-coverage.sh を source して report_coverage を呼ぶ。
+# 呼ぶ側がこの 2 つ以外の綴りで叩いていないかは scripts/tests/render_status_test.py が見る (#867)
 #
 # ## 何を防いでいるか
 #
@@ -292,6 +295,39 @@ read_record() {
   python3 "$(dirname "${BASH_SOURCE[0]}")/read-test-record.py" "$1" "$LEDGER_CLASS"
 }
 
+# 受け取った引数を 1 行で名乗る。空の引数も見分けられるよう、1 つずつ引用符で囲む
+describe_args() {
+  [ "$#" -gt 0 ] || { echo "なし"; return; }
+  local out='' arg
+  for arg in "$@"; do out="$out '$arg'"; done
+  echo "${out# }"
+}
+
+# 呼び出し元を親から順に「make render-status ← bash scripts/catch-up.sh ← make catch-up」の
+# 形で名乗る (#867)。**段数と字数を切る** — エディタやエージェントの起動行は数千字になる
+# ことがあり、そのまま載せると 1 行が読めなくなる。切る前に語ごとのパスを末尾の名前へ
+# 畳む — 一時ディレクトリや worktree の長いパスで、肝心のスクリプト名が切り落とされるため。
+# ps が読めない環境では読めないと名乗る
+caller_chain() {
+  local pid=$PPID depth=0 chain='' line ppid command word
+  local -a words
+  while [ "$depth" -lt 4 ] && [ "${pid:-0}" -gt 1 ]; do
+    line=$(ps -o ppid= -o command= -p "$pid" 2>/dev/null) || break
+    read -r ppid command <<<"$line"
+    read -ra words <<<"$command"
+    command=''
+    for word in ${words[@]+"${words[@]}"}; do
+      case "$word" in */?*) word=${word##*/} ;; esac
+      command="${command:+$command }$word"
+    done
+    [ "${#command}" -le 80 ] || command="${command:0:80}…"
+    chain="${chain:+$chain ← }$command"
+    pid=$ppid
+    depth=$((depth + 1))
+  done
+  echo "${chain:-読めなかった}"
+}
+
 mode=${1:-}
 case "$mode" in
   local)
@@ -369,7 +405,10 @@ case "$mode" in
     # **口は「打つ」2 つだけである** (#819)。以前は catch-up が別プロセスで訊くための
     # target / coverage があったが、判定は scripts/render-coverage.sh に移り、
     # あちらは source して直に呼ぶ
-    echo "使い方: $0 local|proxy" >&2
+    #
+    # **使い方の 1 行に、受け取った引数と呼び出し元の鎖を載せる** (#867)。catch-up の途中で
+    # この行だけが出て、どこから知らない綴りで叩かれたのかを誰も辿れなかった
+    echo "使い方: $0 local|proxy — 受け取った引数: $(describe_args "$@")・呼び出し元: $(caller_chain)" >&2
     # usage は 64 (sysexits の EX_USAGE) で揃える (#820)
     exit 64
     ;;
