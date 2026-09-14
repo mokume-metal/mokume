@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Metal
 import Testing
 
@@ -45,8 +46,17 @@ struct FrameSyncTests {
         }
     }
 
-    private func makeBench(width: Int = 32, height: Int = 32) throws -> Bench {
-        let gpu = try RenderDevice()
+    /// - Parameter slotCount: コマンドの置き場の本数。`nil` なら既定。
+    private func makeBench(width: Int = 32, height: Int = 32, slotCount: Int? = nil) throws -> Bench {
+        let gpu: RenderDevice
+        if let slotCount {
+            guard let device = MTLCreateSystemDefaultDevice() else {
+                throw RenderFailure.deviceUnavailable
+            }
+            gpu = try RenderDevice(device: device, slotCount: slotCount)
+        } else {
+            gpu = try RenderDevice()
+        }
         let target = try RenderTarget(gpu: gpu, width: width, height: height)
         let canvas = try Canvas(target: target, gpu: gpu)
         let scratch = try canvas.makeNumbers(count: 1)
@@ -587,6 +597,92 @@ struct FrameSyncTests {
                 received.level == BusyOutletSketch.brightness(atFrame: received.frame),
                 "\(received.frame) 枚目の絵が組み上がる前に配られている\(faultNote(gpu))")
         }
+    }
+
+    // MARK: - 共有面へ差し出す道 (#748)
+
+    /// ベンチの描画先を差し出す共有面と、焼く口。区画はファイルを置かないので作らない。
+    private func makeSharedSurface(for bench: Bench) throws -> (SharedFrameSurface, FramePresenter) {
+        let target = bench.canvas.output
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        let shared = try SharedFrameSurface(
+            gpu: bench.gpu, width: target.width, height: target.height, at: directory)
+        let presenter = try FramePresenter(gpu: bench.gpu, pixelFormat: RenderTarget.pixelFormat)
+        return (shared, presenter)
+    }
+
+    private func sharedNumbers(frame: Int) -> FrameNumbers {
+        FrameNumbers(frameCount: frame, time: Double(frame) / 60, frameRate: nil, frameTimeMs: nil)
+    }
+
+    /// フレーム `frame` で塗る赤の強さ。**面が 1 周しても同じ値に戻らない** — 面は
+    /// `slotCount` 枚で回るので、待たずに名乗れば同じ面の 1 周前の色が出る。7 と互いに素に
+    /// しておけば、どの周期でも食い違う。8 分の 1 刻みなので半精度で丸まらない。
+    private func sharedLevel(atFrame frame: Int) -> Float { Float(frame % 7 + 1) / 8 }
+
+    @Test("共有面へ差し出しても、フレームは GPU の完了を待たずに返る")
+    func sharedSurfaceWritesDoNotDrainTheGPU() throws {
+        let bench = try makeBench()
+        let canvas = bench.canvas
+        let (shared, presenter) = try makeSharedSurface(for: bench)
+
+        // **先に温める。** 置き場を初めて取るフレームは取り直しの中で待つ
+        var frame = 0
+        for _ in 0..<framesPastOneLap {
+            frame += 1
+            try canvas.draw { canvas.background(black) }
+            try shared.write(canvas.output, using: presenter, numbers: sharedNumbers(frame: frame))
+        }
+        let drains = bench.gpu.blockingWaits
+
+        for _ in 0..<4 {
+            frame += 1
+            try canvas.draw {
+                bench.keepGPUBusy()
+                canvas.background(black)
+            }
+            try shared.write(canvas.output, using: presenter, numbers: sharedNumbers(frame: frame))
+        }
+
+        #expect(!bench.gpu.isIdle, "書き込みから返った時点で GPU が終わっている — 面へ焼く道が待っている")
+        #expect(bench.gpu.blockingWaits == drains, "面へ焼く道が投入済みの全完了を待っている")
+        #expect(shared.frameNumber == frame - 1, "1 枚遅れで名乗っていない")
+
+        // **見終えたら GPU を空にして出る** (#1063。上の出口の検査と同じ理由)
+        try bench.gpu.settle()
+    }
+
+    /// **置き場の環を深くして、GPU を数フレーム遅らせる。** 既定の 3 本では、次の差し出しを
+    /// 開く口 (``RenderDevice`` の置き場の待ち) が 1 つ前のフレームの描画を待ち、その直後に
+    /// 積まれた差し出しも読む前に終わってしまう — 名指しの待ちを外しても緑のままだった。
+    /// 8 本あれば開く口が待つのは 4 フレーム前なので、控えの投入は名乗る時点で本当に終わって
+    /// いない。
+    @Test("読み手が掴む共有面の中身は、その面が名乗る枚数の絵である")
+    func theNewestSharedSurfaceHoldsTheFrameItNames() throws {
+        let bench = try makeBench(slotCount: 8)
+        let canvas = bench.canvas
+        let (shared, presenter) = try makeSharedSurface(for: bench)
+
+        var checked = 0
+        for frame in 1...(SharedFrameSurface.slotCount + 6) {
+            try canvas.draw {
+                bench.keepGPUBusy()
+                canvas.background(LinearRGBA.linear(red: sharedLevel(atFrame: frame), green: 0, blue: 0))
+            }
+            try shared.write(canvas.output, using: presenter, numbers: sharedNumbers(frame: frame))
+            if frame == 1 { try #require(!bench.gpu.isIdle, "回転が短い — この検査は何も見ていない") }
+
+            guard let newest = SharedFrameSurface.newest(among: shared.ids) else { continue }
+            let pixel = try #require(SharedSurfaceReader.pixel(id: newest.id, x: 16, y: 16))
+            // **名指しで待たずに名乗れば、ここに同じ面の 1 周前の色が出る**
+            #expect(
+                pixel.red == sharedLevel(atFrame: newest.frame),
+                "\(newest.frame) 枚目を名乗る面に、別のフレームの絵が載っている\(faultNote(bench.gpu))")
+            checked += 1
+        }
+        #expect(checked >= SharedFrameSurface.slotCount + 2, "読み手が掴めた回数が少ない")
+        try bench.gpu.settle()
     }
 
     // MARK: - 抱えている資源の手放し (#1076)

@@ -503,7 +503,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         switch outlet {
         case .shared(let shared):
             // **速さも一緒に渡す。** 数えているのはこちらで、読むのは道具である
-            // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない
+            // ([ADR-0030] 決定 7) — 面に載せれば通信路は 1 本も増えない。**名乗るのは
+            // 前に焼いた 1 枚**で、いま焼く絵は次のリフレッシュで出る (#748)。止めている間も
+            // ここは毎リフレッシュ通るので、控えが出ないまま残ることはない
             try shared.write(runtime.target, using: presenter, numbers: runtime.frameNumbers)
         case .window(let window, let surface, let hasPresented):
             guard let layer = surface.metalLayer,

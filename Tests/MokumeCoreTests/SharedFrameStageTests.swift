@@ -497,12 +497,16 @@ struct SharedFrameStageTests {
         return shared
     }
 
-    /// 面へ 1 枚焼く。**中身は何でもよい** — 見ているのは枚数が上がることである。
+    /// 面へ 1 枚焼いて名乗らせる。**中身は何でもよい** — 見ているのは枚数が上がることである。
+    ///
+    /// **控えも名乗らせる。** 書き手の公開は 1 枚遅れる (#748) ので、書いただけでは読み手から
+    /// 見えない — ここが見ているのは読み手の乗り換えであって、書き手の遅れ方ではない。
     private func draw(_ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice) throws {
         let source = try RenderTarget(gpu: gpu, width: 32, height: 32)
         try source.fill(with: .linear(red: 0, green: 0, blue: 0))
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         try shared.write(
             source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame))
+        try shared.publishPending()
     }
 }
