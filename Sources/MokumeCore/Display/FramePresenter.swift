@@ -82,10 +82,11 @@ final class FramePresenter {
         gpu.makeDrawableResident(drawable.texture)
 
         gpu.waitForDrawable(drawable)
-        let commands = try gpu.beginCommands()
-        try encode(source, into: drawable.texture, using: commands)
-        // GPU の完了を待たない — 待てば表示のたびに CPU が止まる
-        gpu.commit(commands, signalling: drawable)
+        try gpu.withCommands { commands throws(RenderFailure) in
+            try encode(source, into: drawable.texture, using: commands)
+            // GPU の完了を待たない — 待てば表示のたびに CPU が止まる
+            gpu.commit(commands, signalling: drawable)
+        }
         // **この投入が、いまのスロットの設定を読む。** 次に同じスロットが回ってきた
         // ときの待ち先になる (#754)
         pipeline.noteSubmission()
@@ -98,9 +99,10 @@ final class FramePresenter {
     /// 面へ差し出すのと**同じ経路**で、行き先だけが違う。画面を持たない実行から
     /// 「画面に出るはずの絵」を取り出せるので、収まり方を機械で検められる。
     func draw(_ source: some PresentableFrame, into destination: any MTLTexture) throws(RenderFailure) {
-        let commands = try gpu.beginCommands()
-        try encode(source, into: destination, using: commands)
-        try gpu.commitAndWait(commands)
+        try gpu.withCommands { commands throws(RenderFailure) in
+            try encode(source, into: destination, using: commands)
+            try gpu.commitAndWait(commands)
+        }
         pipeline.noteSubmission()
     }
 

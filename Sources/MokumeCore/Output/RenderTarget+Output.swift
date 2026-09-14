@@ -56,32 +56,34 @@ extension RenderTarget {
         // 明るさを写す段は**描画先が持つ**。画面へ差し出す経路と同じ設定が効く
         pass.setBrightness(brightness)
 
-        let commands = try gpu.beginCommands()
-        // **CPU が画素へ書いたものがあれば、読む前に描画先へ戻す。** 描き切りを挟まずに
-        // `pixels` へ書いてここへ来る経路 (フレームの外で書いて書き出す) のため (#753)
-        try encodePixelWriteBack(into: commands)
-        guard let encoder = commands.makeRenderCommandEncoder(descriptor: image.makeRenderPass())
-        else {
-            throw .encoderUnavailable
+        let submission = try gpu.withCommands { commands throws(RenderFailure) in
+            // **CPU が画素へ書いたものがあれば、読む前に描画先へ戻す。** 描き切りを挟まずに
+            // `pixels` へ書いてここへ来る経路 (フレームの外で書いて書き出す) のため (#753)
+            try encodePixelWriteBack(into: commands)
+            guard
+                let encoder = commands.makeRenderCommandEncoder(descriptor: image.makeRenderPass())
+            else {
+                throw .encoderUnavailable
+            }
+            // **描き終えた絵を読むので、前の書き込み (描画と、直前の書き戻し) が終わるのを
+            // 待つ。** この世代のコマンド構造は口をまたぐ依存を自動では張らない ([#341])
+            //
+            // [#341]: https://github.com/mokume-metal/mokume/issues/341
+            encoder.barrier(
+                afterQueueStages: [.fragment, .blit], beforeStages: .fragment,
+                visibilityOptions: .device)
+            encoder.setRenderPipelineState(pass.state)
+            encoder.setViewport(
+                MTLViewport(
+                    originX: 0, originY: 0, width: Double(width), height: Double(height),
+                    znear: 0, zfar: 1))
+            encoder.setArgumentTable(pass.argumentTable, stages: [.vertex, .fragment])
+            encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
+            encoder.endEncoding()
+            // **待たずに投入し、番号を憶える。** 中身が確定しているかを気にするのは触る側で、
+            // ``EncodedImage/read()`` と出口へ渡す直前がその番号を名指しで待つ (#927)
+            return gpu.commit(commands, retaining: [image])
         }
-        // **描き終えた絵を読むので、前の書き込み (描画と、直前の書き戻し) が終わるのを
-        // 待つ。** この世代のコマンド構造は口をまたぐ依存を自動では張らない ([#341])
-        //
-        // [#341]: https://github.com/mokume-metal/mokume/issues/341
-        encoder.barrier(
-            afterQueueStages: [.fragment, .blit], beforeStages: .fragment,
-            visibilityOptions: .device)
-        encoder.setRenderPipelineState(pass.state)
-        encoder.setViewport(
-            MTLViewport(
-                originX: 0, originY: 0, width: Double(width), height: Double(height),
-                znear: 0, zfar: 1))
-        encoder.setArgumentTable(pass.argumentTable, stages: [.vertex, .fragment])
-        encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
-        encoder.endEncoding()
-        // **待たずに投入し、番号を憶える。** 中身が確定しているかを気にするのは触る側で、
-        // ``EncodedImage/read()`` と出口へ渡す直前がその番号を名指しで待つ (#927)
-        let submission = gpu.commit(commands, retaining: [image])
         image.pendingSubmission = submission
         lastEncodeSubmission = submission
         return image

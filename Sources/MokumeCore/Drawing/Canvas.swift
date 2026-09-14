@@ -1499,61 +1499,61 @@ public final class Canvas {
             continuingFrame: passesThisFrame > 0 && pendingBackground == nil,
             keepingDepth: !applyingEffects)
         passesThisFrame += 1
-        let commands = try gpu.beginCommands()
+        // **途中で投げたら、組み立ての口が畳む** (#1180)。ここに片付けは書かない
+        let submission: UInt64 = try gpu.withCommands { commands throws(RenderFailure) in
+            // **CPU が画素へ書いたものがあれば、描く前に描画先へ戻す。** 描画先は GPU 専用の
+            // 面なので、`pixels` への書き込みは写しに載っている。書いていないフレームは
+            // 何も積まない (#753)
+            try target.encodePixelWriteBack(into: commands)
 
-        // **CPU が画素へ書いたものがあれば、描く前に描画先へ戻す。** 描画先は GPU 専用の
-        // 面なので、`pixels` への書き込みは写しに載っている。書いていないフレームは
-        // 何も積まない (#753)
-        try target.encodePixelWriteBack(into: commands)
+            // **描くより前に、頼まれた計算を流す** (ADR-0023 決定 3 — 計算はフレームの
+            // 前置き)。頼まれていなければ口も開かないので、計算を使わないスケッチは
+            // ここで何も払わない
+            try encodeComputations(into: commands)
 
-        // **描くより前に、頼まれた計算を流す** (ADR-0023 決定 3 — 計算はフレームの
-        // 前置き)。頼まれていなければ口も開かないので、計算を使わないスケッチは
-        // ここで何も払わない
-        try encodeComputations(into: commands)
+            // **画面へ描く前に、光から見た奥行きを焼く。** 同じコマンドに順に積んでも
+            // **この世代では順に実行されない** — encoder をまたぐ依存は自動では張られず、
+            // 明示しなければ焼き付けと画面が重なる。待つ仕掛けは焼く側が積む
+            // (`bakeShadow`)。当初ここに「順に流すので待つ仕掛けは要らない」と書いていた
+            // のが [#341] の出どころなので、消さずに理由を残す。
+            //
+            // [#341]: https://github.com/mokume-metal/mokume/issues/341
+            let bakedShadow = try bakeShadow(into: commands)
 
-        // **画面へ描く前に、光から見た奥行きを焼く。** 同じコマンドに順に積んでも
-        // **この世代では順に実行されない** — encoder をまたぐ依存は自動では張られず、
-        // 明示しなければ焼き付けと画面が重なる。待つ仕掛けは焼く側が積む
-        // (`bakeShadow`)。当初ここに「順に流すので待つ仕掛けは要らない」と書いていた
-        // のが [#341] の出どころなので、消さずに理由を残す。
-        //
-        // [#341]: https://github.com/mokume-metal/mokume/issues/341
-        let bakedShadow = try bakeShadow(into: commands)
+            guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+                throw .encoderUnavailable
+            }
 
-        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
-            throw .encoderUnavailable
+            try encodeBatches(into: encoder, shadow: bakedShadow)
+
+            drawCallsInLastFrame = hasPendingGeometry ? batches.count : 0
+            flatVerticesInLastFrame = vertices.count
+            flatOutlinesInLastFrame = outlinesAssembledThisFrame
+            outlinesAssembledThisFrame = 0
+            pointScansInLastFrame = pointScansThisFrame
+            pointScansThisFrame = 0
+            encoder.endEncoding()
+
+            // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
+            // 書き出しも観測も同じ 1 枚を受け取る (ADR-0023 決定 2)
+            if applyingEffects { applyEffects(into: commands) }
+
+            // **拡大は出口の直前・段の最後。** 効果は描く細かさの上で働き、その結果を
+            // 出す細かさへ広げる。順を逆にすると、効果の半径が出す細かさで測られて
+            // 細かさを変えるたびに効き方が変わる
+            if applyingEffects { applyUpscale(into: commands) }
+
+            // **画素を読む直前の描き切りなら、描き終えた絵を写しへ読み戻す blit を末尾に積む。**
+            // 別のコマンドにすると投入が 1 本増えるので、同じコマンドの末尾に置く (#753)
+            if mirroringPixels { try target.encodePixelReadback(into: commands) }
+
+            // **投入して、待たない。** 直後の片付けで列が抱えていた参照 (面・数の並び・
+            // 断片・外の置き場所) が落ちるので、GPU が終わるまで抱えておく側へ渡す —
+            // この世代のコマンドはリソースを保持しないため、渡さないと利用者が `draw()` の
+            // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
+            return gpu.commit(
+                commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
         }
-
-        try encodeBatches(into: encoder, shadow: bakedShadow)
-
-
-        drawCallsInLastFrame = hasPendingGeometry ? batches.count : 0
-        flatVerticesInLastFrame = vertices.count
-        flatOutlinesInLastFrame = outlinesAssembledThisFrame
-        outlinesAssembledThisFrame = 0
-        pointScansInLastFrame = pointScansThisFrame
-        pointScansThisFrame = 0
-        encoder.endEncoding()
-
-        // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
-        // 書き出しも観測も同じ 1 枚を受け取る (ADR-0023 決定 2)
-        if applyingEffects { applyEffects(into: commands) }
-
-        // **拡大は出口の直前・段の最後。** 効果は描く細かさの上で働き、その結果を
-        // 出す細かさへ広げる。順を逆にすると、効果の半径が出す細かさで測られて
-        // 細かさを変えるたびに効き方が変わる
-        if applyingEffects { applyUpscale(into: commands) }
-
-        // **画素を読む直前の描き切りなら、描き終えた絵を写しへ読み戻す blit を末尾に積む。**
-        // 別のコマンドにすると投入が 1 本増えるので、同じコマンドの末尾に置く (#753)
-        if mirroringPixels { try target.encodePixelReadback(into: commands) }
-
-        // **投入して、待たない。** 直後の片付けで列が抱えていた参照 (面・数の並び・
-        // 断片・外の置き場所) が落ちるので、GPU が終わるまで抱えておく側へ渡す —
-        // この世代のコマンドはリソースを保持しないため、渡さないと利用者が `draw()` の
-        // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
-        let submission = gpu.commit(
-            commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
         // まま書いてよい」ことになる (#754)

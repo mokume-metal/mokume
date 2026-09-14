@@ -180,9 +180,11 @@ public final class RenderTarget: EffectSurface {
         if mirror.hasPendingWrites || mirror.syncedThrough == gpu.submissionCount {
             return mirror
         }
-        let commands = try gpu.beginCommands()
-        try encodePixelReadback(into: commands)
-        markPixelsMirrored(through: gpu.commit(commands))
+        let submission = try gpu.withCommands { commands throws(RenderFailure) in
+            try encodePixelReadback(into: commands)
+            return gpu.commit(commands)
+        }
+        markPixelsMirrored(through: submission)
         try gpu.settle()
         return mirror
     }
@@ -292,13 +294,16 @@ public final class RenderTarget: EffectSurface {
     public func fill(with color: LinearRGBA) throws(RenderFailure) {
         // 全画素を塗り直すので、写しに残っていた CPU の書き込みは戻さず捨てる
         pixelMirror?.hasPendingWrites = false
-        let commands = try gpu.beginCommands()
-        guard let encoder = commands.makeRenderCommandEncoder(descriptor: makeRenderPass(clearColor: color))
-        else {
-            throw .encoderUnavailable
+        try gpu.withCommands { commands throws(RenderFailure) in
+            guard
+                let encoder = commands.makeRenderCommandEncoder(
+                    descriptor: makeRenderPass(clearColor: color))
+            else {
+                throw .encoderUnavailable
+            }
+            encoder.endEncoding()
+            try gpu.commitAndWait(commands)
         }
-        encoder.endEncoding()
-        try gpu.commitAndWait(commands)
     }
 
     // MARK: - 読み出す

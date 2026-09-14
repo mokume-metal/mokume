@@ -126,17 +126,22 @@ struct SpecializedNameTests {
         color.storeAction = .store
         color.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
 
-        let commands = try gpu.beginCommands()
-        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+        let drew = try gpu.withCommands { commands throws(RenderFailure) in
+            guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+                return false
+            }
+            encoder.setRenderPipelineState(state)
+            encoder.setViewport(
+                MTLViewport(originX: 0, originY: 0, width: 1, height: 1, znear: 0, zfar: 1))
+            encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
+            encoder.endEncoding()
+            try gpu.commitAndWait(commands)
+            return true
+        }
+        guard drew else {
             Issue.record("描画の記録口が作れない")
             return false
         }
-        encoder.setRenderPipelineState(state)
-        encoder.setViewport(
-            MTLViewport(originX: 0, originY: 0, width: 1, height: 1, znear: 0, zfar: 1))
-        encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
-        encoder.endEncoding()
-        try gpu.commitAndWait(commands)
 
         var pixel = [UInt8](repeating: 0, count: 4)
         pixel.withUnsafeMutableBytes { raw in

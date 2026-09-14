@@ -270,9 +270,10 @@ extension Canvas {
                     + "was called off")
         else { return }
         do {
-            let commands = try gpu.beginCommands()
-            try encodeComputations(into: commands)
-            try gpu.commitAndWait(commands)
+            try gpu.withCommands { commands throws(RenderFailure) in
+                try encodeComputations(into: commands)
+                try gpu.commitAndWait(commands)
+            }
         } catch {
             // 読み取りは落とさない (ADR-0020 決定 5)。次のフレームの描き切りが同じ理由で
             // 失敗し、そちらから外へ出る
