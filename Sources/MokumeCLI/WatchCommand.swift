@@ -57,13 +57,20 @@ enum WatchCommand {
 
         // **置き場は見張り始める前に 1 度だけ決める。** 作り直しのたびに決め直すと、
         // 途中で先客が現れたときに作り直しと解決が別の置き場を指しうる (#1055)
-        let context = try RunCommand.context(in: directory, invocation: invocation)
+        //
+        // **導き手は 1 つを分け持つ。** ここで導いたものを作り直しがそのまま使うので、
+        // 宣言が変わるまで `swift` は 1 本も起きない — 別々に組むと、初回だけ
+        // `dump-package` と `--show-bin-path` が二重に走る (#1067)
+        let running = RunningBuild()
+        let resolver = BuildResolver.live(
+            in: directory, invocation: invocation, running: running)
+        let context = try resolver.current().context
 
         // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
         // パッケージの場所へ置くと観測とだけ場所が割れる (#331)。**計算は 1 つ** (#791)
         let session = WatchSession(
             directory: directory, context: context, facetBase: invocation.facetBase(),
-            reportsRate: true)
+            reportsRate: true, hooks: .live(resolver: resolver, running: running))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元
@@ -284,12 +291,13 @@ enum WatchCommand {
             cancel: closeCancel, then: { requestStop() })
     }
 
-    /// 入れ替わった後ろの世代を畳み、期限に掛かったことがあれば名乗る。
+    /// 入れ替わりを知らせ、後ろの世代を畳み、期限に掛かったことがあれば名乗る。
     ///
     /// **名乗るのは口の側である** — ``WatchSession`` は判断だけを持ち、出力を持たない
-    /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。
+    /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。新しい絵が
+    /// 出るまでの記録もこの合図で足される (#930)。
     static func retire(after session: WatchSession?) {
-        guard let outcome = session?.retireOutgoing() else { return }
+        guard let outcome = session?.generationPromoted() else { return }
         switch outcome {
         case .killed: say(killedLine)
         case .abandoned(let pid): say(abandonedLine(pid: pid))

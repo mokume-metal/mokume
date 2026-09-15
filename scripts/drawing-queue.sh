@@ -46,6 +46,21 @@
 #   ?       判定できなかった
 #
 # **判定できないときは通す。** 防いでいるのは事故であって偽装ではない (冒頭の宣言)。
+#
+# ## queue に居る描画 PR は番号より先に数える (#1266)
+#
+# 番号順だけで決めていた頃は、merge queue の並び (入れた順) と食い違うと互いを待って
+# 止まった。queue の中で後ろに居る描画 PR は、前に居る描画 PR の変更が合流後の木に
+# 入るので、**番号に関係なく覆いを満たせない**。2026-09-15 には queue の前に #1243 が
+# 居る間、#1242 は番号順の先頭として打ち直しては弾かれ、#1243 は「#1242 を待て」と
+# 言われていた — どちらも規約どおりに動いていて、どちらも進まなかった。
+#
+# そこで順番を 1 本にする — **queue に居る描画 PR が position の順に先、その外は
+# 番号順**。queue の中の描画 PR は通るか弾かれて外へ出るかのどちらかで、外へ出れば
+# 番号順に戻るので、上の収束の議論はそのまま効く。誰かを queue から外す手は要らない。
+#
+# **queue を読めなかったときは番号順だけで決める。** 「判定できない」へ倒すと CI の
+# 順番待ちまで外れるので、以前の振る舞いを劣化時の姿として残す。
 ahead_drawing_pr() {
   local repo=$1 number=$2 open n files self=''
   # draft の除外だけ API 側で済ませ、番号の順序は手元で見る (作り物の gh を通した
@@ -59,12 +74,50 @@ ahead_drawing_pr() {
   done
   [ -n "$self" ] || { printf 'draft'; return 0; }
 
+  # 自分が queue に居て前に描画 PR が居なければ、queue の外の番号は数えない — 数えると
+  # 番号の若い外の PR を待ちながら、その PR は queue に居る自分に弾かれ続ける
+  if n=$(queued_drawing_ahead "$repo" "$number") && [ -n "$n" ]; then
+    [ "$n" = self ] || printf '%s' "$n"
+    return 0
+  fi
+
   for n in $open; do
     [ "$n" -lt "$number" ] || continue
     if ! files=$(pr_files "$repo" "$n"); then
       printf '?'
       return 0
     fi
+    if printf '%s\n' "$files" | touches_drawing coverage; then
+      printf '%s' "$n"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# merge queue で自分より前に居る描画 PR のうち、先頭の番号 (#1266)。
+#
+# 自分が queue に居なければ queue 全体が前に居る。標準出力に返すもの:
+#   <番号>  前に居る描画 PR
+#   self    自分が queue に居て、前に描画 PR が居ない (queue の外は数えなくてよい)
+#   (空)    自分は queue に居らず、queue に描画 PR も居ない
+# 読めなかったときは 1 で終える (呼ぶ側が番号順へ落ちるか、名乗りを変えずに済ませる)。
+#
+# merge_group の判定 (render-status.sh) もこれを直に呼ぶ — 弾いた PR の前に描画 PR が
+# 居れば、打ち直しても同じ理由でまた弾かれるので、名乗りを変える必要がある。
+queued_drawing_ahead() {
+  local repo=$1 number=$2 queued n files
+  # GraphQL の $owner / $name はサーバ側の変数なので、展開させない
+  # shellcheck disable=SC2016
+  queued=$(gh api graphql -f owner="${repo%%/*}" -f name="${repo##*/}" \
+    -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
+      mergeQueue{entries(first:100){nodes{position pullRequest{number}}}}}}' \
+    --jq '.data.repository.mergeQueue.entries.nodes // [] | sort_by(.position)[] | .pullRequest.number') \
+    || return 1
+
+  for n in $queued; do
+    [ "$n" != "$number" ] || { printf 'self'; return 0; }
+    files=$(pr_files "$repo" "$n") || return 1
     if printf '%s\n' "$files" | touches_drawing coverage; then
       printf '%s' "$n"
       return 0

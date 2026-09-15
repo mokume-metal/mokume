@@ -47,8 +47,8 @@ extension Canvas {
     /// 周から、塗りと輪郭を出す。
     func draw(_ outline: Outline) {
         outlinesAssembledThisFrame += 1
-        if outline.fills, hasFill { fillInterior(outline) }
-        if hasStroke, currentStrokeWeight > 0 { strokeOutline(outline) }
+        if outline.fills, style.hasFill { fillInterior(outline) }
+        if style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
     }
 
     /// 形自身の座標で作った周を、置き場所へ置く。**同じ形が続く間は畳む。**
@@ -64,12 +64,12 @@ extension Canvas {
     ) {
         let key = FlatKey(
             form: form,
-            hasFill: hasFill,
-            hasStroke: hasStroke && currentStrokeWeight > 0,
-            strokeWeight: currentStrokeWeight,
-            strokeCap: currentStrokeCap,
-            strokeJoin: currentStrokeJoin,
-            textured: currentPicture != nil)
+            hasFill: style.hasFill,
+            hasStroke: style.hasStroke && style.strokeWeight > 0,
+            strokeWeight: style.strokeWeight,
+            strokeCap: style.strokeCap,
+            strokeJoin: style.strokeJoin,
+            textured: style.picture != nil)
         guard key.hasFill || key.hasStroke else { return }
 
         // **貼る絵と輪郭が同居する図形は畳まない。** 塗りは絵の面を、輪郭は字形の面を
@@ -141,11 +141,11 @@ extension Canvas {
         // **雛形の頂点は白で、変換を掛けずに積む。** 色も変換も置き場所が持つので、
         // ここで焼き込むと二重に掛かる。組み立て自体は畳まないときとまったく同じ経路
         let savedTransform = transform
-        let savedFill = currentFill
-        let savedStroke = currentStroke
+        let savedFill = style.fill
+        let savedStroke = style.stroke
         transform = .identity
-        currentFill = Self.unchangedTint
-        currentStroke = Self.unchangedTint
+        style.fill = Self.unchangedTint
+        style.stroke = Self.unchangedTint
         buildingFlatTemplate = true
         outlinesAssembledThisFrame += 1
         if key.hasFill { fillInterior(outline) }
@@ -153,8 +153,8 @@ extension Canvas {
         if key.hasStroke { strokeOutline(outline) }
         buildingFlatTemplate = false
         transform = savedTransform
-        currentFill = savedFill
-        currentStroke = savedStroke
+        style.fill = savedFill
+        style.stroke = savedStroke
 
         openFlat = OpenFlat(
             key: key, strokeStart: strokeStart, instanceStart: flatInstances.count)
@@ -170,7 +170,7 @@ extension Canvas {
         return FlatInstance(
             linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
             offset: transform.apply(x: anchor.x, y: anchor.y),
-            fill: currentFill, stroke: currentStroke)
+            fill: style.fill, stroke: style.stroke)
     }
 
     /// 周の内側を塗る。
@@ -187,13 +187,13 @@ extension Canvas {
         guard ring.count >= 2 else { return }
 
         // 箱は**周そのもの**から作る。扇の中心は周の内側にあるので、含めても広がらない
-        let uvOf = currentPicture == nil ? nil : Self.boxUV(of: points)
+        let uvOf = style.picture == nil ? nil : Self.boxUV(of: points)
 
         func place(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ bSource: SIMD2<Float>,
             _ c: SIMD2<Float>, _ cSource: SIMD2<Float>)
         {
             appendTriangle(
-                a, b, c, colors: (currentFill, currentFill, currentFill),
+                a, b, c, colors: (style.fill, style.fill, style.fill),
                 uvs: uvOf.map { ($0(pivot), $0(bSource), $0(cSource)) })
         }
 

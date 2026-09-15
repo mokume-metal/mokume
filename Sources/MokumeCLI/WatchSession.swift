@@ -12,8 +12,9 @@ import mokume
 ///
 /// ## 所要時間を分けて測る
 ///
-/// **合計だけを見ていると律速を推測で決めて外す。** 保存から気付くまで / 作り直し /
-/// 差し替え の 3 つに分けて刻み、どの構成で測ったかも併せて出す。
+/// **合計だけを見ていると律速を推測で決めて外す。** 気付いてから始めるまで / 作り直し /
+/// 差し替え / 新しい絵が出るまで の 4 つに分けて刻み、どの構成で測ったかも併せて出す。
+/// 足し算と重なりは ``BuildReport/Timings`` が持つ。
 @MainActor
 final class WatchSession {
     /// 差し替えられる外側。
@@ -49,26 +50,43 @@ final class WatchSession {
         /// 既定は「何も走っていない」 — 替え玉の作り直しは子を起こさない。
         var stopRebuild: () -> Process? = { nil }
 
-        /// - Parameter context: 1 度だけ決めた土台 (構成と置き場と product)。**作り直しと
-        ///   実行ファイルの解決の両方が同じ値から出る** — 片方だけに渡すと、名乗った構成と
-        ///   実際に起動するものが食い違う (#680)。
-        static func live(context: BuildContext) -> Hooks {
+        /// 呼ばれ方から、導き手ごと組む。
+        ///
+        /// **見張りの口 (``WatchCommand``) はこれを使わない。** あちらは見張り始める前に
+        /// 1 度導いて置き場を名乗る必要があるので、導き手を自分で組んで ``live(resolver:running:)``
+        /// へ渡す — 組むのを 2 度にすると、初回だけ `swift` が余分に起きる (#1067)。
+        static func live(in directory: URL, invocation: Invocation) -> Hooks {
             // **1 つを作り直しと止める口で分け持つ。** 止めると決めたら二度と起こさない —
             // 止めるのは見張りが終わるときだけなので、それで足りる (#1147)
             let running = RunningBuild()
-            return Hooks(
+            return live(
+                resolver: .live(in: directory, invocation: invocation, running: running),
+                running: running)
+        }
+
+        /// - Parameter resolver: 宣言から土台と置き場を導く者。**宣言が変わるまで持ち回る** —
+        ///   導くのに `swift` を 2 本起こすので、作り直しのたびに払うと保存から絵が変わるまでに
+        ///   丸ごと乗る ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
+        /// - Parameter running: 走っている `swift` を掴む先。**導き手と同じものを渡す** —
+        ///   止めると決めた後に導き直しが `swift` を起こすと、それが新しく置き場の鍵を握る (#1147)。
+        static func live(resolver: BuildResolver, running: RunningBuild) -> Hooks {
+            Hooks(
                 rebuild: { directory throws(CommandFailure) in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
                     // ここで待っても main actor は空く — ADR-0010 決定 4 の「明示的に分離
                     // する」で、待ち行列は足していない (#834)
                     //
+                    // **導き直しも同じ側で走らせる。** 宣言が変わった回に main actor で
+                    // 導くと、そのあいだ画面が凍る (#1067)
+                    //
                     // **誤りは `Result` に包んで持ち帰る。** `Task` の `value` は `any Error`
                     // を投げるので、そのまま投げると型が落ちる (ADR-0010 決定 7)
                     try await Task.detached(priority: .userInitiated) {
                         Result { () throws(CommandFailure) in
-                            try RunCommand.rebuild(
-                                in: directory, context: context, capturing: true,
-                                running: running)
+                            let resolved = try resolver.current()
+                            return try RunCommand.rebuild(
+                                in: directory, context: resolved.context, capturing: true,
+                                running: running, binPath: resolved.binPath)
                         }
                     }.value.get()
                 },
@@ -144,10 +162,14 @@ final class WatchSession {
     /// 区画の基準。**パッケージの場所とは別の軸** — スケッチは `MOKUME_WORK_DIR` に従って
     /// 観測を書くので、作り直しの記録も同じ側へ置かないと読み手から見て割れる (#331)。
     let facetBase: URL
-    /// 1 度だけ決めた土台 (構成と置き場と product)。
+    /// 見張り始めたときの土台 (構成と置き場と product)。
     ///
     /// **構成だけを持っていた頃は、置き場を足したときに片方だけ渡す形が書けた。**
     /// 抱き合わせた値で持てば、作り直しと解決が必ず同じものから出る。
+    ///
+    /// **作り直しはこれを読まない。** 宣言は編集されうるので、作り直しが使う土台は
+    /// ``BuildResolver`` が宣言の世代ごとに導く (#1067)。ここに残っているのは、
+    /// 宣言によらないもの (構成の名乗り) と、**導く前に倒れた回**の置き場だけである。
     let context: BuildContext
     /// 名乗るときの構成の名前。選ばれていなければ既定の名前。
     var configurationName: String { context.configurationName }
@@ -176,6 +198,20 @@ final class WatchSession {
     /// 入れ替わりの合図は道具の窓から来るので ([ADR-0032] 決定 1)、窓が出せなかった実行では
     /// 誰も知らせてくれない — そこでは今までどおり、止めてから起こす。
     var overlapsGenerations = false
+
+    /// 新しい絵が出るまでを測っている、差し替えを始めた時刻。**測らない回は `nil`。**
+    ///
+    /// 置くのは ``finish(_:)`` の中だけで、どの記録を書いても置き直す — 起こした後に
+    /// 作り直しの失敗や途中停止の記録で上書きされたら、待っていた数字の行き先はもう無い。
+    private var firstFrameSince: Double?
+    /// 最後に起こした世代が、まだ画面へ乗り換わっていないか。
+    private var awaitingPromotion = false
+    /// 乗り換えの合図を 1 度でも受けたか。
+    ///
+    /// **受けるまでの合図は、絵が出た時点を指さない。** 出している世代が無い台は 1 枚目を
+    /// 待たずに乗り換える (`SharedFrameStage.promoteIfReady()`) ので、最初に目録を置いた
+    /// 世代の合図は「絵が出た」ではなく「目録が読めた」になる。
+    private var hasSeenPromotion = false
 
     /// 消えたことを既に名乗ったか。**子が入れ替わると下りる。**
     private var hasNamedDeparture = false
@@ -228,18 +264,20 @@ final class WatchSession {
     /// 実際にそう読まれた ([#695](https://github.com/mokume-metal/mokume/issues/695))。
     var willRebuild: (_ initial: Bool) -> Void = { _ in }
 
-    /// - Parameter hooks: 差し替える外側。**渡さなければ、決めてある土台から組む** —
-    ///   既定引数では作れない (土台が決まるのは初期化の中である)。
+    /// - Parameter hooks: 差し替える外側。**渡さなければ、呼ばれ方から組む** —
+    ///   既定引数では作れない (場所が決まるのは初期化の中である)。
+    /// - Parameter invocation: 呼ばれ方。`hooks` を渡さないときだけ要る。
     init(
         directory: URL, context: BuildContext, facetBase: URL? = nil,
         reportsRate: Bool = false, hooks: Hooks? = nil,
+        invocation: Invocation = Invocation(),
         stopTimeout: TimeInterval = WatchSession.defaultStopTimeout
     ) {
         self.directory = directory
         self.facetBase = facetBase ?? directory
         self.context = context
         self.reportsRate = reportsRate
-        self.hooks = hooks ?? .live(context: context)
+        self.hooks = hooks ?? .live(in: directory, invocation: invocation)
         self.stopTimeout = stopTimeout
     }
 
@@ -471,7 +509,7 @@ final class WatchSession {
             // `output` が空になり、読み手にも端末にも「失敗した」しか届かなかった (#1100)
             rebuilt = RunCommand.Rebuilt(
                 status: 1, output: error.message, executable: nil,
-                binPath: context.directory(under: directory))
+                binPath: context.directory(under: directory), product: context.product)
         }
         let buildMs = (hooks.now() - buildStarted) * 1000
 
@@ -507,6 +545,11 @@ final class WatchSession {
         }
 
         let relaunchStarted = hooks.now()
+        // **どの世代の合図か区別できる回だけ測る。** 前の世代がまだ乗り換わらずに生きて
+        // いると、次の合図はそちらのものかもしれない — 目録は世代の印を持たない
+        let measuresFirstFrame =
+            overlapsGenerations && hasSeenPromotion
+            && !(awaitingPromotion && child?.isRunning == true)
         if overlapsGenerations {
             // **止めるのは、新しい世代が画面に出てからである** (#1142)。合図が来ないまま
             // 次の保存が来た回は、ここで必ず止める — 重ねるのは 1 世代だけである
@@ -518,12 +561,44 @@ final class WatchSession {
         }
         child = hooks.launch(executable, directory, stamp, reportsRate ? configurationName : nil)
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
+        awaitingPromotion = overlapsGenerations && child != nil
 
         return finish(
             BuildReport(
                 ok: true, status: 0, output: rebuilt.output, stamp: stamp,
                 configuration: configurationName, launched: child != nil,
-                timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)))
+                timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)),
+            firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
+    }
+
+    /// 次の世代が画面へ乗り換わった。**新しい絵が出るまでを記録へ足し、退役待ちを畳む。**
+    ///
+    /// 合図は窓ごとに来る (作品の窓とプレビューは独立に見ている) ので、同じ入れ替えで
+    /// 2 度呼ばれる。測るのは最初の 1 度だけで、退役は冪等である。
+    ///
+    /// **記録は書き直す。** 起こし終えた時点の記録は既に置いてあるので、同じ区画へ
+    /// 丸ごと原子的に置き直す — 別のファイルへ書き足すと、読み手は形を 2 つ知ることになる。
+    ///
+    /// **測らない回** (``BuildReport/Timings/firstFrameMs`` が空になる):
+    /// - 窓を出せない実行 — そもそも合図が来ない
+    /// - まだ 1 度も合図を受けていない間に起こした世代 (初回を含む) — 合図が絵を指さない
+    ///   (``hasSeenPromotion``)
+    /// - 前の世代が乗り換わらずに生きているうちに差し替えた回 — どちらの合図か分からない
+    /// - 起こした後に別の記録で上書きされた回
+    ///
+    /// - Returns: 退役待ちを止めた結果。**名乗るのは口の側**である (``retireOutgoing()``)。
+    @discardableResult
+    func generationPromoted() -> StopOutcome? {
+        // **時刻は退役より先に取る。** 退役は期限つきで子の終わりを待つので、後に取ると
+        // 止める待ちが絵の出た時刻に乗る
+        let now = hooks.now()
+        hasSeenPromotion = true
+        awaitingPromotion = false
+        if let since = firstFrameSince, var report = lastReport {
+            report.timings.firstFrameMs = (now - since) * 1000
+            finish(report)
+        }
+        return retireOutgoing()
     }
 
     /// 「通ったのに建っていない」ことを、記録の中で名乗る。
@@ -533,7 +608,10 @@ final class WatchSession {
     /// 窓口) がそれを見ても、何が起きたのか分からない。
     private func unbuiltNotice(_ rebuilt: RunCommand.Rebuilt) -> String? {
         guard rebuilt.status == 0, rebuilt.executable == nil else { return nil }
-        guard let product = context.product else {
+        // **この回が探した名前で名乗る。** 見張りは宣言が変わった回に導き直すので、
+        // 始めたときの名前を持ち回ると、product を改名した回に**前の名前**で
+        // 「建っていない」と言うことになる (#1067)
+        guard let product = rebuilt.product else {
             return """
                 Cannot find anything to run: \(directory.path)
                 Check that Package.swift declares an executable in products
@@ -550,7 +628,11 @@ final class WatchSession {
             """
     }
 
-    private func finish(_ report: BuildReport) -> BuildReport {
+    /// - Parameter firstFrameSince: この記録の世代について、新しい絵が出るまでを測るなら
+    ///   差し替えを始めた時刻。**渡さなければ待ちを捨てる。**
+    @discardableResult
+    private func finish(_ report: BuildReport, firstFrameSince: Double? = nil) -> BuildReport {
+        self.firstFrameSince = firstFrameSince
         lastReport = report
         write(report)
         return report

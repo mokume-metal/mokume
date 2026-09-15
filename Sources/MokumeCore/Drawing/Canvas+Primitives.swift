@@ -14,7 +14,7 @@ extension Canvas {
     /// 矩形。座標の読み方は ``rectMode(_:)`` が決める。
     public func rect(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
-        let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
+        let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
         guard box.width > 0, box.height > 0 else { return }
         let w = box.width
         let h = box.height
@@ -49,7 +49,7 @@ extension Canvas {
     /// 楕円。座標の読み方は ``ellipseMode(_:)`` が決める。
     public func ellipse(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
-        let box = Self.resolveBox(a, b, c, d, mode: currentEllipseMode)
+        let box = Self.resolveBox(a, b, c, d, mode: style.ellipseMode)
         let radiusX = box.width / 2
         let radiusY = box.height / 2
         guard radiusX > 0, radiusY > 0 else { return }
@@ -75,7 +75,7 @@ extension Canvas {
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible
     ) {
         let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
-        let box = Self.resolveBox(a, b, c, d, mode: currentEllipseMode)
+        let box = Self.resolveBox(a, b, c, d, mode: style.ellipseMode)
         let radiusX = box.width / 2
         let radiusY = box.height / 2
         guard radiusX > 0, radiusY > 0 else { return }

@@ -32,7 +32,7 @@ extension Canvas {
     /// 貼る絵は**塗りにしか効かない**ので、塗りを持たない線と点は絵が束ねてあっても
     /// この経路でよい。利用者の断片は塗りも輪郭も塗るので、どちらも三角形の経路へ。
     func formAllowed(fills: Bool) -> Bool {
-        currentShader == nil && !(fills && hasFill && currentPicture != nil)
+        currentShader == nil && !(fills && style.hasFill && style.picture != nil)
     }
 
     /// 基本図形を溜める側へ移る。**開いている平面の列・立体の列はここで閉じる**
@@ -83,11 +83,11 @@ extension Canvas {
         batches.append(
             Batch(
                 run: Shape.Run(
-                    mode: currentBlendMode, texture: currentTexture,
+                    mode: style.blendMode, texture: currentTexture,
                     paint: .builtIn,
                     source: .form, start: open.instanceStart, count: count,
                     indexStart: 0, indexCount: 0),
-                clip: currentClip,
+                clip: style.clip,
                 matrix: jittered(projection),
                 lightRange: 0..<0,
                 material: .default,
@@ -114,8 +114,8 @@ extension Canvas {
         fills: Bool, cap: StrokeCap? = nil
     ) {
         // **色は `Optional` にしない。** 持つかどうかは旗で渡す (``FormInstance/init``)
-        let drawsFill = fills && hasFill
-        let drawsStroke = hasStroke && currentStrokeWeight > 0
+        let drawsFill = fills && style.hasFill
+        let drawsStroke = style.hasStroke && style.strokeWeight > 0
         guard drawsFill || drawsStroke else { return }
 
         // いまの変換の 2x2 に、形自身の横軸の向きを掛ける (線以外は単位)
@@ -127,13 +127,13 @@ extension Canvas {
         let instance = FormInstance(
             kind: kind, linear: SIMD4(x.x, x.y, y.x, y.y),
             offset: transform.apply(x: center.x, y: center.y), half: half, arc: arc,
-            halfWeight: currentStrokeWeight / 2,
-            fill: currentFill.components, stroke: currentStroke.components,
+            halfWeight: style.strokeWeight / 2,
+            fill: style.fill.components, stroke: style.stroke.components,
             fills: drawsFill, strokes: drawsStroke,
-            cap: cap ?? currentStrokeCap, join: currentStrokeJoin)
+            cap: cap ?? style.strokeCap, join: style.strokeJoin)
         // 数でない値・潰れた変換は置かない。三角形のときも面積が無くて何も出なかった
         guard instance.isPlaceable, half.x.isFinite, half.y.isFinite,
-            currentStrokeWeight.isFinite, arc.x.isFinite, arc.y.isFinite
+            style.strokeWeight.isFinite, arc.x.isFinite, arc.y.isFinite
         else { return }
 
         beginForm(flags: instance.meta.w)
@@ -146,7 +146,7 @@ extension Canvas {
         let length = (delta.x * delta.x + delta.y * delta.y).squareRoot()
         guard length.isFinite else { return }
         // 長さちょうどで切る端は、長さ 0 の線では何も描かない (三角形のときと同じ)
-        if length == 0, currentStrokeCap == .square { return }
+        if length == 0, style.strokeCap == .square { return }
         let axis = length > 0 ? delta / length : SIMD2(1, 0)
         appendForm(
             .line, center: (a + b) / 2, half: SIMD2(length / 2, 0), axis: axis, fills: false)
@@ -159,6 +159,6 @@ extension Canvas {
     func appendPointForm(_ point: SIMD2<Float>) {
         appendForm(
             .line, center: point, half: .zero, fills: false,
-            cap: currentStrokeCap == .round ? .round : .project)
+            cap: style.strokeCap == .round ? .round : .project)
     }
 }

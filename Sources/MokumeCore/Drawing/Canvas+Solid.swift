@@ -149,7 +149,7 @@ extension Canvas {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     func place(_ shape: SolidShape) {
-        if hasFill { placeMesh(.mesh(shape)) { solidMesh(for: shape) } }
+        if style.hasFill { placeMesh(.mesh(shape)) { solidMesh(for: shape) } }
         strokeSolidEdges(of: .mesh(shape)) { solidMesh(for: shape) }
     }
 
@@ -173,7 +173,7 @@ extension Canvas {
             let mesh = build()
             let start = solidVertices.count
             solidVertices.reserveCapacity(start + mesh.points.count)
-            let textured = currentPicture != nil
+            let textured = style.picture != nil
             for point in mesh.points {
                 // **形自身の座標のまま置く。** 変換は置き場所が持つ
                 solidVertices.append(
@@ -194,9 +194,9 @@ extension Canvas {
         solidInstances.append(
             SolidInstance(
                 matrix: transform.matrix, normalMatrix: transform.normalMatrix,
-                color: currentFill))
+                color: style.fill))
         // 半透明の塗りが 1 つでも入ったら、この列は裏面を捨てられない (`Batch.cullMode`)
-        if currentFill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
+        if style.fill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
     }
 
     /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから
@@ -368,7 +368,7 @@ extension Canvas {
     func strokeSolidRing(
         _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool
     ) {
-        let half = currentStrokeWeight / 2
+        let half = style.strokeWeight / 2
         guard !points.isEmpty, shapePoints.count == points.count else { return }
 
         // 端と折れ目の規則は平面と共有する (`strokeRing`)
@@ -389,7 +389,7 @@ extension Canvas {
     /// 形自身の座標は稜線の点をそのまま渡す — 頂点を並べた形の輪郭と同じ約束で、
     /// 利用者の断片からは線も形の表面に留まって見える。
     func strokeSolidEdges(of source: SolidSource, mesh build: () -> SolidMesh) {
-        guard hasStroke, currentStrokeWeight > 0 else { return }
+        guard style.hasStroke, style.strokeWeight > 0 else { return }
         let net = solidEdges(of: source, mesh: build)
         guard !net.edges.isEmpty else { return }
         // **塗りを置かなかったときも、立体の側へ移る。** 移らないと平面の列が開いた
@@ -401,7 +401,7 @@ extension Canvas {
             let world = matrix * SIMD4(point, 1)
             return SIMD3(world.x, world.y, world.z)
         }
-        let half = currentStrokeWeight / 2
+        let half = style.strokeWeight / 2
         strokeNet(
             count: placed.count, edges: net.edges,
             band: {
@@ -471,13 +471,13 @@ extension Canvas {
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)
         appendSolidVertex(
             position: liftedTowardViewer(a), shapePosition: shape.0, normal: .zero,
-            isStroke: true, color: currentStroke)
+            isStroke: true, color: style.stroke)
         appendSolidVertex(
             position: liftedTowardViewer(b), shapePosition: shape.1, normal: .zero,
-            isStroke: true, color: currentStroke)
+            isStroke: true, color: style.stroke)
         appendSolidVertex(
             position: liftedTowardViewer(c), shapePosition: shape.2, normal: .zero,
-            isStroke: true, color: currentStroke)
+            isStroke: true, color: style.stroke)
     }
 
     /// 線の頂点を、**見ている側へ視線に沿って**わずかに寄せる。
@@ -495,7 +495,7 @@ extension Canvas {
     /// 形と、稜線が表の縁から出てくる角の数画素だけである。
     private func liftedTowardViewer(_ point: SIMD3<Float>) -> SIMD3<Float> {
         let camera = currentCamera
-        let lift = (currentStrokeWeight + 1) * worldPerPixel(at: point)
+        let lift = (style.strokeWeight + 1) * worldPerPixel(at: point)
         switch camera.projection {
         case .perspective:
             let toEye = camera.eye - point

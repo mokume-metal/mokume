@@ -56,7 +56,7 @@ final class FrameObserver {
 
     init(directory: URL) {
         self.directory = directory
-        self.requests = RequestFile(facet: directory)
+        self.requests = RequestFile(facet: directory, handover: .rereadsReport)
         self.reportURL = requests.reportURL
     }
 
@@ -73,6 +73,10 @@ final class FrameObserver {
     /// - Returns: 消した順。**消しながら並べている**ので、検査はこの並びで順序を見られる。
     ///   ディレクトリの書き込みを塞いで観察しようとしても、そのときは目録も絵も等しく
     ///   消せないため順序が現れない。
+    ///
+    /// **世代は見ない。** 撮り始めは要求を拾えたときだけで、拾えるのは区画の権利
+    /// (``FacetClaim``) を持つプロセスだけである。重なっている前の世代が撮っている列を、
+    /// 次の世代がここで消すことは起きない ([#1162](https://github.com/mokume-metal/mokume/issues/1162))。
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     @discardableResult

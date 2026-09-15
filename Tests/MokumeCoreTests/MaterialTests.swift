@@ -247,7 +247,7 @@ struct MaterialTests {
         let canvas = try makeCanvas()
         // 描くところの外なので、警告を出して無視する (ADR-0021 決定 4)
         canvas.metalness(1)
-        #expect(canvas.currentMaterial == .default)
+        #expect(canvas.style.material == .default)
 
         let image = try sphere(canvas) { _ in }
         let reference = try sphere(try makeCanvas()) { _ in }
@@ -273,8 +273,8 @@ struct MaterialTests {
             canvas.shininess(90)
             canvas.metalness(1)
             canvas.popStyle()
-            insideShininess = canvas.currentMaterial.shininess
-            insideMetalness = canvas.currentMaterial.metalness
+            insideShininess = canvas.style.material.shininess
+            insideMetalness = canvas.style.material.metalness
         }
         #expect(insideShininess == 10)
         #expect(insideMetalness == 0)
@@ -394,10 +394,10 @@ struct MaterialTests {
             canvas.metalness(-0.5)
             canvas.ambient(.linear(red: -1, green: 0, blue: 0))
             canvas.emissive(.linear(red: .nan, green: 0, blue: 0))
-            #expect(canvas.currentMaterial.shininess == 30)
-            #expect(canvas.currentMaterial.metalness == 0)
-            #expect(canvas.currentMaterial.ambient == SIMD3(1, 1, 1))
-            #expect(canvas.currentMaterial.emissive == SIMD3(0, 0, 0))
+            #expect(canvas.style.material.shininess == 30)
+            #expect(canvas.style.material.metalness == 0)
+            #expect(canvas.style.material.ambient == SIMD3(1, 1, 1))
+            #expect(canvas.style.material.emissive == SIMD3(0, 0, 0))
         }
     }
 }

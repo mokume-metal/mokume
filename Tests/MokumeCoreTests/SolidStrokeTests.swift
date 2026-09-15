@@ -153,7 +153,7 @@ struct SolidStrokeTests {
                     canvas.strokeWeight(4)
                     canvas.box(80)
                 }
-                strokeAfter = canvas.hasStroke
+                strokeAfter = canvas.style.hasStroke
                 canvas.push()
                 canvas.translate(100, 100, 0)
                 canvas.shape(crate)

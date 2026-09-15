@@ -15,7 +15,11 @@ import Foundation
 /// 別々に読むと、片方が読み方を変えた日にもう片方が追随しない。**綴りはここ 1 箇所。**
 ///
 /// [ADR-0037]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0037-shared-build-directory.md
-enum Toolchain {
+///
+/// **main actor には置かない。** 見張りの作り直しは巡回とは別の糸から進むので、
+/// そこから辿るものが隔離されていると待ちが main actor へ戻ってしまう
+/// ([#1067](https://github.com/mokume-metal/mokume/issues/1067)・ADR-0010 決定 4)。
+nonisolated enum Toolchain {
     /// 道具立ての名乗り 1 行。**起動できなければ黙って諦める** (投げない)。
     ///
     /// 切り分けの口の規律に従う — 断定できないときは断定しない。置き場のほうは `nil` を

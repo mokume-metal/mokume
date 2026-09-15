@@ -49,7 +49,7 @@
     },
     "timings": {
       "type": "object",
-      "description": "How long it took, broken down (milliseconds). Looking only at the total means guessing at what is slow, and guessing wrong.",
+      "description": "How long it took, broken down (milliseconds). Looking only at the total means guessing at what is slow, and guessing wrong. From noticing the change to the new picture showing is detectMs + buildMs + firstFrameMs. firstFrameMs counts from the same moment as relaunchMs and so contains all of it: do not add both. The wait between saving and the watcher noticing (up to one polling interval) is in none of them.",
       "required": [
         "buildMs"
       ],
@@ -58,7 +58,7 @@
         "detectMs": {
           "type": "number",
           "minimum": 0,
-          "description": "From the save to noticing it. Omitted on the first build."
+          "description": "From noticing the change to starting the build, which is the wait for a build already running. It does not start at the save itself: the watcher sees only a stamp of the sources, not when they were saved. Omitted on the first build."
         },
         "buildMs": {
           "type": "number",
@@ -68,7 +68,12 @@
         "relaunchMs": {
           "type": "number",
           "minimum": 0,
-          "description": "Swapping it in. Omitted when the build failed."
+          "description": "Swapping it in: from winding down the old sketch to having started the new one. It stops once the new process is started, before any picture from it shows; firstFrameMs covers that. Omitted when the build failed."
+        },
+        "firstFrameMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "From starting the swap to the new sketch's first frame being taken up by the tool's window. Not in the record when it is first written: the watcher adds it and rewrites the record once the window signals the change. Omitted when the watcher has no window (nothing signals it), when no picture had been shown yet (the first signal does not wait for a frame), when the previous version had not shown yet and was still running (the signal could be for either), and when a later record replaced this one first."
         }
       }
     }

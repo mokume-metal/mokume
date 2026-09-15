@@ -45,14 +45,14 @@ extension Canvas {
     public func castShadow(_ enabled: Bool) {
         guard isDrawing else { return warnOutsideFrame(.shadow) }
         closeBatch()
-        castsShadow = enabled
+        style.castsShadow = enabled
     }
 
     // これから置く形が、影を受ける側か。
     public func receiveShadow(_ enabled: Bool) {
         guard isDrawing else { return warnOutsideFrame(.shadow) }
         closeBatch()
-        receivesShadow = enabled
+        style.receivesShadow = enabled
     }
 
     // MARK: - 焼き付け

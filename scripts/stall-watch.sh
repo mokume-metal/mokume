@@ -104,7 +104,7 @@ set -euo pipefail
 # 描画 PR の順番の判定。**自分で drawing-paths.sh を読み込まない**ので読み手が並べる
 # shellcheck source=scripts/drawing-queue.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-queue.sh"
-# 手元の実行の報告の綴り。探す側だけ直書きにすると打つ側の改名に付いていけない (#785)
+# 手元の実行の報告の綴りと、それが failure かの判定 (#785・#1045)
 # shellcheck source=scripts/render-context.sh
 . "$(dirname "${BASH_SOURCE[0]}")/render-context.sh"
 
@@ -257,7 +257,8 @@ for n in $numbers; do
     continue
   fi
 
-  if contains_name "$failing" "$RENDER_CONTEXT"; then
+  # 判定の実体は render-context.sh の 1 つ。手元の ready-queue.sh も同じものを読む (#1045)
+  if render_failed <<<"$json"; then
     mins=$(minutes_since "${failed_at:-$updated}")
     ahead=$(ahead_drawing_pr "$REPO" "$n" 2>/dev/null || echo '?')
     case "$ahead" in

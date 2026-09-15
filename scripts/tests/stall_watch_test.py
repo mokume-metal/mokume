@@ -73,6 +73,8 @@ if [ "$1 $2" = "api graphql" ]; then
   # **問い合わせは 2 種類ある。** 承認が落ちた時刻を引くほうは -F number=<n> を持つので、
   # そこから PR 番号を取って $PR_DIR の応答へ振る (#1033)
   case "$*" in
+    # 順番の判定が読む merge queue の並び (#1266)。既定は空
+    *"mergeQueue{"*) printf '%s\\n' ${QUEUED_PRS:-}; exit 0 ;;
     *REVIEW_DISMISSED_EVENT*)
       n=""; prev=""
       for a in "$@"; do

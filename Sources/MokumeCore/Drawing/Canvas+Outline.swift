@@ -102,7 +102,7 @@ extension Canvas {
     /// 埋める形が角の形である。**隙間を埋める向きだけを見て、内側か外側かを判定
     /// しない** — 埋める図形は内側でも帯に重なるだけで、絵は変わらない。
     private func strokeJoinShape(at index: Int, disc: (Int) -> Void, square: (Int) -> Void) {
-        switch currentStrokeJoin {
+        switch style.strokeJoin {
         case .round:
             disc(index)
         case .bevel, .miter:
@@ -116,7 +116,7 @@ extension Canvas {
     private func strokeCapShape(
         at index: Int, isolated: Bool, disc: (Int) -> Void, square: (Int) -> Void
     ) {
-        switch currentStrokeCap {
+        switch style.strokeCap {
         case .square where !isolated:
             return  // 線の長さちょうどで切る
         case .round:
@@ -133,7 +133,7 @@ extension Canvas {
 
     /// 周を太さのある帯でなぞる。
     func strokeOutline(_ outline: Outline) {
-        let half = currentStrokeWeight / 2
+        let half = style.strokeWeight / 2
         let points = outline.points
         let start = vertices.count
         strokeRing(
@@ -174,8 +174,8 @@ extension Canvas {
         let p2 = strokePoint(x: b.x + normal.x, y: b.y + normal.y)
         let p3 = strokePoint(x: b.x - normal.x, y: b.y - normal.y)
         let p4 = strokePoint(x: a.x - normal.x, y: a.y - normal.y)
-        appendTriangle(p1, p2, p3, color: currentStroke)
-        appendTriangle(p1, p3, p4, color: currentStroke)
+        appendTriangle(p1, p2, p3, color: style.stroke)
+        appendTriangle(p1, p3, p4, color: style.stroke)
     }
 
     /// 円板を置く (丸い端点と丸い角)。周は半径に応じて分ける。
@@ -186,11 +186,11 @@ extension Canvas {
         var previous = strokePoint(x: points[0].x, y: points[0].y)
         for point in points.dropFirst() {
             let current = strokePoint(x: point.x, y: point.y)
-            appendTriangle(hub, previous, current, color: currentStroke)
+            appendTriangle(hub, previous, current, color: style.stroke)
             previous = current
         }
         let first = strokePoint(x: points[0].x, y: points[0].y)
-        appendTriangle(hub, previous, first, color: currentStroke)
+        appendTriangle(hub, previous, first, color: style.stroke)
     }
 
     /// 正方形を置く (四角い端点と削いだ角)。
@@ -199,7 +199,7 @@ extension Canvas {
         let b = strokePoint(x: center.x + half, y: center.y - half)
         let c = strokePoint(x: center.x + half, y: center.y + half)
         let d = strokePoint(x: center.x - half, y: center.y + half)
-        appendTriangle(a, b, c, color: currentStroke)
-        appendTriangle(a, c, d, color: currentStroke)
+        appendTriangle(a, b, c, color: style.stroke)
+        appendTriangle(a, c, d, color: style.stroke)
     }
 }

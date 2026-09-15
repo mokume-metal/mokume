@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/ready-queue.sh の検査 (#1028)。
 
-固定したいのは六つ。
+固定したいのは七つ。
 
 1. **何も打たない。** 判定を手元で打っただけでラベルが付いたり auto-merge が掛かったり
    すると、判定と実行を分けた意味が消える (ADR-0036 決定 1)
@@ -15,8 +15,12 @@
    判断が要る側なので出さない (ADR-0036 決定 6)
 5. **描画の見込みは coverage の用途で訊く。** `Sketches/` は evidence-only なので、
    そこしか触らない Issue は描画レーンを取らない (#497)
-6. **終了コードが在庫の有無を表す。** 呼ぶ側 (外に居るディスパッチャ) が「在庫が尽きたので
-   B-1 へ回る」を分岐できる
+6. **終了コードが「打てる仕事があるか」を表す。** 呼ぶ側 (外に居るディスパッチャ) が「在庫が
+   尽きたので B-1 へ回る」を分岐できる。**打てる catch-up があれば在庫切れと言わない** (#1045)。
+   **一覧を読めなかったときも在庫切れと言わない** — 1 ではなく 2 で終える (#1235)
+7. **手元で打てる catch-up を ready より先に出す** (#1045)。当番が ejected と名乗る描画 PR の
+   うち、行列の先頭のものだけを出す — 先に別の描画 PR が居るものは打っても無駄になる。
+   弾かれた PR が無い平常時は、呼び出しも出力も従来のまま
 
 gh と git は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
@@ -51,8 +55,26 @@ emit() { # $1=JSON ファイル
   if [ -n "$filter" ]; then jq -r "$filter" < "$1"; else cat "$1"; fi
 }
 
+# 一覧の読み取りを失敗させる。FAIL_LIST に issue / pr を渡す (#1235)。
+# 綴りは古い gh が実際に出したもの (issueType は gh 2.94.0 からの欄)
+if [ "$1 $2" = "${FAIL_LIST:-} list" ]; then
+  echo 'Unknown JSON field: "issueType"' >&2
+  exit 1
+fi
+
 if [ "$1 $2" = "issue list" ]; then emit "$FIX/issues.json"; exit 0; fi
 if [ "$1 $2" = "pr list" ]; then emit "$FIX/prs.json"; exit 0; fi
+
+# 描画 PR の順番の判定 (drawing-queue.sh) が引く 2 つ。**URL は $2 から取る** —
+# "$*" には --jq の値まで混ざる
+if [ "$1" = "api" ]; then
+  case "$2" in
+    *"/pulls?state=open"*) emit "$FIX/pulls.json"; exit 0 ;;
+    */files) n=${2%/files}; n=${n##*/}; emit "$FIX/$n.files.json"; exit 0 ;;
+    # merge queue の並び (#1266)。既定は空
+    graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; } ;;
+  esac
+fi
 
 echo "偽 gh が知らない呼び出し: $*" >&2
 exit 1
@@ -90,25 +112,51 @@ def issue(number, *, title="なにか", body="", labels=(), type_=None, updated=
     }
 
 
-def closing_pr(number, *, closes=(), repo="mokume-metal/mokume"):
+def closing_pr(
+    number, *, closes=(), repo="mokume-metal/mokume", render=None, draft=False, files=()
+):
+    """open な PR。render に local-render の状態 (StatusContext の state) を渡す。
+
+    files は順番の判定が読む変更ファイル。run_queue がそこから偽 gh の応答を組む。
+    """
     owner, name = repo.split("/")
     return {
         "number": number,
+        "title": f"PR {number}",
+        "isDraft": draft,
         "closingIssuesReferences": [
             {"number": n, "repository": {"owner": {"login": owner}, "name": name}}
             for n in closes
         ],
+        # 本物の gh と同じく、commit status は context / state の欄で来る
+        "statusCheckRollup": (
+            []
+            if render is None
+            else [{"__typename": "StatusContext", "context": render[0], "state": render[1]}]
+        ),
+        "_files": list(files),
     }
 
 
+DRAWING_FILE = "Sources/MokumeCore/Canvas.swift"
+
+
 class ReadyQueueTest(unittest.TestCase):
-    def run_queue(self, issues, prs=(), worktrees=""):
+    def run_queue(self, issues, prs=(), worktrees="", **extra_env):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             fix = tmp / "fixtures"
             fix.mkdir()
             (fix / "issues.json").write_text(json.dumps(issues), encoding="utf-8")
-            (fix / "prs.json").write_text(json.dumps(list(prs)), encoding="utf-8")
+            listing = [{k: v for k, v in pr.items() if k != "_files"} for pr in prs]
+            (fix / "prs.json").write_text(json.dumps(listing), encoding="utf-8")
+            # 順番の判定が読む一覧 (REST の形)。Draft は API 側で外れる前提なので残しておく
+            pulls = [{"number": pr["number"], "draft": pr["isDraft"]} for pr in prs]
+            (fix / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
+            for pr in prs:
+                (fix / f"{pr['number']}.files.json").write_text(
+                    json.dumps([{"filename": f} for f in pr["_files"]]), encoding="utf-8"
+                )
             (fix / "worktrees.txt").write_text(worktrees, encoding="utf-8")
             (tmp / "drawing-paths.txt").write_text(DRAWING_PATHS, encoding="utf-8")
 
@@ -129,6 +177,8 @@ class ReadyQueueTest(unittest.TestCase):
                 GITHUB_REPOSITORY="mokume-metal/mokume",
                 DRAWING_PATHS=str(tmp / "drawing-paths.txt"),
             )
+            env.pop("RENDER_CONTEXT", None)
+            env.update(extra_env)
             done = subprocess.run(
                 ["/bin/bash", str(QUEUE)],
                 env=env,
@@ -262,6 +312,105 @@ class ReadyQueueTest(unittest.TestCase):
 
         done, _ = self.run_queue([issue(41, labels=["verify: triaged"])])
         self.assertEqual(done.returncode, 0)
+
+    # 6b. 一覧を読めなかったときは在庫切れ (1) と言わない (#1235)
+    def test_unreadable_list_is_not_stock_out(self):
+        for listing in ("issue", "pr"):
+            with self.subTest(listing=listing):
+                # 読めていれば ready が 1 件ある状態 — 成功時の値に引きずられないことも見る
+                done, _ = self.run_queue([issue(42, labels=["verify: triaged"])], FAIL_LIST=listing)
+                self.assertEqual(
+                    done.returncode, 2, f"読めなかったのに {done.returncode} で終えている:\n{done.stderr}"
+                )
+                self.assertEqual(done.stdout, "", "判定できないのに行を出している")
+                self.assertIn("読めなかった", done.stderr)
+
+    # 7a. 先頭の弾かれた描画 PR は catch-up として ready より先に出る
+    def test_head_ejected_drawing_pr_is_catch_up(self):
+        for state in ("FAILURE", "ERROR"):
+            with self.subTest(state=state):
+                done, log = self.run_queue(
+                    [issue(60, labels=["verify: triaged"])],
+                    prs=[closing_pr(900, render=("local-render", state), files=[DRAWING_FILE])],
+                )
+                self.assertEqual(done.returncode, 0, done.stderr)
+                lines = done.stdout.splitlines()
+                self.assertTrue(lines, "何も出ていない")
+                self.assertTrue(
+                    lines[0].startswith("900 catch-up - PR #900"),
+                    f"catch-up が先頭に出ていない:\n{done.stdout}",
+                )
+                self.assertIn("make catch-up PR=900", lines[0])
+                self.assertIn("60 ready", done.stdout)
+                self.assertIn("catch-up 1 / ready 1", done.stderr)
+                for verb in ("pr merge", "--add-label", "statuses"):
+                    self.assertNotIn(verb, log, f"判定が {verb} を打っている")
+
+    # 7b. 先に別の描画 PR が居るものは出さない (打っても無駄になる)
+    def test_catch_up_waits_behind_earlier_drawing_pr(self):
+        done, _ = self.run_queue(
+            [issue(61, labels=["verify: triaged"])],
+            prs=[
+                closing_pr(800, files=[DRAWING_FILE]),  # 先に居る描画 PR (弾かれてはいない)
+                closing_pr(900, render=("local-render", "FAILURE"), files=[DRAWING_FILE]),
+            ],
+        )
+        self.assertNotIn("catch-up -", done.stdout, "行列の後ろの PR を打てると言っている")
+        self.assertIn("catch-up 0 /", done.stderr)
+
+        # 先に居る PR が描画に触れていなければ、行列の先頭である
+        done, _ = self.run_queue(
+            [],
+            prs=[
+                closing_pr(800, files=["docs/README.md"]),
+                closing_pr(900, render=("local-render", "FAILURE"), files=[DRAWING_FILE]),
+            ],
+        )
+        self.assertIn("900 catch-up", done.stdout)
+
+    # 7c. 弾かれた PR が無ければ、呼び出しも出力も終了コードも従来のまま
+    def test_no_ejected_pr_changes_nothing(self):
+        prs = [
+            closing_pr(900, render=("local-render", "SUCCESS"), files=[DRAWING_FILE]),
+            closing_pr(901, render=("local-render", "PENDING"), files=[DRAWING_FILE]),
+            closing_pr(902, render=("ci-gate", "FAILURE"), files=[DRAWING_FILE]),  # 別の check
+            closing_pr(903, files=[DRAWING_FILE]),  # 報告が無い
+        ]
+        done, log = self.run_queue([issue(62, type_="Bug", body=SIGNATURE)], prs=prs)
+        self.assertEqual(done.returncode, 1, "在庫切れなのに 0 で終えている")
+        self.assertEqual(done.stdout, f"62 stock - エージェントの起票が無印のまま (Bug・なにか)\n")
+        self.assertNotIn("api ", log, f"弾かれた PR が無いのに順番を引いている:\n{log}")
+
+    # 7d. Draft は見ない (作業中の PR を Draft にしておくのが opt-out)
+    def test_draft_is_not_catch_up(self):
+        done, log = self.run_queue(
+            [],
+            prs=[
+                closing_pr(
+                    900, render=("local-render", "FAILURE"), draft=True, files=[DRAWING_FILE]
+                )
+            ],
+        )
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout, "")
+        self.assertNotIn("api ", log)
+
+    # 7e. 打てる catch-up だけでも在庫切れと言わない
+    def test_catch_up_alone_is_work(self):
+        done, _ = self.run_queue(
+            [],
+            prs=[closing_pr(900, render=("local-render", "FAILURE"), files=[DRAWING_FILE])],
+        )
+        self.assertEqual(done.returncode, 0, "打てる catch-up があるのに在庫切れを返した")
+
+    # 7f. 報告の綴りは render-context.sh の 1 つを読む (当番と同じ実体 — ADR-0008 決定 6)
+    def test_reads_shared_render_context(self):
+        prs = [closing_pr(900, render=("別の綴り", "FAILURE"), files=[DRAWING_FILE])]
+        done, _ = self.run_queue([], prs=prs, RENDER_CONTEXT="別の綴り")
+        self.assertIn("900 catch-up", done.stdout)
+
+        done, _ = self.run_queue([], prs=prs)  # 既定の綴りでは当たらない
+        self.assertNotIn("catch-up -", done.stdout)
 
 
 if __name__ == "__main__":
