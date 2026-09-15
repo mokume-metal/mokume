@@ -554,6 +554,28 @@ struct TextTests {
         #expect(canvas.textOutline("L", 10, 50).allSatisfy { !$0.isHole })
     }
 
+    /// 説明文が名乗る「周の分かれ方は書体による」を押さえる ([#1149])。
+    ///
+    /// **この検査だけは既定の書体を土台にする** — 既定の書体の持ち方そのものが
+    /// 説明文の主張だからである。更新で字形が変わってここが赤くなったら、実装ではなく
+    /// `textOutline` と `TextContour.isHole` の説明文の言い切りを見直す。
+    ///
+    /// [#1149]: https://github.com/mokume-metal/mokume/issues/1149
+    @Test("周の分かれ方は書体による — 既定の書体の A は重なった外周で返り、穴が立たない")
+    func howGlyphsSplitIntoRingsDependsOnTheTypeface() throws {
+        let canvas = try makeCanvas()
+        canvas.noTextFont()
+        let systemA = canvas.textOutline("A", 10, 50)
+        #expect(systemA.count > 1)
+        #expect(systemA.allSatisfy { !$0.isHole })
+
+        // 書体を指定すれば「外周 + 穴」として読める
+        canvas.textFont(fontName)
+        let namedA = canvas.textOutline("A", 10, 50)
+        #expect(namedA.count == 2)
+        #expect(namedA.filter(\.isHole).count == 1)
+    }
+
     @Test("周を持たない字は輪郭を出さない")
     func blankGlyphsHaveNoContours() throws {
         #expect(try makeCanvas().textOutline("   ", 10, 50).isEmpty)
