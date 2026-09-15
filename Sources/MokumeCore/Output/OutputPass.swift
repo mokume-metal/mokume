@@ -13,7 +13,9 @@ import Metal
 /// こちらは絵と同じ大きさの 8 bit のテクスチャへ書く。
 ///
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-final class OutputPass {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor final class OutputPass {
     /// 出力段を通した絵の画素の形式。
     ///
     /// **伝達関数は断片が掛けるので、`_srgb` の付かない形式を使う。** 付けると
@@ -39,8 +41,11 @@ final class OutputPass {
     let argumentTable: any MTL4ArgumentTable
     /// 明るさを写す段の設定を置く領域。取り出すたびに書き換える。
     private let brightnessBuffer: any MTLBuffer
+    /// 死ぬときに置き場を退かせる先。
+    private let gpu: RenderDevice
 
     init(gpu: RenderDevice) throws(RenderFailure) {
+        self.gpu = gpu
         let library = try gpu.shaders.makeLibrary(named: "Present")
 
         let vertexFunction = MTL4LibraryFunctionDescriptor()
@@ -80,6 +85,11 @@ final class OutputPass {
             throw .argumentTableUnavailable(reason: error.localizedDescription)
         }
     }
+
+    /// **明るさの置き場を常駐から退かせる** ([#795])。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit { gpu.retire(brightnessBuffer) }
 
     /// 読む元のテクスチャを差し替える。
     func setSource(_ texture: any MTLTexture) {

@@ -54,7 +54,17 @@ fetch_tool() {
   local tarball="${dest}.tar.gz"
   mkdir -p "$TOOLS_DIR"
   echo "取得中: $(basename "$dest")"
-  curl -fsSL -o "$tarball" "$url"
+  # **一時的な失敗は取り直す** (#1195)。1 回きりだと GitHub 側の 504 で段ごと落ち、merge
+  # queue の上では変更と無関係に PR が外される (#1190 / #1192 が 10 分の間に踏んだ)。
+  # --retry 単独は 5xx・408・429・タイムアウトしか拾わず、接続断 (curl 56 など) を拾わない
+  # ので --retry-all-errors を併せる。代償はピンの URL を誤ったとき (404) も数秒の取り直しを
+  # 挟んでから落ちること。回数は有限 (既定の指数バックオフで待ちは合計 7 秒ほど)。
+  # **照合の失敗は curl の外なので取り直さない** — 改竄を取り直しで押し通さない
+  if ! curl -fsSL --retry 3 --retry-all-errors -o "$tarball" "$url"; then
+    echo "$(basename "$dest") を取得できなかった (${url})" >&2
+    rm -f "$tarball"
+    exit 1
+  fi
   # 落として即実行するので、配布物の改竄・取り違えはここで止める。set -e に頼らず
   # 明示的に分岐して、壊れた tarball を残さない
   if ! echo "${expected}  ${tarball}" | shasum -a 256 -c -; then
@@ -109,9 +119,13 @@ resolve_actionlint() {
   ACTIONLINT="$pinned"
 }
 
-resolve_shellcheck
-resolve_actionlint
-echo "shellcheck: ${SHELLCHECK} ($("$SHELLCHECK" --version | awk '/^version:/ {print $2}'))"
-echo "actionlint: ${ACTIONLINT} ($("$ACTIONLINT" -version | head -1))"
+# **source されたときは関数を定義するだけで止まる。** 検査が fetch_tool を手元の偽の
+# サーバに向けて呼ぶためで、URL を差し替える口を本体に足すより実行経路を変えずに済む (#1195)
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  resolve_shellcheck
+  resolve_actionlint
+  echo "shellcheck: ${SHELLCHECK} ($("$SHELLCHECK" --version | awk '/^version:/ {print $2}'))"
+  echo "actionlint: ${ACTIONLINT} ($("$ACTIONLINT" -version | head -1))"
 
-exec "$ACTIONLINT" -oneline -shellcheck "$SHELLCHECK" "$@"
+  exec "$ACTIONLINT" -oneline -shellcheck "$SHELLCHECK" "$@"
+fi

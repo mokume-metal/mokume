@@ -235,6 +235,16 @@ final class SharedFrameSurface {
         self.ids = slots.map { IOSurfaceGetID($0.surface) }
     }
 
+    /// **面に被せたテクスチャを常駐から退かせる** ([#795])。
+    ///
+    /// 退かせるのはこのプロセスの常駐だけで、面そのもの (IOSurface) は参照計数なので、
+    /// 読み手がまだ引いていれば読み手の側で生きている。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit {
+        for slot in slots { gpu.retire(slot.texture) }
+    }
+
     /// 番号だけで引けるようにする印。
     ///
     /// **これが無いと `IOSurfaceLookup` は同じプロセスからしか通らない。** 外から引くと

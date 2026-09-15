@@ -243,6 +243,17 @@ extension Sketch {
     /// }
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
+    ///
+    /// - Note: **既定の光の組は手本と違い、手本へ寄せない。** 手本の `lights()` は
+    ///   `ambientLight(128, 128, 128)` と、正面から差す `directionalLight(128, 128, 128, 0, 0, -1)`
+    ///   の 2 つである。こちらは底上げが線形で 0.35・平行光が線形で 0.85 と明るく、
+    ///   向きも `(-0.35, 0.75, -0.55)` の斜め上からなので、同じ立体でも陰影が違って出る。
+    ///   手本に従うのは名前と引数の順序までで、引数を取らない `lights()` の中身は
+    ///   その外にある ([ADR-0020] 決定 1)。手本に近い組が要るなら、上の 2 つを自分で並べる。
+    ///   ただし素の数値は線形へ戻して掛けるので、同じ 128 を渡しても手本と同じ明るさには
+    ///   ならない (``directionalLight(_:_:_:_:_:_:)``)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     // shot: 1 snippet=44052481
     public func lights() { canvas.lights() }
 

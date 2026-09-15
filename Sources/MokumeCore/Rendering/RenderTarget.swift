@@ -15,7 +15,9 @@ import MokumeDiagnostics
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
-public final class RenderTarget: EffectSurface {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor public final class RenderTarget: EffectSurface {
     /// 作業空間の画素の形式。
     static let pixelFormat: MTLPixelFormat = .rgba16Float
 
@@ -131,6 +133,20 @@ public final class RenderTarget: EffectSurface {
         let depthTexture = try gpu.makeTexture(descriptor: depth)
         depthTexture.label = "mokume.target.depth"
         self.depthTexture = depthTexture
+    }
+
+    /// **色と奥行きの面を常駐から退かせる** ([#795])。
+    ///
+    /// 常駐の集合は入れたものを抱えるので、描画先を手放しても面は解放されない。
+    /// `createGraphics` で描き場所を作っては捨てる書き方は、これで 1 回ごとに積んでいた。
+    /// 置いた列がまだ面を読むなら、列が描画先ごと抱えている (`Picture.held`) ので
+    /// ここは走らない ([#1079])。写しと出力段の置き場は、それぞれの持ち主が自分で退く。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
+    isolated deinit {
+        gpu.retire(texture)
+        gpu.retire(depthTexture)
     }
 
     // MARK: - 画素として見る
@@ -356,9 +372,13 @@ public final class RenderTarget: EffectSurface {
 /// **どちらが最新かを 2 つの値で持つ。** `hasPendingWrites` が立っていれば CPU の側が
 /// 最新で、次に GPU がこの描画先へ触る前に書き戻される。立っていなければ GPU の側が
 /// 最新で、`syncedThrough` (最後に映した投入の番号) より新しい投入があれば映し直す。
-final class PixelMirror {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor final class PixelMirror {
     /// 置き場。`.shared` なので CPU からそのまま読み書きできる。
     let storage: any MTLBuffer
+    /// 死ぬときに置き場を退かせる先。
+    private let gpu: RenderDevice
     /// 1 行あたりのバイト数。
     let bytesPerRow: Int
     /// CPU が書いたまま、まだテクスチャへ戻していないか。
@@ -372,5 +392,12 @@ final class PixelMirror {
         bytesPerRow = width * RenderTarget.bytesPerPixel
         storage = try gpu.makeReadableBuffer(byteCount: bytesPerRow * height)
         storage.label = "mokume.target.mirror"
+        self.gpu = gpu
     }
+
+    /// **置き場を常駐から退かせる** ([#795])。画素の窓 (``Pixels``) は写しを抱えるので、
+    /// 窓を使い切るまではここは走らない。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit { gpu.retire(storage) }
 }

@@ -261,6 +261,96 @@ struct FrameGrowthTests {
         #expect(gpu.retiredResourceCount == 0)
     }
 
+    // 下の 2 本は、描き場所を作っては捨てる書き方で積んでいた持ち主を見る ([#795])。
+    // 描き場所 1 つは描画先 (色・奥行き)・`Canvas` 自身の置き場・環に載る置き場の最終
+    // 世代を持ち、影や効果や出力段を通すとさらに持つ。**どれか 1 つが退かなくても赤くなる**
+    // よう、1 本目は描き場所の基本の形を、2 本目は段を全部通した形を回す。
+    //
+    // [#795]: https://github.com/mokume-metal/mokume/issues/795
+
+    @Test("描き場所を作っては手放しても、常駐の集合が増え続けない")
+    func discardedGraphicsLeaveTheResidencySet() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
+        let canvas = try Canvas(target: target, gpu: gpu)
+
+        func churn() throws {
+            let graphics = try canvas.createGraphics(16, 16)
+            // **1 度は描く。** 描かないと環に載る置き場も焼いていない影の面も作られず、
+            // それらを退かせ忘れても数が動かない
+            try graphics.draw {
+                graphics.background(.linear(red: 0, green: 0, blue: 0))
+                graphics.noStroke()
+                graphics.circle(8, 8, 6)
+                graphics.box(4)
+            }
+            try canvas.draw { canvas.image(graphics, 0, 0) }
+        }
+
+        try churn()
+        try gpu.settle()
+        let settled = gpu.residencySet.allocationCount
+
+        for _ in 0..<Self.churns { try churn() }
+        try gpu.settle()
+        let after = gpu.residencySet.allocationCount
+
+        #expect(
+            after == settled,
+            """
+            描き場所を \(Self.churns) 個作って手放したら、常駐の集合が \(after - settled) 個
+            残った (増減 0 のはず)。
+
+            描画先 (`RenderTarget`)・`Canvas` 自身の置き場・環に載る置き場 (`GrowableBuffer`)
+            のどれかが、持ち主が死んでも常駐から退いていない
+            ([#795](https://github.com/mokume-metal/mokume/issues/795))。
+            """)
+        #expect(gpu.retiredResourceCount == 0)
+    }
+
+    @Test("影・効果・拡大・出力段を通した描き場所を作っては手放しても、常駐の集合が増え続けない")
+    func discardedStagedGraphicsLeaveTheResidencySet() throws {
+        let gpu = try RenderDevice()
+
+        func churn() throws {
+            let output = try RenderTarget(gpu: gpu, width: 32, height: 32)
+            // 描く細かさを落として、拡大の段 (前のフレームの控え) と内側の描く先を立てる
+            let canvas = try Canvas(output: output, gpu: gpu, pixelDensity: 0.5, upscale: .temporal)
+            try canvas.draw {
+                canvas.background(.linear(red: 0.1, green: 0.1, blue: 0.1))
+                canvas.directionalLight(.linear(red: 1, green: 1, blue: 1), -0.6, 0.6, -0.5)
+                canvas.shadows(true)
+                canvas.shadowDetail(ShadowMap.detailRange.lowerBound)
+                canvas.noStroke()
+                canvas.box(8)
+                canvas.effects([.bloom(amount: 0.5, threshold: 0.4, radius: 8)])
+            }
+            // 画素の写しと、出力段の置き場・パイプライン
+            _ = output.pixels
+            _ = try output.encodeToImage().read()
+        }
+
+        try churn()
+        try gpu.settle()
+        let settled = gpu.residencySet.allocationCount
+
+        for _ in 0..<Self.churns { try churn() }
+        try gpu.settle()
+        let after = gpu.residencySet.allocationCount
+
+        #expect(
+            after == settled,
+            """
+            影・効果・拡大・出力段を通した描き場所を \(Self.churns) 個作って手放したら、
+            常駐の集合が \(after - settled) 個残った (増減 0 のはず)。
+
+            焼き付け先 (`ShadowMap`)・段の途中の絵 (`StageImage`)・画素の写し (`PixelMirror`)・
+            出力段 (`EncodedImage` / `OutputPass`) のどれかが、持ち主が死んでも常駐から退いて
+            いない ([#795](https://github.com/mokume-metal/mokume/issues/795))。
+            """)
+        #expect(gpu.retiredResourceCount == 0)
+    }
+
     /// 断片と計算を作っては手放す回数。**組み立てが要るので少なくする。**
     private static let shaderChurns = 8
 

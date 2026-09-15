@@ -42,11 +42,15 @@ extension EffectSurface {
 ///
 /// [#753]: https://github.com/mokume-metal/mokume/issues/753
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-final class StageImage: EffectSurface {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor final class StageImage: EffectSurface {
     let width: Int
     let height: Int
     /// GPU 専用の面。描画先と同じ形式で、段が読み書きする。
     let texture: any MTLTexture
+    /// 死ぬときに面を退かせる先。
+    private let gpu: RenderDevice
 
     /// - Parameter startingTransparent: 作った時点で透明な黒に塗るか。GPU 専用の面の
     ///   初期値は未定義なので、**書かれる前に読まれる面**は塗っておく (時間方向の拡大の
@@ -69,5 +73,12 @@ final class StageImage: EffectSurface {
             : try gpu.makeTexture(descriptor: descriptor)
         texture.label = "mokume.stage"
         self.texture = texture
+        self.gpu = gpu
     }
+
+    /// **面を常駐から退かせる** ([#795])。持ち主 (効果の控え・時間方向の拡大) は
+    /// 描き場所と同じ寿命なので、描き場所を作っては捨てる書き方がこれで積んでいた。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit { gpu.retire(texture) }
 }

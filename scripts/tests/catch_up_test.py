@@ -508,6 +508,8 @@ class MakeTargetTest(unittest.TestCase):
     居るので待て」が `make: *** [catch-up] Error 3` として出て、**このスクリプトが
     最も避けたかった取り違えが、いちばん使われる入口で起きる**。
 
+    逆向きに、**3 以外は終了コードを潰さない** (#867)。止まった理由の切り分けに要る。
+
     見るのは **リポジトリの本物の Makefile** で、recipe を写さない (写しは腐る)。
     使い捨てディレクトリを cwd にすれば、recipe の `scripts/catch-up.sh` は
     そこに置いた代役へ解決される。`catch-up` は前提を持たないので他の的は走らない。
@@ -562,6 +564,20 @@ class MakeTargetTest(unittest.TestCase):
     def test_途中で止まった_1_は_make_を赤くする(self):
         proc = self.run_make(1, message="止まった — 衝突")
         self.assertNotEqual(proc.returncode, 0, proc.stdout)
+
+    def test_止まったときはスクリプトの終了コードを潰さず名乗る(self):
+        """3 以外の終了コードが `Error 1` に潰れない (#867)。
+
+        `|| [ $? -eq 3 ]` だった頃は何で止まっても `make: *** [catch-up] Error 1` になり、
+        起票者は貼った出力から「exit 2 で落ちた」と読み違えた。make 自身の終了コードは
+        失敗なら常に 2 なので、読める場所は `Error N` と名乗りの行である。
+        """
+        for code in (1, 2, 64):
+            with self.subTest(code=code):
+                proc = self.run_make(code, message="止まった")
+                self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                self.assertIn(f"Error {code}", proc.stderr)
+                self.assertIn(f"終了コード {code} で止まった", proc.stderr)
 
     def test_queue_へ戻した_0_は_make_を赤くしない(self):
         proc = self.run_make(0, message="queue へ戻した")

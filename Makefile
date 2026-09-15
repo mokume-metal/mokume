@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test
+.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。的の並びには意味があり、-j を付けると壊れる
 # — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
@@ -39,7 +39,7 @@ check: setup
 # 設計 (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため両者が理由を
 # 述べて 0 で抜け、本物の判定は同じファイルの独立したジョブ (drawing-evidence /
 # render-signal) が持つ。ここに置いてあるのは手元のためである
-CI_CHECK_STEPS := build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs hooks-test drawing-evidence render-status
+CI_CHECK_STEPS := build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence render-status
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
@@ -119,6 +119,10 @@ docs-links:
 # でもこれを呼ぶ
 adrs:
 	bash scripts/check-adrs.sh
+
+# AGENTS.md の分量をラチェット + 節ごとの上限で持つ (#737)。理由は検査スクリプトの冒頭
+agents-md-size:
+	python3 scripts/check-agents-md-size.py
 
 hooks-test:
 	python3 -m unittest discover -s scripts/tests -p '*_test.py'
@@ -219,10 +223,16 @@ render-status:
 # 居るので待て」という正常な結果が `Error 3` として出て、**このスクリプトが最も避けたかった
 # 取り違えが、いちばん使われる入口で起きる**。契約は他の呼び手のために保ち、「3 は成功
 # として扱う」の表明はこちらに置く。1 (途中で止まった) は従来どおり赤くする
+#
+# **3 以外は、スクリプトの終了コードをそのまま返して名乗る** (#867)。`|| [ $? -eq 3 ]` で
+# 済ませていた頃は 3 以外が全部 `Error 1` に潰れ、止まったときに何で止まったのか
+# (1 = 途中で止まった / 64 = 使い方の誤り / それ以外 = 中で叩いた何かの失敗) を読めなかった。
+# 起票者が出力から「exit 2」と読み違えたのもこれが原因である
 # **PR=<番号> を渡すと代打ちになる** (#967)。持ち主のセッションが居ない描画 PR を、
 # origin/<相手の枝> から切った木で覆い直せる (作り方は scripts/catch-up.sh の冒頭)
 catch-up: ## 弾かれた描画 PR を、合流後の姿を覆い直して merge queue へ戻す (PR=<番号> で代打ち)
-	bash scripts/catch-up.sh $(if $(PR),--pr $(PR)) || [ $$? -eq 3 ]
+	bash scripts/catch-up.sh $(if $(PR),--pr $(PR)) || { code=$$?; [ $$code -eq 3 ] && exit 0; \
+	  echo "catch-up: scripts/catch-up.sh が終了コード $$code で止まった" >&2; exit $$code; }
 
 # 説明文の中の例が、実際にコンパイルできるかを見る (#479)。腐った例は説明が無いより
 # 悪い — 読者はそれを写して、通らない理由を自分の側に探す。

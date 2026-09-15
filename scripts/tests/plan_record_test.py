@@ -44,17 +44,20 @@ for arg in "$@"; do
   [ "$prev" = "-q" ] && query=$arg
   prev=$arg
 done
-case "$*" in
-  # 二重着手の跡見 (#642) は comments を JSON のまま引く (url が要る)。呼び手は後段で
-  # jq を掛けるので、ここで絞り込まない。既存の *comments* 分岐 (本文だけを返す近道) と
-  # 区別するため、この変数が置かれているときだけ先に応える
-  *comments*)
-    if [ -n "${FAKE_GH_ISSUE_STATE:-}" ] && [ "$kind" = issue ]; then
-      printf '%s' "$FAKE_GH_ISSUE_STATE" | jq -r "$query"
-      exit 0
-    fi
-    ;;
-esac
+# 二重着手の跡見 (#642・#1216) は GraphQL 1 回で、対象 Issue とその参照元のコメントを
+# JSON のまま引く。呼び手が jq を掛けるので絞り込まない。番号ごとに応答を変えられるよう、
+# FAKE_GH_GRAPHQL_<番号> があればそちらを、無ければ FAKE_GH_GRAPHQL を返す (どちらも無ければ
+# 引けなかったことにする)
+if [ "$kind" = api ] && [ "${2:-}" = graphql ]; then
+  number=
+  for arg in "$@"; do
+    case "$arg" in number=*) number=${arg#number=} ;; esac
+  done
+  eval "json=\\${FAKE_GH_GRAPHQL_$number:-\\${FAKE_GH_GRAPHQL:-}}"
+  [ -n "$json" ] || exit 1
+  printf '%s' "$json"
+  exit 0
+fi
 case "$*" in
   # コメントは種別ごとに出し分けられるようにする。#631 の筋 (プランは Issue にあり
   # PR には無い) は、両方が同じものを返す偽 gh では表現できない。
@@ -87,19 +90,46 @@ esac
 printf '%s' "$json" | jq -r "$query"
 """
 
-def issue_state(in_progress=False, plans=()):
-    """#642 の跡見が引く JSON を組む。plans は (記録 ID, URL) の並び。
+def plan_comment(rid, url, body="計画。"):
+    """プランの目印を持つコメント。"""
+    return {"body": f"<!-- mokume-plan-record: {rid} -->\n{body}", "url": url}
+
+
+def issue_state(in_progress=False, plans=(), sources=()):
+    """跡見 (#642・#1216) が引く GraphQL の応答を組む。
+
+    plans は対象 Issue に載ったプランの (記録 ID, URL) の並び。sources は対象を参照して
+    いる Issue / PR の (番号, state, [plan_comment(...)]) の並び。
 
     in_progress は「ラベルが在っても名乗らない」ことを見るために残してある
     (跡見はラベルを読まない — 付け主を判定できないため)。
     """
     return json.dumps(
         {
-            "labels": [{"name": "status: in progress"}] if in_progress else [],
-            "comments": [
-                {"body": f"<!-- mokume-plan-record: {rid} -->\n計画。", "url": url}
-                for rid, url in plans
-            ],
+            "data": {
+                "repository": {
+                    "issue": {
+                        "labels": {"nodes": [{"name": "status: in progress"}]}
+                        if in_progress
+                        else {"nodes": []},
+                        "comments": {
+                            "nodes": [plan_comment(rid, url) for rid, url in plans]
+                        },
+                        "timelineItems": {
+                            "nodes": [
+                                {
+                                    "source": {
+                                        "number": number,
+                                        "state": state,
+                                        "comments": {"nodes": list(comments)},
+                                    }
+                                }
+                                for number, state, comments in sources
+                            ]
+                        },
+                    }
+                }
+            }
         }
     )
 
@@ -977,7 +1007,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         result = self.capture(
             "計画。\n",
             FAKE_GH_ISSUE="123",
-            FAKE_GH_ISSUE_STATE=issue_state(in_progress=True),
+            FAKE_GH_GRAPHQL=issue_state(in_progress=True),
         )
         self.assertNotIn("二重着手", result.stderr)
         self.assertIn("scripts/comment.sh issue 123", result.stderr)
@@ -987,7 +1017,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         result = self.capture(
             "計画。\n",
             FAKE_GH_ISSUE="123",
-            FAKE_GH_ISSUE_STATE=issue_state(
+            FAKE_GH_GRAPHQL=issue_state(
                 plans=[("other5678-1700000000", "https://example.invalid/c/1")]
             ),
         )
@@ -1004,7 +1034,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
             "計画。\n",
             FAKE_GH_ISSUE="123",
             # capture が使うセッション ID は abcd1234-ef56-7890 なので接頭辞は abcd1234
-            FAKE_GH_ISSUE_STATE=issue_state(
+            FAKE_GH_GRAPHQL=issue_state(
                 plans=[("abcd1234-1700000000", "https://example.invalid/c/1")]
             ),
         )
@@ -1012,7 +1042,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
 
     def test_capture_is_quiet_without_any_marks(self):
         result = self.capture(
-            "計画。\n", FAKE_GH_ISSUE="123", FAKE_GH_ISSUE_STATE=issue_state()
+            "計画。\n", FAKE_GH_ISSUE="123", FAKE_GH_GRAPHQL=issue_state()
         )
         self.assertNotIn("二重着手", result.stderr)
 
@@ -1021,7 +1051,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         result = self.capture(
             "計画。\n",
             FAKE_GH_ISSUE="123",
-            FAKE_GH_ISSUE_STATE=issue_state(
+            FAKE_GH_GRAPHQL=issue_state(
                 plans=[("other5678-1700000000", "https://example.invalid/c/1")]
             ),
         )
@@ -1035,7 +1065,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         result = self.capture(
             "計画。\n",
             FAKE_GH_PR="42",
-            FAKE_GH_ISSUE_STATE=issue_state(
+            FAKE_GH_GRAPHQL=issue_state(
                 plans=[("other5678-1700000000", "https://example.invalid/c/1")]
             ),
         )
@@ -1043,9 +1073,141 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
 
     def test_capture_is_quiet_when_github_cannot_be_read(self):
         """跡を引けないときは黙る (材料が無いことは書いた人の落ち度ではない)。"""
-        result = self.capture("計画。\n", FAKE_GH_ISSUE="123")  # STATE を渡さない = exit 1
+        result = self.capture("計画。\n", FAKE_GH_ISSUE="123")  # GRAPHQL を渡さない = exit 1
         self.assertNotIn("二重着手", result.stderr)
         self.assertIn("scripts/comment.sh issue 123", result.stderr)
+
+    # --- まとめ先への二重着手 (#1216) -----------------------------------------
+    # #912 と #913 がどちらも #1082 をまとめ、ADR の同じ段を 33 秒差で PR にした。
+    # プランはそれぞれ #912 / #913 に載り、共通の #1082 には誰も載せていなかった。
+
+    OTHER = "other5678-1700000000"  # 自分 (abcd1234) ではないセッション
+    BUNDLE = "# #913 + #1082: 光の口の説明文\n\n### #1082\n\n段を足す。\n"
+
+    def test_capture_looks_at_every_issue_candidate(self):
+        """候補が 2 件なら、2 件目のまとめ先に載ったプランも名乗る。
+
+        かつては候補の先頭しか見なかった。まとめ先はたいてい 2 件目以降に現れる。
+        """
+        result = self.capture(
+            self.BUNDLE,
+            FAKE_GH_ISSUE="1",
+            FAKE_GH_GRAPHQL_913=issue_state(),
+            FAKE_GH_GRAPHQL_1082=issue_state(
+                plans=[(self.OTHER, "https://example.invalid/c/1082")]
+            ),
+        )
+        self.assertIn("投稿先を確定できません", result.stderr)
+        self.assertIn(
+            "#1082 に別のセッションのプランが 1 件載っている (https://example.invalid/c/1082)",
+            result.stderr,
+        )
+
+    def test_capture_names_a_plan_on_an_open_issue_that_names_the_bundle(self):
+        """まとめ先を名乗る別のセッションのプランが、参照元の Issue に載っていれば名乗る。"""
+        result = self.capture(
+            self.BUNDLE,
+            FAKE_GH_ISSUE="1",
+            FAKE_GH_GRAPHQL_913=issue_state(),
+            FAKE_GH_GRAPHQL_1082=issue_state(
+                sources=[
+                    (
+                        912,
+                        "OPEN",
+                        [
+                            plan_comment(
+                                self.OTHER,
+                                "https://example.invalid/c/912",
+                                "# #912 (+ #1082): 線の載り方\n\n### #1082\n",
+                            )
+                        ],
+                    )
+                ]
+            ),
+        )
+        self.assertIn(
+            "#1082 を名乗る別のセッションのプランが #912 に載っている "
+            "(https://example.invalid/c/912)",
+            result.stderr,
+        )
+        self.assertIn("着手を止めません", result.stderr)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_capture_ignores_a_plan_on_a_closed_source(self):
+        """閉じた参照元に載ったプランは終わった仕事なので名乗らない。"""
+        for state in ("CLOSED", "MERGED"):
+            with self.subTest(state=state):
+                result = self.capture(
+                    self.BUNDLE,
+                    FAKE_GH_ISSUE="1",
+                    FAKE_GH_GRAPHQL=issue_state(
+                        sources=[
+                            (
+                                733,
+                                state,
+                                [
+                                    plan_comment(
+                                        self.OTHER,
+                                        "https://example.invalid/c/733",
+                                        "# #733 決定 3\n\nCloses #1082\n",
+                                    )
+                                ],
+                            )
+                        ]
+                    ),
+                )
+                self.assertNotIn("二重着手", result.stderr)
+
+    def test_capture_ignores_a_source_plan_that_only_mentions_the_bundle(self):
+        """参照元のプランが本文で触れているだけ (名乗っていない) なら名乗らない。
+
+        範囲外や先例として番号を引くのはプランの普通の書き方で、それまで数えると
+        注意が毎回出て意味を失う。名乗りの判定は投稿先の解決と同じ拾い方に任せる。
+        """
+        result = self.capture(
+            self.BUNDLE,
+            FAKE_GH_ISSUE="1",
+            FAKE_GH_GRAPHQL=issue_state(
+                sources=[
+                    (
+                        907,
+                        "OPEN",
+                        [
+                            plan_comment(
+                                self.OTHER,
+                                "https://example.invalid/c/907",
+                                "# #907 減衰\n\n範囲外: #1082 の射程は別に扱う。\n",
+                            )
+                        ],
+                    )
+                ]
+            ),
+        )
+        self.assertNotIn("二重着手", result.stderr)
+
+    def test_capture_ignores_its_own_plan_on_a_source(self):
+        """参照元に載った自分のセッションのプランは名乗らない。"""
+        result = self.capture(
+            self.BUNDLE,
+            FAKE_GH_ISSUE="1",
+            FAKE_GH_GRAPHQL=issue_state(
+                sources=[
+                    (
+                        913,
+                        "OPEN",
+                        [
+                            plan_comment(
+                                "abcd1234-1700000000",
+                                "https://example.invalid/c/913",
+                                self.BUNDLE,
+                            )
+                        ],
+                    )
+                ]
+            ),
+        )
+        self.assertNotIn("二重着手", result.stderr)
 
     def test_capture_records_the_target_it_pointed_at(self):
         """指示した先が記録に残ること。ここが空だと guard は引き直しだけに頼る。"""

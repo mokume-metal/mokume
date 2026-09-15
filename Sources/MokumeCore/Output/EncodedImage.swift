@@ -20,7 +20,9 @@ import Metal
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 /// [#927]: https://github.com/mokume-metal/mokume/issues/927
-final class EncodedImage {
+// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
+// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
+@MainActor final class EncodedImage {
     /// 幅 (画素)。
     let width: Int
     /// 高さ (画素)。
@@ -58,6 +60,16 @@ final class EncodedImage {
         backing.texture.label = "mokume.output.encoded"
         self.texture = backing.texture
         self.storage = backing.storage
+    }
+
+    /// **面と、面が載っている領域を常駐から退かせる** ([#795])。同じメモリでも常駐は
+    /// 2 つ別々に数えられている (``RenderDevice/makeBufferBackedTexture(descriptor:bytesPerRow:)``)
+    /// ので、両方を退かせる。出口へ配るのを控えている間は、控えがこの絵を抱えている。
+    ///
+    /// [#795]: https://github.com/mokume-metal/mokume/issues/795
+    isolated deinit {
+        gpu.retire(texture)
+        gpu.retire(storage)
     }
 
     /// この絵へ書き込むパスの記述を作る。
