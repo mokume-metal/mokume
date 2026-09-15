@@ -45,8 +45,8 @@ extension Sketch {
     ///
     /// ## 外からの停止とは別に持つ
     ///
-    /// ホストが ``SketchRuntime/pause()`` / ``SketchRuntime/resume()`` で止めて再開しても、
-    /// ここで止めたスケッチは止まったままである。詳しくは ``SketchRuntime/resume()``。
+    /// ホストが `SketchRuntime.pause()` / `resume()` で止めて再開しても、ここで止めた
+    /// スケッチは止まったままである。理由は `SketchRuntime.resume()` の説明にある。
     public func noLoop() {
         guard let runtime = runningSketch else { return warnNotRunning("noLoop()") }
         runtime.noLoop()
