@@ -113,6 +113,8 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 
 **この表は `scripts/stall-watch.sh` が定期に実行する** ([#961](https://github.com/mokume-metal/mokume/issues/961)) — 機械が打てる行 (auto-merge の掛け直し・古い失敗ジョブの rerun) は打たれ、人手が要る行だけが run の赤で名乗られる。どの行を打ちどの行を名乗るかはスクリプトの冒頭にある。**当番は数時間おきにしか回らない** ([#1197](https://github.com/mokume-metal/mokume/issues/1197)) ので、**急ぐときは当番を待たず、自分でこの表を読んで打つ。** **当番の対象外にしたい PR は Draft にする** (作業中の描画 PR を Draft にしておくのと同じ印である)。
 
+**弾かれた描画 PR (表の `isInMergeQueue: false` の行) は、当番の赤を見に行かなくても手元で見える。** 当番は GPU を持たず `make catch-up` を打てないので名乗るしかないが、手元の `bash scripts/ready-queue.sh` が同じ判定を読み、行列の先頭のものを `catch-up` の行として `ready` より先に出す ([#1045](https://github.com/mokume-metal/mokume/issues/1045))。**着手の前にそれを流す** — 持ち主のセッションが居なくても代打ちできる (「描画に影響する変更」節)。
+
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
 | `autoMerge: true` + `UNKNOWN` で **check が 1 本も付かない** (`local-render` のような手元の commit status を除く) | main と衝突していて合流後の木が作れず、`pull_request` の workflow が起動していない ([#694](https://github.com/mokume-metal/mokume/issues/694)) | `git merge-tree --write-tree origin/main HEAD` で確かめ、手元で解いて push する。**ラベルの付け直しも close → reopen も効かない** |
