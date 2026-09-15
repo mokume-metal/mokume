@@ -92,6 +92,7 @@ extension Canvas {
                 lightRange: 0..<0,
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),
+                view: matrix_identity_float4x4,
                 surroundings: .none,
                 castsShadow: false,
                 instanceStart: open.instanceStart,

@@ -27,6 +27,9 @@ extension Canvas {
     /// 断片へ渡す「見ている場所」。
     var viewer: SIMD4<Float> { currentCamera.viewer }
 
+    /// 断片へ渡す「世界をカメラの側へ移す行列」。
+    var viewMatrix: simd_float4x4 { currentCamera.viewMatrix }
+
     /// 視線が進む向き。
     var viewForward: SIMD3<Float> { currentCamera.forward }
 

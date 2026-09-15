@@ -36,8 +36,9 @@
 //   [20]    描く頂点の頭 (uint のビット列)
 //   [21]    描く頂点の数 (uint のビット列)
 //   [22…26] 段 0…4 の置き場の頭 (uint のビット列)。段 L が生存数 1 個ぶん
-//   [27…31] 予備
-//   [32…]   力 (1 つ 8 個)
+//   [27…35] 視点の枠 (横・上・手前を 3 つずつ)
+//   [36…39] 予備
+//   [40…]   力 (1 つ 8 個)
 
 /// スキャンの区画の大きさ。**Swift 側の `Particles.scanBlock` と一致していなければならない。**
 /// 一致は `mokume_particleLayout` が書き出し、CPU 側が読み比べる。
@@ -182,7 +183,7 @@ kernel void mokume_particles(
         // **渡された順に効く。** 足し合わせるだけなので順序で結果は変わらないが、
         // 減速 (velocity を読む) だけは順序が効く
         for (int i = 0; i < count; i++) {
-            const device float *f = parameters + 32 + i * 8;
+            const device float *f = parameters + 40 + i * 8;
             uint kind = uint(f[0]);
             if (kind == kForceGravity) {
                 push += float3(f[1], f[2], f[3]);
@@ -232,17 +233,24 @@ kernel void mokume_particles(
         float4(parameters[4], parameters[5], parameters[6], parameters[7]),
         float4(parameters[8], parameters[9], parameters[10], parameters[11]),
         float4(parameters[12], parameters[13], parameters[14], parameters[15]));
-    float4x4 local = float4x4(
-        float4(p.size, 0.0, 0.0, 0.0),
-        float4(0.0, p.size, 0.0, 0.0),
-        float4(0.0, 0.0, p.size, 0.0),
-        float4(p.x, p.y, p.z, 1.0));
+    // 視点の枠 (横・上・手前)。**板はこれに沿って置く** (#1043)
+    float3 side = float3(parameters[27], parameters[28], parameters[29]);
+    float3 above = float3(parameters[30], parameters[31], parameters[32]);
+    float3 back = float3(parameters[33], parameters[34], parameters[35]);
 
+    // 板の縦横は視点へ向け、変換からは**各軸の倍率 (列の長さ) だけ**を受け取る。回転まで
+    // 受け取ると、rotateY() で雲ごと回したときに板が横を向いて痩せる。位置は変換をそのまま
+    // 通す。**CPU 側の `Particles.billboard` と同じ式でなければならない**
     SolidInstance placed;
-    placed.matrix = world * local;
-    placed.normal0 = float4(1.0, 0.0, 0.0, 0.0);
-    placed.normal1 = float4(0.0, 1.0, 0.0, 0.0);
-    placed.normal2 = float4(0.0, 0.0, 1.0, 0.0);
+    placed.matrix = float4x4(
+        float4(side * (p.size * length(world[0].xyz)), 0.0),
+        float4(above * (p.size * length(world[1].xyz)), 0.0),
+        float4(back * (p.size * length(world[2].xyz)), 0.0),
+        world * float4(p.x, p.y, p.z, 1.0));
+    // 枠は直交なので、面の向きを移す行列 (逆行列の転置) は枠そのもの
+    placed.normal0 = float4(side, 0.0);
+    placed.normal1 = float4(above, 0.0);
+    placed.normal2 = float4(back, 0.0);
     placed.color = float4(p.red, p.green, p.blue, p.alpha);
     instances[place] = placed;
 }
