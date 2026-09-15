@@ -292,6 +292,18 @@ struct MCPServerTests {
             SchemasLocator.directory(workDirectory: consumer.work, executable: nowhere) == nil)
     }
 
+    /// 実在する場所の、実体の絶対パス。無ければ `nil`。
+    ///
+    /// **在処はパスの綴りで比べない。** リンクを含む場所に置いた木では、同じ場所が 2 通りに
+    /// 綴られる — `#filePath` は実体 (`/private/tmp/…`) を渡すが、`resolvingSymlinksInPath()`
+    /// は `/private` を剥がして `/tmp/…` を返す (#1255)。`realpath(3)` は剥がさないので、
+    /// 両辺をこれに通せば綴りの差だけが消える。
+    private func realPath(_ url: URL?) -> String? {
+        guard let url, let resolved = realpath(url.path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
     @Test("依存から引けなければ、実行ファイルの位置から探す")
     func fallsBackToTheExecutable() throws {
         let repository = schemasRoot().deletingLastPathComponent()
@@ -299,7 +311,33 @@ struct MCPServerTests {
         let executable = repository.appendingPathComponent(".build/debug/mokume-cli")
         let found = SchemasLocator.directory(
             workDirectory: try makeDirectory(), executable: executable)
-        #expect(found?.path == schemasRoot().path)
+        #expect(found != nil)
+        #expect(realPath(found) == realPath(schemasRoot()))
+    }
+
+    @Test("実行ファイルがリンク越しでも、実体の場所から探す")
+    func followsTheExecutableThroughASymlink() throws {
+        // 置き場所によらず見えるよう、リンクは一時ディレクトリの中に作る。リンクを解かなければ
+        // bin/ から上を探すことになり、そこには Schemas/ が無い
+        let root = try makeDirectory()
+        let manager = FileManager.default
+        let repository = root.appendingPathComponent("repo", isDirectory: true)
+        let schemas = repository.appendingPathComponent("Schemas", isDirectory: true)
+        try manager.createDirectory(at: schemas, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: schemas.appendingPathComponent("observe-report.schema.json"))
+        // 解くには実体が要る (実在しないパスは resolvingSymlinksInPath() が何も解かない)
+        let target = repository.appendingPathComponent(".build/debug/mokume-cli")
+        try manager.createDirectory(
+            at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: target)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try manager.createDirectory(at: bin, withIntermediateDirectories: true)
+        let link = bin.appendingPathComponent("mokume-cli")
+        try manager.createSymbolicLink(at: link, withDestinationURL: target)
+
+        let found = SchemasLocator.directory(workDirectory: try makeDirectory(), executable: link)
+        #expect(found != nil)
+        #expect(realPath(found) == realPath(schemas))
     }
 
     @Test("仕様が見つからないときは、見た場所を並べて答える")

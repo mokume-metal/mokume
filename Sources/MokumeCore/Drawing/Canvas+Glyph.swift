@@ -19,16 +19,16 @@ extension Canvas {
     func resolveRect(_ a: Float, _ b: Float, _ c: Float, _ d: Float)
         -> (x: Float, y: Float, width: Float, height: Float)
     {
-        Self.resolveBox(a, b, c, d, mode: currentRectMode)
+        Self.resolveBox(a, b, c, d, mode: style.rectMode)
     }
 
     /// 文字を塗る色。塗りを止めていれば `nil`。
-    var textFillColor: LinearRGBA? { hasFill ? currentFill : nil }
+    var textFillColor: LinearRGBA? { style.hasFill ? style.fill : nil }
 
     /// いま指定されている書体。同じ指定なら作り直さない。
     var typeface: Typeface {
         let request = TypefaceRequest(
-            name: currentFontName, size: currentTextSize, style: currentTextStyle)
+            name: style.fontName, size: style.textSize, style: style.textStyle)
         if let found = typefaces[request] { return found }
         let face = Typeface(request: request)
         typefaces[request] = face
@@ -47,7 +47,7 @@ extension Canvas {
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
         let key = GlyphAtlas.Key(
-            fontKey: resolved.fontKey, size: currentTextSize, style: currentTextStyle,
+            fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
             glyph: resolved.glyph)
         switch atlas.entry(for: key, font: resolved.font) {
         case .found(let entry): return entry

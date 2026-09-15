@@ -173,13 +173,13 @@ struct TextureTests {
             guard let image else { return }
             canvas.push()
             canvas.texture(image)
-            #expect(canvas.currentPicture?.texture === image.texture)
+            #expect(canvas.style.picture?.texture === image.texture)
             canvas.pop()
-            #expect(canvas.currentPicture == nil)
+            #expect(canvas.style.picture == nil)
 
             canvas.texture(image)
             canvas.noTexture()
-            #expect(canvas.currentPicture == nil)
+            #expect(canvas.style.picture == nil)
         }
     }
 

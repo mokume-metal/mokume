@@ -232,4 +232,26 @@ struct ParameterRoundTripTests {
         incoming.surface.drain()
         #expect(incoming.sketch.radius == 150, "戻した値に入っていない書き込みを見送っている")
     }
+
+    /// 区画に応えるのは権利を持つ 1 プロセスだけになった (#1162) が、**つまみは引き継いだ
+    /// 時点で応答を読み直さない** — 読み直すと、前の世代が応えた書き込みを「応えた」として
+    /// 見送り、上の検査が守る性質が別のプロセスの間でだけ壊れる。
+    @Test("別のプロセスの前の世代が応えた書き込みも、引き継いだ次の世代に当たる")
+    func aWriteAnsweredByAnOutgoingProcessReachesTheIncomingAfterHandover() throws {
+        let workspace = try makeWorkspace()
+        let outgoing = try OtherGenerationFixture(holding: workspace.facet)
+        let incoming = launch(in: workspace)
+        try write(
+            request: #"{"id":"r3","values":[{"name":"radius","type":"float","value":170}]}"#,
+            to: workspace)
+        // 前の世代が応えた (応答だけが区画に残る)
+        try Data(#"{"id":"r3"}"#.utf8).write(to: WorkDirectory.reportURL(under: workspace.facet))
+
+        incoming.surface.drain()
+        #expect(incoming.sketch.radius == 80, "前の世代が居る間に、次の世代にも書き込みが当たっている")
+
+        outgoing.leave()
+        incoming.surface.drain()
+        #expect(incoming.sketch.radius == 170, "前の世代が応えた書き込みを、引き継いだ世代が見送っている")
+    }
 }

@@ -36,6 +36,14 @@ enum ToolVersion {
         return describe(executable: executable, modified: executable.flatMap(fileDate))
     }
 
+    /// いまの道具の配布版。**読めなければ `nil`** (手元ビルドは版を持たない)。
+    ///
+    /// 名乗り (``describe()``) は人が読む文なので、依存の版と突き合わせるには使えない
+    /// ([#1230](https://github.com/mokume-metal/mokume/issues/1230))。
+    static func release() -> String? {
+        currentExecutable().flatMap(homebrewVersion)
+    }
+
     /// 在処と日時から名乗りを組む。
     ///
     /// **判定はここだけが持つ。** 引数で受けるのは、検査が在処を差し替えられるように

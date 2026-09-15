@@ -185,12 +185,12 @@ struct SurroundingsTests {
             canvas.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
             canvas.metalness(0.5)
             let lightsBefore = canvas.activeLights.count
-            let materialBefore = canvas.currentMaterial
+            let materialBefore = canvas.style.material
 
             canvas.surroundings(.sky)
 
             #expect(canvas.activeLights.count == lightsBefore)
-            #expect(canvas.currentMaterial == materialBefore)
+            #expect(canvas.style.material == materialBefore)
             #expect(canvas.target.brightness.exposure == 1.4)
             #expect(canvas.target.brightness.toneMapping == .roll)
         }

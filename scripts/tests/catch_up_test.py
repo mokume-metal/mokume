@@ -78,6 +78,12 @@ if [[ "$*" == *"/statuses"* ]]; then
   printf '%s\\n' "${REPORTED:-success}"
   exit 0
 fi
+# 順番の判定が読む merge queue の並び (#1266)。queue へ戻した後の確認とは別の問い合わせ
+if [[ "$*" == "api graphql"* && "$*" == *"mergeQueue{"* ]]; then
+  [ -z "${QUEUE_FAILS:-}" ] || { echo "gh: 502" >&2; exit 1; }
+  printf '%s\\n' ${QUEUED_PRS:-}
+  exit 0
+fi
 if [[ "$*" == "api graphql"* ]]; then
   printf '%s\\n' "isInMergeQueue=true position=1 state=AWAITING_CHECKS"
   exit 0
@@ -278,6 +284,58 @@ class CatchUpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 3, proc.stderr)
         self.assertIn("台帳の絵を動かさない", proc.stdout)
         self.assertNotIn("ci-check", self.made())
+
+    def test_queue_の前に番号の大きい描画_PR_が居れば走らない(self):
+        """**#1266 の現場そのもの。** queue の前に #1243 が居る間、#1242 は番号順では
+        先頭なので打ち直し、合流後の木に #1243 の変更が入るので弾かれ続けた。
+
+        queue に居る描画 PR は、その外の誰よりも先に合流後の木へ入る。番号の若さでは
+        追い越せないので、打つと ci-check の数分が丸ごと無駄になる。"""
+        proc = self.run_script(OPEN_PRS="7 9", FILES_BY_PR=f"9={DRAWING}", QUEUED_PRS="9")
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertIn("#9", proc.stdout)
+        self.assertNotIn("ci-check", self.made())
+
+    def test_queue_で逆順に並んでも両方が待てにはならない(self):
+        """同じ状態を**両方の側から**見る (#1266)。
+
+        番号順だけで決めていた頃は #9 が「#7 を待て」、#7 は打っても弾かれる — 片方が
+        待ち、もう片方は空回りして、どちらも進まなかった。順番が 1 本なら、少なくとも
+        片方は打てる側に居る。"""
+        waiting = self.run_script(OPEN_PRS="7 9", FILES_BY_PR=f"9={DRAWING}", QUEUED_PRS="9")
+        self.assertEqual(waiting.returncode, 3, waiting.stderr)
+        self.assertEqual(self.made(), [])
+
+        ahead = self.run_script(
+            PR_INFO="9 OPEN false", PR_FILES=DRAWING,
+            OPEN_PRS="7 9", FILES_BY_PR=f"7={DRAWING}", QUEUED_PRS="9",
+        )
+        self.assertNotEqual(ahead.returncode, 3, ahead.stdout)
+        self.assertIn("ci-check", self.made())
+
+    def test_queue_から外れれば番号順に戻る(self):
+        """queue の中の描画 PR は通るか弾かれて外へ出るかのどちらかで、外へ出れば
+        番号の若い側が先頭に戻る。これが無いと、弾かれた #9 が居座った順番になる。"""
+        proc = self.run_script(
+            PR_INFO="9 OPEN false", PR_FILES=DRAWING,
+            OPEN_PRS="7 9", FILES_BY_PR=f"7={DRAWING}", QUEUED_PRS="",
+        )
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertIn("#7", proc.stdout)
+
+    def test_queue_の前に居るのが描画に触れない_PR_なら走る(self):
+        proc = self.run_script(OPEN_PRS="7 9", FILES_BY_PR=f"9={NOT_DRAWING}", QUEUED_PRS="9")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("ci-check", self.made())
+
+    def test_queue_を読めなければ番号順だけで決める(self):
+        """読めないときに「判定できない (?)」へ倒すと、CI の順番待ちまで外れる。
+        いまの振る舞い (番号順) を劣化時の姿として残す。"""
+        proc = self.run_script(OPEN_PRS="5 7 9", FILES_BY_PR=f"5={DRAWING} 9={DRAWING}",
+                               QUEUED_PRS="9", QUEUE_FAILS="1")
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertIn("#5", proc.stdout)
+        self.assertNotIn("#9", proc.stdout)
 
     def test_Draft_では走らない(self):
         proc = self.run_script(PR_INFO="7 OPEN true")

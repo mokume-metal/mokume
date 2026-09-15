@@ -17,39 +17,39 @@ extension Canvas {
             warnMissingFontOnce(name)
             return
         }
-        currentFontName = name
+        style.fontName = name
     }
 
     /// 既定の書体へ戻す。
-    public func noTextFont() { currentFontName = nil }
+    public func noTextFont() { style.fontName = nil }
 
     /// これから描く文字の大きさ (画素)。
     public func textSize(_ size: some ScalarConvertible) {
         let size = size.asFloat
-        currentTextSize = max(0, size)
+        style.textSize = max(0, size)
     }
 
     /// これから描く文字の太さと傾き。
-    public func textStyle(_ style: TextStyle) { currentTextStyle = style }
+    public func textStyle(_ style: TextStyle) { self.style.textStyle = style }
 
     /// 文字列を、指定した位置のどちら側へ置くか。
     public func textAlign(
         _ horizontal: HorizontalTextAlign, _ vertical: VerticalTextAlign = .baseline
     ) {
-        currentHorizontalTextAlign = horizontal
-        currentVerticalTextAlign = vertical
+        style.horizontalTextAlign = horizontal
+        style.verticalTextAlign = vertical
     }
 
     /// 行と行の間隔 (画素)。
     public func textLeading(_ leading: some ScalarConvertible) {
         let leading = leading.asFloat
-        currentTextLeading = max(0, leading)
+        style.textLeading = max(0, leading)
     }
 
     // MARK: - 寸法
 
     /// 実際に使う行送り。指定が無ければ大きさから決める。
-    var resolvedTextLeading: Float { currentTextLeading ?? currentTextSize * Self.leadingRatio }
+    var resolvedTextLeading: Float { style.textLeading ?? style.textSize * Self.leadingRatio }
 
     /// 指定が無いときの行送りを、大きさの何倍にするか。
     static let leadingRatio: Float = 1.25
@@ -79,7 +79,7 @@ extension Canvas {
     /// 改行で行が分かれ、行の間隔は ``textLeading(_:)`` が決める。
     public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
-        guard let color = textFillColor, !string.isEmpty, currentTextSize > 0 else { return }
+        guard let color = textFillColor, !string.isEmpty, style.textSize > 0 else { return }
         let face = typeface
         let lines = string.split(separator: "\n", omittingEmptySubsequences: false)
         let leading = resolvedTextLeading
@@ -104,7 +104,7 @@ extension Canvas {
     private func firstBaseline(at y: Float, face: Typeface, lines: Int) -> Float {
         // 最初の行の基準線から、最後の行の基準線までの距離
         let span = Float(lines - 1) * resolvedTextLeading
-        switch currentVerticalTextAlign {
+        switch style.verticalTextAlign {
         case .baseline: return y
         case .top: return y + face.ascent
         case .bottom: return y - face.descent - span
@@ -117,7 +117,7 @@ extension Canvas {
     /// 幅は ``Typeface/advance(of:)`` が数える — 描くときと輪郭を返すときで別々に
     /// 数えると、整列が数画素ずれる形で食い違う。
     private func penStart(at x: Float, face: Typeface, line: some StringProtocol) -> Float {
-        switch currentHorizontalTextAlign {
+        switch style.horizontalTextAlign {
         case .left: return x
         case .center: return x - face.advance(of: line) / 2
         case .right: return x - face.advance(of: line)
@@ -158,7 +158,7 @@ extension Canvas {
 
 extension Canvas {
     /// 幅に収まらなくなったとき、どこで行を折るか。既定は語の切れ目。
-    public func textWrap(_ mode: TextWrap) { currentTextWrap = mode }
+    public func textWrap(_ mode: TextWrap) { style.textWrap = mode }
 
     /// 矩形の中へ文字列を流し込む。
     ///
@@ -170,7 +170,7 @@ extension Canvas {
     {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         let box = resolveRect(a, b, c, d)
-        guard box.width > 0, box.height > 0, currentTextSize > 0, !string.isEmpty else {
+        guard box.width > 0, box.height > 0, style.textSize > 0, !string.isEmpty else {
             return TextFlow(lineCount: 0, height: 0, remainder: string)
         }
 
@@ -202,7 +202,7 @@ extension Canvas {
 
         // 縦の指定は塊全体に効く。基準線は矩形の中では意味を持たないので、上と同じに倒す
         var top = box.y
-        switch currentVerticalTextAlign {
+        switch style.verticalTextAlign {
         case .top, .baseline: break
         case .center: top = box.y + (box.height - height) / 2
         case .bottom: top = box.y + box.height - height
@@ -211,7 +211,7 @@ extension Canvas {
         var baseline = top + face.ascent
         for line in lines.prefix(fits) {
             let x: Float
-            switch currentHorizontalTextAlign {
+            switch style.horizontalTextAlign {
             case .left: x = box.x
             case .center: x = box.x + box.width / 2
             case .right: x = box.x + box.width
@@ -255,7 +255,7 @@ extension Canvas {
 
                 // **1 文字だけの行は折らない。** 幅より広い字はそのままはみ出させる
                 if width + step > limit, index > start {
-                    if currentTextWrap == .word, let space = lastSpace, space > start {
+                    if style.textWrap == .word, let space = lastSpace, space > start {
                         lines.append(paragraph[start..<space])
                         var next = space
                         while next < paragraph.endIndex, paragraph[next].isWhitespace {
@@ -289,9 +289,18 @@ extension Canvas {
     /// **描くときと同じ送り**で並ぶので、``text(_:_:_:)`` と同じ位置・同じ字間になる。
     /// 返る点は**いまの座標のまま**で、変換は掛かっていない — そのまま
     /// ``vertex(_:_:)`` へ渡せば、文字を描いたのと同じ場所に出る。
+    ///
+    /// 字ごとに、外側の周が先・穴が後の順で並ぶ。
+    ///
+    /// **周の分かれ方は書体の持ち方どおりで、書体と字によって変わる。** 既定の書体は
+    /// `A` や `B` のような字を重なった部品で持つので、`A` は重なった外周がいくつも返り、
+    /// 三角の穴は ``TextContour/isHole`` の立った周として現れない (重ねて塗れば絵は
+    /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
+    /// 1 つの形として扱いたいなら、``textFont(_:)`` で書体を指定する — `Helvetica`
+    /// などでは `A` が外周 1 つと穴 1 つになる。
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
-        guard !string.isEmpty, currentTextSize > 0 else { return [] }
+        guard !string.isEmpty, style.textSize > 0 else { return [] }
         let face = typeface
         let lines = string.split(separator: "\n", omittingEmptySubsequences: false)
         let leading = resolvedTextLeading

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -872,6 +873,125 @@ struct CanvasTests {
             #expect(
                 canvas.warnings.hasWarned(.styleOutsideFrame),
                 "\(name) がフレームの外で黙って捨てている")
+        }
+    }
+
+    // MARK: - スタイルの一式 (#780)
+
+    /// 全フィールドが既定と違うスタイル。**`Canvas.Style` にフィールドを足したらここにも
+    /// 足す** — 足し忘れると `styleRoundTripsEveryField` が、既定のままのフィールドを
+    /// 名乗って赤になる (既定のままでは往復したかどうかを見分けられない)。
+    private func distinctStyle(on canvas: Canvas) -> Canvas.Style {
+        var style = Canvas.Style()
+        style.fill = .linear(red: 0.1, green: 0.2, blue: 0.3)
+        style.stroke = .linear(red: 0.4, green: 0.5, blue: 0.6)
+        style.strokeWeight = 3
+        style.strokeCap = .square
+        style.strokeJoin = .bevel
+        style.hasFill = false
+        style.hasStroke = false
+        style.rectMode = .center
+        style.ellipseMode = .corner
+        style.blendMode = .add
+        style.clip = MTLScissorRect(x: 1, y: 2, width: 3, height: 4)
+        style.fontName = "Helvetica"
+        style.textSize = 30
+        style.textStyle = .bold
+        style.horizontalTextAlign = .right
+        style.verticalTextAlign = .top
+        style.textLeading = 40
+        style.textWrap = .character
+        style.imageMode = .center
+        style.tint = .linear(red: 0.7, green: 0.8, blue: 0.9)
+        style.picture = .drawn(canvas.target)
+        style.material.shininess = 8
+        style.castsShadow = false
+        style.receivesShadow = false
+        return style
+    }
+
+    /// フィールドごとの名前と値の綴り。**並びを `Mirror` から取る**ので、ここは宣言に
+    /// フィールドが増えても書き足さなくてよい。
+    private func fields(of style: Canvas.Style) -> [(name: String, value: String)] {
+        Mirror(reflecting: style).children.map {
+            (name: $0.label ?? "?", value: String(describing: $0.value))
+        }
+    }
+
+    @Test("積み降ろしも形の組み立ても、スタイルの全フィールドを往復させる")
+    func styleRoundTripsEveryField() throws {
+        // 以前はフィールドの並びが宣言・写し取り・戻しの 3 か所にあり、1 か所落としても
+        // 型も検査も通った ([#780])。落としたフィールドは「その設定だけ戻らない」形で
+        // 絵がそれらしく壊れるので、全フィールドを並べて見る
+        let canvas = try makeCanvas()
+        let distinct = distinctStyle(on: canvas)
+        let expected = fields(of: distinct)
+        for (plain, marked) in zip(fields(of: Canvas.Style()), expected) {
+            #expect(
+                plain.value != marked.value,
+                "\(marked.name) が既定のままなので、往復したかを見分けられない (distinctStyle に足す)")
+        }
+
+        func expectRestored(_ path: String) {
+            for (actual, wanted) in zip(fields(of: canvas.currentStyle), expected) {
+                #expect(actual.value == wanted.value, "\(path) で \(wanted.name) が戻らない")
+            }
+        }
+        try canvas.draw {
+            canvas.currentStyle = distinct
+            canvas.pushStyle()
+            canvas.currentStyle = Canvas.Style()
+            canvas.popStyle()
+            expectRestored("pushStyle / popStyle")
+
+            // 組み立ては積み降ろしを使わず、写し取って戻す (`Canvas.createShape`)
+            _ = canvas.createShape { canvas.currentStyle = Canvas.Style() }
+            expectRestored("createShape")
+        }
+    }
+
+    /// 戻すときに変わるフィールド。列を閉じるかどうかの違いを持つものを並べる。
+    enum StyleChange: CaseIterable, CustomTestStringConvertible {
+        case material, castsShadow, receivesShadow, blendMode, clip, picture, fill
+
+        /// 戻す前に列を閉じるか。**置いた図形が、列の持つ設定を後から書き換えられない**
+        /// ためのもので、列が読むのは材質・影・混ぜ方・切り抜きだけである。塗りに貼る絵は
+        /// 塗りを置く手前で面を選び直すので、戻すときには閉じない
+        var closesBatch: Bool {
+            switch self {
+            case .material, .castsShadow, .receivesShadow, .blendMode, .clip: true
+            case .picture, .fill: false
+            }
+        }
+
+        var testDescription: String { "\(self)" }
+
+        func apply(from source: Canvas.Style, to style: inout Canvas.Style) {
+            switch self {
+            case .material: style.material = source.material
+            case .castsShadow: style.castsShadow = source.castsShadow
+            case .receivesShadow: style.receivesShadow = source.receivesShadow
+            case .blendMode: style.blendMode = source.blendMode
+            case .clip: style.clip = source.clip
+            case .picture: style.picture = source.picture
+            case .fill: style.fill = source.fill
+            }
+        }
+    }
+
+    @Test("スタイルを戻すとき、列を閉じるのは列が読む設定が変わったときだけ", arguments: StyleChange.allCases)
+    func restoringStyleClosesTheBatchOnlyWhenItMatters(_ change: StyleChange) throws {
+        let canvas = try makeCanvas()
+        let distinct = distinctStyle(on: canvas)
+        try canvas.draw {
+            canvas.rect(0, 0, 8, 8)  // 閉じていない列を 1 本持つ
+            var restored = canvas.currentStyle
+            change.apply(from: distinct, to: &restored)
+            let before = canvas.batches.count
+            canvas.currentStyle = restored
+            #expect(
+                canvas.batches.count - before == (change.closesBatch ? 1 : 0),
+                change.closesBatch ? "戻す前に列を閉じていない" : "閉じなくてよい列を閉じた")
         }
     }
 

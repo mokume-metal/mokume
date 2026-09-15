@@ -82,7 +82,7 @@ extension Canvas {
     /// [#1140]: https://github.com/mokume-metal/mokume/issues/1140
     private func textureUV(_ u: Float, _ v: Float) -> SIMD2<Float>? {
         guard u.isFinite, v.isFinite else { return nil }
-        guard let picture = currentPicture else { return SIMD2(u, v) }
+        guard let picture = style.picture else { return SIMD2(u, v) }
         guard picture.width > 0, picture.height > 0 else { return nil }
         return SIMD2(u / Float(picture.width), v / Float(picture.height))
     }
@@ -257,7 +257,7 @@ extension Canvas {
                 emitFill(
                     triangles, points: points, placed: placed,
                     readsUV: readsUV, fallback: fallback)
-                if hasStroke, currentStrokeWeight > 0 {
+                if style.hasStroke, style.strokeWeight > 0 {
                     emitStroke(primitive, points: points, placed: placed)
                 }
             }
@@ -352,7 +352,7 @@ extension Canvas {
     private func fillTriangles(of primitive: Primitive, points: [BuildingVertex])
         -> [(Int, Int, Int)]
     {
-        guard primitive.fills, hasFill, primitive.ring.count >= 3 else { return [] }
+        guard primitive.fills, style.hasFill, primitive.ring.count >= 3 else { return [] }
         guard let basis = flatBasis(of: primitive, points: points) else { return [] }
         let merged: [Int]
         if primitive.holes.isEmpty {
@@ -374,7 +374,7 @@ extension Canvas {
     /// ないときだけ焼き場の白い区画を読み、読み取り位置が無かった頃と 1 ビットも
     /// 変わらない。
     private func readsUV(_ points: [BuildingVertex]) -> Bool {
-        currentPicture != nil || points.contains(where: { $0.uv != nil })
+        style.picture != nil || points.contains(where: { $0.uv != nil })
     }
 
     /// 書かれていない読み取り位置の倒れ先。**形に 1 度だけ求める。**
@@ -607,7 +607,7 @@ extension Canvas {
         }
         if hasDepth { shapeHasDepth = true }
         let vertex = BuildingVertex(
-            position: position, normal: currentNormal, uv: uv, fill: currentFill)
+            position: position, normal: currentNormal, uv: uv, fill: style.fill)
         if holePoints != nil {
             holePoints?.append(vertex)
         } else {

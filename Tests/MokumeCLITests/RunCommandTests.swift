@@ -250,6 +250,53 @@ struct RunCommandTests {
         #expect(carried[StartupReads.closeConfirmation.key] == "mokume run")
     }
 
+    // MARK: - 出来上がりの置き場 (#1067)
+
+    /// **置き場を聞くのに `swift` を 1 本起こす。** 見張りは宣言が変わるまでそれを持ち回る
+    /// ので (``BuildResolver``)、渡されたら聞き直さないことがここの約束である —
+    /// 聞き直すと、手元の実測で毎回 315 ms が作り直しの時間に乗る
+    /// ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
+    ///
+    /// **`Package.swift` の無い場所で見る。** 作り直しそのものは即座に失敗するが、
+    /// 置き場をどこから得たかは結果に載るので、そこだけを見れば `swift build` の完走を
+    /// 待たずに済む。
+    @Test("置き場を渡した回は、道具立てに聞き直さない")
+    func aGivenBinPathIsUsedAsIs() throws {
+        let directory = try makeEmptyDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let given = directory.appendingPathComponent("given-bin", isDirectory: true)
+
+        let rebuilt = try RunCommand.rebuild(
+            in: directory, context: testContext(), capturing: true, binPath: given)
+
+        #expect(rebuilt.binPath == given, "渡した置き場を使わず、道具立てに聞き直している")
+    }
+
+    /// 裏。**渡さなければ今までどおり聞く** — `run` と `bundle` はこちらを通る。
+    @Test("置き場を渡さなければ、道具立てに聞く")
+    func anAbsentBinPathIsAskedFor() throws {
+        let directory = try makeEmptyDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rebuilt = try RunCommand.rebuild(
+            in: directory, context: testContext(), capturing: true)
+
+        // place を組み立てて確かめない (道具立てが並びを変えた日に黙って別の場所を指す)。
+        // **このパッケージの下の `.build` であること**だけを見る
+        #expect(
+            rebuilt.binPath.path.contains(directory.lastPathComponent),
+            "聞いた先が別のパッケージの下になっている")
+        #expect(rebuilt.binPath.lastPathComponent != "given-bin")
+        #expect(rebuilt.binPath.path.contains(".build"), "道具立てが答える置き場の形をしていない")
+    }
+
+    private func makeEmptyDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-binpath-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
     // MARK: - 走っている作り直しを掴む (#1147)
 
     /// **作り直しは `swift` を何度か呼ぶ** (`--show-bin-path` → `build` → 場合により
