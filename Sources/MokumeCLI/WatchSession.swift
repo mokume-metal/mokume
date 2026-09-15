@@ -12,8 +12,9 @@ import mokume
 ///
 /// ## 所要時間を分けて測る
 ///
-/// **合計だけを見ていると律速を推測で決めて外す。** 保存から気付くまで / 作り直し /
-/// 差し替え の 3 つに分けて刻み、どの構成で測ったかも併せて出す。
+/// **合計だけを見ていると律速を推測で決めて外す。** 気付いてから始めるまで / 作り直し /
+/// 差し替え / 新しい絵が出るまで の 4 つに分けて刻み、どの構成で測ったかも併せて出す。
+/// 足し算と重なりは ``BuildReport/Timings`` が持つ。
 @MainActor
 final class WatchSession {
     /// 差し替えられる外側。
@@ -197,6 +198,20 @@ final class WatchSession {
     /// 入れ替わりの合図は道具の窓から来るので ([ADR-0032] 決定 1)、窓が出せなかった実行では
     /// 誰も知らせてくれない — そこでは今までどおり、止めてから起こす。
     var overlapsGenerations = false
+
+    /// 新しい絵が出るまでを測っている、差し替えを始めた時刻。**測らない回は `nil`。**
+    ///
+    /// 置くのは ``finish(_:)`` の中だけで、どの記録を書いても置き直す — 起こした後に
+    /// 作り直しの失敗や途中停止の記録で上書きされたら、待っていた数字の行き先はもう無い。
+    private var firstFrameSince: Double?
+    /// 最後に起こした世代が、まだ画面へ乗り換わっていないか。
+    private var awaitingPromotion = false
+    /// 乗り換えの合図を 1 度でも受けたか。
+    ///
+    /// **受けるまでの合図は、絵が出た時点を指さない。** 出している世代が無い台は 1 枚目を
+    /// 待たずに乗り換える (`SharedFrameStage.promoteIfReady()`) ので、最初に目録を置いた
+    /// 世代の合図は「絵が出た」ではなく「目録が読めた」になる。
+    private var hasSeenPromotion = false
 
     /// 消えたことを既に名乗ったか。**子が入れ替わると下りる。**
     private var hasNamedDeparture = false
@@ -530,6 +545,11 @@ final class WatchSession {
         }
 
         let relaunchStarted = hooks.now()
+        // **どの世代の合図か区別できる回だけ測る。** 前の世代がまだ乗り換わらずに生きて
+        // いると、次の合図はそちらのものかもしれない — 目録は世代の印を持たない
+        let measuresFirstFrame =
+            overlapsGenerations && hasSeenPromotion
+            && !(awaitingPromotion && child?.isRunning == true)
         if overlapsGenerations {
             // **止めるのは、新しい世代が画面に出てからである** (#1142)。合図が来ないまま
             // 次の保存が来た回は、ここで必ず止める — 重ねるのは 1 世代だけである
@@ -541,12 +561,44 @@ final class WatchSession {
         }
         child = hooks.launch(executable, directory, stamp, reportsRate ? configurationName : nil)
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
+        awaitingPromotion = overlapsGenerations && child != nil
 
         return finish(
             BuildReport(
                 ok: true, status: 0, output: rebuilt.output, stamp: stamp,
                 configuration: configurationName, launched: child != nil,
-                timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)))
+                timings: .init(detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)),
+            firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
+    }
+
+    /// 次の世代が画面へ乗り換わった。**新しい絵が出るまでを記録へ足し、退役待ちを畳む。**
+    ///
+    /// 合図は窓ごとに来る (作品の窓とプレビューは独立に見ている) ので、同じ入れ替えで
+    /// 2 度呼ばれる。測るのは最初の 1 度だけで、退役は冪等である。
+    ///
+    /// **記録は書き直す。** 起こし終えた時点の記録は既に置いてあるので、同じ区画へ
+    /// 丸ごと原子的に置き直す — 別のファイルへ書き足すと、読み手は形を 2 つ知ることになる。
+    ///
+    /// **測らない回** (``BuildReport/Timings/firstFrameMs`` が空になる):
+    /// - 窓を出せない実行 — そもそも合図が来ない
+    /// - まだ 1 度も合図を受けていない間に起こした世代 (初回を含む) — 合図が絵を指さない
+    ///   (``hasSeenPromotion``)
+    /// - 前の世代が乗り換わらずに生きているうちに差し替えた回 — どちらの合図か分からない
+    /// - 起こした後に別の記録で上書きされた回
+    ///
+    /// - Returns: 退役待ちを止めた結果。**名乗るのは口の側**である (``retireOutgoing()``)。
+    @discardableResult
+    func generationPromoted() -> StopOutcome? {
+        // **時刻は退役より先に取る。** 退役は期限つきで子の終わりを待つので、後に取ると
+        // 止める待ちが絵の出た時刻に乗る
+        let now = hooks.now()
+        hasSeenPromotion = true
+        awaitingPromotion = false
+        if let since = firstFrameSince, var report = lastReport {
+            report.timings.firstFrameMs = (now - since) * 1000
+            finish(report)
+        }
+        return retireOutgoing()
     }
 
     /// 「通ったのに建っていない」ことを、記録の中で名乗る。
@@ -576,7 +628,11 @@ final class WatchSession {
             """
     }
 
-    private func finish(_ report: BuildReport) -> BuildReport {
+    /// - Parameter firstFrameSince: この記録の世代について、新しい絵が出るまでを測るなら
+    ///   差し替えを始めた時刻。**渡さなければ待ちを捨てる。**
+    @discardableResult
+    private func finish(_ report: BuildReport, firstFrameSince: Double? = nil) -> BuildReport {
+        self.firstFrameSince = firstFrameSince
         lastReport = report
         write(report)
         return report

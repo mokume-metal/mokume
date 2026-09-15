@@ -291,12 +291,13 @@ enum WatchCommand {
             cancel: closeCancel, then: { requestStop() })
     }
 
-    /// 入れ替わった後ろの世代を畳み、期限に掛かったことがあれば名乗る。
+    /// 入れ替わりを知らせ、後ろの世代を畳み、期限に掛かったことがあれば名乗る。
     ///
     /// **名乗るのは口の側である** — ``WatchSession`` は判断だけを持ち、出力を持たない
-    /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。
+    /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。新しい絵が
+    /// 出るまでの記録もこの合図で足される (#930)。
     static func retire(after session: WatchSession?) {
-        guard let outcome = session?.retireOutgoing() else { return }
+        guard let outcome = session?.generationPromoted() else { return }
         switch outcome {
         case .killed: say(killedLine)
         case .abandoned(let pid): say(abandonedLine(pid: pid))
