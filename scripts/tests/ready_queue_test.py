@@ -16,7 +16,8 @@
 5. **描画の見込みは coverage の用途で訊く。** `Sketches/` は evidence-only なので、
    そこしか触らない Issue は描画レーンを取らない (#497)
 6. **終了コードが「打てる仕事があるか」を表す。** 呼ぶ側 (外に居るディスパッチャ) が「在庫が
-   尽きたので B-1 へ回る」を分岐できる。**打てる catch-up があれば在庫切れと言わない** (#1045)
+   尽きたので B-1 へ回る」を分岐できる。**打てる catch-up があれば在庫切れと言わない** (#1045)。
+   **一覧を読めなかったときも在庫切れと言わない** — 1 ではなく 2 で終える (#1235)
 7. **手元で打てる catch-up を ready より先に出す** (#1045)。当番が ejected と名乗る描画 PR の
    うち、行列の先頭のものだけを出す — 先に別の描画 PR が居るものは打っても無駄になる。
    弾かれた PR が無い平常時は、呼び出しも出力も従来のまま
@@ -53,6 +54,13 @@ emit() { # $1=JSON ファイル
   [ -f "$1" ] || { printf '%s' ""; return 0; }
   if [ -n "$filter" ]; then jq -r "$filter" < "$1"; else cat "$1"; fi
 }
+
+# 一覧の読み取りを失敗させる。FAIL_LIST に issue / pr を渡す (#1235)。
+# 綴りは古い gh が実際に出したもの (issueType は gh 2.94.0 からの欄)
+if [ "$1 $2" = "${FAIL_LIST:-} list" ]; then
+  echo 'Unknown JSON field: "issueType"' >&2
+  exit 1
+fi
 
 if [ "$1 $2" = "issue list" ]; then emit "$FIX/issues.json"; exit 0; fi
 if [ "$1 $2" = "pr list" ]; then emit "$FIX/prs.json"; exit 0; fi
@@ -302,6 +310,18 @@ class ReadyQueueTest(unittest.TestCase):
 
         done, _ = self.run_queue([issue(41, labels=["verify: triaged"])])
         self.assertEqual(done.returncode, 0)
+
+    # 6b. 一覧を読めなかったときは在庫切れ (1) と言わない (#1235)
+    def test_unreadable_list_is_not_stock_out(self):
+        for listing in ("issue", "pr"):
+            with self.subTest(listing=listing):
+                # 読めていれば ready が 1 件ある状態 — 成功時の値に引きずられないことも見る
+                done, _ = self.run_queue([issue(42, labels=["verify: triaged"])], FAIL_LIST=listing)
+                self.assertEqual(
+                    done.returncode, 2, f"読めなかったのに {done.returncode} で終えている:\n{done.stderr}"
+                )
+                self.assertEqual(done.stdout, "", "判定できないのに行を出している")
+                self.assertIn("読めなかった", done.stderr)
 
     # 7a. 先頭の弾かれた描画 PR は catch-up として ready より先に出る
     def test_head_ejected_drawing_pr_is_catch_up(self):
