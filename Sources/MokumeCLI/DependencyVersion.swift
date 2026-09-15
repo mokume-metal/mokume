@@ -20,7 +20,11 @@ import Foundation
 /// ## 断定できないときは断定しない
 ///
 /// パスで指した依存には pin が無いので `nil` を返す。開発中はこの形になる。
-enum DependencyVersion {
+///
+/// **main actor には置かない。** 見張りの作り直しは巡回とは別の糸から進むので、
+/// そこから辿るものが隔離されていると待ちが main actor へ戻ってしまう
+/// ([#1067](https://github.com/mokume-metal/mokume/issues/1067)・ADR-0010 決定 4)。
+nonisolated enum DependencyVersion {
     /// 依存の識別子。
     static let identity = "mokume"
 

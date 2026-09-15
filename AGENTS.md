@@ -111,7 +111,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 
 ## 止まって見えるときの読み分け
 
-**この表は `scripts/stall-watch.sh` が定期に実行する** ([#961](https://github.com/mokume-metal/mokume/issues/961)) — 機械が打てる行 (auto-merge の掛け直し・古い失敗ジョブの rerun) は打たれ、人手が要る行だけが run の赤で名乗られる。どの行を打ちどの行を名乗るかはスクリプトの冒頭にある。**当番は数時間おきにしか回らない** ([#1197](https://github.com/mokume-metal/mokume/issues/1197)) ので、**急ぐときは当番を待たず、自分でこの表を読んで打つ。** **当番の対象外にしたい PR は Draft にする** (作業中の描画 PR を Draft にしておくのと同じ印である)。
+**この表は `scripts/stall-watch.sh` が定期に実行する** ([#961](https://github.com/mokume-metal/mokume/issues/961)) — 機械が打てる行 (auto-merge の掛け直し・古い失敗ジョブの rerun) は打たれ、人手が要る行だけが run の赤で名乗られる。弾かれた描画 PR は手元の `ready-queue.sh` も `catch-up` 行で着手より先に出す ([#1045](https://github.com/mokume-metal/mokume/issues/1045))。**当番は数時間おきにしか回らない** ([#1197](https://github.com/mokume-metal/mokume/issues/1197)) ので、**急ぐときは当番を待たず、自分でこの表を読んで打つ。** **当番の対象外にしたい PR は Draft にする**。
 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
@@ -122,14 +122,14 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 | 同じ 3 つで `isInMergeQueue: false` | 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用) | `make catch-up` |
 | `pr-title` が落ちた | タイトルが Conventional Commits ではない。**`design` は Issue Type であって型ではない** (型は feat/fix/docs/refactor/test/chore/ci/perf/build) | タイトルを直す。**rerun しない** — `pull_request` の rerun は元のイベントを再生するので古いタイトルで判定し、その失敗が最新の結果になって**打つ前より悪くなる** ([#699](https://github.com/mokume-metal/mokume/issues/699))。直せば `edited` で新しい run が走る |
 | close して作り直した PR が、全 check 緑なのに赤い | close した側の run が付けた赤が**同じコミットに残っている** ([#513](https://github.com/mokume-metal/mokume/issues/513)) | **新しい PR の側**の run を rerun する。close した側を rerun すると同じ赤を再生産する — 上の行とは打つ先が逆 |
-| `autoMerge: true` + `BLOCKED` + 全 check 緑 で、**一度承認されたのに承認が無い** | 承認済みの PR へ push したので、ルールセットの `dismiss_stale_reviews_on_push` が承認を落とした ([#1033](https://github.com/mokume-metal/mokume/issues/1033)) | Approve を押し直す — **機械に打てるのは依頼の出し直しまで**で、それは `review-request` が打つ ([#1177](https://github.com/mokume-metal/mokume/issues/1177))。予防は「取り込みは手元だけで済ませ、push しない」([#612](https://github.com/mokume-metal/mokume/issues/612)) — ただし衝突を解いた合流は push が要るので、そのときは落ちるのが正しい |
+| `autoMerge: true` + `BLOCKED` + 全 check 緑 で、**一度承認されたのに承認が無い** | 承認済みの PR へ push したので、ルールセットの `dismiss_stale_reviews_on_push` が承認を落とした ([#1033](https://github.com/mokume-metal/mokume/issues/1033)) | Approve を押し直す — **機械に打てるのは依頼の出し直しまで**で、それは `review-request` が打つ ([#1177](https://github.com/mokume-metal/mokume/issues/1177))。予防は「描画に影響する変更」節の取り込みの作法 ([#612](https://github.com/mokume-metal/mokume/issues/612))。衝突を解いた合流で落ちるのは正しい |
 
 ```bash
 gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews
 gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullRequest(number:<番号>){isInMergeQueue mergeQueueEntry{position state}}}}' --jq '.data.repository.pullRequest'
 ```
 
-**check が 1 本も付かないのは「まだ来ていない」ではなく「来ない」。** 衝突しても赤くならず、`mergeStateStatus` も `DIRTY` ではなく `UNKNOWN` のままなので、状態欄からは衝突と読めない ([#690](https://github.com/mokume-metal/mokume/pull/690))。
+**check が 1 本も付かないのは「まだ来ていない」ではなく「来ない」。** 衝突しても赤くならず `DIRTY` にもならない (`UNKNOWN` のまま) ([#690](https://github.com/mokume-metal/mokume/pull/690))。
 
 **`autoMerge: false` は「外れた」と「queue に入った」の両方を指す** ([#628](https://github.com/mokume-metal/mokume/issues/628))。分けるのは `isInMergeQueue` の 1 欄だけで、`gh pr view --json` に無いので上の GraphQL で引く — **`make catch-up` を打つ前にこれを見る。**
 

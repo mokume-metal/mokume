@@ -18,7 +18,11 @@ import Foundation
 /// たびに今を答える。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
-public enum WorkDirectory {
+///
+/// **main actor には置かない。** 見張りの作り直しは巡回とは別の糸から進むので、
+/// そこから辿るものが隔離されていると待ちが main actor へ戻ってしまう
+/// ([#1067](https://github.com/mokume-metal/mokume/issues/1067)・ADR-0010 決定 4)。
+nonisolated public enum WorkDirectory {
     /// 環境変数の名前。**一覧から取る** — 起動の瞬間に読むものは
     /// ``StartupReads`` が正典で、ここに綴りを書き写さない (#380)。
     static let environmentKey = StartupReads.workDirectory.key

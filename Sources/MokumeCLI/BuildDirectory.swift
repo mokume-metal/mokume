@@ -39,7 +39,11 @@ import mokume
 /// ものと実際に起動するものが食い違う ([#680](https://github.com/mokume-metal/mokume/issues/680)
 /// が構成で踏んだのと同じ形)。だから ``BuildContext`` に抱き合わせて、片方だけ渡せない
 /// 形にしてある。
-enum BuildDirectory {
+///
+/// **main actor には置かない。** 見張りの作り直しは巡回とは別の糸から進むので、
+/// そこから辿るものが隔離されていると待ちが main actor へ戻ってしまう
+/// ([#1067](https://github.com/mokume-metal/mokume/issues/1067)・ADR-0010 決定 4)。
+nonisolated enum BuildDirectory {
     /// 根を外から与える環境変数。
     ///
     /// **``StartupReads`` には載せない。** あれは走らせたスケッチが起動の瞬間に読むものの

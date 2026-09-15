@@ -42,6 +42,15 @@ nonisolated enum ModuleResources {
     }
 
     /// 同梱の資源を 1 つ探す。
+    ///
+    /// **道具立ての口 (`Bundle.module`) に触る 2 つだけは main actor に載せる。** 口は
+    /// ターゲットの既定隔離 (main actor) を受けて生成されるので、隔離を外したこの型の
+    /// 中から触ると、それを隔離の外と読む道具立て (Xcode 26.4.1 / Swift 6.3.1) では
+    /// 組み上がらない。呼び手 (`ShaderLibraries`・`BundledShaders`) はどちらも main actor
+    /// の上に居る。探す並びそのもの (``resolve(name:extension:neighbourhood:resources:onBuildMachine:lastResort:)``)
+    /// は口を受け取るだけなので、隔離を外したままでよい
+    /// ([#1237](https://github.com/mokume-metal/mokume/issues/1237))。
+    @MainActor
     static func url(forResource name: String, withExtension ext: String) -> URL? {
         resolve(
             name: name, extension: ext,
@@ -56,6 +65,7 @@ nonisolated enum ModuleResources {
     /// 隣から読めている」と「組み上げた機械の作業用ディレクトリから読めている」を分け
     /// られないと、配った形が成立しているかを確かめられない
     /// ([#1059](https://github.com/mokume-metal/mokume/issues/1059))。
+    @MainActor
     static func location(
         neighbourhood: URL? = Bundle.main.bundleURL, resources: URL? = Bundle.main.resourceURL,
         onBuildMachine: Bool = isOnBuildMachine,
