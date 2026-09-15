@@ -890,6 +890,148 @@ struct ShapeTests {
         #expect(try bound.target.readPixels() != unbound.target.readPixels())
     }
 
+    // MARK: - 組んだ後に書き換えた絵
+
+    /// 形が絵を読む口。**記録した面は 2 か所に残る** — 貼る絵 (`Run.texture`) と、断片へ
+    /// 渡した面 (`Run.paint.surfaces`)。貼る絵は平面と立体で置き直す経路が分かれる。
+    enum PictureReader: String, CaseIterable, CustomTestStringConvertible {
+        case flat
+        case solid
+        case shaderSurface
+
+        var testDescription: String {
+            switch self {
+            case .flat: "貼った平面"
+            case .solid: "貼った立体"
+            case .shaderSurface: "断片の面"
+            }
+        }
+
+        /// `picture` を読んで描く手順。形の中でもその場でも同じものを使う。
+        @MainActor
+        func body(_ canvas: Canvas, _ picture: Image) throws -> () -> Void {
+            switch self {
+            case .flat:
+                return {
+                    canvas.noStroke()
+                    canvas.fill(.linear(red: 1, green: 1, blue: 1))
+                    canvas.texture(picture)
+                    canvas.beginShape()
+                    canvas.vertex(8, 8, 0, 0)
+                    canvas.vertex(56, 8, 8, 0)
+                    canvas.vertex(56, 56, 8, 8)
+                    canvas.vertex(8, 56, 0, 8)
+                    canvas.endShape(.close)
+                }
+            case .solid:
+                return {
+                    canvas.noStroke()
+                    canvas.fill(.linear(red: 1, green: 1, blue: 1))
+                    canvas.texture(picture)
+                    canvas.beginShape(.triangles)
+                    canvas.normal(0, 0, 1)
+                    canvas.vertex(12, 12, 0, 0, 0)
+                    canvas.normal(0, 0, 1)
+                    canvas.vertex(52, 12, 0, 8, 0)
+                    canvas.normal(0, 0, 1)
+                    canvas.vertex(32, 52, 0, 4, 8)
+                    canvas.endShape()
+                }
+            case .shaderSurface:
+                let shader = try canvas.makeShader(
+                    """
+                    float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                        return mokume_sample(surfaces.tone, in.place);
+                    }
+                    """,
+                    surfaces: ["tone": .image(picture)])
+                return {
+                    canvas.noStroke()
+                    canvas.shader(shader)
+                    canvas.rect(8, 8, 48, 48)
+                }
+            }
+        }
+    }
+
+    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+
+    /// #1253 の完了条件 1・2。**組んだ後で書き換えた絵は、形だけを置き直したフレームにも出る。**
+    ///
+    /// 同じフレームで `image()` を描くと、そちらの経路が送るので隠れる。ここでは形の他に
+    /// 何も描かず、書き換えた後の絵をその場で描いたものと突き合わせる。
+    @Test(
+        "組んだ後で絵を書き換えると、形だけを置き直したフレームに書き換えた画素が出る",
+        arguments: PictureReader.allCases)
+    func rewrittenPictureReachesAReplacedShape(_ reader: PictureReader) throws {
+        let retained = try makeCanvas()
+        let picture = try retained.createImage(8, 8)
+        picture.fill(red)
+        let shape = retained.createShape(try reader.body(retained, picture))
+        try retained.draw {
+            retained.background(.linear(red: 0, green: 0, blue: 0))
+            retained.shape(shape)
+        }
+        let before = try retained.target.readPixels()
+
+        picture.fill(green)
+        try retained.draw {
+            retained.background(.linear(red: 0, green: 0, blue: 0))
+            retained.shape(shape)
+        }
+        let after = try retained.target.readPixels()
+
+        let immediate = try makeCanvas()
+        let immediatePicture = try immediate.createImage(8, 8)
+        immediatePicture.fill(green)
+        let paint = try reader.body(immediate, immediatePicture)
+        try immediate.draw {
+            immediate.background(.linear(red: 0, green: 0, blue: 0))
+            paint()
+        }
+
+        // 書き換えが絵を変えることの裏 (変わらない絵なら、送らなくても一致してしまう)
+        #expect(before != after, "書き換えた画素が面へ送られていない")
+        #expect(after == (try immediate.target.readPixels()))
+    }
+
+    /// #1253 の完了条件 3。**書き換えていない絵は、置き直しても送りを頼まない。**
+    ///
+    /// 送りは GPU 可視メモリへ触るので待ちを頼む (`settleCalls`)。置く口の前後で数え、
+    /// 書き換えたフレームでは 1 つ増えることも見る — 増えない実装でも通る検査にしない。
+    @Test("書き換えていない絵を読む形は、置き直しても送りを頼まない", arguments: PictureReader.allCases)
+    func untouchedPictureIsNotSentAgainWhenReplaced(_ reader: PictureReader) throws {
+        let canvas = try makeCanvas()
+        let picture = try canvas.createImage(8, 8)
+        picture.fill(red)
+        let shape = canvas.createShape(try reader.body(canvas, picture))
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(shape)
+        }
+
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            let settles = canvas.gpu.settleCalls
+            canvas.shape(shape)
+            canvas.shape(shape, 4, 4)
+            #expect(canvas.gpu.settleCalls == settles, "書き換えていない絵の送りを頼んでいる")
+            #expect(!picture.needsUpload)
+        }
+
+        picture.fill(green)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            let settles = canvas.gpu.settleCalls
+            canvas.shape(shape)
+            // 2 度目は送り済みなので頼まない
+            canvas.shape(shape, 4, 4)
+            #expect(canvas.gpu.settleCalls == settles + 1, "書き換えた絵の送りを 1 度だけ頼んでいない")
+            #expect(!picture.needsUpload)
+        }
+    }
+
     @Test("何も入っていない形を置いても、何も起きない")
     func placingAnEmptyShapeDoesNothing() throws {
         let canvas = try makeCanvas(width: 8, height: 8)

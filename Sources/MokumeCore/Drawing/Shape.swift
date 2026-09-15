@@ -132,6 +132,18 @@ public struct Shape {
             theirs.indexCount = 0
             return mine == theirs
         }
+
+        /// この区間が読む面を、読む直前に整える。**置き直す経路はここを通す。**
+        ///
+        /// 記録した面 (`texture` / `paint.surfaces`) は、組んだ時点で送った後の面を指す
+        /// だけである。その場で置く経路と違って ``Picture/prepare()`` を通らないので、
+        /// 組んだ後で画像を書き換えても、呼ばなければ書き換えた画素が面へ届かない ([#1253])。
+        ///
+        /// [#1253]: https://github.com/mokume-metal/mokume/issues/1253
+        func prepareSurfaces() {
+            texture.prepare()
+            for surface in paint.surfaces { surface.prepare() }
+        }
     }
 
     init(
@@ -285,6 +297,14 @@ struct HeldTexture: Equatable {
 
     /// 引数表へ束ねる番地。
     var gpuResourceID: MTLResourceID { texture.gpuResourceID }
+
+    /// 読む直前に整える。持ち主が画像なら、書き換えた画素をここで送る。
+    ///
+    /// **送りは ``Picture/prepare()`` に任せる** — 送りの入口を 1 つに保つためで、
+    /// 送り方が変わってもこちらは書き換えずに済む。描き場所と字形の頁は整えるものが無い。
+    func prepare() {
+        if let image = owner as? Image { Picture.loaded(image).prepare() }
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.texture === rhs.texture }
 }

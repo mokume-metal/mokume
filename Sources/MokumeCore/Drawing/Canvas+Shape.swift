@@ -136,6 +136,11 @@ extension Canvas {
         let savedTexture = currentTexture
 
         for run in shape.runs {
+            // **記録した面を読む前に整える。** 組んだ後で書き換えた画像は、ここで送らないと
+            // 形だけを置くフレームに出ない ([#1253])
+            //
+            // [#1253]: https://github.com/mokume-metal/mokume/issues/1253
+            run.prepareSurfaces()
             // 区間の設定へ移る。**同じなら列は閉じない**ので、続けて置いた形は
             // 前の形と同じ列に並び、描く回数は増えない
             blendMode(run.mode)
