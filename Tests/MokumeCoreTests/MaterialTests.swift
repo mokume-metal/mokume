@@ -35,6 +35,7 @@ struct MaterialTests {
     ) throws -> DisplayImage {
         try canvas.draw {
             canvas.background(black)
+            canvas.noStroke()  // 質感だけを見る (線は既定で有効なので止める)
             if let lights {
                 lights(canvas)
             } else {
@@ -161,6 +162,7 @@ struct MaterialTests {
                 let canvas = try makeCanvas()
                 try canvas.draw {
                     canvas.background(black)
+                    canvas.noStroke()  // 質感だけを見る (線は既定で有効なので止める)
                     canvas.ambientLight(.linear(red: 0.08, green: 0.08, blue: 0.08))
                     canvas.directionalLight(.linear(red: 0.03, green: 0.03, blue: 0.5), 0, 0, -1)
                     canvas.shininess(shininess)
@@ -285,6 +287,7 @@ struct MaterialTests {
         let canvas = try makeCanvas(width: 96, height: 64)
         try canvas.draw {
             canvas.background(black)
+            canvas.noStroke()  // 質感だけを見る (線は既定で有効なので止める)
             canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
             canvas.directionalLight(
                 .linear(red: 0.55, green: 0.55, blue: 0.55), -0.3, 0.4, -0.85)

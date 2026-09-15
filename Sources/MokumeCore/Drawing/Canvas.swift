@@ -310,7 +310,7 @@ public final class Canvas {
     }
 
     /// 立体の頂点が何から来たか。
-    enum SolidSource: Equatable {
+    enum SolidSource: Hashable {
         /// 組み込みの形。同じ寸法なら頂点を置き直さない。
         case mesh(SolidShape)
         /// その場で並べた頂点・線と点・背景。置き場所は 1 つ (何も動かさない)。
@@ -374,6 +374,9 @@ public final class Canvas {
     var solidMeshesBuilt = 0
     /// 使い回しの表に置いておく形の数。超えたら古い順に半分捨てる。
     static let solidMeshCacheLimit = 64
+    /// 形から取り出した稜線の控え。**線を引いたときにだけ作る** — 塗りだけの形は
+    /// 稜線を求めない。形の控えと同じ数を上限にし、超えたら丸ごと捨てて作り直す。
+    var solidEdges: [SolidSource: SolidEdges] = [:]
     /// 一周を割る数の既定。
     public static let defaultSolidDetail = 24
 

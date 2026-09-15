@@ -71,6 +71,9 @@ extension Canvas {
     private func particleQuad() -> Shape {
         createShape {
             fill(.linear(red: 1, green: 1, blue: 1))
+            // **粒は板の塗りだけで出す。** 線は既定で有効なので、止めないと板の縁が
+            // 形に焼き付く (記録の中のスタイルは外へ漏れない — `createShape`)
+            noStroke()
             plane(1, 1)
         }
     }

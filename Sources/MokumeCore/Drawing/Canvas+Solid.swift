@@ -139,14 +139,18 @@ extension Canvas {
 
     // MARK: - 置く
 
-    /// 形を組み立てて (あるいは使い回して)、いまの変換と塗りで置く。
+    /// 形を組み立てて (あるいは使い回して)、いまの変換と塗りと線で置く。
     ///
     /// **同じ形が続く間は、頂点を置き直さない。** 2 個目からは置き場所 (変換と塗り)
     /// だけが増えるので、1 万個置いても頂点は 1 組で済む。
+    ///
+    /// 線は塗りに重ねて引く。`noFill()` なら線だけになる — 塗りと線は互いに独立した
+    /// スタイルで、平面の図形と同じく次元によって作用が変わらない ([ADR-0020] 決定 3)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     func place(_ shape: SolidShape) {
-        guard hasFill else { return }
-
-        placeMesh(.mesh(shape)) { solidMesh(for: shape) }
+        if hasFill { placeMesh(.mesh(shape)) { solidMesh(for: shape) } }
+        strokeSolidEdges(of: .mesh(shape)) { solidMesh(for: shape) }
     }
 
     /// 三角形の並びを、いまの変換と塗りで置く。
@@ -379,6 +383,44 @@ extension Canvas {
             square: { appendSolidSquare(at: points[$0], shape: shapePoints[$0], half: half) })
     }
 
+    /// 置いた形の稜線を、いまの変換と線で引く (``SolidEdges``)。
+    ///
+    /// 帯は視線に合わせて**世界の座標で**組み立てるので、置き場所の変換を点へ焼き込む。
+    /// 形自身の座標は稜線の点をそのまま渡す — 頂点を並べた形の輪郭と同じ約束で、
+    /// 利用者の断片からは線も形の表面に留まって見える。
+    func strokeSolidEdges(of source: SolidSource, mesh build: () -> SolidMesh) {
+        guard hasStroke, currentStrokeWeight > 0 else { return }
+        let net = solidEdges(of: source, mesh: build)
+        guard !net.edges.isEmpty else { return }
+        // **塗りを置かなかったときも、立体の側へ移る。** 移らないと平面の列が開いた
+        // ままで、線の頂点がどの列にも描かれない (`noFill()` で線だけにしたとき)
+        beginSolids()
+
+        let matrix = transform.matrix
+        let placed = net.points.map { point in
+            let world = matrix * SIMD4(point, 1)
+            return SIMD3(world.x, world.y, world.z)
+        }
+        let half = currentStrokeWeight / 2
+        strokeNet(
+            count: placed.count, edges: net.edges,
+            band: {
+                appendSolidBand(
+                    placed[$0], placed[$1], shape: (net.points[$0], net.points[$1]), half: half)
+            },
+            disc: { appendSolidDisc(at: placed[$0], shape: net.points[$0], half: half) },
+            square: { appendSolidSquare(at: placed[$0], shape: net.points[$0], half: half) })
+    }
+
+    /// 稜線を使い回す。**線を引いた形にだけ作る。**
+    private func solidEdges(of source: SolidSource, mesh build: () -> SolidMesh) -> SolidEdges {
+        if let cached = solidEdges[source] { return cached }
+        if solidEdges.count >= Canvas.solidMeshCacheLimit { solidEdges.removeAll(keepingCapacity: true) }
+        let net = SolidEdges(build())
+        solidEdges[source] = net
+        return net
+    }
+
     /// 線分 1 本を帯にする。
     private func appendSolidBand(
         _ a: SIMD3<Float>, _ b: SIMD3<Float>,
@@ -428,10 +470,41 @@ extension Canvas {
     ) {
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)
         appendSolidVertex(
-            position: a, shapePosition: shape.0, normal: .zero, isStroke: true, color: currentStroke)
+            position: liftedTowardViewer(a), shapePosition: shape.0, normal: .zero,
+            isStroke: true, color: currentStroke)
         appendSolidVertex(
-            position: b, shapePosition: shape.1, normal: .zero, isStroke: true, color: currentStroke)
+            position: liftedTowardViewer(b), shapePosition: shape.1, normal: .zero,
+            isStroke: true, color: currentStroke)
         appendSolidVertex(
-            position: c, shapePosition: shape.2, normal: .zero, isStroke: true, color: currentStroke)
+            position: liftedTowardViewer(c), shapePosition: shape.2, normal: .zero,
+            isStroke: true, color: currentStroke)
+    }
+
+    /// 線の頂点を、**見ている側へ視線に沿って**わずかに寄せる。
+    ///
+    /// 帯は視線に正対するので、面の縁に置くと帯の半分が面と同じ奥行きに載る。面を
+    /// 先に描いてあると、その半分が面と奥行きを取り合って**途切れた線**になる
+    /// (#850 で組み込みの形に線を効かせたときに、箱の稜が点線になって現れた)。
+    ///
+    /// **視線に沿って動かすので、画面での位置は変わらない** — 動くのは奥行きだけ
+    /// である。寄せる量は**帯の幅に 1 画素を足した世界の長さ**。帯の内側の縁は、
+    /// 帯の半分の幅と頂点関数の半画素の寄せのぶん面の内へ入る。視線に対して 60° 余り
+    /// まで傾いた面ならその奥行きの差をこの量が上回る (量を帯の半分 + 1 画素にした
+    /// ときは、傾いた面の縁で 1 行に 1 画素ずつ線が食われた)。形の裏の稜線は形の
+    /// 厚みぶん奥にあるので、塗った形の向こう側が透けて見えるのは画面で数画素の
+    /// 形と、稜線が表の縁から出てくる角の数画素だけである。
+    private func liftedTowardViewer(_ point: SIMD3<Float>) -> SIMD3<Float> {
+        let camera = currentCamera
+        let lift = (currentStrokeWeight + 1) * worldPerPixel(at: point)
+        switch camera.projection {
+        case .perspective:
+            let toEye = camera.eye - point
+            let distance = length(toEye)
+            guard distance > 0 else { return point }
+            // 目を越えて裏へ回らないよう、目までの半分で止める
+            return point + toEye / distance * min(lift, distance / 2)
+        case .orthographic:
+            return point - camera.forward * lift
+        }
     }
 }
