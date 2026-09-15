@@ -106,25 +106,25 @@ extension Canvas {
 
     // MARK: - 置き方
 
-    public func imageMode(_ mode: ShapeMode) { currentImageMode = mode }
+    public func imageMode(_ mode: ShapeMode) { style.imageMode = mode }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
-    public func tint(_ color: LinearRGBA) { currentTint = color }
+    public func tint(_ color: LinearRGBA) { style.tint = color }
 
-    public func noTint() { currentTint = .linear(red: 1, green: 1, blue: 1) }
+    public func noTint() { style.tint = .linear(red: 1, green: 1, blue: 1) }
 
     // MARK: - 貼る
 
     // これから置く塗りに絵を貼る。
-    public func texture(_ image: Image) { currentPicture = .loaded(image) }
+    public func texture(_ image: Image) { style.picture = .loaded(image) }
 
     /// 描き場所を貼る。
     public func texture(_ graphics: Canvas) {
         note(placing: graphics)
-        currentPicture = .drawn(graphics.output)
+        style.picture = .drawn(graphics.output)
     }
 
-    public func noTexture() { currentPicture = nil }
+    public func noTexture() { style.picture = nil }
 
     // MARK: - 置く
 
@@ -196,7 +196,7 @@ extension Canvas {
         _ picture: Picture, _ a: Float, _ b: Float, _ c: Float, _ d: Float,
         _ sourceX: Float, _ sourceY: Float, _ sourceWidth: Float, _ sourceHeight: Float
     ) {
-        let box = Self.resolveBox(a, b, c, d, mode: currentImageMode)
+        let box = Self.resolveBox(a, b, c, d, mode: style.imageMode)
         guard box.width > 0, box.height > 0, picture.width > 0, picture.height > 0 else {
             return
         }
@@ -213,7 +213,7 @@ extension Canvas {
             picture, x: box.x, y: box.y, width: box.width, height: box.height,
             uvMin: SIMD2(left / full.x, top / full.y),
             uvMax: SIMD2(right / full.x, bottom / full.y),
-            color: currentTint)
+            color: style.tint)
     }
 }
 

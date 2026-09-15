@@ -37,7 +37,13 @@ public final class SketchRuntime {
     private let timing: FrameTiming
     private let now: () -> Double
     private var hasSetUp = false
+    /// 外から止められているか (``pause()``)。
     private var isPaused = false
+    /// 作者が回しているか (``noLoop()`` で `false`)。**外の停止とは別に持つ** —
+    /// 意味の違いは ``resume()`` の説明にある。
+    private var isLooping = true
+    /// 止まっている間に 1 枚だけ描き直すよう頼まれているか (``redraw()``)。
+    private var redrawRequested = false
 
     /// 登録された出口。**宣言順**に呼ぶ ([ADR-0024] 決定 4)。
     ///
@@ -364,12 +370,25 @@ public final class SketchRuntime {
             serveObservationIfRequested()
             return
         }
+        // **作者が止めている間も入力は配る** (``deliverWhileStopped()``)。配ったコールバックが
+        // `loop()` か `redraw()` を呼べば、このフレームで描く
+        var deliveredInput = false
+        if !isLooping, !redrawRequested {
+            guard deliverWhileStopped() else {
+                serveObservationIfRequested()
+                return
+            }
+            deliveredInput = true
+        }
         var drawFailure: RenderFailure?
         do {
-            try drawSketchFrame()
+            try drawSketchFrame(deliveredInput: deliveredInput)
         } catch {
             drawFailure = error
         }
+        // **落とすのは描いた後。** `draw()` の中で呼ばれた `redraw()` を次のフレームへ
+        // 持ち越すと、止めたはずのスケッチが回り続ける (手本も draw の中では効かない)
+        redrawRequested = false
         // **配ってから組む。** 配るのは前のフレームで組んだ絵で、待つ番号もそれなので、
         // ここまでの CPU の仕事が前のフレームの GPU と重なる (#927)
         if drawFailure == nil { deliverPendingToOutlets() }
@@ -390,11 +409,15 @@ public final class SketchRuntime {
     /// かった ([#808](https://github.com/mokume-metal/mokume/issues/808))。
     ///
     /// 段を足すときはここへ書けば、両方の経路に等しく効く。
-    private func drawSketchFrame() throws(RenderFailure) {
+    ///
+    /// - Parameter deliveredInput: このフレームの入力を、止まっている間に既に当てて配ったか
+    ///   (``deliverWhileStopped()``)。当て直すと、前のフレームからの動き (`pmouseX`・
+    ///   引きずった量・スクロール) が描くフレームから消える。
+    private func drawSketchFrame(deliveredInput: Bool = false) throws(RenderFailure) {
         start()
         timing.advance()
         beginFrame()
-        collectInput()
+        if !deliveredInput { collectInput() }
         canvas.time = timing.time
         canvas.deltaTime = timing.deltaTime
         // **入力の配布も入り口の供給も、描き始めた中で行う。**
@@ -406,11 +429,31 @@ public final class SketchRuntime {
         // 図形や絵の口は守られておらず、フレームの外で置いたものは次の描き切りまで溜まる
         try canvas.draw {
             withActiveRuntime {
-                input.beginFrame { deliver($0) }
+                if !deliveredInput { input.beginFrame { deliver($0) } }
                 supplyFromInlets()
                 sketch.draw()
             }
         }
+    }
+
+    /// 作者が止めている間に届いた入力を引き取り、コールバックを配る。
+    ///
+    /// **止めていても入力は配る。** 止めたスケッチを動かし直す口 (``loop()`` /
+    /// ``redraw()``) は、ふつうコールバックの中から呼ばれる — 配らなければ、一度
+    /// 止めたスケッチは二度と動かない。
+    ///
+    /// 配るのは**フレームの外**である。`draw()` を呼ばないフレームを組むと、効果や
+    /// 視点の無い絵が出口へ出て、止まっている間の絵が変わってしまう。そのため
+    /// コールバックの中の `translate()` は効かず、置いた図形は次に描くフレームへ溜まる。
+    ///
+    /// - Returns: 配った結果、このフレームを描くことになったか。
+    private func deliverWhileStopped() -> Bool {
+        collectInput()
+        withActiveRuntime { input.beginFrame { deliver($0) } }
+        guard isLooping || redrawRequested else { return false }
+        // 止まっていた間の実時間を、描き直しの 1 枚の経過に乗せない
+        timing.resync()
+        return true
     }
 
     /// 配られた 1 件を、スケッチの書いた口へ渡す。
@@ -610,20 +653,51 @@ public final class SketchRuntime {
         exposedValues.removeAll(keepingCapacity: true)
     }
 
-    /// 進めるのを止める。
+    /// 進めるのを止める。**外から止める口** (作者の口は ``Sketch/noLoop()``)。
+    ///
+    /// 止めている間は入力も集めない。観測にだけ応える。
     public func pause() { isPaused = true }
 
-    /// 進めるのを再開する。
+    /// 外から止めたのを再開する。
     ///
     /// **時刻の起点を現在へ寄せ直す。** 止めている間も実時間は進むので、寄せ直さないと
     /// 止めていた時間まるごとが再開後の最初の経過時間として渡る。
+    ///
+    /// ## 作者の `noLoop()` は覆さない
+    ///
+    /// 止まる理由は 2 つある — 外 (``pause()``) と作者 (``Sketch/noLoop()``)。
+    /// これが戻すのは**外の理由だけ**で、作者が止めたスケッチは再開しても止まったまま
+    /// である。「1 度だけ描く」ことが作品の主題であるとき、ホストが再開しただけで
+    /// 動き出すと作品の意味が壊れるため
+    /// ([#900](https://github.com/mokume-metal/mokume/issues/900))。
+    ///
+    /// 判定する関門は ``advance()`` の中の 1 か所で、外が止めていればそちらが先に効く
+    /// (作者の口がコールバックから呼ばれることもない)。外が止めている間に頼まれた
+    /// ``Sketch/redraw()`` は、再開した後の最初のフレームで効く。
     public func resume() {
         isPaused = false
         timing.resync()
     }
 
-    /// 止まっているか。
+    /// 外から止められていないか。**作者の ``Sketch/noLoop()`` はここに現れない** —
+    /// 意味の違いは ``resume()`` の説明にある。
     public var isRunning: Bool { !isPaused }
+
+    /// 作者の口の転送 (正本は ``Sketch/noLoop()``)。
+    func noLoop() { isLooping = false }
+
+    /// 作者の口の転送 (正本は ``Sketch/loop()``)。
+    func loop() {
+        guard !isLooping else { return }
+        isLooping = true
+        // 止まっていた間の実時間を、再開後の最初の経過に乗せない (``resume()`` と同じ理由)
+        timing.resync()
+    }
+
+    /// 作者の口の転送 (正本は ``Sketch/redraw()``)。
+    ///
+    /// 回っている間に呼ばれても旗を立てるだけで、そのフレームを描いた後に落ちる。
+    func redraw() { redrawRequested = true }
 
     // MARK: - 使いやすい入口
 

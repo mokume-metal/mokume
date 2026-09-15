@@ -310,7 +310,7 @@ public final class Canvas {
     }
 
     /// 立体の頂点が何から来たか。
-    enum SolidSource: Equatable {
+    enum SolidSource: Hashable {
         /// 組み込みの形。同じ寸法なら頂点を置き直さない。
         case mesh(SolidShape)
         /// その場で並べた頂点・線と点・背景。置き場所は 1 つ (何も動かさない)。
@@ -374,6 +374,9 @@ public final class Canvas {
     var solidMeshesBuilt = 0
     /// 使い回しの表に置いておく形の数。超えたら古い順に半分捨てる。
     static let solidMeshCacheLimit = 64
+    /// 形から取り出した稜線の控え。**線を引いたときにだけ作る** — 塗りだけの形は
+    /// 稜線を求めない。形の控えと同じ数を上限にし、超えたら丸ごと捨てて作り直す。
+    var solidEdges: [SolidSource: SolidEdges] = [:]
     /// 一周を割る数の既定。
     public static let defaultSolidDetail = 24
 
@@ -394,10 +397,6 @@ public final class Canvas {
     /// 列ごとの「光がどこから何個か」の置き場。
     private let lightingStorage: GrowableBuffer
 
-    /// いま効いている材質。**フレームを越えない** ([ADR-0021] 決定 4)。
-    ///
-    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-    var currentMaterial = Material.default
     /// 列ごとの材質の置き場。列 1 つにつき 1 区画。
     private let materialStorage: GrowableBuffer
 
@@ -599,21 +598,12 @@ public final class Canvas {
 
     // MARK: - 描く状態
 
-    var currentFill = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    var currentStroke = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    var currentStrokeWeight: Float = 1
+    /// これから描くものに効く設定の一式。**フィールドの並びは ``Style`` の宣言にしか無い。**
+    ///
+    /// 丸ごと戻すときは ``currentStyle`` を通す — 列を閉じる条件はそこにある。
+    var style = Style()
     var transform = Transform.identity
     private var transformStack: [Transform] = []
-    var currentRectMode = ShapeMode.corner
-    var currentEllipseMode = ShapeMode.center
-    var currentStrokeCap = StrokeCap.round
-    var currentStrokeJoin = StrokeJoin.miter
-    var hasFill = true
-    /// これから置く形が影を落とすか。
-    var castsShadow = true
-    /// これから置く形が影を受けるか。
-    var receivesShadow = true
-    var hasStroke = true
     private var styleStack: [Style] = []
 
     /// 積んだ履歴を取り出して空にする。**戻すのは ``restore(_:)``。**
@@ -636,8 +626,6 @@ public final class Canvas {
         transformStack = stacks.transforms
         styleStack = stacks.styles
     }
-    var currentBlendMode = BlendMode.blend
-    var currentClip: MTLScissorRect?
     /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
     var hasLoadedPixels = false
 
@@ -689,29 +677,6 @@ public final class Canvas {
     var whiteUV: SIMD2<Float>
     /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。
     var typefaces: [TypefaceRequest: Typeface] = [:]
-
-    var currentFontName: String?
-    var currentTextSize: Float = 12
-    var currentTextStyle = TextStyle.normal
-    var currentHorizontalTextAlign = HorizontalTextAlign.left
-    var currentVerticalTextAlign = VerticalTextAlign.baseline
-    /// 行送りの指定。`nil` は自動 (大きさから決める)。
-    var currentTextLeading: Float?
-    var currentTextWrap = TextWrap.word
-
-    // MARK: 画像
-
-    var currentImageMode = ShapeMode.corner
-    /// 画像に掛ける色。既定は掛けない (白・不透明)。
-    var currentTint = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    /// これから置く**塗り**に貼る絵。`nil` なら貼らない。
-    ///
-    /// **描き方なのでフレームを越える** ([ADR-0021] 決定 4) — 塗り・線・混ぜ方と
-    /// 同じ族である。効く先は塗りだけで、輪郭・端点・角・線と点・字・周囲は
-    /// 焼き場の白い区画を読み続ける。
-    ///
-    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-    var currentPicture: Picture?
 
     // MARK: - 組み立て中の形
 
@@ -770,6 +735,9 @@ public final class Canvas {
         var material: Material
         /// この列を見ている場所。艶が見る向きで変わるので、材質と対で持ち歩く。
         var viewer: SIMD4<Float>
+        /// この列を見ている視点の、世界をカメラの側へ移す行列。断片が面の向きを
+        /// 視点から見た向きへ移すのに使う (`viewer` と同じく**閉じた時点のもの**)。
+        var view: simd_float4x4
         /// この列に効く周囲。**閉じた時点のもの**が入る (光と同じ理由)。
         var surroundings: PackedSurroundings
         /// この列が影を落とす側か。焼き付けるときに、この旗で選り分ける。
@@ -882,102 +850,85 @@ public final class Canvas {
     /// 定数の受け渡しは 16 バイト境界に揃える。
     private static let blendModeStride = 16
 
-    /// これから描くものに効く設定の一式。
+    /// これから描くものに効く設定の一式。**フィールドの並びはこの宣言にしか書かない** ([#780])。
     ///
     /// 面の大きさや溜めている頂点は含まない — **積んで戻せるのは「これから描くものに
     /// 効く設定」だけ**であり、既に置いた図形や面そのものは戻らない。
     ///
+    /// 格納はこれそのもの (``Canvas/style``) で、写し取るのも戻すのも丸ごと 1 つの値で
+    /// 行う。以前は `currentFill` などの格納が別に並び、写し取る getter と戻す setter に
+    /// 同じ並びがもう 2 回書かれていた — 1 か所落としても型は通り、積み降ろしで
+    /// 「その設定だけ戻らない」形で絵がそれらしく壊れる。
+    ///
     /// 積み降ろしの外からも写し取れるよう internal に置く。保持した形の組み立ては
     /// 断片と数の並びまで戻す必要があり、そこは積み降ろしが拾わない
     /// (`Canvas.createShape`)。
+    ///
+    /// [#780]: https://github.com/mokume-metal/mokume/issues/780
     struct Style {
-        var fill: LinearRGBA
-        var stroke: LinearRGBA
-        var strokeWeight: Float
-        var strokeCap: StrokeCap
-        var strokeJoin: StrokeJoin
-        var hasFill: Bool
-        var hasStroke: Bool
-        var rectMode: ShapeMode
-        var ellipseMode: ShapeMode
-        var blendMode: BlendMode
+        var fill = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        var stroke = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        var strokeWeight: Float = 1
+        var strokeCap = StrokeCap.round
+        var strokeJoin = StrokeJoin.miter
+        var hasFill = true
+        var hasStroke = true
+        var rectMode = ShapeMode.corner
+        var ellipseMode = ShapeMode.center
+        var blendMode = BlendMode.blend
         var clip: MTLScissorRect?
         var fontName: String?
-        var textSize: Float
-        var textStyle: TextStyle
-        var horizontalTextAlign: HorizontalTextAlign
-        var verticalTextAlign: VerticalTextAlign
+        var textSize: Float = 12
+        var textStyle = TextStyle.normal
+        var horizontalTextAlign = HorizontalTextAlign.left
+        var verticalTextAlign = VerticalTextAlign.baseline
+        /// 行送りの指定。`nil` は自動 (大きさから決める)。
         var textLeading: Float?
-        var textWrap: TextWrap
-        var imageMode: ShapeMode
-        var tint: LinearRGBA
-        /// 塗りに貼る絵。
+        var textWrap = TextWrap.word
+        var imageMode = ShapeMode.corner
+        /// 画像に掛ける色。既定は掛けない (白・不透明)。
+        var tint = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        /// これから置く**塗り**に貼る絵。`nil` なら貼らない。
+        ///
+        /// **描き方なのでフレームを越える** ([ADR-0021] 決定 4) — 塗り・線・混ぜ方と
+        /// 同じ族である。効く先は塗りだけで、輪郭・端点・角・線と点・字・周囲は
+        /// 焼き場の白い区画を読み続ける。
+        ///
+        /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
         var picture: Picture?
-        /// 材質も積む。**フレームを越えないことと、積めることは別の話である** —
+        /// いま効いている材質。**フレームを越えない** ([ADR-0021] 決定 4)。
+        ///
+        /// それでも積む。**フレームを越えないことと、積めることは別の話である** —
         /// 変換も同じくフレームを越えないが積める。入れ子で書けないほうが不便になる
-        var material: Material
-        /// 影を落とす側か。
-        var castsShadow: Bool
-        /// 影を受ける側か。
-        var receivesShadow: Bool
+        ///
+        /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+        var material = Material.default
+        /// これから置く形が影を落とすか。
+        var castsShadow = true
+        /// これから置く形が影を受けるか。
+        var receivesShadow = true
     }
 
+    /// いまの設定の一式を、丸ごと写し取る / 戻す口。
+    ///
+    /// 戻すときは、**置いた立体を後の設定で描かない**よう、材質・影を落とす / 受ける・
+    /// 混ぜ方・切り抜きのどれかが変わるなら戻す前に列を閉じる。列が読む設定はこの 5 つ
+    /// だけなので、1 度閉じてから丸ごと戻せば足りる (閉じた列は戻す前の値を持つ)。
+    ///
+    /// 塗りに貼る絵 (``Style/picture``) では閉じない。塗りを置く手前で必ず
+    /// `useFillTexture()` を通るので、面が実際に変わるのはそのときで、そこで閉じられる。
     var currentStyle: Style {
-        get {
-            Style(
-                fill: currentFill, stroke: currentStroke, strokeWeight: currentStrokeWeight,
-                strokeCap: currentStrokeCap, strokeJoin: currentStrokeJoin,
-                hasFill: hasFill, hasStroke: hasStroke,
-                rectMode: currentRectMode, ellipseMode: currentEllipseMode,
-                blendMode: currentBlendMode, clip: currentClip,
-                fontName: currentFontName, textSize: currentTextSize,
-                textStyle: currentTextStyle,
-                horizontalTextAlign: currentHorizontalTextAlign,
-                verticalTextAlign: currentVerticalTextAlign,
-                textLeading: currentTextLeading, textWrap: currentTextWrap,
-                imageMode: currentImageMode, tint: currentTint,
-                picture: currentPicture,
-                material: currentMaterial,
-                castsShadow: castsShadow, receivesShadow: receivesShadow)
-        }
+        get { style }
         set {
-            currentFill = newValue.fill
-            currentStroke = newValue.stroke
-            currentStrokeWeight = newValue.strokeWeight
-            currentStrokeCap = newValue.strokeCap
-            currentStrokeJoin = newValue.strokeJoin
-            hasFill = newValue.hasFill
-            hasStroke = newValue.hasStroke
-            currentRectMode = newValue.rectMode
-            currentEllipseMode = newValue.ellipseMode
-            currentFontName = newValue.fontName
-            currentTextSize = newValue.textSize
-            currentTextStyle = newValue.textStyle
-            currentHorizontalTextAlign = newValue.horizontalTextAlign
-            currentVerticalTextAlign = newValue.verticalTextAlign
-            currentTextLeading = newValue.textLeading
-            currentTextWrap = newValue.textWrap
-            currentImageMode = newValue.imageMode
-            currentTint = newValue.tint
-            // 列を閉じる必要は無い。塗りを置く手前で必ず useFillTexture() を通るので、
-            // 面が実際に変わるのはそのときで、そこで閉じられる
-            currentPicture = newValue.picture
-            // 材質と影の扱いが変わるなら、戻す前に列を閉じる (置いた立体を後の設定で
-            // 描かない)
-            if currentMaterial != newValue.material || castsShadow != newValue.castsShadow
-                || receivesShadow != newValue.receivesShadow
+            if style.material != newValue.material
+                || style.castsShadow != newValue.castsShadow
+                || style.receivesShadow != newValue.receivesShadow
+                || style.blendMode != newValue.blendMode
+                || !Self.sameClip(style.clip, newValue.clip)
             {
                 closeBatch()
-                currentMaterial = newValue.material
-                castsShadow = newValue.castsShadow
-                receivesShadow = newValue.receivesShadow
             }
-            // 混ぜ方と切り抜きが変わるなら列を閉じてから戻す
-            blendMode(newValue.blendMode)
-            if !Self.sameClip(currentClip, newValue.clip) {
-                closeBatch()
-                currentClip = newValue.clip
-            }
+            style = newValue
         }
     }
 
@@ -1128,7 +1079,7 @@ public final class Canvas {
     /// 戻る。輪郭・端点・角・線と点はこれを通さず ``useGlyphTexture()`` のままなので、
     /// **貼る絵は塗りにしか効かない**。
     func useFillTexture() {
-        guard let picture = currentPicture else { return useGlyphTexture() }
+        guard let picture = style.picture else { return useGlyphTexture() }
         picture.prepare()
         useTexture(picture.held)
     }
@@ -1353,7 +1304,7 @@ public final class Canvas {
     /// フレームの始まり。**3 つの入口が同じここを通る** — 描き方が入口ごとに
     /// 分かれると、描き場所でだけ成り立たない性質が生まれる。
     private func beginFrame() {
-        currentClip = nil
+        style.clip = nil
         currentNumbers = nil
         // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
         pendingEffects.removeAll(keepingCapacity: true)
@@ -1382,13 +1333,13 @@ public final class Canvas {
         // 効かない視点」が返る。列を閉じるのに視点が要るので、戻すのは flush の後
         defer {
             cameraStorage = nil
-            currentMaterial = .default
+            style.material = .default
             shadowsEnabled = false
             shadowRangeValue = nil
             shadowDetailValue = ShadowMap.defaultDetail
             shadowBiasValue = ShadowMap.defaultBias
-            castsShadow = true
-            receivesShadow = true
+            style.castsShadow = true
+            style.receivesShadow = true
             // **溜めたものもフレームを越えない。** 描き切りは 6 箇所から投げるので、
             // 片付けを成功経路の末尾だけに置くと、描けなかったフレームの図形が次の
             // フレームでもう一度描かれる (#342)。`defer` は投げても走るので、どの
@@ -1398,6 +1349,8 @@ public final class Canvas {
         isDrawing = false
         framesDrawn += 1
 
+        // 焼き付けが読むのと同じ光を、描き切りの前に読む (投げても設定の誤りは知らせる)
+        warnIfShadowHasNoCaster()
         try flush()
     }
 
@@ -1889,7 +1842,8 @@ public final class Canvas {
             var packed = Lighting(
                 offset: UInt32(batch.lightRange.lowerBound),
                 count: UInt32(batch.lightRange.count),
-                viewer: batch.viewer)
+                viewer: batch.viewer,
+                view: batch.view)
             lighting.contents().advanced(by: index * Self.valuesStride)
                 .copyMemory(from: &packed, byteCount: MemoryLayout<Lighting>.stride)
         }

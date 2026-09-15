@@ -71,6 +71,9 @@ extension Canvas {
     private func particleQuad() -> Shape {
         createShape {
             fill(.linear(red: 1, green: 1, blue: 1))
+            // **粒は板の塗りだけで出す。** 線は既定で有効なので、止めないと板の縁が
+            // 形に焼き付く (記録の中のスタイルは外へ漏れない — `createShape`)
+            noStroke()
             plane(1, 1)
         }
     }
@@ -111,7 +114,7 @@ extension Canvas {
         let count = particles.count(rate: rate, over: deltaTime)
         particles.emit(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
-            color: color ?? currentFill, at: time, using: &randomness)
+            color: color ?? style.fill, at: time, using: &randomness)
     }
 
     /// 力を積む。
@@ -128,7 +131,8 @@ extension Canvas {
         // 混ぜ方と変換で描かれるので、順序を入れ替えても絵は変わらない
         let placed = particleRoute == .instanced ? placeFromGPU(particles) : nil
         particles.write(
-            transform: transform.matrix, step: deltaTime, frame: framesDrawn,
+            transform: transform.matrix, basis: currentCamera.basis, step: deltaTime,
+            frame: framesDrawn,
             forces: particles.takeForces(),
             vertexStart: placed?.start ?? 0, vertexCount: placed?.count ?? 0)
         schedule(particles)
@@ -162,7 +166,7 @@ extension Canvas {
     /// 区間 (描く引数として GPU へ渡す)。形を持たなければ `nil`。
     private func placeFromGPU(_ particles: Particles) -> (start: Int, count: Int)? {
         guard let run = particles.quad.runs.first, run.source == .solid else { return nil }
-        let savedMode = currentBlendMode
+        let savedMode = style.blendMode
         let savedTexture = currentTexture
         blendMode(run.mode)
         useTexture(run.texture)
@@ -193,8 +197,27 @@ extension Canvas {
     ///
     /// 読み戻し (``read(_:)``) は溜まっている計算をその場で走らせて待つので、ここで
     /// 読める並びは**このフレームの結果**である。
+    ///
+    /// ``shape(_:at:)`` を通さないのは、板を視点へ向けた行列を ``Placement`` では表せない
+    /// ためである。区間の設定の当て方は ``shape(_:at:)`` の立体の区間と同じ順に揃える
+    /// (面を選び直す `beginSolids` を先に通してから、記録した面へ戻す — #914)。
     private func placeFromCPU(_ particles: Particles) {
-        shape(particles.quad, at: particles.living(from: read(particles.state)))
+        guard let run = particles.quad.runs.first, run.source == .solid else { return }
+        let places = particles.living(
+            from: read(particles.state), transform: transform.matrix,
+            basis: currentCamera.basis)
+        guard !places.isEmpty else { return }
+        let savedMode = style.blendMode
+        let savedTexture = currentTexture
+        blendMode(run.mode)
+        useTexture(run.texture)
+        usePaint(run.paint)
+        beginSolids()
+        useTexture(run.texture)
+        placeSolid(run, of: particles.quad, instances: places)
+        blendMode(savedMode)
+        useTexture(savedTexture)
+        stopReplayingPaint()
     }
 
 }

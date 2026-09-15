@@ -65,7 +65,7 @@ final class InputInbox {
 
     init(directory: URL) {
         self.directory = directory
-        self.requests = RequestFile(facet: directory)
+        self.requests = RequestFile(facet: directory, handover: .rereadsReport)
         self.reportURL = requests.reportURL
     }
 

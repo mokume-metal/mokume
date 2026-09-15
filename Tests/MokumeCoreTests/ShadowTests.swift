@@ -302,15 +302,15 @@ struct ShadowTests {
             #expect(canvas.shadowRangeValue == 40)
             #expect(canvas.shadowDetailValue == 512)
             #expect(canvas.shadowBiasValue == 0.01)
-            #expect(canvas.castsShadow == false)
-            #expect(canvas.receivesShadow == false)
+            #expect(canvas.style.castsShadow == false)
+            #expect(canvas.style.receivesShadow == false)
         }
         #expect(canvas.shadowsEnabled == false)
         #expect(canvas.shadowRangeValue == nil)
         #expect(canvas.shadowDetailValue == ShadowMap.defaultDetail)
         #expect(canvas.shadowBiasValue == ShadowMap.defaultBias)
-        #expect(canvas.castsShadow)
-        #expect(canvas.receivesShadow)
+        #expect(canvas.style.castsShadow)
+        #expect(canvas.style.receivesShadow)
     }
 
     @Test("初期化のときに書いた影の設定は、どのフレームにも属さないので無視される")
@@ -330,8 +330,8 @@ struct ShadowTests {
         #expect(canvas.shadowRangeValue == nil)
         #expect(canvas.shadowDetailValue == ShadowMap.defaultDetail)
         #expect(canvas.shadowBiasValue == ShadowMap.defaultBias)
-        #expect(canvas.castsShadow)
-        #expect(canvas.receivesShadow)
+        #expect(canvas.style.castsShadow)
+        #expect(canvas.style.receivesShadow)
     }
 
     @Test("数でない値・範囲の外の値では、影の設定を変えない")
@@ -652,6 +652,55 @@ struct ShadowTests {
             let caster = canvas.shadowCaster
             #expect(caster?.colorAndKind.x == 1, "2 つ目の光が影を落としている")
         }
+    }
+
+    // MARK: - 落とす光が無いまま終えたフレーム (#1151)
+
+    /// 影と光を置いて立体を描き、手元の表示の前置きとして末尾で光を取り除くフレーム。
+    private func drawThenRemoveLights(_ canvas: Canvas) throws {
+        try canvas.draw {
+            canvas.directionalLight(.linear(red: 1, green: 1, blue: 1), -0.6, 0.6, -0.5)
+            canvas.shadows(true)
+            canvas.sphere(20)
+            #expect(canvas.shadowMatrix != nil, "光を置いたのに影を焼く行列が無い")
+            canvas.noLights()
+            #expect(canvas.shadowMatrix == nil, "光を取り除いた後も影を焼く行列が残っている")
+        }
+    }
+
+    @Test("末尾で光を取り除くと、焼き付けが読む行列が無くなる")
+    func removingLightsAtTheEndLeavesNoShadowMatrix() throws {
+        // 焼き付けはフレームの終わりに 1 度だけ `shadowMatrix` を読むので、末尾の
+        // `noLights()` はそれより前に置いた立体の影まで消す
+        try drawThenRemoveLights(try makeCanvas())
+    }
+
+    @Test("落とす光が無いままフレームを終えると、1 度だけ知らせる")
+    func endingAFrameWithoutACasterWarns() throws {
+        let canvas = try makeCanvas()
+        try drawThenRemoveLights(canvas)
+        #expect(canvas.warnings.hasWarned(.shadowWithoutCaster), "影が黙って消えている")
+        let first = canvas.warnings.message(for: .shadowWithoutCaster)
+        #expect(first?.hasPrefix("shadows()") == true)
+
+        try drawThenRemoveLights(canvas)
+        #expect(canvas.warnings.message(for: .shadowWithoutCaster) == first)
+    }
+
+    @Test("落とす光が残っているフレームと、影を切ったフレームでは知らせない")
+    func framesWithACasterOrWithoutShadowsDoNotWarn() throws {
+        let lit = try makeCanvas()
+        _ = try floorAndSphere(lit)
+        #expect(!lit.warnings.hasWarned(.shadowWithoutCaster), "光が残っているのに知らせている")
+
+        let unshadowed = try makeCanvas()
+        try unshadowed.draw {
+            unshadowed.directionalLight(.linear(red: 1, green: 1, blue: 1), -0.6, 0.6, -0.5)
+            unshadowed.shadows(false)
+            unshadowed.sphere(20)
+            unshadowed.noLights()
+        }
+        #expect(!unshadowed.warnings.hasWarned(.shadowWithoutCaster), "影を切ったのに知らせている")
     }
 }
 

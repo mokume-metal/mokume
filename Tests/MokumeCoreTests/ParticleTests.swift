@@ -5,6 +5,7 @@ import CryptoKit
 import Foundation
 import Metal
 import Testing
+import simd
 
 @testable import MokumeCore
 
@@ -112,14 +113,17 @@ struct ParticleTests {
     }
 
     /// 1 フレームぶんの絵と動きを回す。
+    ///
+    /// `looking` は背景の直後に呼ぶ。視点や変換を置くときに使う。
     private func spray(
         on canvas: Canvas, _ dust: Particles, randomness: inout Randomness, frames: Int,
-        rate: Float = 600
+        rate: Float = 600, looking: (Canvas) -> Void = { _ in }
     ) throws {
         for _ in 0..<frames {
             var stream = randomness
             try canvas.draw {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
+                looking(canvas)
                 canvas.emit(
                     dust, from: .point(32, 12), rate: rate, speed: 20...45,
                     angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
@@ -219,6 +223,84 @@ struct ParticleTests {
         // 何も描けていないと「同じ」も成り立ってしまうので、粒が出ていることを先に見る
         #expect(brightest(fast) > 32)
         #expect(fingerprint(fast) == fingerprint(reference))
+    }
+
+    /// 回した視点と、倍率を掛けて回した変換。板の向きと列の長さを両方踏む。
+    @Test("視点と変換を回しても、速い経路と参照の経路は同じ絵を出す")
+    func bothRoutesAgreeUnderATurnedView() throws {
+        func picture(_ route: Canvas.ParticleRoute) throws -> [UInt8] {
+            let canvas = try makeCanvas()
+            canvas.particleRoute = route
+            var randomness = Randomness(seed: 1043)
+            let dust = try canvas.makeParticles(count: 257)
+            try spray(on: canvas, dust, randomness: &randomness, frames: 10) { canvas in
+                let distance = Camera.fittingDistance(height: 64)
+                canvas.camera(
+                    32 + distance * sin(0.9), 32, distance * cos(0.9), 32, 32, 0, 0, 1, 0)
+                canvas.translate(32, 32, 0)
+                canvas.rotateY(0.6)
+                canvas.scale(1.5, 1.5, 1.5)
+                canvas.translate(-32, -32, 0)
+            }
+            return try canvas.target.encodeForDisplay().bytes
+        }
+
+        let fast = try picture(.instanced)
+        let reference = try picture(.reference)
+        #expect(brightest(fast) > 32)
+        #expect(fingerprint(fast) == fingerprint(reference))
+    }
+
+    // MARK: - 板の向き
+
+    /// 1 点に止まった粒を 1 フレーム描いて、粒が占める画素の数を返す。
+    ///
+    /// 大きさ 12 の板なので、正対していれば 12 × 12 = 144 画素前後になる。
+    private func coverage(looking: (Canvas) -> Void, at origin: (Float, Float)) throws -> Int {
+        let canvas = try makeCanvas()
+        var randomness = Randomness(seed: 1043)
+        let dust = try canvas.makeParticles(count: 256)
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            looking(canvas)
+            canvas.emit(
+                dust, from: .point(origin.0, origin.1), rate: 600, speed: 0...0, angle: 0...0,
+                life: 5...5, size: 12...12, color: .linear(red: 1, green: 1, blue: 1),
+                using: &randomness)
+            canvas.particles(dust)
+        }
+        let bytes = try canvas.target.encodeForDisplay().bytes
+        return stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0 + 1] > 128 }.count
+    }
+
+    /// **3 次元で視点を回すと、板が横を向いて痩せていた** (#1043)。板は視点の枠に沿うので、
+    /// 真横から見ても正面と同じ大きさで写る。
+    @Test("視点を真横へ回しても、粒は痩せない")
+    func particlesFaceTheCameraFromTheSide() throws {
+        let front = try coverage(looking: { _ in }, at: (32, 32))
+        let side = try coverage(
+            looking: { canvas in
+                // 同じ距離から、同じ場所を +x の側から見る
+                canvas.camera(32 + Camera.fittingDistance(height: 64), 32, 0, 32, 32, 0, 0, 1, 0)
+            }, at: (32, 32))
+        #expect(front > 100, "正面から見た粒が写っていない — 比べる前提が崩れている")
+        #expect(Double(side) > Double(front) * 0.8, "真横から見た粒が痩せた (\(side) / \(front) 画素)")
+        #expect(Double(side) < Double(front) * 1.25, "真横から見た粒が太った (\(side) / \(front) 画素)")
+    }
+
+    /// 雲ごと `rotateY()` で回す書き方でも痩せない。**変換からは倍率だけを受け取る**ので、
+    /// 回転は板の向きに効かない。
+    @Test("変換で真横へ回しても、粒は痩せない")
+    func particlesIgnoreTheTurnOfTheTransform() throws {
+        let front = try coverage(looking: { canvas in canvas.translate(32, 32, 0) }, at: (0, 0))
+        let turned = try coverage(
+            looking: { canvas in
+                canvas.translate(32, 32, 0)
+                canvas.rotateY(Float.pi / 2)
+            }, at: (0, 0))
+        #expect(front > 100, "正面から見た粒が写っていない — 比べる前提が崩れている")
+        #expect(Double(turned) > Double(front) * 0.8, "回した粒が痩せた (\(turned) / \(front) 画素)")
+        #expect(Double(turned) < Double(front) * 1.25, "回した粒が太った (\(turned) / \(front) 画素)")
     }
 
     @Test("描き切りが待てなかったら粒の状態へ書かず、次に描けたフレームで置く")
@@ -378,7 +460,9 @@ struct ParticleTests {
             try emitBatch(on: canvas, dust, count: 0, life: 1, randomness: &randomness)
         }
 
-        let living = dust.living(from: canvas.read(dust.state))
+        let living = dust.living(
+            from: canvas.read(dust.state), transform: matrix_identity_float4x4,
+            basis: matrix_identity_float3x3)
         #expect(living.count == tenth * 2)
         let arguments = drawArguments(of: dust, on: canvas)
         #expect(arguments.instanceCount == living.count)
@@ -386,14 +470,16 @@ struct ParticleTests {
         #expect(arguments.baseInstance == 0)
 
         // 詰めた置き場所は、枠の番号順に読んだ生きている粒と 1 つずつ一致する。
-        // 行列の 4 列目が位置、[0][0] が大きさ (変換は単位行列なので値がそのまま出る)
+        // 行列の 4 列目が位置、[0][0] が大きさ (変換も視点の枠も単位行列なので、GPU と
+        // CPU の式が 1 ビットまで揃う)
         let places = canvas.read(dust.instances)
         let placeFloats = MemoryLayout<SolidInstance>.stride / MemoryLayout<Float>.stride
         var mismatched = 0
         for (index, particle) in living.enumerated() {
             let base = index * placeFloats
-            if places[base] != particle.scale || places[base + 12] != particle.x
-                || places[base + 13] != particle.y || places[base + 15] != 1
+            let matrix = particle.matrix
+            if places[base] != matrix.columns.0.x || places[base + 12] != matrix.columns.3.x
+                || places[base + 13] != matrix.columns.3.y || places[base + 15] != 1
             {
                 mismatched += 1
             }
@@ -527,7 +613,7 @@ struct ParticleTests {
         let canvas = try makeCanvas()
         canvas.fill(.linear(red: 1, green: 0, blue: 0))
         _ = try canvas.makeParticles(count: 8)
-        #expect(canvas.currentFill == .linear(red: 1, green: 0, blue: 0))
+        #expect(canvas.style.fill == .linear(red: 1, green: 0, blue: 0))
     }
 
     /// **焼き付くのは仕様である。** 粒の板は保持した形なので、作った瞬間の混ぜ方で描かれる —

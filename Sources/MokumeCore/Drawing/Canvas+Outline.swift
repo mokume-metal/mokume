@@ -32,32 +32,9 @@ extension Canvas {
         count: Int, isClosed: Bool,
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void
     ) {
-        // 折れ目を埋める。
-        //
-        // 帯は線分ごとに独立して置くので、曲がったところに楔形の隙間が空く。そこを
-        // 埋める形が角の形である。**隙間を埋める向きだけを見て、内側か外側かを判定
-        // しない** — 埋める図形は内側でも帯に重なるだけで、絵は変わらない。
-        func join(at index: Int) {
-            switch currentStrokeJoin {
-            case .round:
-                disc(index)
-            case .bevel, .miter:
-                // 削ぐ形は正方形の一部で近似する。尖らせる形は鋭角で極端に伸びるため、
-                // 限界を持たない実装では削ぐ形へ倒す (限界の設計は輪郭が育ってから)
-                square(index)
-            }
-        }
-
-        // 端を仕上げる。
+        func join(at index: Int) { strokeJoinShape(at: index, disc: disc, square: square) }
         func cap(at index: Int, isolated: Bool) {
-            switch currentStrokeCap {
-            case .square where !isolated:
-                return  // 線の長さちょうどで切る
-            case .round:
-                disc(index)
-            case .square, .project:
-                square(index)
-            }
+            strokeCapShape(at: index, isolated: isolated, disc: disc, square: square)
         }
 
         // 点が 1 つだけなら、端点の形そのものを置く
@@ -84,6 +61,70 @@ extension Canvas {
             cap(at: count - 1, isolated: false)
         }
     }
+
+    /// 辺の網を輪郭としてなぞる骨。立体の稜線がこれを通る。
+    ///
+    /// 周と同じ規則を網へ広げただけである — **点に 2 本以上の辺が来ればそこは折れ目、
+    /// 1 本しか来なければ端**。周は全ての点に 2 本が来る網 (閉じた周) か、両端だけ
+    /// 1 本の網 (開いた周) にあたる。
+    ///
+    /// 辺ごとに端を 2 つずつ置かないのは、同じ点へ集まる辺の数だけ円板が重なるから
+    /// である。球の極には一周ぶんの経線が集まるが、置く円板は 1 枚で済む。
+    ///
+    /// - Parameters:
+    ///   - count: 点の数
+    ///   - edges: 点の添字の対。同じ辺が 2 度現れないこと
+    ///   - band: 添字 2 つを結ぶ帯を置く
+    ///   - disc: 添字の点に円板を置く
+    ///   - square: 添字の点に正方形を置く
+    func strokeNet(
+        count: Int, edges: [(Int, Int)],
+        band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void
+    ) {
+        var degrees = [Int](repeating: 0, count: count)
+        for (a, b) in edges {
+            band(a, b)
+            degrees[a] += 1
+            degrees[b] += 1
+        }
+        for (index, degree) in degrees.enumerated() {
+            switch degree {
+            case 0: continue  // どの稜線にも属さない点 (面の中の継ぎ目) は線を持たない
+            case 1: strokeCapShape(at: index, isolated: false, disc: disc, square: square)
+            default: strokeJoinShape(at: index, disc: disc, square: square)
+            }
+        }
+    }
+
+    /// 折れ目を埋める。
+    ///
+    /// 帯は線分ごとに独立して置くので、曲がったところに楔形の隙間が空く。そこを
+    /// 埋める形が角の形である。**隙間を埋める向きだけを見て、内側か外側かを判定
+    /// しない** — 埋める図形は内側でも帯に重なるだけで、絵は変わらない。
+    private func strokeJoinShape(at index: Int, disc: (Int) -> Void, square: (Int) -> Void) {
+        switch style.strokeJoin {
+        case .round:
+            disc(index)
+        case .bevel, .miter:
+            // 削ぐ形は正方形の一部で近似する。尖らせる形は鋭角で極端に伸びるため、
+            // 限界を持たない実装では削ぐ形へ倒す (限界の設計は輪郭が育ってから)
+            square(index)
+        }
+    }
+
+    /// 端を仕上げる。
+    private func strokeCapShape(
+        at index: Int, isolated: Bool, disc: (Int) -> Void, square: (Int) -> Void
+    ) {
+        switch style.strokeCap {
+        case .square where !isolated:
+            return  // 線の長さちょうどで切る
+        case .round:
+            disc(index)
+        case .square, .project:
+            square(index)
+        }
+    }
 }
 
 // 平面の輪郭。骨に差し込むのは「点 → 帯の 4 隅」「点 → 円板の周」「点 → 正方形の 4 隅」の
@@ -92,7 +133,7 @@ extension Canvas {
 
     /// 周を太さのある帯でなぞる。
     func strokeOutline(_ outline: Outline) {
-        let half = currentStrokeWeight / 2
+        let half = style.strokeWeight / 2
         let points = outline.points
         let start = vertices.count
         strokeRing(
@@ -133,8 +174,8 @@ extension Canvas {
         let p2 = strokePoint(x: b.x + normal.x, y: b.y + normal.y)
         let p3 = strokePoint(x: b.x - normal.x, y: b.y - normal.y)
         let p4 = strokePoint(x: a.x - normal.x, y: a.y - normal.y)
-        appendTriangle(p1, p2, p3, color: currentStroke)
-        appendTriangle(p1, p3, p4, color: currentStroke)
+        appendTriangle(p1, p2, p3, color: style.stroke)
+        appendTriangle(p1, p3, p4, color: style.stroke)
     }
 
     /// 円板を置く (丸い端点と丸い角)。周は半径に応じて分ける。
@@ -145,11 +186,11 @@ extension Canvas {
         var previous = strokePoint(x: points[0].x, y: points[0].y)
         for point in points.dropFirst() {
             let current = strokePoint(x: point.x, y: point.y)
-            appendTriangle(hub, previous, current, color: currentStroke)
+            appendTriangle(hub, previous, current, color: style.stroke)
             previous = current
         }
         let first = strokePoint(x: points[0].x, y: points[0].y)
-        appendTriangle(hub, previous, first, color: currentStroke)
+        appendTriangle(hub, previous, first, color: style.stroke)
     }
 
     /// 正方形を置く (四角い端点と削いだ角)。
@@ -158,7 +199,7 @@ extension Canvas {
         let b = strokePoint(x: center.x + half, y: center.y - half)
         let c = strokePoint(x: center.x + half, y: center.y + half)
         let d = strokePoint(x: center.x - half, y: center.y + half)
-        appendTriangle(a, b, c, color: currentStroke)
-        appendTriangle(a, c, d, color: currentStroke)
+        appendTriangle(a, b, c, color: style.stroke)
+        appendTriangle(a, c, d, color: style.stroke)
     }
 }
