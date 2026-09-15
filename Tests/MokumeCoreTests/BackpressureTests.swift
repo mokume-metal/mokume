@@ -107,29 +107,68 @@ struct BackpressureTests {
         #expect(pressure.outstanding == 0)
     }
 
-    @Test("進んでいる間は、総時間が期限を越えても諦めない", arguments: [Patience.block, .peek])
-    func drainMeasuresProgressNotTotalTime(_ patience: Patience) async throws {
-        // 期限は「1 つも進まなくなってから」を測る。**総時間ではない** — 総時間で測ると、
-        // 長く撮った動画の符号化を、進んでいるのに諦めることになる。
-        //
-        // 間隔 (20ms) は期限 (300ms) の 1/15 に取ってある。込み合った機械で 1 回の
-        // 待ちが延びても、期限に届く前に次が返る
+    // MARK: - 期限は「最後に 1 つ進んだ時刻から」測る
+    //
+    // 期限は「1 つも進まなくなってから」を測る。**総時間ではない** — 総時間で測ると、
+    // 長く撮った動画の符号化を、進んでいるのに諦めることになる。
+    //
+    // **守るのは測り方だけで、本物の並行は守らない** (#1229)。枠を `Task.detached` +
+    // `Task.sleep` で返していたら、協調プールの糸 (コア数ぶんしか無い) を並列の他の検査に
+    // 塞がれて再開が期限 (300ms) より遅れ、進んでいるのに諦めて CI と merge queue で落ちた。
+    // 2 つの待ち方で検査を分けたのは、プールから外す形が待ち方によって違うためである
+
+    @Test("進んでいる間は、総時間が期限を越えても諦めない (塞いで待つ)")
+    func blockingDrainMeasuresProgressNotTotalTime() {
         let pressure = Backpressure(limit: 20, stallLimitSeconds: 0.3)
         for _ in 0..<20 { pressure.take() }
         let release = pressure.release
+        let finished = DispatchSemaphore(value: 0)
 
-        Task.detached {
+        // 塞いで待つ側は、返す相手が他に居ないと検査にならない。**返す側は並行プールに
+        // 載せず、専用の糸で返す** (`RunCommandTests` の子を待つ糸と同じ理由)
+        Thread.detachNewThread {
+            defer { finished.signal() }
             for _ in 0..<20 {
-                try? await Task.sleep(for: .milliseconds(20))
+                Thread.sleep(forTimeInterval: 0.02)
                 release()
             }
         }
 
-        // 全部返るまでに 400ms かかる。総時間で測っていれば 300ms で諦める。塞がずに
-        // 見に来る側では、**見に来るたびに測り直していれば**逆に諦めなくなる — そちらは
-        // 上の「1 つも進まなくなったら」が見る
-        #expect(try drain(pressure, patience) == nil)
+        // 全部返るまでに 400ms かかる。総時間で測っていれば 300ms で諦める
+        #expect(pressure.drain() == nil)
         #expect(pressure.outstanding == 0)
+        // **待つ側が期限を持つ** (#564)。期限は安全網である
+        #expect(finished.wait(timeout: .now() + 10) == .success, "枠を返す糸が戻らない")
+    }
+
+    @Test("進んでいる間は、総時間が期限を越えても諦めない (塞がずに見に来る)")
+    func peekingDrainMeasuresProgressNotTotalTime() throws {
+        let pressure = Backpressure(limit: 20, stallLimitSeconds: 0.3)
+        for _ in 0..<20 { pressure.take() }
+        let release = pressure.release
+        let started = DispatchTime.now()
+
+        // **並行を使わない。** 返すのも見に来るのもこの検査で、交互に行う。返してから見に
+        // 来るので、見に来たときの取り込みは必ずその 1 枚を数える — この糸がどれだけ遅れて
+        // 見に来ても判定は変わらない
+        for returned in 1...20 {
+            Thread.sleep(forTimeInterval: 0.02)
+            release()
+            let settled = pressure.drain(.peek)
+            guard returned < 20 else {
+                #expect(settled, "全部返したのに決着しない")
+                break
+            }
+            try #require(
+                !settled,
+                "\(returned) 枚目を返したところで、進んでいるのに諦めた (残り \(pressure.outstanding))")
+        }
+        #expect(pressure.outstanding == 0)
+
+        // 総時間が期限を越えていなければ、この検査は何も見ていない。見に来るたびに
+        // **測り直していれば**逆に諦めなくなる — そちらは上の「1 つも進まなくなったら」が見る
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1e9
+        #expect(elapsed > pressure.stallLimitSeconds, "総時間 \(elapsed) 秒が期限を越えていない")
     }
 
     /// **塞がずに見に来る待ちは、止まった相手の前でも待たない** ([#978])。
