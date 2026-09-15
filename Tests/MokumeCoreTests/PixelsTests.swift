@@ -66,13 +66,22 @@ struct PixelsTests {
         }
 
         // 半精度浮動小数へ量子化した値と比べる。指定した Float とそのまま比べると、
-        // 検査が「量子化したか」ではなく「精度が落ちたか」を見てしまう
-        let quantized = LinearRGBA(
-            premultipliedRed: Float(Float16(color.red)),
-            green: Float(Float16(color.green)),
-            blue: Float(Float16(color.blue)),
-            alpha: Float(Float16(color.alpha)))
-        #expect(canvas.get(16, 16) == quantized)
+        // 検査が「量子化したか」ではなく「精度が落ちたか」を見てしまう。
+        //
+        // **挟む 2 つの半精度のどちらかと一致すればよい。** GPU が描き場所へ書くときの丸めは
+        // 最寄りとは限らず、半精度の目盛りの途中にある値は下の目盛りへ落ちることがある
+        // (原色を移した後の青 0.49213 は、最寄りの 0.49219 ではなく 0.49194 として書かれた — #911)
+        func isQuantized(_ drawn: Float, _ given: Float) -> Bool {
+            let below = Float(Float16(given).nextDown)
+            let above = Float(Float16(given).nextUp)
+            let nearest = Float(Float16(given))
+            return drawn == nearest || drawn == below || drawn == above
+        }
+        let drawn = canvas.get(16, 16)
+        #expect(isQuantized(drawn.red, color.red))
+        #expect(isQuantized(drawn.green, color.green))
+        #expect(isQuantized(drawn.blue, color.blue))
+        #expect(drawn.alpha == Float(Float16(color.alpha)))
     }
 
     // MARK: - 整列
@@ -115,7 +124,8 @@ struct PixelsTests {
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.noStroke()
-            canvas.fill(.display(red: 1, green: 0, blue: 0))
+            // 作業空間の原色で塗る。純色のまま 255 / 0 に出るので、行ごとに完全一致で読める
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.rect(0, 1, Float(width), 1)
         }
 

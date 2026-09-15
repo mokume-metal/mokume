@@ -16,10 +16,12 @@ import Testing
 struct GraphicsTests {
     private static let size = 64
 
+    // 目印の色は作業空間の原色 (`.linear`) で書く。この検査の主題は色の入口ではなく、
+    // 純色のまま 255 / 0 に出るので期待値をそのまま書ける (入口は ColorSurfaceTests が見る — #911)
     private let black = LinearRGBA.display(red: 0, green: 0, blue: 0)
-    private let green = LinearRGBA.display(red: 0, green: 1, blue: 0)
-    private let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
-    private let blue = LinearRGBA.display(red: 0, green: 0, blue: 1)
+    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
     private let white = LinearRGBA.display(red: 1, green: 1, blue: 1)
 
     private func makeCanvas(width: Int = size, height: Int = size) throws -> Canvas {

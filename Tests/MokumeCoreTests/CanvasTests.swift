@@ -33,7 +33,8 @@ struct CanvasTests {
     @Test("背景は面全体を塗る")
     func backgroundCoversEverything() throws {
         let canvas = try makeCanvas(width: 8, height: 8)
-        try canvas.draw { canvas.background(.display(red: 1, green: 0, blue: 0)) }
+        // 作業空間の原色で塗る。純色のまま 255 / 0 に出るので、全画素を完全一致で読める
+        try canvas.draw { canvas.background(.linear(red: 1, green: 0, blue: 0)) }
 
         let image = try pixels(of: canvas)
         for y in 0..<8 {
@@ -1428,24 +1429,28 @@ struct CanvasTests {
 
     // MARK: - 色
 
-    @Test("見た目で指定した色が、そのまま出る")
+    @Test("見た目で指定した色は、sRGB から作業空間へ移した色として出る")
     func displayColorSurvivesTheRoundTrip() throws {
-        // 入口で線形へ戻し、出口で同じ変換を掛けるので、往復すれば元の見た目に戻る
-        // (ADR-0011 決定 3 の入口と出口が対になっていることの確認)。
+        // 入口は転送関数を外して原色を Display P3 へ移し、出口は転送関数だけを掛ける
+        // (ADR-0011 決定 3)。だから書き出しのバイト列は、sRGB の色を Display P3 で書き直した
+        // ものになる。期待値は CoreGraphics に同じ変換をさせて導く (ADR-0019 決定 4 の改訂)。
         //
         // **ぴたりとは戻らない。** 途中の作業空間は半精度浮動小数なので、線形へ
         // 落として戻す間に最下位の桁が動く。8 bit にした後の許容を 1 段に取るのは
         // そのため — ここを 0 段にすると、精度の話でしか落ちない検査になる。
-        let canvas = try makeCanvas(width: 4, height: 4)
-        try canvas.draw {
-            canvas.background(.display(red: 0.25, green: 0.5, blue: 0.75))
-        }
+        for (red, green, blue) in [(0.25, 0.5, 0.75), (204.0 / 255, 153.0 / 255, 0)] {
+            let canvas = try makeCanvas(width: 4, height: 4)
+            try canvas.draw {
+                canvas.background(.display(red: Float(red), green: Float(green), blue: Float(blue)))
+            }
 
-        let pixel = try pixels(of: canvas)[0, 0]
-        #expect(abs(Int(pixel.red) - 64) <= 1)
-        #expect(abs(Int(pixel.green) - 128) <= 1)
-        #expect(abs(Int(pixel.blue) - 191) <= 1)
-        #expect(pixel.alpha == 255)
+            let pixel = try pixels(of: canvas)[0, 0]
+            let expected = SRGBReference.writtenBytes(red: red, green: green, blue: blue)
+            #expect(abs(Int(pixel.red) - Int(expected.0)) <= 1)
+            #expect(abs(Int(pixel.green) - Int(expected.1)) <= 1)
+            #expect(abs(Int(pixel.blue) - Int(expected.2)) <= 1)
+            #expect(pixel.alpha == 255)
+        }
     }
 
     @Test("半透明の図形は下の色と混ざる")

@@ -5,9 +5,10 @@ import MokumeDiagnostics
 
 /// 0–255 の目盛りと作業空間の間の変換 ([ADR-0033] 決定 1)。
 ///
-/// 素の数値で書かれた色は**ディスプレイのエンコード値を 255 倍したもの**として読む。
-/// 線形へ戻す変換そのものは ``TransferFunction`` が持ち、ここは目盛りを合わせるだけ —
-/// 変換点は [ADR-0011] 決定 3 の言う入口の 1 箇所のままである。
+/// 素の数値で書かれた色は **sRGB のエンコード値を 255 倍したもの**として読む。
+/// 作業空間へ移す変換そのもの (転送関数と原色) は ``LinearRGBA/display(red:green:blue:alpha:)``
+/// が持ち、ここは目盛りを合わせるだけ — 変換点は [ADR-0011] 決定 3 の言う入口の 1 箇所の
+/// ままである。読み出しは同じ変換を逆にたどる。
 ///
 /// **アルファには伝達関数を掛けない。** アルファは光の量ではなく覆いの割合なので、
 /// 目盛りを 255 で割るだけでよい。
@@ -18,12 +19,7 @@ enum DisplayScale {
     /// 素の数値の目盛りの上端。
     static let maximum: Float = 255
 
-    /// 0–255 のエンコード値 → 作業空間の線形の値。
-    static func linear(_ component: Float) -> Float {
-        TransferFunction.decode(component / maximum)
-    }
-
-    /// 作業空間の線形の値 → 0–255 のエンコード値。
+    /// 線形 sRGB の値 → 0–255 のエンコード値。
     ///
     /// **丸めない。** 範囲の外の値もそのまま返す ([ADR-0033] 決定 6) — 「0–255」は
     /// 目盛りであって上限ではない。出口の ``OutputStage/encodeForDisplay(_:)`` が
@@ -35,16 +31,25 @@ enum DisplayScale {
         return TransferFunction.encode(linear) * maximum
     }
 
-    /// 乗算を戻してから 0–255 の目盛りへ ([ADR-0033] 決定 6 の 3 つの契約)。
+    /// 乗算を戻し、sRGB の原色へ移してから 0–255 の目盛りへ ([ADR-0033] 決定 6 の 3 つの契約)。
     ///
     /// 掛け戻しは ``OutputStage/straighten(_:alpha:)`` を使う — [ADR-0011] 決定 4 は
     /// 戻す点を 1 つに固定しており、ここに 2 つ目の割り算を書かない。
     ///
+    /// **3 成分をまとめて読む。** 原色の行列は成分を混ぜるので、赤だけを読むにも緑と青が
+    /// 要る。数でない成分は 0 として混ぜる — 1 つの壊れた成分が、残りの読み出しまで
+    /// 数でなくすることはない。
+    ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-    static func readComponent(_ premultiplied: Float, alpha: Float) -> Float {
-        guard premultiplied.isFinite, alpha.isFinite else { return 0 }
-        return component(OutputStage.straighten(premultiplied, alpha: alpha))
+    static func readComponents(_ color: LinearRGBA) -> SIMD3<Float> {
+        guard color.alpha.isFinite else { return .zero }
+        func straight(_ premultiplied: Float) -> Float {
+            premultiplied.isFinite ? OutputStage.straighten(premultiplied, alpha: color.alpha) : 0
+        }
+        let sRGB = ColorPrimaries.sRGB(
+            fromWorking: SIMD3(straight(color.red), straight(color.green), straight(color.blue)))
+        return SIMD3(component(sRGB.x), component(sRGB.y), component(sRGB.z))
     }
 
     /// 素の数値から作業空間の色を作る。**非有限の値が混じっていたら作らない。**
@@ -58,10 +63,8 @@ enum DisplayScale {
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     static func color(red: Float, green: Float, blue: Float, alpha: Float) -> LinearRGBA? {
         guard red.isFinite, green.isFinite, blue.isFinite, alpha.isFinite else { return nil }
-        return LinearRGBA(
-            straightRed: linear(red),
-            green: linear(green),
-            blue: linear(blue),
+        return .display(
+            red: red / maximum, green: green / maximum, blue: blue / maximum,
             alpha: alpha / maximum)
     }
 }
@@ -97,7 +100,8 @@ enum ColorValues {
 /// 色を作る。**素の数値は 0–255** ([ADR-0033] 決定 1)。
 ///
 /// 3 つなら赤・緑・青、4 つ目は不透明度。書いた値は画面で見える明るさの目盛りで、
-/// 線形の光の量ではない。
+/// 線形の光の量ではない。**原色は sRGB** — 手本の色見本と同じ数から同じ色が出る
+/// (作業空間へ移す変換は ``LinearRGBA/display(red:green:blue:alpha:)`` と同じ)。
 ///
 /// ```swift
 /// let accent = color(255, 204, 0)
@@ -163,19 +167,24 @@ public func color(hex: Int) -> LinearRGBA {
 /// 元の色は復元できない)。**範囲の外は丸めない** — `red(color(510, 0, 0))` は 510 を
 /// 返す。**数でない値は 0 へ倒す**。
 ///
+/// 値は ``color(_:_:_:_:)`` と同じ **sRGB の原色**の目盛りで返す (作業空間から sRGB へ
+/// 移してから読む — [ADR-0011] 決定 3)。だから `red(color(255, 204, 0))` は 255 に戻る。
+/// sRGB の外にある作業空間の色は、負や 255 を超える値として読める。
+///
+/// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public func red(_ color: LinearRGBA) -> Float {
-    DisplayScale.readComponent(color.red, alpha: color.alpha)
+    DisplayScale.readComponents(color).x
 }
 
 /// 緑の成分を 0–255 の目盛りで読む。契約は ``red(_:)`` と同じ。
 public func green(_ color: LinearRGBA) -> Float {
-    DisplayScale.readComponent(color.green, alpha: color.alpha)
+    DisplayScale.readComponents(color).y
 }
 
 /// 青の成分を 0–255 の目盛りで読む。契約は ``red(_:)`` と同じ。
 public func blue(_ color: LinearRGBA) -> Float {
-    DisplayScale.readComponent(color.blue, alpha: color.alpha)
+    DisplayScale.readComponents(color).z
 }
 
 /// 不透明度を 0–255 の目盛りで読む。

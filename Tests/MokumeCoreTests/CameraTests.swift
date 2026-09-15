@@ -21,8 +21,10 @@ import Testing
 struct CameraTests {
     private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
     private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
-    private let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
-    private let green = LinearRGBA.display(red: 0, green: 1, blue: 0)
+    // 目印の色は作業空間の原色 (`.linear`) で書く。この検査の主題は色の入口ではなく、
+    // 純色のまま 255 / 0 に出るので期待値をそのまま書ける (入口は ColorSurfaceTests が見る — #911)
+    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
 
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
