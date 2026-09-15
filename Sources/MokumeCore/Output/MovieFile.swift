@@ -34,6 +34,28 @@ enum MovieWriteFailure: Error, Equatable {
 /// バイトまで一致した。配布向けの軽い符号化は「再現を捨てて小さくする」選択なので、
 /// 要る場面が出てから足す ([ADR-0008])。
 ///
+/// ## 符号化器の用意は、読み直して待つ
+///
+/// `append(_:at:)` は `isReadyForMoreMediaData` が立つまで待つ。**この待ちは外せない** —
+/// 用意できていない入力へ書き足すと、AVFoundation は例外を投げる。``Backpressure`` とは
+/// 役目が違い、あちらはこの待ちを頼む側 (フレームループ) まで伝える段である
+/// (``MovieWriter`` の「待ち方」)。
+///
+/// **待ち方は、1ms ごとに読み直す形を選んでいる。** 毎回状態を読み直すので、合図を
+/// 取りこぼしようがない。待ちに入るのは 1 本あたりたいてい 0〜2 回、多くて数十回で、
+/// 費用は無視できる ([#979] の実測)。合図で待つ 2 つの形は採らない:
+///
+/// - **`PixelBufferReceiver.append(_:with:) async`** — 非推奨の案内が指す先だが、入力が
+///   受け取れる状態のまま戻らないことがある (macOS 26.6 で、256×192・120 枚の書き出しの
+///   約 9%)。ここで止まると枠が返らず、上限に達したところで main actor が塞がって
+///   **撮影中に窓ごと固まる**
+/// - **KVO で変化を待つ** — 通知を 1 度取りこぼせば、同じく永久に待つ。取りこぼしが無いと
+///   言えるだけの回数を測れていない
+///
+/// 受け手の API へ移る日のために: 受け手を作った時点で、入力は writer に加わっている。
+/// `add(_:)` を重ねると入力が 2 本と数えられ、来ない 2 本目を待って動画の 1 秒ほどで止まる。
+///
+/// [#979]: https://github.com/mokume-metal/mokume/issues/979
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
@@ -162,6 +184,7 @@ nonisolated final class MovieFile {
             writer.startSession(atSourceTime: stamp)
             hasStarted = true
         }
+        // 読み直して待つ。合図で待つ形を採らない理由は型の冒頭にある (#979)
         while !input.isReadyForMoreMediaData {
             try? await Task.sleep(for: .milliseconds(1))
         }
