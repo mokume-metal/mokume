@@ -117,6 +117,45 @@ struct MovieWriterTests {
         }
     }
 
+    /// **塞がずに見に来る閉じ方も、閉じ終えたと答えた時点で全部入っている** ([#978])。
+    ///
+    /// 終わりの経路はこの答えを見て AppKit へ「終わってよい」と返す。閉じる前に `true` を
+    /// 返せば、返事の直後にプロセスが消えて、再生できないファイルが残る。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @Test("塞がずに見に来て閉じ終えたと答えた時点で、ファイルは閉じていて全部入っている")
+    func peekingReportsClosedOnlyAfterTheFileIsClosed() async throws {
+        try await withTemporaryDirectory("mokume-movie-peek") { directory in
+            let path = directory.appendingPathComponent("peeked.mov").path
+            let writer = MovieWriter(path: path, frameRate: 60)
+            for frame in 1...12 {
+                writer.write(image(UInt8(frame * 8)), frame: frame, time: Double(frame - 1) / 60)
+            }
+            // **符号化を済ませてから閉じ始める。** 見に来る間隔 (2 ms) の間に残りの符号化と
+            // 最終化 (手元で最短約 3 ms) が両方済むと、閉じた合図を見ずに答えていても閉じ終えて
+            // 見える (実測)。符号化が済んでいれば、最初に見に来た同じ呼び出しの中で閉じる段へ
+            // 進むので、合図を見ずに答えれば最終化より前になる
+            try await Task.sleep(for: .milliseconds(300))
+
+            // **答えた瞬間に見る。** 読み戻し (`decodeMovie`) は `await` を挟むので、その間に
+            // 最終化が追いつき、閉じる前に答えていても揃って見える
+            var closedWhenAnswered: Bool?
+            try #require(
+                pollUntilSettled(within: MovieWriter.closeLimitSeconds + 10) {
+                    guard writer.finish(.peek) else { return false }
+                    closedWhenAnswered = movieHasClosed(path)
+                    return true
+                },
+                "閉じる期限を過ぎても決着しない")
+            #expect(closedWhenAnswered == true, "閉じ終える前に、閉じ終えたと答えた")
+
+            let movie = try await decodeMovie(path)
+            #expect(movie.frames.count == 12)
+            // 決着した後に呼んでも、もう一度閉じようとしない
+            #expect(writer.finish(.peek))
+        }
+    }
+
     @Test("作業空間と同じ色を名乗る")
     func theMovieDeclaresTheWorkingColourSpace() async throws {
         try await withTemporaryDirectory("mokume-movie-colour") { directory in
@@ -311,6 +350,76 @@ struct RecordMovieTests {
         return fromTheRoad
     }
 
+    /// **撮っている最中に終わっても、最後の 1 枚まで入る** ([#978])。
+    ///
+    /// 終わりの経路は `endRecord()` を通らず、差込口を閉じながら塞がずに見に来る。控えの
+    /// 1 枚 (#927) を配る前に撮る係を閉じたり、閉じ終える前に手放したりすると、枚数が
+    /// 欠けるかファイルが開けなくなる。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @Test("撮っている最中に塞がずに閉じても、最後の 1 枚まで入っている")
+    func closingWithoutBlockingKeepsEveryFrame() async throws {
+        try await withTemporaryDirectory("mokume-movie-quit") { directory in
+            let path = directory.appendingPathComponent("quit.mov").path
+            let runtime = try makeRuntime { sketch in
+                sketch.background(.display(red: 0.06, green: 0.06, blue: 0.09))
+                sketch.circle(Float(sketch.frameCount) * 4, 24, 20)
+                if sketch.frameCount == 1 { sketch.beginRecord(path) }
+            }
+            for _ in 0..<10 { try runtime.advance() }
+
+            try #require(
+                pollUntilSettled(within: MovieWriter.closeLimitSeconds + 10) {
+                    runtime.closePlugins(.peek)
+                },
+                "閉じる期限を過ぎても決着しない")
+
+            // 撮り始めたフレームから 10 枚目まで。10 枚目は閉じるときに配られる (#927)
+            let movie = try await decodeMovie(path)
+            #expect(movie.frames.count == 10)
+        }
+    }
+
+    /// **閉じ終えるのを待っている間は、フレームを進めない** ([#978])。
+    ///
+    /// 待ちは塞がずに見に来る形なので、その間も駆動源は `advance()` を呼んでくる。進めると
+    /// `draw()` が新しい録りを始め、それは誰にも閉じられないまま終わる。
+    ///
+    /// **最初に見に来た時点で「まだ」になることに寄りかかっている。** 見に来るのは
+    /// `continuation.finish()` と同じ呼び出しの中で、その間は数 µs しかない。対して閉じた
+    /// 合図までは、配ったばかりの 1 枚の符号化に加えて最終化が要る — 符号化を済ませた
+    /// 64x48 の動画でも最終化だけで最短約 3 ms かかり、この検査の経路では閉じ終えるまで
+    /// 0.13 秒前後だった (手元でそれぞれ 5 回)。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @Test("閉じ終えるのを待っている間は、advance() してもスケッチが描かれない")
+    func framesDoNotAdvanceWhileClosing() async throws {
+        try await withTemporaryDirectory("mokume-movie-quit-frozen") { directory in
+            let path = directory.appendingPathComponent("frozen.mov").path
+            var draws = 0
+            let runtime = try makeRuntime { sketch in
+                draws += 1
+                sketch.background(.display(red: 0.06, green: 0.06, blue: 0.09))
+                if sketch.frameCount == 1 { sketch.beginRecord(path) }
+            }
+            for _ in 0..<3 { try runtime.advance() }
+
+            try #require(!runtime.closePlugins(.peek), "最初に見に来た時点で閉じ終えていた")
+            let drawsBeforeWaiting = draws
+            try runtime.advance()
+            #expect(draws == drawsBeforeWaiting, "閉じ終えるのを待っている間にスケッチが描かれた")
+
+            try #require(
+                pollUntilSettled(within: MovieWriter.closeLimitSeconds + 10) {
+                    runtime.closePlugins(.peek)
+                },
+                "閉じる期限を過ぎても決着しない")
+            // 閉じ終えたら、また進む
+            try runtime.advance()
+            #expect(draws == drawsBeforeWaiting + 1)
+        }
+    }
+
     @Test("同じ入力から 2 回書き出した動きが一致する")
     func theSameInputWritesTheSameMotionTwice() async throws {
         try await withTemporaryDirectory("mokume-movie-twice") { directory in
@@ -414,6 +523,17 @@ private func withTemporaryDirectory(
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     try await body(directory)
+}
+
+/// 動画が閉じ終えているか。**末尾のメタデータ (`moov`) が書かれているかで見る。**
+///
+/// `AVAssetWriter` の .mov は、最終化を終えるまで `moov` を書かない (書いている途中・
+/// `finishWriting` を呼んだ直後・終えた後で手元で確かめた)。「閉じ終えた」と答えた瞬間に
+/// 同期で見たいときに使う — 読み戻し (``decodeMovie(_:)``) は `await` を挟むので、その間に
+/// 最終化が追いついてしまう。
+func movieHasClosed(_ path: String) -> Bool {
+    guard let data = FileManager.default.contents(atPath: path) else { return false }
+    return data.range(of: Data("moov".utf8)) != nil
 }
 
 /// 読み戻した動画。

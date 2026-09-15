@@ -482,4 +482,25 @@ struct PluginSeamTests {
         #expect(outlet.received.count == 1)
         #expect(inlet.supplied == 1)
     }
+
+    /// **塞がずに見に来る閉じ方は何度も呼ばれるが、差込口を閉じるのは 1 回だけ** ([#978])。
+    ///
+    /// 終わりの経路は撮る係が書き終えるまで同じ口を見に来る。差込口の `close()` は
+    /// 「終わるときに一度だけ呼ばれる」約束なので、見に来るたびに閉じると、送り先の
+    /// 機材やアプリへ終わりを何度も告げることになる。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @Test("塞がずに見に来る閉じ方を重ねても、差込口は 1 回しか閉じない")
+    func peekingAgainClosesEachSeamOnce() throws {
+        let outlet = RecordingOutlet()
+        let inlet = CountingInlet()
+        let runtime = try makeRuntime([BothPlugin(outlet: outlet, inlet: inlet)])
+
+        try runtime.advance()
+        for _ in 0..<3 { runtime.closePlugins(.peek) }
+        runtime.closePlugins()
+
+        #expect(outlet.closed == 1)
+        #expect(inlet.closed == 1)
+    }
 }

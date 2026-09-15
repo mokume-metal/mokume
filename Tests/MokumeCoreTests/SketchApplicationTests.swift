@@ -190,4 +190,129 @@ struct SketchApplicationTests {
             #expect(ended == (confirmed ? 1 : 0))
         }
     }
+
+    // MARK: - 終わるときに、後始末を塞がずに待つ (#978)
+
+    /// 最初のフレームで動画を撮り始め、止めないスケッチ。行き先は検査ごとに差し替える。
+    private final class Recording: Sketch {
+        nonisolated(unsafe) static var path = ""
+
+        var settings: SketchSettings { SketchSettings(width: 64, height: 48, frameRate: 60) }
+        func draw() {
+            if frameCount == 1 { beginRecord(Self.path) }
+        }
+    }
+
+    /// **いつもの終わり方は変えない。** 待つものが無いのに返事を後回しにすると、終わるたびに
+    /// run loop を 1 周余計に回すことになる。
+    @Test("何も書き出していなければ、その場で終わってよいと答える")
+    func terminatesAtOnceWithNothingToWaitFor() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        var replies = 0
+        application.replyToTermination = { replies += 1 }
+        defer { application.willTerminate() }
+
+        let delegate = SketchApplicationDelegate(application: application)
+        #expect(delegate.applicationShouldTerminate(.shared) == .terminateNow)
+        application.pollTermination()
+        #expect(replies == 0, "その場で終わると答えたのに、後からも返事をした")
+    }
+
+    /// **撮っている最中に終わるなら、main を塞がずに閉じ終えるのを待たせる** ([#978])。
+    ///
+    /// 塞いで待っていれば、問いに答える時点で閉じ終えているので `.terminateNow` が返る —
+    /// それは `AVAssetWriter.finishWriting` の間 main を塞いでいたということである。
+    /// `.terminateLater` の後に、見に来た回で 1 回だけ返事が出ることを見る。
+    ///
+    /// 最初の答えが「後で」になるのは、閉じた合図までに配ったばかりの 1 枚の符号化と最終化が
+    /// 要るからである (幅の実測は `RecordMovieTests` の「閉じ終えるのを待っている間は」)。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @Test(
+        "撮っている最中なら、閉じ終えるまで返事を待たせ、済んだら 1 回だけ終わってよいと返す",
+        .enabled(if: MovieFile.isAvailable, "この機械には ProRes 4444 の符号化器が無い"))
+    func waitsForTheMovieWithoutBlocking() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-quit-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        Recording.path = directory.appendingPathComponent("quit.mov").path
+
+        let application = try SketchApplication(sketch: Recording(), gpu: RenderDevice())
+        var replies = 0
+        var closedAtReply: [Bool] = []
+        application.replyToTermination = {
+            replies += 1
+            closedAtReply.append(movieHasClosed(Recording.path))
+        }
+        defer { application.willTerminate() }
+        for _ in 0..<3 { application.displayLinkFired() }
+
+        let delegate = SketchApplicationDelegate(application: application)
+        #expect(
+            delegate.applicationShouldTerminate(.shared) == .terminateLater,
+            "閉じ終えるまで塞いでから答えている")
+        #expect(replies == 0, "閉じ終える前に返事をした")
+
+        // 検査は run loop を回さないので、Timer に代わって見に来る
+        try #require(
+            pollUntilSettled(within: MovieWriter.closeLimitSeconds + 10) {
+                application.pollTermination()
+                return replies > 0
+            },
+            "閉じる期限を過ぎても返事が無い")
+        application.pollTermination()
+        #expect(replies == 1, "返事が重なった")
+        // **返事の直後にプロセスは消える。** その時点で閉じ終えていなければ、再生できない
+        // ファイルが残る
+        #expect(closedAtReply == [true], "閉じ終える前に、終わってよいと返した")
+    }
+
+    /// **終わりに向かっている間の × は問わずに閉じる** ([#978])。
+    ///
+    /// 問いの先は `terminate(_:)` で、後始末を待っている間にそれを重ねると、AppKit は
+    /// 問い直さずに待ちを飛ばして終わる (実測)。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @Test("終わりに向かっている間の × では問わない")
+    func doesNotAskWhileTerminating() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        var asked = 0
+        application.closeQuestion = Self.question
+        application.presentQuestion = { _, _, _ in asked += 1 }
+        application.replyToTermination = {}
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        _ = SketchApplicationDelegate(application: application).applicationShouldTerminate(.shared)
+
+        #expect(try asksToClose(application))
+        #expect(asked == 0, "終わりに向かっている間に問いを出した")
+    }
+
+    /// **問いが出ている間に終わりが始まったら、答えで終わりを重ねない** ([#978])。
+    ///
+    /// シートは窓にだけ掛かるので、出ている間も Dock からの終了は届く。そのまま「終える」の
+    /// 答えで `terminate(_:)` を呼ぶと、待っている後始末が飛ばされる。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @Test("問いが出ている間に終わりが始まったら、終えるという答えで終わりを重ねない")
+    func anAnswerDoesNotTerminateAgain() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        var answer: ((Bool) -> Void)?
+        var ended = 0
+        application.closeQuestion = Self.question
+        application.presentQuestion = { _, _, reply in answer = reply }
+        application.onCloseConfirmed = { ended += 1 }
+        application.replyToTermination = {}
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        #expect(try !asksToClose(application))
+        _ = SketchApplicationDelegate(application: application).applicationShouldTerminate(.shared)
+        let reply = try #require(answer, "問いが出ていない")
+        reply(true)
+
+        #expect(ended == 0, "終わりに向かっている間に、答えで終わりを重ねた")
+    }
 }

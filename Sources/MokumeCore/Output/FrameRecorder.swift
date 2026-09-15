@@ -40,6 +40,13 @@ final class FrameRecorder: Outlet {
 
     private(set) var failure: String?
 
+    /// 閉じている途中で、静止画の待ちが決着したか。
+    ///
+    /// **同じ閉じの中で待ち直さないための印である。** 塞がずに見に来る閉じ方
+    /// (``close(_:)`` に ``Patience/peek``) は何度も呼ばれるので、決着した待ちへもう一度
+    /// 入ると期限が測り直され、諦めた警告も二重に出る。
+    private var imagesSettled = false
+
     init(frameRate: Int = 60, writer: FrameWriter = FrameWriter()) {
         self.frameRate = frameRate
         self.writer = writer
@@ -145,13 +152,21 @@ final class FrameRecorder: Outlet {
     /// 「\(path) を閉じられませんでした」がいちばん起きてほしくない場面 (撮り終わり)
     /// で誰にも読まれなかったのがこれである。
     ///
+    /// **手放すのは閉じ終えてから**である。塞がずに見に来る閉じ方ではまだ閉じていない
+    /// 呼び出しが挟まるので、先に手放すと続きを見に来る先が無くなる。
+    ///
+    /// - Parameter patience: まだ閉じていないとき、塞いで待つか、その場で返るか。
+    /// - Returns: 決着したか (撮っていない・閉じた・諦めた)。``Patience/block`` なら必ず `true`。
+    ///
     /// [#789]: https://github.com/mokume-metal/mokume/issues/789
-    private func finishMovie() {
-        guard let movie else { return }
+    @discardableResult
+    private func finishMovie(_ patience: Patience = .block) -> Bool {
+        guard let movie else { return true }
+        guard movie.finish(patience) else { return false }
         self.movie = nil
-        movie.finish()
         report(movie)
         if let failure = movie.takeFailure() { warnOnce(.movieFailure, failure) }
+        return true
     }
 
     /// 撮り終えた動画のことを 1 行で言う。
@@ -208,13 +223,36 @@ final class FrameRecorder: Outlet {
     /// 終わるときに、頼んだ全部がファイルになるまで待つ。
     ///
     /// 2 度呼んでも安全なので、並びから外れた後に呼ばれても構わない。
-    func close() {
-        writer.drain()
-        finishMovie()
+    ///
+    /// **この 1 行を消さない。** `Outlet` の拡張が空の `close()` を持っているので、消しても
+    /// コンパイルは通り、差込口として閉じられたときに何も待たない実装が黙って選ばれる。
+    func close() { close(.block) }
+
+    /// 終わるときに、頼んだ全部がファイルになるのを選んだ待ち方で待つ。
+    ///
+    /// 終わりの経路は塞がずに見に来る (``Patience/peek``・[#978])。**呼び直せば続きから
+    /// 見る** — 静止画の待ちが決着していれば、次は動画だけを見る。
+    ///
+    /// - Parameter patience: まだ済んでいないとき、塞いで待つか、その場で返るか。
+    /// - Returns: 決着したか (全部済んだ・諦めた)。``Patience/block`` なら必ず `true`。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @discardableResult
+    func close(_ patience: Patience) -> Bool {
+        if !imagesSettled {
+            guard writer.drain(patience) else { return false }
+            imagesSettled = true
+        }
+        guard finishMovie(patience) else { return false }
+        imagesSettled = false
         // **ここが最後の読み手である** ([#789])。`receive(_:)` はもう来ないので、
         // 待っている間に判明した静止画・連番の書き損じは、ここで言わなければ
         // 誰も取りに来ない。``endRecord()`` の側では取らない — あちらは同じフレームの
-        // `receive(_:)` がまだ来るので、取ると ``SeamHealth`` から 1 回ぶん数えを奪う
+        // `receive(_:)` がまだ来るので、取ると ``SeamHealth`` から 1 回ぶん数えを奪う。
+        // 読むのは**閉じ終えた呼び出しだけ**で、まだ待っている呼び出しは取らない
+        //
+        // [#789]: https://github.com/mokume-metal/mokume/issues/789
         if let failure = writer.takeFailure() { warnOnce(.imageFailure, failure) }
+        return true
     }
 }

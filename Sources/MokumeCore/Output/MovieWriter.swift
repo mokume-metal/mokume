@@ -17,10 +17,14 @@ import MokumeDiagnostics
 /// | `AsyncStream` と 1 本の仕事 | **順番**。詰めた順に届く ([ADR-0010] 決定 4) |
 /// | ``Backpressure`` | **背圧**。抱える枚数が上限を超えない → 長く撮ってもメモリが伸びない |
 /// | ``MovieFile`` の読み直し | **符号化器の用意**。受け取れるようになるまで 1 本の仕事が待つ。待つあいだ枠が返らないので、``Backpressure`` を通じて頼む側まで待たされる |
-/// | `closed` | **終わりを待つ形**。``finish()`` はファイルが閉じてから返る |
+/// | `closed` | **終わりを待つ形**。``finish(_:)`` はファイルが閉じてから返る (塞ぐかは待ち方による) |
 ///
 /// 待つ側が semaphore なのは、完了を待つのが main actor の上で `await` が使えない
 /// ためである (同 決定 4。`DispatchQueue` は足さない)。
+///
+/// **塞いで待つのは `endRecord()` の経路だけである。** 終わりの経路は同じ合図を塞がずに
+/// 見に来る (``Patience/peek``)。`AVAssetWriter.finishWriting` は main を塞いだまま走らせると
+/// 失敗しうると Apple が書いている相手で、終わりはいちばん起きやすい場面だった ([#978])。
 ///
 /// ## 落ちたフレームは数えない
 ///
@@ -28,6 +32,7 @@ import MokumeDiagnostics
 /// 幅から導けるので ([ADR-0025] 決定 2)、数える機構を別に持たない。時刻はフレーム
 /// 自身のものを使うので、落ちても残りの絵の時刻は動かない。
 ///
+/// [#978]: https://github.com/mokume-metal/mokume/issues/978
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 final class MovieWriter {
@@ -72,7 +77,23 @@ final class MovieWriter {
 
     private var firstFrame: Int?
     private var lastFrame = 0
-    private var hasFinished = false
+
+    /// 書き終えるまでのどこに居るか。
+    ///
+    /// **段を憶えるのは、塞がずに見に来る呼び出しが続きから再開するためである**
+    /// (``finish(_:)``)。見に来るたびに頭からやり直すと、諦めた警告が何度も出て、閉じる
+    /// 期限も測り直される。
+    private enum Stage {
+        /// 受け取っている。
+        case recording
+        /// 積んだぶんを符号化しきるのを待っている。
+        case encoding
+        /// ファイルが閉じるのを待っている。**期限はこの段に入った時刻から測る。**
+        case closing(deadline: DispatchTime)
+        /// 閉じた (諦めたときも)。
+        case closed
+    }
+    private var stage = Stage.recording
 
     init(path: String, frameRate: Int, limit: Int = MovieWriter.defaultLimit) {
         self.path = path
@@ -125,7 +146,7 @@ final class MovieWriter {
     ///   - frame: 何枚目か。落ちたフレームを数えるのに使う。
     ///   - time: このフレームの時刻 (秒)。**そのまま動画の時刻になる。**
     func write(_ image: DisplayImage, frame: Int, time: Double) {
-        guard !hasFinished else { return }
+        guard case .recording = stage else { return }
         pressure.take()
         acceptedFrames += 1
         if firstFrame == nil { firstFrame = frame }
@@ -143,21 +164,46 @@ final class MovieWriter {
     /// 1 回きりなので、平らな ``closeLimitSeconds`` で測るしかない。
     ///
     /// どちらも**越えても殺さない** — 名乗って窓を返すだけである。
-    func finish() {
-        guard !hasFinished else { return }
-        hasFinished = true
-        continuation.finish()
-        if let stranded = pressure.drain() {
-            Diagnostics.warn(
-                "\(path): encoding has not moved for \(Int(pressure.stallLimitSeconds)) seconds "
-                    + "(\(stranded) frames are still waiting) — no longer waiting for it")
+    ///
+    /// **期限は待ち方によらず同じ。** 塞がずに見に来る呼び出し (``Patience/peek``) も同じ段を
+    /// 通るので、終わりの経路にも同じ 2 段の期限が効く ([#978])。
+    ///
+    /// - Parameter patience: まだ閉じていないとき、塞いで待つか、その場で返るか。
+    /// - Returns: 決着したか (閉じた・諦めた)。``Patience/block`` なら必ず `true`。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    @discardableResult
+    func finish(_ patience: Patience = .block) -> Bool {
+        if case .recording = stage {
+            continuation.finish()
+            stage = .encoding
         }
-        if closed.wait(timeout: .now() + Self.closeLimitSeconds) != .success {
-            Diagnostics.warn(
-                "\(path): waited \(Int(Self.closeLimitSeconds)) seconds to close the movie with no "
-                    + "answer — no longer waiting. Quitting now leaves a file that will not "
-                    + "play (writing is still going, so waiting a little may still close it)")
+        if case .encoding = stage {
+            guard pressure.drain(patience) else { return false }
+            if pressure.outstanding > 0 {
+                Diagnostics.warn(
+                    "\(path): encoding has not moved for \(Int(pressure.stallLimitSeconds)) seconds "
+                        + "(\(pressure.outstanding) frames are still waiting) — no longer waiting for it")
+            }
+            stage = .closing(deadline: .now() + Self.closeLimitSeconds)
         }
+        if case .closing(let deadline) = stage {
+            let answered: Bool
+            switch patience {
+            case .block: answered = closed.wait(timeout: deadline) == .success
+            case .peek:
+                answered = closed.wait(timeout: .now()) == .success
+                guard answered || DispatchTime.now() >= deadline else { return false }
+            }
+            if !answered {
+                Diagnostics.warn(
+                    "\(path): waited \(Int(Self.closeLimitSeconds)) seconds to close the movie with no "
+                        + "answer — no longer waiting. Quitting now leaves a file that will not "
+                        + "play (writing is still going, so waiting a little may still close it)")
+            }
+            stage = .closed
+        }
+        return true
     }
 
     /// 出口へ届かなかったフレームの数。

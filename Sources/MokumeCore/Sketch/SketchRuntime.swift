@@ -50,6 +50,8 @@ public final class SketchRuntime {
     ///
     /// 頼まれている間だけ ``outlets`` に居る (``attachRecorderIfNeeded()``)。
     private var recorder: FrameRecorder?
+    /// 閉じ終えるのを待っている撮る係。**居る間はフレームを進めない** (``closePlugins(_:)``)。
+    private var closingRecorder: FrameRecorder?
 
     /// 組んだけれどまだ配っていない絵。**出口へ渡すのは 1 枚遅らせる** ([#927])。
     ///
@@ -272,21 +274,52 @@ public final class SketchRuntime {
 
     /// 差込口を閉じる。**投げない** ([ADR-0024] 決定 7)。
     ///
+    /// 頼んだ全部がファイルになるまで**塞いで**待つ。終わりの経路は塞がずに待つ
+    /// ``closePlugins(_:)`` を通る。
+    ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    public func closePlugins() {
+    public func closePlugins() { closePlugins(.block) }
+
+    /// 差込口を閉じ、撮る係が書き終えるのを選んだ待ち方で待つ。**投げない** ([ADR-0024] 決定 7)。
+    ///
+    /// 終わりの経路は塞がずに見に来る (``Patience/peek``・[#978])。**呼び直せば続きから
+    /// 見る** — 差込口を閉じるのは最初の 1 回だけで、2 回目からは撮る係の待ちだけを見る
+    /// (差込口の `close()` は「一度だけ呼ばれる」約束である)。
+    ///
+    /// **待つのは撮る係だけで、差込口とつまみは先に済ませる。** 撮る係の待ちは動画を閉じ
+    /// 終えるまでかかりうるので、その後ろに置くと、待っている間にプロセスが殺されたときに
+    /// つまみの最後の 1 手まで失う。
+    ///
+    /// 待っている間はフレームを進めない (``runFrame()`` の冒頭)。
+    ///
+    /// - Parameter patience: まだ済んでいないとき、塞いで待つか、その場で返るか。
+    /// - Returns: 決着したか (全部済んだ・諦めた)。``Patience/block`` なら必ず `true`。
+    ///
+    /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    @discardableResult
+    func closePlugins(_ patience: Patience) -> Bool {
         // **閉じる前に控えを配る。** 最後のフレームの絵はまだ誰にも渡っていない (#927)
         deliverPendingToOutlets()
-        for entry in outlets { entry.seam.close() }
+        // **撮る係はここでは閉じない。** 並びに居れば同じ `close()` が塞いで待つので、
+        // 下で選んだ待ち方で閉じる
+        for entry in outlets where entry.seam !== recorder { entry.seam.close() }
         for entry in inlets { entry.seam.close() }
-        // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
-        // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
-        recorder?.close()
         // **まとめている途中の保存を落とさない。** 引いたつまみの最後の 1 手だけが
         // 消えると、直したはずの値が次の起動で戻っていない形で出る
         paramStore?.flushIfPending()
         outlets.removeAll()
         inlets.removeAll()
-        recorder = nil
+        // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
+        // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
+        if let recorder {
+            closingRecorder = recorder
+            self.recorder = nil
+        }
+        guard let closingRecorder else { return true }
+        guard closingRecorder.close(patience) else { return false }
+        self.closingRecorder = nil
+        return true
     }
 
     /// フレームを 1 つ進める。
@@ -315,6 +348,13 @@ public final class SketchRuntime {
     /// ためである (``advanceForPresence()``)。``advance()`` ごと呼ぶと、追跡ループの中で
     /// 名乗りの世話が入れ子になる。
     private func runFrame() throws(RenderFailure) {
+        // **閉じ終えるのを待っている間は進めない** ([#978])。待ちは塞がずに見に来る形なので、
+        // その間も駆動源 (画面の link・予備の Timer・名乗りのメニューの Timer) は呼んでくる。
+        // 進めると `draw()` が新しい録りや `save()` を頼み、誰にも閉じられないまま終わる。
+        // 駆動源の側で止めないのは、3 本のどれを止め忘れても同じ穴になるためである
+        //
+        // [#978]: https://github.com/mokume-metal/mokume/issues/978
+        guard closingRecorder == nil else { return }
         isAdvancingFrame = true
         defer {
             isAdvancingFrame = false
