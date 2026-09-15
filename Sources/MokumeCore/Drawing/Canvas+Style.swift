@@ -150,6 +150,8 @@ extension Canvas {
                 lightRange: 0..<0,
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),
+                // 平面は面の向きを持たない (断片へは 0 が届く) ので、移す行列は効かない
+                view: matrix_identity_float4x4,
                 surroundings: bakeSurroundings(),
                 castsShadow: false,
                 // 畳んでいない列は、何も動かさない置き場所 (添字 0) を 1 つ通る
@@ -248,6 +250,7 @@ extension Canvas {
                 lightRange: bakeActiveLights(),
                 material: currentMaterial.receiving(shadow: receivesShadow),
                 viewer: viewer,
+                view: viewMatrix,
                 surroundings: bakeSurroundings(),
                 castsShadow: castsShadow,
                 instanceStart: open.external == nil ? open.instanceStart : 0,

@@ -370,12 +370,14 @@ struct SolidShaderTests {
     @Test("平面の図形では、表面の位置も向きも 0")
     func flatShapesCarryNoSurface() throws {
         let canvas = try makeCanvas()
-        // どちらかが 0 でなければ赤、両方 0 なら緑
+        // どれかが 0 でなければ赤、全部 0 なら緑。**向きは 3 つとも見る** (#847)
         let probe = try canvas.makeShader(
             """
             float4 paint(Fragment in, Values values) {
                 float sum = dot(in.shapePosition, in.shapePosition)
-                    + dot(in.shapeNormal, in.shapeNormal);
+                    + dot(in.shapeNormal, in.shapeNormal)
+                    + dot(in.worldNormal, in.worldNormal)
+                    + dot(in.viewNormal, in.viewNormal);
                 return sum > 0.0 ? float4(1.0, 0.0, 0.0, 1.0) : float4(0.0, 1.0, 0.0, 1.0);
             }
             """)
@@ -392,11 +394,12 @@ struct SolidShaderTests {
     @Test("立体の線には向きが無く、位置は書いたときの座標のまま")
     func solidStrokesCarryThePositionTheyWereWrittenWith() throws {
         let canvas = try makeCanvas(width: 128, height: 128)
-        // 向きがあれば赤。無ければ、書いた座標を色にする
+        // 向きがあれば赤 (3 つのどれでも)。無ければ、書いた座標を色にする
         let probe = try canvas.makeShader(
             """
             float4 paint(Fragment in, Values values) {
-                if (dot(in.shapeNormal, in.shapeNormal) > 0.0) {
+                if (dot(in.shapeNormal, in.shapeNormal) + dot(in.worldNormal, in.worldNormal)
+                    + dot(in.viewNormal, in.viewNormal) > 0.0) {
                     return float4(1.0, 0.0, 0.0, 1.0);
                 }
                 return float4(in.shapePosition.xy / values.extent, 0.0, 1.0);
@@ -470,5 +473,217 @@ struct SolidShaderTests {
         #expect(
             abs(straight.red - elsewhere.red) > 30 || abs(straight.blue - elsewhere.blue) > 30,
             "表面の別の点が同じ色になっている (位置が届いていない)")
+    }
+
+    // MARK: - 世界と視点の向き (#847)
+
+    /// 向きの 1 欄を色へ写す断片。**光を掛けない**ので、出た色がそのまま向きを名乗る。
+    private static func painting(normal field: String) -> String {
+        """
+        float4 paint(Fragment in, Values values) {
+            return float4(in.\(field) * 0.5 + 0.5, 1.0);
+        }
+        """
+    }
+
+    /// 既定の視点がある距離。**同じ距離のまま回り込む**視点を作るのに使う。
+    private static let fittingDistance: Float = 64 / tan(Float.pi / 6)
+
+    /// 立体を 1 つ置き、**形の上の同じ点**が来た画素の色を返す。
+    ///
+    /// `place` が視点・変換・形を決める。点は置いた変換のまま `screenX` / `screenY` へ
+    /// 通すので、視点を動かしても回しても形の上の同じ点を追える。
+    private func sampleSolid(
+        painting body: String, at point: SIMD3<Float>, place: (Canvas) -> Void
+    ) throws -> (red: Int, green: Int, blue: Int) {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let painted = try canvas.makeShader(body)
+        var screen = SIMD2<Float>.zero
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(painted)
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.push()
+            place(canvas)
+            screen = SIMD2(
+                canvas.screenX(point.x, point.y, point.z),
+                canvas.screenY(point.x, point.y, point.z))
+            canvas.pop()
+        }
+        let pixel = try canvas.target.encodeForDisplay()[
+            Int(screen.x.rounded()), Int(screen.y.rounded())]
+        return (Int(pixel.red), Int(pixel.green), Int(pixel.blue))
+    }
+
+    /// 2 つの色が、どれかの成分で `margin` より離れているか。
+    private static func differ(
+        _ a: (red: Int, green: Int, blue: Int), _ b: (red: Int, green: Int, blue: Int),
+        by margin: Int
+    ) -> Bool {
+        abs(a.red - b.red) > margin || abs(a.green - b.green) > margin
+            || abs(a.blue - b.blue) > margin
+    }
+
+    /// 2 つの色が、どの成分でも `margin` 以内か。
+    private static func agree(
+        _ a: (red: Int, green: Int, blue: Int), _ b: (red: Int, green: Int, blue: Int),
+        within margin: Int
+    ) -> Bool {
+        !differ(a, b, by: margin)
+    }
+
+    @Test("形を回すと、世界の向きも視点の向きも変わる")
+    func turningTheShapeTurnsTheWorldAndViewNormals() throws {
+        // **前の面**の 1 点を追う。上下の面は縦の軸で回しても向きが変わらないので、
+        // 届いていない実装と区別が付かない
+        let onFront = SIMD3<Float>(6, 6, 30)
+        for field in ["worldNormal", "viewNormal"] {
+            let straight = try sampleTurnedBox(
+                painting: Self.painting(normal: field), at: onFront, angle: 0)
+            let turned = try sampleTurnedBox(
+                painting: Self.painting(normal: field), at: onFront, angle: 0.9)
+            #expect(Self.differ(straight, turned, by: 40), "回しても \(field) が変わらない")
+        }
+        // 同じ回し方で形自身の向きは動かない — 上の差が本当に「変換の後」から来ている
+        let straight = try sampleTurnedBox(
+            painting: Self.painting(normal: "shapeNormal"), at: onFront, angle: 0)
+        let turned = try sampleTurnedBox(
+            painting: Self.painting(normal: "shapeNormal"), at: onFront, angle: 0.9)
+        #expect(Self.agree(straight, turned, within: 6), "形自身の向きまで回っている")
+    }
+
+    @Test("視点を動かすと、視点の向きだけが変わる")
+    func movingTheCameraTurnsOnlyTheViewNormal() throws {
+        let onFront = SIMD3<Float>(6, 6, 30)
+        func sample(_ field: String, orbit: Float?) throws -> (red: Int, green: Int, blue: Int) {
+            try sampleSolid(painting: Self.painting(normal: field), at: onFront) { canvas in
+                if let orbit {
+                    // 同じ距離のまま横へ回り込む。形はまったく動かさない
+                    canvas.camera(
+                        64 + Self.fittingDistance * sin(orbit), 64,
+                        Self.fittingDistance * cos(orbit), 64, 64, 0, 0, 1, 0)
+                }
+                canvas.translate(64, 64, 0)
+                canvas.box(60)
+            }
+        }
+        let world = try sample("worldNormal", orbit: nil)
+        let worldMoved = try sample("worldNormal", orbit: 0.6)
+        let view = try sample("viewNormal", orbit: nil)
+        let viewMoved = try sample("viewNormal", orbit: 0.6)
+
+        #expect(Self.agree(world, worldMoved, within: 6), "視点を動かすと世界の向きが変わっている")
+        #expect(Self.differ(view, viewMoved, by: 40), "視点を動かしても視点の向きが変わらない")
+        // **何も指定していない視点は面の正面から見ている**ので、2 つは一致する
+        #expect(Self.agree(world, view, within: 6), "既定の視点で世界と視点の向きが食い違う")
+    }
+
+    @Test("視点の向きは、x が画面の右・y が画面の下・z が手前を指す")
+    func theViewNormalFollowsTheScreen() throws {
+        // **視点を傾けて**見る。傾けないと世界の軸と画面の軸が一致して、世界の向きを
+        // そのまま渡している実装でも通ってしまう
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let painted = try canvas.makeShader(Self.painting(normal: "viewNormal"))
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(painted)
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.camera(64, 64, Self.fittingDistance, 64, 64, 0, sin(Float(0.8)), cos(Float(0.8)), 0)
+            canvas.translate(64, 64, 0)
+            canvas.sphere(40)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        // 出力段を通るので、0.5 (向きの成分 0) は 188 前後に出る。そこからどちらへ振れたかを見る
+        let right = image[96, 64]
+        let below = image[64, 96]
+        let middle = image[64, 64]
+        #expect(right.red > 225 && right.green < 215, "画面の右の縁で x が正になっていない")
+        #expect(below.green > 225 && below.red < 215, "画面の下の縁で y が正になっていない")
+        #expect(middle.blue > 245, "正面で z が手前を向いていない")
+    }
+
+    @Test("平らな面を回すと、視点の向きの色が入れ替わる")
+    func turningAPlaneChangesItsViewNormal() throws {
+        // #847 の実測そのもの — 形自身の向きで塗った平らな面は、何度回しても 1 色だった
+        func sample(_ field: String, angle: Float) throws -> (red: Int, green: Int, blue: Int) {
+            try sampleSolid(painting: Self.painting(normal: field), at: .zero) { canvas in
+                canvas.translate(64, 64, 0)
+                canvas.rotateY(angle)
+                canvas.plane(80, 80)
+            }
+        }
+        #expect(
+            Self.differ(try sample("viewNormal", angle: 0), try sample("viewNormal", angle: 0.9), by: 40),
+            "平らな面を回しても視点の向きが変わらない")
+        #expect(
+            Self.agree(try sample("shapeNormal", angle: 0), try sample("shapeNormal", angle: 0.9), within: 6),
+            "平らな面の形自身の向きが回っている")
+    }
+
+    @Test("拡大を含む置き場所でも、世界と視点の向きは長さ 1 で届く")
+    func theWorldAndViewNormalsArriveUnitUnderScale() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        // 両方の長さが 1 なら緑、どちらかが違えば赤
+        let probe = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                return abs(length(in.worldNormal) - 1.0) < 0.01
+                    && abs(length(in.viewNormal) - 1.0) < 0.01
+                    ? float4(0.0, 1.0, 0.0, 1.0) : float4(1.0, 0.0, 0.0, 1.0);
+            }
+            """)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(probe)
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.camera(90, 40, Self.fittingDistance, 64, 64, 0, 0, 1, 0)
+            canvas.translate(64, 64, 0)
+            // **軸ごとに違う倍率**で潰す。向きを移す行列が長さを変えるので、揃え直して
+            // いなければここで長さが 1 から外れる
+            canvas.scale(1.6, 1, 0.5)
+            canvas.sphere(28)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        for point in [(64, 64), (50, 60), (78, 70), (64, 50)] {
+            let pixel = image[point.0, point.1]
+            #expect(pixel.green > 200 && pixel.red < 40, "\(point) の向きの長さが 1 でない")
+        }
+    }
+
+    @Test("形から求めた向きは、巻き方によらず 3 つそろって見えている側を向く")
+    func derivedNormalsFlipTogether() throws {
+        let canvas = try makeCanvas(width: 128, height: 128)
+        // 3 つとも手前 (z が正) を向いていれば緑。**どれか 1 つでも裏返り損ねると赤**
+        let probe = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                return in.shapeNormal.z > 0.9 && in.worldNormal.z > 0.9 && in.viewNormal.z > 0.9
+                    ? float4(0.0, 1.0, 0.0, 1.0) : float4(1.0, 0.0, 0.0, 1.0);
+            }
+            """)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(probe)
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            // 向きを書かずに三角形を 2 枚。**巻き方だけを逆にする** — 片方は表、片方は
+            // 裏を向いて見える
+            canvas.beginShape(.triangles)
+            canvas.vertex(10, 20, 0)
+            canvas.vertex(58, 20, 0)
+            canvas.vertex(34, 100, 0)
+            canvas.vertex(118, 20, 0)
+            canvas.vertex(70, 20, 0)
+            canvas.vertex(94, 100, 0)
+            canvas.endShape()
+        }
+        let image = try canvas.target.encodeForDisplay()
+        for point in [(34, 40), (94, 40)] {
+            let pixel = image[point.0, point.1]
+            #expect(pixel.green > 200 && pixel.red < 40, "\(point) の三角形で向きが見えている側を向いていない")
+        }
     }
 }

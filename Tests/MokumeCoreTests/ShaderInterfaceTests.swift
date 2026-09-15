@@ -369,7 +369,10 @@ struct ShaderInterfaceTests {
 
     static let lighting = layout(
         of: Lighting.self,
-        [("offset", \.offset), ("count", \.count), ("padding", \.padding), ("viewer", \.viewer)])
+        [
+            ("offset", \.offset), ("count", \.count), ("padding", \.padding),
+            ("viewer", \.viewer), ("view", \.view),
+        ])
 
     static let light = layout(
         of: Light.self,

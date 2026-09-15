@@ -761,6 +761,9 @@ public final class Canvas {
         var material: Material
         /// この列を見ている場所。艶が見る向きで変わるので、材質と対で持ち歩く。
         var viewer: SIMD4<Float>
+        /// この列を見ている視点の、世界をカメラの側へ移す行列。断片が面の向きを
+        /// 視点から見た向きへ移すのに使う (`viewer` と同じく**閉じた時点のもの**)。
+        var view: simd_float4x4
         /// この列に効く周囲。**閉じた時点のもの**が入る (光と同じ理由)。
         var surroundings: PackedSurroundings
         /// この列が影を落とす側か。焼き付けるときに、この旗で選り分ける。
@@ -1869,7 +1872,8 @@ public final class Canvas {
             var packed = Lighting(
                 offset: UInt32(batch.lightRange.lowerBound),
                 count: UInt32(batch.lightRange.count),
-                viewer: batch.viewer)
+                viewer: batch.viewer,
+                view: batch.view)
             lighting.contents().advanced(by: index * Self.valuesStride)
                 .copyMemory(from: &packed, byteCount: MemoryLayout<Lighting>.stride)
         }
