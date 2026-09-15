@@ -18,6 +18,9 @@ name: Review request
 # (2026-09-14T10:29:56Z) の 2 秒後に run 34833468641 が event=pull_request_review で立って
 # いる。手で dismiss したときも同じ契機に乗るので、そちらも一緒に塞がる。
 #
+# (検証用の行・#1232。この PR は merge しない — 承認が落ちる瞬間を観測するためだけに
+# `.github/` へ触れて、承認が要る状態を作っている)
+#
 # 判断は scripts/rerequest-review.sh が持つ (検査は scripts/tests/rerequest_review_test.py)。
 # ロジックを YAML へ埋めない理由は triage.yml と同じ (#66)。
 
