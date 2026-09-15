@@ -515,6 +515,15 @@ public final class Canvas {
     /// 出て、GPU が混んだときだけ稀に書き終わる前の並びが読まれる。積む 1 行と同じ場所で
     /// 数え、**その行を消したら数も減る**。
     var computeBarriersEncoded = 0
+    /// 控えを届けるコピーのあとに、続く段が待つ仕掛けを積んだ回数 (作ってから通算)。
+    /// 計算の側と同じ理由で持つ。
+    var uploadBarriersEncoded = 0
+    /// 1 品で控えの置き場へ写してよいバイト数の上限。**超えたものは待って直接書く。**
+    ///
+    /// 控えの置き場は環のスロットの数だけ同じ大きさで取り直すので、巨大な画像を毎フレーム
+    /// 送ると、今まで送れていた絵が置き場を取れずに描き切りごと落ちる。そういう品にだけ
+    /// 今までの形 (待ってから書く) を残す。検査が差し替える。
+    var uploadByteLimit = 64 << 20
     /// 影の行列を置く領域。
     private let shadowMatrixStorage: GrowableBuffer
     /// 焼いていないフレームに影の口へ束ねる 1 画素の奥行きの面。
@@ -844,6 +853,9 @@ public final class Canvas {
     ///
     /// [#932]: https://github.com/mokume-metal/mokume/issues/932
     let computeValuesStorage: GrowableBuffer
+    /// 数の並びと画像へ CPU が書いた控えを、GPU 側のコピーで届けるための置き場
+    /// (`Canvas+Uploads.swift`・#749)。
+    let uploadStorage: GrowableBuffer
     /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
     static let valuesStride = 256
     /// 1 区画に収まる値の数 (float 換算)。**塗りと計算へ渡せる値の上限**でもある。
@@ -1039,6 +1051,7 @@ public final class Canvas {
             stride: Self.valuesStride, minimum: 16, label: "values")
         self.computeValuesStorage = storage(
             stride: Self.valuesStride, minimum: 16, label: "computeValues")
+        self.uploadStorage = storage(stride: 1, minimum: 1 << 16, label: "uploads")
         // 時刻・面の大きさ・影の行列はフレームに 1 区画。**大きさが変わらなくても
         // 環には載る** — 毎フレーム CPU が書き換えるという性質が同じだからである
         self.uniformsStorage = storage(
@@ -1524,9 +1537,9 @@ public final class Canvas {
         defer { isFlushing = false }
         if let failureForTesting { throw failureForTesting }
         // **書く前に、環を 1 つ進めて待つ。** ここから先は GPU 可視メモリへ CPU が書く
-        // (頂点・列ごとの値・効果の値・置き場の取り直し)。書き先はこれから進むスロットの
-        // 置き場なので、待つのは**そのスロットを最後に読んだ投入**だけでよい — その先に
-        // 積まれた新しいフレームの仕事まで待つ理由が無い ([#754])。
+        // (頂点・列ごとの値・効果の値・数の並びと画像の控え・置き場の取り直し)。書き先は
+        // これから進むスロットの置き場なので、待つのは**そのスロットを最後に読んだ投入**
+        // だけでよい — その先に積まれた新しいフレームの仕事まで待つ理由が無い ([#754])。
         //
         // 当初は `gpu.settle()` で投入済みの**全部**を待っていた ([#727])。置き場が
         // 1 本しか無かったので、それ以外に書ける場所が無かったためである。環にしたので、
@@ -1563,6 +1576,10 @@ public final class Canvas {
             // 面なので、`pixels` への書き込みは写しに載っている。書いていないフレームは
             // 何も積まない (#753)
             let wroteBack = try target.encodePixelWriteBack(into: commands)
+
+            // **数の並びと画像へ CPU が書いた控えを、読む段より前に届ける** (#749)。書く口は
+            // 待たずに控えへ積むだけなので、届けるのはここである。控えが無ければ何も積まない
+            let uploaded = try encodeUploads(into: commands)
 
             // **描くより前に、頼まれた計算を流す** (ADR-0023 決定 3 — 計算はフレームの
             // 前置き)。頼まれていなければ口も開かないので、計算を使わないスケッチは
@@ -1611,7 +1628,9 @@ public final class Canvas {
             // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
             let submission = gpu.commit(
                 commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
-            return (submission: submission, wroteBack: wroteBack, shadow: bakedShadow)
+            return (
+                submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
+                uploaded: uploaded)
         }
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
@@ -1619,6 +1638,7 @@ public final class Canvas {
         frameRing.noteSubmission()
         passesThisFrame += 1
         if assembled.wroteBack { target.markPixelsWrittenBack() }
+        gpu.pendingUploads.markUploaded(assembled.uploaded)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
         // 焼いたなら、その入力を覚える。使い回したフレームでは同じ値を書き直すだけになる
         if let shadow = assembled.shadow { lastShadowBakeKey = shadow.key }

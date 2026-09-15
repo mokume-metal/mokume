@@ -254,29 +254,43 @@ extension Canvas {
         return numbers.snapshot()
     }
 
-    /// 溜まっている計算を、その場で走らせて待つ。
+    /// 溜まっている計算と控えを、その場で走らせて待つ。
     ///
-    /// **残っていなければ何もしない。** 走らせるものが無いときの待ちは呼ぶ側 (`read`)
-    /// が持つ — 描き切りが待たなくなったので、溜め場が空でも「走らせたものは全部
+    /// **どちらも残っていなければ何もしない。** 走らせるものが無いときの待ちは呼ぶ側
+    /// (`read`) が持つ — 描き切りが待たなくなったので、溜め場が空でも「走らせたものは全部
     /// 終わっている」とは言えない (#727)。
+    ///
+    /// **控えだけでも流す** ([#749])。数の並びへの書き込みは控えに積まれて描き切りを待つ
+    /// ので、流さずに読むと、書いた直後に読んだ値が書く前のものになる。
+    ///
+    /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     private func runPendingComputations() {
-        guard !pendingComputations.isEmpty else { return }
-        // **値の区画へ書く前に待つ。** ここは描き切りを通らないので、フレームの環を
-        // 進める `frameRing.advance()` の待ちが効かない — 直前のフレームの投入が、
+        guard !pendingComputations.isEmpty || !gpu.pendingUploads.isEmpty else { return }
+        // **値の区画と控えの置き場へ書く前に待つ。** ここは描き切りを通らないので、フレームの
+        // 環を進める `frameRing.advance()` の待ちが効かない — 直前のフレームの投入が、
         // これから書くスロットをまだ読んでいるかもしれない (#932 で値の置き場を計算から
         // 環へ移したときに、`Computation` が持っていた待ちをここへ引き取った)
-        // **待てなければ、値を書かず口も開かない** (#934)。頼みは溜め場に残るので、
-        // このフレームの描き切りか、次の読み戻しが同じものを流し直す
+        // **待てなければ、何も書かず口も開かない** (#934)。頼みは溜め場に、書き込みは控えに
+        // 残るので、このフレームの描き切りか、次の読み戻しが同じものを流し直す
         guard
             gpu.settleBeforeWriting(
                 orWarn: "Could not wait for the GPU before writing compute values, so the write "
                     + "was called off")
         else { return }
         do {
-            try gpu.withCommands { commands throws(RenderFailure) in
+            let uploaded = try gpu.withCommands {
+                commands throws(RenderFailure) -> EncodedUploads in
+                // **控えが先、計算が後。** 計算は書いた値を読む
+                let uploaded = try encodeUploads(into: commands)
                 try encodeComputations(into: commands)
                 gpu.commit(commands)
+                return uploaded
             }
+            // **いまのスロットを読む投入として記録する。** 描き切りと同じ置き場へ書いたので、
+            // 記録しないと、下の待ちが期限切れになったときにそのスロットが「読み終わった」
+            // ことになってしまう (#754)
+            frameRing.noteSubmission()
+            gpu.pendingUploads.markUploaded(uploaded)
             // **流したものは溜め場から降ろす** — 降ろさないとフレーム末尾の描き切りが同じ計算を
             // もう一度走らせる。**待つより先に降ろす**: 待ちが期限切れになっても投入は済んで
             // いるので、残すと 2 度走る (#1183)

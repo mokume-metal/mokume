@@ -63,9 +63,11 @@ import MokumeDiagnostics
 //
 // ## 待たない投入が守る 2 つのこと
 //
-// 1. **CPU が GPU 可視メモリに触る (書く・GPU の結果を読む) 直前には、投入済みの
-//    コマンドがすべて終わっている。** 触る側が直前に `settle()` を呼ぶ。投入済みの
-//    ものが全部終わっていれば何もせずに返るので、触らないフレームは 1 度も待たない
+// 1. **CPU が GPU 可視メモリに触る (書く・GPU の結果を読む) 直前には、それを読む・書く
+//    投入が終わっている。** 触る側が直前に待つ — 投入済みの全部 (`settle()`)、環に
+//    載った置き場ならそのスロットを読む投入だけ (`waitForSubmission(_:)`・#754)。
+//    数の並びと画像への書き込みはその場で触らず、控えを描き切りが GPU 側のコピーで
+//    届ける (`PendingUploads`・#749)
 // 2. **GPU 上でも、投入したコマンドは投入順に実行される。** この世代は別々に投入した
 //    コマンドの間の順序を自動では保証しない (encoder の間と同じ・#341)。投入のたびに
 //    「直前の番号を GPU 側で待つ」を積んで、順序を明示する
@@ -113,6 +115,9 @@ import MokumeDiagnostics
 
     let device: any MTLDevice
     let queue: any MTL4CommandQueue
+
+    /// CPU が書いて、まだ GPU 側へ届けていない数の並びと画像 (#749)。届けるのは描き切り。
+    let pendingUploads = PendingUploads()
 
     /// シェーダの原文を読み、組み立てる係。
     ///
@@ -758,10 +763,12 @@ import MokumeDiagnostics
     ///
     /// **緩めてよいのは、どの投入が書いたかを自分で憶えているものだけである。** いま
     /// 名指しできるのは 2 つ — フレームごとに書く置き場の環 (#754) と、出口へ渡す絵
-    /// ([#927])。それ以外の置き場 (粒・数の並び・画像・字形の面) は今までどおり
-    /// ``settle()`` で全完了を待つ — どの投入に属するかを名乗れないものは、いつ
-    /// 読まれ終わるかも名乗れない。
+    /// ([#927])。数の並びと画像 (粒を含む) は、書く口が待たずに控えを積み、描き切りが
+    /// 環に載った置き場から GPU 側のコピーで届ける ([#749]) ので、ここにもどこにも
+    /// 待ちを持たない。字形の面は今までどおり ``settle()`` で全完了を待つ — どの投入に
+    /// 属するかを名乗れないものは、いつ読まれ終わるかも名乗れない。
     ///
+    /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     /// [#754]: https://github.com/mokume-metal/mokume/issues/754
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     func waitForSubmission(_ submission: UInt64) throws(RenderFailure) {
@@ -820,9 +827,14 @@ import MokumeDiagnostics
     /// 読む側はこちらを使わない。読みは取りやめようが無い (何かを返さねばならない) ので、
     /// 古い値が返ることを警告で名乗るところまでが限界になる。
     ///
+    /// **毎フレーム書く口はこれを通らない。** 数の並びと画像は控えを積むだけで、描き切りが
+    /// GPU 側のコピーで届ける ([#749])。ここを通るのは、控えに載せられないほど大きい
+    /// 書き込みの逃げ道と、読み戻しの口 (描き切りを通らない) と、字形の面である。
+    ///
     /// **`@discardableResult` は付けない。** 返り値を捨てるには `_ =` と書くことになり、
     /// 「待たずに書いた」経路が字面に残る。
     ///
+    /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     /// [#934]: https://github.com/mokume-metal/mokume/issues/934
     func settleBeforeWriting(orWarn note: String) -> Bool {
         do {

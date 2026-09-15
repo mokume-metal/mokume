@@ -221,24 +221,54 @@ struct ParticleTests {
         #expect(fingerprint(fast) == fingerprint(reference))
     }
 
-    @Test("待てなかったら、粒を置かない")
-    func doesNotEmitWhenTheWaitFails() throws {
+    @Test("描き切りが待てなかったら粒の状態へ書かず、次に描けたフレームで置く")
+    func holdsParticlesBackWhileTheWaitFails() throws {
         let canvas = try makeCanvas()
         var randomness = Randomness(seed: 934)
         let dust = try canvas.makeParticles(count: 128)
         try spray(on: canvas, dust, randomness: &randomness, frames: 1)
         let placed = dust.cursor
         #expect(placed > 0, "1 フレーム目で粒が出ていない — 以降の比較が成り立たない")
+        try canvas.gpu.settle()
+        let before = dust.state.snapshot()
 
-        canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
+        canvas.failureForTesting = .timedOut(seconds: 5)
+        #expect(throws: RenderFailure.self) {
+            try spray(on: canvas, dust, randomness: &randomness, frames: 1)
+        }
+        canvas.failureForTesting = nil
+        try canvas.gpu.settle()
+
+        // **置き場へは触らない** (#934)。書き込みは控えに残る (#749) ので、枠は進んでよい
+        #expect(dust.state.snapshot() == before, "描き切りが投げたのに、粒の区画へ書いている")
+        let held = dust.cursor
+        #expect(held > placed, "投げたフレームで出した粒を、控えに積んでいない")
+
         try spray(on: canvas, dust, randomness: &randomness, frames: 1)
-        canvas.gpu.failSettleForTesting = nil
+        let state = canvas.read(dust.state)
+        let floats = Particles.particleFloats
+        let lifeOffset = MemoryLayout.offset(of: \Particle.life)! / MemoryLayout<Float>.stride
+        // 投げたフレームで出した粒が生きている = 次の描き切りが控えを届けた
+        for slot in placed..<held {
+            #expect(state[slot * floats + lifeOffset] > 0, "枠 \(slot) の粒が届いていない")
+        }
+    }
 
-        // 枠を進めてしまうと、書いていない区画が新しい寿命で生き返る
-        #expect(dust.cursor == placed, "待てなかったのに粒の区画へ書いている")
-
-        try spray(on: canvas, dust, randomness: &randomness, frames: 1)
-        #expect(dust.cursor > placed, "待てるようになった後も置けていない")
+    @Test("環を回り込んで出しても、区画を取り違えない")
+    func emittingAcrossTheWrapKeepsEachSlot() throws {
+        func state(writingDirectly: Bool) throws -> [Float] {
+            let canvas = try makeCanvas()
+            var randomness = Randomness(seed: 7_490)
+            let dust = try canvas.makeParticles(count: 16)
+            // **1 フレームで容量いっぱいを出す** と、枠の区間が末尾と先頭の 2 つに割れる。
+            // 物差しは、同じ粒を控えに積まず 1 つずつその場で書いたもの (区間の上限 0)
+            if writingDirectly { dust.state.dirtyRangeLimit = 0 }
+            try spray(on: canvas, dust, randomness: &randomness, frames: 3, rate: 1_500)
+            return canvas.read(dust.state)
+        }
+        let staged = try state(writingDirectly: false)
+        #expect(staged.contains { $0 != 0 }, "粒が 1 つも置かれていない")
+        #expect(staged == (try state(writingDirectly: true)))
     }
 
     @Test("速い経路は、粒を読み戻さない")
@@ -452,11 +482,17 @@ struct ParticleTests {
 
         try spray(on: canvas, dust, randomness: &randomness, frames: 1)
         let tables = try canvas.computePipeline().tablesBuilt
+        let uploadReallocations = canvas.uploadStorage.reallocations
 
         try spray(on: canvas, dust, randomness: &randomness, frames: 200)
         // **単発では出ない。** 毎フレーム確保していれば、ここで増える
         #expect(try canvas.computePipeline().tablesBuilt == tables)
         #expect(dust.state.readbackAllocations == 0)
+        // 書き込みの控え (#749) も毎フレーム確保しない — 影は 1 度、置き場は伸びきったまま
+        #expect(canvas.uploadStorage.reallocations == uploadReallocations)
+        #expect(dust.state.shadowAllocations == 1)
+        #expect(dust.parameters.shadowAllocations == 1)
+        #expect(canvas.uploadBarriersEncoded == 201, "控えを届けていないフレームがある")
         // 1 フレームに開く口は積む計算の数 (旗 1 + 段 2 + 進める 1)。どれも前の計算が
         // 書いた並びに触れるので、1 つずつ口が切れる
         #expect(dust.dispatchCount == 4)

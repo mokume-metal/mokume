@@ -77,7 +77,8 @@ struct EmissionCadence {
 ///
 /// 状態・描画へ渡す置き場所・毎フレームの指定・生存数を数える段・描く引数を、**既にある
 /// ``Numbers`` として持つ**。粒のために新しい置き場の仕組みを作らないので、計算の段の
-/// 同期がそのまま効く ([ADR-0023] 決定 3 — 同期の話を 2 つ持たない)。
+/// 同期も、書き込みを描き切りが届ける控え (#749) もそのまま効く ([ADR-0023] 決定 3 —
+/// 同期の話を 2 つ持たない)。
 ///
 /// ## 描く個数は GPU が決める
 ///
@@ -159,8 +160,7 @@ public final class Particles {
 
     /// 次に書き込む枠。**環状に回る。**
     ///
-    /// **検査が読む。** 待てなかったときに粒を置かないことは、ここが進んでいないことで
-    /// しか外から見えない ([#934](https://github.com/mokume-metal/mokume/issues/934))。
+    /// **検査が読む。**
     private(set) var cursor = 0
     private var cadence = EmissionCadence()
     /// 枠ごとの「いつまで生きるか」。
@@ -215,8 +215,8 @@ public final class Particles {
         self.update = update
         self.deadline = Array(repeating: -.greatestFiniteMagnitude, count: capacity)
 
-        // 段の頭は容量から決まるので、**ここで 1 度だけ書く**。GPU はまだこの並びを
-        // 知らないので、待つものは無い
+        // 段の頭は容量から決まるので、**ここで 1 度だけ書く**。控えに積まれ、最初の
+        // 描き切りが計算より前に届ける
         for (level, header) in levelHeaders.enumerated() {
             header.set([
                 Float(bitPattern: UInt32(levelLengths[level])),
@@ -251,24 +251,23 @@ public final class Particles {
 
     /// 粒を `count` 個置く。
     ///
-    /// **書く直前に GPU の完了を待つ。** 前のフレームで頼んだ計算がまだ同じ場所を
-    /// 読んでいるかもしれない — 描き切りは待たずに返る (#727) — ので、待ってから
-    /// 書く。全部終わっていれば待ちは無い。かつては「フレームの末尾が必ず待つ」ことに
-    /// 寄りかかっていたが、その前提はもう無い。
+    /// **待たない。** 状態の並びへの書き込みは控えに積まれ、描き切りが計算より前に
+    /// GPU 側のコピーで届ける ([#749])。前のフレームの計算がまだ同じ並びを読み書き
+    /// していても、コピーはそれが終わってから走る — かつては書く直前に投入済みの全部を
+    /// 待っていて、粒を使うフレームでは CPU と GPU が重ならなかった。
+    ///
+    /// 枠と寿命はここで進む。控えは描き切りが待てなくても捨てずに持ち越す ([#934]) ので、
+    /// 進めた枠は必ずいつか書かれる。
+    ///
+    /// [#749]: https://github.com/mokume-metal/mokume/issues/749
+    /// [#934]: https://github.com/mokume-metal/mokume/issues/934
     func emit(
         _ count: Int, from source: Emitter, speed: ClosedRange<Float>,
         angle: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
         color: LinearRGBA, at now: Float, using randomness: inout Randomness
     ) {
         guard count > 0 else { return }
-        // **待てなければ 1 つも置かない** (#934)。枠と寿命だけ進めて諦めると、書いて
-        // いない区画が新しい寿命で生き返る
-        guard
-            state.gpu.settleBeforeWriting(
-                orWarn: "Could not wait for the GPU before placing particles, so the write was "
-                    + "called off")
-        else { return }
-        let slots = state.storage.contents().assumingMemoryBound(to: Particle.self)
+        let floats = Self.particleFloats
         for _ in 0..<count {
             let slot = cursor % capacity
             cursor += 1
@@ -280,15 +279,25 @@ public final class Particles {
             let span = max(0, randomness.value(from: life.lowerBound, to: life.upperBound))
             let extent = max(0, randomness.value(from: size.lowerBound, to: size.upperBound))
 
-            slots[slot] = Particle(
+            let particle = Particle(
                 x: place.x, y: place.y, z: place.z,
                 vx: cos(heading) * rate, vy: sin(heading) * rate, vz: 0,
                 life: span, span: span, size: extent,
                 red: color.red, green: color.green, blue: color.blue, alpha: color.alpha,
                 seed: randomness.unitValue())
+            // **区間を丸ごと書く** (`Numbers.write` の約束)。粒は全部が `Float` なので
+            // 詰め物が無く、並びの 1 区画がそのまま粒 1 つになる
+            state.write(at: slot * floats, count: floats) { target in
+                withUnsafeBytes(of: particle) { raw in
+                    _ = target.update(fromContentsOf: raw.bindMemory(to: Float.self))
+                }
+            }
             deadline[slot] = now + span
         }
     }
+
+    /// 粒 1 つが並びの中で占める数。
+    static let particleFloats = MemoryLayout<Particle>.stride / MemoryLayout<Float>.stride
 
     /// この 1 フレームの指定を置く。
     ///
@@ -298,40 +307,36 @@ public final class Particles {
     ///
     /// `vertexStart` / `vertexCount` は描く側が四角を置いた区間で、GPU がそのまま描く引数へ
     /// 写す。参照の経路 (CPU が置く) では使われないので 0 でよい。
+    ///
+    /// **待たない。** 粒を置くのと同じく控えに積み、描き切りが届ける (#749)。
     func write(
         transform: simd_float4x4, step: Float, frame: Int, forces: [Force],
         vertexStart: Int, vertexCount: Int
     ) {
-        // 前のフレームの計算がまだ指定を読んでいるかもしれない。書く直前に待つ (#727)。
-        // **待てなければ書かない** (#934) — このフレームで積まれた力も一緒に落ちるが、
-        // フレームの頭で 0 に戻る量なので、捨てた以上それが正しい
-        guard
-            parameters.gpu.settleBeforeWriting(
-                orWarn: "Could not wait for the GPU before writing particle settings, so the "
-                    + "write was called off")
-        else { return }
-        let values = parameters.storage.contents().assumingMemoryBound(to: Float.self)
-        for column in 0..<4 {
-            let vector = transform[column]
-            for row in 0..<4 { values[column * 4 + row] = vector[row] }
-        }
         if forces.count > Self.maximumForces { warnTooManyForces(forces.count) }
         let used = min(forces.count, Self.maximumForces)
-        values[16] = step
-        values[17] = Float(frame)
-        values[18] = Float(used)
-        // 整数は **ビット列のまま**置く (上の `headerFloats` の理由)
-        values[19] = Float(bitPattern: UInt32(scanCount))
-        values[20] = Float(bitPattern: UInt32(clamping: vertexStart))
-        values[21] = Float(bitPattern: UInt32(clamping: vertexCount))
-        for slot in 0..<Self.maximumLevels {
-            let offset = slot < levelOffsets.count ? levelOffsets[slot] : 0
-            values[22 + slot] = Float(bitPattern: UInt32(offset))
-        }
-        for index in 27..<Self.headerFloats { values[index] = 0 }
-        for (index, force) in forces.prefix(used).enumerated() {
-            for (offset, value) in force.packed.enumerated() {
-                values[Self.headerFloats + index * Force.slotCount + offset] = value
+        // 読まれるのは頭と、効かせる数ぶんの力だけ。**書く区間はそこまでで、全部を書く**
+        parameters.write(at: 0, count: Self.headerFloats + used * Force.slotCount) { values in
+            for column in 0..<4 {
+                let vector = transform[column]
+                for row in 0..<4 { values[column * 4 + row] = vector[row] }
+            }
+            values[16] = step
+            values[17] = Float(frame)
+            values[18] = Float(used)
+            // 整数は **ビット列のまま**置く (上の `headerFloats` の理由)
+            values[19] = Float(bitPattern: UInt32(scanCount))
+            values[20] = Float(bitPattern: UInt32(clamping: vertexStart))
+            values[21] = Float(bitPattern: UInt32(clamping: vertexCount))
+            for slot in 0..<Self.maximumLevels {
+                let offset = slot < levelOffsets.count ? levelOffsets[slot] : 0
+                values[22 + slot] = Float(bitPattern: UInt32(offset))
+            }
+            for index in 27..<Self.headerFloats { values[index] = 0 }
+            for (index, force) in forces.prefix(used).enumerated() {
+                for (offset, value) in force.packed.enumerated() {
+                    values[Self.headerFloats + index * Force.slotCount + offset] = value
+                }
             }
         }
     }
