@@ -17,4 +17,10 @@ struct Lighting {
     /// 見ている場所。`w` が 1 なら xyz は**視点の位置** (透視)、0 なら xyz は
     /// **見ている側へ向かう一定の向き** (平行)。
     var viewer: SIMD4<Float>
+    /// 世界をカメラの側へ移す行列 (``Camera/viewMatrix``)。
+    ///
+    /// 断片はこれで世界の向きを**視点から見た向き**へ移す (`Fragment` の `viewNormal`・
+    /// [#847](https://github.com/mokume-metal/mokume/issues/847))。頂点段を通さず
+    /// ここに置くのは、断片が読む「どこから見ているか」が既にこの構造体だからである。
+    var view: simd_float4x4
 }
