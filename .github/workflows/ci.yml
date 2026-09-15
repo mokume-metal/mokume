@@ -72,6 +72,42 @@ jobs:
           pipx install check-jsonschema
       - run: make ci-check
 
+  # release のテストビルドと実行を、人が打たなくても走らせる (#1096)。
+  #
+  # **ci-check には足さない。** #761 完了条件 2 と AGENTS.md「性能は release で測る。入口は
+  # make test-release の 1 つ」が決めた形は動かさず、ci-check の外に別の入口を置く。別ジョブ
+  # なので ci-check と並列に走り、make ci-check を打ったときの所要時間は 1 秒も変わらない。
+  #
+  # 塞ぐのは release 側で起きて**誰にも見えない 2 つの赤**である (実害 3 件は #761 / #1021 /
+  # #1086。3 件目では誰も見ていない赤が 9 日間 main に残った):
+  #
+  #   入口が組めなくなる赤 … 明示の隔離を持たない isolated deinit が Sources/ に入ると
+  #                          release のテストビルドがコンパイルできない (#1083)。debug でも
+  #                          swift build -c release でも通るので、足した本人には壊れて見えない
+  #   release でしか走らない検査の赤 … .enabled(if: !isDebugBuild) を持つ検査の失敗
+  #
+  # **GPU を要する検査はここでも走らない。** CI の GPU はこの世代のコマンド構造を持たないので、
+  # RenderDevice.isAvailable を条件に持つ Suite は debug と同じくスキップされる (ADR-0019
+  # 決定 7)。2 つ目で届くのは GPU を要さない release 専用の検査だけで、#1086 の赤そのもの
+  # (ShapeTests の速さ = GPU が要る) はここでは捕まらない。手元で make test-release を打つ
+  # 理由はそのぶん残る。
+  #
+  # 承認とラベルの付け外しでは走らせない (#623 / #729) — どちらも PR の木を 1 バイトも
+  # 変えないので、macOS で release ビルドを回し直す理由が無い。条件は ci-check と同じ形で、
+  # 括弧を 1 段深くして pull_request の中に閉じ込める理由もそちらのコメントが持つ。
+  #
+  # 検査の実体は Makefile に集約する (このファイル冒頭の既定)。ここは呼ぶだけを保つ。
+  test-release:
+    if: >-
+      github.event_name != 'pull_request_review'
+      && (github.event_name != 'pull_request'
+      || (github.event.action != 'labeled'
+      && github.event.action != 'unlabeled'))
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: make test-release
+
   # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
   # merge_group にはタイトルが無いためスキップし、ci-gate 側は skipped を許容する。
   #
