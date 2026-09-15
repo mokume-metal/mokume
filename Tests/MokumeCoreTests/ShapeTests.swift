@@ -45,6 +45,26 @@ struct ShapeTests {
         }
     }
 
+    /// 組み立ての中で変換とスタイルを積んで置く葉。`Sketches/TypeAndImagery.swift` が
+    /// `setup()` で書いているのと同じ形である。**頂点の並びで記録する**ので、置かれた
+    /// 座標をそのまま読める。
+    private func makeLeaf(_ canvas: Canvas) -> Shape {
+        canvas.createShape {
+            canvas.push()
+            canvas.translate(17, 9)
+            canvas.rotate(0.7)
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0, green: 0.8, blue: 0.3))
+            canvas.beginShape()
+            canvas.vertex(0, -8)
+            canvas.vertex(6, 0)
+            canvas.vertex(0, 8)
+            canvas.vertex(-6, 0)
+            canvas.endShape(.close)
+            canvas.pop()
+        }
+    }
+
     // MARK: - 畳まれていること
 
     /// 完了条件「組にした形が 1 度の描画に畳まれる」。
@@ -521,6 +541,69 @@ struct ShapeTests {
         #expect(canvas.currentFill == .linear(red: 0, green: 0, blue: 1))
         #expect(!canvas.warnings.hasWarned(.styleOutsideFrame))
         #expect(!canvas.warnings.hasWarned(.transformOutsideFrame))
+    }
+
+    /// 組み立ての中は**形自身の座標で記録する文脈**なので、中で書いた変換もスタイルの
+    /// 積み降ろしも形に焼き付く。フレームの外でだけ落ちると、`setup()` で組み立てた形が
+    /// 1 か所へ重なる ([#1172]) — 参照スケッチ (`Sketches/TypeAndImagery.swift`) の
+    /// 9 枚の葉がそうなっていた。
+    ///
+    /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
+    @Test("フレームの外で組み立てても、中で書いた変換は形に焼き付く")
+    func buildingOutsideTheFrameKeepsTheTransformWrittenInside() throws {
+        let canvas = try makeCanvas(width: 32, height: 32)
+        var inside = Shape.empty
+        try canvas.draw { inside = makeLeaf(canvas) }
+        let outside = makeLeaf(canvas)
+
+        #expect(!outside.isEmpty)
+        #expect(outside.vertices.map(\.position) == inside.vertices.map(\.position))
+        #expect(!canvas.warnings.hasWarned(.transformOutsideFrame))
+        #expect(!canvas.warnings.hasWarned(.styleOutsideFrame))
+    }
+
+    /// 積み降ろしは**記録の中で閉じる**。積んだまま抜けたぶんが外の段として残ると、
+    /// 組み立てのあとの `pop()` が、記録の中で積んだ状態へ戻してしまう ([#1172])。
+    ///
+    /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
+    @Test("組み立ての中で積んだまま抜けても、外の変換は動かない")
+    func buildingDoesNotLeakTheStackItPushed() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        var expected = Transform.identity
+        expected.translate(x: 5, y: 5)
+        try canvas.draw {
+            canvas.translate(5, 5)
+            _ = canvas.createShape {
+                canvas.push()
+                canvas.translate(9, 9)
+                canvas.rect(0, 0, 4, 4)
+            }
+            // 記録の中で積んだ段が外へ残っていれば、ここで (9, 9) ぶん動いた状態へ戻る
+            canvas.pop()
+            #expect(canvas.transform == expected)
+        }
+    }
+
+    /// 逆向きも同じ — 記録の中の `pop()` は、記録より前に積んだ段を取らない ([#1172])。
+    ///
+    /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
+    @Test("組み立ての中の pop() は、外で積んだ段を取らない")
+    func buildingDoesNotPopTheStackFromOutside() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.fill(.linear(red: 0, green: 0, blue: 1))
+            canvas.push()
+            canvas.translate(5, 5)
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
+            _ = canvas.createShape {
+                canvas.pop()
+                canvas.rect(0, 0, 4, 4)
+            }
+            // 外の段はまだ積まれたまま。ここで初めて積む前の状態へ戻る
+            canvas.pop()
+            #expect(canvas.transform == .identity)
+            #expect(canvas.currentFill == .linear(red: 0, green: 0, blue: 1))
+        }
     }
 
     @Test("組み立てたぶんが、そのフレームの絵に紛れ込まない")
