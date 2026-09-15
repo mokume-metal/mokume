@@ -4,6 +4,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import Metal
 import Testing
 import UniformTypeIdentifiers
 
@@ -310,23 +311,62 @@ struct ImageTests {
 
     // MARK: - 作る・書き換える
 
-    @Test("待てなかったら、画像を面へ送らない")
+    /// 面の左上 1 画素の赤。**生の面を読む** — 描いた絵を読むと、送った画素かどうかと
+    /// 描けたかどうかが混ざる。
+    private func redOfFirstTexel(_ image: Image, on canvas: Canvas) throws -> Float {
+        try canvas.gpu.settle()
+        var texel = SIMD4<Float16>()
+        withUnsafeMutableBytes(of: &texel) { bytes in
+            image.texture.getBytes(
+                bytes.baseAddress!, bytesPerRow: MemoryLayout<SIMD4<Float16>>.stride,
+                from: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0)
+        }
+        return Float(texel.x)
+    }
+
+    @Test("描き切りが待てなかったら、画像を面へ送らず、次の描き切りで送る")
     func doesNotUploadWhenTheWaitFails() throws {
         let canvas = try makeCanvas()
         let image = try canvas.createImage(2, 2)
         image.set(0, 0, .linear(red: 1, green: 0, blue: 0))
         #expect(image.needsUpload)
 
-        canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
-        image.uploadIfNeeded()
-        canvas.gpu.failSettleForTesting = nil
+        // 置いたフレームの描き切りが、書く前の待ちで投げる
+        canvas.failureForTesting = .timedOut(seconds: 5)
+        #expect(throws: RenderFailure.self) { try canvas.draw { canvas.image(image, 0, 0) } }
+        canvas.failureForTesting = nil
 
         // 旗が下りると、送っていない画素が「送り済み」になって二度と届かない
         #expect(image.needsUpload, "面へ送っていないのに、送り直しの旗が下りている")
+        #expect(try redOfFirstTexel(image, on: canvas) == 0, "描き切りが投げたのに面へ書いている")
 
-        image.uploadIfNeeded()
+        // 置き直さなくても、控えに残っているので次の描き切りが届ける
+        try canvas.draw { canvas.background(.display(red: 0, green: 0, blue: 0)) }
         #expect(!image.needsUpload, "待てるようになった後も送っていない")
+        #expect(try redOfFirstTexel(image, on: canvas) == 1, "送ったはずの画素が面に無い")
     }
+
+    @Test("大きすぎる画像は、描き切りの中で待ってから直接送る")
+    func oversizedImagesAreSentDirectly() throws {
+        let canvas = try makeCanvas()
+        let image = try canvas.createImage(2, 2)
+        canvas.uploadByteLimit = 0
+
+        image.set(0, 0, .linear(red: 1, green: 0, blue: 0))
+        canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
+        try canvas.draw { canvas.image(image, 0, 0) }
+        canvas.gpu.failSettleForTesting = nil
+        // **待てなければ送らない** (#934)。旗は立ったまま
+        #expect(image.directUploads == 0)
+        #expect(image.needsUpload, "待てなかったのに、送り直しの旗が下りている")
+
+        try canvas.draw { canvas.image(image, 0, 0) }
+        #expect(image.directUploads == 1, "上限を超えた画像が直接送られていない")
+        #expect(!image.needsUpload)
+        #expect(canvas.uploadBarriersEncoded == 0, "直接送った画像のために、控えのコピーを積んでいる")
+        #expect(try redOfFirstTexel(image, on: canvas) == 1, "直接送ったはずの画素が面に無い")
+    }
+
 
     @Test("作った絵に書き込むと、送り直しを呼ばなくても描かれる")
     func writingToACreatedImageShowsUpWithoutAnExplicitUpload() throws {

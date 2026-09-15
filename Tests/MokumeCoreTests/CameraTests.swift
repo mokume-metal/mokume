@@ -61,6 +61,7 @@ struct CameraTests {
             solid.background(black)
             solid.ortho()
             solid.fill(red)
+            solid.noStroke()
             solid.push()
             solid.translate(32, 32, 0)
             solid.plane(30, 20)
@@ -328,6 +329,7 @@ struct CameraTests {
         try canvas.draw {
             canvas.background(black)
             canvas.fill(red)
+            canvas.noStroke()
             canvas.push()
             canvas.translate(32, 32, 0)
             canvas.plane(30, 20)

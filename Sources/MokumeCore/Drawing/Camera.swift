@@ -200,11 +200,19 @@ public struct Camera: Equatable, Sendable {
         Self.clipAdjustment(width: width, height: height) * projectionMatrix * viewMatrix
     }
 
-    /// 世界をカメラの側へ移す行列。
-    var viewMatrix: simd_float4x4 {
+    /// 視点の枠を世界の向きで並べたもの。列は**横・上・手前** (`viewMatrix` の回転の転置)。
+    ///
+    /// 粒の板はこの 3 本に沿って置くと、どこから見ても画面に正対する (#1043)。
+    var basis: simd_float3x3 {
         let back = -forward
         let side = right
-        let above = cross(back, side)
+        return simd_float3x3(side, cross(back, side), back)
+    }
+
+    /// 世界をカメラの側へ移す行列。
+    var viewMatrix: simd_float4x4 {
+        let frame = basis
+        let (side, above, back) = (frame.columns.0, frame.columns.1, frame.columns.2)
         return simd_float4x4(
             SIMD4(side.x, above.x, back.x, 0),
             SIMD4(side.y, above.y, back.y, 0),

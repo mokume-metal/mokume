@@ -538,7 +538,7 @@ struct ShapeTests {
             canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.rect(0, 0, 4, 4)
         }
-        #expect(canvas.currentFill == .linear(red: 0, green: 0, blue: 1))
+        #expect(canvas.style.fill == .linear(red: 0, green: 0, blue: 1))
         #expect(!canvas.warnings.hasWarned(.styleOutsideFrame))
         #expect(!canvas.warnings.hasWarned(.transformOutsideFrame))
     }
@@ -602,7 +602,7 @@ struct ShapeTests {
             // 外の段はまだ積まれたまま。ここで初めて積む前の状態へ戻る
             canvas.pop()
             #expect(canvas.transform == .identity)
-            #expect(canvas.currentFill == .linear(red: 0, green: 0, blue: 1))
+            #expect(canvas.style.fill == .linear(red: 0, green: 0, blue: 1))
         }
     }
 
@@ -998,8 +998,9 @@ struct ShapeTests {
 
     /// #1253 の完了条件 3。**書き換えていない絵は、置き直しても送りを頼まない。**
     ///
-    /// 送りは GPU 可視メモリへ触るので待ちを頼む (`settleCalls`)。置く口の前後で数え、
-    /// 書き換えたフレームでは 1 つ増えることも見る — 増えない実装でも通る検査にしない。
+    /// 送りは描き切りが届けるので、頼んだことは登録簿 (`RenderDevice.pendingUploads`) に
+    /// 載ったかで見る (#749)。置く口の直後に見て、書き換えたフレームでは載ることも見る —
+    /// 載らない実装でも通る検査にしない。
     @Test("書き換えていない絵を読む形は、置き直しても送りを頼まない", arguments: PictureReader.allCases)
     func untouchedPictureIsNotSentAgainWhenReplaced(_ reader: PictureReader) throws {
         let canvas = try makeCanvas()
@@ -1010,26 +1011,26 @@ struct ShapeTests {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.shape(shape)
         }
+        #expect(!picture.needsUpload, "組んだときの絵が届いていない")
 
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
-            let settles = canvas.gpu.settleCalls
             canvas.shape(shape)
             canvas.shape(shape, 4, 4)
-            #expect(canvas.gpu.settleCalls == settles, "書き換えていない絵の送りを頼んでいる")
-            #expect(!picture.needsUpload)
+            #expect(!picture.isQueuedForUpload, "書き換えていない絵の送りを頼んでいる")
+            #expect(canvas.gpu.pendingUploads.isEmpty)
         }
 
         picture.fill(green)
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
-            let settles = canvas.gpu.settleCalls
             canvas.shape(shape)
-            // 2 度目は送り済みなので頼まない
+            // 2 度置いても、登録簿には 1 度だけ載る
             canvas.shape(shape, 4, 4)
-            #expect(canvas.gpu.settleCalls == settles + 1, "書き換えた絵の送りを 1 度だけ頼んでいない")
-            #expect(!picture.needsUpload)
+            #expect(picture.isQueuedForUpload, "書き換えた絵の送りを頼んでいない")
+            #expect(canvas.gpu.pendingUploads.owners.count == 1)
         }
+        #expect(!picture.needsUpload, "書き換えた絵が描き切りで届いていない")
     }
 
     @Test("何も入っていない形を置いても、何も起きない")

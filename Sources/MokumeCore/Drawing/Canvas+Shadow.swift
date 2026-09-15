@@ -45,14 +45,14 @@ extension Canvas {
     public func castShadow(_ enabled: Bool) {
         guard isDrawing else { return warnOutsideFrame(.shadow) }
         closeBatch()
-        castsShadow = enabled
+        style.castsShadow = enabled
     }
 
     // これから置く形が、影を受ける側か。
     public func receiveShadow(_ enabled: Bool) {
         guard isDrawing else { return warnOutsideFrame(.shadow) }
         closeBatch()
-        receivesShadow = enabled
+        style.receivesShadow = enabled
     }
 
     // MARK: - 焼き付け
@@ -85,6 +85,25 @@ extension Canvas {
                 caster.directionAndCone.x, caster.directionAndCone.y, caster.directionAndCone.z),
             center: currentCamera.center,
             range: effectiveShadowRange)
+    }
+
+    /// 影を落とすと言ったのに落とす光が無いまま、フレームを終えようとしていれば初回だけ知らせる。
+    ///
+    /// **呼ぶのはフレームの終わりだけ** (`endFrame`)。焼き付けはそこで 1 度だけ走り、
+    /// そのときの光から ``shadowCaster`` を選ぶので、影が出ないと確定するのはその時点で
+    /// ある。途中の描き切り (画素の読み出しなど) ではまだ光を置く前でありうる。
+    ///
+    /// 黙っていると、光は当たっているのに影だけが無い絵が「そういう作品」に見える
+    /// ([#1151] — 手元の表示を `noLights()` から描いて影が丸ごと消えた)。
+    ///
+    /// [#1151]: https://github.com/mokume-metal/mokume/issues/1151
+    func warnIfShadowHasNoCaster() {
+        guard shadowsEnabled, shadowCaster == nil else { return }
+        warnOnce(
+            .shadowWithoutCaster,
+            "shadows(): the frame ended with no directionalLight() in place, so it has no shadows. "
+                + "Shadows are baked once at the end of the frame from the lights in place then, "
+                + "so a noLights() late in draw() removes the shadows of everything drawn before it too")
     }
 
     /// 受け取れない値を、初回だけ知らせる。

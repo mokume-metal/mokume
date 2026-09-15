@@ -20,6 +20,11 @@ import simd
 /// 実際の送りは描くときに 1 度だけ起きるので、**送り直しを呼び忘れて絵が変わらない**
 /// という形の不具合が起きない。
 ///
+/// 送るのは**描き切りの時点**の画素で、描き切りが GPU 側のコピーで面へ届ける
+/// ([#749](https://github.com/mokume-metal/mokume/issues/749))。だから描いた後で置き直さずに
+/// 書き換えても、そのフレームには書き換えた後の絵が出る (同じフレームで 2 回置いた
+/// ときに、両方へ最後の絵が出るのと同じ理屈である)。
+///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 // `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
 // (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
@@ -33,13 +38,20 @@ import simd
     var pixels: [SIMD4<Float16>]
     /// GPU 側の面。
     let texture: any MTLTexture
-    /// 面へ送る前に待つ相手 (前のフレームがまだこの面を読んでいるかもしれない・#727)。
+    /// 送りを頼む先 (控えの登録簿) と、逃げ道で待つ相手。
     private let gpu: RenderDevice
     /// CPU 側が GPU 側より新しいか。
     ///
-    /// **検査が読む。** 待てなくて送るのをやめたときは立ったままになり、次に描くときへ
-    /// 持ち越す ([#934](https://github.com/mokume-metal/mokume/issues/934))。
-    private(set) var needsUpload = false
+    /// **検査が読む。** 描き切りが待てずに送れなかったときは立ったままになり、次の
+    /// 描き切りへ持ち越す ([#934](https://github.com/mokume-metal/mokume/issues/934))。
+    private(set) var needsUpload = false {
+        didSet { if needsUpload { writeGeneration &+= 1 } }
+    }
+    /// 画素を書き換えた世代。**送った後に書き換えられていたら、旗を下ろさない。**
+    private var writeGeneration: UInt64 = 0
+    var isQueuedForUpload = false
+    /// 逃げ道で直接送った回数。**検査が読む。**
+    private(set) var directUploads = 0
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
     private var warnedMismatch = false
 
@@ -59,7 +71,9 @@ import simd
         texture.label = "mokume.image"
         self.texture = texture
         self.gpu = gpu
-        upload()
+        // **待たずに送る。** いま作った面を GPU はまだ知らないので、読み終わるのを待つ
+        // 相手が居ない
+        replaceTexture()
     }
 
     /// **面を常駐から退かせる** ([#738])。
@@ -171,29 +185,62 @@ import simd
                 + "changed size, make it again with createImage()")
     }
 
-    /// 書き換えた画素を GPU 側へ送る。描く直前に呼ばれる。
-    func uploadIfNeeded() {
+    /// 書き換えた画素を送るよう頼む。描く直前に呼ばれる。
+    ///
+    /// **その場では送らない。** 描き切りは GPU の完了を待たずに返る (#727) ので、前の
+    /// フレームがまだこの面を読んでいるかもしれない。その場で面へ書くには投入済みの全部を
+    /// 待つしかなく、毎フレーム映像を差し替えるスケッチでは CPU と GPU の重なりがそこで
+    /// 消えていた (#749)。登録簿に載せて、描き切りが GPU 側のコピーで届ける。
+    /// 書き換えないフレームは何も積まない。
+    func requestUpload() {
         guard needsUpload else { return }
-        upload()
+        gpu.pendingUploads.enqueue(self)
     }
 
-    private func upload() {
-        // 描き切りは GPU の完了を待たずに返る (#727)。前のフレームがまだこの面を読んで
-        // いるかもしれないので、書き換える直前に投入済みのものが終わるのを待つ。
-        // 書き換えないフレームはここへ来ないので、待ちも払わない
-        // **待てなければ送らない** (#934)。送り直しの旗を立てたまま返るので、書き換えた
-        // 画素は次に描くときへ持ち越す
-        guard
-            gpu.settleBeforeWriting(
-                orWarn: "Could not wait for the GPU before sending an image to a surface, so "
-                    + "the write was called off")
-        else { return }
+    private var pixelBytes: Int { pixels.count * MemoryLayout<SIMD4<Float16>>.stride }
+    private var bytesPerRow: Int { width * MemoryLayout<SIMD4<Float16>>.stride }
+
+    private func replaceTexture() {
         pixels.withUnsafeBytes { source in
             texture.replace(
                 region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
-                withBytes: source.baseAddress!,
-                bytesPerRow: width * MemoryLayout<SIMD4<Float16>>.stride)
+                withBytes: source.baseAddress!, bytesPerRow: bytesPerRow)
         }
+    }
+}
+
+extension Image: PendingUpload {
+    var pendingUploadByteCount: Int { needsUpload ? pixelBytes : 0 }
+
+    func stageUpload(
+        into bytes: UnsafeMutableRawPointer, of staging: any MTLBuffer, at offset: Int,
+        on encoder: any MTL4ComputeCommandEncoder
+    ) -> UInt64 {
+        pixels.withUnsafeBytes { source in
+            bytes.copyMemory(from: source.baseAddress!, byteCount: pixelBytes)
+        }
+        encoder.copy(
+            sourceBuffer: staging, sourceOffset: offset, sourceBytesPerRow: bytesPerRow,
+            sourceBytesPerImage: 0, sourceSize: MTLSize(width: width, height: height, depth: 1),
+            destinationTexture: texture, destinationSlice: 0, destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+        return writeGeneration
+    }
+
+    func uploadDirectly() -> UInt64? {
+        // **待てなければ送らない** (#934)。旗は立ったままなので、次の描き切りへ持ち越す
+        guard
+            gpu.settleBeforeWriting(
+                orWarn: "Could not wait for the GPU before sending an image to a surface, so "
+                    + "the write was held back")
+        else { return nil }
+        replaceTexture()
+        directUploads += 1
+        return writeGeneration
+    }
+
+    func markUploaded(through generation: UInt64) {
+        guard generation == writeGeneration else { return }
         needsUpload = false
     }
 }

@@ -73,7 +73,10 @@ public nonisolated struct TextFlow: Equatable, Sendable {
 public nonisolated struct TextContour: Equatable, Sendable {
     /// 周を回る点。**最後の点から最初の点へ戻る**ものとして扱う。
     public let points: [SIMD2<Float>]
-    /// 内側 (穴) か。`A` の三角や `o` の中が該当する。
+    /// 内側 (穴) か。`o` の中が該当する。
+    ///
+    /// 穴として返るかは**書体による** — 既定の書体の `A` は重なった外周として返り、
+    /// 三角はこれの立った周にならない (``Sketch/textOutline(_:_:_:)``)。
     public let isHole: Bool
 
     public init(points: [SIMD2<Float>], isHole: Bool) {

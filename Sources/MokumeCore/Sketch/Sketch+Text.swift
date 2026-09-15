@@ -580,6 +580,14 @@ extension Sketch {
     ///
     /// 字ごとに、外側の周が先・穴が後の順で並ぶ。曲線は直線の並びにほどいてあり、
     /// 細かさは曲線の大きさから決まる。
+    ///
+    /// **周の分かれ方は書体の持ち方どおりで、書体と字によって変わる。** 既定の書体は
+    /// `A` や `B` のような字を重なった部品で持つので、`A` は重なった外周がいくつも返り、
+    /// 三角の穴は ``TextContour/isHole`` の立った周として現れない (重ねて塗れば絵は
+    /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
+    /// 1 つの形として扱いたい (三角形へ畳む・穴だけ別の色にする) なら、
+    /// ``textFont(_:)`` で書体を指定する — `Helvetica` などでは `A` が外周 1 つと
+    /// 穴 1 つになる。
     // shot: 1 snippet=e9e2ccf8
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)

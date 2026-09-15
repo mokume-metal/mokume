@@ -337,6 +337,60 @@ struct ObservationProtocolTests {
         #expect(FrameObserver(directory: facet).pendingRequest()?.id == "a1")
     }
 
+    // MARK: - 重なった世代 (#1162)
+
+    /// 見張りは切り替えの瞬間だけ 2 世代を重ねる。重なっている間に次の世代が要求を拾うと、
+    /// 撮り始めに前の世代の絵を消し、2 つの列が区画の上で並走する
+    /// ([#1162](https://github.com/mokume-metal/mokume/issues/1162))。
+    @Test("別の世代が区画を持っている間は要求を拾わず、居なくなったら拾う")
+    func waitsWhileAnotherGenerationHoldsTheFacet() throws {
+        let facet = try makeFacet()
+        let outgoing = try OtherGenerationFixture(holding: facet)
+        let incoming = FrameObserver(directory: facet)
+        try write(request: #"{"id":"a1"}"#, to: facet)
+
+        for _ in 0..<5 {
+            #expect(incoming.pendingRequest() == nil, "前の世代が居る間に、次の世代が要求を拾っている")
+        }
+        // 持っていない間は中身を開かない — 引き継いだ後に拾えるよう、見たことにもしない
+        #expect(incoming.readCount == 0)
+
+        outgoing.leave()
+        #expect(incoming.pendingRequest()?.id == "a1")
+    }
+
+    /// 次の世代は作った時点で応答を 1 度読む。**その後に前の世代が応えた要求**は、作った
+    /// 時点の記録には入っていない — 引き継いだ時点で読み直さないと、同じ識別子に 2 つの
+    /// 世代が順に応える (受け渡しの端の二重応答)。
+    @Test("前の世代が引き継ぐ前に応えた要求に、次の世代はもう一度応えない")
+    func doesNotAnswerWhatTheOutgoingGenerationAnswered() throws {
+        let facet = try makeFacet()
+        let outgoing = try OtherGenerationFixture(holding: facet)
+        let incoming = FrameObserver(directory: facet)
+        try write(request: #"{"id":"a1"}"#, to: facet)
+        // 次の世代が作られた後に、前の世代が応えた
+        FrameObserver(directory: facet).finish(report(id: "a1", image: nil))
+
+        outgoing.leave()
+        for _ in 0..<5 {
+            #expect(incoming.pendingRequest() == nil, "前の世代が応えた要求に、もう一度応えている")
+        }
+    }
+
+    @Test("前の世代が応え終える前に居なくなった要求は、引き継いだ世代が応える")
+    func answersWhatTheOutgoingGenerationLeftUnfinished() throws {
+        let facet = try makeFacet()
+        FrameObserver(directory: facet).finish(report(id: "a0", image: nil))
+        let outgoing = try OtherGenerationFixture(holding: facet)
+        let incoming = FrameObserver(directory: facet)
+        try write(request: #"{"id":"a1"}"#, to: facet)
+        #expect(incoming.pendingRequest() == nil)
+
+        // 撮っている途中で落とされた。応答は前の要求のまま
+        outgoing.leave()
+        #expect(incoming.pendingRequest()?.id == "a1")
+    }
+
     @Test("基準は作業ディレクトリで、環境から与えられれば上書きされる")
     func resolvesTheBaseDirectory() {
         let current = URL(

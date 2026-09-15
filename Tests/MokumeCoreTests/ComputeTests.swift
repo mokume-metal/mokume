@@ -351,31 +351,79 @@ struct ComputeTests {
         #expect(canvas.computeEncodersOpened == 0)
     }
 
-    @Test("待てなかったら、数の並びへ書かない")
-    func doesNotWriteNumbersWhenTheWaitFails() throws {
+    @Test("待てない間は、数の並びへ書いた値を置き場へ届けず、待てたときに届ける")
+    func holdsNumberWritesBackWhileTheWaitFails() throws {
         let canvas = try makeCanvas()
         let heat = try canvas.makeNumbers(count: 4)
         heat.fill(3)
         #expect(canvas.read(heat) == [3, 3, 3, 3])
 
-        // 書く口は 3 つあり、**どれも**待てなければ書かない
+        // **読み戻しが待てない。** 書く口は 3 つあり、どれも控えに積むだけで待たない (#749)。
+        // 届けるのは読み戻しか描き切りで、そこが待てなければ置き場へは触らない
         canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
         heat.set(9, at: 0)
-        heat.set([9, 9, 9, 9])
-        heat.fill(9)
+        heat.set([8, 8])
+        heat.set(7, at: 3)
+        let whileStuck = canvas.read(heat)
         canvas.gpu.failSettleForTesting = nil
 
         #expect(
-            canvas.read(heat) == [3, 3, 3, 3],
+            whileStuck == [3, 3, 3, 3],
             """
             GPU の完了を待てなかったのに、共有しているメモリへ書いている。
 
             待ちが期限切れになったことは、GPU がそのメモリを使い終えた証拠ではない
             ([#934](https://github.com/mokume-metal/mokume/issues/934))。
             """)
+        #expect(canvas.read(heat) == [8, 8, 3, 7], "待てるようになった後、控えが届いていない")
 
-        heat.fill(9)
-        #expect(canvas.read(heat) == [9, 9, 9, 9], "待てるようになった後も書けていない")
+        // **描き切りが待てない。** 投げたフレームは置き場へ触らず、控えは次の描き切りへ残る
+        heat.fill(5)
+        canvas.failureForTesting = .timedOut(seconds: 5)
+        #expect(throws: RenderFailure.self) { try canvas.draw {} }
+        canvas.failureForTesting = nil
+        try canvas.gpu.settle()
+        #expect(heat.snapshot() == [8, 8, 3, 7], "描き切りが投げたのに、置き場へ書いている")
+
+        try canvas.draw {}
+        try canvas.gpu.settle()
+        #expect(heat.snapshot() == [5, 5, 5, 5], "次の描き切りが控えを届けていない")
+    }
+
+    @Test("汚れ区間が上限を超えたら、その場で待って書き、区間を溜めない")
+    func scatteredWritesFallBackToWaitingAndWriting() throws {
+        let canvas = try makeCanvas()
+        let heat = try canvas.makeNumbers(count: 16)
+        heat.dirtyRangeLimit = 3
+
+        // 1 つおきに書くので、区間は畳めずに増える
+        for index in stride(from: 0, to: 8, by: 2) { heat.set(Float(index + 1), at: index) }
+        #expect(heat.directUploads == 1, "上限を超えたのに、その場で書いていない")
+        #expect(heat.pendingUploadByteCount == 0, "書いた区間を控えに残している")
+        try canvas.gpu.settle()
+        #expect(Array(heat.snapshot().prefix(8)) == [1, 0, 3, 0, 5, 0, 7, 0])
+    }
+
+    @Test("同じフレームで書いては読むのを繰り返しても、そのつど書いた値が返る")
+    func interleavedWritesAndReadsSeeEachWrite() throws {
+        let canvas = try makeCanvas()
+        let heat = try canvas.makeNumbers(count: 8)
+        var seen: [[Float]] = []
+        try canvas.draw {
+            heat.set([1, 2, 3])
+            seen.append(canvas.read(heat))
+            heat.set(9, at: 1)
+            heat.set(7, at: 6)
+            seen.append(canvas.read(heat))
+            heat.fill(4)
+            heat.set(5, at: 7)
+            seen.append(canvas.read(heat))
+        }
+        #expect(
+            seen == [
+                [1, 2, 3, 0, 0, 0, 0, 0], [1, 9, 3, 0, 0, 0, 7, 0], [4, 4, 4, 4, 4, 4, 4, 5],
+            ])
+        #expect(heat.shadowAllocations == 1, "書くたびに影を確保し直している")
     }
 
     @Test("待てなかったら、計算の値を書かず、口も開かない")
@@ -499,6 +547,9 @@ struct ComputeTests {
         let field = try canvas.makeNumbers(count: 32)
         let seeded = try canvas.makeComputation(Self.seeded, name: "seeded", values: ["seed": 7])
         field.fill(-1)
+        // **書いた値を置き場へ届けておく。** 書く口は控えに積むだけ (#749) なので、届けずに
+        // 生の置き場を覗くと、書く前の 0 が見えて「古い」の意味がずれる
+        #expect(canvas.read(field)[0] == -1)
 
         var raw: Float = 0
         var read: [Float] = []
@@ -678,5 +729,31 @@ struct ComputeTests {
         #expect(
             read.indices.allSatisfy { abs(read[$0] - Float($0) / 31) < 1e-5 },
             "フレーム末尾の描き切りで計算が流れていない")
+    }
+
+    /// 同じ作法を控えにも効かせる。**積んだ後で描き切りが投げても、控えを下ろさない**
+    /// ([#749])。下ろすと、書いた値は置き場へ届かないまま「届いた」ことになる。
+    ///
+    /// [#749]: https://github.com/mokume-metal/mokume/issues/749
+    @Test("途中の描き切りが控えを積んだ後で投げても、書いた値はフレーム末尾で届く")
+    func uploadsSurviveAMidFrameFlushThatThrowsAfterEncodingThem() throws {
+        let canvas = try makeCanvas()
+        let heat = try canvas.makeNumbers(count: 32)
+        // 形の置き場を 1 度取らせる。面の外に置くので絵には出ない
+        try canvas.draw { canvas.rect(1000, 1000, 1, 1) }
+
+        var barriers = -1
+        try canvas.draw {
+            heat.fill(5)
+            for index in 0..<5000 { canvas.rect(1000 + index % 16, 1000, 1, 1) }
+            canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+            canvas.loadPixels()
+            canvas.gpu.failSettleForTesting = nil
+            barriers = canvas.uploadBarriersEncoded
+        }
+        #expect(barriers == 1, "控えを積む前に投げている — この検査は控えの後で投げる経路を見ていない")
+        #expect(canvas.uploadBarriersEncoded == 2, "フレーム末尾の描き切りが控えを積み直していない")
+        try canvas.gpu.settle()
+        #expect(heat.snapshot() == Array(repeating: 5, count: 32), "投入されなかった控えが、届かないまま下ろされている")
     }
 }

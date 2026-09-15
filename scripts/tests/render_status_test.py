@@ -80,6 +80,12 @@ if [[ "$*" == *"/git/trees/"* ]]; then
   fi
   exit 0
 fi
+# merge queue の並び (--jq が position の順に抜いた番号)。順番の判定が読む (#1266)
+if [[ "$*" == "api graphql"* && "$*" == *"mergeQueue{"* ]]; then
+  [ -z "${QUEUE_FAILS:-}" ] || { echo "gh: 502" >&2; exit 1; }
+  printf '%s\\n' ${QUEUED_PRS:-}
+  exit 0
+fi
 # open な PR の一覧 (--jq が draft を落とした後の番号の並び)。順番の判定が読む
 if [[ "$*" == *"/pulls?"* ]]; then
   [ -z "${OPEN_PRS_FAILS:-}" ] || { echo "gh: 500" >&2; exit 1; }
@@ -408,6 +414,20 @@ class RenderStatusTest(unittest.TestCase):
         self.assertEqual(self.posted(), [])
         self.assertIn("この PR が描画の先頭", out)
 
+    def test_queueに居る描画PRは番号が大きくても先に居る(self):
+        """#1266。queue に居る描画 PR は合流後の木へ先に入るので、番号の若さでは
+        追い越せない。ここで先頭と名乗ると、打ち直しても弾かれ続ける。"""
+        out = self.turn(PR_NUMBER="3", OPEN_PRS="3 9", QUEUED_PRS="9")
+        posted = self.posted_to("deadbeef")
+        self.assertEqual(len(posted), 1, self.posted())
+        self.assertIn("#9 の merge を待つ", posted[0])
+        self.assertIn("先に #9 が居る", out)
+
+    def test_queueを読めなければ番号順で決める(self):
+        out = self.turn(PR_NUMBER="3", OPEN_PRS="3 9", QUEUED_PRS="9", QUEUE_FAILS="1")
+        self.assertEqual(self.posted(), [])
+        self.assertIn("この PR が描画の先頭", out)
+
     def test_Draftの描画PRは順番の外(self):
         # 一覧は draft を落とした後の並びなので、自分が居なければ Draft である
         out = self.turn(OPEN_PRS="3")
@@ -546,6 +566,28 @@ class RenderStatusTest(unittest.TestCase):
         # 理由と直し方を description が名乗る
         self.assertIn("merge queue で弾かれた", head_post[0])
         self.assertIn("make ci-check", head_post[0])
+
+    def test_queueの前に描画PRが居れば弾いたheadにその番号を名乗る(self):
+        """#1266。前に描画 PR が居る間は、main を取り込んで打ち直しても同じ理由で
+        また弾かれる。「打ち直す」と書くと、持ち主は空回りを繰り返す。"""
+        self.queue(
+            QUEUED_PRS="9 5", OPEN_PRS="5 9",
+            TREE_MERGED=TREE_DRAWING_MOVED,
+        )
+        head_post = self.posted_to("beef5678")
+        self.assertEqual(len(head_post), 1, self.posted())
+        self.assertIn("state=failure", head_post[0])
+        self.assertIn("#9 の merge を待つ", head_post[0])
+        self.assertNotIn("make ci-check を打ち直す", head_post[0])
+
+    def test_queueの先頭に居る描画PRには打ち直すよう名乗る(self):
+        """前に描画 PR が居なければ、弾かれた理由は main が動いたことである。
+        自分自身を「前に居る PR」と取り違えて待たせない。"""
+        self.queue(QUEUED_PRS="5 9", TREE_MERGED=TREE_DRAWING_MOVED)
+        head_post = self.posted_to("beef5678")
+        self.assertEqual(len(head_post), 1, self.posted())
+        self.assertIn("make ci-check を打ち直す", head_post[0])
+        self.assertNotIn("merge を待つ", head_post[0])
 
     def test_覆えているPRのheadには打たない(self):
         """CI が head へ打つのは failure だけである。success を打てるようにすると、

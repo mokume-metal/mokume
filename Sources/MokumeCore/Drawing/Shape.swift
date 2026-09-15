@@ -298,7 +298,7 @@ struct HeldTexture: Equatable {
     /// 引数表へ束ねる番地。
     var gpuResourceID: MTLResourceID { texture.gpuResourceID }
 
-    /// 読む直前に整える。持ち主が画像なら、書き換えた画素をここで送る。
+    /// 読む直前に整える。持ち主が画像なら、書き換えた画素の送りをここで頼む。
     ///
     /// **送りは ``Picture/prepare()`` に任せる** — 送りの入口を 1 つに保つためで、
     /// 送り方が変わってもこちらは書き換えずに済む。描き場所と字形の頁は整えるものが無い。

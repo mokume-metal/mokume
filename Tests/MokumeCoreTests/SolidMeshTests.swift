@@ -197,6 +197,75 @@ struct SolidMeshTests {
         }
     }
 
+    // MARK: - 稜線 (#850)
+
+    /// 形と、その稜線の本数。一周はどれも 12 で割る。
+    nonisolated static let edgeCounts: [(SolidShape, Int)] = {
+        let around = 12
+        let sphereRings = around / 2
+        return [
+            // 箱: 面の対角線 6 本が消えて 12 本
+            (.box(width: 20, height: 10, depth: 4), 12),
+            // 平らな面: 対角線が消えて縁の 4 本
+            (.plane(width: 8, height: 6), 4),
+            // 球: 緯線 (上下 6 区間の間の 5 周) と経線 (12 本 x 6 区間)。四辺形の対角線は無い
+            (.sphere(radius: 7, detail: around), (sphereRings - 1) * around + around * sphereRings),
+            // 円柱: 側面の縦線 + 上下の縁。蓋の放射線と側面の対角線は無い
+            (.cylinder(radius: 6, height: 20, detail: around), around * 3),
+            // 円錐: 先から降りる線 + 底の縁。底の放射線は無い
+            (.cone(radius: 6, height: 20, detail: around), around * 2),
+            // 輪: 輪の向きと管の向きに、それぞれ一周 x 一周
+            (.torus(ringRadius: 10, tubeRadius: 3, detail: around), around * around * 2),
+        ]
+    }()
+
+    @Test("稜線は形の折れ目と縁だけで、三角形に割った継ぎ目を含まない", arguments: edgeCounts)
+    func edgesAreCreasesAndBorders(_ shape: SolidShape, _ expected: Int) {
+        #expect(SolidEdges(shape.make()).edges.count == expected)
+    }
+
+    @Test("一周の継ぎ目でも点は 1 つにまとまり、辺は 2 本に割れない", arguments: [3, 24, 128])
+    func seamsAreWelded(_ detail: Int) {
+        // 継ぎ目は角度 2π で作られ、丸めで 0 からわずかにずれる。ビットで比べると
+        // 継ぎ目の点が 2 つに割れて、点の数が一周ぶん増える
+        let sphere = SolidEdges(SolidShape.sphere(radius: 50, detail: detail).make())
+        let rings = max(2, detail / 2)
+        #expect(sphere.points.count == 2 + (rings - 1) * detail)
+        let torus = SolidEdges(
+            SolidShape.torus(ringRadius: 40, tubeRadius: 9, detail: detail).make())
+        #expect(torus.points.count == detail * detail)
+        #expect(torus.edges.count == detail * detail * 2)
+    }
+
+    @Test("同じ辺は 1 度しか現れない")
+    func edgesAreUnique() {
+        for shape in [
+            SolidShape.box(width: 3, height: 3, depth: 3), .sphere(radius: 2, detail: 24),
+            .torus(ringRadius: 5, tubeRadius: 1, detail: 24),
+        ] {
+            let edges = SolidEdges(shape.make()).edges
+            let keys = Set(edges.map { SIMD2<Int32>(Int32(min($0.0, $0.1)), Int32(max($0.0, $0.1))) })
+            #expect(keys.count == edges.count, "\(shape) に同じ辺が 2 度ある")
+            #expect(edges.allSatisfy { $0.0 != $0.1 })
+        }
+    }
+
+    @Test("読み込んだモデルにも同じ規則が効く")
+    func modelEdgesFollowTheSameRule() throws {
+        // 四角錐: 底の縁 4 + 斜めの稜 4。底の四角を割った対角線は無い
+        let model = Model.make(
+            name: "pyramid", parsed: try ModelFile.load(ModelFixture.pyramid),
+            fitting: nil, identity: 1)
+        #expect(SolidEdges(model.mesh).edges.count == 8)
+    }
+
+    @Test("空の並びからは稜線が出ない")
+    func emptyMeshHasNoEdges() {
+        let edges = SolidEdges(SolidMesh(points: []))
+        #expect(edges.edges.isEmpty)
+        #expect(edges.points.isEmpty)
+    }
+
     // MARK: - 閉じているか (背面カリングの前提)
 
     @Test("閉じた形とそうでない形を、形自身が名乗る")

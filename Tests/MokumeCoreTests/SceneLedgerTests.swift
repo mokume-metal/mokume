@@ -214,6 +214,13 @@ enum Scene: String, CaseIterable, Sendable {
     case noise
     /// 基本の立体を並べ、回して奥行きが出る向きに置いたもの。
     case solids
+    /// 線を引いた立体。`place()` を通る 6 つの形と読み込んだモデルに、塗りと線を
+    /// 重ねたもの・線だけのものを並べる (#850)。
+    ///
+    /// **線は形の稜線を通る** (`SolidEdges`)。対角線が出る・継ぎ目が二重になる・
+    /// 線が面と奥行きを取り合って途切れる、のどれが起きてもこの行が動く。折れ目の
+    /// 形も 2 種を振ってあるので、網の骨 (`strokeNet`) の円板と正方形の両方が通る。
+    case strokedSolids
     /// 光を当てた立体。底上げの光・向きを持つ光・広がりを持つ光を並べたもの。
     case lighting
     /// 頂点を並べて作った立体。穴・頂点ごとの色・線と点・書いた面の向きを並べたもの。
@@ -614,6 +621,7 @@ enum Scene: String, CaseIterable, Sendable {
         case .noise: drawNoise(on: canvas)
         case .joins: drawJoins(on: canvas)
         case .solids: drawSolids(on: canvas)
+        case .strokedSolids: drawStrokedSolids(on: canvas)
         case .lighting: drawLighting(on: canvas)
         case .materials: drawMaterials(on: canvas, without: suppressed)
         case .surroundings: drawSurroundings(on: canvas)
@@ -1169,6 +1177,9 @@ enum Scene: String, CaseIterable, Sendable {
 
     private func drawSolids(on canvas: Canvas) {
         canvas.background(.display(red: 0.07, green: 0.07, blue: 0.09))
+        // **塗りだけを見るシーン。** 線は既定で有効なので止める — 線の載る絵は
+        // `strokedSolids` が受け持つ (#850)
+        canvas.noStroke()
         // 3 x 2 に並べる。どれも回してあるので、輪郭だけで形が読める
         let places: [(x: Float, y: Float)] = [
             (32, 34), (64, 34), (96, 34), (32, 94), (64, 94), (96, 94),
@@ -1218,8 +1229,61 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.pop()
     }
 
+    private func drawStrokedSolids(on canvas: Canvas) {
+        canvas.background(.display(red: 0.07, green: 0.07, blue: 0.09))
+        canvas.strokeWeight(1)
+        // 3 段に並べる。**一周の割り方を粗くしてある** — 既定の細かさでは、この大きさの
+        // 曲面は線で埋まって形が読めない
+        let light = LinearRGBA.display(red: 0.96, green: 0.94, blue: 0.86)
+
+        /// 回して置く。`tint` が無ければ線だけ。
+        func place(
+            _ x: Float, _ y: Float, tint: (Float, Float, Float)?, _ shape: () -> Void
+        ) {
+            canvas.push()
+            canvas.translate(x, y, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateY(0.7)
+            if let tint {
+                canvas.fill(.display(red: tint.0, green: tint.1, blue: tint.2))
+            } else {
+                canvas.noFill()
+            }
+            shape()
+            canvas.pop()
+        }
+
+        canvas.stroke(light)
+        // 塗りに線を重ねた段。折れ目は丸 (円板で埋まる)
+        canvas.strokeJoin(.round)
+        place(22, 26, tint: (0.95, 0.45, 0.3)) { canvas.box(24) }
+        place(64, 26, tint: (0.4, 0.75, 0.5)) { canvas.sphere(15, detail: 10) }
+        place(106, 26, tint: (0.9, 0.75, 0.2)) { canvas.cylinder(11, 26, detail: 8) }
+        place(22, 66, tint: (0.4, 0.7, 0.9)) { canvas.torus(13, 5, detail: 10) }
+
+        // 線だけの段。折れ目は削ぐ (正方形で埋まる)。**裏の稜線も見える**
+        canvas.strokeJoin(.bevel)
+        place(64, 66, tint: nil) { canvas.cone(13, 26, detail: 8) }
+        place(106, 66, tint: nil) { canvas.plane(28, 22) }
+        place(22, 106, tint: nil) { canvas.box(22) }
+
+        // 読み込んだモデルにも同じ規則で線が引かれる。底の四角を割った対角線は出ない
+        canvas.strokeJoin(.round)
+        guard let model = try? canvas.loadModel(ModelFixture.pyramid) else { return }
+        canvas.push()
+        canvas.translate(85, 108, 0)
+        canvas.rotateX(-0.35)
+        canvas.rotateY(0.6)
+        canvas.scale(0.3, 0.3, 0.3)
+        canvas.fill(.display(red: 0.85, green: 0.4, blue: 0.75))
+        canvas.model(model)
+        canvas.pop()
+    }
+
     private func drawLighting(on canvas: Canvas) {
         canvas.background(.display(red: 0.05, green: 0.05, blue: 0.07))
+        // 光の当たり方だけを見る。線は止める (#850)
+        canvas.noStroke()
         // 底上げ + 斜め上から差す光。縦軸は下向きなので、上から差す光の向きは +y
         canvas.ambientLight(.linear(red: 0.18, green: 0.18, blue: 0.22))
         canvas.directionalLight(.linear(red: 0.9, green: 0.85, blue: 0.75), -0.45, 0.8, -0.4)

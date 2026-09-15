@@ -49,6 +49,8 @@ struct Lighting {
     /// 見ている場所。`w` が 1 なら xyz は**視点の位置** (透視)、0 なら
     /// xyz は**見ている側へ向かう一定の向き** (平行)。艶は見る向きで変わるので要る。
     float4 viewer;
+    /// 世界をカメラの側へ移す行列。面の向きを視点から見た向きへ移すのに使う。
+    float4x4 view;
 };
 
 /// この列に効く周囲。並びは Swift 側の `PackedSurroundings` と一致する。
@@ -329,7 +331,31 @@ struct Fragment {
     /// ``shapePosition`` と同じ座標系なので、**回しても面ごとの向きが変わらない**。
     /// 向きを持たない頂点 (立体の線と点) と平面では 0 なので、使う前に長さを見る。
     /// 形から求めた向きは、裏を向いている面では見えている側へ裏返る (光と同じ規則)。
+    ///
+    /// **面の向きは 3 つの座標で届く**。どれも長さ 1 で、0 になる場所と裏返しの規則は
+    /// 3 つとも同じである:
+    ///
+    /// | 欄 | 座標 | 形を回すと | 視点を動かすと | 使いどころ |
+    /// | --- | --- | --- | --- | --- |
+    /// | `shapeNormal` | 形自身 | 変わらない | 変わらない | 模様を表面に留める |
+    /// | ``worldNormal`` | 世界 | 変わる | 変わらない | 世界の決まった向き (上・光の来る側) と比べる |
+    /// | ``viewNormal`` | 視点 | 変わる | 変わる | 見ている側との角度・向きをそのまま色にする |
     float3 shapeNormal;
+    /// 世界の座標での面の向き (長さ 1)。**置き場所の変換を通した後**の向きで、光が
+    /// 当たるのと同じ向きである。
+    ///
+    /// 形を回すと変わり、視点を動かしても変わらない。0 になる場所と裏返しの規則は
+    /// ``shapeNormal`` と同じ。
+    float3 worldNormal;
+    /// 視点から見た面の向き (長さ 1)。x が画面の右、y が画面の下、z が手前 (見ている側)
+    /// を指す。
+    ///
+    /// 形を回しても視点を動かしても変わる。p5.js の `normalMaterial()` が色にするのは
+    /// この向きで、軸の取り方も同じである (色の値は線形として扱われるので、見え方は
+    /// 同じにはならない)。
+    /// 何も指定していない視点は面の正面から見ているので、``worldNormal`` と一致する。
+    /// 0 になる場所と裏返しの規則は ``shapeNormal`` と同じ。
+    float3 viewNormal;
     /// スケッチが始まってからの秒数。
     float time;
     /// 面の大きさ (画素)。
@@ -564,6 +590,8 @@ static inline float4 mokume_shapeColor(
     // **判定は光と断片で 1 つ**にする — 分けると、光が当たっている側と断片が向きだと
     // 思っている側が食い違う面が作れてしまう
     bool isBackOfDerived = in.isDerivedNormal > 0.5 && !isFrontFacing;
+    // 光と断片の 3 つの向きは、この 1 本から作る
+    float3 normal = isBackOfDerived ? -in.normal : in.normal;
 
     Fragment f;
     f.position = in.position.xy;
@@ -587,7 +615,6 @@ static inline float4 mokume_shapeColor(
         (lighting.count > 0 || surroundings.topAndPresence.w > 0.5)
         && dot(in.normal, in.normal) > 0.0)
     {
-        float3 normal = isBackOfDerived ? -in.normal : in.normal;
         float3 lit = mokume_shade(
             lights, lighting.offset, lighting.count, in.worldPosition, normal,
             lighting.viewer, in.color, material, surroundings, shadow_texture, uniforms);
@@ -599,6 +626,11 @@ static inline float4 mokume_shapeColor(
     // そのまま正規化すると 0 が数でない値に化ける
     float3 shapeNormal = isBackOfDerived ? -in.shapeNormal : in.shapeNormal;
     f.shapeNormal = dot(shapeNormal, shapeNormal) > 0.0 ? normalize(shapeNormal) : float3(0.0);
+    // 置き場所の向きの行列は拡大を含みうるので、世界の向きも揃え直す。視点の行列は
+    // 回すだけなので、揃えた向きを移せば長さ 1 のまま (0 は 0 のまま) である
+    f.worldNormal = dot(normal, normal) > 0.0 ? normalize(normal) : float3(0.0);
+    f.viewNormal = float3x3(lighting.view[0].xyz, lighting.view[1].xyz, lighting.view[2].xyz)
+        * f.worldNormal;
     f.time = uniforms.time;
     f.resolution = uniforms.resolution;
     f.noiseSeed = uniforms.noiseSeed;

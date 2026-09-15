@@ -19,16 +19,16 @@ extension Canvas {
     func resolveRect(_ a: Float, _ b: Float, _ c: Float, _ d: Float)
         -> (x: Float, y: Float, width: Float, height: Float)
     {
-        Self.resolveBox(a, b, c, d, mode: currentRectMode)
+        Self.resolveBox(a, b, c, d, mode: style.rectMode)
     }
 
     /// 文字を塗る色。塗りを止めていれば `nil`。
-    var textFillColor: LinearRGBA? { hasFill ? currentFill : nil }
+    var textFillColor: LinearRGBA? { style.hasFill ? style.fill : nil }
 
     /// いま指定されている書体。同じ指定なら作り直さない。
     var typeface: Typeface {
         let request = TypefaceRequest(
-            name: currentFontName, size: currentTextSize, style: currentTextStyle)
+            name: style.fontName, size: style.textSize, style: style.textStyle)
         if let found = typefaces[request] { return found }
         let face = Typeface(request: request)
         typefaces[request] = face
@@ -47,7 +47,7 @@ extension Canvas {
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
         let key = GlyphAtlas.Key(
-            fontKey: resolved.fontKey, size: currentTextSize, style: currentTextStyle,
+            fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
             glyph: resolved.glyph)
         switch atlas.entry(for: key, font: resolved.font) {
         case .found(let entry): return entry
@@ -180,9 +180,10 @@ extension Canvas {
     /// 3 つが同じ色なら 1 色の三角形と区別が付かないので、色を 1 つ受ける形はこれの
     /// 呼び分けである — **頂点ごとの色のために別の経路を作らない** ([ADR-0021] 決定 5)。
     ///
-    /// `uvs` は**塗りだけが渡す**読み取り位置 (0…1)。渡さなければ焼き場の白い区画を
-    /// 読む — 白を掛けても色は変わらないので、**貼る絵を束ねていないときの絵は
-    /// 1 ビットも変わらない**。輪郭・端点・角はここを渡さない側に居続ける。
+    /// `uvs` は**塗りだけが渡す**読み取り位置。渡さなければ焼き場の白い区画を
+    /// 読む — 白を掛けても色は変わらないので、**読み取り位置を持たない形の絵は
+    /// 1 ビットも変わらない**。渡したときは貼る絵か 1×1 の白い絵を読む
+    /// (``useWrittenUVTexture()``)。輪郭・端点・角はここを渡さない側に居続ける。
     func appendTriangle(
         _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>,
         colors: (LinearRGBA, LinearRGBA, LinearRGBA),
@@ -191,7 +192,7 @@ extension Canvas {
         // **図形は白い区画を読む。** 直前に画像を描いていたら、その面を読んだままに
         // なるので戻す (変わらなければ何も起きない)
         beginFlat()
-        if uvs != nil { useFillTexture() } else { useGlyphTexture() }
+        if uvs != nil { useWrittenUVTexture() } else { useGlyphTexture() }
         let uv = uvs ?? (whiteUV, whiteUV, whiteUV)
         vertices.append(ShapeVertex(position: a, uv: uv.0, color: colors.0))
         vertices.append(ShapeVertex(position: b, uv: uv.1, color: colors.1))

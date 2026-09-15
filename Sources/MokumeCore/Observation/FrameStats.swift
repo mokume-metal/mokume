@@ -28,7 +28,10 @@ public struct FrameStats: Encodable, Equatable, Sendable {
 
     /// 赤・緑・青の平均 (0…1)。
     public let meanColor: [Double]
-    /// 明るさの平均 (0…1)。
+    /// 明るさの平均 (0…1)。赤・緑・青の平均に Display P3 の相対輝度の重みを掛けた値。
+    ///
+    /// 掛ける相手はエンコード済みの値なので、光の量としての相対輝度ではなく、見た目の
+    /// 明るさに寄せた目安である。
     public let meanLuminance: Double
     /// 地 (いちばん多い色) と違う色を持つ点の割合 (0…1)。
     public let contentFraction: Double
@@ -121,8 +124,10 @@ public struct FrameStats: Encodable, Equatable, Sendable {
             Double(sumGreen) / sampleCount / 255,
             Double(sumBlue) / sampleCount / 255,
         ]
-        // 明るさは知覚に寄せた重み付け (赤 0.2126 / 緑 0.7152 / 青 0.0722)
-        let luminance = mean[0] * 0.2126 + mean[1] * 0.7152 + mean[2] * 0.0722
+        // 明るさは Display P3 の相対輝度の重みで測る。値が P3 のエンコード値なので、
+        // 重みも P3 の原色のもの (sRGB の重みでは彩度のある色がずれる・#1212)
+        let weights = ColorPrimaries.luminanceWeights
+        let luminance = mean[0] * weights.x + mean[1] * weights.y + mean[2] * weights.z
 
         var bounds: Bounds?
         if contentCount > 0 {

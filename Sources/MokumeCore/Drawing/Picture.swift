@@ -45,14 +45,15 @@ enum Picture {
         }
     }
 
-    /// 読む直前に整える。**書き換えた画素があればここで送られる**ので、送り直しを
-    /// 呼び忘れて絵が変わらない、が起きない。描いた場所は描き切りが済んでいる。
+    /// 読む直前に整える。**書き換えた画素があれば、ここで送りを頼む** (届けるのは
+    /// 描き切り・#749) ので、送り直しを呼び忘れて絵が変わらない、が起きない。描いた場所は
+    /// 描き切りが済んでいる。
     ///
     /// その場で置く経路はここを直に呼ぶ。保持した形を置き直す経路は、記録した面から
     /// ``HeldTexture/prepare()`` を通ってここへ来る ([#1253])。
     ///
     /// [#1253]: https://github.com/mokume-metal/mokume/issues/1253
     func prepare() {
-        if case .loaded(let image) = self { image.uploadIfNeeded() }
+        if case .loaded(let image) = self { image.requestUpload() }
     }
 }

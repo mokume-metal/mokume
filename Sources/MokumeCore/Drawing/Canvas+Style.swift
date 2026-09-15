@@ -14,24 +14,24 @@ import simd
 extension Canvas {
 
     public func fill(_ color: LinearRGBA) {
-        currentFill = color
-        hasFill = true
+        style.fill = color
+        style.hasFill = true
     }
 
     /// 図形の内側を塗らない。
-    public func noFill() { hasFill = false }
+    public func noFill() { style.hasFill = false }
 
     public func stroke(_ color: LinearRGBA) {
-        currentStroke = color
-        hasStroke = true
+        style.stroke = color
+        style.hasStroke = true
     }
 
     /// 線を引かない。図形の輪郭も出なくなる。
-    public func noStroke() { hasStroke = false }
+    public func noStroke() { style.hasStroke = false }
 
     public func strokeWeight(_ weight: some ScalarConvertible) {
         let weight = weight.asFloat
-        currentStrokeWeight = max(0, weight)
+        style.strokeWeight = max(0, weight)
     }
 
     // 溜めている列をその場で閉じる (混ぜ方と同じ理由)。
@@ -40,20 +40,20 @@ extension Canvas {
     // 受け取ると検証で落ちるためである。指定をそのまま渡さない。
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
-        let box = Self.resolveBox(a, b, c, d, mode: currentRectMode)
+        let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
         let left = min(max(0, Int(box.x)), Int(width))
         let top = min(max(0, Int(box.y)), Int(height))
         let right = min(max(left, Int(box.x + box.width)), Int(width))
         let bottom = min(max(top, Int(box.y + box.height)), Int(height))
         closeBatch()
-        currentClip = MTLScissorRect(
+        style.clip = MTLScissorRect(
             x: left, y: top, width: right - left, height: bottom - top)
     }
 
     public func noClip() {
-        guard currentClip != nil else { return }
+        guard style.clip != nil else { return }
         closeBatch()
-        currentClip = nil
+        style.clip = nil
     }
 
     /// 描くものを、下にある絵とどう混ぜるか。
@@ -61,9 +61,9 @@ extension Canvas {
     /// **溜めている列をその場で閉じる。** 既に置いた図形が後の混ぜ方で描かれないように
     /// するためで、閉じ忘れは「設定を変えたときだけ絵が崩れる」形で現れる。
     public func blendMode(_ mode: BlendMode) {
-        guard mode != currentBlendMode else { return }
+        guard mode != style.blendMode else { return }
         closeBatch()
-        currentBlendMode = mode
+        style.blendMode = mode
     }
 
     /// 落とす行列に、このフレームの揺らしを足す。
@@ -139,10 +139,10 @@ extension Canvas {
         batches.append(
             Batch(
                 run: Shape.Run(
-                    mode: currentBlendMode, texture: currentTexture,
+                    mode: style.blendMode, texture: currentTexture,
                     paint: effectivePaint,
                     source: .flat, start: start, count: count, indexStart: 0, indexCount: 0),
-                clip: currentClip,
+                clip: style.clip,
                 // ここへ来るのは平面だけ (上の `switch` が他を返している)。**平面は
                 // 奥行きを持たないので視点行列を通さず、光も受けない** — 立体の側は
                 // `closeSolidBatch` が視点行列と閉じた時点の光を持って閉じる
@@ -150,6 +150,8 @@ extension Canvas {
                 lightRange: 0..<0,
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),
+                // 平面は面の向きを持たない (断片へは 0 が届く) ので、移す行列は効かない
+                view: matrix_identity_float4x4,
                 surroundings: bakeSurroundings(),
                 castsShadow: false,
                 // 畳んでいない列は、何も動かさない置き場所 (添字 0) を 1 つ通る
@@ -238,18 +240,19 @@ extension Canvas {
         batches.append(
             Batch(
                 run: Shape.Run(
-                    mode: currentBlendMode, texture: currentTexture,
+                    mode: style.blendMode, texture: currentTexture,
                     paint: effectivePaint,
                     source: .solid,
                     start: open.vertexStart, count: open.vertexCount,
                     indexStart: indexStart, indexCount: indexCount),
-                clip: currentClip,
+                clip: style.clip,
                 matrix: jittered(viewProjection),
                 lightRange: bakeActiveLights(),
-                material: currentMaterial.receiving(shadow: receivesShadow),
+                material: style.material.receiving(shadow: style.receivesShadow),
                 viewer: viewer,
+                view: viewMatrix,
                 surroundings: bakeSurroundings(),
-                castsShadow: castsShadow,
+                castsShadow: style.castsShadow,
                 instanceStart: open.external == nil ? open.instanceStart : 0,
                 instanceCount: instanceCount,
                 instances: open.external?.instances,
@@ -269,8 +272,8 @@ extension Canvas {
     private func cullMode(for open: OpenSolid) -> MTLCullMode {
         guard case .mesh(let shape) = open.source, shape.isClosed,
             !open.hasTranslucentInstance,
-            currentBlendMode == .blend,
-            currentPicture == nil,
+            style.blendMode == .blend,
+            style.picture == nil,
             currentShader == nil
         else { return .none }
         return .back
@@ -285,7 +288,7 @@ extension Canvas {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     private func warnIfMaterialCannotShow() {
         switch Material.unusableReason(
-            currentMaterial, lights: activeLights, surroundings: activeSurroundings)
+            style.material, lights: activeLights, surroundings: activeSurroundings)
         {
         case nil:
             return
@@ -337,15 +340,15 @@ extension Canvas {
     }
 
     /// 線の端の形。
-    public func strokeCap(_ cap: StrokeCap) { currentStrokeCap = cap }
+    public func strokeCap(_ cap: StrokeCap) { style.strokeCap = cap }
 
     /// 線の折れ目の形。
-    public func strokeJoin(_ join: StrokeJoin) { currentStrokeJoin = join }
+    public func strokeJoin(_ join: StrokeJoin) { style.strokeJoin = join }
 
     /// 矩形に渡す座標の読み方。
-    public func rectMode(_ mode: ShapeMode) { currentRectMode = mode }
+    public func rectMode(_ mode: ShapeMode) { style.rectMode = mode }
 
     /// 楕円と円弧に渡す座標の読み方。
-    public func ellipseMode(_ mode: ShapeMode) { currentEllipseMode = mode }
+    public func ellipseMode(_ mode: ShapeMode) { style.ellipseMode = mode }
 
 }

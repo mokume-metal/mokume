@@ -58,6 +58,7 @@ struct ScreenCoordinateTests {
         var told = SIMD2<Float>.zero
         try canvas.draw {
             canvas.background(black)
+            canvas.noStroke()  // 塗りの重心だけを見る (線は既定で有効なので止める)
             canvas.fill(red)
             canvas.push()
             place()

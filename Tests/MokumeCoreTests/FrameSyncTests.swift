@@ -121,18 +121,25 @@ struct FrameSyncTests {
         #expect(pixels[16, 16].green == 0)
     }
 
-    @Test("数の並びへ書く口は、書く直前に待つ")
-    func numbersWaitBeforeWriting() throws {
+    @Test("数の並びへ書く口は待たず、読むと書いた値が返る")
+    func numbersWriteWithoutWaiting() throws {
         let bench = try makeBench()
         let numbers = try bench.canvas.makeNumbers(count: 4)
 
         try bench.canvas.draw { bench.keepGPUBusy() }
         try #require(!bench.gpu.isIdle, "回転が短い — この検査は何も見ていない")
 
+        // **書く口は控えに積むだけ** (#749)。かつてはここで投入済みの全部を待っていた
         let before = bench.gpu.settleCalls
         numbers.set(1, at: 0)
-        #expect(bench.gpu.settleCalls == before + 1, "書く口が待ちを頼んでいない")
-        #expect(bench.gpu.isIdle, "書いた時点で GPU が終わっていない")
+        numbers.set([1, 2])
+        numbers.fill(3)
+        numbers.set(4, at: 3)
+        #expect(bench.gpu.settleCalls == before, "書く口が待ちを頼んでいる")
+        #expect(!bench.gpu.isIdle, "書いた時点で GPU が終わっている — どこかで待っている")
+
+        // 読む口は控えを流してから待つので、書いた直後に読んでも書いた値が返る
+        #expect(bench.canvas.read(numbers) == [3, 3, 3, 4], "控えが読み戻しに届いていない")
     }
 
     @Test("計算の結果を読む口は、溜まりが空でも待つ")
@@ -149,8 +156,8 @@ struct FrameSyncTests {
         #expect(values[0] != 0, "計算が終わる前の値を読んでいる\(faultNote(bench.gpu))")
     }
 
-    @Test("画像を面へ送る口は、送る直前に待つ")
-    func imageUploadWaitsBeforeReplacing() throws {
+    @Test("画像を面へ送る口は待たず、描き切りが届ける")
+    func imageUploadDoesNotWait() throws {
         let bench = try makeBench()
         let canvas = bench.canvas
         let image = try canvas.createImage(2, 2)
@@ -163,13 +170,16 @@ struct FrameSyncTests {
 
         // CPU 側を書き換える (面へはまだ送らない)
         image.set(0, 0, red)
-        var idleWhenPlaced = false
+        var idleWhenPlaced = true
+        let before = bench.gpu.settleCalls
         try canvas.draw {
-            // 置く直前に面へ送る。その送りが待つ
+            // 置くときに送りを頼むだけで、面へ書くのは描き切りの GPU 側のコピーである (#749)
             canvas.image(image, 0, 0)
             idleWhenPlaced = bench.gpu.isIdle
         }
-        #expect(idleWhenPlaced, "面を書き換えた時点で、前のフレームの GPU が終わっていない")
+        #expect(!idleWhenPlaced, "置いた時点で前のフレームの GPU が終わっている — 送りが待っている")
+        #expect(bench.gpu.settleCalls == before, "送りが待ちを頼んでいる")
+        #expect(!image.needsUpload, "描き切りの後も送り直しの旗が立っている")
     }
 
     @Test("字形を焼く口は、焼く直前に待つ")
@@ -267,6 +277,154 @@ struct FrameSyncTests {
         #expect(
             !bench.gpu.isIdle,
             "次のフレームを書き終えた時点で GPU が空いている — どこかで全完了を待っている")
+    }
+
+    /// 毎フレーム GPU 可視メモリへ書く口 ([#749])。
+    ///
+    /// [#749]: https://github.com/mokume-metal/mokume/issues/749
+    enum FrameWriter: CaseIterable, CustomTestStringConvertible {
+        /// 数の並びへ書き、それを読む計算を頼む。
+        case numbers
+        /// 粒を出して進める。
+        case particles
+        /// 画像を書き換えて置く。
+        case image
+
+        var testDescription: String {
+            switch self {
+            case .numbers: "数の並び"
+            case .particles: "粒"
+            case .image: "画像"
+            }
+        }
+    }
+
+    /// 書く口を使う場面。`use` は `draw` の中で呼び、`check` は最後のフレームの結果を見る。
+    private struct WriterScene {
+        let use: (Int) -> Void
+        let check: () throws -> Void
+    }
+
+    private static let copyKernel = """
+        kernel void copyInto(device const float *source [[buffer(0)]],
+                             device float *out [[buffer(1)]],
+                             uint id [[thread_position_in_grid]])
+        {
+            out[id] = source[id];
+        }
+        """
+
+    /// 数の並びへ書く値。フレームごとに違うので、1 つ前のフレームの値を読めば落ちる。
+    private static func written(at frame: Int) -> [Float] {
+        (0..<4).map { Float(frame * 10 + $0) }
+    }
+
+    private func particleFrame(on canvas: Canvas, _ dust: Particles, _ randomness: inout Randomness) {
+        canvas.background(black)
+        canvas.emit(
+            dust, from: .point(16, 16), rate: 600, speed: 10...30, angle: 0...(2 * Float.pi),
+            life: 0.4...1.2, size: 2...4, color: white, using: &randomness)
+        canvas.force(dust, [.gravity(0, 30)])
+        canvas.particles(dust)
+    }
+
+    private func makeScene(_ writer: FrameWriter, on bench: Bench, lastFrame: Int) throws
+        -> WriterScene
+    {
+        let canvas = bench.canvas
+        switch writer {
+        case .numbers:
+            let numbers = try canvas.makeNumbers(count: 4)
+            let copied = try canvas.makeNumbers(count: 4)
+            let copy = try canvas.makeComputation(Self.copyKernel, name: "copyInto")
+            return WriterScene(
+                use: { frame in
+                    numbers.set(Self.written(at: frame))
+                    canvas.compute(copy, over: 4, reads: [numbers], writes: [copied])
+                },
+                check: {
+                    #expect(
+                        canvas.read(copied) == Self.written(at: lastFrame),
+                        "計算が、そのフレームで書いた値を読んでいない\(self.faultNote(bench.gpu))")
+                })
+        case .particles:
+            let dust = try canvas.makeParticles(count: 256)
+            var randomness = Randomness(seed: 749)
+            // **物差しは GPU を空けて同じ列を描いたもの。** 置くのが遅れたり、前のフレームの
+            // 状態を踏み潰したりすれば、状態の並びが食い違う
+            let reference = try makeBench()
+            let referenceDust = try reference.canvas.makeParticles(count: 256)
+            var referenceRandomness = Randomness(seed: 749)
+            return WriterScene(
+                use: { _ in self.particleFrame(on: canvas, dust, &randomness) },
+                check: {
+                    for _ in 0...lastFrame {
+                        try reference.canvas.draw {
+                            self.particleFrame(
+                                on: reference.canvas, referenceDust, &referenceRandomness)
+                        }
+                    }
+                    let state = canvas.read(dust.state)
+                    #expect(state.contains { $0 != 0 }, "粒が 1 つも置かれていない")
+                    #expect(
+                        state == reference.canvas.read(referenceDust.state),
+                        "GPU を回したまま進めた粒が、空けて進めた粒と食い違う\(self.faultNote(bench.gpu))")
+                })
+        case .image:
+            let image = try canvas.createImage(2, 2)
+            func color(_ frame: Int) -> LinearRGBA { frame.isMultiple(of: 2) ? red : white }
+            return WriterScene(
+                use: { frame in
+                    image.fill(color(frame))
+                    canvas.background(black)
+                    canvas.image(image, 0, 0, 32, 32)
+                },
+                check: {
+                    let pixel = try canvas.target.readPixels()[16, 16]
+                    let expected: Float = lastFrame.isMultiple(of: 2) ? 0 : 1
+                    #expect(pixel.red == 1, "置いた画像が面に載っていない\(self.faultNote(bench.gpu))")
+                    #expect(
+                        pixel.green == expected,
+                        "面に載ったのが、そのフレームで書いた画素ではない\(self.faultNote(bench.gpu))")
+                })
+        }
+    }
+
+    /// 完了条件 1〜3 ([#749])。**待ちを書く口へ戻すと `blockingWaits` が増えて赤になる。**
+    ///
+    /// [#749]: https://github.com/mokume-metal/mokume/issues/749
+    @Test(
+        "GPU を占めたフレームの次のフレームで毎フレーム書く口を使っても、投入済みの全完了を待たない",
+        arguments: FrameWriter.allCases)
+    func frameWritersDoNotDrainTheGPU(_ writer: FrameWriter) throws {
+        let bench = try makeBench()
+        let canvas = bench.canvas
+        let busyFrame = framesPastOneLap
+        let scene = try makeScene(writer, on: bench, lastFrame: busyFrame + 1)
+
+        // **先に温める。** 置き場 (控えの置き場を含む) を初めて取るフレームは取り直しの
+        // 中で待つので、「毎フレーム待っているか」を見るにはそこを過ぎてから測る
+        for frame in 0..<busyFrame {
+            try canvas.draw { scene.use(frame) }
+        }
+
+        try canvas.draw {
+            bench.keepGPUBusy()
+            scene.use(busyFrame)
+        }
+        try #require(!bench.gpu.isIdle, "回転が短い — この検査は何も見ていない")
+
+        let waits = bench.gpu.blockingWaits
+        try canvas.draw { scene.use(busyFrame + 1) }
+
+        #expect(
+            bench.gpu.blockingWaits == waits,
+            "\(writer.testDescription)へ書く口が、投入済みの全完了を待っている")
+        #expect(
+            !bench.gpu.isIdle,
+            "次のフレームを書き終えた時点で GPU が空いている — どこかで全完了を待っている")
+
+        try scene.check()
     }
 
     @Test("環は、そのスロットを読む投入が終わるまで返らない")

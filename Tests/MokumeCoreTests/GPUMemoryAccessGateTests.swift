@@ -29,6 +29,12 @@ import Testing
 // **CPU が書く場所は `settleBeforeWriting` を通り、待てなければ書かない**
 // (`settlesOrSkips`)。読む場所は取りやめようが無いので `settles` のままである。
 //
+// **3 つ目の道は「その場で書かない」である** ([#749](https://github.com/mokume-metal/mokume/issues/749))。
+// 数の並びと画像 (粒を含む) の書く口は CPU の控えを更新するだけで、描き切りが環の置き場へ
+// 写して GPU 側のコピーで届ける。写す先の頭は `GrowableBuffer` の口が渡すので、控えを写す
+// 持ち主の原文には綴りが現れない — **そこを守っているのは `GrowableBuffer.swift` の行の
+// 名乗り**である。
+//
 // ## 規則
 //
 // > `Sources/` で `.contents()` か `.replace(region` を書けるのは、下の一覧にあるファイルだけ。
@@ -89,16 +95,13 @@ struct GPUMemoryAccessGateTests {
             reason: "描き切りの中 (環を進めた後) で効果の値を書く。書き先は Canvas と同じ環に載った置き場"),
         Permit(
             file: "Drawing/Canvas+Compute.swift", discipline: .settlesOrSkips,
-            reason: "頼みごとの値の区画へ書く。読み戻し (read) の経路は書く前に自分で待つ — そこは描き切りを通らないので環の待ちが効かない (#932)。待てなければ値を書かず口も開かず、頼みを溜め場に残す (#934)。描き切りの経路は Canvas が環を 1 つ進めた後に呼ばれるので、書き先のスロットは待ち済み"),
-        Permit(
-            file: "Drawing/Particles.swift", discipline: .settlesOrSkips,
-            reason: "粒と指定を書く直前に待つ。待てなければ 1 つも置かず、枠と寿命も進めない (#934)"),
+            reason: "頼みごとの値の区画と控えの置き場へ書く。読み戻し (read) の経路は書く前に自分で待つ — そこは描き切りを通らないので環の待ちが効かない (#932)。待てなければ値も控えも書かず口も開かず、頼みを溜め場に・書き込みを控えに残す (#934)。描き切りの経路は Canvas が環を 1 つ進めた後に呼ばれるので、書き先のスロットは待ち済み"),
         Permit(
             file: "Rendering/GrowableBuffer.swift", discipline: .ring,
-            reason: "環に載った置き場へ、いまのスロットぶんだけ写す (write)。待ちは呼ぶ側が持つ — 描き切りの先頭で環を 1 つ進め、そのスロットを読む投入だけを待ってから呼ばれる (#754)"),
+            reason: "環に載った置き場へ、いまのスロットぶんだけ写す (write)、または写す頭を渡す (writableBytes — 数の並びと画像の控えを持ち主が詰める・#749)。待ちは呼ぶ側が持つ — 描き切りの先頭で環を 1 つ進め、そのスロットを読む投入だけを待ってから呼ばれる (#754)。読み戻しの経路からは投入済みの全部を待った後に呼ばれる"),
         Permit(
             file: "Rendering/Numbers.swift", discipline: .settlesOrSkips,
-            reason: "書く口 3 つがすべて 1 つの待ちを通り、待てなければ書かない (#934)。読む口 (snapshot) は Canvas.read が settle してから呼ぶ"),
+            reason: "書く口 3 つは控え (CPU の影と汚れ区間) を更新するだけで置き場に触らず、描き切りが GPU 側のコピーで届ける (#749)。置き場へ直に書くのは、汚れ区間が上限を超えたときの逃げ道だけで、1 つの待ちを通り、待てなければ書かず控えに残す (#934)。init の書き込みは作成時だけ。読む口 (snapshot) は Canvas.read が控えを流して settle してから呼ぶ"),
         Permit(
             file: "Rendering/RenderTarget.swift", discipline: .settles,
             reason: "画素の写しを読む直前に settle する (写しへの読み戻しを積んだときは、その完了まで)"),
@@ -116,7 +119,7 @@ struct GPUMemoryAccessGateTests {
             reason: "焼く直前に待つ。待てなければ焼かず unbakeable を返す (#934)。面の作成時の書き込みは新しい面へ"),
         Permit(
             file: "Image/Image.swift", discipline: .settlesOrSkips,
-            reason: "面へ送る直前に待つ。待てなければ送らず、送り直しの旗を立てたままにする (#934)"),
+            reason: "送りは描き切りが GPU 側のコピーで面へ届ける (#749)。面へ直に書くのは作成時 (新しい面) と、控えに載せられないほど大きい画像の逃げ道だけで、逃げ道は直前に待ち、待てなければ送らず旗を立てたままにする (#934)"),
     ]
 
     private static let tokens = [".contents()", ".replace(region"]

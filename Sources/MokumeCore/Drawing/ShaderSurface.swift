@@ -30,7 +30,8 @@ public enum ShaderSurface {
     }
 
     /// いま読める面を、持ち主と組にして返す。**読む直前に整えてから返す** — 書き換えた
-    /// 画素があればここで送られる。区間は面だけでなく持ち主も写し取る (`HeldTexture`)。
+    /// 画素があればここで送りを頼み、描き切りが届ける。区間は面だけでなく持ち主も
+    /// 写し取る (`HeldTexture`)。
     var held: HeldTexture {
         let picture = picture
         picture.prepare()

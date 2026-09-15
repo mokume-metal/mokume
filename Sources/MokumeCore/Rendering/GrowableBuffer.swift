@@ -99,6 +99,20 @@ import Metal
         return buffer
     }
 
+    /// いまのスロットの置き場を `count` 個ぶん取り、**書き込める頭**と組で返す。
+    ///
+    /// 写す中身が並びの形をしていないもの (数の並びの汚れ区間・画像の画素) を、持ち主が
+    /// 自分で詰めるための口である ([#749])。書いてよい時刻の規律は ``write(_:holding:)`` と
+    /// 同じで、呼ぶ側が環を進めて待った後か、投入済みの全部を待った後に限る。
+    ///
+    /// [#749]: https://github.com/mokume-metal/mokume/issues/749
+    func writableBytes(holding count: Int) throws(RenderFailure)
+        -> (buffer: any MTLBuffer, bytes: UnsafeMutableRawPointer)
+    {
+        let buffer = try buffer(holding: count)
+        return (buffer, buffer.contents())
+    }
+
     /// 全スロットを取り直す。
     private func grow(to count: Int) throws(RenderFailure) {
         let wanted = max(count, max(capacity * 2, minimumCapacity))
