@@ -290,11 +290,16 @@ extension Sketch {
         canvas.vertex(x, y, z)
     }
 
-    /// 貼る絵の読み取り位置つきで頂点を 1 つ置く。
+    /// 読み取り位置つきで頂点を 1 つ置く。
     ///
-    /// `u`・`v` は**貼る絵の画素**で書く (``image(_:_:_:_:_:_:_:_:_:)-(Image,_,_,_,_,_,_,_,_)``
-    /// の切り出しと同じ単位)。``texture(_:)-(Image)`` で絵を束ねていなければ、書いても
-    /// 何も起きない。
+    /// `u`・`v` は、``texture(_:)-(Image)`` で絵を束ねていれば**貼る絵の画素**で書く
+    /// (``image(_:_:_:_:_:_:_:_:_:)-(Image,_,_,_,_,_,_,_,_)`` の切り出しと同じ単位)。
+    /// 絵の画素数で割られて、絵のどこを読むかになる。
+    ///
+    /// **絵を束ねていなければ、書いた値が割られずにそのまま断片の `in.uv` へ届く。**
+    /// 形自身の座標 (帯の端から端・左から右、など) を断片へ渡す口で、曲げた帯の上に
+    /// 模様を留めたいときに使う。組み込みの塗りは色を変えないので、断片を付けなければ
+    /// 絵は書かないときと同じである。
     ///
     /// <!-- example: 文脈 var grain: Image! -->
     /// ```swift
@@ -306,6 +311,21 @@ extension Sketch {
     /// vertex(0, 200, 0, Float(grain.height))
     /// endShape(.close)
     /// ```
+    ///
+    /// <!-- example: 文脈 var stripes: Shader! -->
+    /// ```swift
+    /// shader(stripes)                 // 断片は in.uv だけを見て縞を決める
+    /// beginShape(.triangleStrip)
+    /// for i in 0...10 {
+    ///     let t = Float(i) / 10       // 帯の端から端を 0…1 で書く
+    ///     let x = 40 + t * 400
+    ///     let y = 120 + sin(t * 6) * 30
+    ///     vertex(x, y - 20, t, 0)
+    ///     vertex(x, y + 20, t, 1)
+    /// }
+    /// endShape()
+    /// resetShader()
+    /// ```
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
         canvas.vertex(x, y, u, v)
@@ -313,7 +333,8 @@ extension Sketch {
 
     /// 奥行きと読み取り位置を持つ頂点を 1 つ置く。**この形は立体になる。**
     ///
-    /// 単位は ``vertex(_:_:_:_:)`` と同じ (貼る絵の画素)。
+    /// 単位は ``vertex(_:_:_:_:)`` と同じ — 絵を束ねていれば貼る絵の画素、束ねていなければ
+    /// 割られずにそのまま断片の `in.uv` へ届く。
     ///
     /// **書かなかった頂点は、形の囲みの箱から求まる** — 横と縦の広がりを 0…1 に写す。
     /// 一部にだけ書いた形では、書いた頂点だけがそのとおりに、残りが囲みの箱から

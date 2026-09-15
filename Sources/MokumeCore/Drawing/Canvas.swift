@@ -703,6 +703,9 @@ public final class Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var currentPicture: Picture?
+    /// 貼る絵を束ねずに読み取り位置を書いた塗りが読む、1×1 の白い絵。
+    /// **最初に要ったときに 1 度だけ作る** (``useWrittenUVTexture()``)。
+    private var blankPicture: Picture?
 
     // MARK: - 組み立て中の形
 
@@ -1118,6 +1121,29 @@ public final class Canvas {
         guard let picture = currentPicture else { return useGlyphTexture() }
         picture.prepare()
         useTexture(picture.held)
+    }
+
+    /// **読み取り位置を書いた塗り**が読む面へ切り替える。貼る絵が束ねてあればその面。
+    ///
+    /// 絵が無ければ 1×1 の白い絵を読む ([#1140])。書いた位置は割らずに `Fragment.uv`
+    /// へ届くので、焼き場を読ませると 0…1 を越えた位置が字形を拾って塗りが汚れる —
+    /// 白い 1 画素なら端を伸ばして読むのでどこを指しても白で、既定の塗りの色は
+    /// 変わらない。組み込みの形は絵が無いと読み取り位置を渡さないので、ここへは来ない
+    /// (``useFillTexture()`` のまま焼き場を読み、輪郭と同じ列に乗り続ける)。
+    ///
+    /// [#1140]: https://github.com/mokume-metal/mokume/issues/1140
+    func useWrittenUVTexture() {
+        if currentPicture != nil { return useFillTexture() }
+        if blankPicture == nil {
+            // 作れないのは GPU が面を出せないときだけで、そのときは焼き場へ倒れる
+            // (塗りは汚れうるが、形は消えない)
+            let white = SIMD4<Float16>(repeating: 1)
+            blankPicture = (try? makeImage(
+                ImageFile.Decoded(width: 1, height: 1, pixels: [white]))).map { .loaded($0) }
+        }
+        guard let blankPicture else { return useGlyphTexture() }
+        blankPicture.prepare()
+        useTexture(blankPicture.held)
     }
 
     /// 描画先の座標へ落とす行列を作る。

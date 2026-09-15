@@ -14,7 +14,8 @@ struct BuildingVertex {
     var position: SIMD3<Float>
     /// 面の向き。`nil` は**書かれていない**という意味で、形から求める。
     var normal: SIMD3<Float>?
-    /// 貼る絵のどこを読むか (0…1)。`nil` は**書かれていない**という意味で、
+    /// 断片へ届ける読み取り位置。貼る絵があれば絵の中の 0…1、無ければ書いた値そのまま
+    /// (``Canvas/textureUV(_:_:)``)。`nil` は**書かれていない**という意味で、
     /// 形の囲みの箱から求める。
     var uv: SIMD2<Float>?
     /// 置いた時点の塗り。
@@ -66,15 +67,23 @@ extension Canvas {
         appendVertex(SIMD3(x, y, z), hasDepth: true, uv: textureUV(u, v))
     }
 
-    /// 書かれた読み取り位置を、面の中の 0…1 へ写す。
+    /// 書かれた読み取り位置を、断片の `Fragment.uv` へ届ける値にする。
     ///
-    /// **受け取るのは画像の画素**である (手本の既定と、``image(_:_:_:_:_:_:_:_:_:)`` の
-    /// 切り出しに揃える)。貼る絵を束ねていなければ写す先が無いので、書かれていない
-    /// ことにする — そのときの頂点は焼き場の白い区画を読み、絵は変わらない。
+    /// - **貼る絵を束ねていれば、受け取るのは画像の画素**である (手本の既定と、
+    ///   ``image(_:_:_:_:_:_:_:_:_:)`` の切り出しに揃える)。絵の画素数で割って面の中の
+    ///   0…1 へ写す
+    /// - **束ねていなければ、書いた値を割らずにそのまま届ける** ([#1140])。割る先の
+    ///   大きさが無いので 1×1 の絵と同じ扱いになり、利用者の断片は形自身の座標
+    ///   (鼻から尾・左から右、など) を `in.uv` で読める。塗りは 1×1 の白い絵を読むので
+    ///   (``Canvas/useWrittenUVTexture()``)、組み込みの断片の絵は変わらない
+    ///
+    /// 数でない値と、幅か高さが 0 の絵は、書かれていないことにする。
+    ///
+    /// [#1140]: https://github.com/mokume-metal/mokume/issues/1140
     private func textureUV(_ u: Float, _ v: Float) -> SIMD2<Float>? {
-        guard let picture = currentPicture, picture.width > 0, picture.height > 0,
-            u.isFinite, v.isFinite
-        else { return nil }
+        guard u.isFinite, v.isFinite else { return nil }
+        guard let picture = currentPicture else { return SIMD2(u, v) }
+        guard picture.width > 0, picture.height > 0 else { return nil }
         return SIMD2(u / Float(picture.width), v / Float(picture.height))
     }
 
@@ -238,8 +247,8 @@ extension Canvas {
             : []
         // **形に 1 度だけ求める。** 囲みの箱は原始形によらず同じ (見るのは置いた点の
         // 全体) なので、原始形ごとに作り直すと置いた量の二乗で効く ([#915])
-        let hasPicture = currentPicture != nil
-        let fallback = uvFallback(points)
+        let readsUV = readsUV(points)
+        let fallback = readsUV ? uvFallback(points) : nil
 
         emit {
             for (primitive, triangles) in zip(primitives, triangles) {
@@ -247,7 +256,7 @@ extension Canvas {
                 // 隣の原始形の塗りに隠れることがない
                 emitFill(
                     triangles, points: points, placed: placed,
-                    hasPicture: hasPicture, fallback: fallback)
+                    readsUV: readsUV, fallback: fallback)
                 if hasStroke, currentStrokeWeight > 0 {
                     emitStroke(primitive, points: points, placed: placed)
                 }
@@ -359,17 +368,27 @@ extension Canvas {
             .map { (merged[$0.0], merged[$0.1], merged[$0.2]) }
     }
 
+    /// 塗りが読み取り位置を持つか。**貼る絵を束ねているか、1 点でも書かれていれば持つ。**
+    ///
+    /// 絵が無くても、書いた位置は割らずに断片へ届く (``textureUV(_:_:)``)。どちらでも
+    /// ないときだけ焼き場の白い区画を読み、読み取り位置が無かった頃と 1 ビットも
+    /// 変わらない。
+    private func readsUV(_ points: [BuildingVertex]) -> Bool {
+        currentPicture != nil || points.contains(where: { $0.uv != nil })
+    }
+
     /// 書かれていない読み取り位置の倒れ先。**形に 1 度だけ求める。**
     ///
     /// 全部の点に書かれていれば作らない — 囲みの箱は 1 度も引かれないので、求めるだけ
-    /// 無駄である。**貼る絵が無いこととは別**なので、呼ぶ側は 2 つを分けて持つ
-    /// (``Canvas/emitFill(_:points:placed:hasPicture:fallback:)``)。
+    /// 無駄である。**読み取り位置を持つか (``readsUV(_:)``) とは別**なので、呼ぶ側は
+    /// 2 つを分けて持つ (``Canvas/emitFill(_:points:placed:readsUV:fallback:)``)。
+    /// 読み取り位置を持たない形では呼ばない。
     ///
     /// 判定は**実際の読み取り位置の有無**で行う。「利用者が 4 引数の `vertex` を呼んだか」
     /// では代われない — ``textureUV(_:_:)`` は絵の幅か高さが 0 のときや数でない値が
     /// 渡されたときにも書かれていないことにするので、呼んだのに持たない点がある。
     private func uvFallback(_ points: [BuildingVertex]) -> ((SIMD2<Float>) -> SIMD2<Float>)? {
-        guard currentPicture != nil, points.contains(where: { $0.uv == nil }) else { return nil }
+        guard points.contains(where: { $0.uv == nil }) else { return nil }
         pointScansThisFrame += points.count
         return Canvas.boxUV(of: points.map { SIMD2($0.position.x, $0.position.y) })
     }
@@ -476,9 +495,10 @@ extension Canvas {
 
     /// 塗りを出す。
     ///
-    /// 貼る絵があれば読み取り位置を付ける。**書かれていない頂点は形の囲みの箱 (xy) から
-    /// 作る** — 組み込みの図形と同じ既定に倒すためで、書き忘れた形が絵の 1 画素だけで
-    /// 塗り潰される (手本がそうなる) のを避ける。
+    /// 貼る絵があるか、1 点でも読み取り位置が書かれていれば読み取り位置を付ける
+    /// (``readsUV(_:)``)。**書かれていない頂点は形の囲みの箱 (xy) から作る** — 組み込みの
+    /// 図形と同じ既定に倒すためで、書き忘れた形が絵の 1 画素だけで塗り潰される
+    /// (手本がそうなる) のを避ける。絵が無い形でも同じ規則に倒す。
     ///
     /// 添字を書いた立体では、**同じ点を 2 度積まない** — 積むのは初めて参照されたときで、
     /// 2 度目からは番号だけを積む (``Canvas/appendSharedSolidVertex(slot:position:shapePosition:normal:shapeNormal:isDerived:uv:color:)``)。
@@ -486,16 +506,16 @@ extension Canvas {
     /// (`.triangles`) でも効かせるためである — 形の側で閉じると、原始形ごとに相異なる
     /// 点が 3 つしか無いので 1 つも減らない。
     ///
-    /// **貼る絵の有無と、倒れ先の有無は別のことである。** 一緒にすると、読み取り位置を
-    /// 全部書いた形で倒れ先を省いた瞬間に「貼る絵が無い」と読まれ、焼き場の白い区画が
+    /// **読み取り位置の有無と、倒れ先の有無は別のことである。** 一緒にすると、読み取り位置を
+    /// 全部書いた形で倒れ先を省いた瞬間に「読み取り位置が無い」と読まれ、焼き場の白い区画が
     /// 選ばれて**貼った絵が消える**。しかも面の切り替えが列を閉じるので、形ごとに
     /// 列が割れて新しい二乗が生える。だから 2 つを別々に受け取る。
     private func emitFill(
         _ triangles: [(Int, Int, Int)], points: [BuildingVertex], placed: [PlacedVertex],
-        hasPicture: Bool, fallback: ((SIMD2<Float>) -> SIMD2<Float>)?
+        readsUV: Bool, fallback: ((SIMD2<Float>) -> SIMD2<Float>)?
     ) {
         func uv(_ index: Int) -> SIMD2<Float>? {
-            guard hasPicture else { return nil }
+            guard readsUV else { return nil }
             if let written = points[index].uv { return written }
             // 倒れ先は「1 つでも書かれていない点がある」ときに作られるので、ここへ来た
             // 時点で必ず在る (`uvFallback`)
@@ -531,7 +551,7 @@ extension Canvas {
                     flat[0], flat[1], flat[2],
                     colors: (points[indices[0]].fill, points[indices[1]].fill,
                         points[indices[2]].fill),
-                    uvs: hasPicture
+                    uvs: readsUV
                         ? (uv(indices[0])!, uv(indices[1])!, uv(indices[2])!)
                         : nil)
             }
