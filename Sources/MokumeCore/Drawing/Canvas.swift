@@ -89,7 +89,6 @@ public final class Canvas {
 
     /// 描画先の座標へ落とす行列。整数の座標を画素の角へ落とす。
     let projection: simd_float4x4
-    private let projectionBuffer: any MTLBuffer
 
     /// 溜めている頂点と、その置き場。
     var vertices: [ShapeVertex] = []
@@ -1024,12 +1023,6 @@ public final class Canvas {
         self.currentTexture = atlas.held
         self.whiteUV = atlas.whiteUV
 
-        var matrix = self.projection
-        let buffer = try gpu.makeReadableBuffer(byteCount: MemoryLayout<simd_float4x4>.size)
-        buffer.contents().copyMemory(
-            from: &matrix, byteCount: MemoryLayout<simd_float4x4>.size)
-        self.projectionBuffer = buffer
-
         // 混ぜ方の番号は変わらないので、全部並べて置いておき、列ごとに番地で指す。
         // 列ごとに書き換えると、まだ描いていない列の値まで変わってしまう
         let modes = BlendMode.allCases
@@ -1046,14 +1039,13 @@ public final class Canvas {
 
     /// **自分で確保した置き場と面を常駐から退かせる** ([#795])。
     ///
-    /// 退かせるのは `Canvas` が直に確保した 3 つ (投影行列・混ぜ方の番号・焼いていない
-    /// フレームの影の面) だけである。環に載る置き場・焼き付け先・効果の中間の絵・描く先は、
+    /// 退かせるのは `Canvas` が直に確保した 2 つ (混ぜ方の番号・焼いていないフレームの
+    /// 影の面) だけである。環に載る置き場・焼き付け先・効果の中間の絵・描く先は、
     /// それぞれ確保した型が自分の `deinit` で退く — 片付ける中身は相手の `private` に
     /// あり、しかも `Canvas` の外にも持ち主が居るため (`PresentPipeline` の置き場)。
     ///
     /// [#795]: https://github.com/mokume-metal/mokume/issues/795
     isolated deinit {
-        gpu.retire(projectionBuffer)
         gpu.retire(blendModeBuffer)
         if let unbakedShadowTexture { gpu.retire(unbakedShadowTexture) }
     }
