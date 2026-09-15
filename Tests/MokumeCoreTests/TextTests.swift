@@ -375,9 +375,9 @@ struct TextTests {
             #expect(canvas.textWidth("mokume") != before)
             canvas.popStyle()
             #expect(canvas.textWidth("mokume") == before)
-            #expect(canvas.currentHorizontalTextAlign == .left)
-            #expect(canvas.currentVerticalTextAlign == .baseline)
-            #expect(canvas.currentTextLeading == nil)
+            #expect(canvas.style.horizontalTextAlign == .left)
+            #expect(canvas.style.verticalTextAlign == .baseline)
+            #expect(canvas.style.textLeading == nil)
         }
     }
 

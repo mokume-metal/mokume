@@ -491,7 +491,7 @@ struct ParticleTests {
         let canvas = try makeCanvas()
         canvas.fill(.linear(red: 1, green: 0, blue: 0))
         _ = try canvas.makeParticles(count: 8)
-        #expect(canvas.currentFill == .linear(red: 1, green: 0, blue: 0))
+        #expect(canvas.style.fill == .linear(red: 1, green: 0, blue: 0))
     }
 
     /// **焼き付くのは仕様である。** 粒の板は保持した形なので、作った瞬間の混ぜ方で描かれる —

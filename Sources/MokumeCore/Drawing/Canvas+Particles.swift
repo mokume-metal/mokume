@@ -111,7 +111,7 @@ extension Canvas {
         let count = particles.count(rate: rate, over: deltaTime)
         particles.emit(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
-            color: color ?? currentFill, at: time, using: &randomness)
+            color: color ?? style.fill, at: time, using: &randomness)
     }
 
     /// 力を積む。
@@ -162,7 +162,7 @@ extension Canvas {
     /// 区間 (描く引数として GPU へ渡す)。形を持たなければ `nil`。
     private func placeFromGPU(_ particles: Particles) -> (start: Int, count: Int)? {
         guard let run = particles.quad.runs.first, run.source == .solid else { return nil }
-        let savedMode = currentBlendMode
+        let savedMode = style.blendMode
         let savedTexture = currentTexture
         blendMode(run.mode)
         useTexture(run.texture)

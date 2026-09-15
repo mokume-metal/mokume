@@ -144,7 +144,7 @@ extension Canvas {
     /// **同じ形が続く間は、頂点を置き直さない。** 2 個目からは置き場所 (変換と塗り)
     /// だけが増えるので、1 万個置いても頂点は 1 組で済む。
     func place(_ shape: SolidShape) {
-        guard hasFill else { return }
+        guard style.hasFill else { return }
 
         placeMesh(.mesh(shape)) { solidMesh(for: shape) }
     }
@@ -169,7 +169,7 @@ extension Canvas {
             let mesh = build()
             let start = solidVertices.count
             solidVertices.reserveCapacity(start + mesh.points.count)
-            let textured = currentPicture != nil
+            let textured = style.picture != nil
             for point in mesh.points {
                 // **形自身の座標のまま置く。** 変換は置き場所が持つ
                 solidVertices.append(
@@ -190,9 +190,9 @@ extension Canvas {
         solidInstances.append(
             SolidInstance(
                 matrix: transform.matrix, normalMatrix: transform.normalMatrix,
-                color: currentFill))
+                color: style.fill))
         // 半透明の塗りが 1 つでも入ったら、この列は裏面を捨てられない (`Batch.cullMode`)
-        if currentFill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
+        if style.fill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
     }
 
     /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから
@@ -364,7 +364,7 @@ extension Canvas {
     func strokeSolidRing(
         _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool
     ) {
-        let half = currentStrokeWeight / 2
+        let half = style.strokeWeight / 2
         guard !points.isEmpty, shapePoints.count == points.count else { return }
 
         // 端と折れ目の規則は平面と共有する (`strokeRing`)
@@ -428,10 +428,10 @@ extension Canvas {
     ) {
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)
         appendSolidVertex(
-            position: a, shapePosition: shape.0, normal: .zero, isStroke: true, color: currentStroke)
+            position: a, shapePosition: shape.0, normal: .zero, isStroke: true, color: style.stroke)
         appendSolidVertex(
-            position: b, shapePosition: shape.1, normal: .zero, isStroke: true, color: currentStroke)
+            position: b, shapePosition: shape.1, normal: .zero, isStroke: true, color: style.stroke)
         appendSolidVertex(
-            position: c, shapePosition: shape.2, normal: .zero, isStroke: true, color: currentStroke)
+            position: c, shapePosition: shape.2, normal: .zero, isStroke: true, color: style.stroke)
     }
 }

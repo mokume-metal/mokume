@@ -48,7 +48,7 @@ extension Canvas {
     private func apply(_ change: (inout Material) -> Void) {
         guard isDrawing else { return warnOutsideFrame(.material) }
         closeBatch()
-        change(&currentMaterial)
+        change(&style.material)
     }
 
     /// 材質へ渡された色から、足し引きに使う 3 成分を取り出す。
