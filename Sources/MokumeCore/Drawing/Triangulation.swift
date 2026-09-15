@@ -10,6 +10,16 @@ import simd
 /// よく、**凹みうる経路 (利用者が頂点を並べた形) だけがここを通る**。
 ///
 /// 耳を切る方式を使う。頂点が 3 つになるまで「切り落としてよい角」を探して外していく。
+///
+/// **字形の輪郭が普通に持つ 3 つの形を、正しい入力として扱う** ([#1148]・[#1211])。
+/// どれも利用者が作った不正な形ではなく、`textOutline` で取った字をそのまま塗ると必ず現れる:
+///
+/// - **辺の上に別の点が載る** — T の横棒の下辺に、縦棒の角が載る
+/// - **同じ位置の点が続く** — 曲線で閉じる周は、最後の点が最初の点と重なる
+/// - **周が同じ点を 2 度通る** — 穴を畳んだ橋の継ぎ目や、腕と脚が 1 点で幹に触れる k
+///
+/// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
+/// [#1211]: https://github.com/mokume-metal/mokume/issues/1211
 enum Triangulation {
     /// 単純な多角形を三角形へ分ける。返すのは点の番号の 3 つ組。
     ///
@@ -22,6 +32,7 @@ enum Triangulation {
         // 回る向きを揃える。以降の凸判定はこの向きを前提にする
         var ring = Array(points.indices)
         if signedArea(points) < 0 { ring.reverse() }
+        dropFlatCorners(&ring, points, from: 0, untilClean: ring.count)
 
         var triangles: [(Int, Int, Int)] = []
         // 1 周まわって 1 つも切れなければ打ち切るので、上限は「残り頂点 x 周」で足りる
@@ -37,6 +48,9 @@ enum Triangulation {
                 guard isEar(points, previous, current, next, ring: ring) else { continue }
                 triangles.append((previous, current, next))
                 ring.remove(at: position)
+                // 切った跡で面積を持たない角が生まれうるのは、切り口の前後だけ
+                dropFlatCorners(
+                    &ring, points, from: (position + ring.count - 1) % ring.count, untilClean: 2)
                 clippedSomething = true
                 break
             }
@@ -105,10 +119,48 @@ enum Triangulation {
         return sum / 2
     }
 
+    /// 面積を持たない角を、三角形を出さずに周から外す。
+    ///
+    /// 外すのは**前後の点と一直線に並び、進む向きが折り返す角**で、同じ位置に続く点もこれに
+    /// 含まれる。凸とも凹とも言えないので耳の候補にならず、残りの周がこの角でしか切れなく
+    /// なると分け方が止まる。周が同じ点を 2 度通る形では、最後に「行って戻るだけ」の周が
+    /// 残り、そこから実在しない三角形を切り出してしまう。
+    ///
+    /// **一直線でも折り返さない角は外さない。** 外すと、別の周がその点に触れていたとき、
+    /// その点が辺の上に載った点になって耳を塞ぐ。
+    ///
+    /// - Parameters:
+    ///   - start: 見始める位置。
+    ///   - run: 外すものが無い角がこれだけ続いたら終える。周全体を見るなら周の長さを渡す。
+    private static func dropFlatCorners(
+        _ ring: inout [Int], _ points: [SIMD2<Float>], from start: Int, untilClean run: Int
+    ) {
+        var position = start
+        var clean = 0
+        while ring.count > 3, clean < run {
+            let a = points[ring[(position + ring.count - 1) % ring.count]]
+            let b = points[ring[position]]
+            let c = points[ring[(position + 1) % ring.count]]
+            if cross(b - a, c - b) == 0, dot(b - a, c - b) <= 0 {
+                ring.remove(at: position)
+                // 外した跡で、1 つ前の角が新たに潰れていないかを見直す
+                position = (position + ring.count - 1) % ring.count
+                clean = 0
+            } else {
+                position = (position + 1) % ring.count
+                clean += 1
+            }
+        }
+    }
+
     /// 切り落としてよい角か。
     ///
     /// 条件は 2 つ — その角が出っ張っていること、そして**残りの点をひとつも含まないこと**。
     /// 2 つ目を見ないと、凹んだ形で「形の外を通る三角形」を作ってしまう。
+    ///
+    /// **角と同じ位置にある点は数えない。** 周が同じ点を 2 度通る形では、その点が三角形の
+    /// 角に重なる。数えると耳が永久に見つからない。位置を比べるのは中と判定された点だけで
+    /// よい (角に重なる点は必ず中と判定される) ので、比べる手間は大半の点で掛からない。
     private static func isEar(
         _ points: [SIMD2<Float>], _ a: Int, _ b: Int, _ c: Int, ring: [Int]
     ) -> Bool {
@@ -117,7 +169,10 @@ enum Triangulation {
         let pc = points[c]
         guard cross(pb - pa, pc - pb) > 0 else { return false }
         for index in ring where index != a && index != b && index != c {
-            if isInside(points[index], pa, pb, pc) { return false }
+            let point = points[index]
+            guard isInside(point, pa, pb, pc) else { continue }
+            if point == pa || point == pb || point == pc { continue }
+            return false
         }
         return true
     }
@@ -126,14 +181,20 @@ enum Triangulation {
         a.x * b.y - a.y * b.x
     }
 
+    /// 三角形の中か。**辺の上も「中」とする。**
+    ///
+    /// 含まないと数えると、切り口の辺の上に別の角が載っている三角形が耳として通り、形の外を
+    /// 覆う ([#1148])。判定に許容幅は持たせない — 座標の大きさに比例した幅を試すと、
+    /// 形の外にある点まで耳を塞いで分け方が止まり、壊れる字がかえって増えた。
+    ///
+    /// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
     private static func isInside(
         _ point: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>
     ) -> Bool {
         let d1 = cross(b - a, point - a)
         let d2 = cross(c - b, point - b)
         let d3 = cross(a - c, point - c)
-        // 辺の上は「含まない」とする — 含めると耳が見つからず、分け方が止まる
-        return d1 > 0 && d2 > 0 && d3 > 0
+        return d1 >= 0 && d2 >= 0 && d3 >= 0
     }
 
     private static func rightmost(_ ring: [Int], _ points: [SIMD2<Float>]) -> SIMD2<Float>? {
