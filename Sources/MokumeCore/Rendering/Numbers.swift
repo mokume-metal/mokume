@@ -136,11 +136,3 @@ import MokumeDiagnostics
             "The number array holds \(count), so index \(index) cannot be written. Ignored")
     }
 }
-
-/// **一時的な実証 (#1096)。この PR の中で取り消す。**
-///
-/// 明示の隔離を持たない `isolated deinit`。debug と `swift build -c release` では通り、
-/// release のテストビルドだけがコンパイルできなくなる (#761 / #1021 / #1083)。
-final class TemporaryIsolationProbe1096 {
-    isolated deinit {}
-}

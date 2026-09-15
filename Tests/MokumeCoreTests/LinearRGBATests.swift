@@ -7,6 +7,18 @@ import Testing
 
 @Suite("作業空間の色")
 struct LinearRGBATests {
+    /// **一時的な実証 (#1096)。この PR の中で取り消す。**
+    ///
+    /// release でしか走らない検査の赤が、機械の入口の赤として届くかを確かめるために置いた。
+    /// GPU を要さない Suite に置いてあるのは、GPU を要す Suite は CI ではどのみち
+    /// スキップされるためである (ADR-0019 決定 7)。
+    @Test(
+        "一時的な実証: release でだけ走って必ず落ちる",
+        .enabled(if: !isDebugBuild, "実証のため release でだけ走らせる"))
+    func temporaryReleaseOnlyProbeFor1096() {
+        #expect(Bool(false), "#1096 の実証: この検査は release でだけ走り、必ず落ちる")
+    }
+
     @Test("乗算していない成分は、境界でアルファを乗算される")
     func straightIsPremultipliedAtTheBoundary() {
         let color = LinearRGBA(straightRed: 1, green: 0.5, blue: 0, alpha: 0.5)
