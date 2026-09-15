@@ -315,6 +315,95 @@ struct TextureTests {
         #expect(written.contains(SIMD2(0, 1)))
     }
 
+    // MARK: - 絵を束ねずに書く読み取り位置 (#1140)
+
+    /// 帯をどの経路で置くか。
+    enum StripRoute: String, CaseIterable, CustomTestStringConvertible {
+        case flat, solid, retained
+        var testDescription: String { rawValue }
+    }
+
+    /// 左端から右端へ `u` を書いた帯を、面の横幅いっぱいに置く。
+    ///
+    /// `u` は 0…`span` で書く — **割らずに届けば** 断片は `span` を知っているので
+    /// 0…1 へ戻せる。割られていれば (1 画素ぶんの絵とは違う大きさで割られていれば)
+    /// 右端が 1 に届かない。
+    private func placeStrip(
+        _ canvas: Canvas, route: StripRoute, span: Float, width: Float = 64
+    ) {
+        func strip() {
+            canvas.beginShape(.triangleStrip)
+            for i in 0...8 {
+                let t = Float(i) / 8
+                if route == .solid {
+                    canvas.vertex(t * width, 16, 0, t * span, 0)
+                    canvas.vertex(t * width, 48, 0, t * span, 1)
+                } else {
+                    canvas.vertex(t * width, 16, t * span, 0)
+                    canvas.vertex(t * width, 48, t * span, 1)
+                }
+            }
+            canvas.endShape()
+        }
+        if route == .retained {
+            canvas.shape(canvas.createShape { strip() })
+        } else {
+            strip()
+        }
+    }
+
+    @Test("絵を束ねていなければ、書いた読み取り位置は割られずに断片へ届く", arguments: StripRoute.allCases)
+    func writtenCoordinatesReachTheFragmentWithoutAPicture(route: StripRoute) throws {
+        let canvas = try makeCanvas()
+        let span: Float = 4
+        // 読み取り位置だけで色を決める断片。**絵は 1 画素も読まない**
+        let shader = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                return float4(in.uv.x / \(span), in.uv.y, 0.0, 1.0);
+            }
+            """)
+        try canvas.draw {
+            canvas.background(self.black)
+            canvas.noStroke()
+            canvas.fill(self.white)
+            canvas.noTexture()
+            canvas.shader(shader)
+            self.placeStrip(canvas, route: route, span: span)
+        }
+
+        let left = canvas.get(2, 32)
+        let right = canvas.get(61, 32)
+        // **頂点ごとに違う値が届く。** 届かなければ全点が焼き場の白い区画 (同じ定数) を指し、
+        // 左右が同じ色になる
+        #expect(left != right)
+        // 割らずに届いていること — 右端は u = span なので赤が 1 近くまで上がる
+        #expect(left.red < 0.1)
+        #expect(right.red > 0.9)
+        // v も届く (上端 0・下端 1)
+        #expect(canvas.get(32, 18).green < 0.15)
+        #expect(canvas.get(32, 46).green > 0.85)
+    }
+
+    @Test("絵を束ねずに読み取り位置を書いても、組み込みの塗りの色は変わらない", arguments: StripRoute.allCases)
+    func writtenCoordinatesKeepTheBuiltInFill(route: StripRoute) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(self.black)
+            canvas.noStroke()
+            canvas.fill(self.red)
+            canvas.noTexture()
+            // 0…1 を大きく越える位置を書く。書いた位置で焼き場を読ませると、
+            // 字形の区画や透明な余白を拾って塗りが欠ける
+            self.placeStrip(canvas, route: route, span: 300)
+        }
+
+        let written = try pixels(of: canvas)
+        #expect(written[2, 32] == (255, 0, 0, 255))
+        #expect(written[32, 32] == (255, 0, 0, 255))
+        #expect(written[61, 32] == (255, 0, 0, 255))
+    }
+
     // MARK: - 向き
 
     @Test("貼った絵は上下も左右も逆にならない")

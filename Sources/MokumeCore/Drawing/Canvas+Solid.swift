@@ -272,7 +272,7 @@ extension Canvas {
     ) {
         // **面の切り替えが先。** 切り替えは列を閉じるので、開いてから切り替えると
         // 開いたばかりの列が閉じられ、この頂点がどの列にも属さなくなる
-        if uv != nil { useFillTexture() } else { useGlyphTexture() }
+        if uv != nil { useWrittenUVTexture() } else { useGlyphTexture() }
         openFreeformSolid()
         solidVertices.append(
             SolidVertex(
@@ -297,7 +297,7 @@ extension Canvas {
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>, isDerived: Bool,
         uv: SIMD2<Float>?, color: LinearRGBA
     ) {
-        if uv != nil { useFillTexture() } else { useGlyphTexture() }
+        if uv != nil { useWrittenUVTexture() } else { useGlyphTexture() }
         openIndexedFreeformSolid()
         if let shared = openSolid?.sharedSlots[slot] {
             solidIndices.append(shared)
