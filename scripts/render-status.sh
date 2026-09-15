@@ -233,7 +233,7 @@ post_queue_verdict() { # $1=repo $2=合流後の sha $3=弾いた PR $4=読め�
 # failure だけである** — success は手元の実行しか打たない (#304)。
 report_merge_group() {
   local repo=$1 merged=$2 head_ref=$3
-  local numbers number touches line verdict detail head
+  local numbers number touches line verdict detail head ahead
   local checked=0 blind='' fp_merged='' rejected=''
 
   # queue の枝は gh-readonly-queue/<base>/pr-<番号>-<base sha>。まとめて積まれた
@@ -274,9 +274,18 @@ report_merge_group() {
         ;;
       rejected)
         say "#$number の手元の実行は合流後の姿を覆っていない ($detail 合流後=$fp_merged)"
-        say "main を取り込んで手元で make ci-check を打ち直すと、この報告が付き直す"
-        post "$repo" "$head" failure \
-          "merge queue で弾かれた — main を取り込んで make ci-check を打ち直す"
+        # **queue の前に描画 PR が居れば「打ち直す」と言わない** (#1266)。その変更が
+        # 合流後の木に入るので、打ち直しても同じ理由でまた弾かれる。読めなければ
+        # 従来の名乗りに落ちる
+        if ahead=$(queued_drawing_ahead "$repo" "$number") && [ -n "$ahead" ] && [ "$ahead" != self ]; then
+          say "queue の前に描画 PR #$ahead が居る — #$ahead が入るまでは打ち直しても覆えない"
+          post "$repo" "$head" failure \
+            "merge queue で弾かれた — 前に居る #$ahead の merge を待つ。入った後に make catch-up"
+        else
+          say "main を取り込んで手元で make ci-check を打ち直すと、この報告が付き直す"
+          post "$repo" "$head" failure \
+            "merge queue で弾かれた — main を取り込んで make ci-check を打ち直す"
+        fi
         rejected="$rejected #$number"
         ;;
       *)
@@ -381,7 +390,7 @@ case "$mode" in
     fi
 
     if pr_files "$GITHUB_REPOSITORY" "${PR_NUMBER:?}" | touches_drawing coverage; then
-      # 描画 PR は番号順に 1 本ずつ merge する (#467)。順番でなければここで赤くする
+      # 描画 PR は 1 本ずつ merge する (#467)。順番は queue に居るものが先・その外は番号順 (#1266)。順番でなければここで赤くする
       # — queue で弾かれるのを待つと、待ち時間も手元の打ち直しも無駄になる
       ahead=$(ahead_drawing_pr "$GITHUB_REPOSITORY" "$PR_NUMBER")
       case "$ahead" in
@@ -389,9 +398,9 @@ case "$mode" in
         draft) say "Draft の描画 PR — 順番の外" ;;
         '') say "この PR が描画の先頭" ;;
         *)
-          say "先に #$ahead が居る — 描画 PR は番号順に 1 本ずつ merge する"
+          say "先に #$ahead が居る — 描画 PR は queue に居るものから、その外は番号順に 1 本ずつ merge する"
           post "$GITHUB_REPOSITORY" "${PR_HEAD_SHA:?}" failure \
-            "#$ahead の merge を待つ (描画 PR は番号順に 1 本ずつ)"
+            "#$ahead の merge を待つ (描画 PR は queue に居るものから、その外は番号順に 1 本ずつ)"
           exit 0
           ;;
       esac

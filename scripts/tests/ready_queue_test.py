@@ -71,6 +71,8 @@ if [ "$1" = "api" ]; then
   case "$2" in
     *"/pulls?state=open"*) emit "$FIX/pulls.json"; exit 0 ;;
     */files) n=${2%/files}; n=${n##*/}; emit "$FIX/$n.files.json"; exit 0 ;;
+    # merge queue の並び (#1266)。既定は空
+    graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; } ;;
   esac
 fi
 

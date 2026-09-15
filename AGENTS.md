@@ -292,9 +292,9 @@ bash scripts/orphan-processes.sh
 | 判定 | `local-render` | 対処 |
 | --- | --- | --- |
 | 手元が回した木と合流後で、描画に関わるファイルの中身が違う | failure (PR の head にも付く) | `make catch-up` |
-| 覆いを壊す open な非 Draft PR が他にもあり、自分が最小番号でない | `#N の merge を待つ` で赤 | **先頭 #N を見てから決める** — 全 check 緑・`CLEAN` で `autoMerge: false` なら予約が無いだけなので `gh pr merge <N> --auto --squash` で入る / まだ作業中ならその PR を Draft に落とす / どちらでもなければ待つ (自分の側で打ち直しても無駄になる) |
+| 覆いを壊す open な非 Draft PR が他にあり、自分が先頭でない (queue 内が先・外は番号順) | `#N の merge を待つ` で赤 | **先頭 #N を見てから決める** — 全 check 緑・`CLEAN` で `autoMerge: false` なら予約が無いだけなので `gh pr merge <N> --auto --squash` で入る / 作業中なら Draft に落とす / どちらでもなければ待つ (打ち直しは無駄になる) |
 
-順番は番号順なので、**まだ作業中の描画 PR は Draft にしておく** — Draft は順番の外なので、完成して承認まで済んだ後続を番号だけの理由で待たせずに済む ([#497](https://github.com/mokume-metal/mokume/issues/497))。
+queue の外は番号順なので、**まだ作業中の描画 PR は Draft にしておく** — Draft は順番の外なので、完成した後続を番号だけの理由で待たせずに済む ([#497](https://github.com/mokume-metal/mokume/issues/497))。
 
 `make catch-up` は復旧の 3 手 — main を取り込む → `make ci-check` → `--auto` を掛け直す — を 1 手にする。手で追うと **1 手抜けても PR は全チェック緑・`CLEAN` のまま止まる**ので、`catch-up` を使う ([#457](https://github.com/mokume-metal/mokume/issues/457))。
 
