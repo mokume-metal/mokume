@@ -37,6 +37,11 @@ struct WatchSessionTests {
         var whileBuilding: () async -> Void = {}
         /// 作り直しを起こせなかったことにする誤り。**立っていれば、作り直しは投げる。**
         var failure: CommandFailure?
+        /// 起こしたことにする子を返すか。**既定は返さない** (起こせなかった回になる)。
+        ///
+        /// 返すのは走らせていない `Process` である — 新しい絵が出るまでを測るのは子が居る回
+        /// だけなので、居ることにだけ要る (#930)。
+        var launchesChild = false
 
         func hooks() -> WatchSession.Hooks {
             WatchSession.Hooks(
@@ -59,7 +64,7 @@ struct WatchSessionTests {
                     self.stampsGivenToChildren.append(stamp)
                     self.ratesGivenToChildren.append(rate)
                     self.clock += 0.03
-                    return nil
+                    return self.launchesChild ? Process() : nil
                 },
                 now: { self.clock },
                 stamp: { _ in self.stamp })
@@ -711,6 +716,166 @@ struct WatchSessionTests {
         #expect(!leaving.isRunning, "控えていた子を置いていった")
         #expect(!arriving.isRunning)
         #expect(session.outgoing == nil)
+    }
+
+    // MARK: - 新しい絵が出るまで (#930)
+
+    /// 窓を出せた見張りを、替え玉の外側で組む。**最初の世代は乗り換わった後まで進めてある。**
+    ///
+    /// 最初の合図は絵を指さないので測らない — その先の、測れる差し替えから始めたい検査のため。
+    @MainActor
+    private func promotedOnce(_ recorder: Recorder) async throws -> WatchSession {
+        recorder.launchesChild = true
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        session.overlapsGenerations = true
+        await session.start()
+        session.generationPromoted()
+        return session
+    }
+
+    /// 区画に書かれた記録の所要時間。**書かれていなければ `nil`。**
+    private func writtenTimings(of session: WatchSession) throws -> [String: Any]? {
+        let url = BuildReport.statusURL(under: session.facetBase)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        return (object as? [String: Any])?["timings"] as? [String: Any]
+    }
+
+    /// **作者の実感は「保存してから新しい絵が出るまで」である。** `relaunchMs` は子を
+    /// 起こし終えた時点で止まるので、窓が新しい絵を出すまでは誰も測っていなかった
+    /// ([#930](https://github.com/mokume-metal/mokume/issues/930))。
+    @Test("窓を出せた見張りは、乗り換えの合図で新しい絵が出るまでを記録へ足す")
+    @MainActor
+    func recordsTheTimeUntilTheNewPictureShows() async throws {
+        let recorder = Recorder()
+        let session = try await promotedOnce(recorder)
+
+        recorder.stamp = "bbb"
+        let started = recorder.clock + 0.5  // 作り直しが時計を 0.5 秒進めてから差し替えに入る
+        let launched = try #require(await session.tick())
+        // **起こし終えた時点の記録にはまだ無い** — 分かるのは合図が来てからである
+        #expect(launched.timings.firstFrameMs == nil)
+        #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
+
+        recorder.clock += 0.2
+        session.generationPromoted()
+
+        let report = try #require(session.lastReport)
+        let firstFrame = try #require(report.timings.firstFrameMs, "合図が来ても足されていない")
+        #expect(abs(firstFrame - (recorder.clock - started) * 1000) < 1e-6)
+        // **同じ時刻から数えるので、起こすまでを丸ごと含む**
+        #expect(firstFrame >= (try #require(report.timings.relaunchMs)))
+        // **後から読んでも入っている。** 足しただけで書き直さなければ、窓口は古い記録を読む
+        let written = try #require(try writtenTimings(of: session))
+        #expect(written["firstFrameMs"] as? Double == firstFrame)
+        #expect(written["relaunchMs"] as? Double == report.timings.relaunchMs)
+    }
+
+    /// **合図は窓ごとに来る** (作品の窓とプレビュー)。2 度目で数え直すと、遅いほうの窓の
+    /// 時刻になる。
+    @Test("2 つ目の窓からの合図では、数え直さない")
+    @MainActor
+    func theSecondWindowsSignalDoesNotRecountIt() async throws {
+        let recorder = Recorder()
+        let session = try await promotedOnce(recorder)
+        recorder.stamp = "bbb"
+        await session.tick()
+        recorder.clock += 0.2
+        session.generationPromoted()
+        let first = try #require(session.lastReport?.timings.firstFrameMs)
+
+        recorder.clock += 0.05
+        session.generationPromoted()
+        #expect(session.lastReport?.timings.firstFrameMs == first)
+        #expect(try writtenTimings(of: session)?["firstFrameMs"] as? Double == first)
+    }
+
+    /// **合図が来ない実行で、項目を作らない。** 既存の 3 本は従来どおり書く。
+    @Test("窓を出せない見張りでは省き、既存の 3 本はそのまま書く")
+    @MainActor
+    func aSessionWithoutAWindowLeavesItOut() async throws {
+        let recorder = Recorder()
+        recorder.launchesChild = true
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        await session.start()
+        session.generationPromoted()
+
+        recorder.stamp = "bbb"
+        await session.tick()
+        recorder.clock += 0.2
+        // 窓の無い実行に合図は来ないが、来ても測らない
+        session.generationPromoted()
+
+        let report = try #require(session.lastReport)
+        #expect(report.timings.firstFrameMs == nil)
+        #expect(report.timings.detectMs != nil)
+        #expect(report.timings.buildMs > 0)
+        #expect(report.timings.relaunchMs != nil)
+        let written = try #require(try writtenTimings(of: session))
+        #expect(Set(written.keys) == ["detectMs", "buildMs", "relaunchMs"])
+    }
+
+    /// **出している世代が無い台は、1 枚目を待たずに乗り換える。** 最初の合図は「目録が
+    /// 読めた」でしかないので、そこで測ると絵が出る前の数字になる。
+    @Test("まだ合図を受けていない間に起こした世代は測らない")
+    @MainActor
+    func theGenerationBeforeAnySignalIsNotMeasured() async throws {
+        let recorder = Recorder()
+        recorder.launchesChild = true
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: recorder.hooks())
+        session.overlapsGenerations = true
+
+        await session.start()
+        recorder.clock += 0.2
+        session.generationPromoted()
+        #expect(session.lastReport?.timings.firstFrameMs == nil)
+        #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
+    }
+
+    /// **起こした後に別の記録で上書きされたら、待っていた数字の行き先は無い。** 足すと、
+    /// 作り直しの失敗の記録に、前の世代の絵の時刻が載る。
+    @Test("起こした後に作り直しが失敗したら、その記録には足さない")
+    @MainActor
+    func aLaterFailedRebuildIsNotGivenTheTime() async throws {
+        let recorder = Recorder()
+        let session = try await promotedOnce(recorder)
+        recorder.stamp = "bbb"
+        await session.tick()
+
+        recorder.stamp = "ccc"
+        recorder.buildStatus = 1
+        let failed = try #require(await session.tick())
+        #expect(!failed.ok)
+        session.generationPromoted()
+        #expect(session.lastReport?.timings.firstFrameMs == nil)
+        #expect(try writtenTimings(of: session)?["firstFrameMs"] == nil)
+    }
+
+    /// **前の世代が生きたまま乗り換わっていなければ、次の合図がどちらのものか分からない。**
+    /// 目録は世代の印を持たないので、測ると前の世代の絵の時刻を新しい世代の数字として書く。
+    @Test("前の世代が乗り換わらずに生きているうちに差し替えた回は測らない")
+    @MainActor
+    func aSwapBeforeThePreviousGenerationShowedIsNotMeasured() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stop() }
+
+        await session.start()
+        ready.waitForLast()
+        session.generationPromoted()
+        // 2 世代目を起こし、**乗り換わらないうちに** 3 世代目へ差し替える
+        await session.tick()
+        ready.waitForLast()
+        let unshown = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        #expect(unshown.isRunning, "前の世代が生きている形を作れていない")
+
+        session.generationPromoted()
+        #expect(session.lastReport?.timings.firstFrameMs == nil, "どちらの世代の合図か分からないのに測った")
     }
 
     /// 世代を重ねる見張りを組む。**実際に子を起こす** — 重なりは生きた子でしか見られない。
