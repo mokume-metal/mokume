@@ -1,0 +1,60 @@
+name: Queue sweep
+
+# merge queue が捨てたグループの merge_group run を cancel する (#1265)。
+#
+# merge queue はグループを作り直したり PR を外したりしても、古いグループの run を
+# cancel しない。捨てられた run は macOS の枠 (ci.yml の ci-check と test-release) を
+# 使い続け、今のグループの検証を待たせる。2026-09-15 には 1 日に 2 回起き、どちらも
+# merge が 30〜50 分止まった。
+#
+# **契機は「グループが変わる瞬間」に置く。** 作り直されたグループは新しい merge_group
+# を立て、外れた PR は dequeued を立てる — 後ろにグループが居ない PR が外れたときは
+# 前者が起きないので、両方を拾う。
+#
+# 手段は ADR-0008 決定 5 の順に比べた (#1265):
+#
+# - **当番 (stall-watch.yml) には足さない。** 実測で数時間おきにしか走らず (#1197)、
+#   塞ぎたい停止より遅い
+# - **native の concurrency では書けない。** 同じ PR の旧グループと新グループを同じキーに
+#   するには PR 番号が要るが、式言語には split も正規表現も無く head_ref から抜き出せない。
+#   キーをグループ共通にすると、並行して検証中の他のグループ (max_entries_to_build: 5) まで
+#   cancel してしまう
+# - **ci.yml には相乗りさせない。** pull_request の dequeued を足すと ci-check /
+#   test-release まで起動し、すべてのジョブの条件に手を入れることになる
+#
+# **必須チェックには入れない。** 掃除が落ちても、今のグループの検証の可否は変わらない。
+#
+# 取り残しが出る形は 2 つあり、どちらも次の契機で拾われる方向にしか外れない:
+#
+# - 衝突で合流 ref が作れない PR の dequeued では、pull_request の workflow が起動しない
+#   (#694 の形)
+# - グループの ref の削除と新しい ref の作成は 1〜2 秒の差で起きる。ジョブの起動より短いが、
+#   削除が遅れれば今回の掃除には映らない
+#
+# 判断は scripts/queue-sweep.sh が持つ (検査は scripts/tests/queue_sweep_test.py)。
+# ロジックを YAML へ埋めない理由は triage.yml と同じ (#66)。
+
+# merge_group の既定の run 名はワークフロー名に落ち、どのグループの掃除か分からない
+# (ci.yml の run-name と同じ理由)。値のクォートは必須 — `: ` と `#` が YAML の構文に当たる。
+run-name: "${{ github.event_name == 'merge_group' && format('merge queue: {0}', github.event.merge_group.head_ref) || format('dequeued: #{0}', github.event.pull_request.number) }}"
+
+on:
+  merge_group:
+  pull_request:
+    types: [dequeued]
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      actions: write # 捨てられたグループの run の cancel
+    steps:
+      - uses: actions/checkout@v7
+      - name: 捨てられたグループの run を cancel する
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/queue-sweep.sh
