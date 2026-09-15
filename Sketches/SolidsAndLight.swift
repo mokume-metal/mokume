@@ -27,7 +27,11 @@ final class SolidsAndLight: Sketch {
         perspective(Float.pi / 3, width / height, 10, 2000)
 
         // 光を 4 種そろえて置く。縦軸は下向きなので、上から差す光の向きは +y
-        ambientLight(.linear(red: 0.16, green: 0.17, blue: 0.22))
+        //
+        // **色の目盛りは渡し方で 2 つある。** 素の数値は塗りと同じ 0–255 で、`.linear(…)` は
+        // 0…1 (1 を超えられる)。底上げの光だけ素の数値で書いてある — `.linear(red: 0.16,
+        // green: 0.17, blue: 0.22)` と同じ明るさで、ここに `0.16` と書くとほぼ真っ黒になる
+        ambientLight(111, 115, 129)
         directionalLight(.linear(red: 0.9, green: 0.86, blue: 0.78), -0.45, 0.85, -0.35)
         pointLight(.linear(red: 0.25, green: 0.45, blue: 0.95), center.x - 260, center.y - 60, 220)
         spotLight(
