@@ -73,6 +73,14 @@ nonisolated public enum WorkDirectory {
         facet.appendingPathComponent("report.json")
     }
 
+    /// 区画の中の錠ファイル。区画に応える権利 (``FacetClaim``) を表す。
+    ///
+    /// **点で始める。** 読み手が区画を覗いたときに要求・応答・絵と並んで目に入らないようにする
+    /// ためで、中身は空のまま置かれる。
+    nonisolated static func claimURL(under facet: URL) -> URL {
+        facet.appendingPathComponent(".claim")
+    }
+
     /// その場所がディレクトリとして在るか。
     ///
     /// **ファイルが在るだけでは真にしない。** 区画は必ずディレクトリなので、同じ名前の

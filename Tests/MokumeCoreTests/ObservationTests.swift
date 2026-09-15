@@ -105,6 +105,33 @@ struct ObservationTests {
                 atPath: facet.appendingPathComponent("frame-000.png").path))
     }
 
+    /// 撮り始めは前回の成果物を消す (`clearProducts()`)。世代を見ないので、重なっている
+    /// 次の世代が撮り始めると**前の世代が撮っている列の絵と目録を消す** — 実測では 50 回中
+    /// 5 回で、`complete` の目録が別の世代の絵や存在しない絵を指した
+    /// ([#1162](https://github.com/mokume-metal/mokume/issues/1162))。
+    @Test("別の世代が区画を持っている間は、その世代の絵と目録を消さない")
+    func leavesTheOutgoingGenerationsCaptureAlone() throws {
+        let facet = try makeFacet()
+        let outgoing = try OtherGenerationFixture(holding: facet)
+        let runtime = try makeRuntime(Corner(), facet: facet)
+        // 前の世代が列を撮っている途中の区画
+        let image = facet.appendingPathComponent("frame-000.png")
+        let catalogue = facet.appendingPathComponent("report.json")
+        try Data("outgoing".utf8).write(to: image)
+        try Data(#"{"id":"a0"}"#.utf8).write(to: catalogue)
+        try request(id: "a1", count: 3, in: facet)
+
+        for _ in 0..<3 { try runtime.advance() }
+        #expect(try Data(contentsOf: image) == Data("outgoing".utf8), "前の世代の絵を消している")
+        #expect(try readReport(in: facet)["id"] as? String == "a0", "前の世代の目録を消している")
+
+        outgoing.leave()
+        for _ in 0..<4 { try runtime.advance() }
+        let report = try readReport(in: facet)
+        #expect(report["id"] as? String == "a1")
+        #expect(try frames(in: facet).count == 3)
+    }
+
     @Test("差し出した値が、その絵と同じ応答に載る")
     func carriesTheValuesTheSketchExposed() throws {
         let facet = try makeFacet()

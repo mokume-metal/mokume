@@ -149,7 +149,7 @@ final class ParamSurface: DeclarationWatcher {
 
     init(directory: URL, registry: ParamRegistry, store: ParamStore? = nil) {
         self.directory = directory
-        let requests = RequestFile<ParamRequest>(facet: directory)
+        let requests = RequestFile<ParamRequest>(facet: directory, handover: .keepsCreationRecord)
         self.requests = requests
         self.reportURL = requests.reportURL
         // **応えた識別子を起動をまたいで持ち越す。** 起動は応答を書き直す (``start(after:)``)
