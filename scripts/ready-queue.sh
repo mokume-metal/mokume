@@ -94,6 +94,12 @@
 #
 #   0  打てる仕事がある (catch-up か ready が 1 件以上)
 #   1  どちらも 0 件 (在庫切れ — 呼ぶ側は B-1 へ回る)
+#   2  判定できなかった (Issue か PR の一覧を読めなかった) — 在庫切れと読まない
+#
+# **読めなかったときに 1 を返さない** (#1235)。呼ぶ側は終了コードで分岐するので、1 だと判定が
+# 壊れていても「在庫が尽きた」と読んで B-1 へ回る — #1045 が塞いだ形が、読み取りの失敗から
+# 黙って戻る。gh の版は検査しない。古い gh で欄が足りなければ gh 自身がそう名乗る
+# (例: issueType は gh 2.94.0 から)。
 #
 # **catch-up も 0 に数える** (#1045)。ready だけで決めると、打てる catch-up があるのに 1 が
 # 返って呼ぶ側が在庫作りへ回り、弾かれた描画 PR が止まったままになる。ready と catch-up の
@@ -163,13 +169,13 @@ seen_locally() { # $1=番号
 issues_json=$(gh issue list --repo "$REPO" --state open --limit "$ISSUE_LIMIT" \
   --json number,title,body,labels,issueType,updatedAt) || {
   echo "open な Issue の一覧を読めなかった" >&2
-  exit 1
+  exit 2
 }
 
 prs_json=$(gh pr list --repo "$REPO" --state open --limit "$PR_LIMIT" \
   --json number,title,isDraft,closingIssuesReferences,statusCheckRollup) || {
   echo "open な PR の一覧を読めなかった" >&2
-  exit 1
+  exit 2
 }
 
 # 上限に張り付いたら黙らない。**読み落としは「着手できる」へ倒れる** — 紐づく PR を
