@@ -26,7 +26,8 @@ struct WatchCommandTests {
                     // **建っていない回を模す。** 通ったのに走らせるものが無い形が、
                     // かつて成功として記録されていた (#1066)
                     return RunCommand.Rebuilt(
-                        status: 0, output: "", executable: nil, binPath: directory)
+                        status: 0, output: "", executable: nil, binPath: directory,
+                        product: "sketch")
                 },
                 launch: { _, _, _, _ in nil },
                 now: { 0 },

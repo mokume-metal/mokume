@@ -37,7 +37,7 @@ extension Canvas {
 
     // 読み込んだモデルを置く。
     public func model(_ model: Model) {
-        guard hasFill else { return }
+        guard style.hasFill else { return }
         guard !model.isEmpty else { return warnEmptyModel(model) }
         placeMesh(.model(identity: model.identity), isDerived: model.hasDerivedNormals) {
             model.mesh

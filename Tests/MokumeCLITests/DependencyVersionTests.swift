@@ -80,4 +80,55 @@ struct DependencyVersionTests {
                 $0.contains("mokume dependency") && $0.contains(DoctorCommand.unknown)
             })
     }
+
+    // MARK: - 道具の版との突き合わせ (#1230)
+
+    private static let place = URL(fileURLWithPath: "/tmp/sketch", isDirectory: true)
+
+    private func lines(dependency: String?, tool: String?) -> [String] {
+        DoctorCommand.stateLines(
+            .init(
+                place: Self.place, hasPackage: true, buildDirectory: nil,
+                dependency: dependency, tool: tool))
+    }
+
+    /// Homebrew の 0.5.0 で作ったスケッチが 0.6.0 を解決し、観測面が黙った (#969)。
+    /// **エラー文が「doctor が名乗る」と案内している以上、機械が名指しする。**
+    @Test("道具の版と食い違うと、依存の行がそれを名指しする")
+    func namesAMismatchBetweenToolAndDependency() {
+        let mismatched = lines(dependency: "0.6.0", tool: "0.5.0")
+        let line = mismatched.first { $0.hasPrefix("mokume dependency:") }
+        #expect(
+            line
+                == "mokume dependency: 0.6.0 — does not match this tool (0.5.0); "
+                + "a sketch and a tool from different versions can leave facets silent")
+        // **行を増やさずに言う。** 別の行にすると、揃っているときとの差が行数に出る
+        #expect(mismatched.count == lines(dependency: "0.6.0", tool: "0.6.0").count)
+    }
+
+    @Test("揃っているときは、食い違いを言わない")
+    func staysSilentWhenTheyMatch() {
+        #expect(lines(dependency: "0.6.0", tool: "0.6.0").contains("mokume dependency: 0.6.0"))
+    }
+
+    /// formula を作り直しただけの revision (`_1`) は、中身の版を変えない。
+    @Test("Homebrew の revision が付いていても、同じ版なら食い違いを言わない")
+    func ignoresTheHomebrewRevision() {
+        #expect(lines(dependency: "0.7.1", tool: "0.7.1_1").contains("mokume dependency: 0.7.1"))
+        #expect(!DoctorCommand.sameRelease("0.7.1", "0.7.2_1"))
+    }
+
+    /// **断定できないときは断定しない。** 手元ビルドの道具は版を持たない。
+    @Test("道具の版が読めなければ、食い違いを言わない")
+    func staysSilentWhenTheToolVersionIsUnknown() {
+        #expect(lines(dependency: "0.6.0", tool: nil).contains("mokume dependency: 0.6.0"))
+    }
+
+    @Test("pin が無ければ、道具の版が読めても今までの文言のまま")
+    func keepsTheNoPinWordingWhenTheDependencyIsUnknown() {
+        #expect(
+            lines(dependency: nil, tool: "0.5.0").contains(
+                "mokume dependency: \(DoctorCommand.unknown) — no pin in Package.resolved "
+                    + "(pointing at a path does this)"))
+    }
 }

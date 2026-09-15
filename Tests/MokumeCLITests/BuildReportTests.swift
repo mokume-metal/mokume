@@ -59,14 +59,14 @@ struct BuildReportTests {
         let text = try encoded(
             BuildReport(
                 ok: true, status: 0, output: "出力", stamp: "abc123", configuration: "debug", launched: true,
-                timings: BuildReport.Timings(detectMs: 12, buildMs: 34, relaunchMs: 56)))
+                timings: BuildReport.Timings(detectMs: 12, buildMs: 34, relaunchMs: 56, firstFrameMs: 78)))
         let object = try #require(
             try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
         #expect(
             Set(object.keys)
                 == ["schemaVersion", "ok", "status", "output", "stamp", "configuration", "launched", "timings"])
         let timings = try #require(object["timings"] as? [String: Any])
-        #expect(Set(timings.keys) == ["detectMs", "buildMs", "relaunchMs"])
+        #expect(Set(timings.keys) == ["detectMs", "buildMs", "relaunchMs", "firstFrameMs"])
 
         #expect(object["schemaVersion"] as? Int == 1)
         #expect(object["ok"] as? Bool == true)
@@ -99,6 +99,7 @@ struct BuildReportTests {
         #expect(!text.contains("stamp"))
         #expect(!text.contains("detectMs"))
         #expect(!text.contains("relaunchMs"))
+        #expect(!text.contains("firstFrameMs"))
         #expect(!text.contains("null"))
         #expect(text.contains("\"buildMs\" : 2"))
     }

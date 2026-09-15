@@ -34,13 +34,33 @@ struct BuildReport: Encodable, Equatable {
     }
 
     /// 分解した所要時間 (ミリ秒)。
+    ///
+    /// **気付いてから新しい絵が出るまでは `detectMs + buildMs + firstFrameMs` である。**
+    /// `firstFrameMs` は `relaunchMs` と同じ時刻から数えるので、`relaunchMs` を丸ごと含む —
+    /// 足すと重ねて数えることになる。保存してから巡回が気付くまで (巡回の間隔ぶん) は
+    /// どれにも入らない ([#930](https://github.com/mokume-metal/mokume/issues/930))。
     struct Timings: Encodable, Equatable {
-        /// 保存から気付くまで。最初の作り直しでは省く。
+        /// 変化に気付いてから、作り直しを始めるまで (前の作り直しの順番待ち)。
+        /// 最初の作り直しでは省く。
+        ///
+        /// **保存した時刻は数えていない。** 見ているのはソースの世代の刻印だけで、保存の
+        /// 時刻を持たないためである — 数え始めは巡回が変化を見つけた時刻になる。
         var detectMs: Double?
         /// 作り直しにかかった時間。
         var buildMs: Double
-        /// 差し替え (古いものを終えて新しいものが立ち上がるまで)。失敗したときは省く。
+        /// 差し替え (古いものを畳み、新しいものを起こし終えるまで)。失敗したときは省く。
+        ///
+        /// **起こし終えた時点で止まる。** 窓が新しい絵を出すまでは ``firstFrameMs`` が持つ。
         var relaunchMs: Double?
+        /// 差し替えを始めてから、次の世代の 1 枚目が道具の面へ乗り換わるまで。
+        ///
+        /// **窓を出せた見張りだけが書く。** 乗り換えの合図は道具の窓から来るので、窓の無い
+        /// 実行では誰も知らせてくれない。合図が絵の出た時点を指すと言えない回
+        /// (``WatchSession/generationPromoted()`` が挙げる) も省く — 嘘の数字より空欄を取る。
+        ///
+        /// **最初の記録には載らない。** 記録は起こし終えた時点で一度書き、合図が来てから
+        /// これを足して書き直す。
+        var firstFrameMs: Double?
     }
 
     /// 作り直せたか。
@@ -61,7 +81,10 @@ struct BuildReport: Encodable, Equatable {
     /// 出なかった** ([#1066](https://github.com/mokume-metal/mokume/issues/1066))。
     let launched: Bool
     /// 分解した所要時間。
-    let timings: Timings
+    ///
+    /// **これだけは後から書き換わる。** 新しい絵が出るまで (``Timings/firstFrameMs``) は
+    /// 記録を置いた後に分かるので、見張りが足して置き直す。
+    var timings: Timings
 
     /// 1 行の要約。端末に出す形で、測定の道具もこれを読める。
     var summary: String {

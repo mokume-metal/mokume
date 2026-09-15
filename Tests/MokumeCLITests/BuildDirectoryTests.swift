@@ -450,14 +450,11 @@ struct BuildPlacementTests {
     /// **3 つの失敗を混ぜない。** 次の一手が違う。
     @Test("作り直しが通らなければ、作り直しの失敗として投げる")
     func aFailedBuildIsThrownAsSuch() {
-        let context = BuildContext(
-            configuration: nil, place: .inPackage(.localDependency), product: "hello")
         let result = RunCommand.Rebuilt(
             status: 2, output: "", executable: nil,
-            binPath: URL(fileURLWithPath: "/bin", isDirectory: true))
+            binPath: URL(fileURLWithPath: "/bin", isDirectory: true), product: "hello")
         #expect(throws: CommandFailure.buildFailed(status: 2)) {
-            try RunCommand.executable(
-                from: result, context: context, in: URL(fileURLWithPath: "/sketch"))
+            try RunCommand.executable(from: result, in: URL(fileURLWithPath: "/sketch"))
         }
     }
 
@@ -465,27 +462,21 @@ struct BuildPlacementTests {
     /// **終了コードだけを見ていると、そこを成功として通してしまう。**
     @Test("通ったのに建っていなければ、建っていないと投げる")
     func aBuildThatProducedNothingIsThrown() {
-        let context = BuildContext(
-            configuration: nil, place: .inPackage(.localDependency), product: "hello")
         let result = RunCommand.Rebuilt(
             status: 0, output: "Build complete!", executable: nil,
-            binPath: URL(fileURLWithPath: "/store/debug", isDirectory: true))
+            binPath: URL(fileURLWithPath: "/store/debug", isDirectory: true), product: "hello")
         #expect(throws: CommandFailure.productNotBuilt(product: "hello", path: "/store/debug")) {
-            try RunCommand.executable(
-                from: result, context: context, in: URL(fileURLWithPath: "/sketch"))
+            try RunCommand.executable(from: result, in: URL(fileURLWithPath: "/sketch"))
         }
     }
 
     @Test("走らせるものを決められなければ、宣言の失敗として投げる")
     func anUndeclaredProductIsThrownAsSuch() {
-        let context = BuildContext(
-            configuration: nil, place: .inPackage(.unreadableManifest), product: nil)
         let result = RunCommand.Rebuilt(
             status: 0, output: "", executable: nil,
-            binPath: URL(fileURLWithPath: "/store/debug", isDirectory: true))
+            binPath: URL(fileURLWithPath: "/store/debug", isDirectory: true), product: nil)
         #expect(throws: CommandFailure.noExecutable(path: "/sketch")) {
-            try RunCommand.executable(
-                from: result, context: context, in: URL(fileURLWithPath: "/sketch"))
+            try RunCommand.executable(from: result, in: URL(fileURLWithPath: "/sketch"))
         }
     }
 }

@@ -71,6 +71,7 @@
 #
 #   0  queue へ戻した
 #   3  打つ意味が無い (描画に触れない / 先に描画 PR が居る / Draft)。**待つのが正解**
+#      「先に」は merge queue に居る描画 PR を番号より先に数える (#1266・drawing-queue.sh)
 #   1  途中で止まった (衝突・検査の失敗・報告が付かない・検査の最中に main が動いて
 #      覆いが古くなった)。直してから打ち直す
 #
@@ -199,7 +200,7 @@ repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') \
 pr_files "$repo" "$number" | touches_drawing coverage \
   || skip "PR #$number は台帳の絵を動かさない — main を取り込む必要が無い"
 
-# 描画 PR は番号順に 1 本ずつ。順番でないうちに打ち直しても、先頭が入った時点で
+# 描画 PR は 1 本ずつ (queue に居るものが先・その外は番号順)。順番でないうちに打ち直しても、先頭が入った時点で
 # また覆えなくなる (AGENTS.md「描画に影響する変更」の表の 2 行目)。make ci-check は
 # 数分かかるので、ここで断るのと断らないのとでその数分が変わる
 ahead=$(ahead_drawing_pr "$repo" "$number")

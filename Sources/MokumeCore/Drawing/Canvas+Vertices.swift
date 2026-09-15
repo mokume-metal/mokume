@@ -72,7 +72,7 @@ extension Canvas {
     /// 切り出しに揃える)。貼る絵を束ねていなければ写す先が無いので、書かれていない
     /// ことにする — そのときの頂点は焼き場の白い区画を読み、絵は変わらない。
     private func textureUV(_ u: Float, _ v: Float) -> SIMD2<Float>? {
-        guard let picture = currentPicture, picture.width > 0, picture.height > 0,
+        guard let picture = style.picture, picture.width > 0, picture.height > 0,
             u.isFinite, v.isFinite
         else { return nil }
         return SIMD2(u / Float(picture.width), v / Float(picture.height))
@@ -238,7 +238,7 @@ extension Canvas {
             : []
         // **形に 1 度だけ求める。** 囲みの箱は原始形によらず同じ (見るのは置いた点の
         // 全体) なので、原始形ごとに作り直すと置いた量の二乗で効く ([#915])
-        let hasPicture = currentPicture != nil
+        let hasPicture = style.picture != nil
         let fallback = uvFallback(points)
 
         emit {
@@ -248,7 +248,7 @@ extension Canvas {
                 emitFill(
                     triangles, points: points, placed: placed,
                     hasPicture: hasPicture, fallback: fallback)
-                if hasStroke, currentStrokeWeight > 0 {
+                if style.hasStroke, style.strokeWeight > 0 {
                     emitStroke(primitive, points: points, placed: placed)
                 }
             }
@@ -343,7 +343,7 @@ extension Canvas {
     private func fillTriangles(of primitive: Primitive, points: [BuildingVertex])
         -> [(Int, Int, Int)]
     {
-        guard primitive.fills, hasFill, primitive.ring.count >= 3 else { return [] }
+        guard primitive.fills, style.hasFill, primitive.ring.count >= 3 else { return [] }
         guard let basis = flatBasis(of: primitive, points: points) else { return [] }
         let merged: [Int]
         if primitive.holes.isEmpty {
@@ -369,7 +369,7 @@ extension Canvas {
     /// では代われない — ``textureUV(_:_:)`` は絵の幅か高さが 0 のときや数でない値が
     /// 渡されたときにも書かれていないことにするので、呼んだのに持たない点がある。
     private func uvFallback(_ points: [BuildingVertex]) -> ((SIMD2<Float>) -> SIMD2<Float>)? {
-        guard currentPicture != nil, points.contains(where: { $0.uv == nil }) else { return nil }
+        guard style.picture != nil, points.contains(where: { $0.uv == nil }) else { return nil }
         pointScansThisFrame += points.count
         return Canvas.boxUV(of: points.map { SIMD2($0.position.x, $0.position.y) })
     }
@@ -587,7 +587,7 @@ extension Canvas {
         }
         if hasDepth { shapeHasDepth = true }
         let vertex = BuildingVertex(
-            position: position, normal: currentNormal, uv: uv, fill: currentFill)
+            position: position, normal: currentNormal, uv: uv, fill: style.fill)
         if holePoints != nil {
             holePoints?.append(vertex)
         } else {

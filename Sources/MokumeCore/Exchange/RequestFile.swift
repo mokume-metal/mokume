@@ -27,7 +27,7 @@ nonisolated protocol ExchangeRequest: Decodable {
 /// | --- | --- | --- |
 /// | 読めない | しない | 書き手が置いている途中を掴んだだけ。次に拾えばよい |
 /// | 解けない | する | 壊れた要求は再読しても直らない |
-/// | 応えた識別子と同じ (このプロセスが応えたもの、または作った時点で応答に残っていたもの) | する | 既に応えている |
+/// | 応えた識別子と同じ (このプロセスが応えたもの、または作った時点・引き継いだ時点で応答に残っていたもの) | する | 既に応えている |
 /// | 拾えた | ``markHandled(_:)`` まで待つ | 応えようとするまでは、まだ見たことにしない |
 ///
 /// 読む前に確定させると、書き手が原子的に置いていない一瞬を 1 回掴んだだけで
@@ -51,20 +51,44 @@ nonisolated protocol ExchangeRequest: Decodable {
 /// 無い・別の識別子を持つ・書けなかった・書き終える前に落ちた要求は、起動し直した先で
 /// 応え直す。どれも読み手に応答が届いていない。
 ///
-/// **応答を読むのは作った時点の 1 回だけ。** 要求を見つけるたびに照らす形は採らない。
-/// 見張りは切り替えの瞬間だけ 2 世代を重ねる ([#1150](https://github.com/mokume-metal/mokume/pull/1150)) ので、
-/// 次の世代が作られた後に前の世代が応えた要求は、**次の世代が戻した状態に入っていない**。
-/// 見つけた時点で照らすと、それを「応えた」として見送ってしまう。作った時点の応答が
-/// 持つ識別子なら、区画の持ち主が状態を戻すより前に応えたものなので、戻した状態に
-/// 入っている。
+/// ## 応えるのは 1 世代だけ
+///
+/// 見張りは切り替えの瞬間だけ 2 世代を重ねる ([#1150](https://github.com/mokume-metal/mokume/pull/1150))。
+/// **区画に応えるのは、その区画の権利 (``FacetClaim``) を持つプロセスだけである** — 先に
+/// 居る世代が消えるまで持ち、次の世代はそこで引き継ぐ。持っていない間の ``pending()`` は
+/// 何も返さず、最終更新時刻も確定させない (引き継いだ後に拾えるように)。分けていなかった
+/// 頃は、両方の世代が同じ要求に応え、列の観測が区画の上で並走した
+/// ([#1162](https://github.com/mokume-metal/mokume/issues/1162))。
+///
+/// ## 引き継いだ時点で、応答を読み直すか
+///
+/// 権利を分けても、**次の世代が作られた後に前の世代が応えた要求**は残る。どちらの世代にも
+/// 「応えた記録が無い」要求ではなく、前の世代の応答が記録として置かれている。それを
+/// 見送るかは、区画が状態を戻すかで分かれる (``Handover``)。
+///
+/// - **状態を戻す区画 (つまみ) は、作った時点の 1 回だけ読む。** 次の世代は作った後に
+///   保存から値を戻すので、その後に前の世代が応えた書き込みは**戻した値に入っていない**。
+///   引き継いだ時点の応答で照らすと、それを「応えた」として見送り、画面に残る世代から
+///   書き込みが落ちる (#1143)。作った時点の応答が持つ識別子なら、戻した状態に入っている
+/// - **状態を戻さない区画 (観測・入力) は、引き継いだ時点で読み直す。** 前の世代が応えた
+///   要求にもう一度応えると、読み手には 2 つの世代の応答が順に届く — 目録は前の世代の
+///   ものを掴んだ後に次の世代の絵へ置き換わり、入力は 2 度流れる (#1162)
 ///
 /// 帰結として、**識別子は区画が残っている間は使い回せない**。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 @MainActor
 final class RequestFile<Request: ExchangeRequest> {
+    /// 引き継いだ時点で、前の世代の応答を読み直すか (「引き継いだ時点で、応答を読み直すか」)。
+    enum Handover {
+        /// 読み直す。状態を戻さない区画 (観測・入力) が選ぶ。
+        case rereadsReport
+        /// 読み直さず、作った時点の応答だけを記録とする。状態を戻す区画 (つまみ) が選ぶ。
+        case keepsCreationRecord
+    }
+
     let url: URL
-    /// 応答の置き場。区画の持ち主が書き、ここは作った時点で 1 回だけ読む。
+    /// 応答の置き場。区画の持ち主が書き、ここは作った時点と引き継いだ時点にだけ読む。
     let reportURL: URL
     /// もう見たことにした要求の最終更新時刻。
     private var lastModification: Date?
@@ -73,6 +97,12 @@ final class RequestFile<Request: ExchangeRequest> {
     /// 最後に応えた要求の識別子。**前の起動が応えたものから始まる** (「プロセスをまたぐ」)。
     private(set) var lastHandledID: String?
 
+    /// 応える権利。
+    private let claim: FacetClaim
+    private let handover: Handover
+    /// 権利を持っているか。**持つまでは要求を拾わない。**
+    private var holdsClaim: Bool
+
     /// 最終更新時刻を見た回数。コストを検査が測るために持つ。
     private(set) var pollCount = 0
     /// 中身を実際に読んだ回数。
@@ -80,9 +110,14 @@ final class RequestFile<Request: ExchangeRequest> {
 
     /// 区画の要求を見張る。**区画の持ち主が状態を戻すより前に作る** — 作った時点の応答が
     /// 持つ識別子を「応えた」とみなすので、戻した状態がそれを含んでいる必要がある。
-    init(facet: URL) {
+    ///
+    /// 権利もここで取りに行く。取れなければ、以後 ``pending()`` のたびに取りに行く。
+    init(facet: URL, handover: Handover) {
         self.url = WorkDirectory.requestURL(under: facet)
         self.reportURL = WorkDirectory.reportURL(under: facet)
+        self.handover = handover
+        self.claim = FacetClaim.shared(for: facet)
+        self.holdsClaim = claim.holds()
         self.lastHandledID = Self.answeredID(in: reportURL)
     }
 
@@ -100,6 +135,7 @@ final class RequestFile<Request: ExchangeRequest> {
     /// まだ応えていない要求があれば返す。
     func pending() -> Request? {
         pollCount += 1
+        guard takeOverIfFree() else { return nil }
         guard let modified = modificationDate() else { return nil }
         guard modified != lastModification else { return nil }
 
@@ -132,6 +168,17 @@ final class RequestFile<Request: ExchangeRequest> {
             lastModification = handingOver
             self.handingOver = nil
         }
+    }
+
+    /// 権利を持っているか。**いま引き継いだなら、選んだとおりに応答を読み直す。**
+    private func takeOverIfFree() -> Bool {
+        if holdsClaim { return true }
+        guard claim.holds() else { return false }
+        holdsClaim = true
+        if handover == .rereadsReport {
+            lastHandledID = Self.answeredID(in: reportURL)
+        }
+        return true
     }
 
     private func modificationDate() -> Date? {
