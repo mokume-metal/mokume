@@ -302,15 +302,15 @@ struct ShadowTests {
             #expect(canvas.shadowRangeValue == 40)
             #expect(canvas.shadowDetailValue == 512)
             #expect(canvas.shadowBiasValue == 0.01)
-            #expect(canvas.castsShadow == false)
-            #expect(canvas.receivesShadow == false)
+            #expect(canvas.style.castsShadow == false)
+            #expect(canvas.style.receivesShadow == false)
         }
         #expect(canvas.shadowsEnabled == false)
         #expect(canvas.shadowRangeValue == nil)
         #expect(canvas.shadowDetailValue == ShadowMap.defaultDetail)
         #expect(canvas.shadowBiasValue == ShadowMap.defaultBias)
-        #expect(canvas.castsShadow)
-        #expect(canvas.receivesShadow)
+        #expect(canvas.style.castsShadow)
+        #expect(canvas.style.receivesShadow)
     }
 
     @Test("初期化のときに書いた影の設定は、どのフレームにも属さないので無視される")
@@ -330,8 +330,8 @@ struct ShadowTests {
         #expect(canvas.shadowRangeValue == nil)
         #expect(canvas.shadowDetailValue == ShadowMap.defaultDetail)
         #expect(canvas.shadowBiasValue == ShadowMap.defaultBias)
-        #expect(canvas.castsShadow)
-        #expect(canvas.receivesShadow)
+        #expect(canvas.style.castsShadow)
+        #expect(canvas.style.receivesShadow)
     }
 
     @Test("数でない値・範囲の外の値では、影の設定を変えない")

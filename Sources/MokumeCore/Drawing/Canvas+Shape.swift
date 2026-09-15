@@ -45,7 +45,7 @@ extension Canvas {
         let savedShader = currentShader
         let savedNumbers = currentNumbers
         transform = .identity
-        currentClip = nil
+        style.clip = nil
         // **記録の間は畳まない。** 畳むと置き場所が溜め場の側に残り、記録した頂点からは
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
         let savedRecording = recordingShape
@@ -132,7 +132,7 @@ extension Canvas {
         if usable.count != placements.count { warnBadPlacement() }
         guard !usable.isEmpty else { return }
 
-        let savedMode = currentBlendMode
+        let savedMode = style.blendMode
         let savedTexture = currentTexture
 
         for run in shape.runs {
@@ -149,7 +149,7 @@ extension Canvas {
             case .solid:
                 // **立体は区間を先に開いてから、記録した面を束ね直す。**
                 // `beginSolids` は `useFillTexture()` を通るので、**置く側の**
-                // `currentPicture` で面を選び直してしまう — 置く側は普通 `texture()` を
+                // `style.picture` で面を選び直してしまう — 置く側は普通 `texture()` を
                 // 呼んでいないので焼き場へ倒れ、記録した面が捨てられる ([#914])。
                 //
                 // 直後に置くと描かれていたのは、`createShape` が `openSource` を

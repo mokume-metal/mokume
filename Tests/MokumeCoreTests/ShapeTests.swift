@@ -538,7 +538,7 @@ struct ShapeTests {
             canvas.fill(.linear(red: 1, green: 0, blue: 0))
             canvas.rect(0, 0, 4, 4)
         }
-        #expect(canvas.currentFill == .linear(red: 0, green: 0, blue: 1))
+        #expect(canvas.style.fill == .linear(red: 0, green: 0, blue: 1))
         #expect(!canvas.warnings.hasWarned(.styleOutsideFrame))
         #expect(!canvas.warnings.hasWarned(.transformOutsideFrame))
     }
@@ -602,7 +602,7 @@ struct ShapeTests {
             // 外の段はまだ積まれたまま。ここで初めて積む前の状態へ戻る
             canvas.pop()
             #expect(canvas.transform == .identity)
-            #expect(canvas.currentFill == .linear(red: 0, green: 0, blue: 1))
+            #expect(canvas.style.fill == .linear(red: 0, green: 0, blue: 1))
         }
     }
 
