@@ -27,6 +27,9 @@ struct WatchSessionTests {
         var onBuild: () -> Void = {}
         /// 走らせるものが建ったか。**通ったのに建っていない回**を作れるようにしてある。
         var productBuilt = true
+        /// その回が探した product の名前。**土台が持つ名前とは別に置ける** — 宣言が
+        /// 変わった回に、どちらの名前で名乗るかを見るため (#1067)。
+        var product: String? = "sketch"
         /// 作り直しの最中に待たせる口。**既定は何もしない。**
         ///
         /// 作り直しが main actor を離れたかどうかは、**離れている間に別の仕事が進むか**
@@ -48,7 +51,8 @@ struct WatchSessionTests {
                     let bin = directory.appendingPathComponent("bin")
                     return RunCommand.Rebuilt(
                         status: self.buildStatus, output: self.buildOutput,
-                        executable: self.productBuilt ? bin : nil, binPath: directory)
+                        executable: self.productBuilt ? bin : nil, binPath: directory,
+                        product: self.product)
                 },
                 launch: { _, _, stamp, rate in
                     self.launches += 1
@@ -132,6 +136,7 @@ struct WatchSessionTests {
     func aRebuildThatBuiltNothingIsNotRecordedAsSuccess() async throws {
         let recorder = Recorder()
         recorder.productBuilt = false
+        recorder.product = "hello"
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(product: "hello"),
             hooks: recorder.hooks())
@@ -146,6 +151,28 @@ struct WatchSessionTests {
         #expect(report.summary.contains("Build failed"))
         // 走っているものは落とさない (作り直しの失敗と同じ扱い)
         #expect(report.timings.relaunchMs == nil)
+    }
+
+    /// **名乗る名前は、その回が探したものである。**
+    ///
+    /// 見張りは宣言が変わった回に土台を導き直すので (``BuildResolver``)、始めたときの
+    /// 名前を持ち回ると、`Package.swift` で product を改名した回に**前の名前**で
+    /// 「建っていない」と言うことになる — 手元では `probe` を `probe-renamed` に改名した
+    /// 回に「The build succeeded, but probe was never built」と出て、実際には
+    /// `probe-renamed` が建っていた ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
+    @Test("宣言が変わった回は、その回の product の名前で名乗る")
+    func anUnbuiltProductIsNamedAsThisRebuildSawIt() async throws {
+        let recorder = Recorder()
+        recorder.productBuilt = false
+        // 始めたときの宣言は "sketch"、この回に導き直した宣言は "renamed"
+        recorder.product = "renamed"
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(product: "sketch"),
+            hooks: recorder.hooks())
+
+        let report = await session.start()
+        #expect(report.output.contains("renamed"), "改名した先の名前で名乗っていない")
+        #expect(!report.output.contains("sketch"), "始めたときの名前を持ち回っている")
     }
 
     /// 起こせなかったことも記録に出る。**作り直しの失敗とは別の状態**である。
@@ -286,7 +313,7 @@ struct WatchSessionTests {
     func theLiveRebuildThrowsWhatStoppedIt() async throws {
         let nowhere = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-nowhere-\(UUID().uuidString)", isDirectory: true)
-        let hooks = WatchSession.Hooks.live(context: testContext())
+        let hooks = WatchSession.Hooks.live(in: nowhere, invocation: Invocation())
 
         await #expect(throws: CommandFailure.toolchainMissing("swift")) {
             try await hooks.rebuild(nowhere)
@@ -400,7 +427,7 @@ struct WatchSessionTests {
             rebuild: { directory in
                 RunCommand.Rebuilt(
                     status: 0, output: "", executable: URL(fileURLWithPath: "/bin/sh"),
-                    binPath: directory)
+                    binPath: directory, product: "sketch")
             },
             launch: { executable, _, _, _ in
                 let process = Process()

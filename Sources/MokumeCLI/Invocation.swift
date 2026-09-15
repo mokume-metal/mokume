@@ -17,7 +17,11 @@ import mokume
 /// 選ばれなければ道具立ての既定に任せる — こちらが `-c debug` と書き固めると、道具立てが
 /// 既定を変えた日に黙ってずれる。一方で**名乗りには名前が要る**ので、選ばれていないときは
 /// 既定の名前を名乗る。同じ値から両方が出るので、名乗りと実体が食い違わない。
-struct Invocation: Equatable {
+///
+/// **main actor には置かない。** 見張りの作り直しは巡回とは別の糸から進むので、
+/// そこから辿るものが隔離されていると待ちが main actor へ戻ってしまう
+/// ([#1067](https://github.com/mokume-metal/mokume/issues/1067)・ADR-0010 決定 4)。
+nonisolated struct Invocation: Equatable {
     /// スケッチの場所。渡されなければ、いまいるところ。
     var place: String?
     /// 選ばれた構成。渡されなければ道具立ての既定に任せる。
@@ -83,6 +87,11 @@ struct Invocation: Equatable {
     /// あちらが全員に効かせる。
     ///
     /// [#680]: https://github.com/mokume-metal/mokume/issues/680
+    ///
+    /// **ここだけは main actor に残す。** 解くのは口が起動の 1 度だけで、知らない選択肢の
+    /// 文面が ``Command/usage(_:)`` から来る — 値としての ``Invocation`` を作り直しの糸
+    /// (`Task.detached`) へ渡すのに要るのは格納された値のほうで、解く手続きではない。
+    @MainActor
     static func parse(_ arguments: [String]) throws(CommandFailure) -> Invocation {
         let parsed = try Arguments.parse(
             arguments,
