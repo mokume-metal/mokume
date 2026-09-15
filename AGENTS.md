@@ -122,7 +122,7 @@ PR 本文が揃っていて `ci-gate` が green なら、指示を待たず `gh 
 | 同じ 3 つで `isInMergeQueue: false` | 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用) | `make catch-up` |
 | `pr-title` が落ちた | タイトルが Conventional Commits ではない。**`design` は Issue Type であって型ではない** (型は feat/fix/docs/refactor/test/chore/ci/perf/build) | タイトルを直す。**rerun しない** — `pull_request` の rerun は元のイベントを再生するので古いタイトルで判定し、その失敗が最新の結果になって**打つ前より悪くなる** ([#699](https://github.com/mokume-metal/mokume/issues/699))。直せば `edited` で新しい run が走る |
 | close して作り直した PR が、全 check 緑なのに赤い | close した側の run が付けた赤が**同じコミットに残っている** ([#513](https://github.com/mokume-metal/mokume/issues/513)) | **新しい PR の側**の run を rerun する。close した側を rerun すると同じ赤を再生産する — 上の行とは打つ先が逆 |
-| `autoMerge: true` + `BLOCKED` + 全 check 緑 で、**一度承認されたのに承認が無い** | 承認済みの PR へ push したので、ルールセットの `dismiss_stale_reviews_on_push` が承認を落とした ([#1033](https://github.com/mokume-metal/mokume/issues/1033)) | Approve を押し直す (**機械には打てない**)。予防は「取り込みは手元だけで済ませ、push しない」([#612](https://github.com/mokume-metal/mokume/issues/612)) — ただし衝突を解いた合流は push が要るので、そのときは落ちるのが正しい |
+| `autoMerge: true` + `BLOCKED` + 全 check 緑 で、**一度承認されたのに承認が無い** | 承認済みの PR へ push したので、ルールセットの `dismiss_stale_reviews_on_push` が承認を落とした ([#1033](https://github.com/mokume-metal/mokume/issues/1033)) | Approve を押し直す — **機械に打てるのは依頼の出し直しまで**で、それは `review-request` が打つ ([#1177](https://github.com/mokume-metal/mokume/issues/1177))。予防は「取り込みは手元だけで済ませ、push しない」([#612](https://github.com/mokume-metal/mokume/issues/612)) — ただし衝突を解いた合流は push が要るので、そのときは落ちるのが正しい |
 
 ```bash
 gh pr view <番号> --json autoMergeRequest,mergeStateStatus,latestReviews

@@ -30,7 +30,7 @@
 #   conflict             name   1       衝突の解消は人手
 #   in-queue             quiet  4       止まっていない (queue が進めている)
 #   stale-checks         act    3・7    古い失敗 check を打ち直す。冪等
-#   dismissed-approval   name   8       押し直しは人の操作。機械には打てない
+#   dismissed-approval   name   8       Approve は人の操作。機械には打てない
 #   awaiting-approval    quiet  2       承認待ちは正常な状態
 #   auto-merge-dropped   act    2       予約を掛け直すだけ。ゲートは飛び越えない
 #
@@ -42,6 +42,12 @@
 # push すると dismiss_stale_reviews_on_push が承認を落とすが、checks は全部緑・衝突も
 # 無く・auto-merge も掛かったままなので、**どの行にも当たらず出力ゼロで終わっていた**
 # (#1019 は 69 分・#1020 は 17 分止まった)。
+#
+# **レビュー依頼の出し直しはここの仕事ではない** (#1177)。落ちた承認に気付く経路が当番の
+# 赤だけでは遅すぎた (この当番は実測で数時間おき) ので、落ちたその瞬間に
+# .github/workflows/review-request.yml が依頼を出し直す。ここに残る仕事は「押し直しが
+# 済んでいないまま時間が経った」を名乗ることで、分類が name のままなのはそのためである —
+# **機械に打てるのは依頼までで、Approve は人の操作である。**
 #
 # ## 順序に意味がある
 #
@@ -302,7 +308,7 @@ for n in $numbers; do
     if [ -n "$dismissed" ]; then
       mins=$(minutes_since "$dismissed")
       say_line "$n" dismissed-approval name "$mins" \
-        "承認が push で落ちている — Approve 1 回で入る (押し直しは機械にできない)"
+        "承認が push で落ちている — Approve 1 回で入る (依頼は出し直されている・#1177)"
       [ "$mins" -lt "$DISMISSED_APPROVAL_MINUTES" ] || overdue=1
       continue
     fi

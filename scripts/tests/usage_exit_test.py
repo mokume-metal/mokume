@@ -41,6 +41,7 @@ CLI_USAGE = {
     "apply-rulesets.sh": ["--no-such-flag"],
     "sub-issue.sh": ["1", "題", "--no-such-flag"],
     "comment.sh": ["no-such-kind"],
+    "rerequest-review.sh": ["no-such-number"],
     "plan-record.sh": ["no-such-mode"],
 }
 
