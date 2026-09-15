@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: Probe team visibility
+
+# **使い捨ての探り (#1232)。merge する前に消す。**
+#
+# #1234 の実測で、review-request が「チームへの依頼が飛んだことが無い」と言って何もしな
+# かった。タイムラインには mokume-agent が飛ばした Team 宛ての依頼が残っているので、
+# **GITHUB_TOKEN からは Team のノードが見えていない**のが疑い。
+#
+# 承認を落とすたびにメンテナの Approve を 1 回使うので、探りは push だけで走る形にする。
+# 見るのは 3 つ:
+#
+#   1. GraphQL の timelineItems から Team の slug が読めるか
+#   2. REST の timeline から requested_team が読めるか
+#   3. GITHUB_TOKEN で Team 宛てのレビュー依頼を出せるか (出せたら消す)
+
+run-name: "#${{ github.event.pull_request.number }} 探り: Team が見えるか"
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: GraphQL から Team が読めるか
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.pull_request.number }}
+        run: |
+          # shellcheck disable=SC2016
+          gh api graphql -f owner=mokume-metal -f name=mokume -F number="$NUM" \
+            -f query='query($owner:String!,$name:String!,$number:Int!){
+              repository(owner:$owner,name:$name){pullRequest(number:$number){
+                timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT],last:10){
+                  nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{
+                    __typename ... on Team{slug} ... on User{login}}}}}}}}' || true
+
+      - name: REST の timeline から requested_team が読めるか
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.pull_request.number }}
+        run: |
+          gh api "repos/mokume-metal/mokume/issues/$NUM/timeline" --paginate \
+            --jq '.[] | select(.event == "review_requested")
+                  | {event, actor: .actor.login, team: .requested_team.slug,
+                     user: .requested_reviewer.login}' || true
+
+      - name: Team 宛ての依頼を出せるか (出せたら消す)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.pull_request.number }}
+        run: |
+          if gh api --method POST "repos/mokume-metal/mokume/pulls/$NUM/requested_reviewers" \
+            -f "team_reviewers[]=maintainers"; then
+            echo "出せた — 消しておく"
+            gh api --method DELETE "repos/mokume-metal/mokume/pulls/$NUM/requested_reviewers" \
+              -f "team_reviewers[]=maintainers" || true
+          else
+            echo "出せなかった (上の応答が理由)"
+          fi
