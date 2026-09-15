@@ -33,6 +33,7 @@ struct LightTests {
     private func sphereScene(_ canvas: Canvas, light: (Canvas) -> Void) throws {
         try canvas.draw {
             canvas.background(black)
+            canvas.noStroke()  // 光の当たり方だけを見る (線は既定で有効なので止める)
             light(canvas)
             canvas.fill(white)
             canvas.push()
@@ -149,6 +150,7 @@ struct LightTests {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.background(black)
+            canvas.noStroke()  // 光の当たり方だけを見る (線は既定で有効なので止める)
             canvas.fill(white)
             canvas.push()
             canvas.translate(18, 32, 0)
@@ -173,6 +175,7 @@ struct LightTests {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.background(black)
+            canvas.noStroke()  // 光の当たり方だけを見る (線は既定で有効なので止める)
             canvas.ambientLight(grey)
             canvas.fill(white)
             canvas.push()
@@ -221,6 +224,7 @@ struct LightTests {
         let canvas = try makeCanvas(width: 96, height: 64)
         try canvas.draw {
             canvas.background(black)
+            canvas.noStroke()  // 光の当たり方だけを見る (線は既定で有効なので止める)
             canvas.fill(white)
             // 左側の真上から、狭い広がりで下向きに当てる
             canvas.spotLight(.linear(red: 3, green: 3, blue: 3), 24, -40, 0, 0, 1, 0, angle: 0.5)
@@ -258,6 +262,7 @@ struct LightTests {
             let direction: Float = fromTheRight ? -1 : 1
             try canvas.draw {
                 canvas.background(black)
+                canvas.noStroke()  // 光の当たり方だけを見る (線は既定で有効なので止める)
                 canvas.directionalLight(white, direction, 0, -0.2)
                 canvas.fill(white)
                 canvas.push()

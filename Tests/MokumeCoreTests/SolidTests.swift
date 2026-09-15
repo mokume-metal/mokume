@@ -41,6 +41,8 @@ struct SolidTests {
         try solid.draw {
             solid.background(black)
             solid.fill(red)
+            // 塗りだけで比べるので、面にも矩形にも線を置かない
+            solid.noStroke()
             solid.push()
             solid.translate(32, 32, 0)
             solid.plane(30, 20)
@@ -51,7 +53,6 @@ struct SolidTests {
         try flat.draw {
             flat.background(black)
             flat.fill(red)
-            // 立体にはまだ線が無いので、矩形の線も止めて塗りだけで比べる
             flat.noStroke()
             flat.rect(32 - 15, 32 - 10, 30, 20)
         }

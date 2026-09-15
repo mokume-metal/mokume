@@ -313,3 +313,124 @@ enum SolidMeshBuilder {
         ]
     }
 }
+
+// MARK: - 稜線
+
+/// 立体の線が通る辺。**三角形の並びだけから決まる。**
+///
+/// 稜線は 2 種類ある:
+///
+/// - **隣り合う 2 枚の三角形が同じ平面に載っていない辺** — 箱の角・球の緯線と経線
+/// - **1 枚にしか属さない辺** — 平らな面の縁
+///
+/// 同じ平面に載る 2 枚の境目 (箱の面の対角線・円柱の蓋の放射線) は線にしない。
+/// そこは三角形に割るための継ぎ目で、形の線ではないからである。
+///
+/// **形の種類ごとの対応表を持たない** ([ADR-0021] 決定 5)。組み込みの形も読み込んだ
+/// モデルも、同じ規則が同じ並びから線を取り出す。
+///
+/// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+struct SolidEdges {
+    /// 溶接した点。形自身の座標のまま持つ。
+    let points: [SIMD3<Float>]
+    /// 点番号の対。**同じ辺は 1 度しか現れない** — 2 度引くと半透明の線が重なって濃くなる。
+    let edges: [(Int, Int)]
+
+    /// 「同じ平面」と見なす 2 枚の傾きの差 (ラジアン)。
+    ///
+    /// 下限は丸めの揺れで、同じ平面に載る四辺形の 2 枚でも向きは 1e-6 ほどずれる。
+    /// 上限は本当に折れている辺で、細かさの上限 (128) の球の極でも隣り合う 2 枚は
+    /// 1e-3 ほど傾いている。その間を 1 桁ずつ空けて取る。
+    static let coplanarAngle: Double = 1e-4
+
+    /// 三角形の並びから稜線を取り出す。
+    init(_ mesh: SolidMesh) {
+        var welder = Welder(points: mesh.points.map(\.position))
+        // 辺 (小さい番号, 大きい番号) → その辺を持つ三角形の向き
+        var owners: [EdgeKey: [SIMD3<Double>]] = [:]
+        var order: [EdgeKey] = []
+
+        for start in stride(from: 0, to: mesh.points.count - 2, by: 3) {
+            let corners = (0..<3).map { welder.number(of: start + $0) }
+            // 溶接して点が潰れた三角形は面を持たない (球の極)。辺も持たせない
+            guard Set(corners).count == 3 else { continue }
+            let a = SIMD3<Double>(welder.points[corners[0]])
+            let b = SIMD3<Double>(welder.points[corners[1]])
+            let c = SIMD3<Double>(welder.points[corners[2]])
+            let facing = cross(b - a, c - a)
+            guard length_squared(facing) > 0 else { continue }
+            let normal = normalize(facing)
+            for (from, to) in [(corners[0], corners[1]), (corners[1], corners[2]), (corners[2], corners[0])] {
+                let key = EdgeKey(from, to)
+                if owners[key] == nil { order.append(key) }
+                owners[key, default: []].append(normal)
+            }
+        }
+
+        let threshold = sin(Self.coplanarAngle)
+        edges = order.compactMap { key in
+            let normals = owners[key]!
+            // 2 枚で挟まれ、同じ平面に載っているときだけ線にしない。3 枚以上が
+            // 集まる辺 (閉じていないモデル) は折れているものとして残す
+            if normals.count == 2, dot(normals[0], normals[1]) > 0,
+                length(cross(normals[0], normals[1])) < threshold
+            {
+                return nil
+            }
+            return (key.low, key.high)
+        }
+        points = welder.points
+    }
+
+    /// 向きを持たない辺の鍵。
+    private struct EdgeKey: Hashable {
+        let low: Int
+        let high: Int
+        init(_ a: Int, _ b: Int) { (low, high) = a < b ? (a, b) : (b, a) }
+    }
+
+    /// 同じ位置の点を 1 つにまとめる。
+    ///
+    /// **ビットで比べない。** 一周の継ぎ目は角度 2π で作られ、sin の丸めで 0 から
+    /// わずかにずれる。ビットで比べると継ぎ目の辺が 2 本に割れ、それぞれが縁として
+    /// 残ってしまう。許容差は形の大きさに比例させ、格子の境目をまたいだ 2 点も
+    /// 隣の升目まで探して拾う。
+    private struct Welder {
+        private(set) var points: [SIMD3<Float>] = []
+        private var numbers: [Int]
+        private var cells: [SIMD3<Int32>: [Int]] = [:]
+        private let source: [SIMD3<Float>]
+        private let tolerance: Float
+
+        init(points source: [SIMD3<Float>]) {
+            self.source = source
+            numbers = Array(repeating: -1, count: source.count)
+            var extent: Float = 0
+            for point in source { extent = max(extent, abs(point).max()) }
+            // 形の大きさの 10 万分の 1。どの形の点の間隔よりも十分に小さい
+            tolerance = max(extent * 1e-5, .leastNormalMagnitude)
+        }
+
+        mutating func number(of index: Int) -> Int {
+            if numbers[index] >= 0 { return numbers[index] }
+            let point = source[index]
+            let cell = SIMD3<Int32>((point / tolerance).rounded(.down))
+            for dx: Int32 in -1...1 {
+                for dy: Int32 in -1...1 {
+                    for dz: Int32 in -1...1 {
+                        for candidate in cells[cell &+ SIMD3(dx, dy, dz)] ?? []
+                        where distance(points[candidate], point) <= tolerance {
+                            numbers[index] = candidate
+                            return candidate
+                        }
+                    }
+                }
+            }
+            let number = points.count
+            points.append(point)
+            cells[cell, default: []].append(number)
+            numbers[index] = number
+            return number
+        }
+    }
+}
