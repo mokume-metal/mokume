@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。的の並びには意味があり、-j を付けると壊れる
 # — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
@@ -39,7 +39,7 @@ check: setup
 # 設計 (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため両者が理由を
 # 述べて 0 で抜け、本物の判定は同じファイルの独立したジョブ (drawing-evidence /
 # render-signal) が持つ。ここに置いてあるのは手元のためである
-CI_CHECK_STEPS := build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence render-status
+CI_CHECK_STEPS := build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence render-status
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
@@ -305,6 +305,19 @@ api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っている�
 # 組み上げは要らない — 字句だけを読む (#1160)
 tool-language: ## Sources/ の Swift でコメントの外に日本語を置いていないかを検査する
 	python3 scripts/check-tool-language.py
+
+# `isolated deinit` が隔離を明示した型の中にあるかを見る (#1083)。明示が無いと
+# `make test-release` がコンパイルできなくなるのに、debug も `swift build -c release`
+# (製品) も通る — **足した本人には壊れて見えない**形で 2 度起きた (#761 → #1021)。
+#
+# **段 1 を採っている** (ADR-0008 決定 5)。本物の判定はコンパイラで、それには release の
+# テストビルドを CI で回すしかないが (段 2)、その入口は #1096 が持つ。ここが引き受けるのは
+# **赤が理由の正典まで案内すること**である — 再発の経路は「散文で書いた作法が読まれなかった」
+# 1 本なので、コンパイラの診断 (正典を指さない) では 3 度目を止められない。
+#
+# 組み上げは要らない — 字句だけを読む (tool-language と同じ形)
+isolated-deinit: ## Sources/ の isolated deinit が隔離を明示した型の中にあるかを検査する
+	python3 scripts/check-isolated-deinit.py
 
 api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) \
