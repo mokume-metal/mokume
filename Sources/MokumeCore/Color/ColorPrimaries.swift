@@ -32,6 +32,20 @@ enum ColorPrimaries {
         SIMD3(-0.019_637_554_590_334_4, -0.078_636_045_550_631_8, 1.098_273_600_140_966_5),
     ]
 
+    /// 作業空間の値から相対輝度 Y を取る重み (線形 Display P3 → XYZ の行列の Y 行)。
+    ///
+    /// 原色 R (0.680, 0.320)・G (0.265, 0.690)・B (0.150, 0.060) と白色点 D65
+    /// (0.3127, 0.3290) から導いた値である。**重みは掛ける相手の原色で決まる** —
+    /// Rec.709 の `0.2126 / 0.7152 / 0.0722` は sRGB の原色の値に掛けるもので、作業空間の
+    /// 値に掛けると彩度のある色ほど明るさがずれる ([#1212])。sRGB の原色を
+    /// ``working(fromSRGB:)`` で移してからこの行を掛ければ、Rec.709 の重みに戻る。
+    ///
+    /// 効果のシェーダ (`Builtin.metal` の `mokume_luminance`) は同じ数を写して持つ。
+    ///
+    /// [#1212]: https://github.com/mokume-metal/mokume/issues/1212
+    static let luminanceWeights = SIMD3<Double>(
+        0.228_974_564_069_748_8, 0.691_738_521_836_506_4, 0.079_286_914_093_744_8)
+
     /// 線形 sRGB の 3 成分を、作業空間の 3 成分へ移す (入口)。
     static func working(fromSRGB linear: SIMD3<Float>) -> SIMD3<Float> {
         apply(workingFromSRGBRows, to: linear)

@@ -35,8 +35,12 @@ static inline float4 mokume_blurAlong(Pixel in, float2 step, float radius) {
 }
 
 /// 明るさ (乗算済みのまま測る)。
+///
+/// 重みは作業空間 (線形 Display P3) の相対輝度の行。**正本は Swift 側の
+/// `ColorPrimaries.luminanceWeights`** で、導き方もそこにある。sRGB の重み
+/// (0.2126 / 0.7152 / 0.0722) を掛けると、彩度のある色ほど明るさがずれる (#1212)。
 static inline float mokume_luminance(float3 color) {
-    return dot(color, float3(0.2126, 0.7152, 0.0722));
+    return dot(color, float3(0.228975, 0.691739, 0.079287));
 }
 
 /// 箱で縮める。`factor` は縮め幅 (2 のべき)。

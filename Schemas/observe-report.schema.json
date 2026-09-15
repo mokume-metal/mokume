@@ -192,7 +192,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "The mean brightness (0…1)."
+          "description": "The mean brightness (0…1): the mean red, green and blue weighted by the Display P3 relative-luminance row (0.228975, 0.691739, 0.079287)."
         },
         "contentFraction": {
           "type": "number",
