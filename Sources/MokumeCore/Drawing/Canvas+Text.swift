@@ -289,6 +289,15 @@ extension Canvas {
     /// **描くときと同じ送り**で並ぶので、``text(_:_:_:)`` と同じ位置・同じ字間になる。
     /// 返る点は**いまの座標のまま**で、変換は掛かっていない — そのまま
     /// ``vertex(_:_:)`` へ渡せば、文字を描いたのと同じ場所に出る。
+    ///
+    /// 字ごとに、外側の周が先・穴が後の順で並ぶ。
+    ///
+    /// **周の分かれ方は書体の持ち方どおりで、書体と字によって変わる。** 既定の書体は
+    /// `A` や `B` のような字を重なった部品で持つので、`A` は重なった外周がいくつも返り、
+    /// 三角の穴は ``TextContour/isHole`` の立った周として現れない (重ねて塗れば絵は
+    /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
+    /// 1 つの形として扱いたいなら、``textFont(_:)`` で書体を指定する — `Helvetica`
+    /// などでは `A` が外周 1 つと穴 1 つになる。
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
         guard !string.isEmpty, currentTextSize > 0 else { return [] }
