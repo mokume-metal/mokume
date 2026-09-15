@@ -235,24 +235,37 @@ extension Canvas {
     /// 位置と一緒に**面の向きも移す** — 移さないと、回して置いた形だけ光が付いて
     /// 回らない。位置と違って向きには軸ごとの倍率が逆に効くので、専用の行列を使う。
     private func placeSolid(_ run: Shape.Run, of shape: Shape, at placements: [Placement]) {
+        placeSolid(
+            run, of: shape,
+            instances: placements.lazy.map { placement in
+                let combined = Transform(matrix: self.transform.matrix * placement.transform.matrix)
+                return SolidInstance(
+                    matrix: combined.matrix, normalMatrix: combined.normalMatrix,
+                    // 記録した頂点が色を持つので、置き場所は**白** (掛けても
+                    // 変わらない)。渡された色があればそれを掛ける
+                    color: placement.fill
+                        ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))
+            })
+    }
+
+    /// 立体の区間を、組み上がった置き場所ぶんだけ置く。
+    ///
+    /// **置き場所から行列を組むのは呼ぶ側**で、ここは列へ積むだけを持つ。粒の参照の経路は
+    /// 板を視点へ向けた行列を自分で組むので、``Placement`` を通らずにここへ来る。
+    func placeSolid(
+        _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>
+    ) {
         beginSolids()
-        var placed = 0
-        while placed < placements.count {
+        var remaining = instances[...]
+        while !remaining.isEmpty {
             // **頂点は列ごとに 1 度だけ置く。** 上限に達したら列を閉じて置き直す —
             // 描く回数が増えるだけで、絵は 1 ビットも変わらない
             let start = openRetainedSolid(run, of: shape)
-            while placed < placements.count, !isBatchFull(solidInstances.count, since: start) {
-                let placement = placements[placed]
-                let combined = Transform(
-                    matrix: transform.matrix * placement.transform.matrix)
-                solidInstances.append(
-                    SolidInstance(
-                        matrix: combined.matrix, normalMatrix: combined.normalMatrix,
-                        // 記録した頂点が色を持つので、置き場所は**白** (掛けても
-                        // 変わらない)。渡された色があればそれを掛ける
-                        color: placement.fill
-                            ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
-                placed += 1
+            while let instance = remaining.first,
+                !isBatchFull(solidInstances.count, since: start)
+            {
+                solidInstances.append(instance)
+                remaining = remaining.dropFirst()
             }
         }
     }
