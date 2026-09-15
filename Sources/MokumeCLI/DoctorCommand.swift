@@ -100,6 +100,12 @@ enum DoctorCommand {
         /// ときは pin が無い)。面を持たない理由に当たった人が、どこまで上げればよいかを
         /// 知るために要る (#684)。
         var dependency: String?
+        /// 道具自身の配布版。**読めなければ `nil`** (手元ビルドは版を持たない)。
+        ///
+        /// `dependency` と突き合わせるために持つ。版の違う道具とスケッチの組は観測面を
+        /// 黙らせうるが、2 つの版が別々の節に並ぶだけでは、人が見比べないと辿れなかった
+        /// ([#1230](https://github.com/mokume-metal/mokume/issues/1230))。
+        var tool: String? = nil
     }
 
     /// 共有のビルド置き場の姿。
@@ -346,7 +352,7 @@ enum DoctorCommand {
         var lines = [
             "Place: \(state.place.path)",
             sketchLine(state.hasPackage),
-            dependencyLine(state.dependency),
+            dependencyLine(state.dependency, tool: state.tool),
             // **在処まで書く。** 置き場は版ごとの共有へ移りうるので、在る / 無いだけでは
             // 「どこを消せばやり直せるのか」に答えられない (ADR-0037)
             buildDirectoryLine(state.buildDirectory),
@@ -368,13 +374,34 @@ enum DoctorCommand {
         hasPackage ? "Sketch: Package.swift is here" : "Sketch: no Package.swift here"
     }
 
-    /// 依存している版の行。
-    static func dependencyLine(_ dependency: String?) -> String {
+    /// 依存している版の行。**道具の版と食い違うときだけ、同じ行でそれを名指しする** (#1230)。
+    ///
+    /// 揃っているときは行を増やさない。どちらかが読めなければ食い違いを言わない —
+    /// 手元ビルドの道具に「版が違う」と言うと、正しい原因から人を遠ざける (規律 3)。
+    static func dependencyLine(_ dependency: String?, tool: String? = nil) -> String {
         guard let dependency else {
             return "mokume dependency: \(unknown) — no pin in Package.resolved "
                 + "(pointing at a path does this)"
         }
-        return "mokume dependency: \(dependency)"
+        guard let tool, !sameRelease(dependency, tool) else {
+            return "mokume dependency: \(dependency)"
+        }
+        return "mokume dependency: \(dependency) — does not match this tool (\(tool)); "
+            + "a sketch and a tool from different versions can leave facets silent"
+    }
+
+    /// 2 つの版が同じ配布版を指すか。
+    ///
+    /// **Homebrew の revision (`0.7.1_1`) は落としてから比べる。** formula を作り直しただけで
+    /// 中身の版は変わらないので、そこで食い違いを言うと誤った断定になる (規律 3)。
+    static func sameRelease(_ left: String, _ right: String) -> Bool {
+        func base(_ version: String) -> Substring {
+            guard let mark = version.lastIndex(of: "_"),
+                version[version.index(after: mark)...].allSatisfy(\.isNumber)
+            else { return Substring(version) }
+            return version[..<mark]
+        }
+        return base(left) == base(right)
     }
 
     /// 組み上げた跡の行。
@@ -485,7 +512,8 @@ enum DoctorCommand {
                 pin: DependencyVersion.pin(forPackageAt: directory)),
             sharedStore: sharedStore(at: root),
             lastBuild: lastBuild(under: facetBase),
-            dependency: DependencyVersion.resolved(forPackageAt: directory))
+            dependency: DependencyVersion.resolved(forPackageAt: directory),
+            tool: ToolVersion.release())
     }
 
     /// 共有の置き場を読む。**何も作らず、何も消さない** (根が無ければ 0 通りと名乗る)。
