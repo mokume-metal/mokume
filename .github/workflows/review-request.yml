@@ -1,0 +1,48 @@
+name: Review request
+
+# 承認が push で落ちたら、レビュー依頼を出し直す (#1177)。
+#
+# 承認済みの PR へ push すると dismiss_stale_reviews_on_push が承認を落とすが、**依頼は
+# 出し直されず、落とした出来事の名義は push をした本人 (メンテナ) なので通知も来ない。**
+# 画面上部のレビュー依頼の表示も出ないので、押し直しが要ることに気付く経路が無かった
+# (#1174。実害は #1019 が 69 分・#1020 が 17 分の停止)。
+#
+# **当番 (stall-watch.yml) には足さない。** あちらの cron は 15 分ごとに頼んでいるが実測は
+# 数時間おきで (#1197)、塞ぎたい停止より遅い。加えて stall-act.sh は判定の 3 列目が act の
+# 行しか打たず、落ちた承認は name (人手が要る) に分類されている — そこへ打たせると、判定と
+# 対処を分けてある設計を崩すことになる。**契機は「落ちた瞬間」に置くのが最短である。**
+#
+# GitHub native には「落ちたら出し直す」設定が無い (ルールセットにあるのは落とす側だけ)。
+#
+# 自動の stale 落としでも pull_request_review は飛ぶ — #1174 の ReviewDismissedEvent
+# (2026-09-14T10:29:56Z) の 2 秒後に run 34833468641 が event=pull_request_review で立って
+# いる。手で dismiss したときも同じ契機に乗るので、そちらも一緒に塞がる。
+#
+# 判断は scripts/rerequest-review.sh が持つ (検査は scripts/tests/rerequest_review_test.py)。
+# ロジックを YAML へ埋めない理由は triage.yml と同じ (#66)。
+
+# run-name が無いと GitHub はイベント既定 (pull_request_review → PR タイトル) を使うため、
+# どの PR の run か一覧から辿りにくい。番号を前置して一意にする (triage.yml と同じ形)。
+# 値のクォートは必須 — `#` は YAML のコメント開始文字である。
+run-name: "#${{ github.event.pull_request.number }} ${{ github.event.pull_request.title }}"
+
+on:
+  pull_request_review:
+    types: [dismissed]
+
+permissions:
+  contents: read
+
+jobs:
+  rerequest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      pull-requests: write # レビュー依頼の出し直し
+    steps:
+      - uses: actions/checkout@v7
+      - name: レビュー依頼を出し直す
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.pull_request.number }}
+        run: bash scripts/rerequest-review.sh "$NUM"
