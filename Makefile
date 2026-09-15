@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。的の並びには意味があり、-j を付けると壊れる
 # — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
@@ -39,7 +39,7 @@ check: setup
 # 設計 (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため両者が理由を
 # 述べて 0 で抜け、本物の判定は同じファイルの独立したジョブ (drawing-evidence /
 # render-signal) が持つ。ここに置いてあるのは手元のためである
-CI_CHECK_STEPS := build test examples shaders params schemas api tool-language reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence render-status
+CI_CHECK_STEPS := build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence render-status
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
@@ -152,7 +152,8 @@ build:
 	swift build $(SYMBOL_GRAPH_FLAGS)
 
 # テストの記録を残す。何が走って何がスキップされたかを、手元の実行の報告
-# (local-render・#304) が読む。
+# (local-render・#304) が読む。**この節は下の 2 つの入口 — debug の test と release の
+# test-release — の両方に掛かる** (#1089)。
 #
 # **正本は console ではなく `--xunit-output` の XML である** (#1056)。swift-testing の
 # console 出力は実行ごとに数十〜数百行を落とす — 全件が緑で make が 0 を返しているのに
@@ -161,6 +162,13 @@ build:
 # 止まらない (書き先にも同居する出力にも依らない、上流の挙動)。SwiftPM が自分でファイルへ
 # 書く XML は同じ実行で全件を持っていたので、判定はそちらから読む。
 # `tee` の記録は残す — 人が実行中に読む先で、正本でなくなるだけである。
+#
+# **release の記録は別のファイルへ書く** (#1089)。同じ置き場へ書くと、`local-render` の
+# 判定が読む記録 (render-status.sh の RENDER_TEST_RECORD = 下の TEST_RECORD) を release の
+# 実行が上書きしうる — `make ci-check && make test-release` は計測のとき普通に起きる並びで、
+# そのとき**「手元で全検査が通った」の意味が変わる** (ci-check は debug で回るのに、報告が
+# 読む記録は release のものになる)。2 つとも要るのは、**release でしか走らない検査がある**
+# からである (ShapeTests の `.enabled(if: !isDebugBuild)`)。
 #
 # **Metal の検証レイヤを有効にして走らせる** (#351)。新しい検査を足さず既存の責務を
 # 広げる形にしてあるのは、描画の検査が走る場所がここ 1 つだからである (ADR-0008 決定 5)。
@@ -184,6 +192,11 @@ METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=n
 TEST_RECORD_BASE := .build/test-results.xml
 TEST_RECORD := .build/test-results-swift-testing.xml
 
+# release の記録。debug と別のファイルになる名前を渡す (理由は上の「別のファイルへ書く」
+# の段)。接尾辞の挟まり方は debug と同じで、SwiftPM が -swift-testing を足す
+TEST_RECORD_RELEASE_BASE := .build/test-results-release.xml
+TEST_RECORD_RELEASE := .build/test-results-release-swift-testing.xml
+
 test:
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD)
@@ -199,8 +212,19 @@ test:
 # `-enable-testing` を渡すのは、SwiftPM が release では testability を有効にしないため
 # (`@testable import` が `not compiled for testing` で落ちる)。Metal の検証レイヤは
 # 載せない — 計測の器なので、検証レイヤの費用で時間を歪ませない
+#
+# **記録は残す** (#1089)。release でしか走らない検査が落ちたとき、端末の出力からは名前を
+# 取り逃す — 落ちる集合が実行ごとに別物だからである (上の「正本は console ではなく」の段)。
+# `tee` は付けない。debug の tee は「人が実行中に読む先」で、こちらは計測のときに端末を
+# 見ながら打つ器なので、同じものが 2 つ要らない
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
-	swift test -c release -Xswiftc -enable-testing
+	@mkdir -p .build
+	@rm -f $(TEST_RECORD_RELEASE)
+	swift test -c release -Xswiftc -enable-testing --xunit-output $(TEST_RECORD_RELEASE_BASE)
+	@test -s $(TEST_RECORD_RELEASE) || { \
+		echo "記録が出来ていない ($(TEST_RECORD_RELEASE))。SwiftPM が --xunit-output の"; \
+		echo "綴りを変えた可能性がある — debug 側の TEST_RECORD と併せて直す"; \
+		exit 1; }
 
 # 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
 # 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは
@@ -281,6 +305,19 @@ api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っている�
 # 組み上げは要らない — 字句だけを読む (#1160)
 tool-language: ## Sources/ の Swift でコメントの外に日本語を置いていないかを検査する
 	python3 scripts/check-tool-language.py
+
+# `isolated deinit` が隔離を明示した型の中にあるかを見る (#1083)。明示が無いと
+# `make test-release` がコンパイルできなくなるのに、debug も `swift build -c release`
+# (製品) も通る — **足した本人には壊れて見えない**形で 2 度起きた (#761 → #1021)。
+#
+# **段 1 を採っている** (ADR-0008 決定 5)。本物の判定はコンパイラで、それには release の
+# テストビルドを CI で回すしかないが (段 2)、その入口は #1096 が持つ。ここが引き受けるのは
+# **赤が理由の正典まで案内すること**である — 再発の経路は「散文で書いた作法が読まれなかった」
+# 1 本なので、コンパイラの診断 (正典を指さない) では 3 度目を止められない。
+#
+# 組み上げは要らない — 字句だけを読む (tool-language と同じ形)
+isolated-deinit: ## Sources/ の isolated deinit が隔離を明示した型の中にあるかを検査する
+	python3 scripts/check-isolated-deinit.py
 
 api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) \

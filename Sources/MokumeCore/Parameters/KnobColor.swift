@@ -22,12 +22,20 @@ enum KnobColor {
     }
 
     /// 画面で選んだ色を、作業空間の値にする。
+    ///
+    /// **``LinearRGBA/display(red:green:blue:alpha:)`` を通さない。** あちらは sRGB の原色の
+    /// 値を受ける口で、ここで取り出すのは作業空間と同じ Display P3 の成分である。転送関数だけを
+    /// 外せば作業空間の値になり、選ぶ欄の広い色域もそのまま運べる ([#911])。
+    ///
+    /// [#911]: https://github.com/mokume-metal/mokume/issues/911
     static func working(of color: Color) -> LinearRGBA {
         guard let components = NSColor(color).usingColorSpace(.displayP3) else {
             return .transparent
         }
-        return .display(
-            red: Float(components.redComponent), green: Float(components.greenComponent),
-            blue: Float(components.blueComponent), alpha: Float(components.alphaComponent))
+        return LinearRGBA(
+            straightRed: TransferFunction.decode(Float(components.redComponent)),
+            green: TransferFunction.decode(Float(components.greenComponent)),
+            blue: TransferFunction.decode(Float(components.blueComponent)),
+            alpha: Float(components.alphaComponent))
     }
 }

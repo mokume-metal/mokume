@@ -46,22 +46,28 @@ public struct LinearRGBA: Equatable, Sendable {
 
     /// 利用者が見た目で指定する成分から作る (作業空間へ入る**入口**の境界)。
     ///
-    /// 成分は 0…1 の**ディスプレイのエンコードされた値** — 画面で見える明るさの
+    /// 成分は 0…1 の **sRGB のエンコードされた値** — 画面で見える明るさの
     /// 尺度で、線形の光の量ではない。0.5 と書けば「中くらいの灰色」であって、
     /// 光の量が半分という意味ではない。
     ///
-    /// [ADR-0011] 決定 3 の「入力側は作業空間へ入る時点で線形へ変換する」を担う。
-    /// 線形へ戻したうえでアルファを乗算する。
+    /// **原色は sRGB である** (手本のリファレンスの色見本と同じ)。同じ 3 つの数を持つ
+    /// sRGB の画像を読み込んだ色と、同じ作業空間の値になる。書き出した絵は作業空間の
+    /// Display P3 を刻むので、彩度のある色のバイト列は書いた数と一致しない
+    /// (`(0.8, 0.6, 0)` は `196, 155, 51` として書かれる)。灰色は一致する。
+    ///
+    /// [ADR-0011] 決定 3 の「入力側は作業空間へ入る時点で作業空間へ移す」を担う。
+    /// 線形へ戻し、原色を作業空間へ移したうえでアルファを乗算する。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     public static func display(
         red: Float, green: Float, blue: Float, alpha: Float = 1
     ) -> LinearRGBA {
-        LinearRGBA(
-            straightRed: TransferFunction.decode(red),
-            green: TransferFunction.decode(green),
-            blue: TransferFunction.decode(blue),
-            alpha: alpha)
+        let working = ColorPrimaries.working(
+            fromSRGB: SIMD3(
+                TransferFunction.decode(red), TransferFunction.decode(green),
+                TransferFunction.decode(blue)))
+        return LinearRGBA(
+            straightRed: working.x, green: working.y, blue: working.z, alpha: alpha)
     }
 
     /// **線形の値**から作る不透明な色 (アルファ 1)。
@@ -74,14 +80,18 @@ public struct LinearRGBA: Equatable, Sendable {
     /// 名前が名乗るのは**目盛り**である ([ADR-0033] 決定 2)。同じ `red` という語で
     /// 3 つの目盛りが並ぶので、どれなのかは口の名前だけが区別できる:
     ///
-    /// | 口 | `red` の意味 |
-    /// | --- | --- |
-    /// | ``linear(red:green:blue:)`` | 線形の 0–1 (1 を超えてよい) |
-    /// | ``display(red:green:blue:alpha:)`` | エンコード値の 0–1 |
-    /// | ``color(_:_:_:_:)`` | エンコード値の 0–255 |
+    /// | 口 | `red` の意味 | 原色 |
+    /// | --- | --- | --- |
+    /// | ``linear(red:green:blue:)`` | 線形の 0–1 (1 を超えてよい) | 作業空間 (Display P3) |
+    /// | ``display(red:green:blue:alpha:)`` | エンコード値の 0–1 | sRGB |
+    /// | ``color(_:_:_:_:)`` | エンコード値の 0–255 | sRGB |
+    ///
+    /// この口だけは**作業空間の値そのもの**を受けるので、原色を移さない
+    /// ([ADR-0011] 決定 3 の改訂)。sRGB の外にある色はここで書ける。
     ///
     /// アルファが 1 なので、乗算済みと乗算前が一致し変換は起きない。
     ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public static func linear(red: Float, green: Float, blue: Float) -> LinearRGBA {
         LinearRGBA(premultipliedRed: red, green: green, blue: blue, alpha: 1)

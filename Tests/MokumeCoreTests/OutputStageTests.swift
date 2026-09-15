@@ -316,10 +316,11 @@ struct OutputEncodeTests {
     @Test("取り出した絵は、いまのフレームのもの")
     func takenImageFollowsTheLatestFrame() throws {
         let canvas = try makeCanvas()
-        try canvas.draw { canvas.background(.display(red: 1, green: 0, blue: 0)) }
+        // 作業空間の原色で塗る。純色のまま 255 / 0 に出るので、どちらのフレームかを読める
+        try canvas.draw { canvas.background(.linear(red: 1, green: 0, blue: 0)) }
         let first = try canvas.output.encodeToImage().read()[4, 4]
 
-        try canvas.draw { canvas.background(.display(red: 0, green: 0, blue: 1)) }
+        try canvas.draw { canvas.background(.linear(red: 0, green: 0, blue: 1)) }
         let second = try canvas.output.encodeToImage().read()[4, 4]
 
         // 使い回している 1 枚を返すので、古い中身が残っていると 2 回目が赤のままになる
