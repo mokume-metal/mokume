@@ -127,6 +127,71 @@ screencapture -l <windowId> -V 5 motion.mov   # 5 秒の録画
 
 **全画面 (`-l` を省く形) は撮らない** — 他アプリ・通知・手元のパスが写る。
 
+### シート・パネルも `-l` が一緒に撮る
+
+`-l` が撮るのは**窓とその子ウィンドウ**である。確認シートも、親の外へはみ出したパネルも同じ絵に入り、
+親の id で撮っても子の id で撮っても**同じ絵**が返る (絵の大きさは親と子の合併矩形まで広がる)。
+**子ウィンドウのために撮り方を変えなくてよい** ([#1127](https://github.com/mokume-metal/mokume/issues/1127) で実測)。
+
+**背面のままで撮れる。** 他の窓の下にあっても、アプリが非活性でも、撮れた絵は同じである (実測)。
+前へ出す操作は要らない — **出すと他の窓を隠してしまうので、撮れているなら出さない。**
+
+**窓の外は透明で、背後のものは 1 画素も入らない** (実測。窓とパネルの隙間の画素が `RGBA 0,0,0,0`)。
+`-l` を既定に据えているのはこれが理由で、**写り込みが起きないのは規律ではなく構造**である。
+
+**撮れないときは、黙って親だけの絵にはならない。**
+
+```
+could not create image from window
+```
+
+と名乗り、ファイルを作らずに終わる。**窓が「いま画面に出ている窓」から消えているとき**にこうなる
+(別の Space に居る・畳まれている)。下の一覧の `optionOnScreenOnly` 版から消えているかで見分けられ、
+`gyazo_list_capturable_windows` に出ないのも同じ原因である。**対処は窓をいまの画面へ出して打ち直す**こと:
+
+```bash
+osascript -e 'tell application "System Events" to set frontmost of first process whose unix id is <pid> to true'
+```
+
+**ここで領域を撮る形 (`-R`) へ逃げない。** 逃げた先が下記のとおり写り込む側だからである。
+
+> **シートが写っていないなら、まだ下りていない。** 窓へ確認シートを要求しても、下りるまでには間があり、
+> 要求が通らないこともある (実測で、同じコードが下りる回と下りない回があった)。撮る前に下の一覧で
+> **子ウィンドウが居ること**を確かめ、撮った後も絵を見る — `-l` は在るものを落とさないので、
+> 写っていなければ**画面にも無かった**ということである。
+
+### 領域を撮る (`-R`) のは最後の手段
+
+`-R <x,y,w,h>` は「その領域に**いま見えているもの**」を撮る。対象が前面でなければ手前のアプリの中身が入り、
+**別の Space に居れば対象は 1 画素も写らない** — 前面へ出した後でも起こる。
+[#1127](https://github.com/mokume-metal/mokume/issues/1127) の実測では、無関係のアプリの画面を撮った
+ファイルが 2 度できて破棄した。使うなら前面へ出してから撮り、**上げる前に撮った絵を目で確かめる**
+(「守ること」の 1 つ目)。
+
+矩形は撮る側からは見えないので、窓の一覧から引く。`gyazo_list_capturable_windows` が返すのは id と名前
+だけなので、矩形と子ウィンドウはこちらで見る。**返る座標は左上原点で、`-R` がそのまま要求する形である。**
+シートも 1 つの窓として出る (表題は空) ので、**親の外へ出る子ウィンドウがあるか**もここで分かる:
+
+```bash
+swift - <<'WINDOWS' | grep <アプリ名>
+import CoreGraphics
+
+// 画面に出ている窓も、出ていない窓も返る。表題が空の行は子ウィンドウ (シート・パネル)。
+// [] を [.optionOnScreenOnly] にすると、いま画面に出ている窓だけになる — `-l` が撮れるのはこちら。
+let all = CGWindowListCopyWindowInfo([], kCGNullWindowID) as? [[String: Any]] ?? []
+for window in all where (window[kCGWindowLayer as String] as? Int) == 0 {
+    let bounds = window[kCGWindowBounds as String] as? [String: Any] ?? [:]
+    let name = window[kCGWindowName as String] as? String ?? ""
+    print(window[kCGWindowNumber as String] ?? "", window[kCGWindowOwnerPID as String] ?? "",
+          window[kCGWindowOwnerName as String] ?? "", "'\(name)'",
+          bounds["X"] ?? "", bounds["Y"] ?? "", bounds["Width"] ?? "", bounds["Height"] ?? "")
+}
+WINDOWS
+```
+
+**MCP の一覧に出ない窓もここには出る** — あちらが返すのはいま画面に出ている窓だけなので、
+**目的の窓がこちらにしか無ければ、それは別の Space に居るということ**である (`-R` を打っても写らない側)。
+
 ## 動きを束ねる — 形式は宛先で決まる
 
 | 宛先 | 静止画 | 動き | 使えないもの |
@@ -324,6 +389,9 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
   案内が**区画は要求を置く前から在った**と言っていれば順序の問題ではなく、そもそも走っていない
 - **窓の一覧に目的の窓が出ない** — 一覧が返すのは**いま画面に出ている窓**である。背面で起動した
   (`nohup` 等) スケッチや、最小化・別の Space にある窓は出てこない。前に出してから取り直す
+- **`could not create image from window` で撮れない** — `-l` は窓が**いま画面に出ている窓から消えている**と
+  こう名乗って終わる (上の「一覧に出ない」と同じ原因。背面にあるだけなら撮れる)。**いまの画面へ出して
+  打ち直す** — `-R` へ逃げると写り込む
 - **窓の一覧が空 / 撮れない** — 画面収録の許可が要る。**付与は GUI 操作なので代行せず頼む**
 - **`unauthorized`** — トークンを作り直す (https://gyazo.com/oauth/applications)。OAuth フローは要らず、
   developer ページで出せる 1 本でよい
