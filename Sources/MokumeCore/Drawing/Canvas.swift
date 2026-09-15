@@ -532,6 +532,19 @@ public final class Canvas {
     /// 黙って捨てず警告するために、内と外を知る必要がある ([ADR-0021] 決定 4)。
     private(set) var isDrawing = false
 
+    /// 変換とスタイルが意味を持つ文脈にいるか。**フレームの中と、形を組み立てている間。**
+    ///
+    /// 組み立て (``createShape(_:)``) の中は、形自身の座標で記録する文脈である — そこで
+    /// 書いた変換とスタイルの積み降ろしは**形に焼き付く**ので、どのフレームにも属さない
+    /// まま意味を持つ ([ADR-0021] 決定 4 の 2026-09-15 の改訂・[#1172])。`setup()` で
+    /// 組み立てると中の `push()` / `translate()` が落ち、9 枚の葉が 1 か所へ重なっていた。
+    ///
+    /// **シーンの記述 (視点・光・囲み・影・材質・粒・計算) はここを見ない。** あちらは
+    /// 形に焼き付かずフレームに属するので、記録の間もフレームの外のままである。
+    ///
+    /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
+    var isShaping: Bool { isDrawing || recordingShape }
+
     /// いま描き切っている最中か。**入れ子の描き場所で戻ってくるのを止める。**
     private var isFlushing = false
 
@@ -593,6 +606,27 @@ public final class Canvas {
     var receivesShadow = true
     var hasStroke = true
     private var styleStack: [Style] = []
+
+    /// 積んだ履歴を取り出して空にする。**戻すのは ``restore(_:)``。**
+    ///
+    /// 形の組み立てが、記録の間だけ積み降ろしを切り離すために使う ([#1172]) — 記録の中の
+    /// `pop()` が記録より前に積んだ段を取らず、記録の中で積んだまま抜けた段が、あとの
+    /// `pop()` に拾われないようにする。**2 本まとめて出し入れする**のは、積んだ事実が
+    /// 変換とスタイルのどちらに属するかによらないためである ([ADR-0021] 決定 4 の追補)。
+    ///
+    /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
+    func takeStacks() -> (transforms: [Transform], styles: [Style]) {
+        let taken = (transforms: transformStack, styles: styleStack)
+        transformStack.removeAll(keepingCapacity: true)
+        styleStack.removeAll(keepingCapacity: true)
+        return taken
+    }
+
+    /// 取り出しておいた積み履歴へ戻す。
+    func restore(_ stacks: (transforms: [Transform], styles: [Style])) {
+        transformStack = stacks.transforms
+        styleStack = stacks.styles
+    }
     var currentBlendMode = BlendMode.blend
     var currentClip: MTLScissorRect?
     /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
@@ -842,7 +876,7 @@ public final class Canvas {
     /// 効く設定」だけ**であり、既に置いた図形や面そのものは戻らない。
     ///
     /// 積み降ろしの外からも写し取れるよう internal に置く。保持した形の組み立ては
-    /// フレームの外でも状態を戻す必要があり、積み降ろしはフレームの中でしか効かない
+    /// 断片と数の並びまで戻す必要があり、そこは積み降ろしが拾わない
     /// (`Canvas.createShape`)。
     struct Style {
         var fill: LinearRGBA
@@ -1114,36 +1148,36 @@ public final class Canvas {
 
     public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.translate(x: x, y: y)
     }
 
     public func rotate(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.rotate(by: radians)
     }
 
     public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.scale(x: x, y: y)
     }
 
     public func shearX(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.shearX(by: radians)
     }
 
     public func shearY(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.shearY(by: radians)
     }
 
     public func applyMatrix(_ other: Transform) {
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.concatenate(other)
     }
 
@@ -1151,29 +1185,29 @@ public final class Canvas {
     ///
     /// 積んである変換 (``pushMatrix()``) は捨てない — 戻す先は残る。
     public func resetMatrix() {
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.reset()
     }
 
     public func pushMatrix() {
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transformStack.append(transform)
     }
 
     public func popMatrix() {
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         guard let restored = transformStack.popLast() else { return }
         transform = restored
     }
 
     /// いまのスタイルを積んでおく。
     public func pushStyle() {
-        guard isDrawing else { return warnOutsideFrame(.style) }
+        guard isShaping else { return warnOutsideFrame(.style) }
         styleStack.append(currentStyle)
     }
 
     public func popStyle() {
-        guard isDrawing else { return warnOutsideFrame(.style) }
+        guard isShaping else { return warnOutsideFrame(.style) }
         guard let restored = styleStack.popLast() else { return }
         currentStyle = restored
     }

@@ -27,10 +27,12 @@ extension Canvas {
         // 変換も畳んでおく — そうしないと、組み立てた場所でしか置けない形になる
         //
         // **積み降ろし (`pushStyle()` / `pushMatrix()`) は使わず、写し取って戻す。**
-        // 積み降ろしはフレームの中でしか効かないので、`setup()` で組み立てると退避も
-        // 復帰も空振りし、中で置いた塗りが外へ残ったうえ、利用者が触っていない
-        // 積み降ろしの警告だけが出ていた ([#1041])。断片と数の並びはスタイルの一式に
-        // 無いので、積み降ろしが効いても戻らなかった ([#836])。
+        // 断片と数の並びはスタイルの一式に無いので、積み降ろしが効いても戻らなかった
+        // ([#836])。積み降ろしがフレームの中でしか効かなかった頃は、`setup()` で組み立てる
+        // と退避も復帰も空振りし、中で置いた塗りが外へ残ったうえ、利用者が触っていない
+        // 積み降ろしの警告だけが出ていた ([#1041])。**いまは記録の間も積み降ろしが効く**
+        // (`Canvas.isShaping`) が、写し取る形はそのままにしてある — 戻す対象が
+        // スタイルの一式より広いことは変わらない。
         //
         // 断片と並びは**入口では外さない** — 組み立ての間に効いている塗りは形に焼き付く
         // (#788)。戻すのは出口だけで、読む面と同じ扱いである
@@ -48,11 +50,19 @@ extension Canvas {
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
         let savedRecording = recordingShape
         recordingShape = true
+        // **積んだ履歴は記録の中で閉じる。** 記録の間も `push()` / `pop()` は効く
+        // (`Canvas.isShaping`) ので、切り離さないと記録の中の `pop()` が記録より前に
+        // 積んだ段を取り、記録の中で積んだまま抜けた段はあとの `pop()` に拾われる
+        // ([#1172])
+        //
+        // [#1172]: https://github.com/mokume-metal/mokume/issues/1172
+        let savedStacks = takeStacks()
         let strokeRangeStart = recordedStrokeRanges.count
 
         body()
 
         recordingShape = savedRecording
+        restore(savedStacks)
         closeBatch()
         let recorded = Array(vertices[vertexStart...])
         // 輪郭の区間も形自身の 0 起点へ引き戻し、覚えていた側からは抜く (入れ子の記録なら

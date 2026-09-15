@@ -106,34 +106,34 @@ extension Canvas {
     // 原点を奥行きも含めてずらす。
     public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.translate(x: x, y: y, z: z)
     }
 
     // 横軸まわりに回す。
     public func rotateX(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.rotateX(by: radians)
     }
 
     // 縦軸まわりに回す。
     public func rotateY(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.rotateY(by: radians)
     }
 
     // 奥行きの軸まわりに回す。
     public func rotateZ(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.rotateZ(by: radians)
     }
 
     public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        guard isDrawing else { return warnOutsideFrame(.transform) }
+        guard isShaping else { return warnOutsideFrame(.transform) }
         transform.scale(x: x, y: y, z: z)
     }
 
