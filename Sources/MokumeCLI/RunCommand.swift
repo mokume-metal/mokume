@@ -71,7 +71,15 @@ enum RunCommand {
     /// - Parameters:
     ///   - environment: 環境。**検査から渡せる形にしてある。**
     ///   - home: ホームディレクトリ。同上。
-    static func context(
+    ///
+    /// ## main actor の外で走る
+    ///
+    /// **導き直しは作り直しの糸から来る。** 宣言が変わった回にここを main actor で走らせると、
+    /// `dump-package` と `--show-bin-path` のあいだ画面が凍る — 作り直し本体を外へ出した
+    /// のと同じ理由である ([#834](https://github.com/mokume-metal/mokume/issues/834)・
+    /// [#1067](https://github.com/mokume-metal/mokume/issues/1067))。触るのは `Process` と
+    /// `FileManager` と環境変数だけで、main actor の状態は読まない (ADR-0010 決定 4)。
+    nonisolated static func context(
         in directory: URL, invocation: Invocation,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
@@ -134,7 +142,7 @@ enum RunCommand {
     /// **置き場は共有の 1 つに固定する。** 解決に積まれるのは依存の複製と prebuilt
     /// (実測 200MB) だけで、コンパイルの産物は 1 バイトも入らない — 取り違えようが
     /// 無いので、鍵で分ける理由が無い。
-    private static func resolveDependencies(in directory: URL, root: URL) {
+    nonisolated private static func resolveDependencies(in directory: URL, root: URL) {
         let store = root.appendingPathComponent(
             BuildDirectory.resolveSegment, isDirectory: true)
         _ = try? swift(
@@ -175,6 +183,13 @@ enum RunCommand {
         let executable: URL?
         /// 出来上がりが置かれた場所。失敗を名乗るのに要る。
         let binPath: URL
+        /// この回が探した product の名前。**宣言が読めなければ `nil`。**
+        ///
+        /// **持ち回った名前ではなく、この回の名前である。** 見張りは宣言が変わった回に
+        /// 導き直すので (``BuildResolver``)、セッション開始時の名前で「建っていない」と
+        /// 名乗ると、`Package.swift` で product を改名した回に**前の名前**を出すことに
+        /// なる ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
+        let product: String?
     }
 
     /// 作り直して、走らせるものの場所を返す。
@@ -206,13 +221,24 @@ enum RunCommand {
     /// - Parameter running: 走っている `swift` を外から止められるように掴む先。**見張りだけが
     ///   渡す** — 終わるときに作り直しを止める者は見張りにしか居ない
     ///   ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
+    /// - Parameter binPath: 既に分かっている置き場。**渡されたら道具立てに聞き直さない** —
+    ///   聞くのに `swift` を 1 本起こすので、作り直しのたびに払うと保存から絵が変わるまでに
+    ///   丸ごと乗る (手元の実測で 315 ms・[#1067](https://github.com/mokume-metal/mokume/issues/1067))。
+    ///   持ち回ってよいかを判断するのは呼び手で、見張りは ``BuildResolver`` がそれを担う。
     nonisolated static func rebuild(
         in directory: URL, context: BuildContext, capturing: Bool = false,
-        running: RunningBuild? = nil
+        running: RunningBuild? = nil, binPath: URL? = nil
     )
         throws(CommandFailure) -> Rebuilt
     {
-        let bin = try binPath(in: directory, context: context, running: running)
+        // **`??` で畳まない。** 右辺が投げるので、まとめると誤りの型が `any Error` へ落ちる
+        // (typed throws・ADR-0010 決定 7 と同じ理由)
+        let bin: URL
+        if let binPath {
+            bin = binPath
+        } else {
+            bin = try self.binPath(in: directory, context: context, running: running)
+        }
         if let product = context.product {
             let executable = bin.appendingPathComponent(product, isDirectory: false)
             try? FileManager.default.removeItem(at: executable)
@@ -234,35 +260,37 @@ enum RunCommand {
             ?? (try? dumpPackage(in: directory, running: running))?.executableProductName
         guard let product else {
             return Rebuilt(status: result.status, output: result.output, executable: nil,
-                binPath: bin)
+                binPath: bin, product: nil)
         }
         let executable = bin.appendingPathComponent(product, isDirectory: false)
         let built = FileManager.default.isExecutableFile(atPath: executable.path)
         return Rebuilt(
             status: result.status, output: result.output, executable: built ? executable : nil,
-            binPath: bin)
+            binPath: bin, product: product)
     }
 
     /// 作り直して、走らせるものを返す。**通らなければ投げる** (人へ見せる経路の形)。
     static func buildAndResolve(in directory: URL, context: BuildContext) throws(CommandFailure)
         -> URL
     {
-        try executable(from: rebuild(in: directory, context: context), context: context,
-            in: directory)
+        try executable(from: rebuild(in: directory, context: context), in: directory)
     }
 
     /// 作り直しの結果を、人へ見せる経路の形に読む。
     ///
     /// **3 つの失敗を混ぜない。** 作り直しが通らなかった / 通ったのに建っていない /
     /// そもそも走らせるものを決められない は、次の一手が違う。
-    static func executable(from result: Rebuilt, context: BuildContext, in directory: URL)
+    ///
+    /// **名前は結果から読む。** 作り直しが探したのと同じ名前で名乗らないと、宣言が
+    /// 変わった回に前の名前で「建っていない」と言うことになる (#1067)。
+    static func executable(from result: Rebuilt, in directory: URL)
         throws(CommandFailure) -> URL
     {
         guard result.status == 0 else { throw .buildFailed(status: result.status) }
         guard let executable = result.executable else {
             // 名前が分からないままだったのなら、宣言が読めていない — 走らせるものを
             // 決められないという、別の失敗である
-            guard let product = context.product else {
+            guard let product = result.product else {
                 throw .noExecutable(path: directory.path)
             }
             throw .productNotBuilt(product: product, path: result.binPath.path)

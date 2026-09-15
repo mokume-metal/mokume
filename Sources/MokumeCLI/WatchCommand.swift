@@ -57,13 +57,20 @@ enum WatchCommand {
 
         // **置き場は見張り始める前に 1 度だけ決める。** 作り直しのたびに決め直すと、
         // 途中で先客が現れたときに作り直しと解決が別の置き場を指しうる (#1055)
-        let context = try RunCommand.context(in: directory, invocation: invocation)
+        //
+        // **導き手は 1 つを分け持つ。** ここで導いたものを作り直しがそのまま使うので、
+        // 宣言が変わるまで `swift` は 1 本も起きない — 別々に組むと、初回だけ
+        // `dump-package` と `--show-bin-path` が二重に走る (#1067)
+        let running = RunningBuild()
+        let resolver = BuildResolver.live(
+            in: directory, invocation: invocation, running: running)
+        let context = try resolver.current().context
 
         // 区画は環境変数が決める。走らせるスケッチは親の環境を引き継ぐので、記録を
         // パッケージの場所へ置くと観測とだけ場所が割れる (#331)。**計算は 1 つ** (#791)
         let session = WatchSession(
             directory: directory, context: context, facetBase: invocation.facetBase(),
-            reportsRate: true)
+            reportsRate: true, hooks: .live(resolver: resolver, running: running))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
         // どの道具で見張っているかを名乗る。**いちばん長く見ている画面に無いと、手元

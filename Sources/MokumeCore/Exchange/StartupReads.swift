@@ -11,7 +11,11 @@
 /// ためである ([#380](https://github.com/mokume-metal/mokume/issues/380))。読み手は自分の
 /// 鍵をこの一覧から取り、応えないときの案内はこの一覧をそのまま出す。**一覧に載せずに読む
 /// 経路は残さない** — 載っていない読み手が居ないことは検査が見る。
-public enum StartupReads {
+///
+/// **main actor には置かない。** 見張りの作り直しは巡回とは別の糸から進むので、
+/// そこから辿るものが隔離されていると待ちが main actor へ戻ってしまう
+/// ([#1067](https://github.com/mokume-metal/mokume/issues/1067)・ADR-0010 決定 4)。
+nonisolated public enum StartupReads {
     /// 何から読むか。
     public enum Origin: String, Sendable {
         /// 環境変数。
