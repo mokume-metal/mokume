@@ -458,6 +458,30 @@ struct InputInboxTests {
         }
     }
 
+    /// 見張りが 2 世代を重ねている間の入力は、**画面に出ている前の世代にだけ**届く —
+    /// 標準入力の宛先 (`WatchSession.send(_:)`) と同じである。次の世代が作られた後に
+    /// 前の世代が応えた入力を、引き継いだ次の世代がもう一度流さない
+    /// ([#1162](https://github.com/mokume-metal/mokume/issues/1162))。
+    @Test("重なった世代のうち、入力を受けるのは区画を持つ 1 世代だけ")
+    func onlyOneOverlappingGenerationTakesTheInput() throws {
+        let facet = try makeFacet()
+        let outgoing = try OtherGenerationFixture(holding: facet)
+        let incoming = InputInbox(directory: facet)
+        let state = InputState()
+        try send(#"{"id":"feed","events":[{"type":"mouseDown","x":12,"y":34}]}"#, to: facet)
+
+        #expect(incoming.drain(into: state) == nil, "前の世代が居る間に、次の世代にも入力が届いている")
+        // 前の世代が応えてから居なくなった (応答は前の世代が書いたもの)
+        AtomicFile.publishJSON(
+            InputReport(id: "feed", accepted: 1, ignored: 0, dropped: 0),
+            to: WorkDirectory.reportURL(under: facet), "the input reply")
+        outgoing.leave()
+
+        #expect(incoming.drain(into: state) == nil, "前の世代が受けた入力が、次の世代に流れ直している")
+        state.beginFrame()
+        #expect(!state.isMouseDown)
+    }
+
     @Test("知らない種別は、その 1 件だけが捨てられる")
     func skipsOnlyTheUnknownOne() throws {
         let facet = try makeFacet()
