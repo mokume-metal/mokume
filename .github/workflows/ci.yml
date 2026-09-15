@@ -82,9 +82,15 @@ jobs:
   # #1086。3 件目では誰も見ていない赤が 9 日間 main に残った):
   #
   #   入口が組めなくなる赤 … 明示の隔離を持たない isolated deinit が Sources/ に入ると
-  #                          release のテストビルドがコンパイルできない (#1083)。debug でも
+  #                          release のテストビルドがコンパイルできない。debug でも
   #                          swift build -c release でも通るので、足した本人には壊れて見えない
   #   release でしか走らない検査の赤 … .enabled(if: !isDebugBuild) を持つ検査の失敗
+  #
+  # **1 つ目は #1083 の段 1 (make isolated-deinit) と重なるが、どちらも要る。** あちらは字句で
+  # 「isolated deinit が隔離を明示した型の中にあるか」を見るので、**誰からも参照されない型でも**
+  # 捕まえる。こちらはコンパイラ自身に言わせるので綴り以外の形で壊れるものも捕まえるが、
+  # **誰からも参照されない internal 型では落ちない** (#1096 で実測)。落ちるのは取り込み側が
+  # module を deserialize するときに既定隔離を見失う場合だけで、取り込む側が要るためである。
   #
   # **GPU を要する検査はここでも走らない。** CI の GPU はこの世代のコマンド構造を持たないので、
   # RenderDevice.isAvailable を条件に持つ Suite は debug と同じくスキップされる (ADR-0019
@@ -222,7 +228,7 @@ jobs:
   # ci-gate と local-render の 2 本になった (#618)。
   ci-gate:
     if: always()
-    needs: [ci-check, pr-title, review-gate, drawing-evidence]
+    needs: [ci-check, test-release, pr-title, review-gate, drawing-evidence]
     runs-on: ubuntu-latest
     steps:
       - name: All required jobs green

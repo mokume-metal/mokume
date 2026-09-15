@@ -47,7 +47,7 @@ import Foundation
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 // `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
 // (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
-final class Backpressure {
+@MainActor final class Backpressure {
     /// 同時に抱える枚数の既定の上限。
     ///
     /// 960x540 なら 1 枚あたり約 2 MB なので、既定では 8 MB を上限に抱える。
