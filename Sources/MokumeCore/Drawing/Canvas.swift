@@ -1330,6 +1330,8 @@ public final class Canvas {
         isDrawing = false
         framesDrawn += 1
 
+        // 焼き付けが読むのと同じ光を、描き切りの前に読む (投げても設定の誤りは知らせる)
+        warnIfShadowHasNoCaster()
         try flush()
     }
 

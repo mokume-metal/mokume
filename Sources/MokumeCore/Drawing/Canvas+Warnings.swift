@@ -79,6 +79,8 @@ extension Canvas {
         case shadowOutsideFrame
         /// 受け取れない影の値が渡された。
         case badShadow
+        /// 影を落とすと言ったまま、向きを持つ光を 1 本も置かずにフレームを終えた。
+        case shadowWithoutCaster
 
         /// フレームの外で視点を書いた。
         case cameraOutsideFrame
