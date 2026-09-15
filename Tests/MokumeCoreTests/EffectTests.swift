@@ -90,6 +90,37 @@ struct EffectTests {
         }
     }
 
+    /// 完了条件「灰色の効果が、sRGB の原色で書いた色の相対輝度を返す」([#1212])。
+    ///
+    /// 数で書いた色は sRGB の原色の値として作業空間 (線形 Display P3) へ移る (#911)。
+    /// 移った後の値に掛ける重みが作業空間の原色のものなら、灰色にした値は元の色の
+    /// 相対輝度 Y — sRGB の原色なら Rec.709 の重み — に一致する。**sRGB の重みを P3 の
+    /// 値に掛けていると、赤は 0.199 になって外れる。**
+    ///
+    /// 許容は、期待値の位置での半精度の 1 目盛り (0.2 付近で 1.2e-4・0.7 付近で 4.9e-4) と、
+    /// Rec.709 の重みが 4 桁に丸めた公称値であることの 1e-4 を足したもの。
+    ///
+    /// [#1212]: https://github.com/mokume-metal/mokume/issues/1212
+    @Test(
+        "単色化した画素は、sRGB の原色で書いた色の相対輝度になる",
+        arguments: [
+            (SIMD3<Float>(1, 0, 0), Float(0.2126)),
+            (SIMD3<Float>(0, 1, 0), Float(0.7152)),
+            (SIMD3<Float>(0, 0, 1), Float(0.0722)),
+        ])
+    func monochromeGivesTheRelativeLuminance(primary: SIMD3<Float>, luminance: Float) throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(.display(red: primary.x, green: primary.y, blue: primary.z))
+            canvas.effects([.monochrome()])
+        }
+        let grey = try canvas.target.readPixels()[8, 8]
+        let tolerance = Float(Float16(luminance).nextUp) - Float(Float16(luminance)) + 1e-4
+        for (name, value) in [("red", grey.red), ("green", grey.green), ("blue", grey.blue)] {
+            #expect(abs(value - luminance) <= tolerance, "\(name) = \(value)、期待は \(luminance)")
+        }
+    }
+
     // MARK: - 並びは値
 
     @Test("並びの順を入れ替えると、絵が変わる")
