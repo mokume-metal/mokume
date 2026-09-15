@@ -34,6 +34,13 @@ import Testing
 ///   同じ `nil` が「関数が要る」の表明に当たって異常終了する — どちらの表明も名前に
 ///   ついては何も言わないので、表明文から `specializedName` へは辿れない。
 ///   **この検査は頂点段・計算段を踏まない** (表明は検査ごと落とすため)
+/// - **空文字 `""` を渡すと、パイプラインの作成が Metal の中で稀に abort する** ([#1264])。
+///   作成を同期で待つ間に、Metal のコンパイラ接続キューの側が自分の持っていない
+///   `os_unfair_lock` を解放し、libplatform がプロセスごと殺す。複数のプロセスが並行して
+///   検査を回す負荷の下で起き、新しいプロセスで最初に踏むと約 3 割、他の名前を先に作った
+///   プロセスでは数百回に 1 回落ちた。識別子 4 つ・名前なし・識別子でない名前は 1 度も
+///   落ちていない。**落ちるのは検査のプロセスなので、その回の検査全体が赤になる。**
+///   空文字は識別子でもないので、この検査では渡さない
 ///
 /// ## 分かっていないこと
 ///
@@ -46,6 +53,7 @@ import Testing
 ///
 /// [#775]: https://github.com/mokume-metal/mokume/pull/775
 /// [#776]: https://github.com/mokume-metal/mokume/issues/776
+/// [#1264]: https://github.com/mokume-metal/mokume/issues/1264
 @Suite(
     "特化した関数の名前",
     .enabled(
@@ -163,11 +171,15 @@ struct SpecializedNameTests {
 
     /// **C の識別子なら渡しても走る。** 渡し方が無いのではなく、綴りが決まっている。
     ///
-    /// 空文字も通る。**中で何になっているかは確かめていない** — 見ているのは
-    /// 「断片が走る」ことだけである。
+    /// **中で何になっているかは確かめていない** — 見ているのは「断片が走る」ことだけである。
+    ///
+    /// **空文字 `""` は並べない。** 作成が Metal の中で稀に abort し、検査のプロセスごと
+    /// 落ちる (Suite の注記と [#1264])。
+    ///
+    /// [#1264]: https://github.com/mokume-metal/mokume/issues/1264
     @Test(
         "C の識別子の名前なら、渡しても走る",
-        arguments: ["probeFragmentSpecialized", "_probe", "probe0", "P", ""])
+        arguments: ["probeFragmentSpecialized", "_probe", "probe0", "P"])
     func specializationWithAnIdentifierNameRuns(_ name: String) throws {
         #expect(
             try fragmentRuns(specializedName: name),
