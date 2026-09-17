@@ -196,13 +196,28 @@ def build_source(examples: list[Example]) -> tuple[str, list[int], list[Example]
     return "\n".join(lines) + "\n", starts, ordered
 
 
+def find_modules(binary: pathlib.Path) -> pathlib.Path:
+    """成果物の置き場から、swiftmodule の在処を選ぶ。
+
+    **道具立ての版で場所が違う。** Swift 6.3 までは `<置き場>/Modules/` に並んでいたが、
+    Swift 6.4 の既定のビルドシステムは置き場そのものへ並べる
+    ([#1276](https://github.com/mokume-metal/mokume/issues/1276))。両方を見て、
+    在るほうを使う — 版を名指しで分けると、次に変わった日にまた書き足すことになる。
+    """
+    for candidate in (binary / "Modules", binary):
+        if (candidate / "mokume.swiftmodule").exists():
+            return candidate
+    # 見つからないときは、いままでどおりの場所を名乗って落ちる (案内が具体的になる)
+    return binary / "Modules"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="説明文の中の例が組めるかを見る")
     parser.add_argument(
         "--modules",
         type=pathlib.Path,
-        default=pathlib.Path(".build/debug/Modules"),
-        help="swift build が作った成果物の置き場",
+        default=None,
+        help="swift build が作った成果物の置き場 (省くと .build/debug から探す)",
     )
     arguments = parser.parse_args()
 
@@ -211,7 +226,12 @@ def main() -> int:
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()
     )
-    modules = arguments.modules if arguments.modules.is_absolute() else root / arguments.modules
+    if arguments.modules is None:
+        modules = find_modules(root / ".build" / "debug")
+    else:
+        modules = (
+            arguments.modules if arguments.modules.is_absolute() else root / arguments.modules
+        )
     if not (modules / "mokume.swiftmodule").exists():
         print(f"ng: {modules} に mokume が無い — 先に swift build (make build) を打つ")
         return 1

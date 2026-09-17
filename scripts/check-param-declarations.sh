@@ -18,10 +18,21 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 readonly BUILD_DIR=".build/debug"
-readonly MODULES="$BUILD_DIR/Modules"
 
-if [[ ! -d "$MODULES" ]]; then
-  echo "check-param-declarations: 組み上げたものが見つからない ($MODULES)" >&2
+# **swiftmodule の置き場は道具立ての版で違う。** Swift 6.3 までは `<置き場>/Modules/`
+# に並んでいたが、Swift 6.4 の既定のビルドシステムは置き場そのものへ並べる
+# (https://github.com/mokume-metal/mokume/issues/1276)。**版で分岐せず、在るほうを使う。**
+MODULES=""
+for candidate in "$BUILD_DIR/Modules" "$BUILD_DIR"; do
+  if [[ -f "$candidate/mokume.swiftmodule" || -d "$candidate/mokume.swiftmodule" ]]; then
+    MODULES="$candidate"
+    break
+  fi
+done
+readonly MODULES
+
+if [[ -z "$MODULES" ]]; then
+  echo "check-param-declarations: 組み上げたものが見つからない ($BUILD_DIR)" >&2
   echo "次にすること: swift build を先に走らせる (make ci-check なら自動で先に走る)" >&2
   exit 1
 fi
