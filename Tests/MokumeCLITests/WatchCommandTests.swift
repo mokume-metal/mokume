@@ -143,6 +143,39 @@ struct WatchCommandTests {
         #expect(handedOver?.lastReport == nil)
     }
 
+    /// **見張っている間だけ、省電力の間引きを断る。**
+    ///
+    /// 窓が覆われて前面から降りた道具は App Nap に入り、そこでは CPU の優先度の断りも
+    /// 外れる — 機械が混んでいると入れ替わりも終わりの合図も数秒途切れる
+    /// ([#1199](https://github.com/mokume-metal/mokume/issues/1199))。App Nap そのものは
+    /// 検査で再現できないので、ここが見るのは**断りを立てる場所と返す場所**である。
+    @Test("見張っている間は間引きを断り、終えたら返す")
+    func refusesThrottlingWhileWatching() throws {
+        let root = try makeDirectory()
+        try Data(#"// swift-tools-version: 6.2"#.utf8)
+            .write(to: root.appendingPathComponent("Package.swift"))
+        WatchCommand.teardownDone = false
+        var heldInsideTheLoop = false
+
+        try WatchCommand.run([root.path], watching: { _, _ in
+            heldInsideTheLoop = WatchCommand.refusesThrottling
+        })
+
+        #expect(heldInsideTheLoop, "巡回に入る前に断っていない")
+        #expect(!WatchCommand.refusesThrottling, "終えたのに断ったままになっている")
+    }
+
+    /// **二度返しても落ちない。** 終わりの経路は 2 つある (巡回が抜けた・道具立てが
+    /// 終わらせた) ので、返す側は何度呼ばれてもよい形でなければならない。
+    @Test("断りを二度返しても落ちない")
+    func releasingTheRefusalTwiceIsHarmless() {
+        WatchCommand.refuseThrottling()
+        #expect(WatchCommand.refusesThrottling)
+        WatchCommand.allowThrottling()
+        WatchCommand.allowThrottling()
+        #expect(!WatchCommand.refusesThrottling)
+    }
+
     /// **相手が居なくても落ちない。** 見張りは子を頻繁に入れ替えるので、既に居ない相手へ
     /// 書くことは必ず起きる ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 4)。
     @Test("走らせているものが居なければ、書いても何も起きない")
