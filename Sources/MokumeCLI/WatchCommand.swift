@@ -118,6 +118,9 @@ enum WatchCommand {
         let delegate = ApplicationDelegate { teardown(session, viewer, created: prepared) }
         NSApplication.shared.delegate = delegate
 
+        // **巡回に入る前に断る。** 窓が覆われてから立てるのでは遅い — App Nap は
+        // 起動から 30〜60 秒で入る (#1199)
+        refuseThrottling()
         watching(session, viewer)
         teardown(session, viewer, created: prepared)
     }
@@ -162,6 +165,9 @@ enum WatchCommand {
     static func teardown(_ session: WatchSession, _ viewer: Viewer?, created: [URL] = []) {
         guard !teardownDone else { return }
         teardownDone = true
+        // **断りを返す。** 終わりの経路は 2 つある (巡回が抜けた / 道具立てが終わらせた)
+        // が、どちらもここを通る
+        allowThrottling()
         finish(session)
         viewer?.close()
         // **置いていかない。** 区画は「画面の出口は共有面」という合図なので、残すと
@@ -172,6 +178,46 @@ enum WatchCommand {
 
     /// 後始末を済ませたか。**印は 1 プロセスに 1 つ** (終わりの合図と同じ扱い)。
     static var teardownDone = false
+
+    // MARK: - 間引きを断る (#1199)
+
+    /// 間引きを断っている宣言。**見張っている間だけ持つ。**
+    private static var throttleRefusal: (any NSObjectProtocol)?
+
+    /// いま断っているか。**検査から読む** — 宣言そのものは外から見えない。
+    static var refusesThrottling: Bool { throttleRefusal != nil }
+
+    /// 省電力の間引きを断る。
+    ///
+    /// **窓が覆われて前面から降りると、道具は App Nap に入る。** そこでは実行ループの
+    /// タイマーの断り (`PreventTimerThrottleTier0`) だけでなく、CPU の優先度の断り
+    /// (`PreventSuppressedCPU` / `PreventLowPriorirtyCPU`) も外れる — 機械が混んでいると
+    /// **走れる状態のまま順番が回ってこない** (`pri` が 46 から 4 へ落ちる)。入れ替わり
+    /// (`SharedFrameStage.displayLinkFired` → `promoteIfReady`)・保存の検出・終わりの
+    /// 合図は同じ実行ループに載っているので、揃って数秒途切れる
+    /// ([#1199](https://github.com/mokume-metal/mokume/issues/1199) に交互の実測)。
+    ///
+    /// **スケッチの宣言 ([ADR-0012] 決定 5・`SketchApplication.run()`) とは強さを分ける。**
+    /// あちらは `[.userInitiated, .latencyCritical]` で、絵を出し続けるために機械を
+    /// 寝かせないことまで引き受けている。こちらは**間引きを断るだけで足りる** —
+    /// 実測では弱い宣言でも App Nap に入らず、遅れは 0 だった。道具が「機械を寝かせない」
+    /// という約束を足さないので、ビルドが失敗したまま置いた見張りが夜通し機械を
+    /// 起こし続けることもない。走っているスケッチが在る間は、子の側の宣言がその役を持つ。
+    ///
+    /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
+    static func refuseThrottling() {
+        guard throttleRefusal == nil else { return }
+        throttleRefusal = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "keeping the watch loop and generation swaps on time")
+    }
+
+    /// 断りを返す。**何度呼んでもよい** (後始末の経路は 2 つある)。
+    static func allowThrottling() {
+        guard let refusal = throttleRefusal else { return }
+        ProcessInfo.processInfo.endActivity(refusal)
+        throttleRefusal = nil
+    }
 
     /// 道具立ての終わり方を受ける。
     ///
