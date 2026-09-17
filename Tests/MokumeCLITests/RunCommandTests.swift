@@ -273,9 +273,15 @@ struct RunCommandTests {
     }
 
     /// 裏。**渡さなければ今までどおり聞く** — `run` と `bundle` はこちらを通る。
+    ///
+    /// **ここだけは宣言のあるディレクトリで見る。** Swift 6.4 の
+    /// `swift build --show-bin-path` は `Package.swift` の無い場所では置き場を 1 つも
+    /// 印字せずに失敗するので、空のディレクトリでは「聞いた形」そのものを作れない
+    /// ([#1275](https://github.com/mokume-metal/mokume/issues/1275))。中身の無い宣言で
+    /// 足りるので、作り直しの完走を待たない作りは変わらない。
     @Test("置き場を渡さなければ、道具立てに聞く")
     func anAbsentBinPathIsAskedFor() throws {
-        let directory = try makeEmptyDirectory()
+        let directory = try makeDeclaredDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let rebuilt = try RunCommand.rebuild(
@@ -288,6 +294,19 @@ struct RunCommandTests {
             "聞いた先が別のパッケージの下になっている")
         #expect(rebuilt.binPath.lastPathComponent != "given-bin")
         #expect(rebuilt.binPath.path.contains(".build"), "道具立てが答える置き場の形をしていない")
+    }
+
+    /// 宣言だけを置いたディレクトリ。**中身は持たない** — 置き場を答えられれば足りる。
+    private func makeDeclaredDirectory() throws -> URL {
+        let directory = try makeEmptyDirectory()
+        try """
+            // swift-tools-version: 6.2
+            import PackageDescription
+            let package = Package(name: "bin-path-probe", targets: [.target(name: "Probe")])
+            """.write(
+            to: directory.appendingPathComponent("Package.swift"), atomically: true,
+            encoding: .utf8)
+        return directory
     }
 
     private func makeEmptyDirectory() throws -> URL {

@@ -34,7 +34,13 @@ public nonisolated struct Key: Sendable, Hashable {
 
 // MARK: - 文字を打つキー
 
-extension Key {
+// **定数を宣言する extension にも `nonisolated` を書く。** 型に書いただけでは、ここで
+// 宣言する静的な定数は既定の隔離 (main actor) に載る — 隔離の外から `Key.a` を読むのが
+// `await` の要る非同期のアクセスになり、Swift 6.4 では `@Test(arguments:)` の展開が
+// 組めなくなる ([#1274](https://github.com/mokume-metal/mokume/issues/1274))。
+// 上の型の doc が言う「キーを表す値は隔離を跨いで読まれる」は、値だけでなく**名前の
+// 付いた定数**にも同じだけ効く。
+nonisolated extension Key {
     /// A の位置のキー。
     public static let a = Key(rawValue: 0)
     /// B の位置のキー。
@@ -112,7 +118,7 @@ extension Key {
 
 // MARK: - 文字を打たないキー
 
-extension Key {
+nonisolated extension Key {
     /// 空白。
     public static let space = Key(rawValue: 49)
     /// 改行 (Mac のキーボードでは return と刻まれている)。

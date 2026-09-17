@@ -44,7 +44,36 @@ let package = Package(
         .target(
             name: "MokumeCore",
             dependencies: ["MokumeDiagnostics", "MokumeMacros"],
-            resources: [.process("Drawing/Shaders"), .process("Display/Shaders")],
+            // **シェーダの断片は 1 つずつ写す。**
+            //
+            // `.process` でディレクトリごと渡すと、Swift 6.4 の道具立ては `.metal` を
+            // **資源ではなくソースと読んで 1 ファイルずつコンパイルしようとする** —
+            // 断片は単独では組めない (前置きが持つ宣言が見えない) ので、Xcode 27 の
+            // 機械では build 段で止まる ([#1268])。ここの断片は実行時に文面を
+            // 組み合わせて `makeLibrary(source:)` するもので、**組み上がった
+            // metallib は要らない**。
+            //
+            // **ディレクトリ単位の `.copy` は使えない。** `Drawing/Shaders` と
+            // `Display/Shaders` は名前が同じなので `multiple resources named
+            // 'Shaders'` で弾かれる。1 つずつ写せば、束ねた中身は `.process` の
+            // ときと同じ**平らな 8 ファイル**になり、探す側 (`ModuleResources`) は
+            // 何も変わらない。
+            //
+            // **足したら、ここに 1 行足す。** ディレクトリごと拾っていたものを手書きの
+            // 一覧にしたので、書き忘れは「組めるのに実行時に見つからない」形で出る —
+            // それを見る検査が `ModuleResourcesTests` にある。
+            //
+            // [#1268]: https://github.com/mokume-metal/mokume/issues/1268
+            resources: [
+                .copy("Display/Shaders/Present.metal"),
+                .copy("Drawing/Shaders/Common.metal"),
+                .copy("Drawing/Shaders/Compute.metal"),
+                .copy("Drawing/Shaders/Computations/Particles.metal"),
+                .copy("Drawing/Shaders/Effect.metal"),
+                .copy("Drawing/Shaders/Effects/Builtin.metal"),
+                .copy("Drawing/Shaders/Kinds.metal"),
+                .copy("Drawing/Shaders/Shapes.metal"),
+            ],
             swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(name: "mokume", dependencies: ["MokumeCore"], swiftSettings: .mokume),

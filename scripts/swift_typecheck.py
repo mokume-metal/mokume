@@ -31,6 +31,7 @@ macro の的を改名すると `examples` は追随し、**`params` だけが落
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -41,18 +42,54 @@ import sys
 SWIFT_FLAGS = ["-swift-version", "6", "-default-isolation", "MainActor"]
 
 
-def plugin_flags(modules: pathlib.Path) -> list[str]:
+def macro_targets(package: pathlib.Path) -> list[str]:
+    """宣言が言う macro の的の名前。**写しを持たない** (原則 9)。
+
+    読めなければ空を返す — plugin を渡さないだけなので、落とすほどのことではない
+    (macro を使う例がいつもの言い分で落ちる)。
+    """
+    try:
+        dumped = subprocess.run(
+            ["swift", "package", "dump-package"],
+            cwd=package, capture_output=True, text=True, check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    try:
+        targets = json.loads(dumped).get("targets", [])
+    except json.JSONDecodeError:
+        return []
+    return [target["name"] for target in targets if target.get("type") == "macro"]
+
+
+def plugin_flags(modules: pathlib.Path, package: pathlib.Path | None = None) -> list[str]:
     """macro を使う例のために、組み上がった plugin を渡す。
 
-    **名前は決め打ちしない。** SwiftPM は macro の的を `<的の名前>-tool` という実行
-    ファイルにするので、置き場を見て拾う — Package.swift の写しを持たない (原則 9)。
+    **名前は決め打ちしない。** Swift 6.3 までの SwiftPM は macro の的を
+    `<的の名前>-tool` という実行ファイルにするので、置き場を見て拾えば足りた。
+    **Swift 6.4 の既定のビルドシステムは接尾辞を付けない** ので、それだけでは 1 つも
+    拾えない ([#1276](https://github.com/mokume-metal/mokume/issues/1276))。名前は
+    宣言 (`swift package dump-package`) から引き、置き場は**両方の版の場所**を見る。
+
     渡さないと、macro を使う例は `external macro implementation … could not be found`
     で落ちる。SwiftPM を通さずに型検査する代償で、ここだけは手で繋ぐ必要がある。
     """
     flags: list[str] = []
+    seen: set[str] = set()
     for path in sorted(modules.parent.glob("*-tool")):
         if path.is_file() and os.access(path, os.X_OK):
-            flags += ["-load-plugin-executable", f"{path}#{path.name.removesuffix('-tool')}"]
+            name = path.name.removesuffix("-tool")
+            seen.add(name)
+            flags += ["-load-plugin-executable", f"{path}#{name}"]
+    for name in macro_targets(package or pathlib.Path.cwd()):
+        if name in seen:
+            continue
+        for directory in dict.fromkeys([modules, modules.parent]):
+            path = directory / name
+            if path.is_file() and os.access(path, os.X_OK):
+                seen.add(name)
+                flags += ["-load-plugin-executable", f"{path}#{name}"]
+                break
     return flags
 
 

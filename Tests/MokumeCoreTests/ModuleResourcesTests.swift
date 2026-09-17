@@ -161,4 +161,40 @@ struct ModuleResourcesTests {
                 resources: URL(fileURLWithPath: "/tmp/other", isDirectory: true)
             ).count == 2)
     }
+
+    /// ソースに在る断片が、束ねた中からすべて読めること。
+    ///
+    /// **`Package.swift` の書き忘れを見る検査である。** 断片はディレクトリごと拾われる
+    /// のをやめ、1 つずつ `.copy` で並べる形になった
+    /// ([#1268](https://github.com/mokume-metal/mokume/issues/1268))。
+    ///
+    /// **足し忘れの出方は道具立ての版で違う。** Xcode 27 (Swift 6.4) は並びに無い
+    /// `.metal` を**ソースと読んでコンパイルしようとする**ので build で落ちる (実測)。
+    /// Xcode 26.6 では「扱いの決まっていない資源」の警告になるだけで、束ねられずに
+    /// **実行時にだけ見つからない** — 絵が出ないところまで行って初めて分かる。
+    /// ここが名指しで落とすのは後者である。
+    ///
+    /// **組み上げた機械の上でだけ見る。** ソースの在処を読むので、配った先には無い道で
+    /// ある (`ModuleResources.isOnBuildMachine` と同じ判定)。
+    @MainActor
+    @Test("ソースに在るシェーダの断片は、束ねた中からすべて読める")
+    func everyShaderFragmentIsBundled() throws {
+        try #require(ModuleResources.isOnBuildMachine, "組み上げた機械の上でだけ見る")
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()      // Tests/MokumeCoreTests
+            .deletingLastPathComponent()      // Tests
+            .deletingLastPathComponent()      // パッケージの根
+            .appendingPathComponent("Sources/MokumeCore", isDirectory: true)
+        let found = try #require(
+            FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+        let fragments = found.compactMap { $0 as? URL }.filter { $0.pathExtension == "metal" }
+        // 並べる側が空だと、この検査は何も見ずに緑になる
+        #expect(fragments.count >= 8)
+        for fragment in fragments {
+            let name = fragment.deletingPathExtension().lastPathComponent
+            #expect(
+                ModuleResources.url(forResource: name, withExtension: "metal") != nil,
+                "\(fragment.lastPathComponent) が束ねた中に無い — Package.swift の resources へ足す")
+        }
+    }
 }
