@@ -52,8 +52,9 @@ say() { echo "drawing-evidence: $*"; }
 give_up() { say "判定しない — $1"; exit 0; }
 
 # 本文に絵の参照があるか (標準入力)。人間の経路 (入力欄へ落とすと GitHub が
-# user-attachments の URL を返す) とエージェントの経路 (Gyazo・.claude/skills/
-# gyazo-evidence) の両方を通す。**広く取る** — 狭いと絵を貼った PR が赤くなり、
+# user-attachments の URL を返す) とエージェントの経路 (.claude/skills/
+# visual-evidence — 本線の Gyazo と、退避路である同じ user-attachments) の
+# 両方を通す。**広く取る** — 狭いと絵を貼った PR が赤くなり、
 # 逃がしラベルで外す癖がついて機構ごと形骸化する
 has_evidence() {
   grep -Eqi \
@@ -111,7 +112,8 @@ squash merge でブランチが消えた後には足せません。
   1. before/after を撮って PR 本文に貼る。動きが分からないと正誤を判定できないもの
      (アニメーション・遷移・インタラクション) は、動きの分かる形式で貼る
      - 人間: Issue / PR の入力欄へ画像や動画をそのまま落とす (何も用意が要りません)
-     - エージェント: .claude/skills/gyazo-evidence/SKILL.md の手順で Gyazo へ上げ URL を貼る
+     - エージェント: .claude/skills/visual-evidence/SKILL.md の手順で上げ URL を貼る
+       (本線は Gyazo。落ちていれば GitHub の添付へ退避する — 切り替えは指示を待たない)
   2. リポジトリには**コミットしない** (生成物・バイナリは持ち込まない — AGENTS.md)
 
 絵を出しようがない変更 (描画のパスに居るが絵は変わらないリファクタ・コメントの修正)

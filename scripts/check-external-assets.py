@@ -216,7 +216,7 @@ def main() -> int:
             for origin in where:
                 print(f"    {origin}", file=sys.stderr)
         print(
-            "\n撮り直しの手順は .claude/skills/gyazo-evidence/ が持つ。"
+            "\n撮り直しの手順は .claude/skills/visual-evidence/ が持つ。"
             "撮り直したら、指している行の URL を差し替える (ADR-0027 決定 2)。",
             file=sys.stderr,
         )
