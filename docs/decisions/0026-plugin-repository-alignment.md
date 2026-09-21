@@ -91,7 +91,7 @@ SPDX-License-Identifier: MIT
 | 描画の証跡 (`drawing-evidence`・`local-render`・描画 PR の順番待ち) | 絵を描くのは本体だけ ([ADR-0019](0019-drawing-verification.md)) |
 | merge queue | 合流後の姿を再検証する必要が、並走する PR の量から生じていない |
 | ルールセットのドリフト検査 | 見張る対象 (ルールセット) が第 2 段にある |
-| `changelog.d` と週次リリースの機構 | 版の出し方はパッケージごとに事情が違う (mokume-syphon は焼く・pin を張る・tag を打つを 1 回でやる必要がある) |
+| `changelog.d` とリリースの機構 | 版の出し方はパッケージごとに事情が違う (mokume-syphon は焼く・pin を張る・tag を打つを 1 回でやる必要がある) |
 | ADR (設計判断の正典) | 判断は本体の ADR に従う。従えない事情ができたら本体へ Issue を立てる |
 | `scripts/` のフック群 (`comment.sh`・`plan-record.sh`・各 guard) | 決定 4 と同じ理由 — スクリプトとテストの写しになる |
 
