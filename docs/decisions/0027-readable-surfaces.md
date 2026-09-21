@@ -117,7 +117,7 @@ SPDX-License-Identifier: MIT
 | --- | --- | --- | --- |
 | 参照の面 | PNG | GIF / mp4 (`@Video`) | **WebP — 警告も出ずに参照ごと消える** |
 | Issue / PR (本線) | PNG | WebP | mp4 |
-| Issue / PR (退避路 = GitHub 直) | PNG | mp4 (代替 GIF) | **WebP — 添付形式に無い** |
+| Issue / PR (退避路 = GitHub 直) | PNG | GIF | **WebP — 添付形式に無い** / mp4 は小さいものだけ |
 
 **同じ「絵を載せる」でも、配信系の能力が違えば答えが違ってよい。** 無理に 1 本へ揃えると、能力の低いほうに合わせて全体が劣化する。ただし違う結論を持つ以上、**なぜ違うかは両方の場所に書く** — 何を載せるかの規律は `AGENTS.md`「描画に影響する変更」が、撮り方は `.claude/skills/visual-evidence/` が持つ。
 
