@@ -90,7 +90,7 @@ PR には分類ラベルを付けない ([ADR-0005](docs/decisions/0005-pr-label
 | ラベル | 意味 | 読む側 |
 | --- | --- | --- |
 | `no-issue` | Issue を閉じない例外 PR | `scripts/review-gate.sh` |
-| `release:now` | merge したその場で版を出す | `.github/workflows/release.yml` |
+| `release:now` | 壊れた配布物をその場で出し直す | `.github/workflows/release.yml` |
 | `no-visual-change` | 描画のパスに触れるが絵は変わらない | `scripts/check-drawing-evidence.sh` |
 
 新しい PR ラベルを足すときは、それを読むスクリプトを同時に示す — 読み手のいないラベルは足さない。付け忘れは `review-gate` が赤で差し戻すので手付けのままでよい。bot の PR (dependabot) だけは `.github/dependabot.yml` の `labels` で自動付与する。
@@ -137,7 +137,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullReq
 
 版はタグと [GitHub Release](https://github.com/mokume-metal/mokume/releases) だけで表し、リリースはリポジトリのファイルを 1 つも変えない (判断の詳細は `scripts/release.py` の冒頭)。
 
-- 週に 1 度 (月曜 09:00 JST) 自動で出る。急ぐときは PR に `release:now` を付けて merge する
+- 日に 1 度、自動で出る。壊れた配布物を出し直すときだけ PR に `release:now` を付けて merge する
 - 上げ幅は履歴が決める。1.0 未満では破壊的変更も minor で出す (0.x は形が動くことを織り込んだ区間のため)
 - ノートは `changelog.d/` の断片から組む。断片は消さない
 - 断片が 1 つも増えていなければリリースは出ない
