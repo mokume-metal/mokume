@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import simd
 
 @testable import MokumeCore
 
@@ -288,6 +289,7 @@ struct SolidTests {
             canvas.translate(32, 32, 0)
             canvas.box(size)
             canvas.sphere(size)
+            canvas.ellipsoid(size, size, size)
             canvas.plane(size, size)
             canvas.cylinder(size, size)
             canvas.cone(size, size)
@@ -297,6 +299,109 @@ struct SolidTests {
 
         #expect(canvas.solidMeshesBuilt == 0)
         #expect(try pixels(of: canvas)[32, 32] == (0, 0, 0, 255))
+    }
+
+    // MARK: - 楕円体 (#849)
+
+    @Test("楕円体を置いても、置き場所の変換は汚れない")
+    func ellipsoidLeavesTheTransformAlone() throws {
+        // **これが `push` / `scale` / `sphere` / `pop` との違いである。** あちらは
+        // 変換そのものを動かすので、挟み忘れると後続まで伸びる。楕円体は形の側が
+        // 半径を持つので、置いても変換は動かない
+        let canvas = try makeCanvas()
+        var before = matrix_identity_float4x4
+        var after = matrix_identity_float4x4
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.translate(32, 32, 0)
+            before = canvas.transform.matrix
+            canvas.fill(red)
+            canvas.ellipsoid(12, 6, 9)
+            after = canvas.transform.matrix
+        }
+        #expect(before == after)
+    }
+
+    @Test("楕円体のあとに置いた立体は歪まない")
+    func aSolidPlacedAfterAnEllipsoidIsNotScaled() throws {
+        // 上の言明を**絵の側から**も見る。半径が後続へ漏れていれば、右の球が歪む
+        func render(placingAnEllipsoid: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noStroke()
+                if placingAnEllipsoid {
+                    canvas.fill(green)
+                    canvas.push()
+                    canvas.translate(16, 32, 0)
+                    canvas.ellipsoid(6, 14, 6)
+                    canvas.pop()
+                }
+                canvas.fill(red)
+                canvas.push()
+                canvas.translate(46, 32, 0)
+                canvas.sphere(12)
+                canvas.pop()
+            }
+            return try pixels(of: canvas)
+        }
+
+        let withEllipsoid = try render(placingAnEllipsoid: true)
+        let without = try render(placingAnEllipsoid: false)
+        // 楕円体を置いた左半分は当然違う。**右半分だけ**を突き合わせる
+        for y in 0..<64 {
+            for x in 32..<64 {
+                #expect(withEllipsoid[x, y] == without[x, y], "(\(x), \(y)) で右の球が動いた")
+            }
+        }
+    }
+
+    @Test("楕円体は、push / scale / sphere / pop と同じ絵になる")
+    func ellipsoidMatchesAScaledSphere() throws {
+        // **光を当てるのが要点。** 塗り 1 色だと輪郭しか見ないので、面の向きの式を
+        // 間違えても通ってしまう。光を当てて初めて、向きが絵に出る
+        func render(_ body: (Canvas) -> Void) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noStroke()
+                canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
+                canvas.directionalLight(
+                    .linear(red: 1, green: 1, blue: 1), 0.6, -0.5, -0.6)
+                canvas.fill(.linear(red: 0.9, green: 0.5, blue: 0.3))
+                canvas.push()
+                canvas.translate(32, 32, 0)
+                canvas.rotateX(0.5)
+                canvas.rotateY(0.4)
+                body(canvas)
+                canvas.pop()
+            }
+            return try pixels(of: canvas)
+        }
+
+        let mine = try render { $0.ellipsoid(20, 10, 14) }
+        let scaled = try render {
+            $0.push()
+            $0.scale(20, 10, 14)
+            $0.sphere(1)
+            $0.pop()
+        }
+
+        // **ビット一致は求めない。** 点の位置はこちらが `方向 * 半径` を直に取るのに
+        // 対し、あちらは半径 1 の点へ行列を掛ける。面の向きも、こちらは余因子を
+        // 正規化し、あちらは逆転置 (`Transform.normalMatrix`) を通る。どちらも
+        // 同じ値を指すが、丸めの順が違うので最下位ビットは揃わない
+        var worst = 0
+        var differing = 0
+        for index in stride(from: 0, to: mine.bytes.count, by: 1) {
+            let gap = abs(Int(mine.bytes[index]) - Int(scaled.bytes[index]))
+            if gap > 0 { differing += 1 }
+            worst = max(worst, gap)
+        }
+        #expect(worst <= 8, "画素の差が大きすぎる (最大 \(worst))")
+        // 縁の 1 画素が両者で違う向きに丸まることはあるが、面の中まで違えば式が違う
+        #expect(differing * 100 / mine.bytes.count <= 5, "違う画素が多すぎる")
     }
 
     // MARK: - 投入されなかった描き切り (#1183)

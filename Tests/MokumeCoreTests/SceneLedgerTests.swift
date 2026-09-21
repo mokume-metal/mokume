@@ -214,6 +214,15 @@ enum Scene: String, CaseIterable, Sendable {
     case noise
     /// 基本の立体を並べ、回して奥行きが出る向きに置いたもの。
     case solids
+    /// 軸ごとに半径を決めた立体。潰したもの・伸ばしたもの・**球と並べた対**を置く。
+    ///
+    /// 対は `ellipsoid(r, r, r)` と `sphere(r)` で、**同じ形が 2 つ並ぶのが正しい絵**
+    /// である。別々に組み立てている 2 つが割れれば、ここが左右非対称になって出る
+    /// ([#849](https://github.com/mokume-metal/mokume/issues/849))。
+    ///
+    /// **光を当ててある** — 塗り 1 色だと輪郭しか写らず、面の向き (楕円面の勾配) の
+    /// 退行がこの行に出ない。
+    case ellipsoids
     /// 線を引いた立体。`place()` を通る 6 つの形と読み込んだモデルに、塗りと線を
     /// 重ねたもの・線だけのものを並べる (#850)。
     ///
@@ -621,6 +630,7 @@ enum Scene: String, CaseIterable, Sendable {
         case .noise: drawNoise(on: canvas)
         case .joins: drawJoins(on: canvas)
         case .solids: drawSolids(on: canvas)
+        case .ellipsoids: drawEllipsoids(on: canvas)
         case .strokedSolids: drawStrokedSolids(on: canvas)
         case .lighting: drawLighting(on: canvas)
         case .materials: drawMaterials(on: canvas, without: suppressed)
@@ -1227,6 +1237,42 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.rotateX(0.9)
         canvas.torus(13, 5)
         canvas.pop()
+    }
+
+    private func drawEllipsoids(on canvas: Canvas) {
+        canvas.background(.display(red: 0.07, green: 0.07, blue: 0.09))
+        canvas.noStroke()
+        // **光を当てる。** 面の向きが絵に出るのは光があるときだけなので、塗り 1 色に
+        // すると勾配の式が壊れても行が動かない
+        canvas.ambientLight(.display(red: 0.18, green: 0.18, blue: 0.22))
+        canvas.directionalLight(.display(red: 1, green: 0.96, blue: 0.9), 0.6, -0.5, -0.6)
+
+        /// 回して置く。
+        func place(x: Float, y: Float, tint: LinearRGBA, body: () -> Void) {
+            canvas.fill(tint)
+            canvas.push()
+            canvas.translate(x, y, 0)
+            canvas.rotateX(0.5)
+            canvas.rotateY(0.4)
+            body()
+            canvas.pop()
+        }
+
+        // 上段: 潰したもの (背が低い) と伸ばしたもの (背が高い)。**軸の順を取り違えると
+        // この 2 つが入れ替わる**
+        place(x: 34, y: 34, tint: .display(red: 0.95, green: 0.45, blue: 0.3)) {
+            canvas.ellipsoid(24, 9, 24)
+        }
+        place(x: 94, y: 34, tint: .display(red: 0.4, green: 0.85, blue: 0.5)) {
+            canvas.ellipsoid(10, 26, 10)
+        }
+        // 下段: 半径の等しい楕円体と球の対。**同じ形が並ぶのが正しい**
+        place(x: 34, y: 94, tint: .display(red: 0.35, green: 0.6, blue: 0.95)) {
+            canvas.ellipsoid(18, 18, 18)
+        }
+        place(x: 94, y: 94, tint: .display(red: 0.35, green: 0.6, blue: 0.95)) {
+            canvas.sphere(18)
+        }
     }
 
     private func drawStrokedSolids(on canvas: Canvas) {

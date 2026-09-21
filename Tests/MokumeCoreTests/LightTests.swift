@@ -248,6 +248,7 @@ struct LightTests {
     @Test("組み込みの立体は、光を当てた側が明るくなる", arguments: [
         SolidShape.box(width: 34, height: 34, depth: 34),
         .sphere(radius: 20, detail: 16),
+        .ellipsoid(radiusX: 20, radiusY: 12, radiusZ: 16, detail: 16),
         .cylinder(radius: 18, height: 34, detail: 16),
         .cone(radius: 18, height: 34, detail: 16),
         .torus(ringRadius: 18, tubeRadius: 7, detail: 16),

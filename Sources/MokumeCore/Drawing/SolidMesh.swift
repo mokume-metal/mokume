@@ -40,6 +40,7 @@ struct SolidMesh {
 enum SolidShape: Hashable {
     case box(width: Float, height: Float, depth: Float)
     case sphere(radius: Float, detail: Int)
+    case ellipsoid(radiusX: Float, radiusY: Float, radiusZ: Float, detail: Int)
     case plane(width: Float, height: Float)
     case cylinder(radius: Float, height: Float, detail: Int)
     case cone(radius: Float, height: Float, detail: Int)
@@ -75,7 +76,7 @@ enum SolidShape: Hashable {
     /// それは `SolidMeshTests` が形ごとに見る。
     var isClosed: Bool {
         switch self {
-        case .box, .sphere, .cylinder, .cone, .torus: true
+        case .box, .sphere, .ellipsoid, .cylinder, .cone, .torus: true
         case .plane: false
         }
     }
@@ -87,6 +88,10 @@ enum SolidShape: Hashable {
             SolidMesh(points: SolidMeshBuilder.box(width: width, height: height, depth: depth))
         case .sphere(let radius, let detail):
             SolidMesh(points: SolidMeshBuilder.sphere(radius: radius, detail: detail))
+        case .ellipsoid(let radiusX, let radiusY, let radiusZ, let detail):
+            SolidMesh(
+                points: SolidMeshBuilder.ellipsoid(
+                    radiusX: radiusX, radiusY: radiusY, radiusZ: radiusZ, detail: detail))
         case .plane(let width, let height):
             SolidMesh(points: SolidMeshBuilder.plane(width: width, height: height))
         case .cylinder(let radius, let height, let detail):
@@ -192,6 +197,67 @@ enum SolidMeshBuilder {
                 let d = point(ring: ring, step: step + 1)
                 // 巻き方は外向き。上下 (ring) と横 (step) の進む向きが左手の関係に
                 // なっているので、他の形と揃えるためにここで入れ替える
+                points.append(contentsOf: [a, c, b, a, d, c])
+            }
+        }
+        return points
+    }
+
+    /// 楕円体。**割り方の意味は球と同じ**で、3 つの半径が等しければ球と同じ形になる
+    /// (点の数も位置も貼る絵の読み取り位置も 1 ビット違わない)。
+    ///
+    /// 球と違うのは 2 点だけ — 位置が軸ごとの半径で伸びることと、面の向きが
+    /// **楕円面の勾配**になることである。`(x/a)² + (y/b)² + (z/c)² = 1` の勾配は
+    /// `(x/a², y/b², z/c²)` で、`x = nx·a` を入れると `(nx/a, ny/b, nz/c)` になるが、
+    /// **この形では書けない** — ``SolidShape/isDrawable(_:)`` は 0 を通すので、
+    /// `ellipsoid(0, 40, 40)` で無限が出る。`a·b·c` を掛けた**余因子の形**
+    /// `(nx·b·c, ny·c·a, nz·a·b)` なら割り算が消え、0 が混ざっても数でいられる。
+    /// 積が飽和しないよう倍精度で組む。
+    ///
+    /// **球を引き伸ばした向きではない。** `scale` を掛けた球も面の向きは逆転置
+    /// (``Transform/normalMatrix``) で直るので絵は合うが、あちらは置き場所が持つ
+    /// 向きで、こちらは形自身が持つ向きである。
+    static func ellipsoid(radiusX: Float, radiusY: Float, radiusZ: Float, detail: Int)
+        -> [SolidMesh.Point]
+    {
+        let around = detail
+        let rings = max(2, detail / 2)
+        let radii = SIMD3<Float>(radiusX, radiusY, radiusZ)
+        // 余因子 — 軸ごとに「自分を除いた 2 つの半径の積」
+        let cofactor = SIMD3<Double>(
+            Double(radiusY) * Double(radiusZ),
+            Double(radiusZ) * Double(radiusX),
+            Double(radiusX) * Double(radiusY))
+
+        func point(ring: Int, step: Int) -> SolidMesh.Point {
+            let phi = Float(ring) / Float(rings) * .pi
+            let theta = Float(step) / Float(around) * 2 * .pi
+            // 球の上の向き。**球と同じ字面で作る** — 位置と向きだけが分かれる
+            let direction = SIMD3<Float>(
+                sin(phi) * cos(theta),
+                cos(phi),
+                sin(phi) * sin(theta))
+            let gradient = SIMD3<Double>(direction) * cofactor
+            // **2 つ以上の半径が 0 だと余因子まで 0 になる** (`ellipsoid(0, 0, 40)`)。
+            // そのときは向きへ倒す — 潰れた形に法線は定まらないが、数でない値は出さない
+            let normal =
+                length_squared(gradient) > 0
+                ? SIMD3<Float>(normalize(gradient)) : direction
+            // 貼る絵の読み方も球と同じ (裏返す理由と継ぎ目の閉じ方は `sphere` にある)
+            let uv = SIMD2<Float>(
+                Float(step) / Float(around), 1 - Float(ring) / Float(rings))
+            return SolidMesh.Point(position: direction * radii, normal: normal, uv: uv)
+        }
+
+        var points: [SolidMesh.Point] = []
+        points.reserveCapacity(around * rings * 6)
+        for ring in 0..<rings {
+            for step in 0..<around {
+                let a = point(ring: ring, step: step)
+                let b = point(ring: ring + 1, step: step)
+                let c = point(ring: ring + 1, step: step + 1)
+                let d = point(ring: ring, step: step + 1)
+                // 巻き方も球と同じ (入れ替える理由は `sphere` にある)
                 points.append(contentsOf: [a, c, b, a, d, c])
             }
         }

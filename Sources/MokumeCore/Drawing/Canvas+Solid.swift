@@ -66,6 +66,18 @@ extension Canvas {
         place(.sphere(radius: radius, detail: SolidShape.clampDetail(detail)))
     }
 
+    // 楕円体を置く。
+    public func ellipsoid(
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
+        detail: Int = Canvas.defaultSolidDetail
+    ) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        guard SolidShape.isDrawable(x, y, z) else { return warnBadSize("ellipsoid") }
+        place(
+            .ellipsoid(
+                radiusX: x, radiusY: y, radiusZ: z, detail: SolidShape.clampDetail(detail)))
+    }
+
     // 平らな面を置く。
     public func plane(_ width: some ScalarConvertible, _ height: some ScalarConvertible) {
         let (width, height) = (width.asFloat, height.asFloat)
