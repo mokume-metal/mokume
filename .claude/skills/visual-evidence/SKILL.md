@@ -1,6 +1,6 @@
 ---
-name: gyazo-evidence
-description: 描画結果・動きが変わる変更を PR / Issue に記録するとき、スケッチの絵や窓の様子を Gyazo へ上げて URL を得る。撮る経路・宛先ごとの形式・出所の残し方を扱う。Use when attaching visual evidence to a pull request or issue, when a drawing or motion change needs before/after images, when capturing an animated WebP or GIF, or when embedding images in docs.
+name: visual-evidence
+description: 描画結果・動きが変わる変更を PR / Issue に記録するとき、スケッチの絵や窓の様子を上げて URL を得る。本線は Gyazo で、落ちていれば GitHub の添付へ退避する。撮る経路・宛先ごとの形式・出所の残し方を扱う。Use when attaching visual evidence to a pull request or issue, when a drawing or motion change needs before/after images, when capturing an animated WebP or GIF, when Gyazo is unavailable or its URLs return 404, or when embedding images in docs.
 allowed-tools: "mcp__gyazo-mac__gyazo_list_capturable_windows"
 ---
 
@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: 2026 mokume-metal
 SPDX-License-Identifier: MIT
 -->
 
-# Gyazo で視覚証跡を残す
+# 視覚証跡を残す
 
 **何を載せるかの規律は AGENTS.md 「描画に影響する変更」が正典**で、ここは手順だけを持つ。
 
@@ -19,8 +19,14 @@ PR に貼られた絵が描画の唯一の検証記録になり、squash merge �
 
 > **人がこれを読んでいるなら、たいていここは要らない。** Issue / PR の入力欄へ画像を落とせば
 > GitHub が保管して URL を返す — アカウントもトークンも要らず、そちらの方が早い。
-> この文書が扱うのは**エージェントの経路**である。直接アップロードには API が無く、
-> エージェントには押せる入力欄も無いため、代わりに Gyazo へ上げて URL を貼る。
+> この文書が扱うのは**エージェントの経路**である。
+
+**上げ先は 2 つある。本線は Gyazo で、落ちていれば GitHub の添付へ退避する** (「上げる」節)。
+
+退避路があるのは、上げ先が 1 本だと**そこが落ちた瞬間に描画の PR を出せなくなる**からである
+([#1294](https://github.com/mokume-metal/mokume/issues/1294) で 178 本が一斉に 404 になった)。
+GitHub には添付の API が無いが、**ブラウザを操作できるセッションなら人間と同じ経路を通せる**
+([#1306](https://github.com/mokume-metal/mokume/issues/1306) で実測)。
 
 ## 撮る経路は 2 つ
 
@@ -234,11 +240,27 @@ WINDOWS
 
 | 宛先 | 静止画 | 動き | 使えないもの |
 | --- | --- | --- | --- |
-| PR / Issue | PNG | **WebP** | mp4 |
+| PR / Issue (本線 = Gyazo) | PNG | **WebP** | mp4 |
+| PR / Issue (退避路 = GitHub) | PNG | **GIF** | **WebP** / (mp4 は小さいものだけ) |
 | 参照の面 | PNG | **GIF** | WebP / mp4 |
 
-PR / Issue で WebP を使うのは、同じ絵で GIF より小さく、色数が多くても劣化しないため。
+PR / Issue へ Gyazo 経由で出すとき WebP を使うのは、同じ絵で GIF より小さく、色数が多くても劣化しないため。
 **参照の面は WebP を警告も出さずに落とす**ので、そちらへ出すものだけ GIF にする。
+
+**退避路だけ動きの形式が違うのは、GitHub が WebP を添付形式として受け付けないため**である。
+受け付けるのは `.png` `.gif` `.jpg` `.jpeg` `.svg` `.mp4` `.mov` `.webm` で、WebP はこの一覧に無い。
+
+**その中で GIF を選ぶのは、運べる経路が paste しか無いからである。** 退避路の入口は paste と drop の
+2 つだが、**paste が受け取るのは画像だけで、動画は落ちる** — mp4 をクリップボードから貼っても入力欄は
+空のまま、エラーも出ない ([#1306](https://github.com/mokume-metal/mokume/issues/1306) で実測。同じ手で
+GIF は通るので、形式の違いである)。
+
+**mp4 は drop でしか通らず、そちらは小さいものに限られる。** drop はバイト列を道具の引数へ載せて
+運ぶ必要があるので、証跡として現実的な大きさ (数百 KB 〜 数 MB) は通らない。通ったときは GitHub が
+**裸の URL を 1 行で**挿入し、動画プレイヤーで描く (`![]()` では囲まない)。
+
+> **退避路は `img2webp` を要らなくする。** 本線の WebP は libwebp (`brew install webp`) に依存するが、
+> 退避路の GIF は ffmpeg だけで組める。
 
 > **落ち方が「無言」である**ことを実測で確かめてある ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
 > の「測ったこと」)。WebP を指した参照は本文から丸ごと消え、周りの文だけが残る — ビルドは緑・警告も
@@ -253,10 +275,10 @@ PR / Issue で WebP を使うのは、同じ絵で GIF より小さく、色数�
 # 録画から連番へ (B のみ・幅 720 / 15fps が目安)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos" frames/f.%04d.png
 
-# PR / Issue へ出す — WebP (B は録画なので等間隔でよい。既定が可逆で 1 ビットも劣化しない)
+# PR / Issue へ本線 (Gyazo) で出す — WebP (B は録画なので等間隔でよい。既定が可逆で 1 ビットも劣化しない)
 img2webp -loop 0 -d 67 frames/f.*.png -o motion.webp
 
-# 参照の面へ出す — GIF (パレットを作ってから通す)
+# 参照の面へ出す — GIF (パレットを作ってから通す。**退避路へ出すときもこれ**)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos,palettegen" palette.png
 ffmpeg -y -i motion.mov -i palette.png \
   -lavfi "fps=15,scale=720:-1:flags=lanczos,paletteuse" -loop 0 motion.gif
@@ -271,8 +293,8 @@ ffmpeg -y -i motion.mov -i palette.png \
 4 階調以上ずれ、フレームを追うごとに悪化した)。証跡は「元の絵に無いものが足されていないこと」に
 価値がある。
 
-**4MB を目安に収める。** GitHub は貼られた画像を camo 経由で出すので、詰まるのは Gyazo (40MB) では
-なく必ずこちらである。5,242,880 バイトを超えると `Content length exceeded` で 404 になり、**その手前でも
+**本線 (Gyazo) は 4MB を目安に収める。** GitHub は**外から来た画像を** camo 経由で出すので、詰まるのは
+Gyazo (40MB) ではなく必ずこちらである。5,242,880 バイトを超えると `Content length exceeded` で 404 になり、**その手前でも
 大きいと途中で切られる** — 4.6MB のものが 3.4MB で打ち切られ、それが `x-cache: HIT` のまま
 `max-age=31536000` (1 年) で焼き付いた ([#369](https://github.com/mokume-metal/mokume/issues/369) で実測)。
 壊れた側を引くかはエッジ次第なので、**貼った本人には正しく見えることがある**。実測では 3.7MB は 8 回とも
@@ -287,6 +309,11 @@ img2webp -loop 0 -near_lossless 40 -d 67 frames/f.*.png -o motion.webp   # 最�
 
 それでも収まらないなら**短くする / 小さくする**。`-mixed` へ戻る段は作らない — 情報が減るのと、
 元に無いものが足されるのは別である。
+
+**退避路 (GitHub) は camo を通らない。** `github.com/user-attachments/…` は GitHub 自身の面なので、
+markdown は素の `<img src>` のまま出す ([#1306](https://github.com/mokume-metal/mokume/issues/1306) で実測)。
+したがって上の 4MB の目安も、途中で切られる壊れ方も**こちらには無い**。代わりに効くのは GitHub の
+受け入れ上限で、**画像と GIF が 10MB・動画が 10MB (有料プランのリポジトリは 100MB)・その他が 25MB** である。
 
 **A は `-d` を採った間隔から 1 枚ずつ決める** (`-d` はファイルごとに効く)。等間隔で束ねてはいけない理由は
 経路 A の注意書きのとおり。
@@ -306,6 +333,10 @@ BUNDLE
 ```
 
 ## 上げる
+
+**本線は Gyazo、落ちていれば GitHub へ退避する。** 判定は下の「落ちているかを見分ける」が持つ。
+
+### 本線 — Gyazo へ上げる
 
 トークンは **`MOKUME_GYAZO_TOKEN_CMD`** に「トークンを標準出力に出すコマンド」を渡して読む。
 App の秘密鍵 (AGENTS.md 「エージェントの identity」) と同じ流儀で、**値も在処もリポジトリに書かない**。
@@ -337,6 +368,70 @@ frame 128 (2.13s) / 800x600 / 59.9fps
 
 `metadata_is_public=true` で**公開される**ので、載せるのはリポジトリ相対パス・SHA・版に限る。
 手元の絶対パスやマシン名は入れない。
+
+### 落ちているかを見分ける
+
+**upload が通っても、URL が読めるとは限らない。** 返った URL を必ず引いて確かめる:
+
+```bash
+curl -sI "$GYAZO_URL" -o /dev/null -w '%{http_code}\n'   # 200 でなければ退避路へ
+```
+
+**200 でなければ、指示を待たずに退避路へ落ちる。** upload 自体が失敗したときも同じ。
+
+この 1 手を置くのは、[#1294](https://github.com/mokume-metal/mokume/issues/1294) が
+**「貼ったつもりで死んでいる」**形で現れたからである — 上げた側は成功しており、気付けるのは
+引いてみたときだけだった。
+
+### 退避路 — GitHub へ直接上げる
+
+GitHub には添付の API が無い。REST にも GraphQL にも口が無く、入力欄も `input[type=file]` を
+DOM に持たない — **入口は paste と drop の 2 つだけ**である。したがってこの経路は
+**ブラウザを操作できるセッションでしか通らない** (「前提」節)。
+
+手順は 6 手:
+
+```bash
+# 1. ファイル参照としてクリップボードへ載せる (PNG / GIF。動画は paste では落ちる)
+osascript -e 'set the clipboard to POSIX file "<絶対パス>"'
+```
+
+> **`as «class PNGf»` の形で載せてはいけない。** ビットマップとして載せると**動きが静止画 1 枚に潰れる**。
+> ファイル参照 (`«class furl»`) なら形式をそのまま運べ、**上がったものは元のファイルとバイト単位で一致する**
+> ([#1306](https://github.com/mokume-metal/mokume/issues/1306) で、2 フレームの GIF がフレーム数もループ指定も
+> 保ったまま完全一致することを確かめた)。
+
+2. ブラウザで**貼り付け先の** Issue / PR のコメント欄を開き、focus して `cmd+v` を送る
+3. 挿入された 1 行をそのまま取り出す — `<img width="…" height="…" alt="Image" src="https://github.com/user-attachments/assets/<uuid>" />`
+4. **その URL を含むコメントを投稿する** (下記。PR 本文へ載せたいときも、先にこれを打つ)
+5. 投稿後に `curl -sI` で 200 を確かめる
+6. **ブラウザの下書きを破棄してタブを閉じる** (投稿はラッパー経由で行うので、欄に残った本文は捨てる)
+
+> **URL だけ先に取っておくことはできない。** 貼った時点では公開されず、無認証で引くと **404** が返る
+> (上げた本人のセッションからだけ読める)。**公開になるのは、その URL が新しく投稿されたコメントに
+> 現れたとき**である。取った URL は、投稿して初めて生きる。
+
+```bash
+bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
+```
+
+> **PR 本文へ載せたいときも、先にコメントで投稿する。** `gh pr edit --body` で本文へ URL を書いても
+> **公開されない** — 本文の編集は「新しい投稿」に数えられず、404 のままである
+> ([#1306](https://github.com/mokume-metal/mokume/issues/1306) で実測。同じ URL をコメントとして投稿した
+> 途端に 200 になった)。**`drawing-evidence` が読むのは PR 本文**なので、描画 PR ではこの順を守る:
+>
+> 1. コメント欄へ貼って URL を得る
+> 2. **その URL を含むコメントを投稿する** (`scripts/comment.sh`) — ここで公開される
+> 3. 同じ URL を PR 本文へ書く (`gh pr create --body-file` / `gh pr edit --body-file`。発言ではないのでラッパーは通さない)
+
+**無人セッション (`MOKUME_UNATTENDED=1`) ではこの経路は使えない。** ブラウザを操作できないためである。
+Gyazo も落ちていて証跡を残せないときは、**そのことを PR 本文に書いて Draft に落とし、有人のセッションへ返す** —
+絵の無い描画 PR は `drawing-evidence` が赤で差し戻すので、黙って進めても merge できない。
+
+**退避路が効くのは PR / Issue の一回限りの証跡までで、参照の面 (`make example-shots`) には使わない。**
+あちらは「同じ中身の絵には同じ URL が返る」という Gyazo の冪等性を借りており、**撮り直して URL が
+変わったかがそのまま絵が変わったかの判定**になっている ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
+決定 2)。GitHub の添付は同じ絵でも毎回別の URL を返すので、この判定が成り立たない。
 
 ## 貼る
 
@@ -371,7 +466,7 @@ before / after は表で並べ、**幅を宣言する**。
 **動きには撮影範囲と意図をテキストで添える。** フレームを人が後から検める代わりの記録なので、
 何を撮ったか (A なら観測したスケッチと条件・B ならどの窓)・どの操作の何秒間か・どこを見てほしいかを書く。
 
-**貼ったら camo 側を検算する。** 上のとおり camo は大きいものを途中で切ることがあり、切れた側が
+**本線 (Gyazo) で貼ったら camo 側を検算する。** 上のとおり camo は大きいものを途中で切ることがあり、切れた側が
 キャッシュに焼かれる。**Gyazo の URL を直接叩いても気付けない** (あちらは無事なので) ので、貼った本文から
 camo URL を取り、何度か叩いて**原本と同じ長さが返るか**を見る:
 
@@ -389,6 +484,11 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
 **貼った直後は camo URL が取れない。** `body_html` は少しの間 camo 化前を返すので、すぐ叩くと
 「camo URL が 1 つも無い」で素通りしてしまう ([#374](https://github.com/mokume-metal/mokume/issues/374)
 で実測。20 秒ほどで書き換わった)。**取れた URL の数が貼った絵の数と合っているか**を先に見る。
+
+**退避路 (GitHub) で貼ったものに、この検算は要らない。** `github.com/user-attachments/…` は camo を
+通らないので切られる余地が無い ([#1306](https://github.com/mokume-metal/mokume/issues/1306) で実測)。
+代わりに見るのは 1 つだけ — **投稿した後に URL が 200 を返すか**である (投稿前は 404 のままなので、
+確かめるのは必ず投稿の後)。
 
 ## 守ること
 
@@ -409,7 +509,7 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
 - **`desc` が自分にしか見えない** — `metadata_is_public=true` が要る。付けないと第三者からは読めない
 - **`desc` を間違えた** — 後からは直せない。消して上げ直すことになり、URL が変わって貼った先が壊れる。
   貼る前に読み返す
-- **写り込みに後から気付いた / 消したい**
+- **写り込みに後から気付いた / 消したい (本線)**
 
   ```bash
   GYAZO_TOKEN="$(eval "$MOKUME_GYAZO_TOKEN_CMD")" && curl -s -X DELETE \
@@ -417,9 +517,22 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
   ```
 
   permalink が 404 になる。**貼った先の画像も消えるので、貼り直しまで面倒を見る**
-- **mp4 を貼りたい** — 経路が無い。アップロード API が受け付けず、埋め込んでも展開されない。参照の面を
-  作る道具の側は `@Video` で mp4 を扱える (実測) が、**置き場が無いので使えない**。動きは
-  WebP (PR / Issue) か GIF (参照の面) にする
+- **写り込みに後から気付いた (退避路)** — **こちらには消す口が無い。** 本文から URL を外しても
+  添付そのものは残り、URL を知っていれば引ける。**だから退避路では「送る前に確かめる」が唯一の防壁**である
+  (「守ること」節)。それでも出してしまったら、リポジトリの外に出た秘密として人に報告する
+- **mp4 を貼りたい** — **本線 (Gyazo) には経路が無い** (アップロード API が受け付けず、埋め込んでも
+  展開されない)。**退避路でも paste では落ちる** — 入力欄が空のままで、エラーも出ない。通るのは drop
+  だけで、そちらはバイト列を道具の引数へ載せるので**小さいものに限る**。動きは GIF にする。
+  参照の面を作る道具の側は `@Video` で mp4 を扱える (実測) が、**置き場が無いので使えない**
+- **退避路で上げた絵が 404 のまま** — **その URL を含むコメントをまだ投稿していない**。貼った時点では
+  公開されず、上げた本人のセッションからしか読めない。**PR 本文へ書いただけでも公開されない** —
+  コメントとして投稿してから引き直す
+- **退避路で貼った動きが 1 枚の静止画になっている** — クリップボードへ `as «class PNGf»` で載せている。
+  **ファイル参照** (`set the clipboard to POSIX file "<絶対パス>"`) で載せ直す
+- **退避路で貼っても入力欄が空のまま (エラーも出ない)** — 動画を paste しようとしている。GIF へ束ね直す
+- **退避路で WebP が受け付けられない** — GitHub は WebP を添付形式に持たない。mp4 (既定) か GIF で束ね直す
+- **ブラウザが繋がらない** — 退避路はブラウザを操作できるセッションでしか通らない。Gyazo も
+  落ちているなら証跡は残せないので、**PR にそう書いて Draft に落とし、有人のセッションへ返す**
 - **貼った絵が表示されない / 途中までしか動かない** — camo で詰まっている。5MB 超なら 404
   (`Content length exceeded`)、その手前なら途中切断が焼き付いている。**Gyazo 側は生きているので、URL を
   直接叩くと取れてしまい気付きにくい** — 「貼る」節の検算で camo 側の長さを見る。直すには小さくして
@@ -441,6 +554,15 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
   developer ページで出せる 1 本でよい
 
 ## 前提
+
+本線と退避路で要るものが違う。**退避路は秘密を 1 つも要らない代わりに、有人のセッションを要求する。**
+
+| | 本線 (Gyazo) | 退避路 (GitHub) |
+| --- | --- | --- |
+| 束ねる道具 | `img2webp` (`brew install webp`) と `ffmpeg` | `ffmpeg` だけ |
+| 秘密 | `MOKUME_GYAZO_TOKEN_CMD` | 要らない |
+| セッション | 無人でも通る | **ブラウザを操作できる有人のセッション**・GitHub にサインイン済み |
+| その他 | — | macOS の `osascript` (クリップボードへファイル参照を載せる) |
 
 - `img2webp` (`brew install webp`) と `ffmpeg`
 - **Gyazo のアクセストークン。** https://gyazo.com/oauth/applications でアプリを登録すると出せる
