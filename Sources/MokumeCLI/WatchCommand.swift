@@ -92,6 +92,9 @@ enum WatchCommand {
             say(line)
             viewer?.preview.report(line, spinning: true)
         }
+        // **長く待つ間を無言にしない。** 終えるときは撮っていた動画を閉じ終えるまで待つので
+        // (#1219)、黙っていると固まったと読まれる
+        session.willWaitForFinish = { say(finishWaitLine(remaining: $0)) }
 
         // **窓口が使う区画は、窓より先に置く。** 窓が出せるかどうかと関係が無いうえ、
         // 置き損ねると道具ごとに 1 回ずつ起動し直させることになる (#464)
@@ -489,7 +492,7 @@ enum WatchCommand {
         // **作り直しを先に止める。** 見張りは作り直しを待たずに終われるので、止めないと
         // `swift build` が残って `.build` の鍵を握り、起こし直した見張りを待たせる (#1147)
         if let line = stoppedRebuildLine(session.stopRebuilding()) { say(line) }
-        switch session.stop() {
+        switch session.end() {
         case .notRunning: say("Stopped watching")
         case .terminated: say("Stopped watching (the running sketch was stopped)")
         case .killed: say("Stopped watching (a sketch that would not stop was killed)")
@@ -551,6 +554,16 @@ enum WatchCommand {
     /// 掛かったことは保存のたびにも起こりうる
     /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。
     static let killedLine = "Killed a sketch that would not stop (it does not answer SIGTERM)"
+
+    /// 終えるときに、子が閉じ終えるのを待っていると名乗る行
+    /// ([#1219](https://github.com/mokume-metal/mokume/issues/1219))。
+    ///
+    /// **何を待っているかと、いつまで待つかを言う。** 待っているのは後始末 (撮っていた動画を
+    /// 閉じる) で、越えたら強制終了する — 押した人がもう一度押すべきかを読めるように。
+    static func finishWaitLine(remaining: TimeInterval) -> String {
+        "Waiting for the sketch to finish writing (up to \(Int(remaining.rounded(.up))) more seconds, "
+            + "then it is killed)"
+    }
 
     /// 走らせていたスケッチが、誰も頼んでいないのに消えたことを名乗る行。
     ///
