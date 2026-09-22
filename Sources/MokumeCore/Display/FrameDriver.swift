@@ -7,6 +7,9 @@ import IOKit.pwr_mgt
 ///
 /// **判断だけをここに置く。** 実際に駆動源を回すのは ``ScreenDisplayLink`` で、窓を出す
 /// 2 つの経路 (``SketchApplication`` と ``SharedFrameStage``) はどちらもそれを使う。
+/// **予備の駆動源もあちらが 1 つだけ持つ** — 引き受けたら続ける側と、表示が戻ったら
+/// 下りる側は対で成り立つので、写しにすると片方を書き落とした経路だけが二重に回る
+/// ([#1279](https://github.com/mokume-metal/mokume/issues/1279))。
 /// 純関数にしてあるのは **GPU 無しで検査できる**ようにするためで、
 /// ``FramePresenter/shouldPresent(windowIsVisible:hasPresented:)`` と同じ形である。
 ///
@@ -56,6 +59,14 @@ enum FrameDriver {
     static func fallbackInterval(frameRate: Int) -> Double {
         1 / Double(max(1, frameRate))
     }
+
+    /// 求める速さを据えていない駆動源で、予備が使う速さ (Hz)。
+    ///
+    /// 速さを据えないのは**絵を作っていない側** (別のプロセスの絵を出す台) だけで、
+    /// そこは画面のリフレッシュに任せている (``ScreenDisplayLink/frameRate``)。画面が
+    /// 眠っている間は任せる先が無いので、予備はこの値で回る — 差し出し元より速く回っても
+    /// 出す枚数は増えないので、**画面のいちばん普通の速さ**を取る。
+    static let unspecifiedFrameRate = 60
 }
 
 /// ディスプレイが勝手に消えるのを断る。
@@ -66,8 +77,10 @@ enum FrameDriver {
 /// から届く入力は活動として数えられない**。人が作品の前で手をかざしていても、
 /// キーボードを触らなければ画面は消える。
 ///
-/// **窓を出しているときだけ取る。** 書き出しや観測だけの実行 (窓を持たない) は画面を
-/// 使わないので、断る理由が無い。
+/// **画面に絵が出る実行で取る。** 自分で窓を出す実行だけでなく、外のプロセスの窓へ
+/// 差し出す実行 (``SketchApplication`` の共有面の出口) も取る — 窓を持っているのが
+/// 見張りの道具というだけで、消えて困るのは同じ画面である。断らないのは書き出しや
+/// 観測だけの実行で、そこは ``SketchApplication`` を通らない。
 @MainActor
 final class DisplaySleepBlock {
     private var assertion: IOPMAssertionID = 0
