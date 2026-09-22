@@ -200,8 +200,15 @@ public final class Canvas {
         var strokeWeight: Float
         var strokeCap: StrokeCap
         var strokeJoin: StrokeJoin
-        /// 塗りに貼る絵があるか。読み取り位置が寸法から決まるので鍵に入る。
-        var textured: Bool
+        /// 塗りに貼る絵の面。**どの絵かまで鍵に入る。** 読み取り位置が寸法から決まる
+        /// うえ、面そのものが列を分けるためである。有無しか持たないと、雛形を開いた
+        /// 後に絵を差し替えても畳み続けて、2 枚目以降が前の絵で描かれる ([#1298])。
+        ///
+        /// 貼る絵は**塗りにしか効かない**ので、塗りを持たない図形はここが常に `nil` で、
+        /// 絵を差し替えても列は割れない。
+        ///
+        /// [#1298]: https://github.com/mokume-metal/mokume/issues/1298
+        var texture: HeldTexture?
     }
 
     /// 畳める図形の形。
