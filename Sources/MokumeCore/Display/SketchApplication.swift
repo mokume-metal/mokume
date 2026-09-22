@@ -3,7 +3,6 @@
 
 import AppKit
 import MokumeDiagnostics
-import QuartzCore
 
 /// スケッチをアプリケーションとして走らせる。
 ///
@@ -196,12 +195,6 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。断ったまま測ると
     /// 「スリープを作れなかったのに緑」という嘘が出る。
     public var blocksDisplaySleep = true
-    /// 予備の駆動源。表示のリフレッシュが止まっても進め続けるために回す。
-    private var fallbackTimer: Timer?
-    /// 最後にフレームを進めた時刻。**どちらの駆動源が進めたかは問わない。**
-    private var lastAdvancedAt: Double = 0
-    /// 予備の駆動源が引き受けている最中か。表示のリフレッシュが戻れば下りる。
-    private var isDrivenByFallback = false
 
     /// 速さを名乗る仕掛け。名乗りが与えられたときだけ持つ。
     private var frameRateNotice: Timer?
@@ -287,8 +280,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             displaySleepBlock = DisplaySleepBlock(reason: "keeping the sketch on screen")
         }
         // **断りは保証ではない。** 外部ディスプレイの電源を切る・蓋を閉じるといった
-        // 経路は断れないので、止まったときに拾う側も併せて持つ
-        startFallbackDriver()
+        // 経路は断れないので、止まったときに拾う側も要る — そちらは駆動源
+        // (`ScreenDisplayLink`) が持っており、繋いだ時点で回り始める
         // **与えられたときだけ仕掛ける。** 与えられなければ何も足さないので、窓口から
         // 立てたスケッチの出力は 1 バイトも変わらない ([ADR-0029] 決定 5 の 2 番目)
         if FrameRateNotice.announces(
@@ -513,8 +506,6 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // `terminate(_:)` が重なったとき) だけで、ここが最後の砦である
         runtime.closePlugins()
         screenLink.invalidate()
-        fallbackTimer?.invalidate()
-        fallbackTimer = nil
         // **返し忘れると、プロセスが終わるまで画面が消えなくなる**
         displaySleepBlock?.release()
         displaySleepBlock = nil
@@ -531,45 +522,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
     func displayLinkFired() {
-        // **表示のリフレッシュが生きている。** 予備が引き受けていたなら、ここで下りる
-        isDrivenByFallback = false
         advanceAndPresent()
     }
 
-    /// 予備の駆動源を回し始める。
+    /// 1 フレーム進めて差し出す。
     ///
-    /// **表示のリフレッシュが生きている間は空振りするだけ**なので、目標フレーム間隔で
-    /// 細かく回してよい。止まっている間はこの間隔がそのままフレームレートになる。
-    ///
-    /// `.common` へ載せるのは、メニューを開いている間も回すためである — 名乗りの
-    /// メニューを開いたまま画面が消えることは普通に起きる。
-    private func startFallbackDriver() {
-        let rate = max(1, runtime.sketch.settings.frameRate)
-        let timer = Timer(
-            timeInterval: FrameDriver.fallbackInterval(frameRate: rate), repeats: true
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.fallbackTick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        fallbackTimer = timer
-    }
-
-    /// 予備の駆動源から 1 回。**止まっていなければ何もしない。**
-    private func fallbackTick() {
-        let rate = max(1, runtime.sketch.settings.frameRate)
-        guard
-            FrameDriver.shouldAdvanceFromFallback(
-                now: CACurrentMediaTime(), lastAdvancedAt: lastAdvancedAt,
-                stallThreshold: FrameDriver.stallThreshold(frameRate: rate),
-                isAlreadyDriving: isDrivenByFallback)
-        else { return }
-        isDrivenByFallback = true
-        advanceAndPresent()
-    }
-
-    /// 1 フレーム進めて差し出す。**どちらの駆動源から来ても、通る道は同じ。**
+    /// **予備の駆動源から来た回もここを通る。** 表示のリフレッシュが止まっている間
+    /// (画面が眠っている間) に叩くのは駆動源の側の仕事で、こちらからは区別しない
+    /// (``ScreenDisplayLink``)。
     private func advanceAndPresent() {
-        lastAdvancedAt = CACurrentMediaTime()
         do {
             try runtime.advance()
             try presentFrame()
