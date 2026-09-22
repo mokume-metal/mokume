@@ -139,5 +139,55 @@ class ProbeTest(unittest.TestCase):
         self.assertIsNotNone(reason)
 
 
+class ReportTest(unittest.TestCase):
+    """引けなかったときの報せ方 (#1333)。
+
+    **ホストごとの内訳を、1 本ずつの一覧より先に出す。** 起票は検査の出力を先頭 200 行で
+    切るので (`scripts/report-check-failure.sh`)、後ろに置いた要約は Issue の本文に載らない
+    — 「1 本か、全部か」は起票の「対処」が最初に問うことである。ここは**引かずに**組み立て
+    だけを見る (このファイルの冒頭のとおり、単体の検査は外へ出さない)。
+    """
+
+    ORIGINS = {
+        "https://i.example.test/a.png": ["A.swift:1"],
+        "https://i.example.test/b.png": ["A.swift:2"],
+        "https://cdn.example.test/c.png": ["B.md:3"],
+        "https://cdn.example.test/d.png": ["B.md:4"],
+    }
+
+    def report(self, *dead):
+        return "\n".join(
+            assets.dead_report(
+                self.ORIGINS, [(url, "HTTP 404", self.ORIGINS[url]) for url in dead]
+            )
+        )
+
+    def test_全滅したホストは全滅と名乗る(self):
+        text = self.report("https://i.example.test/a.png", "https://i.example.test/b.png")
+        self.assertIn("i.example.test: 指し先 2 本のうち 2 本 — 全滅", text)
+
+    def test_一部だけ引けないホストは全滅と名乗らない(self):
+        text = self.report("https://cdn.example.test/c.png")
+        self.assertIn("cdn.example.test: 指し先 2 本のうち 1 本", text)
+        self.assertNotIn("全滅", text)
+
+    def test_全滅があれば撮り直す前に確かめよと言う(self):
+        text = self.report("https://i.example.test/a.png", "https://i.example.test/b.png")
+        self.assertIn("撮り直す前に", text)
+        self.assertIn("#1331", text)
+
+    def test_全滅が無ければその断りは付かない(self):
+        self.assertNotIn("撮り直す前に", self.report("https://cdn.example.test/c.png"))
+
+    def test_内訳は_1_本ずつの一覧より先に来る(self):
+        text = self.report("https://i.example.test/a.png", "https://i.example.test/b.png")
+        self.assertLess(text.index("i.example.test: 指し先"), text.index("A.swift:1"))
+
+    def test_出所は_1_本ずつの一覧に残る(self):
+        text = self.report("https://i.example.test/a.png")
+        self.assertIn("https://i.example.test/a.png — HTTP 404", text)
+        self.assertIn("A.swift:1", text)
+
+
 if __name__ == "__main__":
     unittest.main()

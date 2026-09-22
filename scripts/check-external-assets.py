@@ -38,6 +38,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -166,6 +167,71 @@ def probe(url: str) -> str | None:
         return str(error)
 
 
+def host_of(url: str) -> str:
+    """指し先のホスト。取れなければ URL をそのまま名乗る (黙って束ねない)。"""
+    return urllib.parse.urlsplit(url).hostname or url
+
+
+def dead_report(
+    origins: dict[str, list[str]], dead: list[tuple[str, str, list[str]]]
+) -> list[str]:
+    """引けなかったときに出す行 (#1333)。
+
+    **ホストごとの内訳を、1 本ずつの一覧より先に置く。** 日次の起票
+    (`report-dead-assets.sh` → `report-check-failure.sh`) は検査の出力を**先頭 200 行で
+    切る**ので、一覧の後ろに置いた要約は Issue の本文に載らない。起票の「対処」が最初に
+    問うのは「1 本か、全部か」— 個別の消失と、置き場の側で起きた事象では手が違う — なので、
+    その材料を切られない位置に置く。
+
+    [#1294](https://github.com/mokume-metal/mokume/issues/1294) は材料が本文に無いまま
+    「アカウント側で起きた事象に見える」と診断し、実際には置き場のサービス全体が止まって
+    いた。同じ切り分けを [#1331](https://github.com/mokume-metal/mokume/issues/1331) で
+    もう一度やり直している。
+
+    **ホストが生きているかを引きに行くことはしない。** 根が 404 を返す配信は健全なときにも
+    あるので、判定に混ぜると揺れる。**本数の内訳だけで「1 本か、全部か」には答えられる。**
+    """
+    total: dict[str, int] = {}
+    for url in origins:
+        total[host_of(url)] = total.get(host_of(url), 0) + 1
+
+    failed: dict[str, int] = {}
+    for url, _reason, _where in dead:
+        failed[host_of(url)] = failed.get(host_of(url), 0) + 1
+
+    lines = ["外に置いた資産が引けない (ホストごとの内訳):"]
+    wiped = False
+    for host in sorted(failed):
+        # 指し先が 1 本しかないホストは「全滅」と名乗らない。それは個別の消失であって、
+        # 置き場の側で起きた事象ではない (名乗ると、手の違う 2 つが同じ顔になる)
+        whole = failed[host] == total[host] and total[host] > 1
+        wiped = wiped or whole
+        lines.append(
+            f"  {host}: 指し先 {total[host]} 本のうち {failed[host]} 本"
+            + (" — 全滅" if whole else "")
+        )
+
+    if wiped:
+        lines += [
+            "",
+            "全滅しているホストがある。**撮り直す前に、置き場そのものの死活と告知を確かめる** —",
+            "配信が止まっているだけなら絵は消えておらず、撮り直しても上げ先が無い",
+            "(#1331 が実例: 置き場が不正アクセスを受けて配信を止めていた)。",
+        ]
+
+    lines += ["", "引けなかった指し先と出所:"]
+    for url, reason, where in dead:
+        lines.append(f"  {url} — {reason}")
+        lines += [f"    {origin}" for origin in where]
+
+    lines += [
+        "",
+        "撮り直しの手順は .claude/skills/visual-evidence/ が持つ。"
+        "撮り直したら、指している行の URL を差し替える (ADR-0027 決定 2)。",
+    ]
+    return lines
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -210,16 +276,8 @@ def main() -> int:
         dead.append((url, reason, where))
 
     if dead:
-        print("外に置いた資産が引けない:", file=sys.stderr)
-        for url, reason, where in dead:
-            print(f"  {url} — {reason}", file=sys.stderr)
-            for origin in where:
-                print(f"    {origin}", file=sys.stderr)
-        print(
-            "\n撮り直しの手順は .claude/skills/visual-evidence/ が持つ。"
-            "撮り直したら、指している行の URL を差し替える (ADR-0027 決定 2)。",
-            file=sys.stderr,
-        )
+        for line in dead_report(origins, dead):
+            print(line, file=sys.stderr)
         return 1
 
     print(f"ok: {len(origins)} 本すべて引けた")
