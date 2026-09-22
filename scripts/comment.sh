@@ -12,6 +12,12 @@
 # 署名を「規約として書いておく」のではなく、ここで機械的に付ける。エージェントが
 # 規約を覚えていることに依存しない (AGENTS.md は読まれない前提で設計する)。
 #
+# 同じ理由で、投稿の直前に**宛先の近況を 1 行で名乗る** (#1327)。読んだ時刻と投稿する
+# 時刻の間が開くと、差し替わった判断の上に書いてしまう — #1291 で踏んだ形は
+# 01:1x に読み → 02:44 にメンテナが判断を差し替え → 02:56 に古い前提のまま投稿 →
+# 03:01 に closed で、投稿した 4 点すべてが間違っていた。順序と誤りの内訳は
+# https://github.com/mokume-metal/mokume/issues/1327 にある。
+#
 # 使い方:
 #   scripts/comment.sh {issue|pr} <番号> (--body TEXT | --body-file FILE) [--dry-run]
 #     --dry-run : gh を呼ばず、最終的なコマンドと本文を stdout に出す
@@ -132,6 +138,63 @@ if [ "$name" = "an AI agent" ]; then
   MOKUME_AGENT_NAME="<エージェント名>" scripts/comment.sh $KIND $NUMBER ...
 EOF
 fi
+
+# --- 宛先の近況 (#1327) -----------------------------------------------------
+# **名乗るだけで止めない。** blocking にすると正常な連投 (プラン → 証跡 → 完了報告) が
+# 毎回止まる。防ぎたいのは*気付けないこと*であって、連投そのものではない。
+# gh が使えない / 認証が無いときは黙って続行する — 署名という本務を、付加的な表示の
+# 失敗で落とさない。追認フラグ (--force) は持たない (止めないので要らない)。
+
+# 宛先を 1 行の TSV (state / 経過秒 / 投稿者 / 見出しの冒頭) へ畳む。
+# **相対時刻も切り詰めも jq 側で行う** — date の GNU / BSD 差 (scripts/stall-watch.sh の
+# epoch_of が抱えている問題) を持ち込まず、bash 3.2 の ${v:0:n} がロケール次第で
+# マルチバイトを割るのも避けられる。
+# 行頭の HTML コメントを飛ばすのは、この経路自身が付けるマーカー行
+# (plan-record の <!-- mokume-plan-record: … -->) を見出しと取り違えないため
+readonly LATEST_COMMENT_JQ='
+  .comments as $c
+  | ($c[-1] // null) as $last
+  | [ .state,
+      (if $last then ((now - ($last.createdAt | fromdateiso8601)) | floor | tostring) else "" end),
+      (if $last then ($last.author.login // "") else "" end),
+      (if $last
+       then ([$last.body | split("\n")[]
+              | select(test("\\S")) | select(test("^\\s*<!--") | not)][0] // "") as $h
+            | (if ($h | length) > 48 then ($h[0:48] + "…") else $h end)
+       else "" end)
+    ] | @tsv'
+
+relative_age() { # $1=経過秒 → 「12 分前」
+  if [ "$1" -lt 60 ]; then printf 'たった今'
+  elif [ "$1" -lt 3600 ]; then printf '%d 分前' "$(($1 / 60))"
+  elif [ "$1" -lt 86400 ]; then printf '%d 時間前' "$(($1 / 3600))"
+  else printf '%d 日前' "$(($1 / 86400))"
+  fi
+}
+
+announce_destination() { # $1=issue|pr $2=番号
+  local line state age login head mark latest
+  line=$(gh "$1" view "$2" -R "$REPO" --json state,comments --jq "$LATEST_COMMENT_JQ" 2>/dev/null) ||
+    return 0
+  [ -n "$line" ] || return 0
+  IFS=$'\t' read -r state age login head <<< "$line" || return 0
+
+  # OPEN 以外は state そのものを添える (closed / merged。条件は「閉じていることも名乗る」)
+  mark=''
+  if [ -n "$state" ] && [ "$state" != OPEN ]; then
+    mark=" ($(printf '%s' "$state" | tr '[:upper:]' '[:lower:]'))"
+  fi
+  if [ -n "$age" ]; then
+    # ${} で括る — 変数名の直後が多バイト文字だと、ロケール次第で bash が
+    # それを名前の一部として読んでしまう (login・ → 「login\xe3 は未定義」で落ちる)
+    latest="最新コメント: ${login}・$(relative_age "$age")・「${head}」"
+  else
+    latest='コメントはまだ無い'
+  fi
+  printf '宛先 %s #%s%s — %s\n' "$1" "$2" "$mark" "$latest" >&2
+}
+
+announce_destination "$KIND" "$NUMBER"
 
 # --- 投稿 -------------------------------------------------------------------
 # 本文は一時ファイル経由で渡す。--body に直接渡すと、長い本文や引用符・バッククォートを
