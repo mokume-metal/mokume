@@ -55,11 +55,23 @@ struct Randomness: Sendable {
     ///
     /// 上下が同じときは落とさない。`upper.nextDown` は範囲の下も割ってしまう。
     ///
+    /// **幅が `Float` で溢れる組だけ、別の式で混ぜる。** 端がどちらも有限でも
+    /// `upper - lower` が `inf` になることがあり (`-greatestFiniteMagnitude` …
+    /// `greatestFiniteMagnitude`)、そのあとの積と和が `±inf` や `nan` になる (#1312)。
+    /// 幅を作らずに両端から直に混ぜれば溢れない — 幅が溢れるのは端が異符号のときだけ
+    /// なので、どちらの積も端より大きくならず、和は間に落ちる。
+    ///
+    /// **有限の幅は今までどおりの式で移す。** 溢れない組まで混ぜる形に替えると丸めが
+    /// 1 回減って多くの値が 1 ulp 動き、代表シーンの台帳が動く。
+    ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     static func scaled(_ unit: Float, from low: Float, to high: Float) -> Float {
         let lower = min(low, high)
         let upper = max(low, high)
         guard lower < upper else { return lower }
-        return min(lower + (upper - lower) * unit, upper.nextDown)
+        let span = upper - lower
+        // `1 - unit` は厳密。unit は 2^-24 刻みなので、Float の仮数に収まる
+        let value = span.isFinite ? lower + span * unit : lower * (1 - unit) + upper * unit
+        return min(value, upper.nextDown)
     }
 }
