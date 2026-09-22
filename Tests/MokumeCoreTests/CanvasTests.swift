@@ -504,6 +504,79 @@ struct CanvasTests {
         _ = try pixels(of: canvas)  // 落ちないことが要件
     }
 
+    @Test(
+        "有限でない切り抜きは、落とさずに 1 度だけ知らせる (#1302)",
+        arguments: [
+            (Float.nan, Float(0), Float(32), Float(32)),
+            (Float(0), Float.nan, Float(32), Float(32)),
+            (Float(0), Float(0), Float.infinity, Float(32)),
+            (Float(0), Float(0), Float(32), -Float.infinity),
+        ])
+    func nonFiniteClipsAreRefused(_ box: (Float, Float, Float, Float)) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.clip(box.0, box.1, box.2, box.3)
+            canvas.rect(0, 0, 64, 64)
+        }
+        #expect(canvas.warnings.hasWarned(.badClip))
+        #expect(canvas.warnings.message(for: .badClip)?.hasPrefix("clip()") == true)
+        // 切り抜きは書き換わっていない。面の全体へ描けたままである
+        #expect(try pixels(of: canvas)[56, 56].red == 255)
+    }
+
+    /// 並びは (x, y, 幅, 高さ, 収めた先が面を覆うか)。**有限なので知らせる事情ではなく、
+    /// 収める側**である。
+    @Test(
+        "`Int` に収まらない大きさの切り抜きは、落ちずに面の内側へ収まる (#1302)",
+        arguments: [
+            (Float(0), Float(0), Float.greatestFiniteMagnitude, Float.greatestFiniteMagnitude, true),
+            (
+                Float(-1e38), Float(-1e38), Float.greatestFiniteMagnitude,
+                Float.greatestFiniteMagnitude, true
+            ),
+            // 右下の端が原点まで戻ってくるので、面には 1 画素も残らない
+            (
+                -Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude,
+                Float.greatestFiniteMagnitude, Float.greatestFiniteMagnitude, false
+            ),
+            // 面の先から始まる
+            (
+                Float.greatestFiniteMagnitude, Float.greatestFiniteMagnitude, Float(16), Float(16),
+                false
+            ),
+        ])
+    func hugeClipsAreClamped(_ box: (Float, Float, Float, Float, Bool)) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.clip(box.0, box.1, box.2, box.3)
+            canvas.rect(0, 0, 64, 64)
+        }
+        #expect(!canvas.warnings.hasWarned(.badClip))
+        #expect(try pixels(of: canvas)[56, 56].red == (box.4 ? 255 : 0))
+    }
+
+    @Test("指定が有限でも、読み方を解く算術が溢れたら収める (#1302)")
+    func clipsThatOverflowWhileResolvingAreClamped() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            // 半径の読み方は幅を 2 倍するので、有限の指定のまま +∞ へ溢れる
+            canvas.rectMode(.radius)
+            canvas.clip(32, 32, Float.greatestFiniteMagnitude, Float.greatestFiniteMagnitude)
+            canvas.rect(0, 0, 64, 64)
+        }
+        #expect(!canvas.warnings.hasWarned(.badClip))
+        #expect(try pixels(of: canvas)[56, 56].red == 255)
+    }
+
     @Test("切り抜きを変えても、その前に置いた図形は影響を受けない")
     func changingTheClipClosesTheRunSoFar() throws {
         let canvas = try makeCanvas()

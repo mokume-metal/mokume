@@ -40,20 +40,39 @@ extension Canvas {
     // 受け取ると検証で落ちるためである。指定をそのまま渡さない。
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        // 数でない値・無限は、収めた先が決まらない。切り抜きを触らずに返す
+        // (ADR-0020 決定 5 の「安全な既定へ倒す」・他の入口と同じ倒し方)
+        guard a.isFinite, b.isFinite, c.isFinite, d.isFinite else { return warnBadClipOnce() }
         let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
-        let left = min(max(0, Int(box.x)), Int(width))
-        let top = min(max(0, Int(box.y)), Int(height))
-        let right = min(max(left, Int(box.x + box.width)), Int(width))
-        let bottom = min(max(top, Int(box.y + box.height)), Int(height))
+        // **`Float` のまま収めてから `Int` にする。** `Int(_:Float)` は面より桁違いに
+        // 大きい値でトラップするので、変換を先に置くと `min`/`max` は守りにならない
+        // ([#1302])。入力が有限でも、読み方を解く算術 (`c * 2`) は ±∞ へ溢れうる
+        //
+        // [#1302]: https://github.com/mokume-metal/mokume/issues/1302
+        let left = min(max(0, box.x), width)
+        let top = min(max(0, box.y), height)
+        let right = min(max(left, box.x + box.width), width)
+        let bottom = min(max(top, box.y + box.height), height)
         closeBatch()
         style.clip = MTLScissorRect(
-            x: left, y: top, width: right - left, height: bottom - top)
+            x: Int(left), y: Int(top),
+            width: Int(right) - Int(left), height: Int(bottom) - Int(top))
     }
 
     public func noClip() {
         guard style.clip != nil else { return }
         closeBatch()
         style.clip = nil
+    }
+
+    /// 収めようのない切り抜きを、初回だけ知らせる。
+    ///
+    /// 毎フレーム起きうるので繰り返さない (``Diagnostics/warn(_:)`` の但し書き)。
+    private func warnBadClipOnce() {
+        warnOnce(
+            .badClip,
+            "clip(): got a coordinate that is not a number, or an infinite one, so the clip was "
+                + "left as it was")
     }
 
     /// 描くものを、下にある絵とどう混ぜるか。
