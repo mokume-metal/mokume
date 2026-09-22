@@ -241,26 +241,23 @@ WINDOWS
 | 宛先 | 静止画 | 動き | 使えないもの |
 | --- | --- | --- | --- |
 | PR / Issue (本線 = Gyazo) | PNG | **WebP** | mp4 |
-| PR / Issue (退避路 = GitHub) | PNG | **GIF** | **WebP** / (mp4 は小さいものだけ) |
+| PR / Issue (退避路 = GitHub) | PNG | **WebP** | — (mp4 も通る) |
 | 参照の面 | PNG | **GIF** | WebP / mp4 |
 
-PR / Issue へ Gyazo 経由で出すとき WebP を使うのは、同じ絵で GIF より小さく、色数が多くても劣化しないため。
+PR / Issue へ WebP を使うのは、同じ絵で GIF より小さく、色数が多くても劣化しないため。
 **参照の面は WebP を警告も出さずに落とす**ので、そちらへ出すものだけ GIF にする。
 
-**退避路だけ動きの形式が違うのは、GitHub が WebP を添付形式として受け付けないため**である。
-受け付けるのは `.png` `.gif` `.jpg` `.jpeg` `.svg` `.mp4` `.mov` `.webm` で、WebP はこの一覧に無い。
+**上げ先が本線でも退避路でも、動きの形式は同じ WebP でよい** (2026-09-22 実測・
+[#1332](https://github.com/mokume-metal/mokume/issues/1332))。退避路の入力欄が名乗る `accept` には
+`.webp` も `.mp4` も並んでおり、上げてみると**原本と SHA-256 まで一致し、コメントの中でも動いて描かれた**。
 
-**その中で GIF を選ぶのは、運べる経路が paste しか無いからである。** 退避路の入口は paste と drop の
-2 つだが、**paste が受け取るのは画像だけで、動画は落ちる** — mp4 をクリップボードから貼っても入力欄は
-空のまま、エラーも出ない ([#1306](https://github.com/mokume-metal/mokume/issues/1306) で実測。同じ手で
-GIF は通るので、形式の違いである)。
-
-**mp4 は drop でしか通らず、そちらは小さいものに限られる。** drop はバイト列を道具の引数へ載せて
-運ぶ必要があるので、証跡として現実的な大きさ (数百 KB 〜 数 MB) は通らない。通ったときは GitHub が
-**裸の URL を 1 行で**挿入し、動画プレイヤーで描く (`![]()` では囲まない)。
-
-> **退避路は `img2webp` を要らなくする。** 本線の WebP は libwebp (`brew install webp`) に依存するが、
-> 退避路の GIF は ffmpeg だけで組める。
+> **当初は退避路だけ GIF と決めていた。** 根拠は「GitHub は WebP を添付形式に持たない」「paste が
+> 受け取るのは画像だけで動画は落ちる」「mp4 は drop でしか通らず小さいものに限る」の 3 つだった
+> ([#1306](https://github.com/mokume-metal/mokume/issues/1306))。**3 つとも、いまの経路には当てはまらない** —
+> 最初の 1 つは測り直すと成り立たず、残る 2 つは**クリップボード経由で運んでいた頃の制約**である
+> (下の「退避路」節。いまはバイト列をブラウザの道具が運ぶので、道具の引数には載らない)。
+> **mp4 も通る**が、動きの既定は WebP のままでよい — 本線と同じものをそのまま出せれば、上げ先が
+> 切り替わっても束ね直しが要らない。
 
 > **落ち方が「無言」である**ことを実測で確かめてある ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
 > の「測ったこと」)。WebP を指した参照は本文から丸ごと消え、周りの文だけが残る — ビルドは緑・警告も
@@ -275,10 +272,10 @@ GIF は通るので、形式の違いである)。
 # 録画から連番へ (B のみ・幅 720 / 15fps が目安)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos" frames/f.%04d.png
 
-# PR / Issue へ本線 (Gyazo) で出す — WebP (B は録画なので等間隔でよい。既定が可逆で 1 ビットも劣化しない)
+# PR / Issue へ出す — WebP (本線・退避路とも同じ。B は録画なので等間隔でよい。既定が可逆で 1 ビットも劣化しない)
 img2webp -loop 0 -d 67 frames/f.*.png -o motion.webp
 
-# 参照の面へ出す — GIF (パレットを作ってから通す。**退避路へ出すときもこれ**)
+# 参照の面へ出す — GIF (パレットを作ってから通す。**PR / Issue には要らない**)
 ffmpeg -y -i motion.mov -vf "fps=15,scale=720:-1:flags=lanczos,palettegen" palette.png
 ffmpeg -y -i motion.mov -i palette.png \
   -lavfi "fps=15,scale=720:-1:flags=lanczos,paletteuse" -loop 0 motion.gif
@@ -388,35 +385,71 @@ curl -sI "$GYAZO_URL" -o /dev/null -w '%{http_code}\n'   # 200 でなければ�
 
 ### 退避路 — GitHub へ直接上げる
 
-GitHub には添付の API が無い。REST にも GraphQL にも口が無く、入力欄も `input[type=file]` を
-DOM に持たない — **入口は paste と drop の 2 つだけ**である。したがってこの経路は
-**ブラウザを操作できるセッションでしか通らない** (「前提」節)。
+GitHub には添付の API が無い。REST にも GraphQL にも口が無いので、この経路は**ブラウザを操作できる
+セッションでしか通らない** (「前提」節)。通る形は 1 つだけである — **ページの `input[type=file]` へ
+ファイルを渡す。** クリップボードは経由しない (下の「通らない道」)。
 
-手順は 6 手:
+**その入力欄が在るかは面で違う** (2026-09-22 実測・[#1332](https://github.com/mokume-metal/mokume/issues/1332)):
 
-```bash
-# 1. ファイル参照としてクリップボードへ載せる (PNG / GIF。動画は paste では落ちる)
-osascript -e 'set the clipboard to POSIX file "<絶対パス>"'
+| 面 | `input[type=file]` |
+| --- | --- |
+| **PR** のコメント欄 | **在る** — `id="fc-new_comment_field"`。`accept` は `.gif,.jpeg,.jpg,.mov,.mp4,.png,.svg,.webm,.webp,…` |
+| **Issue** のコメント欄 (React の新 UI) | **無い** — 「Paste, drop, or click to add files」は `<button>` で、欄は押すまで DOM に現れない |
+
+**だから手順は「無ければ自分で置く」形にする。** そうすれば面を問わず 1 つの手順で通り、
+GitHub がどちらの UI を出していても分岐が要らない。
+
+手順は 5 手:
+
+**1. 入力欄を用意する。** PR なら `fc-new_comment_field` をそのまま使う。無い面では注入する:
+
+```javascript
+const staging = document.createElement('input');
+staging.type = 'file';
+staging.id = 'mokume-evidence-input';
+staging.setAttribute('aria-label', 'mokume evidence staging file input');  // find が拾えるように
+staging.style.cssText = 'position:fixed;top:0;left:0;z-index:99999;background:#fff';
+document.body.appendChild(staging);
 ```
 
-> **`as «class PNGf»` の形で載せてはいけない。** ビットマップとして載せると**動きが静止画 1 枚に潰れる**。
-> ファイル参照 (`«class furl»`) なら形式をそのまま運べ、**上がったものは元のファイルとバイト単位で一致する**
-> ([#1306](https://github.com/mokume-metal/mokume/issues/1306) で、2 フレームの GIF がフレーム数もループ指定も
-> 保ったまま完全一致することを確かめた)。
+**2. その欄へファイルを渡す** (ブラウザ道具の file upload。要素の参照は `find` で取る)。
+**手元のバイト列をページへ運べるのはこの 1 手だけ**で、他の運び方は下の表のとおり通らない。
 
-2. ブラウザで**貼り付け先の** Issue / PR のコメント欄を開き、focus して `cmd+v` を送る
-3. 挿入された 1 行をそのまま取り出す — `<img width="…" height="…" alt="Image" src="https://github.com/user-attachments/assets/<uuid>" />`
-4. **その URL を含むコメントを投稿する** (下記。PR 本文へ載せたいときも、先にこれを打つ)
-5. 投稿後に**原本と同じバイト数が返るか**を確かめる (下の「退避路の検算」。`-sI` では確かめられない)
-6. **ブラウザの下書きを破棄してタブを閉じる** (投稿はラッパー経由で行うので、欄に残った本文は捨てる)
+**3. 注入した欄を使ったときは、コメント欄へ `paste` を合成して渡し直す** (`fc-new_comment_field` へ
+直接渡したときは、GitHub 自身の受け口なので要らない):
 
-> **URL だけ先に取っておくことはできない。** 貼った時点では公開されず、無認証で引くと **404** が返る
-> (上げた本人のセッションからだけ読める)。**公開になるのは、その URL が新しく投稿されたコメントに
-> 現れたとき**である。取った URL は、投稿して初めて生きる。
+```javascript
+const file = document.getElementById('mokume-evidence-input').files[0];
+const area = document.querySelector('textarea');          // コメント欄
+area.focus();
+const carrier = new DataTransfer();
+carrier.items.add(file);
+area.dispatchEvent(new ClipboardEvent('paste', {clipboardData: carrier, bubbles: true, cancelable: true}));
+```
+
+**4. 数秒おいて、挿入された 1 行をコメント欄の値から取り出す。** 画像は
+`<img width="…" height="…" alt="…" src="https://github.com/user-attachments/assets/<uuid>" />`、
+動画は**裸の URL 1 行**である (`![]()` では囲まない)。
+
+**5. 注入した欄を外し、下書きを空にしてタブを閉じる** (投稿はラッパー経由で行うので、欄に残った本文は捨てる)。
+
+> **上がったものは原本とバイト単位で一致する。** PNG 2 本・WebP・mp4 の計 4 本で **SHA-256 まで一致**した
+> ([#1332](https://github.com/mokume-metal/mokume/issues/1332))。**動きを束ね直す必要は無い** —
+> 本線と同じ WebP をそのまま出せる。
+
+**URL は投稿して初めて生きる。** 貼った時点では公開されず、無認証で引くと **404** が返る
+(上げた本人のセッションからだけ読める)。**公開になるのは、その URL が新しく投稿されたコメントに
+現れたとき**である。
 
 ```bash
 bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
 ```
+
+> **公開は少し遅れて効く。投稿直後の 404 は「失敗」ではなく「まだ」である** — 数十秒おいて引き直す
+> ([#1332](https://github.com/mokume-metal/mokume/issues/1332) で実測)。
+>
+> **上げた欄と、公開のために投稿する先は別でよい。** PR のコメント欄で上げた添付を Issue へ投稿しても
+> 公開された — 添付はスレッドに縛られていない。**Issue へ絵を貼るために、Issue 側で上げ直さなくてよい。**
 
 > **PR 本文へ載せたいときも、先にコメントで投稿する。** `gh pr edit --body` で本文へ URL を書いても
 > **公開されない** — 本文の編集は「新しい投稿」に数えられず、404 のままである
@@ -436,13 +469,29 @@ Gyazo も落ちていて証跡を残せないときは、**そのことを PR �
 変わったかがそのまま絵が変わったかの判定**になっている ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
 決定 2)。GitHub の添付は同じ絵でも毎回別の URL を返すので、この判定が成り立たない。
 
+#### 通らない道 — 試して時間を落とさないために
+
+**どれも「バイト列をページへ運ぶ」ところで止まる。** 上の手順 2 が 1 手だけなのはこのためである。
+
+| 試したこと | なぜ通らないか |
+| --- | --- |
+| `osascript` でクリップボードへ載せて `cmd+v` を合成する | 合成したキー入力はページへ届くだけで、**ブラウザの貼り付けコマンドを起こさない**。OS のクリップボードは読まれず、欄は空のまま |
+| ページ内で `navigator.clipboard.read()` を呼ぶ | 読み取り権限が要り、自動操作には降りない (`NotAllowedError: Read permission denied`) |
+| base64 を JavaScript のソースへ書き写して `File` を組む | 大きな文字列が道具の引数の途中で欠ける (14010 B のはずが 11571 B で上がった) |
+| ページ内から `fetch` で手元のバイト列を取る | GitHub の CSP (`connect-src`) が外す |
+
+**4 つとも 2026-09-22 実測** ([#1320](https://github.com/mokume-metal/mokume/issues/1320) /
+[#1332](https://github.com/mokume-metal/mokume/issues/1332))。**クリップボードを使う形は、上の 1 行目の
+理由で構造的に通らない** — 手順から外したのは作法の好みではない。
+
 ### 退避路の検算
 
 **GET でリダイレクトを追い、原本とバイト数を突き合わせる。**
 
 ```bash
-curl -sL "$ATTACHMENT_URL" -o /dev/null -w '%{http_code} %{size_download}\n'
+curl -sL "$ATTACHMENT_URL" -o /tmp/pulled -w '%{http_code} %{size_download}\n'
 wc -c "<上げた原本>"                                                     # 一致すること
+shasum -a 256 /tmp/pulled "<上げた原本>"                                 # 突き合わせを強めるなら
 ```
 
 **見るのは 200 ではなくバイト数の一致である。** 200 だけでは「途中で切られていない」ことが見えず
@@ -548,21 +597,28 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
   添付そのものは残り、URL を知っていれば引ける。**だから退避路では「送る前に確かめる」が唯一の防壁**である
   (「守ること」節)。それでも出してしまったら、リポジトリの外に出た秘密として人に報告する
 - **mp4 を貼りたい** — **本線 (Gyazo) には経路が無い** (アップロード API が受け付けず、埋め込んでも
-  展開されない)。**退避路でも paste では落ちる** — 入力欄が空のままで、エラーも出ない。通るのは drop
-  だけで、そちらはバイト列を道具の引数へ載せるので**小さいものに限る**。動きは GIF にする。
-  参照の面を作る道具の側は `@Video` で mp4 を扱える (実測) が、**置き場が無いので使えない**
-- **退避路で上げた絵が 404 のまま** — **その URL を含むコメントをまだ投稿していない**。貼った時点では
-  公開されず、上げた本人のセッションからしか読めない。**PR 本文へ書いただけでも公開されない** —
-  コメントとして投稿してから引き直す。**未投稿を名乗るのは 404 だけ**である (下の行)
+  展開されない)。**退避路では通る** — `accept` に載っており、83202 B のものが SHA-256 一致で上がった
+  ([#1332](https://github.com/mokume-metal/mokume/issues/1332))。ただし**動きの既定は WebP のまま**でよい
+  (本線と同じものをそのまま出せる)。参照の面を作る道具の側は `@Video` で mp4 を扱える (実測) が、
+  **置き場が無いので使えない**
+- **退避路で上げた絵が、投稿したのに 404** — **公開は少し遅れて効く。** まず数十秒おいて引き直す
+  ([#1332](https://github.com/mokume-metal/mokume/issues/1332) で実測)。それでも 404 なら
+  **その URL を含むコメントをまだ投稿していない** — 貼った時点では公開されず、上げた本人のセッションから
+  しか読めない。**PR 本文へ書いただけでも公開されない**ので、コメントとして投稿してから引き直す。
+  **未投稿を名乗るのは 404 だけ**である (下の行)
 - **退避路の検算が 302 / 403 を返す** — **添付は公開されていて、打ち方が合っていないだけである。**
   `-sI` / `-s` は署名付き S3 への転送 (302) が返ったところで止まっており、`-sIL` は presigned URL が
   GET 用に署名されているため HEAD が弾かれている (403)。`-sL` で GET で追い直す (「退避路の検算」)。
   **これを「まだ公開されていない」と読んで Draft に落とさない** — 上げ先が 2 本とも塞がったように
   見えて、描画 PR が 1 本も出せなくなる ([#1310](https://github.com/mokume-metal/mokume/issues/1310))
-- **退避路で貼った動きが 1 枚の静止画になっている** — クリップボードへ `as «class PNGf»` で載せている。
-  **ファイル参照** (`set the clipboard to POSIX file "<絶対パス>"`) で載せ直す
-- **退避路で貼っても入力欄が空のまま (エラーも出ない)** — 動画を paste しようとしている。GIF へ束ね直す
-- **退避路で WebP が受け付けられない** — GitHub は WebP を添付形式に持たない。mp4 (既定) か GIF で束ね直す
+- **退避路で貼っても入力欄が空のまま (エラーも出ない)** — クリップボード経由で運ぼうとしている。
+  合成したキー入力はブラウザの貼り付けコマンドを起こさない (「通らない道」)。**`input[type=file]` へ
+  渡す形**に置き換える
+- **注入した入力欄が `find` で見つからない** — `aria-label` を付けていない。画面外や
+  `display:none` にも置かない (拾えなくなる)
+- **退避路で貼った動きが 1 枚の静止画になっている / 形式が受け付けられない** — 上がったものは
+  **原本とバイト単位で一致する**ので、この経路では起こらない。起きたなら渡したファイルのほうを疑う
+  (`shasum -a 256` で原本と突き合わせる)
 - **ブラウザが繋がらない** — 退避路はブラウザを操作できるセッションでしか通らない。Gyazo も
   落ちているなら証跡は残せないので、**PR にそう書いて Draft に落とし、有人のセッションへ返す**
 - **貼った絵が表示されない / 途中までしか動かない** — camo で詰まっている。5MB 超なら 404
@@ -591,10 +647,10 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
 
 | | 本線 (Gyazo) | 退避路 (GitHub) |
 | --- | --- | --- |
-| 束ねる道具 | `img2webp` (`brew install webp`) と `ffmpeg` | `ffmpeg` だけ |
+| 束ねる道具 | `img2webp` (`brew install webp`) と `ffmpeg` | 同じ (動きの形式は本線と揃う) |
 | 秘密 | `MOKUME_GYAZO_TOKEN_CMD` | 要らない |
 | セッション | 無人でも通る | **ブラウザを操作できる有人のセッション**・GitHub にサインイン済み |
-| その他 | — | macOS の `osascript` (クリップボードへファイル参照を載せる) |
+| その他 | — | **ページの `input[type=file]` へファイルを渡せるブラウザ道具** (file upload)。クリップボードは使わない |
 
 - `img2webp` (`brew install webp`) と `ffmpeg`
 - **Gyazo のアクセストークン。** https://gyazo.com/oauth/applications でアプリを登録すると出せる
