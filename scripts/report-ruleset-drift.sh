@@ -11,6 +11,12 @@
 #   push 以外 (schedule / workflow_dispatch / 手元) … Issue を起票する
 #   push (定義変更が main に入った直後)             … 起票せず、適用手順をログへ出す
 #
+# **起票そのものは scripts/report-check-failure.sh が持つ** (#1295)。ここに残るのは
+# 「契機を見て催促に留めるか」と、この検査に固有の**固定タイトルと本文**だけである。
+# 重複抑止・verify: の付与・出力の切り詰め・triage の呼び直しは、割れたときに黙って
+# 壊れる (症状が「何も起きない」になる) ので共有の置き場へ寄せた — 理由の表は
+# ADR-0008 決定 6 と、あちらの冒頭にある。
+#
 # 検査 (scripts/check-rulesets.sh) と発信をスクリプトごと分けているのは、起票を CI に
 # 限るため — check-rulesets.sh に起票を足すと、手元で照合を打っただけで Issue が立つ。
 # token は照合も起票も GITHUB_TOKEN で、issues: write はドリフト検査のジョブにだけ
@@ -31,19 +37,6 @@ REPO="$(this_repo)"
 # 重複起票を防ぐための固定タイトル。文言を変えると、変える前に立った Issue が
 # 見つからなくなり二重に立つので、変えるときは open な分を先に畳む
 readonly TITLE="ci: ルールセットが定義とずれている"
-
-# 起票と同時に付けるトリアージ済みの印。完了条件 (下の「解消の判定」) を本文へ焼き
-# 込んでいるので、議論を待たずに着手できる。機械が verify: を付けてよいのは
-# 「完了条件を知っている起票者」だけで、同じ根拠で sub-issue.sh --test も付ける
-# (ADR-0002 決定 1 / #205)。付け損ねても「着手できない」に倒れるだけで危険側には
-# 倒れない — status: needs-triage を廃止したときと同じ理由。
-# (かつては verify: machine と綴っていた。ADR-0031 が完了条件の性質による二分を畳んで
-#  以降、ラベルは「完了条件が固まっている」1 種類である)
-readonly VERIFY_LABEL="verify: triaged"
-
-# 本文に載せる差分の上限。ずれが大きいときに Issue 本文の上限へ当たって起票ごと
-# 失敗するより、頭を見せて run へ送る
-readonly MAX_LINES=200
 
 LOG="${1:?照合の出力ファイルが必要}"
 [ -f "$LOG" ] || { echo "照合の出力ファイルが無い: $LOG" >&2; exit 66; }
@@ -72,43 +65,15 @@ NUDGE
   exit 0
 fi
 
-# 同じ内容で毎日立てない。GitHub の検索は前方一致や語での照合なので、返ってきた
-# ものをタイトル完全一致で絞ってから採る
-existing=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:title" \
-  --json number,title \
-  --jq "[.[] | select(.title == \"$TITLE\")] | .[0].number // empty")
-
-if [ -n "$existing" ]; then
-  echo "report: 既に open な #$existing がある — 重複起票しない (差分は run のログに残る)"
-  exit 0
-fi
-
-run_url=""
-if [ -n "${GITHUB_RUN_ID:-}" ]; then
-  run_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/actions/runs/$GITHUB_RUN_ID"
-fi
-
-total=$(wc -l < "$LOG" | tr -d ' ')
-excerpt=$(head -n "$MAX_LINES" "$LOG")
-truncated=""
-if [ "$total" -gt "$MAX_LINES" ]; then
-  truncated="
-
-(差分が長いため先頭 $MAX_LINES 行のみ。全文は run のログにある)"
-fi
-
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
+body=$(mktemp)
+trap 'rm -f "$body"' EXIT
 
 # Issue 本文の相対リンクは解決されないので、ADR へは絶対 URL で張る
 adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions/0006-github-settings-as-code.md"
 
 {
-  printf '定期のドリフト検査で、ブランチ保護のルールセットが `.github/rulesets/` の定義とずれていることを検出した。\n\n'
-  printf '正本は定義ファイルで、GitHub 側の状態はその写しである ([ADR-0006](%s))。ずれているということは、**管理画面から直接変えられたか、定義の適用が済んでいないか**のどちらかを意味する。\n\n' "$adr_url"
-  printf '## 検出された差分\n\n```text\n'
-  printf '%s\n' "$excerpt"
-  printf '```\n%s\n' "$truncated"
+  printf '定期のドリフト検査で、ブランチ保護のルールセットが `.github/rulesets/` の定義とずれていることを検出した (差分は下の「検査の出力」)。\n\n'
+  printf '正本は定義ファイルで、GitHub 側の状態はその写しである ([ADR-0006](%s))。ずれているということは、**管理画面から直接変えられたか、定義の適用が済んでいないか**のどちらかを意味する。\n' "$adr_url"
   cat <<'BODY'
 
 ## どちらかを選ぶ
@@ -121,21 +86,13 @@ adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions
 ## 解消の判定
 
 `bash scripts/check-rulesets.sh` を**引数なし**で打ち、ルールセット 3 本すべてが緑になれば解消。引数なしの照合は `bypass_actors` まで見る (読めなければ赤になる) ので、この検査が見ていない範囲もそこで塞がる。
+
+**解消したらこの Issue を閉じる。** open な間は重複起票を抑えるので、残したままにすると次のドリフトが起票されない。
 BODY
-  if [ -n "$run_url" ]; then
-    printf '\n検出した run: %s\n' "$run_url"
-  fi
-  printf '\n<sub>🤖 この Issue は .github/workflows/ruleset-drift.yml が自動起票した (#99)。完了条件が本文で確定しているため `verify: triaged` も自動で付く (#205)</sub>\n'
-} > "$tmp"
+} > "$body"
 
-url=$(gh issue create -R "$REPO" --title "$TITLE" --body-file "$tmp" --label "$VERIFY_LABEL")
-echo "report: 起票した $url"
-
-num="${url##*/}"
-case "$num" in
-  '' | *[!0-9]*) echo "report: 起票の応答から Issue 番号を取れなかった: $url" >&2; exit 1 ;;
-esac
-
-# GITHUB_TOKEN が作った Issue には workflow が発火しない (再帰防止の仕様) ため、
-# triage.yml は走らない。人が起票したときと同じ下書きになるよう自分で呼ぶ
-bash "$(dirname "$0")/triage.sh" "$num" "$TITLE"
+bash "$(dirname "${BASH_SOURCE[0]}")/report-check-failure.sh" \
+  --title "$TITLE" \
+  --log "$LOG" \
+  --body-file "$body" \
+  --source '.github/workflows/ruleset-drift.yml が自動起票した (#99)'

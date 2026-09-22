@@ -43,6 +43,7 @@ CLI_USAGE = {
     "comment.sh": ["no-such-kind"],
     "rerequest-review.sh": ["no-such-number"],
     "plan-record.sh": ["no-such-mode"],
+    "report-check-failure.sh": ["--no-such-flag"],
 }
 
 EX_USAGE = 64
