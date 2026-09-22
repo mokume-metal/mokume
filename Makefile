@@ -149,10 +149,12 @@ hooks-test:
 # 26 では相対でも出ていたので、解決の基準 (cwd) が 27 で変わったと読めるが、そこまでは
 # 追っていない (上流への報告はこの Makefile の仕事ではない)。
 #
-# 出ないこと自体は api-surface.py が既に見ている (「シンボルグラフが見つからない」で
-# 落ちる) ので、新しい見張りは足さない。
+# 出ないこと自体は api-surface.py が既に見ているので、新しい見張りは足さない。あちらの
+# diagnose_empty() は置き場を読んで、**置き場が無いのか / 1 本も出ていないのか / 名指しした
+# モジュールが無いのか / 出ているが公開シンボルが 0 個なのか**を名乗って落ちる ([#1308])。
 #
 # [#1291]: https://github.com/mokume-metal/mokume/issues/1291
+# [#1308]: https://github.com/mokume-metal/mokume/issues/1308
 SYMBOL_GRAPHS := $(CURDIR)/.build/symbol-graphs
 SYMBOL_GRAPH_FLAGS := -Xswiftc -emit-symbol-graph \
 	-Xswiftc -emit-symbol-graph-dir -Xswiftc $(SYMBOL_GRAPHS)

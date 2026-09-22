@@ -366,13 +366,49 @@ class ApiSurfaceTests(unittest.TestCase):
                 json.dumps(document), encoding="utf-8")
             self.assertEqual(len(api.load_symbols(graphs, "MokumeCore")), 2)
 
-    def test_シンボルグラフが無ければ落ちる(self):
+
+class 読むものが無いときの名乗り(unittest.TestCase):
+    """**出ていないのか中身が違うのかを、落ちた側の文面で分ける** (#1308)。
+
+    どの状態でも同じ 1 文を出していたので、打った人は次に何を直すのか分からなかった。
+    4 つの状態はどれも「公開シンボルが 0 個」として現れるので、文面が唯一の手掛かりになる。
+    """
+
+    def check(self, graphs, module="MokumeCore"):
+        return subprocess.run(
+            ["python3", str(SCRIPT), "check", "--graphs", str(graphs), "--module", module],
+            capture_output=True, text=True)
+
+    def test_置き場そのものが無い(self):
         with tempfile.TemporaryDirectory() as directory:
-            result = subprocess.run(
-                ["python3", str(SCRIPT), "check", "--graphs", directory],
-                capture_output=True, text=True)
+            result = self.check(Path(directory) / "まだ無い")
             self.assertEqual(result.returncode, 1)
-            self.assertIn("シンボルグラフが見つからない", result.stderr)
+            self.assertIn("シンボルグラフの置き場が無い", result.stderr)
+
+    def test_置き場は在るがグラフが出ていない(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.check(directory)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("シンボルグラフが 1 本も出ていない", result.stderr)
+
+    def test_別のモジュールのグラフしか無ければ在るものを並べる(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "MokumeMacros.symbols.json").write_text(
+                json.dumps({"symbols": [symbol("draw()", owner="Sketch")]}), encoding="utf-8")
+            result = self.check(directory)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("MokumeCore のシンボルグラフが無い", result.stderr)
+            self.assertIn("MokumeMacros", result.stderr)
+
+    def test_グラフは出ているが公開シンボルが無い(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hidden = symbol("draw()", owner="Sketch")
+            hidden["accessLevel"] = "internal"
+            (Path(directory) / "MokumeCore.symbols.json").write_text(
+                json.dumps({"symbols": [hidden]}), encoding="utf-8")
+            result = self.check(directory)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("公開シンボルが 1 つも無い", result.stderr)
 
 
 if __name__ == "__main__":

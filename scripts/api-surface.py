@@ -105,6 +105,44 @@ def own_modules(graphs: pathlib.Path) -> set[str]:
     return {path.name.split(".symbols.json")[0].split("@")[0] for path in graphs.glob("*.symbols.json")}
 
 
+def diagnose_empty(graphs: pathlib.Path, module: str) -> str:
+    """読むシンボルが 1 つも無かった理由。**出ていないのか中身が違うのかを分ける** (#1308)。
+
+    以前はどの状態でも「シンボルグラフが見つからない」の 1 文だった。その文面は置き場が
+    無いときにも、グラフは出ているのに公開シンボルが 0 個のときにも同じことを言うので、
+    打った人は次に何を直すのか分からない — [#1291](https://github.com/mokume-metal/mokume/issues/1291)
+    (置き場を相対パスで渡すとグラフが 1 本も出ない) を追うときも、まず「置き場が無いのか、
+    出ていないのか」の切り分けから始めることになった。
+
+    返すのは 2 行 — 1 行目で何が無いかを名乗り、2 行目で探した先と読み方を言う。形は
+    `scripts/reference-graphs.py` の診断に揃えているが、**文面は共有しない** (割れても
+    変わるのは出力の文面で、その場で目に見える — ADR-0008 決定 6)。
+
+    どのファイルをモジュール 1 つと数えるかは `own_modules` に預ける。ここで自分で
+    名前を照合すると、判定が読む範囲と診断が言う範囲が別々に動きうる。
+    """
+    if not graphs.is_dir():
+        return (
+            f"シンボルグラフの置き場が無い: {graphs}\n"
+            "  ビルドが出した置き場を渡していない (Makefile の SYMBOL_GRAPHS)"
+        )
+    modules = own_modules(graphs)
+    if not modules:
+        return (
+            f"シンボルグラフが 1 本も出ていない: {graphs} に *.symbols.json が無い\n"
+            "  ビルドが成功しても、-emit-symbol-graph-dir の行き先が失われるとこうなる (#1291)"
+        )
+    if module not in modules:
+        return (
+            f"{module} のシンボルグラフが無い: {graphs} にあるのは {', '.join(sorted(modules))}\n"
+            "  --module の綴りが実体とずれているか、そのモジュールがビルドに含まれていない"
+        )
+    return (
+        f"{module} のシンボルグラフに公開シンボルが 1 つも無い: 読んだ先は {graphs}\n"
+        "  グラフは出ている — 中身が空か、public な宣言が 1 つも無い"
+    )
+
+
 def load_owned_identifiers(graphs: pathlib.Path) -> set[str]:
     """このパッケージが定義するシンボルの識別子。閉包の検査の「自前」の定義になる。
 
@@ -470,11 +508,7 @@ def main() -> int:
 
     symbols = load_symbols(arguments.graphs, arguments.module)
     if not symbols:
-        print(
-            f"シンボルグラフが見つからない: {arguments.graphs} に "
-            f"{arguments.module}.symbols.json が要る",
-            file=sys.stderr,
-        )
+        print(diagnose_empty(arguments.graphs, arguments.module), file=sys.stderr)
         return 1
 
     if arguments.action == "list":
