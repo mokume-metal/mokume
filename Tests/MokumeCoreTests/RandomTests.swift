@@ -73,6 +73,41 @@ struct RandomTests {
         }
     }
 
+    /// 丸めが上へ効く組み合わせ。`low` が 0 なら積がそのまま `high` 未満へ丸まるので、
+    /// **`low` が 0 でないもの**を混ぜて見る (#1304)。
+    nonisolated static var boundaryRanges: [(low: Float, high: Float)] {
+        [(100, 110), (1, 2), (-5, 12), (0, 10), (1e7, 1e7 + 1)]
+    }
+
+    @Test("1 の直前を引いても high にならない", arguments: boundaryRanges)
+    func theHighestUnitValueStaysBelowHigh(_ range: (low: Float, high: Float)) {
+        // unitValue() が返しうる最大 = 16777215/16777216
+        let highest = Float(1).nextDown
+        let value = Randomness.scaled(highest, from: range.low, to: range.high)
+        #expect(value >= range.low && value < range.high)
+    }
+
+    @Test("0 を引けば low ちょうど", arguments: boundaryRanges)
+    func theLowestUnitValueGivesLow(_ range: (low: Float, high: Float)) {
+        #expect(Randomness.scaled(0, from: range.low, to: range.high) == range.low)
+    }
+
+    @Test("上を下回らせない — 上下が同じなら、上の直前へ落とさない")
+    func anEmptyRangeIsNotPushedBelowItself() {
+        #expect(Randomness.scaled(Float(1).nextDown, from: 4, to: 4) == 4)
+    }
+
+    @Test("上で止めても、列は余分に進まない")
+    func stoppingBelowHighDoesNotConsumeExtraDraws() {
+        var ranged = Randomness(seed: 11)
+        var plain = Randomness(seed: 11)
+        for _ in 0..<1000 {
+            _ = ranged.value(from: 1, to: 2)
+            _ = plain.unitValue()
+        }
+        #expect(ranged.unitValue() == plain.unitValue())
+    }
+
     @Test("上下が同じなら常にその値")
     func anEmptyRangeAlwaysGivesThatValue() {
         var generator = Randomness(seed: 3)

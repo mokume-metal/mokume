@@ -43,8 +43,23 @@ struct Randomness: Sendable {
     /// 上下が同じなら常にその値が出る。
     mutating func value(from low: Float, to high: Float) -> Float {
         guard low.isFinite, high.isFinite else { return low.isFinite ? low : 0 }
+        return Self.scaled(unitValue(), from: low, to: high)
+    }
+
+    /// 0 以上 1 未満の `unit` を、下から上まで (上は含まない) へ移す。端は有限であること。
+    ///
+    /// **上の直前で止める。** `unit` は 1 未満でも、そのあとの積と和で `Float` が上へ
+    /// 丸まり、`high` ちょうどが出ることがある — `low` が 0 でないときに起きる
+    /// (`100 + 10 * (1 の直前) == 110` が真)。手本の Processing は引き直しで塞ぐが、
+    /// **それは列を余分に進める**ので、こちらは落とす ([ADR-0025] 水準 2)。
+    ///
+    /// 上下が同じときは落とさない。`upper.nextDown` は範囲の下も割ってしまう。
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    static func scaled(_ unit: Float, from low: Float, to high: Float) -> Float {
         let lower = min(low, high)
         let upper = max(low, high)
-        return lower + (upper - lower) * unitValue()
+        guard lower < upper else { return lower }
+        return min(lower + (upper - lower) * unit, upper.nextDown)
     }
 }
