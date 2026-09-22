@@ -91,6 +91,13 @@ struct TextTests {
         #expect(canvas.textWidth("A\nAAA") == canvas.textWidth("AAA"))
     }
 
+    @Test("改行が CRLF でも、幅はいちばん長い行の幅")
+    func widthTreatsCarriageReturnsAsNewlines() throws {
+        let canvas = try makeCanvas()
+        #expect(canvas.textWidth("A\r\nAAA") == canvas.textWidth("AAA"))
+        #expect(canvas.textWidth("A\rAAA") == canvas.textWidth("AAA"))
+    }
+
     @Test("大きさを変えると幅も変わる")
     func widthFollowsSize() throws {
         let canvas = try makeCanvas()
@@ -281,6 +288,24 @@ struct TextTests {
         #expect(rows.contains(first + 40))
     }
 
+    /// **CRLF は 1 書記素なので、`"\n"` では割れない。** 割れないと外から読んだ字幕などが
+    /// 1 行に重ならず横へ伸びるだけで、落ちも警告も出ない。
+    @Test("CRLF でも行が分かれ、絵は LF と 1 画素も違わない")
+    func carriageReturnsStartALineToo() throws {
+        func drawn(_ string: String) throws -> [UInt8] {
+            let canvas = try makeCanvas(width: 96, height: 128)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textLeading(40)
+                canvas.text(string, 20, 40)
+            }
+            return try pixels(of: canvas).bytes
+        }
+        #expect(try drawn("L\r\nL") == drawn("L\nL"))
+        #expect(try drawn("L\rL") == drawn("L\nL"))
+    }
+
     @Test("行送りを指定しなければ、大きさから決まる")
     func leadingDefaultsToTheSize() throws {
         let canvas = try makeCanvas()
@@ -435,6 +460,15 @@ struct TextTests {
         #expect(lines.map(String.init) == ["a", "b"])
     }
 
+    @Test("CRLF も幅に関わらず行を分ける")
+    func carriageReturnsAlwaysBreak() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(16)
+        let face = canvas.typeface
+        #expect(canvas.wrapped("a\r\nb", face: face, within: 1000).map(String.init) == ["a", "b"])
+        #expect(canvas.wrapped("a\rb", face: face, within: 1000).map(String.init) == ["a", "b"])
+    }
+
     // MARK: - 矩形への流し込み
 
     @Test("収まりきらなかった続きが返り、次の矩形へ流せる")
@@ -574,6 +608,15 @@ struct TextTests {
         let namedA = canvas.textOutline("A", 10, 50)
         #expect(namedA.count == 2)
         #expect(namedA.filter(\.isHole).count == 1)
+    }
+
+    @Test("輪郭も CRLF で行が分かれる")
+    func outlineBreaksOnCarriageReturns() throws {
+        let canvas = try makeCanvas()
+        let lf = canvas.textOutline("L\nL", 20, 40)
+        #expect(!lf.isEmpty)
+        #expect(canvas.textOutline("L\r\nL", 20, 40) == lf)
+        #expect(canvas.textOutline("L\rL", 20, 40) == lf)
     }
 
     @Test("周を持たない字は輪郭を出さない")

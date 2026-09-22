@@ -72,6 +72,25 @@ struct ModelTests {
         #expect(parsed.skippedLines == 2)
     }
 
+    /// Windows 系の道具が書き出した OBJ は改行が `\r\n` である。**割れないと、先頭の
+    /// `#` で全体がコメント扱いになり、頂点 0 のモデルが落ちも警告も無しに返る** —
+    /// 唯一の手がかりである `skippedLines` も 0 なので、症状は「何も出ない」だけになる。
+    @Test("改行が CRLF でも、LF と同じモデルになる")
+    func carriageReturnsSeparateLinesToo() {
+        let lf = ModelFile.parse(ModelFixture.pyramidText)
+        // 割れていないことを「空と同じ」で見逃さないため、まず LF が読めている
+        #expect(!lf.positions.isEmpty)
+
+        let crlf = ModelFile.parse(
+            ModelFixture.pyramidText.replacingOccurrences(of: "\n", with: "\r\n"))
+        #expect(crlf == lf)
+
+        // 単独の \r だけで改行する道具 (古い Mac 系) も同じ扱いにする
+        let cr = ModelFile.parse(
+            ModelFixture.pyramidText.replacingOccurrences(of: "\n", with: "\r"))
+        #expect(cr == lf)
+    }
+
     @Test("書かれた展開 (vt) を読み、読み飛ばした行に数えない")
     func textureCoordinatesAreRead() throws {
         let parsed = ModelFile.parse(ModelFixture.unwrappedText)

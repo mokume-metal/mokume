@@ -61,7 +61,7 @@ extension Canvas {
     public func textWidth(_ string: String) -> Float {
         let face = typeface
         var widest: Float = 0
-        for line in string.split(separator: "\n", omittingEmptySubsequences: false) {
+        for line in string.lines {
             widest = max(widest, face.advance(of: line))
         }
         return widest
@@ -81,7 +81,7 @@ extension Canvas {
         let (x, y) = (x.asFloat, y.asFloat)
         guard let color = textFillColor, !string.isEmpty, style.textSize > 0 else { return }
         let face = typeface
-        let lines = string.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = string.lines
         let leading = resolvedTextLeading
         var baseline = firstBaseline(at: y, face: face, lines: lines.count)
 
@@ -233,7 +233,7 @@ extension Canvas {
     /// 食い違わない。
     func wrapped(_ string: String, face: Typeface, within limit: Float) -> [Substring] {
         var lines: [Substring] = []
-        for paragraph in string.split(separator: "\n", omittingEmptySubsequences: false) {
+        for paragraph in string.lines {
             guard !paragraph.isEmpty else {
                 lines.append(paragraph)
                 continue
@@ -302,7 +302,7 @@ extension Canvas {
         let (x, y) = (x.asFloat, y.asFloat)
         guard !string.isEmpty, style.textSize > 0 else { return [] }
         let face = typeface
-        let lines = string.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = string.lines
         let leading = resolvedTextLeading
         var baseline = firstBaseline(at: y, face: face, lines: lines.count)
 

@@ -72,7 +72,7 @@ nonisolated enum ModelFile {
         var faces: [[(position: Int, texture: Int?, normal: Int?)]] = []
         var skipped = 0
 
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        for line in text.lines {
             let fields = line.split(whereSeparator: \.isWhitespace)
             guard let keyword = fields.first else { continue }
             let values = fields.dropFirst()
