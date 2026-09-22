@@ -159,6 +159,16 @@ class ReportDeadAssetsTest(unittest.TestCase):
         self.report()
         self.assertIn("visual-evidence", self.body.read_text())
 
+    def test_全滅のときの行き先を書く(self):
+        """置き場ごと止まっているときに撮り直させない (#1333)。
+
+        撮り直しは上げ先を要るので、置き場が落ちている間は通らない。しかも配信が止まって
+        いるだけなら絵は消えていないので、撮り直して URL を差し替えると**生きている指し先を
+        捨てる**ことになる (#1331)。
+        """
+        self.report()
+        self.assertIn("全滅しているホストがあるなら撮り直さない", self.body.read_text())
+
     def test_同じ_Issue_が_open_なら二重に立てない(self):
         r = self.report(issue_list=f'[{{"number":42,"title":"{TITLE}"}}]')
         self.assertEqual(r.returncode, 0, r.stderr)
