@@ -132,6 +132,19 @@ struct ClosingFailureTests {
             #expect(said.contains("last.png"))
         }
     }
+
+    @Test("close() は、絵を貰えないまま終わった save() の予約を言う")
+    func closeSpeaksTheSavesThatNeverGotAPicture() throws {
+        let recorder = FrameRecorder()
+        recorder.save("out/never.png", at: 1)
+
+        recorder.close()
+
+        let said = try #require(
+            recorder.warnings.message(for: .unwrittenShots),
+            "果たせなかった save() の予約が、誰にも知らされていない")
+        #expect(said.contains("never.png"))
+    }
 }
 
 /// スケッチから絵をファイルにする経路。GPU を要する。

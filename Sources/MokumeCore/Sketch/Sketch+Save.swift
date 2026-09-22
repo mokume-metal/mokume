@@ -41,6 +41,12 @@ extension Sketch {
     /// ファイルになっているのは、``endRecord()`` から返った後と、スケッチが
     /// 終わった後である。
     ///
+    /// **止まっているスケッチは、そのフレームを描き終えた時点で書かれる。**
+    /// ``noLoop()`` で止めた形も、止まっている間に `keyPressed()` から頼む形も、
+    /// 次のフレームを待たない — 待たせると次が来ないので、終わりまで (終わりが
+    /// 外から殺される形なら永久に) ファイルにならない
+    /// ([#1300](https://github.com/mokume-metal/mokume/issues/1300))。
+    ///
     /// - Parameter path: 書き出す先。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
