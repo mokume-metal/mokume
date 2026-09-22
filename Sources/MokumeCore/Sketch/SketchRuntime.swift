@@ -305,8 +305,9 @@ public final class SketchRuntime {
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     @discardableResult
     func closePlugins(_ patience: Patience) -> Bool {
-        // **閉じる前に控えを配る。** 最後のフレームの絵はまだ誰にも渡っていない (#927)
-        deliverPendingToOutlets()
+        // **閉じる前に決着させる。** 最後のフレームの絵はまだ誰にも渡っていないし (#927)、
+        // 止まっている間に頼まれた `save()` にとってはここが最後の機会である (#1300)
+        settleWithoutAnotherFrame()
         // **撮る係はここでは閉じない。** 並びに居れば同じ `close()` が塞いで待つので、
         // 下で選んだ待ち方で閉じる
         for entry in outlets where entry.seam !== recorder { entry.seam.close() }
@@ -367,6 +368,7 @@ public final class SketchRuntime {
             lastFrameAt = now()
         }
         guard !isPaused else {
+            settleWithoutAnotherFrame()
             serveObservationIfRequested()
             return
         }
@@ -375,6 +377,7 @@ public final class SketchRuntime {
         var deliveredInput = false
         if !isLooping, !redrawRequested {
             guard deliverWhileStopped() else {
+                settleWithoutAnotherFrame()
                 serveObservationIfRequested()
                 return
             }
@@ -396,6 +399,10 @@ public final class SketchRuntime {
         // なるので、この順なら道を 2 回通らない (ADR-0023 決定 5)
         detachRecorderIfDone()
         if drawFailure == nil { encodeForOutlets() }
+        // **このフレームで止まったなら、組んだ絵をその場で配る。** 1 枚遅らせているのは
+        // 次のフレームの CPU と重ねるためなので、次が来ないなら遅らせる意味が無い (#1300)。
+        // ここでの `redrawRequested` は上で落としてあるので、残る理由は作者の `noLoop()` である
+        if !isLooping { settleWithoutAnotherFrame() }
         serveObservationIfRequested(drawFailure: drawFailure)
         if let drawFailure { throw drawFailure }
     }
@@ -778,6 +785,32 @@ public final class SketchRuntime {
             recorder.isIdle || !entry.health.isAttached
         else { return }
         outlets.removeAll { $0.seam === recorder }
+    }
+
+    /// 抱えている絵と予約を、**次のフレームを当てにせずに**決着させる。
+    ///
+    /// 配りを 1 枚遅らせているのは、次のフレームの CPU の仕事を前のフレームの GPU と
+    /// 重ねるためである ([#927])。止まったスケッチに次のフレームは来ないので、遅らせた
+    /// ぶんがそのまま「いつまでも配られない」になる — `noLoop()` で止めたスケッチの
+    /// `save()` がファイルにならなかったのはこれで、終わりの経路 (SIGTERM) まで落ちれば
+    /// 永久に出ない ([#1300])。
+    ///
+    /// 段は 2 つある。控えがあれば配り、**それでも果たせない予約が残っていれば組み直して
+    /// 配る**。後者は止まっている間に頼まれた `save()` (`keyPressed()` から呼ぶ形) で、
+    /// 宛先の絵は既に描かれているのに、控えは前のフレームで配り終えている。
+    ///
+    /// **予約が無ければ組み直さない。** 止まっている絵は変わらないので、毎フレーム組み直すと
+    /// 止めたスケッチが回っているときと同じ費用を払い続ける (ADR-0023 決定 5)。
+    ///
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    /// [#1300]: https://github.com/mokume-metal/mokume/issues/1300
+    private func settleWithoutAnotherFrame() {
+        deliverPendingToOutlets()
+        if recorder?.hasUnwrittenShots(upTo: timing.frameCount) == true {
+            encodeForOutlets()
+            deliverPendingToOutlets()
+        }
+        detachRecorderIfDone()
     }
 
     // MARK: - 観測に応える
