@@ -105,13 +105,7 @@ struct NameCorrespondenceTests {
     /// スケッチが切り詰めることになり、頼んだ側は窓口の説明からその理由を知れない。
     @Test("窓口が名乗る上限は、面の仕様と一致する")
     func theWindowAnnouncesTheSameLimitsAsTheSchema() throws {
-        let file = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Schemas/observe-request.schema.json")
-        let document = try #require(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
-        let declared = try #require(document["properties"] as? [String: Any])
+        let declared = try Self.declaredObserveProperties()
         let announced = try #require(
             Tools.ToolName.observe.inputSchema["properties"] as? [String: Any])
 
@@ -138,6 +132,47 @@ struct NameCorrespondenceTests {
             (announced["every"] as? [String: Any])?["description"] as? String)
         #expect(count.contains("1…\(ObservationRequest.maximumCount)"))
         #expect(every.contains("1…\(ObservationRequest.maximumEvery)"))
+    }
+
+    /// **「枚数で並べれば速さが揃う」と読ませない。** 観測を受けるスケッチ
+    /// (`mokume run` / `watch`) は実時計で走るので、撮れた枚の時刻の間隔は揃わない
+    /// — 説明が応答の `time` を指していないと、読み手は枚数のまま並べて**黙って速さの
+    /// 狂った動きを作る** ([#1285])。
+    ///
+    /// 同じ前提は面の仕様・窓口の散文・型の doc の 3 箇所に写されていて、**揃って
+    /// 古びていた**。ここが見るのは前の 2 つで、どちらも並べ直す先を名指しすること
+    /// である (型の doc はコンパイラも機械も読まないので、書く人とレビューが担う)。
+    ///
+    /// [#1285]: https://github.com/mokume-metal/mokume/issues/1285
+    @Test("間隔の説明は、並べ直しに応答の time を指す")
+    func theIntervalProsePointsAtTheReplyTime() throws {
+        let surfaces: [(String, [String: Any])] = [
+            ("面の仕様", try Self.declaredObserveProperties()),
+            (
+                "窓口の散文",
+                try #require(Tools.ToolName.observe.inputSchema["properties"] as? [String: Any])
+            ),
+        ]
+        for (surface, properties) in surfaces {
+            let every = try #require(
+                (properties["every"] as? [String: Any])?["description"] as? String, "\(surface)")
+            #expect(every.contains("`time`"), "\(surface) が並べ直す先を名指ししていない")
+            // 実時計で走る以上、走らせるたびに同じ列が返るとは言えない
+            #expect(
+                !every.contains("the same series"), "\(surface) が列の再現を名乗っている")
+        }
+    }
+
+    /// 面の仕様が名乗る `observe` の引数。**在処を 1 箇所に保つ** — 読む検査が増える
+    /// たびにパスを写すと、動かした日に片方だけ古いファイルを読む。
+    private static func declaredObserveProperties() throws -> [String: Any] {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Schemas/observe-request.schema.json")
+        let document = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        return try #require(document["properties"] as? [String: Any])
     }
 
     /// 名前だけでなく、一覧が差し出す 3 つの欄が全部埋まっていること。

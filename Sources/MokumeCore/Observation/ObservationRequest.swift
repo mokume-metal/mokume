@@ -10,12 +10,20 @@ import Foundation
 ///
 /// ## 間隔はフレーム数で数える
 ///
-/// ``every`` は秒ではなくフレームで数える。既定の時計はフレーム番号から導くので、
-/// フレームで数えれば**同じスケッチを 2 回走らせれば同じ列が返る**。秒で指定しても
-/// 結局はフレームへ丸めることになり、実時間の時計に差し替えた経路では列が走らせる
-/// たびに変わってしまう。
+/// ``every`` は秒ではなくフレームで数える。秒で指定しても結局はフレームへ丸めることに
+/// なるためで、数えるのは**実際に描けたフレーム**である。
+///
+/// **撮れた枚の時刻の間隔は揃わない。** 観測を受けるのは `mokume run` / `watch` が
+/// 走らせているスケッチで、その入口は実時計を渡す (`SketchApplication` が
+/// ``Clock/wallClock`` で組む) — 撮っている間は絵の書き出しでフレームが重くなるので、
+/// 間隔は描けた速さのぶんだけ伸び縮みする。**並べるには応答の目録 (`frames`) の各行の
+/// `time` を読む**。枚数のまま並べると、黙って速さの狂った動きができる ([#1285])。
+///
+/// 時計をフレーム番号から導く経路 (``SketchRuntime`` を直接組む検査・ヘッドレス) では
+/// 間隔も揃い、同じスケッチを 2 回走らせれば同じ列が返る。
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+/// [#1285]: https://github.com/mokume-metal/mokume/issues/1285
 public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 撮れる枚数の上限。60fps で 2 秒ぶん。
     ///
