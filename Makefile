@@ -142,7 +142,18 @@ hooks-test:
 # 読むので集合はそのぶん広がるが、**ライブラリの公開署名にテストの型は出られない**
 # (依存の向きが逆) ので判定は動かない — 一覧も検査も分けていた頃と 1 記号も違わないことを
 # 実測した。参照の面のほうは reference-graphs.py が --module で名指しするので無関係
-SYMBOL_GRAPHS := .build/symbol-graphs
+#
+# **置き場は絶対パスで渡す** ([#1291])。Xcode 27 (Swift 6.4) の SwiftPM は、相対パスを
+# 渡されるとグラフを 1 本も出さない — **成功で返り、警告も出ず、どこにも書かれない**。
+# 迷子になっているのではないことは、scratch path の下を浚って 0 件だったことで確かめた。
+# 26 では相対でも出ていたので、解決の基準 (cwd) が 27 で変わったと読めるが、そこまでは
+# 追っていない (上流への報告はこの Makefile の仕事ではない)。
+#
+# 出ないこと自体は api-surface.py が既に見ている (「シンボルグラフが見つからない」で
+# 落ちる) ので、新しい見張りは足さない。
+#
+# [#1291]: https://github.com/mokume-metal/mokume/issues/1291
+SYMBOL_GRAPHS := $(CURDIR)/.build/symbol-graphs
 SYMBOL_GRAPH_FLAGS := -Xswiftc -emit-symbol-graph \
 	-Xswiftc -emit-symbol-graph-dir -Xswiftc $(SYMBOL_GRAPHS)
 
