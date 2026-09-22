@@ -90,6 +90,8 @@ extension Canvas {
         case styleOutsideFrame
         /// 成り立たない視点・投影が渡された。**入口が 2 つある 1 つの事情。**
         case badCamera
+        /// 受け取れない切り抜きが渡された。
+        case badClip
 
         /// ``beginDraw()`` を対にせず重ねて呼んだ。
         case alreadyDrawing

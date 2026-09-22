@@ -322,6 +322,10 @@ final class WatchSession {
     ///
     /// 呼ぶ側は既定で `SIGPIPE` を無視しておく必要がある ([WatchCommand] が置く) —
     /// 無視しないと、畳まれた管へ書いた**こちらが死ぬ**。
+    ///
+    /// **塞がらない。** ここは NSView の出来事から main で同期に呼ばれるので、待つと
+    /// 窓・保存の検出・巡回がまとめて止まる。読まない子でも戻れるのは、迎えるときに
+    /// 書き口へ印を立ててあるからである (``unblockWriting(to:)``)。
     func send(_ line: String) {
         // **画面に出ている世代へ送る。** 退役待ちが居る間は、まだ前の世代が映っている —
         // 入れ替わりと退役は同じ合図で起きるので、宛先は画面と一致する (#1142)
@@ -331,7 +335,32 @@ final class WatchSession {
         }
         // **失敗を握り潰す。** 相手が畳んだ (EPIPE)・管が一杯 (EAGAIN) のどちらでも、
         // することは同じ「この 1 件を捨てる」である
-        try? pipe.fileHandleForWriting.write(contentsOf: data)
+        //
+        // **1 度だけ書く。** 道具立ての `FileHandle.write(contentsOf:)` は、書けなかった
+        // ぶんをどう扱うか (投げるか・回り続けるか) が内部に依る — 塞がらないことが
+        // ここの要点なので、`write(2)` を 1 回呼んで戻り値の扱いを自分で持つ (#1296)
+        //
+        // **半分だけ書かれることは無い。** 1 件は PIPE_BUF (512 バイト) より十分に小さく、
+        // 非閉塞の管への書き込みはその大きさまで「全部書く」か EAGAIN で何も書かないかの
+        // どちらかである — 捨てた 1 件が、次の 1 件の頭に継ぎ足される形にはならない
+        let descriptor = pipe.fileHandleForWriting.fileDescriptor
+        _ = data.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+    }
+
+    /// 迎えた子の**書き口**を、塞がない形にする。
+    ///
+    /// **子が読み口に立てた印は、ここに効かない。** 管の両端は別の open file description
+    /// なので、`StandardInputEvents` の `O_NONBLOCK` が変えるのは子の `read` だけである。
+    /// 親が立てないと、読まない子へ書き続けたとき管の容量 (64KB) が埋まった次の `write`
+    /// が戻らず、**見張りの main が永久に塞がる** (#1296)。
+    ///
+    /// **起こす側ではなく、ここで立てる。** 管を引くのは ``Hooks/launch`` だが、書き口を
+    /// 持つのは親である — 替え玉の外側で起こした子にも同じ不変条件が要る。
+    private func unblockWriting(to process: Process?) {
+        guard let pipe = process?.standardInput as? Pipe else { return }
+        let descriptor = pipe.fileHandleForWriting.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        if flags >= 0 { _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) }
     }
 
     /// 子が、道具の知らないところで消えていたら 1 度だけ返す。
@@ -560,6 +589,9 @@ final class WatchSession {
             stop()
         }
         child = hooks.launch(executable, directory, stamp, reportsRate ? configurationName : nil)
+        // **書き口を塞がない形にしてから渡す。** 入力が来るのは窓が出た後なので、ここで
+        // 立てておけば「読まない子へ書いて固まる」回は作れない (#1296)
+        unblockWriting(to: child)
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
         awaitingPromotion = overlapsGenerations && child != nil
 

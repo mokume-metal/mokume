@@ -696,6 +696,83 @@ struct WatchSessionTests {
         #expect(arriving.isRunning, "まだ映っていない世代へ送っている")
     }
 
+    /// 期限を越えたら子を落とす係。
+    ///
+    /// **`Process` は `Sendable` ではない**が、期限を数えるのは別の走りでなければならない
+    /// (数える相手が main を塞いでいる)。落とす 1 手と落としたかの印だけをここへ閉じて渡す。
+    ///
+    /// **型ごと `nonisolated` にする。** 理由は `BuildProcess` の同名の係が書いているものと
+    /// 同じで、既定の隔離 (`Package.swift` の `.defaultIsolation(MainActor.self)`) のままだと
+    /// 期限を数える閉包まで main actor と推論され、別の走りで鳴った瞬間に落ちる
+    /// (実測: `dispatch_assert_queue` の SIGTRAP でバンドルごと死ぬ)。**写しのままにするのは、
+    /// 割れれば黙らずに落ちるからである** ([ADR-0008] 決定 6)。
+    ///
+    /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
+    nonisolated private final class Deadline: @unchecked Sendable {
+        private let lock = NSLock()
+        private let process: Process
+        private var killed = false
+        init(_ process: Process) { self.process = process }
+        var didKill: Bool { lock.withLock { killed } }
+
+        /// 期限を仕掛ける。**鳴る先は main の外である。**
+        ///
+        /// - Returns: 間に合ったときに取り下げる札。
+        func arm(after seconds: Double) -> DispatchWorkItem {
+            let alarm = DispatchWorkItem { self.kill() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: alarm)
+            return alarm
+        }
+
+        private func kill() {
+            lock.withLock { killed = true }
+            process.terminate()
+        }
+    }
+
+    /// **応えない子へ書き続けても、送る側は戻る。**
+    ///
+    /// 読み口に立てた `O_NONBLOCK` は親の書き口に効かない (管の両端は別の open file
+    /// description) ので、親が立てないと管の容量 (64KB) が埋まった次の `write` で
+    /// **main が永久に塞がる** — 窓も保存の検出も合図の巡回も、まとめて止まる (#1296)。
+    @Test("読まない子へ管の容量を越えて送っても、送る側は戻る")
+    func sendingToAChildThatNeverReadsReturns() async throws {
+        // **`send(_:)` の約束どおり `SIGPIPE` を無視する** (実行時は `WatchCommand` が置く)。
+        // 無視しないと、期限で救出した後の書き込みで**検査の走り自体が落ちて**、塞がったのか
+        // 別の理由で死んだのかを読めない
+        let previousPipeHandler = signal(SIGPIPE, SIG_IGN)
+        defer { signal(SIGPIPE, previousPipeHandler) }
+
+        let ready = Ready()
+        // **読まず・眠り続ける子。** `exec` で置き換えるので `sh` は残らず、止めるのは
+        // この 1 人で済む (既定のヘルパが眠りを避けているのは、置き去りを作らないため)
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; exec sleep 30", ready: ready), stopTimeout: 1)
+        defer { session.stop() }
+
+        await session.start()
+        ready.waitForLast()
+        let child = try #require(session.child)
+
+        // **待つ側が期限を持つ。** 塞がったらここで子を落とす — 読み口が閉じれば `write`
+        // は EPIPE で戻るので、**壊れていても run 全体は固まらず**、救出した印が赤で名乗る
+        let deadline = Deadline(child)
+        let alarm = deadline.arm(after: 5)
+        defer { alarm.cancel() }
+
+        // 1 件は約 50 バイト。管の容量 (64KB) を十分に越える数を書く
+        let line = #"{"type":"mouseMoved","x":123.45,"y":678.90}"# + "\n"
+        for _ in 0..<4_000 { session.send(line) }
+
+        #expect(!deadline.didKill, "読まない子への書き込みで塞がり、期限で落として戻した")
+        // **救出されていない回にだけ訊く。** 落とした後の「消えている」は当たり前で、
+        // ここで見たいのは**子が自分で消えていて、塞がる機会が無かった**回である
+        if !deadline.didKill {
+            #expect(child.isRunning, "子が自分で消えている — 塞がるかどうかを見られていない")
+        }
+    }
+
     /// **置いていかない。** 入れ替わりの合図が来る前に終わることがある。
     @Test("終わるときは、控えている子も置いていかない")
     func stoppingAlsoBringsDownTheOutgoingChild() async throws {

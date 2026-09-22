@@ -389,7 +389,16 @@ case "$mode" in
       exit 0
     fi
 
-    if pr_files "$GITHUB_REPOSITORY" "${PR_NUMBER:?}" | touches_drawing coverage; then
+    # **`pr_files … | touches_drawing` の形で訊かない** (#1303)。`if` の条件に置くと
+    # 取得の失敗が**分岐の偽**にしかならず (set -o pipefail の下でも同じ)、else 側の
+    # success へ落ちる — 手元で一度も回していない描画 PR が覆いを通り抜ける。
+    # merge_group 側と同じ 3 値の判定を通して、読めなかった回を分ける
+    touches=0
+    pr_touches_drawing "$GITHUB_REPOSITORY" "${PR_NUMBER:?}" || touches=$?
+    [ "$touches" != 2 ] \
+      || give_up "#$PR_NUMBER の変更ファイルを読めなかった (描画に触れるか判定できない)"
+
+    if [ "$touches" = 0 ]; then
       # 描画 PR は 1 本ずつ merge する (#467)。順番は queue に居るものが先・その外は番号順 (#1266)。順番でなければここで赤くする
       # — queue で弾かれるのを待つと、待ち時間も手元の打ち直しも無駄になる
       ahead=$(ahead_drawing_pr "$GITHUB_REPOSITORY" "$PR_NUMBER")

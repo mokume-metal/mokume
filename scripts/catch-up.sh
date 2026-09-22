@@ -197,7 +197,14 @@ repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') \
 
 # 描画に触れない PR は合流後の木を動かさないので、BEHIND のまま merge できる。
 # 取り込みは queue がこれからやることの前借りにしかならない (AGENTS.md)
-pr_files "$repo" "$number" | touches_drawing coverage \
+#
+# **一覧を読めなかったことは「動かさない」ではない** (#1303)。パイプラインの左辺に
+# 置くと取得の失敗が `touches_drawing` の偽と区別できず、覆い直しが要る PR で
+# skip (3) して黙って終わっていた — 人が打ったのに何も起きない。上の
+# `gh repo view` と同じ向きに倒して、止まって理由を名乗る
+files=$(pr_files "$repo" "$number") \
+  || stop "PR #$number の変更ファイルを読めなかった" "少し置いてから打ち直す"
+printf '%s\n' "$files" | touches_drawing coverage \
   || skip "PR #$number は台帳の絵を動かさない — main を取り込む必要が無い"
 
 # 描画 PR は 1 本ずつ (queue に居るものが先・その外は番号順)。順番でないうちに打ち直しても、先頭が入った時点で

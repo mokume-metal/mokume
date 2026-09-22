@@ -199,6 +199,10 @@ def setUpModule():
     git("config", "user.name", "t")
     # 使い捨てのリポジトリは手元の署名設定から独立させる (#344)
     git("config", "commit.gpgsign", "false")
+    # **雛形を写す前に、git の自動保守を止める** (#1319)。下の commit は
+    # `git maintenance run --auto --detach` を切り離して起こし、その保守が
+    # `.git/objects/maintenance.lock` を作って消すので、写しと競合する
+    git("config", "maintenance.auto", "false")
     (repo / "README.md").write_text("hi\n")
     git("add", "-A")
     git("commit", "-qm", "init")
@@ -217,6 +221,54 @@ def tearDownModule():
     if _template is not None:
         _template.cleanup()
         _template = None
+
+
+class TemplateMaintenanceTest(unittest.TestCase):
+    """雛形のリポジトリが git の自動保守を起こさないことの検査 (#1319)。
+
+    `git commit` は `git maintenance run --auto --quiet --detach` を切り離して起こし、
+    その保守は `.git/objects/maintenance.lock` を作って消す。雛形を写している最中に
+    それが消えると、列挙したファイルを開けない `shutil.copytree` が `shutil.Error` を
+    投げる — 968 件のうち 1 件が「消えたファイルを写せなかった」で落ち、hooks-test が
+    そこで止まって `local-render` が打たれなくなる (描画に触れる PR が merge できない)。
+    雛形を書き換える存在は背後の保守だけなので、**雛形の側で止める**。
+
+    見るのは設定の綴りではなく**振る舞い**。設定を読み返す形だと、キーを書き間違えた
+    ときに「宣言はある」で緑のまま通ってしまう。雛形そのものには commit しない
+    (他の検査が写す元なので)。
+    """
+
+    def test_commit_does_not_spawn_background_maintenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "work"
+            shutil.copytree(_template.name, root)
+            repo = root / "repo"
+            trace = Path(tmp) / "trace.jsonl"
+
+            (repo / "second.md").write_text("hi\n")
+            for args in (["add", "-A"], ["commit", "-qm", "second"]):
+                subprocess.run(
+                    ["git", *args],
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                    # trace2 の宛先は絶対パスでなければならない (相対だと警告を出して
+                    # 何も書かず、子プロセスが 0 件に見えてしまう)
+                    env={**os.environ, "GIT_TRACE2_EVENT": str(trace)},
+                )
+
+            spawned = [
+                event.get("argv") or []
+                for event in (json.loads(line) for line in trace.read_text().splitlines())
+                if event.get("event") == "child_start"
+            ]
+            self.assertEqual(
+                [argv for argv in spawned if "maintenance" in argv],
+                [],
+                "雛形の commit が git の自動保守を起こしている — setUpModule の "
+                'git("config", "maintenance.auto", "false") が抜けているか効いていない。'
+                f"起きた子プロセス: {spawned}",
+            )
 
 
 class HookFixture:

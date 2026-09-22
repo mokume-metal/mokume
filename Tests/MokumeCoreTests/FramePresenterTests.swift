@@ -149,6 +149,16 @@ struct PresentDecisionTests {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct DrawableResidencyTests {
+    /// 常駐していてよい面の数の上限。**環の枚数ではなく「増え続けていない」を表す。**
+    ///
+    /// 環の枚数 (3) より少し大きく取ってあるのは、環が同じでも時間をかけると
+    /// 数種類の面が現れるためである ([#1288])。畳まない実装ではフレーム数ぶん
+    /// 積み上がった (120 件・85.2 MiB — [#357]) ので、この桁で見分けが付く。
+    ///
+    /// [#357]: https://github.com/mokume-metal/mokume/issues/357
+    /// [#1288]: https://github.com/mokume-metal/mokume/issues/1288
+    private static let boundedResidency = 8
+
     /// 面へ差し出す一式。行き先の面だけを外から動かせるようにして返す。
     private func makeSession(surface: Int) throws -> (
         gpu: RenderDevice, source: RenderTarget, presenter: FramePresenter, layer: CAMetalLayer
@@ -181,10 +191,18 @@ struct DrawableResidencyTests {
         for _ in 0..<120 { try presenter.present(source, to: layer) }
 
         // 面の環は Metal 側が持っていて、大きさが同じ限り有界である。**入れ直しても
-        // 数が増えないこと**をここで固定する (集合なので冪等・実測では 2 種類)
+        // 数が増えないこと**をここで固定する (集合なので冪等)。
+        //
+        // **上限を `maximumDrawableCount` に紐づけない** ([#1288])。守りたいのは
+        // 「増え続けないこと」であって「環の枚数に収まること」ではなく、環の枚数は
+        // Metal 側の都合で動く — macOS 27.0 では環が 3 枚でも、時間をかけると
+        // 4 種類の面が現れる (1200 フレーム回すと 4 で頭打ちになる)。合わせに行くと
+        // 環境が変わるたびにこの行が動く。
+        //
+        // [#1288]: https://github.com/mokume-metal/mokume/issues/1288
         #expect(
-            gpu.drawableResidency.allocationCount <= layer.maximumDrawableCount,
-            "面の環より多くの面が常駐している")
+            gpu.drawableResidency.allocationCount <= Self.boundedResidency,
+            "面が積み上がっている (\(gpu.drawableResidency.allocationCount) 件)")
     }
 
     @Test("面の大きさを変えても常駐の集合は膨らまない")

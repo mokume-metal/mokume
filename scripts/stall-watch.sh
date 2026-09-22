@@ -33,6 +33,11 @@
 #   dismissed-approval   name   8       Approve は人の操作。機械には打てない
 #   awaiting-approval    quiet  2       承認待ちは正常な状態
 #   auto-merge-dropped   act    2       予約を掛け直すだけ。ゲートは飛び越えない
+#   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
+#
+# **unreadable は表の行を持たない。** PR そのものか変更ファイルの一覧が読めなかった回で、
+# 詰まりの種類を言っていない — 黙って通す (quiet) と、読めていないことが誰にも見えない
+# まま「正常」に混ざる (#1303)。
 #
 # 表の行 3 と 7 が同じ分類になるのは、対処が同じ (失敗ジョブの rerun) だからである。
 # 7 が言う「**新しい PR の側**を rerun する」は、ここが open な PR しか見ないことで
@@ -320,10 +325,18 @@ for n in $numbers; do
     # 「承認が要るパスに触れているか」と「もう承認されたか」の 2 つである。
     # **「落ちた承認」は上で先に抜けている** — auto-merge も一緒に外れていたら、
     # 押し直された次の run が auto-merge-dropped として掛け直す (2 手で収束する)
-    if [ "$state" = BLOCKED ] && [ "$approved" != true ] &&
-      pr_files "$REPO" "$n" | touches_protected_path; then
-      say_line "$n" awaiting-approval quiet 0 "重要パスに触れる PR の承認待ち (正常)"
-      continue
+    if [ "$state" = BLOCKED ] && [ "$approved" != true ]; then
+      # **一覧を読めなかったことを「重要パスに触れない」と読まない** (#1303)。
+      # パイプラインを条件に混ぜていた頃は取得の失敗が偽に化けて下へ落ち、
+      # **承認待ちの PR に予約を掛け直す当番が回っていた**
+      if ! files=$(pr_files "$REPO" "$n"); then
+        say_line "$n" unreadable name 0 "変更ファイルを読めなかった (承認待ちかを判定していない)"
+        continue
+      fi
+      if printf '%s\n' "$files" | touches_protected_path; then
+        say_line "$n" awaiting-approval quiet 0 "重要パスに触れる PR の承認待ち (正常)"
+        continue
+      fi
     fi
     say_line "$n" auto-merge-dropped act 0 "auto-merge が外れている — 予約を掛け直す"
     continue

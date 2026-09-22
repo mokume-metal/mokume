@@ -98,6 +98,8 @@ case "$url" in
     emit "$PR_DIR/pulls.json"; exit 0 ;;
   */files)
     n=${url%/files}; n=${n##*/}
+    # 特定の PR だけ読めない状況を作る (#1303)
+    [ "$n" != "${FILES_FAILS_FOR:-}" ] || { echo "gh: 502" >&2; exit 1; }
     emit "$PR_DIR/$n.files.json"; exit 0 ;;
 esac
 
@@ -253,6 +255,21 @@ class StallWatchTest(unittest.TestCase):
         )
         kind, action = self.classify(3, self.watch())
         self.assertEqual((kind, action), ("awaiting-approval", "quiet"))
+
+    def test_変更ファイルを読めなければ読めなかったと名乗る(self):
+        """読めなかったことを「重要パスに触れない」と読むと auto-merge-dropped に
+        落ちる (#1303) — **承認待ちの PR に予約を掛け直す当番が回る**。PR 自体を
+        読めなかった場合と同じ unreadable を名乗り、何も打たない。"""
+        self.add_pr(
+            3,
+            auto=False,
+            state="BLOCKED",
+            checks=[check("ci-gate", "SUCCESS")],
+            files=[".github/workflows/ci.yml"],
+        )
+        proc = self.watch(FILES_FAILS_FOR="3")
+        kind, action = self.classify(3, proc)
+        self.assertEqual((kind, action), ("unreadable", "name"))
 
     def test_承認済みなら_auto_merge_が外れたと読む(self):
         self.add_pr(
