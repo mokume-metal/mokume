@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: MIT
 """scripts/comment.sh と scripts/agent-comment-guard.sh の検査 (#18)。
 
-守りたいのは 2 つ:
+守りたいのは 3 つ:
   1. 素の gh でコメントしようとしたら差し戻される (付け忘れの経路を塞ぐ)
   2. ラッパー経由なら、どの AI が書いたかの署名が自動で付く
+  3. 投稿の直前に、宛先の近況が 1 行で名乗られる (#1327)
 
 gh は PATH のスタブに差し替えるので、ネットワークも認証も要らない。
+**ラッパーを起動する検査はすべてスタブを噛ませる** — 3 が宛先を読みに行くので、
+素の PATH のまま走らせると検査が実ネットワークを叩く。
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -18,6 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -160,6 +164,45 @@ BODY_BEARING_SURFACES = {
 SURFACE_ANCHORS = (("issue", "comment"), ("issue", "close"), ("pr", "review"))
 
 GH = shutil.which("gh")
+JQ = shutil.which("jq")
+
+# --- gh のスタブ --------------------------------------------------------
+#
+# ラッパーは投稿の直前に宛先を読む (#1327)。検査でそこから外へ出ないよう、
+# ラッパーを起動するときは必ず PATH の先頭にスタブを置く。
+
+# 何もせず失敗するだけの gh。認証が無い / gh が古い環境を表す
+# (「黙って続行する」側の経路。#1327 完了条件 4)
+FAILING_GH = """#!/bin/bash
+exit 1
+"""
+
+# view には固定の JSON を**実物の jq**で評価させ、comment は引数と本文を記録する。
+# --jq の式はラッパーが書いたものがそのまま渡るので、式自体がここで検査される
+# (スタブが答えを作ると、式が壊れても緑のままになってしまう)
+RESPONDING_GH = """#!/bin/bash
+if [ "$2" = view ]; then
+  expr=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = --jq ]; then expr="$2"; shift 2; else shift; fi
+  done
+  exec jq -r "$expr" "$FIXTURE"
+fi
+printf '%s\\n' "$@" > "$LOG"
+cat "${!#}" >> "$LOG"
+"""
+
+
+def stub_gh(testcase, script=FAILING_GH):
+    """gh のスタブを 1 つ置いたディレクトリを作って返す (PATH の先頭に置く用)。"""
+    tmp = tempfile.TemporaryDirectory()
+    testcase.addCleanup(tmp.cleanup)
+    directory = Path(tmp.name)
+    gh = directory / "gh"
+    gh.write_text(script, encoding="utf-8")
+    gh.chmod(0o755)
+    return directory
+
 
 _SUBCOMMAND = re.compile(r"^  ([a-z][a-z-]*):\s", re.M)
 _BODY_FLAG = re.compile(r"--(?:body-file|comments|comment|body)(?![\w-])")
@@ -187,8 +230,10 @@ def derive_body_bearing_surfaces():
     return derived
 
 
-def clean_env(**overrides):
+def clean_env(path_prefix=None, **overrides):
     env = {k: v for k, v in os.environ.items() if k not in AGENT_ENV}
+    if path_prefix is not None:
+        env["PATH"] = f"{path_prefix}:{env['PATH']}"
     env.update(overrides)
     return env
 
@@ -462,11 +507,12 @@ class SignatureTest(unittest.TestCase):
     """ラッパー: 署名を誰の名前で、どう付けるか。"""
 
     def dry_run(self, body="本文", **env):
+        # 宛先の近況 (#1327) はここの関心ではない。落ちる gh を噛ませて黙らせる
         proc = subprocess.run(
             ["/bin/bash", str(COMMENT), "issue", "42", "--body", body, "--dry-run"],
             capture_output=True,
             text=True,
-            env=clean_env(**env),
+            env=clean_env(path_prefix=stub_gh(self), **env),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout, proc.stderr
@@ -514,7 +560,7 @@ class SignatureTest(unittest.TestCase):
                 ["/bin/bash", str(COMMENT), "pr", "7", "--body-file", str(f), "--dry-run"],
                 capture_output=True,
                 text=True,
-                env=clean_env(CLAUDECODE="1"),
+                env=clean_env(path_prefix=stub_gh(self), CLAUDECODE="1"),
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("ファイルからの本文", proc.stdout)
@@ -561,6 +607,15 @@ class DocumentationTest(unittest.TestCase):
         # 正本は scripts/comment.sh の signature() だけ
         self.assertNotIn("<sub>🤖", self.agents_md)
 
+    def test_the_harm_behind_the_notice_is_traceable_from_the_header(self):
+        """名乗りが何を塞いでいるかが、スクリプトの冒頭から辿れる (#1327 条件 5)。
+
+        「この 1 行は何のために出ているのか」を知りたい人が最初に開くのは
+        スクリプトである。実害の記述は Issue が正典なので、冒頭は番号で指す。
+        """
+        header = COMMENT.read_text(encoding="utf-8").split("set -euo pipefail")[0]
+        self.assertIn("1327", header)
+
 
 class GhInvocationTest(unittest.TestCase):
     """実際に gh へ渡す形 — 本文はファイル経由、リポジトリは明示する。
@@ -573,17 +628,15 @@ class GhInvocationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             log = d / "argv.txt"
+            fixture = d / "view.json"
+            fixture.write_text('{"state":"OPEN","comments":[]}', encoding="utf-8")
             stub = d / "gh"
-            stub.write_text(
-                '#!/bin/bash\nprintf "%s\\n" "$@" > "$LOG"\n'
-                'for a in "$@"; do :; done\n'
-                'cat "${!#}" >> "$LOG"\n',
-                encoding="utf-8",
-            )
+            stub.write_text(RESPONDING_GH, encoding="utf-8")
             stub.chmod(0o755)
             env = clean_env(
+                path_prefix=d,
                 CLAUDECODE="1",
-                PATH=f"{d}:{os.environ['PATH']}",
+                FIXTURE=str(fixture),
                 LOG=str(log),
                 GITHUB_REPOSITORY="mokume-metal/mokume",
             )
@@ -601,6 +654,142 @@ class GhInvocationTest(unittest.TestCase):
             self.assertIn("mokume-metal/mokume", captured)
             self.assertIn("投稿本文", captured)
             self.assertIn("Assisted by [Claude Code]", captured)
+
+
+@unittest.skipUnless(JQ, "jq が PATH に無い")
+class DestinationNoticeTest(unittest.TestCase):
+    """投稿の直前に宛先の近況を名乗る (#1327)。
+
+    読んだ時刻と投稿する時刻の間が開くと、差し替わった判断の上に書いてしまう
+    (#1291 では 1 時間 40 分が開き、12 分前に差し替わっていた判断を「そのまま効く」と
+    書いたコメントが残った)。ここが見るのは 4 つ — 名乗ること・閉じている宛先は
+    それも名乗ること・**止めないこと**・gh が使えないときに黙って続行することである。
+    """
+
+    def comment(self, minutes_ago, login="octocat", body="## 判断を差し替えた"):
+        at = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        return {
+            "createdAt": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "author": {"login": login},
+            "body": body,
+        }
+
+    def run_comment(self, *args, state="OPEN", comments=None, gh=RESPONDING_GH):
+        directory = stub_gh(self, gh)
+        fixture = directory / "view.json"
+        fixture.write_text(
+            json.dumps({"state": state, "comments": comments or []}), encoding="utf-8"
+        )
+        log = directory / "argv.txt"
+        proc = subprocess.run(
+            ["/bin/bash", str(COMMENT), *args],
+            capture_output=True,
+            text=True,
+            env=clean_env(
+                path_prefix=directory,
+                CLAUDECODE="1",
+                FIXTURE=str(fixture),
+                LOG=str(log),
+                GITHUB_REPOSITORY="mokume-metal/mokume",
+            ),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc, log
+
+    def test_latest_comment_is_announced_and_posting_continues(self):
+        """投稿者・相対時刻・見出しの冒頭が出て、投稿はそのまま走る (条件 1・3)。"""
+        proc, log = self.run_comment(
+            "issue",
+            "42",
+            "--body",
+            "x",
+            comments=[
+                self.comment(100, body="## 当初の判断"),
+                self.comment(12, login="maintainer", body="## 判断を差し替えた — 原因は相対パス"),
+            ],
+        )
+        self.assertIn("宛先 issue #42", proc.stderr)
+        self.assertIn("maintainer", proc.stderr)
+        self.assertIn("12 分前", proc.stderr)
+        self.assertIn("## 判断を差し替えた", proc.stderr)
+        self.assertNotIn("当初の判断", proc.stderr, "最新ではなく古いコメントを名乗っている")
+        # 止めない — gh comment まで到達している
+        self.assertIn("comment", log.read_text(encoding="utf-8"))
+
+    def test_closed_destination_says_so(self):
+        """条件 2。#1291 は投稿の 5 分後に closed になった。"""
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", state="CLOSED", comments=[self.comment(5)]
+        )
+        self.assertIn("(closed)", proc.stderr)
+
+    def test_merged_pull_request_says_so(self):
+        proc, _ = self.run_comment(
+            "pr", "7", "--body", "x", state="MERGED", comments=[self.comment(5)]
+        )
+        self.assertIn("(merged)", proc.stderr)
+
+    def test_open_destination_carries_no_state_mark(self):
+        """開いている宛先に印は要らない (毎回出ると読み飛ばされる)。"""
+        proc, _ = self.run_comment("issue", "42", "--body", "x", comments=[self.comment(5)])
+        self.assertIn("宛先 issue #42 —", proc.stderr)
+
+    def test_destination_without_comments(self):
+        proc, _ = self.run_comment("issue", "42", "--body", "x")
+        self.assertIn("コメントはまだ無い", proc.stderr)
+
+    def test_relative_age_scales(self):
+        for minutes, expected in ((0, "たった今"), (12, "12 分前"), (180, "3 時間前"), (2880, "2 日前")):
+            with self.subTest(minutes=minutes):
+                proc, _ = self.run_comment(
+                    "issue", "42", "--body", "x", comments=[self.comment(minutes)]
+                )
+                self.assertIn(expected, proc.stderr)
+
+    def test_marker_line_is_not_mistaken_for_the_heading(self):
+        """この経路自身が付けるマーカー行を見出しと取り違えない。
+
+        plan-record のプランは <!-- mokume-plan-record: … --> で始まるので、
+        素朴に「最初の行」を取ると全部これになる。
+        """
+        proc, _ = self.run_comment(
+            "issue",
+            "42",
+            "--body",
+            "x",
+            comments=[
+                self.comment(3, body="<!-- mokume-plan-record: abc -->\n## 着手時のプラン\n\n本文")
+            ],
+        )
+        self.assertIn("## 着手時のプラン", proc.stderr)
+        self.assertNotIn("mokume-plan-record", proc.stderr)
+
+    def test_long_heading_is_truncated(self):
+        """1 行に収める。切り詰めは jq 側なので、マルチバイトを割らない。"""
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", comments=[self.comment(3, body="あ" * 120)]
+        )
+        self.assertIn("…", proc.stderr)
+        self.assertNotIn("あ" * 60, proc.stderr)
+        self.assertEqual(1, len([n for n in proc.stderr.splitlines() if n.startswith("宛先")]))
+
+    def test_dry_run_announces_too(self):
+        """条件 1: --dry-run でも同じものが出る。
+
+        投稿の前に読み直させるのが目的なので、下見のほうにこそ要る。
+        """
+        proc, _ = self.run_comment(
+            "issue", "42", "--body", "x", "--dry-run", comments=[self.comment(7, login="maintainer")]
+        )
+        self.assertIn("宛先 issue #42", proc.stderr)
+        self.assertIn("7 分前", proc.stderr)
+        self.assertIn("gh issue comment 42", proc.stdout)
+
+    def test_unusable_gh_is_silent_and_posting_still_works(self):
+        """条件 4: 署名という本務を、付加的な表示の失敗で落とさない。"""
+        proc, _ = self.run_comment("issue", "42", "--body", "x", "--dry-run", gh=FAILING_GH)
+        self.assertNotIn("宛先", proc.stderr)
+        self.assertIn("Assisted by [Claude Code]", proc.stdout)
 
 
 if __name__ == "__main__":
