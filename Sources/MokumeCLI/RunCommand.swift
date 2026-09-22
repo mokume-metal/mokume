@@ -389,8 +389,9 @@ enum RunCommand {
         if runStopSignal != 0 { process.terminate() }
         process.waitUntilExit()
         runChildPID = 0
-        // **合図で止めた回は、スケッチの失敗として名乗らない。** 子は渡した SIGTERM で
-        // 終わるので終了コードは 15 になり、`sketchExited` の「スケッチ自身の出力を読め」になる
+        // **合図で止めた回は、終了コードを見ずに名乗る。** 子は渡した SIGTERM で後始末を
+        // 済ませて 0 で終わることも、済ませずに 15 で落ちることもある (#1219)。後者を
+        // `sketchExited` で名乗ると「スケッチ自身の出力を読め」になる
         if runStopSignal != 0 { throw .stopped(signal: runStopSignal) }
         if process.terminationStatus != 0 {
             throw .sketchExited(status: process.terminationStatus)

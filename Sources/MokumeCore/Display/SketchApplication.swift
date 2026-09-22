@@ -136,6 +136,14 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// ままでは、押した後を検めるたびに検査のプロセスが終わる。
     var onCloseConfirmed: @MainActor () -> Void = { NSApplication.shared.terminate(nil) }
 
+    /// 終わりの合図 (`SIGTERM` / `SIGINT`) を受けたときの行き先 ([#1219])。
+    ///
+    /// **× と同じ 1 本へ入れる** — 後始末を待つ ``shouldTerminate()`` を通さないと、撮って
+    /// いた動画が開けないまま残る。**検査から差し替える** (``onCloseConfirmed`` と同じ理由)。
+    ///
+    /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+    var onStopSignal: @MainActor () -> Void = { NSApplication.shared.terminate(nil) }
+
     /// 後始末が済んだと AppKit へ返す口。
     ///
     /// **「終わってよい」しか返さない** — 待っている途中で終わりをやめる経路は作らない
@@ -282,6 +290,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **断りは保証ではない。** 外部ディスプレイの電源を切る・蓋を閉じるといった
         // 経路は断れないので、止まったときに拾う側も要る — そちらは駆動源
         // (`ScreenDisplayLink`) が持っており、繋いだ時点で回り始める
+        // **終わりの合図を、後始末を待つ経路へ運ぶ** (#1219)。見に来るのは駆動源が叩く
+        // ``displayLinkFired()`` で、`app.run()` の前に立った旗は最初の 1 回が拾う
+        StopSignals.install()
         // **与えられたときだけ仕掛ける。** 与えられなければ何も足さないので、窓口から
         // 立てたスケッチの出力は 1 バイトも変わらない ([ADR-0029] 決定 5 の 2 番目)
         if FrameRateNotice.announces(
@@ -522,7 +533,24 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
     func displayLinkFired() {
+        pollStopSignal()
         advanceAndPresent()
+    }
+
+    /// 終わりの合図 (``StopSignals``) を 1 回だけ見に来る。受けていたら終わりを頼む ([#1219])。
+    ///
+    /// **見に来るのは駆動源が叩く回である** (``displayLinkFired()``)。表示のリフレッシュが
+    /// 止まっている間は予備が叩くので (``ScreenDisplayLink``)、画面が眠っていても、
+    /// `noLoop()` で止めていても、後始末を待たせている間も来る (畳むのは ``willTerminate()``)。
+    ///
+    /// **終わりに向かっている間の合図は受け流す。** 返事を待たせている間に `terminate(_:)` を
+    /// 重ねると、AppKit は返事を待たずに終わらせる (``willTerminate()`` の「最後の砦」)。
+    /// 2 度目の合図で急がせる経路は作らない — 待てない側には `SIGKILL` がある。
+    ///
+    /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+    func pollStopSignal() {
+        guard StopSignals.takeRequest(), !isTerminating else { return }
+        onStopSignal()
     }
 
     /// 1 フレーム進めて差し出す。
