@@ -314,6 +314,93 @@ struct LoopTests {
         #expect(sketch.drawCalls == 2)
     }
 
+    // MARK: - 絵をファイルにする
+
+    @Test("止めたスケッチの save() は、次のフレームを待たずにファイルになる")
+    func saveInTheFrameThatStopsIsWrittenRightAway() throws {
+        let facet = try makeFacet()
+        let out = facet.appendingPathComponent("still.png")
+        let sketch = Lines()
+        sketch.afterDraw = { $0.save(out.path) }
+        let runtime = try makeRuntime(sketch)
+
+        try runtime.advance()
+
+        // 止めたスケッチに次のフレームは来ない。ここで書かれなければ、終わりまで
+        // (SIGTERM で終わるなら永久に) 出ないことになる (#1300)
+        #expect(pollUntilSettled(within: 5) { FileManager.default.fileExists(atPath: out.path) })
+        #expect(sketch.drawCalls == 1)
+    }
+
+    @Test("止まっている間の押下から頼んだ save() も、描き直さずにファイルになる")
+    func saveAskedForWhileStoppedIsWritten() throws {
+        let facet = try makeFacet()
+        let out = facet.appendingPathComponent("pressed.png")
+        let sketch = Lines()
+        sketch.onPress = { $0.save(out.path) }
+        let runtime = try makeRuntime(sketch, inbox: facet)
+        try runtime.advance()
+
+        try click(in: facet)
+        var advances = 0
+        while sketch.pressedCalls == 0, advances < 10 {
+            try runtime.advance()
+            advances += 1
+        }
+        #expect(sketch.pressedCalls == 1)
+
+        // 宛先の絵は既に描かれている。組み直して配るほかに、届ける機会は無い
+        #expect(pollUntilSettled(within: 5) { FileManager.default.fileExists(atPath: out.path) })
+        #expect(sketch.drawCalls == 1)
+    }
+
+    @Test("save() の直後に外から pause() しても、ファイルになる")
+    func saveIsWrittenEvenIfThePauseComesFirst() throws {
+        let facet = try makeFacet()
+        let out = facet.appendingPathComponent("paused.png")
+        let sketch = Lines()
+        sketch.stopsInSetup = false
+        sketch.afterDraw = { if $0.drawCalls == 1 { $0.save(out.path) } }
+        let runtime = try makeRuntime(sketch)
+        try runtime.advance()
+
+        runtime.pause()
+        try runtime.advance()
+
+        #expect(pollUntilSettled(within: 5) { FileManager.default.fileExists(atPath: out.path) })
+        #expect(sketch.drawCalls == 1)
+    }
+
+    @Test("止まっている間に頼んだ save() は、次の advance() が無くても終わりまでに書かれる")
+    func aSaveAskedForWhileStoppedIsWrittenWhenTheSketchEnds() throws {
+        let facet = try makeFacet()
+        let out = facet.appendingPathComponent("ending.png")
+        let sketch = Lines()
+        let runtime = try makeRuntime(sketch)
+        try runtime.advance()
+
+        runSketch(runtime) { sketch.save(out.path) }
+        runtime.closePlugins()
+
+        // 終わりの経路が最後の受け皿である。ここも抜けると、頼んだファイルは出ない
+        #expect(FileManager.default.fileExists(atPath: out.path))
+    }
+
+    @Test("止まっている間、頼まれていなければ道を 1 回も通らない")
+    func aStoppedSketchDoesNotKeepHandingOutTheSamePicture() throws {
+        let facet = try makeFacet()
+        let out = facet.appendingPathComponent("once.png")
+        let sketch = Lines()
+        sketch.afterDraw = { $0.save(out.path) }
+        let runtime = try makeRuntime(sketch)
+
+        for _ in 0..<20 { try runtime.advance() }
+
+        // 止まっている絵は変わらない。頼まれた 1 回を越えて読み戻すのは、
+        // 止まったスケッチが毎フレーム費用を払っているということである (ADR-0023 決定 5)
+        #expect(runtime.target.encodePassCount == 1)
+    }
+
     /// 作者の口は走っているランタイムを通るので、検査からもそれを差してから呼ぶ。
     private func runSketch(_ runtime: SketchRuntime, _ body: () -> Void) {
         let previous = runningSketch

@@ -15,10 +15,14 @@ name: Publication
 #   assets    … 外に置いた絵が生きているか。ADR-0027 決定 2 により絵は外部ホスティングに
 #               あり、**壊れる瞬間はどの PR とも一致しない**。定期で引くしかない
 #
-# **赤くするだけで、起票はしない。** schedule の失敗は GitHub が cron を最後に触った
-# 人へ通知する。追跡単位が要るほど頻繁に鳴るかは、まだ 1 度も観測していない
-# (ADR-0008 決定 5 — native で済むなら足さない)。赤を見落とす事象が実際に起きたら、
-# ruleset-drift.yml と同じ形で起票を足す。
+# **assets の赤は Issue で名乗る** (#1295)。かつては両方とも赤くするだけで、理由は
+# 「追跡単位が要るほど頻繁に鳴るかは、まだ 1 度も観測していない」だった。その後 assets が
+# **7 日連続で赤のまま見落とされ**、「外に置いた視覚証跡 178 本がすべて 404」という事象が
+# 誰にも届かなかった (#1294)。ここの冒頭が予告していたとおり、ruleset-drift.yml と同じ形の
+# 起票を足した — 起票の判定は写さず、scripts/report-check-failure.sh が両方ぶんを 1 つ持つ。
+#
+# **freshness は赤くするだけのままである。** そちらは見落とした実害がまだ無いので、順序を
+# 守る (ADR-0008: 実害 → Issue → 機構)。踏んだ日に、同じ共有の置き場を呼ぶ 1 本を足せばよい。
 
 on:
   schedule:
@@ -70,8 +74,35 @@ jobs:
 
   assets:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      issues: write # 指し先が切れたときの起票 (#1295)
     steps:
       - uses: actions/checkout@v7
 
       - name: 外に置いた資産が生きているかを見る
-        run: python3 scripts/check-external-assets.py
+        id: check
+        run: |
+          set +e
+          python3 scripts/check-external-assets.py 2>&1 | tee assets.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: 引けない指し先を発信する
+        if: steps.check.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/report-dead-assets.sh assets.log
+
+      # 起票の後に落とす。Actions の履歴にも赤が残らないと、Issue を閉じた後に
+      # 「いつから直っているか」が run から読めない (ruleset-drift.yml と同じ並び)
+      - name: 死活の結果
+        env:
+          STATUS: ${{ steps.check.outputs.status }}
+        run: |
+          if [ "$STATUS" != "0" ]; then
+            echo "外に置いた資産が引けない (指し先と出所は上のログ)" >&2
+            exit 1
+          fi
+          echo "ok: 外に置いた資産はすべて引けた"

@@ -31,6 +31,13 @@
 #   . "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 #   files=$(pr_files "$repo" "$number") || …   # 読めなかったときの逃がしは呼び出し側
 #
+# **この形以外で呼ばない。** `pr_files … | touches_drawing` のようにパイプラインの
+# 左辺へ置くと、`if` の条件では**取得の失敗と「触れていない」が同じ偽になる**
+# (`set -o pipefail` の下でも、条件としての非 0 は分岐の偽にしかならない)。#1303 では
+# その形が 3 箇所に残っていて、`render-status.sh` は 502 を掴んだ描画 PR に
+# `local-render: success` を打っていた — 上の落ち方 (#793) と同じく、**どれも赤く
+# ならずに緩む方向**である。
+#
 # テストは scripts/tests/pr_files_test.py。
 
 # PR の変更ファイルのパスを 1 行 1 件で stdout へ。読めなければ非 0 で、何も出さない。

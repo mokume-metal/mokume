@@ -70,6 +70,8 @@ final class FrameRecorder: Outlet {
         case movieFailure
         /// 静止画・連番を書けなかった。
         case imageFailure
+        /// 絵を貰えないまま終わった `save()` の予約が残っていた。
+        case unwrittenShots
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -91,6 +93,18 @@ final class FrameRecorder: Outlet {
 
     /// 頼まれているものが何も無いか。
     var isIdle: Bool { oneShots.isEmpty && !isRecording }
+
+    /// いまの絵で果たせる `save()` の予約が残っているか。
+    ///
+    /// **``isIdle`` ではなく予約だけを見る。** 止まっているスケッチの抱えものを決着させるか
+    /// の判定に使うので、連番や動画まで数えると、止めている間じゅう同じ絵を押し込み続ける
+    /// ことになる ([#1300])。描かないフレームは録らない、が連番と動画の側の正しさである。
+    ///
+    /// - Parameter frame: 配れる絵のフレーム番号。これより後で頼まれたものは宛先の絵が
+    ///   まだ描かれていないので数えない (``receive(_:)`` と同じ境目)。
+    ///
+    /// [#1300]: https://github.com/mokume-metal/mokume/issues/1300
+    func hasUnwrittenShots(upTo frame: Int) -> Bool { oneShots.contains { $0.frame <= frame } }
 
     /// 連番か動画を撮っている最中か。
     var isRecording: Bool { sequence != nil || movie != nil }
@@ -253,6 +267,17 @@ final class FrameRecorder: Outlet {
         //
         // [#789]: https://github.com/mokume-metal/mokume/issues/789
         if let failure = writer.takeFailure() { warnOnce(.imageFailure, failure) }
+        // **果たせなかった予約を黙って捨てない** ([#1300])。`receive(_:)` はもう来ないので、
+        // ここに残っているものは 1 枚もファイルにならない。頼んだのに何の音も立てずに
+        // 消えるのが、いちばん分かりにくい壊れ方である
+        if !oneShots.isEmpty {
+            let paths = oneShots.map { "\"\($0.path)\"" }.joined(separator: ", ")
+            warnOnce(
+                .unwrittenShots,
+                "save(\(paths)): the sketch ended before the picture reached this outlet, "
+                    + "so nothing was written")
+            oneShots.removeAll()
+        }
         return true
     }
 }

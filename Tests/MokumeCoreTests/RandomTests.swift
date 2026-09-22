@@ -73,6 +73,74 @@ struct RandomTests {
         }
     }
 
+    /// 丸めが上へ効く組み合わせ。`low` が 0 なら積がそのまま `high` 未満へ丸まるので、
+    /// **`low` が 0 でないもの**を混ぜて見る (#1304)。
+    nonisolated static var boundaryRanges: [(low: Float, high: Float)] {
+        [(100, 110), (1, 2), (-5, 12), (0, 10), (1e7, 1e7 + 1)]
+    }
+
+    @Test("1 の直前を引いても high にならない", arguments: boundaryRanges)
+    func theHighestUnitValueStaysBelowHigh(_ range: (low: Float, high: Float)) {
+        // unitValue() が返しうる最大 = 16777215/16777216
+        let highest = Float(1).nextDown
+        let value = Randomness.scaled(highest, from: range.low, to: range.high)
+        #expect(value >= range.low && value < range.high)
+    }
+
+    @Test("0 を引けば low ちょうど", arguments: boundaryRanges)
+    func theLowestUnitValueGivesLow(_ range: (low: Float, high: Float)) {
+        #expect(Randomness.scaled(0, from: range.low, to: range.high) == range.low)
+    }
+
+    /// 幅 (`high - low`) が `Float` で溢れる組。端はどちらも有限なのに
+    /// `upper - lower` が `inf` になり、そのあとの積と和が壊れる (#1312)。
+    nonisolated static var overflowingSpans: [(low: Float, high: Float)] {
+        [
+            (-.greatestFiniteMagnitude, .greatestFiniteMagnitude),
+            (-3e38, 3e38),
+            (-1e38, 2.5e38),
+        ]
+    }
+
+    /// `unitValue()` が返しうる引きのうち、端と真ん中。
+    nonisolated static var representativeUnits: [Float] {
+        [0, 1.0 / 16_777_216.0, 0.5, Float(1).nextDown]
+    }
+
+    @Test(
+        "幅が溢れても範囲に収まる",
+        arguments: overflowingSpans, representativeUnits)
+    func anOverflowingSpanStaysInRange(_ span: (low: Float, high: Float), _ unit: Float) {
+        let value = Randomness.scaled(unit, from: span.low, to: span.high)
+        #expect(value.isFinite)
+        #expect(value >= span.low && value < span.high)
+    }
+
+    @Test("幅が溢れても、引きを動かせば値が動く", arguments: overflowingSpans)
+    func anOverflowingSpanStillSpreads(_ span: (low: Float, high: Float)) {
+        // 上端へ張り付いていれば、どの引きからも同じ値が返る
+        let values = (0..<16).map { step in
+            Randomness.scaled(Float(step) / 16, from: span.low, to: span.high)
+        }
+        #expect(Set(values).count == values.count)
+    }
+
+    @Test("上を下回らせない — 上下が同じなら、上の直前へ落とさない")
+    func anEmptyRangeIsNotPushedBelowItself() {
+        #expect(Randomness.scaled(Float(1).nextDown, from: 4, to: 4) == 4)
+    }
+
+    @Test("上で止めても、列は余分に進まない")
+    func stoppingBelowHighDoesNotConsumeExtraDraws() {
+        var ranged = Randomness(seed: 11)
+        var plain = Randomness(seed: 11)
+        for _ in 0..<1000 {
+            _ = ranged.value(from: 1, to: 2)
+            _ = plain.unitValue()
+        }
+        #expect(ranged.unitValue() == plain.unitValue())
+    }
+
     @Test("上下が同じなら常にその値")
     func anEmptyRangeAlwaysGivesThatValue() {
         var generator = Randomness(seed: 3)

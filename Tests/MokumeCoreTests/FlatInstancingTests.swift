@@ -333,4 +333,100 @@ struct FlatInstancingTests {
             "畳めるものが畳まれていない")
         #expect(folded.bytes == loose.bytes, "畳み方で絵が変わっている")
     }
+
+    // MARK: - 貼る絵ごとに畳む
+
+    /// 単色の絵を 1 枚作る。**絵どうしは色で見分ける** — 面を取り違えたときに、
+    /// どちらの絵で描かれたかが画素にそのまま出る。
+    private func sheet(_ canvas: Canvas, _ color: LinearRGBA) throws -> Image {
+        let image = try canvas.createImage(8, 8)
+        image.fill(color)
+        return image
+    }
+
+    /// 絵を貼った矩形を、重ならない位置に 3 つ置く。中心は (16, 16) / (40, 16) / (64, 16)。
+    private func stripe(_ canvas: Canvas, _ index: Int) {
+        canvas.rect(8 + Float(index) * 24, 8, 16, 16)
+    }
+
+    @Test("畳んでいる途中で絵を差し替えると、そこから先だけ新しい絵で出る")
+    func switchingTheTextureMidFoldAffectsOnlyWhatFollows() throws {
+        // 雛形が開いた後の図形は**置き場所を足すだけ**で、面を選ぶ経路を通らない。
+        // 鍵が絵を見ていないと、3 つ目が 1 枚目の絵で描かれる ([#1298])
+        let canvas = try makeCanvas()
+        let red = try sheet(canvas, .linear(red: 1, green: 0, blue: 0))
+        let blue = try sheet(canvas, .linear(red: 0, green: 0, blue: 1))
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.noStroke()
+            canvas.texture(red)
+            stripe(canvas, 0)
+            stripe(canvas, 1)  // ここで雛形が開く
+            canvas.texture(blue)
+            stripe(canvas, 2)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        #expect(image[16, 16].red > image[16, 16].blue, "1 つ目が赤い絵で描かれていない")
+        #expect(image[40, 16].red > image[40, 16].blue, "2 つ目が赤い絵で描かれていない")
+        #expect(image[64, 16].blue > image[64, 16].red, "差し替えた後の図形が前の絵で描かれている")
+    }
+
+    @Test("待ち合わせから昇格するとき、1 つ目が 2 つ目の絵に化けない")
+    func promotingFromTheWaitKeepsTheFirstTexture() throws {
+        // 昇格は 1 つ目の頂点を抜いて雛形として積み直す。そのとき選ばれる面が
+        // **いまの**貼る絵だと、置いたときには赤かった 1 つ目まで青になる ([#1298])
+        let canvas = try makeCanvas()
+        let red = try sheet(canvas, .linear(red: 1, green: 0, blue: 0))
+        let blue = try sheet(canvas, .linear(red: 0, green: 0, blue: 1))
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.noStroke()
+            canvas.texture(red)
+            stripe(canvas, 0)
+            canvas.texture(blue)
+            stripe(canvas, 1)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        #expect(image[16, 16].red > image[16, 16].blue, "1 つ目が 2 つ目の絵で描かれている")
+        #expect(image[40, 16].blue > image[40, 16].red, "2 つ目が青い絵で描かれていない")
+    }
+
+    @Test("絵が同じ間は畳まれたままで、絵が変わったところだけ列が分かれる")
+    func onlyATextureChangeSplitsTheFold() throws {
+        // 絵を鍵に入れたことで畳みが死んでいないことを見る。同じ絵で続く限りは
+        // 周を組み立て直さず、絵が変わったところで初めて列が分かれる
+        let same = try makeCanvas()
+        let sheetA = try sheet(same, .linear(red: 1, green: 0, blue: 0))
+        try same.draw {
+            same.background(.linear(red: 0, green: 0, blue: 0))
+            same.fill(.linear(red: 1, green: 1, blue: 1))
+            same.noStroke()
+            same.texture(sheetA)
+            for place in grid(12) { same.circle(place.x, place.y, 12) }
+        }
+        #expect(same.flatOutlinesInLastFrame == 2, "同じ絵なのに置いた数だけ周を組み立てている")
+        #expect(same.drawCallsInLastFrame == 1, "同じ絵なのに列が分かれている")
+
+        let alternating = try makeCanvas()
+        let red = try sheet(alternating, .linear(red: 1, green: 0, blue: 0))
+        let blue = try sheet(alternating, .linear(red: 0, green: 0, blue: 1))
+        try alternating.draw {
+            alternating.background(.linear(red: 0, green: 0, blue: 0))
+            alternating.fill(.linear(red: 1, green: 1, blue: 1))
+            alternating.noStroke()
+            for (index, place) in grid(12).enumerated() {
+                alternating.texture(index.isMultiple(of: 2) ? red : blue)
+                alternating.circle(place.x, place.y, 12)
+            }
+        }
+        #expect(
+            alternating.flatOutlinesInLastFrame == 12,
+            "絵を交互に変えた並びが畳まれている")
+        #expect(
+            alternating.drawCallsInLastFrame > same.drawCallsInLastFrame,
+            "絵が変わっても列が分かれていない")
+    }
+
 }
