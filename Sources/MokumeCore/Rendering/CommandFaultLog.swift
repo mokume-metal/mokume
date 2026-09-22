@@ -21,6 +21,7 @@ nonisolated final class CommandFaultLog: Sendable {
     private struct State {
         var count = 0
         var last: String?
+        var unresolved: String?
         var spoke = false
     }
 
@@ -38,13 +39,30 @@ nonisolated final class CommandFaultLog: Sendable {
         state.withLock { state in
             state.count += 1
             state.last = reason
+            state.unresolved = reason
             defer { state.spoke = true }
             return !state.spoke
         }
     }
 
+    /// 正常な結末が 1 つ届いたことを記す。``unresolved`` を消す。
+    ///
+    /// **回数と最後の理由は消さない。** そちらは「この GPU で何が起きたか」の記録で、
+    /// 消すのは「いま打ち切られたままか」の印だけである。
+    func noteFinished() {
+        state.withLock { $0.unresolved = nil }
+    }
+
     /// 打ち切られた回数。
     var count: Int { state.withLock { $0.count } }
+
+    /// **直近に届いた結末が打ち切りなら、その理由。** 正常な結末が後から届けば `nil` に戻る。
+    ///
+    /// 待ちが期限を越えたときに、それを打ち切りのせいと名乗るかを決める
+    /// (``RenderDevice/waitFailure(faults:)``)。``last`` で決めると、打ち切りから回復した後の
+    /// 本当の描きすぎまで打ち切りのせいにしてしまう
+    /// ([#1343](https://github.com/mokume-metal/mokume/issues/1343))。
+    var unresolved: String? { state.withLock { $0.unresolved } }
 
     /// 最後に打ち切られた理由。
     var last: String? { state.withLock { $0.last } }

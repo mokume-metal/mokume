@@ -74,6 +74,61 @@ struct CommandFaultLogTests {
         #expect(!CommandFaultLog.reason(of: bare).isEmpty)
     }
 
+    // MARK: - 待ちの期限切れを何のせいと名乗るか (#1343)
+
+    /// #1273 で実際に届いた理由。
+    private static let pageFault =
+        "Caused GPU Address Fault Error (0000000b:kIOGPUCommandBufferCallbackErrorPageFault)"
+
+    /// **打ち切られたままの待ちを「描きすぎ」と言わない。** #1273 では page fault の後にこの
+    /// 文面が毎フレーム出て、起票者は形や光を減らす方向へ 6 回作り直した。
+    @Test("直近の結末が打ち切りなら、待ちの期限切れは打ち切りの理由を名乗る")
+    func aTimeoutAfterDroppedWorkNamesTheDrop() {
+        let log = CommandFaultLog()
+        _ = log.note(Self.pageFault)
+
+        let failure = RenderDevice.waitFailure(faults: log)
+        #expect(failure == .workDropped(reason: Self.pageFault))
+        #expect(failure.headline.contains(Self.pageFault), "窓に出る 1 行に理由が載っていない")
+        #expect(!failure.description.contains("drawing too much"))
+    }
+
+    @Test("何も打ち切られていなければ、待ちの期限切れは今までどおり")
+    func aTimeoutWithoutDroppedWorkStaysATimeout() {
+        let failure = RenderDevice.waitFailure(faults: CommandFaultLog())
+        #expect(failure == .timedOut(seconds: RenderDevice.waitLimitSeconds))
+    }
+
+    /// **回復した後の本当の描きすぎまで、昔の打ち切りのせいにしない。** 回数と最後の理由は
+    /// 記録として残るが、名乗りを決めるのは直近の結末である。
+    @Test("打ち切りの後に正常な結末が届けば、待ちの期限切れは今までどおりに戻る")
+    func aFinishedSubmissionClearsTheDrop() {
+        let log = CommandFaultLog()
+        _ = log.note(Self.pageFault)
+        log.noteFinished()
+
+        #expect(RenderDevice.waitFailure(faults: log) == .timedOut(seconds: RenderDevice.waitLimitSeconds))
+        #expect(log.count == 1, "正常な結末で回数まで消えた")
+        #expect(log.last == Self.pageFault, "正常な結末で最後の理由まで消えた")
+    }
+
+    /// **判定を 1 か所に畳んでも、待ち口が通らなければ効かない。** 期限切れは検査から自然には
+    /// 作れないので (`failSettleForTesting` の doc)、待ち口が `.timedOut` を直に投げていない
+    /// ことを原文で留める。
+    @Test("待ち口は期限切れを直に投げず畳んだ口を通し、正常な結末は印を消す")
+    func everyWaitGoesThroughTheFailureBuilder() throws {
+        let source = try String(contentsOf: renderDeviceSource, encoding: .utf8)
+            .filter { !$0.isWhitespace }
+        #expect(
+            !source.contains("throw.timedOut("),
+            "RenderDevice に .timedOut を直に投げる待ち口がある — waitFailure(faults:) を通していない")
+        // 正常な結末で印を消す側も同じく原文で留める。消し忘れると、一度打ち切った GPU の
+        // 期限切れは以後ずっと打ち切りのせいと名乗る
+        #expect(
+            source.contains("commandFaults.noteFinished()"),
+            "結末のハンドラが正常な結末を記録へ渡していない — 打ち切りの印が消えない")
+    }
+
     // MARK: - 拾う経路が繋がっているか
 
     /// **数えるところが正しくても、届いていなければ 0 のままである。**
