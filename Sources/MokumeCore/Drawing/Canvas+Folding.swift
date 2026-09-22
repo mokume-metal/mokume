@@ -69,14 +69,14 @@ extension Canvas {
             strokeWeight: style.strokeWeight,
             strokeCap: style.strokeCap,
             strokeJoin: style.strokeJoin,
-            textured: style.picture != nil)
+            texture: style.hasFill ? style.picture?.held : nil)
         guard key.hasFill || key.hasStroke else { return }
 
         // **貼る絵と輪郭が同居する図形は畳まない。** 塗りは絵の面を、輪郭は字形の面を
         // 読むので、1 つの図形の途中で列が割れる (`useTexture`)。1 つの雛形に収まらない
         //
         // 保持する形を記録している最中も畳まない (`recordingShape`)
-        guard !(key.textured && key.hasFill && key.hasStroke), !recordingShape else {
+        guard !(key.texture != nil && key.hasStroke), !recordingShape else {
             return draw(makeOutline().moved(by: anchor))
         }
 
@@ -136,7 +136,15 @@ extension Canvas {
         closeBatch()
         // 読む面は雛形を積み始める前に決める。積んでいる途中で変わると、雛形が
         // 2 つの列に割れる
-        if key.textured, key.hasFill { useFillTexture() } else { useGlyphTexture() }
+        //
+        // **面は鍵から引く。** いまの貼る絵から引き直すと、鍵が別の面で開いた雛形を
+        // 指しているときに食い違う (`useFillTexture()` と同じ手順を鍵の側から踏む)
+        if let texture = key.texture {
+            texture.prepare()
+            useTexture(texture)
+        } else {
+            useGlyphTexture()
+        }
 
         // **雛形の頂点は白で、変換を掛けずに積む。** 色も変換も置き場所が持つので、
         // ここで焼き込むと二重に掛かる。組み立て自体は畳まないときとまったく同じ経路
