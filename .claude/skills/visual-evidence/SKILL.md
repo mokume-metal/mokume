@@ -379,6 +379,9 @@ curl -sI "$GYAZO_URL" -o /dev/null -w '%{http_code}\n'   # 200 でなければ�
 
 **200 でなければ、指示を待たずに退避路へ落ちる。** upload 自体が失敗したときも同じ。
 
+**HEAD (`-sI`) でよいのは、`i.gyazo.com` が転送を挟まず画像を直接返すからである。** 退避路の URL には
+この打ち方が通らないので、あちらは別の 1 手を持つ (「退避路の検算」)。
+
 この 1 手を置くのは、[#1294](https://github.com/mokume-metal/mokume/issues/1294) が
 **「貼ったつもりで死んでいる」**形で現れたからである — 上げた側は成功しており、気付けるのは
 引いてみたときだけだった。
@@ -404,7 +407,7 @@ osascript -e 'set the clipboard to POSIX file "<絶対パス>"'
 2. ブラウザで**貼り付け先の** Issue / PR のコメント欄を開き、focus して `cmd+v` を送る
 3. 挿入された 1 行をそのまま取り出す — `<img width="…" height="…" alt="Image" src="https://github.com/user-attachments/assets/<uuid>" />`
 4. **その URL を含むコメントを投稿する** (下記。PR 本文へ載せたいときも、先にこれを打つ)
-5. 投稿後に `curl -sI` で 200 を確かめる
+5. 投稿後に**原本と同じバイト数が返るか**を確かめる (下の「退避路の検算」。`-sI` では確かめられない)
 6. **ブラウザの下書きを破棄してタブを閉じる** (投稿はラッパー経由で行うので、欄に残った本文は捨てる)
 
 > **URL だけ先に取っておくことはできない。** 貼った時点では公開されず、無認証で引くと **404** が返る
@@ -432,6 +435,30 @@ Gyazo も落ちていて証跡を残せないときは、**そのことを PR �
 あちらは「同じ中身の絵には同じ URL が返る」という Gyazo の冪等性を借りており、**撮り直して URL が
 変わったかがそのまま絵が変わったかの判定**になっている ([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md)
 決定 2)。GitHub の添付は同じ絵でも毎回別の URL を返すので、この判定が成り立たない。
+
+### 退避路の検算
+
+**GET でリダイレクトを追い、原本とバイト数を突き合わせる。**
+
+```bash
+curl -sL "$ATTACHMENT_URL" -o /dev/null -w '%{http_code} %{size_download}\n'
+wc -c "<上げた原本>"                                                     # 一致すること
+```
+
+**見るのは 200 ではなくバイト数の一致である。** 200 だけでは「途中で切られていない」ことが見えず
+([#369](https://github.com/mokume-metal/mokume/issues/369) が camo で踏んだ形)、一致は**貼ったものが
+原本である**ことまで言う。退避路は camo を通らないので切られる余地は無いが、同じ 1 手で両方を確かめられる。
+
+**本線 (`i.gyazo.com`) と打ち方が違うのは、こちらが画像を直接返さないからである** — `github.com/user-attachments/…`
+は署名付き S3 への 302 で、**presigned URL は GET 用に署名されているので HEAD は 403 で弾かれる**。
+`-sI` で打つと、正しく公開されている添付が「失敗」に見える ([#1310](https://github.com/mokume-metal/mokume/issues/1310))。
+
+| 打ち方 | 返るもの (2026-09-22 実測・[#1293](https://github.com/mokume-metal/mokume/pull/1293) に貼った添付) |
+| --- | --- |
+| `curl -sI` (HEAD・追わず) | **302** — `github-production-user-asset-….s3.amazonaws.com` への署名付き転送 |
+| `curl -sIL` (HEAD・追う) | **403** — presigned URL が GET 用に署名されているため HEAD が弾かれる |
+| `curl -s` (GET・追わず) | 302 |
+| `curl -sL` (GET・追う) | **200** / 7182 bytes / `image/png` — 手元の原本とバイト数一致 |
 
 ## 貼る
 
@@ -487,8 +514,8 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
 
 **退避路 (GitHub) で貼ったものに、この検算は要らない。** `github.com/user-attachments/…` は camo を
 通らないので切られる余地が無い ([#1306](https://github.com/mokume-metal/mokume/issues/1306) で実測)。
-代わりに見るのは 1 つだけ — **投稿した後に URL が 200 を返すか**である (投稿前は 404 のままなので、
-確かめるのは必ず投稿の後)。
+代わりに見るのは 1 つだけ — **「退避路の検算」を投稿した後に打って、原本と同じバイト数が返るか**である
+(投稿前は 404 のままなので、確かめるのは必ず投稿の後。`-sI` では 302 が返るので、200 を待っても来ない)。
 
 ## 守ること
 
@@ -526,7 +553,12 @@ gh api repos/mokume-metal/mokume/pulls/<N> -H 'Accept: application/vnd.github.ht
   参照の面を作る道具の側は `@Video` で mp4 を扱える (実測) が、**置き場が無いので使えない**
 - **退避路で上げた絵が 404 のまま** — **その URL を含むコメントをまだ投稿していない**。貼った時点では
   公開されず、上げた本人のセッションからしか読めない。**PR 本文へ書いただけでも公開されない** —
-  コメントとして投稿してから引き直す
+  コメントとして投稿してから引き直す。**未投稿を名乗るのは 404 だけ**である (下の行)
+- **退避路の検算が 302 / 403 を返す** — **添付は公開されていて、打ち方が合っていないだけである。**
+  `-sI` / `-s` は署名付き S3 への転送 (302) が返ったところで止まっており、`-sIL` は presigned URL が
+  GET 用に署名されているため HEAD が弾かれている (403)。`-sL` で GET で追い直す (「退避路の検算」)。
+  **これを「まだ公開されていない」と読んで Draft に落とさない** — 上げ先が 2 本とも塞がったように
+  見えて、描画 PR が 1 本も出せなくなる ([#1310](https://github.com/mokume-metal/mokume/issues/1310))
 - **退避路で貼った動きが 1 枚の静止画になっている** — クリップボードへ `as «class PNGf»` で載せている。
   **ファイル参照** (`set the clipboard to POSIX file "<絶対パス>"`) で載せ直す
 - **退避路で貼っても入力欄が空のまま (エラーも出ない)** — 動画を paste しようとしている。GIF へ束ね直す
