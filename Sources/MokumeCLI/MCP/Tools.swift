@@ -93,7 +93,13 @@ struct Tools {
                             "minimum": 1,
                             "maximum": ObservationRequest.maximumEvery,
                             "description":
-                                "Take a shot every N frames (1…\(ObservationRequest.maximumEvery)). Omit to take every frame. Counted in frames rather than seconds, so running the same sketch twice returns the same series.",
+                                """
+                                Take a shot every N frames (1…\(ObservationRequest.maximumEvery)). \
+                                Omit to take every frame. Counted in frames rather than seconds, \
+                                and the sketch being observed runs on the wall clock, so the shots \
+                                are not evenly spaced in time — lay the series out by each entry's \
+                                `time` in the reply's catalogue, rather than assuming an even gap.
+                                """,
                         ],
                     ],
                 ]
