@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加 ([#193](https://github.com/mokume-metal/mokume/issues/193)) / 改訂 (2026-09-03): 決定 1 に、手本が割れている場合の段を追加 ([#669](https://github.com/mokume-metal/mokume/issues/669)) / 改訂 (2026-09-05): 決定 7 が保留していた語彙の置き場を決めた ([#883](https://github.com/mokume-metal/mokume/issues/883)) / 改訂 (2026-09-09): 決定 3 が 3D をまだ無いものとして書いていた箇所を、実装が入った後の姿に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-09-09): 決定 1 に、手本に倣う射程 (名前と引数の順序まで) の段を追加 ([#1082](https://github.com/mokume-metal/mokume/issues/1082))
+採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加 ([#193](https://github.com/mokume-metal/mokume/issues/193)) / 改訂 (2026-09-03): 決定 1 に、手本が割れている場合の段を追加 ([#669](https://github.com/mokume-metal/mokume/issues/669)) / 改訂 (2026-09-05): 決定 7 が保留していた語彙の置き場を決めた ([#883](https://github.com/mokume-metal/mokume/issues/883)) / 改訂 (2026-09-09): 決定 3 が 3D をまだ無いものとして書いていた箇所を、実装が入った後の姿に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-09-09): 決定 1 に、手本に倣う射程 (名前と引数の順序まで) の段を追加 ([#1082](https://github.com/mokume-metal/mokume/issues/1082)) / 改訂 (2026-09-22): 決定 7 が保留していた `lerp` / `constrain` を足した ([#1281](https://github.com/mokume-metal/mokume/issues/1281))
 
 ## 文脈
 
@@ -156,6 +156,27 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
 | 色の補間 | ここには入れない。作業空間で混ぜる規範 ([ADR-0011](0011-color-model.md)) が先に効く、色の面の話である |
 
 **何が示されたら足すか** — 作品トラックの作品が、これらを手で書いたことを 2 作品で踏んだとき。そのときは [#883](https://github.com/mokume-metal/mokume/issues/883) を開き直さず、新しい `Feature` を立てる。
+
+#### 改訂 (2026-09-22): 足す日が来たので、補間と締めを足した
+
+**当初の決定**は「`constrain` は 9 例・`lerp` は 3 例で手本に出てくるが、作品トラックではまだ踏んでいないので、いまは作らない」だった ([ADR-0001](0001-founding-principles.md) 原則 4)。上の段が定めた条件が満たされたので、ここで足す ([#1281](https://github.com/mokume-metal/mokume/issues/1281))。
+
+**条件どおり 2 作品が手で書いた。** `Tempo` ([works#65](https://github.com/mokume-metal/works/pull/65)) は `Ease.swift` に `mix` と `clamp` を、`Cast` ([works#67](https://github.com/mokume-metal/works/pull/67)) は `Stage.swift` に `mix`・`Score.swift` ほか 4 ファイルに `min(max(x, 0), 1)` を書いている。
+
+**踏まれ方が、保留のあいだに 1 つ増えていた。** 2 作品の `mix` は**引数の順番が違う** — `Tempo` が `(t, a, b)`、`Cast` が `(a, b, t)` である。毎回その場で書くと順番が揃わないので、実害は「同じ 1 行を 2 度書いた」だけではなく「**同じ名前が 2 通りの意味を持った**」でもある。上の表が名前と引数の順序を手本のまま (`lerp(start, stop, amount)`) と決めてあったことが、そのまま答えになっている。
+
+表の各行がどう実装に落ちたかは次のとおりで、**表を離れた判断はしていない**:
+
+| 表の行 | 実装 (`Sources/MokumeCore/Math/NumberSurface.swift`) |
+| --- | --- |
+| 置き場は `map` と同じ | 同じファイルのグローバル関数。`Sketch` のメソッドにしない — 実害はどちらの作品でも `enum` の `static func` の中で起きた |
+| 名前と引数は手本のまま | `lerp(_ start:, _ stop:, _ amount:)` / `constrain(_ value:, _ low:, _ high:)` |
+| `lerp` は 0…1 の外で締めない | 外挿する (`lerp(0, 10, 2)` は 20)。締めたい呼び手は `constrain` を通す |
+| `constrain` の上下が逆なら入れ替える | 両端を `min` / `max` で正規化してから締める |
+| 異常な入力は `map` と同じ控えへ事情を 1 つ足す (口ごとに数える) | `NumberValues.Warning.notANumber` に**口を連想値として持たせた**。綴りを並べる (`lerpNotANumber` …) 形にすると、足す人が既存の綴りを使い回せてしまい、先に鳴った口が残りを永久に黙らせる — 連想値なら鍵の共有が起こりようがない |
+| 色の補間はここに入れない | 入れていない ([ADR-0011](0011-color-model.md) が先に効く色の面の話である) |
+
+**この改訂で「足す日」の段は役目を終えた。** 上に残してあるのは、何を待っていたかと、待つと決めた理由の記録である。
 
 ## 影響
 
