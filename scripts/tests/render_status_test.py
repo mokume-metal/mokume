@@ -322,6 +322,23 @@ class RenderStatusTest(unittest.TestCase):
         self.assertEqual(self.posted(), [])
         self.assertIn("手元の報告を待つ", out)
 
+    def test_変更ファイルを読めなければ代理で報告しない(self):
+        """取得の失敗を「描画に触れない」と読むと、**手元で一度も回していない描画 PR に
+        success が付く** (#1303)。merge queue 側はそれを `covers=` なしの報告として
+        head の木で判定するので、覆いが成立したことにされる。何も打たなければ、
+        必須チェックの待ちがそのまま残る。"""
+        out = self.run_script(
+            "proxy",
+            GITHUB_REPOSITORY="mokume-metal/mokume",
+            GITHUB_EVENT_NAME="pull_request",
+            PR_NUMBER="5",
+            PR_HEAD_SHA="deadbeef",
+            FILES="Sources/MokumeCore/Drawing/Canvas.swift",
+            FILES_FAILS_FOR="5",
+        )
+        self.assertEqual(self.posted(), [])
+        self.assertIn("読めなかった", out)
+
     def test_台帳の絵を動かさない場所だけの変更には代理で報告する(self):
         """`Sketches/` は絵の証跡は要るが、手元の実行の覆いは壊せない (#497)。
         覆いを壊さないなら手元の報告を待つ理由が無いので、代理で緑にする。"""

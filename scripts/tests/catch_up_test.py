@@ -60,6 +60,11 @@ if [[ "$*" == *"/pulls?"* ]]; then
   exit 0
 fi
 if [[ "$*" == *"/files"* ]]; then
+  # 特定の PR だけ読めない状況を作る (#1303)
+  if [ -n "${FILES_FAILS_FOR:-}" ] && [[ "$*" == *"/pulls/${FILES_FAILS_FOR}/files"* ]]; then
+    echo "gh: 502" >&2
+    exit 1
+  fi
   for entry in ${FILES_BY_PR:-}; do
     if [[ "$*" == *"/pulls/${entry%%=*}/files"* ]]; then
       printf '%s\\n' "${entry#*=}" | tr ',' '\\n'
@@ -235,6 +240,15 @@ class CatchUpTest(unittest.TestCase):
         proc = self.run_script(PR_FILES=NOT_DRAWING)
         self.assertEqual(proc.returncode, 3, proc.stderr)
         self.assertIn("台帳の絵を動かさない", proc.stdout)
+        self.assertNotIn("ci-check", self.made())
+
+    def test_変更ファイルを読めなければ止まる(self):
+        """読めなかったことを「台帳の絵を動かさない」と読むと、覆い直しが要る PR で
+        黙って終わる (#1303)。人が catch-up を打ったのに何も起きないので、
+        skip (3) ではなく止まって理由を名乗る。"""
+        proc = self.run_script(FILES_FAILS_FOR="7")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("読めなかった", proc.stderr)
         self.assertNotIn("ci-check", self.made())
 
     def test_後半にだけ描画のパスがある大きな_PR_でも走る(self):
