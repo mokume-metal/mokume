@@ -14,10 +14,21 @@ enum NumberValues {
     /// 1 度だけ言う注意の種類。**事情ごとに数える** — 1 つの鍵を共有すると、先に
     /// 鳴ったほうが後の事情を永久に黙らせる。
     enum Warning: Hashable {
-        /// 写す元の幅が 0 だった。
+        /// 写す元の幅が 0 だった。``map(_:_:_:_:_:)`` だけが持つ事情である。
         case emptyRange
-        /// 数でない値・無限の値が渡された。
-        case notANumber
+        /// 数でない値・無限の値が渡された。**口ごとに数える** — 事情は同じでも、
+        /// 出す文面が口ごとに違ううえ、綴りを 1 つにすると先に鳴った口が残りを
+        /// 永久に黙らせる。連想値にしてあるのは、口が増えても鍵の共有が起こり
+        /// ようがない形にするためで、綴りを並べる (`lerpNotANumber` …) と
+        /// 足す人が使い回せてしまう。
+        case notANumber(Entry)
+
+        /// 注意を出した口。
+        enum Entry: Hashable {
+            case map
+            case lerp
+            case constrain
+        }
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
@@ -80,7 +91,7 @@ public func map(
     guard value.isFinite, inLow.isFinite, inHigh.isFinite, outLow.isFinite, outHigh.isFinite
     else {
         NumberValues.warnOnce(
-            .notANumber, "map(): got a value that is not a number, or an infinite one, so the low end of the destination was returned")
+            .notANumber(.map), "map(): got a value that is not a number, or an infinite one, so the low end of the destination was returned")
         return outLow.isFinite ? outLow : 0
     }
     guard inHigh != inLow else {
@@ -90,4 +101,67 @@ public func map(
         return outLow
     }
     return outLow + (value - inLow) / (inHigh - inLow) * (outHigh - outLow)
+}
+
+// MARK: - 2 つの値の間を取る
+
+/// 2 つの値の間を取る。
+///
+/// ```swift
+/// let x = lerp(20, width - 20, 0.25)
+/// ```
+///
+/// 引数は始まり・終わり・その間のどこか、の順 (手本と同じ並び)。`amount` が 0 なら
+/// `start`、1 なら `stop` が返る。
+///
+/// **0…1 の外は締めない。** `lerp(0, 10, 2)` は 20 を、`lerp(0, 10, -1)` は -10 を返す
+/// (手本と同じで、``map(_:_:_:_:_:)`` の外挿と揃う)。締めたいときは ``constrain(_:_:_:)``
+/// を通す。
+///
+/// **数でない値・無限の値が混じったときは `start` を返す。** 毎フレーム呼ばれる口が
+/// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func lerp(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
+    guard start.isFinite, stop.isFinite, amount.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.lerp),
+            "lerp(): got a value that is not a number, or an infinite one, so the start was returned"
+        )
+        return start.isFinite ? start : 0
+    }
+    return start + (stop - start) * amount
+}
+
+// MARK: - 値を範囲へ締める
+
+/// 値を、決めた範囲の中へ締める。
+///
+/// ```swift
+/// let radius = constrain(mouseX / 4, 4, 120)
+/// ```
+///
+/// 引数は締める値・下端・上端の順 (手本と同じ並び)。範囲の中の値はそのまま返る。
+///
+/// **上下が逆に渡されたら入れ替えて締める。** `constrain(5, 10, 0)` は `constrain(5, 0, 10)`
+/// と同じ 5 を返す — 逆向きの範囲を受け取る ``map(_:_:_:_:_:)`` と揃う。
+///
+/// **数でない値・無限の値が混じったときは、範囲の端へ倒す** — 両端とも有限なら下端を、
+/// 片側だけ有限ならその端を、どちらも数でなければ 0 を返す。毎フレーム呼ばれる口が
+/// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func constrain(_ value: Float, _ low: Float, _ high: Float) -> Float {
+    guard value.isFinite, low.isFinite, high.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.constrain),
+            "constrain(): got a value that is not a number, or an infinite one, so the low end of the range was returned"
+        )
+        // 両端のうち有限なほうへ倒す。どちらも数でなければ返す先が無いので 0 にする
+        if low.isFinite && high.isFinite { return min(low, high) }
+        if low.isFinite { return low }
+        if high.isFinite { return high }
+        return 0
+    }
+    return min(max(value, min(low, high)), max(low, high))
 }
