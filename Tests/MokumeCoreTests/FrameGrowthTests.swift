@@ -22,6 +22,23 @@ import Testing
 /// `residencySet.allocationCount` は**この土台が確保した資源の総数**そのものである。
 /// 数えるための機構を足していないのは、既にあるもので測れるからである ([ADR-0008])。
 ///
+/// ## footprint では数えない
+///
+/// **物理メモリ (`phys_footprint`) は、読む時刻で数字が変わる。** 手元で漏れを疑って
+/// footprint を読むときは、次の 2 つを踏まえる — 踏まえずに読んだ数字で、伸びていない
+/// ものを「伸び続ける」と起票したことがある ([#1209])。
+///
+/// - **基準も終点も、``RenderDevice/settle()`` の直後ではなく少し待ってから読む。**
+///   直後は解放が OS に返り切る前を読む。#1209 の実測では、描かない `Canvas` を 128 回
+///   作り捨てた直後が +57 MiB、0.25 秒後が +2 MiB だった
+/// - **GPU の仕事を投入しない回し方では、外す番を待つ列が `settle()` まで溜まる。**
+///   ``RenderDevice/retire(_:)`` は番を控えるだけなので、1 度も描かずに作り捨てると
+///   N 回分を最後の `settle()` まで常駐の集合が抱える。`settle()` の**後**に
+///   `allocationCount` を数えると 0 に見えるので、溜まり方を見るなら**前**に
+///   ``RenderDevice/retiredResourceCount`` も読む
+///
+/// 実測の表と、計測に使った検査は [#1209] にある。
+///
 /// ## 何を回すか
 ///
 /// M6 で足した段を**全部載せた 1 フレーム**を回す — 計算・粒・効果・拡大・描き場所・
@@ -29,6 +46,7 @@ import Testing
 /// どちらの検査にも入らない。
 ///
 /// [#385]: https://github.com/mokume-metal/mokume/issues/385
+/// [#1209]: https://github.com/mokume-metal/mokume/issues/1209
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 @Suite(
     "長く回しても増えない",
