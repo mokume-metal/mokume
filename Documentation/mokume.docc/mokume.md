@@ -327,6 +327,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/box(_:)``
 - ``Sketch/box(_:_:_:)``
 - ``Sketch/sphere(_:detail:)``
+- ``Sketch/ellipsoid(_:_:_:detail:)``
 - ``Sketch/plane(_:_:)``
 - ``Sketch/cylinder(_:_:detail:)``
 - ``Sketch/cone(_:_:detail:)``

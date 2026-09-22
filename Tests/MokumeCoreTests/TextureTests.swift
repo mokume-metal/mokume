@@ -191,6 +191,7 @@ struct TextureTests {
             SolidShape.box(width: 20, height: 30, depth: 40),
             .plane(width: 20, height: 30),
             .sphere(radius: 10, detail: 12),
+            .ellipsoid(radiusX: 10, radiusY: 25, radiusZ: 6, detail: 12),
             .cylinder(radius: 10, height: 20, detail: 12),
             .cone(radius: 10, height: 20, detail: 12),
             .torus(ringRadius: 10, tubeRadius: 3, detail: 12),

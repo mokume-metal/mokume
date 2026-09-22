@@ -32,6 +32,10 @@ struct SolidMeshTests {
         #expect(
             SolidShape.sphere(radius: 10, detail: detail).make().triangleCount
                 == detail * (detail / 2) * 2)
+        // 楕円体の割り方の意味は球と同じ
+        #expect(
+            SolidShape.ellipsoid(radiusX: 10, radiusY: 20, radiusZ: 5, detail: detail)
+                .make().triangleCount == detail * (detail / 2) * 2)
         // 輪は、輪の一周も管の一周も同じ数で割る
         #expect(
             SolidShape.torus(ringRadius: 10, tubeRadius: 3, detail: detail).make().triangleCount
@@ -143,6 +147,7 @@ struct SolidMeshTests {
     @Test("形は三角形の並びなので、点の数は 3 の倍数", arguments: [
         SolidShape.box(width: 1, height: 2, depth: 3),
         .sphere(radius: 1, detail: 7),
+        .ellipsoid(radiusX: 1, radiusY: 2, radiusZ: 3, detail: 7),
         .plane(width: 1, height: 1),
         .cylinder(radius: 1, height: 2, detail: 5),
         .cone(radius: 1, height: 2, detail: 5),
@@ -155,6 +160,7 @@ struct SolidMeshTests {
     @Test("面の巻き方が、形をまたいで揃っている", arguments: [
         SolidShape.box(width: 10, height: 20, depth: 30),
         .sphere(radius: 10, detail: 8),
+        .ellipsoid(radiusX: 10, radiusY: 25, radiusZ: 6, detail: 8),
         .plane(width: 10, height: 10),
         .cylinder(radius: 10, height: 20, detail: 6),
         .cone(radius: 10, height: 20, detail: 6),
@@ -183,6 +189,7 @@ struct SolidMeshTests {
     @Test("面の向きは外を向いている", arguments: [
         SolidShape.box(width: 10, height: 20, depth: 30),
         .sphere(radius: 10, detail: 8),
+        .ellipsoid(radiusX: 10, radiusY: 25, radiusZ: 6, detail: 8),
         .cylinder(radius: 10, height: 20, detail: 6),
         .cone(radius: 10, height: 20, detail: 6),
     ])
@@ -210,6 +217,12 @@ struct SolidMeshTests {
             (.plane(width: 8, height: 6), 4),
             // 球: 緯線 (上下 6 区間の間の 5 周) と経線 (12 本 x 6 区間)。四辺形の対角線は無い
             (.sphere(radius: 7, detail: around), (sphereRings - 1) * around + around * sphereRings),
+            // 楕円体: 球と同じ数。`diag(a, b, c)` は線形写像なので、球の四辺形が
+            // 同一平面に載る性質 (だから対角線が出ない) をそのまま保つ
+            (
+                .ellipsoid(radiusX: 7, radiusY: 18, radiusZ: 4, detail: around),
+                (sphereRings - 1) * around + around * sphereRings
+            ),
             // 円柱: 側面の縦線 + 上下の縁。蓋の放射線と側面の対角線は無い
             (.cylinder(radius: 6, height: 20, detail: around), around * 3),
             // 円錐: 先から降りる線 + 底の縁。底の放射線は無い
@@ -273,6 +286,7 @@ struct SolidMeshTests {
         // 閉じた形の列だけが裏面を捨てられる。平らな面は片面で、裏から見えなくなる
         #expect(SolidShape.box(width: 1, height: 1, depth: 1).isClosed)
         #expect(SolidShape.sphere(radius: 1, detail: 8).isClosed)
+        #expect(SolidShape.ellipsoid(radiusX: 1, radiusY: 2, radiusZ: 3, detail: 8).isClosed)
         #expect(SolidShape.cylinder(radius: 1, height: 1, detail: 8).isClosed)
         #expect(SolidShape.cone(radius: 1, height: 1, detail: 8).isClosed)
         #expect(SolidShape.torus(ringRadius: 2, tubeRadius: 1, detail: 8).isClosed)
@@ -283,6 +297,8 @@ struct SolidMeshTests {
         SolidShape.box(width: 10, height: 20, depth: 30),
         .sphere(radius: 10, detail: 8),
         .sphere(radius: 3, detail: 3),
+        .ellipsoid(radiusX: 10, radiusY: 25, radiusZ: 6, detail: 8),
+        .ellipsoid(radiusX: 3, radiusY: 1, radiusZ: 7, detail: 3),
         .cylinder(radius: 10, height: 20, detail: 6),
         .cylinder(radius: 1, height: 100, detail: 3),
         .cone(radius: 10, height: 20, detail: 6),
@@ -318,5 +334,95 @@ struct SolidMeshTests {
         guard case .torus(let ringRadius, _, _) = shape else { return .zero }
         let inPlane = SIMD3<Float>(point.x, point.y, 0)
         return normalize(inPlane) * ringRadius
+    }
+
+    // MARK: - 楕円体 (#849)
+
+    @Test("3 つの半径が等しい楕円体は、球と同じ形になる")
+    func anEllipsoidWithEqualRadiiIsASphere() {
+        // **球と楕円体は別々に組み立てている** (ADR-0008 決定 6 の第 3 の道)。畳んで
+        // いないので、片方の規律だけが動いても気付けない箇所が要る — それが uv の
+        // 巻き方で、この検査 1 本がそこを塞ぐ。並び順・rings の割り方・巻き方も
+        // まとめて留まる
+        let radius: Float = 13
+        let sphere = SolidShape.sphere(radius: radius, detail: 16).make().points
+        let ellipsoid = SolidShape
+            .ellipsoid(radiusX: radius, radiusY: radius, radiusZ: radius, detail: 16)
+            .make().points
+
+        #expect(ellipsoid.count == sphere.count)
+        for (mine, theirs) in zip(ellipsoid, sphere) {
+            // 位置と uv は**ビットで**一致する。どちらも同じ積を同じ順で取るので、
+            // 丸めまで同じになる
+            #expect(mine.position == theirs.position)
+            #expect(mine.uv == theirs.uv)
+            // 向きだけは経路が違う (球は方向そのまま、楕円体は余因子を正規化する)
+            #expect(distance(mine.normal, theirs.normal) < 1e-5)
+        }
+    }
+
+    @Test("楕円体の点は、すべて楕円面に載っている")
+    func ellipsoidPointsSitOnTheSurface() {
+        let (a, b, c): (Float, Float, Float) = (20, 40, 7)
+        let mesh = SolidShape.ellipsoid(radiusX: a, radiusY: b, radiusZ: c, detail: 20).make()
+        for point in mesh.points {
+            let p = point.position
+            let onSurface = (p.x / a) * (p.x / a) + (p.y / b) * (p.y / b) + (p.z / c) * (p.z / c)
+            #expect(abs(onSurface - 1) < 1e-4)
+        }
+    }
+
+    @Test("半径は x・y・z の順に効く")
+    func ellipsoidRadiiApplyInAxisOrder() {
+        // **軸を取り違えても「楕円体らしい絵」は出る。** 順序は形からしか読めない
+        let mesh = SolidShape.ellipsoid(radiusX: 20, radiusY: 40, radiusZ: 60, detail: 24).make()
+        let positions = mesh.points.map(\.position)
+        for (extent, axis) in [
+            (Float(20), \SIMD3<Float>.x), (40, \SIMD3<Float>.y), (60, \SIMD3<Float>.z),
+        ] {
+            #expect(abs((positions.map { $0[keyPath: axis] }.max() ?? 0) - extent) < 1e-3)
+            #expect(abs((positions.map { $0[keyPath: axis] }.min() ?? 0) + extent) < 1e-3)
+        }
+    }
+
+    @Test("楕円体の面の向きは、楕円面の勾配である")
+    func ellipsoidNormalsFollowTheGradient() {
+        // **球を引き伸ばしただけの向き (位置と同じ向き) では通らない。** 伸びた軸ほど
+        // 面は寝るので、勾配と方向は別物になる
+        let (a, b, c): (Float, Float, Float) = (10, 30, 6)
+        let mesh = SolidShape.ellipsoid(radiusX: a, radiusY: b, radiusZ: c, detail: 20).make()
+        var differed = 0
+        for point in mesh.points {
+            #expect(abs(length(point.normal) - 1) < 1e-4)
+            let p = point.position
+            let gradient = normalize(
+                SIMD3<Float>(p.x / (a * a), p.y / (b * b), p.z / (c * c)))
+            #expect(dot(point.normal, gradient) > 0.9999)
+            // 位置の向きとは**違う**ことも見る。見ないと、球のままの実装でも
+            // 勾配との一致だけは (丸めの範囲で) 通ってしまう極が残る
+            if dot(point.normal, normalize(p)) < 0.99 { differed += 1 }
+        }
+        #expect(differed > 0, "どの点でも向きが位置と同じ = 球を引き伸ばしただけ")
+    }
+
+    @Test(
+        "半径に 0 が混ざっても、位置も向きも数である",
+        arguments: [
+            SIMD3<Float>(0, 40, 40), SIMD3(40, 0, 40), SIMD3(40, 40, 0),
+            SIMD3(0, 0, 40), SIMD3(0, 0, 0),
+        ])
+    func zeroRadiiStayFinite(_ radii: SIMD3<Float>) {
+        // `SolidShape.isDrawable` は 0 を通す (`goodSizesAreAccepted`) ので、ここへ
+        // 0 が届く。法線を素直な割り算で書くと無限が出て、そのまま GPU へ渡る
+        let mesh = SolidShape
+            .ellipsoid(radiusX: radii.x, radiusY: radii.y, radiusZ: radii.z, detail: 12).make()
+        #expect(!mesh.points.isEmpty)
+        for point in mesh.points {
+            #expect(point.position.x.isFinite && point.position.y.isFinite
+                && point.position.z.isFinite)
+            #expect(point.normal.x.isFinite && point.normal.y.isFinite
+                && point.normal.z.isFinite)
+            #expect(abs(length(point.normal) - 1) < 1e-4)
+        }
     }
 }

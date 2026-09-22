@@ -139,6 +139,51 @@ extension Sketch {
         canvas.sphere(radius, detail: detail)
     }
 
+    /// 楕円体を置く。**3 つの半径を軸ごとに決めた球**である。
+    ///
+    /// 3 つとも同じ値なら ``sphere(_:detail:)`` と同じ形になる。**半径は x・y・z の順**で、
+    /// 縦軸は下向きなので 2 つ目が背の高さにあたる。下の 2 つは同じ割り方で、半径だけを
+    /// 振っている — 縦に長い卵形と、上下に潰れた円盤状の立体になる。
+    ///
+    /// ```swift
+    /// background(23, 26, 31)
+    /// lights()
+    /// noStroke()
+    /// fill(242, 115, 64)
+    /// translate(200, 150, 0)
+    /// rotateY(0.6)
+    /// rotateX(0.35)
+    /// ellipsoid(60, 120, 60)
+    /// ```
+    ///
+    /// ```swift
+    /// background(23, 26, 31)
+    /// lights()
+    /// noStroke()
+    /// fill(242, 115, 64)
+    /// translate(200, 150, 0)
+    /// rotateY(0.6)
+    /// rotateX(0.35)
+    /// ellipsoid(120, 45, 120)
+    /// ```
+    ///
+    /// - Note: 同じ形は ``push()`` / ``scale(_:_:_:)`` / ``sphere(_:detail:)`` / ``pop()``
+    ///   でも作れるが、そちらは**置き場所の変換を動かす**ので、後続へ残さないよう
+    ///   挟む必要がある。`ellipsoid` は形の側が半径を持つので変換は汚れない。
+    ///
+    /// - Parameters:
+    ///   - x: 横の半径 (画素)。
+    ///   - y: 縦の半径 (画素)。
+    ///   - z: 奥行きの半径 (画素)。
+    ///   - detail: **一周をいくつに割るか。** 球と同じく、上下は半周なのでその半分で割る。
+    public func ellipsoid(
+        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
+        detail: Int = Canvas.defaultSolidDetail
+    ) {
+        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        canvas.ellipsoid(x, y, z, detail: detail)
+    }
+
     /// 平らな面を置く。画面の側を向く。
     ///
     /// 奥行き 0 に置いた面は、同じ座標に描いた ``rect(_:_:_:_:)`` とぴったり重なる。
