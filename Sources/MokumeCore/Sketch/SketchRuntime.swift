@@ -774,7 +774,9 @@ public final class SketchRuntime {
 
     /// 連番を始める。転送 (正本は ``Sketch/beginRecord(_:)``)。
     public func beginRecord(_ pattern: String) {
-        requireRecorder().beginRecord(pattern)
+        // **頼まれたフレームを一緒に渡す** (`save(_:)` と同じ理由)。番号が無いと、撮る係が
+        // 前から並びに居たときに 1 つ前の絵から録る (#1456)
+        requireRecorder().beginRecord(pattern, at: timing.frameCount)
         attachRecorderIfNeeded()
     }
 
