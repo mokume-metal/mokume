@@ -498,6 +498,15 @@ public final class SketchRuntime {
         paramStore?.tick()
     }
 
+    /// 起こした道具が居なくなっていたら 1 度だけ `true` を返す (``StandardInputEvents/takeDeparture()``)。
+    ///
+    /// **見張りから起こされていなければ、常に `false`。** 管を読むのはそのときだけなので
+    /// (``StandardInputEvents/makeIfDriven(by:descriptor:)``)、`mokume run` や直に走らせた子の
+    /// 標準入力 (端末) が閉じても終わらない。
+    func takeDriverDeparture() -> Bool {
+        relayed?.takeDeparture() ?? false
+    }
+
     /// 入り口に値を供給させる。**`draw()` の直前** ([ADR-0024] 決定 6)。
     ///
     /// 供給した値が同じフレームの `draw()` から見える。1 フレーム遅れて効く形にすると、

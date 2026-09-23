@@ -253,6 +253,20 @@ struct WatchCommandTests {
         #expect(WatchCommand.stopSignals.contains(SIGTERM))
     }
 
+    /// **時間切れで畳む形も受ける。** 期限を付けて起こした見張り (`alarm` + `exec`) が既定の
+    /// 動作で消え、子が窓の無いまま 28 時間残った ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
+    @Test("時間切れの合図 (SIGALRM) でも、印が立つ")
+    func raisesTheStopFlagOnAlarm() {
+        WatchCommand.installStopHandlers()
+        defer {
+            for number in WatchCommand.stopSignals { signal(number, SIG_DFL) }
+            watchStopRequested = 0
+        }
+
+        raise(SIGALRM)
+        #expect(watchStopRequested != 0)
+    }
+
     @Test("印が立つと、巡回を抜ける")
     func leavesTheLoopWhenStopped() async throws {
         let stub = Stub()

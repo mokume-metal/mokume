@@ -357,4 +357,70 @@ struct SketchApplicationTests {
         #expect(ended == 0, "終わりに向かっている間に、合図で終わりを重ねた")
         #expect(!StopSignals.takeRequest(), "受け流した合図が、旗に残っている")
     }
+
+    // MARK: - 起こした道具が居なくなったとき (#1427)
+
+    /// **道具が居なくなったら、終わりの合図と同じ経路で終わる。** 窓は道具のものなので一緒に
+    /// 消えており、残った子には人が止める入口が無い ([#1427])。
+    ///
+    /// [#1427]: https://github.com/mokume-metal/mokume/issues/1427
+    @Test("起こした道具が居なくなったら、終わりを頼む")
+    func asksToEndWhenTheDriverIsGone() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        var ended = 0
+        var gone = false
+        application.onStopSignal = { ended += 1 }
+        application.driverDeparted = { gone }
+        defer { application.willTerminate() }
+
+        application.pollStopSignal()
+        #expect(ended == 0, "道具が居るのに、終わりを頼んだ")
+        gone = true
+        application.pollStopSignal()
+        #expect(ended == 1)
+    }
+
+    /// **合図と管が同じ刻みに来ても、頼むのは 1 度である。** 両方の印を下ろすので、次の刻みで
+    /// 読み残した側が重ねて頼むこともない。
+    @Test("合図と道具の消失が重なっても、終わりは 1 度だけ頼む")
+    func asksOnceWhenBothArrive() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        var ended = 0
+        var departures = [true]
+        application.onStopSignal = { ended += 1 }
+        application.driverDeparted = { departures.popLast() ?? false }
+        defer { application.willTerminate() }
+
+        sketchStopRequested = 1
+        application.pollStopSignal()
+        application.pollStopSignal()
+
+        #expect(ended == 1)
+        #expect(departures.isEmpty, "合図があった刻みで、道具の消失を読み残した")
+    }
+
+    /// **終わりに向かっている間は重ねない** (``aStopSignalDoesNotTerminateAgain()`` と同じ理由)。
+    @Test("終わりに向かっている間に道具が居なくなっても、終わりを重ねない")
+    func theDriverLeavingDoesNotTerminateAgain() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        var ended = 0
+        application.onStopSignal = { ended += 1 }
+        application.driverDeparted = { true }
+        application.replyToTermination = {}
+        defer { application.willTerminate() }
+
+        _ = SketchApplicationDelegate(application: application).applicationShouldTerminate(.shared)
+        application.pollStopSignal()
+
+        #expect(ended == 0, "終わりに向かっている間に、道具の消失で終わりを重ねた")
+    }
+
+    /// **検査のプロセスは道具から起こされていないので、既定の口は何も言わない。** 直に走らせた
+    /// スケッチの標準入力 (端末) が閉じても終わらないことは、ここから従う。
+    @Test("道具から起こされていなければ、居なくなったとは言わない")
+    func notDrivenMeansNeverDeparted() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        defer { application.willTerminate() }
+        #expect(!application.driverDeparted())
+    }
 }
