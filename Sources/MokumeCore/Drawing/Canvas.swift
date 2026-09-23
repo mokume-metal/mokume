@@ -740,6 +740,13 @@ public final class Canvas {
     var currentCurveDetail = 20
     var currentCurveTightness: Float = 0
     /// 通過点を結ぶ曲線の制御点。4 つ揃うごとに 1 区間を引く。
+    ///
+    /// **並びは `curveVertex` を続けて呼んでいる間だけ続く。** `curveVertex` 以外で点を置く
+    /// 呼び出し (`vertex` / `bezierVertex` / `quadraticVertex`) と、穴の境目 (``beginContour()`` /
+    /// ``endContour()``) で空に戻す — 穴の中の曲線は外周の点を並びに含まず、外周と独立に
+    /// 始まる ([#1449])。
+    ///
+    /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
     var curveGuides: [SIMD2<Float>] = []
 
     /// 閉じた列。**同じ列は単一の混ぜ方でしか描かれない。**

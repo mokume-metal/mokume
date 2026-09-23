@@ -49,24 +49,28 @@ extension Canvas {
 
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
+        breakCurveSequence()
         appendVertex(SIMD3(x, y, 0), hasDepth: false)
     }
 
     // 奥行きを持つ頂点を 1 つ置く。
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        breakCurveSequence()
         appendVertex(SIMD3(x, y, z), hasDepth: true)
     }
 
     // 貼る絵の読み取り位置つきで頂点を 1 つ置く。
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
+        breakCurveSequence()
         appendVertex(SIMD3(x, y, 0), hasDepth: false, uv: textureUV(u, v))
     }
 
     // 奥行きと読み取り位置を持つ頂点を 1 つ置く。
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)
+        breakCurveSequence()
         appendVertex(SIMD3(x, y, z), hasDepth: true, uv: textureUV(u, v))
     }
 
@@ -109,6 +113,7 @@ extension Canvas {
         _ cx1: some ScalarConvertible, _ cy1: some ScalarConvertible, _ cx2: some ScalarConvertible, _ cy2: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible
     ) {
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
+        breakCurveSequence()
         guard isBuildingShape, let start = lastShapePoint else {
             warnVertexOutsideShapeOnce()
             return
@@ -126,6 +131,7 @@ extension Canvas {
 
     public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
+        breakCurveSequence()
         guard isBuildingShape, let start = lastShapePoint else {
             warnVertexOutsideShapeOnce()
             return
@@ -142,6 +148,14 @@ extension Canvas {
     ///
     /// **4 つ揃って初めて 1 区間が引ける** — 最初と最後の点は曲がり方を決めるためだけに
     /// 使われ、その間だけが実際に描かれる。
+    ///
+    /// **並びは `curveVertex` を続けて呼んでいる間だけ続く。** `vertex` / `bezierVertex` /
+    /// `quadraticVertex` と穴の境目 (`beginContour` / `endContour`) で切れ、次の区間はまた
+    /// 4 つ揃ってから引く。いま組んでいる環 (外周か穴) で最初に引く区間は、その始点も環に
+    /// 置く — 穴の中の曲線は外周と独立に始まる ([#1449])。規則の正本は
+    /// ``Sketch/curveVertex(_:_:)`` の説明。
+    ///
+    /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard isBuildingShape else {
@@ -155,7 +169,7 @@ extension Canvas {
         let p1 = curveGuides[count - 3]
         let p2 = curveGuides[count - 2]
         let p3 = curveGuides[count - 1]
-        if shapePoints.isEmpty { appendShapePoint(p1, isCurveStep: false) }
+        if (holePoints ?? shapePoints).isEmpty { appendShapePoint(p1, isCurveStep: false) }
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
             // 最後の刻みは通過点 — 張り具合 1 では折れ線の角になる
@@ -178,12 +192,14 @@ extension Canvas {
             return
         }
         holePoints = []
+        breakCurveSequence()
     }
 
     public func endContour() {
         guard let hole = holePoints else { return }
         if hole.count >= 3 { shapeHoles.append(hole) }
         holePoints = nil
+        breakCurveSequence()
     }
 
     public func endShape(_ end: ShapeEnd = .open) {
@@ -595,8 +611,23 @@ extension Canvas {
 
     // MARK: - 溜める
 
+    /// いま組んでいる環 (外周か穴) の最後の点。**空の穴は外周の点へ倒れない** — 穴の最初の
+    /// ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` は、形の中で手前に点が
+    /// 無いときと同じく何もしない ([#1449])。
+    ///
+    /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
     private var lastShapePoint: SIMD2<Float>? {
-        (holePoints?.last ?? shapePoints.last).map { SIMD2($0.position.x, $0.position.y) }
+        (holePoints ?? shapePoints).last.map { SIMD2($0.position.x, $0.position.y) }
+    }
+
+    /// 通過点の曲線の並び (``curveGuides``) を切る。**`curveVertex` 以外で点を置く呼び出し
+    /// (`vertex` / `bezierVertex` / `quadraticVertex`) と、穴の境目で呼ぶ** — 次の区間は、
+    /// また 4 つ揃ってから引かれる。
+    ///
+    /// ``appendVertex(_:hasDepth:uv:isCurveStep:)`` には入れない。`curveVertex` 自身が置く
+    /// 刻みの点もそこを通るので、曲線が 1 区間で止まる。
+    private func breakCurveSequence() {
+        curveGuides.removeAll(keepingCapacity: true)
     }
 
     /// 曲線が作った点を置く。奥行きは直前の点から引き継ぐ。

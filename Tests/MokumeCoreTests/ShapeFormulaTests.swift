@@ -265,6 +265,210 @@ struct ShapeFormulaTests {
         #expect(differingPixels(curved, straight) == 0)
     }
 
+    // MARK: - 通過点の曲線の並びの切れ目 (#1449)
+
+    /// 起票 ([#1449]) の再現の輪。8 点の輪を 11 個の通過点で一巡りする — 最初と最後の
+    /// 3 点が重なるので、並びの両端の区間も輪の上に乗り、輪は閉じる。
+    ///
+    /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
+    private static func ringGuides(radius: Float, reversed: Bool) -> [SIMD2<Float>] {
+        let order = reversed ? Array((0..<11).reversed()) : Array(0..<11)
+        return order.map { i in
+            let angle = Float(i % 8) / 8 * 2 * .pi
+            return SIMD2(80 + radius * cos(angle), 80 + radius * sin(angle))
+        }
+    }
+
+    /// 外周を `vertex` で組んだ長方形 (160×160 の面)。
+    private static let frameCorners: [SIMD2<Float>] = [
+        SIMD2(10, 10), SIMD2(150, 10), SIMD2(150, 150), SIMD2(10, 150),
+    ]
+
+    /// 端点を 2 度置いた、閉じない通過点の曲線。**外周の長方形と逆回り**に並べてある
+    /// (穴の頂点の並べ方 — ``Sketch/beginContour()``)。穴の中の最初の区間の始点は 2 つ目に
+    /// 置いた (40, 40) で、輪と違って終わりが始点に重ならない — 始点が欠けると絵に出る。
+    private static let openCurveGuides: [SIMD2<Float>] = [
+        SIMD2(40, 40), SIMD2(40, 40), SIMD2(40, 120), SIMD2(120, 120), SIMD2(120, 40),
+        SIMD2(120, 40),
+    ]
+
+    /// #1449 の完了条件 1。**穴は外周から独立した輪郭として始まる** — 穴を ``Canvas/beginContour()``
+    /// の中で描いた絵は、外周だけの形を塗ってから同じ曲線を独立した形として下地の色で塗った
+    /// 絵と一致する。直す前は、穴の最初の区間が外周の点を端点にして引かれ、穴の環が外周の上
+    /// から始まっていた (塗りで 63 画素違う)。線も引く組では、穴の輪郭が外周まで伸びた線に
+    /// なっていた。
+    @Test(
+        "曲線の外周に曲線の穴を開けた絵は、外周を塗ってから穴を下地の色で塗った絵と同じになる",
+        arguments: [false, true])
+    func curvedHoleStartsOnItsOwn(stroked: Bool) throws {
+        let outer = Self.ringGuides(radius: 70, reversed: false)
+        let hole = Self.ringGuides(radius: 30, reversed: true)
+        func style(_ canvas: Canvas) {
+            canvas.fill(white)
+            if stroked {
+                canvas.stroke(.linear(red: 1, green: 0, blue: 0))
+                canvas.strokeWeight(3)
+            } else {
+                canvas.noStroke()
+            }
+        }
+        let withHole = try render(width: 160, height: 160) { canvas in
+            style(canvas)
+            canvas.beginShape()
+            for guide in outer { canvas.curveVertex(guide.x, guide.y) }
+            canvas.beginContour()
+            for guide in hole { canvas.curveVertex(guide.x, guide.y) }
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        let paintedOver = try render(width: 160, height: 160) { canvas in
+            style(canvas)
+            canvas.beginShape()
+            for guide in outer { canvas.curveVertex(guide.x, guide.y) }
+            canvas.endShape(.close)
+            canvas.fill(black)
+            canvas.beginShape()
+            for guide in hole { canvas.curveVertex(guide.x, guide.y) }
+            canvas.endShape(.close)
+        }
+        #expect(inkedPixels(paintedOver) > 0)
+        #expect(differingPixels(withHole, paintedOver) == 0)
+    }
+
+    /// #1449 の完了条件 2。**穴の中で最初に引く区間は、その始点 (2 つ目に置いた点) を穴に置く。**
+    /// 形の中で最初に引く区間と同じ扱いである。直す前は外周の点の有無を見ていたので、
+    /// 外周に点がある穴では始点が落ち、穴は 1 刻み目から始まっていた (塗りで 91 画素違う)。
+    ///
+    /// 外周を `vertex` で組むので、曲線の並びは穴の中の点だけでできている — 並びを切るだけの
+    /// 直し方では、この検査は赤いまま残る。
+    @Test(
+        "外周を vertex で組んだ形に閉じない曲線の穴を開けても、穴を下地の色で塗った絵と同じになる",
+        arguments: [false, true])
+    func openCurvedHoleKeepsItsStart(stroked: Bool) throws {
+        func style(_ canvas: Canvas) {
+            canvas.fill(white)
+            if stroked {
+                canvas.stroke(.linear(red: 1, green: 0, blue: 0))
+                canvas.strokeWeight(3)
+            } else {
+                canvas.noStroke()
+            }
+        }
+        var holeStart: SIMD2<Float>?
+        let withHole = try render(width: 160, height: 160) { canvas in
+            style(canvas)
+            canvas.beginShape()
+            for corner in Self.frameCorners { canvas.vertex(corner.x, corner.y) }
+            canvas.beginContour()
+            for guide in Self.openCurveGuides { canvas.curveVertex(guide.x, guide.y) }
+            holeStart = canvas.holePoints?.first.map { SIMD2($0.position.x, $0.position.y) }
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        let paintedOver = try render(width: 160, height: 160) { canvas in
+            style(canvas)
+            canvas.beginShape()
+            for corner in Self.frameCorners { canvas.vertex(corner.x, corner.y) }
+            canvas.endShape(.close)
+            canvas.fill(black)
+            canvas.beginShape()
+            for guide in Self.openCurveGuides { canvas.curveVertex(guide.x, guide.y) }
+            canvas.endShape(.close)
+        }
+        #expect(holeStart == Self.openCurveGuides[1], "穴の最初の点が、最初の区間の始点でない")
+        #expect(inkedPixels(paintedOver) > 0)
+        #expect(differingPixels(withHole, paintedOver) == 0)
+    }
+
+    /// #1449 の完了条件 3。**`curveVertex` 以外で点を置いたら、通過点の曲線の並びは切れる** —
+    /// 次の区間は、また 4 つ揃ってから引かれる。だから挟んだ後の `curveVertex` 1 つは何も
+    /// 引かず、置かない形と同じ絵になる。直す前は、挟む前の並びの続きとして区間を引き、
+    /// 挟んだ点から前の曲線の終わり (40, 20) の脇へ逆戻りしていた。
+    @Test(
+        "通過点の曲線は vertex / bezierVertex / quadraticVertex を挟むと並びが切れ、前の点へ戻らない",
+        arguments: ["vertex", "bezierVertex", "quadraticVertex"])
+    func curveSequenceBreaksAtOtherVertices(interruption: String) throws {
+        func draw(_ canvas: Canvas, resuming: Bool) {
+            canvas.fill(.linear(red: 0.2, green: 0.4, blue: 0.8))
+            canvas.stroke(white)
+            canvas.strokeWeight(3)
+            canvas.beginShape()
+            for guide: SIMD2<Float> in [SIMD2(10, 50), SIMD2(20, 20), SIMD2(40, 20), SIMD2(50, 50)] {
+                canvas.curveVertex(guide.x, guide.y)
+            }
+            switch interruption {
+            case "vertex": canvas.vertex(60, 60)
+            case "bezierVertex": canvas.bezierVertex(50, 66, 66, 64, 60, 56)
+            default: canvas.quadraticVertex(64, 66, 60, 56)
+            }
+            if resuming { canvas.curveVertex(70, 20) }
+            canvas.endShape()
+        }
+        let resumed = try render(width: 80, height: 72) { draw($0, resuming: true) }
+        let stopped = try render(width: 80, height: 72) { draw($0, resuming: false) }
+        #expect(inkedPixels(stopped) > 0)
+        #expect(differingPixels(resumed, stopped) == 0)
+    }
+
+    /// #1449 の完了条件 3 (穴の境目)。**穴を閉じたら、並びは切れる** — 閉じた後に外周へ置いた
+    /// `curveVertex` 1 つは何も引かない。直す前は穴の中の点を並びの続きにして区間を引き、
+    /// 外周の環に穴の点の間の曲線が積まれていた。
+    @Test("穴を閉じた後に外周へ curveVertex を 1 つ足しても、足さない形と同じ絵になる")
+    func curveSequenceBreaksAtEndContour() throws {
+        func draw(_ canvas: Canvas, resuming: Bool) {
+            canvas.fill(white)
+            canvas.stroke(.linear(red: 1, green: 0, blue: 0))
+            canvas.strokeWeight(3)
+            canvas.beginShape()
+            for corner in Self.frameCorners { canvas.vertex(corner.x, corner.y) }
+            canvas.beginContour()
+            for guide in Self.openCurveGuides { canvas.curveVertex(guide.x, guide.y) }
+            canvas.endContour()
+            if resuming { canvas.curveVertex(80, 150) }
+            canvas.endShape(.close)
+        }
+        let resumed = try render(width: 160, height: 160) { draw($0, resuming: true) }
+        let stopped = try render(width: 160, height: 160) { draw($0, resuming: false) }
+        #expect(inkedPixels(stopped) > 0)
+        #expect(differingPixels(resumed, stopped) == 0)
+    }
+
+    /// #1449 の完了条件 4。**穴の最初の `bezierVertex` / `quadraticVertex` は何もしない** —
+    /// 形の中で手前に点が無いときと同じ扱い (``Sketch/bezierVertex(_:_:_:_:_:_:)`` の説明)。
+    /// 直す前は外周の最後の点 (10, 150) から曲線を引き、その刻みが穴の環に積まれていた。
+    @Test(
+        "穴の最初の bezierVertex / quadraticVertex は、外周の最後の点から曲線を引かない",
+        arguments: ["bezierVertex", "quadraticVertex"])
+    func curveOpeningAHoleDrawsNothing(opening: String) throws {
+        var placedByOpening: Int?
+        func draw(_ canvas: Canvas, opened: Bool) {
+            canvas.fill(white)
+            canvas.stroke(.linear(red: 1, green: 0, blue: 0))
+            canvas.strokeWeight(3)
+            canvas.beginShape()
+            for corner in Self.frameCorners { canvas.vertex(corner.x, corner.y) }
+            canvas.beginContour()
+            if opened {
+                if opening == "bezierVertex" {
+                    canvas.bezierVertex(40, 130, 90, 140, 100, 100)
+                } else {
+                    canvas.quadraticVertex(60, 140, 100, 100)
+                }
+                placedByOpening = canvas.holePoints?.count
+            }
+            canvas.vertex(60, 60)
+            canvas.vertex(60, 100)
+            canvas.vertex(100, 100)
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        let opened = try render(width: 160, height: 160) { draw($0, opened: true) }
+        let plain = try render(width: 160, height: 160) { draw($0, opened: false) }
+        #expect(placedByOpening == 0, "穴の最初の \(opening) が穴に点を置いた")
+        #expect(inkedPixels(plain) > 0)
+        #expect(differingPixels(opened, plain) == 0)
+    }
+
     // MARK: - 座標の読み方
 
     /// 完了条件 5。どれも中心 (30, 22)・幅 36・高さ 20 の楕円を指す。**幅と高さを違え、
