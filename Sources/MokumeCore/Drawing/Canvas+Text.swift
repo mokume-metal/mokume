@@ -234,10 +234,17 @@ extension Canvas {
     /// が返す値そのもの**になり、測った幅と描いた幅が食い違わない。行の中ほどで続いた
     /// 空白 (切れ目にならないもの) と、段落の頭の空白 (字下げ) は行に残る。
     ///
-    /// 消費した空白は、前の行の終わりと次の行の始まりの**間に、元の文字列のまま残っている**
-    /// — いくつ消費したかは、範囲の隙間を読めば分かる。
+    /// **段落の末尾の空白で折ったときは、空の行を足さない。** 切れ目の後ろに語が無く、消費した
+    /// 空白の先が段落の終わりなので、次の行に置く字が無い — 空の行を足すと、行数と高さが 1 行
+    /// ぶん増え、続きが改行から始まる ([#1419])。元からある空の行 (改行が続いたところ) は、
+    /// いままでどおり 1 行に数える。
+    ///
+    /// 消費した空白 (段落の末尾で折ったときは、段落の終わりの改行も) は、前の行の終わりと
+    /// 次の行の始まりの**間に、元の文字列のまま残っている** — いくつ消費したかは、範囲の
+    /// 隙間を読めば分かる。
     ///
     /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
+    /// [#1419]: https://github.com/mokume-metal/mokume/issues/1419
     func wrapped(_ string: String, face: Typeface, within limit: Float) -> [Substring] {
         var lines: [Substring] = []
         for paragraph in string.lines {
@@ -291,7 +298,13 @@ extension Canvas {
                 width += step
                 index = paragraph.index(after: index)
             }
-            lines.append(paragraph[start..<paragraph.endIndex])
+            // **段落の末尾の空白で折ったなら、空の行は足さない** ([#1419])。`start` が段落の
+            // 終わりに達するのは、語の切れ目で折って後ろの空白を読み飛ばした先が段落の終わり
+            // だったときだけである (文字の切れ目で折った後の `start` は、段落の中の字を指す)。
+            // 元からある空の行 (空の段落) は頭の `guard` が足す
+            if start < paragraph.endIndex {
+                lines.append(paragraph[start..<paragraph.endIndex])
+            }
         }
         return lines
     }
