@@ -188,7 +188,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 - **フックが黙っていることを「安全である」と読まない。** 配線が読まれるのは、そのセッションが主として開いたディレクトリの `.claude/settings.json` だけである — 別のリポジトリを主とするセッションでは効かないので、この節を自分で守る ([ADR-0007](docs/decisions/0007-approvability-invariant.md) 決定 3)
 - push は `-u` を付ける。`origin/main` を追跡している枝は `git branch --unset-upstream` してから `-u` で押し直す
 
-手で揃える設定は `MOKUME_APP_PRIVATE_KEY_CMD` (App の秘密鍵 PEM を標準出力に出すコマンド) の 1 つだけで、秘密鍵の中身も在処もリポジトリに書かない。組めなければ PR を作らず、鍵の渡し方を人に尋ねる。
+手で揃える設定は `MOKUME_APP_PRIVATE_KEY_CMD` (App の秘密鍵 PEM を標準出力に出すコマンド) の 1 つだけで、秘密鍵の中身も在処もリポジトリに書かない。未設定でも「鍵が無い」と即断せず、手元の秘密管理の「自動化から読んでよい秘密の一覧」をまず引く ([ADR-0007](docs/decisions/0007-approvability-invariant.md) 決定 5)。一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねる。
 
 **maintainers team の側では、承認が要る変更は App identity の PR で入れる。token を発行できないときは PR を作らない** ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。メンテナも例外にしない — 自分の PR は自分で承認できないので、メンテナ名義で作れば誰も承認できない PR になる。承認の要否は作成前に確定できないため、一律に App identity を使う。**外部の人は自分の名義で作ってよい** — author が承認者の外に居るので不変条件は破れない。
 

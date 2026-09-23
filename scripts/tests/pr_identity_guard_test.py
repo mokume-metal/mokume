@@ -6,8 +6,9 @@
 守りたいのは 1 つ — **メンテナ名義で PR を作ろうとしたら、作る前に差し戻される**。
 破ると誰も承認できない PR ができ、close して作り直すしかない (ADR-0007 / #88)。
 
-判定はコマンド文字列と GH_TOKEN だけを見るので、ネットワークも gh も要らない。
-実行は make hooks-test (CI もこれを呼ぶ)。
+判定はコマンド文字列と GH_TOKEN を見る。例外は最後の差し戻しの直前に push 権限を
+1 回引くところ (#184) で、検査ではそこへ gh のスタブを噛ませるので、ネットワークには
+出ない。実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
 import json
@@ -24,6 +25,19 @@ GUARD = REPO / "scripts" / "pr-identity-guard.sh"
 TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN"]
 
 
+# gh のスタブ。既定は「何もせず失敗する」— 権限を読めないときは止める側に倒れるので、
+# 押し権限の判定を持たない検査はこれまでどおりの結果になる (#184)
+FAILING_GH = "#!/bin/bash\nexit 1\n"
+
+
+def gh_answering_push(value):
+    """`gh api repos/<repo> --jq .permissions.push` に value を返すスタブ。"""
+    return f"""#!/bin/bash
+[ "$1" = api ] || exit 1
+echo {value}
+"""
+
+
 def clean_env(**overrides):
     """token 系の環境変数を必ず立て直す。
 
@@ -38,16 +52,29 @@ def clean_env(**overrides):
 class GuardTest(unittest.TestCase):
     """PreToolUse フック: どのコマンドを差し戻し、どれを素通しするか。"""
 
+    gh_script = FAILING_GH
+
+    def stub_dir(self):
+        """self.gh_script を gh として置いたディレクトリ (PATH の先頭に置く)。"""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        gh = Path(tmp.name) / "gh"
+        gh.write_text(self.gh_script, encoding="utf-8")
+        gh.chmod(0o755)
+        return tmp.name
+
     def run_guard(self, command, cwd=None, **env):
         payload = json.dumps(
             {"tool_input": {"command": command}, **({"cwd": cwd} if cwd else {})}
         )
+        environment = clean_env(**env)
+        environment["PATH"] = f"{self.stub_dir()}:{environment['PATH']}"
         proc = subprocess.run(
             ["/bin/bash", str(GUARD)],
             input=payload,
             capture_output=True,
             text=True,
-            env=clean_env(**env),
+            env=environment,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
@@ -245,6 +272,16 @@ class GuardTest(unittest.TestCase):
         reason = self.assert_denied("gh pr create --fill")
         self.assertIn("一覧", reason)
 
+    def test_agents_md_keeps_the_search_order(self):
+        """AGENTS.md も探す順序を持つ (ADR-0007 決定 5・影響の 1 行目)。
+
+        文面は差し戻しと AGENTS.md の 2 か所に要る — フックはこのリポジトリを主として
+        開いた Claude Code にしか効かない。#1372 は AGENTS.md の側を「個人事情」と読んで
+        消してしまい、差し戻しの側と違って検査が無かったので素通りした (#184)。
+        """
+        agents_md = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("自動化から読んでよい秘密の一覧", agents_md)
+
     def test_reason_does_not_leak_where_the_key_lives(self):
         """在処も道具名もメッセージに出さない (ADR-0003 / ADR-0007 決定 5)。"""
         reason = self.assert_denied("gh pr create --fill")
@@ -337,6 +374,33 @@ class GuardTest(unittest.TestCase):
     def test_non_gh_command_passes(self):
         self.assert_passed("git commit -m 'gh pr create'")
         self.assert_passed("echo hello")
+
+
+class OutsideCollaboratorTest(GuardTest):
+    """push 権限の無い外部の人は止めない (#184)。
+
+    承認者の集合の外に居る人の PR は、どの名義で作っても誰かが承認できる (ADR-0007 の
+    不変条件は破れない)。**false と読めたときだけ**通し、それ以外は止める側に倒す。
+    """
+
+    COMMAND = "gh pr create -R mokume-metal/mokume --title t --body b"
+
+    def test_push_権限が無いと読めたら素通し(self):
+        self.gh_script = gh_answering_push("false")
+        self.assert_passed(self.COMMAND)
+
+    def test_push_権限があれば差し戻す(self):
+        self.gh_script = gh_answering_push("true")
+        self.assert_denied(self.COMMAND)
+
+    def test_権限を読めなければ差し戻す(self):
+        self.gh_script = FAILING_GH
+        reason = self.assert_denied(self.COMMAND)
+        self.assertIn("gh auth status", reason, "読めなかったときの直し方が文面に無い")
+
+    def test_空の答えは差し戻す(self):
+        self.gh_script = gh_answering_push("")
+        self.assert_denied(self.COMMAND)
 
 
 class PushFormTest(unittest.TestCase):
