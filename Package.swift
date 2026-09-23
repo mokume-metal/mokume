@@ -86,13 +86,14 @@ let package = Package(
             swiftSettings: .mokume),
         // 開発時に測るための道具。product には含めない (利用者へ配るものではない)
         // 参照スケッチ。2D の面が実際に成立していることを、使って示す。
-        // product には含めない — 利用者へ配るものではなく、面を確かめるためのもの
+        // product には含めない — 利用者へ配るものではなく、面を確かめるためのもの。
+        // 台帳の検査 (MokumeCoreTests) がこれに依存し、全スケッチの絵を指紋にする (#1377)
         .executableTarget(
             name: "reference-sketches", dependencies: ["mokume"], path: "Sketches",
             swiftSettings: .mokume),
         .executableTarget(name: "frame-rate-probe", dependencies: ["mokume"], swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeCoreTests", dependencies: ["mokume"],
+            name: "MokumeCoreTests", dependencies: ["mokume", "reference-sketches"],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
