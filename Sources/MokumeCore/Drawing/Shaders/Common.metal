@@ -259,8 +259,14 @@ static inline float3 mokume_shade(
             float nh = max(dot(n, halfway), 0.0);
             float vh = max(dot(toEye, halfway), 0.0);
             float spread2 = spread * spread;
-            float peak = nh * nh * (spread2 - 1.0) + 1.0;
-            float distribution = spread2 / max(M_PI_F * peak * peak, 1e-6);
+            // `peak` は N·H ∈ [0, 1] で単調に減り、山の頂 (N·H = 1) で最小の `spread2` を取る。
+            // **下から止めるのはその最小値で、定数ではない。** 止まるのは丸め (N·H が 1 を
+            // わずかに超える・`spread2 - 1` の丸め) で最小値を割ったときだけで、正しい値は
+            // 1 つも変わらない。粗さの下限 (0.03) があるので分母は π · 0.03⁸ ≈ 2e−12 を
+            // 割らず、0 では割らない。以前の `max(π · peak², 1e-6)` は shininess 80 ほどから
+            // 頂に掛かり、鋭くするほど艶が暗くなっていた (#1407)
+            float peak = max(nh * nh * (spread2 - 1.0) + 1.0, spread2);
+            float distribution = spread2 / (M_PI_F * peak * peak);
             float k = spread / 2.0;
             float shadowing = (nl / (nl * (1.0 - k) + k)) * (nv / (nv * (1.0 - k) + k));
             float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
