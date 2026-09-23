@@ -53,6 +53,8 @@ final class StandardInputEvents {
     private(set) var accepted = 0
     /// 相手が管を畳んだか。畳んだ後は読みに行かない。
     private(set) var isClosed = false
+    /// 畳まれたことを、既に ``takeDeparture()`` で返したか。
+    private var hasReportedDeparture = false
 
     /// 共有面へ差し出しているときだけ働く。
     ///
@@ -84,6 +86,28 @@ final class StandardInputEvents {
             state.enqueue(event)
             accepted += 1
         }
+    }
+
+    /// 道具が管を畳んでいたら 1 度だけ `true` を返す。**読んだら下ろす** (`StopSignals.takeRequest()`
+    /// と同じ形) — 見に来るのは刻みごとなので、印を持たないと刻みの数だけ終わりを頼む。
+    ///
+    /// **管が畳まれたのは、窓の持ち主が居なくなったということである。** 管の書き口を持つのは
+    /// 子を起こした道具だけで、道具は子を止めてから手放す — 子が生きているうちに畳まれるのは、
+    /// 道具が後始末を通らずに消えた回 (捕まえない合図・`SIGKILL`) と、強制終了しても消えな
+    /// かった子を道具が置いていく回 (`WatchSession.StopOutcome.abandoned`) だけである。窓は道具の
+    /// ものなので一緒に消えており ([ADR-0032] 決定 1)、残った子には人が止める入口が無い
+    /// ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
+    ///
+    /// **``drain(into:)`` を待たずに自分で読みに行く。** 止めている間や録りを閉じている間は
+    /// フレームが入力を集めに来ないので、そこに頼ると気付けない回が残る。読み進めたぶんは
+    /// 溜まりに残り、次の ``drain(into:)`` が配る。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    func takeDeparture() -> Bool {
+        readAvailable()
+        guard isClosed, !hasReportedDeparture else { return false }
+        hasReportedDeparture = true
+        return true
     }
 
     /// いま読めるだけ読む。**待たない。**

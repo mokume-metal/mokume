@@ -144,6 +144,16 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     var onStopSignal: @MainActor () -> Void = { NSApplication.shared.terminate(nil) }
 
+    /// 起こした道具が居なくなったか。**1 度だけ `true` を返す** ([#1427])。
+    ///
+    /// 道具が捕まえない合図や `SIGKILL` で消えると、窓 (道具のもの) だけが一緒に消えて子が
+    /// 残り、人が止める入口が無くなる。気付くのは管が畳まれたことで
+    /// (``SketchRuntime/takeDriverDeparture()``)、行き先は終わりの合図と同じ 1 本である。
+    /// **検査から差し替える** — 検査のプロセスは道具から起こされていない。
+    ///
+    /// [#1427]: https://github.com/mokume-metal/mokume/issues/1427
+    var driverDeparted: @MainActor () -> Bool
+
     /// 後始末が済んだと AppKit へ返す口。
     ///
     /// **「終わってよい」しか返さない** — 待っている途中で終わりをやめる経路は作らない
@@ -246,7 +256,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     public init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
         self.gpu = gpu
         self.title = sketch.settings.title
-        self.runtime = try SketchRuntime(sketch: sketch, gpu: gpu, clock: .wallClock)
+        let runtime = try SketchRuntime(sketch: sketch, gpu: gpu, clock: .wallClock)
+        self.runtime = runtime
+        self.driverDeparted = { runtime.takeDriverDeparture() }
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         self.screenLink = ScreenDisplayLink(
             frameRate: Float(max(1, sketch.settings.frameRate)))
@@ -548,8 +560,23 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 2 度目の合図で急がせる経路は作らない — 待てない側には `SIGKILL` がある。
     ///
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+    ///
+    /// **起こした道具が居なくなったことも、同じ 1 本へ入れる** ([#1427])。窓を持たない子に
+    /// とって、窓の持ち主が消えたことは終われと言われたのと同じである。両方を先に読むのは、
+    /// 短絡で片方の印を読み残さないためである。
+    ///
+    /// [#1427]: https://github.com/mokume-metal/mokume/issues/1427
     func pollStopSignal() {
-        guard StopSignals.takeRequest(), !isTerminating else { return }
+        let signalled = StopSignals.takeRequest()
+        let departed = driverDeparted()
+        guard signalled || departed, !isTerminating else { return }
+        // **道具が居なくなって終わることは名乗る。** 黙って消えると、区画が残ったまま標準入力を
+        // 閉じて走らせた回などで、なぜ終わったのかが読めない
+        if departed, !signalled {
+            Diagnostics.warn(
+                "The tool that started this sketch is gone (its input pipe closed) — ending,"
+                    + " since the window it owned went with it")
+        }
         onStopSignal()
     }
 
