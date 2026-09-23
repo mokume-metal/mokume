@@ -59,10 +59,10 @@ layered@20 0fab28721031f4d6550ecefd067a055e98acd544ad03a88492b18cb2673d0140
 # (sketch:<名前>@45)。作者が書く形のまま API を呼ぶので、Sketch 層の中継と SketchRuntime の
 # 経路はここにしか無い (#1377)。requestImage / requestModel で読む 2 本は「届く前」の絵。
 # 文字を描くものは Helvetica と既定の書体に依る — text の行と同じく、OS の書体が変わると動く。
-sketch:shapes-and-style@45 a459332180a0a48de9a493a3b18544ac945cba00a27e99edef2e17698b3f8c4d
-sketch:curves-and-vertices@45 7359551f30015ed34a5549f7c8044db0a8d2aaa33fdb462aa01e741cb87fd021
+sketch:shapes-and-style@45 f83ed1df30f9b856b9a215eeba154af84e38b3195d7acc3ee965324881869847
+sketch:curves-and-vertices@45 d8339d6759b2a53e2b6dd76022a03bac348a8a1faff14077bb10a33fc795739a
 sketch:color-and-scale@45 26aac8b580e7f7dee5b45c2671792c3c114718fdff7d61b62865f63e7e290cad
-sketch:type-and-imagery@45 a90f340819bf3e4abfc57ef027752a4707f1d658294f1af8d79afb31c5108bc4
+sketch:type-and-imagery@45 e3f6c5433b487eabbd213cf5a120012e1746fff7c435aece2993235f7087fbbd
 sketch:type-and-measure@45 16932326749c25cdb1d2c8261de5b73e9e9e082f92b909b29d35887ac5100f3e
 sketch:textured-surfaces@45 6a75367567f994da775aa77df94570f6affba85f90610bcaa73fd3ef63c6efed
 sketch:pixels-and-paint@45 0524fb2022b5e7ddc594eca983eb17ff3ad23f552aa8b4e920951da4f12005ac
@@ -79,5 +79,5 @@ sketch:effects-and-custom@45 ef132c2d88c0b885a9f40a8128475174113b5c74c9a3c3e9946
 sketch:pointer-and-keys@45 161addec2c0d35025bff8f08ad71b2e6b5c3dd7e5c840a7dac7ed04e13c2e3ba
 sketch:knobs-and-values@45 77a7633d7a76ae5e29a68c807a77857eb548fc1bb981e14bb6771dd23a971916
 sketch:solids-and-light@45 923c1abdfe83740c938a72f769d06e2fcbc53e9422c7db1f18486664cb0aa8e6
-sketch:materials-and-surroundings@45 1afedd4ddf051abbf67e96c868286a556d3f79d108b954ec550831a4ffea013f
+sketch:materials-and-surroundings@45 3d64dfaade7965c14af584dd8748affe638f35d3687cd414e3c21b09ef5a3207
 sketch:crowd-and-model@45 3a3e91efabe5666b1b3ed381fdb7b49d9acabf9b647bdff290e8d30b262aa5cb
