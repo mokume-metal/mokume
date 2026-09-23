@@ -35,8 +35,8 @@ final class FrameWriter {
 
     /// 抱える枚数の上限と、終わったものの数え方。
     private let pressure: Backpressure
-    /// 直近の書き損じ。**隔離の外から書かれる**ので錠で守る。
-    private let lastFailure = FailureSlot()
+    /// 最後に決着した書き込みの結果。**隔離の外から書かれる**ので錠で守る。
+    private let lastOutcome = OutcomeSlot()
 
     /// 抱えている枚数の上限。
     var limit: Int { pressure.limit }
@@ -63,15 +63,18 @@ final class FrameWriter {
 
         let url = URL(fileURLWithPath: path)
         let release = pressure.release
-        let lastFailure = lastFailure
+        let lastOutcome = lastOutcome
         let path = path
         Task.detached(priority: .utility) {
+            // **結果は枠を返す前に置く。** 背圧で待っていた側は、返ってきた時点で
+            // 少なくとも 1 つの結果が置かれていると当てにできる
             do {
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try PNGFile.write(image, to: url)
+                lastOutcome.succeed()
             } catch {
-                lastFailure.set("Could not write \(path): \(error)")
+                lastOutcome.fail("Could not write \(path): \(error)")
             }
             release()
         }
@@ -102,32 +105,63 @@ final class FrameWriter {
         return true
     }
 
-    /// 直近の書き損じを取り出す。**取り出したら消える。**
+    /// 前に取り出してから決着した書き込みの、最後の結果を取り出す。**取り出したら消える。**
     ///
-    /// 書き込みは隔離の外で走るので、失敗が分かるのは頼んだフレームより後になる。
+    /// 書き込みは隔離の外で走るので、結果が分かるのは頼んだフレームより後になる。
     /// 呼んだ側 (``FrameRecorder``) はこれを差込口の ``Outlet/failure`` へ載せ、
-    /// 続けて転んだら外れる形へつなぐ ([ADR-0024] 決定 7)。
+    /// 続けて転んだら外れる形へつなぐ ([ADR-0024] 決定 7)。**`nil` は「順調」ではなく
+    /// 「まだ何も決着していない」である** ([#1272])。
     ///
+    /// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    func takeFailure() -> String? { lastFailure.take() }
+    func takeOutcome() -> WriteOutcome? { lastOutcome.take() }
+
+    /// 最後の結果が書き損じなら、その理由を取り出す。**取り出したら消える。**
+    ///
+    /// 閉じる経路のように「言い残しが無いか」だけを見る読み手のためにある。
+    func takeFailure() -> String? { takeOutcome()?.failure }
 }
 
-/// 隔離の外から書かれ、main actor から読まれる 1 つの値。
+/// 書き込み 1 つの決着。
+enum WriteOutcome: Equatable, Sendable {
+    /// 書けた。
+    case succeeded
+    /// 書けなかった。理由を持つ。
+    case failed(String)
+
+    /// 書けなかった理由。書けたなら `nil`。
+    var failure: String? {
+        guard case .failed(let reason) = self else { return nil }
+        return reason
+    }
+}
+
+/// 隔離の外から書かれ、main actor から読まれる、最後に決着した結果。
+///
+/// **成功も置く** ([#1272])。失敗だけを置く器だと、取り出して空だったときに
+/// 「書けた」と「まだ決着していない」を分けられず、後者を順調と数えてしまう。
 ///
 /// 錠そのもの (`Mutex`) は複製できないので、閉じた先の仕事へ渡すには参照になる器が要る。
 /// **escape hatch は使わない** ([ADR-0010] 決定 3) — 中身が錠で守られていることを
 /// 型として示す。
 ///
+/// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
-nonisolated final class FailureSlot: Sendable {
-    private let value = Mutex<String?>(nil)
+nonisolated final class OutcomeSlot: Sendable {
+    private let value = Mutex<WriteOutcome?>(nil)
 
-    /// 書き損じを置く。**後から来たものが前を上書きする** — 続けて転んでいることは
-    /// 差込口の健康状態が数えるので、ここに溜める理由が無い。
-    func set(_ message: String) { value.withLock { $0 = message } }
+    /// 書けたことを置く。
+    func succeed() { value.withLock { $0 = .succeeded } }
+
+    /// 書き損じを置く。
+    ///
+    /// **成功も失敗も、後から来たものが前を上書きする** — 置くのは「最後に決着した結果」
+    /// である。続けて転んでいることは差込口の健康状態が数えるので、ここに溜める理由が無い。
+    /// 書き損じの後に成功が決着すれば、その書き損じは読まれずに消える (直ったので)。
+    func fail(_ message: String) { value.withLock { $0 = .failed(message) } }
 
     /// 置かれているものを取り出す。**取り出したら消える。**
-    func take() -> String? {
+    func take() -> WriteOutcome? {
         value.withLock { stored in
             defer { stored = nil }
             return stored

@@ -147,6 +147,107 @@ struct ClosingFailureTests {
     }
 }
 
+/// 書き損じの知らせが遅れて届くときの数え方 ([#1272])。GPU を要さない。
+///
+/// 書き込みは隔離の外で走るので、知らせが次のフレームに間に合わないことがある。
+/// **まだ決着していないことを「順調」と数えると**、転び続ける出口が負荷の下で外れない。
+/// ``FrameRecorder/receive(_:)`` は絵を要するので、その先頭で呼ばれる
+/// ``FrameRecorder/absorbOutcomes()`` を直接呼んでフレームの代わりにする。
+///
+/// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
+@Suite("書き損じの知らせが遅れるとき")
+struct LateFailureTests {
+    private let picture = DisplayImage(
+        width: 8, height: 8, bytes: [UInt8](repeating: 200, count: 8 * 8 * 4))
+
+    @Test("まだ決着していないフレームでは、前の書き損じを保つ")
+    func aFrameWithNoNewsKeepsTheLastFailure() throws {
+        try withTemporaryDirectory("mokume-late-failure-kept") { directory in
+            // 書き先の親をファイルにしておく。ディレクトリを作ることも書くこともできない
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("a.png").path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+            #expect(recorder.failure?.contains("a.png") == true)
+
+            // 次の書き込みがまだ決着していないフレーム。ここで `nil` に戻すと、
+            // 差込口の健康状態は「順調」と読んで数えを 0 に戻す
+            recorder.absorbOutcomes()
+            #expect(recorder.failure?.contains("a.png") == true, "知らせが無いだけで直ったことになっている")
+        }
+    }
+
+    @Test("書けたことが決着したら、書き損じは消える")
+    func aSettledSuccessClearsTheFailure() throws {
+        try withTemporaryDirectory("mokume-late-failure-cleared") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("a.png").path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+            #expect(recorder.failure != nil)
+
+            // 持ち越しが消えないと、直った出口まで続けて転んだことにされる
+            recorder.writer.write(picture, to: directory.appendingPathComponent("b.png").path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+            #expect(recorder.failure == nil)
+        }
+    }
+
+    @Test("暇になってから頼み直すと、前の書き損じを持ち越さない", arguments: ["save", "beginRecord"])
+    func askingAgainAfterIdlingStartsAfresh(_ how: String) throws {
+        try withTemporaryDirectory("mokume-late-failure-afresh") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            // 1 つ目の書き損じは載せ替え済み、2 つ目は外れている間に決着して口に残っている
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("a.png").path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("b.png").path)
+            recorder.writer.drain()
+            #expect(recorder.isIdle)
+
+            switch how {
+            case "save": recorder.save(directory.appendingPathComponent("c.png").path, at: 1)
+            default: recorder.beginRecord(directory.appendingPathComponent("f-##.png").path)
+            }
+            // 並びへ戻るときに健康状態は作り直される。ここで前の失敗が見えると、
+            // 仕切り直したはずの最初のフレームで 1 回ぶん数えられる
+            #expect(recorder.failure == nil)
+            recorder.absorbOutcomes()
+            #expect(recorder.failure == nil, "外れている間に決着した前の知らせを数えている")
+        }
+    }
+
+    @Test("頼まれている最中に頼み足しても、書き損じは消えない")
+    func askingMoreWhileBusyKeepsTheFailure() throws {
+        try withTemporaryDirectory("mokume-late-failure-busy") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            recorder.beginRecord(blocker.appendingPathComponent("f-##.png").path)
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("f-00.png").path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+
+            // 撮っている最中の save() は仕切り直しではない
+            recorder.save(directory.appendingPathComponent("c.png").path, at: 2)
+            #expect(recorder.failure != nil)
+
+            recorder.close()
+        }
+    }
+}
+
 /// スケッチから絵をファイルにする経路。GPU を要する。
 @Suite(
     "絵をファイルにする",

@@ -258,13 +258,14 @@ struct RecordingFailureTests {
             try Data("not a directory".utf8).write(to: blocker)
 
             let recorder = FrameRecorder(frameRate: 60)
+            // **撮り始めてから転ばせる。** 暇なうちに決着した知らせは、頼まれ始めた時点で
+            // 仕切り直しとして捨てられる (#1272)
+            recorder.beginRecord(blocker.appendingPathComponent("motion.mov").path)
+            let movie = try #require(recorder.recordingMovie)
             recorder.writer.write(
                 image(10, width: 8, height: 8),
                 to: blocker.appendingPathComponent("still.png").path)
             recorder.writer.drain()
-
-            recorder.beginRecord(blocker.appendingPathComponent("motion.mov").path)
-            let movie = try #require(recorder.recordingMovie)
             // **背圧を使って待つ。** 抱える枚数の上限を超えて頼めば、頼んだ側は空くまで
             // 返らない = 少なくとも 2 枚は符号化の側を通っていて、書き損じは置かれている
             for frame in 1...(movie.limit + 2) {
@@ -272,9 +273,17 @@ struct RecordingFailureTests {
             }
 
             // **`??` で繋ぐと、ここで動画の理由が落ちる。** 左が非 nil なら右を評価しない
-            let both = try #require(recorder.takeFailures())
+            recorder.absorbOutcomes()
+            let both = try #require(recorder.failure)
             #expect(both.contains("still.png"))
             #expect(both.contains("motion.mov"), "動画の書き損じが落ちている")
+
+            // どちらの口にも新しい知らせが無いフレーム。片方の「まだ決着していない」で
+            // 理由を消すと、数えがそこで 0 に戻る (#1272)
+            recorder.absorbOutcomes()
+            let stillBoth = try #require(recorder.failure, "知らせが無いだけで直ったことになっている")
+            #expect(stillBoth.contains("still.png"))
+            #expect(stillBoth.contains("motion.mov"))
 
             recorder.close()
         }

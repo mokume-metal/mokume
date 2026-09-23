@@ -38,7 +38,29 @@ final class FrameRecorder: Outlet {
     /// 撮っている動画。撮っていなければ `nil`。
     private var movie: MovieWriter?
 
-    private(set) var failure: String?
+    /// 静止画・連番の、最後に決着した書き込みの書き損じ。**知らせの無いフレームでは前の値を保つ。**
+    private var imageFailure: String?
+    /// 動画の、最後に決着した書き込みの書き損じ。**知らせの無いフレームでは前の値を保つ。**
+    ///
+    /// 動画を手放すときに消す — 閉じ際に分かったことは ``finishMovie(_:)`` が言うので、
+    /// 手放した動画の失敗を次の録りへ持ち越す理由が無い。
+    private var movieFailure: String?
+
+    /// 最後に決着した書き込みの書き損じ。**まだ何も決着していないフレームでは前の値を保つ**
+    /// ([#1272])。
+    ///
+    /// 書き込みは隔離の外で走るので、知らせが次のフレームに間に合わないことがある。そこで
+    /// `nil` を載せると ``SeamHealth`` は「順調」と読んで数えを 0 に戻し、転び続ける出口が
+    /// 負荷の下で外れなくなる。`nil` に戻すのは**書けたことが決着したとき**だけである。
+    ///
+    /// 両方あるときは並べて 1 つの理由にする (#789)。差込口が持てる理由は 1 つだが、
+    /// ``SeamHealth`` が見るのは `nil` かどうかだけなので、繋いでも数え方は変わらない。
+    ///
+    /// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
+    var failure: String? {
+        let reasons = [imageFailure, movieFailure].compactMap { $0 }
+        return reasons.isEmpty ? nil : reasons.joined(separator: " / ")
+    }
 
     /// 閉じている途中で、静止画の待ちが決着したか。
     ///
@@ -117,7 +139,10 @@ final class FrameRecorder: Outlet {
     /// このフレームの絵を 1 枚だけ頼む。
     ///
     /// - Parameter frame: 頼まれたフレームの番号。**この番号の絵が届いたときに書く。**
-    func save(_ path: String, at frame: Int) { oneShots.append((frame, path)) }
+    func save(_ path: String, at frame: Int) {
+        startAfreshIfIdle()
+        oneShots.append((frame, path))
+    }
 
     /// 連番か動画を始める。**行き先の綴りが形を決める。**
     ///
@@ -129,6 +154,7 @@ final class FrameRecorder: Outlet {
             return
         }
         if pattern.lowercased().hasSuffix(".mov") {
+            startAfreshIfIdle()
             movie = MovieWriter(path: pattern, frameRate: frameRate)
             forgetWarnings()
             return
@@ -141,8 +167,21 @@ final class FrameRecorder: Outlet {
                     + "Motion is written as .mov, as in \"out/motion.mov\". Not starting")
             return
         }
+        startAfreshIfIdle()
         self.sequence = sequence
         forgetWarnings()
+    }
+
+    /// 暇だったなら、前に頼まれた分の書き損じを持ち越さない。**頼まれ始める直前に呼ぶ。**
+    ///
+    /// 暇になった出口は並びから外れ、次に頼まれたときに健康状態ごと作り直される
+    /// (``SketchRuntime``)。持ち越した失敗や、外れている間に決着した前の書き込みの知らせが
+    /// 残っていると、仕切り直したはずの最初のフレームで 1 回ぶん数えられてしまう。
+    /// 動画の側は手放すときに消えている (``movieFailure``)。
+    private func startAfreshIfIdle() {
+        guard isIdle else { return }
+        imageFailure = nil
+        _ = writer.takeOutcome()
     }
 
     /// 連番か動画を止める。**頼んだ全部がファイルになってから返る。**
@@ -178,6 +217,7 @@ final class FrameRecorder: Outlet {
         guard let movie else { return true }
         guard movie.finish(patience) else { return false }
         self.movie = nil
+        movieFailure = nil
         report(movie)
         if let failure = movie.takeFailure() { warnOnce(.movieFailure, failure) }
         return true
@@ -202,7 +242,7 @@ final class FrameRecorder: Outlet {
     func receive(_ frame: OutputFrame) {
         // 書き込みは隔離の外で走るので、転んだことが分かるのは頼んだフレームより後になる。
         // 受け取ったときに載せ替えて、続けて転んだら外れる形へつなぐ (ADR-0024 決定 7)
-        failure = takeFailures()
+        absorbOutcomes()
         guard !isIdle else { return }
 
         // **1 フレームに 1 回だけ読み戻す。** 行き先が何個あっても同じ 1 枚を配る
@@ -217,21 +257,19 @@ final class FrameRecorder: Outlet {
         movie?.write(image, frame: frame.frame, time: frame.time)
     }
 
-    /// 溜まっている書き損じを**両方から**取り出して 1 つにまとめる。取り出したら消える。
+    /// 決着した書き込みの知らせを**両方から**取り出して、``failure`` を更新する。
+    ///
+    /// **知らせがあった口だけを更新する** ([#1272])。片方の口の「まだ決着していない」で
+    /// もう片方の書き損じまで消すと、数えがそこで 0 に戻る。
     ///
     /// **`??` で繋がない** ([#789])。左が非 nil なら右を評価しないので、静止画が
-    /// 転んだフレームでは動画の書き損じを取り出さない。取り出さなかったものは
-    /// `lastFailure` に残って次のフレームで拾われる — が、**最終フレームだと拾う機会が
-    /// 無い**。短絡を選んだ理由は履歴にもコメントにも無く (#488 が 1 行で足したもの)、
-    /// 捨ててよい根拠が見つからないので、両方あるときは並べて 1 つの理由にする。
-    /// 差込口が持てる理由は 1 つだが、``SeamHealth`` が見るのは `nil` かどうかだけ
-    /// なので、繋いでも数え方は変わらない。
+    /// 転んだフレームでは動画の知らせを取り出さず、最終フレームだと拾う機会が無い。
     ///
     /// [#789]: https://github.com/mokume-metal/mokume/issues/789
-    func takeFailures() -> String? {
-        let reasons = [writer.takeFailure(), movie.flatMap { $0.takeFailure() }]
-            .compactMap { $0 }
-        return reasons.isEmpty ? nil : reasons.joined(separator: " / ")
+    /// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
+    func absorbOutcomes() {
+        if let outcome = writer.takeOutcome() { imageFailure = outcome.failure }
+        if let outcome = movie?.takeOutcome() { movieFailure = outcome.failure }
     }
 
     /// 終わるときに、頼んだ全部がファイルになるまで待つ。
