@@ -37,8 +37,20 @@ import simd
 /// 焼き付けは CPU からこの面へ直接書き込む。**GPU がこの面を読んでいる間に書き換えて
 /// はならない。** 面への描画は投入しても GPU の完了を待たずに返る (#727) ので、焼く
 /// 直前に投入済みのものが全部終わるのを待つ。新しい字形が出ないフレームは焼かない
-/// ので、待ちも払わない。広げるとき (`grow`) は新しい頁 (``GlyphPage``) を作るだけなので
-/// 待たない — 前の頁は、そこを指している列や形が手放すまで生きる。
+/// ので、待ちも払わない。広げるとき (`grow`) と焼き直すとき (`rebake`) は新しい頁
+/// (``GlyphPage``) を作るだけなので待たない — 前の頁は、そこを指している列や形が手放すまで
+/// 生きる。
+///
+/// ## 上限の面が埋まったら
+///
+/// **同じ大きさの新しい頁へ替えて、要る字を焼き直す** (`rebake`・[#1342])。焼き分けの鍵には
+/// 大きさが入るので、`textSize()` を連続的に変えると鍵が際限なく増え、上限の面もいずれ埋まる。
+/// 替えずにいると、それ以後に初めて使う字が 1 つも描かれない。
+///
+/// いまの面を 0 で埋め直して使い回さないのは、前のフレームがまだその面を読んでいるかも
+/// しれないからである — 埋め直すには GPU の完了を待つことになる。
+///
+/// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
 @MainActor final class GlyphAtlas {
     /// 最初の一辺 (画素)。
     static let initialSize = 256
@@ -98,7 +110,7 @@ import simd
     enum Lookup {
         /// 焼いてある (あるいはいま焼いた) 字形。
         case found(Entry)
-        /// いまの面に場所が無い。**広げれば入る。**
+        /// いまの面に場所が無い。**広げれば入る** — 上限の面なら、焼き直せば入る (`rebake`)。
         case full
         /// 上限の面 (``maximumSize``) より大きい。**広げても入らない。**
         case tooLarge(width: Int, height: Int)
@@ -228,10 +240,29 @@ import simd
     /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
     /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
     func grow(gpu: RenderDevice) throws(RenderFailure) {
-        let next = min(Self.maximumSize, size * 2)
+        try startPage(side: min(Self.maximumSize, size * 2), gpu: gpu)
+    }
+
+    /// 同じ大きさの新しい頁へ替え、焼いた字形を捨てる。**上限の面が埋まったときに使う**
+    /// ([#1342])。
+    ///
+    /// 広げるとき (``grow(gpu:)``) と同じ道を通る — 前の頁は、そこを指している列や保持した
+    /// 形が抱えたまま残るので、**GPU を待たない**。要る字は、次に頼まれたときに新しい頁へ
+    /// 焼かれる。
+    ///
+    /// 何度でも呼べるが、**1 フレームに何枚替えるかは呼ぶ側が決める** — 上限の頁は 1 枚で
+    /// 128 MiB あり、替えた頁はそのフレームを描き終えるまで残る。
+    ///
+    /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
+    func rebake(gpu: RenderDevice) throws(RenderFailure) {
+        try startPage(side: size, gpu: gpu)
+    }
+
+    /// 一辺 `side` の新しい頁を作り、焼いた字形の控えと棚を空に戻す。
+    private func startPage(side: Int, gpu: RenderDevice) throws(RenderFailure) {
         // **新しい頁を先に作る。** 作れずに投げたときも、前の頁はそのまま使える
-        page = try GlyphPage(side: next, gpu: gpu)
-        size = next
+        page = try GlyphPage(side: side, gpu: gpu)
+        size = side
         entries.removeAll(keepingCapacity: true)
         cursorX = Self.whiteBlock + Self.padding
         cursorY = 0
