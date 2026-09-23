@@ -20,6 +20,7 @@ let catalogue: [(name: String, make: () -> any Sketch)] = [
     ("shapes-and-style", { ShapesAndStyle() }),
     ("curves-and-vertices", { CurvesAndVertices() }),
     ("type-and-imagery", { TypeAndImagery() }),
+    ("type-and-measure", { TypeAndMeasure() }),
     ("textured-surfaces", { TexturedSurfaces() }),
     ("pixels-and-paint", { PixelsAndPaint() }),
     ("noise-and-seed", { NoiseAndSeed() }),

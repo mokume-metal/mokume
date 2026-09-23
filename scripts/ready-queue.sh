@@ -47,7 +47,7 @@
 #   弾かれたか    scripts/render-context.sh の render_failed。**写しを持たない** — 割れると
 #                 「当番が名乗ったのに手元に現れない」が黙って起きる (ADR-0008 決定 6)
 #   先頭か        scripts/drawing-queue.sh の ahead_drawing_pr。先に別の描画 PR が居る
-#                 ものは**出さない** (打っても無駄になる — AGENTS.md の読み分け表)。
+#                 ものは**出さない** (打っても無駄になる — scripts/stall-watch.sh の読み分け表)。
 #                 読めなかったときは出す (drawing-queue.sh の「判定できないときは通す」)
 #
 # 順番の判定は API を何度も呼ぶので、**弾かれた PR があるときだけ**引く。報告の状態は

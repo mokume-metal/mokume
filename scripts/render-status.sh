@@ -22,6 +22,22 @@
 # は CLI の口ではなく、scripts/render-coverage.sh を source して report_coverage を呼ぶ。
 # 呼ぶ側がこの 2 つ以外の綴りで叩いていないかは scripts/tests/render_status_test.py が見る (#867)
 #
+# ## merge queue での 2 つの判定
+#
+# 守っている不変条件は 1 行 — **main の絵に関わるファイルは、常に誰かが手元で実際に
+# 回して確かめた組み合わせのままである。** queue ではそのために 2 つを見る (以前は
+# AGENTS.md が持っていた表。#1364 でここへ移した):
+#
+#   1. 手元が回した木と合流後で、描画に関わるファイルの中身が違う
+#      → local-render を failure で打つ (PR の head にも)。対処は make catch-up
+#   2. 覆いを壊す open な非 Draft PR が他にあり、自分が先頭でない (queue 内が先・外は番号順)
+#      → 「#N の merge を待つ」で赤。**先頭 #N を見てから決める** — 全 check 緑・CLEAN で
+#      autoMerge: false なら予約が無いだけなので gh pr merge <N> --auto --squash で入る /
+#      作業中なら Draft に落とす / どちらでもなければ待つ (打ち直しは無駄になる)
+#
+# queue の外は番号順なので、**作業中の描画 PR は Draft にしておく** — Draft は順番の外に
+# 居るので、完成した後続を番号だけの理由で待たせずに済む (#497)。
+#
 # ## 何を防いでいるか
 #
 # 防いでいるのは**打ち忘れ**であって、意図的な偽装ではない。status の 1 行は手でも
