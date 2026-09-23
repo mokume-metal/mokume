@@ -314,23 +314,14 @@ struct LightFormulaTests {
     ///
     /// 比べるのは画素の番号で、**折り返した点を含む画素が、いちばん明るい画素であること**を
     /// 求める。山の位置を動かしうるのは、分布の外で緩やかに変わる因子 (遮り合い・見る角での
-    /// 映り込みの強さ・`1 / N·V`) だけで、`shininess(50)` の山の鋭さに対してはずれが 0.01 画素に
+    /// 映り込みの強さ・`1 / N·V`) だけで、`shininess(200)` の山の鋭さに対してはずれが 0.01 画素に
     /// 届かない (式を CPU で 0.01 画素刻みに評価して確かめた)。そこで光源は、折り返した点が画素の
     /// 縁から 0.25 画素以上内側に落ちる位置を選び、その前提を検査自身が確かめる。
-    ///
-    /// **艶の鋭さは 50 に留める。** およそ 80 を超えると、分布の分母の下限 (`Common.metal` の
-    /// `max(…, 1e-6)`) が山の頂を平らに削り、頂の中の最大が緩やかな因子に引かれて 1 画素ほど
-    /// ずれる ([#1407])。
-    ///
-    /// [#1407]: https://github.com/mokume-metal/mokume/issues/1407
     @Test("艶の山は、視点と光源を面で折り返した点に立つ", arguments: Glint.all)
     func highlightSitsAtTheMirrorPoint(_ glint: Glint) throws {
-        let eye = SIMD3<Double>(Camera.fitting(width: Float(Self.side), height: Float(Self.side)).eye)
+        let eye = Self.eye
         let source = glint.source
-        // 面 z = 0 で折り返した光源と視点を結ぶ線が、面を横切る点
-        let mirrored = SIMD3(source.x, source.y, -source.z)
-        let t = eye.z / (eye.z - mirrored.z)
-        let mirror = eye + (mirrored - eye) * t
+        let mirror = Self.mirrorPoint(of: source)
         let expected = (x: Int(mirror.x.rounded(.down)), y: Int(mirror.y.rounded(.down)))
 
         let inset = min(
@@ -345,11 +336,7 @@ struct LightFormulaTests {
         try #require(apart(expected, source) >= 3, "折り返した点が光源の真下に近すぎる")
         try #require(apart(expected, eye) >= 3, "折り返した点が視点の真下に近すぎる")
 
-        let s = SIMD3<Float>(source)
-        let image = try planeImage(paint: .black) {
-            $0.shininess(50)
-            $0.pointLight(.linear(red: 1, green: 1, blue: 1), s.x, s.y, s.z)
-        }
+        let image = try glossImage(shininess: 200, source: source)
         var brightest = (x: -1, y: -1, value: -Float.infinity)
         for (x, y) in pixels(where: { _, _ in true }) where image[x, y].red > brightest.value {
             brightest = (x, y, image[x, y].red)
@@ -359,6 +346,71 @@ struct LightFormulaTests {
             brightest.x == expected.x && brightest.y == expected.y,
             "いちばん明るい画素が (\(brightest.x), \(brightest.y)) — 折り返した点 (\(mirror.x), \(mirror.y)) の画素は (\(expected.x), \(expected.y))"
         )
+    }
+
+    /// 艶を鋭くするほど、**折り返した点の艶は高くなる** ([#1407])。
+    ///
+    /// 折り返した点では面の向きと半分の向きが重なり、分布 (GGX) は頂の値 `1 / (π α²)` を
+    /// 取る (α は粗さの 2 乗)。艶を鋭くする (α を下げる) ほど頂は高くなり、遮り合いも弱まる。
+    /// 見る角での映り込みの強さと `1 / (4 N·L N·V)` はこの点の向きだけで決まって鋭さに
+    /// よらないので、**この点の艶は鋭さについて狭義に増える**。
+    ///
+    /// 折り返した点は**画素の中心**に置く。中心から外すと、鋭い山ほど画素の中心が裾に落ちて
+    /// 値が下がり、分布の頂ではなく標本の位置を見てしまう。
+    ///
+    /// 鋭さは粗さの下限 (`Common.metal` の `clamp(…, 0.03, 1.0)`、`shininess` ≈ 2220) の手前
+    /// まで振る。以前は分布の分母の下限 (`max(…, 1e-6)`) が 80 ほどから頂を平らに削り、この
+    /// 点の値は 100 → 200 で 4 分の 1 に落ちていた。
+    ///
+    /// [#1407]: https://github.com/mokume-metal/mokume/issues/1407
+    @Test("艶を鋭くするほど、折り返した点の艶は高くなる")
+    func sharperHighlightPeaksHigher() throws {
+        // 折り返した点を画素 (20, 40) の中心に置く光源を、`mirrorPoint(of:)` を逆にたどって
+        // 求める: 視点から中心を通る線を面の下 `height` まで伸ばした点が、折り返した光源
+        let pixel = (x: 20, y: 40)
+        let center = SIMD3(Double(pixel.x) + 0.5, Double(pixel.y) + 0.5, 0)
+        let height = 30.0
+        let reach = (Self.eye.z + height) / Self.eye.z
+        let mirrored = Self.eye + (center - Self.eye) * reach
+        let source = SIMD3<Double>(SIMD3<Float>(SIMD3(mirrored.x, mirrored.y, height)))
+        // 前提: 描く側へ渡す float32 に丸めても、折り返した点は画素の中心から動かない
+        let landed = Self.mirrorPoint(of: source)
+        try #require(
+            abs(landed.x - center.x) < 1e-4 && abs(landed.y - center.y) < 1e-4,
+            "折り返した点 \(landed) が画素の中心 \(center) から外れている")
+
+        var peaks: [(shininess: Float, value: Float)] = []
+        for shininess: Float in [50, 100, 200, 400, 1000, 2220] {
+            let image = try glossImage(shininess: shininess, source: source)
+            peaks.append((shininess, image[pixel.x, pixel.y].red))
+        }
+        for (lower, higher) in zip(peaks, peaks.dropFirst()) {
+            #expect(
+                higher.value > lower.value,
+                "shininess \(lower.shininess) → \(higher.shininess) で、折り返した点の艶が \(lower.value) → \(higher.value)"
+            )
+        }
+    }
+
+    /// 既定の視点の、見る位置。
+    private static var eye: SIMD3<Double> {
+        SIMD3(Camera.fitting(width: Float(side), height: Float(side)).eye)
+    }
+
+    /// 面 z = 0 で折り返した光源と視点を結ぶ線が、面を横切る点。
+    private static func mirrorPoint(of source: SIMD3<Double>) -> SIMD3<Double> {
+        let mirrored = SIMD3(source.x, source.y, -source.z)
+        let t = eye.z / (eye.z - mirrored.z)
+        return eye + (mirrored - eye) * t
+    }
+
+    /// 黒い面に白の点光源を 1 つ当てた、艶だけの絵。
+    private func glossImage(shininess: Float, source: SIMD3<Double>) throws -> PixelBuffer {
+        let s = SIMD3<Float>(source)
+        return try planeImage(paint: .black) {
+            $0.shininess(shininess)
+            $0.pointLight(.linear(red: 1, green: 1, blue: 1), s.x, s.y, s.z)
+        }
     }
 
     // MARK: - 影
