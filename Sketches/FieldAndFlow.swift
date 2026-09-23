@@ -5,13 +5,18 @@ import mokume
 
 /// 描く前に計算して、その結果を絵にする。
 ///
-/// **見どころは、絵が図形の集まりではないこと。** 置いている図形は全画面の矩形 1 枚だけで、
+/// **見どころは、絵が図形の集まりではないこと。** 場を描く図形は全画面の矩形 1 枚だけで、
 /// 模様は毎フレーム GPU が 96×54 の格子へ書いた数から出ている。図形を 5184 個置いて
 /// 同じ絵を作ることもできるが、そのときは CPU が 5184 回の呼び出しを払う。
 ///
 /// **輪は CPU が置いている。** 30 フレームに 1 度だけ ``Sketch/read(_:)`` で場を引き戻し、
 /// いちばん高いところを探して印を置く。毎フレーム引くと CPU と GPU が交互に動く形になるので、
 /// **要るときだけ引く**という面の言い分をそのまま書いてある。
+///
+/// **下の帯は、その行の断面である。** CPU が見つけた行の番号を ``Numbers/set(_:at:)`` で
+/// GPU へ返し、1 次元の計算が場からその 1 行だけを切り出す。場は `reads:` で渡すので、
+/// **場を書く計算より後に走ることは宣言から導かれる** — 待つ仕掛けはどこにも書いていない。
+/// 横に引いた線が、いま切り出している行である。
 ///
 /// 時計はフレーム番号から導くので、**同じ番号のフレームは何度描いても同じ絵**になる。
 final class FieldAndFlow: Sketch {
@@ -28,10 +33,23 @@ final class FieldAndFlow: Sketch {
     private var stir: Computation?
     private var paint: Shader?
 
+    /// 切り出す行の番号。**CPU が書き、GPU が読む** — 1 個だけの並び。
+    private var probe: Numbers?
+    /// 切り出した断面。格子の 1 行ぶん。
+    private var profile: Numbers?
+    /// 場から 1 行を切り出す計算。**1 次元**で、列 1 本につき 1 本走る。
+    private var slice: Computation?
+    /// 断面を帯に描く塗り。
+    private var graph: Shader?
+    /// 帯の上端と下端 (画面の高さに対する割合)。
+    private let band = (top: Float(0.8), bottom: Float(0.96))
+
     /// 引き戻した場の、いちばん高かったところ (画面の座標)。
     private var peak: (x: Float, y: Float) = (480, 270)
     /// そのときの高さ。輪の太さに使う。
     private var peakHeight: Float = 0
+    /// そのときの行。**断面を切り出す行**として GPU へ返す。
+    private var peakRow = 27
 
     func setup() {
         field = try? makeNumbers(count: columns * rows)
@@ -106,6 +124,58 @@ final class FieldAndFlow: Sketch {
                 "low": .color(color(13, 18, 33)),
                 "high": .color(color(255, 194, 92)),
             ])
+
+        // 切り出す行は CPU が決める。**書くのはいつでもよい** — 書いた値は次の描き切りが届ける
+        probe = try? makeNumbers(count: 1)
+        probe?.set(Float(peakRow), at: 0)
+        profile = try? makeNumbers(count: columns)
+        profile?.fill(0)
+
+        // **1 次元の計算。** 束ねる先は `reads + writes` の順に buffer(0), (1), … となる
+        slice = try? makeComputation(
+            """
+            kernel void slice(device const float *field [[buffer(0)]],
+                              device const float *probe [[buffer(1)]],
+                              device float *profile [[buffer(2)]],
+                              constant Values &values [[buffer(MOKUME_VALUES)]],
+                              uint id [[thread_position_in_grid]])
+            {
+                uint columns = uint(values.columns);
+                if (id >= columns) { return; }
+                uint row = uint(probe[0]);
+                profile[id] = field[row * columns + id];
+            }
+            """,
+            name: "slice",
+            values: ["columns": .number(Float(columns))])
+
+        // 断面を帯にする。**高さがそのまま値**で、帯の下から塗り上げる
+        graph = try? makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                float columns = values.columns;
+                float2 band = values.band;
+                float y = (in.place.y - band.x) / (band.y - band.x);
+
+                // 列の間は隣の 2 本から混ぜる。場を塗る側と同じく、列の真ん中で引く
+                float spot = clamp(in.place.x * columns - 0.5, 0.0, columns - 1.0);
+                float a = in.numbers[uint(floor(spot))];
+                float b = in.numbers[uint(min(floor(spot) + 1.0, columns - 1.0))];
+                float level = clamp(mix(a, b, fract(spot)), 0.0, 1.0);
+
+                float under = step(1.0 - level, y);
+                float edge = 1.0 - smoothstep(0.0, 0.04, abs(y - (1.0 - level)));
+                float3 tint = mix(values.low.rgb, values.high.rgb, level);
+                return float4(mix(values.low.rgb * 0.6, tint, under) + edge * 0.6, 1.0);
+            }
+            """,
+            name: "graph",
+            values: [
+                "columns": .number(Float(columns)),
+                "band": .pair(band.top, band.bottom),
+                "low": .color(color(13, 18, 33)),
+                "high": .color(color(255, 194, 92)),
+            ])
     }
 
     func draw() {
@@ -113,6 +183,10 @@ final class FieldAndFlow: Sketch {
 
         stir.set("time", .number(time))
         compute(stir, over: columns, by: rows, writes: [field])
+        // 場を読む計算。**`reads:` に場を書いたので、上の計算が終わってから走る**
+        if let slice, let probe, let profile {
+            compute(slice, over: columns, reads: [field, probe], writes: [profile])
+        }
 
         // **要るときだけ引く。** 引くとその場で走らせて完了まで待つので、
         // 毎フレーム引けば CPU と GPU が交互に動く形になる
@@ -129,6 +203,15 @@ final class FieldAndFlow: Sketch {
         resetShader()
         resetNumbers()
 
+        // 断面の帯。**塗りの規約は同じで、読む並びだけが違う**
+        if let graph, let profile {
+            numbers(profile)
+            shader(graph)
+            rect(0, height * band.top, width, height * (band.bottom - band.top))
+            resetShader()
+            resetNumbers()
+        }
+
         // CPU が置く側。**GPU が書いた数を CPU が読んで初めて置ける印**である
         noFill()
         stroke(255, 255, 255, 217)
@@ -137,6 +220,11 @@ final class FieldAndFlow: Sketch {
         strokeWeight(1)
         line(peak.x - 34, peak.y, peak.x + 34, peak.y)
         line(peak.x, peak.y - 34, peak.x, peak.y + 34)
+
+        // いま切り出している行。**帯の断面はこの線の上の値である**
+        stroke(255, 255, 255, 90)
+        let rowY = (Float(peakRow) + 0.5) / Float(rows) * height
+        line(0, rowY, width, rowY)
     }
 
     /// 引き戻した場から、いちばん高いマスを探して画面の座標へ移す。
@@ -148,5 +236,8 @@ final class FieldAndFlow: Sketch {
         let row = Float(best / columns) + 0.5
         peak = (map(column, 0, Float(columns), 0, width), map(row, 0, Float(rows), 0, height))
         peakHeight = values[best]
+        // 見つけた行を GPU へ返す。**待たない** — 次の描き切りが届ける
+        peakRow = best / columns
+        probe?.set(Float(peakRow), at: 0)
     }
 }

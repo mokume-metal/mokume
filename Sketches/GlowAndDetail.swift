@@ -15,6 +15,10 @@ import mokume
 ///
 /// 細い線と小さな点を多く置いてあるのは、**低い細かさでいちばん崩れるもの**を並べないと
 /// 拡大が何をしているか読めないからである。
+///
+/// 左下の字は ``Sketch/pixelWidth`` / ``Sketch/pixelHeight`` を読んで出している。
+/// **刻んでいる数と出している数が違うことを、絵の中で名乗る** — 字そのものも 480×270 で
+/// 刻まれるので、拡大の粗さは字の縁にも出る (効果より前に置くので、色ずれも字に掛かる)。
 final class GlowAndDetail: Sketch {
     // 描く細かさは半分。**出す細かさは変えない**ので、座標も窓の大きさもそのまま
     var settings = SketchSettings(
@@ -70,6 +74,14 @@ final class GlowAndDetail: Sketch {
         noStroke()
         fill(255, 242, 204)
         circle(centre.x, centre.y, 34 + 6 * sin(time * 1.7))
+
+        // 刻んでいる数と出している数。**座標は出す細かさのまま**なので、字を置く位置は
+        // 等倍のときと同じ数で書ける
+        fill(210, 222, 240)
+        textFont("Helvetica")
+        textSize(16)
+        text("描いている \(pixelWidth)×\(pixelHeight)", 24, height - 44)
+        text("出している \(Int(width))×\(Int(height))", 24, height - 22)
 
         // にじみの強さだけを振る。**並べた順にかかる**ので、色ずれは
         // にじんだ後の絵に効く

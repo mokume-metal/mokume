@@ -11,6 +11,13 @@ import mokume
 ///
 /// 左の板は木目だけ、右の板は**木目と汚しを掛け合わせたもの**。汚しは自分で描いた面で、
 /// 読み込んだ絵と同じように渡せる。**同じ形・同じ回し方で、渡した面の数だけが違う。**
+///
+/// **汚しは 1 秒ごとに差し替わる。** 断片は組み直さず、名前で渡した面だけを
+/// ``Shader/set(_:_:)-(_,ShaderSurface)`` で取り替える — 面の宣言は作るときに決まって
+/// いるので、変えられるのは中身だけである。下に並べた 2 枚が差し替える候補で、枠の付いた
+/// ほうがいま右の板に掛かっている (描いた面を `image(_:_:_:_:_:)` でそのまま置く)。
+/// 真ん中上の小さな箱は、同じ面を断片を使わずに `texture(_:)` で貼ったもの。
+/// **名前で渡しても、貼っても、描いた面は読み込んだ絵と同じに扱える。**
 final class SurfacesAndBlend: Sketch {
     var settings = SketchSettings(width: 960, height: 540, title: "surfaces and blend")
 
@@ -18,6 +25,10 @@ final class SurfacesAndBlend: Sketch {
     private var grain: Image?
     /// 描いた汚し。**自分で描いた面も、読み込んだ絵と同じ渡し方で渡せる。**
     private var smudge: Canvas?
+    /// もう 1 枚の汚し。**右の板の面を後から差し替える先**になる。
+    private var scuff: Canvas?
+    /// いま右の板に掛けている汚し (0 が `smudge`・1 が `scuff`)。
+    private var showing = 0
 
     /// 木目だけを読む塗り。渡す面は 1 枚。
     private var plain: Shader?
@@ -31,6 +42,7 @@ final class SurfacesAndBlend: Sketch {
         guard let grain = bakeGrain(), let smudge = paintSmudge() else { return }
         self.grain = grain
         self.smudge = smudge
+        scuff = paintScuff()
 
         // **形自身の座標から読む位置を作る** ので、板を回しても模様は面に留まる
         let place = """
@@ -75,6 +87,14 @@ final class SurfacesAndBlend: Sketch {
         directionalLight(color(255, 242, 224), -0.4, 0.7, -0.6)
         noStroke()
 
+        // **面だけを差し替える。** 断片は組み直さない。変わったときだけ渡し直す
+        let candidates = [smudge, scuff]
+        let choice = Int(time) % 2
+        if choice != showing, let next = candidates[choice] {
+            blended?.set("smudge", .graphics(next))
+            showing = choice
+        }
+
         // **同じ姿勢で 2 枚**。時計はフレーム番号から導かれるので、何度撮っても同じ動き
         let spin = time * 0.55
         for (index, painted) in [plain, blended].enumerated() {
@@ -88,6 +108,35 @@ final class SurfacesAndBlend: Sketch {
             box(Self.board.width, 18, Self.board.depth)
             resetShader()
             pop()
+        }
+
+        // 同じ面を、断片を使わずに貼る。**貼る絵はフレームを越える**ので、置いたら外す
+        if let current = candidates[showing] {
+            push()
+            translate(width / 2, height * 0.2, 0)
+            rotateX(-0.5)
+            rotateY(spin * 1.3)
+            fill(255, 255, 255)
+            texture(current)
+            box(64)
+            noTexture()
+            pop()
+        }
+
+        // 差し替える候補。**描いた面をそのまま絵として置き**、いま掛けているほうに枠を付ける
+        let thumb = Float(88)
+        for (index, candidate) in candidates.enumerated() {
+            guard let candidate else { continue }
+            let x = width / 2 - thumb - 6 + Float(index) * (thumb + 12)
+            let y = height * 0.8
+            image(candidate, x, y, thumb, thumb)
+            if index == showing {
+                noFill()
+                stroke(255, 214, 140)
+                strokeWeight(2)
+                rect(x - 4, y - 4, thumb + 8, thumb + 8)
+                noStroke()
+            }
         }
     }
 
@@ -125,6 +174,24 @@ final class SurfacesAndBlend: Sketch {
             let shade = 0.35 + 0.5 * abs(sin(step * 0.9))
             canvas.fill(.display(red: shade, green: shade, blue: shade, alpha: 0.5))
             canvas.circle(x, y, 18 + 26 * abs(cos(step * 0.6)))
+        }
+        canvas.endDraw()
+        return canvas
+    }
+
+    /// もう 1 枚の汚しを描く。**斜めの擦り傷**で、染みとは違う向きの模様にする —
+    /// 差し替えたことが板の上で読めるように。
+    private func paintScuff() -> Canvas? {
+        guard let canvas = try? createGraphics(256, 256) else { return nil }
+        canvas.beginDraw()
+        canvas.background(255, 255, 255)
+        canvas.strokeWeight(5)
+        for index in 0..<28 {
+            let step = Float(index)
+            let shade = 0.3 + 0.45 * abs(sin(step * 1.3))
+            canvas.stroke(.display(red: shade, green: shade, blue: shade, alpha: 0.7))
+            let start = -40 + step * 12
+            canvas.line(start, 0, start + 110 + 30 * sin(step), 256)
         }
         canvas.endDraw()
         return canvas
