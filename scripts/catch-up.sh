@@ -208,7 +208,7 @@ printf '%s\n' "$files" | touches_drawing coverage \
   || skip "PR #$number は台帳の絵を動かさない — main を取り込む必要が無い"
 
 # 描画 PR は 1 本ずつ (queue に居るものが先・その外は番号順)。順番でないうちに打ち直しても、先頭が入った時点で
-# また覆えなくなる (AGENTS.md「描画に影響する変更」の表の 2 行目)。make ci-check は
+# また覆えなくなる (scripts/render-status.sh「merge queue での 2 つの判定」の 2)。make ci-check は
 # 数分かかるので、ここで断るのと断らないのとでその数分が変わる
 ahead=$(ahead_drawing_pr "$repo" "$number")
 case "$ahead" in
