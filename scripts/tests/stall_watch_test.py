@@ -16,7 +16,8 @@
    無害だが、承認待ちを「詰まっている」と名乗ると本物の詰まりが埋もれる
 5. **判定は何も打たない。** 手元で様子を見るために打っただけで auto-merge が掛かると、
    判定と対処を分けた意味が消える
-6. **Draft は見ない。** 作業中の PR を Draft にしておくのが opt-out である
+6. **Draft と fork からの PR は見ない。** 作業中の PR を Draft にしておくのが opt-out で、
+   fork の PR に予約を掛けるかは引き取るメンテナが決める (#1361)
 7. **猶予の中の名乗りでは赤くしない。** 走るたびに通知が飛ぶと「毎回出る注意は意味を
    失う」(#642) を踏む
 8. **落ちた承認と、新規の承認待ちを分ける。** 承認済みの PR へ push すると承認が落ちるが、
@@ -148,6 +149,7 @@ class StallWatchTest(unittest.TestCase):
         number,
         *,
         draft=False,
+        cross=False,
         auto=True,
         state="CLEAN",
         checks=(),
@@ -160,7 +162,7 @@ class StallWatchTest(unittest.TestCase):
         path = self.pr_dir / "list.json"
         if path.exists():
             listing = json.loads(path.read_text(encoding="utf-8"))
-        listing.append({"number": number, "isDraft": draft})
+        listing.append({"number": number, "isDraft": draft, "isCrossRepository": cross})
         self.write("list.json", listing)
 
         self.write(
@@ -237,6 +239,12 @@ class StallWatchTest(unittest.TestCase):
 
     def test_Draft_の_PR_は見ない(self):
         self.add_pr(1, draft=True, auto=False, state="BLOCKED")
+        proc = self.watch()
+        self.assertEqual(proc.stdout.strip(), "", proc.stdout)
+
+    def test_fork_の_PR_は見ない(self):
+        """予約が無く緑の fork PR でも、当番は掛け直さない (#1361)。"""
+        self.add_pr(9, cross=True, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
         proc = self.watch()
         self.assertEqual(proc.stdout.strip(), "", proc.stdout)
 
