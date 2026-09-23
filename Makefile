@@ -21,6 +21,10 @@ SHELL := /bin/bash
 export REUSE_ENCODING_MODULE := chardet
 
 setup: ## 開発ツールを確認する
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: xcode-select --install"; exit 1; }
+	@for cmd in gh jq openssl; do \
+		command -v $$cmd >/dev/null 2>&1 || { echo "$$cmd が見つからない: brew install $$cmd"; exit 1; }; \
+	done
 	@command -v reuse >/dev/null 2>&1 || { echo "reuse が見つからない: pipx install reuse && pipx inject reuse chardet"; exit 1; }
 	@reuse --version >/dev/null 2>&1 || { \
 		echo "reuse が $(REUSE_ENCODING_MODULE) を使えない (#48 の回避に必要):"; \

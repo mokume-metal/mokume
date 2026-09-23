@@ -163,6 +163,11 @@ BODY_BEARING_SURFACES = {
 # 「口が 1 つも無い」で緑になるのではなく、ここで赤くする
 SURFACE_ANCHORS = (("issue", "comment"), ("issue", "close"), ("pr", "review"))
 
+# 表を導いた gh の版。**手元ではこの版のときだけ完全一致を照合する** (#1360)。
+# gh の版は人ごとに違い、違う版で赤くすると make ci-check を他の人が通せなくなる。
+# 「gh が口を増やした日に赤くなる」(#708) は CI が担う。表を直したらここも上げる
+SURFACES_GH_VERSION = "2.101.0"
+
 GH = shutil.which("gh")
 JQ = shutil.which("jq")
 
@@ -228,6 +233,13 @@ def derive_body_bearing_surfaces():
             if flags:
                 derived[(group, sub)] = flags
     return derived
+
+
+def gh_version():
+    """`gh --version` の 1 行目から版だけを取り出す (取れなければ空文字)。"""
+    proc = subprocess.run(["gh", "--version"], capture_output=True, text=True)
+    match = re.search(r"gh version (\S+)", proc.stdout)
+    return match.group(1) if match else ""
 
 
 def clean_env(path_prefix=None, **overrides):
@@ -466,13 +478,21 @@ class GuardTest(unittest.TestCase):
                 "_SUBCOMMAND / _BODY_FLAG を gh の書式に合わせ直す",
             )
 
+        local = gh_version()
+        if not os.environ.get("GITHUB_ACTIONS") and local != SURFACES_GH_VERSION:
+            self.skipTest(
+                f"手元の gh {local} は表を導いた版 {SURFACES_GH_VERSION} と違う。"
+                "口の完全一致は CI が照合する"
+            )
+
         appeared = sorted(set(derived) - set(BODY_BEARING_SURFACES))
         vanished = sorted(set(BODY_BEARING_SURFACES) - set(derived))
         self.assertEqual(
             ([], []),
             (appeared, vanished),
             f"gh の口が動いた (増: {appeared} / 減: {vanished})。"
-            "BODY_BEARING_SURFACES を直し、増えた口はスレッドへの発言かで分類する",
+            "BODY_BEARING_SURFACES を直し、増えた口はスレッドへの発言かで分類する。"
+            f"直したら SURFACES_GH_VERSION を手元の gh の版 ({local}) へ上げる",
         )
 
         for surface, flags in sorted(derived.items()):
