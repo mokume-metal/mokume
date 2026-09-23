@@ -514,7 +514,7 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     private func supplyFromInlets() {
-        visit(&inlets) { $0.supply() } failure: { $0.failure }
+        Self.visit(&inlets) { $0.supply() } failure: { $0.failure }
     }
 
     /// 差込口を 1 巡し、**続けて転んだものを外す**。
@@ -533,10 +533,15 @@ public final class SketchRuntime {
     /// 組み立てる必要があったからで ([#947](https://github.com/mokume-metal/mokume/issues/947)
     /// の「頼んた」)、ここには組み立てが無い。
     ///
+    /// `warn` は外したことを知らせる口で、**検査が差し替える**。標準エラーへ実際に出た行は
+    /// 検査から読めないので、言ったかどうかと何と言ったかはここで受け取って確かめる
+    /// ([#1442])。ランタイムの状態には触れないので、差し替えて回すのに面は要らない。
+    ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    private func visit<Seam>(
+    /// [#1442]: https://github.com/mokume-metal/mokume/issues/1442
+    static func visit<Seam>(
         _ seams: inout [(seam: Seam, health: SeamHealth)], calling act: (Seam) -> Void,
-        failure: (Seam) -> String?
+        failure: (Seam) -> String?, warn: (String) -> Void = Diagnostics.warn
     ) {
         for index in seams.indices where seams[index].health.isAttached {
             let seam = seams[index].seam
@@ -544,8 +549,12 @@ public final class SketchRuntime {
             // **理由は 1 度だけ読む。** 2 度読むと、外した判断と言う理由が別の値になりうる
             let reason = failure(seam)
             if seams[index].health.note(reason) {
-                Diagnostics.warn(
-                    "\(type(of: seam)) failed again and again, so it was detached"
+                // **名乗りは `Any` を経て取る。** `Seam` には存在型 (`any Outlet` /
+                // `any Inlet`) が入るので、`type(of: seam)` は中身ではなく存在型そのもの
+                // を返し、どれを外したのかが分からない ([#1442])。`Any` へ包み直すと、
+                // 中身の型まで降りる
+                warn(
+                    "\(type(of: seam as Any)) failed again and again, so it was detached"
                         + " (the last reason: \(reason ?? "unknown"))")
             }
         }
@@ -598,7 +607,7 @@ public final class SketchRuntime {
             pending.image.pendingSubmission,
             orWarn: "Could not wait for the GPU before handing the frame to an outlet")
         let frame = OutputFrame(image: pending.image, frame: pending.frame, time: pending.time)
-        visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
+        Self.visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
     }
 
     // MARK: - 名乗り

@@ -504,3 +504,90 @@ struct PluginSeamTests {
         #expect(inlet.closed == 1)
     }
 }
+
+/// 続けて転んだ差込口を外したときの文面 ([#1442])。GPU は要らない。
+///
+/// 見るのは**外した差込口の具体的な型を名乗るか**。差込口を幾つも付けたスケッチでは、
+/// 型の名前が無いとどれが外れたのかが分からない。1 巡 (``SketchRuntime/visit(_:calling:failure:warn:)``)
+/// を直に回し、言った行を受け取って読む — 標準エラーへ実際に出た行は検査から読めない。
+///
+/// **並びはランタイムが持つのと同じ形で作る** (`[(seam: any Outlet, health: SeamHealth)]`)。
+/// 型引数に存在型が入るのはこの形のときで、存在型の値を総称の関数へ直に渡すと中身の型へ
+/// 開かれてしまい (SE-0352)、直す前の姿でも正しい名前が出て検査として成立しない。
+///
+/// [#1442]: https://github.com/mokume-metal/mokume/issues/1442
+@Suite("差込口を外したときの文面")
+struct SeamDetachNoticeTests {
+    /// 転ばない出口。並びの中で、外れたほうと見分けるために置く。
+    final class QuietOutlet: Outlet {
+        func receive(_ frame: OutputFrame) {}
+    }
+
+    final class StuckInlet: Inlet {
+        func supply() {}
+    }
+
+    /// 並びを `rounds` 巡回して、言った行を集める。`failing` が `true` を返す差込口だけが
+    /// 毎巡 `reason` で転ぶ。
+    private func notices<Seam>(
+        _ seams: inout [(seam: Seam, health: SeamHealth)], rounds: Int,
+        failing: (Seam) -> Bool, reason: String
+    ) -> [String] {
+        var said: [String] = []
+        for _ in 0..<rounds {
+            SketchRuntime.visit(&seams) { _ in } failure: {
+                failing($0) ? reason : nil
+            } warn: { said.append($0) }
+        }
+        return said
+    }
+
+    @Test("組み込みの撮る係が外れると、並びの中で FrameRecorder を名乗る")
+    func theDetachedRecorderNamesItsType() {
+        var outlets: [(seam: any Outlet, health: SeamHealth)] = [
+            (QuietOutlet(), SeamHealth()), (FrameRecorder(), SeamHealth()),
+        ]
+
+        let said = notices(
+            &outlets, rounds: SeamHealth.limit, failing: { $0 is FrameRecorder },
+            reason: "bufferUnavailable")
+
+        // 文面の残りは変えない (#1442 の範囲外) ので、全文で見る
+        #expect(
+            said == [
+                "FrameRecorder failed again and again, so it was detached"
+                    + " (the last reason: bufferUnavailable)"
+            ])
+        #expect(!outlets[1].health.isAttached)
+        #expect(outlets[0].health.isAttached)
+    }
+
+    /// 入り口も同じ 1 巡を通るので、同じ直しで名乗る。
+    @Test("入り口が外れると、その入り口の型を名乗る")
+    func theDetachedInletNamesItsType() {
+        var inlets: [(seam: any Inlet, health: SeamHealth)] = [(StuckInlet(), SeamHealth())]
+
+        let said = notices(
+            &inlets, rounds: SeamHealth.limit, failing: { _ in true }, reason: "stuck")
+
+        #expect(
+            said == [
+                "StuckInlet failed again and again, so it was detached (the last reason: stuck)"
+            ])
+    }
+
+    /// 外れる手前では言わず、外れた後は呼ばれないので 2 度と言わない。
+    @Test("外れる 1 巡手前までは何も言わず、外れた後も言い直さない")
+    func saysItOnceAtTheLimit() {
+        var outlets: [(seam: any Outlet, health: SeamHealth)] = [(FrameRecorder(), SeamHealth())]
+
+        let before = notices(
+            &outlets, rounds: SeamHealth.limit - 1, failing: { _ in true }, reason: "full")
+        #expect(before.isEmpty)
+        #expect(outlets[0].health.isAttached)
+
+        let after = notices(&outlets, rounds: 3, failing: { _ in true }, reason: "full")
+        #expect(after.count == 1)
+        #expect(after.first?.hasPrefix("FrameRecorder ") == true)
+    }
+}
