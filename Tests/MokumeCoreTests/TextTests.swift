@@ -444,12 +444,15 @@ struct TextTests {
         let canvas = try makeCanvas()
         canvas.textSize(16)
         canvas.textWrap(.character)
-        let lines = canvas.wrapped(
-            "aa bb cc dd", face: canvas.typeface, within: canvas.textWidth("aa bb"))
-        #expect(lines.map(String.init).joined() == "aa bb cc dd")
-        #expect(lines.count > 1)
-        // 語の切れ目を待たないので、行の末尾が語の終わりとは限らない
-        #expect(lines.map(String.init) != ["aa bb", "cc dd"])
+        let source = "aaaa bbbb"
+        let lines = canvas.wrapped(source, face: canvas.typeface, within: canvas.textWidth("aaaa b"))
+        // 語の切れ目を待たないので、2 つ目の語の 1 字目まで入れて、語の途中で折る
+        #expect(lines.map(String.init) == ["aaaa b", "bbb"])
+        // 行と行の隙間には空白しか無い — 切れ目の空白は消費しても、字は落とさない ([#1424])
+        let gaps = zip(lines, lines.dropFirst()).map { source[$0.endIndex..<$1.startIndex] }
+        #expect(gaps.allSatisfy { $0.allSatisfy(\.isWhitespace) })
+        #expect(lines.first?.startIndex == source.startIndex)
+        #expect(lines.last?.endIndex == source.endIndex)
     }
 
     @Test("改行は幅に関わらず必ず行を分ける")
