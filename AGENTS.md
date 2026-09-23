@@ -230,7 +230,7 @@ mokume 向けのエージェント支援 (スキル・hooks・設定) はこの�
 
 ### エージェントの identity
 
-エージェントは PR の作成を GitHub App の identity で行う ([ADR-0003](docs/decisions/0003-agent-identity-separation.md))。token は次で発行する:
+maintainers team の人と、その人が動かすエージェントは、PR の作成を GitHub App の identity で行う ([ADR-0003](docs/decisions/0003-agent-identity-separation.md))。token は次で発行する:
 
 ```bash
 GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u origin HEAD && gh pr create …
@@ -244,9 +244,9 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 
 手で揃える設定は `MOKUME_APP_PRIVATE_KEY_CMD` (App の秘密鍵 PEM を標準出力に出すコマンド) の 1 つだけ。秘密鍵の中身も在処もリポジトリに書かない。token は有効期限 1 時間で、キャッシュしない。App ID とインストール ID は `scripts/gh-app-token.sh` が org から自力で引く。
 
-未設定でも「鍵が無い」と即断しない — 手元の秘密管理の「自動化から読んでよい秘密の一覧」を引き、参照名が分かれば 1 行で組める (在処そのものを読む必要はない)。一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねる。
+鍵を読むコマンドを組めなければ PR を作らず、鍵の渡し方を人に尋ねる。
 
-**承認が要る変更は、誰の手であれ App identity の PR で入れる。token を発行できないときは PR を作らない** ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。メンテナも例外にしない — 自分の PR は自分で承認できないので、メンテナ名義で作れば誰も承認できない PR になる。承認の要否は作成前に確定できないため、`gh pr create` は一律に App identity を要求する。
+**maintainers team の側では、承認が要る変更は App identity の PR で入れる。token を発行できないときは PR を作らない** ([ADR-0007](docs/decisions/0007-approvability-invariant.md))。メンテナも例外にしない — 自分の PR は自分で承認できないので、メンテナ名義で作れば誰も承認できない PR になる。承認の要否は作成前に確定できないため、一律に App identity を使う。**外部の人は自分の名義で作ってよい** — author が承認者の外に居るので不変条件は破れない。
 
 コミットの author と署名はメンテナのままで、分離するのは PR 作成の主体だけ。push の主体は問わない (ADR-0003 決定 6)。
 

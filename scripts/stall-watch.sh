@@ -225,9 +225,12 @@ say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
 # --- 走査 -------------------------------------------------------------------
 
 # Draft は当番の対象外である。**作業中の PR を Draft にしておくのが opt-out** で、
-# それは描画 PR の順番待ち (AGENTS.md) が既に採っている形と同じ
+# それは描画 PR の順番待ち (AGENTS.md) が既に採っている形と同じ。
+# **fork からの PR も見ない** (#1361)。予約を掛けるかは引き取るメンテナが決める —
+# 当番が掛けると、メンテナが手元で local-render を打った瞬間に判断なしで入る
 numbers=$(gh pr list --repo "$REPO" --state open --limit 100 \
-  --json number,isDraft --jq '.[] | select(.isDraft | not) | .number') || {
+  --json number,isDraft,isCrossRepository \
+  --jq '.[] | select((.isDraft or .isCrossRepository) | not) | .number') || {
   echo "open な PR の一覧を読めなかった" >&2
   exit 1
 }
