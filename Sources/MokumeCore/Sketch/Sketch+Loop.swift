@@ -31,7 +31,7 @@ extension Sketch {
     /// ## 止まっていても入力は届く
     ///
     /// ``mousePressed()`` などのコールバックは呼ばれ続ける。止めたスケッチを動かし直す
-    /// ``loop()`` / ``redraw()`` は、ふつうそこから呼ぶ。
+    /// ``loop()`` / ``redraw()`` は、そこから呼ぶ。
     ///
     /// ```swift
     /// func mousePressed() {
@@ -43,12 +43,28 @@ extension Sketch {
     /// 次に描くフレームまで出ず、``translate(_:_:)`` などの変換は効かない。描くのは
     /// ``draw()`` に任せる。
     ///
+    /// ## 呼べる場所
+    ///
+    /// **進行の 3 つの口 (これと ``loop()`` / ``redraw()``) が効くのは、``setup()``・
+    /// ``draw()``・入力のコールバックの中から呼んだときだけである。** それ以外の場所から
+    /// 呼ぶと何もせず、そのことを標準エラーで知らせる。
+    ///
+    /// **そこで起こした `Task` の中も、外に数える。** `Task` の中身が走るのは起こした
+    /// コールバックが返った後で、そのときにはもう呼び出しの中ではない。
+    ///
+    /// 待つ読み込みの口 (``requestImage(_:)`` など) は `Task` から呼べるが、あちらは
+    /// 絵を描かず値を返すだけなので `Task` へ持ち越せる。進行の口は持ち越さない —
+    /// `Task` から触れると、どのフレームが描き直されるかが `Task` に番が回る時機で
+    /// 決まるためである。
+    ///
     /// ## 外からの停止とは別に持つ
     ///
     /// ホストが `SketchRuntime.pause()` / `resume()` で止めて再開しても、ここで止めた
     /// スケッチは止まったままである。理由は `SketchRuntime.resume()` の説明にある。
     public func noLoop() {
-        guard let runtime = runningSketch else { return warnNotRunning("noLoop()") }
+        guard let runtime = runningSketch else {
+            return Diagnostics.warn(OutsideCall.noLoop.notice)
+        }
         runtime.noLoop()
     }
 
@@ -61,8 +77,13 @@ extension Sketch {
     /// ```
     ///
     /// 戻った後の最初の ``deltaTime`` に、止まっていた間の時間は乗らない。
+    ///
+    /// **効くのは ``setup()``・``draw()``・入力のコールバックの中から呼んだときだけ**で、
+    /// そこで起こした `Task` から呼んでも回り出さない (``noLoop()`` の「呼べる場所」)。
     public func loop() {
-        guard let runtime = runningSketch else { return warnNotRunning("loop()") }
+        guard let runtime = runningSketch else {
+            return Diagnostics.warn(OutsideCall.loop.notice)
+        }
         runtime.loop()
     }
 
@@ -73,12 +94,13 @@ extension Sketch {
     ///
     /// **回っている間と、``draw()`` の中では何もしない** — どちらも、頼まなくても
     /// 描かれている (または描いている最中の) フレームだからである。
+    ///
+    /// **効くのは ``setup()``・``draw()``・入力のコールバックの中から呼んだときだけ**で、
+    /// そこで起こした `Task` から呼んでも描き直さない (``noLoop()`` の「呼べる場所」)。
     public func redraw() {
-        guard let runtime = runningSketch else { return warnNotRunning("redraw()") }
+        guard let runtime = runningSketch else {
+            return Diagnostics.warn(OutsideCall.redraw.notice)
+        }
         runtime.redraw()
-    }
-
-    private func warnNotRunning(_ call: String) {
-        Diagnostics.warn("\(call): the sketch is not running, so there is nothing to control")
     }
 }
