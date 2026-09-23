@@ -30,13 +30,17 @@ public nonisolated enum HorizontalTextAlign: Sendable, CaseIterable {
 
 /// 文字列を、指定した位置の上下どこに合わせるか。
 public nonisolated enum VerticalTextAlign: Sendable, CaseIterable {
-    /// 指定した位置が、いちばん高い字の上端になる。
+    /// 指定した位置が、字の囲みの上端 — 基準線から ``Sketch/textAscent()`` だけ上 — になる。
+    ///
+    /// 書体によっては、アクセントの付いた字がこの上端より上へ出る (``Sketch/textAscent()``)。
     case top
     /// 指定した位置が、文字の高さの中央になる。
     case center
     /// 指定した位置が**基準線** — 字が乗る線になる。既定。
     case baseline
-    /// 指定した位置が、いちばん低い字の下端になる。
+    /// 指定した位置が、字の囲みの下端 — 基準線から ``Sketch/textDescent()`` だけ下 — になる。
+    ///
+    /// 字の下に付く記号は、この下端より下へ出ることがある (``Sketch/textDescent()``)。
     case bottom
 }
 

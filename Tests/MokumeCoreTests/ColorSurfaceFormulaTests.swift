@@ -1,0 +1,228 @@
+// SPDX-FileCopyrightText: 2026 mokume-metal
+// SPDX-License-Identifier: MIT
+
+import Testing
+
+@testable import MokumeCore
+
+/// 描く口の数値版が、値を作る口 ``color(_:_:_:_:)`` と同じ色を作る ([#1385] 条件 1)。
+///
+/// 作者が最もよく書くのは `fill(255, 204, 0)` のほうで、`color(…)` を経由しない。
+/// 目盛りの変換は ``ColorSurfaceTests`` が CoreGraphics と突き合わせているので、ここで
+/// 見るのは**描く口がその変換へ数をどう渡すか** — 引数の並び・灰色の広げ方・不透明度の
+/// 既定値である。どれか 1 つを取り違えても型は通り、絵がそれらしく違う色になるだけで
+/// 済んでしまう。
+///
+/// **作者の口 (``Sketch``) から呼ぶ。** 下の層 (``Canvas``) へ渡す 1 行の中継も、
+/// 取り違えれば同じ形で壊れる。
+///
+/// [#1385]: https://github.com/mokume-metal/mokume/issues/1385
+@Suite(
+    "描く口の数値版の色",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct NumericColorEntryTests {
+    /// 何も描かないスケッチ。`draw()` で呼ぶ口だけを差し替える。
+    final class Blank: Sketch {
+        var settings = SketchSettings(width: 8, height: 8)
+        var paint: (Blank) -> Void = { _ in }
+        init() {}
+        func draw() { paint(self) }
+    }
+
+    /// 成分がどれも違う数。**同じ数どうしを入れ替えても色は変わらない**ので、
+    /// 取り違えが色に出るよう 4 つとも別の値にする。
+    private static let red: Float = 230
+    private static let green: Float = 120
+    private static let blue: Float = 40
+    private static let opacity: Float = 200
+    /// 灰色の 1 値版に渡す数。不透明度は上と別の値にする。
+    private static let gray: Float = 90
+    private static let grayOpacity: Float = 170
+
+    /// 状態を読める 3 つの口。下地は状態を持ち越さない (フレームごとの予定) ので、
+    /// 画素で見る別の検査にしてある。
+    enum Entry: CaseIterable, CustomTestStringConvertible {
+        case fill, stroke, tint
+
+        var testDescription: String {
+            switch self {
+            case .fill: "fill"
+            case .stroke: "stroke"
+            case .tint: "tint"
+            }
+        }
+
+        func call(_ sketch: Blank, _ values: [Float]) {
+            switch (self, values.count) {
+            case (.fill, 1): sketch.fill(values[0])
+            case (.fill, 2): sketch.fill(values[0], values[1])
+            case (.fill, 3): sketch.fill(values[0], values[1], values[2])
+            case (.fill, _): sketch.fill(values[0], values[1], values[2], values[3])
+            case (.stroke, 1): sketch.stroke(values[0])
+            case (.stroke, 2): sketch.stroke(values[0], values[1])
+            case (.stroke, 3): sketch.stroke(values[0], values[1], values[2])
+            case (.stroke, _): sketch.stroke(values[0], values[1], values[2], values[3])
+            case (.tint, 1): sketch.tint(values[0])
+            case (.tint, 2): sketch.tint(values[0], values[1])
+            case (.tint, 3): sketch.tint(values[0], values[1], values[2])
+            case (.tint, _): sketch.tint(values[0], values[1], values[2], values[3])
+            }
+        }
+
+        func read(_ canvas: Canvas) -> LinearRGBA {
+            switch self {
+            case .fill: canvas.style.fill
+            case .stroke: canvas.style.stroke
+            case .tint: canvas.style.tint
+            }
+        }
+    }
+
+    /// 渡す数と、同じ数を `color(…)` に渡した色。綴りは 4 通り (3 つ・4 つ・灰色・灰色と不透明度)。
+    private static var forms: [(values: [Float], expected: LinearRGBA)] {
+        [
+            ([red, green, blue], color(red, green, blue)),
+            ([red, green, blue, opacity], color(red, green, blue, opacity)),
+            ([gray], color(gray)),
+            ([gray, grayOpacity], color(gray, grayOpacity)),
+        ]
+    }
+
+    /// 作者の口は走っているランタイムを通るので、検査からもそれを差してから呼ぶ。
+    private func runSketch(_ runtime: SketchRuntime, _ body: () -> Void) {
+        let previous = runningSketch
+        runningSketch = runtime
+        defer { runningSketch = previous }
+        body()
+    }
+
+    @Test("数値版と灰色 1 値版は、同じ数の color(…) と同じ色になる", arguments: Entry.allCases)
+    func numericFormsMatchTheColorValue(_ entry: Entry) throws {
+        let sketch = Blank()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        runSketch(runtime) {
+            for form in Self.forms {
+                entry.call(sketch, form.values)
+                // **等値で見る。** どちらも同じ目盛りの変換 (`DisplayScale.color`) を通るので、
+                // 数の渡し方が同じなら最下位ビットまで一致する
+                #expect(
+                    entry.read(runtime.canvas) == form.expected,
+                    "\(entry.testDescription)(\(form.values)) が color(\(form.values)) と違う色になった")
+            }
+        }
+    }
+
+    @Test("数値版の塗りと線は、止めていた塗りと線を戻す")
+    func numericFormsTurnDrawingBackOn() throws {
+        // 説明の約束「塗りを止めていたら、呼んだ時点で再び塗るようになる」
+        let sketch = Blank()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        runSketch(runtime) {
+            sketch.noFill()
+            sketch.fill(Self.gray)
+            #expect(runtime.canvas.style.hasFill)
+            sketch.noStroke()
+            sketch.stroke(Self.red, Self.green, Self.blue)
+            #expect(runtime.canvas.style.hasStroke)
+        }
+    }
+
+    @Test("下地の数値版と灰色 1 値版は、同じ数の color(…) と同じ絵になる")
+    func backgroundFormsMatchTheColorValue() throws {
+        /// 下地を 1 度塗ったフレームの画素。
+        func painted(_ paint: @escaping (Blank) -> Void) throws -> [UInt8] {
+            let sketch = Blank()
+            sketch.paint = paint
+            let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+            try runtime.advance()
+            return try runtime.target.encodeForDisplay().bytes
+        }
+        let (r, g, b, a) = (Self.red, Self.green, Self.blue, Self.opacity)
+        let (gray, grayOpacity) = (Self.gray, Self.grayOpacity)
+        #expect(try painted { $0.background(r, g, b) } == painted { $0.background(color(r, g, b)) })
+        #expect(
+            try painted { $0.background(r, g, b, a) } == painted { $0.background(color(r, g, b, a)) })
+        #expect(try painted { $0.background(gray) } == painted { $0.background(color(gray)) })
+        #expect(
+            try painted { $0.background(gray, grayOpacity) }
+                == painted { $0.background(color(gray, grayOpacity)) })
+    }
+}
+
+/// 色相・彩度・明度の 6 つの区画 ([#1385] 条件 2)。GPU は要らない。
+///
+/// ``HueSaturationBrightnessTests`` は原色 3 つ (区画の境) と 200 度の往復だけを見ている。
+/// 区画ごとに成分の並びを切り替える式 (``HueSaturationBrightness/components(hue:saturation:brightness:)``
+/// の `switch`) は、境では 2 つの区画の式が同じ値を出すので、並びを取り違えても境の検査は
+/// 緑のままになる。**区画の中ほど** (30 度刻みの奇数倍) を見る。
+///
+/// 期待値は教科書の HSV → RGB の式から手で出したもの。明度 V・彩度 S・色相 H について
+/// C = V·S、X = C·(1 − |(H/60) mod 2 − 1|)、m = V − C で、区画ごとに (C, X, 0) の並びを
+/// 入れ替えて m を足す。30 度刻みの奇数倍では X = C/2 になる。
+///
+/// [#1385]: https://github.com/mokume-metal/mokume/issues/1385
+@Suite("色相の 6 つの区画")
+struct HueSectorTests {
+    private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-5)
+        -> Bool
+    {
+        abs(one.red - other.red) < tolerance && abs(one.green - other.green) < tolerance
+            && abs(one.blue - other.blue) < tolerance && abs(one.alpha - other.alpha) < tolerance
+    }
+
+    /// 彩度 100・明度 100 では m = 0・C = 255・X = 127.5。
+    nonisolated static var fullColors: [(hue: Float, rgb: SIMD3<Float>)] {
+        [
+            (30, SIMD3(255, 127.5, 0)),
+            (90, SIMD3(127.5, 255, 0)),
+            (180, SIMD3(0, 255, 255)),
+            (270, SIMD3(127.5, 0, 255)),
+            (330, SIMD3(255, 0, 127.5)),
+        ]
+    }
+
+    /// 彩度 50・明度 80 では m = 0.4・C = 0.4・X = 0.2 (180 度だけは区画の境なので X = C)。
+    /// **m が 0 でない**ので、底上げの足し忘れもここで見える。
+    nonisolated static var mutedColors: [(hue: Float, rgb: SIMD3<Float>)] {
+        [
+            (30, SIMD3(204, 153, 102)),
+            (90, SIMD3(153, 204, 102)),
+            (180, SIMD3(102, 204, 204)),
+            (270, SIMD3(153, 102, 204)),
+            (330, SIMD3(204, 102, 153)),
+        ]
+    }
+
+    @Test("彩度 100・明度 100 の中間の角度が、式から出した RGB と一致する", arguments: fullColors)
+    func fullColorsMatchTheFormula(_ sample: (hue: Float, rgb: SIMD3<Float>)) {
+        let rgb = sample.rgb
+        #expect(
+            isSame(
+                color(hue: sample.hue, saturation: 100, brightness: 100),
+                color(rgb.x, rgb.y, rgb.z)),
+            "色相 \(sample.hue) 度が \(rgb) にならない")
+    }
+
+    @Test("彩度 50・明度 80 の中間の角度が、式から出した RGB と一致する", arguments: mutedColors)
+    func mutedColorsMatchTheFormula(_ sample: (hue: Float, rgb: SIMD3<Float>)) {
+        let rgb = sample.rgb
+        #expect(
+            isSame(
+                color(hue: sample.hue, saturation: 50, brightness: 80),
+                color(rgb.x, rgb.y, rgb.z)),
+            "色相 \(sample.hue) 度が \(rgb) にならない")
+    }
+
+    /// 6 つの区画それぞれの中ほど。読み出しの側 (``hue(_:)``) も、最大の成分が
+    /// 赤・緑・青のどれかで式を 3 通りに分けるので、区画を全部通すと 3 通りとも通る。
+    @Test("6 つの区画すべてで、書いた色相・彩度・明度が読み出せる", arguments: [20, 80, 140, 200, 260, 320] as [Float])
+    func everySectorRoundTrips(_ written: Float) {
+        let made = color(hue: written, saturation: 70, brightness: 85)
+        #expect(abs(hue(made) - written) < 0.01, "色相 \(written) 度が \(hue(made)) 度で戻った")
+        #expect(abs(saturation(made) - 70) < 0.01)
+        #expect(abs(brightness(made) - 85) < 0.01)
+    }
+}
