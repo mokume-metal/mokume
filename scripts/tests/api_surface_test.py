@@ -367,6 +367,52 @@ class ApiSurfaceTests(unittest.TestCase):
             self.assertEqual(len(api.load_symbols(graphs, "MokumeCore")), 2)
 
 
+
+class 参照スケッチからの呼び出し(unittest.TestCase):
+    """作者向けの面が参照スケッチから呼ばれないまま入らないこと (#1358)。
+
+    空白は 100 件を超えるまで誰にも気付かれず (#1350)、その間に呼べない口を 1 つ隠した
+    (#1367)。検査が名前を取りこぼすと、同じ空白が黙って溜まる。
+    """
+
+    def test_スケッチに現れない名前を名乗る(self):
+        symbols = [symbol("ellipse(_:_:_:_:)", owner="Sketch"),
+                   symbol("ellipsoid(_:_:_:)", owner="Sketch")]
+        problems = api.check_sketch_coverage(symbols, "ellipse(1, 2, 3, 4)", {})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Sketch.ellipsoid", problems[0])
+        self.assertIn("UNSHOWN", problems[0])
+
+    def test_コメントの中にだけ書いた名前は呼んだことにしない(self):
+        symbols = [symbol("lerp(_:_:_:)", owner="Sketch")]
+        for source in ["// lerp(0, 1, t) で混ぜる", "/// `lerp` を使う", "/* lerp */ let x = 1"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+
+    def test_名前の一部に含まれるだけでは呼んだことにしない(self):
+        symbols = [symbol("fill(_:)", owner="Sketch")]
+        for source in ["refill()", "fills = 3", "_fill()"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+
+    def test_対象外に載せた名前は見ない(self):
+        symbols = [symbol("save(_:)", owner="Sketch")]
+        self.assertEqual(api.check_sketch_coverage(symbols, "", {"save": "理由"}), [])
+
+    def test_引数の違う同名は基底名1つとして数える(self):
+        symbols = [symbol("fill(_:)", owner="Sketch", precise="a"),
+                   symbol("fill(_:_:_:)", owner="Sketch", precise="b")]
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "", {})), 1)
+        self.assertEqual(api.check_sketch_coverage(symbols, "fill(0.5)", {}), [])
+
+    def test_Sketch以外の型のメンバは見ない(self):
+        symbols = [symbol("encodeForDisplay()", owner="RenderTarget")]
+        self.assertEqual(api.check_sketch_coverage(symbols, "", {}), [])
+
+    def test_いまの参照スケッチを読める(self):
+        # 置き場を取り違えると全部が「呼ばれていない」になる。読めていることだけを見る
+        self.assertIn("catalogue", api.read_sketches(api.SKETCHES))
+
 class 読むものが無いときの名乗り(unittest.TestCase):
     """**出ていないのか中身が違うのかを、落ちた側の文面で分ける** (#1308)。
 
