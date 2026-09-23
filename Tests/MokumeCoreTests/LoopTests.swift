@@ -30,6 +30,7 @@ struct LoopTests {
         var drawCalls = 0
         var seenFrameCounts: [Int] = []
         var seenDeltas: [Float] = []
+        var seenTimes: [Float] = []
         var pressedCalls = 0
 
         init() {}
@@ -40,6 +41,7 @@ struct LoopTests {
             drawCalls += 1
             seenFrameCounts.append(frameCount)
             seenDeltas.append(deltaTime)
+            seenTimes.append(time)
             background(0)
             stroke(255)
             y -= 4
@@ -181,11 +183,14 @@ struct LoopTests {
         now = 10.0
         try runtime.advance()
         runSketch(runtime) { sketch.loop() }
-        now = 10.016
+        now = 10.03
         try runtime.advance()
 
         #expect(sketch.seenDeltas.count == 2)
-        #expect(abs(sketch.seenDeltas[1] - 0.016) < 1e-5)
+        // 呼び出しの外から戻しても、コールバックから戻したとき
+        // (``loopFromCallbackStepsOneTargetFrame()``) と同じ 1 フレームぶんになる。
+        // `loop()` から描くまでの 0.03 秒でもない
+        #expect(sketch.seenDeltas[1] == 1 / Float(sketch.settings.frameRate))
     }
 
     // MARK: - 止まっていても応える
@@ -278,6 +283,132 @@ struct LoopTests {
         #expect(report["frame"] as? Int == 1)
         #expect(report["image"] as? String == "frame-000.png")
         #expect(sketch.drawCalls == 1)
+    }
+
+    // MARK: - 止めていたところから描く 1 枚の時計 (#1366)
+
+    /// 止めているスケッチに、描き直しをどこから頼むか。
+    enum RedrawRoute: String, CaseIterable, CustomTestStringConvertible {
+        /// 押下のコールバックの中から。窓で作者のコードが実際に通る経路
+        case fromCallback
+        /// 呼び出しの外から (窓では断られるので、いまは検査からしか通らない)
+        case fromOutside
+        /// 外の `pause()` 中に頼み、`resume()` した後
+        case whilePausedThenResumed
+        var testDescription: String { rawValue }
+    }
+
+    /// 実時間の時計で `setup()` から止め、`stoppedAt` 秒まで止めてから `route` で描き直しを頼む。
+    ///
+    /// 起点は 0 秒で、最初の 1 枚は 0.016 秒に描く。止めている間にも 1 度進めて、描かずに
+    /// 過ぎるフレームを挟む (窓では止めている間も駆動源が呼んでくる)。
+    private func redrawAfterStop(
+        _ sketch: Lines, route: RedrawRoute, stoppedAt: Double
+    ) throws {
+        let facet = try makeFacet()
+        sketch.onPress = { $0.redraw() }
+        var now: Double = 0
+        let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
+        now = 0.016
+        try runtime.advance()
+        now = (0.016 + stoppedAt) / 2
+        try runtime.advance()
+        #expect(sketch.drawCalls == 1)
+
+        switch route {
+        case .fromCallback:
+            now = stoppedAt
+            try click(in: facet)
+        case .fromOutside:
+            now = stoppedAt
+            runSketch(runtime) { sketch.redraw() }
+        case .whilePausedThenResumed:
+            runtime.pause()
+            runSketch(runtime) { sketch.redraw() }
+            try runtime.advance()
+            // 再開から次の 1 枚までの間を、1 フレームぶんとも 0 とも違う長さにしておく
+            now = stoppedAt - 0.05
+            runtime.resume()
+            now = stoppedAt
+        }
+        try runtime.advance()
+        #expect(sketch.drawCalls == 2)
+    }
+
+    @Test(
+        "止めていたところから redraw() で描く 1 枚は、頼んだ経路によらず目標の 1 フレームぶん進み、time は止めていた時間ごと進む",
+        arguments: RedrawRoute.allCases)
+    func redrawAfterStopStepsOneTargetFrame(route: RedrawRoute) throws {
+        let sketch = Lines()
+        try redrawAfterStop(sketch, route: route, stoppedAt: 5)
+
+        // 止めていた 5 秒近くは乗らず、ほぼ 0 でもない — 回っているときの 1 枚ぶん
+        #expect(sketch.seenDeltas.last == 1 / Float(sketch.settings.frameRate))
+        // **時刻は実時間のまま** (ADR-0025 決定 6)。起点が 0 秒なので、描いた瞬間の `now` に等しい
+        #expect(sketch.seenTimes.last == 5)
+    }
+
+    @Test(
+        "描き直しの 1 枚の刻みは設定のフレームレートから取り、止めていた時間が 1 フレームより短くても上限より長くても変わらない",
+        arguments: [24, 120], [0.02, 3.0])
+    func redrawStepFollowsTheTargetFrameRate(frameRate: Int, stoppedAt: Double) throws {
+        let sketch = Lines()
+        sketch.settings.frameRate = frameRate
+        try redrawAfterStop(sketch, route: .fromCallback, stoppedAt: stoppedAt)
+
+        #expect(sketch.seenDeltas.last == 1 / Float(frameRate))
+        #expect(sketch.seenTimes.last == Float(stoppedAt))
+    }
+
+    @Test("止めていたところから押下で loop() を呼ぶと、戻った最初の 1 枚は目標の 1 フレームぶん進み、次の 1 枚から実際の経過に戻る")
+    func loopFromCallbackStepsOneTargetFrame() throws {
+        let facet = try makeFacet()
+        let sketch = Lines()
+        sketch.onPress = { $0.loop() }
+        var now: Double = 0
+        let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
+        now = 0.016
+        try runtime.advance()
+
+        now = 5
+        try click(in: facet)
+        try runtime.advance()
+        now = 5.05
+        try runtime.advance()
+
+        #expect(sketch.drawCalls == 3)
+        #expect(sketch.seenDeltas[1] == 1 / Float(sketch.settings.frameRate))
+        #expect(sketch.seenTimes[1] == 5)
+        // **1 フレームぶんにするのは戻った 1 枚だけ。** 次からは実際に流れた時間
+        #expect(abs(sketch.seenDeltas[2] - 0.05) < 1e-5)
+    }
+
+    @Test("回っている間に呼んだ loop() / redraw() は、経過を 1 フレームぶんに書き換えない")
+    func loopAndRedrawWhileLoopingKeepTheMeasuredDelta() throws {
+        let facet = try makeFacet()
+        let sketch = Lines()
+        sketch.stopsInSetup = false
+        // どちらも回っている間は何もしない口である。止めていなかった枚の経過まで
+        // 1 フレームぶんにすると、落ちたフレームを `deltaTime` で追いつけなくなる
+        sketch.onPress = {
+            $0.loop()
+            $0.redraw()
+        }
+        var now: Double = 0
+        let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
+        now = 0.016
+        try runtime.advance()
+
+        try click(in: facet)
+        now = 0.066
+        try runtime.advance()
+        now = 0.116
+        try runtime.advance()
+
+        #expect(sketch.pressedCalls == 1)
+        #expect(sketch.drawCalls == 3)
+        #expect(abs(sketch.seenDeltas[1] - 0.05) < 1e-5)
+        #expect(abs(sketch.seenDeltas[2] - 0.05) < 1e-5)
     }
 
     // MARK: - 外からの停止との関係
