@@ -93,9 +93,7 @@ import simd
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func get(_ x: Int, _ y: Int) -> LinearRGBA {
-        guard x >= 0, y >= 0, x < width, y < height else {
-            return LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
-        }
+        guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
         let texel = pixels[y * width + x]
         return LinearRGBA(
             premultipliedRed: Float(texel.x), green: Float(texel.y), blue: Float(texel.z),
