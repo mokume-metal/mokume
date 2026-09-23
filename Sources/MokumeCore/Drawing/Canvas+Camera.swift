@@ -9,9 +9,16 @@ import simd
 // [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 extension Canvas {
 
-    // 視点を既定へ戻す。
+    // 視点だけを既定へ戻す。投影は残す。
     public func camera() {
-        apply(defaultCamera, name: "camera")
+        // **いまの投影から始める** — 9 引数の形と同じ組み立て方。既定の視点を丸ごと
+        // 当てると、`ortho()` で決めた写し方まで既定の透視へ戻る (#1371)
+        let fitting = defaultCamera
+        var camera = currentCamera
+        camera.eye = fitting.eye
+        camera.center = fitting.center
+        camera.up = fitting.up
+        apply(camera, name: "camera")
     }
 
     // 見る位置・見ている先・上方向を決める。
