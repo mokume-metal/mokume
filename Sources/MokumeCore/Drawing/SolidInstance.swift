@@ -38,6 +38,31 @@ struct SolidInstance {
         self.color = SIMD4(color.red, color.green, color.blue, color.alpha)
     }
 
+    /// この置き場所へ置いた頂点を、**頂点関数より先に CPU で**作る。
+    ///
+    /// 保持する形を記録している間は、置き場所を持ち歩けない — 記録するのは頂点と区間
+    /// だけである (``Canvas/recordingShape``)。そこで置き場所の変換と色を頂点へ焼き、
+    /// 何も動かさない置き場所で描く ([#1297])。
+    ///
+    /// **頂点関数 (`solidVertexMain`) が置き場所に対して行う計算と同じ式にする** — 位置と
+    /// 向きに行列を掛け、色を掛ける。向きは揃え直さない (揃えるのは断片の側で、置いてから
+    /// 描いたときと同じ値を渡すため)。**形自身の座標と向きは触らない** — 利用者の断片へ
+    /// 渡すのはそちらで、置き場所を通していない値である (#367)。
+    ///
+    /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
+    func placing(_ vertex: SolidVertex) -> SolidVertex {
+        var placed = vertex
+        let world = matrix * SIMD4(vertex.position, 1)
+        placed.position = SIMD3(world.x, world.y, world.z)
+        func upper(_ column: SIMD4<Float>) -> SIMD3<Float> { SIMD3(column.x, column.y, column.z) }
+        let normalMatrix = simd_float3x3(upper(normal0), upper(normal1), upper(normal2))
+        let normal = upper(vertex.normal)
+        // `w` は「形から求めた向きか」の印で、向きではない (``SolidVertex/normal``)
+        placed.normal = SIMD4(normalMatrix * normal, vertex.normal.w)
+        placed.color = vertex.color * color
+        return placed
+    }
+
     /// 何も動かさない置き場所。
     ///
     /// **単位行列を掛けても値は 1 ビットも変わらない** (0 を掛けて足すだけなので)。

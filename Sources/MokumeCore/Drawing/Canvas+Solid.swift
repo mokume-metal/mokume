@@ -172,6 +172,14 @@ extension Canvas {
     ///
     /// **同じ出どころが続く間は頂点を置き直さない。** 組み込みの形も読み込んだモデルも
     /// ここを通るので、まとめ方が 2 通りに割れない。
+    ///
+    /// **保持する形を記録している間だけは、置き場所を頂点へ焼く** ([#1297])。記録は置き場所を
+    /// 持ち歩かない (``recordingShape``) ので、置き場所に変換と塗りを持たせたままだと、
+    /// 置くときに形の原点へ白く落ちる。平面が記録の間は畳まずに頂点へ焼くのと同じ答えで、
+    /// 捨てるのは**形の中での**畳みだけである — 組み上げた形を ``shape(_:at:)`` で何か所に
+    /// 置いても、頂点 1 組と置き場所の並びで描くことは変わらない。
+    ///
+    /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
         _ source: SolidSource, isDerived: Bool = false, mesh build: () -> SolidMesh
     ) {
@@ -179,6 +187,20 @@ extension Canvas {
         // **貼る絵が変わったら、ここで列が閉じる。** beginSolids は平面から移るときしか
         // 効かないので、立体を続けて置いている最中の切り替えはここが拾う
         useFillTexture()
+        let textured = style.picture != nil
+
+        if recordingShape {
+            // **置き場所で描いたときと同じ頂点を、先に作って焼く。** 焼いた頂点はその場で
+            // 並べる列へ積むので、線 (同じ列へ積まれる) と塗りが 1 本の区間に並ぶ
+            let placement = SolidInstance(
+                matrix: transform.matrix, normalMatrix: transform.normalMatrix,
+                color: style.fill)
+            let vertices = build().points.map {
+                meshVertex($0, isDerived: isDerived, textured: textured)
+            }
+            appendPlacedSolidVertices(vertices[...], indices: nil, placedBy: placement)
+            return
+        }
 
         if openSolid?.source != source
             || isBatchFull(solidInstances.count, since: openSolid?.instanceStart ?? 0)
@@ -188,16 +210,8 @@ extension Canvas {
             let mesh = build()
             let start = solidVertices.count
             solidVertices.reserveCapacity(start + mesh.points.count)
-            let textured = style.picture != nil
             for point in mesh.points {
-                // **形自身の座標のまま置く。** 変換は置き場所が持つ
-                solidVertices.append(
-                    SolidVertex(
-                        position: point.position, normal: point.normal, isDerived: isDerived,
-                        // 貼る絵が無ければ焼き場の白い区画を読む。**そのときの頂点は
-                        // 貼る口が無かった頃と 1 ビットも変わらない**
-                        uv: textured ? point.uv : whiteUV,
-                        color: .linear(red: 1, green: 1, blue: 1)))
+                solidVertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
             }
             openSolid = OpenSolid(
                 source: source, vertexStart: start, vertexCount: mesh.points.count,
@@ -212,6 +226,51 @@ extension Canvas {
                 color: style.fill))
         // 半透明の塗りが 1 つでも入ったら、この列は裏面を捨てられない (`Batch.cullMode`)
         if style.fill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
+    }
+
+    /// 組み込みの形・読み込んだモデルの 1 点を頂点にする。
+    ///
+    /// **形自身の座標のまま、白で作る。** 変換と塗りは置き場所が持つ (記録の間は、置き場所
+    /// ごと焼く — ``placeMesh(_:isDerived:mesh:)``)。
+    private func meshVertex(
+        _ point: SolidMesh.Point, isDerived: Bool, textured: Bool
+    ) -> SolidVertex {
+        SolidVertex(
+            position: point.position, normal: point.normal, isDerived: isDerived,
+            // 貼る絵が無ければ焼き場の白い区画を読む。**そのときの頂点は
+            // 貼る口が無かった頃と 1 ビットも変わらない**
+            uv: textured ? point.uv : whiteUV,
+            color: .linear(red: 1, green: 1, blue: 1))
+    }
+
+    /// 置き場所を焼いた頂点を、その場で並べる頂点の列へ積む。**記録の間だけ通る。**
+    ///
+    /// `indices` は `vertices` を読む順で、値は**切り出す前の並びでの番号**である
+    /// (``Shape/solidIndices`` と同じ数え方)。`nil` なら並べた順に読む。
+    ///
+    /// **読む面は切り替えない。** 面は呼ぶ側が決めてある — 組み込みの形なら塗りの面、
+    /// 保持した形なら記録した面である。ここで選び直すと、記録した面が置く側の状態で
+    /// 上書きされる ([#914])。
+    ///
+    /// [#914]: https://github.com/mokume-metal/mokume/issues/914
+    func appendPlacedSolidVertices(
+        _ vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?,
+        placedBy placement: SolidInstance
+    ) {
+        if indices != nil { openIndexedFreeformSolid() } else { openFreeformSolid() }
+        let base = solidVertices.count
+        solidVertices.append(contentsOf: vertices.lazy.map(placement.placing))
+        openSolid?.vertexCount += vertices.count
+        if let indices {
+            // 写した先までのずれを足す。ずれは負にもなる (切り出した位置より、溜め場の
+            // 末尾が手前のことがある)
+            let shift = base - vertices.startIndex
+            solidIndices.append(contentsOf: indices.lazy.map { UInt32(Int($0) + shift) })
+        } else if openSolid?.indexStart != nil {
+            // **添字の列では、並べただけの頂点も自分の番号を名乗る** — 名乗らないと誰からも
+            // 参照されず、黙って消える (``appendSolidVertex`` と同じ理由)
+            solidIndices.append(contentsOf: (base..<solidVertices.count).lazy.map { UInt32($0) })
+        }
     }
 
     /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから

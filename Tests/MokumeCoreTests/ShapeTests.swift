@@ -737,6 +737,235 @@ struct ShapeTests {
         #expect(try retained.target.readPixels() == immediate.target.readPixels())
     }
 
+    // MARK: - 形の中で置いた立体の塗りと変換 (#1297)
+
+    /// 形を (100, 100) に置いた絵。**光を置かない**ので、塗った色がそのまま画素に出る。
+    private func picture(placing shape: Shape, on canvas: Canvas) throws -> DisplayImage {
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(shape, 100, 100)
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
+    /// 背景 (黒) でない画素の数。見るのは `center` から縦横 `reach` 画素の正方形の中だけ。
+    private func litCount(
+        _ image: DisplayImage, around center: (x: Int, y: Int), reach: Int,
+        where matches: ((red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8)) -> Bool = {
+            $0.red > 0 || $0.green > 0 || $0.blue > 0
+        }
+    ) -> Int {
+        var count = 0
+        for y in (center.y - reach)...(center.y + reach) {
+            for x in (center.x - reach)...(center.x + reach) where matches(image[x, y]) {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    /// 赤が勝っている画素か。**255, 0, 0 とは比べない** — 書き出しは表示の色域で符号化する
+    /// ので、`fill(255, 0, 0)` の赤も 234, 51, 35 前後で出る。落ちた箱の白 (3 成分が揃う) と
+    /// 背景の黒は、どちらもここを通らない。
+    private func isRed(_ sample: (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8)) -> Bool {
+        sample.red > 128 && sample.red > 3 * UInt16(sample.green) && sample.red > 3 * UInt16(sample.blue)
+    }
+
+    /// 完了条件 1。**立体の色と変換は頂点に焼く。** 組み込みの形は頂点を白で持ち、色と
+    /// 変換を置き場所の側に持つので、記録が置き場所を捨てると形の原点に白い箱が出る。
+    @Test("形の中で塗って動かした立体は、その色でその場所に出る")
+    func aSolidKeepsTheFillAndTransformWrittenInside() throws {
+        let canvas = try makeCanvas(width: 200, height: 160)
+        let crate = canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(255, 0, 0)
+            canvas.translate(50, 0, 0)
+            canvas.box(20)
+        }
+        let image = try picture(placing: crate, on: canvas)
+
+        #expect(isRed(image[150, 100]), "中で動かした先に赤い箱が出ていない")
+        #expect(litCount(image, around: (100, 100), reach: 15) == 0, "形の原点に何かが出ている")
+    }
+
+    /// 完了条件 2。同じ形が続くと 2 個目からは置き場所しか増えないので、置き場所を
+    /// 捨てる記録には 1 個ぶんの頂点しか残らない。
+    @Test("形の中で動かして 2 つ置いた立体は、2 つとも出る")
+    func twoSolidsInsideAShapeBothAppear() throws {
+        let canvas = try makeCanvas(width: 200, height: 160)
+        let pair = canvas.createShape {
+            canvas.noStroke()
+            canvas.box(10)
+            canvas.translate(30, 0, 0)
+            canvas.box(10)
+        }
+        let image = try picture(placing: pair, on: canvas)
+
+        #expect(litCount(image, around: (100, 100), reach: 2) > 0, "1 つ目の箱が出ていない")
+        #expect(litCount(image, around: (130, 100), reach: 2) > 0, "2 つ目の箱が出ていない")
+        #expect(litCount(image, around: (115, 100), reach: 2) == 0, "2 つの箱の間が埋まっている")
+    }
+
+    /// 完了条件 5。**焼き込んでも区間は増えない** — 焼いた頂点はその場で並べる列へ積む
+    /// ので、2 つの箱は 1 本の区間に並ぶ。焼く前から 1 で、焼いた後も保つことを見る。
+    @Test("形の中で 2 つ置いた立体も、描く回数は 1 回")
+    func twoSolidsInsideAShapeStayInOneRun() throws {
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let pair = canvas.createShape {
+            canvas.noStroke()
+            canvas.box(10)
+            canvas.translate(30, 0, 0)
+            canvas.box(10)
+        }
+        #expect(pair.drawCallCount == 1)
+    }
+
+    /// 完了条件 8。**置き場所を頂点へ焼いたこと**を数で見る。2 つ目の箱が置き場所 1 つで
+    /// 済む作り (置き場所を記録に持たせる道) では、頂点は 1 組のままになる。
+    @Test("形の中で 2 つ置いた立体は、頂点を 2 組ぶん持つ")
+    func twoSolidsInsideAShapeHoldTwoSetsOfVertices() throws {
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let single = canvas.createShape {
+            canvas.noStroke()
+            canvas.box(10)
+        }
+        let pair = canvas.createShape {
+            canvas.noStroke()
+            canvas.box(10)
+            canvas.translate(30, 0, 0)
+            canvas.box(10)
+        }
+        #expect(single.vertexCount > 0)
+        #expect(pair.vertexCount == 2 * single.vertexCount)
+    }
+
+    /// 完了条件 3。**線は元から世界の座標へ焼かれていた**ので、塗りだけが形の原点へ
+    /// 落ちて 2 つがずれた。塗りも線も、中で動かした先の同じ箱に載ることを見る。
+    @Test("形の中で線を付けて動かした立体は、塗りと線が同じ箱に載る")
+    func aStrokedSolidKeepsFillAndStrokeTogether() throws {
+        let canvas = try makeCanvas(width: 200, height: 160)
+        let crate = canvas.createShape {
+            canvas.stroke(0, 0, 255)
+            canvas.fill(255, 0, 0)
+            canvas.translate(50, 0, 0)
+            canvas.box(20)
+        }
+        let image = try picture(placing: crate, on: canvas)
+
+        #expect(isRed(image[150, 100]), "中で動かした先の箱に塗りが載っていない")
+        let blue = litCount(image, around: (150, 100), reach: 20) {
+            $0.blue > 0 && $0.red == 0
+        }
+        #expect(blue > 0, "中で動かした先の箱に線が載っていない")
+        #expect(litCount(image, around: (100, 100), reach: 15) == 0, "形の原点に何かが出ている")
+    }
+
+    /// 完了条件 4 の前半。**入れ子の置き場所も焼く。** 組み立ての中で置き直した形の
+    /// 置き場所を記録が捨てると、中で書いた `translate` が落ちる。
+    @Test("立体を含む形を形の中で動かして置いても、動かした先に出る")
+    func aNestedSolidShapeKeepsTheTransformWrittenOutside() throws {
+        let canvas = try makeCanvas(width: 200, height: 160)
+        let inner = canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(255, 0, 0)
+            canvas.box(20)
+        }
+        let outer = canvas.createShape {
+            canvas.translate(50, 0, 0)
+            canvas.shape(inner)
+        }
+        let image = try picture(placing: outer, on: canvas)
+
+        #expect(isRed(image[150, 100]), "入れ子の形が動かした先に赤く出ていない")
+        #expect(litCount(image, around: (100, 100), reach: 15) == 0, "形の原点に何かが出ている")
+    }
+
+    /// 入れ子の置き場所を焼くときは、**読む順も一緒に写す**。写さないと、番号で指した形が
+    /// 3 つずつ束ねただけの並びとして描かれるか、元の形の頂点を指す。
+    @Test("番号で指した立体の形も、形の中で動かして置いた先に出る")
+    func aNestedIndexedSolidShapeKeepsTheTransformWrittenOutside() throws {
+        let canvas = try makeCanvas(width: 200, height: 160)
+        let inner = canvas.createShape { patch(canvas, indexed: true) }
+        let outer = canvas.createShape {
+            canvas.translate(30, 0, 0)
+            canvas.shape(inner)
+        }
+        let image = try picture(placing: outer, on: canvas)
+
+        #expect(outer.vertexCount == inner.vertexCount, "置き直しで頂点の共有が崩れている")
+        // 面は三角形 2 枚。**両方の三角形の中を 1 点ずつ見る** — 読む順が落ちると、並べた
+        // 順に 3 つずつ読まれて 1 枚目 (右上) しか出ない
+        #expect(isRed(image[146, 104]), "動かした先の右上の三角形が出ていない")
+        #expect(isRed(image[134, 116]), "動かした先の左下の三角形が出ていない")
+        #expect(litCount(image, around: (110, 110), reach: 5) == 0, "元の場所に何かが出ている")
+    }
+
+    /// 完了条件 4 の後半。`Sketch.createShape` の doc にある組み方 (中で動かした形を
+    /// `Shape.group` で繋ぐ) を、立体で書いたもの。
+    @Test("中で動かした立体の形を組にしても、それぞれの場所に出る")
+    func groupedSolidShapesKeepTheirOwnPlaces() throws {
+        let canvas = try makeCanvas(width: 200, height: 160)
+        let inner = canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(255, 0, 0)
+            canvas.box(20)
+        }
+        let left = canvas.createShape {
+            canvas.translate(-30, 0, 0)
+            canvas.shape(inner)
+        }
+        let right = canvas.createShape {
+            canvas.translate(30, 0, 0)
+            canvas.shape(inner)
+        }
+        let image = try picture(placing: Shape.group([left, right]), on: canvas)
+
+        #expect(isRed(image[70, 100]), "左の箱が出ていない")
+        #expect(isRed(image[130, 100]), "右の箱が出ていない")
+        #expect(litCount(image, around: (100, 100), reach: 2) == 0, "2 つの箱が真ん中に重なっている")
+    }
+
+    /// 読み込んだモデルも組み込みの形と同じ経路 (`placeMesh`) を通るので、同じく焼く。
+    ///
+    /// **その場で描いた絵とは画素単位では比べない。** 焼いた頂点は CPU で行列を掛け、
+    /// その場で描いた頂点は GPU で掛けるので、最下位ビットの違いで縁の画素が動きうる。
+    /// 落ちていれば形の原点に白く出るので、ほぼ全部の画素が食い違う。
+    @Test("形の中で置いたモデルも、中で書いた塗りと変換で出る")
+    func aModelInsideAShapeKeepsTheFillAndTransformWrittenInside() throws {
+        func paint(_ canvas: Canvas, _ model: Model) {
+            canvas.noStroke()
+            canvas.fill(255, 0, 0)
+            canvas.translate(50, 0, 0)
+            canvas.scale(0.4, 0.4, 0.4)
+            canvas.model(model)
+        }
+
+        let immediate = try makeCanvas(width: 200, height: 160)
+        let immediateModel = try immediate.loadModel(ModelFixture.pyramid)
+        try immediate.draw {
+            immediate.background(.linear(red: 0, green: 0, blue: 0))
+            immediate.translate(100, 100, 0)
+            paint(immediate, immediateModel)
+        }
+        let expected = try immediate.target.encodeForDisplay()
+
+        let retained = try makeCanvas(width: 200, height: 160)
+        let retainedModel = try retained.loadModel(ModelFixture.pyramid)
+        let gem = retained.createShape { paint(retained, retainedModel) }
+        let image = try picture(placing: gem, on: retained)
+
+        var lit = 0
+        var differing = 0
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                if isRed(expected[x, y]) { lit += 1 }
+                if expected[x, y] != image[x, y] { differing += 1 }
+            }
+        }
+        #expect(lit > 100, "その場で描いたモデルが赤く出ていない (比べる相手が成り立っていない)")
+        #expect(differing * 50 <= lit, "形の中で置いたモデルが、その場で描いた絵と食い違う")
+    }
+
     // MARK: - 貼る絵が記録に残ること
 
     /// 縞の絵を焼く。
