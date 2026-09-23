@@ -388,6 +388,202 @@ struct FormShapeTests {
         }
     }
 
+    // MARK: - 1 画素より細い線・輪郭・点
+
+    /// 黒地に白の輪郭で描いて、**線形の**赤 (= 被覆) を読む。
+    ///
+    /// 細い線の濃さは 1 画素あたり数 % なので、出力段を通した 8 bit (`picture`) では刻みが
+    /// 粗すぎて和が読めない。読むのは作業空間そのままの値である。
+    private func coverage(
+        width: Int = 160, height: Int = 160, _ body: (Canvas) -> Void
+    ) throws -> PixelBuffer {
+        let canvas = try makeCanvas(width: width, height: height)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(white)
+            body(canvas)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// 行 `row` の列 `columns` の被覆の和。
+    private func rowSum(_ pixels: PixelBuffer, row: Int, columns: Range<Int>) -> Double {
+        columns.reduce(0) { $0 + Double(pixels.components[(row * pixels.width + $1) * 4]) }
+    }
+
+    /// 面全体の被覆の和。
+    private func totalSum(_ pixels: PixelBuffer) -> Double {
+        stride(from: 0, to: pixels.components.count, by: 4)
+            .reduce(0) { $0 + Double(pixels.components[$1]) }
+    }
+
+    /// **1 画素より細い線は、置く位置によらず太さぶんの濃さで出る** ([#1451])。
+    ///
+    /// 被覆を縁 1 本の距離だけで出していた頃は、帯の両縁が同じ画素に入っても向こう側の縁の
+    /// 欠けを引かなかった。線は画面で半画素寄せる約束 (ADR-0039 決定 2) なので、整数の座標
+    /// では帯の中心が画素の中心に乗り、太さ 0.1 の線がその 1 画素を 0.55 で塗っていた —
+    /// 帯が 2 画素の境目に乗る半端な座標 (0.093) の 5.9 倍である。
+    ///
+    /// 被覆は画面の画素で測るので、拡大の下で画面で同じ太さ・同じ位置になる線も同じ濃さで
+    /// 出る。
+    ///
+    /// 太さ 0.05 も見るのは、細い線の被覆に 1/256 の遊び (`mokume_formCoverage`) を掛けて
+    /// いないことを捕まえるため — 掛けると帯を画素の境目に置いた太さ 0.05 の線が 15% 足りなく
+    /// なる (太さ 0.1 では 7% で、許容の内に収まってしまう)。
+    ///
+    /// [#1451]: https://github.com/mokume-metal/mokume/issues/1451
+    @Test(
+        "1 画素より細い縦線は、置く位置によらず太さぶんの濃さで出る",
+        arguments: [Float(0.05), 0.1, 0.5], [Float(80), 80.25, 80.5])
+    func subpixelLinesKeepTheirWeight(_ weight: Float, _ x: Float) throws {
+        let direct = try coverage { canvas in
+            canvas.strokeWeight(weight)
+            canvas.line(x, 10, x, 150)
+        }
+        let directSum = rowSum(direct, row: 80, columns: 70..<90)
+        #expect(
+            abs(directSum - Double(weight)) <= 0.1 * Double(weight),
+            "太さ \(weight)・x = \(x) の縦線の行の和: \(directSum)")
+
+        let scaled = try coverage { canvas in
+            canvas.scale(0.25, 0.25)
+            canvas.strokeWeight(weight * 4)
+            canvas.line(x * 4, 40, x * 4, 600)
+        }
+        let scaledSum = rowSum(scaled, row: 80, columns: 70..<90)
+        #expect(
+            abs(scaledSum - Double(weight)) <= 0.1 * Double(weight),
+            "scale(0.25) の下で画面の太さ \(weight)・x = \(x) の縦線の行の和: \(scaledSum)")
+    }
+
+    /// 線の**端**でも濃さは太さに比例する。
+    ///
+    /// 長さの向きも画素の中で両側の端を見る — 片側の縁だけを見ると、端を画素の中心に
+    /// 置いた線がそこで帯の外まで塗られ、太さ 0.1・長さ 20 の線の和が 11.5 (期待の 5.8 倍)
+    /// になっていた。回した線でも同じ。
+    @Test("1 画素より細い線は、端でも回しても太さに比例した濃さで出る")
+    func subpixelLineEndsKeepTheirWeight() throws {
+        // 太さ 0.1・長さ 20 の水平線 (既定の丸い端)。期待は 20 × 0.1 = 2 (端の丸は 0.008)
+        let starts: [(Float, Float)] = [(10, 20), (10.5, 20), (10.25, 20.5), (10.5, 20.5)]
+        for (x, y) in starts {
+            let pixels = try coverage(width: 64, height: 64) { canvas in
+                canvas.strokeWeight(0.1)
+                canvas.line(x, y, x + 20, y)
+            }
+            let sum = totalSum(pixels)
+            #expect(abs(sum - 2) <= 0.2, "(\(x), \(y)) から引いた長さ 20 の線の和: \(sum)")
+        }
+        // 0.5 rad 回した長さ 40 の線。期待は 40 × 0.1 = 4
+        let angle: Float = 0.5
+        let tilted: [(Float, Float)] = [(10.25, 10), (10.5, 10.5), (10.1, 10.7)]
+        for (x, y) in tilted {
+            let pixels = try coverage(width: 64, height: 64) { canvas in
+                canvas.strokeWeight(0.1)
+                canvas.line(x, y, x + 40 * cos(angle), y + 40 * sin(angle))
+            }
+            let sum = totalSum(pixels)
+            #expect(abs(sum - 4) <= 0.4, "(\(x), \(y)) から 0.5 rad 回して引いた線の和: \(sum)")
+        }
+    }
+
+    /// 輪郭の帯も、1 画素より細ければ縁の位置によらず太さぶんの濃さで出る。
+    ///
+    /// 帯は外縁と内縁の 2 本の距離場を持つが、2 つの被覆を**掛け合わせて**いた頃は
+    /// (「外縁の内で、かつ内縁の外」を独立な事象とみなす式)、両縁が同じ画素に入ると内縁の
+    /// 欠けを引き切れず、太さ 0.1 の縁の和が 0.303 / 0.239 / 0.093 と位置で揺れていた。
+    @Test(
+        "1 画素より細い輪郭は、縁を置く位置によらず太さぶんの濃さで出る",
+        arguments: ["rect", "circle", "arc"], [Float(0.1), 0.5])
+    func subpixelOutlinesKeepTheirWeight(_ kind: String, _ weight: Float) throws {
+        for offset in [Float(0), 0.25, 0.5] {
+            let pixels = try coverage(width: 128, height: 128) { canvas in
+                canvas.strokeWeight(weight)
+                // どれも左の縁が x = 10 + offset に来て、行 60 がその縁を横切る。弧は角 π を
+                // 挟む向きに開くので、扇の 2 本の半径は行 60 では中心 (x = 60 付近) にしか来ない
+                switch kind {
+                case "rect": canvas.rect(10 + offset, 40, 40, 40)
+                case "circle": canvas.circle(60 + offset, 60, 100)
+                default: canvas.arc(60 + offset, 60, 100, 100, Float.pi - 0.5, Float.pi + 0.5)
+                }
+            }
+            let sum = rowSum(pixels, row: 60, columns: 0..<20)
+            #expect(
+                abs(sum - Double(weight)) <= 0.1 * Double(weight),
+                "\(kind) の太さ \(weight)・縁 x = \(10 + offset) の行の和: \(sum)")
+        }
+    }
+
+    /// **1 画素より細い点は、置く位置によらず面積に比例した濃さで出る。**
+    ///
+    /// 点は長さ 0 の線なので、太さの向きと長さの向きのどちらでも両側の縁を見る。片側だけ
+    /// を見ると、4 画素の角に置いた太さ 0.1 の丸い点はどの画素の中心にも届かずに消え
+    /// (0)、画素の中心に置くと 0.55 で出ていた。
+    @Test("1 画素より細い点は、置く位置によらず面積に比例した濃さで出る", arguments: [StrokeCap.round, .project])
+    func subpixelPointsKeepTheirArea(_ cap: StrokeCap) throws {
+        let positions: [(Float, Float)] = [(20, 20), (20.5, 20), (20.5, 20.5), (20.25, 20.1)]
+        func sums(_ weight: Float) throws -> [Double] {
+            try positions.map { (x, y) in
+                totalSum(
+                    try coverage(width: 40, height: 40) { canvas in
+                        canvas.strokeWeight(weight)
+                        canvas.strokeCap(cap)
+                        canvas.point(x, y)
+                    })
+            }
+        }
+        let thin = try sums(0.1)
+        let thick = try sums(0.5)
+        for (weight, values) in [(0.1, thin), (0.5, thick)] {
+            let smallest = values.min() ?? 0
+            let largest = values.max() ?? 0
+            #expect(smallest > 0, "\(cap) の太さ \(weight) の点が消える位置がある: \(values)")
+            #expect(
+                largest <= 1.25 * smallest,
+                "\(cap) の太さ \(weight) の点の和が位置で揺れる: \(values)")
+        }
+        // 面積は太さの 2 乗に比例する — 太さ 0.1 は太さ 0.5 の 1/25
+        for (index, (small, large)) in zip(thin, thick).enumerated() {
+            let ratio = large > 0 ? small / large : .infinity
+            #expect(
+                abs(ratio - 1.0 / 25) <= 0.3 / 25,
+                "\(cap) の点 \(positions[index]) で、太さ 0.1 と 0.5 の和の比が \(ratio) (期待 0.04)")
+        }
+    }
+
+    /// **1 画素以上の線と輪郭は、縁の位置によらず太さぶんの濃さのまま。**
+    ///
+    /// 1 画素より細い帯の扱いを直したことが、1 画素以上へ漏れないための見張り
+    /// ([#1451] 完了条件 5)。1 画素以上では、帯の片側の縁しか入らない画素と、帯に覆い
+    /// 切られる画素しか無いので、縁 1 本の被覆で足りていた (1/256 の遊びのぶんだけ和が
+    /// 僅かに縮む)。
+    ///
+    /// [#1451]: https://github.com/mokume-metal/mokume/issues/1451
+    @Test(
+        "1 画素以上の線と輪郭は、縁を置く位置によらず太さぶんの濃さのまま",
+        arguments: [Float(1), 1.5, 2, 3])
+    func weightsOfAPixelOrMoreStayExact(_ weight: Float) throws {
+        for offset in [Float(0), 0.25, 0.5] {
+            let line = try coverage { canvas in
+                canvas.strokeWeight(weight)
+                canvas.line(80 + offset, 10, 80 + offset, 150)
+            }
+            let lineSum = rowSum(line, row: 80, columns: 70..<90)
+            #expect(
+                abs(lineSum - Double(weight)) <= 0.01 * Double(weight),
+                "太さ \(weight)・x = \(80 + offset) の縦線の行の和: \(lineSum)")
+
+            let outline = try coverage { canvas in
+                canvas.strokeWeight(weight)
+                canvas.rect(10 + offset, 40, 40, 40)
+            }
+            let outlineSum = rowSum(outline, row: 60, columns: 0..<20)
+            #expect(
+                abs(outlineSum - Double(weight)) <= 0.01 * Double(weight),
+                "太さ \(weight)・縁 x = \(10 + offset) の rect の輪郭の行の和: \(outlineSum)")
+        }
+    }
+
     // MARK: - 壊れない
 
     @Test("大きさの無い図形・負の寸法は何も描かない")
