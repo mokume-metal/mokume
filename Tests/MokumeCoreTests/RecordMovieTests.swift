@@ -246,7 +246,7 @@ struct RecordingFailureTests {
         try await withTemporaryDirectory("mokume-movie-close-failure") { directory in
             let path = directory.appendingPathComponent("broken.mov").path
             let recorder = FrameRecorder(frameRate: 60)
-            recorder.beginRecord(path)
+            recorder.beginRecord(path, at: 1)
             let movie = try #require(recorder.recordingMovie)
 
             movie.write(image(80), frame: 1, time: 0)
@@ -282,7 +282,7 @@ struct RecordingFailureTests {
         try await withTemporaryDirectory("mokume-movie-write-after-failure") { directory in
             let path = directory.appendingPathComponent("broken.mov").path
             let recorder = FrameRecorder(frameRate: 60)
-            recorder.beginRecord(path)
+            recorder.beginRecord(path, at: 1)
             let movie = try #require(recorder.recordingMovie)
 
             // 時刻が戻るフレームで転ばせる (上の検査と同じ入り方)
@@ -330,7 +330,7 @@ struct RecordingFailureTests {
 
             let path = locked.appendingPathComponent("still.mov").path
             let recorder = FrameRecorder(frameRate: 60)
-            recorder.beginRecord(path)
+            recorder.beginRecord(path, at: 1)
             try #require(recorder.recordingMovie).write(image(120), frame: 1, time: 0)
 
             recorder.endRecord()
@@ -352,7 +352,7 @@ struct RecordingFailureTests {
             let recorder = FrameRecorder(frameRate: 60)
             // **撮り始めてから転ばせる。** 暇なうちに決着した知らせは、頼まれ始めた時点で
             // 仕切り直しとして捨てられる (#1272)
-            recorder.beginRecord(blocker.appendingPathComponent("motion.mov").path)
+            recorder.beginRecord(blocker.appendingPathComponent("motion.mov").path, at: 1)
             let movie = try #require(recorder.recordingMovie)
             recorder.writer.write(
                 image(10, width: 8, height: 8),
@@ -390,7 +390,7 @@ struct RecordingFailureTests {
 
             let recorder = FrameRecorder(frameRate: 60)
             for name in ["first.mov", "second.mov"] {
-                recorder.beginRecord(blocker.appendingPathComponent(name).path)
+                recorder.beginRecord(blocker.appendingPathComponent(name).path, at: 1)
                 try #require(recorder.recordingMovie).write(image(60), frame: 1, time: 0)
                 recorder.endRecord()
 

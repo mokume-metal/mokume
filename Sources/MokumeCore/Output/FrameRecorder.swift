@@ -37,6 +37,18 @@ final class FrameRecorder: Outlet {
     private var sequence: FrameSequence?
     /// 撮っている動画。撮っていなければ `nil`。
     private var movie: MovieWriter?
+    /// 撮っている連番か動画を**頼まれたフレーム**。これより前のフレームの絵は録らない。
+    ///
+    /// 番号を憶える理由は ``oneShots`` と同じで、絵が 1 枚遅れて届くためである ([#927])。
+    /// 撮る係が前のフレームから並びに居ると (直前の `save()` の予約・外から足した出口)、
+    /// 撮り始めたフレームで**前のフレームの絵**が届く。それを録ると 1 枚多くなり、全体が
+    /// 1 フレーム前へずれる ([#1456])。
+    ///
+    /// 連番と動画を同時には撮らない (``beginRecord(_:at:)``) ので、1 つで足りる。
+    ///
+    /// [#927]: https://github.com/mokume-metal/mokume/issues/927
+    /// [#1456]: https://github.com/mokume-metal/mokume/issues/1456
+    private var recordingFrom = 0
 
     /// 静止画・連番の、最後に決着した書き込みの書き損じ。**知らせの無いフレームでは前の値を保つ。**
     private var imageFailure: String?
@@ -148,7 +160,10 @@ final class FrameRecorder: Outlet {
     ///
     /// `.mov` なら動画、`#` を含むなら連番。どちらでもない名前は断る — 番号の入る
     /// 場所が無い連番を受けてしまうと全部が同じ名前になり、最後の 1 枚しか残らない。
-    func beginRecord(_ pattern: String) {
+    ///
+    /// - Parameter frame: 頼まれたフレームの番号。**録りの 1 枚目はこの番号の絵になる**
+    ///   (``recordingFrom``)。
+    func beginRecord(_ pattern: String, at frame: Int) {
         guard !isRecording else {
             warnOnce(.alreadyRecording, "beginRecord(): already recording. Carrying on with the current one")
             return
@@ -156,6 +171,7 @@ final class FrameRecorder: Outlet {
         if pattern.lowercased().hasSuffix(".mov") {
             startAfreshIfIdle()
             movie = MovieWriter(path: pattern, frameRate: frameRate)
+            recordingFrom = frame
             forgetWarnings()
             return
         }
@@ -169,6 +185,7 @@ final class FrameRecorder: Outlet {
         }
         startAfreshIfIdle()
         self.sequence = sequence
+        recordingFrom = frame
         forgetWarnings()
     }
 
@@ -253,6 +270,9 @@ final class FrameRecorder: Outlet {
             writer.write(image, to: shot.path)
         }
         oneShots.removeAll { $0.frame <= frame.frame }
+        // **撮り始めたフレームより前の絵は録らない。** これも 1 枚遅れのためで、撮る係が
+        // 前のフレームから並びに居ると、撮り始めたフレームで前の絵が届く (#1456)
+        guard frame.frame >= recordingFrom else { return }
         if sequence != nil { writer.write(image, to: sequence!.next()) }
         movie?.write(image, frame: frame.frame, time: frame.time)
     }
