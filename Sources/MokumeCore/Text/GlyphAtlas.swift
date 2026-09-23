@@ -111,6 +111,11 @@ import simd
         /// 焼いてある (あるいはいま焼いた) 字形。
         case found(Entry)
         /// いまの面に場所が無い。**広げれば入る** — 上限の面なら、焼き直せば入る (`rebake`)。
+        ///
+        /// **1 段広げて足りるとは限らない** ([#1460])。面は倍ずつにしか育たないので、
+        /// 受け取る側は入るまで広げて引き直す。
+        ///
+        /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
         case full
         /// 上限の面 (``maximumSize``) より大きい。**広げても入らない。**
         case tooLarge(width: Int, height: Int)
