@@ -332,7 +332,8 @@ struct InputCallbackTests {
         #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyReleased])
     }
 
-    /// **押しっぱなしは連射する** (手本 — Processing / p5.js — と同じ)。
+    /// **押しっぱなしは連射する** — Processing と同じで、p5.js とは違う (p5.js は押したままの
+    /// キーでは呼び直さない)。
     @Test("押しっぱなしのキーは、届いたぶんだけ配られる")
     func repeatsWhileHeld() {
         let events: [InputEvent] = [

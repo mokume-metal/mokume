@@ -122,8 +122,32 @@ public protocol Sketch: AnyObject {
 
     /// キーが押された瞬間に呼ばれる。
     ///
-    /// **押しっぱなしでは連射される** (手本 — Processing / p5.js — と同じ)。1 回だけ
-    /// 効かせたいなら、押されているキーの集合 (``isKeyDown(_:)``) を自分で見る。
+    /// **押しっぱなしでは連射される** — OS のキーリピートが届くたびに、また呼ばれる。
+    /// これは Processing と同じで、**p5.js とは違う** (p5.js は押したままのキーでは
+    /// 呼び直さない)。
+    ///
+    /// **1 回だけ効かせたいなら、押したままかを ``keyReleased()`` と対にして自分で持つ。**
+    ///
+    /// ```swift
+    /// var showsGrid = false
+    /// var spaceHeld = false
+    ///
+    /// func keyPressed() {
+    ///     guard keyCode == .space, !spaceHeld else { return }
+    ///     spaceHeld = true
+    ///     showsGrid.toggle()  // 押しっぱなしでも、押すたびに 1 回だけ切り替わる
+    /// }
+    ///
+    /// func keyReleased() {
+    ///     if keyCode == .space { spaceHeld = false }
+    /// }
+    /// ```
+    ///
+    /// ``isKeyDown(_:)`` では見分けられない。ここが呼ばれた時点で、そのキーは既に押されて
+    /// いる集合に入っており、**最初の 1 回でも `true` を返す**。
+    ///
+    /// この書き方は `draw()` を見ないので、``noLoop()`` で止めている間も同じように効く
+    /// (止まっている間もコールバックは呼ばれる)。
     ///
     /// どのキーが動いたかは ``keyCode`` から読む。文字を打つ用途には ``keyTyped()`` と
     /// ``key`` を使う。
