@@ -26,10 +26,15 @@ public struct PixelBuffer: Equatable, Sendable {
     }
 
     /// 指定した位置の色。原点は左上。
+    ///
+    /// 範囲の外を読むと透明が返る (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
+    /// 画素の面 (``Pixels``) と絵 (``Image/get(_:_:)``) も範囲の外で同じ値を返すので、
+    /// どの口で読んでも答えは変わらない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public subscript(x: Int, y: Int) -> LinearRGBA {
-        precondition(
-            x >= 0 && x < width && y >= 0 && y < height,
-            "The position to read is outside the drawing target: (\(x), \(y)) / \(width)x\(height)")
+        // 置き場の位置を求める掛け算より先に見る。大きな位置では掛け算のほうが溢れて落ちる
+        guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
         let base = (y * width + x) * 4
         return LinearRGBA(
             premultipliedRed: Float(components[base]),
