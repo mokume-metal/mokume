@@ -90,14 +90,16 @@ struct LightTests {
         #expect(image[32, 46] == (255, 255, 255, 255))
     }
 
-    @Test("底上げの光だけを置くと、面はその色の分だけ明るくなる")
+    @Test("底上げの光だけを置くと、面の値は「塗り × 光」になる")
     func ambientLightScalesTheSurfaceColor() throws {
         let canvas = try makeCanvas()
         try sphereScene(canvas) { $0.ambientLight(grey) }
 
-        // 白い面 × 0.5 の光 = 線形で 0.5。表示のエンコードを通るので 128 ではない
-        let value = try pixels(of: canvas)[32, 32].red
-        #expect(value > 150 && value < 210)
+        // 白い面 × 0.5 の光 = 作業空間で 0.5 ちょうど。**幅を置かずに比べる** — 表示の
+        // エンコードの手前 (`rgba16Float`) で読めば、間の丸めは Float16 の 1 段だけで、
+        // 0.5 はそこで丸まらない (塗りの色を変えた照合は `LightFormulaTests` が持つ・#1381)
+        let value = try canvas.target.readPixels()[32, 32]
+        #expect([value.red, value.green, value.blue, value.alpha] == [0.5, 0.5, 0.5, 1])
     }
 
     @Test("1 を超える色の光は、白い面を白へ飽和させる")
