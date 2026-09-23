@@ -365,23 +365,33 @@ static inline FormField mokume_segmentField(float2 p, float2 end) {
 
 /// 楕円の扇形 (中心を含む) の距離場。
 ///
+/// **角は媒介変数の角である。** 弧の端は `(rx·cos t, ry·sin t)` の点で、楕円では中心から
+/// 見た向き `(cos t, sin t)` とずれる (長い軸の側へ寄る)。三角形の経路 (`arcPoints`) も
+/// この点を並べるので、**扇の内外は中心から弧の端へ向かう 2 本の半直線で決める** —
+/// 中心から見た角で決めると、楕円でだけ切り口が本当の辺からずれ、塗りも輪郭の弧も
+/// 辺の外へはみ出す ([#1448](https://github.com/mokume-metal/mokume/issues/1448))。
+///
 /// 半平面 2 枚と楕円の `max` では組まない — 掃引が π を越えると半直線の**延長**に
 /// 幻の縁が出る (半平面の距離は直線への距離であって半直線への距離ではない)。
 /// 2 本の半径は原点から弧の端までの**線分**として距離を取り、楕円の縁は扇の角度の
 /// 内側にいるときだけ数える。角の外側は真の距離になるので半径 hw で丸く出る。
 static inline FormField mokume_sectorField(float2 p, float2 radii, float start, float sweep) {
     float end = start + sweep;
-    float2 direction1 = float2(cos(start), sin(start));
-    float2 direction2 = float2(cos(end), sin(end));
-    // 2 本の半直線を含む半平面。内側 (扇の中) で負になる向きに取る
-    float halfPlane1 = dot(p, float2(direction1.y, -direction1.x));
-    float halfPlane2 = dot(p, float2(-direction2.y, direction2.x));
+    // 弧の両端。2 本の辺も内外の判定もこの 2 点から作る
+    float2 end1 = radii * float2(cos(start), sin(start));
+    float2 end2 = radii * float2(cos(end), sin(end));
+    // 中心から弧の端へ向かう半直線を含む半平面。内側 (扇の中) で負になる向きに取る。
+    // **符号しか使わない** (距離は下の線分と楕円で画素のまま測る) ので、法線の長さは
+    // 揃えない。符号は (x/rx, y/ry) の空間で単位円の扇を切る半平面と同じ — 掃引 t の
+    // 扇がそこでも掃引 t なので、π で「かつ / または」を切り替える判定もそのまま使える
+    float halfPlane1 = dot(p, float2(end1.y, -end1.x));
+    float halfPlane2 = dot(p, float2(-end2.y, end2.x));
     bool inWedge = sweep <= M_PI_F
         ? (halfPlane1 <= 0.0 && halfPlane2 <= 0.0)
         : (halfPlane1 <= 0.0 || halfPlane2 <= 0.0);
 
-    FormField edge1 = mokume_segmentField(p, radii * direction1);
-    FormField edge2 = mokume_segmentField(p, radii * direction2);
+    FormField edge1 = mokume_segmentField(p, end1);
+    FormField edge2 = mokume_segmentField(p, end2);
     FormField nearest = edge1.distance < edge2.distance ? edge1 : edge2;
     FormField ellipse = mokume_ellipseField(p, radii);
     if (inWedge && abs(ellipse.distance) < nearest.distance) {
