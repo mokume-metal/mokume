@@ -250,4 +250,79 @@ struct CurveJoinTests {
         }
         #expect(outside.isEmpty, "\(outside.count) 画素がはみ出している (最初は \(outside.first.map { "\($0)" } ?? ""))")
     }
+
+    // MARK: - 輪郭の経路で描く円と円弧 (#1423)
+
+    /// 絵を貼って塗る円と円弧は、距離関数の経路 (``Canvas/formAllowed(fills:)``) に乗れず、
+    /// 周の点を結んだ折れ線として輪郭を引く。**周の点も曲線の刻みで、角ではない。**
+    private func renderTextured(join: StrokeJoin, _ place: (Canvas) -> Void) throws
+        -> DisplayImage
+    {
+        try render { canvas in
+            // 絵の中身は問わない。塗りに絵が付いていることだけが経路を決める
+            guard let picture = try? canvas.createImage(1, 1) else { return }
+            canvas.texture(picture)
+            canvas.fill(black)
+            canvas.strokeWeight(10)
+            canvas.strokeJoin(join)
+            place(canvas)
+        }
+    }
+
+    /// 周の多角形は円に内接するので、帯と円板は中心から「半径 + 太さの半分」の内側に
+    /// 収まる。周の点に正方形を置くと、周が斜めを向くところで角がその外へ出る。
+    @Test("絵を貼って塗る円の輪郭は、半径と太さの半分の外へはみ出さない")
+    func texturedCircleStaysWithinHalfTheWeight() throws {
+        let image = try renderTextured(join: .miter) { $0.circle(32, 32, 36) }
+        #expect(inkedPixels(image) > 0)
+        var outside = 0
+        for y in 0..<image.height {
+            for x in 0..<image.width where isInked(image, x, y) {
+                let offset = SIMD2(Double(x) - 32, Double(y) - 32)
+                if (offset * offset).sum().squareRoot() > 18 + 5 + 0.01 { outside += 1 }
+            }
+        }
+        #expect(outside == 0, "\(outside) 画素がはみ出している")
+    }
+
+    @Test("絵を貼って塗る円の輪郭は、折れ目の形によらず同じ絵になる")
+    func texturedCircleIgnoresTheJoin() throws {
+        let mitered = try renderTextured(join: .miter) { $0.circle(32, 32, 36) }
+        let rounded = try renderTextured(join: .round) { $0.circle(32, 32, 36) }
+        #expect(inkedPixels(rounded) > 0)
+        #expect(differingPixels(mitered, rounded) == 0)
+    }
+
+    /// 扇は中心と弧の両端の 3 点が本当の角である。**折れ目の形の違いは、その 3 点の
+    /// 近くにしか出ない** — 角を埋める正方形は、角から (太さの半分) × √2 の内側に収まる。
+    @Test("絵を貼って塗る扇の折れ目の形は、中心と弧の両端の角にだけ効く")
+    func texturedPieJoinsOnlyAtItsCorners() throws {
+        let (start, stop): (Float, Float) = (0.3, 2.2)
+        func pie(_ canvas: Canvas) { canvas.arc(32, 32, 44, 44, start, stop) }
+        let mitered = try renderTextured(join: .miter, pie)
+        let rounded = try renderTextured(join: .round, pie)
+
+        let corners: [SIMD2<Double>] = [
+            SIMD2(32, 32),
+            SIMD2(32 + 22 * cos(Double(start)), 32 + 22 * sin(Double(start))),
+            SIMD2(32 + 22 * cos(Double(stop)), 32 + 22 * sin(Double(stop))),
+        ]
+        let reach = 5 * 2.0.squareRoot() + 0.01
+        var differing = 0
+        var awayFromCorners: [(Int, Int)] = []
+        for y in 0..<mitered.height {
+            for x in 0..<mitered.width where mitered[x, y] != rounded[x, y] {
+                differing += 1
+                let point = SIMD2(Double(x), Double(y))
+                let nearest = corners.map { corner -> Double in
+                    let offset = point - corner
+                    return (offset * offset).sum().squareRoot()
+                }.min() ?? .infinity
+                if nearest > reach { awayFromCorners.append((x, y)) }
+            }
+        }
+        // 角では違いが出ている — 出ていなければ、折れ目の形を見ていない
+        #expect(differing > 0)
+        #expect(awayFromCorners.isEmpty, "角から離れた \(awayFromCorners.count) 画素が違う (最初は \(awayFromCorners.first.map { "\($0)" } ?? ""))")
+    }
 }
