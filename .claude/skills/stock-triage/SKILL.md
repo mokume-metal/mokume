@@ -59,7 +59,7 @@ Issue は、たいてい本当に読めない — 埋めずに、**確かめら�
 (`Bug` / `Feature` / `Task` / `Design` / `Docs`)。付いていなければ付ける (ラベルではなく Issue Type)。
 
 ```bash
-gh issue edit <番号> --repo mokume-metal/mokume  # 型の付与は gh の Issue Type 欄
+gh issue edit <番号> -R mokume-metal/mokume --type <型>
 ```
 
 ## 4. 完了条件を本文へ書く
@@ -71,7 +71,7 @@ gh issue edit <番号> --repo mokume-metal/mokume  # 型の付与は gh の Issu
 **起票時の記述がずれていたら、消さずに直す。** ADR の改訂と同じ作法で「**当初は〜と書かれていた**」
 を残す — 何が変わったのかが読めなくなると、次に同じ調査をやり直すことになる。
 
-本文の編集は `gh issue edit <番号> --body-file <ファイル>`。
+本文の編集は `gh issue edit <番号> -R mokume-metal/mokume --body-file <ファイル>`。
 
 ## 5. 印は付けない
 
