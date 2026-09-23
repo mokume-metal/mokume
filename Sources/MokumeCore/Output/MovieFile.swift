@@ -55,7 +55,26 @@ enum MovieWriteFailure: Error, Equatable {
 /// 受け手の API へ移る日のために: 受け手を作った時点で、入力は writer に加わっている。
 /// `add(_:)` を重ねると入力が 2 本と数えられ、来ない 2 本目を待って動画の 1 秒ほどで止まる。
 ///
+/// ## 止まった writer は待たない
+///
+/// **待つ前と待つ間に `writer.status` を読み、`.writing` でなくなったら writer 自身の理由で
+/// 書き損じにする。** 止まった writer へはもう書けないので、用意を待つ意味が無い。
+///
+/// 用意のフラグに任せない理由は 2 つある ([#1299] の実測・macOS 27.0):
+///
+/// - **理由が落ちる。** 転んだ writer は用意を `true` に戻すが、画素の器を手放す。フラグだけを
+///   見て器を借りに行くと「器を借りられない」(`bufferUnavailable`) で決着し、ディスクが埋まった
+///   (`Disk Full`) のような本当の理由が消える。差込口を外すときに名乗るのは最後に決着した枚の
+///   理由なので、利用者には `bufferUnavailable` しか届かなかった
+/// - **フラグが戻ることは約束されていない。** 27.0 では時刻が戻る 1 枚でもディスクが埋まる
+///   入り方でも戻ったが、26 では測っていない。戻らなければ待ちが永久に回り、枠が返らずに
+///   上限のところで main actor が塞がる。`status` で抜ければ、どちらでも同じに終わる
+///
+/// `.writing` のまま用意が永久に戻らない場合は覆わない。測られた例が無い ([#979] の測定では
+/// 待ちに入るのはたいてい 0〜2 回) ので、実害が出てから足す ([ADR-0008])。
+///
 /// [#979]: https://github.com/mokume-metal/mokume/issues/979
+/// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
@@ -175,6 +194,7 @@ nonisolated final class MovieFile {
     /// 1 枚を書き足す。**時刻はフレーム自身のもの**で、通し番号ではない。
     ///
     /// 詰まっているあいだは待つ。ここはフレームループの外なので、待っても絵は遅くならない。
+    /// writer が止まっていれば待たず、writer の理由で書き損じにする (型の冒頭)。
     func append(_ image: DisplayImage, at time: Double) async throws(MovieWriteFailure) {
         guard image.width == width, image.height == height else {
             throw .writeFailed(path: path, reason: "the frame size differs from when recording began")
@@ -184,9 +204,13 @@ nonisolated final class MovieFile {
             writer.startSession(atSourceTime: stamp)
             hasStarted = true
         }
-        // 読み直して待つ。合図で待つ形を採らない理由は型の冒頭にある (#979)
-        while !input.isReadyForMoreMediaData {
+        // 読み直して待つ。合図で待つ形を採らない理由は型の冒頭にある (#979)。
+        // **止まった writer は待たない** — 理由も型の冒頭にある (#1299)
+        while writer.status == .writing, !input.isReadyForMoreMediaData {
             try? await Task.sleep(for: .milliseconds(1))
+        }
+        guard writer.status == .writing else {
+            throw .writeFailed(path: path, reason: writer.error?.localizedDescription ?? "unknown")
         }
         guard let pool = adaptor.pixelBufferPool else { throw .bufferUnavailable }
         // **器は借りて返す。** フレームごとに確保すると、長く撮ったときにだけ重くなる

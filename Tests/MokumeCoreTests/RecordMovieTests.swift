@@ -168,13 +168,59 @@ struct MovieWriterTests {
             #expect(movie.colorPrimaries == (AVVideoColorPrimaries_P3_D65 as String))
         }
     }
+
+    /// **転んだ符号化器へ書き足した枚は、符号化器の言った理由で書き損じになる** ([#1299])。
+    ///
+    /// 転んだ writer は画素の器を手放す (macOS 27 で実測)。`status` を見ずに器を借りに行くと
+    /// 「器を借りられない」(`bufferUnavailable`) として決着し、ディスクが埋まった (`Disk Full`)
+    /// のような本当の理由が落ちる。差込口を外すときに名乗るのは最後に決着した枚の理由なので、
+    /// 落ちた理由はどこにも出ない。
+    ///
+    /// 決着は隔離の外で走るので、**待つ側が期限を持って**、1 枚ずつ決着を見てから次を書く
+    /// (``writeAndSettle(_:_:frame:time:)``)。
+    ///
+    /// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
+    @Test("転んだ符号化器へ書き足した枚は、1 枚ずつ符号化器の理由で書き損じになる")
+    func framesWrittenToAFailedEncoderCarryItsReason() async throws {
+        try await withTemporaryDirectory("mokume-movie-reason-after-failure") { directory in
+            let path = directory.appendingPathComponent("broken.mov").path
+            let writer = MovieWriter(path: path, frameRate: 60)
+            defer { writer.finish() }
+
+            #expect(try writeAndSettle(writer, image(80), frame: 1, time: 0) == .succeeded)
+            #expect(try writeAndSettle(writer, image(120), frame: 2, time: 1.0 / 60) == .succeeded)
+            // 時刻が戻るフレーム。この 1 枚は受け付けられ、符号化器は後から転ぶ (実測)。
+            // どちらに決着するかは見ない
+            _ = try writeAndSettle(writer, image(160), frame: 3, time: -1)
+
+            // **転ぶ前に受け付けられた枚は数えない** — 直後の枚は、符号化器が転ぶ前に受け付け
+            // られることがある (実測)。転んだ後に書けたことになる枚は無い
+            var frame = 3
+            var reasons: [String] = []
+            while reasons.count < 3, frame < 8 {
+                frame += 1
+                let outcome = try writeAndSettle(
+                    writer, image(200), frame: frame, time: Double(frame - 1) / 60)
+                if let reason = outcome.failure {
+                    reasons.append(reason)
+                } else {
+                    #expect(reasons.isEmpty, "\(frame) 枚目: 転んだ後に書けたことになった")
+                }
+            }
+            try #require(reasons.count == 3, "5 枚書き足しても、3 枚転ばない — この入り方が効いていない")
+            for reason in reasons {
+                #expect(reason.contains("writeFailed"), "\(reason)")
+                #expect(!reason.contains("bufferUnavailable"), "符号化器の理由を落とした: \(reason)")
+            }
+        }
+    }
 }
 
 /// 撮り終わりに分かった失敗が、人へ届くか ([#789])。**GPU を要さない。**
 ///
-/// 見ているのは 4 つ — 閉じられなかったことを ``FrameRecorder/endRecord()`` が言う・
-/// 書き込み先が読み取り専用でも黙らない・静止画と動画の**両方**の理由が載る・
-/// 2 本目の録りが 1 本目のせいで黙らない。
+/// 見ているのは 5 つ — 閉じられなかったことを ``FrameRecorder/endRecord()`` が言う・
+/// 転んだ符号化器へ書き足しても抱えものを残さずに返る・書き込み先が読み取り専用でも
+/// 黙らない・静止画と動画の**両方**の理由が載る・2 本目の録りが 1 本目のせいで黙らない。
 ///
 /// **どれも撮り終わりでしか見られない。** 動画は閉じた時点で手放すので、そこで
 /// 読まなかった書き損じは ``FrameRecorder/receive(_:)`` からも読めない。
@@ -219,6 +265,52 @@ struct RecordingFailureTests {
                 "閉じられなかったことが誰にも読まれていない")
             #expect(said.contains(path))
             #expect(said.contains("Could not close"))
+        }
+    }
+
+    /// **転んだ符号化器へ書き足しても、待ちが固まらない** ([#1299])。
+    ///
+    /// 起票時の見立ては「転んだ writer の用意が戻らず、書き足した 1 枚が永久に待つ」だった。
+    /// macOS 27 では用意が戻るので、`status` を見ない姿でもこの検査は緑になる — 見張って
+    /// いるのは、用意のフラグがどう振る舞っても `endRecord()` が抱えものを残さずに返ることで
+    /// ある。固まる姿では、転んだ後に書き足した 1 枚が決着しない (決着を見る枚なら 10 秒で、
+    /// 見ない最後の 1 枚なら `endRecord()` が閉じる側の期限まで待ち切って、赤になる)。
+    ///
+    /// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
+    @Test("転んだ符号化器へ書き足しても、endRecord() が抱えものを残さずに返る")
+    func endRecordLeavesNothingBehindAfterWritingToAFailedEncoder() async throws {
+        try await withTemporaryDirectory("mokume-movie-write-after-failure") { directory in
+            let path = directory.appendingPathComponent("broken.mov").path
+            let recorder = FrameRecorder(frameRate: 60)
+            recorder.beginRecord(path)
+            let movie = try #require(recorder.recordingMovie)
+
+            // 時刻が戻るフレームで転ばせる (上の検査と同じ入り方)
+            _ = try writeAndSettle(movie, image(80), frame: 1, time: 0)
+            _ = try writeAndSettle(movie, image(120), frame: 2, time: 1.0 / 60)
+            _ = try writeAndSettle(movie, image(160), frame: 3, time: -1)
+            // **転んだと分かってから書き足す。** 時刻が戻る 1 枚の直後の枚は、符号化器が転ぶ前に
+            // 受け付けられることがある (実測) ので、書き損じが決着するまで 1 枚ずつ見る
+            var frame = 3
+            var failed = false
+            while !failed, frame < 6 {
+                frame += 1
+                let outcome = try writeAndSettle(
+                    movie, image(200), frame: frame, time: Double(frame - 1) / 60)
+                failed = outcome.failure != nil
+            }
+            try #require(failed, "3 枚書き足しても符号化器が転ばない — この入り方が効いていない")
+
+            // 転んだ符号化器へもう 1 枚。**この決着は待たない** — 待つのは endRecord() の期限である
+            frame += 1
+            movie.write(image(220), frame: frame, time: Double(frame - 1) / 60)
+            recorder.endRecord()
+
+            #expect(movie.outstanding == 0, "書き足した 1 枚が決着しないまま、待つのを諦めた")
+            let said = try #require(
+                recorder.warnings.message(for: .movieFailure),
+                "転んだことが誰にも読まれていない")
+            #expect(said.contains(path))
         }
     }
 
@@ -532,6 +624,27 @@ private func withTemporaryDirectory(
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     try await body(directory)
+}
+
+/// 1 枚を書き、その決着を待って取り出す。**待つ側が期限を持つ** (`.timeLimit` は使わない)。
+///
+/// 決着を見てから次を書く理由は 2 つある。知らせの器は最後の 1 つしか持たない
+/// (``MovieWriter/takeOutcome()``) ので、続けて書くとどの枚の決着か分からない。もう 1 つは、
+/// 時刻が戻る 1 枚の直後に続けて書くと、次の枚は符号化器が転ぶ前に受け付けられ、転んだ後の
+/// 待ちを通らないことである (手元で実測 — 待ちを固まる姿にしても検査が緑のままだった)。
+@MainActor
+private func writeAndSettle(
+    _ writer: MovieWriter, _ image: DisplayImage, frame: Int, time: Double
+) throws -> WriteOutcome {
+    writer.write(image, frame: frame, time: time)
+    var outcome: WriteOutcome?
+    try #require(
+        pollUntilSettled(within: 10) {
+            outcome = writer.takeOutcome()
+            return outcome != nil
+        },
+        "\(frame) 枚目が 10 秒待っても決着しない")
+    return try #require(outcome)
 }
 
 /// 動画が閉じ終えているか。**末尾のメタデータ (`moov`) が書かれているかで見る。**
