@@ -77,8 +77,14 @@ public func degrees(_ radians: Float) -> Float { radians * 180 / .pi }
 ///
 /// 引数は写す値・元の範囲の下端と上端・写した先の下端と上端の順 (手本と同じ並び)。
 ///
+/// **元の範囲の端は、写した先の端へちょうど写る** — `inLow` を写せば `outLow` が、`inHigh`
+/// を写せば `outHigh` が返る。元の範囲の中の値は、写した先の両端の間の有限の値になる。
+/// どちらも、範囲の幅が `Float` で表せないほど広くても変わらない (`map(0.5, 0, 1, -3e38, 3e38)`
+/// は 0 を返す)。
+///
 /// **範囲の外は丸めない。** 元の範囲を外れた値は、そのまま外へ伸びる — `map(2, 0, 1, 0, 10)`
-/// は 20 を返す。締めたいときは呼ぶ側で締める。
+/// は 20 を返す。締めたいときは呼ぶ側で締める。伸びた先が `Float` の範囲を越えたら ±∞ を
+/// 返す (数でない値は返さない)。
 ///
 /// **元の幅が 0 のとき、数でない値・無限の値が混じったときは、写した先の下端を返す。**
 /// 手本は ±∞ や NaN を返すが、``Sketch/draw()`` から毎フレーム呼ばれる口が数でない値を
@@ -100,7 +106,15 @@ public func map(
             "map(): the source range has zero width, so the low end of the destination was returned")
         return outLow
     }
-    return outLow + (value - inLow) / (inHigh - inLow) * (outHigh - outLow)
+    // 元の範囲のどこか (0…1 の外もありうる) を求め、間を取る計算へ渡す (#1476)。元の幅が
+    // 溢れる組だけ、端と値を半分にしてから比を取る。半分どうしの差は溢れず、端は大きいので
+    // 半分にしても丸まらない — 値が端ちょうどなら、比も 0 と 1 ちょうどになる
+    let inSpan = inHigh - inLow
+    let amount =
+        inSpan.isFinite
+        ? (value - inLow) / inSpan
+        : (value / 2 - inLow / 2) / (inHigh / 2 - inLow / 2)
+    return interpolate(outLow, outHigh, amount)
 }
 
 // MARK: - 2 つの値の間を取る
@@ -112,11 +126,15 @@ public func map(
 /// ```
 ///
 /// 引数は始まり・終わり・その間のどこか、の順 (手本と同じ並び)。`amount` が 0 なら
-/// `start`、1 なら `stop` が返る。
+/// `start`、1 なら `stop` が**ちょうど**返る。
+///
+/// **端が有限で `amount` が 0…1 なら、返る値は有限で、端の間に収まる。** 端の差が `Float` で
+/// 表せないほど離れていても変わらない (`lerp(-3e38, 3e38, 0.5)` は 0 を返す)。
 ///
 /// **0…1 の外は締めない。** `lerp(0, 10, 2)` は 20 を、`lerp(0, 10, -1)` は -10 を返す
 /// (手本と同じで、``map(_:_:_:_:_:)`` の外挿と揃う)。締めたいときは ``constrain(_:_:_:)``
-/// を通す。
+/// を通す。伸びた先が `Float` の範囲を越えたら ±∞ を返す (数でない値は返さない) —
+/// `lerp(1e38, 2e38, 10)` は ∞ になる。
 ///
 /// **数でない値・無限の値が混じったときは `start` を返す。** 毎フレーム呼ばれる口が
 /// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
@@ -130,7 +148,36 @@ public func lerp(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
         )
         return start.isFinite ? start : 0
     }
-    return start + (stop - start) * amount
+    return interpolate(start, stop, amount)
+}
+
+/// 間を取る計算。``lerp(_:_:_:)`` と ``map(_:_:_:_:_:)`` が共有する。端は有限であること。
+/// `amount` は ±∞ でもよい — ``map(_:_:_:_:_:)`` の比は、写す値が元の範囲から遠く外れると
+/// 溢れる。
+///
+/// **有限の幅は今までどおりの式で移し、`amount` が 1 のときだけ `stop` を返す** ([#1453])。
+/// 幅 (`stop - start`) を丸めてから掛けるので、1 を掛けても `stop` に戻らないことがある
+/// (`1e8 + (1 - 1e8) * 1` は 0)。**1 だけを差し替えても値は逆行しない** — 1 の直前を掛けると
+/// 幅は半 ulp 以上縮み、1 の直後を掛けると 1 ulp 以上伸びる。幅の丸めは半 ulp までなので、
+/// 1 の直前の値は `stop` を越えず、1 の直後の値は `stop` の手前に残らない。
+///
+/// **幅が `Float` で溢れる組だけ、両端から直に混ぜる。** `random(low, high)` が塞いだのと同じ
+/// 穴で、流儀も同じである ([#1312])。幅が溢れるのは端が異符号のときだけなので、0…1 の間では
+/// どちらの積も端より大きくならず、和は端の間に落ちる。0…1 の外では 2 つの積が同じ符号に
+/// なるので、溢れても ±∞ で止まり、`∞ - ∞` の NaN は作らない。
+///
+/// **溢れない幅まで混ぜる形に替えない。** 端はちょうどになるが、`start == stop` で `start` に
+/// 戻らない・`amount` を増やして値が逆行する・外挿で NaN を返す、の 3 つを壊すうえ、端の間の
+/// ふつうの値も 4 つに 1 つが最下位ビットで動く。
+///
+/// [#1312]: https://github.com/mokume-metal/mokume/issues/1312
+/// [#1453]: https://github.com/mokume-metal/mokume/issues/1453
+private func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
+    let span = stop - start
+    guard span.isFinite else { return (1 - amount) * start + amount * stop }
+    // 幅が無ければ、どこを取っても始まり。比が ∞ で来ても `0 × ∞` の NaN を作らない
+    guard span != 0 else { return start }
+    return amount == 1 ? stop : start + span * amount
 }
 
 // MARK: - 値を範囲へ締める
