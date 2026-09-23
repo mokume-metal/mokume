@@ -146,7 +146,7 @@ final class FieldAndFlow: Sketch {
         for index in 1..<values.count where values[index] > values[best] { best = index }
         let column = Float(best % columns) + 0.5
         let row = Float(best / columns) + 0.5
-        peak = (column / Float(columns) * width, row / Float(rows) * height)
+        peak = (map(column, 0, Float(columns), 0, width), map(row, 0, Float(rows), 0, height))
         peakHeight = values[best]
     }
 }

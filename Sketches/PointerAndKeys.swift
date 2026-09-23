@@ -69,7 +69,7 @@ final class PointerAndKeys: Sketch {
     ///
     /// [#807]: https://github.com/mokume-metal/mokume/issues/807
     func mouseWheel(deltaX: Float, deltaY: Float) {
-        size = min(max(size + deltaY * 4, 20), 400)
+        size = constrain(size + deltaY * 4, 20, 400)
     }
 
     /// **文字を生むキーだけが呼ぶ。** 矢印やファンクションキーではここへ来ない。
