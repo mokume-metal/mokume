@@ -315,4 +315,46 @@ struct SketchApplicationTests {
 
         #expect(ended == 0, "終わりに向かっている間に、答えで終わりを重ねた")
     }
+
+    // MARK: - 終わりの合図 (#1219)
+
+    /// **合図を、後始末を待つ経路へ入れる。** 受け口が無かった頃は合図を受けた瞬間に消え、
+    /// 撮っていた動画が開けないまま残った ([#1219])。**1 度の合図で 1 度だけ頼む** — 見に来る
+    /// のは刻みごとなので、旗を下ろさなければ刻みの数だけ頼む。
+    ///
+    /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+    @Test("終わりの合図を受けていたら、終わりを 1 度だけ頼む")
+    func asksToEndOnceAfterAStopSignal() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        var ended = 0
+        application.onStopSignal = { ended += 1 }
+        defer { application.willTerminate() }
+
+        application.pollStopSignal()
+        #expect(ended == 0, "合図を受けていないのに、終わりを頼んだ")
+        sketchStopRequested = 1
+        application.pollStopSignal()
+        application.pollStopSignal()
+        #expect(ended == 1)
+    }
+
+    /// **返事を待たせている間に `terminate(_:)` を重ねない。** 重ねると AppKit は返事を待たずに
+    /// 終わらせ、待っていた後始末 (動画を閉じる) が飛ばされる ([#1219])。
+    ///
+    /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+    @Test("終わりに向かっている間の合図では、終わりを重ねない")
+    func aStopSignalDoesNotTerminateAgain() throws {
+        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        var ended = 0
+        application.onStopSignal = { ended += 1 }
+        application.replyToTermination = {}
+        defer { application.willTerminate() }
+
+        _ = SketchApplicationDelegate(application: application).applicationShouldTerminate(.shared)
+        sketchStopRequested = 1
+        application.pollStopSignal()
+
+        #expect(ended == 0, "終わりに向かっている間に、合図で終わりを重ねた")
+        #expect(!StopSignals.takeRequest(), "受け流した合図が、旗に残っている")
+    }
 }

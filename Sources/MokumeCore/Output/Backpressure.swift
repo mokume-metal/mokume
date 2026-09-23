@@ -58,7 +58,7 @@ import Foundation
     /// ``RenderDevice/waitLimitSeconds`` と同じ 5 秒にしてある。あちらは GPU の完了を待つ
     /// 上限で、こちらは書き込みが 1 つ進む間隔 — 測っているものは違うが、**どちらも
     /// 「これだけ音沙汰が無ければ壊れている」の見立て**なので、2 つの数を持たない。
-    static let defaultStallLimitSeconds = 5.0
+    nonisolated static let defaultStallLimitSeconds = 5.0
 
     /// 仕事の側が「1 つ終わった」と言う口。**隔離の外へ渡せる。**
     ///

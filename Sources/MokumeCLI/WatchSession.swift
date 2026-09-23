@@ -151,6 +151,22 @@ final class WatchSession {
     /// 感じる前に決着する側へ寄せる。
     static let defaultStopTimeout: TimeInterval = 3
 
+    /// 見張りを**終えるとき**に、止まるのを待つ上限 (秒)。
+    ///
+    /// **撮っていた動画を閉じ終えるまで待つ** ([#1219])。スケッチは `SIGTERM` を受けると
+    /// 後始末 (動画を閉じる) を済ませてから終わるが、それは 3 秒に収まらない — 閉じる側の
+    /// 期限 (``RecordingDeadline/longestFinishSeconds``) の上に、いつもの ``defaultStopTimeout``
+    /// を足す。数字を写さないのは、閉じる側の期限が動いたときに黙って割れないためである。
+    ///
+    /// **延ばすのは終えるとき (``end()``) だけ。** 差し替えと作り直しの中断は保存のたびに
+    /// 払う待ちなので ``defaultStopTimeout`` のまま置く — 応えないスケッチがあると、保存のたびにその分固まる
+    /// ([#732](https://github.com/mokume-metal/mokume/issues/732))。差し替えで閉じきれなかった
+    /// 動画は、次の世代が撮り直す。
+    ///
+    /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+    static let defaultFinishTimeout: TimeInterval =
+        RecordingDeadline.longestFinishSeconds + defaultStopTimeout
+
     /// 強制終了した後に、消えるのを待つ上限 (秒)。
     ///
     /// **短く取る。** `SIGKILL` は届けば即座に効くので、ここで長く待って得るものが無い —
@@ -239,6 +255,9 @@ final class WatchSession {
     /// 止まるのを待つ上限 (秒)。**検査から縮める** — 既定で待つと、期限を確かめる検査が
     /// そのぶん遅くなる。
     let stopTimeout: TimeInterval
+    /// 見張りを終えるときに、止まるのを待つ上限 (秒)。**検査から縮める** (``stopTimeout`` と
+    /// 同じ理由)。
+    let finishTimeout: TimeInterval
     /// 直前に子を止めたときの結果。**差し替えのときも入る。**
     ///
     /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。期限に
@@ -264,6 +283,16 @@ final class WatchSession {
     /// 実際にそう読まれた ([#695](https://github.com/mokume-metal/mokume/issues/695))。
     var willRebuild: (_ initial: Bool) -> Void = { _ in }
 
+    /// 見張りを終えるときに、子が ``stopTimeout`` を越えてもまだ終わっていないと呼ばれる。
+    /// 引数はこの先さらに待つ上限 (秒)。**1 度だけ呼ぶ。**
+    ///
+    /// **知らせるだけで、出力は口の側が決める** (``willRebuild`` と同じ)。長く待つのは撮って
+    /// いた動画を閉じているからで、黙っていると「固まった」と読まれる — ``defaultStopTimeout``
+    /// が 3 秒で決着させていたのは、まさにその読まれ方を避けるためだった ([#1219])。
+    ///
+    /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+    var willWaitForFinish: (_ remaining: TimeInterval) -> Void = { _ in }
+
     /// - Parameter hooks: 差し替える外側。**渡さなければ、呼ばれ方から組む** —
     ///   既定引数では作れない (場所が決まるのは初期化の中である)。
     /// - Parameter invocation: 呼ばれ方。`hooks` を渡さないときだけ要る。
@@ -271,7 +300,8 @@ final class WatchSession {
         directory: URL, context: BuildContext, facetBase: URL? = nil,
         reportsRate: Bool = false, hooks: Hooks? = nil,
         invocation: Invocation = Invocation(),
-        stopTimeout: TimeInterval = WatchSession.defaultStopTimeout
+        stopTimeout: TimeInterval = WatchSession.defaultStopTimeout,
+        finishTimeout: TimeInterval = WatchSession.defaultFinishTimeout
     ) {
         self.directory = directory
         self.facetBase = facetBase ?? directory
@@ -279,6 +309,7 @@ final class WatchSession {
         self.reportsRate = reportsRate
         self.hooks = hooks ?? .live(in: directory, invocation: invocation)
         self.stopTimeout = stopTimeout
+        self.finishTimeout = finishTimeout
     }
 
     /// 1 巡する。変化が無ければ何もしない。
@@ -394,10 +425,22 @@ final class WatchSession {
     ///
     /// - Returns: 3 通りの結果。呼ぶ側はそれぞれを別の出来事として名乗れる。
     @discardableResult
-    func stop() -> StopOutcome {
+    func stop() -> StopOutcome { stop(timeout: stopTimeout) }
+
+    /// 見張りを**終えるときに**、走らせているものを終わらせる。
+    ///
+    /// ``stop()`` との違いは待つ長さだけで、撮っていた動画を閉じ終えるまで待つ
+    /// (``finishTimeout``・[#1219])。**差し替えは ``stop()`` を通る** ので、延ばすのはこちらに
+    /// 限る — 分けておかないと、窓を持たない見張りでは保存のたびに長く待つ。
+    ///
+    /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+    @discardableResult
+    func end() -> StopOutcome { stop(timeout: finishTimeout) }
+
+    private func stop(timeout: TimeInterval) -> StopOutcome {
         // **退役待ちも置いていかない。** 入れ替わりの合図が来る前に終わることがある
         retireOutgoing()
-        let outcome = bringDown(child)
+        let outcome = bringDown(child, timeout: timeout)
         child = nil
         lastStop = outcome
         return outcome
@@ -422,7 +465,7 @@ final class WatchSession {
     func stopRebuilding() -> StopOutcome? {
         guard isRebuilding, stoppedReport == nil else { return nil }
         let running = hooks.stopRebuild()
-        let outcome = bringDown(running, interrupting: true)
+        let outcome = bringDown(running, timeout: stopTimeout, interrupting: true)
         // **終わっていない子の終了コードは読まない** (読むと例外で落ちる)。置いていった回と、
         // 走っている子が無かった回は、止めた合図の慣習の値で書く
         let status =
@@ -457,23 +500,33 @@ final class WatchSession {
     func retireOutgoing() -> StopOutcome? {
         guard let leaving = outgoing else { return nil }
         outgoing = nil
-        return bringDown(leaving)
+        return bringDown(leaving, timeout: stopTimeout)
     }
 
     /// 1 つの子を落とす。**期限を持つ。**
     ///
     /// 呼び手が 3 つある (終わるとき・退役させるとき・作り直しを止めるとき) ので、判断は
-    /// ここ 1 つに置く — 期限の値も刻みの細かさも `StopOutcome` の分け方も、割れない。
+    /// ここ 1 つに置く — 刻みの細かさも `StopOutcome` の分け方も、割れない。**期限だけは
+    /// 呼び手が渡す** — 終わるときだけ、撮っていた動画を閉じ終えるまで待つ (#1219)。
     ///
+    /// - Parameter timeout: 頼んでから、強制終了へ進むまでの上限 (秒)。``stopTimeout`` を
+    ///   越える分を待つときは、越えた時点で ``willWaitForFinish`` を 1 度呼ぶ。
     /// - Parameter interrupting: 頼むのに `SIGTERM` ではなく `SIGINT` を使うか。**作り直し
     ///   (`swift build`) だけが使う。** SwiftPM が畳みの処理を持つのは `SIGINT` の側で、
     ///   `SIGTERM` では本体だけが死んで `swift-driver` と `swift-frontend` が launchd に
     ///   付け替えられて残る。手元の実測では `SIGINT` は配下ごと 0.4 秒で消え、`SIGTERM` は
     ///   配下が 1〜4.5 秒残った ([#1147](https://github.com/mokume-metal/mokume/issues/1147))。
-    private func bringDown(_ running: Process?, interrupting: Bool = false) -> StopOutcome {
+    private func bringDown(
+        _ running: Process?, timeout: TimeInterval, interrupting: Bool = false
+    ) -> StopOutcome {
         guard let running, running.isRunning else { return .notRunning }
         if interrupting { running.interrupt() } else { running.terminate() }
-        if waitForExit(running, timeout: stopTimeout) { return .terminated }
+        let first = min(timeout, stopTimeout)
+        if waitForExit(running, timeout: first) { return .terminated }
+        if timeout > first {
+            willWaitForFinish(timeout - first)
+            if waitForExit(running, timeout: timeout - first) { return .terminated }
+        }
         // **宛先を確かめてから撃つ。** 起動していない `Process` の番号は 0 で、
         // `kill(0, …)` は**自分のプロセスグループごと**落とす。上の guard が弾いている
         // 形だが、暗黙に頼らない

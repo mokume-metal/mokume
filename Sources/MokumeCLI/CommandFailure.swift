@@ -24,8 +24,10 @@ nonisolated enum CommandFailure: Error, Equatable {
     case sketchExited(status: Int32)
     /// 道具が終わりの合図を受け、走らせていたスケッチも止めて終わった。
     ///
-    /// **`sketchExited` と分ける。** 子は渡した SIGTERM で終わるので終了コードは 15 になり、
-    /// そちらで名乗ると「スケッチ自身の出力を読め」と読み違えさせる
+    /// **`sketchExited` と分ける。** 子の終了コードは止めた合図で決まり、スケッチ自身の
+    /// 事情を映さない — 後始末を済ませて終われば 0、済ませずに落ちれば 15 になる
+    /// ([#1219](https://github.com/mokume-metal/mokume/issues/1219))。0 以外をそちらで名乗ると
+    /// 「スケッチ自身の出力を読め」と読み違えさせる
     /// ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
     case stopped(signal: Int32)
     case noExecutable(path: String)

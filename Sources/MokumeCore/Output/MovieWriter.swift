@@ -48,7 +48,7 @@ final class MovieWriter {
     /// **越えても殺さない。** mp4 は末尾のメタデータが要るので、途中で止めると再生できない
     /// ファイルになる。待つのをやめても符号化は走り続けるので、失うのは「返ってきた時点で
     /// 出来ている」という保証だけである。
-    static let closeLimitSeconds = 30.0
+    nonisolated static let closeLimitSeconds = 30.0
 
     /// 符号化へ渡す 1 枚。
     private struct Job: Sendable {
@@ -217,4 +217,21 @@ final class MovieWriter {
 
     /// 直近の書き損じを取り出す。**取り出したら消える。**
     func takeFailure() -> String? { lastFailure.take() }
+}
+
+/// 動画を閉じ終えるまでに、外から待つ側が見込むべき長さ。
+///
+/// **足し算をここ 1 箇所に置く。** 待ちは 2 段 (``MovieWriter/finish(_:)``) で、積んだぶんを
+/// 符号化しきる段が進捗の途切れ (``Backpressure/defaultStallLimitSeconds``) で諦め、閉じる段が
+/// 平らな ``MovieWriter/closeLimitSeconds`` で諦める。プロセスの外から待つ側 (見張りが子を
+/// 終わらせる猶予・[#1219]) が数字を写すと、片方が動いたときに黙って割れる。
+///
+/// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
+package nonisolated enum RecordingDeadline {
+    /// 止まってしまったときに、諦めるまでの秒数。
+    ///
+    /// **上限ではない。** 符号化が少しずつでも進む限り 1 段目は待ち続けるので、ここが覆うのは
+    /// 「止まってしまったとき」の長さだけである。
+    package static let longestFinishSeconds =
+        Backpressure.defaultStallLimitSeconds + MovieWriter.closeLimitSeconds
 }

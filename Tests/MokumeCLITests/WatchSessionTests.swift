@@ -461,8 +461,12 @@ struct WatchSessionTests {
         ready.waitForLast()
         #expect(child.isRunning)
 
-        #expect(session.stop() == .terminated)
+        var waits = 0
+        session.willWaitForFinish = { _ in waits += 1 }
+        #expect(session.end() == .terminated)
         #expect(!child.isRunning)
+        // **いつもの終わり方は無言のまま。** 素直に終わる子を待つ間は名乗らない
+        #expect(waits == 0)
     }
 
     /// **待つ側が期限を持つ。** 期限が無ければ、ここは永久に戻らない (#732)。
@@ -501,6 +505,64 @@ struct WatchSessionTests {
         #expect(!first.isRunning, "前の子が残っている")
         #expect(session.lastStop == .killed, "期限に掛かったことが残っていない")
         #expect(session.child !== first, "差し替わっていない")
+    }
+
+    // MARK: - 後始末を待つのは終えるときだけ (#1219)
+
+    /// 頼まれてから後始末に 0.6 秒かかる子。撮っていた動画を閉じているスケッチの代わり。
+    private func hooksClosingSlowly(ready: Ready) -> WatchSession.Hooks {
+        hooks(running: "trap 'sleep 0.6; exit 0' TERM; echo ready; read line", ready: ready)
+    }
+
+    /// **撮っていた動画を閉じ終えるまで待つ。** 3 秒で落としていた頃は、閉じている最中の
+    /// スケッチを `SIGKILL` で落とし、開けない動画が残った (#1219)。
+    @Test("見張りを終えるときは、後始末に時間のかかる子も待ってから、待っていると 1 度名乗る")
+    func waitsForTheChildToFinishWhenWatchingEnds() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooksClosingSlowly(ready: ready), stopTimeout: 0.2, finishTimeout: 3)
+        var waits: [TimeInterval] = []
+        session.willWaitForFinish = { waits.append($0) }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+
+        #expect(session.end() == .terminated, "後始末の途中で落とした")
+        #expect(!child.isRunning)
+        #expect(waits.count == 1, "長く待つ間を名乗っていない (または 2 度以上名乗った)")
+        // 名乗るのは「この先さらに待つ上限」で、全体の上限から最初の待ちを引いたもの
+        #expect(waits.first.map { abs($0 - 2.8) < 0.001 } == true)
+    }
+
+    /// **差し替えは保存のたびに払う待ちなので、延ばさない** (#732・#1219)。窓を持たない
+    /// 見張りの差し替えは ``WatchSession/stop()`` を通るので、終えるときの口と分かれている
+    /// ことをここで見る。
+    @Test("差し替えは、後始末に時間のかかる子を待たずに落とす")
+    func replacesWithoutWaitingForTheChildToFinish() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooksClosingSlowly(ready: ready), stopTimeout: 0.2, finishTimeout: 3)
+        var waits = 0
+        session.willWaitForFinish = { _ in waits += 1 }
+        await session.start()
+        let first = try #require(session.child)
+        ready.waitForLast()
+        defer { session.stop() }
+
+        await session.tick()
+        #expect(!first.isRunning, "前の子が残っている")
+        #expect(session.lastStop == .killed, "差し替えで後始末を待った")
+        #expect(waits == 0, "差し替えで、終えるときの名乗りが出た")
+    }
+
+    /// **閉じる側の期限を写さない。** 閉じる側が延びたのにこちらが据え置かれると、閉じている
+    /// 最中に落とす形へ黙って戻る。
+    @Test("見張りを終えるときの既定の猶予は、動画を閉じる側の期限を覆う")
+    func finishTimeoutCoversTheRecordingDeadline() {
+        #expect(WatchSession.defaultFinishTimeout > RecordingDeadline.longestFinishSeconds)
+        #expect(WatchSession.defaultFinishTimeout > WatchSession.defaultStopTimeout)
     }
 
     // MARK: - 誰も頼んでいない消え方 (#1103)
