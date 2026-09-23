@@ -510,29 +510,65 @@ struct WatchSessionTests {
     // MARK: - 後始末を待つのは終えるときだけ (#1219)
 
     /// 頼まれてから後始末に 0.6 秒かかる子。撮っていた動画を閉じているスケッチの代わり。
+    ///
+    /// **1 行来ても終わらない。** 待ち方を `read` 1 回にしないのは、TERM の保留を解く手
+    /// (``nudge(_:)``) が 1 行渡すからである — 1 行で終わる子だと、**頼まれていない子まで**
+    /// 自分から終わって `.terminated` に見える。管が閉じれば `read` が偽を返して終わるので、
+    /// 置き去りにされても生き続けない。
     private func hooksClosingSlowly(ready: Ready) -> WatchSession.Hooks {
-        hooks(running: "trap 'sleep 0.6; exit 0' TERM; echo ready; read line", ready: ready)
+        hooks(
+            running: "trap 'sleep 0.6; exit 0' TERM; echo ready; while read line; do :; done",
+            ready: ready)
+    }
+
+    /// 子の標準入力へ 1 行渡して、**保留された TERM の trap を走らせる。**
+    ///
+    /// **子の `sh` (bash 3.2) は、届いた TERM をすぐには処理しないことがある。** `echo ready` の
+    /// 後・`read` が割り込める状態になる前に届くと trap は保留になり、**`read` が戻るまで
+    /// 走らない**。誰も書かなければ `read` は戻らないので、後始末を始めてもいない子を期限で
+    /// 落とすことになる — merge queue で 1 度そうなった
+    /// ([#1394](https://github.com/mokume-metal/mokume/issues/1394)。手元では `ready` から
+    /// 0〜250 µs 揺らして撃つと 1500 回に 1 回)。負荷はこの隙を広げる形で効くので、
+    /// **上限を延ばしても直らない** — 落ちるまでの時間が延びるだけである。
+    ///
+    /// **後始末の途中の子には効かない。** trap の中で `exit` するので、渡した行は読まれない。
+    ///
+    /// **管が閉じていることは無い。** 呼ぶのは子が走っている間だけで、後始末の `sleep` も
+    /// 読み口を受け継いでいる — `SIGPIPE` を心配しなくてよい。
+    private func nudge(_ child: Process) {
+        guard let pipe = child.standardInput as? Pipe else { return }
+        try? pipe.fileHandleForWriting.write(contentsOf: Data("\n".utf8))
     }
 
     /// **撮っていた動画を閉じ終えるまで待つ。** 3 秒で落としていた頃は、閉じている最中の
     /// スケッチを `SIGKILL` で落とし、開けない動画が残った (#1219)。
+    ///
+    /// **上限は後始末の時間 (0.6 秒) と桁を離して取る。** 通る回は子が終わった時点で戻るので、
+    /// 延ばしても通る回の所要時間は変わらない (#1394)。
     @Test("見張りを終えるときは、後始末に時間のかかる子も待ってから、待っていると 1 度名乗る")
     func waitsForTheChildToFinishWhenWatchingEnds() async throws {
         let ready = Ready()
         let session = WatchSession(
             directory: try makeDirectory(), context: testContext(),
-            hooks: hooksClosingSlowly(ready: ready), stopTimeout: 0.2, finishTimeout: 3)
-        var waits: [TimeInterval] = []
-        session.willWaitForFinish = { waits.append($0) }
+            hooks: hooksClosingSlowly(ready: ready), stopTimeout: 0.2, finishTimeout: 30)
         await session.start()
         let child = try #require(session.child)
         ready.waitForLast()
+
+        var waits: [TimeInterval] = []
+        // **名乗られた時点で、保留された TERM を解く。** 名乗りは「頼んでから `stopTimeout` を
+        // 越えた」合図なので、子は後始末の途中か、TERM を保留したまま `read` に入っているかの
+        // どちらかである (``nudge(_:)``)
+        session.willWaitForFinish = {
+            waits.append($0)
+            nudge(child)
+        }
 
         #expect(session.end() == .terminated, "後始末の途中で落とした")
         #expect(!child.isRunning)
         #expect(waits.count == 1, "長く待つ間を名乗っていない (または 2 度以上名乗った)")
         // 名乗るのは「この先さらに待つ上限」で、全体の上限から最初の待ちを引いたもの
-        #expect(waits.first.map { abs($0 - 2.8) < 0.001 } == true)
+        #expect(waits.first.map { abs($0 - 29.8) < 0.001 } == true)
     }
 
     /// **差し替えは保存のたびに払う待ちなので、延ばさない** (#732・#1219)。窓を持たない
