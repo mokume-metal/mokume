@@ -224,6 +224,30 @@ public struct SketchSettings: Equatable, Sendable {
 @MainActor
 var runningSketch: SketchRuntime?
 
+/// 走っているランタイムの面を、その中で起こされた `Task` へ持ち越すもの。
+///
+/// ``runningSketch`` は `setup()` / `draw()` が返った時点で外れる。そこで起こした
+/// `Task` の中身が走るのはその後なので、中から ``Sketch/canvas`` を取ると何も差さって
+/// いない。待つ読み込みの口 (``Sketch/requestImage(_:)``・``Sketch/requestModel(_:normalize:)``)
+/// は `async` で `Task` からしか呼べないので、**呼べる場所が 1 つも無かった**
+/// ([#1367](https://github.com/mokume-metal/mokume/issues/1367))。`Task { … }` は起こした
+/// 文脈のタスクローカル値を受け継ぐので、ここに束ねた面はそのまま中へ届く
+/// (`Task.detached` は受け継がない)。
+///
+/// **読むのは待つ読み込みの口だけ** (``Sketch/requireLoadingCanvas(_:)``)。描く口は
+/// ``runningSketch`` だけを見続ける — `Task` から描けると、描く順が `Task` に番が回る時機で
+/// 決まり、描画順を main actor の上で直列に確定させている性質 ([ADR-0010] の影響欄) が崩れる。
+/// 待つ読み込みの口は絵を描かず、値を作って返すだけなので、この性質に触れない。
+///
+/// **持ち越すのは実行ではなく面で、強く持つ。** 弱く持つと、実行が畳まれた後に届いたときに
+/// 返せる面が無く、止めるか投げるかしかなくなる。面が生きるのはその `Task` が走っている
+/// 間だけで、実行そのもの (観測・入力・名乗り) は `Task` に生かされない。
+///
+/// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
+enum LaunchingSketch {
+    @TaskLocal static var canvas: Canvas?
+}
+
 extension Sketch {
     /// いま描いている面。
     public var canvas: Canvas { Self.requireRuntime().canvas }
@@ -291,5 +315,25 @@ extension Sketch {
                     + "Call it from setup() or draw(), not from init or a property initialiser.")
         }
         return runtime
+    }
+
+    /// 待つ読み込みの口が使う面。**走っていなくても、走っている実行の中で起こされた
+    /// `Task` からなら、その実行の面を返す** (``LaunchingSketch``)。
+    ///
+    /// 先に見るのは ``runningSketch`` で、これまで動いていた経路は何も変わらない。
+    /// 持ち越した面へ倒れるのは、これまで止まっていた経路だけである。
+    ///
+    /// - Parameter call: 止めるときの文面に載せる、呼ばれた口の名前。
+    @MainActor
+    static func requireLoadingCanvas(_ call: String) -> Canvas {
+        guard let canvas = runningSketch?.canvas ?? LaunchingSketch.canvas else {
+            // 走っている実行から起こされていない (init・プロパティの初期化子・
+            // Task.detached)。どの面へ読み込むかが決まらないので、描く口と同じく止める
+            fatalError(
+                "\(call) only works for a sketch that is running. Call it from setup() or "
+                    + "draw(), or from a Task started there — not from init, a property "
+                    + "initialiser or Task.detached.")
+        }
+        return canvas
     }
 }

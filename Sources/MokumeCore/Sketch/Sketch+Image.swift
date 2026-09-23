@@ -40,9 +40,39 @@ extension Sketch {
     ///
     /// 復号を別の仕事として回すので、大きな絵を読んでもフレームが詰まらない。
     ///
+    /// **`setup()` の中で `Task` を起こし、そこから呼ぶ。** `setup()` も ``draw()`` も
+    /// 待てないので、待つのは `Task` の仕事になる。
+    ///
+    /// <!-- example: 文脈 var grain: Image? -->
+    /// ```swift
+    /// func setup() {
+    ///     Task { grain = try? await requestImage("assets/grain.png") }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     if let grain { image(grain, 0, 0) }
+    /// }
+    /// ```
+    ///
+    /// **届くまでの ``draw()`` は、絵が無いまま呼ばれる。** 待っている間もフレームは進む
+    /// ので、届く前の姿 (何も置かない・仮の絵を置く) を `draw()` の側で決めておく。届くのは
+    /// フレームとフレームの間で、届いた次のフレームから置かれる。
+    ///
+    /// **置くのは ``draw()`` の中で、`Task` の中ではない。** `Task` の中から描く口
+    /// (``image(_:_:_:)-(Image,_,_)`` や ``width``) を呼ぶと、走っていないとして止まる。`Task` がするのは、
+    /// 届いたものを持っておくところまでである。
+    ///
+    /// 起こすのは ``draw()`` や入力のコールバックの中でもよい。そこで起こした `Task` も
+    /// 呼べる。呼べないのは、走っている実行から起こされていない所 — `init`・プロパティの
+    /// 初期化子・`Task.detached` — で、そこから呼ぶと止まる。
+    ///
+    /// スケッチが終わった後に届いても落ちない。絵はそのまま返り、置く ``draw()`` が
+    /// もう来ないだけである。
+    ///
     /// > Note: ``loadImage(_:)`` と同じ理由で、この口にも例の絵は付いていない。
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
-        try await canvas.requestImage(path)
+        try await Self.requireLoadingCanvas("requestImage(_:)").requestImage(path)
     }
 
     /// 空の絵を作る。中身は透明。

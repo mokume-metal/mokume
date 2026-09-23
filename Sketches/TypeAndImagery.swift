@@ -93,14 +93,9 @@ final class TypeAndImagery: Sketch {
         try? PNGFile.write(picture, to: requestedURL)
         pending = try? createImage(picture.width, picture.height)
         pending?.fill(color(64, 76, 102))
-        // **待つには Task が要るが、Task の中身は setup() が返った後に走る。** スケッチの
-        // `requestImage` はその時点では「走っていない」として止まるので ([#1367])、面
-        // (`canvas`) をここで取っておき、面の口から頼む
-        //
-        // [#1367]: https://github.com/mokume-metal/mokume/issues/1367
-        let surface = canvas
+        // 待つのは Task の仕事。届くまでは下の draw() が仮の絵を置く
         Task {
-            requested = try? await surface.requestImage(requestedURL.path)
+            requested = try? await requestImage(requestedURL.path)
         }
     }
 
