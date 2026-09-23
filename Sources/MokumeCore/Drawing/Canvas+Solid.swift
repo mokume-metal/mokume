@@ -381,14 +381,15 @@ extension Canvas {
     /// 組み立てるが、利用者の断片へ渡すのは形自身の座標のほうなので、両方が要る。
     /// 帯の太さのぶんの広がりは持たない — **帯のどの画素も、元になった点の座標を名乗る**。
     func strokeSolidRing(
-        _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool
+        _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
+        curveSteps: [Bool] = []
     ) {
         let half = style.strokeWeight / 2
         guard !points.isEmpty, shapePoints.count == points.count else { return }
 
         // 端と折れ目の規則は平面と共有する (`strokeRing`)
         strokeRing(
-            count: points.count, isClosed: isClosed,
+            count: points.count, isClosed: isClosed, curveSteps: curveSteps,
             band: {
                 appendSolidBand(
                     points[$0], points[$1],
