@@ -56,6 +56,15 @@ public final class SketchRuntime {
     ///
     /// 頼まれている間だけ ``outlets`` に居る (``attachRecorderIfNeeded()``)。
     private var recorder: FrameRecorder?
+    /// 撮る係へ渡す刻み。**起動のときに読んだ ``SketchSettings/frameRate``** ([#1457])。
+    ///
+    /// 各枚の時刻を決める時計と `deltaTime` の上限も、同じ `settings` の写しから刻みを採る。
+    /// 係を作るとき (最初の `save` か `beginRecord`) に読み直すと、走っている最中に代入した
+    /// スケッチでは、各枚の間隔は起動のときのまま、動画の最後の 1 枚の長さだけが代入した値に
+    /// 従う。
+    ///
+    /// [#1457]: https://github.com/mokume-metal/mokume/issues/1457
+    private let launchFrameRate: Int
     /// 閉じ終えるのを待っている撮る係。**居る間はフレームを進めない** (``closePlugins(_:)``)。
     private var closingRecorder: FrameRecorder?
 
@@ -168,6 +177,7 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         self.sketch = sketch
+        self.launchFrameRate = settings.frameRate
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
@@ -201,6 +211,7 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         self.sketch = sketch
+        self.launchFrameRate = settings.frameRate
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
@@ -765,7 +776,7 @@ public final class SketchRuntime {
     /// 撮る係。**頼まれてはじめて作る** — 撮らないスケッチは 1 バイトも払わない。
     private func requireRecorder() -> FrameRecorder {
         if let recorder { return recorder }
-        let made = FrameRecorder(frameRate: sketch.settings.frameRate)
+        let made = FrameRecorder(frameRate: launchFrameRate)
         recorder = made
         return made
     }
