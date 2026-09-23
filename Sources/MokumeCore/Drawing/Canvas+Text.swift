@@ -228,9 +228,16 @@ extension Canvas {
     /// 返るのは**元の文字列の中の範囲**なので、置けなかった行の先頭から先が
     /// そのまま「残り」になる。
     ///
-    /// 折るために消費した空白は、どちらの行にも入らない。こうしておくと
-    /// **各行の幅は ``textWidth(_:)`` が返す値そのもの**になり、測った幅と描いた幅が
-    /// 食い違わない。
+    /// 折るために消費した空白は、どちらの行にも入らない。**切れ目に空白が続いていれば、
+    /// 続いた空白をまとめて消費する** — 前のほうの空白が行の末尾に残ると、行の幅が
+    /// その分だけ広く数えられる ([#1412])。こうしておくと**各行の幅は ``textWidth(_:)``
+    /// が返す値そのもの**になり、測った幅と描いた幅が食い違わない。行の中ほどで続いた
+    /// 空白 (切れ目にならないもの) と、段落の頭の空白 (字下げ) は行に残る。
+    ///
+    /// 消費した空白は、前の行の終わりと次の行の始まりの**間に、元の文字列のまま残っている**
+    /// — いくつ消費したかは、範囲の隙間を読めば分かる。
+    ///
+    /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
     func wrapped(_ string: String, face: Typeface, within limit: Float) -> [Substring] {
         var lines: [Substring] = []
         for paragraph in string.lines {
@@ -251,7 +258,16 @@ extension Canvas {
                 // **切れ目は、幅を測る前に憶える。** 幅を超えたのが空白そのものだった
                 // とき、その空白は「ここまでが 1 行」の合図であって、次の行へ送る
                 // 対象ではない
-                if character.isWhitespace, index > start { lastSpace = index }
+                //
+                // **切れ目は、続いた空白の先頭に置く。** 溢れる直前に見た空白を切れ目に
+                // すると、それより前の空白が行の末尾に残り、右揃え・中央揃えの行が
+                // その幅だけずれる ([#1412])。段落の頭の空白 (字下げ) は、前に語が
+                // 無いので切れ目にしない
+                if character.isWhitespace, index > start,
+                    !paragraph[paragraph.index(before: index)].isWhitespace
+                {
+                    lastSpace = index
+                }
 
                 // **1 文字だけの行は折らない。** 幅より広い字はそのままはみ出させる
                 if width + step > limit, index > start {
