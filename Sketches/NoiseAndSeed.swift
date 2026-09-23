@@ -14,7 +14,10 @@ import mokume
 /// 組み立てて見せるためである。揃っているのは揺らぎのほうで、そこが揃っているから
 /// 同じ模様になる。
 ///
-/// 下の粒は `random()`。`randomSeed()` を置いてあるので、走らせるたびに同じ並びが出る。
+/// 下の帯の稜線は 1 次元の `noise(x)` で引いてある。その上に乗る粒は `random()` で置き、
+/// `randomSeed()` を置いてあるので、走らせるたびに同じ並びが出る。粒の向きは稜線の
+/// 傾きから `atan2` で求め、明るさは 3 つ目の座標に時刻を渡した `noise(x, y, z)` で
+/// 移ろわせている — **動くのはこの明るさだけ**で、ほかは何フレーム目でも同じ絵になる。
 ///
 /// [#366]: https://github.com/mokume-metal/mokume/issues/366
 final class NoiseAndSeed: Sketch {
@@ -94,13 +97,42 @@ final class NoiseAndSeed: Sketch {
             resetShader()
         }
 
-        // 下: 乱数。種を決めてあるので、走らせるたびに同じ並びが出る
+        // 下: 1 次元の揺らぎで引いた稜線。**近い x には近い高さ**が返るので、
+        // 4 画素ごとに引いて結んでも線は途切れない
+        stroke(209, 163, 112, 140)
+        strokeWeight(1.5)
+        var previous = (x: Float(20), y: ridge(20))
+        for x in stride(from: Float(24), through: 940, by: 4) {
+            line(previous.x, previous.y, x, ridge(x))
+            previous = (x, ridge(x))
+        }
+        noStroke()
+
+        // 稜線に乗る粒。種を決めてあるので、走らせるたびに同じ並びが出る
         randomSeed(7)
         for _ in 0..<60 {
-            fill(.display(red: random(0.5, 1), green: random(0.4, 0.8), blue: random(0.2, 0.5)))
-            circle(random(20, 940), random(475, 515), random(6, 18))
+            let x = 20 + random(920)
+            let y = ridge(x)
+            let size = random(6, 18)
+            // 太さの割合。0…1 の値を引いて、使いたい幅へ移す
+            let thickness = lerp(0.55, 0.85, random())
+            // 稜線の傾きを向きに直し、粒を稜線に沿って寝かせる
+            let slope = atan2(ridge(x + 1) - ridge(x - 1), 2)
+            // 3 つ目の座標に時刻を渡すと、同じ粒の明るさが**瞬かずに**移ろう
+            // (毎フレーム `random()` で選び直すと瞬く)。揺らぎは 0.5 のまわりに
+            // 寄るので、広げてから使う
+            let glow = constrain(map(noise(x * 0.02, y * 0.02, time * 0.8), 0.3, 0.7, 0, 1), 0, 1)
+            fill(.display(red: lerp(0.45, 1, glow), green: lerp(0.3, 0.85, glow), blue: lerp(0.2, 0.5, glow)))
+            push()
+            translate(x, y)
+            rotate(slope)
+            ellipse(0, 0, size * 1.6, size * thickness)
+            pop()
         }
     }
+
+    /// 下の帯の稜線の高さ。**1 次元の揺らぎ**で、同じ x には何度呼んでも同じ高さが返る。
+    private func ridge(_ x: Float) -> Float { lerp(448, 532, noise(x * 0.014)) }
 
     /// 木目 1 点ぶんの色。**上の断片と同じ式**を Swift で書いたもの。
     private func wood(_ px: Float, _ py: Float) -> LinearRGBA {
@@ -112,17 +144,17 @@ final class NoiseAndSeed: Sketch {
         let lateness = smoothstep(0.72, 0.9, ring) * (1 - smoothstep(0.94, 1.0, ring))
         let fibre = (noise(px * 2, py * 26) - 0.5) * 0.14
         return LinearRGBA(
-            premultipliedRed: mix(early.red, late.red, lateness) + fibre,
-            green: mix(early.green, late.green, lateness) + fibre,
-            blue: mix(early.blue, late.blue, lateness) + fibre,
+            premultipliedRed: lerp(early.red, late.red, lateness) + fibre,
+            green: lerp(early.green, late.green, lateness) + fibre,
+            blue: lerp(early.blue, late.blue, lateness) + fibre,
             alpha: 1)
     }
 
     // 断片の側にあるものを Swift で書いたもの。**式を揃えるためだけに置いてある**
+    // (断片の `mix` / `clamp` にあたるものは `lerp` / `constrain` がそのまま使える)
     private func fract(_ value: Float) -> Float { value - value.rounded(.down) }
-    private func mix(_ a: Float, _ b: Float, _ t: Float) -> Float { a + (b - a) * t }
     private func smoothstep(_ low: Float, _ high: Float, _ value: Float) -> Float {
-        let t = min(max((value - low) / (high - low), 0), 1)
+        let t = constrain((value - low) / (high - low), 0, 1)
         return t * t * (3 - 2 * t)
     }
 }

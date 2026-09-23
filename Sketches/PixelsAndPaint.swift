@@ -57,7 +57,7 @@ final class PixelsAndPaint: Sketch {
         for y in 0..<Int(height) {
             for x in 480..<Int(width) {
                 // 右端へ行くほど、赤と青を入れ替えていく
-                let mix = Float(x - 480) / (width - 480)
+                let mix = map(Float(x), 480, width, 0, 1)
                 let colour = pixels[x, y]
                 pixels[x, y] = LinearRGBA(
                     premultipliedRed: colour.red * (1 - mix) + colour.blue * mix,
