@@ -111,7 +111,12 @@ extension Canvas {
 
         /// 無い書体を指定された。
         case missingFont
-        /// 字形を焼く場所が上限まで埋まった。
-        case atlasFull
+        /// 1 フレームで要る字が、焼き直しても上限の焼き場に収まらなかった。
+        ///
+        /// 以前の `atlasFull` (上限まで埋まった) を改めたもの。上限まで埋まるだけなら焼き
+        /// 直して戻るので、知らせる場面ではなくなった ([#1342])。
+        ///
+        /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
+        case atlasFullInOneFrame
     }
 }
