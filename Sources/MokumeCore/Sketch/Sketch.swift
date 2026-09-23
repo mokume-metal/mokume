@@ -165,6 +165,15 @@ public struct SketchSettings: Equatable, Sendable {
     /// 出す高さ (画素)。
     public var height: Int
     /// 1 秒あたりのフレーム数の目標。
+    ///
+    /// **起動のときに読む。** 走っている最中に代入しても、画面の刻みも ``Sketch/time`` /
+    /// ``Sketch/deltaTime`` も変わらず、警告も出ない。`var settings = SketchSettings(…)` と
+    /// 持てば `draw()` の中で代入でき、読み返しても代入した値が返るので、変えられたように
+    /// 見えてしまう。
+    ///
+    /// 手本 (Processing / p5) の `frameRate(n)` は走っている最中に呼べるが、ここには
+    /// 走っている最中に速さを変える口がまだ無い
+    /// ([#1323](https://github.com/mokume-metal/mokume/issues/1323))。
     public var frameRate: Int
     /// 窓の題名。
     public var title: String
