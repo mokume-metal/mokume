@@ -135,4 +135,74 @@ struct CallbackDeliveryTests {
                 .draw(frame: 2),
             ])
     }
+
+    /// ``Sketch/keyPressed()`` の説明が勧める「1 回だけ効かせる」書き方を、そのまま写した
+    /// スケッチ。**説明の例を書き換えたら、ここも同じ形に揃える** — 見ているのは、説明が
+    /// 約束する書き方で約束どおりに効くことである。
+    final class OncePerPress: Sketch {
+        /// `setup()` で ``Sketch/noLoop()`` を呼ぶか。
+        var stopsInSetup = false
+        var spaceHeld = false
+        /// 1 回だけ効かせたいことが、実際に効いた回数。
+        var fired = 0
+        /// 呼ばれた時点で `isKeyDown(.space)` が返した値。
+        var seenKeyDown: [Bool] = []
+        var drawCalls = 0
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
+
+        func setup() {
+            if stopsInSetup { noLoop() }
+        }
+        func draw() {
+            drawCalls += 1
+            background(.display(red: 0, green: 0, blue: 0))
+        }
+        func keyPressed() {
+            seenKeyDown.append(isKeyDown(.space))
+            guard keyCode == .space, !spaceHeld else { return }
+            spaceHeld = true
+            fired += 1
+        }
+        func keyReleased() {
+            if keyCode == .space { spaceHeld = false }
+        }
+    }
+
+    /// **連射と最初の 1 回の違いは、送る列の `isRepeat` にしか無い** — 窓の実操作でも
+    /// OS のキーリピートは同じ形で届く。スケッチからはそれが読めないので、勧める書き方が
+    /// 見分けに使えるのは押下と解放の対だけである
+    /// ([#1365](https://github.com/mokume-metal/mokume/issues/1365))。
+    ///
+    /// 止めた側も見るのは、止めている間は `draw()` が呼ばれず、前のフレームと比べる
+    /// 形が使えないためである。コールバックだけで閉じていれば、そこでも同じに効く。
+    @Test(
+        "keyPressed の説明が勧める書き方なら、押しっぱなしの連射では効かず、押し直すと効く",
+        arguments: [false, true])
+    func recommendedFormFiresOncePerPress(stopsInSetup: Bool) throws {
+        let facet = try makeFacet()
+        let sketch = OncePerPress()
+        sketch.stopsInSetup = stopsInSetup
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+
+        try runtime.advance()
+        try send(
+            #"""
+            {"type":"keyDown","code":49,"characters":" ","isRepeat":false},
+            {"type":"keyDown","code":49,"characters":" ","isRepeat":true},
+            {"type":"keyDown","code":49,"characters":" ","isRepeat":true},
+            {"type":"keyUp","code":49},
+            {"type":"keyDown","code":49,"characters":" ","isRepeat":false}
+            """#, id: "k1", to: facet)
+        try runtime.advance()
+
+        #expect(sketch.fired == 2, "押した 2 回のぶんだけ効くはずが、\(sketch.fired) 回効いた")
+        // 説明が名乗る事実: 呼ばれた時点でそのキーは既に押されている集合に入っている。
+        // **最初の 1 回でも `true`** なので、`isKeyDown` では連射と見分けられない
+        #expect(sketch.seenKeyDown == [true, true, true, true])
+        // 止めた側は、止まった経路 (`draw()` を呼ばずにコールバックだけを配る) を通っている
+        #expect(sketch.drawCalls == (stopsInSetup ? 1 : 2))
+    }
 }
