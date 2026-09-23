@@ -16,33 +16,6 @@ import AppKit
 import Foundation
 import mokume
 
-let catalogue: [(name: String, make: () -> any Sketch)] = [
-    ("shapes-and-style", { ShapesAndStyle() }),
-    ("curves-and-vertices", { CurvesAndVertices() }),
-    ("color-and-scale", { ColorAndScale() }),
-    ("type-and-imagery", { TypeAndImagery() }),
-    ("type-and-measure", { TypeAndMeasure() }),
-    ("textured-surfaces", { TexturedSurfaces() }),
-    ("pixels-and-paint", { PixelsAndPaint() }),
-    ("noise-and-seed", { NoiseAndSeed() }),
-    ("surface-and-grain", { SurfaceAndGrain() }),
-    ("band-and-pattern", { BandAndPattern() }),
-    ("facing-and-view", { FacingAndView() }),
-    ("surfaces-and-blend", { SurfacesAndBlend() }),
-    ("field-and-flow", { FieldAndFlow() }),
-    ("sparks-and-forces", { SparksAndForces() }),
-    ("sparks-in-space", { SparksInSpace() }),
-    ("glow-and-detail", { GlowAndDetail() }),
-    ("effects-and-custom", { EffectsAndCustom() }),
-    // 触って確かめるためのもの。**書き出しても意味を持たない** (下の --render は
-    // 触っていない 1 枚を出すだけ) が、カタログを 2 つに割るほどの違いではない
-    ("pointer-and-keys", { PointerAndKeys() }),
-    ("knobs-and-values", { KnobsAndValues() }),
-    ("solids-and-light", { SolidsAndLight() }),
-    ("materials-and-surroundings", { MaterialsAndSurroundings() }),
-    ("crowd-and-model", { CrowdAndModel() }),
-]
-
 /// 失敗したら、何が足りないかと次にすることを出して落ちる。
 ///
 /// **裸の `try` に任せない。** top-level の throw は Swift ランタイムの既定処理へ落ち、
@@ -78,7 +51,7 @@ if arguments.first == "--render" {
             guard let frames else {
                 // **同じ番号のフレームを描く。** 時計はフレーム番号から導くので、
                 // 何度撮っても同じ絵になる
-                for _ in 0..<45 { try runtime.advance() }
+                for _ in 0..<stillFrame { try runtime.advance() }
                 let url = directory.appendingPathComponent("\(entry.name).png")
                 try runtime.target.writePNG(to: url)
                 print("\(entry.name) → \(url.path)")

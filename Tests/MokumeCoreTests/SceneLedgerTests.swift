@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCore
+@testable import reference_sketches
 
 /// 代表シーンの絵が、台帳に記録した時点から**変わっていない**ことを見る。
 ///
@@ -18,6 +19,14 @@ import Testing
 /// 役割は**ゲートではなく可視化**である。共通部分を触った変更が他の絵まで変えたとき、
 /// それが台帳の差分の行として現れ、レビューする目が「この変更でなぜこの絵が変わるのか」
 /// を問えるようにする ([ADR-0019] 決定 3)。
+///
+/// ## 参照スケッチの行
+///
+/// 検査の中で組んだシーンに加え、参照スケッチ (`Sketches/`) を 1 本 1 行で載せる。行名は
+/// `sketch:<名前>@45` で、書き出し (`--render`) と同じ 45 フレーム目の絵である。シーンは
+/// 経路を 1 つずつ狙って組めるので、動いた行がそのまま動いた経路を名指す。参照スケッチは
+/// 作者が書く形のまま API をほぼすべて呼ぶので、シーンに無い組み合わせと `Sketch` 層の
+/// 中継を拾う。見るのは同じく退行だけである ([ADR-0019] 決定 3 の改訂・#1377)。
 ///
 /// ## 指紋の取り方
 ///
@@ -38,22 +47,67 @@ import Testing
 struct SceneLedgerTests {
     @Test("台帳に記録した絵が変わっていない", arguments: Take.all)
     func sceneMatchesLedger(_ take: Take) throws {
-        let ledger = try Ledger.load()
-        let digest = try Self.fingerprint(of: take)
+        try Self.compare(
+            take.name, noun: "シーン",
+            howToSee: "MOKUME_LEDGER_DUMP_DIR=/tmp/scenes swift test --filter SceneLedger"
+        ) { try Self.fingerprint(of: take) }
+    }
 
-        guard let recorded = ledger[take.name] else {
+    /// 参照スケッチを書き出しと同じ番号のフレームまで進めた絵が、台帳から動いていない。
+    ///
+    /// 参照スケッチは作者向けの API をほぼすべて、作者が書く形のまま呼ぶ (#1350)。
+    /// **検査の中で組んだシーンは `Canvas` を直に叩く**ので、`Sketch` 層の中継と
+    /// `SketchRuntime` の経路 (setup / draw / 時計) を通る行はここにしか無い。
+    /// 走らせる検査もここにしか無く、描く途中で落ちれば ci-check ごと赤になる (#1377)。
+    @Test("参照スケッチの書き出しが台帳から動いていない", arguments: catalogue)
+    func sketchMatchesLedger(_ sketch: ReferenceSketch) throws {
+        try Self.compare(
+            Self.ledgerName(of: sketch), noun: "参照スケッチ",
+            howToSee: """
+                make reference-shots OUT=/tmp/shots    (→ /tmp/shots/\(sketch.name).png)
+                """,
+            beforeAfter: """
+                before / after は、main とこのブランチでそれぞれ次を打って
+                \(sketch.name).png を並べる (AI が見るなら、観測の統計値を先に使う — ADR-0019 決定 5):
+
+                    make reference-shots OUT=/tmp/before    (main)
+                    make reference-shots OUT=/tmp/after     (このブランチ)
+
+                書き出しは手元の .mokume/state/params.json (つまみの保存) を読むが、
+                台帳は読まない。撮る前に退避しておく。
+                """,
+            nondeterminismHint: """
+                requestImage / requestModel で読むスケッチなら、届く時機を先に疑う。
+                この検査は描き終えるまで main actor を手放さないので、setup で起こした
+                Task は 45 フレーム目より前には走らない (#1377)。手放す経路が入ったなら
+                そこが原因である。
+                """
+        ) { try Self.fingerprint(of: sketch) }
+    }
+
+    /// 台帳の行と照合し、合わなければ「台帳に無い / 絵が変わった / 決定論が壊れた」を
+    /// 切り分けて報告する。シーンと参照スケッチで同じ文面を使う。
+    static func compare(
+        _ name: String, noun: String, howToSee: String,
+        beforeAfter: String? = nil, nondeterminismHint: String? = nil,
+        fingerprint: () throws -> String
+    ) throws {
+        let ledger = try Ledger.load()
+        let digest = try fingerprint()
+
+        guard let recorded = ledger[name] else {
             Issue.record(
                 """
-                シーン \(take.name) が台帳に無い。
-                新しいシーンなら、次の 1 行を \(Ledger.relativePath) へ足す:
+                \(noun) \(name) が台帳に無い。
+                新しい\(noun)なら、次の 1 行を \(Ledger.relativePath) へ足す:
 
-                    \(take.name) \(digest)
+                    \(name) \(digest)
 
-                足す前に、そのシーンの絵を目で見て正しいことを確かめる — 台帳の行は
+                足す前に、その\(noun)の絵を目で見て正しいことを確かめる — 台帳の行は
                 「この絵を正しいと認めた」という記録であって、正しさの根拠ではない。
                 絵は次で書き出せる:
 
-                    MOKUME_LEDGER_DUMP_DIR=/tmp/scenes swift test --filter SceneLedger
+                    \(howToSee)
                 """)
             return
         }
@@ -62,17 +116,17 @@ struct SceneLedgerTests {
 
         // 不一致。もう一度描いて「絵が変わった」と「決定論が壊れた」を切り分ける。
         // 切り分けずに報告すると、台帳を書き換えてはいけない場面で書き換えられる
-        let again = try Self.fingerprint(of: take)
+        let again = try fingerprint()
         if again == digest {
             Issue.record(
                 """
-                シーン \(take.name) の絵が変わった。
-                (同じシーンを 2 回描いた結果は一致するので、決定論は効いている)
+                \(noun) \(name) の絵が変わった。
+                (同じ\(noun)を 2 回描いた結果は一致するので、決定論は効いている)
 
                 意図した変更なら、\(Ledger.relativePath) の行を次へ書き換え、
                 before / after を PR の証跡に載せる:
 
-                    \(take.name) \(digest)
+                    \(name) \(digest)\(beforeAfter.map { "\n\n\($0)" } ?? "")
 
                 意図していないなら、この変更が触った共通部分が他の絵まで変えている。
                 台帳は先に書き換えず、なぜ変わったかを先に調べる。
@@ -86,11 +140,11 @@ struct SceneLedgerTests {
         } else {
             Issue.record(
                 """
-                シーン \(take.name) が、同じ入力から違う絵を出している (決定論が壊れている)。
+                \(noun) \(name) が、同じ入力から違う絵を出している (決定論が壊れている)。
                 1 回目 \(digest) / 2 回目 \(again)
 
                 **台帳を書き換えてはならない。** 台帳は「変わっていないこと」しか見られないので、
-                同じ絵が出ない状態では何も守れない。先に決定論を直す。
+                同じ絵が出ない状態では何も守れない。先に決定論を直す。\(nondeterminismHint.map { "\n\n\($0)" } ?? "")
                 """)
         }
     }
@@ -127,6 +181,42 @@ struct SceneLedgerTests {
             try? FileManager.default.createDirectory(
                 at: URL(fileURLWithPath: dir), withIntermediateDirectories: true)
             try target.writePNG(to: url)
+        }
+
+        return SHA256.hash(data: Data(image.bytes)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 台帳の行名。`@N` は時点を持つシーンの行と同じく「何フレーム進めたところか」
+    static func ledgerName(of sketch: ReferenceSketch) -> String {
+        "sketch:\(sketch.name)@\(stillFrame)"
+    }
+
+    /// 参照スケッチを書き出しと同じ番号のフレームまで進め、出力段を通した 8 bit の画素から
+    /// 指紋を取る。描く経路 (`advance()`) は `--render` と同じである。
+    ///
+    /// **組み立ては検査用の入口で行い、外から入る口をすべて閉じる。** 公開の入口は作業場所の
+    /// 観測・入力・つまみの区画と、つまみの保存 (`.mokume/state/params.json`) を読む。窓で
+    /// つまみを動かした跡が手元に残っていると絵が動き、「絵が変わった」の文面が台帳の
+    /// 書き換えを勧めてしまう。`now` を止めるのは、走り出しの名乗りが run loop を回す経路を
+    /// 塞ぐためで、フレームの時刻はフレーム番号から導くので絵には効かない。
+    ///
+    /// **async にしない。** `requestImage` / `requestModel` で読むスケッチは setup で `Task` を
+    /// 起こし、その中身は main actor で走る。描き終えるまで main actor を手放さなければ、
+    /// 45 フレーム目は必ず「届く前」の絵になる (`--render` と同じ)。途中に `await` を置くと、
+    /// 届く前と後が 45 フレーム目で揺れる。
+    static func fingerprint(of sketch: ReferenceSketch) throws -> String {
+        let gpu = try RenderDevice()
+        let runtime = try SketchRuntime(
+            sketch: sketch.make(), gpu: gpu, clock: nil, now: { 0 }, observer: nil)
+        for _ in 0..<stillFrame { try runtime.advance() }
+        let image = try runtime.target.encodeForDisplay()
+
+        if let dir = ProcessInfo.processInfo.environment["MOKUME_LEDGER_DUMP_DIR"] {
+            // 行名の `:` はファイル名に入れない。置き方は --render と同じ並びにして、
+            // 書き出しとそのまま突き合わせられるようにする
+            let folder = URL(fileURLWithPath: dir).appendingPathComponent("sketches")
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try runtime.target.writePNG(to: folder.appendingPathComponent("\(sketch.name).png"))
         }
 
         return SHA256.hash(data: Data(image.bytes)).map { String(format: "%02x", $0) }.joined()

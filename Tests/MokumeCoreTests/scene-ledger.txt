@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# 代表シーンの絵の指紋 (出力段を通した 8 bit 画素の sha256)。
+# 代表シーンと参照スケッチの書き出しの、絵の指紋 (出力段を通した 8 bit 画素の sha256)。
 # 行が動いたら「触っていない絵が変わった」ということ — 意図した変更かを
 # 目で確かめてから書き換える。判定と更新の手順は SceneLedgerTests.swift。
 
@@ -54,3 +54,30 @@ upscaledOverTime@8 32cf40dda6cb0d817035228bc6e217bbb6ca32827369cc49ebc40ab01fa77
 upscaledOverTime@32 f161ee959c2cd62cdba637bb0317995b074e6dae433e52ae8242d17e6a351764
 layered@6 056678ace7f5b15775a703651ebec642d26e82a6a446db9006763e1c68a13150
 layered@20 0fab28721031f4d6550ecefd067a055e98acd544ad03a88492b18cb2673d0140
+
+# 参照スケッチ (Sketches/) の書き出し。1 本 1 行で、--render と同じ 45 フレーム目の絵
+# (sketch:<名前>@45)。作者が書く形のまま API を呼ぶので、Sketch 層の中継と SketchRuntime の
+# 経路はここにしか無い (#1377)。requestImage / requestModel で読む 2 本は「届く前」の絵。
+# 文字を描くものは Helvetica と既定の書体に依る — text の行と同じく、OS の書体が変わると動く。
+sketch:shapes-and-style@45 f83ed1df30f9b856b9a215eeba154af84e38b3195d7acc3ee965324881869847
+sketch:curves-and-vertices@45 d8339d6759b2a53e2b6dd76022a03bac348a8a1faff14077bb10a33fc795739a
+sketch:color-and-scale@45 26aac8b580e7f7dee5b45c2671792c3c114718fdff7d61b62865f63e7e290cad
+sketch:type-and-imagery@45 e3f6c5433b487eabbd213cf5a120012e1746fff7c435aece2993235f7087fbbd
+sketch:type-and-measure@45 16932326749c25cdb1d2c8261de5b73e9e9e082f92b909b29d35887ac5100f3e
+sketch:textured-surfaces@45 6a75367567f994da775aa77df94570f6affba85f90610bcaa73fd3ef63c6efed
+sketch:pixels-and-paint@45 0524fb2022b5e7ddc594eca983eb17ff3ad23f552aa8b4e920951da4f12005ac
+sketch:noise-and-seed@45 61bb463d7e8cad31c121fa503f5be631df1005e7fa76a0435c220cacacf8fa9b
+sketch:surface-and-grain@45 71c8897827ec3fef771012464f584483013a480b5c4b98c49446bc25fb145d23
+sketch:band-and-pattern@45 f0d88fa73e579c69057dd234d4186921916018e1693539b3e96a372787d31b71
+sketch:facing-and-view@45 6f5aa00fe3ef32580210f4c5f3861a7da5ae6eb002a9538f05d0dd5dda859568
+sketch:surfaces-and-blend@45 1d5733d4ae8bcc4af1007381380aadabb6f9399f2d616700042aa99356ea704a
+sketch:field-and-flow@45 1fd4e16974daaa22b34267d5aa2321f89191ffa6357f5a2d68fba4fb12bb5c9c
+sketch:sparks-and-forces@45 08960d8b0a7bd3c18de7455b9109b71f340f404902c2a966c76078b113a0ac82
+sketch:sparks-in-space@45 e471813a37cf99133cc375339603a4f44ae9f5923fc953fe72c4e10dae57af88
+sketch:glow-and-detail@45 d232f41f91d5dcaacf3228757264c40ce9d2fbf36ff6d18cf398e3db360612d3
+sketch:effects-and-custom@45 ef132c2d88c0b885a9f40a8128475174113b5c74c9a3c3e99463548ded4c29b1
+sketch:pointer-and-keys@45 161addec2c0d35025bff8f08ad71b2e6b5c3dd7e5c840a7dac7ed04e13c2e3ba
+sketch:knobs-and-values@45 77a7633d7a76ae5e29a68c807a77857eb548fc1bb981e14bb6771dd23a971916
+sketch:solids-and-light@45 923c1abdfe83740c938a72f769d06e2fcbc53e9422c7db1f18486664cb0aa8e6
+sketch:materials-and-surroundings@45 3d64dfaade7965c14af584dd8748affe638f35d3687cd414e3c21b09ef5a3207
+sketch:crowd-and-model@45 3a3e91efabe5666b1b3ed381fdb7b49d9acabf9b647bdff290e8d30b262aa5cb
