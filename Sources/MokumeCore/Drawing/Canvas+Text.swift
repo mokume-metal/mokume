@@ -234,6 +234,10 @@ extension Canvas {
     /// が返す値そのもの**になり、測った幅と描いた幅が食い違わない。行の中ほどで続いた
     /// 空白 (切れ目にならないもの) と、段落の頭の空白 (字下げ) は行に残る。
     ///
+    /// **文字の切れ目で折っても、切れ目の空白は同じく消費する** ([#1424])。行の末尾に
+    /// 収まった空白も、溢れて次の行へ送られる空白も、どちらの行にも入らない — 行の頭に
+    /// 空白が残ると左揃えの行がその幅だけずれ、段落の末尾では空白だけの行ができる。
+    ///
     /// **段落の末尾の空白で折ったときは、空の行を足さない。** 切れ目の後ろに語が無く、消費した
     /// 空白の先が段落の終わりなので、次の行に置く字が無い — 空の行を足すと、行数と高さが 1 行
     /// ぶん増え、続きが改行から始まる ([#1419])。元からある空の行 (改行が続いたところ) は、
@@ -245,6 +249,7 @@ extension Canvas {
     ///
     /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
     /// [#1419]: https://github.com/mokume-metal/mokume/issues/1419
+    /// [#1424]: https://github.com/mokume-metal/mokume/issues/1424
     func wrapped(_ string: String, face: Typeface, within limit: Float) -> [Substring] {
         var lines: [Substring] = []
         for paragraph in string.lines {
@@ -287,7 +292,23 @@ extension Canvas {
                         start = next
                         index = next
                     } else {
-                        lines.append(paragraph[start..<index])
+                        // **文字の切れ目でも、切れ目の空白はまとめて消費する** ([#1424])。
+                        // 行の末尾に収まった空白 (`index` の前) も、溢れた空白 (`index` から
+                        // 後ろ) も、どちらの行にも入れない — 語の切れ目と同じ扱いである。
+                        // 行の頭から空白しか無い (字下げだけで溢れた) ときは消費しない。
+                        // 字下げは切れ目ではない
+                        var end = index
+                        while end > start, paragraph[paragraph.index(before: end)].isWhitespace {
+                            end = paragraph.index(before: end)
+                        }
+                        if end > start {
+                            lines.append(paragraph[start..<end])
+                            while index < paragraph.endIndex, paragraph[index].isWhitespace {
+                                index = paragraph.index(after: index)
+                            }
+                        } else {
+                            lines.append(paragraph[start..<index])
+                        }
                         start = index
                     }
                     width = 0
@@ -299,9 +320,9 @@ extension Canvas {
                 index = paragraph.index(after: index)
             }
             // **段落の末尾の空白で折ったなら、空の行は足さない** ([#1419])。`start` が段落の
-            // 終わりに達するのは、語の切れ目で折って後ろの空白を読み飛ばした先が段落の終わり
-            // だったときだけである (文字の切れ目で折った後の `start` は、段落の中の字を指す)。
-            // 元からある空の行 (空の段落) は頭の `guard` が足す
+            // 終わりに達するのは、切れ目で折って後ろの空白を読み飛ばした先が段落の終わりだった
+            // ときだけである — 語の切れ目でも文字の切れ目でも ([#1424])。元からある空の行
+            // (空の段落) は頭の `guard` が足す
             if start < paragraph.endIndex {
                 lines.append(paragraph[start..<paragraph.endIndex])
             }
