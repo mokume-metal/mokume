@@ -476,8 +476,32 @@ static inline float mokume_noise(Fragment f, float x) {
 /// 描かれる ([#758])。**どの混ぜ方がどちらの経路へ行くかの一覧は
 /// `ShapePipeline.BlendStates` の doc が持つ** ([#887])。
 ///
+/// **式は W3C の合成の一般式である** ([Compositing and Blending Level 1] の 6 節・10 節)。
+/// 大文字は乗算前、小文字は乗算済みの色で、`B` が混ぜ方ごとの式:
+///
+/// ```text
+/// 置く色  Cs' = (1 − αb)·Cs + αb·B(Cb, Cs)
+/// 結果    co  = mix(cb, Cs', αs)
+///         αo  = αb + αs·(1 − αb)          (乗算済みの source-over)
+/// ```
+///
+/// 混ぜる相手 (下地) がどれだけ居るかを**下地のアルファ**が、置いた色をどれだけ効かせるかを
+/// **上のアルファ**が決める。だから次の 3 つが、どのモードでも揃って成り立つ:
+///
+/// - **アルファ 0 の色は下地を変えない** (αs = 0 なら `co = cb`)
+/// - **下地が透明な所では、置いた色がそのまま載る** (αb = 0 なら `Cs' = Cs` で、source-over
+///   と同じになる)。以前は下地のアルファを見ず、透明な下地を「黒」と読んで混ぜていたので、
+///   `multiply` は黒い形を、`subtract` は負の色を置いていた ([#1447])
+/// - **不透明な下地の上では、以前の式と同じ値を計算する** (αb = 1 なら `Cs' = B` で、
+///   `mix(Cb, B, αs)` に戻る)。不透明な下地に描いた絵は動かない
+///
+/// `add` / `subtract` は W3C に無いが、同じ式を当てる。`add` は `cs + cb` (乗算済みの和)、
+/// `subtract` は `cs·(1 − 2αb) + cb` になる。
+///
 /// [#758]: https://github.com/mokume-metal/mokume/issues/758
 /// [#887]: https://github.com/mokume-metal/mokume/issues/887
+/// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
+/// [Compositing and Blending Level 1]: https://www.w3.org/TR/compositing-1/#generalformula
 static inline float4 mokume_composite(float4 source, float4 destination, uint mode) {
     // 「色そのもの」どうしを混ぜるので、両方の乗算を戻してから計算する。
     // 乗算済みのまま混ぜると、半透明の色が暗い色として扱われてしまう
@@ -495,10 +519,10 @@ static inline float4 mokume_composite(float4 source, float4 destination, uint mo
         case kMultiply: mixed = s * d; break;
         case kScreen: mixed = s + d - s * d; break;
         // **来ない番号を、無害な側で飲む。** 上の doc のとおり 0 と 9 は別の列へ行くので
-        // 届く経路が無く、`mixed` を置かないと未初期化になるので default は要る。以前は
-        // `s` だったので、万一届いたら置き換え相当で下地を消していた — 下地をそのまま
-        // 返せば、絵は動かないまま「消える」だけが起きなくなる (#887)
-        default: mixed = d; break;
+        // 届く経路が無い。以前は `s` だったので、万一届いたら置き換え相当で下地を消していた
+        // (#887)。**下地そのものを返す** — `mixed = d` で下の式へ流すと、透ける下地の上では
+        // 置く色に上の色が混ざるので、下地は保たれない (#1447)
+        default: return destination;
     }
 
     // **飽和させない。** 作業空間は範囲外の値 (負値および 1.0 超) を捨てず、表示できる
@@ -509,14 +533,22 @@ static inline float4 mokume_composite(float4 source, float4 destination, uint mo
     // 頭打ちになって光を積み上げられなかった (#1057)。切っていたのは 8 種だけなので、
     // 固定機能の列へ移った `.blend` は最初から 1.0 超を保っていた (#758)。
     //
-    // **`.subtract` の暗部が 0 へ落ちるのは、この決定に含まれる。** 式が `d - a*s` へ
-    // 単純化し、以前の「0 で折れる」非線形が消えるためで、退行ではない。
+    // **`.subtract` の暗部が 0 へ落ちるのは、この決定に含まれる。** 不透明な下地の上では
+    // 式が `d - a*s` へ単純化し、以前の「0 で折れる」非線形が消えるためで、退行ではない。
 
-    // **どれだけ効かせるかはアルファが決める。** これを全モードで揃えるので、
-    // アルファ 0 の色はどのモードでも下地を変えない
-    float3 result = mix(d, mixed, source.a);
+    // **混ぜる相手がどれだけ居るかは、下地のアルファが決める。** 透明な所では上の色そのもの
+    // を、不透明な所では混ぜた色を置く。`mix(s, mixed, αb)` と書かないのは、αb = 1 で
+    // `mixed` が丸めなしに出るようにするため — `s + (mixed − s)·1` は浮動小数では `mixed`
+    // に戻るとは限らない。こう書けば、不透明な下地の上では以前の式と同じ値を計算する
+    // (8 bit の台帳に出る幅ではないが、どちらでも動かないなら丸めの無いほうを採る)
+    float3 placed = (1.0 - destination.a) * s + destination.a * mixed;
+
+    // **どれだけ効かせるかは上のアルファが決める。** これを全モードで揃えるので、
+    // アルファ 0 の色はどのモードでも下地を変えない。**下地は乗算済みのまま混ぜる** —
+    // 結果もそのまま乗算済みになり、戻した色を掛け直す往復が要らない
+    float3 result = mix(destination.rgb, placed, source.a);
     float outAlpha = destination.a + source.a * (1.0 - destination.a);
-    return float4(result * outAlpha, outAlpha);
+    return float4(result, outAlpha);
 }
 
 /// 画素の色を出す。**組み込みも利用者の断片も、書くのはこれ 1 本。**
