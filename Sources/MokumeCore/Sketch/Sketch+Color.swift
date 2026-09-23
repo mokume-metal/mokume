@@ -42,7 +42,7 @@ extension Sketch {
     /// circle(250, 150, 160)
     /// ```
     ///
-    /// - Note: 引数は `Float` なので `Int` の変数はそのまま渡せない (`fill(Float(i), 0, 0)`)。
+    /// - Note: `Int` の変数もそのまま渡せる (`fill(i, 0, 0)`)。
     ///   0–1 で書きたいときは ``LinearRGBA/display(red:green:blue:alpha:)`` を渡す。
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
