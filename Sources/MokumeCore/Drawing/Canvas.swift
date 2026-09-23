@@ -1503,6 +1503,17 @@ public final class Canvas {
         !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty
     }
 
+    /// 描画先の絵を変えるものを、最後に描き切ってから溜めたか。
+    ///
+    /// **画素を読む口が描き切り直すかの判定** ([#1368])。図形 (``hasPendingGeometry``) に
+    /// 塗り直しの予定を足す — 読んだあとの `background()` は図形が 1 つも無くても絵を変える。
+    /// どちらも描き切りの末尾 (`discardFrame()`) で空に戻るので、別に印を持たなくても
+    /// 「描き切ってから溜めたか」をそのまま表す。**図形を積む口ごとに印を立てる形は取らない** —
+    /// 口が増えた日に、そこだけ黙って印が漏れる。
+    ///
+    /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
+    var hasPendingDrawing: Bool { hasPendingGeometry || pendingBackground != nil }
+
     /// - Parameters:
     ///   - applyingEffects: 効果を通すか。**フレームの終わりだけ通す** —
     ///     フレームの途中の描き切り (`loadPixels()`) で通すと、効果のかかった絵の上に

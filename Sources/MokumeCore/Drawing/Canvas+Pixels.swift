@@ -45,11 +45,18 @@ extension Canvas {
         target.pixels[x, y] = color
     }
 
-    /// このフレームでまだ読んでいなければ、読める状態にする。
+    /// このフレームでまだ読んでいないか、読んだあとに描いたなら、読める状態にする。
     ///
-    /// 1 フレームに 1 度しか描き切らないので、画素を 100 万回読んでも待つのは 1 度きり。
+    /// **読んだあとに描いたものも読む** ([#1368])。フレームで 1 度読んだかだけを見ていた
+    /// ときは、読んだあとの図形が描き切られず、古い写しが読めていた — 「`loadPixels()` を
+    /// 省いても結果は変わらない」が、画素に 1 度触れたフレームでは成り立っていなかった。
+    ///
+    /// 描いていなければ写しをそのまま使うので、読んで描かずにまた読むだけなら、
+    /// 画素を 100 万回読んでも描き切るのも待つのも 1 度きり (#753)。
+    ///
+    /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
     private func loadPixelsIfNeeded() {
-        guard !hasLoadedPixels else { return }
+        guard !hasLoadedPixels || hasPendingDrawing else { return }
         loadPixels()
     }
 }
