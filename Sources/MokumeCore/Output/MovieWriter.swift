@@ -60,8 +60,8 @@ final class MovieWriter {
     private let pressure: Backpressure
     /// ファイルが閉じた合図。
     private let closed = DispatchSemaphore(value: 0)
-    /// 直近の書き損じ。**隔離の外から書かれる**ので錠で守る。
-    private let lastFailure = FailureSlot()
+    /// 最後に決着した書き込みの結果。**隔離の外から書かれる**ので錠で守る。
+    private let lastOutcome = OutcomeSlot()
     private let continuation: AsyncStream<Job>.Continuation
 
     /// 書き出し先。
@@ -104,7 +104,7 @@ final class MovieWriter {
 
         let release = pressure.release
         let closed = self.closed
-        let failure = lastFailure
+        let outcome = lastOutcome
         Task.detached(priority: .utility) {
             // **ファイルは最初の 1 枚が来てから開く。** 絵の大きさは受け取るまで
             // 分からず、開いた後は変えられない
@@ -123,8 +123,9 @@ final class MovieWriter {
                     }
                     try await opened.append(job.image, at: job.time)
                     lastTime = job.time
+                    outcome.succeed()
                 } catch {
-                    failure.set("Could not write \(path): \(error)")
+                    outcome.fail("Could not write \(path): \(error)")
                 }
                 release()
             }
@@ -132,7 +133,7 @@ final class MovieWriter {
                 do {
                     try await file.finish(lastFrameAt: lastTime)
                 } catch {
-                    failure.set("Could not close \(path): \(error)")
+                    outcome.fail("Could not close \(path): \(error)")
                 }
             }
             closed.signal()
@@ -215,8 +216,16 @@ final class MovieWriter {
         return max(0, (lastFrame - firstFrame + 1) - acceptedFrames)
     }
 
-    /// 直近の書き損じを取り出す。**取り出したら消える。**
-    func takeFailure() -> String? { lastFailure.take() }
+    /// 前に取り出してから決着した書き込みの、最後の結果を取り出す。**取り出したら消える。**
+    ///
+    /// `nil` は「順調」ではなく「まだ何も決着していない」である
+    /// (``FrameWriter/takeOutcome()``・[#1272])。
+    ///
+    /// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
+    func takeOutcome() -> WriteOutcome? { lastOutcome.take() }
+
+    /// 最後の結果が書き損じなら、その理由を取り出す。**取り出したら消える。**
+    func takeFailure() -> String? { takeOutcome()?.failure }
 }
 
 /// 動画を閉じ終えるまでに、外から待つ側が見込むべき長さ。
