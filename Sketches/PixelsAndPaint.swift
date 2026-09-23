@@ -4,6 +4,11 @@
 import mokume
 
 /// 画素の読み書きと、自分で書いた塗り。
+///
+/// **右半分は、描いてから画素を読んで書き換えたもの。** 下地は `background()` ではなく
+/// `pixels.fill()` で全画素を 1 色にしてあり、その後に描いた円と四角を `loadPixels()` で
+/// 描き切らせてから読んでいる。下の 4 つの四角は、白い輪の場所を `get()` で 1 画素ずつ
+/// 読んだ色 (書き換えた後の色が読める)、黄色の市松は `set()` で 1 画素ずつ書いたもの。
 final class PixelsAndPaint: Sketch {
     var settings = SketchSettings(width: 960, height: 540, title: "pixels and paint")
 
@@ -29,7 +34,8 @@ final class PixelsAndPaint: Sketch {
     }
 
     func draw() {
-        background(15, 18, 23)
+        // 下地は画素で埋める。**描いた図形を経ずに、全画素を 1 色にする**
+        pixels.fill(color(15, 18, 23))
         noStroke()
 
         // 左: 自分で書いた塗り
@@ -53,7 +59,13 @@ final class PixelsAndPaint: Sketch {
         fill(102, 204, 153, 191)
         rect(620, 200, 240, 200)
 
-        // その上から、画素を読んで書き換える。**そのフレームでそこまでに描いたものが読める**
+        // その上から、画素を読んで書き換える。**そのフレームでそこまでに描いたものが読める**。
+        // 下地を画素で埋めた後に描いた図形を読むので、ここで描き切らせる — 待つのもここ。
+        // **省くと読めない** — 画素に 1 度触れたフレームでは、後から描いた図形を読む口が
+        // 描き切らない ([#1368])
+        //
+        // [#1368]: https://github.com/mokume-metal/mokume/issues/1368
+        loadPixels()
         for y in 0..<Int(height) {
             for x in 480..<Int(width) {
                 // 右端へ行くほど、赤と青を入れ替えていく
@@ -64,6 +76,22 @@ final class PixelsAndPaint: Sketch {
                     green: colour.green,
                     blue: colour.blue * (1 - mix) + colour.red * mix,
                     alpha: colour.alpha)
+            }
+        }
+
+        // 1 画素ずつ読む・書く。読めるのは書き換えた後の色で、白い輪が読んだ場所
+        for (index, place) in [(630, 150), (770, 130), (690, 250), (830, 360)].enumerated() {
+            fill(get(place.0, place.1))
+            rect(500 + index * 60, 420, 48, 48)
+            noFill()
+            stroke(242, 242, 230)
+            strokeWeight(2)
+            circle(place.0, place.1, 12)
+            noStroke()
+        }
+        for y in 420..<468 {
+            for x in 760..<940 where (x / 6 + y / 6) % 2 == 0 {
+                set(x, y, color(242, 217, 89))
             }
         }
 
