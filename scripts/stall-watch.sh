@@ -2,9 +2,56 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# 止まった PR の判定 (#961)。AGENTS.md「止まって見えるときの読み分け」表の実行者。
+# 止まった PR の判定 (#961)。下の「読み分け表」の実行者。
 #
 #   stall-watch.sh
+#
+# **手元で打ってもよい** (読み取りしかしない)。当番は数時間おきにしか回らないので
+# (#1197)、急ぐときは自分で打って分類を読む。
+#
+# ## 読み分け表
+#
+# 以前は AGENTS.md が持っていた (#1364 でここへ移した)。行番号は下の「分類」が指す。
+#
+#   1. autoMerge: true + UNKNOWN で **check が 1 本も付かない** (local-render のような
+#      手元の commit status を除く)
+#      原因: main と衝突していて合流後の木が作れず、pull_request の workflow が起動して
+#      いない (#694)。衝突しても赤くならず DIRTY にもならない — 「まだ来ていない」では
+#      なく「来ない」(#690)
+#      対処: git merge-tree --write-tree origin/main HEAD で確かめ、手元で解いて push する。
+#      ラベルの付け直しも close → reopen も効かない
+#   2. autoMerge: false + BLOCKED
+#      原因: 承認待ち、または auto-merge が外れた (#114 に出来事ごとの実測)
+#      対処: 承認を待つ / gh pr merge <番号> --auto --squash を打ち直す
+#   3. 全 check が緑なのに進まない
+#      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)
+#      対処: gh run rerun <run-id> --failed — **ただし pr-title には打たない** (#699)
+#   4. autoMerge: false + CLEAN + 全 check 緑 で isInMergeQueue: true
+#      原因: 止まっていない — 予約が queue へ移ると autoMergeRequest は null になる (#628)
+#      対処: 何も打たない
+#   5. 同じ 3 つで isInMergeQueue: false
+#      原因: 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用)
+#      対処: make catch-up
+#   6. pr-title が落ちた
+#      原因: タイトルが Conventional Commits ではない (design は Issue Type であって型ではない)
+#      対処: タイトルを直す。**rerun しない** — pull_request の rerun は元のイベントを再生する
+#      ので古いタイトルで判定し、打つ前より悪くなる (#699)。直せば edited で新しい run が走る
+#   7. close して作り直した PR が、全 check 緑なのに赤い
+#      原因: close した側の run が付けた赤が同じコミットに残っている (#513)
+#      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)
+#   8. autoMerge: true + BLOCKED + 全 check 緑 で、一度承認されたのに承認が無い
+#      原因: 承認済みの PR へ push したので dismiss_stale_reviews_on_push が承認を落とした (#1033)
+#      対処: Approve を押し直す。依頼の出し直しは review-request が打つ (#1177)。衝突を解いた
+#      合流で落ちるのは正しい
+#
+# 読むときの注意:
+#
+# - **autoMerge: false は「外れた」と「queue に入った」の両方を指す** (#628)。分けるのは
+#   isInMergeQueue の 1 欄だけで、gh pr view --json に無い — make catch-up の前にこれを見る:
+#     gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullRequest(number:<番号>){isInMergeQueue mergeQueueEntry{position state}}}}' --jq '.data.repository.pullRequest'
+# - 承認の要否は reviewDecision には現れないので mergeStateStatus を見る (承認待ちなら
+#   BLOCKED・承認されると CLEAN)。**CLEAN だけでは「承認された」と読めない** — 承認の
+#   要らない PR も CLEAN なので、承認が付いたかは latestReviews を見る (#573)
 #
 # 表は PR が止まるたびに 1 行ずつ増えてきたが、**読むのは人間とエージェントの目だけ**
 # だった。気付く経路が「誰かがたまたま見る」しか無いので、夜間や人が離れている間は
@@ -225,7 +272,7 @@ say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
 # --- 走査 -------------------------------------------------------------------
 
 # Draft は当番の対象外である。**作業中の PR を Draft にしておくのが opt-out** で、
-# それは描画 PR の順番待ち (AGENTS.md) が既に採っている形と同じ。
+# それは描画 PR の順番待ち (scripts/render-status.sh) が既に採っている形と同じ。
 # **fork からの PR も見ない** (#1361)。予約を掛けるかは引き取るメンテナが決める —
 # 当番が掛けると、メンテナが手元で local-render を打った瞬間に判断なしで入る
 numbers=$(gh pr list --repo "$REPO" --state open --limit 100 \
@@ -253,7 +300,7 @@ for n in $numbers; do
   checks=$(normalize_checks <<<"$json")
   failing=$(failing_names <<<"$checks")
   failed_at=$(newest_failure_at <<<"$checks")
-  # 手元の commit status は「check が付いていない」の数に入れない (AGENTS.md 行 1)
+  # 手元の commit status は「check が付いていない」の数に入れない (読み分け表の行 1)
   others=$(jq -r --arg r "$RENDER_CONTEXT" '[.[] | select(.name != $r)] | length' <<<"$checks")
 
   # 名乗る行を先に判定する。順序の理由は冒頭の「順序に意味がある」

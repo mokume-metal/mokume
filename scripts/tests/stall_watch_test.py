@@ -302,7 +302,7 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual((kind, action), ("conflict", "name"))
 
     def test_手元の報告だけが付いた_PR_も_check_0_本と数える(self):
-        # AGENTS.md 行 1 の「local-render のような手元の commit status を除く」
+        # 読み分け表 (scripts/stall-watch.sh) の行 1 の「local-render のような手元の commit status を除く」
         self.add_pr(
             7, auto=True, state="UNKNOWN", checks=[check("local-render", "SUCCESS")]
         )
