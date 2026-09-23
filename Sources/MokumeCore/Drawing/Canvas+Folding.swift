@@ -25,22 +25,25 @@ extension Canvas {
         var fanCenter: SIMD2<Float>?
         /// 塗りを持つか。線と点は持たない。
         var fills: Bool
+        /// 点ごとに、曲線の刻みの点か (``BuildingVertex/isCurveStep``)。空ならどの点も角。
+        var curveSteps: [Bool]
 
         init(
             points: [SIMD2<Float>], isClosed: Bool, fanCenter: SIMD2<Float>? = nil,
-            fills: Bool = true
+            fills: Bool = true, curveSteps: [Bool] = []
         ) {
             self.points = points
             self.isClosed = isClosed
             self.fanCenter = fanCenter
             self.fills = fills
+            self.curveSteps = curveSteps
         }
 
         /// 形自身の座標で作った周を、置き場所ぶんずらす。**畳まないときの経路。**
         func moved(by offset: SIMD2<Float>) -> Outline {
             Outline(
                 points: points.map { $0 + offset }, isClosed: isClosed,
-                fanCenter: fanCenter.map { $0 + offset }, fills: fills)
+                fanCenter: fanCenter.map { $0 + offset }, fills: fills, curveSteps: curveSteps)
         }
     }
 

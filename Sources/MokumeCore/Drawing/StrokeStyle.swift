@@ -19,7 +19,11 @@ public nonisolated enum StrokeCap: Sendable, Equatable {
 
 /// 線の折れ目の形。
 ///
-/// 折れ線と、閉じた図形の輪郭の角に効く。
+/// 折れ線と、閉じた図形の輪郭の角に効く。**曲線の刻みの継ぎ目には効かない** —
+/// 継ぎ目は角ではないので、どの形でも丸く繋ぐ ([#1409])。曲線の終点と通過点は
+/// 置いた点なので、そこで折れれば角として扱う。
+///
+/// [#1409]: https://github.com/mokume-metal/mokume/issues/1409
 public nonisolated enum StrokeJoin: Sendable, Equatable {
     /// 角を尖らせる (既定)。
     ///
