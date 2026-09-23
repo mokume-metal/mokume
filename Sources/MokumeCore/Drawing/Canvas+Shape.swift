@@ -278,11 +278,18 @@ extension Canvas {
             return
         }
         var remaining = instances[...]
-        while !remaining.isEmpty {
+        while let first = remaining.first {
             // **頂点は列ごとに 1 度だけ置く。** 上限に達したら列を閉じて置き直す —
             // 描く回数が増えるだけで、絵は 1 ビットも変わらない
-            let start = openRetainedSolid(run, of: shape)
-            while let instance = remaining.first,
+            //
+            // **鏡映の符号が変わったときも開き直す** ([#1446])。表の巻き方は列ごとに 1 つ
+            // (``Canvas/Batch/frontFacing``) なので、鏡映した置き場所と鏡映していない置き場所は
+            // 同じ列に並べられない
+            //
+            // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+            let mirrored = first.isMirrored
+            let start = openRetainedSolid(run, of: shape, mirrored: mirrored)
+            while let instance = remaining.first, instance.isMirrored == mirrored,
                 !isBatchFull(solidInstances.count, since: start)
             {
                 solidInstances.append(instance)
@@ -294,8 +301,9 @@ extension Canvas {
     /// 保持した形の頂点を積んで、置き場所を入れる列を開く。返すのはその列の先頭。
     ///
     /// **先頭を返すのは、上限に達したかを同じ形で数えるため** (``Canvas/isBatchFull(_:since:)``)。
-    /// `openSolid` から読み直すと、開いた直後に強制開示が要る。
-    private func openRetainedSolid(_ run: Shape.Run, of shape: Shape) -> Int {
+    /// `openSolid` から読み直すと、開いた直後に強制開示が要る。`mirrored` はこの列に入れる
+    /// 置き場所の鏡映の符号 (``Canvas/OpenSolid/isMirrored``)。
+    private func openRetainedSolid(_ run: Shape.Run, of shape: Shape, mirrored: Bool) -> Int {
         closeBatch()
         let start = solidVertices.count
         solidVertices.append(
@@ -315,7 +323,8 @@ extension Canvas {
         let instanceStart = solidInstances.count
         openSolid = OpenSolid(
             source: .retained(serial: retainedSerial), vertexStart: start,
-            vertexCount: run.count, indexStart: indexStart, instanceStart: instanceStart)
+            vertexCount: run.count, indexStart: indexStart, instanceStart: instanceStart,
+            isMirrored: mirrored)
         return instanceStart
     }
 

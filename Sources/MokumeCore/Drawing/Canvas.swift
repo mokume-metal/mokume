@@ -295,6 +295,14 @@ public final class Canvas {
         /// 半透明の形は奥の面が手前の面を通して見えるので、1 つでも居れば列ごと
         /// 両面で描く (``Batch/cullMode``)。
         var hasTranslucentInstance = false
+        /// この列の置き場所が形を鏡映するか (``SolidInstance/isMirrored``)。
+        ///
+        /// **列の置き場所はどれも同じ符号を持つ。** 表の巻き方は列ごとに 1 つ
+        /// (``Batch/frontFacing``) なので、符号が変わったら列を閉じる — 鏡映した置き場所と
+        /// 鏡映していない置き場所を同じ列に同居させると、どちらかの手前の面が捨てられる
+        /// ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。その場で並べる列は
+        /// 何も動かさない置き場所 1 つで描くので、いつも `false` である。
+        var isMirrored = false
         /// いま組み立てている形の点番号が、この列のどの頂点になったか。
         ///
         /// **添字の列だけが使い、列と一緒に消える。** ``appendSolidVertex`` は貼る面の
@@ -812,12 +820,35 @@ public final class Canvas {
         /// 縁で表と裏が同じ奥行きを争っていた画素だけで、それは表の色に確定する
         /// (台帳の `shadows` で 1 画素・2 階調が動いた実測が #756 の PR にある)。
         ///
+        /// **どちらが表かは巻き方で決まり、巻き方は鏡映と裏返す投影で裏返る。** 捨て方は
+        /// `.back` のまま、表の巻き方 (``frontFacing``) のほうを列ごとに裏返す — そうしないと
+        /// 鏡映した箱や上下を逆にした `ortho` の箱では、手前の面が捨てられて奥の面だけが
+        /// 写る ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
+        ///
         /// 裏面が絵に出うるものは全部 `.none` に居続ける: 片面の形 (`plane`)・自分で並べた
         /// 頂点・保持した形・読み込んだモデル (閉じているか分からない)・半透明の置き場所を
         /// 含む列・貼る絵 (透けた画素から奥が見える)・重ねる混ぜ方・利用者の断片 (透明を
         /// 返したり画素を捨てたりできる)。**判定は列を閉じる側 (`closeSolidBatch`) が
         /// 1 箇所で行い**、描く側はこの値を掛けるだけにする。
         var cullMode: MTLCullMode = .none
+        /// 画面でどちら回りに見える面を表とするか。
+        ///
+        /// 形は外向きに巻いてあり (`SolidMeshBuilder`)、縦軸を下向きへ戻す補正が画面での
+        /// 巻き方を反転させるので、**いつもは時計回りが表**になる。置き場所の鏡映
+        /// (``isMirrored``) と、画面の縦横を裏返す投影 (``Camera/flipsScreen``) はそれぞれ
+        /// 巻き方をもう 1 度裏返すので、どちらか一方だけなら反時計回りが表になる
+        /// ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
+        ///
+        /// **捨て方と、形から求めた向きの裏返しの両方がこれを読む。** 断片は表裏を見て
+        /// 求めた向きを裏返す (`Common.metal`) ので、ここが幾何的な表を指していれば、
+        /// 鏡映しても裏返した投影でも、見る側を向いた面が見る側から光を受ける。
+        /// 決めるのは列を閉じる側 (`closeSolidBatch`) で、平面と基本図形の列は既定のまま
+        /// (面の向きを持たず、捨てもしない)。
+        var frontFacing: MTLWinding = .clockwise
+        /// この列の置き場所が形を鏡映するか (``OpenSolid/isMirrored``)。**影の焼き付けが読む**
+        /// — 光から見る行列は画面の投影と別物なので、焼く側の表の巻き方は置き場所の符号
+        /// だけで決まる。
+        var isMirrored = false
         /// 立体の列が、何の頂点を並べているか。**影の焼き付けの指紋が読む** — 組み込みの
         /// 形と読み込んだモデルは頂点が出どころから決まるので、頂点の中身を舐めずに
         /// 出どころで代表できる。平面の列は `nil`。
@@ -1696,12 +1727,6 @@ public final class Canvas {
                 width: Double(pixelWidth), height: Double(pixelHeight),
                 znear: 0, zfar: 1))
 
-        // **どちら回りを表とするかを明示する。** 断片は表裏を見て面の向きを裏返す
-        // (両面) ので、ここが黙っていると「表」の意味が土台の既定に委ねられる。
-        // 形は外向きに巻いてあり (`SolidMeshBuilder`)、縦軸を下向きへ戻す補正が
-        // 画面での巻き方を反転させるので、時計回りが表になる
-        encoder.setFrontFacing(.clockwise)
-
         for (index, batch) in batches.enumerated() {
             let run = batch.run
             // 並びごとに、頂点の落とし方と奥行きの扱いを切り替える。**平面は奥行きを
@@ -1743,8 +1768,11 @@ public final class Canvas {
                         + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                     index: ShapePipeline.instanceBufferIndex)
             }
-            // 裏を向いた面を描くかは列が決めている (`Batch.cullMode`)。表の向きは
-            // 上で 1 度だけ決めてあるので、ここは捨て方を掛けるだけ
+            // **どちら回りを表とするかを列ごとに明示する。** 断片は表裏を見て形から
+            // 求めた向きを裏返すので、ここが黙っていると「表」の意味が土台の既定に
+            // 委ねられる。表の巻き方は鏡映と裏返す投影で裏返るので、列が持っている
+            // (`Batch.frontFacing`)。裏を向いた面を描くかも列が決めている (`Batch.cullMode`)
+            encoder.setFrontFacing(batch.frontFacing)
             encoder.setCullMode(batch.cullMode)
             pipeline.argumentTable.setAddress(
                 perBatch.matrices.gpuAddress + UInt64(index * Self.valuesStride),
@@ -2050,7 +2078,6 @@ public final class Canvas {
             MTLViewport(
                 originX: 0, originY: 0, width: Double(map.detail), height: Double(map.detail),
                 znear: 0, zfar: 1))
-        encoder.setFrontFacing(.clockwise)
         pipeline.argumentTable.setAddress(
             solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
         pipeline.argumentTable.setAddress(
@@ -2065,6 +2092,14 @@ public final class Canvas {
                 index: ShapePipeline.instanceBufferIndex)
             // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
             // 裏面を捨てても焼き付く奥行きは変わらない
+            //
+            // **表の巻き方は置き場所の鏡映だけで裏返す** ([#1446])。光から見る行列は画面の
+            // 投影と別物 (縦を戻す補正も、利用者の投影も通らない) なので、画面の側の
+            // `Batch.frontFacing` は使わない。鏡映した列も鏡映していない列と同じ側の面を
+            // 焼くことだけを保ち、その側がどちらかは変えない (#1474)
+            //
+            // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+            encoder.setFrontFacing(batch.isMirrored ? .counterClockwise : .clockwise)
             encoder.setCullMode(batch.cullMode)
             encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
             if let arguments = batch.indirectArguments?.storage {
@@ -2093,8 +2128,8 @@ public final class Canvas {
     }
 
     /// 焼き付けの入力の指紋。**焼く側が読むものを全部**入れる — 光の行列・細かさ・
-    /// 落とす列ごとの (頂点の区間・置き場所の区間・捨て方) と、その区間の頂点と置き場所の
-    /// 中身。焼く側が読まないもの (受ける側の材質・縁の余裕・視点) は入れない。
+    /// 落とす列ごとの (頂点の区間・置き場所の区間・捨て方・表の巻き方) と、その区間の頂点と
+    /// 置き場所の中身。焼く側が読まないもの (受ける側の材質・縁の余裕・視点) は入れない。
     ///
     /// GPU が埋める置き場所 (粒) を含む列があれば `nil` — CPU からは前のフレームと同じか
     /// どうかが分からないので、分からないものは焼く側に倒す。
@@ -2116,6 +2151,8 @@ public final class Canvas {
             hasher.mix(UInt64(batch.instanceStart))
             hasher.mix(UInt64(batch.instanceCount))
             hasher.mix(UInt64(batch.cullMode.rawValue))
+            // 焼く側の表の巻き方も焼き付く奥行きを変える (鏡映の符号だけで決まる)
+            hasher.mix(batch.isMirrored ? 1 : 0)
             // **読む順も焼く側が読むものである。** 頂点を 1 バイトも動かさずに添字だけを
             // 組み直すフレーム (面の張り替え・粗さの切り替え) は `index(_:)` がまさに
             // 誘う書き方で、これを混ぜないと前のフレームの影が居座る

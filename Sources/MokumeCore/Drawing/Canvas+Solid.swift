@@ -188,13 +188,13 @@ extension Canvas {
         // 効かないので、立体を続けて置いている最中の切り替えはここが拾う
         useFillTexture()
         let textured = style.picture != nil
+        let placement = SolidInstance(
+            matrix: transform.matrix, normalMatrix: transform.normalMatrix,
+            color: style.fill)
 
         if recordingShape {
             // **置き場所で描いたときと同じ頂点を、先に作って焼く。** 焼いた頂点はその場で
             // 並べる列へ積むので、線 (同じ列へ積まれる) と塗りが 1 本の区間に並ぶ
-            let placement = SolidInstance(
-                matrix: transform.matrix, normalMatrix: transform.normalMatrix,
-                color: style.fill)
             let vertices = build().points.map {
                 meshVertex($0, isDerived: isDerived, textured: textured)
             }
@@ -202,10 +202,16 @@ extension Canvas {
             return
         }
 
-        if openSolid?.source != source
+        // **鏡映の符号が変わっても列を閉じる** ([#1446])。表の巻き方は列ごとに 1 つなので、
+        // 鏡映した置き場所と鏡映していない置き場所は同じ列に並べられない。鏡映していない
+        // 置き場所だけが続く間は、いままでどおり 1 列にまとまる
+        //
+        // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+        if openSolid?.source != source || openSolid?.isMirrored != placement.isMirrored
             || isBatchFull(solidInstances.count, since: openSolid?.instanceStart ?? 0)
         {
-            // 出どころが変わった (か、1 列に入る上限に達した)。列を閉じて頂点を置き直す
+            // 出どころか鏡映の符号が変わった (か、1 列に入る上限に達した)。列を閉じて頂点を
+            // 置き直す
             closeBatch()
             let mesh = build()
             let start = solidVertices.count
@@ -217,13 +223,10 @@ extension Canvas {
                 source: source, vertexStart: start, vertexCount: mesh.points.count,
                 // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
                 indexStart: nil,
-                instanceStart: solidInstances.count)
+                instanceStart: solidInstances.count, isMirrored: placement.isMirrored)
         }
 
-        solidInstances.append(
-            SolidInstance(
-                matrix: transform.matrix, normalMatrix: transform.normalMatrix,
-                color: style.fill))
+        solidInstances.append(placement)
         // 半透明の塗りが 1 つでも入ったら、この列は裏面を捨てられない (`Batch.cullMode`)
         if style.fill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
     }
@@ -252,7 +255,14 @@ extension Canvas {
     /// 保持した形なら記録した面である。ここで選び直すと、記録した面が置く側の状態で
     /// 上書きされる ([#914])。
     ///
+    /// **鏡映する置き場所で焼いたら、三角形の巻き方を戻す** ([#1446])。置いてから描く経路では
+    /// 列が表の巻き方を裏返す (``Batch/frontFacing``) が、焼いた頂点は何も動かさない置き場所で
+    /// 描くので、その列は裏返らない。巻き方を戻さないと、形から求めた向きの面が「裏を
+    /// 向いている」と判定されて、見る側を向いた面が視線と逆の向きで光を受ける。三角形の
+    /// 2 点目と 3 点目を入れ替えるだけなので、位置も向きも色も変わらない。
+    ///
     /// [#914]: https://github.com/mokume-metal/mokume/issues/914
+    /// [#1446]: https://github.com/mokume-metal/mokume/issues/1446
     func appendPlacedSolidVertices(
         _ vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?,
         placedBy placement: SolidInstance
@@ -261,15 +271,33 @@ extension Canvas {
         let base = solidVertices.count
         solidVertices.append(contentsOf: vertices.lazy.map(placement.placing))
         openSolid?.vertexCount += vertices.count
+        let rewinds = placement.isMirrored
         if let indices {
             // 写した先までのずれを足す。ずれは負にもなる (切り出した位置より、溜め場の
             // 末尾が手前のことがある)
             let shift = base - vertices.startIndex
+            let indexBase = solidIndices.count
             solidIndices.append(contentsOf: indices.lazy.map { UInt32(Int($0) + shift) })
-        } else if openSolid?.indexStart != nil {
+            if rewinds { Self.reverseTriangles(in: &solidIndices, from: indexBase) }
+            return
+        }
+        if rewinds { Self.reverseTriangles(in: &solidVertices, from: base) }
+        if openSolid?.indexStart != nil {
             // **添字の列では、並べただけの頂点も自分の番号を名乗る** — 名乗らないと誰からも
             // 参照されず、黙って消える (``appendSolidVertex`` と同じ理由)
             solidIndices.append(contentsOf: (base..<solidVertices.count).lazy.map { UInt32($0) })
+        }
+    }
+
+    /// `start` から後ろに並んだ三角形の巻き方を、1 枚ずつ裏返す (2 点目と 3 点目を入れ替える)。
+    ///
+    /// 並びは三角形の列 (3 つずつで 1 枚) で、立体の頂点も読む順もこの形で積まれている。
+    /// **3 で割り切れない端は触らない** — 描く側も 3 つ揃わない端は読まない。
+    private static func reverseTriangles<Element>(in elements: inout [Element], from start: Int) {
+        var first = start
+        while first + 2 < elements.count {
+            elements.swapAt(first + 1, first + 2)
+            first += 3
         }
     }
 

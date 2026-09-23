@@ -131,6 +131,45 @@ struct CustomSolidTests {
         #expect(try brightness(reversed: false) == brightness(reversed: true))
     }
 
+    @Test("上下を裏返した平行投影でも、形から求めた向きの面は見る側から光を受ける")
+    func derivedNormalsCatchTheLightUnderAFlippedProjection() throws {
+        // 上の検査と同じ場面を、上下を裏返した ortho で描く。投影が画面の巻き方を裏返すと
+        // 「裏を向いている」の判定も裏返るので、表の巻き方を裏返さないと、どちらの巻き方で
+        // 並べても視線と逆の向きで光を受けて暗くなる — **2 つが同じ明るさのまま暗くなる**
+        // ので、上の検査の比べ方 (2 つが等しい) では見分けられない (#1446)
+        func brightness(flipped: Bool, reversed: Bool) throws -> Int {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                if flipped { canvas.ortho(-48, 48, -48, 48, 5, 600) } else { canvas.ortho() }
+                canvas.directionalLight(white, 0, 1, 0)
+                canvas.fill(white)
+                canvas.noStroke()
+                canvas.push()
+                canvas.translate(48, 48, 0)
+                canvas.rotateX(1.15)
+                canvas.beginShape()
+                let corners: [(Float, Float)] = [(-40, -40), (40, -40), (40, 40), (-40, 40)]
+                for corner in reversed ? corners.reversed() : corners {
+                    canvas.vertex(corner.0, corner.1, 0)
+                }
+                canvas.endShape(.close)
+                canvas.pop()
+            }
+            // 裏返した絵では、真ん中の画素は縦に 1 つずれた位置へ移る (96 画素の面の 48 ↔ 47)
+            return Int(try pixels(of: canvas)[48, flipped ? 47 : 48].red)
+        }
+
+        for reversed in [false, true] {
+            let upright = try brightness(flipped: false, reversed: reversed)
+            let flipped = try brightness(flipped: true, reversed: reversed)
+            #expect(upright > 120, "裏返さない投影で面が光を受けていない (\(upright))")
+            #expect(
+                abs(flipped - upright) <= 2,
+                "裏返した投影で明るさが変わった (\(upright) → \(flipped)・並べる向きの逆転 \(reversed))")
+        }
+    }
+
     @Test("書いた面の向きは、書き換えるまで続く")
     func writtenNormalsPersistUntilChanged() throws {
         // 2 つの三角形を、同じ形・同じ場所に置いて向きだけ変える。「次の 1 頂点まで」

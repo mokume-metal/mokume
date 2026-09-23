@@ -63,6 +63,19 @@ struct SolidInstance {
         return placed
     }
 
+    /// この置き場所が形を鏡映するか (位置を移す行列の左上 3x3 の行列式が負か)。
+    ///
+    /// **鏡映すると、画面での巻き方が裏返る。** 奇数本の軸を裏返した置き場所だけが当たり、
+    /// 2 本を裏返したもの (`scale(-1, -1, 1)`) は回転と同じなので当たらない。列は表の
+    /// 巻き方を 1 つしか持てないので、この符号が変わったら列を分ける
+    /// ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
+    var isMirrored: Bool {
+        func upper(_ column: SIMD4<Float>) -> SIMD3<Float> { SIMD3(column.x, column.y, column.z) }
+        let placement = simd_float3x3(
+            upper(matrix.columns.0), upper(matrix.columns.1), upper(matrix.columns.2))
+        return placement.determinant < 0
+    }
+
     /// 何も動かさない置き場所。
     ///
     /// **単位行列を掛けても値は 1 ビットも変わらない** (0 を掛けて足すだけなので)。
