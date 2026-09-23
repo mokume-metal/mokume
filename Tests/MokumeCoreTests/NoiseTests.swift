@@ -8,6 +8,7 @@ import Testing
 /// 揺らぎが約束どおりの値を返すことを見る。
 ///
 /// **断片との一致は見ない** — GPU が要るので `NoiseParityTests` が別に持つ。
+/// 作者が呼ぶ口を通す検査も面 (GPU) を要するので、入れ子の ``ThroughTheCanvas`` に分けてある。
 @Suite("揺らぎ")
 struct NoiseTests {
     @Test("同じ座標には何度でも同じ値")
@@ -61,11 +62,38 @@ struct NoiseTests {
         }
     }
 
-    @Test("引数を省いた呼び方は 0 を渡したのと同じ")
-    func omittedAxesAreZero() {
-        let noise = ValueNoise(seed: 11)
-        #expect(noise.value(1.5, 0, 0) == noise.value(1.5, 0, 0))
-        #expect(noise.value(1.5, 2.5, 0) != noise.value(1.5, 0, 0))
+    /// 作者が呼ぶ口 (``Canvas/noise(_:_:_:)``) を通す検査。
+    ///
+    /// **省いた軸を 0 で埋めるのは口の既定値**で、``ValueNoise`` は 3 軸を必ず受け取る。
+    /// だから省いた形は ``ValueNoise`` を直に呼んでも通らない — 以前ここにあった検査は
+    /// 同じ式どうしを比べており、既定値を壊しても緑のままだった
+    /// ([#1388](https://github.com/mokume-metal/mokume/issues/1388))。面を作るので GPU が要る。
+    @Suite(
+        "作者が呼ぶ口",
+        .enabled(if: RenderDevice.isAvailable, "面を作るので GPU が要る")
+    )
+    struct ThroughTheCanvas {
+        @Test("引数を省いた呼び方は、省いた軸に 0 を渡したのと同じ")
+        func omittedAxesAreZero() throws {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+            canvas.noiseSeed(11)
+            let places: [(x: Float, y: Float)] = [(1.5, 2.5), (-3.25, 0.75), (17.125, -8.5)]
+            for place in places {
+                #expect(canvas.noise(place.x) == canvas.noise(place.x, 0, 0), "x = \(place.x)")
+                #expect(
+                    canvas.noise(place.x, place.y) == canvas.noise(place.x, place.y, 0),
+                    "(\(place.x), \(place.y))")
+            }
+            // **比べた座標が、省いた軸を 0 以外で埋めたら見分けのつく場所であること。**
+            // 軸を動かしても値が変わらない座標では、既定値が壊れても上の一致は崩れない
+            for place in places {
+                #expect(
+                    canvas.noise(place.x, 0, 0) != canvas.noise(place.x, 1, 0), "x = \(place.x)")
+                #expect(
+                    canvas.noise(place.x, place.y, 0) != canvas.noise(place.x, place.y, 1),
+                    "(\(place.x), \(place.y))")
+            }
+        }
     }
 
     @Test("重ねる枚数を増やすと細かさが乗る")
