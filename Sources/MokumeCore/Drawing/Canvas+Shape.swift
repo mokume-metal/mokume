@@ -257,10 +257,26 @@ extension Canvas {
     ///
     /// **置き場所から行列を組むのは呼ぶ側**で、ここは列へ積むだけを持つ。粒の参照の経路は
     /// 板を視点へ向けた行列を自分で組むので、``Placement`` を通らずにここへ来る。
+    ///
+    /// **組み立ての中で置き直すときは、置き場所ごとに頂点へ焼く** ([#1297])。記録は置き場所を
+    /// 持ち歩かないので、置き場所を並べたままだと、中で書いた変換が外側の記録から落ちる
+    /// (組み込みの形の ``placeMesh(_:isDerived:mesh:)`` と同じ理由)。
+    ///
+    /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeSolid(
         _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>
     ) {
         beginSolids()
+        if recordingShape {
+            let vertices = shape.solidVertices[run.start..<(run.start + run.count)]
+            let indices: ArraySlice<UInt32>? =
+                run.isIndexed
+                ? shape.solidIndices[run.indexStart..<(run.indexStart + run.indexCount)] : nil
+            for instance in instances {
+                appendPlacedSolidVertices(vertices, indices: indices, placedBy: instance)
+            }
+            return
+        }
         var remaining = instances[...]
         while !remaining.isEmpty {
             // **頂点は列ごとに 1 度だけ置く。** 上限に達したら列を閉じて置き直す —
