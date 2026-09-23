@@ -13,6 +13,12 @@ import MokumeDiagnostics
 /// **アルファには伝達関数を掛けない。** アルファは光の量ではなく覆いの割合なので、
 /// 目盛りを 255 で割るだけでよい。
 ///
+/// **範囲の外の扱いは成分とアルファで逆になる。** 色の成分は締めない (0–255 は目盛りであって
+/// 上限ではない — [ADR-0033] 決定 6) が、アルファは 0–255 に締める (同 決定 3 の改訂)。
+/// 締めるのはここではなく、乗算する点 (``LinearRGBA/init(straightRed:green:blue:alpha:)``)
+/// である — 0–1 の口 (``LinearRGBA/display(red:green:blue:alpha:)``) から書いた色も同じ値に
+/// 揃える。
+///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 enum DisplayScale {
@@ -111,6 +117,10 @@ enum ColorValues {
 /// 描く口へそのまま数値を渡す形 (``Sketch/fill(_:_:_:_:)``) と同じ目盛りなので、
 /// 色を変数に持ちたいときだけこちらを使う。
 ///
+/// **不透明度は 0–255 に締める。色の成分は締めない。** `color(255, 204, 0, 400)` は
+/// 不透明度 255 と同じ色になり、`color(510, 0, 0)` の赤は 510 のまま残る
+/// ([ADR-0033] 決定 3 の改訂・決定 6)。
+///
 /// - Note: 引数は `Float` なので、`Int` の変数はそのまま渡せない (`color(Float(i), 0, 0)`)。
 ///   `Int` と `Float` の口を並べると、リテラルの書き方で目盛りが変わる罠が入るため
 ///   ([ADR-0033] 決定 1)。
@@ -135,6 +145,8 @@ public func color(
 /// let ash = color(128)
 /// let veil = color(0, 64)
 /// ```
+///
+/// **不透明度は 0–255 に締める。灰色の値は締めない** (``color(_:_:_:_:)`` と同じ)。
 public func color(_ gray: Float, _ alpha: Float = 255) -> LinearRGBA {
     color(gray, gray, gray, alpha)
 }
@@ -191,6 +203,13 @@ public func blue(_ color: LinearRGBA) -> Float {
 ///
 /// **伝達関数を通さない** — 不透明度は光の量ではなく覆いの割合なので、目盛りを
 /// 255 倍するだけである。数でない値は 0 へ倒す。
+///
+/// **書いた不透明度は 0–255 に締まっている** — `alpha(color(0, 0, 0, 400))` は 255、
+/// `alpha(color(0, 0, 0, -100))` は 0 を返す。色の成分は締めないので、``red(_:)`` は
+/// 範囲の外の値も返す ([ADR-0033] 決定 3 の改訂・決定 6)。乗算済みの口
+/// (``LinearRGBA/init(premultipliedRed:green:blue:alpha:)``) で作った色は締めずに読む。
+///
+/// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public func alpha(_ color: LinearRGBA) -> Float {
     guard color.alpha.isFinite else { return 0 }
     return color.alpha * DisplayScale.maximum
