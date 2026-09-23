@@ -123,12 +123,23 @@ final class ParamSurface: DeclarationWatcher {
     /// 見張る先 (``DeclarationWatcher``)。
     let registry: ParamRegistry
 
-    /// 内容が変わるたびに進む番号。
+    /// 内容が変わるたびに進む番号。まだ 1 度も書いていなければ `nil`。
     ///
     /// **起動しただけでも進む。** プロセスが変われば宣言そのもの (つまみの数・範囲・
     /// 候補) が変わりうるので、「内容が変われば番号も変わる」を保つ
     /// ([ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 2)。
-    private(set) var revision = 0
+    ///
+    /// **だからプロセスの中だけで数えない。** 起動し直すたびに 1 から数えると、起動した
+    /// きりの前の世代と、つまみが増えた次の世代が同じ番号で違う宣言を書き、前の世代が
+    /// 進めていれば番号が戻る。番号で写しの鮮度を見る書き手は、どちらでも気付けない
+    /// ([#1458](https://github.com/mokume-metal/mokume/issues/1458))。最初に書くときに、
+    /// 区画に残っていた応答の番号 (``revisionLeft(in:)``) の続きから数える。
+    ///
+    /// **読むのは作った時点ではなく、最初に書く直前である。** 作ってから最初に書くまで
+    /// (保存からの復元と `setup()`) の間にも、前の世代は書き足しうる。それでも切り替えで
+    /// 2 世代が重なっている間の単調さまでは保たない — 重なりが持つ代償の範囲である
+    /// ([#1433](https://github.com/mokume-metal/mokume/issues/1433))。
+    private(set) var revision: Int?
     private var lastHandledID: String?
     /// 値が変わったことを Observation から受け取る印。
     private var valuesChanged = false
@@ -237,7 +248,8 @@ final class ParamSurface: DeclarationWatcher {
         rejected: [ParamReport.Rejection] = [], clamped: [ParamReport.Clamp] = [],
         discarded: [ParamReport.Rejection] = []
     ) -> ParamReport {
-        revision += 1
+        let revision = Self.advanced(self.revision ?? Self.revisionLeft(in: reportURL))
+        self.revision = revision
         valuesChanged = false
         let declarations = registry.declarations
         let report = ParamReport(
@@ -245,6 +257,29 @@ final class ParamSurface: DeclarationWatcher {
             rejected: rejected, clamped: clamped, discarded: discarded)
         write(report)
         return report
+    }
+
+    /// 次の番号。**進められなければ 1 から数え直す。**
+    ///
+    /// 区画に残っていた数の続きから数えるので、足す相手は外から置けるものである。
+    /// `Int.max` が置かれていただけで起動が落ちる形にしない。
+    private static func advanced(_ revision: Int) -> Int {
+        let (next, overflowed) = revision.addingReportingOverflow(1)
+        return overflowed ? 1 : next
+    }
+
+    /// 区画に残っていた応答の番号。無い・読めない・解けない・番号でない (Schema の
+    /// `minimum: 1` を割る) ときは 0 で、そのとき最初の番号は 1 になる。
+    private static func revisionLeft(in reportURL: URL) -> Int {
+        guard let data = try? Data(contentsOf: reportURL),
+            let left = try? JSONDecoder().decode(LeftReport.self, from: data)
+        else { return 0 }
+        return max(left.revision, 0)
+    }
+
+    /// 残っていた応答のうち、ここが読むのは番号だけ。識別子は ``RequestFile`` が読む。
+    private struct LeftReport: Decodable {
+        let revision: Int
     }
 
     private func write(_ report: ParamReport) {
