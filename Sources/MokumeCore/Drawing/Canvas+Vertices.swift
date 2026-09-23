@@ -20,6 +20,9 @@ struct BuildingVertex {
     var uv: SIMD2<Float>?
     /// 置いた時点の塗り。
     var fill: LinearRGBA
+    /// 曲線が作った刻みの点か。**利用者が置いた点 (`vertex`・曲線の終点・通過点) ではない**
+    /// ので、輪郭は継ぎ目に折れ目の形を置かない (``Canvas/strokeRing(count:isClosed:curveSteps:band:disc:square:)``)。
+    var isCurveStep = false
 }
 
 // 頂点を並べて形を作る。**道具は 1 つで、平面と立体に分かれない** ([ADR-0021] 決定 5)。
@@ -115,7 +118,9 @@ extension Canvas {
         let end = SIMD2(x, y)
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
-            appendShapePoint(Self.cubicPoint(start, c1, c2, end, t))
+            // 最後の刻みは終点 — 利用者が置いた点なので、そこで折れれば角になる
+            appendShapePoint(
+                Self.cubicPoint(start, c1, c2, end, t), isCurveStep: step < currentCurveDetail)
         }
     }
 
@@ -150,11 +155,13 @@ extension Canvas {
         let p1 = curveGuides[count - 3]
         let p2 = curveGuides[count - 2]
         let p3 = curveGuides[count - 1]
-        if shapePoints.isEmpty { appendShapePoint(p1) }
+        if shapePoints.isEmpty { appendShapePoint(p1, isCurveStep: false) }
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
+            // 最後の刻みは通過点 — 張り具合 1 では折れ線の角になる
             appendShapePoint(
-                Self.catmullRomPoint(p0, p1, p2, p3, t, tightness: currentCurveTightness))
+                Self.catmullRomPoint(p0, p1, p2, p3, t, tightness: currentCurveTightness),
+                isCurveStep: step < currentCurveDetail)
         }
     }
 
@@ -572,16 +579,17 @@ extension Canvas {
         _ ring: [Int], closed: Bool, points: [BuildingVertex], placed: [PlacedVertex]
     ) {
         guard !ring.isEmpty else { return }
+        let curveSteps = ring.map { points[$0].isCurveStep }
         if shapeHasDepth {
             strokeSolidRing(
                 ring.map { placed[$0].position }, shapePoints: ring.map { points[$0].position },
-                isClosed: closed)
+                isClosed: closed, curveSteps: curveSteps)
         } else {
             // 平面の輪郭は変換の前の座標で組み立てる (`Outline` の説明を参照)
             strokeOutline(
                 Outline(
                     points: ring.map { SIMD2(points[$0].position.x, points[$0].position.y) },
-                    isClosed: closed, fills: false))
+                    isClosed: closed, fills: false, curveSteps: curveSteps))
         }
     }
 
@@ -592,13 +600,14 @@ extension Canvas {
     }
 
     /// 曲線が作った点を置く。奥行きは直前の点から引き継ぐ。
-    private func appendShapePoint(_ point: SIMD2<Float>) {
+    private func appendShapePoint(_ point: SIMD2<Float>, isCurveStep: Bool) {
         let depth = (holePoints?.last ?? shapePoints.last)?.position.z ?? 0
-        appendVertex(SIMD3(point.x, point.y, depth), hasDepth: false)
+        appendVertex(SIMD3(point.x, point.y, depth), hasDepth: false, isCurveStep: isCurveStep)
     }
 
     private func appendVertex(
-        _ position: SIMD3<Float>, hasDepth: Bool, uv: SIMD2<Float>? = nil
+        _ position: SIMD3<Float>, hasDepth: Bool, uv: SIMD2<Float>? = nil,
+        isCurveStep: Bool = false
     ) {
         guard isBuildingShape else { return warnVertexOutsideShapeOnce() }
         // 数でない座標は形を壊すだけなので置かない ([ADR-0020] 決定 5)
@@ -607,7 +616,8 @@ extension Canvas {
         }
         if hasDepth { shapeHasDepth = true }
         let vertex = BuildingVertex(
-            position: position, normal: currentNormal, uv: uv, fill: style.fill)
+            position: position, normal: currentNormal, uv: uv, fill: style.fill,
+            isCurveStep: isCurveStep)
         if holePoints != nil {
             holePoints?.append(vertex)
         } else {

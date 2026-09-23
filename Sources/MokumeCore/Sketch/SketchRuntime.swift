@@ -996,10 +996,16 @@ public final class SketchRuntime {
     /// いま走っているランタイムとして自分を差し込んでから `body` を実行する。
     ///
     /// 差し込みを入れ子にしても壊れないよう、前の値へ必ず戻す。
+    ///
+    /// **同じ範囲で面も束ねる** (``LaunchingSketch``)。中で起こされた `Task` が、差し込みが
+    /// 外れた後もこの面へ読み込めるようにするためである ([#1367])。束ねた値は範囲を出れば
+    /// 自動で戻る。
+    ///
+    /// [#1367]: https://github.com/mokume-metal/mokume/issues/1367
     private func withActiveRuntime(_ body: () -> Void) {
         let previous = runningSketch
         runningSketch = self
         defer { runningSketch = previous }
-        body()
+        LaunchingSketch.$canvas.withValue(canvas, operation: body)
     }
 }

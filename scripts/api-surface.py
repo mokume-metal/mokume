@@ -494,6 +494,59 @@ def check_foreign_vocabulary(
     return problems
 
 
+# 参照スケッチ。作者向けの面は、絵か操作で示せるものをすべてここから呼ぶ (#1350)
+SKETCHES = pathlib.Path(__file__).resolve().parents[1] / "Sketches"
+
+# 参照スケッチから呼ばなくてよい `Sketch` の公開メンバ (基底名)。表の出どころは #1350 の
+# 「対象から外すもの」。**書けるのは「スケッチでは示せない理由」に限る** — 足すのが面倒な
+# だけのものを載せると、#1358 が塞いだ空白がここへ移るだけになる
+UNSHOWN = {
+    "save": "結果が絵ではなくファイルで、--render のたびにファイルが書かれる。正しさはテストが見る",
+    "beginRecord": "save と同じ理由 (記録の書き出し)",
+    "endRecord": "save と同じ理由 (記録の書き出し)",
+    "plugins": "作者が書くのは 1 行だけで、中身は外のパッケージが書く",
+    "loadShader": "ファイルから読む口で、見どころの「ファイルを直すと変わる」は自己完結したスケッチでは示せない",
+    "loadComputation": "loadShader と同じ理由",
+    "loadEffect": "loadShader と同じ理由",
+    "usesFrameHistory": "--render の「同じ番号のフレームは同じ絵」を崩す",
+    "main": "入口は Sketches/main.swift が持つ",
+}
+
+
+def check_sketch_coverage(
+    symbols: list[dict], sources: str, unshown: dict[str, str] = UNSHOWN
+) -> list[str]:
+    """`Sketch` の公開メンバが、参照スケッチのどこかで呼ばれているか (#1358)。
+
+    機能を足す PR は検査と説明文の例までは揃えるが、参照スケッチへ足すことを求める
+    ものが無く、100 件を超える空白が溜まった (#1350)。空白は不具合も隠す — スケッチから
+    呼べる場所の無い口が、スケッチへ足すまで誰にも見つからなかった (#1367)。
+
+    見るのは基底名 (引数部を落とした名前) の字面で、列挙の case までは見ない。コメントは
+    落としてから照合するが、**文字列の中に書いた名前は「呼ばれた」に数える** — 取り
+    こぼすのは名前を文字列にだけ書いたときで、そこまでは追わない。
+    """
+    code = re.sub(r"/\*.*?\*/", "", sources, flags=re.DOTALL)
+    code = re.sub(r"//[^\n]*", "", code)
+    bases = {title(s).split("(")[0] for s in symbols if owner(s) == ENTRY_TYPE}
+    problems = []
+    for base in sorted(bases - unshown.keys()):
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])", code):
+            continue
+        problems.append(
+            f"{ENTRY_TYPE}.{base} が参照スケッチ (Sketches/) から呼ばれていない。"
+            "絵か操作で示せるなら参照スケッチから呼ぶ。示せないなら、その理由を添えて "
+            "scripts/api-surface.py の UNSHOWN に載せる (#1358)"
+        )
+    return problems
+
+
+def read_sketches(directory: pathlib.Path) -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(directory.glob("*.swift"))
+    )
+
+
 # ---------------------------------------------------------------- 入口
 
 
@@ -504,6 +557,7 @@ def main() -> int:
     parser.add_argument("--module", default="MokumeCore")
     parser.add_argument("--version", default="(開発版)")
     parser.add_argument("--output", type=pathlib.Path)
+    parser.add_argument("--sketches", default=SKETCHES, type=pathlib.Path)
     arguments = parser.parse_args()
 
     symbols = load_symbols(arguments.graphs, arguments.module)
@@ -527,6 +581,7 @@ def main() -> int:
         + check_doc_canon(symbols)
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
+        + check_sketch_coverage(symbols, read_sketches(arguments.sketches))
     )
     if problems:
         print("公開 API が規範に沿っていない:", file=sys.stderr)

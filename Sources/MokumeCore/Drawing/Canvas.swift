@@ -635,6 +635,18 @@ public final class Canvas {
     }
     /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
     var hasLoadedPixels = false
+    /// 直前の、画素を読む前の描き切りが失敗したか。次に描き切れたときに戻る。
+    ///
+    /// **読む口に描き切りをやり直させないための印** ([#1368])。失敗した描き切りは溜めたものを
+    /// フレームの終わりへ残すので、溜めたか (``hasPendingDrawing``) だけを見ていると読むたびに
+    /// やり直す — GPU が詰まっていれば、1 画素読むごとに待ちの上限まで待つ。同じフレームで
+    /// やり直すのは ``loadPixels()`` を呼んだときだけにする。
+    ///
+    /// **フレームの頭では戻さない。** フレームで最初の読み取りは印を見ずに必ず描き切り
+    /// (``hasLoadedPixels``)、描き切れればそこで戻るので、戻す場所を 2 つ持つ理由が無い。
+    ///
+    /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
+    var pixelLoadFailed = false
 
     // MARK: 文字
 
@@ -1502,6 +1514,17 @@ public final class Canvas {
     private var hasPendingGeometry: Bool {
         !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty
     }
+
+    /// 描画先の絵を変えるものを、最後に描き切ってから溜めたか。
+    ///
+    /// **画素を読む口が描き切り直すかの判定** ([#1368])。図形 (``hasPendingGeometry``) に
+    /// 塗り直しの予定を足す — 読んだあとの `background()` は図形が 1 つも無くても絵を変える。
+    /// どちらも描き切りの末尾 (`discardFrame()`) で空に戻るので、別に印を持たなくても
+    /// 「描き切ってから溜めたか」をそのまま表す。**図形を積む口ごとに印を立てる形は取らない** —
+    /// 口が増えた日に、そこだけ黙って印が漏れる。
+    ///
+    /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
+    var hasPendingDrawing: Bool { hasPendingGeometry || pendingBackground != nil }
 
     /// - Parameters:
     ///   - applyingEffects: 効果を通すか。**フレームの終わりだけ通す** —

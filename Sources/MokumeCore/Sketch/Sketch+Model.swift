@@ -47,11 +47,29 @@ extension Sketch {
     ///
     /// 解釈を別の仕事として回すので、大きなモデルを読んでもフレームが詰まらない。
     ///
+    /// **`setup()` の中で `Task` を起こし、そこから呼ぶ。** 呼び方と届く前の扱いは
+    /// ``requestImage(_:)`` と同じで、届くまでの ``draw()`` はモデルが無いまま呼ばれ、
+    /// 置くのは `draw()` の中である。
+    ///
+    /// <!-- example: 文脈 var head: Model? -->
+    /// ```swift
+    /// func setup() {
+    ///     Task { head = try? await requestModel("assets/head.obj") }
+    /// }
+    ///
+    /// func draw() {
+    ///     lights()
+    ///     translate(width / 2, height / 2, 0)
+    ///     if let head { model(head) }
+    /// }
+    /// ```
+    ///
     /// > Note: ``loadModel(_:normalize:)`` と同じ理由で、この口にも例の絵は付いていない。
     public func requestModel(_ path: String, normalize: Bool = true) async throws(ModelFailure)
         -> Model
     {
-        try await canvas.requestModel(path, normalize: normalize)
+        try await Self.requireLoadingCanvas("requestModel(_:normalize:)")
+            .requestModel(path, normalize: normalize)
     }
 
     /// 読み込んだモデルを置く。
