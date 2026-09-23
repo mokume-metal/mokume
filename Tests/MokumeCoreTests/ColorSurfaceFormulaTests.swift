@@ -150,6 +150,79 @@ struct NumericColorEntryTests {
             try painted { $0.background(gray, grayOpacity) }
                 == painted { $0.background(color(gray, grayOpacity)) })
     }
+
+    // MARK: - 不透明度の範囲の外 (#1450)
+
+    /// 範囲の外の不透明度と、それを締めた端の値。
+    private static let opacityEnds: [(outside: Float, end: Float)] = [(-100, 0), (400, 255)]
+
+    @Test("不透明度に範囲の外を渡すと、端の値を渡したのと同じ色が置かれる", arguments: Entry.allCases)
+    func opacityOutsideTheScaleMatchesTheEnd(_ entry: Entry) throws {
+        let sketch = Blank()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        runSketch(runtime) {
+            // 2 引数 (灰色と不透明度) と 4 引数の両方
+            for colour in [[Self.gray], [Self.red, Self.green, Self.blue]] {
+                for (outside, end) in Self.opacityEnds {
+                    entry.call(sketch, colour + [outside])
+                    let placed = entry.read(runtime.canvas)
+                    entry.call(sketch, colour + [end])
+                    #expect(
+                        placed == entry.read(runtime.canvas),
+                        "\(entry.testDescription)(\(colour + [outside])) が \(entry.testDescription)(\(colour + [end])) と違う色になった")
+                }
+            }
+        }
+    }
+
+    /// 下地は合成ではなくクリア色なので、範囲の外の不透明度がそのまま画素に載る
+    /// (`background(128, -100)` は赤 -0.085・不透明度 -0.39 だった)。**線形の値で見る** —
+    /// 画面の値 (`encodeForDisplay`) は出口で標準レンジへ収めるので、違いが消えうる。
+    @Test("下地の不透明度に範囲の外を渡すと、端の値を渡したのと同じ画素になる")
+    func backgroundOpacityOutsideTheScaleMatchesTheEnd() throws {
+        func painted(_ paint: @escaping (Blank) -> Void) throws -> PixelBuffer {
+            let sketch = Blank()
+            sketch.paint = paint
+            let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+            try runtime.advance()
+            return try runtime.target.readPixels()
+        }
+        #expect(try painted { $0.background(128, -100) } == painted { $0.background(128, 0) })
+        #expect(try painted { $0.background(128, 400) } == painted { $0.background(128) })
+        #expect(
+            try painted { $0.background(128, 64, 0, -100) } == painted { $0.background(128, 64, 0, 0) })
+        #expect(
+            try painted { $0.background(128, 64, 0, 400) } == painted { $0.background(128, 64, 0) })
+    }
+
+    /// Issue の再現そのもの: `background(128)` の上に不透明度だけを変えた白い矩形を置き、
+    /// 中央を `get` で読む。締めないと、-100 は下地を負の値 (赤 -0.092) へ落とし、400 は
+    /// 白を越える (赤 1.445)。
+    @Test("塗りの不透明度に範囲の外を渡した矩形は、端の値で塗った矩形と同じ画素になる")
+    func fillOpacityOutsideTheScalePaintsLikeTheEnd() throws {
+        func centre(afterFillingWith opacity: Float) throws -> LinearRGBA {
+            let sketch = Blank()
+            var sampled = LinearRGBA.transparent
+            sketch.paint = { sketch in
+                sketch.background(128)
+                sketch.noStroke()
+                sketch.fill(255, opacity)
+                sketch.rect(0, 0, 8, 8)
+                sampled = sketch.get(4, 4)
+            }
+            let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+            try runtime.advance()
+            return sampled
+        }
+        let untouched = try centre(afterFillingWith: 0)
+        let opaque = try centre(afterFillingWith: 255)
+        // 不透明度 0 の矩形は下地を残す (赤 0.216)。ここが崩れると下の比較が意味を失う
+        #expect(abs(untouched.red - TransferFunction.decode(128 / 255)) < 1e-3)
+        let belowTheScale = try centre(afterFillingWith: -100)
+        let aboveTheScale = try centre(afterFillingWith: 400)
+        #expect(belowTheScale == untouched)
+        #expect(aboveTheScale == opaque)
+    }
 }
 
 /// 色相・彩度・明度の 6 つの区画 ([#1385] 条件 2)。GPU は要らない。
