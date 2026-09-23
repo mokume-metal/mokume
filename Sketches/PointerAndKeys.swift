@@ -29,8 +29,9 @@ import mokume
 /// space で止める (`noLoop()`)・もう一度で再開する (`loop()`)。止まっている間は return で
 /// 1 枚だけ進む (`redraw()`) — 左の列のフレーム番号が 1 つずつ増える。矢印を押している間は
 /// 右の四角が動く (`isKeyDown(_:)` を `draw()` で読み、`deltaTime` で積む)。止めて矢印を
-/// 押したまま return を打つと、描いた 1 枚ごとにその枚の `deltaTime` のぶんだけ進む —
-/// どれだけかは左の列の Δt が出す。
+/// 押したまま return を打つと、描いた 1 枚ごとに**回っているときの 1 枚ぶん**だけ進む —
+/// 描き直しの 1 枚の `deltaTime` は、止めていた長さによらず目標の 1 フレームぶんだからで
+/// (`redraw()` の説明)、左の列の Δt は約 16.7 ms を出す (60 fps のとき)。
 ///
 /// **止まっている間のコールバックはフレームの外で呼ばれる** (`noLoop()` の説明)。
 /// だからここのコールバックは記録だけをして描かない — そこで置いた図形は次に描く
@@ -170,7 +171,8 @@ final class PointerAndKeys: Sketch {
 
         // 矢印を押している間だけ四角が進む。**押しっぱなしは状態で読む** — 連射される
         // `keyPressed()` で進めると、進み方が OS のキーリピートの間隔に縛られる。
-        // 再開した直後の `deltaTime` に止まっていた時間は乗らないので、飛ばない
+        // 止めていたところから描く 1 枚 (return の描き直し・space の再開) の `deltaTime` は
+        // 目標の 1 フレームぶんなので、止めていた時間ぶん飛ばず、止まったままにもならない
         let step = Self.shipSpeed * deltaTime
         if isKeyDown(.arrowLeft) { shipX -= step }
         if isKeyDown(.arrowRight) { shipX += step }

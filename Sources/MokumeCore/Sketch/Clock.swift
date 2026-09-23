@@ -22,7 +22,14 @@ public enum Clock: Equatable, Sendable {
 ///
 /// 実時間で動かすときの落とし穴を 1 つ引き受ける: **止めている間も実時間は進む。**
 /// 止めて再開したとき起点を寄せ直さないと、止めていた時間まるごとが 1 フレームの
-/// 経過時間として渡り、それを積分に使う側は 1 回で破綻する。``resync()`` がその役。
+/// 経過時間として渡り、それを積分に使う側は 1 回で破綻する。止まり方で口が 2 つある:
+///
+/// - 外から止めて再開した (`SketchRuntime.resume()`) — ``resync()`` で起点を寄せ直し、
+///   再開してから次のフレームまでの経過を渡す
+/// - 作者が止めていたところから描く (`redraw()` の 1 枚・`loop()` で戻った最初の 1 枚) —
+///   ``stepOneFrameNext()`` で、次の 1 枚の経過を**目標の 1 フレームぶん**にする。寄せ直すと
+///   頼んだ直後に描くので経過がほぼ 0 になり、`deltaTime` で動かすものが 1 枚進めても
+///   動かない ([#1366])。フレーム番号から導く時計の 1 枚と同じ値になる
 ///
 /// **寄せ直せない止まり方もある。** ディスプレイのスリープや駆動源の停止は
 /// `pause()` を通らないので ``resync()`` が呼ばれない ([#874])。そこで経過そのものに
@@ -31,6 +38,7 @@ public enum Clock: Equatable, Sendable {
 /// ([ADR-0025] 決定 2 が「番号は進め、絵だけ抜く」と決めているのと同じ向き)。
 ///
 /// [#874]: https://github.com/mokume-metal/mokume/issues/874
+/// [#1366]: https://github.com/mokume-metal/mokume/issues/1366
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 @MainActor
 final class FrameTiming {
@@ -49,6 +57,10 @@ final class FrameTiming {
 
     /// 1 フレームぶんとして渡す経過の上限 (秒)。**実時間で動かすときだけ効く。**
     private let maximumDeltaTime: Double
+    /// 目標の 1 フレームぶんの間隔 (秒)。``stepOneFrameNext()`` が渡す経過。
+    private let frameInterval: Double
+    /// 次の ``advance()`` の経過を ``frameInterval`` にするか。1 枚で落ちる。
+    private var stepsOneFrame = false
 
     /// 上限を目標フレームレートから導く。**目標フレーム間隔の 10 倍。**
     ///
@@ -59,12 +71,19 @@ final class FrameTiming {
         10 / Double(max(1, frameRate))
     }
 
+    /// - Parameters:
+    ///   - clock: 時刻の出どころ。
+    ///   - frameRate: 目標のフレームレート。**実時間で動かすときの**経過の上限と、止めていた
+    ///     ところから描く 1 枚の経過をここから導く。フレーム番号から導く時計は、自分の
+    ///     フレームレートで進む。
+    ///   - now: 実時間の出どころ。
     init(
-        clock: Clock, maximumDeltaTime: Double = FrameTiming.maximumDeltaTime(frameRate: 60),
+        clock: Clock, frameRate: Int = 60,
         now: @escaping () -> Double = { CACurrentMediaTime() }
     ) {
         self.clock = clock
-        self.maximumDeltaTime = maximumDeltaTime
+        self.maximumDeltaTime = Self.maximumDeltaTime(frameRate: frameRate)
+        self.frameInterval = 1 / Double(max(1, frameRate))
         self.now = now
         let start = now()
         self.started = start
@@ -75,29 +94,50 @@ final class FrameTiming {
     func advance() {
         let now = now()
         frameCount += 1
+        defer { stepsOneFrame = false }
         switch clock {
         case .wallClock:
             let elapsed = now - started
             // **時刻は絶対経過のまま。** 何枚落ちても復帰した瞬間に追いつく — 揃えたい
-            // ものがあるならこちらを読む (ADR-0025)
+            // ものがあるならこちらを読む (ADR-0025)。止めていたところから描く 1 枚も同じ
             time = Float(elapsed)
-            // **経過には上限を置く。** 止まっていた時間まるごとを渡すと、積分している
-            // 側 (粒・視点) が 1 枚で吹き飛ぶ
-            deltaTime = Float(min(max(0, now - previous), maximumDeltaTime))
+            if stepsOneFrame {
+                // 止めていた長さによらず、回っているときの 1 枚ぶん (``stepOneFrameNext()``)
+                deltaTime = Float(frameInterval)
+            } else {
+                // **経過には上限を置く。** 止まっていた時間まるごとを渡すと、積分している
+                // 側 (粒・視点) が 1 枚で吹き飛ぶ
+                deltaTime = Float(min(max(0, now - previous), maximumDeltaTime))
+            }
             previous = now
         case .frameIndex(let frameRate):
             let rate = Double(max(1, frameRate))
-            // 最初のフレームを 0 秒にする
+            // 最初のフレームを 0 秒にする。止めていたところから描く 1 枚も、既に 1 フレーム
+            // ぶんしか進まないので ``stepOneFrameNext()`` は効かせるものが無い
             time = Float(Double(frameCount - 1) / rate)
             deltaTime = Float(1 / rate)
         }
     }
 
-    /// フレームを 1 枚も進めずに時刻だけが進んだときに、起点を寄せ直す。
+    /// フレームを 1 枚も進めずに時刻だけが進んだときに、起点を寄せ直す。**外から止めて
+    /// 再開したときの口** — 次の経過は、寄せ直してから次のフレームまでに流れた時間になる。
     ///
     /// 実時間で動かしているときにしか効かない — フレーム番号から導く時刻は
     /// そもそも実時間に依存しないので、寄せ直すものがない。
     func resync() {
         previous = now()
+    }
+
+    /// 次の ``advance()`` の経過 (``deltaTime``) を、目標の 1 フレームぶんにする。
+    /// **作者が止めていたところから描くときの口。**
+    ///
+    /// 効くのは次の 1 枚だけで、その次からは実際に流れた時間に戻る。``time`` には
+    /// 触れない — 止めていた時間ごと進む (ADR-0025 決定 6)。
+    ///
+    /// 寄せ直し (``resync()``) では足りない。頼まれてすぐ描くので、寄せ直した直後の
+    /// 経過はほぼ 0 になる。フレーム番号から導く時計では既に 1 フレームぶんなので、
+    /// こちらでは何も変わらない — **どちらの時計でも、止めて 1 枚描いたときの送りが揃う。**
+    func stepOneFrameNext() {
+        stepsOneFrame = true
     }
 }

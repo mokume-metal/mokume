@@ -174,7 +174,7 @@ public final class SketchRuntime {
             upscale: settings.upscale)
         self.timing = FrameTiming(
             clock: clock ?? .frameIndex(frameRate: settings.frameRate),
-            maximumDeltaTime: FrameTiming.maximumDeltaTime(frameRate: settings.frameRate),
+            frameRate: settings.frameRate,
             now: now)
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
@@ -207,7 +207,7 @@ public final class SketchRuntime {
             upscale: settings.upscale)
         self.timing = FrameTiming(
             clock: clock ?? .frameIndex(frameRate: settings.frameRate),
-            maximumDeltaTime: FrameTiming.maximumDeltaTime(frameRate: settings.frameRate),
+            frameRate: settings.frameRate,
             now: now)
         self.now = now
         self.observer = observer
@@ -375,13 +375,21 @@ public final class SketchRuntime {
         // **作者が止めている間も入力は配る** (``deliverWhileStopped()``)。配ったコールバックが
         // `loop()` か `redraw()` を呼べば、このフレームで描く
         var deliveredInput = false
-        if !isLooping, !redrawRequested {
-            guard deliverWhileStopped() else {
-                settleWithoutAnotherFrame()
-                serveObservationIfRequested()
-                return
+        if !isLooping {
+            if !redrawRequested {
+                guard deliverWhileStopped() else {
+                    settleWithoutAnotherFrame()
+                    serveObservationIfRequested()
+                    return
+                }
+                deliveredInput = true
             }
-            deliveredInput = true
+            // **止めていたところから描く 1 枚は、目標の 1 フレームぶん進める** ([#1366])。
+            // 止まっていた時間は乗せず、ほぼ 0 にもしない。頼んだ経路 (コールバックの中・
+            // 呼び出しの外・外の停止の間) をここ 1 か所で拾うので、経路で値が割れない
+            //
+            // [#1366]: https://github.com/mokume-metal/mokume/issues/1366
+            timing.stepOneFrameNext()
         }
         var drawFailure: RenderFailure?
         do {
@@ -457,10 +465,8 @@ public final class SketchRuntime {
     private func deliverWhileStopped() -> Bool {
         collectInput()
         withActiveRuntime { input.beginFrame { deliver($0) } }
-        guard isLooping || redrawRequested else { return false }
-        // 止まっていた間の実時間を、描き直しの 1 枚の経過に乗せない
-        timing.resync()
-        return true
+        // 描き直しの 1 枚の経過は ``runFrame()`` が決める
+        return isLooping || redrawRequested
     }
 
     /// 配られた 1 件を、スケッチの書いた口へ渡す。
@@ -715,8 +721,10 @@ public final class SketchRuntime {
     func loop() {
         guard !isLooping else { return }
         isLooping = true
-        // 止まっていた間の実時間を、再開後の最初の経過に乗せない (``resume()`` と同じ理由)
-        timing.resync()
+        // 止まっていた間の実時間を、再開後の最初の経過に乗せない (``resume()`` と同じ理由)。
+        // 寄せ直すのではなく 1 フレームぶんにするのは、``Sketch/redraw()`` の 1 枚と揃える
+        // ため。コールバックから呼ばれたときは ``runFrame()`` も同じ印を付ける
+        timing.stepOneFrameNext()
     }
 
     /// 作者の口の転送 (正本は ``Sketch/redraw()``)。
