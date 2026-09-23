@@ -19,6 +19,7 @@ import mokume
 let catalogue: [(name: String, make: () -> any Sketch)] = [
     ("shapes-and-style", { ShapesAndStyle() }),
     ("curves-and-vertices", { CurvesAndVertices() }),
+    ("color-and-scale", { ColorAndScale() }),
     ("type-and-imagery", { TypeAndImagery() }),
     ("type-and-measure", { TypeAndMeasure() }),
     ("textured-surfaces", { TexturedSurfaces() }),
