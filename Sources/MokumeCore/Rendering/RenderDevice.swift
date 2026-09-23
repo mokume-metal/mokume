@@ -255,7 +255,12 @@ import MokumeDiagnostics
             // **抱えている資源を手放す契機は、完了そのものが持つ。** 実測では、成功した
             // 投入でもハンドラは毎回呼ばれる (50 回の投入に対し 50 回)
             Task { @MainActor in self?.releaseFinished(upTo: submission) }
-            guard let error = feedback.error else { return }
+            guard let error = feedback.error else {
+                // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
+                // 待ちの期限切れを打ち切りのせいにしない (#1343)
+                commandFaults.noteFinished()
+                return
+            }
             let reason = CommandFaultLog.reason(of: error)
             guard commandFaults.note(reason) else { return }
             Diagnostics.warn(
@@ -691,6 +696,20 @@ import MokumeDiagnostics
     /// **言うことは持たない。** 4 つの呼び出し側で文言が違い、`Diagnostics.warn` は標準
     /// エラーへ直に書いて控えを持たないので、畳んで壊しても確かめる手段が無い (#958 で
     /// 同じ線を引いた)。投げるか投げないか (`deinit` だけ投げない) も呼ぶ側に残す。
+    /// 待ちが期限を越えたときに投げる失敗。**3 つの待ち口はすべてここを通る。**
+    ///
+    /// 直近に届いた結末が打ち切りなら ``RenderFailure/workDropped(reason:)``、そうでなければ
+    /// ``RenderFailure/timedOut(seconds:)``。打ち切りの後に待ちが越えると、`.timedOut` の文面
+    /// は「描きすぎ」と言い切ってしまい、読んだ人は形や光を減らす方向へ切り分ける — 本当の
+    /// 原因は打ち切りの側にある ([#1343](https://github.com/mokume-metal/mokume/issues/1343))。
+    ///
+    /// 記録を引数で受けるのは、GPU を打ち切らせずに判定を検査できるようにするためである
+    /// (打ち切りは検査から自然には作れない)。
+    static func waitFailure(faults: CommandFaultLog) -> RenderFailure {
+        if let reason = faults.unresolved { return .workDropped(reason: reason) }
+        return .timedOut(seconds: waitLimitSeconds)
+    }
+
     private func signalReached(_ value: UInt64) -> Bool {
         completion.wait(
             untilSignaledValue: value, timeoutMS: UInt64(Self.waitLimitSeconds * 1000))
@@ -718,7 +737,7 @@ import MokumeDiagnostics
         guard signalReached(pending) else {
             Diagnostics.warn(
                 "Waited \(Self.waitLimitSeconds) seconds for a command allocator to free up, with no answer")
-            throw .timedOut(seconds: Self.waitLimitSeconds)
+            throw Self.waitFailure(faults: commandFaults)
         }
     }
 
@@ -750,7 +769,7 @@ import MokumeDiagnostics
             // 観測が遅い) から原因へ辿る手がかりが 1 つも残らない
             Diagnostics.warn(
                 "Waited \(Self.waitLimitSeconds) seconds for the GPU to finish, with no answer")
-            throw .timedOut(seconds: Self.waitLimitSeconds)
+            throw Self.waitFailure(faults: commandFaults)
         }
     }
 
@@ -781,7 +800,7 @@ import MokumeDiagnostics
         guard signalReached(submission) else {
             Diagnostics.warn(
                 "Waited \(Self.waitLimitSeconds) seconds for a frame slot to free up, with no answer")
-            throw .timedOut(seconds: Self.waitLimitSeconds)
+            throw Self.waitFailure(faults: commandFaults)
         }
     }
 

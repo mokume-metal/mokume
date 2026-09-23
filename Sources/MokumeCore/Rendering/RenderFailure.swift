@@ -58,6 +58,20 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 物差しにできるようにするため。
     case timedOut(seconds: Int)
 
+    /// GPU の完了を待ったが制限時間内に終わらず、**直近に結末が届いた投入は GPU が打ち切って
+    /// いた**。``timedOut(seconds:)`` の代わりに出る。
+    ///
+    /// 打ち切られた投入も完了の合図は進めるので、待ちの側からは打ち切りと正常が区別できない
+    /// ([#1065])。区別が付くのは結末の記録だけで、それが打ち切りのまま待ちが越えたなら、原因は
+    /// 描いている量ではなく打ち切りの側にある。`.timedOut` の「描きすぎ」を出すと、読んだ人を
+    /// 形や光を減らす方向へ送ってしまう ([#1343])。
+    ///
+    /// `reason` は Metal が名乗った打ち切りの理由 (`Caused GPU Address Fault Error (…)` など)。
+    ///
+    /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
+    /// [#1343]: https://github.com/mokume-metal/mokume/issues/1343
+    case workDropped(reason: String)
+
     /// 描画先の大きさが正しくない (幅・高さは 1 以上、面の一辺の上限以下でなければ
     /// ならない)。上限そのものは ``description`` が名乗る。
     ///
@@ -174,6 +188,15 @@ extension RenderFailure: CustomStringConvertible {
             """
             Waited \(seconds) seconds for the GPU and it never finished.
             One frame is drawing too much — draw fewer things, or make the shader lighter.
+            """
+        case .workDropped(let reason):
+            // **1 行目に理由を入れる。** 窓の経路は `headline` の 1 行しか流さないので、
+            // 2 行目へ回すと、読むべき理由が端末に 1 度も出ない (#1343)
+            """
+            The GPU dropped work it had queued, and waiting for it never finished: \(reason)
+            This is not how much is being drawn. If the reason is a hang, one frame's work (a \
+            shader) runs too long; otherwise it is most likely a fault inside mokume — please \
+            report it with this message at https://github.com/mokume-metal/mokume/issues
             """
         case .invalidSize(let width, let height):
             """

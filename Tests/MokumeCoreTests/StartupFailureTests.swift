@@ -34,6 +34,11 @@ struct StartupFailureTests {
         ("bufferUnavailable", .bufferUnavailable(byteCount: 1024)),
         ("encoderUnavailable", .encoderUnavailable),
         ("timedOut", .timedOut(seconds: 5)),
+        (
+            "workDropped",
+            .workDropped(
+                reason: "Caused GPU Address Fault Error (0000000b:kIOGPUCommandBufferCallbackErrorPageFault)")
+        ),
         ("invalidSize", .invalidSize(width: 0, height: 120)),
         ("invalidPixelDensity", .invalidPixelDensity(1.5)),
         ("shaderSourceMissing", .shaderSourceMissing(name: "Shapes.metal")),
