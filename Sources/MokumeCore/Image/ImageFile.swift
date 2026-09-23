@@ -145,10 +145,21 @@ nonisolated enum ImageFile {
     }
 
     /// 置き場に並んだ包みの中を、探す場所として広げる。
+    ///
+    /// **列挙はパスの版で行う。** URL の版 (`contentsOfDirectory(at:)`) は、置き場が
+    /// ディレクトリへの symlink だと開けずに投げる。SwiftPM の `.build/release` はまさに
+    /// それなので、手で `./.build/release/<名前>` と打つと包みが候補から丸ごと落ちていた
+    /// ([#1330])。
+    ///
+    /// **候補は起点の綴りのまま組み、symlink を解かない。** 解いてから組むと、返す綴りが
+    /// 比べる側の綴りと割れる ([#1255])。
+    ///
+    /// [#1330]: https://github.com/mokume-metal/mokume/issues/1330
+    /// [#1255]: https://github.com/mokume-metal/mokume/issues/1255
     private static func bundled(_ path: String, in root: URL) -> [URL] {
         let listing =
-            (try? FileManager.default.contentsOfDirectory(
-                at: root, includingPropertiesForKeys: nil)) ?? []
+            ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
+            .map { root.appendingPathComponent($0) }
         var urls: [URL] = []
         for bundle in listing.sorted(by: { $0.path < $1.path })
         where bundle.pathExtension == "bundle" {
