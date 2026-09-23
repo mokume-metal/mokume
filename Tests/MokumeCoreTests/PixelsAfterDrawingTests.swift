@@ -10,8 +10,9 @@ import Testing
 ///
 /// `loadPixels()` の説明は「`pixels` も `get` も `set` も必要なら自分で呼ぶので、省いても
 /// 結果は変わらない」と約束している。同じフレームで 1 度読んだだけで描き切らなくなると、
-/// 読んだあとの図形は続く読み書きに現れず、古い写しが読める。**どの検査も
-/// `loadPixels()` を呼ばない** — 呼べば描き切られるので、見たいものが見えなくなる。
+/// 読んだあとの図形は続く読み書きに現れず、古い写しが読める。**描き切りの失敗を見る
+/// 1 本を除いて、どの検査も `loadPixels()` を呼ばない** — 呼べば描き切られるので、
+/// 見たいものが見えなくなる。
 ///
 /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
 @Suite(
@@ -187,5 +188,47 @@ struct PixelsAfterDrawingTests {
         #expect(
             canvas.target.pixelReadbacksEncoded == 2,
             "描いたあとに 1 度だけ描き切り直すはずが、\(canvas.target.pixelReadbacksEncoded) 本積んだ")
+    }
+
+    // MARK: - 描き切りに失敗したとき
+
+    /// **失敗した描き切りを、読むたびにはやり直さない。** 失敗した描き切りは溜めたものを
+    /// フレームの終わりへ残すので、溜めたかだけを見ていると読むたびにやり直す — GPU が
+    /// 詰まっていれば 1 画素読むごとに待ちの上限 (5 秒) まで待ち、画素を読み回すスケッチが
+    /// 固まる。やり直すのは `loadPixels()` を呼んだときだけで、溜めたものはそこで描かれ、
+    /// その後に描いたものはまた読む口が描き切る。
+    ///
+    /// 失敗の元は、読んだ直後に取り除く。**取り除いた後の読み取りが描いた色を返したら、
+    /// 読む口がやり直している。**
+    @Test("読む前の描き切りに失敗したフレームでは、続く読み取りが描き切りをやり直さない")
+    func aFailedLoadIsNotRetriedOnEveryRead() throws {
+        let canvas = try makeCanvas()
+        var afterFailure = LinearRGBA.transparent
+        var afterExplicitLoad = LinearRGBA.transparent
+        var afterDrawingAgain = LinearRGBA.transparent
+        try canvas.draw {
+            canvas.background(black)
+            _ = canvas.get(8, 8)
+            canvas.noStroke()
+            canvas.fill(green)
+            canvas.rect(0, 0, 16, 16)
+            canvas.failureForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+            _ = canvas.get(8, 8)
+            canvas.failureForTesting = nil
+            afterFailure = canvas.get(8, 8)
+
+            canvas.loadPixels()
+            afterExplicitLoad = canvas.get(8, 8)
+
+            canvas.fill(blue)
+            canvas.rect(0, 0, 16, 16)
+            afterDrawingAgain = canvas.get(8, 8)
+        }
+        #expect(afterFailure == black, "失敗した描き切りを、読む口がやり直した")
+        #expect(afterExplicitLoad == green, "loadPixels() を呼んでも、失敗した描き切りをやり直さない")
+        #expect(
+            afterDrawingAgain == blue,
+            "loadPixels() が描き切れた後も、読む口が描き切りをやり直さないままになっている")
+        #expect(try canvas.target.readPixels()[8, 8] == blue)
     }
 }

@@ -20,9 +20,12 @@ extension Canvas {
             // 積む** — 描画先は GPU 専用の面なので、読むには写しへ blit する必要がある。
             // ここで積めば、続く `pixels` は blit を積み直さず待つだけで済む (#753)
             try flush(applyingEffects: false, mirroringPixels: true)
+            pixelLoadFailed = false
         } catch {
             // 読み取りは落とさない (ADR-0020 決定 5) ので、投げずに残す。次のフレームの
-            // 描き切りが同じ理由で失敗し、そちらから外へ出る
+            // 描き切りが同じ理由で失敗し、そちらから外へ出る。**このフレームの読む口は
+            // もうやり直さない** (``pixelLoadFailed``)
+            pixelLoadFailed = true
             Diagnostics.warn("Could not finish drawing before reading pixels: \(error.headline)")
         }
         hasLoadedPixels = true
@@ -54,9 +57,12 @@ extension Canvas {
     /// 描いていなければ写しをそのまま使うので、読んで描かずにまた読むだけなら、
     /// 画素を 100 万回読んでも描き切るのも待つのも 1 度きり (#753)。
     ///
+    /// **失敗した描き切りは、読むたびにはやり直さない。** 失敗しても溜めたものは残るので、
+    /// 溜めたかだけを見ると GPU が詰まっているときに 1 画素ごとに待つことになる。
+    ///
     /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
     private func loadPixelsIfNeeded() {
-        guard !hasLoadedPixels || hasPendingDrawing else { return }
+        guard !hasLoadedPixels || (hasPendingDrawing && !pixelLoadFailed) else { return }
         loadPixels()
     }
 }
