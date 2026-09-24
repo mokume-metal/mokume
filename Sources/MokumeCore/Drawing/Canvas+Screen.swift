@@ -49,7 +49,8 @@ extension Canvas {
     // 面の位置が、いまの視点で空間のどこを指すか。
     public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> SIMD3<Float> {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
-        // 潰れた変換 (どこかの軸を 0 倍したもの) には打ち消しが無い = 戻し先が決まらない
+        // 潰れた変換 (どこかの軸を 0 倍したもの。判定は `Transform.isCollapsed`) には
+        // 打ち消しが無い = 戻し先が決まらない。倍率が小さいだけなら打ち消しはある (#1541)
         guard let undo = transform.inverted else { return .zero }
         let inside =
             Self.makeProjection(width: width, height: height)

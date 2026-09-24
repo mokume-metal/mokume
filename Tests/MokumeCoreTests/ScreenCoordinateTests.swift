@@ -203,6 +203,44 @@ struct ScreenCoordinateTests {
         }
     }
 
+    @Test("小さいだけの倍率の下でも、往復して元の点へ帰る")
+    func tinyScaleStillRoundTrips() throws {
+        // 潰れていない変換には打ち消しがある (#1541)。行列式を固定の閾値と比べていた
+        // 頃は、一様に 0.0049 倍・平面で 0.00034 倍・奥行きだけ 1e-7 倍で (0, 0, 0) が返った
+        let canvas = try makeCanvas(width: 160, height: 160)
+
+        func roundTrip(_ point: SIMD3<Float>, setUp: () -> Void) throws -> SIMD3<Float> {
+            var back = SIMD3<Float>.zero
+            try canvas.draw {
+                canvas.push()
+                canvas.translate(80, 80, 0)
+                setUp()
+                back = canvas.spacePosition(
+                    screenX: canvas.screenX(point.x, point.y, point.z),
+                    screenY: canvas.screenY(point.x, point.y, point.z),
+                    depth: canvas.screenZ(point.x, point.y, point.z))
+                canvas.pop()
+            }
+            return back
+        }
+
+        for k: Float in [0.0049, 0.004, 0.001] {
+            let point = SIMD3<Float>(20 / k, 0, 0)
+            let back = try roundTrip(point) { canvas.scale(k, k, k) }
+            #expect(length(back - point) <= length(point) * 0.001, "scale(\(k), \(k), \(k)): \(back)")
+        }
+        for k: Float in [0.00034, 0.0003] {
+            let point = SIMD3<Float>(20 / k, 0, 0)
+            let back = try roundTrip(point) { canvas.scale(k, k) }
+            #expect(length(back - point) <= length(point) * 0.001, "scale(\(k), \(k)): \(back)")
+        }
+        // 奥行きの誤差は 1 / k 倍に広がりうるので、z は見ない
+        for k: Float in [1e-7, 1e-8] {
+            let back = try roundTrip(SIMD3(20, 10, 0)) { canvas.scale(1, 1, k) }
+            #expect(abs(back.x - 20) <= 0.05 && abs(back.y - 10) <= 0.05, "scale(1, 1, \(k)): \(back)")
+        }
+    }
+
     @Test("戻した点は、いまの変換の中の座標で返る")
     func backwardReturnsCoordinatesInsideTheCurrentTransform() throws {
         let canvas = try makeCanvas()
