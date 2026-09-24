@@ -435,6 +435,55 @@ struct FormShapeTests {
         }
     }
 
+    /// 楕円の扇の再現 ([#1448])。横 260・縦 80 の楕円の 0…π/4 で、弧の端は媒介変数の角
+    /// 45° の点 (cx + rx·cos t, cy + ry·sin t) — 中心から見ると 17° の向きにある。
+    ///
+    /// [#1448]: https://github.com/mokume-metal/mokume/issues/1448
+    private func ellipticSector(_ canvas: Canvas) {
+        canvas.arc(20, 60, 260, 80, 0, Float.pi / 4)
+    }
+
+    /// 楕円の扇の**塗り**の内外は、辺を引くのと同じ媒介変数の角で決まる。
+    ///
+    /// 内外を中心から見た角で決めていた頃は、切り口が中心から見た 45° の半直線まで
+    /// 伸び、本当の辺 (中心から弧の端まで) の外に三角の塗りがはみ出していた ([#1448])。
+    ///
+    /// [#1448]: https://github.com/mokume-metal/mokume/issues/1448
+    @Test("楕円の扇の塗りは、弧の端へ引いた辺の外へはみ出さない")
+    func ellipticSectorFillStopsAtItsEdge() throws {
+        let image = try picture(try makeCanvas(width: 170, height: 110)) { canvas in
+            canvas.noStroke()
+            canvas.fill(white)
+            ellipticSector(canvas)
+        }
+        // (52, 77) は楕円の内で、中心から見れば 28° (はみ出しの中)、媒介変数の角では 60°
+        #expect(image[52, 77].red == 0, "扇の外 (媒介変数の角 60°) が塗られている: \(image[52, 77].red)")
+        // 媒介変数の角 13° の扇の内は塗り切られている
+        #expect(image[100, 65].red == 255, "扇の内 (媒介変数の角 13°) が抜けている: \(image[100, 65].red)")
+    }
+
+    /// 楕円の扇の**輪郭**も、弧の端で止まる。直線の辺の帯は塗り切られたまま。
+    ///
+    /// 輪郭は塗りと同じ距離場を輪郭の位置で解くので、内外の取り違えは弧の伸びとして
+    /// 出る — 弧が中心から見た 45° (媒介変数の角 73°) まで伸びていた ([#1448])。
+    ///
+    /// [#1448]: https://github.com/mokume-metal/mokume/issues/1448
+    @Test("楕円の扇の輪郭は、弧の端より先の楕円の上に出ない")
+    func ellipticSectorOutlineStopsAtTheArcEnd() throws {
+        let image = try picture(try makeCanvas(width: 170, height: 110)) { canvas in
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(2)
+            ellipticSector(canvas)
+        }
+        // 弧の端 (媒介変数の角 45°) より先、媒介変数の角 60°・70° の楕円の上
+        for (x, y) in [(85, 94), (64, 97)] {
+            #expect(image[x, y].red == 0, "弧の端より先 (\(x), \(y)) に輪郭が出ている: \(image[x, y].red)")
+        }
+        // 中心から弧の端へ引いた直線の辺の上
+        #expect(image[65, 74].red == 255, "直線の辺の帯 (65, 74) が抜けている: \(image[65, 74].red)")
+    }
+
     @Test("巨大な寸法でも数が壊れず、面を覆う")
     func hugeSizesStayFinite() throws {
         func scene(_ canvas: Canvas) throws -> DisplayImage {

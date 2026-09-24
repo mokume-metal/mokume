@@ -84,9 +84,10 @@ struct PixelGridTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) {
         let tolerance = tolerance ?? centroidTolerance
+        let differing = a.differingPixels(from: b)
         #expect(
-            a.differingPixels(from: b) <= allowedDifferingPixels,
-            "\(what): 被覆 50% で白黒にした画素の集合が違う", sourceLocation: sourceLocation)
+            differing <= allowedDifferingPixels,
+            "\(what): 被覆 50% で白黒にした画素の集合が \(differing) 画素違う", sourceLocation: sourceLocation)
         #expect(
             abs(a.centroid.x - b.centroid.x) < tolerance
                 && abs(a.centroid.y - b.centroid.y) < tolerance,
@@ -212,6 +213,53 @@ struct PixelGridTests {
             expectSameGeometry(
                 form, triangles, "太さ \(weight) の線", allowedDifferingPixels: 3, tolerance: 0.25)
         }
+    }
+
+    /// 楕円の扇の始まりと終わりの角。掃引が π 未満・π 超・一周近くの組と、始まりが
+    /// 軸に乗らない組を混ぜる — 始まりが 0 の組は、始まりの辺が中心から見た角でも
+    /// 媒介変数の角でも同じ向きなので、終わりの辺しか確かめない。
+    nonisolated struct ArcSpan: CustomTestStringConvertible, Sendable {
+        let start: Float
+        let stop: Float
+        var testDescription: String { "\(start)…\(stop) rad" }
+
+        static let all = [
+            ArcSpan(start: 0, stop: .pi / 4),
+            ArcSpan(start: 5, stop: 5.8),
+            ArcSpan(start: -7, stop: -6.2),
+            ArcSpan(start: 0.4, stop: 0.4 + .pi * 1.1),
+            ArcSpan(start: -2, stop: 1.5),
+            ArcSpan(start: 0.3, stop: 0.3 + 2 * .pi - 0.05),
+        ]
+    }
+
+    @Test(
+        "楕円の扇は、断片を付けて三角形で描いても同じ場所を覆う",
+        arguments: Placement.all, ArcSpan.all)
+    func ellipticArcsStayPutAcrossRoutes(_ placement: Placement, _ span: ArcSpan) throws {
+        // 三角形の経路は弧の点 (rx·cos t, ry·sin t) を並べた多角形で、角を媒介変数の角と
+        // して扱う。距離関数の経路が内外を中心から見た角で決めると、楕円でだけ切り口が
+        // 別の向きへずれる (#1448。円では 2 つの角が一致するので表に出ない)
+        func arc(on canvas: Canvas) {
+            canvas.noStroke()
+            canvas.translate(placement.x, placement.y)
+            canvas.rotate(placement.angle)
+            canvas.arc(0, 0, 60, 24, span.start, span.stop)
+        }
+        let form = try coverage { arc(on: $0) }
+        let triangles = try coverage { canvas in
+            canvas.shader(try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }"))
+            arc(on: canvas)
+        }
+        // **許容は、楕円そのものが経路の間で違う幅に取る。** 三角形の経路は弧を弦で近似し
+        // (弦は弧の内側へ最大 0.25 画素入る)、同じ置き方で一周の楕円を描いても 7〜16 画素が
+        // 入れ替わる。扇は直した後で 0〜15 画素、内外を中心から見た角で決めていた頃は
+        // 33〜160 画素 (いちばん少ないのは一周近くの組) 違った (どれも実測)。重心は、覆う
+        // 画素の少ない細い扇で AA の無い三角形の量子化が 0.16 画素まで揺らす (直した後に
+        // 実測) ので、細い線と同じ幅まで許す
+        expectSameGeometry(
+            form, triangles, "楕円の扇 \(span.testDescription)", allowedDifferingPixels: 20,
+            tolerance: placement.comparesCentroid ? 0.25 : .infinity)
     }
 
     // MARK: - 塗りと輪郭の継ぎ目
