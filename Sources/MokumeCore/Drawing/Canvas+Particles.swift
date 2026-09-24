@@ -111,7 +111,9 @@ extension Canvas {
         size: ClosedRange<Float>, color: LinearRGBA?, using randomness: inout Randomness
     ) {
         guard isDrawing else { return warnOutsideFrame(.particles) }
-        let count = particles.count(rate: rate, over: deltaTime)
+        // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
+        // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法
+        let count = particles.count(rate: rate, over: deltaTime, frame: framesDrawn)
         particles.emit(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
             color: color ?? style.fill, at: time, using: &randomness)

@@ -414,6 +414,83 @@ struct ParticleTests {
         #expect(brightest(spent) <= 8)
     }
 
+    // MARK: - 1 つの粒へ何か所から出す (#1468)
+
+    /// 1 つの粒へ毎フレーム `rates.count` 回 `emit` し、`frames` フレームで呼んだ順ごとに
+    /// 出た数を返す。数えるのは各 `emit` の前後の ``Particles/cursor`` の差で、環を
+    /// 回り込まないだけの容量を取る。
+    ///
+    /// `inOneLoop` なら同じ 1 行 (`for` の中) から呼び、そうでなければ別々の行から呼ぶ
+    /// (`rates` は 2 つ)。**呼んだ位置で分ける作りでは、同じ 1 行から呼ぶ形が直らない**
+    /// — `Sketches/SparksAndForces.swift` がその書き方をしている。
+    private func emittedCounts(
+        rates: [Float], step: Float, frames: Int, inOneLoop: Bool
+    ) throws -> [Int] {
+        let canvas = try makeCanvas()
+        canvas.deltaTime = step
+        var randomness = Randomness(seed: 1468)
+        let dust = try canvas.makeParticles(count: 256)
+        var counts = Array(repeating: 0, count: rates.count)
+        for _ in 0..<frames {
+            try canvas.draw {
+                if inOneLoop {
+                    for (index, rate) in rates.enumerated() {
+                        let before = dust.cursor
+                        canvas.emit(
+                            dust, from: .point(32, 32), rate: rate, speed: 0...0, angle: 0...0,
+                            life: 0.2...0.2, size: 1...1,
+                            color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+                        counts[index] += dust.cursor - before
+                    }
+                } else {
+                    let first = dust.cursor
+                    canvas.emit(
+                        dust, from: .point(16, 32), rate: rates[0], speed: 0...0, angle: 0...0,
+                        life: 0.2...0.2, size: 1...1,
+                        color: .linear(red: 1, green: 0.5, blue: 0), using: &randomness)
+                    let second = dust.cursor
+                    canvas.emit(
+                        dust, from: .point(48, 32), rate: rates[1], speed: 0...0, angle: 0...0,
+                        life: 0.2...0.2, size: 1...1,
+                        color: .linear(red: 0, green: 0.5, blue: 1), using: &randomness)
+                    counts[0] += second - first
+                    counts[1] += dust.cursor - second
+                }
+                canvas.particles(dust)
+            }
+        }
+        // 環を回り込んでいない (差をそのまま足してよい前提)
+        try #require(counts.reduce(0, +) < dust.capacity, "出た数 \(counts) が容量を超えた")
+        return counts
+    }
+
+    /// [#1468] の完了条件 1・3。**1 つの粒へ 2 か所から出しても、それぞれが頼んだ数を出す。**
+    /// 刻み 1/30 で 60 フレーム (2 秒) — `rate: 15` を 2 か所なら 30 個ずつ、`rate: 3` と
+    /// `rate: 45` なら 6 個と 90 個。
+    ///
+    /// 繰り越しが 1 つだと取り合う。15 と 15 なら、1 か所目が 0.5 を足して 0 個、2 か所目が
+    /// 1 に届いて 1 個、を毎フレーム繰り返して (0, 60) になる。3 と 45 では (0, 96)。
+    /// 合計は合っていて、配り方だけが崩れる。
+    ///
+    /// [#1468]: https://github.com/mokume-metal/mokume/issues/1468
+    @Test(
+        "1 つの粒へ 2 か所から出しても、それぞれが頼んだ数を出す",
+        arguments: [([Float(15), 15], [30, 30]), ([Float(3), 45], [6, 90])])
+    func twoEmittersOnOneParticlesEachGetTheirRate(rates: [Float], expected: [Int]) throws {
+        let counts = try emittedCounts(rates: rates, step: 1 / 30, frames: 60, inOneLoop: false)
+        #expect(counts == expected, "レート \(rates) の噴き口が出した数 \(counts) — 頼んだ数は \(expected)")
+    }
+
+    /// [#1468] の完了条件 2。**同じ 1 行から 2 回呼んでも、繰り越しは分かれる。** 呼んだ
+    /// 位置 (`#line` など) で分ける作りでは、ここが (0, 60) のまま直らない。
+    ///
+    /// [#1468]: https://github.com/mokume-metal/mokume/issues/1468
+    @Test("同じ 1 行から何度 emit しても、それぞれが頼んだ数を出す")
+    func emittingInALoopStillSplitsTheCarry() throws {
+        let counts = try emittedCounts(rates: [15, 15], step: 1 / 30, frames: 60, inOneLoop: true)
+        #expect(counts == [30, 30], "同じ行から呼んだ 2 回が出した数 \(counts)")
+    }
+
     // MARK: - 描く個数は GPU が決める
 
     /// GPU が書いた描く引数を読む。`UInt32` のビット列で置かれているのでそのまま読み替える。
