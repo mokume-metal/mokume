@@ -191,6 +191,64 @@ struct CameraTests {
         #expect(abs((upright - 32) + (flipped - 32)) < 1.5)
     }
 
+    /// 裏返した平行投影の向き。**裏返さない向きの範囲**は ``ortho()`` と同じ (面 1 枚ぶん)。
+    enum OrthoSwap: Sendable, CaseIterable {
+        case topAndBottom
+        case leftAndRight
+    }
+
+    @Test(
+        "上端と下端 (左端と右端) を入れ替えても、光の当たった閉じた箱は裏返った絵になるだけ",
+        arguments: OrthoSwap.allCases)
+    func swappingTheRangeOnlyFlipsAClosedSolid(_ swap: OrthoSwap) throws {
+        // ortho の説明の「絵が上下反転するだけ」は、閉じた形でも成り立たなければならない。
+        // 投影が画面の縦横を裏返すと巻き方も裏返るので、表の巻き方を裏返さずに裏面を
+        // 捨てると手前の面が捨てられ、光に背を向けた奥の面だけが写る (#1446)
+        func picture(swapped: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas(width: 96, height: 96)
+            try canvas.draw {
+                canvas.background(20)
+                switch (swapped, swap) {
+                case (false, _): canvas.ortho()
+                case (true, .topAndBottom): canvas.ortho(-48, 48, -48, 48, 5, 600)
+                case (true, .leftAndRight): canvas.ortho(48, -48, 48, -48, 5, 600)
+                }
+                canvas.noStroke()
+                canvas.directionalLight(255, 255, 255, 0, 0, -1)
+                canvas.fill(230, 60, 40)
+                canvas.translate(52, 40, 0)
+                canvas.rotateY(0.6)
+                canvas.rotateX(0.5)
+                canvas.box(40)
+            }
+            return try pixels(of: canvas)
+        }
+
+        let upright = try picture(swapped: false)
+        let swapped = try picture(swapped: true)
+        let difference = PictureDifference.between(
+            swapped, upright, flip: swap == .topAndBottom ? .vertical : .horizontal)
+        #expect(difference.shapePixels > 1000, "箱が写っていない (\(difference))")
+        #expect(difference.fraction <= 0.02, "裏返した投影の箱が、裏返した絵と食い違う (\(difference))")
+    }
+
+    @Test("投影が画面の縦横を裏返すかは、縦横の倍率の符号で決まり、奥行きの向きは見ない")
+    func whetherAProjectionFlipsTheScreen() {
+        func flips(_ projection: Camera.Projection) -> Bool {
+            Camera(
+                eye: SIMD3(0, 0, 100), center: .zero, up: SIMD3(0, 1, 0), projection: projection
+            ).flipsScreen
+        }
+        #expect(!flips(Camera.defaultPerspective(width: 64, height: 64)))
+        #expect(!flips(Camera.defaultOrthographic(width: 64, height: 64)))
+        #expect(flips(.orthographic(left: -32, right: 32, bottom: -32, top: 32, near: 5, far: 600)))
+        #expect(flips(.orthographic(left: 32, right: -32, bottom: 32, top: -32, near: 5, far: 600)))
+        #expect(!flips(.orthographic(left: 32, right: -32, bottom: -32, top: 32, near: 5, far: 600)))
+        // 手前と奥を入れ替えると 4x4 の行列式は負になるが、画面の巻き方は変わらない
+        #expect(!flips(.orthographic(left: -32, right: 32, bottom: 32, top: -32, near: 600, far: 5)))
+        #expect(flips(.perspective(fieldOfView: 1, aspect: -1, near: 5, far: 600)))
+    }
+
     // MARK: - フレームの中で変える
 
     @Test("視点を変えると、変えたあとに置いたものだけが新しい視点で描かれる")

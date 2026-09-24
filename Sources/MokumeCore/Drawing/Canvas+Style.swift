@@ -277,6 +277,8 @@ extension Canvas {
                 instances: open.external?.instances,
                 indirectArguments: open.external?.arguments,
                 cullMode: cullMode(for: open),
+                frontFacing: frontFacing(for: open),
+                isMirrored: open.isMirrored,
                 solidSource: open.source))
         warnIfMaterialCannotShow()
     }
@@ -288,6 +290,10 @@ extension Canvas {
     /// どれか 1 つでも欠けると、裏面が絵の一部になりうる (半透明の奥・透けた画素・
     /// 足し合わせへの寄与・断片が捨てる画素の奥) ので両面で描く。**迷う側は両面**で、
     /// 捨てないことは遅くなるだけで絵を間違えない。
+    ///
+    /// **鏡映と裏返す投影は、ここでは見ない。** どちらも巻き方を裏返すだけで、裏面が絵に
+    /// 出るようにはしない — 裏返った巻き方は表の巻き方 (``frontFacing(for:)``) の側で
+    /// 戻し、捨て方は `.back` のまま保つ ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
     private func cullMode(for open: OpenSolid) -> MTLCullMode {
         guard case .mesh(let shape) = open.source, shape.isClosed,
             !open.hasTranslucentInstance,
@@ -296,6 +302,15 @@ extension Canvas {
             currentShader == nil
         else { return .none }
         return .back
+    }
+
+    /// 閉じようとしている立体の列の、表の巻き方 (``Batch/frontFacing``)。
+    ///
+    /// **置き場所の鏡映と、画面の縦横を裏返す投影の組で決まる。** どちらも画面での巻き方を
+    /// 1 度ずつ裏返すので、片方だけなら反時計回りが表になり、両方なら元へ戻る。投影は
+    /// **閉じた時点の視点**から読む (視点を当てると列が閉じるので、列の中で投影は変わらない)。
+    private func frontFacing(for open: OpenSolid) -> MTLWinding {
+        open.isMirrored != currentCamera.flipsScreen ? .counterClockwise : .clockwise
     }
 
     /// 効きようのない材質を、初回だけ知らせる ([ADR-0020] 決定 5)。

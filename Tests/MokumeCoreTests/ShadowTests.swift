@@ -654,6 +654,62 @@ struct ShadowTests {
         }
     }
 
+    // MARK: - 鏡映した形の影 (#1446)
+
+    /// 床の上に箱を 1 つ浮かせる絵。`mirrored` なら横に鏡映してから回し、そうでなければ
+    /// 同じ形になるよう逆に回す (箱は横の鏡映で自分に重なる)。
+    private func floorAndBox(_ canvas: Canvas, mirrored: Bool, shadows: Bool = true) throws
+        -> DisplayImage
+    {
+        let center: Float = 64
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.camera(center, -24, 170, center, 14, 0, 0, 1, 0)
+            canvas.perspective(Float.pi / 3, 1, 1, 500)
+            canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
+            canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
+            canvas.shadows(shadows)
+            // **縁の余裕を 0 にする。** 焼き付く面が光を向いた面だと、光を向いた面が自分の
+            // 影を受けて斑になる。余裕があるとそれが隠れ、どちらの面を焼いたかが絵に出ない
+            canvas.shadowBias(0)
+            canvas.noStroke()
+
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.7, green: 0.7, blue: 0.7))
+            canvas.push()
+            canvas.translate(center, 40, -20)
+            canvas.box(190, 8, 190)
+            canvas.pop()
+
+            canvas.castShadow(true)
+            canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
+            canvas.push()
+            canvas.translate(center, 0, 0)
+            if mirrored { canvas.scale(-1, 1, 1) }
+            canvas.rotateY(mirrored ? 0.6 : -0.6)
+            canvas.rotateX(0.5)
+            canvas.box(40)
+            canvas.pop()
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
+    @Test("鏡映した箱の影は、同じ形になる回転の箱の影と同じ")
+    func aMirroredBoxCastsTheSameShadow() throws {
+        // 焼き付けも画面と同じ捨て方で描く。鏡映した列だけ巻き方を裏返さずに焼くと、
+        // 鏡映していない列とは反対の側の面 (光を向いた面) が焼き付き、箱の光を向いた面が
+        // 自分の影を受ける (#1446)。床に落ちる影の形はどちらの面を焼いても同じなので、
+        // 見分けが付くのは箱の上である
+        let mirrored = try floorAndBox(try makeCanvas(), mirrored: true)
+        let rotated = try floorAndBox(try makeCanvas(), mirrored: false)
+        let unshadowed = try floorAndBox(try makeCanvas(), mirrored: false, shadows: false)
+        // 比べ合わせる相手が影を持っていること (影の無い絵と比べて床が暗くなっている)
+        let shadow = PictureDifference.between(rotated, unshadowed)
+        #expect(shadow.differing > 100, "比べる相手に影が落ちていない (\(shadow))")
+        let difference = PictureDifference.between(mirrored, rotated)
+        #expect(difference.differing * 50 <= shadow.differing, "鏡映した箱の影が食い違う (\(difference) / 影 \(shadow))")
+    }
+
     // MARK: - 落とす光が無いまま終えたフレーム (#1151)
 
     /// 影と光を置いて立体を描き、手元の表示の前置きとして末尾で光を取り除くフレーム。

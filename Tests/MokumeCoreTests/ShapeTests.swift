@@ -966,6 +966,168 @@ struct ShapeTests {
         #expect(differing * 50 <= lit, "形の中で置いたモデルが、その場で描いた絵と食い違う")
     }
 
+    // MARK: - 鏡映して置く (#1446)
+
+    /// 光を正面から当てた場面へ、`place` で何かを置いた絵 (128×128・真ん中が原点)。
+    private func frontLitPicture(_ canvas: Canvas, place: () -> Void) throws -> DisplayImage {
+        try canvas.draw {
+            canvas.background(20)
+            canvas.directionalLight(255, 255, 255, 0, 0, -1)
+            canvas.noStroke()
+            canvas.fill(230, 60, 40)
+            canvas.translate(64, 64, 0)
+            place()
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
+    /// 四角錐の角と面。**横の鏡映で自分に重なる**ので、鏡映して回した絵は逆に回した絵と
+    /// 同じになる (``ModelFixture/pyramidText`` と同じ形・同じ巻き方)。
+    private static let pyramidCorners: [SIMD3<Float>] = [
+        SIMD3(-1, 0, -1), SIMD3(1, 0, -1), SIMD3(1, 0, 1), SIMD3(-1, 0, 1), SIMD3(0, 1.6, 0),
+    ]
+    private static let pyramidFaces: [[Int]] = [
+        [0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4], [3, 2, 1], [3, 1, 0],
+    ]
+
+    @Test("向きを書かずに並べた立体の形を鏡映して置いても、見る側から光を受ける")
+    func aMirroredShapeWithDerivedNormalsCatchesTheLight() throws {
+        // 形から求めた向きは、断片が「裏を向いている」と判定した面で裏返す。置き場所で
+        // 鏡映すると巻き方が裏返るので、表の巻き方を列ごと裏返さないと、見る側を向いた
+        // 面が視線と逆の向きで光を受けて暗くなる
+        func picture(mirrored: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas(width: 128, height: 128)
+            let gem = canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(230, 60, 40)
+                canvas.beginShape(.triangles)
+                for face in Self.pyramidFaces {
+                    for corner in face {
+                        let point = Self.pyramidCorners[corner] * 30
+                        canvas.vertex(point.x, point.y, point.z)
+                    }
+                }
+                canvas.endShape()
+            }
+            return try frontLitPicture(canvas) {
+                if mirrored { canvas.scale(-1, 1, 1) }
+                canvas.rotateY(mirrored ? 0.6 : -0.6)
+                canvas.rotateX(0.5)
+                canvas.shape(gem)
+            }
+        }
+
+        let mirrored = try picture(mirrored: true)
+        let rotated = try picture(mirrored: false)
+        let difference = PictureDifference.between(mirrored, rotated)
+        #expect(difference.shapePixels > 1000, "形が写っていない (\(difference))")
+        #expect(difference.fraction <= 0.02, "鏡映した形が逆に回した形と食い違う (\(difference))")
+    }
+
+    @Test("形の中で鏡映して置いた箱は、鏡映せずに置いても、同じ形になる回転の箱と同じ絵に写る")
+    func aBoxMirroredInsideAShapeLooksLikeTheEquivalentRotation() throws {
+        // 記録の間は置き場所を頂点へ焼く (#1297) ので、鏡映は頂点の巻き方に焼き付き、
+        // 置くときの置き場所は鏡映しない。焼いた頂点はその場で並べる列に入って両面で
+        // 描かれ、箱は向きを書いて持つので、捨て方にも求めた向きの裏返しにも掛からない
+        // — 直す前から写る見込みの経路で、#1446 の直しが崩さないことの見張り
+        let baked = try makeCanvas(width: 128, height: 128)
+        let crate = baked.createShape {
+            baked.noStroke()
+            baked.fill(230, 60, 40)
+            baked.scale(-1, 1, 1)
+            baked.rotateY(0.6)
+            baked.rotateX(0.5)
+            baked.box(56)
+        }
+        let placed = try frontLitPicture(baked) { baked.shape(crate) }
+
+        let direct = try makeCanvas(width: 128, height: 128)
+        let rotated = try frontLitPicture(direct) {
+            direct.rotateY(-0.6)
+            direct.rotateX(0.5)
+            direct.box(56)
+        }
+        let difference = PictureDifference.between(placed, rotated)
+        #expect(difference.shapePixels > 1000, "箱が写っていない (\(difference))")
+        #expect(difference.fraction <= 0.02, "形の中で鏡映した箱が回転の箱と食い違う (\(difference))")
+    }
+
+    @Test("形の中で鏡映して置いた、面の向きの無いモデルも、見る側から光を受ける")
+    func aModelMirroredInsideAShapeCatchesTheLight() throws {
+        // 焼いた頂点は何も動かさない置き場所で描くので、列の表の巻き方は裏返らない。
+        // 鏡映は焼いた三角形の巻き方に残るので、焼く側が巻き方を戻さないと、形から
+        // 求めた向きが視線と逆の向きで光を受ける
+        let baked = try makeCanvas(width: 128, height: 128)
+        let bakedModel = try baked.loadModel(ModelFixture.pyramid, normalize: false)
+        let gem = baked.createShape {
+            baked.noStroke()
+            baked.fill(230, 60, 40)
+            baked.scale(-1, 1, 1)
+            baked.rotateY(0.6)
+            baked.rotateX(0.5)
+            baked.scale(30, 30, 30)
+            baked.model(bakedModel)
+        }
+        let placed = try frontLitPicture(baked) { baked.shape(gem) }
+
+        let direct = try makeCanvas(width: 128, height: 128)
+        let directModel = try direct.loadModel(ModelFixture.pyramid, normalize: false)
+        let rotated = try frontLitPicture(direct) {
+            direct.rotateY(-0.6)
+            direct.rotateX(0.5)
+            direct.scale(30, 30, 30)
+            direct.model(directModel)
+        }
+        let difference = PictureDifference.between(placed, rotated)
+        #expect(difference.shapePixels > 1000, "モデルが写っていない (\(difference))")
+        #expect(
+            difference.fraction <= 0.02, "形の中で鏡映したモデルが逆に回したモデルと食い違う (\(difference))")
+    }
+
+    @Test("番号で指した、向きを書かない形を形の中で鏡映して置き直しても、見る側から光を受ける")
+    func anIndexedShapeMirroredInsideAShapeCatchesTheLight() throws {
+        // 入れ子の置き直しは読む順ごと焼く。巻き方を戻すのは頂点ではなく読む順の側になる
+        // ので、上の検査 (並べた順に読む頂点) とは別の枝を通る。頂点は三角形ごとに別に
+        // 並べて共有しない — 共有すると向きが角ごとに均されて、鏡映で自分に重ならない
+        func gem(on canvas: Canvas) -> Shape {
+            canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(230, 60, 40)
+                canvas.beginShape(.triangles)
+                for face in Self.pyramidFaces {
+                    for corner in face {
+                        let point = Self.pyramidCorners[corner] * 30
+                        canvas.vertex(point.x, point.y, point.z)
+                    }
+                }
+                for number in 0..<(Self.pyramidFaces.count * 3) { canvas.index(number) }
+                canvas.endShape()
+            }
+        }
+
+        let baked = try makeCanvas(width: 128, height: 128)
+        let inner = gem(on: baked)
+        let outer = baked.createShape {
+            baked.scale(-1, 1, 1)
+            baked.rotateY(0.6)
+            baked.rotateX(0.5)
+            baked.shape(inner)
+        }
+        let placed = try frontLitPicture(baked) { baked.shape(outer) }
+
+        let direct = try makeCanvas(width: 128, height: 128)
+        let reference = gem(on: direct)
+        let rotated = try frontLitPicture(direct) {
+            direct.rotateY(-0.6)
+            direct.rotateX(0.5)
+            direct.shape(reference)
+        }
+        let difference = PictureDifference.between(placed, rotated)
+        #expect(difference.shapePixels > 1000, "形が写っていない (\(difference))")
+        #expect(
+            difference.fraction <= 0.02, "形の中で鏡映した形が逆に回した形と食い違う (\(difference))")
+    }
+
     // MARK: - 貼る絵が記録に残ること
 
     /// 縞の絵を焼く。

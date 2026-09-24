@@ -364,6 +364,41 @@ struct ModelTests {
             #expect(canvas.drawCallsInLastFrame == 1)
         }
 
+        @Test("鏡映して置いた、面の向きの無いモデルも、見る側から光を受ける")
+        func aMirroredModelWithDerivedNormalsCatchesTheLight() throws {
+            // 形から求めた向きは、断片が「裏を向いている」と判定した面で裏返す。鏡映すると
+            // 巻き方が裏返るので、表の巻き方を裏返さないと、見る側を向いた面が視線と逆の
+            // 向きで光を受けて暗くなる (#1446)。四角錐は横の鏡映で自分に重なるので、
+            // 鏡映して回した絵は逆に回した絵と同じになる
+            //
+            // **整えずに読む。** 整える経路は縦を裏返すのに巻き方を戻さない別の穴を持つ
+            // (#1473) ので、ここでは鏡映の穴だけを見る
+            func picture(mirrored: Bool) throws -> DisplayImage {
+                let canvas = try makeCanvas(width: 128, height: 128)
+                let raw = try canvas.loadModel(ModelFixture.pyramid, normalize: false)
+                try canvas.draw {
+                    canvas.background(20)
+                    canvas.directionalLight(255, 255, 255, 0, 0, -1)
+                    canvas.noStroke()
+                    canvas.fill(230, 60, 40)
+                    canvas.translate(64, 64, 0)
+                    if mirrored { canvas.scale(-1, 1, 1) }
+                    canvas.rotateY(mirrored ? 0.6 : -0.6)
+                    canvas.rotateX(0.5)
+                    canvas.scale(30, 30, 30)
+                    canvas.model(raw)
+                }
+                return try canvas.target.encodeForDisplay()
+            }
+
+            let mirrored = try picture(mirrored: true)
+            let rotated = try picture(mirrored: false)
+            let difference = PictureDifference.between(mirrored, rotated)
+            #expect(difference.shapePixels > 1000, "モデルが写っていない (\(difference))")
+            #expect(
+                difference.fraction <= 0.02, "鏡映したモデルが逆に回したモデルと食い違う (\(difference))")
+        }
+
         // MARK: - 読み直さない
 
         @Test("同じ名前・同じ整え方なら読み直さない")
