@@ -909,14 +909,48 @@ public final class Canvas {
     static let valueSlotCapacity = valuesStride / MemoryLayout<Float>.stride
 
     /// いまのフレームの時刻 (秒)。利用者の断片から読める。
-    var time: Float = 0
+    ///
+    /// **描き場所は作った面と同じ値を読む** (``timebase``・[#1467])。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    var time: Float {
+        get { timebase.time }
+        set { timebase.time = newValue }
+    }
 
     /// 1 フレームの長さ (秒)。**動くものの積分はこれで進む。**
     ///
     /// 既定を 60 分の 1 にしてあるのは、`Canvas` を直に回す経路 (検査・台帳のシーン)
     /// でも動きが進むようにするためである。0 を既定にすると、時計を差さない経路では
     /// 何も動かず、しかも絵は出るので気付けない。
-    var deltaTime: Float = 1.0 / 60
+    ///
+    /// **描き場所は作った面と同じ値を読む** (``timebase``・[#1467])。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    var deltaTime: Float {
+        get { timebase.deltaTime }
+        set { timebase.deltaTime = newValue }
+    }
+
+    /// 時刻と刻みの置き場。**描き場所は、作った面と同じ 1 つを指す** (``createGraphics(_:_:)``・
+    /// [#1467])。
+    ///
+    /// 参照を共有するのは、描き場所が作った面の値を**いつ読んでも**同じにするためである。
+    /// 作ったときに写すと `setup()` で作った描き場所が 0 のまま止まり、描き始めに写すと
+    /// 描き場所から作った描き場所が、間の描き場所を描かなかったフレームで古い値を読む。
+    /// 時刻を作るのは今までどおりランタイムの 1 か所で、描き場所の側は読むだけになる。
+    ///
+    /// 直に作った面 (``init(target:gpu:)``) は自分の置き場を持つ。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    var timebase = Timebase()
+
+    /// 時刻と刻み。**面どうしで共有するための参照型**で、値そのものは ``time`` と
+    /// ``deltaTime`` の説明が持つ。
+    final class Timebase {
+        var time: Float = 0
+        var deltaTime: Float = 1.0 / 60
+    }
 
     /// これまでに描き切ったフレームの数。**時計ではなく番号**なので、同じ入力からは
     /// 何度走らせても同じ列になる。

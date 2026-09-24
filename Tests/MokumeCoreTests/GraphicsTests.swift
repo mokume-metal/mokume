@@ -355,6 +355,229 @@ struct GraphicsTests {
         #expect(color.alpha > 0.99)
     }
 
+    // MARK: - 時刻と刻みは作った面と同じ (#1467)
+
+    /// 時刻で脈打つ色。赤は `0.5 + 0.5·sin(πt)` で、0 秒で 0.5、0.5 秒 (30 fps の 16 枚目)
+    /// で 1.0 になる。時刻が 0 のまま止まると、16 枚目も 0.5 のまま残る。
+    private static let pulse = "float k = 0.5 + 0.5 * sin(in.time * 3.14159265);"
+        + " return float4(k, 0.3 * k, 0.9 * (1.0 - k), 1.0);"
+
+    /// 左の半分に描き場所、右の半分に本体の面へ、同じ断片で同じ矩形を塗る
+    /// ([#1467] の再現スケッチを縮めたもの)。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    final class PulseSideBySide: Sketch {
+        /// 描き場所を描き場所から作るか (完了条件 4)。間の描き場所は描かない。
+        var nested = false
+        var pulse: Shader?
+        var outer: Canvas?
+        var graphics: Canvas?
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 32, height: 16, frameRate: 30) }
+        func setup() {
+            pulse = try? makeShader(
+                "float4 paint(Fragment in, Values values) { \(GraphicsTests.pulse) }")
+            outer = try? createGraphics(16, 16)
+            graphics = outer
+            if nested { graphics = try? outer?.createGraphics(16, 16) }
+        }
+        func draw() {
+            guard let pulse, let graphics else { return }
+            background(.display(red: 0, green: 0, blue: 0))
+            graphics.beginDraw()
+            graphics.noStroke()
+            graphics.shader(pulse)
+            graphics.rect(0, 0, 16, 16)
+            graphics.endDraw()
+            image(graphics, 0, 0)
+            noStroke()
+            shader(pulse)
+            rect(16, 0, 16, 16)
+            resetShader()
+        }
+    }
+
+    /// 1 枚目と 16 枚目の、描き場所を置いた画素と本体の面の画素の赤を返す。
+    private func sideBySideReds(nested: Bool) throws -> [(graphics: Float, screen: Float)] {
+        let sketch = PulseSideBySide()
+        sketch.nested = nested
+        let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
+        var reds: [(graphics: Float, screen: Float)] = []
+        for frame in 1...16 {
+            try runtime.advance()
+            guard frame == 1 || frame == 16 else { continue }
+            try #require(sketch.graphics != nil && sketch.pulse != nil, "描き場所か断片を作れなかった")
+            let pixels = try runtime.target.readPixels()
+            reds.append((pixels[8, 8].red, pixels[24, 8].red))
+        }
+        return reds
+    }
+
+    /// 完了条件 1 ([#1467])。直す前は描き場所の時刻が 0 のまま止まり、16 枚目の描き場所が
+    /// 0.5 (= `sin(0)`) で残る。1 枚目は本体も 0 秒なので、直す前でも揃う。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    @Test("描き場所で塗った断片も、本体の面と同じ時刻を読む")
+    func graphicsFragmentReadsTheSketchTime() throws {
+        let reds = try sideBySideReds(nested: false)
+        let (first, sixteenth) = (reds[0], reds[1])
+        #expect(abs(first.graphics - 0.5) < 0.02, "1 枚目: \(first)")
+        #expect(abs(first.graphics - first.screen) < 0.02, "1 枚目: \(first)")
+        #expect(abs(sixteenth.screen - 1) < 0.02, "16 枚目: \(sixteenth)")
+        #expect(abs(sixteenth.graphics - sixteenth.screen) < 0.02, "16 枚目: \(sixteenth)")
+    }
+
+    /// 完了条件 4 ([#1467])。描き場所から作った描き場所も、作った面 (その先の本体の面) と
+    /// 同じ時刻を読む。**間の描き場所は 1 度も描かない** — 描いた時点で作った面から写す
+    /// 作りなら、ここで古い値が残る。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    @Test("描き場所から作った描き場所も、間を描かなくても本体の面と同じ時刻を読む")
+    func nestedGraphicsReadsTheSketchTime() throws {
+        let reds = try sideBySideReds(nested: true)
+        let (first, sixteenth) = (reds[0], reds[1])
+        #expect(abs(first.graphics - first.screen) < 0.02, "1 枚目: \(first)")
+        #expect(abs(sixteenth.screen - 1) < 0.02, "16 枚目: \(sixteenth)")
+        #expect(abs(sixteenth.graphics - sixteenth.screen) < 0.02, "16 枚目: \(sixteenth)")
+    }
+
+    /// 時刻で脈打つ色を返す利用者の効果を、描き場所か本体の面のどちらかに掛ける。
+    ///
+    /// **本体に掛けた効果は画面全体を上書きする**ので、1 回の走らせ方で両方は比べられない。
+    /// 掛け先を変えて 2 回走らせ、同じ画素を比べる。描き場所は毎フレーム塗り直す
+    /// (#1469 の焼き込みを混ぜないため)。
+    final class PulsingEffect: Sketch {
+        var onGraphics = false
+        var effect: EffectShader?
+        var graphics: Canvas?
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 30) }
+        func setup() {
+            effect = try? makeEffect(
+                "float4 effect(Pixel in, Values values) { \(GraphicsTests.pulse) }")
+            graphics = try? createGraphics(16, 16)
+        }
+        func draw() {
+            guard let effect, let graphics else { return }
+            let gray = LinearRGBA.display(red: 0.5, green: 0.5, blue: 0.5)
+            if onGraphics {
+                background(.display(red: 0, green: 0, blue: 0))
+                graphics.beginDraw()
+                graphics.background(gray)
+                graphics.effects([.custom(effect)])
+                graphics.endDraw()
+                image(graphics, 0, 0)
+            } else {
+                background(gray)
+                effects([.custom(effect)])
+            }
+        }
+    }
+
+    /// 16 枚目の中央の赤。
+    private func pulsingEffectRed(onGraphics: Bool) throws -> Float {
+        let sketch = PulsingEffect()
+        sketch.onGraphics = onGraphics
+        let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
+        for _ in 0..<16 { try runtime.advance() }
+        try #require(sketch.effect != nil && sketch.graphics != nil, "描き場所か効果を作れなかった")
+        return try runtime.target.readPixels()[8, 8].red
+    }
+
+    /// 完了条件 2 ([#1467])。直す前は描き場所の効果が時刻 0 の色 (赤 0.5) を返す。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    @Test("描き場所に掛けた効果も、本体の面に掛けた効果と同じ時刻を読む")
+    func graphicsEffectReadsTheSketchTime() throws {
+        let screen = try pulsingEffectRed(onGraphics: false)
+        let graphics = try pulsingEffectRed(onGraphics: true)
+        #expect(abs(screen - 1) < 0.02, "本体: \(screen)")
+        #expect(abs(graphics - screen) < 0.02, "描き場所: \(graphics) / 本体: \(screen)")
+    }
+
+    /// 1 枚目にだけ本体から粒を 1 つずつ出し、片方は本体で、もう片方は描き場所で進める。
+    /// **力は掛けない** (#1471 の `drag` の不安定を混ぜないため)。
+    final class DriftingDust: Sketch {
+        static let start: Float = 4
+        var onScreen: Particles?
+        var onGraphics: Particles?
+        var graphics: Canvas?
+        private var emitted = false
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 30) }
+        func setup() {
+            onScreen = try? makeParticles(count: 1)
+            onGraphics = try? makeParticles(count: 1)
+            graphics = try? createGraphics(16, 16)
+        }
+        func draw() {
+            guard let onScreen, let onGraphics, let graphics else { return }
+            if !emitted {
+                emitted = true
+                // 毎秒 30 個を 1/30 秒ぶん = 1 個。速さ 60 px/秒で右へ
+                for dust in [onScreen, onGraphics] {
+                    emit(
+                        dust, from: .point(Self.start, 8), rate: 30, speed: 60...60,
+                        angle: 0...0, life: 100...100, size: 1...1)
+                }
+            }
+            particles(onScreen)
+            graphics.beginDraw()
+            graphics.particles(onGraphics)
+            graphics.endDraw()
+        }
+    }
+
+    /// 完了条件 3 ([#1467])。30 fps で 30 枚 (1 秒) 進めると、どちらも出た位置から約 60 px
+    /// に居る。直す前は描き場所の刻みが 1/60 のままなので、描き場所で進めた粒は約 30 px
+    /// しか進まず、寿命も半分しか減らない。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    @Test("描き場所で進める粒も、本体の面と同じ刻みで進む")
+    func graphicsParticlesStepWithTheSketch() throws {
+        let sketch = DriftingDust()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
+        for _ in 0..<30 { try runtime.advance() }
+        let onScreen = try #require(sketch.onScreen, "粒を作れなかった")
+        let onGraphics = try #require(sketch.onGraphics, "粒を作れなかった")
+
+        func particle(_ dust: Particles) -> Particle {
+            runtime.canvas.read(dust.state).withUnsafeBytes { raw in
+                raw.bindMemory(to: Particle.self)[0]
+            }
+        }
+        let screen = particle(onScreen)
+        let graphics = particle(onGraphics)
+        try #require(screen.life > 0 && graphics.life > 0, "粒が出ていない")
+        #expect(abs(screen.x - DriftingDust.start - 60) < 0.5, "本体: \(screen.x)")
+        #expect(abs(graphics.x - screen.x) < 1e-3, "描き場所: \(graphics.x) / 本体: \(screen.x)")
+        #expect(
+            abs(graphics.life - screen.life) < 1e-3,
+            "描き場所: \(graphics.life) / 本体: \(screen.life)")
+    }
+
+    /// 完了条件 5 のうち描き場所の側 ([#1467])。時計を差さない経路 (`Canvas` を直に回す
+    /// 検査・台帳のシーン) では、描き場所の時刻と刻みは作った面と同じ値のまま。作った面の
+    /// 値を変えれば、描き場所も入れ子の描き場所も同じ値を読む。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    @Test("時計を差さない面でも、描き場所は作った面と同じ時刻と刻みを読む")
+    func graphicsWithoutAClockFollowsItsMaker() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+        let inner = try layer.createGraphics(8, 8)
+        // 既定は作った面と同じ 0 と 1/60
+        #expect(layer.time == 0)
+        #expect(layer.deltaTime == 1.0 / 60)
+
+        canvas.time = 0.5
+        canvas.deltaTime = 1.0 / 30
+        for graphics in [layer, inner] {
+            #expect(graphics.time == 0.5)
+            #expect(graphics.deltaTime == 1.0 / 30)
+        }
+    }
+
     // MARK: - 呼び方が対になっていないとき (ADR-0020 決定 5)
 
     @Test("描き切る前の描き場所を置いたら知らせる")
