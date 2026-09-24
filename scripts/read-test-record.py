@@ -26,8 +26,21 @@ SwiftPM が `--xunit-output` で自分でファイルへ書く記録は、同じ
 読めなければ `unreadable 0` を出す。**終了コードは常に 0** — 呼ぶ側
 (`render-status.sh`) は「報告しない理由を述べて 0 で終える」約束を持っており、
 ここで落ちるとその約束を破ることになる。
+
+## 記録全体の失敗の数 (`--failures <記録>`・#1526)
+
+`make test` が、`swift test` が非 0 で終わった回に呼ぶ (`scripts/test-vanished.sh`)。
+検査のプロセスが要約を残さずに消えた回と、普通の赤とを分けるためで、出すのは 1 行:
+
+    missing      記録が無い (空のファイルも含む — Makefile の `test -s` と同じ線)
+    unreadable   在るが読めない (本物の helper を kill -9 した回は、宣言と根の開き
+                 だけの 52 バイトが残った)
+    failures N   読めて、`<failure>` か `<error>` を持つ検査が N 件
+
+終了コードは同じく常に 0 にする。判定は呼ぶ側が行を読んで決める。
 """
 
+import os
 import sys
 import xml.etree.ElementTree as ET
 
@@ -53,7 +66,27 @@ def read(path, classname):
     return verdict(cases, classname), skipped
 
 
+def failures(path):
+    """記録全体で、落ちた (`<failure>` / `<error>` を持つ) 検査の数。"""
+    try:
+        if os.path.getsize(path) == 0:
+            return "missing"
+    except OSError:
+        return "missing"
+    try:
+        cases = list(ET.parse(path).getroot().iter("testcase"))
+    except (OSError, ET.ParseError):
+        return "unreadable"
+    failed = sum(
+        1 for c in cases if c.find("failure") is not None or c.find("error") is not None
+    )
+    return "failures %d" % failed
+
+
 def main(argv):
+    if len(argv) == 3 and argv[1] == "--failures":
+        print(failures(argv[2]))
+        return 0
     if len(argv) != 3:
         print("unreadable 0")
         return 0
