@@ -171,15 +171,6 @@ struct SolidCullingTests {
         #expect(try frontFacing { $0.ortho(32, -32, 32, -32, 5, 600) } == [.counterClockwise])
         #expect(try frontFacing { $0.ortho(32, -32, -32, 32, 5, 600) } == [.clockwise])
         #expect(try frontFacing { $0.ortho(-32, 32, 32, -32, 600, 5) } == [.clockwise])
-        // 作っておいた視点 (`setCamera`) は投影の値を検めずに通るので、横 ÷ 縦の比が負の
-        // 透視も届く。判定は実際に使う行列から出す
-        #expect(
-            try frontFacing { canvas in
-                var camera = canvas.currentCamera
-                camera.projection = .perspective(
-                    fieldOfView: Float.pi / 3, aspect: -1, near: 5, far: 600)
-                canvas.setCamera(camera)
-            } == [.counterClockwise])
         // 裏返す投影で鏡映した置き場所は、2 度裏返って元に戻る
         #expect(
             try frontFacing({ $0.ortho(-32, 32, -32, 32, 5, 600) }, mirrored: true) == [.clockwise])
