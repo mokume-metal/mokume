@@ -30,9 +30,6 @@ extension Canvas {
     /// 断片へ渡す「世界をカメラの側へ移す行列」。
     var viewMatrix: simd_float4x4 { currentCamera.viewMatrix }
 
-    /// 視線が進む向き。
-    var viewForward: SIMD3<Float> { currentCamera.forward }
-
     /// 画面の横方向。
     var viewRight: SIMD3<Float> { currentCamera.right }
 
@@ -458,8 +455,11 @@ extension Canvas {
 
     /// 立体の線を、太さのある帯でなぞる。
     ///
-    /// 帯は**視線に正対させる** — そうしないと線を回したときに太さが変わり、真横を
-    /// 向いた線が消える。太さは画面の画素で測るので、奥にあるものほど世界では広く作る。
+    /// 帯は**画面に写した線に正対させる** — 横向きを画面上の線の垂線に取る。そう
+    /// しないと線を回したときに太さが変わり、真横を向いた線が消える。透視投影で
+    /// 正対させる相手はカメラ全体の軸ではなく、目から線の各点へ向かう視線である
+    /// (画面の中心から外れた奥行きのある線が細った・#1546)。太さは画面の画素で測る
+    /// ので、奥にあるものほど世界では広く作る。
     ///
     /// 面の向きは持たせない (ゼロ)。**線と点は光を受けない** — 平面の輪郭が光を受けない
     /// のと同じ扱いで、向きを持たない頂点をそのままの色で出すのは断片の側の約束である。
@@ -529,18 +529,48 @@ extension Canvas {
         _ a: SIMD3<Float>, _ b: SIMD3<Float>,
         shape: (SIMD3<Float>, SIMD3<Float>), half: Float
     ) {
-        let along = b - a
-        guard length_squared(along) > 0 else { return }
-        var side = cross(along, viewForward)
-        // 視線に沿って伸びる線は横向きが決まらない。画面の横方向へ倒す
-        if length_squared(side) <= 0 { side = viewRight }
-        side = normalize(side)
+        guard length_squared(b - a) > 0 else { return }
+        // 画面で点に潰れる線 (目を通る線) は帯の幅を持たない。端の形だけが出る
+        guard let side = screenAcross(a, b) else { return }
         let atA = side * (half * worldPerPixel(at: a))
         let atB = side * (half * worldPerPixel(at: b))
         appendSolidStrokeTriangle(
             a + atA, b + atB, b - atB, shape: (shape.0, shape.1, shape.1))
         appendSolidStrokeTriangle(
             a + atA, b - atB, a - atA, shape: (shape.0, shape.1, shape.0))
+    }
+
+    /// 線分を画面に写したときの垂線を、**世界の向き**で返す (長さ 1)。
+    ///
+    /// 向きは画面の横 (`viewRight`) と縦 (`viewDown`) の組み合わせ — 視線に直交する
+    /// 面の中の向きなので、そちらへ `worldPerPixel(at:)` の長さだけ動かすと、画面で
+    /// ちょうど 1 画素動く (透視でもその点の奥行きのまま動くため)。
+    ///
+    /// **正対させる相手はカメラ全体の軸ではなく、画面に写った線である** (#1546)。
+    /// 透視投影では、奥行きのある線は画面の中心から外れるほど斜めに写るので、軸との
+    /// 外積で決めた横向きは画面の線とずれ、帯が細る (ずれが揃うと線が消える)。
+    ///
+    /// 透視では目と線を含む平面の法線 `cross(a − eye, b − eye)` を視点の座標で取る。
+    /// その横と縦の成分が、画面に写した線の垂線の向きになる — 端点を割り算で画面へ
+    /// 落とさないので、目の後ろへ回る端点があっても向きが決まる。平行投影では画面の
+    /// 線は視点の座標での線そのものなので、その向きを 90° 回す。
+    ///
+    /// 画面での長さが 0 の線 (透視で目を通る線・平行で視線に沿う線) には `nil` を返す。
+    private func screenAcross(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float>? {
+        let camera = currentCamera
+        let (right, down) = (camera.right, camera.down)
+        let normal: SIMD2<Float>
+        switch camera.projection {
+        case .perspective:
+            let plane = cross(a - camera.eye, b - camera.eye)
+            normal = SIMD2(dot(plane, right), dot(plane, down))
+        case .orthographic:
+            let along = b - a
+            normal = SIMD2(-dot(along, down), dot(along, right))
+        }
+        let size = length(normal)
+        guard size > 0, size.isFinite else { return nil }
+        return right * (normal.x / size) + down * (normal.y / size)
     }
 
     /// 視線に正対する円板を置く (丸い端点と丸い角)。
