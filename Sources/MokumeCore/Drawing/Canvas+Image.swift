@@ -201,7 +201,8 @@ extension Canvas {
             return
         }
 
-        // 切り出しは絵の中へ収める。外を指しても落ちず、指した分だけが出る
+        // 切り出しは絵の中へ収める。外を指しても落ちず、重なった分だけが同じ倍率で
+        // 指した場所に出る (置き先は下で同じ割合で締める)
         let full = SIMD2(Float(picture.width), Float(picture.height))
         let left = min(max(0, sourceX), full.x)
         let top = min(max(0, sourceY), full.y)
@@ -209,8 +210,18 @@ extension Canvas {
         let bottom = min(max(top, sourceY + sourceHeight), full.y)
         guard right > left, bottom > top else { return }
 
+        // **置き先も、切り出しを締めた割合で締める** (#1532)。締めずに置くと、重なった分が
+        // 置き先いっぱいに引き伸ばされ、はみ出した量で倍率と縦横比が変わる。倍率は
+        // `置き先 / 切り出し` のまま (canvas の `drawImage` と同じ扱い)。上の guard を
+        // 通ったなら切り出しの幅と高さは正なので、0 では割らない
+        let scale = SIMD2(box.width / sourceWidth, box.height / sourceHeight)
+        let x = box.x + (left - sourceX) * scale.x
+        let y = box.y + (top - sourceY) * scale.y
+        let width = (right - left) * scale.x
+        let height = (bottom - top) * scale.y
+
         appendImageQuad(
-            picture, x: box.x, y: box.y, width: box.width, height: box.height,
+            picture, x: x, y: y, width: width, height: height,
             uvMin: SIMD2(left / full.x, top / full.y),
             uvMax: SIMD2(right / full.x, bottom / full.y),
             color: style.tint)
