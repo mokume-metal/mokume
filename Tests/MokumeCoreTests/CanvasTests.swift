@@ -1127,6 +1127,25 @@ struct CanvasTests {
         }
     }
 
+    @Test("フレームの外で書いた切り抜きは、どの口でも警告して無視される (#1505)")
+    func clipsOutsideAFrameAreIgnored() throws {
+        // 切り抜きはシーンの記述で、フレームを越えない (ADR-0021 決定 4・寿命の表)。
+        // 形に焼き付かないので、形の組み立ての間もフレームの外に数える。注意は初回だけ
+        // 言うので、口ごとに新しい面を作る (`transformsOutsideAFrameAreIgnored` と同じ理由)
+        let mouths: [(String, (Canvas) -> Void)] = [
+            ("clip", { $0.clip(0, 0, 8, 8) }),
+            ("noClip", { $0.noClip() }),
+        ]
+        for (name, write) in mouths {
+            let canvas = try makeCanvas()
+            write(canvas)
+            #expect(
+                canvas.warnings.hasWarned(.clipOutsideFrame),
+                "\(name) がフレームの外で黙って捨てている")
+            #expect(canvas.style.clip == nil, "\(name) がフレームの外で効いている")
+        }
+    }
+
     @Test("初期化のときに変換を書いても、絵は変わらない")
     func transformsOutsideAFrameLeaveThePictureAlone() throws {
         // 警告を足したことで**絵まで変わっていない**ことを見る。フレームの外で書いた

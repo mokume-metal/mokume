@@ -331,12 +331,19 @@ extension Sketch {
     ///
     /// 積み降ろし (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
     /// 面の外へ出た指定は面の内側へ収める。
+    ///
+    /// - Note: 切り抜きは**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
+    ///   ときや、止まっている間の入力のコールバックで書いた切り抜きはどのフレームにも
+    ///   属さないので、警告して無視される。
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.clip(a, b, c, d)
     }
 
     /// 切り抜きをやめる。
+    ///
+    /// - Note: 切り抜きは**フレームを越えない**ので、フレームの外 (初期化のときなど) には
+    ///   外す切り抜きが無い。そこで呼ぶと、``clip(_:_:_:_:)`` と同じく警告して無視される。
     public func noClip() { canvas.noClip() }
 
     /// 描くものを、下にある絵とどう混ぜるか。既定は上に重ねる。

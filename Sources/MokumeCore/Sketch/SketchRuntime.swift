@@ -450,8 +450,8 @@ public final class SketchRuntime {
         //
         // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
         // 落ちる。描き始めた中でないと、コールバックの中の `translate()` や `pushStyle()` が
-        // 無言で効かない (変換とスタイルの口は `guard isShaping`・光の口は `guard isDrawing`
-        // で守られている。形を組み立てている最中でもないので、どちらも外である)。
+        // 無言で効かない (変換とスタイルの口は `guard isShaping`・光と切り抜きの口は
+        // `guard isDrawing` で守られている。形を組み立てている最中でもないので、どちらも外である)。
         // 図形や絵の口は守られておらず、フレームの外で置いたものは次の描き切りまで溜まる
         try canvas.draw {
             withActiveRuntime {

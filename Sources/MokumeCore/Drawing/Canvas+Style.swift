@@ -39,6 +39,9 @@ extension Canvas {
     // 面の外へ出た指定を面の内側へ収めるのは、この世代の GPU が範囲外の切り抜きを
     // 受け取ると検証で落ちるためである。指定をそのまま渡さない。
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+        // **切り抜きはフレームを越えない** (ADR-0021 決定 4)。形に焼き付かないので、形の
+        // 組み立ての間もフレームの外に数える (同 決定 4 の追補)。値の検めより先に断る
+        guard isDrawing else { return warnOutsideFrame(.clip) }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         // 数でない値・無限は、収めた先が決まらない。切り抜きを触らずに返す
         // (ADR-0020 決定 5 の「安全な既定へ倒す」・他の入口と同じ倒し方)
@@ -60,6 +63,9 @@ extension Canvas {
     }
 
     public func noClip() {
+        // 切り抜きの無いフレームの外でも言う。フレームの外では何も変えない口も、書いた
+        // ことを知らせる (変換の `resetMatrix()` / `popMatrix()` と同じ扱い・#970)
+        guard isDrawing else { return warnOutsideFrame(.clip) }
         guard style.clip != nil else { return }
         closeBatch()
         style.clip = nil
