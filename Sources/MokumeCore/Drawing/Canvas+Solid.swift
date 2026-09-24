@@ -478,12 +478,18 @@ extension Canvas {
         strokeRing(
             count: points.count, isClosed: isClosed, curveSteps: curveSteps,
             band: {
-                appendSolidBand(
-                    points[$0], points[$1],
+                appendSolidStroke(
+                    .band(points[$0], points[$1]),
                     shape: (shapePoints[$0], shapePoints[$1]), half: half)
             },
-            disc: { appendSolidDisc(at: points[$0], shape: shapePoints[$0], half: half) },
-            square: { appendSolidSquare(at: points[$0], shape: shapePoints[$0], half: half) })
+            disc: {
+                appendSolidStroke(
+                    .disc(points[$0]), shape: (shapePoints[$0], shapePoints[$0]), half: half)
+            },
+            square: {
+                appendSolidStroke(
+                    .square(points[$0]), shape: (shapePoints[$0], shapePoints[$0]), half: half)
+            })
     }
 
     /// 置いた形の稜線を、いまの変換と線で引く (``SolidEdges``)。
@@ -508,11 +514,69 @@ extension Canvas {
         strokeNet(
             count: placed.count, edges: net.edges,
             band: {
-                appendSolidBand(
-                    placed[$0], placed[$1], shape: (net.points[$0], net.points[$1]), half: half)
+                appendSolidStroke(
+                    .band(placed[$0], placed[$1]), shape: (net.points[$0], net.points[$1]),
+                    half: half)
             },
-            disc: { appendSolidDisc(at: placed[$0], shape: net.points[$0], half: half) },
-            square: { appendSolidSquare(at: placed[$0], shape: net.points[$0], half: half) })
+            disc: {
+                appendSolidStroke(
+                    .disc(placed[$0]), shape: (net.points[$0], net.points[$0]), half: half)
+            },
+            square: {
+                appendSolidStroke(
+                    .square(placed[$0]), shape: (net.points[$0], net.points[$0]), half: half)
+            })
+    }
+
+    /// 線の部品を 1 つ積む。**記録の間は、置くときに組み直せるよう元を覚える** (#1547)。
+    ///
+    /// 帯は視点に合わせて組むので、記録したときの視点で組んだ帯は置いた先で合わない
+    /// (``SolidStrokePiece``)。頂点はいまの視点で組んで積み、どの区間がどの部品かを
+    /// ``recordedSolidStrokes`` に残す。
+    private func appendSolidStroke(
+        _ kind: SolidStrokePiece.Kind, shape: (SIMD3<Float>, SIMD3<Float>), half: Float
+    ) {
+        let start = solidVertices.count
+        buildSolidStroke(kind, shape: shape, half: half)
+        let count = solidVertices.count - start
+        guard recordingShape, count > 0 else { return }
+        recordedSolidStrokes.append(
+            SolidStrokePiece(
+                kind: kind, weight: style.strokeWeight, vertexStart: start, vertexCount: count))
+    }
+
+    /// 線の部品を組む。積むか位置だけを受け取るかは ``solidStrokeCapture`` が決める。
+    private func buildSolidStroke(
+        _ kind: SolidStrokePiece.Kind, shape: (SIMD3<Float>, SIMD3<Float>), half: Float
+    ) {
+        switch kind {
+        case let .band(start, end): appendSolidBand(start, end, shape: shape, half: half)
+        case let .disc(center): appendSolidDisc(at: center, shape: shape.0, half: half)
+        case let .square(center): appendSolidSquare(at: center, shape: shape.0, half: half)
+        }
+    }
+
+    /// 線の部品を、**いまの視点で**組み直した頂点の位置。並びは積んだときと同じ。
+    ///
+    /// 保持した形を置くときに、置いた後の点へ移した部品を渡す
+    /// (`placeSolid(_:of:instances:)`)。組み直しで何も積まない部品 (点に潰れる帯) は、
+    /// 同じ数の頂点を 1 点へ畳んで面積を 0 にする — 頂点の数は記録と変えられない
+    /// (添字の列と区間が数で指している)。
+    func rebuiltSolidStroke(_ piece: SolidStrokePiece) -> [SIMD3<Float>] {
+        // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組んだときの太さで組む
+        let savedWeight = style.strokeWeight
+        style.strokeWeight = piece.weight
+        solidStrokeCapture = []
+        buildSolidStroke(
+            piece.kind, shape: (piece.anchor, piece.anchor), half: piece.weight / 2)
+        var corners = solidStrokeCapture ?? []
+        solidStrokeCapture = nil
+        style.strokeWeight = savedWeight
+        if corners.count != piece.vertexCount {
+            corners = Array(repeating: piece.anchor, count: piece.vertexCount)
+        }
+        if piece.isReversed { Self.reverseTriangles(in: &corners, from: 0) }
+        return corners
     }
 
     /// 稜線を使い回す。**線を引いた形にだけ作る。**
@@ -571,6 +635,11 @@ extension Canvas {
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
         shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)
     ) {
+        // 組み直しの間は積まずに、位置だけを渡す (``rebuiltSolidStroke(_:)``)
+        if solidStrokeCapture != nil {
+            solidStrokeCapture?.append(contentsOf: [a, b, c].map(liftedTowardViewer))
+            return
+        }
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)
         appendSolidVertex(
             position: liftedTowardViewer(a), shapePosition: shape.0, normal: .zero,

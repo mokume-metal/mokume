@@ -53,6 +53,15 @@ public struct Shape {
     ///
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     let strokeRanges: [Range<Int>]
+    /// ``solidVertices`` のうち**立体の線の頂点**が、どの部品から来たか。
+    ///
+    /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ位置のままでは
+    /// 置いた先で合わない。置くときに部品を置いた後の点といまの視点で組み直し、この
+    /// 区間の頂点の位置を上書きする (``SolidStrokePiece``・[#1547])。区間は
+    /// ``solidVertices`` の番号で、部品の点は形自身の座標である。
+    ///
+    /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
+    let solidStrokes: [SolidStrokePiece]
 
     /// 区間を塗るもの一式。
     ///
@@ -149,7 +158,7 @@ public struct Shape {
     init(
         vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
         solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
-        strokeRanges: [Range<Int>] = []
+        strokeRanges: [Range<Int>] = [], solidStrokes: [SolidStrokePiece] = []
     ) {
         self.vertices = vertices
         self.solidVertices = solidVertices
@@ -157,6 +166,7 @@ public struct Shape {
         self.forms = forms
         self.runs = runs
         self.strokeRanges = strokeRanges
+        self.solidStrokes = solidStrokes
     }
 
     /// 何も入っていない形。
@@ -191,6 +201,7 @@ public struct Shape {
         var forms: [FormInstance] = []
         var runs: [Run] = []
         var strokeRanges: [Range<Int>] = []
+        var solidStrokes: [SolidStrokePiece] = []
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
         forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
 
@@ -207,6 +218,12 @@ public struct Shape {
             forms.append(contentsOf: shape.forms)
             strokeRanges.append(
                 contentsOf: shape.strokeRanges.map { ($0.lowerBound + flatOffset)..<($0.upperBound + flatOffset) })
+            solidStrokes.append(
+                contentsOf: shape.solidStrokes.map { piece in
+                    var piece = piece
+                    piece.vertexStart += solidOffset
+                    return piece
+                })
             for var run in shape.runs {
                 switch run.source {
                 case .flat: run.start += flatOffset
@@ -220,7 +237,7 @@ public struct Shape {
         }
         return Shape(
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
-            forms: forms, runs: runs, strokeRanges: strokeRanges)
+            forms: forms, runs: runs, strokeRanges: strokeRanges, solidStrokes: solidStrokes)
     }
 
     /// 2 つの形を 1 つに畳む。
