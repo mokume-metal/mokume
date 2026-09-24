@@ -143,8 +143,8 @@ struct EffectPass {
     enum Slot: Equatable {
         /// いまの絵。
         case current
-        /// 次の絵。ここへ書くと往復が 1 つ進む。**並びの最後なら入りの絵そのもの**へ書く
-        /// (その段が入りの絵を読んでいない限り)。
+        /// 次の絵。ここへ書くと往復が 1 つ進む。**並びの最後なら描く先そのもの**へ書く
+        /// (入りの絵は描く先から写した控えなので、読んでいる面へ書くことにはならない・#1469)。
         case next
         /// 脇の絵。`level` が 1 以上なら 1 / 2^level に縮めた絵 (#755)。
         case side(Int, level: Int)
@@ -178,7 +178,9 @@ struct EffectPass {
 /// [#802]: https://github.com/mokume-metal/mokume/issues/802
 /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
 enum BuiltinEffectKind: UInt32, CaseIterable {
-    /// そのまま写す。段の連なりの最後に 1 度だけ通る。
+    /// そのまま写す。時間方向の拡大が出した絵を控えるときに通る (利用者の効果も、組み込みの
+    /// 設定が要らないのでこの番号を名乗る)。かつては最後の段が入りの絵を読む並びの写し戻しにも
+    /// 使っていたが、入りの絵を控えから読むようにして要らなくなった (#1469)。
     case copy = 0
     case blurX = 1
     case blurY = 2

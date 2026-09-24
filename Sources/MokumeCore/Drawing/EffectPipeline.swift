@@ -81,6 +81,19 @@ final class EffectPipeline {
     private var reduced: [[StageImage]] = Array(repeating: [], count: maxReductionLevel)
     /// 縮めた絵を確保した回数。**長回しで増えないことを検査が見る。**
     private(set) var reducedBuilt = 0
+    /// 効果を通す前の絵の控え ([#1469])。**効果を頼まれてはじめて作り、使い回す**
+    /// ([ADR-0023] 決定 5)。
+    ///
+    /// 効果の並びはこれを入りの絵として読み、最後の段が描く先へ効果を通した絵を書く。
+    /// 次のフレームの入りは、ここから描く先へ戻した絵になる (``Canvas`` の描き切り)。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    private var carryStorage: StageImage?
+    /// 控えを作った回数。**効果を頼まない面では 0 のまま**であることを検査が見る — 細かさを
+    /// 下げた面は拡大のためにこのパイプラインが立つので、パイプラインの有無では見られない。
+    private(set) var carriesBuilt = 0
+    /// 作ってある控え。**作らずに覗く** (戻す側は、控えが無ければ戻すものも無い)。
+    var existingCarry: StageImage? { carryStorage }
     /// いちばん小さい段。1/8 より下は持たない (半径から段を選ぶ側 ``Effect/reductionLevel(for:)`` も
     /// ここで止まる)。
     static let maxReductionLevel = 3
@@ -192,6 +205,19 @@ final class EffectPipeline {
             reducedBuilt += 1
         }
         return reduced[level - 1][index]
+    }
+
+    /// 効果を通す前の絵の控え。無ければ作る。
+    ///
+    /// 大きさは描く細かさ (中間の絵と同じ)。塗っておかない — 読まれる前に必ず描く先から
+    /// 写されるうえ、コマンドを組み立てている最中に作られるので塗れもしない。
+    func carry() throws(RenderFailure) -> StageImage {
+        if let carryStorage { return carryStorage }
+        let made = try StageImage(
+            gpu: gpu, width: width, height: height, startingTransparent: false)
+        carryStorage = made
+        carriesBuilt += 1
+        return made
     }
 
     /// 縮めた絵の一辺。**上へ丸める**ので、元の絵の画素を 1 つも切り捨てない。

@@ -77,49 +77,62 @@ extension Canvas {
 
     /// 頼まれた効果を、描き終えた絵へ通す。
     ///
-    /// **入りの絵へ書くのは最後の 1 段だけ。** 段は控えの間を往復し、並びの最後の段が
-    /// 入りの絵へ書く (その段が入りの絵を読んでいるときだけ、控えへ書いてから写し戻す)。
-    /// 段の失敗はすべてコマンドを組む時点で起きるので、最後の段の組み立てに失敗すれば
-    /// 入りの絵へは 1 命令も積まれない。だから**途中で失敗しても「途中の絵」は出ない** —
-    /// 入りの絵は 1 ビットも変わっていない (#755 で書き戻しの段を消しても、ここは
-    /// 変わらない)。
+    /// **描く先へ書くのは最後の 1 段だけ。** 描き終えた絵をまず控え
+    /// (``EffectPipeline/carry()``) へ写し、段はそれを入りの絵として読んで中間の絵の間を
+    /// 往復し、並びの最後の段が描く先へ書く。段の失敗はすべてコマンドを組む時点で起きるので、
+    /// 最後の段の組み立てに失敗すれば描く先へは 1 命令も積まれない。だから**途中で失敗しても
+    /// 「途中の絵」は出ない** — 描く先は 1 ビットも変わっていない (#755 で書き戻しの段を
+    /// 消しても、ここは変わらない)。
     ///
-    /// 頼まれていなければ段を 1 つも立てないので、効果を使わないスケッチはここで
-    /// 何も払わない (代表シーンの台帳が動かないのもこれによる)。
+    /// **描く先に残った効果は、次のフレームの入りにならない** ([#1469])。控えには効果を
+    /// 通す前の絵が残るので、次のフレームの最初の描き切りがそこから戻す
+    /// (``encodeCarryRestore(into:)``)。細かさ 1 では描く先と出す先が同じ 1 枚なので、
+    /// 出口へ届ける絵は描く先へ書くしかなく、戻さなければ塗り直さずに描き足すスケッチで
+    /// 効果がフレームごとに重なる。
+    ///
+    /// 頼まれていなければ段も写しも 1 つも積まず、控えも作らないので、効果を使わない
+    /// スケッチはここで何も払わない (代表シーンの台帳が動かないのもこれによる)。
+    ///
     /// 効果を通す。**失敗しても投げない。**
     ///
     /// 効果は毎フレーム走るので、投げると 1 段の失敗でフレームごと落ちる ([ADR-0020]
-    /// 決定 5)。入りの絵を書く段の手前で止まれば入りの絵は無傷なので、**入りをそのまま
+    /// 決定 5)。描く先を書く段の手前で止まれば描く先は無傷なので、**入りをそのまま
     /// 通して**理由を知らせる。
     ///
+    /// - Returns: 描く先へ効果を通した絵を書いたか。書いたなら、効果を通す前の絵は控えにある。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    func applyEffects(into commands: any MTL4CommandBuffer) {
+    func applyEffects(into commands: any MTL4CommandBuffer) -> Bool {
         do {
-            try encodeEffects(into: commands)
+            return try encodeEffects(into: commands)
         } catch {
             warnOnce(
                 .effectFailed,
                 "Could not run the effect: \(error.headline). This frame comes out as it stood before "
                     + "the effect")
+            return false
         }
     }
 
-    func encodeEffects(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+    func encodeEffects(into commands: any MTL4CommandBuffer) throws(RenderFailure) -> Bool {
         let passes = pendingEffects.flatMap(\.passes)
-        guard !passes.isEmpty else { return }
+        guard !passes.isEmpty else { return false }
         let pipeline = try effectPipeline()
         // **このフレームで使う枠を、1 枠も書かないうちに数え切る。** 取り直すと領域が
         // 入れ替わるので、既に束ねた番地の指す先を生かしておくことに頼ることになる。
-        // 数え切っておけば、そもそも途中で取り直さない (要るかもしれない写し戻しと
-        // 拡大のぶんを足す — 上限で数えてよい)
-        try pipeline.reservePasses(
-            stagePassesUsed + passes.count + 1 + upscalePassCount)
+        // 数え切っておけば、そもそも途中で取り直さない (拡大のぶんを足す — 上限で
+        // 数えてよい)。控えへの写しは段ではないので枠を取らない
+        try pipeline.reservePasses(stagePassesUsed + passes.count + upscalePassCount)
+        let carry = try pipeline.carry()
+        try encodeCarry(into: carry, in: commands)
 
-        /// いまの絵。`nil` は入りの絵 (描き終えた描画先)。
-        var current: (any EffectSurface)?
+        /// いまの絵。**最初は控え** — 入りの絵を描く先から読まないので、最後の段は
+        /// 読んでいる面へ書くことにならない。
+        var current: any EffectSurface = carry
         var nextSlot = 0
 
-        func image(of slot: EffectPass.Slot) throws(RenderFailure) -> (any EffectSurface)? {
+        func image(of slot: EffectPass.Slot) throws(RenderFailure) -> any EffectSurface {
             switch slot {
             case .current: return current
             case .next: return try pipeline.scratch(at: nextSlot)
@@ -130,20 +143,16 @@ extension Canvas {
         }
 
         for (position, pass) in passes.enumerated() {
-            let source = try image(of: pass.input) ?? (target as any EffectSurface)
-            let paired = try image(of: pass.paired ?? pass.input) ?? (target as any EffectSurface)
-            let destination: any EffectSurface
-            if position == passes.count - 1, pass.output == .next,
-                source !== target, paired !== target
-            {
-                // **最後の段は入りの絵へ直接書く** (#755)。ただし、その段が入りの絵を読んで
-                // いるときは除く — 同じ面を読みながら描くのは Metal では未定義で、
-                // 決定論が守れない (1 段だけの並びと、にじみ単独の合成がこれに当たる)
-                destination = target
-            } else {
-                guard let image = try image(of: pass.output) else { throw .encoderUnavailable }
-                destination = image
-            }
+            let source = try image(of: pass.input)
+            let paired = try image(of: pass.paired ?? pass.input)
+            // **最後の段は描く先へ直接書く** (#755)。入りの絵は控えなので、1 段だけの
+            // 並びやにじみ単独の合成のように入りの絵を読む段でも、読んでいる面へ書く
+            // ことにはならない (同じ面を読みながら描くのは Metal では未定義で、かつては
+            // その並びだけ控えへ書いてから写し戻していた)。ここで書いた絵が次の
+            // フレームの入りにならないのは、控えから戻すため (#1469)
+            let destination =
+                position == passes.count - 1 && pass.output == .next
+                ? target : try image(of: pass.output)
             try encode(
                 pass, at: takeStagePass(), from: source.texture, paired: paired.texture,
                 into: destination, using: pipeline, in: commands)
@@ -153,13 +162,58 @@ extension Canvas {
             }
         }
 
-        // **入りの絵へ書くのはここまでで 1 度きり。** 最後の段が入りの絵を読んでいた並び
-        // だけが控えで終わるので、そのときだけ写し戻す。途中で失敗すればここへ来ない
-        guard let result = current, result !== target else { return }
-        try encode(
-            EffectPass(control: (SIMD4(0, 0, 0, 0), SIMD4(0, 0, 0, 0))), at: takeStagePass(),
-            from: result.texture, paired: result.texture, into: target,
-            using: pipeline, in: commands)
+        // **描く先へ書くのはここまでで 1 度きり。** 途中で失敗すればここへ来ない
+        return current === target
+    }
+
+    /// 描き終えた絵を、控えへ写す blit を積む ([#1469])。
+    ///
+    /// **段の外に置く。** 段にすると採番 (``takeStagePass()``) と置き場の数え切りに入り、
+    /// 「段の数は並びが宣言する段の数」が崩れる。待つ仕掛けは描画先の読み戻しと同じ形
+    /// (``RenderTarget/encodePixelReadback(into:)``)。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    private func encodeCarry(into carry: StageImage, in commands: any MTL4CommandBuffer)
+        throws(RenderFailure)
+    {
+        guard let encoder = commands.makeComputeCommandEncoder() else {
+            throw .encoderUnavailable
+        }
+        // **描き終わるのを待つ。** この世代は encoder をまたぐ依存を自動では張らない
+        // (#341)。前の戻し・書き戻し (blit) も待つ — 控えは戻しが読んだ面でもある
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: .blit,
+            visibilityOptions: .device)
+        encoder.copy(sourceTexture: target.texture, destinationTexture: carry.texture)
+        // **写し終わるのを、控えを読む段と描く先へ書く段が待つ。** `.device` を渡さないと
+        // 実行順だけ揃って中身が見えない (#341 で実測)
+        encoder.barrier(
+            afterStages: .blit, beforeQueueStages: .fragment, visibilityOptions: .device)
+        encoder.endEncoding()
+        effectCarriesEncoded += 1
+    }
+
+    /// 控えから描く先へ、効果を通す前の絵を戻す blit を積む ([#1469])。**控えが無ければ
+    /// 何も積まない。**
+    ///
+    /// 描き切りのコマンドの**先頭**に積む (CPU の画素の書き戻しより前)。前の投入とは投入の
+    /// 順で直列になっている (``RenderDevice/commit(_:retaining:)`` の `orderAfter`) ので、
+    /// 頭に待つ仕掛けは要らない。積んだ blit を後続の段が待つ仕掛けは、書き戻しと同じ形で
+    /// ここで積む。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    func encodeCarryRestore(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+        guard let carry = effectPipelineStorage?.existingCarry else { return }
+        guard let encoder = commands.makeComputeCommandEncoder() else {
+            throw .encoderUnavailable
+        }
+        encoder.copy(sourceTexture: carry.texture, destinationTexture: target.texture)
+        // **戻し終わるのを、続く書き戻し・描画・効果・読み戻しが待つ**
+        encoder.barrier(
+            afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
+            visibilityOptions: .device)
+        encoder.endEncoding()
+        effectCarryRestoresEncoded += 1
     }
 
     /// 次の段の枠を 1 つ取る。**効果も拡大もここから取る** (採番は 1 系統)。
@@ -176,7 +230,7 @@ extension Canvas {
         // **投げうる仕事は、口を開く前に済ませる** ([#1184])。開いた後で投げると口が開いたまま
         // `applyEffects` が握って投入し、検証層では投入の時点で落ちる。閉じてから抜ける
         // のでも足りない — 書き込む先は前の内容を読まない (`.dontCare`) ので、最後の段が
-        // 入りの絵へ開いた口を閉じるだけで、入りの絵の中身が保証されなくなる。だから口を
+        // 描く先へ開いた口を閉じるだけで、描く先の中身が保証されなくなる。だから口を
         // 開いた後には投げる行を置かない
         //
         // [#1184]: https://github.com/mokume-metal/mokume/issues/1184
