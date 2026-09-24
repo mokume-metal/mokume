@@ -159,7 +159,7 @@ DROPPED_MINUTES=${DROPPED_MINUTES:-120}
 
 readonly TRIAGED='verify: triaged'
 readonly IN_PROGRESS='status: in progress'
-# エージェントの起票の唯一の手掛かり (AGENTS.md「署名」が定める綴り)
+# エージェントの起票の唯一の手掛かり (scripts/comment.sh が付ける署名の綴り)
 readonly AGENT_MARK='Assisted by [Claude Code]'
 # 無印のまま出してよい型。Design / Feature は判断が要る側なので出さない (ADR-0036 決定 6)
 readonly STOCK_TYPES='Bug Task Docs'
