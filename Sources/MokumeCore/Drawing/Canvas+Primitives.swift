@@ -130,10 +130,52 @@ extension Canvas {
         _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
     ) {
         let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
-        draw(
-            Outline(
-                points: [SIMD2(x1, y1), SIMD2(x2, y2), SIMD2(x3, y3), SIMD2(x4, y4)],
-                isClosed: true))
+        let points = [SIMD2(x1, y1), SIMD2(x2, y2), SIMD2(x3, y3), SIMD2(x4, y4)]
+        draw(Outline(points: points, isClosed: true, fillTriangles: Self.quadTriangles(points)))
+    }
+
+    /// 凸でない四角形の塗りを割る三角形。凸なら `nil` (最初の点からの扇で塗る)。
+    ///
+    /// 4 つの頂点は利用者が並べるので、凸とは限らない ([#1534])。4 点で閉じた計算なので、
+    /// 耳切り (`Triangulation`) へは通さない — 耳切りは自己交差した周を砂時計に割れない。
+    ///
+    /// - **辺が交差する**: 交わる点を頂点にした三角形 2 枚 (砂時計)。回り数はどちらの
+    ///   三角形も ±1 なので、nonzero でも even-odd でも同じ形になる
+    /// - **凹んでいる**: 凹んだ点を要にした扇。凹んだ点からの対角線は必ず形の中を通る
+    /// - **凸**: `nil`。凸の四角形の割り方は変えない
+    ///
+    /// [#1534]: https://github.com/mokume-metal/mokume/issues/1534
+    static func quadTriangles(_ p: [SIMD2<Float>])
+        -> [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]?
+    {
+        func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float { a.x * b.y - a.y * b.x }
+        /// 線分 ab と cd が、端点以外の 1 点で交わるなら、その点。
+        func crossing(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, _ d: SIMD2<Float>)
+            -> SIMD2<Float>?
+        {
+            let dc = cross(b - a, c - a)
+            let dd = cross(b - a, d - a)
+            let da = cross(d - c, a - c)
+            let db = cross(d - c, b - c)
+            guard dc * dd < 0, da * db < 0 else { return nil }
+            return a + (b - a) * (da / (da - db))
+        }
+
+        if let x = crossing(p[0], p[1], p[2], p[3]) {
+            return [(p[1], p[2], x), (p[3], p[0], x)]
+        }
+        if let x = crossing(p[1], p[2], p[3], p[0]) {
+            return [(p[0], p[1], x), (p[2], p[3], x)]
+        }
+        // 回る向きと逆に曲がる角が、凹んだ点である。交差しない四角形では高々 1 つ
+        let area = cross(p[2] - p[0], p[3] - p[1])
+        let dent = (0..<4).first { index in
+            let turn = cross(p[index] - p[(index + 3) % 4], p[(index + 1) % 4] - p[index])
+            return turn * area < 0
+        }
+        guard let dent else { return nil }
+        let (a, b, c, d) = (p[dent], p[(dent + 1) % 4], p[(dent + 2) % 4], p[(dent + 3) % 4])
+        return [(a, b, c), (a, c, d)]
     }
 
     // 線。塗りは持たない。
