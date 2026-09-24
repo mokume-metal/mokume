@@ -43,7 +43,8 @@ extension Canvas {
     ///
     /// **広げても入らないものは広げない** ([#738])。広げるたびに焼いた字形は全部
     /// 捨てられるので、入らない 1 字のために他の全部を焼き直させることになる。
-    /// どちらなのかは面が名乗る (``GlyphAtlas/Lookup``)。
+    /// どちらなのかは面が名乗る (``GlyphAtlas/Lookup``)。**焼き直しても入らないものも同じ**で、
+    /// 作りたての上限の頁にも入らない字は、面が「満杯」ではなく「大きすぎる」を名乗る ([#1492])。
     ///
     /// **入るまで広げる** ([#1460])。面は 1 段ずつ倍になるので、1 度広げた面にも入らない
     /// 大きさの字がある (256 の面に 800 の「M」)。1 度で諦めると、その字はこのフレームで
@@ -60,6 +61,7 @@ extension Canvas {
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
     /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
     func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
         let key = GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
