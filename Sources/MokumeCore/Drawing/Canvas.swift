@@ -683,6 +683,13 @@ public final class Canvas {
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader?
     /// いま塗りが読む数の並び。`nil` なら読まない。
+    ///
+    /// **断片 (``currentShader``) と同じくフレームを越える** ([#1470])。並びは断片と一組の
+    /// 塗り (`Shape.Paint`) で、中身は `Numbers.set` で差し替える作りなので、1 度渡して
+    /// 中身だけを書き換える書き方が自然に生まれる。フレームの頭で外すと、その書き方だけが
+    /// 2 枚目から黙って 0 を読む。外すのは ``resetNumbers()`` の 1 つだけ。
+    ///
+    /// [#1470]: https://github.com/mokume-metal/mokume/issues/1470
     var currentNumbers: Numbers?
     /// 保持した形を置いている間だけ効く、**記録した塗り**。`nil` なら生きている状態を使う。
     ///
@@ -1402,7 +1409,6 @@ public final class Canvas {
     /// 分かれると、描き場所でだけ成り立たない性質が生まれる。
     private func beginFrame() {
         style.clip = nil
-        currentNumbers = nil
         // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
         pendingEffects.removeAll(keepingCapacity: true)
         transform = .identity
