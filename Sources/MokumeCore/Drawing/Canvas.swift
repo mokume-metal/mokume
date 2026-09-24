@@ -924,6 +924,9 @@ public final class Canvas {
     ///
     /// **環に載せない。** 作成時に全部を並べて書いたきり、以後 CPU は触らない。
     private let blendModeBuffer: any MTLBuffer
+    /// 「列が字の焼き場を読むか」の 0 と 1 を並べた領域。列ごとに番地で指す
+    /// (``ShapePipeline/glyphPageBufferIndex``)。混ぜ方の番号と同じく、作成時に書いたきりである。
+    private let glyphPageBuffer: any MTLBuffer
     /// フレームを通して変わらない値 (時刻・面の大きさ) の置き場。
     private let uniformsStorage: GrowableBuffer
     /// 列ごとの、利用者が渡した値の置き場。列 1 つにつき 1 区画。
@@ -1183,18 +1186,28 @@ public final class Canvas {
             slot.pointee = mode.rawIndex
         }
         self.blendModeBuffer = modeBuffer
+
+        let glyphPageBuffer = try gpu.makeReadableBuffer(byteCount: 2 * Self.blendModeStride)
+        for flag: UInt32 in [0, 1] {
+            glyphPageBuffer.contents()
+                .advanced(by: Int(flag) * Self.blendModeStride)
+                .assumingMemoryBound(to: UInt32.self)
+                .pointee = flag
+        }
+        self.glyphPageBuffer = glyphPageBuffer
     }
 
     /// **自分で確保した置き場と面を常駐から退かせる** ([#795])。
     ///
-    /// 退かせるのは `Canvas` が直に確保した 2 つ (混ぜ方の番号・焼いていないフレームの
-    /// 影の面) だけである。環に載る置き場・焼き付け先・効果の中間の絵・描く先は、
+    /// 退かせるのは `Canvas` が直に確保した 3 つ (混ぜ方の番号・字の焼き場を読むかの印・
+    /// 焼いていないフレームの影の面) だけである。環に載る置き場・焼き付け先・効果の中間の絵・描く先は、
     /// それぞれ確保した型が自分の `deinit` で退く — 片付ける中身は相手の `private` に
     /// あり、しかも `Canvas` の外にも持ち主が居るため (`PresentPipeline` の置き場)。
     ///
     /// [#795]: https://github.com/mokume-metal/mokume/issues/795
     isolated deinit {
         gpu.retire(blendModeBuffer)
+        gpu.retire(glyphPageBuffer)
         if let unbakedShadowTexture { gpu.retire(unbakedShadowTexture) }
     }
 
@@ -1904,6 +1917,12 @@ public final class Canvas {
                 blendModeBuffer.gpuAddress
                     + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
                 index: ShapePipeline.blendModeBufferIndex)
+            // **字の焼き場を読む列かを渡す。** 置き換える列はこれを見て、字形の外の余白を
+            // 捨てる (#1557)。読まない断片にも束ねておく (口を空けたまま走らせない)
+            pipeline.argumentTable.setAddress(
+                glyphPageBuffer.gpuAddress
+                    + UInt64((run.texture.isGlyphPage ? 1 : 0) * Self.blendModeStride),
+                index: ShapePipeline.glyphPageBufferIndex)
             // **必ず何かを束ねる。** 渡されていない列には 1 個の 0 を束ねる —
             // 束ねずに走らせると、読んだ断片が絵の乱れではなく異常終了になる
             pipeline.argumentTable.setAddress(

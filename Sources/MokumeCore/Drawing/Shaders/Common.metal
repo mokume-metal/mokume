@@ -712,3 +712,29 @@ fragment float4 mokume_fragmentDirect(
 {
     return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
 }
+
+/// 画素を描く入口 (置き換える列)。**下地を読まないが、字形の外の余白は捨てる。**
+///
+/// 置き換える混ぜ方は下地を見ずに色を置く — α 0 の色も、貼る絵の透けた所も、下地を
+/// 透明に置き換える ([#1542])。ただし**字は字形の外接矩形に余白を付けた四角**として
+/// 置かれ、字形の外では焼き場の α が 0 になる。そこを書くと、字の周りの矩形 (`o` の穴の
+/// 中も) の下地が抜ける ([#1557])。基本図形の置き換える列が形の外の余白を捨てるのと
+/// 同じく、**字の焼き場を読む列に限って**、字形の被覆 0 の断片を捨てる。
+///
+/// 字の焼き場かどうかは列が `buffer(3)` で渡す (`ShapePipeline.glyphPageBufferIndex`)。
+/// 焼き場を読む図形 (輪郭・線・点・絵を貼らない塗り) は焼き場の白い区画 (α 1) を読むので、
+/// 捨てられない。
+///
+/// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
+/// [#1557]: https://github.com/mokume-metal/mokume/issues/1557
+fragment float4 mokume_fragmentReplace(
+    MOKUME_SURFACE_PARAMS
+    MOKUME_SHAPE_PARAMS,
+    constant uint &readsGlyphPage [[buffer(3)]])
+{
+    if (readsGlyphPage != 0 && source_texture.sample(kGlyphSampler, in.uv).a <= 0.0) {
+        discard_fragment();
+        return float4(0.0);
+    }
+    return mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
+}

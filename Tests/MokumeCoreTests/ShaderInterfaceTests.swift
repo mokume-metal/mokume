@@ -294,7 +294,7 @@ struct ShaderInterfaceTests {
         ] + shapeFragmentEntries(surfaces: surfaces)
     }
 
-    /// 三角形の経路の断片 2 本。**利用者の断片のライブラリにも入る**入口である。
+    /// 三角形の経路の断片 3 本。**利用者の断片のライブラリにも入る**入口である。
     static func shapeFragmentEntries(surfaces: Bool) -> [Entry] {
         var common: [Port] = [
             .buffer("uniforms", ShapePipeline.uniformsBufferIndex, .layout(Self.uniforms)),
@@ -321,6 +321,13 @@ struct ShaderInterfaceTests {
                     .buffer("mode", ShapePipeline.blendModeBufferIndex, .scalar(UInt32.self))
                 ]),
             Entry(ShapePipeline.flatDirectFragmentFunctionName, common),
+            Entry(
+                ShapePipeline.flatReplaceFragmentFunctionName,
+                common + [
+                    .buffer(
+                        "readsGlyphPage", ShapePipeline.glyphPageBufferIndex,
+                        .scalar(UInt32.self))
+                ]),
         ]
     }
 
