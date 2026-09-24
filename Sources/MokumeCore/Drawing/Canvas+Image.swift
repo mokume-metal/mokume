@@ -128,7 +128,7 @@ extension Canvas {
 
     // MARK: - 置く
 
-    /// 絵を等倍で置く。
+    /// 絵を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは絵の画素数のまま。
     public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible) {
         let (a, b) = (a.asFloat, b.asFloat)
         place(.loaded(image), a, b)
@@ -151,7 +151,7 @@ extension Canvas {
         place(.loaded(image), a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
-    /// 描き場所を等倍で置く。
+    /// 描き場所を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは描き場所の画素数のまま。
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible) {
         let (a, b) = (a.asFloat, b.asFloat)
         note(placing: graphics)
@@ -182,7 +182,17 @@ extension Canvas {
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     private func place(_ picture: Picture, _ a: Float, _ b: Float) {
-        place(picture, a, b, Float(picture.width), Float(picture.height))
+        // 3 つの数の形は、(a, b) の読み方だけを imageMode に任せ、大きさは絵の画素数の
+        // ままにする。幅と高さを後の 2 つの数としてそのまま渡すと、.corners はそれを
+        // 2 つ目の角として、.radius は半径として読んでしまう (#1531)
+        let (width, height) = (Float(picture.width), Float(picture.height))
+        let (c, d): (Float, Float) =
+            switch style.imageMode {
+            case .corner, .center: (width, height)
+            case .corners: (a + width, b + height)
+            case .radius: (width / 2, height / 2)
+            }
+        place(picture, a, b, c, d)
     }
 
     private func place(

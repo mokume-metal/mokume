@@ -160,6 +160,115 @@ struct ImageTests {
         #expect(try pixels(of: corner).bytes == pixels(of: center).bytes)
     }
 
+    // MARK: - 3 つの数で置く (#1531)
+
+    /// 墨 (黒でない画素) の外接 `[左, 右) × [上, 下)` と、その数。何も無ければ `nil`。
+    private func inkBox(_ image: DisplayImage) -> (
+        left: Int, top: Int, right: Int, bottom: Int, count: Int
+    )? {
+        var (left, top, right, bottom, count) = (Int.max, Int.max, Int.min, Int.min, 0)
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                let pixel = image[x, y]
+                guard pixel.red > 0 || pixel.green > 0 || pixel.blue > 0 else { continue }
+                (left, top) = (min(left, x), min(top, y))
+                (right, bottom) = (max(right, x + 1), max(bottom, y + 1))
+                count += 1
+            }
+        }
+        return count > 0 ? (left, top, right, bottom, count) : nil
+    }
+
+    /// 左半分が橙・右半分が青の絵。
+    private func halves(on canvas: Canvas, width: Int, height: Int) throws -> Image {
+        let image = try canvas.createImage(width, height)
+        for y in 0..<height {
+            for x in 0..<width {
+                image.set(
+                    x, y,
+                    x < width / 2
+                        ? .linear(red: 0.9, green: 0.45, blue: 0.1)
+                        : .linear(red: 0.1, green: 0.2, blue: 0.8))
+            }
+        }
+        return image
+    }
+
+    @Test(
+        "3 つの数で置くと、どの読み方でも絵の画素数のまま置かれる",
+        arguments: [
+            (ShapeMode.corner, Float(90), Float(60)),
+            (ShapeMode.corners, Float(90), Float(60)),
+            (ShapeMode.center, Float(58), Float(28)),
+            (ShapeMode.radius, Float(58), Float(28)),
+        ])
+    func threeNumbersPlaceAtNaturalSizeInEveryMode(
+        _ mode: ShapeMode, _ cornerX: Float, _ cornerY: Float
+    ) throws {
+        let placed = try makeCanvas(width: 160, height: 160)
+        let placedTile = try halves(on: placed, width: 64, height: 64)
+        try placed.draw {
+            placed.background(black)
+            placed.imageMode(mode)
+            placed.image(placedTile, 90, 60)
+        }
+        // 手本は、読み方で決まる左上の角から 64×64 へ置いた絵
+        let expected = try makeCanvas(width: 160, height: 160)
+        let expectedTile = try halves(on: expected, width: 64, height: 64)
+        try expected.draw {
+            expected.background(black)
+            expected.image(expectedTile, cornerX, cornerY, 64, 64)
+        }
+        #expect(try pixels(of: placed).bytes == pixels(of: expected).bytes)
+    }
+
+    @Test(
+        "縦横の違う絵も、3 つの数で置くと画素数のまま置かれる",
+        arguments: [
+            (ShapeMode.corner, 30, 50), (ShapeMode.corners, 30, 50),
+            (ShapeMode.center, 10, 38), (ShapeMode.radius, 10, 38),
+        ])
+    func threeNumbersKeepTheAspectOfAnOblongImage(
+        _ mode: ShapeMode, _ left: Int, _ top: Int
+    ) throws {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        let tile = try halves(on: canvas, width: 40, height: 24)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.imageMode(mode)
+            canvas.image(tile, 30, 50)
+        }
+        let box = try #require(inkBox(pixels(of: canvas)))
+        #expect(box.left == left && box.top == top)
+        #expect(box.right == left + 40 && box.bottom == top + 24)
+        #expect(box.count == 960)
+    }
+
+    @Test(
+        "描き場所も、3 つの数で置くと画素数のまま置かれる",
+        arguments: [
+            (ShapeMode.corner, 40, 40), (ShapeMode.corners, 40, 40),
+            (ShapeMode.center, 15, 25), (ShapeMode.radius, 15, 25),
+        ])
+    func threeNumbersPlaceAGraphicsAtNaturalSize(
+        _ mode: ShapeMode, _ left: Int, _ top: Int
+    ) throws {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        let pad = try canvas.createGraphics(50, 30)
+        pad.beginDraw()
+        pad.background(.linear(red: 0.9, green: 0.45, blue: 0.1))
+        pad.endDraw()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.imageMode(mode)
+            canvas.image(pad, 40, 40)
+        }
+        let box = try #require(inkBox(pixels(of: canvas)))
+        #expect(box.left == left && box.top == top)
+        #expect(box.right == left + 50 && box.bottom == top + 30)
+        #expect(box.count == 1500)
+    }
+
     @Test("色掛けは掛け算で、白は何も変えない")
     func tintMultipliesAndWhiteChangesNothing() throws {
         let url = try writePNG(Array(repeating: (1.0, 1.0, 1.0, 1.0), count: 4), width: 2, height: 2)
