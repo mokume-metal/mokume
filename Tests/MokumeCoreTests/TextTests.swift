@@ -666,6 +666,108 @@ struct TextTests {
         #expect(try pixels(of: alone).bytes == pixels(of: crowded).bytes)
     }
 
+    /// 「M」の字形の外接矩形 (画素・送り位置と基準線から測る)。**焼き場を通さず、この環境の
+    /// 書体から引く** — 検査の前提 (どの大きさの面なら入るか・どこに置けば窓に入るか) を、
+    /// 焼き場の外で決めるため。
+    private func boundsOfM(size: Float) -> CGRect {
+        let font = CTFontCreateWithName(fontName as CFString, CGFloat(size), nil)
+        var units = Array("M".utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: 1)
+        CTFontGetGlyphsForCharacters(font, &units, &glyphs, 1)
+        return CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyphs, nil, 1)
+    }
+
+    /// 余白込みの「M」の字形の大きさ (画素)。焼き場が場所を取る大きさと同じ数え方をする。
+    private func paddedExtentOfM(size: Float) -> (width: Int, height: Int) {
+        let bounds = boundsOfM(size: size)
+        let pad = GlyphAtlas.padding
+        let width = Int(bounds.maxX.rounded(.up)) - Int(bounds.minX.rounded(.down)) + 2 * pad
+        let height = Int(bounds.maxY.rounded(.up)) - Int(bounds.minY.rounded(.down)) + 2 * pad
+        return (width, height)
+    }
+
+    /// 「M」を 1 字だけ置いたフレームを描いて、その絵を返す。
+    ///
+    /// **字の左端を窓の中 (x = 8) に合わせる。** 大きい字ほど送り位置から絵の左端までが
+    /// 離れる (4096 では 300 画素を越える) ので、送り位置を固定すると窓の外に出る。基準線は
+    /// 窓の下端近くに置くので、左の縦棒が窓を上から下まで通る。
+    private func drawLargeM(size: Float, on canvas: Canvas) throws -> DisplayImage {
+        let x = 8 - Float(boundsOfM(size: size).minX)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(size)
+            canvas.text("M", x, 120)
+        }
+        return try pixels(of: canvas)
+    }
+
+    /// 作りたての面を 1 度広げただけでは入らない字も、**最初のフレームから**描かれる ([#1460])。
+    ///
+    /// 焼き場は面が足りないと 1 段ずつ倍に広げる。引き直しを 1 度で打ち切ると、1 度広げた面
+    /// にも入らない字はそのフレームで欠け、次のフレームでもう一段広がってから出る。動かして
+    /// いる窓ではほぼ見えないが、1 フレームだけ描く使い方では欠けたまま残る。
+    ///
+    /// **比べる相手は、面が育ちきった後のフレーム**である。直す前のコードでも何フレームか
+    /// 描けば字は出るので、「最初のフレームだけが欠ける」という事象そのものを見られる。
+    ///
+    /// **入った大きさで止まる**ことも見る。上限まで広げれば必ず入るが、上限の面は 1 枚で
+    /// 128 MiB ある。
+    ///
+    /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
+    @Test(
+        "作りたての面を何段か広げないと入らない字も、最初のフレームから描かれる",
+        // 引数は main actor の外で組まれるので、面の一辺は数で書く (上限は中で突き合わせる)
+        arguments: [
+            // 256 → 512 → 1024。1 度広げた 512 にも入らない
+            (size: Float(1200), side: 1024),
+            // 256 → … → 4096。上限の面でしか入らない
+            (size: Float(4096), side: 4096),
+        ])
+    func aGlyphNeedingSeveralGrowthsIsDrawnInTheFirstFrame(size: Float, side: Int) throws {
+        try #require(side <= GlyphAtlas.maximumSize, "検査の前提: 一辺 \(side) の面は上限を越える")
+        // 検査の前提: 1 度広げた面には入らず、`side` の面には入る
+        let extent = paddedExtentOfM(size: size)
+        try #require(
+            max(extent.width, extent.height) > GlyphAtlas.initialSize * 2,
+            "検査の前提: \(size) の「M」(\(extent)) が、1 度広げた面に入ってしまう")
+        try #require(
+            max(extent.width, extent.height) > side / 2
+                && max(extent.width, extent.height) <= side,
+            "検査の前提: \(size) の「M」(\(extent)) が、一辺 \(side) の面でちょうど入る大きさでない")
+
+        let canvas = try makeCanvas(width: 128, height: 128)
+        #expect(canvas.atlas.size == GlyphAtlas.initialSize, "検査の前提: 面が作りたてでない")
+        let first = try drawLargeM(size: size, on: canvas)
+        #expect(
+            canvas.atlas.size == side,
+            "\(size) の「M」を描いた後の面が \(canvas.atlas.size) — 入る大きさ \(side) で止まっていない")
+
+        // 字が出るまで描き足す。256 から上限までは 4 段なので、それより多くは要らない
+        var settled = try drawLargeM(size: size, on: canvas)
+        var framesDrawn = 2
+        while inkBounds(settled, width: 128, height: 128) == nil, framesDrawn < 8 {
+            settled = try drawLargeM(size: size, on: canvas)
+            framesDrawn += 1
+        }
+        try #require(
+            inkBounds(settled, width: 128, height: 128) != nil,
+            "検査の前提: \(framesDrawn) フレーム描いても、\(size) の「M」が 1 度も描かれない")
+
+        // 絵の並びをそのまま #expect に渡すと、外れたときに 6 万余りの数が並ぶ
+        let firstInked = inkBounds(first, width: 128, height: 128) != nil
+        let sameAsSettled = first.bytes == settled.bytes
+        #expect(
+            sameAsSettled,
+            """
+            作りたての面で描いた \(size) の「M」が、面が育ちきった後のフレームと違う絵に\
+            なった (最初のフレームに墨が\(firstInked ? "乗ってはいる" : "乗っていない"))。
+
+            1 度広げた面にも入らない字は、入るまで広げなければそのフレームで欠ける
+            ([#1460](https://github.com/mokume-metal/mokume/issues/1460))。
+            """)
+    }
+
     /// 上限の面にも収まらない大きさ。**倍にして、丸めや余白では届かない側へ振る。**
     private var overwhelmingSize: Float { Float(GlyphAtlas.maximumSize) * 2 }
 

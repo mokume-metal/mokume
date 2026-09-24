@@ -45,44 +45,51 @@ extension Canvas {
     /// 捨てられるので、入らない 1 字のために他の全部を焼き直させることになる。
     /// どちらなのかは面が名乗る (``GlyphAtlas/Lookup``)。
     ///
+    /// **入るまで広げる** ([#1460])。面は 1 段ずつ倍になるので、1 度広げた面にも入らない
+    /// 大きさの字がある (256 の面に 800 の「M」)。1 度で諦めると、その字はこのフレームで
+    /// 欠け、次のフレームでもう一段広がってから出る — 1 フレームだけ描いて書き出す使い方では、
+    /// 欠けたまま残る。
+    ///
     /// **焼き直すのは 1 フレームに 1 度まで** (``atlasPageFrame``)。このフレームで作った
     /// 上限の頁まで埋まったなら、このフレームで要る字は焼き直しても収まらない。そのときだけ
     /// 知らせて、入らない字を諦める。次のフレームでは、また焼き直せる。
     ///
+    /// **繰り返しは必ず止まる。** 広げる段は上限までの有限で、上限の頁を作れるのは 1 フレームに
+    /// 1 度だけだからである。1 度の呼び出しで頁を替えるのは、多くて 4 度 (256 → 4096) になる。
+    ///
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
     /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
+    /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
     func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
         let key = GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
             glyph: resolved.glyph)
-        switch atlas.entry(for: key, font: resolved.font) {
-        case .found(let entry): return entry
-        // 理由は面の側が名乗っている。広げても変わらないので、ここは黙って諦める
-        case .tooLarge, .unbakeable: return nil
-        case .full: break
-        }
-
-        guard atlas.canGrow || atlasPageFrame != framesDrawn else {
-            warnAtlasFullInOneFrameOnce()
-            return nil
-        }
-        closeBatch()
-        do {
-            if atlas.canGrow {
-                try atlas.grow(gpu: gpu)
-            } else {
-                try atlas.rebake(gpu: gpu)
+        while true {
+            switch atlas.entry(for: key, font: resolved.font) {
+            case .found(let entry): return entry
+            // 理由は面の側が名乗っている。広げても変わらないので、ここは黙って諦める
+            case .tooLarge, .unbakeable: return nil
+            case .full: break
             }
-        } catch {
-            return nil
+
+            guard atlas.canGrow || atlasPageFrame != framesDrawn else {
+                warnAtlasFullInOneFrameOnce()
+                return nil
+            }
+            closeBatch()
+            do {
+                if atlas.canGrow {
+                    try atlas.grow(gpu: gpu)
+                } else {
+                    try atlas.rebake(gpu: gpu)
+                }
+            } catch {
+                return nil
+            }
+            atlasPageFrame = framesDrawn
+            currentTexture = atlas.held
+            whiteUV = atlas.whiteUV
         }
-        atlasPageFrame = framesDrawn
-        currentTexture = atlas.held
-        whiteUV = atlas.whiteUV
-        guard case .found(let entry) = atlas.entry(for: key, font: resolved.font) else {
-            return nil
-        }
-        return entry
     }
 
     /// 画素の境目に合わせた四角を 1 枚積む。
