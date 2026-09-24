@@ -230,7 +230,11 @@ extension Canvas {
             let moved = form.placed(by: matrix, tint: placement.fill)
             // 潰れた変換で置いた形は面積を持たない (直に描いたときと同じく何も出ない)
             guard moved.isPlaceable else { continue }
-            beginForm(flags: moved.meta.w)
+            // 細い塗りは**置いた後の変換で**判定する — 記録したときの大きさが同じでも、
+            // 縮めて置けば細くなる
+            beginForm(
+                flags: moved.meta.w,
+                thinFill: moved.mayHaveThinFill(unitsPerDrawnPixel: unitsPerDrawnPixel))
             formInstances.append(moved)
         }
     }

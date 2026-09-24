@@ -123,16 +123,32 @@ final class ShapePipeline {
     ///
     /// **塗り / 輪郭の有無でも分かれる。** 断片は無い側の綴りを持たないほうが速く
     /// (面を覆う矩形 200 枚で 1.4 ms)、有無は列ごとに決まっているので function constant
-    /// で特化できる ([#771])。並びは旗 (``FormInstance/fillsFlag`` | `strokesFlag`) から
-    /// 1 を引いた番号 — 塗りも輪郭も無い図形は置かれないので 0 は使わない。
+    /// で特化できる ([#771])。鍵は旗 (``FormInstance/fillsFlag`` | `strokesFlag`) —
+    /// 塗りも輪郭も無い図形は置かれないので 0 は使わない。
+    ///
+    /// **1 画素より細い塗りを含むかでも分かれる** (``FormInstance/thinFillsFlag``・[#1477])。
+    /// 塗りを持つ組 (旗 1 と 3) にだけ、細い塗りの枝を残した組 (旗 5 と 7) がある。
     ///
     /// [#752]: https://github.com/mokume-metal/mokume/issues/752
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
-    private let formStatesByFlags: [BlendStates]
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    private let formStatesByFlags: [UInt32: BlendStates]
+
+    /// 組むパイプラインの旗の組。細い塗りの旗は塗りを持つ組にしか立たない
+    /// (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` が塗りの無い形に「含まない」と答える)。
+    static let formFlagCombinations: [UInt32] = [
+        FormInstance.fillsFlag, FormInstance.strokesFlag,
+        FormInstance.fillsFlag | FormInstance.strokesFlag,
+        FormInstance.fillsFlag | FormInstance.thinFillsFlag,
+        FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.thinFillsFlag,
+    ]
 
     /// その旗の組で描くパイプラインの 3 本組。
     func formStates(for flags: UInt32) -> BlendStates {
-        formStatesByFlags[Int(flags) - 1]
+        guard let states = formStatesByFlags[flags] else {
+            preconditionFailure("基本図形の旗の組 \(flags) のパイプラインを組んでいない")
+        }
+        return states
     }
 
     /// 平面の奥行きの扱い — **常に通し、書かない**。
@@ -177,18 +193,18 @@ final class ShapePipeline {
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
-        // 塗り / 輪郭の有無ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方)
-        var formStates: [BlendStates] = []
-        for flags in 1...3 {
-            formStates.append(
-                try Self.makeBlendStates(
-                    compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
-                    pixelFormat: pixelFormat, label: "mokume.forms.\(flags)",
-                    vertexFunctionName: Self.formVertexFunctionName,
-                    fragmentFunctionName: Self.formFragmentFunctionName,
-                    blendFragmentFunctionName: Self.formBlendFragmentFunctionName,
-                    replaceFragmentFunctionName: Self.formReplaceFragmentFunctionName,
-                    formFlags: UInt32(flags)))
+        // 旗の組ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方) と、塗りを持つ組に
+        // 1 画素より細い塗りの枝を残したもの (5・7)
+        var formStates: [UInt32: BlendStates] = [:]
+        for flags in Self.formFlagCombinations {
+            formStates[flags] = try Self.makeBlendStates(
+                compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+                pixelFormat: pixelFormat, label: "mokume.forms.\(flags)",
+                vertexFunctionName: Self.formVertexFunctionName,
+                fragmentFunctionName: Self.formFragmentFunctionName,
+                blendFragmentFunctionName: Self.formBlendFragmentFunctionName,
+                replaceFragmentFunctionName: Self.formReplaceFragmentFunctionName,
+                formFlags: flags)
         }
         self.formStatesByFlags = formStates
 
@@ -285,6 +301,8 @@ final class ShapePipeline {
     static let formHasFillConstantIndex = 0
     /// 輪郭の有無を渡す function constant の番号 (シェーダ側の `kFormHasStroke`)。
     static let formHasStrokeConstantIndex = 1
+    /// 1 画素より細い塗りを含むかを渡す function constant の番号 (シェーダ側の `kFormHasThinFill`)。
+    static let formHasThinFillConstantIndex = 2
 
     /// 断片を旗の組で特化する記述。
     ///
@@ -319,8 +337,10 @@ final class ShapePipeline {
         let values = MTLFunctionConstantValues()
         var hasFill = (formFlags & FormInstance.fillsFlag) != 0
         var hasStroke = (formFlags & FormInstance.strokesFlag) != 0
+        var hasThinFill = (formFlags & FormInstance.thinFillsFlag) != 0
         values.setConstantValue(&hasFill, type: .bool, index: formHasFillConstantIndex)
         values.setConstantValue(&hasStroke, type: .bool, index: formHasStrokeConstantIndex)
+        values.setConstantValue(&hasThinFill, type: .bool, index: formHasThinFillConstantIndex)
 
         let descriptor = MTL4SpecializedFunctionDescriptor()
         descriptor.functionDescriptor = function

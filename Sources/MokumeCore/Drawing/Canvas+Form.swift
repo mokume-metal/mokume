@@ -25,6 +25,15 @@ extension Canvas {
         ///
         /// [#771]: https://github.com/mokume-metal/mokume/issues/771
         var flags: UInt32
+        /// この列に、描く画素で 1 画素より細い塗りを含みうる図形が 1 つでもあるか
+        /// (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)``)。
+        ///
+        /// 立っていれば、閉じるときに ``FormInstance/thinFillsFlag`` を足して、断片の枝を
+        /// 残した組で描く。**変わっても列を切らない** — 細い塗りと太い塗りが混ざった列は
+        /// 含む側の組で描けば絵が変わらないので、寸法違いが 1 列に並ぶ性質を崩さない ([#1477])。
+        ///
+        /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+        var hasThinFill = false
     }
 
     /// 基本図形をこの経路で描いてよいか。
@@ -47,8 +56,11 @@ extension Canvas {
     /// の境目だけで、これは #424 の畳みが `hasFill` / `hasStroke` を鍵に含めていた
     /// 頃と同じ粒度である。
     ///
+    /// 描く画素で 1 画素より細い塗りを含みうる図形 (`thinFill`) は、列を切らずに列の旗へ
+    /// 足す (``OpenForm/hasThinFill``)。
+    ///
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
-    func beginForm(flags: UInt32) {
+    func beginForm(flags: UInt32, thinFill: Bool) {
         if openSource != .form {
             closeBatch()
             openSource = .form
@@ -61,6 +73,7 @@ extension Canvas {
         if openForm == nil {
             openForm = OpenForm(instanceStart: formInstances.count, flags: flags)
         }
+        if thinFill { openForm?.hasThinFill = true }
     }
 
     /// 開いている基本図形の列を閉じる。
@@ -97,7 +110,7 @@ extension Canvas {
                 castsShadow: false,
                 instanceStart: open.instanceStart,
                 instanceCount: count,
-                formFlags: open.flags))
+                formFlags: open.flags | (open.hasThinFill ? FormInstance.thinFillsFlag : 0)))
     }
 
     /// 基本図形を 1 つ置く。
@@ -137,7 +150,9 @@ extension Canvas {
             style.strokeWeight.isFinite, arc.x.isFinite, arc.y.isFinite
         else { return }
 
-        beginForm(flags: instance.meta.w)
+        beginForm(
+            flags: instance.meta.w,
+            thinFill: instance.mayHaveThinFill(unitsPerDrawnPixel: unitsPerDrawnPixel))
         formInstances.append(instance)
     }
 

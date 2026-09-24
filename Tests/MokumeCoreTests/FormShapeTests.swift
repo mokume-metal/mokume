@@ -916,6 +916,58 @@ struct FormShapeTests {
         }
     }
 
+    /// **細い塗りを含む列と含まない列が 1 枚に混ざっても、どの塗りも正しく描ける** ([#1477])。
+    ///
+    /// 1 画素より細い塗りの枝は、細い塗りを含まない列では断片の原稿から外す
+    /// (`kFormHasThinFill`)。含むかは置く側が図形ごとに判定して列の旗に足す
+    /// (`FormInstance.mayHaveThinFill`) ので、判定が細い塗りを見落とすと、その列の細い塗りが
+    /// 縁 1 本の式に戻って濃さが揺れる。太い塗りだけの列・細い塗りだけの列・両方が混ざった
+    /// 列 (太い塗りが先) を並べ、太い塗りは縁 1 本の式のまま (縁に 3/4 掛かる画素が遊びを
+    /// 込めた値)、細い塗りは面積ぶんで出ることを見る。
+    ///
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    @Test("細い塗りを含む列と含まない列が混ざっても、どちらの塗りも正しく描ける")
+    func thinAndThickFillRunsMix() throws {
+        let pixels = try coverage(width: 64, height: 64) { canvas in
+            // 塗りを持たない点を挟んで列を切る (点は角 (60, 60) の画素にだけ出る)
+            let splitRun = {
+                canvas.stroke(white)
+                canvas.point(60, 60)
+                canvas.noStroke()
+            }
+            canvas.noStroke()
+            canvas.fill(white)
+            // 列 1: 1 画素以上の塗りだけ
+            canvas.rect(10.25, 4, 2, 12)
+            splitRun()
+            // 列 2: 1 画素より細い塗りだけ (帯の中心が画素の中心)
+            canvas.rect(30.45, 4, 0.1, 12)
+            splitRun()
+            // 列 3: 太い塗りの後に、細い rect と、4 画素の角に置いた小さい円
+            canvas.rect(10.25, 24, 2, 12)
+            canvas.rect(30.45, 24, 0.1, 12)
+            canvas.circle(50, 30, 0.5)
+        }
+        func sum(rows: Range<Int>, columns: Range<Int>) -> Double {
+            rows.reduce(0) { $0 + rowSum(pixels, row: $1, columns: columns) }
+        }
+        let snapped = 0.75 * (1 + 2.0 / 256) - 1.0 / 256
+        for (name, row) in [("太い塗りだけの列", 10), ("混ざった列", 30)] {
+            let thick = rowSum(pixels, row: row, columns: 0..<20)
+            #expect(abs(thick - 2) <= 0.02, "\(name) の幅 2 の rect の行の和: \(thick) (期待 2)")
+            let edge = Double(pixels.components[(row * pixels.width + 10) * 4])
+            #expect(
+                abs(edge - snapped) <= 1e-4,
+                "\(name) の幅 2 の rect の、縁に 3/4 掛かる画素: \(edge) (期待 \(snapped))")
+        }
+        for (name, rows) in [("細い塗りだけの列", 0..<20), ("混ざった列", 20..<40)] {
+            let thin = sum(rows: rows, columns: 20..<40)
+            #expect(abs(thin - 1.2) <= 0.12, "\(name) の幅 0.1 の rect の和: \(thin) (期待 1.2)")
+        }
+        let circle = sum(rows: 20..<40, columns: 40..<60)
+        #expect(abs(circle - 0.25) <= 0.025, "混ざった列の直径 0.5 の円の和: \(circle) (期待 0.25)")
+    }
+
     /// **描く細かさをもっと下げても、縁に掛かる画素が覆う四角の外に落ちない。**
     ///
     /// 頂点関数が形の外に取る余白 (`kFormMargin`) も描く画素で測る。出す画素で 2 のまま
@@ -1166,6 +1218,32 @@ struct FormShapeTests {
         #expect(canvas.drawCallsInLastFrame == 2)
     }
 
+    /// **保持した形の塗りは、置いた後の大きさで 1 画素より細いかを判定する** ([#1477])。
+    ///
+    /// 記録したときは幅 4 の `rect` でも、縮めて置けば画面で幅 0.1 になる。細い塗りの枝を
+    /// 残した組で描くかは置いた時点で決める (`FormInstance.mayHaveThinFill`) ので、記録した
+    /// ときの大きさで決めると、縮めて置いた塗りが縁 1 本の式に戻って濃さが揺れる。
+    ///
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    @Test("保持した形の塗りは、置いた後の大きさで 1 画素より細いかを判定する")
+    func retainedThinFillsFollowThePlacedSize() throws {
+        let pixels = try coverage(width: 64, height: 64) { canvas in
+            let shape = canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(white)
+                canvas.rect(0, 0, 4, 48)
+            }
+            canvas.push()
+            // 画面で幅 0.1・高さ 12。帯の中心が画素の中心 (x = 30.5) に来る
+            canvas.translate(30.45, 4)
+            canvas.scale(0.025, 0.25)
+            canvas.shape(shape)
+            canvas.pop()
+        }
+        let sum = totalSum(pixels)
+        #expect(abs(sum - 1.2) <= 0.12, "縮めて置いた幅 0.1 の rect の和: \(sum) (期待 1.2)")
+    }
+
     @Test("組にした形をたくさん置いても、1 列に収まり色掛けが効く")
     func placingManyRetainedFormsStaysInOneCall() throws {
         let canvas = try makeCanvas()
@@ -1233,5 +1311,59 @@ struct FormShapeTests {
         #expect(onlyStroke.stroke == colour)
         #expect(onlyStroke.size.z == 3)
         #expect(onlyStroke.meta.w == FormInstance.strokesFlag)
+    }
+
+    /// **1 画素より細い塗りの判定は、描く画素での細さで答え、境目の近くは「含む」側に倒す**
+    /// ([#1477])。
+    ///
+    /// 「含む」と答えた図形の列だけが、断片に細い塗りの枝を残した組で描かれる
+    /// (`kFormHasThinFill`)。1 画素以上の塗りまで「含む」と答えると速さを失い、細い塗りを
+    /// 「含まない」と答えると絵が変わる。境目は断片と同じ 256/258 画素で、その少し外
+    /// (1/1024 以内) も「含む」と答える — CPU と GPU の丸めの違いで、断片が枝に入るはずの
+    /// 形を見落とさないため。
+    ///
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    @Test("1 画素より細い塗りの判定は、描く画素での細さで答え、境目の近くは含む側に倒す")
+    func thinFillJudgementLeansToIncluding() {
+        func form(
+            _ width: Float, _ height: Float, kind: FormInstance.Kind = .rect,
+            linear: SIMD4<Float> = SIMD4(1, 0, 0, 1), fills: Bool = true
+        ) -> FormInstance {
+            FormInstance(
+                kind: kind, linear: linear, offset: SIMD2(10, 10),
+                half: SIMD2(width / 2, height / 2), arc: kind == .arc ? SIMD2(0, 1) : .zero,
+                halfWeight: 0.5, fill: SIMD4(1, 1, 1, 1), stroke: SIMD4(1, 1, 1, 1),
+                fills: fills, strokes: !fills, cap: .round, join: .miter)
+        }
+        let one = SIMD2<Float>(1, 1)
+        // 細かさ 1・変換なし: 幅 1 画素以上は含まない、境目の手前は含む
+        #expect(!form(1, 20).mayHaveThinFill(unitsPerDrawnPixel: one), "幅 1 の rect")
+        #expect(!form(20, 1).mayHaveThinFill(unitsPerDrawnPixel: one), "高さ 1 の rect")
+        #expect(form(0.99, 20).mayHaveThinFill(unitsPerDrawnPixel: one), "幅 0.99 の rect")
+        #expect(form(20, 0.1).mayHaveThinFill(unitsPerDrawnPixel: one), "高さ 0.1 の rect")
+        // 断片の境目 (256/258) の少し外は、断片では枝に入らないが、判定は含む側に倒す
+        let justOutside = Float(256) / 258 * 1.0005
+        #expect(
+            form(justOutside, 20).mayHaveThinFill(unitsPerDrawnPixel: one),
+            "境目の 0.05% 外の rect")
+        // 楕円も同じ。扇・塗りの無い形は枝を持たないので含まない
+        #expect(!form(1, 20, kind: .ellipse).mayHaveThinFill(unitsPerDrawnPixel: one), "幅 1 の楕円")
+        #expect(form(0.5, 0.5, kind: .ellipse).mayHaveThinFill(unitsPerDrawnPixel: one), "直径 0.5 の円")
+        #expect(!form(0.5, 0.5, kind: .arc).mayHaveThinFill(unitsPerDrawnPixel: one), "直径 0.5 の扇")
+        #expect(
+            !form(0.1, 20, fills: false).mayHaveThinFill(unitsPerDrawnPixel: one),
+            "塗りの無い幅 0.1 の rect")
+        // 拡大の下では画面の大きさで答える: scale(0.25) の幅 4 は画面で 1
+        let quarter = SIMD4<Float>(0.25, 0, 0, 0.25)
+        #expect(!form(4, 80, linear: quarter).mayHaveThinFill(unitsPerDrawnPixel: one), "scale(0.25) の幅 4")
+        #expect(form(3.9, 80, linear: quarter).mayHaveThinFill(unitsPerDrawnPixel: one), "scale(0.25) の幅 3.9")
+        // 回しても画面の大きさで答える
+        let rotated = SIMD4<Float>(cos(0.5), sin(0.5), -sin(0.5), cos(0.5))
+        #expect(!form(1, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 1")
+        #expect(form(0.5, 40, linear: rotated).mayHaveThinFill(unitsPerDrawnPixel: one), "回した幅 0.5")
+        // 描く細かさ 0.5 では描く画素で答える: 幅 2 は描く画素で 1
+        let halfDensity = SIMD2<Float>(2, 2)
+        #expect(!form(2, 40).mayHaveThinFill(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の幅 2")
+        #expect(form(1.9, 40).mayHaveThinFill(unitsPerDrawnPixel: halfDensity), "細かさ 0.5 の幅 1.9")
     }
 }
