@@ -1323,10 +1323,74 @@ struct CanvasTests {
 
     @Test("削ぐ形は矩形の角を落とし、尖らせる形は残す")
     func bevelCutsTheCornerAndMiterKeepsIt() throws {
-        // 矩形の角は距離関数で描くので、3 つの折れ目の形が区別される (#752)。任意多角形の
-        // 折れ目はまだ正方形で埋める (StrokeJoin.miter の注記)
+        // 矩形の角は 3 つの折れ目の形が区別される。距離関数の経路は式で削ぎ (#752)、
+        // 三角形の経路も矩形の角だけは同じ線で削ぐ (#1506・下の
+        // `triangleRectCornersFollowTheJoin`)。任意多角形の折れ目はまだ正方形で埋める
+        // (StrokeJoin.miter の注記)
         #expect(try outerCornerOfBend(join: .bevel) == 0)
         #expect(try outerCornerOfBend(join: .miter) == 255)
+    }
+
+    /// 矩形を三角形の経路へ乗せる手立て。
+    nonisolated enum RectRoute: CaseIterable, CustomTestStringConvertible, Sendable {
+        /// 断片を付ける (`shader()`)。1 つだけなので畳まない
+        case shaded
+        /// 同じ矩形を断片付きで 2 つ重ねる。2 つ目で畳みの雛形が開く
+        case shadedFolded
+        /// 絵を貼って塗る (`texture()`)。輪郭と同居するので畳まない
+        case textured
+
+        var testDescription: String {
+            switch self {
+            case .shaded: "断片を付けた"
+            case .shadedFolded: "断片を付けて畳んだ"
+            case .textured: "絵を貼って塗る"
+            }
+        }
+    }
+
+    /// 三角形の経路の矩形の角も、距離関数の経路と同じ線で削ぐ (#1506)。形と探針は
+    /// `FormShapeTests.rectangleCornersFollowTheJoin` と同じで、削ぎ線は角から太さの半分だけ
+    /// 離れた所を通る 45° の線。かつては `bevel` でも `miter` と同じ正方形で角を埋め、
+    /// `shader()` / `texture()` を 1 行足しただけで矩形の角が尖っていた。
+    @Test("三角形の経路で描く矩形も、削ぐ形は角を 45° で落とし、尖らせる形は残す", arguments: RectRoute.allCases)
+    func triangleRectCornersFollowTheJoin(_ route: RectRoute) throws {
+        func corner(_ join: StrokeJoin) throws -> DisplayImage {
+            let canvas = try makeCanvas(width: 96, height: 96)
+            var failure: (any Error)?
+            try canvas.draw {
+                canvas.background(black)
+                canvas.stroke(white)
+                canvas.strokeWeight(12)
+                canvas.strokeJoin(join)
+                do {
+                    switch route {
+                    case .shaded, .shadedFolded:
+                        canvas.noFill()
+                        canvas.shader(try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }"))
+                    case .textured:
+                        // 絵の中身は問わない。塗りに絵が付いていることだけが経路を決める
+                        canvas.texture(try canvas.createImage(1, 1))
+                        canvas.fill(black)
+                    }
+                } catch { failure = error }
+                canvas.rect(20, 20, 40, 40)
+                if route == .shadedFolded { canvas.rect(20, 20, 40, 40) }
+            }
+            if let failure { throw failure }
+            return try pixels(of: canvas)
+        }
+        // 外縁は 14…66。角 (15, 15) は尖らせたときだけ塗られる
+        #expect(try corner(.miter)[15, 15].red == 255)
+        #expect(try corner(.bevel)[15, 15].red == 0, "削いだ角が尖っている")
+        // 削いだ角は 45° の直線。(19, 19) は削ぎ線の内側
+        #expect(try corner(.bevel)[19, 19].red == 255)
+        // 内縁はどちらの形でも直角 (帯が重なる)
+        for join in [StrokeJoin.miter, .bevel] {
+            let image = try corner(join)
+            #expect(image[27, 27].red == 0, "\(join): 内縁の角の内側が塗られている")
+            #expect(image[25, 25].red == 255, "\(join): 内縁の角が欠けている")
+        }
     }
 
     @Test("閉じた図形の輪郭に隙間が無い")

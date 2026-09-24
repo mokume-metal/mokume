@@ -320,6 +320,62 @@ struct PixelGridTests {
         #expect(differing[.bevel] == differing[.round], "bevel と round で食い違いの数が違う")
     }
 
+    /// 輪郭を引く矩形。横長・縦長と、辺が太さより短いものを混ぜる — 辺が短いと、
+    /// 角を埋める形が向かいの角の側まで届く。
+    nonisolated struct StrokedRect: CustomTestStringConvertible, Sendable {
+        let width: Float
+        let height: Float
+        var testDescription: String { "\(width)×\(height)" }
+
+        static let all = [
+            StrokedRect(width: 34, height: 20),
+            StrokedRect(width: 14, height: 36),
+            StrokedRect(width: 2, height: 24),
+        ]
+    }
+
+    @Test(
+        "輪郭つきの矩形は、断片を付けて三角形で描いても、折れ目の形ごとに同じ場所を覆う",
+        arguments: Placement.all, StrokedRect.all)
+    func strokedRectsStayPutAcrossRoutes(_ placement: Placement, _ box: StrokedRect) throws {
+        // 距離関数の経路は `bevel` の角を、角から太さの半分だけ離れた 45° の線で削ぐ。
+        // 三角形の経路も矩形の角ではそこを同じ線で削ぐ (#1506) — かつては `miter` と同じ
+        // 正方形で埋め、`shader()` を足しただけで削いだ角が尖っていた
+        var differing: [StrokeJoin: Int] = [:]
+        for join in [StrokeJoin.round, .miter, .bevel] {
+            func rect(on canvas: Canvas) {
+                canvas.noFill()
+                canvas.strokeWeight(10)
+                canvas.strokeJoin(join)
+                canvas.translate(placement.x, placement.y)
+                canvas.rotate(placement.angle)
+                canvas.rect(-box.width / 2, -box.height / 2, box.width, box.height)
+            }
+            let form = try coverage { rect(on: $0) }
+            let triangles = try coverage { canvas in
+                canvas.shader(try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }"))
+                rect(on: canvas)
+            }
+            // **許容は `strokeJoin` によらず 1 つにし、`miter` / `round` の組の実測で決める。**
+            // 距離関数の経路の `miter` は箱、三角形の経路は帯と正方形の和で、同じ形になる —
+            // 食い違いは 0〜2 画素。`round` は円板を多角形で近似するので 3〜10 画素違う。
+            // 重心は回した組で `miter` / `round` が 0.034 画素まで、削いだ角を直した後の
+            // `bevel` が 0.071 画素まで揺れた (辺 2 の矩形。削ぐ線の上の AA の有無による
+            // 量子化) ので、0.1 まで許す。角に正方形を置いていた頃の `bevel` の組は 15〜18 画素
+            // 違い、重心はほとんど動かなかった (正方形は角に対して対称なので) — 下の数の一致が
+            // 直に捕まえる (どれも実測)
+            expectSameGeometry(
+                form, triangles, "\(join) の矩形 \(box.testDescription)",
+                allowedDifferingPixels: 10,
+                tolerance: placement.comparesCentroid ? 0.1 : .infinity)
+            differing[join] = form.differingPixels(from: triangles)
+        }
+        // **`bevel` の食い違いが `miter` と同じ数であること。** どちらの経路も直角の角を
+        // 同じ多角形 (尖らせれば箱の角、削げば 45° の線で落とした角) で出すので、食い違いは
+        // 縁の量子化だけで、角の形によらない。削ぐ角を正方形で埋めると、その分だけ増える
+        #expect(differing[.bevel] == differing[.miter], "bevel と miter で食い違いの数が違う")
+    }
+
     // MARK: - 塗りと輪郭の継ぎ目
 
     @Test("塗りと輪郭が接する所で、下地が漏れない", arguments: [Float(1), 2, 3])

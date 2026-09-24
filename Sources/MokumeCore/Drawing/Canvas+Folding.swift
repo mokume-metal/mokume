@@ -29,23 +29,29 @@ extension Canvas {
         /// (``BuildingVertex/isCurveStep``) と、扇の 3 つの角 (中心と弧の両端・#1486) がそう。
         /// 空ならどの点も角。
         var curveSteps: [Bool]
+        /// 点ごとに、矩形の直角の角としての外向きの対角 (各成分 ±1)。`strokeJoin(.bevel)` で
+        /// 角を距離関数の経路と同じ 45° の線で削ぐのに使う (#1506)。空なら矩形の角ではない
+        /// (任意多角形の折れ目で、正方形で埋める)。
+        var cornerDiagonals: [SIMD2<Float>]
 
         init(
             points: [SIMD2<Float>], isClosed: Bool, fanCenter: SIMD2<Float>? = nil,
-            fills: Bool = true, curveSteps: [Bool] = []
+            fills: Bool = true, curveSteps: [Bool] = [], cornerDiagonals: [SIMD2<Float>] = []
         ) {
             self.points = points
             self.isClosed = isClosed
             self.fanCenter = fanCenter
             self.fills = fills
             self.curveSteps = curveSteps
+            self.cornerDiagonals = cornerDiagonals
         }
 
         /// 形自身の座標で作った周を、置き場所ぶんずらす。**畳まないときの経路。**
         func moved(by offset: SIMD2<Float>) -> Outline {
             Outline(
                 points: points.map { $0 + offset }, isClosed: isClosed,
-                fanCenter: fanCenter.map { $0 + offset }, fills: fills, curveSteps: curveSteps)
+                fanCenter: fanCenter.map { $0 + offset }, fills: fills, curveSteps: curveSteps,
+                cornerDiagonals: cornerDiagonals)
         }
     }
 
