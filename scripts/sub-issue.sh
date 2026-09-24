@@ -10,6 +10,8 @@
 #   --type : 親から継ぐ型を上書きする (ADR-0004 の 5 型: Bug/Feature/Task/Design/Docs)
 #   --test : 使い捨て検証用。タイトルに test: を補い、verify: triaged を付け、
 #            本文が無ければ検証用の雛形を入れる (確認後に close する前提)
+#
+# 作った子を探すときは、検索に parent-issue:mokume-metal/mokume#<親番号> を使う。
 set -euo pipefail
 
 # リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)

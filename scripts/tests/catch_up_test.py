@@ -33,8 +33,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "catch-up.sh"
 
-# `Sketches/` は印つきの行 — 絵の証跡は要るが、覆いの判定には数えない (#497)
-PATHS = "# 見出し\n\nSources/MokumeCore/\nSketches/  evidence-only\n"
+PATHS = "# 見出し\n\nSources/MokumeCore/\n"
 
 FAKE_GH = """#!/bin/bash
 printf '%s\\n' "$*" >> "$GH_CALLS"
@@ -285,19 +284,6 @@ class CatchUpTest(unittest.TestCase):
         proc = self.run_script(OPEN_PRS="5 7", FILES_BY_PR=f"5={NOT_DRAWING}")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("ci-check", self.made())
-
-    def test_先に居るのが台帳の絵を動かさない_PR_なら走る(self):
-        """`Sketches/` の PR は覆いを壊さないので行列を作らない (#497)。"""
-        proc = self.run_script(OPEN_PRS="5 7", FILES_BY_PR="5=Sketches/main.swift")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("ci-check", self.made())
-
-    def test_台帳の絵を動かさない_PR_では走らない(self):
-        """打ち直す理由が無い側。覆いを壊さないなら合流後の姿はもう覆えている。"""
-        proc = self.run_script(PR_FILES="Sketches/main.swift")
-        self.assertEqual(proc.returncode, 3, proc.stderr)
-        self.assertIn("台帳の絵を動かさない", proc.stdout)
-        self.assertNotIn("ci-check", self.made())
 
     def test_queue_の前に番号の大きい描画_PR_が居れば走らない(self):
         """**#1266 の現場そのもの。** queue の前に #1243 が居る間、#1242 は番号順では

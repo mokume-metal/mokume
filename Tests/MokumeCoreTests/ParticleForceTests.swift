@@ -17,21 +17,24 @@ import simd
 /// ## 積分は CPU で独立に書く
 ///
 /// 進め方は ``Force`` の doc が決めている — 力を加速度として足し合わせ、**先に速度を、
-/// 進めた速度で位置を**進める (半陰的オイラー)。刻みは `deltaTime`。ここではその方式を
-/// CPU で書き直して照合する。実装 (`Shaders/Computations/Particles.metal`) の綴りは写さない。
+/// 進めた速度で位置を**進める (半陰的オイラー)。減速だけは足さず、進めた速度に
+/// e^{−amount·Δt} を掛ける。刻みは `deltaTime`。ここではその方式を CPU で書き直して
+/// 照合する。実装 (`Shaders/Computations/Particles.metal`) の綴りは写さない。
 ///
 /// ## 完全一致が取れるところと、取れないところ
 ///
-/// 刻みを 1/64 秒に、力と速さを 2 進の短い小数にすると、重力と減速の積分は**丸めなしで
+/// 刻みを 1/64 秒に、力と速さを 2 進の短い小数にすると、重力の積分は**丸めなしで
 /// 閉じる**。そこは完全一致で比べる — 閉じていることは、CPU の単精度の積分が倍精度の
 /// 閉じた式と一致することで検査自身が確かめる。単精度の積和が 1 回の丸めにまとめられて
 /// いても (fma)、丸めが無ければ値は変わらない。
 ///
 /// 引く・押す・回す力は、向きを長さで割るので 2 進で閉じない (平方根と割り算は近似の
-/// 算術 — fast math — を通る)。そこは相対 1e-5 を許す。単精度の数目盛りぶんで、向きや
-/// 大きさを取り違えたときのずれより 4 桁以上小さい。
+/// 算術 — fast math — を通る)。減速も、速度に e^{−amount·Δt} を掛けるので閉じない
+/// (`exp` も近似の算術を通る — [#1471])。そこは相対 1e-5 を許す。単精度の数目盛りぶんで、
+/// 向きや大きさを取り違えたときのずれより 4 桁以上小さい。
 ///
 /// [#1384]: https://github.com/mokume-metal/mokume/issues/1384
+/// [#1471]: https://github.com/mokume-metal/mokume/issues/1471
 /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
 @Suite(
     "粒の力と噴き口",
@@ -54,21 +57,35 @@ struct ParticleForceTests {
 
     /// 最初のフレームで粒を出し、毎フレーム同じ力を掛けて `frames` フレーム進め、
     /// 粒の状態を枠の順に返す。**寿命は尽きないだけ長く取る。**
+    ///
+    /// - Parameters:
+    ///   - step: 1 フレームの長さ。省くと ``step`` (1/64 秒)。
+    ///   - everyFrame: 各フレームを進めた直後の粒の状態を受け取る。1 つ目の引数は
+    ///     進めたフレームの数 (1 始まり)。
     private func advance(
-        _ releases: [Release], forces: [Force], frames: Int
+        _ releases: [Release], forces: [Force], frames: Int, step: Float = Self.step,
+        everyFrame: ((Int, [Particle]) -> Void)? = nil
     ) throws -> [Particle] {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
-        canvas.deltaTime = Self.step
+        canvas.deltaTime = step
         let total = releases.reduce(0) { $0 + $1.count }
         let dust = try canvas.makeParticles(count: total)
         var randomness = Randomness(seed: 1384)
+        func state() -> [Particle] {
+            canvas.read(dust.state).withUnsafeBytes { raw in
+                Array(raw.bindMemory(to: Particle.self).prefix(total))
+            }
+        }
         for frame in 0..<frames {
             try canvas.draw {
                 if frame == 0 {
                     for release in releases {
-                        // 1 フレームで `count` 個 (レートは毎秒の数)
+                        // 1 フレームで `count` 個 (レートは毎秒の数)。**1 つ上の値に丸める** —
+                        // 刻みが 2 のべきでないと count ÷ step × step が count にわずかに
+                        // 届かず、端数として繰り越されて出ない (刻み 1/30 秒で 1 個 → 0 個)
                         canvas.emit(
-                            dust, from: release.source, rate: Float(release.count) / Self.step,
+                            dust, from: release.source,
+                            rate: (Float(release.count) / step).nextUp,
                             speed: release.speed...release.speed,
                             angle: release.angle...release.angle, life: 100...100,
                             size: 1...1, color: .linear(red: 1, green: 1, blue: 1),
@@ -78,11 +95,9 @@ struct ParticleForceTests {
                 if !forces.isEmpty { canvas.force(dust, forces) }
                 canvas.particles(dust)
             }
+            everyFrame?(frame + 1, state())
         }
-        let state = canvas.read(dust.state)
-        let particles = state.withUnsafeBytes { raw in
-            Array(raw.bindMemory(to: Particle.self).prefix(total))
-        }
+        let particles = state()
         // 出したはずの数が出ている (以降の照合の前提)
         try #require(particles.filter { $0.life > 0 }.count == total, "出した粒の数が合わない")
         return particles
@@ -141,30 +156,141 @@ struct ParticleForceTests {
 
     // MARK: - 減速
 
-    /// 完了条件 6 ([#1384])。**減速は速度に比例して逆らう加速度** −amount·v で、1 フレームで
-    /// 速度は (1 − amount·Δt) 倍になる。3 フレームなら (1 − amount·Δt)³ 倍。
+    /// 完了条件 6 ([#1384]) を [#1471] で書き換えたもの。**減速は、1 フレームごとに速度を
+    /// e^{−amount·Δt} 倍にする** — n フレームなら e^{−n·amount·Δt} 倍。減速だけの粒で、
+    /// 各フレームを倍精度の式と相対 1e-5 で比べる。
     ///
-    /// 3 フレームまでは 2 進で閉じる (速さ 32・amount 0.5・Δt 1/64 → 127/128 倍ずつ)。
+    /// **当初は (1 − amount·Δt) 倍**を、2 進で閉じる値 (127/128 倍ずつ) の完全一致で見ていた。
+    /// それはいまの実装を写した約束で、刻みが粗いと 1 − amount·Δt が負になって速さが
+    /// 増えた ([#1471])。127/128 と e^{−1/128} は 1 フレーム目でも相対 3.1e-5 ずれ
+    /// (3 フレームで 9.3e-5)、1e-5 で見分けが付く。
     ///
     /// [#1384]: https://github.com/mokume-metal/mokume/issues/1384
-    @Test("減速は、1 フレームごとに速度を (1 − amount·Δt) 倍にする")
+    /// [#1471]: https://github.com/mokume-metal/mokume/issues/1471
+    @Test("減速は、1 フレームごとに速度を e^{−amount·Δt} 倍にする")
     func dragScalesTheVelocityEachFrame() throws {
         let speed: Float = 32
         let amount: Float = 0.5
-        let angle: Float = 0
         let frames = 3
-        let ratio = 1 - Double(amount) * Double(Self.step)
-        var expected = Double(speed)
-        for _ in 0..<frames { expected *= ratio }
-        // **前提: 単精度で表せる** (表せれば、途中の各フレームも表せる — 桁が少ないほうから増える)
-        try #require(Double(Float(expected)) == expected, "\(expected) が単精度で表せない")
+        var seen: [Int: SIMD3<Float>] = [:]
+        _ = try advance(
+            [Release(source: .point(8, 8), speed: speed, angle: 0)],
+            forces: [.drag(amount)], frames: frames
+        ) { frame, particles in seen[frame] = Self.velocity(particles[0]) }
+        for frame in 1...frames {
+            let expected = SIMD3<Double>(
+                Double(speed) * exp(-Double(frame) * Double(amount) * Double(Self.step)), 0, 0)
+            let drawn = try #require(seen[frame])
+            #expect(
+                Self.close(drawn, expected),
+                "\(frame) フレーム目の速度 \(drawn) — 式からは \(expected)")
+            #expect(drawn.y == 0 && drawn.z == 0, "減速が速度の向きを変えた: \(drawn)")
+        }
+    }
 
+    /// [#1471] の完了条件 1。**どれだけ強い減速でも、速度の向きは変わらず、速さは増えない。**
+    ///
+    /// 減速だけの粒を amount·Δt が 1 を超える刻みで進め、毎フレーム見る:
+    ///
+    /// - 速度は出たときの向き (x の正) のまま — y・z は 0 で、x は負にならない
+    /// - 速さは前のフレームより小さい (0 に届いたら 0 のまま)
+    /// - 出た位置からの隔たりは v₀ ÷ amount を越えない。連続の解
+    ///   x₀ + v₀/amount·(1 − e^{−amount·t}) が止まるまでに進む距離で、1 フレームごとに
+    ///   e^{−amount·Δt} を掛ける進め方の総距離 v₀·Δt ÷ (e^{amount·Δt} − 1) はその内側にある
+    ///
+    /// 組は 2 つ。刻み 1/30・amount 70 は本文の再現 (1 − amount·Δt = −1.33)。刻み 1/6・
+    /// amount 20 は、実時計の `deltaTime` が上限 (10 / fps — 60 fps で 1/6 秒) に当たった
+    /// 1 枚に当たる (1 − amount·Δt = −2.33)。フレーム数を 12 に留めるのは、速さが
+    /// 非正規数へ潰れて「毎フレーム小さくなる」が丸めで崩れる手前で止めるため
+    /// (12 フレームで速さ 60 は 1e-10 を下回る程度)。
+    ///
+    /// [#1471]: https://github.com/mokume-metal/mokume/issues/1471
+    @Test(
+        "強い減速を粗い刻みで進めても、粒は向きを変えず、速さを増やさない",
+        arguments: [(Float(1) / 30, Float(70)), (Float(1) / 6, Float(20))])
+    func strongDragOnACoarseStepNeverOvershoots(step: Float, amount: Float) throws {
+        let speed: Float = 60
+        let start = SIMD3<Float>(8, 32, 0)
+        let reach = speed / amount
+        var previous = speed
+        var frames: [Int] = []
+        _ = try advance(
+            [Release(source: .point(start.x, start.y), speed: speed, angle: 0)],
+            forces: [.drag(amount)], frames: 12, step: step
+        ) { frame, particles in
+            frames.append(frame)
+            let velocity = Self.velocity(particles[0])
+            let away = simd_length(Self.position(particles[0]) - start)
+            #expect(
+                velocity.y == 0 && velocity.z == 0 && velocity.x >= 0,
+                "\(frame) フレーム目の速度 \(velocity) — 出たときの向き (x の正) を外れた")
+            #expect(
+                velocity.x < previous || (previous == 0 && velocity.x == 0),
+                "\(frame) フレーム目の速さ \(velocity.x) — 前のフレームは \(previous)")
+            #expect(
+                away <= reach,
+                "\(frame) フレーム目: 出た位置から \(away) — 止まるまでに進む距離は \(reach)")
+            previous = velocity.x
+        }
+        #expect(frames == Array(1...12))
+    }
+
+    /// [#1471] の完了条件 2。**減速だけの粒の 1 秒後の速さは、フレームレートに依らず
+    /// v₀·e^{−amount}** — 説明が単位を「1 秒あたりに削る割合」で言っている以上、刻みで
+    /// 変わってはいけない。刻み 1/32 で 32 フレームと、1/64 で 64 フレームを見る。
+    ///
+    /// 許す幅は相対 1e-4。Metal Shading Language Specification の精度の表 (「Numerical
+    /// Compliance」の章・単精度) は `exp` を、fast math を切ると 4 ulp 以内、fast math
+    /// (ライブラリの既定) では 3 + floor(|2x|) ulp 以内 — この引数 (|x| ≦ 1/8) では 3 ulp —
+    /// とする。大きいほうの 4 ulp で見積もる。毎フレーム同じ引数 (−amount·Δt・2 進で閉じる)
+    /// で同じ誤差を掛けるので、n フレームで相対 n × 4 ulp ≈ 64 × 4.8e-7 = 3.1e-5 まで積もり、
+    /// 掛け算の丸め (1 回 0.5 ulp) を 64 回足しても 3.4e-5 である。1e-4 はその外側に取った。
+    /// いまの式との違いはずっと大きい — amount 4 で (1 − 4/32)³² は e^{−4} の 0.76 倍、
+    /// (1 − 4/64)⁶⁴ は 0.88 倍。
+    ///
+    /// [#1471]: https://github.com/mokume-metal/mokume/issues/1471
+    @Test("減速だけの粒の 1 秒後の速さは、刻みに依らず v₀·e^{−amount} になる", arguments: [32, 64])
+    func dragOverOneSecondDoesNotDependOnTheStep(framesPerSecond: Int) throws {
+        let speed: Float = 32
+        let amount: Float = 4
         let particle = try advance(
-            [Release(source: .point(8, 8), speed: speed, angle: angle)],
-            forces: [.drag(amount)], frames: frames)[0]
-        #expect(particle.vx == Float(expected), "\(particle.vx) — 式からは \(expected)")
-        #expect(particle.vy == 0)
-        #expect(particle.vz == 0)
+            [Release(source: .point(8, 32), speed: speed, angle: 0)],
+            forces: [.drag(amount)], frames: framesPerSecond,
+            step: 1 / Float(framesPerSecond))[0]
+        let expected = SIMD3<Double>(Double(speed) * exp(-Double(amount)), 0, 0)
+        let drawn = Self.velocity(particle)
+        #expect(
+            Self.close(drawn, expected, tolerance: 1e-4),
+            "刻み 1/\(framesPerSecond) の 1 秒後の速度 \(drawn) — 式からは \(expected)")
+    }
+
+    /// [#1471] の完了条件 3。**減速は、足し合わせた加速度で進めた速度に掛かる**
+    /// (v ← (v + a·Δt)·e^{−k·Δt})。静止した粒に重力 g と減速 amount を組んで 1 フレーム
+    /// 進めると、速度は g·Δt·e^{−amount·Δt}、位置はその速度で進んだところになる。
+    ///
+    /// 掛けてから足す順 (v·e^{−k·Δt} + a·Δt) を取ると、静止した粒の速度は g·Δt のまま
+    /// 減速が効かない — g 64・amount 8・刻み 1/64 なら e^{−1/8} ≈ 0.8825 に対して 1 で、
+    /// 相対 1e-5 で見分けが付く。位置も見るのは、減速を掛ける前の速度で位置を進める
+    /// 取り違えを外すため (y が 0.1175 / 64 ずれる)。
+    ///
+    /// [#1471]: https://github.com/mokume-metal/mokume/issues/1471
+    @Test("減速は、ほかの力で進めた速度に掛かる")
+    func dragScalesTheVelocityAdvancedByTheOtherForces() throws {
+        let start = SIMD3<Float>(8, 8, 0)
+        let gravity: Float = 64
+        let amount: Float = 8
+        let particle = try advance(
+            [Release(source: .point(start.x, start.y))],
+            forces: [.gravity(0, gravity), .drag(amount)], frames: 1)[0]
+        let dt = Double(Self.step)
+        let velocity = SIMD3<Double>(0, Double(gravity) * dt * exp(-Double(amount) * dt), 0)
+        let position = SIMD3<Double>(start) + velocity * dt
+        #expect(
+            Self.close(Self.velocity(particle), velocity),
+            "速度 \(Self.velocity(particle)) — 式からは \(velocity)")
+        #expect(
+            Self.close(Self.position(particle), position),
+            "位置 \(Self.position(particle)) — 式からは \(position)")
     }
 
     // MARK: - 引く・押す

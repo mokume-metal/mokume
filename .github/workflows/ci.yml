@@ -132,6 +132,8 @@ jobs:
           else
             echo "PR タイトルが Conventional Commits ではない: $TITLE" >&2
             echo '形式: <type>(<scope>): <要約>  (type: feat/fix/docs/refactor/test/chore/ci/perf/build)' >&2
+            echo 'design は Issue Type であって type ではない。' >&2
+            echo 'タイトルを直せば新しい run が走る。この run は rerun しない (元のイベントを再生するので古いタイトルで判定する — #699)。' >&2
             exit 1
           fi
 

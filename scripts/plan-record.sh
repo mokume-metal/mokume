@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 #
 # 着手時に立てたプランを GitHub (PR / Issue のコメント) に残させるフック (#35)。
-# AGENTS.md 「進め方」3 の担保 — capture で投稿を指示し、guard で未投稿を差し戻す。
+# AGENTS.md 「進め方」3・4 の担保 — capture で投稿を指示し、guard で未投稿を差し戻す。
 #
 # 設計の要点:
 #   1. 置き場は GitHub のコメント (リポジトリにはコミットしない)
