@@ -285,6 +285,112 @@ struct LoopTests {
         #expect(sketch.drawCalls == 1)
     }
 
+    // MARK: - 止まっている間のコールバックはフレームの外 (#1472)
+
+    /// `draw()` を既定でない変換や切り抜きのまま `noLoop()` で終え、押すと赤い四角を置いて
+    /// 描き直しを頼む (#1472 の再現手順の形)。
+    final class StoppedPlacement: Sketch {
+        /// `draw()` が変換をどう残して終わるか。
+        enum Ending: String, CaseIterable, CustomTestStringConvertible {
+            /// `translate(50, 0)` のまま終わる
+            case translated
+            /// `push(); translate(50, 0)` と積んで、戻し忘れて終わる
+            case pushedThenTranslated
+            var testDescription: String { rawValue }
+        }
+
+        var settings = SketchSettings(width: 160, height: 40)
+        var ending: Ending?
+        /// `draw()` を `clip(0, 0, 20, 40)` のまま終えるか。
+        var clipsAtEnd = false
+        /// 押したときに置く四角の左上。
+        var placeAt: (x: Float, y: Float) = (0, 0)
+        /// 置いた四角の列を、コールバックの中で閉じるか (`blendMode(.add)` で閉じる)。
+        var closesRunInCallback = false
+        /// 押したときに読んだ `screenX(0, 0)` / `screenY(0, 0)` / 奥行きを渡す形の 2 つ。
+        var seenScreen: [Float] = []
+
+        init() {}
+        func draw() {
+            // **描き直しの枚では下地を塗らない。** `background()` はそれまでに溜めた図形を
+            // 捨てるので、押したときに置いた四角ごと消える
+            if frameCount == 1 { background(0) }
+            switch ending {
+            case .translated:
+                translate(50, 0)
+            case .pushedThenTranslated:
+                push()
+                translate(50, 0)
+            case nil:
+                break
+            }
+            if clipsAtEnd { clip(0, 0, 20, 40) }
+            noLoop()
+        }
+        func mousePressed() {
+            seenScreen = [screenX(0, 0), screenY(0, 0), screenX(0, 0, 0), screenY(0, 0, 0)]
+            noStroke()
+            fill(255, 0, 0)
+            rect(placeAt.x, placeAt.y, 10, 10)
+            if closesRunInCallback { blendMode(.add) }
+            redraw()
+        }
+    }
+
+    /// 1 枚描いて止め、押して描き直させた 1 枚の絵を返す。
+    private func pictureAfterPressing(_ sketch: StoppedPlacement) throws -> DisplayImage {
+        let facet = try makeFacet()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try click(in: facet)
+        try runtime.advance()
+        #expect(runtime.frameCount == 2)
+        return try runtime.target.encodeForDisplay()
+    }
+
+    @Test(
+        "止まっている間のコールバックで置いた図形に、前の draw() が最後に残した変換は効かない",
+        arguments: StoppedPlacement.Ending.allCases)
+    func placingWhileStoppedIgnoresThePreviousTransform(ending: StoppedPlacement.Ending) throws {
+        let sketch = StoppedPlacement()
+        sketch.ending = ending
+        let image = try pictureAfterPressing(sketch)
+
+        // 回っている間のコールバック (フレームの中・`draw()` の前) で置いたときと同じ場所
+        #expect(image[5, 5].red > 200)
+        #expect(image[55, 5].red < 50)
+    }
+
+    @Test("止まっている間のコールバックで閉じた列は、前の draw() が最後に残した切り抜きを持たない")
+    func aRunClosedWhileStoppedIgnoresThePreviousClip() throws {
+        let sketch = StoppedPlacement()
+        sketch.clipsAtEnd = true
+        sketch.placeAt = (30, 5)
+        // 切り抜きは列を**閉じた時点**の値を列が持つ。閉じないまま次のフレームへ持ち越すと、
+        // 次のフレームの頭で切り抜きが外れた後に閉じるので、直す前でも四角は出てしまう
+        sketch.closesRunInCallback = true
+        let image = try pictureAfterPressing(sketch)
+
+        #expect(image[35, 10].red > 200)
+    }
+
+    @Test("止まっている間のコールバックで読む画面の座標に、前の draw() が最後に残した変換は効かない")
+    func screenCoordinatesWhileStoppedIgnoreThePreviousTransform() throws {
+        let sketch = StoppedPlacement()
+        sketch.ending = .translated
+        _ = try pictureAfterPressing(sketch)
+
+        try #require(sketch.seenScreen.count == 4)
+        #expect(sketch.seenScreen[0] == 0)
+        #expect(sketch.seenScreen[1] == 0)
+        // 奥行きを渡す形は視点も通す。視点は前から終わりで既定へ戻っていたので、変換だけが
+        // 前の `draw()` のまま混ざっていた
+        #expect(abs(sketch.seenScreen[2]) < 0.01)
+        #expect(abs(sketch.seenScreen[3]) < 0.01)
+    }
+
     // MARK: - 止めていたところから描く 1 枚の時計 (#1366)
 
     /// 止めているスケッチに、描き直しをどこから頼むか。
