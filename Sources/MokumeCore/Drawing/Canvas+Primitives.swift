@@ -103,15 +103,14 @@ extension Canvas {
             let arcPoints = Self.arcPoints(
                 center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
                 from: start, sweep: sweep)
-            // 弧の点は刻み。**扇の角 (中心と弧の両端) だけが折れ目の形に従う** (#1423)
-            if isFullTurn {
-                return Outline(
-                    points: arcPoints, isClosed: true, fanCenter: SIMD2(0, 0),
-                    curveSteps: Array(repeating: true, count: arcPoints.count))
-            }
+            // 周の点はどれも円板で埋める。弧の点は刻みで、**扇の 3 つの角 (中心と弧の両端)
+            // も折れ目の形によらず丸く繋ぐ** — 距離関数の経路は 3 つの角を真の距離で丸く出し、
+            // `StrokeJoin.miter` の注記もそう約束している。#1423 は 3 つの角だけを折れ目の形に
+            // 従わせていたが、`texture()` / `shader()` を足しただけで角の形が変わっていた (#1486)
+            let points = isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints
             return Outline(
-                points: [SIMD2(0, 0)] + arcPoints, isClosed: true, fanCenter: SIMD2(0, 0),
-                curveSteps: [false] + arcPoints.indices.map { $0 > 0 && $0 < arcPoints.count - 1 })
+                points: points, isClosed: true, fanCenter: SIMD2(0, 0),
+                curveSteps: Array(repeating: true, count: points.count))
         }
     }
 

@@ -262,6 +262,64 @@ struct PixelGridTests {
             tolerance: placement.comparesCentroid ? 0.25 : .infinity)
     }
 
+    /// 輪郭を引く扇。円と楕円、掃引が π 未満の組と π 超の組 (中心が凹の角になる) を
+    /// 混ぜる。
+    nonisolated struct StrokedPie: CustomTestStringConvertible, Sendable {
+        let width: Float
+        let height: Float
+        let start: Float
+        let stop: Float
+        var testDescription: String { "\(width)×\(height) の \(start)…\(stop) rad" }
+
+        static let all = [
+            StrokedPie(width: 40, height: 40, start: 0.3, stop: 2.2),
+            StrokedPie(width: 40, height: 40, start: 0.3, stop: 0.3 + 1.4 * .pi),
+            StrokedPie(width: 46, height: 26, start: 5, stop: 6.2),
+            StrokedPie(width: 46, height: 26, start: -2, stop: 1.5),
+        ]
+    }
+
+    @Test(
+        "輪郭つきの扇は、断片を付けて三角形で描いても、折れ目の形によらず同じ場所を覆う",
+        arguments: Placement.all, StrokedPie.all)
+    func strokedPiesStayPutAcrossRoutes(_ placement: Placement, _ pie: StrokedPie) throws {
+        // 扇の 3 つの角 (中心と弧の両端) を、距離関数の経路は `strokeJoin` によらず真の距離で
+        // 丸く出す。三角形の経路もそこを円板で埋める (#1486) — かつては `miter` / `bevel` で
+        // 軸に沿った正方形を置き、`shader()` を足しただけで角の形が変わっていた
+        var differing: [StrokeJoin: Int] = [:]
+        for join in [StrokeJoin.round, .miter, .bevel] {
+            func arc(on canvas: Canvas) {
+                canvas.noFill()
+                canvas.strokeWeight(10)
+                canvas.strokeJoin(join)
+                canvas.translate(placement.x, placement.y)
+                canvas.rotate(placement.angle)
+                canvas.arc(0, 0, pie.width, pie.height, pie.start, pie.stop)
+            }
+            let form = try coverage { arc(on: $0) }
+            let triangles = try coverage { canvas in
+                canvas.shader(try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }"))
+                arc(on: canvas)
+            }
+            // **許容は `strokeJoin` によらず 1 つにし、`round` の組の実測で決める。** 三角形の
+            // 経路は弧を弦で近似するので、帯の内縁と外縁の両方で画素が入れ替わる — 同じ置き方で
+            // 同じ大きさの一周の輪郭を描いても 39〜70 画素違う。扇の `round` の組は 9〜40 画素
+            // (楕円の組は 11〜30 で、円より多くはない)、重心は回した組で 0.15 画素まで揺れた
+            // (どれも実測。#1486 の前後で変わらない)。角に正方形を置いていた頃の `miter` /
+            // `bevel` の組は 28〜51 画素で、この許容だけでは捕まえきれない — 下の数の一致が見る
+            expectSameGeometry(
+                form, triangles, "\(join) の扇 \(pie.testDescription)",
+                allowedDifferingPixels: 45,
+                tolerance: placement.comparesCentroid ? 0.25 : .infinity)
+            differing[join] = form.differingPixels(from: triangles)
+        }
+        // **`miter` / `bevel` の食い違いが `round` と同じ数であること。** 距離関数の経路は
+        // `strokeJoin` を読まないので、三角形の経路が角を円板で埋めていれば 3 通りの絵は
+        // 同じになり、食い違いも同じ数になる。角に正方形を置くと、その分だけ増える
+        #expect(differing[.miter] == differing[.round], "miter と round で食い違いの数が違う")
+        #expect(differing[.bevel] == differing[.round], "bevel と round で食い違いの数が違う")
+    }
+
     // MARK: - 塗りと輪郭の継ぎ目
 
     @Test("塗りと輪郭が接する所で、下地が漏れない", arguments: [Float(1), 2, 3])

@@ -251,10 +251,11 @@ struct CurveJoinTests {
         #expect(outside.isEmpty, "\(outside.count) 画素がはみ出している (最初は \(outside.first.map { "\($0)" } ?? ""))")
     }
 
-    // MARK: - 輪郭の経路で描く円と円弧 (#1423)
+    // MARK: - 輪郭の経路で描く円と円弧 (#1423・#1486)
 
     /// 絵を貼って塗る円と円弧は、距離関数の経路 (``Canvas/formAllowed(fills:)``) に乗れず、
     /// 周の点を結んだ折れ線として輪郭を引く。**周の点も曲線の刻みで、角ではない。**
+    /// 扇の 3 つの角 (中心と弧の両端) も、折れ目の形によらず円板で埋める (#1486)。
     private func renderTextured(join: StrokeJoin, _ place: (Canvas) -> Void) throws
         -> DisplayImage
     {
@@ -263,6 +264,24 @@ struct CurveJoinTests {
             guard let picture = try? canvas.createImage(1, 1) else { return }
             canvas.texture(picture)
             canvas.fill(black)
+            canvas.strokeWeight(10)
+            canvas.strokeJoin(join)
+            place(canvas)
+        }
+    }
+
+    /// 断片を付けた図形も三角形の経路で描く。断片は頂点の色をそのまま返すので、輪郭は
+    /// 線の色 (白) のまま出る。**断片を作れなければ何も描かない** — 比べる前に
+    /// `inkedPixels` で何か出ていることを確かめるので、空振りはそこで捕まる。
+    private func renderShaded(join: StrokeJoin, _ place: (Canvas) -> Void) throws
+        -> DisplayImage
+    {
+        try render { canvas in
+            guard
+                let shader = try? canvas.makeShader(
+                    "float4 paint(Fragment in, Values values) { return in.color; }")
+            else { return }
+            canvas.shader(shader)
             canvas.strokeWeight(10)
             canvas.strokeJoin(join)
             place(canvas)
@@ -293,36 +312,63 @@ struct CurveJoinTests {
         #expect(differingPixels(mitered, rounded) == 0)
     }
 
-    /// 扇は中心と弧の両端の 3 点が本当の角である。**折れ目の形の違いは、その 3 点の
-    /// 近くにしか出ない** — 角を埋める正方形は、角から (太さの半分) × √2 の内側に収まる。
-    @Test("絵を貼って塗る扇の折れ目の形は、中心と弧の両端の角にだけ効く")
-    func texturedPieJoinsOnlyAtItsCorners() throws {
-        let (start, stop): (Float, Float) = (0.3, 2.2)
-        func pie(_ canvas: Canvas) { canvas.arc(32, 32, 44, 44, start, stop) }
-        let mitered = try renderTextured(join: .miter, pie)
-        let rounded = try renderTextured(join: .round, pie)
+    /// 三角形の経路へ乗せる手立て。どちらも扇を周の折れ線で引く。
+    nonisolated enum PieRoute: CaseIterable, CustomTestStringConvertible, Sendable {
+        /// 絵を貼って塗る (`texture()`)
+        case textured
+        /// 断片を付ける (`shader()`)
+        case shaded
 
-        let corners: [SIMD2<Double>] = [
-            SIMD2(32, 32),
-            SIMD2(32 + 22 * cos(Double(start)), 32 + 22 * sin(Double(start))),
-            SIMD2(32 + 22 * cos(Double(stop)), 32 + 22 * sin(Double(stop))),
-        ]
-        let reach = 5 * 2.0.squareRoot() + 0.01
-        var differing = 0
-        var awayFromCorners: [(Int, Int)] = []
-        for y in 0..<mitered.height {
-            for x in 0..<mitered.width where mitered[x, y] != rounded[x, y] {
-                differing += 1
-                let point = SIMD2(Double(x), Double(y))
-                let nearest = corners.map { corner -> Double in
-                    let offset = point - corner
-                    return (offset * offset).sum().squareRoot()
-                }.min() ?? .infinity
-                if nearest > reach { awayFromCorners.append((x, y)) }
+        var testDescription: String {
+            switch self {
+            case .textured: "絵を貼って塗る"
+            case .shaded: "断片を付けた"
             }
         }
-        // 角では違いが出ている — 出ていなければ、折れ目の形を見ていない
-        #expect(differing > 0)
-        #expect(awayFromCorners.isEmpty, "角から離れた \(awayFromCorners.count) 画素が違う (最初は \(awayFromCorners.first.map { "\($0)" } ?? ""))")
+    }
+
+    /// 64×64 の面の中心に置く扇。円と楕円、掃引が π 未満の組と π 超の組 (中心が凹の角に
+    /// なる) を混ぜる。
+    nonisolated struct Pie: CustomTestStringConvertible, Sendable {
+        let width: Float
+        let height: Float
+        let start: Float
+        let stop: Float
+        var testDescription: String { "\(width)×\(height) の \(start)…\(stop) rad" }
+
+        static let all = [
+            Pie(width: 44, height: 44, start: 0.3, stop: 2.2),
+            Pie(width: 44, height: 44, start: 0.3, stop: 0.3 + 1.4 * .pi),
+            Pie(width: 50, height: 26, start: 0.4, stop: 2.4),
+            Pie(width: 50, height: 26, start: -2, stop: 1.5),
+        ]
+    }
+
+    /// 扇の 3 つの角 (中心と弧の両端) も、折れ目の形によらず円板で埋める (#1486)。
+    /// 距離関数の経路は 3 つの角を真の距離で丸く出し、``StrokeJoin/miter`` の注記も
+    /// 「扇形の角は折れ目の形によらず丸く出る」と約束している — 三角形の経路もそれに揃える。
+    ///
+    /// かつて (#1423) は 3 つの角だけを折れ目の形に従わせ、`miter` / `bevel` では角に
+    /// 軸に沿った正方形を置いていた。`texture()` / `shader()` を 1 行足しただけで、
+    /// 扇の角の形が変わっていた。
+    @Test(
+        "三角形の経路で描く扇の輪郭は、中心と弧の両端の角も含めて折れ目の形によらず同じ絵になる",
+        arguments: PieRoute.allCases, Pie.all)
+    func trianglePieIgnoresTheJoin(_ route: PieRoute, _ pie: Pie) throws {
+        func place(_ canvas: Canvas) {
+            canvas.arc(32, 32, pie.width, pie.height, pie.start, pie.stop)
+        }
+        func draw(_ join: StrokeJoin) throws -> DisplayImage {
+            switch route {
+            case .textured: try renderTextured(join: join, place)
+            case .shaded: try renderShaded(join: join, place)
+            }
+        }
+        let rounded = try draw(.round)
+        let mitered = try draw(.miter)
+        let beveled = try draw(.bevel)
+        #expect(inkedPixels(rounded) > 0)
+        #expect(differingPixels(mitered, rounded) == 0)
+        #expect(differingPixels(beveled, rounded) == 0)
     }
 }
