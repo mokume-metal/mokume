@@ -116,7 +116,10 @@ extension Canvas {
     }
 
     func encodeEffects(into commands: any MTL4CommandBuffer) throws(RenderFailure) -> Bool {
-        let passes = pendingEffects.flatMap(\.passes)
+        // **半径は出す画素で書かれている** ([#1545])。段は描く細かさの絵の上で回るので、
+        // 展開する前に描く画素へ換算する (縮め幅もこの半径で決まる)
+        let scale = effectRadiusScale
+        let passes = pendingEffects.flatMap { $0.passes(drawnPerOutput: scale) }
         guard !passes.isEmpty else { return false }
         let pipeline = try effectPipeline()
         // **このフレームで使う枠を、1 枠も書かないうちに数え切る。** 取り直すと領域が
@@ -293,5 +296,22 @@ extension Canvas {
         encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
         effectPassesEncoded += 1
+    }
+}
+
+// MARK: - 半径は出す画素 (#1545)
+
+extension Canvas {
+    /// 出す画素 1 つが描く画素でいくらか。効果の半径 (出す画素) をこれで描く画素へ換算する
+    /// ([#1545])。
+    ///
+    /// 描く大きさは縦横それぞれ丸める (`drawnSize`) ので、縦と横の比は僅かにずれうる。
+    /// 半径は 1 つなので、2 つの平均を取る。**細かさ 1 ではちょうど 1** — 描く先と出す先が
+    /// 同じ 1 枚で、幅を幅で割るため (``unitsPerDrawnPixel`` と同じ)。
+    ///
+    /// [#1545]: https://github.com/mokume-metal/mokume/issues/1545
+    var effectRadiusScale: Float {
+        let drawnPerOutput = 1 / unitsPerDrawnPixel
+        return (drawnPerOutput.x + drawnPerOutput.y) / 2
     }
 }
