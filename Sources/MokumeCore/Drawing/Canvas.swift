@@ -470,7 +470,12 @@ public final class Canvas {
     /// [#366]: https://github.com/mokume-metal/mokume/issues/366
     var noiseSettings = ValueNoise()
     /// 焼き付け先。**同じ細かさなら作り直さない** (同 決定 4)。
-    private var shadowMap: ShadowMap?
+    ///
+    /// 読めるのは検査が焼いた奥行きを直に確かめるため ([#1474] — どちらの面を焼いたかは、
+    /// 既定の縁の余裕の下では絵にほとんど出ない)。
+    ///
+    /// [#1474]: https://github.com/mokume-metal/mokume/issues/1474
+    private(set) var shadowMap: ShadowMap?
     /// 焼き付け先を作った回数 (作ってから通算)。
     ///
     /// **作り直していないかを数える値。** 毎フレーム宣言してよい形にした以上、
@@ -859,7 +864,9 @@ public final class Canvas {
         /// 変わらず、断片の仕事 (影の読み取りを含む) が裏面のぶんだけ減る
         /// ([#756](https://github.com/mokume-metal/mokume/issues/756))。動きうるのは輪郭の
         /// 縁で表と裏が同じ奥行きを争っていた画素だけで、それは表の色に確定する
-        /// (台帳の `shadows` で 1 画素・2 階調が動いた実測が #756 の PR にある)。
+        /// (台帳の `shadows` で 1 画素・2 階調が動いた実測が #756 の PR にある)。影の焼き付けも
+        /// 同じ捨て方で焼き、焼き付く奥行きも両面で焼いたときと変わらない — 光から見て最も
+        /// 近い面も必ず表だからである ([#1474](https://github.com/mokume-metal/mokume/issues/1474))。
         ///
         /// **どちらが表かは巻き方で決まり、巻き方は鏡映と裏返す投影で裏返る。** 捨て方は
         /// `.back` のまま、表の巻き方 (``frontFacing``) のほうを列ごとに裏返す — そうしないと
@@ -888,7 +895,8 @@ public final class Canvas {
         var frontFacing: MTLWinding = .clockwise
         /// この列の置き場所が形を鏡映するか (``OpenSolid/isMirrored``)。**影の焼き付けが読む**
         /// — 光から見る行列は画面の投影と別物なので、焼く側の表の巻き方は置き場所の符号
-        /// だけで決まる。
+        /// だけで決まる。鏡映していなければ反時計回り、鏡映していれば時計回りが表になり、
+        /// どちらも光を向いた面を焼く (``ShadowMap/frontFacing(isMirrored:)``)。
         var isMirrored = false
         /// 立体の列が、何の頂点を並べているか。**影の焼き付けの指紋が読む** — 組み込みの
         /// 形と読み込んだモデルは頂点が出どころから決まるので、頂点の中身を舐めずに
@@ -2197,15 +2205,18 @@ public final class Canvas {
                     + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                 index: ShapePipeline.instanceBufferIndex)
             // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
-            // 裏面を捨てても焼き付く奥行きは変わらない
+            // 裏面を捨てても焼き付く奥行きは両面で焼いたときと変わらない
             //
-            // **表の巻き方は置き場所の鏡映だけで裏返す** ([#1446])。光から見る行列は画面の
-            // 投影と別物 (縦を戻す補正も、利用者の投影も通らない) なので、画面の側の
-            // `Batch.frontFacing` は使わない。鏡映した列も鏡映していない列と同じ側の面を
-            // 焼くことだけを保ち、その側がどちらかは変えない (#1474)
+            // **表の巻き方は光の行列に合わせる** (``ShadowMap/frontFacing(isMirrored:)``)。光から
+            // 見る行列は画面の投影と別物 (縦を戻す補正 `Camera.clipAdjustment` も、利用者の
+            // 投影も通らない) なので、鏡映していない列の表は画面と逆の反時計回りになり、画面の
+            // 側の `Batch.frontFacing` は使えない。画面の巻き方を写していた間は光を向いた面が
+            // 捨てられ、奥の面が焼き付いていた ([#1474])。鏡映は置き場所の符号だけで裏返す
+            // ([#1446])
             //
             // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
-            encoder.setFrontFacing(batch.isMirrored ? .counterClockwise : .clockwise)
+            // [#1474]: https://github.com/mokume-metal/mokume/issues/1474
+            encoder.setFrontFacing(ShadowMap.frontFacing(isMirrored: batch.isMirrored))
             encoder.setCullMode(batch.cullMode)
             encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
             if let arguments = batch.indirectArguments?.storage {
