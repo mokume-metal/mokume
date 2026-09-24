@@ -18,7 +18,7 @@ struct FlatInstance {
 };
 
 /// 列ごとに変わらないもの。並びは Swift 側の `FlatFrame` と一致する。
-/// **平面は行列と番号を、立体は行列と寄せを読む。**
+/// **平面は行列と番号を、立体は行列と寄せを、基本図形は行列と描く画素の大きさを読む。**
 struct FlatFrame {
     float4x4 projection;
     /// 輪郭の頂点が始まる番号。**ここから後ろが輪郭**で、手前が塗りである。
@@ -26,6 +26,11 @@ struct FlatFrame {
     uint strokeStart;
     /// 立体の輪郭の頂点を画面で (+0.5, +0.5) 画素寄せる量 (切り取り座標。`w` を掛けて足す)。
     float4 strokeShift;
+    /// 描く画素 1 つが描画先の座標でいくらか (x, y)。細かさ 1 ならちょうど 1
+    /// (`formVertexMain`・[#1488])。
+    ///
+    /// [#1488]: https://github.com/mokume-metal/mokume/issues/1488
+    float2 unitsPerDrawnPixel;
 };
 
 vertex ShapeFragmentIn shapeVertexMain(
@@ -199,7 +204,7 @@ struct FormInstance {
 constant bool kFormHasFill [[function_constant(0)]];
 constant bool kFormHasStroke [[function_constant(1)]];
 
-/// 縁を滑らかにする余白 (画素)。被覆が 0 になるのは縁から 0.5 画素なので、微分の
+/// 縁を滑らかにする余白 (描く画素)。被覆が 0 になるのは縁から 0.5 画素なので、微分の
 /// 揺れを見込んで 2 画素取る
 constant float kFormMargin = 2.0;
 
@@ -210,8 +215,9 @@ struct FormFragmentIn {
     float4 position [[position]];
     /// 形自身の座標での位置。距離関数はこの座標で評価する
     float2 local;
-    /// 描画先 → 形自身の座標の 2x2 (逆行列) の 2 行。xy が 1 行目、zw が 2 行目。
-    /// 形自身の座標での勾配を画面の勾配へ写すのに使う (`mokume_formCoverage`)
+    /// **描く画素** → 形自身の座標の 2x2 の 2 行。xy が 1 行目、zw が 2 行目。
+    /// 形自身の座標での勾配を画面の勾配へ写すのに使う (`mokume_formCoverage`)。
+    /// 描画先の座標ではなく描く画素を基準にする理由は頂点関数の説明にある
     float4 inverseRows [[flat]];
     /// 輪郭と線を評価する位置のずらし (形自身の座標)。画面の (0.5, 0.5) を写したもの (下の説明)
     float2 strokeShift [[flat]];
@@ -239,9 +245,22 @@ vertex FormFragmentIn formVertexMain(
     float determinant = columnX.x * columnY.y - columnX.y * columnY.x;
     float4 inverseRows = float4(columnY.y, -columnY.x, -columnX.y, columnX.x) / determinant;
 
-    // 縁の余白は**画面の画素**で測る。形自身の座標では、逆行列の行ノルムぶんになる —
+    // **被覆は描く画素で測る** ([#1488](https://github.com/mokume-metal/mokume/issues/1488))。
+    // 座標と太さは描画先の座標 (出す画素) で書かれ、描く画素への縮みは投影と見る窓が持つ。
+    // 逆行列のままだと、細かさ 0.5 の面では描く画素 1 つを 1 単位と数えるので、縁を
+    // 滑らかにする幅が描く画素の半分に縮む — 太さ 1 の線は描く画素では太さ 0.5 なのに
+    // 被覆の式からは太さ 1 に見え、描く画素の中心が縁から 1 単位離れる位置に置くと
+    // 消えていた。
+    //
+    // 描く画素の差 (px, py) は描画先の座標で (px · ux, py · uy) なので、逆行列の列に
+    // (ux, uy) を掛ければ「描く画素 → 形自身の座標」になる。**割らずに掛ける** — 細かさ 1
+    // ではちょうど 1 を掛けるので、値は 1 ビットも変わらない (割り算は速い数学の下で逆数の
+    // 近似に置き換わりうる)
+    float4 drawnRows = inverseRows * frame.unitsPerDrawnPixel.xyxy;
+
+    // 縁の余白は**描く画素**で測る。形自身の座標では、上の行のノルムぶんになる —
     // 画面で半径 2 画素の円は、形自身の座標ではその楕円の外接する箱に収まる
-    extent += kFormMargin * float2(length(inverseRows.xy), length(inverseRows.zw));
+    extent += kFormMargin * float2(length(drawnRows.xy), length(drawnRows.zw));
 
     // クアッドは三角形 2 枚 (0 1 2 / 0 2 3)。角の番号から符号を決める
     uint corner = index == 3 ? 0 : (index == 4 ? 2 : (index == 5 ? 3 : index));
@@ -254,7 +273,7 @@ vertex FormFragmentIn formVertexMain(
     FormFragmentIn out;
     out.position = frame.projection * float4(placed, 0.0, 1.0);
     out.local = local;
-    out.inverseRows = inverseRows;
+    out.inverseRows = drawnRows;
     // **輪郭と線は、画面で半画素寄せて評価する。** 整数の座標は画素の角に落ちるので、
     // 塗りの縁は整数の座標で画素の境目に乗り、`rect(10, 20, 4, 8)` はちょうど 4x8 画素を
     // 塗る。輪郭は縁の上に中心を持つ帯なので、そのまま置くと太さ 1 の線が 2 列の画素を
@@ -264,6 +283,10 @@ vertex FormFragmentIn formVertexMain(
     // ずらしは画面の (0.5, 0.5) を形自身の座標へ逆行列で写したもの — 拡大しても回しても
     // 画面上で半画素になる。**長さの向きにも寄せる**ので、端点と点も三角形のときと同じ
     // 画素に乗る。評価する位置を戻す向き (`p − ずらし`) で掛けるので、帯は画面で +0.5 動く
+    //
+    // **寄せは出す画素で測り、描く画素では測らない** — 被覆と違ってここは描画先の座標の
+    // 逆行列のまま写す。三角形の経路も立体も出す画素で寄せる (`Canvas.solidStrokeShift`) ので、
+    // ここだけ描く画素にすると、細かさ < 1 で経路によって同じ線がずれる
     out.strokeShift = 0.5 * float2(inverseRows.x + inverseRows.y, inverseRows.z + inverseRows.w);
     out.instance = instance;
     return out;
@@ -299,9 +322,11 @@ static inline float2 mokume_direction(float2 vector, float2 fallback) {
 
 /// 距離場から被覆率を出す。**縁を 1 画素の幅で線形に渡す** (箱フィルタと同じ)。
 ///
-/// 距離は形自身の座標で測っているので、画面の 1 画素が形自身の座標でいくらかを勾配から
-/// 出す — 形自身の座標での勾配 n は、画面では (L⁻¹)ᵀ n になる。その長さが「画面の
-/// 1 画素あたりに距離がいくら進むか」の逆数である。
+/// 距離は形自身の座標で測っているので、描く画素 1 つが形自身の座標でいくらかを勾配から
+/// 出す — 形自身の座標での勾配 n は、描く画素の上では (L⁻¹)ᵀ n になる (L⁻¹ は
+/// `inverseRows`。描く画素を基準にしてある)。その長さが「描く画素 1 つあたりに距離が
+/// いくら進むか」の逆数である。**出す画素で測ると、描く細かさを下げた面で縁の渡しが
+/// 縮む** ([#1488])。
 ///
 /// **見るのは縁 1 本である。** 箱フィルタと一致するのは、画素に縁が 1 本しか入らない
 /// ときに限る。帯の両縁が同じ画素に入る (画面で 1 画素より細い) ときは、呼び手が 2 本の
@@ -309,6 +334,7 @@ static inline float2 mokume_direction(float2 vector, float2 fallback) {
 /// `mokume_spanCoverage` の積で数える (`mokume_formPaint`・[#1451])。
 ///
 /// [#1451]: https://github.com/mokume-metal/mokume/issues/1451
+/// [#1488]: https://github.com/mokume-metal/mokume/issues/1488
 static inline float mokume_formCoverage(FormField field, float4 inverseRows) {
     float2 n = field.gradient;
     float2 screen = float2(
@@ -324,7 +350,7 @@ static inline float mokume_formCoverage(FormField field, float4 inverseRows) {
     return saturate(coverage * (1.0 + 2.0 * kFormSnap) - kFormSnap);
 }
 
-/// 画素 [−0.5, 0.5] と、中心 `center`・半幅 `halfWidth` の帯が重なる長さ (どれも画面の画素)。
+/// 画素 [−0.5, 0.5] と、中心 `center`・半幅 `halfWidth` の帯が重なる長さ (どれも描く画素)。
 ///
 /// **両縁を見る** 1 次元の箱フィルタ。帯が画素より細くても、画素の中に入った分だけを
 /// 数える。1 画素より細い線と点が使う (`mokume_formPaint`)。
@@ -509,8 +535,10 @@ static inline FormPaint mokume_formPaint(
     } else if (kFormHasStroke) {
         // 線。塗りは持たず、線そのものの距離場を輪郭の外縁として使う
         float halfLength = form.size.x;
-        // 画面の 1 画素が形自身の座標でいくらか。x が長さの向き、y が太さの向きで、逆行列の
-        // 行ノルムになる (`mokume_formCoverage` の説明で n を軸に取ったもの)
+        // 描く画素 1 つが形自身の座標でいくらか。x が長さの向き、y が太さの向きで、
+        // `inverseRows` の行ノルムになる (`mokume_formCoverage` の説明で n を軸に取ったもの)。
+        // 描く画素で測るので、細かさ 0.5 の面の太さ 1 の線は、描く画素で太さ 0.5 の線として
+        // この下の枝を通る (#1488)
         float2 unitsPerPixel = float2(length(in.inverseRows.xy), length(in.inverseRows.zw));
         if (2.0 * halfWeight * (1.0 + 2.0 * kFormSnap) < unitsPerPixel.y) {
             // **画面で 1 画素より細い線と点は、両縁を見る 1 次元の被覆の積で数える。**
