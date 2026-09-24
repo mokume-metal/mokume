@@ -206,3 +206,150 @@ struct CanvasWarningTests {
         #expect(!second.warnings.hasWarned(.lightOutsideFrame))
     }
 }
+
+/// 形の外で頂点の仲間を呼んだときの原文 (`Canvas+Vertices.swift`)。**#1485 で動かさない
+/// と決めた側**なので、ここに写して変わっていないことを見る。
+private let vertexOutsideShape =
+    "vertex(): call this between beginShape() and endShape(). This call does nothing"
+
+/// 手前の点から曲線を続ける 2 つの入口。
+enum CurveContinuation: CaseIterable {
+    case bezier
+    case quadratic
+
+    /// 手前に点があれば、そこから (12, 12) まで曲線を引く呼び出し。
+    func call(on canvas: Canvas) {
+        switch self {
+        case .bezier: canvas.bezierVertex(4, 12, 8, 14, 12, 12)
+        case .quadratic: canvas.quadraticVertex(6, 14, 12, 12)
+        }
+    }
+
+    /// 形の中で手前に点が無いときの原文。**呼んだ関数の名前が入る** — 文の骨組みから
+    /// 組み立てず、2 通りとも写す (実装と同じ組み立てを検査が持つと、両方が揃って
+    /// 間違えても通ってしまう)。
+    var notice: String {
+        switch self {
+        case .bezier:
+            "bezierVertex(): a curve continues from the last point placed, and there is no point "
+                + "yet in this shape or beginContour() hole, so this call does nothing. Place a "
+                + "vertex() first"
+        case .quadratic:
+            "quadraticVertex(): a curve continues from the last point placed, and there is no "
+                + "point yet in this shape or beginContour() hole, so this call does nothing. "
+                + "Place a vertex() first"
+        }
+    }
+}
+
+/// 形の中で手前に点が無いまま曲線を続けたときの注意 ([#1485])。GPU を要する。
+///
+/// 直す前は、形の外で呼んだときと同じ `vertex(): call this between beginShape() and
+/// endShape()…` を言っていた。呼んだ場所は既にその間なので、書き手は `beginShape` の
+/// 位置を探しに行ってしまう。**何もしない振る舞いは直す前から約束どおり**で、直したのは
+/// 注意の文面と鍵だけである。
+///
+/// [#1485]: https://github.com/mokume-metal/mokume/issues/1485
+@Suite(
+    "手前に点が無い曲線の注意",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct CurveWithoutStartWarningTests {
+    private func makeCanvas() throws -> Canvas {
+        try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+    }
+
+    @Test(
+        "形の中で手前に点が無ければ、呼んだ関数の名前で「手前に点が無い」と言う",
+        arguments: CurveContinuation.allCases)
+    func namesTheCallAndTheMissingStart(_ curve: CurveContinuation) throws {
+        let canvas = try makeCanvas()
+        var placed: Int?
+        try canvas.draw {
+            canvas.beginShape()
+            curve.call(on: canvas)
+            placed = canvas.shapePoints.count
+            canvas.endShape()
+        }
+        #expect(canvas.warnings.message(for: .curveWithoutStart) == curve.notice)
+        #expect(!canvas.warnings.hasWarned(.vertexOutsideShape), "形の中なのに、形の外の注意を言った")
+        #expect(placed == 0, "手前に点が無いのに点を置いた")
+    }
+
+    /// 穴は外周の点から始めない (#1449) ので、穴の最初も「手前に点が無い」に当たる。
+    @Test("穴の最初で呼んでも、同じ注意を言う", arguments: CurveContinuation.allCases)
+    func saysTheSameAtTheStartOfAHole(_ curve: CurveContinuation) throws {
+        let canvas = try makeCanvas()
+        var placedInHole: Int?
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(16, 0)
+            canvas.vertex(16, 16)
+            canvas.beginContour()
+            curve.call(on: canvas)
+            placedInHole = canvas.holePoints?.count
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        #expect(canvas.warnings.message(for: .curveWithoutStart) == curve.notice)
+        #expect(!canvas.warnings.hasWarned(.vertexOutsideShape), "形の中なのに、形の外の注意を言った")
+        #expect(placedInHole == 0, "穴の最初の \(curve) が穴に点を置いた")
+    }
+
+    @Test(
+        "形の外で呼べば、これまでどおり形の外の注意を言い、点を置かない",
+        arguments: CurveContinuation.allCases)
+    func keepsTheOutsideNoticeOutsideAShape(_ curve: CurveContinuation) throws {
+        let canvas = try makeCanvas()
+        var placed: Int?
+        try canvas.draw {
+            curve.call(on: canvas)
+            placed = canvas.shapePoints.count
+        }
+        #expect(canvas.warnings.message(for: .vertexOutsideShape) == vertexOutsideShape)
+        #expect(!canvas.warnings.hasWarned(.curveWithoutStart), "形の外なのに、手前の点の注意を言った")
+        #expect(placed == 0, "形の外なのに点を置いた")
+    }
+
+    /// 鍵を取り違えると、先に言った側が後の側を黙らせる。順番を入れ替えて両方の向きを見る。
+    @Test("形の外の注意と手前の点の注意は、互いに黙らせない", arguments: [true, false])
+    func theTwoNoticesDoNotSilenceEachOther(outsideFirst: Bool) throws {
+        let canvas = try makeCanvas()
+        func callOutside() { CurveContinuation.bezier.call(on: canvas) }
+        func callWithoutStart() {
+            canvas.beginShape()
+            CurveContinuation.bezier.call(on: canvas)
+            canvas.endShape()
+        }
+        try canvas.draw {
+            if outsideFirst {
+                callOutside()
+                callWithoutStart()
+            } else {
+                callWithoutStart()
+                callOutside()
+            }
+        }
+        #expect(canvas.warnings.message(for: .vertexOutsideShape) == vertexOutsideShape)
+        #expect(
+            canvas.warnings.message(for: .curveWithoutStart) == CurveContinuation.bezier.notice)
+    }
+
+    /// `badMaterial` の検査と同じく、**入口ごとに文面が変わる注意**で 2 度目を見る。2 度目も
+    /// 言っていれば、控えの文面が後から呼んだ関数の名前に入れ替わる。
+    @Test("入口が違っても、2 度目からは黙る")
+    func staysSilentTheSecondTimeEvenFromTheOtherEntrance() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.beginShape()
+            CurveContinuation.quadratic.call(on: canvas)
+            CurveContinuation.bezier.call(on: canvas)
+            canvas.endShape()
+        }
+        #expect(
+            canvas.warnings.message(for: .curveWithoutStart) == CurveContinuation.quadratic.notice)
+    }
+}
