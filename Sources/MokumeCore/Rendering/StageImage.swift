@@ -30,7 +30,7 @@ extension EffectSurface {
     }
 }
 
-/// 段の途中の絵 — 効果の控えと、時間方向の拡大が持つ前のフレーム。
+/// 段の途中の絵 — 効果の控え (中間の絵と、効果を通す前の絵) と、時間方向の拡大が持つ前のフレーム。
 ///
 /// **色だけを持つ。** 描画先 (``RenderTarget``) は立体を置くために奥行きの面を伴うが、
 /// 段は絵から絵への変換で奥行きを見ないので、ここに同じ面を付けると使われないまま
@@ -54,7 +54,7 @@ extension EffectSurface {
 
     /// - Parameter startingTransparent: 作った時点で透明な黒に塗るか。GPU 専用の面の
     ///   初期値は未定義なので、**書かれる前に読まれる面**は塗っておく (時間方向の拡大の
-    ///   控えは最初のフレームから読まれる)。効果の控えは全画素を書く段しか通らないうえ、
+    ///   控えは最初のフレームから読まれる)。効果の控えは全画素を書く段か写ししか通らないうえ、
     ///   コマンドを組み立てている最中に作られるので塗れない
     ///   (``RenderDevice/makeClearedTexture(descriptor:)``)。
     init(gpu: RenderDevice, width: Int, height: Int, startingTransparent: Bool)

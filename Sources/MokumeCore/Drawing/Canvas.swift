@@ -492,6 +492,23 @@ public final class Canvas {
     var pendingEffects: [Effect] = []
     /// 効果のパイプライン。**頼まれてはじめて作る。**
     var effectPipelineStorage: EffectPipeline?
+    /// 描く先に効果を通した絵があり、効果を通す前の絵が控え (``EffectPipeline/carry()``) に
+    /// あるか ([#1469])。**立っていれば、次のフレームの最初の描き切りが控えから戻す**
+    /// (塗り直すなら戻さない)。
+    ///
+    /// 立てるのも下ろすのも投入の後だけ ([#1183] と同じ作法)。組み立ての途中で投げた
+    /// コマンドは捨てられるので、その前に書き換えると描く先の中身と食い違う。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    var carriesPictureBeforeEffects = false
+    /// 描き終えた絵を控えへ写した回数 (作ってから通算)。**効果を頼まないフレームでは
+    /// 増えない**ことを検査が見る。積む 1 行と同じ場所で数える。
+    var effectCarriesEncoded = 0
+    /// 控えから描く先へ戻した回数 (作ってから通算)。戻すのは効果を通したフレームの次の
+    /// 1 回だけで、塗り直すフレームでは戻さない。**戻しても絵は同じなので、戻しすぎは
+    /// 絵では分からない** — 数で見る。
+    var effectCarryRestoresEncoded = 0
     /// 積んだ待つ仕掛けの数。**積む 1 行と同じ場所で数える。**
     var effectBarriersEncoded = 0
     /// 検査から「途中で失敗した段」を作るための差し込み。製品の経路では常に `nil`。
@@ -1581,12 +1598,15 @@ public final class Canvas {
     /// - Parameters:
     ///   - applyingEffects: 効果を通すか。**フレームの終わりだけ通す** —
     ///     フレームの途中の描き切り (`loadPixels()`) で通すと、効果のかかった絵の上に
-    ///     続きが描かれ、しかもフレームの終わりにもう一度かかる。
+    ///     続きが描かれ、しかもフレームの終わりにもう一度かかる。フレームの**境目**でも
+    ///     同じことが起きないように、効果を通す前の絵を控えに残し、次のフレームの最初の
+    ///     描き切りで戻す ([#1469])。
     ///   - mirroringPixels: 描き終えた絵を画素の写しへ読み戻す blit を末尾に積むか。
     ///     **画素を読む直前の描き切りだけ** `true` — 読まないフレームは 1 バイトも払わない
     ///     ([#753])。
     ///
     /// [#753]: https://github.com/mokume-metal/mokume/issues/753
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
     func flush(applyingEffects: Bool = true, mirroringPixels: Bool = false)
         throws(RenderFailure)
     {
@@ -1623,6 +1643,16 @@ public final class Canvas {
             clearColor: pendingBackground,
             continuingFrame: passesThisFrame > 0 && pendingBackground == nil,
             keepingDepth: !applyingEffects)
+        // **次のフレームの入りは、効果を通す前の絵** ([#1469])。前のフレームが描く先へ効果を
+        // 通した絵を書いていたら、このフレームの最初の描き切りで控えから戻す。塗り直す
+        // 描き切りでは戻さない — 戻しても消えるだけなので、毎フレーム塗り直すスケッチが
+        // 払うのは控えへの写しだけになる。
+        //
+        // **戻すのはここで、`beginFrame()` ではない。** 自分を置いている面を描き切らせる
+        // (上の `settlePlacersBeforeChange()`) より先に戻すと、置いた側が効果を通す前の絵を
+        // 拾う — 置いた時点の絵は、前のフレームの出口 (効果を通した絵) である
+        let startsFrame = passesThisFrame == 0
+        let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
         // **途中で投げたら、組み立ての口が畳む** (#1180)。ここに片付けは書かない。
         //
         // **「投入された」ことにする記帳は、口から返った後でだけ書く** ([#1183])。組み立ての
@@ -1633,6 +1663,11 @@ public final class Canvas {
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         let assembled = try gpu.withCommands { commands throws(RenderFailure) in
+            // **効果を通す前の絵を、何より先に戻す。** CPU の画素の書き戻しより後に戻すと、
+            // フレームの外で `pixels` へ書いたものを控えの絵で消してしまう (先に戻すので、
+            // その書き戻しは効果を通した絵ごと描く先へ載る — 既知の制約)
+            if restoresCarry { try encodeCarryRestore(into: commands) }
+
             // **CPU が画素へ書いたものがあれば、描く前に描画先へ戻す。** 描画先は GPU 専用の
             // 面なので、`pixels` への書き込みは写しに載っている。書いていないフレームは
             // 何も積まない (#753)
@@ -1672,7 +1707,7 @@ public final class Canvas {
 
             // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
             // 書き出しも観測も同じ 1 枚を受け取る (ADR-0023 決定 2)
-            if applyingEffects { applyEffects(into: commands) }
+            let carried = applyingEffects && applyEffects(into: commands)
 
             // **拡大は出口の直前・段の最後。** 効果は描く細かさの上で働き、その結果を
             // 出す細かさへ広げる。順を逆にすると、効果の半径が出す細かさで測られて
@@ -1691,7 +1726,7 @@ public final class Canvas {
                 commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
             return (
                 submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
-                uploaded: uploaded)
+                uploaded: uploaded, carried: carried)
         }
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
@@ -1703,6 +1738,10 @@ public final class Canvas {
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
         // 焼いたなら、その入力を覚える。使い回したフレームでは同じ値を書き直すだけになる
         if let shadow = assembled.shadow { lastShadowBakeKey = shadow.key }
+        // フレームの最初の描き切りで、描く先は効果を通す前の絵に戻ったか塗り直された。
+        // このコマンドが効果を通していれば、描く先はまた効果を通した絵になっている
+        if startsFrame { carriesPictureBeforeEffects = false }
+        if assembled.carried { carriesPictureBeforeEffects = true }
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる。

@@ -147,6 +147,45 @@ struct GraphicsTests {
         #expect(image[48, 8] == (0, 0, 255, 255))
     }
 
+    /// 効果を通した描き場所を置いてから、その描き場所へ塗り直さずに描き足す ([#1469])。
+    ///
+    /// 描き場所は次のフレームの頭で効果を通す前の絵へ戻るが、**戻すのは自分を置いている面を
+    /// 描き切らせた後**である。先に戻すと、先に置いた側が効果を通す前の絵 (赤) を拾う —
+    /// 置いた時点の絵は、前のフレームの出口 (反転した絵) である。後に置いた側は、効果を
+    /// 通す前の絵に描き足して反転した絵になる。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    @Test("効果を通した描き場所を置いてから描き足しても、置いた時点の絵が残る")
+    func placedGraphicsKeepTheirEffectedPictureWhenDrawnOver() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+        layer.beginDraw()
+        layer.background(red)
+        layer.effects([.invert()])
+        layer.endDraw()
+
+        try canvas.draw {
+            canvas.background(black)
+            canvas.image(layer, 0, 0)
+            // **塗り直さずに**右半分だけ描き足し、もう一度反転する
+            layer.beginDraw()
+            layer.noStroke()
+            layer.fill(blue)
+            layer.rect(8, 0, 8, 16)
+            layer.effects([.invert()])
+            layer.endDraw()
+            canvas.image(layer, 32, 0)
+        }
+
+        let image = try pixels(of: canvas)
+        // 先に置いた絵は、前のフレームの出口 (赤の反転) のまま
+        #expect(image[4, 8] == (0, 255, 255, 255), "先に置いた絵が、効果を通す前の絵に変わった")
+        #expect(image[12, 8] == (0, 255, 255, 255))
+        // 後に置いた絵は、効果を通す前の赤に青を描き足して反転したもの
+        #expect(image[36, 8] == (0, 255, 255, 255), "描き場所の入りに前のフレームの効果が残った")
+        #expect(image[44, 8] == (255, 255, 0, 255))
+    }
+
     @Test("描き場所を貼った立体も、貼った時点の絵で焼かれる")
     func aPastedGraphicsKeepsThePictureItWasGiven() throws {
         let canvas = try makeCanvas()

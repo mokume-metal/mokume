@@ -132,8 +132,10 @@ struct EffectTests {
         #expect(fingerprint(first) != fingerprint(second))
     }
 
-    /// **書き戻しの段は無い。** 最後の段が入りの絵へ直接書くので、通した段の数は並びが
-    /// 宣言する段の数と等しい (#755)。
+    /// **書き戻しの段は無い。** 最後の段が描く先へ直接書くので、通した段の数は並びが
+    /// 宣言する段の数と等しい (#755)。**例外は無い** — 入りの絵は控えから読むので、
+    /// 最後の段が入りの絵を読む並びでも写し戻しの段は付かない (#1469)。控えへの写しは
+    /// 段ではない (blit) ので、ここには数えられない。
     @Test("段の数は、並びから決まる — 書き戻しの段は付かない")
     func derivesThePassCountFromTheList() throws {
         let canvas = try makeCanvas()
@@ -165,19 +167,23 @@ struct EffectTests {
         #expect(canvas.effectBarriersEncoded == 0)
     }
 
-    /// 同じ面を読みながら描くことはできない (Metal では未定義)。最後の段が入りの絵
-    /// そのものを読む並びだけ、控えへ書いてから写し戻す。
-    @Test("最後の段が入りの絵そのものを読むときだけ、写し戻しの 1 段が付く")
-    func copiesBackOnlyWhenTheLastPassReadsTheInput() throws {
+    /// 同じ面を読みながら描くことはできない (Metal では未定義)。**入りの絵は控え**なので、
+    /// 最後の段が入りの絵を読む並び (1 段だけの並び・にじみ単独の合成) でも、最後の段は
+    /// 描く先へ直接書ける ([#1469])。かつてはこの並びだけ控えへ書いてから写し戻す 1 段が
+    /// 付いていた (#767 の例外)。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    @Test("最後の段が入りの絵を読む並びでも、写し戻しの段は付かない")
+    func addsNoCopyBackPassEvenWhenTheLastPassReadsTheInput() throws {
         let canvas = try makeCanvas()
-        // 1 段だけの並び: 1 + 写し戻し
+        // 1 段だけの並び
         _ = try picture([.invert()], on: canvas)
-        #expect(canvas.effectPassesEncoded == 2)
+        #expect(canvas.effectPassesEncoded == 1)
 
         canvas.effectPassesEncoded = 0
-        // にじみ単独: 合成が入りの絵を読むので 4 + 写し戻し
+        // にじみ単独: しきい値 + 縮める → 横 → 縦 → 合成 の 4 段
         _ = try picture([.bloom(amount: 0.5)], on: canvas)
-        #expect(canvas.effectPassesEncoded == 5)
+        #expect(canvas.effectPassesEncoded == 4)
     }
 
     @Test("段ごとに待つ仕掛けが積まれる")
@@ -426,22 +432,262 @@ struct EffectTests {
         let buffers = pipeline.buffersBuilt
         let scratch = pipeline.scratchBuilt
         let reduced = pipeline.reducedBuilt
+        let carries = pipeline.carriesBuilt
+        let restores = canvas.effectCarryRestoresEncoded
 
         for frame in 0..<200 {
             // **値を動かし続ける。** 小数を控えのキーにしていれば、ここで増える。
             // 半径は縮め幅の境目 (8・16・32) をまたいで動かす
             ripple.set("shift", .number(Float(frame) / 2000))
-            _ = try picture(
-                [
-                    .blur(radius: Float(frame % 50)), .bloom(amount: Float(frame % 5) / 5),
-                    .custom(ripple),
-                ], on: canvas)
+            let effects: [Effect] = [
+                .blur(radius: Float(frame % 50)), .bloom(amount: Float(frame % 5) / 5),
+                .custom(ripple),
+            ]
+            // **半分は塗り直さずに描き足す。** 効果を通す前の絵を控えから戻す経路 (#1469) も
+            // 長回しの範囲に入れる
+            try canvas.draw {
+                if frame.isMultiple(of: 2) {
+                    scene(on: canvas)
+                } else {
+                    canvas.circle(Float(frame % 64), 32, 6)
+                }
+                canvas.effects(effects)
+            }
         }
 
         #expect(pipeline.tablesBuilt == tables)
         #expect(pipeline.buffersBuilt == buffers)
         #expect(pipeline.scratchBuilt == scratch)
         #expect(pipeline.reducedBuilt == reduced)
+        #expect(pipeline.carriesBuilt == carries)
+        #expect(carries == 1)
+        // 塗り直さなかった 100 フレームは、どれも前のフレームの効果の後に来るので戻す
+        #expect(canvas.effectCarryRestoresEncoded - restores == 100)
+    }
+
+    // MARK: - フレームの境目 (#1469)
+
+    /// 効果を通す面。**3 つの入口は同じ `beginFrame` / `flush` を通る**ので、同じ検査を
+    /// 面ごとに回す ([#1469] 完了条件 4)。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    enum CarrySurface: CaseIterable, CustomTestStringConvertible {
+        /// 本体の面。細かさ 1 なので、描く先と出す先が同じ 1 枚である。
+        case main
+        /// 描き場所 (`createGraphics` の面を `beginDraw()` / `endDraw()` で描く)。
+        case graphics
+        /// 細かさを下げた面。効果は描く先に書かれ、拡大がそこから出す先へ広げる。
+        case halfDensity
+
+        var testDescription: String {
+            switch self {
+            case .main: "本体の面"
+            case .graphics: "描き場所"
+            case .halfDensity: "細かさ 0.5 の面"
+            }
+        }
+
+        /// 出す大きさ 160×160 の面を 1 つ作る。
+        func make() throws -> CarryFixture {
+            let gpu = try RenderDevice()
+            switch self {
+            case .main:
+                let canvas = try CanvasFixture.make(gpu: gpu, width: 160, height: 160)
+                return CarryFixture(canvas: canvas) { body in try canvas.draw { body(canvas) } }
+            case .graphics:
+                let host = try CanvasFixture.make(gpu: gpu, width: 160, height: 160)
+                let layer = try host.createGraphics(160, 160)
+                return CarryFixture(canvas: layer, host: host) { body in
+                    layer.beginDraw()
+                    body(layer)
+                    layer.endDraw()
+                }
+            case .halfDensity:
+                // `CanvasFixture` を通さない理由は `UpscaleTests.makeCanvas` と同じ
+                // (細かさが引数なので、`Canvas(output:gpu:pixelDensity:upscale:)` を直に呼ぶ)
+                let output = try RenderTarget(gpu: gpu, width: 160, height: 160)
+                let canvas = try Canvas(
+                    output: output, gpu: gpu, pixelDensity: 0.5, upscale: .spatial)
+                return CarryFixture(canvas: canvas) { body in try canvas.draw { body(canvas) } }
+            }
+        }
+    }
+
+    /// 面と、その面で 1 フレームを回す口。
+    struct CarryFixture {
+        let canvas: Canvas
+        /// 描き場所を作った面。描き場所より先に消えないように抱える。
+        let host: Canvas?
+        let frame: ((Canvas) -> Void) throws -> Void
+
+        init(
+            canvas: Canvas, host: Canvas? = nil,
+            frame: @escaping ((Canvas) -> Void) throws -> Void
+        ) {
+            self.canvas = canvas
+            self.host = host
+            self.frame = frame
+        }
+
+        /// 出口 (出す先) の隅 (3, 3)。**出口は効果を通した絵を受け取る。**
+        func corner() throws -> LinearRGBA { try canvas.output.readPixels()[3, 3] }
+    }
+
+    /// 再現手順の下地 (`background(235)`)。
+    private static func paper(_ canvas: Canvas) { canvas.background(235) }
+
+    /// 再現手順の効果。
+    private static let darkening: [Effect] = [.vignette(amount: 0.6)]
+
+    /// 完了条件 1・4・5 — **効果は次のフレームの入りにならない。**
+    ///
+    /// 1 枚目だけ塗って残像を残すスケッチでも、縁が暗くなるのはフレームによらず 1 回ぶん
+    /// だけである。直す前は、効果の結果が描く先に残って次のフレームの入りになり、12 枚目の
+    /// 隅の赤が 0.344 から 0.00002 まで沈んでいた。出口に届く絵は変わらない — 1 枚目は
+    /// 毎フレーム塗り直す版と一致し、どちらも効果を通した絵である。
+    @Test(
+        "塗り直さずに描き足しても、効果は次のフレームへ焼き込まれない",
+        arguments: CarrySurface.allCases)
+    func effectsDoNotBakeIntoTheNextFrame(surface: CarrySurface) throws {
+        let trailing = try surface.make()
+        let repainting = try surface.make()
+        var trail: [LinearRGBA] = []
+        var repainted: [LinearRGBA] = []
+        for index in 0..<12 {
+            try trailing.frame { canvas in
+                if index == 0 { Self.paper(canvas) }
+                canvas.effects(Self.darkening)
+            }
+            trail.append(try trailing.corner())
+            try repainting.frame { canvas in
+                Self.paper(canvas)
+                canvas.effects(Self.darkening)
+            }
+            repainted.append(try repainting.corner())
+        }
+
+        let plain = try surface.make()
+        try plain.frame { Self.paper($0) }
+        let unaffected = try plain.corner()
+
+        // 出口には効果が効いている (隅は下地より十分暗い)
+        #expect(trail[0].red < unaffected.red * 0.6, "1 枚目の出口に効果が効いていない")
+        #expect(trail[0] == repainted[0])
+        for (index, value) in trail.enumerated() {
+            #expect(value == trail[0], "\(index + 1) 枚目の隅が 1 枚目と違う: \(value.red)")
+        }
+        #expect(trail[11] == repainted[11])
+    }
+
+    /// 完了条件 2 — **書かなかったフレームには何もかからない。** 効果を書いたフレームの次に
+    /// 何も書かずに回すと、出口は効果を通す前の絵に戻る。
+    @Test(
+        "効果を書かないフレームは、効果を通す前の絵を出す", arguments: CarrySurface.allCases)
+    func aFrameWithoutEffectsShowsThePictureBeforeThem(surface: CarrySurface) throws {
+        let fixture = try surface.make()
+        try fixture.frame { canvas in
+            Self.paper(canvas)
+            canvas.effects(Self.darkening)
+        }
+        let affected = try fixture.corner()
+        try fixture.frame { _ in }
+        let next = try fixture.corner()
+
+        let plain = try surface.make()
+        try plain.frame { Self.paper($0) }
+        let unaffected = try plain.corner()
+
+        #expect(affected != unaffected, "1 枚目に効果が効いていない")
+        #expect(next == unaffected, "効果を書かないフレームに効果が残った: \(next.red)")
+    }
+
+    /// 画素を読む口。
+    enum NextFrameReader: CaseIterable, CustomTestStringConvertible {
+        case get
+        case pixels
+
+        var testDescription: String {
+            switch self {
+            case .get: "get"
+            case .pixels: "pixels"
+            }
+        }
+
+        func read(from canvas: Canvas) -> LinearRGBA {
+            switch self {
+            case .get: canvas.get(3, 3)
+            case .pixels: canvas.pixels[3, 3]
+            }
+        }
+    }
+
+    /// 完了条件 3 — 効果を通したフレームの次のフレームで、何も描かないうちに読む画素は
+    /// **効果を通す前の値**である。読む口は描き切ってから描く先の写しを読むので、次の
+    /// フレームの入りが効果を通した絵なら、それを読んでしまう。
+    ///
+    /// 比べる相手は、1 枚目の途中 (効果を通す前) に同じ口で読んだ値である — フレームの途中で
+    /// 読む画素に効果が効いていないことは、説明が前から約束している。
+    @Test(
+        "効果を通した次のフレームで描く前に読む画素は、効果を通す前の値",
+        arguments: CarrySurface.allCases, NextFrameReader.allCases)
+    func pixelsReadInTheNextFrameAreBeforeTheEffect(
+        surface: CarrySurface, reader: NextFrameReader
+    ) throws {
+        let fixture = try surface.make()
+        var before = LinearRGBA.transparent
+        try fixture.frame { canvas in
+            Self.paper(canvas)
+            before = reader.read(from: canvas)
+            canvas.effects(Self.darkening)
+        }
+        #expect(try fixture.corner() != before, "1 枚目の出口に効果が効いていない")
+
+        var next = LinearRGBA.transparent
+        try fixture.frame { canvas in
+            next = reader.read(from: canvas)
+        }
+        #expect(next == before, "次のフレームで読んだ画素に効果が残った: \(next.red)")
+    }
+
+    /// 完了条件 6 — **効果を頼まないフレームは何も払わない。** 控えへ写すのは効果を通す
+    /// フレームだけ、控えから戻すのはその次の 1 回だけで、塗り直すフレームでは戻さない。
+    ///
+    /// 見るのは数である — 戻しすぎても絵は同じなので、絵では分からない。細かさを下げた面は
+    /// 効果を頼まなくても拡大のために段のパイプラインが立つので、控えの有無はパイプラインの
+    /// 有無ではなく控え専用の作った回数で見る。
+    @Test(
+        "効果を頼まないフレームは、控えを作らず、写しも戻しも積まない",
+        arguments: CarrySurface.allCases)
+    func carriesNothingWithoutEffects(surface: CarrySurface) throws {
+        let fixture = try surface.make()
+        let canvas = fixture.canvas
+        var carriesBuilt: Int { canvas.effectPipelineStorage?.carriesBuilt ?? 0 }
+        func stroke(_ canvas: Canvas) { canvas.circle(80, 80, 20) }
+
+        // 効果を頼まず、塗り直さずに描き足していく
+        for index in 0..<30 {
+            try fixture.frame { canvas in
+                if index == 0 { Self.paper(canvas) }
+                stroke(canvas)
+            }
+        }
+        #expect(carriesBuilt == 0, "効果を頼んでいないのに控えを作った")
+        #expect(canvas.effectCarriesEncoded == 0)
+        #expect(canvas.effectCarryRestoresEncoded == 0)
+
+        // 効果を通したフレームの次に塗り直すなら、戻さない (戻しても消えるだけ)
+        try fixture.frame { $0.effects(Self.darkening) }
+        #expect(carriesBuilt == 1)
+        #expect(canvas.effectCarriesEncoded == 1)
+        try fixture.frame { Self.paper($0) }
+        #expect(canvas.effectCarryRestoresEncoded == 0, "塗り直すフレームで控えから戻した")
+
+        // 効果を通したフレームの次に塗り直さないフレームが続いても、戻すのは 1 回だけ
+        try fixture.frame { $0.effects(Self.darkening) }
+        for _ in 0..<3 { try fixture.frame { stroke($0) } }
+        #expect(canvas.effectCarryRestoresEncoded == 1, "効果を通していないフレームの後にも戻した")
+        #expect(canvas.effectCarriesEncoded == 2)
+        #expect(carriesBuilt == 1, "控えを作り直した")
     }
 
     // MARK: - 利用者の効果
