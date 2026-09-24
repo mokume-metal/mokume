@@ -19,7 +19,7 @@ extension Canvas {
     ///
     /// **受け口で検める** ([#1544])。数でない値・無限を持つ効果はその 1 つだけを外して
     /// 初回だけ言い、並びの他の効果は掛ける。範囲を決めている数は端へ締める
-    /// (``Effect/accepted``)。
+    /// (`Effect.accepted`)。
     ///
     /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
     public func effects(_ effects: [Effect]) {
