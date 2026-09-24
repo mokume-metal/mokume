@@ -25,7 +25,9 @@ extension Canvas {
         var fanCenter: SIMD2<Float>?
         /// 塗りを持つか。線と点は持たない。
         var fills: Bool
-        /// 点ごとに、曲線の刻みの点か (``BuildingVertex/isCurveStep``)。空ならどの点も角。
+        /// 点ごとに、折れ目の形によらず円板で埋めるか。曲線の刻みの点
+        /// (``BuildingVertex/isCurveStep``) と、扇の 3 つの角 (中心と弧の両端・#1486) がそう。
+        /// 空ならどの点も角。
         var curveSteps: [Bool]
 
         init(
