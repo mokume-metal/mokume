@@ -13,8 +13,8 @@
    無いときだけ dropped で、**それは「落ちた」ではなく「落ちて見える」**である
 4. **stock は署名つき・無印・型が Bug / Task / Docs のときだけ。** Design / Feature は
    判断が要る側なので出さない (ADR-0036 決定 6)
-5. **描画の見込みは coverage の用途で訊く。** 下の一覧の `Sketches/` は evidence-only なので、
-   そこしか触らない Issue は描画レーンを取らない (#497)
+5. **描画の見込みは、本文に現れるパス片を一覧に照らして出す。** URL の中のパスも拾い、
+   一覧に無い場所しか触らない Issue は描画レーンを取らない
 6. **終了コードが「打てる仕事があるか」を表す。** 呼ぶ側 (外に居るディスパッチャ) が「在庫が
    尽きたので B-1 へ回る」を分岐できる。**打てる catch-up があれば在庫切れと言わない** (#1045)。
    **一覧を読めなかったときも在庫切れと言わない** — 1 ではなく 2 で終える (#1235)
@@ -101,7 +101,6 @@ exit 1
 # 検査用の一覧。**本物を読まない** — 一覧が動いたときに、無関係な検査が赤くならないため
 DRAWING_PATHS = """# 検査用
 Sources/MokumeCore/
-Sketches/  evidence-only
 """
 
 SIGNATURE = "🤖 Assisted by [Claude Code](https://claude.com/claude-code)"
@@ -321,11 +320,10 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual([n for n, v in seen.items() if v[0] == "stock"], [20, 21, 22])
         self.assertEqual(seen[26][0], "ready")
 
-    # 5. 描画の見込みは coverage の用途で訊く
+    # 5. 描画の見込みは、本文に現れるパス片を一覧に照らして出す
     def test_drawing_guess(self):
         issues = [
             issue(30, labels=["verify: triaged"], body="Sources/MokumeCore/Frame.swift を直す"),
-            issue(31, labels=["verify: triaged"], body="Sketches/Demo.swift だけ触る"),
             issue(32, labels=["verify: triaged"], body="どこにも触れない話"),
             issue(
                 33,
@@ -336,7 +334,6 @@ class ReadyQueueTest(unittest.TestCase):
         done, _ = self.run_queue(issues)
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[30][1], "drawing?")
-        self.assertEqual(seen[31][1], "plain?", "evidence-only が coverage で外れていない")
         self.assertEqual(seen[32][1], "plain?")
         self.assertEqual(seen[33][1], "drawing?", "URL の中のパスを拾えていない")
 

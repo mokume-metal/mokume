@@ -58,7 +58,7 @@ set -euo pipefail
 
 # 「描画に触れているか」の判定は #306 と共有する (照合の実体は 1 つ)。**訊く問いは
 # coverage の側**である — 手元の実行の覆いが壊れるか、で、絵の証跡を要求するかとは
-# 答えが違う場所がある (#497)
+# 別の問いである (#497。いまは答えの違う場所が無い — drawing-paths.sh の冒頭)
 # shellcheck source=scripts/drawing-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
 # 「どのリポジトリか」の解き方 (#818)。ここには `git@github.com:` と `https://github.com/`
@@ -277,9 +277,11 @@ report_merge_group() {
     fi
 
     # **判定を先に受け取ってから読む。** `IFS=$'\t' read … <<<"$(pr_coverage …)"` と
-    # 1 文で書くと、前置きの IFS が**同じコマンドの中のコマンド置換にも効く** —
+    # 1 文で書くと、前置きの IFS が**同じコマンドの中のコマンド置換にも効く** — 当時は
     # drawing_files の `for tag in $rest` が空白で分割されなくなり、`evidence-only` の
-    # 印が読めずに覆いの判定が別の問い (evidence) の答えを返していた (#819 で実測)
+    # 印が読めずに覆いの判定が別の問い (evidence) の答えを返していた (#819 で実測)。
+    # その分割は印ごと #1428 で消えたが、コマンド置換の中へ IFS を持ち込まないために
+    # この形は残す
     line=$(pr_coverage "$repo" "$number" "$fp_merged")
     IFS=$'\t' read -r verdict detail head <<<"$line"
     case $verdict in
