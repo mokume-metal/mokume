@@ -1500,17 +1500,24 @@ public final class Canvas {
 
     /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
     private func endFrame() throws(RenderFailure) {
-        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点・変換・切り抜きは
-        // **描き終えてから**既定へ戻す — 始まりでだけ戻すと、フレームの外 (止まっている
-        // 間のコールバック・描き場所の `endDraw()` の後) で置いた図形と読んだ座標にだけ、
-        // 前のフレームが最後に残した視点・変換・切り抜きが効く ([#1472])。列を閉じるのに
-        // 視点と切り抜きが要るので、戻すのは flush の後
+        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点・変換・切り抜き・
+        // 光・周囲は**描き終えてから**既定へ戻す — 始まりでだけ戻すと、フレームの外 (止まって
+        // いる間のコールバック・描き場所の `endDraw()` の後) で置いた図形と読んだ座標にだけ、
+        // 前のフレームが最後に残したものが効く ([#1472]・[#1504])。列を閉じるのに視点と
+        // 切り抜きと光が要り、影の焼き付けも flush の中で光を読むので、戻すのは flush の後
+        //
+        // 光の置き場 (`lightStorage`) は次のフレームの頭まで空にしなくてよい。置き場を
+        // 指しうる列は flush と下の `discardFrame()` が全部捨て、外で閉じる列は光が空なので
+        // 区間も常に空になる — 前のフレームの置き場を指す区間は生まれない
         //
         // [#1472]: https://github.com/mokume-metal/mokume/issues/1472
+        // [#1504]: https://github.com/mokume-metal/mokume/issues/1504
         defer {
             cameraStorage = nil
             transform = .identity
             style.clip = nil
+            activeLights.removeAll(keepingCapacity: true)
+            activeSurroundings = nil
             style.material = .default
             shadowsEnabled = false
             shadowRangeValue = nil

@@ -338,7 +338,7 @@ struct LoopTests {
     }
 
     /// 1 枚描いて止め、押して描き直させた 1 枚の絵を返す。
-    private func pictureAfterPressing(_ sketch: StoppedPlacement) throws -> DisplayImage {
+    private func pictureAfterPressing(_ sketch: some Sketch) throws -> DisplayImage {
         let facet = try makeFacet()
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
@@ -389,6 +389,51 @@ struct LoopTests {
         // 前の `draw()` のまま混ざっていた
         #expect(abs(sketch.seenScreen[2]) < 0.01)
         #expect(abs(sketch.seenScreen[3]) < 0.01)
+    }
+
+    // MARK: - 止まっている間のコールバックに前の draw() の光は当たらない (#1504)
+
+    /// `draw()` が底上げの光を置いたまま `noLoop()` で終わり、押すと赤い立体を原点に置いて
+    /// 描き直しを頼む。
+    ///
+    /// **1 枚目は立体を置かず、描き直しの枚だけ光を受ける立体を端に置く。** こうすると、
+    /// 押したときに閉じた列が焼いた光の区間は、描き直しの枚が焼く光をちょうど指す。毎フレーム
+    /// 同じ `draw()` だと、直す前に読むのが置き場の残りになり、結果が定まらない
+    final class StoppedLitPlacement: Sketch {
+        var settings = SketchSettings(width: 160, height: 40)
+
+        init() {}
+        func draw() {
+            // 描き直しの枚では下地を塗らない (`background()` は押して置いた立体ごと捨てる)
+            if frameCount == 1 { background(0) }
+            noStroke()
+            ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
+            if frameCount > 1 {
+                fill(255)
+                push()
+                translate(150, 20, 0)
+                box(10)
+                pop()
+            }
+            noLoop()
+        }
+        func mousePressed() {
+            fill(255, 0, 0)
+            box(10)
+            // 列をコールバックの中で閉じる。閉じないまま持ち越すと、次のフレームの頭で光が
+            // 空に戻った後に閉じるので、直す前でも光は当たらない
+            blendMode(.add)
+            redraw()
+        }
+    }
+
+    @Test("止まっている間のコールバックで置いた立体に、前の draw() の光は当たらない")
+    func aSolidPlacedWhileStoppedIgnoresThePreviousLights() throws {
+        let image = try pictureAfterPressing(StoppedLitPlacement())
+
+        // 光も周囲も無い立体は塗りの色のまま出る (表示の色域で赤は 234 前後)。前の
+        // `draw()` の光を受けると 0.2 倍に暗くなる (直す前は 113)
+        #expect(image[2, 2].red > 220)
     }
 
     // MARK: - 止めていたところから描く 1 枚の時計 (#1366)
