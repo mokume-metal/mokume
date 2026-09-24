@@ -594,6 +594,187 @@ struct FormShapeTests {
         }
     }
 
+    // MARK: - 1 画素より細い塗り
+
+    /// **1 画素より細い `rect` の塗りは、置く位置によらず面積ぶんの濃さで出る** ([#1477])。
+    ///
+    /// 塗りの被覆を縁 1 本の距離だけで出していた頃は、帯の両縁が同じ画素に入っても向こう側の
+    /// 縁の欠けを引かなかった。幅 0.1・高さ 20 の `rect` (面積 2) の和が、帯の中心を画素の
+    /// 中心に置くと 11.0、画素の境目に置くと 1.86 だった。塗りは寄せない (ADR-0039 決定 2)
+    /// ので、線と違って整数の座標では縁が画素の境目に乗る。
+    ///
+    /// 幅 0.05 と、帯の中心が画素の境目に来る位置 (11 − w/2) を見るのは、細い塗りに 1/256 の
+    /// 遊び (`mokume_formCoverage`) を掛けていないことを捕まえるため — 掛けると、境目を
+    /// またぐ幅 0.05 の帯が 15% 足りなくなる (帯が画素 1 つに収まる位置では 7% で、許容の内に
+    /// 収まってしまう)。位置を引数に割らないのは、直す前でも緑になる位置があるためである。
+    ///
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    @Test(
+        "1 画素より細い rect は、置く位置によらず面積ぶんの濃さで出る",
+        arguments: [Float(0.05), 0.1, 0.5])
+    func subpixelRectanglesKeepTheirArea(_ width: Float) throws {
+        // 左上の角。帯の中心が画素の中心に来る位置 (10.5 − w/2) と、画素の境目に来る位置
+        // (11 − w/2) を含む
+        let corners: [(Float, Float)] = [
+            (10, 10), (10.25, 10), (10.5, 10), (10.5 - width / 2, 10), (11 - width / 2, 10),
+            (10.3, 10.7),
+        ]
+        let expected = Double(width) * 20
+        for (x, y) in corners {
+            let upright = totalSum(
+                try coverage(width: 64, height: 64) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.rect(x, y, width, 20)
+                })
+            #expect(
+                abs(upright - expected) <= 0.1 * expected,
+                "幅 \(width)・左上 (\(x), \(y)) の縦長の rect の和: \(upright) (期待 \(expected))")
+
+            let lying = totalSum(
+                try coverage(width: 64, height: 64) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.rect(y, x, 20, width)
+                })
+            #expect(
+                abs(lying - expected) <= 0.1 * expected,
+                "幅 \(width)・左上 (\(y), \(x)) の横長の rect の和: \(lying) (期待 \(expected))")
+
+            // 画面で同じ位置・同じ大きさになる、拡大の下の rect
+            let scaled = totalSum(
+                try coverage(width: 64, height: 64) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.scale(0.25, 0.25)
+                    canvas.rect(x * 4, y * 4, width * 4, 80)
+                })
+            #expect(
+                abs(scaled - expected) <= 0.1 * expected,
+                "scale(0.25) の下で画面の幅 \(width)・左上 (\(x), \(y)) の rect の和: \(scaled) (期待 \(expected))")
+        }
+    }
+
+    /// 回した細い `rect` も、面積ぶんの濃さで出る。
+    ///
+    /// 細さは描く画素 1 つが形自身の座標でいくらか (逆行列の行ノルム) で測るので、回した
+    /// 形でも同じ枝を通る。縁 1 本の式では、0.5 rad 回した幅 0.1・長さ 40 の `rect` (面積 4)
+    /// の和が 12 前後だった。
+    @Test("回した 1 画素より細い rect も、面積ぶんの濃さで出る")
+    func tiltedSubpixelRectanglesKeepTheirArea() throws {
+        let centers: [(Float, Float)] = [(32.25, 32), (32.5, 32.5), (32.1, 32.7)]
+        for (x, y) in centers {
+            let sum = totalSum(
+                try coverage(width: 64, height: 64) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.translate(x, y)
+                    canvas.rotate(0.5)
+                    canvas.rect(-20, -0.05, 40, 0.1)
+                })
+            #expect(abs(sum - 4) <= 0.4, "中心 (\(x), \(y)) で 0.5 rad 回した rect の和: \(sum) (期待 4)")
+        }
+    }
+
+    /// **1 画素より小さい円は、置く位置によらず外接する正方形の面積ぶんで出る。**
+    ///
+    /// 直径 d の円は d² に比例させる — 同じ位置に置いた太さ d の丸い点 (1 画素より細い点は
+    /// 四角に数える) と同じ量で、直径 1 の境目の両側でも濃さが続く (#1477 の判断 1)。縁 1 本
+    /// の式では、直径 0.2 の円が 4 画素の角に置くと消え (0)、画素の中心に置くと 0.60
+    /// (外接する正方形の 15 倍) で出ていた。
+    @Test(
+        "1 画素より小さい円は、置く位置によらず外接する正方形の面積ぶんで出る",
+        arguments: [Float(0.2), 0.5])
+    func subpixelCirclesKeepTheirBoundingSquare(_ diameter: Float) throws {
+        let centers: [(Float, Float)] = [(20, 20), (20.25, 20), (20.5, 20.5), (20.3, 20.7)]
+        let expected = Double(diameter * diameter)
+        for (x, y) in centers {
+            let circle = totalSum(
+                try coverage(width: 40, height: 40) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.circle(x, y, diameter)
+                })
+            #expect(
+                abs(circle - expected) <= 0.1 * expected,
+                "直径 \(diameter)・中心 (\(x), \(y)) の円の和: \(circle) (期待 \(expected))")
+
+            let point = totalSum(
+                try coverage(width: 40, height: 40) { canvas in
+                    canvas.strokeWeight(diameter)
+                    canvas.strokeCap(.round)
+                    canvas.point(x, y)
+                })
+            #expect(
+                abs(circle - point) <= 0.1 * point,
+                "直径 \(diameter)・中心 (\(x), \(y)) の円の和 \(circle) が、太さ \(diameter) の丸い点の和 \(point) と食い違う")
+        }
+    }
+
+    /// **片方の向きだけが細い楕円も、置く位置によらず面積ぶんの濃さで出る。**
+    ///
+    /// 長い向きは画素で解けているので、細い向きの両縁だけを数え、面積 (π/4 × 幅 × 高さ) に
+    /// 比例させる。縁 1 本の式では、`ellipse(x, 30, 0.2, 20)` (面積 3.14) の和が、中心を
+    /// 画素の境目に置くと 5.94、画素の中心に置くと 20.0 だった。
+    @Test("細長い楕円は、置く位置によらず面積ぶんの濃さで出る")
+    func thinEllipsesKeepTheirArea() throws {
+        let centers: [(Float, Float)] = [(20, 30), (20.25, 30), (20.5, 30), (20.3, 30), (20.3, 30.7)]
+        let expected = Double.pi / 4 * 0.2 * 20
+        for (x, y) in centers {
+            let tall = totalSum(
+                try coverage(width: 64, height: 64) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.ellipse(x, y, 0.2, 20)
+                })
+            #expect(
+                abs(tall - expected) <= 0.1 * expected,
+                "中心 (\(x), \(y)) の縦長の楕円の和: \(tall) (期待 \(expected))")
+
+            let wide = totalSum(
+                try coverage(width: 64, height: 64) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.ellipse(y, x, 20, 0.2)
+                })
+            #expect(
+                abs(wide - expected) <= 0.1 * expected,
+                "中心 (\(y), \(x)) の横長の楕円の和: \(wide) (期待 \(expected))")
+        }
+    }
+
+    /// **1 画素以上の塗りは、縁の位置によらず幅ぶんの濃さのまま。**
+    ///
+    /// 1 画素より細い塗りの扱いを直したことが、1 画素以上へ漏れないための見張り
+    /// ([#1477] 完了条件 6)。1 画素以上の塗りは縁 1 本の式のままなので、縁が画素に 3/4
+    /// 掛かる画素は 1/256 の遊びのぶん 0.75 からずれた値 (0.75 × (1 + 2/256) − 1/256) で
+    /// 出る。細い塗りの枝は遊びを掛けないので、1 画素以上へ漏れればそこが 0.75 ちょうどになる。
+    ///
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    @Test(
+        "1 画素以上の塗りは、縁を置く位置によらず幅ぶんの濃さのまま",
+        arguments: [Float(1), 1.5, 2, 3])
+    func fillsOfAPixelOrMoreStayExact(_ width: Float) throws {
+        for x in [Float(10), 10.25, 10.5] {
+            let pixels = try coverage(width: 32, height: 32) { canvas in
+                canvas.noStroke()
+                canvas.fill(white)
+                canvas.rect(x, 4, width, 24)
+            }
+            let sum = rowSum(pixels, row: 16, columns: 0..<32)
+            #expect(
+                abs(sum - Double(width)) <= 0.01 * Double(width),
+                "幅 \(width)・左の縁 x = \(x) の rect の行の和: \(sum)")
+            if x == 10.25 {
+                let edge = Double(pixels.components[(16 * pixels.width + 10) * 4])
+                let snapped = 0.75 * (1 + 2.0 / 256) - 1.0 / 256
+                #expect(
+                    abs(edge - snapped) <= 1e-4,
+                    "幅 \(width)・左の縁 x = 10.25 の rect の、縁に 3/4 掛かる画素: \(edge) (期待 \(snapped))")
+            }
+        }
+    }
+
     // MARK: - 描く細かさを下げた面
 
     /// **描く細かさを下げた面でも、線の濃さは置く位置によらず、描く画素での太さぶんで出る**
@@ -697,6 +878,41 @@ struct FormShapeTests {
             #expect(
                 abs(edge - expected) <= 0.01,
                 "細かさ 0.5・縁 x = \(10 + offset) の塗りの、縁に掛かる描く画素の値: \(edge) (期待 \(expected))")
+        }
+    }
+
+    /// **1 画素より細い塗りも、描く細かさを下げた面では描く画素での面積ぶんで出る** ([#1477])。
+    ///
+    /// 細さは描く画素で測る (`inverseRows` が描く画素を基準にしている・#1488)。細かさ 0.5 の
+    /// `rect(x, 10, 0.2, 20)` は描く画素では幅 0.1・高さ 10 で、縁 1 本の式では描く画素の和が
+    /// 置く位置で 0.97〜5.00 に揺れていた (期待 1.0)。直径 1 の円は描く画素で直径 0.5 なので、
+    /// 外接する正方形の 0.25 になる。
+    ///
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    @Test("描く細かさ 0.5 の面でも、1 画素より細い塗りは描く画素での面積ぶんの濃さで出る")
+    func halfDensitySubpixelFillsKeepTheirArea() throws {
+        for x in [Float(10), 10.5, 11, 11.5] {
+            let sum = totalSum(
+                try coverage(width: 64, height: 64, density: 0.5) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.rect(x, 10, 0.2, 20)
+                })
+            #expect(
+                abs(sum - 1) <= 0.1,
+                "細かさ 0.5・左の縁 x = \(x) の幅 0.2 の rect の、描く画素の和: \(sum) (期待 1)")
+        }
+        let centers: [(Float, Float)] = [(40, 40), (40.5, 40), (41, 41), (40.6, 41.4)]
+        for (x, y) in centers {
+            let sum = totalSum(
+                try coverage(width: 80, height: 80, density: 0.5) { canvas in
+                    canvas.noStroke()
+                    canvas.fill(white)
+                    canvas.circle(x, y, 1)
+                })
+            #expect(
+                abs(sum - 0.25) <= 0.025,
+                "細かさ 0.5・中心 (\(x), \(y)) の直径 1 の円の、描く画素の和: \(sum) (期待 0.25)")
         }
     }
 
