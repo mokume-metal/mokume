@@ -16,8 +16,8 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 
 ## 進め方
 
-1. 変更は Issue の起票から始める。起票は雑でよい (書式不要・型は機械がタイトルから下書きする)。複数工程は親 Issue + sub-issue にし、本文のチェックリストは使わない。着手できる Issue は先に作っておいてよい (手順は `.claude/skills/stock-triage/`)
-2. **着手できるのは `verify: triaged` が付いた Issue だけ。** 付いていなければ、議論して「どうなれば解消か」を本文に固めるところから始める。ラベルを付けるのは完了条件を知っている者 (起票者かメンテナ) で、エージェントが付けてよいのは自分で起票して完了条件を書いた Issue だけ (ADR-0002 決定 1 の追補・ADR-0031 決定 1)
+1. 変更は Issue の起票から始める。起票は雑でよい (書式不要・型は機械がタイトルから下書きする)。複数工程は親 Issue + sub-issue にし、本文のチェックリストは使わない。未トリアージの Issue の完了条件を調べて本文に書くところまでは、着手を待たずにしてよい (ラベルは付けない。手順は `.claude/skills/stock-triage/`)
+2. **着手できるのは `verify: triaged` が付いた Issue だけ。** 付いていなければ、議論して「どうなれば解消か」を本文に固めるところから始める。ラベルを付けられるのは完了条件を知っている起票者だけで、他人が書いた Issue には付けない。エージェントも、自分で起票して完了条件を書いた Issue には付けてよい (ADR-0002 決定 1 の追補・ADR-0031 決定 1)
 3. 着手時に各完了条件を現行のコードと突き合わせ、「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書く。ずれていれば先に Issue 本文を直す (ADR-0031 決定 4)
 4. そのプラン (変更点・確認方法) を対象 Issue にコメントする。実装中に変わったら差分をコメントする (PR を出した後なら PR 側へ)
 5. `main` から `<type>/<短い説明>` ブランチを切る
@@ -50,7 +50,7 @@ PR には分類ラベルを付けない (ADR-0005)。付くのは CI の判定�
 | `release:now` | 壊れた配布物をその場で出し直す | `.github/workflows/release.yml` |
 | `no-visual-change` | 描画のパスに触れるが絵は変わらない | `scripts/check-drawing-evidence.sh` |
 
-新しいラベルは、それを読むスクリプトと同時にしか足さない。
+新しい PR ラベルは、それを読むスクリプトと同時にしか足さない。
 
 ## マージの判断基準
 
@@ -72,7 +72,7 @@ bash scripts/comment.sh issue <番号> --body-file <ファイル>
 bash scripts/comment.sh pr    <番号> --body "<本文>"
 ```
 
-`gh pr review` の本文と、close / reopen の `--comment` も同じ扱いにする。close / reopen は 2 手に分け、発言をラッパーで投稿してから、状態だけを発言なしで変える。他のリポジトリへは素の `gh` で書き、署名の 1 行は同じ形を付ける (ADR-0026 決定 4)。人間が直接書く分にはラッパーは要らない。
+`gh pr review` の本文と、close / reopen の `--comment` も同じ扱いにする。close / reopen は 2 手に分け、発言をラッパーで投稿してから、状態だけを発言なしで変える。他のリポジトリへは素の `gh` で書く。同じ org の外のパッケージへは、署名の 1 行を同じ形で付ける (ADR-0026 決定 4)。人間が直接書く分にはラッパーは要らない。
 
 ## エージェントの identity
 
@@ -114,7 +114,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 **main の絵に関わるファイルは、常に誰かが手元で実際に回して確かめた組み合わせのままに保つ** (merge queue での判定は `scripts/render-status.sh` の冒頭)。書き手が守ること:
 
 - 作業中の描画 PR は Draft にする。描画 PR は 1 本ずつ (queue の外では番号順に) 入るので、作業中の PR が完成した後続を待たせる
-- queue から弾かれたら `make catch-up` を実行する (main の取り込み → `make ci-check` → `--auto` の掛け直しを 1 手にしたもの。手順は `scripts/catch-up.sh` の冒頭)。queue に居るかは `isInMergeQueue` で見る (`autoMerge: false` は queue に入った後も出る)
+- queue から弾かれたら `make catch-up` を実行する (main の取り込み → `make ci-check` → `--auto` の掛け直しを 1 手にしたもの。手順は `scripts/catch-up.sh` の冒頭)。実行する前に、queue に居るかを `isInMergeQueue` で見る (`autoMerge: false` は queue に入った後も出る)
 - 取り込みは手元だけで済ませ、push しない。push は承認を落とす (#612)。例外は衝突を解いた合流だけ
 
 見た目・動きの事象を Issue に立てるときも証跡を添える (壊れた絵は起票の時点でしか撮れない)。上げ先は問わず、Issue / PR の入力欄へ画像や動画を落とせば GitHub が保管する。エージェントの撮り方と上げ先は `.claude/skills/visual-evidence/` が持つ。
