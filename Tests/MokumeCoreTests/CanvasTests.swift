@@ -1180,6 +1180,21 @@ struct CanvasTests {
         }
     }
 
+    @Test("変換と切り抜きは、描き切った後のフレームの外へ残らない (#1472)")
+    func transformAndClipDoNotOutliveTheFrame() throws {
+        let canvas = try makeCanvas()
+        // 描き場所 (`createGraphics`) の入口で描き切る。`draw { }` と同じ `endFrame()` を通る
+        canvas.beginDraw()
+        canvas.background(black)
+        canvas.translate(20, 10)
+        canvas.clip(0, 0, 8, 8)
+        canvas.endDraw()
+
+        #expect(canvas.screenX(5, 5) == 5)
+        #expect(canvas.screenY(5, 5) == 5)
+        #expect(canvas.style.clip == nil)
+    }
+
     // MARK: - 輪郭 (#234)
 
     private let blue = LinearRGBA.display(red: 0, green: 0.4, blue: 1)

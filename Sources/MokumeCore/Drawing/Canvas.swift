@@ -1425,11 +1425,17 @@ public final class Canvas {
 
     /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
     private func endFrame() throws(RenderFailure) {
-        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点は**描き終えて
-        // から**既定へ戻す — 始まりで戻すと、フレームの外から読んだときだけ「もう
-        // 効かない視点」が返る。列を閉じるのに視点が要るので、戻すのは flush の後
+        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点・変換・切り抜きは
+        // **描き終えてから**既定へ戻す — 始まりでだけ戻すと、フレームの外 (止まっている
+        // 間のコールバック・描き場所の `endDraw()` の後) で置いた図形と読んだ座標にだけ、
+        // 前のフレームが最後に残した視点・変換・切り抜きが効く ([#1472])。列を閉じるのに
+        // 視点と切り抜きが要るので、戻すのは flush の後
+        //
+        // [#1472]: https://github.com/mokume-metal/mokume/issues/1472
         defer {
             cameraStorage = nil
+            transform = .identity
+            style.clip = nil
             style.material = .default
             shadowsEnabled = false
             shadowRangeValue = nil
