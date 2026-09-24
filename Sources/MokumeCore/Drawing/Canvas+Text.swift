@@ -168,9 +168,11 @@ extension Canvas {
     /// **横の揃えは、行の末尾の空白を数えない。** 行をどこで折るかはこちらが決めるので、
     /// 折った行も段落の最後の行も、末尾の空白を除いた幅で揃える ([#1452])。
     /// ``textWidth(_:)`` と点の形の ``text(_:_:_:)`` は末尾の空白も数える — 渡された
-    /// 文字列を、渡された位置で終わらせるためである。
+    /// 文字列を、渡された位置で終わらせるためである。改行しない空白 (U+00A0・U+202F・
+    /// U+2007) は字と同じに扱うので、行の末尾にあっても幅に数える ([#1540])。
     ///
     /// [#1452]: https://github.com/mokume-metal/mokume/issues/1452
+    /// [#1540]: https://github.com/mokume-metal/mokume/issues/1540
     @discardableResult
     public func text(_ string: String, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible)
         -> TextFlow
@@ -260,10 +262,15 @@ extension Canvas {
     /// 最後の段落の最後の行なら、その行の終わりと文字列の終わりの間である。いくつ消費したかは、
     /// 範囲の隙間を読めば分かる。
     ///
+    /// ここで言う**空白は、折ってよい空白** (`Character.isBreakingSpace`) である。
+    /// 改行しない空白 (U+00A0・U+202F・U+2007) は字と同じに扱い、切れ目にせず、消費も
+    /// 削りもしない ([#1540])。
+    ///
     /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
     /// [#1419]: https://github.com/mokume-metal/mokume/issues/1419
     /// [#1424]: https://github.com/mokume-metal/mokume/issues/1424
     /// [#1452]: https://github.com/mokume-metal/mokume/issues/1452
+    /// [#1540]: https://github.com/mokume-metal/mokume/issues/1540
     func wrapped(_ string: String, face: Typeface, within limit: Float) -> [Substring] {
         var lines: [Substring] = []
         for paragraph in string.lines {
@@ -289,8 +296,8 @@ extension Canvas {
                 // すると、それより前の空白が行の末尾に残り、右揃え・中央揃えの行が
                 // その幅だけずれる ([#1412])。段落の頭の空白 (字下げ) は、前に語が
                 // 無いので切れ目にしない
-                if character.isWhitespace, index > start,
-                    !paragraph[paragraph.index(before: index)].isWhitespace
+                if character.isBreakingSpace, index > start,
+                    !paragraph[paragraph.index(before: index)].isBreakingSpace
                 {
                     lastSpace = index
                 }
@@ -300,7 +307,7 @@ extension Canvas {
                     if style.textWrap == .word, let space = lastSpace, space > start {
                         lines.append(paragraph[start..<space])
                         var next = space
-                        while next < paragraph.endIndex, paragraph[next].isWhitespace {
+                        while next < paragraph.endIndex, paragraph[next].isBreakingSpace {
                             next = paragraph.index(after: next)
                         }
                         start = next
@@ -314,8 +321,8 @@ extension Canvas {
                         // 行が字で終われば切れ目なので、溢れた側の空白も消費する。行の頭から
                         // 空白しか無い (字下げだけで溢れた) 行は空白で終わる — 字下げは切れ目
                         // ではないので消費しない
-                        if !paragraph[paragraph.index(before: end)].isWhitespace {
-                            while index < paragraph.endIndex, paragraph[index].isWhitespace {
+                        if !paragraph[paragraph.index(before: end)].isBreakingSpace {
+                            while index < paragraph.endIndex, paragraph[index].isBreakingSpace {
                                 index = paragraph.index(after: index)
                             }
                         }
@@ -358,14 +365,18 @@ extension Canvas {
     /// 文字の切れ目で折るとき ([#1424]) と、段落の終わりに達したとき ([#1452]) の 2 か所が
     /// 読む。語の切れ目は切れ目を続いた空白の先頭に置くので ([#1412])、読み戻す空白が無い。
     ///
+    /// 読み戻すのは折ってよい空白 (`Character.isBreakingSpace`) だけで、改行しない
+    /// 空白は字と同じく行に残す ([#1540])。
+    ///
     /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
     /// [#1424]: https://github.com/mokume-metal/mokume/issues/1424
     /// [#1452]: https://github.com/mokume-metal/mokume/issues/1452
+    /// [#1540]: https://github.com/mokume-metal/mokume/issues/1540
     private static func lineEnd(
         in paragraph: Substring, from start: String.Index, upTo end: String.Index
     ) -> String.Index {
         var trimmed = end
-        while trimmed > start, paragraph[paragraph.index(before: trimmed)].isWhitespace {
+        while trimmed > start, paragraph[paragraph.index(before: trimmed)].isBreakingSpace {
             trimmed = paragraph.index(before: trimmed)
         }
         return trimmed > start ? trimmed : end
@@ -501,4 +512,26 @@ extension Canvas {
         }
         return total / 2
     }
+}
+
+// MARK: - 折ってよい空白
+
+nonisolated extension Character {
+    /// 流し込みが行を折ってよい空白か ([#1540])。
+    ///
+    /// **空白のうち、改行しない空白 (U+00A0 NO-BREAK SPACE・U+202F NARROW NO-BREAK SPACE・
+    /// U+2007 FIGURE SPACE) を除いたもの。** `isWhitespace` はこの 3 つにも true を返すが、
+    /// Unicode の改行規則 (UAX #14) ではこの 3 つは前後で折らない類 (GL) で、「10 km」の
+    /// ように切らないために置く。Java の `Character.isWhitespace` も数えない。
+    ///
+    /// 流し込みはこの判定だけで、折る場所・切れ目の後ろで消費する空白・行末から削る空白を
+    /// 決める。3 つの場面で同じ判定を読むので、改行しない空白はどの場面でも字と同じになる。
+    ///
+    /// [#1540]: https://github.com/mokume-metal/mokume/issues/1540
+    var isBreakingSpace: Bool {
+        isWhitespace && !unicodeScalars.contains { Self.noBreakSpaces.contains($0) }
+    }
+
+    /// 改行しない空白。
+    private static let noBreakSpaces: Set<Unicode.Scalar> = ["\u{00A0}", "\u{202F}", "\u{2007}"]
 }
