@@ -8,10 +8,11 @@ extension Canvas {
     /// **旗ではなく鍵で数える** ([#734])。ケース名は畳む前の `warnedXxx` から `warned`
     /// を落としたもので、名前が対応していれば履歴を辿るときに突き合わせが要らない。
     ///
-    /// **同じ鍵を 2 か所から言うのは、同じ事情を別の入口から知らせるときだけ。** いま
-    /// あるのは ``badCamera`` の 1 組で、`camera()` と `perspective()` / `ortho()` が
-    /// 「視点が成り立たない」を共有する (畳む前から 1 つの旗だった)。共有するかどうかは
-    /// この定義を見れば分かる — 鍵が文字列なら、どちらが黙っているかは誰にも分からない。
+    /// **同じ鍵を複数の場所から言うのは、同じ事情を別の入口から知らせるときだけ。** 例えば
+    /// ``badCamera`` は、視点の口 (`camera()` / `setCamera()`)・投影の口 (`perspective()` /
+    /// `ortho()`)・`setCamera()` が持ち込む投影の 3 か所が「視点が成り立たない」を共有する
+    /// (畳む前から 1 つの旗だった)。共有するかどうかはこの定義を見れば分かる — 鍵が文字列
+    /// なら、どれが黙っているかは誰にも分からない。
     ///
     /// [#734]: https://github.com/mokume-metal/mokume/issues/734
     enum Warning: Hashable {
@@ -88,7 +89,10 @@ extension Canvas {
         case transformOutsideFrame
         /// フレームの外でスタイルを積み降ろしした。
         case styleOutsideFrame
-        /// 成り立たない視点・投影が渡された。**入口が 2 つある 1 つの事情。**
+        /// 成り立たない視点・投影が渡された。**入口が 3 つある 1 つの事情** — 視点の口・
+        /// 投影の口・`setCamera()` が持ち込む投影 ([#1495])。
+        ///
+        /// [#1495]: https://github.com/mokume-metal/mokume/issues/1495
         case badCamera
         /// 受け取れない切り抜きが渡された。
         case badClip
