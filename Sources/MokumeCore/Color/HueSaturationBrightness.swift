@@ -18,14 +18,19 @@ enum HueSaturationBrightness {
     /// 彩度・明度の目盛りの上端。
     static let percent: Float = 100
 
-    /// 0–360 の内側へ巻き戻す。
+    /// 0 以上 360 未満 (半開区間) へ巻き戻す。**360 は返さない。**
     ///
     /// **切り捨ての剰余は使わない。** `truncatingRemainder` は負の入力に負を返すので、
     /// `hue: -40` が区画の添字を負にする。`color(hue: Float(frameCount), …)` を
     /// 剰余なしで書けることがこの口の値打ちなので、負の側も畳む。
+    ///
+    /// **360 に丸まった値は 0 へ畳む。** 絶対値が 1.5e-5 ほどより小さい負の値に 360 を
+    /// 足すと、Float では 360.0 ちょうどに丸まる。赤の色相は作業空間との往復の残差で
+    /// そういう値になるので、畳まないと 1 周ぶんずれた 360 が読み出される (#1533)。
     static func wrapped(_ hue: Float) -> Float {
         let remainder = hue.truncatingRemainder(dividingBy: turn)
-        return remainder < 0 ? remainder + turn : remainder
+        let wrapped = remainder < 0 ? remainder + turn : remainder
+        return wrapped < turn ? wrapped : 0
     }
 
     /// 色相・彩度・明度 → 0–255 のエンコード値。**非有限の値は受け取らない。**
@@ -135,6 +140,9 @@ public func color(
 // MARK: - 色相・彩度・明度で読む
 
 /// 色相を **0–360 の度**で読む ([ADR-0033] 決定 6)。
+///
+/// 返る値は **0 以上 360 未満**で、360 は返らない。赤は 0 になるので、
+/// `Int(hue(c) / 360 * n)` で区画を引いても添字は `0..<n` に収まる。
 ///
 /// 灰色 (彩度 0) の色相は決まらないので 0 を返す。不透明度が 0 の色と、数でない値を
 /// 持つ色も 0 になる — 契約は ``red(_:)`` と同じ。
