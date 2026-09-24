@@ -49,6 +49,53 @@ struct FormInstance {
     static let fillsFlag: UInt32 = 1
     /// 輪郭を持つ。
     static let strokesFlag: UInt32 = 2
+    /// 描く画素で 1 画素より細い塗りを含みうる。**列だけが持つ旗で、置き場所には入れない**
+    /// (``mayHaveThinFill(unitsPerDrawnPixel:)``)。
+    ///
+    /// 塗り・輪郭の旗と違って、変わっても列を切らない。含む図形が 1 つでもある列は、
+    /// 断片の枝を残した組で描く ([#1477])。
+    ///
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    static let thinFillsFlag: UInt32 = 4
+
+    /// 判定を保守側へ倒す幅 (相対)。
+    ///
+    /// 断片の境目 (`2 × 半幅 × (1 + 2/256) < 描く画素 1 つ`) と同じ式を CPU で解くが、
+    /// 逆行列と長さの丸めは GPU と 1 ビットまでは揃わない (1e-7 ほど)。境目の近くで
+    /// 「含まない」と答えると、断片が細い枝に入るはずの形を枝の無い組で描いて絵が変わる
+    /// ので、1/1024 だけ「含む」側へ広げる。幅 1 画素の塗りは境目から 0.8% 離れている
+    /// ので、広げても「含む」側に入らない。
+    private static let thinFillSlack: Float = 1.0 / 1024
+
+    /// この形の塗りが、**描く画素で 1 画素より細い向き**を持ちうるか ([#1477])。
+    ///
+    /// 断片の `rect` と楕円の塗りの枝 (`Shapes.metal` の `mokume_formPaint`) に入るかを、
+    /// 置いた時点の変換 (``linear``) と大きさから CPU で先に判定する。立った列だけが枝を
+    /// 残した組で描かれる (`kFormHasThinFill`)。**迷ったら「含む」と答える** — 余計に
+    /// 立てても速さを失うだけだが、立て損なうと細い塗りの濃さが置く位置で揺れる形に戻る。
+    ///
+    /// 扇 (`arc`) の塗りと線・点は枝を持たないので、常に「含まない」。
+    ///
+    /// - Parameter unitsPerDrawnPixel: 描く画素 1 つが描画先の座標でいくらか
+    ///   (細かさ 1 なら 1。`FlatFrame.unitsPerDrawnPixel` と同じ値)。
+    ///
+    /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+    func mayHaveThinFill(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        guard meta.w & Self.fillsFlag != 0,
+            meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue
+        else { return false }
+        // 断片が読む行ノルム (描く画素 1 つが形自身の座標でいくらか) は、逆行列の行に
+        // 描く画素の大きさを掛けたものの長さ。逆行列は余因子 / 行列式なので、両辺に
+        // 行列式の 2 乗を掛けて、割り算と平方根を使わずに 2 乗どうしで比べる
+        let determinant = linear.x * linear.w - linear.y * linear.z
+        let rowX = SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel
+        let rowY = SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel
+        let span = 2 * SIMD2(size.x, size.y) * (1 + 2.0 / 256)
+        let reach = (1 + Self.thinFillSlack) * (1 + Self.thinFillSlack)
+        let squared = determinant * determinant
+        return span.x * span.x * squared < simd_length_squared(rowX) * reach
+            || span.y * span.y * squared < simd_length_squared(rowY) * reach
+    }
 
     /// 置き場所を 1 つ組む。**色は「持つか」を旗で渡し、`Optional` にしない。**
     ///

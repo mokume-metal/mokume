@@ -54,6 +54,15 @@ public final class Canvas {
     /// 実際に刻む高さ (画素)。
     public var pixelHeight: Int { target.height }
 
+    /// 描く画素 1 つが描画先の座標でいくらか (x, y)。細かさ 1 では描く先と出す先が同じ
+    /// 1 枚なので、幅を幅で割ってちょうど 1 になる。
+    ///
+    /// 基本図形の頂点関数が縁の被覆を描く画素で測るために読み (`FlatFrame`・#1488)、
+    /// 置く側が 1 画素より細い塗りを判定するのにも使う (`FormInstance.mayHaveThinFill`・#1477)。
+    var unitsPerDrawnPixel: SIMD2<Float> {
+        SIMD2(width / Float(pixelWidth), height / Float(pixelHeight))
+    }
+
     /// 描く先。**細かさに従う**ので、``output`` より小さいことがある。
     let target: RenderTarget
 
@@ -805,11 +814,12 @@ public final class Canvas {
         /// 畳めない列は**何も動かさない置き場所を 1 つ**指す (平面なら添字 0)。
         var instanceStart: Int = 0
         var instanceCount: Int = 1
-        /// 基本図形の列が持つもの (塗り・輪郭)。**基本図形の列だけが使う。**
+        /// 基本図形の列が持つもの (塗り・輪郭・1 画素より細い塗り)。**基本図形の列だけが使う。**
         ///
-        /// 断片は有無で特化してあるので、この組がパイプラインを選ぶ ([#771])。
+        /// 断片は有無で特化してあるので、この組がパイプラインを選ぶ ([#771]・[#1477])。
         ///
         /// [#771]: https://github.com/mokume-metal/mokume/issues/771
+        /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
         var formFlags: UInt32 = 0
         /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。**持ち主ごと持つ**
         /// (``ExternalInstances`` と同じ理由)。
@@ -1942,9 +1952,7 @@ public final class Canvas {
     ) throws(RenderFailure) -> BatchBuffers {
         // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
         let matrices = try matrixStorage.buffer(holding: batches.count)
-        // 描く画素 1 つが描画先の座標でいくらか。細かさ 1 では描く先と出す先が同じ 1 枚
-        // なので、幅を幅で割ってちょうど 1 になる
-        let unitsPerDrawnPixel = SIMD2(width / Float(pixelWidth), height / Float(pixelHeight))
+        let unitsPerDrawnPixel = self.unitsPerDrawnPixel
         for (index, batch) in batches.enumerated() {
             // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
             // 読まない**ので、同じ区画に足しても効かない
