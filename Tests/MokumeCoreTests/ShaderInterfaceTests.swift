@@ -338,7 +338,10 @@ struct ShaderInterfaceTests {
 
     static let flatFrame = layout(
         of: FlatFrame.self,
-        [("projection", \.projection), ("strokeStart", \.strokeStart), ("strokeShift", \.strokeShift)])
+        [
+            ("projection", \.projection), ("strokeStart", \.strokeStart),
+            ("strokeShift", \.strokeShift), ("unitsPerDrawnPixel", \.unitsPerDrawnPixel),
+        ])
 
     static let flatInstance = layout(
         of: FlatInstance.self,

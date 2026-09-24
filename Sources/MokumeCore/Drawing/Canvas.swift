@@ -1896,13 +1896,17 @@ public final class Canvas {
     ) throws(RenderFailure) -> BatchBuffers {
         // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
         let matrices = try matrixStorage.buffer(holding: batches.count)
+        // 描く画素 1 つが描画先の座標でいくらか。細かさ 1 では描く先と出す先が同じ 1 枚
+        // なので、幅を幅で割ってちょうど 1 になる
+        let unitsPerDrawnPixel = SIMD2(width / Float(pixelWidth), height / Float(pixelHeight))
         for (index, batch) in batches.enumerated() {
             // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
             // 読まない**ので、同じ区画に足しても効かない
             var frame = FlatFrame(
                 projection: batch.matrix,
                 strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
-                strokeShift: Self.solidStrokeShift(width: width, height: height))
+                strokeShift: Self.solidStrokeShift(width: width, height: height),
+                unitsPerDrawnPixel: unitsPerDrawnPixel)
             matrices.contents().advanced(by: index * Self.valuesStride)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
         }
@@ -2070,8 +2074,10 @@ public final class Canvas {
         let instanceBuffer = try solidInstanceStorage.write(
             solidInstances, holding: max(solidInstances.count, 1))
         let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
-        // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い
-        var value = FlatFrame(projection: matrix, strokeStart: .max, strokeShift: .zero)
+        // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い。
+        // 描く画素の大きさは基本図形しか読まず、基本図形は影へ焼かないので 1 を置く
+        var value = FlatFrame(
+            projection: matrix, strokeStart: .max, strokeShift: .zero, unitsPerDrawnPixel: .one)
         matrixBuffer.contents().copyMemory(
             from: &value, byteCount: MemoryLayout<FlatFrame>.stride)
 

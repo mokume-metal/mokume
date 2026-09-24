@@ -394,10 +394,20 @@ struct FormShapeTests {
     ///
     /// 細い線の濃さは 1 画素あたり数 % なので、出力段を通した 8 bit (`picture`) では刻みが
     /// 粗すぎて和が読めない。読むのは作業空間そのままの値である。
+    ///
+    /// `density` を下げると、読むのは**描く画素** (出す面より小さい) になる。fixture の
+    /// `Canvas(target:gpu:)` は細かさ 1 に決め打つので、そのときだけ直に組む。
     private func coverage(
-        width: Int = 160, height: Int = 160, _ body: (Canvas) -> Void
+        width: Int = 160, height: Int = 160, density: Float = 1, _ body: (Canvas) -> Void
     ) throws -> PixelBuffer {
-        let canvas = try makeCanvas(width: width, height: height)
+        let canvas: Canvas
+        if density == 1 {
+            canvas = try makeCanvas(width: width, height: height)
+        } else {
+            let gpu = try RenderDevice()
+            let output = try RenderTarget(gpu: gpu, width: width, height: height)
+            canvas = try Canvas(output: output, gpu: gpu, pixelDensity: density, upscale: .spatial)
+        }
         try canvas.draw {
             canvas.background(black)
             canvas.noFill()
@@ -581,6 +591,134 @@ struct FormShapeTests {
             #expect(
                 abs(outlineSum - Double(weight)) <= 0.01 * Double(weight),
                 "太さ \(weight)・縁 x = \(10 + offset) の rect の輪郭の行の和: \(outlineSum)")
+        }
+    }
+
+    // MARK: - 描く細かさを下げた面
+
+    /// **描く細かさを下げた面でも、線の濃さは置く位置によらず、描く画素での太さぶんで出る**
+    /// ([#1488])。
+    ///
+    /// 座標と太さは出す画素で書き、描く画素への縮みは投影が持つ。被覆を出す画素の単位で
+    /// 測っていた頃は、`pixelDensity: 0.5` の太さ 1 の線が、描く画素では太さ 0.5 なのに
+    /// 被覆の式からは太さ 1 に見えていた。描く画素の中心は出す座標で 2 ずつ離れるので、
+    /// 線の縁から 1 単位の所に中心が来る位置 (x = 81.5) では被覆が 0 になって線が消え、
+    /// 行の和が x = 80 / 80.5 / 81 / 81.5 で 0.5 / 1.0 / 0.5 / 0 と揺れていた。
+    ///
+    /// 太さ 3 (描く画素で 1.5) も見るのは、1 画素より太い帯の縁の渡しも描く画素で測る
+    /// ことを捕まえるため — 出す画素で測ると、縁の渡しが描く画素の半分の幅に縮む。
+    ///
+    /// [#1488]: https://github.com/mokume-metal/mokume/issues/1488
+    @Test(
+        "描く細かさ 0.5 の面の縦線は、置く位置によらず描く画素での太さぶんの濃さで出る",
+        arguments: [Float(0.2), 1, 3], [Float(80), 80.5, 81, 81.5])
+    func halfDensityLinesKeepTheirWeight(_ weight: Float, _ x: Float) throws {
+        let pixels = try coverage(density: 0.5) { canvas in
+            canvas.strokeWeight(weight)
+            canvas.line(x, 10, x, 150)
+        }
+        // 出す 160 画素の面は、描く画素では 80。行 40 は出す座標の y = 80〜82 にあたる
+        let sum = rowSum(pixels, row: 40, columns: 30..<50)
+        let expected = Double(weight) * 0.5
+        #expect(
+            abs(sum - expected) <= 0.1 * expected,
+            "細かさ 0.5・太さ \(weight)・x = \(x) の縦線の、描く画素の行の和: \(sum) (期待 \(expected))")
+    }
+
+    /// 輪郭の帯も、描く細かさを下げた面で縁の位置によらず、描く画素での太さぶんで出る。
+    ///
+    /// 輪郭は外縁と内縁の被覆の差で数える (`mokume_formPaint`)。どちらの縁の被覆も
+    /// 出す画素で測っていた頃は、帯が描く画素の中でどこに来るかで和が揺れていた。
+    @Test(
+        "描く細かさ 0.5 の面の輪郭は、縁を置く位置によらず描く画素での太さぶんの濃さで出る",
+        arguments: ["rect", "circle", "arc"], [Float(0.2), 1, 3])
+    func halfDensityOutlinesKeepTheirWeight(_ kind: String, _ weight: Float) throws {
+        for offset in [Float(0), 0.5, 1, 1.5] {
+            let pixels = try coverage(width: 128, height: 128, density: 0.5) { canvas in
+                canvas.strokeWeight(weight)
+                // どれも左の縁が x = 10 + offset に来る (`subpixelOutlinesKeepTheirWeight` と同じ形)
+                switch kind {
+                case "rect": canvas.rect(10 + offset, 40, 40, 40)
+                case "circle": canvas.circle(60 + offset, 60, 100)
+                default: canvas.arc(60 + offset, 60, 100, 100, Float.pi - 0.5, Float.pi + 0.5)
+                }
+            }
+            // 描く画素の行 30 (出す座標の y = 60〜62) が左の縁を横切る
+            let sum = rowSum(pixels, row: 30, columns: 0..<10)
+            let expected = Double(weight) * 0.5
+            #expect(
+                abs(sum - expected) <= 0.1 * expected,
+                "細かさ 0.5・\(kind) の太さ \(weight)・縁 x = \(10 + offset) の、描く画素の行の和: \(sum) (期待 \(expected))")
+        }
+    }
+
+    /// 点も、描く細かさを下げた面で置く位置によらず、描く画素での面積ぶんで出る。
+    ///
+    /// 出す座標で 0.5 ずつずらすと、点の中心は描く画素の中を 0.25 ずつ動く。並べたのは
+    /// 描く画素の中心・縁・角と、その間である。
+    @Test(
+        "描く細かさ 0.5 の面の点は、置く位置によらず描く画素での面積ぶんの濃さで出る",
+        arguments: [StrokeCap.round, .project])
+    func halfDensityPointsKeepTheirArea(_ cap: StrokeCap) throws {
+        // 評価は出す画素で半画素寄せるので、中心は描く画素で ((x + 0.5) / 2, (y + 0.5) / 2)
+        let positions: [(Float, Float)] = [(40, 40), (40.5, 40.5), (41.5, 40.5), (41.5, 41.5)]
+        for weight in [Float(0.2), 1] {
+            for (x, y) in positions {
+                let sum = totalSum(
+                    try coverage(width: 80, height: 80, density: 0.5) { canvas in
+                        canvas.strokeWeight(weight)
+                        canvas.strokeCap(cap)
+                        canvas.point(x, y)
+                    })
+                let expected = pow(Double(weight) * 0.5, 2)
+                #expect(
+                    abs(sum - expected) <= 0.1 * expected,
+                    "細かさ 0.5・\(cap) の太さ \(weight) の点 (\(x), \(y)) の、描く画素の和: \(sum) (期待 \(expected))")
+            }
+        }
+    }
+
+    /// **塗りの縁も、描く画素に掛かる面積ぶんの濃さで出る。**
+    ///
+    /// 塗りの縁の被覆も同じ式 (`mokume_formCoverage`) で出す。出す画素で測っていた頃は、
+    /// 縁を滑らかにする幅が描く画素の半分しか無く、縁が描く画素の 1/4 に掛かっても 3/4 に
+    /// 掛かっても、その画素は 0 か 1 に振り切れていた。
+    @Test("描く細かさ 0.5 の面の塗りの縁は、描く画素に掛かる面積ぶんの濃さで出る")
+    func halfDensityFillEdgesFollowTheArea() throws {
+        for offset in [Float(0), 0.5, 1, 1.5] {
+            let pixels = try coverage(width: 128, height: 128, density: 0.5) { canvas in
+                canvas.noStroke()
+                canvas.fill(white)
+                canvas.rect(10 + offset, 40, 40, 40)
+            }
+            // 左の縁は描く画素で x = 5 + offset / 2。画素 5 (行 30) に掛かるのは 1 − offset / 2
+            let edge = Double(pixels.components[(30 * pixels.width + 5) * 4])
+            let expected = 1 - Double(offset) / 2
+            #expect(
+                abs(edge - expected) <= 0.01,
+                "細かさ 0.5・縁 x = \(10 + offset) の塗りの、縁に掛かる描く画素の値: \(edge) (期待 \(expected))")
+        }
+    }
+
+    /// **描く細かさをもっと下げても、縁に掛かる画素が覆う四角の外に落ちない。**
+    ///
+    /// 頂点関数が形の外に取る余白 (`kFormMargin`) も描く画素で測る。出す画素で 2 のまま
+    /// だと、細かさ 0.25 では描く画素の半分にしかならない。線は画面で半画素寄せて評価する
+    /// ので、寄せた側 (+x) で縁に掛かる描く画素の中心が四角の外に出て、その画素が塗られない。
+    @Test("描く細かさ 0.25 の面でも、縦線の縁に掛かる画素が落ちない")
+    func quarterDensityLinesKeepTheirEdges() throws {
+        // 出す座標で 0.25 ずつ、描く画素 1 つぶん (出す座標で 4) を刻む
+        for step in 0..<16 {
+            let x = 80 + Float(step) * 0.25
+            let pixels = try coverage(density: 0.25) { canvas in
+                canvas.strokeWeight(2)
+                canvas.line(x, 10, x, 150)
+            }
+            // 出す 160 画素の面は、描く画素では 40。行 20 は出す座標の y = 80〜84 にあたる
+            let sum = rowSum(pixels, row: 20, columns: 15..<25)
+            #expect(
+                abs(sum - 0.5) <= 0.05,
+                "細かさ 0.25・太さ 2・x = \(x) の縦線の、描く画素の行の和: \(sum) (期待 0.5)")
         }
     }
 
