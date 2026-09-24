@@ -104,6 +104,14 @@ extension Canvas {
         case reversedArc
         /// 形の外で ``vertex(_:_:)`` を呼んだ。
         case vertexOutsideShape
+        /// 形の中で、手前に点が無いまま曲線を続けようとした ([#1485])。
+        ///
+        /// 入口は ``bezierVertex(_:_:_:_:_:_:)`` と ``quadraticVertex(_:_:_:_:)`` の 2 つで、
+        /// 事情は 1 つなので鍵を共有する。文面には呼んだ関数の名前が入る。穴
+        /// (``beginContour()``) の最初もこれに当たる — 穴は外周の点から始めない。
+        ///
+        /// [#1485]: https://github.com/mokume-metal/mokume/issues/1485
+        case curveWithoutStart
         /// 受け取れない頂点の座標が渡された。
         case badVertex
         /// ``Canvas/index(_:)`` に、置いていない頂点の番号が渡された。

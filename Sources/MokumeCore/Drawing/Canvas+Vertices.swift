@@ -114,10 +114,8 @@ extension Canvas {
     ) {
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
-        guard isBuildingShape, let start = lastShapePoint else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce() }
+        guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("bezierVertex") }
         let c1 = SIMD2(cx1, cy1)
         let c2 = SIMD2(cx2, cy2)
         let end = SIMD2(x, y)
@@ -132,10 +130,8 @@ extension Canvas {
     public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
-        guard isBuildingShape, let start = lastShapePoint else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce() }
+        guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("quadraticVertex") }
         // 2 次は 3 次の特別な形として通す — 曲線の道具を 1 本に保つ
         let control = SIMD2(cx, cy)
         let end = SIMD2(x, y)
@@ -684,6 +680,21 @@ extension Canvas {
         warnOnce(
             .vertexOutsideShape,
             "vertex(): call this between beginShape() and endShape(). This call does nothing")
+    }
+
+    /// 形の中で手前に点が無いまま曲線を続けようとしたことを、初回だけ知らせる ([#1485])。
+    ///
+    /// **形の外の注意 (``warnVertexOutsideShapeOnce()``) とは言うことが違う。** 呼んだ場所は
+    /// 既に `beginShape()` と `endShape()` の間なので、間で呼べと言っても直す先を指さない。
+    /// 穴の最初もこちらに当たる (穴は外周の点から始めない・``lastShapePoint``)。
+    ///
+    /// [#1485]: https://github.com/mokume-metal/mokume/issues/1485
+    private func warnCurveWithoutStartOnce(_ name: String) {
+        warnOnce(
+            .curveWithoutStart,
+            "\(name)(): a curve continues from the last point placed, and there is no point yet "
+                + "in this shape or beginContour() hole, so this call does nothing. Place a "
+                + "vertex() first")
     }
 
     private func warnBadVertexOnce() {
