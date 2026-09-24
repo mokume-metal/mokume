@@ -32,6 +32,8 @@ path = [
   "README.md",
   "AGENTS.md",
   "CLAUDE.md",
+  "docs/decisions/AGENTS.md",
+  "docs/decisions/CLAUDE.md",
   "CONTRIBUTING.md",
   "SECURITY.md",
   "changelog.d/README.md",
