@@ -349,6 +349,9 @@ extension Sketch {
     /// 面の向きは、光がどれだけ当たるかを決めるもの。**書き換えるまで続き、
     /// ``beginShape(_:)`` で未指定へ戻る。**
     ///
+    /// **``beginShape(_:)`` の後で書く。** 形の外で書いた向きは次の形へ持ち越されない
+    /// ので、注意を出して捨てる。
+    ///
     /// ```swift
     /// beginShape(.triangles)
     /// normal(0, 0, 1)     // ここから置く頂点は、画面の側を向く
@@ -364,6 +367,9 @@ extension Sketch {
     ///
     /// 面は**どちらの側から見ても光を受ける**ので、向きの符号 (頂点を並べる向き) で
     /// 絵が真っ黒になることはない。
+    ///
+    /// 数でない値・無限の値・長さ 0 の向きは向きにならないので、注意を出して「書かれて
+    /// いない」に倒す。その後に置く頂点の向きは、書き直すまで形から求まる。
     public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.normal(x, y, z)
@@ -373,6 +379,9 @@ extension Sketch {
     ///
     /// ``beginShape(_:)`` と ``endShape(_:)`` の間で開き、``endContour()`` で閉じる。
     /// 挟んだ頂点は外周ではなく**穴**になる。
+    ///
+    /// 穴を開いたままもう一度呼ぶと、開いていた穴を ``endShape(_:)`` と同じ規則で畳んで
+    /// から次の穴を始める。閉じ忘れても、置いた穴は捨てられない。
     ///
     /// **穴の頂点は外周と逆回りに並べる。** 下の例では外周が時計回り、穴が反時計回り。
     ///
@@ -408,7 +417,7 @@ extension Sketch {
     ///
     /// **閉じてからもう一度 ``beginContour()`` を開けば、穴はいくつでも空けられる。**
     /// 頂点が 3 つに満たない穴は捨てられる (面にならないため)。閉じ忘れても
-    /// ``endShape(_:)`` が畳む。
+    /// ``endShape(_:)`` が畳む。穴を開いていないのに呼ぶと、注意を出して何もしない。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -495,6 +504,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// ``beginShape(_:)`` で始めた形が無いまま呼ぶと (書き忘れ・二重呼び)、注意を出して
+    /// 何もしない。
     // shot: 1 snippet=ba1ee5bb
     // shot: 2 snippet=35422e2c
     public func endShape(_ end: ShapeEnd = .open) { canvas.endShape(end) }
