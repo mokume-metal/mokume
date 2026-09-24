@@ -102,7 +102,15 @@ extension Canvas {
 
         /// 角度が逆向きの円弧を描こうとした。
         case reversedArc
-        /// 形の外で ``vertex(_:_:)`` を呼んだ。
+        /// 形の外 (``beginShape(_:)`` と ``endShape(_:)`` の間でないところ) で、頂点の仲間を
+        /// 呼んだ ([#1498])。
+        ///
+        /// 入口は ``vertex(_:_:)`` (4 つの形)・``bezierVertex(_:_:_:_:_:_:)``・
+        /// ``quadraticVertex(_:_:_:_:)``・``curveVertex(_:_:)``・``beginContour()``・
+        /// ``index(_:)`` の 6 つで、事情は 1 つなので鍵を共有する。文面には呼んだ関数の名前が
+        /// 入る。
+        ///
+        /// [#1498]: https://github.com/mokume-metal/mokume/issues/1498
         case vertexOutsideShape
         /// 形の中で、手前に点が無いまま曲線を続けようとした ([#1485])。
         ///
