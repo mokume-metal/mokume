@@ -146,7 +146,7 @@ final class ShapePipeline {
     /// その旗の組で描くパイプラインの 3 本組。
     func formStates(for flags: UInt32) -> BlendStates {
         guard let states = formStatesByFlags[flags] else {
-            preconditionFailure("基本図形の旗の組 \(flags) のパイプラインを組んでいない")
+            preconditionFailure("no form pipeline was built for the flag combination \(flags)")
         }
         return states
     }
