@@ -176,12 +176,16 @@ kernel void mokume_particles(
         float3 position = float3(p.x, p.y, p.z);
         float3 velocity = float3(p.vx, p.vy, p.vz);
         float3 push = float3(0.0);
+        // 減速の和。**加速度として足さない** — 足し合わせた加速度で進めた速度に、最後に
+        // e^{−和·Δt} を掛ける。加速度 −k·v として足すと 1 フレームで (1 − k·Δt) 倍になり、
+        // k·Δt が 1 を超える刻みで向きが反転し、2 を超えると速さが増える (#1471)
+        float resist = 0.0;
         uint frame = uint(max(parameters[17], 0.0));
         uint salt = id + uint(p.seed * 65535.0);
         int count = int(parameters[18]);
 
-        // **渡された順に効く。** 足し合わせるだけなので順序で結果は変わらないが、
-        // 減速 (velocity を読む) だけは順序が効く
+        // **渡された順に効く。** 足し合わせるだけなので順序で結果は変わらない。減速も和を
+        // 取ってから最後に掛けるので、どこに置いても同じ
         for (int i = 0; i < count; i++) {
             const device float *f = parameters + 40 + i * 8;
             uint kind = uint(f[0]);
@@ -200,11 +204,16 @@ kernel void mokume_particles(
                 float2 away = position.xy - float2(f[1], f[2]);
                 push += float3(-away.y, away.x, 0.0) / max(length(away), 1e-4) * f[4];
             } else if (kind == kForceDrag) {
-                push -= velocity * f[4];
+                resist += f[4];
             }
         }
 
         velocity += push * step;
+        // **減速を渡さない粒には掛けない。** 近似の算術 (fast math) の exp(0) がちょうど 1 に
+        // なる保証は無く、掛けると減速を使わない粒の最下位の桁まで動きうる
+        if (resist != 0.0) {
+            velocity *= exp(-resist * step);
+        }
         position += velocity * step;
         p.x = position.x;
         p.y = position.y;
