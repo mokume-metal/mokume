@@ -611,10 +611,17 @@ public final class Canvas {
     /// このフレームで描き切った回数。**奥行きを引き継ぐかの判定に使う。**
     private var passesThisFrame = 0
 
-    /// このフレームで置いた描き場所。
+    /// 置いた描き場所のうち、まだ描き切っていないもの。
     ///
     /// **置いた時点の絵を守るために覚えている。** 溜めてから描くので、置いたあとに
     /// その描き場所が描き換わると、先に置いた場所まで最新の絵に化ける。
+    ///
+    /// 記録するのは**置くたび** — 画像として置いたときと、貼った塗りや保持した形がその
+    /// 面を読むように切り替えたとき (``useTexture(_:)``) である。落とすのは描き切り
+    /// (フレームの終わりと、描き場所が描き換わる直前) と塗り直し (``discardPending()``) で、
+    /// 落とした後に同じ面のまま置いた形も、置いた時点で記録し直される ([#1543])。
+    ///
+    /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     private(set) var placedGraphics: Set<ObjectIdentifier> = []
 
     /// 自分を置いた面。**自分の絵が変わる前に、そちらを先に描き切らせる。**
@@ -1183,6 +1190,9 @@ public final class Canvas {
             slot.pointee = mode.rawIndex
         }
         self.blendModeBuffer = modeBuffer
+        // **出す先から自分へ辿れるようにする** (#1543)。この面を読む側が、置くたびに
+        // 置いたことを記録し直すのに使う (``useTexture(_:)``)
+        output.drawer = self
     }
 
     /// **自分で確保した置き場と面を常駐から退かせる** ([#795])。
@@ -1212,7 +1222,17 @@ public final class Canvas {
     /// これから置く頂点が読む面を決める。**変わるなら列を閉じる。**
     ///
     /// 閉じ忘れると、既に置いた図形や字が後から差し替わった面を読む。
+    ///
+    /// **描き場所の面を読むなら、そのたびに置いたことを記録し直す** ([#1543])。塗り・立体・
+    /// 保持した形・画像のどれも面を切り替えるときはここを通るので、記録する所はこの 1 か所
+    /// でよい。貼った時点 (`texture(_:)`) の記録だけに頼ると、描き場所を描き換えて記録が
+    /// 落ちた後 (描き切り・塗り直し・次のフレーム) に同じ面のまま置いた形が描き切られず、
+    /// 描き換えた後の絵で描かれる。**同じ面が続くときも記録する** — 続けて置く形こそ、
+    /// 貼り直さずに塗り続けた形である。
+    ///
+    /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     func useTexture(_ texture: HeldTexture) {
+        if let graphics = (texture.owner as? RenderTarget)?.drawer { note(placing: graphics) }
         if texture == currentTexture { return }
         closeBatch()
         currentTexture = texture
