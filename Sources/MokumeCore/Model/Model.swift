@@ -17,7 +17,8 @@ import simd
 ///
 /// 1. 中心 (囲みの箱の中心) を原点へ移す
 /// 2. いちばん長い辺を、面に合う長さへ**一様に**縮める (軸の比は変わらない)
-/// 3. 縦軸を**この面の約束 (下向き)** へ合わせる — モデルの多くは上向きで書かれる
+/// 3. 縦軸を**この面の約束 (下向き)** へ合わせる — モデルの多くは上向きで書かれる。
+///    縦だけの裏返しは**鏡映**なので、三角形の巻き方も一緒に戻す (#1473)
 ///
 /// 3 つ目も整える側に入れてあるので、`normalize: false` では**ファイルの座標が
 /// そのまま残る**。ただし**貼る絵の読み取り位置は整えの対象ではない** — 形の座標では
@@ -91,7 +92,8 @@ extension Model {
             let scale = longest > 0 ? fitting / longest : 1
             for index in positions.indices {
                 let moved = (positions[index] - center) * scale
-                // 縦軸はこの面の約束 (下向き) へ合わせる
+                // 縦軸はこの面の約束 (下向き) へ合わせる。**これは鏡映である** (行列式が -1)
+                // — 三角形の巻き方も裏返るので、角を組んだあとで戻す (下の入れ替え)
                 positions[index] = SIMD3(moved.x, -moved.y, moved.z)
                 normals[index] = SIMD3(normals[index].x, -normals[index].y, normals[index].z)
             }
@@ -116,7 +118,7 @@ extension Model {
             uvHighest = simd_max(uvHighest, SIMD2(position.x, -position.y))
         }
         let extent = uvHighest - uvLowest
-        let points = (0..<positions.count).map { index in
+        var points = (0..<positions.count).map { index in
             let source = parsed.positions[index]
             return SolidMesh.Point(
                 position: positions[index], normal: normals[index],
@@ -126,6 +128,20 @@ extension Model {
                     ?? SIMD2(
                         extent.x > 0 ? (source.x - uvLowest.x) / extent.x : 0,
                         extent.y > 0 ? (-source.y - uvLowest.y) / extent.y : 0))
+        }
+
+        // **縦を裏返した形は、巻き方を戻す。** 縦だけの裏返しは鏡映なので、3 点の並びから
+        // 求まる向きが、持っている向きと逆の側を指したまま残る。面の向きを書いていない
+        // 形は、断片が巻き方で表裏を見分けて向きを裏返す (両面の扱い) ので、戻さないと
+        // 見る側を向いた面が裏から光を受けて暗くなる (#1473)。書かれた向きは y を一緒に
+        // 裏返してあるので、巻き方を戻すと両方が揃う
+        //
+        // **角ごと入れ替える** — 位置・向き・読み取り位置は角に付いたまま動く。入れ替えるのは
+        // 2 点目と 3 点目で、鏡映した置き場所で焼いた頂点を戻すのと同じ (#1446)
+        if fitting != nil {
+            for start in stride(from: 0, to: points.count - 2, by: 3) {
+                points.swapAt(start + 1, start + 2)
+            }
         }
         return Model(
             name: name, mesh: SolidMesh(points: points),
