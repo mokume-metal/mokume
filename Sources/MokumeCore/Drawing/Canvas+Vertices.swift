@@ -114,7 +114,7 @@ extension Canvas {
     ) {
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce() }
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("bezierVertex") }
         guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("bezierVertex") }
         let c1 = SIMD2(cx1, cy1)
         let c2 = SIMD2(cx2, cy2)
@@ -130,7 +130,7 @@ extension Canvas {
     public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce() }
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("quadraticVertex") }
         guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("quadraticVertex") }
         // 2 次は 3 次の特別な形として通す — 曲線の道具を 1 本に保つ
         let control = SIMD2(cx, cy)
@@ -155,7 +155,7 @@ extension Canvas {
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
+            warnVertexOutsideShapeOnce("curveVertex")
             return
         }
         curveGuides.append(SIMD2(x, y))
@@ -184,7 +184,7 @@ extension Canvas {
 
     public func beginContour() {
         guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
+            warnVertexOutsideShapeOnce("beginContour")
             return
         }
         holePoints = []
@@ -217,7 +217,7 @@ extension Canvas {
     // 置いた頂点を 1 つ、番号で選ぶ。
     public func index(_ number: Int) {
         guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
+            warnVertexOutsideShapeOnce("index")
             return
         }
         shapeIndices.append(number)
@@ -636,7 +636,9 @@ extension Canvas {
         _ position: SIMD3<Float>, hasDepth: Bool, uv: SIMD2<Float>? = nil,
         isCurveStep: Bool = false
     ) {
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce() }
+        // 形の外でここまで来るのは `vertex` の 4 つの形だけである。曲線の刻みの点
+        // (`appendShapePoint`) は、呼んだ関数が自分の入口で形の外を受けてから来る
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("vertex") }
         // 数でない座標は形を壊すだけなので置かない ([ADR-0020] 決定 5)
         guard position.x.isFinite, position.y.isFinite, position.z.isFinite else {
             return warnBadVertexOnce()
@@ -676,15 +678,24 @@ extension Canvas {
             + m2 * (t3 - t2)
     }
 
-    private func warnVertexOutsideShapeOnce() {
+    /// `beginShape()` の外で頂点の仲間を呼んだことを、初回だけ知らせる。
+    ///
+    /// **文面は呼んだ関数の名前を名乗る** ([#1498])。入口は `vertex` の 4 つの形・
+    /// ``bezierVertex(_:_:_:_:_:_:)``・``quadraticVertex(_:_:_:_:)``・``curveVertex(_:_:)``・
+    /// ``beginContour()``・``index(_:)`` で、事情は 1 つなので鍵を共有し、文面には名前だけを
+    /// 入れる (``warnBadSize(_:)`` と同じ形)。直す前はどの入口も `vertex():` を名乗り、書き手は
+    /// 呼んでいない `vertex()` を探しに行くことになっていた。
+    ///
+    /// [#1498]: https://github.com/mokume-metal/mokume/issues/1498
+    private func warnVertexOutsideShapeOnce(_ name: String) {
         warnOnce(
             .vertexOutsideShape,
-            "vertex(): call this between beginShape() and endShape(). This call does nothing")
+            "\(name)(): call this between beginShape() and endShape(). This call does nothing")
     }
 
     /// 形の中で手前に点が無いまま曲線を続けようとしたことを、初回だけ知らせる ([#1485])。
     ///
-    /// **形の外の注意 (``warnVertexOutsideShapeOnce()``) とは言うことが違う。** 呼んだ場所は
+    /// **形の外の注意 (``warnVertexOutsideShapeOnce(_:)``) とは言うことが違う。** 呼んだ場所は
     /// 既に `beginShape()` と `endShape()` の間なので、間で呼べと言っても直す先を指さない。
     /// 穴の最初もこちらに当たる (穴は外周の点から始めない・``lastShapePoint``)。
     ///

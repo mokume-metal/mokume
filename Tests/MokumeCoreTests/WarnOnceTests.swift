@@ -207,10 +207,58 @@ struct CanvasWarningTests {
     }
 }
 
-/// 形の外で頂点の仲間を呼んだときの原文 (`Canvas+Vertices.swift`)。**#1485 で動かさない
-/// と決めた側**なので、ここに写して変わっていないことを見る。
-private let vertexOutsideShape =
-    "vertex(): call this between beginShape() and endShape(). This call does nothing"
+/// `beginShape()` の外で呼べる、頂点の仲間の入口。`vertex` は 4 つの形を別々に数える。
+enum OutsideShapeCall: CaseIterable {
+    case vertex
+    case vertexWithDepth
+    case vertexWithUV
+    case vertexWithDepthAndUV
+    case bezierVertex
+    case quadraticVertex
+    case curveVertex
+    case beginContour
+    case index
+
+    /// 形の中で呼べば、点を置くか・穴を始めるか・番号を積む呼び出し。
+    func call(on canvas: Canvas) {
+        switch self {
+        case .vertex: canvas.vertex(4, 4)
+        case .vertexWithDepth: canvas.vertex(4, 4, 1)
+        case .vertexWithUV: canvas.vertex(4, 4, 0.5, 0.5)
+        case .vertexWithDepthAndUV: canvas.vertex(4, 4, 1, 0.5, 0.5)
+        case .bezierVertex: canvas.bezierVertex(4, 12, 8, 14, 12, 12)
+        case .quadraticVertex: canvas.quadraticVertex(6, 14, 12, 12)
+        case .curveVertex: canvas.curveVertex(4, 4)
+        case .beginContour: canvas.beginContour()
+        case .index: canvas.index(0)
+        }
+    }
+
+    /// 形の外で呼んだときの原文 (`Canvas+Vertices.swift`)。**呼んだ関数の名前が入り、理由の
+    /// 部分は入口によらない** ([#1498])。直す前はどの入口も `vertex():` を名乗っていた。
+    ///
+    /// `CurveContinuation/notice` と同じく、文の骨組みから組み立てず全文を写す。`vertex` の
+    /// 文面は #1498 の前から変えていない側で、4 つの形が同じ原文を持つ。
+    ///
+    /// [#1498]: https://github.com/mokume-metal/mokume/issues/1498
+    var notice: String {
+        switch self {
+        case .vertex, .vertexWithDepth, .vertexWithUV, .vertexWithDepthAndUV:
+            "vertex(): call this between beginShape() and endShape(). This call does nothing"
+        case .bezierVertex:
+            "bezierVertex(): call this between beginShape() and endShape(). This call does nothing"
+        case .quadraticVertex:
+            "quadraticVertex(): call this between beginShape() and endShape(). This call does "
+                + "nothing"
+        case .curveVertex:
+            "curveVertex(): call this between beginShape() and endShape(). This call does nothing"
+        case .beginContour:
+            "beginContour(): call this between beginShape() and endShape(). This call does nothing"
+        case .index:
+            "index(): call this between beginShape() and endShape(). This call does nothing"
+        }
+    }
+}
 
 /// 手前の点から曲線を続ける 2 つの入口。
 enum CurveContinuation: CaseIterable {
@@ -238,6 +286,15 @@ enum CurveContinuation: CaseIterable {
             "quadraticVertex(): a curve continues from the last point placed, and there is no "
                 + "point yet in this shape or beginContour() hole, so this call does nothing. "
                 + "Place a vertex() first"
+        }
+    }
+
+    /// 形の外で呼んだときの原文。形の外の入口の一覧 (``OutsideShapeCall``) から引き、写しを
+    /// 2 つ持たない。
+    var outsideNotice: String {
+        switch self {
+        case .bezier: OutsideShapeCall.bezierVertex.notice
+        case .quadratic: OutsideShapeCall.quadraticVertex.notice
         }
     }
 }
@@ -299,8 +356,10 @@ struct CurveWithoutStartWarningTests {
         #expect(placedInHole == 0, "穴の最初の \(curve) が穴に点を置いた")
     }
 
+    /// 文面は #1498 で呼んだ関数の名前を名乗るようになった。ここが見るのは、形の外では
+    /// 手前の点の注意ではなく形の外の注意のほうを言うことである。
     @Test(
-        "形の外で呼べば、これまでどおり形の外の注意を言い、点を置かない",
+        "形の外で呼べば、形の外の注意を言い、点を置かない",
         arguments: CurveContinuation.allCases)
     func keepsTheOutsideNoticeOutsideAShape(_ curve: CurveContinuation) throws {
         let canvas = try makeCanvas()
@@ -309,7 +368,7 @@ struct CurveWithoutStartWarningTests {
             curve.call(on: canvas)
             placed = canvas.shapePoints.count
         }
-        #expect(canvas.warnings.message(for: .vertexOutsideShape) == vertexOutsideShape)
+        #expect(canvas.warnings.message(for: .vertexOutsideShape) == curve.outsideNotice)
         #expect(!canvas.warnings.hasWarned(.curveWithoutStart), "形の外なのに、手前の点の注意を言った")
         #expect(placed == 0, "形の外なのに点を置いた")
     }
@@ -333,7 +392,9 @@ struct CurveWithoutStartWarningTests {
                 callOutside()
             }
         }
-        #expect(canvas.warnings.message(for: .vertexOutsideShape) == vertexOutsideShape)
+        #expect(
+            canvas.warnings.message(for: .vertexOutsideShape)
+                == CurveContinuation.bezier.outsideNotice)
         #expect(
             canvas.warnings.message(for: .curveWithoutStart) == CurveContinuation.bezier.notice)
     }
@@ -351,5 +412,65 @@ struct CurveWithoutStartWarningTests {
         }
         #expect(
             canvas.warnings.message(for: .curveWithoutStart) == CurveContinuation.quadratic.notice)
+    }
+}
+
+/// 形の外で頂点の仲間を呼んだときの注意 ([#1498])。GPU を要する。
+///
+/// 直す前は、どの入口で呼んでも `vertex(): call this between beginShape() and endShape()…`
+/// を言っていた。理由は正しいが名乗る関数が違うので、書き手は呼んでいない `vertex()` を
+/// 探しに行ってしまう。**何もしない振る舞いは直す前から約束どおり**で、直したのは注意が
+/// 名乗る関数の名前だけである。鍵は入口のすべてで共有したまま動かさない。
+///
+/// [#1498]: https://github.com/mokume-metal/mokume/issues/1498
+@Suite(
+    "形の外で呼んだ頂点の仲間の注意",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct VertexOutsideShapeWarningTests {
+    private func makeCanvas() throws -> Canvas {
+        try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+    }
+
+    @Test(
+        "形の外で呼べば、呼んだ関数の名前で注意を言い、何もしない",
+        arguments: OutsideShapeCall.allCases)
+    func namesTheCallOutsideAShape(_ call: OutsideShapeCall) throws {
+        let canvas = try makeCanvas()
+        var points: Int?
+        var indices: Int?
+        var holeStarted: Bool?
+        var guides: Int?
+        var building: Bool?
+        try canvas.draw {
+            call.call(on: canvas)
+            points = canvas.shapePoints.count
+            indices = canvas.shapeIndices.count
+            holeStarted = canvas.holePoints != nil
+            guides = canvas.curveGuides.count
+            building = canvas.isBuildingShape
+        }
+        #expect(canvas.warnings.message(for: .vertexOutsideShape) == call.notice)
+        #expect(!canvas.warnings.hasWarned(.curveWithoutStart), "形の外なのに、手前の点の注意を言った")
+        #expect(points == 0, "形の外の \(call) が点を置いた")
+        #expect(indices == 0, "形の外の \(call) が番号を積んだ")
+        #expect(holeStarted == false, "形の外の \(call) が穴を始めた")
+        #expect(guides == 0, "形の外の \(call) が通過点を溜めた")
+        #expect(building == false, "形の外の \(call) が形を始めた")
+    }
+
+    /// 鍵は入口のすべてで 1 つ。**入口ごとに文面が変わる**ので、2 度目も言っていれば控えの
+    /// 文面が後から呼んだ関数の名前に入れ替わる (`badMaterial` の検査と同じ見方)。
+    @Test("入口が違っても、2 度目からは黙る")
+    func staysSilentTheSecondTimeEvenFromAnotherEntrance() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            OutsideShapeCall.index.call(on: canvas)
+            OutsideShapeCall.vertex.call(on: canvas)
+        }
+        #expect(
+            canvas.warnings.message(for: .vertexOutsideShape) == OutsideShapeCall.index.notice)
     }
 }
