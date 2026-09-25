@@ -46,6 +46,9 @@ extension Sketch {
     /// と書くと、``noiseSeed(_:)`` で決めた同じ種の同じ揺らぎが出る — 面と立体で
     /// 同じ模様を出すのに、揺らぎを 2 つ別々に持たなくてよい。
     ///
+    /// 断片では**傾き**も引ける (`mokume_noiseGradient(in, p)`)。揺らぎを高さとみた面の
+    /// 向きを、隣を引いて差を取らずに作れる。傾きは断片の側にだけあり、ここには無い。
+    ///
     /// 座標として扱えるのは ±1e6 くらいまで。それを超えると模様は破綻するが、
     /// 落ちはしない (数でない座標には 0 が返る)。
     public func noise(_ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0) -> Float {

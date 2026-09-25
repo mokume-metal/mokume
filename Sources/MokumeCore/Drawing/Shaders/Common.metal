@@ -396,6 +396,12 @@ struct Fragment {
 // 二重管理を許すのは ADR-0001 原則 9 に反するので、**食い違いは機械が見る** —
 // NoiseParityTests が代表点で両者を突き合わせ、ずれたら赤くなる。ここを触ったら
 // 向こうも触ることになる。
+//
+// **傾き (`mokume_noiseGradient`) は断片の側にだけあり、`ValueNoise` に対応するものは
+// 無い。** 傾きを要る作品は断片の中でしか使っておらず、CPU で傾きを引く作品はまだ
+// 無いので、想定だけの口を先回りで作らない (ADR-0001 原則 4・#1141)。揃えている
+// 約束は値のほうで、値の経路はここでも 1 本のままである。傾きがその値の傾きになって
+// いることは、NoiseGradientTests が CPU の `noise()` の差分と突き合わせて見る。
 
 /// 格子点の値を作る混ぜ合わせ。**Swift の `ValueNoise.hash` と 1 行ずつ対応する。**
 static inline uint mokume_noiseHash(int x, int y, int z, uint seed) {
@@ -471,6 +477,84 @@ static inline float mokume_noise(Fragment f, float2 p) {
 
 static inline float mokume_noise(Fragment f, float x) {
     return mokume_noise(f, float3(x, 0.0, 0.0));
+}
+
+/// 1 枚ぶんの揺らぎ (`mokume_noiseLayer`) の傾き。**同じ格子点を引き、繋ぎの重みを
+/// 微分したもの**で、値の側の式は触らずに横へ並べてある。
+static inline float3 mokume_noiseLayerGradient(float3 p, uint seed) {
+    // 切り方は値と同じ。**端は整数なので、外に張り付いた軸は格子の上に乗り、下の
+    // 繋ぎの重みの傾きが 0 になる** — 値が動かない所では傾きも 0 である
+    float3 c = clamp(p, -1000000.0, 1000000.0);
+    float3 i = floor(c);
+    float3 f = c - i;
+    float3 t = f * f * (3.0 - 2.0 * f);
+    // 繋ぎの重み (3t² − 2t³) の傾き。格子の上 (f = 0, 1) でちょうど 0 になる
+    float3 dt = 6.0 * f * (1.0 - f);
+
+    int x0 = int(i.x), y0 = int(i.y), z0 = int(i.z);
+    int x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
+
+    float c000 = mokume_noiseCorner(x0, y0, z0, seed);
+    float c100 = mokume_noiseCorner(x1, y0, z0, seed);
+    float c010 = mokume_noiseCorner(x0, y1, z0, seed);
+    float c110 = mokume_noiseCorner(x1, y1, z0, seed);
+    float c001 = mokume_noiseCorner(x0, y0, z1, seed);
+    float c101 = mokume_noiseCorner(x1, y0, z1, seed);
+    float c011 = mokume_noiseCorner(x0, y1, z1, seed);
+    float c111 = mokume_noiseCorner(x1, y1, z1, seed);
+
+    // 軸ごとに、その軸に沿った格子点の差を、残りの 2 軸の重みで混ぜる
+    float dx = mix(mix(c100 - c000, c110 - c010, t.y), mix(c101 - c001, c111 - c011, t.y), t.z);
+    float dy = mix(mix(c010 - c000, c110 - c100, t.x), mix(c011 - c001, c111 - c101, t.x), t.z);
+    float dz = mix(mix(c001 - c000, c101 - c100, t.x), mix(c011 - c010, c111 - c110, t.x), t.y);
+    return float3(dx, dy, dz) * dt;
+}
+
+/// その座標での揺らぎの傾き — `mokume_noise(f, p)` を p の各軸で微分したもの
+/// (∂/∂x, ∂/∂y, ∂/∂z)。渡した座標と同じ次元で返る。
+///
+/// 隣を引いて差を取るのと違い、**格子の繋ぎ方を閉じた形で微分する**ので、隣り合う
+/// 画素で傾きが階段にならない。種・重ねる枚数・弱まりは値と同じものが効き、値と
+/// 同じ合計で割る — 返るのは `mokume_noise` が返す値そのものの傾きである。
+///
+/// ```metal
+/// float4 paint(Fragment in, Values values) {
+///     // 揺らぎを高さとみた面を、左上からの光で照らす
+///     float2 slope = mokume_noiseGradient(in, in.place * 8.0);
+///     float3 normal = normalize(float3(-slope * 0.6, 1.0));
+///     float lit = max(dot(normal, normalize(float3(-1.0, -1.0, 1.0))), 0.0);
+///     return float4(lit, lit, lit, 1.0);
+/// }
+/// ```
+///
+/// **傾きは渡した座標あたり**である。上の例なら、面の位置 (`in.place`) あたりの傾きは
+/// 返った値の 8 倍になる。値と傾きの両方が要るなら `mokume_noise` と別々に呼ぶ
+/// (格子を 2 度引く)。
+static inline float3 mokume_noiseGradient(Fragment f, float3 p) {
+    // 枚の重ね方 (種のずらし方・弱まり・倍率) は `mokume_noise` と同じ。食い違うと
+    // 値の傾きではなくなり、NoiseGradientTests が赤くなる
+    float3 sum = 0.0;
+    float total = 0.0;
+    float amplitude = 1.0;
+    float frequency = 1.0;
+    uint octaves = max(f.noiseOctaves, 1u);
+    for (uint octave = 0; octave < octaves; octave++) {
+        uint layerSeed = f.noiseSeed + octave * 0x9E3779B1u;
+        // 倍率を掛けた座標で引いているので、傾きにも倍率が掛かる
+        sum += mokume_noiseLayerGradient(p * frequency, layerSeed) * (amplitude * frequency);
+        total += amplitude;
+        amplitude *= f.noiseFalloff;
+        frequency *= 2.0;
+    }
+    return total > 0.0 ? sum / total : float3(0.0);
+}
+
+static inline float2 mokume_noiseGradient(Fragment f, float2 p) {
+    return mokume_noiseGradient(f, float3(p, 0.0)).xy;
+}
+
+static inline float mokume_noiseGradient(Fragment f, float x) {
+    return mokume_noiseGradient(f, float3(x, 0.0, 0.0)).x;
 }
 
 /// 出した色を下地と混ぜる。**通るのは 8 種だけ** (`kAdd` … `kScreen`)。
