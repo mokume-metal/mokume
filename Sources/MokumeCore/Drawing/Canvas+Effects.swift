@@ -16,8 +16,23 @@ import simd
 // [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 extension Canvas {
     /// このフレームにかける効果の並びを決める。
+    ///
+    /// **受け口で検める** ([#1544])。数でない値・無限を持つ効果はその 1 つだけを外して
+    /// 初回だけ言い、並びの他の効果は掛ける。範囲を決めている数は端へ締める
+    /// (`Effect.accepted`)。
+    ///
+    /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
     public func effects(_ effects: [Effect]) {
-        pendingEffects = effects
+        pendingEffects = effects.compactMap { effect in
+            guard let accepted = effect.accepted else {
+                warnOnce(
+                    .badEffect,
+                    "effects(): the \(effect.name) effect held a value that is not a number, or an "
+                        + "infinite one, so it was not applied")
+                return nil
+            }
+            return accepted
+        }
     }
 
     /// 文字列から効果を作る。

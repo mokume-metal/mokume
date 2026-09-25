@@ -15,6 +15,14 @@ import simd
 /// - 増減を表す数 (``adjust(brightness:contrast:saturation:)``) は **0 が無効**で、
 ///   正で増え負で減る
 ///
+/// ## 受け取れない数
+///
+/// - **数でない値 (NaN)・無限を 1 つでも持つ効果は掛けない。** 初回だけ警告し、並びの
+///   他の効果はそのまま掛ける (受け取れば、フレームの全画素が数でない値になる)
+/// - **`amount` は 0…1 の外なら端へ締める。** 1 を越えれば 1 と同じ絵で、負なら効かない
+/// - `radius` は 131072 画素 (面の辺の上限の 8 倍) まで。それより大きくしても絵は
+///   変わらない
+///
 /// **散文の約束にしていない。** 全部の組み込みの効果について「無効の値なら絵が
 /// 1 ビットも変わらない」を検査が見ている。
 public enum Effect {
@@ -130,6 +138,90 @@ public enum Effect {
     ) -> (SIMD4<Float>, SIMD4<Float>) {
         (SIMD4(kind.value, p0, p1, p2), SIMD4(p3, 0, 0, 0))
     }
+}
+
+// MARK: - 受け口で検める (#1544)
+
+extension Effect {
+    /// 受け取れる形にした効果。**数でない値・無限を 1 つでも持つなら `nil`** で、その効果は
+    /// 掛けない ([#1544])。
+    ///
+    /// 効果は毎フレーム呼ばれる口なので、落とさずに安全な側へ倒す ([ADR-0020] 決定 5)。
+    /// 検めないと、NaN 1 つがフレームの全画素を NaN にする — 断片の「0 以下なら何もしない」は
+    /// NaN を素通しし、ぼかしは 1 画素を読むたびに周りへ広げる。
+    ///
+    /// 数えられる値は、説明が決めている範囲へ締める。
+    ///
+    /// - `amount` は 0…1。1 を越えた値は 1 と同じ絵になる (負の値は、締める前から 0 と同じ
+    ///   く効かない)。越えたまま通すと、反転や周辺減光が負の光を作る
+    /// - `radius` は ``maxRadius`` まで。締めても絵は変わらない (そちらの説明)
+    /// - `threshold` と ``adjust(brightness:contrast:saturation:)`` の 3 つは範囲を決めて
+    ///   いないので、締めない
+    ///
+    /// **締めるときは言わない** (#1478 の不透明度と同じ)。説明どおりの扱いで、失われる
+    /// 意図が無い。
+    ///
+    /// 利用者の効果 (``custom(_:)``) は数を持たないので、そのまま通す。
+    ///
+    /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    var accepted: Effect? {
+        switch self {
+        case .blur(let radius):
+            guard radius.isFinite else { return nil }
+            return .blur(radius: Self.clampRadius(radius))
+        case .bloom(let amount, let threshold, let radius):
+            guard amount.isFinite, threshold.isFinite, radius.isFinite else { return nil }
+            return .bloom(
+                amount: Self.clampAmount(amount), threshold: threshold,
+                radius: Self.clampRadius(radius))
+        case .invert(let amount):
+            guard amount.isFinite else { return nil }
+            return .invert(amount: Self.clampAmount(amount))
+        case .monochrome(let amount):
+            guard amount.isFinite else { return nil }
+            return .monochrome(amount: Self.clampAmount(amount))
+        case .vignette(let amount):
+            guard amount.isFinite else { return nil }
+            return .vignette(amount: Self.clampAmount(amount))
+        case .fringe(let amount):
+            guard amount.isFinite else { return nil }
+            return .fringe(amount: Self.clampAmount(amount))
+        case .adjust(let brightness, let contrast, let saturation):
+            guard brightness.isFinite, contrast.isFinite, saturation.isFinite else { return nil }
+            return self
+        case .custom:
+            return self
+        }
+    }
+
+    /// 半径の上限 (画素)。面の辺の上限 (``RenderDevice/maxTextureSide``) の 8 倍。
+    ///
+    /// 半径がこれを越えると、どの大きさの面でも、ぼかしの 17 タップのうち中心以外は
+    /// すべて面の外に落ちる (面の外は縁の画素を読む)。だから**締めても絵は変わらない** —
+    /// 160×160 と 1000×37 の面で、面の長辺の 8 倍・131072・1e19 の絵がバイトで同じことを
+    /// 確かめてある。締めないと、1e20 を越えたあたりで断片の釣鐘の幅の 2 乗が float の上限を
+    /// 越え、全画素が NaN になる (#1544)。
+    static let maxRadius = Float(RenderDevice.maxTextureSide) * 8
+
+    /// 効果の名前。警告の文面に入る。
+    var name: String {
+        switch self {
+        case .blur: "blur"
+        case .bloom: "bloom"
+        case .invert: "invert"
+        case .monochrome: "monochrome"
+        case .vignette: "vignette"
+        case .fringe: "fringe"
+        case .adjust: "adjust"
+        case .custom: "custom"
+        }
+    }
+
+    private static func clampAmount(_ amount: Float) -> Float { min(max(amount, 0), 1) }
+
+    /// 負の半径は締めない。断片が「0 以下なら何もしない」で扱う (いまと同じ絵)。
+    private static func clampRadius(_ radius: Float) -> Float { min(radius, maxRadius) }
 }
 
 /// 効果を 1 回通すぶん。
