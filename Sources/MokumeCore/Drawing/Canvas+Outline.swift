@@ -44,7 +44,8 @@ extension Canvas {
     ///     空ならどの点も角
     ///   - band: 添字 2 つを結ぶ帯を置く
     ///   - disc: 添字の点に円板を置く (丸い端点と丸い角・曲線の刻みの継ぎ目)
-    ///   - square: 添字の点に正方形を置く (四角い端点と削いだ角)
+    ///   - square: 添字の点に正方形を置く (四角い端点と、丸めない角)。矩形の削いだ角は、
+    ///     平面の呼び出し側がここで削いだ形に差し替える (`strokeOutline`)
     func strokeRing(
         count: Int, isClosed: Bool, curveSteps: [Bool] = [],
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void
@@ -126,8 +127,10 @@ extension Canvas {
         case .round:
             disc(index)
         case .bevel, .miter:
-            // 削ぐ形は正方形の一部で近似する。尖らせる形は鋭角で極端に伸びるため、
-            // 限界を持たない実装では削ぐ形へ倒す (限界の設計は輪郭が育ってから)
+            // 任意多角形の折れ目は、どちらも正方形で埋める。尖らせる形は鋭角で極端に
+            // 伸びるため、限界を持たない実装では正方形へ倒す (限界の設計は輪郭が育ってから)。
+            // 矩形の直角の角だけは、`bevel` なら呼び出し側 (`strokeOutline`) がこの正方形を
+            // 45° で削いだ形に差し替える (#1506)
             square(index)
         }
     }
@@ -152,15 +155,25 @@ extension Canvas {
 extension Canvas {
 
     /// 周を太さのある帯でなぞる。
+    ///
+    /// **矩形の直角の角は、`bevel` なら削いだ角で埋める** (#1506)。距離関数の経路と同じ
+    /// 線で削ぐので、`shader()` や `texture()` を足して三角形の経路へ落ちても角の形が
+    /// 変わらない。閉じた周の `square` は折れ目からしか呼ばれないので、端の形には及ばない。
     func strokeOutline(_ outline: Outline) {
         let half = style.strokeWeight / 2
         let points = outline.points
+        let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
         let start = vertices.count
         strokeRing(
             count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
             band: { appendBand(points[$0], points[$1], half: half) },
             disc: { appendDisc(at: points[$0], half: half) },
-            square: { appendSquare(at: points[$0], half: half) })
+            square: { index in
+                guard index < chamfers.count else {
+                    return appendSquare(at: points[index], half: half)
+                }
+                appendChamferedCorner(at: points[index], outward: chamfers[index], half: half)
+            })
         // 記録の間は寄せられないので、積んだ区間を覚える (`recordedStrokeRanges`)
         if recordingShape, vertices.count > start {
             recordedStrokeRanges.append(start..<vertices.count)
@@ -213,7 +226,7 @@ extension Canvas {
         appendTriangle(hub, previous, first, color: style.stroke)
     }
 
-    /// 正方形を置く (四角い端点と削いだ角)。
+    /// 正方形を置く (四角い端点と、任意多角形の折れ目・矩形の尖らせた角)。
     private func appendSquare(at center: SIMD2<Float>, half: Float) {
         let a = strokePoint(x: center.x - half, y: center.y - half)
         let b = strokePoint(x: center.x + half, y: center.y - half)
@@ -221,5 +234,32 @@ extension Canvas {
         let d = strokePoint(x: center.x - half, y: center.y + half)
         appendTriangle(a, b, c, color: style.stroke)
         appendTriangle(a, c, d, color: style.stroke)
+    }
+
+    /// 矩形の直角の角を、45° で削いで埋める (#1506)。
+    ///
+    /// 削ぐ線は角から太さの半分だけ離れた所を通り、`outward · (p − corner) = √2 · half`
+    /// で表せる。距離関数の経路 (`Shapes.metal` の `kFormJoinBevel`) と同じ線である。
+    ///
+    /// **埋めるのは角の外側の 4 分の 1 だけ** — 角から外向きに `half` の正方形を、削ぐ線で
+    /// 落とした五角形。残りは両側の帯が覆うので、帯と合わせた和は距離関数の経路の
+    /// 八角形にちょうど一致する。正方形全体を削ぐと、辺が太さの (2 − √2) / 2 倍より短い
+    /// 矩形で、内側の半分が向かいの角の削ぐ線の外へはみ出す。
+    ///
+    /// - Parameter outward: 角の外向きの対角 (各成分 ±1)
+    private func appendChamferedCorner(
+        at corner: SIMD2<Float>, outward: SIMD2<Float>, half: Float
+    ) {
+        let cut = (Float(2).squareRoot() - 1) * half
+        let hub = strokePoint(x: corner.x, y: corner.y)
+        let rim = [
+            SIMD2(outward.x * half, 0),
+            SIMD2(outward.x * half, outward.y * cut),
+            SIMD2(outward.x * cut, outward.y * half),
+            SIMD2(0, outward.y * half),
+        ].map { strokePoint(x: corner.x + $0.x, y: corner.y + $0.y) }
+        for index in 0..<(rim.count - 1) {
+            appendTriangle(hub, rim[index], rim[index + 1], color: style.stroke)
+        }
     }
 }

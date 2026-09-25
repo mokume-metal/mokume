@@ -26,11 +26,15 @@ extension Canvas {
         }
         // 周は**形自身の座標**で作り、左上の角を置き場所として渡す。畳まないときは
         // 角を足し戻すだけなので、絵は 1 ビットも変わらない (足す順が入れ替わるだけ)
+        //
+        // 4 つの角は直角なので、外向きの対角を添える。`bevel` の角を距離関数の経路と
+        // 同じ線で削ぐのに使う (#1506)
         draw(folding: .rect(width: w, height: h), at: SIMD2(box.x, box.y)) {
             Outline(
                 points: [
                     SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
-                ], isClosed: true)
+                ], isClosed: true,
+                cornerDiagonals: [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)])
         }
     }
 
