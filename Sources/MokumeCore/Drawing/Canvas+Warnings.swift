@@ -113,11 +113,36 @@ extension Canvas {
         ///
         /// 入口は ``vertex(_:_:)`` (4 つの形)・``bezierVertex(_:_:_:_:_:_:)``・
         /// ``quadraticVertex(_:_:_:_:)``・``curveVertex(_:_:)``・``beginContour()``・
-        /// ``index(_:)`` の 6 つで、事情は 1 つなので鍵を共有する。文面には呼んだ関数の名前が
-        /// 入る。
+        /// ``endContour()``・``normal(_:_:_:)``・``index(_:)`` の 8 つで、事情は 1 つなので鍵を
+        /// 共有する。文面には呼んだ関数の名前が入る。``endContour()`` と ``normal(_:_:_:)``
+        /// は #1520 で加わった — 直す前は、形の外では注意なしで黙っていた。
         ///
         /// [#1498]: https://github.com/mokume-metal/mokume/issues/1498
         case vertexOutsideShape
+        /// 形の始まりが無いまま ``endShape(_:)`` を呼んだ ([#1520])。一度も
+        /// ``beginShape(_:)`` を呼んでいない場合と、二重に呼んだ場合の 2 つがここに来る。
+        ///
+        /// **``vertexOutsideShape`` とは鍵を分ける。** あちらの文面 (`beginShape()` と
+        /// `endShape()` の間で呼べ) は `endShape()` には直す先を指さない。対の終わりを
+        /// 始まり無しに呼んだことを別の鍵で言うのは、``notDrawing`` と同じ形である。
+        ///
+        /// [#1520]: https://github.com/mokume-metal/mokume/issues/1520
+        case shapeNotBegun
+        /// 形の中で、穴を開かずに ``endContour()`` を呼んだ ([#1528])。
+        ///
+        /// 形の外で呼んだときは ``vertexOutsideShape`` のほうを言う (直す先が
+        /// `beginShape()` で、こちらは `beginContour()`)。
+        ///
+        /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+        case contourNotBegun
+        /// 形の中で、向きにならない値 (数でない・無限・長さ 0) を ``normal(_:_:_:)`` に
+        /// 渡した ([#1528])。向きは「書かれていない」に倒す。
+        ///
+        /// ``badVertex`` とは鍵を分ける。あちらの文面は置かなかった頂点のことを言い、向きには
+        /// 当てはまらない。形の外で呼んだときは ``vertexOutsideShape`` のほうを言う。
+        ///
+        /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+        case badNormal
         /// 形の中で、手前に点が無いまま曲線を続けようとした ([#1485])。
         ///
         /// 入口は ``bezierVertex(_:_:_:_:_:_:)`` と ``quadraticVertex(_:_:_:_:)`` の 2 つで、
