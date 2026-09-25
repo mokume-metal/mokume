@@ -10,7 +10,7 @@ extension Canvas {
     /// 無視した」) は 7 つとも同型なので、片方だけ言い回しを直すと、同じ事情が口に
     /// よって違う説明になる。
     ///
-    /// **鍵は 7 つのまま分けてある** — 光の注意が視点の注意を黙らせないことを
+    /// **鍵は種類ごとに分けたままにしてある** — 光の注意が視点の注意を黙らせないことを
     /// `WarnOnceTests` が契約として見ている。ここが畳むのは文面だけである。
     ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
@@ -18,6 +18,7 @@ extension Canvas {
         case camera
         case transform
         case style
+        case clip
         case light
         case surroundings
         case shadow
@@ -31,6 +32,7 @@ extension Canvas {
             case .camera: .cameraOutsideFrame
             case .transform: .transformOutsideFrame
             case .style: .styleOutsideFrame
+            case .clip: .clipOutsideFrame
             case .light: .lightOutsideFrame
             case .surroundings: .surroundingsOutsideFrame
             case .shadow: .shadowOutsideFrame
@@ -40,7 +42,7 @@ extension Canvas {
             }
         }
 
-        /// 言う中身。**9 通を完全な文として持つ。**
+        /// 言う中身。**10 通を完全な文として持つ。**
         ///
         /// かつては `opening` +「初期化のときに」+ `pastVerb` + `subject` +「はどのフレーム
         /// にも属さないため、無視しました」の 3 スロットで組んでいた。**その形は語順と助詞に
@@ -60,6 +62,9 @@ extension Canvas {
             case .style:
                 "Pushing and popping style only works inside a frame. The style pushed during "
                     + "setup belongs to no frame, and was ignored"
+            case .clip:
+                "The clip is written again every frame, so call this from draw(). The clip "
+                    + "written during setup belongs to no frame, and was ignored"
             case .light:
                 "Lights are placed again every frame, so call this from draw(). The light "
                     + "placed during setup belongs to no frame, and was ignored"

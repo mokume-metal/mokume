@@ -307,6 +307,8 @@ struct LoopTests {
         var placeAt: (x: Float, y: Float) = (0, 0)
         /// 置いた四角の列を、コールバックの中で閉じるか (`blendMode(.add)` で閉じる)。
         var closesRunInCallback = false
+        /// 押したときに `clip(0, 0, 20, 40)` してから四角を置き、`noClip()` で閉じるか。
+        var clipsInCallback = false
         /// 押したときに読んだ `screenX(0, 0)` / `screenY(0, 0)` / 奥行きを渡す形の 2 つ。
         var seenScreen: [Float] = []
 
@@ -331,7 +333,9 @@ struct LoopTests {
             seenScreen = [screenX(0, 0), screenY(0, 0), screenX(0, 0, 0), screenY(0, 0, 0)]
             noStroke()
             fill(255, 0, 0)
+            if clipsInCallback { clip(0, 0, 20, 40) }
             rect(placeAt.x, placeAt.y, 10, 10)
+            if clipsInCallback { noClip() }
             if closesRunInCallback { blendMode(.add) }
             redraw()
         }
@@ -371,6 +375,18 @@ struct LoopTests {
         // 切り抜きは列を**閉じた時点**の値を列が持つ。閉じないまま次のフレームへ持ち越すと、
         // 次のフレームの頭で切り抜きが外れた後に閉じるので、直す前でも四角は出てしまう
         sketch.closesRunInCallback = true
+        let image = try pictureAfterPressing(sketch)
+
+        #expect(image[35, 10].red > 200)
+    }
+
+    @Test("止まっている間のコールバックで書いた切り抜きは効かない (#1505)")
+    func aClipWrittenWhileStoppedIsIgnored() throws {
+        let sketch = StoppedPlacement()
+        sketch.clipsInCallback = true
+        sketch.placeAt = (30, 5)
+        // `noClip()` が列を閉じるので、切り抜きが効いていれば四角は切り抜きを持ったまま
+        // 次のフレームで描かれ、(30, 5) からの四角は丸ごと消える
         let image = try pictureAfterPressing(sketch)
 
         #expect(image[35, 10].red > 200)

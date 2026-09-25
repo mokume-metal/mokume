@@ -89,6 +89,8 @@ extension Canvas {
         case transformOutsideFrame
         /// フレームの外でスタイルを積み降ろしした。
         case styleOutsideFrame
+        /// フレームの外で切り抜きを書いた。
+        case clipOutsideFrame
         /// 成り立たない視点・投影が渡された。**入口が 3 つある 1 つの事情** — 視点の口・
         /// 投影の口・`setCamera()` が持ち込む投影 ([#1495])。
         ///
