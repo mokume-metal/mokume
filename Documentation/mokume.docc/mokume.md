@@ -169,6 +169,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``color(_:_:_:_:)``
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
+- ``lerpColor(_:_:_:)``
 - ``red(_:)``
 - ``green(_:)``
 - ``blue(_:)``
@@ -415,6 +416,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``map(_:_:_:_:_:)``
 - ``lerp(_:_:_:)``
 - ``constrain(_:_:_:)``
+- ``norm(_:_:_:)``
+- ``smoothstep(_:_:_:)``
 
 ### GPU に計算させる
 
@@ -460,6 +463,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/pmouseY``
 - ``Sketch/isMousePressed``
 - ``Sketch/mouseButton``
+- ``MouseButton``
 - ``Sketch/scrollX``
 - ``Sketch/scrollY``
 - ``Sketch/dragX``
@@ -493,6 +497,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 観測へ差し出す
 
 - ``Sketch/expose(_:_:)-19rp8``
+- ``Sketch/measure(_:_:)``
 
 ### 数を渡す
 

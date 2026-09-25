@@ -244,7 +244,11 @@ final class PointerAndKeys: Sketch {
         noStroke()
         textSize(22)
         text("x \(Int(mouseX))   y \(Int(mouseY))   前 \(Int(pmouseX)), \(Int(pmouseY))", 24, 44)
-        text("押している \(isMousePressed ? "はい (釦 \(mouseButton))" : "いいえ")", 24, 76)
+        // 釦は名前で出す。**番号 (macOS では 1 が右・2 が中) を数のまま見せない** — 手本や
+        // ブラウザの番号とは並びが違い、読んだ数を写すと別の釦になる
+        text(
+            "押している \(isMousePressed ? "はい (\(mouseButton.map(Self.name(of:)) ?? "—"))" : "いいえ")",
+            24, 76)
         text("引きずった \(Int(dragX)), \(Int(dragY))", 24, 108)
         text(
             "スクロール \(String(format: "%.1f", scrollX)), \(String(format: "%.1f", scrollY))   大きさ \(Int(size))",
@@ -273,6 +277,16 @@ final class PointerAndKeys: Sketch {
             "押した点 \(pressed.count)   離した点 \(released.count)   クリック \(clicked.count)   "
                 + "引きずった線 \(dragged.count)   動いた \(movedCount)",
             24, height - 28)
+    }
+
+    /// 釦を、画面に出せる短い綴りにする。知らない釦 (戻る・進むなど) は番号で出す。
+    static func name(of button: MouseButton) -> String {
+        switch button {
+        case .left: "左の釦"
+        case .right: "右の釦"
+        case .center: "中の釦"
+        default: "釦 \(button.rawValue)"
+        }
     }
 
     /// 名前の付いたキーを、画面に出せる短い綴りにする。知らないキーは符号で出す。

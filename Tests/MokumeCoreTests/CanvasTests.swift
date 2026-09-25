@@ -649,7 +649,7 @@ struct CanvasTests {
     }
 
     @Test(
-        "どの混ぜ方でも、アルファ 0 の色は下地を変えない",
+        "置き換える (replace) 以外のどの混ぜ方でも、アルファ 0 の色は下地を変えない",
         arguments: BlendMode.allCases.filter { $0 != .replace })
     func fullyTransparentColorsNeverDisturbTheBackground(_ mode: BlendMode) throws {
         let base = LinearRGBA.display(red: 0.4, green: 0.3, blue: 0.2)
@@ -660,13 +660,98 @@ struct CanvasTests {
         #expect(painted == untouched, "\(mode) がアルファ 0 で下地を変えた")
     }
 
-    @Test("置き換える混ぜ方だけは下地を見ない")
-    func replaceIgnoresWhatIsUnderneath() throws {
-        let result = try blended(
-            mode: .replace,
-            base: .display(red: 1, green: 1, blue: 1),
-            top: .display(red: 0, green: 0, blue: 0, alpha: 0))
-        #expect(result.alpha == 0)  // 透明で置き換わる
+    // MARK: 置き換える混ぜ方の例外 (#1542)
+
+    /// 白い下地に `color` を置き換えで置き、真ん中の画素を作業空間の値 (線形・乗算済み) で返す。
+    ///
+    /// **置き換える列の断片は経路ごとに別である** — 基本図形 (`rect`) は
+    /// `mokume_formFragmentReplace`、三角形の経路 (`quad`) は `mokume_fragmentDirect` で描く
+    /// (一覧は `ShapePipeline.BlendStates` の doc)。片方だけがアルファ 0 を捨てるように
+    /// なっても気付けるよう、両方で置く。
+    private func replaced(with color: LinearRGBA, throughForms: Bool) throws -> LinearRGBA {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(white)
+            canvas.noStroke()
+            canvas.blendMode(.replace)
+            canvas.fill(color)
+            if throughForms {
+                canvas.rect(0, 0, 16, 16)
+            } else {
+                canvas.quad(0, 0, 16, 0, 16, 16, 0, 16)
+            }
+        }
+        return try canvas.target.readPixels()[8, 8]
+    }
+
+    /// **置き換える混ぜ方は、形が掛かる画素を置いた色でアルファごと置き換える。** アルファ 0
+    /// の色なら、その画素は透明になる — 「アルファ 0 の色は下地を変えない」の唯一の例外で、
+    /// 面の一部を透明にする手段でもある。
+    ///
+    /// 置く色は成分を持たせたアルファ 0 にする。乗算済みの 4 成分がすべて 0 になるので、
+    /// 白い下地 (1, 1, 1, 1) が 1 成分でも残れば落ちる。
+    @Test("置き換える混ぜ方は下地を見ず、アルファ 0 の色なら透明に置き換える", arguments: [true, false])
+    func replaceIgnoresWhatIsUnderneath(_ throughForms: Bool) throws {
+        let result = try replaced(
+            with: .display(red: 0.25, green: 0.55, blue: 1, alpha: 0), throughForms: throughForms)
+        #expect(
+            result == LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0),
+            "アルファ 0 の色で置き換えたのに、透明になっていない: \(result)")
+    }
+
+    /// **アルファ 0 とその 1 段上の間に継ぎ目が無い。** アルファ 1/255 の色で置き換えれば
+    /// ほぼ透明になり、下地 (アルファ 1) へは戻らない。アルファを 0 へ下げていく動きで、
+    /// 最後の 1 段だけ下地がいきなり現れる振る舞いを見張る。
+    @Test("置き換える混ぜ方で、アルファ 1/255 の色はほぼ透明に置き換わる", arguments: [true, false])
+    func replaceWithANearlyTransparentColorStaysNearlyTransparent(_ throughForms: Bool) throws {
+        let step: Float = 1 / 255
+        let result = try replaced(
+            with: .display(red: 0.25, green: 0.55, blue: 1, alpha: step), throughForms: throughForms)
+        #expect(
+            abs(result.alpha - step) <= step,
+            "アルファ 1/255 で置き換えた画素のアルファが \(result.alpha) になった")
+    }
+
+    /// **絵を置き換えで貼ると、絵の透けた画素がそのまま透明として写る。** 絵の α 0 の画素を
+    /// 数え、貼った結果で同じ位置が 1 つ残らず透明になっていることと、絵の外の下地が
+    /// 1 画素も透けないことを見る (絵を貼る列も三角形の経路の断片で描く)。
+    @Test("透けた所を持つ絵を置き換えで貼ると、絵の透けた画素がそのまま透明になる")
+    func replacingWithAPictureCopiesItsTransparentPixels() throws {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        let pad = try canvas.createGraphics(80, 80)
+        pad.beginDraw()
+        pad.noStroke()
+        pad.fill(white)
+        pad.circle(40, 40, 40)
+        pad.endDraw()
+        let picture = try pad.target.readPixels()
+        try canvas.draw {
+            canvas.background(red)
+            canvas.blendMode(.replace)
+            canvas.image(pad, 40, 40)
+        }
+        let placed = try canvas.target.readPixels()
+
+        let clear = LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
+        var clearInPicture = 0
+        var clearWhenPlaced = 0
+        for y in 0..<80 {
+            for x in 0..<80 where picture[x, y].alpha == 0 {
+                clearInPicture += 1
+                if placed[40 + x, 40 + y] == clear { clearWhenPlaced += 1 }
+            }
+        }
+        // 円の外の四隅が透けている (直径 40 の円を 80×80 の絵に描いた)
+        try #require(clearInPicture > 80 * 80 / 2)
+        #expect(clearWhenPlaced == clearInPicture, "絵の透けた画素のうち、貼った結果で透明でないものがある")
+
+        var seeThroughOutside = 0
+        for y in 0..<160 {
+            for x in 0..<160 where !(40..<120).contains(x) || !(40..<120).contains(y) {
+                if placed[x, y].alpha < 1 { seeThroughOutside += 1 }
+            }
+        }
+        #expect(seeThroughOutside == 0, "絵の外で下地が透けた")
     }
 
     @Test("掛ける混ぜ方は暗いほうへ寄る")
@@ -1165,6 +1250,25 @@ struct CanvasTests {
         }
     }
 
+    @Test("フレームの外で書いた切り抜きは、どの口でも警告して無視される (#1505)")
+    func clipsOutsideAFrameAreIgnored() throws {
+        // 切り抜きはシーンの記述で、フレームを越えない (ADR-0021 決定 4・寿命の表)。
+        // 形に焼き付かないので、形の組み立ての間もフレームの外に数える。注意は初回だけ
+        // 言うので、口ごとに新しい面を作る (`transformsOutsideAFrameAreIgnored` と同じ理由)
+        let mouths: [(String, (Canvas) -> Void)] = [
+            ("clip", { $0.clip(0, 0, 8, 8) }),
+            ("noClip", { $0.noClip() }),
+        ]
+        for (name, write) in mouths {
+            let canvas = try makeCanvas()
+            write(canvas)
+            #expect(
+                canvas.warnings.hasWarned(.clipOutsideFrame),
+                "\(name) がフレームの外で黙って捨てている")
+            #expect(canvas.style.clip == nil, "\(name) がフレームの外で効いている")
+        }
+    }
+
     @Test("初期化のときに変換を書いても、絵は変わらない")
     func transformsOutsideAFrameLeaveThePictureAlone() throws {
         // 警告を足したことで**絵まで変わっていない**ことを見る。フレームの外で書いた
@@ -1231,6 +1335,31 @@ struct CanvasTests {
         #expect(canvas.screenX(5, 5) == 5)
         #expect(canvas.screenY(5, 5) == 5)
         #expect(canvas.style.clip == nil)
+    }
+
+    @Test("光と周囲は、描き切った後のフレームの外へ残らない (#1504)")
+    func lightsAndSurroundingsDoNotOutliveTheFrame() throws {
+        let canvas = try makeCanvas()
+        canvas.beginDraw()
+        canvas.background(black)
+        canvas.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
+        canvas.surroundings(.sky)
+        canvas.box(10)
+        canvas.endDraw()
+
+        #expect(canvas.activeLights.isEmpty)
+        #expect(canvas.activeSurroundings == nil)
+
+        // フレームの外で置いて閉じた立体の列は、前のフレームの光も周囲も焼かない。
+        // 線は既定で引くので、塗りの列は `box()` の中で稜線の列に閉じられる
+        canvas.box(10)
+        canvas.blendMode(.add)
+        let solids = canvas.batches.filter { $0.source == .solid }
+        try #require(!solids.isEmpty)
+        for batch in solids {
+            #expect(batch.lightRange.isEmpty)
+            #expect(batch.surroundings.topAndPresence.w == 0)
+        }
     }
 
     // MARK: - 輪郭 (#234)
@@ -1361,10 +1490,74 @@ struct CanvasTests {
 
     @Test("削ぐ形は矩形の角を落とし、尖らせる形は残す")
     func bevelCutsTheCornerAndMiterKeepsIt() throws {
-        // 矩形の角は距離関数で描くので、3 つの折れ目の形が区別される (#752)。任意多角形の
-        // 折れ目はまだ正方形で埋める (StrokeJoin.miter の注記)
+        // 矩形の角は 3 つの折れ目の形が区別される。距離関数の経路は式で削ぎ (#752)、
+        // 三角形の経路も矩形の角だけは同じ線で削ぐ (#1506・下の
+        // `triangleRectCornersFollowTheJoin`)。任意多角形の折れ目はまだ正方形で埋める
+        // (StrokeJoin.miter の注記)
         #expect(try outerCornerOfBend(join: .bevel) == 0)
         #expect(try outerCornerOfBend(join: .miter) == 255)
+    }
+
+    /// 矩形を三角形の経路へ乗せる手立て。
+    nonisolated enum RectRoute: CaseIterable, CustomTestStringConvertible, Sendable {
+        /// 断片を付ける (`shader()`)。1 つだけなので畳まない
+        case shaded
+        /// 同じ矩形を断片付きで 2 つ重ねる。2 つ目で畳みの雛形が開く
+        case shadedFolded
+        /// 絵を貼って塗る (`texture()`)。輪郭と同居するので畳まない
+        case textured
+
+        var testDescription: String {
+            switch self {
+            case .shaded: "断片を付けた"
+            case .shadedFolded: "断片を付けて畳んだ"
+            case .textured: "絵を貼って塗る"
+            }
+        }
+    }
+
+    /// 三角形の経路の矩形の角も、距離関数の経路と同じ線で削ぐ (#1506)。形と探針は
+    /// `FormShapeTests.rectangleCornersFollowTheJoin` と同じで、削ぎ線は角から太さの半分だけ
+    /// 離れた所を通る 45° の線。かつては `bevel` でも `miter` と同じ正方形で角を埋め、
+    /// `shader()` / `texture()` を 1 行足しただけで矩形の角が尖っていた。
+    @Test("三角形の経路で描く矩形も、削ぐ形は角を 45° で落とし、尖らせる形は残す", arguments: RectRoute.allCases)
+    func triangleRectCornersFollowTheJoin(_ route: RectRoute) throws {
+        func corner(_ join: StrokeJoin) throws -> DisplayImage {
+            let canvas = try makeCanvas(width: 96, height: 96)
+            var failure: (any Error)?
+            try canvas.draw {
+                canvas.background(black)
+                canvas.stroke(white)
+                canvas.strokeWeight(12)
+                canvas.strokeJoin(join)
+                do {
+                    switch route {
+                    case .shaded, .shadedFolded:
+                        canvas.noFill()
+                        canvas.shader(try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }"))
+                    case .textured:
+                        // 絵の中身は問わない。塗りに絵が付いていることだけが経路を決める
+                        canvas.texture(try canvas.createImage(1, 1))
+                        canvas.fill(black)
+                    }
+                } catch { failure = error }
+                canvas.rect(20, 20, 40, 40)
+                if route == .shadedFolded { canvas.rect(20, 20, 40, 40) }
+            }
+            if let failure { throw failure }
+            return try pixels(of: canvas)
+        }
+        // 外縁は 14…66。角 (15, 15) は尖らせたときだけ塗られる
+        #expect(try corner(.miter)[15, 15].red == 255)
+        #expect(try corner(.bevel)[15, 15].red == 0, "削いだ角が尖っている")
+        // 削いだ角は 45° の直線。(19, 19) は削ぎ線の内側
+        #expect(try corner(.bevel)[19, 19].red == 255)
+        // 内縁はどちらの形でも直角 (帯が重なる)
+        for join in [StrokeJoin.miter, .bevel] {
+            let image = try corner(join)
+            #expect(image[27, 27].red == 0, "\(join): 内縁の角の内側が塗られている")
+            #expect(image[25, 25].red == 255, "\(join): 内縁の角が欠けている")
+        }
     }
 
     @Test("閉じた図形の輪郭に隙間が無い")

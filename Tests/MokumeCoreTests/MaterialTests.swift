@@ -230,6 +230,112 @@ struct MaterialTests {
         #expect(Int(glowing[darkest.x, darkest.y].red) > darkest.value + 60)
     }
 
+    // MARK: - 半透明の面の自発光 (#1548)
+
+    /// 160×160 の黒地に `lights()` と線なしで `scene` を描き、作業空間の値を返す。
+    ///
+    /// 自発光も塗りの不透明度のぶんだけ乗る — 色はアルファ乗算済みで扱い (ADR-0011
+    /// 決定 4)、アルファ 0 の色は下地を変えない (`BlendMode` の説明)。直す前は自発光だけが
+    /// 乗算済みの世界の外にあり、透明な面でもその色が満額で下地へ足されていた
+    private func translucentGlow(
+        background: (Canvas) -> Void = { $0.background(0) }, _ scene: (Canvas) -> Void
+    ) throws -> PixelBuffer {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        try canvas.draw {
+            background(canvas)
+            canvas.lights()
+            canvas.noStroke()
+            scene(canvas)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// `emissive(255, 0, 0)` の赤 (作業空間の線形の値)。
+    private let glowRed: Float = 0.822
+
+    @Test(
+        "半透明の球の自発光は、塗りの不透明度に比例して乗る",
+        arguments: [0, 64, 128, 192, 255])
+    func emissiveScalesWithTheFillOpacity(alpha: Int) throws {
+        let image = try translucentGlow {
+            $0.emissive(255, 0, 0)
+            $0.fill(0, 0, 0, alpha)
+            $0.push()
+            $0.translate(80, 80, 0)
+            $0.sphere(40)
+            $0.pop()
+        }
+        let pixel = image[80, 80]
+        #expect(abs(pixel.red - glowRed * Float(alpha) / 255) < 0.01, "赤が \(pixel.red)")
+        if alpha == 0 {
+            // 置かないのと同じ (黒地のまま)
+            #expect(abs(pixel.red) < 0.005 && abs(pixel.green) < 0.005 && abs(pixel.blue) < 0.005)
+        }
+    }
+
+    @Test("透明な立体の自発光は下地を変えず、半透明なら下地が薄まるのと同じ割合で乗る")
+    func emissiveOnAGroundFollowsTheFillOpacity() throws {
+        func box(alpha: Int) throws -> LinearRGBA {
+            try translucentGlow(background: { $0.background(0, 0, 255) }) {
+                $0.emissive(255, 0, 0)
+                $0.fill(0, 0, 0, alpha)
+                $0.push()
+                $0.translate(80, 80, 0)
+                $0.rotateX(0.4)
+                $0.rotateY(0.5)
+                $0.box(60)
+                $0.pop()
+            }[80, 80]
+        }
+        let ground = try translucentGlow(background: { $0.background(0, 0, 255) }) { _ in }[80, 80]
+        let clear = try box(alpha: 0)
+        #expect(abs(clear.red - ground.red) < 0.005)
+        #expect(abs(clear.green - ground.green) < 0.005)
+        #expect(abs(clear.blue - ground.blue) < 0.005)
+        #expect(abs(try box(alpha: 128).red - glowRed * 128 / 255) < 0.01)
+    }
+
+    @Test("半透明の面では、自発光も塗り × 光と同じだけ薄まる")
+    func emissiveThinsLikeTheLitPaint() throws {
+        func plane(alpha: Int) throws -> LinearRGBA {
+            let canvas = try makeCanvas(width: 160, height: 160)
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.directionalLight(128, 128, 128, 0, 0, -1)
+                canvas.emissive(128)
+                canvas.fill(255, 255, 255, alpha)
+                canvas.push()
+                canvas.translate(80, 80, 0)
+                canvas.plane(80, 80)
+                canvas.pop()
+            }
+            return try canvas.target.readPixels()[80, 80]
+        }
+        // 128 は線形で 0.216。塗り × 光 = 0.216、自発光 = 0.216 で、どちらも α 倍になる
+        let half = try plane(alpha: 128)
+        let clear = try plane(alpha: 0)
+        let opaque = try plane(alpha: 255)
+        for value in [half.red, half.green, half.blue] { #expect(abs(value - 0.217) < 0.01) }
+        for value in [clear.red, clear.green, clear.blue] { #expect(abs(value) < 0.005) }
+        for value in [opaque.red, opaque.green, opaque.blue] { #expect(abs(value - 0.432) < 0.005) }
+    }
+
+    @Test("保持した形でも、透明な立体の自発光は下地を変えない")
+    func emissiveOfAKeptShapeFollowsTheFillOpacity() throws {
+        let image = try translucentGlow { canvas in
+            let ball = canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(0, 0, 0, 0)
+                canvas.sphere(40)
+            }
+            canvas.emissive(255, 0, 0)
+            canvas.shape(ball, 80, 80)
+        }
+        let pixel = image[80, 80]
+        #expect(abs(pixel.red) < 0.005 && abs(pixel.green) < 0.005 && abs(pixel.blue) < 0.005)
+    }
+
     // MARK: - 寿命と積み方
 
     @Test("材質はフレームを越えない")

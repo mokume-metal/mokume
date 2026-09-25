@@ -20,8 +20,31 @@ extension Sketch {
     public var pmouseY: Float { Self.input.previousY }
     /// 押されているか。
     public var isMousePressed: Bool { Self.input.isMouseDown }
-    /// 最後に押された釦 (0 = 主釦)。
-    public var mouseButton: Int { Self.input.button }
+    /// 最後に押されたか離された釦。まだ何も押していなければ `nil`。
+    ///
+    /// <!-- example: 文脈 var marks: [Float] = [] -->
+    /// ```swift
+    /// func mouseReleased() {
+    ///     if mouseButton == .right { marks.removeAll() }
+    /// }
+    /// ```
+    ///
+    /// **押しても離しても入れ替わる。** ``mouseReleased()`` の中から「どの釦が離されたか」
+    /// を知る口はここしかない (``keyCode`` と同じ)。押していない間も最後に離した釦を指した
+    /// ままなので、いま押されているかは ``isMousePressed`` で見る。
+    ///
+    /// **手本と綴りは同じだが、数ではない** ([ADR-0034] 決定 1)。手本の `LEFT` / `RIGHT` /
+    /// `CENTER` は ``MouseButton/left`` / ``MouseButton/right`` / ``MouseButton/center`` と
+    /// 書く。Processing の定数は 37 / 39 / 3、ブラウザの番号は 0 / 2 / 1 で、どちらも
+    /// mokume が運ぶ macOS の番号 (0 = 左・1 = 右・2 = 中) とは合わない。**型が違うので、
+    /// 写した数の比較はコンパイルの時点で止まる** — 黙って別の釦になるより、そこで気付ける
+    /// ほうがよい。
+    ///
+    /// `switch` で分けるときも `case .left:` と書ける。まだ何も押していないときの `nil` は
+    /// `default` の枝へ落ちる。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    public var mouseButton: MouseButton? { Self.input.button }
     /// このフレームのスクロール量 (横)。
     ///
     /// **これはフレームの合計で、`draw()` から読むためのもの。** 出来事 1 件ぶんの量が

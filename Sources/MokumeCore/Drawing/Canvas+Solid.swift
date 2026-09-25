@@ -227,8 +227,10 @@ extension Canvas {
         }
 
         solidInstances.append(placement)
-        // 半透明の塗りが 1 つでも入ったら、この列は裏面を捨てられない (`Batch.cullMode`)
-        if style.fill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
+        // 裏面が絵に出うるスタイルで 1 つでも置いたら、この列は裏面を捨てられない
+        // (`Batch.cullMode`)。**置いたこの時点で記録する** — 列が閉じる時点のスタイルは、
+        // 置いた後で外した絵を知らない (#1564)
+        if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
     }
 
     /// 組み込みの形・読み込んだモデルの 1 点を頂点にする。
@@ -477,6 +479,10 @@ extension Canvas {
         // 端と折れ目の規則は平面と共有する (`strokeRing`)
         strokeRing(
             count: points.count, isClosed: isClosed, curveSteps: curveSteps,
+            endSquare: {
+                appendSolidSquare(
+                    at: points[$0], awayFrom: points[$1], shape: shapePoints[$0], half: half)
+            },
             band: {
                 appendSolidBand(
                     points[$0], points[$1],
@@ -507,6 +513,10 @@ extension Canvas {
         let half = style.strokeWeight / 2
         strokeNet(
             count: placed.count, edges: net.edges,
+            endSquare: {
+                appendSolidSquare(
+                    at: placed[$0], awayFrom: placed[$1], shape: net.points[$0], half: half)
+            },
             band: {
                 appendSolidBand(
                     placed[$0], placed[$1], shape: (net.points[$0], net.points[$1]), half: half)
@@ -556,13 +566,42 @@ extension Canvas {
         }
     }
 
-    /// 視線に正対する正方形を置く (四角い端点と削いだ角)。
+    /// 視線に正対し、画面の軸に沿った正方形を置く (向きの無い点の四角い端と、丸めない角)。
+    /// 線の端の正方形は線の向きに沿って置く (`appendSolidSquare(at:awayFrom:shape:half:)`)。
     private func appendSolidSquare(at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float) {
+        appendSolidSquare(at: center, right: viewRight, down: viewDown, shape: shape, half: half)
+    }
+
+    /// 視線に正対し、線の向きに沿った正方形を置く (出っ張らせる端 — [#1535])。
+    ///
+    /// 軸は帯 (`appendSolidBand`) と同じ横向き `cross(along, viewForward)` と、それに直交して
+    /// 視線に正対した向きで取る。帯と合わせて、画面で見て線を太さの半分だけ延ばした形に
+    /// なる。横向きが決まらない (線が視線に沿う・長さ 0) ときは、画面の軸に沿った正方形へ倒す。
+    ///
+    /// [#1535]: https://github.com/mokume-metal/mokume/issues/1535
+    private func appendSolidSquare(
+        at center: SIMD3<Float>, awayFrom from: SIMD3<Float>, shape: SIMD3<Float>, half: Float
+    ) {
+        let side = cross(center - from, viewForward)
+        guard length_squared(side) > 0 else {
+            return appendSolidSquare(at: center, shape: shape, half: half)
+        }
+        let right = normalize(side)
+        appendSolidSquare(
+            at: center, right: right, down: normalize(cross(viewForward, right)), shape: shape,
+            half: half)
+    }
+
+    /// 視線に正対する正方形を、`right` / `down` の 2 軸で張る。
+    private func appendSolidSquare(
+        at center: SIMD3<Float>, right: SIMD3<Float>, down: SIMD3<Float>, shape: SIMD3<Float>,
+        half: Float
+    ) {
         let radius = half * worldPerPixel(at: center)
-        let a = center + (-viewRight - viewDown) * radius
-        let b = center + (viewRight - viewDown) * radius
-        let c = center + (viewRight + viewDown) * radius
-        let d = center + (-viewRight + viewDown) * radius
+        let a = center + (-right - down) * radius
+        let b = center + (right - down) * radius
+        let c = center + (right + down) * radius
+        let d = center + (-right + down) * radius
         appendSolidStrokeTriangle(a, b, c, shape: (shape, shape, shape))
         appendSolidStrokeTriangle(a, c, d, shape: (shape, shape, shape))
     }

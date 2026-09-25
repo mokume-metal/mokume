@@ -6,13 +6,15 @@ import Testing
 
 @testable import MokumeCore
 
-/// 利用者が読む 9 通の文面を、**実装とは別の場所に写して突き合わせる**。
+/// 利用者が読む 10 通の文面を、**実装とは別の場所に写して突き合わせる**。
 ///
 /// 畳んだ拍子に変わっていないことをここで見る。実際に 2 度動いている — 7 本を 1 つの型へ
 /// 畳んだとき「頼んだ」が「頼んた」になり ([#947]・語幹だけを差し替えて音便を落とした)、
-/// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。
+/// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。切り抜きの
+/// 1 文は後から足した ([#1505])。
 ///
 /// [#947]: https://github.com/mokume-metal/mokume/issues/947
+/// [#1505]: https://github.com/mokume-metal/mokume/issues/1505
 private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .camera:
         "The camera and projection are placed again every frame, so call this from "
@@ -23,6 +25,9 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .style:
         "Pushing and popping style only works inside a frame. The style pushed during "
             + "setup belongs to no frame, and was ignored",
+    .clip:
+        "The clip is written again every frame, so call this from draw(). The clip "
+            + "written during setup belongs to no frame, and was ignored",
     .light:
         "Lights are placed again every frame, so call this from draw(). The light "
             + "placed during setup belongs to no frame, and was ignored",
@@ -46,7 +51,7 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("フレームの外で置き直したときの文面")
 struct OutsideFrameNoticeTests {
-    @Test("9 つとも原文のまま")
+    @Test("10 通とも原文のまま")
     func noticesKeepTheirWording() {
         for (subject, original) in outsideFrameNotices {
             #expect(subject.notice == original, "\(subject) の文面が変わっている")

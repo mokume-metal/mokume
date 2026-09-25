@@ -21,7 +21,7 @@ struct BuildingVertex {
     /// 置いた時点の塗り。
     var fill: LinearRGBA
     /// 曲線が作った刻みの点か。**利用者が置いた点 (`vertex`・曲線の終点・通過点) ではない**
-    /// ので、輪郭は継ぎ目に折れ目の形を置かない (``Canvas/strokeRing(count:isClosed:curveSteps:band:disc:square:)``)。
+    /// ので、輪郭は継ぎ目に折れ目の形を置かない (``Canvas/strokeRing(count:isClosed:curveSteps:endSquare:band:disc:square:)``)。
     var isCurveStep = false
 }
 
@@ -150,11 +150,15 @@ extension Canvas {
     ///
     /// **並びは `curveVertex` を続けて呼んでいる間だけ続く。** `vertex` / `bezierVertex` /
     /// `quadraticVertex` と穴の境目 (`beginContour` / `endContour`) で切れ、次の区間はまた
-    /// 4 つ揃ってから引く。いま組んでいる環 (外周か穴) で最初に引く区間は、その始点も環に
-    /// 置く — 穴の中の曲線は外周と独立に始まる ([#1449])。規則の正本は
+    /// 4 つ揃ってから引く。**並びの最初の区間は、その始点 (2 つ目に置いた点) も環に置く**
+    /// — 環 (外周か穴) の最初でも、切れた後の並びでも同じで、穴の中の曲線は外周と独立に
+    /// 始まる ([#1449])。直す前は環の最初でだけ置いていたので、切れた後の並びは手前の点から
+    /// 刻みの 1 つ目へ直に繋がっていた ([#1537])。環の最後の点が始点と同じ位置なら置き
+    /// 直さない — 始点を `vertex` で明示した書き方が、同じ点を 2 度持たない。規則の正本は
     /// ``Sketch/curveVertex(_:_:)`` の説明。
     ///
     /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
+    /// [#1537]: https://github.com/mokume-metal/mokume/issues/1537
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard isBuildingShape else {
@@ -168,7 +172,9 @@ extension Canvas {
         let p1 = curveGuides[count - 3]
         let p2 = curveGuides[count - 2]
         let p3 = curveGuides[count - 1]
-        if (holePoints ?? shapePoints).isEmpty { appendShapePoint(p1, isCurveStep: false) }
+        // 並びの最初の区間は始点も置く。環の最後の点が始点と同じ位置なら置き直さない (#1537)
+        let last = (holePoints ?? shapePoints).last.map { SIMD2($0.position.x, $0.position.y) }
+        if count == 4, last != p1 { appendShapePoint(p1, isCurveStep: false) }
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
             // 最後の刻みは通過点 — 張り具合 1 では折れ線の角になる
