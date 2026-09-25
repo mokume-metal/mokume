@@ -230,7 +230,11 @@ extension Canvas {
             let moved = form.placed(by: matrix, tint: placement.fill)
             // 潰れた変換で置いた形は面積を持たない (直に描いたときと同じく何も出ない)
             guard moved.isPlaceable else { continue }
-            beginForm(flags: moved.meta.w)
+            // 細い塗りは**置いた後の変換で**判定する — 記録したときの大きさが同じでも、
+            // 縮めて置けば細くなる
+            beginForm(
+                flags: moved.meta.w,
+                thinFill: moved.mayHaveThinFill(unitsPerDrawnPixel: unitsPerDrawnPixel))
             formInstances.append(moved)
         }
     }
@@ -257,16 +261,39 @@ extension Canvas {
     ///
     /// **置き場所から行列を組むのは呼ぶ側**で、ここは列へ積むだけを持つ。粒の参照の経路は
     /// 板を視点へ向けた行列を自分で組むので、``Placement`` を通らずにここへ来る。
+    ///
+    /// **組み立ての中で置き直すときは、置き場所ごとに頂点へ焼く** ([#1297])。記録は置き場所を
+    /// 持ち歩かないので、置き場所を並べたままだと、中で書いた変換が外側の記録から落ちる
+    /// (組み込みの形の ``placeMesh(_:isDerived:mesh:)`` と同じ理由)。
+    ///
+    /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeSolid(
         _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>
     ) {
         beginSolids()
+        if recordingShape {
+            let vertices = shape.solidVertices[run.start..<(run.start + run.count)]
+            let indices: ArraySlice<UInt32>? =
+                run.isIndexed
+                ? shape.solidIndices[run.indexStart..<(run.indexStart + run.indexCount)] : nil
+            for instance in instances {
+                appendPlacedSolidVertices(vertices, indices: indices, placedBy: instance)
+            }
+            return
+        }
         var remaining = instances[...]
-        while !remaining.isEmpty {
+        while let first = remaining.first {
             // **頂点は列ごとに 1 度だけ置く。** 上限に達したら列を閉じて置き直す —
             // 描く回数が増えるだけで、絵は 1 ビットも変わらない
-            let start = openRetainedSolid(run, of: shape)
-            while let instance = remaining.first,
+            //
+            // **鏡映の符号が変わったときも開き直す** ([#1446])。表の巻き方は列ごとに 1 つ
+            // (``Canvas/Batch/frontFacing``) なので、鏡映した置き場所と鏡映していない置き場所は
+            // 同じ列に並べられない
+            //
+            // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+            let mirrored = first.isMirrored
+            let start = openRetainedSolid(run, of: shape, mirrored: mirrored)
+            while let instance = remaining.first, instance.isMirrored == mirrored,
                 !isBatchFull(solidInstances.count, since: start)
             {
                 solidInstances.append(instance)
@@ -278,8 +305,9 @@ extension Canvas {
     /// 保持した形の頂点を積んで、置き場所を入れる列を開く。返すのはその列の先頭。
     ///
     /// **先頭を返すのは、上限に達したかを同じ形で数えるため** (``Canvas/isBatchFull(_:since:)``)。
-    /// `openSolid` から読み直すと、開いた直後に強制開示が要る。
-    private func openRetainedSolid(_ run: Shape.Run, of shape: Shape) -> Int {
+    /// `openSolid` から読み直すと、開いた直後に強制開示が要る。`mirrored` はこの列に入れる
+    /// 置き場所の鏡映の符号 (``Canvas/OpenSolid/isMirrored``)。
+    private func openRetainedSolid(_ run: Shape.Run, of shape: Shape, mirrored: Bool) -> Int {
         closeBatch()
         let start = solidVertices.count
         solidVertices.append(
@@ -299,7 +327,8 @@ extension Canvas {
         let instanceStart = solidInstances.count
         openSolid = OpenSolid(
             source: .retained(serial: retainedSerial), vertexStart: start,
-            vertexCount: run.count, indexStart: indexStart, instanceStart: instanceStart)
+            vertexCount: run.count, indexStart: indexStart, instanceStart: instanceStart,
+            isMirrored: mirrored)
         return instanceStart
     }
 

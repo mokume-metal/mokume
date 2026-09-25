@@ -129,7 +129,24 @@ import simd
                 left: -half, right: half, bottom: half, top: -half,
                 near: 0.01, far: range * 2))
         // **画面向けの補正 (縦軸の反転) は掛けない。** ここは画面ではないので、掛けると
-        // 焼き付けた位置と読む位置が食い違う
+        // 焼き付けた位置と読む位置が食い違う。補正を掛けないので、巻き方も画面と逆になる
+        // (``frontFacing(isMirrored:)``)
         return camera.projectionMatrix * camera.viewMatrix
+    }
+
+    /// ``matrix(direction:center:range:)`` で焼くときに、どちら回りに見える面を表とするか。
+    ///
+    /// 形は外向きに巻いてある (`SolidMeshBuilder`)。画面の行列は縦軸を下向きへ戻す補正
+    /// (`Camera.clipAdjustment`) を通り、その補正が巻き方を 1 度裏返すので、画面では時計回りが
+    /// 表になる (``Canvas/Batch/frontFacing``)。**光の行列はその補正を通らない**ので、鏡映して
+    /// いない形の外向きの面は反時計回りに見える。置き場所の鏡映は巻き方をもう 1 度裏返す。
+    ///
+    /// **巻き方を行列の隣に置くのは、行列を決める場所から離れると前提を写し損ねるため**
+    /// である。焼く側が画面の巻き方を写していた間、裏面を捨てる列 (閉じた組み込みの形) は
+    /// 光を向いた面を捨てて奥の面を焼き、床に接した縁に沿って光が漏れていた ([#1474])。
+    ///
+    /// [#1474]: https://github.com/mokume-metal/mokume/issues/1474
+    static func frontFacing(isMirrored: Bool) -> MTLWinding {
+        isMirrored ? .clockwise : .counterClockwise
     }
 }

@@ -58,7 +58,7 @@
 
 # --- フックの入口と出口 -------------------------------------------------------
 #
-# 3 本のフック (agent-comment-guard / pr-identity-guard / worktree-path-guard) は、
+# 2 本のフック (agent-comment-guard / pr-identity-guard) は、
 # 同じ前置きと同じ差し戻しの形を持つ。以前はそれぞれが写しを抱えていた (#815)。
 #
 # **写しのうち一番危ないのは差し戻しの JSON である。** 綴りは Claude Code 側の仕様
@@ -67,7 +67,7 @@
 # #160 で実際に踏んだのがこれで (pr-identity-guard.sh が bash 3.2 のパースに失敗して
 # JSON を返さなかった)、あのときは 1 本だったから気付けた。
 #
-# 3 本がここを通っているかは scripts/tests/guard_lib_test.py が構造で見る。
+# 2 本がここを通っているかは scripts/tests/guard_lib_test.py が構造で見る。
 
 # 差し戻して終わる。**フックの出口はここだけ。**
 #   $1 = 理由 (差し戻しの文面。そのまま読み手に出る)
@@ -109,7 +109,7 @@ hook_command() {
   [ -n "$HOOK_COMMAND" ] || exit 0
 }
 
-# 使い方を尋ねているだけか。投稿でも作成でもないので、3 本とも素通しの判定に使う。
+# 使い方を尋ねているだけか。投稿でも作成でもないので、2 本とも素通しの判定に使う。
 is_help_request() { # $1=コマンド
   printf '%s' "$1" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)'
 }

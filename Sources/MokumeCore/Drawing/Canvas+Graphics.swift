@@ -19,6 +19,13 @@ extension Canvas {
         // ことを構造で保証するには 1 度塗るしかない。以後は自動では消さない —
         // 消さないからこそ、前のフレームの上に積み上がる絵が書ける
         try target.fill(with: .transparent)
-        return try Canvas(target: target, gpu: gpu)
+        let graphics = try Canvas(target: target, gpu: gpu)
+        // **時刻と刻みは作った面と同じ置き場を指す** (#1467)。本体の面へ時刻を渡すのは
+        // ランタイムだけなので、繋がないと描き場所の断片・効果は時刻 0 を、粒は 1/60 秒の
+        // 刻みを読み続ける。描き場所から作った描き場所も、同じ 1 つへ辿り着く
+        graphics.timebase = timebase
+        // 字形を置くかも引き継ぐ (``placesGlyphs``・#1559)。描き場所に書いた字も同じ絵に載る
+        graphics.placesGlyphs = placesGlyphs
+        return graphics
     }
 }

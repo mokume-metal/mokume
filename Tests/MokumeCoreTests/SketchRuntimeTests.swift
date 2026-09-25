@@ -53,7 +53,7 @@ struct FrameTimingTests {
     func theGapIsCappedEvenWithoutResync() {
         let clock = ManualClock(0)
         let cap = FrameTiming.maximumDeltaTime(frameRate: 60)
-        let timing = FrameTiming(clock: .wallClock, maximumDeltaTime: cap, now: clock.provider)
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: clock.provider)
         clock.now = 0.016
         timing.advance()
         // 10 秒止めてから再開した、を寄せ直さずに再現する
@@ -91,6 +91,40 @@ struct FrameTimingTests {
         clock.now = 10.016
         timing.advance()
         #expect(abs(timing.deltaTime - 0.016) < 1e-5)
+    }
+
+    /// 作者が止めていたところから描く 1 枚 ([#1366](https://github.com/mokume-metal/mokume/issues/1366))。
+    /// 寄せ直してすぐ描くと経過がほぼ 0 になり、`deltaTime` で動かすものが進まない。
+    @Test("止めていたところから描く 1 枚は、実時間の時計でも目標の 1 フレームぶん進み、時刻は実時間のまま")
+    func stepAfterStopReportsOneTargetFrame() {
+        let clock = ManualClock(0)
+        let timing = FrameTiming(clock: .wallClock, frameRate: 30, now: clock.provider)
+        clock.now = 0.016
+        timing.advance()
+
+        clock.now = 7
+        timing.stepOneFrameNext()
+        timing.advance()
+        #expect(timing.deltaTime == 1 / Float(30))
+        #expect(timing.time == 7)
+
+        // **効くのは 1 枚だけ。** 次からは実際に流れた時間に戻る
+        clock.now = 7.02
+        timing.advance()
+        #expect(abs(timing.deltaTime - 0.02) < 1e-5)
+    }
+
+    @Test("フレーム番号から導く時計では、止めていたところから描く 1 枚も時計の刻みのまま")
+    func stepLeavesTheFrameIndexClockAlone() {
+        let clock = ManualClock(0)
+        // 時計の刻み (24) と目標 (60) を違えておく。印が目標の側で上書きすると 1/60 になる
+        let timing = FrameTiming(clock: .frameIndex(frameRate: 24), frameRate: 60, now: clock.provider)
+        timing.advance()
+        clock.now = 7
+        timing.stepOneFrameNext()
+        timing.advance()
+        #expect(timing.deltaTime == Float(1.0 / 24))
+        #expect(timing.time == Float(1.0 / 24))
     }
 
     @Test("時間が巻き戻っても経過は負にならない")

@@ -220,6 +220,23 @@ public struct Camera: Equatable, Sendable {
             SIMD4(-dot(side, eye), -dot(above, eye), -dot(back, eye), 1))
     }
 
+    /// この投影が画面の縦横を裏返すか。**裏返すなら、画面での巻き方も裏返る**
+    /// ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
+    ///
+    /// 見るのは、実際に使う投影行列の横と縦の倍率の符号である。描く列で当たるのは、上下か
+    /// 左右の一方を入れ替えた `ortho` だけである。横 ÷ 縦の比が負の透視も値としては当たる
+    /// が、受け口 (``Canvas/perspective(_:_:_:_:)`` と ``Canvas/setCamera(_:)``) が断るので、
+    /// 描く列には届かない ([#1495](https://github.com/mokume-metal/mokume/issues/1495))。
+    ///
+    /// **4x4 の行列式は物差しにしない。** 手前と奥を入れ替えただけでも負になるが、そのとき
+    /// 裏返るのは奥行きの向きで、画面での巻き方は変わらない。視点の行列は回すだけ
+    /// (行列式が +1) で、縦を下向きへ戻す補正 (``clipAdjustment(width:height:)``) は
+    /// 常に掛かって表の既定の巻き方が吸収しているので、どちらも見ない。
+    var flipsScreen: Bool {
+        let matrix = projectionMatrix
+        return matrix.columns.0.x * matrix.columns.1.y < 0
+    }
+
     /// 見えている範囲を、切り取りの立方体へ落とす行列。
     var projectionMatrix: simd_float4x4 {
         switch projection {

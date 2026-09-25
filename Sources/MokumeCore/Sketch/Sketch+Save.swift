@@ -53,8 +53,7 @@ extension Sketch {
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func save(_ path: String) {
         guard let runtime = runningSketch else {
-            Diagnostics.warn("save(\"\(path)\"): the sketch is not running, so nothing can be taken")
-            return
+            return Diagnostics.warn(OutsideCall.save.notice)
         }
         runtime.save(path)
     }
@@ -75,6 +74,10 @@ extension Sketch {
     ///
     /// `.mov` で終わる名前なら 1 本の動画に、`#` を含む名前なら 1 枚ずつの連番になる
     /// (`"out/frame-####.png"`)。どちらでもない名前は**撮り始めずに知らせる**。
+    ///
+    /// **入るのは、呼んだフレームの絵から** ``endRecord()`` を呼んだフレームの前の絵まで
+    /// である。上の例なら 1 フレーム目から 119 フレーム目までの 119 枚になる。直前のフレームで
+    /// ``save(_:)`` を呼んでいても、1 枚目は変わらない。
     ///
     /// ## 連番 — 番号は撮った順に並ぶ
     ///
@@ -114,9 +117,7 @@ extension Sketch {
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     public func beginRecord(_ pattern: String) {
         guard let runtime = runningSketch else {
-            Diagnostics.warn(
-                "beginRecord(\"\(pattern)\"): the sketch is not running, so nothing can be taken")
-            return
+            return Diagnostics.warn(OutsideCall.beginRecord.notice)
         }
         runtime.beginRecord(pattern)
     }
@@ -131,8 +132,7 @@ extension Sketch {
     /// 伸びる。
     public func endRecord() {
         guard let runtime = runningSketch else {
-            Diagnostics.warn("endRecord(): the sketch is not running")
-            return
+            return Diagnostics.warn(OutsideCall.endRecord.notice)
         }
         runtime.endRecord()
     }

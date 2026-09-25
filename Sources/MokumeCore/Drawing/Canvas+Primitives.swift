@@ -60,11 +60,13 @@ extension Canvas {
         // 周は**形自身の座標**で作り、中心を置き場所として渡す。**周を作るのは畳めない
         // と分かってから** — 畳めるときは置き場所を 1 つ足すだけで、周は要らない
         draw(folding: .ellipse(radiusX: radiusX, radiusY: radiusY), at: center) {
-            Outline(
-                points: Self.arcPoints(
-                    center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
-                    from: 0, sweep: 2 * .pi),
-                isClosed: true, fanCenter: SIMD2(0, 0))
+            let points = Self.arcPoints(
+                center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
+                from: 0, sweep: 2 * .pi)
+            // 周の点はどれも刻みで、角は 1 つも無い (#1423)
+            return Outline(
+                points: points, isClosed: true, fanCenter: SIMD2(0, 0),
+                curveSteps: Array(repeating: true, count: points.count))
         }
     }
 
@@ -101,9 +103,14 @@ extension Canvas {
             let arcPoints = Self.arcPoints(
                 center: SIMD2(0, 0), radiusX: radiusX, radiusY: radiusY,
                 from: start, sweep: sweep)
+            // 周の点はどれも円板で埋める。弧の点は刻みで、**扇の 3 つの角 (中心と弧の両端)
+            // も折れ目の形によらず丸く繋ぐ** — 距離関数の経路は 3 つの角を真の距離で丸く出し、
+            // `StrokeJoin.miter` の注記もそう約束している。#1423 は 3 つの角だけを折れ目の形に
+            // 従わせていたが、`texture()` / `shader()` を足しただけで角の形が変わっていた (#1486)
+            let points = isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints
             return Outline(
-                points: isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints,
-                isClosed: true, fanCenter: SIMD2(0, 0))
+                points: points, isClosed: true, fanCenter: SIMD2(0, 0),
+                curveSteps: Array(repeating: true, count: points.count))
         }
     }
 

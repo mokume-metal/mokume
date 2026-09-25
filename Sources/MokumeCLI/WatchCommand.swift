@@ -28,9 +28,16 @@ enum WatchCommand {
     /// 終わると、既定ではその場で親だけが消え、子が離れる — [#454](https://github.com/mokume-metal/mokume/issues/454)
     /// が記録した孤児はこの形をしている ([#691](https://github.com/mokume-metal/mokume/issues/691))。
     ///
-    /// **捕まえられるものだけを捕まえる。** 強制終了 (SIGKILL) と、親ごと消える終わり方は
-    /// 受け取れないので、そこは直したふりをしない ([#681](https://github.com/mokume-metal/mokume/issues/681))。
-    static let stopSignals: [Int32] = [SIGINT, SIGTERM, SIGHUP]
+    /// **時間切れで畳む形 (SIGALRM) も受ける。** `perl -e 'alarm 120; exec …'` のように期限を
+    /// 付けて見張りを起こすと、期限で届くのはこれである。受けないと既定の動作でその場で消え、
+    /// 子も作り直し中の `swift build` も置いていく ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
+    /// 既定で終わる合図はほかにもあるが (SIGUSR1 など)、踏まれていないので足さない (ADR-0008)。
+    ///
+    /// **捕まえられないものは、子の側が拾う。** 強制終了 (SIGKILL) と、親ごと消える終わり方は
+    /// ここでは受け取れない ([#681](https://github.com/mokume-metal/mokume/issues/681))。そこで
+    /// 見張りが消えると子への管が畳まれるので、子はそれを見て自分で終わる (#1427)。
+    /// 作り直し中の `swift build` は拾えない (#1147 の残り)。
+    static let stopSignals: [Int32] = [SIGINT, SIGTERM, SIGHUP, SIGALRM]
 
     /// - Parameter watching: 巡回のしかた。**検査から差し替える** — 既定は合図が来るまで
     ///   回り続けるので、始める前に止まることを確かめる検査がここで固まらないようにする。

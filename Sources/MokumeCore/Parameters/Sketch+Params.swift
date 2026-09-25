@@ -23,7 +23,13 @@ extension Sketch {
 enum ParamCatalog {
     /// 名前と置き場の組を集める。走らせている間に何度も呼ぶものではない
     /// (起動時に 1 度引き、以降は ``ParamRegistry`` が持ち回る)。
-    static func indexed(from object: Any) -> [(name: String, box: any DeclaredParam)] {
+    ///
+    /// `warn` は名前の重なりを知らせる口で、**検査が差し替える**。標準エラーへ実際に
+    /// 出た行は検査から読めないので、言ったかどうかはここで受け取って確かめる
+    /// ([#1389](https://github.com/mokume-metal/mokume/issues/1389))。
+    static func indexed(
+        from object: Any, warn: (String) -> Void = Diagnostics.warn
+    ) -> [(name: String, box: any DeclaredParam)] {
         var entries: [(name: String, box: any DeclaredParam)] = []
         var seen: Set<String> = []
         for box in boxes(of: object) {
@@ -32,8 +38,7 @@ enum ParamCatalog {
                 // 同じ型の中の重複はビルドが止める。ここへ来るのは基底と派生で
                 // 同じ名前を宣言した場合だけで、機械では防げない。黙って片方を
                 // 落とすと「書いたのに動かない値」になるので名指しする。
-                Diagnostics.warn(
-                    "The knob \"\(name)\" is declared twice. Using the one declared first")
+                warn("The knob \"\(name)\" is declared twice. Using the one declared first")
                 continue
             }
             entries.append((name: name, box: box))

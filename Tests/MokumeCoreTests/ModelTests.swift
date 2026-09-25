@@ -197,6 +197,33 @@ struct ModelTests {
         #expect(model.mesh.points.contains { abs($0.position.y - 1.6) < 0.001 })
     }
 
+    @Test("整えても、三角形の巻き方と面の向きが同じ側を指す")
+    func normalizingKeepsTheWindingWithTheNormals() throws {
+        // **縦だけの裏返しは鏡映である** (行列式が -1)。位置と向きの y を裏返すだけだと、
+        // 3 点の巻き方から求まる向きが、持っている向きと逆を指すようになる。面の向きを
+        // 書いていない形は、断片が巻き方で表裏を見分けて向きを裏返すので、それが見る側の
+        // 面を裏から照らす (#1473)。四角錐は向きを書いていない形、板は書いた形である
+        //
+        // **整える前と比べる。** 巻き方が向きと揃っているかはファイルの書き方で決まる
+        // (検体の四角錐は内向きに巻いてある) ので、整えてもそれが動かないことを見る
+        func agreement(_ model: Model) -> [Bool] {
+            let points = model.mesh.points
+            return stride(from: 0, to: points.count - 2, by: 3).map { start in
+                let (a, b, c) = (points[start], points[start + 1], points[start + 2])
+                let wound = cross(b.position - a.position, c.position - a.position)
+                return dot(wound, a.normal + b.normal + c.normal) > 0
+            }
+        }
+        for path in [ModelFixture.pyramid, ModelFixture.unwrapped] {
+            let parsed = try ModelFile.load(path)
+            let raw = Model.make(name: path, parsed: parsed, fitting: nil, identity: 1)
+            let fitted = Model.make(name: path, parsed: parsed, fitting: 60, identity: 2)
+            let before = agreement(raw)
+            #expect(!before.isEmpty)
+            #expect(agreement(fitted) == before, "整えると、巻き方が向きと逆の側を指す (\(path))")
+        }
+    }
+
     @Test("整えると、縦軸がこの面の約束 (下向き) になる")
     func normalizingFlipsTheVerticalAxis() throws {
         let model = try normalized(fitting: 60)
@@ -214,9 +241,10 @@ struct ModelTests {
         let model = Model.make(
             name: "unwrapped", parsed: try ModelFile.load(ModelFixture.unwrapped),
             fitting: 60, identity: 1)
-        // **囲みの箱から作る位置とは重ならない値**を書いてあるので、倒れていれば落ちる
+        // **囲みの箱から作る位置とは重ならない値**を書いてあるので、倒れていれば落ちる。
+        // 整えると巻き方を戻すので、1 枚目の 3 点目 (vt 3) は 2 番目に並ぶ (#1473)
         #expect(model.mesh.points[0].uv == SIMD2(0.25, Float(1) - 0.8))
-        #expect(model.mesh.points[2].uv == SIMD2(0.75, Float(1) - 0.1))
+        #expect(model.mesh.points[1].uv == SIMD2(0.75, Float(1) - 0.1))
     }
 
     @Test("展開を持たないモデルは、囲みの箱の位置に倒れる")
@@ -240,14 +268,15 @@ struct ModelTests {
         let model = Model.make(
             name: "mixed", parsed: try ModelFile.load(ModelFixture.mixedUnwrap),
             fitting: 60, identity: 1)
-        // 手前の 3 点は書かれた展開
+        // 整えると巻き方を戻すので、どちらの三角形も 2 点目と 3 点目が入れ替わって並ぶ (#1473)
+        // 手前の 3 点は書かれた展開 (vt 1・3・2 の順)
         #expect(model.mesh.points[0].uv == SIMD2(0.25, Float(1) - 0.75))
-        #expect(model.mesh.points[1].uv == SIMD2(0.75, Float(1) - 0.75))
-        #expect(model.mesh.points[2].uv == SIMD2(0.75, Float(1) - 0.25))
+        #expect(model.mesh.points[1].uv == SIMD2(0.75, Float(1) - 0.25))
+        #expect(model.mesh.points[2].uv == SIMD2(0.75, Float(1) - 0.75))
         // 奥の 3 点は囲みの箱 (板は x が -1…1・y が 0…2 なので、角がそのまま四隅に来る)
         #expect(model.mesh.points[3].uv == SIMD2(0, 1))
-        #expect(model.mesh.points[4].uv == SIMD2(1, 0))
-        #expect(model.mesh.points[5].uv == SIMD2(0, 0))
+        #expect(model.mesh.points[4].uv == SIMD2(0, 0))
+        #expect(model.mesh.points[5].uv == SIMD2(1, 0))
     }
 
     @Test("読み取り位置は整え方に依らない")
@@ -255,13 +284,29 @@ struct ModelTests {
         // **貼る絵の読み取り位置は形の座標ではない**ので、整えても倒れ先も含めて同じ値に
         // なる。整えたあとの座標から測っていた頃は、normalize: false でだけ絵が上下逆に
         // 乗っていた (#406)
+        //
+        // **角ごとに比べる。** 整えると巻き方を戻すので角の並びは変わる (#1473) が、読み取り
+        // 位置は角に付いたまま動く。整えた角をファイルの座標へ引き戻し、同じ三角形の中で
+        // 同じ位置にある角と比べる
         for path in [ModelFixture.pyramid, ModelFixture.unwrapped, ModelFixture.mixedUnwrap] {
             let parsed = try ModelFile.load(path)
             let fitted = Model.make(name: path, parsed: parsed, fitting: 60, identity: 1)
             let raw = Model.make(name: path, parsed: parsed, fitting: nil, identity: 2)
-            #expect(
-                fitted.mesh.points.map(\.uv) == raw.mesh.points.map(\.uv),
-                "整え方で読み取り位置が動いた (\(path))")
+            #expect(fitted.mesh.points.count == raw.mesh.points.count)
+            let scale = 60 / max(raw.size.x, max(raw.size.y, raw.size.z))
+            for (index, point) in fitted.mesh.points.enumerated() {
+                // 整えたのと逆の手順 (縦を戻し、縮めたぶん広げ、中心を戻す)
+                let back =
+                    SIMD3(point.position.x, -point.position.y, point.position.z) / scale
+                    + raw.center
+                let first = index / 3 * 3
+                let same = raw.mesh.points[first..<(first + 3)].first {
+                    distance($0.position, back) < 1e-4
+                }
+                #expect(same != nil, "整えた角が元の三角形に見つからない (\(path) の \(index) 番目)")
+                #expect(
+                    same?.uv == point.uv, "整え方で読み取り位置が動いた (\(path) の \(index) 番目)")
+            }
         }
     }
 
@@ -362,6 +407,125 @@ struct ModelTests {
                 }
             }
             #expect(canvas.drawCallsInLastFrame == 1)
+        }
+
+        @Test("鏡映して置いた、面の向きの無いモデルも、見る側から光を受ける")
+        func aMirroredModelWithDerivedNormalsCatchesTheLight() throws {
+            // 形から求めた向きは、断片が「裏を向いている」と判定した面で裏返す。鏡映すると
+            // 巻き方が裏返るので、表の巻き方を裏返さないと、見る側を向いた面が視線と逆の
+            // 向きで光を受けて暗くなる (#1446)。四角錐は横の鏡映で自分に重なるので、
+            // 鏡映して回した絵は逆に回した絵と同じになる
+            //
+            // **整えずに読む。** 整える経路の縦の裏返し (これも鏡映) は別の検査が見る
+            // (#1473) ので、ここでは置き場所の鏡映だけを見る
+            func picture(mirrored: Bool) throws -> DisplayImage {
+                let canvas = try makeCanvas(width: 128, height: 128)
+                let raw = try canvas.loadModel(ModelFixture.pyramid, normalize: false)
+                try canvas.draw {
+                    canvas.background(20)
+                    canvas.directionalLight(255, 255, 255, 0, 0, -1)
+                    canvas.noStroke()
+                    canvas.fill(230, 60, 40)
+                    canvas.translate(64, 64, 0)
+                    if mirrored { canvas.scale(-1, 1, 1) }
+                    canvas.rotateY(mirrored ? 0.6 : -0.6)
+                    canvas.rotateX(0.5)
+                    canvas.scale(30, 30, 30)
+                    canvas.model(raw)
+                }
+                return try canvas.target.encodeForDisplay()
+            }
+
+            let mirrored = try picture(mirrored: true)
+            let rotated = try picture(mirrored: false)
+            let difference = PictureDifference.between(mirrored, rotated)
+            #expect(difference.shapePixels > 1000, "モデルが写っていない (\(difference))")
+            #expect(
+                difference.fraction <= 0.02, "鏡映したモデルが逆に回したモデルと食い違う (\(difference))")
+        }
+
+        @Test(
+            "整えて置いた四角錐は、面の向きを書いていなくても、書いたときと同じに光を受ける",
+            arguments: [false, true])
+        func aNormalizedModelWithDerivedNormalsMatchesWrittenNormals(reversedWinding: Bool)
+            throws
+        {
+            // **整えると縦を裏返すので、巻き方が裏返る** (鏡映)。形から求めた向きは断片が
+            // 巻き方で表裏を見分けて裏返すので、巻き方を戻さないと、見る側を向いた面が
+            // 裏から光を受けて暗くなる (#1473)。書いた向きは裏返されないので、正しい絵の
+            // 手本になる。検体の四角錐は内向きに巻いてあるので、外向きに巻き直したものと
+            // 両方で見る (形から求めた向きは両面なので、どちらの巻き方でも同じ絵になる)
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            func written(_ text: String, as name: String) throws -> String {
+                let url = directory.appendingPathComponent(name)
+                try text.write(to: url, atomically: true, encoding: .utf8)
+                return url.path
+            }
+
+            let outward = Self.reversingWinding(of: ModelFixture.pyramidText)
+            let derived = try written(
+                reversedWinding ? ModelFixture.pyramidText : outward, as: "derived.obj")
+            // **書く向きは、外向きに巻いた形から求まる向きそのもの**にする。値が同じなので、
+            // 2 枚の違いは「向きを裏から受けているか」だけになる
+            let writtenNormals = try written(Self.writingDerivedNormals(of: outward), as: "written.obj")
+
+            func picture(_ path: String) throws -> DisplayImage {
+                let canvas = try makeCanvas(width: 128, height: 128)
+                let model = try canvas.loadModel(path)
+                try canvas.draw {
+                    canvas.background(20)
+                    canvas.directionalLight(255, 255, 255, 0, 0, -1)
+                    canvas.noStroke()
+                    canvas.fill(230, 60, 40)
+                    canvas.translate(64, 64, 0)
+                    canvas.rotateY(-0.6)
+                    canvas.rotateX(0.5)
+                    canvas.model(model)
+                }
+                return try canvas.target.encodeForDisplay()
+            }
+
+            let reference = try picture(writtenNormals)
+            // 手本が暗ければ、2 枚が揃って暗くても一致してしまう。光を向けた面が明るいことを先に見る
+            var brightest = 0
+            for y in 0..<reference.height {
+                for x in 0..<reference.width { brightest = max(brightest, Int(reference[x, y].red)) }
+            }
+            #expect(brightest > 150, "書いた向きの四角錐が光を受けていない (赤の最大 \(brightest))")
+
+            let difference = PictureDifference.between(try picture(derived), reference)
+            #expect(difference.shapePixels > 1000, "モデルが写っていない (\(difference))")
+            #expect(
+                difference.fraction <= 0.02,
+                "向きを書いていない四角錐が、書いた四角錐と違う光り方をする (\(difference))")
+        }
+
+        /// `f` の行の角を逆に並べ、巻き方を裏返す。
+        private static func reversingWinding(of text: String) -> String {
+            text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+                let fields = line.split(whereSeparator: \.isWhitespace)
+                guard fields.first == "f" else { return String(line) }
+                return (["f"] + fields.dropFirst().reversed()).joined(separator: " ")
+            }.joined(separator: "\n")
+        }
+
+        /// 形から求まる向きを書き込んだ OBJ。**三角形ごとにばらして**書く — 角ごとに向きを
+        /// 持たせれば、点を共有していなくても同じ向きの並びになる。
+        private static func writingDerivedNormals(of text: String) -> String {
+            let parsed = ModelFile.parse(text)
+            var lines: [String] = []
+            for (position, normal) in zip(parsed.positions, parsed.normals) {
+                lines.append("v \(position.x) \(position.y) \(position.z)")
+                lines.append("vn \(normal.x) \(normal.y) \(normal.z)")
+            }
+            for first in stride(from: 1, through: parsed.positions.count - 2, by: 3) {
+                lines.append(
+                    "f \(first)//\(first) \(first + 1)//\(first + 1) \(first + 2)//\(first + 2)")
+            }
+            return lines.joined(separator: "\n")
         }
 
         // MARK: - 読み直さない

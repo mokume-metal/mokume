@@ -7,7 +7,7 @@
 #
 # ## 1. 連番が一意であること (#500)
 #
-# ADR は互いを ADR-00NN の綴りで参照する (AGENTS.md 「正典の在処」)。番号が
+# ADR は互いを ADR-00NN の綴りで参照する (docs/decisions/AGENTS.md 「形」)。番号が
 # 一意でないと「ADR-0026 のとおり」と書いたときにどちらを指すか決まらない。
 # 実際に #490 と #491 が並走し、どちらも「次は 0026」と読んで採番したまま
 # 両方 merge された — **別ファイルなので文字の衝突は起きない**ので、git も CI も
@@ -155,7 +155,7 @@ done <<<"$numbered"
 
 if [ "$failed" -ne 0 ]; then
   echo "" >&2
-  echo "状態欄の綴りは AGENTS.md 「ADR の状態欄」が持つ (#545)。" >&2
+  echo "状態欄の綴りは docs/decisions/AGENTS.md 「ADR の状態欄」が持つ (#545)。" >&2
   exit 1
 fi
 

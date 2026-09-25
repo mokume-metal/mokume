@@ -497,6 +497,117 @@ struct ComputeTests {
         #expect(gray(image, atColumn: 16) < 0.1)
     }
 
+    // MARK: - 並びの寿命 (#1470)
+    //
+    // 並びは断片と一組の塗りで、断片と同じ**描き方**の側に居る — フレームを越え、
+    // 書き換えるまで残る (``Sketch/numbers(_:)`` の Note)。2 枚目でも断片を置き直して
+    // いるのは、見ているのが並びの寿命だけであることをはっきりさせるため
+    // (断片はもとから越える)。
+
+    @Test("1 度だけ渡した並びを、次のフレームの断片も読む")
+    func numbersCrossFrames() throws {
+        let canvas = try makeCanvas()
+        let level = try canvas.makeNumbers(count: 1)
+        let show = try canvas.makeShader(Self.showFirst)
+
+        level.set(0.25, at: 0)
+        try canvas.draw {
+            canvas.shader(show)
+            canvas.numbers(level)
+            canvas.rect(0, 0, 32, 8)
+        }
+        let first = written(try canvas.target.encodeForDisplay(), atColumn: 16)
+        #expect(abs(first - 0.25) < 0.01)
+
+        // **渡し直さない。** 中身だけを差し替える — `Numbers.set` で書き換える作りが
+        // 自然に誘う書き方で、フレームの頭で外れると 2 枚目は 1 個の 0 を読む
+        level.set(0.75, at: 0)
+        try canvas.draw {
+            canvas.shader(show)
+            canvas.rect(0, 0, 32, 8)
+        }
+        let second = written(try canvas.target.encodeForDisplay(), atColumn: 16)
+        #expect(abs(second - 0.75) < 0.01)
+    }
+
+    /// `setup()` に当たる、最初のフレームの前。**描き方なのでフレームの外でも効き、
+    /// 何も言わない** — シーンの記述と違って、どのフレームにも属さないことが問題にならない。
+    @Test("フレームの外で渡した並びを、最初のフレームの断片が読む")
+    func numbersGivenOutsideTheFrameReachTheFirstFrame() throws {
+        let canvas = try makeCanvas()
+        let level = try canvas.makeNumbers(count: 1)
+        let show = try canvas.makeShader(Self.showFirst)
+        level.set(0.5, at: 0)
+        canvas.numbers(level)
+
+        try canvas.draw {
+            canvas.shader(show)
+            canvas.rect(0, 0, 32, 8)
+        }
+        let read = written(try canvas.target.encodeForDisplay(), atColumn: 16)
+        #expect(abs(read - 0.5) < 0.01)
+        #expect(
+            Canvas.OutsideFrame.allCases.allSatisfy { !canvas.warnings.hasWarned($0.warning) },
+            "描き方を置いただけで、フレームの外の注意が出ている")
+    }
+
+    /// 並びを `setup()` で渡す、利用者が実際に書く形。`setup()` はフレームの外で走り
+    /// (``SketchRuntime/start()``)、最初の `draw()` の頭をくぐってから描く。
+    final class GivenInSetup: Sketch {
+        var level: Numbers!
+        var show: Shader!
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 32, height: 8) }
+        func setup() {
+            level = try! makeNumbers(count: 1)
+            show = try! makeShader(ComputeTests.showFirst)
+            level.set(0.5, at: 0)
+            numbers(level)
+        }
+        func draw() {
+            shader(show)
+            rect(0, 0, 32, 8)
+        }
+    }
+
+    @Test("setup() で渡した並びを、最初の draw() の断片が読む")
+    func numbersGivenInSetupReachTheFirstDraw() throws {
+        let runtime = try SketchRuntime(sketch: GivenInSetup(), gpu: try RenderDevice())
+        try runtime.advance()
+
+        let read = written(try runtime.target.encodeForDisplay(), atColumn: 16)
+        #expect(abs(read - 0.5) < 0.01)
+        #expect(
+            Canvas.OutsideFrame.allCases.allSatisfy { !runtime.canvas.warnings.hasWarned($0.warning) })
+    }
+
+    /// 越えるのは渡した並びだけではない。**外した状態も越える** — そうでないと、外した
+    /// つもりの並びが次のフレームで戻ってくる。
+    @Test("resetNumbers() で外した状態も、次のフレームへ越える")
+    func resetNumbersCrossesFrames() throws {
+        let canvas = try makeCanvas()
+        let level = try canvas.makeNumbers(count: 1)
+        let show = try canvas.makeShader(Self.showFirst)
+        level.fill(1)
+
+        try canvas.draw {
+            canvas.shader(show)
+            canvas.numbers(level)
+            canvas.rect(0, 0, 32, 8)
+            canvas.resetNumbers()
+        }
+        let first = written(try canvas.target.encodeForDisplay(), atColumn: 16)
+        #expect(abs(first - 1) < 0.01)
+
+        try canvas.draw {
+            canvas.shader(show)
+            canvas.rect(0, 0, 32, 8)
+        }
+        // 外した列が読むのは 1 個の 0 (「並びを渡していない塗りは、読んでも落ちない」と同じ)
+        let second = gray(try canvas.target.encodeForDisplay(), atColumn: 16)
+        #expect(second < 0.1)
+    }
+
     // MARK: - 読み戻し
 
     /// 種を足して並べる。**フレームごとに違う値**を書かせるため。

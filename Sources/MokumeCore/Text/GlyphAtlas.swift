@@ -37,8 +37,20 @@ import simd
 /// 焼き付けは CPU からこの面へ直接書き込む。**GPU がこの面を読んでいる間に書き換えて
 /// はならない。** 面への描画は投入しても GPU の完了を待たずに返る (#727) ので、焼く
 /// 直前に投入済みのものが全部終わるのを待つ。新しい字形が出ないフレームは焼かない
-/// ので、待ちも払わない。広げるとき (`grow`) は新しい頁 (``GlyphPage``) を作るだけなので
-/// 待たない — 前の頁は、そこを指している列や形が手放すまで生きる。
+/// ので、待ちも払わない。広げるとき (`grow`) と焼き直すとき (`rebake`) は新しい頁
+/// (``GlyphPage``) を作るだけなので待たない — 前の頁は、そこを指している列や形が手放すまで
+/// 生きる。
+///
+/// ## 上限の面が埋まったら
+///
+/// **同じ大きさの新しい頁へ替えて、要る字を焼き直す** (`rebake`・[#1342])。焼き分けの鍵には
+/// 大きさが入るので、`textSize()` を連続的に変えると鍵が際限なく増え、上限の面もいずれ埋まる。
+/// 替えずにいると、それ以後に初めて使う字が 1 つも描かれない。
+///
+/// いまの面を 0 で埋め直して使い回さないのは、前のフレームがまだその面を読んでいるかも
+/// しれないからである — 埋め直すには GPU の完了を待つことになる。
+///
+/// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
 @MainActor final class GlyphAtlas {
     /// 最初の一辺 (画素)。
     static let initialSize = 256
@@ -51,6 +63,14 @@ import simd
     static let padding = 2
     /// 白く塗った区画の一辺 (画素)。
     static let whiteBlock = 4
+    /// 作りたての頁で、字形より先に埋まっている左上の隅の一辺 (画素)。白い区画と、その周りの
+    /// 余白である。
+    ///
+    /// **字形はこの隅を避けて置かれる** — 棚の 1 段目は隅の右から、2 段目は隅の下から始まる。
+    /// そのため上限の頁でも、両辺とも上限いっぱいの字形は入らない ([#1492])。
+    ///
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
+    static let reservedCorner = whiteBlock + padding
     /// 焼き場の画素の形式。**作業空間と同じ** — 線形・アルファ乗算済みの 16F
     /// ([ADR-0011] 決定 2)。
     ///
@@ -98,9 +118,24 @@ import simd
     enum Lookup {
         /// 焼いてある (あるいはいま焼いた) 字形。
         case found(Entry)
-        /// いまの面に場所が無い。**広げれば入る。**
+        /// いまの面に場所が無い。**広げれば入る** — 上限の面なら、焼き直せば入る (`rebake`)。
+        ///
+        /// **1 段広げて足りるとは限らない** ([#1460])。面は倍ずつにしか育たないので、
+        /// 受け取る側は入るまで広げて引き直す。
+        ///
+        /// 「入る」は約束である。作りたての上限の頁にも入らない字形は、ここへ来る前に
+        /// ``tooLarge(width:height:)`` を名乗る ([#1492])。
+        ///
+        /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
+        /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
         case full
-        /// 上限の面 (``maximumSize``) より大きい。**広げても入らない。**
+        /// 作りたての上限の頁 (``maximumSize``) にも入らない。**広げても焼き直しても入らない。**
+        ///
+        /// **両辺が上限以下でも当たる** ([#1492])。頁の左上の隅 (``reservedCorner``) を避けて
+        /// 置くので、両辺を上限いっぱいには使えない。これを ``full`` と名乗ると、受け取る側は
+        /// 焼き直せば入ると読む。入らないまま、上限の頁を毎フレーム作り直すことになる。
+        ///
+        /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
         case tooLarge(width: Int, height: Int)
         /// 焼けなかった。**広げても変わらない** — 焼き場を用意できなかったか、
         /// GPU の完了を待てなくて面へ書かなかった ([#934])。
@@ -126,19 +161,28 @@ import simd
     private var rowHeight: Int
     /// 焼く前に待つ相手 (「書き込んでよい時機」を参照)。
     private let gpu: RenderDevice
-    /// 大きすぎる字形のことを、もう知らせたか。
+
+    /// 1 度だけ言う注意の種類。仕組みは ``WarningLog`` が持つ ([#734])。
     ///
-    /// **毎フレーム起きうる** — 入らない字は焼かれないので、次のフレームでも同じ道を
-    /// 通る。1 度だけ言うのは ``Diagnostics/warn(_:)`` の但し書きに従う。
-    private var warnedTooLarge = false
+    /// [#734]: https://github.com/mokume-metal/mokume/issues/734
+    enum Warning: Hashable {
+        /// 作りたての上限の頁にも入らない字形を頼まれた。
+        ///
+        /// **毎フレーム起きうる** — 入らない字は焼かれないので、次のフレームでも同じ道を
+        /// 通る。1 度だけ言うのは ``Diagnostics/warn(_:)`` の但し書きに従う。
+        case tooLarge
+    }
+
+    /// 言った注意の控え。**検査が読む。**
+    private(set) var warnings = WarningLog<Warning>()
 
     init(gpu: RenderDevice) throws(RenderFailure) {
         self.gpu = gpu
         self.size = Self.initialSize
         self.page = try GlyphPage(side: size, gpu: gpu)
-        self.cursorX = Self.whiteBlock + Self.padding
+        self.cursorX = Self.reservedCorner
         self.cursorY = 0
-        self.rowHeight = Self.whiteBlock + Self.padding
+        self.rowHeight = Self.reservedCorner
         paintWhiteBlock()
     }
 
@@ -228,15 +272,47 @@ import simd
     /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
     /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
     func grow(gpu: RenderDevice) throws(RenderFailure) {
-        let next = min(Self.maximumSize, size * 2)
+        try startPage(side: min(Self.maximumSize, size * 2), gpu: gpu)
+    }
+
+    /// 同じ大きさの新しい頁へ替え、焼いた字形を捨てる。**上限の面が埋まったときに使う**
+    /// ([#1342])。
+    ///
+    /// 広げるとき (``grow(gpu:)``) と同じ道を通る — 前の頁は、そこを指している列や保持した
+    /// 形が抱えたまま残るので、**GPU を待たない**。要る字は、次に頼まれたときに新しい頁へ
+    /// 焼かれる。
+    ///
+    /// 何度でも呼べるが、**1 フレームに何枚替えるかは呼ぶ側が決める** — 上限の頁は 1 枚で
+    /// 128 MiB あり、替えた頁はそのフレームを描き終えるまで残る。
+    ///
+    /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
+    func rebake(gpu: RenderDevice) throws(RenderFailure) {
+        try startPage(side: size, gpu: gpu)
+    }
+
+    /// 一辺 `side` の新しい頁を作り、焼いた字形の控えと棚を空に戻す。
+    private func startPage(side: Int, gpu: RenderDevice) throws(RenderFailure) {
         // **新しい頁を先に作る。** 作れずに投げたときも、前の頁はそのまま使える
-        page = try GlyphPage(side: next, gpu: gpu)
-        size = next
+        page = try GlyphPage(side: side, gpu: gpu)
+        size = side
         entries.removeAll(keepingCapacity: true)
-        cursorX = Self.whiteBlock + Self.padding
+        cursorX = Self.reservedCorner
         cursorY = 0
-        rowHeight = Self.whiteBlock + Self.padding
+        rowHeight = Self.reservedCorner
         paintWhiteBlock()
+    }
+
+    /// 作りたての一辺 `side` の頁に、`width`×`height` の字形が入るか。
+    ///
+    /// **棚の詰め方 (``reserve(width:height:)``) と同じ答えを返す。** 作りたての棚は隅
+    /// (``reservedCorner``) の右から始まるので、幅が `side - 隅` までなら 1 段目に入り、高さは
+    /// `side` まで使える。幅がそれを越えると隅の下の 2 段目へ送られ、今度は幅が `side` まで、
+    /// 高さが `side - 隅` までになる。合わせると、**長いほうの辺が `side` まで、短いほうの辺が
+    /// `side - 隅` まで**である ([#1492])。
+    ///
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
+    static func fitsFreshPage(width: Int, height: Int, side: Int) -> Bool {
+        max(width, height) <= side && min(width, height) <= side - reservedCorner
     }
 
     /// 焼いてある字形。まだ無ければ焼く。**引けなければ理由を返す。**
@@ -269,8 +345,10 @@ import simd
         let width = right - left
         let height = top - bottom
         guard width > 0, height > 0 else { return .unbakeable }
-        // **上限の面にも入らないなら、広げても入らない。** ここで名乗って諦める
-        guard width <= Self.maximumSize, height <= Self.maximumSize else {
+        // **作りたての上限の頁にも入らないなら、広げても焼き直しても入らない。** ここで名乗って
+        // 諦める。上限と比べるだけでは足りない — 両辺が上限以下でも、左上の隅のぶん入らない
+        // 字形がある (#1492)
+        guard Self.fitsFreshPage(width: width, height: height, side: Self.maximumSize) else {
             warnTooLargeOnce(width: width, height: height)
             return .tooLarge(width: width, height: height)
         }
@@ -313,14 +391,19 @@ import simd
     /// 黙って何も描かないと、利用者は書体か色か位置を疑う ([ADR-0020] 決定 5)。
     /// 大きさが理由だと分かれば、`textSize()` を下げるという次の一手が打てる。
     ///
+    /// **上限は 2 つ言う** — 長いほうの辺と、短いほうの辺 (``fitsFreshPage(width:height:side:)``)。
+    /// 面の一辺だけを並べると、4091×4091 の字形が「4096×4096 に入らない」と言われ、食い違って
+    /// 読める ([#1492])。
+    ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
     private func warnTooLargeOnce(width: Int, height: Int) {
-        guard !warnedTooLarge else { return }
-        warnedTooLarge = true
-        Diagnostics.warn(
-            "text(): one glyph is \(width)x\(height) pixels, which does not fit the baking area's "
-                + "limit of \(Self.maximumSize)x\(Self.maximumSize). This character will not be "
-                + "drawn — lower textSize()")
+        warnings.warnOnce(
+            .tooLarge,
+            "text(): one glyph is \(width)x\(height) pixels, which does not fit the baking area: it "
+                + "takes glyphs of at most \(Self.maximumSize) pixels on the longer side and "
+                + "\(Self.maximumSize - Self.reservedCorner) on the shorter. This character will "
+                + "not be drawn — lower textSize()")
     }
 
     /// 焼いた画素が、字形自身の色を持っているか。

@@ -325,6 +325,30 @@ struct PixelsTests {
         #expect(canvas.get(0, 0) == .linear(red: 1, green: 1, blue: 1))
     }
 
+    /// 完了条件「画素の面・読み出した画素・絵の 3 つが、範囲の外で同じ値を返す」(#1436)。
+    ///
+    /// 読み取りは決して落ちない (ADR-0020 決定 5) のだから、画素を読む口のどれを
+    /// 選んでも範囲の外の答えは変わらない。**内側は白で埋める** — 透明のままだと、
+    /// 範囲の外で内側の値を返す口があっても一致してしまう。
+    @Test("範囲の外では、画素の面・読み出した画素・絵が同じ透明を返す")
+    func everyPixelReaderAgreesOutside() throws {
+        let canvas = try makeCanvas(width: 4, height: 4)
+        let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        try canvas.draw { canvas.background(white) }
+        let image = try canvas.createImage(4, 4)
+        for y in 0..<4 {
+            for x in 0..<4 { image.set(x, y, white) }
+        }
+        let buffer = try canvas.target.readPixels()
+
+        for (x, y) in [(-1, 0), (4, 0), (0, -1), (0, 4)] {
+            let surface = canvas.pixels[x, y]
+            #expect(surface == .transparent, "画素の面 (\(x), \(y))")
+            #expect(buffer[x, y] == surface, "読み出した画素 (\(x), \(y))")
+            #expect(image.get(x, y) == surface, "絵 (\(x), \(y))")
+        }
+    }
+
     @Test("画素の面は描画先そのもので、写しではない")
     func thePixelSurfaceIsTheTargetItself() throws {
         let canvas = try makeCanvas(width: 8, height: 8)

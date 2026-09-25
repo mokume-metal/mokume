@@ -10,9 +10,11 @@
 #
 # ## ここは何も打たない
 #
-# 呼ぶのは `gh issue list` / `gh pr list` / `git worktree list` の 3 つ (弾かれた描画 PR が
-# あるときだけ、その順番を読む `gh api` が加わる) で、ラベルも付けず auto-merge も掛けない。scripts/stall-watch.sh と同じ性質で、**手元でいつ打っても
-# 安全である**。打つ側 (stall-act.sh に当たるもの) はこのリポジトリには来ない — 打つのは
+# 呼ぶのは `gh issue list` / `gh pr list` / `git worktree list` の 3 つで、ラベルも付けず
+# auto-merge も掛けない。読み取りが増えるのは 2 つの場合だけである — 弾かれた描画 PR が
+# あるときは、その順番を読む `gh api` が加わる。自分に証拠の無い着手印があるときは、その
+# 家族を読む `gh api graphql` が 1 回加わる (下の「落ちて見えるか」)。scripts/stall-watch.sh と
+# 同じ性質で、**手元でいつ打っても安全である**。打つ側 (stall-act.sh に当たるもの) はこのリポジトリには来ない — 打つのは
 # 外に居るディスパッチャの仕事で、こちらが実行まで持つと「様子を見るために打ったら着手が
 # 始まった」が起きる。
 #
@@ -27,8 +29,10 @@
 #   catch-up **手元で打てる catch-up** — local-render が failure の描画 PR で、描画の行列の先頭
 #   ready    verify: triaged が付き、着手中でもなく、紐づく open PR も無い
 #   stock    **B-1 の対象** — エージェントが起票したのに無印で、型が Bug / Task / Docs
-#   dropped  status: in progress なのに、open PR も手元の worktree / 枝も無く、静かで久しい
-#   busy     着手中 (紐づく open PR がある・手元に worktree / 枝がある・まだ動いている)
+#   dropped  status: in progress なのに、open PR も手元の worktree / 枝も無く、静かで久しい。
+#            家族 (親・兄弟・子) にも同じ証拠が無い
+#   busy     着手中 (紐づく open PR がある・手元に worktree / 枝がある・まだ動いている・
+#            家族のどれかがそうである)
 #
 # ## catch-up を先頭に出す (#1045)
 #
@@ -83,6 +87,27 @@
 # 静かさは Issue の updatedAt で測る — 着手すればラベルが動きプランが投稿されるので、
 # 生きている着手は必ず新しい。
 #
+# ### 家族も見る (#1391)
+#
+# 上の前提は、**着手より前に付けた印**と**親の印**には成り立たない。1 つのセッションが兄弟を
+# まとめて予約すると、PR を出すまで子は 1 度も動かない。プランは親に 1 通だけ載る。親の側も、
+# 子で作業が進んでも自分の updatedAt は動かない — 子の PR の Closes が指すのは子だからである。
+# 2026-09-23 には、生きている #1350 / #1352 / #1355 がこれで dropped に出た。
+#
+# だから、自分に 3 つの証拠 (PR・手元の worktree か枝・新しい updatedAt) が無い着手印は、
+# **家族**を見てから決める。家族は親・その親の子すべて・自分の子すべてで、閉じたものも含む。
+# 閉じた家族は PR も worktree も持たないので、updatedAt が新しいときだけ動いているとみなす。
+# 兄弟の PR が merge されてから、次の子の PR が出るまでの間を拾うためである。
+#
+# **家族を渡るのは 1 段だけにする。** 家族の証拠に数えるのは上の 3 つだけで、家族を通じて
+# busy になったものは数えない。連鎖させると、1 本の生きた PR が無関係な枝まで生かしてしまう。
+#
+# 家族を読む問い合わせは、そういう候補があるときだけ 1 回打つ。**読めなかったら dropped の
+# まま**出し、そう書く — 読めなかったことを「生きている」と読まない。
+#
+# 代償は既知である: 家族が動き続けていると、本当に落ちた予約も busy に隠れる。拾う動作は
+# いまのところ無い (ADR-0036 決定 5) ので、誤って拾うより安い側に倒した。
+#
 # **見ないもの**: 他のマシンで動いているセッション。worktree は手元のものしか見えないので、
 # dropped は「落ちた」ではなく「**落ちて見える**」までしか言わない。拾う動作を足さないのも
 # 同じ理由である (ADR-0036 決定 5 — 出すのは 0 円だが、拾うには実害が要る)。
@@ -134,7 +159,7 @@ DROPPED_MINUTES=${DROPPED_MINUTES:-120}
 
 readonly TRIAGED='verify: triaged'
 readonly IN_PROGRESS='status: in progress'
-# エージェントの起票の唯一の手掛かり (AGENTS.md「署名」が定める綴り)
+# エージェントの起票の唯一の手掛かり (scripts/comment.sh が付ける署名の綴り)
 readonly AGENT_MARK='Assisted by [Claude Code]'
 # 無印のまま出してよい型。Design / Feature は判断が要る側なので出さない (ADR-0036 決定 6)
 readonly STOCK_TYPES='Bug Task Docs'
@@ -224,6 +249,8 @@ while IFS= read -r row; do
 done < <(jq -c '.[] | select(.isDraft | not)' <<<"$prs_json")
 
 ready='' stock='' dropped='' busy='' ready_count=0
+# 自分に証拠の無い着手印。「<番号> <タイトル>」の並びで、家族を読んでから分ける
+candidates=''
 
 while IFS= read -r row; do
   n=$(jq -r '.number' <<<"$row")
@@ -242,7 +269,7 @@ while IFS= read -r row; do
     elif [[ $updated > $QUIET_BEFORE ]]; then
       busy+="$n busy - まだ動いている ($updated ・$title)"$'\n'
     else
-      dropped+="$n dropped - 着手印が残ったまま $DROPPED_MINUTES 分以上動いていない ($title)"$'\n'
+      candidates+="$n $title"$'\n'
     fi
     continue
   fi
@@ -267,6 +294,72 @@ while IFS= read -r row; do
     *"$AGENT_MARK"*) stock+="$n stock - エージェントの起票が無印のまま (${type}・${title})"$'\n' ;;
   esac
 done < <(jq -c '.[]' <<<"$issues_json")
+
+# --- 家族 (#1391) -------------------------------------------------------------
+
+# 候補ごとの家族を 1 回で読む。「<候補> <家族> <state> <updatedAt>」を 1 行 1 組で出す。
+# 候補自身は除く (親の子に自分も居る)
+read_families() { # $1=候補の番号 (空白区切り)
+  local owner=${REPO%%/*} name=${REPO#*/} fields='number state updatedAt' q='' n
+  for n in $1; do
+    q+="i$n: issue(number: $n) { parent { $fields subIssues(first: 100) { nodes { $fields } } }"
+    q+=" subIssues(first: 100) { nodes { $fields } } } "
+  done
+  gh api graphql -f query="{ repository(owner: \"$owner\", name: \"$name\") { $q } }" \
+    --jq '.data.repository | to_entries[]
+      | (.key | ltrimstr("i") | tonumber) as $c
+      | [.value.parent // empty, (.value.parent.subIssues.nodes // [])[], (.value.subIssues.nodes // [])[]]
+      | map(select(.number != $c)) | unique_by(.number)[]
+      | "\($c) \(.number) \(.state) \(.updatedAt)"'
+}
+
+# 家族 1 人の**直接の**証拠。無ければ何も出さず 1 を返す。
+#
+# 見るのは自分の判定と同じ 3 つだけで、家族を通じて busy になったかは見ない — それが
+# 「家族を渡るのは 1 段だけ」である (冒頭の「家族も見る」)
+member_evidence() { # $1=番号 $2=state $3=updatedAt
+  local pr
+  if [ "$2" = OPEN ]; then
+    pr=$(awk -v n="$1" '$1 == n { print $2; exit }' <<<"$claims")
+    if [ -n "$pr" ]; then
+      echo "家族 #$1 に PR #$pr が出ている"
+      return 0
+    fi
+    if seen_locally "$1"; then
+      echo "家族 #$1 の worktree か枝が手元にある"
+      return 0
+    fi
+    if [[ $3 > $QUIET_BEFORE ]]; then
+      echo "家族 #$1 がまだ動いている ($3)"
+      return 0
+    fi
+  elif [[ $3 > $QUIET_BEFORE ]]; then
+    echo "家族 #$1 が閉じたばかり ($3)"
+    return 0
+  fi
+  return 1
+}
+
+if [ -n "$candidates" ]; then
+  family_note=''
+  families=$(read_families "$(awk '{ print $1 }' <<<"$candidates" | tr '\n' ' ')") ||
+    { families='' family_note='・家族を読めなかった'; }
+
+  while read -r n title; do
+    [ -n "$n" ] || continue
+    why=''
+    while read -r c m state updated; do
+      [ "$c" = "$n" ] || continue
+      why=$(member_evidence "$m" "$state" "$updated") && break
+      why=''
+    done <<<"$families"
+    if [ -n "$why" ]; then
+      busy+="$n busy - $why ($title)"$'\n'
+    else
+      dropped+="$n dropped - 着手印が残ったまま $DROPPED_MINUTES 分以上動いていない ($title)$family_note"$'\n'
+    fi
+  done <<<"$candidates"
+fi
 
 printf '%s' "$catch_up$ready$stock$dropped$busy"
 

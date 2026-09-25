@@ -30,8 +30,8 @@
 # 混ぜると、片方の答えでもう片方を解こうとして静かに外れる:
 #
 #   いま作業しているリポジトリはどこか   git rev-parse --show-toplevel
-#                                        セッションが居る木を返す。plan-record.sh や
-#                                        worktree-path-guard.sh が知りたいのはこれ
+#                                        セッションが居る木を返す。plan-record.sh が
+#                                        知りたいのはこれ
 #   このスクリプトの隣は何か             cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P
 #                                        自分が置かれた場所。リポジトリの中の資材
 #                                        (定義ファイル・雛形) を指すときはこれ

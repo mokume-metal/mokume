@@ -97,7 +97,7 @@ extension Canvas {
     /// **同じ値でなければならない** — 後者の doc が「描くときと同じ送りで並ぶ」と
     /// 保証しているのに、畳む前はその保証を 2 つの独立した写しが支えていた ([#895])。
     ///
-    /// 矩形へ流し込む側 (``textFlow(_:in:)``) は畳んでいない — あちらは塊全体を矩形の
+    /// 矩形へ流し込む側 (``text(_:_:_:_:_:)``) は畳んでいない — あちらは塊全体を矩形の
     /// 中へ置く計算で、基準線ではなく上端から決まる。
     ///
     /// [#895]: https://github.com/mokume-metal/mokume/issues/895
@@ -164,6 +164,13 @@ extension Canvas {
     ///
     /// 4 つの数の読み方は ``rectMode(_:)`` が決める — ``rect(_:_:_:_:)`` と同じ約束である。
     /// 幅で折り返し、高さに収まる行だけを置く。
+    ///
+    /// **横の揃えは、行の末尾の空白を数えない。** 行をどこで折るかはこちらが決めるので、
+    /// 折った行も段落の最後の行も、末尾の空白を除いた幅で揃える ([#1452])。
+    /// ``textWidth(_:)`` と点の形の ``text(_:_:_:)`` は末尾の空白も数える — 渡された
+    /// 文字列を、渡された位置で終わらせるためである。
+    ///
+    /// [#1452]: https://github.com/mokume-metal/mokume/issues/1452
     @discardableResult
     public func text(_ string: String, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible)
         -> TextFlow
@@ -228,9 +235,35 @@ extension Canvas {
     /// 返るのは**元の文字列の中の範囲**なので、置けなかった行の先頭から先が
     /// そのまま「残り」になる。
     ///
-    /// 折るために消費した空白は、どちらの行にも入らない。こうしておくと
-    /// **各行の幅は ``textWidth(_:)`` が返す値そのもの**になり、測った幅と描いた幅が
-    /// 食い違わない。
+    /// 折るために消費した空白は、どちらの行にも入らない。**切れ目に空白が続いていれば、
+    /// 続いた空白をまとめて消費する** — 前のほうの空白が行の末尾に残ると、行の幅が
+    /// その分だけ広く数えられる ([#1412])。こうしておくと**各行の幅は ``textWidth(_:)``
+    /// が返す値そのもの**になり、測った幅と描いた幅が食い違わない。行の中ほどで続いた
+    /// 空白 (切れ目にならないもの) と、段落の頭の空白 (字下げ) は行に残る。
+    ///
+    /// **文字の切れ目で折っても、切れ目の空白は同じく消費する** ([#1424])。行の末尾に
+    /// 収まった空白も、溢れて次の行へ送られる空白も、どちらの行にも入らない — 行の頭に
+    /// 空白が残ると左揃えの行がその幅だけずれ、段落の末尾では空白だけの行ができる。
+    ///
+    /// **段落の末尾の空白で折ったときは、空の行を足さない。** 切れ目の後ろに語が無く、消費した
+    /// 空白の先が段落の終わりなので、次の行に置く字が無い — 空の行を足すと、行数と高さが 1 行
+    /// ぶん増え、続きが改行から始まる ([#1419])。元からある空の行 (改行が続いたところ) は、
+    /// いままでどおり 1 行に数える。
+    ///
+    /// **段落の最後の行も、末尾の空白を行に入れない** ([#1452])。溢れずに段落の終わりに達した
+    /// 行は切れ目で折らないが、末尾の空白が残ると、折った行と同じく右揃え・中央揃えの行が
+    /// その幅だけずれる — 同じ末尾の空白が、溢れれば消費され、収まれば残る、と幅しだいで
+    /// 変わっていた。段落の頭の空白 (字下げ) と、空白だけの段落は、空白ごと 1 行に残る。
+    ///
+    /// 消費した空白 (段落の末尾で折ったときは、段落の終わりの改行も) と、段落の最後の行から
+    /// 削った空白は、前の行の終わりと次の行の始まりの**間に、元の文字列のまま残っている** —
+    /// 最後の段落の最後の行なら、その行の終わりと文字列の終わりの間である。いくつ消費したかは、
+    /// 範囲の隙間を読めば分かる。
+    ///
+    /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
+    /// [#1419]: https://github.com/mokume-metal/mokume/issues/1419
+    /// [#1424]: https://github.com/mokume-metal/mokume/issues/1424
+    /// [#1452]: https://github.com/mokume-metal/mokume/issues/1452
     func wrapped(_ string: String, face: Typeface, within limit: Float) -> [Substring] {
         var lines: [Substring] = []
         for paragraph in string.lines {
@@ -251,7 +284,16 @@ extension Canvas {
                 // **切れ目は、幅を測る前に憶える。** 幅を超えたのが空白そのものだった
                 // とき、その空白は「ここまでが 1 行」の合図であって、次の行へ送る
                 // 対象ではない
-                if character.isWhitespace, index > start { lastSpace = index }
+                //
+                // **切れ目は、続いた空白の先頭に置く。** 溢れる直前に見た空白を切れ目に
+                // すると、それより前の空白が行の末尾に残り、右揃え・中央揃えの行が
+                // その幅だけずれる ([#1412])。段落の頭の空白 (字下げ) は、前に語が
+                // 無いので切れ目にしない
+                if character.isWhitespace, index > start,
+                    !paragraph[paragraph.index(before: index)].isWhitespace
+                {
+                    lastSpace = index
+                }
 
                 // **1 文字だけの行は折らない。** 幅より広い字はそのままはみ出させる
                 if width + step > limit, index > start {
@@ -264,7 +306,19 @@ extension Canvas {
                         start = next
                         index = next
                     } else {
-                        lines.append(paragraph[start..<index])
+                        // **文字の切れ目でも、切れ目の空白はまとめて消費する** ([#1424])。
+                        // 行の末尾に収まった空白 (`index` の前) も、溢れた空白 (`index` から
+                        // 後ろ) も、どちらの行にも入れない — 語の切れ目と同じ扱いである
+                        let end = Self.lineEnd(in: paragraph, from: start, upTo: index)
+                        lines.append(paragraph[start..<end])
+                        // 行が字で終われば切れ目なので、溢れた側の空白も消費する。行の頭から
+                        // 空白しか無い (字下げだけで溢れた) 行は空白で終わる — 字下げは切れ目
+                        // ではないので消費しない
+                        if !paragraph[paragraph.index(before: end)].isWhitespace {
+                            while index < paragraph.endIndex, paragraph[index].isWhitespace {
+                                index = paragraph.index(after: index)
+                            }
+                        }
                         start = index
                     }
                     width = 0
@@ -275,9 +329,46 @@ extension Canvas {
                 width += step
                 index = paragraph.index(after: index)
             }
-            lines.append(paragraph[start..<paragraph.endIndex])
+            // **段落の末尾の空白で折ったなら、空の行は足さない** ([#1419])。`start` が段落の
+            // 終わりに達するのは、切れ目で折って後ろの空白を読み飛ばした先が段落の終わりだった
+            // ときだけである — 語の切れ目でも文字の切れ目でも ([#1424])。元からある空の行
+            // (空の段落) は頭の `guard` が足す
+            //
+            // **段落の最後の行も、末尾の空白を行に入れない** ([#1452])。溢れずに段落の終わりに
+            // 達した行は切れ目で折らないので、ここで読み戻さないと末尾の空白が行の幅に数えられ、
+            // 右揃え・中央揃えの行がずれる。空白だけの段落は空白ごと 1 行に残る
+            if start < paragraph.endIndex {
+                let end = Self.lineEnd(in: paragraph, from: start, upTo: paragraph.endIndex)
+                lines.append(paragraph[start..<end])
+            }
         }
         return lines
+    }
+
+    /// `start` から `end` までを 1 行にするとき、行の終わりをどこに置くか。
+    ///
+    /// **行の末尾に続いた空白を読み戻した位置を返す** — 行の末尾の空白は行の幅に数えられ、
+    /// 右揃え・中央揃えの行をその幅だけずらす。**行の頭まで空白しか無ければ、`end` のまま
+    /// 返す** — そうした行 (字下げだけで溢れた行・空白だけの段落) の空白は切れ目の空白では
+    /// ないので、空白ごと 1 行に残す。
+    ///
+    /// `end` は `start` より後ろに渡す。返る位置も `start` より後ろにあるので、呼ぶ側は返った
+    /// 行の最後の字を読める。
+    ///
+    /// 文字の切れ目で折るとき ([#1424]) と、段落の終わりに達したとき ([#1452]) の 2 か所が
+    /// 読む。語の切れ目は切れ目を続いた空白の先頭に置くので ([#1412])、読み戻す空白が無い。
+    ///
+    /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
+    /// [#1424]: https://github.com/mokume-metal/mokume/issues/1424
+    /// [#1452]: https://github.com/mokume-metal/mokume/issues/1452
+    private static func lineEnd(
+        in paragraph: Substring, from start: String.Index, upTo end: String.Index
+    ) -> String.Index {
+        var trimmed = end
+        while trimmed > start, paragraph[paragraph.index(before: trimmed)].isWhitespace {
+            trimmed = paragraph.index(before: trimmed)
+        }
+        return trimmed > start ? trimmed : end
     }
 }
 

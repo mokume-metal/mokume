@@ -30,13 +30,17 @@ public nonisolated enum HorizontalTextAlign: Sendable, CaseIterable {
 
 /// 文字列を、指定した位置の上下どこに合わせるか。
 public nonisolated enum VerticalTextAlign: Sendable, CaseIterable {
-    /// 指定した位置が、いちばん高い字の上端になる。
+    /// 指定した位置が、字の囲みの上端 — 基準線から ``Sketch/textAscent()`` だけ上 — になる。
+    ///
+    /// 書体によっては、アクセントの付いた字がこの上端より上へ出る (``Sketch/textAscent()``)。
     case top
     /// 指定した位置が、文字の高さの中央になる。
     case center
     /// 指定した位置が**基準線** — 字が乗る線になる。既定。
     case baseline
-    /// 指定した位置が、いちばん低い字の下端になる。
+    /// 指定した位置が、字の囲みの下端 — 基準線から ``Sketch/textDescent()`` だけ下 — になる。
+    ///
+    /// 字の下に付く記号は、この下端より下へ出ることがある (``Sketch/textDescent()``)。
     case bottom
 }
 
@@ -45,6 +49,10 @@ public nonisolated enum TextWrap: Sendable, CaseIterable {
     /// 語の切れ目で折る。1 語が幅より長いときだけ、その語の中で折る。
     case word
     /// 文字の切れ目で折る。
+    ///
+    /// 切れ目に空白があれば、語の切れ目と同じく**まとめて消費する** — 行の末尾に収まった
+    /// 空白も、溢れた空白も、どちらの行にも入らない。段落の頭の空白 (字下げ) と、切れ目に
+    /// ならない行の中ほどの空白は行に残る。
     case character
 }
 
@@ -53,10 +61,22 @@ public nonisolated enum TextWrap: Sendable, CaseIterable {
 /// **続きをどこから描くかを、呼んだ側が計算せずに済むように返す。**
 public nonisolated struct TextFlow: Equatable, Sendable {
     /// 実際に置いた行数。
+    ///
+    /// 元の文にある空の行 (改行が続いたところ) は 1 行に数える。**段落の末尾の空白で
+    /// 折っても、空の行は数えない** — 切れ目の後ろに置く字が無いので、行にならない。
     public let lineCount: Int
-    /// 実際に使った高さ (画素)。
+    /// 実際に使った高さ (画素)。置いた行数 (``lineCount``) から決まる。
     public let height: Float
     /// 置けずに残った文字。全部置けたなら空。
+    ///
+    /// **元の文の後ろの部分そのもの**で、置いた最後の行との切れ目を消費した直後から
+    /// 始まる — 語の切れ目なら次の語から、文字の切れ目なら次の字から、段落の切れ目なら
+    /// 改行 1 つの次から。切れ目に空白が続いていれば、語の切れ目でも文字の切れ目でも、
+    /// 続いた空白をまとめて消費する。段落の末尾の空白で折ったなら、その空白と改行 1 つを
+    /// 消費して、次の段落の先頭から始まる。
+    ///
+    /// 消費した空白と改行は置いた行にも続きにも入らないが、**失われはしない**。元の文から
+    /// 続きを除いた前半の末尾に、そのままの数で残っている。
     public let remainder: String
 
     /// 収まりきらなかったか。

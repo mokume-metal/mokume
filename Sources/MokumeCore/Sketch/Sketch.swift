@@ -122,8 +122,32 @@ public protocol Sketch: AnyObject {
 
     /// キーが押された瞬間に呼ばれる。
     ///
-    /// **押しっぱなしでは連射される** (手本 — Processing / p5.js — と同じ)。1 回だけ
-    /// 効かせたいなら、押されているキーの集合 (``isKeyDown(_:)``) を自分で見る。
+    /// **押しっぱなしでは連射される** — OS のキーリピートが届くたびに、また呼ばれる。
+    /// これは Processing と同じで、**p5.js とは違う** (p5.js は押したままのキーでは
+    /// 呼び直さない)。
+    ///
+    /// **1 回だけ効かせたいなら、押したままかを ``keyReleased()`` と対にして自分で持つ。**
+    ///
+    /// ```swift
+    /// var showsGrid = false
+    /// var spaceHeld = false
+    ///
+    /// func keyPressed() {
+    ///     guard keyCode == .space, !spaceHeld else { return }
+    ///     spaceHeld = true
+    ///     showsGrid.toggle()  // 押しっぱなしでも、押すたびに 1 回だけ切り替わる
+    /// }
+    ///
+    /// func keyReleased() {
+    ///     if keyCode == .space { spaceHeld = false }
+    /// }
+    /// ```
+    ///
+    /// ``isKeyDown(_:)`` では見分けられない。ここが呼ばれた時点で、そのキーは既に押されて
+    /// いる集合に入っており、**最初の 1 回でも `true` を返す**。
+    ///
+    /// この書き方は `draw()` を見ないので、``noLoop()`` で止めている間も同じように効く
+    /// (止まっている間もコールバックは呼ばれる)。
     ///
     /// どのキーが動いたかは ``keyCode`` から読む。文字を打つ用途には ``keyTyped()`` と
     /// ``key`` を使う。
@@ -165,6 +189,15 @@ public struct SketchSettings: Equatable, Sendable {
     /// 出す高さ (画素)。
     public var height: Int
     /// 1 秒あたりのフレーム数の目標。
+    ///
+    /// **起動のときに読む。** 走っている最中に代入しても、画面の刻みも ``Sketch/time`` /
+    /// ``Sketch/deltaTime`` も変わらず、警告も出ない。`var settings = SketchSettings(…)` と
+    /// 持てば `draw()` の中で代入でき、読み返しても代入した値が返るので、変えられたように
+    /// 見えてしまう。
+    ///
+    /// 手本 (Processing / p5) の `frameRate(n)` は走っている最中に呼べるが、ここには
+    /// 走っている最中に速さを変える口がまだ無い
+    /// ([#1323](https://github.com/mokume-metal/mokume/issues/1323))。
     public var frameRate: Int
     /// 窓の題名。
     public var title: String
@@ -174,6 +207,10 @@ public struct SketchSettings: Equatable, Sendable {
     /// **重い絵を低い細かさで描いて拡大すれば、フレーム時間に収まらなかった表現が
     /// 動くようになる** ([ADR-0015] 決定 1)。座標は出す細かさのままなので、
     /// スケッチのコードは 1 行も変わらない。
+    ///
+    /// 線の太さも出す細かさの画素で書き、描く画素では細かさの分だけ細くなる。0.5 なら
+    /// `strokeWeight(1)` の線は描く画素で太さ 0.5 の線として、置く位置によらずその太さぶんの
+    /// 濃さで描かれてから拡大される。
     ///
     /// 使えるのは 0 より大きく 1 以下。1 を超える指定 (出すより細かく描く) は
     /// 引き受けないので、組み立ての時点で断る。
@@ -223,6 +260,30 @@ public struct SketchSettings: Equatable, Sendable {
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 @MainActor
 var runningSketch: SketchRuntime?
+
+/// 走っているランタイムの面を、その中で起こされた `Task` へ持ち越すもの。
+///
+/// ``runningSketch`` は `setup()` / `draw()` が返った時点で外れる。そこで起こした
+/// `Task` の中身が走るのはその後なので、中から ``Sketch/canvas`` を取ると何も差さって
+/// いない。待つ読み込みの口 (``Sketch/requestImage(_:)``・``Sketch/requestModel(_:normalize:)``)
+/// は `async` で `Task` からしか呼べないので、**呼べる場所が 1 つも無かった**
+/// ([#1367](https://github.com/mokume-metal/mokume/issues/1367))。`Task { … }` は起こした
+/// 文脈のタスクローカル値を受け継ぐので、ここに束ねた面はそのまま中へ届く
+/// (`Task.detached` は受け継がない)。
+///
+/// **読むのは待つ読み込みの口だけ** (``Sketch/requireLoadingCanvas(_:)``)。描く口は
+/// ``runningSketch`` だけを見続ける — `Task` から描けると、描く順が `Task` に番が回る時機で
+/// 決まり、描画順を main actor の上で直列に確定させている性質 ([ADR-0010] の影響欄) が崩れる。
+/// 待つ読み込みの口は絵を描かず、値を作って返すだけなので、この性質に触れない。
+///
+/// **持ち越すのは実行ではなく面で、強く持つ。** 弱く持つと、実行が畳まれた後に届いたときに
+/// 返せる面が無く、止めるか投げるかしかなくなる。面が生きるのはその `Task` が走っている
+/// 間だけで、実行そのもの (観測・入力・名乗り) は `Task` に生かされない。
+///
+/// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
+enum LaunchingSketch {
+    @TaskLocal static var canvas: Canvas?
+}
 
 extension Sketch {
     /// いま描いている面。
@@ -274,6 +335,10 @@ extension Sketch {
     /// (粒・視点) が 1 回で吹き飛ぶ。目標フレーム間隔の 10 倍を上限にしてある
     /// ([#874](https://github.com/mokume-metal/mokume/issues/874))。
     ///
+    /// **作者が止めていたところから描く 1 枚は、目標の 1 フレームぶんになる** — ``redraw()``
+    /// で描き直した 1 枚と、``loop()`` で戻った最初の 1 枚である (``redraw()`` の
+    /// 「描き直しの 1 枚の時刻」)。
+    ///
     /// **足し込んだ合計は ``time`` と一致しない。** 揃えたいものをこれで作らない
     /// ([ADR-0025] 決定 6) — 同じ合計時間でも刻み方が違えば結果が変わるので、
     /// フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない。
@@ -291,5 +356,25 @@ extension Sketch {
                     + "Call it from setup() or draw(), not from init or a property initialiser.")
         }
         return runtime
+    }
+
+    /// 待つ読み込みの口が使う面。**走っていなくても、走っている実行の中で起こされた
+    /// `Task` からなら、その実行の面を返す** (``LaunchingSketch``)。
+    ///
+    /// 先に見るのは ``runningSketch`` で、これまで動いていた経路は何も変わらない。
+    /// 持ち越した面へ倒れるのは、これまで止まっていた経路だけである。
+    ///
+    /// - Parameter call: 止めるときの文面に載せる、呼ばれた口の名前。
+    @MainActor
+    static func requireLoadingCanvas(_ call: String) -> Canvas {
+        guard let canvas = runningSketch?.canvas ?? LaunchingSketch.canvas else {
+            // 走っている実行から起こされていない (init・プロパティの初期化子・
+            // Task.detached)。どの面へ読み込むかが決まらないので、描く口と同じく止める
+            fatalError(
+                "\(call) only works for a sketch that is running. Call it from setup() or "
+                    + "draw(), or from a Task started there — not from init, a property "
+                    + "initialiser or Task.detached.")
+        }
+        return canvas
     }
 }

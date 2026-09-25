@@ -444,12 +444,15 @@ struct TextTests {
         let canvas = try makeCanvas()
         canvas.textSize(16)
         canvas.textWrap(.character)
-        let lines = canvas.wrapped(
-            "aa bb cc dd", face: canvas.typeface, within: canvas.textWidth("aa bb"))
-        #expect(lines.map(String.init).joined() == "aa bb cc dd")
-        #expect(lines.count > 1)
-        // 語の切れ目を待たないので、行の末尾が語の終わりとは限らない
-        #expect(lines.map(String.init) != ["aa bb", "cc dd"])
+        let source = "aaaa bbbb"
+        let lines = canvas.wrapped(source, face: canvas.typeface, within: canvas.textWidth("aaaa b"))
+        // 語の切れ目を待たないので、2 つ目の語の 1 字目まで入れて、語の途中で折る
+        #expect(lines.map(String.init) == ["aaaa b", "bbb"])
+        // 行と行の隙間には空白しか無い — 切れ目の空白は消費しても、字は落とさない ([#1424])
+        let gaps = zip(lines, lines.dropFirst()).map { source[$0.endIndex..<$1.startIndex] }
+        #expect(gaps.allSatisfy { $0.allSatisfy(\.isWhitespace) })
+        #expect(lines.first?.startIndex == source.startIndex)
+        #expect(lines.last?.endIndex == source.endIndex)
     }
 
     @Test("改行は幅に関わらず必ず行を分ける")
@@ -663,6 +666,119 @@ struct TextTests {
         #expect(try pixels(of: alone).bytes == pixels(of: crowded).bytes)
     }
 
+    /// 字形の外接矩形 (画素・送り位置と基準線から測る)。**焼き場を通さず、この環境の
+    /// 書体から引く** — 検査の前提 (どの大きさの面なら入るか・どこに置けば窓に入るか) を、
+    /// 焼き場の外で決めるため。
+    private func glyphBounds(of character: String, size: Float) -> CGRect {
+        let font = CTFontCreateWithName(fontName as CFString, CGFloat(size), nil)
+        var units = Array(character.utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: 1)
+        CTFontGetGlyphsForCharacters(font, &units, &glyphs, 1)
+        return CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyphs, nil, 1)
+    }
+
+    /// 検査で使う書体が、その字を**自分で**持っているか。
+    ///
+    /// 代わりの書体へ落ちる字では、``glyphBounds(of:size:)`` が引く寸法と、焼き場が焼く字形が
+    /// 別物になる。書体から寸法を引く検査は、前提としてこれを確かめる。
+    private func fontOwns(_ character: String) -> Bool {
+        let font = CTFontCreateWithName(fontName as CFString, 12, nil)
+        var units = Array(character.utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: units.count)
+        return CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count)
+    }
+
+    /// 余白込みの字形の大きさ (画素)。焼き場が場所を取る大きさと同じ数え方をする。
+    private func paddedExtent(of character: String, size: Float) -> (width: Int, height: Int) {
+        let bounds = glyphBounds(of: character, size: size)
+        let pad = GlyphAtlas.padding
+        let width = Int(bounds.maxX.rounded(.up)) - Int(bounds.minX.rounded(.down)) + 2 * pad
+        let height = Int(bounds.maxY.rounded(.up)) - Int(bounds.minY.rounded(.down)) + 2 * pad
+        return (width, height)
+    }
+
+    /// 「M」を 1 字だけ置いたフレームを描いて、その絵を返す。
+    ///
+    /// **字の左端を窓の中 (x = 8) に合わせる。** 大きい字ほど送り位置から絵の左端までが
+    /// 離れる (4096 では 300 画素を越える) ので、送り位置を固定すると窓の外に出る。基準線は
+    /// 窓の下端近くに置くので、左の縦棒が窓を上から下まで通る。
+    private func drawLargeM(size: Float, on canvas: Canvas) throws -> DisplayImage {
+        let x = 8 - Float(glyphBounds(of: "M", size: size).minX)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(size)
+            canvas.text("M", x, 120)
+        }
+        return try pixels(of: canvas)
+    }
+
+    /// 作りたての面を 1 度広げただけでは入らない字も、**最初のフレームから**描かれる ([#1460])。
+    ///
+    /// 焼き場は面が足りないと 1 段ずつ倍に広げる。引き直しを 1 度で打ち切ると、1 度広げた面
+    /// にも入らない字はそのフレームで欠け、次のフレームでもう一段広がってから出る。動かして
+    /// いる窓ではほぼ見えないが、1 フレームだけ描く使い方では欠けたまま残る。
+    ///
+    /// **比べる相手は、面が育ちきった後のフレーム**である。直す前のコードでも何フレームか
+    /// 描けば字は出るので、「最初のフレームだけが欠ける」という事象そのものを見られる。
+    ///
+    /// **入った大きさで止まる**ことも見る。上限まで広げれば必ず入るが、上限の面は 1 枚で
+    /// 128 MiB ある。
+    ///
+    /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
+    @Test(
+        "作りたての面を何段か広げないと入らない字も、最初のフレームから描かれる",
+        // 引数は main actor の外で組まれるので、面の一辺は数で書く (上限は中で突き合わせる)
+        arguments: [
+            // 256 → 512 → 1024。1 度広げた 512 にも入らない
+            (size: Float(1200), side: 1024),
+            // 256 → … → 4096。上限の面でしか入らない
+            (size: Float(4096), side: 4096),
+        ])
+    func aGlyphNeedingSeveralGrowthsIsDrawnInTheFirstFrame(size: Float, side: Int) throws {
+        try #require(side <= GlyphAtlas.maximumSize, "検査の前提: 一辺 \(side) の面は上限を越える")
+        // 検査の前提: 1 度広げた面には入らず、`side` の面には入る
+        let extent = paddedExtent(of: "M", size: size)
+        try #require(
+            max(extent.width, extent.height) > GlyphAtlas.initialSize * 2,
+            "検査の前提: \(size) の「M」(\(extent)) が、1 度広げた面に入ってしまう")
+        try #require(
+            max(extent.width, extent.height) > side / 2
+                && max(extent.width, extent.height) <= side,
+            "検査の前提: \(size) の「M」(\(extent)) が、一辺 \(side) の面でちょうど入る大きさでない")
+
+        let canvas = try makeCanvas(width: 128, height: 128)
+        #expect(canvas.atlas.size == GlyphAtlas.initialSize, "検査の前提: 面が作りたてでない")
+        let first = try drawLargeM(size: size, on: canvas)
+        #expect(
+            canvas.atlas.size == side,
+            "\(size) の「M」を描いた後の面が \(canvas.atlas.size) — 入る大きさ \(side) で止まっていない")
+
+        // 字が出るまで描き足す。256 から上限までは 4 段なので、それより多くは要らない
+        var settled = try drawLargeM(size: size, on: canvas)
+        var framesDrawn = 2
+        while inkBounds(settled, width: 128, height: 128) == nil, framesDrawn < 8 {
+            settled = try drawLargeM(size: size, on: canvas)
+            framesDrawn += 1
+        }
+        try #require(
+            inkBounds(settled, width: 128, height: 128) != nil,
+            "検査の前提: \(framesDrawn) フレーム描いても、\(size) の「M」が 1 度も描かれない")
+
+        // 絵の並びをそのまま #expect に渡すと、外れたときに 6 万余りの数が並ぶ
+        let firstInked = inkBounds(first, width: 128, height: 128) != nil
+        let sameAsSettled = first.bytes == settled.bytes
+        #expect(
+            sameAsSettled,
+            """
+            作りたての面で描いた \(size) の「M」が、面が育ちきった後のフレームと違う絵に\
+            なった (最初のフレームに墨が\(firstInked ? "乗ってはいる" : "乗っていない"))。
+
+            1 度広げた面にも入らない字は、入るまで広げなければそのフレームで欠ける
+            ([#1460](https://github.com/mokume-metal/mokume/issues/1460))。
+            """)
+    }
+
     /// 上限の面にも収まらない大きさ。**倍にして、丸めや余白では届かない側へ振る。**
     private var overwhelmingSize: Float { Float(GlyphAtlas.maximumSize) * 2 }
 
@@ -736,6 +852,205 @@ struct TextTests {
             広げるたびに焼いた字形は全部捨てられるので、これは入らない 1 字のために
             他の字を焼き直させ続ける形になる。上限まで行っても入らないので、回復もしない
             ([#738](https://github.com/mokume-metal/mokume/issues/738))。
+            """)
+    }
+
+    /// 作りたての頁で、字形の短いほうの辺に使える長さ (画素)。長いほうの辺は、面の一辺まで使える。
+    ///
+    /// **焼き場の寸法の定数から組み直す。** 頁の左上の隅には白い区画とその余白があるので、棚の
+    /// 1 段目はその右から、2 段目はその下から始まる。上限の頁でも、両辺を上限いっぱいには使えない。
+    private var shorterSideLimit: Int {
+        GlyphAtlas.maximumSize - GlyphAtlas.whiteBlock - GlyphAtlas.padding
+    }
+
+    /// 「大きすぎる」の文面。**実装とは別の場所に写して突き合わせる** (``WarningLogTests`` と
+    /// 同じ形)。
+    ///
+    /// 上限の数だけを並べる文面では、4091×4091 の字形が「4096×4096 の上限に入らない」と
+    /// 言われ、食い違って読める ([#1492])。長いほうと短いほうの辺の、2 つの上限を言う。
+    ///
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
+    private func tooLargeNotice(width: Int, height: Int) -> String {
+        "text(): one glyph is \(width)x\(height) pixels, which does not fit the baking area: it "
+            + "takes glyphs of at most 4096 pixels on the longer side and 4090 on the shorter. "
+            + "This character will not be drawn — lower textSize()"
+    }
+
+    /// 「●」の字形を 1 つだけ頼んで、焼き場の答えを返す。
+    private func lookUpDisc(size: Float, in canvas: Canvas) throws -> GlyphAtlas.Lookup {
+        canvas.textSize(size)
+        let resolved = try #require(canvas.typeface.glyph(for: "●"))
+        let key = GlyphAtlas.Key(
+            fontKey: resolved.fontKey, size: size, style: .normal, glyph: resolved.glyph)
+        return canvas.atlas.entry(for: key, font: resolved.font)
+    }
+
+    /// 作りたての上限の頁にも、左上の白い区画のぶん入らない字形 ([#1492])。**両辺とも上限以下**
+    /// なので、上限と比べるだけの判定を通ってしまう。
+    ///
+    /// 通ると、棚に場所が取れずに「満杯」を名乗る。受け取る側は、広げるか焼き直せば入ると
+    /// 読む — 入らないまま、上限の頁を毎フレーム作り直すことになる。
+    ///
+    /// **作りたての上限の頁に頼む。** 「焼き直せば入る」が本当に成り立たない場所で、答えを見る。
+    ///
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
+    @Test(
+        "作りたての上限の頁に白い区画のぶん入らない字形も、理由を『大きすぎる』として名乗る",
+        arguments: [
+            // 余白込み 4091×4091。両辺とも、短いほうの辺に使える長さを 1 画素だけ越える
+            Float(9508),
+            // 余白込み 4096×4096。両辺とも上限ちょうど
+            Float(9520),
+        ])
+    func aGlyphBlockedByTheWhiteBlockNamesItselfTooLarge(size: Float) throws {
+        try #require(fontOwns("●"), "検査の前提: \(fontName) が「●」を持っていない")
+        let extent = paddedExtent(of: "●", size: size)
+        try #require(
+            max(extent.width, extent.height) <= GlyphAtlas.maximumSize
+                && min(extent.width, extent.height) > shorterSideLimit,
+            """
+            検査の前提: \(size) の「●」(\(extent)) が、両辺とも \(shorterSideLimit) を越え \
+            \(GlyphAtlas.maximumSize) 以下の大きさでない
+            """)
+
+        let canvas = try makeCanvas()
+        while canvas.atlas.canGrow { try canvas.atlas.grow(gpu: canvas.gpu) }
+        let lookup = try lookUpDisc(size: size, in: canvas)
+        guard case .tooLarge(let width, let height) = lookup else {
+            Issue.record(
+                """
+                作りたての上限の頁にも入らない \(extent.width)×\(extent.height) の字形を頼んだのに、\
+                面は「\(lookup)」と答えた。
+
+                「満杯」は、広げるか焼き直せば入るという意味である。入らない字形がそう名乗ると、
+                受け取る側は上限の頁を毎フレーム作り直し、ほかの字も全部焼き直させる
+                ([#1492](https://github.com/mokume-metal/mokume/issues/1492))。
+                """)
+            return
+        }
+        #expect(
+            width == extent.width && height == extent.height,
+            "「大きすぎる」が名乗った大きさ \(width)×\(height) が、書体から引いた \(extent) と違う")
+    }
+
+    /// 条件 2・3 ([#1492] の完了条件)。**上限の面にも入らない字形と同じ扱い**になる —
+    /// 焼き場は広がらず、頁も替わらない (``anOversizedGlyphDoesNotGrowTheAtlas()``)。
+    ///
+    /// 小さい「A」を一緒に描くのは、頁が替わると焼いた控えが捨てられ、**入らない 1 字が
+    /// ほかの字まで焼き直させる**からである。数フレーム続けるのは、直す前は上限の頁に着いた
+    /// 後に毎フレーム頁を作り直していたからである。
+    ///
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
+    @Test("白い区画のぶん入らない字形を何フレーム描いても、頁は替わらず、『大きすぎる』を知らせる")
+    func aGlyphBlockedByTheWhiteBlockNeverTurnsThePage() throws {
+        let size: Float = 9508
+        try #require(fontOwns("●"), "検査の前提: \(fontName) が「●」を持っていない")
+        let extent = paddedExtent(of: "●", size: size)
+        try #require(
+            max(extent.width, extent.height) <= GlyphAtlas.maximumSize
+                && min(extent.width, extent.height) > shorterSideLimit,
+            "検査の前提: \(size) の「●」(\(extent)) が、白い区画のぶん入らない大きさでない")
+
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let page = canvas.atlas.texture
+        for frame in 0..<4 {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(32)
+                canvas.text("A", 8, 40)
+                canvas.textSize(size)
+                canvas.text("●", 8, 120)
+            }
+            guard canvas.atlas.texture === page, canvas.atlas.size == GlyphAtlas.initialSize else {
+                Issue.record(
+                    """
+                    入らない \(extent.width)×\(extent.height) の「●」を描いた \(frame) フレーム目に、\
+                    焼き場の頁が替わった (面は \(canvas.atlas.size))。
+
+                    頁を替えるたびに焼いた字形の控えは捨てられるので、同じフレームのほかの字も
+                    全部焼き直しになる。入らない字は替えても入らない
+                    ([#1492](https://github.com/mokume-metal/mokume/issues/1492))。
+                    """)
+                return
+            }
+        }
+
+        #expect(
+            canvas.atlas.warnings.message(for: .tooLarge)
+                == tooLargeNotice(width: extent.width, height: extent.height),
+            "入らない字形を描いたのに、「大きすぎる」の知らせがその文面で出ていない")
+        #expect(
+            canvas.warnings.message(for: .atlasFullInOneFrame) == nil,
+            """
+            入らない字形を 1 つ描いただけなのに、「1 フレームで要る字が収まらない」と知らせた。
+            利用者は字の種類を減らそうとするが、減らしても入らない
+            """)
+    }
+
+    /// 字を 1 つだけ置いたフレームを描いて、その絵を返す。
+    ///
+    /// **字の左端を窓の中 (x = 8) に、字の高さの中ほどを窓の中ほど (y = 64) に合わせる。**
+    /// 「●」の左端も「—」の棒も、字の高さの中ほどにしか墨が無い。
+    private func drawLeftMiddle(_ character: String, size: Float, on canvas: Canvas) throws
+        -> DisplayImage
+    {
+        let bounds = glyphBounds(of: character, size: size)
+        let x = 8 - Float(bounds.minX)
+        // 書体の座標は上へ測るので、字の中ほどは基準線から `midY` だけ上に在る
+        let baseline = 64 + Float(bounds.midY)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(size)
+            canvas.text(character, x, baseline)
+        }
+        return try pixels(of: canvas)
+    }
+
+    /// 条件 4 ([#1492] の完了条件) — **境界の内側は変わらない。** 片方の辺が短いほうの辺に
+    /// 使える長さに収まれば、もう片方は上限まで使える。
+    ///
+    /// 判定を厳しくしすぎる (両辺とも短いほうの長さに収める) と、ここに挙げた縦長・横長の字が
+    /// 描かれなくなる。
+    ///
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
+    @Test(
+        "片方の辺が白い区画を避けられる字形は、上限の頁に最初のフレームから描かれる",
+        arguments: [
+            // 余白込み 4090×4090。両辺とも、短いほうの辺に使える長さちょうど。1 段目に置かれる
+            (character: "●", size: Float(9507)),
+            // 余白込み 3924×4094。縦長なので、白い区画の右の 1 段目に置かれる
+            (character: "M", size: Float(5701)),
+            // 余白込み 4094×389。横長なので、白い区画の下の 2 段目に置かれる
+            (character: "—", size: Float(5351)),
+        ])
+    func aGlyphWithOneSideClearOfTheWhiteBlockIsDrawn(character: String, size: Float) throws {
+        try #require(fontOwns(character), "検査の前提: \(fontName) が「\(character)」を持っていない")
+        let extent = paddedExtent(of: character, size: size)
+        let longer = max(extent.width, extent.height)
+        let shorter = min(extent.width, extent.height)
+        try #require(
+            longer <= GlyphAtlas.maximumSize && shorter <= shorterSideLimit,
+            "検査の前提: \(size) の「\(character)」(\(extent)) が、上限の頁に入る大きさでない")
+        try #require(
+            longer > GlyphAtlas.maximumSize / 2,
+            "検査の前提: \(size) の「\(character)」(\(extent)) が、上限より小さい面に入ってしまう")
+
+        let canvas = try makeCanvas(width: 128, height: 128)
+        let image = try drawLeftMiddle(character, size: size, on: canvas)
+        #expect(
+            canvas.atlas.size == GlyphAtlas.maximumSize,
+            "\(size) の「\(character)」を描いた後の面が \(canvas.atlas.size) — 上限まで広がっていない")
+        #expect(
+            inkBounds(image, width: 128, height: 128) != nil,
+            """
+            上限の頁に入る \(extent.width)×\(extent.height) の「\(character)」が、最初のフレームで\
+            描かれなかった。
+
+            作りたての上限の頁は、長いほうの辺を \(GlyphAtlas.maximumSize) まで、短いほうの辺を \
+            \(shorterSideLimit) まで受け取る
+            ([#1492](https://github.com/mokume-metal/mokume/issues/1492))。
             """)
     }
 

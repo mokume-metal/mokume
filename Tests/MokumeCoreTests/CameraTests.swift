@@ -191,6 +191,64 @@ struct CameraTests {
         #expect(abs((upright - 32) + (flipped - 32)) < 1.5)
     }
 
+    /// 裏返した平行投影の向き。**裏返さない向きの範囲**は ``ortho()`` と同じ (面 1 枚ぶん)。
+    enum OrthoSwap: Sendable, CaseIterable {
+        case topAndBottom
+        case leftAndRight
+    }
+
+    @Test(
+        "上端と下端 (左端と右端) を入れ替えても、光の当たった閉じた箱は裏返った絵になるだけ",
+        arguments: OrthoSwap.allCases)
+    func swappingTheRangeOnlyFlipsAClosedSolid(_ swap: OrthoSwap) throws {
+        // ortho の説明の「絵が上下反転するだけ」は、閉じた形でも成り立たなければならない。
+        // 投影が画面の縦横を裏返すと巻き方も裏返るので、表の巻き方を裏返さずに裏面を
+        // 捨てると手前の面が捨てられ、光に背を向けた奥の面だけが写る (#1446)
+        func picture(swapped: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas(width: 96, height: 96)
+            try canvas.draw {
+                canvas.background(20)
+                switch (swapped, swap) {
+                case (false, _): canvas.ortho()
+                case (true, .topAndBottom): canvas.ortho(-48, 48, -48, 48, 5, 600)
+                case (true, .leftAndRight): canvas.ortho(48, -48, 48, -48, 5, 600)
+                }
+                canvas.noStroke()
+                canvas.directionalLight(255, 255, 255, 0, 0, -1)
+                canvas.fill(230, 60, 40)
+                canvas.translate(52, 40, 0)
+                canvas.rotateY(0.6)
+                canvas.rotateX(0.5)
+                canvas.box(40)
+            }
+            return try pixels(of: canvas)
+        }
+
+        let upright = try picture(swapped: false)
+        let swapped = try picture(swapped: true)
+        let difference = PictureDifference.between(
+            swapped, upright, flip: swap == .topAndBottom ? .vertical : .horizontal)
+        #expect(difference.shapePixels > 1000, "箱が写っていない (\(difference))")
+        #expect(difference.fraction <= 0.02, "裏返した投影の箱が、裏返した絵と食い違う (\(difference))")
+    }
+
+    @Test("投影が画面の縦横を裏返すかは、縦横の倍率の符号で決まり、奥行きの向きは見ない")
+    func whetherAProjectionFlipsTheScreen() {
+        func flips(_ projection: Camera.Projection) -> Bool {
+            Camera(
+                eye: SIMD3(0, 0, 100), center: .zero, up: SIMD3(0, 1, 0), projection: projection
+            ).flipsScreen
+        }
+        #expect(!flips(Camera.defaultPerspective(width: 64, height: 64)))
+        #expect(!flips(Camera.defaultOrthographic(width: 64, height: 64)))
+        #expect(flips(.orthographic(left: -32, right: 32, bottom: -32, top: 32, near: 5, far: 600)))
+        #expect(flips(.orthographic(left: 32, right: -32, bottom: 32, top: -32, near: 5, far: 600)))
+        #expect(!flips(.orthographic(left: 32, right: -32, bottom: -32, top: 32, near: 5, far: 600)))
+        // 手前と奥を入れ替えると 4x4 の行列式は負になるが、画面の巻き方は変わらない
+        #expect(!flips(.orthographic(left: -32, right: 32, bottom: 32, top: -32, near: 600, far: 5)))
+        #expect(flips(.perspective(fieldOfView: 1, aspect: -1, near: 5, far: 600)))
+    }
+
     // MARK: - フレームの中で変える
 
     @Test("視点を変えると、変えたあとに置いたものだけが新しい視点で描かれる")
@@ -417,5 +475,114 @@ struct CameraTests {
         }
 
         #expect(seen.allSatisfy { $0 == canvas.defaultCamera })
+    }
+
+    /// `perspective` / `ortho` が断る投影 (#1495)。`setCamera` もこれを断らなければならない。
+    enum RefusedProjection: Sendable, CaseIterable {
+        /// 横 ÷ 縦の比が負 (画面の左右を裏返す)。
+        case negativeAspect
+        /// 画角が π。
+        case fieldOfViewOfPi
+        /// 手前と奥の面が同じ距離。
+        case nearAtFar
+        /// 数でない値。
+        case notANumber
+        /// 平行投影の左端と右端が同じ。
+        case orthoLeftEqualsRight
+        /// 平行投影の手前と奥の面が同じ距離。
+        case orthoNearEqualsFar
+
+        var projection: Camera.Projection {
+            switch self {
+            case .negativeAspect: .perspective(fieldOfView: 1, aspect: -1, near: 5, far: 600)
+            case .fieldOfViewOfPi: .perspective(fieldOfView: Float.pi, aspect: 1, near: 5, far: 600)
+            case .nearAtFar: .perspective(fieldOfView: 1, aspect: 1, near: 100, far: 100)
+            case .notANumber: .perspective(fieldOfView: Float.nan, aspect: 1, near: 5, far: 600)
+            case .orthoLeftEqualsRight:
+                .orthographic(left: 32, right: 32, bottom: 32, top: -32, near: 5, far: 600)
+            case .orthoNearEqualsFar:
+                .orthographic(left: -32, right: 32, bottom: 32, top: -32, near: 100, far: 100)
+            }
+        }
+    }
+
+    @Test(
+        "perspective / ortho が断る投影は setCamera でも断り、視点も投影も呼ぶ前のまま続ける",
+        arguments: RefusedProjection.allCases)
+    func setCameraRefusesWhatPerspectiveAndOrthoRefuse(_ refused: RefusedProjection) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.camera(70, 10, 90, 32, 32, 0, 0, 1, 0)
+            let before = canvas.currentCamera
+            // 視点も変えた値を渡す。視点だけが当たって投影が残る半端な当たり方も見分けるため
+            var camera = before
+            camera.eye = SIMD3(10, 50, 120)
+            camera.projection = refused.projection
+            canvas.setCamera(camera)
+            #expect(canvas.currentCamera == before)
+        }
+        #expect(
+            canvas.warnings.message(for: .badCamera)
+                == "setCamera(): the projection is one that perspective() and ortho() refuse (the "
+                + "range being captured is collapsed, or a value is out of range or not a number), so "
+                + "the camera was left as it was")
+    }
+
+    @Test(
+        "setCamera が断る投影は、perspective / ortho で渡しても断られる",
+        arguments: RefusedProjection.allCases)
+    func perspectiveAndOrthoRefuseTheSameProjections(_ refused: RefusedProjection) throws {
+        // 上の検査の前提 (「perspective / ortho が断る」) が、並べた値について本当に成り立つか
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            let before = canvas.currentCamera
+            switch refused.projection {
+            case let .perspective(fieldOfView, aspect, near, far):
+                canvas.perspective(fieldOfView, aspect, near, far)
+            case let .orthographic(left, right, bottom, top, near, far):
+                canvas.ortho(left, right, bottom, top, near, far)
+            }
+            #expect(canvas.currentCamera == before)
+        }
+        #expect(canvas.warnings.hasWarned(.badCamera))
+    }
+
+    /// `perspective` / `ortho` が受ける投影。`setCamera` でも受けて、注意を出さない。
+    enum TakenProjection: Sendable, CaseIterable {
+        case defaultPerspective
+        case defaultOrthographic
+        /// `perspective(1.6, width / height, 26, 2600)` に当たる透視。
+        case widePerspective
+        /// 上下を入れ替えた `ortho(-32, 32, -32, 32, 5, 600)` に当たる平行。
+        case flippedOrthographic
+
+        func projection(width: Float, height: Float) -> Camera.Projection {
+            switch self {
+            case .defaultPerspective: Camera.defaultPerspective(width: width, height: height)
+            case .defaultOrthographic: Camera.defaultOrthographic(width: width, height: height)
+            case .widePerspective:
+                .perspective(fieldOfView: 1.6, aspect: width / height, near: 26, far: 2600)
+            case .flippedOrthographic:
+                .orthographic(left: -32, right: 32, bottom: -32, top: 32, near: 5, far: 600)
+            }
+        }
+    }
+
+    @Test(
+        "perspective / ortho が受ける投影は setCamera でも受け、注意も出ない",
+        arguments: TakenProjection.allCases)
+    func setCameraTakesWhatPerspectiveAndOrthoTake(_ taken: TakenProjection) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            // どの値とも違う投影から始める。断っても投影が変わらずに済む既定から始めると、
+            // 受けたか断ったかが currentCamera に出ない
+            canvas.perspective(1, 2, 5, 600)
+            var camera = canvas.currentCamera
+            camera.eye = SIMD3(10, 50, 120)
+            camera.projection = taken.projection(width: 64, height: 64)
+            canvas.setCamera(camera)
+            #expect(canvas.currentCamera == camera)
+        }
+        #expect(canvas.warnings.message(for: .badCamera) == nil)
     }
 }

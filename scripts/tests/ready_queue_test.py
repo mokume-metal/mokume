@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/ready-queue.sh の検査 (#1028)。
 
-固定したいのは七つ。
+固定したいのは八つ。
 
 1. **何も打たない。** 判定を手元で打っただけでラベルが付いたり auto-merge が掛かったり
    すると、判定と実行を分けた意味が消える (ADR-0036 決定 1)
@@ -13,14 +13,18 @@
    無いときだけ dropped で、**それは「落ちた」ではなく「落ちて見える」**である
 4. **stock は署名つき・無印・型が Bug / Task / Docs のときだけ。** Design / Feature は
    判断が要る側なので出さない (ADR-0036 決定 6)
-5. **描画の見込みは coverage の用途で訊く。** `Sketches/` は evidence-only なので、
-   そこしか触らない Issue は描画レーンを取らない (#497)
+5. **描画の見込みは、本文に現れるパス片を一覧に照らして出す。** URL の中のパスも拾い、
+   一覧に無い場所しか触らない Issue は描画レーンを取らない
 6. **終了コードが「打てる仕事があるか」を表す。** 呼ぶ側 (外に居るディスパッチャ) が「在庫が
    尽きたので B-1 へ回る」を分岐できる。**打てる catch-up があれば在庫切れと言わない** (#1045)。
    **一覧を読めなかったときも在庫切れと言わない** — 1 ではなく 2 で終える (#1235)
 7. **手元で打てる catch-up を ready より先に出す** (#1045)。当番が ejected と名乗る描画 PR の
    うち、行列の先頭のものだけを出す — 先に別の描画 PR が居るものは打っても無駄になる。
    弾かれた PR が無い平常時は、呼び出しも出力も従来のまま
+8. **自分に証拠の無い着手印は、家族を見てから dropped と呼ぶ** (#1391)。家族は親・兄弟・子で、
+   閉じたものは新しいときだけ数える。**家族を渡るのは 1 段だけ**で、家族を通じて busy に
+   なったものは証拠にしない。家族を読むのは候補があるときだけで、読めなければ dropped のまま
+   そう名乗る
 
 gh と git は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
@@ -72,7 +76,12 @@ if [ "$1" = "api" ]; then
     *"/pulls?state=open"*) emit "$FIX/pulls.json"; exit 0 ;;
     */files) n=${2%/files}; n=${n##*/}; emit "$FIX/$n.files.json"; exit 0 ;;
     # merge queue の並び (#1266)。既定は空
-    graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; } ;;
+    graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; }
+      # 着手印の家族 (#1391)。FAIL_FAMILY で読み取りを失敗させる
+      if [[ "$*" == *"subIssues"* ]]; then
+        [ -z "${FAIL_FAMILY:-}" ] || { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
+        emit "$FIX/family.json"; exit 0
+      fi ;;
   esac
 fi
 
@@ -92,7 +101,6 @@ exit 1
 # 検査用の一覧。**本物を読まない** — 一覧が動いたときに、無関係な検査が赤くならないため
 DRAWING_PATHS = """# 検査用
 Sources/MokumeCore/
-Sketches/  evidence-only
 """
 
 SIGNATURE = "🤖 Assisted by [Claude Code](https://claude.com/claude-code)"
@@ -141,8 +149,31 @@ def closing_pr(
 DRAWING_FILE = "Sources/MokumeCore/Canvas.swift"
 
 
+def member(number, state="OPEN", updated=LONG_AGO):
+    """家族の 1 人。GraphQL の subIssues.nodes と同じ形"""
+    return {"number": number, "state": state, "updatedAt": updated}
+
+
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def family_response(families):
+    """{候補: {"parent": member か None, "siblings": [...], "children": [...]}} から応答を組む。
+
+    siblings は親の子すべてで、本物と同じく候補自身も混ぜて返す (除くのはスクリプトの仕事)
+    """
+    repo = {}
+    for n, f in families.items():
+        parent = f.get("parent")
+        if parent is not None:
+            parent = dict(parent, subIssues={"nodes": [member(n)] + list(f.get("siblings", []))})
+        repo[f"i{n}"] = {"parent": parent, "subIssues": {"nodes": list(f.get("children", []))}}
+    return {"data": {"repository": repo}}
+
+
 class ReadyQueueTest(unittest.TestCase):
-    def run_queue(self, issues, prs=(), worktrees="", **extra_env):
+    def run_queue(self, issues, prs=(), worktrees="", families=None, **extra_env):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             fix = tmp / "fixtures"
@@ -158,6 +189,10 @@ class ReadyQueueTest(unittest.TestCase):
                     json.dumps([{"filename": f} for f in pr["_files"]]), encoding="utf-8"
                 )
             (fix / "worktrees.txt").write_text(worktrees, encoding="utf-8")
+            if families is not None:
+                (fix / "family.json").write_text(
+                    json.dumps(family_response(families)), encoding="utf-8"
+                )
             (tmp / "drawing-paths.txt").write_text(DRAWING_PATHS, encoding="utf-8")
 
             bindir = tmp / "bin"
@@ -285,11 +320,10 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual([n for n, v in seen.items() if v[0] == "stock"], [20, 21, 22])
         self.assertEqual(seen[26][0], "ready")
 
-    # 5. 描画の見込みは coverage の用途で訊く
+    # 5. 描画の見込みは、本文に現れるパス片を一覧に照らして出す
     def test_drawing_guess(self):
         issues = [
             issue(30, labels=["verify: triaged"], body="Sources/MokumeCore/Frame.swift を直す"),
-            issue(31, labels=["verify: triaged"], body="Sketches/Demo.swift だけ触る"),
             issue(32, labels=["verify: triaged"], body="どこにも触れない話"),
             issue(
                 33,
@@ -300,7 +334,6 @@ class ReadyQueueTest(unittest.TestCase):
         done, _ = self.run_queue(issues)
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[30][1], "drawing?")
-        self.assertEqual(seen[31][1], "plain?", "evidence-only が coverage で外れていない")
         self.assertEqual(seen[32][1], "plain?")
         self.assertEqual(seen[33][1], "drawing?", "URL の中のパスを拾えていない")
 
@@ -411,6 +444,92 @@ class ReadyQueueTest(unittest.TestCase):
 
         done, _ = self.run_queue([], prs=prs)  # 既定の綴りでは当たらない
         self.assertNotIn("catch-up -", done.stdout)
+
+
+    # 8. 家族も見る (#1391)
+    def test_parent_is_busy_while_child_has_pr(self):
+        done, _ = self.run_queue(
+            [issue(1350, labels=["status: in progress"]), issue(1357)],
+            prs=[closing_pr(1374, closes=[1357])],
+            families={1350: {"children": [member(1357), member(1351, "CLOSED")]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1350][0], "busy", "子に PR が出ている親を落ちたと呼んでいる")
+        self.assertIn("家族 #1357", seen[1350][2])
+        self.assertIn("PR #1374", seen[1350][2])
+
+    def test_reserved_sibling_is_busy_while_sibling_has_pr(self):
+        done, _ = self.run_queue(
+            [
+                issue(1352, labels=["status: in progress"]),
+                issue(1357, labels=["status: in progress"]),
+            ],
+            prs=[closing_pr(1374, closes=[1357])],
+            families={1352: {"parent": member(1350), "siblings": [member(1357)]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1352][0], "busy", "予約された兄弟を落ちたと呼んでいる")
+        self.assertIn("家族 #1357 に PR #1374", seen[1352][2])
+
+    def test_recently_closed_sibling_keeps_reservation_busy(self):
+        done, _ = self.run_queue(
+            [issue(1355, labels=["status: in progress"])],
+            families={
+                1355: {"parent": member(1350), "siblings": [member(1354, "CLOSED", now())]}
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1355][0], "busy", "閉じたばかりの兄弟を数えていない")
+        self.assertIn("家族 #1354 が閉じたばかり", seen[1355][2])
+
+    def test_old_closed_family_does_not_keep_busy(self):
+        done, _ = self.run_queue(
+            [issue(1355, labels=["status: in progress"])],
+            families={1355: {"parent": member(1350), "siblings": [member(1354, "CLOSED")]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1355][0], "dropped", "古く閉じた家族で生きていると読んでいる")
+
+    def test_family_evidence_is_one_hop(self):
+        # X の子 Z に PR → X は busy。X の兄弟 Y の家族は P・X・Y で、Z は居ない
+        done, _ = self.run_queue(
+            [
+                issue(10, labels=["status: in progress"]),  # X
+                issue(11, labels=["status: in progress"]),  # Y
+                issue(12),  # Z
+            ],
+            prs=[closing_pr(90, closes=[12])],
+            families={
+                10: {"parent": member(1), "siblings": [member(11)], "children": [member(12)]},
+                11: {"parent": member(1), "siblings": [member(10)]},
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[10][0], "busy")
+        self.assertEqual(seen[11][0], "dropped", "家族を通じた busy を、さらに証拠に数えている")
+
+    def test_unreadable_family_stays_dropped(self):
+        done, _ = self.run_queue(
+            [issue(1352, labels=["status: in progress"])],
+            prs=[closing_pr(1374, closes=[1357])],
+            families={1352: {"parent": member(1350), "siblings": [member(1357)]}},
+            FAIL_FAMILY="1",
+        )
+        self.assertNotEqual(done.returncode, 2, "家族が読めないだけで一覧の失敗と名乗っている")
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1352][0], "dropped", "読めなかった家族を生きていると読んでいる")
+        self.assertIn("家族を読めなかった", seen[1352][2])
+
+    def test_family_is_read_only_for_candidates(self):
+        done, log = self.run_queue(
+            [
+                issue(1, labels=["verify: triaged"]),
+                issue(2, labels=["status: in progress"]),
+            ],
+            prs=[closing_pr(90, closes=[2])],
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertNotIn("graphql", log, "候補が無いのに家族を読んでいる")
 
 
 if __name__ == "__main__":

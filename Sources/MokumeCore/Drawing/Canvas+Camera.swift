@@ -9,9 +9,16 @@ import simd
 // [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 extension Canvas {
 
-    // 視点を既定へ戻す。
+    // 視点だけを既定へ戻す。投影は残す。
     public func camera() {
-        apply(defaultCamera, name: "camera")
+        // **いまの投影から始める** — 9 引数の形と同じ組み立て方。既定の視点を丸ごと
+        // 当てると、`ortho()` で決めた写し方まで既定の透視へ戻る (#1371)
+        let fitting = defaultCamera
+        var camera = currentCamera
+        camera.eye = fitting.eye
+        camera.center = fitting.center
+        camera.up = fitting.up
+        apply(camera, name: "camera")
     }
 
     // 見る位置・見ている先・上方向を決める。
@@ -68,9 +75,16 @@ extension Canvas {
     ///
     /// フレームの外 (初期化のとき) に書かれた視点は、どのフレームにも属さないので
     /// 警告して無視する (同 決定 4)。黙って捨てると「書いたのに効かない」だけが残る。
+    ///
+    /// **投影も `perspective()` / `ortho()` と同じ述語で検める** ([#1495])。値ごと当てる口
+    /// (`setCamera(_:)`) は投影を持ち込めるので、ここで見ないと 2 つの口の受ける範囲がずれる。
+    /// 断ったら値を丸ごと捨てる — 視点だけが当たると、どこまで効いたかが読めない。
+    ///
+    /// [#1495]: https://github.com/mokume-metal/mokume/issues/1495
     private func apply(_ camera: Camera, name: String) {
         guard isDrawing else { return warnOutsideFrame(.camera) }
         guard camera.isUsable else { return warnBadCamera(name) }
+        guard Self.isUsable(camera.projection) else { return warnBadCameraProjection(name) }
         closeBatch()
         cameraStorage = camera
     }
@@ -87,6 +101,11 @@ extension Canvas {
     }
 
     /// 投影として成り立つか。**範囲が潰れていると絵が丸ごと消える**ので、当てる前に見る。
+    ///
+    /// **述語はここ 1 つで、投影を差し替える口と値ごと当てる口の 2 つの経路がこれを呼ぶ**
+    /// ([#1495])。口ごとに持つと、受ける範囲が黙ってずれる。
+    ///
+    /// [#1495]: https://github.com/mokume-metal/mokume/issues/1495
     private static func isUsable(_ projection: Camera.Projection) -> Bool {
         switch projection {
         case let .perspective(fieldOfView, aspect, near, far):
@@ -104,6 +123,16 @@ extension Canvas {
             .badCamera,
             "\(name)(): the eye and what it looks at are the same, or up lines up with the view "
                 + "direction, or a value is not a number, so the camera was left as it was")
+    }
+
+    /// 値ごと当てた視点の投影が成り立たないことを、初回だけ知らせる。視点の側は成り立って
+    /// いても値を丸ごと捨てるので、文面は視点が残ったことを言う。
+    private func warnBadCameraProjection(_ name: String) {
+        warnOnce(
+            .badCamera,
+            "\(name)(): the projection is one that perspective() and ortho() refuse (the range being "
+                + "captured is collapsed, or a value is out of range or not a number), so the camera "
+                + "was left as it was")
     }
 
     /// 成り立たない投影を、初回だけ知らせる。

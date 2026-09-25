@@ -22,17 +22,37 @@ extension Canvas {
     /// 座標そのものを骨へ渡せない。骨が決めるのは「どの添字を、帯・円板・正方形の
     /// どれにするか」だけで、点を形に変えるのは呼び出し側の 3 つの閉包である。
     ///
+    /// **曲線の刻みの継ぎ目は角ではない** ([#1409])。折れ目の形 (`strokeJoin`) を置かず、
+    /// 形によらず円板で埋める。円板は両側の帯の縁に接するので、どれだけ急に曲がっても
+    /// 隙間を残さず、帯の外へも出ない — 線は刻みの折れ線から太さの半分の内側を
+    /// ちょうど塗る。角の形のほうの正方形は軸に沿っているので、斜めに走る曲線の継ぎ目に
+    /// 置くと角が帯の外へ最大 (√2 − 1) × 太さ / 2 出て、縁が鋸の歯のように太っていた。
+    /// 円板は正方形より三角形が多い (`strokeJoin(.round)` が払うのと同じ量) が、隣の刻みの
+    /// 向きを要さないので、骨は点ごとの判断のまま保てる。
+    ///
+    /// 利用者が置いた点 (`vertex`・曲線の終点・通過点) は刻みではなく、折れ目の形に従う。
+    /// 扇の 3 つの角 (中心と弧の両端) は置いた点ではないので、刻みと同じく円板で埋める
+    /// ([#1486] — 距離関数の経路が真の距離で丸く出すのに揃える)。
+    ///
+    /// [#1409]: https://github.com/mokume-metal/mokume/issues/1409
+    /// [#1486]: https://github.com/mokume-metal/mokume/issues/1486
+    ///
     /// - Parameters:
     ///   - count: 点の数
     ///   - isClosed: 周が閉じているか (閉じていれば最後の点から最初の点へも帯が要る)
+    ///   - curveSteps: 点ごとに、折れ目の形によらず円板で埋めるか (曲線の刻みの点と扇の角)。
+    ///     空ならどの点も角
     ///   - band: 添字 2 つを結ぶ帯を置く
-    ///   - disc: 添字の点に円板を置く (丸い端点と丸い角)
+    ///   - disc: 添字の点に円板を置く (丸い端点と丸い角・曲線の刻みの継ぎ目)
     ///   - square: 添字の点に正方形を置く (四角い端点と削いだ角)
     func strokeRing(
-        count: Int, isClosed: Bool,
+        count: Int, isClosed: Bool, curveSteps: [Bool] = [],
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void
     ) {
-        func join(at index: Int) { strokeJoinShape(at: index, disc: disc, square: square) }
+        func join(at index: Int) {
+            if index < curveSteps.count, curveSteps[index] { return disc(index) }
+            strokeJoinShape(at: index, disc: disc, square: square)
+        }
         func cap(at index: Int, isolated: Bool) {
             strokeCapShape(at: index, isolated: isolated, disc: disc, square: square)
         }
@@ -137,7 +157,7 @@ extension Canvas {
         let points = outline.points
         let start = vertices.count
         strokeRing(
-            count: points.count, isClosed: outline.isClosed,
+            count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
             band: { appendBand(points[$0], points[$1], half: half) },
             disc: { appendDisc(at: points[$0], half: half) },
             square: { appendSquare(at: points[$0], half: half) })

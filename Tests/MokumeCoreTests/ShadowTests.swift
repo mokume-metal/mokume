@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -652,6 +653,176 @@ struct ShadowTests {
             let caster = canvas.shadowCaster
             #expect(caster?.colorAndKind.x == 1, "2 つ目の光が影を落としている")
         }
+    }
+
+    // MARK: - 光を向いた面を焼く (#1474)
+
+    /// 焼き付け先の奥行きを、CPU から読める並びへ写して返す。**焼いたフレームを描き終えてから呼ぶ。**
+    ///
+    /// 焼き付け先は GPU だけが触る奥行きの面 (`private`・``ShadowMap/descriptor(side:)``) なので、
+    /// 読める置き場へ写す 1 本を積んで終わるまで待つ。
+    private func bakedDepths(of canvas: Canvas) throws -> [Float] {
+        let gpu = canvas.gpu
+        try gpu.settle()
+        let map = try #require(canvas.shadowMap, "影を焼いていない")
+        let side = map.detail
+        let bytesPerRow = side * MemoryLayout<Float>.stride
+        let buffer = try gpu.makeReadableBuffer(byteCount: bytesPerRow * side)
+        defer { gpu.retire(buffer) }
+        try gpu.withCommands { commands throws(RenderFailure) in
+            guard let encoder = commands.makeComputeCommandEncoder() else {
+                throw .encoderUnavailable
+            }
+            encoder.copy(
+                sourceTexture: map.texture, sourceSlice: 0, sourceLevel: 0,
+                sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                sourceSize: MTLSize(width: side, height: side, depth: 1),
+                destinationBuffer: buffer, destinationOffset: 0,
+                destinationBytesPerRow: bytesPerRow, destinationBytesPerImage: 0)
+            encoder.endEncoding()
+            try gpu.commitAndWait(commands)
+        }
+        let values = buffer.contents().bindMemory(to: Float.self, capacity: side * side)
+        return Array(UnsafeBufferPointer(start: values, count: side * side))
+    }
+
+    /// 宙に浮かせた箱を 1 つ焼き、焼き付いた奥行きを返す。`twoSided` なら同じ `box(40)` を
+    /// `createShape` で保持して置く — 保持した形は両面で焼く列になる (`cullMode(for:)`)。
+    private func bakedBox(mirrored: Bool, twoSided: Bool) throws -> [Float] {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.camera(64, -24, 170, 64, 14, 0, 0, 1, 0)
+            canvas.perspective(Float.pi / 3, 1, 1, 500)
+            canvas.directionalLight(.linear(red: 1, green: 1, blue: 1), -0.6, 0.6, -0.5)
+            canvas.shadows(true)
+            canvas.shadowDetail(256)
+            canvas.noStroke()
+            let retained = canvas.createShape { canvas.box(40) }
+            canvas.push()
+            canvas.translate(64, 0, 0)
+            if mirrored { canvas.scale(-1, 1, 1) }
+            canvas.rotateY(-0.6)
+            canvas.rotateX(0.5)
+            if twoSided { canvas.shape(retained) } else { canvas.box(40) }
+            canvas.pop()
+        }
+        return try bakedDepths(of: canvas)
+    }
+
+    @Test("閉じた組み込みの形は、両面で焼いたときと同じ奥行き (光を向いた面) を焼く", arguments: [false, true])
+    func aClosedSolidBakesItsLitFaces(mirrored: Bool) throws {
+        // 組み込みの箱は裏面を捨てて焼く (`.back`)。光から見る行列は画面の縦の補正を通らない
+        // ので、表の巻き方を画面から写すと光を向いた面が捨てられ、奥の面が焼き付く。
+        // 両面で焼けば最も近い面 (光を向いた面) が残るので、奥行きを直に比べる
+        let culled = try bakedBox(mirrored: mirrored, twoSided: false)
+        let twoSided = try bakedBox(mirrored: mirrored, twoSided: true)
+        #expect(culled.count == twoSided.count)
+        var covered = 0
+        var differing = 0
+        var fartherWhenCulled = 0
+        for (a, b) in zip(culled, twoSided) where a < 1 || b < 1 {
+            covered += 1
+            guard abs(a - b) > 1e-5 else { continue }
+            differing += 1
+            if a > b { fartherWhenCulled += 1 }
+        }
+        #expect(covered > 1000, "箱が焼き付いていない (\(covered) texel)")
+        #expect(
+            differing * 100 <= covered,
+            "裏面を捨てて焼いた箱の奥行きが両面で焼いたときと食い違う (\(differing) / \(covered) texel。うち捨てたほうが遠い \(fartherWhenCulled))"
+        )
+    }
+
+    /// 箱の置き方 (``floorAndGroundedBox(_:_:shadows:)``)。
+    private enum GroundedBox {
+        /// 組み込みの `box(40)`。裏面を捨てて焼く列になる
+        case builtIn
+        /// 組み込みの `box(40)` を横に鏡映してから逆に回す (箱は横の鏡映で自分に重なるので、
+        /// ``builtIn`` と同じ形になる)
+        case mirrored
+        /// `createShape` で保持した `box(40)`。両面で焼く列になる
+        case retained
+    }
+
+    /// 受けるだけの床に、箱を 1 つ**接して**置く絵 (箱の底面と床の上面がどちらも y = 36)。
+    ///
+    /// 影は手前へ落とす。奥へ落とすと、接した縁の影の側が箱自身に隠れて写らない。
+    private func floorAndGroundedBox(
+        _ canvas: Canvas, _ variant: GroundedBox, shadows: Bool = true
+    ) throws -> DisplayImage {
+        let center: Float = 64
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.camera(center, -24, 170, center, 14, 0, 0, 1, 0)
+            canvas.perspective(Float.pi / 3, 1, 1, 500)
+            canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
+            canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, 0.5)
+            canvas.shadows(shadows)
+            // **焼く範囲を広げる。** 奥の面を焼いたときに接した縁へ漏れる光の幅は、縁の余裕
+            // (既定のまま) と範囲の積に比例する。既定の範囲 (面の対角) では 1 画素に満たない
+            canvas.shadowRange(720)
+            canvas.noStroke()
+
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.7, green: 0.7, blue: 0.7))
+            canvas.push()
+            canvas.translate(center, 40, -20)
+            canvas.box(190, 8, 190)
+            canvas.pop()
+
+            canvas.castShadow(true)
+            canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
+            let retained = canvas.createShape { canvas.box(40) }
+            canvas.push()
+            canvas.translate(center, 16, 0)
+            switch variant {
+            case .builtIn:
+                canvas.rotateY(-0.6)
+                canvas.box(40)
+            case .mirrored:
+                canvas.scale(-1, 1, 1)
+                canvas.rotateY(0.6)
+                canvas.box(40)
+            case .retained:
+                canvas.rotateY(-0.6)
+                canvas.shape(retained)
+            }
+            canvas.pop()
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
+    @Test("床に接した組み込みの箱は、同じ頂点を両面で焼いた箱と同じ影を落とす")
+    func aGroundedBoxCastsTheSameShadowAsItsTwoSidedCopy() throws {
+        // 奥の面 (光に背を向けた面) を焼くと、接した縁の近くで焼き付いた奥行きと床の奥行きの
+        // 差が縁の余裕より小さくなり、影の側の縁に沿って光が漏れる。両面で焼く保持した形は
+        // 光を向いた面を焼くので漏れない
+        let builtIn = try floorAndGroundedBox(try makeCanvas(), .builtIn)
+        let retained = try floorAndGroundedBox(try makeCanvas(), .retained)
+        let unshadowed = try floorAndGroundedBox(try makeCanvas(), .retained, shadows: false)
+        let shadow = PictureDifference.between(retained, unshadowed)
+        #expect(shadow.differing > 100, "比べる相手に影が落ちていない (\(shadow))")
+        let difference = PictureDifference.between(builtIn, retained)
+        #expect(
+            difference.differing * 50 <= shadow.differing,
+            "組み込みの箱の影が両面で焼いた箱の影と食い違う (\(difference) / 影 \(shadow))")
+    }
+
+    // MARK: - 鏡映した形の影 (#1446)
+
+    @Test("鏡映した箱の影は、同じ形になる回転の箱の影と同じ")
+    func aMirroredBoxCastsTheSameShadow() throws {
+        // 焼き付けも画面と同じ捨て方で描き、表の巻き方は置き場所の鏡映で裏返す (#1446)。
+        // 鏡映した列だけ巻き方を裏返さずに焼くと、鏡映した箱だけ光に背を向けた面が
+        // 焼き付き、床に接した縁に沿って光が漏れる (#1474 と同じ場面)
+        let mirrored = try floorAndGroundedBox(try makeCanvas(), .mirrored)
+        let rotated = try floorAndGroundedBox(try makeCanvas(), .builtIn)
+        let unshadowed = try floorAndGroundedBox(try makeCanvas(), .builtIn, shadows: false)
+        // 比べ合わせる相手が影を持っていること (影の無い絵と比べて床が暗くなっている)
+        let shadow = PictureDifference.between(rotated, unshadowed)
+        #expect(shadow.differing > 100, "比べる相手に影が落ちていない (\(shadow))")
+        let difference = PictureDifference.between(mirrored, rotated)
+        #expect(difference.differing * 50 <= shadow.differing, "鏡映した箱の影が食い違う (\(difference) / 影 \(shadow))")
     }
 
     // MARK: - 落とす光が無いまま終えたフレーム (#1151)

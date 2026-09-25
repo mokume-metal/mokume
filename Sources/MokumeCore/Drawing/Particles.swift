@@ -165,7 +165,24 @@ public final class Particles {
     ///
     /// **検査が読む。**
     private(set) var cursor = 0
-    private var cadence = EmissionCadence()
+    /// 端数の繰り越し。**そのフレームで何回目の `emit` か**で分けて持つ ([#1468])。
+    ///
+    /// 1 つにすると、1 つの粒へ何か所から出したときに噴き口どうしが端数を取り合い、
+    /// 先に呼んだ側から 1 個も出ないことがある — 毎秒 15 個を 30 fps で 2 か所なら、
+    /// 1 か所目が 0.5 を足して 0 個、2 か所目が 1 に届いて 1 個、を毎フレーム繰り返す。
+    /// 呼んだ順で分けるので、同じ 1 行 (`for` の中) から何度呼んでも分かれ、1 か所から
+    /// 出す使い方はいままでと同じ 1 つ目を引いて数が変わらない。
+    ///
+    /// **呼ぶ順や回数がフレームごとに変わると、1 個未満の端数が別の噴き口へ移りうる**
+    /// (条件付きで出す噴き口があるとき)。移るのは入れ替わるたびに 1 個未満で、毎フレーム
+    /// 取り合うことはない。並びは縮めない — 噴き口の数ぶんしか伸びない。
+    ///
+    /// [#1468]: https://github.com/mokume-metal/mokume/issues/1468
+    private var cadences: [EmissionCadence] = []
+    /// 呼んだ順を数えているフレーム (面の `Canvas.framesDrawn`)。変わったら数え直す。
+    private var cadenceFrame: Int?
+    /// `cadenceFrame` のフレームで、これまでに数えた `emit` の回数。
+    private var emitsThisFrame = 0
     /// 枠ごとの「いつまで生きるか」。
     ///
     /// **CPU だけが読む。** 寿命を配ったのは CPU なので、GPU から読み戻さなくても
@@ -247,9 +264,18 @@ public final class Particles {
         return pendingForces
     }
 
-    /// この 1 フレームで出す数。
-    func count(rate: Float, over seconds: Float) -> Int {
-        cadence.take(rate: rate, over: seconds, upTo: capacity)
+    /// この 1 フレームで出す数。`frame` は呼んだ面のフレーム番号で、同じ番号のうちに
+    /// 呼ばれた順で繰り越しを引き分ける (`cadences` の説明)。**0 個に終わる呼び出しも
+    /// 1 回と数える** — 数えないと、出なかった噴き口の後ろの繰り越しが 1 つずつ前へずれる。
+    func count(rate: Float, over seconds: Float, frame: Int) -> Int {
+        if cadenceFrame != frame {
+            cadenceFrame = frame
+            emitsThisFrame = 0
+        }
+        let order = emitsThisFrame
+        emitsThisFrame += 1
+        if order == cadences.count { cadences.append(EmissionCadence()) }
+        return cadences[order].take(rate: rate, over: seconds, upTo: capacity)
     }
 
     /// 粒を `count` 個置く。

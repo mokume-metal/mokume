@@ -30,6 +30,7 @@ struct LoopTests {
         var drawCalls = 0
         var seenFrameCounts: [Int] = []
         var seenDeltas: [Float] = []
+        var seenTimes: [Float] = []
         var pressedCalls = 0
 
         init() {}
@@ -40,6 +41,7 @@ struct LoopTests {
             drawCalls += 1
             seenFrameCounts.append(frameCount)
             seenDeltas.append(deltaTime)
+            seenTimes.append(time)
             background(0)
             stroke(255)
             y -= 4
@@ -181,11 +183,14 @@ struct LoopTests {
         now = 10.0
         try runtime.advance()
         runSketch(runtime) { sketch.loop() }
-        now = 10.016
+        now = 10.03
         try runtime.advance()
 
         #expect(sketch.seenDeltas.count == 2)
-        #expect(abs(sketch.seenDeltas[1] - 0.016) < 1e-5)
+        // 呼び出しの外から戻しても、コールバックから戻したとき
+        // (``loopFromCallbackStepsOneTargetFrame()``) と同じ 1 フレームぶんになる。
+        // `loop()` から描くまでの 0.03 秒でもない
+        #expect(sketch.seenDeltas[1] == 1 / Float(sketch.settings.frameRate))
     }
 
     // MARK: - 止まっていても応える
@@ -278,6 +283,299 @@ struct LoopTests {
         #expect(report["frame"] as? Int == 1)
         #expect(report["image"] as? String == "frame-000.png")
         #expect(sketch.drawCalls == 1)
+    }
+
+    // MARK: - 止まっている間のコールバックはフレームの外 (#1472)
+
+    /// `draw()` を既定でない変換や切り抜きのまま `noLoop()` で終え、押すと赤い四角を置いて
+    /// 描き直しを頼む (#1472 の再現手順の形)。
+    final class StoppedPlacement: Sketch {
+        /// `draw()` が変換をどう残して終わるか。
+        enum Ending: String, CaseIterable, CustomTestStringConvertible {
+            /// `translate(50, 0)` のまま終わる
+            case translated
+            /// `push(); translate(50, 0)` と積んで、戻し忘れて終わる
+            case pushedThenTranslated
+            var testDescription: String { rawValue }
+        }
+
+        var settings = SketchSettings(width: 160, height: 40)
+        var ending: Ending?
+        /// `draw()` を `clip(0, 0, 20, 40)` のまま終えるか。
+        var clipsAtEnd = false
+        /// 押したときに置く四角の左上。
+        var placeAt: (x: Float, y: Float) = (0, 0)
+        /// 置いた四角の列を、コールバックの中で閉じるか (`blendMode(.add)` で閉じる)。
+        var closesRunInCallback = false
+        /// 押したときに `clip(0, 0, 20, 40)` してから四角を置き、`noClip()` で閉じるか。
+        var clipsInCallback = false
+        /// 押したときに読んだ `screenX(0, 0)` / `screenY(0, 0)` / 奥行きを渡す形の 2 つ。
+        var seenScreen: [Float] = []
+
+        init() {}
+        func draw() {
+            // **描き直しの枚では下地を塗らない。** `background()` はそれまでに溜めた図形を
+            // 捨てるので、押したときに置いた四角ごと消える
+            if frameCount == 1 { background(0) }
+            switch ending {
+            case .translated:
+                translate(50, 0)
+            case .pushedThenTranslated:
+                push()
+                translate(50, 0)
+            case nil:
+                break
+            }
+            if clipsAtEnd { clip(0, 0, 20, 40) }
+            noLoop()
+        }
+        func mousePressed() {
+            seenScreen = [screenX(0, 0), screenY(0, 0), screenX(0, 0, 0), screenY(0, 0, 0)]
+            noStroke()
+            fill(255, 0, 0)
+            if clipsInCallback { clip(0, 0, 20, 40) }
+            rect(placeAt.x, placeAt.y, 10, 10)
+            if clipsInCallback { noClip() }
+            if closesRunInCallback { blendMode(.add) }
+            redraw()
+        }
+    }
+
+    /// 1 枚描いて止め、押して描き直させた 1 枚の絵を返す。
+    private func pictureAfterPressing(_ sketch: some Sketch) throws -> DisplayImage {
+        let facet = try makeFacet()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try click(in: facet)
+        try runtime.advance()
+        #expect(runtime.frameCount == 2)
+        return try runtime.target.encodeForDisplay()
+    }
+
+    @Test(
+        "止まっている間のコールバックで置いた図形に、前の draw() が最後に残した変換は効かない",
+        arguments: StoppedPlacement.Ending.allCases)
+    func placingWhileStoppedIgnoresThePreviousTransform(ending: StoppedPlacement.Ending) throws {
+        let sketch = StoppedPlacement()
+        sketch.ending = ending
+        let image = try pictureAfterPressing(sketch)
+
+        // 回っている間のコールバック (フレームの中・`draw()` の前) で置いたときと同じ場所
+        #expect(image[5, 5].red > 200)
+        #expect(image[55, 5].red < 50)
+    }
+
+    @Test("止まっている間のコールバックで閉じた列は、前の draw() が最後に残した切り抜きを持たない")
+    func aRunClosedWhileStoppedIgnoresThePreviousClip() throws {
+        let sketch = StoppedPlacement()
+        sketch.clipsAtEnd = true
+        sketch.placeAt = (30, 5)
+        // 切り抜きは列を**閉じた時点**の値を列が持つ。閉じないまま次のフレームへ持ち越すと、
+        // 次のフレームの頭で切り抜きが外れた後に閉じるので、直す前でも四角は出てしまう
+        sketch.closesRunInCallback = true
+        let image = try pictureAfterPressing(sketch)
+
+        #expect(image[35, 10].red > 200)
+    }
+
+    @Test("止まっている間のコールバックで書いた切り抜きは効かない (#1505)")
+    func aClipWrittenWhileStoppedIsIgnored() throws {
+        let sketch = StoppedPlacement()
+        sketch.clipsInCallback = true
+        sketch.placeAt = (30, 5)
+        // `noClip()` が列を閉じるので、切り抜きが効いていれば四角は切り抜きを持ったまま
+        // 次のフレームで描かれ、(30, 5) からの四角は丸ごと消える
+        let image = try pictureAfterPressing(sketch)
+
+        #expect(image[35, 10].red > 200)
+    }
+
+    @Test("止まっている間のコールバックで読む画面の座標に、前の draw() が最後に残した変換は効かない")
+    func screenCoordinatesWhileStoppedIgnoreThePreviousTransform() throws {
+        let sketch = StoppedPlacement()
+        sketch.ending = .translated
+        _ = try pictureAfterPressing(sketch)
+
+        try #require(sketch.seenScreen.count == 4)
+        #expect(sketch.seenScreen[0] == 0)
+        #expect(sketch.seenScreen[1] == 0)
+        // 奥行きを渡す形は視点も通す。視点は前から終わりで既定へ戻っていたので、変換だけが
+        // 前の `draw()` のまま混ざっていた
+        #expect(abs(sketch.seenScreen[2]) < 0.01)
+        #expect(abs(sketch.seenScreen[3]) < 0.01)
+    }
+
+    // MARK: - 止まっている間のコールバックに前の draw() の光は当たらない (#1504)
+
+    /// `draw()` が底上げの光を置いたまま `noLoop()` で終わり、押すと赤い立体を原点に置いて
+    /// 描き直しを頼む。
+    ///
+    /// **1 枚目は立体を置かず、描き直しの枚だけ光を受ける立体を端に置く。** こうすると、
+    /// 押したときに閉じた列が焼いた光の区間は、描き直しの枚が焼く光をちょうど指す。毎フレーム
+    /// 同じ `draw()` だと、直す前に読むのが置き場の残りになり、結果が定まらない
+    final class StoppedLitPlacement: Sketch {
+        var settings = SketchSettings(width: 160, height: 40)
+
+        init() {}
+        func draw() {
+            // 描き直しの枚では下地を塗らない (`background()` は押して置いた立体ごと捨てる)
+            if frameCount == 1 { background(0) }
+            noStroke()
+            ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
+            if frameCount > 1 {
+                fill(255)
+                push()
+                translate(150, 20, 0)
+                box(10)
+                pop()
+            }
+            noLoop()
+        }
+        func mousePressed() {
+            fill(255, 0, 0)
+            box(10)
+            // 列をコールバックの中で閉じる。閉じないまま持ち越すと、次のフレームの頭で光が
+            // 空に戻った後に閉じるので、直す前でも光は当たらない
+            blendMode(.add)
+            redraw()
+        }
+    }
+
+    @Test("止まっている間のコールバックで置いた立体に、前の draw() の光は当たらない")
+    func aSolidPlacedWhileStoppedIgnoresThePreviousLights() throws {
+        let image = try pictureAfterPressing(StoppedLitPlacement())
+
+        // 光も周囲も無い立体は塗りの色のまま出る (表示の色域で赤は 234 前後)。前の
+        // `draw()` の光を受けると 0.2 倍に暗くなる (直す前は 113)
+        #expect(image[2, 2].red > 220)
+    }
+
+    // MARK: - 止めていたところから描く 1 枚の時計 (#1366)
+
+    /// 止めているスケッチに、描き直しをどこから頼むか。
+    enum RedrawRoute: String, CaseIterable, CustomTestStringConvertible {
+        /// 押下のコールバックの中から。窓で作者のコードが実際に通る経路
+        case fromCallback
+        /// 呼び出しの外から (窓では断られるので、いまは検査からしか通らない)
+        case fromOutside
+        /// 外の `pause()` 中に頼み、`resume()` した後
+        case whilePausedThenResumed
+        var testDescription: String { rawValue }
+    }
+
+    /// 実時間の時計で `setup()` から止め、`stoppedAt` 秒まで止めてから `route` で描き直しを頼む。
+    ///
+    /// 起点は 0 秒で、最初の 1 枚は 0.016 秒に描く。止めている間にも 1 度進めて、描かずに
+    /// 過ぎるフレームを挟む (窓では止めている間も駆動源が呼んでくる)。
+    private func redrawAfterStop(
+        _ sketch: Lines, route: RedrawRoute, stoppedAt: Double
+    ) throws {
+        let facet = try makeFacet()
+        sketch.onPress = { $0.redraw() }
+        var now: Double = 0
+        let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
+        now = 0.016
+        try runtime.advance()
+        now = (0.016 + stoppedAt) / 2
+        try runtime.advance()
+        #expect(sketch.drawCalls == 1)
+
+        switch route {
+        case .fromCallback:
+            now = stoppedAt
+            try click(in: facet)
+        case .fromOutside:
+            now = stoppedAt
+            runSketch(runtime) { sketch.redraw() }
+        case .whilePausedThenResumed:
+            runtime.pause()
+            runSketch(runtime) { sketch.redraw() }
+            try runtime.advance()
+            // 再開から次の 1 枚までの間を、1 フレームぶんとも 0 とも違う長さにしておく
+            now = stoppedAt - 0.05
+            runtime.resume()
+            now = stoppedAt
+        }
+        try runtime.advance()
+        #expect(sketch.drawCalls == 2)
+    }
+
+    @Test(
+        "止めていたところから redraw() で描く 1 枚は、頼んだ経路によらず目標の 1 フレームぶん進み、time は止めていた時間ごと進む",
+        arguments: RedrawRoute.allCases)
+    func redrawAfterStopStepsOneTargetFrame(route: RedrawRoute) throws {
+        let sketch = Lines()
+        try redrawAfterStop(sketch, route: route, stoppedAt: 5)
+
+        // 止めていた 5 秒近くは乗らず、ほぼ 0 でもない — 回っているときの 1 枚ぶん
+        #expect(sketch.seenDeltas.last == 1 / Float(sketch.settings.frameRate))
+        // **時刻は実時間のまま** (ADR-0025 決定 6)。起点が 0 秒なので、描いた瞬間の `now` に等しい
+        #expect(sketch.seenTimes.last == 5)
+    }
+
+    @Test(
+        "描き直しの 1 枚の刻みは設定のフレームレートから取り、止めていた時間が 1 フレームより短くても上限より長くても変わらない",
+        arguments: [24, 120], [0.02, 3.0])
+    func redrawStepFollowsTheTargetFrameRate(frameRate: Int, stoppedAt: Double) throws {
+        let sketch = Lines()
+        sketch.settings.frameRate = frameRate
+        try redrawAfterStop(sketch, route: .fromCallback, stoppedAt: stoppedAt)
+
+        #expect(sketch.seenDeltas.last == 1 / Float(frameRate))
+        #expect(sketch.seenTimes.last == Float(stoppedAt))
+    }
+
+    @Test("止めていたところから押下で loop() を呼ぶと、戻った最初の 1 枚は目標の 1 フレームぶん進み、次の 1 枚から実際の経過に戻る")
+    func loopFromCallbackStepsOneTargetFrame() throws {
+        let facet = try makeFacet()
+        let sketch = Lines()
+        sketch.onPress = { $0.loop() }
+        var now: Double = 0
+        let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
+        now = 0.016
+        try runtime.advance()
+
+        now = 5
+        try click(in: facet)
+        try runtime.advance()
+        now = 5.05
+        try runtime.advance()
+
+        #expect(sketch.drawCalls == 3)
+        #expect(sketch.seenDeltas[1] == 1 / Float(sketch.settings.frameRate))
+        #expect(sketch.seenTimes[1] == 5)
+        // **1 フレームぶんにするのは戻った 1 枚だけ。** 次からは実際に流れた時間
+        #expect(abs(sketch.seenDeltas[2] - 0.05) < 1e-5)
+    }
+
+    @Test("回っている間に呼んだ loop() / redraw() は、経過を 1 フレームぶんに書き換えない")
+    func loopAndRedrawWhileLoopingKeepTheMeasuredDelta() throws {
+        let facet = try makeFacet()
+        let sketch = Lines()
+        sketch.stopsInSetup = false
+        // どちらも回っている間は何もしない口である。止めていなかった枚の経過まで
+        // 1 フレームぶんにすると、落ちたフレームを `deltaTime` で追いつけなくなる
+        sketch.onPress = {
+            $0.loop()
+            $0.redraw()
+        }
+        var now: Double = 0
+        let runtime = try makeRuntime(sketch, inbox: facet, clock: .wallClock, now: { now })
+        now = 0.016
+        try runtime.advance()
+
+        try click(in: facet)
+        now = 0.066
+        try runtime.advance()
+        now = 0.116
+        try runtime.advance()
+
+        #expect(sketch.pressedCalls == 1)
+        #expect(sketch.drawCalls == 3)
+        #expect(abs(sketch.seenDeltas[1] - 0.05) < 1e-5)
+        #expect(abs(sketch.seenDeltas[2] - 0.05) < 1e-5)
     }
 
     // MARK: - 外からの停止との関係

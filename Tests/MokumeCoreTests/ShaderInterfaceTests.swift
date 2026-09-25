@@ -112,6 +112,7 @@ struct ShaderInterfaceTests {
             constants == [
                 "kFormHasFill": ShapePipeline.formHasFillConstantIndex,
                 "kFormHasStroke": ShapePipeline.formHasStrokeConstantIndex,
+                "kFormHasThinFill": ShapePipeline.formHasThinFillConstantIndex,
             ])
     }
 
@@ -148,7 +149,7 @@ struct ShaderInterfaceTests {
 
     @Test("画面へ差し出す入口と取り出す入口が、それぞれの Swift 側と同じ番号・並びで受け取る")
     func presentAndOutputAgreeWithSwift() throws {
-        let library = try RenderDevice().shaders.makeLibrary(named: "Present")
+        let library = try RenderDevice().shaders.presentLibrary()
         #expect(
             Set(library.functionNames)
                 == ["presentVertexMain", "presentFragmentMain", "presentEncodeFragmentMain"],
@@ -338,7 +339,10 @@ struct ShaderInterfaceTests {
 
     static let flatFrame = layout(
         of: FlatFrame.self,
-        [("projection", \.projection), ("strokeStart", \.strokeStart), ("strokeShift", \.strokeShift)])
+        [
+            ("projection", \.projection), ("strokeStart", \.strokeStart),
+            ("strokeShift", \.strokeShift), ("unitsPerDrawnPixel", \.unitsPerDrawnPixel),
+        ])
 
     static let flatInstance = layout(
         of: FlatInstance.self,

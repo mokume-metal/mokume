@@ -295,6 +295,74 @@ struct ParameterExchangeTests {
         }
     }
 
+    /// **番号はプロセスの中だけで数えない。** 起動し直すたびに 1 から数えると、前の起動が
+    /// 起動したきり 1 を書き、保存でつまみが増えた次の起動も同じ 1 で違う宣言を書く。前の
+    /// 起動が番号を進めていれば、次の起動の番号は戻る。どちらでも、番号で写しの鮮度を見る
+    /// 書き手は宣言が変わったことに気付けない ([#1458](https://github.com/mokume-metal/mokume/issues/1458)・
+    /// ADR-0030 決定 2)。
+    @Test("起動し直した最初の応答の改訂番号は、区画に残っていた応答の番号より大きい")
+    func revisionCarriesOnAcrossRelaunches() throws {
+        let facet = try makeFacet()
+        let first = ParamSurface(directory: facet, sketch: Knobbed())
+        first.start()
+        try write(
+            request: #"{"id":"a7","values":[{"name":"count","type":"int","value":5}]}"#, to: facet)
+        first.drain()
+        var last = try #require(try report(from: facet)["revision"] as? Int)
+
+        // 起動し直しを 1 回で終わらせない — 2 回目の起動が 1 回目の起動の続きから
+        // 数えられても、その次が戻れば同じことである
+        for relaunch in 1...2 {
+            ParamSurface(directory: facet, sketch: Knobbed()).start()
+            let revision = try #require(try report(from: facet)["revision"] as? Int)
+            #expect(
+                revision > last,
+                "\(relaunch) 回目の起動の最初の応答が \(revision) で、残っていた \(last) を越えていない")
+            last = revision
+        }
+    }
+
+    /// **残っていたものが番号として使えなければ、1 から数える。** 読めない応答で走っている
+    /// スケッチを止めない。`minimum: 1` を割る数は、Schema の上で番号ではない。
+    @Test(
+        "区画に残っていた応答から番号が読めなければ、改訂番号は 1 から",
+        arguments: [
+            #"{"revision":"#,
+            #"{"schemaVersion":2,"params":[]}"#,
+            #"{"revision":"7"}"#,
+            #"{"revision":2.5}"#,
+            #"{"revision":0}"#,
+            #"{"revision":-3}"#,
+        ])
+    func revisionStartsOverWhenTheLeftoverIsNotANumber(leftover: String) throws {
+        let facet = try makeFacet()
+        try leftover.write(
+            to: facet.appendingPathComponent("report.json"), atomically: true, encoding: .utf8)
+
+        ParamSurface(directory: facet, sketch: Knobbed()).start()
+
+        #expect(try report(from: facet)["revision"] as? Int == 1)
+    }
+
+    /// **外から置ける数に足すので、足せない数で落ちない。** 0 から数えていたころは
+    /// 桁あふれは起きえなかったが、区画に残っていた番号の続きから数えると、そこに
+    /// `Int.max` が置かれているだけで起動が落ちうる。進められなければ 1 から数え直す。
+    @Test("区画に残っていた番号が進められない大きさでも、起動は落ちず 1 から数え直す")
+    func revisionStartsOverWhenItCannotAdvance() throws {
+        let facet = try makeFacet()
+        try #"{"revision":\#(Int.max)}"#.write(
+            to: facet.appendingPathComponent("report.json"), atomically: true, encoding: .utf8)
+
+        let surface = ParamSurface(directory: facet, sketch: Knobbed())
+        surface.start()
+        #expect(try report(from: facet)["revision"] as? Int == 1)
+
+        try write(
+            request: #"{"id":"a8","values":[{"name":"count","type":"int","value":5}]}"#, to: facet)
+        surface.drain()
+        #expect(try report(from: facet)["revision"] as? Int == 2)
+    }
+
     @Test("1 つの要求の中は、名前順に当たる")
     func appliesInNameOrder() throws {
         // 辞書の並びに依ると、同じ要求で結果が揺れ、しかも環境で再現しない

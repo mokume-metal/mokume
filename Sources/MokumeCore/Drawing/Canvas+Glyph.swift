@@ -35,43 +35,63 @@ extension Canvas {
         return face
     }
 
-    /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる。
+    /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる — 上限の面なら、同じ
+    /// 大きさの新しい頁へ焼き直す ([#1342])。
     ///
-    /// **面を広げると、そこを読む列が変わる。** 既に置いた字は前の面を指しているので、
-    /// 広げる前に列を閉じ、前の面はその列が頁ごと抱えたまま残す (``GlyphPage``)。
+    /// **面を替えると、そこを読む列が変わる。** 既に置いた字は前の面を指しているので、
+    /// 替える前に列を閉じ、前の面はその列が頁ごと抱えたまま残す (``GlyphPage``)。
     ///
     /// **広げても入らないものは広げない** ([#738])。広げるたびに焼いた字形は全部
     /// 捨てられるので、入らない 1 字のために他の全部を焼き直させることになる。
-    /// どちらなのかは面が名乗る (``GlyphAtlas/Lookup``)。
+    /// どちらなのかは面が名乗る (``GlyphAtlas/Lookup``)。**焼き直しても入らないものも同じ**で、
+    /// 作りたての上限の頁にも入らない字は、面が「満杯」ではなく「大きすぎる」を名乗る ([#1492])。
+    ///
+    /// **入るまで広げる** ([#1460])。面は 1 段ずつ倍になるので、1 度広げた面にも入らない
+    /// 大きさの字がある (256 の面に 800 の「M」)。1 度で諦めると、その字はこのフレームで
+    /// 欠け、次のフレームでもう一段広がってから出る — 1 フレームだけ描いて書き出す使い方では、
+    /// 欠けたまま残る。
+    ///
+    /// **焼き直すのは 1 フレームに 1 度まで** (``atlasPageFrame``)。このフレームで作った
+    /// 上限の頁まで埋まったなら、このフレームで要る字は焼き直しても収まらない。そのときだけ
+    /// 知らせて、入らない字を諦める。次のフレームでは、また焼き直せる。
+    ///
+    /// **繰り返しは必ず止まる。** 広げる段は上限までの有限で、上限の頁を作れるのは 1 フレームに
+    /// 1 度だけだからである。1 度の呼び出しで頁を替えるのは、多くて 4 度 (256 → 4096) になる。
     ///
     /// [#738]: https://github.com/mokume-metal/mokume/issues/738
+    /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
+    /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
+    /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
     func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
         let key = GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: style.textSize, style: style.textStyle,
             glyph: resolved.glyph)
-        switch atlas.entry(for: key, font: resolved.font) {
-        case .found(let entry): return entry
-        // 理由は面の側が名乗っている。広げても変わらないので、ここは黙って諦める
-        case .tooLarge, .unbakeable: return nil
-        case .full: break
-        }
+        while true {
+            switch atlas.entry(for: key, font: resolved.font) {
+            case .found(let entry): return entry
+            // 理由は面の側が名乗っている。広げても変わらないので、ここは黙って諦める
+            case .tooLarge, .unbakeable: return nil
+            case .full: break
+            }
 
-        guard atlas.canGrow else {
-            warnAtlasFullOnce()
-            return nil
+            guard atlas.canGrow || atlasPageFrame != framesDrawn else {
+                warnAtlasFullInOneFrameOnce()
+                return nil
+            }
+            closeBatch()
+            do {
+                if atlas.canGrow {
+                    try atlas.grow(gpu: gpu)
+                } else {
+                    try atlas.rebake(gpu: gpu)
+                }
+            } catch {
+                return nil
+            }
+            atlasPageFrame = framesDrawn
+            currentTexture = atlas.held
+            whiteUV = atlas.whiteUV
         }
-        closeBatch()
-        do {
-            try atlas.grow(gpu: gpu)
-        } catch {
-            return nil
-        }
-        currentTexture = atlas.held
-        whiteUV = atlas.whiteUV
-        guard case .found(let entry) = atlas.entry(for: key, font: resolved.font) else {
-            return nil
-        }
-        return entry
     }
 
     /// 画素の境目に合わせた四角を 1 枚積む。
@@ -110,6 +130,9 @@ extension Canvas {
     func appendGlyphQuad(
         _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
     ) {
+        // 台帳の指紋を採るときは置かない (``placesGlyphs``)。送り幅は呼ぶ側が進める
+        guard placesGlyphs else { return }
+        glyphQuadsPlaced += 1
         useGlyphTexture()
         // **色を持つ字形には塗りの色を掛けない。** 焼き場の値に頂点の色を掛けるのが
         // 合成の唯一の式なので、掛けても変わらない色 — 白 — を積めば、字形の色が
@@ -162,11 +185,21 @@ extension Canvas {
         }
     }
 
-    /// 焼き場が埋まったことを、初回だけ知らせる。
-    private func warnAtlasFullOnce() {
+    /// 1 フレームで要る字が、焼き直しても上限の面に収まらなかったことを、初回だけ知らせる。
+    ///
+    /// **その場面を名乗る** ([#1342])。上限の面が埋まること自体は、焼き直せば戻るので知らせ
+    /// ない — 戻れないのは、1 フレームのうちに上限の面を使い切るときだけである。次の一手
+    /// (1 フレームで使う字の種類・大きさを減らす) が打てるよう、文面で場面を言う。
+    ///
+    /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
+    private func warnAtlasFullInOneFrameOnce() {
+        let side = GlyphAtlas.maximumSize
         warnOnce(
-            .atlasFull,
-            "text(): the place where glyphs are baked is full. No further new characters will be drawn")
+            .atlasFullInOneFrame,
+            "text(): the characters one frame needs do not fit the baking area's limit of "
+                + "\(side)x\(side), even after it is baked afresh. The characters beyond that are "
+                + "not drawn in such a frame — draw fewer different characters or text sizes in "
+                + "one frame, or lower textSize()")
     }
 
     func appendTriangle(

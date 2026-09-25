@@ -27,6 +27,10 @@
 #   MOKUME_AGENT_URL   その名前に張るリンク (省略可)
 #   GITHUB_REPOSITORY  投稿先リポジトリ (既定 mokume-metal/mokume)
 #
+# **責務は「署名を付けて投稿する」1 つに保つ。** close / reopen も -R も足さない —
+# close / reopen の発言はこれで投稿してから、状態の変更は素の gh で発言なしに行う
+# (AGENTS.md「コメント」)。
+#
 # 人間が直接 gh を使う分にはこのラッパーは不要 (署名の意味が無い)。
 # **CI からもこのラッパーは通さない** (#798)。GitHub Actions が github.token で投稿すると
 # GitHub が bot として出所を描くので、上の穴 — 本人のトークンでの投稿に出所の表示が

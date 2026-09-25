@@ -108,6 +108,51 @@ struct ColorSurfaceTests {
         #expect(red(color(-255, 0, 0)) < 0)
     }
 
+    /// 上の検査と**逆向き**の扱いを並べて置く。成分は目盛りであって上限ではないが、
+    /// 不透明度は「どれだけ効かせるか」なので、0 より透明にも 255 より不透明にもならない
+    /// ([ADR-0033] 決定 3 の改訂)。締めないと、`fill(255, -100)` は下地を負の値へ落とす
+    /// ([#1450])。
+    ///
+    /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
+    /// [#1450]: https://github.com/mokume-metal/mokume/issues/1450
+    @Test("不透明度は範囲の外を 0–255 に締める")
+    func opacityOutsideTheScaleIsClamped() {
+        // **等値で見る。** 締めた値は端の値そのものなので、最下位ビットまで一致する
+        #expect(color(255, 204, 0, -100) == color(255, 204, 0, 0))
+        #expect(color(255, 400) == color(255, 255))
+        #expect(
+            color(hue: 200, saturation: 80, brightness: 90, alpha: 400)
+                == color(hue: 200, saturation: 80, brightness: 90))
+        // 読み出しも締めた値を返す。締めないと `alpha(_:)` だけが範囲の外を返し、
+        // 成分の読み出し (不透明度が 0 以下なら 0) と食い違う
+        #expect(alpha(color(0, 0, 0, 400)) == 255)
+        #expect(alpha(color(0, 0, 0, -100)) == 0)
+    }
+
+    @Test("0–1 の口でも不透明度は 0–1 に締め、乗算済みの口は締めない")
+    func opacityClampsOnTheUnitScaleButNotWhenPremultiplied() {
+        // 締めるのは乗算する点 (ADR-0011 決定 4 の変換点) なので、straight で書くどの綴りも揃う
+        #expect(
+            LinearRGBA.display(red: 1, green: 1, blue: 1, alpha: 1.5)
+                == .display(red: 1, green: 1, blue: 1))
+        #expect(
+            LinearRGBA(straightRed: 1, green: 0, blue: 0, alpha: -0.5)
+                == LinearRGBA(straightRed: 1, green: 0, blue: 0, alpha: 0))
+        // 乗算済みの層は作業空間の「計算のための値」(ADR-0011 決定 1) なので、渡したまま
+        let premultiplied = LinearRGBA(premultipliedRed: 1, green: 0, blue: 0, alpha: 2)
+        #expect(premultiplied.alpha == 2)
+        #expect(premultiplied.red == 1)
+    }
+
+    @Test("数でない不透明度は、締めても不透明に化けない")
+    func notANumberOpacityStaysNotANumber() {
+        // Swift の `min` / `max` は第 1 引数の NaN を返すので、`max(0, min(1, a))` の順に
+        // 書くと NaN が 1 (不透明) に化ける。数値の口は手前で弾く (下の検査) ので、
+        // ここへ NaN が届くのは 0–1 の口から直に作ったときだけで、扱いは変えない
+        let made = LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: .nan)
+        #expect(made.alpha.isNaN, "NaN の不透明度が \(made.alpha) に化けた")
+    }
+
     @Test("数でない値は色を作らず、読み出しは 0 へ倒れる")
     func notANumberFallsToSafeValues() {
         #expect(color(.nan, 0, 0) == .transparent)

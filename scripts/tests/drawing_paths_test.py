@@ -3,15 +3,16 @@
 # SPDX-License-Identifier: MIT
 """scripts/drawing-paths.sh の検査 (#497)。
 
-一覧は 1 つだが、**問いは 2 つある** — 「絵の証跡が要るか」(#306) と「手元の実行の
-覆いが壊れるか」(#435)。`Sketches/` はその 2 つで答えが違う場所で、行の印
-(`evidence-only`) がその違いを持つ。
+一覧は 1 つで、**問いは 2 つある** — 「絵の証跡が要るか」(#306) と「手元の実行の
+覆いが壊れるか」(#435)。いまは 2 つの答えが違う場所が無く、照合は用途を読まない。
+答えを分けていた行の印 (`evidence-only`) は、最後の行から #1377 で外れ、読む口ごと
+#1428 で畳んだ。
 
 読み手ごとの検査 (render_status_test.py / drawing_evidence_test.py /
 catch_up_test.py) が「どちらの問いで訊いているか」を固定するのに対し、ここは
-**照合そのもの**を固定する。とくに固定したいのは倒れる向きで、印も用途も読めない
-ときは広い側 (両方の問いに効く) へ倒れる — 狭く倒すと、絵の退行が誰にも見られずに
-main へ入る。
+**照合そのもの**を固定する。とくに固定したいのは倒れる向きで、どの用途で訊いても、
+前置きの後ろに何が書かれていても、行は外れずに効く — 狭く倒すと、絵の退行が誰にも
+見られずに main へ入る。
 
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
@@ -27,7 +28,7 @@ LIB = REPO / "scripts" / "drawing-paths.sh"
 PATHS = """# 見出し
 
 Sources/MokumeCore/
-Sketches/  evidence-only
+Sketches/
 Tests/MokumeCoreTests/
 """
 
@@ -60,9 +61,9 @@ class DrawingPathsTest(unittest.TestCase):
         )
         return proc.returncode == 0
 
-    # --- 印の無い行は、どちらの問いにも効く ------------------------------
+    # --- 行は前置きとして読む --------------------------------------------
 
-    def test_印の無い行は両方の用途に効く(self):
+    def test_一覧に載る場所は両方の用途に効く(self):
         f = ["Sources/MokumeCore/Canvas.swift"]
         self.assertEqual(self.files("evidence", *f), f)
         self.assertEqual(self.files("coverage", *f), f)
@@ -73,56 +74,33 @@ class DrawingPathsTest(unittest.TestCase):
         self.assertEqual(self.files("coverage", *f), [])
 
     def test_行は先頭一致の前置きとして読む(self):
-        # 印を足しても、前置きの読み方は変わらない
         self.assertEqual(
             self.files("evidence", "Sketches/Shapes/Circles.swift"),
             ["Sketches/Shapes/Circles.swift"],
         )
 
-    # --- evidence-only の行 ---------------------------------------------
+    def test_前置きの後ろに続く語は読まない(self):
+        """行の先頭の語だけが前置きで、空白の後ろは読まない。畳んだ印 (`evidence-only`)
+        や知らない語が書き残されていても、その行は外れずにどちらの問いにも効く —
+        後ろの語で狭く倒れると、絵の退行が誰にも見られずに main へ入る (#1428)。"""
+        self.paths.write_text("Sketches/  evidence-only\nTests/MokumeCoreTests/  なにか 別の語\n")
+        f = ["Sketches/main.swift", "Tests/MokumeCoreTests/L.swift"]
+        for purpose in ("evidence", "coverage"):
+            with self.subTest(purpose=purpose):
+                self.assertEqual(self.files(purpose, *f), f)
+                self.assertTrue(self.touches(purpose, *f))
 
-    def test_evidence_onlyの行は証跡の問いには効く(self):
-        f = ["Sketches/main.swift"]
-        self.assertEqual(self.files("evidence", *f), f)
-        self.assertTrue(self.touches("evidence", *f))
+    # --- 用途は読まない --------------------------------------------------
 
-    def test_evidence_onlyの行は覆いの問いから外れる(self):
-        """#497 の本体。参照スケッチは台帳が描く絵を動かせないので、手元の実行の
-        覆いにも、描画 PR の順番待ちにも数えない。"""
-        f = ["Sketches/main.swift"]
-        self.assertEqual(self.files("coverage", *f), [])
-        self.assertFalse(self.touches("coverage", *f))
-
-    def test_印の付いた行と付かない行が混ざっても覆いは残る(self):
-        self.assertEqual(
-            self.files("coverage", "Sketches/main.swift", "Tests/MokumeCoreTests/L.swift"),
-            ["Tests/MokumeCoreTests/L.swift"],
-        )
-
-    # --- 読めないものは広い側へ倒れる ------------------------------------
-
-    def test_用途を渡さなければ広い側へ倒れる(self):
-        """新しい読み手が用途を渡し忘れたら、狭いほうへ黙って倒れてはいけない。"""
-        script = f'. "{LIB}"\nprintf \'%s\\n\' Sketches/main.swift | drawing_files\n'
-        proc = subprocess.run(
-            ["/bin/bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8",
-            env={"DRAWING_PATHS": str(self.paths), "PATH": "/usr/bin:/bin"},
-        )
-        self.assertEqual(proc.stdout.split(), ["Sketches/main.swift"])
-
-    def test_知らない用途は広い側へ倒れる(self):
-        self.assertEqual(
-            self.files("いつかの新しい問い", "Sketches/main.swift"),
-            ["Sketches/main.swift"],
-        )
-
-    def test_知らない印は無視して広い側へ倒れる(self):
-        # evidence-only の綴り違いは「印が無い」と同じ扱い = 両方の問いに効く
-        self.paths.write_text("Sketches/  evidence-onlyy\n")
-        self.assertEqual(
-            self.files("coverage", "Sketches/main.swift"), ["Sketches/main.swift"]
-        )
+    def test_どの用途で訊いても同じ答え(self):
+        """いまは 2 つの問いの答えが違う場所が無い。用途を渡し忘れた読み手も、知らない
+        用途を渡した読み手も、狭いほうへ黙って倒れてはいけない。"""
+        f = ["Sketches/main.swift", "AGENTS.md", "Tests/MokumeCoreTests/L.swift"]
+        want = ["Sketches/main.swift", "Tests/MokumeCoreTests/L.swift"]
+        for purpose in ("evidence", "coverage", "いつかの新しい問い", ""):
+            with self.subTest(purpose=purpose):
+                self.assertEqual(self.files(purpose, *f), want)
+                self.assertTrue(self.touches(purpose, *f))
 
 
 if __name__ == "__main__":

@@ -6,6 +6,11 @@
 /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
 /// 「どれだけ効かせるか」はアルファが決める、という規律を全モードで揃えてある。
 ///
+/// **下地が透明な所では、どのモードでも置いた色がそのまま載る。** 混ぜる相手が無いので、
+/// 混ぜ方は下地のアルファの分だけ効く — 半分透ける下地の上では、混ぜた色と置いた色が
+/// 半分ずつになる (W3C の合成の一般式・[#1447])。透明で始まる描き場所
+/// (`createGraphics`) に `multiply` で描いても、黒い形にはならない。
+///
 /// **合成は 2 つの経路に分かれる。** `blend` と `replace` は固定機能のブレンドが混ぜ、
 /// 残りはフラグメントが下地を読んで混ぜる ([#758])。アルファの扱いは経路によらず揃えて
 /// ある (乗算済みの source-over・[ADR-0011] 決定 4) ので、上の規律はどちらでも成立する。
@@ -16,6 +21,7 @@
 ///
 /// [#758]: https://github.com/mokume-metal/mokume/issues/758
 /// [#887]: https://github.com/mokume-metal/mokume/issues/887
+/// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// - Note: **隔離の外に置く。** ライブラリ全体が main actor を既定の隔離としているので
@@ -37,8 +43,9 @@ public nonisolated enum BlendMode: Sendable, Equatable, CaseIterable {
     case add
     /// 引く。暗くなる。
     ///
-    /// **0 を下回った値もそのまま残る** (式は `下地 − アルファ × 塗り`)。負の値は出力段が
-    /// 0 へ畳むので、暗部は途中で折れずに黒へ着く ([#1057])。
+    /// **0 を下回った値もそのまま残る** (不透明な下地の上での式は `下地 − アルファ × 塗り`)。
+    /// 負の値は出力段が 0 へ畳むので、暗部は途中で折れずに黒へ着く ([#1057])。下地が透けて
+    /// いる所では引く相手が少ないぶん効きが弱まり、透明な所では置いた色がそのまま載る。
     ///
     /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
     case subtract

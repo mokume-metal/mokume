@@ -217,7 +217,7 @@ struct LateFailureTests {
 
             switch how {
             case "save": recorder.save(directory.appendingPathComponent("c.png").path, at: 1)
-            default: recorder.beginRecord(directory.appendingPathComponent("f-##.png").path)
+            default: recorder.beginRecord(directory.appendingPathComponent("f-##.png").path, at: 1)
             }
             // 並びへ戻るときに健康状態は作り直される。ここで前の失敗が見えると、
             // 仕切り直したはずの最初のフレームで 1 回ぶん数えられる
@@ -234,7 +234,7 @@ struct LateFailureTests {
             try Data("not a directory".utf8).write(to: blocker)
 
             let recorder = FrameRecorder()
-            recorder.beginRecord(blocker.appendingPathComponent("f-##.png").path)
+            recorder.beginRecord(blocker.appendingPathComponent("f-##.png").path, at: 1)
             recorder.writer.write(picture, to: blocker.appendingPathComponent("f-00.png").path)
             recorder.writer.drain()
             recorder.absorbOutcomes()

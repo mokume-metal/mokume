@@ -31,7 +31,7 @@ extension Sketch {
     /// ## 止まっていても入力は届く
     ///
     /// ``mousePressed()`` などのコールバックは呼ばれ続ける。止めたスケッチを動かし直す
-    /// ``loop()`` / ``redraw()`` は、ふつうそこから呼ぶ。
+    /// ``loop()`` / ``redraw()`` は、そこから呼ぶ。
     ///
     /// ```swift
     /// func mousePressed() {
@@ -40,15 +40,36 @@ extension Sketch {
     /// ```
     ///
     /// ただし止まっている間のコールバックは**フレームの外**で呼ばれる。そこで置いた図形は
-    /// 次に描くフレームまで出ず、``translate(_:_:)`` などの変換は効かない。描くのは
+    /// 次に描くフレームまで出ず、**変換も切り抜きも無い状態で置かれる** — そこで書いた
+    /// ``translate(_:_:)`` などの変換や ``clip(_:_:_:_:)`` は警告して無視され、前の
+    /// ``draw()`` が最後に残した変換 (戻し
+    /// 忘れた ``push()`` の後の分も) と切り抜きも効かない。``screenX(_:_:)`` などで読む
+    /// 座標も同じである。置いた立体は**光も周囲も無い状態で置かれ**、前の ``draw()`` の光は
+    /// 当たらない (塗りの色のまま出る)。塗りや線の色は前の ``draw()`` のものが残る。描くのは
     /// ``draw()`` に任せる。
+    ///
+    /// ## 呼べる場所
+    ///
+    /// **進行の 3 つの口 (これと ``loop()`` / ``redraw()``) が効くのは、``setup()``・
+    /// ``draw()``・入力のコールバックの中から呼んだときだけである。** それ以外の場所から
+    /// 呼ぶと何もせず、そのことを標準エラーで知らせる。
+    ///
+    /// **そこで起こした `Task` の中も、外に数える。** `Task` の中身が走るのは起こした
+    /// コールバックが返った後で、そのときにはもう呼び出しの中ではない。
+    ///
+    /// 待つ読み込みの口 (``requestImage(_:)`` など) は `Task` から呼べるが、あちらは
+    /// 絵を描かず値を返すだけなので `Task` へ持ち越せる。進行の口は持ち越さない —
+    /// `Task` から触れると、どのフレームが描き直されるかが `Task` に番が回る時機で
+    /// 決まるためである。
     ///
     /// ## 外からの停止とは別に持つ
     ///
     /// ホストが `SketchRuntime.pause()` / `resume()` で止めて再開しても、ここで止めた
     /// スケッチは止まったままである。理由は `SketchRuntime.resume()` の説明にある。
     public func noLoop() {
-        guard let runtime = runningSketch else { return warnNotRunning("noLoop()") }
+        guard let runtime = runningSketch else {
+            return Diagnostics.warn(OutsideCall.noLoop.notice)
+        }
         runtime.noLoop()
     }
 
@@ -60,9 +81,17 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 戻った後の最初の ``deltaTime`` に、止まっていた間の時間は乗らない。
+    /// 戻った後の最初の 1 枚の ``deltaTime`` は**目標の 1 フレームぶん**
+    /// (`1 / settings.frameRate`) で、止まっていた間の時間は乗らない。``time`` も含めて、
+    /// その 1 枚の値は ``redraw()`` で描き直した 1 枚と同じになる (``redraw()`` の
+    /// 「描き直しの 1 枚の時刻」)。2 枚目からは、ふだんどおり前のフレームからの経過である。
+    ///
+    /// **効くのは ``setup()``・``draw()``・入力のコールバックの中から呼んだときだけ**で、
+    /// そこで起こした `Task` から呼んでも回り出さない (``noLoop()`` の「呼べる場所」)。
     public func loop() {
-        guard let runtime = runningSketch else { return warnNotRunning("loop()") }
+        guard let runtime = runningSketch else {
+            return Diagnostics.warn(OutsideCall.loop.notice)
+        }
         runtime.loop()
     }
 
@@ -73,12 +102,29 @@ extension Sketch {
     ///
     /// **回っている間と、``draw()`` の中では何もしない** — どちらも、頼まなくても
     /// 描かれている (または描いている最中の) フレームだからである。
+    ///
+    /// **効くのは ``setup()``・``draw()``・入力のコールバックの中から呼んだときだけ**で、
+    /// そこで起こした `Task` から呼んでも描き直さない (``noLoop()`` の「呼べる場所」)。
+    ///
+    /// ## 描き直しの 1 枚の時刻
+    ///
+    /// **1 回の描き直しで、回っているときの 1 枚ぶん進む。** その 1 枚の ``deltaTime`` は
+    /// 目標の 1 フレームぶん (`1 / settings.frameRate`・60 fps なら約 16.7 ms) で、止めていた
+    /// 長さによらない。`deltaTime` で積んで動かすものは、描き直すたびに 1 枚ぶんずつ動く。
+    ///
+    /// ``time`` は時計によって進み方が違う:
+    ///
+    /// - 窓に出して動かしているとき (実時間の時計) — **止めていた時間ごと進む。** ``time`` は
+    ///   実際に流れた時間なので、描き直した 1 枚で止めていたぶんに追いつく。`time` から
+    ///   導いた動きは、その 1 枚で止めていたぶんだけ先へ飛ぶ
+    /// - フレーム番号から時刻を導く時計 (書き出しと検査の既定) — **1 フレームぶんだけ
+    ///   進む。** 止めている間はフレームが進まないので、止めていた時間はどこにも現れない
+    ///
+    /// ``deltaTime`` の値はどちらの時計でも同じである。
     public func redraw() {
-        guard let runtime = runningSketch else { return warnNotRunning("redraw()") }
+        guard let runtime = runningSketch else {
+            return Diagnostics.warn(OutsideCall.redraw.notice)
+        }
         runtime.redraw()
-    }
-
-    private func warnNotRunning(_ call: String) {
-        Diagnostics.warn("\(call): the sketch is not running, so there is nothing to control")
     }
 }

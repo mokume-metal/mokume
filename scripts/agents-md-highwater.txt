@@ -4,4 +4,4 @@
 # AGENTS.md の字数の記録値 (#737)。実測と等しいときだけ make agents-md-size が緑になる。
 # 下げるのは実測が縮んだとき、上げるのは降ろせない規律を足すときだけ。理由は
 # scripts/check-agents-md-size.py の冒頭にある。
-14114
+8267

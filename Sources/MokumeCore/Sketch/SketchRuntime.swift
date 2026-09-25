@@ -56,6 +56,15 @@ public final class SketchRuntime {
     ///
     /// 頼まれている間だけ ``outlets`` に居る (``attachRecorderIfNeeded()``)。
     private var recorder: FrameRecorder?
+    /// 撮る係へ渡す刻み。**起動のときに読んだ ``SketchSettings/frameRate``** ([#1457])。
+    ///
+    /// 各枚の時刻を決める時計と `deltaTime` の上限も、同じ `settings` の写しから刻みを採る。
+    /// 係を作るとき (最初の `save` か `beginRecord`) に読み直すと、走っている最中に代入した
+    /// スケッチでは、各枚の間隔は起動のときのまま、動画の最後の 1 枚の長さだけが代入した値に
+    /// 従う。
+    ///
+    /// [#1457]: https://github.com/mokume-metal/mokume/issues/1457
+    private let launchFrameRate: Int
     /// 閉じ終えるのを待っている撮る係。**居る間はフレームを進めない** (``closePlugins(_:)``)。
     private var closingRecorder: FrameRecorder?
 
@@ -168,13 +177,14 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         self.sketch = sketch
+        self.launchFrameRate = settings.frameRate
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
         self.timing = FrameTiming(
             clock: clock ?? .frameIndex(frameRate: settings.frameRate),
-            maximumDeltaTime: FrameTiming.maximumDeltaTime(frameRate: settings.frameRate),
+            frameRate: settings.frameRate,
             now: now)
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
@@ -201,13 +211,14 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         self.sketch = sketch
+        self.launchFrameRate = settings.frameRate
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
         self.timing = FrameTiming(
             clock: clock ?? .frameIndex(frameRate: settings.frameRate),
-            maximumDeltaTime: FrameTiming.maximumDeltaTime(frameRate: settings.frameRate),
+            frameRate: settings.frameRate,
             now: now)
         self.now = now
         self.observer = observer
@@ -375,13 +386,21 @@ public final class SketchRuntime {
         // **作者が止めている間も入力は配る** (``deliverWhileStopped()``)。配ったコールバックが
         // `loop()` か `redraw()` を呼べば、このフレームで描く
         var deliveredInput = false
-        if !isLooping, !redrawRequested {
-            guard deliverWhileStopped() else {
-                settleWithoutAnotherFrame()
-                serveObservationIfRequested()
-                return
+        if !isLooping {
+            if !redrawRequested {
+                guard deliverWhileStopped() else {
+                    settleWithoutAnotherFrame()
+                    serveObservationIfRequested()
+                    return
+                }
+                deliveredInput = true
             }
-            deliveredInput = true
+            // **止めていたところから描く 1 枚は、目標の 1 フレームぶん進める** ([#1366])。
+            // 止まっていた時間は乗せず、ほぼ 0 にもしない。頼んだ経路 (コールバックの中・
+            // 呼び出しの外・外の停止の間) をここ 1 か所で拾うので、経路で値が割れない
+            //
+            // [#1366]: https://github.com/mokume-metal/mokume/issues/1366
+            timing.stepOneFrameNext()
         }
         var drawFailure: RenderFailure?
         do {
@@ -431,8 +450,8 @@ public final class SketchRuntime {
         //
         // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
         // 落ちる。描き始めた中でないと、コールバックの中の `translate()` や `pushStyle()` が
-        // 無言で効かない (変換とスタイルの口は `guard isShaping`・光の口は `guard isDrawing`
-        // で守られている。形を組み立てている最中でもないので、どちらも外である)。
+        // 無言で効かない (変換とスタイルの口は `guard isShaping`・光と切り抜きの口は
+        // `guard isDrawing` で守られている。形を組み立てている最中でもないので、どちらも外である)。
         // 図形や絵の口は守られておらず、フレームの外で置いたものは次の描き切りまで溜まる
         try canvas.draw {
             withActiveRuntime {
@@ -452,15 +471,15 @@ public final class SketchRuntime {
     /// 配るのは**フレームの外**である。`draw()` を呼ばないフレームを組むと、効果や
     /// 視点の無い絵が出口へ出て、止まっている間の絵が変わってしまう。そのため
     /// コールバックの中の `translate()` は効かず、置いた図形は次に描くフレームへ溜まる。
+    /// 置かれるのは変換も切り抜きも光も周囲も無い状態で、前のフレームが最後に残した分も
+    /// 効かない (描き終えたところで戻す — `Canvas.endFrame()`・#1472・#1504)。
     ///
     /// - Returns: 配った結果、このフレームを描くことになったか。
     private func deliverWhileStopped() -> Bool {
         collectInput()
         withActiveRuntime { input.beginFrame { deliver($0) } }
-        guard isLooping || redrawRequested else { return false }
-        // 止まっていた間の実時間を、描き直しの 1 枚の経過に乗せない
-        timing.resync()
-        return true
+        // 描き直しの 1 枚の経過は ``runFrame()`` が決める
+        return isLooping || redrawRequested
     }
 
     /// 配られた 1 件を、スケッチの書いた口へ渡す。
@@ -498,6 +517,15 @@ public final class SketchRuntime {
         paramStore?.tick()
     }
 
+    /// 起こした道具が居なくなっていたら 1 度だけ `true` を返す (``StandardInputEvents/takeDeparture()``)。
+    ///
+    /// **見張りから起こされていなければ、常に `false`。** 管を読むのはそのときだけなので
+    /// (``StandardInputEvents/makeIfDriven(by:descriptor:)``)、`mokume run` や直に走らせた子の
+    /// 標準入力 (端末) が閉じても終わらない。
+    func takeDriverDeparture() -> Bool {
+        relayed?.takeDeparture() ?? false
+    }
+
     /// 入り口に値を供給させる。**`draw()` の直前** ([ADR-0024] 決定 6)。
     ///
     /// 供給した値が同じフレームの `draw()` から見える。1 フレーム遅れて効く形にすると、
@@ -505,7 +533,7 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     private func supplyFromInlets() {
-        visit(&inlets) { $0.supply() } failure: { $0.failure }
+        Self.visit(&inlets) { $0.supply() } failure: { $0.failure }
     }
 
     /// 差込口を 1 巡し、**続けて転んだものを外す**。
@@ -524,10 +552,15 @@ public final class SketchRuntime {
     /// 組み立てる必要があったからで ([#947](https://github.com/mokume-metal/mokume/issues/947)
     /// の「頼んた」)、ここには組み立てが無い。
     ///
+    /// `warn` は外したことを知らせる口で、**検査が差し替える**。標準エラーへ実際に出た行は
+    /// 検査から読めないので、言ったかどうかと何と言ったかはここで受け取って確かめる
+    /// ([#1442])。ランタイムの状態には触れないので、差し替えて回すのに面は要らない。
+    ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-    private func visit<Seam>(
+    /// [#1442]: https://github.com/mokume-metal/mokume/issues/1442
+    static func visit<Seam>(
         _ seams: inout [(seam: Seam, health: SeamHealth)], calling act: (Seam) -> Void,
-        failure: (Seam) -> String?
+        failure: (Seam) -> String?, warn: (String) -> Void = Diagnostics.warn
     ) {
         for index in seams.indices where seams[index].health.isAttached {
             let seam = seams[index].seam
@@ -535,8 +568,12 @@ public final class SketchRuntime {
             // **理由は 1 度だけ読む。** 2 度読むと、外した判断と言う理由が別の値になりうる
             let reason = failure(seam)
             if seams[index].health.note(reason) {
-                Diagnostics.warn(
-                    "\(type(of: seam)) failed again and again, so it was detached"
+                // **名乗りは `Any` を経て取る。** `Seam` には存在型 (`any Outlet` /
+                // `any Inlet`) が入るので、`type(of: seam)` は中身ではなく存在型そのもの
+                // を返し、どれを外したのかが分からない ([#1442])。`Any` へ包み直すと、
+                // 中身の型まで降りる
+                warn(
+                    "\(type(of: seam as Any)) failed again and again, so it was detached"
                         + " (the last reason: \(reason ?? "unknown"))")
             }
         }
@@ -589,7 +626,7 @@ public final class SketchRuntime {
             pending.image.pendingSubmission,
             orWarn: "Could not wait for the GPU before handing the frame to an outlet")
         let frame = OutputFrame(image: pending.image, frame: pending.frame, time: pending.time)
-        visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
+        Self.visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
     }
 
     // MARK: - 名乗り
@@ -697,8 +734,10 @@ public final class SketchRuntime {
     func loop() {
         guard !isLooping else { return }
         isLooping = true
-        // 止まっていた間の実時間を、再開後の最初の経過に乗せない (``resume()`` と同じ理由)
-        timing.resync()
+        // 止まっていた間の実時間を、再開後の最初の経過に乗せない (``resume()`` と同じ理由)。
+        // 寄せ直すのではなく 1 フレームぶんにするのは、``Sketch/redraw()`` の 1 枚と揃える
+        // ため。コールバックから呼ばれたときは ``runFrame()`` も同じ印を付ける
+        timing.stepOneFrameNext()
     }
 
     /// 作者の口の転送 (正本は ``Sketch/redraw()``)。
@@ -737,7 +776,9 @@ public final class SketchRuntime {
 
     /// 連番を始める。転送 (正本は ``Sketch/beginRecord(_:)``)。
     public func beginRecord(_ pattern: String) {
-        requireRecorder().beginRecord(pattern)
+        // **頼まれたフレームを一緒に渡す** (`save(_:)` と同じ理由)。番号が無いと、撮る係が
+        // 前から並びに居たときに 1 つ前の絵から録る (#1456)
+        requireRecorder().beginRecord(pattern, at: timing.frameCount)
         attachRecorderIfNeeded()
     }
 
@@ -756,7 +797,7 @@ public final class SketchRuntime {
     /// 撮る係。**頼まれてはじめて作る** — 撮らないスケッチは 1 バイトも払わない。
     private func requireRecorder() -> FrameRecorder {
         if let recorder { return recorder }
-        let made = FrameRecorder(frameRate: sketch.settings.frameRate)
+        let made = FrameRecorder(frameRate: launchFrameRate)
         recorder = made
         return made
     }
@@ -996,10 +1037,16 @@ public final class SketchRuntime {
     /// いま走っているランタイムとして自分を差し込んでから `body` を実行する。
     ///
     /// 差し込みを入れ子にしても壊れないよう、前の値へ必ず戻す。
+    ///
+    /// **同じ範囲で面も束ねる** (``LaunchingSketch``)。中で起こされた `Task` が、差し込みが
+    /// 外れた後もこの面へ読み込めるようにするためである ([#1367])。束ねた値は範囲を出れば
+    /// 自動で戻る。
+    ///
+    /// [#1367]: https://github.com/mokume-metal/mokume/issues/1367
     private func withActiveRuntime(_ body: () -> Void) {
         let previous = runningSketch
         runningSketch = self
         defer { runningSketch = previous }
-        body()
+        LaunchingSketch.$canvas.withValue(canvas, operation: body)
     }
 }

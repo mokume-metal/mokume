@@ -54,6 +54,15 @@ public final class Canvas {
     /// 実際に刻む高さ (画素)。
     public var pixelHeight: Int { target.height }
 
+    /// 描く画素 1 つが描画先の座標でいくらか (x, y)。細かさ 1 では描く先と出す先が同じ
+    /// 1 枚なので、幅を幅で割ってちょうど 1 になる。
+    ///
+    /// 基本図形の頂点関数が縁の被覆を描く画素で測るために読み (`FlatFrame`・#1488)、
+    /// 置く側が 1 画素より細い塗りを判定するのにも使う (`FormInstance.mayHaveThinFill`・#1477)。
+    var unitsPerDrawnPixel: SIMD2<Float> {
+        SIMD2(width / Float(pixelWidth), height / Float(pixelHeight))
+    }
+
     /// 描く先。**細かさに従う**ので、``output`` より小さいことがある。
     let target: RenderTarget
 
@@ -120,6 +129,12 @@ public final class Canvas {
     /// 保持した形は自分で畳む仕組みを持つ ([#241](https://github.com/mokume-metal/mokume/issues/241)) —
     /// 記録するのは頂点と区間だけで、置き場所は持ち歩かない。記録の中で畳むと、形自身の
     /// 座標へ寄せた頂点だけが残り、**どこへ置くかが記録から落ちる**。
+    ///
+    /// **立体も同じ答えを取る** ([#1297])。組み込みの形・読み込んだモデル・組み立ての中で
+    /// 置き直した保持した形は、置き場所に変換と塗りを持たせて描くが、記録の間は置き場所を
+    /// 頂点へ焼いて積む (``SolidInstance/placing(_:)``)。
+    ///
+    /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     var recordingShape = false
 
     /// 保持する形を記録している間に、輪郭が積んだ平面の頂点の区間。
@@ -289,6 +304,14 @@ public final class Canvas {
         /// 半透明の形は奥の面が手前の面を通して見えるので、1 つでも居れば列ごと
         /// 両面で描く (``Batch/cullMode``)。
         var hasTranslucentInstance = false
+        /// この列の置き場所が形を鏡映するか (``SolidInstance/isMirrored``)。
+        ///
+        /// **列の置き場所はどれも同じ符号を持つ。** 表の巻き方は列ごとに 1 つ
+        /// (``Batch/frontFacing``) なので、符号が変わったら列を閉じる — 鏡映した置き場所と
+        /// 鏡映していない置き場所を同じ列に同居させると、どちらかの手前の面が捨てられる
+        /// ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。その場で並べる列は
+        /// 何も動かさない置き場所 1 つで描くので、いつも `false` である。
+        var isMirrored = false
         /// いま組み立てている形の点番号が、この列のどの頂点になったか。
         ///
         /// **添字の列だけが使い、列と一緒に消える。** ``appendSolidVertex`` は貼る面の
@@ -447,7 +470,12 @@ public final class Canvas {
     /// [#366]: https://github.com/mokume-metal/mokume/issues/366
     var noiseSettings = ValueNoise()
     /// 焼き付け先。**同じ細かさなら作り直さない** (同 決定 4)。
-    private var shadowMap: ShadowMap?
+    ///
+    /// 読めるのは検査が焼いた奥行きを直に確かめるため ([#1474] — どちらの面を焼いたかは、
+    /// 既定の縁の余裕の下では絵にほとんど出ない)。
+    ///
+    /// [#1474]: https://github.com/mokume-metal/mokume/issues/1474
+    private(set) var shadowMap: ShadowMap?
     /// 焼き付け先を作った回数 (作ってから通算)。
     ///
     /// **作り直していないかを数える値。** 毎フレーム宣言してよい形にした以上、
@@ -478,6 +506,23 @@ public final class Canvas {
     var pendingEffects: [Effect] = []
     /// 効果のパイプライン。**頼まれてはじめて作る。**
     var effectPipelineStorage: EffectPipeline?
+    /// 描く先に効果を通した絵があり、効果を通す前の絵が控え (``EffectPipeline/carry()``) に
+    /// あるか ([#1469])。**立っていれば、次のフレームの最初の描き切りが控えから戻す**
+    /// (塗り直すなら戻さない)。
+    ///
+    /// 立てるのも下ろすのも投入の後だけ ([#1183] と同じ作法)。組み立ての途中で投げた
+    /// コマンドは捨てられるので、その前に書き換えると描く先の中身と食い違う。
+    ///
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    var carriesPictureBeforeEffects = false
+    /// 描き終えた絵を控えへ写した回数 (作ってから通算)。**効果を頼まないフレームでは
+    /// 増えない**ことを検査が見る。積む 1 行と同じ場所で数える。
+    var effectCarriesEncoded = 0
+    /// 控えから描く先へ戻した回数 (作ってから通算)。戻すのは効果を通したフレームの次の
+    /// 1 回だけで、塗り直すフレームでは戻さない。**戻しても絵は同じなので、戻しすぎは
+    /// 絵では分からない** — 数で見る。
+    var effectCarryRestoresEncoded = 0
     /// 積んだ待つ仕掛けの数。**積む 1 行と同じ場所で数える。**
     var effectBarriersEncoded = 0
     /// 検査から「途中で失敗した段」を作るための差し込み。製品の経路では常に `nil`。
@@ -566,10 +611,17 @@ public final class Canvas {
     /// このフレームで描き切った回数。**奥行きを引き継ぐかの判定に使う。**
     private var passesThisFrame = 0
 
-    /// このフレームで置いた描き場所。
+    /// 置いた描き場所のうち、まだ描き切っていないもの。
     ///
     /// **置いた時点の絵を守るために覚えている。** 溜めてから描くので、置いたあとに
     /// その描き場所が描き換わると、先に置いた場所まで最新の絵に化ける。
+    ///
+    /// 記録するのは**置くたび** — 画像として置いたときと、貼った塗りや保持した形がその
+    /// 面を読むように切り替えたとき (``useTexture(_:)``) である。落とすのは描き切り
+    /// (フレームの終わりと、描き場所が描き換わる直前) と塗り直し (``discardPending()``) で、
+    /// 落とした後に同じ面のまま置いた形も、置いた時点で記録し直される ([#1543])。
+    ///
+    /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     private(set) var placedGraphics: Set<ObjectIdentifier> = []
 
     /// 自分を置いた面。**自分の絵が変わる前に、そちらを先に描き切らせる。**
@@ -635,11 +687,46 @@ public final class Canvas {
     }
     /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
     var hasLoadedPixels = false
+    /// 直前の、画素を読む前の描き切りが失敗したか。次に描き切れたときに戻る。
+    ///
+    /// **読む口に描き切りをやり直させないための印** ([#1368])。失敗した描き切りは溜めたものを
+    /// フレームの終わりへ残すので、溜めたか (``hasPendingDrawing``) だけを見ていると読むたびに
+    /// やり直す — GPU が詰まっていれば、1 画素読むごとに待ちの上限まで待つ。同じフレームで
+    /// やり直すのは ``loadPixels()`` を呼んだときだけにする。
+    ///
+    /// **フレームの頭では戻さない。** フレームで最初の読み取りは印を見ずに必ず描き切り
+    /// (``hasLoadedPixels``)、描き切れればそこで戻るので、戻す場所を 2 つ持つ理由が無い。
+    ///
+    /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
+    var pixelLoadFailed = false
 
     // MARK: 文字
 
     /// 字形を焼いて溜める面。**図形もここの白い区画を読む** (``GlyphAtlas``)。
     let atlas: GlyphAtlas
+    /// 焼き場のいまの頁を作ったフレーム (``framesDrawn`` の値)。まだ替えていなければ `nil`。
+    ///
+    /// **上限の頁を 1 フレームに 2 枚作らないために持つ** ([#1342])。このフレームで作った
+    /// 頁が埋まったなら、このフレームで要る字だけで上限の面が溢れている — 焼き直しても
+    /// 同じフレームのうちにまた埋まるので、替え続けると 128 MiB の頁が際限なく並ぶ。
+    ///
+    /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
+    var atlasPageFrame: Int?
+    /// 字形を四角として置くか。**台帳の指紋を採るときだけ下ろす** ([#1559])。
+    ///
+    /// 字形を画素にするのは OS (CoreGraphics) で、書体の輪郭と送り幅が同じでも、焼いた画素は
+    /// OS の版で 1〜3 階調ずれる。文字が主題でない台帳の行にそれを写し込むと、絵が 1 画素も
+    /// 変わっていないのに OS の更新で行が動く ([ADR-0019] 決定 3 の改訂 (2026-09-25))。
+    ///
+    /// **下ろしても組版は変わらない。** 字を引き、送り幅を進めたうえで、置く手前で止める
+    /// だけである。作者に見せる口ではないので公開しない。描き場所へは引き継ぐ
+    /// (``createGraphics(_:_:)``) — 描き場所に書いた字も、同じ行の絵に載るからである。
+    ///
+    /// [#1559]: https://github.com/mokume-metal/mokume/issues/1559
+    /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
+    var placesGlyphs = true
+    /// 置いた字形の四角の数。旗 (``placesGlyphs``) が効いていることを、検査が数で確かめる。
+    var glyphQuadsPlaced = 0
     /// いま列が読んでいる面。面を広げる・画像を描くと差し替わる。
     ///
     /// **持ち主と組で持つ** (``HeldTexture``)。閉じた列はこれを写し取るので、ここで持ち主を
@@ -649,6 +736,13 @@ public final class Canvas {
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader?
     /// いま塗りが読む数の並び。`nil` なら読まない。
+    ///
+    /// **断片 (``currentShader``) と同じくフレームを越える** ([#1470])。並びは断片と一組の
+    /// 塗り (`Shape.Paint`) で、中身は `Numbers.set` で差し替える作りなので、1 度渡して
+    /// 中身だけを書き換える書き方が自然に生まれる。フレームの頭で外すと、その書き方だけが
+    /// 2 枚目から黙って 0 を読む。外すのは ``resetNumbers()`` の 1 つだけ。
+    ///
+    /// [#1470]: https://github.com/mokume-metal/mokume/issues/1470
     var currentNumbers: Numbers?
     /// 保持した形を置いている間だけ効く、**記録した塗り**。`nil` なら生きている状態を使う。
     ///
@@ -714,6 +808,13 @@ public final class Canvas {
     var currentCurveDetail = 20
     var currentCurveTightness: Float = 0
     /// 通過点を結ぶ曲線の制御点。4 つ揃うごとに 1 区間を引く。
+    ///
+    /// **並びは `curveVertex` を続けて呼んでいる間だけ続く。** `curveVertex` 以外で点を置く
+    /// 呼び出し (`vertex` / `bezierVertex` / `quadraticVertex`) と、穴の境目 (``beginContour()`` /
+    /// ``endContour()``) で空に戻す — 穴の中の曲線は外周の点を並びに含まず、外周と独立に
+    /// 始まる ([#1449])。
+    ///
+    /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
     var curveGuides: [SIMD2<Float>] = []
 
     /// 閉じた列。**同じ列は単一の混ぜ方でしか描かれない。**
@@ -757,11 +858,12 @@ public final class Canvas {
         /// 畳めない列は**何も動かさない置き場所を 1 つ**指す (平面なら添字 0)。
         var instanceStart: Int = 0
         var instanceCount: Int = 1
-        /// 基本図形の列が持つもの (塗り・輪郭)。**基本図形の列だけが使う。**
+        /// 基本図形の列が持つもの (塗り・輪郭・1 画素より細い塗り)。**基本図形の列だけが使う。**
         ///
-        /// 断片は有無で特化してあるので、この組がパイプラインを選ぶ ([#771])。
+        /// 断片は有無で特化してあるので、この組がパイプラインを選ぶ ([#771]・[#1477])。
         ///
         /// [#771]: https://github.com/mokume-metal/mokume/issues/771
+        /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
         var formFlags: UInt32 = 0
         /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。**持ち主ごと持つ**
         /// (``ExternalInstances`` と同じ理由)。
@@ -784,7 +886,14 @@ public final class Canvas {
         /// 変わらず、断片の仕事 (影の読み取りを含む) が裏面のぶんだけ減る
         /// ([#756](https://github.com/mokume-metal/mokume/issues/756))。動きうるのは輪郭の
         /// 縁で表と裏が同じ奥行きを争っていた画素だけで、それは表の色に確定する
-        /// (台帳の `shadows` で 1 画素・2 階調が動いた実測が #756 の PR にある)。
+        /// (台帳の `shadows` で 1 画素・2 階調が動いた実測が #756 の PR にある)。影の焼き付けも
+        /// 同じ捨て方で焼き、焼き付く奥行きも両面で焼いたときと変わらない — 光から見て最も
+        /// 近い面も必ず表だからである ([#1474](https://github.com/mokume-metal/mokume/issues/1474))。
+        ///
+        /// **どちらが表かは巻き方で決まり、巻き方は鏡映と裏返す投影で裏返る。** 捨て方は
+        /// `.back` のまま、表の巻き方 (``frontFacing``) のほうを列ごとに裏返す — そうしないと
+        /// 鏡映した箱や上下を逆にした `ortho` の箱では、手前の面が捨てられて奥の面だけが
+        /// 写る ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
         ///
         /// 裏面が絵に出うるものは全部 `.none` に居続ける: 片面の形 (`plane`)・自分で並べた
         /// 頂点・保持した形・読み込んだモデル (閉じているか分からない)・半透明の置き場所を
@@ -792,6 +901,25 @@ public final class Canvas {
         /// 返したり画素を捨てたりできる)。**判定は列を閉じる側 (`closeSolidBatch`) が
         /// 1 箇所で行い**、描く側はこの値を掛けるだけにする。
         var cullMode: MTLCullMode = .none
+        /// 画面でどちら回りに見える面を表とするか。
+        ///
+        /// 形は外向きに巻いてあり (`SolidMeshBuilder`)、縦軸を下向きへ戻す補正が画面での
+        /// 巻き方を反転させるので、**いつもは時計回りが表**になる。置き場所の鏡映
+        /// (``isMirrored``) と、画面の縦横を裏返す投影 (``Camera/flipsScreen``) はそれぞれ
+        /// 巻き方をもう 1 度裏返すので、どちらか一方だけなら反時計回りが表になる
+        /// ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
+        ///
+        /// **捨て方と、形から求めた向きの裏返しの両方がこれを読む。** 断片は表裏を見て
+        /// 求めた向きを裏返す (`Common.metal`) ので、ここが幾何的な表を指していれば、
+        /// 鏡映しても裏返した投影でも、見る側を向いた面が見る側から光を受ける。
+        /// 決めるのは列を閉じる側 (`closeSolidBatch`) で、平面と基本図形の列は既定のまま
+        /// (面の向きを持たず、捨てもしない)。
+        var frontFacing: MTLWinding = .clockwise
+        /// この列の置き場所が形を鏡映するか (``OpenSolid/isMirrored``)。**影の焼き付けが読む**
+        /// — 光から見る行列は画面の投影と別物なので、焼く側の表の巻き方は置き場所の符号
+        /// だけで決まる。鏡映していなければ反時計回り、鏡映していれば時計回りが表になり、
+        /// どちらも光を向いた面を焼く (``ShadowMap/frontFacing(isMirrored:)``)。
+        var isMirrored = false
         /// 立体の列が、何の頂点を並べているか。**影の焼き付けの指紋が読む** — 組み込みの
         /// 形と読み込んだモデルは頂点が出どころから決まるので、頂点の中身を舐めずに
         /// 出どころで代表できる。平面の列は `nil`。
@@ -845,14 +973,48 @@ public final class Canvas {
     static let valueSlotCapacity = valuesStride / MemoryLayout<Float>.stride
 
     /// いまのフレームの時刻 (秒)。利用者の断片から読める。
-    var time: Float = 0
+    ///
+    /// **描き場所は作った面と同じ値を読む** (``timebase``・[#1467])。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    var time: Float {
+        get { timebase.time }
+        set { timebase.time = newValue }
+    }
 
     /// 1 フレームの長さ (秒)。**動くものの積分はこれで進む。**
     ///
     /// 既定を 60 分の 1 にしてあるのは、`Canvas` を直に回す経路 (検査・台帳のシーン)
     /// でも動きが進むようにするためである。0 を既定にすると、時計を差さない経路では
     /// 何も動かず、しかも絵は出るので気付けない。
-    var deltaTime: Float = 1.0 / 60
+    ///
+    /// **描き場所は作った面と同じ値を読む** (``timebase``・[#1467])。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    var deltaTime: Float {
+        get { timebase.deltaTime }
+        set { timebase.deltaTime = newValue }
+    }
+
+    /// 時刻と刻みの置き場。**描き場所は、作った面と同じ 1 つを指す** (``createGraphics(_:_:)``・
+    /// [#1467])。
+    ///
+    /// 参照を共有するのは、描き場所が作った面の値を**いつ読んでも**同じにするためである。
+    /// 作ったときに写すと `setup()` で作った描き場所が 0 のまま止まり、描き始めに写すと
+    /// 描き場所から作った描き場所が、間の描き場所を描かなかったフレームで古い値を読む。
+    /// 時刻を作るのは今までどおりランタイムの 1 か所で、描き場所の側は読むだけになる。
+    ///
+    /// 直に作った面 (``init(target:gpu:)``) は自分の置き場を持つ。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    var timebase = Timebase()
+
+    /// 時刻と刻み。**面どうしで共有するための参照型**で、値そのものは ``time`` と
+    /// ``deltaTime`` の説明が持つ。
+    final class Timebase {
+        var time: Float = 0
+        var deltaTime: Float = 1.0 / 60
+    }
 
     /// これまでに描き切ったフレームの数。**時計ではなく番号**なので、同じ入力からは
     /// 何度走らせても同じ列になる。
@@ -1043,6 +1205,9 @@ public final class Canvas {
             slot.pointee = mode.rawIndex
         }
         self.blendModeBuffer = modeBuffer
+        // **出す先から自分へ辿れるようにする** (#1543)。この面を読む側が、置くたびに
+        // 置いたことを記録し直すのに使う (``useTexture(_:)``)
+        output.drawer = self
     }
 
     /// **自分で確保した置き場と面を常駐から退かせる** ([#795])。
@@ -1072,7 +1237,17 @@ public final class Canvas {
     /// これから置く頂点が読む面を決める。**変わるなら列を閉じる。**
     ///
     /// 閉じ忘れると、既に置いた図形や字が後から差し替わった面を読む。
+    ///
+    /// **描き場所の面を読むなら、そのたびに置いたことを記録し直す** ([#1543])。塗り・立体・
+    /// 保持した形・画像のどれも面を切り替えるときはここを通るので、記録する所はこの 1 か所
+    /// でよい。貼った時点 (`texture(_:)`) の記録だけに頼ると、描き場所を描き換えて記録が
+    /// 落ちた後 (描き切り・塗り直し・次のフレーム) に同じ面のまま置いた形が描き切られず、
+    /// 描き換えた後の絵で描かれる。**同じ面が続くときも記録する** — 続けて置く形こそ、
+    /// 貼り直さずに塗り続けた形である。
+    ///
+    /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     func useTexture(_ texture: HeldTexture) {
+        if let graphics = (texture.owner as? RenderTarget)?.drawer { note(placing: graphics) }
         if texture == currentTexture { return }
         closeBatch()
         currentTexture = texture
@@ -1338,7 +1513,6 @@ public final class Canvas {
     /// 分かれると、描き場所でだけ成り立たない性質が生まれる。
     private func beginFrame() {
         style.clip = nil
-        currentNumbers = nil
         // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
         pendingEffects.removeAll(keepingCapacity: true)
         transform = .identity
@@ -1361,11 +1535,24 @@ public final class Canvas {
 
     /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
     private func endFrame() throws(RenderFailure) {
-        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点は**描き終えて
-        // から**既定へ戻す — 始まりで戻すと、フレームの外から読んだときだけ「もう
-        // 効かない視点」が返る。列を閉じるのに視点が要るので、戻すのは flush の後
+        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点・変換・切り抜き・
+        // 光・周囲は**描き終えてから**既定へ戻す — 始まりでだけ戻すと、フレームの外 (止まって
+        // いる間のコールバック・描き場所の `endDraw()` の後) で置いた図形と読んだ座標にだけ、
+        // 前のフレームが最後に残したものが効く ([#1472]・[#1504])。列を閉じるのに視点と
+        // 切り抜きと光が要り、影の焼き付けも flush の中で光を読むので、戻すのは flush の後
+        //
+        // 光の置き場 (`lightStorage`) は次のフレームの頭まで空にしなくてよい。置き場を
+        // 指しうる列は flush と下の `discardFrame()` が全部捨て、外で閉じる列は光が空なので
+        // 区間も常に空になる — 前のフレームの置き場を指す区間は生まれない
+        //
+        // [#1472]: https://github.com/mokume-metal/mokume/issues/1472
+        // [#1504]: https://github.com/mokume-metal/mokume/issues/1504
         defer {
             cameraStorage = nil
+            transform = .identity
+            style.clip = nil
+            activeLights.removeAll(keepingCapacity: true)
+            activeSurroundings = nil
             style.material = .default
             shadowsEnabled = false
             shadowRangeValue = nil
@@ -1503,15 +1690,29 @@ public final class Canvas {
         !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty
     }
 
+    /// 描画先の絵を変えるものを、最後に描き切ってから溜めたか。
+    ///
+    /// **画素を読む口が描き切り直すかの判定** ([#1368])。図形 (``hasPendingGeometry``) に
+    /// 塗り直しの予定を足す — 読んだあとの `background()` は図形が 1 つも無くても絵を変える。
+    /// どちらも描き切りの末尾 (`discardFrame()`) で空に戻るので、別に印を持たなくても
+    /// 「描き切ってから溜めたか」をそのまま表す。**図形を積む口ごとに印を立てる形は取らない** —
+    /// 口が増えた日に、そこだけ黙って印が漏れる。
+    ///
+    /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
+    var hasPendingDrawing: Bool { hasPendingGeometry || pendingBackground != nil }
+
     /// - Parameters:
     ///   - applyingEffects: 効果を通すか。**フレームの終わりだけ通す** —
     ///     フレームの途中の描き切り (`loadPixels()`) で通すと、効果のかかった絵の上に
-    ///     続きが描かれ、しかもフレームの終わりにもう一度かかる。
+    ///     続きが描かれ、しかもフレームの終わりにもう一度かかる。フレームの**境目**でも
+    ///     同じことが起きないように、効果を通す前の絵を控えに残し、次のフレームの最初の
+    ///     描き切りで戻す ([#1469])。
     ///   - mirroringPixels: 描き終えた絵を画素の写しへ読み戻す blit を末尾に積むか。
     ///     **画素を読む直前の描き切りだけ** `true` — 読まないフレームは 1 バイトも払わない
     ///     ([#753])。
     ///
     /// [#753]: https://github.com/mokume-metal/mokume/issues/753
+    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
     func flush(applyingEffects: Bool = true, mirroringPixels: Bool = false)
         throws(RenderFailure)
     {
@@ -1548,6 +1749,16 @@ public final class Canvas {
             clearColor: pendingBackground,
             continuingFrame: passesThisFrame > 0 && pendingBackground == nil,
             keepingDepth: !applyingEffects)
+        // **次のフレームの入りは、効果を通す前の絵** ([#1469])。前のフレームが描く先へ効果を
+        // 通した絵を書いていたら、このフレームの最初の描き切りで控えから戻す。塗り直す
+        // 描き切りでは戻さない — 戻しても消えるだけなので、毎フレーム塗り直すスケッチが
+        // 払うのは控えへの写しだけになる。
+        //
+        // **戻すのはここで、`beginFrame()` ではない。** 自分を置いている面を描き切らせる
+        // (上の `settlePlacersBeforeChange()`) より先に戻すと、置いた側が効果を通す前の絵を
+        // 拾う — 置いた時点の絵は、前のフレームの出口 (効果を通した絵) である
+        let startsFrame = passesThisFrame == 0
+        let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
         // **途中で投げたら、組み立ての口が畳む** (#1180)。ここに片付けは書かない。
         //
         // **「投入された」ことにする記帳は、口から返った後でだけ書く** ([#1183])。組み立ての
@@ -1558,6 +1769,11 @@ public final class Canvas {
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         let assembled = try gpu.withCommands { commands throws(RenderFailure) in
+            // **効果を通す前の絵を、何より先に戻す。** CPU の画素の書き戻しより後に戻すと、
+            // フレームの外で `pixels` へ書いたものを控えの絵で消してしまう (先に戻すので、
+            // その書き戻しは効果を通した絵ごと描く先へ載る — 既知の制約)
+            if restoresCarry { try encodeCarryRestore(into: commands) }
+
             // **CPU が画素へ書いたものがあれば、描く前に描画先へ戻す。** 描画先は GPU 専用の
             // 面なので、`pixels` への書き込みは写しに載っている。書いていないフレームは
             // 何も積まない (#753)
@@ -1597,7 +1813,7 @@ public final class Canvas {
 
             // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
             // 書き出しも観測も同じ 1 枚を受け取る (ADR-0023 決定 2)
-            if applyingEffects { applyEffects(into: commands) }
+            let carried = applyingEffects && applyEffects(into: commands)
 
             // **拡大は出口の直前・段の最後。** 効果は描く細かさの上で働き、その結果を
             // 出す細かさへ広げる。順を逆にすると、効果の半径が出す細かさで測られて
@@ -1616,7 +1832,7 @@ public final class Canvas {
                 commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
             return (
                 submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
-                uploaded: uploaded)
+                uploaded: uploaded, carried: carried)
         }
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
@@ -1628,6 +1844,10 @@ public final class Canvas {
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
         // 焼いたなら、その入力を覚える。使い回したフレームでは同じ値を書き直すだけになる
         if let shadow = assembled.shadow { lastShadowBakeKey = shadow.key }
+        // フレームの最初の描き切りで、描く先は効果を通す前の絵に戻ったか塗り直された。
+        // このコマンドが効果を通していれば、描く先はまた効果を通した絵になっている
+        if startsFrame { carriesPictureBeforeEffects = false }
+        if assembled.carried { carriesPictureBeforeEffects = true }
 
         // **描き切ったらその場で片付ける。** 片付けをフレームの頭に置くと、フレームの
         // 途中で描き切ったときに溜めたものが残り、同じ図形が 2 度描かれる。
@@ -1658,12 +1878,6 @@ public final class Canvas {
                 originX: 0, originY: 0,
                 width: Double(pixelWidth), height: Double(pixelHeight),
                 znear: 0, zfar: 1))
-
-        // **どちら回りを表とするかを明示する。** 断片は表裏を見て面の向きを裏返す
-        // (両面) ので、ここが黙っていると「表」の意味が土台の既定に委ねられる。
-        // 形は外向きに巻いてあり (`SolidMeshBuilder`)、縦軸を下向きへ戻す補正が
-        // 画面での巻き方を反転させるので、時計回りが表になる
-        encoder.setFrontFacing(.clockwise)
 
         for (index, batch) in batches.enumerated() {
             let run = batch.run
@@ -1706,8 +1920,11 @@ public final class Canvas {
                         + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                     index: ShapePipeline.instanceBufferIndex)
             }
-            // 裏を向いた面を描くかは列が決めている (`Batch.cullMode`)。表の向きは
-            // 上で 1 度だけ決めてあるので、ここは捨て方を掛けるだけ
+            // **どちら回りを表とするかを列ごとに明示する。** 断片は表裏を見て形から
+            // 求めた向きを裏返すので、ここが黙っていると「表」の意味が土台の既定に
+            // 委ねられる。表の巻き方は鏡映と裏返す投影で裏返るので、列が持っている
+            // (`Batch.frontFacing`)。裏を向いた面を描くかも列が決めている (`Batch.cullMode`)
+            encoder.setFrontFacing(batch.frontFacing)
             encoder.setCullMode(batch.cullMode)
             pipeline.argumentTable.setAddress(
                 perBatch.matrices.gpuAddress + UInt64(index * Self.valuesStride),
@@ -1824,13 +2041,15 @@ public final class Canvas {
     ) throws(RenderFailure) -> BatchBuffers {
         // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
         let matrices = try matrixStorage.buffer(holding: batches.count)
+        let unitsPerDrawnPixel = self.unitsPerDrawnPixel
         for (index, batch) in batches.enumerated() {
             // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
             // 読まない**ので、同じ区画に足しても効かない
             var frame = FlatFrame(
                 projection: batch.matrix,
                 strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
-                strokeShift: Self.solidStrokeShift(width: width, height: height))
+                strokeShift: Self.solidStrokeShift(width: width, height: height),
+                unitsPerDrawnPixel: unitsPerDrawnPixel)
             matrices.contents().advanced(by: index * Self.valuesStride)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
         }
@@ -1998,8 +2217,10 @@ public final class Canvas {
         let instanceBuffer = try solidInstanceStorage.write(
             solidInstances, holding: max(solidInstances.count, 1))
         let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
-        // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い
-        var value = FlatFrame(projection: matrix, strokeStart: .max, strokeShift: .zero)
+        // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い。
+        // 描く画素の大きさは基本図形しか読まず、基本図形は影へ焼かないので 1 を置く
+        var value = FlatFrame(
+            projection: matrix, strokeStart: .max, strokeShift: .zero, unitsPerDrawnPixel: .one)
         matrixBuffer.contents().copyMemory(
             from: &value, byteCount: MemoryLayout<FlatFrame>.stride)
 
@@ -2013,7 +2234,6 @@ public final class Canvas {
             MTLViewport(
                 originX: 0, originY: 0, width: Double(map.detail), height: Double(map.detail),
                 znear: 0, zfar: 1))
-        encoder.setFrontFacing(.clockwise)
         pipeline.argumentTable.setAddress(
             solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
         pipeline.argumentTable.setAddress(
@@ -2027,7 +2247,18 @@ public final class Canvas {
                     + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
                 index: ShapePipeline.instanceBufferIndex)
             // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
-            // 裏面を捨てても焼き付く奥行きは変わらない
+            // 裏面を捨てても焼き付く奥行きは両面で焼いたときと変わらない
+            //
+            // **表の巻き方は光の行列に合わせる** (``ShadowMap/frontFacing(isMirrored:)``)。光から
+            // 見る行列は画面の投影と別物 (縦を戻す補正 `Camera.clipAdjustment` も、利用者の
+            // 投影も通らない) なので、鏡映していない列の表は画面と逆の反時計回りになり、画面の
+            // 側の `Batch.frontFacing` は使えない。画面の巻き方を写していた間は光を向いた面が
+            // 捨てられ、奥の面が焼き付いていた ([#1474])。鏡映は置き場所の符号だけで裏返す
+            // ([#1446])
+            //
+            // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+            // [#1474]: https://github.com/mokume-metal/mokume/issues/1474
+            encoder.setFrontFacing(ShadowMap.frontFacing(isMirrored: batch.isMirrored))
             encoder.setCullMode(batch.cullMode)
             encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
             if let arguments = batch.indirectArguments?.storage {
@@ -2056,8 +2287,8 @@ public final class Canvas {
     }
 
     /// 焼き付けの入力の指紋。**焼く側が読むものを全部**入れる — 光の行列・細かさ・
-    /// 落とす列ごとの (頂点の区間・置き場所の区間・捨て方) と、その区間の頂点と置き場所の
-    /// 中身。焼く側が読まないもの (受ける側の材質・縁の余裕・視点) は入れない。
+    /// 落とす列ごとの (頂点の区間・置き場所の区間・捨て方・表の巻き方) と、その区間の頂点と
+    /// 置き場所の中身。焼く側が読まないもの (受ける側の材質・縁の余裕・視点) は入れない。
     ///
     /// GPU が埋める置き場所 (粒) を含む列があれば `nil` — CPU からは前のフレームと同じか
     /// どうかが分からないので、分からないものは焼く側に倒す。
@@ -2079,6 +2310,8 @@ public final class Canvas {
             hasher.mix(UInt64(batch.instanceStart))
             hasher.mix(UInt64(batch.instanceCount))
             hasher.mix(UInt64(batch.cullMode.rawValue))
+            // 焼く側の表の巻き方も焼き付く奥行きを変える (鏡映の符号だけで決まる)
+            hasher.mix(batch.isMirrored ? 1 : 0)
             // **読む順も焼く側が読むものである。** 頂点を 1 バイトも動かさずに添字だけを
             // 組み直すフレーム (面の張り替え・粗さの切り替え) は `index(_:)` がまさに
             // 誘う書き方で、これを混ぜないと前のフレームの影が居座る

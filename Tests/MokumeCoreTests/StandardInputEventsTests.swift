@@ -41,7 +41,7 @@ struct StandardInputEventsTests {
     func joinsSplitLines() throws {
         try withPipe { reader, writer in
             let state = InputState()
-            let line = InputEvent.mouseDown(x: 5, y: 6, button: 0).wireLine
+            let line = InputEvent.mouseDown(x: 5, y: 6, button: .left).wireLine
             let cut = line.index(line.startIndex, offsetBy: line.count / 2)
             try write(String(line[..<cut]), to: writer)
             reader.drain(into: state)
@@ -84,7 +84,7 @@ struct StandardInputEventsTests {
         try withPipe { reader, writer in
             let events: [InputEvent] = [
                 .mouseMoved(x: 0, y: 0),
-                .mouseDown(x: 100, y: 50, button: 0),
+                .mouseDown(x: 100, y: 50, button: .left),
                 .mouseMoved(x: 120, y: 60),
             ]
             let viaPipe = InputState()
@@ -115,9 +115,9 @@ struct StandardInputEventsTests {
         try withPipe { reader, writer in
             let events: [InputEvent] = [
                 .mouseMoved(x: 0, y: 0),
-                .mouseDown(x: 100, y: 50, button: 0),
+                .mouseDown(x: 100, y: 50, button: .left),
                 .mouseMoved(x: 120, y: 60),
-                .mouseUp(x: 120, y: 60, button: 0),
+                .mouseUp(x: 120, y: 60, button: .left),
             ]
             let viaPipe = InputState()
             for event in events { try write(event.wireLine, to: writer) }
@@ -146,9 +146,9 @@ struct StandardInputEventsTests {
         try withPipe { reader, writer in
             let events: [InputEvent] = [
                 .mouseMoved(x: 10, y: 10),
-                .mouseDown(x: 10, y: 10, button: 0),
+                .mouseDown(x: 10, y: 10, button: .left),
                 .mouseMoved(x: 40, y: 30),
-                .mouseUp(x: 40, y: 30, button: 0),
+                .mouseUp(x: 40, y: 30, button: .left),
                 .keyDown(code: .a, characters: "a", isRepeat: false),
                 .keyDown(code: .arrowUp, characters: "\u{F700}", isRepeat: false),
                 .keyUp(code: .a),
@@ -183,6 +183,41 @@ struct StandardInputEventsTests {
             #expect(reader.accepted == 0)
             #expect(!reader.isClosed)
         }
+    }
+
+    // MARK: - 道具が居なくなったこと (#1427)
+
+    /// **管が畳まれたら、1 度だけ知らせる。** 畳まれたのは窓の持ち主 (道具) が消えたという
+    /// ことで、残った子には人が止める入口が無い ([#1427])。見に来るのは刻みごとなので、印を
+    /// 下ろさないと刻みの数だけ終わりを頼む。
+    ///
+    /// [#1427]: https://github.com/mokume-metal/mokume/issues/1427
+    @Test("書き口が閉じたら、居なくなったことを 1 度だけ返す")
+    func reportsTheDepartureOnce() throws {
+        let pipe = Pipe()
+        let reader = StandardInputEvents(descriptor: pipe.fileHandleForReading.fileDescriptor)
+        #expect(!reader.takeDeparture(), "書き口が開いているのに、居なくなったと言った")
+
+        try pipe.fileHandleForWriting.close()
+        #expect(reader.takeDeparture())
+        #expect(!reader.takeDeparture(), "同じ畳まれ方を 2 度返した")
+    }
+
+    /// **気付くために読み進めても、入力を失わない。** 気付くのは入力を集めに来ない刻み
+    /// (止めている間) にもなるので、読み進めたぶんは次に集めたときに配る。
+    @Test("閉じる直前に書かれた行は、気付いた後に集めても配られる")
+    func keepsLinesReadWhileNoticing() throws {
+        let pipe = Pipe()
+        let reader = StandardInputEvents(descriptor: pipe.fileHandleForReading.fileDescriptor)
+        try write(InputEvent.mouseMoved(x: 7, y: 9).wireLine, to: pipe.fileHandleForWriting)
+        try pipe.fileHandleForWriting.close()
+        #expect(reader.takeDeparture())
+
+        let state = InputState()
+        reader.drain(into: state)
+        state.beginFrame()
+        #expect(reader.accepted == 1)
+        #expect(state.x == 7)
     }
 
     /// 直に走らせた子の標準入力 (端末) を横取りしないことは、**合図が 1 つ**であること

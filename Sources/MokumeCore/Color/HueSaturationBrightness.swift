@@ -112,6 +112,9 @@ enum HueSaturationBrightness {
 /// 負の値だけは 0 として扱う (負にすると色相が 180 度回ってしまい、値を保つのではなく
 /// 引数の意味が変わるため)。
 ///
+/// **不透明度は 0–255 に締める** (``color(_:_:_:_:)`` と同じ)。`alpha: 400` は 255 と同じ色になる
+/// ([ADR-0033] 決定 3 の改訂)。
+///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public func color(

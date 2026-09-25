@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Metal
 import simd
 
 // 粒。意味の説明は利用者が最初に触る層 (`Sketch`) が正本で、ここは受け口である
@@ -49,6 +50,10 @@ extension Canvas {
 
         let parameters = Particles.headerFloats + Particles.maximumForces * Force.slotCount
         let source = try gpu.shaders.bundledShaderSource(named: Self.particleShaderName)
+        // **原文は 1 度だけ組む。** 3 つの入口は同じ原文にあるので、入口ごとに組むと
+        // 同じものを 3 度組む (#728)
+        let library = try gpu.shaders.makeComputeLibrary(
+            named: Self.particleShaderName, body: source)
         var headers: [Numbers] = []
         for _ in 0..<(lengths.count - 1) { headers.append(try Numbers(gpu: gpu, count: 4)) }
         let particles = Particles(
@@ -61,9 +66,9 @@ extension Canvas {
             arguments: try Numbers(gpu: gpu, count: Particles.argumentFloats),
             levelLengths: lengths,
             quad: particleQuad(),
-            flag: try particleKernel(Self.particleFlagKernelName, from: source),
-            scan: try particleKernel(Self.particleScanKernelName, from: source),
-            update: try particleKernel(Self.particleKernelName, from: source))
+            flag: try particleKernel(Self.particleFlagKernelName, in: library, from: source),
+            scan: try particleKernel(Self.particleScanKernelName, in: library, from: source),
+            update: try particleKernel(Self.particleKernelName, in: library, from: source))
         return particles
     }
 
@@ -80,11 +85,14 @@ extension Canvas {
 
     /// 組み込みの計算。**同梱した断片から組む**ので、壊れていればビルド時のシェーダ検査
     /// (`scripts/check-shaders.sh`) で落ちる — 走らせるまで分からない形にしない。
+    ///
+    /// **組むのは呼ぶ側である。** ここは組んだものから入口を 1 本取り出すだけにして、
+    /// 同じ原文を入口の数だけ組まない。
     private func particleKernel(
-        _ entry: String, from source: String
+        _ entry: String, in library: any MTLLibrary, from source: String
     ) throws(RenderFailure) -> Computation {
         let computation = try Computation(
-            name: entry, url: nil, body: source, values: [:],
+            name: entry, url: nil, body: source, values: [:], library: library,
             gpu: gpu, pipeline: try computePipeline())
         remember(computation)
         return computation
@@ -111,7 +119,9 @@ extension Canvas {
         size: ClosedRange<Float>, color: LinearRGBA?, using randomness: inout Randomness
     ) {
         guard isDrawing else { return warnOutsideFrame(.particles) }
-        let count = particles.count(rate: rate, over: deltaTime)
+        // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
+        // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法
+        let count = particles.count(rate: rate, over: deltaTime, frame: framesDrawn)
         particles.emit(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
             color: color ?? style.fill, at: time, using: &randomness)

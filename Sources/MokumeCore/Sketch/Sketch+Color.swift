@@ -6,6 +6,10 @@ extension Sketch {
     ///
     /// 3 つなら赤・緑・青、4 つ目は不透明度。
     ///
+    /// **不透明度は 0–255 に締める。色の成分は締めない** — 不透明度の 400 は 255 と、
+    /// -100 は 0 と同じになる。成分の 255 を越える値は、白を越える明るさのまま残る
+    /// ([ADR-0033] 決定 3 の改訂・決定 6)。
+    ///
     /// ```swift
     /// background(15, 18, 23)
     /// ```
@@ -20,6 +24,8 @@ extension Sketch {
 
     /// 下地を灰色で塗る。**目盛りは 0–255**、2 つ目は不透明度。
     ///
+    /// **不透明度は 0–255 に締める。灰色の値は締めない。**
+    ///
     /// ```swift
     /// background(24)
     /// ```
@@ -33,6 +39,10 @@ extension Sketch {
     /// 3 つなら赤・緑・青、4 つ目は不透明度。**塗りを止めていたら、呼んだ時点で
     /// 再び塗るようになる。**
     ///
+    /// **不透明度は 0–255 に締める。色の成分は締めない** — 不透明度の 400 は 255 と、
+    /// -100 は 0 と同じになる。成分の 255 を越える値は、白を越える明るさのまま残る
+    /// ([ADR-0033] 決定 3 の改訂・決定 6)。
+    ///
     /// ```swift
     /// background(15, 18, 23)
     /// noStroke()
@@ -42,16 +52,20 @@ extension Sketch {
     /// circle(250, 150, 160)
     /// ```
     ///
-    /// - Note: 引数は `Float` なので `Int` の変数はそのまま渡せない (`fill(Float(i), 0, 0)`)。
+    /// - Note: `Int` の変数もそのまま渡せる (`fill(i, 0, 0)`)。
     ///   0–1 で書きたいときは ``LinearRGBA/display(red:green:blue:alpha:)`` を渡す。
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
+    ///
+    /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public func fill(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.fill(red, green, blue, alpha)
     }
 
     /// 塗りを灰色にする。**目盛りは 0–255**、2 つ目は不透明度。
+    ///
+    /// **不透明度は 0–255 に締める。灰色の値は締めない。**
     ///
     /// ```swift
     /// background(15, 18, 23)
@@ -70,6 +84,10 @@ extension Sketch {
     /// 3 つなら赤・緑・青、4 つ目は不透明度。**線を止めていたら、呼んだ時点で
     /// 再び引くようになる。**
     ///
+    /// **不透明度は 0–255 に締める。色の成分は締めない** — 不透明度の 400 は 255 と、
+    /// -100 は 0 と同じになる。成分の 255 を越える値は、白を越える明るさのまま残る
+    /// ([ADR-0033] 決定 3 の改訂・決定 6)。
+    ///
     /// ```swift
     /// background(15, 18, 23)
     /// noFill()
@@ -79,12 +97,16 @@ extension Sketch {
     /// ```
     ///
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
+    ///
+    /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public func stroke(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.stroke(red, green, blue, alpha)
     }
 
     /// 線の色を灰色にする。**目盛りは 0–255**、2 つ目は不透明度。
+    ///
+    /// **不透明度は 0–255 に締める。灰色の値は締めない。**
     ///
     /// ```swift
     /// background(15, 18, 23)
@@ -103,17 +125,25 @@ extension Sketch {
     ///
     /// 4 つ目の不透明度を下げると、画像そのものが薄くなる。
     ///
+    /// **不透明度は 0–255 に締める。色の成分は締めない** — 不透明度の 400 は 255 と、
+    /// -100 は 0 と同じになる。成分の 255 を越える値は、白を越える明るさのまま残る
+    /// ([ADR-0033] 決定 3 の改訂・決定 6)。
+    ///
     /// ```swift
     /// tint(255, 204, 0)
     /// ```
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
+    ///
+    /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public func tint(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.tint(red, green, blue, alpha)
     }
 
     /// 画像に掛ける色を灰色にする。**目盛りは 0–255**、2 つ目は不透明度。
+    ///
+    /// **不透明度は 0–255 に締める。灰色の値は締めない。**
     ///
     /// ```swift
     /// tint(255, 128)

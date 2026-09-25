@@ -21,6 +21,10 @@ SHELL := /bin/bash
 export REUSE_ENCODING_MODULE := chardet
 
 setup: ## 開発ツールを確認する
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: xcode-select --install"; exit 1; }
+	@for cmd in gh jq openssl; do \
+		command -v $$cmd >/dev/null 2>&1 || { echo "$$cmd が見つからない: brew install $$cmd"; exit 1; }; \
+	done
 	@command -v reuse >/dev/null 2>&1 || { echo "reuse が見つからない: pipx install reuse && pipx inject reuse chardet"; exit 1; }
 	@reuse --version >/dev/null 2>&1 || { \
 		echo "reuse が $(REUSE_ENCODING_MODULE) を使えない (#48 の回避に必要):"; \
@@ -210,10 +214,27 @@ TEST_RECORD := .build/test-results-swift-testing.xml
 TEST_RECORD_RELEASE_BASE := .build/test-results-release.xml
 TEST_RECORD_RELEASE := .build/test-results-release-swift-testing.xml
 
+# **検査のプロセスが要約を残さずに消えた回は、そう名乗って材料を残す** (#1526)。
+# 本体の検査のプロセス (swiftpm-testing-helper) が要約も記録も残さずに消え、出るのが
+# 「test で止まった」だけの回が 3 度あった。上の出力に失敗は無く、打ち直すと tee が
+# test-log.txt を切り詰め、上の rm -f が記録を消すので、原因 (#1527) を調べる材料が
+# 1 つも残らなかった。swift test が非 0 で終わった回に scripts/test-vanished.sh が記録を
+# 読み、無い / 読めない / 失敗を 1 件も持たない回だけを名乗って、材料を
+# .build/test-vanished/ の下へ残す。**判定に console は使わない** — 上の「正本は console
+# ではなく」のとおり要約は緑の回でも落ちるので、「要約が無い」を印にすると緑の回でも
+# 名乗る (#1056)。段の終了コードは swift test のものをそのまま返す。
+#
+# ビルドと実行を分けるのは、ビルドで止まった回を「消えた」と名乗らないためである。
+# どちらも記録が無いまま非 0 で終わるので、記録からは見分けられない。印
+# (.build/test-started) は段の始まりで、材料の jetsam の行と報告の「この間にできた」の
+# 境目に使う
 test:
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD)
-	set -o pipefail; env $(METAL_VALIDATION) swift test $(SYMBOL_GRAPH_FLAGS) --xunit-output $(TEST_RECORD_BASE) 2>&1 | tee .build/test-log.txt
+	@touch .build/test-started
+	set -o pipefail; swift build --build-tests $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log.txt
+	set -o pipefail; env $(METAL_VALIDATION) swift test --skip-build --xunit-output $(TEST_RECORD_BASE) 2>&1 | tee -a .build/test-log.txt \
+		|| { code=$$?; bash scripts/test-vanished.sh $$code $(TEST_RECORD) .build/test-log.txt .build/test-started; exit $$code; }
 	@test -s $(TEST_RECORD) || { \
 		echo "記録が出来ていない ($(TEST_RECORD))。SwiftPM が --xunit-output の綴りを"; \
 		echo "変えた可能性がある — render-status.sh の RENDER_TEST_RECORD と併せて直す"; \

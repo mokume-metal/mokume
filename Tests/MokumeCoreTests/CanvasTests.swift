@@ -206,6 +206,44 @@ struct CanvasTests {
         #expect(image[48, 32].red == 255)
     }
 
+    /// 閉じ忘れた穴は ``Canvas/endShape(_:)`` が畳む。**次の穴を開いたときも同じ規則で畳む**
+    /// ([#1528])。直す前は、開いていた穴の点を捨てて新しい穴を始めていたので、1 つ目の穴が
+    /// 描かれなかった。
+    ///
+    /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+    @Test("穴を開いたまま次の穴を開いても、前の穴は畳まれて空く")
+    func reopeningAContourKeepsTheOpenHole() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.beginShape()
+            canvas.vertex(4, 4)
+            canvas.vertex(60, 4)
+            canvas.vertex(60, 60)
+            canvas.vertex(4, 60)
+            canvas.beginContour()  // 閉じ忘れる
+            canvas.vertex(10, 16)
+            canvas.vertex(10, 48)
+            canvas.vertex(28, 32)
+            canvas.beginContour()
+            canvas.vertex(36, 16)
+            canvas.vertex(36, 48)
+            canvas.vertex(54, 32)
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 32] == (0, 0, 0, 255))  // 1 つ目の穴の中は背景
+        #expect(image[42, 32] == (0, 0, 0, 255))  // 2 つ目の穴の中も背景
+        #expect(image[32, 32].red == 255)  // 2 つの穴の間は塗られている
+        #expect(image[32, 8].red == 255)
+        for key in [Canvas.Warning.vertexOutsideShape, .contourNotBegun, .curveWithoutStart] {
+            #expect(!canvas.warnings.hasWarned(key), "閉じ忘れを畳むだけの形で \(key) を言った")
+        }
+    }
+
     @Test("点の列として読むと、点が並ぶ")
     func pointsKindPlacesDots() throws {
         let canvas = try makeCanvas()
@@ -1127,6 +1165,25 @@ struct CanvasTests {
         }
     }
 
+    @Test("フレームの外で書いた切り抜きは、どの口でも警告して無視される (#1505)")
+    func clipsOutsideAFrameAreIgnored() throws {
+        // 切り抜きはシーンの記述で、フレームを越えない (ADR-0021 決定 4・寿命の表)。
+        // 形に焼き付かないので、形の組み立ての間もフレームの外に数える。注意は初回だけ
+        // 言うので、口ごとに新しい面を作る (`transformsOutsideAFrameAreIgnored` と同じ理由)
+        let mouths: [(String, (Canvas) -> Void)] = [
+            ("clip", { $0.clip(0, 0, 8, 8) }),
+            ("noClip", { $0.noClip() }),
+        ]
+        for (name, write) in mouths {
+            let canvas = try makeCanvas()
+            write(canvas)
+            #expect(
+                canvas.warnings.hasWarned(.clipOutsideFrame),
+                "\(name) がフレームの外で黙って捨てている")
+            #expect(canvas.style.clip == nil, "\(name) がフレームの外で効いている")
+        }
+    }
+
     @Test("初期化のときに変換を書いても、絵は変わらない")
     func transformsOutsideAFrameLeaveThePictureAlone() throws {
         // 警告を足したことで**絵まで変わっていない**ことを見る。フレームの外で書いた
@@ -1177,6 +1234,46 @@ struct CanvasTests {
             canvas.scale(2, 3)
             #expect(canvas.screenX(5, 5) == 30)  // 20 + 5*2
             #expect(canvas.screenY(5, 5) == 25)  // 10 + 5*3
+        }
+    }
+
+    @Test("変換と切り抜きは、描き切った後のフレームの外へ残らない (#1472)")
+    func transformAndClipDoNotOutliveTheFrame() throws {
+        let canvas = try makeCanvas()
+        // 描き場所 (`createGraphics`) の入口で描き切る。`draw { }` と同じ `endFrame()` を通る
+        canvas.beginDraw()
+        canvas.background(black)
+        canvas.translate(20, 10)
+        canvas.clip(0, 0, 8, 8)
+        canvas.endDraw()
+
+        #expect(canvas.screenX(5, 5) == 5)
+        #expect(canvas.screenY(5, 5) == 5)
+        #expect(canvas.style.clip == nil)
+    }
+
+    @Test("光と周囲は、描き切った後のフレームの外へ残らない (#1504)")
+    func lightsAndSurroundingsDoNotOutliveTheFrame() throws {
+        let canvas = try makeCanvas()
+        canvas.beginDraw()
+        canvas.background(black)
+        canvas.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
+        canvas.surroundings(.sky)
+        canvas.box(10)
+        canvas.endDraw()
+
+        #expect(canvas.activeLights.isEmpty)
+        #expect(canvas.activeSurroundings == nil)
+
+        // フレームの外で置いて閉じた立体の列は、前のフレームの光も周囲も焼かない。
+        // 線は既定で引くので、塗りの列は `box()` の中で稜線の列に閉じられる
+        canvas.box(10)
+        canvas.blendMode(.add)
+        let solids = canvas.batches.filter { $0.source == .solid }
+        try #require(!solids.isEmpty)
+        for batch in solids {
+            #expect(batch.lightRange.isEmpty)
+            #expect(batch.surroundings.topAndPresence.w == 0)
         }
     }
 

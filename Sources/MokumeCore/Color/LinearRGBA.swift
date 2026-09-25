@@ -22,9 +22,16 @@ public struct LinearRGBA: Equatable, Sendable {
     /// 青成分 (線形・アルファ乗算済み)。
     public var blue: Float
     /// 不透明度。
+    ///
+    /// 乗算していない成分から作った色 (``init(straightRed:green:blue:alpha:)`` と、それを通る
+    /// ``display(red:green:blue:alpha:)``・``color(_:_:_:_:)`` など) では **0…1 に締まっている**。
+    /// このプロパティと ``init(premultipliedRed:green:blue:alpha:)`` は作業空間の
+    /// 「計算のための値」なので締めない — 書き換えた値はそのまま残る。
     public var alpha: Float
 
     /// アルファを乗算済みの成分から作る (作業空間の内側で使う形)。
+    ///
+    /// **どの値も締めない。** 渡した不透明度が 0…1 の外でもそのまま持つ。
     public init(premultipliedRed red: Float, green: Float, blue: Float, alpha: Float) {
         self.red = red
         self.green = green
@@ -36,8 +43,18 @@ public struct LinearRGBA: Equatable, Sendable {
     ///
     /// ここが [ADR-0011] 決定 4 の言う変換点。ここ以外で掛け戻しを書かない。
     ///
+    /// **不透明度は 0…1 に締める。色の成分は締めない。** 成分は範囲の外の明るさとして
+    /// 意味を持つ ([ADR-0011] 決定 1) が、不透明度は「どれだけ効かせるか」なので、0 より
+    /// 透明にも 1 より不透明にもならない。締めずに掛けると、`alpha: -0.5` は下地を負の値へ
+    /// 落とし、`alpha: 1.5` は塗りの色を越える ([ADR-0033] 決定 3 の改訂)。数でない不透明度は
+    /// 締めずにそのまま残す (不透明に化けない)。
+    ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public init(straightRed red: Float, green: Float, blue: Float, alpha: Float = 1) {
+        // **この書き順を保つ。** Swift の `min` / `max` は第 1 引数の NaN を返すので、
+        // `max(0, min(1, alpha))` と書くと NaN が 1 (不透明) に化ける
+        let alpha = min(max(alpha, 0), 1)
         self.red = red * alpha
         self.green = green * alpha
         self.blue = blue * alpha
@@ -57,6 +74,9 @@ public struct LinearRGBA: Equatable, Sendable {
     ///
     /// [ADR-0011] 決定 3 の「入力側は作業空間へ入る時点で作業空間へ移す」を担う。
     /// 線形へ戻し、原色を作業空間へ移したうえでアルファを乗算する。
+    ///
+    /// **不透明度は 0…1 に締める。色の成分は締めない** — `alpha: 1.5` は 1 と同じ色になり、
+    /// `red: 2` は白を越える明るさのまま残る (``init(straightRed:green:blue:alpha:)`` と同じ)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     public static func display(

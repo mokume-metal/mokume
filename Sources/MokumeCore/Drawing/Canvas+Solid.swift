@@ -172,6 +172,14 @@ extension Canvas {
     ///
     /// **同じ出どころが続く間は頂点を置き直さない。** 組み込みの形も読み込んだモデルも
     /// ここを通るので、まとめ方が 2 通りに割れない。
+    ///
+    /// **保持する形を記録している間だけは、置き場所を頂点へ焼く** ([#1297])。記録は置き場所を
+    /// 持ち歩かない (``recordingShape``) ので、置き場所に変換と塗りを持たせたままだと、
+    /// 置くときに形の原点へ白く落ちる。平面が記録の間は畳まずに頂点へ焼くのと同じ答えで、
+    /// 捨てるのは**形の中での**畳みだけである — 組み上げた形を ``shape(_:at:)`` で何か所に
+    /// 置いても、頂点 1 組と置き場所の並びで描くことは変わらない。
+    ///
+    /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
         _ source: SolidSource, isDerived: Bool = false, mesh build: () -> SolidMesh
     ) {
@@ -179,39 +187,118 @@ extension Canvas {
         // **貼る絵が変わったら、ここで列が閉じる。** beginSolids は平面から移るときしか
         // 効かないので、立体を続けて置いている最中の切り替えはここが拾う
         useFillTexture()
+        let textured = style.picture != nil
+        let placement = SolidInstance(
+            matrix: transform.matrix, normalMatrix: transform.normalMatrix,
+            color: style.fill)
 
-        if openSolid?.source != source
+        if recordingShape {
+            // **置き場所で描いたときと同じ頂点を、先に作って焼く。** 焼いた頂点はその場で
+            // 並べる列へ積むので、線 (同じ列へ積まれる) と塗りが 1 本の区間に並ぶ
+            let vertices = build().points.map {
+                meshVertex($0, isDerived: isDerived, textured: textured)
+            }
+            appendPlacedSolidVertices(vertices[...], indices: nil, placedBy: placement)
+            return
+        }
+
+        // **鏡映の符号が変わっても列を閉じる** ([#1446])。表の巻き方は列ごとに 1 つなので、
+        // 鏡映した置き場所と鏡映していない置き場所は同じ列に並べられない。鏡映していない
+        // 置き場所だけが続く間は、いままでどおり 1 列にまとまる
+        //
+        // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+        if openSolid?.source != source || openSolid?.isMirrored != placement.isMirrored
             || isBatchFull(solidInstances.count, since: openSolid?.instanceStart ?? 0)
         {
-            // 出どころが変わった (か、1 列に入る上限に達した)。列を閉じて頂点を置き直す
+            // 出どころか鏡映の符号が変わった (か、1 列に入る上限に達した)。列を閉じて頂点を
+            // 置き直す
             closeBatch()
             let mesh = build()
             let start = solidVertices.count
             solidVertices.reserveCapacity(start + mesh.points.count)
-            let textured = style.picture != nil
             for point in mesh.points {
-                // **形自身の座標のまま置く。** 変換は置き場所が持つ
-                solidVertices.append(
-                    SolidVertex(
-                        position: point.position, normal: point.normal, isDerived: isDerived,
-                        // 貼る絵が無ければ焼き場の白い区画を読む。**そのときの頂点は
-                        // 貼る口が無かった頃と 1 ビットも変わらない**
-                        uv: textured ? point.uv : whiteUV,
-                        color: .linear(red: 1, green: 1, blue: 1)))
+                solidVertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
             }
             openSolid = OpenSolid(
                 source: source, vertexStart: start, vertexCount: mesh.points.count,
                 // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
                 indexStart: nil,
-                instanceStart: solidInstances.count)
+                instanceStart: solidInstances.count, isMirrored: placement.isMirrored)
         }
 
-        solidInstances.append(
-            SolidInstance(
-                matrix: transform.matrix, normalMatrix: transform.normalMatrix,
-                color: style.fill))
+        solidInstances.append(placement)
         // 半透明の塗りが 1 つでも入ったら、この列は裏面を捨てられない (`Batch.cullMode`)
         if style.fill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
+    }
+
+    /// 組み込みの形・読み込んだモデルの 1 点を頂点にする。
+    ///
+    /// **形自身の座標のまま、白で作る。** 変換と塗りは置き場所が持つ (記録の間は、置き場所
+    /// ごと焼く — ``placeMesh(_:isDerived:mesh:)``)。
+    private func meshVertex(
+        _ point: SolidMesh.Point, isDerived: Bool, textured: Bool
+    ) -> SolidVertex {
+        SolidVertex(
+            position: point.position, normal: point.normal, isDerived: isDerived,
+            // 貼る絵が無ければ焼き場の白い区画を読む。**そのときの頂点は
+            // 貼る口が無かった頃と 1 ビットも変わらない**
+            uv: textured ? point.uv : whiteUV,
+            color: .linear(red: 1, green: 1, blue: 1))
+    }
+
+    /// 置き場所を焼いた頂点を、その場で並べる頂点の列へ積む。**記録の間だけ通る。**
+    ///
+    /// `indices` は `vertices` を読む順で、値は**切り出す前の並びでの番号**である
+    /// (``Shape/solidIndices`` と同じ数え方)。`nil` なら並べた順に読む。
+    ///
+    /// **読む面は切り替えない。** 面は呼ぶ側が決めてある — 組み込みの形なら塗りの面、
+    /// 保持した形なら記録した面である。ここで選び直すと、記録した面が置く側の状態で
+    /// 上書きされる ([#914])。
+    ///
+    /// **鏡映する置き場所で焼いたら、三角形の巻き方を戻す** ([#1446])。置いてから描く経路では
+    /// 列が表の巻き方を裏返す (``Batch/frontFacing``) が、焼いた頂点は何も動かさない置き場所で
+    /// 描くので、その列は裏返らない。巻き方を戻さないと、形から求めた向きの面が「裏を
+    /// 向いている」と判定されて、見る側を向いた面が視線と逆の向きで光を受ける。三角形の
+    /// 2 点目と 3 点目を入れ替えるだけなので、位置も向きも色も変わらない。
+    ///
+    /// [#914]: https://github.com/mokume-metal/mokume/issues/914
+    /// [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+    func appendPlacedSolidVertices(
+        _ vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?,
+        placedBy placement: SolidInstance
+    ) {
+        if indices != nil { openIndexedFreeformSolid() } else { openFreeformSolid() }
+        let base = solidVertices.count
+        solidVertices.append(contentsOf: vertices.lazy.map(placement.placing))
+        openSolid?.vertexCount += vertices.count
+        let rewinds = placement.isMirrored
+        if let indices {
+            // 写した先までのずれを足す。ずれは負にもなる (切り出した位置より、溜め場の
+            // 末尾が手前のことがある)
+            let shift = base - vertices.startIndex
+            let indexBase = solidIndices.count
+            solidIndices.append(contentsOf: indices.lazy.map { UInt32(Int($0) + shift) })
+            if rewinds { Self.reverseTriangles(in: &solidIndices, from: indexBase) }
+            return
+        }
+        if rewinds { Self.reverseTriangles(in: &solidVertices, from: base) }
+        if openSolid?.indexStart != nil {
+            // **添字の列では、並べただけの頂点も自分の番号を名乗る** — 名乗らないと誰からも
+            // 参照されず、黙って消える (``appendSolidVertex`` と同じ理由)
+            solidIndices.append(contentsOf: (base..<solidVertices.count).lazy.map { UInt32($0) })
+        }
+    }
+
+    /// `start` から後ろに並んだ三角形の巻き方を、1 枚ずつ裏返す (2 点目と 3 点目を入れ替える)。
+    ///
+    /// 並びは三角形の列 (3 つずつで 1 枚) で、立体の頂点も読む順もこの形で積まれている。
+    /// **3 で割り切れない端は触らない** — 描く側も 3 つ揃わない端は読まない。
+    private static func reverseTriangles<Element>(in elements: inout [Element], from start: Int) {
+        var first = start
+        while first + 2 < elements.count {
+            elements.swapAt(first + 1, first + 2)
+            first += 3
+        }
     }
 
     /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから
@@ -381,14 +468,15 @@ extension Canvas {
     /// 組み立てるが、利用者の断片へ渡すのは形自身の座標のほうなので、両方が要る。
     /// 帯の太さのぶんの広がりは持たない — **帯のどの画素も、元になった点の座標を名乗る**。
     func strokeSolidRing(
-        _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool
+        _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
+        curveSteps: [Bool] = []
     ) {
         let half = style.strokeWeight / 2
         guard !points.isEmpty, shapePoints.count == points.count else { return }
 
         // 端と折れ目の規則は平面と共有する (`strokeRing`)
         strokeRing(
-            count: points.count, isClosed: isClosed,
+            count: points.count, isClosed: isClosed, curveSteps: curveSteps,
             band: {
                 appendSolidBand(
                     points[$0], points[$1],

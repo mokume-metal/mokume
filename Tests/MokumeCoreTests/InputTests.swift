@@ -40,7 +40,7 @@ struct InputStateTests {
         state.beginFrame()
 
         // 前の位置から遠く離れた場所で押す。位置の差は大きいが、押下は移動ではない
-        state.enqueue(.mouseDown(x: 200, y: 150, button: 0))
+        state.enqueue(.mouseDown(x: 200, y: 150, button: .left))
         state.beginFrame()
         #expect(state.x - state.previousX == 190)
         #expect(state.dragX == 0)
@@ -52,14 +52,14 @@ struct InputStateTests {
         let state = InputState()
         // 押す前の移動は数えない
         state.enqueue(.mouseMoved(x: 10, y: 10))
-        state.enqueue(.mouseDown(x: 10, y: 10, button: 0))
+        state.enqueue(.mouseDown(x: 10, y: 10, button: .left))
         state.enqueue(.mouseMoved(x: 30, y: 25))
         state.beginFrame()
         #expect(state.dragX == 20)
         #expect(state.dragY == 15)
 
         // 離したあとの移動も数えない
-        state.enqueue(.mouseUp(x: 30, y: 25, button: 0))
+        state.enqueue(.mouseUp(x: 30, y: 25, button: .left))
         state.enqueue(.mouseMoved(x: 100, y: 100))
         state.beginFrame()
         #expect(state.dragX == 0)
@@ -69,7 +69,7 @@ struct InputStateTests {
     @Test("1 フレームにまとめて届いても、引きずった量は取りこぼさない")
     func draggingAccumulatesAcrossEventsInOneFrame() {
         let state = InputState()
-        state.enqueue(.mouseDown(x: 0, y: 0, button: 0))
+        state.enqueue(.mouseDown(x: 0, y: 0, button: .left))
         state.beginFrame()
 
         // 行って戻る。**足し込みなので経路のとおりに数える**
@@ -87,12 +87,12 @@ struct InputStateTests {
     @Test("押して離すと、押されている状態がその通りに変わる")
     func followsTheButton() {
         let state = InputState()
-        state.enqueue(.mouseDown(x: 1, y: 2, button: 1))
+        state.enqueue(.mouseDown(x: 1, y: 2, button: .right))
         state.beginFrame()
         #expect(state.isMouseDown)
-        #expect(state.button == 1)
+        #expect(state.button == .right)
 
-        state.enqueue(.mouseUp(x: 1, y: 2, button: 1))
+        state.enqueue(.mouseUp(x: 1, y: 2, button: .right))
         state.beginFrame()
         #expect(!state.isMouseDown)
     }
@@ -176,8 +176,8 @@ struct InputCallbackTests {
     @Test("1 フレームに押して離しても、押下が消えない")
     func keepsAPressThatFitsInOneFrame() {
         let state = InputState()
-        state.enqueue(.mouseDown(x: 200, y: 250, button: 0))
-        state.enqueue(.mouseUp(x: 200, y: 250, button: 0))
+        state.enqueue(.mouseDown(x: 200, y: 250, button: .left))
+        state.enqueue(.mouseUp(x: 200, y: 250, button: .left))
 
         var seen: [InputCallback] = []
         state.beginFrame { seen.append($0) }
@@ -190,15 +190,15 @@ struct InputCallbackTests {
     @Test("押下を伴わない解放は、クリックにならない")
     func doesNotClickWithoutAPress() {
         // 窓の外で押して中で離した、溜める上限で押下だけ捨てられた、など
-        #expect(callbacks(from: [.mouseUp(x: 10, y: 10, button: 0)]) == [.mouseReleased])
+        #expect(callbacks(from: [.mouseUp(x: 10, y: 10, button: .left)]) == [.mouseReleased])
     }
 
     @Test("クリックは、解放の直後に続く")
     func clickFollowsTheRelease() {
         let events: [InputEvent] = [
-            .mouseDown(x: 10, y: 10, button: 0),
+            .mouseDown(x: 10, y: 10, button: .left),
             .mouseMoved(x: 20, y: 20),
-            .mouseUp(x: 20, y: 20, button: 0),
+            .mouseUp(x: 20, y: 20, button: .left),
         ]
         #expect(
             callbacks(from: events) == [
@@ -252,7 +252,7 @@ struct InputCallbackTests {
     @Test("引きずりの 1 件ぶんを足すと、フレーム合計と一致する")
     func draggedAmountsSumToTheFrameTotal() {
         let state = InputState()
-        state.enqueue(.mouseDown(x: 10, y: 10, button: 0))
+        state.enqueue(.mouseDown(x: 10, y: 10, button: .left))
         state.enqueue(.mouseMoved(x: 20, y: 15))
         state.enqueue(.mouseMoved(x: 50, y: 35))
         state.enqueue(.mouseMoved(x: 60, y: 60))
@@ -273,10 +273,10 @@ struct InputCallbackTests {
     @Test("配られた時点で読める値は、その出来事を当てた直後の姿")
     func readsTheStateAsOfThatEvent() {
         let state = InputState()
-        state.enqueue(.mouseDown(x: 30, y: 40, button: 1))
-        state.enqueue(.mouseUp(x: 70, y: 80, button: 1))
+        state.enqueue(.mouseDown(x: 30, y: 40, button: .right))
+        state.enqueue(.mouseUp(x: 70, y: 80, button: .right))
 
-        var seen: [(InputCallback, Float, Float, Bool, Int)] = []
+        var seen: [(InputCallback, Float, Float, Bool, MouseButton?)] = []
         state.beginFrame { seen.append(($0, state.x, state.y, state.isMouseDown, state.button)) }
 
         #expect(seen.count == 3)
@@ -285,7 +285,7 @@ struct InputCallbackTests {
         #expect(seen[0].1 == 30)
         #expect(seen[0].2 == 40)
         #expect(seen[0].3)
-        #expect(seen[0].4 == 1)
+        #expect(seen[0].4 == .right)
         // 離した瞬間は、離した場所で押されていない
         #expect(seen[1].0 == .mouseReleased)
         #expect(seen[1].1 == 70)
@@ -301,9 +301,9 @@ struct InputCallbackTests {
         // 押す前の移動 → 移動。押した後の移動 → 引きずり。離した後の移動 → 移動
         let events: [InputEvent] = [
             .mouseMoved(x: 10, y: 10),
-            .mouseDown(x: 10, y: 10, button: 0),
+            .mouseDown(x: 10, y: 10, button: .left),
             .mouseMoved(x: 30, y: 25),
-            .mouseUp(x: 30, y: 25, button: 0),
+            .mouseUp(x: 30, y: 25, button: .left),
             .mouseMoved(x: 60, y: 60),
         ]
         #expect(
@@ -318,7 +318,7 @@ struct InputCallbackTests {
     /// 同じ材料 (押下状態) で分けている。
     @Test("引きずりの判定は、外から送れる材料だけで決まる")
     func derivesDraggingWithoutWindowOnlyInformation() {
-        let held: [InputEvent] = [.mouseDown(x: 0, y: 0, button: 0), .mouseMoved(x: 5, y: 5)]
+        let held: [InputEvent] = [.mouseDown(x: 0, y: 0, button: .left), .mouseMoved(x: 5, y: 5)]
         #expect(callbacks(from: held) == [.mousePressed, .mouseDragged(deltaX: 5, deltaY: 5)])
         #expect(callbacks(from: [.mouseMoved(x: 5, y: 5)]) == [.mouseMoved])
     }
@@ -332,7 +332,8 @@ struct InputCallbackTests {
         #expect(callbacks(from: events) == [.keyPressed, .keyTyped, .keyReleased])
     }
 
-    /// **押しっぱなしは連射する** (手本 — Processing / p5.js — と同じ)。
+    /// **押しっぱなしは連射する** — Processing と同じで、p5.js とは違う (p5.js は押したままの
+    /// キーでは呼び直さない)。
     @Test("押しっぱなしのキーは、届いたぶんだけ配られる")
     func repeatsWhileHeld() {
         let events: [InputEvent] = [
@@ -386,7 +387,7 @@ struct InputCallbackTests {
     func foldingIsUnchangedByDispatching() {
         let events: [InputEvent] = [
             .mouseMoved(x: 10, y: 10),
-            .mouseDown(x: 10, y: 10, button: 0),
+            .mouseDown(x: 10, y: 10, button: .left),
             .mouseMoved(x: 30, y: 25),
             .scrolled(dx: 1, dy: 2),
         ]
@@ -565,7 +566,7 @@ struct InputInboxTests {
         let facet = try makeFacet()
         let inbox = InputInbox(directory: facet)
         let state = InputState()
-        // button は 0 (主釦)・dx dy は 0 (動かない)・characters は空・isRepeat は false
+        // button は 0 (主釦 = 左)・dx dy は 0 (動かない)・characters は空・isRepeat は false
         try send(
             #"{"id":"a1","events":[{"type":"mouseDown","x":7,"y":9},{"type":"scrolled"},{"type":"keyDown","code":49}]}"#,
             to: facet)
@@ -573,7 +574,7 @@ struct InputInboxTests {
         #expect(inbox.drain(into: state)?.accepted == 3)
         state.beginFrame()
         #expect(state.isMouseDown)
-        #expect(state.button == 0)
+        #expect(state.button == .left)
         #expect(state.scrollX == 0)
         #expect(state.scrollY == 0)
         #expect(state.pressedKeys.contains(.space))

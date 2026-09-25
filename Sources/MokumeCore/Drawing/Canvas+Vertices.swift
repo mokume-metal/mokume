@@ -20,6 +20,9 @@ struct BuildingVertex {
     var uv: SIMD2<Float>?
     /// 置いた時点の塗り。
     var fill: LinearRGBA
+    /// 曲線が作った刻みの点か。**利用者が置いた点 (`vertex`・曲線の終点・通過点) ではない**
+    /// ので、輪郭は継ぎ目に折れ目の形を置かない (``Canvas/strokeRing(count:isClosed:curveSteps:band:disc:square:)``)。
+    var isCurveStep = false
 }
 
 // 頂点を並べて形を作る。**道具は 1 つで、平面と立体に分かれない** ([ADR-0021] 決定 5)。
@@ -46,24 +49,28 @@ extension Canvas {
 
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
+        breakCurveSequence()
         appendVertex(SIMD3(x, y, 0), hasDepth: false)
     }
 
     // 奥行きを持つ頂点を 1 つ置く。
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        breakCurveSequence()
         appendVertex(SIMD3(x, y, z), hasDepth: true)
     }
 
     // 貼る絵の読み取り位置つきで頂点を 1 つ置く。
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
+        breakCurveSequence()
         appendVertex(SIMD3(x, y, 0), hasDepth: false, uv: textureUV(u, v))
     }
 
     // 奥行きと読み取り位置を持つ頂点を 1 つ置く。
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)
+        breakCurveSequence()
         appendVertex(SIMD3(x, y, z), hasDepth: true, uv: textureUV(u, v))
     }
 
@@ -90,13 +97,16 @@ extension Canvas {
     // これから置く頂点の面の向きを決める。
     public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        // 形の外で控えても、次の beginShape() が消すのでどの頂点にも効かない (#1520)
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("normal") }
         let direction = SIMD3<Float>(x, y, z)
         // 長さを持たない向き・数でない向きは「書かれていない」に倒す。零ベクトルを
-        // そのまま持たせると、光の計算で向きの定まらない面になる
+        // そのまま持たせると、光の計算で向きの定まらない面になる (#1528 で注意を足した)
         guard direction.x.isFinite, direction.y.isFinite, direction.z.isFinite,
             length_squared(direction) > 0
         else {
             currentNormal = nil
+            warnBadNormalOnce()
             return
         }
         currentNormal = normalize(direction)
@@ -106,25 +116,25 @@ extension Canvas {
         _ cx1: some ScalarConvertible, _ cy1: some ScalarConvertible, _ cx2: some ScalarConvertible, _ cy2: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible
     ) {
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
-        guard isBuildingShape, let start = lastShapePoint else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
+        breakCurveSequence()
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("bezierVertex") }
+        guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("bezierVertex") }
         let c1 = SIMD2(cx1, cy1)
         let c2 = SIMD2(cx2, cy2)
         let end = SIMD2(x, y)
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
-            appendShapePoint(Self.cubicPoint(start, c1, c2, end, t))
+            // 最後の刻みは終点 — 利用者が置いた点なので、そこで折れれば角になる
+            appendShapePoint(
+                Self.cubicPoint(start, c1, c2, end, t), isCurveStep: step < currentCurveDetail)
         }
     }
 
     public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
-        guard isBuildingShape, let start = lastShapePoint else {
-            warnVertexOutsideShapeOnce()
-            return
-        }
+        breakCurveSequence()
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("quadraticVertex") }
+        guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("quadraticVertex") }
         // 2 次は 3 次の特別な形として通す — 曲線の道具を 1 本に保つ
         let control = SIMD2(cx, cy)
         let end = SIMD2(x, y)
@@ -137,10 +147,22 @@ extension Canvas {
     ///
     /// **4 つ揃って初めて 1 区間が引ける** — 最初と最後の点は曲がり方を決めるためだけに
     /// 使われ、その間だけが実際に描かれる。
+    ///
+    /// **並びは `curveVertex` を続けて呼んでいる間だけ続く。** `vertex` / `bezierVertex` /
+    /// `quadraticVertex` と穴の境目 (`beginContour` / `endContour`) で切れ、次の区間はまた
+    /// 4 つ揃ってから引く。**並びの最初の区間は、その始点 (2 つ目に置いた点) も環に置く**
+    /// — 環 (外周か穴) の最初でも、切れた後の並びでも同じで、穴の中の曲線は外周と独立に
+    /// 始まる ([#1449])。直す前は環の最初でだけ置いていたので、切れた後の並びは手前の点から
+    /// 刻みの 1 つ目へ直に繋がっていた ([#1537])。環の最後の点が始点と同じ位置なら置き
+    /// 直さない — 始点を `vertex` で明示した書き方が、同じ点を 2 度持たない。規則の正本は
+    /// ``Sketch/curveVertex(_:_:)`` の説明。
+    ///
+    /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
+    /// [#1537]: https://github.com/mokume-metal/mokume/issues/1537
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
+            warnVertexOutsideShapeOnce("curveVertex")
             return
         }
         curveGuides.append(SIMD2(x, y))
@@ -150,11 +172,15 @@ extension Canvas {
         let p1 = curveGuides[count - 3]
         let p2 = curveGuides[count - 2]
         let p3 = curveGuides[count - 1]
-        if shapePoints.isEmpty { appendShapePoint(p1) }
+        // 並びの最初の区間は始点も置く。環の最後の点が始点と同じ位置なら置き直さない (#1537)
+        let last = (holePoints ?? shapePoints).last.map { SIMD2($0.position.x, $0.position.y) }
+        if count == 4, last != p1 { appendShapePoint(p1, isCurveStep: false) }
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
+            // 最後の刻みは通過点 — 張り具合 1 では折れ線の角になる
             appendShapePoint(
-                Self.catmullRomPoint(p0, p1, p2, p3, t, tightness: currentCurveTightness))
+                Self.catmullRomPoint(p0, p1, p2, p3, t, tightness: currentCurveTightness),
+                isCurveStep: step < currentCurveDetail)
         }
     }
 
@@ -167,16 +193,34 @@ extension Canvas {
 
     public func beginContour() {
         guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
+            warnVertexOutsideShapeOnce("beginContour")
             return
         }
+        // 開いたままの穴は、endShape() と同じ規則で畳んでから次を始める (#1528)
+        closeOpenHole()
         holePoints = []
+        breakCurveSequence()
     }
 
     public func endContour() {
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("endContour") }
+        guard holePoints != nil else { return warnContourNotBegunOnce() }
+        closeOpenHole()
+    }
+
+    /// 開いている穴を畳む。**注意は言わない** — 閉じ忘れを畳むのは約束どおりの振る舞いで、
+    /// 公開の ``endContour()`` とは道を分ける ([#1528])。
+    ///
+    /// 同じ道を通すと、穴を閉じた形・穴の無い形の ``endShape(_:)`` が「閉じる穴が無い」を
+    /// 言ってしまう。穴を開いていなければ何もしない。点が 3 つに満たない穴は面にならない
+    /// ので捨てる。
+    ///
+    /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+    private func closeOpenHole() {
         guard let hole = holePoints else { return }
         if hole.count >= 3 { shapeHoles.append(hole) }
         holePoints = nil
+        breakCurveSequence()
     }
 
     public func endShape(_ end: ShapeEnd = .open) {
@@ -190,15 +234,16 @@ extension Canvas {
             shapeHasDepth = false
             currentNormal = nil
         }
-        guard isBuildingShape else { return }
-        endContour()  // 閉じ忘れた穴も畳む
+        // 始まりの無い形の終わり — beginShape() の書き忘れか、二重呼び (#1520)
+        guard isBuildingShape else { return warnShapeNotBegunOnce() }
+        closeOpenHole()  // 閉じ忘れた穴も畳む
         drawBuiltShape(closed: end == .close)
     }
 
     // 置いた頂点を 1 つ、番号で選ぶ。
     public func index(_ number: Int) {
         guard isBuildingShape else {
-            warnVertexOutsideShapeOnce()
+            warnVertexOutsideShapeOnce("index")
             return
         }
         shapeIndices.append(number)
@@ -572,42 +617,62 @@ extension Canvas {
         _ ring: [Int], closed: Bool, points: [BuildingVertex], placed: [PlacedVertex]
     ) {
         guard !ring.isEmpty else { return }
+        let curveSteps = ring.map { points[$0].isCurveStep }
         if shapeHasDepth {
             strokeSolidRing(
                 ring.map { placed[$0].position }, shapePoints: ring.map { points[$0].position },
-                isClosed: closed)
+                isClosed: closed, curveSteps: curveSteps)
         } else {
             // 平面の輪郭は変換の前の座標で組み立てる (`Outline` の説明を参照)
             strokeOutline(
                 Outline(
                     points: ring.map { SIMD2(points[$0].position.x, points[$0].position.y) },
-                    isClosed: closed, fills: false))
+                    isClosed: closed, fills: false, curveSteps: curveSteps))
         }
     }
 
     // MARK: - 溜める
 
+    /// いま組んでいる環 (外周か穴) の最後の点。**空の穴は外周の点へ倒れない** — 穴の最初の
+    /// ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` は、形の中で手前に点が
+    /// 無いときと同じく何もしない ([#1449])。
+    ///
+    /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
     private var lastShapePoint: SIMD2<Float>? {
-        (holePoints?.last ?? shapePoints.last).map { SIMD2($0.position.x, $0.position.y) }
+        (holePoints ?? shapePoints).last.map { SIMD2($0.position.x, $0.position.y) }
+    }
+
+    /// 通過点の曲線の並び (``curveGuides``) を切る。**`curveVertex` 以外で点を置く呼び出し
+    /// (`vertex` / `bezierVertex` / `quadraticVertex`) と、穴の境目で呼ぶ** — 次の区間は、
+    /// また 4 つ揃ってから引かれる。
+    ///
+    /// ``appendVertex(_:hasDepth:uv:isCurveStep:)`` には入れない。`curveVertex` 自身が置く
+    /// 刻みの点もそこを通るので、曲線が 1 区間で止まる。
+    private func breakCurveSequence() {
+        curveGuides.removeAll(keepingCapacity: true)
     }
 
     /// 曲線が作った点を置く。奥行きは直前の点から引き継ぐ。
-    private func appendShapePoint(_ point: SIMD2<Float>) {
+    private func appendShapePoint(_ point: SIMD2<Float>, isCurveStep: Bool) {
         let depth = (holePoints?.last ?? shapePoints.last)?.position.z ?? 0
-        appendVertex(SIMD3(point.x, point.y, depth), hasDepth: false)
+        appendVertex(SIMD3(point.x, point.y, depth), hasDepth: false, isCurveStep: isCurveStep)
     }
 
     private func appendVertex(
-        _ position: SIMD3<Float>, hasDepth: Bool, uv: SIMD2<Float>? = nil
+        _ position: SIMD3<Float>, hasDepth: Bool, uv: SIMD2<Float>? = nil,
+        isCurveStep: Bool = false
     ) {
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce() }
+        // 形の外でここまで来るのは `vertex` の 4 つの形だけである。曲線の刻みの点
+        // (`appendShapePoint`) は、呼んだ関数が自分の入口で形の外を受けてから来る
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("vertex") }
         // 数でない座標は形を壊すだけなので置かない ([ADR-0020] 決定 5)
         guard position.x.isFinite, position.y.isFinite, position.z.isFinite else {
             return warnBadVertexOnce()
         }
         if hasDepth { shapeHasDepth = true }
         let vertex = BuildingVertex(
-            position: position, normal: currentNormal, uv: uv, fill: style.fill)
+            position: position, normal: currentNormal, uv: uv, fill: style.fill,
+            isCurveStep: isCurveStep)
         if holePoints != nil {
             holePoints?.append(vertex)
         } else {
@@ -639,10 +704,71 @@ extension Canvas {
             + m2 * (t3 - t2)
     }
 
-    private func warnVertexOutsideShapeOnce() {
+    /// `beginShape()` の外で頂点の仲間を呼んだことを、初回だけ知らせる。
+    ///
+    /// **文面は呼んだ関数の名前を名乗る** ([#1498])。入口は `vertex` の 4 つの形・
+    /// ``bezierVertex(_:_:_:_:_:_:)``・``quadraticVertex(_:_:_:_:)``・``curveVertex(_:_:)``・
+    /// ``beginContour()``・``endContour()``・``normal(_:_:_:)``・``index(_:)`` で、事情は 1 つ
+    /// なので鍵を共有し、文面には名前だけを入れる (``warnBadSize(_:)`` と同じ形)。直す前は
+    /// どの入口も `vertex():` を名乗り、書き手は呼んでいない `vertex()` を探しに行くことに
+    /// なっていた。`endContour()` と `normal(_:_:_:)` は [#1520] で加わった。
+    ///
+    /// [#1498]: https://github.com/mokume-metal/mokume/issues/1498
+    /// [#1520]: https://github.com/mokume-metal/mokume/issues/1520
+    private func warnVertexOutsideShapeOnce(_ name: String) {
         warnOnce(
             .vertexOutsideShape,
-            "vertex(): call this between beginShape() and endShape(). This call does nothing")
+            "\(name)(): call this between beginShape() and endShape(). This call does nothing")
+    }
+
+    /// 形の中で手前に点が無いまま曲線を続けようとしたことを、初回だけ知らせる ([#1485])。
+    ///
+    /// **形の外の注意 (``warnVertexOutsideShapeOnce(_:)``) とは言うことが違う。** 呼んだ場所は
+    /// 既に `beginShape()` と `endShape()` の間なので、間で呼べと言っても直す先を指さない。
+    /// 穴の最初もこちらに当たる (穴は外周の点から始めない・``lastShapePoint``)。
+    ///
+    /// [#1485]: https://github.com/mokume-metal/mokume/issues/1485
+    private func warnCurveWithoutStartOnce(_ name: String) {
+        warnOnce(
+            .curveWithoutStart,
+            "\(name)(): a curve continues from the last point placed, and there is no point yet "
+                + "in this shape or beginContour() hole, so this call does nothing. Place a "
+                + "vertex() first")
+    }
+
+    /// 形の始まりが無いまま ``endShape(_:)`` を呼んだことを、初回だけ知らせる ([#1520])。
+    ///
+    /// 形の外の注意 (``warnVertexOutsideShapeOnce(_:)``) の文面は、`endShape()` には直す先を
+    /// 指さない。対の始まりが無いことを言う。
+    ///
+    /// [#1520]: https://github.com/mokume-metal/mokume/issues/1520
+    private func warnShapeNotBegunOnce() {
+        warnOnce(
+            .shapeNotBegun,
+            "endShape(): no shape was begun with beginShape(), so there is nothing to end. This "
+                + "call does nothing")
+    }
+
+    /// 形の中で、穴を開かずに ``endContour()`` を呼んだことを、初回だけ知らせる ([#1528])。
+    ///
+    /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+    private func warnContourNotBegunOnce() {
+        warnOnce(
+            .contourNotBegun,
+            "endContour(): no hole was begun with beginContour(), so there is nothing to end. "
+                + "This call does nothing")
+    }
+
+    /// 形の中で、向きにならない値を ``normal(_:_:_:)`` に渡したことを、初回だけ知らせる
+    /// ([#1528])。
+    ///
+    /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+    private func warnBadNormalOnce() {
+        warnOnce(
+            .badNormal,
+            "normal(): got a direction that is not a number, or an infinite one, or one with no "
+                + "length, so the vertices placed after this take their facing from the shape, "
+                + "as if no normal() had been written")
     }
 
     private func warnBadVertexOnce() {

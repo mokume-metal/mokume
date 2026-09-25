@@ -152,7 +152,7 @@ struct DrawableResidencyTests {
     /// 常駐していてよい面の数の上限。**環の枚数ではなく「増え続けていない」を表す。**
     ///
     /// 環の枚数 (3) より少し大きく取ってあるのは、環が同じでも時間をかけると
-    /// 数種類の面が現れるためである ([#1288])。畳まない実装ではフレーム数ぶん
+    /// 数種類の面が現れるためである ([#1288])。畳まない実装では面の環を作り直すたびに
     /// 積み上がった (120 件・85.2 MiB — [#357]) ので、この桁で見分けが付く。
     ///
     /// [#357]: https://github.com/mokume-metal/mokume/issues/357
@@ -209,15 +209,31 @@ struct DrawableResidencyTests {
     func residencyStaysBoundedAcrossResizes() throws {
         let (gpu, source, presenter, layer) = try makeSession(surface: 200)
 
+        var sizesPresented = 0
         for step in 0..<60 {
             layer.drawableSize = CGSize(width: 200 + step * 8, height: 200)
-            for _ in 0..<4 { try presenter.present(source, to: layer) }
+            var presented = false
+            for _ in 0..<4 {
+                if try presenter.present(source, to: layer) { presented = true }
+            }
+            if presented { sizesPresented += 1 }
         }
 
         // **ここが本番。** 大きさが変わると面の環ごと作り直されるので、古い面を畳まないと
-        // 積み上がる — 畳まない実装では 120 件・85.2 MiB が常駐したままになった (#357)
+        // 積み上がる — 畳まない実装では 120 件・85.2 MiB が常駐したままになった ([#357])。
+        //
+        // 大きさの違う面は別のテクスチャなので、**畳まなければ面を取れた大きさごとに
+        // 最低 1 件ずつ残る** (60 通りなら 60 件以上)。上限 (8) はその桁から十分に離して
+        // あり、畳む実装は最後の大きさの環のぶんしか残さない。上限を環の枚数に紐づけない
+        // 理由は兄弟と同じ ([#1288] — 環が 3 枚でも 4 種類の面が現れる)。
+        //
+        // [#357]: https://github.com/mokume-metal/mokume/issues/357
+        // [#1288]: https://github.com/mokume-metal/mokume/issues/1288
+        try #require(
+            sizesPresented > Self.boundedResidency,
+            "面を取れた大きさが \(sizesPresented) 通りしかなく、畳まなくても上限に届かない — この検査は何も見ていない")
         #expect(
-            gpu.drawableResidency.allocationCount <= layer.maximumDrawableCount,
-            "作り直される前の面が常駐に残り続けている")
+            gpu.drawableResidency.allocationCount <= Self.boundedResidency,
+            "作り直される前の面が常駐に残り続けている (\(gpu.drawableResidency.allocationCount) 件)")
     }
 }
