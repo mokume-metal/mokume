@@ -491,6 +491,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 観測へ差し出す
 
 - ``Sketch/expose(_:_:)-19rp8``
+- ``Sketch/measure(_:_:)``
 
 ### 数を渡す
 
