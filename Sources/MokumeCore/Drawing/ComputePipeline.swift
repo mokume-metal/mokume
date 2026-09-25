@@ -36,13 +36,7 @@ final class ComputePipeline {
         self.tablePool = ArgumentTablePool(
             gpu: gpu, label: "mokume.compute.arguments",
             bufferBindCount: Self.valuesBufferIndex + 1)
-        let compilerDescriptor = MTL4CompilerDescriptor()
-        compilerDescriptor.label = "mokume.compute.compiler"
-        guard let compiler = try? gpu.device.makeCompiler(descriptor: compilerDescriptor) else {
-            throw .shaderCompilerUnavailable
-        }
-        self.compiler = compiler
-
+        self.compiler = try gpu.shaders.compiler()
     }
 
     /// 位置に対応するテーブル。**足りなければ伸ばす** (``ArgumentTablePool``)。

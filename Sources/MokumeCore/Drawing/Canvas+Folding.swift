@@ -22,7 +22,18 @@ extension Canvas {
         /// 最後の点から最初の点へ戻るか。
         var isClosed: Bool
         /// 扇で塗れる図形の中心。`nil` なら最初の点から扇状に分ける。
+        ///
+        /// **最初の点からの扇は、凸な周でしか正しくない。** 凸でない周は ``fillTriangles``
+        /// で割り方を渡す (凸でない `quad`)。
         var fanCenter: SIMD2<Float>?
+        /// 塗りを割る三角形。`nil` なら扇で割る (``fanCenter``)。
+        ///
+        /// 周は与えた順のまま輪郭に使い、**塗りだけを別に割る**ときに持つ。凸でない `quad` が
+        /// そうで、最初の点から扇に割ると、凹んだ形はへこみまで塗り、辺の交差した形は
+        /// 砂時計にならない ([#1534])。
+        ///
+        /// [#1534]: https://github.com/mokume-metal/mokume/issues/1534
+        var fillTriangles: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]?
         /// 塗りを持つか。線と点は持たない。
         var fills: Bool
         /// 点ごとに、折れ目の形によらず円板で埋めるか。曲線の刻みの点
@@ -36,11 +47,13 @@ extension Canvas {
 
         init(
             points: [SIMD2<Float>], isClosed: Bool, fanCenter: SIMD2<Float>? = nil,
+            fillTriangles: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]? = nil,
             fills: Bool = true, curveSteps: [Bool] = [], cornerDiagonals: [SIMD2<Float>] = []
         ) {
             self.points = points
             self.isClosed = isClosed
             self.fanCenter = fanCenter
+            self.fillTriangles = fillTriangles
             self.fills = fills
             self.curveSteps = curveSteps
             self.cornerDiagonals = cornerDiagonals
@@ -50,8 +63,9 @@ extension Canvas {
         func moved(by offset: SIMD2<Float>) -> Outline {
             Outline(
                 points: points.map { $0 + offset }, isClosed: isClosed,
-                fanCenter: fanCenter.map { $0 + offset }, fills: fills, curveSteps: curveSteps,
-                cornerDiagonals: cornerDiagonals)
+                fanCenter: fanCenter.map { $0 + offset },
+                fillTriangles: fillTriangles?.map { ($0.0 + offset, $0.1 + offset, $0.2 + offset) },
+                fills: fills, curveSteps: curveSteps, cornerDiagonals: cornerDiagonals)
         }
     }
 
@@ -199,6 +213,17 @@ extension Canvas {
     private func fillInterior(_ outline: Outline) {
         let points = outline.points
         guard points.count >= 3 else { return }
+        if let triangles = outline.fillTriangles {
+            let uvOf = style.picture == nil ? nil : Self.boxUV(of: points)
+            for (a, b, c) in triangles {
+                appendTriangle(
+                    transform.apply(x: a.x, y: a.y), transform.apply(x: b.x, y: b.y),
+                    transform.apply(x: c.x, y: c.y),
+                    colors: (style.fill, style.fill, style.fill),
+                    uvs: uvOf.map { ($0(a), $0(b), $0(c)) })
+            }
+            return
+        }
         let pivot = outline.fanCenter ?? points[0]
         let center = transform.apply(x: pivot.x, y: pivot.y)
         // 中心を持つ図形は全周を扇に分け、持たない図形は最初の点から分ける

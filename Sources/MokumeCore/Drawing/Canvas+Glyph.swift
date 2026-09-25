@@ -130,6 +130,9 @@ extension Canvas {
     func appendGlyphQuad(
         _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
     ) {
+        // 台帳の指紋を採るときは置かない (``placesGlyphs``)。送り幅は呼ぶ側が進める
+        guard placesGlyphs else { return }
+        glyphQuadsPlaced += 1
         useGlyphTexture()
         // **色を持つ字形には塗りの色を掛けない。** 焼き場の値に頂点の色を掛けるのが
         // 合成の唯一の式なので、掛けても変わらない色 — 白 — を積めば、字形の色が

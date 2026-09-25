@@ -268,6 +268,64 @@ struct SolidCullingTests {
         #expect(modes == [.none])
     }
 
+    // MARK: - 置いた後で外した絵 (#1564)
+
+    /// 形を置いた後で、貼った絵を外す口。**どちらも列を閉じない** — 列が閉じるのは、次に
+    /// 形を置くとき (貼る面の切り替え) か、ほかの理由で閉じるときで、そのときスタイルには
+    /// もう絵が無い。
+    enum PictureRemoval: String, CaseIterable, Sendable, CustomTestStringConvertible {
+        /// `noTexture()` を呼ぶ。
+        case noTexture
+        /// `push()` の後で貼り、`pop()` で戻す。
+        case pop
+        var testDescription: String { rawValue }
+    }
+
+    @Test("絵を貼った形を置いた後で絵を外しても、その列は裏面を捨てない", arguments: PictureRemoval.allCases)
+    func removingThePictureAfterPlacingKeepsBothFaces(_ removal: PictureRemoval) throws {
+        // 裏面を捨てるかは、形を置いたときのスタイルで決まる。後から外した絵は、既に置いた
+        // 形に効かない — 効くと、透けた画素から見えるはずの奥の面が消える
+        let canvas = try makeCanvas()
+        let picture = try canvas.createGraphics(8, 8)
+        try picture.draw { picture.background(.linear(red: 1, green: 1, blue: 1)) }
+        var modes: [MTLCullMode] = []
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            if removal == .pop { canvas.push() }
+            canvas.texture(picture)
+            canvas.box(20)
+            switch removal {
+            case .noTexture: canvas.noTexture()
+            case .pop: canvas.pop()
+            }
+            canvas.closeBatch()
+            modes = canvas.batches.filter { $0.source == .solid }.map(\.cullMode)
+        }
+        #expect(modes == [.none])
+    }
+
+    @Test("絵を外した後に置いた、絵の無い不透明な閉じた形は裏面を捨てる")
+    func shapesPlacedAfterRemovingThePictureStillCull() throws {
+        // 外した後の形は、外した後のスタイルで決まる。絵を貼った列の性質が後ろの列へ
+        // 漏れていないことを見る
+        let canvas = try makeCanvas()
+        let picture = try canvas.createGraphics(8, 8)
+        try picture.draw { picture.background(.linear(red: 1, green: 1, blue: 1)) }
+        var modes: [MTLCullMode] = []
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.texture(picture)
+            canvas.box(20)
+            canvas.noTexture()
+            canvas.sphere(10)
+            canvas.closeBatch()
+            modes = canvas.batches.filter { $0.source == .solid }.map(\.cullMode)
+        }
+        #expect(modes == [.none, .back])
+    }
+
     @Test("平面の列は捨て方を持たない")
     func flatBatchesAreNeverCulled() throws {
         let canvas = try makeCanvas()
@@ -347,5 +405,122 @@ struct SolidCullingTests {
         let difference = PictureDifference.between(mirrored, rotated)
         #expect(difference.shapePixels > 2000, "箱が写っていない (\(difference))")
         #expect(difference.fraction <= 0.02, "鏡映した箱が回転の箱と食い違う (\(difference))")
+    }
+
+    /// 透けた画素を持つ、貼る絵 (#1564 の起票時の 2 枚)。
+    enum SeeThroughPicture: String, CaseIterable, Sendable, CustomTestStringConvertible {
+        /// 4×4 の全画素が白・α 0.5。
+        case halfTransparent
+        /// 8×8 の市松で、半分の画素が α 0 の穴 (残りは白・α 1)。
+        case checkerWithHoles
+        var testDescription: String { rawValue }
+
+        func make(on canvas: Canvas) throws -> Image {
+            switch self {
+            case .halfTransparent:
+                let image = try canvas.createImage(4, 4)
+                let half = LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 0.5)
+                for y in 0..<4 {
+                    for x in 0..<4 { image.set(x, y, half) }
+                }
+                return image
+            case .checkerWithHoles:
+                // 作った絵は透明で始まるので、塞ぐ側だけを白で塗る
+                let image = try canvas.createImage(8, 8)
+                for y in 0..<8 {
+                    for x in 0..<8 where (x + y).isMultiple(of: 2) {
+                        image.set(x, y, .linear(red: 1, green: 1, blue: 1))
+                    }
+                }
+                return image
+            }
+        }
+    }
+
+    /// #1564 の起票時の絵 (160×160): 黒地に、`picture` を貼った白い `sphere(40)` を
+    /// (80, 80, 0) に置く。`turned` なら形の直前に `rotateY(π)` を入れる。
+    ///
+    /// `afterwards` は形を置いた後、フレームを描き切る前に打つ。
+    private func picturedSphere(
+        _ picture: SeeThroughPicture, turned: Bool, afterwards: (Canvas) -> Void = { _ in }
+    ) throws -> PixelBuffer {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        let image = try picture.make(on: canvas)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.texture(image)
+            canvas.push()
+            canvas.translate(80, 80, 0)
+            if turned { canvas.rotateY(Float.pi) }
+            canvas.sphere(40)
+            canvas.pop()
+            afterwards(canvas)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// どれかの成分の差が 0.02 を超える画素の数。`ignoring` が真を返す画素は数えない。
+    private func differingPixels(
+        _ a: PixelBuffer, _ b: PixelBuffer, ignoring: (Int, Int) -> Bool = { _, _ in false }
+    ) -> Int {
+        var count = 0
+        for y in 0..<a.height {
+            for x in 0..<a.width where !ignoring(x, y) {
+                let (p, q) = (a[x, y], b[x, y])
+                let apart =
+                    abs(p.red - q.red) > 0.02 || abs(p.green - q.green) > 0.02
+                    || abs(p.blue - q.blue) > 0.02 || abs(p.alpha - q.alpha) > 0.02
+                if apart { count += 1 }
+            }
+        }
+        return count
+    }
+
+    /// α 0.5 の白を 2 層重ねた画素 (黒地の上で 0.75) の数 — 透けた画素から奥の面が見えている所。
+    ///
+    /// **比べる前にこれが 0 でないことを確かめる。** 見比べる 2 枚がどちらも裏面を捨てて
+    /// いれば、奥の面が消えていても一致してしまう。1 層だけなら 0.5 なので、0.7 で分ける。
+    private func twoLayerPixels(_ image: PixelBuffer) -> Int {
+        var count = 0
+        for y in 0..<image.height {
+            for x in 0..<image.width where image[x, y].red > 0.7 { count += 1 }
+        }
+        return count
+    }
+
+    @Test(
+        "絵を貼った球を置いた直後に noTexture() を呼んでも、透けた画素から奥の面が見える",
+        arguments: SeeThroughPicture.allCases, [false, true])
+    func removingThePictureKeepsTheFarSideVisible(_ picture: SeeThroughPicture, turned: Bool) throws {
+        // 起票時は、呼ぶと裏面を捨てる列になり、透けた画素から見えていた奥の面が消えた
+        // (違う画素: α 0.5 で 1734 / 3674、市松の穴で 1714 / 3641)
+        let kept = try picturedSphere(picture, turned: turned)
+        if picture == .halfTransparent {
+            // 市松の絵は 1 層でも白 (1.0) の画素を持つので、層の数では見分けない
+            try #require(twoLayerPixels(kept) > 0, "絵を貼ったままの球で、奥の面が見えていない")
+        }
+        let removed = try picturedSphere(picture, turned: turned) { $0.noTexture() }
+        #expect(differingPixels(kept, removed) == 0)
+    }
+
+    @Test(
+        "noTexture() の後に絵の無い球を置いても、先に置いた球の透けた画素から奥の面が見える",
+        arguments: [false, true])
+    func placingAnotherShapeAfterRemovingThePicture(turned: Bool) throws {
+        // 後の球を置くと貼る面が切り替わり、そこで絵を貼った列が閉じる
+        let kept = try picturedSphere(.halfTransparent, turned: turned)
+        try #require(twoLayerPixels(kept) > 0, "絵を貼ったままの球で、奥の面が見えていない")
+        let removed = try picturedSphere(.halfTransparent, turned: turned) { canvas in
+            canvas.noTexture()
+            canvas.push()
+            canvas.translate(150, 150, 0)
+            canvas.sphere(5)
+            canvas.pop()
+        }
+        // 後から置いた小さな球の周りは比べない
+        let nearTheSmallSphere = { (x: Int, y: Int) in abs(x - 150) <= 12 && abs(y - 150) <= 12 }
+        #expect(differingPixels(kept, removed, ignoring: nearTheSmallSphere) == 0)
     }
 }

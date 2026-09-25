@@ -298,12 +298,16 @@ public final class Canvas {
         /// `nil` なら溜め場の並び (いつもの経路)。粒だけがここを使う — 置き場所を
         /// 埋めるのが GPU なので、CPU の溜め場を通らない。
         var external: ExternalInstances?
-        /// 半透明の塗りの置き場所を 1 つでも足したか。
+        /// 裏面が絵に出うるスタイルで、置き場所を 1 つでも足したか
+        /// (``Canvas/placementMayShowBackFaces``)。1 つでも居れば列ごと両面で描く
+        /// (``Batch/cullMode``)。
         ///
-        /// 塗りを変えても列は閉じないので、1 つの列に不透明と半透明が同居する。
-        /// 半透明の形は奥の面が手前の面を通して見えるので、1 つでも居れば列ごと
-        /// 両面で描く (``Batch/cullMode``)。
-        var hasTranslucentInstance = false
+        /// **形を置いたときに記録する。** 塗りの不透明度も貼る絵も、変えただけでは列を閉じない
+        /// (`fill`・`noTexture()`・`pop()`) ので、1 つの列に置いたときのスタイルが違う形が
+        /// 同居し、閉じる時点のスタイルはもう置いたときのものではない。閉じる時点を読むと、
+        /// 置いた後で外した絵の列が裏面を捨て、透けた画素から見えるはずの奥の面が消える
+        /// ([#1564](https://github.com/mokume-metal/mokume/issues/1564))。
+        var mayShowBackFaces = false
         /// この列の置き場所が形を鏡映するか (``SolidInstance/isMirrored``)。
         ///
         /// **列の置き場所はどれも同じ符号を持つ。** 表の巻き方は列ごとに 1 つ
@@ -611,10 +615,17 @@ public final class Canvas {
     /// このフレームで描き切った回数。**奥行きを引き継ぐかの判定に使う。**
     private var passesThisFrame = 0
 
-    /// このフレームで置いた描き場所。
+    /// 置いた描き場所のうち、まだ描き切っていないもの。
     ///
     /// **置いた時点の絵を守るために覚えている。** 溜めてから描くので、置いたあとに
     /// その描き場所が描き換わると、先に置いた場所まで最新の絵に化ける。
+    ///
+    /// 記録するのは**置くたび** — 画像として置いたときと、貼った塗りや保持した形がその
+    /// 面を読むように切り替えたとき (``useTexture(_:)``) である。落とすのは描き切り
+    /// (フレームの終わりと、描き場所が描き換わる直前) と塗り直し (``discardPending()``) で、
+    /// 落とした後に同じ面のまま置いた形も、置いた時点で記録し直される ([#1543])。
+    ///
+    /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     private(set) var placedGraphics: Set<ObjectIdentifier> = []
 
     /// 自分を置いた面。**自分の絵が変わる前に、そちらを先に描き切らせる。**
@@ -705,6 +716,21 @@ public final class Canvas {
     ///
     /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
     var atlasPageFrame: Int?
+    /// 字形を四角として置くか。**台帳の指紋を採るときだけ下ろす** ([#1559])。
+    ///
+    /// 字形を画素にするのは OS (CoreGraphics) で、書体の輪郭と送り幅が同じでも、焼いた画素は
+    /// OS の版で 1〜3 階調ずれる。文字が主題でない台帳の行にそれを写し込むと、絵が 1 画素も
+    /// 変わっていないのに OS の更新で行が動く ([ADR-0019] 決定 3 の改訂 (2026-09-25))。
+    ///
+    /// **下ろしても組版は変わらない。** 字を引き、送り幅を進めたうえで、置く手前で止める
+    /// だけである。作者に見せる口ではないので公開しない。描き場所へは引き継ぐ
+    /// (``createGraphics(_:_:)``) — 描き場所に書いた字も、同じ行の絵に載るからである。
+    ///
+    /// [#1559]: https://github.com/mokume-metal/mokume/issues/1559
+    /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
+    var placesGlyphs = true
+    /// 置いた字形の四角の数。旗 (``placesGlyphs``) が効いていることを、検査が数で確かめる。
+    var glyphQuadsPlaced = 0
     /// いま列が読んでいる面。面を広げる・画像を描くと差し替わる。
     ///
     /// **持ち主と組で持つ** (``HeldTexture``)。閉じた列はこれを写し取るので、ここで持ち主を
@@ -878,6 +904,11 @@ public final class Canvas {
         /// 含む列・貼る絵 (透けた画素から奥が見える)・重ねる混ぜ方・利用者の断片 (透明を
         /// 返したり画素を捨てたりできる)。**判定は列を閉じる側 (`closeSolidBatch`) が
         /// 1 箇所で行い**、描く側はこの値を掛けるだけにする。
+        ///
+        /// **絵・混ぜ方・断片・塗りの不透明度は、形を置いたときのものを読む**
+        /// (``OpenSolid/mayShowBackFaces``)。後から変えた設定は既に置いた形に効かない —
+        /// 絵を貼った形を置いた後で `noTexture()` を呼んでも、その形の列は両面で描く
+        /// ([#1564](https://github.com/mokume-metal/mokume/issues/1564))。
         var cullMode: MTLCullMode = .none
         /// 画面でどちら回りに見える面を表とするか。
         ///
@@ -1183,6 +1214,9 @@ public final class Canvas {
             slot.pointee = mode.rawIndex
         }
         self.blendModeBuffer = modeBuffer
+        // **出す先から自分へ辿れるようにする** (#1543)。この面を読む側が、置くたびに
+        // 置いたことを記録し直すのに使う (``useTexture(_:)``)
+        output.drawer = self
     }
 
     /// **自分で確保した置き場と面を常駐から退かせる** ([#795])。
@@ -1212,7 +1246,17 @@ public final class Canvas {
     /// これから置く頂点が読む面を決める。**変わるなら列を閉じる。**
     ///
     /// 閉じ忘れると、既に置いた図形や字が後から差し替わった面を読む。
+    ///
+    /// **描き場所の面を読むなら、そのたびに置いたことを記録し直す** ([#1543])。塗り・立体・
+    /// 保持した形・画像のどれも面を切り替えるときはここを通るので、記録する所はこの 1 か所
+    /// でよい。貼った時点 (`texture(_:)`) の記録だけに頼ると、描き場所を描き換えて記録が
+    /// 落ちた後 (描き切り・塗り直し・次のフレーム) に同じ面のまま置いた形が描き切られず、
+    /// 描き換えた後の絵で描かれる。**同じ面が続くときも記録する** — 続けて置く形こそ、
+    /// 貼り直さずに塗り続けた形である。
+    ///
+    /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     func useTexture(_ texture: HeldTexture) {
+        if let graphics = (texture.owner as? RenderTarget)?.drawer { note(placing: graphics) }
         if texture == currentTexture { return }
         closeBatch()
         currentTexture = texture
@@ -1500,17 +1544,24 @@ public final class Canvas {
 
     /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
     private func endFrame() throws(RenderFailure) {
-        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点・変換・切り抜きは
-        // **描き終えてから**既定へ戻す — 始まりでだけ戻すと、フレームの外 (止まっている
-        // 間のコールバック・描き場所の `endDraw()` の後) で置いた図形と読んだ座標にだけ、
-        // 前のフレームが最後に残した視点・変換・切り抜きが効く ([#1472])。列を閉じるのに
-        // 視点と切り抜きが要るので、戻すのは flush の後
+        // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点・変換・切り抜き・
+        // 光・周囲は**描き終えてから**既定へ戻す — 始まりでだけ戻すと、フレームの外 (止まって
+        // いる間のコールバック・描き場所の `endDraw()` の後) で置いた図形と読んだ座標にだけ、
+        // 前のフレームが最後に残したものが効く ([#1472]・[#1504])。列を閉じるのに視点と
+        // 切り抜きと光が要り、影の焼き付けも flush の中で光を読むので、戻すのは flush の後
+        //
+        // 光の置き場 (`lightStorage`) は次のフレームの頭まで空にしなくてよい。置き場を
+        // 指しうる列は flush と下の `discardFrame()` が全部捨て、外で閉じる列は光が空なので
+        // 区間も常に空になる — 前のフレームの置き場を指す区間は生まれない
         //
         // [#1472]: https://github.com/mokume-metal/mokume/issues/1472
+        // [#1504]: https://github.com/mokume-metal/mokume/issues/1504
         defer {
             cameraStorage = nil
             transform = .identity
             style.clip = nil
+            activeLights.removeAll(keepingCapacity: true)
+            activeSurroundings = nil
             style.material = .default
             shadowsEnabled = false
             shadowRangeValue = nil
