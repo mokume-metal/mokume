@@ -32,7 +32,7 @@
       "minimum": 1,
       "maximum": 60,
       "default": 1,
-      "description": "Take a shot every this many frames. Every frame when omitted. **Counted in frames rather than seconds**, so the shots follow the frames the sketch actually draws. The sketch being observed runs on the wall clock, and writing the images makes frames heavier, so **the shots are not evenly spaced in time** — lay the series out by each entry's `time` in the catalogue (frames), rather than assuming an even gap."
+      "description": "Take a shot every this many frames. Every frame when omitted. **Counted in frames rather than seconds**, so the shots follow the frames the sketch actually draws. The sketch being observed runs on the wall clock, and writing the images makes frames heavier, so **the shots are not evenly spaced in time** — lay the series out by each entry's `time` in the catalogue (frames), rather than assuming an even gap. For motion with evenly spaced times, write it with `mokume render` instead: it runs the sketch at a fixed frame rate and writes every frame, so nothing needs laying out again."
     }
   }
 }

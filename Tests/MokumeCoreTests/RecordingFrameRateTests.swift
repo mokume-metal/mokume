@@ -45,16 +45,40 @@ struct RecordingFrameRateTests {
 
     /// 起動のときの刻みを決めて組み、`frames` 回進めてから差込口を閉じる。
     ///
-    /// 時計は渡さない — フレーム番号から導く既定の時計になり、各枚の時刻が
+    /// 時計を渡さなければ、フレーム番号から導く既定の時計になり、各枚の時刻が
     /// `(frameCount - 1) / 起動のときの frameRate` に決まる。
     private func run(
-        launchFrameRate: Int, frames: Int, _ body: @escaping (RetimedSketch) -> Void
+        launchFrameRate: Int, clock: Clock? = nil, frames: Int,
+        _ body: @escaping (RetimedSketch) -> Void
     ) throws {
         RetimedSketch.launchFrameRate = launchFrameRate
         RetimedSketch.body = body
-        let runtime = try SketchRuntime(sketch: RetimedSketch(), gpu: try RenderDevice())
+        let runtime = try SketchRuntime(
+            sketch: RetimedSketch(), gpu: try RenderDevice(), clock: clock)
         for _ in 0..<frames { try runtime.advance() }
         runtime.closePlugins()
+    }
+
+    /// **時計の刻みが宣言と違えば、撮る係は時計に従う** ([#1282])。
+    ///
+    /// `mokume render --fps 30` は、宣言が 60 の作品をフレーム番号の時計 (30) で回す。各枚の
+    /// 時刻は時計から来るので 1/30 ずつ進むが、最後の 1 枚の長さを宣言 (60) から採ると、動画の
+    /// 長さだけが半コマ短くなる。
+    ///
+    /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
+    @Test("フレーム番号の時計が宣言と違う刻みなら、最後の 1 枚も時計の 1 フレームぶん")
+    func aFrameIndexClockSetsTheLastFrameToo() async throws {
+        try await withTemporaryDirectory("mokume-rate-clock") { directory in
+            let path = directory.appendingPathComponent("clock.mov").path
+            try run(launchFrameRate: 60, clock: .frameIndex(frameRate: 30), frames: 11) { sketch in
+                if sketch.frameCount == 1 { sketch.beginRecord(path) }
+                if sketch.frameCount == 11 { sketch.endRecord() }
+            }
+
+            let movie = try await readTiming(path)
+            #expect(movie.times.count == 10)
+            expectEveryFrameLasts(movie, 1.0 / 30)
+        }
     }
 
     @Test("代入しなければ、最後の 1 枚は起動のときの 1 フレームぶんで、各枚の間隔と揃う")

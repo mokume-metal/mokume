@@ -41,7 +41,10 @@ public final class SketchRuntime {
     private var isPaused = false
     /// 作者が回しているか (``noLoop()`` で `false`)。**外の停止とは別に持つ** —
     /// 意味の違いは ``resume()`` の説明にある。
-    private var isLooping = true
+    ///
+    /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
+    /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
+    private(set) var isLooping = true
     /// 止まっている間に 1 枚だけ描き直すよう頼まれているか (``redraw()``)。
     private var redrawRequested = false
 
@@ -56,17 +59,35 @@ public final class SketchRuntime {
     ///
     /// 頼まれている間だけ ``outlets`` に居る (``attachRecorderIfNeeded()``)。
     private var recorder: FrameRecorder?
-    /// 撮る係へ渡す刻み。**起動のときに読んだ ``SketchSettings/frameRate``** ([#1457])。
+    /// 撮る係へ渡す刻み。**起動のときに決まった時計の刻み** ([#1457]・[#1282])。
     ///
-    /// 各枚の時刻を決める時計と `deltaTime` の上限も、同じ `settings` の写しから刻みを採る。
+    /// フレーム番号から導く時計なら、その刻み。実時間の時計なら、起動のときに読んだ
+    /// ``SketchSettings/frameRate`` (`deltaTime` の上限も同じ写しから採る)。
+    ///
     /// 係を作るとき (最初の `save` か `beginRecord`) に読み直すと、走っている最中に代入した
     /// スケッチでは、各枚の間隔は起動のときのまま、動画の最後の 1 枚の長さだけが代入した値に
-    /// 従う。
+    /// 従う。**時計と別の値を採っても同じことが起きる** — 宣言が 60 の作品を 30 の時計で
+    /// 回すと (`mokume render --fps 30`)、各枚は 1/30 ずつ進むのに最後の 1 枚だけが 1/60 になる。
     ///
+    /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
     /// [#1457]: https://github.com/mokume-metal/mokume/issues/1457
     private let launchFrameRate: Int
+
+    /// 撮る係へ渡す刻みを、時計から決める (``launchFrameRate``)。
+    static func recordingFrameRate(clock: Clock, declared: Int) -> Int {
+        switch clock {
+        case .frameIndex(let frameRate): frameRate
+        case .wallClock: declared
+        }
+    }
+
     /// 閉じ終えるのを待っている撮る係。**居る間はフレームを進めない** (``closePlugins(_:)``)。
     private var closingRecorder: FrameRecorder?
+    /// 閉じ終えた撮る係が、1 度でも書き損じていたか (``FrameRecorder/hasFailedToWrite``)。
+    ///
+    /// **係は閉じ終えたところで手放すので、答えはここに残す。** 読むのは書き出しの経路で、
+    /// 書けたかを終了コードにする (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
+    private(set) var recordingFailed = false
 
     /// 組んだけれどまだ配っていない絵。**出口へ渡すのは 1 枚遅らせる** ([#927])。
     ///
@@ -183,16 +204,14 @@ public final class SketchRuntime {
         now: @escaping () -> Double
     ) throws(RenderFailure) {
         let settings = sketch.settings
+        let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
-        self.launchFrameRate = settings.frameRate
+        self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
-        self.timing = FrameTiming(
-            clock: clock ?? .frameIndex(frameRate: settings.frameRate),
-            frameRate: settings.frameRate,
-            now: now)
+        self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
         self.now = now
         self.observer = FrameObserver.makeIfEnabled()
         self.inbox = InputInbox.makeIfEnabled()
@@ -217,16 +236,14 @@ public final class SketchRuntime {
         paramStore: ParamStore? = nil
     ) throws(RenderFailure) {
         let settings = sketch.settings
+        let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
-        self.launchFrameRate = settings.frameRate
+        self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
-        self.timing = FrameTiming(
-            clock: clock ?? .frameIndex(frameRate: settings.frameRate),
-            frameRate: settings.frameRate,
-            now: now)
+        self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
         self.now = now
         self.observer = observer
         self.inbox = inbox
@@ -343,6 +360,7 @@ public final class SketchRuntime {
         }
         guard let closingRecorder else { return true }
         guard closingRecorder.close(patience) else { return false }
+        if closingRecorder.hasFailedToWrite { recordingFailed = true }
         self.closingRecorder = nil
         return true
     }

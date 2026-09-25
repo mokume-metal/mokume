@@ -40,7 +40,7 @@ enum Command {
     /// ``dispatch(_:)`` の網羅 `switch` と ``usageEntry`` の両方が**コンパイラに
     /// 問われる** — 案内に並べないなら、並べないと書くことになる。
     enum Verb: String, CaseIterable {
-        case new, run, watch, mcp, bundle, doctor, help, version
+        case new, run, watch, render, mcp, bundle, doctor, help, version
 
         /// 慣習の綴り。名前とは別に受けるだけで、案内には並べない。
         var aliases: [String] {
@@ -82,6 +82,19 @@ enum Command {
                 (
                     "watch [<directory>] [-c <configuration>] [--scratch-path <directory>]",
                     "Rebuild the sketch and swap it in whenever you save"
+                )
+            case .render:
+                (
+                    """
+                    render [<directory>] [-c <configuration>] [--scratch-path <directory>] \
+                    --fps <n> --seconds <s> --out <path>
+                    """,
+                    """
+                    Build the sketch and write its motion at a fixed frame rate, with no window.
+                    The time the sketch sees steps by 1/fps per frame, so the same arguments give
+                    the same motion. --out takes a .mov, or a numbered series with a run of # for
+                    the number (out/frame-####.png). Ends by itself after fps × seconds frames
+                    """
                 )
             case .mcp:
                 ("mcp [<directory>]", "Serve the agent interface (speaks over stdin and stdout)")
@@ -128,6 +141,8 @@ enum Command {
             try RunCommand.run(rest)
         case .watch:
             try WatchCommand.run(rest)
+        case .render:
+            try RenderCommand.run(rest)
         case .mcp:
             try MCPCommand.run(rest)
         case .bundle:

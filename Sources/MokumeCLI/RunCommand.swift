@@ -57,7 +57,17 @@ enum RunCommand {
         let executable = try buildAndResolve(in: directory, context: context)
         // 走らせるのは人なので、速さを名乗らせる。窓口はここを通らない。
         // **名乗る名前は、いま走らせる構成と同じ値から出す**
-        try launch(executable, in: directory, reportingRate: context.configurationName)
+        //
+        // **窓の × は、確かめてから終わらせる。** 起こしたのが道具なので、押し間違いで
+        // 消えるのは制作中の作品である ([#1120])。渡すのは自分の名乗りで、押した後どう
+        // なるかを言う文面へそのまま入る
+        //
+        // [#1120]: https://github.com/mokume-metal/mokume/issues/1120
+        try launch(
+            executable, in: directory,
+            environment: childEnvironment(
+                reportingRate: context.configurationName,
+                confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)"))
     }
 
     /// 1 回の実行で 1 度だけ、置き場と構成と product を決める。
@@ -354,29 +364,23 @@ enum RunCommand {
 
     /// 走らせる。終わるまで待ち、終了コードをそのまま引き継ぐ。
     ///
-    /// - Parameter reportingRate: 速さを名乗らせるなら、**一緒に出す構成の名前**。
-    ///   渡さなければスケッチは何も出さない ([ADR-0029] 決定 3)。
-    ///
-    /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
-    static func launch(_ executable: URL, in directory: URL, reportingRate: String? = nil) throws(
-        CommandFailure
-    ) {
+    /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:)``)。
+    ///   **何を載せるかは口が決める** — `run` は速さの名乗りと × の確認を、`render` は書き出しの
+    ///   頼みを載せる。待ち方と合図の運び方は口によらず同じなので、ここは 1 本にする。
+    /// - Parameter signals: 道具が受けて子へ渡す合図。既定は ``stopSignals`` (`render` は足す)。
+    static func launch(
+        _ executable: URL, in directory: URL, environment: [String: String] = childEnvironment(),
+        forwarding signals: [Int32] = stopSignals
+    ) throws(CommandFailure) {
         let process = Process()
         process.executableURL = executable
         process.currentDirectoryURL = directory
-        // **窓の × は、確かめてから終わらせる。** 起こしたのが道具なので、押し間違いで
-        // 消えるのは制作中の作品である ([#1120])。渡すのは自分の名乗りで、押した後どう
-        // なるかを言う文面へそのまま入る
-        //
-        // [#1120]: https://github.com/mokume-metal/mokume/issues/1120
-        process.environment = childEnvironment(
-            reportingRate: reportingRate,
-            confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)")
+        process.environment = environment
 
         // **起こす前に受け口を置く。** ハンドラ関数の設定は exec で既定へ戻るので子には
         // 引き継がれない (無視 `SIG_IGN` にすると引き継がれ、スケッチが合図を無視する)。
         // 戻すのは検査のため — 本番の道具はこの後すぐ終わる
-        let previous = installStopForwarding()
+        let previous = installStopForwarding(signals)
         defer { restoreStopHandlers(previous) }
         do {
             try process.run()
@@ -401,15 +405,18 @@ enum RunCommand {
     /// 終わりの合図を受けたら、走らせているスケッチへ SIGTERM を渡す受け口を置く。
     ///
     /// **ハンドラでは印を立てて `kill` を撃つだけにする** (どちらも async-signal-safe)。
-    /// 子が消えれば待ちが戻り、後は ``launch(_:in:reportingRate:)`` が終わらせる。
+    /// 子が消えれば待ちが戻り、後は ``launch(_:in:environment:forwarding:)`` が終わらせる。
     ///
     /// **子が SIGTERM に応えなければ、道具も待ち続ける。** 孤児は残らず道具ごと見えて
     /// いるので、見張りのような期限つきの強制終了は踏まれてから足す (ADR-0008)。
     ///
-    /// - Returns: 置き換える前の受け口。``restoreStopHandlers(_:)`` へ渡す。
-    static func installStopForwarding() -> [sigaction] {
+    /// - Parameter signals: 受け口を置く合図。
+    /// - Returns: 置き換えた合図と、置き換える前の受け口。``restoreStopHandlers(_:)`` へ渡す。
+    static func installStopForwarding(_ signals: [Int32] = stopSignals)
+        -> [(number: Int32, previous: sigaction)]
+    {
         runStopSignal = 0
-        return stopSignals.map { number in
+        return signals.map { number in
             var action = sigaction()
             action.__sigaction_u.__sa_handler = { received in
                 runStopSignal = received
@@ -422,38 +429,42 @@ enum RunCommand {
             action.sa_flags = SA_RESTART
             var previous = sigaction()
             sigaction(number, &action, &previous)
-            return previous
+            return (number, previous)
         }
     }
 
-    /// ``installStopForwarding()`` が置き換えた受け口を戻す。
-    static func restoreStopHandlers(_ previous: [sigaction]) {
-        for (number, action) in zip(stopSignals, previous) {
-            var action = action
-            sigaction(number, &action, nil)
+    /// ``installStopForwarding(_:)`` が置き換えた受け口を戻す。
+    static func restoreStopHandlers(_ replaced: [(number: Int32, previous: sigaction)]) {
+        for (number, previous) in replaced {
+            var previous = previous
+            sigaction(number, &previous, nil)
         }
     }
 
     /// 子へ渡す環境。
     ///
     /// **読むのではなく運ぶ。** 親の環境をそのまま複製し、道具が決めるものだけを載せる —
-    /// 世代の刻印 (観測が応答へ載せる) と、速さの名乗り (一緒に出す構成の名前)、そして
-    /// 窓の × を確かめさせる合図。渡されなかったものは**置かない**ので、受け取る側は
-    /// 「無ければ黙る」だけで済む。
+    /// 世代の刻印 (観測が応答へ載せる) と、速さの名乗り (一緒に出す構成の名前)、窓の × を
+    /// 確かめさせる合図、そして書き出しの頼み。渡されなかったものは**置かない**ので、受け取る
+    /// 側は「無ければ黙る」だけで済む。
     ///
     /// - Parameter confirmingCloseFor: 窓の × を押した人に確かめさせるなら、**自分の
     ///   名乗り**。見張り (`watch`) は渡さない — 子は窓を持たず、確認は道具の側が出す
     ///   ([ADR-0032] 決定 1)。
+    /// - Parameter rendering: 窓を開かずに書き出させるなら、その頼み (`render` だけが渡す)。
+    ///   値の形は読み手と同じ型 (`RenderRequest`) が組むので、ここでは綴らない。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static func childEnvironment(
         _ base: [String: String] = ProcessInfo.processInfo.environment,
-        stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil
+        stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
+        rendering request: RenderRequest? = nil
     ) -> [String: String] {
         var environment = base
         if let stamp { environment[StartupReads.sourceStamp.key] = stamp }
         if let reportingRate { environment[StartupReads.frameRateNotice.key] = reportingRate }
         if let tool { environment[StartupReads.closeConfirmation.key] = tool }
+        if let request { environment[StartupReads.render.key] = request.environmentValue }
         return environment
     }
 

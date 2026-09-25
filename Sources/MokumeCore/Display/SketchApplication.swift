@@ -83,8 +83,18 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         case window(NSWindow, SketchSurface, hasPresented: Bool)
         /// 外のプロセスが持つ区画へ差し出す。**窓は持たない。**
         case shared(SharedFrameSurface)
+        /// 画面へは出さず、決めた枚数を書き出して終わる (`mokume render`・[#1282])。
+        /// **窓も共有面も持たない** — 出口は撮る係だけである。
+        ///
+        /// 決まるのは起動の瞬間 (``init(sketch:gpu:render:)``) で、区画 (`viewport`) より先に
+        /// 効く。窓を持たないのは、窓が受けた入力が作品へ届くと、同じ引数から同じ動きが
+        /// 出なくなるためである ([ADR-0025] 決定 1 の水準 2)。
+        ///
+        /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
+        /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+        case render(RenderRequest)
     }
-    private var outlet: ScreenOutlet = .pendingWindow
+    private var outlet: ScreenOutlet
 
     /// 開いている窓。**読むだけを内へ開けてある** — 検査が実際の経路の窓を閉じるため (#714)。
     var window: NSWindow? {
@@ -109,10 +119,44 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     var endsAfterLastWindowClosed: Bool {
         switch outlet {
-        case .shared: false
+        case .shared, .render: false
         case .pendingWindow, .window: true
         }
     }
+
+    /// 活動の方針。**窓を持たない経路では Dock に並ばない** (`.accessory`) — 並ぶと、道具が
+    /// 出す窓と作品が 2 つ並んで見える。書き出す経路にはそもそも見せる窓が無い。
+    ///
+    /// 据えるのは ``run()`` で、ここは決めるだけである。据えると呼んだプロセス全体に効くので、
+    /// 検査はこの値だけを読む。
+    var activationPolicy: NSApplication.ActivationPolicy {
+        switch outlet {
+        case .shared, .render: .accessory
+        // 窓はまだ建っていないが、建てると決まっている
+        case .pendingWindow, .window: .regular
+        }
+    }
+
+    /// 時刻の出どころ。**起動の瞬間に決まる** — 書き出すならフレーム番号、でなければ実時間。
+    /// 検査が読む。
+    let clock: Clock
+
+    /// 決めた枚数を描き終えた (書き出す経路だけ)。
+    ///
+    /// **× や終わりの合図と同じ 1 本へ入れる** — 後始末を待つ ``shouldTerminate()`` を通さない
+    /// と、書いていた動画が開けないまま残る。**検査から差し替える** (``onCloseConfirmed`` と
+    /// 同じ理由)。
+    var onRenderFinished: @MainActor () -> Void = { NSApplication.shared.terminate(nil) }
+
+    /// 書き出しが揃わなかったときに、プロセスを終わらせる口。
+    ///
+    /// **道具は終了コードで「書けたか」を読む** (`mokume render`)。AppKit の終わりの経路は
+    /// 0 で終わるので、揃わなかったときはここから 0 以外で終わる。**検査から差し替える** —
+    /// 既定のままでは、揃わなかった回を検めるたびに検査のプロセスが終わる。
+    var exitProcess: @MainActor (Int32) -> Void = { exit($0) }
+
+    /// 書き出す経路で、描けなかったフレームの数。
+    private var framesFailedToDraw = 0
 
     /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。
     private let screenLink: ScreenDisplayLink
@@ -253,10 +297,29 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// 時刻の出どころは**実時間**にする — 画面に出しながら動かす経路なので、
     /// 実際に流れた時間で動くのが正しい。
-    public init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
+    ///
+    /// 道具が書き出しを頼んだとき (`mokume render`・``StartupReads/render``) だけは、窓を
+    /// 開かずに決めた枚数を書き出す。その経路の時刻はフレーム番号から導く。
+    public convenience init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
+        try self.init(sketch: sketch, gpu: gpu, render: RenderRequest.startup())
+    }
+
+    /// 書き出しの頼みを渡せる入口。**検査から渡す** — 本番は起動の瞬間に環境から読む
+    /// (``init(sketch:gpu:)``)。
+    ///
+    /// **頼みは時計と画面の出口の両方を決める。** 時計だけ差し替えて窓を開くと、窓が受けた
+    /// 入力が作品に届き、同じ引数から同じ動きが出なくなる (``ScreenOutlet/render(_:)``)。
+    ///
+    /// - Parameter render: 書き出しの頼み。`nil` ならいつもの窓の経路。
+    init(sketch: any Sketch, gpu: RenderDevice, render: RenderRequest?) throws(RenderFailure) {
         self.gpu = gpu
         self.title = sketch.settings.title
-        let runtime = try SketchRuntime(sketch: sketch, gpu: gpu, clock: .wallClock)
+        // **刻みは頼みから採る。** 撮る係の刻みも時計から決まる (`SketchRuntime.launchFrameRate`)
+        // ので、`--fps` が作品の宣言と違っても最後の 1 枚まで揃う
+        let clock: Clock = render.map { .frameIndex(frameRate: $0.frameRate) } ?? .wallClock
+        self.clock = clock
+        self.outlet = render.map(ScreenOutlet.render) ?? .pendingWindow
+        let runtime = try SketchRuntime(sketch: sketch, gpu: gpu, clock: clock)
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
@@ -274,11 +337,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
         // 並ばない (`.accessory`) — 並ぶと、道具が出す窓と作品が 2 つ並んで見える
         resolveOutlet()
-        switch outlet {
-        case .shared: app.setActivationPolicy(.accessory)
-        // 窓はまだ建っていないが、建てると決まっている
-        case .pendingWindow, .window: app.setActivationPolicy(.regular)
-        }
+        app.setActivationPolicy(activationPolicy)
         // **delegate と自分を強く持っておく。** AppKit は delegate を弱く参照するので、
         // ここで持たないと、delegate を渡した直後に解放され、以後の呼び出しが 1 つも
         // 来ない (窓が開かない形で表に出る)。走らせている間は生きているべきものなので、
@@ -349,6 +408,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// **活動の方針 (`setActivationPolicy`) はここに置かない。** 呼んだプロセス全体に
     /// 効くので、検査から呼べる場所に混ぜると検査の走るプロセスの方針まで動く。
     func resolveOutlet(at directory: URL = WorkDirectory.facet(StartupReads.viewport.key)) {
+        // **書き出す経路は区画より先に決まっている。** 見張りが畳めずに残した区画が在っても
+        // 共有面へは差し出さない — その経路の出口は撮る係だけである
+        guard case .pendingWindow = outlet else { return }
         if let shared = attachSharedSurface(at: directory) { outlet = .shared(shared) }
     }
 
@@ -380,6 +442,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     func didFinishLaunching() {
         switch outlet {
         case .shared:
+            screenLink.attach(to: NSScreen.main)
+            return
+        case .render(let request):
+            // **最初のフレームより前に撮り始める。** 撮る係は頼まれたフレームの絵から録るので
+            // (#1456)、ここで頼めば 1 枚目から入る。作品が `beginRecord` を呼ぶ必要は無い
+            runtime.beginRecord(request.destination)
             screenLink.attach(to: NSScreen.main)
             return
         // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る
@@ -536,6 +604,36 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             ProcessInfo.processInfo.endActivity(activity)
             self.activity = nil
         }
+        // **書けたかは最後に言う** — 撮る係の答えは閉じ終えてはじめて揃う
+        concludeRender()
+    }
+
+    /// 書き出しを締めくくる。**書き出す経路でなければ何もしない。**
+    ///
+    /// 揃わなかったら理由を名乗り、0 以外で終わる — 道具 (`mokume render`) は終了コードで
+    /// 「書けたか」を読む。揃ったとは、決めた枚数を全部描き、撮る係が 1 度も書き損じなかった
+    /// ことである。書き損じの中身は撮る係が既に名乗っているので、ここでは繰り返さない。
+    private func concludeRender() {
+        guard case .render(let request) = outlet else { return }
+        var complete = true
+        if runtime.frameCount < request.frameCount {
+            complete = false
+            Diagnostics.warn(
+                "Rendering stopped after \(runtime.frameCount) of \(request.frameCount) frames"
+                    + " — \(request.destination) holds only those")
+        }
+        if framesFailedToDraw > 0 {
+            complete = false
+            Diagnostics.warn(
+                "\(request.destination) is missing \(framesFailedToDraw) of \(request.frameCount)"
+                    + " frames (they could not be drawn)")
+        }
+        if runtime.recordingFailed {
+            complete = false
+            Diagnostics.warn(
+                "\(request.destination) could not be written in full (the reason is above)")
+        }
+        if !complete { exitProcess(1) }
     }
 
     /// 表示のリフレッシュごとに 1 フレーム進めて差し出す。
@@ -546,7 +644,35 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
     func displayLinkFired() {
         pollStopSignal()
+        // **書き出す経路では、決めた枚数より先を描かない。** 終わりを頼んだ後も駆動源は
+        // 呼んでくるので、描けば枚数 + 1 枚目が撮る係へ届く
+        guard !rendersNoMore else { return }
         advanceAndPresent()
+        finishRenderIfDone()
+    }
+
+    /// 書き出す経路で、もう描かないか。**決めた枚数を描いた後と、終わりに向かっている間。**
+    /// 書き出す経路でなければ常に `false`。
+    private var rendersNoMore: Bool {
+        guard case .render(let request) = outlet else { return false }
+        return isTerminating || runtime.frameCount >= request.frameCount
+    }
+
+    /// 書き出す経路で、描き終えたら終わりを頼む。
+    ///
+    /// **作者が止めたスケッチ (`noLoop()`) は、そこで終える。** 止まったスケッチは入力が
+    /// 来なければ動き直さず、書き出す経路には窓も入力も無い — 待てば永久に決めた枚数に
+    /// 届かない。揃わなかったことは ``concludeRender()`` が終了コードで言う。
+    private func finishRenderIfDone() {
+        guard case .render(let request) = outlet, !isTerminating else { return }
+        if runtime.frameCount >= request.frameCount {
+            onRenderFinished()
+        } else if !runtime.isLooping {
+            Diagnostics.warn(
+                "The sketch stopped its loop (noLoop()) at frame \(runtime.frameCount) of"
+                    + " \(request.frameCount), so the rest cannot be drawn — ending here")
+            onRenderFinished()
+        }
     }
 
     /// 終わりの合図 (``StopSignals``) を 1 回だけ見に来る。受けていたら終わりを頼む ([#1219])。
@@ -624,13 +750,17 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             if try presenter.present(runtime.target, to: layer), !hasPresented {
                 outlet = .window(window, surface, hasPresented: true)
             }
-        case .pendingWindow:
+        // 書き出す経路の出口は撮る係だけで、絵はランタイムが配っている
+        case .pendingWindow, .render:
             return
         }
     }
 
     /// 描けなかったことを 1 度だけ言う。
     private func noteFrameFailure(_ failure: RenderFailure) {
+        // **書き出す経路では数える。** 描けなかったフレームは撮る係へ届かず、書き出したものの
+        // 穴になる — 揃ったかを終了コードで言うのに要る (``concludeRender()``)
+        if case .render = outlet { framesFailedToDraw += 1 }
         guard frameFailures.note() else { return }
         Diagnostics.warn(
             "Could not draw the frame: \(failure.headline) — trying again on the next refresh")
