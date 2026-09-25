@@ -705,6 +705,21 @@ public final class Canvas {
     ///
     /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
     var atlasPageFrame: Int?
+    /// 字形を四角として置くか。**台帳の指紋を採るときだけ下ろす** ([#1559])。
+    ///
+    /// 字形を画素にするのは OS (CoreGraphics) で、書体の輪郭と送り幅が同じでも、焼いた画素は
+    /// OS の版で 1〜3 階調ずれる。文字が主題でない台帳の行にそれを写し込むと、絵が 1 画素も
+    /// 変わっていないのに OS の更新で行が動く ([ADR-0019] 決定 3 の改訂 (2026-09-25))。
+    ///
+    /// **下ろしても組版は変わらない。** 字を引き、送り幅を進めたうえで、置く手前で止める
+    /// だけである。作者に見せる口ではないので公開しない。描き場所へは引き継ぐ
+    /// (``createGraphics(_:_:)``) — 描き場所に書いた字も、同じ行の絵に載るからである。
+    ///
+    /// [#1559]: https://github.com/mokume-metal/mokume/issues/1559
+    /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
+    var placesGlyphs = true
+    /// 置いた字形の四角の数。旗 (``placesGlyphs``) が効いていることを、検査が数で確かめる。
+    var glyphQuadsPlaced = 0
     /// いま列が読んでいる面。面を広げる・画像を描くと差し替わる。
     ///
     /// **持ち主と組で持つ** (``HeldTexture``)。閉じた列はこれを写し取るので、ここで持ち主を

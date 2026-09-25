@@ -469,6 +469,156 @@ struct ShapeFormulaTests {
         #expect(differingPixels(opened, plain) == 0)
     }
 
+    // MARK: - 並びが切れた後の最初の区間 (#1537)
+
+    /// 起票の再現の通過点。描かれるのは真ん中の (80, 20)–(140, 20) で、始点 (80, 20) は
+    /// 手前の点 (20, 140) とも次の刻みとも違う位置にある — 始点が欠けると、手前の点から
+    /// 斜めに線が伸びる。
+    private static let restartGuides: [SIMD2<Float>] = [
+        SIMD2(20, 20), SIMD2(80, 20), SIMD2(140, 20), SIMD2(140, 140),
+    ]
+
+    /// 太さ 4 の白い線だけで描く (#1537 の完了条件の書式)。
+    private static func strokeOnly(_ canvas: Canvas, detail: Int) {
+        canvas.noFill()
+        canvas.stroke(.linear(red: 1, green: 1, blue: 1))
+        canvas.strokeWeight(4)
+        canvas.curveDetail(detail)
+    }
+
+    private static func curveVertices(_ guides: [SIMD2<Float>], on canvas: Canvas) {
+        for guide in guides { canvas.curveVertex(guide.x, guide.y) }
+    }
+
+    /// #1537 の完了条件 1。**`vertex` の後の並びも、最初の区間は 2 つ目に置いた点から描く**
+    /// (``Sketch/curveVertex(_:_:)`` の「間だけが実際に描かれる」)。参照は始点を `vertex` で
+    /// 明示した形。直す前は始点を置くのが環の最初の点のときだけで、(20, 140) から刻みの
+    /// 1 つ目へ直に繋がっていた (`curveDetail(1)` では (20, 140)→(140, 20) の斜め 1 本)。
+    @Test("vertex の後に並べた curveVertex は、2 つ目の点から描き始める", arguments: [1, 20])
+    func curveAfterVertexStartsAtItsSecondPoint(detail: Int) throws {
+        func draw(_ canvas: Canvas, explicitStart: Bool) {
+            Self.strokeOnly(canvas, detail: detail)
+            canvas.beginShape()
+            canvas.vertex(20, 140)
+            if explicitStart { canvas.vertex(80, 20) }
+            Self.curveVertices(Self.restartGuides, on: canvas)
+            canvas.endShape()
+        }
+        let curved = try render(width: 160, height: 160) { draw($0, explicitStart: false) }
+        let explicit = try render(width: 160, height: 160) { draw($0, explicitStart: true) }
+        #expect(inkedPixels(explicit) > 0)
+        #expect(curved[80, 20] == (255, 255, 255, 255), "始点 (80, 20) に線が来ない")
+        #expect(differingPixels(curved, explicit) == 0)
+    }
+
+    /// 始点を `vertex` で明示した書き方は、始点を 2 度持たない。上の検査が参照にしている形で、
+    /// 環の最後の点が始点と同じ位置なら置き直さない枝が守る (線の絵は同じ点が 2 度あっても
+    /// 変わらないので、画素ではなく点の並びで見る)。
+    @Test("始点を vertex で置いた後の曲線は、同じ始点を 2 度置かない")
+    func explicitStartIsNotPlacedTwice() throws {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        var placed: [SIMD2<Float>] = []
+        try canvas.draw {
+            Self.strokeOnly(canvas, detail: 1)
+            canvas.beginShape()
+            canvas.vertex(20, 140)
+            canvas.vertex(80, 20)
+            Self.curveVertices(Self.restartGuides, on: canvas)
+            placed = canvas.shapePoints.map { SIMD2($0.position.x, $0.position.y) }
+            canvas.endShape()
+        }
+        #expect(placed == [SIMD2(20, 140), SIMD2(80, 20), SIMD2(140, 20)])
+    }
+
+    /// #1537 の完了条件 2。並びを切る別の呼び出し・2 本目の並び・記録して置く経路でも、
+    /// 最初の区間は始点から描く。参照はどれも、並びの直前に `vertex(80, 20)` を明示した形。
+    @Test(
+        "bezierVertex の後・2 本目の並び・createShape でも、並びは 2 つ目の点から描き始める",
+        arguments: ["bezierVertex", "secondRun", "createShape"])
+    func curveAfterOtherRoutesStartsAtItsSecondPoint(route: String) throws {
+        func shape(_ canvas: Canvas, explicitStart: Bool) {
+            canvas.beginShape()
+            switch route {
+            case "bezierVertex":
+                canvas.vertex(20, 150)
+                canvas.bezierVertex(30, 150, 20, 145, 20, 140)
+            case "secondRun":
+                Self.curveVertices(
+                    [SIMD2(10, 150), SIMD2(20, 140), SIMD2(60, 140), SIMD2(70, 150)], on: canvas)
+                canvas.vertex(40, 100)
+            default:
+                canvas.vertex(20, 140)
+            }
+            if explicitStart { canvas.vertex(80, 20) }
+            Self.curveVertices(Self.restartGuides, on: canvas)
+            canvas.endShape()
+        }
+        func draw(_ canvas: Canvas, explicitStart: Bool) {
+            Self.strokeOnly(canvas, detail: 1)
+            if route == "createShape" {
+                let held = canvas.createShape { shape(canvas, explicitStart: explicitStart) }
+                canvas.shape(held)
+            } else {
+                shape(canvas, explicitStart: explicitStart)
+            }
+        }
+        let curved = try render(width: 160, height: 160) { draw($0, explicitStart: false) }
+        let explicit = try render(width: 160, height: 160) { draw($0, explicitStart: true) }
+        #expect(inkedPixels(explicit) > 0)
+        #expect(curved[80, 20] == (255, 255, 255, 255), "始点 (80, 20) に線が来ない")
+        #expect(differingPixels(curved, explicit) == 0)
+    }
+
+    /// #1537 の完了条件 3 (塗り)。始点が欠けると周の点が減り、`curveDetail(1)` では周が
+    /// (80, 150)・(140, 20) の 2 点になって面を持たなかった (塗られた画素 0)。
+    @Test("vertex の後に曲線を並べて閉じた形は、始点を明示した形と同じ面を塗る", arguments: [1, 20])
+    func filledCurveAfterVertexKeepsItsStart(detail: Int) throws {
+        func draw(_ canvas: Canvas, explicitStart: Bool) {
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.curveDetail(detail)
+            canvas.beginShape()
+            canvas.vertex(80, 150)
+            if explicitStart { canvas.vertex(20, 20) }
+            Self.curveVertices(
+                [SIMD2(10, 10), SIMD2(20, 20), SIMD2(140, 20), SIMD2(150, 10)], on: canvas)
+            canvas.endShape(.close)
+        }
+        let curved = try render(width: 160, height: 160) { draw($0, explicitStart: false) }
+        let explicit = try render(width: 160, height: 160) { draw($0, explicitStart: true) }
+        #expect(inkedPixels(explicit) > 0)
+        #expect(differingPixels(curved, explicit) == 0)
+    }
+
+    /// #1537 の完了条件 3 (穴)。穴を `vertex` で始めて曲線を続けると、始点が欠けた穴は点が
+    /// 2 つしか残らず、3 つに満たない穴として捨てられていた。参照は同じ 3 点を `vertex` で
+    /// 並べた穴 (外周と逆回り)。
+    @Test("vertex で始めた穴に曲線を続けても、始点を明示した穴と同じく穴が開く")
+    func curvedHoleAfterVertexKeepsItsStart() throws {
+        func draw(_ canvas: Canvas, curved: Bool) {
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.curveDetail(1)
+            canvas.beginShape()
+            for corner in Self.frameCorners { canvas.vertex(corner.x, corner.y) }
+            canvas.beginContour()
+            canvas.vertex(40, 120)
+            if curved {
+                Self.curveVertices(
+                    [SIMD2(120, 120), SIMD2(120, 40), SIMD2(80, 40), SIMD2(40, 40)], on: canvas)
+            } else {
+                canvas.vertex(120, 40)
+                canvas.vertex(80, 40)
+            }
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        let curved = try render(width: 160, height: 160) { draw($0, curved: true) }
+        let explicit = try render(width: 160, height: 160) { draw($0, curved: false) }
+        #expect(explicit[90, 60] == (0, 0, 0, 255), "参照の穴が開いていない")
+        #expect(differingPixels(curved, explicit) == 0)
+    }
+
     // MARK: - 座標の読み方
 
     /// 完了条件 5。どれも中心 (30, 22)・幅 36・高さ 20 の楕円を指す。**幅と高さを違え、

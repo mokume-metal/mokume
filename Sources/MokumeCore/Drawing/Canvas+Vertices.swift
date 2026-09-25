@@ -97,13 +97,16 @@ extension Canvas {
     // これから置く頂点の面の向きを決める。
     public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        // 形の外で控えても、次の beginShape() が消すのでどの頂点にも効かない (#1520)
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("normal") }
         let direction = SIMD3<Float>(x, y, z)
         // 長さを持たない向き・数でない向きは「書かれていない」に倒す。零ベクトルを
-        // そのまま持たせると、光の計算で向きの定まらない面になる
+        // そのまま持たせると、光の計算で向きの定まらない面になる (#1528 で注意を足した)
         guard direction.x.isFinite, direction.y.isFinite, direction.z.isFinite,
             length_squared(direction) > 0
         else {
             currentNormal = nil
+            warnBadNormalOnce()
             return
         }
         currentNormal = normalize(direction)
@@ -147,11 +150,15 @@ extension Canvas {
     ///
     /// **並びは `curveVertex` を続けて呼んでいる間だけ続く。** `vertex` / `bezierVertex` /
     /// `quadraticVertex` と穴の境目 (`beginContour` / `endContour`) で切れ、次の区間はまた
-    /// 4 つ揃ってから引く。いま組んでいる環 (外周か穴) で最初に引く区間は、その始点も環に
-    /// 置く — 穴の中の曲線は外周と独立に始まる ([#1449])。規則の正本は
+    /// 4 つ揃ってから引く。**並びの最初の区間は、その始点 (2 つ目に置いた点) も環に置く**
+    /// — 環 (外周か穴) の最初でも、切れた後の並びでも同じで、穴の中の曲線は外周と独立に
+    /// 始まる ([#1449])。直す前は環の最初でだけ置いていたので、切れた後の並びは手前の点から
+    /// 刻みの 1 つ目へ直に繋がっていた ([#1537])。環の最後の点が始点と同じ位置なら置き
+    /// 直さない — 始点を `vertex` で明示した書き方が、同じ点を 2 度持たない。規則の正本は
     /// ``Sketch/curveVertex(_:_:)`` の説明。
     ///
     /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
+    /// [#1537]: https://github.com/mokume-metal/mokume/issues/1537
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard isBuildingShape else {
@@ -165,7 +172,9 @@ extension Canvas {
         let p1 = curveGuides[count - 3]
         let p2 = curveGuides[count - 2]
         let p3 = curveGuides[count - 1]
-        if (holePoints ?? shapePoints).isEmpty { appendShapePoint(p1, isCurveStep: false) }
+        // 並びの最初の区間は始点も置く。環の最後の点が始点と同じ位置なら置き直さない (#1537)
+        let last = (holePoints ?? shapePoints).last.map { SIMD2($0.position.x, $0.position.y) }
+        if count == 4, last != p1 { appendShapePoint(p1, isCurveStep: false) }
         for step in 1...currentCurveDetail {
             let t = Float(step) / Float(currentCurveDetail)
             // 最後の刻みは通過点 — 張り具合 1 では折れ線の角になる
@@ -187,11 +196,27 @@ extension Canvas {
             warnVertexOutsideShapeOnce("beginContour")
             return
         }
+        // 開いたままの穴は、endShape() と同じ規則で畳んでから次を始める (#1528)
+        closeOpenHole()
         holePoints = []
         breakCurveSequence()
     }
 
     public func endContour() {
+        guard isBuildingShape else { return warnVertexOutsideShapeOnce("endContour") }
+        guard holePoints != nil else { return warnContourNotBegunOnce() }
+        closeOpenHole()
+    }
+
+    /// 開いている穴を畳む。**注意は言わない** — 閉じ忘れを畳むのは約束どおりの振る舞いで、
+    /// 公開の ``endContour()`` とは道を分ける ([#1528])。
+    ///
+    /// 同じ道を通すと、穴を閉じた形・穴の無い形の ``endShape(_:)`` が「閉じる穴が無い」を
+    /// 言ってしまう。穴を開いていなければ何もしない。点が 3 つに満たない穴は面にならない
+    /// ので捨てる。
+    ///
+    /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+    private func closeOpenHole() {
         guard let hole = holePoints else { return }
         if hole.count >= 3 { shapeHoles.append(hole) }
         holePoints = nil
@@ -209,8 +234,9 @@ extension Canvas {
             shapeHasDepth = false
             currentNormal = nil
         }
-        guard isBuildingShape else { return }
-        endContour()  // 閉じ忘れた穴も畳む
+        // 始まりの無い形の終わり — beginShape() の書き忘れか、二重呼び (#1520)
+        guard isBuildingShape else { return warnShapeNotBegunOnce() }
+        closeOpenHole()  // 閉じ忘れた穴も畳む
         drawBuiltShape(closed: end == .close)
     }
 
@@ -682,11 +708,13 @@ extension Canvas {
     ///
     /// **文面は呼んだ関数の名前を名乗る** ([#1498])。入口は `vertex` の 4 つの形・
     /// ``bezierVertex(_:_:_:_:_:_:)``・``quadraticVertex(_:_:_:_:)``・``curveVertex(_:_:)``・
-    /// ``beginContour()``・``index(_:)`` で、事情は 1 つなので鍵を共有し、文面には名前だけを
-    /// 入れる (``warnBadSize(_:)`` と同じ形)。直す前はどの入口も `vertex():` を名乗り、書き手は
-    /// 呼んでいない `vertex()` を探しに行くことになっていた。
+    /// ``beginContour()``・``endContour()``・``normal(_:_:_:)``・``index(_:)`` で、事情は 1 つ
+    /// なので鍵を共有し、文面には名前だけを入れる (``warnBadSize(_:)`` と同じ形)。直す前は
+    /// どの入口も `vertex():` を名乗り、書き手は呼んでいない `vertex()` を探しに行くことに
+    /// なっていた。`endContour()` と `normal(_:_:_:)` は [#1520] で加わった。
     ///
     /// [#1498]: https://github.com/mokume-metal/mokume/issues/1498
+    /// [#1520]: https://github.com/mokume-metal/mokume/issues/1520
     private func warnVertexOutsideShapeOnce(_ name: String) {
         warnOnce(
             .vertexOutsideShape,
@@ -706,6 +734,41 @@ extension Canvas {
             "\(name)(): a curve continues from the last point placed, and there is no point yet "
                 + "in this shape or beginContour() hole, so this call does nothing. Place a "
                 + "vertex() first")
+    }
+
+    /// 形の始まりが無いまま ``endShape(_:)`` を呼んだことを、初回だけ知らせる ([#1520])。
+    ///
+    /// 形の外の注意 (``warnVertexOutsideShapeOnce(_:)``) の文面は、`endShape()` には直す先を
+    /// 指さない。対の始まりが無いことを言う。
+    ///
+    /// [#1520]: https://github.com/mokume-metal/mokume/issues/1520
+    private func warnShapeNotBegunOnce() {
+        warnOnce(
+            .shapeNotBegun,
+            "endShape(): no shape was begun with beginShape(), so there is nothing to end. This "
+                + "call does nothing")
+    }
+
+    /// 形の中で、穴を開かずに ``endContour()`` を呼んだことを、初回だけ知らせる ([#1528])。
+    ///
+    /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+    private func warnContourNotBegunOnce() {
+        warnOnce(
+            .contourNotBegun,
+            "endContour(): no hole was begun with beginContour(), so there is nothing to end. "
+                + "This call does nothing")
+    }
+
+    /// 形の中で、向きにならない値を ``normal(_:_:_:)`` に渡したことを、初回だけ知らせる
+    /// ([#1528])。
+    ///
+    /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+    private func warnBadNormalOnce() {
+        warnOnce(
+            .badNormal,
+            "normal(): got a direction that is not a number, or an infinite one, or one with no "
+                + "length, so the vertices placed after this take their facing from the shape, "
+                + "as if no normal() had been written")
     }
 
     private func warnBadVertexOnce() {

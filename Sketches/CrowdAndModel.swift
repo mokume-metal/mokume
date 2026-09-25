@@ -135,12 +135,11 @@ final class CrowdAndModel: Sketch {
         endShape()
         pop()
 
-        // **頂点を並べた自由な立体。** 穴も向きも立体で効く
+        // **頂点を並べた自由な立体。** 穴も立体で効き、面の向きは形から求まる
         fill(242, 153, 71)
         push()
         translate(width / 2 - 400, height / 2 - 110, 0)
         rotateY(time * 0.6)
-        normal(0, 0, 1)
         beginShape()
         for step in 0..<6 {
             let around = Float(step) / 6 * 2 * .pi
