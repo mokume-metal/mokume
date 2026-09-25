@@ -49,7 +49,7 @@ extension InputEvent {
     private var wireFields: [(String, String)] {
         switch self {
         case .mouseDown(let x, let y, let button), .mouseUp(let x, let y, let button):
-            [("x", Self.number(x)), ("y", Self.number(y)), ("button", "\(button)")]
+            [("x", Self.number(x)), ("y", Self.number(y)), ("button", "\(button.rawValue)")]
         case .mouseMoved(let x, let y):
             [("x", Self.number(x)), ("y", Self.number(y))]
         case .scrolled(let dx, let dy):

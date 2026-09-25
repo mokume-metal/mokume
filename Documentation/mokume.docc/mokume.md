@@ -458,6 +458,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/pmouseY``
 - ``Sketch/isMousePressed``
 - ``Sketch/mouseButton``
+- ``MouseButton``
 - ``Sketch/scrollX``
 - ``Sketch/scrollY``
 - ``Sketch/dragX``
