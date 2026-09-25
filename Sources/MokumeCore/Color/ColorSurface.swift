@@ -91,6 +91,8 @@ enum ColorValues {
         case notANumber
         /// 色相・彩度・明度の口に、数でない値・無限の値が渡された。
         case notANumberHSB
+        /// 2 色の間を取る口に、数でない値・無限の `amount` が渡された。
+        case notANumberLerpColor
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
@@ -164,6 +166,61 @@ public func color(hex: Int) -> LinearRGBA {
     let bits = hex & 0xFF_FFFF
     return color(
         Float((bits >> 16) & 0xFF), Float((bits >> 8) & 0xFF), Float(bits & 0xFF))
+}
+
+// MARK: - 色を混ぜる
+
+/// 2 つの色の間を取る。
+///
+/// ```swift
+/// let dusk = lerpColor(color(255, 170, 60), color(40, 50, 120), 0.5)
+/// ```
+///
+/// 引数は始まりの色・終わりの色・その間のどこか、の順 (手本と同じ並び)。`amount` が 0 なら
+/// `start`、1 なら `stop` が**ちょうど**返る。
+///
+/// **手本には寄せない** — 手本に倣うのは名前と引数の順序までで、同じ中間の色が出ることは
+/// 約束しない ([ADR-0020] 決定 1 の 2026-09-09 改訂)。違いは 2 つある。
+///
+/// - **線形の光の量で混ぜるので、中間の色が手本より明るい。** 黒と白の真ん中は ``red(_:)`` で
+///   約 187.5 と読める (手本は 127.5)。0–255 の数を成分ごとに ``lerp(_:_:_:)`` で混ぜていた式
+///   から置き換えると、中間の色が動く ([ADR-0011] 決定 1)
+/// - **乗算済みの値で混ぜるので、透明へ寄せても暗くならない。**
+///   `lerpColor(.transparent, color(255, 0, 0), 0.5)` は不透明度が半分の赤のままで、手本の
+///   ように暗い赤にはならない ([ADR-0011] 決定 4)
+///
+/// **`amount` は 0…1 に締める** — `lerpColor(a, b, 2)` は `b` を返す。0…1 の外へ伸ばす
+/// ``lerp(_:_:_:)`` とはここが違うが、手本も `lerpColor` では締める。締めないと、不透明度の
+/// 違う 2 色から 0–255 の外の不透明度ができる ([ADR-0033] 決定 3 の改訂・決定 7 の改訂)。
+///
+/// **HSB で混ぜる形は無い。** `colorMode()` を持たないので、混ぜる空間は 1 つである
+/// ([ADR-0033] 決定 4)。色相を回して混ぜたいときは
+/// `color(hue: lerp(20, 200, t), saturation: 80, brightness: 90)` と書く。
+///
+/// **`amount` が数でない値・無限のときは `start` を返す。** 毎フレーム呼ばれる口が数でない色を
+/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。色の成分は検めない —
+/// 数でない成分を持つ色は、それを作った 0–1 の口や乗算済みの口と同じく、そのまま混ぜる。
+///
+/// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+/// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
+public func lerpColor(_ start: LinearRGBA, _ stop: LinearRGBA, _ amount: Float) -> LinearRGBA {
+    // 締める前に弾く — Swift の `max` は第 1 引数の NaN をそのまま返すので、締めても NaN は残る
+    guard amount.isFinite else {
+        ColorValues.warnOnce(
+            .notANumberLerpColor,
+            "lerpColor(): got an amount that is not a number, or an infinite one, so the start color was returned"
+        )
+        return start
+    }
+    let amount = min(max(amount, 0), 1)
+    // 乗算済みの 4 成分を、そのまま成分ごとに混ぜる。割り戻しも掛け直しもしない
+    // ([ADR-0011] 決定 4) — `init(straightRed:…)` を通すと、もう 1 度掛けてしまう
+    return LinearRGBA(
+        premultipliedRed: interpolate(start.red, stop.red, amount),
+        green: interpolate(start.green, stop.green, amount),
+        blue: interpolate(start.blue, stop.blue, amount),
+        alpha: interpolate(start.alpha, stop.alpha, amount))
 }
 
 // MARK: - 色を読む

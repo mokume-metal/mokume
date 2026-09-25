@@ -167,6 +167,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``color(_:_:_:_:)``
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
+- ``lerpColor(_:_:_:)``
 - ``red(_:)``
 - ``green(_:)``
 - ``blue(_:)``

@@ -87,4 +87,21 @@ struct ColorValueWarningTests {
         #expect(
             ColorValues.warnings.message(for: .notANumberHSB)?.hasPrefix("color(hue:") == true)
     }
+
+    /// 2 色の間を取る口も、専用の鍵で数える ([#1552])。`color()` と鍵を共有すると、先に
+    /// 鳴ったほうが他方を永久に黙らせる。
+    ///
+    /// [#1552]: https://github.com/mokume-metal/mokume/issues/1552
+    @Test("2 色の間を取る口と、素の数値の口は互いに黙らせない")
+    func lerpColorCountsSeparately() {
+        let start = color(236, 238, 240)
+        #expect(lerpColor(start, color(232, 96, 72), .nan) == start)
+        #expect(color(.nan, 0, 0) == .transparent)
+        #expect(ColorValues.warnings.hasWarned(.notANumberLerpColor))
+        #expect(ColorValues.warnings.hasWarned(.notANumber))
+        #expect(
+            ColorValues.warnings.message(for: .notANumberLerpColor)?.hasPrefix("lerpColor()")
+                == true)
+        #expect(ColorValues.warnings.message(for: .notANumber)?.hasPrefix("color()") == true)
+    }
 }
