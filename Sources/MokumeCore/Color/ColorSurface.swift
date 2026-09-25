@@ -73,6 +73,34 @@ enum DisplayScale {
             red: red / maximum, green: green / maximum, blue: blue / maximum,
             alpha: alpha / maximum)
     }
+
+    /// 色が元から持つ不透明度に、0–255 の不透明度を**掛ける** (`fill(color, alpha)` /
+    /// `stroke(color, alpha)` の形 — [#1553])。**数でない値・無限なら作らない** (``color(red:green:blue:alpha:)`` と
+    /// 同じく、何と言うかは受け口が決める)。
+    ///
+    /// **置き換えずに掛ける。** 手本 (Processing の `colorCalcARGB`) も同じで、乗算済みの 4 成分を
+    /// 同じ率で縮めるだけで済む — 割り戻して掛け直す必要が無い ([ADR-0011] 決定 4)。置き換えに
+    /// すると、不透明度 0 の色は元の成分を復元できないので黒になる。
+    ///
+    /// **締めるのは掛ける率で、積ではない。** 率を 0–1 に締めれば、元の色より不透明にも、
+    /// 0 より透明にもならない。積だけを締めると、半透明の色に 255 を越える値を渡したとき
+    /// 元の色より不透明になる — [ADR-0033] 決定 3 の改訂が退けた「塗りの色を越えて外挿する」
+    /// と同じ形である。改訂は締める場所を straight の成分に掛ける点 1 箇所に置いたが、この形は
+    /// 乗算済みの色に率を掛けるので、ここが 2 つ目になる。改訂がそう置いた理由 (0–1 の口と
+    /// 0–255 の口で同じ色にする) には触れない — この形は 0–255 の口にしか無い。色の成分は
+    /// 締めない (決定 6)。
+    ///
+    /// [#1553]: https://github.com/mokume-metal/mokume/issues/1553
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
+    static func fading(_ color: LinearRGBA, by alpha: Float) -> LinearRGBA? {
+        guard alpha.isFinite else { return nil }
+        // 書き順は決定 3 の改訂と揃える (`max` は第 1 引数の NaN をそのまま返す)
+        let rate = min(max(alpha / maximum, 0), 1)
+        return LinearRGBA(
+            premultipliedRed: color.red * rate, green: color.green * rate,
+            blue: color.blue * rate, alpha: color.alpha * rate)
+    }
 }
 
 // MARK: - 値を作る口が言う注意

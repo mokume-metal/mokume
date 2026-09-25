@@ -141,11 +141,13 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/background(_:_:)``
 - ``Sketch/background(_:_:_:_:)``
 - ``Sketch/fill(_:)``
-- ``Sketch/fill(_:_:)``
+- ``Sketch/fill(_:_:)-(ScalarConvertible,_)``
+- ``Sketch/fill(_:_:)-(LinearRGBA,_)``
 - ``Sketch/fill(_:_:_:_:)``
 - ``Sketch/noFill()``
 - ``Sketch/stroke(_:)``
-- ``Sketch/stroke(_:_:)``
+- ``Sketch/stroke(_:_:)-(ScalarConvertible,_)``
+- ``Sketch/stroke(_:_:)-(LinearRGBA,_)``
 - ``Sketch/stroke(_:_:_:_:)``
 - ``Sketch/noStroke()``
 - ``Sketch/tint(_:)``
