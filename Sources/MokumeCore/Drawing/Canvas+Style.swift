@@ -286,22 +286,34 @@ extension Canvas {
     /// 閉じようとしている立体の列が、裏を向いた面を捨ててよいか (``Batch/cullMode``)。
     ///
     /// **捨ててよいのは、裏面が絵に出ようのない列だけ**である。閉じた組み込みの形で、
-    /// 置き場所が全部不透明で、混ぜ方が普通の重ね方で、貼る絵も利用者の断片も無い —
-    /// どれか 1 つでも欠けると、裏面が絵の一部になりうる (半透明の奥・透けた画素・
-    /// 足し合わせへの寄与・断片が捨てる画素の奥) ので両面で描く。**迷う側は両面**で、
-    /// 捨てないことは遅くなるだけで絵を間違えない。
+    /// 裏面が絵に出うるスタイル (``placementMayShowBackFaces``) で置いた形が 1 つも無い
+    /// 列だけが捨てる。**迷う側は両面**で、捨てないことは遅くなるだけで絵を間違えない。
+    ///
+    /// **スタイルは、閉じる時点ではなく形を置いたときのものを読む**
+    /// (``OpenSolid/mayShowBackFaces``)。後から変えた設定は、既に置いた形に効かない
+    /// ([#1564](https://github.com/mokume-metal/mokume/issues/1564))。
     ///
     /// **鏡映と裏返す投影は、ここでは見ない。** どちらも巻き方を裏返すだけで、裏面が絵に
     /// 出るようにはしない — 裏返った巻き方は表の巻き方 (``frontFacing(for:)``) の側で
     /// 戻し、捨て方は `.back` のまま保つ ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
     private func cullMode(for open: OpenSolid) -> MTLCullMode {
-        guard case .mesh(let shape) = open.source, shape.isClosed,
-            !open.hasTranslucentInstance,
-            style.blendMode == .blend,
-            style.picture == nil,
-            currentShader == nil
+        guard case .mesh(let shape) = open.source, shape.isClosed, !open.mayShowBackFaces
         else { return .none }
         return .back
+    }
+
+    /// いまのスタイルで置く形は、裏面が絵に出うるか (``cullMode(for:)``)。
+    ///
+    /// 出うるのは、次のどれか 1 つでも当たる形である: 半透明の塗り (奥の面が手前の面を
+    /// 通して見える)・貼る絵 (透けた画素から奥が見える)・重ねる以外の混ぜ方 (奥の面も
+    /// 足し合わせに寄与する)・利用者の断片 (透明を返したり画素を捨てたりできる)。
+    ///
+    /// **形を置くときに読み、列へ記録する** (``OpenSolid/mayShowBackFaces``)。4 つとも同じ
+    /// 扱いにしてある — 混ぜ方と断片は変えれば列を閉じるので、いまは閉じる時点に読んでも
+    /// 同じ答えになるが、読み方を 1 つにしておけば、閉じない設定が混ざっても食い違わない。
+    var placementMayShowBackFaces: Bool {
+        style.fill.alpha < 1 || style.picture != nil || style.blendMode != .blend
+            || currentShader != nil
     }
 
     /// 閉じようとしている立体の列の、表の巻き方 (``Batch/frontFacing``)。
