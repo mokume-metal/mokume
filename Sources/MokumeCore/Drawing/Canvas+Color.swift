@@ -43,6 +43,14 @@ extension Canvas {
         fill(color)
     }
 
+    public func fill(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+        guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
+            return warnOnce(
+                .notANumberFill, "fill(): got a value that is not a number, or an infinite one, so the colour was left as it was")
+        }
+        fill(faded)
+    }
+
     public func stroke(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         stroke(gray, gray, gray, alpha)
@@ -57,6 +65,14 @@ extension Canvas {
                 .notANumberStroke, "stroke(): got a value that is not a number, or an infinite one, so the colour was left as it was")
         }
         stroke(color)
+    }
+
+    public func stroke(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+        guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
+            return warnOnce(
+                .notANumberStroke, "stroke(): got a value that is not a number, or an infinite one, so the colour was left as it was")
+        }
+        stroke(faded)
     }
 
     public func tint(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {

@@ -10,6 +10,10 @@ import mokume
 /// 0–255 (と 360 / 100 / 100) へ戻して返すので、中段では**線形の 0.5 が 128 ではなく
 /// 188 と読める**。下段の光も素の数値なら 0–255 で受ける。
 ///
+/// **中段の見本の右半分は、同じ色を `fill(color, 128)` で薄めたもの。** 不透明度は色が
+/// 元から持つ不透明度に掛けるので、半透明の見本 (`alpha: 0.5`) はさらに薄くなり、
+/// 透明の見本は透明のまま残る。
+///
 /// **色相が回る。** 上段の帯は色相にそのまま時刻を足してあり、360 を越えても剰余を
 /// 書かずに巻き戻る。
 ///
@@ -93,7 +97,7 @@ final class ColorAndScale: Sketch {
         // 中段 — 読み出し。**不透明度が見えるよう、明暗 2 段の下敷きに置く**
         noStroke()
         fill(170)
-        text("red / green / blue / alpha / hue / saturation / brightness", 40, 200)
+        text("red / green / blue / alpha / hue / saturation / brightness (right half: fill(color, 128))", 40, 200)
         for (index, sample) in samples.enumerated() {
             let x = 40 + index * 128
             fill(64)
@@ -101,7 +105,10 @@ final class ColorAndScale: Sketch {
             fill(200)
             rect(x, 244, 72, 32)
             fill(sample.color)
-            rect(x + 12, 220, 48, 48)
+            rect(x + 8, 220, 28, 48)
+            // 右半分は同じ色を不透明度 128 で薄めたもの。**色が元から持つ不透明度に掛ける**
+            fill(sample.color, 128)
+            rect(x + 36, 220, 28, 48)
 
             fill(210)
             text(sample.name, x, 296)
