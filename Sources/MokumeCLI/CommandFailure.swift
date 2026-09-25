@@ -30,6 +30,12 @@ nonisolated enum CommandFailure: Error, Equatable {
     /// 「スケッチ自身の出力を読め」と読み違えさせる
     /// ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
     case stopped(signal: Int32)
+    /// 書き出しが揃わなかった (`render`)。子は理由を名乗ってから 0 以外で終わっている。
+    ///
+    /// **`sketchExited` と分ける。** `render` の終了コードは「書けたか」を意味するので、
+    /// 呼ぶ側が読みたいのはどこが欠けたかであって、スケッチの成否ではない
+    /// ([#1282](https://github.com/mokume-metal/mokume/issues/1282))。
+    case renderIncomplete(destination: String, status: Int32)
     case noExecutable(path: String)
     /// 作り直しは通ったのに、走らせるものが建っていない。
     ///
@@ -175,6 +181,11 @@ nonisolated enum CommandFailure: Error, Equatable {
             """
         case .stopped(let signal):
             "Stopped by signal \(signal) — the running sketch was stopped too"
+        case .renderIncomplete(let destination, let status):
+            """
+            Rendering did not complete: \(destination) is missing frames or was not written.
+            The sketch said why above (it exited with code \(status))
+            """
         case .noExecutable(let path):
             """
             Cannot find anything to run: \(path)

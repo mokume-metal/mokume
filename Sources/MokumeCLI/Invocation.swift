@@ -93,6 +93,21 @@ nonisolated struct Invocation: Equatable {
     /// (`Task.detached`) へ渡すのに要るのは格納された値のほうで、解く手続きではない。
     @MainActor
     static func parse(_ arguments: [String]) throws(CommandFailure) -> Invocation {
+        try parse(arguments, adding: []).invocation
+    }
+
+    /// 口が自分の選択肢を足して解く。**走らせる部分 (場所・構成・置き場) の解き方は共有する。**
+    ///
+    /// `render` は `run` と同じものを受けたうえで、書き出しの選択肢を持つ
+    /// ([#1282](https://github.com/mokume-metal/mokume/issues/1282))。解き方を写すと、
+    /// [#680] のように片方だけが選択肢を受ける状態が戻る。足した選択肢は `run` / `watch` へは
+    /// 届かない — 知らない選択肢として断られる。
+    ///
+    /// - Returns: 走らせる部分と、足した選択肢の値 (鍵は ``Arguments/Option/key``)。
+    @MainActor
+    static func parse(_ arguments: [String], adding extra: [Arguments.Option]) throws(
+        CommandFailure
+    ) -> (invocation: Invocation, values: [String: String]) {
         let parsed = try Arguments.parse(
             arguments,
             options: [
@@ -102,10 +117,11 @@ nonisolated struct Invocation: Equatable {
                 Arguments.Option(scratchPathFlags) {
                     "\($0) needs a build directory after it"
                 },
-            ],
+            ] + extra,
             surplus: .reject { "Only one directory: \($0)" })
-        return Invocation(
+        let invocation = Invocation(
             place: parsed.positional, configuration: parsed.values[configurationFlags[0]],
             scratchPath: parsed.values[scratchPathFlags[0]])
+        return (invocation, parsed.values)
     }
 }
