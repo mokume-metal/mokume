@@ -14,8 +14,12 @@ enum NumberValues {
     /// 1 度だけ言う注意の種類。**事情ごとに数える** — 1 つの鍵を共有すると、先に
     /// 鳴ったほうが後の事情を永久に黙らせる。
     enum Warning: Hashable {
-        /// 写す元の幅が 0 だった。``map(_:_:_:_:_:)`` だけが持つ事情である。
-        case emptyRange
+        /// 写す元の幅が 0 だった。**口ごとに数える** ([#1283]) — ``map(_:_:_:_:_:)`` と
+        /// ``norm(_:_:_:)`` が 1 つの鍵を共有すると、先に鳴ったほうが他方を永久に黙らせる。
+        /// ``smoothstep(_:_:_:)`` の幅 0 は段という答えを持つので、ここへは来ない。
+        ///
+        /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
+        case emptyRange(Entry)
         /// 数でない値・無限の値が渡された。**口ごとに数える** — 事情は同じでも、
         /// 出す文面が口ごとに違ううえ、綴りを 1 つにすると先に鳴った口が残りを
         /// 永久に黙らせる。連想値にしてあるのは、口が増えても鍵の共有が起こり
@@ -28,6 +32,8 @@ enum NumberValues {
             case map
             case lerp
             case constrain
+            case norm
+            case smoothstep
         }
     }
 
@@ -102,19 +108,31 @@ public func map(
     }
     guard inHigh != inLow else {
         NumberValues.warnOnce(
-            .emptyRange,
+            .emptyRange(.map),
             "map(): the source range has zero width, so the low end of the destination was returned")
         return outLow
     }
-    // 元の範囲のどこか (0…1 の外もありうる) を求め、間を取る計算へ渡す (#1476)。元の幅が
-    // 溢れる組だけ、端と値を半分にしてから比を取る。半分どうしの差は溢れず、端は大きいので
-    // 半分にしても丸まらない — 値が端ちょうどなら、比も 0 と 1 ちょうどになる
-    let inSpan = inHigh - inLow
-    let amount =
-        inSpan.isFinite
-        ? (value - inLow) / inSpan
-        : (value / 2 - inLow / 2) / (inHigh / 2 - inLow / 2)
-    return interpolate(outLow, outHigh, amount)
+    // 元の範囲のどこか (0…1 の外もありうる) を求め、間を取る計算へ渡す (#1476)
+    return interpolate(outLow, outHigh, proportion(value, inLow, inHigh))
+}
+
+/// 値が範囲のどこにあるかの比 (0…1 の外もありうる)。``map(_:_:_:_:_:)``・``norm(_:_:_:)``・
+/// ``smoothstep(_:_:_:)`` が共有する。**注意は言わない** — 中で他の口を呼ぶと、呼んだ先の名で
+/// 注意が鳴る ([#1283])。値と端は有限で、幅は 0 でないこと。
+///
+/// 範囲の幅が有限なら `(value - low) / (high - low)` そのもので、断片 (MSL) の `smoothstep` が
+/// 書く式と 1 字も違わない。**幅が `Float` で溢れる組だけ、端と値を半分にしてから比を取る**
+/// ([#1476])。半分どうしの差は溢れず、端は大きいので半分にしても丸まらない — 値が端ちょうど
+/// なら、比も 0 と 1 ちょうどになる。有限の値から数でない値は返らない (値が範囲から遠く
+/// 外れて溢れれば ±∞)。
+///
+/// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
+/// [#1476]: https://github.com/mokume-metal/mokume/issues/1476
+private func proportion(_ value: Float, _ low: Float, _ high: Float) -> Float {
+    let span = high - low
+    return span.isFinite
+        ? (value - low) / span
+        : (value / 2 - low / 2) / (high / 2 - low / 2)
 }
 
 // MARK: - 2 つの値の間を取る
@@ -211,4 +229,85 @@ public func constrain(_ value: Float, _ low: Float, _ high: Float) -> Float {
         return 0
     }
     return min(max(value, min(low, high)), max(low, high))
+}
+
+// MARK: - 範囲の中のどこかを 0…1 で表す
+
+/// 値が範囲の中のどこにあるかを、始まりを 0・終わりを 1 とする割合で返す。
+///
+/// ```swift
+/// let progress = norm(time, 2, 6)
+/// ```
+///
+/// 引数は値・範囲の始まりと終わりの順 (手本と同じ並び)。写した先を 0…1 にした
+/// ``map(_:_:_:_:_:)`` と同じ値を返す — `start` なら 0、`stop` なら 1 がちょうど返り、逆向きの
+/// 範囲も受ける (`norm(20, 80, 0)` は 0.75)。
+///
+/// **範囲の外は締めない。** `norm(120, 0, 80)` は 1.5 を、`norm(-40, 0, 80)` は -0.5 を返す
+/// (手本と同じ)。0…1 に収めたいときは ``constrain(_:_:_:)`` を通すか、窓・締め・曲線を 1 本で
+/// 済ませる ``smoothstep(_:_:_:)`` を使う。
+///
+/// **範囲の幅が 0 のとき、数でない値・無限の値が混じったときは 0 を返す。** 手本は ±∞ や NaN を
+/// 返すが、``Sketch/draw()`` から毎フレーム呼ばれる口が数でない値を返すと、**絵が黙って消える**
+/// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` が写した先の下端を返すのと揃えてある。注意は 1 度だけ
+/// 言う。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func norm(_ value: Float, _ start: Float, _ stop: Float) -> Float {
+    guard value.isFinite, start.isFinite, stop.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.norm),
+            "norm(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    guard stop != start else {
+        NumberValues.warnOnce(
+            .emptyRange(.norm), "norm(): the range has zero width, so 0 was returned")
+        return 0
+    }
+    return proportion(value, start, stop)
+}
+
+// MARK: - 窓・締め・曲線を 1 本で
+
+/// 窓の中で 0 から 1 へ、両端で速さが 0 になる曲線で移る。
+///
+/// ```swift
+/// let fade = smoothstep(2.4, 5.4, time)
+/// ```
+///
+/// **断片 (MSL) の `smoothstep` と同じ名前・同じ引数の並び・同じ式である。** 窓の中の割合を
+/// 0…1 に締めて `t` とし、`t * t * (3 - 2 * t)` を返す。シェーダに書いた式を、そのまま Swift の
+/// 側へ写せる。
+///
+/// - **窓の外は締める。** 縁を含めて `edge0` の側の外では 0、`edge1` の側の外では 1 を返す —
+///   `smoothstep(2, 6, 1)` は 0、`smoothstep(2, 6, 9)` は 1
+/// - **逆向きの窓 (`edge0 > edge1`) は入れ替えず、下り坂になる。** `smoothstep(6, 2, 3)` は
+///   `1 - smoothstep(2, 6, 3)` と同じ 0.84375。断片の式も場合分けせずに同じ値を出す
+/// - **幅 0 の窓 (`edge0 == edge1`) は段になる** — `x` が縁より下なら 0、縁から上は 1 (断片の
+///   `step(edge, x)` と同じ)。注意は言わない。縁の外では断片の式と同じ値で、縁ちょうどは断片の
+///   式では決まらない (0 ÷ 0)。締める口には段という答えがあるので、幅 0 で 0 を返して注意を
+///   言う ``norm(_:_:_:)`` / ``map(_:_:_:_:_:)`` とはここが違う
+///
+/// **数でない値・無限の値が混じったときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
+/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。**ここだけは断片の
+/// `smoothstep` と値が違いうる** — 断片が無限や数でない値に何を返すかには揃えない。幅が `Float`
+/// で溢れる窓 (`smoothstep(-3e38, 3e38, 0)`) も、ここは窓の中の割合どおりの値 (0.5) を返す。
+/// 同じ名前でも、画素まで揃えることは約束しない ([ADR-0020] 決定 1 の 2026-09-09 改訂)。
+///
+/// 曲線を通さずに、窓の中の割合だけが欲しいなら ``norm(_:_:_:)`` を使う (こちらは締めない)。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+public func smoothstep(_ edge0: Float, _ edge1: Float, _ x: Float) -> Float {
+    guard edge0.isFinite, edge1.isFinite, x.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.smoothstep),
+            "smoothstep(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    // 幅 0 の窓は段 (#1283 の判断 A)。断片の `step(edge, x)` と同じく、縁ちょうどから 1
+    guard edge1 != edge0 else { return x < edge0 ? 0 : 1 }
+    // 締めは `constrain` を呼ばずに書く — 呼ぶと、そちらの名で注意が鳴りうる
+    let t = min(max(proportion(x, edge0, edge1), 0), 1)
+    return t * t * (3 - 2 * t)
 }

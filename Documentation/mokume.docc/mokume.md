@@ -413,6 +413,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``map(_:_:_:_:_:)``
 - ``lerp(_:_:_:)``
 - ``constrain(_:_:_:)``
+- ``norm(_:_:_:)``
+- ``smoothstep(_:_:_:)``
 
 ### GPU に計算させる
 
