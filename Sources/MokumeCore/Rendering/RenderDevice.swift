@@ -114,7 +114,14 @@ import MokumeDiagnostics
     }
 
     let device: any MTLDevice
-    let queue: any MTL4CommandQueue
+
+    /// **このファイルの外へ出さない** ([#845])。別のファイルから掴めると、
+    /// ``commit(_:retaining:)`` を通らずに投入する口が書ける。そうして投入された置き場は
+    /// 番号が書き戻されず、巻き戻す側が「もう終わっている」と読んで待たない (#222 と同じく、
+    /// 絵が黙って壊れる)。投入はすべて漏斗を通すこと。
+    ///
+    /// [#845]: https://github.com/mokume-metal/mokume/issues/845
+    private let queue: any MTL4CommandQueue
 
     /// CPU が書いて、まだ GPU 側へ届けていない数の並びと画像 (#749)。届けるのは描き切り。
     let pendingUploads = PendingUploads()

@@ -201,6 +201,65 @@ struct TriangulationTests {
         #expect(abs(area(of: triangles, points: merged) - 480) < 1)
     }
 
+    /// 穴の右端 (70, 80) からいちばん近い外周の点は左の (10, 10) で、そこへ架けると
+    /// 橋が穴そのものを横切る ([#1530])。
+    ///
+    /// [#1530]: https://github.com/mokume-metal/mokume/issues/1530
+    @Test("橋が穴そのものを横切らない")
+    func aBridgeDoesNotCrossItsOwnHole() {
+        let outer: [SIMD2<Float>] = [
+            SIMD2(10, 10), SIMD2(150, 10), SIMD2(150, 150), SIMD2(10, 150),
+        ]
+        let hole: [SIMD2<Float>] = [
+            SIMD2(70, 80), SIMD2(60, 62), SIMD2(40, 62),
+            SIMD2(30, 80), SIMD2(40, 98), SIMD2(60, 98),
+        ]
+        let merged = mergeHoles(outer: outer, holes: [hole])
+        let triangles = Triangulation.triangulate(merged)
+        // 外 19600 - 穴 1080 = 18520
+        #expect(abs(area(of: triangles, points: merged) - 18520) < 1)
+    }
+
+    /// 右の穴からいちばん近い外周の点 (10, 40) へ架けると、まだ畳んでいない左の穴を
+    /// 横切る。どちらの穴も単独なら正しく抜ける ([#1530])。
+    ///
+    /// [#1530]: https://github.com/mokume-metal/mokume/issues/1530
+    @Test("橋がまだ畳んでいない穴を横切らない")
+    func aBridgeDoesNotCrossAHoleNotYetMerged() {
+        let outer: [SIMD2<Float>] = [
+            SIMD2(10, 40), SIMD2(150, 40), SIMD2(150, 120), SIMD2(10, 120),
+        ]
+        let right: [SIMD2<Float>] = [
+            SIMD2(70, 75), SIMD2(60, 75), SIMD2(60, 85), SIMD2(70, 85),
+        ]
+        let left: [SIMD2<Float>] = [
+            SIMD2(30, 45), SIMD2(20, 45), SIMD2(20, 55), SIMD2(30, 55),
+        ]
+        let merged = mergeHoles(outer: outer, holes: [right, left])
+        let triangles = Triangulation.triangulate(merged)
+        // 外 11200 - 穴 100 x 2 = 11000
+        #expect(abs(area(of: triangles, points: merged) - 11000) < 1)
+    }
+
+    /// 曲線で閉じる穴 (字の o) は、最後の点が最初の点と重なる。橋の入口に接する辺を
+    /// 番号で外すと、同じ位置のもう 1 つの点に接する辺が「入口で跨いだ」と数えられ、
+    /// 架ける先が 1 つも無くなって穴が消える。
+    @Test("最後の点が最初の点と重なる穴にも、橋を架けられる")
+    func aHoleClosedByARepeatedPointIsMerged() {
+        let outer: [SIMD2<Float>] = [
+            SIMD2(0, 0), SIMD2(60, 0), SIMD2(60, 60), SIMD2(0, 60),
+        ]
+        var hole = (0..<8).map { step -> SIMD2<Float> in
+            let angle = -Float(step) / 8 * 2 * .pi
+            return SIMD2(cos(angle) * 8 + 30, sin(angle) * 8 + 30)
+        }
+        hole.append(hole[0])
+        let merged = mergeHoles(outer: outer, holes: [hole])
+        let triangles = Triangulation.triangulate(merged)
+        let expected = 3600 - abs(Triangulation.signedArea(hole))
+        #expect(abs(area(of: triangles, points: merged) - expected) < 0.5)
+    }
+
     @Test("点の足りない穴は無視される")
     func degenerateHolesAreIgnored() {
         let outer: [SIMD2<Float>] = [

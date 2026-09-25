@@ -164,7 +164,7 @@ static inline float3 straighten(float4 color) {
 /// 依存する。1 本なので、材質の 4 つは常に全部が効く。
 ///
 /// ```text
-/// 出る色 = 自発光
+/// 出る色 = 自発光 · 不透明度
 ///        + 周りへの返し · 塗り · (底上げの光の合計)
 ///        + (1 − 金属らしさ) · 塗り · (向きを持つ光の合計)
 ///        + 周りへの返し · 塗り · (周囲を面の向きで読んだ色)
@@ -181,6 +181,11 @@ static inline float3 straighten(float4 color) {
 ///
 /// 色は**アルファ乗算済み**のまま扱う ([ADR-0011] 決定 4)。映り込みの色 (`f0`) だけは
 /// 乗算を戻してから作る — 半透明の面の金属色が、透け具合で濁らないようにするため。
+/// 塗りに由来しない自発光と艶は、最後に不透明度を掛けて乗算済みの世界へ入れる。掛けないと
+/// 透明な面でもその色が満額で下地へ足され、アルファ 0 の色は下地を変えないという約束が
+/// 破れる ([#1548])。
+///
+/// [#1548]: https://github.com/mokume-metal/mokume/issues/1548
 static inline float3 mokume_shade(
     constant Light *lights, uint offset, uint count,
     float3 worldPosition, float3 normal, float4 viewer,
@@ -289,8 +294,8 @@ static inline float3 mokume_shade(
         }
     }
 
-    // 艶は乗算済みの世界へ入れ直す (半透明の面では、その分だけ薄く乗る)
-    return emissive + base * total + gloss * color.a;
+    // 自発光と艶は乗算済みの世界へ入れ直す (半透明の面では、その分だけ薄く乗る)
+    return emissive * color.a + base * total + gloss * color.a;
 }
 
 // 字形を焼いた面の読み取り方。字の縁を滑らかにするため線形に読み、

@@ -450,8 +450,8 @@ public final class SketchRuntime {
         //
         // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
         // 落ちる。描き始めた中でないと、コールバックの中の `translate()` や `pushStyle()` が
-        // 無言で効かない (変換とスタイルの口は `guard isShaping`・光の口は `guard isDrawing`
-        // で守られている。形を組み立てている最中でもないので、どちらも外である)。
+        // 無言で効かない (変換とスタイルの口は `guard isShaping`・光と切り抜きの口は
+        // `guard isDrawing` で守られている。形を組み立てている最中でもないので、どちらも外である)。
         // 図形や絵の口は守られておらず、フレームの外で置いたものは次の描き切りまで溜まる
         try canvas.draw {
             withActiveRuntime {
@@ -471,8 +471,8 @@ public final class SketchRuntime {
     /// 配るのは**フレームの外**である。`draw()` を呼ばないフレームを組むと、効果や
     /// 視点の無い絵が出口へ出て、止まっている間の絵が変わってしまう。そのため
     /// コールバックの中の `translate()` は効かず、置いた図形は次に描くフレームへ溜まる。
-    /// 置かれるのは変換も切り抜きも無い状態で、前のフレームが最後に残した分も効かない
-    /// (描き終えたところで戻す — `Canvas.endFrame()`・#1472)。
+    /// 置かれるのは変換も切り抜きも光も周囲も無い状態で、前のフレームが最後に残した分も
+    /// 効かない (描き終えたところで戻す — `Canvas.endFrame()`・#1472・#1504)。
     ///
     /// - Returns: 配った結果、このフレームを描くことになったか。
     private func deliverWhileStopped() -> Bool {
