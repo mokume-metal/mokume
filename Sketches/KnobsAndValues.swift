@@ -57,6 +57,16 @@ import mokume
 /// echo '{"id":"o1"}' > .mokume/observe/request.json
 /// ```
 ///
+/// ## 準備にかかった時間を観測へ差し出す
+///
+/// 並びの揺らぎは、種か並びの数が変わったときだけ組み直す。組むのにかかった実時間は
+/// `measure(_:_:)` で測り、同じ応答の `values` に `jitterMs` (ミリ秒) として載る。
+/// **差し出し直さなくても、組み直すまでどのフレームの応答にも載る** — つまみで並びの数
+/// を変えると、その時点で測り直した値に置き換わる。
+///
+/// この値は**画面には描かない。** 走らせるたびに違う値なので、描くと同じ番号のフレームが
+/// 同じ絵にならなくなる。
+///
 /// ## 台帳には載せない
 ///
 /// 代表シーンの台帳 ([ADR-0019] 決定 3) には入れない。つまみを外から動かすシーンは
@@ -123,6 +133,11 @@ final class KnobsAndValues: Sketch {
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     @Param var seed: Int = 7
 
+    /// 並びの揺らぎ。行ごとに並べる。**種と並びの数が変わったときだけ組み直す。**
+    private var jitters: [Float] = []
+    /// ``jitters`` を組んだときの種と並びの数。
+    private var jittersBuiltFor: [Int] = []
+
     func draw() {
         background(backdrop.x, backdrop.y, backdrop.z)
         noiseSeed(seed)
@@ -132,6 +147,20 @@ final class KnobsAndValues: Sketch {
         let cells = columns * rows
         expose("angle", angle)
         expose("cells", cells)
+
+        // 組み直すのにかかった時間を観測へ差し出す。測り直すまで、どのフレームの応答にも
+        // 載る。**描かない** — 走らせるたびに違う値なので
+        if jittersBuiltFor != [seed, columns, rows] {
+            jitters = measure("jitterMs") {
+                // 種でばらつく揺らぎ。同じ種なら同じ並びになる
+                (0..<rows).flatMap { row in
+                    (0..<columns).map { column in
+                        noise(Float(column) * 0.6, Float(row) * 0.6) - 0.5
+                    }
+                }
+            }
+            jittersBuiltFor = [seed, columns, rows]
+        }
 
         let stepX = Self.gridWidth / Float(columns + 1)
         let stepY = height / Float(rows + 1)
@@ -143,8 +172,7 @@ final class KnobsAndValues: Sketch {
             for column in 0..<columns {
                 let x = stepX * Float(column + 1) + drift.x * stepX * 0.5
                 let y = stepY * Float(row + 1) + drift.y * stepY * 0.5
-                // 種でばらつく揺らぎ。同じ種なら同じ並びになる
-                let jitter = noise(Float(column) * 0.6, Float(row) * 0.6) - 0.5
+                let jitter = jitters[row * columns + column]
                 push()
                 translate(x, y)
                 rotate(angle + jitter * 2)

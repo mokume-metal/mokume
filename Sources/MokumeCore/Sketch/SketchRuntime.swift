@@ -116,6 +116,13 @@ public final class SketchRuntime {
     var randomness = Randomness()
     /// このフレームでスケッチが差し出した値。観測が無ければ溜めない。
     private var exposedValues: [String: ExposedValue] = [:]
+    /// スケッチが測った値 (``measure(_:_:)``)。**フレームを越えて残る** — 同じ名前で
+    /// 測り直すまで。観測が無ければ溜めない。
+    ///
+    /// 報告へ載せるのはここからではなく ``exposedValues`` からで、フレームの頭で
+    /// 差し戻す (``beginFrame()``)。報告を組む場所は 2 つあるので、それぞれで合わせると
+    /// 片方だけ腐る (#808 と同じ形)。
+    private var measuredValues: [String: ExposedValue] = [:]
     /// 続けて撮っている最中の列。撮り終えるまで次の要求を拾わない。
     private var capture: FrameCapture?
     /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
@@ -695,6 +702,11 @@ public final class SketchRuntime {
         tempo.record(now: now())
         guard observer != nil else { return }
         exposedValues.removeAll(keepingCapacity: true)
+        // **測った値はここで差し戻す。** 差し出した値はフレームごとに消えるが、測った値は
+        // 測り直すまで残る約束なので、どのフレームの報告も「そのフレームで差し出した値」
+        // のまま測った値を含む。`setup()` の中で測った値が最初のフレームに載るのも、
+        // この差し戻しが消去の後にあるためである
+        exposedValues.merge(measuredValues) { _, measured in measured }
     }
 
     /// 進めるのを止める。**外から止める口** (作者の口は ``Sketch/noLoop()``)。
@@ -863,6 +875,25 @@ public final class SketchRuntime {
     func expose(_ name: String, _ value: ExposedValue) {
         guard observer != nil else { return }
         exposedValues[name] = value
+    }
+
+    /// 処理を 1 度走らせ、かかった実時間をミリ秒で差し出す (``Sketch/measure(_:_:)`` から
+    /// 呼ばれる)。
+    ///
+    /// **時計は ``now`` を読む。** フレームの時刻 (``FrameTiming``) はフレームの途中で
+    /// 進まず、再現する時計ではフレーム番号から導かれるので、区間を測れない。
+    ///
+    /// 観測が有効でなければ、時計も読まず溜めもしない。処理だけを走らせる。処理が
+    /// 投げたときは何も溜めない — 測り終えていない。
+    func measure<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
+        guard observer != nil else { return try body() }
+        let began = now()
+        let result = try body()
+        let value = ExposedValue.float((now() - began) * 1000)
+        measuredValues[name] = value
+        // このフレームの報告にも載せる。次のフレームからは ``beginFrame()`` が差し戻す
+        exposedValues[name] = value
+        return result
     }
 
     /// 要求が来ていれば応える。
