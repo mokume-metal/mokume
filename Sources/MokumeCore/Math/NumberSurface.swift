@@ -169,7 +169,8 @@ public func lerp(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
     return interpolate(start, stop, amount)
 }
 
-/// 間を取る計算。``lerp(_:_:_:)`` と ``map(_:_:_:_:_:)`` が共有する。端は有限であること。
+/// 間を取る計算。``lerp(_:_:_:)`` と ``map(_:_:_:_:_:)`` が共有し、``lerpColor(_:_:_:)`` も
+/// 成分ごとに通す (そのためモジュールの中へ開けてある)。端は有限であること。
 /// `amount` は ±∞ でもよい — ``map(_:_:_:_:_:)`` の比は、写す値が元の範囲から遠く外れると
 /// 溢れる。
 ///
@@ -190,7 +191,7 @@ public func lerp(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
 ///
 /// [#1312]: https://github.com/mokume-metal/mokume/issues/1312
 /// [#1453]: https://github.com/mokume-metal/mokume/issues/1453
-private func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
+func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
     let span = stop - start
     guard span.isFinite else { return (1 - amount) * start + amount * stop }
     // 幅が無ければ、どこを取っても始まり。比が ∞ で来ても `0 × ∞` の NaN を作らない
