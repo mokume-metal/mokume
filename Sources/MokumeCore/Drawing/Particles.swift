@@ -199,6 +199,8 @@ public final class Particles {
         case overwrite
         /// 効かせられる数を超えた力を渡された。
         case tooManyForces
+        /// 引く力の弱まり始める距離に、受け取れない値が渡された。
+        case badWeakeningDistance
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -254,8 +256,21 @@ public final class Particles {
             guard pendingForces.count < Self.maximumForces else {
                 return warnTooManyForces(pendingForces.count + 1)
             }
-            pendingForces.append(force)
+            pendingForces.append(accepted(force))
         }
+    }
+
+    /// 受け取れる形にした力。**弱まり始める距離が 0 以下・数でない値・無限なら、注意を
+    /// 言って距離を外す** — 弱まらない力として効かせる (ADR-0020 決定 5)。
+    ///
+    /// 式へ届かせないのは、0 なら力が消え、負なら向きが返り、数でない値なら粒の速度が
+    /// 数でなくなるためである。
+    private func accepted(_ force: Force) -> Force {
+        guard case .attract(let x, let y, let z, let strength, let distance?) = force,
+            !(distance.isFinite && distance > 0)
+        else { return force }
+        warnBadWeakeningDistance(distance)
+        return .attract(x, y, z, strength: strength)
     }
 
     /// 積まれた力を取り出して空にする。
@@ -441,5 +456,12 @@ public final class Particles {
             .tooManyForces,
             "At most \(Self.maximumForces) forces can go in one call (\(count) were passed). "
                 + "Only the first \(Self.maximumForces) took effect")
+    }
+
+    private func warnBadWeakeningDistance(_ distance: Float) {
+        warnOnce(
+            .badWeakeningDistance,
+            "attract / repel: weakeningBeyond takes a distance larger than 0 (\(distance) was passed). "
+                + "The pull was applied at full strength at every distance instead")
     }
 }

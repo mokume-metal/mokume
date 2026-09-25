@@ -104,9 +104,9 @@ extension Sketch {
     /// なるので、毎フレーム書いてよい。1 回に効かせられるのは 8 個までで、超えたぶんは
     /// 理由を添えて捨てる。
     ///
-    /// 引く力 (``Force/attract(_:_:_:strength:)``) は強さを負にすると押す力になる。
-    /// 読みやすさのために ``Force/repel(_:_:_:strength:)`` も置いてあるが、**計算は
-    /// 同じ 1 本**である。
+    /// 引く力 (``Force/attract(_:_:_:strength:weakeningBeyond:)``) は強さを負にすると
+    /// 押す力になる。読みやすさのために ``Force/repel(_:_:_:strength:weakeningBeyond:)`` も
+    /// 置いてあるが、**計算は同じ 1 本**である。
     public func force(_ particles: Particles, _ forces: Force...) {
         canvas.force(particles, forces)
     }

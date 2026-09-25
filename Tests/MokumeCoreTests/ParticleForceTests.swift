@@ -62,9 +62,11 @@ struct ParticleForceTests {
     ///   - step: 1 フレームの長さ。省くと ``step`` (1/64 秒)。
     ///   - everyFrame: 各フレームを進めた直後の粒の状態を受け取る。1 つ目の引数は
     ///     進めたフレームの数 (1 始まり)。
+    ///   - afterward: 進め終えた粒の群れを受け取る (言った注意を読むため)。
     private func advance(
         _ releases: [Release], forces: [Force], frames: Int, step: Float = Self.step,
-        everyFrame: ((Int, [Particle]) -> Void)? = nil
+        everyFrame: ((Int, [Particle]) -> Void)? = nil,
+        afterward: ((Particles) -> Void)? = nil
     ) throws -> [Particle] {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
         canvas.deltaTime = step
@@ -100,6 +102,7 @@ struct ParticleForceTests {
         let particles = state()
         // 出したはずの数が出ている (以降の照合の前提)
         try #require(particles.filter { $0.life > 0 }.count == total, "出した粒の数が合わない")
+        afterward?(dust)
         return particles
     }
 
@@ -327,6 +330,174 @@ struct ParticleForceTests {
                 Self.close(drawn, expected),
                 "\(name): \(place) からの速度 \(drawn) — 式からは \(expected)")
         }
+    }
+
+    /// [#1044] の完了条件 1。**弱まり始める距離 R (`weakeningBeyond`) を渡した引く力は、
+    /// 距離 r が R 以内なら大きさ strength、R より遠ければ strength·R/r** の加速度で、
+    /// 1 点への向きへ効く。押す力も同じ R を受け取る (符号を返すだけ)。
+    ///
+    /// 上の検査と同じ 2 粒 (距離 14・56) に、R ちょうどの 1 粒 (距離 28) を足し、R = 28 で
+    /// 進める。内側の粒は弱まらず、外側の粒は 1/2 に弱まる。R ちょうどの粒は内と外の式が
+    /// 一致する境目で、そこで力が飛ばないことを見る。
+    ///
+    /// [#1044]: https://github.com/mokume-metal/mokume/issues/1044
+    @Test(
+        "R を渡した引く力・押す力は、R の内側では strength、外側では strength·R/r で効く",
+        arguments: [("attract", Float(1)), ("repel", Float(-1))])
+    func attractionWeakensBeyondTheDistance(name: String, sign: Float) throws {
+        let target = SIMD3<Float>(32, 32, 0)
+        let strength: Float = 48
+        let reach: Float = 28
+        // 長さ 7 の組 (2, 3, 6)・(3, 6, −2)・(6, −2, 3) を 2 倍・4 倍・8 倍して、距離 14・28・56
+        let places = [
+            target - SIMD3(2, 3, 6) * 2, target + SIMD3(3, 6, -2) * 4, target + SIMD3(6, -2, 3) * 8,
+        ]
+        let force: Force =
+            sign > 0
+            ? .attract(target.x, target.y, target.z, strength: strength, weakeningBeyond: reach)
+            : .repel(target.x, target.y, target.z, strength: strength, weakeningBeyond: reach)
+
+        let particles = try advance(
+            places.map { Release(source: .point($0.x, $0.y, $0.z)) }, forces: [force], frames: 1)
+        for (place, particle) in zip(places, particles) {
+            let toward = SIMD3<Double>(target - place)
+            let distance = simd_length(toward)
+            let scale = min(1, Double(reach) / distance)
+            let expected =
+                toward / distance * Double(sign * strength) * scale * Double(Self.step)
+            let drawn = Self.velocity(particle)
+            #expect(
+                Self.close(drawn, expected),
+                "\(name): 距離 \(distance) の \(place) からの速度 \(drawn) — 式からは \(expected)")
+        }
+    }
+
+    /// [#1044] の完了条件 3。**受け取れない R (0 以下・数でない値・無限) は、注意を言って、
+    /// 弱まらない力として効かせる** ([ADR-0020] 決定 5 — 投げずに、安全な既定へ倒す)。
+    ///
+    /// 粒は R = 8 が効けば 1/7 に弱まる距離 56 に置く。
+    ///
+    /// **受け取れない値は、積む時点で外す** (断片へ届かせない)。断片の式は 0 以下を「弱まら
+    /// ない」と読むが、数でない値・無限をどう比べるかは近似の算術 (fast math) が約束しない
+    /// ので、式の側の比べ方には頼らない。外れていることは、積んだ力をそのまま取り出して見る
+    /// — 速度だけを見ると、いまの断片が偶然うまく扱う値では外し忘れが緑のまま通る。
+    ///
+    /// [#1044]: https://github.com/mokume-metal/mokume/issues/1044
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    @Test(
+        "受け取れない R は、注意を言って弱まらない力として効く",
+        arguments: [Float(0), -8, .nan, .infinity])
+    func anUnacceptableDistanceFallsBackToFullStrength(reach: Float) throws {
+        let target = SIMD3<Float>(32, 32, 0)
+        let strength: Float = 48
+        let place = target + SIMD3(6, -2, 3) * 8
+        let force = Force.attract(
+            target.x, target.y, target.z, strength: strength, weakeningBeyond: reach)
+        var warned = false
+        var kept: [Force] = []
+        let particle = try advance(
+            [Release(source: .point(place.x, place.y, place.z))], forces: [force], frames: 1,
+            afterward: { dust in
+                warned = dust.warnings.hasWarned(.badWeakeningDistance)
+                dust.add([force])
+                kept = dust.takeForces()
+            })[0]
+
+        let toward = SIMD3<Double>(target - place)
+        let expected = toward / simd_length(toward) * Double(strength) * Double(Self.step)
+        #expect(warned, "R = \(reach) を黙って受け取った")
+        #expect(
+            kept == [.attract(target.x, target.y, target.z, strength: strength)],
+            "R = \(reach) が外れずに積まれた: \(kept)")
+        #expect(
+            Self.close(Self.velocity(particle), expected),
+            "R = \(reach) の速度 \(Self.velocity(particle)) — 弱まらない力なら \(expected)")
+    }
+
+    @Test("R を省けば、注意は言わない")
+    func omittingTheDistanceSaysNothing() throws {
+        var warned = true
+        _ = try advance(
+            [Release(source: .point(8, 8))], forces: [.attract(32, 32, strength: 48)], frames: 1,
+            afterward: { warned = $0.warnings.hasWarned(.badWeakeningDistance) })
+        #expect(!warned)
+    }
+
+    // MARK: - 渦と抵抗を組む
+
+    /// [#1044] の完了条件 6。**渦と抵抗を組むと粒はどの半径でもほぼ同じ速さ V で回り、
+    /// 距離に依らない引く力では、その速さで回れる半径 V² ÷ strength の 1 本へ全粒が集まる。
+    /// R を渡して strength·R = V² に合わせると、R の外のどの半径でもおおよそ釣り合い、
+    /// 撒いた半径の広がりが残る** (``Force`` の説明「渦と抵抗を組むと」)。
+    ///
+    /// V は `渦 ÷ 抵抗` に x/(eˣ − 1) (x = 抵抗·Δt) を掛けた値である。1 フレームごとに速度へ
+    /// e^(−抵抗·Δt) を掛ける進め方 ([#1517]) の不動点で、ここでは `渦 ÷ 抵抗` より 3.1% 低い。
+    ///
+    /// ## 組み方と回す長さ
+    ///
+    /// 静止した 32 粒を、半径 2R〜8R (32〜128) に等間隔で、黄金角ずつ向きを変えて置く。
+    /// 刻み 1/32 秒・抵抗 2・V = 160・R = 16 で、弱まらない力は半径 64 (撒いた範囲の相乗平均)
+    /// で釣り合う強さにする。
+    ///
+    /// 速さが V に揃う時定数は 1/抵抗 = 0.5 秒、弱まらない力で半径が 1 本へ寄る速さは、
+    /// 釣り合いの半径のまわりの揺れ (角振動数 V ÷ 64 = 2.5) が抵抗で減る速さで、振幅が
+    /// 1 秒に e 分の 1 ほどになる。256 フレーム (8 秒) 回せば、撒いた幅 (最大 ÷ 最小 = 4) は
+    /// 1 本に畳まれる。GPU で測ると、8 秒後の最大 ÷ 最小は弱まらない力で 1.009、R を渡した
+    /// 力で 4.50 だった (R の力でも粒は外へゆっくり流れるが、広がりは縮まない)。
+    ///
+    /// ## 許す幅
+    ///
+    /// - 弱まらない力: 最大 ÷ 最小が 1.05 未満。中央の半径は V² ÷ strength (64) から 5% 以内 —
+    ///   測ると 65.9 で 3% 外にずれる。1 フレームで 4.5° 回る刻みの粗さによるもので、同じ
+    ///   進め方を単精度で写した試算では、刻みを 1/128 にすると 0.4% まで寄る
+    /// - 同じ粒の速さは V から 1% 以内 (測ると 159.5〜160.1) — `渦 ÷ 抵抗` (165.1) を速さと
+    ///   する説明はここで外れる
+    /// - R を渡した力: 最大 ÷ 最小が 3 より大きい (撒いた 4 の 3/4 を残す)
+    ///
+    /// [#1517]: https://github.com/mokume-metal/mokume/pull/1517
+    @Test("渦と抵抗を組むと、弱まらない引く力では半径が 1 本に集まり、R を渡して強さを合わせると広がりが残る")
+    func swirlAndDragGatherIntoOneRingUnlessThePullWeakens() throws {
+        let step: Float = 1.0 / 32
+        let drag: Float = 2
+        let speed: Float = 160
+        let reach: Float = 16
+        // V = (渦 ÷ 抵抗)·x/(eˣ − 1) を渦について解く
+        let x = Double(drag * step)
+        let swirl = Float(Double(speed) * Double(drag) * expm1(x) / x)
+        let centre = SIMD3<Float>(32, 32, 0)
+        let radii = (0..<32).map { 2 * reach + 6 * reach * Float($0) / 31 }
+        let places = radii.enumerated().map { index, radius in
+            let angle = Float(index) * 2.399_963
+            return centre + SIMD3(cos(angle) * radius, sin(angle) * radius, 0)
+        }
+        let ring = (radii[0] * radii[31]).squareRoot()
+
+        func settle(_ pull: Force) throws -> (radii: [Float], speeds: [Float]) {
+            let particles = try advance(
+                places.map { Release(source: .point($0.x, $0.y, $0.z)) },
+                forces: [pull, .swirl(centre.x, centre.y, strength: swirl), .drag(drag)],
+                frames: 256, step: step)
+            return (
+                particles.map { simd_length(SIMD2($0.x - centre.x, $0.y - centre.y)) },
+                particles.map { simd_length(Self.velocity($0)) }
+            )
+        }
+
+        let gathered = try settle(.attract(centre.x, centre.y, strength: speed * speed / ring))
+        let spread = try #require(gathered.radii.max()) / (try #require(gathered.radii.min()))
+        let middle = gathered.radii.sorted()[16]
+        #expect(spread < 1.05, "弱まらない力で半径が 1 本に集まっていない (最大 ÷ 最小 \(spread))")
+        #expect(
+            abs(middle / ring - 1) < 0.05,
+            "集まった半径 \(middle) — V² ÷ strength は \(ring)")
+        for pace in gathered.speeds {
+            #expect(abs(pace / speed - 1) < 0.01, "速さ \(pace) — V は \(speed) (渦 ÷ 抵抗は \(swirl / drag))")
+        }
+
+        let kept = try settle(
+            .attract(centre.x, centre.y, strength: speed * speed / reach, weakeningBeyond: reach))
+        let keptSpread = try #require(kept.radii.max()) / (try #require(kept.radii.min()))
+        #expect(keptSpread > 3, "R を渡した力でも半径が寄った (最大 ÷ 最小 \(keptSpread))")
     }
 
     // MARK: - 回す
