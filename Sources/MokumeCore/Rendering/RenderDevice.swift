@@ -122,9 +122,14 @@ import MokumeDiagnostics
     /// シェーダの原文を読み、組み立てる係。
     ///
     /// **転送メソッドを置かない。** ここに `makeShapeLibrary` などを残すと「組み立てには
-    /// 描画の土台の状態が要る」という読みが残るが、実際に要るのは `device` だけである
+    /// 描画の土台の状態が要る」という読みが残るが、投入と待ちに要るものは 1 つも使わない
     /// ([#959](https://github.com/mokume-metal/mokume/issues/959))。呼ぶ側はここを通る。
-    var shaders: ShaderLibraries { ShaderLibraries(device: device) }
+    ///
+    /// **触るたびに作り直さず、1 つを持ち続ける。** 組んだものを持ち主どうしで分け合う
+    /// 場所があちらで、分け合う範囲がこの GPU 1 つだからである。作り直すと、抱えたものが
+    /// 触るたびに消えて同じ原文を組み直す
+    /// ([#728](https://github.com/mokume-metal/mokume/issues/728))。
+    let shaders: ShaderLibraries
 
     /// コマンドの置き場ひとつぶん。
     ///
@@ -341,6 +346,7 @@ import MokumeDiagnostics
     /// 環が実際に待っていることを検査から確かめられる。
     init(device: any MTLDevice, slotCount: Int) throws(RenderFailure) {
         self.device = device
+        self.shaders = ShaderLibraries(device: device)
 
         guard let queue = device.makeMTL4CommandQueue() else {
             throw .commandQueueUnavailable
