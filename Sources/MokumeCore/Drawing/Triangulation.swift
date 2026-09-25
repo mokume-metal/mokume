@@ -69,8 +69,16 @@ enum Triangulation {
     /// 三角形化そのものを穴に対応させるのではなく、橋を架けて 1 周にしてから同じ道具へ
     /// 通す。道具が 1 つで済み、穴が「一部の経路でだけ効く」状態を作らない。
     ///
-    /// 橋は、穴のいちばん右の点から外周の点へ架ける。**架けた線が他の辺を跨がない点**を
-    /// 選ぶ — 跨ぐと、畳んだ周が自己交差して三角形化が途中で止まる。
+    /// 橋は、穴のいちばん右の点から外周の点へ架ける。架ける先には、近い点のうち
+    /// **架けた線がどの辺も跨がない点**を選ぶ — 跨ぐと、畳んだ周が自己交差して
+    /// 三角形化が途中で止まる。見る辺は 3 つある:
+    ///
+    /// - **外周の辺** (先に畳んだ穴の辺も、畳んだ時点で外周に入っている)
+    /// - **いま畳んでいる穴自身の辺** — 穴の右端から外周の近い点が左にあると、橋が穴の
+    ///   中を通り抜ける ([#1530])
+    /// - **まだ畳んでいない穴の辺** — 右の穴から架けた橋が、左の穴を横切りうる
+    ///
+    /// 橋の端点に接する辺は、跨いだことにしない。
     ///
     /// 受け渡すのは**点そのものではなく番号**である。畳んだ周から元の頂点を引ける
     /// ようにするためで、立体の頂点が持つ色や面の向きは点の座標には載っていない。
@@ -79,6 +87,8 @@ enum Triangulation {
     ///   - outer: 外周をなす点の番号。
     ///   - holes: 穴をなす点の番号。
     ///   - points: 番号で引ける点の位置。
+    ///
+    /// [#1530]: https://github.com/mokume-metal/mokume/issues/1530
     static func mergeHoles(outer: [Int], holes: [[Int]], points: [SIMD2<Float>]) -> [Int] {
         var ring = outer
         // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい
@@ -88,10 +98,15 @@ enum Triangulation {
                 (rightmost($0, points)?.x ?? 0) > (rightmost($1, points)?.x ?? 0)
             }
 
-        for hole in ordered {
+        for (order, hole) in ordered.enumerated() {
             guard let entryIndex = rightmostIndex(hole, points) else { continue }
             let entry = points[hole[entryIndex]]
-            guard let bridgeIndex = bridgeTarget(ring: ring, points: points, from: entry) else {
+            // この穴と、まだ畳んでいない穴。先に畳んだ穴は `ring` に入っている
+            let unmerged = ordered[order...]
+            guard
+                let bridgeIndex = bridgeTarget(
+                    ring: ring, holes: unmerged, points: points, from: entry)
+            else {
                 continue  // 架けられる先が無ければ、その穴は諦める (塗りが埋まるだけ)
             }
             // 外周を橋の点で開き、穴を 1 周ぶん通してから戻る
@@ -206,8 +221,10 @@ enum Triangulation {
     }
 
     /// 橋を架ける先を、外周の点から選ぶ。
+    ///
+    /// - Parameter holes: 跨いではならない穴。いま畳んでいる穴と、まだ畳んでいない穴。
     private static func bridgeTarget(
-        ring: [Int], points: [SIMD2<Float>], from entry: SIMD2<Float>
+        ring: [Int], holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from entry: SIMD2<Float>
     ) -> Int? {
         var best: (index: Int, distance: Float)?
         for index in ring.indices {
@@ -217,7 +234,8 @@ enum Triangulation {
             if let current = best, current.distance <= distance { continue }
             guard
                 !crossesAnyEdge(
-                    ring: ring, points: points, from: entry, to: candidate, skipping: index)
+                    ring: ring, points: points, from: entry, to: candidate, skipping: index),
+                !crossesAnyHole(holes, points: points, from: entry, to: candidate)
             else {
                 continue
             }
@@ -226,7 +244,7 @@ enum Triangulation {
         return best?.index
     }
 
-    /// 架けた線が、外周のどれかの辺を跨ぐか。
+    /// 架けた線が、外周 (先に畳んだ穴を含む) のどれかの辺を跨ぐか。
     private static func crossesAnyEdge(
         ring: [Int], points: [SIMD2<Float>], from: SIMD2<Float>, to: SIMD2<Float>,
         skipping target: Int
@@ -236,6 +254,25 @@ enum Triangulation {
             // 橋の端点を共有する辺は、跨いだことにしない
             if index == target || next == target { continue }
             if segmentsIntersect(from, to, points[ring[index]], points[ring[next]]) { return true }
+        }
+        return false
+    }
+
+    /// 架けた線が、穴のどれかの辺を跨ぐか。
+    ///
+    /// 外すのは、**入口の点と同じ位置に端を持つ辺**である。穴自身の 2 辺がこれに当たる。
+    /// 番号ではなく位置で比べるのは、最後の点が最初の点と重なる穴 (曲線で閉じる字の o) で、
+    /// 同じ位置のもう 1 つの点に接する辺まで外すためである。
+    private static func crossesAnyHole(
+        _ holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from: SIMD2<Float>, to: SIMD2<Float>
+    ) -> Bool {
+        for hole in holes {
+            for index in hole.indices {
+                let a = points[hole[index]]
+                let b = points[hole[(index + 1) % hole.count]]
+                if a == from || b == from { continue }
+                if segmentsIntersect(from, to, a, b) { return true }
+            }
         }
         return false
     }
