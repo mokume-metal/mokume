@@ -75,13 +75,18 @@ struct LedgerDetectionTests {
         #expect(!stage.takes.isEmpty, "\(stage) を写しているはずの行が 1 つも無い")
 
         for take in stage.takes {
-            guard let recorded = ledger[take.name] else {
+            guard let entry = ledger[take.name] else {
                 Issue.record("行 \(take.name) が台帳に無い")
+                continue
+            }
+            // 字形を写す行は、基準の版の機械でしか値が合わない (#1559)。版が違う機械では
+            // 外さなくても値が違うので、「動いた」と読むと検出力を誤って認めてしまう
+            if let base = entry.baseOS, !Ledger.comparable(base: base, host: Ledger.hostOS) {
                 continue
             }
             let killed = try SceneLedgerTests.fingerprint(of: take, without: stage)
             #expect(
-                killed != recorded,
+                killed != entry.digest,
                 """
                 \(stage) を外しても、行 \(take.name) の絵が動かない。
                 その行はこの段を写していないので、この段が壊れても台帳には現れない。

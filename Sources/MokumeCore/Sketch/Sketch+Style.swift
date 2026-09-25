@@ -329,14 +329,38 @@ extension Sketch {
 
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
     ///
+    /// 矩形は**いまの変換の影響を受けず**、面の座標で読む。``translate(_:_:)`` などの後で
+    /// 呼んでも、切り抜くのは面の同じ場所である。変換を効かせたいときは、角を
+    /// ``screenX(_:_:)`` / ``screenY(_:_:)`` で面の座標へ写してから渡す。平行移動と拡大までは、
+    /// 角を 2 つ写せば足りる (既定の `rectMode(.corner)` のとき):
+    ///
+    /// ```swift
+    /// translate(60, 60)
+    /// scale(2, 2)
+    /// let left = screenX(0, 0)
+    /// let top = screenY(0, 0)
+    /// clip(left, top, screenX(60, 60) - left, screenY(60, 60) - top)
+    /// rect(0, 0, 60, 60)  // 動かした先の矩形の中だけが残る
+    /// ```
+    ///
+    /// 切り抜きは面に沿った矩形しか持てないので、``rotate(_:)`` や ``shearX(_:)`` を掛けた
+    /// 矩形は表せない — 角を写しても、回した矩形にはならない。
+    ///
     /// 積み降ろし (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
     /// 面の外へ出た指定は面の内側へ収める。
+    ///
+    /// - Note: 切り抜きは**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
+    ///   ときや、止まっている間の入力のコールバックで書いた切り抜きはどのフレームにも
+    ///   属さないので、警告して無視される。
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.clip(a, b, c, d)
     }
 
     /// 切り抜きをやめる。
+    ///
+    /// - Note: 切り抜きは**フレームを越えない**ので、フレームの外 (初期化のときなど) には
+    ///   外す切り抜きが無い。そこで呼ぶと、``clip(_:_:_:_:)`` と同じく警告して無視される。
     public func noClip() { canvas.noClip() }
 
     /// 描くものを、下にある絵とどう混ぜるか。既定は上に重ねる。
