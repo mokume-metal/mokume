@@ -449,8 +449,10 @@ extension Sketch {
     ///   }
     /// }
     ///
-    /// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
-    /// 「どれだけ効かせるか」はアルファが決める。
+    /// **置き換える (``BlendMode/replace``) 以外のどのモードでも、アルファ 0 の色は下地を
+    /// 変えない。** 混ぜ方が変わっても「どれだけ効かせるか」はアルファが決める。
+    /// ``BlendMode/replace`` だけは下地を見ず、形が掛かる画素を置いた色でアルファごと
+    /// 置き換える — アルファ 0 の色なら、その画素は透明になる ([#1542])。
     ///
     /// **下地が透明な所では、どのモードでも置いた色がそのまま載る。** 混ぜる相手が無いので、
     /// 混ぜ方は下地のアルファの分だけ効く — 半分透ける下地の上では、混ぜた色と置いた色が
@@ -465,6 +467,7 @@ extension Sketch {
     ///
     /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
     /// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
+    /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     ///
     /// - Note: 混ぜ方は**フレームを越える**。一度書けば、書き換えるまで残る。
