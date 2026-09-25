@@ -206,6 +206,44 @@ struct CanvasTests {
         #expect(image[48, 32].red == 255)
     }
 
+    /// 閉じ忘れた穴は ``Canvas/endShape(_:)`` が畳む。**次の穴を開いたときも同じ規則で畳む**
+    /// ([#1528])。直す前は、開いていた穴の点を捨てて新しい穴を始めていたので、1 つ目の穴が
+    /// 描かれなかった。
+    ///
+    /// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+    @Test("穴を開いたまま次の穴を開いても、前の穴は畳まれて空く")
+    func reopeningAContourKeepsTheOpenHole() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.beginShape()
+            canvas.vertex(4, 4)
+            canvas.vertex(60, 4)
+            canvas.vertex(60, 60)
+            canvas.vertex(4, 60)
+            canvas.beginContour()  // 閉じ忘れる
+            canvas.vertex(10, 16)
+            canvas.vertex(10, 48)
+            canvas.vertex(28, 32)
+            canvas.beginContour()
+            canvas.vertex(36, 16)
+            canvas.vertex(36, 48)
+            canvas.vertex(54, 32)
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 32] == (0, 0, 0, 255))  // 1 つ目の穴の中は背景
+        #expect(image[42, 32] == (0, 0, 0, 255))  // 2 つ目の穴の中も背景
+        #expect(image[32, 32].red == 255)  // 2 つの穴の間は塗られている
+        #expect(image[32, 8].red == 255)
+        for key in [Canvas.Warning.vertexOutsideShape, .contourNotBegun, .curveWithoutStart] {
+            #expect(!canvas.warnings.hasWarned(key), "閉じ忘れを畳むだけの形で \(key) を言った")
+        }
+    }
+
     @Test("点の列として読むと、点が並ぶ")
     func pointsKindPlacesDots() throws {
         let canvas = try makeCanvas()
