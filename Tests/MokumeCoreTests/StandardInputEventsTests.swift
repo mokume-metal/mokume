@@ -41,7 +41,7 @@ struct StandardInputEventsTests {
     func joinsSplitLines() throws {
         try withPipe { reader, writer in
             let state = InputState()
-            let line = InputEvent.mouseDown(x: 5, y: 6, button: 0).wireLine
+            let line = InputEvent.mouseDown(x: 5, y: 6, button: .left).wireLine
             let cut = line.index(line.startIndex, offsetBy: line.count / 2)
             try write(String(line[..<cut]), to: writer)
             reader.drain(into: state)
@@ -84,7 +84,7 @@ struct StandardInputEventsTests {
         try withPipe { reader, writer in
             let events: [InputEvent] = [
                 .mouseMoved(x: 0, y: 0),
-                .mouseDown(x: 100, y: 50, button: 0),
+                .mouseDown(x: 100, y: 50, button: .left),
                 .mouseMoved(x: 120, y: 60),
             ]
             let viaPipe = InputState()
@@ -115,9 +115,9 @@ struct StandardInputEventsTests {
         try withPipe { reader, writer in
             let events: [InputEvent] = [
                 .mouseMoved(x: 0, y: 0),
-                .mouseDown(x: 100, y: 50, button: 0),
+                .mouseDown(x: 100, y: 50, button: .left),
                 .mouseMoved(x: 120, y: 60),
-                .mouseUp(x: 120, y: 60, button: 0),
+                .mouseUp(x: 120, y: 60, button: .left),
             ]
             let viaPipe = InputState()
             for event in events { try write(event.wireLine, to: writer) }
@@ -146,9 +146,9 @@ struct StandardInputEventsTests {
         try withPipe { reader, writer in
             let events: [InputEvent] = [
                 .mouseMoved(x: 10, y: 10),
-                .mouseDown(x: 10, y: 10, button: 0),
+                .mouseDown(x: 10, y: 10, button: .left),
                 .mouseMoved(x: 40, y: 30),
-                .mouseUp(x: 40, y: 30, button: 0),
+                .mouseUp(x: 40, y: 30, button: .left),
                 .keyDown(code: .a, characters: "a", isRepeat: false),
                 .keyDown(code: .arrowUp, characters: "\u{F700}", isRepeat: false),
                 .keyUp(code: .a),
