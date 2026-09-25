@@ -1233,6 +1233,31 @@ struct CanvasTests {
         #expect(canvas.style.clip == nil)
     }
 
+    @Test("光と周囲は、描き切った後のフレームの外へ残らない (#1504)")
+    func lightsAndSurroundingsDoNotOutliveTheFrame() throws {
+        let canvas = try makeCanvas()
+        canvas.beginDraw()
+        canvas.background(black)
+        canvas.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2))
+        canvas.surroundings(.sky)
+        canvas.box(10)
+        canvas.endDraw()
+
+        #expect(canvas.activeLights.isEmpty)
+        #expect(canvas.activeSurroundings == nil)
+
+        // フレームの外で置いて閉じた立体の列は、前のフレームの光も周囲も焼かない。
+        // 線は既定で引くので、塗りの列は `box()` の中で稜線の列に閉じられる
+        canvas.box(10)
+        canvas.blendMode(.add)
+        let solids = canvas.batches.filter { $0.source == .solid }
+        try #require(!solids.isEmpty)
+        for batch in solids {
+            #expect(batch.lightRange.isEmpty)
+            #expect(batch.surroundings.topAndPresence.w == 0)
+        }
+    }
+
     // MARK: - 輪郭 (#234)
 
     private let blue = LinearRGBA.display(red: 0, green: 0.4, blue: 1)
