@@ -46,7 +46,7 @@ import Metal
 
     init(gpu: RenderDevice) throws(RenderFailure) {
         self.gpu = gpu
-        let library = try gpu.shaders.makeLibrary(named: "Present")
+        let library = try gpu.shaders.presentLibrary()
 
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = "presentVertexMain"
@@ -62,11 +62,7 @@ import Metal
         descriptor.fragmentFunctionDescriptor = fragmentFunction
         descriptor.colorAttachments[0]!.pixelFormat = Self.pixelFormat
 
-        let compilerDescriptor = MTL4CompilerDescriptor()
-        compilerDescriptor.label = "mokume.output.compiler"
-        guard let compiler = try? gpu.device.makeCompiler(descriptor: compilerDescriptor) else {
-            throw .shaderCompilerUnavailable
-        }
+        let compiler = try gpu.shaders.compiler()
         do {
             state = try compiler.makeRenderPipelineState(descriptor: descriptor)
         } catch {

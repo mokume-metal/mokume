@@ -111,11 +111,7 @@ final class EffectPipeline {
             gpu: gpu, ring: ring, stride: Self.passStride, minimumCapacity: 8,
             label: "mokume.effect.passes")
 
-        let descriptor = MTL4CompilerDescriptor()
-        descriptor.label = "mokume.effect.compiler"
-        guard let compiler = try? gpu.device.makeCompiler(descriptor: descriptor) else {
-            throw .shaderCompilerUnavailable
-        }
+        let compiler = try gpu.shaders.compiler()
         self.compiler = compiler
 
         let library = try gpu.shaders.makeEffectLibrary(
