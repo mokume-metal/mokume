@@ -298,12 +298,16 @@ public final class Canvas {
         /// `nil` なら溜め場の並び (いつもの経路)。粒だけがここを使う — 置き場所を
         /// 埋めるのが GPU なので、CPU の溜め場を通らない。
         var external: ExternalInstances?
-        /// 半透明の塗りの置き場所を 1 つでも足したか。
+        /// 裏面が絵に出うるスタイルで、置き場所を 1 つでも足したか
+        /// (``Canvas/placementMayShowBackFaces``)。1 つでも居れば列ごと両面で描く
+        /// (``Batch/cullMode``)。
         ///
-        /// 塗りを変えても列は閉じないので、1 つの列に不透明と半透明が同居する。
-        /// 半透明の形は奥の面が手前の面を通して見えるので、1 つでも居れば列ごと
-        /// 両面で描く (``Batch/cullMode``)。
-        var hasTranslucentInstance = false
+        /// **形を置いたときに記録する。** 塗りの不透明度も貼る絵も、変えただけでは列を閉じない
+        /// (`fill`・`noTexture()`・`pop()`) ので、1 つの列に置いたときのスタイルが違う形が
+        /// 同居し、閉じる時点のスタイルはもう置いたときのものではない。閉じる時点を読むと、
+        /// 置いた後で外した絵の列が裏面を捨て、透けた画素から見えるはずの奥の面が消える
+        /// ([#1564](https://github.com/mokume-metal/mokume/issues/1564))。
+        var mayShowBackFaces = false
         /// この列の置き場所が形を鏡映するか (``SolidInstance/isMirrored``)。
         ///
         /// **列の置き場所はどれも同じ符号を持つ。** 表の巻き方は列ごとに 1 つ
@@ -900,6 +904,11 @@ public final class Canvas {
         /// 含む列・貼る絵 (透けた画素から奥が見える)・重ねる混ぜ方・利用者の断片 (透明を
         /// 返したり画素を捨てたりできる)。**判定は列を閉じる側 (`closeSolidBatch`) が
         /// 1 箇所で行い**、描く側はこの値を掛けるだけにする。
+        ///
+        /// **絵・混ぜ方・断片・塗りの不透明度は、形を置いたときのものを読む**
+        /// (``OpenSolid/mayShowBackFaces``)。後から変えた設定は既に置いた形に効かない —
+        /// 絵を貼った形を置いた後で `noTexture()` を呼んでも、その形の列は両面で描く
+        /// ([#1564](https://github.com/mokume-metal/mokume/issues/1564))。
         var cullMode: MTLCullMode = .none
         /// 画面でどちら回りに見える面を表とするか。
         ///

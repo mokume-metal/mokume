@@ -227,8 +227,10 @@ extension Canvas {
         }
 
         solidInstances.append(placement)
-        // 半透明の塗りが 1 つでも入ったら、この列は裏面を捨てられない (`Batch.cullMode`)
-        if style.fill.alpha < 1 { openSolid?.hasTranslucentInstance = true }
+        // 裏面が絵に出うるスタイルで 1 つでも置いたら、この列は裏面を捨てられない
+        // (`Batch.cullMode`)。**置いたこの時点で記録する** — 列が閉じる時点のスタイルは、
+        // 置いた後で外した絵を知らない (#1564)
+        if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
     }
 
     /// 組み込みの形・読み込んだモデルの 1 点を頂点にする。
