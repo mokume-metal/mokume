@@ -19,6 +19,9 @@
 - **台帳が撮った版を持たない** (#671) — 持っていた頃は撮るたびに全数の行が動き、絵を
   数枚足す PR が台帳 163 行を巻き込んでいた。古い形を読めることと、それを名乗って
   落とすこともここで固定する
+- **撮るのに要る道具が無ければ、組む前に名乗って止まる** (#1598) — 止まり方が
+  「全部を撮り終えた後の traceback」だと、何が足りないかも入れ方も出ない。見るだけの
+  既定の実行が道具を探さないことも、ここで固定する
 
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
@@ -26,11 +29,14 @@
 import contextlib
 import importlib.util
 import io
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "example-shots.py"
@@ -346,6 +352,70 @@ class ExampleShotsTest(unittest.TestCase):
     def test_実物のソースの囲みが揃っている(self):
         result = subprocess.run(
             ["python3", str(SCRIPT)], cwd=REPO, capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class NeededToolsTest(unittest.TestCase):
+    """撮る側は ffmpeg が無ければ組む前に止まり、見る側は探しもしない (#1598)。
+
+    探す先は `main(which=...)` で差し替える。本物の `--render` は GPU とビルドが要るので、
+    組む入口 (`render`) と測る入口 (`report_mirrors`) は呼ばれたかだけを記録する偽物に
+    替える — 見たいのは「組む前に止まるか」で、組めるかではない。
+    """
+
+    def run_main(self, argv, which):
+        self.built = []
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(shots, "render", lambda *a: self.built.append(a)), \
+                mock.patch.object(shots, "report_mirrors", lambda *a, **k: None), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shots.main(argv, which=which)
+        return code, out.getvalue(), err.getvalue()
+
+    def assert_named_and_stopped(self, argv):
+        code, _, err = self.run_main(argv, which=lambda name: None)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(len(self.built), 0, "ffmpeg が無いのにスケッチを組みに行った")
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1, err)
+        self.assertIn("ffmpeg", lines[0])
+        self.assertIn("brew install ffmpeg", lines[0])
+
+    def test_ffmpeg_が無ければ_render_は組む前に名乗って止まる(self):
+        with tempfile.TemporaryDirectory() as out:
+            self.assert_named_and_stopped(["--render", out])
+
+    def test_ffmpeg_が無ければ_capture_は組む前に名乗って止まる(self):
+        # トークンは空にしておく。確かめが外れて止まらなくても、上げには行かない
+        self.assert_named_and_stopped(["--capture", "--token-command", "true"])
+
+    def test_ffmpeg_があれば_render_は組みに行く(self):
+        with tempfile.TemporaryDirectory() as out:
+            code, _, err = self.run_main(
+                ["--render", out], which=lambda name: f"/opt/tools/{name}"
+            )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.built), 1)
+
+    def test_見るだけの実行は道具を探さない(self):
+        def which(name):
+            raise AssertionError(f"見るだけの実行が {name} を探した")
+
+        code, _, err = self.run_main([], which=which)
+        self.assertEqual(code, 0, err)
+
+    def test_見るだけの実行は_ffmpeg_の無い_PATH_でも通る(self):
+        # 既定の実行が要るのは版管理の道具だけ。OS が最初から持つ置き場 (os.defpath) に
+        # それがあり ffmpeg が無ければ、そこだけを PATH にして本物の入口を通す
+        path = os.defpath
+        if shutil.which("git", path=path) is None:
+            self.skipTest(f"{path} に版管理の道具が無い")
+        if shutil.which("ffmpeg", path=path):
+            self.skipTest(f"{path} に ffmpeg がある")
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)], cwd=REPO, capture_output=True, text=True,
+            env={**os.environ, "PATH": path},
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
