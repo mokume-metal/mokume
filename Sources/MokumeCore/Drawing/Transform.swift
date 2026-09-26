@@ -66,15 +66,15 @@ public struct Transform: Equatable, Sendable {
     /// 面の向きをこの変換で移す行列。
     ///
     /// 位置と同じ行列では移せない — 軸ごとに違う倍率を掛けると、面の向きは面に
-    /// 垂直でなくなる。左上 3x3 の逆転置がその補正で、潰れた変換のときは
-    /// 補正のしようが無いので左上 3x3 をそのまま返す。
+    /// 垂直でなくなる。左上 3x3 の逆転置がその補正で、潰れた変換
+    /// (``isCollapsed(_:)`` の判定) のときは補正のしようが無いので左上 3x3 をそのまま返す。
+    /// 倍率が小さいだけの変換は潰れていないので、逆転置で移す。
     var normalMatrix: simd_float3x3 {
         let upper = simd_float3x3(
             SIMD3<Float>(matrix.columns.0.x, matrix.columns.0.y, matrix.columns.0.z),
             SIMD3<Float>(matrix.columns.1.x, matrix.columns.1.y, matrix.columns.1.z),
             SIMD3<Float>(matrix.columns.2.x, matrix.columns.2.y, matrix.columns.2.z))
-        let determinant = upper.determinant
-        guard determinant.isFinite, abs(determinant) > .ulpOfOne else { return upper }
+        guard !Self.isCollapsed(upper.determinant) else { return upper }
         return upper.inverse.transpose
     }
 
@@ -144,15 +144,32 @@ public struct Transform: Equatable, Sendable {
 
     /// この変換を打ち消す変換。
     ///
-    /// 潰れた変換 (どこかの軸を 0 倍にしたもの) には打ち消しが無いので `nil` を返す。
+    /// 潰れた変換 (どこかの軸を 0 倍にしたもの。判定は ``isCollapsed(_:)``) には
+    /// 打ち消しが無いので `nil` を返す。倍率が小さいだけの変換には打ち消しがある。
     /// 窓から届く座標を図形の座標へ移す用途は ``Canvas/spacePosition(screenX:screenY:depth:)``
     /// が持つ。**公開するのはその 1 本だけ**で、行列そのものは面に出さない — 戻し先の
     /// 奥行きを決める引数が要る以上、行列を渡しても利用者の側で同じ式を組み直すことに
     /// なるためである。
     var inverted: Transform? {
-        let determinant = matrix.determinant
-        guard determinant.isFinite, abs(determinant) > .ulpOfOne else { return nil }
+        guard !Self.isCollapsed(matrix.determinant) else { return nil }
         return Transform(matrix: matrix.inverse)
+    }
+
+    /// 行列式から「潰れた変換」かを判定する。``inverted`` と ``normalMatrix`` が共有する。
+    ///
+    /// **潰れたとみなすのは、行列式が 0・非正規数・非有限のときだけ**である
+    /// (`isNormal` でないとき)。
+    ///
+    /// - **大きさを固定の閾値と比べない。** 行列式は倍率の積なので、潰れていない変換でも
+    ///   倍率が小さいだけでいくらでも 0 に近づく。かつて `Float.ulpOfOne` と比べていた頃は、
+    ///   一様に 0.0049 倍 (3 次元)・平面で 0.00034 倍・奥行きだけ 1e-7 倍を下回るだけで
+    ///   打ち消しと面の向きの補正を失い、`spacePosition` が (0, 0, 0) を返し、軸ごとに
+    ///   倍率が違う形で光の当たり方が狂っていた (#1541)
+    /// - **非正規数は潰れた側に倒す。** 0 ではないが、逆行列を取ると 1 / 行列式 が溢れて
+    ///   ±inf が混ざり、面や光の向きが数でなくなる。行列式がそこまで小さい変換は、
+    ///   Float では 0 倍と区別できない
+    static func isCollapsed(_ determinant: Float) -> Bool {
+        !determinant.isNormal
     }
 
     // MARK: - 部品
