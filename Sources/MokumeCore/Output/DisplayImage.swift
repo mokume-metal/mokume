@@ -34,8 +34,7 @@ public struct DisplayImage: Equatable, Sendable {
     /// 詰め物を置かない** — 詰め物のある元から作るときは、詰め物を落としてから渡す。
     ///
     /// 長さが合わないものは受け取らない。**絵にならない値をそのまま持ち回ると、
-    /// 落ちる場所が渡した所から遠ざかる**ので、作る所で止める (同じ理由で
-    /// ``subscript(_:_:)`` も範囲の外で止まる)。
+    /// 落ちる場所が渡した所から遠ざかる**ので、作る所で止める。
     public init(width: Int, height: Int, bytes: [UInt8]) {
         precondition(
             width > 0 && height > 0,
@@ -68,10 +67,15 @@ public struct DisplayImage: Equatable, Sendable {
     }
 
     /// 指定した位置の 4 成分。原点は左上。
+    ///
+    /// 範囲の外は透明 (0, 0, 0, 0) を返す (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
+    /// 読み出した画素 (``PixelBuffer``)・画素の面 (``Pixels``)・絵 (``Image/get(_:_:)``) も
+    /// 範囲の外で透明を返すので、どの口で読んでも答えは変わらない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public subscript(x: Int, y: Int) -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {
-        precondition(
-            x >= 0 && x < width && y >= 0 && y < height,
-            "The position to read is outside the image: (\(x), \(y)) / \(width)x\(height)")
+        // 置き場の位置を求める掛け算より先に見る。大きな位置では掛け算のほうが溢れて落ちる
+        guard x >= 0, y >= 0, x < width, y < height else { return (0, 0, 0, 0) }
         let base = (y * width + x) * 4
         return (bytes[base], bytes[base + 1], bytes[base + 2], bytes[base + 3])
     }
