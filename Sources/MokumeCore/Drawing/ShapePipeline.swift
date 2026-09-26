@@ -34,7 +34,7 @@ final class ShapePipeline {
     /// | 混ぜ方 | 列 | 描く断片 | 下地 | 混ぜる主体 |
     /// | --- | --- | --- | --- | --- |
     /// | `.blend` (0) | `blend` | `mokume_fragmentDirect` / `mokume_formFragmentBlend` | 読まない | 固定機能のブレンド |
-    /// | `.replace` (9) | `replace` | `mokume_fragmentDirect` / `mokume_formFragmentReplace` | 読まない | 混ぜない (そのまま置く) |
+    /// | `.replace` (9) | `replace` | `mokume_fragmentReplace` / `mokume_formFragmentReplace` | 読まない | 混ぜない (そのまま置く) |
     /// | `.add` … `.screen` (1–8) | `composite` | `mokume_fragmentMain` / `mokume_formFragment` | 読む | `mokume_composite` |
     ///
     /// 番号は `BlendMode.rawIndex` (正本は `Shaders/Kinds.metal`)。**`mokume_composite`
@@ -64,10 +64,13 @@ final class ShapePipeline {
     static let projectionBufferIndex = 1
     /// 混ぜ方の番号を渡す口の番号 (シェーダ側の `buffer(2)`)。
     static let blendModeBufferIndex = 2
-    // `buffer(3)` は欠番で、**再利用してよい**。面の中身の種類を渡していた口
-    // (`textureKindBufferIndex`) が、色を持つ字形を色のまま描く変更で要らなくなった跡である
-    // ([#468](https://github.com/mokume-metal/mokume/pull/468))。後ろを詰めなかっただけで、
-    // 空けておく理由は無い
+    /// 列が字の焼き場を読むかを渡す口の番号 (シェーダ側の `buffer(3)`)。置き換える列の
+    /// 断片 (``flatReplaceFragmentFunctionName``) だけが読む。
+    ///
+    /// 面の中身の種類を渡していた口 (`textureKindBufferIndex`) が、色を持つ字形を色のまま
+    /// 描く変更で空いた番号を使っている
+    /// ([#468](https://github.com/mokume-metal/mokume/pull/468))。
+    static let glyphPageBufferIndex = 3
     /// フレームを通して変わらない値を渡す口の番号 (シェーダ側の `buffer(4)`)。
     static let uniformsBufferIndex = 4
     /// 利用者が渡した値の口の番号 (シェーダ側の `buffer(5)`)。
@@ -233,11 +236,16 @@ final class ShapePipeline {
     static let solidVertexFunctionName = "solidVertexMain"
     /// 三角形の経路の断片の名前 (下地を読む側)。
     static let flatFragmentFunctionName = "mokume_fragmentMain"
-    /// 三角形の経路の断片の名前 (**下地を読まない側**)。
-    ///
-    /// 三角形は塗る所だけを覆うので、置き換える列でも捨てる必要が無い — 重ねる列と
-    /// 同じ入口で足りる (基本図形の経路は余白を持つので分かれる)。
+    /// 三角形の経路の断片の名前 (**下地を読まない側** — 重ねる列)。
     static let flatDirectFragmentFunctionName = "mokume_fragmentDirect"
+    /// 三角形の経路の断片の名前 (**下地を読まない側** — 置き換える列)。
+    ///
+    /// 三角形の図形は塗る所だけを覆うので捨てる所が無いが、**字は字形の外接矩形に余白を
+    /// 付けた四角**として置かれ、字形の外が余白になる。置き換える列でそこを書くと下地が
+    /// 抜けるので、字の焼き場を読む列に限って字形の被覆 0 を捨てる
+    /// ([#1557](https://github.com/mokume-metal/mokume/issues/1557))。どの列かは
+    /// ``glyphPageBufferIndex`` の口で渡す。
+    static let flatReplaceFragmentFunctionName = "mokume_fragmentReplace"
     /// 基本図形のクアッドを置く頂点関数の名前。
     static let formVertexFunctionName = "formVertexMain"
     /// 基本図形を距離関数で塗る断片の名前 (下地を読む側)。
@@ -264,14 +272,14 @@ final class ShapePipeline {
     /// 同じ絵を描く 3 本を組む (``BlendStates``)。
     ///
     /// 断片の名前を渡さなければ、三角形の経路の入口 (`mokume_fragmentMain` /
-    /// `mokume_fragmentDirect`) を使う — 利用者の断片もここから組む。
+    /// `mokume_fragmentDirect` / `mokume_fragmentReplace`) を使う — 利用者の断片もここから組む。
     private static func makeBlendStates(
         compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary,
         fragmentLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat, label: String,
         vertexFunctionName: String,
         fragmentFunctionName: String = ShapePipeline.flatFragmentFunctionName,
         blendFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName,
-        replaceFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName,
+        replaceFragmentFunctionName: String = ShapePipeline.flatReplaceFragmentFunctionName,
         formFlags: UInt32? = nil
     ) throws(RenderFailure) -> BlendStates {
         BlendStates(
