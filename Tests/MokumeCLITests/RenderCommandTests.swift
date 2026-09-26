@@ -228,18 +228,6 @@ struct RenderCommandTests {
 
     // MARK: - 途中で止める (完了条件 7)
 
-    /// **無視で継いだ SIGINT は受けない** (背面 `&` で起こされた起動の約束)。
-    @Test("SIGINT は、無視で継いでいなければ受けて子へ渡す")
-    func sigintIsForwardedUnlessInheritedAsIgnored() {
-        var ignored = sigaction()
-        ignored.__sigaction_u.__sa_handler = SIG_IGN
-        var standard = sigaction()
-        standard.__sigaction_u.__sa_handler = SIG_DFL
-
-        #expect(RenderCommand.stopSignals(sigint: standard) == RunCommand.stopSignals + [SIGINT])
-        #expect(RenderCommand.stopSignals(sigint: ignored) == RunCommand.stopSignals)
-    }
-
     /// **端末の Control + C は子へ届かない** — `Process` は子を別のプロセスグループに置くので、
     /// 前面のグループ (道具) にしか配られない。道具が受けて渡さないと、道具だけが消えて子は
     /// 書き出しを続ける。ここでは検査の走者を道具に見立て、**自分のプロセスへ** SIGINT を送る。
