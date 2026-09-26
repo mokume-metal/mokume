@@ -30,9 +30,6 @@ extension Canvas {
     /// 断片へ渡す「世界をカメラの側へ移す行列」。
     var viewMatrix: simd_float4x4 { currentCamera.viewMatrix }
 
-    /// 視線が進む向き。
-    var viewForward: SIMD3<Float> { currentCamera.forward }
-
     /// 画面の横方向。
     var viewRight: SIMD3<Float> { currentCamera.right }
 
@@ -460,8 +457,11 @@ extension Canvas {
 
     /// 立体の線を、太さのある帯でなぞる。
     ///
-    /// 帯は**視線に正対させる** — そうしないと線を回したときに太さが変わり、真横を
-    /// 向いた線が消える。太さは画面の画素で測るので、奥にあるものほど世界では広く作る。
+    /// 帯は**画面に写した線に正対させる** — 横向きを画面上の線の垂線に取る。そう
+    /// しないと線を回したときに太さが変わり、真横を向いた線が消える。透視投影で
+    /// 正対させる相手はカメラ全体の軸ではなく、目から線の各点へ向かう視線である
+    /// (画面の中心から外れた奥行きのある線が細った・#1546)。太さは画面の画素で測る
+    /// ので、奥にあるものほど世界では広く作る。
     ///
     /// 面の向きは持たせない (ゼロ)。**線と点は光を受けない** — 平面の輪郭が光を受けない
     /// のと同じ扱いで、向きを持たない頂点をそのままの色で出すのは断片の側の約束である。
@@ -480,16 +480,23 @@ extension Canvas {
         strokeRing(
             count: points.count, isClosed: isClosed, curveSteps: curveSteps,
             endSquare: {
-                appendSolidSquare(
-                    at: points[$0], awayFrom: points[$1], shape: shapePoints[$0], half: half)
+                appendSolidStroke(
+                    .endSquare(points[$0], awayFrom: points[$1]),
+                    shape: (shapePoints[$0], shapePoints[$0]), half: half)
             },
             band: {
-                appendSolidBand(
-                    points[$0], points[$1],
+                appendSolidStroke(
+                    .band(points[$0], points[$1]),
                     shape: (shapePoints[$0], shapePoints[$1]), half: half)
             },
-            disc: { appendSolidDisc(at: points[$0], shape: shapePoints[$0], half: half) },
-            square: { appendSolidSquare(at: points[$0], shape: shapePoints[$0], half: half) })
+            disc: {
+                appendSolidStroke(
+                    .disc(points[$0]), shape: (shapePoints[$0], shapePoints[$0]), half: half)
+            },
+            square: {
+                appendSolidStroke(
+                    .square(points[$0]), shape: (shapePoints[$0], shapePoints[$0]), half: half)
+            })
     }
 
     /// 置いた形の稜線を、いまの変換と線で引く (``SolidEdges``)。
@@ -514,15 +521,76 @@ extension Canvas {
         strokeNet(
             count: placed.count, edges: net.edges,
             endSquare: {
-                appendSolidSquare(
-                    at: placed[$0], awayFrom: placed[$1], shape: net.points[$0], half: half)
+                appendSolidStroke(
+                    .endSquare(placed[$0], awayFrom: placed[$1]),
+                    shape: (net.points[$0], net.points[$0]), half: half)
             },
             band: {
-                appendSolidBand(
-                    placed[$0], placed[$1], shape: (net.points[$0], net.points[$1]), half: half)
+                appendSolidStroke(
+                    .band(placed[$0], placed[$1]), shape: (net.points[$0], net.points[$1]),
+                    half: half)
             },
-            disc: { appendSolidDisc(at: placed[$0], shape: net.points[$0], half: half) },
-            square: { appendSolidSquare(at: placed[$0], shape: net.points[$0], half: half) })
+            disc: {
+                appendSolidStroke(
+                    .disc(placed[$0]), shape: (net.points[$0], net.points[$0]), half: half)
+            },
+            square: {
+                appendSolidStroke(
+                    .square(placed[$0]), shape: (net.points[$0], net.points[$0]), half: half)
+            })
+    }
+
+    /// 線の部品を 1 つ積む。**記録の間は、置くときに組み直せるよう元を覚える** (#1547)。
+    ///
+    /// 帯は視点に合わせて組むので、記録したときの視点で組んだ帯は置いた先で合わない
+    /// (``SolidStrokePiece``)。頂点はいまの視点で組んで積み、どの区間がどの部品かを
+    /// ``recordedSolidStrokes`` に残す。
+    private func appendSolidStroke(
+        _ kind: SolidStrokePiece.Kind, shape: (SIMD3<Float>, SIMD3<Float>), half: Float
+    ) {
+        let start = solidVertices.count
+        buildSolidStroke(kind, shape: shape, half: half)
+        let count = solidVertices.count - start
+        guard recordingShape, count > 0 else { return }
+        recordedSolidStrokes.append(
+            SolidStrokePiece(
+                kind: kind, weight: style.strokeWeight, vertexStart: start, vertexCount: count))
+    }
+
+    /// 線の部品を組む。積むか位置だけを受け取るかは ``solidStrokeCapture`` が決める。
+    private func buildSolidStroke(
+        _ kind: SolidStrokePiece.Kind, shape: (SIMD3<Float>, SIMD3<Float>), half: Float
+    ) {
+        switch kind {
+        case let .band(start, end): appendSolidBand(start, end, shape: shape, half: half)
+        case let .disc(center): appendSolidDisc(at: center, shape: shape.0, half: half)
+        case let .square(center): appendSolidSquare(at: center, shape: shape.0, half: half)
+        case let .endSquare(center, from):
+            appendSolidSquare(at: center, awayFrom: from, shape: shape.0, half: half)
+        }
+    }
+
+    /// 線の部品を、**いまの視点で**組み直した頂点の位置。並びは積んだときと同じ。
+    ///
+    /// 保持した形を置くときに、置いた後の点へ移した部品を渡す
+    /// (`placeSolid(_:of:instances:)`)。組み直しで何も積まない部品 (点に潰れる帯) は、
+    /// 同じ数の頂点を 1 点へ畳んで面積を 0 にする — 頂点の数は記録と変えられない
+    /// (添字の列と区間が数で指している)。
+    func rebuiltSolidStroke(_ piece: SolidStrokePiece) -> [SIMD3<Float>] {
+        // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組んだときの太さで組む
+        let savedWeight = style.strokeWeight
+        style.strokeWeight = piece.weight
+        solidStrokeCapture = []
+        buildSolidStroke(
+            piece.kind, shape: (piece.anchor, piece.anchor), half: piece.weight / 2)
+        var corners = solidStrokeCapture ?? []
+        solidStrokeCapture = nil
+        style.strokeWeight = savedWeight
+        if corners.count != piece.vertexCount {
+            corners = Array(repeating: piece.anchor, count: piece.vertexCount)
+        }
+        if piece.isReversed { Self.reverseTriangles(in: &corners, from: 0) }
+        return corners
     }
 
     /// 稜線を使い回す。**線を引いた形にだけ作る。**
@@ -539,18 +607,48 @@ extension Canvas {
         _ a: SIMD3<Float>, _ b: SIMD3<Float>,
         shape: (SIMD3<Float>, SIMD3<Float>), half: Float
     ) {
-        let along = b - a
-        guard length_squared(along) > 0 else { return }
-        var side = cross(along, viewForward)
-        // 視線に沿って伸びる線は横向きが決まらない。画面の横方向へ倒す
-        if length_squared(side) <= 0 { side = viewRight }
-        side = normalize(side)
+        guard length_squared(b - a) > 0 else { return }
+        // 画面で点に潰れる線 (目を通る線) は帯の幅を持たない。端の形だけが出る
+        guard let side = screenAcross(a, b) else { return }
         let atA = side * (half * worldPerPixel(at: a))
         let atB = side * (half * worldPerPixel(at: b))
         appendSolidStrokeTriangle(
             a + atA, b + atB, b - atB, shape: (shape.0, shape.1, shape.1))
         appendSolidStrokeTriangle(
             a + atA, b - atB, a - atA, shape: (shape.0, shape.1, shape.0))
+    }
+
+    /// 線分を画面に写したときの垂線を、**世界の向き**で返す (長さ 1)。
+    ///
+    /// 向きは画面の横 (`viewRight`) と縦 (`viewDown`) の組み合わせ — 視線に直交する
+    /// 面の中の向きなので、そちらへ `worldPerPixel(at:)` の長さだけ動かすと、画面で
+    /// ちょうど 1 画素動く (透視でもその点の奥行きのまま動くため)。
+    ///
+    /// **正対させる相手はカメラ全体の軸ではなく、画面に写った線である** (#1546)。
+    /// 透視投影では、奥行きのある線は画面の中心から外れるほど斜めに写るので、軸との
+    /// 外積で決めた横向きは画面の線とずれ、帯が細る (ずれが揃うと線が消える)。
+    ///
+    /// 透視では目と線を含む平面の法線 `cross(a − eye, b − eye)` を視点の座標で取る。
+    /// その横と縦の成分が、画面に写した線の垂線の向きになる — 端点を割り算で画面へ
+    /// 落とさないので、目の後ろへ回る端点があっても向きが決まる。平行投影では画面の
+    /// 線は視点の座標での線そのものなので、その向きを 90° 回す。
+    ///
+    /// 画面での長さが 0 の線 (透視で目を通る線・平行で視線に沿う線) には `nil` を返す。
+    private func screenAcross(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float>? {
+        let camera = currentCamera
+        let (right, down) = (camera.right, camera.down)
+        let normal: SIMD2<Float>
+        switch camera.projection {
+        case .perspective:
+            let plane = cross(a - camera.eye, b - camera.eye)
+            normal = SIMD2(dot(plane, right), dot(plane, down))
+        case .orthographic:
+            let along = b - a
+            normal = SIMD2(-dot(along, down), dot(along, right))
+        }
+        let size = length(normal)
+        guard size > 0, size.isFinite else { return nil }
+        return right * (normal.x / size) + down * (normal.y / size)
     }
 
     /// 視線に正対する円板を置く (丸い端点と丸い角)。
@@ -574,22 +672,21 @@ extension Canvas {
 
     /// 視線に正対し、線の向きに沿った正方形を置く (出っ張らせる端 — [#1535])。
     ///
-    /// 軸は帯 (`appendSolidBand`) と同じ横向き `cross(along, viewForward)` と、それに直交して
-    /// 視線に正対した向きで取る。帯と合わせて、画面で見て線を太さの半分だけ延ばした形に
-    /// なる。横向きが決まらない (線が視線に沿う・長さ 0) ときは、画面の軸に沿った正方形へ倒す。
+    /// 軸は帯 (`appendSolidBand`) と同じ横向き (画面に写した線の垂線 `screenAcross`) と、
+    /// 画面の中でそれに直交する向き (画面に写した線の向き) で取る。帯と合わせて、画面で
+    /// 見て線を太さの半分だけ延ばした形になる。横向きが決まらない (画面で点に潰れる線・
+    /// 長さ 0) ときは、画面の軸に沿った正方形へ倒す。
     ///
     /// [#1535]: https://github.com/mokume-metal/mokume/issues/1535
     private func appendSolidSquare(
         at center: SIMD3<Float>, awayFrom from: SIMD3<Float>, shape: SIMD3<Float>, half: Float
     ) {
-        let side = cross(center - from, viewForward)
-        guard length_squared(side) > 0 else {
+        guard length_squared(center - from) > 0, let right = screenAcross(from, center) else {
             return appendSolidSquare(at: center, shape: shape, half: half)
         }
-        let right = normalize(side)
-        appendSolidSquare(
-            at: center, right: right, down: normalize(cross(viewForward, right)), shape: shape,
-            half: half)
+        // 正方形は中心について対称なので、画面の中で 90° 回す向きはどちらでもよい
+        let down = viewRight * -dot(right, viewDown) + viewDown * dot(right, viewRight)
+        appendSolidSquare(at: center, right: right, down: down, shape: shape, half: half)
     }
 
     /// 視線に正対する正方形を、`right` / `down` の 2 軸で張る。
@@ -610,6 +707,11 @@ extension Canvas {
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
         shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)
     ) {
+        // 組み直しの間は積まずに、位置だけを渡す (``rebuiltSolidStroke(_:)``)
+        if solidStrokeCapture != nil {
+            solidStrokeCapture?.append(contentsOf: [a, b, c].map(liftedTowardViewer))
+            return
+        }
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)
         appendSolidVertex(
             position: liftedTowardViewer(a), shapePosition: shape.0, normal: .zero,

@@ -91,6 +91,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+from collections.abc import Callable
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -713,8 +714,24 @@ def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str]) -> i
 
 # ---------------------------------------------------------------- 入口
 
+# **撮る側が要る道具と、その入れ方** (#1598)。ffmpeg は動きの束ね (`_bundle_gif`) と
+# 反転の測り (`average_difference`) の両方に要るので、無ければ撮り終えても最後まで
+# 通らない — それは撮る前に分かる。見るだけの既定の実行は ffmpeg を使わないので探さない
+NEEDED_TO_SHOOT = {"ffmpeg": "brew install ffmpeg"}
 
-def main() -> int:
+
+def missing_tool(which: Callable[[str], str | None]) -> str | None:
+    """撮るのに要る道具のうち見つからない最初の 1 つを、入れ方を添えた 1 行で返す。"""
+    for tool, install in NEEDED_TO_SHOOT.items():
+        if which(tool) is None:
+            return f"{tool} が見つからない — 撮るのに要る。入れるには {install}"
+    return None
+
+
+def main(
+    argv: list[str] | None = None, which: Callable[[str], str | None] = shutil.which
+) -> int:
+    """`which` は道具を探す先。検査が「無い手元」を作るために差し替える。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--render", type=pathlib.Path, help="撮って置き場へ書き出す (GPU が要る)")
     parser.add_argument("--capture", action="store_true", help="撮って上げて書き戻す (GPU と鍵が要る)")
@@ -724,7 +741,15 @@ def main() -> int:
         action="store_true",
         help="反転したときの差を 1 本ずつ出す (境目を決め直すときに見る)",
     )
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
+
+    # **組む前に確かめる。** 撮り終えた後で道具が無いと分かると、組んで撮った時間が
+    # 丸ごと無駄になり、止まり方も traceback になる
+    if arguments.render or arguments.capture:
+        missing = missing_tool(which)
+        if missing:
+            print(missing, file=sys.stderr)
+            return 1
 
     root = pathlib.Path(
         subprocess.run(

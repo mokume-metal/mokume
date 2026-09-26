@@ -16,16 +16,33 @@ nonisolated(unsafe) var runStopSignal: sig_atomic_t = 0
 
 /// スケッチを作って走らせる。
 enum RunCommand {
-    /// 道具だけへ届いたら、スケッチへも渡す合図。
+    /// 道具だけへ届いたら、スケッチへも渡す合図。`run` も `render` もこれを受ける。
     ///
     /// **道具の PID だけに送る経路で孤児が残る。** 既定のままだと道具だけが死に、
     /// スケッチは launchd に付け替えられて窓ごと残る — エージェントやスクリプトが止める
     /// 経路で実際に踏んだ ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
     ///
-    /// **SIGINT は入れない。** 端末の Control + C はプロセスグループ全体に届くので子へは
-    /// 既に届いている。背面 (`&`) で起こされて SIGINT を無視している起動の約束も、
-    /// 受け口を置くと上書きしてしまう。
-    nonisolated static let stopSignals: [Int32] = [SIGTERM, SIGHUP]
+    /// **端末の Control + C (SIGINT) もこの経路である。** `Process` は子を別のプロセス
+    /// グループに置く (`ps -o pgid` で確かめた) ので、端末が前面のグループへ配る SIGINT は
+    /// 道具にしか届かない。受けずにいると道具だけがその場で終わり、スケッチが残る
+    /// ([#1618](https://github.com/mokume-metal/mokume/issues/1618))。
+    ///
+    /// **無視で継いだ SIGINT には置かない。** 背面 (`&`) で起こされた起動の約束で、子も同じ
+    /// 無視を継ぐので、両方が同じく受け流す (子の側の規則は `StopSignals` と同じ)。
+    ///
+    /// - Parameter current: いまの SIGINT の受け口。**検査から渡す** — 既定はこのプロセスのもの。
+    nonisolated static func stopSignals(sigint current: sigaction = currentAction(SIGINT))
+        -> [Int32]
+    {
+        StopSignals.isIgnored(current) ? [SIGTERM, SIGHUP] : [SIGTERM, SIGHUP, SIGINT]
+    }
+
+    /// その合図のいまの受け口。
+    nonisolated static func currentAction(_ number: Int32) -> sigaction {
+        var action = sigaction()
+        sigaction(number, nil, &action)
+        return action
+    }
 
     /// 構成を渡さないときの名乗り。**道具立てへ渡す引数は変えない** — ここで名乗るのは
     /// 「この数字がどの土俵のものか」だけで、`BuildReport.configuration` と同じ言葉を使う。
@@ -367,10 +384,11 @@ enum RunCommand {
     /// - Parameter environment: 子へ渡す環境 (``childEnvironment(_:stamp:reportingRate:confirmingCloseFor:rendering:)``)。
     ///   **何を載せるかは口が決める** — `run` は速さの名乗りと × の確認を、`render` は書き出しの
     ///   頼みを載せる。待ち方と合図の運び方は口によらず同じなので、ここは 1 本にする。
-    /// - Parameter signals: 道具が受けて子へ渡す合図。既定は ``stopSignals`` (`render` は足す)。
+    /// - Parameter signals: 道具が受けて子へ渡す合図。既定は ``stopSignals(sigint:)`` で、
+    ///   **呼ぶたびにいまの SIGINT の受け口を見て決める。**
     static func launch(
         _ executable: URL, in directory: URL, environment: [String: String] = childEnvironment(),
-        forwarding signals: [Int32] = stopSignals
+        forwarding signals: [Int32] = stopSignals()
     ) throws(CommandFailure) {
         let process = Process()
         process.executableURL = executable
@@ -412,7 +430,7 @@ enum RunCommand {
     ///
     /// - Parameter signals: 受け口を置く合図。
     /// - Returns: 置き換えた合図と、置き換える前の受け口。``restoreStopHandlers(_:)`` へ渡す。
-    static func installStopForwarding(_ signals: [Int32] = stopSignals)
+    static func installStopForwarding(_ signals: [Int32] = stopSignals())
         -> [(number: Int32, previous: sigaction)]
     {
         runStopSignal = 0

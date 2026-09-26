@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import simd
 
 @testable import MokumeCore
 
@@ -94,6 +95,53 @@ struct CircleSegmentTests {
         var transform = Transform.identity
         transform.scale(x: 4, y: 0)  // 縦が潰れる
         #expect(transform.inverted == nil)
+    }
+
+    // MARK: - 小さいだけの倍率 (#1541)
+    //
+    // 潰れていない変換には、倍率がどれだけ小さくても打ち消しがある。行列式の絶対値を
+    // 固定の閾値 (`Float.ulpOfOne`) と比べていた頃は、一様に 0.0049 倍 (3 次元) を
+    // 下回るだけで「潰れた」とみなし、打ち消しも面の向きの補正も失っていた。
+
+    @Test("小さいだけの倍率には打ち消しがあり、点を往復させて戻せる")
+    func aTinyScaleStillHasAnInverse() throws {
+        var transform = Transform.identity
+        transform.translate(x: 80, y: 80, z: 0)
+        transform.scale(x: 0.004, y: 0.004, z: 0.004)  // 行列式 6.4e-8
+
+        let inverse = try #require(transform.inverted)
+        for point in [SIMD3<Float>(5000, 0, 0), SIMD3(-2500, 1200, 300)] {
+            let moved = transform.apply(x: point.x, y: point.y, z: point.z)
+            let back = inverse.apply(x: moved.x, y: moved.y, z: moved.z)
+            #expect(simd_length(back - point) <= simd_length(point) * 1e-4, "戻らない: \(back)")
+        }
+    }
+
+    @Test("小さいだけの倍率でも、面の向きは逆転置で移る")
+    func aTinyScaleStillCorrectsNormals() {
+        // scale(0.01, 0.01, 0.001) の逆転置は対角 (100, 100, 1000)。
+        // 左上 3x3 のまま (0.01, 0.01, 0.001) で移すと、斜めの面の向きが奥行きから離れる
+        var transform = Transform.identity
+        transform.scale(x: 0.01, y: 0.01, z: 0.001)  // 行列式 1e-7
+
+        let normal = simd_normalize(transform.normalMatrix * SIMD3<Float>(1, 0, 1))
+        let expected = simd_normalize(SIMD3<Float>(100, 0, 1000))
+        #expect(simd_length(normal - expected) < 1e-4, "向きが違う: \(normal)")
+    }
+
+    @Test("行列式が Float の正規数を下回る変換は潰れた側に倒れ、無限を返さない")
+    func aDeterminantBelowTheNormalRangeCountsAsCollapsed() {
+        // 行列式 1e-39 は非正規数。0 ではないが、逆行列を取ると 1 / 行列式 が溢れて
+        // ±inf が混ざる。それが面や光の向きへ流れると陰影が数でなくなる
+        var transform = Transform.identity
+        transform.scale(x: 1e-13, y: 1e-13, z: 1e-13)
+
+        #expect(transform.inverted == nil)
+        let columns = [
+            transform.normalMatrix.columns.0, transform.normalMatrix.columns.1,
+            transform.normalMatrix.columns.2,
+        ]
+        #expect(columns.allSatisfy { $0.x.isFinite && $0.y.isFinite && $0.z.isFinite })
     }
 
     @Test("合成の順序が結果を変える")

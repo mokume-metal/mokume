@@ -146,6 +146,19 @@ public final class Canvas {
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     var recordedStrokeRanges: [Range<Int>] = []
 
+    /// 保持する形を記録している間に、立体の線が積んだ部品の元 (``SolidStrokePiece``)。
+    ///
+    /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ帯は置いた先で
+    /// 合わない。**部品の元を覚えておき、置くときに組み直す** (`Shape.solidStrokes`)。
+    /// 記録を終えると `createShape` が抜く。
+    var recordedSolidStrokes: [SolidStrokePiece] = []
+
+    /// 立体の線の部品を組み直している間、頂点を積む代わりに位置を受け取る先。
+    ///
+    /// 組み直しは即時に描くときと**同じ関数** (帯・円板・正方形) を通す。向き・幅・寄せの
+    /// 式を 2 か所に書くと、片方だけ直した誤りが保持した形でだけ現れる (#1547)。
+    var solidStrokeCapture: [SIMD3<Float>]?
+
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///
     /// 同じ形が 2 つ目に来たら、ここに控えた周から雛形を積み直して畳む。1 つ目から
@@ -1434,6 +1447,7 @@ public final class Canvas {
     func discardPending() {
         vertices.removeAll(keepingCapacity: true)
         recordedStrokeRanges.removeAll(keepingCapacity: true)
+        recordedSolidStrokes.removeAll(keepingCapacity: true)
         solidVertices.removeAll(keepingCapacity: true)
         solidIndices.removeAll(keepingCapacity: true)
         solidInstances.removeAll(keepingCapacity: true)

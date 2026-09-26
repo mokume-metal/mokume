@@ -286,6 +286,92 @@ struct LightTests {
         #expect(try litFraction(fromTheRight: true) > litFraction(fromTheRight: false))
     }
 
+    // MARK: - 小さいだけの倍率 (#1541)
+    //
+    // 潰れていない変換なら、倍率が小さいだけで光の当たり方は変わらない。行列式の
+    // 絶対値を固定の閾値 (`Float.ulpOfOne`) と比べていた頃は、0.0049 倍 (3 次元) を
+    // 下回ると逆転置を諦め、軸ごとに倍率が違う形で面の向きと光の向きが狂っていた。
+
+    /// 面の中心に 1 つ置く絵。`lights()` を当てるかどうかと、置くものだけを差し替えられる。
+    private func centeredScene(
+        lit: Bool = true, _ body: @escaping (Canvas) -> Void
+    ) throws -> PixelBuffer {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        try canvas.draw {
+            canvas.background(black)
+            if lit { canvas.lights() }
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.push()
+            canvas.translate(80, 80, 0)
+            body(canvas)
+            canvas.pop()
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// どれかの成分が `tolerance` を超えて違う画素の数 (作業空間の線形の値で比べる)。
+    private func differingPixels(_ one: PixelBuffer, _ other: PixelBuffer, tolerance: Float = 0.02)
+        -> Int
+    {
+        var differing = 0
+        for y in 0..<one.height {
+            for x in 0..<one.width {
+                let (a, b) = (one[x, y], other[x, y])
+                let gap = max(abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue))
+                if gap > tolerance { differing += 1 }
+            }
+        }
+        return differing
+    }
+
+    @Test(
+        "小さい倍率で平たく縮めた球も、同じ大きさの楕円体と同じ光を受ける",
+        arguments: [
+            (SIMD3<Float>(0.01, 0.01, 0.001), Float(4000), SIMD3<Float>(40, 40, 4)),
+            (SIMD3<Float>(0.005, 0.005, 0.0025), Float(8000), SIMD3<Float>(40, 40, 20)),
+        ])
+    func aTinyNonUniformScaleShadesLikeTheEllipsoid(
+        scale: SIMD3<Float>, radius: Float, radii: SIMD3<Float>
+    ) throws {
+        let scaled = try centeredScene {
+            $0.scale(scale.x, scale.y, scale.z)
+            $0.sphere(radius)
+        }
+        let ellipsoid = try centeredScene { $0.ellipsoid(radii.x, radii.y, radii.z) }
+
+        // 面の 1% まで。倍率を 10 倍にした同じ形でも、分け方の丸めで 132 画素は違う
+        #expect(differingPixels(scaled, ellipsoid) <= 256)
+        #expect(abs(scaled[52, 80].red - ellipsoid[52, 80].red) <= 0.02)
+    }
+
+    @Test("一様に縮めた球は、縮めずに置いた同じ大きさの球と同じ絵になる")
+    func aTinyUniformScaleShadesLikeTheSphere() throws {
+        let scaled = try centeredScene {
+            $0.scale(0.004, 0.004, 0.004)
+            $0.sphere(10000)
+        }
+        let plain = try centeredScene { $0.sphere(40) }
+        #expect(differingPixels(scaled, plain) == 0)
+    }
+
+    @Test("小さい倍率の中で置いた光も、倍率を戻した向きから差す")
+    func aLightPlacedUnderATinyScaleKeepsItsDirection() throws {
+        // (1, 0, -1) を scale(0.001, 0.001, 0.1) の逆転置で移すと (1000, 0, -10) の向き
+        let inside = try centeredScene(lit: false) { canvas in
+            canvas.push()
+            canvas.scale(0.001, 0.001, 0.1)
+            canvas.directionalLight(self.white, 1, 0, -1)
+            canvas.pop()
+            canvas.sphere(50)
+        }
+        let outside = try centeredScene(lit: false) { canvas in
+            canvas.directionalLight(self.white, 1000, 0, -10)
+            canvas.sphere(50)
+        }
+        #expect(differingPixels(inside, outside) <= 256)
+    }
+
     // MARK: - 道具
 
     private enum Flip { case vertical, horizontal }

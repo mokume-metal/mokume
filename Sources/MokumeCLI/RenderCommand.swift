@@ -57,6 +57,7 @@ enum RenderCommand {
     /// 走らせて、書き終えるまで待つ。
     ///
     /// **待ち方と合図の運び方は `run` と同じ 1 本を通る** (``RunCommand/launch(_:in:environment:forwarding:)``)。
+    /// 受ける合図も同じで、端末の Control + C を含む (``RunCommand/stopSignals(sigint:)``)。
     /// 受けた終わりの合図は子へ SIGTERM として渡り、子は終わりの経路で撮る係を閉じる —
     /// それまでの枚が入った開けるファイルが残り、道具は子が閉じ終えるのを待ってから終わる。
     ///
@@ -67,34 +68,11 @@ enum RenderCommand {
         do {
             try RunCommand.launch(
                 executable, in: directory,
-                environment: RunCommand.childEnvironment(rendering: request),
-                forwarding: stopSignals())
+                environment: RunCommand.childEnvironment(rendering: request))
         } catch {
             guard case .sketchExited(let status) = error else { throw error }
             throw .renderIncomplete(destination: request.destination, status: status)
         }
-    }
-
-    /// 道具が受けて子へ渡す終わりの合図。**`run` の合図に SIGINT を足す。**
-    ///
-    /// **端末の Control + C は子へ届かない。** `Process` は子を別のプロセスグループに置く
-    /// (書き出しの途中で `ps -o pgid` を見て確かめた) ので、端末が前面のグループへ配る SIGINT は
-    /// 道具にしか届かない。受けずにいると道具だけがその場で終わり、子は窓も無いまま書き出しを
-    /// 最後まで続ける — 止めたつもりの人の手元で、見えない書き出しが走り続ける。
-    ///
-    /// **無視で継いだ SIGINT には置かない。** 背面 (`&`) で起こされた起動の約束で、子も同じ
-    /// 無視を継ぐので、両方が同じく受け流す (子の側の規則は `StopSignals` と同じ)。
-    ///
-    /// - Parameter current: いまの SIGINT の受け口。**検査から渡す** — 既定はこのプロセスのもの。
-    static func stopSignals(sigint current: sigaction = currentAction(SIGINT)) -> [Int32] {
-        StopSignals.isIgnored(current) ? RunCommand.stopSignals : RunCommand.stopSignals + [SIGINT]
-    }
-
-    /// その合図のいまの受け口。
-    static func currentAction(_ number: Int32) -> sigaction {
-        var action = sigaction()
-        sigaction(number, nil, &action)
-        return action
     }
 
     /// 書き終えたときの 1 行。**どこへ何枚書いたか**を名乗る。
