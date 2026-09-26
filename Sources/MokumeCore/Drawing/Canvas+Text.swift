@@ -58,7 +58,14 @@ extension Canvas {
     ///
     /// **1 文字ずつの送り幅の合計**なので、部分に切って足しても全体と一致する。
     /// 末尾の空白も幅に数える。改行を含む文字列では、いちばん長い行の幅を返す。
+    ///
+    /// **大きさ 0 では 0 を返す** (高さと深さも同じ)。描く口と同じ見張りで帰る — 大きさ 0 を
+    /// 書体へ渡すと、CoreText はそれを書体ごとの既定の大きさ (システム書体なら 13pt) と
+    /// 読み替え、何も描かない文字列に幅があると答えてしまう ([#1539])。
+    ///
+    /// [#1539]: https://github.com/mokume-metal/mokume/issues/1539
     public func textWidth(_ string: String) -> Float {
+        guard style.textSize > 0 else { return 0 }
         let face = typeface
         var widest: Float = 0
         for line in string.lines {
@@ -67,9 +74,9 @@ extension Canvas {
         return widest
     }
 
-    public func textAscent() -> Float { typeface.ascent }
+    public func textAscent() -> Float { style.textSize > 0 ? typeface.ascent : 0 }
 
-    public func textDescent() -> Float { typeface.descent }
+    public func textDescent() -> Float { style.textSize > 0 ? typeface.descent : 0 }
 
     // MARK: - 描く
 
