@@ -58,6 +58,7 @@ extension Canvas {
         // [#1172]: https://github.com/mokume-metal/mokume/issues/1172
         let savedStacks = takeStacks()
         let strokeRangeStart = recordedStrokeRanges.count
+        let solidStrokeStart = recordedSolidStrokes.count
 
         body()
 
@@ -72,6 +73,14 @@ extension Canvas {
         }
         recordedStrokeRanges.removeLast(recordedStrokeRanges.count - strokeRangeStart)
         let recordedSolid = Array(solidVertices[solidStart...])
+        // 立体の線の部品も形自身の 0 起点へ引き戻し、覚えていた側からは抜く (入れ子の記録
+        // なら外側の記録には、置き直した部品として `placeSolid` が積み直す)
+        let recordedPieces = recordedSolidStrokes[solidStrokeStart...].map { piece in
+            var piece = piece
+            piece.vertexStart -= solidStart
+            return piece
+        }
+        recordedSolidStrokes.removeLast(recordedSolidStrokes.count - solidStrokeStart)
         // **添字の値も形自身の 0 起点へ引き戻す。** 値は頂点の並びの番号そのものなので、
         // 区間だけずらすと記録した形が溜め場に残っていた頂点を指す (``Shape/solidIndices``)
         let recordedIndices = solidIndices[solidIndexStart...].map { $0 - UInt32(solidStart) }
@@ -106,7 +115,8 @@ extension Canvas {
 
         return Shape(
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,
-            forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes)
+            forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes,
+            solidStrokes: recordedPieces)
     }
 
     // 保持した形を置く。
@@ -266,18 +276,30 @@ extension Canvas {
     /// 持ち歩かないので、置き場所を並べたままだと、中で書いた変換が外側の記録から落ちる
     /// (組み込みの形の ``placeMesh(_:isDerived:mesh:)`` と同じ理由)。
     ///
+    /// **立体の線を持つ区間も、置き場所ごとに頂点へ焼く** ([#1547])。線の帯は視点に
+    /// 合わせて組むので、置き場所の行列を掛けただけでは向き・幅・目の側への寄せが記録した
+    /// ときのまま残る。焼いた後で、線の頂点の位置だけを置いた後の点で組み直す
+    /// (``placeSolidStrokes(_:from:to:by:reversed:)``)。線を持たない区間は並べたまま置く。
+    ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
+    /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     func placeSolid(
         _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>
     ) {
         beginSolids()
-        if recordingShape {
-            let vertices = shape.solidVertices[run.start..<(run.start + run.count)]
+        let runRange = run.start..<(run.start + run.count)
+        let pieces = shape.solidStrokes.filter { runRange.contains($0.vertexStart) }
+        if recordingShape || !pieces.isEmpty {
+            let vertices = shape.solidVertices[runRange]
             let indices: ArraySlice<UInt32>? =
                 run.isIndexed
                 ? shape.solidIndices[run.indexStart..<(run.indexStart + run.indexCount)] : nil
             for instance in instances {
+                let base = solidVertices.count
                 appendPlacedSolidVertices(vertices, indices: indices, placedBy: instance)
+                placeSolidStrokes(
+                    pieces, from: run.start, to: base, by: instance,
+                    reversed: instance.isMirrored && indices == nil)
             }
             return
         }
@@ -298,6 +320,31 @@ extension Canvas {
             {
                 solidInstances.append(instance)
                 remaining = remaining.dropFirst()
+            }
+        }
+    }
+
+    /// 焼いて積んだ区間のうち、立体の線の頂点を置いた後の点で組み直す。
+    ///
+    /// `source` は区間の形の中での先頭、`base` は焼いた頂点の溜め場での先頭。`reversed` は
+    /// 焼くときに三角形の巻き方を裏返したか (鏡映した置き場所で、添字を持たない区間)。
+    ///
+    /// **組み立ての中では組み直さず、部品を外側の記録へ渡す。** 置き場所が決まるのは
+    /// 外側の形を置くときなので、そこで組み直す (``createShape(_:)``)。
+    private func placeSolidStrokes(
+        _ pieces: [SolidStrokePiece], from source: Int, to base: Int, by instance: SolidInstance,
+        reversed: Bool
+    ) {
+        for piece in pieces {
+            var moved = piece.moved(by: instance.matrix)
+            moved.vertexStart = base + (piece.vertexStart - source)
+            if reversed { moved.isReversed.toggle() }
+            if recordingShape {
+                recordedSolidStrokes.append(moved)
+                continue
+            }
+            for (offset, corner) in rebuiltSolidStroke(moved).enumerated() {
+                solidVertices[moved.vertexStart + offset].position = corner
             }
         }
     }
