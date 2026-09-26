@@ -151,10 +151,7 @@ final class NoiseAndSeed: Sketch {
     }
 
     // 断片の側にあるものを Swift で書いたもの。**式を揃えるためだけに置いてある**
-    // (断片の `mix` / `clamp` にあたるものは `lerp` / `constrain` がそのまま使える)
+    // (断片の `mix` / `clamp` にあたるものは `lerp` / `constrain` がそのまま使え、
+    // `smoothstep` は断片と同じ名前・同じ式のものがある)
     private func fract(_ value: Float) -> Float { value - value.rounded(.down) }
-    private func smoothstep(_ low: Float, _ high: Float, _ value: Float) -> Float {
-        let t = constrain((value - low) / (high - low), 0, 1)
-        return t * t * (3 - 2 * t)
-    }
 }

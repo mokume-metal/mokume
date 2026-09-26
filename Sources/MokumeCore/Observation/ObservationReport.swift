@@ -49,7 +49,8 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
         public let time: Double
         /// 絵の要約。
         public let stats: FrameStats?
-        /// このフレームでスケッチが差し出した値。1 つも無ければ `nil`。
+        /// このフレームでスケッチが差し出した値。測って残っている値 (``Sketch/measure(_:_:)``)
+        /// を含む。1 つも無ければ `nil`。
         public let values: [String: ExposedValue]?
     }
 
@@ -69,7 +70,7 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
     public let stats: FrameStats?
     /// 走らせている重さ。速い遅いを絵からの推測ではなく数値で答えるため。
     public let load: RuntimeLoad?
-    /// スケッチがこのフレームで差し出した値。
+    /// スケッチがこのフレームで差し出した値。測って残っている値 (``Sketch/measure(_:_:)``) を含む。
     public let values: [String: ExposedValue]?
     /// この絵を生んだ入力の世代。読み手は等値比較だけを行う。
     public let stamp: String?

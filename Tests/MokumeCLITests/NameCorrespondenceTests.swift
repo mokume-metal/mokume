@@ -143,8 +143,13 @@ struct NameCorrespondenceTests {
     /// 古びていた**。ここが見るのは前の 2 つで、どちらも並べ直す先を名指しすること
     /// である (型の doc はコンパイラも機械も読まないので、書く人とレビューが担う)。
     ///
+    /// **並べ直さずに済む行き先も名指す** ([#1282])。時刻の揃った動きが要るなら、観測で
+    /// 撮って並べ直すより、固定の fps で書き出す口 (`render`) のほうが歪まない — 作品の証跡を
+    /// 観測から並べ直して半コマずれたのが、その口を足した理由である。
+    ///
+    /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
     /// [#1285]: https://github.com/mokume-metal/mokume/issues/1285
-    @Test("間隔の説明は、並べ直しに応答の time を指す")
+    @Test("間隔の説明は、並べ直しに応答の time を指し、揃った動きには render を指す")
     func theIntervalProsePointsAtTheReplyTime() throws {
         let surfaces: [(String, [String: Any])] = [
             ("面の仕様", try Self.declaredObserveProperties()),
@@ -157,6 +162,9 @@ struct NameCorrespondenceTests {
             let every = try #require(
                 (properties["every"] as? [String: Any])?["description"] as? String, "\(surface)")
             #expect(every.contains("`time`"), "\(surface) が並べ直す先を名指ししていない")
+            #expect(
+                every.contains("`mokume \(Command.Verb.render.rawValue)`"),
+                "\(surface) が時刻の揃った動きの行き先を名指ししていない")
             // 実時計で走る以上、走らせるたびに同じ列が返るとは言えない
             #expect(
                 !every.contains("the same series"), "\(surface) が列の再現を名乗っている")

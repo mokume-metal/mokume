@@ -28,8 +28,8 @@ struct InputEventWireTests {
     /// ([#803](https://github.com/mokume-metal/mokume/issues/803))。
     private func sample(of type: InputEventType) -> InputEvent {
         switch type {
-        case .mouseDown: .mouseDown(x: 12.5, y: 30, button: 1)
-        case .mouseUp: .mouseUp(x: 0, y: 0, button: 0)
+        case .mouseDown: .mouseDown(x: 12.5, y: 30, button: .right)
+        case .mouseUp: .mouseUp(x: 0, y: 0, button: .center)
         case .mouseMoved: .mouseMoved(x: -4.25, y: 719.5)
         case .scrolled: .scrolled(dx: 1.5, dy: -2.25)
         case .keyDown: .keyDown(code: .enter, characters: "a", isRepeat: true)

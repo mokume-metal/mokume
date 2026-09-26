@@ -73,6 +73,34 @@ enum DisplayScale {
             red: red / maximum, green: green / maximum, blue: blue / maximum,
             alpha: alpha / maximum)
     }
+
+    /// 色が元から持つ不透明度に、0–255 の不透明度を**掛ける** (`fill(color, alpha)` /
+    /// `stroke(color, alpha)` の形 — [#1553])。**数でない値・無限なら作らない** (``color(red:green:blue:alpha:)`` と
+    /// 同じく、何と言うかは受け口が決める)。
+    ///
+    /// **置き換えずに掛ける。** 手本 (Processing の `colorCalcARGB`) も同じで、乗算済みの 4 成分を
+    /// 同じ率で縮めるだけで済む — 割り戻して掛け直す必要が無い ([ADR-0011] 決定 4)。置き換えに
+    /// すると、不透明度 0 の色は元の成分を復元できないので黒になる。
+    ///
+    /// **締めるのは掛ける率で、積ではない。** 率を 0–1 に締めれば、元の色より不透明にも、
+    /// 0 より透明にもならない。積だけを締めると、半透明の色に 255 を越える値を渡したとき
+    /// 元の色より不透明になる — [ADR-0033] 決定 3 の改訂が退けた「塗りの色を越えて外挿する」
+    /// と同じ形である。改訂は締める場所を straight の成分に掛ける点 1 箇所に置いたが、この形は
+    /// 乗算済みの色に率を掛けるので、ここが 2 つ目になる。改訂がそう置いた理由 (0–1 の口と
+    /// 0–255 の口で同じ色にする) には触れない — この形は 0–255 の口にしか無い。色の成分は
+    /// 締めない (決定 6)。
+    ///
+    /// [#1553]: https://github.com/mokume-metal/mokume/issues/1553
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
+    static func fading(_ color: LinearRGBA, by alpha: Float) -> LinearRGBA? {
+        guard alpha.isFinite else { return nil }
+        // 書き順は決定 3 の改訂と揃える (`max` は第 1 引数の NaN をそのまま返す)
+        let rate = min(max(alpha / maximum, 0), 1)
+        return LinearRGBA(
+            premultipliedRed: color.red * rate, green: color.green * rate,
+            blue: color.blue * rate, alpha: color.alpha * rate)
+    }
 }
 
 // MARK: - 値を作る口が言う注意
@@ -91,6 +119,8 @@ enum ColorValues {
         case notANumber
         /// 色相・彩度・明度の口に、数でない値・無限の値が渡された。
         case notANumberHSB
+        /// 2 色の間を取る口に、数でない値・無限の `amount` が渡された。
+        case notANumberLerpColor
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
@@ -164,6 +194,61 @@ public func color(hex: Int) -> LinearRGBA {
     let bits = hex & 0xFF_FFFF
     return color(
         Float((bits >> 16) & 0xFF), Float((bits >> 8) & 0xFF), Float(bits & 0xFF))
+}
+
+// MARK: - 色を混ぜる
+
+/// 2 つの色の間を取る。
+///
+/// ```swift
+/// let dusk = lerpColor(color(255, 170, 60), color(40, 50, 120), 0.5)
+/// ```
+///
+/// 引数は始まりの色・終わりの色・その間のどこか、の順 (手本と同じ並び)。`amount` が 0 なら
+/// `start`、1 なら `stop` が**ちょうど**返る。
+///
+/// **手本には寄せない** — 手本に倣うのは名前と引数の順序までで、同じ中間の色が出ることは
+/// 約束しない ([ADR-0020] 決定 1 の 2026-09-09 改訂)。違いは 2 つある。
+///
+/// - **線形の光の量で混ぜるので、中間の色が手本より明るい。** 黒と白の真ん中は ``red(_:)`` で
+///   約 187.5 と読める (手本は 127.5)。0–255 の数を成分ごとに ``lerp(_:_:_:)`` で混ぜていた式
+///   から置き換えると、中間の色が動く ([ADR-0011] 決定 1)
+/// - **乗算済みの値で混ぜるので、透明へ寄せても暗くならない。**
+///   `lerpColor(.transparent, color(255, 0, 0), 0.5)` は不透明度が半分の赤のままで、手本の
+///   ように暗い赤にはならない ([ADR-0011] 決定 4)
+///
+/// **`amount` は 0…1 に締める** — `lerpColor(a, b, 2)` は `b` を返す。0…1 の外へ伸ばす
+/// ``lerp(_:_:_:)`` とはここが違うが、手本も `lerpColor` では締める。締めないと、不透明度の
+/// 違う 2 色から 0–255 の外の不透明度ができる ([ADR-0033] 決定 3 の改訂・決定 7 の改訂)。
+///
+/// **HSB で混ぜる形は無い。** `colorMode()` を持たないので、混ぜる空間は 1 つである
+/// ([ADR-0033] 決定 4)。色相を回して混ぜたいときは
+/// `color(hue: lerp(20, 200, t), saturation: 80, brightness: 90)` と書く。
+///
+/// **`amount` が数でない値・無限のときは `start` を返す。** 毎フレーム呼ばれる口が数でない色を
+/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。色の成分は検めない —
+/// 数でない成分を持つ色は、それを作った 0–1 の口や乗算済みの口と同じく、そのまま混ぜる。
+///
+/// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+/// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
+public func lerpColor(_ start: LinearRGBA, _ stop: LinearRGBA, _ amount: Float) -> LinearRGBA {
+    // 締める前に弾く — Swift の `max` は第 1 引数の NaN をそのまま返すので、締めても NaN は残る
+    guard amount.isFinite else {
+        ColorValues.warnOnce(
+            .notANumberLerpColor,
+            "lerpColor(): got an amount that is not a number, or an infinite one, so the start color was returned"
+        )
+        return start
+    }
+    let amount = min(max(amount, 0), 1)
+    // 乗算済みの 4 成分を、そのまま成分ごとに混ぜる。割り戻しも掛け直しもしない
+    // ([ADR-0011] 決定 4) — `init(straightRed:…)` を通すと、もう 1 度掛けてしまう
+    return LinearRGBA(
+        premultipliedRed: interpolate(start.red, stop.red, amount),
+        green: interpolate(start.green, stop.green, amount),
+        blue: interpolate(start.blue, stop.blue, amount),
+        alpha: interpolate(start.alpha, stop.alpha, amount))
 }
 
 // MARK: - 色を読む

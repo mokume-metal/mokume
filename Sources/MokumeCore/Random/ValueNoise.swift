@@ -13,6 +13,11 @@
 /// `NoiseParityTests` が代表点で両者を突き合わせ、ずれたら赤くなる。片方を直したら
 /// もう片方も直すことになる、という規律を文書ではなく検査に持たせている。
 ///
+/// **傾き (`mokume_noiseGradient`) は断片の側にだけあり、この型には無い。** 傾きを要る
+/// 作品は断片の中でしか使っておらず、CPU で傾きを引く作品はまだ無いので、想定だけの口を
+/// 先回りで作らない ([ADR-0001] 原則 4・[#1141])。上で約束しているのは値であり、値の経路は
+/// 両側とも 1 本のままなので、この約束は傾きが片側にしか無くても破れない。
+///
 /// ## 格子の値はビット単位で一致する
 ///
 /// 格子点の値は**整数演算だけ**で作り、最後に `Float(h >> 8) * (1 / 16777216)` で
@@ -30,6 +35,7 @@
 ///
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [#366]: https://github.com/mokume-metal/mokume/issues/366
+/// [#1141]: https://github.com/mokume-metal/mokume/issues/1141
 struct ValueNoise: Equatable, Sendable {
     /// 受け取れる重ねる枚数。上を切るのは、枚数だけで走らせ続けられないため。
     static let octaveRange = 1...16

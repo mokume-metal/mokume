@@ -161,9 +161,23 @@ nonisolated public enum StartupReads {
             + "of the tool that started it, and the tool passes it only for run",
         readSite: "Sources/MokumeCore/Display/CloseConfirmation.swift")
 
+    /// 決めた枚数を、決めた速さの時刻で書き出すか (`mokume render`)。
+    ///
+    /// **在ると窓を開かない。** 画面の出口を持たず、撮る係だけを出口にして、決めた枚数を
+    /// 描いたら自分で終わる。時刻はフレーム番号から導く ([ADR-0032] 決定 1 の表の `render`
+    /// の行)。値の形は読み手 (`RenderRequest`) が持ち、道具も同じ型で組む。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    public static let render = Entry(
+        name: "Render", origin: .environment, key: "MOKUME_RENDER", decidedBy: .tool,
+        note: "Writes a fixed number of frames at a fixed frame rate and then ends, with no "
+            + "window. The value is the frame rate, the frame count and where to write, and "
+            + "the tool passes it only for render",
+        readSite: "Sources/MokumeCore/Display/RenderRequest.swift")
+
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
-        workDirectory, sourceStamp, frameRateNotice, closeConfirmation, observe, input, params,
-        viewport,
+        workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, observe, input,
+        params, viewport,
     ]
 }

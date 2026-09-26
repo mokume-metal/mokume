@@ -21,7 +21,7 @@ struct BuildingVertex {
     /// 置いた時点の塗り。
     var fill: LinearRGBA
     /// 曲線が作った刻みの点か。**利用者が置いた点 (`vertex`・曲線の終点・通過点) ではない**
-    /// ので、輪郭は継ぎ目に折れ目の形を置かない (``Canvas/strokeRing(count:isClosed:curveSteps:band:disc:square:)``)。
+    /// ので、輪郭は継ぎ目に折れ目の形を置かない (``Canvas/strokeRing(count:isClosed:curveSteps:endSquare:band:disc:square:)``)。
     var isCurveStep = false
 }
 

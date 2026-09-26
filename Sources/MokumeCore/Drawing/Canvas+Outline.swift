@@ -42,24 +42,29 @@ extension Canvas {
     ///   - isClosed: 周が閉じているか (閉じていれば最後の点から最初の点へも帯が要る)
     ///   - curveSteps: 点ごとに、折れ目の形によらず円板で埋めるか (曲線の刻みの点と扇の角)。
     ///     空ならどの点も角
+    ///   - endSquare: 1 つ目の添字の点に、2 つ目の添字の点から離れる向き (線の向き) に
+    ///     沿った正方形を置く (出っ張らせる端 — #1535)
     ///   - band: 添字 2 つを結ぶ帯を置く
     ///   - disc: 添字の点に円板を置く (丸い端点と丸い角・曲線の刻みの継ぎ目)
-    ///   - square: 添字の点に正方形を置く (四角い端点と削いだ角)
+    ///   - square: 添字の点に正方形を置く (四角い端点と、丸めない角)。矩形の削いだ角は、
+    ///     平面の呼び出し側がここで削いだ形に差し替える (`strokeOutline`)
     func strokeRing(
         count: Int, isClosed: Bool, curveSteps: [Bool] = [],
+        endSquare: (Int, Int) -> Void,
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void
     ) {
         func join(at index: Int) {
             if index < curveSteps.count, curveSteps[index] { return disc(index) }
             strokeJoinShape(at: index, disc: disc, square: square)
         }
-        func cap(at index: Int, isolated: Bool) {
-            strokeCapShape(at: index, isolated: isolated, disc: disc, square: square)
+        func cap(at index: Int, awayFrom neighbor: Int?) {
+            strokeCapShape(
+                at: index, awayFrom: neighbor, disc: disc, square: square, endSquare: endSquare)
         }
 
         // 点が 1 つだけなら、端点の形そのものを置く
         if count == 1 {
-            cap(at: 0, isolated: true)
+            cap(at: 0, awayFrom: nil)
             return
         }
         guard count >= 2 else { return }
@@ -77,8 +82,8 @@ extension Canvas {
             for index in 1..<(count - 1) {
                 join(at: index)
             }
-            cap(at: 0, isolated: false)
-            cap(at: count - 1, isolated: false)
+            cap(at: 0, awayFrom: 1)
+            cap(at: count - 1, awayFrom: count - 2)
         }
     }
 
@@ -94,23 +99,32 @@ extension Canvas {
     /// - Parameters:
     ///   - count: 点の数
     ///   - edges: 点の添字の対。同じ辺が 2 度現れないこと
+    ///   - endSquare: 1 つ目の添字の点に、2 つ目の添字の点から離れる向きに沿った正方形を置く
     ///   - band: 添字 2 つを結ぶ帯を置く
     ///   - disc: 添字の点に円板を置く
-    ///   - square: 添字の点に正方形を置く
+    ///   - square: 添字の点に軸に沿った正方形を置く
     func strokeNet(
         count: Int, edges: [(Int, Int)],
+        endSquare: (Int, Int) -> Void,
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void
     ) {
         var degrees = [Int](repeating: 0, count: count)
+        // 端 (辺が 1 本だけ来る点) の、その辺の向こうの点
+        var neighbors = [Int](repeating: 0, count: count)
         for (a, b) in edges {
             band(a, b)
             degrees[a] += 1
             degrees[b] += 1
+            neighbors[a] = b
+            neighbors[b] = a
         }
         for (index, degree) in degrees.enumerated() {
             switch degree {
             case 0: continue  // どの稜線にも属さない点 (面の中の継ぎ目) は線を持たない
-            case 1: strokeCapShape(at: index, isolated: false, disc: disc, square: square)
+            case 1:
+                strokeCapShape(
+                    at: index, awayFrom: neighbors[index], disc: disc, square: square,
+                    endSquare: endSquare)
             default: strokeJoinShape(at: index, disc: disc, square: square)
             }
         }
@@ -126,22 +140,36 @@ extension Canvas {
         case .round:
             disc(index)
         case .bevel, .miter:
-            // 削ぐ形は正方形の一部で近似する。尖らせる形は鋭角で極端に伸びるため、
-            // 限界を持たない実装では削ぐ形へ倒す (限界の設計は輪郭が育ってから)
+            // 任意多角形の折れ目は、どちらも正方形で埋める。尖らせる形は鋭角で極端に
+            // 伸びるため、限界を持たない実装では正方形へ倒す (限界の設計は輪郭が育ってから)。
+            // 矩形の直角の角だけは、`bevel` なら呼び出し側 (`strokeOutline`) がこの正方形を
+            // 45° で削いだ形に差し替える (#1506)
             square(index)
         }
     }
 
     /// 端を仕上げる。
+    ///
+    /// **出っ張らせる端の正方形は、線の向きに沿って置く** ([#1535])。帯と合わせて、線を
+    /// 太さの半分だけ延ばした長方形になる — 距離関数の経路 (`line`) と同じ形である。
+    /// 軸に沿って置いていた頃は、斜めの線で端が菱形に張り出していた。
+    /// 向きの無い点 (`neighbor` が `nil`) の四角い端は、軸に沿った正方形のまま。
+    ///
+    /// [#1535]: https://github.com/mokume-metal/mokume/issues/1535
+    ///
+    /// - Parameter neighbor: 端の隣の点の添字。孤立した点なら `nil`
     private func strokeCapShape(
-        at index: Int, isolated: Bool, disc: (Int) -> Void, square: (Int) -> Void
+        at index: Int, awayFrom neighbor: Int?, disc: (Int) -> Void, square: (Int) -> Void,
+        endSquare: (Int, Int) -> Void
     ) {
-        switch style.strokeCap {
-        case .square where !isolated:
+        switch (style.strokeCap, neighbor) {
+        case (.square, .some):
             return  // 線の長さちょうどで切る
-        case .round:
+        case (.round, _):
             disc(index)
-        case .square, .project:
+        case (.project, .some(let neighbor)):
+            endSquare(index, neighbor)
+        case (.square, .none), (.project, .none):
             square(index)
         }
     }
@@ -152,15 +180,26 @@ extension Canvas {
 extension Canvas {
 
     /// 周を太さのある帯でなぞる。
+    ///
+    /// **矩形の直角の角は、`bevel` なら削いだ角で埋める** (#1506)。距離関数の経路と同じ
+    /// 線で削ぐので、`shader()` や `texture()` を足して三角形の経路へ落ちても角の形が
+    /// 変わらない。閉じた周の `square` は折れ目からしか呼ばれないので、端の形には及ばない。
     func strokeOutline(_ outline: Outline) {
         let half = style.strokeWeight / 2
         let points = outline.points
+        let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
         let start = vertices.count
         strokeRing(
             count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
+            endSquare: { appendSquare(at: points[$0], awayFrom: points[$1], half: half) },
             band: { appendBand(points[$0], points[$1], half: half) },
             disc: { appendDisc(at: points[$0], half: half) },
-            square: { appendSquare(at: points[$0], half: half) })
+            square: { index in
+                guard index < chamfers.count else {
+                    return appendSquare(at: points[index], half: half)
+                }
+                appendChamferedCorner(at: points[index], outward: chamfers[index], half: half)
+            })
         // 記録の間は寄せられないので、積んだ区間を覚える (`recordedStrokeRanges`)
         if recordingShape, vertices.count > start {
             recordedStrokeRanges.append(start..<vertices.count)
@@ -198,6 +237,32 @@ extension Canvas {
         appendTriangle(p1, p3, p4, color: style.stroke)
     }
 
+    /// 線の向きに沿った正方形を置く (出っ張らせる端 — #1535)。
+    ///
+    /// **正方形は 2 通りある。** 線の端 (`strokeCap(.project)`) はこちらで、線の向きに沿って
+    /// 置く — 帯と合わせて線を太さの半分だけ延ばした形になり、距離関数の経路の `line` と
+    /// 揃う。向きの無い点の四角い端と、丸めない折れ目は、形の座標の軸に沿った
+    /// `appendSquare(at:half:)` のままである。
+    ///
+    /// 向きは形自身の座標で `from` から `center` へ向かう向きで、帯の向きと同じ座標で
+    /// 取るので、変換を掛けた後も帯と揃う。長さ 0 (隣が同じ位置) で向きが決まらない
+    /// ときは、軸に沿った正方形へ倒す。
+    private func appendSquare(
+        at center: SIMD2<Float>, awayFrom from: SIMD2<Float>, half: Float
+    ) {
+        let delta = center - from
+        let length = (delta.x * delta.x + delta.y * delta.y).squareRoot()
+        guard length > 0 else { return appendSquare(at: center, half: half) }
+        let along = delta / length * half
+        let across = SIMD2(-along.y, along.x)
+        let a = strokePoint(x: center.x - along.x - across.x, y: center.y - along.y - across.y)
+        let b = strokePoint(x: center.x + along.x - across.x, y: center.y + along.y - across.y)
+        let c = strokePoint(x: center.x + along.x + across.x, y: center.y + along.y + across.y)
+        let d = strokePoint(x: center.x - along.x + across.x, y: center.y - along.y + across.y)
+        appendTriangle(a, b, c, color: style.stroke)
+        appendTriangle(a, c, d, color: style.stroke)
+    }
+
     /// 円板を置く (丸い端点と丸い角)。周は半径に応じて分ける。
     private func appendDisc(at center: SIMD2<Float>, half: Float) {
         let points = Self.arcPoints(
@@ -213,7 +278,7 @@ extension Canvas {
         appendTriangle(hub, previous, first, color: style.stroke)
     }
 
-    /// 正方形を置く (四角い端点と削いだ角)。
+    /// 正方形を置く (四角い端点と、任意多角形の折れ目・矩形の尖らせた角)。
     private func appendSquare(at center: SIMD2<Float>, half: Float) {
         let a = strokePoint(x: center.x - half, y: center.y - half)
         let b = strokePoint(x: center.x + half, y: center.y - half)
@@ -221,5 +286,32 @@ extension Canvas {
         let d = strokePoint(x: center.x - half, y: center.y + half)
         appendTriangle(a, b, c, color: style.stroke)
         appendTriangle(a, c, d, color: style.stroke)
+    }
+
+    /// 矩形の直角の角を、45° で削いで埋める (#1506)。
+    ///
+    /// 削ぐ線は角から太さの半分だけ離れた所を通り、`outward · (p − corner) = √2 · half`
+    /// で表せる。距離関数の経路 (`Shapes.metal` の `kFormJoinBevel`) と同じ線である。
+    ///
+    /// **埋めるのは角の外側の 4 分の 1 だけ** — 角から外向きに `half` の正方形を、削ぐ線で
+    /// 落とした五角形。残りは両側の帯が覆うので、帯と合わせた和は距離関数の経路の
+    /// 八角形にちょうど一致する。正方形全体を削ぐと、辺が太さの (2 − √2) / 2 倍より短い
+    /// 矩形で、内側の半分が向かいの角の削ぐ線の外へはみ出す。
+    ///
+    /// - Parameter outward: 角の外向きの対角 (各成分 ±1)
+    private func appendChamferedCorner(
+        at corner: SIMD2<Float>, outward: SIMD2<Float>, half: Float
+    ) {
+        let cut = (Float(2).squareRoot() - 1) * half
+        let hub = strokePoint(x: corner.x, y: corner.y)
+        let rim = [
+            SIMD2(outward.x * half, 0),
+            SIMD2(outward.x * half, outward.y * cut),
+            SIMD2(outward.x * cut, outward.y * half),
+            SIMD2(0, outward.y * half),
+        ].map { strokePoint(x: corner.x + $0.x, y: corner.y + $0.y) }
+        for index in 0..<(rim.count - 1) {
+            appendTriangle(hub, rim[index], rim[index + 1], color: style.stroke)
+        }
     }
 }

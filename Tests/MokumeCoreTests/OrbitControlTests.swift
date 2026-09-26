@@ -85,7 +85,7 @@ struct OrbitControlTests {
         let beforeYaw = try #require(sketch.seenOrbit?.yaw)
 
         // 遠く離れた場所で押す。位置の差 (mouseX - pmouseX) は大きいが、押下は移動ではない
-        runtime.input.enqueue(.mouseDown(x: 60, y: 58, button: 0))
+        runtime.input.enqueue(.mouseDown(x: 60, y: 58, button: .left))
         try runtime.advance()
 
         #expect(try pixels(runtime) == before)
@@ -98,7 +98,7 @@ struct OrbitControlTests {
     func draggingTurnsAndReleasingStops() throws {
         let sketch = Subject()
         let runtime = try makeRuntime(sketch)
-        runtime.input.enqueue(.mouseDown(x: 32, y: 32, button: 0))
+        runtime.input.enqueue(.mouseDown(x: 32, y: 32, button: .left))
         try runtime.advance()
         let atPress = try pixels(runtime)
 
@@ -109,7 +109,7 @@ struct OrbitControlTests {
         #expect(try pixels(runtime) != atPress)
 
         // 離したあとは、慣性を入れていないので動かない
-        runtime.input.enqueue(.mouseUp(x: 62, y: 32, button: 0))
+        runtime.input.enqueue(.mouseUp(x: 62, y: 32, button: .left))
         try runtime.advance()
         let afterRelease = try pixels(runtime)
         try runtime.advance()
@@ -121,7 +121,7 @@ struct OrbitControlTests {
         func yaw(splitInto steps: Int) throws -> Float {
             let sketch = Subject()
             let runtime = try makeRuntime(sketch)
-            runtime.input.enqueue(.mouseDown(x: 10, y: 32, button: 0))
+            runtime.input.enqueue(.mouseDown(x: 10, y: 32, button: .left))
             try runtime.advance()
             // 同じ 30 px を、1 フレームでまとめて / 複数フレームに分けて送る
             let stride = Float(30) / Float(steps)
@@ -142,7 +142,7 @@ struct OrbitControlTests {
             let sketch = Subject()
             sketch.callsPerFrame = callsPerFrame
             let runtime = try makeRuntime(sketch)
-            runtime.input.enqueue(.mouseDown(x: 10, y: 32, button: 0))
+            runtime.input.enqueue(.mouseDown(x: 10, y: 32, button: .left))
             try runtime.advance()
             runtime.input.enqueue(.mouseMoved(x: 40, y: 32))
             try runtime.advance()
@@ -218,7 +218,7 @@ struct OrbitControlTests {
         let sketch = Ortho()
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 })
-        runtime.input.enqueue(.mouseDown(x: 10, y: 10, button: 0))
+        runtime.input.enqueue(.mouseDown(x: 10, y: 10, button: .left))
         try runtime.advance()
         runtime.input.enqueue(.mouseMoved(x: 40, y: 30))
         try runtime.advance()

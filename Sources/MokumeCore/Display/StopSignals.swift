@@ -34,7 +34,7 @@ nonisolated(unsafe) var sketchStopRequested: sig_atomic_t = 0
 /// 無視で継いだ合図には何も置かない (`SIGTERM` も同じ規則に従う)。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
-nonisolated enum StopSignals {
+package nonisolated enum StopSignals {
     /// 受け口を置く合図。
     ///
     /// **`SIGHUP` は入れない。** 端末が閉じたときに届くもので、道具はスケッチを止めるのに
@@ -79,7 +79,10 @@ nonisolated enum StopSignals {
     ///
     /// `SIG_IGN` は `(void (*)(int))1` という番地の約束なので、関数ポインタとしては比べられず、
     /// 番地で比べる。
-    static func isIgnored(_ action: sigaction) -> Bool {
+    ///
+    /// **道具も同じ判定を使う** (`mokume render` が SIGINT を受けるか決める)。番地の比べ方を
+    /// 写さないために、パッケージの中へ開けてある。
+    package static func isIgnored(_ action: sigaction) -> Bool {
         address(of: action) == address(of: SIG_IGN)
     }
 

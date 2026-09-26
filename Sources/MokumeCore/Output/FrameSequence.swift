@@ -16,7 +16,10 @@ import Foundation
 ///
 /// 番号が桁に収まらなくなったら、切り詰めずに桁が伸びる。名前順と撮った順が食い違う
 /// ことになるが、**枚数を黙って失うよりはよい**。
-struct FrameSequence {
+///
+/// **隔離を持たない。** 名前を組み立てるだけの値で、走らせる前に綴りを確かめる口
+/// (``FrameRecorder/accepts(_:)``) が main actor の外から使う。
+nonisolated struct FrameSequence {
     /// 番号の前に付く部分。
     let prefix: String
     /// 番号の桁数。

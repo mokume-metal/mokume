@@ -223,6 +223,136 @@ struct NumericColorEntryTests {
         #expect(belowTheScale == untouched)
         #expect(aboveTheScale == opaque)
     }
+
+    // MARK: - 色の値と不透明度 (#1553)
+
+    /// 色の値と不透明度を取る 2 つの口。`tint` / `background` にはこの形を置かない ([#1553])。
+    ///
+    /// [#1553]: https://github.com/mokume-metal/mokume/issues/1553
+    enum OpacityEntry: CaseIterable, CustomTestStringConvertible {
+        case fill, stroke
+
+        var testDescription: String {
+            switch self {
+            case .fill: "fill"
+            case .stroke: "stroke"
+            }
+        }
+
+        func call(_ sketch: Blank, _ color: LinearRGBA, _ alpha: Float) {
+            switch self {
+            case .fill: sketch.fill(color, alpha)
+            case .stroke: sketch.stroke(color, alpha)
+            }
+        }
+
+        func read(_ canvas: Canvas) -> LinearRGBA {
+            switch self {
+            case .fill: canvas.style.fill
+            case .stroke: canvas.style.stroke
+            }
+        }
+    }
+
+    /// 半透明の色 (不透明度 128)。**不透明な色では掛け算と置き換えが一致する**ので、
+    /// 置き換えの実装を見分けるにはこれが要る。
+    private static let halfOpaque = color(230, 120, 40, 128)
+
+    /// 手本 (Processing の `colorCalcARGB`) と、作品が手で書いた `fade` と同じく、色が元から
+    /// 持つ不透明度に `alpha / 255` を**掛ける**。
+    @Test("色の値と不透明度の形は、色が元から持つ不透明度に掛ける", arguments: OpacityEntry.allCases)
+    func colorWithOpacityMultipliesTheOpacity(_ entry: OpacityEntry) throws {
+        let sketch = Blank()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        let read = { entry.read(runtime.canvas) }
+        runSketch(runtime) {
+            // 不透明な色では、掛け算と置き換えが一致する — 4 つ目に不透明度を書いた色と同じ
+            entry.call(sketch, color(230, 120, 40), 200)
+            #expect(read() == color(230, 120, 40, 200))
+
+            // 半透明の色に 255 を渡しても、不透明にはならない (置き換えならここで 255 になる)
+            entry.call(sketch, Self.halfOpaque, 255)
+            #expect(read() == Self.halfOpaque)
+
+            // 128 × 128 / 255。色みは動かない
+            entry.call(sketch, Self.halfOpaque, 128)
+            let halved = read()
+            #expect(abs(alpha(halved) - 128 * 128 / 255) < 1e-3, "\(alpha(halved))")
+            // 成分の読み出しは名前が static の数と重なるので、モジュール名で呼ぶ
+            #expect(abs(MokumeCore.red(halved) - 230) < 0.01, "\(MokumeCore.red(halved))")
+            #expect(abs(MokumeCore.green(halved) - 120) < 0.01, "\(MokumeCore.green(halved))")
+            #expect(abs(MokumeCore.blue(halved) - 40) < 0.01, "\(MokumeCore.blue(halved))")
+
+            // 作品が手で書いていた `fade(c, 0.72)` — 乗算済みの 4 成分を同じ率で縮める式
+            let ink = LinearRGBA.display(red: 0.114, green: 0.110, blue: 0.118)
+            entry.call(sketch, ink, 0.72 * 255)
+            let faded = read()
+            #expect(abs(faded.red - ink.red * 0.72) < 1e-6, "\(faded)")
+            #expect(abs(faded.green - ink.green * 0.72) < 1e-6, "\(faded)")
+            #expect(abs(faded.blue - ink.blue * 0.72) < 1e-6, "\(faded)")
+            #expect(abs(faded.alpha - ink.alpha * 0.72) < 1e-6, "\(faded)")
+        }
+    }
+
+    /// 受け口は `some ScalarConvertible` で、色は `.display(…)` の暗黙メンバでも書ける。
+    /// 型が決まらなければ、ここがコンパイルできずに落ちる。
+    @Test("不透明度は Int の変数も Double の式も受け、色は暗黙メンバでも書ける")
+    func colorWithOpacityAcceptsTheUsualSpellings() throws {
+        let sketch = Blank()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        runSketch(runtime) {
+            let red = LinearRGBA.display(red: 1, green: 0, blue: 0)
+            sketch.fill(red, 128)
+            let expected = runtime.canvas.style.fill
+            let count = 128
+            sketch.fill(red, count)
+            #expect(runtime.canvas.style.fill == expected)
+            let half: Double = 64
+            sketch.fill(red, half * 2.0)
+            #expect(runtime.canvas.style.fill == expected)
+            sketch.fill(.display(red: 1, green: 0, blue: 0), 128)
+            #expect(runtime.canvas.style.fill == expected)
+            sketch.stroke(.display(red: 1, green: 0, blue: 0), count)
+            #expect(runtime.canvas.style.stroke == expected)
+        }
+    }
+
+    @Test("色の値と不透明度の形も、止めていた塗りと線を戻す")
+    func colorWithOpacityTurnsDrawingBackOn() throws {
+        let sketch = Blank()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        runSketch(runtime) {
+            sketch.noFill()
+            sketch.fill(Self.halfOpaque, 128)
+            #expect(runtime.canvas.style.hasFill)
+            sketch.noStroke()
+            sketch.stroke(Self.halfOpaque, 128)
+            #expect(runtime.canvas.style.hasStroke)
+        }
+    }
+
+    /// 締めるのは**掛ける率**で、積ではない。積を締めると、半透明の色に 255 を越える値を
+    /// 渡したとき元の色より不透明になる (`fill(color(…, 128), 400)` が約 201)。
+    @Test("範囲の外の不透明度は掛ける率を締め、色の成分は締めない", arguments: OpacityEntry.allCases)
+    func colorWithOpacityClampsTheOpacityOnly(_ entry: OpacityEntry) throws {
+        let sketch = Blank()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        let read = { entry.read(runtime.canvas) }
+        runSketch(runtime) {
+            entry.call(sketch, Self.halfOpaque, 400)
+            let above = read()
+            entry.call(sketch, Self.halfOpaque, 255)
+            #expect(above == read())
+            #expect(above == Self.halfOpaque)
+
+            entry.call(sketch, Self.halfOpaque, -100)
+            #expect(read() == .transparent)
+
+            // 255 を越える成分は、白を越える明るさのまま残る
+            entry.call(sketch, color(510, 0, 0), 128)
+            #expect(abs(MokumeCore.red(read()) - 510) < 0.01, "\(MokumeCore.red(read()))")
+        }
+    }
 }
 
 /// 色相・彩度・明度の 6 つの区画 ([#1385] 条件 2)。GPU は要らない。

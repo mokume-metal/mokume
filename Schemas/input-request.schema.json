@@ -23,7 +23,7 @@
         "required": [
           "type"
         ],
-        "description": "Unknown keys are ignored. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value. button (0 = the primary button), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional.",
+        "description": "Unknown keys are ignored. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value. button (0 = the left, primary button), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional.",
         "allOf": [
           {
             "if": {
@@ -90,7 +90,7 @@
           },
           "button": {
             "type": "integer",
-            "description": "The button (0 = the primary one)."
+            "description": "The button. **The macOS button number** (NSEvent.buttonNumber: 0 = left, the primary one; 1 = right; 2 = center), which is a different order from the browser's MouseEvent.button (1 = the middle button, 2 = the secondary one). Buttons past these three, such as back and forward, arrive as their own numbers. On the sketch's own surface this number reads as a `MouseButton`, such as `.right`."
           },
           "dx": {
             "type": "number",

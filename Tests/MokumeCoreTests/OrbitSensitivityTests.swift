@@ -39,7 +39,7 @@ struct OrbitSensitivityTests {
         sketch.sensitivityX = sensitivityX
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 })
-        runtime.input.enqueue(.mouseDown(x: 10, y: 24, button: 0))
+        runtime.input.enqueue(.mouseDown(x: 10, y: 24, button: .left))
         try runtime.advance()
         runtime.input.enqueue(.mouseMoved(x: 40, y: 24))
         try runtime.advance()

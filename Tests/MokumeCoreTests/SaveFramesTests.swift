@@ -227,6 +227,36 @@ struct LateFailureTests {
         }
     }
 
+    /// **``FrameRecorder/failure`` は直れば消えるが、書き出したものの穴は消えない** ([#1282])。
+    /// 閉じた後に「書けたか」を問う口 (`mokume render` の終了コード) は、こちらを読む。
+    ///
+    /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
+    @Test("書き損じた後に書けても、1 度書き損じたことは閉じた後まで残る")
+    func aFailureIsRememberedAfterARecovery() throws {
+        try withTemporaryDirectory("mokume-late-failure-remembered") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            recorder.writer.write(picture, to: directory.appendingPathComponent("a.png").path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+            #expect(!recorder.hasFailedToWrite, "書けただけで書き損じたことになっている")
+
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("b.png").path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+            recorder.writer.write(picture, to: directory.appendingPathComponent("c.png").path)
+            recorder.writer.drain()
+            recorder.absorbOutcomes()
+            #expect(recorder.failure == nil, "最後に決着したのは書けた 1 枚")
+            #expect(recorder.hasFailedToWrite, "直ったことで、穴があったことまで忘れている")
+
+            recorder.close()
+            #expect(recorder.hasFailedToWrite)
+        }
+    }
+
     @Test("頼まれている最中に頼み足しても、書き損じは消えない")
     func askingMoreWhileBusyKeepsTheFailure() throws {
         try withTemporaryDirectory("mokume-late-failure-busy") { directory in

@@ -64,6 +64,10 @@ extension Canvas {
         /// 受け取れない揺らぎの設定が渡された。
         case badNoise
 
+        /// 効果の引数に、数でない値・無限の値が渡された ([#1544])。
+        ///
+        /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
+        case badEffect
         /// 効果を通せなかった。
         case effectFailed
         /// 拡大を通せなかった。
