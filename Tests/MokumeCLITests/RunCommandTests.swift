@@ -26,6 +26,39 @@ struct RunCommandTests {
         return executable
     }
 
+    /// 自分の番号を `pid` へ書いて 30 秒眠るだけの実行ファイルを置く。合図の検査の子。
+    ///
+    /// **番号を書き終えてから名乗る** (途中を読ませない)。`exec` で番号を保ったまま眠る。
+    private func makeSleeper() throws -> (directory: URL, marker: URL, executable: URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-run-signal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let marker = directory.appendingPathComponent("pid")
+        let executable = directory.appendingPathComponent("sketch")
+        try """
+            #!/bin/sh
+            echo $$ > '\(marker.path).tmp' && mv '\(marker.path).tmp' '\(marker.path)'
+            exec sleep 30
+            """.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        return (directory, marker, executable)
+    }
+
+    /// 書かれた番号を読む。**期限までに書かれなければ `nil`** (期限は安全網・#564)。
+    private nonisolated static func waitForPID(in marker: URL) -> pid_t? {
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            if let text = try? String(contentsOf: marker, encoding: .utf8),
+                let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            {
+                return pid
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        return nil
+    }
+
     /// 両方の流れへ 1 行ずつ書くだけの子。
     ///
     /// **偽の道具立てを `PATH` へ置く形は採らない。** `swift(_:in:capturing:errors:)` は
@@ -119,16 +152,21 @@ struct RunCommandTests {
     /// **道具の PID だけへ届く合図で、スケッチを孤児にしない**
     /// ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
     ///
-    /// 端末の Control + C はグループ全体に届くので人の操作では起きず、エージェントや
-    /// スクリプトが道具だけを止める経路で起きる。ここでは検査の走者そのものを道具に見立て、
-    /// **自分のプロセスへ**合図を送る。
+    /// エージェントやスクリプトが道具だけを止める経路 (SIGTERM / SIGHUP) に加えて、**端末の
+    /// Control + C (SIGINT) もこの経路である** — `Process` は子を別のプロセスグループに置くので、
+    /// 端末が前面のグループへ配る SIGINT は道具にしか届かない
+    /// ([#1618](https://github.com/mokume-metal/mokume/issues/1618))。ここでは検査の走者そのものを
+    /// 道具に見立て、**自分のプロセスへ**合図を送る。
+    ///
+    /// **既定の受け口から始める。** 走者が SIGINT を無視で継いでいると、道具は受けない側へ倒れる
+    /// (背面の起動の約束) ので、合図ごとに既定へ戻してから走らせ、終わったら継いだものへ戻す。
     ///
     /// **壊れた実装で走者ごと死なせない。** 受け口が置かれていなければ合図を送らずに失敗を
     /// 記録し、受け口が子へ渡さなければ期限で子を落として失敗を記録する — どちらでも
     /// `launch` の待ちは戻る。
     @Test(
         "道具だけへ終わりの合図が届いても、走らせていたスケッチを残さずに終わる",
-        arguments: RunCommand.stopSignals)
+        arguments: [SIGTERM, SIGHUP, SIGINT])
     func aStopSignalTakesTheSketchDownToo(stopSignal: Int32) throws {
         /// 糸をまたいで結果を受け渡す箱。**触るのは終わりの合図の後だけ**なので鍵は要らない。
         nonisolated final class Sender: @unchecked Sendable {
@@ -136,37 +174,20 @@ struct RunCommandTests {
             var pid: pid_t?
             let done = DispatchSemaphore(value: 0)
         }
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-signal-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let marker = directory.appendingPathComponent("pid")
-        let executable = directory.appendingPathComponent("sketch")
-        // **番号を書き終えてから名乗る** (途中を読ませない)。`exec` で番号を保ったまま眠る
-        try """
-            #!/bin/sh
-            echo $$ > '\(marker.path).tmp' && mv '\(marker.path).tmp' '\(marker.path)'
-            exec sleep 30
-            """.write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let (directory, marker, executable) = try makeSleeper()
+        defer { try? FileManager.default.removeItem(at: directory) }
 
-        var before = sigaction()
-        sigaction(stopSignal, nil, &before)
+        var standard = sigaction()
+        standard.__sigaction_u.__sa_handler = SIG_DFL
+        var inherited = sigaction()
+        sigaction(stopSignal, &standard, &inherited)
+        defer { sigaction(stopSignal, &inherited, nil) }
         let sender = Sender()
         // **並行プールに載せず、専用の糸で送る** (上の `theRunningChildCanBeTakenOutAndStopped`
         // と同じ理由)。期限はどれも安全網である (#564)
         Thread.detachNewThread {
             defer { sender.done.signal() }
-            let started = Date().addingTimeInterval(30)
-            while Date() < started {
-                if let text = try? String(contentsOf: marker, encoding: .utf8),
-                    let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
-                {
-                    sender.pid = pid
-                    break
-                }
-                Thread.sleep(forTimeInterval: 0.005)
-            }
+            sender.pid = Self.waitForPID(in: marker)
             guard let pid = sender.pid else {
                 sender.failures.append("スケッチが起きない")
                 return
@@ -199,9 +220,62 @@ struct RunCommandTests {
 
         var after = sigaction()
         sigaction(stopSignal, nil, &after)
+        #expect(after.__sigaction_u.__sa_handler == nil, "走り終えた後に、合図の受け口を元へ戻していない")
+    }
+
+    /// **無視で継いだ SIGINT には受け口を置かない** — 背面 (`&`) で起こされた起動の約束を
+    /// 上書きしない (子の `StopSignals.install` と同じ規則・判定も同じ `StopSignals.isIgnored`)。
+    @Test("SIGINT は、無視で継いでいなければ受けて子へ渡す")
+    func sigintIsForwardedUnlessInheritedAsIgnored() {
+        var ignored = sigaction()
+        ignored.__sigaction_u.__sa_handler = SIG_IGN
+        var standard = sigaction()
+        standard.__sigaction_u.__sa_handler = SIG_DFL
+
+        #expect(RunCommand.stopSignals(sigint: standard) == [SIGTERM, SIGHUP, SIGINT])
+        #expect(RunCommand.stopSignals(sigint: ignored) == [SIGTERM, SIGHUP])
+    }
+
+    /// 上の規則を、**走らせている間の受け口で**確かめる。`launch` の既定がこの規則を通らずに
+    /// SIGINT を足すと、背面で起こした `run` が端末の Control + C で止まる。
+    ///
+    /// 子は合図を介さずに落とす (道具が受けていないことを見るのが目的なので、走者へは送らない)。
+    @Test("無視で継いだ SIGINT は、走らせている間も無視のままにしておく")
+    func anIgnoredSigintStaysIgnoredWhileRunning() throws {
+        /// 糸をまたいで結果を受け渡す箱。**触るのは子が落ちた後だけ**なので鍵は要らない。
+        nonisolated final class Watcher: @unchecked Sendable {
+            var failures: [String] = []
+            let done = DispatchSemaphore(value: 0)
+        }
+        let (directory, marker, executable) = try makeSleeper()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        var ignored = sigaction()
+        ignored.__sigaction_u.__sa_handler = SIG_IGN
+        var inherited = sigaction()
+        sigaction(SIGINT, &ignored, &inherited)
+        defer { sigaction(SIGINT, &inherited, nil) }
+
+        let watcher = Watcher()
+        Thread.detachNewThread {
+            defer { watcher.done.signal() }
+            guard let pid = Self.waitForPID(in: marker) else {
+                watcher.failures.append("スケッチが起きない")
+                return
+            }
+            if !StopSignals.isIgnored(RunCommand.currentAction(SIGINT)) {
+                watcher.failures.append("無視で継いだ SIGINT に、受け口を置いた")
+            }
+            kill(pid, SIGTERM)
+        }
+
+        #expect(throws: CommandFailure.sketchExited(status: SIGTERM)) {
+            try RunCommand.launch(executable, in: directory)
+        }
+        #expect(watcher.done.wait(timeout: .now() + 60) == .success, "見る糸が戻らない")
+        for failure in watcher.failures { Issue.record(Comment(rawValue: failure)) }
         #expect(
-            (after.__sigaction_u.__sa_handler == nil) == (before.__sigaction_u.__sa_handler == nil),
-            "走り終えた後に、合図の受け口を元へ戻していない")
+            StopSignals.isIgnored(RunCommand.currentAction(SIGINT)), "走り終えた後に無視を戻していない")
     }
 
     /// **合図で止めた回は、慣習の 128 + 番号で終わる。** スケッチの成否として 15 を返すと、
