@@ -145,6 +145,27 @@ struct RetainedSolidStrokeTests {
             "\(placement.name): 保持した線の重心が \(held.center)、その場で \(here.center)")
     }
 
+    @Test("出っ張らせる端の正方形も、置いた先の線の向きで組み直される")
+    func projectedCapsFollowThePlacedLine() throws {
+        // 端の正方形は画面に写した線の向きに沿う (#1535)。記録したときの向きのまま焼くと、
+        // 回して置いた先で線と端の向きがずれる
+        let (retained, immediate) = try pair(
+            content: strokeOnly(weight: 16) { canvas in
+                canvas.strokeCap(.project)
+                canvas.beginShape(.lines)
+                canvas.vertex(-40, -40, 0)
+                canvas.vertex(40, 40, 0)
+                canvas.endShape()
+            },
+            placement: { canvas in
+                canvas.translate(80, 80, 0)
+                canvas.rotateY(0.9)
+                canvas.rotateZ(0.5)
+            })
+        let differing = differingPixels(retained, immediate)
+        #expect(differing <= 30, "保持とその場で \(differing) 画素違う")
+    }
+
     // MARK: - 置き直す経路
 
     @Test("鏡映して置いた箱の輪郭も、その場で描いた箱と同じ絵になる")

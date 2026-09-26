@@ -3,7 +3,7 @@
 
 import simd
 
-/// 立体の線の部品 1 つ (帯・円板・正方形) の元。保持した形が、**置くときに帯を組み直す**
+/// 立体の線の部品 1 つ (帯・円板・正方形・線の端の正方形) の元。保持した形が、**置くときに帯を組み直す**
 /// ために持つ ([#1547])。
 ///
 /// 立体の線の帯は視点に合わせて組む — 向きは画面に写した線に、幅は画面の画素に合わせ、
@@ -26,6 +26,9 @@ struct SolidStrokePiece {
         case disc(SIMD3<Float>)
         /// 四角い端点と削いだ角の正方形。
         case square(SIMD3<Float>)
+        /// 出っ張らせる線の端の正方形 (1 つ目の点に置き、2 つ目の点から離れる向きに沿う)。
+        /// 向きが画面に写した線で決まるので、帯と同じく置く先で組み直す
+        case endSquare(SIMD3<Float>, awayFrom: SIMD3<Float>)
     }
 
     var kind: Kind
@@ -46,7 +49,7 @@ struct SolidStrokePiece {
     var anchor: SIMD3<Float> {
         switch kind {
         case let .band(start, _): start
-        case let .disc(center), let .square(center): center
+        case let .disc(center), let .square(center), let .endSquare(center, _): center
         }
     }
 
@@ -61,6 +64,8 @@ struct SolidStrokePiece {
         case let .band(start, end): piece.kind = .band(move(start), move(end))
         case let .disc(center): piece.kind = .disc(move(center))
         case let .square(center): piece.kind = .square(move(center))
+        case let .endSquare(center, from):
+            piece.kind = .endSquare(move(center), awayFrom: move(from))
         }
         return piece
     }

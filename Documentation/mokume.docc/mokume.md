@@ -141,11 +141,13 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/background(_:_:)``
 - ``Sketch/background(_:_:_:_:)``
 - ``Sketch/fill(_:)``
-- ``Sketch/fill(_:_:)``
+- ``Sketch/fill(_:_:)-(ScalarConvertible,_)``
+- ``Sketch/fill(_:_:)-(LinearRGBA,_)``
 - ``Sketch/fill(_:_:_:_:)``
 - ``Sketch/noFill()``
 - ``Sketch/stroke(_:)``
-- ``Sketch/stroke(_:_:)``
+- ``Sketch/stroke(_:_:)-(ScalarConvertible,_)``
+- ``Sketch/stroke(_:_:)-(LinearRGBA,_)``
 - ``Sketch/stroke(_:_:_:_:)``
 - ``Sketch/noStroke()``
 - ``Sketch/tint(_:)``
@@ -167,6 +169,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``color(_:_:_:_:)``
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
+- ``lerpColor(_:_:_:)``
 - ``red(_:)``
 - ``green(_:)``
 - ``blue(_:)``
@@ -413,6 +416,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``map(_:_:_:_:_:)``
 - ``lerp(_:_:_:)``
 - ``constrain(_:_:_:)``
+- ``norm(_:_:_:)``
+- ``smoothstep(_:_:_:)``
 
 ### GPU に計算させる
 
@@ -458,6 +463,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/pmouseY``
 - ``Sketch/isMousePressed``
 - ``Sketch/mouseButton``
+- ``MouseButton``
 - ``Sketch/scrollX``
 - ``Sketch/scrollY``
 - ``Sketch/dragX``
@@ -491,6 +497,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### 観測へ差し出す
 
 - ``Sketch/expose(_:_:)-19rp8``
+- ``Sketch/measure(_:_:)``
 
 ### 数を渡す
 

@@ -50,8 +50,14 @@ import MokumeDiagnostics
 
     init(gpu: RenderDevice, count: Int) throws(RenderFailure) {
         let count = max(1, count)
+        // **数え切れない指定は、確保の失敗として返す** (ADR-0020 決定 5 — 資源の生成は
+        // 投げる・#1589)。掛け算が回り込むと、上限の検めより先にプロセスごと落ちる。
+        // 粒の置き場もここを通るので、守りはこの 1 か所に置く
+        let (byteCount, overflowed) = count.multipliedReportingOverflow(
+            by: MemoryLayout<Float>.stride)
+        guard !overflowed else { throw .bufferUnavailable(byteCount: Int.max) }
         self.count = count
-        self.storage = try gpu.makeReadableBuffer(byteCount: count * MemoryLayout<Float>.stride)
+        self.storage = try gpu.makeReadableBuffer(byteCount: byteCount)
         self.gpu = gpu
         // **置き場へ直に埋める。** いま確保したばかりの置き場を GPU はまだ知らないので、
         // 読み終わるのを待つ相手が居ない。書く口 (`fill(_:)`) は控えに積むだけなので、

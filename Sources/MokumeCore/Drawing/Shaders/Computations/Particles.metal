@@ -193,7 +193,15 @@ kernel void mokume_particles(
                 push += float3(f[1], f[2], f[3]);
             } else if (kind == kForceAttract) {
                 float3 toward = float3(f[1], f[2], f[3]) - position;
-                push += toward / max(length(toward), 1e-4) * f[4];
+                // 弱まり始める距離 (f[5])。0 は「弱まらない」で、**式はいままでの行を
+                // そのまま通す** — 近似の算術 (fast math) は式を並べ替えうるので、同じ行を
+                // 残さないと、距離を渡さないスケッチの粒まで最下位の桁が動きうる
+                if (f[5] > 0.0) {
+                    float distance = max(length(toward), 1e-4);
+                    push += toward / distance * (f[4] * min(1.0, f[5] / distance));
+                } else {
+                    push += toward / max(length(toward), 1e-4) * f[4];
+                }
             } else if (kind == kForceWander) {
                 float3 drift = float3(
                     mokume_particleDrift(salt, frame, 0),

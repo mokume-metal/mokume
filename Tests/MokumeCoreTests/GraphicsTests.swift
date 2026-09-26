@@ -207,6 +207,122 @@ struct GraphicsTests {
         #expect(image[44, 12] == (0, 0, 255, 255))
     }
 
+    // MARK: - 貼り直さずに塗り続けても、置いた時点の絵が残る (#1543)
+
+    @Test("描き場所を 1 度だけ貼って塗り続けても、置くたびにその時点の絵が出る")
+    func aPastedGraphicsKeepsItsPictureWithoutPastingAgain() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            paint(layer, red)
+            canvas.texture(layer)
+            canvas.rect(0, 0, 24, 24)
+            // **貼り直さずに**描き換えて、もう 1 つ置く
+            paint(layer, blue)
+            canvas.rect(32, 0, 24, 24)
+            paint(layer, green)
+        }
+
+        let image = try pixels(of: canvas)
+        #expect(image[12, 12] == (255, 0, 0, 255))
+        #expect(image[44, 12] == (0, 0, 255, 255), "置いた後に描き換えた絵が出た")
+    }
+
+    @Test("立体に 1 度だけ貼って塗り続けても、置くたびにその時点の絵が出る")
+    func aSolidKeepsThePictureWithoutPastingAgain() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            paint(layer, red)
+            canvas.texture(layer)
+            canvas.push()
+            canvas.translate(16, 32, 0)
+            canvas.plane(24, 24)
+            canvas.pop()
+            paint(layer, blue)
+            canvas.push()
+            canvas.translate(48, 32, 0)
+            canvas.plane(24, 24)
+            canvas.pop()
+            paint(layer, green)
+        }
+
+        let image = try pixels(of: canvas)
+        #expect(image[16, 32] == (255, 0, 0, 255))
+        #expect(image[48, 32] == (0, 0, 255, 255), "置いた後に描き換えた絵が出た")
+    }
+
+    /// `placedFirst` は、塗り直す前に 1 度置いておくか。置いておくと、塗り直した後も読む面が
+    /// 描き場所のまま続くので、**面が変わらなくても記録し直す**ことを見られる。
+    @Test("貼った後に背景で塗り直しても、置いた時点の絵が出る", arguments: [false, true])
+    func aPastedGraphicsSurvivesABackgroundBeforeItIsPlaced(placedFirst: Bool) throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+
+        try canvas.draw {
+            canvas.noStroke()
+            paint(layer, red)
+            canvas.texture(layer)
+            if placedFirst { canvas.rect(32, 32, 24, 24) }
+            // 塗り直しは溜めたものと一緒に「置いた記録」も落とす
+            canvas.background(black)
+            canvas.rect(0, 0, 24, 24)
+            paint(layer, green)
+        }
+
+        #expect(try pixels(of: canvas)[12, 12] == (255, 0, 0, 255), "置いた後に描き換えた絵が出た")
+    }
+
+    @Test("最初のフレームで 1 度だけ貼れば、後のフレームでも置いた時点の絵が出る")
+    func aPastedGraphicsKeepsItsPictureAcrossFrames() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+
+        for frame in 0..<3 {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noStroke()
+                paint(layer, blue)
+                if frame == 0 { canvas.texture(layer) }
+                canvas.rect(0, 0, 24, 24)
+                paint(layer, green)
+            }
+            #expect(
+                try pixels(of: canvas)[12, 12] == (0, 0, 255, 255),
+                "\(frame + 1) フレーム目で、置いた後に描き換えた絵が出た")
+        }
+    }
+
+    @Test("描き場所を貼って保持した形も、置くたびにその時点の絵が出る")
+    func aHeldShapeKeepsThePictureOfEachPlacement() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(16, 16)
+        let tile = canvas.createShape {
+            canvas.noStroke()
+            canvas.texture(layer)
+            canvas.rect(0, 0, 24, 24)
+        }
+
+        try canvas.draw {
+            canvas.background(black)
+            paint(layer, red)
+            canvas.shape(tile, 0, 0)
+            paint(layer, blue)
+            canvas.shape(tile, 32, 0)
+            paint(layer, green)
+        }
+
+        let image = try pixels(of: canvas)
+        #expect(image[12, 12] == (255, 0, 0, 255), "置いた後に描き換えた絵が出た")
+        #expect(image[44, 12] == (0, 0, 255, 255), "置いた後に描き換えた絵が出た")
+    }
+
     // MARK: - 背景が独立している (完了条件 4)
 
     @Test("描き場所の背景は、画面の背景と独立に決められる")

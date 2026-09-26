@@ -23,13 +23,16 @@
 // 名指しの境界は手本に置く — Processing / p5 が持つ三角関数はこの 7 本ちょうどで、
 // mokume は既に radians を採っている (`rotate(_ radians: Float)`) ので単位の齟齬が無い。
 //
-// **角度の単位変換・写像・補間・締めは、ここではなく自前で書いた** (#883・#1281)。
-// `radians` / `degrees` / `map` / `lerp` / `constrain` に対応する関数は Darwin に無いので、
-// 名指しで通せる先が最初から無い。実装は MokumeCore の側 (Math/NumberSurface.swift) に
-// あり、上の行が MokumeCore を丸ごと再エクスポートするのでそのまま通る。保留していた
-// 理由 — 「毎回書いている」ものが作品トラック (ADR-0022) から見えていない — は、どちらも
-// 2 作品が同じ 1 行を書いたことで解けた (ADR-0020 決定 7 の 2026-09-05 / 2026-09-22 改訂・
-// ADR-0001 原則 4・#193)。
+// **角度の単位変換・写像・補間・締め・窓は、ここではなく自前で書いた** (#883・#1281・
+// #1283)。`radians` / `degrees` / `map` / `lerp` / `constrain` / `norm` / `smoothstep` に
+// 対応する関数は Darwin に無いので、名指しで通せる先が最初から無い。**simd の
+// `smoothstep` は形が違う** — ベクトルだけを受け、`x` を先に取る (`smoothstep(_:edge0:edge1:)`)
+// ので、名指しで通すと断片 (MSL) の並びと食い違う。引数ラベルが違うので、利用者が
+// `import simd` しても呼び出しは曖昧にならない。実装は MokumeCore の側
+// (Math/NumberSurface.swift) にあり、上の行が MokumeCore を丸ごと再エクスポートするので
+// そのまま通る。保留していた理由 — 「毎回書いている」ものが作品トラック (ADR-0022) から
+// 見えていない — は、どれも 2 作品が同じ形を書いたことで解けた (ADR-0020 決定 7 の
+// 2026-09-05 / 2026-09-22 改訂・ADR-0001 原則 4・#193・#1283)。
 @_exported import func Darwin.sin
 @_exported import func Darwin.cos
 @_exported import func Darwin.tan

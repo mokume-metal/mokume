@@ -28,8 +28,8 @@ public final class InputState {
     public private(set) var previousY: Float = 0
     /// 押されているか。
     public private(set) var isMouseDown = false
-    /// 最後に押された釦。
-    public private(set) var button: Int = 0
+    /// 最後に押されたか離された釦。まだ何も来ていなければ `nil`。
+    public private(set) var button: MouseButton?
     /// 直近のスクロール量 (このフレームぶん)。
     public private(set) var scrollX: Float = 0
     public private(set) var scrollY: Float = 0

@@ -25,14 +25,41 @@
 ///
 /// **散文の約束にしていない。** 検査がこの 2 行と各力の式を CPU で書き直し、GPU が
 /// 進めた粒と照合している。
+///
+/// ## 渦と抵抗を組むと、粒は 1 つの速さに揃う
+///
+/// 渦 (``swirl(_:_:strength:)``) も距離に依らない加速度なので、減速と組むと、粒は初速を
+/// 忘れて**どの半径でもほぼ同じ速さ V** で回るようになる。V は `渦 ÷ 抵抗` に
+/// x/(eˣ − 1) (x = 抵抗·Δt) を掛けた値で、`渦 ÷ 抵抗` そのものではない — 1 フレームごとに
+/// 速度へ e^(−k·Δt) を掛ける進め方の釣り合いで、60 fps・抵抗 1.2 なら 1% 低い。
+///
+/// そこで**何が決まるかは、引く力の距離の法則で変わる。** 円く回り続けられるのは、
+/// V² ÷ 半径 と引く力が釣り合う半径だけである:
+///
+/// - **距離に依らない引く力** (``attract(_:_:_:strength:weakeningBeyond:)`` の既定) — 釣り合う
+///   半径は V² ÷ `strength` の 1 本で、ずれた粒はそこへ戻る。**長く回すと全粒がその 1 本の
+///   輪へ集まり**、撒いた広がりが消える
+/// - **`weakeningBeyond` (R) を渡した引く力** — R の外では V² ÷ 半径 と同じく半径に反比例して
+///   弱まるので、`strength`·R = V² に合わせると **R の外のどの半径でもおおよそ釣り合い**、
+///   撒いた広がりが残る。合っていなければ、ずれの割合に比例した速さで内か外へ流れる。
+///   R の内側は距離に依らない引きなので、内側の粒は R の縁へ寄る
 public enum Force: Equatable, Sendable {
     /// どこにいても同じ向きへ引く。**(x, y, z) がそのまま加速度**になる。
     case gravity(_ x: Float, _ y: Float, _ z: Float = 0)
-    /// 1 点へ向かって引く。**強さを負にすると遠ざける** (``repel(_:_:_:strength:)``)。
+    /// 1 点へ向かって引く。**強さを負にすると遠ざける**
+    /// (``repel(_:_:_:strength:weakeningBeyond:)``)。
     ///
-    /// 粒から (x, y, z) への向きへ、大きさ `strength` の加速度。**距離に依らない** —
-    /// 近くても遠くても同じ強さで引く。
-    case attract(_ x: Float, _ y: Float, _ z: Float = 0, strength: Float)
+    /// 粒から (x, y, z) への向きへ、大きさ `strength` の加速度。`weakeningBeyond` を省くと
+    /// **距離に依らない** — 近くても遠くても同じ強さで引く。
+    ///
+    /// `weakeningBeyond` に距離 R を渡すと、**R より遠い粒では距離に反比例して弱まる** —
+    /// 距離 r の粒への大きさは、r が R 以内なら `strength`、R より遠ければ `strength`·R/r。
+    /// 内側を弱めないのは、中心の近くで力が際限なく大きくならないようにするためである。
+    /// 渦と抵抗を組んだときに輪 1 本へ集まらないようにするのに使う (上の「渦と抵抗を
+    /// 組むと」)。R は 0 より大きい有限の値で、それ以外を渡すと注意を言って、弱まらない
+    /// 力として効かせる。
+    case attract(
+        _ x: Float, _ y: Float, _ z: Float = 0, strength: Float, weakeningBeyond: Float? = nil)
     /// 粒ごとに違う向きへ揺らす。**同じ粒・同じフレームなら同じ揺れ**が出る。
     ///
     /// 加速度の各成分 (x・y・z) が、−`strength`…`strength` の一様な値になる。
@@ -52,13 +79,13 @@ public enum Force: Equatable, Sendable {
 
     /// 1 点から遠ざける。
     ///
-    /// **``attract(_:_:_:strength:)`` の符号を返すだけ** — 引くと押すは同じ 1 つの計算なので、枝を
-    /// 2 本持たない。名前を 2 つ置いてあるのは、`strength` を負で書くより読みやすい
-    /// ためである。
+    /// **``attract(_:_:_:strength:weakeningBeyond:)`` の符号を返すだけ** — 引くと押すは同じ
+    /// 1 つの計算なので、枝を 2 本持たない。名前を 2 つ置いてあるのは、`strength` を負で書く
+    /// より読みやすいためである。`weakeningBeyond` も同じ意味でそのまま渡る。
     public static func repel(
-        _ x: Float, _ y: Float, _ z: Float = 0, strength: Float
+        _ x: Float, _ y: Float, _ z: Float = 0, strength: Float, weakeningBeyond: Float? = nil
     ) -> Force {
-        .attract(x, y, z, strength: -strength)
+        .attract(x, y, z, strength: -strength, weakeningBeyond: weakeningBeyond)
     }
 
     /// 置き場へ書く形。**先頭が種類**で、残りはその種類が読む。
@@ -86,8 +113,9 @@ public enum Force: Equatable, Sendable {
         switch self {
         case .gravity(let x, let y, let z):
             return [code, x, y, z, 0, 0, 0, 0]
-        case .attract(let x, let y, let z, let strength):
-            return [code, x, y, z, strength, 0, 0, 0]
+        case .attract(let x, let y, let z, let strength, let distance):
+            // **省いたら 0。** 0 は「弱まらない」と読まれ、いままでと同じ式を通る
+            return [code, x, y, z, strength, distance ?? 0, 0, 0]
         case .wander(let strength):
             return [code, 0, 0, 0, strength, 0, 0, 0]
         case .swirl(let x, let y, let strength):

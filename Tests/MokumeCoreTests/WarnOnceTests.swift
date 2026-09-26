@@ -6,13 +6,15 @@ import Testing
 
 @testable import MokumeCore
 
-/// 利用者が読む 9 通の文面を、**実装とは別の場所に写して突き合わせる**。
+/// 利用者が読む 10 通の文面を、**実装とは別の場所に写して突き合わせる**。
 ///
 /// 畳んだ拍子に変わっていないことをここで見る。実際に 2 度動いている — 7 本を 1 つの型へ
 /// 畳んだとき「頼んだ」が「頼んた」になり ([#947]・語幹だけを差し替えて音便を落とした)、
-/// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。
+/// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。切り抜きの
+/// 1 文は後から足した ([#1505])。
 ///
 /// [#947]: https://github.com/mokume-metal/mokume/issues/947
+/// [#1505]: https://github.com/mokume-metal/mokume/issues/1505
 private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .camera:
         "The camera and projection are placed again every frame, so call this from "
@@ -23,6 +25,9 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .style:
         "Pushing and popping style only works inside a frame. The style pushed during "
             + "setup belongs to no frame, and was ignored",
+    .clip:
+        "The clip is written again every frame, so call this from draw(). The clip "
+            + "written during setup belongs to no frame, and was ignored",
     .light:
         "Lights are placed again every frame, so call this from draw(). The light "
             + "placed during setup belongs to no frame, and was ignored",
@@ -46,7 +51,7 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("フレームの外で置き直したときの文面")
 struct OutsideFrameNoticeTests {
-    @Test("9 つとも原文のまま")
+    @Test("10 通とも原文のまま")
     func noticesKeepTheirWording() {
         for (subject, original) in outsideFrameNotices {
             #expect(subject.notice == original, "\(subject) の文面が変わっている")
@@ -208,6 +213,9 @@ struct CanvasWarningTests {
 }
 
 /// `beginShape()` の外で呼べる、頂点の仲間の入口。`vertex` は 4 つの形を別々に数える。
+///
+/// `endContour` と `normal` は #1520 で加わった。直す前は、形の外では注意なしで黙っていた
+/// (`normal` は向きを控え、次の `beginShape()` が消していた)。
 enum OutsideShapeCall: CaseIterable {
     case vertex
     case vertexWithDepth
@@ -217,9 +225,12 @@ enum OutsideShapeCall: CaseIterable {
     case quadraticVertex
     case curveVertex
     case beginContour
+    case endContour
+    case normal
     case index
 
-    /// 形の中で呼べば、点を置くか・穴を始めるか・番号を積む呼び出し。
+    /// 形の中で呼べば、点を置くか・穴を始めるか・穴を閉じるか・向きを控えるか・番号を積む
+    /// 呼び出し。
     func call(on canvas: Canvas) {
         switch self {
         case .vertex: canvas.vertex(4, 4)
@@ -230,6 +241,8 @@ enum OutsideShapeCall: CaseIterable {
         case .quadraticVertex: canvas.quadraticVertex(6, 14, 12, 12)
         case .curveVertex: canvas.curveVertex(4, 4)
         case .beginContour: canvas.beginContour()
+        case .endContour: canvas.endContour()
+        case .normal: canvas.normal(0, 0, 1)
         case .index: canvas.index(0)
         }
     }
@@ -254,6 +267,10 @@ enum OutsideShapeCall: CaseIterable {
             "curveVertex(): call this between beginShape() and endShape(). This call does nothing"
         case .beginContour:
             "beginContour(): call this between beginShape() and endShape(). This call does nothing"
+        case .endContour:
+            "endContour(): call this between beginShape() and endShape(). This call does nothing"
+        case .normal:
+            "normal(): call this between beginShape() and endShape(). This call does nothing"
         case .index:
             "index(): call this between beginShape() and endShape(). This call does nothing"
         }
@@ -444,6 +461,7 @@ struct VertexOutsideShapeWarningTests {
         var holeStarted: Bool?
         var guides: Int?
         var building: Bool?
+        var normalWritten: Bool?
         try canvas.draw {
             call.call(on: canvas)
             points = canvas.shapePoints.count
@@ -451,6 +469,7 @@ struct VertexOutsideShapeWarningTests {
             holeStarted = canvas.holePoints != nil
             guides = canvas.curveGuides.count
             building = canvas.isBuildingShape
+            normalWritten = canvas.currentNormal != nil
         }
         #expect(canvas.warnings.message(for: .vertexOutsideShape) == call.notice)
         #expect(!canvas.warnings.hasWarned(.curveWithoutStart), "形の外なのに、手前の点の注意を言った")
@@ -459,6 +478,8 @@ struct VertexOutsideShapeWarningTests {
         #expect(holeStarted == false, "形の外の \(call) が穴を始めた")
         #expect(guides == 0, "形の外の \(call) が通過点を溜めた")
         #expect(building == false, "形の外の \(call) が形を始めた")
+        // 控えた向きは次の beginShape() が消すので、どの頂点にも効かない (#1520)
+        #expect(normalWritten == false, "形の外の \(call) が向きを控えた")
     }
 
     /// 鍵は入口のすべてで 1 つ。**入口ごとに文面が変わる**ので、2 度目も言っていれば控えの
@@ -472,5 +493,262 @@ struct VertexOutsideShapeWarningTests {
         }
         #expect(
             canvas.warnings.message(for: .vertexOutsideShape) == OutsideShapeCall.index.notice)
+    }
+
+    /// #1520 で加わった入口も、同じ鍵を言う。先に言っていれば、後の `vertex` は黙る。
+    @Test(
+        "加わった入口の後でも、2 度目からは黙る",
+        arguments: [OutsideShapeCall.normal, .endContour])
+    func staysSilentAfterTheAddedEntrances(_ call: OutsideShapeCall) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            call.call(on: canvas)
+            OutsideShapeCall.vertex.call(on: canvas)
+        }
+        #expect(canvas.warnings.message(for: .vertexOutsideShape) == call.notice)
+    }
+}
+
+/// 形の外で `endShape()` を呼んだときの原文 ([#1520])。
+///
+/// [#1520]: https://github.com/mokume-metal/mokume/issues/1520
+private let shapeNotBegunNotice =
+    "endShape(): no shape was begun with beginShape(), so there is nothing to end. This call "
+    + "does nothing"
+
+/// 形の中で、穴を開かずに `endContour()` を呼んだときの原文 ([#1528])。
+///
+/// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+private let contourNotBegunNotice =
+    "endContour(): no hole was begun with beginContour(), so there is nothing to end. This call "
+    + "does nothing"
+
+/// 形の中で、向きにならない値を `normal()` に渡したときの原文 ([#1528])。
+///
+/// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+private let badNormalNotice =
+    "normal(): got a direction that is not a number, or an infinite one, or one with no length, "
+    + "so the vertices placed after this take their facing from the shape, as if no normal() had "
+    + "been written"
+
+/// 形の始まりが無いまま `endShape()` を呼んだときの注意 ([#1520])。GPU を要する。
+///
+/// 直す前は注意なしで黙って返っていた。**何もしない振る舞いは直す前のまま**で、足したのは
+/// 注意だけである。鍵を ``Canvas/Warning/vertexOutsideShape`` と分けるのは、あちらの文面
+/// (`beginShape()` と `endShape()` の間で呼べ) が `endShape()` には直す先を指さないため。
+///
+/// [#1520]: https://github.com/mokume-metal/mokume/issues/1520
+@Suite(
+    "形の始まりが無い endShape() の注意",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct ShapeNotBegunWarningTests {
+    private func makeCanvas() throws -> Canvas {
+        try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+    }
+
+    @Test("一度も beginShape() を呼ばずに endShape() を呼ぶと、endShape() を名乗って注意する")
+    func warnsWhenNoShapeWasBegun() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw { canvas.endShape() }
+        #expect(canvas.warnings.message(for: .shapeNotBegun) == shapeNotBegunNotice)
+        #expect(!canvas.warnings.hasWarned(.vertexOutsideShape), "形の外の頂点の注意を言った")
+    }
+
+    @Test("形を閉じた直後にもう一度 endShape() を呼ぶと、2 度目で注意する")
+    func warnsOnTheSecondEndShape() throws {
+        let canvas = try makeCanvas()
+        var warnedAfterFirst: Bool?
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.vertex(2, 2)
+            canvas.vertex(14, 2)
+            canvas.vertex(8, 14)
+            canvas.endShape(.close)
+            warnedAfterFirst = canvas.warnings.hasWarned(.shapeNotBegun)
+            canvas.endShape(.close)
+        }
+        #expect(warnedAfterFirst == false, "対になった endShape() で注意した")
+        #expect(canvas.warnings.message(for: .shapeNotBegun) == shapeNotBegunNotice)
+    }
+
+    /// 鍵を取り違えると、先に言った側が後の側を黙らせる。順番を入れ替えて両方の向きを見る。
+    @Test("形の外の頂点の注意とは、互いに黙らせない", arguments: [true, false])
+    func theTwoNoticesDoNotSilenceEachOther(endShapeFirst: Bool) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            if endShapeFirst {
+                canvas.endShape()
+                OutsideShapeCall.vertex.call(on: canvas)
+            } else {
+                OutsideShapeCall.vertex.call(on: canvas)
+                canvas.endShape()
+            }
+        }
+        #expect(canvas.warnings.message(for: .shapeNotBegun) == shapeNotBegunNotice)
+        #expect(
+            canvas.warnings.message(for: .vertexOutsideShape) == OutsideShapeCall.vertex.notice)
+    }
+}
+
+/// 形の中で、頂点の口を誤って呼んだときの注意 ([#1528])。GPU を要する。
+///
+/// 直す前は、穴を開かずに呼んだ `endContour()` と、向きにならない値を渡した `normal()` が
+/// 注意なしで黙っていた。**振る舞い (何もしない・書かれていない向きに倒す) は直す前のまま**
+/// で、足したのは注意だけである。
+///
+/// [#1528]: https://github.com/mokume-metal/mokume/issues/1528
+@Suite(
+    "形の中で誤って呼んだ頂点の口の注意",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct InsideShapeMisuseWarningTests {
+    private func makeCanvas() throws -> Canvas {
+        try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+    }
+
+    /// 穴を 1 つ閉じた後にもう一度閉じる場面も見る。閉じた後は「開いた穴が無い」ので、
+    /// 最初から開いていない場面と同じ注意になる。
+    @Test("穴を開かずに endContour() を呼ぶと注意し、穴を増やさない", arguments: [false, true])
+    func warnsAboutEndContourWithoutAHole(afterClosingOne: Bool) throws {
+        let canvas = try makeCanvas()
+        var holesBefore: Int?
+        var holesAfter: Int?
+        var pointsBefore: Int?
+        var pointsAfter: Int?
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(16, 0)
+            canvas.vertex(16, 16)
+            canvas.vertex(0, 16)
+            if afterClosingOne {
+                canvas.beginContour()
+                canvas.vertex(4, 4)
+                canvas.vertex(4, 12)
+                canvas.vertex(12, 8)
+                canvas.endContour()
+            }
+            holesBefore = canvas.shapeHoles.count
+            pointsBefore = canvas.shapePoints.count
+            canvas.endContour()
+            holesAfter = canvas.shapeHoles.count
+            pointsAfter = canvas.shapePoints.count
+            canvas.endShape(.close)
+        }
+        #expect(canvas.warnings.message(for: .contourNotBegun) == contourNotBegunNotice)
+        #expect(!canvas.warnings.hasWarned(.vertexOutsideShape), "形の中なのに、形の外の注意を言った")
+        #expect(holesAfter == holesBefore, "閉じる穴が無いのに穴が増えた")
+        #expect(pointsAfter == pointsBefore, "閉じる穴が無いのに外周が変わった")
+    }
+
+    @Test(
+        "向きにならない値を normal() に渡すと注意し、書かれていない向きに倒す",
+        arguments: [SIMD3<Float>(.nan, 0, 1), SIMD3<Float>(0, 0, 0), SIMD3<Float>(.infinity, 0, 1)])
+    func warnsAboutADirectionThatIsNotOne(_ direction: SIMD3<Float>) throws {
+        let canvas = try makeCanvas()
+        var written: SIMD3<Float>?
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.normal(0, 0, 1)
+            canvas.normal(direction.x, direction.y, direction.z)
+            written = canvas.currentNormal
+            canvas.endShape()
+        }
+        #expect(canvas.warnings.message(for: .badNormal) == badNormalNotice)
+        #expect(!canvas.warnings.hasWarned(.vertexOutsideShape), "形の中なのに、形の外の注意を言った")
+        #expect(written == nil, "向きにならない値の後も、向きが書かれたまま")
+    }
+
+    /// 同じ入口 (`endContour` / `normal`) が形の外では ``Canvas/Warning/vertexOutsideShape`` を
+    /// 言う。鍵を取り違えると、先に言った側が後の側を黙らせる。順番を入れ替えて両方の向きを見る。
+    @Test(
+        "形の外の注意と形の中の注意は、同じ入口でも互いに黙らせない",
+        arguments: [OutsideShapeCall.endContour, .normal], [true, false])
+    func insideAndOutsideDoNotSilenceEachOther(
+        _ call: OutsideShapeCall, outsideFirst: Bool
+    ) throws {
+        let canvas = try makeCanvas()
+        func callInside() {
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            switch call {
+            case .normal: canvas.normal(Float.nan, 0, 1)
+            default: canvas.endContour()
+            }
+            canvas.vertex(16, 0)
+            canvas.vertex(16, 16)
+            canvas.endShape(.close)
+        }
+        try canvas.draw {
+            if outsideFirst {
+                call.call(on: canvas)
+                callInside()
+            } else {
+                callInside()
+                call.call(on: canvas)
+            }
+        }
+        #expect(canvas.warnings.message(for: .vertexOutsideShape) == call.notice)
+        switch call {
+        case .normal: #expect(canvas.warnings.message(for: .badNormal) == badNormalNotice)
+        default: #expect(canvas.warnings.message(for: .contourNotBegun) == contourNotBegunNotice)
+        }
+    }
+}
+
+/// 形の中の正しい使い方では、#1520 / #1528 で足した注意をどれも言わない。GPU を要する。
+///
+/// 閉じ忘れた穴を畳むのは ``Canvas/endShape(_:)`` の約束で、中で穴を畳む道は公開の
+/// ``Canvas/endContour()`` と分けてある。同じ道を通すと、穴を閉じた形・穴の無い形の
+/// `endShape()` が「閉じる穴が無い」を言う。
+@Suite(
+    "正しく並べた形の注意",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct WellFormedShapeWarningTests {
+    enum Ending: CaseIterable {
+        /// 穴を開いて `endContour()` で閉じる。
+        case closedHole
+        /// 穴を開いたまま、`endShape()` に畳ませる。
+        case openHole
+        /// 穴を開かない。
+        case noHole
+    }
+
+    private func makeCanvas() throws -> Canvas {
+        try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+    }
+
+    @Test("向きを書いて並べ、どの閉じ方でも注意を増やさない", arguments: Ending.allCases)
+    func saysNothing(_ ending: Ending) throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.normal(0, 0, 1)
+            canvas.vertex(0, 0)
+            canvas.vertex(16, 0)
+            canvas.vertex(16, 16)
+            canvas.vertex(0, 16)
+            if ending != .noHole {
+                canvas.beginContour()
+                canvas.vertex(4, 4)
+                canvas.vertex(4, 12)
+                canvas.vertex(12, 8)
+                if ending == .closedHole { canvas.endContour() }
+            }
+            canvas.endShape(.close)
+        }
+        for key in [
+            Canvas.Warning.vertexOutsideShape, .shapeNotBegun, .contourNotBegun, .badNormal,
+        ] {
+            #expect(!canvas.warnings.hasWarned(key), "\(ending) の形で \(key) を言った")
+        }
     }
 }

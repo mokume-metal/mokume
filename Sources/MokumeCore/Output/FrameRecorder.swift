@@ -74,6 +74,15 @@ final class FrameRecorder: Outlet {
         return reasons.isEmpty ? nil : reasons.joined(separator: " / ")
     }
 
+    /// この係が 1 度でも書き損じたか。**立ったら下ろさない。**
+    ///
+    /// ``failure`` は最後に決着した書き込みのことで、書けた回が来れば `nil` へ戻る。こちらは
+    /// 「書き出したものに穴があるか」を終わった後に問う口で、`mokume render` がそれを
+    /// 終了コードにする ([#1282])。
+    ///
+    /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
+    private(set) var hasFailedToWrite = false
+
     /// 閉じている途中で、静止画の待ちが決着したか。
     ///
     /// **同じ閉じの中で待ち直さないための印である。** 塞がずに見に来る閉じ方
@@ -168,7 +177,7 @@ final class FrameRecorder: Outlet {
             warnOnce(.alreadyRecording, "beginRecord(): already recording. Carrying on with the current one")
             return
         }
-        if pattern.lowercased().hasSuffix(".mov") {
+        if Self.isMovie(pattern) {
             startAfreshIfIdle()
             movie = MovieWriter(path: pattern, frameRate: frameRate)
             recordingFrom = frame
@@ -187,6 +196,19 @@ final class FrameRecorder: Outlet {
         self.sequence = sequence
         recordingFrom = frame
         forgetWarnings()
+    }
+
+    /// 行き先の綴りが動画か (``beginRecord(_:at:)`` の規則)。
+    nonisolated static func isMovie(_ pattern: String) -> Bool {
+        pattern.lowercased().hasSuffix(".mov")
+    }
+
+    /// 行き先の綴りを、連番か動画として受けるか。**規則は ``beginRecord(_:at:)`` と同じ 1 つ。**
+    ///
+    /// 走らせる前に確かめる口 (`mokume render --out`) が使う。写しを持つと、受ける綴りを
+    /// 広げた日に道具だけが古い規則で断る。
+    nonisolated static func accepts(_ pattern: String) -> Bool {
+        isMovie(pattern) || FrameSequence(pattern: pattern) != nil
     }
 
     /// 暇だったなら、前に頼まれた分の書き損じを持ち越さない。**頼まれ始める直前に呼ぶ。**
@@ -236,7 +258,10 @@ final class FrameRecorder: Outlet {
         self.movie = nil
         movieFailure = nil
         report(movie)
-        if let failure = movie.takeFailure() { warnOnce(.movieFailure, failure) }
+        if let failure = movie.takeFailure() {
+            hasFailedToWrite = true
+            warnOnce(.movieFailure, failure)
+        }
         return true
     }
 
@@ -290,6 +315,7 @@ final class FrameRecorder: Outlet {
     func absorbOutcomes() {
         if let outcome = writer.takeOutcome() { imageFailure = outcome.failure }
         if let outcome = movie?.takeOutcome() { movieFailure = outcome.failure }
+        if failure != nil { hasFailedToWrite = true }
     }
 
     /// 終わるときに、頼んだ全部がファイルになるまで待つ。
@@ -324,7 +350,10 @@ final class FrameRecorder: Outlet {
         // 読むのは**閉じ終えた呼び出しだけ**で、まだ待っている呼び出しは取らない
         //
         // [#789]: https://github.com/mokume-metal/mokume/issues/789
-        if let failure = writer.takeFailure() { warnOnce(.imageFailure, failure) }
+        if let failure = writer.takeFailure() {
+            hasFailedToWrite = true
+            warnOnce(.imageFailure, failure)
+        }
         // **果たせなかった予約を黙って捨てない** ([#1300])。`receive(_:)` はもう来ないので、
         // ここに残っているものは 1 枚もファイルにならない。頼んだのに何の音も立てずに
         // 消えるのが、いちばん分かりにくい壊れ方である

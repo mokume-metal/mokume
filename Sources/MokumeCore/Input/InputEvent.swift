@@ -7,8 +7,8 @@ import Foundation
 ///
 /// 窓からの実操作も、外から送られたものも、同じ形でここへ集まる。
 public enum InputEvent: Equatable, Sendable {
-    case mouseDown(x: Float, y: Float, button: Int)
-    case mouseUp(x: Float, y: Float, button: Int)
+    case mouseDown(x: Float, y: Float, button: MouseButton)
+    case mouseUp(x: Float, y: Float, button: MouseButton)
     case mouseMoved(x: Float, y: Float)
     case scrolled(dx: Float, dy: Float)
     case keyDown(code: Key, characters: String, isRepeat: Bool)
@@ -28,7 +28,7 @@ public enum InputEvent: Equatable, Sendable {
 /// 壊れた 1 件が「面の左上角を押した」という正しい出来事として合流点へ入り、送り手には
 /// `accepted: 1` が返るので誰も気付けない ([#322](https://github.com/mokume-metal/mokume/issues/322))。
 ///
-/// 一方 `button` の 0 は主釦、`dx` の 0 は動いていない、`isRepeat` の false は
+/// 一方 `button` の 0 は主釦 (左)、`dx` の 0 は動いていない、`isRepeat` の false は
 /// 押しっぱなしでない — こちらは省略が自然に読めるので埋める。
 ///
 /// **弾き方の機構は要らない。** `nil` を返せば知らない種別と同じ経路に乗り、
@@ -54,6 +54,16 @@ struct RawInputEvent: Decodable {
         case type, x, y, button, dx, dy, code, characters, isRepeat
     }
 
+    /// 線の番号を釦にする。**番号を型へ絞る関所は、ここと窓 (`SketchSurface`) の 2 つだけ。**
+    ///
+    /// 線は macOS の `NSEvent.buttonNumber` のまま据え置いたので ([ADR-0034] 決定 4)、
+    /// 変換はせず包むだけである。省いた 1 件は主釦 (左) として読む。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    private var mouseButton: MouseButton {
+        button.map(MouseButton.init(rawValue:)) ?? .left
+    }
+
     /// 知っている形なら出来事にする。知らない種別も、必須の値が欠けたものも `nil`。
     ///
     /// **綴りは ``InputEventType`` から引く。** 知らない綴りを落とすのは
@@ -64,10 +74,10 @@ struct RawInputEvent: Decodable {
         switch type {
         case .mouseDown:
             guard let x, let y else { return nil }
-            return .mouseDown(x: x, y: y, button: button ?? 0)
+            return .mouseDown(x: x, y: y, button: mouseButton)
         case .mouseUp:
             guard let x, let y else { return nil }
-            return .mouseUp(x: x, y: y, button: button ?? 0)
+            return .mouseUp(x: x, y: y, button: mouseButton)
         case .mouseMoved:
             guard let x, let y else { return nil }
             return .mouseMoved(x: x, y: y)

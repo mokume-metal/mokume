@@ -28,6 +28,15 @@ import Testing
 /// 作者が書く形のまま API をほぼすべて呼ぶので、シーンに無い組み合わせと `Sketch` 層の
 /// 中継を拾う。見るのは同じく退行だけである ([ADR-0019] 決定 3 の改訂・#1377)。
 ///
+/// ## 字形は文字が主題の行にだけ写す
+///
+/// 字形を画素にするのは OS なので、字形を写した行は OS の版が変わると絵が同じでも動く
+/// (#1559)。そこで**台帳に `os=` を書いた行 (文字が主題の行) だけが字形を置いて採り**、
+/// その版の機械でだけ比べる。版が違う機械では飛ばし、理由を記録に残す。ほかの行は
+/// 字形の四角を置かずに採る (``Canvas/placesGlyphs``) — 名札や数字は人が見るための
+/// 表示で、突き合わせる絵に混ぜない ([ADR-0025] 決定 5 と同じ向き)。組版は通るので、
+/// 字を測って決める置き場所は写る。どの行がどちらかは台帳が決める (``Ledger``)。
+///
 /// ## 指紋の取り方
 ///
 /// **出力段を通した 8 bit の画素**から取る ([ADR-0011] 決定 6 の量子化点)。作業空間の
@@ -38,6 +47,7 @@ import Testing
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
+/// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 @Suite(
     "代表シーンの台帳",
     .enabled(
@@ -45,8 +55,24 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SceneLedgerTests {
-    @Test("台帳に記録した絵が変わっていない", arguments: Take.all)
+    @Test("台帳に記録した絵が変わっていない", arguments: SceneLedgerTests.plainTakes)
     func sceneMatchesLedger(_ take: Take) throws {
+        try compareScene(take)
+    }
+
+    /// 文字が主題のシーン。**台帳に書いた基準の版の機械でだけ比べる** (``Ledger/Entry/baseOS``)。
+    ///
+    /// 字形を画素にするのは OS なので、版が違う機械では絵が同じでも指紋が動く (#1559)。
+    /// 飛ばした回は、理由 (行名・基準の版・この機械の版) が記録の `<skipped>` に残る。
+    @Test(
+        "文字が主題のシーンが、基準の版の機械で台帳から動いていない",
+        .enabled(if: Ledger.glyphRowsComparableHere, Ledger.glyphSkipNotice),
+        arguments: SceneLedgerTests.glyphTakes)
+    func glyphSceneMatchesLedger(_ take: Take) throws {
+        try compareScene(take)
+    }
+
+    private func compareScene(_ take: Take) throws {
         try Self.compare(
             take.name, noun: "シーン",
             howToSee: "MOKUME_LEDGER_DUMP_DIR=/tmp/scenes swift test --filter SceneLedger"
@@ -59,8 +85,51 @@ struct SceneLedgerTests {
     /// **検査の中で組んだシーンは `Canvas` を直に叩く**ので、`Sketch` 層の中継と
     /// `SketchRuntime` の経路 (setup / draw / 時計) を通る行はここにしか無い。
     /// 走らせる検査もここにしか無く、描く途中で落ちれば ci-check ごと赤になる (#1377)。
-    @Test("参照スケッチの書き出しが台帳から動いていない", arguments: catalogue)
+    ///
+    /// **字形は置かずに採る** (``Canvas/placesGlyphs``・#1559)。名札や数字は人が見るための
+    /// 表示で、字形の画素は OS の版で動く ([ADR-0025] 決定 5 と同じ向き)。`text()` の呼び出しと
+    /// 組版は通るので、字を測って置き場所を決める絵はそのまま写る。
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    @Test("参照スケッチの書き出しが台帳から動いていない", arguments: SceneLedgerTests.plainSketches)
     func sketchMatchesLedger(_ sketch: ReferenceSketch) throws {
+        try compareSketch(sketch)
+    }
+
+    /// 文字が主題の参照スケッチ。字形も置いて採り、**基準の版の機械でだけ比べる**
+    /// (``glyphSceneMatchesLedger(_:)`` と同じ扱い)。
+    @Test(
+        "文字が主題の参照スケッチが、基準の版の機械で台帳から動いていない",
+        .enabled(if: Ledger.glyphRowsComparableHere, Ledger.glyphSkipNotice),
+        arguments: SceneLedgerTests.glyphSketches)
+    func glyphSketchMatchesLedger(_ sketch: ReferenceSketch) throws {
+        try compareSketch(sketch)
+    }
+
+    /// 字形を置かずに採る参照スケッチは、45 フレーム目までに字形の四角を 1 つも置かない。
+    ///
+    /// 旗 (``Canvas/placesGlyphs``) を下ろす行が外れると、文字が主題でない行に OS の字形が
+    /// 戻り、OS の更新でまた動く。数で見るのは、下ろし忘れても絵の上では「字が写っている」
+    /// としか現れず、台帳の行の値からは気付けないからである。文字が主題の行が字形を置く
+    /// ことも同時に見る — 数える口が効いていることの確かめである。
+    @Test("文字が主題でない参照スケッチは、字形を置かずに採る")
+    func plainSketchesPlaceNoGlyphs() throws {
+        let drawsText = catalogue.filter { $0.name == "solids-and-light" }
+        #expect(!drawsText.isEmpty, "名札を描く参照スケッチ solids-and-light が見つからない")
+        for sketch in drawsText {
+            #expect(!Ledger.drawsGlyphs(Self.ledgerName(of: sketch)))
+            let runtime = try Self.advanced(sketch)
+            #expect(
+                runtime.canvas.glyphQuadsPlaced == 0,
+                "\(sketch.name) が字形を \(runtime.canvas.glyphQuadsPlaced) 個置いた")
+        }
+        for sketch in Self.glyphSketches {
+            let runtime = try Self.advanced(sketch)
+            #expect(runtime.canvas.glyphQuadsPlaced > 0, "\(sketch.name) が字形を 1 つも置いていない")
+        }
+    }
+
+    private func compareSketch(_ sketch: ReferenceSketch) throws {
         try Self.compare(
             Self.ledgerName(of: sketch), noun: "参照スケッチ",
             howToSee: """
@@ -95,7 +164,7 @@ struct SceneLedgerTests {
         let ledger = try Ledger.load()
         let digest = try fingerprint()
 
-        guard let recorded = ledger[name] else {
+        guard let entry = ledger[name] else {
             Issue.record(
                 """
                 \(noun) \(name) が台帳に無い。
@@ -112,6 +181,7 @@ struct SceneLedgerTests {
             return
         }
 
+        let recorded = entry.digest
         if digest == recorded { return }
 
         // 不一致。もう一度描いて「絵が変わった」と「決定論が壊れた」を切り分ける。
@@ -126,7 +196,7 @@ struct SceneLedgerTests {
                 意図した変更なら、\(Ledger.relativePath) の行を次へ書き換え、
                 before / after を PR の証跡に載せる:
 
-                    \(name) \(digest)\(beforeAfter.map { "\n\n\($0)" } ?? "")
+                    \(Ledger.line(name, digest: digest, baseOS: entry.baseOS))\(entry.baseOS.map { "\n\n" + Ledger.baseOSReminder($0) } ?? "")\(beforeAfter.map { "\n\n\($0)" } ?? "")
 
                 意図していないなら、この変更が触った共通部分が他の絵まで変えている。
                 台帳は先に書き換えず、なぜ変わったかを先に調べる。
@@ -170,6 +240,8 @@ struct SceneLedgerTests {
             output: target, gpu: gpu,
             pixelDensity: suppressed == .upscale ? 1 : scene.pixelDensity,
             upscale: scene.upscale)
+        // 字形を置くのは、基準の版を持つ行 (文字が主題の行) だけ (#1559)
+        canvas.placesGlyphs = Ledger.drawsGlyphs(take.name)
         // **時点まで進めてから取る。** 時点を持たないシーンは 1 度描いた結果で、
         // いままでと 1 ビットも変わらない (ADR-0023 決定 6)
         let session = try scene.session(on: canvas, without: suppressed)
@@ -187,7 +259,7 @@ struct SceneLedgerTests {
     }
 
     /// 台帳の行名。`@N` は時点を持つシーンの行と同じく「何フレーム進めたところか」
-    static func ledgerName(of sketch: ReferenceSketch) -> String {
+    nonisolated static func ledgerName(of sketch: ReferenceSketch) -> String {
         "sketch:\(sketch.name)@\(stillFrame)"
     }
 
@@ -204,11 +276,10 @@ struct SceneLedgerTests {
     /// 起こし、その中身は main actor で走る。描き終えるまで main actor を手放さなければ、
     /// 45 フレーム目は必ず「届く前」の絵になる (`--render` と同じ)。途中に `await` を置くと、
     /// 届く前と後が 45 フレーム目で揺れる。
+    ///
+    /// **文字が主題でない行は、字形を置かずに描く** (``advanced(_:)``)。
     static func fingerprint(of sketch: ReferenceSketch) throws -> String {
-        let gpu = try RenderDevice()
-        let runtime = try SketchRuntime(
-            sketch: sketch.make(), gpu: gpu, clock: nil, now: { 0 }, observer: nil)
-        for _ in 0..<stillFrame { try runtime.advance() }
+        let runtime = try advanced(sketch)
         let image = try runtime.target.encodeForDisplay()
 
         if let dir = ProcessInfo.processInfo.environment["MOKUME_LEDGER_DUMP_DIR"] {
@@ -221,6 +292,31 @@ struct SceneLedgerTests {
 
         return SHA256.hash(data: Data(image.bytes)).map { String(format: "%02x", $0) }.joined()
     }
+
+    /// 参照スケッチを検査用の入口で組み、書き出しと同じ番号のフレームまで進める。
+    ///
+    /// **字形を置くかは、台帳の行が決める** (``Ledger/drawsGlyphs(_:)``)。基準の版を持つ
+    /// 行 (文字が主題の行) だけが字形を置き、ほかは置かない (#1559)。旗は最初の `advance()`
+    /// より前に下ろす — setup もそこで走るので、setup で作った描き場所にも引き継がれる。
+    static func advanced(_ sketch: ReferenceSketch) throws -> SketchRuntime {
+        let gpu = try RenderDevice()
+        let runtime = try SketchRuntime(
+            sketch: sketch.make(), gpu: gpu, clock: nil, now: { 0 }, observer: nil)
+        runtime.canvas.placesGlyphs = Ledger.drawsGlyphs(ledgerName(of: sketch))
+        for _ in 0..<stillFrame { try runtime.advance() }
+        return runtime
+    }
+
+    // MARK: - 行の振り分け
+
+    /// 字形を置かずに採るシーン (基準の版を持たない行)。
+    nonisolated static let plainTakes = Take.all.filter { !Ledger.drawsGlyphs($0.name) }
+    /// 文字が主題のシーン (基準の版を持つ行)。
+    nonisolated static let glyphTakes = Take.all.filter { Ledger.drawsGlyphs($0.name) }
+    /// 字形を置かずに採る参照スケッチ。
+    nonisolated static let plainSketches = catalogue.filter { !Ledger.drawsGlyphs(ledgerName(of: $0)) }
+    /// 文字が主題の参照スケッチ。
+    nonisolated static let glyphSketches = catalogue.filter { Ledger.drawsGlyphs(ledgerName(of: $0)) }
 }
 
 // MARK: - 台帳の行
@@ -238,7 +334,7 @@ struct Take: Sendable, CustomStringConvertible {
     /// 何フレーム進めた時点か。`nil` なら 1 度描いた結果。
     let moment: Int?
 
-    var name: String { moment.map { "\(scene.rawValue)@\($0)" } ?? scene.rawValue }
+    nonisolated var name: String { moment.map { "\(scene.rawValue)@\($0)" } ?? scene.rawValue }
     var description: String { name }
 
     nonisolated static var all: [Take] {
@@ -280,13 +376,15 @@ enum Scene: String, CaseIterable, Sendable {
     case reusedVertices
     /// 書体・大きさ・整列・行送りを振った文字。
     ///
-    /// **このシーンだけは、この環境が持つ書体の字形に依る。** 環境の更新で字形が
-    /// 変われば、絵は変わっていなくてもこの行は動く。土台の書体には版の変わりにくい
-    /// ものを選んであるが、覆えない字の引き当て先までは選べない。
+    /// **このシーンは OS の版に依る** (#1559)。字形を画素にするのは OS (CoreGraphics) で、
+    /// 書体の輪郭と送り幅が同じでも、焼いた画素は OS の版で 1〜3 階調ずれる。書体の
+    /// 引き当て先は原因ではなかった (ヒラギノに引き当たる和文は版の間で 1 画素も動かない)。
+    /// だから台帳の行は `os=` で採った版を名乗り、その版の機械でだけ比べる (``Ledger``)。
     case text
     /// 矩形へ流し込んだ文字と、取り出した輪郭。
     ///
-    /// ``text`` と同じく、この環境が持つ書体の字形に依る。
+    /// ``text`` と同じく OS の版に依る。輪郭 (`textOutline`) は mokume 自身が塗るので
+    /// 版に依らないが、同じ絵に焼いた字形が載る。
     case textFlow
     /// 作った絵を、等倍・引き伸ばし・切り出し・色掛けで置いたもの。
     case images
@@ -1994,9 +2092,30 @@ enum Scene: String, CaseIterable, Sendable {
 /// PR に現れるのがこの機構の目的なので、置き場と形式はそこから決まる
 /// ([ADR-0019] 決定 3)。画像の実体は置かない ([ADR-0001] 原則 7)。
 ///
+/// ## 基準の版を持つ行
+///
+/// 行は `<名前> <指紋>` で、**文字が主題の行だけ** `<名前> <指紋> os=<macOS の major>` と書く
+/// (#1559)。字形を画素にするのは OS (CoreGraphics) で、書体の輪郭と送り幅が同じでも、焼いた
+/// 画素は OS の版で 1〜3 階調ずれる。だから字形を写す行は、採った機械の版でしか比べられない。
+///
+/// - **`os=` を持つ行だけが字形を置いて採る。** 持たない行は字形の四角を置かずに採る
+///   (``Canvas/placesGlyphs``)。どちらで採るかを 2 か所に書くと食い違うので、台帳の行が決める
+/// - **`os=` の版はすべての行で 1 つにそろえる** (``glyphBase(of:)``)。OS を上げたら、文字が
+///   主題の行はまとめて新しい版の機械で採り直す。版が混ざると、どの機械でも比べられない行が残る
+/// - 版が違う機械では、その行を比べずに飛ばす。飛ばした理由は記録の `<skipped>` に残る
+///   (``glyphSkipNotice``)
+///
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
-enum Ledger {
+nonisolated enum Ledger {
+    /// 台帳の 1 行。
+    struct Entry: Equatable, Sendable {
+        /// 出力段を通した 8 bit の画素の sha256。
+        let digest: String
+        /// 字形を写す行の、採った機械の macOS の major。字形を写さない行は `nil`。
+        let baseOS: Int?
+    }
+
     static let relativePath = "Tests/MokumeCoreTests/scene-ledger.txt"
 
     static var url: URL {
@@ -2005,17 +2124,87 @@ enum Ledger {
             .appendingPathComponent("scene-ledger.txt")
     }
 
-    /// シーン名 → 指紋。`#` で始まる行と空行は読み飛ばす。
-    static func load() throws -> [String: String] {
-        let text = try String(contentsOf: url, encoding: .utf8)
-        var entries: [String: String] = [:]
+    /// シーン名 → 行。
+    static func load() throws -> [String: Entry] {
+        try parse(String(contentsOf: url, encoding: .utf8))
+    }
+
+    /// 台帳の本文を読む。`#` で始まる行と空行は読み飛ばす。
+    ///
+    /// **読めない形の行も読み飛ばす** (いままでどおり)。その行の名前は台帳に無いことになり、
+    /// 比べる側が「台帳に無い」と名乗るので、黙って通ることはない。
+    static func parse(_ text: String) -> [String: Entry] {
+        var entries: [String: Entry] = [:]
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
             let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count == 2 else { continue }
-            entries[String(parts[0])] = String(parts[1])
+            switch parts.count {
+            case 2:
+                entries[String(parts[0])] = Entry(digest: String(parts[1]), baseOS: nil)
+            case 3:
+                guard parts[2].hasPrefix("os="), let major = Int(parts[2].dropFirst(3)) else {
+                    continue
+                }
+                entries[String(parts[0])] = Entry(digest: String(parts[1]), baseOS: major)
+            default:
+                continue
+            }
         }
         return entries
+    }
+
+    /// 台帳に書く 1 行。基準の版を持つ行は `os=` まで書く。
+    static func line(_ name: String, digest: String, baseOS: Int?) -> String {
+        baseOS.map { "\(name) \(digest) os=\($0)" } ?? "\(name) \(digest)"
+    }
+
+    /// 基準の版を持つ行を書き換えるときの注意。
+    static func baseOSReminder(_ major: Int) -> String {
+        """
+        この行は字形を写すので、macOS \(major) の機械で採った値だけを書く (#1559)。
+        OS を上げて採り直すときは、os= を持つ行をまとめて新しい版で採り、版をそろえる。
+        """
+    }
+
+    // MARK: 字形を写す行
+
+    /// 読んだ台帳。**振り分けは検査を並べる時点で決まる**ので、1 度だけ読む。
+    /// 読めなければ空で、振り分けはすべて「字形を置かない」側に倒れる — その先の比べる
+    /// 側が台帳を読み直して落ちるので、読めないことは黙って通らない。
+    private static let loaded: [String: Entry] = (try? load()) ?? [:]
+
+    /// 字形を置いて採る行か。**基準の版を持つ行だけ**である。
+    static func drawsGlyphs(_ name: String) -> Bool {
+        loaded[name]?.baseOS != nil
+    }
+
+    /// 字形を写す行の基準の版。行が無いか、版がそろっていなければ `nil`。
+    static func glyphBase(of entries: [String: Entry]) -> Int? {
+        let bases = Set(entries.values.compactMap(\.baseOS))
+        return bases.count == 1 ? bases.first : nil
+    }
+
+    /// この機械の macOS の major。
+    static var hostOS: Int { ProcessInfo.processInfo.operatingSystemVersion.majorVersion }
+
+    /// 字形を写す行を、この機械で比べられるか。
+    static func comparable(base: Int?, host: Int) -> Bool {
+        base == host
+    }
+
+    /// 字形を写す行を、この機械で比べられるか (読んだ台帳とこの機械の版で決める)。
+    static var glyphRowsComparableHere: Bool {
+        comparable(base: glyphBase(of: loaded), host: hostOS)
+    }
+
+    /// 字形を写す行を飛ばすときの名乗り。行名・基準の版・この機械の版を言う。
+    static var glyphSkipNotice: Comment {
+        let names = loaded.filter { $0.value.baseOS != nil }.keys.sorted().joined(separator: ", ")
+        let base = glyphBase(of: loaded).map { "macOS \($0)" } ?? "(os= の版がそろっていない)"
+        return """
+            文字が主題の行 (\(names)) は \(base) の機械で採った値で、この機械は macOS \(hostOS) \
+            なので比べない。字形を画素にするのは OS で、版が違えば絵が同じでも指紋が動く (#1559)
+            """
     }
 }

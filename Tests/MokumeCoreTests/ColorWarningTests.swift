@@ -63,6 +63,39 @@ struct ColorWarningTests {
         #expect(!canvas.warnings.hasWarned(.notANumberStroke))
     }
 
+    /// 色の値と不透明度の形 ([#1553]) も、数値の口と同じ鍵で数え、同じ倒し方をする —
+    /// 色は直前のまま残し、止めていた塗りも戻さない。
+    ///
+    /// [#1553]: https://github.com/mokume-metal/mokume/issues/1553
+    @Test("色の値と不透明度の形は、数でない不透明度を弾く")
+    func colorWithOpacityRejectsNonFinite() throws {
+        let canvas = try makeCanvas()
+        let previous = color(20, 40, 60)
+        let tinted = color(230, 120, 40, 128)
+        try canvas.draw {
+            canvas.fill(previous)
+            canvas.fill(tinted, Float.nan)
+            #expect(canvas.style.fill == previous)
+            canvas.fill(tinted, Float.infinity)
+            #expect(canvas.style.fill == previous)
+            canvas.noFill()
+            canvas.fill(tinted, -Float.infinity)
+            #expect(!canvas.style.hasFill)
+
+            canvas.stroke(previous)
+            canvas.stroke(tinted, Float.nan)
+            #expect(canvas.style.stroke == previous)
+            canvas.noStroke()
+            canvas.stroke(tinted, Float.infinity)
+            #expect(!canvas.style.hasStroke)
+        }
+        #expect(canvas.warnings.hasWarned(.notANumberFill))
+        #expect(canvas.warnings.hasWarned(.notANumberStroke))
+        // 口ごとの文面 — 塗りと線は互いに黙らせない
+        #expect(canvas.warnings.message(for: .notANumberFill)?.hasPrefix("fill()") == true)
+        #expect(canvas.warnings.message(for: .notANumberStroke)?.hasPrefix("stroke()") == true)
+    }
+
     @Test("触っていない口は、言ったことになっていない")
     func untouchedEntriesStaySilent() throws {
         let canvas = try makeCanvas()
@@ -86,5 +119,22 @@ struct ColorValueWarningTests {
         #expect(ColorValues.warnings.message(for: .notANumber)?.hasPrefix("color()") == true)
         #expect(
             ColorValues.warnings.message(for: .notANumberHSB)?.hasPrefix("color(hue:") == true)
+    }
+
+    /// 2 色の間を取る口も、専用の鍵で数える ([#1552])。`color()` と鍵を共有すると、先に
+    /// 鳴ったほうが他方を永久に黙らせる。
+    ///
+    /// [#1552]: https://github.com/mokume-metal/mokume/issues/1552
+    @Test("2 色の間を取る口と、素の数値の口は互いに黙らせない")
+    func lerpColorCountsSeparately() {
+        let start = color(236, 238, 240)
+        #expect(lerpColor(start, color(232, 96, 72), .nan) == start)
+        #expect(color(.nan, 0, 0) == .transparent)
+        #expect(ColorValues.warnings.hasWarned(.notANumberLerpColor))
+        #expect(ColorValues.warnings.hasWarned(.notANumber))
+        #expect(
+            ColorValues.warnings.message(for: .notANumberLerpColor)?.hasPrefix("lerpColor()")
+                == true)
+        #expect(ColorValues.warnings.message(for: .notANumber)?.hasPrefix("color()") == true)
     }
 }
