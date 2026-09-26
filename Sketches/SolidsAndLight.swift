@@ -105,7 +105,8 @@ final class SolidsAndLight: Sketch {
         }
 
         // 名札。**2D の文字は視点を通らない**ので、上で落とした画面の座標へそのまま書く。
-        // 奥行き (`screenZ`) は 0 が手前・1 が奥なので、並べた中での順位を淡さに写す
+        // 奥行き (`screenZ`) は 0 が手前・1 が奥なので、並べた中での位置を `norm` で 0…1 に
+        // してから淡さに写す
         noStroke()
         textSize(15)
         textAlign(.center)
@@ -113,7 +114,7 @@ final class SolidsAndLight: Sketch {
         let nearest = depths.min() ?? 0
         let farthest = depths.max() ?? 1
         for tag in tags {
-            let far = farthest > nearest ? (tag.depth - nearest) / (farthest - nearest) : 0
+            let far = norm(tag.depth, nearest, farthest)
             fill(240, 240, 232, 255 - far * 170)
             text(tag.name, tag.x, tag.y)
         }

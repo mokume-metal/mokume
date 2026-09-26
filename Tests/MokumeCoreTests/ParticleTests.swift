@@ -57,12 +57,19 @@ struct ParticleEmissionTests {
     func repelIsAttractWithTheSignFlipped() {
         // 枝を 2 本持たない。名前が 2 つあるだけ
         #expect(Force.repel(3, 4, strength: 5) == .attract(3, 4, strength: -5))
+        // 弱まり始める距離は、符号を返さずにそのまま渡る
+        #expect(
+            Force.repel(3, 4, strength: 5, weakeningBeyond: 6)
+                == .attract(3, 4, strength: -5, weakeningBeyond: 6))
     }
 
     @Test("力の並びは、先頭が種類")
     func packsTheKindFirst() {
         #expect(Force.gravity(1, 2, 3).packed == [0, 1, 2, 3, 0, 0, 0, 0])
         #expect(Force.attract(1, 2, strength: 9).packed == [1, 1, 2, 0, 9, 0, 0, 0])
+        // 弱まり始める距離は 6 つ目の枠。省いたときの 0 は「弱まらない」と読まれる
+        #expect(
+            Force.attract(1, 2, 3, strength: 9, weakeningBeyond: 4).packed == [1, 1, 2, 3, 9, 4, 0, 0])
         #expect(Force.wander(strength: 9).packed == [2, 0, 0, 0, 9, 0, 0, 0])
         #expect(Force.swirl(1, 2, strength: 9).packed == [3, 1, 2, 0, 9, 0, 0, 0])
         #expect(Force.drag(9).packed == [4, 0, 0, 0, 9, 0, 0, 0])

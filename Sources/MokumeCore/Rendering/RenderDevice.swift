@@ -114,7 +114,14 @@ import MokumeDiagnostics
     }
 
     let device: any MTLDevice
-    let queue: any MTL4CommandQueue
+
+    /// **このファイルの外へ出さない** ([#845])。別のファイルから掴めると、
+    /// ``commit(_:retaining:)`` を通らずに投入する口が書ける。そうして投入された置き場は
+    /// 番号が書き戻されず、巻き戻す側が「もう終わっている」と読んで待たない (#222 と同じく、
+    /// 絵が黙って壊れる)。投入はすべて漏斗を通すこと。
+    ///
+    /// [#845]: https://github.com/mokume-metal/mokume/issues/845
+    private let queue: any MTL4CommandQueue
 
     /// CPU が書いて、まだ GPU 側へ届けていない数の並びと画像 (#749)。届けるのは描き切り。
     let pendingUploads = PendingUploads()
@@ -122,9 +129,14 @@ import MokumeDiagnostics
     /// シェーダの原文を読み、組み立てる係。
     ///
     /// **転送メソッドを置かない。** ここに `makeShapeLibrary` などを残すと「組み立てには
-    /// 描画の土台の状態が要る」という読みが残るが、実際に要るのは `device` だけである
+    /// 描画の土台の状態が要る」という読みが残るが、投入と待ちに要るものは 1 つも使わない
     /// ([#959](https://github.com/mokume-metal/mokume/issues/959))。呼ぶ側はここを通る。
-    var shaders: ShaderLibraries { ShaderLibraries(device: device) }
+    ///
+    /// **触るたびに作り直さず、1 つを持ち続ける。** 組んだものを持ち主どうしで分け合う
+    /// 場所があちらで、分け合う範囲がこの GPU 1 つだからである。作り直すと、抱えたものが
+    /// 触るたびに消えて同じ原文を組み直す
+    /// ([#728](https://github.com/mokume-metal/mokume/issues/728))。
+    let shaders: ShaderLibraries
 
     /// コマンドの置き場ひとつぶん。
     ///
@@ -341,6 +353,7 @@ import MokumeDiagnostics
     /// 環が実際に待っていることを検査から確かめられる。
     init(device: any MTLDevice, slotCount: Int) throws(RenderFailure) {
         self.device = device
+        self.shaders = ShaderLibraries(device: device)
 
         guard let queue = device.makeMTL4CommandQueue() else {
             throw .commandQueueUnavailable

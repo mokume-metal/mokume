@@ -208,12 +208,21 @@ extension SketchSurface {
 
     private func notePress(_ event: NSEvent) {
         guard let point = canvasLocation(of: event) else { return }
-        deliver(.mouseDown(x: point.x, y: point.y, button: event.buttonNumber))
+        deliver(.mouseDown(x: point.x, y: point.y, button: Self.button(of: event)))
     }
 
     private func noteRelease(_ event: NSEvent) {
         guard let point = canvasLocation(of: event) else { return }
-        deliver(.mouseUp(x: point.x, y: point.y, button: event.buttonNumber))
+        deliver(.mouseUp(x: point.x, y: point.y, button: Self.button(of: event)))
+    }
+
+    /// 出来事の釦。**番号を型へ絞る関所は、ここと外から送る経路 (`RawInputEvent`) の
+    /// 2 つだけ。** `buttonNumber` は ``MouseButton`` の番号と同じ体系なので、変換はせず
+    /// 包むだけにする ([ADR-0034] 決定 1)。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    private static func button(of event: NSEvent) -> MouseButton {
+        MouseButton(rawValue: event.buttonNumber)
     }
 
     private func noteMove(_ event: NSEvent) {

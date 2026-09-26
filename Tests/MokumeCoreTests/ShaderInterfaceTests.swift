@@ -149,7 +149,7 @@ struct ShaderInterfaceTests {
 
     @Test("画面へ差し出す入口と取り出す入口が、それぞれの Swift 側と同じ番号・並びで受け取る")
     func presentAndOutputAgreeWithSwift() throws {
-        let library = try RenderDevice().shaders.makeLibrary(named: "Present")
+        let library = try RenderDevice().shaders.presentLibrary()
         #expect(
             Set(library.functionNames)
                 == ["presentVertexMain", "presentFragmentMain", "presentEncodeFragmentMain"],

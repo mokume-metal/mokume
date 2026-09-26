@@ -3,17 +3,21 @@
 
 /// 描くものを、下にある絵とどう混ぜるか。
 ///
-/// **どのモードでも、アルファ 0 の色は下地を変えない。** 混ぜ方が変わっても
-/// 「どれだけ効かせるか」はアルファが決める、という規律を全モードで揃えてある。
+/// **置き換える (`replace`) 以外のどのモードでも、アルファ 0 の色は下地を変えない。**
+/// 混ぜ方が変わっても「どれだけ効かせるか」はアルファが決める、という規律を `replace`
+/// 以外の全モードで揃えてある。`replace` だけは下地を見ず、形が掛かる画素を置いた色で
+/// アルファごと置き換える — アルファ 0 の色なら、その画素は透明になる ([#1542])。
 ///
 /// **下地が透明な所では、どのモードでも置いた色がそのまま載る。** 混ぜる相手が無いので、
 /// 混ぜ方は下地のアルファの分だけ効く — 半分透ける下地の上では、混ぜた色と置いた色が
 /// 半分ずつになる (W3C の合成の一般式・[#1447])。透明で始まる描き場所
 /// (`createGraphics`) に `multiply` で描いても、黒い形にはならない。
 ///
-/// **合成は 2 つの経路に分かれる。** `blend` と `replace` は固定機能のブレンドが混ぜ、
-/// 残りはフラグメントが下地を読んで混ぜる ([#758])。アルファの扱いは経路によらず揃えて
-/// ある (乗算済みの source-over・[ADR-0011] 決定 4) ので、上の規律はどちらでも成立する。
+/// **合成は 2 つの経路に分かれる。** `blend` と `replace` は下地を読まずに描き、残りは
+/// フラグメントが下地を読んで混ぜる ([#758])。下地を読まない側のうち、固定機能のブレンドで
+/// 混ぜるのは `blend` だけである — `replace` はブレンドを切り、置く色をそのまま書く。
+/// アルファの扱いは `blend` と下地を読む側とで揃えてある (乗算済みの source-over・
+/// [ADR-0011] 決定 4) ので、アルファ 0 の規律はこの 2 つで成立し、`replace` には及ばない。
 ///
 /// **どのモードがどちらへ行くかの一覧の実体は `ShapePipeline.BlendStates` の doc**
 /// ([ADR-0001] 原則 9)。ここも `Shaders/Common.metal` の `mokume_composite` もそこを指す
@@ -22,6 +26,7 @@
 /// [#758]: https://github.com/mokume-metal/mokume/issues/758
 /// [#887]: https://github.com/mokume-metal/mokume/issues/887
 /// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
+/// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// - Note: **隔離の外に置く。** ライブラリ全体が main actor を既定の隔離としているので
@@ -62,6 +67,13 @@ public nonisolated enum BlendMode: Sendable, Equatable, CaseIterable {
     /// 反転して掛け、また反転する。明るいほうへ寄る。
     case screen
     /// 下地を見ずに置き換える。
+    ///
+    /// **形が掛かる画素は、置いた色でアルファごと置き換わる** — 下地とは混ざらない。
+    /// アルファ 0 の色で描けば、形の所の下地は透明に抜ける。「アルファ 0 の色は下地を
+    /// 変えない」が成り立たない唯一のモードで、描き場所 (`createGraphics`) の一部を
+    /// 透明にする使い方になる ([#1542])。
+    ///
+    /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
     case replace
 
     /// シェーダへ渡す番号。

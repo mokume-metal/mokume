@@ -48,9 +48,24 @@ import MokumeDiagnostics
     private let gpu: RenderDevice
     private let pipeline: ComputePipeline
 
-    init(
+    convenience init(
         name: String, url: URL?, body: String, values: [String: ShaderValue],
         gpu: RenderDevice, pipeline: ComputePipeline
+    ) throws(RenderFailure) {
+        try self.init(
+            name: name, url: url, body: body, values: values,
+            library: gpu.shaders.makeComputeLibrary(named: name, body: body, values: values),
+            gpu: gpu, pipeline: pipeline)
+    }
+
+    /// 組んであるライブラリから作る。**`body` はそのライブラリの原文である。**
+    ///
+    /// 同じ原文から入口を何本も取り出すとき (``Canvas/makeParticles(count:)``) に使う。
+    /// 入口ごとに組むと、同じ原文を入口の数だけ組むことになる
+    /// ([#728](https://github.com/mokume-metal/mokume/issues/728))。
+    init(
+        name: String, url: URL?, body: String, values: [String: ShaderValue],
+        library: any MTLLibrary, gpu: RenderDevice, pipeline: ComputePipeline
     ) throws(RenderFailure) {
         self.name = name
         self.gpu = gpu
@@ -59,7 +74,6 @@ import MokumeDiagnostics
             name: name, url: url, body: body, values: values,
             label: "computation", valuesHint: "the values you pass when making it")
 
-        let library = try gpu.shaders.makeComputeLibrary(named: name, body: body, values: values)
         self.state = try pipeline.makeState(
             library: library, functionName: name, label: "mokume.computation.\(name)")
         box.watch { [weak self] in self?.reload() }

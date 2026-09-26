@@ -642,3 +642,255 @@ struct FirstObservedFrameTests {
         #expect(inlet.supplied == 1)
     }
 }
+
+/// 処理にかかった実時間を測って観測へ差し出す口 (``Sketch/measure(_:_:)``・
+/// [#1554](https://github.com/mokume-metal/mokume/issues/1554))。
+///
+/// 時計は検査が差し、**測る処理の中で進める**。進めた量がそのまま値に出ることで、
+/// 処理の前と後の 2 回を読んでいることと、単位がミリ秒であることを同時に見る。
+@Suite(
+    "測った実時間を観測へ差し出す",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct MeasureTests {
+    struct Refusal: Error, Equatable {}
+
+    /// 決めたフレームで準備を測るスケッチ。何をどこで測るかは検査が決める。
+    final class Preparing: Sketch {
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        /// 測る処理の中で時計を進める手。検査が差す。
+        var advanceClock: (Double) -> Void = { _ in }
+        /// `bakeMs` を測るフレームと、その処理の中で時計を進める量 (秒)。
+        var measureOn: [Int: Double] = [:]
+        /// `setup()` の中で `setupMs` を測るときの量 (秒)。`nil` なら測らない。
+        var measureInSetup: Double?
+        /// `bakeMs` と同じ名前を、測ったのとは別に差し出すフレームと値。
+        var exposeOn: [Int: Double] = [:]
+        /// `once` を差し出すフレーム。**測った値ではない値**が残らないことを見るため。
+        var exposeOnceOn: Int?
+        /// 投げる処理を測るフレーム。
+        var failOn: Int?
+
+        /// 測る処理が走った回数。
+        private(set) var runs = 0
+        /// 測る口が返した値。
+        private(set) var returned: [Int] = []
+        /// 測る口から届いたエラー。
+        private(set) var caught: [any Error] = []
+
+        func setup() {
+            if let seconds = measureInSetup {
+                returned.append(
+                    measure("setupMs") {
+                        runs += 1
+                        advanceClock(seconds)
+                        return 0
+                    })
+                // 測ったのではなく差し出しただけの値。こちらは最初のフレームの頭で消える
+                expose("setupExposed", 1)
+            }
+        }
+
+        func draw() {
+            background(.display(red: 0, green: 0, blue: 0))
+            let frame = frameCount
+            if let seconds = measureOn[frame] {
+                returned.append(
+                    measure("bakeMs") {
+                        runs += 1
+                        advanceClock(seconds)
+                        return frame
+                    })
+            }
+            if let value = exposeOn[frame] { expose("bakeMs", value) }
+            if exposeOnceOn == frame { expose("once", frame) }
+            if failOn == frame {
+                do {
+                    _ = try measure("failMs") { () throws -> Int in
+                        runs += 1
+                        throw Refusal()
+                    }
+                } catch {
+                    caught.append(error)
+                }
+            }
+        }
+    }
+
+    private func makeFacet() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-measure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func request(id: String, in facet: URL) throws {
+        try AtomicFile.write(
+            Data(#"{"id":"\#(id)"}"#.utf8), to: facet.appendingPathComponent("request.json"))
+    }
+
+    /// 応答の `values`。**`id` が合わない応答は読まない** — 前の応答を今回のものと
+    /// 取り違えないため。
+    private func values(answering id: String, in facet: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: facet.appendingPathComponent("report.json"))
+        let report = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        try #require(report["id"] as? String == id, "応答がまだ \(id) に答えていない")
+        return report["values"] as? [String: Any] ?? [:]
+    }
+
+    /// 測った値 (ミリ秒)。`float` を名乗っていなければ `nil`。
+    private func milliseconds(_ name: String, answering id: String, in facet: URL) throws
+        -> Double?
+    {
+        guard let entry = try values(answering: id, in: facet)[name] as? [String: Any],
+            entry["type"] as? String == "float"
+        else { return nil }
+        return entry["value"] as? Double
+    }
+
+    /// 時計を差して組む。時計は測る処理の中でだけ進む。
+    private func makeRuntime(
+        _ sketch: Preparing, clock: Clock?, observed facet: URL?
+    ) throws -> SketchRuntime {
+        nonisolated(unsafe) var clockReading = 5.0
+        sketch.advanceClock = { clockReading += $0 }
+        return try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: clock, now: { clockReading },
+            observer: facet.map { FrameObserver(directory: $0) })
+    }
+
+    @Test(
+        "処理の中で進んだ実時間が、ミリ秒でその名前の値に載る",
+        arguments: [Clock.wallClock, .frameIndex(frameRate: 60)])
+    func carriesTheElapsedMilliseconds(clock: Clock) throws {
+        let facet = try makeFacet()
+        let sketch = Preparing()
+        sketch.measureOn = [1: 0.0123]
+        let runtime = try makeRuntime(sketch, clock: clock, observed: facet)
+
+        try request(id: "a1", in: facet)
+        try runtime.advance()
+
+        // 測るのは時計の種類によらない実時間なので、どちらでも同じ値になる
+        let measured = try #require(try milliseconds("bakeMs", answering: "a1", in: facet))
+        #expect(abs(measured - 12.3) < 1e-9)
+        #expect(sketch.runs == 1)
+        #expect(sketch.returned == [1])
+    }
+
+    @Test("測った値は次のフレーム以降も残り、同じ名前で測り直すと置き換わる")
+    func keepsTheMeasuredValueUntilMeasuredAgain() throws {
+        let facet = try makeFacet()
+        let sketch = Preparing()
+        sketch.measureOn = [1: 0.0123, 5: 0.0045]
+        sketch.exposeOnceOn = 1
+        let runtime = try makeRuntime(sketch, clock: nil, observed: facet)
+
+        for _ in 1...3 { try runtime.advance() }
+        try request(id: "a1", in: facet)
+        try runtime.advance()  // 4 枚目
+        let kept = try #require(try milliseconds("bakeMs", answering: "a1", in: facet))
+        #expect(abs(kept - 12.3) < 1e-9)
+        // 残るのは測った値だけ。1 度差し出しただけの値は、これまでどおり次のフレームで消える
+        #expect(try values(answering: "a1", in: facet).keys.contains("once") == false)
+
+        try request(id: "a2", in: facet)
+        try runtime.advance()  // 5 枚目で測り直す
+        let replaced = try #require(try milliseconds("bakeMs", answering: "a2", in: facet))
+        #expect(abs(replaced - 4.5) < 1e-9)
+
+        try request(id: "a3", in: facet)
+        try runtime.advance()
+        let stillReplaced = try #require(try milliseconds("bakeMs", answering: "a3", in: facet))
+        #expect(abs(stillReplaced - 4.5) < 1e-9)
+        #expect(sketch.runs == 2)
+    }
+
+    @Test("同じフレームで同じ名前を差し出すと、そのフレームはそちらが載り、次のフレームで測った値に戻る")
+    func exposingTheSameNameWinsForThatFrameOnly() throws {
+        let facet = try makeFacet()
+        let sketch = Preparing()
+        sketch.measureOn = [1: 0.0123]
+        sketch.exposeOn = [3: -1]
+        let runtime = try makeRuntime(sketch, clock: nil, observed: facet)
+
+        try runtime.advance()
+        try runtime.advance()
+        try request(id: "a1", in: facet)
+        try runtime.advance()  // 3 枚目で差し出す
+        #expect(try milliseconds("bakeMs", answering: "a1", in: facet) == -1)
+
+        try request(id: "a2", in: facet)
+        try runtime.advance()
+        let back = try #require(try milliseconds("bakeMs", answering: "a2", in: facet))
+        #expect(abs(back - 12.3) < 1e-9)
+    }
+
+    @Test("setup() の中で測った値も、最初のフレームの応答に載る")
+    func carriesWhatSetupMeasuredIntoTheFirstFrame() throws {
+        let facet = try makeFacet()
+        let sketch = Preparing()
+        sketch.measureInSetup = 0.002
+        let runtime = try makeRuntime(sketch, clock: nil, observed: facet)
+
+        try request(id: "a1", in: facet)
+        try runtime.advance()
+
+        let measured = try #require(try milliseconds("setupMs", answering: "a1", in: facet))
+        #expect(abs(measured - 2) < 1e-9)
+        #expect(sketch.runs == 1)
+        // 差し出しただけの値は載らない (説明文が名乗る、`expose` のいまの振る舞い)
+        #expect(try values(answering: "a1", in: facet).keys.contains("setupExposed") == false)
+    }
+
+    @Test("観測が無くても、処理はちょうど 1 度走り、その戻り値が返る")
+    func runsTheBodyOnceWithoutObservation() throws {
+        let sketch = Preparing()
+        sketch.measureOn = [1: 0.0123]
+        let runtime = try makeRuntime(sketch, clock: nil, observed: nil)
+
+        try runtime.advance()
+        try runtime.advance()
+
+        #expect(sketch.runs == 1)
+        #expect(sketch.returned == [1])
+    }
+
+    @Test("処理が投げたら、そのエラーが呼び手へ届き、値は載らない", arguments: [true, false])
+    func passesTheThrownErrorThrough(observed: Bool) throws {
+        let facet = try makeFacet()
+        let sketch = Preparing()
+        sketch.failOn = 1
+        let runtime = try makeRuntime(sketch, clock: nil, observed: observed ? facet : nil)
+
+        if observed { try request(id: "a1", in: facet) }
+        try runtime.advance()
+
+        #expect(sketch.runs == 1)
+        #expect(sketch.caught.count == 1)
+        #expect(sketch.caught.first as? Refusal == Refusal())
+        if observed {
+            // 応答は返っている。載っていないのは測れなかった値だけ
+            #expect(try values(answering: "a1", in: facet).keys.contains("failMs") == false)
+        }
+    }
+}
+
+/// 走っていないときの測る口。GPU を要しない。
+@Suite("走っていないときに測る")
+struct MeasureOutsideARunTests {
+    @Test("走っていなくても、処理はちょうど 1 度走り、その戻り値が返る")
+    func runsTheBodyOutsideARun() {
+        let sketch = MeasureTests.Preparing()
+        var runs = 0
+        let returned = sketch.measure("bakeMs") {
+            runs += 1
+            return 42
+        }
+        #expect(returned == 42)
+        #expect(runs == 1)
+    }
+}

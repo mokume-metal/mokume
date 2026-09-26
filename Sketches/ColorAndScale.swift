@@ -10,13 +10,26 @@ import mokume
 /// 0–255 (と 360 / 100 / 100) へ戻して返すので、中段では**線形の 0.5 が 128 ではなく
 /// 188 と読める**。下段の光も素の数値なら 0–255 で受ける。
 ///
+/// **中段の見本の右半分は、同じ色を `fill(color, 128)` で薄めたもの。** 不透明度は色が
+/// 元から持つ不透明度に掛けるので、半透明の見本 (`alpha: 0.5`) はさらに薄くなり、
+/// 透明の見本は透明のまま残る。
+///
 /// **色相が回る。** 上段の帯は色相にそのまま時刻を足してあり、360 を越えても剰余を
 /// 書かずに巻き戻る。
+///
+/// **2 色の間は線形で混ざる。** 灰色の段の右の帯は、同じ青と黄の間を 2 通りに混ぜて
+/// 並べたもの。上の `lerpColor` は線形の光の量で混ぜ、下は 0–255 の数を成分ごとに
+/// `lerp` で混ぜた (手本の `lerpColor` と同じ) もの。真ん中の色は上のほうが明るく、
+/// 下は灰色へ沈む。
 final class ColorAndScale: Sketch {
     var settings = SketchSettings(width: 960, height: 540, title: "color and scale")
 
     /// 色を掛けて置く絵。**毎フレーム透明で消す**ので、置いた先で下地が透けて見える。
     private var pad: Canvas?
+
+    /// 混ぜる 2 色。0–255 の数でも持っておき、手本の混ぜ方 (数のまま混ぜる) と並べる。
+    private let cool = (red: Float(30), green: Float(60), blue: Float(220))
+    private let warm = (red: Float(255), green: Float(210), blue: Float(40))
 
     /// 読み出す色。作り方がそれぞれ違う。
     private var samples: [(name: String, color: LinearRGBA)] {
@@ -61,13 +74,30 @@ final class ColorAndScale: Sketch {
         strokeWeight(2)
         for index in 0..<11 {
             fill(Float(index) * 25.5)
-            rect(40 + index * 80, 134, 72, 30)
+            rect(40 + index * 38, 134, 34, 30)
+        }
+
+        // 灰色の段の右 — 2 色の間を取る。上は線形の光の量で、下は 0–255 の数のまま混ぜる
+        noStroke()
+        fill(170)
+        text("lerpColor (top) / lerp of 0-255 values (bottom)", 506, 124)
+        let from = color(cool.red, cool.green, cool.blue)
+        let to = color(warm.red, warm.green, warm.blue)
+        for index in 0..<11 {
+            let amount = Float(index) / 10
+            let x = 506 + index * 38
+            fill(lerpColor(from, to, amount))
+            rect(x, 134, 34, 15)
+            fill(
+                lerp(cool.red, warm.red, amount), lerp(cool.green, warm.green, amount),
+                lerp(cool.blue, warm.blue, amount))
+            rect(x, 149, 34, 15)
         }
 
         // 中段 — 読み出し。**不透明度が見えるよう、明暗 2 段の下敷きに置く**
         noStroke()
         fill(170)
-        text("red / green / blue / alpha / hue / saturation / brightness", 40, 200)
+        text("red / green / blue / alpha / hue / saturation / brightness (right half: fill(color, 128))", 40, 200)
         for (index, sample) in samples.enumerated() {
             let x = 40 + index * 128
             fill(64)
@@ -75,7 +105,10 @@ final class ColorAndScale: Sketch {
             fill(200)
             rect(x, 244, 72, 32)
             fill(sample.color)
-            rect(x + 12, 220, 48, 48)
+            rect(x + 8, 220, 28, 48)
+            // 右半分は同じ色を不透明度 128 で薄めたもの。**色が元から持つ不透明度に掛ける**
+            fill(sample.color, 128)
+            rect(x + 36, 220, 28, 48)
 
             fill(210)
             text(sample.name, x, 296)

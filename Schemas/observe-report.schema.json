@@ -120,7 +120,7 @@
     },
     "values": {
       "$ref": "#/$defs/values",
-      "description": "The values the sketch exposed on the frame this reply was written on. Omitted when there are none."
+      "description": "The values the sketch exposed on the frame this reply was written on, including measured values still carried over (see $defs/values). Omitted when there are none."
     },
     "stamp": {
       "type": "string",
@@ -159,7 +159,7 @@
           },
           "values": {
             "$ref": "#/$defs/values",
-            "description": "The values the sketch exposed on this frame. Omitted when there are none."
+            "description": "The values the sketch exposed on this frame, including measured values still carried over (see $defs/values). Omitted when there are none."
           }
         }
       }
@@ -256,7 +256,7 @@
     },
     "values": {
       "type": "object",
-      "description": "The values the sketch exposed on this frame, as a type and value pair per name. Omitted when there are none.",
+      "description": "The values the sketch exposed on this frame, as a type and value pair per name. Omitted when there are none. A value given with expose(_:_:) belongs to its frame alone and is gone on the next unless given again. A value taken with measure(_:_:) — the wall-clock milliseconds a piece of work took, as a float — is carried over: the runtime offers it again at the head of every frame until the same name is measured again, so it still reads as a value exposed on this frame. Exposing the same name on a frame wins for that frame only. Measured values differ from run to run, so do not compare them across runs.",
       "additionalProperties": {
         "type": "object",
         "required": [

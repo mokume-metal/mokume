@@ -177,11 +177,7 @@ final class ShapePipeline {
             named: "Shapes", body: gpu.shaders.bundledShaderSource(named: "Shapes"))
         self.vertexLibrary = library
 
-        let compilerDescriptor = MTL4CompilerDescriptor()
-        compilerDescriptor.label = "mokume.compiler"
-        guard let compiler = try? gpu.device.makeCompiler(descriptor: compilerDescriptor) else {
-            throw .shaderCompilerUnavailable
-        }
+        let compiler = try gpu.shaders.compiler()
         self.compiler = compiler
 
         self.states = try Self.makeBlendStates(
