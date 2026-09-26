@@ -254,6 +254,28 @@ struct ComputeTests {
         }
     }
 
+    /// 形は `ParticleTests.refusesACountItCannotHold` と揃えている ([#1589])。
+    ///
+    /// [#1589]: https://github.com/mokume-metal/mokume/issues/1589
+    @Test("持てない数の指定は、確保の失敗として返る")
+    func refusesACountItCannotHold() throws {
+        let canvas = try makeCanvas()
+        let stride = MemoryLayout<Float>.stride
+        // 数え切れない (バイト数の掛け算が回り込む)。溢れる最小の数も同じに断る
+        for count in [Int.max, Int.max / stride + 1] {
+            #expect(throws: RenderFailure.bufferUnavailable(byteCount: Int.max)) {
+                try canvas.makeNumbers(count: count)
+            }
+        }
+        // 数えられるが確保できない (上限の検めで断る)。溢れない最大の数も含める
+        for count in [Int.max / stride, 1 << 40] {
+            #expect(throws: RenderFailure.self) { try canvas.makeNumbers(count: count) }
+        }
+        // **途中で止まらない。** 断ったあとも普通に使える
+        let heat = try canvas.makeNumbers(count: 8)
+        #expect(heat.count == 8)
+    }
+
     @Test("繋がった計算は、順に効く")
     func runsChainedWorkInOrder() throws {
         let canvas = try makeCanvas()
