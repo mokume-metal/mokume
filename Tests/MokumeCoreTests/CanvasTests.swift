@@ -1056,22 +1056,6 @@ struct CanvasTests {
         #expect(image[36, 36] == (0, 0, 0, 255), "変換だけが戻っている")
     }
 
-    @Test("フレームの外でスタイルを積み降ろしすると、警告して無視される")
-    func styleStackOutsideAFrameIsIgnored() throws {
-        // 積んだ履歴はフレームに属するので、初期化のときに積んでも捨てられる。
-        // #941 で変換について塞いだのと同じ形で知らせる ([#925])
-        for (name, write) in [
-            ("pushStyle", { (c: Canvas) in c.pushStyle() }),
-            ("popStyle", { (c: Canvas) in c.popStyle() }),
-        ] {
-            let canvas = try makeCanvas()
-            write(canvas)
-            #expect(
-                canvas.warnings.hasWarned(.styleOutsideFrame),
-                "\(name) がフレームの外で黙って捨てている")
-        }
-    }
-
     // MARK: - スタイルの一式 (#780)
 
     /// 全フィールドが既定と違うスタイル。**`Canvas.Style` にフィールドを足したらここにも
@@ -1211,63 +1195,9 @@ struct CanvasTests {
         #expect(image[38, 38].red == 255)
     }
 
-    @Test("フレームの外で書いた変換は、どの口でも警告して無視される")
-    func transformsOutsideAFrameAreIgnored() throws {
-        // 変換はシーンの記述なので、初期化のときに書いてもどのフレームにも属さない
-        // (ADR-0021 決定 4)。**黙って捨てると「書いたのに効かない」だけが残る**ので、
-        // 視点・光・周囲・材質・影と同じ形で知らせる ([#941])
-        //
-        // **口ごとに新しい面を作る。** 注意は初回だけ言う仕組みに載っているので、1 つの
-        // 面で 14 本を続けて呼ぶと最初の 1 本しか確かめられない — 残り 13 本の guard を
-        // 外しても緑のままになる
-        //
-        // [#941]: https://github.com/mokume-metal/mokume/issues/941
-        var moved = Transform.identity
-        moved.translate(x: 5, y: 5)
-        let mouths: [(String, (Canvas) -> Void)] = [
-            ("translate(x,y)", { $0.translate(10, 20) }),
-            ("translate(x,y,z)", { $0.translate(10, 20, 30) }),
-            ("rotate", { $0.rotate(Float.pi / 4) }),
-            ("rotateX", { $0.rotateX(Float.pi / 4) }),
-            ("rotateY", { $0.rotateY(Float.pi / 4) }),
-            ("rotateZ", { $0.rotateZ(Float.pi / 4) }),
-            ("scale(x,y)", { $0.scale(2, 3) }),
-            ("scale(x,y,z)", { $0.scale(2, 3, 4) }),
-            ("shearX", { $0.shearX(0.3) }),
-            ("shearY", { $0.shearY(0.3) }),
-            ("applyMatrix", { $0.applyMatrix(moved) }),
-            ("resetMatrix", { $0.resetMatrix() }),
-            ("pushMatrix", { $0.pushMatrix() }),
-            ("popMatrix", { $0.popMatrix() }),
-        ]
-        for (name, write) in mouths {
-            let canvas = try makeCanvas()
-            write(canvas)
-            #expect(
-                canvas.warnings.hasWarned(.transformOutsideFrame),
-                "\(name) がフレームの外で黙って捨てている")
-            #expect(canvas.transform == .identity, "\(name) がフレームの外で効いている")
-        }
-    }
-
-    @Test("フレームの外で書いた切り抜きは、どの口でも警告して無視される (#1505)")
-    func clipsOutsideAFrameAreIgnored() throws {
-        // 切り抜きはシーンの記述で、フレームを越えない (ADR-0021 決定 4・寿命の表)。
-        // 形に焼き付かないので、形の組み立ての間もフレームの外に数える。注意は初回だけ
-        // 言うので、口ごとに新しい面を作る (`transformsOutsideAFrameAreIgnored` と同じ理由)
-        let mouths: [(String, (Canvas) -> Void)] = [
-            ("clip", { $0.clip(0, 0, 8, 8) }),
-            ("noClip", { $0.noClip() }),
-        ]
-        for (name, write) in mouths {
-            let canvas = try makeCanvas()
-            write(canvas)
-            #expect(
-                canvas.warnings.hasWarned(.clipOutsideFrame),
-                "\(name) がフレームの外で黙って捨てている")
-            #expect(canvas.style.clip == nil, "\(name) がフレームの外で効いている")
-        }
-    }
+    // フレームの外で書いた変換・積み降ろし・切り抜きが口ごとに注意して無視されるかは、
+    // シーンの記述の口をまとめて回す `SceneOutsideFrameTests` が見る (#941・#925・#1505 の
+    // 検査をそこへ畳んだ・#1670)。ここに残すのは絵のほう
 
     @Test("初期化のときに変換を書いても、絵は変わらない")
     func transformsOutsideAFrameLeaveThePictureAlone() throws {
