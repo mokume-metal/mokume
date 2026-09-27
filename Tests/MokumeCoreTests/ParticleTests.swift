@@ -19,38 +19,158 @@ struct ParticleEmissionTests {
     func carriesTheFractionSoLowRatesStillEmit() {
         // **1 フレームだけ見ると 0 個。** 切り捨てる作りだと、ここが永久に 0 のままになる
         var single = EmissionCadence()
-        #expect(single.take(rate: 0.5, over: 1.0 / 60, upTo: 1000) == 0)
+        #expect(single.take(rate: 0.5, over: .frame(perSecond: 60), upTo: 1000) == 0)
 
         // 毎秒 0.5 個を 10 秒ぶん (600 フレーム) 回せば 5 個
         var cadence = EmissionCadence()
         var total = 0
-        for _ in 0..<600 { total += cadence.take(rate: 0.5, over: 1.0 / 60, upTo: 1000) }
+        for _ in 0..<600 { total += cadence.take(rate: 0.5, over: .frame(perSecond: 60), upTo: 1000) }
         #expect(total == 5)
+
+        // 秒で数える刻み (実時間の時計・直に回す面) でも同じ
+        var bySeconds = EmissionCadence()
+        var secondsTotal = 0
+        for _ in 0..<600 {
+            secondsTotal += bySeconds.take(rate: 0.5, over: .seconds(Double(Float(1.0 / 60))), upTo: 1000)
+        }
+        #expect(secondsTotal == 5)
     }
 
     @Test("高いレートでも、出る数はレートどおり")
     func emitsWhatTheRateAsksFor() {
         var cadence = EmissionCadence()
         var total = 0
-        for _ in 0..<60 { total += cadence.take(rate: 90, over: 1.0 / 60, upTo: 1000) }
+        for _ in 0..<60 { total += cadence.take(rate: 90, over: .frame(perSecond: 60), upTo: 1000) }
         #expect(total == 90)
+    }
+
+    /// フレーム番号から導く時計 (`fps`) が 1 枚ごとに渡す刻みで、`rate` の `emit` を
+    /// `frames` 枚数え、各枚までの累計を返す。**刻みは時計から受け取る** — 手で 1/fps を
+    /// 書くと、時計と数える側の間の受け渡しの丸めを飛ばしてしまう。
+    private func cumulativeCounts(rate: Float, fps: Int, frames: Int) -> [Int] {
+        let timing = FrameTiming(clock: .frameIndex(frameRate: fps), now: { 0 })
+        var cadence = EmissionCadence()
+        var total = 0
+        var totals: [Int] = []
+        for _ in 0..<frames {
+            timing.advance()
+            total += cadence.take(rate: rate, over: timing.step, upTo: 1_000_000)
+            totals.append(total)
+        }
+        return totals
+    }
+
+    /// [#1640] の完了条件 1。**毎秒 fps 個を fps 枚回せば fps 個出て、1 枚目に 1 個出る。**
+    /// fps 1…120 のすべてで見る。刻みを単精度で渡していた頃は、`Float(1/fps)` が 1/fps
+    /// より小さくなる 33 の fps (25・50・100 …) で、合計が fps − 1 個・1 枚目が 0 個だった。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    @Test("フレーム番号の時計のどの fps でも、毎秒 fps 個を 1 秒回せば fps 個出て、1 枚目に 1 個出る")
+    func emitsTheRatePerSecondAtEveryFrameRate() {
+        var broken: [String] = []
+        for fps in 1...120 {
+            let totals = cumulativeCounts(rate: Float(fps), fps: fps, frames: fps)
+            if totals.first != 1 || totals.last != fps {
+                broken.append("fps \(fps): 1 枚目 \(totals.first ?? -1) 個・合計 \(totals.last ?? -1) 個")
+            }
+        }
+        #expect(broken.isEmpty, "頼んだ数どおりに出ない fps が \(broken.count) 個: \(broken)")
+    }
+
+    /// [#1640] の完了条件 2。**不足も超過もしない** — `n` 枚目までの累計が、有理数で計算した
+    /// ⌊rate·n ÷ fps⌋ に等しい。`rate` は fps の倍数でないもの (0.5・10) と fps。**これらの
+    /// rate の端数は整数から十分離れているので、丸めに遊びを持たせる作りの超過はここでは
+    /// 出ない** — 超過は次の `fractionalRatesNeitherRunOverNorFallShort` が見る (#1640 の反証 2)。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    @Test("刻みの揃った時計では、何枚目までの累計も ⌊rate·n ÷ fps⌋ に等しい")
+    func cumulativeCountsNeverFallShortNorRunOver() {
+        var broken: [String] = []
+        for fps in 1...120 {
+            // rate = numerator ÷ denominator (どれも単精度で厳密に表せる)
+            for (numerator, denominator) in [(1, 2), (10, 1), (fps, 1)] {
+                let rate = Float(numerator) / Float(denominator)
+                let totals = cumulativeCounts(rate: rate, fps: fps, frames: 2 * fps)
+                for (index, total) in totals.enumerated() {
+                    let n = index + 1
+                    let expected = numerator * n / (denominator * fps)
+                    if total != expected {
+                        broken.append("fps \(fps)・rate \(rate)・\(n) 枚目: \(total) 個 (頼んだ数 \(expected))")
+                        break
+                    }
+                }
+            }
+        }
+        #expect(broken.isEmpty, "累計が頼んだ数と違う組が \(broken.count) 個: \(broken.prefix(12))")
+    }
+
+    /// ⌊`rate`·n ÷ fps⌋ を**整数で**求める。`rate` は `Float` で、その値は m·2^−k (m・k は
+    /// 整数) と厳密に書けるので、割り算を丸めずに済む — 実装の倍精度の式を写さない。
+    private static func requested(rate: Float, frames n: Int, fps: Int) -> Int {
+        // 仮数を整数にする桁 (1 未満の rate も含めて、2^k 倍で整数になる最小の k 以上)
+        let shift = max(0, Int(Float.significandBitCount) - Int(rate.exponent))
+        let numerator = Int(Double(rate) * Double(1 << shift))
+        return numerator * n / ((1 << shift) * fps)
+    }
+
+    /// [#1640] の反証 1・2。**丸めの誤差に遊びを持たせる直し方は、整数のわずか下にある
+    /// 端数を 1 個に数えて超過する。** 反証役が見つけた組 (fps 120 の `rate: 71.563` は 6206 枚目、
+    /// 59.99999・29.99999・119.9999 は 1 枚目から) と、小数 4 桁の `rate` を fps 120 で 60 秒
+    /// 回した 64 本を、整数で求めた累計と枚ごとに比べる。遊び 1e-6 の作りはここで赤くなる。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    @Test("端数の rate でも、累計は ⌊rate·n ÷ fps⌋ を 1 枚も越えず、1 枚も下回らない")
+    func fractionalRatesNeitherRunOverNorFallShort() {
+        var cases: [(rate: Float, fps: Int, frames: Int)] = [
+            (71.563, 120, 6300), (59.99999, 60, 120), (29.99999, 30, 60), (119.9999, 120, 240),
+        ]
+        var randomness = Randomness(seed: 1640)
+        for _ in 0..<64 {
+            let tenThousandths = Int(randomness.unitValue() * 1_200_000)
+            cases.append((Float(tenThousandths) / 10_000, 120, 7200))
+        }
+        var broken: [String] = []
+        for (rate, fps, frames) in cases {
+            let totals = cumulativeCounts(rate: rate, fps: fps, frames: frames)
+            for (index, total) in totals.enumerated() {
+                let expected = Self.requested(rate: rate, frames: index + 1, fps: fps)
+                if total != expected {
+                    broken.append("rate \(rate)・fps \(fps)・\(index + 1) 枚目: \(total) 個 (頼んだ数 \(expected))")
+                    break
+                }
+            }
+        }
+        #expect(broken.isEmpty, "累計が頼んだ数と違う組が \(broken.count) 個: \(broken.prefix(8))")
+    }
+
+    /// 端数を整数で求める式そのものの確かめ。**検査の物差しが外れていれば、上の検査は
+    /// 何も言わない。**
+    @Test("整数で求めた頼んだ数は、有理数で書ける例と一致する")
+    func theRequestedCountIsExact() {
+        #expect(Self.requested(rate: 0.5, frames: 600, fps: 60) == 5)
+        #expect(Self.requested(rate: 0.5, frames: 119, fps: 60) == 0)
+        #expect(Self.requested(rate: 50, frames: 1, fps: 50) == 1)
+        #expect(Self.requested(rate: 10, frames: 4, fps: 50) == 0)
+        #expect(Self.requested(rate: 10, frames: 5, fps: 50) == 1)
+        // 71.563 の単精度の値は 71.56300354…で、6206 枚では 3700.99999975 個 (整数の下)
+        #expect(Self.requested(rate: 71.563, frames: 6206, fps: 120) == 3700)
     }
 
     @Test("1 フレームで枠を超える注文は、繰り越さずに切る")
     func doesNotCarryBeyondTheCapacity() {
         var cadence = EmissionCadence()
-        #expect(cadence.take(rate: 100_000, over: 1, upTo: 10) == 10)
+        #expect(cadence.take(rate: 100_000, over: .seconds(1), upTo: 10) == 10)
         // **貯め込まない。** 貯めると、レートを下げたあとも出続ける
         #expect(cadence.carried == 0)
-        #expect(cadence.take(rate: 0, over: 1, upTo: 10) == 0)
+        #expect(cadence.take(rate: 0, over: .seconds(1), upTo: 10) == 0)
     }
 
     @Test("進まない時間・出ないレートでは、何も出ない")
     func emitsNothingWithoutRateOrTime() {
         var cadence = EmissionCadence()
-        #expect(cadence.take(rate: 0, over: 1.0 / 60, upTo: 10) == 0)
-        #expect(cadence.take(rate: 60, over: 0, upTo: 10) == 0)
-        #expect(cadence.take(rate: .infinity, over: 1.0 / 60, upTo: 10) == 0)
+        #expect(cadence.take(rate: 0, over: .frame(perSecond: 60), upTo: 10) == 0)
+        #expect(cadence.take(rate: 60, over: .seconds(0), upTo: 10) == 0)
+        #expect(cadence.take(rate: .infinity, over: .frame(perSecond: 60), upTo: 10) == 0)
     }
 
     @Test("遠ざける力は、引く力の符号を返したもの")
@@ -486,6 +606,56 @@ struct ParticleTests {
     func twoEmittersOnOneParticlesEachGetTheirRate(rates: [Float], expected: [Int]) throws {
         let counts = try emittedCounts(rates: rates, step: 1 / 30, frames: 60, inOneLoop: false)
         #expect(counts == expected, "レート \(rates) の噴き口が出した数 \(counts) — 頼んだ数は \(expected)")
+    }
+
+    /// fps 50 で毎秒 50 個 (1 枚に 1 個) の粒を、毎秒 1200 画素で右へ飛ばす。粒は 24 画素
+    /// おきに 1 行に並ぶ ([#1640] の本文の再現)。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    final class EmitPerSecond: Sketch {
+        static let fps = 50
+        var settings: SketchSettings {
+            SketchSettings(width: 1300, height: 20, frameRate: Self.fps)
+        }
+        var dots: Particles?
+        init() {}
+
+        func setup() { dots = try? makeParticles(count: 1000) }
+
+        func draw() {
+            background(0)
+            guard let dots else { return }
+            emit(
+                dots, from: .point(5, 10), rate: Float(Self.fps), speed: 1200...1200,
+                angle: 0...0, life: 100...100, size: 2...2,
+                color: LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 1))
+            particles(dots)
+        }
+    }
+
+    /// `frames` 枚回した後、行の上で粒を数える。
+    private func dotsOnTheRow(after frames: Int) throws -> Int {
+        let runtime = try SketchRuntime(sketch: EmitPerSecond(), gpu: RenderDevice())
+        defer { runtime.closePlugins() }
+        for _ in 0..<frames { try runtime.advance() }
+        let pixels = try runtime.target.readPixels()
+        var (count, inside) = (0, false)
+        for x in 0..<pixels.width {
+            let on = pixels[x, pixels.height / 2].red > 0.3
+            if on && !inside { count += 1 }
+            inside = on
+        }
+        return count
+    }
+
+    /// [#1640] の完了条件 3。**時計から `emit` までを `SketchRuntime` ごと通す** —
+    /// 数える側だけを見る検査は、時計と面の間の受け渡しで刻みが丸まるのを見落とす。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    @Test("fps 50 で毎秒 50 個なら、1 枚目に 1 個・50 枚目に 50 個が並ぶ")
+    func theRuntimeEmitsTheRatePerSecondAtFifty() throws {
+        #expect(try dotsOnTheRow(after: 1) == 1)
+        #expect(try dotsOnTheRow(after: EmitPerSecond.fps) == EmitPerSecond.fps)
     }
 
     /// [#1468] の完了条件 2。**同じ 1 行から 2 回呼んでも、繰り越しは分かれる。** 呼んだ
