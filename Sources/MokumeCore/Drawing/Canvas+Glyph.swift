@@ -130,6 +130,9 @@ extension Canvas {
     func appendGlyphQuad(
         _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
     ) {
+        // 区間の外では置かない (``Canvas/canPlace``・#1672)。断るのは置く所だけで、`text()` は
+        // 送り幅と流し込みの続きを今までどおり返す
+        guard canPlace else { return warnOutsideFrame(.placing) }
         // 台帳の指紋を採るときは置かない (``placesGlyphs``)。送り幅は呼ぶ側が進める
         guard placesGlyphs else { return }
         glyphQuadsPlaced += 1
@@ -168,6 +171,8 @@ extension Canvas {
         _ picture: Picture, x: Float, y: Float, width: Float, height: Float,
         uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
     ) {
+        // 区間の外では、絵を整えることも読む面を替えることもしない (``Canvas/canPlace``・#1672)
+        guard canPlace else { return warnOutsideFrame(.placing) }
         picture.prepare()
         useTexture(picture.held)
         appendPixelAlignedQuad(
@@ -222,6 +227,8 @@ extension Canvas {
         colors: (LinearRGBA, LinearRGBA, LinearRGBA),
         uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)? = nil
     ) {
+        // 区間の外では、読む面も切り替えない (``Canvas/canPlace``・#1672)
+        guard canPlace else { return warnOutsideFrame(.placing) }
         // **図形は白い区画を読む。** 直前に画像を描いていたら、その面を読んだままに
         // なるので戻す (変わらなければ何も起きない)
         beginFlat()

@@ -139,6 +139,10 @@ extension Canvas {
         _ line: some StringProtocol, face: Typeface, x: Float, baseline: Float,
         color: LinearRGBA
     ) {
+        // 区間の外では字を焼き場へ焼くことも始めない (#1672)。焼き場が溢れて作り直すと、その
+        // フレームの番号を覚えるので、区間の外で作り直すと次のフレームで作り直せず字が落ちる。
+        // 字を置く所 (`appendGlyphQuad`) でも断るが、焼くのはそれより手前である
+        guard canPlace else { return warnOutsideFrame(.placing) }
         guard !line.isEmpty else { return }
 
         var pen = penStart(at: x, face: face, line: line)

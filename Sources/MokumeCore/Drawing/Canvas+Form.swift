@@ -127,6 +127,8 @@ extension Canvas {
         axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero,
         fills: Bool, cap: StrokeCap? = nil
     ) {
+        // 区間の外では置かない (``Canvas/canPlace``・#1672)
+        guard canPlace else { return warnOutsideFrame(.placing) }
         // **色は `Optional` にしない。** 持つかどうかは旗で渡す (``FormInstance/init``)
         let drawsFill = fills && style.hasFill
         let drawsStroke = style.hasStroke && style.strokeWeight > 0

@@ -611,10 +611,15 @@ public final class Canvas {
     /// 変わったときに古い既定が残らないようにするため。
     var cameraStorage: Camera?
 
-    /// いま `draw(_:)` の中か。
+    /// いまフレームの中か (``draw(_:)`` の閉包の中か、``beginDraw()``〜``endDraw()`` の間)。
     ///
     /// シーンの記述 (光・視点) は、フレームの外で書かれてもどのフレームにも属さない。
     /// 黙って捨てず警告するために、内と外を知る必要がある ([ADR-0021] 決定 4)。
+    ///
+    /// **置いたもの (図形・絵・背景・画素) はここだけを見ない** — フレームの外でも、持ち越しを
+    /// 約束する区間 (``carriesOver``) と形の組み立ての中では置ける (``canPlace``)。`setup()` だけで
+    /// 1 枚を描く書き方は、区間の中なので最初のフレームに出る ([ADR-0021] 決定 4 の追補
+    /// (2026-09-27))。
     private(set) var isDrawing = false
 
     /// いまのフレームを ``beginDraw()`` が開いたなら、そのときの本体のフレームの番号
@@ -640,6 +645,77 @@ public final class Canvas {
     ///
     /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
     var isShaping: Bool { isDrawing || recordingShape }
+
+    /// 持ち越しを約束する区間にいるか ([ADR-0021] 決定 4 の追補 (2026-09-27)・[#1672])。
+    ///
+    /// **置いたもの (図形・絵・背景・画素の書き込み) をフレームの外に置いてよいのは、次の
+    /// フレームを約束する主体が約束した区間だけである。** 本体では約束するのがランタイムで、
+    /// 区間は `setup()` と止まっている間のコールバックである。立てるのは ``SketchRuntime`` だけで、
+    /// 自分の面にだけ、その 2 つの呼び出しの間だけ立て、抜けるときに必ず下ろす。描き場所
+    /// (`createGraphics`) では約束するのが作者で、区間は ``beginDraw()``〜``endDraw()`` そのもの
+    /// なので、ここは立たない。
+    ///
+    /// 下ろすときに、区間の中で置いた量を覚える (``carriedOverAmount``)。フレームの頭の検め
+    /// (``beginFrame()``) が、区間の外で置いたものと見分けるのに読む。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    var carriesOver = false {
+        didSet {
+            guard oldValue, !carriesOver else { return }
+            let amount = pendingAmount
+            if amount > 0 { carriedOverAmount = amount }
+        }
+    }
+
+    /// 持ち越しの区間を出たときに、溜め場に残っていた量 (``pendingAmount``)。区間で何も置いて
+    /// いなければ `nil`。**フレームの頭の検めの印** (``beginFrame()``)。
+    ///
+    /// 区間を出るとき (``carriesOver`` を下ろすとき) に書き、フレームの頭が読んで下ろす。
+    /// **有無ではなく量を覚える** — 区間で置いた後に、区間の外で守りの無い口から積み足すと、
+    /// 有無の印ではその積み足しを持ち越しと取り違える。溜め場は置けば増え、捨てれば空に戻る
+    /// だけなので、頭で覚えた量より増えていれば区間の外で置いたものである。
+    ///
+    /// 口ごとに立てる形は取らない — 口を 1 つ書き落とした日に、そこだけ印が漏れる
+    /// (``hasPendingDrawing`` と同じ理由)。
+    var carriedOverAmount: Int?
+
+    /// 書いたものが、この面の次の描き切りに載る区間にいるか。**フレームの中と、持ち越しの区間。**
+    ///
+    /// 画素の書き込みと、描き場所を置いた記録 (``note(placing:)``) はここを見る。形の組み立て
+    /// (``createShape(_:)``) の中は入らない — 組み立ての中で置いた図形は形へ抜かれて溜め場に
+    /// 残らないが、画素は形に載らず面へ直に書かれ、置いた記録も守る絵が無いまま残るからである。
+    ///
+    /// **描き場所で、閉じ忘れたまま本体のフレームの境目を越えたフレームは入らない**
+    /// (``isFrameLeftOpenPastTheMainFrame``)。そのフレームは次の ``beginDraw()`` が描かずに捨てる
+    /// もので ([#1622])、もう区間ではない — 置けるままにすると、`beginDraw()` を 1 度だけ書いて
+    /// `endDraw()` を忘れた描き場所に、描き切りが来ないまま置いたものが溜まり続ける (#1592 と同じ形)。
+    ///
+    /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+    var writesToSurface: Bool { (isDrawing && !isFrameLeftOpenPastTheMainFrame) || carriesOver }
+
+    /// 描き場所の ``beginDraw()`` が開いたフレームが、閉じないまま本体のフレームの境目を越えたか。
+    ///
+    /// 越えたかは本体のフレームの番号 (``Timebase/frame``) で見分ける (``leftOpenAcrossBoundary``
+    /// と同じ見方)。**時刻の置き場の持ち主 (本体・直に使う面) では立たない** — 持ち主の境目は
+    /// 自分の次のフレームの頭そのもので、そこで閉じ忘れを捨てる。
+    private var isFrameLeftOpenPastTheMainFrame: Bool {
+        guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self else { return false }
+        return opened != timebase.frame
+    }
+
+    /// 置いてよいか。**フレームの中・形を組み立てている間・持ち越しの区間** ([#1672])。
+    ///
+    /// ``isShaping`` と同じ形で、持ち越しの区間 (``carriesOver``) を足したもの。図形が溜め場に
+    /// 入る口はどれも、副作用より前にこれを見て、外なら ``OutsideFrame/placing`` を 1 度言って
+    /// 何もしない。区間の外で置いたものは、描き場所では次の描き切りが来ないので永遠に溜まり
+    /// ([#1592])、直に使う `Canvas` ではいつの絵に出るかを呼び手が知らない。
+    ///
+    /// **守りの漏れはフレームの頭が拾う。** 口を 1 つ書き落としても、そこで置いたものは区間の
+    /// 印を持たないまま溜め場に残り、次のフレームの頭で debug 組みが止まる (``beginFrame()``)。
+    ///
+    /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
+    var canPlace: Bool { writesToSurface || recordingShape }
 
     /// いま描き切っている最中か。**入れ子の描き場所で戻ってくるのを止める。**
     private var isFlushing = false
@@ -1469,6 +1545,14 @@ public final class Canvas {
     // MARK: - 図形
 
     public func background(_ color: LinearRGBA) {
+        // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])。
+        //
+        // **見るのは形の組み立てを含まない述語** (``writesToSurface``)。塗り直しは形に焼き付かず、
+        // 面を塗る予定として組み立ての外へ残るので、フレームの外の組み立ての中で通すと、
+        // 描き場所の次のフレームを知らない色で塗る
+        //
+        // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        guard writesToSurface else { return warnOutsideFrame(.placing) }
         discardPending()
         pendingBackground = color
     }
@@ -1480,27 +1564,87 @@ public final class Canvas {
     /// 1 つでも残すと、次に閉じる列が「もう無い頂点」を指す — 消えたはずのものが
     /// 出る、あるいは何も出ない、という形で現れる (#323)。
     func discardPending() {
-        vertices.removeAll(keepingCapacity: true)
-        recordedStrokeRanges.removeAll(keepingCapacity: true)
-        recordedSolidStrokes.removeAll(keepingCapacity: true)
-        solidVertices.removeAll(keepingCapacity: true)
-        solidIndices.removeAll(keepingCapacity: true)
-        solidInstances.removeAll(keepingCapacity: true)
+        _ = sweepPending(emptying: true)
+        // 開いている列の種類は溜めたものではなく、次に置くものの向き先である。空かを見る
+        // 側 (``hasNothingPending``) は読まない — 形の組み立ては種類を `.solid` のまま抜ける
+        openSource = .flat
+    }
+
+    /// 溜め場が空か。**区間の外で置いたものが残っていないかを、フレームの頭が見る** ([#1672])。
+    ///
+    /// 並びは ``discardPending()`` と同じもの (``sweepPending(emptying:)``) を通る (``pendingAmount``)。
+    ///
+    /// **画素の写しへの書き込みは見ない。** 書く口は画素の窓 (``Pixels``) の 2 つに集まっていて、
+    /// 窓自身が書いてよいかを尋ねる。しかも写しへの書き込みは、描き切れなかったフレームと
+    /// 閉じ忘れて捨てたフレームでも残る ([#1678] の判断待ち) ので、ここで見ると区間の中で
+    /// 書いたものを区間の外と取り違える。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    var hasNothingPending: Bool { pendingAmount == 0 }
+
+    /// 溜め場に溜まっている量。**置けば増え、捨てれば 0 に戻る。** 列を閉じる操作 (`blendMode()`
+    /// などが開いた列を閉じる) では増えない。
+    ///
+    /// 数えるのは溜め場の要素の数と、開いている列・畳む相手の控え・置いた記録の数に、塗り直しの
+    /// 予定を足したもの (次の描き切りで面を塗るので、置いたものである)。閉じた列の数は数えない
+    /// (``sweepPending(emptying:)``)。
+    var pendingAmount: Int { sweepPending(emptying: false) + (pendingBackground == nil ? 0 : 1) }
+
+    /// 溜め場を 1 つずつ通り、空にするか、空かを見る。
+    ///
+    /// **捨てる (``discardPending()``) のと空かを見る (``hasNothingPending``) が、同じ並びを通る**
+    /// ([#1672])。並びを 2 か所に書くと、溜め場を 1 つ足した日に片方だけが知る — 捨て落とせば
+    /// 溜まり、見落とせばフレームの頭の検めが黙る。
+    ///
+    /// - Returns: 見る側 (`emptying: false`) で、溜まっている量 (``pendingAmount``)。捨てる側では 0。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    private func sweepPending(emptying: Bool) -> Int {
+        var amount = 0
+        func list<Store: RangeReplaceableCollection>(
+            _ store: inout Store, resettingTo reset: Store = Store(), counted: Bool = true
+        ) {
+            if emptying {
+                store.removeAll(keepingCapacity: true)
+                store.append(contentsOf: reset)
+            } else if counted {
+                amount += store.count - reset.count
+            }
+        }
+        func open<Value>(_ value: inout Value?) {
+            if emptying { value = nil } else if value != nil { amount += 1 }
+        }
+        func flag(_ value: inout Bool) {
+            if emptying { value = false } else if value { amount += 1 }
+        }
+        list(&vertices)
+        list(&recordedStrokeRanges)
+        list(&recordedSolidStrokes)
+        list(&solidVertices)
+        list(&solidIndices)
+        list(&solidInstances)
         // **何も動かさない置き場所は置き直す。** 畳めない列がこれを指すので、
         // 空のまま次の列を閉じると、束ねる先の無い添字が残る
-        flatInstances.removeAll(keepingCapacity: true)
-        flatInstances.append(.identity)
-        formInstances.removeAll(keepingCapacity: true)
-        batches.removeAll(keepingCapacity: true)
-        openSolid = nil
-        openFlat = nil
-        openForm = nil
-        pendingFlat = nil
-        buildingFlatTemplate = false
-        openSource = .flat
+        list(&flatInstances, resettingTo: [FlatInstance.identity])
+        list(&formInstances)
+        // 列は数えない。溜めたものを閉じて束ねるだけで、置いたものではない — 数えると、区間の
+        // 外で `blendMode()` を書いて列を閉じただけで量が増える。列があれば、束ねた中身が上の
+        // どれかに溜まっている (中身の無い列は積まない) ので、空かの判定は変わらない
+        list(&batches, counted: false)
+        open(&openSolid)
+        open(&openFlat)
+        open(&openForm)
+        open(&pendingFlat)
+        flag(&buildingFlatTemplate)
         // **置いた記録も一緒に落とす。** 置いた四角ごと捨てたのだから、その絵を
         // 守るために描き切らせる相手はもう居ない
-        placedGraphics.removeAll(keepingCapacity: true)
+        if emptying {
+            placedGraphics.removeAll(keepingCapacity: true)
+        } else {
+            amount += placedGraphics.count
+        }
+        return amount
     }
 
     /// このフレームに溜めたものを、**塗り直しの予定ごと**落とす。
@@ -1549,7 +1693,9 @@ public final class Canvas {
 
     /// 1 フレーム分を描く。
     ///
-    /// `body` の中で呼んだ図形が溜められ、抜けるときにまとめて描画先へ落ちる。
+    /// `body` の中で呼んだ図形が溜められ、抜けるときにまとめて描画先へ落ちる。**`draw { }` の
+    /// 外で置いた図形・絵・背景と書いた画素は、注意して置かない** — どのフレームに出るかを
+    /// 約束する者が居ないからである ([ADR-0021] 決定 4 の追補 (2026-09-27)・[#1672])。
     /// **返った時点で GPU はまだ描いていることがある。** 待つのは結果に触る口
     /// (画素の読み出し・数の並びの読み書き) と、次の描き切りの書く直前で、どちらも
     /// 自分で待つ。だから呼ぶ側は待ちを意識しなくてよい (#727)。
@@ -1559,6 +1705,9 @@ public final class Canvas {
     /// 光を途中で既定へ戻し、閉じると外の閉包が戻った後にもう一度描き切ることになる。ただし
     /// ``beginDraw()`` で開いたまま閉じ忘れて境目を越えたフレームは、捨ててから始める
     /// (``beginDraw()`` の説明)。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     public func draw(_ body: () -> Void) throws(RenderFailure) {
         if isDrawing, !leftOpenAcrossBoundary {
             warnFrameCallInsideFrame("draw")
@@ -1573,6 +1722,13 @@ public final class Canvas {
     /// 描き場所として 1 フレーム分を描き始める。
     ///
     /// ``endDraw()`` と対で使う。手本と同じ名前・同じ対の形にしてある。
+    ///
+    /// **描き場所 (`createGraphics`) の図形・絵・背景と画素の書き込みは、`beginDraw()` と
+    /// `endDraw()` の間でだけ置ける。** 外で置くと 1 度注意して、置かない ([ADR-0021] 決定 4 の
+    /// 追補 (2026-09-27)・[#1672])。次のフレームを約束するのは作者で、約束の区間がこの対だから
+    /// である。以前は外で置いたものが溜め場に積まれ、描き切りが来ないまま溜まり続けた
+    /// ([#1592])。本体の面は違い、`setup()` と止まっている間のコールバックでも置ける — そちらは
+    /// ランタイムが次のフレームを約束する。
     ///
     /// <!-- example: 文脈 var trail: Canvas! -->
     /// <!-- example: 文脈 let x: Float = 200 -->
@@ -1598,7 +1754,9 @@ public final class Canvas {
     /// - 描き場所で、同じ本体のフレームの中で `beginDraw()` を重ねた (補助の関数の入れ子など)
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     public func beginDraw() {
         // 閉じ忘れたまま境目を越えたフレームだけを捨てる。越えていない重ね呼びで捨てると、
         // 本体の面の `draw()` で `canvas.beginDraw()` を呼んだだけで、あるいは補助の関数が
@@ -1678,6 +1836,8 @@ public final class Canvas {
             abandonFrame()
             discardFrame()
         }
+        // 閉じ忘れたフレームを捨てた後で見る — 捨てたフレームの中で置いたものは区間の中である
+        checkNothingPlacedOutsideTheRegions()
         // 時刻の置き場の持ち主だけが、本体のフレームを数える (``Timebase/frame``)
         if timebase.owner === self { timebase.frame += 1 }
         // **組み立て中の形もフレームを越えない** (ADR-0021 決定 4 の追補 (2026-09-27)・
@@ -1707,6 +1867,50 @@ public final class Canvas {
         isDrawing = true
         beginDrawFrame = nil
     }
+
+    /// フレームの頭で、**区間の外で置いたものが溜め場に残っていないか**を見る ([#1672])。
+    ///
+    /// 置いてよいのは区間の中 (``canPlace``) だけで、区間の外では図形が溜め場に入る口がそれぞれ
+    /// 断る。**断る口を 1 つ書き落としても、ここで拾う。** 前のフレームは描き切りか捨てる道で
+    /// 溜め場を空にして終わるので、頭で何か残っていれば、フレームの外で置いたものである。
+    /// 持ち越しの区間で置いたもの (区間を出たときの量 ``carriedOverAmount`` まで) だけが、約束どおり
+    /// 残ってよい。
+    ///
+    /// 口を列挙して守る形は採らない。#1592 の一覧は、合流点 14 か所のうち 2 か所を取りこぼして
+    /// いた (#1603 の判断材料)。溜め場の並びは捨てる側と同じもの (``hasNothingPending``) を読む。
+    ///
+    /// debug 組みでは止まる。検査はすべて debug 組みで走るので、**全検査を通して漏れが 0 で
+    /// あることを、検査の全体がこの 1 行の上で確かめる** — どの検査で置いた図形が漏れても、
+    /// その検査がここで止まる。release 組みでは、漏れたものを描かずに捨てる (溜めない)。
+    ///
+    /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
+    /// [#1603]: https://github.com/mokume-metal/mokume/issues/1603
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    private func checkNothingPlacedOutsideTheRegions() {
+        defer { carriedOverAmount = nil }
+        // 持ち越しの区間の中でフレームを開いた (`setup()` で本体の面の `draw { }` を呼んだ)。
+        // 区間はまだ閉じていないので量は覚えていないが、溜まっているものはどれも区間の中で
+        // 置いたものである
+        guard !carriesOver else { return }
+        guard pendingAmount > (carriedOverAmount ?? 0) else { return }
+        placementsFoundOutsideRegions += 1
+        discardPending()
+        pendingBackground = nil
+        if stopsOnPlacementOutsideRegions {
+            assertionFailure(
+                "Something was placed outside a frame and outside setup() and the stopped "
+                    + "callbacks, and no guard refused it. Add `guard canPlace else { return "
+                    + "warnOutsideFrame(.placing) }` to the function that stores it (#1672)")
+        }
+    }
+
+    /// フレームの頭の検め (``checkNothingPlacedOutsideTheRegions()``) が、区間の外で置いたものを
+    /// 見つけた回数 (作ってから通算)。検め自身を確かめる検査が読む。
+    var placementsFoundOutsideRegions = 0
+
+    /// 見つけたときに debug 組みで止まるか。**検め自身を確かめる検査だけが下ろす** — 下ろさずに
+    /// 漏れを作ると、その検査が止まる。製品の経路では常に立っている。
+    var stopsOnPlacementOutsideRegions = true
 
     /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
     private func endFrame() throws(RenderFailure) {
@@ -1831,6 +2035,20 @@ public final class Canvas {
 
     /// 描き場所を置いたことを、両側に覚えさせる。
     func note(placing graphics: Canvas) {
+        // **面に載らない区間では記録しない。注意もしない** ([#1672])。記録は置いた時点の絵を
+        // 守るためのもので、区間の外では置いたもの自体が断られる (``canPlace``)。`setup()` で
+        // 描き場所を貼る (`texture(pg)`) のは描き方を決めるだけで正当なので、黙って飛ばす。
+        // フレームの外の形の組み立ての中も飛ばす — 組み立てた図形は形へ抜かれ、形を置くときに
+        // 記録し直す (``useTexture(_:)``)。記録すると、守る絵の無い印が区間の外の溜め場に残る
+        // (#1592 では相手の `placers` も伸びていた)
+        //
+        // **描き切りの最中は記録する。** フレームの終わりの描き切りは、フレームを閉じた印
+        // (`isDrawing`) を下ろしてから列を閉じ、断片に渡した描き場所をそこで記録する — 飛ばすと、
+        // 描き切る前の描き場所を読んだ注意 (下) が出ない
+        //
+        // [#1592]: https://github.com/mokume-metal/mokume/issues/1592
+        // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        guard writesToSurface || isFlushing else { return }
         guard graphics !== self else { return }
         // **描き切る前に置いたら知らせる。** 出るのは前のフレームの絵で、しかも
         // 「それらしい絵」なので、黙っていると自分のコードを疑うしかない
@@ -2012,8 +2230,21 @@ public final class Canvas {
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         let assembled = try gpu.withCommands { commands throws(RenderFailure) in
             // **効果を通す前の絵を、何より先に戻す。** CPU の画素の書き戻しより後に戻すと、
-            // フレームの外で `pixels` へ書いたものを控えの絵で消してしまう (先に戻すので、
-            // その書き戻しは効果を通した絵ごと描く先へ載る — 既知の制約)
+            // フレームの外で `pixels` へ書いたものを控えの絵で消してしまう。
+            //
+            // フレームの外で画素を書けるのは、持ち越しを約束する区間だけである (ADR-0021
+            // 決定 4 の追補 (2026-09-27)・[#1672])。描き場所の区間 (`beginDraw()`〜`endDraw()`) は
+            // フレームそのもので、そこで書いた画素はこの戻しより後に載る — 書く口 (`set()`・
+            // `pixels`) がまず画素を読むので、フレームの最初の描き切りは書く前に済んでいる。
+            // 描き場所の区間の外 (`endDraw()` の後) の書き込みは断る。以前は通していたので、
+            // 効果を通した絵ごと書き戻され、次のフレームで効果が 2 回掛かった ([#1655])。
+            //
+            // 残るのは本体の止まっている間のコールバックで書いた画素だけで、先に戻すので、それは
+            // 効果を通した絵ごと描く先へ載る。どう扱うかは [#1524] の判断に残す
+            //
+            // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+            // [#1655]: https://github.com/mokume-metal/mokume/issues/1655
+            // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
             if restoresCarry { try encodeCarryRestore(into: commands) }
 
             // **CPU が画素へ書いたものがあれば、描く前に描画先へ戻す。** 描画先は GPU 専用の

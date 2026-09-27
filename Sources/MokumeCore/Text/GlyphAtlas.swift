@@ -156,6 +156,8 @@ import simd
     private(set) var page: GlyphPage
     private(set) var size: Int
     private var entries: [Key: Entry] = [:]
+    /// 焼いた字形の数。**検査が読む** — 区間の外の `text()` が字を焼かないことを数える (#1672)。
+    var bakedCount: Int { entries.count }
     private var cursorX: Int
     private var cursorY: Int
     private var rowHeight: Int

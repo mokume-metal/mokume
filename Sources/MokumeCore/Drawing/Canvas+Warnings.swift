@@ -128,6 +128,14 @@ extension Canvas {
         case notDrawing
         /// 描き切る前の描き場所を置いた。
         case placingWhileDrawing
+        /// 持ち越しを約束する区間の外で、図形・絵・背景を置いた ([#1672])。
+        ///
+        /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        case placingOutsideFrame
+        /// 持ち越しを約束する区間の外で、画素を書いた ([#1672])。
+        ///
+        /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        case pixelWriteOutsideFrame
 
         /// 角度が逆向きの円弧を描こうとした。
         case reversedArc

@@ -36,6 +36,12 @@ extension Canvas {
 
     // 頂点を並べ始める。
     public func beginShape(_ kind: VertexKind = .polygon) {
+        // **形を開くのも置くことに含む** ([#1672])。区間の外で開いた形は、描き場所では境目が
+        // 来ないので捨てられず、`vertex()` の点が際限なく溜まる (`setup()` で開き、`draw()` で
+        // `beginDraw()` を書かずに点を足す書き方)
+        //
+        // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        guard canPlace else { return warnOutsideFrame(.placing) }
         isBuildingShape = true
         shapeKind = kind
         shapeHasDepth = false
@@ -98,7 +104,7 @@ extension Canvas {
     public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         // 形の外で控えても、次の beginShape() が消すのでどの頂点にも効かない (#1520)
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce("normal") }
+        guard admitsShapeCall("normal") else { return }
         let direction = SIMD3<Float>(x, y, z)
         // 長さを持たない向き・数でない向きは「書かれていない」に倒す。零ベクトルを
         // そのまま持たせると、光の計算で向きの定まらない面になる (#1528 で注意を足した)
@@ -117,7 +123,7 @@ extension Canvas {
     ) {
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce("bezierVertex") }
+        guard admitsShapeCall("bezierVertex") else { return }
         guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("bezierVertex") }
         let c1 = SIMD2(cx1, cy1)
         let c2 = SIMD2(cx2, cy2)
@@ -133,7 +139,7 @@ extension Canvas {
     public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce("quadraticVertex") }
+        guard admitsShapeCall("quadraticVertex") else { return }
         guard let start = lastShapePoint else { return warnCurveWithoutStartOnce("quadraticVertex") }
         // 2 次は 3 次の特別な形として通す — 曲線の道具を 1 本に保つ
         let control = SIMD2(cx, cy)
@@ -161,10 +167,7 @@ extension Canvas {
     /// [#1537]: https://github.com/mokume-metal/mokume/issues/1537
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
-        guard isBuildingShape else {
-            warnVertexOutsideShapeOnce("curveVertex")
-            return
-        }
+        guard admitsShapeCall("curveVertex") else { return }
         curveGuides.append(SIMD2(x, y))
         guard curveGuides.count >= 4 else { return }
         let count = curveGuides.count
@@ -192,10 +195,7 @@ extension Canvas {
     }
 
     public func beginContour() {
-        guard isBuildingShape else {
-            warnVertexOutsideShapeOnce("beginContour")
-            return
-        }
+        guard admitsShapeCall("beginContour") else { return }
         // 開いたままの穴は、endShape() と同じ規則で畳んでから次を始める (#1528)
         closeOpenHole()
         holePoints = []
@@ -203,7 +203,7 @@ extension Canvas {
     }
 
     public func endContour() {
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce("endContour") }
+        guard admitsShapeCall("endContour") else { return }
         guard holePoints != nil else { return warnContourNotBegunOnce() }
         closeOpenHole()
     }
@@ -225,6 +225,11 @@ extension Canvas {
 
     public func endShape(_ end: ShapeEnd = .open) {
         defer { discardOpenShape() }
+        // 区間の外では描かない。区間の中で開いた形を外で閉じても、形ごと捨てる ([#1672])。
+        // 始まりの無い形の注意より先に見る — 外で開こうとした形は、開く口がもう断っている
+        //
+        // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        guard canPlace else { return warnOutsideFrame(.placing) }
         // 始まりの無い形の終わり — beginShape() の書き忘れか、二重呼び (#1520)
         guard isBuildingShape else { return warnShapeNotBegunOnce() }
         closeOpenHole()  // 閉じ忘れた穴も畳む
@@ -326,10 +331,7 @@ extension Canvas {
 
     // 置いた頂点を 1 つ、番号で選ぶ。
     public func index(_ number: Int) {
-        guard isBuildingShape else {
-            warnVertexOutsideShapeOnce("index")
-            return
-        }
+        guard admitsShapeCall("index") else { return }
         shapeIndices.append(number)
     }
 
@@ -748,7 +750,7 @@ extension Canvas {
     ) {
         // 形の外でここまで来るのは `vertex` の 4 つの形だけである。曲線の刻みの点
         // (`appendShapePoint`) は、呼んだ関数が自分の入口で形の外を受けてから来る
-        guard isBuildingShape else { return warnVertexOutsideShapeOnce("vertex") }
+        guard admitsShapeCall("vertex") else { return }
         // 数でない座標は形を壊すだけなので置かない ([ADR-0020] 決定 5)
         guard position.x.isFinite, position.y.isFinite, position.z.isFinite else {
             return warnBadVertexOnce()
@@ -786,6 +788,26 @@ extension Canvas {
             + m1 * (t3 - 2 * t2 + t)
             + p2 * (-2 * t3 + 3 * t2)
             + m2 * (t3 - t2)
+    }
+
+    /// 頂点の仲間を受け付けるか。受け付けないなら、そのわけを 1 度だけ言う。
+    ///
+    /// **区間の外 (``Canvas/canPlace``) を、形の外より先に見る** ([#1672])。区間の外で開こうと
+    /// した形は ``beginShape(_:)`` が断っているので、続く頂点に「`beginShape()` の間で呼べ」と
+    /// 言っても直す先を指さない。区間の中で開いた形に、区間を出てから頂点を足すのも断る —
+    /// 描き場所では境目が来ないので、足した点が捨てられないまま溜まる。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    private func admitsShapeCall(_ name: String) -> Bool {
+        guard canPlace else {
+            warnOutsideFrame(.placing)
+            return false
+        }
+        guard isBuildingShape else {
+            warnVertexOutsideShapeOnce(name)
+            return false
+        }
+        return true
     }
 
     /// `beginShape()` の外で頂点の仲間を呼んだことを、初回だけ知らせる。

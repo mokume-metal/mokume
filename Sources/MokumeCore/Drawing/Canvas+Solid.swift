@@ -180,6 +180,8 @@ extension Canvas {
     func placeMesh(
         _ source: SolidSource, isDerived: Bool = false, mesh build: () -> SolidMesh
     ) {
+        // 区間の外では、立体の側へも移らない (``Canvas/canPlace``・#1672)
+        guard canPlace else { return warnOutsideFrame(.placing) }
         beginSolids()
         // **貼る絵が変わったら、ここで列が閉じる。** beginSolids は平面から移るときしか
         // 効かないので、立体を続けて置いている最中の切り替えはここが拾う
@@ -318,6 +320,9 @@ extension Canvas {
     /// 点番号は形の中でしか意味を持たないので、前の形の表が残っていると 2 つ目の形の
     /// 点 0 が 1 つ目の点 0 を指す。
     func inSolidBatch(indexed: Bool = false, _ body: () -> Void) {
+        // 区間の外では区間を開かず、`body` も走らせない (``Canvas/canPlace``・#1672)。奥行きの
+        // ある形の輪郭 (`strokeSolidRing`) と周囲の背景も、ここを通って塞がる
+        guard canPlace else { return warnOutsideFrame(.placing) }
         beginSolids()
         if indexed {
             openIndexedFreeformSolid()
@@ -505,6 +510,8 @@ extension Canvas {
     /// 形自身の座標は稜線の点をそのまま渡す — 頂点を並べた形の輪郭と同じ約束で、
     /// 利用者の断片からは線も形の表面に留まって見える。
     func strokeSolidEdges(of source: SolidSource, mesh build: () -> SolidMesh) {
+        // 区間の外では引かない。`noFill()` の立体はここだけを通る (``Canvas/canPlace``・#1672)
+        guard canPlace else { return warnOutsideFrame(.placing) }
         guard style.hasStroke, style.strokeWeight > 0 else { return }
         let net = solidEdges(of: source, mesh: build)
         guard !net.edges.isEmpty else { return }

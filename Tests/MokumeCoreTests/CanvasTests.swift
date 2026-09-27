@@ -1037,11 +1037,15 @@ struct CanvasTests {
         // 組み立て中の形はフレームに属する (ADR-0021 決定 4 の追補 (2026-09-27))。直す前は
         // 開いた印が境目で下りず、毎フレームの `vertex()` が同じ形へ積まれ続けた — 何も
         // 描かれないまま、点のぶんだけ記憶が増える ([#1591])。`setup()` で開いた形を模して、
-        // フレームの外で開く (頭の側で捨てることを見る)
+        // フレームの外の持ち越しの区間で開く (頭の側で捨てることを見る)。区間の外では形を
+        // 開くこと自体を断る ([#1672])
         //
         // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         let canvas = try makeCanvas()
+        canvas.carriesOver = true
         canvas.beginShape()
+        canvas.carriesOver = false
         for frame in 1...30 {
             var placedInFrame = 0
             try canvas.draw {
@@ -1188,6 +1192,16 @@ struct CanvasTests {
         }
     }
 
+    /// 持ち越しを約束する区間 (本体の `setup()` と止まっている間のコールバック) を模して
+    /// `body` を走らせる ([#1672])。区間の印を立てるのは、製品ではランタイムだけである。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    private func carryingOver(_ canvas: Canvas, _ body: () -> Void) {
+        canvas.carriesOver = true
+        defer { canvas.carriesOver = false }
+        body()
+    }
+
     // MARK: - フレームの境目で戻す状態 (#1671)
 
     /// フレームの境目の越え方。**境目の関数はどれを通っても、同じ状態を戻す。**
@@ -1204,8 +1218,9 @@ struct CanvasTests {
         case drawAfterBeginDraw
         /// 本体の通常の経路 (`draw { }` → `draw { }`)。
         case drawThenDraw
-        /// `setup()` にあたるフレームの外で汚し、最初の `draw { }` を始める。外で書けるものは
-        /// 限られる (シーンの記述は断られる) ので、見るのは頭で戻すものだけ (``FrameReset``)。
+        /// `setup()` にあたるフレームの外 (持ち越しの区間・``Canvas/carriesOver``) で汚し、最初の
+        /// `draw { }` を始める。外で書けるものは限られる (シーンの記述は断られる) ので、見るのは
+        /// 頭で戻すものだけ (``FrameReset``)。区間の外では形も開けない (#1672)。
         case outsideThenDraw
 
         var testDescription: String { "\(self)" }
@@ -1247,7 +1262,9 @@ struct CanvasTests {
                 closed()
                 try canvas.draw { inspect() }
             case .outsideThenDraw:
+                canvas.carriesOver = true
                 dirty()
+                canvas.carriesOver = false
                 try canvas.draw { inspect() }
             }
         }
@@ -1411,6 +1428,8 @@ struct CanvasTests {
             ("buildingFlatTemplate", end, all, { c, _ in c.buildingFlatTemplate = true }),
             // 捨てたフレームで積んだ力を落とすための控え (#1622)
             ("forcesThisFrame", end, all, { c, f in c.force(f.particles, [.gravity(0, 1)]) }),
+            // 持ち越しの区間で置いた量の印。フレームの頭の検めが読んで下ろす (#1672)
+            ("carriedOverAmount", head, all, { c, _ in c.carriedOverAmount = 7 }),
         ]
     }
 
@@ -1495,6 +1514,9 @@ struct CanvasTests {
             "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
             "solidStrokeCapture": transient,
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
+            "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
+            "placementsFoundOutsideRegions": count,
+            "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
             "uploadByteLimit": testing, "failureForTesting": testing,
             "failEffectPassForTesting": testing,
@@ -1695,7 +1717,8 @@ struct CanvasTests {
             after = shapeFingerprint(of: canvas)
             canvas.endShape()
         }
-        if insideFrame { try canvas.draw { run() } } else { run() }
+        // フレームの外は `setup()` を模す。形を開けるのは持ち越しの区間の中だけである (#1672)
+        if insideFrame { try canvas.draw { run() } } else { carryingOver(canvas, run) }
 
         for name in Self.shapeState.sorted() {
             #expect(before[name] != fresh[name], "\(name) が既定のままなので、戻ったかを見分けられない")
@@ -1720,7 +1743,9 @@ struct CanvasTests {
             canvas.vertex(16, 16)
             points = canvas.shapePoints.count
         }
-        if insideFrame { try canvas.draw { run() } } else { run() }
+        // フレームの外は `setup()` を模す。区間の外の `vertex()` は形の外より先に区間の外を
+        // 言う (#1672) ので、形の外の注意を見るには区間の中で呼ぶ
+        if insideFrame { try canvas.draw { run() } } else { carryingOver(canvas, run) }
 
         #expect(building == false, "記録の中で開いた形が外へ漏れた")
         #expect(points == 0, "外の vertex() が記録の中の形に積み足した")
@@ -1903,7 +1928,8 @@ struct CanvasTests {
         #expect(canvas.shapePoints.isEmpty)
         #expect(canvas.warnings.hasWarned(.shapeNotEnded))
 
-        canvas.vertex(8, 8)
+        // 止まっている間のコールバックを模す (持ち越しの区間・#1672)
+        carryingOver(canvas) { canvas.vertex(8, 8) }
         #expect(canvas.warnings.hasWarned(.vertexOutsideShape), "閉じた後の vertex() が黙っている")
         #expect(canvas.shapePoints.isEmpty, "閉じた後の vertex() が点を積んだ")
     }
@@ -2164,15 +2190,36 @@ struct CanvasTests {
         #expect(canvas.activeSurroundings == nil)
 
         // フレームの外で置いて閉じた立体の列は、前のフレームの光も周囲も焼かない。
-        // 線は既定で引くので、塗りの列は `box()` の中で稜線の列に閉じられる
+        // 線は既定で引くので、塗りの列は `box()` の中で稜線の列に閉じられる。
+        //
+        // **置くのは持ち越しの区間の中** (#1672)。フレームの外で置けるのは、ランタイムが次の
+        // フレームを約束する区間 (本体の止まっている間のコールバック) だけで、#1504 の舞台も
+        // そこである。区間の外では置かれない (下の検査)
+        canvas.carriesOver = true
         canvas.box(10)
         canvas.blendMode(.add)
+        canvas.carriesOver = false
         let solids = canvas.batches.filter { $0.source == .solid }
         try #require(!solids.isEmpty)
         for batch in solids {
             #expect(batch.lightRange.isEmpty)
             #expect(batch.surroundings.topAndPresence.w == 0)
         }
+    }
+
+    @Test("持ち越しの区間の外では、描き切った後に置いた立体は溜まらず、1 度注意する (#1672)")
+    func solidsPlacedOutsideTheRegionsAreRefused() throws {
+        let canvas = try makeCanvas()
+        canvas.beginDraw()
+        canvas.box(10)
+        canvas.endDraw()
+
+        canvas.box(10)
+        canvas.blendMode(.add)
+        #expect(canvas.batches.isEmpty)
+        #expect(canvas.solidVertices.isEmpty)
+        #expect(canvas.solidInstances.isEmpty)
+        #expect(canvas.warnings.hasWarned(.placingOutsideFrame))
     }
 
     // MARK: - 輪郭 (#234)

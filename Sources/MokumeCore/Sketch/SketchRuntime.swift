@@ -264,7 +264,8 @@ public final class SketchRuntime {
         // **戻すのは setup より先。** setup も最初の draw も、復元された値を見る
         // (ADR-0030 決定 6)
         let restoration = paramStore?.restore() ?? .init()
-        withActiveRuntime { sketch.setup() }
+        // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)
+        withActiveRuntime { carryingOver { sketch.setup() } }
         // 最初の応答は setup のあとに書く。setup で決めた値が、外から読める最初の
         // 姿になる
         params?.start(after: restoration)
@@ -477,7 +478,9 @@ public final class SketchRuntime {
         // 落ちる。描き始めた中でないと、コールバックの中の `translate()` や `pushStyle()` が
         // 無言で効かない (変換とスタイルの口は `guard isShaping`・光と切り抜きの口は
         // `guard isDrawing` で守られている。形を組み立てている最中でもないので、どちらも外である)。
-        // 図形や絵の口は守られておらず、フレームの外で置いたものは次の描き切りまで溜まる
+        // 図形・絵・画素の口は `guard canPlace` で守られている。フレームの外で置けるのは、この面に
+        // ランタイムが持ち越しを約束した区間 (`setup()` と止まっている間のコールバック・
+        // ``carryingOver(_:)``) だけで、そこで置いたものは次に描くフレームへ出る
         try canvas.draw {
             withActiveRuntime {
                 if !deliveredInput { input.beginFrame { deliver($0) } }
@@ -495,14 +498,17 @@ public final class SketchRuntime {
     ///
     /// 配るのは**フレームの外**である。`draw()` を呼ばないフレームを組むと、効果や
     /// 視点の無い絵が出口へ出て、止まっている間の絵が変わってしまう。そのため
-    /// コールバックの中の `translate()` は効かず、置いた図形は次に描くフレームへ溜まる。
+    /// コールバックの中の `translate()` は効かない。**置いた図形・絵・背景と書いた画素は、
+    /// 持ち越しの区間 (``carryingOver(_:)``) の中なので、次に描くフレームへ溜まる** —
+    /// `redraw()` を呼べばそのフレームに出る。呼ばずに置き続けると、上限を付けずに溜まり続ける
+    /// (作者が置き続けているからである・ADR-0021 決定 4 の追補 (2026-09-27))。
     /// 置かれるのは変換も切り抜きも光も周囲も無い状態で、前のフレームが最後に残した分も
     /// 効かない (描き終えたところで戻す — `Canvas.endFrame()`・#1472・#1504)。
     ///
     /// - Returns: 配った結果、このフレームを描くことになったか。
     private func deliverWhileStopped() -> Bool {
         collectInput()
-        withActiveRuntime { input.beginFrame { deliver($0) } }
+        withActiveRuntime { carryingOver { input.beginFrame { deliver($0) } } }
         // 描き直しの 1 枚の経過は ``runFrame()`` が決める
         return isLooping || redrawRequested
     }
@@ -1081,6 +1087,26 @@ public final class SketchRuntime {
         var frames: [ObservationReport.CapturedFrame] = []
         /// 次に撮るまで残っているフレーム数。0 ならこのフレームで撮る。
         var wait = 0
+    }
+
+    /// 自分の面に、持ち越しを約束する区間の印を立てて `body` を走らせる ([#1672])。
+    ///
+    /// **置いたものをフレームの外に置いてよいのは、次のフレームを約束する主体が約束した区間
+    /// だけである** (ADR-0021 決定 4 の追補 (2026-09-27))。本体の面で約束するのはランタイムで、
+    /// 区間は `setup()` と止まっている間のコールバックの 2 つ。どちらも次に描くフレームが来る
+    /// (最初のフレーム・`redraw()` か `loop()` の後のフレーム) ので、そこで置いたものはそこへ
+    /// 持ち越す。`setup()` だけで 1 枚を描く書き方 (Processing の基本) はこれに頼る。
+    ///
+    /// 立てるのは自分の面 (``canvas``) にだけである。描き場所 (`createGraphics`) の区間は作者の
+    /// `beginDraw()`〜`endDraw()` で、`setup()` の中でも立てない。**`defer` で必ず下ろす** —
+    /// 下ろし損ねると、`Task` の続きのような区間の外で置いたものまで持ち越してしまう。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    private func carryingOver(_ body: () -> Void) {
+        let previous = canvas.carriesOver
+        canvas.carriesOver = true
+        defer { canvas.carriesOver = previous }
+        body()
     }
 
     /// いま走っているランタイムとして自分を差し込んでから `body` を実行する。
