@@ -30,7 +30,7 @@ Claude Code のセッションでは、手順 3・4 を `scripts/plan-record.sh`
 
 | 踏んだもの | 行き先 |
 | --- | --- |
-| その PR の説明で筋が通る | 起票して、その PR で閉じる (既定) |
+| その PR の説明で筋が通る (同じ根の兄弟は常にここ — ADR-0040) | 起票して、その PR で閉じる (既定) |
 | 筋は通らないが、完了条件は書ける | 起票し、完了条件を本文に書いて `verify: triaged` まで付ける |
 | 完了条件を書けない (設計・判断が要る) | ラベルなしで置き、メンテナの判断を待つ |
 
@@ -126,6 +126,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 
 | 場面 | 規律と読む先 |
 | --- | --- |
+| バグを直す | 症状ではなく破られた約束として、及ぶ範囲ごと直す (ADR-0040)。閉じる PR には反証役の指摘と応えを載せる。手順は `.claude/skills/bug-refute/` |
 | 止まって見えるときの読み分け | `bash scripts/stall-watch.sh` (読み取りのみ・冒頭に症状と対処の表)。数時間おきに定期実行もされ、機械で直せるものは直す。対象から外すなら Draft にする |
 | 版の出方 | 版は日に 1 度自動で出る (タグと GitHub Release だけで表す)。壊れた配布物を出し直すときだけ PR に `release:now` を付ける。上げ幅は `scripts/release.py` の冒頭 |
 | ブランチ保護の正本 | 正本は `.github/rulesets/*.json` (ADR-0006)。管理画面ではなく定義ファイルの PR で変え、merge 後の適用 (`scripts/apply-rulesets.sh --apply`) はメンテナが行う。必須チェックを消すときだけ適用を merge より先にする (消す PR 自身がそのチェックを満たせなくなる) |
