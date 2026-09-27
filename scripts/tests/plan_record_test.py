@@ -84,6 +84,16 @@ case "$kind" in
     case " ${FAKE_GH_MISSING:-} " in *" $3 "*) exit 1 ;; esac
     json=${FAKE_GH_ISSUE_JSON:-}
     [ -n "$json" ] || [ -z "${FAKE_GH_ISSUE:-}" ] || json='{"number":'$FAKE_GH_ISSUE'}'
+    # Issue Type (#1661 — 実在確認に相乗りして読まれる)。番号ごとに変えたいときは
+    # FAKE_GH_ISSUE_TYPE_<番号>、全部同じでよければ FAKE_GH_ISSUE_TYPE。どちらも無ければ
+    # 型の無い Issue になる (既存の検査はすべてこれ)
+    case "$3" in
+      *[!0-9]* | '') type= ;;
+      *) eval "type=\\${FAKE_GH_ISSUE_TYPE_$3:-\\${FAKE_GH_ISSUE_TYPE:-}}" ;;
+    esac
+    if [ -n "$json" ] && [ -n "$type" ]; then
+      json=$(printf '%s' "$json" | jq -c --arg t "$type" '. + {issueType: {name: $t}}')
+    fi
     ;;
 esac
 [ -n "$json" ] || exit 1
@@ -509,6 +519,79 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
                 result = self.capture(plan, recheck=False, FAKE_GH_PR="42")
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(len(self.records()), 1, result.stderr)
+
+    # --- Bug の約束と範囲 (ADR-0040 決定 1・#1661) ---------------------------
+    # #1659 の実測: 兄弟の口を探さず、同じ根のバグが 1 件ずつ直されていた (同じ根の後発
+    # 15 件・見つけた兄弟を同じ PR で閉じたのは 51 件中 4 件)。対象が Bug のプランにだけ、
+    # 破られた約束とそれが及ぶ範囲を書かせる
+
+    BUG_PLAN = "# #12 座標のずれを直す\n\n"
+    PROMISE = "破られた約束: 変換は保持した形にも同じく効く。\n"
+    SCOPE = "及ぶ範囲: rg 'applyMatrix' Sources/ で 3 か所を見た。兄弟は無かった。\n"
+
+    def test_capture_accepts_a_bug_plan_that_names_the_promise_and_its_scope(self):
+        result = self.capture(
+            self.BUG_PLAN + self.PROMISE + self.SCOPE, FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE="Bug"
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(len(self.records()), 1, result.stderr)
+        self.assertIn("scripts/comment.sh issue 12", result.stderr)
+        self.assertNotIn("ADR-0040", result.stderr)
+
+    def test_capture_refuses_a_bug_plan_without_the_promise_or_its_scope(self):
+        """約束と範囲は別々に問う — 片方だけ書いたプランには、足りないほうだけを名乗る。
+
+        足りないものの行は「… (」で終わる綴りで見分ける (案内の本文にも同じ語が出るため)。
+        """
+        promise, scope = "破られた約束 (", "約束が及ぶ範囲 ("
+        for plan, missing, present in (
+            (self.BUG_PLAN + "直す。\n", (promise, scope), ()),
+            (self.BUG_PLAN + self.PROMISE, (scope,), (promise,)),
+            (self.BUG_PLAN + self.SCOPE, (promise,), (scope,)),
+        ):
+            with self.subTest(plan=plan):
+                result = self.capture(plan, FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE="Bug")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("ADR-0040", result.stderr)
+                self.assertIn("#12", result.stderr)
+                for word in missing:
+                    self.assertIn(word, result.stderr)
+                for word in present:
+                    self.assertNotIn(word, result.stderr)
+                # 記録は作らない — 残すと guard が直す前のプランの投稿を催促する
+                self.assertEqual(self.records(), [])
+                self.assertEqual(self.metas(), [])
+                self.assertNotIn("scripts/comment.sh issue 12", result.stderr)
+
+    def test_capture_does_not_ask_a_plan_whose_targets_are_not_bugs(self):
+        """Bug でなければ問わない。型が読めない (型の無い) Issue も問わない側へ倒す。"""
+        for type_ in ("Task", ""):
+            with self.subTest(type_=type_):
+                for f in self.records():
+                    f.unlink()
+                result = self.capture(
+                    self.BUG_PLAN + "直す。\n", FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE=type_
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(len(self.records()), 1, result.stderr)
+                self.assertNotIn("ADR-0040", result.stderr)
+
+    def test_capture_asks_when_any_named_issue_is_a_bug(self):
+        """投稿先が PR に確定しても、プランが名乗る Issue に Bug があれば問う。
+
+        型は投稿先ではなく**仕事の対象**の属性である。PR が名乗りを全部閉じるときは出力が
+        `pr N` の 1 行になるが、直しているのは名乗った Issue のほうである。
+        """
+        result = self.capture(
+            "# #12 座標のずれを直す\n\nRefs #13\n",
+            FAKE_GH_PR_JSON=pr_json(42, closes=[12, 13]),
+            FAKE_GH_ISSUE="12",
+            FAKE_GH_ISSUE_TYPE_13="Bug",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.records(), [])
+        self.assertIn("#13", result.stderr)
+        self.assertIn("破られた約束", result.stderr)
 
     def test_capture_still_records_when_no_target_exists_yet(self):
         result = self.capture("PR も Issue もまだ無い状態の計画。\n")

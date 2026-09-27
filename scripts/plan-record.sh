@@ -10,6 +10,7 @@
 #   2. 持ち出す前に落とす。秘密は落とさず投稿ごと止める
 #   3. 投稿はフックが行わず scripts/comment.sh を打たせる (人間の目を一度通す)
 #   4. 着手の瞬間に、完了条件がまだ妥当かを問う (ADR-0031 決定 4 — recheck_missing)
+#   5. 対象が Bug なら、破られた約束とそれが及ぶ範囲を問う (ADR-0040 決定 1 — bug_scope_missing)
 #
 # 契約 (詳細は各関数の頭):
 #   capture   stdin に PostToolUse (ExitPlanMode) の JSON。記録し指示を stderr へ (exit 2)
@@ -231,8 +232,14 @@ named_numbers() { # $1=本文 → 番号を 1 行ずつ
   return 0
 }
 
+# plan_targets が実在を確かめた番号と、その Issue Type (「<番号> <型>」を 1 行ずつ。型が
+# 無ければ空)。出力の形 ("pr 123" / "issue 45") は guard も読むので変えず、型は脇に控える。
+# **$( ) で呼ぶとサブシェルごと消える**ので、読めるのは今のシェルで呼んだ capture だけ
+# である (#1661)
+PLAN_TARGET_TYPES=''
+
 plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行ずつ (優先順)
-  local branch="$1" body="$2" number numbers seen='' info pr='' closes='' found='' mismatch=0
+  local branch="$1" body="$2" number numbers seen='' info pr='' closes='' found='' mismatch=0 type
 
   # 番号と「その PR が閉じる Issue」を 1 行で受ける。閉じる Issue が無ければ番号のあとに
   # 空白だけが続く (前後を空白で挟んでおき、` $number ` の部分一致で照合する)
@@ -266,13 +273,20 @@ plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行
       grep -oE '[0-9]+' | head -1)
   fi
 
+  PLAN_TARGET_TYPES=''
   while IFS= read -r number; do
     [ -n "$number" ] || continue
     case "$seen" in *"|$number|"*) continue ;; esac   # 同じ番号を 2 度並べない
     seen="$seen|$number|"
-    # 実在するかを確かめる。ブランチ名の数字はハッシュの断片でもありうる
-    gh issue view "$number" -R "$REPO" --json number -q .number >/dev/null 2>&1 || continue
+    # 実在するかを確かめる。ブランチ名の数字はハッシュの断片でもありうる。
+    # 型はこの問い合わせに相乗りして控える (bug_scope_missing が読む・#1661)。呼び出しの
+    # 回数は増やさない — 型のためだけに候補ごとにもう 1 回 GitHub を叩くと、フックの
+    # 中で最も遅い区間 (#1024) がそのまま倍になる
+    type=$(gh issue view "$number" -R "$REPO" --json number,issueType \
+      -q '.issueType.name // ""' 2>/dev/null) || continue
     found="$found$number
+"
+    PLAN_TARGET_TYPES="$PLAN_TARGET_TYPES$number $type
 "
   done <<< "$numbers"
 
@@ -556,6 +570,37 @@ recheck_missing() { # stdin=プラン本文。足りないものを 1 行 1 件�
     <<<"$body" || echo '完了条件の現況 (まだ有効 / 既に満たされている / 差し替えが要る)'
 }
 
+# --- Bug の約束と範囲 (#1661) -----------------------------------------------
+# **Bug は症状ではなく、破られた約束として直す** (ADR-0040 決定 1)。#1659 の実測では、
+# 原因の特定と再現テストはよくできているのに兄弟の口を探さず、同じ根のバグが 1 件ずつ
+# 直されていた — 直しの取りこぼしから出た同じ根の後発が 15 件、修正中に見つけた兄弟の
+# うち同じ PR で閉じたのは 51 件中 4 件だけだった。
+#
+# だから対象に Bug が含まれるプランには、**どの約束が破れたか**と、**その約束がどこまで
+# 及ぶか** (探した式・兄弟・同じ根) の 2 つを書かせる。見るのは recheck_missing と同じく
+# 書いてあることだけで、範囲の探し方が正しいかは見ない。語彙も同じ理由で広く取る。
+#
+# recheck_missing とは別に置く。**対象の型は plan_targets の後でしか分からない** — 番号と
+# 現況の検査は GitHub を引く前 (記録を作る前) に済ませるので、そちらへ混ぜると GitHub を
+# 引く区間が .meta を書く前へ出てしまう (#1024 の順序)。
+#
+# **型が読めないときは問わない。** これは記録の検査で、着手のゲートではない。型の無い
+# Issue まで Bug とみなすと、Bug でないプランにも約束と範囲を求めて差し戻しが毎回出る —
+# MOKUME_PLAN_RECORD=0 で外す癖がつき、機構ごと形骸化する (recheck_missing の語彙を広く
+# 取ったのと同じ理由)。実在確認そのものが失敗した番号は対象から外れるので、ここへは来ない。
+targets_include_bug() { # $1=PLAN_TARGET_TYPES → Bug が 1 件でもあれば 0
+  printf '%s\n' "$1" | awk '$2 == "Bug" { found = 1 } END { exit !found }'
+}
+
+bug_scope_missing() { # stdin=プラン本文。足りないものを 1 行 1 件で stdout へ
+  local body
+  body=$(read_stdin)
+  grep -qE '約束|不変条件|契約' <<<"$body" ||
+    echo '破られた約束 (どの約束・不変条件・契約が破れたか)'
+  grep -qE '範囲|及ぶ|兄弟|同じ根' <<<"$body" ||
+    echo 'その約束が及ぶ範囲 (探した式と、見つかった兄弟・同じ根の Issue)'
+}
+
 # --- 差し戻しの文言と指示文 -------------------------------------------------
 #
 # **文言は関数に切り出す。** scripts/review-gate.sh と scripts/pr-identity-guard.sh が
@@ -604,6 +649,27 @@ $(printf '%s' "$1" | sed 's/^/  - /')
 
 **見ているのは書いてあることだけで、判定が正しいかは見ていません。** 記録は作っていないので、
 プランを直してもう一度 ExitPlanMode を通してください。
+EOF
+}
+
+bug_scope_missing_message() { # $1=足りないもの (1 行 1 件) $2=対象の Bug の番号 (空白区切り)
+  cat <<EOF
+対象に Bug (#$(printf '%s' "$2" | sed 's/ / #/g')) があるのに、着手プランに約束と範囲が見当たりません (ADR-0040 決定 1)。足りないのは:
+
+$(printf '%s' "$1" | sed 's/^/  - /')
+
+**Bug は症状ではなく、破られた約束として直します。** 症状の 1 か所だけを直すと、同じ約束を
+破っている兄弟の口が残り、同じ根のバグが 1 件ずつ起票されては直されます (#1659 の実測で、
+直しの取りこぼしから出た後発が 15 件、見つけた兄弟を同じ PR で閉じたのは 51 件中 4 件)。
+
+プランに次の 2 つを書いてください:
+
+  1. 破られた約束 — 何が守られるはずだったのか (API の約束・不変条件・契約)
+  2. その約束が及ぶ範囲 — 同じ約束を負う口をどう探したか (探した式を残す) と、見つかった
+     兄弟。同じ根の既存 Issue があれば sub-issue で束ねる (bash scripts/sub-issue.sh <根> --attach <番号>)
+
+**見ているのは書いてあることだけで、範囲の探し方が正しいかは見ていません。** 記録は作って
+いないので、プランを直してもう一度 ExitPlanMode を通してください。
 EOF
 }
 
@@ -664,7 +730,7 @@ post_instructions() {
 
 capture() {
   local payload plan cwd session root branch dir id file body findings
-  local blocks warns targets target count recheck marks mark candidate
+  local blocks warns targets target count recheck marks mark candidate scratch scope
 
   payload=$(read_stdin)
   if [ -z "$payload" ]; then
@@ -744,7 +810,31 @@ capture() {
   # 投稿先が空でも guard は plan_targets で引き直すので、催促はそれで成り立つ
   write_meta "$dir/$id.meta" "$branch" "$id" 0 ''
 
-  targets=$(plan_targets "$branch" "$body")
+  # 型を控えた PLAN_TARGET_TYPES を読むので、plan_targets は**今のシェルで**呼び、出力は
+  # 一時ファイルで受ける ($( ) にするとサブシェルごと型が消える)。一時ファイルを作れなければ
+  # 従来どおり $( ) で呼ぶ — 型が空になるので、下の Bug の検査は問わない側へ倒れる
+  PLAN_TARGET_TYPES=''
+  if scratch=$(mktemp "${TMPDIR:-/tmp}/plan-record.XXXXXX" 2>/dev/null); then
+    plan_targets "$branch" "$body" >"$scratch"
+    targets=$(cat "$scratch")
+    rm -f "$scratch"
+  else
+    targets=$(plan_targets "$branch" "$body")
+  fi
+
+  # 対象に Bug があれば、約束と範囲を問う (#1661 — 理由は bug_scope_missing の頭)。
+  # 差し戻すなら上で書いた記録も消す。recheck_missing と同じく「記録は作らない」に揃える —
+  # 残すと guard が、直す前のプランを投稿するよう催促してしまう
+  if targets_include_bug "$PLAN_TARGET_TYPES"; then
+    scope=$(printf '%s' "$body" | bug_scope_missing)
+    if [ -n "$scope" ]; then
+      rm -f "$file" "$dir/$id.meta"
+      bug_scope_missing_message "$scope" \
+        "$(printf '%s\n' "$PLAN_TARGET_TYPES" | awk '$2 == "Bug" { printf "%s%s", sep, $1; sep = " " }')" >&2
+      exit 2
+    fi
+  fi
+
   target=$(printf '%s' "$targets" | head -1)
   count=$(printf '%s' "$targets" | grep -c . || true)
 

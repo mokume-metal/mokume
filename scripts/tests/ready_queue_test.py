@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/ready-queue.sh の検査 (#1028)。
 
-固定したいのは八つ。
+固定したいのは九つ。
 
 1. **何も打たない。** 判定を手元で打っただけでラベルが付いたり auto-merge が掛かったり
    すると、判定と実行を分けた意味が消える (ADR-0036 決定 1)
@@ -25,6 +25,10 @@
    閉じたものは新しいときだけ数える。**家族を渡るのは 1 段だけ**で、家族を通じて busy に
    なったものは証拠にしない。家族を読むのは候補があるときだけで、読めなければ dropped のまま
    そう名乗る
+9. **同じ根の群は根で直す** (#1661・ADR-0040 決定 2・3)。親が open な Bug の子は ready に出さず
+   busy (「根 #N で直す」) へ回し、ready の件数もそのあとで数える。open な Bug の子を持つ無印の
+   Design は、子の多い順に decide として最後に出す (終了コードには数えない)。親は open な Bug か
+   ready の候補があるときだけ読み、読めなければ ready は従来どおり出してそう名乗る
 
 gh と git は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
@@ -77,6 +81,12 @@ if [ "$1" = "api" ]; then
     */files) n=${2%/files}; n=${n##*/}; emit "$FIX/$n.files.json"; exit 0 ;;
     # merge queue の並び (#1266)。既定は空
     graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; }
+      # open な Bug と ready の候補の親 (#1661)。家族の問い合わせとは issueType の綴りで
+      # 見分ける (家族のほうは型を読まない)。FAIL_PARENTS で読み取りを失敗させる
+      if [[ "$*" == *"issueType"* ]]; then
+        [ -z "${FAIL_PARENTS:-}" ] || { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
+        emit "$FIX/parents.json"; exit 0
+      fi
       # 着手印の家族 (#1391)。FAIL_FAMILY で読み取りを失敗させる
       if [[ "$*" == *"subIssues"* ]]; then
         [ -z "${FAIL_FAMILY:-}" ] || { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
@@ -172,8 +182,22 @@ def family_response(families):
     return {"data": {"repository": repo}}
 
 
+def parent(number, state="OPEN", type_="Bug"):
+    """親の 1 件。GraphQL の parent と同じ形"""
+    return {
+        "number": number,
+        "state": state,
+        "issueType": None if type_ is None else {"name": type_},
+    }
+
+
+def parents_response(parents):
+    """{番号: parent(...) か None} から応答を組む。載っていない番号は親を持たない"""
+    return {"data": {"repository": {f"i{n}": {"parent": p} for n, p in parents.items()}}}
+
+
 class ReadyQueueTest(unittest.TestCase):
-    def run_queue(self, issues, prs=(), worktrees="", families=None, **extra_env):
+    def run_queue(self, issues, prs=(), worktrees="", families=None, parents=None, **extra_env):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             fix = tmp / "fixtures"
@@ -193,6 +217,9 @@ class ReadyQueueTest(unittest.TestCase):
                 (fix / "family.json").write_text(
                     json.dumps(family_response(families)), encoding="utf-8"
                 )
+            (fix / "parents.json").write_text(
+                json.dumps(parents_response(parents or {})), encoding="utf-8"
+            )
             (tmp / "drawing-paths.txt").write_text(DRAWING_PATHS, encoding="utf-8")
 
             bindir = tmp / "bin"
@@ -412,7 +439,16 @@ class ReadyQueueTest(unittest.TestCase):
         done, log = self.run_queue([issue(62, type_="Bug", body=SIGNATURE)], prs=prs)
         self.assertEqual(done.returncode, 1, "在庫切れなのに 0 で終えている")
         self.assertEqual(done.stdout, f"62 stock - エージェントの起票が無印のまま (Bug・なにか)\n")
-        self.assertNotIn("api ", log, f"弾かれた PR が無いのに順番を引いている:\n{log}")
+        # 順番の判定 (REST の pulls / files と merge queue の GraphQL) を引いていないこと。
+        # **api の呼び出しそのものは 0 にならない** — #62 は open な Bug なので、その親を読む
+        # GraphQL が 1 回走る (#1661 の「根と判断」)。それ以外の api が無いことを見る
+        others = [
+            line
+            for line in log.splitlines()
+            if line.startswith("api ") and "parent { number state issueType" not in line
+        ]
+        self.assertEqual(others, [], f"弾かれた PR が無いのに順番を引いている:\n{log}")
+        self.assertNotIn("mergeQueue", log)
 
     # 7d. Draft は見ない (作業中の PR を Draft にしておくのが opt-out)
     def test_draft_is_not_catch_up(self):
@@ -529,7 +565,122 @@ class ReadyQueueTest(unittest.TestCase):
             prs=[closing_pr(90, closes=[2])],
         )
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertNotIn("graphql", log, "候補が無いのに家族を読んでいる")
+        # 見るのは家族の問い合わせ (subIssues) だけ。**graphql の呼び出しそのものは 0 に
+        # ならない** — #1 は ready の候補なので、その親を読む GraphQL が 1 回走る
+        # (#1661 の「根と判断」。そちらを引かない条件は test_parents_are_not_read_without_bugs_or_candidates)
+        self.assertNotIn("subIssues", log, "候補が無いのに家族を読んでいる")
+
+    # 9. 根と判断 (#1661)
+    def test_child_of_an_open_bug_goes_to_its_root(self):
+        """親が open な Bug の子は ready に出さない — 根を直す PR が子をまとめて閉じる。"""
+        done, _ = self.run_queue(
+            [
+                issue(100, labels=["verify: triaged"], type_="Bug", title="根"),
+                issue(101, labels=["verify: triaged"], type_="Bug", title="症状"),
+            ],
+            parents={101: parent(100)},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[100][0], "ready")
+        self.assertEqual(seen[101][0], "busy", "根が open なのに子を ready に出している")
+        self.assertEqual(seen[101][2], "根 #100 で直す (症状)")
+        self.assertIn("ready 1 /", done.stderr)
+
+    def test_child_is_ready_unless_its_parent_is_an_open_bug(self):
+        done, _ = self.run_queue(
+            [
+                issue(102, labels=["verify: triaged"]),
+                issue(103, labels=["verify: triaged"]),
+                issue(104, labels=["verify: triaged"]),
+            ],
+            parents={
+                102: parent(100, state="CLOSED"),  # 根は直った
+                103: parent(200, type_="Design"),  # 親は判断の Issue
+                104: parent(201, type_=None),  # 型の無い親
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        for n in (102, 103, 104):
+            self.assertEqual(seen[n][0], "ready", f"#{n} を根で直す側へ回している")
+
+    def test_children_waiting_on_their_root_are_not_work(self):
+        """ready の件数は親を読んでから数える (終了コードに効く)。"""
+        done, _ = self.run_queue(
+            [issue(101, labels=["verify: triaged"], type_="Bug")],
+            parents={101: parent(100)},
+        )
+        self.assertEqual(done.returncode, 1, "根を待つ子しか無いのに打てる仕事があると言った")
+        self.assertIn("ready 0 /", done.stderr)
+
+    def test_design_with_open_bug_children_is_decide(self):
+        issues = [
+            issue(300, type_="Design", title="子 1 件"),
+            issue(301, type_="Design", title="子 2 件"),
+            issue(302, type_="Design", title="Task の子だけ"),
+            issue(303, type_="Design", title="子なし"),
+            issue(310, type_="Bug"),
+            issue(311, type_="Bug"),
+            issue(312, type_="Bug", labels=["verify: triaged"]),  # 印の有無は問わない
+            issue(320, type_="Task"),
+        ]
+        done, _ = self.run_queue(
+            issues,
+            parents={
+                310: parent(300, type_="Design"),
+                311: parent(301, type_="Design"),
+                312: parent(301, type_="Design"),
+                320: parent(302, type_="Design"),
+            },
+        )
+        lines = done.stdout.splitlines()
+        decide = [line for line in lines if line.split(" ")[1] == "decide"]
+        self.assertEqual(
+            decide,
+            [
+                "301 decide - open な Bug の子 2 件が根本の判断を待っている (子 2 件)",
+                "300 decide - open な Bug の子 1 件が根本の判断を待っている (子 1 件)",
+            ],
+            f"子の多い順に出ていない:\n{done.stdout}",
+        )
+        self.assertEqual(lines[-len(decide):], decide, "decide が最後に出ていない")
+        self.lines_by_number(done.stdout)  # 4 列を守っている (崩れていれば分解で落ちる)
+        self.assertIn("/ decide 2", done.stderr)
+
+    def test_decide_is_not_work(self):
+        """decide は人が決める行で、打てる仕事ではない — 終了コードに数えない。"""
+        done, _ = self.run_queue(
+            [issue(300, type_="Design"), issue(310, type_="Bug")],
+            parents={310: parent(300, type_="Design")},
+        )
+        self.assertIn("300 decide", done.stdout)
+        self.assertEqual(done.returncode, 1, "decide しか無いのに打てる仕事があると言った")
+
+    def test_parents_are_not_read_without_bugs_or_candidates(self):
+        done, log = self.run_queue(
+            [
+                issue(1, type_="Task", body=SIGNATURE),  # stock
+                issue(2, labels=["status: in progress"]),
+                issue(3, type_="Design"),
+            ],
+            prs=[closing_pr(90, closes=[2])],
+        )
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertNotIn("graphql", log, "open な Bug も ready の候補も無いのに親を読んでいる")
+
+    def test_unreadable_parents_keep_ready_and_say_so(self):
+        done, _ = self.run_queue(
+            [
+                issue(101, labels=["verify: triaged"], type_="Bug"),
+                issue(300, type_="Design"),
+            ],
+            parents={101: parent(300, type_="Design")},
+            FAIL_PARENTS="1",
+        )
+        self.assertEqual(done.returncode, 0, "親が読めないだけで ready を消している")
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[101][0], "ready")
+        self.assertNotIn(300, seen, "読めなかったのに decide を出している")
+        self.assertIn("親を読めなかった", done.stderr)
 
 
 if __name__ == "__main__":
