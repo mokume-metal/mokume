@@ -1948,13 +1948,15 @@ public final class Canvas {
     /// 口を列挙して守る形は採らない。#1592 の一覧は、合流点 14 か所のうち 2 か所を取りこぼして
     /// いた (#1603 の判断材料)。溜め場の並びは捨てる側と同じもの (``hasNothingPending``) を読む。
     ///
-    /// debug 組みでは止まる。検査はすべて debug 組みで走るので、**全検査を通して漏れが 0 で
-    /// あることを、検査の全体がこの 1 行の上で確かめる** — どの検査で置いた図形が漏れても、
-    /// その検査がここで止まる。release 組みでは、漏れたものを描かずに捨てる (溜めない)。
+    /// 見つけたら、漏れたものを描かずに捨て (溜めない)、1 度だけ注意する。**止まるのは mokume の
+    /// 検査の中だけ** ([#1682]) — 検査の全体がこの 1 行の上で「全検査を通して漏れが 0」を確かめる
+    /// (どの検査で置いた図形が漏れても、その検査がここで止まる)。漏れは口の守りの足し忘れ、つまり
+    /// mokume の中の不具合でしか起きないので、利用者の作品 (debug 組みを含む) を止めずに名乗る。
     ///
     /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
     /// [#1603]: https://github.com/mokume-metal/mokume/issues/1603
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#1682]: https://github.com/mokume-metal/mokume/issues/1682
     private func checkNothingPlacedOutsideTheRegions() {
         defer { carriedOverAmount = nil }
         // 持ち越しの区間の中でフレームを開いた (`setup()` で本体の面の `draw { }` を呼んだ)。
@@ -1965,6 +1967,7 @@ public final class Canvas {
         placementsFoundOutsideRegions += 1
         discardPending()
         pendingBackground = nil
+        warnOnce(.placementLeak, Self.placementLeakNotice)
         if stopsOnPlacementOutsideRegions {
             assertionFailure(
                 "Something was placed outside a frame and outside setup() and the stopped "
@@ -1977,9 +1980,20 @@ public final class Canvas {
     /// 見つけた回数 (作ってから通算)。検め自身を確かめる検査が読む。
     var placementsFoundOutsideRegions = 0
 
-    /// 見つけたときに debug 組みで止まるか。**検め自身を確かめる検査だけが下ろす** — 下ろさずに
-    /// 漏れを作ると、その検査が止まる。製品の経路では常に立っている。
-    var stopsOnPlacementOutsideRegions = true
+    /// 見つけたときに止まるか。**既定は mokume の検査の中かどうか** (``SelfTest/isRunning``・[#1682])
+    /// — 検査の中では立っていて、漏れを作ればその検査が止まる。利用者の作品の中では下りていて、
+    /// 注意 (``placementLeakNotice``) だけが出る。検め自身を確かめる検査は、下ろして数を見る。
+    ///
+    /// [#1682]: https://github.com/mokume-metal/mokume/issues/1682
+    var stopsOnPlacementOutsideRegions = SelfTest.isRunning
+
+    /// 置き漏れを見つけたときの注意。**利用者のコードの誤りではなく mokume の不具合**なので、
+    /// 直し方ではなく報告を頼む (`RenderFailure` の `workDropped` と同じ書き方)。
+    static let placementLeakNotice =
+        "Something was placed outside a frame through a path that mokume does not guard, so it "
+        + "was dropped without being drawn. This is most likely a fault inside mokume — please "
+        + "report it with this message at https://github.com/mokume-metal/mokume/issues (#1672)"
+
 
     /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
     private func endFrame() throws(RenderFailure) {
