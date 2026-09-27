@@ -61,6 +61,12 @@ PR 本文が揃い `ci-gate` が green なら、指示を待たず `gh pr merge 
 - **`BEHIND` でも "Update branch" は押さない。** 追随しても得るものが無く、auto-merge だけが外れる。例外は描画 PR の `local-render` が failure のとき (「描画に影響する変更」)
 - check が 1 本も付かないのは、まだ来ていないのではなく main と衝突している。`git merge-tree --write-tree origin/main HEAD` で確かめ、手元で解いて push する
 
+## 説明と報告
+
+Issue を調べて完了条件を固めるときは、具体的な入力・操作、変更前後の結果と対処・代償を最低1例示す。可能な範囲で画像・動画等の実物を各 Issue にも添え、撮れなければ理由と未確認範囲を書く。雑な起票は妨げない。PR では結果を更新する。
+
+複数の変更の方向性を伝える報告は、[既存の証跡を束ねる手順](.claude/skills/visual-evidence/report.md) に従う (ADR-0036 決定 7)。沈黙を同意とせず、委任範囲は広げない。
+
 ## コメント
 
 置き場は、PR ができるまでは Issue、できてからは PR。例外は 3 つで、完了条件が動く話は Issue、完了報告は Issue に 1 通 (「条件 N は PR #M で満たされた」の対応表まで)、恒久的な決定は ADR (ADR-0002 決定 6)。PR を作ったときに Issue へ「実装 PR は #N」とは書かない (`Closes #N` から GitHub が相互リンクを描く)。
