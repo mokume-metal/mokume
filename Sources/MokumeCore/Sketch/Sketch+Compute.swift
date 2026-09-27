@@ -20,7 +20,8 @@ extension Sketch {
     /// 完了まで待つ。同じメモリを見ているので値は「読めて」しまうが、それが計算の前なのか
     /// 後なのかは呼んだ側に分からず、**絵か音がおかしくなって初めて気付く**形になるため。
     ///
-    /// - Throws: 領域を取れないときに ``RenderFailure``。
+    /// - Throws: 領域を取れないときと、`count` が 1 を割るとき (``RenderFailure/invalidCount(_:)``。
+    ///   1 個へ丸めない) に ``RenderFailure``。
     public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
         try canvas.makeNumbers(count: count)
     }

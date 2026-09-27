@@ -135,6 +135,7 @@ nonisolated final class MovieFile {
         self.path = path
         self.width = width
         self.height = height
+        // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         self.frameDuration = 1 / Double(max(1, frameRate))
 
         let url = URL(fileURLWithPath: path)

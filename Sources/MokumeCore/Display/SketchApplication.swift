@@ -323,6 +323,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        // `max(1, …)` は、すぐ上の組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を
+        // 断っているので届かない (#1642)。割り算の守りとして残す
         self.screenLink = ScreenDisplayLink(
             frameRate: Float(max(1, sketch.settings.frameRate)))
         super.init()

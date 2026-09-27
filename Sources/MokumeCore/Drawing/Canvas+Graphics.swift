@@ -14,7 +14,9 @@
 extension Canvas {
     /// 画面とは別の描き場所を作る。
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
-        let target = try RenderTarget(gpu: gpu, width: max(1, width), height: max(1, height))
+        // **大きさはそのまま関所 (`RenderTarget`) へ渡す。** 手前で 1 へ丸めると、1 を割る
+        // 指定が `invalidSize` に届かず、1×1 の描き場所が黙って返る (#1642)
+        let target = try RenderTarget(gpu: gpu, width: width, height: height)
         // **透明で始める。** 確保したままの中身は決まっていないので、既定で透けている
         // ことを構造で保証するには 1 度塗るしかない。以後は自動では消さない —
         // 消さないからこそ、前のフレームの上に積み上がる絵が書ける
