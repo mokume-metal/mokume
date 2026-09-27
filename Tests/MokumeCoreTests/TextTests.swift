@@ -355,6 +355,71 @@ struct TextTests {
         #expect(try pixels(of: plain).bytes != pixels(of: bold).bytes)
     }
 
+    // 書体の控え (#1431)。鍵に大きさ (連続値) が入るので、`textSize` を毎フレーム変える
+    // 書き方 (脈打つ字) ではフレームごとに鍵が 1 つ増える。描かずに `textWidth` で引けば
+    // GPU を回さずに済む
+
+    @Test("大きさを 1 回ずつ変えて書体を 1000 回引いても、控えの件数は上限以下に収まる")
+    func typefacesStayWithinTheLimit() throws {
+        let canvas = try makeCanvas()
+        #expect(Canvas.typefaceCacheLimit == 64)
+        for index in 0..<1000 {
+            canvas.textSize(8 + Float(index) * 0.01)
+            _ = canvas.textWidth("mokume")
+        }
+        #expect(
+            canvas.typefaces.count <= Canvas.typefaceCacheLimit,
+            """
+            大きさを変えて 1000 回引いた後の書体の控えが \(canvas.typefaces.count) 件で、
+            上限 \(Canvas.typefaceCacheLimit) を超えている。脈打つ字で footprint が増え続ける (#1431)。
+            """)
+    }
+
+    @Test("使い続けている大きさの書体は、別の大きさを上限より多く引いても追い出されない")
+    func aTypefaceInUseIsKept() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(20)
+        let kept = canvas.typeface
+        for index in 0..<(Canvas.typefaceCacheLimit * 3) {
+            canvas.textSize(20)
+            _ = canvas.textWidth("mokume")
+            canvas.textSize(21 + Float(index) * 0.1)
+            _ = canvas.textWidth("mokume")
+        }
+        #expect(canvas.typefaces.count <= Canvas.typefaceCacheLimit)
+        canvas.textSize(20)
+        #expect(canvas.typeface === kept, "1 回おきに使っていた書体が追い出された (入れた順に捨てている)")
+    }
+
+    @Test("追い出した書体で描き直しても、絵と幅は変わらない")
+    func anEvictedTypefaceDrawsTheSame() throws {
+        let canvas = try makeCanvas()
+        // 欧文と、書体を渡って引く字 (欧文の書体に無い) を混ぜる
+        let string = "mokume あ"
+        func drawn() throws -> [UInt8] {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(20)
+                canvas.text(string, 10, 60)
+            }
+            return try pixels(of: canvas).bytes
+        }
+        let before = try drawn()
+        canvas.textSize(20)
+        let width = canvas.textWidth(string)
+        let first = canvas.typeface
+
+        for index in 0..<(Canvas.typefaceCacheLimit * 2) {
+            canvas.textSize(21 + Float(index) * 0.25)
+            _ = canvas.textWidth(string)
+        }
+        canvas.textSize(20)
+        #expect(canvas.typeface !== first, "上限を超えて引いたのに、最初の書体が追い出されていない")
+        #expect(canvas.textWidth(string) == width)
+        #expect(try drawn() == before, "書体を作り直すと、絵が変わった")
+    }
+
     // MARK: - 描かないとき
 
     @Test("塗りを止めていると何も描かない")

@@ -49,40 +49,19 @@ extension Canvas {
     /// ことで成り立っており、名前だけで引くとそれが黙って効かなくなる。更新時刻を読めな
     /// かったときも当たりにしない — 読み直す側 (安全な側) へ倒す。
     private func freshDecoded(for path: String) -> ImageFile.Decoded? {
-        let request = ImageRequest(path: path)
-        guard let cached = imageCache[request],
+        guard let cached = imageCache[ImageRequest(path: path)],
             let stamp = ImageFile.stamp(of: cached.url), stamp == cached.stamp
         else { return nil }
-        touch(request)
         return cached.decoded
     }
 
     /// 復号したものを控えに入れる。**量が上限を超えたら、収まるまで古い順に捨てる**
-    /// (追い出しの形は `solidMesh(for:)` と同じで、数える単位だけが違う)。
+    /// (``BoundedCache``。いま読んだものは、1 枚で上限を超えても残る)。
     private func remember(
         _ decoded: ImageFile.Decoded, path: String, url: URL, stamp: Date?
     ) {
-        let request = ImageRequest(path: path)
-        imageCacheBytes -= imageCache[request]?.bytes ?? 0
-        let entry = DecodedImage(url: url, stamp: stamp, decoded: decoded)
-        imageCache[request] = entry
-        imageCacheBytes += entry.bytes
-        imagesDecoded += 1
-        touch(request)
-        // **いま読んだものは残す。** 1 枚で上限を超える絵はありうるが、そこで空にしても
-        // 読み直しが増えるだけで、抱える量は減らない (その絵は読んだ側が持っている)
-        while imageCacheBytes > Canvas.imageCacheBudget, imageCache.count > 1,
-            let oldest = imageCacheUse.min(by: { $0.value < $1.value })?.key
-        {
-            imageCacheBytes -= imageCache.removeValue(forKey: oldest)?.bytes ?? 0
-            imageCacheUse.removeValue(forKey: oldest)
-        }
-    }
-
-    /// 最後に使った時刻を進める。
-    private func touch(_ request: ImageRequest) {
-        imageCacheUse[request] = imageCacheClock
-        imageCacheClock += 1
+        imageCache.insert(
+            DecodedImage(url: url, stamp: stamp, decoded: decoded), for: ImageRequest(path: path))
     }
 
     /// 空の絵を作る。中身は透明。

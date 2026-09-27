@@ -1479,15 +1479,13 @@ struct CanvasTests {
             "emptyNumbers": resource, "blankPicture": resource,
             "shadowMap": "焼き付け先。同じ細かさなら作り直さない (ADR-0021 決定 4)。宣言は shadowDetailValue が戻る",
             "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
-            "imageCache": cache, "imageCacheUse": cache, "imageCacheClock": cache,
-            "imageCacheBytes": cache, "modelCache": cache, "solidMeshes": cache,
-            "solidMeshUse": cache, "solidMeshClock": cache, "solidEdges": cache,
+            "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
             "typefaces": cache,
             "lastShadowBakeKey": "前に焼いた入力の指紋。焼かなかったフレームでは触らない (影の面は誰にも書き換えられない)",
             "atlasPageFrame": "焼き場の頁を作ったフレームの番号 (#1342)。番号どうしで比べる",
             "nextModelIdentity": "読み込んだモデルの通し番号", "retainedSerial": "保持した形を置くたびの通し番号",
             "framesDrawn": "閉じたフレームの通し番号。境目の印そのもの",
-            "imagesDecoded": count, "solidMeshesBuilt": count, "shadowMapsBuilt": count,
+            "shadowMapsBuilt": count,
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
@@ -1579,6 +1577,24 @@ struct CanvasTests {
         }
         for name in frameFields.union(carriedStyle) {
             #expect(fields.contains(name), "style.\(name) は Style に無い (表から消す)")
+        }
+    }
+
+    @Test("控えに分けた格納は、どれも上限つきの型である")
+    func everyCacheIsBounded() throws {
+        // 控えの上限は 2 度書き落とされた (#1593・#1431)。上の表で「控え」に分けた格納は、
+        // 上限を書き落とせない型 (BoundedCache) でしか作らない (ADR-0023 決定 5・#1602)。
+        // 辞書で控えを足すと、表に理由を 1 行書いても、ここで止まる
+        let canvas = try makeCanvas()
+        let cacheReason = try #require(carriedState["imageCache"])
+        let caches = Set(carriedState.filter { $0.value == cacheReason }.keys)
+        #expect(caches.count >= 5)
+        for child in Mirror(reflecting: canvas).children {
+            guard let label = child.label, caches.contains(label) else { continue }
+            let typeName = String(describing: type(of: child.value))
+            #expect(
+                typeName.hasPrefix("BoundedCache<"),
+                "\(label) は控えに分けてあるのに \(typeName) で持っている。上限つきの型で作る")
         }
     }
 

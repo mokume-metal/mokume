@@ -31,7 +31,7 @@ extension Canvas {
             name: style.fontName, size: style.textSize, style: style.textStyle)
         if let found = typefaces[request] { return found }
         let face = Typeface(request: request)
-        typefaces[request] = face
+        typefaces.insert(face, for: request)
         return face
     }
 

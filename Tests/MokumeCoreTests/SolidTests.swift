@@ -275,6 +275,76 @@ struct SolidTests {
         #expect(canvas.solidMeshesBuilt == 2)
     }
 
+    // 形と稜線の控えは、量の予算で切る (#1602)。寸法は鍵に入るので、大きさを動かし続ける
+    // 書き方では鍵が増え続ける。どの形の種類でも、控えが予算を超えないことを面を通して見る
+
+    @Test("大きさを変え続けて立体を置いても、形と稜線の控えは予算以下に収まる")
+    func solidCachesStayWithinTheBudget() throws {
+        let canvas = try makeCanvas()
+        // 細かさ 128 の輪環は 1 つ 4.7 MB。件数で切ると 64 件で 300 MB になる
+        for index in 0..<40 {
+            let size = 10 + Float(index) * 0.1
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(red)
+                canvas.stroke(green)
+                canvas.push()
+                canvas.translate(32, 32, 0)
+                canvas.box(size)
+                canvas.sphere(size)
+                canvas.ellipsoid(size, size * 0.5, size, detail: 64)
+                canvas.plane(size, size)
+                canvas.cylinder(size, size)
+                canvas.cone(size, size)
+                canvas.torus(size, size * 0.3, detail: 128)
+                canvas.pop()
+            }
+        }
+        #expect(canvas.solidMeshes.budget == Canvas.solidCacheBudget)
+        #expect(canvas.solidEdges.budget == Canvas.solidCacheBudget)
+        #expect(canvas.solidMeshes.total <= Canvas.solidCacheBudget)
+        #expect(canvas.solidEdges.total <= Canvas.solidCacheBudget)
+        // **控えが名乗る合計を信じず、残っている輪環の重さを数え直す。** 重さを 1 と数える
+        // 控え (件数で切る) は、合計が件数になって上の 2 つを素通りする
+        var meshBytes = 0
+        var edgeBytes = 0
+        for index in 0..<40 {
+            let size = 10 + Float(index) * 0.1
+            let shape = SolidShape.torus(ringRadius: size, tubeRadius: size * 0.3, detail: 128)
+            if let mesh = canvas.solidMeshes[shape] { meshBytes += Canvas.solidMeshWeight(mesh) }
+            if let net = canvas.solidEdges[.mesh(shape)] { edgeBytes += Canvas.solidEdgesWeight(net) }
+        }
+        #expect(meshBytes > 0, "最後に置いた輪環まで捨てられている")
+        #expect(
+            meshBytes <= Canvas.solidCacheBudget,
+            "残っている輪環だけで形の控えが \(meshBytes) バイトあり、予算 \(Canvas.solidCacheBudget) を超えている")
+        #expect(
+            edgeBytes <= Canvas.solidCacheBudget,
+            "残っている輪環だけで稜線の控えが \(edgeBytes) バイトあり、予算 \(Canvas.solidCacheBudget) を超えている")
+        // 7 種 × 40 通りの大きさを組み立てた (当たらないので毎回作る)
+        #expect(canvas.solidMeshesBuilt == 7 * 40)
+    }
+
+    @Test("既定の細かさの形なら、64 種並べても控えに収まり、2 フレーム目から組み立て直さない")
+    func sixtyFourDefaultShapesStillFit() throws {
+        let canvas = try makeCanvas()
+        func place() throws {
+            try canvas.draw {
+                canvas.fill(red)
+                canvas.stroke(green)
+                // 既定の細かさでいちばん重い形 (輪環)
+                for index in 0..<64 { canvas.torus(10 + Float(index), 3) }
+            }
+        }
+        try place()
+        let built = canvas.solidMeshesBuilt
+        let edgesMade = canvas.solidEdges.made
+        try place()
+        #expect(built == 64)
+        #expect(canvas.solidMeshesBuilt == built, "件数 64 で切っていた頃に当たった並びが外れた")
+        #expect(canvas.solidEdges.made == edgesMade)
+    }
+
     // MARK: - 置けない寸法
 
     @Test(
