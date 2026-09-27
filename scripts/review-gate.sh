@@ -9,12 +9,14 @@
 #      PR には .github/dependabot.yml が自動で付ける)
 #   - 対象 Issue に verify: ラベルが無ければ、完了条件が未確定のまま実装に入っている
 #   - PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
+#   - 閉じる Issue に Bug が含まれるなら、PR 本文に空でない「反証」の節がある
+#     (ADR-0040 決定 4 — 下の「4.」)
 #   - 承認が要る PR の author が、その PR を承認できる唯一の人であってはならない
 #     (ADR-0007 の不変条件。破ると **誰も承認できない PR** ができる — #88)
 #
 # **承認そのものはここで判定しない。** 要求も必須化もルールセットの required_reviewers
 # が担う (.github/rulesets/main-protection.json — 3 パスに minimum_approvals: 1 を課して
-# team maintainers へ要求が飛ぶ)。下の「4.」がそのパターンを読むのは、承認が要る PR か
+# team maintainers へ要求が飛ぶ)。下の「6.」がそのパターンを読むのは、承認が要る PR か
 # どうかを知るためだけである。
 # (当初は CODEOWNERS + 承認数 0 で必須化できるつもりでいたが、承認数 0 は
 #  「0 件で足りる」と読まれて非ブロックになっていた — #211 / ADR-0003 決定 4 の改訂。
@@ -37,8 +39,8 @@
 # 終了コードは 2 つ。
 #
 #   0   通過
-#   1   差し戻し (Issue 紐づけなし・verify ラベルなし・対応表なし・変更要求・
-#       誰も承認できない)
+#   1   差し戻し (Issue 紐づけなし・verify ラベルなし・対応表なし・反証の節なし・
+#       変更要求・誰も承認できない・対象 Issue を読めない)
 #
 # 使い方: review-gate.sh <PR番号> (要 GH_TOKEN / gh 認証)
 set -euo pipefail
@@ -48,7 +50,7 @@ PR="${1:?PR 番号が必要}"
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
 REPO="$(this_repo)"
-# 承認が要るパスの判定 (下の「4.」を参照)。**照合は 1 か所**に保つ (ADR-0001 原則 9)
+# 承認が要るパスの判定 (下の「6.」を参照)。**照合は 1 か所**に保つ (ADR-0001 原則 9)
 # shellcheck source=scripts/protected-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
 # 変更ファイルの取り方も 1 か所に保つ。**照合の手前が割れていた** (#793) — gh pr view の
@@ -119,6 +121,70 @@ Issue を閉じない例外 PR なら no-issue ラベルを付けてください
 EOF
 }
 
+# 反証の節が無い・空のときの差し戻し文言。上と同じ理由で $( … ) の外に置く
+missing_refute_message() {
+  cat <<'EOF'
+閉じる Issue に Bug が含まれる PR は、本文に「## 反証」節を置き、独立した反証役の
+指摘と、それぞれへの応えを書いてください (ADR-0040 決定 4)。
+
+  ## 反証
+
+  | 指摘 | 根拠 | 応え |
+  | --- | --- | --- |
+  | 同じ形の口がもう 1 つある | Sources/…/Foo.swift:42 | 直した (この PR) |
+  | 呼び出し元の … が壊れうる | Sources/…/Bar.swift:17 | 起票した #N |
+  | 根ではなく症状を塞いでいる | Sources/…/Baz.swift:88 | 当たらない: 理由 |
+
+反証役はプランも完了条件も渡されないサブエージェントで、Issue の症状と差分だけから
+兄弟の口・壊しうる経路・根か症状かを探します。起動手順は
+.claude/skills/bug-refute/SKILL.md にあります。指摘が 1 件も無かったなら、そう書けば
+空ではありません。
+
+**見ているのは節があって中身が空でないことだけで、中身の正しさは見ていません**
+(確認方法の対応表と同じ形 — ADR-0019 決定 1)。HTML コメントだけの節は空とみなします。
+本文を編集すれば CI は自動で再評価されます。
+EOF
+}
+
+# PR 本文 (標準入力) から、$1 を含む見出しの節を切り出す。開始より浅い (または同じ)
+# 見出しが来るまでを節とみなし、節の中の小見出しは内容として残す。見出しの階層は
+# 問わない (## でも ### でもよい)。
+#
+# **切り出しの形は 1 つに保つ** — 「確認方法」(下の「3.」) と「反証」(下の「4.」) で
+# 同じ規則を使う。写しを 2 つ持つと、片方だけが直って節の境界が食い違う (#1662)
+body_section() {
+  awk -v word="$1" '
+    /^#+[[:space:]]/ {
+      match($0, /^#+/); lvl = RLENGTH
+      if (index($0, word)) { inside = 1; start = lvl; next }
+      if (inside && lvl <= start) inside = 0
+    }
+    inside { print }
+  '
+}
+
+# 標準入力から HTML コメント (<!-- … -->、行をまたいでよい) を除く。テンプレートの
+# 案内はコメントで書かれているので、見出しだけ残して中身を書かなかった節は、これを
+# 通すと空白だけになる
+strip_html_comments() {
+  awk '
+    {
+      line = $0; out = ""
+      while (1) {
+        if (incomment) {
+          e = index(line, "-->")
+          if (!e) { line = ""; break }
+          line = substr(line, e + 3); incomment = 0
+        }
+        s = index(line, "<!--")
+        if (!s) { out = out line; break }
+        out = out substr(line, 1, s - 1); line = substr(line, s + 4); incomment = 1
+      }
+      print out
+    }
+  '
+}
+
 pr_json=$(gh pr view "$PR" -R "$REPO" \
   --json body,labels,latestReviews,author,closingIssuesReferences)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
@@ -178,8 +244,27 @@ fi
 #    **不在が未トリアージを表す**構造は変わらない。付け損ねれば Issue はラベルを
 #    持たないまま = 着手できない状態で残る (ADR-0002 決定 1 が status: needs-triage を
 #    廃止したときと向きが揃っている)
+#
+#    同じ応答から Issue の型も控える (下の「4.」が読む)。問い合わせを分けないのは、
+#    1 回で取れるものを 2 回引かないためである。
+#
+#    **読めなかったら理由を名乗って落ちる。** 代入の中の gh が失敗すると set -e で
+#    そのまま終わり、review-gate としては何も言わずに赤くなる。issueType は gh 2.94.0
+#    からの欄で (scripts/ready-queue.sh の冒頭)、CI の gh がそれより古ければここに当たる。
+#    欄が応答に無いときも同じに扱う — 型が分からないまま Bug でないと読むと、4. が
+#    黙って外れる (#1662)
+bug_issues=""
 for n in $issues; do
-  ilabels=$(gh issue view "$n" -R "$REPO" --json labels --jq '[.labels[].name] | join("\n")')
+  ijson=$(gh issue view "$n" -R "$REPO" --json labels,issueType) ||
+    fail "対象 Issue #$n の labels / issueType を読めなかった (上の gh のエラーを参照)" \
+         "gh が issueType を知らない版なら (gh 2.94.0 から) gh を上げる。権限や通信の失敗なら、直してからこの check を再実行する"
+  jq -e 'has("issueType")' <<<"$ijson" >/dev/null ||
+    fail "対象 Issue #$n の応答に issueType が無い (Bug かどうかを判定できない)" \
+         "gh を 2.94.0 以降に上げて、この check を再実行する"
+  ilabels=$(jq -r '[.labels[].name] | join("\n")' <<<"$ijson")
+  if [ "$(jq -r '.issueType.name // ""' <<<"$ijson")" = "Bug" ]; then
+    bug_issues="$bug_issues #$n"
+  fi
   if grep -q '^verify: ' <<<"$ilabels"; then
     echo "review-gate: #$n はトリアージ済み"
   else
@@ -208,14 +293,7 @@ if [ -n "$issues" ]; then
   # 「確認方法」を含む見出しから、開始より浅い (または同じ) 見出しが来るまでを節とみなす。
   # 節の中の小見出し (### Closes #N) は内容として残す — 番号がそこにしか無い書き方が
   # 自然だからである
-  section=$(jq -r '.body // ""' <<<"$pr_json" | awk '
-    /^#+[[:space:]]/ {
-      match($0, /^#+/); lvl = RLENGTH
-      if ($0 ~ /確認方法/) { inside = 1; start = lvl; next }
-      if (inside && lvl <= start) inside = 0
-    }
-    inside { print }
-  ')
+  section=$(jq -r '.body // ""' <<<"$pr_json" | body_section 確認方法)
   missing=""
   # -w で境界を見る。#618 は拾い #6180 は拾わない。**グループの中に ^ や $ を書かない** —
   # POSIX の ERE ではアンカーの位置が未定義で、BSD grep は (^|[^0-9])#N([^0-9]|$) を
@@ -230,14 +308,49 @@ if [ -n "$issues" ]; then
   echo "review-gate: 確認方法の節に対象 Issue の対応表を確認"
 fi
 
-# 4. 変更要求は承認より強い
+# 4. Bug を閉じる PR の反証 (ADR-0040 決定 4)。
+#
+#    直近の fix PR 23 件は、原因の特定と再現テストはよくできていたが、兄弟の口を探さず、
+#    同じ根のバグが後から 1 件ずつ出ていた。レビューコメントは 0 件で、棚卸し・プラン・
+#    実装・検証を同じエージェントが担うので、**完了条件の範囲がそのまま調べる範囲の
+#    上限になる** (#1659)。プランと完了条件を渡されない反証役の指摘と、それへの応え
+#    (直した / 起票した / 当たらない+理由) を PR 本文に残させる。
+#
+#    **見るのは構造の有無だけである** — 「反証」を含む見出しの節があり、HTML コメントと
+#    空白を除いて中身が残ること。指摘の質も応えの妥当性も見ない (3. と同じ形 —
+#    ADR-0019 決定 1)。防いでいるのは反証役を起こし忘れることで、意図的な迂回ではない。
+#
+#    節の綴りは .github/pull_request_template.md の「## 反証」と揃える。境界の規則は 3. と
+#    同じ (body_section)。
+#
+#    対象は閉じる Issue に Bug 型が 1 つでも含まれる PR だけ。Bug でない PR には問わない
+#    (同じ PR でまとめて閉じる Task・Docs があっても、Bug があれば問う)。
+#
+#    採られた率 (指摘のうち「直した」「起票した」の割合) がほぼ 0 なら畳む (ADR-0040
+#    決定 4)。数え直しは #1663
+if [ -n "$bug_issues" ]; then
+  refute=$(jq -r '.body // ""' <<<"$pr_json" | body_section 反証)
+  # 見出しだけの節 (中身が空) と節そのものが無い場合を分けて名乗る。見出しの有無は
+  # 本文の見出し行を直接見る — 切り出した中身が空でも見出しはあったかもしれない
+  if ! jq -r '.body // ""' <<<"$pr_json" | grep -Eq '^#+[[:space:]].*反証'; then
+    fail "閉じる Bug (${bug_issues# }) の PR 本文に「反証」の節が無い (ADR-0040 決定 4)" \
+         "$(missing_refute_message)"
+  fi
+  if ! strip_html_comments <<<"$refute" | grep -q '[^[:space:]]'; then
+    fail "閉じる Bug (${bug_issues# }) の PR 本文の「反証」の節が空 (ADR-0040 決定 4)" \
+         "$(missing_refute_message)"
+  fi
+  echo "review-gate: 反証の節を確認 (${bug_issues# })"
+fi
+
+# 5. 変更要求は承認より強い
 reviews=$(jq -r '[.latestReviews[]?.state] | join("\n")' <<<"$pr_json")
 if grep -qx "CHANGES_REQUESTED" <<<"$reviews"; then
   fail "変更要求 (Changes requested) のレビューが未解消" \
        "指摘に対応して push し、レビュアーの承認をもらい直す"
 fi
 
-# 5. 承認可能性の不変条件 (ADR-0007 決定 1)。
+# 6. 承認可能性の不変条件 (ADR-0007 決定 1)。
 #    「承認が要る PR の author は、その PR を承認できる集合の要素であってはならない」。
 #    破ると承認を待っても永久に来ない — GitHub は自分の PR を自分で承認できず、author は
 #    後から変えられない。PR 作成前のフック (scripts/pr-identity-guard.sh) が常道で、
