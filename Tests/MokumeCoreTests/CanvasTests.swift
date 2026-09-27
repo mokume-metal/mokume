@@ -1580,6 +1580,24 @@ struct CanvasTests {
         }
     }
 
+    @Test("控えに分けた格納は、どれも上限つきの型である")
+    func everyCacheIsBounded() throws {
+        // 控えの上限は 2 度書き落とされた (#1593・#1431)。上の表で「控え」に分けた格納は、
+        // 上限を書き落とせない型 (BoundedCache) でしか作らない (ADR-0023 決定 5・#1602)。
+        // 辞書で控えを足すと、表に理由を 1 行書いても、ここで止まる
+        let canvas = try makeCanvas()
+        let cacheReason = try #require(carriedState["imageCache"])
+        let caches = Set(carriedState.filter { $0.value == cacheReason }.keys)
+        #expect(caches.count >= 5)
+        for child in Mirror(reflecting: canvas).children {
+            guard let label = child.label, caches.contains(label) else { continue }
+            let typeName = String(describing: type(of: child.value))
+            #expect(
+                typeName.hasPrefix("BoundedCache<"),
+                "\(label) は控えに分けてあるのに \(typeName) で持っている。上限つきの型で作る")
+        }
+    }
+
     /// フレームに属する状態の綴り。**同じ面の上で比べる** — 面ごとに違う資源 (焼き場の面) を
     /// 指す値も、同じ面なら同じ綴りになる。
     private func frameFingerprint(of canvas: Canvas) -> [String: String] {

@@ -383,8 +383,7 @@ public final class Canvas {
     var imageCacheBytes: Int { imageCache.total }
     /// 控えに置いておく画素の総量 (バイト)。超えたら、収まるまで古い順に捨てる。
     ///
-    /// **数ではなく量で切る。** 立体の形は 1 つの大きさが揃っているので枚数で足りるが
-    /// (``solidMeshCacheLimit``)、絵は 16 画素四方のことも 4096 画素四方のこともある —
+    /// **数ではなく量で切る。** 絵は 16 画素四方のことも 4096 画素四方のこともある —
     /// 枚数で切ると、同じ上限が 8 KiB にも 2 GiB にもなる。上限を持つこと自体は
     /// [ADR-0023] 決定 5 (名前を組み立てて読む書き方で際限なく増えない) の要求である。
     ///
@@ -432,27 +431,47 @@ public final class Canvas {
     /// いま開いている列が、どちらの並びから描かれるか。
     var openSource = VertexSource.flat
 
-    /// 使い回している立体の形。**件数で切る** (``solidMeshCacheLimit``)。
+    /// 使い回している立体の形。**量で切る** (``solidCacheBudget``)。
+    ///
+    /// 件数では切らない。形 1 つの大きさは細かさで開く — 箱は 1.7 KB、既定の細かさ (24) の
+    /// 輪環は 166 KB、細かさ 128 の輪環は 4.7 MB ある。件数で切ると、同じ上限が 100 KB にも
+    /// 300 MB にもなる。
     var solidMeshes = BoundedCache<SolidShape, SolidMesh>(
-        budget: Canvas.solidMeshCacheLimit, weight: { _ in 1 })
+        budget: Canvas.solidCacheBudget, weight: Canvas.solidMeshWeight)
     /// 立体の形を組み立てた回数 (作ってから通算)。
     ///
     /// **畳めているかではなく、作り直していないかを数える値。** 絵は同じでも毎フレーム
     /// 組み立て直していれば確保が積み上がるので、絵ではなく数で確かめる。
     var solidMeshesBuilt: Int { solidMeshes.made }
-    /// 使い回しの表に置いておく形の数。超えたら古い順に 1 件ずつ捨てる。
+    /// 立体の形の控えと稜線の控えに、**それぞれ**置いておく重さの合計 (見積もりのバイト数)。
+    /// 超えたら古い順に 1 件ずつ捨てる。
     ///
-    /// **数で切る。** 組み込みの形の点の数は細かさで決まり、既定の細かさなら 1 つの大きさはほぼ揃う。
-    static let solidMeshCacheLimit = 64
+    /// 既定の細かさでいちばん重い形 (輪環・166 KB) を 64 種並べても収まる大きさにしてある
+    /// (件数 64 で切っていた頃に当たっていた並びは、既定の細かさなら今も当たる)。
+    static let solidCacheBudget = 16 << 20
+    /// 形 1 つの重さの見積もり (バイト)。点の並びと、1 件あたりの固定分。
+    nonisolated static func solidMeshWeight(_ mesh: SolidMesh) -> Int {
+        mesh.points.count * MemoryLayout<SolidMesh.Point>.stride + 256
+    }
+    /// 稜線 1 つの重さの見積もり (バイト)。溶接した点と辺の並びと、1 件あたりの固定分。
+    nonisolated static func solidEdgesWeight(_ net: SolidEdges) -> Int {
+        net.points.count * MemoryLayout<SIMD3<Float>>.stride
+            + net.edges.count * MemoryLayout<(Int, Int)>.stride + 256
+    }
     /// 形から取り出した稜線の控え。**線を引いたときにだけ作る** — 塗りだけの形は
-    /// 稜線を求めない。形の控えと同じ数を上限にし、超えたら古い順に 1 件ずつ捨てる。
+    /// 稜線を求めない。**量で切る** (``solidCacheBudget``)。
     ///
-    /// 鍵に寸法が入るので、大きさの違う立体を 64 種より多く並べると外れ続ける。
+    /// **読み込んだモデルの稜線もここに載る** (鍵はモデルの番号)。モデルの控え
+    /// (``modelCache``) から追い出されたモデルを読み直すと番号が変わるので、前の番号の稜線は
+    /// 二度と当たらない。件数で切ると、それが大きなモデル 64 個分まで予算の外に残る
+    /// ので、量で切る。上限を超える長さの連番に線を引いて回すと、毎回溶接し直す。
+    ///
+    /// 鍵に寸法が入るので、大きさの違う立体を並べると、予算に収まらない数では外れ続ける。
     /// それは上限ではなく鍵の問題で、[#1606] が扱う。
     ///
     /// [#1606]: https://github.com/mokume-metal/mokume/issues/1606
     var solidEdges = BoundedCache<SolidSource, SolidEdges>(
-        budget: Canvas.solidMeshCacheLimit, weight: { _ in 1 })
+        budget: Canvas.solidCacheBudget, weight: Canvas.solidEdgesWeight)
     /// 一周を割る数の既定。
     public static let defaultSolidDetail = 24
 
@@ -928,6 +947,11 @@ public final class Canvas {
     /// 識別名・大きさ・太さと傾き・字形の番号でできた値で、この控えの書体を指していない。
     /// 同じ指定で作り直すと字の引き当てはやり直すが、頁には当たるので焼き直しは起きない。
     /// 使っている最中の書体は、使う側が関数の中で持っているので消えない。
+    ///
+    /// **上限を超える数の大きさを 1 フレームで使うと、毎フレーム外れる** (ワードクラウドの
+    /// ように 64 通りより多くの大きさを並べる書き方)。そのときは毎フレーム書体を作り直し、
+    /// 字の引き当てもやり直す。上限が無かった頃は 2 フレーム目から全部当たっていたが、
+    /// 代わりに大きさを動かし続ける書き方で際限なく増えていた。費用は `textSize` の説明に書いた。
     ///
     /// [#1431]: https://github.com/mokume-metal/mokume/issues/1431
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md

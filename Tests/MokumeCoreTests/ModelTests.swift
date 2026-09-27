@@ -624,6 +624,40 @@ struct ModelTests {
             #expect(try await read(paths[0]) == kept)
         }
 
+        @Test("線を引いたモデルの稜線も、モデルを読み進めるうちに稜線の控えの予算を超えない")
+        func modelEdgesStayWithinTheBudget() throws {
+            let paths = try writtenPyramids(10)
+            defer { removeDirectory(of: paths) }
+
+            let canvas = try makeCanvas()
+            // モデルの控えから追い出したモデルを読み直すと番号が変わり、前の番号の稜線は
+            // 二度と当たらない。稜線の控えが件数で切ると、それが予算の外に残る
+            let first = try canvas.loadModel(paths[0])
+            canvas.modelCache.budget = Canvas.modelCacheWeight(first) * 3
+            var models = [first]
+            for path in paths.dropFirst() { models.append(try canvas.loadModel(path)) }
+            try canvas.draw {
+                canvas.stroke(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+                canvas.model(first)
+            }
+            let each = try #require(canvas.solidEdges[.model(identity: first.identity)])
+            canvas.solidEdges.budget = Canvas.solidEdgesWeight(each) * 3
+            for model in models.dropFirst() {
+                try canvas.draw {
+                    canvas.stroke(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+                    canvas.model(model)
+                }
+            }
+
+            // 控えが名乗る合計ではなく、残っている稜線の重さを数え直す
+            let kept = models.compactMap { canvas.solidEdges[.model(identity: $0.identity)] }
+            let bytes = kept.map(Canvas.solidEdgesWeight).reduce(0, +)
+            #expect(
+                bytes <= canvas.solidEdges.budget,
+                "モデル \(kept.count) 個分の稜線 (\(bytes) バイト) が、予算 \(canvas.solidEdges.budget) を超えて残っている")
+            #expect(canvas.solidEdges[.model(identity: models.last!.identity)] != nil)
+        }
+
         @Test("1 つで予算を超えるモデルも読めて控えに残り、読み直しても解釈し直さない")
         func anOversizedModelIsKept() throws {
             let paths = try writtenPyramids(2)
