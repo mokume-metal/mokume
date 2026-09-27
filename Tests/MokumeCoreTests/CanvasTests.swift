@@ -1364,6 +1364,7 @@ struct CanvasTests {
             ("pendingComputations", end, all, { c, f in c.compute(f.computation, over: 1, writes: [f.numbers]) }),
             // 溜めたもの。立体は光を置いた後に置くので、列を閉じたときに光の置き場へ写る
             ("solidVertices", end, all, { c, _ in c.box(4) }),
+            ("solidMeshRanges", end, all, { c, _ in c.box(4) }),
             ("solidInstances", end, all, { c, _ in c.box(4) }),
             ("lightStorage", head, all, { c, _ in c.box(4) }),
             ("solidIndices", end, all, { c, _ in
@@ -1480,7 +1481,7 @@ struct CanvasTests {
             "shadowMap": "焼き付け先。同じ細かさなら作り直さない (ADR-0021 決定 4)。宣言は shadowDetailValue が戻る",
             "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
-            "typefaces": cache,
+            "typefaces": cache, "solidStrokeGeometry": cache,
             "lastShadowBakeKey": "前に焼いた入力の指紋。焼かなかったフレームでは触らない (影の面は誰にも書き換えられない)",
             "atlasPageFrame": "焼き場の頁を作ったフレームの番号 (#1342)。番号どうしで比べる",
             "nextModelIdentity": "読み込んだモデルの通し番号", "retainedSerial": "保持した形を置くたびの通し番号",
