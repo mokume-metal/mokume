@@ -35,6 +35,7 @@ import argparse
 import importlib.util
 import pathlib
 import re
+import ssl
 import subprocess
 import sys
 import time
@@ -156,22 +157,52 @@ def collect(root: pathlib.Path) -> list[Reference]:
 # 失敗を消失と同じ赤に数えてはならない。実際、生きている 178 本のうち 3 本が続けて引いた
 # ときだけ 503 を返し、個別に引き直すと 200 だった。
 #
-# 4xx は相手が「無い・許さない」と答えているので、引き直しても答えは変わらない。例外は
-# 408 と 429 で、これは相手自身が「待てば通りうる」と言っている。5xx と、応答までたどり
-# 着かなかった失敗 (名前解決・接続・待ち切れ) は一時的でありうる
+# 4xx は引き直しても答えが変わらないので引き直さない。4xx が消失を意味するとは限らない
+# ([#1294](https://github.com/mokume-metal/mokume/issues/1294) の 404 は、置き場が配信を
+# 止めていただけだった) が、そうした停止は日の単位で続き、数十秒後に引き直しても救えない
+# — そちらは `dead_report` の「全滅」の断りが受ける。例外は 408 と 429 で、これは相手自身が
+# 「待てば通りうる」と言っている。5xx と、応答までたどり着かなかった失敗 (名前解決・接続・
+# 待ち切れ) は一時的でありうる
 RETRYABLE_CLIENT_ERRORS = frozenset({408, 429})
 
 # 引き直す前に 1 度だけ待つ秒数。**待つのは全体で 1 回で、1 本ごとではない** —
-# 置き場が丸ごと 5xx を返しているときに 1 本ずつ待つと、待ちが本数ぶん積み上がる
+# 置き場が丸ごと 5xx を返しているときに 1 本ずつ待つと、待ちが本数ぶん積み上がる。
+# 相手が `Retry-After` で待ちを指定していればそれに従うが、上限で切る (日次の検査が
+# 相手の指定ひとつで何時間も止まらないように)。ここで諦めたものは「応えない」と名乗る
 RETRY_WAIT_SECONDS = 10
+RETRY_WAIT_LIMIT_SECONDS = 60
 
 
 class Failure:
     """引けなかった理由と、引き直す価値があるか。"""
 
-    def __init__(self, reason: str, transient: bool) -> None:
+    def __init__(self, reason: str, transient: bool, retry_after: float | None = None) -> None:
         self.reason = reason
         self.transient = transient
+        self.retry_after = retry_after
+
+
+def _retry_after(error: urllib.error.HTTPError) -> float | None:
+    """`Retry-After` の秒数。日付の形や読めない値は無いものとする (既定の待ちに任せる)。"""
+    value = (error.headers or {}).get("Retry-After")
+    try:
+        return max(0.0, float(value)) if value is not None else None
+    except ValueError:
+        return None
+
+
+def _unreachable_is_transient(error: Exception) -> bool:
+    """応答までたどり着かなかった失敗が、引き直す価値のあるものか。
+
+    名前解決・接続・待ち切れは OSError として来る (URLError は理由を `reason` に包む)。
+    **証明書の検証失敗は OSError の仲間だが恒久的**なので外す。URL の書き方の誤り
+    (`unknown url type` や符号化できない文字) は OSError でないので、ここで外れる。
+    外すのは待ち時間のためで、どちらにしても最後は赤になる。
+    """
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return False
+    return isinstance(reason, OSError)
 
 
 def probe(url: str) -> Failure | None:
@@ -189,17 +220,18 @@ def probe(url: str) -> Failure | None:
         # 例外そのものが応答なので閉じる (site_source.py の Source.read と同じ理由)
         error.close()
         transient = error.code >= 500 or error.code in RETRYABLE_CLIENT_ERRORS
-        return Failure(f"HTTP {error.code}", transient)
+        return Failure(f"HTTP {error.code}", transient, _retry_after(error))
     except Exception as error:  # 名前解決・接続・証明書の失敗をそのまま名乗る
-        return Failure(str(error), transient=True)
+        return Failure(str(error), _unreachable_is_transient(error))
 
 
-def probe_all(urls: list[str], sleep=time.sleep) -> dict[str, str]:
+def probe_all(urls: list[str], sleep=time.sleep) -> dict[str, Failure]:
     """引けなかった指し先と、その理由。
 
     一時的でありうる失敗は、全体を引き終えてから 1 度だけ待って引き直す。引き直しても
     引けなかったものだけを返す — **引き直しは 1 回きり**で、続けて断られるなら
-    それは一時的ではない。
+    検査の側で粘ることはしない。返したものの `transient` が立っていれば、それは
+    「消えた」ではなく「応えない」である (`dead_report` が名乗り分ける)。
     """
     failures = {}
     for url in urls:
@@ -209,7 +241,8 @@ def probe_all(urls: list[str], sleep=time.sleep) -> dict[str, str]:
 
     retry = [url for url, failure in failures.items() if failure.transient]
     if retry:
-        sleep(RETRY_WAIT_SECONDS)
+        asked = [failures[url].retry_after or 0 for url in retry]
+        sleep(min(max([RETRY_WAIT_SECONDS, *asked]), RETRY_WAIT_LIMIT_SECONDS))
         for url in retry:
             again = probe(url)
             if again is None:
@@ -217,7 +250,7 @@ def probe_all(urls: list[str], sleep=time.sleep) -> dict[str, str]:
             else:
                 failures[url] = again
 
-    return {url: failure.reason for url, failure in failures.items()}
+    return failures
 
 
 def host_of(url: str) -> str:
@@ -226,7 +259,9 @@ def host_of(url: str) -> str:
 
 
 def dead_report(
-    origins: dict[str, list[str]], dead: list[tuple[str, str, list[str]]]
+    origins: dict[str, list[str]],
+    dead: list[tuple[str, str, list[str]]],
+    unanswered: frozenset[str] = frozenset(),
 ) -> list[str]:
     """引けなかったときに出す行 (#1333)。
 
@@ -240,6 +275,10 @@ def dead_report(
     「アカウント側で起きた事象に見える」と診断し、実際には置き場のサービス全体が止まって
     いた。同じ切り分けを [#1331](https://github.com/mokume-metal/mokume/issues/1331) で
     もう一度やり直している。
+
+    **引き直しても応えなかったもの (`unanswered`) は、消えたとは名乗らない** (#1676)。
+    5xx や接続の失敗は置き場が応えていないことを言っているだけで、撮り直しを求めると
+    生きている絵を撮り直させることになる。
 
     **ホストが生きているかを引きに行くことはしない。** 根が 404 を返す配信は健全なときにも
     あるので、判定に混ぜると揺れる。**本数の内訳だけで「1 本か、全部か」には答えられる。**
@@ -272,9 +311,18 @@ def dead_report(
             "(#1331 が実例: 置き場が不正アクセスを受けて配信を止めていた)。",
         ]
 
+    if unanswered:
+        lines += [
+            "",
+            f"{len(unanswered)} 本は、待って引き直しても応えなかった (5xx・接続の失敗)。",
+            "これは指し先が消えたのではなく、置き場が応えていないことを言っている。",
+            "**撮り直す前に、時間を置いて検査をもう一度流す** — 通れば撮り直しは要らない。",
+        ]
+
     lines += ["", "引けなかった指し先と出所:"]
     for url, reason, where in dead:
-        lines.append(f"  {url} — {reason}")
+        mark = " (引き直しても応えない)" if url in unanswered else ""
+        lines.append(f"  {url} — {reason}{mark}")
         lines += [f"    {origin}" for origin in where]
 
     lines += [
@@ -322,10 +370,11 @@ def main() -> int:
         return 0
 
     failures = probe_all(sorted(origins))
-    dead = [(url, failures[url], origins[url]) for url in sorted(failures)]
+    dead = [(url, failures[url].reason, origins[url]) for url in sorted(failures)]
+    unanswered = frozenset(url for url, failure in failures.items() if failure.transient)
 
     if dead:
-        for line in dead_report(origins, dead):
+        for line in dead_report(origins, dead, unanswered):
             print(line, file=sys.stderr)
         return 1
 
