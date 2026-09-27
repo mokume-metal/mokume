@@ -120,9 +120,8 @@ import MokumeDiagnostics
 
     /// 指定した大きさの描画先を確保する。
     public init(gpu: RenderDevice, width: Int, height: Int) throws(RenderFailure) {
-        guard width > 0, height > 0 else {
-            throw .invalidSize(width: width, height: height)
-        }
+        // descriptor を組む前に、寸法の関所を通す (負の寸法は descriptor へ写せない)
+        try RenderDevice.checkTextureSize(width: width, height: height)
         self.gpu = gpu
         self.width = width
         self.height = height

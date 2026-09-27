@@ -94,6 +94,25 @@ import MokumeDiagnostics
     /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
     nonisolated static let maxTextureSide = 16384
 
+    /// 面の一辺として置ける範囲。**1 以上、``maxTextureSide`` 以下。**
+    ///
+    /// 上の端と下の端を同じ 1 つで持つ。寸法を検める口 (``checkTextureSize(width:height:)`` と、
+    /// `ImageFailure` で断る `createImage`) はどれもこれを読む — 端ごとに別の場所で見ると、
+    /// 片方の端だけが漏れる ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。
+    nonisolated static let textureSides = 1...maxTextureSide
+
+    /// 面の寸法を検める。**外から任意の寸法が入る口の関所** (#885・#1642)。
+    ///
+    /// descriptor を組む前に呼ぶ。負の寸法は `MTLTextureDescriptor` の符号なしの幅へ写せず、
+    /// 組む時点で落ちる — だから関所は ``makeTexture(descriptor:)`` の中だけでは足りず、
+    /// 寸法を受け取った口 (`RenderTarget`・`SharedFrameSurface`) が先にここを通る。
+    /// ``makeTexture(descriptor:)`` 自身も同じここを通す。
+    nonisolated static func checkTextureSize(width: Int, height: Int) throws(RenderFailure) {
+        guard textureSides.contains(width), textureSides.contains(height) else {
+            throw .invalidSize(width: width, height: height)
+        }
+    }
+
     /// この実行環境で描画の土台を組み立てられるか。
     ///
     /// **GPU があるかだけでは足りない。** 仮想化された実行環境には、GPU としては
@@ -243,6 +262,29 @@ import MokumeDiagnostics
     /// 診断: 最後に打ち切られた理由。
     var lastCommandFault: String? { commandFaults.last }
 
+    /// 完了の知らせを main actor へ渡す前に合体する器 ([#1594])。
+    ///
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+    private let completionNotices = CoalescedNotices()
+
+    /// 診断: 届いた完了の知らせの数 (投入の結末を受け取るハンドラが呼ばれた数)。
+    var arrivedNoticeCount: Int { completionNotices.arrived }
+
+    /// 診断: main actor へ積んだまま、まだ走っていない完了の知らせの数。
+    ///
+    /// **main actor を譲らずにフレームを回しても、1 を超えない** ([#1594])。投入ごとに 1 本
+    /// 積んでいた頃は、譲るまでフレームに比例して溜まった。
+    ///
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+    var queuedNoticeCount: Int { completionNotices.queued }
+
+    /// 診断: 完了の知らせが main actor で**実際に走った**回数。
+    ///
+    /// **器の数え (``queuedNoticeCount``) とは別に、走った側で数える** (#1594 の反証 3)。
+    /// 器の数えは器が積めと言った数で、ハンドラが器の答えを無視して毎回積んでも 1 のままに
+    /// 見える。走った回数は積まれた `Task` の数そのものなので、そちらを取り違えない。
+    private(set) var noticeRuns = 0
+
     /// 投入に添えるお願いを組む。**投入ごとに作る。**
     ///
     /// **1 つを作って使い回すと、ハンドラが 1 度も呼ばれない。** 実測では、打ち切られた
@@ -259,14 +301,28 @@ import MokumeDiagnostics
     /// 注釈次第になり、main actor 隔離として推論された日には Metal 側の糸から呼ばれた
     /// 瞬間に落ちる。書けばコンパイラが掴んだものを検査する。
     ///
+    /// **知らせは合体する** ([#1594])。main actor へ積むのは、積んだまま走っていない知らせが
+    /// 無いときの 1 本だけで、走るときに届いている最大の番号まで刈る (``CoalescedNotices``)。
+    /// 投入ごとに 1 本積むと、main actor を譲らずにフレームを回す経路では 1 本も走れず、
+    /// フレームに比例して溜まり続けた。
+    ///
     /// - Parameter submission: この投入の番号。終わったらここまでを刈る。
+    ///
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     private func makeCommitOptions(finishing submission: UInt64) -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
         options.addFeedbackHandler {
-            @Sendable [commandFaults, weak self] (feedback: any MTL4CommitFeedback) in
+            @Sendable [commandFaults, completionNotices, weak self] (feedback: any MTL4CommitFeedback) in
             // **抱えている資源を手放す契機は、完了そのものが持つ。** 実測では、成功した
             // 投入でもハンドラは毎回呼ばれる (50 回の投入に対し 50 回)
-            Task { @MainActor in self?.releaseFinished(upTo: submission) }
+            if completionNotices.arrive(submission) {
+                Task { @MainActor in
+                    // **印は自分の生死によらず下ろす。** `self?.…(take())` の形では、自分が
+                    // 居ないと `take()` が評価されず、積んだ印が残る (#1594 の反証 4)
+                    let newest = completionNotices.take()
+                    self?.releaseOnNotice(upTo: newest)
+                }
+            }
             guard let error = feedback.error else {
                 // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
                 // 待ちの期限切れを打ち切りのせいにしない (#1343)
@@ -289,9 +345,20 @@ import MokumeDiagnostics
     /// 残す競走になる (それはこの Issue が直そうとしている状態そのものである)。
     /// 片方が遅れてももう片方が埋めるので、両方の大きいほうを取る。
     ///
+    /// **`submission` は、合体した知らせが走る時点で届いている最大の番号である** ([#1594])。
+    /// 先に積んだ知らせの番号のままにすると、合図が知らせより遅れたときに、合体して捨てた
+    /// 後の投入を刈り残す — 最後の投入の分が残れば、上の保持環が 1 フレームぶん戻る。
+    ///
     /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     private func releaseFinished(upTo submission: UInt64) {
         releaseFinished(through: max(submission, completion.signaledValue))
+    }
+
+    /// 合体した完了の知らせが main actor で走った。走った回数を数えてから刈る。
+    private func releaseOnNotice(upTo submission: UInt64) {
+        noticeRuns += 1
+        releaseFinished(upTo: submission)
     }
 
     /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。
@@ -504,12 +571,11 @@ import MokumeDiagnostics
     /// ([#885](https://github.com/mokume-metal/mokume/issues/885))。
     ///
     /// **外から任意の寸法が入る口 (描き場所・絵・窓の大きさ) は、いずれもここへ集まる。**
-    /// 3 つを個別に守ると、面を作る道が 1 本増えるたびに守り忘れが生まれる。
+    /// 3 つを個別に守ると、面を作る道が 1 本増えるたびに守り忘れが生まれる。見る範囲は
+    /// ``textureSides`` の 1 つで、下の端 (1 を割る寸法) は descriptor を組む前に
+    /// ``checkTextureSize(width:height:)`` が同じ範囲で断る。
     func makeTexture(descriptor: MTLTextureDescriptor) throws(RenderFailure) -> any MTLTexture {
-        guard descriptor.width <= Self.maxTextureSide, descriptor.height <= Self.maxTextureSide
-        else {
-            throw .invalidSize(width: descriptor.width, height: descriptor.height)
-        }
+        try Self.checkTextureSize(width: descriptor.width, height: descriptor.height)
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             throw .textureUnavailable(width: descriptor.width, height: descriptor.height)
         }

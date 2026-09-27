@@ -30,7 +30,9 @@ extension Canvas {
 
     /// 粒を用意する。
     public func makeParticles(count: Int) throws(RenderFailure) -> Particles {
-        let capacity = max(1, count)
+        // 1 を割る数は断る。黙って 1 粒へ丸めない (ADR-0020 決定 5・#1642)
+        guard count >= 1 else { throw .invalidCount(count) }
+        let capacity = count
         let stateFloats = MemoryLayout<Particle>.stride / MemoryLayout<Float>.stride
         let placeFloats = MemoryLayout<SolidInstance>.stride / MemoryLayout<Float>.stride
 
@@ -120,12 +122,13 @@ extension Canvas {
     ) {
         guard isDrawing else { return warnOutsideFrame(.particles) }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
-        // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法
-        // 刻みは秒に直さずに渡す。単精度の秒を足し合わせると、fps によって毎秒 1 個ずれる (#1640)
-        let count = particles.count(rate: rate, over: frameStep, frame: framesDrawn)
+        // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法。
+        // 刻みは秒に直さずに渡す。単精度の秒を足し合わせると、fps によって毎秒 1 個ずれる (#1640)。
+        // 数でない値・無限は受け口 (`Particles.emit`) が検めて断る (#1623)
         particles.emit(
-            count, from: source, speed: speed, angle: angle, life: life, size: size,
-            color: color ?? style.fill, at: time, using: &randomness)
+            rate: rate, over: frameStep, frame: framesDrawn, from: source, speed: speed,
+            angle: angle, life: life, size: size, color: color, fill: style.fill, at: time,
+            using: &randomness)
     }
 
     /// 力を積む。

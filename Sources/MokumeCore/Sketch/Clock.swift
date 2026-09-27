@@ -104,6 +104,7 @@ final class FrameTiming {
     /// 水準にしてある。固定値にすると、遅いフレームレートを求めたスケッチで
     /// 1 枚ぶんの間隔が上限を越えてしまう。
     static func maximumDeltaTime(frameRate: Int) -> Double {
+        // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         10 / Double(max(1, frameRate))
     }
 
@@ -119,6 +120,7 @@ final class FrameTiming {
     ) {
         self.clock = clock
         self.maximumDeltaTime = Self.maximumDeltaTime(frameRate: frameRate)
+        // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         self.frameInterval = 1 / Double(max(1, frameRate))
         self.now = now
         let start = now()
@@ -147,6 +149,7 @@ final class FrameTiming {
             }
             previous = now
         case .frameIndex(let frameRate):
+            // 時計の刻みも組み立てで検めている。`max(1, …)` は割り算の守り (#1642)
             let rate = Double(max(1, frameRate))
             // 最初のフレームを 0 秒にする。止めていたところから描く 1 枚も、既に 1 フレーム
             // ぶんしか進まないので ``stepOneFrameNext()`` は効かせるものが無い

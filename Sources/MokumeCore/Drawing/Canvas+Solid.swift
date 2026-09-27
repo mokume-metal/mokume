@@ -420,26 +420,11 @@ extension Canvas {
     /// 形を使い回す。**同じ寸法なら組み立て直さない。**
     ///
     /// 毎フレーム `box(120)` と書いても、組み立ては最初の 1 回だけになる。使わなく
-    /// なったものは、多くなりすぎたときに古い順から捨てる。
+    /// なったものは、多くなりすぎたときに古い順から 1 件ずつ捨てる (``Canvas/solidMeshes``)。
     private func solidMesh(for shape: SolidShape) -> SolidMesh {
-        if let cached = solidMeshes[shape] {
-            solidMeshUse[shape] = solidMeshClock
-            solidMeshClock += 1
-            return cached
-        }
+        if let cached = solidMeshes[shape] { return cached }
         let mesh = shape.make()
-        solidMeshes[shape] = mesh
-        solidMeshUse[shape] = solidMeshClock
-        solidMeshClock += 1
-        solidMeshesBuilt += 1
-        if solidMeshes.count > Canvas.solidMeshCacheLimit {
-            let oldest = solidMeshUse.sorted { $0.value < $1.value }
-                .prefix(solidMeshes.count - Canvas.solidMeshCacheLimit / 2)
-            for (key, _) in oldest {
-                solidMeshes.removeValue(forKey: key)
-                solidMeshUse.removeValue(forKey: key)
-            }
-        }
+        solidMeshes.insert(mesh, for: shape)
         return mesh
     }
 
@@ -603,9 +588,8 @@ extension Canvas {
     /// 稜線を使い回す。**線を引いた形にだけ作る。**
     private func solidEdges(of source: SolidSource, mesh build: () -> SolidMesh) -> SolidEdges {
         if let cached = solidEdges[source] { return cached }
-        if solidEdges.count >= Canvas.solidMeshCacheLimit { solidEdges.removeAll(keepingCapacity: true) }
         let net = SolidEdges(build())
-        solidEdges[source] = net
+        solidEdges.insert(net, for: source)
         return net
     }
 

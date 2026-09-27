@@ -145,7 +145,7 @@ SPDX-License-Identifier: MIT
 | --- | --- |
 | シーンの記述の口 | 公開の口を種類で分類した表に無い口と、フレームの外で注意が出ることを回す検査に無いシーンの記述の口を、`make api` が赤にする ([#1670](https://github.com/mokume-metal/mokume/issues/1670)) |
 | 境目で戻す状態 | `Canvas` の格納プロパティを、「フレームに属する」「持ち越す」の 2 つの表のどちらかに載せる。どちらにも無ければ赤。フレームに属する状態は、全部汚して境目を越えると既定へ戻る ([#1671](https://github.com/mokume-metal/mokume/issues/1671)) |
-| 置いたものの寿命 | フレームの頭で、区間の外で置いたものが溜め場に残っていれば止まる。口を足し忘れても赤になる ([#1672](https://github.com/mokume-metal/mokume/issues/1672)) |
+| 置いたものの寿命 | フレームの頭で、区間の外で置いたものが溜め場に残っていれば、捨てて 1 度注意する。**止まるのは mokume の検査の中だけ**で、口を足し忘れると検査が赤になる。漏れは mokume の中の不具合でしか起きないので、利用者の作品 (debug 組みを含む) は止めずに名乗る ([#1672](https://github.com/mokume-metal/mokume/issues/1672)・[#1682](https://github.com/mokume-metal/mokume/issues/1682)) |
 
 **本体の止まっている間のコールバックで書いた画素は、この追補では決めない。** 区間の中なので断らないが、効果を掛けた面では控えの絵との順序で食い違いが残りうる。それは [#1524](https://github.com/mokume-metal/mokume/issues/1524) の判断に残す。
 

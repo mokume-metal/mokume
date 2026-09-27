@@ -355,6 +355,71 @@ struct TextTests {
         #expect(try pixels(of: plain).bytes != pixels(of: bold).bytes)
     }
 
+    // 書体の控え (#1431)。鍵に大きさ (連続値) が入るので、`textSize` を毎フレーム変える
+    // 書き方 (脈打つ字) ではフレームごとに鍵が 1 つ増える。描かずに `textWidth` で引けば
+    // GPU を回さずに済む
+
+    @Test("大きさを 1 回ずつ変えて書体を 1000 回引いても、控えの件数は上限以下に収まる")
+    func typefacesStayWithinTheLimit() throws {
+        let canvas = try makeCanvas()
+        #expect(Canvas.typefaceCacheLimit == 64)
+        for index in 0..<1000 {
+            canvas.textSize(8 + Float(index) * 0.01)
+            _ = canvas.textWidth("mokume")
+        }
+        #expect(
+            canvas.typefaces.count <= Canvas.typefaceCacheLimit,
+            """
+            大きさを変えて 1000 回引いた後の書体の控えが \(canvas.typefaces.count) 件で、
+            上限 \(Canvas.typefaceCacheLimit) を超えている。脈打つ字で footprint が増え続ける (#1431)。
+            """)
+    }
+
+    @Test("使い続けている大きさの書体は、別の大きさを上限より多く引いても追い出されない")
+    func aTypefaceInUseIsKept() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(20)
+        let kept = canvas.typeface
+        for index in 0..<(Canvas.typefaceCacheLimit * 3) {
+            canvas.textSize(20)
+            _ = canvas.textWidth("mokume")
+            canvas.textSize(21 + Float(index) * 0.1)
+            _ = canvas.textWidth("mokume")
+        }
+        #expect(canvas.typefaces.count <= Canvas.typefaceCacheLimit)
+        canvas.textSize(20)
+        #expect(canvas.typeface === kept, "1 回おきに使っていた書体が追い出された (入れた順に捨てている)")
+    }
+
+    @Test("追い出した書体で描き直しても、絵と幅は変わらない")
+    func anEvictedTypefaceDrawsTheSame() throws {
+        let canvas = try makeCanvas()
+        // 欧文と、書体を渡って引く字 (欧文の書体に無い) を混ぜる
+        let string = "mokume あ"
+        func drawn() throws -> [UInt8] {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(20)
+                canvas.text(string, 10, 60)
+            }
+            return try pixels(of: canvas).bytes
+        }
+        let before = try drawn()
+        canvas.textSize(20)
+        let width = canvas.textWidth(string)
+        let first = canvas.typeface
+
+        for index in 0..<(Canvas.typefaceCacheLimit * 2) {
+            canvas.textSize(21 + Float(index) * 0.25)
+            _ = canvas.textWidth(string)
+        }
+        canvas.textSize(20)
+        #expect(canvas.typeface !== first, "上限を超えて引いたのに、最初の書体が追い出されていない")
+        #expect(canvas.textWidth(string) == width)
+        #expect(try drawn() == before, "書体を作り直すと、絵が変わった")
+    }
+
     // MARK: - 描かないとき
 
     @Test("塗りを止めていると何も描かない")
@@ -640,6 +705,144 @@ struct TextTests {
         #expect(right > 120 - canvas.textWidth("mokume"))
     }
 
+    // MARK: - 数でない値・巨大な大きさ (#1587)
+
+    /// 数でない位置と無限の位置。
+    nonisolated static var nonFinitePositions: [(x: Float, y: Float)] {
+        [(.nan, 100), (50, .nan), (.infinity, 100), (-.infinity, 100)]
+    }
+
+    /// 輪郭は読み取りの口なので、決して落ちずに空を返す ([ADR-0020] 決定 5)。直す前は、数でない
+    /// 位置から曲線を割る数が NaN になり、Int へ直す所でプロセスごと落ちた ([#1587])。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    @Test("輪郭の位置に数でない値か無限を渡しても、落ちずに空を返す", arguments: nonFinitePositions)
+    func aNonFinitePositionHasNoOutline(_ position: (x: Float, y: Float)) throws {
+        let canvas = try makeCanvas()
+        #expect(canvas.textOutline("o", position.x, position.y).isEmpty)
+    }
+
+    /// 曲線を割る数の上限に張り付く大きさ。**有限だが、点どうしの距離の 2 乗が `Float` から
+    /// あふれる** (`1e20` 以上)。
+    nonisolated static var hugeOutlineSizes: [Float] { [1e20, 1e21, .greatestFiniteMagnitude] }
+
+    /// 大きい字の輪郭は、曲線ごとに割る数の上限 (24) まで割る。巨大な大きさでもそれ以上には
+    /// 割らないので、周の数と各周の点の数は大きい字と同じになる。直す前は、曲線の長さが
+    /// 無限大か `2 × Int.max` を越えて、割る数を Int へ直す所でプロセスごと落ちた ([#1587])。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    @Test("巨大な大きさの輪郭も落ちず、周と点の数は大きい字の輪郭と揃う", arguments: hugeOutlineSizes)
+    func aHugeSizeOutlinesLikeALargeOne(size: Float) throws {
+        let canvas = try makeCanvas()
+        // 周ごとに、点の数と穴かどうか。**穴の判定も揃う** — 面積を `Float` で積むと、大きな字
+        // では座標の積が溢れて NaN になり、穴がすべて外周と読まれていた (#1587 の反証 4)
+        func shape(at position: Float = 0) -> [String] {
+            canvas.textOutline("o", position, position)
+                .map { "\($0.points.count)\($0.isHole ? " hole" : "")" }
+        }
+        canvas.textSize(400)
+        let large = shape()
+        try #require(large.contains { $0.hasSuffix("hole") }, "検査の前提: 400 の「o」に穴が無い")
+        canvas.textSize(4000)
+        try #require(
+            shape() == large, "検査の前提: 400 の「o」の曲線が、どれも割る数の上限に張り付いていない")
+
+        canvas.textSize(size)
+        #expect(shape() == large)
+        // 原点から遠い位置でも同じ。座標どうしの積は大きさだけでなく位置でも溢れる
+        #expect(shape(at: 1e20) == large)
+        #expect(canvas.textOutline("o", 0, 0).allSatisfy { $0.points.allSatisfy { $0.x.isFinite && $0.y.isFinite } })
+    }
+
+    /// 無限の大きさは、NaN と負の値と同じく 0 に倒れる ([#1587])。直す前は +∞ だけが素通りして
+    /// 書体へ渡り、字は描かれず輪郭も空だったが、測る口は無限を返していた。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    @Test("大きさに無限を渡すと、0 と同じく何も描かず、輪郭も空")
+    func anInfiniteSizeActsAsZero() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(Float.infinity)
+            canvas.text("M", 10, 80)
+        }
+        #expect(inkBounds(try pixels(of: canvas), width: 160, height: 96) == nil)
+        #expect(canvas.textOutline("o", 0, 0).isEmpty)
+        // 測る口と矩形へ流す口も、大きさ 0 と同じ答えを返す。直す前は上端と下端が無限、
+        // 矩形へ流すと高さ NaN の行を 1 行置いたと答えていた
+        #expect(canvas.textWidth("M") == 0)
+        #expect(canvas.textAscent() == 0)
+        #expect(canvas.textDescent() == 0)
+        let flow = canvas.text("M", 0, 0, 100, 100)
+        #expect(flow.lineCount == 0 && flow.height == 0)
+        #expect(canvas.warnings.hasWarned(.unusableTextMeasure))
+    }
+
+    /// 字の寸法から作る量が有限に収まる大きさの上限 ([#1587] の反証 2・5)。上限を越える有限の
+    /// 大きさは上限として扱うので、測る口も流し込みも上限の大きさと同じ答えを返し、無限を
+    /// 返さない。直す前は、大きさ × 1.25 の行送りや送り幅の合計が溢れて無限になり、流し込みは
+    /// 高さ NaN の行を置いたと答えた。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    @Test("上限を越える有限の大きさは上限として測られ、測る口も流し込みも有限を返す", arguments: [Float(1e30), .greatestFiniteMagnitude])
+    func aSizeAboveTheLimitMeasuresAsTheLimit(size: Float) throws {
+        let canvas = try makeCanvas()
+        let text = String(repeating: "M", count: 64) + "\nM"
+        func measures() -> [Float] {
+            let flow = canvas.text(text, 0, 0, 1e38, 1e38)
+            return [
+                canvas.textWidth(text), canvas.textAscent(), canvas.textDescent(),
+                canvas.resolvedTextLeading, Float(flow.lineCount), flow.height,
+            ]
+        }
+        canvas.textSize(Canvas.largestTextMeasure)
+        let limit = measures()
+        try #require(limit.allSatisfy { $0.isFinite }, "検査の前提: 上限の大きさで測った値 \(limit) が有限でない")
+        #expect(!canvas.warnings.hasWarned(.unusableTextMeasure), "上限ちょうどで知らせた")
+
+        canvas.textSize(size)
+        #expect(measures() == limit)
+        #expect(canvas.warnings.hasWarned(.unusableTextMeasure))
+    }
+
+    /// 行送りにも同じ受け口を通す ([#1587] の反証 1)。直す前は `max(0, leading)` が +∞ を
+    /// 素通しし、流し込みは `0 × ∞` の NaN から高さ NaN の行を置いたと答えた。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    @Test("行送りに数でない値・無限を渡すと 0 として流し込む", arguments: [Float.infinity, .nan])
+    func anUnusableLeadingActsAsZero(leading: Float) throws {
+        let canvas = try makeCanvas()
+        canvas.textLeading(0)
+        let zero = canvas.text("M\nM", 0, 0, 100, 1000)
+        canvas.textLeading(leading)
+        let flow = canvas.text("M\nM", 0, 0, 100, 1000)
+        #expect(flow.lineCount == zero.lineCount && flow.height == zero.height)
+        #expect(canvas.warnings.hasWarned(.unusableTextMeasure))
+    }
+
+    /// 縦の揃えが行の広がり (行数 - 1) × 行送りを使っても、輪郭の点は有限 ([#1587] の反証 3)。
+    /// 直す前は、1 行でも `0 × ∞` が NaN になり、下揃え・中央揃えの基準線が NaN になっていた。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    @Test("下揃え・中央揃えの輪郭は、大きな大きさと無限の行送りでも有限の点を返す", arguments: [VerticalTextAlign.bottom, .center])
+    func aVerticallyAlignedOutlineStaysFinite(align: VerticalTextAlign) throws {
+        let canvas = try makeCanvas()
+        canvas.textAlign(.left, align)
+        for (size, leading) in [(Float.greatestFiniteMagnitude, nil), (32, Float.infinity)] as [(Float, Float?)] {
+            canvas.textSize(size)
+            if let leading { canvas.textLeading(leading) }
+            for text in ["o", "o\no"] {
+                let points = canvas.textOutline(text, 0, 0).flatMap(\.points)
+                #expect(!points.isEmpty)
+                #expect(
+                    points.allSatisfy { $0.x.isFinite && $0.y.isFinite },
+                    "大きさ \(size)・行送り \(String(describing: leading)) の「\(text)」の輪郭に有限でない点がある")
+            }
+        }
+    }
+
     // MARK: - 焼き場
 
     @Test("焼き場を広げても、それまでに置いた字は元のまま描かれる")
@@ -781,8 +984,18 @@ struct TextTests {
             """)
     }
 
-    /// 上限の面にも収まらない大きさ。**倍にして、丸めや余白では届かない側へ振る。**
-    private var overwhelmingSize: Float { Float(GlyphAtlas.maximumSize) * 2 }
+    /// 上限の面にも収まらない大きさの並び。
+    ///
+    /// 先頭の `8192` は上限の面の一辺 (``GlyphAtlas/maximumSize`` の 4096) の倍で、丸めや余白では
+    /// 届かない側へ振った大きさ。**残りは外接矩形が Int に収まらない所まで振る** ([#1587])。
+    /// 焼き場は外接矩形を Int へ直してから上限と比べていたので、大きさ `1e20` の「M」(`maxX` が
+    /// 約 7e19 で、`Int.max` の 9.2e18 を越える) ではその変換でプロセスごと落ちた。`1e18` は
+    /// Int に収まる対照で、直す前から通る。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    nonisolated static var overwhelmingSizes: [Float] {
+        [8192, 1e18, 1e20, .greatestFiniteMagnitude]
+    }
 
     @Test("待てなかったら、字形を焼かない")
     func doesNotBakeAGlyphWhenTheWaitFails() throws {
@@ -813,17 +1026,19 @@ struct TextTests {
         }
     }
 
-    @Test("焼き場に入りきらない字形は、理由を『大きすぎる』として名乗る")
-    func anOversizedGlyphNamesItsReason() throws {
+    @Test("焼き場に入りきらない字形は、理由を『大きすぎる』として名乗る", arguments: overwhelmingSizes)
+    func anOversizedGlyphNamesItsReason(size: Float) throws {
         let canvas = try makeCanvas()
-        canvas.textSize(overwhelmingSize)
-        let face = canvas.typeface
-        let resolved = try #require(face.glyph(for: "M"))
-        let key = GlyphAtlas.Key(
-            fontKey: resolved.fontKey, size: overwhelmingSize, style: .normal,
-            glyph: resolved.glyph)
+        // **書体は `textSize` を通さずに作る。** `textSize` は 1e18 を越える大きさを 1e18 に締める
+        // (#1587 の反証 2) ので、通すと焼き場へ Int に収まらない外接矩形が届かない。焼き場は
+        // 締めの有無によらず、頼まれた字形を Int へ直す前に比べる
+        let font = CTFontCreateWithName(fontName as CFString, CGFloat(size), nil)
+        var units = Array("M".utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: 1)
+        try #require(CTFontGetGlyphsForCharacters(font, &units, &glyphs, 1))
+        let key = GlyphAtlas.Key(fontKey: fontName, size: size, style: .normal, glyph: glyphs[0])
 
-        let lookup = canvas.atlas.entry(for: key, font: resolved.font)
+        let lookup = canvas.atlas.entry(for: key, font: font)
         guard case .tooLarge = lookup else {
             Issue.record(
                 """
@@ -837,15 +1052,26 @@ struct TextTests {
         }
     }
 
-    @Test("上限の面にも入らない字形を頼んでも、焼き場は広がらない")
-    func anOversizedGlyphDoesNotGrowTheAtlas() throws {
+    /// 描く口は、入らない字を投げずに何も置かず、「大きすぎる」を 1 度知らせる ([ADR-0020] 決定 5)。
+    /// 大きさが Int に収まらない外接矩形を生む所まで振っても同じ ([#1587])。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    @Test("上限の面にも入らない字形を頼んでも、焼き場は広がらない", arguments: overwhelmingSizes)
+    func anOversizedGlyphDoesNotGrowTheAtlas(size: Float) throws {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.background(self.black)
             canvas.fill(self.white)
-            canvas.textSize(self.overwhelmingSize)
+            canvas.textSize(size)
             canvas.text("M", 10, 100)
         }
+        #expect(
+            inkBounds(try pixels(of: canvas), width: 160, height: 96) == nil,
+            "入らない大きさ \(size) の「M」を描いたのに、面に墨が乗った")
+        #expect(
+            canvas.atlas.warnings.hasWarned(.tooLarge),
+            "入らない大きさ \(size) の「M」を描いたのに、「大きすぎる」を知らせていない")
         #expect(
             canvas.atlas.size == GlyphAtlas.initialSize,
             """

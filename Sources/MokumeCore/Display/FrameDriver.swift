@@ -47,6 +47,7 @@ enum FrameDriver {
     /// 4 倍は 60 fps のとき 0.066 秒で、``SketchRuntime`` が名乗りの側で使っている
     /// 停滞の判定と同じ水準になる。
     static func stallThreshold(frameRate: Int) -> Double {
+        // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         4 / Double(max(1, frameRate))
     }
 
@@ -57,6 +58,7 @@ enum FrameDriver {
     /// [ADR-0012](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md)
     /// 決定 5 (画面に出ていなくてもフレームレートを維持する) を満たせない。
     static func fallbackInterval(frameRate: Int) -> Double {
+        // `max(1, …)` の意味は ``stallThreshold(frameRate:)`` と同じ (#1642)
         1 / Double(max(1, frameRate))
     }
 

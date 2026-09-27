@@ -56,10 +56,16 @@ PR には分類ラベルを付けない (ADR-0005)。付くのは CI の判定�
 
 PR 本文が揃い `ci-gate` が green なら、指示を待たず `gh pr merge --auto --squash` で merge queue に入れてよい。queue が合流後の姿で再検証するので、CI を見張って手で merge しない。マージ後は main に戻って pull する。
 
-承認が要るのは重要パス (`docs/decisions/`・`.github/`・`.claude/`) を触る PR だけで、`.github/rulesets/main-protection.json` が maintainers への 1 承認を求める。承認が要る PR でも先に `--auto` を掛けておく (予約はゲートを越えないので、メンテナの操作が Approve 1 回で済む)。承認は native の Approve レビューだけ。
+承認が要るのは[重要パス](.github/rulesets/main-protection.json) を触る PR だけで、maintainers への 1 承認を求める。承認が要る PR でも先に `--auto` を掛けておく (予約はゲートを越えないので、メンテナの操作が Approve 1 回で済む)。承認は native の Approve レビューだけ。
 
 - **`BEHIND` でも "Update branch" は押さない。** 追随しても得るものが無く、auto-merge だけが外れる。例外は描画 PR の `local-render` が failure のとき (「描画に影響する変更」)
 - check が 1 本も付かないのは、まだ来ていないのではなく main と衝突している。`git merge-tree --write-tree origin/main HEAD` で確かめ、手元で解いて push する
+
+## 説明と報告
+
+Issue を調べて完了条件を固めるときは、具体的な入力・操作、変更前後の結果と対処・代償を最低1例示す。可能な範囲で画像・動画等の実物を各 Issue にも添え、撮れなければ理由と未確認範囲を書く。雑な起票は妨げない。PR では結果を更新する。
+
+複数の変更の方向性を伝える報告は、[既存の証跡を束ねる手順](.claude/skills/visual-evidence/report.md) に従う (ADR-0036 決定 7)。沈黙を同意とせず、委任範囲は広げない。
 
 ## コメント
 
@@ -133,7 +139,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 | sub-issue の使い方 | `scripts/sub-issue.sh <親番号> <タイトル>` で作る。階層は 2〜3 段までにし、独立した Issue を無理にツリーにしない。open の子を残して親を畳むなら not planned で close する (completed だと Parent guard が開き直す) |
 | 進捗の公開ロードマップ | Org の Project「mokume Roadmap」は Issue の投影で、項目の出し入れは手でしない。人が触るのはフェーズ親 Issue の Start / Target だけで、Iteration・Milestone・独自の status は足さない |
 | 手元に残ったプロセス | `bash scripts/orphan-processes.sh` が出所つきで一覧する。止めるかどうかは人が決める |
-| エージェント環境の設定 | `.claude/` の支援 (スキル・hooks・設定) を足す・外すときは ADR-0017 を読む |
+| エージェント環境の設定 | 変更は ADR-0017、導入は [環境](docs/agent-environment.md) |
 | 無人セッションの起動 | 起動する側が `MOKUME_UNATTENDED=1` を立てる (ADR-0036 決定 2。何が変わるかは `scripts/plan-record.sh` の冒頭) |
 | 外のパッケージ | この文書がどこまで効くかは ADR-0026 決定 1 |
 

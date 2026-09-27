@@ -221,7 +221,9 @@ final class SharedFrameSurface {
     }
 
     init(gpu: RenderDevice, width: Int, height: Int, at directory: URL) throws(RenderFailure) {
-        guard width > 0, height > 0 else { throw .invalidSize(width: width, height: height) }
+        // 面は `makeTexture(descriptor:iosurface:plane:)` で作るので `RenderDevice.makeTexture` を
+        // 通らない。寸法の関所はここで通す (上の端も含む・#1642)
+        try RenderDevice.checkTextureSize(width: width, height: height)
         self.width = width
         self.height = height
         self.gpu = gpu

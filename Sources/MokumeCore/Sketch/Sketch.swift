@@ -188,7 +188,9 @@ public struct SketchSettings: Equatable, Sendable {
     public var width: Int
     /// 出す高さ (画素)。
     public var height: Int
-    /// 1 秒あたりのフレーム数の目標。
+    /// 1 秒あたりのフレーム数の目標。**1 以上。** 0 以下は起動の組み立てで
+    /// ``RenderFailure/invalidFrameRate(_:)`` として断り、1 fps へ丸めない。止めたいなら
+    /// ``Sketch/noLoop()`` を呼ぶ。
     ///
     /// **起動のときに読む。** 走っている最中に代入しても、画面の刻みも ``Sketch/time`` /
     /// ``Sketch/deltaTime`` も変わらず、警告も出ない。`var settings = SketchSettings(…)` と

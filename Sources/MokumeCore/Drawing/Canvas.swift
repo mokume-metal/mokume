@@ -377,15 +377,13 @@ public final class Canvas {
     /// **常にファイルの中身を返す**、を保ったまま探索と復号だけを省く。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
-    var imageCache: [ImageRequest: DecodedImage] = [:]
-    var imageCacheUse: [ImageRequest: Int] = [:]
-    var imageCacheClock = 0
+    var imageCache = BoundedCache<ImageRequest, DecodedImage>(
+        budget: Canvas.imageCacheBudget, weight: \.bytes)
     /// いま控えている画素の総量 (バイト)。
-    var imageCacheBytes = 0
+    var imageCacheBytes: Int { imageCache.total }
     /// 控えに置いておく画素の総量 (バイト)。超えたら、収まるまで古い順に捨てる。
     ///
-    /// **数ではなく量で切る。** 立体の形は 1 つの大きさが揃っているので枚数で足りるが
-    /// (``solidMeshCacheLimit``)、絵は 16 画素四方のことも 4096 画素四方のこともある —
+    /// **数ではなく量で切る。** 絵は 16 画素四方のことも 4096 画素四方のこともある —
     /// 枚数で切ると、同じ上限が 8 KiB にも 2 GiB にもなる。上限を持つこと自体は
     /// [ADR-0023] 決定 5 (名前を組み立てて読む書き方で際限なく増えない) の要求である。
     ///
@@ -395,10 +393,33 @@ public final class Canvas {
     ///
     /// **控えが効いているかを、絵ではなく数で確かめる値。** 絵は同じでも毎フレーム復号し
     /// 直していれば費用は払っているので、``solidMeshesBuilt`` と同じ形で数える。
-    var imagesDecoded = 0
+    var imagesDecoded: Int { imageCache.made }
 
     /// 読み込んだモデルの控え。**同じファイル・同じ整え方なら読み直さない。**
-    var modelCache: [ModelRequest: Model] = [:]
+    ///
+    /// **量で切る** (``modelCacheBudget``)。モデル 1 つの重さは、三角形 1 枚の 1 KB に
+    /// 満たないものから数百 MB まで開く — 件数で切ると、同じ上限が KB にも GB にもなる
+    /// (絵と同じ理由)。重さは ``modelCacheWeight(_:)`` が見積もる。
+    ///
+    /// 控えが要るのは、`draw()` の中で `loadModel` を呼ぶ書き方で毎フレーム読み直さない
+    /// ためである。上限が要るのは、名前を組み立てて読む書き方 (動きを書き出した連番の
+    /// OBJ) で、読んだモデルが全部残るためである ([#1593]・[ADR-0023] 決定 5)。
+    ///
+    /// [#1593]: https://github.com/mokume-metal/mokume/issues/1593
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    var modelCache = BoundedCache<ModelRequest, Model>(
+        budget: Canvas.modelCacheBudget, weight: Canvas.modelCacheWeight)
+    /// 控えに置いておくモデルの重さの合計 (見積もりのバイト数)。画像の控えとは別に持つ。
+    static let modelCacheBudget = 64 << 20
+    /// モデル 1 つの重さの見積もり (バイト)。
+    ///
+    /// **モデルが持つ大きなものは点の並びだけである。** 三角形ごとに 3 点を持ち、頂点を
+    /// 共有しないので、点の数 × 点 1 つの大きさでほぼ決まる (#1593 の実測と 1% 以内で合う)。
+    /// 1 件あたりの固定分 (名前・鍵・表の枠) を足すのは、面の無いモデルを大量に読んでも
+    /// 重さ 0 で際限なく溜まらないためである。
+    nonisolated static func modelCacheWeight(_ model: Model) -> Int {
+        model.mesh.points.count * MemoryLayout<SolidMesh.Point>.stride + 1024
+    }
     /// モデルを読むたびに増える番号。
     var nextModelIdentity = 0
 
@@ -410,20 +431,47 @@ public final class Canvas {
     /// いま開いている列が、どちらの並びから描かれるか。
     var openSource = VertexSource.flat
 
-    /// 使い回している立体の形と、最後に使った時刻。
-    var solidMeshes: [SolidShape: SolidMesh] = [:]
-    var solidMeshUse: [SolidShape: Int] = [:]
-    var solidMeshClock = 0
+    /// 使い回している立体の形。**量で切る** (``solidCacheBudget``)。
+    ///
+    /// 件数では切らない。形 1 つの大きさは細かさで開く — 箱は 1.7 KB、既定の細かさ (24) の
+    /// 輪環は 166 KB、細かさ 128 の輪環は 4.7 MB ある。件数で切ると、同じ上限が 100 KB にも
+    /// 300 MB にもなる。
+    var solidMeshes = BoundedCache<SolidShape, SolidMesh>(
+        budget: Canvas.solidCacheBudget, weight: Canvas.solidMeshWeight)
     /// 立体の形を組み立てた回数 (作ってから通算)。
     ///
     /// **畳めているかではなく、作り直していないかを数える値。** 絵は同じでも毎フレーム
     /// 組み立て直していれば確保が積み上がるので、絵ではなく数で確かめる。
-    var solidMeshesBuilt = 0
-    /// 使い回しの表に置いておく形の数。超えたら古い順に半分捨てる。
-    static let solidMeshCacheLimit = 64
+    var solidMeshesBuilt: Int { solidMeshes.made }
+    /// 立体の形の控えと稜線の控えに、**それぞれ**置いておく重さの合計 (見積もりのバイト数)。
+    /// 超えたら古い順に 1 件ずつ捨てる。
+    ///
+    /// 既定の細かさでいちばん重い形 (輪環・166 KB) を 64 種並べても収まる大きさにしてある
+    /// (件数 64 で切っていた頃に当たっていた並びは、既定の細かさなら今も当たる)。
+    static let solidCacheBudget = 16 << 20
+    /// 形 1 つの重さの見積もり (バイト)。点の並びと、1 件あたりの固定分。
+    nonisolated static func solidMeshWeight(_ mesh: SolidMesh) -> Int {
+        mesh.points.count * MemoryLayout<SolidMesh.Point>.stride + 256
+    }
+    /// 稜線 1 つの重さの見積もり (バイト)。溶接した点と辺の並びと、1 件あたりの固定分。
+    nonisolated static func solidEdgesWeight(_ net: SolidEdges) -> Int {
+        net.points.count * MemoryLayout<SIMD3<Float>>.stride
+            + net.edges.count * MemoryLayout<(Int, Int)>.stride + 256
+    }
     /// 形から取り出した稜線の控え。**線を引いたときにだけ作る** — 塗りだけの形は
-    /// 稜線を求めない。形の控えと同じ数を上限にし、超えたら丸ごと捨てて作り直す。
-    var solidEdges: [SolidSource: SolidEdges] = [:]
+    /// 稜線を求めない。**量で切る** (``solidCacheBudget``)。
+    ///
+    /// **読み込んだモデルの稜線もここに載る** (鍵はモデルの番号)。モデルの控え
+    /// (``modelCache``) から追い出されたモデルを読み直すと番号が変わるので、前の番号の稜線は
+    /// 二度と当たらない。件数で切ると、それが大きなモデル 64 個分まで予算の外に残る
+    /// ので、量で切る。上限を超える長さの連番に線を引いて回すと、毎回溶接し直す。
+    ///
+    /// 鍵に寸法が入るので、大きさの違う立体を並べると、予算に収まらない数では外れ続ける。
+    /// それは上限ではなく鍵の問題で、[#1606] が扱う。
+    ///
+    /// [#1606]: https://github.com/mokume-metal/mokume/issues/1606
+    var solidEdges = BoundedCache<SolidSource, SolidEdges>(
+        budget: Canvas.solidCacheBudget, weight: Canvas.solidEdgesWeight)
     /// 一周を割る数の既定。
     public static let defaultSolidDetail = 24
 
@@ -889,7 +937,28 @@ public final class Canvas {
     /// 図形が指す、白い区画の中の点。面を広げるたびに取り直す。
     var whiteUV: SIMD2<Float>
     /// 引き当てた書体の控え。同じ指定で作り直さないために持つ。
-    var typefaces: [TypefaceRequest: Typeface] = [:]
+    ///
+    /// **件数で切る** (``typefaceCacheLimit``)。鍵に大きさ (連続値) が入るので、
+    /// `textSize` を毎フレーム変える書き方 (脈打つ字) では、フレームごとに鍵が 1 つ増える
+    /// ([#1431]・[ADR-0023] 決定 5)。量で切らないのは、書体 1 つの重さが引いた字の種類で
+    /// 決まり、`CTFont` の中身は量れないためである。
+    ///
+    /// **追い出しても、焼いた字形は残る。** 焼き場の頁の鍵 (``GlyphAtlas``) は書体の
+    /// 識別名・大きさ・太さと傾き・字形の番号でできた値で、この控えの書体を指していない。
+    /// 同じ指定で作り直すと字の引き当てはやり直すが、頁には当たるので焼き直しは起きない。
+    /// 使っている最中の書体は、使う側が関数の中で持っているので消えない。
+    ///
+    /// **上限を超える数の大きさを 1 フレームで使うと、毎フレーム外れる** (ワードクラウドの
+    /// ように 64 通りより多くの大きさを並べる書き方)。そのときは毎フレーム書体を作り直し、
+    /// 字の引き当てもやり直す。上限が無かった頃は 2 フレーム目から全部当たっていたが、
+    /// 代わりに大きさを動かし続ける書き方で際限なく増えていた。費用は `textSize` の説明に書いた。
+    ///
+    /// [#1431]: https://github.com/mokume-metal/mokume/issues/1431
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    var typefaces = BoundedCache<TypefaceRequest, Typeface>(
+        budget: Canvas.typefaceCacheLimit, weight: { _ in 1 })
+    /// 書体の控えに置いておく件数。1 つの重さは引いた字の種類で決まる (漢字 12 字で約 15 KB・#1431)。
+    static let typefaceCacheLimit = 64
     /// 貼る絵を束ねずに読み取り位置を書いた塗りが読む、1×1 の白い絵。
     /// **最初に要ったときに 1 度だけ作る** (``useWrittenUVTexture()``)。
     private var blankPicture: Picture?
@@ -1891,13 +1960,15 @@ public final class Canvas {
     /// 口を列挙して守る形は採らない。#1592 の一覧は、合流点 14 か所のうち 2 か所を取りこぼして
     /// いた (#1603 の判断材料)。溜め場の並びは捨てる側と同じもの (``hasNothingPending``) を読む。
     ///
-    /// debug 組みでは止まる。検査はすべて debug 組みで走るので、**全検査を通して漏れが 0 で
-    /// あることを、検査の全体がこの 1 行の上で確かめる** — どの検査で置いた図形が漏れても、
-    /// その検査がここで止まる。release 組みでは、漏れたものを描かずに捨てる (溜めない)。
+    /// 見つけたら、漏れたものを描かずに捨て (溜めない)、1 度だけ注意する。**止まるのは mokume の
+    /// 検査の中だけ** ([#1682]) — 検査の全体がこの 1 行の上で「全検査を通して漏れが 0」を確かめる
+    /// (どの検査で置いた図形が漏れても、その検査がここで止まる)。漏れは口の守りの足し忘れ、つまり
+    /// mokume の中の不具合でしか起きないので、利用者の作品 (debug 組みを含む) を止めずに名乗る。
     ///
     /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
     /// [#1603]: https://github.com/mokume-metal/mokume/issues/1603
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#1682]: https://github.com/mokume-metal/mokume/issues/1682
     private func checkNothingPlacedOutsideTheRegions() {
         defer { carriedOverAmount = nil }
         // 持ち越しの区間の中でフレームを開いた (`setup()` で本体の面の `draw { }` を呼んだ)。
@@ -1908,6 +1979,7 @@ public final class Canvas {
         placementsFoundOutsideRegions += 1
         discardPending()
         pendingBackground = nil
+        warnOnce(.placementLeak, Self.placementLeakNotice)
         if stopsOnPlacementOutsideRegions {
             assertionFailure(
                 "Something was placed outside a frame and outside setup() and the stopped "
@@ -1920,9 +1992,20 @@ public final class Canvas {
     /// 見つけた回数 (作ってから通算)。検め自身を確かめる検査が読む。
     var placementsFoundOutsideRegions = 0
 
-    /// 見つけたときに debug 組みで止まるか。**検め自身を確かめる検査だけが下ろす** — 下ろさずに
-    /// 漏れを作ると、その検査が止まる。製品の経路では常に立っている。
-    var stopsOnPlacementOutsideRegions = true
+    /// 見つけたときに止まるか。**既定は mokume の検査の中かどうか** (``SelfTest/isRunning``・[#1682])
+    /// — 検査の中では立っていて、漏れを作ればその検査が止まる。利用者の作品の中では下りていて、
+    /// 注意 (``placementLeakNotice``) だけが出る。検め自身を確かめる検査は、下ろして数を見る。
+    ///
+    /// [#1682]: https://github.com/mokume-metal/mokume/issues/1682
+    var stopsOnPlacementOutsideRegions = SelfTest.isRunning
+
+    /// 置き漏れを見つけたときの注意。**利用者のコードの誤りではなく mokume の不具合**なので、
+    /// 直し方ではなく報告を頼む (`RenderFailure` の `workDropped` と同じ書き方)。
+    static let placementLeakNotice =
+        "Something was placed outside a frame through a path that mokume does not guard, so it "
+        + "was dropped without being drawn. This is most likely a fault inside mokume — please "
+        + "report it with this message at https://github.com/mokume-metal/mokume/issues (#1672)"
+
 
     /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
     private func endFrame() throws(RenderFailure) {

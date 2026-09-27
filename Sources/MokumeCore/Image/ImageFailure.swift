@@ -14,7 +14,11 @@ public enum ImageFailure: Error, Equatable, Sendable {
     case notFound(path: String, searched: [String])
     /// 見つかったが、画像として読めない。
     case undecodable(path: String)
-    /// GPU 側へ置けない — 読めたが置き場が足りない、あるいは面の上限より大きい。
+    /// GPU 側へ置けない — 読めたが置き場が足りない、あるいは辺が 1 を割るか面の上限より大きい。
+    ///
+    /// **下の端も同じ case で運ぶ。** 呼ぶ側がすることは上限を越えたときと同じ (頼む大きさを
+    /// 直す) で、分けても選び分ける先が無い (``RenderFailure/invalidSize(width:height:)`` と
+    /// 同じ理由・[#1642](https://github.com/mokume-metal/mokume/issues/1642))。
     case unplaceable(width: Int, height: Int)
 }
 
@@ -39,8 +43,8 @@ extension ImageFailure: CustomStringConvertible {
         case .unplaceable(let width, let height):
             return """
                 Cannot place a \(width)x\(height) image on the GPU.
-                A side can be at most \(RenderDevice.maxTextureSide) pixels — check that it is \
-                within that
+                A side has to be at least 1 and at most \(RenderDevice.maxTextureSide) pixels — \
+                check that it is within that
                 """
         }
     }

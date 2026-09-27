@@ -73,6 +73,33 @@ public final class SketchRuntime {
     /// [#1457]: https://github.com/mokume-metal/mokume/issues/1457
     private let launchFrameRate: Int
 
+    /// 組み立てで検めた、宣言のフレームレート (``checkFrameRates(declared:clock:)`` を越えた値)。
+    ///
+    /// **画面の駆動源へ渡す速さはこれを読む** (`SketchApplication`)。`settings` を読み直すと、
+    /// 計算型の `settings` は読むたびに別の値を返しうるので、検めた値と渡す値が別物になる
+    /// ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。検めた値そのものを持ち回れば、
+    /// 1 を割る値が届かないことを構造で保証できる。
+    let declaredFrameRate: Int
+
+    /// 組み立てで受け取る刻みを検める。**宣言 (``SketchSettings/frameRate``) も、差し替えた
+    /// 時計の刻み (``Clock/frameIndex(frameRate:)``) も 1 以上でなければ断る。**
+    ///
+    /// 黙って 1 fps へ丸めない ([ADR-0020] 決定 5 の 2 行目・[#1642])。`frameRate: 0` を
+    /// 「止める」の意味で書いた人は、1 秒に 1 枚だけ進む絵を見ることになる。窓の経路も
+    /// 書き出しの経路もこの組み立てを通るので、**刻みを読む先 (`FrameTiming`・`FrameDriver`・
+    /// `MovieFile`・画面の駆動源) へは、ここを越えた値しか届かない。**
+    ///
+    /// 組み立ての入口は 2 つあるので、どちらもここを呼ぶ。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
+    static func checkFrameRates(declared: Int, clock: Clock?) throws(RenderFailure) {
+        guard declared >= 1 else { throw .invalidFrameRate(declared) }
+        if case .frameIndex(let frameRate) = clock, frameRate < 1 {
+            throw .invalidFrameRate(frameRate)
+        }
+    }
+
     /// 撮る係へ渡す刻みを、時計から決める (``launchFrameRate``)。
     static func recordingFrameRate(clock: Clock, declared: Int) -> Int {
         switch clock {
@@ -204,8 +231,10 @@ public final class SketchRuntime {
         now: @escaping () -> Double
     ) throws(RenderFailure) {
         let settings = sketch.settings
+        try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
+        self.declaredFrameRate = settings.frameRate
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
@@ -236,8 +265,10 @@ public final class SketchRuntime {
         paramStore: ParamStore? = nil
     ) throws(RenderFailure) {
         let settings = sketch.settings
+        try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
+        self.declaredFrameRate = settings.frameRate
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(

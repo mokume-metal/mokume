@@ -712,6 +712,37 @@ struct PlacementLeakTests {
         try canvas.draw {}
         #expect(canvas.placementsFoundOutsideRegions == 1)
     }
+
+    /// 置き漏れは mokume の不具合なので、利用者の作品 (debug 組みを含む) は止めず、捨てて名乗る
+    /// ([#1682])。止まるのは mokume の検査の中だけで、ここでは旗を下ろして作品の中を模す。
+    ///
+    /// [#1682]: https://github.com/mokume-metal/mokume/issues/1682
+    @Test("検査の外では止まらず、漏れたものを捨てて 1 度だけ原文のまま名乗る")
+    func outsideTheTestsItDropsAndSaysSoOnce() throws {
+        let canvas = try makeCanvas()
+        canvas.stopsOnPlacementOutsideRegions = false
+        placeWithoutAGuard(on: canvas)
+        try canvas.draw { #expect(canvas.solidVertices.isEmpty) }
+        #expect(canvas.warnings.message(for: .placementLeak) == Self.placementLeakNotice)
+
+        placeWithoutAGuard(on: canvas)
+        try canvas.draw {}
+        #expect(canvas.placementsFoundOutsideRegions == 2)
+        #expect(canvas.warnings.message(for: .placementLeak) == Self.placementLeakNotice)
+    }
+
+    /// 検査の中では、旗は既定で立っている。**下りていると、全検査を通す網が働かない** — 守りを
+    /// 書き落とした口があっても、注意が出るだけで検査は緑のままになる。
+    @Test("mokume の検査の中では、置き漏れで止まる旗が既定で立っている")
+    func insideTheTestsItStopsByDefault() throws {
+        #expect(try makeCanvas().stopsOnPlacementOutsideRegions)
+    }
+
+    /// 原文の写し。組み立てた文は壊れても気付けない (#947) ので、写しと突き合わせる。
+    static let placementLeakNotice =
+        "Something was placed outside a frame through a path that mokume does not guard, so it "
+        + "was dropped without being drawn. This is most likely a fault inside mokume — please "
+        + "report it with this message at https://github.com/mokume-metal/mokume/issues (#1672)"
 }
 
 /// 本体の約束は変わらない、と #1654・#1655 の再現 ([#1672])。ランタイムを通す。GPU を要する。

@@ -104,6 +104,16 @@ static inline bool mokume_particleSurvives(float life, float step) {
     return life > 0.0 && max(life - step, 0.0) > 0.0;
 }
 
+/// 3 成分がどれも数 (有限) か。
+///
+/// **ビットで見る。** 近似の算術 (fast math) は数でない値・無限が来ないことを前提に
+/// してよいので、`isfinite()` や自分との比較は畳まれうる。指数部がすべて 1 なら
+/// 数でない値か無限である。
+static inline bool mokume_particleFinite(float3 v) {
+    uint3 exponent = as_type<uint3>(v) & 0x7f800000u;
+    return all(exponent != uint3(0x7f800000u));
+}
+
 /// 1. 生き残る粒に旗を立てる。
 ///
 ///   buffer(0) 指定 (読む) / buffer(1) 状態 (読む) / buffer(2) 段の置き場 (書く)
@@ -223,12 +233,19 @@ kernel void mokume_particles(
             velocity *= exp(-resist * step);
         }
         position += velocity * step;
-        p.x = position.x;
-        p.y = position.y;
-        p.z = position.z;
-        p.vx = velocity.x;
-        p.vy = velocity.y;
-        p.vz = velocity.z;
+        // **進めた状態が数でなくなるなら、この 1 フレームは動かさない** (#1623)。有限の
+        // 力でも、和や減速の e^{−和·Δt} が溢れれば速度は無限になり、速度 0 の成分と
+        // 掛け合わされて数でなくなる — 一度そうなった粒は寿命まで戻らない。受け口で
+        // 断れるのは数でない値・無限そのものだけなので、状態の側で有限に保つ。有限な
+        // 粒は同じ値をそのまま書くので、今までの動きは 1 ビットも変わらない
+        if (mokume_particleFinite(position) && mokume_particleFinite(velocity)) {
+            p.x = position.x;
+            p.y = position.y;
+            p.z = position.z;
+            p.vx = velocity.x;
+            p.vy = velocity.y;
+            p.vz = velocity.z;
+        }
         p.life = max(p.life - step, 0.0);
         particles[id] = p;
     }

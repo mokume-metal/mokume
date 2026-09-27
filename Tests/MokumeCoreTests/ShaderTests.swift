@@ -583,6 +583,49 @@ struct ShaderTests {
         #expect(watcher.isWatchingDirectory)
     }
 
+    /// 見張りの知らせは、main actor を譲らない間も 1 本までしか積まれない ([#1594] の反証 1)。
+    ///
+    /// 親ディレクトリの書き込みも拾うので、保存や連番の書き出しの行き先が断片と同じ
+    /// ディレクトリなら、事象はフレームごとに起きる。事象ごとに 1 本積むと、譲らないループでは
+    /// フレームに比例して溜まり、譲った後に溜まった本数だけ張り直しと読み直しが走る。
+    ///
+    /// **走った回数で数える** — 積まれた `Task` の数そのものである。譲らずに書いて、事象が
+    /// 届くのも譲らずに待ち、それから譲る。
+    ///
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+    @Test("譲らずに何度書き換えても、見張りは譲った後に 1 度だけ扱う")
+    func theWatcherCoalescesEventsWhileTheMainActorIsBusy() async throws {
+        let directory = try makeTemporaryDirectory()
+        let url = directory.appendingPathComponent("paint.metal")
+        try "x".write(to: url, atomically: true, encoding: .utf8)
+        var changes = 0
+        let watcher = FileWatcher(url: url) { changes += 1 }
+
+        // **ここから譲らない。** 同期の手続きで書き、届くのも眠って待つ
+        func writeWithoutYielding() -> Int {
+            for index in 0..<20 {
+                try? "\(index)".write(to: url, atomically: false, encoding: .utf8)
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+            return watcher.arrivedEventCount
+        }
+        let arrived = writeWithoutYielding()
+        try #require(arrived >= 10, "検査の前提: 20 回書いて事象が \(arrived) 回しか届いていない")
+
+        try await waitUntil { watcher.handledCount >= 1 }
+        try await Task.sleep(for: .milliseconds(200))
+        // 譲った後に遅れて届いた事象があれば、もう 1 本積まれて走る。多くて 2 回である
+        #expect(
+            watcher.handledCount <= 2,
+            """
+            譲らずに事象を \(arrived) 回拾った後で譲ったら、\(watcher.handledCount) 回扱った。
+            事象ごとに main actor へ積んでいる
+            ([#1594](https://github.com/mokume-metal/mokume/issues/1594))。
+            """)
+        #expect(changes == watcher.handledCount)
+    }
+
     // MARK: - 道具
 
     private func makeTemporaryDirectory() throws -> URL {

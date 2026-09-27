@@ -136,6 +136,11 @@ extension Canvas {
         ///
         /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         case pixelWriteOutsideFrame
+        /// フレームの頭の検めが、守りの無い道で置かれたものを見つけた ([#1682])。**mokume の
+        /// 中の不具合**を名乗る注意で、利用者の書き方の誤りではない。
+        ///
+        /// [#1682]: https://github.com/mokume-metal/mokume/issues/1682
+        case placementLeak
 
         /// 角度が逆向きの円弧を描こうとした。
         case reversedArc
@@ -199,6 +204,11 @@ extension Canvas {
 
         /// 無い書体を指定された。
         case missingFont
+        /// ``Canvas/textSize(_:)``・``Canvas/textLeading(_:)`` に、数でない値・無限・上限
+        /// (``Canvas/largestTextMeasure``) を越える値が渡された ([#1587])。
+        ///
+        /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+        case unusableTextMeasure
         /// 1 フレームで要る字が、焼き直しても上限の焼き場に収まらなかった。
         ///
         /// 以前の `atlasFull` (上限まで埋まった) を改めたもの。上限まで埋まるだけなら焼き
