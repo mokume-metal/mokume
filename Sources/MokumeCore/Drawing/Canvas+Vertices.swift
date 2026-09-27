@@ -224,20 +224,56 @@ extension Canvas {
     }
 
     public func endShape(_ end: ShapeEnd = .open) {
-        defer {
-            isBuildingShape = false
-            shapePoints.removeAll(keepingCapacity: true)
-            shapeIndices.removeAll(keepingCapacity: true)
-            shapeHoles.removeAll(keepingCapacity: true)
-            curveGuides.removeAll(keepingCapacity: true)
-            holePoints = nil
-            shapeHasDepth = false
-            currentNormal = nil
-        }
+        defer { discardOpenShape() }
         // 始まりの無い形の終わり — beginShape() の書き忘れか、二重呼び (#1520)
         guard isBuildingShape else { return warnShapeNotBegunOnce() }
         closeOpenHole()  // 閉じ忘れた穴も畳む
         drawBuiltShape(closed: end == .close)
+    }
+
+    /// 組み立て中の形を、描かずに捨てる。**注意は言わない。**
+    ///
+    /// ``endShape(_:)`` が描いた後に片付けるのと、フレームの境目が閉じ忘れた形を捨てる
+    /// (``discardShapeLeftOpen()``) のが、同じここを通る ([#1591])。並びを 2 か所に書くと、
+    /// 組み立ての状態を 1 つ足した日に片方だけが戻す — フレームの境目で戻す状態を境目の
+    /// 関数ごとに手で並べていたのが、#1591 の戻し落としの形そのものである。
+    ///
+    /// 開いたままの穴 (#1528) は畳まずに形ごと捨てる。畳むのは ``endShape(_:)`` が描く
+    /// ときの約束で、描かない形の穴を畳む理由は無い。
+    ///
+    /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+    func discardOpenShape() {
+        isBuildingShape = false
+        // 読むのは組み立ての間だけ (`beginShape()` が書き直す) だが、既定へ戻しておく。
+        // 境目の検査 (`CanvasTests.frameStateResetsAtEveryBoundary`) が、組み立ての状態を
+        // 1 つの群として既定に戻ったかで見る
+        shapeKind = .polygon
+        shapePoints.removeAll(keepingCapacity: true)
+        shapeIndices.removeAll(keepingCapacity: true)
+        shapeHoles.removeAll(keepingCapacity: true)
+        curveGuides.removeAll(keepingCapacity: true)
+        holePoints = nil
+        shapeHasDepth = false
+        currentNormal = nil
+    }
+
+    /// フレームの境目で開いたままの形を、形ごと捨てて 1 度だけ知らせる ([#1591])。
+    ///
+    /// **組み立て中の形はフレームに属する** ([ADR-0021] 決定 4 の追補 (2026-09-27))。
+    /// `beginShape()` と `endShape()` は対で開いて閉じる操作で、積み履歴 (#925) と同じく
+    /// 1 つのフレームの中で釣り合う。持ち越すと、閉じ忘れた形へ次のフレームの `vertex()` が
+    /// 点を積み続け、何も描かれないまま記憶だけが増える (60 fps で 1 時間に約 36 GB)。
+    ///
+    /// **フレームの頭と終わりの両方で呼ぶ。** 頭だけだと `draw()` で開いた形が止まっている
+    /// 間のコールバックへ漏れ、終わりだけだと `setup()` で開いた形に 1 枚目の点が積まれる。
+    /// 開いていなければ何もしない。
+    ///
+    /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    func discardShapeLeftOpen() {
+        guard isBuildingShape else { return }
+        warnShapeNotEndedOnce()
+        discardOpenShape()
     }
 
     // 置いた頂点を 1 つ、番号で選ぶ。
@@ -747,6 +783,21 @@ extension Canvas {
             .shapeNotBegun,
             "endShape(): no shape was begun with beginShape(), so there is nothing to end. This "
                 + "call does nothing")
+    }
+
+    /// 開いたまま境目を越えた形を捨てたことを、初回だけ知らせる ([#1591])。
+    ///
+    /// **名乗るのは `beginShape()`** — 境目で呼ばれる関数は利用者が書いたものではなく、
+    /// 直す先は開いた側 (対の終わりを同じ `draw()` に置く) だからである。形の外の注意
+    /// (``warnVertexOutsideShapeOnce(_:)``) とは言うことが違うので鍵を分ける。捨てた後の
+    /// フレームで閉じ忘れた形へ `vertex()` を足し続けると、あちらも言う。
+    ///
+    /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+    private func warnShapeNotEndedOnce() {
+        warnOnce(
+            .shapeNotEnded,
+            "beginShape(): the shape was not ended with endShape() before the frame ended, so it "
+                + "was dropped without being drawn. Begin and end a shape within the same draw()")
     }
 
     /// 形の中で、穴を開かずに ``endContour()`` を呼んだことを、初回だけ知らせる ([#1528])。

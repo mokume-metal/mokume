@@ -1041,8 +1041,13 @@ public final class Canvas {
         var deltaTime: Float = 1.0 / 60
     }
 
-    /// これまでに描き切ったフレームの数。**時計ではなく番号**なので、同じ入力からは
+    /// これまでに閉じたフレームの数。**時計ではなく番号**なので、同じ入力からは
     /// 何度走らせても同じ列になる。
+    ///
+    /// 描き切れなかったフレームも、閉じ忘れて ``beginDraw()`` が捨てたフレーム ([#1622]) も
+    /// 1 枚に数える — 番号はフレームの境目の印として読まれる (粒の繰り越し・焼き場の頁)。
+    ///
+    /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     private(set) var framesDrawn = 0
     /// 定数の受け渡しは 16 バイト境界に揃える。
     private static let blendModeStride = 16
@@ -1526,8 +1531,27 @@ public final class Canvas {
     /// trail.circle(x, y, 20)
     /// trail.endDraw()
     /// ```
+    ///
+    /// **``endDraw()`` を呼ばずに次の `beginDraw()` が来たら、閉じていないフレームは描かずに
+    /// 捨て、注意してから描き始め直す** ([ADR-0021] 決定 4 の追補 (2026-09-27)・[#1622])。
+    /// 捨てたフレームで書いた変換・溜めた図形・開いた形は、次のフレームへ持ち込まない。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     public func beginDraw() {
-        guard !isDrawing else { return warnAlreadyDrawing() }
+        if isDrawing {
+            // **閉じ忘れたフレームは、描かずに捨てる** ([#1622])。`beginDraw()` / `endDraw()` は
+            // 対で開いて閉じる操作で、積む・降ろすと同じく 1 つのフレームの中で釣り合う。
+            // 直す前はここで何もせず帰っていたので、前のフレームで書いた変換が次の描き直しに
+            // 積み上がり、閉じ忘れた 1 枚の続きとして描かれた
+            //
+            // 番号は進める。番号はフレームの境目の印で、粒の繰り越し (#1468) と焼き場の頁
+            // (#1342) が読む — 進めないと、捨てたフレームと次のフレームが同じ 1 枚に数えられる
+            warnAlreadyDrawing()
+            framesDrawn += 1
+            abandonFrame()
+            discardFrame()
+        }
         beginFrame()
     }
 
@@ -1548,7 +1572,20 @@ public final class Canvas {
 
     /// フレームの始まり。**3 つの入口が同じここを通る** — 描き方が入口ごとに
     /// 分かれると、描き場所でだけ成り立たない性質が生まれる。
+    ///
+    /// **ここと ``abandonFrame()`` が戻す状態は、境目の検査が 1 つずつ見る**
+    /// (`CanvasTests.frameStateResetsAtEveryBoundary`)。`Canvas` の格納を 1 つ足したら、
+    /// フレームに属するか持ち越すかをその検査の表に書く — どちらにも無ければ赤になる
+    /// ([#1671])。戻し落としは、これまで 1 件ずつ見つかっていた (#925・#1472・#1504・#1591)。
+    ///
+    /// [#1671]: https://github.com/mokume-metal/mokume/issues/1671
     private func beginFrame() {
+        // **組み立て中の形もフレームを越えない** (ADR-0021 決定 4 の追補 (2026-09-27)・
+        // [#1591])。頭で捨てるのは、`setup()` や止まっている間のコールバックで開いたまま
+        // 抜けた形に、このフレームの点を積ませないため (終わりの側は `abandonFrame()`)
+        //
+        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        discardShapeLeftOpen()
         style.clip = nil
         // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
         pendingEffects.removeAll(keepingCapacity: true)
@@ -1573,8 +1610,9 @@ public final class Canvas {
     /// フレームの終わり。溜めたものを描き切り、シーンの記述を戻す。
     private func endFrame() throws(RenderFailure) {
         // **シーンの記述はフレームを越えない** (ADR-0021 決定 4)。視点・変換・切り抜き・
-        // 光・周囲は**描き終えてから**既定へ戻す — 始まりでだけ戻すと、フレームの外 (止まって
-        // いる間のコールバック・描き場所の `endDraw()` の後) で置いた図形と読んだ座標にだけ、
+        // 光・周囲と、開いたままの形 (#1591) は**描き終えてから**既定へ戻す (`abandonFrame()`)
+        // — 始まりでだけ戻すと、フレームの外 (止まっている間のコールバック・描き場所の
+        // `endDraw()` の後) で置いた図形と読んだ座標にだけ、
         // 前のフレームが最後に残したものが効く ([#1472]・[#1504])。列を閉じるのに視点と
         // 切り抜きと光が要り、影の焼き付けも flush の中で光を読むので、戻すのは flush の後
         //
@@ -1585,18 +1623,7 @@ public final class Canvas {
         // [#1472]: https://github.com/mokume-metal/mokume/issues/1472
         // [#1504]: https://github.com/mokume-metal/mokume/issues/1504
         defer {
-            cameraStorage = nil
-            transform = .identity
-            style.clip = nil
-            activeLights.removeAll(keepingCapacity: true)
-            activeSurroundings = nil
-            style.material = .default
-            shadowsEnabled = false
-            shadowRangeValue = nil
-            shadowDetailValue = ShadowMap.defaultDetail
-            shadowBiasValue = ShadowMap.defaultBias
-            style.castsShadow = true
-            style.receivesShadow = true
+            abandonFrame()
             // **溜めたものもフレームを越えない。** 描き切りは 6 箇所から投げるので、
             // 片付けを成功経路の末尾だけに置くと、描けなかったフレームの図形が次の
             // フレームでもう一度描かれる (#342)。`defer` は投げても走るので、どの
@@ -1611,10 +1638,49 @@ public final class Canvas {
         try flush()
     }
 
+    /// フレームの終わりに、**シーンの記述と開いたままの操作を既定へ戻す。** 溜めたものには
+    /// 触らない (それは ``discardFrame()``)。
+    ///
+    /// 通る道は 2 つある。描き切った後 (``endFrame()`` の `defer`) と、閉じ忘れたフレームを
+    /// 描かずに捨てるとき (``beginDraw()``・[#1622]) である。並びを 1 か所に置くのは、
+    /// 戻す状態を境目の関数ごとに手で並べると、並べ落とした状態だけが越えるからである
+    /// ([#1671])。
+    ///
+    /// **描き切る道では、flush の後に呼ぶ** (光と周囲と視点を列が閉じるときに読む・[#1504])。
+    /// 捨てる道は描き切らないので、順序の制約は無い。
+    ///
+    /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+    /// [#1671]: https://github.com/mokume-metal/mokume/issues/1671
+    private func abandonFrame() {
+        cameraStorage = nil
+        transform = .identity
+        style.clip = nil
+        activeLights.removeAll(keepingCapacity: true)
+        activeSurroundings = nil
+        style.material = .default
+        shadowsEnabled = false
+        shadowRangeValue = nil
+        shadowDetailValue = ShadowMap.defaultDetail
+        shadowBiasValue = ShadowMap.defaultBias
+        style.castsShadow = true
+        style.receivesShadow = true
+        // **組み立て中の形もフレームを越えない** ([#1591])。終わりで捨てるのは、`draw()` で
+        // 開いたまま抜けた形を、止まっている間のコールバックへ漏らさないため (頭の側は
+        // `beginFrame()`)
+        //
+        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        discardShapeLeftOpen()
+    }
+
+    /// 閉じ忘れたフレームを捨てたことを、初回だけ知らせる ([#1622])。直す前の文面は
+    /// 「何もしない」だったが、いまは前のフレームを描かずに捨てて描き始め直す。
+    ///
+    /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     private func warnAlreadyDrawing() {
         warnOnce(
             .alreadyDrawing,
-            "beginDraw(): endDraw() has not been called yet. This call does nothing")
+            "beginDraw(): endDraw() was not called for the previous beginDraw(), so that frame "
+                + "was dropped without being drawn, and drawing starts over from here")
     }
 
     private func warnNotDrawing() {

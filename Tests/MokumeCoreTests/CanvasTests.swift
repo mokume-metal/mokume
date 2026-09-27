@@ -1032,6 +1032,64 @@ struct CanvasTests {
         #expect(image[16, 16].red < 60)
     }
 
+    @Test("閉じ忘れた beginShape() は、フレームをまたいで点を積み続けない (#1591)")
+    func unclosedShapeDoesNotGrowAcrossFrames() throws {
+        // 組み立て中の形はフレームに属する (ADR-0021 決定 4 の追補 (2026-09-27))。直す前は
+        // 開いた印が境目で下りず、毎フレームの `vertex()` が同じ形へ積まれ続けた — 何も
+        // 描かれないまま、点のぶんだけ記憶が増える ([#1591])。`setup()` で開いた形を模して、
+        // フレームの外で開く (頭の側で捨てることを見る)
+        //
+        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        let canvas = try makeCanvas()
+        canvas.beginShape()
+        for frame in 1...30 {
+            var placedInFrame = 0
+            try canvas.draw {
+                for index in 0..<1000 {
+                    canvas.vertex(Float(index % 64), Float(index / 16))
+                }
+                placedInFrame = canvas.shapePoints.count
+            }
+            // フレームの中でも積まれていない — 頭で捨てている。終わりだけで捨てると、
+            // `setup()` で開いた形に 1 枚目の点が積まれる
+            try #require(placedInFrame == 0, "\(frame) 枚目の中で \(placedInFrame) 点が積まれた")
+            try #require(!canvas.isBuildingShape, "\(frame) 枚目の後も形が開いたまま")
+            try #require(
+                canvas.shapePoints.isEmpty,
+                "\(frame) 枚目の後に \(canvas.shapePoints.count) 点が残っている")
+            #expect(canvas.shapeIndices.isEmpty)
+            #expect(canvas.shapeHoles.isEmpty)
+            #expect(canvas.curveGuides.isEmpty)
+            #expect(canvas.holePoints == nil)
+        }
+        #expect(canvas.warnings.hasWarned(.shapeNotEnded))
+        // 捨てた後のフレームの `vertex()` は形の外なので、そちらの注意も言う
+        #expect(canvas.warnings.hasWarned(.vertexOutsideShape))
+    }
+
+    @Test("フレームをまたいで組んだ形は描かれない (#1591)")
+    func shapeBuiltAcrossFramesIsNotDrawn() throws {
+        // 1 枚目で開いて 2 点、2 枚目 (塗り直さない) で 1 点足して閉じる。直す前は 2 枚目に
+        // 三角形が出ていた — 閉じ忘れた形を、次のフレームが続きとして描いていた
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.beginShape()
+            canvas.vertex(4, 4)
+            canvas.vertex(60, 4)
+        }
+        try canvas.draw {
+            canvas.vertex(32, 60)
+            canvas.endShape(.close)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 16] == (0, 0, 0, 255), "前のフレームで開いた形が描かれた")
+        #expect(canvas.warnings.hasWarned(.shapeNotEnded))
+        #expect(canvas.warnings.hasWarned(.shapeNotBegun))
+    }
+
     @Test("push() の片肺が無い — 変換とスタイルは揃って戻らない")
     func pushRestoresNeitherHalfAcrossFrames() throws {
         // 以前は `push()` だけ書いて `pop()` を忘れると、次のフレームで**変換だけ**が
@@ -1265,6 +1323,95 @@ struct CanvasTests {
         #expect(canvas.screenX(5, 5) == 5)
         #expect(canvas.screenY(5, 5) == 5)
         #expect(canvas.style.clip == nil)
+    }
+
+    @Test("開いたままの形は、描き場所の endDraw() の後へ残らない (#1591)")
+    func openShapeDoesNotOutliveTheFrame() throws {
+        // 終わりの側で捨てることを見る。頭の側だけだと、`draw()` で開いた形が止まっている
+        // 間のコールバック (ここではフレームの外の `vertex()`) へ漏れる
+        let canvas = try makeCanvas()
+        canvas.beginDraw()
+        canvas.background(black)
+        canvas.beginShape()
+        canvas.vertex(0, 0)
+        canvas.vertex(16, 0)
+        canvas.vertex(16, 16)
+        canvas.endDraw()
+
+        #expect(!canvas.isBuildingShape)
+        #expect(canvas.shapePoints.isEmpty)
+        #expect(canvas.warnings.hasWarned(.shapeNotEnded))
+
+        canvas.vertex(8, 8)
+        #expect(canvas.warnings.hasWarned(.vertexOutsideShape), "閉じた後の vertex() が黙っている")
+        #expect(canvas.shapePoints.isEmpty, "閉じた後の vertex() が点を積んだ")
+    }
+
+    @Test("開いたままの穴と通過点の曲線も、形ごと捨てる (#1591)")
+    func openHoleAndCurveGuidesDoNotOutliveTheFrame() throws {
+        // 開いたままの穴 (#1528) は畳まずに形ごと捨てる。畳むのは `endShape()` が描くときの
+        // 約束である
+        let canvas = try makeCanvas()
+        var holes = 0
+        var guides = 0
+        var holeOpen = false
+        canvas.beginDraw()
+        canvas.beginShape()
+        canvas.vertex(0, 0)
+        canvas.vertex(60, 0)
+        canvas.vertex(60, 60)
+        canvas.beginContour()
+        canvas.vertex(4, 4)
+        canvas.vertex(12, 4)
+        canvas.vertex(4, 12)
+        canvas.beginContour()  // 1 つ目の穴を畳み、2 つ目を開く
+        for index in 0..<6 {
+            canvas.curveVertex(Float(20 + index * 4), Float(20 + index % 2 * 8))
+        }
+        holes = canvas.shapeHoles.count
+        guides = canvas.curveGuides.count
+        holeOpen = canvas.holePoints != nil
+        canvas.endDraw()
+
+        try #require(holes > 0 && guides > 0 && holeOpen, "検査の前提: 穴と曲線を開いたまま抜けていない")
+        #expect(canvas.curveGuides.isEmpty)
+        #expect(canvas.shapeHoles.isEmpty)
+        #expect(canvas.holePoints == nil)
+    }
+
+    @Test("endDraw() を忘れた描き場所は、次の beginDraw() が前のフレームを描かずに捨てる (#1622)")
+    func beginDrawAgainDropsTheUnfinishedFrame() throws {
+        // 描き場所の `beginDraw()` / `endDraw()` も対で開いて閉じる操作で、フレームの中で
+        // 釣り合う (ADR-0021 決定 4 の追補 (2026-09-27))。直す前の `beginDraw()` は注意だけで
+        // 帰り、閉じ忘れたフレームの変換がそのまま次の描き直しに積み上がった ([#1622])
+        //
+        // [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+        let canvas = try makeCanvas()
+        try canvas.draw { canvas.background(black) }
+
+        // 閉じ忘れる 1 枚。置いた図形も、書いた変換も、次へ持ち込まない
+        canvas.beginDraw()
+        canvas.noStroke()
+        canvas.fill(white)
+        canvas.rect(40, 40, 8, 8)
+        canvas.translate(20, 0)
+
+        canvas.beginDraw()
+        canvas.noStroke()
+        canvas.fill(white)
+        canvas.rect(8, 8, 8, 8)
+        canvas.endDraw()
+
+        let image = try pixels(of: canvas)
+        #expect(image[12, 12] == (255, 255, 255, 255), "前のフレームの変換が効いている")
+        #expect(image[32, 12] == (0, 0, 0, 255), "前のフレームの変換が効いている")
+        #expect(image[44, 44] == (0, 0, 0, 255), "閉じ忘れたフレームの図形が描かれた")
+        // 捨てたフレームも 1 枚に数える。番号は粒の繰り越しと焼き場の頁が境目の印として読む
+        #expect(canvas.framesDrawn == 3, "捨てたフレームと次のフレームが同じ番号になっている")
+        #expect(
+            canvas.warnings.message(for: .alreadyDrawing)
+                == "beginDraw(): endDraw() was not called for the previous beginDraw(), so that "
+                + "frame was dropped without being drawn, and drawing starts over from here")
     }
 
     @Test("光と周囲は、描き切った後のフレームの外へ残らない (#1504)")
