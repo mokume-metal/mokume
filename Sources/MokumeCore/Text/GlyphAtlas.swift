@@ -135,7 +135,10 @@ import simd
         /// 置くので、両辺を上限いっぱいには使えない。これを ``full`` と名乗ると、受け取る側は
         /// 焼き直せば入ると読む。入らないまま、上限の頁を毎フレーム作り直すことになる。
         ///
+        /// 大きさは余白込みの画素数で、**Int に収まらなければ `Int.max` に張り付く** ([#1587])。
+        ///
         /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
+        /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
         case tooLarge(width: Int, height: Int)
         /// 焼けなかった。**広げても変わらない** — 焼き場を用意できなかったか、
         /// GPU の完了を待てなくて面へ書かなかった ([#934])。
@@ -312,9 +315,26 @@ import simd
     /// 高さが `side - 隅` までになる。合わせると、**長いほうの辺が `side` まで、短いほうの辺が
     /// `side - 隅` まで**である ([#1492])。
     ///
+    /// **大きさは浮動小数のまま受ける** ([#1587])。巨大な字形の大きさは Int に収まらないので、
+    /// Int へ直す前にここで比べる。整数の画素数はそのまま表せるので、答えは Int で比べたときと同じ。
+    ///
     /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
-    static func fitsFreshPage(width: Int, height: Int, side: Int) -> Bool {
-        max(width, height) <= side && min(width, height) <= side - reservedCorner
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    static func fitsFreshPage(width: CGFloat, height: CGFloat, side: Int) -> Bool {
+        max(width, height) <= CGFloat(side)
+            && min(width, height) <= CGFloat(side - reservedCorner)
+    }
+
+    /// 画素数を Int へ直す。**Int に収まらなければ `Int.max` に張り付ける** — 焼き場に入らない
+    /// 字形の大きさを名乗るためだけに使う (``Lookup/tooLarge(width:height:)``)。
+    static func saturatingInt(_ pixels: CGFloat) -> Int {
+        Int(exactly: pixels) ?? Int.max
+    }
+
+    /// 注意の文面に載せる画素数。Int に収まればこれまでどおり整数で、収まらなければ浮動小数の
+    /// 表記で言う (`Int.max` に張り付けた数を言うと、実際と違う大きさを名乗ることになる)。
+    private static func pixelCount(_ pixels: CGFloat) -> String {
+        Int(exactly: pixels).map(String.init) ?? "\(pixels)"
     }
 
     /// 焼いてある字形。まだ無ければ焼く。**引けなければ理由を返す。**
@@ -339,21 +359,32 @@ import simd
                     isColored: false))
         }
 
-        let pad = Self.padding
-        let left = Int(bounds.minX.rounded(.down)) - pad
-        let bottom = Int(bounds.minY.rounded(.down)) - pad
-        let right = Int(bounds.maxX.rounded(.up)) + pad
-        let top = Int(bounds.maxY.rounded(.up)) + pad
-        let width = right - left
-        let height = top - bottom
-        guard width > 0, height > 0 else { return .unbakeable }
+        // **Int へ直す前に、浮動小数のまま大きさを見る** (#1587)。巨大な大きさでは外接矩形の辺が
+        // Int の範囲を越え、先に直すとそこでプロセスごと落ちる。上限の頁は Int の範囲よりはるかに
+        // 小さいので、入るかどうかは浮動小数で決まる
+        let pad = CGFloat(Self.padding)
+        let leftEdge = bounds.minX.rounded(.down) - pad
+        let bottomEdge = bounds.minY.rounded(.down) - pad
+        let rightEdge = bounds.maxX.rounded(.up) + pad
+        let topEdge = bounds.maxY.rounded(.up) + pad
+        let extent = (width: rightEdge - leftEdge, height: topEdge - bottomEdge)
+        guard extent.width > 0, extent.height > 0 else { return .unbakeable }
         // **作りたての上限の頁にも入らないなら、広げても焼き直しても入らない。** ここで名乗って
         // 諦める。上限と比べるだけでは足りない — 両辺が上限以下でも、左上の隅のぶん入らない
         // 字形がある (#1492)
-        guard Self.fitsFreshPage(width: width, height: height, side: Self.maximumSize) else {
-            warnTooLargeOnce(width: width, height: height)
-            return .tooLarge(width: width, height: height)
+        guard Self.fitsFreshPage(width: extent.width, height: extent.height, side: Self.maximumSize)
+        else {
+            warnTooLargeOnce(width: extent.width, height: extent.height)
+            return .tooLarge(
+                width: Self.saturatingInt(extent.width), height: Self.saturatingInt(extent.height))
         }
+        // 入る字形の辺は Int に収まる。収まらないのは、外接矩形が原点から Int の範囲の外まで
+        // 離れた字形だけで、焼いても置く場所の計算が成り立たない
+        guard let left = Int(exactly: leftEdge), let bottom = Int(exactly: bottomEdge),
+            let right = Int(exactly: rightEdge), let top = Int(exactly: topEdge)
+        else { return .unbakeable }
+        let width = right - left
+        let height = top - bottom
         // いまの面より大きいだけなら、広げれば入る
         guard width <= size, height <= size else { return .full }
 
@@ -399,10 +430,11 @@ import simd
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
-    private func warnTooLargeOnce(width: Int, height: Int) {
+    private func warnTooLargeOnce(width: CGFloat, height: CGFloat) {
         warnings.warnOnce(
             .tooLarge,
-            "text(): one glyph is \(width)x\(height) pixels, which does not fit the baking area: it "
+            "text(): one glyph is \(Self.pixelCount(width))x\(Self.pixelCount(height)) pixels, "
+                + "which does not fit the baking area: it "
                 + "takes glyphs of at most \(Self.maximumSize) pixels on the longer side and "
                 + "\(Self.maximumSize - Self.reservedCorner) on the shorter. This character will "
                 + "not be drawn — lower textSize()")
