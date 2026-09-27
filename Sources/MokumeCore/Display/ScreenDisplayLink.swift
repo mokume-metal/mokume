@@ -79,7 +79,9 @@ final class ScreenDisplayLink: NSObject {
     /// 別のプロセスの絵を出す台は据えない — こちらは絵を作っていないので、差し出し元より
     /// 速く回っても出す枚数は増えない (同じ枚数なら出さない)。画面の速さに任せるほうが、
     /// 相手が何 fps でも遅れが最小になる。
-    private let frameRate: Float?
+    ///
+    /// **検査が読む** (据えた速さが組み立てで検めた値であること・#1642)。
+    let frameRate: Float?
 
     private var link: CADisplayLink?
     /// 紐づけている画面。張り替えの要否をこれで判断する。

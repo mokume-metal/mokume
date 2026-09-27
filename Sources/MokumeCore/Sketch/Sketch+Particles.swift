@@ -36,11 +36,13 @@ extension Sketch {
     /// 上書きしたときは理由を知らせる** — 出す数 (`rate`) × 寿命 (`life`) がここで決めた
     /// 数より多いと起きるので、どれかを変える。
     ///
-    /// ## 大きすぎる数
+    /// ## 大きすぎる数・1 を割る数
     ///
     /// 置き場を取れない数は**確保の失敗として返る**。途中まで作って止まることはない。
+    /// 0 以下は 1 粒へ丸めずに断る。
     ///
-    /// - Throws: 置き場を取れないときに ``RenderFailure``。
+    /// - Throws: 置き場を取れないときと、`count` が 1 を割るとき
+    ///   (``RenderFailure/invalidCount(_:)``) に ``RenderFailure``。
     public func makeParticles(count: Int) throws(RenderFailure) -> Particles {
         try canvas.makeParticles(count: count)
     }

@@ -109,6 +109,9 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// - Throws: 幅・高さのどちらかが 1 を割るか面の上限を越えるときに
+    ///   ``ImageFailure/unplaceable(width:height:)``。1 を割る指定を 1×1 へ丸めない。
     // shot: 1 snippet=f455cc89
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
         try canvas.createImage(width, height)

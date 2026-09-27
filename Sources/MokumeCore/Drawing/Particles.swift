@@ -154,6 +154,8 @@ public final class Particles {
 
     /// 段ごとの長さ。**容量から一意に決まる** — 256 で割り上げて 1 になるまで重ねる。
     static func levelLengths(capacity: Int) -> [Int] {
+        // `max(1, …)` は、`makeParticles` が 1 未満を断っているので届かない (#1642)。段を
+        // 1 つは残す守りとして残す (0 を渡しても段が空にならないことを ParticleTests が見る)
         var lengths = [max(1, capacity)]
         while let last = lengths.last, last > 1 {
             lengths.append((last + scanBlock - 1) / scanBlock)

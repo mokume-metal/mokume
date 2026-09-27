@@ -6,7 +6,8 @@
 /// 起こりうる失敗が列挙できるので typed throws で運ぶ ([ADR-0010] 決定 7)。
 ///
 /// **大半は「環境かリソースが足りない」形だが、それに限らない。** 頼んだ値が通らないもの
-/// (``invalidSize(width:height:)`` / ``invalidPixelDensity(_:)``) と、呼ぶ順序が誤っているもの
+/// (``invalidSize(width:height:)`` / ``invalidPixelDensity(_:)`` / ``invalidFrameRate(_:)`` /
+/// ``invalidCount(_:)``) と、呼ぶ順序が誤っているもの
 /// (``commandsAlreadyOpen``) も同じ型で運ぶ。呼び出し側から見ればどれも `try` した先で
 /// 起きたことで、運び方を分けても受け取る場所が増えるだけだからである ([#792])。
 ///
@@ -86,6 +87,24 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// 1 を超える指定 — 出すより細かく描いて縮める — は引き受けない。拡大器が
     /// 縮小を扱わないうえ、要求も出ていないためである。
     case invalidPixelDensity(Float)
+
+    /// 1 秒あたりのフレーム数が正しくない (1 以上でなければならない)。
+    ///
+    /// **組み立てで断り、黙って 1 fps へ丸めない** ([ADR-0020] 決定 5 の 2 行目・[#1642])。
+    /// `frameRate: 0` を「止める」の意味で書いた人が、1 秒に 1 枚だけ進む絵を見ることになる。
+    /// 止めたいなら `noLoop()` を呼ぶ — 文面もそちらへ送る。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
+    case invalidFrameRate(Int)
+
+    /// 用意する数が正しくない (1 以上でなければならない)。数の並び (`makeNumbers(count:)`)
+    /// と粒 (`makeParticles(count:)`) の数で出る。
+    ///
+    /// **``bufferUnavailable(byteCount:)`` とは分ける。** あちらは資源が足りない (一度に扱う
+    /// 数を減らす) で、こちらは頼み方の誤り (数を直す)。同じ文面にすると、0 を渡した人を
+    /// 減らす方向へ送ってしまう ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。
+    case invalidCount(Int)
 
     /// 同梱しているはずのシェーダの原文が見つからない。
     case shaderSourceMissing(name: String)
@@ -208,6 +227,17 @@ extension RenderFailure: CustomStringConvertible {
             That is not a valid pixel density: \(density)
             It has to be above 0 and at most 1 (1 draws at exactly the density asked for, and
             anything smaller draws coarser and scales up).
+            """
+        case .invalidFrameRate(let frameRate):
+            """
+            That is not a valid frame rate: \(frameRate)
+            It has to be at least 1 frame per second. To stop the sketch from moving on, call
+            noLoop() instead.
+            """
+        case .invalidCount(let count):
+            """
+            That is not a valid number to make: \(count)
+            It has to be at least 1 — ask for as many as the sketch will use.
             """
         case .shaderSourceMissing(let name):
             """

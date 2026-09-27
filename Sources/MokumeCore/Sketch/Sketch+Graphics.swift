@@ -80,8 +80,9 @@ extension Sketch {
     /// 同じフレームで置いてから描き換えて、また置ける。**先に置いた場所は描き換えに
     /// 引きずられない**ので、途中の姿と最後の姿を並べられる。
     ///
-    /// - Throws: 描き場所を確保できないときに ``RenderFailure``。**組み立てのときに
-    ///   投げる** ([ADR-0020] 決定 5) ので、`setup()` で作って持ち回る。
+    /// - Throws: 描き場所を確保できないときと、幅・高さのどちらかが 1 を割るとき
+    ///   (``RenderFailure/invalidSize(width:height:)``。1×1 へ丸めない) に ``RenderFailure``。
+    ///   **組み立てのときに投げる** ([ADR-0020] 決定 5) ので、`setup()` で作って持ち回る。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md

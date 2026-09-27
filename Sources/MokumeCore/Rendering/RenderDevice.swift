@@ -94,6 +94,25 @@ import MokumeDiagnostics
     /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
     nonisolated static let maxTextureSide = 16384
 
+    /// 面の一辺として置ける範囲。**1 以上、``maxTextureSide`` 以下。**
+    ///
+    /// 上の端と下の端を同じ 1 つで持つ。寸法を検める口 (``checkTextureSize(width:height:)`` と、
+    /// `ImageFailure` で断る `createImage`) はどれもこれを読む — 端ごとに別の場所で見ると、
+    /// 片方の端だけが漏れる ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。
+    nonisolated static let textureSides = 1...maxTextureSide
+
+    /// 面の寸法を検める。**外から任意の寸法が入る口の関所** (#885・#1642)。
+    ///
+    /// descriptor を組む前に呼ぶ。負の寸法は `MTLTextureDescriptor` の符号なしの幅へ写せず、
+    /// 組む時点で落ちる — だから関所は ``makeTexture(descriptor:)`` の中だけでは足りず、
+    /// 寸法を受け取った口 (`RenderTarget`・`SharedFrameSurface`) が先にここを通る。
+    /// ``makeTexture(descriptor:)`` 自身も同じここを通す。
+    nonisolated static func checkTextureSize(width: Int, height: Int) throws(RenderFailure) {
+        guard textureSides.contains(width), textureSides.contains(height) else {
+            throw .invalidSize(width: width, height: height)
+        }
+    }
+
     /// この実行環境で描画の土台を組み立てられるか。
     ///
     /// **GPU があるかだけでは足りない。** 仮想化された実行環境には、GPU としては
@@ -504,12 +523,11 @@ import MokumeDiagnostics
     /// ([#885](https://github.com/mokume-metal/mokume/issues/885))。
     ///
     /// **外から任意の寸法が入る口 (描き場所・絵・窓の大きさ) は、いずれもここへ集まる。**
-    /// 3 つを個別に守ると、面を作る道が 1 本増えるたびに守り忘れが生まれる。
+    /// 3 つを個別に守ると、面を作る道が 1 本増えるたびに守り忘れが生まれる。見る範囲は
+    /// ``textureSides`` の 1 つで、下の端 (1 を割る寸法) は descriptor を組む前に
+    /// ``checkTextureSize(width:height:)`` が同じ範囲で断る。
     func makeTexture(descriptor: MTLTextureDescriptor) throws(RenderFailure) -> any MTLTexture {
-        guard descriptor.width <= Self.maxTextureSide, descriptor.height <= Self.maxTextureSide
-        else {
-            throw .invalidSize(width: descriptor.width, height: descriptor.height)
-        }
+        try Self.checkTextureSize(width: descriptor.width, height: descriptor.height)
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             throw .textureUnavailable(width: descriptor.width, height: descriptor.height)
         }

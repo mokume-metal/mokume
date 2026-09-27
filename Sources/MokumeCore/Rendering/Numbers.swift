@@ -49,7 +49,9 @@ import MokumeDiagnostics
     private(set) var readbackAllocations = 0
 
     init(gpu: RenderDevice, count: Int) throws(RenderFailure) {
-        let count = max(1, count)
+        // **1 を割る数は断る。黙って 1 個へ丸めない** (ADR-0020 決定 5・#1642)。確保の失敗
+        // (`bufferUnavailable`) とは文面を分ける — こちらは頼み方の誤りで、減らしても直らない
+        guard count >= 1 else { throw .invalidCount(count) }
         // **数え切れない指定は、確保の失敗として返す** (ADR-0020 決定 5 — 資源の生成は
         // 投げる・#1589)。掛け算が回り込むと、上限の検めより先にプロセスごと落ちる。
         // 粒の置き場もここを通るので、守りはこの 1 か所に置く

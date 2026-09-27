@@ -30,7 +30,9 @@ extension Canvas {
 
     /// 粒を用意する。
     public func makeParticles(count: Int) throws(RenderFailure) -> Particles {
-        let capacity = max(1, count)
+        // 1 を割る数は断る。黙って 1 粒へ丸めない (ADR-0020 決定 5・#1642)
+        guard count >= 1 else { throw .invalidCount(count) }
+        let capacity = count
         let stateFloats = MemoryLayout<Particle>.stride / MemoryLayout<Float>.stride
         let placeFloats = MemoryLayout<SolidInstance>.stride / MemoryLayout<Float>.stride
 
