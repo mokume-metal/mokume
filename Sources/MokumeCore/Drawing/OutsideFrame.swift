@@ -96,7 +96,8 @@ extension Canvas {
     ///
     /// 呼ぶ側は `guard isDrawing else { return warnOutsideFrame(.shadow) }` の形になる。
     /// **`guard` そのものは畳んでいない** — 値の検査を挟む口があり、`isDrawing` と検査の
-    /// どちらが先かが口によって違うためである (`Canvas+Material.swift` だけ検査が先)。
+    /// どちらが先かが口によって違うためである (`Canvas+Material.swift` の口と、
+    /// `Canvas+LightColor.swift` の数で書く光・材質の口は検査が先)。
     /// 順序を揃えると診断の出方が変わるので、それは畳みとは別の判断として分ける。
     func warnOutsideFrame(_ subject: OutsideFrame) {
         warnOnce(subject.warning, subject.notice)
