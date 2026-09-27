@@ -43,10 +43,18 @@ extension Sketch {
     ///   食うのは ``Sketch/dragX`` — フレームの合計 — なので、1 フレームに移動が複数件
     ///   届くと同じ量を何度も食うことになる (2 度目からは食わない作りにしてあるが、
     ///   そのぶん残りの呼び出しでは何も起きない)。`draw()` の中で 1 回呼ぶ形にする。
+    ///
+    /// - Note: 視点と同じく**フレームを越えない**。`setup()` や止まっている間の入力の
+    ///   コールバックで呼ぶと、警告して無視される (道具の状態も進めない)。
     public func orbitControl(
         _ sensitivityX: Float = 1, _ sensitivityY: Float = 1, _ sensitivityZ: Float = 1
     ) {
         guard let runtime = runningSketch else { return }
+        // **道具の状態を進める前に断る** (#1670)。視点を書くのはシーンの記述で、フレームの
+        // 外 (`setup()`・止まっている間のコールバック) では下の `camera` が断る。そこまで
+        // 進めてから断ると、注意は出ても道具の状態 (慣性・引きずった量を食った印) だけが
+        // 1 段進み、「無視する」にならない
+        guard canvas.isDrawing else { return canvas.warnOutsideFrame(.camera) }
         var orbit = runtime.orbit ?? Orbit.fitting(width: canvas.width, height: canvas.height)
 
         // 同じフレームで 2 度呼ばれても、引きずった量を 2 度食わない
