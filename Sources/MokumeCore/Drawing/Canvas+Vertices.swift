@@ -788,7 +788,9 @@ extension Canvas {
     /// 開いたまま境目を越えた形を捨てたことを、初回だけ知らせる ([#1591])。
     ///
     /// **名乗るのは `beginShape()`** — 境目で呼ばれる関数は利用者が書いたものではなく、
-    /// 直す先は開いた側 (対の終わりを同じ `draw()` に置く) だからである。形の外の注意
+    /// 直す先は開いた側 (対の終わりを、開いたのと同じ `draw()`・`setup()`・`createShape()` の
+    /// 本体に置く) だからである。フレームの頭で捨てる形 (`setup()` で開いた) と終わりで捨てる
+    /// 形 (`draw()` で開いた) の両方に当たるよう、どちらの境目かは言わない。形の外の注意
     /// (``warnVertexOutsideShapeOnce(_:)``) とは言うことが違うので鍵を分ける。捨てた後の
     /// フレームで閉じ忘れた形へ `vertex()` を足し続けると、あちらも言う。
     ///
@@ -796,8 +798,9 @@ extension Canvas {
     private func warnShapeNotEndedOnce() {
         warnOnce(
             .shapeNotEnded,
-            "beginShape(): the shape was not ended with endShape() before the frame ended, so it "
-                + "was dropped without being drawn. Begin and end a shape within the same draw()")
+            "beginShape(): a shape was still open when a frame began or ended, so it was dropped "
+                + "without being drawn. End each shape with endShape() in the same draw(), setup() "
+                + "or createShape() body that began it")
     }
 
     /// 形の中で、穴を開かずに ``endContour()`` を呼んだことを、初回だけ知らせる ([#1528])。

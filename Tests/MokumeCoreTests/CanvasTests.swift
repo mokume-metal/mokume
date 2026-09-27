@@ -1199,10 +1199,14 @@ struct CanvasTests {
         case beginDrawAgain
         /// 描き切りに失敗して閉じる ([#342])。flush は溜めたものに触れずに投げる。
         case failedEndDraw
+        /// 閉じ忘れたまま、次のフレームを `draw { }` で始める。捨てるのは入口ではなく
+        /// フレームの始まりなので、こちらの入口でも同じに捨てる。
+        case drawAfterBeginDraw
 
         var testDescription: String { "\(self)" }
 
-        func cross(_ canvas: Canvas) {
+        /// 境目を越え、次のフレームの中で `inspect` を呼び、そのフレームを閉じる。
+        func cross(_ canvas: Canvas, inspect: (Canvas) -> Void) throws {
             switch self {
             case .endDraw:
                 canvas.endDraw()
@@ -1214,7 +1218,12 @@ struct CanvasTests {
                 canvas.endDraw()
                 canvas.failureForTesting = nil
                 canvas.beginDraw()
+            case .drawAfterBeginDraw:
+                try canvas.draw { inspect(canvas) }
+                return
             }
+            inspect(canvas)
+            canvas.endDraw()
         }
     }
 
@@ -1422,9 +1431,10 @@ struct CanvasTests {
             "currentCurveTightness": "描き方 (曲線の張り)。一度書けば残る",
             "noiseSettings": "揺らぎの種と細かさ。一度書けば残る (断片と共有する・#366)",
             "carriesPictureBeforeEffects": "効果を通す前の絵の控えがあるか。次のフレームの最初の描き切りが戻す (#1469)",
-            "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手を描き切らせて空にする。捨てたフレームでは絵が変わらないので残す",
+            "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手を描き切らせて空にする。捨てるだけでは絵が変わらないので残す",
             "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
             "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
+            "isDrawingFromBeginDraw": "isDrawing と組のフレームの印 (beginDraw が開いたか)。境目の関数だけが書く",
             "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
             "solidStrokeCapture": transient,
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
@@ -1533,12 +1543,11 @@ struct CanvasTests {
             #expect(dirtied["style.\(field)"] != baseline["style.\(field)"], "style.\(field) が汚れていない")
         }
 
-        boundary.cross(canvas)
-        let crossed = frameFingerprint(of: canvas)
+        var crossed: [String: String] = [:]
+        try boundary.cross(canvas) { crossed = frameFingerprint(of: $0) }
         for (name, value) in baseline.sorted(by: { $0.key < $1.key }) {
             #expect(crossed[name] == value, "\(name) が \(boundary) の境目で既定へ戻らない")
         }
-        canvas.endDraw()
     }
 
     /// 戻すときに変わるフィールド。列を閉じるかどうかの違いを持つものを並べる。
@@ -1761,10 +1770,62 @@ struct CanvasTests {
         #expect(image[44, 44] == (0, 0, 0, 255), "閉じ忘れたフレームの図形が描かれた")
         // 捨てたフレームも 1 枚に数える。番号は粒の繰り越しと焼き場の頁が境目の印として読む
         #expect(canvas.framesDrawn == 3, "捨てたフレームと次のフレームが同じ番号になっている")
+        #expect(canvas.warnings.message(for: .alreadyDrawing) == alreadyDrawingNotice)
+    }
+
+    private let alreadyDrawingNotice =
+        "endDraw() was not called for the previous beginDraw(), so that frame was dropped "
+        + "without being drawn, and drawing starts over from here"
+
+    @Test("endDraw() を忘れた描き場所は、次のフレームが draw { } から来ても捨てる (#1622)")
+    func drawAfterForgottenEndDrawDropsTheUnfinishedFrame() throws {
+        // 捨てるのは入口 (`beginDraw()`) ではなく、フレームの始まりである。入口にだけ置くと、
+        // 閉じ忘れたフレームの図形が `draw { }` の新しいフレームへ黙って合流する
+        let canvas = try makeCanvas()
+        try canvas.draw { canvas.background(black) }
+
+        canvas.beginDraw()
+        canvas.noStroke()
+        canvas.fill(white)
+        canvas.rect(40, 40, 8, 8)
+        canvas.translate(20, 0)
+
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.rect(8, 8, 8, 8)
+        }
+
+        let image = try pixels(of: canvas)
+        #expect(image[12, 12] == (255, 255, 255, 255), "前のフレームの変換が効いている")
+        #expect(image[44, 44] == (0, 0, 0, 255), "閉じ忘れたフレームの図形が描かれた")
+        #expect(canvas.warnings.message(for: .alreadyDrawing) == alreadyDrawingNotice)
+    }
+
+    @Test("draw { } の中で呼んだ beginDraw() は、そのフレームを捨てずに何もしない (#1622)")
+    func beginDrawInsideDrawDoesNothing() throws {
+        // `draw { }` が開いたフレームは、閉包を抜けるときに同じ呼び出しが閉じる。閉じ忘れでは
+        // ないので捨てない — 捨てると、本体の面の `draw()` で `canvas.beginDraw()` を呼んだ
+        // だけで、それまでに描いたものが消える
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.rect(8, 8, 8, 8)
+            canvas.translate(20, 0)
+            canvas.beginDraw()
+            canvas.rect(8, 8, 8, 8)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[12, 12] == (255, 255, 255, 255), "beginDraw() がそれまでのフレームを捨てた")
+        #expect(image[32, 12] == (255, 255, 255, 255), "beginDraw() がフレームの変換を戻した")
+        #expect(!canvas.warnings.hasWarned(.alreadyDrawing), "閉じ忘れではないのに、捨てたと言った")
         #expect(
-            canvas.warnings.message(for: .alreadyDrawing)
-                == "beginDraw(): endDraw() was not called for the previous beginDraw(), so that "
-                + "frame was dropped without being drawn, and drawing starts over from here")
+            canvas.warnings.message(for: .beginDrawInsideDraw)
+                == "beginDraw(): this canvas is already inside a frame opened by draw { }, which "
+                + "closes it on its own. This call does nothing")
+        #expect(canvas.framesDrawn == 1)
     }
 
     @Test("光と周囲は、描き切った後のフレームの外へ残らない (#1504)")

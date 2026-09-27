@@ -107,11 +107,19 @@ extension Canvas {
         /// 受け取れない切り抜きが渡された。
         case badClip
 
-        /// ``beginDraw()`` を対にせず重ねて呼んだ。閉じていなかったフレームは描かずに捨て、
+        /// ``beginDraw()`` で開いたフレームを ``endDraw()`` で閉じないまま、次のフレームを
+        /// 始めた (`beginDraw()` か `draw { }`)。閉じていなかったフレームは描かずに捨て、
         /// 描き始め直す ([#1622])。
         ///
         /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
         case alreadyDrawing
+        /// ``draw(_:)`` が開いたフレームの中で ``beginDraw()`` を呼んだ。何もしない。
+        ///
+        /// **``alreadyDrawing`` とは鍵を分ける。** あちらは閉じ忘れたフレームを捨てたことを言い、
+        /// こちらは閉じる役が別に居るフレームで呼んだことを言う — 振る舞いが違う ([#1622])。
+        ///
+        /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+        case beginDrawInsideDraw
         /// ``beginDraw()`` の前に ``endDraw()`` を呼んだ。
         case notDrawing
         /// 描き切る前の描き場所を置いた。

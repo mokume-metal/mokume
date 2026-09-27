@@ -659,8 +659,9 @@ struct ShapeNotBegunWarningTests {
 ///
 /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
 private let shapeNotEndedNotice =
-    "beginShape(): the shape was not ended with endShape() before the frame ended, so it was "
-    + "dropped without being drawn. Begin and end a shape within the same draw()"
+    "beginShape(): a shape was still open when a frame began or ended, so it was dropped without "
+    + "being drawn. End each shape with endShape() in the same draw(), setup() or createShape() "
+    + "body that began it"
 
 /// 開いたまま境目を越えた形の注意 ([#1591])。GPU を要する。
 ///
