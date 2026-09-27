@@ -471,7 +471,7 @@ public final class SketchRuntime {
         beginFrame()
         if !deliveredInput { collectInput() }
         canvas.time = timing.time
-        canvas.preciseDeltaTime = timing.preciseDeltaTime
+        canvas.frameStep = timing.step
         // **入力の配布も入り口の供給も、描き始めた中で行う。**
         //
         // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで

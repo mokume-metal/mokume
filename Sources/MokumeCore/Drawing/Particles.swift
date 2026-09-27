@@ -44,47 +44,68 @@ struct Particle {
 /// 数えると毎回 0.008 個で、切り捨てれば永久に 0 である。しかも**単発の検査では出ない** —
 /// 数百フレーム回して初めて「出るはずの数が出ていない」が見える。
 struct EmissionCadence {
-    /// まだ出していない端数。
+    /// まだ出していない端数の、``per`` 倍。
     ///
     /// **倍精度で貯める。** 単精度だと 60 分の 1 秒を数百回足す間に誤差が積もり、
     /// 10 秒で 5 個出るはずのものが 4 個になる — 繰り越しを入れた意味が消える。
-    /// 同じ理由で、**受け取る刻みも倍精度**である ([#1640])。単精度に丸めた刻みは、
-    /// `Float(1/50)` のように 1/fps より小さくなる fps で、倍精度で貯めても足りない。
     ///
-    /// 遊び (``slack``) のぶん、切り捨てた後にわずかに負になることがある。
+    /// **フレーム番号から導く時計では、「rate × 枚数」の単位で貯め、fps で割り切る**
+    /// ([#1640])。1/fps 秒を足し合わせる形は、どの精度でも整数のわずか下 (1 個不足) か
+    /// わずか上 (1 個超過) に落ちる組がある — 単精度の秒では fps 25・50・100 などで毎秒
+    /// 1 個少なく、倍精度の秒に丸めの遊びを足す形では `rate: 71.563` を fps 120 で 6206 枚
+    /// 回したところで 1 個多かった。`rate` は `Float` で、足すのはその値そのもの (倍精度で
+    /// 厳密) なので、累計は ⌊rate·n ÷ fps⌋ に丸めなしで一致する。
     ///
     /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
     private(set) var carried: Double = 0
-
-    /// 切り捨てる前に足す遊び (個)。
-    ///
-    /// **倍精度の刻みでも、1/fps は 2 進で閉じない。** 足し合わせた値が整数のわずか下に
-    /// 落ち、出るはずの 1 個が次のフレームへずれる — fps 1…120・`rate` {0.5, 10, fps} の
-    /// 2 秒ぶんを倍精度の 1/fps で数えると、360 組のうち 134 組で累計が 1 個足りなかった
-    /// ([#1640] の試算)。倍精度の誤差は 1 回の足し算で 1e-16 程度なので、1e-6 は累計
-    /// 10 億個ぶんまでを覆う。一方で、有理数のレートの端数は 1/(分母·fps) より小さく
-    /// ならないので、**遊びで 1 個多く出すことは無い** (`ParticleEmissionTests` が累計を
-    /// ⌊rate·n ÷ fps⌋ と比べて見る)。
-    ///
-    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
-    static let slack = 1e-6
+    /// ``carried`` が何分の 1 個を単位にしているか。秒で数えるときは 1、フレーム番号から
+    /// 導く時計では fps。
+    private var per = 1
 
     /// この 1 フレームで出す数。`limit` を超えるぶんは繰り越さずに捨てる。
-    mutating func take(rate: Float, over seconds: Double, upTo limit: Int) -> Int {
-        guard rate > 0, seconds > 0, rate.isFinite, seconds.isFinite, limit > 0 else {
-            return 0
+    mutating func take(rate: Float, over step: FrameStep, upTo limit: Int) -> Int {
+        guard rate > 0, rate.isFinite, limit > 0 else { return 0 }
+        let amount: Double
+        let unit: Int
+        switch step {
+        case .frame(let perSecond):
+            guard perSecond > 0 else { return 0 }
+            (amount, unit) = (Double(rate), perSecond)
+        case .seconds(let seconds):
+            guard seconds > 0, seconds.isFinite else { return 0 }
+            (amount, unit) = (Double(rate) * seconds, 1)
         }
-        carried += Double(rate) * seconds
-        guard carried + Self.slack >= 1 else { return 0 }
-        let whole = (carried + Self.slack).rounded(.down)
+        // 数え方が替わったら (直に回す面の刻みを差し替えたときなど)、貯めた端数を新しい
+        // 単位へ移す。**同じ時計で回している間は起きない**
+        if unit != per {
+            carried = carried / Double(per) * Double(unit)
+            per = unit
+        }
+        carried += amount
+        let whole = Self.wholeUnits(carried, per: per)
+        guard whole >= 1 else { return 0 }
         guard whole < Double(limit) else {
             // **貯めたぶんを捨てる。** 捨てないと、容量を超える注文が続いたときに
             // 端数が際限なく積もり、レートを下げても出続ける
             carried = 0
             return limit
         }
-        carried -= whole
+        carried -= whole * Double(per)
         return Int(whole)
+    }
+
+    /// ⌊`value` ÷ `per`⌋。**割り算の丸めを掛け算で確かめ直す** — 商は整数の近くで上へ
+    /// 丸まりうるが、整数と `per` の積は倍精度で厳密なので、比べれば正しい側へ戻せる。
+    /// `per` が 1 なら `value` の切り捨てそのもの。
+    private static func wholeUnits(_ value: Double, per: Int) -> Double {
+        let divisor = Double(per)
+        var whole = (value / divisor).rounded(.down)
+        if whole * divisor > value {
+            whole -= 1
+        } else if (whole + 1) * divisor <= value {
+            whole += 1
+        }
+        return whole
     }
 }
 
@@ -315,7 +336,7 @@ public final class Particles {
     /// この 1 フレームで出す数。`frame` は呼んだ面のフレーム番号で、同じ番号のうちに
     /// 呼ばれた順で繰り越しを引き分ける (`cadences` の説明)。**0 個に終わる呼び出しも
     /// 1 回と数える** — 数えないと、出なかった噴き口の後ろの繰り越しが 1 つずつ前へずれる。
-    func count(rate: Float, over seconds: Double, frame: Int) -> Int {
+    func count(rate: Float, over step: FrameStep, frame: Int) -> Int {
         if cadenceFrame != frame {
             cadenceFrame = frame
             emitsThisFrame = 0
@@ -323,7 +344,7 @@ public final class Particles {
         let order = emitsThisFrame
         emitsThisFrame += 1
         if order == cadences.count { cadences.append(EmissionCadence()) }
-        return cadences[order].take(rate: rate, over: seconds, upTo: capacity)
+        return cadences[order].take(rate: rate, over: step, upTo: capacity)
     }
 
     /// 粒を `count` 個置く。

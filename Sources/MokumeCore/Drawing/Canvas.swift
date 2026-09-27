@@ -1112,18 +1112,18 @@ public final class Canvas {
     ///
     /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
     var deltaTime: Float {
-        get { Float(timebase.preciseDeltaTime) }
-        set { timebase.preciseDeltaTime = Double(newValue) }
+        get { timebase.step.deltaTime }
+        set { timebase.step = .seconds(Double(newValue)) }
     }
 
-    /// 1 フレームの長さ (秒) の倍精度の値。``deltaTime`` はこれの単精度の写しである。
-    /// **経過を数に変える側 (`emit` の繰り越し) が読む** — 単精度の刻みを足し合わせると、
-    /// fps によって毎秒 1 個少なく出る ([#1640])。
+    /// 1 フレームの長さ。``deltaTime`` はこれの単精度の写しである。**経過を数に変える側
+    /// (`emit` の繰り越し) が読む** — フレーム番号から導く時計では秒に直さずに渡るので、
+    /// fps によって毎秒 1 個ずれることが無い (``FrameStep``・[#1640])。
     ///
     /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
-    var preciseDeltaTime: Double {
-        get { timebase.preciseDeltaTime }
-        set { timebase.preciseDeltaTime = newValue }
+    var frameStep: FrameStep {
+        get { timebase.step }
+        set { timebase.step = newValue }
     }
 
     /// 時刻と刻みの置き場。**描き場所は、作った面と同じ 1 つを指す** (``createGraphics(_:_:)``・
@@ -1140,10 +1140,12 @@ public final class Canvas {
     var timebase = Timebase()
 
     /// 時刻と刻み。**面どうしで共有するための参照型**で、値そのものは ``time`` と
-    /// ``deltaTime``・``preciseDeltaTime`` の説明が持つ。
+    /// ``deltaTime``・``frameStep`` の説明が持つ。
     final class Timebase {
         var time: Float = 0
-        var preciseDeltaTime: Double = 1.0 / 60
+        /// 既定は単精度の 60 分の 1 秒 (``deltaTime`` の既定と同じ値)。直に回す面の数え方を
+        /// 変えないため、秒のまま持つ
+        var step = FrameStep.seconds(Double(Float(1.0 / 60)))
         /// 作った面 (``owner``) が始めたフレームの数。**描き場所の境目の印** — 描き場所は
         /// 本体のフレームの中で描かれるので、閉じ忘れたフレームが本体の境目を越えたかを
         /// これで見る ([#1622])。数えるのは作った面の ``beginFrame()`` だけである。

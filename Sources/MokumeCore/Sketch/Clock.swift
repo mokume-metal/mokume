@@ -18,6 +18,35 @@ public enum Clock: Equatable, Sendable {
     case frameIndex(frameRate: Int)
 }
 
+/// 1 フレームの長さ。
+///
+/// **フレーム番号から導く時計では、秒ではなく「fps 分の 1 秒」のまま持つ** ([#1640])。
+/// 1/fps は 2 進で閉じないので、秒に直した値をどの精度で足し合わせても、整数に届く
+/// はずのところでわずかに足りなかったり越えたりする。数を数える側 (`emit` の繰り越し) は、
+/// 整数の fps のまま受け取って「rate × 枚数 ÷ fps」を丸めずに数える
+/// ([ADR-0025] 決定 6 — 揃えたいものを積分で作らない)。
+///
+/// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+/// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+enum FrameStep: Equatable {
+    /// 整数の fps の 1 フレーム。長さはちょうど 1/`perSecond` 秒。
+    case frame(perSecond: Int)
+    /// 秒で測った長さ (実時間の経過・直に回す面)。毎回違う値なので、数は「長い目で見て」
+    /// 頼んだとおりになる。
+    case seconds(Double)
+
+    /// 秒。
+    var seconds: Double {
+        switch self {
+        case .frame(let perSecond): 1 / Double(max(1, perSecond))
+        case .seconds(let seconds): seconds
+        }
+    }
+
+    /// 利用者に見せる単精度の秒 (``Sketch/deltaTime``)。
+    var deltaTime: Float { Float(seconds) }
+}
+
 /// 時刻を配り、フレームの進みを数える。
 ///
 /// 実時間で動かすときの落とし穴を 1 つ引き受ける: **止めている間も実時間は進む。**
@@ -52,17 +81,15 @@ final class FrameTiming {
     private(set) var frameCount = 0
     /// いまのフレームの時刻 (秒)。
     private(set) var time: Float = 0
-    /// 前のフレームからの経過 (秒)。**倍精度のまま持つ** ([#1640])。
-    ///
-    /// 経過を数に変える側 (``Sketch/emit(_:from:rate:speed:angle:life:size:color:)`` の
-    /// 端数の繰り越し) は、これを足し合わせて切り捨てる。単精度に丸めた刻みを渡すと、
-    /// `Float(1/50)` のように 1/fps より小さくなる fps で足し合わせが整数に届かず、
-    /// 毎秒 1 個少なく出る。
+    /// 前のフレームからの経過。**フレーム番号から導く時計では、秒に直さずに持つ**
+    /// (``FrameStep``・[#1640])。経過を数に変える側 (`emit` の端数の繰り越し) がこれを読む。
+    /// 単精度の秒を渡していた頃は、`Float(1/50)` のように 1/fps より小さく丸まる fps で、
+    /// 毎秒 1 個少なく出ていた。
     ///
     /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
-    private(set) var preciseDeltaTime: Double = 0
-    /// 前のフレームからの経過 (秒)。``preciseDeltaTime`` の単精度の写しで、利用者に見せる値。
-    var deltaTime: Float { Float(preciseDeltaTime) }
+    private(set) var step: FrameStep = .seconds(0)
+    /// 前のフレームからの経過 (秒)。``step`` の単精度の写しで、利用者に見せる値。
+    var deltaTime: Float { step.deltaTime }
 
     /// 1 フレームぶんとして渡す経過の上限 (秒)。**実時間で動かすときだけ効く。**
     private let maximumDeltaTime: Double
@@ -112,11 +139,11 @@ final class FrameTiming {
             time = Float(elapsed)
             if stepsOneFrame {
                 // 止めていた長さによらず、回っているときの 1 枚ぶん (``stepOneFrameNext()``)
-                preciseDeltaTime = frameInterval
+                step = .seconds(frameInterval)
             } else {
                 // **経過には上限を置く。** 止まっていた時間まるごとを渡すと、積分している
                 // 側 (粒・視点) が 1 枚で吹き飛ぶ
-                preciseDeltaTime = min(max(0, now - previous), maximumDeltaTime)
+                step = .seconds(min(max(0, now - previous), maximumDeltaTime))
             }
             previous = now
         case .frameIndex(let frameRate):
@@ -124,7 +151,8 @@ final class FrameTiming {
             // 最初のフレームを 0 秒にする。止めていたところから描く 1 枚も、既に 1 フレーム
             // ぶんしか進まないので ``stepOneFrameNext()`` は効かせるものが無い
             time = Float(Double(frameCount - 1) / rate)
-            preciseDeltaTime = 1 / rate
+            // 見せる `deltaTime` は `Float(1 / rate)` のまま (``FrameStep/deltaTime``)
+            step = .frame(perSecond: max(1, frameRate))
         }
     }
 

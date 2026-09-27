@@ -19,20 +19,28 @@ struct ParticleEmissionTests {
     func carriesTheFractionSoLowRatesStillEmit() {
         // **1 フレームだけ見ると 0 個。** 切り捨てる作りだと、ここが永久に 0 のままになる
         var single = EmissionCadence()
-        #expect(single.take(rate: 0.5, over: 1.0 / 60, upTo: 1000) == 0)
+        #expect(single.take(rate: 0.5, over: .frame(perSecond: 60), upTo: 1000) == 0)
 
         // 毎秒 0.5 個を 10 秒ぶん (600 フレーム) 回せば 5 個
         var cadence = EmissionCadence()
         var total = 0
-        for _ in 0..<600 { total += cadence.take(rate: 0.5, over: 1.0 / 60, upTo: 1000) }
+        for _ in 0..<600 { total += cadence.take(rate: 0.5, over: .frame(perSecond: 60), upTo: 1000) }
         #expect(total == 5)
+
+        // 秒で数える刻み (実時間の時計・直に回す面) でも同じ
+        var bySeconds = EmissionCadence()
+        var secondsTotal = 0
+        for _ in 0..<600 {
+            secondsTotal += bySeconds.take(rate: 0.5, over: .seconds(Double(Float(1.0 / 60))), upTo: 1000)
+        }
+        #expect(secondsTotal == 5)
     }
 
     @Test("高いレートでも、出る数はレートどおり")
     func emitsWhatTheRateAsksFor() {
         var cadence = EmissionCadence()
         var total = 0
-        for _ in 0..<60 { total += cadence.take(rate: 90, over: 1.0 / 60, upTo: 1000) }
+        for _ in 0..<60 { total += cadence.take(rate: 90, over: .frame(perSecond: 60), upTo: 1000) }
         #expect(total == 90)
     }
 
@@ -46,7 +54,7 @@ struct ParticleEmissionTests {
         var totals: [Int] = []
         for _ in 0..<frames {
             timing.advance()
-            total += cadence.take(rate: rate, over: timing.preciseDeltaTime, upTo: 1_000_000)
+            total += cadence.take(rate: rate, over: timing.step, upTo: 1_000_000)
             totals.append(total)
         }
         return totals
@@ -70,8 +78,9 @@ struct ParticleEmissionTests {
     }
 
     /// [#1640] の完了条件 2。**不足も超過もしない** — `n` 枚目までの累計が、有理数で計算した
-    /// ⌊rate·n ÷ fps⌋ に等しい。`rate` は fps の倍数でないもの (0.5・10) と fps。丸めの誤差に
-    /// 遊びを持たせる直し方が、遊びで 1 個多く出していないこともここで見る。
+    /// ⌊rate·n ÷ fps⌋ に等しい。`rate` は fps の倍数でないもの (0.5・10) と fps。**これらの
+    /// rate の端数は整数から十分離れているので、丸めに遊びを持たせる作りの超過はここでは
+    /// 出ない** — 超過は次の `fractionalRatesNeitherRunOverNorFallShort` が見る (#1640 の反証 2)。
     ///
     /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
     @Test("刻みの揃った時計では、何枚目までの累計も ⌊rate·n ÷ fps⌋ に等しい")
@@ -95,21 +104,73 @@ struct ParticleEmissionTests {
         #expect(broken.isEmpty, "累計が頼んだ数と違う組が \(broken.count) 個: \(broken.prefix(12))")
     }
 
+    /// ⌊`rate`·n ÷ fps⌋ を**整数で**求める。`rate` は `Float` で、その値は m·2^−k (m・k は
+    /// 整数) と厳密に書けるので、割り算を丸めずに済む — 実装の倍精度の式を写さない。
+    private static func requested(rate: Float, frames n: Int, fps: Int) -> Int {
+        // 仮数を整数にする桁 (1 未満の rate も含めて、2^k 倍で整数になる最小の k 以上)
+        let shift = max(0, Int(Float.significandBitCount) - Int(rate.exponent))
+        let numerator = Int(Double(rate) * Double(1 << shift))
+        return numerator * n / ((1 << shift) * fps)
+    }
+
+    /// [#1640] の反証 1・2。**丸めの誤差に遊びを持たせる直し方は、整数のわずか下にある
+    /// 端数を 1 個に数えて超過する。** 反証役が見つけた組 (fps 120 の `rate: 71.563` は 6206 枚目、
+    /// 59.99999・29.99999・119.9999 は 1 枚目から) と、小数 4 桁の `rate` を fps 120 で 60 秒
+    /// 回した 64 本を、整数で求めた累計と枚ごとに比べる。遊び 1e-6 の作りはここで赤くなる。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    @Test("端数の rate でも、累計は ⌊rate·n ÷ fps⌋ を 1 枚も越えず、1 枚も下回らない")
+    func fractionalRatesNeitherRunOverNorFallShort() {
+        var cases: [(rate: Float, fps: Int, frames: Int)] = [
+            (71.563, 120, 6300), (59.99999, 60, 120), (29.99999, 30, 60), (119.9999, 120, 240),
+        ]
+        var randomness = Randomness(seed: 1640)
+        for _ in 0..<64 {
+            let tenThousandths = Int(randomness.unitValue() * 1_200_000)
+            cases.append((Float(tenThousandths) / 10_000, 120, 7200))
+        }
+        var broken: [String] = []
+        for (rate, fps, frames) in cases {
+            let totals = cumulativeCounts(rate: rate, fps: fps, frames: frames)
+            for (index, total) in totals.enumerated() {
+                let expected = Self.requested(rate: rate, frames: index + 1, fps: fps)
+                if total != expected {
+                    broken.append("rate \(rate)・fps \(fps)・\(index + 1) 枚目: \(total) 個 (頼んだ数 \(expected))")
+                    break
+                }
+            }
+        }
+        #expect(broken.isEmpty, "累計が頼んだ数と違う組が \(broken.count) 個: \(broken.prefix(8))")
+    }
+
+    /// 端数を整数で求める式そのものの確かめ。**検査の物差しが外れていれば、上の検査は
+    /// 何も言わない。**
+    @Test("整数で求めた頼んだ数は、有理数で書ける例と一致する")
+    func theRequestedCountIsExact() {
+        #expect(Self.requested(rate: 0.5, frames: 600, fps: 60) == 5)
+        #expect(Self.requested(rate: 0.5, frames: 119, fps: 60) == 0)
+        #expect(Self.requested(rate: 50, frames: 1, fps: 50) == 1)
+        #expect(Self.requested(rate: 10, frames: 4, fps: 50) == 0)
+        #expect(Self.requested(rate: 10, frames: 5, fps: 50) == 1)
+        // 71.563 の単精度の値は 71.56300354…で、6206 枚では 3700.99999975 個 (整数の下)
+        #expect(Self.requested(rate: 71.563, frames: 6206, fps: 120) == 3700)
+    }
+
     @Test("1 フレームで枠を超える注文は、繰り越さずに切る")
     func doesNotCarryBeyondTheCapacity() {
         var cadence = EmissionCadence()
-        #expect(cadence.take(rate: 100_000, over: 1, upTo: 10) == 10)
+        #expect(cadence.take(rate: 100_000, over: .seconds(1), upTo: 10) == 10)
         // **貯め込まない。** 貯めると、レートを下げたあとも出続ける
         #expect(cadence.carried == 0)
-        #expect(cadence.take(rate: 0, over: 1, upTo: 10) == 0)
+        #expect(cadence.take(rate: 0, over: .seconds(1), upTo: 10) == 0)
     }
 
     @Test("進まない時間・出ないレートでは、何も出ない")
     func emitsNothingWithoutRateOrTime() {
         var cadence = EmissionCadence()
-        #expect(cadence.take(rate: 0, over: 1.0 / 60, upTo: 10) == 0)
-        #expect(cadence.take(rate: 60, over: 0, upTo: 10) == 0)
-        #expect(cadence.take(rate: .infinity, over: 1.0 / 60, upTo: 10) == 0)
+        #expect(cadence.take(rate: 0, over: .frame(perSecond: 60), upTo: 10) == 0)
+        #expect(cadence.take(rate: 60, over: .seconds(0), upTo: 10) == 0)
+        #expect(cadence.take(rate: .infinity, over: .frame(perSecond: 60), upTo: 10) == 0)
     }
 
     @Test("遠ざける力は、引く力の符号を返したもの")
@@ -547,10 +608,6 @@ struct ParticleTests {
         #expect(counts == expected, "レート \(rates) の噴き口が出した数 \(counts) — 頼んだ数は \(expected)")
     }
 
-    /// [#1468] の完了条件 2。**同じ 1 行から 2 回呼んでも、繰り越しは分かれる。** 呼んだ
-    /// 位置 (`#line` など) で分ける作りでは、ここが (0, 60) のまま直らない。
-    ///
-    /// [#1468]: https://github.com/mokume-metal/mokume/issues/1468
     /// fps 50 で毎秒 50 個 (1 枚に 1 個) の粒を、毎秒 1200 画素で右へ飛ばす。粒は 24 画素
     /// おきに 1 行に並ぶ ([#1640] の本文の再現)。
     ///
@@ -601,6 +658,10 @@ struct ParticleTests {
         #expect(try dotsOnTheRow(after: EmitPerSecond.fps) == EmitPerSecond.fps)
     }
 
+    /// [#1468] の完了条件 2。**同じ 1 行から 2 回呼んでも、繰り越しは分かれる。** 呼んだ
+    /// 位置 (`#line` など) で分ける作りでは、ここが (0, 60) のまま直らない。
+    ///
+    /// [#1468]: https://github.com/mokume-metal/mokume/issues/1468
     @Test("同じ 1 行から何度 emit しても、それぞれが頼んだ数を出す")
     func emittingInALoopStillSplitsTheCarry() throws {
         let counts = try emittedCounts(rates: [15, 15], step: 1 / 30, frames: 60, inOneLoop: true)
