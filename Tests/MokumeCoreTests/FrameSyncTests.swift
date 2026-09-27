@@ -974,6 +974,62 @@ struct FrameSyncTests {
     private static let flatShader =
         "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }"
 
+    /// 1 フレームの形。**投入が 1 フレームに複数あるもの**を含める — 合体すると、1 本の知らせが
+    /// 別のフレームの投入の分までまとめて刈る ([#1594])。出口は描き切りの後に出力段を別に
+    /// 投入するので、1 フレームに投入が 2 本になる (効果は描き切りと同じ投入に載るので増えない)。
+    ///
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+    enum NoticeFrame: String, CaseIterable {
+        case plain = "塗るだけ"
+        case outlet = "出口を載せる"
+    }
+
+    /// 合体した知らせでも、**最後の投入まで誰も頼まずに刈られる** ([#1594])。
+    ///
+    /// main actor を譲らずに回して知らせを合体させ、そのあとで譲る。直した形では積んだ知らせは
+    /// 1 本だけで、それが走るときに届いている最大の番号まで刈る。
+    ///
+    /// **控える番号の誤り (先に積んだ知らせの番号のまま刈る) は、この検査では赤くならない。**
+    /// 刈る側は番号と合図の進んでいるほうまで刈り、譲って待つ間に合図が追いつくからである。
+    /// 合図が遅れる並びは実物では起こせる保証が無いので、`CompletionNoticesTests` が手で並べて
+    /// 押さえる。ここが見るのは、合体しても誰も頼まずに畳めること ([#1076] の芯) である。
+    ///
+    /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+    @Test("譲らずに回して合体した知らせも、最後の投入まで誰も待たずに刈る", arguments: NoticeFrame.allCases)
+    func coalescedNoticesReleaseTheLastSubmission(_ shape: NoticeFrame) async throws {
+        let bench = try makeBench()
+        let canvas = bench.canvas
+        let frames = 200
+        let first = bench.gpu.submissionCount
+
+        for _ in 0..<frames {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(red)
+                canvas.rect(0, 0, 16, 16)
+            }
+            if shape == .outlet { _ = try canvas.target.encodeToImage() }
+        }
+        let submitted = bench.gpu.submissionCount - first
+        if shape == .outlet {
+            try #require(
+                submitted > UInt64(frames), "検査の前提: 出口を載せても 1 フレームに投入が 1 本しかない")
+        }
+
+        // **ここまで main actor を譲らない。** 届くのを待つ間も譲らずに眠る
+        try #require(bench.gpu.awaitNoticesWithoutYielding(), "知らせが全部届かなかった")
+        #expect(bench.gpu.queuedNoticeCount <= 1, "知らせが合体していない")
+
+        let settles = bench.gpu.settleCalls
+        try await waitUntil {
+            bench.gpu.heldResourceCount == 0 && bench.gpu.retiredResourceCount == 0
+        }
+        #expect(bench.gpu.settleCalls == settles, "刈るために待ちを頼んでいる")
+        #expect(bench.gpu.queuedNoticeCount == 0, "譲った後も走っていない知らせが残っている")
+        #expect(bench.gpu.isIdle, "抱えているものが無いのに、まだ走っている")
+    }
+
     /// 二次被害のほう。**環が生きている間は `Numbers` の `deinit` も走らない**ので、
     /// 置き場が常駐の集合から外れないまま残る ([#738] が閉じた穴が、その間だけ開く)。
     ///

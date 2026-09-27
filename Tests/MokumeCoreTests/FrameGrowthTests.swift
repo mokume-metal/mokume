@@ -85,6 +85,43 @@ struct FrameGrowthTests {
             """)
     }
 
+    /// 完了の知らせは、main actor を譲らずに回す間も溜まらない ([#1594])。
+    ///
+    /// **この関数は同期で、待つ間も main actor を譲らない。** 知らせは main actor へ積まれて
+    /// から走るので、譲れば走ってしまい、溜まり方が見えなくなる。窓を出さない書き出しや
+    /// 検査のループがこの形で `advance()` を回す — 誰が叩くかは外側の話
+    /// (``SketchRuntime`` の説明) なので、叩き方で溜まり方が変わってはならない。
+    ///
+    /// 直す前は、投入ごとに 1 本積んでいた。N 枚で N 本以上 (1 枚に投入が 1 本以上ある) 溜まり、
+    /// 譲るまで 1 本も走らなかった。
+    ///
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+    @Test("main actor を譲らずにフレームを回しても、完了の知らせは 1 本までしか積まれない")
+    func completionNoticesDoNotPileUpWithoutYielding() throws {
+        let gpu = try RenderDevice()
+        let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
+        let canvas = try Canvas(target: target, gpu: gpu)
+        for _ in 0..<Self.longRun {
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                canvas.rect(4, 4, 8, 8)
+            }
+        }
+
+        try #require(
+            gpu.awaitNoticesWithoutYielding(),
+            "\(gpu.submissionCount) 本の投入に、知らせが \(gpu.arrivedNoticeCount) 本しか届いていない")
+        #expect(
+            gpu.queuedNoticeCount <= 1,
+            """
+            main actor を譲らずに \(Self.longRun) フレーム (投入 \(gpu.submissionCount) 本) 回したら、\
+            走っていない完了の知らせが \(gpu.queuedNoticeCount) 本溜まった。
+
+            知らせは main actor が空くまで走れない。投入ごとに積むと、譲らないループでは
+            フレームに比例して溜まり続ける ([#1594](https://github.com/mokume-metal/mokume/issues/1594))。
+            """)
+    }
+
     /// 置き場を取り直させる回数。倍増で伸びるので、**要求を毎回倍にする**。
     private static let regrowths = 6
 
@@ -518,5 +555,24 @@ struct FrameGrowthTests {
             _ = try target.encodeForDisplay()
             step += 1
         }
+    }
+}
+
+extension RenderDevice {
+    /// 投入した分の完了の知らせが**届く**まで待つ。**main actor を譲らずに眠る** ([#1594])。
+    ///
+    /// 知らせは Metal 側の糸で届き、main actor へ積まれてから走る。譲って待つと積んだ知らせが
+    /// 走ってしまい、譲らないループでの溜まり方が見えなくなる。同期の関数なので、async の
+    /// 検査から呼んでもここでは譲らない。
+    ///
+    /// 期限は ``RenderDevice/waitLimitSeconds`` から取る。届いたら `true`。
+    ///
+    /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+    func awaitNoticesWithoutYielding() -> Bool {
+        let deadline = Date().addingTimeInterval(Double(Self.waitLimitSeconds))
+        while arrivedNoticeCount < Int(submissionCount), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return arrivedNoticeCount == Int(submissionCount)
     }
 }
