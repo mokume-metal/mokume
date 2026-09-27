@@ -24,9 +24,14 @@ extension Canvas {
     public func noTextFont() { style.fontName = nil }
 
     /// これから描く文字の大きさ (画素)。
+    ///
+    /// **負の値と、数でない値・無限は 0 に倒す** — 大きさ 0 の字は描かれず、測っても 0 になる。
+    /// 無限を書体へ渡すと、CoreText は上端と下端に無限を、送り幅に NaN を返す ([#1587])。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
     public func textSize(_ size: some ScalarConvertible) {
         let size = size.asFloat
-        style.textSize = max(0, size)
+        style.textSize = size.isFinite ? max(0, size) : 0
     }
 
     /// これから描く文字の太さと傾き。
@@ -411,9 +416,15 @@ extension Canvas {
     /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
     /// 1 つの形として扱いたいなら、``textFont(_:)`` で書体を指定する — `Helvetica`
     /// などでは `A` が外周 1 つと穴 1 つになる。
+    ///
+    /// **位置に数でない値・無限を渡すと空を返す** — 読み取りの口なので、落とさず黙って空を返す
+    /// ([ADR-0020] 決定 5・[#1587])。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
-        guard !string.isEmpty, style.textSize > 0 else { return [] }
+        guard !string.isEmpty, style.textSize > 0, x.isFinite, y.isFinite else { return [] }
         let face = typeface
         let lines = string.lines
         let leading = resolvedTextLeading
@@ -499,6 +510,13 @@ extension Canvas {
 
     /// 曲線を直線の並びへ割る。**細かさは曲線の大きさから決める** — 字形の曲線は
     /// 大きさがまちまちなので、一律の本数では小さい曲線が過剰になり大きい曲線が粗くなる。
+    ///
+    /// **割る数は `Float` のまま 2…24 に締めてから Int へ直す** ([#1587])。巨大な大きさでは
+    /// 曲線の長さが `2 × Int.max` を越えるか、長さを測る 2 乗が `Float` からあふれて無限になる。
+    /// 点が無限どうしの差から NaN になったときは、下限の 2 に倒す (絵にならない周なので細かさは
+    /// 要らない)。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
     private static func appendCurve(
         _ points: inout [SIMD2<Float>], from: SIMD2<Float>, control1: SIMD2<Float>,
         control2: SIMD2<Float>, to: SIMD2<Float>
@@ -506,7 +524,8 @@ extension Canvas {
         let rough =
             simd_length(control1 - from) + simd_length(control2 - control1)
             + simd_length(to - control2)
-        let steps = min(24, max(2, Int((rough / 2).rounded(.up))))
+        let wanted = (rough / 2).rounded(.up)
+        let steps = wanted.isNaN ? 2 : Int(min(24, max(2, wanted)))
         for step in 1...steps {
             let t = Float(step) / Float(steps)
             points.append(cubicPoint(from, control1, control2, to, t))
