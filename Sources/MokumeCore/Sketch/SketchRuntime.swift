@@ -73,6 +73,14 @@ public final class SketchRuntime {
     /// [#1457]: https://github.com/mokume-metal/mokume/issues/1457
     private let launchFrameRate: Int
 
+    /// 組み立てで検めた、宣言のフレームレート (``checkFrameRates(declared:clock:)`` を越えた値)。
+    ///
+    /// **画面の駆動源へ渡す速さはこれを読む** (`SketchApplication`)。`settings` を読み直すと、
+    /// 計算型の `settings` は読むたびに別の値を返しうるので、検めた値と渡す値が別物になる
+    /// ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。検めた値そのものを持ち回れば、
+    /// 1 を割る値が届かないことを構造で保証できる。
+    let declaredFrameRate: Int
+
     /// 組み立てで受け取る刻みを検める。**宣言 (``SketchSettings/frameRate``) も、差し替えた
     /// 時計の刻み (``Clock/frameIndex(frameRate:)``) も 1 以上でなければ断る。**
     ///
@@ -226,6 +234,7 @@ public final class SketchRuntime {
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
+        self.declaredFrameRate = settings.frameRate
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
@@ -259,6 +268,7 @@ public final class SketchRuntime {
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
+        self.declaredFrameRate = settings.frameRate
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(

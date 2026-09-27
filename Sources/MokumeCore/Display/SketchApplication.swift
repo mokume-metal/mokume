@@ -159,7 +159,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private var framesFailedToDraw = 0
 
     /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。
-    private let screenLink: ScreenDisplayLink
+    ///
+    /// **検査が読む** (据えた速さ・#1642)。
+    let screenLink: ScreenDisplayLink
 
     /// × を押した人に問う言葉。**無ければ確かめずに閉じる。**
     ///
@@ -323,10 +325,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
-        // `max(1, …)` は、すぐ上の組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を
-        // 断っているので届かない (#1642)。割り算の守りとして残す
-        self.screenLink = ScreenDisplayLink(
-            frameRate: Float(max(1, sketch.settings.frameRate)))
+        // **速さは組み立てが検めた値を読む。** `sketch.settings` を読み直すと、計算型の
+        // 設定は別の値を返しうる — 検めた値そのものなら 1 を割らない (#1642)
+        self.screenLink = ScreenDisplayLink(frameRate: Float(runtime.declaredFrameRate))
         super.init()
         screenLink.owner = self
         windowRelay.application = self

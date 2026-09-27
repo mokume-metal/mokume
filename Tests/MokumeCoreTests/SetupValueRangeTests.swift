@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Testing
 
 @testable import MokumeCore
@@ -94,6 +95,74 @@ struct SetupValueRangeTests {
         try runtime.advance()
         #expect(runtime.time == 1)
         #expect(runtime.deltaTime == 1)
+    }
+
+    // MARK: - 書き出しの経路・画面の駆動源
+
+    /// **書き出しの経路も同じ組み立てを通る。** `--fps` に正しい値を渡していても、作品の
+    /// 宣言が 1 を割れば断る (反証役の指摘 5)。窓の経路も同じ。
+    @Test("窓の経路も書き出しの経路も、宣言の frameRate が 1 を割れば断る")
+    @MainActor
+    func bothLaunchPathsRefuseADeclaredRateBelowOne() throws {
+        let request = try #require(
+            RenderRequest(frameRate: 30, frameCount: 1, destination: "/tmp/mokume-never-written.mov"))
+        for rate in Self.belowOne {
+            for render in [nil, request] {
+                #expect(throws: RenderFailure.invalidFrameRate(rate)) {
+                    _ = try SketchApplication(
+                        sketch: Scene(frameRate: rate), gpu: RenderDevice(), render: render)
+                }
+            }
+        }
+    }
+
+    /// 読むたびに速さが変わる設定。**組み立てまでに読まれる 2 回** (窓の題名と、ランタイムの
+    /// 組み立て) は 30、以後は 0 を返す。組み立てより前の読みが増えると、組み立てが 0 を読んで
+    /// 投げるので、この検査は黙って通らずに赤くなる。
+    private final class Fickle: Sketch {
+        private var reads = 0
+        var settings: SketchSettings {
+            reads += 1
+            return SketchSettings(width: 10, height: 10, frameRate: reads <= 2 ? 30 : 0)
+        }
+        init() {}
+        func draw() {}
+    }
+
+    /// **画面の駆動源へは、組み立てが検めた値を渡す** (反証役の指摘 6)。設定を読み直すと、
+    /// 計算型の設定は検めた後に別の値を返しうる — そのとき 1 を割る速さが黙って 1 へ倒れていた。
+    @Test("画面の駆動源へは、組み立てで検めた速さが渡る")
+    @MainActor
+    func theDisplayLinkGetsTheCheckedRate() throws {
+        let application = try SketchApplication(sketch: Fickle(), gpu: RenderDevice(), render: nil)
+        #expect(application.screenLink.frameRate == 30)
+    }
+
+    // MARK: - 面の寸法の関所
+
+    /// **上の端と下の端を 1 つの範囲で見る** (反証役の指摘 1)。寸法を受け取る口
+    /// (`RenderTarget`・`SharedFrameSurface`) も、面を作る `makeTexture` も同じ関所を通る。
+    @Test("面の寸法は、上下の端とも 1 つの関所で断る")
+    func textureSizesAreCheckedAtBothEndsInOnePlace() throws {
+        let gpu = try RenderDevice()
+        let outside = Self.belowOne + [RenderDevice.maxTextureSide + 1, Int.max]
+        for side in outside {
+            #expect(throws: RenderFailure.invalidSize(width: side, height: 8)) {
+                try RenderDevice.checkTextureSize(width: side, height: 8)
+            }
+            #expect(throws: RenderFailure.invalidSize(width: 8, height: side)) {
+                _ = try RenderTarget(gpu: gpu, width: 8, height: side)
+            }
+            #expect(throws: RenderFailure.invalidSize(width: side, height: 8)) {
+                _ = try SharedFrameSurface(
+                    gpu: gpu, width: side, height: 8,
+                    at: FileManager.default.temporaryDirectory)
+            }
+        }
+        for side in [1, RenderDevice.maxTextureSide] {
+            #expect(throws: Never.self) { try RenderDevice.checkTextureSize(width: side, height: side) }
+        }
+        #expect(try RenderTarget(gpu: gpu, width: 1, height: 1).width == 1)
     }
 
     // MARK: - createGraphics

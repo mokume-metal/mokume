@@ -87,17 +87,17 @@ extension Canvas {
 
     /// 空の絵を作る。中身は透明。
     ///
-    /// **範囲の外の指定は、画素を組む前に断る。** 面が作れないことは後段
-    /// (`RenderDevice.makeTexture`) が同じ ``ImageFailure/unplaceable(width:height:)``
-    /// として返すので、守りはそちらの 1 箇所のままである。ここで先に見るのは
-    /// **捨てるものを確保しない**ため — 20000×20000 は Metal に触る前に 3.2 GB の
-    /// 画素配列を組むことになる ([#885](https://github.com/mokume-metal/mokume/issues/885))。
-    /// 下の端も同じ所で見る。負の辺では画素配列の数が組めない。
+    /// **範囲の外の指定は、画素を組む前に断る。** 範囲は面の関所と同じ
+    /// `RenderDevice.textureSides` の 1 つで、後段 (`RenderDevice.makeTexture`) も同じ範囲を
+    /// 見る。ここで先に見るのは**組めないもの・捨てるものを作らない**ため — 20000×20000 は
+    /// Metal に触る前に 3.2 GB の画素配列を組むことになり
+    /// ([#885](https://github.com/mokume-metal/mokume/issues/885))、負の辺では画素配列の数が
+    /// 組めない。
     ///
     /// **1 を割る指定を 1 へ丸めない** — 丸めると 1×1 の絵が黙って返る
     /// ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
-        let sides = 1...RenderDevice.maxTextureSide
+        let sides = RenderDevice.textureSides
         guard sides.contains(width), sides.contains(height) else {
             throw .unplaceable(width: width, height: height)
         }

@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 組み立てで受け取る数が 1 を割ったとき、黙って 1 に丸めずに型のついたエラーで断るようにしました ([#1642](https://github.com/mokume-metal/mokume/issues/1642))。**0 以下を渡していたスケッチは、これまでのように動き続けず、起動や `setup()` の時点で断られます。**
 
-- `SketchSettings.frameRate` (と、ランタイムへ渡す時計 `.frameIndex(frameRate:)` の刻み) が 0 以下なら、起動の組み立てが新しい `RenderFailure.invalidFrameRate` を投げます。これまでは黙って 1 fps で走っていました
+- `SketchSettings.frameRate` (と、ランタイムへ渡す時計 `.frameIndex(frameRate:)` の刻み) が 0 以下なら、起動の組み立てが新しい `RenderFailure.invalidFrameRate` を投げます。これまでは黙って 1 fps で走っていました。**書き出し (`mokume render --fps N`) も同じ組み立てを通るので、`--fps` に正しい値を渡していても、作品の宣言が 0 以下なら断られます** (これまでは書き出せていました)
 - `createGraphics(_:_:)` の幅・高さが 0 以下なら `RenderFailure.invalidSize` を、`createImage(_:_:)` なら `ImageFailure.unplaceable` を投げます。これまでは 1×1 が返っていました
 - `makeNumbers(count:)` と `makeParticles(count:)` の `count` が 0 以下なら、新しい `RenderFailure.invalidCount` を投げます。これまでは 1 個ぶんが返っていました
 
