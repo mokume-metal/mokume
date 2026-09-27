@@ -685,7 +685,24 @@ public final class Canvas {
     /// 画素の書き込みと、描き場所を置いた記録 (``note(placing:)``) はここを見る。形の組み立て
     /// (``createShape(_:)``) の中は入らない — 組み立ての中で置いた図形は形へ抜かれて溜め場に
     /// 残らないが、画素は形に載らず面へ直に書かれ、置いた記録も守る絵が無いまま残るからである。
-    var writesToSurface: Bool { isDrawing || carriesOver }
+    ///
+    /// **描き場所で、閉じ忘れたまま本体のフレームの境目を越えたフレームは入らない**
+    /// (``isFrameLeftOpenPastTheMainFrame``)。そのフレームは次の ``beginDraw()`` が描かずに捨てる
+    /// もので ([#1622])、もう区間ではない — 置けるままにすると、`beginDraw()` を 1 度だけ書いて
+    /// `endDraw()` を忘れた描き場所に、描き切りが来ないまま置いたものが溜まり続ける (#1592 と同じ形)。
+    ///
+    /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+    var writesToSurface: Bool { (isDrawing && !isFrameLeftOpenPastTheMainFrame) || carriesOver }
+
+    /// 描き場所の ``beginDraw()`` が開いたフレームが、閉じないまま本体のフレームの境目を越えたか。
+    ///
+    /// 越えたかは本体のフレームの番号 (``Timebase/frame``) で見分ける (``leftOpenAcrossBoundary``
+    /// と同じ見方)。**時刻の置き場の持ち主 (本体・直に使う面) では立たない** — 持ち主の境目は
+    /// 自分の次のフレームの頭そのもので、そこで閉じ忘れを捨てる。
+    private var isFrameLeftOpenPastTheMainFrame: Bool {
+        guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self else { return false }
+        return opened != timebase.frame
+    }
 
     /// 置いてよいか。**フレームの中・形を組み立てている間・持ち越しの区間** ([#1672])。
     ///

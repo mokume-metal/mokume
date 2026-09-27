@@ -349,6 +349,44 @@ struct PlacingOutsideFrameTests {
         #expect(canvas.placementsFoundOutsideRegions == 0)
     }
 
+    /// 字を置く所で断っても、焼き場へ焼くのはそれより手前である。区間の外で焼き場を作り直すと
+    /// そのフレームの番号を覚えるので、次のフレームで溢れても作り直せず字が落ちる (#1672 の
+    /// 反証 2 回目の 3)。
+    @Test("区間の外の text() は、焼き場へ字を焼かない", arguments: PlacingSurface.allCases)
+    func textOutsideTheRegionsBakesNothing(_ surface: PlacingSurface) throws {
+        let canvas = try surface.make(gpu: try RenderDevice())
+        let baked = canvas.atlas.bakedCount
+        canvas.text("abc", 1, 12)
+        _ = canvas.text("def ghi", 1, 1, 14, 14)
+        #expect(canvas.atlas.bakedCount == baked)
+        #expect(canvas.warnings.hasWarned(.placingOutsideFrame))
+    }
+
+    /// 描き場所で `beginDraw()` を 1 度だけ書き、`endDraw()` を忘れる。そのフレームは本体の
+    /// フレームの境目を越えた時点で区間ではなくなる (次の `beginDraw()` が捨てる・#1622)。置ける
+    /// ままにすると、描き切りが来ないまま溜まり続ける (#1592 と同じ形・#1672 の反証 2 回目の 1)。
+    @Test("閉じ忘れたまま本体のフレームを越えた描き場所には、置いても溜まらない")
+    func aFrameLeftOpenPastTheMainFrameTakesNothing() throws {
+        let gpu = try RenderDevice()
+        let host = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let layer = try host.createGraphics(16, 16)
+        var placedInFirst = 0
+        try host.draw {
+            layer.beginDraw()
+            layer.circle(8, 8, 6)
+            placedInFirst = layer.formInstances.count
+        }
+        for frame in 2...4 {
+            try host.draw {
+                for _ in 0..<100 { layer.circle(8, 8, 6) }
+                host.image(layer, 0, 0)
+            }
+            #expect(layer.formInstances.count == placedInFirst, "\(frame) 枚目で積み足した")
+        }
+        #expect(placedInFirst == 1, "同じ本体のフレームの中では置ける")
+        #expect(layer.warnings.hasWarned(.placingOutsideFrame))
+    }
+
     @Test("直に使う Canvas で、draw { } の外で置いた円は次の draw { } に出ない")
     func directCanvasDoesNotCarryWhatWasPlacedOutside() throws {
         let canvas = try PlacingSurface.direct.make(gpu: try RenderDevice())
