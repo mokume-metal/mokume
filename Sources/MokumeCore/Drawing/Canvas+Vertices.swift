@@ -257,6 +257,52 @@ extension Canvas {
         currentNormal = nil
     }
 
+    /// 組み立て中の形ひとつぶん。形の組み立て (``createShape(_:)``) が、外で開いていた形を
+    /// 記録の間だけ退かせるのに使う ([#1607])。
+    ///
+    /// **並びは ``discardOpenShape()`` と同じである。** 組み立ての状態を足したら 3 か所
+    /// (ここ・``takeOpenShape()``・``restoreOpenShape(_:)``) と `discardOpenShape()` に足す。
+    /// 落とすと、`CanvasTests.createShapeKeepsTheOuterOpenShape` が既定のままのものを名乗って赤になる。
+    ///
+    /// [#1607]: https://github.com/mokume-metal/mokume/issues/1607
+    struct OpenShape {
+        var isBuilding: Bool
+        var kind: VertexKind
+        var points: [BuildingVertex]
+        var indices: [Int]
+        var holes: [[BuildingVertex]]
+        var holePoints: [BuildingVertex]?
+        var hasDepth: Bool
+        var normal: SIMD3<Float>?
+        var curveGuides: [SIMD2<Float>]
+    }
+
+    /// 組み立て中の形を取り出し、組み立ての状態を既定へ戻す。**注意は言わない** —
+    /// 取り出した形は ``restoreOpenShape(_:)`` で戻す ([#1607])。
+    ///
+    /// [#1607]: https://github.com/mokume-metal/mokume/issues/1607
+    func takeOpenShape() -> OpenShape {
+        let taken = OpenShape(
+            isBuilding: isBuildingShape, kind: shapeKind, points: shapePoints,
+            indices: shapeIndices, holes: shapeHoles, holePoints: holePoints,
+            hasDepth: shapeHasDepth, normal: currentNormal, curveGuides: curveGuides)
+        discardOpenShape()
+        return taken
+    }
+
+    /// 取り出しておいた組み立て中の形へ戻す。
+    func restoreOpenShape(_ shape: OpenShape) {
+        isBuildingShape = shape.isBuilding
+        shapeKind = shape.kind
+        shapePoints = shape.points
+        shapeIndices = shape.indices
+        shapeHoles = shape.holes
+        holePoints = shape.holePoints
+        shapeHasDepth = shape.hasDepth
+        currentNormal = shape.normal
+        curveGuides = shape.curveGuides
+    }
+
     /// フレームの境目で開いたままの形を、形ごと捨てて 1 度だけ知らせる ([#1591])。
     ///
     /// **組み立て中の形はフレームに属する** ([ADR-0021] 決定 4 の追補 (2026-09-27))。
@@ -266,8 +312,10 @@ extension Canvas {
     ///
     /// **フレームの頭と終わりの両方で呼ぶ。** 頭だけだと `draw()` で開いた形が止まっている
     /// 間のコールバックへ漏れ、終わりだけだと `setup()` で開いた形に 1 枚目の点が積まれる。
-    /// 開いていなければ何もしない。
+    /// 開いていなければ何もしない。形の組み立て (``createShape(_:)``) の出口も同じここを通る
+    /// ([#1607])。
     ///
+    /// [#1607]: https://github.com/mokume-metal/mokume/issues/1607
     /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     func discardShapeLeftOpen() {
@@ -798,9 +846,9 @@ extension Canvas {
     private func warnShapeNotEndedOnce() {
         warnOnce(
             .shapeNotEnded,
-            "beginShape(): a shape was still open when a frame began or ended, so it was dropped "
-                + "without being drawn. End each shape with endShape() in the same draw(), setup() "
-                + "or createShape() body that began it")
+            "beginShape(): a shape was left open past the end of the draw(), setup() or "
+                + "createShape() body that began it, so it was dropped without being drawn. End "
+                + "each shape with endShape() in the same body")
     }
 
     /// 形の中で、穴を開かずに ``endContour()`` を呼んだことを、初回だけ知らせる ([#1528])。

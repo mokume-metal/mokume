@@ -1647,6 +1647,108 @@ struct CanvasTests {
         }
     }
 
+    // MARK: - 形の組み立ての出入口で切り離す組み立て中の形 (#1607)
+
+    /// 組み立て中の形の綴り (``shapeState`` の名前だけ)。
+    private func shapeFingerprint(of canvas: Canvas) -> [String: String] {
+        frameFingerprint(of: canvas).filter { Self.shapeState.contains($0.key) }
+    }
+
+    /// 組み立て中の形を、``shapeState`` の全部が既定と違う状態にする。
+    private func openBusyShape(on canvas: Canvas) {
+        canvas.beginShape(.triangles)
+        canvas.normal(0, 0, 1)
+        canvas.vertex(0, 0, 1)
+        canvas.vertex(8, 0)
+        canvas.vertex(0, 8)
+        canvas.index(0)
+        canvas.beginContour()
+        canvas.vertex(1, 1)
+        canvas.vertex(2, 1)
+        canvas.vertex(1, 2)
+        canvas.beginContour()  // 1 つ目の穴を畳み、2 つ目を開いたままにする
+        canvas.vertex(3, 3)
+        canvas.curveVertex(4, 4)
+        canvas.curveVertex(5, 5)
+    }
+
+    @Test("外で開いた形は、形の組み立てを挟んでもそのまま残る (#1607)", arguments: [false, true])
+    func createShapeKeepsTheOuterOpenShape(insideFrame: Bool) throws {
+        // 形の組み立ても、積む・降ろすが釣り合う単位である (ADR-0021 決定 4 の追補
+        // (2026-09-15))。直す前は組み立て中の形を切り離しておらず、記録の中の `beginShape()` が
+        // 外で開いた形を黙って上書きした。**並びの全部を見る** — 退かせる並びは 3 か所に
+        // 書いてあり (`Canvas.OpenShape`)、1 つ落としても型は通る
+        let canvas = try makeCanvas()
+        let fresh = shapeFingerprint(of: canvas)
+        var before: [String: String] = [:]
+        var after: [String: String] = [:]
+        func run() {
+            openBusyShape(on: canvas)
+            before = shapeFingerprint(of: canvas)
+            _ = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+                canvas.vertex(16, 0)
+                canvas.vertex(16, 16)
+                canvas.endShape(.close)
+            }
+            after = shapeFingerprint(of: canvas)
+            canvas.endShape()
+        }
+        if insideFrame { try canvas.draw { run() } } else { run() }
+
+        for name in Self.shapeState.sorted() {
+            #expect(before[name] != fresh[name], "\(name) が既定のままなので、戻ったかを見分けられない")
+            #expect(after[name] == before[name], "\(name) が形の組み立てを挟んで変わった")
+        }
+        #expect(!canvas.warnings.hasWarned(.shapeNotEnded), "閉じた形しか組み立てていないのに注意した")
+    }
+
+    @Test("形の組み立ての中で開いたまま抜けた形は、出口で捨てて外へ漏らさない (#1607)", arguments: [false, true])
+    func createShapeDropsTheShapeLeftOpenInside(insideFrame: Bool) throws {
+        // 直す前は記録の中で開いた形が外へ漏れ、外の `vertex()` が形自身の座標の点に積み足した
+        let canvas = try makeCanvas()
+        var building: Bool?
+        var points: Int?
+        func run() {
+            _ = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+                canvas.vertex(16, 0)
+            }
+            building = canvas.isBuildingShape
+            canvas.vertex(16, 16)
+            points = canvas.shapePoints.count
+        }
+        if insideFrame { try canvas.draw { run() } } else { run() }
+
+        #expect(building == false, "記録の中で開いた形が外へ漏れた")
+        #expect(points == 0, "外の vertex() が記録の中の形に積み足した")
+        #expect(canvas.warnings.hasWarned(.shapeNotEnded))
+        #expect(canvas.warnings.hasWarned(.vertexOutsideShape))
+    }
+
+    @Test("外で開いた形は、形の組み立ての中からは続けられない (#1607)")
+    func createShapeCannotContinueTheOuterShape() throws {
+        let canvas = try makeCanvas()
+        var shape: Shape?
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(60, 0)
+            shape = canvas.createShape {
+                canvas.vertex(30, 60)  // 外の形の続きにはならない
+                canvas.endShape(.close)
+            }
+            canvas.vertex(30, 60)
+            canvas.endShape(.close)
+        }
+        #expect(canvas.warnings.hasWarned(.vertexOutsideShape), "記録の中から外の形を続けられた")
+        #expect(canvas.warnings.hasWarned(.shapeNotBegun), "記録の中の endShape() が外の形を閉じた")
+        let recorded = try #require(shape)
+        #expect(recorded.runs.isEmpty, "記録の中に外の形が焼き付いた")
+    }
+
     /// 戻すときに変わるフィールド。列を閉じるかどうかの違いを持つものを並べる。
     enum StyleChange: CaseIterable, CustomTestStringConvertible {
         case material, castsShadow, receivesShadow, blendMode, clip, picture, fill
