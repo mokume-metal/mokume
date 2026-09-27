@@ -26,6 +26,9 @@ PR に貼られた絵が描画の唯一の検証記録になり、squash merge �
 ([#1294](https://github.com/mokume-metal/mokume/issues/1294))、退避路の手順は [fallback.md](fallback.md) に
 分けてある — **本線が落ちていると分かったときにだけ読めばよい。**
 
+複数の変更を人が確認する報告へ束ねるときは [report.md](report.md) を読む。画像のない
+変更にも具体例を添え、対象の全件・設計の意図・未確認事項を GitHub に残す手順である。
+
 ## 撮る経路は 2 つ
 
 | | 撮るもの | 撮り方 |
