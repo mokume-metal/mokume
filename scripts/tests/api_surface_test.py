@@ -449,6 +449,38 @@ class 公開の口の種類(unittest.TestCase):
                 self.assertEqual(len(api.check_port_kinds(symbols, source, kinds)), 1)
         self.assertEqual(api.check_port_kinds(symbols, "{ $0.noLights() }", kinds), [])
 
+    def test_呼び出しの形でない名前は数えない(self):
+        # 反証で見つかった形: 断片の文字列・列挙子・読んだ値・別の型の同名の口が、
+        # 消した行の代わりに数えられていた
+        symbols = [symbol("scale(_:_:)", owner="Canvas")]
+        kinds = {"scale": api.SCENE}
+        for source in ['let s = "values.scale"', "Mouth(\"x\", .scale)", "canvas.style.scale == 1",
+                       "moved.scale(x: 2)", "scale(2, 3)"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_port_kinds(symbols, source, kinds)), 1)
+        for source in ["{ $0.scale(2, 3) }", "canvas.scale (2, 3)", "sketch.scale(2, 3)"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_port_kinds(symbols, source, kinds), [])
+
+    def test_多重定義の数だけ呼び出しを求める(self):
+        symbols = [symbol("ambient(_:)", owner="Canvas", precise="a", parameters=["LinearRGBA"]),
+                   symbol("ambient(_:)", owner="Canvas", precise="b", parameters=["Float"]),
+                   symbol("ambient(_:_:_:)", owner="Canvas", precise="c"),
+                   symbol("ambient(_:)", owner="Sketch", precise="d")]
+        kinds = {"ambient": api.SCENE}
+        one = "{ $0.ambient(white) }"
+        problems = api.check_port_kinds(symbols, one * 2, kinds)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("2 本", problems[0])
+        self.assertIn("3 本", problems[0])
+        self.assertEqual(api.check_port_kinds(symbols, one * 3, kinds), [])
+
+    def test_Canvasに無い口はSketchの多重定義で数える(self):
+        symbols = [symbol("orbitControl(_:_:_:)", owner="Sketch")]
+        kinds = {"orbitControl": api.SCENE}
+        self.assertEqual(len(api.check_port_kinds(symbols, "", kinds)), 1)
+        self.assertEqual(api.check_port_kinds(symbols, "$0.orbitControl()", kinds), [])
+
     def test_表に残った古い名前を名乗る(self):
         symbols = [symbol("fill(_:)", owner="Sketch")]
         kinds = {"fill": api.DRAWING_STYLE, "gone": api.SCENE}

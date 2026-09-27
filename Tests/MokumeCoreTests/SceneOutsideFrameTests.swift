@@ -47,6 +47,10 @@ struct SceneOutsideFrameTests {
 
     /// `Canvas` の口。**同名で引数の違う口は別の行にする** — 転送先が違いうる
     /// (`ambientLight(_:)` の数の形は色の形へ転送するが、転送が要らない書き方もできる)。
+    ///
+    /// **呼び出しは `$0.` / `canvas.` / `sketch.` から書く。** `check_port_kinds` はその形の
+    /// 呼び出しだけを数え、口の多重定義の数 (`Canvas` の側) より少なければ赤にする — 文字列・
+    /// 列挙子・読んだ値に同じ名前が出ても、行を足したことにはならない。
     private var mouths: [Mouth] {
         let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
         // 恒等でない行列。恒等を渡すと、効いてしまっても「変換は既定のまま」に見える
@@ -101,8 +105,10 @@ struct SceneOutsideFrameTests {
             // 材質
             Mouth("ambient(color)", .material) { $0.ambient(white) },
             Mouth("ambient(gray)", .material) { $0.ambient(200) },
+            Mouth("ambient(r,g,b)", .material) { $0.ambient(200, 180, 160) },
             Mouth("emissive(color)", .material) { $0.emissive(white) },
             Mouth("emissive(gray)", .material) { $0.emissive(200) },
+            Mouth("emissive(r,g,b)", .material) { $0.emissive(200, 180, 160) },
             Mouth("metalness", .material) { $0.metalness(0.5) },
             Mouth("shininess", .material) { $0.shininess(8) },
             // 影
@@ -118,10 +124,15 @@ struct SceneOutsideFrameTests {
             // 無視する口 (`Canvas.isShaping` の説明が挙げる並び)
             Mouth("particles", .particles) { $0.particles(try $0.makeParticles(count: 4)) },
             Mouth("force", .particles) { $0.force(try $0.makeParticles(count: 4), [.gravity(0, 90)]) },
-            Mouth("compute", .compute) { canvas in
+            Mouth("compute(1D)", .compute) { canvas in
                 let heat = try canvas.makeNumbers(count: 4)
                 let ramp = try canvas.makeComputation(Self.ramp, name: "ramp", values: ["scale": 1])
                 canvas.compute(ramp, over: 4, writes: [heat])
+            },
+            Mouth("compute(2D)", .compute) { canvas in
+                let heat = try canvas.makeNumbers(count: 4)
+                let ramp = try canvas.makeComputation(Self.ramp, name: "ramp", values: ["scale": 1])
+                canvas.compute(ramp, over: 2, by: 2, writes: [heat])
             },
         ]
     }
@@ -233,6 +244,10 @@ struct SceneOutsideFrameTests {
                 runtime.canvas.warnings.hasWarned(mouth.says.warning),
                 "\(mouth.name) が setup() で黙って捨てている")
             expectUntouched(runtime.canvas, after: mouth.name)
+            // 視点を操る道具の状態も進めない。進めてから断ると、注意は出ても慣性と
+            // 引きずった量を食った印だけが 1 段進む (#1670 の反証で見つかった)
+            #expect(runtime.orbit == nil, "\(mouth.name) が setup() で視点の道具を進めている")
+            #expect(runtime.orbitAdvancedAt == -1, "\(mouth.name) が setup() で視点の道具を進めている")
         }
     }
 }

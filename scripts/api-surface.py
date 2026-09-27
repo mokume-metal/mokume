@@ -793,12 +793,27 @@ def check_port_kinds(
     (#941・#1505・#1605)。**範囲 (シーンの記述の口すべて) を回す検査**を置き、口を足したら
     種類を決めることと、シーンの記述ならその検査へ行を足すことを、ここが求める。
 
-    照合は `check_sketch_coverage` と同じ字面の照合で、コメントは落としてから見る。
+    照合は字面で、コメントは落としてから見る。`check_sketch_coverage` より狭く、**呼び出しの形
+    (`$0.` / `canvas.` / `sketch.` に続く `名前(`) だけを数える** — 名前がどこかに出れば
+    よい形では、断片の文字列の `values.scale`・列挙子の `.camera`・読んだ値の `style.clip` が
+    行の代わりに数えられ、行を消しても緑のままだった (#1670 の反証)。
+
+    **多重定義の数だけ呼び出しを求める。** 鍵は基底名なので、名前が 1 度出れば足りる形では、
+    守りを書き落とした多重定義を足しても既存の行が名前を満たす (#1670 の反証)。数える
+    多重定義は `Canvas` の側で (`Sketch` の口は転送なので同じ数になる)、`Canvas` に無い口
+    だけ `Sketch` の側で数える。どの呼び出しがどの多重定義かまでは字面では見分けられない
+    ので、見るのは数だけである。
+
     表に残った古い名前と、種類の綴り違いも上げる — どちらも黙って範囲を狭める。
     """
     code = re.sub(r"/\*.*?\*/", "", scene_test, flags=re.DOTALL)
     code = re.sub(r"//[^\n]*", "", code)
-    bases = {title(s).split("(")[0] for s in symbols if owner(s) in {ENTRY_TYPE, LOWER_TYPE}}
+    overloads: dict[str, dict[str, int]] = {}
+    for symbol in symbols:
+        if owner(symbol) in {ENTRY_TYPE, LOWER_TYPE}:
+            counts = overloads.setdefault(title(symbol).split("(")[0], {})
+            counts[owner(symbol)] = counts.get(owner(symbol), 0) + 1
+    bases = set(overloads)
     problems = []
     for base in sorted(bases - kinds.keys()):
         problems.append(
@@ -817,11 +832,15 @@ def check_port_kinds(
             continue
         if kind != SCENE or base not in bases:
             continue
-        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])", code):
+        wanted = overloads[base].get(LOWER_TYPE) or overloads[base][ENTRY_TYPE]
+        calls = len(re.findall(
+            rf"(?<![A-Za-z0-9_])(?:\$0|canvas|sketch)\.{re.escape(base)}\s*\(", code))
+        if calls >= wanted:
             continue
         problems.append(
             f"{base} はシーンの記述なのに、フレームの外で呼ぶと注意が出るかを見る検査 "
-            f"({SCENE_TEST.name}) に名前が無い。口ごとの表に行を足す (ADR-0021 決定 4・#1670)"
+            f"({SCENE_TEST.name}) の呼び出しが {calls} 本で、多重定義 {wanted} 本に足りない。"
+            "口ごとの表に行を足す (ADR-0021 決定 4・#1670)"
         )
     return problems
 
