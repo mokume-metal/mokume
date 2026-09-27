@@ -246,7 +246,7 @@ import MokumeDiagnostics
     /// 完了の知らせを main actor へ渡す前に合体する器 ([#1594])。
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
-    private let completionNotices = CompletionNotices()
+    private let completionNotices = CoalescedNotices()
 
     /// 診断: 届いた完了の知らせの数 (投入の結末を受け取るハンドラが呼ばれた数)。
     var arrivedNoticeCount: Int { completionNotices.arrived }
@@ -258,6 +258,13 @@ import MokumeDiagnostics
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     var queuedNoticeCount: Int { completionNotices.queued }
+
+    /// 診断: 完了の知らせが main actor で**実際に走った**回数。
+    ///
+    /// **器の数え (``queuedNoticeCount``) とは別に、走った側で数える** (#1594 の反証 3)。
+    /// 器の数えは器が積めと言った数で、ハンドラが器の答えを無視して毎回積んでも 1 のままに
+    /// 見える。走った回数は積まれた `Task` の数そのものなので、そちらを取り違えない。
+    private(set) var noticeRuns = 0
 
     /// 投入に添えるお願いを組む。**投入ごとに作る。**
     ///
@@ -276,7 +283,7 @@ import MokumeDiagnostics
     /// 瞬間に落ちる。書けばコンパイラが掴んだものを検査する。
     ///
     /// **知らせは合体する** ([#1594])。main actor へ積むのは、積んだまま走っていない知らせが
-    /// 無いときの 1 本だけで、走るときに届いている最大の番号まで刈る (``CompletionNotices``)。
+    /// 無いときの 1 本だけで、走るときに届いている最大の番号まで刈る (``CoalescedNotices``)。
     /// 投入ごとに 1 本積むと、main actor を譲らずにフレームを回す経路では 1 本も走れず、
     /// フレームに比例して溜まり続けた。
     ///
@@ -290,7 +297,12 @@ import MokumeDiagnostics
             // **抱えている資源を手放す契機は、完了そのものが持つ。** 実測では、成功した
             // 投入でもハンドラは毎回呼ばれる (50 回の投入に対し 50 回)
             if completionNotices.arrive(submission) {
-                Task { @MainActor in self?.releaseFinished(upTo: completionNotices.take()) }
+                Task { @MainActor in
+                    // **印は自分の生死によらず下ろす。** `self?.…(take())` の形では、自分が
+                    // 居ないと `take()` が評価されず、積んだ印が残る (#1594 の反証 4)
+                    let newest = completionNotices.take()
+                    self?.releaseOnNotice(upTo: newest)
+                }
             }
             guard let error = feedback.error else {
                 // 打ち切りの後に正常に終わった投入があれば、GPU はもう回復している。以後の
@@ -322,6 +334,12 @@ import MokumeDiagnostics
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     private func releaseFinished(upTo submission: UInt64) {
         releaseFinished(through: max(submission, completion.signaledValue))
+    }
+
+    /// 合体した完了の知らせが main actor で走った。走った回数を数えてから刈る。
+    private func releaseOnNotice(upTo submission: UInt64) {
+        noticeRuns += 1
+        releaseFinished(upTo: submission)
     }
 
     /// 投入したコマンドが読むリソースを、終わるまで抱えておく列。

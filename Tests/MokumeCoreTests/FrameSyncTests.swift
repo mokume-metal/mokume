@@ -991,7 +991,7 @@ struct FrameSyncTests {
     ///
     /// **控える番号の誤り (先に積んだ知らせの番号のまま刈る) は、この検査では赤くならない。**
     /// 刈る側は番号と合図の進んでいるほうまで刈り、譲って待つ間に合図が追いつくからである。
-    /// 合図が遅れる並びは実物では起こせる保証が無いので、`CompletionNoticesTests` が手で並べて
+    /// 合図が遅れる並びは実物では起こせる保証が無いので、`CoalescedNoticesTests` が手で並べて
     /// 押さえる。ここが見るのは、合体しても誰も頼まずに畳めること ([#1076] の芯) である。
     ///
     /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
@@ -1022,9 +1022,21 @@ struct FrameSyncTests {
         #expect(bench.gpu.queuedNoticeCount <= 1, "知らせが合体していない")
 
         let settles = bench.gpu.settleCalls
+        let runs = bench.gpu.noticeRuns
         try await waitUntil {
             bench.gpu.heldResourceCount == 0 && bench.gpu.retiredResourceCount == 0
         }
+        // **積まれた `Task` の数は、走った側で数える** (反証 3)。器の数え (`queuedNoticeCount`)
+        // は器の答えしか映さず、ハンドラが答えを無視して毎回積んでも 1 に見える。main の列は
+        // 積まれた順に捌かれるので、少し眠ってから数えれば、溜まっていた分はすべて走り終えている
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(
+            bench.gpu.noticeRuns - runs <= 1,
+            """
+            譲らずに \(frames) フレーム (投入 \(submitted) 本) 回した後で譲ったら、完了の知らせが \
+            \(bench.gpu.noticeRuns - runs) 本走った。main actor へ積む知らせが合体していない
+            ([#1594](https://github.com/mokume-metal/mokume/issues/1594))。
+            """)
         #expect(bench.gpu.settleCalls == settles, "刈るために待ちを頼んでいる")
         #expect(bench.gpu.queuedNoticeCount == 0, "譲った後も走っていない知らせが残っている")
         #expect(bench.gpu.isIdle, "抱えているものが無いのに、まだ走っている")

@@ -95,6 +95,11 @@ struct FrameGrowthTests {
     /// 直す前は、投入ごとに 1 本積んでいた。N 枚で N 本以上 (1 枚に投入が 1 本以上ある) 溜まり、
     /// 譲るまで 1 本も走らなかった。
     ///
+    /// **ここが読むのは器の数え (`queuedNoticeCount`) である。** ハンドラが器の答えを無視して
+    /// 毎回積む誤りはここでは赤くならない (譲らない限り走った数は数えられない)。積まれた
+    /// `Task` の数は、譲った後に走った回数として `FrameSyncTests` の
+    /// `coalescedNoticesReleaseTheLastSubmission` が数える。
+    ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     @Test("main actor を譲らずにフレームを回しても、完了の知らせは 1 本までしか積まれない")
     func completionNoticesDoNotPileUpWithoutYielding() throws {
