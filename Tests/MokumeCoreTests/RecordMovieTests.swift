@@ -403,9 +403,8 @@ struct RecordingFailureTests {
             #expect(both.contains("motion.mov"), "動画の書き損じが落ちている")
 
             // どちらの口にも新しい知らせが無いフレーム。片方の「まだ決着していない」で
-            // 理由を消すと、数えがそこで 0 に戻る (#1272)。**静止画の口にも後が来る形にする** —
-            // 何も来ない口の書き損じは 1 回数えたら下ろす (#1626)
-            recorder.save(blocker.appendingPathComponent("next.png").path, at: movie.limit + 3)
+            // 理由を消すと、数えがそこで 0 に戻る (#1272)。`recorder.writer` へ直に書いた
+            // 静止画は連番の器 (流れ) へ決着するので保たれる
             recorder.absorbOutcomes()
             let stillBoth = try #require(recorder.failure, "知らせが無いだけで直ったことになっている")
             #expect(stillBoth.contains("still.png"))
@@ -436,15 +435,48 @@ struct RecordingFailureTests {
                 movie.write(image(UInt8(frame * 40)), frame: frame, time: Double(frame - 1) / 60)
             }
 
-            // どちらも 10 枚目までが録りの幅 — 11 枚目で止めた / 10 枚目まで描いて閉じた
+            // どちらも 10 枚目までが録りの幅 (10 枚目まで描き終えたところで止めた・閉じた)
             switch how {
-            case "endRecord": recorder.endRecord(at: 11)
+            case "endRecord": recorder.endRecord(through: 10)
             default: recorder.close(.block, through: 10)
             }
 
             let said = try #require(
                 recorder.warnings.message(for: .droppedFrames), "外れた後の末尾の欠けを名乗っていない")
             #expect(said.contains("wrote 3 frames. 7 did not reach it"), "\(said)")
+        }
+    }
+
+    /// **動画の書き損じも、並びへ戻るときに持ち越さない** ([#1626] の反証 7)。動画の書き損じで
+    /// 外された後に `save()` で戻ると、保っていた書き損じが新しい健康状態で 1 回ぶん数えられた。
+    /// 捨てる前に名乗り、書き出しの穴としては残す。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("並びへ戻るとき、動画の書き損じも持ち越さない")
+    func rejoiningDropsTheMovieFailureToo() async throws {
+        try await withTemporaryDirectory("mokume-movie-rejoin") { directory in
+            // 書き先の親をファイルにしておく。動画を開けない
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+            let recorder = FrameRecorder(frameRate: 60)
+            recorder.beginRecord(blocker.appendingPathComponent("motion.mov").path, at: 1)
+            let movie = try #require(recorder.recordingMovie)
+            movie.write(image(80), frame: 1, time: 0)
+            try #require(
+                pollUntilSettled(within: 10) {
+                    recorder.absorbOutcomes()
+                    return recorder.failure != nil
+                },
+                "動画の書き損じが 10 秒待っても決着しない")
+            // 外れている間にもう 1 枚転ぶ (口に残る)
+            movie.write(image(90), frame: 2, time: 1.0 / 60)
+            _ = movie.outstanding
+
+            recorder.save(directory.appendingPathComponent("still.png").path, at: 3)
+            recorder.startAfresh()
+            #expect(recorder.failure == nil, "動画の書き損じを持ち越している")
+            #expect(recorder.hasFailedToWrite)
+            recorder.close()
         }
     }
 

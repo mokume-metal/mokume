@@ -153,6 +153,12 @@ public final class SketchRuntime {
     private var firstAdvanceAt: Double?
     /// いまフレームを描いている最中か。入れ子で描き始めないための目印。
     private var isAdvancingFrame = false
+    /// 描き終えた (描けなかったものも含む) 最後のフレームの番号。**録りの幅の終わりになる。**
+    ///
+    /// `frameCount` そのものは、描いている最中なら描き終えていないフレームを、止まっている
+    /// 間なら描き終えたフレームを指す。止める口 (`endRecord()`) はどちらからも呼ばれるので、
+    /// `frameCount - 1` のような決め打ちでは片方で 1 枚ずれる (#1626 の反証)。
+    private var drawnThrough = 0
     /// 最後にフレームを描き終えた時刻。**誰かが進めているか**の判断に使う。
     private var lastFrameAt: Double = 0
     /// フレームの速さを数える、**ただ 1 つの集計器** ([ADR-0030] 決定 7)。
@@ -362,7 +368,7 @@ public final class SketchRuntime {
         guard let closingRecorder else { return true }
         // **最後に描いたフレームまでを録りの幅にする。** 撮る係が途中で外れていたら、
         // 末尾の欠けはここで教えないと落ちた数に入らない (#1626)
-        guard closingRecorder.close(patience, through: timing.frameCount) else { return false }
+        guard closingRecorder.close(patience, through: drawnThrough) else { return false }
         if closingRecorder.hasFailedToWrite { recordingFailed = true }
         self.closingRecorder = nil
         return true
@@ -470,6 +476,8 @@ public final class SketchRuntime {
     private func drawSketchFrame(deliveredInput: Bool = false) throws(RenderFailure) {
         start()
         timing.advance()
+        // 描けなかったフレームも、録りの幅には入る (落ちた 1 枚として数える・ADR-0025 決定 2)
+        defer { drawnThrough = timing.frameCount }
         beginFrame()
         if !deliveredInput { collectInput() }
         canvas.time = timing.time
@@ -831,8 +839,11 @@ public final class SketchRuntime {
         deliverPendingToOutlets()
         // **止めたフレームを一緒に渡す。** 撮る係が途中で外れていると最後の絵が届かないので、
         // どこまでが録りの幅かを教えないと、末尾の欠けが落ちた数に入らない (#1626)
-        recorder.endRecord(at: timing.frameCount)
+        recorder.endRecord(through: drawnThrough)
     }
+
+    /// 撮る係が言った注意の控え。撮る係がまだ無いか、閉じ終えて手放した後は `nil`。**検査が読む。**
+    var recorderWarnings: WarningLog<FrameRecorder.Warning>? { recorder?.warnings }
 
     /// 撮る係。**頼まれてはじめて作る** — 撮らないスケッチは 1 バイトも払わない。
     private func requireRecorder() -> FrameRecorder {
@@ -852,11 +863,31 @@ public final class SketchRuntime {
     /// 新しくすると、係が保っている前の書き損じが最初のフレームで 1 回ぶん数えられる。
     /// 録っている最中に外されて `save()` で戻るときも同じである (#1626)。
     private func attachRecorderIfNeeded() {
-        guard let recorder, !recorder.isIdle,
-            !outlets.contains(where: { $0.seam === recorder })
-        else { return }
-        outlets.append((recorder, SeamHealth()))
+        guard let recorder else { return }
+        Self.rejoin(recorder, into: &outlets)
+    }
+
+    /// 頼まれている撮る係を、並びへ入れる (入れ直す)。
+    ///
+    /// **並びに居ても、外されていれば入れ直す** (#1626 の反証)。外された係は、そのフレームを
+    /// 配り終えるまで並びに残る (``detachRecorderIfDone()``)。その間に頼まれると (描き切りの中の
+    /// `endRecord()` で外れ、同じ `draw()` の中で `save()` する形)、居ることだけを見て入れ直さず、
+    /// 直後に並びから外されて、頼んだものが終わりまで書かれない。
+    ///
+    /// - Returns: 入れた・入れ直したか。
+    @discardableResult
+    static func rejoin(
+        _ recorder: FrameRecorder, into outlets: inout [(seam: any Outlet, health: SeamHealth)]
+    ) -> Bool {
+        guard !recorder.isIdle else { return false }
+        if let index = outlets.firstIndex(where: { $0.seam === recorder }) {
+            guard !outlets[index].health.isAttached else { return false }
+            outlets[index].health = SeamHealth()
+        } else {
+            outlets.append((recorder, SeamHealth()))
+        }
         recorder.startAfresh()
+        return true
     }
 
     /// 頼まれているものが無くなったら並びから外す。

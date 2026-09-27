@@ -55,7 +55,13 @@ final class FrameWriter {
     ///
     /// 途中のディレクトリはここで作る — 撮る先を先に用意させると、名前を組み立てた
     /// 側と作る側が二重になる。
-    func write(_ image: DisplayImage, to path: String) {
+    ///
+    /// - Parameter slot: 決着を置く器。`nil` ならこの係の器 (``takeOutcome()``)。**数え方の
+    ///   違う書き込みを分けて置くためにある** — 1 度きりの `save()` と流れで書く連番
+    ///   (``FrameRecorder``・[#1626])。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    func write(_ image: DisplayImage, to path: String, settlingInto slot: OutcomeSlot? = nil) {
         // 背圧。ここで待つのは main actor なので、フレームが遅くなる代わりに
         // 抱える枚数は上限を超えない
         pressure.take()
@@ -63,7 +69,7 @@ final class FrameWriter {
 
         let url = URL(fileURLWithPath: path)
         let release = pressure.release
-        let lastOutcome = lastOutcome
+        let lastOutcome = slot ?? lastOutcome
         let path = path
         Task.detached(priority: .utility) {
             // **結果は枠を返す前に置く。** 背圧で待っていた側は、返ってきた時点で
@@ -121,18 +127,6 @@ final class FrameWriter {
     ///
     /// 閉じる経路のように「言い残しが無いか」だけを見る読み手のためにある。
     func takeFailure() -> String? { takeOutcome()?.failure }
-
-    /// まだ決着していない書き込みがあるか。**待たない。**
-    ///
-    /// 結果は枠を返す前に置かれる (``write(_:to:)``) ので、`false` なら頼んだ全部の結果が
-    /// 既に置かれている。知らせが無いことを「まだ決着していない」と読んでよいのは、ここが
-    /// `true` の間だけである ([#1626])。
-    ///
-    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
-    func hasUnsettledWrites() -> Bool {
-        pressure.harvest()
-        return pressure.outstanding > 0
-    }
 }
 
 /// 書き込み 1 つの決着。

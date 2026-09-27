@@ -50,9 +50,23 @@ final class FrameRecorder: Outlet {
     /// [#1456]: https://github.com/mokume-metal/mokume/issues/1456
     private var recordingFrom = 0
 
-    /// 静止画・連番の、最後に決着した書き込みの書き損じ。**知らせの無いフレームでは、後に
-    /// 書き込みが来る間だけ前の値を保つ** (``absorbOutcomes()``)。
-    private var imageFailure: String?
+    /// 撮っている連番の番号の幅。落ちた数はここから導く (``RecordedSpan``)。
+    private var sequenceSpan: RecordedSpan?
+
+    /// `save()` の 1 枚ものの決着を置く器。**連番の器 (``FrameWriter/takeOutcome()``) と分ける。**
+    ///
+    /// 数え方が違うからである ([#1626])。連番は毎フレーム書き込みが来る流れで、知らせの無い
+    /// フレームでは前の書き損じを保つ (#1272)。1 枚ものは 1 度きりの事象で、保つと後に何も
+    /// 来ないので二度と消えない。1 つの器に混ぜると、どちらの数え方も選べない。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    private let shotOutcomes = OutcomeSlot()
+    /// このフレームに知らせが来た、`save()` の 1 枚ものの書き損じ。**次のフレームには持ち越さない。**
+    private var shotFailure: String?
+    /// 連番の、最後に決着した書き込みの書き損じ。**知らせの無いフレームでは前の値を保つ** (#1272)。
+    ///
+    /// 連番を止めるときに消す。止めた流れの失敗を持ち越す理由が無い。
+    private var sequenceFailure: String?
     /// 動画の、最後に決着した書き込みの書き損じ。**知らせの無いフレームでは前の値を保つ。**
     ///
     /// 動画を手放すときに消す — 閉じ際に分かったことは ``finishMovie(_:)`` が言うので、
@@ -64,16 +78,22 @@ final class FrameRecorder: Outlet {
     ///
     /// 書き込みは隔離の外で走るので、知らせが次のフレームに間に合わないことがある。そこで
     /// `nil` を載せると ``SeamHealth`` は「順調」と読んで数えを 0 に戻し、転び続ける出口が
-    /// 負荷の下で外れなくなる。`nil` に戻すのは**書けたことが決着したとき**と、**その口に
-    /// もう何も来ないとき**である ([#1626]・``absorbOutcomes()``)。
+    /// 負荷の下で外れなくなる。流れ (連番・動画) の書き損じを `nil` に戻すのは、**書けたことが
+    /// 決着したとき**と、その流れを止めたときである。
     ///
-    /// 両方あるときは並べて 1 つの理由にする (#789)。差込口が持てる理由は 1 つだが、
+    /// **`save()` の 1 枚ものは流れではない** ([#1626])。書き損じは知らせが来たフレームで
+    /// 1 回だけ載せ、次のフレームには持ち越さない。持ち越すと後に何も来ないので二度と消えず、
+    /// 以後のフレームすべてで「続けて転んだ」と数えられて、同居している動画ごと外れる。
+    /// 「このフレームには新しい知らせが無い」を差込口の報せ (`String?`) が表せないことが根で、
+    /// それは #1708 で扱う。
+    ///
+    /// 幾つかあるときは並べて 1 つの理由にする (#789)。差込口が持てる理由は 1 つだが、
     /// ``SeamHealth`` が見るのは `nil` かどうかだけなので、繋いでも数え方は変わらない。
     ///
     /// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
     /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
     var failure: String? {
-        let reasons = [imageFailure, movieFailure].compactMap { $0 }
+        let reasons = [shotFailure, sequenceFailure, movieFailure].compactMap { $0 }
         return reasons.isEmpty ? nil : reasons.joined(separator: " / ")
     }
 
@@ -180,7 +200,7 @@ final class FrameRecorder: Outlet {
             return
         }
         if Self.isMovie(pattern) {
-            movie = MovieWriter(path: pattern, frameRate: frameRate)
+            movie = MovieWriter(path: pattern, frameRate: frameRate, from: frame)
             recordingFrom = frame
             forgetWarnings()
             return
@@ -194,6 +214,7 @@ final class FrameRecorder: Outlet {
             return
         }
         self.sequence = sequence
+        sequenceSpan = RecordedSpan(from: frame)
         recordingFrom = frame
         forgetWarnings()
     }
@@ -223,13 +244,22 @@ final class FrameRecorder: Outlet {
     /// **捨てる知らせが書き損じなら、名乗ってから捨てる。** 外れている間に決着した書き損じを
     /// 読む口はほかに無い。黙って捨てると、書けなかった 1 枚が誰にも知らされない。
     ///
-    /// 動画の側は触らない。撮っている動画には続きが書かれるので、その書き損じは持ち越しでは
-    /// なく、手放すときに消える (``movieFailure``)。
+    /// **動画の側も同じに仕切り直す** ([#1626] の反証)。動画の書き損じで外された後に `save()` で
+    /// 戻ると、保っていた動画の書き損じが新しい健康状態で 1 回ぶん数えられる。動画が本当に
+    /// 転び続けているなら、次に決着した書き込みがまた知らせる。
     ///
     /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
     func startAfresh() {
-        imageFailure = nil
-        if let failure = writer.takeFailure() { noteImageFailure(failure) }
+        shotFailure = nil
+        sequenceFailure = nil
+        movieFailure = nil
+        for failure in [shotOutcomes.take()?.failure, writer.takeFailure()].compactMap({ $0 }) {
+            noteImageFailure(failure)
+        }
+        if let failure = movie?.takeFailure() {
+            hasFailedToWrite = true
+            warnOnce(.movieFailure, failure)
+        }
     }
 
     /// 静止画・連番の書き損じを 1 度名乗り、書き出しに穴があったことを残す。
@@ -246,17 +276,33 @@ final class FrameRecorder: Outlet {
 
     /// 連番か動画を止める。**頼んだ全部がファイルになってから返る。**
     ///
-    /// - Parameter frame: 止めるよう頼まれたフレームの番号。**録りはその手前のフレームまで**
-    ///   で、この番号の絵は入らない (まだ描き終えていない)。動画の落ちた数はここまでの幅で
-    ///   数える (``MovieWriter/expectFrames(through:)``)。`nil` なら受け取った最後の絵まで。
-    func endRecord(at frame: Int? = nil) {
+    /// - Parameter lastFrame: 録りが覆うはずだった最後のフレーム — 止めるよう頼まれた時点で
+    ///   描き終えていた最後のフレーム。落ちた数はここまでの幅で数える (``RecordedSpan``)。
+    ///   `nil` なら受け取った最後の絵まで。
+    func endRecord(through lastFrame: Int? = nil) {
         guard isRecording else {
             warnOnce(.notRecording, "endRecord(): nothing is being recorded")
             return
         }
-        sequence = nil
-        finishMovie(through: frame.map { $0 - 1 })
+        finishSequence(through: lastFrame)
+        finishMovie(through: lastFrame)
         writer.drain()
+    }
+
+    /// 撮っている連番を止め、**入らなかった枚数をここで言う。**
+    ///
+    /// 連番の名前の番号は録りの中の通し番号で、フレームの番号ではない。途中で絵が届かなかった
+    /// (描けなかった・撮る係が外れていた) フレームは、名前の上では穴にならずに詰まる。
+    /// だから落ちた数は名前からは導けず、ここで名乗る ([#1626] の反証・ADR-0025 決定 2)。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    private func finishSequence(through lastFrame: Int?) {
+        guard let sequence, var span = sequenceSpan else { return }
+        self.sequence = nil
+        sequenceSpan = nil
+        sequenceFailure = nil
+        if let lastFrame { span.expect(through: lastFrame) }
+        reportDropped(sequence.pattern, accepted: span.accepted, dropped: span.dropped)
     }
 
     /// 撮っている動画を閉じ、**閉じ際に分かったことをここで言う。**
@@ -287,7 +333,7 @@ final class FrameRecorder: Outlet {
         guard movie.finish(patience) else { return false }
         self.movie = nil
         movieFailure = nil
-        report(movie)
+        reportDropped(movie.path, accepted: movie.acceptedFrames, dropped: movie.droppedFrames)
         if let failure = movie.takeFailure() {
             hasFailedToWrite = true
             warnOnce(.movieFailure, failure)
@@ -295,7 +341,7 @@ final class FrameRecorder: Outlet {
         return true
     }
 
-    /// 撮り終えた動画のことを 1 行で言う。
+    /// 撮り終えた録り (動画・連番) のことを 1 行で言う。
     ///
     /// **落ちたフレームは黙って飲まない。** 出口へ届かなかったフレームがあると動きは
     /// カクつくが、時刻はずれないので**再生しても気付きにくい** ([ADR-0025] 決定 2)。
@@ -305,11 +351,11 @@ final class FrameRecorder: Outlet {
     ///
     /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    private func report(_ movie: MovieWriter) {
-        guard movie.droppedFrames > 0 else { return }
+    private func reportDropped(_ name: String, accepted: Int, dropped: Int) {
+        guard dropped > 0 else { return }
         warnOnce(
             .droppedFrames,
-            "\(movie.path): wrote \(movie.acceptedFrames) frames. \(movie.droppedFrames) did not "
+            "\(name): wrote \(accepted) frames. \(dropped) did not "
                 + "reach it (they could not be drawn, or came while writing had been detached) "
                 + "and are not in it (the times of the frames that remain are not shifted)")
     }
@@ -327,29 +373,35 @@ final class FrameRecorder: Outlet {
         // **届いた絵より後で頼まれたものは持ち越す。** 絵は 1 枚遅れて届くので、
         // ここで全部書くと `save()` が 1 つ前のフレームの絵を書くことになる (#927)
         for shot in oneShots where shot.frame <= frame.frame {
-            writer.write(image, to: shot.path)
+            writeShot(image, to: shot.path)
         }
         oneShots.removeAll { $0.frame <= frame.frame }
         // **撮り始めたフレームより前の絵は録らない。** これも 1 枚遅れのためで、撮る係が
         // 前のフレームから並びに居ると、撮り始めたフレームで前の絵が届く (#1456)
         guard frame.frame >= recordingFrom else { return }
-        if sequence != nil { writer.write(image, to: sequence!.next()) }
+        if sequence != nil {
+            writer.write(image, to: sequence!.next())
+            sequenceSpan?.accept(frame.frame)
+        }
         movie?.write(image, frame: frame.frame, time: frame.time)
     }
 
-    /// 決着した書き込みの知らせを**両方から**取り出して、``failure`` を更新する。
+    /// `save()` の 1 枚を書くよう頼む。決着は 1 枚ものの器 (``shotOutcomes``) に置く。
+    func writeShot(_ image: DisplayImage, to path: String) {
+        writer.write(image, to: path, settlingInto: shotOutcomes)
+    }
+
+    /// 決着した書き込みの知らせを**全部の口から**取り出して、``failure`` を更新する。
     ///
-    /// **知らせがあった口だけを更新する** ([#1272])。片方の口の「まだ決着していない」で
-    /// もう片方の書き損じまで消すと、数えがそこで 0 に戻る。
+    /// **流れの口 (連番・動画) は、知らせがあったときだけ更新する** ([#1272])。片方の口の
+    /// 「まだ決着していない」でもう片方の書き損じまで消すと、数えがそこで 0 に戻る。
     ///
-    /// **ただし、もう何も来ない口の書き損じは下ろす** ([#1626])。知らせが無いことを
-    /// 「まだ決着していない」と読めるのは、後に書き込みが来る間 — 連番を撮っている・`save()` の
-    /// 予約がある・書き込みが決着していない — だけである。決着した 1 度きりの `save()` の
-    /// 書き損じを保つと、動画だけを撮っている間は二度と消えず、以後のフレームすべてで
-    /// 「続けて転んだ」と数えられて、同居している動画ごと外れる。書き損じは知らせが来た
-    /// フレームで 1 回数え、そこで名乗る (``noteImageFailure(_:)``)。
+    /// **1 枚ものの口は、知らせが来たフレームだけ載せる** ([#1626])。1 度きりの `save()` の
+    /// 書き損じを保つと、後に何も来ないので二度と消えず、同居している動画ごと外れる。
+    /// 別の書き込みがまだ決着していないことは、保つ理由にならない (その書き込みの知らせは、
+    /// その書き込みが持ってくる)。
     ///
-    /// 動画の口は撮っている間ずっと書き込みが来るので、手放すまで保つ (``finishMovie(_:through:)``)。
+    /// 静止画・連番の書き損じは、取り出したその場で名乗る (``noteImageFailure(_:)``)。
     ///
     /// **`??` で繋がない** ([#789])。左が非 nil なら右を評価しないので、静止画が
     /// 転んだフレームでは動画の知らせを取り出さず、最終フレームだと拾う機会が無い。
@@ -358,14 +410,11 @@ final class FrameRecorder: Outlet {
     /// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
     /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
     func absorbOutcomes() {
-        // **知らせを取り出す前に見る。** 決着していない書き込みが無ければ、全部の知らせは
-        // もう置かれている (結果は枠より先に置かれる・``FrameWriter/write(_:to:)``)
-        let moreImagesComing = sequence != nil || !oneShots.isEmpty || writer.hasUnsettledWrites()
+        shotFailure = shotOutcomes.take()?.failure
+        if let failure = shotFailure { noteImageFailure(failure) }
         if let outcome = writer.takeOutcome() {
-            imageFailure = outcome.failure
+            sequenceFailure = outcome.failure
             if let failure = outcome.failure { noteImageFailure(failure) }
-        } else if !moreImagesComing {
-            imageFailure = nil
         }
         if let outcome = movie?.takeOutcome() { movieFailure = outcome.failure }
         if failure != nil { hasFailedToWrite = true }
@@ -386,8 +435,8 @@ final class FrameRecorder: Outlet {
     ///
     /// - Parameters:
     ///   - patience: まだ済んでいないとき、塞いで待つか、その場で返るか。
-    ///   - lastFrame: 最後に描いたフレーム。撮っている動画は、ここまでの幅で落ちた数を
-    ///     数える (``finishMovie(_:through:)``)。`nil` なら受け取った最後の絵まで。
+    ///   - lastFrame: 最後に描いたフレーム。撮っている動画と連番は、ここまでの幅で落ちた数を
+    ///     数える (``RecordedSpan``)。`nil` なら受け取った最後の絵まで。
     /// - Returns: 決着したか (全部済んだ・諦めた)。``Patience/block`` なら必ず `true`。
     ///
     /// [#978]: https://github.com/mokume-metal/mokume/issues/978
@@ -398,6 +447,7 @@ final class FrameRecorder: Outlet {
             imagesSettled = true
         }
         guard finishMovie(patience, through: lastFrame) else { return false }
+        finishSequence(through: lastFrame)
         imagesSettled = false
         // **ここが最後の読み手である** ([#789])。`receive(_:)` はもう来ないので、
         // 待っている間に判明した静止画・連番の書き損じは、ここで言わなければ
@@ -406,9 +456,8 @@ final class FrameRecorder: Outlet {
         // 読むのは**閉じ終えた呼び出しだけ**で、まだ待っている呼び出しは取らない
         //
         // [#789]: https://github.com/mokume-metal/mokume/issues/789
-        if let failure = writer.takeFailure() {
-            hasFailedToWrite = true
-            warnOnce(.imageFailure, failure)
+        for failure in [shotOutcomes.take()?.failure, writer.takeFailure()].compactMap({ $0 }) {
+            noteImageFailure(failure)
         }
         // **果たせなかった予約を黙って捨てない** ([#1300])。`receive(_:)` はもう来ないので、
         // ここに残っているものは 1 枚もファイルにならない。頼んだのに何の音も立てずに
