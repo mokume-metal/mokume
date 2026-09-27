@@ -24,14 +24,8 @@ extension Canvas {
     public func noTextFont() { style.fontName = nil }
 
     /// これから描く文字の大きさ (画素)。
-    ///
-    /// **負の値と、数でない値・無限は 0 に倒す** — 大きさ 0 の字は描かれず、測っても 0 になる。
-    /// 無限を書体へ渡すと、CoreText は上端と下端に無限を、送り幅に NaN を返す ([#1587])。
-    ///
-    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
     public func textSize(_ size: some ScalarConvertible) {
-        let size = size.asFloat
-        style.textSize = size.isFinite ? max(0, size) : 0
+        style.textSize = textMeasure(size.asFloat, from: "textSize")
     }
 
     /// これから描く文字の太さと傾き。
@@ -47,8 +41,42 @@ extension Canvas {
 
     /// 行と行の間隔 (画素)。
     public func textLeading(_ leading: some ScalarConvertible) {
-        let leading = leading.asFloat
-        style.textLeading = max(0, leading)
+        style.textLeading = textMeasure(leading.asFloat, from: "textLeading")
+    }
+
+    /// 字の大きさと行送りに使える、いちばん大きい値 (画素)。
+    ///
+    /// **字の寸法から作る量がどれも `Float` の有限に収まる所に置く** ([#1587])。寸法は大きさに
+    /// 比例し、そこから行送り (× 1.25)・上端と下端の和・送り幅の合計 (× 字数)・行の広がり
+    /// (× 行数) を作り、輪郭では点どうしの距離を 2 乗する。上限を置かないと、有限の大きさでも
+    /// これらが無限に溢れ、`0 × ∞` や `∞ - ∞` から NaN が出る。2 乗しても溢れない境
+    /// (√`Float.greatestFiniteMagnitude` ≈ 1.8e19) より 1 桁下に置けば、字形の数倍の距離の
+    /// 2 乗も、字数や行数を掛けた和も収まる。焼き場の上限の頁 (4096 画素) よりはるかに大きい
+    /// ので、描ける字の大きさは変わらない。
+    ///
+    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
+    static let largestTextMeasure: Float = 1e18
+
+    /// 大きさと行送りの受け口。**負の値は黙って 0 に、数でない値・無限は 0 に、上限を越える値は
+    /// 上限に締める** ([ADR-0020] 決定 5)。後の 2 つは「使えない値を渡された」ので 1 度知らせる
+    /// (負の値を 0 にするのは説明に書いた扱いなので黙る)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    private func textMeasure(_ value: Float, from name: String) -> Float {
+        guard value.isFinite else {
+            warnOnce(
+                .unusableTextMeasure,
+                "\(name)(): got \(value), which is not a number text can use, so 0 was used")
+            return 0
+        }
+        guard value <= Self.largestTextMeasure else {
+            warnOnce(
+                .unusableTextMeasure,
+                "\(name)(): \(value) is larger than text can be measured at, so "
+                    + "\(Self.largestTextMeasure) was used")
+            return Self.largestTextMeasure
+        }
+        return max(0, value)
     }
 
     // MARK: - 寸法
@@ -114,8 +142,9 @@ extension Canvas {
     ///
     /// [#895]: https://github.com/mokume-metal/mokume/issues/895
     private func firstBaseline(at y: Float, face: Typeface, lines: Int) -> Float {
-        // 最初の行の基準線から、最後の行の基準線までの距離
-        let span = Float(lines - 1) * resolvedTextLeading
+        // 最初の行の基準線から、最後の行の基準線までの距離。1 行なら掛けずに 0 — 行送りが
+        // 何であれ、1 行の塊に広がりは無い
+        let span = lines > 1 ? Float(lines - 1) * resolvedTextLeading : 0
         switch style.verticalTextAlign {
         case .baseline: return y
         case .top: return y + face.ascent
@@ -416,14 +445,9 @@ extension Canvas {
     /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
     /// 1 つの形として扱いたいなら、``textFont(_:)`` で書体を指定する — `Helvetica`
     /// などでは `A` が外周 1 つと穴 1 つになる。
-    ///
-    /// **位置に数でない値・無限を渡すと空を返す** — 読み取りの口なので、落とさず黙って空を返す
-    /// ([ADR-0020] 決定 5・[#1587])。
-    ///
-    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
+        // 読み取りの口なので、数でない位置・無限の位置は落とさず黙って空を返す (#1587)
         guard !string.isEmpty, style.textSize > 0, x.isFinite, y.isFinite else { return [] }
         let face = typeface
         let lines = string.lines
@@ -533,11 +557,15 @@ extension Canvas {
     }
 
     /// 周の符号つき面積。向きを読むために使う。
-    static func signedArea(of points: [SIMD2<Float>]) -> Float {
-        var total: Float = 0
+    ///
+    /// **`Double` で積む** ([#1587])。座標どうしの積は、`Float` では大きな字や原点から遠い
+    /// 位置で無限に溢れ、`∞ - ∞` の NaN から穴がすべて外周と読まれる。`Float` の有限の値
+    /// どうしの積は `Double` なら溢れない。
+    static func signedArea(of points: [SIMD2<Float>]) -> Double {
+        var total: Double = 0
         for index in points.indices {
-            let a = points[index]
-            let b = points[(index + 1) % points.count]
+            let a = SIMD2<Double>(points[index])
+            let b = SIMD2<Double>(points[(index + 1) % points.count])
             total += a.x * b.y - b.x * a.y
         }
         return total / 2
