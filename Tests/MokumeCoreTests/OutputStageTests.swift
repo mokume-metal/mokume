@@ -108,6 +108,54 @@ struct OutputStageTests {
         #expect(OutputStage.quantize(.nan) == 0)
     }
 
+    // MARK: - 表示できる形になった絵を読む (GPU を要さない・#1590)
+
+    /// 幅と高さを違えた小さな絵。縦横を取り違えると範囲の判定がずれる。
+    ///
+    /// `nonisolated` なのは、検査の引数の並びが隔離の外で組まれるため。
+    private nonisolated static let shownWidth = 3
+    private nonisolated static let shownHeight = 2
+
+    /// 位置ごとに違う**不透明な**画素。透明で埋めると、範囲の外で内側の値を返しても
+    /// 透明と区別が付かず、検査が何も見なくなる。
+    private static func shownPixel(_ x: Int, _ y: Int) -> (UInt8, UInt8, UInt8, UInt8) {
+        (UInt8(10 + 40 * x), UInt8(20 + 60 * y), 128, 255)
+    }
+
+    private static func makeShownImage() -> DisplayImage {
+        var bytes: [UInt8] = []
+        for y in 0..<shownHeight {
+            for x in 0..<shownWidth {
+                let pixel = shownPixel(x, y)
+                bytes += [pixel.0, pixel.1, pixel.2, pixel.3]
+            }
+        }
+        return DisplayImage(width: shownWidth, height: shownHeight, bytes: bytes)
+    }
+
+    /// 完了条件「範囲の外で読んでも落ちず、透明 (0, 0, 0, 0) が返る」(#1590)。
+    ///
+    /// 4 辺のすぐ外に加えて、掛け算で溢れる大きさの位置も読む — 範囲を見る前に
+    /// 置き場の位置を計算すると、そこで落ちる。
+    @Test("表示できる形の絵は、範囲の外を読んでも落ちず、透明が返る", arguments: [
+        (-1, 0), (shownWidth, 0), (0, -1), (0, shownHeight),
+        (shownWidth, shownHeight), (Int.min, 0), (0, Int.max), (Int.max, Int.max),
+    ])
+    func readingOutsideTheShownImageReturnsTransparent(_ position: (Int, Int)) {
+        let image = Self.makeShownImage()
+        #expect(image[position.0, position.1] == (0, 0, 0, 0))
+    }
+
+    /// 範囲の端の内側は、入れた値がそのまま返る (範囲の判定が 1 つ内側へずれていない)。
+    @Test("表示できる形の絵の内側の四隅は、入れた値がそのまま返る")
+    func cornersInsideTheShownImageReturnWhatWasStored() {
+        let image = Self.makeShownImage()
+        for (x, y) in [(0, 0), (Self.shownWidth - 1, 0), (0, Self.shownHeight - 1),
+                       (Self.shownWidth - 1, Self.shownHeight - 1)] {
+            #expect(image[x, y] == Self.shownPixel(x, y), "(\(x), \(y))")
+        }
+    }
+
     // MARK: - 間引きは出力段の前で効く (#382)
 
     /// 特異な値を含む作業空間の画素を組む。
