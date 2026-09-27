@@ -124,7 +124,7 @@ extension Canvas {
         // 数でない値・無限は受け口 (`Particles.emit`) が検めて断る (#1623)
         particles.emit(
             rate: rate, over: deltaTime, frame: framesDrawn, from: source, speed: speed,
-            angle: angle, life: life, size: size, color: color ?? style.fill, at: time,
+            angle: angle, life: life, size: size, color: color, fill: style.fill, at: time,
             using: &randomness)
     }
 

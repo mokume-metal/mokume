@@ -131,6 +131,124 @@ struct ParticleInputTests {
         #expect(dust.takeForces().isEmpty)
     }
 
+    /// [#1623] の反証 1。**減速は速さを増やさない** (``Force/drag(_:)``) ので、負の `amount` は
+    /// 注意を言って積まない。30 fps の `drag(-10000)` は 1 フレームで e^{333} 倍 (溢れる) で、
+    /// 効かせた群の粒がすべて数でなくなっていた。0 は今までどおり黙って積む。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+    @Test("負の減速は積まず、1 度注意する", arguments: [Float(-10_000), -1, -Float.leastNonzeroMagnitude])
+    func refusesANegativeDrag(amount: Float) throws {
+        let canvas = try makeCanvas()
+        let dust = try canvas.makeParticles(count: 4)
+        var kept: [Force] = []
+        try canvas.draw {
+            canvas.force(dust, [.gravity(0, 1), .drag(amount), .drag(0)])
+            kept = dust.takeForces()
+        }
+        #expect(kept == [.gravity(0, 1), .drag(0)], "drag(\(amount)) を並べた呼び出しで積まれた力: \(kept)")
+        let message = try #require(dust.warnings.message(for: .negativeDrag))
+        #expect(message.contains("\(amount)"), "注意が、渡した値を言っていない: \(message)")
+        #expect(!dust.warnings.hasWarned(.unacceptableForce))
+    }
+
+    // MARK: - 状態
+
+    /// 静止した粒を `count` 個出し、毎フレーム `forces` を掛けて `frames` フレーム進めた
+    /// 後の、生きている粒の状態。
+    private func advanced(
+        from source: Emitter = .point(32, 32), count: Int = 16, forces: [Force], frames: Int
+    ) throws -> (living: [Particle], dust: Particles) {
+        let canvas = try makeCanvas()
+        canvas.deltaTime = 1.0 / 30
+        var randomness = Randomness(seed: 1623)
+        let dust = try canvas.makeParticles(count: count)
+        for frame in 0..<frames {
+            try canvas.draw {
+                if frame == 0 {
+                    canvas.emit(
+                        dust, from: source, rate: (Float(count) * 30).nextUp, speed: 0...0,
+                        angle: 0...0, life: 100...100, size: 1...1,
+                        color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+                }
+                if !forces.isEmpty { canvas.force(dust, forces) }
+                canvas.particles(dust)
+            }
+        }
+        let living = canvas.read(dust.state).withUnsafeBytes { raw in
+            Array(raw.bindMemory(to: Particle.self).prefix(count)).filter { $0.life > 0 }
+        }
+        return (living, dust)
+    }
+
+    private static func isFinite(_ particle: Particle) -> Bool {
+        [particle.x, particle.y, particle.z, particle.vx, particle.vy, particle.vz]
+            .allSatisfy(\.isFinite)
+    }
+
+    nonisolated static let overflowingForces: [[Force]] = [
+        [.gravity(0, 3e38), .gravity(0, 3e38)],
+        [.gravity(0, 3e38)],
+        [.attract(0, 0, strength: 3e38), .attract(0, 0, strength: 3e38)],
+        [.swirl(0, 0, strength: 3e38), .gravity(3e38, 0)],
+    ]
+
+    /// [#1623] の反証 2・7。**有限の力でも、和や積分が溢れれば粒の状態は数でなくなる** —
+    /// 受け口は数でない値・無限そのものしか断れない。状態の側 (断片の書き戻し) で、進めた
+    /// 状態が数でなくなるフレームは動かさない。粒は消えず、状態は有限のまま残る。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+    @Test("有限の力が溢れても、生きている粒の状態は数でなくならない", arguments: overflowingForces)
+    func overflowingFiniteForcesKeepTheStateFinite(forces: [Force]) throws {
+        let (living, _) = try advanced(forces: forces, frames: 40)
+        #expect(living.count == 16, "\(forces) で生きている粒が \(living.count) 個に減った")
+        let broken = living.filter { !Self.isFinite($0) }
+        #expect(broken.isEmpty, "\(forces) で状態が数でなくなった粒: \(broken.count) 個")
+    }
+
+    /// [#1623] の反証 3。**端が有限でも、出る所が `Float` で溢れることがある。** 線分は
+    /// 差だけが溢れるので、両端から直に混ぜて出す (`Randomness.scaled` と同じ手・#1312)。
+    /// 円と球は中心 + 半径そのものが溢れるので、溢れた粒は置かずに注意する。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+    @Test("端が有限の線分は、差が溢れても有限の所から出る")
+    func aLineWhoseSpanOverflowsStillEmitsFinitePlaces() throws {
+        let (living, dust) = try advanced(from: .line(-3e38, 0, 3e38, 0), forces: [], frames: 1)
+        #expect(living.count == 16)
+        #expect(living.allSatisfy(Self.isFinite), "線分から出た粒の位置が数でない")
+        #expect(!dust.warnings.hasWarned(.unacceptableEmission))
+    }
+
+    @Test(
+        "中心 + 半径が溢れる円・球からは、溢れた粒を置かずに注意する",
+        arguments: [Emitter.circle(3e38, 0, radius: 3e38), .sphere(0, 0, 3e38, radius: 3e38)])
+    func placesOutsideTheFloatRangeAreNotEmitted(source: Emitter) throws {
+        let (living, dust) = try advanced(from: source, forces: [], frames: 1)
+        #expect(living.allSatisfy(Self.isFinite), "\(source) から数でない位置の粒が出た")
+        #expect(living.count < 16, "\(source) から溢れる粒が 1 つも出ていない (検査の前提)")
+        let message = try #require(dust.warnings.message(for: .unacceptableEmission))
+        #expect(message.contains("from"))
+    }
+
+    /// [#1623] の反証 6。**`color` を省いた `emit` は塗りで出すので、注意は塗りを名指す。**
+    /// `color` と言うと、渡していない引数を名乗る。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+    @Test("color を省いた emit で塗りが数でなければ、注意は塗りを名指す")
+    func anOmittedColorNamesTheFill() throws {
+        let canvas = try makeCanvas()
+        let dust = try canvas.makeParticles(count: 4)
+        var randomness = Randomness(seed: 1623)
+        try canvas.draw {
+            canvas.fill(LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1))
+            canvas.emit(
+                dust, from: .point(32, 32), rate: 60, speed: 0...0, angle: 0...0, life: 1...1,
+                size: 1...1, color: nil, using: &randomness)
+        }
+        #expect(dust.cursor == 0)
+        let message = try #require(dust.warnings.message(for: .unacceptableEmission))
+        #expect(message.contains("fill"), "塗りを名指していない: \(message)")
+    }
+
     // MARK: - 出す
 
     /// `emit` の 1 回ぶんの引数。既定はどれも有限で、1 フレームで粒が出る。

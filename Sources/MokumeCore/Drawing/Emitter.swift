@@ -31,6 +31,18 @@ public enum Emitter: Equatable, Sendable {
         }
     }
 
+    /// 端 `a` から `b` へ `t` (0…1) だけ進んだ所。
+    ///
+    /// **差が `Float` で溢れる組だけ、別の式で混ぜる** (`Randomness.scaled` と同じ手・#1312)。
+    /// 端がどちらも有限でも `b - a` は `inf` になりうる (`-3e38` と `3e38`)。溢れるのは端が
+    /// 異符号のときだけなので、両端から直に混ぜればどちらの積も端より大きくならない。
+    /// 溢れない組は今までの式のままにする — 替えると丸めが 1 回減って置き場所が 1 ulp
+    /// 動き、台帳が動く。
+    private static func mix(_ a: Float, _ b: Float, _ t: Float) -> Float {
+        let span = b - a
+        return span.isFinite ? a + span * t : a * (1 - t) + b * t
+    }
+
     /// 1 つぶんの出どころを引く。
     ///
     /// **引く回数は形ごとに決まっている** (点 0 回・線 1 回・円 2 回・球 3 回)。回数が
@@ -41,7 +53,7 @@ public enum Emitter: Equatable, Sendable {
             return SIMD3(x, y, z)
         case .line(let x1, let y1, let x2, let y2):
             let t = randomness.unitValue()
-            return SIMD3(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, 0)
+            return SIMD3(Self.mix(x1, x2, t), Self.mix(y1, y2, t), 0)
         case .circle(let x, let y, let radius):
             // **半径は平方根で引く。** そのまま引くと中心へ寄る
             let around = randomness.unitValue() * 2 * .pi
