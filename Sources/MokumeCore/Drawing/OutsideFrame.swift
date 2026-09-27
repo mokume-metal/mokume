@@ -19,6 +19,7 @@ extension Canvas {
         case transform
         case style
         case clip
+        case effects
         case light
         case surroundings
         case shadow
@@ -33,6 +34,7 @@ extension Canvas {
             case .transform: .transformOutsideFrame
             case .style: .styleOutsideFrame
             case .clip: .clipOutsideFrame
+            case .effects: .effectsOutsideFrame
             case .light: .lightOutsideFrame
             case .surroundings: .surroundingsOutsideFrame
             case .shadow: .shadowOutsideFrame
@@ -42,7 +44,7 @@ extension Canvas {
             }
         }
 
-        /// 言う中身。**10 通を完全な文として持つ。**
+        /// 言う中身。**種類ごとの 1 文を、完全な文として持つ。**
         ///
         /// かつては `opening` +「初期化のときに」+ `pastVerb` + `subject` +「はどのフレーム
         /// にも属さないため、無視しました」の 3 スロットで組んでいた。**その形は語順と助詞に
@@ -65,6 +67,9 @@ extension Canvas {
             case .clip:
                 "The clip is written again every frame, so call this from draw(). The clip "
                     + "written during setup belongs to no frame, and was ignored"
+            case .effects:
+                "Effects are written again every frame, so call this from draw(). The effects "
+                    + "written during setup belong to no frame, and were ignored"
             case .light:
                 "Lights are placed again every frame, so call this from draw(). The light "
                     + "placed during setup belongs to no frame, and was ignored"
@@ -91,7 +96,8 @@ extension Canvas {
     ///
     /// 呼ぶ側は `guard isDrawing else { return warnOutsideFrame(.shadow) }` の形になる。
     /// **`guard` そのものは畳んでいない** — 値の検査を挟む口があり、`isDrawing` と検査の
-    /// どちらが先かが口によって違うためである (`Canvas+Material.swift` だけ検査が先)。
+    /// どちらが先かが口によって違うためである (`Canvas+Material.swift` の口と、
+    /// `Canvas+LightColor.swift` の数で書く光・材質の口は検査が先)。
     /// 順序を揃えると診断の出方が変わるので、それは畳みとは別の判断として分ける。
     func warnOutsideFrame(_ subject: OutsideFrame) {
         warnOnce(subject.warning, subject.notice)

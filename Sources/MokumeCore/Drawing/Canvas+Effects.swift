@@ -23,6 +23,13 @@ extension Canvas {
     ///
     /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
     public func effects(_ effects: [Effect]) {
+        // **効果はフレームを越えない** (ADR-0021 決定 4)。フレームの頭で捨てるので、外で
+        // 決めた並びはどのフレームにも属さない。黙って捨てると「書いたのに効かない」だけが
+        // 残るので、切り抜き (#1505) と同じく 1 度言って無視する (#1605)。形に焼き付かない
+        // ので、形の組み立ての間もフレームの外に数える (`isShaping` ではなく `isDrawing`)。
+        // **値の検めより先に断る** — どのフレームにも属さない並びの値を言っても、直す先を
+        // 指さない
+        guard isDrawing else { return warnOutsideFrame(.effects) }
         pendingEffects = effects.compactMap { effect in
             guard let accepted = effect.accepted else {
                 warnOnce(

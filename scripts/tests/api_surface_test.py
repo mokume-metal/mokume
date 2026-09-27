@@ -413,6 +413,100 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
         # 置き場を取り違えると全部が「呼ばれていない」になる。読めていることだけを見る
         self.assertIn("catalogue", api.read_sketches(api.SKETCHES))
 
+
+class 公開の口の種類(unittest.TestCase):
+    """公開の口が種類の表に載り、シーンの記述は口ごとの検査に名前があること (#1670)。
+
+    シーンの記述の口は `guard isDrawing` を口ごとに書いて守っていて、書き落とした口が
+    黙った (#941・#1505・#1605)。表か照合が名前を取りこぼすと、同じ書き落としが黙って入る。
+    """
+
+    def test_表に無い口を名乗る(self):
+        symbols = [symbol("fill(_:)", owner="Sketch"), symbol("blur(_:)", owner="Canvas")]
+        problems = api.check_port_kinds(symbols, "", {"fill": api.DRAWING_STYLE})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("blur", problems[0])
+        self.assertIn("PORT_KINDS", problems[0])
+
+    def test_シーンの記述は検査に名前が無ければ名乗る(self):
+        symbols = [symbol("effects(_:)", owner="Canvas"), symbol("clip(_:_:_:_:)", owner="Sketch")]
+        kinds = {"effects": api.SCENE, "clip": (api.SCENE, "理由")}
+        problems = api.check_port_kinds(symbols, 'Mouth("clip", .clip) { $0.clip(0, 0, 8, 8) }', kinds)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("effects", problems[0])
+        self.assertIn(api.SCENE_TEST.name, problems[0])
+
+    def test_シーンの記述でない口は検査に名前を求めない(self):
+        symbols = [symbol("fill(_:)", owner="Sketch"), symbol("circle(_:_:_:)", owner="Canvas")]
+        kinds = {"fill": api.DRAWING_STYLE, "circle": (api.FIGURE, "理由")}
+        self.assertEqual(api.check_port_kinds(symbols, "", kinds), [])
+
+    def test_コメントの中や名前の一部にだけある名前は数えない(self):
+        symbols = [symbol("noLights()", owner="Canvas")]
+        kinds = {"noLights": api.SCENE}
+        for source in ["// $0.noLights()", "/* noLights */", "$0.noLightsAtAll()", "_noLights()"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_port_kinds(symbols, source, kinds)), 1)
+        self.assertEqual(api.check_port_kinds(symbols, "{ $0.noLights() }", kinds), [])
+
+    def test_呼び出しの形でない名前は数えない(self):
+        # 反証で見つかった形: 断片の文字列・列挙子・読んだ値・別の型の同名の口が、
+        # 消した行の代わりに数えられていた
+        symbols = [symbol("scale(_:_:)", owner="Canvas")]
+        kinds = {"scale": api.SCENE}
+        for source in ['let s = "values.scale"', "Mouth(\"x\", .scale)", "canvas.style.scale == 1",
+                       "moved.scale(x: 2)", "scale(2, 3)"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_port_kinds(symbols, source, kinds)), 1)
+        for source in ["{ $0.scale(2, 3) }", "canvas.scale (2, 3)", "sketch.scale(2, 3)"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_port_kinds(symbols, source, kinds), [])
+
+    def test_多重定義の数だけ呼び出しを求める(self):
+        symbols = [symbol("ambient(_:)", owner="Canvas", precise="a", parameters=["LinearRGBA"]),
+                   symbol("ambient(_:)", owner="Canvas", precise="b", parameters=["Float"]),
+                   symbol("ambient(_:_:_:)", owner="Canvas", precise="c"),
+                   symbol("ambient(_:)", owner="Sketch", precise="d")]
+        kinds = {"ambient": api.SCENE}
+        one = "{ $0.ambient(white) }"
+        problems = api.check_port_kinds(symbols, one * 2, kinds)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("2 本", problems[0])
+        self.assertIn("3 本", problems[0])
+        self.assertEqual(api.check_port_kinds(symbols, one * 3, kinds), [])
+
+    def test_Canvasに無い口はSketchの多重定義で数える(self):
+        symbols = [symbol("orbitControl(_:_:_:)", owner="Sketch")]
+        kinds = {"orbitControl": api.SCENE}
+        self.assertEqual(len(api.check_port_kinds(symbols, "", kinds)), 1)
+        self.assertEqual(api.check_port_kinds(symbols, "$0.orbitControl()", kinds), [])
+
+    def test_表に残った古い名前を名乗る(self):
+        symbols = [symbol("fill(_:)", owner="Sketch")]
+        kinds = {"fill": api.DRAWING_STYLE, "gone": api.SCENE}
+        problems = api.check_port_kinds(symbols, "", kinds)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("gone", problems[0])
+
+    def test_種類の綴り違いを名乗る(self):
+        symbols = [symbol("clip(_:_:_:_:)", owner="Sketch")]
+        problems = api.check_port_kinds(symbols, "clip", {"clip": "シーン"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("シーン", problems[0])
+
+    def test_Sketch_Canvas以外の型のメンバは見ない(self):
+        symbols = [symbol("encodeForDisplay()", owner="RenderTarget")]
+        self.assertEqual(api.check_port_kinds(symbols, "", {}), [])
+
+    def test_いまの検査を読める(self):
+        # 置き場を取り違えると、シーンの記述が全部「名前が無い」になる
+        self.assertIn("SceneOutsideFrameTests", api.SCENE_TEST.read_text(encoding="utf-8"))
+
+    def test_いまの表の種類はどれも正しい綴り(self):
+        for base, entry in api.PORT_KINDS.items():
+            with self.subTest(base=base):
+                self.assertIn(api.port_kind(entry), api.PORT_KIND_NAMES)
+
 class 読むものが無いときの名乗り(unittest.TestCase):
     """**出ていないのか中身が違うのかを、落ちた側の文面で分ける** (#1308)。
 

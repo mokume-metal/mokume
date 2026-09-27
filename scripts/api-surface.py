@@ -541,6 +541,310 @@ def check_sketch_coverage(
     return problems
 
 
+# 公開の口が何の仕事をするかの種類 (#1670)。**寿命の約束 (ADR-0021 決定 4) は種類ごとに
+# 決まっている**ので、口を足したらまず種類を決める。
+#
+# | 種類 | 何か | フレームの外で呼ぶと |
+# | --- | --- | --- |
+# | 描き方 | どう描くかの状態 (塗り・線・読み方・文字・貼る絵・種…) | 効く。フレームを越えて残る |
+# | シーンの記述 | 何を描くかの状態 (視点・投影・光・材質・変換・影・周囲・効果・切り抜き) | 警告して無視する |
+# | 図形 | 絵を置く (頂点を並べて形を置く口も含む) | 持ち越しを約束する区間でだけ置ける (#1603 の決定。R3 の根が扱う) |
+# | 読み取り | 値を返すだけで、絵もフレームの状態も変えない | 読める |
+# | 資源 | 作る・読み込む (返したものは寿命を持たない) | 作れる |
+# | 組み立て | スケッチとフレームの組み立て (入口・進行・作者が書くコールバック・書き出し・観測) | 口ごとに決まる |
+#
+# **シーンの記述は、フレームの外で呼ぶと注意が出るかを口ごとに回す検査に名前が要る**
+# (`check_port_kinds`)。守りは口ごとの `guard isDrawing` で、書き落とした口が黙る —
+# 変換 (#941)・切り抜き (#1505)・効果 (#1605)・`noLights()` (#1670) を 1 件ずつ見つけてきた。
+#
+# 分類の正典は Documentation/mokume.docc/mokume.md の「状態の寿命」と ADR-0021 決定 4 の表。
+# **表だけでは決まらない口は、理由を組で書く** (FOREIGN_ALLOWLIST・UNSHOWN と同じ作法)。
+# 鍵は基底名 (引数部を落とした名前) で、`Sketch` と `Canvas` の同名の口は同じ行を引く。
+DRAWING_STYLE = "描き方"
+SCENE = "シーンの記述"
+FIGURE = "図形"
+READING = "読み取り"
+RESOURCE = "資源"
+ASSEMBLY = "組み立て"
+PORT_KIND_NAMES = (DRAWING_STYLE, SCENE, FIGURE, READING, RESOURCE, ASSEMBLY)
+
+PORT_KINDS: dict[str, str | tuple[str, str]] = {
+    # 描き方 — 表の「塗り・線の色と太さ・端と折れ目の形・混ぜ方・座標の読み方・文字の設定・
+    # 絵に掛ける色・貼る絵・断片・断片が読む数の並び・揺らぎの種と細かさ・露出」
+    "fill": DRAWING_STYLE,
+    "noFill": DRAWING_STYLE,
+    "stroke": DRAWING_STYLE,
+    "noStroke": DRAWING_STYLE,
+    "strokeWeight": DRAWING_STYLE,
+    "strokeCap": DRAWING_STYLE,
+    "strokeJoin": DRAWING_STYLE,
+    "blendMode": DRAWING_STYLE,
+    "rectMode": DRAWING_STYLE,
+    "ellipseMode": DRAWING_STYLE,
+    "imageMode": DRAWING_STYLE,
+    "textFont": DRAWING_STYLE,
+    "noTextFont": DRAWING_STYLE,
+    "textSize": DRAWING_STYLE,
+    "textAlign": DRAWING_STYLE,
+    "textLeading": DRAWING_STYLE,
+    "textStyle": DRAWING_STYLE,
+    "textWrap": DRAWING_STYLE,
+    "tint": DRAWING_STYLE,
+    "noTint": DRAWING_STYLE,
+    "texture": DRAWING_STYLE,
+    "noTexture": DRAWING_STYLE,
+    "shader": DRAWING_STYLE,
+    "resetShader": DRAWING_STYLE,
+    "numbers": DRAWING_STYLE,
+    "resetNumbers": DRAWING_STYLE,
+    "noiseSeed": DRAWING_STYLE,
+    "noiseDetail": DRAWING_STYLE,
+    "exposure": DRAWING_STYLE,
+    "toneMapping": (DRAWING_STYLE, "表には露出だけがある。同じ画面の明るさの段 (Brightness) の設定で、画面が持ち越す"),
+    "curveDetail": (DRAWING_STYLE, "表に無い。曲線の頂点の細かさで、線の太さと同じくスタイルとして持ち越す"),
+    "curveTightness": (DRAWING_STYLE, "curveDetail と同じ理由"),
+    "randomSeed": (DRAWING_STYLE, "表の「揺らぎの種」と同じく、乱数の流れの種で持ち越す"),
+    "orbit": (DRAWING_STYLE, "視点を操る道具の状態で、フレームを越えて持ち越す (setup() で書く例がある)。視点そのものを書くのは orbitControl"),
+    # シーンの記述 — 表の「視点・投影・光・材質・変換・影・周囲の光・効果・切り抜き」
+    "camera": SCENE,
+    "setCamera": SCENE,
+    "perspective": SCENE,
+    "ortho": SCENE,
+    "orbitControl": (SCENE, "Sketch にだけある口。中で視点 (camera) を書く"),
+    "ambientLight": SCENE,
+    "directionalLight": SCENE,
+    "pointLight": SCENE,
+    "spotLight": SCENE,
+    "lights": SCENE,
+    "noLights": (SCENE, "光を取り除く口。フレームの外には取り除く光が無いが、書いたことは知らせる (noClip の #970 と同じ)"),
+    "ambient": SCENE,
+    "emissive": SCENE,
+    "metalness": SCENE,
+    "shininess": SCENE,
+    "translate": SCENE,
+    "rotate": SCENE,
+    "rotateX": SCENE,
+    "rotateY": SCENE,
+    "rotateZ": SCENE,
+    "scale": SCENE,
+    "shearX": SCENE,
+    "shearY": SCENE,
+    "applyMatrix": SCENE,
+    "resetMatrix": SCENE,
+    "pushMatrix": SCENE,
+    "popMatrix": SCENE,
+    "pushStyle": (SCENE, "描き方を積むが、積んだ履歴はフレームに属する (ADR-0021 決定 4 の 2026-09-06 の追補・#925)"),
+    "popStyle": (SCENE, "pushStyle と同じ理由"),
+    "push": (SCENE, "変換とスタイルの両方を積む (pushMatrix と pushStyle)"),
+    "pop": (SCENE, "push と同じ理由"),
+    "shadows": SCENE,
+    "shadowRange": SCENE,
+    "shadowDetail": SCENE,
+    "shadowBias": SCENE,
+    "castShadow": SCENE,
+    "receiveShadow": SCENE,
+    "surroundings": SCENE,
+    "effects": SCENE,
+    "clip": SCENE,
+    "noClip": SCENE,
+    "particles": (SCENE, "表に無い。フレームの中でだけ扱い、外では注意して無視する (Canvas.isShaping の説明が挙げる「粒」)。1 フレーム進めるので、置くだけの図形とは寿命が違う"),
+    "force": (SCENE, "particles と同じ理由"),
+    "emit": (SCENE, "particles と同じ理由。Sketch にだけある口"),
+    "compute": (SCENE, "表に無い。描く前の段としてフレームの中でだけ走り、外では注意して無視する (ADR-0023 決定 3・Canvas.isShaping の説明が挙げる「計算」)"),
+    # 図形
+    "arc": FIGURE,
+    "background": FIGURE,
+    "box": FIGURE,
+    "circle": FIGURE,
+    "cone": FIGURE,
+    "cylinder": FIGURE,
+    "ellipse": FIGURE,
+    "ellipsoid": FIGURE,
+    "image": FIGURE,
+    "line": FIGURE,
+    "model": FIGURE,
+    "plane": FIGURE,
+    "point": FIGURE,
+    "quad": FIGURE,
+    "rect": FIGURE,
+    "shape": FIGURE,
+    "sphere": FIGURE,
+    "square": FIGURE,
+    "text": FIGURE,
+    "torus": FIGURE,
+    "triangle": FIGURE,
+    "set": (FIGURE, "画素の書き込み。#1603 の決定 (2b) で「置くこと」に含む"),
+    "beginShape": FIGURE,
+    "endShape": FIGURE,
+    "beginContour": FIGURE,
+    "endContour": FIGURE,
+    "vertex": FIGURE,
+    "bezierVertex": FIGURE,
+    "quadraticVertex": FIGURE,
+    "curveVertex": FIGURE,
+    "normal": FIGURE,
+    "index": FIGURE,
+    # 読み取り
+    "width": READING,
+    "height": READING,
+    "pixelWidth": READING,
+    "pixelHeight": READING,
+    "frameCount": READING,
+    "time": READING,
+    "deltaTime": READING,
+    "mouseX": READING,
+    "mouseY": READING,
+    "pmouseX": READING,
+    "pmouseY": READING,
+    "dragX": READING,
+    "dragY": READING,
+    "scrollX": READING,
+    "scrollY": READING,
+    "mouseButton": READING,
+    "isMousePressed": READING,
+    "key": READING,
+    "keyCode": READING,
+    "isKeyDown": READING,
+    "get": READING,
+    "loadPixels": READING,
+    "pixels": (READING, "画素の窓を返す。窓からの書き込みは set と同じく #1603 の R3 が扱う"),
+    "read": READING,
+    "noise": READING,
+    "random": (READING, "値を返す。種は randomSeed が持つ"),
+    "screenX": READING,
+    "screenY": READING,
+    "screenZ": READING,
+    "spacePosition": READING,
+    "currentCamera": READING,
+    "textWidth": READING,
+    "textAscent": READING,
+    "textDescent": READING,
+    "textOutline": (READING, "文字の輪郭を値で返す。置くのは作者"),
+    "usesFrameHistory": READING,
+    "defaultSolidDetail": READING,
+    "output": (READING, "描き先 (RenderTarget) を返す。作るのは面の組み立て"),
+    # 資源
+    "createGraphics": RESOURCE,
+    "createImage": RESOURCE,
+    "createShape": RESOURCE,
+    "loadImage": RESOURCE,
+    "requestImage": RESOURCE,
+    "loadModel": RESOURCE,
+    "requestModel": RESOURCE,
+    "loadShader": RESOURCE,
+    "makeShader": RESOURCE,
+    "loadEffect": RESOURCE,
+    "makeEffect": RESOURCE,
+    "loadComputation": RESOURCE,
+    "makeComputation": RESOURCE,
+    "makeNumbers": RESOURCE,
+    "makeParticles": RESOURCE,
+    # 組み立て
+    "init": ASSEMBLY,
+    "main": ASSEMBLY,
+    "settings": ASSEMBLY,
+    "plugins": ASSEMBLY,
+    "params": ASSEMBLY,
+    "canvas": (ASSEMBLY, "Sketch から下の層 (Canvas) へ降りる口"),
+    "setup": ASSEMBLY,
+    "draw": ASSEMBLY,
+    "loop": ASSEMBLY,
+    "noLoop": ASSEMBLY,
+    "redraw": ASSEMBLY,
+    "beginDraw": ASSEMBLY,
+    "endDraw": ASSEMBLY,
+    "keyPressed": ASSEMBLY,
+    "keyReleased": ASSEMBLY,
+    "keyTyped": ASSEMBLY,
+    "mousePressed": ASSEMBLY,
+    "mouseReleased": ASSEMBLY,
+    "mouseClicked": ASSEMBLY,
+    "mouseMoved": ASSEMBLY,
+    "mouseDragged": ASSEMBLY,
+    "mouseWheel": ASSEMBLY,
+    "save": (ASSEMBLY, "フレームの絵を外へ書き出す"),
+    "beginRecord": (ASSEMBLY, "save と同じ理由"),
+    "endRecord": (ASSEMBLY, "save と同じ理由"),
+    "expose": (ASSEMBLY, "観測へ値を出す。絵にもフレームの状態にも触れない"),
+    "measure": (ASSEMBLY, "expose と同じ理由 (かかった時間を出す)"),
+}
+
+# 「シーンの記述」の口を、口ごとにフレームの外で呼ぶ検査。**名前がここに字面で現れること**を
+# `check_port_kinds` が求める
+SCENE_TEST = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "Tests"
+    / "MokumeCoreTests"
+    / "SceneOutsideFrameTests.swift"
+)
+
+
+def port_kind(entry: str | tuple[str, str]) -> str:
+    """表の 1 行から種類を取る。理由つきの行は (種類, 理由) の組で書く。"""
+    return entry[0] if isinstance(entry, tuple) else entry
+
+
+def check_port_kinds(
+    symbols: list[dict], scene_test: str, kinds: dict[str, str | tuple[str, str]] = PORT_KINDS
+) -> list[str]:
+    """`Sketch` と `Canvas` の公開の口が種類の表に載り、シーンの記述は検査に名前があるか (#1670)。
+
+    口ごとの `guard` で守る形は、書き落とした口が黙る。黙った口は 1 件ずつ見つかってきた
+    (#941・#1505・#1605)。**範囲 (シーンの記述の口すべて) を回す検査**を置き、口を足したら
+    種類を決めることと、シーンの記述ならその検査へ行を足すことを、ここが求める。
+
+    照合は字面で、コメントは落としてから見る。`check_sketch_coverage` より狭く、**呼び出しの形
+    (`$0.` / `canvas.` / `sketch.` に続く `名前(`) だけを数える** — 名前がどこかに出れば
+    よい形では、断片の文字列の `values.scale`・列挙子の `.camera`・読んだ値の `style.clip` が
+    行の代わりに数えられ、行を消しても緑のままだった (#1670 の反証)。
+
+    **多重定義の数だけ呼び出しを求める。** 鍵は基底名なので、名前が 1 度出れば足りる形では、
+    守りを書き落とした多重定義を足しても既存の行が名前を満たす (#1670 の反証)。数える
+    多重定義は `Canvas` の側で (`Sketch` の口は転送なので同じ数になる)、`Canvas` に無い口
+    だけ `Sketch` の側で数える。どの呼び出しがどの多重定義かまでは字面では見分けられない
+    ので、見るのは数だけである。
+
+    表に残った古い名前と、種類の綴り違いも上げる — どちらも黙って範囲を狭める。
+    """
+    code = re.sub(r"/\*.*?\*/", "", scene_test, flags=re.DOTALL)
+    code = re.sub(r"//[^\n]*", "", code)
+    overloads: dict[str, dict[str, int]] = {}
+    for symbol in symbols:
+        if owner(symbol) in {ENTRY_TYPE, LOWER_TYPE}:
+            counts = overloads.setdefault(title(symbol).split("(")[0], {})
+            counts[owner(symbol)] = counts.get(owner(symbol), 0) + 1
+    bases = set(overloads)
+    problems = []
+    for base in sorted(bases - kinds.keys()):
+        problems.append(
+            f"{base} が公開の口の種類の表に無い。scripts/api-surface.py の PORT_KINDS に種類 "
+            f"({' / '.join(PORT_KIND_NAMES)}) を決めて載せる。表だけでは決まらないなら理由を添える (#1670)"
+        )
+    for base in sorted(kinds.keys() - bases):
+        problems.append(
+            f"{base} は PORT_KINDS に載っているが、{ENTRY_TYPE} にも {LOWER_TYPE} にも公開の口が無い。"
+            "表から外す (#1670)"
+        )
+    for base, entry in sorted(kinds.items()):
+        kind = port_kind(entry)
+        if kind not in PORT_KIND_NAMES:
+            problems.append(f"{base} の種類「{kind}」は PORT_KIND_NAMES に無い (#1670)")
+            continue
+        if kind != SCENE or base not in bases:
+            continue
+        wanted = overloads[base].get(LOWER_TYPE) or overloads[base][ENTRY_TYPE]
+        calls = len(re.findall(
+            rf"(?<![A-Za-z0-9_])(?:\$0|canvas|sketch)\.{re.escape(base)}\s*\(", code))
+        if calls >= wanted:
+            continue
+        problems.append(
+            f"{base} はシーンの記述なのに、フレームの外で呼ぶと注意が出るかを見る検査 "
+            f"({SCENE_TEST.name}) の呼び出しが {calls} 本で、多重定義 {wanted} 本に足りない。"
+            "口ごとの表に行を足す (ADR-0021 決定 4・#1670)"
+        )
+    return problems
+
+
 def read_sketches(directory: pathlib.Path) -> str:
     return "\n".join(
         path.read_text(encoding="utf-8") for path in sorted(directory.glob("*.swift"))
@@ -558,6 +862,7 @@ def main() -> int:
     parser.add_argument("--version", default="(開発版)")
     parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument("--sketches", default=SKETCHES, type=pathlib.Path)
+    parser.add_argument("--scene-test", default=SCENE_TEST, type=pathlib.Path)
     arguments = parser.parse_args()
 
     symbols = load_symbols(arguments.graphs, arguments.module)
@@ -582,6 +887,7 @@ def main() -> int:
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
         + check_sketch_coverage(symbols, read_sketches(arguments.sketches))
+        + check_port_kinds(symbols, arguments.scene_test.read_text(encoding="utf-8"))
     )
     if problems:
         print("公開 API が規範に沿っていない:", file=sys.stderr)

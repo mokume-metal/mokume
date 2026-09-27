@@ -50,6 +50,12 @@ extension Canvas {
 
     // 置いた光をすべて取り除く。
     public func noLights() {
+        // 光の無いフレームの外でも言う (#1670)。そこには取り除く光が無い (頭と終わりで
+        // 空に戻る) ので何も変わらないが、書いたことは知らせる — 切り抜きの `noClip()` と
+        // 同じ扱い (#970)。鍵は光を置く口と共有する。直す先 (`draw()` から呼ぶ) は置く口と
+        // 外す口で同じなので、分けても言うことが増えない (`resetMatrix()` が変換の鍵を
+        // 共有するのと同じ)
+        guard isDrawing else { return warnOutsideFrame(.light) }
         guard !activeLights.isEmpty else { return }
         closeBatch()
         activeLights.removeAll(keepingCapacity: true)
