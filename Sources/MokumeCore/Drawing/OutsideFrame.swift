@@ -19,6 +19,7 @@ extension Canvas {
         case transform
         case style
         case clip
+        case effects
         case light
         case surroundings
         case shadow
@@ -33,6 +34,7 @@ extension Canvas {
             case .transform: .transformOutsideFrame
             case .style: .styleOutsideFrame
             case .clip: .clipOutsideFrame
+            case .effects: .effectsOutsideFrame
             case .light: .lightOutsideFrame
             case .surroundings: .surroundingsOutsideFrame
             case .shadow: .shadowOutsideFrame
@@ -42,7 +44,7 @@ extension Canvas {
             }
         }
 
-        /// 言う中身。**10 通を完全な文として持つ。**
+        /// 言う中身。**種類ごとの 1 文を、完全な文として持つ。**
         ///
         /// かつては `opening` +「初期化のときに」+ `pastVerb` + `subject` +「はどのフレーム
         /// にも属さないため、無視しました」の 3 スロットで組んでいた。**その形は語順と助詞に
@@ -65,6 +67,9 @@ extension Canvas {
             case .clip:
                 "The clip is written again every frame, so call this from draw(). The clip "
                     + "written during setup belongs to no frame, and was ignored"
+            case .effects:
+                "Effects are written again every frame, so call this from draw(). The effects "
+                    + "written during setup belong to no frame, and were ignored"
             case .light:
                 "Lights are placed again every frame, so call this from draw(). The light "
                     + "placed during setup belongs to no frame, and was ignored"

@@ -6,15 +6,16 @@ import Testing
 
 @testable import MokumeCore
 
-/// 利用者が読む 10 通の文面を、**実装とは別の場所に写して突き合わせる**。
+/// 利用者が読む文面を、種類ごとに**実装とは別の場所に写して突き合わせる**。
 ///
 /// 畳んだ拍子に変わっていないことをここで見る。実際に 2 度動いている — 7 本を 1 つの型へ
 /// 畳んだとき「頼んだ」が「頼んた」になり ([#947]・語幹だけを差し替えて音便を落とした)、
 /// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。切り抜きの
-/// 1 文は後から足した ([#1505])。
+/// 1 文 ([#1505]) と効果の 1 文 ([#1605]) は後から足した。
 ///
 /// [#947]: https://github.com/mokume-metal/mokume/issues/947
 /// [#1505]: https://github.com/mokume-metal/mokume/issues/1505
+/// [#1605]: https://github.com/mokume-metal/mokume/issues/1605
 private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .camera:
         "The camera and projection are placed again every frame, so call this from "
@@ -28,6 +29,9 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .clip:
         "The clip is written again every frame, so call this from draw(). The clip "
             + "written during setup belongs to no frame, and was ignored",
+    .effects:
+        "Effects are written again every frame, so call this from draw(). The effects "
+            + "written during setup belong to no frame, and were ignored",
     .light:
         "Lights are placed again every frame, so call this from draw(). The light "
             + "placed during setup belongs to no frame, and was ignored",
@@ -51,7 +55,7 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("フレームの外で置き直したときの文面")
 struct OutsideFrameNoticeTests {
-    @Test("10 通とも原文のまま")
+    @Test("どの種類の文面も原文のまま")
     func noticesKeepTheirWording() {
         for (subject, original) in outsideFrameNotices {
             #expect(subject.notice == original, "\(subject) の文面が変わっている")
@@ -200,6 +204,64 @@ struct CanvasWarningTests {
         #expect(canvas.warnings.message(for: .cameraOutsideFrame) == cameraOutsideFrame)
         // 先に言った側も残っている (鍵が食い合っていない)
         #expect(canvas.warnings.message(for: .lightOutsideFrame) == lightOutsideFrame)
+    }
+
+    // MARK: - 効果 (#1605)
+
+    private let effectsOutsideFrame = outsideFrameNotices[.effects]!
+
+    /// 明るい四角のある絵。反転が掛かれば全画素が変わる。
+    private func paint(_ canvas: Canvas) {
+        canvas.background(.linear(red: 0, green: 0, blue: 0))
+        canvas.noStroke()
+        canvas.fill(.linear(red: 1, green: 1, blue: 1))
+        canvas.rect(4, 4, 8, 8)
+    }
+
+    /// 効果は形に焼き付かないシーンの記述で、フレームの頭で捨てる (ADR-0021 決定 4)。
+    /// 以前は受け口が中かを見ず、外で決めた並びを黙って捨てていた。
+    @Test("フレームの外で決めた効果は、1 度だけ原文のまま知らせ、次のフレームに掛からない")
+    func warnsAboutEffectsOutsideTheFrame() throws {
+        let plain = try makeCanvas()
+        try plain.draw { paint(plain) }
+        let expected = try plain.target.encodeForDisplay().bytes
+
+        let canvas = try makeCanvas()
+        canvas.effects([.invert()])
+        #expect(canvas.warnings.message(for: .effectsOutsideFrame) == effectsOutsideFrame)
+        #expect(canvas.pendingEffects.isEmpty)
+        // 2 度目は黙る。何度書いても言うのは初回の 1 通で、並びは溜まらない
+        canvas.effects([.monochrome()])
+        #expect(canvas.warnings.message(for: .effectsOutsideFrame) == effectsOutsideFrame)
+        #expect(canvas.pendingEffects.isEmpty)
+
+        try canvas.draw { paint(canvas) }
+        #expect(try canvas.target.encodeForDisplay().bytes == expected, "外で決めた効果が掛かっている")
+    }
+
+    /// 値の検めより先に断る。外で決めた並びはどのフレームにも属さないので、中の値を
+    /// 言っても直す先を指さない (切り抜きの口と同じ順・#1505)。
+    @Test("フレームの外では、数でない値の効果でも外のことだけを言う")
+    func saysOutsideTheFrameBeforeCheckingTheValues() throws {
+        let canvas = try makeCanvas()
+        canvas.effects([.invert(amount: .nan)])
+        #expect(canvas.warnings.hasWarned(.effectsOutsideFrame))
+        #expect(!canvas.warnings.hasWarned(.badEffect))
+    }
+
+    @Test("フレームの中で決めた効果は、今までどおり掛かる")
+    func effectsInsideTheFrameStillApply() throws {
+        let plain = try makeCanvas()
+        try plain.draw { paint(plain) }
+        let expected = try plain.target.encodeForDisplay().bytes
+
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            paint(canvas)
+            canvas.effects([.invert()])
+        }
+        #expect(try canvas.target.encodeForDisplay().bytes != expected)
+        #expect(!canvas.warnings.hasWarned(.effectsOutsideFrame))
     }
 
     @Test("面ごとに別々に数える")

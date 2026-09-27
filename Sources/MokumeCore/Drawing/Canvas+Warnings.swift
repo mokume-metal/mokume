@@ -68,6 +68,10 @@ extension Canvas {
         ///
         /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
         case badEffect
+        /// フレームの外で効果を決めた ([#1605])。
+        ///
+        /// [#1605]: https://github.com/mokume-metal/mokume/issues/1605
+        case effectsOutsideFrame
         /// 効果を通せなかった。
         case effectFailed
         /// 拡大を通せなかった。
