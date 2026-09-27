@@ -77,6 +77,13 @@ extension Canvas {
             warnOutsideFrame(.pixelWrite)
             return false
         }
+        // **書く前に、このフレームの絵を写しへ読んでおく。** 窓 (``pixels``) は取っておけるので、
+        // 前のフレームで取った窓にこのフレームで書くと、写しは前のフレームの絵 (効果を通した
+        // 後) のまま書き込み待ちになる。するとこのフレームの最初の描き切りが、効果を通す前の
+        // 絵を戻した後に写し全体を書き戻し、効果が 2 回掛かる (#1655 と同じ形・#1672 の反証 1)。
+        // 読めば最初の描き切りは書く前に済み、写しもいまの絵になる。取り直さない窓でも、GPU が
+        // 写しへ読み戻している途中に書かない (`pixels` が待つ)
+        if needsPixelLoad { _ = pixels }
         return true
     }
 
@@ -94,7 +101,12 @@ extension Canvas {
     ///
     /// [#1368]: https://github.com/mokume-metal/mokume/issues/1368
     private func loadPixelsIfNeeded() {
-        guard !hasLoadedPixels || (hasPendingDrawing && !pixelLoadFailed) else { return }
+        guard needsPixelLoad else { return }
         loadPixels()
+    }
+
+    /// このフレームでまだ読んでいないか、読んだあとに描いたか (``loadPixelsIfNeeded()``)。
+    private var needsPixelLoad: Bool {
+        !hasLoadedPixels || (hasPendingDrawing && !pixelLoadFailed)
     }
 }

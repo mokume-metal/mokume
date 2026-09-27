@@ -1528,10 +1528,14 @@ public final class Canvas {
     // MARK: - 図形
 
     public func background(_ color: LinearRGBA) {
-        // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])
+        // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])。
+        //
+        // **見るのは形の組み立てを含まない述語** (``writesToSurface``)。塗り直しは形に焼き付かず、
+        // 面を塗る予定として組み立ての外へ残るので、フレームの外の組み立ての中で通すと、
+        // 描き場所の次のフレームを知らない色で塗る
         //
         // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-        guard canPlace else { return warnOutsideFrame(.placing) }
+        guard writesToSurface else { return warnOutsideFrame(.placing) }
         discardPending()
         pendingBackground = color
     }
@@ -1867,6 +1871,10 @@ public final class Canvas {
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     private func checkNothingPlacedOutsideTheRegions() {
         defer { carriedOverAmount = nil }
+        // 持ち越しの区間の中でフレームを開いた (`setup()` で本体の面の `draw { }` を呼んだ)。
+        // 区間はまだ閉じていないので量は覚えていないが、溜まっているものはどれも区間の中で
+        // 置いたものである
+        guard !carriesOver else { return }
         guard pendingAmount > (carriedOverAmount ?? 0) else { return }
         placementsFoundOutsideRegions += 1
         discardPending()
@@ -2017,9 +2025,13 @@ public final class Canvas {
         // 記録し直す (``useTexture(_:)``)。記録すると、守る絵の無い印が区間の外の溜め場に残る
         // (#1592 では相手の `placers` も伸びていた)
         //
+        // **描き切りの最中は記録する。** フレームの終わりの描き切りは、フレームを閉じた印
+        // (`isDrawing`) を下ろしてから列を閉じ、断片に渡した描き場所をそこで記録する — 飛ばすと、
+        // 描き切る前の描き場所を読んだ注意 (下) が出ない
+        //
         // [#1592]: https://github.com/mokume-metal/mokume/issues/1592
         // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-        guard writesToSurface else { return }
+        guard writesToSurface || isFlushing else { return }
         guard graphics !== self else { return }
         // **描き切る前に置いたら知らせる。** 出るのは前のフレームの絵で、しかも
         // 「それらしい絵」なので、黙っていると自分のコードを疑うしかない

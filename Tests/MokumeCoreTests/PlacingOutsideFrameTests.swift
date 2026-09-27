@@ -327,6 +327,28 @@ struct PlacingOutsideFrameTests {
         #expect(canvas.hasNothingPending, "組み立てた形が溜め場に残った")
     }
 
+    /// 塗り直しは形に焼き付かず、面を塗る予定として組み立ての外へ残る。フレームの外の組み立ての
+    /// 中で通すと、描き場所の次のフレームを知らない色で塗り、頭の検めがそれを漏れと数える
+    /// (#1672 の反証 4)。
+    @Test("フレームの外の形の組み立ての中でも、塗り直しは断る", arguments: [false, true])
+    func backgroundInsideCreateShapeOutsideIsRefused(surroundings: Bool) throws {
+        let canvas = try PlacingSurface.graphics.make(gpu: try RenderDevice())
+        canvas.stopsOnPlacementOutsideRegions = false
+        _ = canvas.createShape {
+            if surroundings {
+                canvas.background(.sky)
+            } else {
+                canvas.background(.linear(red: 1, green: 0, blue: 0))
+            }
+            canvas.rect(0, 0, 4, 4)
+        }
+        #expect(canvas.warnings.hasWarned(.placingOutsideFrame))
+        #expect(canvas.hasNothingPending, "組み立ての中の塗り直しが、溜め場に残った")
+        canvas.beginDraw()
+        canvas.endDraw()
+        #expect(canvas.placementsFoundOutsideRegions == 0)
+    }
+
     @Test("直に使う Canvas で、draw { } の外で置いた円は次の draw { } に出ない")
     func directCanvasDoesNotCarryWhatWasPlacedOutside() throws {
         let canvas = try PlacingSurface.direct.make(gpu: try RenderDevice())
@@ -421,6 +443,31 @@ struct PlacingOutsideFrameTests {
         #expect(canvas.get(2, 2) != PixelWriteCall.color)
     }
 
+    /// 前のフレームで取った窓に、このフレームの区間の中で書く (#1672 の反証 1)。写しは前の
+    /// フレームの絵 (効果を通した後) のままなので、書く前に読み直さないと、このフレームの最初の
+    /// 描き切りが写し全体を書き戻し、効果が 2 回掛かる (#1655 と同じ形)。
+    @Test("前のフレームで取った窓に書いても、効果は 1 回だけ掛かる")
+    func aWindowKeptFromAnEarlierFrameWritesOnTheCurrentPicture() throws {
+        func secondFrame(writes: Bool) throws -> LinearRGBA {
+            let canvas = try PlacingSurface.graphics.make(gpu: try RenderDevice())
+            canvas.beginDraw()
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.rect(0, 0, 8, 16)
+            canvas.effects([.invert()])
+            canvas.endDraw()
+            let window = canvas.pixels
+            canvas.beginDraw()
+            if writes { window[15, 15] = window[15, 15] }
+            canvas.effects([.invert()])
+            canvas.endDraw()
+            return canvas.get(4, 8)
+        }
+        // 白い矩形は反転 1 回で黒。写し全体を書き戻すと、2 回掛かって白に戻る
+        #expect(try secondFrame(writes: true) == secondFrame(writes: false))
+    }
+
     // MARK: - 鍵が食い合わない (#1592 の完了条件 5)
 
     @Test("区間の外の注意と endDraw() の書き違いの注意は、互いに黙らせない", arguments: [true, false])
@@ -480,6 +527,30 @@ struct PlacingOutsideFrameTests {
             place()
         }
         #expect(host.warnings.hasWarned(.placingOutsideFrame))
+        #expect(host.warnings.hasWarned(.placingWhileDrawing))
+    }
+
+    /// フレームの終わりの描き切りは、フレームを閉じた印を下ろしてから列を閉じる。断片に渡した
+    /// 描き場所をそこで記録するので、区間の外で記録を飛ばす守りが、描き切りの最中まで飛ばすと
+    /// この注意が出なくなる (#1672 の反証 7)。
+    @Test("断片に渡した描き切る前の描き場所は、フレームの終わりの描き切りでも注意する")
+    func placingWhileDrawingIsToldAtTheLastFlush() throws {
+        let gpu = try RenderDevice()
+        let host = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let layer = try host.createGraphics(8, 8)
+        let shader = try host.makeShader(
+            """
+            float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                return mokume_sample(surfaces.painted, in.place);
+            }
+            """,
+            surfaces: ["painted": .graphics(layer)])
+        try host.draw {
+            layer.beginDraw()
+            host.shader(shader)
+            host.rect(0, 0, 16, 16)
+        }
+        layer.endDraw()
         #expect(host.warnings.hasWarned(.placingWhileDrawing))
     }
 
@@ -549,6 +620,21 @@ struct PlacementLeakTests {
         try canvas.draw { carried = canvas.solidVertices.count }
         #expect(carried == 1, "持ち越しの区間で置いたものが最初のフレームに届かない")
         #expect(canvas.placementsFoundOutsideRegions == 0)
+    }
+
+    /// `setup()` で本体の面の `draw { }` を呼ぶと、持ち越しの区間の中でフレームが開く (#1672 の
+    /// 反証 5)。区間はまだ閉じていないので量は覚えていないが、溜まっているものは区間の中で
+    /// 置いたものである。
+    @Test("持ち越しの区間の中で開いたフレームは、区間で置いたものを見つけたことにしない")
+    func aFrameOpenedInsideTheRegionKeepsWhatWasPlaced() throws {
+        let canvas = try makeCanvas()
+        canvas.stopsOnPlacementOutsideRegions = false
+        canvas.carriesOver = true
+        canvas.background(.linear(red: 1, green: 0, blue: 0))
+        try canvas.draw {}
+        canvas.carriesOver = false
+        #expect(canvas.placementsFoundOutsideRegions == 0)
+        #expect(canvas.get(8, 8) == .linear(red: 1, green: 0, blue: 0), "区間で置いた塗り直しが出ない")
     }
 
     /// 印は有無ではなく量である。区間で置いた後に、区間の外で守りの無い口から積み足したものも

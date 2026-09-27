@@ -12,4 +12,4 @@ SPDX-License-Identifier: MIT
 **移行:** 次の注意が出たら、置く行を区間の中へ移す。
 
 - `Shapes, images and backgrounds are placed in setup(), draw() or an input callback, or between beginDraw() and endDraw() on a drawing target. …` — 描き場所へ置く行を `layer.beginDraw()` と `layer.endDraw()` で挟む (`setup()` の中でも挟む)。`Canvas` を直に使っているなら、`draw { }` の中へ移す。`Task` の続きで置いていたなら、結果を変数に受け取り、`draw()` で置く
-- `Pixels are written in setup(), draw() or an input callback, or between beginDraw() and endDraw() on a drawing target. …` — 描き場所への `set()` や `pixels` への書き込みを、同じく `beginDraw()` と `endDraw()` の間へ移す。`pixels` をプロパティに取っておいて後で書く形も、書く時点で区間の中にする
+- `Pixels are written in setup(), draw() or an input callback, or between beginDraw() and endDraw() on a drawing target. …` — 描き場所への `set()` や `pixels` への書き込みを、同じく `beginDraw()` と `endDraw()` の間へ移す。`pixels` は書くフレームの中で取り直す
