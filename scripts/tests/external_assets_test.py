@@ -20,6 +20,8 @@ import importlib.util
 import subprocess
 import tempfile
 import unittest
+import urllib.error
+from unittest import mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -135,8 +137,95 @@ class ProbeTest(unittest.TestCase):
     """引けなかった理由の作り方。**外へは出さない** — 解決しない名前で分岐だけ通す。"""
 
     def test_引けなければ理由が返る(self):
-        reason = assets.probe("https://mokume-does-not-exist.invalid/a.png")
-        self.assertIsNotNone(reason)
+        failure = assets.probe("https://mokume-does-not-exist.invalid/a.png")
+        self.assertIsNotNone(failure)
+        self.assertTrue(failure.transient)
+
+
+def http_error(url, code):
+    return urllib.error.HTTPError(url, code, "status", {}, None)
+
+
+class RetryTest(unittest.TestCase):
+    """一時的な失敗を消失と数えない (#1676)。
+
+    赤は「指し先が消えた」を意味し、日次の実行ではそのまま撮り直しを求める起票になる。
+    生きている指し先が続けて引いたときだけ 503 を返した実測があるので、一時的でありうる
+    失敗は 1 度だけ待って引き直す。**引く部分は差し替える** (冒頭のとおり外へは出さない)。
+    """
+
+    def run_probe(self, answers):
+        """URL ごとに応答の列を渡して probe_all を回す。
+
+        列の要素は None (引けた) か、送出する例外。呼ばれた回数と待った回数も返す。
+        """
+        calls = {url: 0 for url in answers}
+
+        def fake_urlopen(request, timeout):
+            url = request.full_url
+            # 数えてから引く。用意した列を越えて呼ばれたときの例外は probe が理由として
+            # 握るので、先に数えておかないと「余計に引いた」が回数に表れない
+            calls[url] += 1
+            script = answers[url]
+            answer = script[calls[url] - 1] if calls[url] <= len(script) else None
+            if answer is not None:
+                raise answer
+            return mock.MagicMock()
+
+        sleep = mock.Mock()
+        with mock.patch.object(assets.urllib.request, "urlopen", fake_urlopen):
+            dead = assets.probe_all(sorted(answers), sleep=sleep)
+        return dead, calls, sleep.call_count
+
+    def test_一時的な_503_は引き直して通れば緑(self):
+        url = "https://i.example.test/a.png"
+        dead, calls, waits = self.run_probe({url: [http_error(url, 503), None]})
+        self.assertEqual(dead, {})
+        self.assertEqual(calls[url], 2)
+        self.assertEqual(waits, 1)
+
+    def test_接続の失敗も引き直す(self):
+        url = "https://i.example.test/a.png"
+        dead, _calls, _waits = self.run_probe(
+            {url: [urllib.error.URLError("timed out"), None]}
+        )
+        self.assertEqual(dead, {})
+
+    def test_429_は待てば通りうるので引き直す(self):
+        url = "https://i.example.test/a.png"
+        dead, _calls, _waits = self.run_probe({url: [http_error(url, 429), None]})
+        self.assertEqual(dead, {})
+
+    def test_404_は引き直さずに赤(self):
+        url = "https://i.example.test/a.png"
+        dead, calls, waits = self.run_probe({url: [http_error(url, 404)]})
+        self.assertEqual(dead, {url: "HTTP 404"})
+        self.assertEqual(calls[url], 1)
+        self.assertEqual(waits, 0)
+
+    def test_503_が続けば赤(self):
+        url = "https://i.example.test/a.png"
+        dead, calls, _waits = self.run_probe(
+            {url: [http_error(url, 503), http_error(url, 503)]}
+        )
+        self.assertEqual(dead, {url: "HTTP 503"})
+        self.assertEqual(calls[url], 2)
+
+    def test_待つのは本数によらず全体で_1_回(self):
+        urls = [f"https://i.example.test/{name}.png" for name in "abc"]
+        dead, _calls, waits = self.run_probe(
+            {url: [http_error(url, 502), None] for url in urls}
+        )
+        self.assertEqual(dead, {})
+        self.assertEqual(waits, 1)
+
+    def test_引けたものは引き直さない(self):
+        ok = "https://i.example.test/ok.png"
+        flaky = "https://i.example.test/flaky.png"
+        _dead, calls, _waits = self.run_probe(
+            {ok: [None], flaky: [http_error(flaky, 503), None]}
+        )
+        self.assertEqual(calls[ok], 1)
 
 
 class ReportTest(unittest.TestCase):

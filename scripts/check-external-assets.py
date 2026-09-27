@@ -37,6 +37,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -150,8 +151,31 @@ def collect(root: pathlib.Path) -> list[Reference]:
     return found
 
 
-def probe(url: str) -> str | None:
-    """引けたら None、引けなければ理由。
+# 引き直してよい失敗 (#1676)。**赤は「指し先が消えた」を意味する** — その赤を受けて
+# `report-dead-assets.sh` が撮り直しを求める起票をするので、配信が一時的に断っただけの
+# 失敗を消失と同じ赤に数えてはならない。実際、生きている 178 本のうち 3 本が続けて引いた
+# ときだけ 503 を返し、個別に引き直すと 200 だった。
+#
+# 4xx は相手が「無い・許さない」と答えているので、引き直しても答えは変わらない。例外は
+# 408 と 429 で、これは相手自身が「待てば通りうる」と言っている。5xx と、応答までたどり
+# 着かなかった失敗 (名前解決・接続・待ち切れ) は一時的でありうる
+RETRYABLE_CLIENT_ERRORS = frozenset({408, 429})
+
+# 引き直す前に 1 度だけ待つ秒数。**待つのは全体で 1 回で、1 本ごとではない** —
+# 置き場が丸ごと 5xx を返しているときに 1 本ずつ待つと、待ちが本数ぶん積み上がる
+RETRY_WAIT_SECONDS = 10
+
+
+class Failure:
+    """引けなかった理由と、引き直す価値があるか。"""
+
+    def __init__(self, reason: str, transient: bool) -> None:
+        self.reason = reason
+        self.transient = transient
+
+
+def probe(url: str) -> Failure | None:
+    """引けたら None、引けなければその理由。
 
     **HEAD ではなく GET で引く。** HEAD に 405 を返す配信があり、その 405 を死活の
     判定に混ぜると生きている資産まで赤くなる。本文は読み捨てる。
@@ -162,9 +186,38 @@ def probe(url: str) -> str | None:
             response.read(1)
         return None
     except urllib.error.HTTPError as error:
-        return f"HTTP {error.code}"
+        # 例外そのものが応答なので閉じる (site_source.py の Source.read と同じ理由)
+        error.close()
+        transient = error.code >= 500 or error.code in RETRYABLE_CLIENT_ERRORS
+        return Failure(f"HTTP {error.code}", transient)
     except Exception as error:  # 名前解決・接続・証明書の失敗をそのまま名乗る
-        return str(error)
+        return Failure(str(error), transient=True)
+
+
+def probe_all(urls: list[str], sleep=time.sleep) -> dict[str, str]:
+    """引けなかった指し先と、その理由。
+
+    一時的でありうる失敗は、全体を引き終えてから 1 度だけ待って引き直す。引き直しても
+    引けなかったものだけを返す — **引き直しは 1 回きり**で、続けて断られるなら
+    それは一時的ではない。
+    """
+    failures = {}
+    for url in urls:
+        failure = probe(url)
+        if failure is not None:
+            failures[url] = failure
+
+    retry = [url for url, failure in failures.items() if failure.transient]
+    if retry:
+        sleep(RETRY_WAIT_SECONDS)
+        for url in retry:
+            again = probe(url)
+            if again is None:
+                del failures[url]
+            else:
+                failures[url] = again
+
+    return {url: failure.reason for url, failure in failures.items()}
 
 
 def host_of(url: str) -> str:
@@ -268,12 +321,8 @@ def main() -> int:
             print(f"  {url}\n    {' / '.join(where)}")
         return 0
 
-    dead = []
-    for url, where in sorted(origins.items()):
-        reason = probe(url)
-        if reason is None:
-            continue
-        dead.append((url, reason, where))
+    failures = probe_all(sorted(origins))
+    dead = [(url, failures[url], origins[url]) for url in sorted(failures)]
 
     if dead:
         for line in dead_report(origins, dead):
