@@ -28,8 +28,9 @@ import MokumeDiagnostics
 ///
 /// ## 落ちたフレームは数えない
 ///
-/// 出口へ届かなかったフレームは**番号の穴**として残る。落ちた数は最初と最後の番号の
-/// 幅から導けるので ([ADR-0025] 決定 2)、数える機構を別に持たない。時刻はフレーム
+/// 出口へ届かなかったフレームは**番号の穴**として残る。落ちた数は、最初に受け取った番号
+/// から止めたところまでの幅から導けるので ([ADR-0025] 決定 2・``droppedFrames``)、数える
+/// 機構を別に持たない。時刻はフレーム
 /// 自身のものを使うので、落ちても残りの絵の時刻は動かない。
 ///
 /// [#978]: https://github.com/mokume-metal/mokume/issues/978
@@ -73,10 +74,9 @@ final class MovieWriter {
     /// 抱えた枚数の最大。**背圧が効いたことを検査から見るための目印。**
     var peakOutstanding: Int { pressure.peak }
     /// 受け取った枚数。
-    private(set) var acceptedFrames = 0
-
-    private var firstFrame: Int?
-    private var lastFrame = 0
+    var acceptedFrames: Int { span.accepted }
+    /// 録りが覆う番号の幅。落ちた数はここから導く (``droppedFrames``)。
+    private var span: RecordedSpan
 
     /// 書き終えるまでのどこに居るか。
     ///
@@ -95,9 +95,12 @@ final class MovieWriter {
     }
     private var stage = Stage.recording
 
-    init(path: String, frameRate: Int, limit: Int = MovieWriter.defaultLimit) {
+    /// - Parameter from: 録りを頼まれたフレーム。1 枚も届かなかったときの、落ちた数の幅の
+    ///   始まりになる (``RecordedSpan``)。
+    init(path: String, frameRate: Int, limit: Int = MovieWriter.defaultLimit, from: Int = 1) {
         self.path = path
         pressure = Backpressure(limit: limit)
+        span = RecordedSpan(from: from)
 
         let (stream, continuation) = AsyncStream<Job>.makeStream()
         self.continuation = continuation
@@ -149,9 +152,7 @@ final class MovieWriter {
     func write(_ image: DisplayImage, frame: Int, time: Double) {
         guard case .recording = stage else { return }
         pressure.take()
-        acceptedFrames += 1
-        if firstFrame == nil { firstFrame = frame }
-        lastFrame = frame
+        span.accept(frame)
         continuation.yield(Job(image: image, time: time))
     }
 
@@ -207,16 +208,30 @@ final class MovieWriter {
         return true
     }
 
+    /// 録りが覆うはずだったのは、このフレームまでだと教える。**閉じる前に、止めた側が呼ぶ。**
+    ///
+    /// 受け取った最後の番号だけでは、**届かなくなった後の末尾**が番号の幅の外に出る。
+    /// 撮る係が録りの途中で差込口から外れると (続けて転んだとき・[ADR-0024] 決定 7)、
+    /// 以後の絵は 1 枚も届かないまま止められるので、末尾の欠けは穴として残らない ([#1626])。
+    ///
+    /// 受け取った番号より手前を教えられても、幅は縮めない。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    func expectFrames(through frame: Int) { span.expect(through: frame) }
+
     /// 出口へ届かなかったフレームの数。
     ///
-    /// **番号の穴から導く。** 描けなかったフレームは出口を通らないので、受け取った
-    /// 枚数と番号の幅が食い違う。
-    var droppedFrames: Int {
-        guard let firstFrame else { return 0 }
-        return max(0, (lastFrame - firstFrame + 1) - acceptedFrames)
-    }
+    /// **番号の穴から導く** ([ADR-0025] 決定 2 の「番号の幅 − 入った枚数」)。描けなかった
+    /// フレームは出口を通らないので、受け取った枚数と番号の幅が食い違う。幅の終わりは、
+    /// 受け取った最後の番号と ``expectFrames(through:)`` で教えられた番号の遅いほうで、
+    /// 1 枚も受け取っていなければ録りを頼まれた番号から数える (``RecordedSpan``)。
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    var droppedFrames: Int { span.dropped }
 
-    /// 前に取り出してから決着した書き込みの、最後の結果を取り出す。**取り出したら消える。**
+    /// 前に取り出してから決着した書き込みの結果を取り出す (転んだものがあれば書き損じ・``OutcomeSlot``)。
+    /// **取り出したら消える。**
     ///
     /// `nil` は「順調」ではなく「まだ何も決着していない」である
     /// (``FrameWriter/takeOutcome()``・[#1272])。

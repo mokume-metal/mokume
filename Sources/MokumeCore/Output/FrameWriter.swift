@@ -55,7 +55,13 @@ final class FrameWriter {
     ///
     /// 途中のディレクトリはここで作る — 撮る先を先に用意させると、名前を組み立てた
     /// 側と作る側が二重になる。
-    func write(_ image: DisplayImage, to path: String) {
+    ///
+    /// - Parameter slot: 決着を置く器。`nil` ならこの係の器 (``takeOutcome()``)。**数え方の
+    ///   違う書き込みを分けて置くためにある** — 1 度きりの `save()` と流れで書く連番
+    ///   (``FrameRecorder``・[#1626])。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    func write(_ image: DisplayImage, to path: String, settlingInto slot: OutcomeSlot? = nil) {
         // 背圧。ここで待つのは main actor なので、フレームが遅くなる代わりに
         // 抱える枚数は上限を超えない
         pressure.take()
@@ -63,7 +69,7 @@ final class FrameWriter {
 
         let url = URL(fileURLWithPath: path)
         let release = pressure.release
-        let lastOutcome = lastOutcome
+        let lastOutcome = slot ?? lastOutcome
         let path = path
         Task.detached(priority: .utility) {
             // **結果は枠を返す前に置く。** 背圧で待っていた側は、返ってきた時点で
@@ -105,7 +111,8 @@ final class FrameWriter {
         return true
     }
 
-    /// 前に取り出してから決着した書き込みの、最後の結果を取り出す。**取り出したら消える。**
+    /// 前に取り出してから決着した書き込みの結果を取り出す (転んだものがあれば書き損じ・``OutcomeSlot``)。
+    /// **取り出したら消える。**
     ///
     /// 書き込みは隔離の外で走るので、結果が分かるのは頼んだフレームより後になる。
     /// 呼んだ側 (``FrameRecorder``) はこれを差込口の ``Outlet/failure`` へ載せ、
@@ -136,10 +143,15 @@ enum WriteOutcome: Equatable, Sendable {
     }
 }
 
-/// 隔離の外から書かれ、main actor から読まれる、最後に決着した結果。
+/// 隔離の外から書かれ、main actor から読まれる、前に取り出してから決着した結果。
 ///
 /// **成功も置く** ([#1272])。失敗だけを置く器だと、取り出して空だったときに
 /// 「書けた」と「まだ決着していない」を分けられず、後者を順調と数えてしまう。
+///
+/// **読まれていない書き損じは、後の成功で消さない** ([#1626])。同じ間に決着したものの
+/// どれかが転んでいれば、取り出すのは書き損じである。成功で上書きすると、同じフレームに
+/// 頼んだ 2 枚 (`save` を 2 つ・連番と `save`) の片方が転んでも、後に決着したほうが書けて
+/// いれば誰も名乗らず、書き出しの穴 (``FrameRecorder/hasFailedToWrite``) も立たない。
 ///
 /// 錠そのもの (`Mutex`) は複製できないので、閉じた先の仕事へ渡すには参照になる器が要る。
 /// **escape hatch は使わない** ([ADR-0010] 決定 3) — 中身が錠で守られていることを
@@ -150,14 +162,18 @@ enum WriteOutcome: Equatable, Sendable {
 nonisolated final class OutcomeSlot: Sendable {
     private let value = Mutex<WriteOutcome?>(nil)
 
-    /// 書けたことを置く。
-    func succeed() { value.withLock { $0 = .succeeded } }
+    /// 書けたことを置く。**まだ読まれていない書き損じは上書きしない。**
+    func succeed() {
+        value.withLock { stored in
+            if case .failed = stored { return }
+            stored = .succeeded
+        }
+    }
 
     /// 書き損じを置く。
     ///
-    /// **成功も失敗も、後から来たものが前を上書きする** — 置くのは「最後に決着した結果」
-    /// である。続けて転んでいることは差込口の健康状態が数えるので、ここに溜める理由が無い。
-    /// 書き損じの後に成功が決着すれば、その書き損じは読まれずに消える (直ったので)。
+    /// 書き損じどうしでは後から来たものが前を上書きする — 名乗る理由は最後の 1 つで足り、
+    /// 続けて転んでいることは差込口の健康状態が数えるので、ここに溜める理由が無い。
     func fail(_ message: String) { value.withLock { $0 = .failed(message) } }
 
     /// 置かれているものを取り出す。**取り出したら消える。**
