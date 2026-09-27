@@ -24,7 +24,7 @@ mokume は macOS / Apple Silicon 専用のクリエイティブコーディン�
 6. PR を出す。本文は 目的 / 変更点 / 確認方法。「確認方法」には、閉じる Issue ごとに完了条件と、それを何でどう確かめたかの対応表を置く (ADR-0031 決定 2)。`Closes #N` は PR 本文に書く (squash merge ではコミット側の記述が GitHub に届かない)。Issue を閉じない例外 PR には `no-issue` を付ける
 7. マージは squash だけ (「コミット・PR の規約」)
 
-Claude Code のセッションでは、手順 3・4 を `scripts/plan-record.sh` が見る。
+3・4: Claudeはフック、Codexは[明示登録](docs/agent-environment.md)。
 
 作業中に踏んだ問題は、起票の時点で行き先まで決める (ADR-0036 決定 6)。分けるのは完了条件を自分で書けるかどうかだけ:
 
