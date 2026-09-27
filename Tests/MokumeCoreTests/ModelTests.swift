@@ -542,5 +542,103 @@ struct ModelTests {
             #expect(raw != first)
             #expect(canvas.modelCache.count == 2)
         }
+
+        /// 四角錐を別々の場所へ `count` 個書き出す。**連番の OBJ の形** (名前を組み立てて読む)。
+        private func writtenPyramids(_ count: Int) throws -> [String] {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-model-sequence-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+            return try (0..<count).map { index in
+                let url = directory.appendingPathComponent("wave-\(index).obj")
+                try ModelFixture.pyramidText.write(to: url, atomically: true, encoding: .utf8)
+                return url.path
+            }
+        }
+
+        private func removeDirectory(of paths: [String]) {
+            guard let first = paths.first else { return }
+            try? FileManager.default.removeItem(
+                at: URL(fileURLWithPath: first).deletingLastPathComponent())
+        }
+
+        /// 控えを引いて、在るかだけを返す。**真偽値にしてから `#expect` へ渡す** (中身を渡すと、
+        /// 失敗したときの説明に点が全部並ぶ)。
+        private func remembers(_ canvas: Canvas, _ path: String) -> Bool {
+            canvas.modelCache[ModelRequest(path: path, normalize: true)] != nil
+        }
+
+        @Test("予算を超えるだけ別々のモデルを読んでも、控えの合計は予算以下に収まり、最後に読んだものは残る")
+        func theModelCacheDropsTheOldestUntilItFits() throws {
+            let paths = try writtenPyramids(10)
+            defer { removeDirectory(of: paths) }
+
+            let canvas = try makeCanvas()
+            // 面の控えの予算は、画像とは別の 64 MiB (#1593 の決定)
+            #expect(canvas.modelCache.budget == Canvas.modelCacheBudget)
+            #expect(Canvas.modelCacheBudget == 64 << 20)
+
+            // 予算は検査から絞る。64 MiB を超えるだけのモデルを書き出すと、解釈に時間が掛かる
+            let each = Canvas.modelCacheWeight(try canvas.loadModel(paths[0]))
+            canvas.modelCache.budget = each * 3
+            for path in paths.dropFirst() { _ = try canvas.loadModel(path) }
+
+            #expect(
+                canvas.modelCache.total <= canvas.modelCache.budget,
+                """
+                \(paths.count) 個読んだあとの控えが \(canvas.modelCache.total) バイトで、
+                予算 \(canvas.modelCache.budget) を超えている。
+
+                動きを書き出した連番の OBJ を 1 枚ずつ読むと、読んだモデルが全部残る (#1593)。
+                """)
+            #expect(canvas.modelCache.count == 3)
+            #expect(remembers(canvas, paths.last!), "最後に読んだものが捨てられた")
+            #expect(!remembers(canvas, paths[0]), "いちばん古いものが残っている")
+            #expect(canvas.modelCache.made == paths.count)
+        }
+
+        @Test(
+            "途中で読み直したモデルは捨てられない (loadModel と requestModel の両方)",
+            arguments: [false, true])
+        func rereadModelsAreKept(throughRequest: Bool) async throws {
+            let paths = try writtenPyramids(10)
+            defer { removeDirectory(of: paths) }
+
+            let canvas = try makeCanvas()
+            func read(_ path: String) async throws -> Model {
+                if throughRequest { return try await canvas.requestModel(path) }
+                return try canvas.loadModel(path)
+            }
+            let kept = try await read(paths[0])
+            canvas.modelCache.budget = Canvas.modelCacheWeight(kept) * 3
+            for path in paths.dropFirst() {
+                _ = try await read(paths[0])
+                _ = try await read(path)
+            }
+
+            #expect(canvas.modelCache.total <= canvas.modelCache.budget)
+            // 1 回おきに読み直した 1 つ目は、1 度しか解釈していない
+            #expect(
+                canvas.modelCache.made == paths.count,
+                "読み直したモデルが捨てられ、解釈し直された (入れた順に捨てている)")
+            #expect(try await read(paths[0]) == kept)
+        }
+
+        @Test("1 つで予算を超えるモデルも読めて控えに残り、読み直しても解釈し直さない")
+        func anOversizedModelIsKept() throws {
+            let paths = try writtenPyramids(2)
+            defer { removeDirectory(of: paths) }
+
+            let canvas = try makeCanvas()
+            // どのモデルも 1 つで予算を超える
+            canvas.modelCache.budget = 1
+            _ = try canvas.loadModel(paths[0])
+            let huge = try canvas.loadModel(paths[1])
+            #expect(canvas.modelCache.count == 1, "予算を超えたのに、前のモデルを捨てていない")
+
+            let again = try canvas.loadModel(paths[1])
+            #expect(again == huge)
+            #expect(canvas.modelCache.made == 2, "控えに残したはずのモデルを解釈し直した")
+        }
     }
 }

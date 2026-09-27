@@ -47,7 +47,9 @@ extension Canvas {
         strokeSolidEdges(of: .model(identity: model.identity)) { model.mesh }
     }
 
-    /// 整えて控えに入れる。
+    /// 整えて控えに入れる。**量が上限を超えたら、収まるまで古い順に捨てる**
+    /// (``Canvas/modelCache``)。`loadModel` も `requestModel` もここを通るので、追い出しは
+    /// 両方に効く。
     private func remember(
         _ parsed: ModelFile.Parsed, path: String, normalize: Bool
     ) -> Model {
@@ -58,7 +60,7 @@ extension Canvas {
             // 「読めているのに見えない」が起きる
             fitting: normalize ? min(width, height) / 2 : nil,
             identity: nextModelIdentity)
-        modelCache[ModelRequest(path: path, normalize: normalize)] = model
+        modelCache.insert(model, for: ModelRequest(path: path, normalize: normalize))
         return model
     }
 
