@@ -11,9 +11,10 @@
 # ## ここは何も打たない
 #
 # 呼ぶのは `gh issue list` / `gh pr list` / `git worktree list` の 3 つで、ラベルも付けず
-# auto-merge も掛けない。読み取りが増えるのは 2 つの場合だけである — 弾かれた描画 PR が
+# auto-merge も掛けない。読み取りが増えるのは 3 つの場合だけである — 弾かれた描画 PR が
 # あるときは、その順番を読む `gh api` が加わる。自分に証拠の無い着手印があるときは、その
-# 家族を読む `gh api graphql` が 1 回加わる (下の「落ちて見えるか」)。scripts/stall-watch.sh と
+# 家族を読む `gh api graphql` が 1 回加わる (下の「落ちて見えるか」)。open な Bug か ready の
+# 候補があるときは、その親を読む `gh api graphql` が 1 回加わる (下の「根と判断」)。scripts/stall-watch.sh と
 # 同じ性質で、**手元でいつ打っても安全である**。打つ側 (stall-act.sh に当たるもの) はこのリポジトリには来ない — 打つのは
 # 外に居るディスパッチャの仕事で、こちらが実行まで持つと「様子を見るために打ったら着手が
 # 始まった」が起きる。
@@ -24,15 +25,32 @@
 #
 # 番号は Issue の番号である。**catch-up の行だけは PR の番号**で、説明も PR #N から始める。
 #
-# 分類は 5 つで、この順に出す:
+# 分類は 6 つで、この順に出す:
 #
 #   catch-up **手元で打てる catch-up** — local-render が failure の描画 PR で、描画の行列の先頭
-#   ready    verify: triaged が付き、着手中でもなく、紐づく open PR も無い
+#   ready    verify: triaged が付き、着手中でもなく、紐づく open PR も無く、親が open な Bug でない
 #   stock    **B-1 の対象** — エージェントが起票したのに無印で、型が Bug / Task / Docs
 #   dropped  status: in progress なのに、open PR も手元の worktree / 枝も無く、静かで久しい。
 #            家族 (親・兄弟・子) にも同じ証拠が無い
 #   busy     着手中 (紐づく open PR がある・手元に worktree / 枝がある・まだ動いている・
-#            家族のどれかがそうである)
+#            家族のどれかがそうである)。または ready の候補のうち、親が open な Bug のもの
+#            (根を直す側で閉じる)
+#   decide   **人が決める行** — 無印の Design で、open な Bug の子を持つもの。子の多い順
+#
+# ## 根と判断 (#1661)
+#
+# バグの直しは「深いが狭い」— 原因の特定と再現はよくできているのに、兄弟の口を探さず、
+# 同じ根のバグが 1 件ずつ直されていた (#1659)。ADR-0040 は同じ根の群を sub-issue で束ね、
+# 根を直す PR が子をまとめて閉じるとした (決定 2)。判定はその形に 2 つで合わせる:
+#
+#   親が open な Bug の子   ready に出さず busy へ回す。子を 1 件ずつ拾うと、根を直さずに
+#                           症状だけを閉じる直しが続く。根のほうが ready に出ていれば、そちらを取る
+#   Bug の子を持つ Design   根本の直し方が人の判断を待っている (決定 3 — 約束を決める・変える
+#                           ときだけ人を待つ)。人の目に入らないと、子の Bug が症状のまま直される
+#
+# 親は GraphQL 1 回で、open な Bug と ready の候補の分だけ読む。**読めなかったら ready は
+# 従来どおり出し、decide は出さず、そう名乗る。** decide は終了コードに数えない — 打てる
+# 仕事ではなく、人が決める仕事である。
 #
 # ## catch-up を先頭に出す (#1045)
 #
@@ -248,9 +266,12 @@ while IFS= read -r row; do
   catch_up_count=$((catch_up_count + 1))
 done < <(jq -c '.[] | select(.isDraft | not)' <<<"$prs_json")
 
-ready='' stock='' dropped='' busy='' ready_count=0
+ready='' stock='' dropped='' busy='' decide='' ready_count=0 decide_count=0
 # 自分に証拠の無い着手印。「<番号> <タイトル>」の並びで、家族を読んでから分ける
 candidates=''
+# ready の候補 (「<番号> <描画の見込み> <タイトル>」) と、未トリアージの Design
+# (「<番号> <タイトル>」)。どちらも親を読んでから分ける (#1661)
+ready_rows='' designs=''
 
 while IFS= read -r row; do
   n=$(jq -r '.number' <<<"$row")
@@ -283,10 +304,13 @@ while IFS= read -r row; do
       path_tokens | touches_drawing coverage; then
       guess='drawing?'
     fi
-    ready+="$n ready $guess $title"$'\n'
-    ready_count=$((ready_count + 1))
+    # ready と決めるのは親を読んでから (下の「根と判断」)。ここでは溜めるだけ
+    ready_rows+="$n $guess $title"$'\n'
     continue
   fi
+
+  # 未トリアージの Design は、子の Bug を数えてから decide に出すかを決める (#1661)
+  [ "$type" != Design ] || designs+="$n $title"$'\n'
 
   # 未トリアージ。**B-1 の対象になるのは、完了条件を書ける見込みがあるものだけ**である
   case " $STOCK_TYPES " in *" $type "*) ;; *) continue ;; esac
@@ -361,14 +385,80 @@ if [ -n "$candidates" ]; then
   done <<<"$candidates"
 fi
 
-printf '%s' "$catch_up$ready$stock$dropped$busy"
+# --- 根と判断 (#1661) ---------------------------------------------------------
+
+# 番号ごとの親を 1 回で読む。「<番号> <親> <親の state> <親の型>」を 1 行 1 件で出す
+# (親の無いものは出さない。型の無い親は - にする — 空にすると欄がずれる)
+read_parents() { # $1=番号 (空白区切り)
+  local owner=${REPO%%/*} name=${REPO#*/} q='' n
+  for n in $1; do
+    q+="i$n: issue(number: $n) { parent { number state issueType { name } } } "
+  done
+  gh api graphql -f query="{ repository(owner: \"$owner\", name: \"$name\") { $q } }" \
+    --jq '.data.repository | to_entries[]
+      | (.value.parent // empty) as $p
+      | "\(.key | ltrimstr("i")) \($p.number) \($p.state) \($p.issueType.name // "-")"'
+}
+
+# 引くのは open な Bug と ready の候補だけ。**どちらも無ければ引かない** — 平常時の呼び出しを
+# 増やさないため (catch-up の順番の判定・家族と同じ作法)
+open_bugs=$(jq -r '.[] | select(.issueType.name == "Bug") | .number' <<<"$issues_json")
+asked=$(printf '%s\n%s\n' "$(awk '{ print $1 }' <<<"$ready_rows")" "$open_bugs" |
+  awk 'NF && !seen[$1]++ { printf "%s ", $1 }')
+parents=''
+if [ -n "$asked" ]; then
+  # 読めなかったら、ready の候補は従来どおり ready に出し、decide は出さない。**そう名乗る** —
+  # 黙ると「根で直す子が ready に出ている」ことに誰も気付かない
+  parents=$(read_parents "$asked") || {
+    parents=''
+    echo "親を読めなかった — 根で直す子も ready に出し、decide は出していない" >&2
+  }
+fi
+
+# (a) 親が open な Bug なら、子は根を直す側で閉じる (ADR-0040 決定 2)。子を ready に出すと
+# 症状の 1 か所だけが直され、同じ根の兄弟が残る — #1659 が数えた「深いが狭い」直しの形である
+while read -r n guess title; do
+  [ -n "$n" ] || continue
+  root=$(awk -v n="$n" '$1 == n && $3 == "OPEN" && $4 == "Bug" { print $2; exit }' <<<"$parents")
+  if [ -n "$root" ]; then
+    busy+="$n busy - 根 #$root で直す ($title)"$'\n'
+  else
+    ready+="$n ready $guess $title"$'\n'
+    ready_count=$((ready_count + 1))
+  fi
+done <<<"$ready_rows"
+
+# (b) open な Bug の子を持つ未トリアージの Design は、**根本が人の判断を待っている**ことを
+# 表す (ADR-0040 決定 3 — 約束を決める・変えるときだけ人を待つ)。子の多い順に並べるのは、
+# 1 つ決めれば閉じる Bug の多いものから人の目に入れるためである。終了コードには数えない —
+# 打てる仕事ではなく、人が決める仕事なので。
+#
+# 数えるのは open な Bug の子だけ (ready の候補の親も同じ応答に混ざっている)。親の state は
+# 見ない — 突き合わせる Design は open な一覧から集めたものなので、閉じた親には当たらない
+children=$(awk -v bugs=" $(tr '\n' ' ' <<<"$open_bugs") " '
+  index(bugs, " " $1 " ") { c[$2]++ }
+  END { for (p in c) print p, c[p] }' <<<"$parents")
+while read -r count n title; do
+  [ -n "$n" ] || continue
+  decide+="$n decide - open な Bug の子 $count 件が根本の判断を待っている ($title)"$'\n'
+  decide_count=$((decide_count + 1))
+done < <(
+  while read -r n title; do
+    [ -n "$n" ] || continue
+    count=$(awk -v n="$n" '$1 == n { print $2; exit }' <<<"$children")
+    [ -z "$count" ] || printf '%s %s %s\n' "$count" "$n" "$title"
+  done <<<"$designs" | sort -k1,1nr -k2,2n
+)
+
+printf '%s' "$catch_up$ready$stock$dropped$busy$decide"
 
 # 件数は標準エラーへ出す。**標準出力は 1 行 1 件のまま**にしておく (読む側が機械なので)
-printf 'catch-up %s / ready %s / stock %s / dropped %s / busy %s\n' \
+printf 'catch-up %s / ready %s / stock %s / dropped %s / busy %s / decide %s\n' \
   "$catch_up_count" \
   "$ready_count" \
   "$(grep -c . <<<"$stock" || true)" \
   "$(grep -c . <<<"$dropped" || true)" \
-  "$(grep -c . <<<"$busy" || true)" >&2
+  "$(grep -c . <<<"$busy" || true)" \
+  "$decide_count" >&2
 
 [ $((catch_up_count + ready_count)) -gt 0 ]
