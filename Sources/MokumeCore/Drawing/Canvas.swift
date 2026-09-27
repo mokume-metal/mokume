@@ -466,10 +466,8 @@ public final class Canvas {
     /// 二度と当たらない。件数で切ると、それが大きなモデル 64 個分まで予算の外に残る
     /// ので、量で切る。上限を超える長さの連番に線を引いて回すと、毎回溶接し直す。
     ///
-    /// 鍵に寸法が入るので、大きさの違う立体を並べると、予算に収まらない数では外れ続ける。
-    /// それは上限ではなく鍵の問題で、[#1606] が扱う。
-    ///
-    /// [#1606]: https://github.com/mokume-metal/mokume/issues/1606
+    /// 球は通常の半径なら、半径1の稜線を共有する (#1606)。他の形と溶接の計算範囲の
+    /// 端にある球は寸法も鍵に持ち、予算に収まらなければ古いものから作り直す。
     var solidEdges = BoundedCache<SolidSource, SolidEdges>(
         budget: Canvas.solidCacheBudget, weight: Canvas.solidEdgesWeight)
     /// 一周を割る数の既定。
