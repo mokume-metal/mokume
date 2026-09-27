@@ -107,8 +107,23 @@ extension Canvas {
         /// 受け取れない切り抜きが渡された。
         case badClip
 
-        /// ``beginDraw()`` を対にせず重ねて呼んだ。
+        /// 同じ本体のフレームの中で ``beginDraw()`` を対にせず重ねて呼んだ。境目を越えて
+        /// いないので、何もせず開いているフレームが続く。
         case alreadyDrawing
+        /// ``beginDraw()`` で開いたフレームを ``endDraw()`` で閉じないまま境目を越え、次の
+        /// フレームが始まった (`beginDraw()` か `draw { }`)。閉じていなかったフレームは描かずに
+        /// 捨て、描き始め直す ([#1622])。
+        ///
+        /// **``alreadyDrawing`` とは鍵を分ける。** あちらは境目を越えていない重ね呼びで、中身を
+        /// 保つ。振る舞いが違う。
+        ///
+        /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+        case unfinishedFrameDropped
+        /// ``draw(_:)`` が開いたフレームの中で、フレームを開く・閉じる口 (``beginDraw()``・
+        /// ``endDraw()``・入れ子の ``draw(_:)``) を呼んだ。フレームは開き直さず閉じもしない。
+        ///
+        /// 入口は 3 つで事情は 1 つなので鍵を共有し、文面は口ごとの全文にする。
+        case frameCallInsideDraw
         /// ``beginDraw()`` の前に ``endDraw()`` を呼んだ。
         case notDrawing
         /// 描き切る前の描き場所を置いた。
@@ -136,6 +151,16 @@ extension Canvas {
         ///
         /// [#1520]: https://github.com/mokume-metal/mokume/issues/1520
         case shapeNotBegun
+        /// ``beginShape(_:)`` で開いた形を ``endShape(_:)`` で閉じないまま、フレームの境目を
+        /// 越えた ([#1591])。形は描かずに捨てる。
+        ///
+        /// **``shapeNotBegun``・``vertexOutsideShape`` とは鍵を分ける。** あちらは対の片方を
+        /// 呼んだ場所の誤りで、こちらは開いた形を閉じ忘れたまま境目が来たことを言う。閉じ
+        /// 忘れた形を捨てた後の `vertex()` は形の外になるので、同じ書き間違いから 2 つとも
+        /// 出ることがある — 共有すると、先に言った側がもう片方を黙らせる。
+        ///
+        /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        case shapeNotEnded
         /// 形の中で、穴を開かずに ``endContour()`` を呼んだ ([#1528])。
         ///
         /// 形の外で呼んだときは ``vertexOutsideShape`` のほうを言う (直す先が

@@ -130,6 +130,13 @@ extension Canvas {
     /// 力を積む。
     public func force(_ particles: Particles, _ forces: [Force]) {
         guard isDrawing else { return warnOutsideFrame(.particles) }
+        // このフレームで最初に積む前の数を控える。フレームを描かずに捨てるとき、ここから後を
+        // 落とす ([#1622]・``forcesThisFrame``)
+        //
+        // [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+        if !forcesThisFrame.contains(where: { $0.particles.value === particles }) {
+            forcesThisFrame.append((Weak(particles), particles.pendingForceCount))
+        }
         particles.add(forces)
     }
 
@@ -145,6 +152,8 @@ extension Canvas {
             frame: framesDrawn,
             forces: particles.takeForces(),
             vertexStart: placed?.start ?? 0, vertexCount: placed?.count ?? 0)
+        // 取り出したので、控えた数はもう指す先が無い。この後に積む力は 0 個から数え直す
+        forcesThisFrame.removeAll { $0.particles.value === particles }
         schedule(particles)
         if particleRoute == .reference { placeFromCPU(particles) }
     }

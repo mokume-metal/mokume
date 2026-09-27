@@ -1032,6 +1032,64 @@ struct CanvasTests {
         #expect(image[16, 16].red < 60)
     }
 
+    @Test("閉じ忘れた beginShape() は、フレームをまたいで点を積み続けない (#1591)")
+    func unclosedShapeDoesNotGrowAcrossFrames() throws {
+        // 組み立て中の形はフレームに属する (ADR-0021 決定 4 の追補 (2026-09-27))。直す前は
+        // 開いた印が境目で下りず、毎フレームの `vertex()` が同じ形へ積まれ続けた — 何も
+        // 描かれないまま、点のぶんだけ記憶が増える ([#1591])。`setup()` で開いた形を模して、
+        // フレームの外で開く (頭の側で捨てることを見る)
+        //
+        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        let canvas = try makeCanvas()
+        canvas.beginShape()
+        for frame in 1...30 {
+            var placedInFrame = 0
+            try canvas.draw {
+                for index in 0..<1000 {
+                    canvas.vertex(Float(index % 64), Float(index / 16))
+                }
+                placedInFrame = canvas.shapePoints.count
+            }
+            // フレームの中でも積まれていない — 頭で捨てている。終わりだけで捨てると、
+            // `setup()` で開いた形に 1 枚目の点が積まれる
+            try #require(placedInFrame == 0, "\(frame) 枚目の中で \(placedInFrame) 点が積まれた")
+            try #require(!canvas.isBuildingShape, "\(frame) 枚目の後も形が開いたまま")
+            try #require(
+                canvas.shapePoints.isEmpty,
+                "\(frame) 枚目の後に \(canvas.shapePoints.count) 点が残っている")
+            #expect(canvas.shapeIndices.isEmpty)
+            #expect(canvas.shapeHoles.isEmpty)
+            #expect(canvas.curveGuides.isEmpty)
+            #expect(canvas.holePoints == nil)
+        }
+        #expect(canvas.warnings.hasWarned(.shapeNotEnded))
+        // 捨てた後のフレームの `vertex()` は形の外なので、そちらの注意も言う
+        #expect(canvas.warnings.hasWarned(.vertexOutsideShape))
+    }
+
+    @Test("フレームをまたいで組んだ形は描かれない (#1591)")
+    func shapeBuiltAcrossFramesIsNotDrawn() throws {
+        // 1 枚目で開いて 2 点、2 枚目 (塗り直さない) で 1 点足して閉じる。直す前は 2 枚目に
+        // 三角形が出ていた — 閉じ忘れた形を、次のフレームが続きとして描いていた
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.beginShape()
+            canvas.vertex(4, 4)
+            canvas.vertex(60, 4)
+        }
+        try canvas.draw {
+            canvas.vertex(32, 60)
+            canvas.endShape(.close)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[32, 16] == (0, 0, 0, 255), "前のフレームで開いた形が描かれた")
+        #expect(canvas.warnings.hasWarned(.shapeNotEnded))
+        #expect(canvas.warnings.hasWarned(.shapeNotBegun))
+    }
+
     @Test("push() の片肺が無い — 変換とスタイルは揃って戻らない")
     func pushRestoresNeitherHalfAcrossFrames() throws {
         // 以前は `push()` だけ書いて `pop()` を忘れると、次のフレームで**変換だけ**が
@@ -1128,6 +1186,567 @@ struct CanvasTests {
             _ = canvas.createShape { canvas.currentStyle = Canvas.Style() }
             expectRestored("createShape")
         }
+    }
+
+    // MARK: - フレームの境目で戻す状態 (#1671)
+
+    /// フレームの境目の越え方。**境目の関数はどれを通っても、同じ状態を戻す。**
+    enum FrameBoundary: CaseIterable, CustomTestStringConvertible {
+        /// 描き切って閉じ、次を始める (`endDraw()` → `beginDraw()`)。
+        case endDraw
+        /// 閉じ忘れたまま次を始める (`beginDraw()` を重ねる・[#1622])。描き切らないので、
+        /// 溜めたものを flush が片付けてくれない。
+        case beginDrawAgain
+        /// 描き切りに失敗して閉じる ([#342])。flush は溜めたものに触れずに投げる。
+        case failedEndDraw
+        /// 閉じ忘れたまま、次のフレームを `draw { }` で始める。捨てるのは入口ではなく
+        /// フレームの始まりなので、こちらの入口でも同じに捨てる。
+        case drawAfterBeginDraw
+        /// 本体の通常の経路 (`draw { }` → `draw { }`)。
+        case drawThenDraw
+        /// `setup()` にあたるフレームの外で汚し、最初の `draw { }` を始める。外で書けるものは
+        /// 限られる (シーンの記述は断られる) ので、見るのは頭で戻すものだけ (``FrameReset``)。
+        case outsideThenDraw
+
+        var testDescription: String { "\(self)" }
+
+        /// 汚すのがフレームの外か。
+        var dirtiesOutside: Bool { self == .outsideThenDraw }
+
+        /// 汚したフレームを閉じる越え方か。閉じた直後にも、終わりで戻すものを見る。
+        var closes: Bool { [.endDraw, .failedEndDraw, .drawThenDraw].contains(self) }
+
+        /// 汚すフレームを開いて `dirty` を走らせ、境目を越える。閉じる越え方なら閉じた直後に
+        /// `closed` を、次のフレームの中で `inspect` を呼ぶ。
+        func run(
+            _ canvas: Canvas, dirty: () -> Void, closed: () -> Void, inspect: () -> Void
+        ) throws {
+            switch self {
+            case .endDraw, .failedEndDraw:
+                canvas.beginDraw()
+                dirty()
+                if self == .failedEndDraw { canvas.failureForTesting = .deviceUnavailable }
+                canvas.endDraw()
+                canvas.failureForTesting = nil
+                closed()
+                canvas.beginDraw()
+                inspect()
+                canvas.endDraw()
+            case .beginDrawAgain:
+                canvas.beginDraw()
+                dirty()
+                canvas.beginDraw()
+                inspect()
+                canvas.endDraw()
+            case .drawAfterBeginDraw:
+                canvas.beginDraw()
+                dirty()
+                try canvas.draw { inspect() }
+            case .drawThenDraw:
+                try canvas.draw { dirty() }
+                closed()
+                try canvas.draw { inspect() }
+            case .outsideThenDraw:
+                dirty()
+                try canvas.draw { inspect() }
+            }
+        }
+    }
+
+    /// フレームに属する状態を、境目のどちらの側で戻すか。
+    ///
+    /// **終わりの側で戻すものは、閉じた直後にも見る。** 止まっている間のコールバックと
+    /// 描き場所の `endDraw()` の後はフレームの外で、そこで置いた図形や読んだ座標に前の
+    /// フレームのものが効かないようにする ([#1472]・[#1504])。頭の側だけで見ていると、
+    /// 終わりの戻しを頭へ移しても緑のままになる。
+    ///
+    /// [#1472]: https://github.com/mokume-metal/mokume/issues/1472
+    /// [#1504]: https://github.com/mokume-metal/mokume/issues/1504
+    enum FrameReset {
+        /// 頭でだけ戻す。閉じた直後は汚れたままでよい (次のフレームの前に読まれない)。
+        case head
+        /// 終わりで戻す。フレームの外で汚したもの (`setup()` で置いた図形) は、最初の
+        /// フレームへ持ち越すのが約束なので、頭では戻さない。
+        case end
+        /// 頭と終わりの両方で戻す。
+        case both
+
+        var atHead: Bool { self != .end }
+        var atEnd: Bool { self != .head }
+    }
+
+    /// 境目を越えるときに開いている列。**列は同時に 1 本しか開かない**ので、開いたまま
+    /// 越える列の種類を引数で回す (``frameState`` の `openIn`)。
+    enum OpenBatch: CaseIterable, CustomTestStringConvertible {
+        /// 貼る絵の矩形を 2 つ置いて畳み始めた、平面の雛形。
+        case flatTemplate
+        /// 基本図形の列。
+        case form
+        /// 立体の列。
+        case solid
+
+        var testDescription: String { "\(self)" }
+    }
+
+    /// 境目を越える前に、フレームを汚すのに使う道具。
+    struct FrameFixture {
+        let sheet: Image
+        let other: Canvas
+        let computation: Computation
+        let numbers: Numbers
+        let particles: Particles
+        /// 開いたまま越える列。
+        let openBatch: OpenBatch
+        /// 貼る絵の矩形を 1 つ置いた直後の、畳む相手の控え (``Canvas/pendingFlat``)。
+        var pendingFlat: Canvas.PendingFlat?
+    }
+
+    /// **フレームに属する状態と、それを汚す手順** ([ADR-0021] 決定 4 と追補・[#1671])。
+    ///
+    /// ここに載る状態は、どの境目を越えた後も (次の `beginFrame()` の後で見て) 既定へ
+    /// 戻っていなければならない。**頭でしか戻さないもの** (`pendingEffects`・積み履歴・
+    /// `passesThisFrame`・`hasLoadedPixels`・`lightStorage`) もあるので、見るのは次の
+    /// フレームを始めた後である。
+    ///
+    /// 手順は上から順に通す。**塗り直し (`background`) と途中の描き切り (`loadPixels`) は
+    /// 溜めたものを捨てるので先頭に置く。** 手順が本当に汚したかは検査が確かめる
+    /// (既定のままの状態は、戻ったかどうかを見分けられない)。
+    ///
+    /// `openIn` はその状態が汚れる開いた列の種類。**開いている列は 1 本だけ**
+    /// (``OpenBatch``) なので、列の組と、それに付いて動く状態だけが種類を持つ。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#1671]: https://github.com/mokume-metal/mokume/issues/1671
+    private var frameState:
+        [(
+            name: String, reset: FrameReset, openIn: Set<OpenBatch>,
+            dirty: (Canvas, inout FrameFixture) -> Void
+        )]
+    {
+        let all = Set(OpenBatch.allCases)
+        let head = FrameReset.head
+        let end = FrameReset.end
+        let both = FrameReset.both
+        return [
+            // 途中の描き切りと塗り直しは、溜めたものを捨てるので先に通す
+            ("passesThisFrame", head, all, { c, _ in c.loadPixels() }),
+            ("hasLoadedPixels", head, all, { c, _ in c.loadPixels() }),
+            ("pendingBackground", end, all, { c, _ in c.background(.linear(red: 0, green: 0, blue: 0)) }),
+            // シーンの記述
+            ("cameraStorage", end, all, { c, _ in c.perspective() }),
+            ("transform", both, all, { c, _ in c.translate(5, 5) }),
+            ("transformStack", head, all, { c, _ in c.pushMatrix() }),
+            ("styleStack", head, all, { c, _ in c.pushStyle() }),
+            ("activeLights", both, all, { c, _ in c.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2)) }),
+            ("activeSurroundings", both, all, { c, _ in c.surroundings(.sky) }),
+            ("shadowsEnabled", end, all, { c, _ in c.shadows(true) }),
+            ("shadowRangeValue", end, all, { c, _ in c.shadowRange(50) }),
+            ("shadowDetailValue", end, all, { c, _ in c.shadowDetail(ShadowMap.detailRange.lowerBound) }),
+            ("shadowBiasValue", end, all, { c, _ in c.shadowBias(0.5) }),
+            ("pendingEffects", head, all, { c, _ in c.effects([.invert()]) }),
+            ("pendingComputations", end, all, { c, f in c.compute(f.computation, over: 1, writes: [f.numbers]) }),
+            // 溜めたもの。立体は光を置いた後に置くので、列を閉じたときに光の置き場へ写る
+            ("solidVertices", end, all, { c, _ in c.box(4) }),
+            ("solidInstances", end, all, { c, _ in c.box(4) }),
+            ("lightStorage", head, all, { c, _ in c.box(4) }),
+            ("solidIndices", end, all, { c, _ in
+                c.beginShape(.triangles)
+                c.vertex(0, 0, 1)
+                c.vertex(8, 0, 1)
+                c.vertex(0, 8, 1)
+                c.index(0)
+                c.index(1)
+                c.index(2)
+                c.endShape()
+            }),
+            // 貼る絵の矩形は、読む面を替えた 1 つ目が列を閉じるので、2 つ目が畳む相手を待つ
+            ("vertices", end, all, { c, f in
+                c.texture(f.sheet)
+                c.noStroke()
+                c.rect(0, 0, 3, 3)
+                c.rect(4, 0, 3, 3)
+                f.pendingFlat = c.pendingFlat
+                c.noTexture()
+                c.stroke(.linear(red: 1, green: 1, blue: 1))
+            }),
+            ("flatInstances", end, all, { c, _ in c.flatInstances.append(.identity) }),
+            ("recordedStrokeRanges", end, all, { c, _ in c.recordedStrokeRanges.append(0..<0) }),
+            ("recordedSolidStrokes", end, all, { c, _ in
+                c.recordedSolidStrokes.append(
+                    SolidStrokePiece(kind: .disc(.zero), weight: 1, vertexStart: 0, vertexCount: 0))
+            }),
+            ("formInstances", end, all, { c, _ in c.rect(10, 10, 4, 4) }),
+            ("batches", end, all, { c, _ in c.rect(10, 10, 4, 4) }),
+            ("placedGraphics", end, all, { c, f in c.note(placing: f.other) }),
+            ("outlinesAssembledThisFrame", end, all, { c, _ in c.outlinesAssembledThisFrame = 7 }),
+            ("pointScansThisFrame", end, all, { c, _ in c.pointScansThisFrame = 7 }),
+            // 組み立て中の形 (#1591)。閉じずに境目を越える
+            ("isBuildingShape", both, all, { c, _ in c.beginShape(.triangles) }),
+            ("shapeKind", both, all, { _, _ in }),
+            ("currentNormal", both, all, { c, _ in c.normal(0, 0, 1) }),
+            ("shapePoints", both, all, { c, _ in c.vertex(0, 0, 1) }),
+            ("shapeHasDepth", both, all, { _, _ in }),
+            ("shapeIndices", both, all, { c, _ in c.index(0) }),
+            ("shapeHoles", both, all, { c, _ in
+                c.beginContour()
+                c.vertex(1, 1)
+                c.vertex(2, 1)
+                c.vertex(1, 2)
+                c.beginContour()  // 1 つ目の穴を畳み、2 つ目を開いたままにする (#1528)
+            }),
+            ("holePoints", both, all, { c, _ in c.vertex(3, 3) }),
+            ("curveGuides", both, all, { c, _ in
+                c.curveVertex(0, 0)
+                c.curveVertex(1, 1)
+            }),
+            // 開いたまま越える列 (1 本だけ)。**最後に開く** — 後から置いた図形が列を閉じる
+            ("openSource", end, [.form, .solid], { c, f in Self.open(f.openBatch, on: c, f) }),
+            ("openForm", end, [.form], { _, _ in }),
+            ("openSolid", end, [.solid], { _, _ in }),
+            ("openFlat", end, [.flatTemplate], { _, _ in }),
+            ("currentTexture", end, [.flatTemplate], { _, _ in }),
+            // 雛形を開く道は畳む相手を片付け、雛形の旗を立てて下ろすので、列を開いた後に
+            // 汚す (列を閉じる道はどちらも読まない)
+            ("pendingFlat", end, all, { c, f in c.pendingFlat = f.pendingFlat }),
+            ("buildingFlatTemplate", end, all, { c, _ in c.buildingFlatTemplate = true }),
+            // 捨てたフレームで積んだ力を落とすための控え (#1622)
+            ("forcesThisFrame", end, all, { c, f in c.force(f.particles, [.gravity(0, 1)]) }),
+        ]
+    }
+
+    /// 開いたまま越える列を開く。
+    private static func open(_ batch: OpenBatch, on canvas: Canvas, _ fixture: FrameFixture) {
+        switch batch {
+        case .form:
+            canvas.rect(20, 20, 4, 4)
+        case .solid:
+            canvas.box(4)
+        case .flatTemplate:
+            // 読む面を替えた 1 つ目は列を閉じ、2 つ目が畳む相手を待ち、3 つ目で雛形が開く
+            canvas.texture(fixture.sheet)
+            canvas.noStroke()
+            canvas.rect(0, 0, 4, 4)
+            canvas.rect(8, 0, 4, 4)
+            canvas.rect(16, 0, 4, 4)
+            canvas.noTexture()
+        }
+    }
+
+    /// **持ち越す状態と、その理由。** 境目で戻さないことが約束どおりのもの。
+    ///
+    /// 足すときは理由を 1 行で書く。「戻し忘れ」をここへ逃がすと、この検査は何も守らなく
+    /// なる — 迷ったら ``frameState`` に載せ、赤くなったら境目の関数で戻す。
+    private var carriedState: [String: String] {
+        let construction = "面を作ったときに決まり、面と同じだけ生きる"
+        let resource = "資源 (置き場・パイプライン)。作り直さないために持つ"
+        let cache = "控え。同じ頼みで作り直さないために持つ (中身は入力で決まり、フレームに属さない)"
+        let count = "計数 (作ってから通算・直前のフレーム)。数で確かめる検査が読む"
+        let transient = "呼び出しの中でだけ立ち、抜ける前に戻る一時の値。境目では常に既定"
+        let testing = "検査の差し込み・上限。製品の経路では既定のまま"
+        return [
+            "width": construction, "height": construction, "target": construction,
+            "output": construction, "upscaleStage": construction, "gpu": construction,
+            "frameRing": construction, "pipeline": construction, "projection": construction,
+            "atlas": construction, "timebase": "時刻と刻み。ランタイムが進め、描き場所は作った面と共有する (#1467)",
+            "vertexStorage": resource, "flatInstanceStorage": resource,
+            "formInstanceStorage": resource, "solidVertexStorage": resource,
+            "solidIndexStorage": resource, "solidInstanceStorage": resource,
+            "lightStorageBuffer": resource, "lightingStorage": resource, "materialStorage": resource,
+            "surroundingsStorage": resource, "shadowMatrixStorage": resource,
+            "blendModeBuffer": resource, "glyphPageBuffer": resource, "uniformsStorage": resource,
+            "valuesStorage": resource, "matrixStorage": resource, "computeValuesStorage": resource,
+            "uploadStorage": resource, "effectPipelineStorage": resource,
+            "computePipelineStorage": resource, "unbakedShadowTexture": resource,
+            "emptyNumbers": resource, "blankPicture": resource,
+            "shadowMap": "焼き付け先。同じ細かさなら作り直さない (ADR-0021 決定 4)。宣言は shadowDetailValue が戻る",
+            "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
+            "imageCache": cache, "imageCacheUse": cache, "imageCacheClock": cache,
+            "imageCacheBytes": cache, "modelCache": cache, "solidMeshes": cache,
+            "solidMeshUse": cache, "solidMeshClock": cache, "solidEdges": cache,
+            "typefaces": cache,
+            "lastShadowBakeKey": "前に焼いた入力の指紋。焼かなかったフレームでは触らない (影の面は誰にも書き換えられない)",
+            "atlasPageFrame": "焼き場の頁を作ったフレームの番号 (#1342)。番号どうしで比べる",
+            "nextModelIdentity": "読み込んだモデルの通し番号", "retainedSerial": "保持した形を置くたびの通し番号",
+            "framesDrawn": "閉じたフレームの通し番号。境目の印そのもの",
+            "imagesDecoded": count, "solidMeshesBuilt": count, "shadowMapsBuilt": count,
+            "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
+            "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
+            "effectBarriersEncoded": count, "effectPassesEncoded": count,
+            "computeEncodersOpened": count, "computeEncodersClosed": count,
+            "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
+            "glyphQuadsPlaced": count, "drawCallsInLastFrame": count,
+            "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
+            "pointScansInLastFrame": count,
+            "stagePassesUsed": "段の枠の採番。描き切りごとに 0 から数える (コマンドと同じ寿命)",
+            "shaders": "この面が作った断片 (弱く持つ)。観測へ失敗を載せる",
+            "effectShaders": "この面が作った効果 (弱く持つ)。観測へ失敗を載せる",
+            "computations": "この面が作った計算 (弱く持つ)。観測へ失敗を載せる",
+            "warnings": "言った注意の控え。初回だけ言うのは面の寿命で数える",
+            "currentShader": "描き方。断片はフレームを越える (ADR-0021 決定 4)",
+            "currentNumbers": "描き方。断片と一組でフレームを越える (#1470)",
+            "currentCurveDetail": "描き方 (曲線の細かさ)。一度書けば残る",
+            "currentCurveTightness": "描き方 (曲線の張り)。一度書けば残る",
+            "noiseSettings": "揺らぎの種と細かさ。一度書けば残る (断片と共有する・#366)",
+            "carriesPictureBeforeEffects": "効果を通す前の絵の控えがあるか。次のフレームの最初の描き切りが戻す (#1469)",
+            "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手を描き切らせて空にする。捨てるだけでは絵が変わらないので残す",
+            "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
+            "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
+            "beginDrawFrame": "isDrawing と組のフレームの印 (beginDraw が開いた本体のフレームの番号)。境目の関数だけが書く",
+            "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
+            "solidStrokeCapture": transient,
+            "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
+            "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
+            "uploadByteLimit": testing, "failureForTesting": testing,
+            "failEffectPassForTesting": testing,
+        ]
+    }
+
+    /// ``Canvas/Style`` のうち、フレームに属するフィールドと汚す手順。**入れ子もフィールド
+    /// ごとに同じ 2 つの表で扱う** — 切り抜き・材質・影は越えず、残りの描き方は越える
+    /// (ADR-0021 決定 4 の表)。
+    private var frameStyle: [String: (reset: FrameReset, dirty: (inout Canvas.Style) -> Void)] {
+        [
+            "clip": (.both, { $0.clip = MTLScissorRect(x: 1, y: 2, width: 3, height: 4) }),
+            "material": (.end, { $0.material.shininess = 8 }),
+            "castsShadow": (.end, { $0.castsShadow = false }),
+            "receivesShadow": (.end, { $0.receivesShadow = false }),
+        ]
+    }
+
+    /// 組み立て中の形の状態 (#1591・#1607)。フレームの外 (`setup()`) でも汚せ、頭で捨てる。
+    /// 形の組み立て (`createShape`) の出入口が切り離す群でもある。
+    static let shapeState: Set<String> = [
+        "isBuildingShape", "shapeKind", "currentNormal", "shapePoints", "shapeHasDepth",
+        "shapeIndices", "shapeHoles", "holePoints", "curveGuides",
+    ]
+
+    /// ``Canvas/Style`` のうち、越えるフィールド。どれも描き方である (ADR-0021 決定 4)。
+    private let carriedStyle: Set<String> = [
+        "fill", "stroke", "strokeWeight", "strokeCap", "strokeJoin", "hasFill", "hasStroke",
+        "rectMode", "ellipseMode", "blendMode", "fontName", "textSize", "textStyle",
+        "horizontalTextAlign", "verticalTextAlign", "textLeading", "textWrap", "imageMode",
+        "tint", "picture",
+    ]
+
+    @Test("Canvas の格納は、フレームに属するか持ち越すかのどちらかに載っている")
+    func everyStoredPropertyIsClassified() throws {
+        // 境目で戻す状態は、境目の関数ごとに手で並べてあり、並べ落とした状態が越えていた
+        // (#925・#1472・#1504・#1591・#1622)。**格納を 1 つ足したら、ここで止まる** —
+        // どちらの表にも無い名前は、境目で戻すかを誰も決めていない
+        let canvas = try makeCanvas()
+        let labels = Mirror(reflecting: canvas).children.compactMap(\.label)
+        let frame = Set(frameState.map(\.name))
+        let carried = Set(carriedState.keys)
+        #expect(frame.isDisjoint(with: carried), "両方の表に載っている: \(frame.intersection(carried))")
+        for label in labels where label != "style" {
+            #expect(
+                frame.contains(label) || carried.contains(label),
+                "\(label) がどちらの表にも無い。フレームに属するなら汚す手順を、持ち越すなら理由を書く")
+        }
+        for name in frame.union(carried) {
+            #expect(labels.contains(name), "\(name) は Canvas の格納に無い (表から消す)")
+        }
+
+        let fields = Mirror(reflecting: canvas.style).children.compactMap(\.label)
+        let frameFields = Set(frameStyle.keys)
+        #expect(frameFields.isDisjoint(with: carriedStyle))
+        for field in fields {
+            #expect(
+                frameFields.contains(field) || carriedStyle.contains(field),
+                "style.\(field) がどちらの表にも無い")
+        }
+        for name in frameFields.union(carriedStyle) {
+            #expect(fields.contains(name), "style.\(name) は Style に無い (表から消す)")
+        }
+    }
+
+    /// フレームに属する状態の綴り。**同じ面の上で比べる** — 面ごとに違う資源 (焼き場の面) を
+    /// 指す値も、同じ面なら同じ綴りになる。
+    private func frameFingerprint(of canvas: Canvas) -> [String: String] {
+        let names = Set(frameState.map(\.name))
+        var prints: [String: String] = [:]
+        for child in Mirror(reflecting: canvas).children {
+            guard let label = child.label, names.contains(label) else { continue }
+            prints[label] = String(describing: child.value)
+        }
+        let styleNames = Set(frameStyle.keys)
+        for child in Mirror(reflecting: canvas.style).children {
+            guard let label = child.label, styleNames.contains(label) else { continue }
+            prints["style.\(label)"] = String(describing: child.value)
+        }
+        return prints
+    }
+
+    @Test(
+        "フレームに属する状態は、どの境目を越えても既定へ戻る (#1671)",
+        arguments: FrameBoundary.allCases, OpenBatch.allCases)
+    func frameStateResetsAtEveryBoundary(_ boundary: FrameBoundary, _ openBatch: OpenBatch) throws {
+        // 戻す状態を境目の関数ごとに手で並べていたので、並べ落とした状態が 1 件ずつ見つかって
+        // きた (#925・#1472・#1504・#1591・#1622)。**全部汚してから越え、全部が戻ったかを見る**
+        // — 1 例ずつの検査では、次に足した状態の戻し落としが黙る
+        let canvas = try makeCanvas()
+        let other = try makeCanvas()
+        var fixture = FrameFixture(
+            sheet: try canvas.createImage(8, 8), other: other,
+            computation: try canvas.makeComputation(
+                "kernel void mark(device float *out [[buffer(0)]], uint id [[thread_position_in_grid]]) { out[id] = 1; }",
+                name: "mark"),
+            numbers: try canvas.makeNumbers(count: 1),
+            // 粒は別の面で作る。作る道は形を組み立てる (`particleQuad`) ので、開いた列の種類が
+            // 汚す前から動いてしまう
+            particles: try other.makeParticles(count: 8),
+            openBatch: openBatch)
+        fixture.sheet.fill(.linear(red: 1, green: 1, blue: 1))
+        let resets = Dictionary(
+            uniqueKeysWithValues: frameState.map { ($0.name, $0.reset) }
+                + frameStyle.map { ("style.\($0.key)", $0.value.reset) })
+
+        var baseline: [String: String] = [:]
+        var dirtied: [String: String] = [:]
+        var closed: [String: String]?
+        var crossed: [String: String] = [:]
+        try boundary.run(
+            canvas,
+            dirty: {
+                baseline = frameFingerprint(of: canvas)
+                for entry in frameState { entry.dirty(canvas, &fixture) }
+                for (_, field) in frameStyle { field.dirty(&canvas.style) }
+                dirtied = frameFingerprint(of: canvas)
+            },
+            closed: { closed = frameFingerprint(of: canvas) },
+            inspect: { crossed = frameFingerprint(of: canvas) })
+
+        if boundary.dirtiesOutside {
+            // フレームの外で汚せるのは組み立て中の形くらいである。それが汚れていなければ、
+            // この越え方は何も見ていない
+            for name in Self.shapeState.subtracting(["shapeKind", "shapeHasDepth"]) {
+                #expect(dirtied[name] != baseline[name], "\(name) を外で汚せていない")
+            }
+        } else {
+            for entry in frameState where entry.openIn.contains(openBatch) {
+                #expect(
+                    dirtied[entry.name] != baseline[entry.name],
+                    "\(entry.name) を汚す手順が汚していない (既定のままでは戻ったかを見分けられない)")
+            }
+            for field in frameStyle.keys {
+                #expect(dirtied["style.\(field)"] != baseline["style.\(field)"], "style.\(field) が汚れていない")
+            }
+        }
+
+        if boundary.closes {
+            let closed = try #require(closed, "閉じた直後を見ていない")
+            for (name, value) in baseline.sorted(by: { $0.key < $1.key }) where resets[name]?.atEnd == true {
+                #expect(closed[name] == value, "\(name) が \(boundary) で閉じた直後に既定へ戻っていない")
+            }
+        }
+        for (name, value) in baseline.sorted(by: { $0.key < $1.key }) {
+            // 外で置いたものは最初のフレームへ持ち越すのが約束である (ADR-0021 決定 4 の追補
+            // (2026-09-27))。頭で戻すものだけを見る
+            guard !boundary.dirtiesOutside || resets[name]?.atHead == true else { continue }
+            #expect(crossed[name] == value, "\(name) が \(boundary) の境目で既定へ戻らない")
+        }
+    }
+
+    // MARK: - 形の組み立ての出入口で切り離す組み立て中の形 (#1607)
+
+    /// 組み立て中の形の綴り (``shapeState`` の名前だけ)。
+    private func shapeFingerprint(of canvas: Canvas) -> [String: String] {
+        frameFingerprint(of: canvas).filter { Self.shapeState.contains($0.key) }
+    }
+
+    /// 組み立て中の形を、``shapeState`` の全部が既定と違う状態にする。
+    private func openBusyShape(on canvas: Canvas) {
+        canvas.beginShape(.triangles)
+        canvas.normal(0, 0, 1)
+        canvas.vertex(0, 0, 1)
+        canvas.vertex(8, 0)
+        canvas.vertex(0, 8)
+        canvas.index(0)
+        canvas.beginContour()
+        canvas.vertex(1, 1)
+        canvas.vertex(2, 1)
+        canvas.vertex(1, 2)
+        canvas.beginContour()  // 1 つ目の穴を畳み、2 つ目を開いたままにする
+        canvas.vertex(3, 3)
+        canvas.curveVertex(4, 4)
+        canvas.curveVertex(5, 5)
+    }
+
+    @Test("外で開いた形は、形の組み立てを挟んでもそのまま残る (#1607)", arguments: [false, true])
+    func createShapeKeepsTheOuterOpenShape(insideFrame: Bool) throws {
+        // 形の組み立ても、積む・降ろすが釣り合う単位である (ADR-0021 決定 4 の追補
+        // (2026-09-15))。直す前は組み立て中の形を切り離しておらず、記録の中の `beginShape()` が
+        // 外で開いた形を黙って上書きした。**並びの全部を見る** — 退かせる並びは 3 か所に
+        // 書いてあり (`Canvas.OpenShape`)、1 つ落としても型は通る
+        let canvas = try makeCanvas()
+        let fresh = shapeFingerprint(of: canvas)
+        var before: [String: String] = [:]
+        var after: [String: String] = [:]
+        func run() {
+            openBusyShape(on: canvas)
+            before = shapeFingerprint(of: canvas)
+            _ = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+                canvas.vertex(16, 0)
+                canvas.vertex(16, 16)
+                canvas.endShape(.close)
+            }
+            after = shapeFingerprint(of: canvas)
+            canvas.endShape()
+        }
+        if insideFrame { try canvas.draw { run() } } else { run() }
+
+        for name in Self.shapeState.sorted() {
+            #expect(before[name] != fresh[name], "\(name) が既定のままなので、戻ったかを見分けられない")
+            #expect(after[name] == before[name], "\(name) が形の組み立てを挟んで変わった")
+        }
+        #expect(!canvas.warnings.hasWarned(.shapeNotEnded), "閉じた形しか組み立てていないのに注意した")
+    }
+
+    @Test("形の組み立ての中で開いたまま抜けた形は、出口で捨てて外へ漏らさない (#1607)", arguments: [false, true])
+    func createShapeDropsTheShapeLeftOpenInside(insideFrame: Bool) throws {
+        // 直す前は記録の中で開いた形が外へ漏れ、外の `vertex()` が形自身の座標の点に積み足した
+        let canvas = try makeCanvas()
+        var building: Bool?
+        var points: Int?
+        func run() {
+            _ = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+                canvas.vertex(16, 0)
+            }
+            building = canvas.isBuildingShape
+            canvas.vertex(16, 16)
+            points = canvas.shapePoints.count
+        }
+        if insideFrame { try canvas.draw { run() } } else { run() }
+
+        #expect(building == false, "記録の中で開いた形が外へ漏れた")
+        #expect(points == 0, "外の vertex() が記録の中の形に積み足した")
+        #expect(canvas.warnings.hasWarned(.shapeNotEnded))
+        #expect(canvas.warnings.hasWarned(.vertexOutsideShape))
+    }
+
+    @Test("外で開いた形は、形の組み立ての中からは続けられない (#1607)")
+    func createShapeCannotContinueTheOuterShape() throws {
+        let canvas = try makeCanvas()
+        var shape: Shape?
+        try canvas.draw {
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(60, 0)
+            shape = canvas.createShape {
+                canvas.vertex(30, 60)  // 外の形の続きにはならない
+                canvas.endShape(.close)
+            }
+            canvas.vertex(30, 60)
+            canvas.endShape(.close)
+        }
+        #expect(canvas.warnings.hasWarned(.vertexOutsideShape), "記録の中から外の形を続けられた")
+        #expect(canvas.warnings.hasWarned(.shapeNotBegun), "記録の中の endShape() が外の形を閉じた")
+        let recorded = try #require(shape)
+        #expect(recorded.runs.isEmpty, "記録の中に外の形が焼き付いた")
     }
 
     /// 戻すときに変わるフィールド。列を閉じるかどうかの違いを持つものを並べる。
@@ -1265,6 +1884,270 @@ struct CanvasTests {
         #expect(canvas.screenX(5, 5) == 5)
         #expect(canvas.screenY(5, 5) == 5)
         #expect(canvas.style.clip == nil)
+    }
+
+    @Test("開いたままの形は、描き場所の endDraw() の後へ残らない (#1591)")
+    func openShapeDoesNotOutliveTheFrame() throws {
+        // 終わりの側で捨てることを見る。頭の側だけだと、`draw()` で開いた形が止まっている
+        // 間のコールバック (ここではフレームの外の `vertex()`) へ漏れる
+        let canvas = try makeCanvas()
+        canvas.beginDraw()
+        canvas.background(black)
+        canvas.beginShape()
+        canvas.vertex(0, 0)
+        canvas.vertex(16, 0)
+        canvas.vertex(16, 16)
+        canvas.endDraw()
+
+        #expect(!canvas.isBuildingShape)
+        #expect(canvas.shapePoints.isEmpty)
+        #expect(canvas.warnings.hasWarned(.shapeNotEnded))
+
+        canvas.vertex(8, 8)
+        #expect(canvas.warnings.hasWarned(.vertexOutsideShape), "閉じた後の vertex() が黙っている")
+        #expect(canvas.shapePoints.isEmpty, "閉じた後の vertex() が点を積んだ")
+    }
+
+    @Test("開いたままの穴と通過点の曲線も、形ごと捨てる (#1591)")
+    func openHoleAndCurveGuidesDoNotOutliveTheFrame() throws {
+        // 開いたままの穴 (#1528) は畳まずに形ごと捨てる。畳むのは `endShape()` が描くときの
+        // 約束である
+        let canvas = try makeCanvas()
+        var holes = 0
+        var guides = 0
+        var holeOpen = false
+        canvas.beginDraw()
+        canvas.beginShape()
+        canvas.vertex(0, 0)
+        canvas.vertex(60, 0)
+        canvas.vertex(60, 60)
+        canvas.beginContour()
+        canvas.vertex(4, 4)
+        canvas.vertex(12, 4)
+        canvas.vertex(4, 12)
+        canvas.beginContour()  // 1 つ目の穴を畳み、2 つ目を開く
+        for index in 0..<6 {
+            canvas.curveVertex(Float(20 + index * 4), Float(20 + index % 2 * 8))
+        }
+        holes = canvas.shapeHoles.count
+        guides = canvas.curveGuides.count
+        holeOpen = canvas.holePoints != nil
+        canvas.endDraw()
+
+        try #require(holes > 0 && guides > 0 && holeOpen, "検査の前提: 穴と曲線を開いたまま抜けていない")
+        #expect(canvas.curveGuides.isEmpty)
+        #expect(canvas.shapeHoles.isEmpty)
+        #expect(canvas.holePoints == nil)
+    }
+
+    @Test("endDraw() を忘れた描き場所は、次の beginDraw() が前のフレームを描かずに捨てる (#1622)")
+    func beginDrawAgainDropsTheUnfinishedFrame() throws {
+        // 描き場所の `beginDraw()` / `endDraw()` も対で開いて閉じる操作で、フレームの中で
+        // 釣り合う (ADR-0021 決定 4 の追補 (2026-09-27))。直す前の `beginDraw()` は注意だけで
+        // 帰り、閉じ忘れたフレームの変換がそのまま次の描き直しに積み上がった ([#1622])
+        //
+        // [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+        let canvas = try makeCanvas()
+        try canvas.draw { canvas.background(black) }
+
+        // 閉じ忘れる 1 枚。置いた図形も、書いた変換も、次へ持ち込まない
+        canvas.beginDraw()
+        canvas.noStroke()
+        canvas.fill(white)
+        canvas.rect(40, 40, 8, 8)
+        canvas.translate(20, 0)
+
+        canvas.beginDraw()
+        canvas.noStroke()
+        canvas.fill(white)
+        canvas.rect(8, 8, 8, 8)
+        canvas.endDraw()
+
+        let image = try pixels(of: canvas)
+        #expect(image[12, 12] == (255, 255, 255, 255), "前のフレームの変換が効いている")
+        #expect(image[32, 12] == (0, 0, 0, 255), "前のフレームの変換が効いている")
+        #expect(image[44, 44] == (0, 0, 0, 255), "閉じ忘れたフレームの図形が描かれた")
+        // 捨てたフレームも 1 枚に数える。番号は粒の繰り越しと焼き場の頁が境目の印として読む
+        #expect(canvas.framesDrawn == 3, "捨てたフレームと次のフレームが同じ番号になっている")
+        #expect(canvas.warnings.message(for: .unfinishedFrameDropped) == unfinishedFrameNotice)
+        #expect(!canvas.warnings.hasWarned(.alreadyDrawing), "境目を越えたのに、重ね呼びと言った")
+    }
+
+    private let unfinishedFrameNotice =
+        "endDraw() was not called for a beginDraw() in an earlier frame, so that frame was "
+        + "dropped without being drawn, and drawing starts over from here"
+
+    @Test("endDraw() を忘れた描き場所は、次のフレームが draw { } から来ても捨てる (#1622)")
+    func drawAfterForgottenEndDrawDropsTheUnfinishedFrame() throws {
+        // 捨てるのは入口 (`beginDraw()`) ではなく、フレームの始まりである。入口にだけ置くと、
+        // 閉じ忘れたフレームの図形が `draw { }` の新しいフレームへ黙って合流する
+        let canvas = try makeCanvas()
+        try canvas.draw { canvas.background(black) }
+
+        canvas.beginDraw()
+        canvas.noStroke()
+        canvas.fill(white)
+        canvas.rect(40, 40, 8, 8)
+        canvas.translate(20, 0)
+
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.rect(8, 8, 8, 8)
+        }
+
+        let image = try pixels(of: canvas)
+        #expect(image[12, 12] == (255, 255, 255, 255), "前のフレームの変換が効いている")
+        #expect(image[44, 44] == (0, 0, 0, 255), "閉じ忘れたフレームの図形が描かれた")
+        #expect(canvas.warnings.message(for: .unfinishedFrameDropped) == unfinishedFrameNotice)
+    }
+
+    /// `draw { }` が開いたフレームの中で呼んだ、フレームを開く・閉じる口。
+    enum FrameCallInsideDraw: CaseIterable, CustomTestStringConvertible {
+        case beginDraw, endDraw, draw
+
+        var testDescription: String { "\(self)" }
+
+        var notice: String {
+            switch self {
+            case .beginDraw:
+                "beginDraw(): this canvas is already inside a frame opened by draw { }, which "
+                    + "closes it on its own. This call does nothing"
+            case .endDraw:
+                "endDraw(): this canvas is inside a frame opened by draw { }, which closes it on "
+                    + "its own when the block returns. This call does nothing"
+            case .draw:
+                "draw(): this canvas is already inside a frame, so the block runs as part of that "
+                    + "frame instead of opening a new one"
+            }
+        }
+    }
+
+    @Test(
+        "draw { } の中で呼んだ beginDraw() / endDraw() / draw { } は、そのフレームを開き直さず閉じもしない",
+        arguments: FrameCallInsideDraw.allCases)
+    func frameCallsInsideDrawKeepTheFrame(_ call: FrameCallInsideDraw) throws {
+        // `draw { }` が開いたフレームは、閉包を抜けるときに同じ呼び出しが閉じる。中で開き直すと
+        // それまでに描いたものや変換が消え、中で閉じると閉包が戻った後にもう一度描き切って
+        // 番号が 2 つ進む。本体の面は `Sketch.canvas` として公開されているので、`draw()` の中から
+        // 呼べる (#1622 の反証役の指摘)
+        let canvas = try makeCanvas()
+        var passesAfterCall: Int?
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.rect(8, 8, 8, 8)
+            canvas.translate(20, 0)
+            switch call {
+            case .beginDraw: canvas.beginDraw()
+            case .endDraw: canvas.endDraw()
+            case .draw: try? canvas.draw { canvas.rect(8, 30, 8, 8) }
+            }
+            passesAfterCall = canvas.framesDrawn
+            canvas.rect(8, 8, 8, 8)
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[12, 12] == (255, 255, 255, 255), "\(call) がそれまでのフレームを捨てた")
+        #expect(image[32, 12] == (255, 255, 255, 255), "\(call) がフレームの変換を戻した")
+        if call == .draw {
+            #expect(image[32, 34] == (255, 255, 255, 255), "入れ子の draw の中身が同じフレームに描かれない")
+        }
+        #expect(passesAfterCall == 0, "\(call) がフレームを閉じた")
+        #expect(canvas.framesDrawn == 1, "フレームが 2 度閉じた")
+        #expect(!canvas.isDrawing)
+        #expect(canvas.warnings.message(for: .frameCallInsideDraw) == call.notice)
+        #expect(!canvas.warnings.hasWarned(.unfinishedFrameDropped), "閉じ忘れではないのに、捨てたと言った")
+    }
+
+    @Test("描き場所で同じ本体のフレームの中に beginDraw() を重ねても、中身を捨てない (#1622)")
+    func beginDrawTwiceInOneFrameKeepsTheLayer() throws {
+        // 約束が捨てるのは、閉じ忘れたまま境目を越えたフレームである。補助の関数の入れ子などで
+        // 同じ本体のフレームの中に重ねただけなら、境目は越えていない。描き場所は本体と時刻の
+        // 置き場を共有する (#1467) ので、本体のフレームの番号で見分ける
+        let main = try makeCanvas()
+        let layer = try main.createGraphics(64, 64)
+        try main.draw {
+            layer.beginDraw()
+            layer.background(black)
+            layer.noStroke()
+            layer.fill(white)
+            layer.rect(8, 8, 8, 8)
+            layer.beginDraw()  // 同じ本体のフレームで重ねる
+            layer.rect(40, 40, 8, 8)
+            layer.endDraw()
+        }
+        let image = try layer.target.encodeForDisplay()
+        #expect(image[12, 12] == (255, 255, 255, 255), "重ねる前に描いたものが消えた")
+        #expect(image[44, 44] == (255, 255, 255, 255))
+        #expect(layer.framesDrawn == 1)
+        #expect(
+            layer.warnings.message(for: .alreadyDrawing)
+                == "beginDraw(): endDraw() has not been called yet for the beginDraw() earlier in "
+                + "this frame. This call does nothing, and drawing continues in the frame already open")
+        #expect(!layer.warnings.hasWarned(.unfinishedFrameDropped))
+    }
+
+    @Test("描き場所で閉じ忘れたまま本体のフレームが進めば、次の beginDraw() が捨てる (#1622)")
+    func beginDrawInTheNextFrameDropsTheLayer() throws {
+        let main = try makeCanvas()
+        let layer = try main.createGraphics(64, 64)
+        try main.draw {
+            layer.beginDraw()
+            layer.background(black)
+            layer.endDraw()
+        }
+        try main.draw {
+            layer.beginDraw()  // 閉じ忘れる
+            layer.noStroke()
+            layer.fill(white)
+            layer.rect(40, 40, 8, 8)
+            layer.translate(20, 0)
+        }
+        try main.draw {
+            layer.beginDraw()
+            layer.noStroke()
+            layer.fill(white)
+            layer.rect(8, 8, 8, 8)
+            layer.endDraw()
+        }
+        let image = try layer.target.encodeForDisplay()
+        #expect(image[12, 12] == (255, 255, 255, 255), "前のフレームの変換が効いている")
+        #expect(image[44, 44] == (0, 0, 0, 255), "閉じ忘れたフレームの図形が描かれた")
+        #expect(layer.warnings.message(for: .unfinishedFrameDropped) == unfinishedFrameNotice)
+        #expect(!layer.warnings.hasWarned(.alreadyDrawing))
+    }
+
+    @Test("捨てたフレームで積んだ力だけを落とし、前のフレームで積んだ力は残す (#1622)")
+    func droppedFrameDropsOnlyItsForces() throws {
+        // 力は「次に進めるときにまとめて効く」ので、前のフレームで積んで進めていない力は
+        // 捨てたフレームに属さない。捨てたフレームで積んだ力だけを落とす
+        let canvas = try makeCanvas()
+        let dust = try canvas.makeParticles(count: 8)
+        try canvas.draw { canvas.force(dust, [.gravity(0, 1)]) }  // 進めずに終える
+        #expect(dust.pendingForceCount == 1)
+
+        canvas.beginDraw()
+        canvas.force(dust, [.gravity(0, 2), .drag(0.5)])
+        canvas.particles(dust)  // 取り出した後に積んだぶんも落ちる
+        canvas.force(dust, [.gravity(0, 3)])
+        canvas.beginDraw()  // 閉じ忘れたフレームを捨てる
+        #expect(dust.pendingForceCount == 0, "捨てたフレームで積んだ力が残っている")
+        canvas.endDraw()
+
+        canvas.beginDraw()
+        canvas.force(dust, [.gravity(0, 4)])
+        #expect(dust.pendingForceCount == 1)
+        canvas.beginDraw()
+        #expect(dust.pendingForceCount == 0)
+        canvas.force(dust, [.gravity(0, 5)])
+        canvas.endDraw()
+        try canvas.draw { canvas.force(dust, [.gravity(0, 6)]) }
+        canvas.beginDraw()
+        canvas.force(dust, [.gravity(0, 7)])
+        canvas.beginDraw()
+        #expect(dust.pendingForceCount == 2, "前のフレームで積んだ力まで落とした")
+        canvas.endDraw()
     }
 
     @Test("光と周囲は、描き切った後のフレームの外へ残らない (#1504)")

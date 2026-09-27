@@ -214,6 +214,15 @@ extension Sketch {
     ///     <!-- /shot -->
     ///   }
     /// }
+    ///
+    /// ## 同じ `draw()` の中で閉じる
+    ///
+    /// **組み立て中の形はフレームに属する** ([ADR-0021] 決定 4 の追補 (2026-09-27))。開いたら、
+    /// 同じ ``draw()`` の中で ``endShape(_:)`` まで書く。閉じないままフレームの境目を越えると、
+    /// 形は描かれずに捨てられ、注意が 1 度だけ出る。次のフレームの ``vertex(_:_:)`` は形の外に
+    /// なるので、前のフレームの形の続きとして積まれることはない。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     // shot: 1 snippet=445ca5af
     // shot: 2 snippet=c3c942c1
     // shot: 3 snippet=603b8a4f
@@ -506,7 +515,8 @@ extension Sketch {
     /// }
     ///
     /// ``beginShape(_:)`` で始めた形が無いまま呼ぶと (書き忘れ・二重呼び)、注意を出して
-    /// 何もしない。
+    /// 何もしない。**前のフレームで開いた形も、ここでは閉じられない** — 閉じないままフレームの
+    /// 境目を越えた形は、そこで捨てられている。形は同じ ``draw()`` の中で開いて閉じる。
     // shot: 1 snippet=ba1ee5bb
     // shot: 2 snippet=35422e2c
     public func endShape(_ end: ShapeEnd = .open) { canvas.endShape(end) }

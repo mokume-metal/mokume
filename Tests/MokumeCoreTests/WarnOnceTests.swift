@@ -655,6 +655,119 @@ struct ShapeNotBegunWarningTests {
     }
 }
 
+/// 開いたまま境目を越えた形を捨てたときの原文 ([#1591])。
+///
+/// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+private let shapeNotEndedNotice =
+    "beginShape(): a shape was left open past the end of the draw(), setup() or createShape() body "
+    + "that began it, so it was dropped without being drawn. End each shape with endShape() in the "
+    + "same body"
+
+/// 開いたまま境目を越えた形の注意 ([#1591])。GPU を要する。
+///
+/// 直す前は、閉じ忘れた形がフレームをまたいで点を積み続け、何も言わなかった。いまは境目で
+/// 形ごと捨てて 1 度だけ言う。鍵を ``Canvas/Warning/vertexOutsideShape`` と分けるのは、同じ
+/// 書き間違いから両方が出うるため (捨てた後の `vertex()` は形の外になる)。
+///
+/// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+@Suite(
+    "開いたまま境目を越えた形の注意",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct ShapeNotEndedWarningTests {
+    private func makeCanvas() throws -> Canvas {
+        try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+    }
+
+    /// 頭で捨てる形 (フレームの外で開いた) と、終わりで捨てる形 (フレームの中で開いた) の
+    /// どちらでも、同じ文面を言う。
+    @Test("開いたまま境目を越えると、beginShape() を名乗って注意する", arguments: [true, false])
+    func warnsWhenAShapeCrossesTheBoundary(openedOutside: Bool) throws {
+        let canvas = try makeCanvas()
+        var warnedOnEntry: Bool?
+        if openedOutside { canvas.beginShape() }
+        try canvas.draw {
+            warnedOnEntry = canvas.warnings.hasWarned(.shapeNotEnded)
+            if !openedOutside {
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+            }
+        }
+        // フレームの外で開いた形は、頭で捨てて言う (終わりまで待たない)
+        #expect(warnedOnEntry == openedOutside, "捨てて言う境目が違う")
+        #expect(canvas.warnings.message(for: .shapeNotEnded) == shapeNotEndedNotice)
+        #expect(!canvas.warnings.hasWarned(.shapeNotBegun), "対の始まりの注意を言った")
+    }
+
+    /// 文面は値を含まないので、2 度目も言っていれば控えが上書きされる形では見分けられない。
+    /// 見るのは、毎フレーム捨て続けても控えが初回のまま 1 つであることと、形が毎回捨てられて
+    /// いることである。
+    @Test("30 フレーム捨て続けても、控えの文面は初回のまま")
+    func staysSilentAfterTheFirstDrop() throws {
+        let canvas = try makeCanvas()
+        for _ in 0..<30 {
+            try canvas.draw {
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+                canvas.vertex(16, 0)
+            }
+            #expect(canvas.shapePoints.isEmpty)
+        }
+        #expect(canvas.warnings.message(for: .shapeNotEnded) == shapeNotEndedNotice)
+        #expect(!canvas.warnings.hasWarned(.vertexOutsideShape), "形の中なのに、形の外の注意を言った")
+    }
+
+    /// 鍵を取り違えると、先に言った側が後の側を黙らせる。順番を入れ替えて両方の向きを見る。
+    @Test("形の外の頂点の注意とは、互いに黙らせない", arguments: [true, false])
+    func theTwoNoticesDoNotSilenceEachOther(droppedFirst: Bool) throws {
+        let canvas = try makeCanvas()
+        if droppedFirst {
+            try canvas.draw { canvas.beginShape() }
+            try canvas.draw { OutsideShapeCall.vertex.call(on: canvas) }
+        } else {
+            try canvas.draw {
+                OutsideShapeCall.vertex.call(on: canvas)
+                canvas.beginShape()
+            }
+        }
+        #expect(canvas.warnings.message(for: .shapeNotEnded) == shapeNotEndedNotice)
+        #expect(
+            canvas.warnings.message(for: .vertexOutsideShape) == OutsideShapeCall.vertex.notice)
+    }
+
+    /// 正しい使い方では言わない。同じフレームで開いて閉じる形 (穴と通過点の曲線を含む) を
+    /// 何枚描いても、形の組み立て (`createShape`) の中で開いて閉じても。
+    @Test("同じフレームで開いて閉じれば、何枚描いても注意しない")
+    func saysNothingForShapesEndedInTheSameFrame() throws {
+        let canvas = try makeCanvas()
+        func shape() {
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(16, 0)
+            canvas.vertex(16, 16)
+            canvas.beginContour()
+            canvas.vertex(4, 4)
+            canvas.vertex(8, 4)
+            canvas.vertex(4, 8)
+            canvas.endContour()
+            for index in 0..<6 { canvas.curveVertex(Float(index * 2), Float(index % 2 * 4)) }
+            canvas.endShape(.close)
+        }
+        _ = canvas.createShape { shape() }  // フレームの外で組み立てる (`setup()` の形)
+        for _ in 0..<3 {
+            try canvas.draw {
+                shape()
+                _ = canvas.createShape { shape() }
+            }
+        }
+        for key in [Canvas.Warning.shapeNotEnded, .shapeNotBegun, .vertexOutsideShape] {
+            #expect(!canvas.warnings.hasWarned(key), "正しく閉じた形で \(key) を言った")
+        }
+    }
+}
+
 /// 形の中で、頂点の口を誤って呼んだときの注意 ([#1528])。GPU を要する。
 ///
 /// 直す前は、穴を開かずに呼んだ `endContour()` と、向きにならない値を渡した `normal()` が

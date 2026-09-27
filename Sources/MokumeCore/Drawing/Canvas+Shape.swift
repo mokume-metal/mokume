@@ -57,11 +57,22 @@ extension Canvas {
         //
         // [#1172]: https://github.com/mokume-metal/mokume/issues/1172
         let savedStacks = takeStacks()
+        // **組み立て中の形も記録の中で閉じる** ([#1607])。積み履歴と同じく、形の組み立ては
+        // 釣り合う単位の 1 つである (ADR-0021 決定 4 の追補 (2026-09-15)・(2026-09-27))。
+        // 切り離さないと、外で開いた形を記録の中の `beginShape()` が黙って上書きし、記録の中で
+        // 開いたままの形は外へ漏れて、外の `vertex()` が形自身の座標の点に積み足す
+        //
+        // [#1607]: https://github.com/mokume-metal/mokume/issues/1607
+        let savedShape = takeOpenShape()
         let strokeRangeStart = recordedStrokeRanges.count
         let solidStrokeStart = recordedSolidStrokes.count
 
         body()
 
+        // 記録の中で開いたまま抜けた形は、形ごと捨てて 1 度知らせる。外で開いていた形はその後に
+        // 戻す — 記録の中からは続けられない
+        discardShapeLeftOpen()
+        restoreOpenShape(savedShape)
         recordingShape = savedRecording
         restore(savedStacks)
         closeBatch()
