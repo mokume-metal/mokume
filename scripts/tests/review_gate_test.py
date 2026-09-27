@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/review-gate.sh の検査 (#44 / #104 / #309 / #618)。
+"""scripts/review-gate.sh の検査 (#44 / #104 / #309 / #618 / #1662)。
 
-このゲートが守るのは mokume 固有の四点だけ:
+このゲートが守るのは mokume 固有の五点だけ:
   1. PR が Issue に紐づいている (例外は no-issue ラベル)
   2. 対象 Issue に verify: ラベルがある (完了条件が固まっている)
   3. PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
-  4. 承認が要る PR の author が、唯一の承認者になっていない (ADR-0007 / #88)
+  4. 閉じる Issue に Bug が含まれるなら、本文に空でない「反証」の節がある (ADR-0040 決定 4)
+  5. 承認が要る PR の author が、唯一の承認者になっていない (ADR-0007 / #88)
 
 重要パスの承認要求そのものはルールセットの required_reviewers が担うので、ここでは見ない —
-4 がその file_patterns を読むのは「承認が要る PR か」を知るためで、承認を重ねて要求するため
+5 がその file_patterns を読むのは「承認が要る PR か」を知るためで、承認を重ねて要求するため
 ではない。
 
 **承認待ちはもう無い。** verify: human の Issue に紐づく PR へ Approve を要求していた頃は、
@@ -25,8 +26,8 @@ ADR-0031 が畳んだので終了コードは 0 と 1 だけである。承認�
 closing keyword をコードスパンの中では読まないので、緑のままマージされて Issue が開いた
 まま残った (#307 → #309)。偽 gh が返す紐づけは実測値をそのまま写す (下の closes 引数)。
 
-3 が見るのは**構造だけ**である。番号が節に現れることは見るが、書いてある内容が正しいかは
-見ない (check-drawing-evidence.sh と同じ形 — ADR-0019 決定 1)。
+3 と 4 が見るのは**構造だけ**である。番号が節に現れること・節が空でないことは見るが、
+書いてある内容が正しいかは見ない (check-drawing-evidence.sh と同じ形 — ADR-0019 決定 1)。
 
 gh は PATH の先頭に置いた偽物へ差し替え、ルールセットの定義も一時ファイルへ差し替えるので、
 ネットワークも認証も実ファイルの内容も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
@@ -73,13 +74,18 @@ RULESET = json.dumps(
 
 # 偽 gh。review-gate が呼ぶのは 4 つだけ:
 #   gh pr view <n> -R <repo> --json body,labels,latestReviews,author,closingIssuesReferences
-#   gh issue view <n> -R <repo> --json labels --jq <query>
+#   gh issue view <n> -R <repo> --json labels,issueType   ← #1662 で型も同じ応答から取る
 #   gh api repos/<repo>/pulls/<n> --jq .author_association
 #   gh api repos/<repo>/pulls/<n>/files --paginate --jq .[].filename   ← #793 で分かれた
 # 応答は環境変数で決める。--jq が付くときは本物と同じようにクエリを適用する。
 #
 # **2 つの api を綴りで分ける。** 変更ファイルの一覧は別の口になったので (#793)、
-# 一緒に返すと author_association の判定に一覧が流れ込む
+# 一緒に返すと author_association の判定に一覧が流れ込む。
+#
+# Issue の応答は既定で全 Issue 共通 (FAKE_ISSUE_JSON)。**番号ごとに変えるときだけ**
+# FAKE_ISSUE_JSON_<番号> を置く — 複数の Issue のうち 1 つだけが Bug、を表すため (#1662)。
+# FAKE_ISSUE_FAIL を置くと、古い gh が知らない欄を問われたときと同じく、それを名乗って
+# 失敗する
 FAKE_GH = """#!/bin/sh
 printf '%s\\n' "$*" >> "${GH_CALLS:-/dev/null}"
 kind=$2
@@ -91,7 +97,13 @@ for arg in "$@"; do
 done
 case "$1 $2" in
   "pr view") json=$FAKE_PR_JSON ;;
-  "issue view") json=$FAKE_ISSUE_JSON ;;
+  "issue view")
+    if [ -n "${FAKE_ISSUE_FAIL:-}" ]; then
+      printf '%s\\n' "$FAKE_ISSUE_FAIL" >&2
+      exit 1
+    fi
+    # $3 は review-gate が渡す Issue 番号 (数字だけ) なので eval に載せてよい
+    eval "json=\\${FAKE_ISSUE_JSON_$3:-\\$FAKE_ISSUE_JSON}" ;;
   "api "*) case "$*" in
              *"/files"*) json=$FAKE_FILES_JSON ;;
              *) json=$FAKE_API_JSON ;;
@@ -191,8 +203,25 @@ def assert_files_call_paginates(case, calls):
         case.assertIn("--paginate", line, f"ページングを通していない呼び出し: {line}")
 
 
-def issue_json(*labels):
-    return json.dumps({"labels": [{"name": n} for n in labels]})
+def issue_json(*labels, issue_type="Task"):
+    """偽の gh issue view 応答。
+
+    型は gh の実物と同じ形 ({"name": ...}) で持たせる。型の付いていない Issue は
+    issueType が null で返るので、issue_type=None でそれを表す。既定を Task にするのは、
+    反証の検査 (ADR-0040 決定 4) に掛からない側を既存の検査の既定にするためである
+    """
+    return json.dumps(
+        {
+            "labels": [{"name": n} for n in labels],
+            "issueType": None if issue_type is None else {"name": issue_type},
+        }
+    )
+
+
+def refute_section(text="| 指摘 | 根拠 | 応え |\n| --- | --- | --- |\n"
+                        "| 同じ形の口がもう 1 つある | Sources/Foo.swift:42 | 直した |"):
+    """PR 本文の「反証」節 (ADR-0040 決定 4)。text を空にすれば見出しだけの節になる。"""
+    return f"\n\n## 反証\n\n{text}\n"
 
 
 class ReviewGateTest(unittest.TestCase):
@@ -207,11 +236,15 @@ class ReviewGateTest(unittest.TestCase):
         self.ruleset = Path(self.tmp.name) / "main-protection.json"
         self.ruleset.write_text(RULESET, encoding="utf-8")
 
-    def run_gate(self, pr, issue=None, ruleset=None, all_files=None, record_calls=None):
+    def run_gate(self, pr, issue=None, ruleset=None, all_files=None, record_calls=None,
+                 issues=None, issue_fail=None):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
         省略すると `pr` が持つ `files` と同じものになる。上限を越える PR を装うときだけ
         別に渡す — `gh pr view` の側は上限で切られた前半を、こちらは全件を返す形になる。
+
+        `issues` は {番号: issue_json(...)} で、その番号だけ `issue` と違う応答を返す。
+        `issue_fail` を渡すと gh issue view がその文言を名乗って失敗する。
         """
         if ruleset is not None:
             self.ruleset.write_text(ruleset, encoding="utf-8")
@@ -222,6 +255,10 @@ class ReviewGateTest(unittest.TestCase):
             all_files = [f["path"] for f in json.loads(pr)["files"]]
         env["FAKE_FILES_JSON"] = json.dumps([{"filename": p} for p in all_files])
         env["FAKE_ISSUE_JSON"] = issue if issue is not None else issue_json(TRIAGED)
+        for n, body in (issues or {}).items():
+            env[f"FAKE_ISSUE_JSON_{n}"] = body
+        if issue_fail is not None:
+            env["FAKE_ISSUE_FAIL"] = issue_fail
         env["FAKE_API_JSON"] = json.dumps(
             {"author_association": json.loads(pr)["authorAssociation"]}
         )
@@ -352,7 +389,84 @@ class ReviewGateTest(unittest.TestCase):
         )
         self.assert_blocked(proc, "対応表が無い")
 
-    # --- 4. 承認可能性の不変条件 (ADR-0007 / #88) ---------------------------
+    # --- 4. Bug を閉じる PR の反証 (ADR-0040 決定 4 / #1662) -----------------
+
+    def test_bug_with_a_refute_section_passes(self):
+        proc = self.run_gate(
+            pr_json(body="Closes #12" + refute_section()),
+            issue_json(TRIAGED, issue_type="Bug"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("反証の節を確認 (#12)", proc.stdout)
+
+    def test_bug_without_a_refute_section_is_blocked(self):
+        """反証役を起こし忘れた形。
+
+        直近の fix PR は兄弟の口を探さず、同じ根のバグが後から 1 件ずつ出ていた。
+        完了条件の範囲がそのまま調べる範囲の上限になっていた (#1659)。
+        """
+        proc = self.run_gate(pr_json(), issue_json(TRIAGED, issue_type="Bug"))
+        self.assert_blocked(proc, "「反証」の節が無い")
+        self.assertIn("#12", proc.stderr)
+        # 差し戻された人が起動手順へ辿り着けること
+        self.assertIn(".claude/skills/bug-refute/SKILL.md", proc.stderr)
+
+    def test_bug_with_an_empty_refute_section_is_blocked(self):
+        # テンプレートの見出しと案内のコメントだけを残した形。コメントは行をまたぐ
+        empty = "<!--\n反証役の指摘と応えを書く\n-->\n\n   \n"
+        proc = self.run_gate(
+            pr_json(body="Closes #12" + refute_section(empty)),
+            issue_json(TRIAGED, issue_type="Bug"),
+        )
+        self.assert_blocked(proc, "「反証」の節が空")
+
+    def test_a_later_section_ends_the_refute_section(self):
+        # 「反証」の直後に同階層の見出しが来たら、そこから先は節の外。切り出しは
+        # 確認方法と同じ関数なので、境界の規則も同じになる
+        proc = self.run_gate(
+            pr_json(body="Closes #12" + refute_section("") + "\n## 補足\n\n中身はここ\n"),
+            issue_json(TRIAGED, issue_type="Bug"),
+        )
+        self.assert_blocked(proc, "「反証」の節が空")
+
+    def test_a_non_bug_issue_is_not_asked_for_a_refutation(self):
+        # Task も型の無い Issue も問わない
+        for issue_type in ("Task", None):
+            with self.subTest(issue_type=issue_type):
+                proc = self.run_gate(pr_json(), issue_json(TRIAGED, issue_type=issue_type))
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertNotIn("反証", proc.stdout + proc.stderr)
+
+    def test_one_bug_among_several_issues_is_asked(self):
+        # まとめて閉じる Issue のうち 1 つでも Bug なら問う。名指しされるのは Bug の側だけ
+        proc = self.run_gate(
+            pr_json(body="Closes #12\nCloses #34", closes=(12, 34)),
+            issue_json(TRIAGED, issue_type="Task"),
+            issues={34: issue_json(TRIAGED, issue_type="Bug")},
+        )
+        self.assert_blocked(proc, "「反証」の節が無い")
+        self.assertIn("(#34)", proc.stderr)
+        self.assertNotIn("#12", proc.stderr)
+
+    def test_an_unreadable_issue_type_names_the_reason(self):
+        """gh が issueType を知らない版だと、黙って終わらずに理由を名乗る。
+
+        代入の中の gh が失敗すると set -e でそのまま終わり、review-gate としては何も
+        言わずに赤くなる。欄は gh 2.94.0 から (scripts/ready-queue.sh の冒頭)
+        """
+        proc = self.run_gate(
+            pr_json(), issue_fail='Unknown JSON field: "issueType"'
+        )
+        self.assert_blocked(proc, "#12 の labels / issueType を読めなかった")
+
+    def test_a_response_without_issue_type_is_blocked(self):
+        # 欄そのものが無い応答を「Bug でない」と読むと、反証の検査が黙って外れる
+        proc = self.run_gate(
+            pr_json(), json.dumps({"labels": [{"name": TRIAGED}]})
+        )
+        self.assert_blocked(proc, "issueType が無い")
+
+    # --- 5. 承認可能性の不変条件 (ADR-0007 / #88) ---------------------------
 
     def test_maintainer_authored_pr_touching_a_protected_path_is_blocked(self):
         # #88 と同じ形。唯一の承認者が author 本人なので、承認は永久に来ない
