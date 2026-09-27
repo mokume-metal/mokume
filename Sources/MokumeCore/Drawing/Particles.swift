@@ -273,6 +273,20 @@ public final class Particles {
         return .attract(x, y, z, strength: strength)
     }
 
+    /// いま積んである力の数。面が、フレームで最初に力を積む前の数を控えるのに読む。
+    var pendingForceCount: Int { pendingForces.count }
+
+    /// `count` 個目より後に積んだ力を落とす。**捨てたフレームで積んだ力だけを落とす**ための口で
+    /// ([#1622])、それより前に積んだ力 (前のフレームで積んで、まだ進めていないもの) は残す —
+    /// 力は「次に進めるときにまとめて効く」約束なので、前のフレームの力は捨てたフレームに
+    /// 属さない。
+    ///
+    /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+    func dropForces(after count: Int) {
+        guard pendingForces.count > count else { return }
+        pendingForces.removeLast(pendingForces.count - count)
+    }
+
     /// 積まれた力を取り出して空にする。
     func takeForces() -> [Force] {
         defer { pendingForces.removeAll(keepingCapacity: true) }

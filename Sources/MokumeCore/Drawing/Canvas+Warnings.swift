@@ -107,19 +107,23 @@ extension Canvas {
         /// 受け取れない切り抜きが渡された。
         case badClip
 
-        /// ``beginDraw()`` で開いたフレームを ``endDraw()`` で閉じないまま、次のフレームを
-        /// 始めた (`beginDraw()` か `draw { }`)。閉じていなかったフレームは描かずに捨て、
-        /// 描き始め直す ([#1622])。
-        ///
-        /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+        /// 同じ本体のフレームの中で ``beginDraw()`` を対にせず重ねて呼んだ。境目を越えて
+        /// いないので、何もせず開いているフレームが続く。
         case alreadyDrawing
-        /// ``draw(_:)`` が開いたフレームの中で ``beginDraw()`` を呼んだ。何もしない。
+        /// ``beginDraw()`` で開いたフレームを ``endDraw()`` で閉じないまま境目を越え、次の
+        /// フレームが始まった (`beginDraw()` か `draw { }`)。閉じていなかったフレームは描かずに
+        /// 捨て、描き始め直す ([#1622])。
         ///
-        /// **``alreadyDrawing`` とは鍵を分ける。** あちらは閉じ忘れたフレームを捨てたことを言い、
-        /// こちらは閉じる役が別に居るフレームで呼んだことを言う — 振る舞いが違う ([#1622])。
+        /// **``alreadyDrawing`` とは鍵を分ける。** あちらは境目を越えていない重ね呼びで、中身を
+        /// 保つ。振る舞いが違う。
         ///
         /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
-        case beginDrawInsideDraw
+        case unfinishedFrameDropped
+        /// ``draw(_:)`` が開いたフレームの中で、フレームを開く・閉じる口 (``beginDraw()``・
+        /// ``endDraw()``・入れ子の ``draw(_:)``) を呼んだ。フレームは開き直さず閉じもしない。
+        ///
+        /// 入口は 3 つで事情は 1 つなので鍵を共有し、文面は口ごとの全文にする。
+        case frameCallInsideDraw
         /// ``beginDraw()`` の前に ``endDraw()`` を呼んだ。
         case notDrawing
         /// 描き切る前の描き場所を置いた。
