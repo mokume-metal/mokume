@@ -108,6 +108,22 @@ public enum Force: Equatable, Sendable {
         }
     }
 
+    /// 数の成分。**受け口が、数でない値・無限を検めるのに読む** ([#1623])。
+    ///
+    /// 弱まり始める距離は入れない。受け取れないときの扱いが違い、力ごと断らずに距離だけを
+    /// 外す (`Particles.accepted`)。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+    var numbers: [Float] {
+        switch self {
+        case .gravity(let x, let y, let z): [x, y, z]
+        case .attract(let x, let y, let z, let strength, _): [x, y, z, strength]
+        case .wander(let strength): [strength]
+        case .swirl(let x, let y, let strength): [x, y, strength]
+        case .drag(let amount): [amount]
+        }
+    }
+
     var packed: [Float] {
         let code = Float(kind.rawValue)
         switch self {

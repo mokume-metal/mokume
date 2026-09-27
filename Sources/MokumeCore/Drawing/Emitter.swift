@@ -19,6 +19,18 @@ public enum Emitter: Equatable, Sendable {
     /// 球の内側から (どこも同じ確からしさで)。
     case sphere(_ x: Float, _ y: Float, _ z: Float, radius: Float)
 
+    /// 数の成分。**受け口が、数でない値・無限を検めるのに読む** ([#1623])。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+    var numbers: [Float] {
+        switch self {
+        case .point(let x, let y, let z): [x, y, z]
+        case .line(let x1, let y1, let x2, let y2): [x1, y1, x2, y2]
+        case .circle(let x, let y, let radius): [x, y, radius]
+        case .sphere(let x, let y, let z, let radius): [x, y, z, radius]
+        }
+    }
+
     /// 1 つぶんの出どころを引く。
     ///
     /// **引く回数は形ごとに決まっている** (点 0 回・線 1 回・円 2 回・球 3 回)。回数が
