@@ -36,6 +36,65 @@ struct ParticleEmissionTests {
         #expect(total == 90)
     }
 
+    /// フレーム番号から導く時計 (`fps`) が 1 枚ごとに渡す刻みで、`rate` の `emit` を
+    /// `frames` 枚数え、各枚までの累計を返す。**刻みは時計から受け取る** — 手で 1/fps を
+    /// 書くと、時計と数える側の間の受け渡しの丸めを飛ばしてしまう。
+    private func cumulativeCounts(rate: Float, fps: Int, frames: Int) -> [Int] {
+        let timing = FrameTiming(clock: .frameIndex(frameRate: fps), now: { 0 })
+        var cadence = EmissionCadence()
+        var total = 0
+        var totals: [Int] = []
+        for _ in 0..<frames {
+            timing.advance()
+            total += cadence.take(rate: rate, over: timing.preciseDeltaTime, upTo: 1_000_000)
+            totals.append(total)
+        }
+        return totals
+    }
+
+    /// [#1640] の完了条件 1。**毎秒 fps 個を fps 枚回せば fps 個出て、1 枚目に 1 個出る。**
+    /// fps 1…120 のすべてで見る。刻みを単精度で渡していた頃は、`Float(1/fps)` が 1/fps
+    /// より小さくなる 33 の fps (25・50・100 …) で、合計が fps − 1 個・1 枚目が 0 個だった。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    @Test("フレーム番号の時計のどの fps でも、毎秒 fps 個を 1 秒回せば fps 個出て、1 枚目に 1 個出る")
+    func emitsTheRatePerSecondAtEveryFrameRate() {
+        var broken: [String] = []
+        for fps in 1...120 {
+            let totals = cumulativeCounts(rate: Float(fps), fps: fps, frames: fps)
+            if totals.first != 1 || totals.last != fps {
+                broken.append("fps \(fps): 1 枚目 \(totals.first ?? -1) 個・合計 \(totals.last ?? -1) 個")
+            }
+        }
+        #expect(broken.isEmpty, "頼んだ数どおりに出ない fps が \(broken.count) 個: \(broken)")
+    }
+
+    /// [#1640] の完了条件 2。**不足も超過もしない** — `n` 枚目までの累計が、有理数で計算した
+    /// ⌊rate·n ÷ fps⌋ に等しい。`rate` は fps の倍数でないもの (0.5・10) と fps。丸めの誤差に
+    /// 遊びを持たせる直し方が、遊びで 1 個多く出していないこともここで見る。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    @Test("刻みの揃った時計では、何枚目までの累計も ⌊rate·n ÷ fps⌋ に等しい")
+    func cumulativeCountsNeverFallShortNorRunOver() {
+        var broken: [String] = []
+        for fps in 1...120 {
+            // rate = numerator ÷ denominator (どれも単精度で厳密に表せる)
+            for (numerator, denominator) in [(1, 2), (10, 1), (fps, 1)] {
+                let rate = Float(numerator) / Float(denominator)
+                let totals = cumulativeCounts(rate: rate, fps: fps, frames: 2 * fps)
+                for (index, total) in totals.enumerated() {
+                    let n = index + 1
+                    let expected = numerator * n / (denominator * fps)
+                    if total != expected {
+                        broken.append("fps \(fps)・rate \(rate)・\(n) 枚目: \(total) 個 (頼んだ数 \(expected))")
+                        break
+                    }
+                }
+            }
+        }
+        #expect(broken.isEmpty, "累計が頼んだ数と違う組が \(broken.count) 個: \(broken.prefix(12))")
+    }
+
     @Test("1 フレームで枠を超える注文は、繰り越さずに切る")
     func doesNotCarryBeyondTheCapacity() {
         var cadence = EmissionCadence()
@@ -492,6 +551,56 @@ struct ParticleTests {
     /// 位置 (`#line` など) で分ける作りでは、ここが (0, 60) のまま直らない。
     ///
     /// [#1468]: https://github.com/mokume-metal/mokume/issues/1468
+    /// fps 50 で毎秒 50 個 (1 枚に 1 個) の粒を、毎秒 1200 画素で右へ飛ばす。粒は 24 画素
+    /// おきに 1 行に並ぶ ([#1640] の本文の再現)。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    final class EmitPerSecond: Sketch {
+        static let fps = 50
+        var settings: SketchSettings {
+            SketchSettings(width: 1300, height: 20, frameRate: Self.fps)
+        }
+        var dots: Particles?
+        init() {}
+
+        func setup() { dots = try? makeParticles(count: 1000) }
+
+        func draw() {
+            background(0)
+            guard let dots else { return }
+            emit(
+                dots, from: .point(5, 10), rate: Float(Self.fps), speed: 1200...1200,
+                angle: 0...0, life: 100...100, size: 2...2,
+                color: LinearRGBA(straightRed: 1, green: 1, blue: 1, alpha: 1))
+            particles(dots)
+        }
+    }
+
+    /// `frames` 枚回した後、行の上で粒を数える。
+    private func dotsOnTheRow(after frames: Int) throws -> Int {
+        let runtime = try SketchRuntime(sketch: EmitPerSecond(), gpu: RenderDevice())
+        defer { runtime.closePlugins() }
+        for _ in 0..<frames { try runtime.advance() }
+        let pixels = try runtime.target.readPixels()
+        var (count, inside) = (0, false)
+        for x in 0..<pixels.width {
+            let on = pixels[x, pixels.height / 2].red > 0.3
+            if on && !inside { count += 1 }
+            inside = on
+        }
+        return count
+    }
+
+    /// [#1640] の完了条件 3。**時計から `emit` までを `SketchRuntime` ごと通す** —
+    /// 数える側だけを見る検査は、時計と面の間の受け渡しで刻みが丸まるのを見落とす。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    @Test("fps 50 で毎秒 50 個なら、1 枚目に 1 個・50 枚目に 50 個が並ぶ")
+    func theRuntimeEmitsTheRatePerSecondAtFifty() throws {
+        #expect(try dotsOnTheRow(after: 1) == 1)
+        #expect(try dotsOnTheRow(after: EmitPerSecond.fps) == EmitPerSecond.fps)
+    }
+
     @Test("同じ 1 行から何度 emit しても、それぞれが頼んだ数を出す")
     func emittingInALoopStillSplitsTheCarry() throws {
         let counts = try emittedCounts(rates: [15, 15], step: 1 / 30, frames: 60, inOneLoop: true)

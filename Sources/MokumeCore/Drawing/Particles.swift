@@ -48,16 +48,35 @@ struct EmissionCadence {
     ///
     /// **倍精度で貯める。** 単精度だと 60 分の 1 秒を数百回足す間に誤差が積もり、
     /// 10 秒で 5 個出るはずのものが 4 個になる — 繰り越しを入れた意味が消える。
+    /// 同じ理由で、**受け取る刻みも倍精度**である ([#1640])。単精度に丸めた刻みは、
+    /// `Float(1/50)` のように 1/fps より小さくなる fps で、倍精度で貯めても足りない。
+    ///
+    /// 遊び (``slack``) のぶん、切り捨てた後にわずかに負になることがある。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
     private(set) var carried: Double = 0
 
+    /// 切り捨てる前に足す遊び (個)。
+    ///
+    /// **倍精度の刻みでも、1/fps は 2 進で閉じない。** 足し合わせた値が整数のわずか下に
+    /// 落ち、出るはずの 1 個が次のフレームへずれる — fps 1…120・`rate` {0.5, 10, fps} の
+    /// 2 秒ぶんを倍精度の 1/fps で数えると、360 組のうち 134 組で累計が 1 個足りなかった
+    /// ([#1640] の試算)。倍精度の誤差は 1 回の足し算で 1e-16 程度なので、1e-6 は累計
+    /// 10 億個ぶんまでを覆う。一方で、有理数のレートの端数は 1/(分母·fps) より小さく
+    /// ならないので、**遊びで 1 個多く出すことは無い** (`ParticleEmissionTests` が累計を
+    /// ⌊rate·n ÷ fps⌋ と比べて見る)。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    static let slack = 1e-6
+
     /// この 1 フレームで出す数。`limit` を超えるぶんは繰り越さずに捨てる。
-    mutating func take(rate: Float, over seconds: Float, upTo limit: Int) -> Int {
+    mutating func take(rate: Float, over seconds: Double, upTo limit: Int) -> Int {
         guard rate > 0, seconds > 0, rate.isFinite, seconds.isFinite, limit > 0 else {
             return 0
         }
-        carried += Double(rate) * Double(seconds)
-        guard carried >= 1 else { return 0 }
-        let whole = carried.rounded(.down)
+        carried += Double(rate) * seconds
+        guard carried + Self.slack >= 1 else { return 0 }
+        let whole = (carried + Self.slack).rounded(.down)
         guard whole < Double(limit) else {
             // **貯めたぶんを捨てる。** 捨てないと、容量を超える注文が続いたときに
             // 端数が際限なく積もり、レートを下げても出続ける
@@ -296,7 +315,7 @@ public final class Particles {
     /// この 1 フレームで出す数。`frame` は呼んだ面のフレーム番号で、同じ番号のうちに
     /// 呼ばれた順で繰り越しを引き分ける (`cadences` の説明)。**0 個に終わる呼び出しも
     /// 1 回と数える** — 数えないと、出なかった噴き口の後ろの繰り越しが 1 つずつ前へずれる。
-    func count(rate: Float, over seconds: Float, frame: Int) -> Int {
+    func count(rate: Float, over seconds: Double, frame: Int) -> Int {
         if cadenceFrame != frame {
             cadenceFrame = frame
             emitsThisFrame = 0

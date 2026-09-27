@@ -121,7 +121,8 @@ extension Canvas {
         guard isDrawing else { return warnOutsideFrame(.particles) }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
         // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法
-        let count = particles.count(rate: rate, over: deltaTime, frame: framesDrawn)
+        // 刻みは倍精度で渡す。単精度の刻みを足し合わせると、fps によって毎秒 1 個少ない (#1640)
+        let count = particles.count(rate: rate, over: preciseDeltaTime, frame: framesDrawn)
         particles.emit(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
             color: color ?? style.fill, at: time, using: &randomness)

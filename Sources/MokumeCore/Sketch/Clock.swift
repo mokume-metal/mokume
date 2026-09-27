@@ -52,8 +52,17 @@ final class FrameTiming {
     private(set) var frameCount = 0
     /// いまのフレームの時刻 (秒)。
     private(set) var time: Float = 0
-    /// 前のフレームからの経過 (秒)。
-    private(set) var deltaTime: Float = 0
+    /// 前のフレームからの経過 (秒)。**倍精度のまま持つ** ([#1640])。
+    ///
+    /// 経過を数に変える側 (``Sketch/emit(_:from:rate:speed:angle:life:size:color:)`` の
+    /// 端数の繰り越し) は、これを足し合わせて切り捨てる。単精度に丸めた刻みを渡すと、
+    /// `Float(1/50)` のように 1/fps より小さくなる fps で足し合わせが整数に届かず、
+    /// 毎秒 1 個少なく出る。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    private(set) var preciseDeltaTime: Double = 0
+    /// 前のフレームからの経過 (秒)。``preciseDeltaTime`` の単精度の写しで、利用者に見せる値。
+    var deltaTime: Float { Float(preciseDeltaTime) }
 
     /// 1 フレームぶんとして渡す経過の上限 (秒)。**実時間で動かすときだけ効く。**
     private let maximumDeltaTime: Double
@@ -103,11 +112,11 @@ final class FrameTiming {
             time = Float(elapsed)
             if stepsOneFrame {
                 // 止めていた長さによらず、回っているときの 1 枚ぶん (``stepOneFrameNext()``)
-                deltaTime = Float(frameInterval)
+                preciseDeltaTime = frameInterval
             } else {
                 // **経過には上限を置く。** 止まっていた時間まるごとを渡すと、積分している
                 // 側 (粒・視点) が 1 枚で吹き飛ぶ
-                deltaTime = Float(min(max(0, now - previous), maximumDeltaTime))
+                preciseDeltaTime = min(max(0, now - previous), maximumDeltaTime)
             }
             previous = now
         case .frameIndex(let frameRate):
@@ -115,7 +124,7 @@ final class FrameTiming {
             // 最初のフレームを 0 秒にする。止めていたところから描く 1 枚も、既に 1 フレーム
             // ぶんしか進まないので ``stepOneFrameNext()`` は効かせるものが無い
             time = Float(Double(frameCount - 1) / rate)
-            deltaTime = Float(1 / rate)
+            preciseDeltaTime = 1 / rate
         }
     }
 
