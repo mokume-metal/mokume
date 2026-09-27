@@ -24,6 +24,16 @@ import Foundation
 /// 見張りは**自前の待ち行列**で受け、そこから main actor へ渡す。主キューへ直に
 /// 載せると、主キューが捌かれる仕組みのある実行 (窓のあるアプリ) でしか届かない —
 /// 検査の実行では捌かれず、**実装が正しくても届かない**ことを実測した。
+///
+/// ## main actor へ積むのは 1 本まで
+///
+/// 事象ごとに 1 本積むと、main actor を譲らずにフレームを回す経路では 1 本も走れず、
+/// フレームに比例して溜まる ([#1594] と同じ形)。親ディレクトリの書き込みも拾うので、保存や
+/// 連番の書き出しの行き先が見張る断片と同じディレクトリなら、事象はフレームごとに起きる。
+/// 知らせは ``CoalescedNotices`` で合体する — 拾ったときにすることは「張り直して知らせる」
+/// だけで、何回変わったかは要らない。
+///
+/// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
 final class FileWatcher {
     private let url: URL
     private let onChange: () -> Void
@@ -32,6 +42,13 @@ final class FileWatcher {
     private let queue = DispatchQueue(label: "org.mokume.shader-watch")
     /// いま見張っているファイルの通し番号。置き換えられると変わる。
     private var watchedIdentifier: UInt64?
+    /// 拾った事象を main actor へ渡す前に合体する器。
+    private let notices = CoalescedNotices()
+
+    /// 診断: 拾った事象の数。
+    var arrivedEventCount: Int { notices.arrived }
+    /// 診断: 拾った事象を main actor で扱った回数 (積まれた `Task` が走った数)。
+    private(set) var handledCount = 0
 
     init(url: URL, onChange: @escaping () -> Void) {
         self.url = url.standardizedFileURL
@@ -69,14 +86,27 @@ final class FileWatcher {
         fileSource = nil
         fileSource = Self.makeSource(
             path: url.path, mask: [.write, .delete, .rename, .extend], queue: queue,
-            onEvent: { [weak self] in Task { @MainActor in self?.handle() } })
+            onEvent: onEvent)
         watchedIdentifier = Self.identifier(of: url.path)
     }
 
     private func watchDirectory() {
         directorySource = Self.makeSource(
             path: url.deletingLastPathComponent().path, mask: [.write], queue: queue,
-            onEvent: { [weak self] in Task { @MainActor in self?.handle() } })
+            onEvent: onEvent)
+    }
+
+    /// 見張りが事象を拾ったときの手続き。**積んだまま走っていない知らせがあれば積まない。**
+    ///
+    /// 印は自分の生死によらず下ろす (``RenderDevice`` の完了の知らせと同じ)。
+    private var onEvent: @Sendable () -> Void {
+        { [weak self, notices] in
+            guard notices.arrive(0) else { return }
+            Task { @MainActor in
+                _ = notices.take()
+                self?.handle()
+            }
+        }
     }
 
     /// 見張りを 1 本張る。
@@ -100,6 +130,7 @@ final class FileWatcher {
 
     /// 変化を拾った。
     private func handle() {
+        handledCount += 1
         // **張り直してから知らせる。** 置き換え保存では、いま見ているファイルは
         // もう別のものになっている
         watchFile()

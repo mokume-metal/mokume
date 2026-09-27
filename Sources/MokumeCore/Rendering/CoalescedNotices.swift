@@ -3,24 +3,31 @@
 
 import Synchronization
 
-/// 投入の完了の知らせを、main actor へ渡す前に**合体する**器 ([#1594])。
+/// 隔離の外から届く知らせを、main actor へ渡す前に**合体する**器 ([#1594])。
 ///
-/// **知らせは投入ごとに届くが、main actor へ積むのは 1 本まででよい。** 刈る側
-/// (``RenderDevice``) が知りたいのは「どこまで終わったか」だけで、番号の途中を 1 つずつ
-/// 受け取る必要は無い。投入ごとに `Task` を 1 本積むと、main actor を譲らずにフレームを
-/// 回す経路 (窓を出さない書き出しや検査のループ) では 1 本も走れず、フレームに比例して
-/// 溜まり続けた。「誰が `advance()` を叩くかは外側の話」(``SketchRuntime``) と食い違う。
+/// **知らせは事象ごとに届くが、main actor へ積むのは 1 本まででよい。** 受ける側が知りたいのは
+/// 「どこまで終わったか」「変わったか」だけで、途中を 1 つずつ受け取る必要は無い。事象ごとに
+/// `Task` を 1 本積むと、main actor を譲らずにフレームを回す経路 (窓を出さない書き出しや
+/// 検査のループ) では 1 本も走れず、フレームに比例して溜まり続けた。「誰が `advance()` を
+/// 叩くかは外側の話」(``SketchRuntime``) と食い違う。
+///
+/// 使うのは 2 か所である。
+///
+/// | 使い手 | 知らせ | 番号 |
+/// | --- | --- | --- |
+/// | ``RenderDevice`` | 投入の完了 (Metal 側の糸) | 投入の番号 |
+/// | ``FileWatcher`` | ファイルの変化 (見張りの待ち行列) | 使わない (0) |
 ///
 /// **控えるのは届いた最大の番号である。** 先に積んだ知らせの番号のまま刈ると、後から届いた
 /// 投入を刈り残す。刈る側は番号と合図 (`MTLSharedEvent`) の進んでいるほうまで刈るが、合図は
 /// コマンドの後にキューが進めるので、知らせが届いた時点でまだ上がっていないことがある
 /// ([#1076] の保持環が 1 フレームぶん戻る)。
 ///
-/// ハンドラは Metal 側の糸から呼ばれるので、錠で守る (``CommandFaultLog`` と同じ作法)。
+/// 知らせは別の糸から届くので、錠で守る (``CommandFaultLog`` と同じ作法)。
 ///
 /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
 /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
-nonisolated final class CompletionNotices: Sendable {
+nonisolated final class CoalescedNotices: Sendable {
     private struct State {
         var newest: UInt64 = 0
         var queued = 0
