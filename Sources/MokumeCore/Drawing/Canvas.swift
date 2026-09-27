@@ -655,24 +655,30 @@ public final class Canvas {
     /// (`createGraphics`) では約束するのが作者で、区間は ``beginDraw()``〜``endDraw()`` そのもの
     /// なので、ここは立たない。
     ///
-    /// 下ろすときに、区間の中で置いたものが残っていれば印を付ける (``placedWhileCarryingOver``)。
-    /// フレームの頭の検め (``beginFrame()``) が、区間の外で置いたものと見分けるのに読む。
+    /// 下ろすときに、区間の中で置いた量を覚える (``carriedOverAmount``)。フレームの頭の検め
+    /// (``beginFrame()``) が、区間の外で置いたものと見分けるのに読む。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     var carriesOver = false {
         didSet {
-            if oldValue, !carriesOver, !hasNothingPending { placedWhileCarryingOver = true }
+            guard oldValue, !carriesOver else { return }
+            let amount = pendingAmount
+            if amount > 0 { carriedOverAmount = amount }
         }
     }
 
-    /// 持ち越しの区間の中で置いたものが、溜め場に残っているか。**フレームの頭の検めの印**
-    /// (``beginFrame()``)。
+    /// 持ち越しの区間を出たときに、溜め場に残っていた量 (``pendingAmount``)。区間で何も置いて
+    /// いなければ `nil`。**フレームの頭の検めの印** (``beginFrame()``)。
     ///
-    /// 区間を出るとき (``carriesOver`` を下ろすとき) に立ち、フレームの頭が読んで下ろす。
+    /// 区間を出るとき (``carriesOver`` を下ろすとき) に書き、フレームの頭が読んで下ろす。
+    /// **有無ではなく量を覚える** — 区間で置いた後に、区間の外で守りの無い口から積み足すと、
+    /// 有無の印ではその積み足しを持ち越しと取り違える。溜め場は置けば増え、捨てれば空に戻る
+    /// だけなので、頭で覚えた量より増えていれば区間の外で置いたものである。
+    ///
     /// 口ごとに立てる形は取らない — 口を 1 つ書き落とした日に、そこだけ印が漏れる
     /// (``hasPendingDrawing`` と同じ理由)。
-    var placedWhileCarryingOver = false
+    var carriedOverAmount: Int?
 
     /// 書いたものが、この面の次の描き切りに載る区間にいるか。**フレームの中と、持ち越しの区間。**
     ///
@@ -1545,8 +1551,7 @@ public final class Canvas {
 
     /// 溜め場が空か。**区間の外で置いたものが残っていないかを、フレームの頭が見る** ([#1672])。
     ///
-    /// 並びは ``discardPending()`` と同じもの (``sweepPending(emptying:)``) を通り、塗り直しの予定を
-    /// 足す (次の描き切りで面を塗るので、置いたものである)。
+    /// 並びは ``discardPending()`` と同じもの (``sweepPending(emptying:)``) を通る (``pendingAmount``)。
     ///
     /// **画素の写しへの書き込みは見ない。** 書く口は画素の窓 (``Pixels``) の 2 つに集まっていて、
     /// 窓自身が書いてよいかを尋ねる。しかも写しへの書き込みは、描き切れなかったフレームと
@@ -1555,7 +1560,15 @@ public final class Canvas {
     ///
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
-    var hasNothingPending: Bool { sweepPending(emptying: false) && pendingBackground == nil }
+    var hasNothingPending: Bool { pendingAmount == 0 }
+
+    /// 溜め場に溜まっている量。**置けば増え、捨てれば 0 に戻る。** 列を閉じる操作 (`blendMode()`
+    /// などが開いた列を閉じる) では増えない。
+    ///
+    /// 数えるのは溜め場の要素の数と、開いている列・畳む相手の控え・置いた記録の数に、塗り直しの
+    /// 予定を足したもの (次の描き切りで面を塗るので、置いたものである)。閉じた列の数は数えない
+    /// (``sweepPending(emptying:)``)。
+    var pendingAmount: Int { sweepPending(emptying: false) + (pendingBackground == nil ? 0 : 1) }
 
     /// 溜め場を 1 つずつ通り、空にするか、空かを見る。
     ///
@@ -1563,26 +1576,26 @@ public final class Canvas {
     /// ([#1672])。並びを 2 か所に書くと、溜め場を 1 つ足した日に片方だけが知る — 捨て落とせば
     /// 溜まり、見落とせばフレームの頭の検めが黙る。
     ///
-    /// - Returns: 見る側 (`emptying: false`) で、どの溜め場も空だったか。捨てる側では常に `true`。
+    /// - Returns: 見る側 (`emptying: false`) で、溜まっている量 (``pendingAmount``)。捨てる側では 0。
     ///
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-    private func sweepPending(emptying: Bool) -> Bool {
-        var isEmpty = true
+    private func sweepPending(emptying: Bool) -> Int {
+        var amount = 0
         func list<Store: RangeReplaceableCollection>(
-            _ store: inout Store, resettingTo reset: Store = Store()
+            _ store: inout Store, resettingTo reset: Store = Store(), counted: Bool = true
         ) {
             if emptying {
                 store.removeAll(keepingCapacity: true)
                 store.append(contentsOf: reset)
-            } else if store.count != reset.count {
-                isEmpty = false
+            } else if counted {
+                amount += store.count - reset.count
             }
         }
         func open<Value>(_ value: inout Value?) {
-            if emptying { value = nil } else if value != nil { isEmpty = false }
+            if emptying { value = nil } else if value != nil { amount += 1 }
         }
         func flag(_ value: inout Bool) {
-            if emptying { value = false } else if value { isEmpty = false }
+            if emptying { value = false } else if value { amount += 1 }
         }
         list(&vertices)
         list(&recordedStrokeRanges)
@@ -1594,7 +1607,10 @@ public final class Canvas {
         // 空のまま次の列を閉じると、束ねる先の無い添字が残る
         list(&flatInstances, resettingTo: [FlatInstance.identity])
         list(&formInstances)
-        list(&batches)
+        // 列は数えない。溜めたものを閉じて束ねるだけで、置いたものではない — 数えると、区間の
+        // 外で `blendMode()` を書いて列を閉じただけで量が増える。列があれば、束ねた中身が上の
+        // どれかに溜まっている (中身の無い列は積まない) ので、空かの判定は変わらない
+        list(&batches, counted: false)
         open(&openSolid)
         open(&openFlat)
         open(&openForm)
@@ -1604,10 +1620,10 @@ public final class Canvas {
         // 守るために描き切らせる相手はもう居ない
         if emptying {
             placedGraphics.removeAll(keepingCapacity: true)
-        } else if !placedGraphics.isEmpty {
-            isEmpty = false
+        } else {
+            amount += placedGraphics.count
         }
-        return isEmpty
+        return amount
     }
 
     /// このフレームに溜めたものを、**塗り直しの予定ごと**落とす。
@@ -1836,7 +1852,8 @@ public final class Canvas {
     /// 置いてよいのは区間の中 (``canPlace``) だけで、区間の外では図形が溜め場に入る口がそれぞれ
     /// 断る。**断る口を 1 つ書き落としても、ここで拾う。** 前のフレームは描き切りか捨てる道で
     /// 溜め場を空にして終わるので、頭で何か残っていれば、フレームの外で置いたものである。
-    /// 持ち越しの区間で置いたもの (``placedWhileCarryingOver``) だけが、約束どおり残ってよい。
+    /// 持ち越しの区間で置いたもの (区間を出たときの量 ``carriedOverAmount`` まで) だけが、約束どおり
+    /// 残ってよい。
     ///
     /// 口を列挙して守る形は採らない。#1592 の一覧は、合流点 14 か所のうち 2 か所を取りこぼして
     /// いた (#1603 の判断材料)。溜め場の並びは捨てる側と同じもの (``hasNothingPending``) を読む。
@@ -1849,8 +1866,8 @@ public final class Canvas {
     /// [#1603]: https://github.com/mokume-metal/mokume/issues/1603
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     private func checkNothingPlacedOutsideTheRegions() {
-        defer { placedWhileCarryingOver = false }
-        guard !placedWhileCarryingOver, !hasNothingPending else { return }
+        defer { carriedOverAmount = nil }
+        guard pendingAmount > (carriedOverAmount ?? 0) else { return }
         placementsFoundOutsideRegions += 1
         discardPending()
         pendingBackground = nil

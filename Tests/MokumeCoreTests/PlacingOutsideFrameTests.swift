@@ -206,6 +206,16 @@ struct PlacingOutsideFrameTests {
     private let placingNotice = Canvas.OutsideFrame.placing.notice
     private let pixelWriteNotice = Canvas.OutsideFrame.pixelWrite.notice
 
+    /// 溜め場の中身の数。開いている列の有無は入れない — 区間の外でも、描き方を替えれば列は閉じる。
+    private static func stored(in canvas: Canvas) -> [Int] {
+        [
+            canvas.vertices.count, canvas.solidVertices.count, canvas.solidIndices.count,
+            canvas.solidInstances.count, canvas.formInstances.count, canvas.flatInstances.count,
+            canvas.recordedStrokeRanges.count, canvas.recordedSolidStrokes.count,
+            canvas.placedGraphics.count, canvas.hasPendingDrawing ? 1 : 0,
+        ]
+    }
+
     // MARK: - 区間の外では置かない
 
     @Test(
@@ -223,6 +233,10 @@ struct PlacingOutsideFrameTests {
         #expect(canvas.hasNothingPending, "区間の外の \(call) が溜め場に積んだ")
         #expect(!canvas.isBuildingShape, "区間の外の \(call) が形を開いた")
         #expect(canvas.shapePoints.isEmpty, "区間の外の \(call) が点を積んだ")
+        // このフレームの数も動かさない。動かすと、次のフレームの数に足される (#1671 と同じ形)
+        #expect(canvas.outlinesAssembledThisFrame == 0, "区間の外の \(call) が周を組んだと数えた")
+        #expect(canvas.pointScansThisFrame == 0, "区間の外の \(call) が点を走査したと数えた")
+        #expect(canvas.glyphQuadsPlaced == 0, "区間の外の \(call) が字を置いたと数えた")
         // 置いた記録も付けない。#1592 では描き場所を置いた相手の `placers` まで伸びていた
         #expect(canvas.placedGraphics.isEmpty)
         #expect(props.other.placers.isEmpty)
@@ -266,12 +280,35 @@ struct PlacingOutsideFrameTests {
         canvas.carriesOver = false
 
         #expect(!canvas.hasNothingPending, "持ち越しの区間の \(call) が何も置かなかった")
-        #expect(canvas.placedWhileCarryingOver)
+        #expect(canvas.carriedOverAmount == canvas.pendingAmount)
         #expect(!canvas.warnings.hasWarned(.placingOutsideFrame))
         try canvas.draw {}
         // 持ち越したものは頭の検めに数えない
         #expect(canvas.placementsFoundOutsideRegions == 0)
-        #expect(!canvas.placedWhileCarryingOver, "印がフレームの頭で下りていない")
+        #expect(canvas.carriedOverAmount == nil, "印がフレームの頭で下りていない")
+    }
+
+    /// 区間で置いたものが溜め場に残ったまま区間を出て、外で同じ口を呼ぶ。**区間で開いた列や
+    /// 畳む相手に、外から積み足させない** — 畳む経路は、開いている雛形と同じ形なら周を組まずに
+    /// 置き場所を足すだけなので、周の側の守りを通らない。
+    @Test("持ち越しの区間で置いた後に、区間の外で続けても積み足さない", arguments: PlacingCall.allCases)
+    func doesNotAddToWhatWasCarriedOver(_ call: PlacingCall) throws {
+        let canvas = try PlacingSurface.direct.make(gpu: try RenderDevice())
+        let props = try PlacingCall.Props(on: canvas)
+        canvas.stopsOnPlacementOutsideRegions = false
+        canvas.carriesOver = true
+        call.call(on: canvas, props)
+        canvas.carriesOver = false
+        let carried = Self.stored(in: canvas)
+
+        call.call(on: canvas, props)
+
+        // 積み足しも、持ち越したものを捨てることもしない (区間の外の塗り直しは、溜めたものを
+        // 捨てる前に断る)
+        #expect(Self.stored(in: canvas) == carried, "区間の外の \(call) が溜め場を変えた")
+        #expect(canvas.warnings.message(for: .placingOutsideFrame) == placingNotice)
+        try canvas.draw {}
+        #expect(canvas.placementsFoundOutsideRegions == 0)
     }
 
     @Test("描き場所に対して、区間の外で形を組み立てられる (#1592 の完了条件 3)")
@@ -332,6 +369,7 @@ struct PlacingOutsideFrameTests {
         canvas.vertex(0, 0)
         canvas.carriesOver = false
         for index in 0..<100 { canvas.vertex(Float(index), 1) }
+        #expect(canvas.shapePoints.count == 1, "区間の外の vertex() が点を積んだ")
         canvas.endShape()
 
         #expect(canvas.shapePoints.isEmpty)
@@ -511,6 +549,28 @@ struct PlacementLeakTests {
         try canvas.draw { carried = canvas.solidVertices.count }
         #expect(carried == 1, "持ち越しの区間で置いたものが最初のフレームに届かない")
         #expect(canvas.placementsFoundOutsideRegions == 0)
+    }
+
+    /// 印は有無ではなく量である。区間で置いた後に、区間の外で守りの無い口から積み足したものも
+    /// 見つける。
+    @Test("持ち越しの区間の後に、区間の外で積み足したものは見つける")
+    func findsWhatWasAddedAfterTheRegion() throws {
+        let canvas = try makeCanvas()
+        canvas.stopsOnPlacementOutsideRegions = false
+        canvas.carriesOver = true
+        placeWithoutAGuard(on: canvas)
+        canvas.carriesOver = false
+        // 列を閉じるだけの操作は、積み足しに数えない
+        canvas.blendMode(.add)
+        try canvas.draw {}
+        #expect(canvas.placementsFoundOutsideRegions == 0, "列を閉じただけで漏れと数えた")
+
+        canvas.carriesOver = true
+        placeWithoutAGuard(on: canvas)
+        canvas.carriesOver = false
+        placeWithoutAGuard(on: canvas)
+        try canvas.draw {}
+        #expect(canvas.placementsFoundOutsideRegions == 1)
     }
 
     /// 印は区間の出口で付き、フレームの頭で下りる。**下りないと、次に区間の外で漏れたものを

@@ -1428,8 +1428,8 @@ struct CanvasTests {
             ("buildingFlatTemplate", end, all, { c, _ in c.buildingFlatTemplate = true }),
             // 捨てたフレームで積んだ力を落とすための控え (#1622)
             ("forcesThisFrame", end, all, { c, f in c.force(f.particles, [.gravity(0, 1)]) }),
-            // 持ち越しの区間で置いた印。フレームの頭の検めが読んで下ろす (#1672)
-            ("placedWhileCarryingOver", head, all, { c, _ in c.placedWhileCarryingOver = true }),
+            // 持ち越しの区間で置いた量の印。フレームの頭の検めが読んで下ろす (#1672)
+            ("carriedOverAmount", head, all, { c, _ in c.carriedOverAmount = 7 }),
         ]
     }
 
