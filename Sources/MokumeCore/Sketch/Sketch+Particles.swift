@@ -81,6 +81,16 @@ extension Sketch {
     ///
     /// 出た粒の値は**種から決まる乱数** (``random()`` と同じ 1 本の流れ) で引くので、
     /// ``randomSeed(_:)`` を決めれば何度走らせても同じ粒が出る。
+    ///
+    /// ## 数でない値・無限は、注意して出さない
+    ///
+    /// `rate`・`from` の座標や半径・幅の端・`color` の成分のどれかが数でない値 (NaN) か
+    /// 無限なら、**その呼び出しでは 1 個も出さず**、どの引数だったかを 1 度だけ知らせる。
+    /// `color` を省いたときは塗りを見る。すでに生きている粒と、同じ粒へ出している他の
+    /// 呼び出しには効かない。
+    ///
+    /// 値が有限でも、出る所が `Float` で表せないほど遠い粒 (中心と半径の和が溢れる円や球)
+    /// は出さずに知らせる。
     public func emit(
         _ particles: Particles, from source: Emitter, rate: Float,
         speed: ClosedRange<Float> = 20...60,
@@ -109,6 +119,17 @@ extension Sketch {
     /// 引く力 (``Force/attract(_:_:_:strength:weakeningBeyond:)``) は強さを負にすると
     /// 押す力になる。読みやすさのために ``Force/repel(_:_:_:strength:weakeningBeyond:)`` も
     /// 置いてあるが、**計算は同じ 1 本**である。
+    ///
+    /// ## 数でない値・無限は、注意して効かせない
+    ///
+    /// 成分 (座標・`strength`・`amount`) のどれかが数でない値 (NaN) か無限の力は、**その力
+    /// だけを積まず**、1 度だけ知らせる。同じ呼び出しに並べた他の力は今までどおり効き、
+    /// すでに生きている粒も壊れない。弱まり始める距離 (`weakeningBeyond`) だけは扱いが
+    /// 違い、力ごと断らずに距離を外して、弱まらない力として効かせる。減速 (``Force/drag(_:)``)
+    /// の負の `amount` も、速さを増やしてしまうので同じく知らせて効かせない。
+    ///
+    /// 有限の力でも、足し合わせや積分が `Float` で溢れるほど大きければ、**溢れるフレームは
+    /// 粒を動かさない** — 粒の位置と速度が数でなくなることは無い。
     public func force(_ particles: Particles, _ forces: Force...) {
         canvas.force(particles, forces)
     }

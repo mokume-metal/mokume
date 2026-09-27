@@ -75,6 +75,8 @@ public enum Force: Equatable, Sendable {
     /// 1 フレームで速度は e^(−`amount`·Δt) 倍になる — 1 秒で e^(−`amount`) 倍で、
     /// **フレームレートに依らない**。どれだけ強くしても速度の向きは変わらず、速さは増えない
     /// (強いほど、その場に早く止まる)。ほかの力と組むと、それらで進めた速度に掛かる。
+    ///
+    /// `amount` は 0 以上。負の値は速さを増やしてしまうので、注意を言って効かせない。
     case drag(_ amount: Float)
 
     /// 1 点から遠ざける。
@@ -105,6 +107,22 @@ public enum Force: Equatable, Sendable {
         case .wander: .wander
         case .swirl: .swirl
         case .drag: .drag
+        }
+    }
+
+    /// 数の成分。**受け口が、数でない値・無限を検めるのに読む** ([#1623])。
+    ///
+    /// 弱まり始める距離は入れない。受け取れないときの扱いが違い、力ごと断らずに距離だけを
+    /// 外す (`Particles.accepted`)。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+    var numbers: [Float] {
+        switch self {
+        case .gravity(let x, let y, let z): [x, y, z]
+        case .attract(let x, let y, let z, let strength, _): [x, y, z, strength]
+        case .wander(let strength): [strength]
+        case .swirl(let x, let y, let strength): [x, y, strength]
+        case .drag(let amount): [amount]
         }
     }
 
