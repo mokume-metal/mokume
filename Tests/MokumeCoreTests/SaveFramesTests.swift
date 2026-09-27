@@ -160,14 +160,23 @@ struct LateFailureTests {
     private let picture = DisplayImage(
         width: 8, height: 8, bytes: [UInt8](repeating: 200, count: 8 * 8 * 4))
 
-    @Test("まだ決着していないフレームでは、前の書き損じを保つ")
-    func aFrameWithNoNewsKeepsTheLastFailure() throws {
+    /// **後に書き込みが来る間**だけの性質である。何も来ない口で保つと、1 度きりの書き損じが
+    /// 二度と消えない (下の ``aSettledOneOffFailureIsCountedOnce()``・[#1626])。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("後に書き込みが来る間は、まだ決着していないフレームでも前の書き損じを保つ", arguments: ["連番", "save"])
+    func aFrameWithNoNewsKeepsTheLastFailure(_ coming: String) throws {
         try withTemporaryDirectory("mokume-late-failure-kept") { directory in
             // 書き先の親をファイルにしておく。ディレクトリを作ることも書くこともできない
             let blocker = directory.appendingPathComponent("blocker")
             try Data("not a directory".utf8).write(to: blocker)
 
             let recorder = FrameRecorder()
+            // 後に書き込みが来る — 連番を撮っている、または次の `save()` の予約がある
+            switch coming {
+            case "連番": recorder.beginRecord(blocker.appendingPathComponent("f-##.png").path, at: 1)
+            default: recorder.save(blocker.appendingPathComponent("next.png").path, at: 2)
+            }
             recorder.writer.write(picture, to: blocker.appendingPathComponent("a.png").path)
             recorder.writer.drain()
             recorder.absorbOutcomes()
@@ -177,6 +186,76 @@ struct LateFailureTests {
             // 差込口の健康状態は「順調」と読んで数えを 0 に戻す
             recorder.absorbOutcomes()
             #expect(recorder.failure?.contains("a.png") == true, "知らせが無いだけで直ったことになっている")
+
+            recorder.close()
+        }
+    }
+
+    /// **1 度きりの書き損じは、1 回数えて名乗ったら下ろす** ([#1626])。
+    ///
+    /// 動画だけを撮っている間は、決着した `save()` の後に静止画の書き込みが来ない。保ったままに
+    /// すると以後のフレームすべてで「続けて転んだ」と数えられ、3 フレームで撮る係ごと外れて、
+    /// 同居している動画が途切れた。差込口の健康状態 (``SeamHealth``) を実際に回して、外れない
+    /// ことまで見る。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("もう何も来ない口の書き損じは、1 回数えて名乗ったら持ち越さない")
+    func aSettledOneOffFailureIsCountedOnce() throws {
+        try withTemporaryDirectory("mokume-late-failure-once") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            // 動画だけを撮っている。1 フレームも書かないので、符号化器は要らない
+            recorder.beginRecord(directory.appendingPathComponent("motion.mov").path, at: 1)
+            // 撮っている最中の `save()` の 1 枚 (予約は配られて書き込みに回った後)
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("still.png").path)
+            recorder.writer.drain()
+
+            var health = SeamHealth()
+            recorder.absorbOutcomes()
+            #expect(recorder.failure?.contains("still.png") == true, "決着したフレームで数えていない")
+            _ = health.note(recorder.failure)
+            // **黙らない。** 外れないので、外したときの診断は出ない
+            #expect(recorder.hasFailedToWrite)
+            let said = try #require(
+                recorder.warnings.message(for: .imageFailure), "1 度きりの書き損じを誰にも言っていない")
+            #expect(said.contains("still.png"))
+
+            for _ in 0..<SeamHealth.limit + 2 {
+                recorder.absorbOutcomes()
+                _ = health.note(recorder.failure)
+            }
+            #expect(recorder.failure == nil, "後に何も来ない書き損じを持ち越している")
+            #expect(health.isAttached, "1 度きりの書き損じで、撮る係ごと外れた")
+
+            recorder.close()
+        }
+    }
+
+    /// **読まれていない書き損じは、後の成功で消えない** ([#1626])。
+    ///
+    /// 知らせの器は 1 つなので、同じフレームに頼んだ 2 枚 (`save` を 2 つ・連番と `save`) の
+    /// 転んだほうが先に決着し、後に書けたほうが上書きすると、誰も名乗らず穴も残らなかった。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("同じ間に書き損じと書けたものが決着しても、書き損じが読まれる")
+    func aFailureIsNotOverwrittenByALaterSuccess() throws {
+        try withTemporaryDirectory("mokume-late-failure-overwritten") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            // 転ぶほうを先に決着させてから、書けるほうを決着させる
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("a.png").path)
+            recorder.writer.drain()
+            recorder.writer.write(picture, to: directory.appendingPathComponent("b.png").path)
+            recorder.writer.drain()
+
+            recorder.absorbOutcomes()
+            #expect(recorder.failure?.contains("a.png") == true, "後の成功に上書きされて、書き損じが読まれていない")
+            #expect(recorder.hasFailedToWrite)
+            #expect(recorder.warnings.message(for: .imageFailure)?.contains("a.png") == true)
         }
     }
 
@@ -200,30 +279,76 @@ struct LateFailureTests {
         }
     }
 
-    @Test("暇になってから頼み直すと、前の書き損じを持ち越さない", arguments: ["save", "beginRecord"])
-    func askingAgainAfterIdlingStartsAfresh(_ how: String) throws {
+    /// **並びへ戻るときは、暇だったかによらず仕切り直す** ([#1626])。
+    ///
+    /// 並びへ入れ直すのは ``SketchRuntime`` で、健康状態を作り直すのと同じ時点で
+    /// ``FrameRecorder/startAfresh()`` を呼ぶ。ここではその呼び出しを直接行う。「録っている
+    /// 最中」は、続けて転んで外された後に `save()` で戻る形である — 暇ではないので、暇かで
+    /// 決めていた頃は前の書き損じを持ち越して、戻った直後に 1 回ぶん数えていた。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test(
+        "並びへ戻るときは、前の書き損じを持ち越さない",
+        arguments: ["暇から save", "暇から beginRecord", "録っている最中に save"])
+    func rejoiningStartsAfresh(_ how: String) throws {
         try withTemporaryDirectory("mokume-late-failure-afresh") { directory in
             let blocker = directory.appendingPathComponent("blocker")
             try Data("not a directory".utf8).write(to: blocker)
 
             let recorder = FrameRecorder()
+            if how == "録っている最中に save" {
+                recorder.beginRecord(directory.appendingPathComponent("motion.mov").path, at: 1)
+            }
             // 1 つ目の書き損じは載せ替え済み、2 つ目は外れている間に決着して口に残っている
             recorder.writer.write(picture, to: blocker.appendingPathComponent("a.png").path)
             recorder.writer.drain()
             recorder.absorbOutcomes()
             recorder.writer.write(picture, to: blocker.appendingPathComponent("b.png").path)
             recorder.writer.drain()
-            #expect(recorder.isIdle)
 
             switch how {
-            case "save": recorder.save(directory.appendingPathComponent("c.png").path, at: 1)
-            default: recorder.beginRecord(directory.appendingPathComponent("f-##.png").path, at: 1)
+            case "暇から beginRecord":
+                recorder.beginRecord(directory.appendingPathComponent("f-##.png").path, at: 5)
+            default: recorder.save(directory.appendingPathComponent("c.png").path, at: 5)
             }
+            recorder.startAfresh()
             // 並びへ戻るときに健康状態は作り直される。ここで前の失敗が見えると、
             // 仕切り直したはずの最初のフレームで 1 回ぶん数えられる
             #expect(recorder.failure == nil)
             recorder.absorbOutcomes()
             #expect(recorder.failure == nil, "外れている間に決着した前の知らせを数えている")
+            #expect(recorder.hasFailedToWrite, "持ち越さないついでに、書き損じたことまで忘れている")
+
+            recorder.close()
+        }
+    }
+
+    /// **外れている間に決着した書き損じは、捨てる前に名乗る** ([#1626])。
+    ///
+    /// 暇になった撮る係は並びから外れるので、その後に決着した書き損じを読む口は、次に頼まれた
+    /// ときの仕切り直ししか無い。そこで黙って捨てると、書けなかった 1 枚が誰にも知らされず、
+    /// `mokume render` の終了コードにも出ない (#1282)。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("外れている間に決着した書き損じを、仕切り直しで黙って捨てない")
+    func startingAfreshSpeaksTheFailureItDrops() throws {
+        try withTemporaryDirectory("mokume-late-failure-dropped") { directory in
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+
+            let recorder = FrameRecorder()
+            recorder.writer.write(picture, to: blocker.appendingPathComponent("a.png").path)
+            recorder.writer.drain()
+            #expect(!recorder.hasFailedToWrite)
+
+            recorder.save(directory.appendingPathComponent("b.png").path, at: 5)
+            recorder.startAfresh()
+            #expect(recorder.hasFailedToWrite, "捨てた書き損じが、書き出しの穴として残っていない")
+            let said = try #require(
+                recorder.warnings.message(for: .imageFailure), "捨てた書き損じを誰にも言っていない")
+            #expect(said.contains("a.png"))
+
+            recorder.close()
         }
     }
 

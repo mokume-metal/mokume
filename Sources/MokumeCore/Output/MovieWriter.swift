@@ -28,8 +28,9 @@ import MokumeDiagnostics
 ///
 /// ## 落ちたフレームは数えない
 ///
-/// 出口へ届かなかったフレームは**番号の穴**として残る。落ちた数は最初と最後の番号の
-/// 幅から導けるので ([ADR-0025] 決定 2)、数える機構を別に持たない。時刻はフレーム
+/// 出口へ届かなかったフレームは**番号の穴**として残る。落ちた数は、最初に受け取った番号
+/// から止めたところまでの幅から導けるので ([ADR-0025] 決定 2・``droppedFrames``)、数える
+/// 機構を別に持たない。時刻はフレーム
 /// 自身のものを使うので、落ちても残りの絵の時刻は動かない。
 ///
 /// [#978]: https://github.com/mokume-metal/mokume/issues/978
@@ -77,6 +78,8 @@ final class MovieWriter {
 
     private var firstFrame: Int?
     private var lastFrame = 0
+    /// 録りが覆うはずだった最後のフレーム。**止めた側が教える** (``expectFrames(through:)``)。
+    private var expectedLastFrame: Int?
 
     /// 書き終えるまでのどこに居るか。
     ///
@@ -207,16 +210,37 @@ final class MovieWriter {
         return true
     }
 
-    /// 出口へ届かなかったフレームの数。
+    /// 録りが覆うはずだったのは、このフレームまでだと教える。**閉じる前に、止めた側が呼ぶ。**
     ///
-    /// **番号の穴から導く。** 描けなかったフレームは出口を通らないので、受け取った
-    /// 枚数と番号の幅が食い違う。
-    var droppedFrames: Int {
-        guard let firstFrame else { return 0 }
-        return max(0, (lastFrame - firstFrame + 1) - acceptedFrames)
+    /// 受け取った最後の番号だけでは、**届かなくなった後の末尾**が番号の幅の外に出る。
+    /// 撮る係が録りの途中で差込口から外れると (続けて転んだとき・[ADR-0024] 決定 7)、
+    /// 以後の絵は 1 枚も届かないまま止められるので、末尾の欠けは穴として残らない ([#1626])。
+    ///
+    /// 受け取った番号より手前を教えられても、幅は縮めない。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    func expectFrames(through frame: Int) {
+        expectedLastFrame = max(expectedLastFrame ?? frame, frame)
     }
 
-    /// 前に取り出してから決着した書き込みの、最後の結果を取り出す。**取り出したら消える。**
+    /// 出口へ届かなかったフレームの数。
+    ///
+    /// **番号の穴から導く** ([ADR-0025] 決定 2 の「番号の幅 − 入った枚数」)。描けなかった
+    /// フレームは出口を通らないので、受け取った枚数と番号の幅が食い違う。幅の終わりは、
+    /// 受け取った最後の番号と ``expectFrames(through:)`` で教えられた番号の遅いほうである。
+    ///
+    /// **1 枚も受け取っていなければ 0 である。** 幅の始まりが分からず、ファイルも開いていない。
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    var droppedFrames: Int {
+        guard let firstFrame else { return 0 }
+        let last = max(lastFrame, expectedLastFrame ?? lastFrame)
+        return max(0, (last - firstFrame + 1) - acceptedFrames)
+    }
+
+    /// 前に取り出してから決着した書き込みの結果を取り出す (転んだものがあれば書き損じ・``OutcomeSlot``)。
+    /// **取り出したら消える。**
     ///
     /// `nil` は「順調」ではなく「まだ何も決着していない」である
     /// (``FrameWriter/takeOutcome()``・[#1272])。
