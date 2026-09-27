@@ -66,6 +66,27 @@
 # 危険な形は複数あって数え上げると取りこぼすので、**既知の安全な形だけを素通しする**
 # (曖昧な --repo mokume を止める側に倒しているのと同じ方針)。
 #
+# ## 承認が要る PR は Draft で作らせない (#1621)
+#
+# 名義の判定を通った後で、もう 1 つだけ見る。**重要パスに触れる PR を `--draft` で作ると、
+# ルールセットの required_reviewers が maintainers へのレビュー依頼を出さない。** 承認
+# 待ちであることが GitHub のどこにも出ず、#1599・#1614・#1620 は依頼が空のまま止まった。
+# Draft でなく作れば作成の瞬間に Team 宛ての依頼が出て、あとで Draft に落としても残る
+# (#1234 の実測)。そこで Draft の作成を差し戻し、「作ってから `gh pr ready --undo`」を
+# 案内する。依頼を自前で出す仕組みは足さない — GITHUB_TOKEN も App も Team へは依頼
+# できず (scripts/rerequest-review.sh の冒頭)、宛先の User を書けば人が増えるたびに直す
+# ことになる。
+#
+# **重要パスに触れない PR の `--draft` は通す。** 作ってから落とす形だと、その間だけ
+# 描画の行列に入ってしまう (多くの描画 PR は重要パスに触れない)。ここだけは上の「承認の
+# 要否は区別しない」の例外で、判定に手元の差分 (`git diff origin/<base>...<head>`) を
+# 読む。**読めなければ差し戻す側に倒す** — 代償は `--draft` を外して打ち直すことだけで、
+# 取りこぼしの代償 (依頼の無い承認待ち) より小さい。`gh pr revert` の中身は手元に無い
+# ので、revert の `--draft` はいつも差し戻す。
+#
+# 名義の差し戻しと同時には出ない。判定は名義の素通しの直前に置いてあり、名義を直した
+# 打ち直しで初めてこちらが当たる。
+#
 # 契約: stdin に PreToolUse の JSON。素通しは無出力 + 終了コード 0。
 # 配線は .claude/settings.json、テストは scripts/tests/pr_identity_guard_test.py。
 set -uo pipefail
@@ -144,11 +165,44 @@ identity_required_message() { # $1=実際に打たれた口 (例: gh pr create)
 EOF
 }
 
+draft_created_message() { # $1=実際に打たれた口  $2=差分を読めなかった理由 (読めたなら空)
+  if [ -n "${2:-}" ]; then
+    cat <<EOF
+**Draft で作ろうとしている PR が重要パスに触れているかを確かめられませんでした** ($2)。
+触れているものとして扱っています。
+
+EOF
+  fi
+  cat <<EOF
+**承認が要る PR を Draft で作ると、maintainers へのレビュー依頼が出ません** (#1621)。
+ルールセットの required_reviewers は、重要パス (docs/decisions/・.github/・.claude/ など)
+に触れる PR に 1 承認を課しますが、Draft で作られた PR には依頼を出しません。承認待ちで
+あることが GitHub のどこにも出ないまま止まります (#1599・#1614・#1620)。
+
+Draft に置きたいなら、Draft でなく作ってから落としてください。依頼は作成の瞬間に出て、
+Draft に落としても残ります (#1234):
+
+  $1 …            (--draft / -d を外す)
+  gh pr ready --undo <番号>
+
+重要パスに触れない PR の --draft は差し戻しません。
+EOF
+  if [ -n "${2:-}" ]; then
+    cat <<'EOF'
+触れていないと分かっているなら、手元にある枝を --head / --base で指し直して打ち直して
+ください (差分が読めれば判定できます)。
+EOF
+  fi
+}
+
 # payload の解き方・差し戻し方・コマンド文字列の読み方は guard-lib.sh と共有する
 # (#128・#815)。読めなければ素通し — guard が壊れて Bash ツール全体が使えなくなるほうが
 # 害が大きい (hook_payload の jq と同じ fail open の考え方)
 # shellcheck source=scripts/guard-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
+# 「承認が要るパスに触れているか」— 正本はルールセットで、写しは持たない (#1621 の判定)
+# shellcheck source=scripts/protected-paths.sh
+. "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh" 2>/dev/null || exit 0
 
 # PR を作る口 (冒頭の表の「載せる」3 つ)。**判定と、打たれた口の取り出しが同じ綴りを
 # 読む** — 割れると「差し戻したのに、名乗る口が空」が起きる
@@ -160,6 +214,52 @@ is_dry_run() { # $1=コマンド
   printf '%s' "$1" |
     strip_heredoc_bodies |
     grep -qE '(^|[[:space:]])--dry-run([[:space:]]|$)'
+}
+
+# PR を作る 1 回の呼び出し (口を含む断片)。旗はこの中からだけ読む — 同じ行の別の
+# コマンドの `-d` を拾わないため
+port_fragment() { # $1=コマンド
+  printf '%s' "$1" |
+    strip_heredoc_bodies |
+    split_into_fragments |
+    grep -E "^gh([[:space:]]+[^[:space:]]+)*[[:space:]]+$PR_CREATING_PORTS([[:space:]]|$)" |
+    head -1
+}
+
+# 旗の値。`--head x` / `--head=x` / `-H x` の形を読み、引用符を落とす。後勝ち (gh と同じ)
+flag_value() { # $1=断片  $2=旗の正規表現 (例 '--head|-H')
+  printf '%s' "$1" |
+    grep -oE "(^|[[:space:]])($2)(=|[[:space:]]+)[^[:space:]]+" |
+    tail -1 |
+    sed -E "s/^[[:space:]]*($2)(=|[[:space:]]+)//; s/^[\"']//; s/[\"']\$//"
+}
+
+# 重要パスに触れる PR を Draft で作ろうとしていたら差し戻す (冒頭の「Draft で作らせない」)。
+# 名義の素通しの直前で呼ぶ。Draft でなければ何もしない
+deny_if_protected_draft() {
+  local fragment base head files
+  fragment=$(port_fragment "$command")
+  printf '%s' "$fragment" | grep -qE '(^|[[:space:]])(--draft|-d)(=|[[:space:]]|$)' || return 0
+
+  # revert の中身は、戻す PR の差分であって手元には無い (port は末尾に空白を持ちうる)
+  case "$port" in "gh pr revert"*)
+    hook_deny "$(draft_created_message "$port" "revert の中身は手元の差分に無い")"
+    ;;
+  esac
+
+  base=$(flag_value "$fragment" '--base|-B')
+  base=${base:-main}
+  head=$(flag_value "$fragment" '--head|-H')
+  head=${head##*:} # <user>:<branch> の形
+  head=${head:-HEAD}
+  # --head の枝が手元に無ければ、push 済みの枝を見る
+  git -C "$cwd" rev-parse -q --verify "$head^{commit}" >/dev/null 2>&1 || head="origin/$head"
+
+  files=$(git -C "$cwd" diff --name-only "origin/$base...$head" 2>/dev/null) ||
+    hook_deny "$(draft_created_message "$port" "origin/$base...$head の差分を読めなかった")"
+
+  printf '%s\n' "$files" | touches_protected_path || return 0
+  hook_deny "$(draft_created_message "$port")"
 }
 
 hook_payload
@@ -213,7 +313,10 @@ readonly EXPORT_FORM='(^|&&|;|\|)[[:space:]]*export[[:space:]]+GH_TOKEN([[:space
 
 if printf '%s' "$command" | grep -qE '[^[:space:];&|`)]*scripts/gh-app-token\.sh'; then
   if printf '%s' "$command" | grep -qE "$SAFE_TOKEN_FORM"; then
-    printf '%s' "$command" | grep -qE "$EXPORT_FORM" && exit 0
+    if printf '%s' "$command" | grep -qE "$EXPORT_FORM"; then
+      deny_if_protected_draft
+      exit 0
+    fi
 
     # 発行の形は正しいが、gh へ渡っていない
     hook_deny "$(token_not_exported_message)"
@@ -227,7 +330,11 @@ fi
 # 常設している環境 (GH_TOKEN に installation token を置いてある) も常道。
 # 判定は token 発行の形より **後**。危険な形は env の token を空文字で上書きするので、
 # ここが先に通ると握り潰しを見逃す
-case "${GH_TOKEN:-}" in ghs_*) exit 0 ;; esac
+case "${GH_TOKEN:-}" in ghs_*)
+  deny_if_protected_draft
+  exit 0
+  ;;
+esac
 
 # 承認者の外に居る人 (push 権限の無い外部の人) の PR は、どの名義で作っても承認できる
 # (冒頭の「外部の人は止めない」・#184)。確かめられたときだけ通し、引けない・読めない
