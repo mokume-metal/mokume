@@ -16,6 +16,21 @@ import Synchronization
 /// 上限と待ち方は ``Backpressure`` が持つ。上限に達すると ``write(_:to:)`` が返らなく
 /// なるので、遅いディスクではフレームが遅くなる。**代わりにメモリは伸びない。**
 ///
+/// ## 同じ行き先には、最後に頼んだ絵が残る
+///
+/// 書き込みは 1 枚ずつ並行に走る。**同じ行き先への書き込みだけは 1 本ずつ書き、書いている
+/// 間に頼まれたものは最後の 1 つだけを残して畳む** (``WriteLanes``)。並行のままだと後に
+/// 頼んだ絵が先に書き終わり、前の絵が後から置き換える — 同じ名前へ毎フレーム `save()` すると、
+/// 最後に残るのが最後のフレームの絵にならない ([#1627])。
+///
+/// **待たせずに畳む。** 前の書き込みの後ろに並べて待たせると、同じ名前へ毎フレーム書く
+/// 使い方ではフレームの速さが 1 枚を書く時間で決まり、1 本返らない書き込みがあるだけで
+/// 背圧の枠が埋まって main が止まる。畳めば同じ行き先が持つ枠は高々 2 つ (書いている 1 つと
+/// 控えの 1 つ) で、残りの枠は違う行き先 (連番) が並行に使う。
+///
+/// 順番待ちは**プロセスで 1 つ**である。撮る係を作り直した後 (閉じ終えた後の `save()`) も、
+/// 前の係の書き込みが走っていれば同じ行き先はその後ろに並ぶ。
+///
 /// ## 待ち方
 ///
 /// 走らせる側は `Task.detached` で main actor の外へ出す ([ADR-0010] 決定 4)。
@@ -27,6 +42,7 @@ import Synchronization
 /// 見に来る (``Patience/peek``・[#978])。
 ///
 /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+/// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 final class FrameWriter {
@@ -37,6 +53,9 @@ final class FrameWriter {
     private let pressure: Backpressure
     /// 最後に決着した書き込みの結果。**隔離の外から書かれる**ので錠で守る。
     private let lastOutcome = OutcomeSlot()
+    /// 行き先ごとの、書き込みの順番待ち。**プロセスで 1 つ** — 係を作り直しても、前の係の
+    /// 書き込みが走っている行き先はその後ろに並ぶ (``WriteLanes``)。
+    private static let lanes = WriteLanes()
 
     /// 抱えている枚数の上限。
     var limit: Int { pressure.limit }
@@ -46,9 +65,24 @@ final class FrameWriter {
     var peakOutstanding: Int { pressure.peak }
     /// 頼まれた総数。
     private(set) var requested = 0
+    /// この行き先への書き込みが、まだ走っているか控えているか。**控えが残らないことを検査から
+    /// 見るための目印。**
+    static func isBusy(_ path: String) -> Bool { lanes.isBusy(destination(of: path)) }
+    /// 1 枚をファイルにする関数。**フレームの外で呼ばれる。**
+    ///
+    /// 差し替えられるのは検査のためである。書き込みの決着の順は機械の混み具合で決まるので、
+    /// 順序の検査は、書く関数の側で 1 枚を遅らせて崩れる状況を作る ([#1627])。
+    ///
+    /// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
+    typealias Encode = @Sendable (DisplayImage, URL) throws -> Void
+    private let encode: Encode
 
-    init(limit: Int = FrameWriter.defaultLimit) {
+    init(
+        limit: Int = FrameWriter.defaultLimit,
+        encode: @escaping Encode = { image, url in try PNGFile.write(image, to: url) }
+    ) {
         pressure = Backpressure(limit: limit)
+        self.encode = encode
     }
 
     /// 1 枚を書くよう頼む。**上限に達していたら、空くまで返らない。**
@@ -71,19 +105,50 @@ final class FrameWriter {
         let release = pressure.release
         let lastOutcome = slot ?? lastOutcome
         let path = path
-        Task.detached(priority: .utility) {
+        let encode = encode
+        // **同じ行き先へは 1 本ずつ書き、書いている間に頼まれたものは最後の 1 つを残して
+        // 畳む** (#1627)。畳まれた頼みは書かずに枠を返す — 後に頼んだ絵が残るので、書く
+        // 必要が無い
+        Self.lanes.enqueue(Self.destination(of: path), drop: { release() }) {
             // **結果は枠を返す前に置く。** 背圧で待っていた側は、返ってきた時点で
             // 少なくとも 1 つの結果が置かれていると当てにできる
             do {
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try PNGFile.write(image, to: url)
+                try encode(image, url)
                 lastOutcome.succeed()
             } catch {
                 lastOutcome.fail("Could not write \(path): \(error)")
             }
             release()
         }
+    }
+
+    /// 同じファイルを指す綴りを 1 つに揃えた、行き先の名前 ([#1627])。
+    ///
+    /// 揃えるのは 3 つ — `..` と `.` (綴りの上の同一)、途中のシンボリックリンク (`/tmp` と
+    /// `/private/tmp`)、大文字と小文字と Unicode の正規化 (ボリュームが区別しないとき。
+    /// 既定の APFS は区別しない)。まだ無いファイルを指すことが多いので、在るところまで
+    /// 遡って確かめる。
+    ///
+    /// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
+    nonisolated static func destination(of path: String) -> String {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        // 在るところまで遡り、そこだけリンクを解く (無いものは解けない)。残りは綴りのまま継ぐ
+        var existing = url
+        var rest: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path), existing.path != "/" {
+            rest.insert(existing.lastPathComponent, at: 0)
+            existing = existing.deletingLastPathComponent()
+        }
+        let resolved = rest.reduce(existing.resolvingSymlinksInPath()) {
+            $0.appendingPathComponent($1)
+        }
+        let caseSensitive =
+            (try? existing.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+            .volumeSupportsCaseSensitiveNames ?? true
+        let name = resolved.path.precomposedStringWithCanonicalMapping
+        return caseSensitive ? name : name.lowercased()
     }
 
     /// 頼んだ全部が**ファイルになるまで**待つ。
@@ -127,6 +192,68 @@ final class FrameWriter {
     ///
     /// 閉じる経路のように「言い残しが無いか」だけを見る読み手のためにある。
     func takeFailure() -> String? { takeOutcome()?.failure }
+}
+
+/// 行き先ごとに書き込みを 1 本ずつ走らせ、**書いている間に頼まれたものは最後の 1 つに畳む。**
+/// 違う行き先どうしは待ち合わない。
+///
+/// 行き先ごとに持つのは、書いている仕事が在るかと、次に書く控え 1 つだけである。書いている
+/// 間に頼まれた仕事は控えを置き換え、置き換えられた仕事は書かずに `drop` を呼ぶ (背圧の枠を
+/// 返す)。書き終えた仕事は控えがあればそれを書き、無ければ行き先ごと消える — 控えは走って
+/// いる行き先の数までしか伸びない。
+///
+/// **待たせない** ([#1627] の反証)。後ろに並べて待たせると、同じ行き先への頼みが 1 つずつ
+/// 背圧の枠を持ったまま待ち、フレームの速さが 1 枚を書く時間で決まる。1 本返らない仕事が
+/// あると、その後ろに並んだ頼みで枠が埋まり、頼む側 (main actor) が止まる。畳めば 1 つの
+/// 行き先が持つ枠は高々 2 つである。
+///
+/// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
+nonisolated final class WriteLanes: Sendable {
+    /// 1 つの頼み。書く仕事と、書かずに畳まれたときに呼ぶもの。
+    struct Job: Sendable {
+        let work: @Sendable () -> Void
+        let drop: @Sendable () -> Void
+    }
+
+    /// 書いている行き先ごとの、次に書く控え。**鍵が在ることが「書いている」を表す。**
+    private let lanes = Mutex<[String: Job?]>([:])
+
+    /// `work` を走らせる。同じ行き先を書いている最中なら、控えを置き換えて返る。**待たない。**
+    func enqueue(
+        _ destination: String, drop: @escaping @Sendable () -> Void,
+        _ work: @escaping @Sendable () -> Void
+    ) {
+        let job = Job(work: work, drop: drop)
+        let (start, superseded): (Job?, Job?) = lanes.withLock { lanes in
+            guard let pending = lanes[destination] else {
+                lanes[destination] = .some(nil)
+                return (job, nil)
+            }
+            lanes[destination] = job
+            return (nil, pending)
+        }
+        // **錠の外で呼ぶ。** 畳んだ頼みの後始末 (枠を返す) は錠と無関係である
+        superseded?.drop()
+        guard let start else { return }
+        Task.detached(priority: .utility) { [self] in
+            var next: Job? = start
+            while let job = next {
+                job.work()
+                next = lanes.withLock { lanes in
+                    // 控えがあれば取り出して続けて書き、無ければ行き先ごと消す
+                    guard let pending = lanes[destination] ?? nil else {
+                        lanes[destination] = nil
+                        return nil
+                    }
+                    lanes[destination] = .some(nil)
+                    return pending
+                }
+            }
+        }
+    }
+
+    /// この行き先を書いているか、控えているか。
+    func isBusy(_ destination: String) -> Bool { lanes.withLock { $0[destination] != nil } }
 }
 
 /// 書き込み 1 つの決着。
