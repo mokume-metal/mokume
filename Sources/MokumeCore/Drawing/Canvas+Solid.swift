@@ -590,7 +590,30 @@ extension Canvas {
     }
 
     /// 稜線を使い回す。**線を引いた形にだけ作る。**
-    private func solidEdges(of source: SolidSource, mesh build: () -> SolidMesh) -> SolidEdges {
+    ///
+    /// 球は半径だけでは稜線のつながりが変わらないので、半径1の形で控える (#1606)。
+    /// 使うときに点を伸ばし、利用者へ渡す形自身の座標も元の半径のまま保つ。
+    /// 溶接の許容差が下限に張り付く寸法と、近傍の距離の二乗が溢れうる寸法は除く。
+    /// 非一様に伸ばす形も面の向きの判定が変わりうるので、寸法ごとに取り出す。
+    func solidEdges(of source: SolidSource, mesh build: () -> SolidMesh) -> SolidEdges {
+        if case .mesh(.sphere(let radius, let detail)) = source {
+            let tolerance = radius * SolidEdges.weldScale
+            // 溶接が探す隣の升目までの差は各軸2倍未満。距離の二乗にも余裕を持たせる。
+            if tolerance >= Float.leastNormalMagnitude,
+                tolerance <= sqrt(Float.greatestFiniteMagnitude) / 4
+            {
+                let unit = SolidShape.sphere(radius: 1, detail: detail)
+                let key = SolidSource.mesh(unit)
+                let net: SolidEdges
+                if let cached = solidEdges[key] {
+                    net = cached
+                } else {
+                    net = SolidEdges(unit.make())
+                    solidEdges.insert(net, for: key)
+                }
+                return net.scaled(by: radius)
+            }
+        }
         if let cached = solidEdges[source] { return cached }
         let net = SolidEdges(build())
         solidEdges.insert(net, for: source)

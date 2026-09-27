@@ -398,7 +398,7 @@ enum SolidMeshBuilder {
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 struct SolidEdges {
     /// 溶接した点。形自身の座標のまま持つ。
-    let points: [SIMD3<Float>]
+    private(set) var points: [SIMD3<Float>]
     /// 点番号の対。**同じ辺は 1 度しか現れない** — 2 度引くと半透明の線が重なって濃くなる。
     let edges: [(Int, Int)]
 
@@ -408,6 +408,16 @@ struct SolidEdges {
     /// 上限は本当に折れている辺で、細かさの上限 (128) の球の極でも隣り合う 2 枚は
     /// 1e-3 ほど傾いている。その間を 1 桁ずつ空けて取る。
     static let coplanarAngle: Double = 1e-4
+
+    /// 溶接の許容差は形の大きさの10万分の1。球の共有が安全な寸法の判定にも使う。
+    static let weldScale: Float = 1e-5
+
+    /// つながりを保ったまま一様に伸ばす。共有する控えの点は書き換えない。
+    func scaled(by scale: Float) -> SolidEdges {
+        var result = self
+        result.points = points.map { $0 * scale }
+        return result
+    }
 
     /// 三角形の並びから稜線を取り出す。
     init(_ mesh: SolidMesh) {
@@ -474,7 +484,7 @@ struct SolidEdges {
             var extent: Float = 0
             for point in source { extent = max(extent, abs(point).max()) }
             // 形の大きさの 10 万分の 1。どの形の点の間隔よりも十分に小さい
-            tolerance = max(extent * 1e-5, .leastNormalMagnitude)
+            tolerance = max(extent * SolidEdges.weldScale, .leastNormalMagnitude)
         }
 
         mutating func number(of index: Int) -> Int {
