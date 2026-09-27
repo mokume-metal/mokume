@@ -4,6 +4,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import Synchronization
 import Testing
 
 @testable import MokumeCore
@@ -68,6 +69,11 @@ struct FrameWriterTests {
                 let url = directory.appendingPathComponent("f-\(index).png")
                 #expect(FileManager.default.fileExists(atPath: url.path))
             }
+            // **行き先ごとの順番待ちの控えも伸びない** (#1627)。控えは仕事が終わった直後に
+            // 消えるので、枠が返った後の少しの間だけ残りうる
+            #expect(
+                pollUntilSettled(within: 10) { writer.pendingDestinations == 0 },
+                "書き終えた行き先の控えが残っている — 長い連番で伸び続ける")
         }
     }
 
@@ -89,6 +95,88 @@ struct FrameWriterTests {
         }
     }
 
+    /// **同じ行き先へ続けて頼むと、頼んだ順に書き、最後に頼んだ絵が残る** ([#1627])。
+    ///
+    /// 書き込みは 1 枚ずつフレームの外で走り、決着の順は機械の混み具合で決まる。同じ名前へ
+    /// 毎フレーム `save()` すると、後に頼んだ絵が先に書き終わり、前の絵が後から置き換える
+    /// ことがあった (混ませた機械で 20 試行中 7〜13 回)。**崩れる状況を書く関数の側で作る** —
+    /// 1 枚目を、2 枚目が書き終えるまで (期限つきで) 止めておく。順序を保たない書き方なら
+    /// 2 枚目が先に書き終わり、1 枚目が後から置き換える。
+    ///
+    /// 綴りの違う同じ行き先 (`sub/../`) も同じ行き先として扱う。
+    ///
+    /// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
+    @Test("同じ行き先へ続けて頼むと、頼んだ順に書き、最後に頼んだ絵が残る", arguments: ["同じ綴り", "違う綴り"])
+    func writesToOnePathSettleInTheOrderAsked(_ spelling: String) throws {
+        try withTemporaryDirectory("mokume-frame-writer-order") { directory in
+            // 見分けるための 2 枚の PNG。書く関数は隔離の外で走り、絵の中身を直接は読めない
+            // (`DisplayImage` は main actor に属する) ので、PNG にしてから突き合わせる
+            let pictures = try [level(1), level(2)].enumerated().map { index, picture in
+                let url = directory.appendingPathComponent("expected-\(index).png")
+                try PNGFile.write(picture, to: url)
+                return try Data(contentsOf: url)
+            }
+            let log = EncodeLog()
+            let secondEnded = DispatchSemaphore(value: 0)
+            let writer = FrameWriter { image, url in
+                // ImageIO と同じく、別の名前に書いてから置き換える (#1341)
+                let staged = directory.appendingPathComponent("\(UUID().uuidString).png")
+                try PNGFile.write(image, to: staged)
+                let which = pictures.firstIndex(of: try Data(contentsOf: staged)).map { $0 + 1 } ?? 0
+                log.record(.start(which))
+                // **待つ側が期限を持つ。** 順序を保つ書き方では 2 枚目は 1 枚目の後にしか
+                // 始まらないので、ここは期限まで待って抜ける
+                if which == 1 { _ = secondEnded.wait(timeout: .now() + 0.5) }
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: staged)
+                log.record(.end(which))
+                if which == 2 { secondEnded.signal() }
+            }
+            let path = directory.appendingPathComponent("latest.png").path
+            let again =
+                spelling == "同じ綴り"
+                ? path : directory.appendingPathComponent("sub/../latest.png").path
+
+            writer.write(level(1), to: path)
+            writer.write(level(2), to: again)
+            writer.drain()
+
+            #expect(log.events == [.start(1), .end(1), .start(2), .end(2)], "頼んだ順に書いていない")
+            #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == pictures[1], "前の絵が後から置き換えた")
+            #expect(writer.takeFailure() == nil)
+        }
+    }
+
+    /// **違う行き先どうしは待ち合わない** ([#1627])。順序を保つのは同じ行き先の中だけで、
+    /// 連番のように毎回違う名前へ書くときは、今までどおり背圧の上限まで並行に書く。
+    ///
+    /// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
+    @Test("違う行き先への書き込みは、前の書き込みの終わりを待たない")
+    func writesToDifferentPathsDoNotWaitForEachOther() throws {
+        try withTemporaryDirectory("mokume-frame-writer-parallel") { directory in
+            let secondEnded = DispatchSemaphore(value: 0)
+            let firstSawTheSecond = Mutex<Bool?>(nil)
+            let writer = FrameWriter { _, url in
+                switch url.lastPathComponent {
+                case "a.png":
+                    // 2 枚目が並行に走れば、すぐに合図が来る。1 本ずつ書く形なら期限まで来ない
+                    let answered = secondEnded.wait(timeout: .now() + 10) == .success
+                    firstSawTheSecond.withLock { $0 = answered }
+                default: secondEnded.signal()
+                }
+            }
+            writer.write(level(1), to: directory.appendingPathComponent("a.png").path)
+            writer.write(level(2), to: directory.appendingPathComponent("b.png").path)
+            writer.drain()
+
+            #expect(firstSawTheSecond.withLock { $0 } == true, "違う行き先の書き込みが、前の書き込みを待った")
+        }
+    }
+
+    /// 1 画素の絵。**最初のバイトで何枚目かを見分ける** (書く関数を差し替えた検査が読む)。
+    private func level(_ value: UInt8) -> DisplayImage {
+        DisplayImage(width: 1, height: 1, bytes: [value, value, value, 255])
+    }
+
     @Test("途中のディレクトリは頼まれた側が作る")
     func missingDirectoriesAreCreated() throws {
         try withTemporaryDirectory("mokume-frame-writer-mkdir") { directory in
@@ -102,6 +190,20 @@ struct FrameWriterTests {
             #expect(FileManager.default.fileExists(atPath: url.path))
         }
     }
+}
+
+/// 差し替えた書く関数が、何枚目の書き込みがいつ始まり、いつ終わったかを記す。
+/// **フレームの外から書かれる**ので錠で守る。
+private nonisolated final class EncodeLog: Sendable {
+    enum Event: Equatable, Sendable {
+        case start(Int)
+        case end(Int)
+    }
+
+    private let state = Mutex<[Event]>([])
+
+    func record(_ event: Event) { state.withLock { $0.append(event) } }
+    var events: [Event] { state.withLock { $0 } }
 }
 
 /// 終わるときに残っていた書き損じ ([#789])。GPU を要さない。

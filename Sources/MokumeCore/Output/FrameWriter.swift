@@ -16,6 +16,13 @@ import Synchronization
 /// 上限と待ち方は ``Backpressure`` が持つ。上限に達すると ``write(_:to:)`` が返らなく
 /// なるので、遅いディスクではフレームが遅くなる。**代わりにメモリは伸びない。**
 ///
+/// ## 同じ行き先へは頼んだ順に書く
+///
+/// 書き込みは 1 枚ずつ並行に走る。**同じ行き先への書き込みだけは、前に頼んだものが終わって
+/// から書く** (``WriteLanes``)。そうしないと後に頼んだ絵が先に書き終わり、前の絵が後から
+/// 置き換える — 同じ名前へ毎フレーム `save()` すると、最後に残るのが最後のフレームの絵に
+/// ならない ([#1627])。違う行き先どうし (連番) は待ち合わない。
+///
 /// ## 待ち方
 ///
 /// 走らせる側は `Task.detached` で main actor の外へ出す ([ADR-0010] 決定 4)。
@@ -27,6 +34,7 @@ import Synchronization
 /// 見に来る (``Patience/peek``・[#978])。
 ///
 /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+/// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 final class FrameWriter {
@@ -37,6 +45,8 @@ final class FrameWriter {
     private let pressure: Backpressure
     /// 最後に決着した書き込みの結果。**隔離の外から書かれる**ので錠で守る。
     private let lastOutcome = OutcomeSlot()
+    /// 行き先ごとの、書き込みの順番待ち。
+    private let lanes = WriteLanes()
 
     /// 抱えている枚数の上限。
     var limit: Int { pressure.limit }
@@ -46,9 +56,23 @@ final class FrameWriter {
     var peakOutstanding: Int { pressure.peak }
     /// 頼まれた総数。
     private(set) var requested = 0
+    /// 順番待ちの控えを持つ行き先の数。**控えが伸びないことを検査から見るための目印。**
+    var pendingDestinations: Int { lanes.pendingDestinations }
+    /// 1 枚をファイルにする関数。**フレームの外で呼ばれる。**
+    ///
+    /// 差し替えられるのは検査のためである。書き込みの決着の順は機械の混み具合で決まるので、
+    /// 順序の検査は、書く関数の側で 1 枚を遅らせて崩れる状況を作る ([#1627])。
+    ///
+    /// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
+    typealias Encode = @Sendable (DisplayImage, URL) throws -> Void
+    private let encode: Encode
 
-    init(limit: Int = FrameWriter.defaultLimit) {
+    init(
+        limit: Int = FrameWriter.defaultLimit,
+        encode: @escaping Encode = { image, url in try PNGFile.write(image, to: url) }
+    ) {
         pressure = Backpressure(limit: limit)
+        self.encode = encode
     }
 
     /// 1 枚を書くよう頼む。**上限に達していたら、空くまで返らない。**
@@ -65,13 +89,16 @@ final class FrameWriter {
         let release = pressure.release
         let lastOutcome = lastOutcome
         let path = path
-        Task.detached(priority: .utility) {
+        let encode = encode
+        // **同じ行き先へは、前に頼んだ書き込みの後に書く** (#1627)。行き先は綴りを揃えて
+        // 比べる — `out/../a.png` と `a.png` は同じファイルである
+        lanes.enqueue(url.standardizedFileURL.path) {
             // **結果は枠を返す前に置く。** 背圧で待っていた側は、返ってきた時点で
             // 少なくとも 1 つの結果が置かれていると当てにできる
             do {
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try PNGFile.write(image, to: url)
+                try encode(image, url)
                 lastOutcome.succeed()
             } catch {
                 lastOutcome.fail("Could not write \(path): \(error)")
@@ -120,6 +147,58 @@ final class FrameWriter {
     ///
     /// 閉じる経路のように「言い残しが無いか」だけを見る読み手のためにある。
     func takeFailure() -> String? { takeOutcome()?.failure }
+}
+
+/// 行き先ごとに、書き込みを頼んだ順に並べる。**違う行き先どうしは待ち合わない。**
+///
+/// 行き先ごとに、最後に頼んだ仕事だけを控える。新しい仕事は、同じ行き先の控えが終わるのを
+/// 待ってから走る — 控えも自分の前を待っているので、同じ行き先の仕事は頼んだ順に 1 本ずつ
+/// 走る。待つのは隔離の外の仕事で、頼む側 (main actor) は待たない。
+///
+/// **控えは、その仕事が終わったときに消す** (後から同じ行き先が頼まれていなければ)。
+/// 連番のように毎回違う名前へ書いても、控えは走っている仕事の数までしか伸びない。
+///
+/// 仕事を作るのは錠の中である。錠の外で作ると、仕事が控えを置く前に終わって消そうとし、
+/// 終わった仕事の控えが残る。
+///
+/// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
+nonisolated final class WriteLanes: Sendable {
+    private struct Tail {
+        let ticket: Int
+        let task: Task<Void, Never>
+    }
+
+    private struct State {
+        var issued = 0
+        var tails: [String: Tail] = [:]
+    }
+
+    private let state = Mutex(State())
+
+    /// 同じ行き先の前の仕事が終わってから `work` を走らせる。**待たずに返る。**
+    func enqueue(_ destination: String, _ work: @escaping @Sendable () -> Void) {
+        state.withLock { state in
+            let previous = state.tails[destination]?.task
+            state.issued += 1
+            let ticket = state.issued
+            let task = Task.detached(priority: .utility) { [self] in
+                await previous?.value
+                work()
+                finish(destination, ticket)
+            }
+            state.tails[destination] = Tail(ticket: ticket, task: task)
+        }
+    }
+
+    /// 行き先ごとの控えの数。**検査が、控えが伸びないことを見るための目印。**
+    var pendingDestinations: Int { state.withLock { $0.tails.count } }
+
+    /// 終わった仕事の控えを消す。後から同じ行き先が頼まれていれば、そちらが控えなので残す。
+    private func finish(_ destination: String, _ ticket: Int) {
+        state.withLock { state in
+            if state.tails[destination]?.ticket == ticket { state.tails[destination] = nil }
+        }
+    }
 }
 
 /// 書き込み 1 つの決着。
