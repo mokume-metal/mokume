@@ -40,7 +40,9 @@
             "file_patterns": [
               "docs/decisions/**",
               ".github/**",
-              ".claude/**"
+              ".claude/**",
+              ".agents/**",
+              ".codex/**"
             ],
             "minimum_approvals": 1,
             "reviewer": {
