@@ -1484,6 +1484,14 @@ public final class Canvas {
         // 溜めた計算もフレームを越えない。描けなかったフレームの頼みが次のフレームで
         // もう一度走ると、進み方が観測の有無で変わる
         pendingComputations.removeAll(keepingCapacity: true)
+        // **このフレームの数も越えない** ([#1671])。描き切れたときは flush が「直前のフレーム」の
+        // 値へ移してから 0 に戻しているが、描き切れなかったフレーム (#342) と閉じ忘れて捨てた
+        // フレーム (#1622) では移さないまま残り、次のフレームの数に足されていた。境目の検査
+        // (`CanvasTests.frameStateResetsAtEveryBoundary`) が見つけた戻し落とし
+        //
+        // [#1671]: https://github.com/mokume-metal/mokume/issues/1671
+        outlinesAssembledThisFrame = 0
+        pointScansThisFrame = 0
         // **読む面も焼き場へ戻す。** 面は持ち主と組で持つので、最後に置いた絵を次に面を
         // 替えるまで生かしてしまう。溜めたものは上で落ちているので、列を閉じずに替えてよい
         currentTexture = atlas.held
