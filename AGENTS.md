@@ -86,6 +86,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 - push は `-u` を付ける。`origin/main` を追跡しているブランチは `git branch --unset-upstream` してから押し直す
 - 手で揃える設定は `MOKUME_APP_PRIVATE_KEY_CMD` (App の秘密鍵 PEM を標準出力に出すコマンド) だけ。秘密鍵の中身も在処もリポジトリに書かない。未設定でも「鍵が無い」と即断せず、手元の秘密管理の「自動化から読んでよい秘密の一覧」をまず引く (ADR-0007 決定 5)。一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねる
 - **承認が要る変更は App identity の PR で入れ、token を発行できないときは PR を作らない。** メンテナも例外にしない。自分の PR は自分で承認できないので、メンテナ名義の PR は誰も承認できなくなる。要否は作成前に決まらないので一律に使う (ADR-0007 決定 2)。外部の人は自分の名義で作ってよい
+- 承認が要る PR を Draft に置くなら、作ってから `gh pr ready --undo` で落とす (Draft で作るとレビュー依頼が出ない・#1621)
 - コミットの author と署名はメンテナのまま。分けるのは PR を作る主体だけで、push の主体は問わない
 
 **フックが黙っていることを安全と読まない。** 素の `gh` でのコメント (`scripts/agent-comment-guard.sh`) と、この形を外れた PR 作成 (`scripts/pr-identity-guard.sh`) はフックが差し戻すが、フックはこのリポジトリを主として開いた Claude Code のセッションでしか効かない。それ以外では、この節と「コメント」を自分で守る (ADR-0007 決定 3)。
