@@ -234,11 +234,14 @@ struct ResidencyReaderTests {
         let canvas = bench.canvas
         var face: (any MTLTexture)?
 
-        // `setup()` の中で置く並び。描く口はフレームの外でも溜まり、最初のフレームで投入される
+        // `setup()` の中で置く並び。`setup()` は持ち越しを約束する区間なので (#1672)、描く口は
+        // フレームの外でも溜まり、最初のフレームで投入される
         do {
             let picture = try canvas.createImage(16, 16)
             face = picture.texture
+            canvas.carriesOver = true
             canvas.image(picture, 0, 0)
+            canvas.carriesOver = false
         }
         try bench.gpu.settle()
         try canvas.draw {}

@@ -498,8 +498,10 @@ struct TextTests {
             all = rest.text(source, 10, 10, 80, 180)
         }
         #expect(!all.isTruncated)
-        // 続きだけを流し直すと、全体から 1 行ぶん減る
-        let continued = rest.text(short.remainder, 10, 10, 80, 180)
+        // 続きだけを流し直すと、全体から 1 行ぶん減る。流し直すのもフレームの中で行う —
+        // フレームの外で置いた字は断られる (#1672)
+        var continued = TextFlow(lineCount: 0, height: 0, remainder: "")
+        try rest.draw { continued = rest.text(short.remainder, 10, 10, 80, 180) }
         #expect(continued.lineCount == all.lineCount - 1)
         #expect(!continued.isTruncated)
     }

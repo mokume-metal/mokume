@@ -148,6 +148,8 @@ extension Canvas {
     /// 置き場所ごとに頂点を展開する (その区間には置き場所の仕組みが無い)。どれも、同じ
     /// 置き場所を 1 つずつ書いたときと同じ絵になる。
     private func place(_ shape: Shape, at placements: [Placement]) {
+        // 区間の外では置かない (``Canvas/canPlace``・#1672)。置き場所の検めより先に断る
+        guard canPlace else { return warnOutsideFrame(.placing) }
         guard !shape.isEmpty else { return }
         let usable = placements.filter(\.isUsable)
         if usable.count != placements.count { warnBadPlacement() }

@@ -11,11 +11,13 @@ import Testing
 /// 畳んだ拍子に変わっていないことをここで見る。実際に 2 度動いている — 7 本を 1 つの型へ
 /// 畳んだとき「頼んだ」が「頼んた」になり ([#947]・語幹だけを差し替えて音便を落とした)、
 /// その後 3 スロットの組み立てごと畳んで英語の 9 文になった (ADR-0038 決定 3)。切り抜きの
-/// 1 文 ([#1505]) と効果の 1 文 ([#1605]) は後から足した。
+/// 1 文 ([#1505]) と効果の 1 文 ([#1605]) は後から足した。置くことと画素を書くことの 2 文
+/// ([#1672]) はシーンの記述ではなく、置ける場面を名乗る。
 ///
 /// [#947]: https://github.com/mokume-metal/mokume/issues/947
 /// [#1505]: https://github.com/mokume-metal/mokume/issues/1505
 /// [#1605]: https://github.com/mokume-metal/mokume/issues/1605
+/// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
 private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .camera:
         "The camera and projection are placed again every frame, so call this from "
@@ -50,6 +52,14 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .compute:
         "Compute is a preamble to drawing, so ask for it from draw(). The compute asked "
             + "for during setup belongs to no frame, and was ignored",
+    .placing:
+        "Shapes, images and backgrounds are placed in setup(), draw() or an input "
+            + "callback, or between beginDraw() and endDraw() on a drawing target. This was "
+            + "placed outside all of them, so it belongs to no frame, and was ignored",
+    .pixelWrite:
+        "Pixels are written in setup(), draw() or an input callback, or between "
+            + "beginDraw() and endDraw() on a drawing target. This pixel was written "
+            + "outside all of them, so it belongs to no frame, and was ignored",
 ]
 
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
@@ -687,7 +697,12 @@ struct ShapeNotEndedWarningTests {
     func warnsWhenAShapeCrossesTheBoundary(openedOutside: Bool) throws {
         let canvas = try makeCanvas()
         var warnedOnEntry: Bool?
-        if openedOutside { canvas.beginShape() }
+        // フレームの外は `setup()` を模す。形を開けるのは持ち越しの区間の中だけである (#1672)
+        if openedOutside {
+            canvas.carriesOver = true
+            canvas.beginShape()
+            canvas.carriesOver = false
+        }
         try canvas.draw {
             warnedOnEntry = canvas.warnings.hasWarned(.shapeNotEnded)
             if !openedOutside {

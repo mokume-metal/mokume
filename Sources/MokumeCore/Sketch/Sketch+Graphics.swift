@@ -58,6 +58,17 @@ extension Sketch {
     /// `in.time` は ``time`` と同じ秒数で、描き場所で進める粒 (``Canvas/particles(_:)``) は
     /// ``deltaTime`` ずつ進む。描き場所から作った描き場所も同じである。
     ///
+    /// ## 置くのは `beginDraw()` と `endDraw()` の間だけ
+    ///
+    /// 描き場所の図形・絵・背景と画素の書き込み (``Canvas/set(_:_:_:)``・``Canvas/pixels``) は、
+    /// ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ置ける。**外で置くと 1 度注意して、
+    /// 置かない。** `setup()` の中でも同じで、`setup()` で描き場所に描くなら対で挟む (上の例)。
+    ///
+    /// 画面の側と違うのは、次のフレームを約束する者が違うからである。画面では ``setup()`` と
+    /// 止まっている間のコールバックで置いたものを、ランタイムが次に描くフレームへ持ち越す。
+    /// 描き場所の次の絵を決めるのは書き手の `beginDraw()` / `endDraw()` なので、その外で置いた
+    /// ものには出る先が無い ([ADR-0021] 決定 4 の追補 (2026-09-27))。
+    ///
     /// ## 既定で透けていて、自動では消えない
     ///
     /// 作った時点の中身は透明で、以後は**こちらが ``Canvas/background(_:)-(LinearRGBA)`` を呼ぶまで
@@ -73,6 +84,7 @@ extension Sketch {
     ///   投げる** ([ADR-0020] 決定 5) ので、`setup()` で作って持ち回る。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     // shot: 1 snippet=952dfdc7
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {

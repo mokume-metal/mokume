@@ -358,7 +358,8 @@ struct PixelsTests {
         let canvas = try makeCanvas(width: 8, height: 8)
         try canvas.draw { canvas.background(.linear(red: 0, green: 0, blue: 0)) }
 
-        canvas.pixels[2, 3] = .linear(red: 1, green: 0, blue: 0)
+        // 書くのはフレームの中 (区間の外の書き込みは断る・#1672)
+        try canvas.draw { canvas.pixels[2, 3] = .linear(red: 1, green: 0, blue: 0) }
         // 送り直しの手順を挟まずに、書き出した絵へ届く
         #expect(try canvas.target.encodeForDisplay()[2, 3] == (255, 0, 0, 255))
     }
@@ -368,7 +369,8 @@ struct PixelsTests {
         let canvas = try makeCanvas(width: 13, height: 3)
         try canvas.draw { canvas.background(.linear(red: 0, green: 0, blue: 0)) }
 
-        canvas.pixels.fill(.linear(red: 0, green: 0.5, blue: 1))
+        // 書くのはフレームの中 (区間の外の書き込みは断る・#1672)
+        try canvas.draw { canvas.pixels.fill(.linear(red: 0, green: 0.5, blue: 1)) }
         for y in 0..<3 {
             for x in 0..<13 {
                 #expect(canvas.pixels[x, y] == .linear(red: 0, green: 0.5, blue: 1))

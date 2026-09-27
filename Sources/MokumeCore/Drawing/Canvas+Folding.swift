@@ -71,6 +71,8 @@ extension Canvas {
 
     /// 周から、塗りと輪郭を出す。
     func draw(_ outline: Outline) {
+        // 区間の外では置かず、組み立てた数も数えない (``Canvas/canPlace``・#1672)
+        guard canPlace else { return warnOutsideFrame(.placing) }
         outlinesAssembledThisFrame += 1
         if outline.fills, style.hasFill { fillInterior(outline) }
         if style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
@@ -87,6 +89,8 @@ extension Canvas {
     func draw(
         folding form: FlatForm, at anchor: SIMD2<Float>, outline makeOutline: () -> Outline
     ) {
+        // 区間の外では、畳む相手の控えも雛形も動かさない (``Canvas/canPlace``・#1672)
+        guard canPlace else { return warnOutsideFrame(.placing) }
         let key = FlatKey(
             form: form,
             hasFill: style.hasFill,

@@ -32,9 +32,14 @@ extension Canvas {
     }
 
     /// 描いた結果の画素。
+    ///
+    /// **窓は書いてよいかをこの面に尋ねる** ([#1672])。窓はプロパティに取っておけるので、
+    /// 取った時点ではなく書く時点で区間 (``writesToSurface``) を見る。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     public var pixels: Pixels {
         loadPixelsIfNeeded()
-        return target.pixels
+        return target.pixels.asking { [weak self] in self?.admitsPixelWrite() ?? false }
     }
 
     /// 1 画素の色。範囲の外は透明を返す。
@@ -44,8 +49,34 @@ extension Canvas {
     }
 
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) {
+        // 画素の書き込みも置くことに含む ([#1672])。読む前に断る — 区間の外で描き切らせない
+        //
+        // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        guard admitsPixelWrite() else { return }
         loadPixelsIfNeeded()
         target.pixels[x, y] = color
+    }
+
+    /// 画素を書いてよいか。だめなら 1 度だけ言う ([ADR-0021] 決定 4 の追補 (2026-09-27)・[#1672])。
+    ///
+    /// **書いた画素も、置いた図形と同じく次の描き切りで面に載る**ので、属する先の規則が同じで
+    /// なければならない。区間の外で書いた画素を通していたので、描き場所では `get()` が読めるのに
+    /// `image()` には出ず ([#1654])、効果を掛けた描き場所では次のフレームに効果が 2 回掛かった
+    /// ([#1655])。
+    ///
+    /// 見るのは ``writesToSurface`` で、``canPlace`` ではない — 形の組み立ての中で書いた画素は
+    /// 形に載らず、面へ直に書かれるからである。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#1654]: https://github.com/mokume-metal/mokume/issues/1654
+    /// [#1655]: https://github.com/mokume-metal/mokume/issues/1655
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    func admitsPixelWrite() -> Bool {
+        guard writesToSurface else {
+            warnOutsideFrame(.pixelWrite)
+            return false
+        }
+        return true
     }
 
     /// このフレームでまだ読んでいないか、読んだあとに描いたなら、読める状態にする。

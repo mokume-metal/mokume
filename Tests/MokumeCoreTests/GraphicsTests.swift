@@ -804,6 +804,38 @@ struct GraphicsTests {
         #expect(try pixels(of: canvas).bytes == first)
     }
 
+    /// #1592 の再現そのもの。描き場所に `beginDraw()` を書かずに置いた図形は、描き切りが
+    /// 来ないので捨てられず、1 枚ごとに 1000 個ずつ溜まっていた (`formInstances` が
+    /// 1000 × フレーム数)。**置いてよいのは持ち越しを約束する区間だけ**で、描き場所の区間は
+    /// `beginDraw()`〜`endDraw()` である (ADR-0021 決定 4 の追補 (2026-09-27)・[#1672])。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    @Test("beginDraw() を書かずに描き場所へ置き続けても、溜まらない (#1592)")
+    func placingWithoutBeginDrawDoesNotPileUp() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(32, 32)
+        for frame in 1...30 {
+            try canvas.draw {
+                canvas.background(black)
+                layer.noStroke()
+                for index in 0..<1000 {
+                    layer.circle(Float(index % 32), Float(index / 32), 6)
+                }
+                canvas.image(layer, 0, 0)
+            }
+            try #require(layer.formInstances.isEmpty, "\(frame) 枚目の後に \(layer.formInstances.count) 個溜まった")
+            #expect(layer.vertices.isEmpty)
+            #expect(layer.solidVertices.isEmpty)
+            #expect(layer.solidInstances.isEmpty)
+            #expect(layer.batches.isEmpty)
+            #expect(layer.flatInstances.count == 1)
+            #expect(layer.hasNothingPending)
+        }
+        #expect(layer.warnings.hasWarned(.placingOutsideFrame))
+        // 置いた相手 (画面) は、描き場所の区間とは関係なく今までどおり置ける
+        #expect(!canvas.warnings.hasWarned(.placingOutsideFrame))
+    }
+
     // MARK: - 描き場所を持たないスケッチは何も払わない
 
     @Test("描き場所を作らなければ、置いた記録も相手も 1 つも立たない")

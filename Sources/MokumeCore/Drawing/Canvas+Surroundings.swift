@@ -16,6 +16,9 @@ extension Canvas {
 
     // 周囲を背景として描く。
     public func background(_ surroundings: Surroundings) {
+        // 塗り 1 色の背景と同じく、区間の外では溜めたものを捨てる前に断る (#1672)。値の検めより
+        // 先に断る — どのフレームにも属さない背景の値を言っても、直す先を指さない
+        guard canPlace else { return warnOutsideFrame(.placing) }
         guard surroundings.isUsable else { return warnBadSurroundings() }
         // 塗り 1 色の背景と同じく、溜めていたものを捨ててから置き直す
         discardPending()

@@ -26,6 +26,19 @@ extension Canvas {
         case material
         case particles
         case compute
+        /// 図形・絵・背景を置いた ([#1672])。**シーンの記述ではない** — 置いたものは、持ち越しを
+        /// 約束する区間 (本体の `setup()` と止まっている間のコールバック・描き場所の
+        /// `beginDraw()`〜`endDraw()`) ならフレームの外でも置ける。断るのはその外だけなので、
+        /// 文面は「`setup()` の間に」ではなく、置ける場面を名乗る。
+        ///
+        /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        case placing
+        /// 画素を書いた ([#1672])。書いた画素も次の描き切りで面に載るので、置くことと同じ規則に
+        /// 従う (ADR-0021 決定 4 の追補 (2026-09-27))。鍵を ``placing`` と分けるのは、直す先の
+        /// 口が違うからである。
+        ///
+        /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+        case pixelWrite
 
         /// 初回だけ言うための鍵。
         var warning: Warning {
@@ -41,6 +54,8 @@ extension Canvas {
             case .material: .materialOutsideFrame
             case .particles: .particlesOutsideFrame
             case .compute: .computeOutsideFrame
+            case .placing: .placingOutsideFrame
+            case .pixelWrite: .pixelWriteOutsideFrame
             }
         }
 
@@ -88,6 +103,14 @@ extension Canvas {
             case .compute:
                 "Compute is a preamble to drawing, so ask for it from draw(). The compute asked "
                     + "for during setup belongs to no frame, and was ignored"
+            case .placing:
+                "Shapes, images and backgrounds are placed in setup(), draw() or an input "
+                    + "callback, or between beginDraw() and endDraw() on a drawing target. This was "
+                    + "placed outside all of them, so it belongs to no frame, and was ignored"
+            case .pixelWrite:
+                "Pixels are written in setup(), draw() or an input callback, or between "
+                    + "beginDraw() and endDraw() on a drawing target. This pixel was written "
+                    + "outside all of them, so it belongs to no frame, and was ignored"
             }
         }
     }

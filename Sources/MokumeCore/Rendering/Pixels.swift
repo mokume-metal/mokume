@@ -25,16 +25,32 @@ public struct Pixels {
     /// 書いたことを知らせる先。**書く口はすべてここへ旗を立てる** — 立て忘れると、
     /// 書いた画素が描画先へ戻らない。
     let mirror: PixelMirror?
+    /// 書いてよいかを尋ねる先。**書く口はすべて、書く前にここを通る** ([#1672])。
+    ///
+    /// 答えるのは窓を渡した面 (``Canvas/pixels``) で、だめなら面がそのわけを 1 度言う。窓は
+    /// プロパティに取っておけるので、取った時点ではなく書く時点で尋ねる。`nil` なら尋ねない
+    /// (面を通さずに取った窓)。
+    ///
+    /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    let admitsWrite: (() -> Bool)?
 
     init(
         base: UnsafeMutableRawPointer, width: Int, height: Int, bytesPerRow: Int,
-        mirror: PixelMirror?
+        mirror: PixelMirror?, admitsWrite: (() -> Bool)? = nil
     ) {
         self.base = base
         self.width = width
         self.height = height
         self.bytesPerRow = bytesPerRow
         self.mirror = mirror
+        self.admitsWrite = admitsWrite
+    }
+
+    /// 書く前に `admits` へ尋ねる窓。中身は同じ写しを指す。
+    func asking(_ admits: @escaping () -> Bool) -> Pixels {
+        Pixels(
+            base: base, width: width, height: height, bytesPerRow: bytesPerRow, mirror: mirror,
+            admitsWrite: admits)
     }
 
     /// 大きさ 0 の窓。写しを用意できなかったときに返す — 読むと透明、書いても何も起きない。
@@ -50,7 +66,9 @@ public struct Pixels {
     /// 指定した位置の色。原点は左上。
     ///
     /// 範囲の外を読むと透明が返り、範囲の外へ書くと何も起きない
-    /// (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
+    /// (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。書けるのは、置いてよい区間
+    /// (フレームの中と、本体の `setup()`・止まっている間のコールバック) だけで、外で書くと
+    /// 1 度注意して何もしない (``fill(_:)`` も同じ)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public subscript(x: Int, y: Int) -> LinearRGBA {
@@ -62,7 +80,7 @@ public struct Pixels {
                 blue: Float(texel.z), alpha: Float(texel.w))
         }
         nonmutating set {
-            guard contains(x, y) else { return }
+            guard admitsWrite?() ?? true, contains(x, y) else { return }
             address(x, y).pointee = SIMD4<Float16>(
                 Float16(newValue.red), Float16(newValue.green),
                 Float16(newValue.blue), Float16(newValue.alpha))
@@ -72,6 +90,7 @@ public struct Pixels {
 
     /// 全体を 1 色で埋める。
     public func fill(_ color: LinearRGBA) {
+        guard admitsWrite?() ?? true else { return }
         let texel = SIMD4<Float16>(
             Float16(color.red), Float16(color.green), Float16(color.blue), Float16(color.alpha))
         for y in 0..<height {
