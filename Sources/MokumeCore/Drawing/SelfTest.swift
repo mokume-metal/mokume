@@ -9,12 +9,17 @@
 ///
 /// ## どう見分けるか
 ///
-/// **起動の引数に、mokume の検査の束 (`Package.swift` の `testTarget` の名前) の実行ファイルが
-/// あるか**で見る。`make test` と素の `swift test` で実測したところ (#1682)、どちらでも立つのは
-/// 次の 2 つだけだった:
+/// **起動の引数に、mokume の検査の束の実行ファイルがあるか**で見る。`make test` と素の
+/// `swift test` で実測したところ (#1682)、どちらでも立つのは次の 2 つだけだった:
 ///
 /// - プロセス名 `swiftpm-testing-helper` — **利用者が自分のパッケージの検査を回しても立つ**ので使わない
-/// - 引数の `…/MokumeCoreTests.xctest/Contents/MacOS/MokumeCoreTests` — 束の名前は mokume 固有
+/// - 引数の束の実行ファイル — 束の名前は mokume 固有
+///
+/// **束の名前は SwiftPM の版で違う。** 手元の版は `testTarget` ごとに束を作る
+/// (`…/MokumeCoreTests.xctest/Contents/MacOS/MokumeCoreTests`)。CI の版 (Xcode 26.6) は全部を
+/// 1 つの束にまとめ、パッケージ名から名付ける (`…/mokumePackageTests.xctest/…`)。手元でしか
+/// 確かめずに入れた最初の形は、CI で「外」と判定した (#1696 の CI)。どちらも mokume 固有の名前で、
+/// 利用者のパッケージは自分の名前の束になる。
 ///
 /// `XCTestConfigurationFilePath` や `SWIFT_TESTING_*` の環境変数は、どちらの経路でも立たなかった。
 /// 環境変数を読まないので、起動時に読むものの登録簿 (``StartupReads``) の外にある。
@@ -24,8 +29,9 @@
 ///
 /// [#1682]: https://github.com/mokume-metal/mokume/issues/1682
 enum SelfTest {
-    /// mokume の検査の束の名前。`Package.swift` の `testTarget` と揃える。
-    static let bundleNames = ["MokumeCoreTests", "MokumeCLITests"]
+    /// mokume の検査の束の名前。`Package.swift` の `testTarget` と、パッケージ名 (`mokume`) から
+    /// SwiftPM が付けるまとめた束の名前。
+    static let bundleNames = ["mokumePackageTests", "MokumeCoreTests", "MokumeCLITests"]
 
     /// 起動の引数から 1 度だけ判定する。引数は走っている間に変わらない。
     static let isRunning: Bool = isRunning(arguments: CommandLine.arguments)
