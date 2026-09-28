@@ -873,6 +873,36 @@ struct ShadowTests {
         }
         #expect(!unshadowed.warnings.hasWarned(.shadowWithoutCaster), "影を切ったのに知らせている")
     }
+
+    // MARK: - 写しは 1 度 (#1790)
+
+    /// **焼き直すフレームでも、立体の頂点は 1 度だけ写す** ([#1790])。
+    ///
+    /// 焼き付けと画面は同じ置き場を読むので、両方がそれぞれ写すと同じ中身を 2 度写す。
+    /// 回すたびに光を動かして、毎フレーム焼き直させる。
+    ///
+    /// [#1790]: https://github.com/mokume-metal/mokume/issues/1790
+    @Test("影を焼き直すフレームでも、立体の頂点を写すのは 1 度だけ")
+    func rebakingFramesUploadSolidVerticesOnce() throws {
+        let canvas = try makeCanvas()
+        var perFrame: [Int] = []
+        for frame in 0..<3 {
+            let before = canvas.solidVertexStorage.writes
+            let bakesBefore = canvas.shadowBakesEncoded
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.shadows(true)
+                canvas.directionalLight(
+                    .linear(red: 1, green: 1, blue: 1), 0.3 + Float(frame) * 0.1, 1, -0.5)
+                canvas.box(40)
+            }
+            #expect(
+                canvas.shadowBakesEncoded == bakesBefore + 1,
+                "検査の前提: \(frame) 枚目で焼き直していない")
+            perFrame.append(canvas.solidVertexStorage.writes - before)
+        }
+        #expect(perFrame == [1, 1, 1])
+    }
 }
 
 /// 混ませて繰り返す回数。`MOKUME_SHADOW_STRESS` に入れた数だけ回す。

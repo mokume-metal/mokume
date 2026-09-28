@@ -48,6 +48,12 @@ import Metal
     /// 取り直した回数。**長回しで増えないことを検査が見る。**
     private(set) var reallocations = 0
 
+    /// 並びを写した回数 (``write(_:holding:)``・作ってから通算)。**同じ中身を 1 フレームに
+    /// 2 度写していないことを検査が見る** ([#1790])。
+    ///
+    /// [#1790]: https://github.com/mokume-metal/mokume/issues/1790
+    private(set) var writes = 0
+
     init(
         gpu: RenderDevice, ring: FrameRing, stride: Int, minimumCapacity: Int, label: String
     ) {
@@ -92,6 +98,7 @@ import Metal
         -> any MTLBuffer
     {
         let buffer = try buffer(holding: count)
+        writes += 1
         source.withUnsafeBytes { bytes in
             guard let base = bytes.baseAddress, bytes.count > 0 else { return }
             buffer.contents().copyMemory(from: base, byteCount: bytes.count)

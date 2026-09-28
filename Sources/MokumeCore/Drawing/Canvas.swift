@@ -428,7 +428,8 @@ public final class Canvas {
 
     /// 保持した形を置くたびに増える番号。
     var retainedSerial = 0
-    private let solidVertexStorage: GrowableBuffer
+    /// 立体の頂点の置き場。**写した回数 (``GrowableBuffer/writes``) を検査が読む** (#1790)。
+    let solidVertexStorage: GrowableBuffer
     private let solidIndexStorage: GrowableBuffer
 
     /// いま開いている列が、どちらの並びから描かれるか。
@@ -2465,7 +2466,7 @@ public final class Canvas {
 
         // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
-        let geometry = try uploadGeometry()
+        let geometry = try uploadGeometry(reusing: bakedShadow?.solidUploads)
         let perBatch = try uploadPerBatch(shadow: bakedShadow)
 
         // **見る窓は実際に刻む画素で測る。** 落とす行列は出す細かさで書かれた
@@ -2616,21 +2617,24 @@ public final class Canvas {
     }
 
     /// Swift の並びに溜めた頂点・置き場所・光を、GPU の置き場へ写す。
-    private func uploadGeometry() throws(RenderFailure) -> GeometryBuffers {
+    ///
+    /// **このフレームで影を焼いていれば、立体の頂点・添字・置き場所は写し直さない** ([#1790])。
+    /// 焼き付けがここより前に同じ中身を同じ置き場 (同じスロット・同じ `holding:`) へ写して
+    /// あり、その間にこの 3 つの置き場へ書く者はいない。写し直すと、焼き直すフレームで
+    /// 同じ中身を 2 度写すことになる (20 万三角形で約 1 ms)。焼き付けを使い回したフレーム
+    /// では焼き付けが写していないので、ここで写す。
+    ///
+    /// [#1790]: https://github.com/mokume-metal/mokume/issues/1790
+    private func uploadGeometry(
+        reusing baked: SolidUploads?
+    ) throws(RenderFailure) -> GeometryBuffers {
         let buffer = try vertexStorage.write(vertices, holding: vertices.count)
         let formBuffer = try formInstanceStorage.write(
             formInstances, holding: max(formInstances.count, 1))
-        let instanceBuffer = try solidInstanceStorage.write(
-            solidInstances, holding: max(solidInstances.count, 1))
+        let solid: SolidUploads
+        if let baked { solid = baked } else { solid = try uploadSolids() }
         let flatInstanceBuffer = try flatInstanceStorage.write(
             flatInstances, holding: flatInstances.count)
-        let solidBuffer = try solidVertexStorage.write(
-            solidVertices, holding: solidVertices.count)
-        // **影の焼き付けと同じ `holding:` を渡す** — 焼き付けはここより前に走って
-        // 自分で写すので、要求する大きさが食い違うと、束ねた後に取り直した置き場を
-        // 指すことになる (``GrowableBuffer/write(_:holding:)`` の順序の規律)
-        let solidIndexBuffer = try solidIndexStorage.write(
-            solidIndices, holding: solidIndices.count)
         // 光の置き場。列は自分の区間を指す
         let lightsBuffer = try lightStorageBuffer.write(
             lightStorage, holding: max(lightStorage.count, 1))
@@ -2638,8 +2642,26 @@ public final class Canvas {
             lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
         return GeometryBuffers(
             flatVertices: buffer, formInstances: formBuffer,
-            solidInstances: instanceBuffer, flatInstances: flatInstanceBuffer,
-            solidVertices: solidBuffer, solidIndices: solidIndexBuffer)
+            solidInstances: solid.instances, flatInstances: flatInstanceBuffer,
+            solidVertices: solid.vertices, solidIndices: solid.indices)
+    }
+
+    /// 立体の頂点・添字・置き場所を写す。**影の焼き付けと画面が同じ `holding:` を渡す** —
+    /// 要求する大きさが食い違うと、束ねた後に取り直した置き場を指すことになる
+    /// (``GrowableBuffer/write(_:holding:)`` の順序の規律)。
+    private func uploadSolids() throws(RenderFailure) -> SolidUploads {
+        let instances = try solidInstanceStorage.write(
+            solidInstances, holding: max(solidInstances.count, 1))
+        let vertices = try solidVertexStorage.write(solidVertices, holding: solidVertices.count)
+        let indices = try solidIndexStorage.write(solidIndices, holding: solidIndices.count)
+        return SolidUploads(vertices: vertices, indices: indices, instances: instances)
+    }
+
+    /// 写した立体の置き場 (``uploadSolids()``)。
+    private struct SolidUploads {
+        let vertices: any MTLBuffer
+        let indices: any MTLBuffer
+        let instances: any MTLBuffer
     }
 
     /// 列ごとの値と、フレームに 1 つの値 (時刻・面の大きさ・影・揺らぎ) を置く。
@@ -2824,16 +2846,14 @@ public final class Canvas {
         let key = shadowBakeKey(matrix: matrix, detail: detail, casting: casting)
         if let key, key == lastShadowBakeKey, let shadowMap, shadowMap.detail == detail {
             shadowBakesReused += 1
-            return BakedShadow(map: shadowMap, matrix: matrix, key: key)
+            return BakedShadow(map: shadowMap, matrix: matrix, key: key, solidUploads: nil)
         }
         let map = try shadowMapHolding(detail)
-        let solidBuffer = try solidVertexStorage.write(
-            solidVertices, holding: solidVertices.count)
-        // ``uploadGeometry()`` と同じ大きさを要求する (あちらの但し書きを参照)
-        let solidIndexBuffer = try solidIndexStorage.write(
-            solidIndices, holding: solidIndices.count)
-        let instanceBuffer = try solidInstanceStorage.write(
-            solidInstances, holding: max(solidInstances.count, 1))
+        // 写した置き場は画面の側でも使う (``uploadGeometry(reusing:)``)
+        let solid = try uploadSolids()
+        let solidBuffer = solid.vertices
+        let solidIndexBuffer = solid.indices
+        let instanceBuffer = solid.instances
         let batchValues = try uploadBatchValues()
         let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
         // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い。
@@ -2901,7 +2921,7 @@ public final class Canvas {
         encodeShadowBarrier(on: encoder)
         encoder.endEncoding()
         shadowBakesEncoded += 1
-        return BakedShadow(map: map, matrix: matrix, key: key)
+        return BakedShadow(map: map, matrix: matrix, key: key, solidUploads: solid)
     }
 
     /// 焼いた (または使い回した) 影と、その入力の指紋。
@@ -2911,6 +2931,8 @@ public final class Canvas {
         /// 焼き付けの入力の指紋。**投入した後で `lastShadowBakeKey` へ覚える。**
         /// 指紋を取れない入力 (粒) では `nil` で、覚えると次のフレームが使い回さない
         let key: UInt64?
+        /// 焼くために写した立体の置き場。**使い回したフレームでは `nil`** (写していない)。
+        let solidUploads: SolidUploads?
     }
 
     /// 焼き付けの入力の指紋。**焼く側が読むものを全部**入れる — 光の行列・細かさ・
