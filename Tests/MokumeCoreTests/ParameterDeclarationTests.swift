@@ -115,6 +115,39 @@ struct ParameterDeclarationTests {
         #expect(!notified.fired)
     }
 
+    /// **その場で書き換える経路 (`_modify`) も知らせる** ([#1782])。`@Observable` を手で
+    /// 展開したので、代入 (`set`) と別に書いた `_modify` が通知を落とさないことを見る。
+    ///
+    /// [#1782]: https://github.com/mokume-metal/mokume/issues/1782
+    @Test("値をその場で書き換えても、見ている側へ伝わる")
+    func observesInPlaceMutation() {
+        let box = ParamBox(name: "count", value: 1)
+        let notified = Notice()
+        withObservationTracking {
+            _ = box.value
+        } onChange: {
+            notified.fire()
+        }
+        box.value += 1
+        #expect(notified.fired)
+        #expect(box.value == 2)
+    }
+
+    /// 面 (窓のつまみ・外からの書き込み) から来た値も、同じ経路で伝わる ([#1782])。
+    @Test("面から書き込んだ値も、見ている側へ伝わる")
+    func observesSurfaceWrites() {
+        let box = ParamBox(name: "radius", value: 1.0, range: ParamRange(0...10))
+        let notified = Notice()
+        withObservationTracking {
+            _ = box.value
+        } onChange: {
+            notified.fire()
+        }
+        #expect(box.write(.float(20)) == .clamped(requested: .float(20), applied: .float(10)))
+        #expect(notified.fired)
+        #expect(box.value == 10)
+    }
+
     @Test("宣言していないスケッチの一覧は空")
     func emptyWhenUndeclared() {
         final class Plain: Sketch {}
