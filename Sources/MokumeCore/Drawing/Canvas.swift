@@ -899,6 +899,9 @@ public final class Canvas {
     /// 落とすと、列が読む前に面が常駐から外れうる。フレームの終わりに焼き場へ戻す
     /// (``discardFrame()``) — 戻さないと、最後に置いた絵の持ち主を次に面を替えるまで生かす。
     var currentTexture: HeldTexture
+    /// 丸い継ぎ目と端の円板の、周のずれの控え。**直前の太さの 1 件だけ** (#1785・
+    /// `appendDisc(at:half:)`)。
+    var discOffsets: (half: Float, offsets: [SIMD2<Float>])?
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader?
     /// いま塗りが読む数の並び。`nil` なら読まない。
@@ -1496,7 +1499,12 @@ public final class Canvas {
     }
 
     /// 図形と字が読む面 (字形の置き場) へ戻す。
+    ///
+    /// **既に焼き場の面なら何もしない** (#1785)。線や字は頂点・三角形ごとにここを通るので、
+    /// 面の組 (``HeldTexture``) を作って型を確かめて比べる手間が積もる。焼き場の頁は描き
+    /// 場所ではないので、``useTexture(_:)`` の描き場所の記録にも当たらない。
     func useGlyphTexture() {
+        if currentTexture.texture === atlas.texture { return }
         useTexture(atlas.held)
     }
 

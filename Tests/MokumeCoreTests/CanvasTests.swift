@@ -1484,6 +1484,7 @@ struct CanvasTests {
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
             "typefaces": cache, "solidStrokeGeometry": cache,
             "lastShadowBakeKey": "前に焼いた入力の指紋。焼かなかったフレームでは触らない (影の面は誰にも書き換えられない)",
+            "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さの 1 件だけで、点は 1024 個が上限 (#1785)。中身は太さで決まり、フレームに属さない",
             "atlasPageFrame": "焼き場の頁を作ったフレームの番号 (#1342)。番号どうしで比べる",
             "nextModelIdentity": "読み込んだモデルの通し番号", "retainedSerial": "保持した形を置くたびの通し番号",
             "framesDrawn": "閉じたフレームの通し番号。境目の印そのもの",
