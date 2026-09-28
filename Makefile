@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。的の並びには意味があり、-j を付けると壊れる
 # — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
@@ -197,11 +197,12 @@ build:
 # — 助言まで落とす assert とは違って、これなら常時のゲートにできる。集合そのものを問う
 # 検査 (RenderTargetTests・FramePresenterTests) はそのまま置く。どちらが欠けたかが分かる
 #
-# **CI では有効にしない。** CI の実行環境の GPU はこの世代のコマンド構造に対応して
-# おらず、そこでは検証レイヤが「使えるか」の判定 (RenderDevice.isAvailable が試す
-# makeMTL4CommandQueue) そのものを表明で落とし、**検査が 1 件も走らないまま止まる**。
-# 描画の検査はどのみち CI では 1 本も走らない (ADR-0019 決定 7) ので、検証レイヤが
-# 意味を持つのは描画が実際に走る手元だけである
+# **GitHub ホストのランナー (CI が立つ) では有効にしない。** そこの GPU はこの世代の
+# コマンド構造に対応しておらず、検証レイヤが「使えるか」の判定 (RenderDevice.isAvailable
+# が試す makeMTL4CommandQueue) そのものを表明で落とし、**検査が 1 件も走らないまま止まる**。
+# 描画の検査はどのみちそこでは 1 本も走らないので、検証レイヤが意味を持つのは描画が
+# 実際に走る機械だけである。専用機の描画ジョブ (.github/workflows/render.yml) は
+# `CI=` を渡して、手元と同じく有効にする (ADR-0019 決定 7・#878)
 METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=nslog)
 
 # 記録の綴りは render-status.sh の RENDER_TEST_RECORD と揃える。SwiftPM は渡した名前の
@@ -239,6 +240,26 @@ test:
 		echo "記録が出来ていない ($(TEST_RECORD))。SwiftPM が --xunit-output の綴りを"; \
 		echo "変えた可能性がある — render-status.sh の RENDER_TEST_RECORD と併せて直す"; \
 		exit 1; }
+
+# 描画の検査が実際に走ったかを、test の記録から確かめる (#878)。専用機の描画ジョブ
+# (.github/workflows/render.yml) が test の後に走らせる。**ci-check の既定の並びには
+# 入れない** — GitHub ホストのランナーでは描画の検査が必ず飛ぶので、そこでは赤になる。
+#
+# 見張るのは「GPU が見えないまま、描画の検査を全部飛ばして緑になる」ことである。描画の
+# 検査は RenderDevice.isAvailable が偽なら飛ぶ作りで (この世代の GPU が無い機械のため)、
+# 専用機の GPU が見えなくなっても test 自体は緑で終わる。台帳 (SceneLedgerTests) を
+# 代表に選ぶのは、決定 3 の照合そのものがそこにあるからである。記録の読み方は
+# scripts/read-test-record.py が持つ (端末の出力は行を落とすので読まない・#1056)。
+# 検査は scripts/tests/gpu_ran_test.py
+gpu-ran:
+	@read -r verdict skipped < <(python3 scripts/read-test-record.py $(TEST_RECORD) MokumeCoreTests.SceneLedgerTests); \
+	case "$$verdict" in \
+	  passed) echo "ok: 描画の検査が走った (台帳の照合が通った・飛ばした検査 $$skipped 件)" ;; \
+	  skipped) echo "描画の検査が飛ばされている — この機械で GPU (この世代のコマンド構造) が見えていない"; exit 1 ;; \
+	  absent) echo "台帳の検査 (SceneLedgerTests) が記録に無い ($(TEST_RECORD))"; exit 1 ;; \
+	  failed) echo "台帳の検査が落ちている"; exit 1 ;; \
+	  *) echo "test の記録を読めない ($(TEST_RECORD))"; exit 1 ;; \
+	esac
 
 # release でテストを回す — 性能を測るための器 (#761)。**ci-check には入れない** (計測の
 # ためだけで、常時のゲートに要る検査は debug の test が全部持つ)。

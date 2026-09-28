@@ -63,6 +63,9 @@
           },
           {
             "context": "local-render"
+          },
+          {
+            "context": "render"
           }
         ],
         "strict_required_status_checks_policy": false

@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: Render
+
+# 描画を要する検査を、隔離した専用機の self-hosted runner で走らせる (#878・ADR-0019
+# 決定 7)。GitHub ホストのランナーの仮想 GPU はこの世代のコマンド構造を持たないので、
+# そこでは描画の検査が 1 本も走らない (#180)。
+#
+# **ci.yml と分けてある。** ci-gate とその依存は GitHub ホストのまま保ち、runs-on が
+# 専用機を指すジョブをこのファイルだけに閉じ込める。専用機に何が届きうるかを、この
+# ファイル 1 枚を読めば言えるようにするためである。
+#
+# **専用機に届くのは 2 つだけ** (ADR-0019 決定 7 の段階 A・B):
+#   - merge_group — queue に入るのは write 権限を持つ人が入れたコードだけ
+#   - 同じリポジトリの PR — そのブランチを作れるのは write 権限を持つ人だけ
+# fork の PR は各ジョブの if で弾く。fork の PR はこのファイル自体を書き換えられるので、
+# if だけでは止まらない。止めるのはリポジトリの設定 (外部の人の PR のワークフローは
+# 毎回承認を要する・approval_policy: all_external_contributors) である。
+#
+# **必須チェックは render だけ。** render は merge_group でだけ走り、PR では skipped として
+# 現れる。skipped は必須チェックを満たすので、PR を止めない。render-pr は PR の時点で
+# 早く気付くための情報で、必須にしない — 専用機が混んでも merge が止まらないように
+# するため (#878 の 2026-09-05 の決定)。
+#
+# **secrets を持たず、contents: read だけで走る。** 結論はこのジョブの成否そのものが
+# check になるので、commit status を打つ token は要らない。
+#
+# 専用機の設置と、ジョブ開始時の掃除 (scripts/runner-job-started.sh) の置き方は
+# そのスクリプトの冒頭にある。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    if: github.event_name == 'merge_group'
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # build と test だけを走らせる。ほかの段 (lint・文書・hooks の検査) は GitHub ホストの
+      # ci-check が同じ木で走らせている。gpu-ran は、描画の検査が「GPU が見えないので
+      # 全部飛ばした」まま緑になるのを止める。
+      #
+      # CI= は Metal の検証レイヤを手元と同じく有効にするため (Makefile の
+      # METAL_VALIDATION)。GitHub が立てる CI=true のままだと、検証レイヤが切れる。
+      - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
+
+  render-pr:
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && !github.event.pull_request.draft
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    # 同じ PR へ push し直したら、古い実行は捨てる。専用機は 1 台なので、古い木の検査で
+    # 塞がないようにする
+    concurrency:
+      group: render-pr-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+      - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=

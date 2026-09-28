@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# actionlint に、専用機の self-hosted runner が持つ独自のラベルを教える (#878)。
+# 教えないと、render.yml の runs-on を「知らないラベル」として拒む。
+self-hosted-runner:
+  labels:
+    - mokume-render
