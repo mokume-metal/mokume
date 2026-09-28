@@ -66,7 +66,7 @@ layered@20 0fab28721031f4d6550ecefd067a055e98acd544ad03a88492b18cb2673d0140
 # (sketch:<名前>@45)。作者が書く形のまま API を呼ぶので、Sketch 層の中継と SketchRuntime の
 # 経路はここにしか無い (#1377)。requestImage / requestModel で読む 2 本は「届く前」の絵。
 # 文字を描くものは Helvetica と既定の書体に依る — text の行と同じく、OS の書体が変わると動く。
-sketch:shapes-and-style@45 737cddc3dc1954b14a889e189546e391f459d5f5f2e1e157dffb155d3430069f
+sketch:shapes-and-style@45 000cddc3dc1954b14a889e189546e391f459d5f5f2e1e157dffb155d3430069f
 sketch:curves-and-vertices@45 d8339d6759b2a53e2b6dd76022a03bac348a8a1faff14077bb10a33fc795739a
 sketch:color-and-scale@45 af06e39f2fe54ca40c274823e8a1bb19670cd0a3e3f45498a047490e20ff13ba
 sketch:type-and-imagery@45 e3f6c5433b487eabbd213cf5a120012e1746fff7c435aece2993235f7087fbbd os=27
