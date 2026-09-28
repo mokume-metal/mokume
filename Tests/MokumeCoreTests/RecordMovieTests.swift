@@ -81,6 +81,38 @@ struct MovieWriterTests {
         }
     }
 
+    /// **届かなくなった後の末尾も、番号の幅に入る** ([#1626])。
+    ///
+    /// 受け取った最後の番号で幅を閉じると、撮る係が途中で外れた後の末尾は幅の外になり、
+    /// 1 枚も落ちていないことになる。止めた側が教えた番号まで幅を伸ばす。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("止めたところまでを教えると、届かなくなった後の末尾も落ちた数に入る")
+    func theTailAfterTheLastFrameCountsAsDropped() async throws {
+        try await withTemporaryDirectory("mokume-movie-tail") { directory in
+            let path = directory.appendingPathComponent("tail.mov").path
+            let writer = MovieWriter(path: path, frameRate: 60)
+            // 4 枚目が描けず、7 枚目から先は届かないまま 10 枚目で止めた
+            for frame in [1, 2, 3, 5, 6] {
+                writer.write(image(UInt8(frame * 20)), frame: frame, time: Double(frame - 1) / 60)
+            }
+            writer.expectFrames(through: 10)
+            writer.finish()
+
+            #expect(writer.acceptedFrames == 5)
+            #expect(writer.droppedFrames == 5, "4 枚目の穴と、7…10 枚目の末尾")
+
+            // 受け取った番号より手前を教えられても、幅は縮まない
+            let early = MovieWriter(path: directory.appendingPathComponent("early.mov").path, frameRate: 60)
+            for frame in 1...3 {
+                early.write(image(UInt8(frame * 20)), frame: frame, time: Double(frame - 1) / 60)
+            }
+            early.expectFrames(through: 2)
+            early.finish()
+            #expect(early.droppedFrames == 0)
+        }
+    }
+
     @Test("長く撮っても、抱える枚数が上限を超えない")
     func theQueueNeverGrowsBeyondTheLimit() async throws {
         try await withTemporaryDirectory("mokume-movie-backpressure") { directory in
@@ -371,12 +403,79 @@ struct RecordingFailureTests {
             #expect(both.contains("motion.mov"), "動画の書き損じが落ちている")
 
             // どちらの口にも新しい知らせが無いフレーム。片方の「まだ決着していない」で
-            // 理由を消すと、数えがそこで 0 に戻る (#1272)
+            // 理由を消すと、数えがそこで 0 に戻る (#1272)。`recorder.writer` へ直に書いた
+            // 静止画は連番の器 (流れ) へ決着するので保たれる
             recorder.absorbOutcomes()
             let stillBoth = try #require(recorder.failure, "知らせが無いだけで直ったことになっている")
             #expect(stillBoth.contains("still.png"))
             #expect(stillBoth.contains("motion.mov"))
 
+            recorder.close()
+        }
+    }
+
+    /// **撮る係が録りの途中で外れても、入らなかった末尾を名乗る** ([#1626])。
+    ///
+    /// 続けて転んだ撮る係は差込口から外れ (ADR-0024 決定 7)、以後の絵は届かない。止める側が
+    /// 録りの幅を教えないと、落ちた数は受け取った最後の番号で閉じ、末尾の欠けを名乗らない。
+    /// 止め方は 2 つ — `endRecord()` (頼まれたフレームの手前まで) と、終わりの経路の `close`
+    /// (最後に描いたフレームまで) — で、どちらも同じ 1 本 (``FrameRecorder/finishMovie(_:through:)``)
+    /// を通る。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("撮る係が途中で外れても、入らなかった末尾を名乗る", arguments: ["endRecord", "close"])
+    func theTailAfterDetachingIsSpoken(_ how: String) async throws {
+        try await withTemporaryDirectory("mokume-movie-detached-tail") { directory in
+            let path = directory.appendingPathComponent("cut.mov").path
+            let recorder = FrameRecorder(frameRate: 60)
+            recorder.beginRecord(path, at: 1)
+            let movie = try #require(recorder.recordingMovie)
+            // 3 枚目までを受け取った後に外れ、4 枚目から先は届かない
+            for frame in 1...3 {
+                movie.write(image(UInt8(frame * 40)), frame: frame, time: Double(frame - 1) / 60)
+            }
+
+            // どちらも 10 枚目までが録りの幅 (10 枚目まで描き終えたところで止めた・閉じた)
+            switch how {
+            case "endRecord": recorder.endRecord(through: 10)
+            default: recorder.close(.block, through: 10)
+            }
+
+            let said = try #require(
+                recorder.warnings.message(for: .droppedFrames), "外れた後の末尾の欠けを名乗っていない")
+            #expect(said.contains("wrote 3 frames. 7 did not reach it"), "\(said)")
+        }
+    }
+
+    /// **動画の書き損じも、並びへ戻るときに持ち越さない** ([#1626] の反証 7)。動画の書き損じで
+    /// 外された後に `save()` で戻ると、保っていた書き損じが新しい健康状態で 1 回ぶん数えられた。
+    /// 捨てる前に名乗り、書き出しの穴としては残す。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("並びへ戻るとき、動画の書き損じも持ち越さない")
+    func rejoiningDropsTheMovieFailureToo() async throws {
+        try await withTemporaryDirectory("mokume-movie-rejoin") { directory in
+            // 書き先の親をファイルにしておく。動画を開けない
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+            let recorder = FrameRecorder(frameRate: 60)
+            recorder.beginRecord(blocker.appendingPathComponent("motion.mov").path, at: 1)
+            let movie = try #require(recorder.recordingMovie)
+            movie.write(image(80), frame: 1, time: 0)
+            try #require(
+                pollUntilSettled(within: 10) {
+                    recorder.absorbOutcomes()
+                    return recorder.failure != nil
+                },
+                "動画の書き損じが 10 秒待っても決着しない")
+            // 外れている間にもう 1 枚転ぶ (口に残る)
+            movie.write(image(90), frame: 2, time: 1.0 / 60)
+            _ = movie.outstanding
+
+            recorder.save(directory.appendingPathComponent("still.png").path, at: 3)
+            recorder.startAfresh()
+            #expect(recorder.failure == nil, "動画の書き損じを持ち越している")
+            #expect(recorder.hasFailedToWrite)
             recorder.close()
         }
     }
@@ -518,6 +617,39 @@ struct RecordMovieTests {
             // 閉じ終えたら、また進む
             try runtime.advance()
             #expect(draws == drawsBeforeWaiting + 1)
+        }
+    }
+
+    /// **録りの最中に `save()` が 1 度転んでも、動画は 1 枚も欠けない** ([#1626])。
+    ///
+    /// 撮る係は静止画と動画を 1 つの差込口に束ねている。静止画の書き損じは次に静止画が
+    /// 書けるまで保たれていた (#1272) ので、動画だけを撮っている間は 1 度の書き損じが以後の
+    /// フレームすべてで数えられ、3 フレームで撮る係ごと外れて、動画がそこで途切れた
+    /// (直す前は 40 枚中 13 枚)。**1 度きりの書き損じは、その 1 枚の失敗として名乗って
+    /// 終わる** — 閉じた後にも「書き損じた」ことは残る (`mokume render` の終了コード・#1282)。
+    ///
+    /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    @Test("録りの最中に save() が 1 度転んでも、動画は欠けず、転んだことは閉じた後に残る")
+    func aSingleFailedSaveDoesNotCutTheMovie() async throws {
+        try await withTemporaryDirectory("mokume-movie-save-failure") { directory in
+            // 書き先の親をファイルにしておく。ディレクトリを作ることも書くこともできない
+            let blocker = directory.appendingPathComponent("blocker")
+            try Data("not a directory".utf8).write(to: blocker)
+            let still = blocker.appendingPathComponent("still.png").path
+            let path = directory.appendingPathComponent("motion.mov").path
+            let runtime = try makeRuntime { sketch in
+                sketch.background(.display(red: 0.06, green: 0.06, blue: 0.09))
+                sketch.circle(Float(sketch.frameCount % 16) * 4, 24, 20)
+                if sketch.frameCount == 3 { sketch.beginRecord(path) }
+                if sketch.frameCount == 10 { sketch.save(still) }
+                if sketch.frameCount == 43 { sketch.endRecord() }
+            }
+            for _ in 1...45 { try runtime.advance() }
+            runtime.closePlugins()
+
+            let movie = try await decodeMovie(path)
+            #expect(movie.frames.count == 40, "3…42 枚目の 40 枚のはず")
+            #expect(runtime.recordingFailed, "1 度書き損じたことが、閉じた後に残っていない")
         }
     }
 

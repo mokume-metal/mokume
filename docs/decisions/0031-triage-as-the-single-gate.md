@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-31) / 改訂 (2026-09-27): 決定 2 の「AI の目」を ADR-0040 の反証役へ繋ぎ、決定 3 に同じ根の兄弟を足す
+採用 (2026-08-31) / 改訂 (2026-09-27): 決定 2 の「AI の目」を ADR-0040 の反証役へ繋ぎ、決定 3 に同じ根の兄弟を足す / 改訂 (2026-09-28): 決定 1 の対象一覧をルールセットに委ね、意味の事前判断と既存の PR 承認を分ける
 
 ## 文脈
 
@@ -75,7 +75,20 @@ SPDX-License-Identifier: MIT
 
 **着手ゲートは変えない。** ラベルが無い Issue には着手しない・ラベルの不在が未トリアージを表す・付け損ねは「着手できない」側へ倒れる ([ADR-0002](0002-issue-lifecycle-and-merge-approval.md) 決定 1 が `status: needs-triage` を廃止したときの向き) は、そのまま生き続ける。`verify:` の綴りを保つのも同じ理由で、[ADR-0004](0004-issue-classification-by-issue-type.md) の「ラベルは Issue Type と直交する属性だけを表す」という枠組みを動かさずに済む。
 
-承認を要求するのは**ルールセットの `required_reviewers` だけ**になる (`docs/decisions/` ・ `.github/` ・ `.claude/` の 3 パスに team `maintainers` の 1 承認)。ADR・CI 設定・エージェント設定を触る変更が人の目を通ることは変わらない。
+承認を要求するのは**ルールセットの `required_reviewers` だけ**である。対象パスの正本は [main-protection.json](../../.github/rulesets/main-protection.json) に置き、team `maintainers` の 1 承認を求める。ADR・CI 設定・エージェント設定を触る変更が人の目を通ることは変わらない。
+
+#### 改訂 (2026-09-28) — 意味の事前判断と、PR の承認を分ける
+
+**当初の決定**は対象を `docs/decisions/`・`.github/`・`.claude/` の3パスと本文にも列挙した。
+[ADR-0017](0017-agent-support-locality.md) の接続追加で正本の対象が広がった後も列挙が残ったため、
+一覧はルールセットの正本へ委ねる。承認の要求源を一つにする理由は変わらない。
+
+[#1716](https://github.com/mokume-metal/mokume/issues/1716) で承認の縮小・撤去も検討したが、
+報告による長期の判断負担・見落としの改善はまだ測れていないため、**現行の PR 承認を当面維持する**。
+未合意の意味・代償を人が先に選ぶ範囲は [ADR-0036](0036-unattended-issue-processing.md) 決定 8 が持つ。
+Issue での方針合意を native Approve に代えず、重要パス外であることも方針合意の不要を意味しない。
+App identity と merge queue は維持する。パスによる承認が意味の変更をすべて拾う保証はなく、
+判断と PR の承認の両方に手間が残る。この代償を引き受けて継続評価する。
 
 ### 2. 承認の代わりに、PR 本文へ「完了条件 × 検証」の対応表を要求する
 

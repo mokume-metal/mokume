@@ -8,6 +8,16 @@ import Foundation
 /// 形の正典は `Schemas/observe-request.schema.json`。**知らない鍵は無視する**
 /// ([ADR-0018] 決定 3) ので、書き手が新しい鍵を足しても古い実装は壊れない。
 ///
+/// ## 同じ時刻で比較する
+///
+/// `time: 3` を指定すると、3秒目を1枚描き直して撮る。色を編集して保存した後も、
+/// 新しいidで同じ秒を指定すれば同じ構図で比べられる。秒はFloatに丸める。
+/// **画面とdrawの副作用は残る。** deltaTimeは0、frameCountは1進み、次は元の時計へ戻る。
+/// 状態の巻き戻しではなく、時刻と他の入力から絵が決まる作品向けである。
+/// noLoopは停止を保つ。外部pause、録画中、count/everyが1以外なら理由を返す。
+/// 指定フレーム内でのbeginRecordも断る。通常観測はtimeを省く。
+/// 応答にappliedTimeがあり、目録と同じ秒かを必ず確認する。旧版はtimeを無視することがある。
+///
 /// ## 間隔はフレーム数で数える
 ///
 /// ``every`` は秒ではなくフレームで数える。秒で指定しても結局はフレームへ丸めることに
@@ -44,12 +54,28 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     public let count: Int
     /// 何フレームおきに撮るか。
     public let every: Int
+    /// 指定した秒で1枚描き直す。省略時は直近の絵を読むだけ。
+    /// `deltaTime` は0、番号は1進む。画面と `draw()` の副作用は残り、巻き戻しではない。
+    public let time: Double?
 
-    public init(id: String, scale: Double = 1, count: Int = 1, every: Int = 1) {
+    /// JSON の数として読めても、時刻として使えない要求は応答で断る。
+    var timeWarning: String? {
+        guard let time else { return nil }
+        guard time.isFinite, time >= 0, time <= Double(Float.greatestFiniteMagnitude) else {
+            return "time must be finite, non-negative seconds within the Float range"
+        }
+        guard count == 1, every == 1 else {
+            return "A specified time requires count=1 and every=1"
+        }
+        return nil
+    }
+
+    public init(id: String, scale: Double = 1, count: Int = 1, every: Int = 1, time: Double? = nil) {
         self.id = id
         self.scale = scale
         self.count = count
         self.every = every
+        self.time = time
     }
 
     /// 上限で切った枚数と間隔、そして切ったことを伝えることわり。
@@ -77,7 +103,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, scale, count, every
+        case id, scale, count, every, time
     }
 
     public init(from decoder: any Decoder) throws {
@@ -86,5 +112,8 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         self.scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? 1
         self.count = try container.decodeIfPresent(Int.self, forKey: .count) ?? 1
         self.every = try container.decodeIfPresent(Int.self, forKey: .every) ?? 1
+        // 型が違っても「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
+        self.time = container.contains(.time)
+            ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
     }
 }

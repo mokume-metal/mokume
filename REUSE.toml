@@ -41,6 +41,8 @@ path = [
   "Makefile",
   # 依存の版を釘づける表。SwiftPM が書くので中にコメントを置けない
   "Package.resolved",
+  "Schemas/examples/observe-request-time.json",
+  "Schemas/examples/observe-report-time.json",
   ".claude/settings.json",
   ".github/workflows/ci.yml",
   ".github/workflows/pages.yml",

@@ -59,7 +59,7 @@ struct Tools {
         var description: String {
             switch self {
             case .observe:
-                "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew."
+                "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew. With time, redraw exactly one frame at those seconds (deltaTime=0). This changes the shown picture and retains draw side effects; it is not a rewind. noLoop stays stopped. External pause and recording refuse it."
             case .buildStatus:
                 "Return the result of the most recent build (whether it passed, the exit code, the output, a breakdown of how long it took, and the source stamp). Read this when you want to know why the drawing did not change."
             case .input:
@@ -75,6 +75,11 @@ struct Tools {
                 [
                     "type": "object",
                     "properties": [
+                        "time": [
+                            "type": "number", "minimum": 0,
+                            "maximum": Double(Float.greatestFiniteMagnitude),
+                            "description": "Draw and capture one frame at these seconds, rounded to Float. Requires count=1 and every=1. Update the sketch dependency if its reply lacks appliedTime.",
+                        ],
                         "scale": [
                             "type": "number",
                             "exclusiveMinimum": 0,
@@ -153,6 +158,24 @@ struct Tools {
         let id = makeID()
         var request: [String: Any] = ["id": id]
         if let scale = arguments["scale"] as? Double { request["scale"] = scale }
+        var requestedTime: Double?
+        if let raw = arguments["time"] {
+            guard let value = raw as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
+                value.doubleValue.isFinite, value.doubleValue >= 0,
+                value.doubleValue <= Double(Float.greatestFiniteMagnitude) else {
+                return ("time must be finite, non-negative seconds within the Float range", true)
+            }
+            for key in ["count", "every"] {
+                if let raw = arguments[key] {
+                    guard let value = raw as? NSNumber,
+                        CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue == 1 else {
+                        return ("A specified time requires count=1 and every=1", true)
+                    }
+                }
+            }
+            requestedTime = value.doubleValue
+            request["time"] = value.doubleValue
+        }
         let count = max(1, arguments["count"] as? Int ?? 1)
         let every = max(1, arguments["every"] as? Int ?? 1)
         if count > 1 { request["count"] = count }
@@ -166,6 +189,9 @@ struct Tools {
         case .answered(let answer): report = answer
         }
 
+        if let requestedTime, let failure = Self.timeObservationFailure(report, requested: requestedTime) {
+            return (failure + "\n\n" + pretty(report), true)
+        }
         var lines: [String] = []
         let frames = (report["frames"] as? [[String: Any]]) ?? []
         var names = frames.compactMap { $0["image"] as? String }
@@ -196,6 +222,30 @@ struct Tools {
         }
         lines.append(pretty(report))
         return (lines.joined(separator: "\n\n"), false)
+    }
+
+    /// 版だけで成功とは判断しない。旧版は未知の要求を無視するため、適用の印と絵の時刻を照合する。
+    static func timeObservationFailure(_ report: [String: Any], requested: Double) -> String? {
+        guard let applied = report["appliedTime"] as? Double else {
+            let warnings = (report["warnings"] as? [String]) ?? []
+            if report["image"] == nil, !warnings.isEmpty { return warnings.joined(separator: "\n") }
+            return "The reply does not confirm the requested time (appliedTime is missing). "
+                + "The sketch may use an older mokume. Update the sketch's own dependency; this image is not a time-specific result."
+        }
+        let expected = Double(Float(requested))
+        guard applied == expected,
+            let appliedNumber = report["appliedTime"] as? NSNumber,
+            CFGetTypeID(appliedNumber) != CFBooleanGetTypeID(),
+            let topTime = report["time"] as? NSNumber,
+            CFGetTypeID(topTime) != CFBooleanGetTypeID(), topTime.doubleValue == expected,
+            let frames = report["frames"] as? [[String: Any]], frames.count == 1,
+            let frameTime = frames[0]["time"] as? NSNumber,
+            CFGetTypeID(frameTime) != CFBooleanGetTypeID(), frameTime.doubleValue == expected,
+            let image = report["image"] as? String, !image.isEmpty,
+            frames[0]["image"] as? String == image else {
+            return "The reply does not match the requested time or single image. No time-specific result was accepted."
+        }
+        return nil
     }
 
     /// 目録を書かない書き手と繋がったときに添える。

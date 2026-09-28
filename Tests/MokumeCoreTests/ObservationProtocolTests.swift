@@ -107,7 +107,7 @@ struct ObservationProtocolTests {
         let written = try Data(contentsOf: facet.appendingPathComponent("report.json"))
         let decoded = try JSONSerialization.jsonObject(with: written) as? [String: Any]
         #expect(decoded?["id"] as? String == "a1")
-        #expect(decoded?["schemaVersion"] as? Int == 1)
+        #expect(decoded?["schemaVersion"] as? Int == 2)
     }
 
     @Test("撮り始める前に、前回の目録と絵が消えている")

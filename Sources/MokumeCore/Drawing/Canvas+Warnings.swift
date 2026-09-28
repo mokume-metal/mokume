@@ -136,6 +136,11 @@ extension Canvas {
         ///
         /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         case pixelWriteOutsideFrame
+        /// フレームの頭の検めが、守りの無い道で置かれたものを見つけた ([#1682])。**mokume の
+        /// 中の不具合**を名乗る注意で、利用者の書き方の誤りではない。
+        ///
+        /// [#1682]: https://github.com/mokume-metal/mokume/issues/1682
+        case placementLeak
 
         /// 角度が逆向きの円弧を描こうとした。
         case reversedArc

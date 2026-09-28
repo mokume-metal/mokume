@@ -27,6 +27,9 @@ nonisolated struct FrameSequence {
     /// 番号の後ろに付く部分。
     let suffix: String
 
+    /// 頼まれたときの綴り (`#` の並びを含む)。名乗るときに使う。
+    var pattern: String { prefix + String(repeating: "#", count: digits) + suffix }
+
     /// 次に撮る番号。この録りの中での通し番号で、0 から始まる。
     private(set) var index = 0
 

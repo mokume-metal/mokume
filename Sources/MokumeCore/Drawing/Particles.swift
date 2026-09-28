@@ -44,28 +44,68 @@ struct Particle {
 /// 数えると毎回 0.008 個で、切り捨てれば永久に 0 である。しかも**単発の検査では出ない** —
 /// 数百フレーム回して初めて「出るはずの数が出ていない」が見える。
 struct EmissionCadence {
-    /// まだ出していない端数。
+    /// まだ出していない端数の、``per`` 倍。
     ///
     /// **倍精度で貯める。** 単精度だと 60 分の 1 秒を数百回足す間に誤差が積もり、
     /// 10 秒で 5 個出るはずのものが 4 個になる — 繰り越しを入れた意味が消える。
+    ///
+    /// **フレーム番号から導く時計では、「rate × 枚数」の単位で貯め、fps で割り切る**
+    /// ([#1640])。1/fps 秒を足し合わせる形は、どの精度でも整数のわずか下 (1 個不足) か
+    /// わずか上 (1 個超過) に落ちる組がある — 単精度の秒では fps 25・50・100 などで毎秒
+    /// 1 個少なく、倍精度の秒に丸めの遊びを足す形では `rate: 71.563` を fps 120 で 6206 枚
+    /// 回したところで 1 個多かった。`rate` は `Float` で、足すのはその値そのもの (倍精度で
+    /// 厳密) なので、累計は ⌊rate·n ÷ fps⌋ に丸めなしで一致する。
+    ///
+    /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
     private(set) var carried: Double = 0
+    /// ``carried`` が何分の 1 個を単位にしているか。秒で数えるときは 1、フレーム番号から
+    /// 導く時計では fps。
+    private var per = 1
 
     /// この 1 フレームで出す数。`limit` を超えるぶんは繰り越さずに捨てる。
-    mutating func take(rate: Float, over seconds: Float, upTo limit: Int) -> Int {
-        guard rate > 0, seconds > 0, rate.isFinite, seconds.isFinite, limit > 0 else {
-            return 0
+    mutating func take(rate: Float, over step: FrameStep, upTo limit: Int) -> Int {
+        guard rate > 0, rate.isFinite, limit > 0 else { return 0 }
+        let amount: Double
+        let unit: Int
+        switch step {
+        case .frame(let perSecond):
+            guard perSecond > 0 else { return 0 }
+            (amount, unit) = (Double(rate), perSecond)
+        case .seconds(let seconds):
+            guard seconds > 0, seconds.isFinite else { return 0 }
+            (amount, unit) = (Double(rate) * seconds, 1)
         }
-        carried += Double(rate) * Double(seconds)
-        guard carried >= 1 else { return 0 }
-        let whole = carried.rounded(.down)
+        // 数え方が替わったら (直に回す面の刻みを差し替えたときなど)、貯めた端数を新しい
+        // 単位へ移す。**同じ時計で回している間は起きない**
+        if unit != per {
+            carried = carried / Double(per) * Double(unit)
+            per = unit
+        }
+        carried += amount
+        let whole = Self.wholeUnits(carried, per: per)
+        guard whole >= 1 else { return 0 }
         guard whole < Double(limit) else {
             // **貯めたぶんを捨てる。** 捨てないと、容量を超える注文が続いたときに
             // 端数が際限なく積もり、レートを下げても出続ける
             carried = 0
             return limit
         }
-        carried -= whole
+        carried -= whole * Double(per)
         return Int(whole)
+    }
+
+    /// ⌊`value` ÷ `per`⌋。**割り算の丸めを掛け算で確かめ直す** — 商は整数の近くで上へ
+    /// 丸まりうるが、整数と `per` の積は倍精度で厳密なので、比べれば正しい側へ戻せる。
+    /// `per` が 1 なら `value` の切り捨てそのもの。
+    private static func wholeUnits(_ value: Double, per: Int) -> Double {
+        let divisor = Double(per)
+        var whole = (value / divisor).rounded(.down)
+        if whole * divisor > value {
+            whole -= 1
+        } else if (whole + 1) * divisor <= value {
+            whole += 1
+        }
+        return whole
     }
 }
 
@@ -203,6 +243,18 @@ public final class Particles {
         case tooManyForces
         /// 引く力の弱まり始める距離に、受け取れない値が渡された。
         case badWeakeningDistance
+        /// 数でない値・無限を成分に持つ力を渡された ([#1623])。
+        ///
+        /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+        case unacceptableForce
+        /// `emit` の引数に数でない値・無限が渡された ([#1623])。
+        ///
+        /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+        case unacceptableEmission
+        /// 減速に負の値が渡された ([#1623] の反証)。
+        ///
+        /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+        case negativeDrag
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -253,26 +305,49 @@ public final class Particles {
 
     /// 力を積む。**上限を超えたぶんは受け取らない** — 進めずに積み続けても際限なく
     /// 増えないようにするため。
+    ///
+    /// **数でない値・無限を成分に持つ力は、注意を言って積まない** ([#1623]・ADR-0020 決定 5)。
+    /// 積むと GPU で、効かせた群の**すべての粒**の速度が数でなくなり、その粒は寿命まで
+    /// 描かれない — 1 度渡しただけで、生きている粒が全部消える。断った力は上限の枠を取らず、
+    /// 同じ呼び出しに並べた他の力は今までどおり積む。検めるのはここ 1 か所で、GPU へ
+    /// 渡す手前 (`write`) には散らさない。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
     func add(_ forces: [Force]) {
         for force in forces {
+            guard force.numbers.allSatisfy(\.isFinite) else {
+                warnUnacceptableForce(force)
+                continue
+            }
+            guard let force = accepted(force) else { continue }
             guard pendingForces.count < Self.maximumForces else {
                 return warnTooManyForces(pendingForces.count + 1)
             }
-            pendingForces.append(accepted(force))
+            pendingForces.append(force)
         }
     }
 
-    /// 受け取れる形にした力。**弱まり始める距離が 0 以下・数でない値・無限なら、注意を
-    /// 言って距離を外す** — 弱まらない力として効かせる (ADR-0020 決定 5)。
+    /// 受け取れる形にした力。受け取らない力は `nil` (ADR-0020 決定 5)。
     ///
-    /// 式へ届かせないのは、0 なら力が消え、負なら向きが返り、数でない値なら粒の速度が
-    /// 数でなくなるためである。
-    private func accepted(_ force: Force) -> Force {
-        guard case .attract(let x, let y, let z, let strength, let distance?) = force,
-            !(distance.isFinite && distance > 0)
-        else { return force }
-        warnBadWeakeningDistance(distance)
-        return .attract(x, y, z, strength: strength)
+    /// - **弱まり始める距離が 0 以下・数でない値・無限なら、注意を言って距離を外す** —
+    ///   弱まらない力として効かせる。式へ届かせないのは、0 なら力が消え、負なら向きが
+    ///   返り、数でない値なら粒の速度が数でなくなるためである
+    /// - **減速の `amount` が負なら、注意を言って積まない** — 減速は「速さは増えない」
+    ///   (``Force/drag(_:)``) の約束で、負の値は 1 フレームごとに速度を e^{|amount|·Δt} 倍に
+    ///   増やす。30 fps の `drag(-10000)` では 1 フレームで溢れる (#1623 の反証)。0 と
+    ///   同じく効かない力として扱う
+    private func accepted(_ force: Force) -> Force? {
+        switch force {
+        case .attract(let x, let y, let z, let strength, let distance?)
+        where !(distance.isFinite && distance > 0):
+            warnBadWeakeningDistance(distance)
+            return .attract(x, y, z, strength: strength)
+        case .drag(let amount) where amount < 0:
+            warnNegativeDrag(amount)
+            return nil
+        default:
+            return force
+        }
     }
 
     /// いま積んである力の数。面が、フレームで最初に力を積む前の数を控えるのに読む。
@@ -298,7 +373,7 @@ public final class Particles {
     /// この 1 フレームで出す数。`frame` は呼んだ面のフレーム番号で、同じ番号のうちに
     /// 呼ばれた順で繰り越しを引き分ける (`cadences` の説明)。**0 個に終わる呼び出しも
     /// 1 回と数える** — 数えないと、出なかった噴き口の後ろの繰り越しが 1 つずつ前へずれる。
-    func count(rate: Float, over seconds: Float, frame: Int) -> Int {
+    func count(rate: Float, over step: FrameStep, frame: Int) -> Int {
         if cadenceFrame != frame {
             cadenceFrame = frame
             emitsThisFrame = 0
@@ -306,7 +381,69 @@ public final class Particles {
         let order = emitsThisFrame
         emitsThisFrame += 1
         if order == cadences.count { cadences.append(EmissionCadence()) }
-        return cadences[order].take(rate: rate, over: seconds, upTo: capacity)
+        return cadences[order].take(rate: rate, over: step, upTo: capacity)
+    }
+
+    /// 粒を出す受け口。**1 フレームで出す数を決めて (`count(rate:over:frame:)`)、その数を
+    /// 置く。**
+    ///
+    /// **数でない値・無限を受けたら、注意を言って 1 個も出さない** ([#1623]・ADR-0020
+    /// 決定 5)。見るのは `rate`・`source` の成分・幅の端・`color` の成分である (幅の端の
+    /// 数でない値は、Swift の `...` が幅を作る時点で止めるので届かない)。出してしまうと、
+    /// 数でない位置や色の粒が寿命まで枠を塞ぎ、描いた画素を汚しうる。検めるのはここ
+    /// 1 か所で、置く手前 (`place`) には散らさない。
+    ///
+    /// **断った呼び出しも、そのフレームの 1 回と数える** — 数えないと、後ろの噴き口の
+    /// 繰り越しが前へずれる (`count(rate:over:frame:)` と同じ理由)。繰り越しには何も足さない。
+    ///
+    /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
+    func emit(
+        rate: Float, over step: FrameStep, frame: Int, from source: Emitter,
+        speed: ClosedRange<Float>, angle: ClosedRange<Float>, life: ClosedRange<Float>,
+        size: ClosedRange<Float>, color: LinearRGBA?, fill: LinearRGBA, at now: Float,
+        using randomness: inout Randomness
+    ) {
+        if let refused = Self.unacceptable(
+            rate: rate, from: source, speed: speed, angle: angle, life: life, size: size,
+            color: color, fill: fill)
+        {
+            _ = count(rate: 0, over: step, frame: frame)
+            return warnUnacceptableEmission(
+                "\(refused.name) got \(refused.value), which is not a number or is infinite. "
+                    + "No particles were emitted from that call")
+        }
+        let count = count(rate: rate, over: step, frame: frame)
+        place(
+            count, from: source, speed: speed, angle: angle, life: life, size: size,
+            color: color ?? fill, at: now, using: &randomness)
+    }
+
+    /// 受け取れない `emit` の引数の名前と、渡された値の綴り。どれも受け取れるなら `nil`。
+    /// 見る順は引数の並びどおりで、最初の 1 つだけを返す。
+    ///
+    /// `color` を省いたときは塗り (`fill`) で出すので、塗りを見て**塗りと名指す** — `color`
+    /// と言うと、渡していない引数を名乗ることになる (#1623 の反証)。
+    private static func unacceptable(
+        rate: Float, from source: Emitter, speed: ClosedRange<Float>,
+        angle: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
+        color: LinearRGBA?, fill: LinearRGBA
+    ) -> (name: String, value: String)? {
+        func finite(_ range: ClosedRange<Float>) -> Bool {
+            range.lowerBound.isFinite && range.upperBound.isFinite
+        }
+        if !rate.isFinite { return ("rate", "\(rate)") }
+        if !source.numbers.allSatisfy(\.isFinite) { return ("from", "\(source)") }
+        if !finite(speed) { return ("speed", "\(speed)") }
+        if !finite(angle) { return ("angle", "\(angle)") }
+        if !finite(life) { return ("life", "\(life)") }
+        if !finite(size) { return ("size", "\(size)") }
+        let paint = color ?? fill
+        let channels = [paint.red, paint.green, paint.blue, paint.alpha]
+        if !channels.allSatisfy(\.isFinite) {
+            let name = color == nil ? "the fill (color was omitted)" : "color"
+            return (name, "(\(channels.map { "\($0)" }.joined(separator: ", ")))")
+        }
+        return nil
     }
 
     /// 粒を `count` 個置く。
@@ -321,7 +458,7 @@ public final class Particles {
     ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     /// [#934]: https://github.com/mokume-metal/mokume/issues/934
-    func emit(
+    private func place(
         _ count: Int, from source: Emitter, speed: ClosedRange<Float>,
         angle: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
         color: LinearRGBA, at now: Float, using randomness: inout Randomness
@@ -329,11 +466,20 @@ public final class Particles {
         guard count > 0 else { return }
         let floats = Self.particleFloats
         for _ in 0..<count {
+            let place = source.sample(using: &randomness)
+            // **中心と半径が有限でも、足した所が `Float` で溢れることがある** (`.circle(3e38, 0,
+            // radius: 3e38)`)。数でない位置の粒は寿命まで枠を塞いで描かれないので、置かない
+            // (#1623 の反証)。枠も進めない
+            guard all(place .< .infinity) && all(place .> -.infinity) else {
+                warnUnacceptableEmission(
+                    "from \(source) placed a particle at \(place), outside the range of Float. "
+                        + "Particles that land there were not emitted")
+                continue
+            }
             let slot = cursor % capacity
             cursor += 1
             if deadline[slot] > now { warnOverwrite() }
 
-            let place = source.sample(using: &randomness)
             let heading = randomness.value(from: angle.lowerBound, to: angle.upperBound)
             let rate = randomness.value(from: speed.lowerBound, to: speed.upperBound)
             let span = max(0, randomness.value(from: life.lowerBound, to: life.upperBound))
@@ -472,6 +618,25 @@ public final class Particles {
             .tooManyForces,
             "At most \(Self.maximumForces) forces can go in one call (\(count) were passed). "
                 + "Only the first \(Self.maximumForces) took effect")
+    }
+
+    private func warnUnacceptableForce(_ force: Force) {
+        warnOnce(
+            .unacceptableForce,
+            "force(): \(force) has a value that is not a number, or an infinite one. "
+                + "That force was left out; the other forces in the call still took effect")
+    }
+
+    /// `problem` は受け取れなかった引数の名前で始める (検査が名前を読む)。
+    private func warnUnacceptableEmission(_ problem: String) {
+        warnOnce(.unacceptableEmission, "emit(): \(problem)")
+    }
+
+    private func warnNegativeDrag(_ amount: Float) {
+        warnOnce(
+            .negativeDrag,
+            "drag: amount takes 0 or more (\(amount) was passed), because drag never speeds "
+                + "a particle up. That drag was left out")
     }
 
     private func warnBadWeakeningDistance(_ distance: Float) {

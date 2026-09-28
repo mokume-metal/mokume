@@ -285,7 +285,8 @@ extension Canvas {
                 cullMode: cullMode(for: open),
                 frontFacing: frontFacing(for: open),
                 isMirrored: open.isMirrored,
-                solidSource: open.source))
+                solidSource: open.source,
+                strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement))
         warnIfMaterialCannotShow()
     }
 
@@ -303,7 +304,8 @@ extension Canvas {
     /// 出るようにはしない — 裏返った巻き方は表の巻き方 (``frontFacing(for:)``) の側で
     /// 戻し、捨て方は `.back` のまま保つ ([#1446](https://github.com/mokume-metal/mokume/issues/1446))。
     private func cullMode(for open: OpenSolid) -> MTLCullMode {
-        guard case .mesh(let shape) = open.source, shape.isClosed, !open.mayShowBackFaces
+        guard open.strokeGeometry == nil,
+            case .mesh(let shape) = open.source, shape.isClosed, !open.mayShowBackFaces
         else { return .none }
         return .back
     }

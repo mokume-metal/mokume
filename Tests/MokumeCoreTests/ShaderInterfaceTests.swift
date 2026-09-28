@@ -262,6 +262,13 @@ struct ShaderInterfaceTests {
                         .layout(Self.solidInstance)),
                 ]),
             Entry(
+                ShapePipeline.solidStrokeVertexFunctionName,
+                [
+                    .buffer("pieces", ShapePipeline.vertexBufferIndex, .layout(Self.solidStrokePiece)),
+                    .buffer("frame", ShapePipeline.projectionBufferIndex, .layout(Self.flatFrame)),
+                    .buffer("s", ShapePipeline.valuesBufferIndex, .layout(Self.solidStrokePlacement)),
+                ]),
+            Entry(
                 ShapePipeline.formVertexFunctionName,
                 [
                     .buffer("frame", ShapePipeline.projectionBufferIndex, .layout(Self.flatFrame)),
@@ -342,6 +349,16 @@ struct ShaderInterfaceTests {
         [
             ("position", \.position), ("shapePosition", \.shapePosition), ("normal", \.normal),
             ("shapeNormal", \.shapeNormal), ("uv", \.uv), ("stroke", \.stroke), ("color", \.color),
+        ])
+
+    static let solidStrokePiece = layout(
+        of: SolidStrokeGeometry.Piece.self, [("a", \.a), ("b", \.b)])
+
+    static let solidStrokePlacement = layout(
+        of: SolidStrokePlacement.self,
+        [
+            ("matrix", \.matrix), ("eye", \.eye), ("right", \.right), ("down", \.down),
+            ("forward", \.forward), ("parameters", \.parameters), ("color", \.color), ("uv", \.uv),
         ])
 
     static let flatFrame = layout(

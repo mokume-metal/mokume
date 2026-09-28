@@ -122,11 +122,13 @@ extension Canvas {
     ) {
         guard isDrawing else { return warnOutsideFrame(.particles) }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
-        // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法
-        let count = particles.count(rate: rate, over: deltaTime, frame: framesDrawn)
+        // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法。
+        // 刻みは秒に直さずに渡す。単精度の秒を足し合わせると、fps によって毎秒 1 個ずれる (#1640)。
+        // 数でない値・無限は受け口 (`Particles.emit`) が検めて断る (#1623)
         particles.emit(
-            count, from: source, speed: speed, angle: angle, life: life, size: size,
-            color: color ?? style.fill, at: time, using: &randomness)
+            rate: rate, over: frameStep, frame: framesDrawn, from: source, speed: speed,
+            angle: angle, life: life, size: size, color: color, fill: style.fill, at: time,
+            using: &randomness)
     }
 
     /// 力を積む。
