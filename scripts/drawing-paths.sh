@@ -4,9 +4,10 @@
 # 「この変更は描画に触れているか」の判定 (#304 / #306)。
 #
 # 一覧そのものは scripts/drawing-paths.txt が持ち、**それを読む照合はここ 1 つ**に
-# 保つ。読み手は絵の証跡を要求するかの判定 (scripts/check-drawing-evidence.sh) と、
-# Issue が描画に触りそうかの見込み (scripts/ready-queue.sh) で、照合ループを各所へ写すと
-# 「一覧は 1 つなのに読み方が 2 通り」という質の悪い二重管理になる (ADR-0001 原則 9)。
+# 保つ。読み手は絵の証跡を要求するかの判定 (scripts/check-drawing-evidence.sh) である。
+# 以前は Issue が描画に触りそうかの見込み (scripts/ready-queue.sh) も読んでいたが、描画
+# レーンごと畳んだ (#1769)。照合ループを各所へ写すと「一覧は 1 つなのに読み方が 2 通り」
+# という質の悪い二重管理になる (ADR-0001 原則 9)。
 # guard-lib.sh と同じ形で source する。
 #
 # **以前は用途 (evidence / coverage) を呼ぶ側が渡していた** (#497)。coverage は手元の
