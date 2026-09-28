@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは八つ。
+固定したいのは九つ。
 
 1. **pr-title へ rerun を打たない。** pull_request の rerun は元のイベントを再生するので、
    古いタイトルで判定され、その失敗が最新の結果になって**打つ前より悪くなる** (#699)。
@@ -23,6 +23,9 @@
 8. **落ちた承認と、新規の承認待ちを分ける。** 承認済みの PR へ push すると承認が落ちるが、
    checks は全部緑・auto-merge も掛かったままなので**どの行にも当たらず 1 行も出なかった**
    (#1033)。分かれ目は「落とした出来事があるか」の 1 点で、latestReviews からは読めない
+9. **専用機の runner が止まったことを、順番待ちと分けて名乗る** (#1774)。必須の render が
+   走らないと、描画に触れない PR も含めて queue 全体が止まる。1 台なので、他の run を
+   走らせている間の queued は正常な順番待ちで、名乗ると毎回の注意になる (#642)
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -92,6 +95,13 @@ fi
 url=${2:-}
 
 case "$url" in
+  # 専用機の render の run (#1774)。status の値ごとに応答を分ける。既定は空の並び
+  */actions/workflows/render.yml/runs\?*)
+    [ -z "${RUNS_FAIL:-}" ] || { echo "gh: 502" >&2; exit 1; }
+    st=${url#*status=}; st=${st%%&*}
+    f="$PR_DIR/render-runs.$st.json"
+    [ -f "$f" ] || f="$PR_DIR/render-runs.none.json"
+    emit "$f"; exit 0 ;;
   */check-runs)
     sha=${url%/check-runs}; sha=${sha##*/}
     emit "$PR_DIR/${sha#sha-}.checkruns.json"; exit 0 ;;
@@ -132,6 +142,9 @@ class StallWatchTest(unittest.TestCase):
 
         self.pr_dir = root / "pr"
         self.pr_dir.mkdir()
+        # **run が無いときも応答は返す** (空の並び)。本物の gh もそう返すので、判定側の
+        # `// ""` と length を素通りさせない
+        self.write_runs("none")
         self.calls = root / "gh-calls.txt"
         self.calls.write_text("", encoding="utf-8")
         self.bin_dir = bin_dir
@@ -139,6 +152,11 @@ class StallWatchTest(unittest.TestCase):
 
     def write(self, name, payload):
         (self.pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+
+    def write_runs(self, status, *created):
+        """render.yml の run のうち、status のものを created の時刻で並べる。"""
+        runs = [{"status": status, "created_at": at} for at in created]
+        self.write(f"render-runs.{status}.json", {"total_count": len(runs), "workflow_runs": runs})
 
     def add_pr(
         self,
@@ -405,6 +423,48 @@ class StallWatchTest(unittest.TestCase):
         )
         proc = self.watch(STALL_MINUTES=600, DISMISSED_APPROVAL_MINUTES=15)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+    def runner_line(self, proc):
+        for line in proc.stdout.splitlines():
+            parts = line.split(maxsplit=4)
+            if parts[:1] == ["-"]:
+                return parts
+        return None
+
+    def test_render_が拾われないまま猶予を超えたら_runner_を名乗る(self):
+        self.write_runs("queued", ago(10), ago(30))
+        proc = self.watch()
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        # 経過は最古の queued から測る
+        self.assertEqual(line[1:4], ["runner-offline", "name", "30"], proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+
+    def test_他の_run_を走らせている間は順番待ちとして黙る(self):
+        self.write_runs("queued", ago(30))
+        self.write_runs("in_progress", ago(33))
+        proc = self.watch()
+        self.assertIsNone(self.runner_line(proc), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_猶予の内の_queued_は黙る(self):
+        self.write_runs("queued", ago(3))
+        proc = self.watch()
+        self.assertIsNone(self.runner_line(proc), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_run_を読めなければ読めなかったと名乗る(self):
+        """黙ると「止まっていない」に倒れる (#1303)。"""
+        proc = self.watch(RUNS_FAIL=1)
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1:3], ["unreadable", "name"], proc.stdout)
+
+    def test_runner_の行には何も打たない(self):
+        proc = self.act(["- runner-offline name 30 専用機の runner が render を拾っていない"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("pr merge", self.gh_log())
+        self.assertNotIn("run rerun", self.gh_log())
 
     def test_打つ行だけでは赤くしない(self):
         self.add_pr(14, auto=False, state="CLEAN", checks=[check("ci-gate", "SUCCESS")])
