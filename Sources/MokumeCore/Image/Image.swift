@@ -240,8 +240,7 @@ import simd
     /// 消えていた (#749)。登録簿に載せて、描き切りが GPU 側のコピーで届ける。
     /// 書き換えないフレームは GPU へ送る仕事を積まない。
     func requestUpload() {
-        // 配置した後の write / set / fill も描き切りへ届ける (#1766)。
-        // 転送するかは配置時ではなく、描き切り時の pendingUploadByteCount で決める。
+        guard needsUpload else { return }
         gpu.pendingUploads.enqueue(self)
     }
 

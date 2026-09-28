@@ -1387,6 +1387,31 @@ struct ShapeTests {
         #expect(after == (try immediate.target.readPixels()))
     }
 
+    @Test("保持した形を配置した後の画像更新も描き切りへ届く", arguments: PictureReader.allCases)
+    func pictureChangedAfterPlacement(_ reader: PictureReader) throws {
+        let canvas = try makeCanvas()
+        let picture = try canvas.createImage(8, 8)
+        picture.fill(red)
+        let shape = canvas.createShape(try reader.body(canvas, picture))
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(shape)
+        }
+        let before = try canvas.target.readPixels()
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(shape)
+            picture.fill(green)
+        }
+        let after = try canvas.target.readPixels()
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(shape)
+        }
+        #expect(before != after)
+        #expect(after == (try canvas.target.readPixels()))
+    }
+
     /// #1253 の完了条件 3。**書き換えていない絵は、置き直しても送りを頼まない。**
     ///
     /// 送りは描き切りが届けるので、頼んだことは登録簿 (`RenderDevice.pendingUploads`) に

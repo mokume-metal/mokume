@@ -2293,6 +2293,11 @@ public final class Canvas {
         settlePlacersBeforeChange()
         isFlushing = true
         defer { isFlushing = false }
+        // CPU 上の列を確定し、実際に読む直前の画像更新を拾う (#1766)。配置後の
+        // write と、別 Canvas の描き切りが登録簿を消費した後の write の両方を覆う。
+        // 待ちが失敗しても再試行できるよう、GPU 可視メモリへ触る前に登録する。
+        closeBatch()
+        for batch in batches { batch.run.prepareSurfaces() }
         if let failureForTesting { throw failureForTesting }
         // **書く前に、環を 1 つ進めて待つ。** ここから先は GPU 可視メモリへ CPU が書く
         // (頂点・列ごとの値・効果の値・数の並びと画像の控え・置き場の取り直し)。書き先は
@@ -2310,7 +2315,6 @@ public final class Canvas {
         // [#727]: https://github.com/mokume-metal/mokume/issues/727
         // [#754]: https://github.com/mokume-metal/mokume/issues/754
         try frameRing.advance()
-        closeBatch()
         // 段の枠の採番は描き切りごとに 0 から。**1 本のコマンドの中でだけ衝突しない
         // ことが要る**ので、コマンドと同じ寿命で数える
         stagePassesUsed = 0

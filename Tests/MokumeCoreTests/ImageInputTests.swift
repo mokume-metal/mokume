@@ -167,6 +167,17 @@ import Testing
                 throw .encoderUnavailable
             }
         }
+        let allocated = gpu.residencySet.allocationCount
+        for _ in 0..<9 {
+            try canvas.frameRing.advance()
+            #expect(throws: RenderFailure.self) {
+                try gpu.withCommands { commands throws(RenderFailure) in
+                    _ = try canvas.encodeUploads(into: commands)
+                    throw .encoderUnavailable
+                }
+            }
+        }
+        #expect(gpu.residencySet.allocationCount == allocated)
         #expect(image.needsUpload && image.inputNeedsDecode)
         try canvas.draw { canvas.background(.transparent) }
         #expect(!image.needsUpload)
@@ -265,6 +276,45 @@ import Testing
         try canvas.draw { canvas.image(image, 0, 0) }
         #expect(canvas.uploadBarriersEncoded == barriers, "未変更なら転送しない")
         #expect(!image.isQueuedForUpload)
+    }
+
+    @Test("別 Canvas の描き切りを挟んで更新しても、元の列へ最新値が届く",
+          arguments: [2, 1024], [false, true])
+    func anotherCanvasBetweenPlacementAndWrite(size: Int, initiallyDirty: Bool) throws {
+        let gpu = try RenderDevice()
+        let first = try canvas(on: gpu)
+        let second = try canvas(on: gpu)
+        let image = try first.createImage(size, size)
+        if initiallyDirty { image.fill(.linear(red: 0, green: 0, blue: 1)) }
+        var nestedResult: Result<Void, any Error>?
+        try first.draw {
+            first.image(image, 0, 0, 32, 32)
+            nestedResult = Result { try second.draw { second.background(.transparent) } }
+            image.write(DisplayImage(
+                width: size, height: size, bytes: Array(repeating: 255, count: size * size * 4)))
+        }
+        try #require(nestedResult).get()
+        #expect(try first.target.encodeForDisplay()[16, 16] == (255, 255, 255, 255))
+        #expect(!image.needsUpload)
+    }
+
+    @Test("配置後の更新を拾ってから待つので、待ちの失敗後も置き直さず再試行できる")
+    func lateWriteSurvivesFailedWait() throws {
+        let gpu = try RenderDevice()
+        let canvas = try canvas(on: gpu)
+        let image = try canvas.createImage(side, side)
+        canvas.failureForTesting = .timedOut(seconds: 5)
+        #expect(throws: RenderFailure.self) {
+            try canvas.draw {
+                canvas.image(image, 0, 0, 32, 32)
+                image.write(picture(255))
+            }
+        }
+        #expect(image.needsUpload && image.isQueuedForUpload)
+        canvas.failureForTesting = nil
+        try canvas.draw { canvas.background(.transparent) }
+        #expect(!image.needsUpload)
+        #expect(try texels(image, on: gpu)[0] == SIMD4(repeating: 1))
     }
 
     @Test("GPU 分岐の境界と奇数幅でも最後の画素と編集位置が一致する",
