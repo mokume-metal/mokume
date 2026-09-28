@@ -1639,5 +1639,116 @@ class StdinDeadlineTest(HookFixture, unittest.TestCase):
         result = self.run_hook("no-such-mode", stdin="")
         self.assertIn("stdin", result.stderr)
 
+
+class ExplicitPlanTest(HookFixture, unittest.TestCase):
+    """明示登録の隔離と投稿確認。Claudeの既存ケースは別クラスでそのまま回す。"""
+
+    def env(self, **overrides):
+        return super().env(**{"FAKE_GH_ISSUE": "12", **overrides})
+
+    def register(self, text=None, agent="codex", session="session-one", **env):
+        path = Path(self.workdir.name) / "plan.md"
+        path.write_text(text if text is not None else "#12 を直す。" + RECHECK)
+        return subprocess.run(
+            ["/bin/bash", str(SCRIPT), "register", "--agent", agent,
+             "--session", session, "--body-file", str(path)],
+            cwd=self.repo, env=self.env(**env), capture_output=True, text=True, timeout=30,
+        )
+
+    def check(self, session="session-one", **env):
+        return subprocess.run(
+            ["/bin/bash", str(SCRIPT), "check", "--agent", "codex", "--session", session],
+            cwd=self.repo, env=self.env(**env), capture_output=True, text=True, timeout=30,
+        )
+
+    def explicit_records(self):
+        return sorted((self.repo / ".build" / "mokume-plan-records").glob("*/codex/*/*.md"))
+
+    def test_capture_is_separate_and_stop_checks_only_the_same_session(self):
+        result = self.register()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("scripts/comment.sh issue 12", result.stderr)
+        self.assertEqual(len(self.explicit_records()), 1)
+        self.assertEqual(self.records(), [])
+        self.assertEqual(self.guard().returncode, 0)
+        self.assertEqual(self.check("session-two").returncode, 0)
+        self.assertEqual(self.check().returncode, 2)
+        result = self.run_hook("codex-stop", {"cwd": str(self.repo), "session_id": "session-one"})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("まだ GitHub に残っていません", result.stderr)
+
+    def test_codex_stop_does_not_claim_claude_records(self):
+        self.assertEqual(self.capture("#12 の変更").returncode, 2)
+        result = self.run_hook("codex-stop", {"cwd": str(self.repo), "session_id": "session-one"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_same_plan_has_one_marker_and_posted_registration_is_silent(self):
+        self.register()
+        record = self.explicit_records()[0]
+        marker = record.read_text().splitlines()[0]
+        self.register()
+        self.assertEqual(len(self.explicit_records()), 1)
+        self.assertEqual(self.explicit_records()[0].read_text().splitlines()[0], marker)
+        result = self.register(FAKE_GH_COMMENTS=marker)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.explicit_records(), [])
+
+    def test_posted_check_removes_only_its_record(self):
+        self.register()
+        first = self.explicit_records()[0]
+        marker = first.read_text().splitlines()[0]
+        self.register(session="session-two")
+        self.assertEqual(self.check(FAKE_GH_COMMENTS=marker).returncode, 0)
+        self.assertEqual(len(self.explicit_records()), 1)
+        self.assertIn("session-two", str(self.explicit_records()[0]))
+
+    def test_invalid_scope_and_missing_session_do_not_write(self):
+        for session in ("", "../outside", "a/b", "a\nb"):
+            with self.subTest(session=session):
+                self.assertEqual(self.register(session=session).returncode, 64)
+        result = self.run_hook("codex-stop", {"cwd": str(self.repo)})
+        self.assertEqual(result.returncode, 64)
+        self.assertEqual(self.explicit_records(), [])
+
+    def test_missing_recheck_uses_explicit_retry_and_stores_nothing(self):
+        result = self.register("#12 を直す。")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("register", result.stderr)
+        self.assertNotIn("ExitPlanMode", result.stderr)
+        self.assertEqual(self.explicit_records(), [])
+
+    def test_secret_is_not_saved_or_echoed(self):
+        secret = "ghp_" + "a" * 36
+        result = self.register("#12 " + secret + RECHECK)
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn(secret, result.stdout + result.stderr)
+        self.assertEqual(self.explicit_records(), [])
+
+    def test_other_worktree_cannot_claim_record_even_on_the_same_branch(self):
+        self.register()
+        other = Path(self.workdir.name) / "other"
+        self.git("worktree", "add", "--force", str(other), "feat/plan-123")
+        result = subprocess.run(
+            ["/bin/bash", str(SCRIPT), "check", "--agent", "codex", "--session", "session-one"],
+            cwd=other, env=self.env(), capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.explicit_records()), 1)
+
+
+    def test_unwritable_record_location_reports_failure(self):
+        (self.repo / ".build").write_text("not a directory")
+        result = self.register()
+        self.assertEqual(result.returncode, 73, result.stderr)
+        self.assertIn("記録の置き場を作れません", result.stderr)
+
+    def test_other_agent_with_the_same_session_is_not_claimed(self):
+        self.register(agent="another-agent")
+        self.assertEqual(self.check().returncode, 0)
+        records = list((self.repo / ".build/mokume-plan-records").glob("*/another-agent/*/*.meta"))
+        self.assertEqual(len(records), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
