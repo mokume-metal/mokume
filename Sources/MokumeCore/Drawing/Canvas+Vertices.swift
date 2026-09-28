@@ -343,7 +343,13 @@ extension Canvas {
     /// 同じ手順で出す**。塗りと線の出る順序が種類によって変わらない。
     private struct Primitive {
         /// 外周をなす頂点の番号。
-        var ring: [Int]
+        ///
+        /// **形の全原始形で 1 本の並びを共有する切り出し**である ([#1781])。`.triangles`
+        /// のように三角形 1 枚が原始形 1 つになる読み方で、原始形ごとに番号の配列を
+        /// 確保しないため。添字は 0 から始まるとは限らないので、`startIndex` から数える。
+        ///
+        /// [#1781]: https://github.com/mokume-metal/mokume/issues/1781
+        var ring: ArraySlice<Int>
         /// 穴をなす頂点の番号。
         var holes: [[Int]] = []
         /// 最後の点から最初の点へ戻るか。
@@ -376,13 +382,15 @@ extension Canvas {
         //
         // 閉包を標準ライブラリの高階関数へ渡さずにループで回す。main actor の文脈で作った
         // 閉包は、要素ごとに隔離の実行時検査を払う (#1779)
-        var triangles: [[(Int, Int, Int)]] = []
-        triangles.reserveCapacity(primitives.count)
+        //
+        // 三角形は形の全原始形で 1 本の並びへ積み、原始形ごとの区間で引く ([#1781])
         var allTriangles: [(Int, Int, Int)] = []
+        var triangleRanges: [Range<Int>] = []
+        triangleRanges.reserveCapacity(primitives.count)
         for primitive in primitives {
-            let found = fillTriangles(of: primitive, points: points)
-            triangles.append(found)
-            if shapeHasDepth { allTriangles += found }
+            let start = allTriangles.count
+            fillTriangles(of: primitive, points: points, into: &allTriangles)
+            triangleRanges.append(start..<allTriangles.count)
         }
         let placed = shapeHasDepth ? placedVertices(points, triangles: allTriangles) : []
         // **形に 1 度だけ求める。** 囲みの箱は原始形によらず同じ (見るのは置いた点の
@@ -391,11 +399,11 @@ extension Canvas {
         let fallback = readsUV ? uvFallback(points) : nil
 
         emit {
-            for (primitive, triangles) in zip(primitives, triangles) {
+            for (primitive, range) in zip(primitives, triangleRanges) {
                 // **原始形ごとに 塗り → 線。** 種類によらず同じ順序なので、線が
                 // 隣の原始形の塗りに隠れることがない
                 emitFill(
-                    triangles, points: points, placed: placed,
+                    allTriangles[range], points: points, placed: placed,
                     readsUV: readsUV, fallback: fallback)
                 if style.hasStroke, style.strokeWeight > 0 {
                     emitStroke(primitive, points: points, placed: placed)
@@ -451,16 +459,15 @@ extension Canvas {
                 holes.append(Array(next..<(next + hole.count)))
                 next += hole.count
             }
-            return [Primitive(ring: outer, holes: holes, isClosed: closed, fills: true)]
+            return [Primitive(ring: outer[...], holes: holes, isClosed: closed, fills: true)]
 
         case .triangles:
+            // 読む順そのものの切り出しで足りる (並べ替えない)
             var built: [Primitive] = []
             built.reserveCapacity(outer.count / 3)
             for start in stride(from: 0, to: max(0, outer.count - 2), by: 3) {
                 built.append(
-                    Primitive(
-                        ring: [outer[start], outer[start + 1], outer[start + 2]],
-                        isClosed: true, fills: true))
+                    Primitive(ring: outer[start..<(start + 3)], isClosed: true, fills: true))
             }
             return built
 
@@ -468,43 +475,63 @@ extension Canvas {
             // **1 枚ずつ巻きを揃える** (帯の規約は OpenGL と同じ)。交互のまま出すと、
             // 隣り合う面の外積が打ち消し合って、書かれていない面の向きが求まらなくなる
             // (`placedVertices`)
-            var built: [Primitive] = []
-            built.reserveCapacity(max(0, outer.count - 2))
-            for start in 0..<max(0, outer.count - 2) {
-                let ring =
-                    start.isMultiple(of: 2)
-                    ? [outer[start], outer[start + 1], outer[start + 2]]
-                    : [outer[start + 1], outer[start], outer[start + 2]]
-                built.append(Primitive(ring: ring, isClosed: true, fills: true))
+            //
+            // 並べ替えた番号は 1 本の並びへ**全部積んでから**切り出す。積む途中で切り出すと、
+            // 切り出しが並びを参照している間の追記が並び全体の写しになる
+            let count = max(0, outer.count - 2)
+            var rings: [Int] = []
+            rings.reserveCapacity(count * 3)
+            for start in 0..<count {
+                if start.isMultiple(of: 2) {
+                    rings.append(outer[start])
+                    rings.append(outer[start + 1])
+                    rings.append(outer[start + 2])
+                } else {
+                    rings.append(outer[start + 1])
+                    rings.append(outer[start])
+                    rings.append(outer[start + 2])
+                }
             }
-            return built
+            return Self.triples(of: rings)
 
         case .triangleFan:
-            var built: [Primitive] = []
-            built.reserveCapacity(max(0, outer.count - 2))
+            // 帯と同じく、積み終えてから切り出す
+            var rings: [Int] = []
+            rings.reserveCapacity(max(0, outer.count - 2) * 3)
             for step in 1..<max(1, outer.count - 1) {
-                built.append(
-                    Primitive(
-                        ring: [outer[0], outer[step], outer[step + 1]], isClosed: true,
-                        fills: true))
+                rings.append(outer[0])
+                rings.append(outer[step])
+                rings.append(outer[step + 1])
             }
-            return built
+            return Self.triples(of: rings)
 
         case .lines:
             var built: [Primitive] = []
             built.reserveCapacity(outer.count / 2)
             for start in stride(from: 0, to: max(0, outer.count - 1), by: 2) {
                 built.append(
-                    Primitive(ring: [outer[start], outer[start + 1]], isClosed: false, fills: false))
+                    Primitive(ring: outer[start..<(start + 2)], isClosed: false, fills: false))
             }
             return built
 
         case .points:
             var built: [Primitive] = []
             built.reserveCapacity(outer.count)
-            for index in outer { built.append(Primitive(ring: [index], isClosed: false, fills: false)) }
+            for index in outer.indices {
+                built.append(Primitive(ring: outer[index..<(index + 1)], isClosed: false, fills: false))
+            }
             return built
         }
+    }
+
+    /// 3 つずつ並んだ番号を、塗る三角形の原始形の一覧へ切り出す。
+    private static func triples(of rings: [Int]) -> [Primitive] {
+        var built: [Primitive] = []
+        built.reserveCapacity(rings.count / 3)
+        for start in stride(from: 0, to: rings.count, by: 3) {
+            built.append(Primitive(ring: rings[start..<(start + 3)], isClosed: true, fills: true))
+        }
+        return built
     }
 
     /// 原始形を三角形へ分ける。返すのは頂点の番号の 3 つ組。
@@ -519,32 +546,41 @@ extension Canvas {
     /// 引き直すことになって逆に遅くなる。
     ///
     /// [#915]: https://github.com/mokume-metal/mokume/issues/915
-    private func fillTriangles(of primitive: Primitive, points: [BuildingVertex])
-        -> [(Int, Int, Int)]
-    {
-        guard primitive.fills, style.hasFill, primitive.ring.count >= 3 else { return [] }
-        guard let basis = flatBasis(of: primitive, points: points) else { return [] }
+    private func fillTriangles(
+        of primitive: Primitive, points: [BuildingVertex],
+        into triangles: inout [(Int, Int, Int)]
+    ) {
+        guard primitive.fills, style.hasFill, primitive.ring.count >= 3 else { return }
+        guard let basis = flatBasis(of: primitive, points: points) else { return }
         let merged: [Int]
         if primitive.holes.isEmpty {
-            merged = primitive.ring
+            let ring = primitive.ring
+            // **3 点なら分けるまでもない** ([#1781])。`Triangulation.triangulate` は 3 点に
+            // `(0, 1, 2)` を返すので、平らな座標を写さずに同じ答えを積む。潰れた三角形を
+            // 捨てる判定 (`flatBasis`) は上で済んでいる。`.triangles` などは三角形 1 枚が
+            // 原始形 1 つなので、この近道が形 1 つにつき三角形の数だけ効く
+            if ring.count == 3 {
+                pointScansThisFrame += 3
+                let first = ring.startIndex
+                triangles.append((ring[first], ring[first + 1], ring[first + 2]))
+                return
+            }
+            merged = Array(ring)
         } else {
             var all: [SIMD2<Float>] = []
             all.reserveCapacity(points.count)
             for point in points { all.append(basis.flatten(point.position)) }
             pointScansThisFrame += points.count
             merged = Triangulation.mergeHoles(
-                outer: primitive.ring, holes: primitive.holes, points: all)
+                outer: Array(primitive.ring), holes: primitive.holes, points: all)
         }
         pointScansThisFrame += merged.count
         var flattened: [SIMD2<Float>] = []
         flattened.reserveCapacity(merged.count)
         for index in merged { flattened.append(basis.flatten(points[index].position)) }
-        var triangles = Triangulation.triangulate(flattened)
-        for index in triangles.indices {
-            let (a, b, c) = triangles[index]
-            triangles[index] = (merged[a], merged[b], merged[c])
+        for (a, b, c) in Triangulation.triangulate(flattened) {
+            triangles.append((merged[a], merged[b], merged[c]))
         }
-        return triangles
     }
 
     /// 塗りが読み取り位置を持つか。**貼る絵を束ねているか、1 点でも書かれていれば持つ。**
@@ -612,9 +648,9 @@ extension Canvas {
         // 平らでない形で平面を取り違える
         var normal = SIMD3<Float>.zero
         let ring = primitive.ring
-        for index in ring.indices {
-            let a = points[ring[index]].position
-            let b = points[ring[(index + 1) % ring.count]].position
+        for offset in 0..<ring.count {
+            let a = points[ring[ring.startIndex + offset]].position
+            let b = points[ring[ring.startIndex + (offset + 1) % ring.count]].position
             normal += SIMD3(
                 (a.y - b.y) * (a.z + b.z),
                 (a.z - b.z) * (a.x + b.x),
@@ -717,7 +753,7 @@ extension Canvas {
     /// 選ばれて**貼った絵が消える**。しかも面の切り替えが列を閉じるので、形ごとに
     /// 列が割れて新しい二乗が生える。だから 2 つを別々に受け取る。
     private func emitFill(
-        _ triangles: [(Int, Int, Int)], points: [BuildingVertex], placed: [PlacedVertex],
+        _ triangles: ArraySlice<(Int, Int, Int)>, points: [BuildingVertex], placed: [PlacedVertex],
         readsUV: Bool, fallback: ((SIMD2<Float>) -> SIMD2<Float>)?
     ) {
         func uv(_ index: Int) -> SIMD2<Float>? {
@@ -766,12 +802,12 @@ extension Canvas {
     ) {
         strokeRing(primitive.ring, closed: primitive.isClosed, points: points, placed: placed)
         for hole in primitive.holes {
-            strokeRing(hole, closed: true, points: points, placed: placed)
+            strokeRing(hole[...], closed: true, points: points, placed: placed)
         }
     }
 
     private func strokeRing(
-        _ ring: [Int], closed: Bool, points: [BuildingVertex], placed: [PlacedVertex]
+        _ ring: ArraySlice<Int>, closed: Bool, points: [BuildingVertex], placed: [PlacedVertex]
     ) {
         guard !ring.isEmpty else { return }
         var curveSteps: [Bool] = []
