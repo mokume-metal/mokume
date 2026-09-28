@@ -88,7 +88,7 @@ SPDX-License-Identifier: MIT
 
 | 揃えないもの | 理由 |
 | --- | --- |
-| 描画の証跡 (`drawing-evidence`・`local-render`・描画 PR の順番待ち) | 絵を描くのは本体だけ ([ADR-0019](0019-drawing-verification.md)) |
+| 描画の証跡と検査 (`drawing-evidence`・専用機の `render`) | 絵を描くのは本体だけ ([ADR-0019](0019-drawing-verification.md)) |
 | merge queue | 合流後の姿を再検証する必要が、並走する PR の量から生じていない |
 | ルールセットのドリフト検査 | 見張る対象 (ルールセット) が第 2 段にある |
 | `changelog.d` とリリースの機構 | 版の出し方はパッケージごとに事情が違う (mokume-syphon は焼く・pin を張る・tag を打つを 1 回でやる必要がある) |

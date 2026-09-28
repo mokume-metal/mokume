@@ -16,7 +16,6 @@
 #                                     (ADR-0007 の不変条件を守る側)
 #   scripts/check-drawing-evidence.sh 描画のパスに触れているのに「触れていない」と読み、
 #                                     絵の証跡の要求が外れる (#306 が黙って効かなくなる)
-#   scripts/catch-up.sh               描画 PR を「触れない」と判定して断る
 #
 # **一覧そのものは GitHub が持ち、それを取る口はここ 1 つに保つ。** drawing-paths.sh が
 # 「一覧は drawing-paths.txt が持ち、読む照合はここ 1 つ」と書いているのと同じ形で、

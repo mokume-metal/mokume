@@ -5,12 +5,10 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release examples drawing-evidence render-status catch-up entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release examples drawing-evidence entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
-# **並行では走らせない** (#784)。的の並びには意味があり、-j を付けると壊れる
-# — render-status を最後に置いているのは「全部が通ったときだけ手元の実行を報告する」
-# ためで (下記)、並行に走れば落ちた検査があっても報告が出うる。swift の置き場
-# (.build/.lock) の取り合いも同時に避けられる。ci-check は駆動役が 1 段ずつ make を
+# **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
+# 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
 # 起こすので並びは構造的に守られるが (#1182)、段を手で並べて打つ場合はこれが守る
 .NOTPARALLEL:
 
@@ -35,15 +33,17 @@ setup: ## 開発ツールを確認する
 
 check: setup
 
-# ci-check が走らせる段の並び。render-status は**最後**に置く。全部が通ったときだけ
-# 「手元で走った」と報告するため (途中で落ちればそこで止まり、報告は行われない)
+# ci-check が走らせる段の並び。
 #
-# **この並びは「CI と同一」から 2 つだけ意図的にずれている。** drawing-evidence と
-# render-status は CI では必ず no-op になる — ci-check のジョブへ GH_TOKEN を持ち込まない
-# 設計 (.github/workflows/ci.yml の drawing-evidence ジョブの冒頭) のため両者が理由を
-# 述べて 0 で抜け、本物の判定は同じファイルの独立したジョブ (drawing-evidence /
-# render-signal) が持つ。ここに置いてあるのは手元のためである
-CI_CHECK_STEPS := build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence render-status
+# **この並びは「CI と同一」から 1 つだけ意図的にずれている。** drawing-evidence は CI では
+# 必ず no-op になる — ci-check のジョブへ GH_TOKEN を持ち込まない設計 (.github/workflows/ci.yml
+# の drawing-evidence ジョブの冒頭) のため理由を述べて 0 で抜け、本物の判定は同じファイルの
+# 独立したジョブ (drawing-evidence) が持つ。ここに置いてあるのは手元のためである
+#
+# **描画の検査は、ここでは GPU のある機械でだけ実際に走る。** merge の判定としては、
+# 専用機の描画ジョブ (.github/workflows/render.yml の render) が merge queue の合流後の木で
+# build と test を走らせる (ADR-0019 決定 7)
+CI_CHECK_STEPS := build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
@@ -168,8 +168,8 @@ SYMBOL_GRAPH_FLAGS := -Xswiftc -emit-symbol-graph \
 build:
 	swift build $(SYMBOL_GRAPH_FLAGS)
 
-# テストの記録を残す。何が走って何がスキップされたかを、手元の実行の報告
-# (local-render・#304) が読む。**この節は下の 2 つの入口 — debug の test と release の
+# テストの記録を残す。何が走って何がスキップされたかを、描画の検査が走ったかの判定
+# (gpu-ran・#878) が読む。**この節は下の 2 つの入口 — debug の test と release の
 # test-release — の両方に掛かる** (#1089)。
 #
 # **正本は console ではなく `--xunit-output` の XML である** (#1056)。swift-testing の
@@ -180,11 +180,11 @@ build:
 # 書く XML は同じ実行で全件を持っていたので、判定はそちらから読む。
 # `tee` の記録は残す — 人が実行中に読む先で、正本でなくなるだけである。
 #
-# **release の記録は別のファイルへ書く** (#1089)。同じ置き場へ書くと、`local-render` の
-# 判定が読む記録 (render-status.sh の RENDER_TEST_RECORD = 下の TEST_RECORD) を release の
+# **release の記録は別のファイルへ書く** (#1089)。同じ置き場へ書くと、debug の test の
+# 記録 (下の TEST_RECORD。gpu-ran や、落ちた回の scripts/test-vanished.sh が読む) を release の
 # 実行が上書きしうる — `make ci-check && make test-release` は計測のとき普通に起きる並びで、
-# そのとき**「手元で全検査が通った」の意味が変わる** (ci-check は debug で回るのに、報告が
-# 読む記録は release のものになる)。2 つとも要るのは、**release でしか走らない検査がある**
+# そのとき**記録が表す実行が変わる** (ci-check は debug で回るのに、読む記録は release の
+# ものになる)。2 つとも要るのは、**release でしか走らない検査がある**
 # からである (ShapeTests の `.enabled(if: !isDebugBuild)`)。
 #
 # **Metal の検証レイヤを有効にして走らせる** (#351)。新しい検査を足さず既存の責務を
@@ -205,8 +205,8 @@ build:
 # `CI=` を渡して、手元と同じく有効にする (ADR-0019 決定 7・#878)
 METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=nslog)
 
-# 記録の綴りは render-status.sh の RENDER_TEST_RECORD と揃える。SwiftPM は渡した名前の
-# 末尾に検査ライブラリの名前を挟むので、こちらが渡すのは接尾辞の付く前の名前である
+# 記録の綴り。SwiftPM は渡した名前の末尾に検査ライブラリの名前を挟むので、こちらが
+# 渡すのは接尾辞の付く前の名前である
 TEST_RECORD_BASE := .build/test-results.xml
 TEST_RECORD := .build/test-results-swift-testing.xml
 
@@ -238,7 +238,7 @@ test:
 		|| { code=$$?; bash scripts/test-vanished.sh $$code $(TEST_RECORD) .build/test-log.txt .build/test-started; exit $$code; }
 	@test -s $(TEST_RECORD) || { \
 		echo "記録が出来ていない ($(TEST_RECORD))。SwiftPM が --xunit-output の綴りを"; \
-		echo "変えた可能性がある — render-status.sh の RENDER_TEST_RECORD と併せて直す"; \
+		echo "変えた可能性がある — 下の gpu-ran と scripts/test-vanished.sh の読み手と併せて直す"; \
 		exit 1; }
 
 # 描画の検査が実際に走ったかを、test の記録から確かめる (#878)。専用機の描画ジョブ
@@ -286,32 +286,6 @@ test-release: ## release でテストを回す (性能の計測用。ci-check �
 # 理由を述べて 0 で抜ける (PR を出した後の実行から効くようになる)
 drawing-evidence:
 	bash scripts/check-drawing-evidence.sh
-
-# 描画の検査が走ったことを commit status として報告する (#304)。CI から呼ばれても
-# 認証が無いので何もしない。報告しない理由を述べて必ず 0 で終える
-render-status:
-	bash scripts/render-status.sh local
-
-# merge queue から弾かれた描画 PR を queue へ戻す (#457)。取り込み → 検査 → push →
-# 報告 → 戻す の 5 手を 1 手にする。**打つ意味が無いときは走らない** (描画に触れない
-# PR・先に描画 PR が居る場合) ので、順番待ちの数分を無駄にしない
-#
-# **3 (打つ意味が無い = 待つのが正解) はここで成功に均す** (#786)。スクリプトは 3 と 1 を
-# 分けて返す契約を持つが、その区別を要るのは終了コードを読む呼び手だけで、`make catch-up`
-# を打つ人が受け取るのは赤いエラーか否かの 1 ビットである。素で呼ぶと「先に描画 PR が
-# 居るので待て」という正常な結果が `Error 3` として出て、**このスクリプトが最も避けたかった
-# 取り違えが、いちばん使われる入口で起きる**。契約は他の呼び手のために保ち、「3 は成功
-# として扱う」の表明はこちらに置く。1 (途中で止まった) は従来どおり赤くする
-#
-# **3 以外は、スクリプトの終了コードをそのまま返して名乗る** (#867)。`|| [ $? -eq 3 ]` で
-# 済ませていた頃は 3 以外が全部 `Error 1` に潰れ、止まったときに何で止まったのか
-# (1 = 途中で止まった / 64 = 使い方の誤り / それ以外 = 中で叩いた何かの失敗) を読めなかった。
-# 起票者が出力から「exit 2」と読み違えたのもこれが原因である
-# **PR=<番号> を渡すと代打ちになる** (#967)。持ち主のセッションが居ない描画 PR を、
-# origin/<相手の枝> から切った木で覆い直せる (作り方は scripts/catch-up.sh の冒頭)
-catch-up: ## 弾かれた描画 PR を、合流後の姿を覆い直して merge queue へ戻す (PR=<番号> で代打ち)
-	bash scripts/catch-up.sh $(if $(PR),--pr $(PR)) || { code=$$?; [ $$code -eq 3 ] && exit 0; \
-	  echo "catch-up: scripts/catch-up.sh が終了コード $$code で止まった" >&2; exit $$code; }
 
 # 説明文の中の例が、実際にコンパイルできるかを見る (#479)。腐った例は説明が無いより
 # 悪い — 読者はそれを写して、通らない理由を自分の側に探す。

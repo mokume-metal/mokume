@@ -42,8 +42,8 @@ import simd
 /// - **組み込みの計算 (粒) の束ね先** — 番号は `compute(_:over:reads:writes:)` に渡す並びで
 ///   決まり、名前の付いた定数が無い。並びを入れ替えると `ParticleTests` が赤くなる
 ///   (#735 で測った)。ここが見るのは、粒の組み立てに入る `SolidInstance` の写しの並びだけ
-/// - **GPU の無い機械**。そこでは suite ごと飛ぶ。`Sources/MokumeCore/` に触る PR は手元の
-///   `make ci-check` (`local-render`) を通らないと merge できないので、触った PR では走る
+/// - **GPU の無い機械**。そこでは suite ごと飛ぶ。merge queue では専用機の `render` が走らせる
+///   ので (ADR-0019 決定 7)、どの PR も merge の前に走る
 ///
 /// [#735]: https://github.com/mokume-metal/mokume/issues/735
 @Suite(

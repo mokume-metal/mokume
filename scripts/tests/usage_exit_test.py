@@ -36,7 +36,6 @@ SCRIPTS = REPO / "scripts"
 # **フックの口 (capture / guard) は入れない** — あちらは stdin を待ち、差し戻しを 2 で
 # 表す。usage の誤りとは別の話である
 CLI_USAGE = {
-    "render-status.sh": ["no-such-mode"],
     "check-rulesets.sh": ["--no-such-flag"],
     "apply-rulesets.sh": ["--no-such-flag"],
     "sub-issue.sh": ["1", "題", "--no-such-flag"],

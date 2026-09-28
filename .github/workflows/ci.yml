@@ -92,9 +92,9 @@ jobs:
   # **誰からも参照されない internal 型では落ちない** (#1096 で実測)。落ちるのは取り込み側が
   # module を deserialize するときに既定隔離を見失う場合だけで、取り込む側が要るためである。
   #
-  # **GPU を要する検査はここでも走らない。** CI の GPU はこの世代のコマンド構造を持たないので、
-  # RenderDevice.isAvailable を条件に持つ Suite は debug と同じくスキップされる (ADR-0019
-  # 決定 7)。2 つ目で届くのは GPU を要さない release 専用の検査だけで、#1086 の赤そのもの
+  # **GPU を要する検査はここでも走らない。** GitHub ホストのランナーの GPU はこの世代の
+  # コマンド構造を持たないので、RenderDevice.isAvailable を条件に持つ Suite は debug と同じく
+  # スキップされる (debug の描画の検査は、専用機の render.yml が走らせる。ADR-0019 決定 7)。2 つ目で届くのは GPU を要さない release 専用の検査だけで、#1086 の赤そのもの
   # (ShapeTests の速さ = GPU が要る) はここでは捕まらない。手元で make test-release を打つ
   # 理由はそのぶん残る。
   #
@@ -160,48 +160,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/review-gate.sh "${{ github.event.pull_request.number }}"
 
-  # 描画を要する検査は、この世代のコマンド構造を持たない GPU の上では 1 本も走らない
-  # (#180・ADR-0019 決定 7)。走ったことは **手元の make ci-check** が local-render
-  # として報告する (#304)。このジョブが打つのは「手元の報告が要らない」場合だけで、
-  # 描画に触れている PR には**何も打たない** — 打たないことがそのまま待ちになる。
-  #
-  # merge queue では、手元の報告が**合流後の姿を覆っているか**を判定する (#435)。
-  # 覆っていなければ local-render を failure で打ち、queue から外す。GPU は要らない
-  # — 木の中身 (path と blob の並び) を突き合わせるだけである。
-  render-signal:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      statuses: write
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@v7
-      - name: local-render を代理で報告する
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          MERGE_GROUP_SHA: ${{ github.event.merge_group.head_sha }}
-          # gh-readonly-queue/<base>/pr-<番号>-<base sha>。積まれた PR を読む口 (#435)
-          MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bash scripts/render-status.sh proxy
-
   # 描画に触れる PR に**絵が載っていること**を要求する (#306)。
   #
-  # CI は絵を描けない (#180・ADR-0019 決定 7) ので、新しい絵が正しいかの担い手は
-  # 人間と AI の目である (ADR-0019 決定 1)。目に見せるものが無ければ担い手は働けず、
+  # 機械が見られるのは触っていない絵の退行だけで (専用機の render.yml・ADR-0019 決定 7)、
+  # 新しい絵が正しいかの担い手は人間と AI の目である (ADR-0019 決定 1)。目に見せるものが無ければ担い手は働けず、
   # squash merge でブランチが消えた後には絵を足せない。それまで担保していたのは
   # PR テンプレートのコメント 1 行だけで、抜けたときに気付く経路が無かった。
   #
-  # **GPU は要らない** — 変更ファイルの一覧と本文の文字列しか見ないので、上の
-  # render-signal (手元の実行を待つ) とは独立に置ける。
+  # **GPU は要らない** — 変更ファイルの一覧と本文の文字列しか見ない。
   #
-  # **ci-check ジョブには相乗りさせない。** あのジョブへ GH_TOKEN を持ち込むと、
-  # render-status.sh が「CI からここへ来ても認証が無いのでここで止まる」と宣言して
-  # いる前提 (#304) を崩し、CI が local-render を打てる状態になる。
+  # **ci-check ジョブには相乗りさせない。** あのジョブは PR の中の任意のコード
+  # (Makefile・検査) を走らせるので、GH_TOKEN を持ち込まない。
   #
   # 本文を編集しても逃がしラベルを付け外ししても自動で再評価される
   # (on.pull_request.types に edited / labeled / unlabeled が入っている)。
@@ -226,8 +195,10 @@ jobs:
   #
   # かつてはもう 1 つ human-approval があり、「人の操作を待っているか」を別の名前で
   # 表していた (混ぜると監視が承認待ちを故障と誤検出する — #111)。ADR-0031 が
-  # ラベル由来の承認を畳んで待つ状態そのものが無くなったので、必須チェックは
-  # ci-gate と local-render の 2 本になった (#618)。
+  # ラベル由来の承認を畳んで待つ状態そのものが無くなった (#618)。必須チェックは、
+  # この ci-gate と、専用機の描画ジョブ render (render.yml・#878) の 2 本である。
+  # 手元の実行の報告 local-render は、render が合流後の木を直接描くようになって畳んだ
+  # (#879)。
   ci-gate:
     if: always()
     needs: [ci-check, test-release, pr-title, review-gate, drawing-evidence]

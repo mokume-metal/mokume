@@ -167,8 +167,6 @@ class OneWayOnlyTest(unittest.TestCase):
         for name in (
             "review-gate.sh",
             "check-drawing-evidence.sh",
-            "catch-up.sh",
-            "render-status.sh",
         ):
             with self.subTest(reader=name):
                 text = (SCRIPTS / name).read_text(encoding="utf-8")

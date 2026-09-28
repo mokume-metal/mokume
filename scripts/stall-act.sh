@@ -36,7 +36,7 @@
 #
 # 除外が要るのは「**凍結されたイベントペイロードの可変な欄** (title / body / labels) を
 # 読むジョブ」である。番号や sha は run の中で変わらないので、それだけを受け取る
-# ジョブ (review-gate / drawing-evidence / render-signal) は rerun して安全である —
+# ジョブ (review-gate / drawing-evidence) は rerun して安全である —
 # 本文は GH_TOKEN で都度取り直すからである。
 #
 # いま当てはまるのは pr-title 1 本だけだが、**同じ形のジョブが増えたらここへ足さないと

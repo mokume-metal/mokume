@@ -240,7 +240,7 @@ class TemplateMaintenanceTest(unittest.TestCase):
     その保守は `.git/objects/maintenance.lock` を作って消す。雛形を写している最中に
     それが消えると、列挙したファイルを開けない `shutil.copytree` が `shutil.Error` を
     投げる — 968 件のうち 1 件が「消えたファイルを写せなかった」で落ち、hooks-test が
-    そこで止まって `local-render` が打たれなくなる (描画に触れる PR が merge できない)。
+    そこで止まる (当時は `local-render` が打たれず、描画に触れる PR が merge できなかった)。
     雛形を書き換える存在は背後の保守だけなので、**雛形の側で止める**。
 
     見るのは設定の綴りではなく**振る舞い**。設定を読み返す形だと、キーを書き間違えた

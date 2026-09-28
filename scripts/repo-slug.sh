@@ -20,8 +20,8 @@
 #
 # ## ここに無いもの
 #
-# **「gh はどこへ送るか」は別の問いである。** `catch-up.sh` が `gh repo view --json
-# nameWithOwner` を使うのはそちらで、`gh repo set-default` や base-repo の解決を含む。
+# **「gh はどこへ送るか」は別の問いである。** 答えるのは `gh repo view --json
+# nameWithOwner` で、`gh repo set-default` や base-repo の解決を含む。
 # 下の repo_of_dir は「origin は何を指すか」だけを答え、ローカルパスの remote は
 # 意図的に拒む — 寄せると、origin が手元の bare である環境で解けなくなる。
 #

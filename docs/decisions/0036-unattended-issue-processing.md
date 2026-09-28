@@ -74,7 +74,7 @@ PR の流れは、もう人を待っていない。直近 60 件の merge 済み
 
 判定と実行をスクリプトごと分けるのは `scripts/stall-watch.sh` と `scripts/stall-act.sh` を分けたのと同じ理由で、**判定する側が実行して文脈を汚さないため**である。判定は読み取りしかしないので、手元でいつ打っても安全である。
 
-**起床と子セッションの起動は、このリポジトリの外に残る。** [ADR-0017](0017-agent-support-locality.md) 決定 1 の改訂が外に残すと認めた 2 類型のうち、「守る場面がこのリポジトリの外にあるもの」に当たる — どのリポジトリにも属さない場所で走るからである。**手元の Mac である理由は選択ではなく制約で**、描画 PR は `local-render` の commit status と Gyazo の証跡を要し、どちらも Metal と窓を要求する ([#180](https://github.com/mokume-metal/mokume/issues/180))。
+**起床と子セッションの起動は、このリポジトリの外に残る。** [ADR-0017](0017-agent-support-locality.md) 決定 1 の改訂が外に残すと認めた 2 類型のうち、「守る場面がこのリポジトリの外にあるもの」に当たる — どのリポジトリにも属さない場所で走るからである。**手元の Mac である理由は選択ではなく制約で**、描画 PR は Gyazo の証跡を要し、それは Metal と窓を要求する ([#180](https://github.com/mokume-metal/mokume/issues/180))。当初は `local-render` の commit status も手元で打つ必要があったが、専用機が merge queue で描画を見るようになって畳んだ ([ADR-0019](0019-drawing-verification.md) 決定 7・[#879](https://github.com/mokume-metal/mokume/issues/879))。
 
 ### 2. トリアージ済みの Issue への着手は、プランを投稿して進む
 
@@ -129,6 +129,8 @@ PR の流れは、もう人を待っていない。直近 60 件の merge 済み
 ### 4. レーンの確保は、着手時ではなくプラン確定時
 
 `scripts/drawing-paths.txt` が持つのは**ファイルの一覧**で、Issue はどのファイルを触るか宣言していない。着手時のレーン判定は必ず見込みになり、外すと「描画 PR が 2 本並走 → `#N の merge を待つ` で赤 → `make catch-up` の空費」という、レーンで避けたかった事象がそのまま起きる ([#497](https://github.com/mokume-metal/mokume/issues/497))。
+
+> **この事象はもう起きない。** 描画 PR を 1 本ずつ入れていた覆いの機構は、専用機が merge queue の合流後の木を直接描くようになって畳んだ ([#879](https://github.com/mokume-metal/mokume/issues/879))。描画レーンの制限を残すかは [#1769](https://github.com/mokume-metal/mokume/issues/1769) で決める。それまでは、この決定のままレーンを確保する。
 
 子セッションはプランの「変更点」を出す時点で触るファイルが分かるので、そこで `scripts/drawing-paths.sh` に照らして自己申告し、**描画レーンが埋まっていたら実装前に降りる** (`status: in progress` を外して終了する)。降りるのは実装前なので、捨てるものが少ない。
 

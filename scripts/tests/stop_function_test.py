@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: MIT
 """止まるときに「次にすること」を名乗る関数の作法を見る (#864)。
 
-`scripts/` には同じ形の停止関数が 3 本ある (`catch-up.sh` の `stop`・
-`gh-app-token.sh` と `review-gate.sh` の `fail`)。**これは畳まない** — 割れても変わるのは
+`scripts/` には同じ形の停止関数が 2 本ある (`gh-app-token.sh` と `review-gate.sh` の
+`fail`。以前は `catch-up.sh` の `stop` もあったが、#879 でスクリプトごと畳んだ)。**これは畳まない** — 割れても変わるのは
 出力の文面だけで、しかも終了コードは呼び出し側の契約である
 ([ADR-0008](../../docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 6)。
 

@@ -13,8 +13,7 @@
 #
 # 以前は AGENTS.md が持っていた (#1364 でここへ移した)。行番号は下の「分類」が指す。
 #
-#   1. autoMerge: true + UNKNOWN で **check が 1 本も付かない** (local-render のような
-#      手元の commit status を除く)
+#   1. autoMerge: true + UNKNOWN で **check が 1 本も付かない**
 #      原因: main と衝突していて合流後の木が作れず、pull_request の workflow が起動して
 #      いない (#694)。衝突しても赤くならず DIRTY にもならない — 「まだ来ていない」では
 #      なく「来ない」(#690)
@@ -30,8 +29,10 @@
 #      原因: 止まっていない — 予約が queue へ移ると autoMergeRequest は null になる (#628)
 #      対処: 何も打たない
 #   5. 同じ 3 つで isInMergeQueue: false
-#      原因: 描画 PR が merge queue から弾かれ、auto-merge も一緒に外れた (eject の副作用)
-#      対処: make catch-up
+#      原因: merge queue の合流後の木で必須チェック (ci-gate か、専用機の render) が落ちて
+#      弾かれ、auto-merge も一緒に外れた (eject の副作用)
+#      対処: 弾いた merge_group の run を読む。一過性か main 側で直ったなら予約を掛け直す
+#      (当番は auto-merge-dropped として掛け直す)。PR 側で直すものなら直して push する
 #   6. pr-title が落ちた
 #      原因: タイトルが Conventional Commits ではない (design は Issue Type であって型ではない)
 #      対処: タイトルを直す。**rerun しない** — pull_request の rerun は元のイベントを再生する
@@ -47,7 +48,7 @@
 # 読むときの注意:
 #
 # - **autoMerge: false は「外れた」と「queue に入った」の両方を指す** (#628)。分けるのは
-#   isInMergeQueue の 1 欄だけで、gh pr view --json に無い — make catch-up の前にこれを見る:
+#   isInMergeQueue の 1 欄だけで、gh pr view --json に無い — 掛け直す前にこれを見る:
 #     gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullRequest(number:<番号>){isInMergeQueue mergeQueueEntry{position state}}}}' --jq '.data.repository.pullRequest'
 # - 承認の要否は reviewDecision には現れないので mergeStateStatus を見る (承認待ちなら
 #   BLOCKED・承認されると CLEAN)。**CLEAN だけでは「承認された」と読めない** — 承認の
@@ -58,7 +59,7 @@
 # 止まったままになる (#840 は 2 時間 47 分・#690 は 45 分)。
 #
 # 詰まりは *何かが起きること* ではなく ***何も起きないこと*** なので、pull_request や
-# merge_group を契機に走る既存の機構 (review-gate / render-status / drawing-evidence)
+# merge_group を契機に走る既存の機構 (review-gate / drawing-evidence / render)
 # では原理的に捕まえられない。時計を持つ機構が要る、というのがこのスクリプトの理由で
 # ある。
 #
@@ -73,13 +74,12 @@
 #
 #   分類                 別     表の行  なぜその別か
 #   bad-title            name   6       タイトルの修正は人手。**rerun を打つと悪化する**
-#   ejected              name   5       make catch-up は手元で絵を回す必要がある
 #   conflict             name   1       衝突の解消は人手
 #   in-queue             quiet  4       止まっていない (queue が進めている)
 #   stale-checks         act    3・7    古い失敗 check を打ち直す。冪等
 #   dismissed-approval   name   8       Approve は人の操作。機械には打てない
 #   awaiting-approval    quiet  2       承認待ちは正常な状態
-#   auto-merge-dropped   act    2       予約を掛け直すだけ。ゲートは飛び越えない
+#   auto-merge-dropped   act    2・5    予約を掛け直すだけ。ゲートは飛び越えない
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
 #
 # **unreadable は表の行を持たない。** PR そのものか変更ファイルの一覧が読めなかった回で、
@@ -150,15 +150,6 @@ set -euo pipefail
 # 「承認が要るパスに触れているか」— BLOCKED の 2 つの意味を分けるのに使う
 # shellcheck source=scripts/protected-paths.sh
 . "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
-# 「描画に触れているか」— ejected の説明で先頭かどうかを言うのに使う
-# shellcheck source=scripts/drawing-paths.sh
-. "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
-# 描画 PR の順番の判定。**自分で drawing-paths.sh を読み込まない**ので読み手が並べる
-# shellcheck source=scripts/drawing-queue.sh
-. "$(dirname "${BASH_SOURCE[0]}")/drawing-queue.sh"
-# 手元の実行の報告の綴りと、それが failure かの判定 (#785・#1045)
-# shellcheck source=scripts/render-context.sh
-. "$(dirname "${BASH_SOURCE[0]}")/render-context.sh"
 
 REPO="$(this_repo)"
 
@@ -271,10 +262,9 @@ say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
 
 # --- 走査 -------------------------------------------------------------------
 
-# Draft は当番の対象外である。**作業中の PR を Draft にしておくのが opt-out** で、
-# それは描画 PR の順番待ち (scripts/render-status.sh) が既に採っている形と同じ。
+# Draft は当番の対象外である。**作業中の PR を Draft にしておくのが opt-out** である。
 # **fork からの PR も見ない** (#1361)。予約を掛けるかは引き取るメンテナが決める —
-# 当番が掛けると、メンテナが手元で local-render を打った瞬間に判断なしで入る
+# 当番が掛けると、メンテナが引き取ると判断する前に queue へ入りうる
 numbers=$(gh pr list --repo "$REPO" --state open --limit 100 \
   --json number,isDraft,isCrossRepository \
   --jq '.[] | select((.isDraft or .isCrossRepository) | not) | .number') || {
@@ -300,31 +290,13 @@ for n in $numbers; do
   checks=$(normalize_checks <<<"$json")
   failing=$(failing_names <<<"$checks")
   failed_at=$(newest_failure_at <<<"$checks")
-  # 手元の commit status は「check が付いていない」の数に入れない (読み分け表の行 1)
-  others=$(jq -r --arg r "$RENDER_CONTEXT" '[.[] | select(.name != $r)] | length' <<<"$checks")
+  others=$(jq -r 'length' <<<"$checks")
 
   # 名乗る行を先に判定する。順序の理由は冒頭の「順序に意味がある」
   if contains_name "$failing" pr-title; then
     mins=$(minutes_since "${failed_at:-$updated}")
     say_line "$n" bad-title name "$mins" \
       "タイトルが Conventional Commits でない — 直す (rerun は打たない・#699)"
-    [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
-    continue
-  fi
-
-  # 判定の実体は render-context.sh の 1 つ。手元の ready-queue.sh も同じものを読む (#1045)
-  if render_failed <<<"$json"; then
-    mins=$(minutes_since "${failed_at:-$updated}")
-    ahead=$(ahead_drawing_pr "$REPO" "$n" 2>/dev/null || echo '?')
-    case "$ahead" in
-      '' | draft) note="自分が先頭 — 手元で make catch-up を打つ" ;;
-      '?') note="先に居る描画 PR を読めなかった (手元で make catch-up を試す)" ;;
-      # **先頭の行を見る。** この PR にできることは無いが、先頭が予約を落としている
-      # だけなら掛け直せば入る (#1060)。先頭も open なのでこの走査に載っており、
-      # auto-merge-dropped / in-queue / awaiting-approval のどれかを名乗っている
-      *) note="先に #$ahead が居る — この PR では打てない。#$ahead の行を見る" ;;
-    esac
-    say_line "$n" ejected name "$mins" "$note"
     [ "$mins" -lt "$STALL_MINUTES" ] || overdue=1
     continue
   fi

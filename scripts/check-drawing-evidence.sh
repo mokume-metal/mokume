@@ -91,7 +91,7 @@ number=$(jq -r '.number' <<<"$pr_json")
 pr_paths=$(pr_files "$REPO" "$number") \
   || give_up "PR #$number の変更ファイルを読めなかった"
 
-if ! printf '%s\n' "$pr_paths" | touches_drawing evidence; then
+if ! printf '%s\n' "$pr_paths" | touches_drawing; then
   say "描画に触れていない PR — 絵は要らない"
   exit 0
 fi

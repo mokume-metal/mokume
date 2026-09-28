@@ -98,7 +98,7 @@ SPDX-License-Identifier: MIT
 ## 影響
 
 - **文言に依存している検査 118 件が英語の綴りへ動く。** 内訳は `Tests/MokumeCLITests/` が 101、`Tests/MokumeCoreTests/` が 24 (うち偽陽性 7)
-- **`scripts/check-param-declarations.sh` が `grep -qF` で握っている 2 つの綴りは、macro の診断と同じ PR で動かす。** 順序を違えると `make ci-check` が落ち、`local-render` が打たれず**描画 PR が merge できなくなる**
+- **`scripts/check-param-declarations.sh` が `grep -qF` で握っている 2 つの綴りは、macro の診断と同じ PR で動かす。** 順序を違えると `make ci-check` と専用機の `render` が落ち、**描画 PR が merge できなくなる**
 - `README.md`・[ADR-0029](0029-post-run-surfaces.md)・`changelog.d/` 4 本に転写された `doctor` の出力例が動く。**断片は消さない** (リリースノートの材料なので中身だけ直す)
 - `Sources/MokumeCore/` は `scripts/drawing-paths.txt` に載っているので、Core の文言を触る変更は描画 PR として扱われる。窓に描かれる文言 (速さの名乗り・メニューバー) は**実際に絵が動く**ので証跡が要り、標準エラーだけに出る文言は `no-visual-change` になる
 - ADR-0027 決定 4 の側にも線を書く (決定 2 が課した「なぜ違うかは両方の場所に書く」の条件)
