@@ -587,7 +587,9 @@ nonisolated extension Character {
     ///
     /// [#1540]: https://github.com/mokume-metal/mokume/issues/1540
     var isBreakingSpace: Bool {
-        isWhitespace && !unicodeScalars.contains { Self.noBreakSpaces.contains($0) }
+        // 改行しない空白はどれも ASCII の外なので、ASCII の字は空白かどうかだけで決まる
+        if asciiValue != nil { return isWhitespaceQuickly }
+        return isWhitespace && !unicodeScalars.contains { Self.noBreakSpaces.contains($0) }
     }
 
     /// 改行しない空白。

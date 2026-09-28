@@ -73,7 +73,7 @@ nonisolated enum ModelFile {
         var skipped = 0
 
         for line in text.lines {
-            let fields = line.split(whereSeparator: \.isWhitespace)
+            let fields = line.split(whereSeparator: \.isWhitespaceQuickly)
             guard let keyword = fields.first else { continue }
             let values = fields.dropFirst()
             switch keyword {
