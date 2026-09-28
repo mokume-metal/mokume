@@ -12,7 +12,7 @@
 #     その版の機械で、os= の版はすべての行でそろえる。OS を上げたらまとめて採り直す
 #   - 行に os= を足す・外すと、その行の採り方 (字形を置くか) が変わる
 
-shapes dd81d4132734fc413ebd901ccd121ad884a0e4e536aaddbb41a8bb0f5ccbd080
+shapes 0000000000000000000000000000000000000000000000000000000000000000
 transforms b91eb19a6b7ff7e4bdc3bf28429d6ca88eeda5d9f4bb24466ad0a40a6ab71228
 strokes ea4229a6bf5f5b347f292e08356c754990ecd9a1cbb31a003420ed93cd572aaf
 primitives fa93987412419d59c3d6aa33947d1416a96fe72fb9cb5cfe9daaa41af03fa1c2
