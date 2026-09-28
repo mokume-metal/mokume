@@ -128,11 +128,18 @@ final class FrameTiming {
         self.previous = start
     }
 
-    /// フレームを 1 つ進め、時刻を更新する。
-    func advance() {
+    /// フレームを1つ進め、時刻を更新する。指定秒があればこの枚だけ経過を0にする。
+    /// 次の枚は元の時計へ戻り、実時計の経過も指定秒との差にはしない。
+    func advance(at requestedTime: Float? = nil) {
         let now = now()
         frameCount += 1
         defer { stepsOneFrame = false }
+        if let requestedTime {
+            time = requestedTime
+            step = .seconds(0)
+            previous = now
+            return
+        }
         switch clock {
         case .wallClock:
             let elapsed = now - started

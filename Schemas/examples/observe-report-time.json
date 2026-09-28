@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "id": "8f2b1c",
+  "id": "same-scene-3",
   "image": "frame-000.png",
   "frame": 128,
-  "time": 2.1333333333333333,
+  "time": 3,
   "size": {
     "width": 800,
     "height": 600
@@ -60,44 +60,8 @@
     {
       "image": "frame-000.png",
       "frame": 128,
-      "time": 2.1333333333333333,
-      "stats": {
-        "meanColor": [
-          0.12,
-          0.13,
-          0.16
-        ],
-        "meanLuminance": 0.129,
-        "contentFraction": 0.08,
-        "contentBounds": {
-          "x": 0.4,
-          "y": 0.35,
-          "width": 0.22,
-          "height": 0.3
-        },
-        "sampleGrid": {
-          "width": 64,
-          "height": 48
-        }
-      },
-      "values": {
-        "angle": {
-          "type": "float",
-          "value": 1.047
-        },
-        "count": {
-          "type": "int",
-          "value": 12
-        },
-        "phase": {
-          "type": "string",
-          "value": "settling"
-        },
-        "paused": {
-          "type": "bool",
-          "value": false
-        }
-      }
+      "time": 3
     }
-  ]
+  ],
+  "appliedTime": 3
 }

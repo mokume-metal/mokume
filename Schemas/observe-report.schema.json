@@ -16,7 +16,7 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "const": 1,
+      "const": 2,
       "description": "The version of this reply's format. How it is raised is ADR-0018 decision 5."
     },
     "id": {
@@ -163,6 +163,12 @@
           }
         }
       }
+    },
+    "appliedTime": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 3.4028234663852886e+38,
+      "description": "Present only when a requested time was applied AND the single image was captured successfully. Equals the Float-rounded request time, the top-level time and frames[0].time. Absence is never a successful time-specific observation, even if an older writer returns an image at a coincidentally equal time."
     }
   },
   "$defs": {
@@ -278,5 +284,25 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "appliedTime"
+        ]
+      },
+      "then": {
+        "required": [
+          "image"
+        ],
+        "properties": {
+          "frames": {
+            "minItems": 1,
+            "maxItems": 1
+          }
+        }
+      }
+    }
+  ]
 }

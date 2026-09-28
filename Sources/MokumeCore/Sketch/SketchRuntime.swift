@@ -47,6 +47,8 @@ public final class SketchRuntime {
     private(set) var isLooping = true
     /// 止まっている間に 1 枚だけ描き直すよう頼まれているか (``redraw()``)。
     private var redrawRequested = false
+    /// 指定時刻の1枚の最中は連続録画を始めない。通常の時刻へ戻るので順序を保証できない。
+    private var observingAtTime = false
 
     /// 登録された出口。**宣言順**に呼ぶ ([ADR-0024] 決定 4)。
     ///
@@ -437,7 +439,29 @@ public final class SketchRuntime {
         // 駆動源の側で止めないのは、3 本のどれを止め忘れても同じ穴になるためである
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
+        let observation = capture == nil ? observer?.pendingRequest() : nil
+        var requestedTime: Float?
+        if let observation, observation.time != nil, let observer {
+            var refusal = observation.timeWarning
+            if isPaused { refusal = "Cannot draw at a specified time while externally paused" }
+            if closingRecorder != nil { refusal = "Cannot draw at a specified time while recording is closing" }
+            if refusal == nil {
+                start() // setupが録画を始める場合も、指定の絵を描く前に断る。
+                if recorder?.isRecording == true {
+                    refusal = "Cannot draw at a specified time while recording"
+                }
+            }
+            if let refusal {
+                observer.clearProducts()
+                finish(id: observation.id, through: observer, frames: [], complete: false, warnings: [refusal])
+                return
+            }
+            requestedTime = Float(observation.time!)
+        }
         guard closingRecorder == nil else { return }
+        observingAtTime = requestedTime != nil
+        let keepStopped = observingAtTime && !isLooping
+        defer { observingAtTime = false }
         isAdvancingFrame = true
         defer {
             isAdvancingFrame = false
@@ -445,17 +469,17 @@ public final class SketchRuntime {
         }
         guard !isPaused else {
             settleWithoutAnotherFrame()
-            serveObservationIfRequested()
+            serveObservationIfRequested(request: observation)
             return
         }
         // **作者が止めている間も入力は配る** (``deliverWhileStopped()``)。配ったコールバックが
         // `loop()` か `redraw()` を呼べば、このフレームで描く
         var deliveredInput = false
-        if !isLooping {
+        if !isLooping, requestedTime == nil {
             if !redrawRequested {
                 guard deliverWhileStopped() else {
                     settleWithoutAnotherFrame()
-                    serveObservationIfRequested()
+                    serveObservationIfRequested(request: observation)
                     return
                 }
                 deliveredInput = true
@@ -469,13 +493,14 @@ public final class SketchRuntime {
         }
         var drawFailure: RenderFailure?
         do {
-            try drawSketchFrame(deliveredInput: deliveredInput)
+            try drawSketchFrame(deliveredInput: deliveredInput, at: requestedTime)
         } catch {
             drawFailure = error
         }
         // **落とすのは描いた後。** `draw()` の中で呼ばれた `redraw()` を次のフレームへ
         // 持ち越すと、止めたはずのスケッチが回り続ける (手本も draw の中では効かない)
         redrawRequested = false
+        if keepStopped { isLooping = false }
         // **配ってから組む。** 配るのは前のフレームで組んだ絵で、待つ番号もそれなので、
         // ここまでの CPU の仕事が前のフレームの GPU と重なる (#927)
         if drawFailure == nil { deliverPendingToOutlets() }
@@ -487,14 +512,14 @@ public final class SketchRuntime {
         // 次のフレームの CPU と重ねるためなので、次が来ないなら遅らせる意味が無い (#1300)。
         // ここでの `redrawRequested` は上で落としてあるので、残る理由は作者の `noLoop()` である
         if !isLooping { settleWithoutAnotherFrame() }
-        serveObservationIfRequested(drawFailure: drawFailure)
+        serveObservationIfRequested(request: observation, drawFailure: drawFailure, appliedTime: requestedTime)
         if let drawFailure { throw drawFailure }
     }
 
     /// フレームを 1 枚描く手順。**正本はここ 1 つ。**
     ///
     /// 通常のフレーム (``runFrame()``) と、観測がまだ 1 枚も描いていないスケッチを
-    /// 叩いたときの 1 枚 (``serveObservationIfRequested(drawFailure:)``) が、同じここを
+    /// 叩いたときの 1 枚 (``serveObservationIfRequested(request:drawFailure:appliedTime:)``) が、同じここを
     /// 通る。**かつては 2 か所に書かれており、観測の側だけが腐っていた** — 入り口の
     /// 供給と面への時刻の受け渡しが落ちていて、しかも窓で走らせている限り再現しな
     /// かった ([#808](https://github.com/mokume-metal/mokume/issues/808))。
@@ -504,9 +529,9 @@ public final class SketchRuntime {
     /// - Parameter deliveredInput: このフレームの入力を、止まっている間に既に当てて配ったか
     ///   (``deliverWhileStopped()``)。当て直すと、前のフレームからの動き (`pmouseX`・
     ///   引きずった量・スクロール) が描くフレームから消える。
-    private func drawSketchFrame(deliveredInput: Bool = false) throws(RenderFailure) {
+    private func drawSketchFrame(deliveredInput: Bool = false, at requestedTime: Float? = nil) throws(RenderFailure) {
         start()
-        timing.advance()
+        timing.advance(at: requestedTime)
         // 描けなかったフレームも、録りの幅には入る (落ちた 1 枚として数える・ADR-0025 決定 2)
         defer { drawnThrough = timing.frameCount }
         beginFrame()
@@ -853,6 +878,10 @@ public final class SketchRuntime {
 
     /// 連番を始める。転送 (正本は ``Sketch/beginRecord(_:)``)。
     public func beginRecord(_ pattern: String) {
+        guard !observingAtTime else {
+            Diagnostics.warn("beginRecord(): cannot start recording in a specified-time observation; start on a normal frame")
+            return
+        }
         // **頼まれたフレームを一緒に渡す** (`save(_:)` と同じ理由)。番号が無いと、撮る係が
         // 前から並びに居たときに 1 つ前の絵から録る (#1456)
         requireRecorder().beginRecord(pattern, at: timing.frameCount)
@@ -997,26 +1026,28 @@ public final class SketchRuntime {
     /// 進めることはしない — 観測の有無で番号が動くと、同じスケッチを 2 回走らせれば
     /// 同じ絵になるという性質が観測に壊される。
     ///
-    /// 例外は「まだ 1 枚も描いていない」ときだけで、そのときは 1 枚描いてから応える。
+    /// 時刻なしの観測で新たに描くのは「まだ1枚も描いていない」ときだけ。指定時刻は runFrame で既に描いている。
     /// 最初の 1 枚は観測の有無によらず必ず描かれるものなので、再現性は損なわれない。
     ///
     /// **列を撮っている間は次の要求を拾わない。** 拾うと 2 つの列が同じ区画へ混ざり、
     /// どちらの目録も数が合わなくなる。
     ///
     /// - Parameter drawFailure: このフレームの描画が失敗していれば、その理由。
-    private func serveObservationIfRequested(drawFailure: RenderFailure? = nil) {
+    private func serveObservationIfRequested(
+        request: ObservationRequest?, drawFailure: RenderFailure? = nil, appliedTime: Float? = nil
+    ) {
         guard let observer else { return }
         if capture != nil {
             continueCapture(through: observer, drawFailure: drawFailure)
             return
         }
-        guard let request = observer.pendingRequest() else { return }
+        guard let request else { return }
         // **通常のフレームと同じ手順で描く。** 手順をここへ写すと、段を足すたびに
         // 片方だけ腐る (#808)
         if drawFailure == nil, timing.frameCount == 0 {
             try? drawSketchFrame()
         }
-        beginCapture(for: request, through: observer, drawFailure: drawFailure)
+        beginCapture(for: request, through: observer, drawFailure: drawFailure, appliedTime: appliedTime)
     }
 
     /// 列を撮り始める。1 枚だけの要求も同じ道を通る。
@@ -1025,7 +1056,7 @@ public final class SketchRuntime {
     /// として扱い、撮る・目録を書くの手順を 1 本に保つ。
     private func beginCapture(
         for request: ObservationRequest, through observer: FrameObserver,
-        drawFailure: RenderFailure?
+        drawFailure: RenderFailure?, appliedTime: Float? = nil
     ) {
         let limits = request.clamped()
         // 前回の成果物は**撮り始める前に**消す。新しい識別子の目録と古い絵が
@@ -1042,7 +1073,7 @@ public final class SketchRuntime {
         }
         capture = FrameCapture(
             id: request.id, scale: request.scale, count: limits.count, every: limits.every,
-            warnings: limits.warnings)
+            warnings: limits.warnings, appliedTime: appliedTime)
         continueCapture(through: observer, drawFailure: nil)
     }
 
@@ -1098,7 +1129,7 @@ public final class SketchRuntime {
             finish(
                 id: pending.id, through: observer, frames: pending.frames, complete: true,
                 warnings: pending.warnings + canvas.shaderFailures
-                    + Self.repetitionWarnings(pending.frames))
+                    + Self.repetitionWarnings(pending.frames), appliedTime: pending.appliedTime)
             return
         }
         pending.wait = pending.every - 1
@@ -1111,7 +1142,7 @@ public final class SketchRuntime {
     /// 揃わなかったときは `image` を落とす — 読み手はこの鍵の有無だけで成否を言える。
     private func finish(
         id: String, through observer: FrameObserver,
-        frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String]
+        frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String], appliedTime: Float? = nil
     ) {
         let last = complete ? frames.last : nil
         observer.finish(
@@ -1126,7 +1157,7 @@ public final class SketchRuntime {
                 load: RuntimeLoad.sample(tempo: tempo, now: now()),
                 values: exposedValues.isEmpty ? nil : exposedValues,
                 stamp: SourceStamp.current,
-                frames: frames))
+                frames: frames, appliedTime: complete ? appliedTime.map(Double.init) : nil))
     }
 
     /// 同じフレームが並んでいたら、そのことわり。
@@ -1154,6 +1185,7 @@ public final class SketchRuntime {
         let every: Int
         /// 目録に載せることわり。切り詰めたことなど、撮り始める前に決まるもの。
         var warnings: [String]
+        var appliedTime: Float?
         /// ここまでに撮れた絵。
         var frames: [ObservationReport.CapturedFrame] = []
         /// 次に撮るまで残っているフレーム数。0 ならこのフレームで撮る。

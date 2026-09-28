@@ -27,7 +27,7 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
     /// 置き場所が鍵の並びを決める。
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
-    public let schemaVersion = 1
+    public let schemaVersion = 2
 
     /// 大きさ。
     public struct Size: Encodable, Equatable, Sendable {
@@ -76,6 +76,8 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
     public let stamp: String?
     /// 撮った絵の目録。撮った順に並ぶ。**枚数によらず在る**。
     public let frames: [CapturedFrame]
+    /// 指定を適用して撮れた秒。時刻指定の成功時だけ在る。目録の時刻と照合する。
+    public let appliedTime: Double?
 
     init(
         id: String,
@@ -88,7 +90,8 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
         load: RuntimeLoad? = nil,
         values: [String: ExposedValue]? = nil,
         stamp: String? = nil,
-        frames: [CapturedFrame] = []
+        frames: [CapturedFrame] = [],
+        appliedTime: Double? = nil
     ) {
         self.id = id
         self.image = image
@@ -101,5 +104,6 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
         self.values = values
         self.stamp = stamp
         self.frames = frames
+        self.appliedTime = appliedTime
     }
 }
