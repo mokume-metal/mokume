@@ -453,7 +453,7 @@ enum WatchCommand {
         // **`.common` へ載せる。** `Timer.scheduledTimer` は `.default` にしか載らず、
         // 窓を掴んで動かしている間や大きさを変えている間は巡回が**止まる** — その間に
         // 保存しても作り直されない
-        let timer = Timer(timeInterval: interval, repeats: true) { _ in
+        let timer = loopTimer { _ in
             MainActor.assumeIsolated { () -> Void in
                 // **1 拍を `Task` へ渡す。** 作り直しを待つのはこの中で、待っている間
                 // main actor は空く — 窓の描き直しも × の問いもそこで捌かれる (#834)。
@@ -474,6 +474,18 @@ enum WatchCommand {
         RunLoop.main.add(timer, forMode: .common)
         application.run()
         timer.invalidate()
+    }
+
+    /// 巡回の拍を刻むタイマー。**最初の拍は巡回に入った直後に来る** ([#1789])。
+    ///
+    /// `Timer(timeInterval:repeats:block:)` の最初の発火は「作った時刻 + 間隔」で、初回の
+    /// 作り直しは最初の拍で始まるので、窓が出てから必ず 1 拍 (0.25 秒) 空で待っていた。
+    /// 発火の時刻を今にしておけば、`application.run()` の最初の周回で拍が来る。作り直し
+    /// は拍の中から `Task` へ渡すので、巡回はすぐ空く — 窓を先に出す順序は変わらない。
+    ///
+    /// [#1789]: https://github.com/mokume-metal/mokume/issues/1789
+    static func loopTimer(_ tick: @escaping @Sendable (Timer) -> Void) -> Timer {
+        Timer(fire: Date(), interval: interval, repeats: true, block: tick)
     }
 
     /// アプリケーションの巡回を抜けさせる。

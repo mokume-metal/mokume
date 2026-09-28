@@ -143,6 +143,20 @@ struct WatchCommandTests {
         #expect(handedOver?.lastReport == nil)
     }
 
+    /// **最初の拍は、巡回に入った直後に来る** ([#1789])。
+    ///
+    /// 最初の発火を「作った時刻 + 間隔」にすると、初回の作り直しが 1 拍ぶん無駄に待つ。
+    ///
+    /// [#1789]: https://github.com/mokume-metal/mokume/issues/1789
+    @Test("巡回の最初の拍は 1 拍待たずに来る")
+    func firstTickDoesNotWaitAnInterval() {
+        let madeAt = Date()
+        let timer = WatchCommand.loopTimer { _ in }
+        defer { timer.invalidate() }
+        #expect(timer.fireDate.timeIntervalSince(madeAt) < WatchCommand.interval / 2)
+        #expect(timer.timeInterval == WatchCommand.interval)
+    }
+
     /// **見張っている間だけ、省電力の間引きを断る。**
     ///
     /// 窓が覆われて前面から降りた道具は App Nap に入り、そこでは CPU の優先度の断りも
