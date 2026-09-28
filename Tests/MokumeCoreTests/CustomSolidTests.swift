@@ -76,6 +76,100 @@ struct CustomSolidTests {
 
     // MARK: - 面の向き
 
+    @Test("全指定の法線は、未使用の未指定頂点を含む形と頂点値・陰影が一致する",
+        arguments: [VertexKind.triangles, .triangleStrip], [false, true])
+    func writtenNormalsMatchAccumulatingPath(kind: VertexKind, mirrored: Bool) throws {
+        let canvas = try makeCanvas()
+        let paint = try canvas.makeShader("""
+            float4 paint(Fragment in, Values values) {
+                return float4(in.shapeNormal * 0.25 + in.worldNormal * 0.25 + 0.5, 1.0);
+            }
+            """)
+        // 最後の三角形は縮退。互いに異なる指定法線を、非一様拡大・鏡映で移す。
+        let points: [SIMD3<Float>] = [
+            SIMD3(-25, -20, 0), SIMD3(25, -20, 3), SIMD3(-25, 20, 5),
+            SIMD3(25, 20, -2), SIMD3(25, 20, -2), SIMD3(25, 20, -2),
+        ]
+        func render(accumulating: Bool, lit: Bool) throws -> ([SolidVertex], DisplayImage) {
+            var vertices: [SolidVertex] = []
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noStroke()
+                if lit {
+                    canvas.resetShader()
+                    canvas.lights()
+                } else {
+                    canvas.shader(paint)
+                }
+                canvas.translate(48, 48, 0)
+                canvas.rotateX(0.31)
+                canvas.rotateY(-0.27)
+                canvas.scale(mirrored ? -1.2 : 1.2, 0.7, 1.5)
+                canvas.beginShape(kind)
+                // 添字から参照しない未指定頂点だけを足すと、必ず既存の累積経路に入る。
+                // 塗りの入力は同じなので、早期returnの判定・変換・isDerivedを比較できる。
+                if accumulating { canvas.vertex(0, 0, 0) }
+                for (index, point) in points.enumerated() {
+                    canvas.normal(Float(index + 1), -2, 3)
+                    canvas.fill(.linear(red: Float(index + 1) / 8, green: 0.4, blue: 0.7))
+                    canvas.vertex(point.x, point.y, point.z, Float(index) / 8, 0.25)
+                    canvas.index(index + (accumulating ? 1 : 0))
+                }
+                canvas.endShape()
+                vertices = canvas.solidVertices
+            }
+            return (vertices, try pixels(of: canvas))
+        }
+        for lit in [false, true] {
+            let (actual, image) = try render(accumulating: false, lit: lit)
+            let (reference, referenceImage) = try render(accumulating: true, lit: lit)
+            #expect(!actual.isEmpty)
+            #expect(actual.count == reference.count)
+            for (a, b) in zip(actual, reference) {
+                // padding は読まず、shaderへ届く全成分をbit単位で比べる。
+                let aValues = [a.position.x, a.position.y, a.position.z,
+                    a.shapePosition.x, a.shapePosition.y, a.shapePosition.z,
+                    a.normal.x, a.normal.y, a.normal.z, a.normal.w,
+                    a.shapeNormal.x, a.shapeNormal.y, a.shapeNormal.z,
+                    a.uv.x, a.uv.y, a.stroke, a.color.x, a.color.y, a.color.z, a.color.w]
+                let bValues = [b.position.x, b.position.y, b.position.z,
+                    b.shapePosition.x, b.shapePosition.y, b.shapePosition.z,
+                    b.normal.x, b.normal.y, b.normal.z, b.normal.w,
+                    b.shapeNormal.x, b.shapeNormal.y, b.shapeNormal.z,
+                    b.uv.x, b.uv.y, b.stroke, b.color.x, b.color.y, b.color.z, b.color.w]
+                #expect(aValues.map(\.bitPattern) == bValues.map(\.bitPattern))
+                #expect(a.normal.w == 0)
+            }
+            #expect(image.bytes == referenceImage.bytes)
+            #expect(image.bytes.contains { $0 != 0 && $0 != 255 }, "空の画像だけを比較しない")
+        }
+    }
+
+    @Test("帯の未指定法線は、指定済みの隣の頂点があっても形から求める")
+    func mixedStripNormalsKeepTheDerivedVertices() throws {
+        let canvas = try makeCanvas()
+        var normals: [SIMD4<Float>] = []
+        var shapeNormals: [SIMD3<Float>] = []
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.beginShape(.triangleStrip)
+            canvas.vertex(10, 10, 0)
+            canvas.vertex(50, 10, 0)
+            canvas.normal(0, 1, 0)
+            canvas.vertex(10, 50, 0)
+            canvas.vertex(50, 50, 0)
+            canvas.endShape()
+            normals = canvas.solidVertices.map(\.normal)
+            shapeNormals = canvas.solidVertices.map(\.shapeNormal)
+        }
+        #expect(normals.count == 6)
+        #expect(normals.filter { $0.w == 1 }.allSatisfy { $0 == SIMD4(0, 0, 1, 1) })
+        #expect(normals.filter { $0.w == 0 }.allSatisfy { $0 == SIMD4(0, 1, 0, 0) })
+        #expect(normals.contains { $0.w == 1 })
+        #expect(normals.contains { $0.w == 0 })
+        #expect(shapeNormals == normals.map { SIMD3($0.x, $0.y, $0.z) })
+    }
+
     @Test("法線を書かずに閉じた面が、真横から差す光で真っ黒にならない")
     func autoNormalsCatchTheLight() throws {
         // 面の向きを書かない形は、向きが既定値のまま残ると**その面だけ真っ黒**になる。
