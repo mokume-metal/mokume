@@ -166,9 +166,15 @@ public func brightness(_ color: LinearRGBA) -> Float {
     values(of: color).brightness
 }
 
+/// **色を読むのは 1 度だけ** ([#1787])。``red(_:)`` / ``green(_:)`` / ``blue(_:)`` はどれも
+/// 3 成分をまとめて読んで 1 つを取り出すので、3 つを別々に呼ぶと同じ読み取り (割り戻し・
+/// 原色の行列・伝達関数 3 回) を 3 度払う。まとめて読んだ 3 成分は、別々に読んだ値と同じ。
+///
+/// [#1787]: https://github.com/mokume-metal/mokume/issues/1787
 private func values(of color: LinearRGBA)
     -> (hue: Float, saturation: Float, brightness: Float)
 {
-    HueSaturationBrightness.values(
-        red: red(color), green: green(color), blue: blue(color))
+    let components = DisplayScale.readComponents(color)
+    return HueSaturationBrightness.values(
+        red: components.x, green: components.y, blue: components.z)
 }
