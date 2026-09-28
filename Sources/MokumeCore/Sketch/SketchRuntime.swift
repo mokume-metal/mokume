@@ -447,8 +447,8 @@ public final class SketchRuntime {
             if closingRecorder != nil { refusal = "Cannot draw at a specified time while recording is closing" }
             if refusal == nil {
                 start() // setupが録画を始める場合も、指定の絵を描く前に断る。
-                if recorder?.isIdle == false {
-                    refusal = "Cannot draw at a specified time while recording or saving"
+                if recorder?.isRecording == true {
+                    refusal = "Cannot draw at a specified time while recording"
                 }
             }
             if let refusal {

@@ -14,7 +14,7 @@ import Foundation
 /// 新しいidで同じ秒を指定すれば同じ構図で比べられる。秒はFloatに丸める。
 /// **画面とdrawの副作用は残る。** deltaTimeは0、frameCountは1進み、次は元の時計へ戻る。
 /// 状態の巻き戻しではなく、時刻と他の入力から絵が決まる作品向けである。
-/// noLoopは停止を保つ。外部pause、録画/保存待ち、count/everyが1以外なら理由を返す。
+/// noLoopは停止を保つ。外部pause、録画中、count/everyが1以外なら理由を返す。
 /// 指定フレーム内でのbeginRecordも断る。通常観測はtimeを省く。
 /// 応答にappliedTimeがあり、目録と同じ秒かを必ず確認する。旧版はtimeを無視することがある。
 ///

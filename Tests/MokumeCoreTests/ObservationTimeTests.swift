@@ -170,4 +170,25 @@ struct ObservationTimeTests {
         #expect(runtime.recorderWarnings != nil)
         runtime.endRecord()
     }
+    @Test("単発の保存予約は妨げず、指定した枚も保存できる")
+    func permitsAStillSave() throws {
+        let path = try facet(), scene = Scene()
+        scene.stop = true
+        let runtime = try runtime(scene, path)
+        let saved = path.appendingPathComponent("still.png")
+        runtime.save(saved.path)
+        try request(#"{"id":"a","time":3}"#, to: path)
+        try runtime.advance()
+        #expect(try report(path)["appliedTime"] as? Double == 3)
+        let deadline = Date().addingTimeInterval(5)
+        var closed = runtime.closePlugins(.peek)
+        while !closed, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.005)
+            closed = runtime.closePlugins(.peek)
+        }
+        try #require(closed)
+        #expect(FileManager.default.fileExists(atPath: saved.path))
+        #expect(try Data(contentsOf: saved) == Data(contentsOf: path.appendingPathComponent("frame-000.png")))
+    }
+
 }
