@@ -805,7 +805,8 @@ struct ImageTests {
         _ url: URL, _ colors: [(red: Double, green: Double, blue: Double, alpha: Double)],
         width: Int, height: Int
     ) throws {
-        let stamp = ImageFile.stamp(of: url)
+        let stamp = try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]
+            as? Date
         let rewritten = try writePNG(colors, width: width, height: height)
         defer { try? FileManager.default.removeItem(at: rewritten) }
         try FileManager.default.removeItem(at: url)

@@ -29,7 +29,7 @@ nonisolated enum ImageFile {
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
     struct Read: Sendable {
         var url: URL
-        var stamp: Date?
+        var stamp: FileStamp?
         var decoded: Decoded
     }
 
@@ -70,8 +70,8 @@ nonisolated enum ImageFile {
     /// 読み直す側 (安全な側) へ倒すためである。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
-    static func stamp(of url: URL) -> Date? {
-        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+    static func stamp(of url: URL) -> FileStamp? {
+        FileStamp.of(url)
     }
 
     /// 場所が分かっている絵を復号する。
