@@ -304,12 +304,15 @@ extension Canvas {
     ) {
         let cut = (Float(2).squareRoot() - 1) * half
         let hub = strokePoint(x: corner.x, y: corner.y)
-        let rim = [
+        let offsets = [
             SIMD2(outward.x * half, 0),
             SIMD2(outward.x * half, outward.y * cut),
             SIMD2(outward.x * cut, outward.y * half),
             SIMD2(0, outward.y * half),
-        ].map { strokePoint(x: corner.x + $0.x, y: corner.y + $0.y) }
+        ]
+        var rim: [SIMD2<Float>] = []
+        rim.reserveCapacity(offsets.count)
+        for offset in offsets { rim.append(strokePoint(x: corner.x + offset.x, y: corner.y + offset.y)) }
         for index in 0..<(rim.count - 1) {
             appendTriangle(hub, rim[index], rim[index + 1], color: style.stroke)
         }

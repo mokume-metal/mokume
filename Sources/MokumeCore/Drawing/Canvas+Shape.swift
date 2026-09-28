@@ -151,7 +151,9 @@ extension Canvas {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)。置き場所の検めより先に断る
         guard canPlace else { return warnOutsideFrame(.placing) }
         guard !shape.isEmpty else { return }
-        let usable = placements.filter(\.isUsable)
+        var usable: [Placement] = []
+        usable.reserveCapacity(placements.count)
+        for placement in placements where placement.isUsable { usable.append(placement) }
         if usable.count != placements.count { warnBadPlacement() }
         guard !usable.isEmpty else { return }
 
@@ -267,17 +269,21 @@ extension Canvas {
     /// 位置と一緒に**面の向きも移す** — 移さないと、回して置いた形だけ光が付いて
     /// 回らない。位置と違って向きには軸ごとの倍率が逆に効くので、専用の行列を使う。
     private func placeSolid(_ run: Shape.Run, of shape: Shape, at placements: [Placement]) {
-        placeSolid(
-            run, of: shape,
-            instances: placements.lazy.map { placement in
-                let combined = Transform(matrix: self.transform.matrix * placement.transform.matrix)
-                return SolidInstance(
+        // 閉包を標準ライブラリの高階関数へ渡さずにループで組む。main actor の文脈の閉包は
+        // 要素ごとに隔離の実行時検査を払う (#1779)
+        var instances: [SolidInstance] = []
+        instances.reserveCapacity(placements.count)
+        for placement in placements {
+            let combined = Transform(matrix: transform.matrix * placement.transform.matrix)
+            instances.append(
+                SolidInstance(
                     matrix: combined.matrix, normalMatrix: combined.normalMatrix,
                     // 記録した頂点が色を持つので、置き場所は**白** (掛けても
                     // 変わらない)。渡された色があればそれを掛ける
                     color: placement.fill
-                        ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))
-            })
+                        ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
+        }
+        placeSolid(run, of: shape, instances: instances)
     }
 
     /// 立体の区間を、組み上がった置き場所ぶんだけ置く。
@@ -301,7 +307,10 @@ extension Canvas {
     ) {
         beginSolids()
         let runRange = run.start..<(run.start + run.count)
-        let pieces = shape.solidStrokes.filter { runRange.contains($0.vertexStart) }
+        var pieces: [SolidStrokePiece] = []
+        for piece in shape.solidStrokes where runRange.contains(piece.vertexStart) {
+            pieces.append(piece)
+        }
         if recordingShape || !pieces.isEmpty {
             let vertices = shape.solidVertices[runRange]
             let indices: ArraySlice<UInt32>? =
@@ -379,9 +388,10 @@ extension Canvas {
         if run.isIndexed {
             // ずれは負にもなる (形の中での位置より、溜め場の末尾が手前のことがある)
             let shift = start - run.start
-            solidIndices.append(
-                contentsOf: shape.solidIndices[run.indexStart..<(run.indexStart + run.indexCount)]
-                    .map { UInt32(Int($0) + shift) })
+            solidIndices.reserveCapacity(solidIndices.count + run.indexCount)
+            for index in shape.solidIndices[run.indexStart..<(run.indexStart + run.indexCount)] {
+                solidIndices.append(UInt32(Int(index) + shift))
+            }
         }
         retainedSerial += 1
         let instanceStart = solidInstances.count

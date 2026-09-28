@@ -365,17 +365,26 @@ extension Canvas {
 
     /// 並べ終えた頂点を描く。
     private func drawBuiltShape(closed: Bool) {
-        let points = shapePoints + shapeHoles.flatMap { $0 }
+        var points = shapePoints
+        for hole in shapeHoles { points += hole }
         guard !points.isEmpty else { return }
         let primitives = builtPrimitives(closed: closed)
 
         // **塗る三角形を先に全部求める。** 面の向きは形の全体から求めるので、出す前に
         // 揃っている必要がある — 3 つずつ独立に処理すると、帯状・扇状に並べたときに
         // 後ろの頂点が書かれないまま残る
-        let triangles = primitives.map { fillTriangles(of: $0, points: points) }
-        let placed = shapeHasDepth
-            ? placedVertices(points, triangles: triangles.flatMap { $0 })
-            : []
+        //
+        // 閉包を標準ライブラリの高階関数へ渡さずにループで回す。main actor の文脈で作った
+        // 閉包は、要素ごとに隔離の実行時検査を払う (#1779)
+        var triangles: [[(Int, Int, Int)]] = []
+        triangles.reserveCapacity(primitives.count)
+        var allTriangles: [(Int, Int, Int)] = []
+        for primitive in primitives {
+            let found = fillTriangles(of: primitive, points: points)
+            triangles.append(found)
+            if shapeHasDepth { allTriangles += found }
+        }
+        let placed = shapeHasDepth ? placedVertices(points, triangles: allTriangles) : []
         // **形に 1 度だけ求める。** 囲みの箱は原始形によらず同じ (見るのは置いた点の
         // 全体) なので、原始形ごとに作り直すと置いた量の二乗で効く ([#915])
         let readsUV = readsUV(points)
@@ -416,7 +425,16 @@ extension Canvas {
         guard shapeIndices.isEmpty else {
             let range = shapePoints.indices
             let built = primitives(reading: shapeIndices, closed: closed)
-            let kept = built.filter { $0.ring.allSatisfy { range.contains($0) } }
+            var kept: [Primitive] = []
+            kept.reserveCapacity(built.count)
+            for primitive in built {
+                var inRange = true
+                for index in primitive.ring where !range.contains(index) {
+                    inRange = false
+                    break
+                }
+                if inRange { kept.append(primitive) }
+            }
             if kept.count != built.count { warnIndexOutOfRange() }
             return kept
         }
@@ -436,35 +454,56 @@ extension Canvas {
             return [Primitive(ring: outer, holes: holes, isClosed: closed, fills: true)]
 
         case .triangles:
-            return stride(from: 0, to: max(0, outer.count - 2), by: 3).map {
-                Primitive(ring: Array(outer[$0..<($0 + 3)]), isClosed: true, fills: true)
+            var built: [Primitive] = []
+            built.reserveCapacity(outer.count / 3)
+            for start in stride(from: 0, to: max(0, outer.count - 2), by: 3) {
+                built.append(
+                    Primitive(
+                        ring: [outer[start], outer[start + 1], outer[start + 2]],
+                        isClosed: true, fills: true))
             }
+            return built
 
         case .triangleStrip:
             // **1 枚ずつ巻きを揃える** (帯の規約は OpenGL と同じ)。交互のまま出すと、
             // 隣り合う面の外積が打ち消し合って、書かれていない面の向きが求まらなくなる
             // (`placedVertices`)
-            return (0..<max(0, outer.count - 2)).map { start in
+            var built: [Primitive] = []
+            built.reserveCapacity(max(0, outer.count - 2))
+            for start in 0..<max(0, outer.count - 2) {
                 let ring =
                     start.isMultiple(of: 2)
                     ? [outer[start], outer[start + 1], outer[start + 2]]
                     : [outer[start + 1], outer[start], outer[start + 2]]
-                return Primitive(ring: ring, isClosed: true, fills: true)
+                built.append(Primitive(ring: ring, isClosed: true, fills: true))
             }
+            return built
 
         case .triangleFan:
-            return (1..<max(1, outer.count - 1)).map { step in
-                Primitive(
-                    ring: [outer[0], outer[step], outer[step + 1]], isClosed: true, fills: true)
+            var built: [Primitive] = []
+            built.reserveCapacity(max(0, outer.count - 2))
+            for step in 1..<max(1, outer.count - 1) {
+                built.append(
+                    Primitive(
+                        ring: [outer[0], outer[step], outer[step + 1]], isClosed: true,
+                        fills: true))
             }
+            return built
 
         case .lines:
-            return stride(from: 0, to: max(0, outer.count - 1), by: 2).map {
-                Primitive(ring: Array(outer[$0..<($0 + 2)]), isClosed: false, fills: false)
+            var built: [Primitive] = []
+            built.reserveCapacity(outer.count / 2)
+            for start in stride(from: 0, to: max(0, outer.count - 1), by: 2) {
+                built.append(
+                    Primitive(ring: [outer[start], outer[start + 1]], isClosed: false, fills: false))
             }
+            return built
 
         case .points:
-            return outer.map { Primitive(ring: [$0], isClosed: false, fills: false) }
+            var built: [Primitive] = []
+            built.reserveCapacity(outer.count)
+            for index in outer { built.append(Primitive(ring: [index], isClosed: false, fills: false)) }
+            return built
         }
     }
 
@@ -489,14 +528,23 @@ extension Canvas {
         if primitive.holes.isEmpty {
             merged = primitive.ring
         } else {
-            let all = points.map { basis.flatten($0.position) }
+            var all: [SIMD2<Float>] = []
+            all.reserveCapacity(points.count)
+            for point in points { all.append(basis.flatten(point.position)) }
             pointScansThisFrame += points.count
             merged = Triangulation.mergeHoles(
                 outer: primitive.ring, holes: primitive.holes, points: all)
         }
         pointScansThisFrame += merged.count
-        return Triangulation.triangulate(merged.map { basis.flatten(points[$0].position) })
-            .map { (merged[$0.0], merged[$0.1], merged[$0.2]) }
+        var flattened: [SIMD2<Float>] = []
+        flattened.reserveCapacity(merged.count)
+        for index in merged { flattened.append(basis.flatten(points[index].position)) }
+        var triangles = Triangulation.triangulate(flattened)
+        for index in triangles.indices {
+            let (a, b, c) = triangles[index]
+            triangles[index] = (merged[a], merged[b], merged[c])
+        }
+        return triangles
     }
 
     /// 塗りが読み取り位置を持つか。**貼る絵を束ねているか、1 点でも書かれていれば持つ。**
@@ -505,7 +553,9 @@ extension Canvas {
     /// ないときだけ焼き場の白い区画を読み、読み取り位置が無かった頃と 1 ビットも
     /// 変わらない。
     private func readsUV(_ points: [BuildingVertex]) -> Bool {
-        style.picture != nil || points.contains(where: { $0.uv != nil })
+        if style.picture != nil { return true }
+        for point in points where point.uv != nil { return true }
+        return false
     }
 
     /// 書かれていない読み取り位置の倒れ先。**形に 1 度だけ求める。**
@@ -519,9 +569,17 @@ extension Canvas {
     /// では代われない — ``textureUV(_:_:)`` は絵の幅か高さが 0 のときや数でない値が
     /// 渡されたときにも書かれていないことにするので、呼んだのに持たない点がある。
     private func uvFallback(_ points: [BuildingVertex]) -> ((SIMD2<Float>) -> SIMD2<Float>)? {
-        guard points.contains(where: { $0.uv == nil }) else { return nil }
+        var lacksUV = false
+        for point in points where point.uv == nil {
+            lacksUV = true
+            break
+        }
+        guard lacksUV else { return nil }
         pointScansThisFrame += points.count
-        return Canvas.boxUV(of: points.map { SIMD2($0.position.x, $0.position.y) })
+        var flat: [SIMD2<Float>] = []
+        flat.reserveCapacity(points.count)
+        for point in points { flat.append(SIMD2(point.position.x, point.position.y)) }
+        return Canvas.boxUV(of: flat)
     }
 
     /// 三角形へ分けるための、平らな座標の取り方。
@@ -579,15 +637,26 @@ extension Canvas {
         let matrix = transform.matrix
         let normalMatrix = transform.normalMatrix
         var needsDerivedNormals = false
-        var placed = points.map { point -> PlacedVertex in
-            if point.normal == nil { needsDerivedNormals = true }
+        // **閉包へ渡さずにループで回す** — main actor の文脈で作った閉包を標準ライブラリの
+        // 高階関数へ渡すと、要素ごとに隔離の実行時検査が入る (#1779)
+        var placed: [PlacedVertex] = []
+        placed.reserveCapacity(points.count)
+        for point in points {
             let moved = matrix * SIMD4<Float>(point.position, 1)
-            return PlacedVertex(
-                position: SIMD3(moved.x, moved.y, moved.z),
-                normal: point.normal.map { normalize(normalMatrix * $0) } ?? .zero,
-                isDerived: point.normal == nil,
-                color: point.fill,
-                shapeNormal: point.normal ?? .zero)
+            let normal: SIMD3<Float>
+            if let written = point.normal {
+                normal = normalize(normalMatrix * written)
+            } else {
+                normal = .zero
+                needsDerivedNormals = true
+            }
+            placed.append(
+                PlacedVertex(
+                    position: SIMD3(moved.x, moved.y, moved.z),
+                    normal: normal,
+                    isDerived: point.normal == nil,
+                    color: point.fill,
+                    shapeNormal: point.normal ?? .zero))
         }
 
         // 全頂点に向きが書かれていれば、面から求めた向きは誰も使わない。
@@ -661,9 +730,8 @@ extension Canvas {
         }
 
         for triangle in triangles {
-            let indices = [triangle.0, triangle.1, triangle.2]
             if shapeHasDepth {
-                for index in indices {
+                for index in [triangle.0, triangle.1, triangle.2] {
                     let vertex = placed[index]
                     // **変換を焼き込む前の座標と向きも渡す。** 断片へ届くのはそちらで、
                     // 組み込みの立体と同じく「回しても模様が形に留まる」ようにする
@@ -681,16 +749,13 @@ extension Canvas {
                     }
                 }
             } else {
-                let flat = indices.map {
-                    transform.apply(x: points[$0].position.x, y: points[$0].position.y)
-                }
+                let (a, b, c) = triangle
                 appendTriangle(
-                    flat[0], flat[1], flat[2],
-                    colors: (points[indices[0]].fill, points[indices[1]].fill,
-                        points[indices[2]].fill),
-                    uvs: readsUV
-                        ? (uv(indices[0])!, uv(indices[1])!, uv(indices[2])!)
-                        : nil)
+                    transform.apply(x: points[a].position.x, y: points[a].position.y),
+                    transform.apply(x: points[b].position.x, y: points[b].position.y),
+                    transform.apply(x: points[c].position.x, y: points[c].position.y),
+                    colors: (points[a].fill, points[b].fill, points[c].fill),
+                    uvs: readsUV ? (uv(a)!, uv(b)!, uv(c)!) : nil)
             }
         }
     }
@@ -709,17 +774,27 @@ extension Canvas {
         _ ring: [Int], closed: Bool, points: [BuildingVertex], placed: [PlacedVertex]
     ) {
         guard !ring.isEmpty else { return }
-        let curveSteps = ring.map { points[$0].isCurveStep }
+        var curveSteps: [Bool] = []
+        curveSteps.reserveCapacity(ring.count)
+        for index in ring { curveSteps.append(points[index].isCurveStep) }
         if shapeHasDepth {
+            var placedRing: [SIMD3<Float>] = []
+            var shapeRing: [SIMD3<Float>] = []
+            placedRing.reserveCapacity(ring.count)
+            shapeRing.reserveCapacity(ring.count)
+            for index in ring {
+                placedRing.append(placed[index].position)
+                shapeRing.append(points[index].position)
+            }
             strokeSolidRing(
-                ring.map { placed[$0].position }, shapePoints: ring.map { points[$0].position },
-                isClosed: closed, curveSteps: curveSteps)
+                placedRing, shapePoints: shapeRing, isClosed: closed, curveSteps: curveSteps)
         } else {
             // 平面の輪郭は変換の前の座標で組み立てる (`Outline` の説明を参照)
+            var flatRing: [SIMD2<Float>] = []
+            flatRing.reserveCapacity(ring.count)
+            for index in ring { flatRing.append(SIMD2(points[index].position.x, points[index].position.y)) }
             strokeOutline(
-                Outline(
-                    points: ring.map { SIMD2(points[$0].position.x, points[$0].position.y) },
-                    isClosed: closed, fills: false, curveSteps: curveSteps))
+                Outline(points: flatRing, isClosed: closed, fills: false, curveSteps: curveSteps))
         }
     }
 
@@ -773,7 +848,7 @@ extension Canvas {
     }
 
     /// 3 次の曲線の上の点。
-    static func cubicPoint(
+    nonisolated static func cubicPoint(
         _ p0: SIMD2<Float>, _ c1: SIMD2<Float>, _ c2: SIMD2<Float>, _ p1: SIMD2<Float>, _ t: Float
     ) -> SIMD2<Float> {
         let u = 1 - t
@@ -781,7 +856,7 @@ extension Canvas {
     }
 
     /// 通過点を結ぶ曲線の上の点。`tightness` が 0 のとき、4 点のうち中の 2 点を滑らかに繋ぐ。
-    static func catmullRomPoint(
+    nonisolated static func catmullRomPoint(
         _ p0: SIMD2<Float>, _ p1: SIMD2<Float>, _ p2: SIMD2<Float>, _ p3: SIMD2<Float>,
         _ t: Float, tightness: Float
     ) -> SIMD2<Float> {

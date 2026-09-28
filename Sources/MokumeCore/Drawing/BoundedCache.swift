@@ -28,7 +28,7 @@
 /// [#1431]: https://github.com/mokume-metal/mokume/issues/1431
 /// [#1593]: https://github.com/mokume-metal/mokume/issues/1593
 /// [#1602]: https://github.com/mokume-metal/mokume/issues/1602
-struct BoundedCache<Key: Hashable, Value> {
+nonisolated struct BoundedCache<Key: Hashable, Value> {
     private struct Entry {
         var value: Value
         var weight: Int

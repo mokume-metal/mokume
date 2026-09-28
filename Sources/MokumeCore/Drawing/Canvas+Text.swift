@@ -487,7 +487,7 @@ extension Canvas {
     /// 書体の座標は基準線から**上向き**に測るので、面の縦向きに合わせて折り返す。
     /// 折り返すと巻きの向きも入れ替わるので、穴かどうかは折り返した後の面積で見る
     /// (面の座標では、外側が正・穴が負になる)。
-    static func rings(of path: CGPath, originX: Float, baseline: Float) -> [TextContour] {
+    nonisolated static func rings(of path: CGPath, originX: Float, baseline: Float) -> [TextContour] {
         var rings: [[SIMD2<Float>]] = []
         var current: [SIMD2<Float>] = []
 
@@ -541,7 +541,7 @@ extension Canvas {
     /// 要らない)。
     ///
     /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
-    private static func appendCurve(
+    private nonisolated static func appendCurve(
         _ points: inout [SIMD2<Float>], from: SIMD2<Float>, control1: SIMD2<Float>,
         control2: SIMD2<Float>, to: SIMD2<Float>
     ) {
@@ -561,7 +561,7 @@ extension Canvas {
     /// **`Double` で積む** ([#1587])。座標どうしの積は、`Float` では大きな字や原点から遠い
     /// 位置で無限に溢れ、`∞ - ∞` の NaN から穴がすべて外周と読まれる。`Float` の有限の値
     /// どうしの積は `Double` なら溢れない。
-    static func signedArea(of points: [SIMD2<Float>]) -> Double {
+    nonisolated static func signedArea(of points: [SIMD2<Float>]) -> Double {
         var total: Double = 0
         for index in points.indices {
             let a = SIMD2<Double>(points[index])
