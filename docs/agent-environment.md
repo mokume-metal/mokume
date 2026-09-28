@@ -30,7 +30,19 @@ Claude Code は従来どおり `.claude/skills/` を読む。Codex は `.agents/
 
 ## フック
 
-Claude Code の接続は `.claude/settings.json`。他製品の設定として読み替えない。
+Claude Code の接続は `.claude/settings.json`。Codex の接続は `.codex/config.toml`。
+どちらもコメント・PR identity の同じスクリプトを呼ぶ。各製品の設定を読み替えない。
+
+Codex はプロジェクトを信頼し、さらにフックを確認して信頼した場合にだけ動かす。
+CLI では `/hooks` で読込元と信頼状態を確認する。変更後のフックも再確認が必要になる。
+未信頼のプロジェクトの設定は読み込まれない。一時的な `projects.trust_level` の CLI 指定で
+導入済みとは扱わず、製品の信頼操作を使う。個人設定をこのリポジトリから書き換えない。
+
+Codex CLI 0.158.0-alpha.2.1 のシェル実行 (`exec_command`) とコード実行 (`exec` 内の
+`tools.exec_command`) は `Bash` としてフックへ届く。入力は `tool_input.command` であり、
+既存ガードを直接呼べる。MCP 経由の投稿や任意の外部 API 全体を覆うものではない。
+既存ガードのコマンド認識範囲もそのままである（環境変数・パスを前置した `gh` は #1729）。
+別の版では読込と実際の発火を確かめる。
 フックを提供しない環境でも、Issue へのプラン記録・コメントのラッパー・App identity は
 AGENTS.md に従って実行する。フックが黙っていることを検証済みの印にしない。
 個人のプラグイン・モデル・権限設定はこのリポジトリから変更しない。
