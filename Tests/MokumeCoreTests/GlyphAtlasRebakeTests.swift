@@ -74,6 +74,31 @@ struct GlyphAtlasRebakeTests {
         return false
     }
 
+    // MARK: - 書体が持つ字形の控え (#1783)
+
+    /// **頁を替えた後は、書体が控えた字形を使わず焼き直す** ([#1783])。
+    ///
+    /// 書体は、焼き場で引いた字形を文字ごとに控える (``Typeface/placed``)。控えた字形は
+    /// 前の頁の読み取り位置を持つので、頁を替えた後に使うと、新しい頁の何も焼いていない
+    /// 場所を読んで字が消える。控えは頁の通し番号で見分ける。
+    ///
+    /// [#1783]: https://github.com/mokume-metal/mokume/issues/1783
+    @Test("頁を替えた後の字は、書体の控えではなく新しい頁へ焼き直して描く")
+    func placedGlyphsAreRebakedAfterAPageChange() throws {
+        let canvas = try makeCanvas()
+        let before = try drawAlone("Ag", size: 40, on: canvas, x: 8, baseline: 80)
+        #expect(isInked(before), "検査の前提: 最初の字に墨が乗っていない")
+
+        try canvas.atlas.rebake(gpu: canvas.gpu)
+        #expect(canvas.atlas.bakedCount == 0, "検査の前提: 焼き直した頁が空でない")
+
+        let after = try drawAlone("Ag", size: 40, on: canvas, x: 8, baseline: 80)
+        #expect(canvas.atlas.bakedCount == 2, "頁を替えた後の字を新しい頁へ焼いていない")
+        // 配列ごと表明すると、食い違ったときに全画素が出力に流れる
+        let unchanged = after.bytes == before.bytes
+        #expect(unchanged, "頁を替えた後の字の絵が、替える前と違う")
+    }
+
     // MARK: - フレームをまたいで埋まる
 
     /// 条件 1・2 と、3 の前半 ([#1342] の完了条件)。

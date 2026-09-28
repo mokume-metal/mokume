@@ -159,6 +159,15 @@ import simd
     private(set) var page: GlyphPage
     private(set) var size: Int
     private var entries: [Key: Entry] = [:]
+    /// いまの頁の通し番号。**頁を替えるたびに変わり、どの焼き場の頁とも重ならない** ([#1783])。
+    ///
+    /// 書体が持つ字形の控え (``Typeface/placed``) が、引いた字形がまだこの頁のものかを
+    /// 確かめるのに使う。頁を替えると焼いた字形は全部捨てられる (``startPage(side:gpu:)``)
+    /// ので、番号が違えば控えは古い。
+    ///
+    /// [#1783]: https://github.com/mokume-metal/mokume/issues/1783
+    private(set) var pageSerial: UInt64
+    private static var nextPageSerial: UInt64 = 0
     /// 焼いた字形の数。**検査が読む** — 区間の外の `text()` が字を焼かないことを数える (#1672)。
     var bakedCount: Int { entries.count }
     private var cursorX: Int
@@ -185,6 +194,7 @@ import simd
         self.gpu = gpu
         self.size = Self.initialSize
         self.page = try GlyphPage(side: size, gpu: gpu)
+        self.pageSerial = Self.takePageSerial()
         self.cursorX = Self.reservedCorner
         self.cursorY = 0
         self.rowHeight = Self.reservedCorner
@@ -295,12 +305,18 @@ import simd
         try startPage(side: size, gpu: gpu)
     }
 
+    private static func takePageSerial() -> UInt64 {
+        defer { nextPageSerial &+= 1 }
+        return nextPageSerial
+    }
+
     /// 一辺 `side` の新しい頁を作り、焼いた字形の控えと棚を空に戻す。
     private func startPage(side: Int, gpu: RenderDevice) throws(RenderFailure) {
         // **新しい頁を先に作る。** 作れずに投げたときも、前の頁はそのまま使える
         page = try GlyphPage(side: side, gpu: gpu)
         size = side
         entries.removeAll(keepingCapacity: true)
+        pageSerial = Self.takePageSerial()
         cursorX = Self.reservedCorner
         cursorY = 0
         rowHeight = Self.reservedCorner

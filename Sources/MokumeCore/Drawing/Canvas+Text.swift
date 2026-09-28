@@ -182,9 +182,22 @@ extension Canvas {
         var pen = penStart(at: x, face: face, line: line)
 
         for scalar in line.unicodeScalars {
+            // 同じ頁で引いたことのある字は、書体も焼き場も引かない (``Typeface/placed``)
+            if let placed = face.placed[scalar], placed.pageSerial == atlas.pageSerial {
+                if !placed.entry.isBlank {
+                    appendGlyphQuad(placed.entry, penX: pen, baseline: baseline, color: color)
+                }
+                pen += placed.advance
+                continue
+            }
             guard let resolved = face.glyph(for: scalar) else { continue }
-            if let entry = glyphEntry(for: resolved), !entry.isBlank {
-                appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
+            if let entry = glyphEntry(for: resolved) {
+                // 引いた後の頁の番号で控える — 引く途中で頁を広げていれば、番号も新しい
+                face.placed[scalar] = PlacedGlyph(
+                    pageSerial: atlas.pageSerial, entry: entry, advance: resolved.advance)
+                if !entry.isBlank {
+                    appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
+                }
             }
             pen += resolved.advance
         }
