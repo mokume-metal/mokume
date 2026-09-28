@@ -44,6 +44,17 @@
 #      原因: 承認済みの PR へ push したので dismiss_stale_reviews_on_push が承認を落とした (#1033)
 #      対処: Approve を押し直す。依頼の出し直しは review-request が打つ (#1177)。衝突を解いた
 #      合流で落ちるのは正しい
+#   9. 描画に触れない PR も含めて、queue に入った PR が 60 分ごとに弾かれ続ける
+#      原因: 専用機の runner が止まっていて、必須の render が queued のまま走らない
+#      (#1774)。専用機は 1 台で、render は paths で絞らず merge_group ごとに走る。弾かれた
+#      PR には 5 の行も出るが、掛け直しても同じ 60 分を待つだけである
+#      対処: 1) 専用機の前で runner を戻す (ssh では入れない — #1767)。戻ったかは
+#      Settings → Actions → Runners か gh api repos/<repo>/actions/runners (メンテナの権限)
+#      で見る。2) 戻せない間も merge を通すなら、メンテナが .github/rulesets/main-protection.json
+#      の必須チェックから render を外した定義を手元で scripts/apply-rulesets.sh --apply
+#      してから、その定義の PR を出す — 必須チェックを消すときは適用を merge より先にする
+#      (AGENTS.md「ブランチ保護の正本」)。戻すときは逆順 (PR を merge してから適用) にする。
+#      外している間は描画を誰も見ないので、戻した後の最初の merge_group の render を確かめる
 #
 # 読むときの注意:
 #
@@ -70,7 +81,7 @@
 # ために打っただけで auto-merge が掛かってしまうのを防ぐため。こちらは読み取りしか
 # しないので、いつ打っても安全である。
 #
-# ## 分類 (表の 8 行に対応する)
+# ## 分類 (表の 9 行に対応する)
 #
 #   分類                 別     表の行  なぜその別か
 #   bad-title            name   6       タイトルの修正は人手。**rerun を打つと悪化する**
@@ -80,6 +91,7 @@
 #   dismissed-approval   name   8       Approve は人の操作。機械には打てない
 #   awaiting-approval    quiet  2       承認待ちは正常な状態
 #   auto-merge-dropped   act    2・5    予約を掛け直すだけ。ゲートは飛び越えない
+#   runner-offline       name   9       専用機の前での操作と、保護の定義の適用は人手
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
 #
 # **unreadable は表の行を持たない。** PR そのものか変更ファイルの一覧が読めなかった回で、
@@ -132,6 +144,20 @@
 #   それは #1033 が求めた「見つけたら名乗る」そのものである
 # - 間隔が詰まる日 (間引きが緩む日) にも、猶予が騒がしさの上限として同じように効く
 #
+# ## PR ではなくリポジトリを見る行 (runner-offline・#1774)
+#
+# runner-offline だけは PR ごとの状態ではなく、専用機という 1 台の状態を見る。番号の欄は
+# `-` になる。判定は render.yml の run の並びから読む — runners API は GITHUB_TOKEN では
+# 読めないためである。「queued の run があり、in_progress の run が 1 本も無く、最古の
+# queued が猶予を超えた」ときに名乗る。
+#
+# - **in_progress が 1 本でもあれば名乗らない。** runner は生きていて、1 台なので順番を
+#   待っているだけである (render の所要は約 4〜5 分)
+# - 生きている runner は queued の run を数秒で拾うので、猶予 (既定 15 分) は PR の猶予より
+#   短い。**ここは猶予を超えたときにしか行を出さず、出したら必ず 1 で終える** — 猶予の
+#   内の queued は正常な順番待ちなので、出すと毎回の注意になる (#642)
+# - run の一覧を読めなかったら unreadable を名乗る。黙ると「止まっていない」に倒れる (#1303)
+#
 # ## 出力
 #
 #   <番号> <分類> <act|name|quiet> <経過分> <説明>
@@ -158,6 +184,10 @@ STALL_MINUTES=${STALL_MINUTES:-60}
 
 # 落ちた承認だけの猶予。短い理由は冒頭の「騒がしさの上限」
 DISMISSED_APPROVAL_MINUTES=${DISMISSED_APPROVAL_MINUTES:-15}
+
+# 専用機の runner が render を拾わないまま過ぎてよい時間。理由は冒頭の「PR ではなく
+# リポジトリを見る行」
+RUNNER_STALL_MINUTES=${RUNNER_STALL_MINUTES:-15}
 
 # 「まだ答えが出ていない」と読む check の結果。ここに無いものは失敗として扱う
 # (FAILURE / ERROR / CANCELLED / TIMED_OUT / ACTION_REQUIRED / STARTUP_FAILURE)
@@ -260,7 +290,29 @@ say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
   printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5"
 }
 
+# 専用機の render の run を、状態で絞って読む。読めなければ非 0 で返す
+render_runs() { # $1=status $2=jq
+  gh api "repos/$REPO/actions/workflows/render.yml/runs?status=$1&per_page=100" \
+    --jq "$2" 2>/dev/null
+}
+
 # --- 走査 -------------------------------------------------------------------
+
+overdue=0
+
+# 専用機の死活。PR の走査より先に出す — 止まっていれば、下の PR の行 (弾かれた・予約が
+# 外れた) の原因はたいていここにある
+if ! oldest_queued=$(render_runs queued '[.workflow_runs[].created_at] | sort | first // ""') ||
+  ! running=$(render_runs in_progress '.workflow_runs | length'); then
+  say_line - unreadable name 0 "専用機の render の run を読めなかった (runner の死活を判定していない)"
+elif [ -n "$oldest_queued" ] && [ "${running:-0}" -eq 0 ]; then
+  mins=$(minutes_since "$oldest_queued")
+  if [ "$mins" -ge "$RUNNER_STALL_MINUTES" ]; then
+    say_line - runner-offline name "$mins" \
+      "専用機の runner が render を拾っていない — 戻す手順は表の 9 行目"
+    overdue=1
+  fi
+fi
 
 # Draft は当番の対象外である。**作業中の PR を Draft にしておくのが opt-out** である。
 # **fork からの PR も見ない** (#1361)。予約を掛けるかは引き取るメンテナが決める —
@@ -271,8 +323,6 @@ numbers=$(gh pr list --repo "$REPO" --state open --limit 100 \
   echo "open な PR の一覧を読めなかった" >&2
   exit 1
 }
-
-overdue=0
 
 for n in $numbers; do
   json=$(gh pr view "$n" --repo "$REPO" \
