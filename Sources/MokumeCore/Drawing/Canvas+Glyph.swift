@@ -118,12 +118,32 @@ extension Canvas {
         let bottomRight = transform.apply(x: right, y: bottom)
         let bottomLeft = transform.apply(x: left, y: bottom)
 
-        appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
-        appendGlyphVertex(topRight, SIMD2(uvMax.x, uvMin.y), color)
-        appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
-        appendGlyphVertex(topLeft, SIMD2(uvMin.x, uvMin.y), color)
-        appendGlyphVertex(bottomRight, SIMD2(uvMax.x, uvMax.y), color)
-        appendGlyphVertex(bottomLeft, SIMD2(uvMin.x, uvMax.y), color)
+        // **6 頂点を 1 度の書き込みで積む** ([#1783])。1 頂点ずつ面の並びへ足すと、足す
+        // たびに排他の確かめ (`swift_beginAccess`) が走り、字 1 つで 12 回になっていた
+        //
+        // [#1783]: https://github.com/mokume-metal/mokume/issues/1783
+        beginFlat()
+        Self.appendQuad(
+            into: &vertices, topLeft, topRight, bottomRight, bottomLeft,
+            uvMin: uvMin, uvMax: uvMax, color: color)
+    }
+
+    /// 四角を 2 つの三角形として積む。並びは左上・右上・右下 / 左上・右下・左下。
+    private static func appendQuad(
+        into vertices: inout [ShapeVertex],
+        _ topLeft: SIMD2<Float>, _ topRight: SIMD2<Float>,
+        _ bottomRight: SIMD2<Float>, _ bottomLeft: SIMD2<Float>,
+        uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
+    ) {
+        vertices.append(ShapeVertex(position: topLeft, uv: SIMD2(uvMin.x, uvMin.y), color: color))
+        vertices.append(ShapeVertex(position: topRight, uv: SIMD2(uvMax.x, uvMin.y), color: color))
+        vertices.append(
+            ShapeVertex(position: bottomRight, uv: SIMD2(uvMax.x, uvMax.y), color: color))
+        vertices.append(ShapeVertex(position: topLeft, uv: SIMD2(uvMin.x, uvMin.y), color: color))
+        vertices.append(
+            ShapeVertex(position: bottomRight, uv: SIMD2(uvMax.x, uvMax.y), color: color))
+        vertices.append(
+            ShapeVertex(position: bottomLeft, uv: SIMD2(uvMin.x, uvMax.y), color: color))
     }
 
     /// 字形 1 つを四角として置く。
@@ -156,13 +176,6 @@ extension Canvas {
         let alpha = color.alpha
         return LinearRGBA(
             premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
-    }
-
-    private func appendGlyphVertex(
-        _ position: SIMD2<Float>, _ uv: SIMD2<Float>, _ color: LinearRGBA
-    ) {
-        beginFlat()
-        vertices.append(ShapeVertex(position: position, uv: uv, color: color))
     }
 
     /// 画像を四角として置く。**字形と同じ約束** (縁が画素の境目に乗る) で置かれる

@@ -30,6 +30,13 @@ struct ResolvedGlyph {
     var fontKey: String
 }
 
+/// 焼き場で引いた字形と、それを引いた頁 (``Typeface/placed``)。
+struct PlacedGlyph {
+    var pageSerial: UInt64
+    var entry: GlyphAtlas.Entry
+    var advance: Float
+}
+
 /// 指定された書体を引き当て、寸法を答える。
 ///
 /// ## 送り幅をここだけで計算する
@@ -57,6 +64,19 @@ final class Typeface {
 
     /// 1 文字ぶんの引き当て結果の控え。同じ文字を何度も引かないために持つ。
     private var resolved: [Unicode.Scalar: ResolvedGlyph] = [:]
+
+    /// 焼き場で引いた字形の控え ([#1783])。**頁の通し番号が一致する間だけ使える。**
+    ///
+    /// 字を置くたびに、書体の引き当て (``glyph(for:)``) と焼き場の引き当て (文字列を含む鍵の
+    /// 辞書) の 2 度を引いていた。この書体の同じ文字は、同じ頁の上では必ず同じ字形を指す —
+    /// 焼き分けの鍵 (書体名・大きさ・字体・字形の番号) は書体と文字で決まり、焼いた字形は
+    /// 頁を替えるまで動かない。だから文字 1 つで引けるように控える。
+    ///
+    /// 大きさは ``resolved`` と同じく、この書体で描いた文字の種類の数で決まる。書体そのものは
+    /// 面の控え (上限つき) に入っている。
+    ///
+    /// [#1783]: https://github.com/mokume-metal/mokume/issues/1783
+    var placed: [Unicode.Scalar: PlacedGlyph] = [:]
 
     init(request: TypefaceRequest) {
         self.request = request
