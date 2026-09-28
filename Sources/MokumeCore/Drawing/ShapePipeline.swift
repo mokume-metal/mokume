@@ -112,6 +112,8 @@ final class ShapePipeline {
 
     /// 立体を組み込みの塗りで描くパイプライン。頂点の落とし方だけが違う。
     let solidStates: BlendStates
+    let solidStrokeStates: BlendStates
+    let solidStrokeShadowState: any MTLRenderPipelineState
 
     /// 光から見た奥行きを焼き付けるパイプライン。**頂点だけで、断片を持たない。**
     ///
@@ -189,6 +191,13 @@ final class ShapePipeline {
             pixelFormat: pixelFormat, label: "mokume.solids",
             vertexFunctionName: Self.solidVertexFunctionName)
 
+        self.solidStrokeStates = try Self.makeBlendStates(
+            compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
+            pixelFormat: pixelFormat, label: "mokume.solid-strokes",
+            vertexFunctionName: Self.solidStrokeVertexFunctionName)
+        self.solidStrokeShadowState = try Self.makeDepthOnlyState(
+            compiler: compiler, vertexLibrary: library, label: "mokume.solid-stroke-shadow",
+            vertexFunctionName: Self.solidStrokeVertexFunctionName)
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
@@ -234,6 +243,7 @@ final class ShapePipeline {
     static let flatVertexFunctionName = "shapeVertexMain"
     /// 立体の頂点を落とす関数の名前。
     static let solidVertexFunctionName = "solidVertexMain"
+    static let solidStrokeVertexFunctionName = "solidStrokeVertexMain"
     /// 三角形の経路の断片の名前 (下地を読む側)。
     static let flatFragmentFunctionName = "mokume_fragmentMain"
     /// 三角形の経路の断片の名前 (**下地を読まない側** — 重ねる列)。

@@ -88,6 +88,9 @@ struct GPUMemoryAccessGateTests {
 
     private static let permits: [Permit] = [
         Permit(
+            file: "Drawing/SolidStrokeGeometry.swift", discipline: .waitedElsewhere,
+            reason: "骨は作成時だけ新しい置き場へ書き、その後は変更しない (#1738)。控えと描画列が所有し、投入完了までは HeldFrame が列ごと保持する。追い出し後の解放は RenderDevice.retire が待つ"),
+        Permit(
             file: "Drawing/Canvas.swift", discipline: .ring,
             reason: "描き切りの先頭で環を 1 つ進め、そのスロットを読む投入だけを待ってから頂点・列ごとの値・uniforms を書く (#754)。init の書き込みは作成時だけ"),
         Permit(

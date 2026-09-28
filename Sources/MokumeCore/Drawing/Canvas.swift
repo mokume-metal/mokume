@@ -311,6 +311,9 @@ public final class Canvas {
         /// `nil` なら溜め場の並び (いつもの経路)。粒だけがここを使う — 置き場所を
         /// 埋めるのが GPU なので、CPU の溜め場を通らない。
         var external: ExternalInstances?
+        /// GPU で広げる線。閉じた列へそのまま渡し、骨と配置を所有する。
+        var strokeGeometry: SolidStrokeGeometry?
+        var strokePlacement: SolidStrokePlacement?
         /// 裏面が絵に出うるスタイルで、置き場所を 1 つでも足したか
         /// (``Canvas/placementMayShowBackFaces``)。1 つでも居れば列ごと両面で描く
         /// (``Batch/cullMode``)。
@@ -470,6 +473,11 @@ public final class Canvas {
     /// 端にある球は寸法も鍵に持ち、予算に収まらなければ古いものから作り直す。
     var solidEdges = BoundedCache<SolidSource, SolidEdges>(
         budget: Canvas.solidCacheBudget, weight: Canvas.solidEdgesWeight)
+    /// 同じ稜線の GPU 上の骨。列も所有し、控えの追い出しと描画の寿命を分ける。
+    var solidStrokeGeometry = BoundedCache<SolidSource, SolidStrokeGeometry>(
+        budget: Canvas.solidCacheBudget, weight: { $0.buffer.length + 256 })
+    /// 今回の描き切りで積んだ塗りの頂点。列が切れても同じ頂点範囲を指せる。
+    var solidMeshRanges: [SolidMeshRangeKey: Range<Int>] = [:]
     /// 一周を割る数の既定。
     public static let defaultSolidDetail = 24
 
@@ -1108,6 +1116,9 @@ public final class Canvas {
         /// 形と読み込んだモデルは頂点が出どころから決まるので、頂点の中身を舐めずに
         /// 出どころで代表できる。平面の列は `nil`。
         var solidSource: SolidSource?
+        /// GPU で展開する線だけが持つ。投入完了まで HeldFrame が列ごと保持する。
+        var strokeGeometry: SolidStrokeGeometry?
+        var strokePlacement: SolidStrokePlacement?
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -1703,6 +1714,7 @@ public final class Canvas {
         list(&solidVertices)
         list(&solidIndices)
         list(&solidInstances)
+        if emptying { solidMeshRanges.removeAll(keepingCapacity: true) }
         // **何も動かさない置き場所は置き直す。** 畳めない列がこれを指すので、
         // 空のまま次の列を閉じると、束ねる先の無い添字が残る
         list(&flatInstances, resettingTo: [FlatInstance.identity])
@@ -2241,6 +2253,7 @@ public final class Canvas {
     /// [#893]: https://github.com/mokume-metal/mokume/issues/893
     private var hasPendingGeometry: Bool {
         !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty
+            || openSolid?.strokeGeometry != nil || batches.contains { $0.strokeGeometry != nil }
     }
 
     /// 描画先の絵を変えるものを、最後に描き切ってから溜めたか。
@@ -2475,10 +2488,13 @@ public final class Canvas {
             case .solid:
                 // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
                 encoder.setRenderPipelineState(
-                    (run.paint.shader?.solidStates ?? pipeline.solidStates).state(for: run.mode))
+                    (batch.strokeGeometry != nil
+                        ? pipeline.solidStrokeStates : (run.paint.shader?.solidStates ?? pipeline.solidStates))
+                        .state(for: run.mode))
                 encoder.setDepthStencilState(pipeline.solidDepthState)
                 pipeline.argumentTable.setAddress(
-                    geometry.solidVertices.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+                    (batch.strokeGeometry?.buffer ?? geometry.solidVertices).gpuAddress,
+                    index: ShapePipeline.vertexBufferIndex)
                 // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
                 // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
                 pipeline.argumentTable.setAddress(
@@ -2688,6 +2704,13 @@ public final class Canvas {
                 .copyMemory(from: &packed, byteCount: MemoryLayout<PackedSurroundings>.stride)
         }
 
+        let values = try uploadBatchValues()
+        return BatchBuffers(
+            matrices: matrices, lighting: lighting, materials: materials,
+            surroundings: surroundings, values: values)
+    }
+
+    private func uploadBatchValues() throws(RenderFailure) -> any MTLBuffer {
         let values = try valuesStorage.buffer(holding: batches.count)
         for (index, batch) in batches.enumerated() {
             // **区画に収まることは入口で保証されている** (`Canvas.loadShader` /
@@ -2696,15 +2719,16 @@ public final class Canvas {
             // 一度も書かれない欄」が残り、絵が永久に間違ったまま出るためである
             let slot = values.contents().advanced(by: index * Self.valuesStride)
                 .assumingMemoryBound(to: Float.self)
-            if batch.run.paint.values.isEmpty {
+            if var stroke = batch.strokePlacement {
+                UnsafeMutableRawPointer(slot).copyMemory(
+                    from: &stroke, byteCount: MemoryLayout<SolidStrokePlacement>.stride)
+            } else if batch.run.paint.values.isEmpty {
                 slot.update(repeating: 0, count: 4)
             } else {
                 slot.update(from: batch.run.paint.values, count: batch.run.paint.values.count)
             }
         }
-        return BatchBuffers(
-            matrices: matrices, lighting: lighting, materials: materials,
-            surroundings: surroundings, values: values)
+        return values
     }
 
     /// 頂点と置き場所の置き場。``uploadGeometry()`` が満たし、列を積むときに読む。
@@ -2762,7 +2786,7 @@ public final class Canvas {
     private func bakeShadow(
         into commands: any MTL4CommandBuffer
     ) throws(RenderFailure) -> BakedShadow? {
-        guard let matrix = shadowMatrix, !solidVertices.isEmpty else { return nil }
+        guard let matrix = shadowMatrix, hasPendingGeometry else { return nil }
         let casting = batches.filter(\.castsShadow)
         guard !casting.isEmpty else { return nil }
 
@@ -2788,6 +2812,7 @@ public final class Canvas {
             solidIndices, holding: solidIndices.count)
         let instanceBuffer = try solidInstanceStorage.write(
             solidInstances, holding: max(solidInstances.count, 1))
+        let batchValues = try uploadBatchValues()
         let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
         // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い。
         // 描く画素の大きさは基本図形しか読まず、基本図形は影へ焼かないので 1 を置く
@@ -2813,7 +2838,15 @@ public final class Canvas {
         // **束ねるのは頂点段だけ。** 焼くパイプラインは断片を持たない (奥行きの面へは
         // 前後判定が書く) ので、断片段に渡すものが無い
         encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
-        for batch in casting {
+        for (batchIndex, batch) in batches.enumerated() where batch.castsShadow {
+            encoder.setRenderPipelineState(
+                batch.strokeGeometry == nil ? pipeline.shadowState : pipeline.solidStrokeShadowState)
+            pipeline.argumentTable.setAddress(
+                (batch.strokeGeometry?.buffer ?? solidBuffer).gpuAddress,
+                index: ShapePipeline.vertexBufferIndex)
+            pipeline.argumentTable.setAddress(
+                batchValues.gpuAddress + UInt64(batchIndex * Self.valuesStride),
+                index: ShapePipeline.valuesBufferIndex)
             pipeline.argumentTable.setAddress(
                 (batch.instances?.storage ?? instanceBuffer).gpuAddress
                     + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
@@ -2877,6 +2910,11 @@ public final class Canvas {
         hasher.mix(UInt64(casting.count))
         for batch in casting {
             guard batch.instances == nil else { return nil }
+            if batch.strokeGeometry != nil {
+                // 形の鍵は下で混ぜる。視点・太さ・変換も焼かれる帯を変える。
+                hasher.mix(4)
+                withUnsafeBytes(of: batch.strokePlacement!) { hasher.mix($0) }
+            }
             hasher.mix(UInt64(batch.run.start))
             hasher.mix(UInt64(batch.run.count))
             hasher.mix(UInt64(batch.instanceStart))

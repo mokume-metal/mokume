@@ -163,6 +163,97 @@ vertex ShapeFragmentIn solidVertexMain(
     return out;
 }
 
+// 骨は形ごとに共用し、帯と角を置き場所・視点から頂点段で広げる (#1738)。
+struct SolidStrokePiece {
+    float4 a;
+    float4 b;
+};
+struct SolidStrokePlacement {
+    float4x4 matrix;
+    float4 eye;
+    float4 right;
+    float4 down;
+    float4 forward;
+    float4 parameters;
+    float4 color;
+    float4 uv;
+};
+
+float solidStrokePixel(float3 p, constant SolidStrokePlacement &s) {
+    if (s.eye.w != 0) {
+        float depth = max(dot(p - s.eye.xyz, s.forward.xyz), s.parameters.z);
+        return s.parameters.y * depth / s.parameters.w;
+    }
+    return s.parameters.y / s.parameters.w;
+}
+
+vertex ShapeFragmentIn solidStrokeVertexMain(
+    uint index [[vertex_id]],
+    constant SolidStrokePiece *pieces [[buffer(0)]],
+    constant FlatFrame &frame [[buffer(1)]],
+    constant SolidStrokePlacement &s [[buffer(5)]])
+{
+    SolidStrokePiece piece = pieces[index / 6];
+    const uint corners[6] = {0, 1, 2, 0, 2, 3};
+    uint corner = corners[index % 6];
+    float3 shapeA = piece.a.xyz * s.uv.z;
+    float3 shapeB = piece.b.xyz * s.uv.z;
+    float3 a = (s.matrix * float4(shapeA, 1)).xyz;
+    float3 world = a;
+    float3 shape = shapeA;
+    float halfWeight = s.parameters.x / 2;
+    if (piece.a.w == 0) {
+        float3 b = (s.matrix * float4(shapeB, 1)).xyz;
+        float3 along = b - a;
+        float2 normal;
+        if (s.eye.w != 0) {
+            float3 plane = cross(a - s.eye.xyz, b - s.eye.xyz);
+            normal = float2(dot(plane, s.right.xyz), dot(plane, s.down.xyz));
+        } else {
+            normal = float2(-dot(along, s.down.xyz), dot(along, s.right.xyz));
+        }
+        float size = length(normal);
+        // CPU が積まない帯は面積0にする。角は独立した部品のまま残る。
+        if (dot(along, along) > 0 && size > 0 && isfinite(size)) {
+            float3 side = s.right.xyz * (normal.x / size) + s.down.xyz * (normal.y / size);
+            bool end = corner == 1 || corner == 2;
+            float3 center = end ? b : a;
+            float3 across = side * (halfWeight * solidStrokePixel(center, s));
+            world = corner < 2 ? center + across : center - across;
+            shape = end ? shapeB : shapeA;
+        }
+    } else {
+        float radius = halfWeight * solidStrokePixel(a, s);
+        float3 axis;
+        switch (corner) {
+            case 0: axis = -s.right.xyz - s.down.xyz; break;
+            case 1: axis = s.right.xyz - s.down.xyz; break;
+            case 2: axis = s.right.xyz + s.down.xyz; break;
+            default: axis = -s.right.xyz + s.down.xyz; break;
+        }
+        world = a + axis * radius;
+    }
+    float lift = (s.parameters.x + 1) * solidStrokePixel(world, s);
+    if (s.eye.w != 0) {
+        float3 toEye = s.eye.xyz - world;
+        float distance = length(toEye);
+        if (distance > 0) world += toEye / distance * min(lift, distance / 2);
+    } else {
+        world -= s.forward.xyz * lift;
+    }
+    ShapeFragmentIn out;
+    out.position = frame.projection * float4(world, 1);
+    out.position.xy += frame.strokeShift.xy * out.position.w;
+    out.uv = s.uv.xy;
+    out.color = s.color;
+    out.worldPosition = world;
+    out.normal = float3(0);
+    out.isDerivedNormal = 0;
+    out.shapePosition = shape;
+    out.shapeNormal = float3(0);
+    return out;
+}
+
 // MARK: - 平面の基本図形 (1 インスタンス = 1 クアッド + 距離関数)
 //
 // 矩形・楕円・扇形・線・点は、頂点を組み立てずに描く。置き場所 1 つが形の寸法まで持ち、

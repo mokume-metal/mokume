@@ -153,8 +153,8 @@ extension Canvas {
 
     /// 形を組み立てて (あるいは使い回して)、いまの変換と塗りと線で置く。
     ///
-    /// **同じ形が続く間は、頂点を置き直さない。** 2 個目からは置き場所 (変換と塗り)
-    /// だけが増えるので、1 万個置いても頂点は 1 組で済む。
+    /// **同じ形の頂点は、描き切るまで 1 組を共有する。** 線で列が分かれても、塗りの
+    /// 頂点を置き直さない。描く列は呼び出し順のまま、置き場所 (変換と塗り) を持つ。
     ///
     /// 線は塗りに重ねて引く。`noFill()` なら線だけになる — 塗りと線は互いに独立した
     /// スタイルで、平面の図形と同じく次元によって作用が変わらない ([ADR-0020] 決定 3)。
@@ -167,8 +167,8 @@ extension Canvas {
 
     /// 三角形の並びを、いまの変換と塗りで置く。
     ///
-    /// **同じ出どころが続く間は頂点を置き直さない。** 組み込みの形も読み込んだモデルも
-    /// ここを通るので、まとめ方が 2 通りに割れない。
+    /// **同じ入力の頂点は、列をまたいで共有する。** 組み込みの形も読み込んだモデルも
+    /// ここを通る。続く同じ出どころは配置をまとめ、離れた列は同じ頂点範囲を指す。
     ///
     /// **保持する形を記録している間だけは、置き場所を頂点へ焼く** ([#1297])。記録は置き場所を
     /// 持ち歩かない (``recordingShape``) ので、置き場所に変換と塗りを持たせたままだと、
@@ -206,20 +206,29 @@ extension Canvas {
         // 置き場所だけが続く間は、いままでどおり 1 列にまとまる
         //
         // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
-        if openSolid?.source != source || openSolid?.isMirrored != placement.isMirrored
+        if openSolid?.source != source || openSolid?.strokeGeometry != nil
+            || openSolid?.isMirrored != placement.isMirrored
             || isBatchFull(solidInstances.count, since: openSolid?.instanceStart ?? 0)
         {
-            // 出どころか鏡映の符号が変わった (か、1 列に入る上限に達した)。列を閉じて頂点を
-            // 置き直す
+            // 列は分けても、描く順序と頂点の所有は別である。同じ入力なら既に積んだ範囲を指す。
             closeBatch()
-            let mesh = build()
-            let start = solidVertices.count
-            solidVertices.reserveCapacity(start + mesh.points.count)
-            for point in mesh.points {
-                solidVertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
+            let key = SolidMeshRangeKey(
+                source: source, isDerived: isDerived, textured: textured, whiteUV: whiteUV)
+            let range: Range<Int>
+            if let shared = solidMeshRanges[key] {
+                range = shared
+            } else {
+                let mesh = build()
+                let start = solidVertices.count
+                solidVertices.reserveCapacity(start + mesh.points.count)
+                for point in mesh.points {
+                    solidVertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
+                }
+                range = start..<solidVertices.count
+                solidMeshRanges[key] = range
             }
             openSolid = OpenSolid(
-                source: source, vertexStart: start, vertexCount: mesh.points.count,
+                source: source, vertexStart: range.lowerBound, vertexCount: range.count,
                 // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
                 indexStart: nil,
                 instanceStart: solidInstances.count, isMirrored: placement.isMirrored)
@@ -501,6 +510,7 @@ extension Canvas {
         // 区間の外では引かない。`noFill()` の立体はここだけを通る (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         guard style.hasStroke, style.strokeWeight > 0 else { return }
+        if placeGPUStroke(of: source, mesh: build) { return }
         let net = solidEdges(of: source, mesh: build)
         guard !net.edges.isEmpty else { return }
         // **塗りを置かなかったときも、立体の側へ移る。** 移らないと平面の列が開いた
