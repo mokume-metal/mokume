@@ -193,6 +193,18 @@ class ReadFailureMessagesTest(unittest.TestCase):
         self.assertIn("シーン disc の絵が変わった", out)
         self.assertIn("色が違う", out)
 
+    def test_reads_raw_newlines_as_the_runner_writes_them(self):
+        """専用機 (macOS 27) の SwiftPM は、文面の改行を生のまま属性へ書く (#1773)。
+
+        XML の仕様どおりに読むと改行が空白へ潰れ、台帳の行を拾えなかった。
+        """
+        raw = LEDGER_FAILED.replace("&#10;", "\n")
+        self.assertIn('message="Issue recorded (error): シーン disc の絵が変わった。\n', raw)
+        out = self.read(_record(raw))
+        block = out.split("台帳の書き換え後の行")[1].split("####")[0]
+        self.assertIn("disc %s\n" % DIGEST, block)
+        self.assertIn("シーン disc の絵が変わった。\n\n意図した変更なら", out)
+
     def test_does_not_take_lines_from_other_tests(self):
         """台帳の外の検査が同じ形の行を名乗っても、台帳の案には入れない。"""
         other = _failed("MokumeCoreTests.CanvasTests", "hashes()", "期待:\n\n    disc %s" % DIGEST)

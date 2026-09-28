@@ -109,16 +109,35 @@ def fenced(text):
     return "%stext\n%s\n%s" % (fence, text, fence)
 
 
+def keep_attribute_newlines(raw):
+    """属性値の中の生の改行とタブを、文字参照へ戻す。
+
+    専用機 (macOS 27) の SwiftPM は、文面の改行を `&#10;` ではなく生の改行のまま
+    `message="…"` へ書く。XML の仕様は属性値の生の改行を空白へ正規化するので、そのまま
+    読むと文面が 1 行に潰れ、台帳の行も拾えない (#1773 の赤の run で見つけた)。手元の
+    macOS 26 は `&#10;` で書くので、手元の記録では起きない。属性値は `"` を `&quot;` に
+    して書かれるので、`"…"` の範囲がそのまま 1 つの値になる。
+    """
+    def escape(m):
+        value = m.group(1).replace("\r", "&#13;").replace("\n", "&#10;").replace("\t", "&#9;")
+        return '="%s"' % value
+
+    return re.sub(r'="([^"]*)"', escape, raw)
+
+
 def failure_messages(path):
     """落ちた検査の名前と文面を Markdown で。台帳の書き換え後の行は先頭に集める。"""
     try:
         if os.path.getsize(path) == 0:
             return "記録が無い (`%s`)" % path
-    except OSError:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
+    except (OSError, UnicodeDecodeError):
         return "記録が無い (`%s`)" % path
     try:
-        cases = list(ET.parse(path).getroot().iter("testcase"))
-    except (OSError, ET.ParseError):
+        root = ET.fromstring(keep_attribute_newlines(raw).encode("utf-8"))
+        cases = list(root.iter("testcase"))
+    except ET.ParseError:
         return "記録を読めなかった (`%s`)" % path
 
     found = []
