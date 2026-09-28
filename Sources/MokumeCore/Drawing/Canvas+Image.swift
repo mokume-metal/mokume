@@ -58,7 +58,7 @@ extension Canvas {
     /// 復号したものを控えに入れる。**量が上限を超えたら、収まるまで古い順に捨てる**
     /// (``BoundedCache``。いま読んだものは、1 枚で上限を超えても残る)。
     private func remember(
-        _ decoded: ImageFile.Decoded, path: String, url: URL, stamp: Date?
+        _ decoded: ImageFile.Decoded, path: String, url: URL, stamp: FileStamp?
     ) {
         imageCache.insert(
             DecodedImage(url: url, stamp: stamp, decoded: decoded), for: ImageRequest(path: path))
@@ -228,7 +228,7 @@ struct ImageRequest: Hashable {
 /// 控えた復号結果。**読んだ場所と更新時刻も持つ** — 差し替えを見逃さないため。
 struct DecodedImage {
     var url: URL
-    var stamp: Date?
+    var stamp: FileStamp?
     var decoded: ImageFile.Decoded
 
     /// 画素が占める大きさ (バイト)。控えの量を数えるのに使う。

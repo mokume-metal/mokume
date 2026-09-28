@@ -34,7 +34,7 @@ import Foundation
 final class WatchedFile<Value: Decodable> {
     let url: URL
     /// もう読んだことにした改訂の最終更新時刻。
-    private var readAt: Date?
+    private var readAt: FileStamp?
 
     init(url: URL) {
         self.url = url
@@ -47,8 +47,7 @@ final class WatchedFile<Value: Decodable> {
     ///
     /// - Returns: 新しい中身。変わっていない・まだ読めないなら `nil`。
     func changed() -> Value? {
-        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[
-            .modificationDate] as? Date
+        let modified = FileStamp.of(url)
         guard let modified, modified != readAt else { return nil }
         guard let data = try? Data(contentsOf: url),
             let value = try? JSONDecoder().decode(Value.self, from: data)

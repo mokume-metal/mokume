@@ -91,9 +91,9 @@ final class RequestFile<Request: ExchangeRequest> {
     /// 応答の置き場。区画の持ち主が書き、ここは作った時点と引き継いだ時点にだけ読む。
     let reportURL: URL
     /// もう見たことにした要求の最終更新時刻。
-    private var lastModification: Date?
+    private var lastModification: FileStamp?
     /// 拾って返したが、まだ応えていない要求の最終更新時刻。
-    private var handingOver: Date?
+    private var handingOver: FileStamp?
     /// 最後に応えた要求の識別子。**前の起動が応えたものから始まる** (「プロセスをまたぐ」)。
     private(set) var lastHandledID: String?
 
@@ -181,7 +181,7 @@ final class RequestFile<Request: ExchangeRequest> {
         return true
     }
 
-    private func modificationDate() -> Date? {
-        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+    private func modificationDate() -> FileStamp? {
+        FileStamp.of(url)
     }
 }
