@@ -122,4 +122,58 @@ struct ObserveTests {
         #expect(text.contains("8 shots were asked for"))
         #expect(text.contains("only one came back"))
     }
+    @Test("時刻を無視した旧版は、偶然同じ秒でも成功ではない")
+    func rejectsIgnoredTime() throws {
+        var report = base()
+        report["image"] = "frame.png"
+        report["frames"] = [frame("frame.png", 42)]
+        let (text, error) = try makeTools(report: report).call("observe", arguments: ["time": 0.7])
+        #expect(error)
+        #expect(text.contains("appliedTime is missing"))
+        #expect(text.contains("Update the sketch's own dependency"))
+    }
+
+    @Test("丸めた指定秒と、適用の印・絵の時刻をすべて照合する")
+    func checksAppliedTime() throws {
+        let time = Double(Float(0.7))
+        var report = base()
+        report["schemaVersion"] = 2
+        report["appliedTime"] = time
+        report["time"] = time
+        report["image"] = "frame.png"
+        report["frames"] = [["image": "frame.png", "frame": 42, "time": time]]
+        let (_, successError) = try makeTools(report: report).call("observe", arguments: ["time": 0.7])
+        #expect(!successError)
+        report["frames"] = [["image": "frame.png", "frame": 42, "time": 1.0]]
+        let (_, mismatchError) = try makeTools(report: report).call("observe", arguments: ["time": 0.7])
+        #expect(mismatchError)
+        report["frames"] = []
+        #expect(Tools.timeObservationFailure(report, requested: 0.7) != nil)
+    }
+
+    @Test("時刻の不正値と連写指定は要求を送る前に断る")
+    func rejectsInvalidTimeArguments() throws {
+        let tools = try makeTools(report: base())
+        for raw: Any in [-1.0, Double.infinity, 1e39, "three", true, NSNull()] {
+            let (_, error) = tools.call("observe", arguments: ["time": raw])
+            #expect(error)
+        }
+        let (_, error) = tools.call("observe", arguments: ["time": 3, "count": 2])
+        #expect(error)
+        for key in ["count", "every"] {
+            let (_, invalid) = tools.call("observe", arguments: ["time": 3, key: "one"])
+            #expect(invalid)
+        }
+    }
+
+    @Test("指定を断った理由を旧版の案内に置き換えない")
+    func keepsRefusalReason() throws {
+        var report = base()
+        report["warnings"] = ["Cannot draw at a specified time while externally paused"]
+        let (text, error) = try makeTools(report: report).call("observe", arguments: ["time": 3])
+        #expect(error)
+        #expect(text.contains("externally paused"))
+        #expect(!text.contains("Update the sketch"))
+    }
+
 }
