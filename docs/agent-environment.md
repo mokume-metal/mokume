@@ -46,3 +46,31 @@ Codex CLI 0.158.0-alpha.2.1 のシェル実行 (`exec_command`) とコード実�
 フックを提供しない環境でも、Issue へのプラン記録・コメントのラッパー・App identity は
 AGENTS.md に従って実行する。フックが黙っていることを検証済みの印にしない。
 個人のプラグイン・モデル・権限設定はこのリポジトリから変更しない。
+
+## プランの明示登録
+
+Codex では、実装前に対象 Issue と完了条件の現況を含むプラン本文を一時ファイルへ書き、
+次を実行する。`CODEX_THREAD_ID` が空なら実際のセッションIDを確認する。代用のIDを作らない。
+
+```bash
+bash scripts/plan-record.sh register --agent codex --session "$CODEX_THREAD_ID" --body-file /tmp/plan.md
+```
+
+説明を読み、表示された `scripts/comment.sh` で投稿する。終了コード2は投稿の指示にも
+入力の差し戻しにも使うため、成功と決めつけない。投稿そのものをフックは代行しない。
+有効な Stop フックは同じworktree・Codexセッションで登録された未投稿のプランを確認する。
+未登録のプランは検出しない。Claude の ExitPlanMode と capture/guard は従来どおりである。
+
+他のエージェントは `--agent` と `--session` を明示し、作業終了時に `check` を実行する。
+Codex でもフック非対応・未信頼なら同じ確認を手で行う。
+
+```bash
+bash scripts/plan-record.sh check --agent codex --session "$CODEX_THREAD_ID"
+```
+
+記録はworktree・agent・sessionごとに分離する。再開は同じID、別のセッションへの引き継ぎは
+GitHub の投稿を読む。入力・終了コードの詳細は `bash scripts/plan-record.sh --help` を参照する。
+
+明示登録の投稿前の一時材料は `.build/mokume-plan-records/` に置く。`.git` の保護を緩める
+必要はない。`.build` を消した場合は再登録する。経過の正典は投稿先の GitHub であり、
+ローカルの記録だけを引き継ぎに使わない。

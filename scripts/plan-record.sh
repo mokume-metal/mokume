@@ -12,6 +12,9 @@
 #   4. 着手の瞬間に、完了条件がまだ妥当かを問う (ADR-0031 決定 4 — recheck_missing)
 #   5. 対象が Bug なら、破られた約束とそれが及ぶ範囲を問う (ADR-0040 決定 1 — bug_scope_missing)
 #
+# 明示入力: register/check は --help を参照。codex-stop は Codex Stop 用。
+# Claude の capture/guard の入力契約と記録の置き場は変えない (#1728)。
+#
 # 契約 (詳細は各関数の頭):
 #   capture   stdin に PostToolUse (ExitPlanMode) の JSON。記録し指示を stderr へ (exit 2)
 #   guard     stdin に Stop の JSON。未投稿が残っていれば差し戻す (exit 2)
@@ -48,6 +51,9 @@ REPO="$(this_repo)"
 # 投稿済み判定の目印。個人環境の同種フック (plan-record: <id>) と混ざらないよう
 # 接頭辞を分ける — 両方が動いていても互いの記録を「投稿済み」と誤読しない
 readonly MARKER='mokume-plan-record'
+# CLI で明示入力を選んだときだけ設定する。環境変数からは継承しない。
+EXPLICIT_AGENT=''
+EXPLICIT_SESSION=''
 
 
 # 何もせず終わる経路の理由を見せる。既定は無言 (通常運転で喋ると邪魔になる)。
@@ -465,6 +471,12 @@ write_meta() { # $1=経路 $2=ブランチ $3=記録 ID $4=催促した回数 $5
       done <<< "$5"
     fi
   } > "$1"
+  local status=$?
+  if [ "$status" -ne 0 ] && [ -n "$EXPLICIT_AGENT" ]; then
+    echo "プランの投稿確認用の記録を保存できませんでした: $1" >&2
+    exit 73
+  fi
+  return "$status"
 }
 
 # いま居るリポジトリが自分でないと確認できるか。**他のリポジトリで立てたプランには
@@ -495,6 +507,14 @@ in_another_repository() { # → 他リポだと確認できたときだけ 0
 
 record_dir() {
   local common
+  if [ -n "$EXPLICIT_AGENT" ]; then
+    common=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+    # .git は Codex の通常sandboxで保護される。投稿前の一時材料だけ .build へ置く。
+    # .build 自体が共有されていても、worktreeの絶対ルートで名前空間を分ける。
+    printf '%s/.build/%ss/%s/%s/%s' "$common" "$MARKER" \
+      "$(printf '%s' "$common" | shasum -a 256 | cut -d ' ' -f1)" "$EXPLICIT_AGENT" "$EXPLICIT_SESSION"
+    return
+  fi
   common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
   # --git-common-dir は相対パス (.git) を返すことがあるので絶対化しておく。
   # .git の中なのでコミットされず、worktree からでも共通の一箇所を指す
@@ -634,6 +654,14 @@ $(printf '%s' "$1" | sed 's/^/  - /')
 EOF
 }
 
+retry_plan_instruction() {
+  if [ -n "$EXPLICIT_AGENT" ]; then
+    echo 'プランを直してもう一度 register を実行してください。'
+  else
+    echo 'プランを直してもう一度 ExitPlanMode を通してください。'
+  fi
+}
+
 recheck_missing_message() { # $1=足りないもの (1 行 1 件)
   cat <<EOF
 着手プランに、完了条件の再チェックが見当たりません (ADR-0031 決定 4)。足りないのは:
@@ -648,7 +676,7 @@ $(printf '%s' "$1" | sed 's/^/  - /')
   #448 — 載せ替える対象は 4 つではなく 2 つだった
 
 **見ているのは書いてあることだけで、判定が正しいかは見ていません。** 記録は作っていないので、
-プランを直してもう一度 ExitPlanMode を通してください。
+$(retry_plan_instruction)
 EOF
 }
 
@@ -669,7 +697,7 @@ $(printf '%s' "$1" | sed 's/^/  - /')
      兄弟。同じ根の既存 Issue があれば sub-issue で束ねる (bash scripts/sub-issue.sh <根> --attach <番号>)
 
 **見ているのは書いてあることだけで、範囲の探し方が正しいかは見ていません。** 記録は作って
-いないので、プランを直してもう一度 ExitPlanMode を通してください。
+いないので、$(retry_plan_instruction)
 EOF
 }
 
@@ -789,8 +817,18 @@ capture() {
     exit 2
   fi
 
-  mkdir -p "$dir" 2>/dev/null || { debug "記録の置き場を作れない ($dir)"; exit 0; }
+  mkdir -p "$dir" 2>/dev/null || {
+    if [ -n "$EXPLICIT_AGENT" ]; then
+      echo "記録の置き場を作れませんでした: $dir" >&2
+      exit 73
+    fi
+    debug "記録の置き場を作れない ($dir)"; exit 0
+  }
   id="${session%%-*}-$(date +%s)"
+  if [ -n "$EXPLICIT_AGENT" ]; then
+    # 同じ内容の再登録は同じマーカーになる。別セッション・別worktreeとは分ける。
+    id="$(printf '%s\n' "$EXPLICIT_AGENT" "$EXPLICIT_SESSION" "$root" "$body" | shasum -a 256 | cut -d ' ' -f1)"
+  fi
   file="$dir/$id.md"
 
   {
@@ -803,6 +841,10 @@ capture() {
     # 署名はここで焼き込まない。どのエージェントから投稿されるかは実行環境で決まるので、
     # scripts/comment.sh が投稿時に判定して付ける (#18)
   } > "$file"
+  if [ "$?" -ne 0 ] && [ -n "$EXPLICIT_AGENT" ]; then
+    echo "プランを保存できませんでした: $file" >&2
+    exit 73
+  fi
 
   # **投稿先を引く前に記録を残す。** この下の GitHub の区間はフックの中で最も遅く、
   # そこで timeout に殺されると .meta が無いまま .md だけが残る — guard は .meta しか
@@ -859,6 +901,12 @@ capture() {
   # Issue から PR へ移るので、引き直しだけでは投稿済みを見落とす (#631)。
   # 確定していないときは候補を全部残す (#646)
   write_meta "$dir/$id.meta" "$branch" "$id" 0 "$targets"
+
+  if [ -n "$EXPLICIT_AGENT" ] && posted_anywhere "$id" "$targets"; then
+    rm -f "$file" "$dir/$id.meta"
+    echo 'このプランは既に投稿されています。' >&2
+    exit 0
+  fi
 
   post_instructions "$file" "$marks" "$count" "$targets" "$target" "$warns" >&2
   exit 2
@@ -983,7 +1031,84 @@ EOF
   exit 2
 }
 
+# --- 明示入力 (#1728) -------------------------------------------------------
+# Claude の capture/guard は共通 git dir の従来の記録を見る。明示入力は
+# worktree の .build / worktree識別子 / agent / session で分け、他のセッションへ催促しない。
+# agent/session はパスに使うので、空・区切り・制御文字を受け付けない。
+explicit_scope() {
+  local value
+  for value in "$1" "$2"; do
+    case "$value" in ''|*[!a-zA-Z0-9_-]*)
+      echo 'agent/session は英数字・ハイフン・アンダースコアで指定してください。' >&2
+      exit 64 ;;
+    esac
+    [ "${#value}" -le 128 ] || { echo 'agent/session が長すぎます。' >&2; exit 64; }
+  done
+  EXPLICIT_AGENT=$1
+  EXPLICIT_SESSION=$2
+}
+
+explicit_usage() {
+  cat <<'HELP'
+使い方:
+  bash scripts/plan-record.sh register --agent <名前> --session <ID> --body-file <本文>
+  bash scripts/plan-record.sh check --agent <名前> --session <ID>
+  bash scripts/plan-record.sh codex-stop  # Codex Stop の JSON を stdin で受ける
+
+本文には対象 Issue (#N) と各完了条件の現況を書く。投稿は表示された
+scripts/comment.sh で行う。register/check は記録・催促が必要なら終了コード2、
+投稿済みなど催促不要なら0、引数が不正なら64、保存失敗なら73。2を登録成功の保証には使わず、
+必ず説明を読む。秘密や再確認の欠落でも2になり、記録を作らない。
+
+Codex の --session は実行環境の CODEX_THREAD_ID を渡す。再開時も同じIDを使う。
+check は同じworktree・agent・sessionで実行する。未登録のプランは検出しない。
+Claude Code の capture/guard と sanitize の呼び方・動作は従来どおり。
+HELP
+}
+
+explicit_entry() { # $1=register/check
+  local mode=$1 agent='' session='' body_file='' payload
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --agent|--session|--body-file)
+        [ "$#" -ge 2 ] || { explicit_usage >&2; exit 64; }
+        case "$1" in
+          --agent) agent=$2 ;;
+          --session) session=$2 ;;
+          --body-file) body_file=$2 ;;
+        esac
+        shift 2 ;;
+      *) explicit_usage >&2; exit 64 ;;
+    esac
+  done
+  explicit_scope "$agent" "$session"
+  command -v jq >/dev/null 2>&1 || { echo 'jq が必要です (make setup)。' >&2; exit 69; }
+  git rev-parse --git-dir >/dev/null 2>&1 || { echo 'リポジトリ内で実行してください。' >&2; exit 64; }
+  if [ "$mode" = register ]; then
+    [ -f "$body_file" ] && [ -r "$body_file" ] || { echo '読める --body-file が必要です。' >&2; exit 64; }
+    payload=$(jq -n --arg cwd "$PWD" --arg session "$session" --rawfile plan "$body_file" \
+      '{cwd:$cwd,session_id:$session,tool_input:{plan:$plan}}') || exit 64
+    capture <<< "$payload"
+  else
+    [ -z "$body_file" ] || { explicit_usage >&2; exit 64; }
+    payload=$(jq -n --arg cwd "$PWD" '{cwd:$cwd}') || exit 64
+    guard <<< "$payload"
+  fi
+}
+
+codex_stop() {
+  local payload session
+  payload=$(read_stdin)
+  session=$(printf '%s' "$payload" | jq -er '.session_id | select(type == "string" and length > 0)') || exit 64
+  explicit_scope codex "$session"
+  guard <<< "$payload"
+}
+
 case "${1:-}" in
+  register|check) mode=$1; shift; explicit_entry "$mode" "$@" ;;
+  codex-stop) codex_stop ;;
+  --help|-h) explicit_usage ;;
   capture)  capture ;;
   guard)    guard ;;
   sanitize) sanitize "${2:-}" ;;

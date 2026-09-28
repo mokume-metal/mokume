@@ -15,3 +15,10 @@ type = "command"
 command = 'bash "$(git rev-parse --show-toplevel)/scripts/pr-identity-guard.sh"'
 timeout = 10
 statusMessage = "PR の作成主体を確認中"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = 'bash "$(git rev-parse --show-toplevel)/scripts/plan-record.sh" codex-stop'
+timeout = 30
+statusMessage = "プランが GitHub に残ったか確認中"
