@@ -9,8 +9,9 @@
 /// 「毎フレーム全頂点」に増える。
 ///
 /// **費用は測ってある** ([#976])。別のパッケージから release で呼んで 1 回あたり約 0.8 ns
-/// (2〜3 クロック) で、`circle` 本体の 60〜70 ns に対して 1% 台である。ジェネリックは
-/// 呼ぶ側で特殊化されるので、`Float` を直に受けるのと同じ機械語に落ちる。
+/// (2〜3 クロック) で、`circle` 本体の 60〜70 ns に対して 1% 台である。**呼ぶ側では
+/// 特殊化されない** — 呼び先は総称の入口で、`asFloat` は証人表を通って引かれるが、
+/// existential の箱化にはならず引数 1 つあたり約 1 ns で収まる ([ADR-0035] 決定 1・[#1797])。
 ///
 /// **オーバーロードではないが、リテラルの書き方は結果を変える。** [ADR-0033] 決定 1 は
 /// 「`Int` と `Float` の口を並べると、どちらが呼ばれるかで目盛りが変わる」罠を避けた。
@@ -33,6 +34,7 @@
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
 /// [#976]: https://github.com/mokume-metal/mokume/issues/976
 /// [#1018]: https://github.com/mokume-metal/mokume/issues/1018
+/// [#1797]: https://github.com/mokume-metal/mokume/issues/1797
 public protocol ScalarConvertible {
     /// 描画へ渡す幅 (32 bit)。
     var asFloat: Float { get }
