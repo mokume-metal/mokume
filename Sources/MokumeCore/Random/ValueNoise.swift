@@ -112,6 +112,49 @@ struct ValueNoise: Equatable, Sendable {
         return mix(near, far, w)
     }
 
+    /// 奥行き (`z`) が 0 の平面の上の 1 枚。**``layer(_:_:_:_:)`` と 1 ビットも違わない** ([#1788])。
+    ///
+    /// `z` が 0 なら奥の重み `w` は 0 で、`mix(near, far, 0)` は `near + (far - near) * 0` になる。
+    /// 格子点の値は 0…1 の有限の数なので `(far - near) * 0` は ±0 で、`near` (0 以上) に足しても
+    /// `near` のまま — 奥の 4 隅は引いても結果に効かない。だから引かない。`z` が `-0` でも
+    /// 切り下げは `-0`、格子の番号は 0 で同じ隅を引く。
+    ///
+    /// [#1788]: https://github.com/mokume-metal/mokume/issues/1788
+    static func layer(_ x: Float, _ y: Float, _ seed: UInt32) -> Float {
+        let limit = ValueNoise.coordinateLimit
+        let cx = min(max(x, -limit), limit)
+        let cy = min(max(y, -limit), limit)
+        let xi = cx.rounded(.down)
+        let yi = cy.rounded(.down)
+        let xf = cx - xi
+        let yf = cy - yi
+        let u = xf * xf * (3 - 2 * xf)
+        let v = yf * yf * (3 - 2 * yf)
+
+        let x0 = Int32(xi)
+        let y0 = Int32(yi)
+        let x1 = x0 &+ 1
+        let y1 = y0 &+ 1
+
+        return mix(
+            mix(corner(x0, y0, 0, seed), corner(x1, y0, 0, seed), u),
+            mix(corner(x0, y1, 0, seed), corner(x1, y1, 0, seed), u), v)
+    }
+
+    /// 奥行きも縦も 0 の線の上の 1 枚。理由は 2 次元の ``layer(_:_:_:)`` と同じで、縦の重み
+    /// `v` も 0 なので、下の 2 隅だけが効く ([#1788])。
+    ///
+    /// [#1788]: https://github.com/mokume-metal/mokume/issues/1788
+    static func layer(_ x: Float, _ seed: UInt32) -> Float {
+        let limit = ValueNoise.coordinateLimit
+        let cx = min(max(x, -limit), limit)
+        let xi = cx.rounded(.down)
+        let xf = cx - xi
+        let u = xf * xf * (3 - 2 * xf)
+        let x0 = Int32(xi)
+        return mix(corner(x0, 0, 0, seed), corner(x0 &+ 1, 0, 0, seed), u)
+    }
+
     /// 倍率を変えて重ねた揺らぎ (0…1)。
     ///
     /// **重ねた合計で割る。** 手本は割らないので弱まりを大きくすると 1 を超えるが、
@@ -121,6 +164,24 @@ struct ValueNoise: Equatable, Sendable {
         // (ADR-0020 決定 5)
         guard x.isFinite, y.isFinite, z.isFinite else { return 0 }
 
+        // **軸が 0 なら、その軸の隅を引かない** (#1788)。`noise(x)` と `noise(x, y)` は残りの
+        // 軸を 0 で呼ぶので、1 次元で 8 隅のうち 6 隅、2 次元で 4 隅が結果に効かない。
+        // 振り分けは入口で 1 度だけで、重ねる輪は振り分けの先で回す — 輪の中で分けると
+        // 3 次元の呼び出しが分岐のぶん遅くなる (層の中で軸ごとに分けたときも同じだった)
+        if z == 0 {
+            if y == 0 { return layered { frequency, seed in Self.layer(x * frequency, seed) } }
+            return layered { frequency, seed in
+                Self.layer(x * frequency, y * frequency, seed)
+            }
+        }
+        return layered { frequency, seed in
+            Self.layer(x * frequency, y * frequency, z * frequency, seed)
+        }
+    }
+
+    /// 枚を重ねて合計で割る。`layer` は倍率と種から 1 枚を引く。
+    @inline(__always)
+    private func layered(_ layer: (Float, UInt32) -> Float) -> Float {
         var sum: Float = 0
         var total: Float = 0
         var amplitude: Float = 1
@@ -129,7 +190,7 @@ struct ValueNoise: Equatable, Sendable {
             // 枚ごとに種をずらす。ずらさないと、倍率違いの同じ模様が重なって
             // 格子の目が見える
             let layerSeed = seed &+ UInt32(octave) &* 0x9E37_79B1
-            sum += Self.layer(x * frequency, y * frequency, z * frequency, layerSeed) * amplitude
+            sum += layer(frequency, layerSeed) * amplitude
             total += amplitude
             amplitude *= falloff
             frequency *= 2
