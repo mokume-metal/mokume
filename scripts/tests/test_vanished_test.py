@@ -141,6 +141,96 @@ class ReadFailuresTest(unittest.TestCase):
         self.assertEqual((proc.returncode, proc.stdout.strip()), (0, "failed 0"))
 
 
+DIGEST = "ab" * 32
+
+
+def _failed(classname, name, message):
+    esc = message.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace("\n", "&#10;")
+    return (
+        '    <testcase classname="%s" name="%s" time="0.1">\n'
+        '      <failure message="%s" />\n    </testcase>\n' % (classname, name, esc)
+    )
+
+
+# 台帳の「絵が変わった」の文面の形 (SceneLedgerTests.compare)。行は 4 字下げで名乗られる
+LEDGER_FAILED = _failed(
+    "MokumeCoreTests.SceneLedgerTests", "sceneMatchesLedger(_:)",
+    "Issue recorded (error): シーン disc の絵が変わった。\n\n"
+    "意図した変更なら、行を次へ書き換える:\n\n    disc %s\n\nbefore / after を載せる" % DIGEST,
+)
+LEDGER_FAILED_OS = _failed(
+    "MokumeCoreTests.SceneLedgerTests", "glyphSceneMatchesLedger(_:)",
+    "Issue recorded (error): シーン text の絵が変わった。\n\n    text %s os=27\n" % DIGEST,
+)
+
+
+class ReadFailureMessagesTest(unittest.TestCase):
+    """`read-test-record.py --failure-messages` — 専用機の赤を run の要約へ残す口 (#1773)。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def read(self, content):
+        path = self.root / "record.xml"
+        if content is not None:
+            path.write_text(content, encoding="utf-8")
+        proc = subprocess.run(
+            ["python3", str(READER), "--failure-messages", str(path)],
+            capture_output=True, text=True,
+        )
+        # 呼ぶ側 (render.yml の要約の step) との約束 — 終了コードは常に 0
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    def test_collects_the_ledger_lines_first(self):
+        out = self.read(_record(PASSED_CASE, LEDGER_FAILED, LEDGER_FAILED_OS, FAILED_CASE))
+        self.assertIn("落ちた検査 (3 件)", out)
+        block = out.split("台帳の書き換え後の行")[1].split("####")[0]
+        self.assertIn("disc %s\ntext %s os=27\n" % (DIGEST, DIGEST), block)
+        # 文面そのものも、台帳以外の失敗も載る
+        self.assertIn("シーン disc の絵が変わった", out)
+        self.assertIn("色が違う", out)
+
+    def test_reads_raw_newlines_as_the_runner_writes_them(self):
+        """専用機 (macOS 27) の SwiftPM は、文面の改行を生のまま属性へ書く (#1773)。
+
+        XML の仕様どおりに読むと改行が空白へ潰れ、台帳の行を拾えなかった。
+        """
+        raw = LEDGER_FAILED.replace("&#10;", "\n")
+        self.assertIn('message="Issue recorded (error): シーン disc の絵が変わった。\n', raw)
+        out = self.read(_record(raw))
+        block = out.split("台帳の書き換え後の行")[1].split("####")[0]
+        self.assertIn("disc %s\n" % DIGEST, block)
+        self.assertIn("シーン disc の絵が変わった。\n\n意図した変更なら", out)
+
+    def test_does_not_take_lines_from_other_tests(self):
+        """台帳の外の検査が同じ形の行を名乗っても、台帳の案には入れない。"""
+        other = _failed("MokumeCoreTests.CanvasTests", "hashes()", "期待:\n\n    disc %s" % DIGEST)
+        out = self.read(_record(other))
+        self.assertNotIn("台帳の書き換え後の行", out)
+        self.assertIn("hashes()", out)
+
+    def test_fence_outlives_backticks_in_the_message(self):
+        out = self.read(_record(_failed("A", "b()", "```swift\nfoo()\n```")))
+        self.assertIn("````text\n```swift", out)
+
+    def test_caps_the_messages_under_the_summary_limit(self):
+        """要約は 1 step あたり 1 MiB まで。切ったことと残りの数を名乗る。"""
+        out = self.read(_record(*[FAILED_CASE] * 81))
+        self.assertIn("落ちた検査 (81 件)", out)
+        self.assertEqual(out.count("色が違う"), 80)
+        self.assertIn("ほか 1 件", out)
+
+    def test_names_green_missing_and_unreadable(self):
+        # 無い記録を先に見る (read は同じ置き場へ書くので、後に回すと前の記録が残る)
+        self.assertIn("記録が無い", self.read(None))
+        self.assertIn("記録が無い", self.read(""))
+        self.assertEqual(self.read(RECORD_ALL_PASSED).strip(), "記録に落ちた検査は無い")
+        self.assertIn("記録を読めなかった", self.read(RECORD_TRUNCATED))
+
+
 class MakeTestTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

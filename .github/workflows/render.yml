@@ -27,6 +27,17 @@ name: Render
 #
 # 専用機の設置と、ジョブ開始時の掃除 (scripts/runner-job-started.sh) の置き方は
 # そのスクリプトの冒頭にある。
+#
+# **記録は artifact に上げて持ち出す** (#1773)。専用機の作業ディレクトリは次のジョブが
+# 消すので、上げなければ赤を読んで直す材料が行を落とすジョブのログしか残らない。
+#   - render-record: 何が走ったかの正本 (xunit の記録)・test-log・test-vanished の材料・
+#     段ごとの所要。成否によらず上げる
+#   - ledger-shots: 台帳の全行の絵 (MOKUME_LEDGER_DUMP_DIR)。落ちた回だけ上げる — 台帳の
+#     行が動いた回の after の絵で、書き換える前に目で見る (ADR-0019 決定 3)
+#   - 落ちた回は、落ちた検査の文面と台帳の書き換え後の行 (案) を run の要約へ書く
+# artifact は runner が持つ runtime の token で上げるので、contents: read のままで足りる。
+# 保持は 14 日 — 赤を直すまでの材料で、恒久の証跡は PR に載せる絵が持つ。
+# render と render-pr の step の並びは同じに保つ (ジョブの if と concurrency だけが違う)。
 
 on:
   pull_request:
@@ -50,6 +61,33 @@ jobs:
       # CI= は Metal の検証レイヤを手元と同じく有効にするため (Makefile の
       # METAL_VALIDATION)。GitHub が立てる CI=true のままだと、検証レイヤが切れる。
       - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
+        env:
+          MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
+      - name: 落ちた検査の文面を要約へ書く
+        if: failure()
+        run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: render-record
+          path: |
+            .build/test-results-swift-testing.xml
+            .build/test-log.txt
+            .build/test-vanished/
+            .build/ci-check-durations.tsv
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: ledger-shots
+          path: .build/ledger-shots/
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
 
   render-pr:
     if: >-
@@ -66,3 +104,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
+        env:
+          MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
+      - name: 落ちた検査の文面を要約へ書く
+        if: failure()
+        run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: render-record
+          path: |
+            .build/test-results-swift-testing.xml
+            .build/test-log.txt
+            .build/test-vanished/
+            .build/ci-check-durations.tsv
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: ledger-shots
+          path: .build/ledger-shots/
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
