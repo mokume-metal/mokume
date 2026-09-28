@@ -36,6 +36,21 @@ struct BoundedCache<Key: Hashable, Value> {
     }
 
     private var entries: [Key: Entry] = [:]
+    /// 使った順の記録。**使うたびに (時刻, 鍵) を末尾へ積み、古い記録は消さない** ([#1780])。
+    ///
+    /// 追い出す相手は「最後に使った時刻がいちばん古いもの」で、全件を舐めて探すと予算が
+    /// 満ちた控えでは入れるたびに件数ぶん走る — 寸法が毎フレーム変わる立体 300 個で、
+    /// 1 フレーム 800 ms を超えた。時刻は積む順に増えるので、先頭から読んで**その鍵の
+    /// 最後の時刻と一致する記録**が、全件の最小と同じ相手になる (一致しない記録は、あとで
+    /// 使い直された古い記録なので読み飛ばす)。
+    ///
+    /// 読み飛ばす記録が溜まりすぎたら詰め直す (``compactIfNeeded()``)。詰め直しは生きた
+    /// 記録の数に比例し、溜まった記録の数に対して償却で O(1) になる。
+    ///
+    /// [#1780]: https://github.com/mokume-metal/mokume/issues/1780
+    private var order: [(time: Int, key: Key)] = []
+    /// ``order`` のうち、読み終えた先頭の数。
+    private var head = 0
     private var clock = 0
     private let weigh: (Value) -> Int
 
@@ -67,6 +82,8 @@ struct BoundedCache<Key: Hashable, Value> {
             guard let entry = entries[key] else { return nil }
             let now = tick()
             entries[key]?.lastUse = now
+            order.append((now, key))
+            compactIfNeeded()
             return entry.value
         }
     }
@@ -79,13 +96,42 @@ struct BoundedCache<Key: Hashable, Value> {
         total -= entries[key]?.weight ?? 0
         let now = tick()
         entries[key] = Entry(value: value, weight: weight, lastUse: now)
+        order.append((now, key))
         total += weight
         made += 1
-        while total > budget, entries.count > 1,
-            let oldest = entries.min(by: { $0.value.lastUse < $1.value.lastUse })?.key
-        {
+        while total > budget, entries.count > 1, let oldest = popOldest() {
             total -= entries.removeValue(forKey: oldest)?.weight ?? 0
         }
+        compactIfNeeded()
+    }
+
+    /// 最後に使った時刻がいちばん古い鍵を、使った順の記録から取り出す。
+    ///
+    /// いま入れたものは記録の末尾にあり、ほかに生きた記録が 1 つでも残っていればそちらが
+    /// 先に出る。呼ぶ側は件数が 2 以上のときだけ呼ぶので、いま入れたものは出てこない。
+    private mutating func popOldest() -> Key? {
+        while head < order.count {
+            let (time, key) = order[head]
+            head += 1
+            if entries[key]?.lastUse == time { return key }
+        }
+        return nil
+    }
+
+    /// 読み飛ばす記録が生きた記録より十分多くなったら、生きた記録だけへ詰め直す。
+    ///
+    /// 閾値を生きた件数の倍に取るので、詰め直す仕事は、その間に積んだ記録の数で割れば
+    /// 定数になる。件数の少ない控えで細かく詰め直さないよう、下駄を履かせる。
+    private mutating func compactIfNeeded() {
+        guard order.count - head > 2 * entries.count + 64 else { return }
+        var live: [(time: Int, key: Key)] = []
+        live.reserveCapacity(entries.count)
+        for index in head..<order.count {
+            let (time, key) = order[index]
+            if entries[key]?.lastUse == time { live.append((time, key)) }
+        }
+        order = live
+        head = 0
     }
 
     private mutating func tick() -> Int {
