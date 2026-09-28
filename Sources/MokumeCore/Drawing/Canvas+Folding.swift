@@ -265,6 +265,17 @@ extension Canvas {
     static func arcPoints(
         center: SIMD2<Float>, radiusX: Float, radiusY: Float, from start: Float, sweep: Float
     ) -> [SIMD2<Float>] {
+        var points = arcOffsets(radiusX: radiusX, radiusY: radiusY, from: start, sweep: sweep)
+        for index in points.indices { points[index] = center + points[index] }
+        return points
+    }
+
+    /// 弧の上の点の、中心からのずれ。**中心を足せば ``arcPoints(center:radiusX:radiusY:from:sweep:)``
+    /// と 1 ビットも違わない** — 点は `center.x + radiusX * cos(angle)` で、掛け算を先に済ませて
+    /// から中心を足す式なので、ずれを控えて後から足しても同じ値になる (#1785)。
+    static func arcOffsets(
+        radiusX: Float, radiusY: Float, from start: Float, sweep: Float
+    ) -> [SIMD2<Float>] {
         let full = segmentCount(forRadius: max(radiusX, radiusY))
         let segments = max(1, Int((Float(full) * sweep / (2 * .pi)).rounded(.up)))
         let step = sweep / Float(segments)
@@ -276,8 +287,7 @@ extension Canvas {
         points.reserveCapacity(count)
         for index in 0..<count {
             let angle = start + step * Float(index)
-            points.append(
-                SIMD2(center.x + radiusX * cos(angle), center.y + radiusY * sin(angle)))
+            points.append(SIMD2(radiusX * cos(angle), radiusY * sin(angle)))
         }
         return points
     }

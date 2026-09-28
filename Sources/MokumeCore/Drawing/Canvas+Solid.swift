@@ -483,8 +483,9 @@ extension Canvas {
         let half = style.strokeWeight / 2
         guard !points.isEmpty, shapePoints.count == points.count else { return }
 
-        // 既定の視点も、帯や角の頂点ごとに作り直さず持ち回る (#1596)。
-        let camera = currentCamera
+        // 既定の視点も、帯や角の頂点ごとに作り直さず持ち回る (#1596)。視点から導く向きと
+        // 1 画素の長さの係数も、線 1 本につき 1 度だけ求める (#1785)
+        let camera = StrokeCamera(currentCamera)
 
         // 端と折れ目の規則は平面と共有する (`strokeRing`)
         strokeRing(
@@ -533,7 +534,7 @@ extension Canvas {
             placed.append(SIMD3(world.x, world.y, world.z))
         }
         let half = style.strokeWeight / 2
-        let camera = currentCamera
+        let camera = StrokeCamera(currentCamera)
         strokeNet(
             count: placed.count, edges: net.edges,
             endSquare: {
@@ -562,7 +563,7 @@ extension Canvas {
     /// (``SolidStrokePiece``)。頂点はいまの視点で組んで積み、どの区間がどの部品かを
     /// ``recordedSolidStrokes`` に残す。
     private func appendSolidStroke(
-        _ kind: SolidStrokePiece.Kind, shape: (SIMD3<Float>, SIMD3<Float>), half: Float, camera: Camera
+        _ kind: SolidStrokePiece.Kind, shape: (SIMD3<Float>, SIMD3<Float>), half: Float, camera: StrokeCamera
     ) {
         let start = solidVertices.count
         buildSolidStroke(kind, shape: shape, half: half, camera: camera)
@@ -575,7 +576,7 @@ extension Canvas {
 
     /// 線の部品を組む。積むか位置だけを受け取るかは ``solidStrokeCapture`` が決める。
     private func buildSolidStroke(
-        _ kind: SolidStrokePiece.Kind, shape: (SIMD3<Float>, SIMD3<Float>), half: Float, camera: Camera
+        _ kind: SolidStrokePiece.Kind, shape: (SIMD3<Float>, SIMD3<Float>), half: Float, camera: StrokeCamera
     ) {
         switch kind {
         case let .band(start, end): appendSolidBand(start, end, shape: shape, half: half, camera: camera)
@@ -598,7 +599,8 @@ extension Canvas {
         style.strokeWeight = piece.weight
         solidStrokeCapture = []
         buildSolidStroke(
-            piece.kind, shape: (piece.anchor, piece.anchor), half: piece.weight / 2, camera: currentCamera)
+            piece.kind, shape: (piece.anchor, piece.anchor), half: piece.weight / 2,
+            camera: StrokeCamera(currentCamera))
         var corners = solidStrokeCapture ?? []
         solidStrokeCapture = nil
         style.strokeWeight = savedWeight
@@ -643,7 +645,7 @@ extension Canvas {
     /// 線分 1 本を帯にする。
     private func appendSolidBand(
         _ a: SIMD3<Float>, _ b: SIMD3<Float>,
-        shape: (SIMD3<Float>, SIMD3<Float>), half: Float, camera: Camera
+        shape: (SIMD3<Float>, SIMD3<Float>), half: Float, camera: StrokeCamera
     ) {
         guard length_squared(b - a) > 0 else { return }
         // 画面で点に潰れる線 (目を通る線) は帯の幅を持たない。端の形だけが出る
@@ -673,15 +675,14 @@ extension Canvas {
     ///
     /// 画面での長さが 0 の線 (透視で目を通る線・平行で視線に沿う線) には `nil` を返す。
     private func screenAcross(
-        _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: Camera
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD3<Float>? {
         let (right, down) = (camera.right, camera.down)
         let normal: SIMD2<Float>
-        switch camera.projection {
-        case .perspective:
+        if camera.isPerspective {
             let plane = cross(a - camera.eye, b - camera.eye)
             normal = SIMD2(dot(plane, right), dot(plane, down))
-        case .orthographic:
+        } else {
             let along = b - a
             normal = SIMD2(-dot(along, down), dot(along, right))
         }
@@ -692,7 +693,7 @@ extension Canvas {
 
     /// 視線に正対する円板を置く (丸い端点と丸い角)。
     private func appendSolidDisc(
-        at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: Camera
+        at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
     ) {
         let radius = half * camera.worldPerPixel(at: center, height: height)
         let steps = 16
@@ -709,7 +710,7 @@ extension Canvas {
     /// 視線に正対し、画面の軸に沿った正方形を置く (向きの無い点の四角い端と、丸めない角)。
     /// 線の端の正方形は線の向きに沿って置く (`appendSolidSquare(at:awayFrom:shape:half:camera:)`)。
     private func appendSolidSquare(
-        at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: Camera
+        at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
     ) {
         appendSolidSquare(
             at: center, right: camera.right, down: camera.down, shape: shape, half: half, camera: camera)
@@ -724,7 +725,7 @@ extension Canvas {
     ///
     /// [#1535]: https://github.com/mokume-metal/mokume/issues/1535
     private func appendSolidSquare(
-        at center: SIMD3<Float>, awayFrom from: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: Camera
+        at center: SIMD3<Float>, awayFrom from: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
     ) {
         guard length_squared(center - from) > 0, let right = screenAcross(from, center, camera: camera) else {
             return appendSolidSquare(at: center, shape: shape, half: half, camera: camera)
@@ -737,7 +738,7 @@ extension Canvas {
     /// 視線に正対する正方形を、`right` / `down` の 2 軸で張る。
     private func appendSolidSquare(
         at center: SIMD3<Float>, right: SIMD3<Float>, down: SIMD3<Float>, shape: SIMD3<Float>,
-        half: Float, camera: Camera
+        half: Float, camera: StrokeCamera
     ) {
         let radius = half * camera.worldPerPixel(at: center, height: height)
         let a = center + (-right - down) * radius
@@ -750,7 +751,7 @@ extension Canvas {
 
     private func appendSolidStrokeTriangle(
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
-        shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>), camera: Camera
+        shape: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>), camera: StrokeCamera
     ) {
         // 組み直しの間は積まずに、位置だけを渡す (``rebuiltSolidStroke(_:)``)
         if solidStrokeCapture != nil {
@@ -785,18 +786,64 @@ extension Canvas {
     /// 厚みぶん奥にあるので、塗った形の向こう側が透けて見えるのは画面で数画素の
     /// 形と、稜線が表の縁から出てくる角の数画素だけである。
     private func liftedTowardViewer(
-        _ point: SIMD3<Float>, camera: Camera
+        _ point: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD3<Float> {
         let lift = (style.strokeWeight + 1) * camera.worldPerPixel(at: point, height: height)
-        switch camera.projection {
-        case .perspective:
+        if camera.isPerspective {
             let toEye = camera.eye - point
             let distance = length(toEye)
             guard distance > 0 else { return point }
             // 目を越えて裏へ回らないよう、目までの半分で止める
             return point + toEye / distance * min(lift, distance / 2)
-        case .orthographic:
-            return point - camera.forward * lift
         }
+        return point - camera.forward * lift
+    }
+}
+
+/// CPU で線を組む間に使う、視点から導いた量 ([#1785])。
+///
+/// ``Camera`` の `forward` / `right` / `down` は読むたびに正規化し直し (`right` と `down` は
+/// `forward` もまた作り直す)、`worldPerPixel(at:height:)` は読むたびに `tan` を取る。帯 1 本で
+/// 正規化が約 13 回・`tan` が約 8 回走っていた。線を組む間は視点が変わらないので、1 度だけ
+/// 求めて持ち回る。
+///
+/// **式と演算の順は ``Camera`` と同じ**である。`worldPerPixel` の透視は
+/// `2 * tan(fov / 2) * depth / height` を左から `((2 * tan) * depth) / height` と計算するので、
+/// 先に `2 * tan(fov / 2)` を求めておいても同じ値になる (Swift は浮動小数の積和を縮約しない)。
+///
+/// [#1785]: https://github.com/mokume-metal/mokume/issues/1785
+struct StrokeCamera {
+    let eye: SIMD3<Float>
+    let forward: SIMD3<Float>
+    let right: SIMD3<Float>
+    let down: SIMD3<Float>
+    let isPerspective: Bool
+    /// 1 画素の長さの係数。透視は `2 * tan(fov / 2)`、平行は `abs(bottom - top)`。
+    private let scale: Float
+    /// 透視の手前の面。平行では使わない。
+    private let near: Float
+
+    init(_ camera: Camera) {
+        eye = camera.eye
+        forward = camera.forward
+        right = camera.right
+        down = camera.down
+        switch camera.projection {
+        case let .perspective(fieldOfView, _, near, _):
+            isPerspective = true
+            scale = 2 * tan(fieldOfView / 2)
+            self.near = near
+        case let .orthographic(_, _, bottom, top, _, _):
+            isPerspective = false
+            scale = abs(bottom - top)
+            near = 0
+        }
+    }
+
+    /// ``Camera/worldPerPixel(at:height:)`` と同じ値。
+    func worldPerPixel(at position: SIMD3<Float>, height: Float) -> Float {
+        guard isPerspective else { return scale / height }
+        let depth = max(dot(position - eye, forward), near)
+        return scale * depth / height
     }
 }

@@ -264,17 +264,29 @@ extension Canvas {
     }
 
     /// 円板を置く (丸い端点と丸い角)。周は半径に応じて分ける。
+    ///
+    /// **周のずれは太さごとに 1 度だけ求める** (#1785)。曲線 (`curveVertex` / `bezierVertex`)
+    /// の点はどれも円板で継ぐので、1 区間で分割数ぶん置かれる。1 本の線を描く間は太さが
+    /// 変わらないので、直前の太さの 1 件を控えておけば、`acos` と三角関数と配列の確保を
+    /// 円板ごとに払わずに済む。点は中心にずれを足すだけなので、値は変わらない
+    /// (``arcOffsets(radiusX:radiusY:from:sweep:)``)。
     private func appendDisc(at center: SIMD2<Float>, half: Float) {
-        let points = Self.arcPoints(
-            center: center, radiusX: half, radiusY: half, from: 0, sweep: 2 * .pi)
+        if discOffsets?.half != half {
+            discOffsets = (
+                half, Self.arcOffsets(radiusX: half, radiusY: half, from: 0, sweep: 2 * .pi)
+            )
+        }
+        guard let offsets = discOffsets?.offsets, let start = offsets.first else { return }
         let hub = strokePoint(x: center.x, y: center.y)
-        var previous = strokePoint(x: points[0].x, y: points[0].y)
-        for point in points.dropFirst() {
+        let firstPoint = center + start
+        var previous = strokePoint(x: firstPoint.x, y: firstPoint.y)
+        for offset in offsets.dropFirst() {
+            let point = center + offset
             let current = strokePoint(x: point.x, y: point.y)
             appendTriangle(hub, previous, current, color: style.stroke)
             previous = current
         }
-        let first = strokePoint(x: points[0].x, y: points[0].y)
+        let first = strokePoint(x: firstPoint.x, y: firstPoint.y)
         appendTriangle(hub, previous, first, color: style.stroke)
     }
 
