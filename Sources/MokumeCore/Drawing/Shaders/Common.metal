@@ -691,6 +691,23 @@ float4 paint(Fragment in, Values values);
     in, uniforms, values, lighting, lights, material, surroundings, numbers, \
     source_texture, shadow_texture, isFrontFacing
 
+/// この列の頂点が光と周囲を受けうるか。**頂点関数ごとに決まる** ([#1778])。
+///
+/// 平面 (`shapeVertexMain`) と立体の輪郭 (`solidStrokeVertexMain`) は向きを 0 で出し、
+/// 光も周囲も背景の旗も持たない列なので、下の 2 つの枝は必ず偽になる。それでも枝が
+/// 原稿に残っていると、影の PCF・GGX・周囲色まで抱えた断片として走る — 面を覆う
+/// 半透明のクアッド 40 枚で GPU 時間の 35% がそれだった ([#771] と同じく、走らない綴りも
+/// 居るだけで費用になる)。その 2 つの頂点関数で組むときだけ `false` を渡して枝ごと外す。
+///
+/// 組む側 (`ShapePipeline.shapeLit`) は三角形の経路の断片に必ず値を渡す。**渡し忘れた
+/// ときは `true`** — 枝を持つ今までの断片になり、絵は変わらず速さだけを失う側に倒れる。
+/// 番号を大きく取るのは、利用者の断片が自分で宣言した function constant と重ならないため。
+///
+/// [#771]: https://github.com/mokume-metal/mokume/issues/771
+/// [#1778]: https://github.com/mokume-metal/mokume/issues/1778
+constant bool kShapeLitValue [[function_constant(65000)]];
+constant bool kShapeLit = is_function_constant_defined(kShapeLitValue) ? kShapeLitValue : true;
+
 /// この画素が出す色。**下地は見ない。**
 ///
 /// 下地との混ぜ方は呼ぶ側が決める — 固定機能のブレンドへ渡す入口と、自分で混ぜる
@@ -727,7 +744,7 @@ static inline float4 mokume_shapeColor(
     f.color = in.color;
     // **周囲そのものを出す列は、光も材質も見ない。** 見ている向きへ周囲を読むだけで、
     // 背景と映り込みが同じ 1 本の関数から出る
-    if (surroundings.horizonAndBackdrop.w > 0.5) {
+    if (kShapeLit && surroundings.horizonAndBackdrop.w > 0.5) {
         float3 toEye = lighting.viewer.w > 0.5
             ? normalize(lighting.viewer.xyz - in.worldPosition)
             : normalize(lighting.viewer.xyz);
@@ -739,7 +756,8 @@ static inline float4 mokume_shapeColor(
     // **向きを持たない頂点も色そのまま** — 立体の線と点がこれに当たる (平面の輪郭が
     // 光を受けないのと同じ扱い)
     else if (
-        (lighting.count > 0 || surroundings.topAndPresence.w > 0.5)
+        kShapeLit
+        && (lighting.count > 0 || surroundings.topAndPresence.w > 0.5)
         && dot(in.normal, in.normal) > 0.0)
     {
         float3 lit = mokume_shade(
