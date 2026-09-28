@@ -10,26 +10,62 @@ import Observation
 /// 持たない。変更の追跡は Observation に載せる (同 決定 1) ので、窓の更新のために
 /// 登録も通知も書かない。
 ///
+/// ## `@Observable` を手で展開している ([#1782])
+///
+/// 中身は Swift 6.3 の `@Observable` の展開そのままで、**違いは key path を作る場所
+/// だけ**である。macro の展開は読むたびに `\.value` を書くが、この型は総称なので、
+/// その key path は呼ぶたびに実行時に組み立てられて捨てられる (`swift_getKeyPath`)。
+/// スケッチが `@Param` の値を 1 回読むのに約 490 ns かかっていた (素の読みは 1 ns
+/// 未満)。作るのを初期化の 1 度にし、以後は同じものを渡す。
+///
+/// key path は構造で等しさを判定するので、観測の登録と通知は macro の展開と一致する。
+/// setter は `Value` が `Equatable` を要求しないので、展開と同じく常に通知する
+/// (`shouldNotifyObservers` が常に真になる形)。
+///
 /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
-@Observable
+/// [#1782]: https://github.com/mokume-metal/mokume/issues/1782
 public final class ParamBox<Value: ParamRepresentable> {
     /// いまの値。
-    public var value: Value
+    public var value: Value {
+        get {
+            observation.access(self, keyPath: valueKeyPath)
+            return storedValue
+        }
+        set {
+            observation.withMutation(of: self, keyPath: valueKeyPath) {
+                storedValue = newValue
+            }
+        }
+        _modify {
+            observation.access(self, keyPath: valueKeyPath)
+            observation.willSet(self, keyPath: valueKeyPath)
+            defer { observation.didSet(self, keyPath: valueKeyPath) }
+            yield &storedValue
+        }
+    }
+
+    private var storedValue: Value
+    private let observation = ObservationRegistrar()
+    /// ``value`` を指す key path。**初期化で 1 度だけ作る** (型の説明を参照)。
+    private let valueKeyPath: KeyPath<ParamBox, Value>
 
     /// 面から指すときの名前。
-    @ObservationIgnored public let name: String
+    public let name: String
     /// つまみが動ける幅。
-    @ObservationIgnored public let range: ParamRange?
+    public let range: ParamRange?
     /// 許した候補。
-    @ObservationIgnored public let choices: [String]?
+    public let choices: [String]?
 
     public init(name: String, value: Value, range: ParamRange? = nil, choices: [String]? = nil) {
         self.name = name
-        self.value = value
+        self.storedValue = value
+        self.valueKeyPath = \ParamBox<Value>.value
         self.range = range
         self.choices = choices
     }
 }
+
+extension ParamBox: nonisolated Observable {}
 
 extension ParamBox: DeclaredParam {
     /// 面から見えるいまの姿。
