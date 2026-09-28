@@ -1476,6 +1476,7 @@ struct CanvasTests {
             "blendModeBuffer": resource, "glyphPageBuffer": resource, "uniformsStorage": resource,
             "valuesStorage": resource, "matrixStorage": resource, "computeValuesStorage": resource,
             "uploadStorage": resource, "effectPipelineStorage": resource,
+            "imageInputPass": resource, "imageInputUnavailable": "GPU入力の準備失敗を持ち越し、毎フレーム繰り返さない (#1753)",
             "computePipelineStorage": resource, "unbakedShadowTexture": resource,
             "emptyNumbers": resource, "blankPicture": resource,
             "shadowMap": "焼き付け先。同じ細かさなら作り直さない (ADR-0021 決定 4)。宣言は shadowDetailValue が戻る",
@@ -1518,7 +1519,7 @@ struct CanvasTests {
             "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
             "uploadByteLimit": testing, "failureForTesting": testing,
-            "failEffectPassForTesting": testing,
+            "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
         ]
     }
 

@@ -56,7 +56,7 @@ let package = Package(
             // **ディレクトリ単位の `.copy` は使えない。** `Drawing/Shaders` と
             // `Display/Shaders` は名前が同じなので `multiple resources named
             // 'Shaders'` で弾かれる。1 つずつ写せば、束ねた中身は `.process` の
-            // ときと同じ**平らな 8 ファイル**になり、探す側 (`ModuleResources`) は
+            // ときと同じ**平らな 9 ファイル**になり、探す側 (`ModuleResources`) は
             // 何も変わらない。
             //
             // **足したら、ここに 1 行足す。** ディレクトリごと拾っていたものを手書きの
@@ -69,6 +69,7 @@ let package = Package(
                 .copy("Drawing/Shaders/Common.metal"),
                 .copy("Drawing/Shaders/Compute.metal"),
                 .copy("Drawing/Shaders/Computations/Particles.metal"),
+                .copy("Image/ImageInput.metal"),
                 .copy("Drawing/Shaders/Effect.metal"),
                 .copy("Drawing/Shaders/Effects/Builtin.metal"),
                 .copy("Drawing/Shaders/Kinds.metal"),

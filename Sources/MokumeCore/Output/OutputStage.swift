@@ -77,26 +77,38 @@ public enum OutputStage {
     /// - Precondition: `pixels` の要素数が絵の画素数と一致していること。
     static func decode(_ picture: DisplayImage, into pixels: inout [SIMD4<Float16>]) {
         precondition(pixels.count == picture.width * picture.height)
+        pixels.withUnsafeMutableBufferPointer { destination in
+            decode(picture, into: destination)
+        }
+    }
+
+    /// 遅らせた入力を CPU で読むときだけ確保する。ゼロ埋めしてから全画素を上書きしない。
+    static func decode(_ picture: DisplayImage) -> [SIMD4<Float16>] {
+        Array(unsafeUninitializedCapacity: picture.width * picture.height) { buffer, count in
+            decode(picture, into: buffer)
+            count = buffer.count
+        }
+    }
+
+    private static func decode(
+        _ picture: DisplayImage, into destination: UnsafeMutableBufferPointer<SIMD4<Float16>>
+    ) {
         picture.bytes.withUnsafeBufferPointer { source in
-            pixels.withUnsafeMutableBufferPointer { destination in
-                decodeLinear.withUnsafeBufferPointer { linear in
-                    for index in destination.indices {
-                        let base = index * 4
-                        let alpha = Float(source[base + 3]) / 255
-                        // **不透明なら乗算を飛ばす。** 映像はほとんどが不透明で、
-                        // 掛け算 3 回とアルファの読みがそのぶん丸ごと消える
-                        if alpha >= 1 {
-                            destination[index] = SIMD4(
-                                Float16(linear[Int(source[base])]),
-                                Float16(linear[Int(source[base + 1])]),
-                                Float16(linear[Int(source[base + 2])]), 1)
-                        } else {
-                            destination[index] = SIMD4(
-                                Float16(linear[Int(source[base])] * alpha),
-                                Float16(linear[Int(source[base + 1])] * alpha),
-                                Float16(linear[Int(source[base + 2])] * alpha),
-                                Float16(alpha))
-                        }
+            decodeLinear.withUnsafeBufferPointer { linear in
+                for index in destination.indices {
+                    let base = index * 4
+                    let alpha = Float(source[base + 3]) / 255
+                    if alpha >= 1 {
+                        destination[index] = SIMD4(
+                            Float16(linear[Int(source[base])]),
+                            Float16(linear[Int(source[base + 1])]),
+                            Float16(linear[Int(source[base + 2])]), 1)
+                    } else {
+                        destination[index] = SIMD4(
+                            Float16(linear[Int(source[base])] * alpha),
+                            Float16(linear[Int(source[base + 1])] * alpha),
+                            Float16(linear[Int(source[base + 2])] * alpha),
+                            Float16(alpha))
                     }
                 }
             }
@@ -108,7 +120,7 @@ public enum OutputStage {
     /// **画素ごとに `pow()` を呼ばないための表である。** 1920×1080 なら色成分は
     /// 622 万個あり、そこへ伝達関数を素直に掛けると変換だけで 1 フレームの予算を
     /// 使い切る。段は 256 しか無いので、全部を先に引いておける。
-    private static let decodeLinear: [Float] = (0...255).map {
+    static let decodeLinear: [Float] = (0...255).map {
         TransferFunction.decode(Float($0) / 255)
     }
 

@@ -9,14 +9,14 @@ import simd
 ///
 /// ## 画素は作業空間の値で持つ
 ///
-/// 中身は**線形・アルファ乗算済み**の半精度 4 成分で、色域は作業空間と同じ
-/// ([ADR-0011])。読み込みの時点で 1 度だけ変換するので、描くたびに変換は起きない。
+/// 読み書きする画素と描画に使う面は**線形・アルファ乗算済み**の半精度 4 成分で、色域は作業空間と同じ
+/// ([ADR-0011])。入力は画素を読むか描くまでに変換し、描くたびには変換しない。
 /// ``get(_:_:)`` と ``set(_:_:_:)`` が扱う色も同じ表現なので、
 /// **`set(x, y, get(x, y))` は絵を変えない。**
 ///
 /// ## 書き換えたら、描くときに自動で送られる
 ///
-/// ``set(_:_:_:)`` は CPU 側を書き換え、「送り直しが要る」と印を付けるだけである。
+/// ``set(_:_:_:)`` は書き換えを控え、「送り直しが要る」と印を付けるだけである。
 /// 実際の送りは描くときに 1 度だけ起きるので、**送り直しを呼び忘れて絵が変わらない**
 /// という形の不具合が起きない。
 ///
@@ -35,12 +35,23 @@ import simd
     public let height: Int
 
     /// 作業空間の画素 (線形・アルファ乗算済み)。行は上から下へ。
-    var pixels: [SIMD4<Float16>]
+    var pixels: [SIMD4<Float16>] {
+        materializePixels()
+        return cpuPixels
+    }
+    private var cpuPixels: [SIMD4<Float16>]
+    /// 大きな入力は値として保持する。呼び手が元の配列を書き換えてもこの控えは変わらない。
+    private(set) var displayInput: DisplayImage?
+    private(set) var inputPatches: [Int: SIMD4<Float16>] = [:]
+    private(set) var inputNeedsDecode = false
+    // 公開のモードにせず、小さい入力の dispatch 費用と編集の控えの上限を内部で持つ (#1753)。
+    static let metalInputMinimumPixels = 1 << 20
+    static let inputPatchLimit = 4096
     /// GPU 側の面。
     let texture: any MTLTexture
     /// 送りを頼む先 (控えの登録簿) と、逃げ道で待つ相手。
     private let gpu: RenderDevice
-    /// CPU 側が GPU 側より新しいか。
+    /// 入力の控え (raw / CPU 半精度) が GPU 側より新しいか。
     ///
     /// **検査が読む。** 描き切りが待てずに送れなかったときは立ったままになり、次の
     /// 描き切りへ持ち越す ([#934](https://github.com/mokume-metal/mokume/issues/934))。
@@ -61,11 +72,12 @@ import simd
     ) {
         self.width = width
         self.height = height
-        self.pixels = pixels
+        self.cpuPixels = pixels
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
-        descriptor.usage = .shaderRead
+        descriptor.usage = width * height >= Self.metalInputMinimumPixels
+            ? [.shaderRead, .renderTarget] : .shaderRead
         descriptor.storageMode = .shared
         let texture = try gpu.makeTexture(descriptor: descriptor)
         texture.label = "mokume.image"
@@ -94,7 +106,8 @@ import simd
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func get(_ x: Int, _ y: Int) -> LinearRGBA {
         guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
-        let texel = pixels[y * width + x]
+        materializePixels()
+        let texel = cpuPixels[y * width + x]
         return LinearRGBA(
             premultipliedRed: Float(texel.x), green: Float(texel.y), blue: Float(texel.z),
             alpha: Float(texel.w))
@@ -103,9 +116,18 @@ import simd
     /// 1 画素の色を書き換える。範囲の外は何もしない。
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) {
         guard x >= 0, y >= 0, x < width, y < height else { return }
-        pixels[y * width + x] = SIMD4(
+        let index = y * width + x
+        let texel = SIMD4<Float16>(
             Float16(color.red), Float16(color.green), Float16(color.blue),
             Float16(color.alpha))
+        if displayInput != nil,
+            inputPatches[index] != nil || inputPatches.count < Self.inputPatchLimit
+        {
+            inputPatches[index] = texel
+        } else {
+            materializePixels()
+            cpuPixels[index] = texel
+        }
         needsUpload = true
     }
 
@@ -154,7 +176,14 @@ import simd
             warnMismatchOnce(picture)
             return
         }
-        OutputStage.decode(picture, into: &pixels)
+        if width * height >= Self.metalInputMinimumPixels {
+            displayInput = picture
+            cpuPixels = []
+            inputPatches = [:]
+            inputNeedsDecode = true
+        } else {
+            OutputStage.decode(picture, into: &cpuPixels)
+        }
         needsUpload = true
     }
 
@@ -163,9 +192,29 @@ import simd
         let texel = SIMD4<Float16>(
             Float16(color.red), Float16(color.green), Float16(color.blue),
             Float16(color.alpha))
-        for index in pixels.indices { pixels[index] = texel }
+        if displayInput != nil {
+            // 捨てる入力は復号しない。
+            cpuPixels = Array(repeating: texel, count: width * height)
+            displayInput = nil
+            inputPatches = [:]
+            inputNeedsDecode = false
+        } else {
+            for index in cpuPixels.indices { cpuPixels[index] = texel }
+        }
         needsUpload = true
     }
+
+    /// CPU が読むとき、または GPU の準備に失敗したときの逃げ道。論理的な値と世代は変えない。
+    func materializePixels() {
+        guard let displayInput else { return }
+        cpuPixels = OutputStage.decode(displayInput)
+        for (index, texel) in inputPatches { cpuPixels[index] = texel }
+        self.displayInput = nil
+        inputPatches = [:]
+        inputNeedsDecode = false
+    }
+
+    var uploadGeneration: UInt64 { writeGeneration }
 
     /// 大きさの違う絵を渡されたことを、**最初の 1 度だけ**知らせる。
     ///
@@ -189,17 +238,18 @@ import simd
     /// フレームがまだこの面を読んでいるかもしれない。その場で面へ書くには投入済みの全部を
     /// 待つしかなく、毎フレーム映像を差し替えるスケッチでは CPU と GPU の重なりがそこで
     /// 消えていた (#749)。登録簿に載せて、描き切りが GPU 側のコピーで届ける。
-    /// 書き換えないフレームは何も積まない。
+    /// 書き換えないフレームは GPU へ送る仕事を積まない。
     func requestUpload() {
         guard needsUpload else { return }
         gpu.pendingUploads.enqueue(self)
     }
 
-    private var pixelBytes: Int { pixels.count * MemoryLayout<SIMD4<Float16>>.stride }
+    private var pixelBytes: Int { width * height * MemoryLayout<SIMD4<Float16>>.stride }
     private var bytesPerRow: Int { width * MemoryLayout<SIMD4<Float16>>.stride }
 
     private func replaceTexture() {
-        pixels.withUnsafeBytes { source in
+        materializePixels()
+        cpuPixels.withUnsafeBytes { source in
             texture.replace(
                 region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
                 withBytes: source.baseAddress!, bytesPerRow: bytesPerRow)
@@ -214,7 +264,8 @@ extension Image: PendingUpload {
         into bytes: UnsafeMutableRawPointer, of staging: any MTLBuffer, at offset: Int,
         on encoder: any MTL4ComputeCommandEncoder
     ) -> UInt64 {
-        pixels.withUnsafeBytes { source in
+        materializePixels()
+        cpuPixels.withUnsafeBytes { source in
             bytes.copyMemory(from: source.baseAddress!, byteCount: pixelBytes)
         }
         encoder.copy(
@@ -240,5 +291,6 @@ extension Image: PendingUpload {
     func markUploaded(through generation: UInt64) {
         guard generation == writeGeneration else { return }
         needsUpload = false
+        inputNeedsDecode = false
     }
 }

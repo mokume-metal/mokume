@@ -1157,7 +1157,12 @@ public final class Canvas {
     ///
     /// [#932]: https://github.com/mokume-metal/mokume/issues/932
     let computeValuesStorage: GrowableBuffer
-    /// 数の並びと画像へ CPU が書いた控えを、GPU 側のコピーで届けるための置き場
+    /// 大画像の入力変換。最初に必要になったときだけ準備する (#1753)。
+    var imageInputPass: ImageInputPass?
+    var imageInputUnavailable = false
+    /// GPU 準備が使えないときの CPU への逃げ道を検査する。
+    var failImageInputForTesting = false
+    /// 数の並びと画像へ CPU が書いた控えを、GPU 側で届けるための置き場
     /// (`Canvas+Uploads.swift`・#749)。
     let uploadStorage: GrowableBuffer
     /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
@@ -2288,6 +2293,11 @@ public final class Canvas {
         settlePlacersBeforeChange()
         isFlushing = true
         defer { isFlushing = false }
+        // CPU 上の列を確定し、実際に読む直前の画像更新を拾う (#1766)。配置後の
+        // write と、別 Canvas の描き切りが登録簿を消費した後の write の両方を覆う。
+        // 待ちが失敗しても再試行できるよう、GPU 可視メモリへ触る前に登録する。
+        closeBatch()
+        for batch in batches { batch.run.prepareSurfaces() }
         if let failureForTesting { throw failureForTesting }
         // **書く前に、環を 1 つ進めて待つ。** ここから先は GPU 可視メモリへ CPU が書く
         // (頂点・列ごとの値・効果の値・数の並びと画像の控え・置き場の取り直し)。書き先は
@@ -2305,7 +2315,6 @@ public final class Canvas {
         // [#727]: https://github.com/mokume-metal/mokume/issues/727
         // [#754]: https://github.com/mokume-metal/mokume/issues/754
         try frameRing.advance()
-        closeBatch()
         // 段の枠の採番は描き切りごとに 0 から。**1 本のコマンドの中でだけ衝突しない
         // ことが要る**ので、コマンドと同じ寿命で数える
         stagePassesUsed = 0
@@ -2408,7 +2417,10 @@ public final class Canvas {
             // この世代のコマンドはリソースを保持しないため、渡さないと利用者が `draw()` の
             // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
             let submission = gpu.commit(
-                commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
+                commands,
+                retaining: [
+                    HeldFrame(batches: batches, effects: pendingEffects, imageInput: imageInputPass)
+                ])
             return (
                 submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
                 uploaded: uploaded, carried: carried)
@@ -2759,7 +2771,9 @@ public final class Canvas {
     private final class HeldFrame {
         let batches: [Batch]
         let effects: [Effect]
-        init(batches: [Batch], effects: [Effect]) {
+        let imageInput: ImageInputPass?
+        init(batches: [Batch], effects: [Effect], imageInput: ImageInputPass?) {
+            self.imageInput = imageInput
             self.batches = batches
             self.effects = effects
         }

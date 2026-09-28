@@ -88,6 +88,9 @@ struct GPUMemoryAccessGateTests {
 
     private static let permits: [Permit] = [
         Permit(
+            file: "Image/ImageInputPass.swift", discipline: .waitedElsewhere,
+            reason: "変換表は作成時だけ新しい置き場へ書き、以後は不変。入力と編集は Canvas.encodeUploads が FrameRing の待ちを済ませた領域へ写す。投入完了までは HeldFrame がパスを保持し、表の退役は RenderDevice.retire が待つ (#1753)"),
+        Permit(
             file: "Drawing/SolidStrokeGeometry.swift", discipline: .waitedElsewhere,
             reason: "骨は作成時だけ新しい置き場へ書き、その後は変更しない (#1738)。控えと描画列が所有し、投入完了までは HeldFrame が列ごと保持する。追い出し後の解放は RenderDevice.retire が待つ"),
         Permit(

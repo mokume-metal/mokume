@@ -54,10 +54,36 @@ extension Canvas {
 
         // **置き場は積む前に 1 度だけ取る** (``GrowableBuffer/buffer(holding:)``)
         let (staging, bytes) = try uploadStorage.writableBytes(holding: total)
+        var cpuStaged: [(owner: any PendingUpload, offset: Int)] = []
+        var imageIndex = 0
+        for item in staged {
+            if let image = item.owner as? Image, image.displayInput != nil,
+                !imageInputUnavailable, !failImageInputForTesting
+            {
+                do {
+                    if imageInputPass == nil {
+                        imageInputPass = try ImageInputPass(gpu: gpu, slotCount: frameRing.slotCount)
+                    }
+                    let generation = try imageInputPass!.stage(
+                        image, into: bytes.advanced(by: item.offset), of: staging, at: item.offset,
+                        slot: frameRing.slot, index: imageIndex, in: commands)
+                    imageIndex += 1
+                    uploaded.append((image, generation))
+                    uploadBarriersEncoded += 1
+                    continue
+                } catch {
+                    // 準備に失敗しても公開の失敗は増やさず、同じ値を CPU から送る。
+                    // 同じ Canvas で毎フレーム失敗する準備を繰り返さない。
+                    imageInputUnavailable = true
+                }
+            }
+            cpuStaged.append(item)
+        }
+        guard !cpuStaged.isEmpty else { return uploaded }
         guard let encoder = commands.makeComputeCommandEncoder() else {
             throw .encoderUnavailable
         }
-        for item in staged {
+        for item in cpuStaged {
             let generation = item.owner.stageUpload(
                 into: bytes.advanced(by: item.offset), of: staging, at: item.offset,
                 on: encoder)
