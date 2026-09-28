@@ -283,7 +283,7 @@ extension Canvas {
                 // **控えが先、計算が後。** 計算は書いた値を読む
                 let uploaded = try encodeUploads(into: commands)
                 try encodeComputations(into: commands)
-                gpu.commit(commands)
+                gpu.commit(commands, retaining: imageInputPass.map { [$0] } ?? [])
                 return uploaded
             }
             // **いまのスロットを読む投入として記録する。** 描き切りと同じ置き場へ書いたので、

@@ -49,6 +49,7 @@ final class ShaderLibraries {
 
     /// 組んだ `Present`。最初に頼まれたときに組む。
     private var present: (any MTLLibrary)?
+    private var imageInput: (any MTLLibrary)?
     /// パイプラインの組み立て器。最初に頼まれたときに作る。
     private var madeCompiler: (any MTL4Compiler)?
 
@@ -64,6 +65,14 @@ final class ShaderLibraries {
         if let present { return present }
         let library = try makeLibrary(named: "Present")
         present = library
+        return library
+    }
+
+    /// 画像入力の共通断片。描き場所が増えても同じ原文を組み直さない。
+    func imageInputLibrary() throws(RenderFailure) -> any MTLLibrary {
+        if let imageInput { return imageInput }
+        let library = try makeLibrary(named: "ImageInput")
+        imageInput = library
         return library
     }
 
@@ -87,8 +96,8 @@ final class ShaderLibraries {
     /// ビルドに含める手がないため。**原文の誤りはここまで来ないと分からない**ので、
     /// `make ci-check` が別途ビルド時に組み立てて落とす (`scripts/check-shaders.sh`)。
     ///
-    /// **外からは呼ばせない。** 呼べば同じ原文をもう 1 度組む。前置き無しで組むのはいま
-    /// `Present` だけで、それは ``presentLibrary()`` が抱える。
+    /// **外からは呼ばせない。** 呼べば同じ原文をもう 1 度組む。前置き無しで組む同梱の断片も、
+    /// 専用の口が抱える (`Present` と `ImageInput`)。
     private func makeLibrary(named name: String) throws(RenderFailure) -> any MTLLibrary {
         let source = try bundledShaderSource(named: name)
         return try compile(source, name: name, reportedAs: "\(name).metal")

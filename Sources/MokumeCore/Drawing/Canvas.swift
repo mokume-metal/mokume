@@ -1157,7 +1157,12 @@ public final class Canvas {
     ///
     /// [#932]: https://github.com/mokume-metal/mokume/issues/932
     let computeValuesStorage: GrowableBuffer
-    /// 数の並びと画像へ CPU が書いた控えを、GPU 側のコピーで届けるための置き場
+    /// 大画像の入力変換。最初に必要になったときだけ準備する (#1753)。
+    var imageInputPass: ImageInputPass?
+    var imageInputUnavailable = false
+    /// GPU 準備が使えないときの CPU への逃げ道を検査する。
+    var failImageInputForTesting = false
+    /// 数の並びと画像へ CPU が書いた控えを、GPU 側で届けるための置き場
     /// (`Canvas+Uploads.swift`・#749)。
     let uploadStorage: GrowableBuffer
     /// 1 区画の大きさ (バイト)。定数の受け渡しの境界に揃える。
@@ -2408,7 +2413,10 @@ public final class Canvas {
             // この世代のコマンドはリソースを保持しないため、渡さないと利用者が `draw()` の
             // 中で作って手放した絵を、GPU が読んでいる途中で解放することになる (#727)
             let submission = gpu.commit(
-                commands, retaining: [HeldFrame(batches: batches, effects: pendingEffects)])
+                commands,
+                retaining: [
+                    HeldFrame(batches: batches, effects: pendingEffects, imageInput: imageInputPass)
+                ])
             return (
                 submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
                 uploaded: uploaded, carried: carried)
@@ -2759,7 +2767,9 @@ public final class Canvas {
     private final class HeldFrame {
         let batches: [Batch]
         let effects: [Effect]
-        init(batches: [Batch], effects: [Effect]) {
+        let imageInput: ImageInputPass?
+        init(batches: [Batch], effects: [Effect], imageInput: ImageInputPass?) {
+            self.imageInput = imageInput
             self.batches = batches
             self.effects = effects
         }
