@@ -112,8 +112,8 @@ class RepoOfDirTest(unittest.TestCase):
     def test_a_local_path_is_not_a_slug(self):
         """origin が手元の bare のときは「解けなかった」に倒す。
 
-        **gh の宛先を訊いているのではない** — そちらは `gh repo view` の仕事で、
-        `catch-up.sh` がそれを使う (問いが違うので寄せていない)。
+        **gh の宛先を訊いているのではない** — そちらは `gh repo view` の仕事である
+        (問いが違うので寄せていない)。
         """
         with tempfile.TemporaryDirectory() as tmp:
             status, _ = self.resolve(tmp)

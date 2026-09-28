@@ -58,7 +58,7 @@ PR 本文が揃い `ci-gate` が green なら、指示を待たず `gh pr merge 
 
 承認が要るのは[重要パス](.github/rulesets/main-protection.json) を触る PR だけで、maintainers への 1 承認を求める。承認が要る PR でも先に `--auto` を掛けておく (予約はゲートを越えないので、メンテナの操作が Approve 1 回で済む)。承認は native の Approve レビューだけ。
 
-- **`BEHIND` でも "Update branch" は押さない。** 追随しても得るものが無く、auto-merge だけが外れる。例外は描画 PR の `local-render` が failure のとき (「描画に影響する変更」)
+- **`BEHIND` でも "Update branch" は押さない。** 追随しても得るものが無く、auto-merge だけが外れる
 - check が 1 本も付かないのは、まだ来ていないのではなく main と衝突している。`git merge-tree --write-tree origin/main HEAD` で確かめ、手元で解いて push する
 
 ## 説明と報告
@@ -103,7 +103,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 
 - Conventional Commits: `<type>(<scope>): <要約>`。type は feat / fix / docs / refactor / test / chore / ci / perf / build。type と scope は英語、要約は日本語でよい。PR タイトルがそのまま squash のマージコミットになるので、同じ形で書く
 - 1 コミット 1 関心。1 PR は「1 つの説明で筋が通る範囲」で、同じ親の sub-issue 群や、作業中に踏んで起票した障害もまとめて閉じてよい (ADR-0031 決定 3)
-- **検証は `make ci-check` に集約し、push 前に通す。これは merge の条件である。** 全部通ったときだけ `local-render` が commit status に報告され、描画に触れる PR はそれが無いと merge できない (報告されないときは理由が出る。多いのは作業ツリーが汚れたまま実行した場合)
+- **検証は `make ci-check` に集約し、push 前に通す。** merge の条件は必須チェックの `ci-gate` と `render` で、`render` は専用機が merge queue の合流後の木で描画の検査を走らせる (ADR-0019 決定 7)
 - 何が走ったかの正本は `.build/test-results-swift-testing.xml` で、端末出力ではない (行を落とす)。赤を見たら、実行し直す前に `.build/test-log.txt` を退避する (実行し直すと記録が切り詰められる)
 - 性能は release で測る。debug の数字を性能の根拠にしない。入口は `make test-release` の 1 つ
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 つ置く (CHANGELOG を直接編集しない)
@@ -118,13 +118,9 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 
 ## 描画に影響する変更
 
-描画結果・動きが変わる PR には before/after の視覚的証跡を載せる (動きは動きの分かる形式で)。**CI は描画を走らせられないので、緑は「描けている」を意味しない。** 貼られた絵が唯一の検証記録で、squash merge の後には足せない。`scripts/drawing-paths.txt` に載る場所を触った PR に絵が無ければ `drawing-evidence` が赤になる (見るのは絵があることだけ — ADR-0019 決定 1)。絵が変わりようのない変更には `no-visual-change` を付ける。
+描画結果・動きが変わる PR には before/after の視覚的証跡を載せる (動きは動きの分かる形式で)。**専用機の `render` が見るのは触っていない絵の退行 (台帳の照合) だけで、緑は新しい絵が正しいことを意味しない。** 貼られた絵が新しい絵の唯一の検証記録で、squash merge の後には足せない。`scripts/drawing-paths.txt` に載る場所を触った PR に絵が無ければ `drawing-evidence` が赤になる (見るのは絵があることだけ — ADR-0019 決定 1)。絵が変わりようのない変更には `no-visual-change` を付ける。
 
-**main の絵に関わるファイルは、常に誰かが手元で実際に回して確かめた組み合わせのままに保つ** (merge queue での判定は `scripts/render-status.sh` の冒頭)。書き手が守ること:
-
-- 作業中の描画 PR は Draft にする。描画 PR は 1 本ずつ (queue の外では番号順に) 入るので、作業中の PR が完成した後続を待たせる
-- queue から弾かれたら `make catch-up` を実行する (main の取り込み → `make ci-check` → `--auto` の掛け直しを 1 手にしたもの。手順は `scripts/catch-up.sh` の冒頭)。実行する前に、queue に居るかを `isInMergeQueue` で見る (`autoMerge: false` は queue に入った後も出る)
-- 取り込みは手元だけで済ませ、push しない。push は承認を落とす (#612)。例外は衝突を解いた合流だけ
+描画の検査は、専用機 (self-hosted runner) が merge queue の合流後の木を実際に描いて走らせる (`.github/workflows/render.yml`)。描画 PR も他の PR と同じく並んで入る。同じリポジトリの Draft でない PR には `render-pr` も走るが、早く気付くための情報で必須ではない。queue から弾かれたら、落ちた `render` の run を読んで直す。専用機での作業は画面とキーボードで行う (#180)
 
 見た目・動きの事象を Issue に立てるときも証跡を添える (壊れた絵は起票の時点でしか撮れない)。上げ先は問わず、Issue / PR の入力欄へ画像や動画を落とせば GitHub が保管する。エージェントの撮り方と上げ先は `.claude/skills/visual-evidence/` が持つ。
 

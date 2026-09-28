@@ -116,7 +116,7 @@ class ReadFailuresTest(unittest.TestCase):
             ["python3", str(READER), "--failures", str(path)],
             capture_output=True, text=True,
         )
-        # 呼ぶ側 (render-status.sh) の約束 — 終了コードは常に 0
+        # 呼ぶ側 (test-vanished.sh・gpu-ran) との約束 — 終了コードは常に 0
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
 
@@ -131,7 +131,7 @@ class ReadFailuresTest(unittest.TestCase):
         self.assertEqual(self.read(RECORD_TRUNCATED), "unreadable")
 
     def test_the_existing_mouth_is_unchanged(self):
-        """render-status.sh が呼ぶ口 (<記録> <classname>) はそのまま。"""
+        """gpu-ran が呼ぶ口 (<記録> <classname>) はそのまま。"""
         path = self.root / "record.xml"
         path.write_text(RECORD_ONE_FAILED, encoding="utf-8")
         proc = subprocess.run(

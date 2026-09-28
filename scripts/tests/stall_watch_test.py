@@ -95,8 +95,6 @@ case "$url" in
   */check-runs)
     sha=${url%/check-runs}; sha=${sha##*/}
     emit "$PR_DIR/${sha#sha-}.checkruns.json"; exit 0 ;;
-  *"/pulls?state=open"*)
-    emit "$PR_DIR/pulls.json"; exit 0 ;;
   */files)
     n=${url%/files}; n=${n##*/}
     # 特定の PR だけ読めない状況を作る (#1303)
@@ -138,8 +136,6 @@ class StallWatchTest(unittest.TestCase):
         self.calls.write_text("", encoding="utf-8")
         self.bin_dir = bin_dir
 
-        # 順番の判定 (ahead_drawing_pr) が読む一覧。既定は自分 1 本だけ
-        self.write("pulls.json", [])
 
     def write(self, name, payload):
         (self.pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
@@ -300,26 +296,6 @@ class StallWatchTest(unittest.TestCase):
         self.add_pr(6, auto=True, state="UNKNOWN", checks=[])
         kind, action = self.classify(6, self.watch())
         self.assertEqual((kind, action), ("conflict", "name"))
-
-    def test_手元の報告だけが付いた_PR_も_check_0_本と数える(self):
-        # 読み分け表 (scripts/stall-watch.sh) の行 1 の「local-render のような手元の commit status を除く」
-        self.add_pr(
-            7, auto=True, state="UNKNOWN", checks=[check("local-render", "SUCCESS")]
-        )
-        kind, _ = self.classify(7, self.watch())
-        self.assertEqual(kind, "conflict")
-
-    def test_local_render_が失敗した描画_PR_を名乗る(self):
-        self.add_pr(
-            8,
-            auto=True,
-            state="BLOCKED",
-            checks=[check("local-render", "FAILURE"), check("ci-gate", "SUCCESS")],
-            files=["Sources/MokumeCore/Drawing/Canvas.swift"],
-        )
-        self.write("pulls.json", [{"number": 8, "draft": False}])
-        kind, action = self.classify(8, self.watch())
-        self.assertEqual((kind, action), ("ejected", "name"))
 
     def test_古い失敗_check_が残る_PR_は打つに分類される(self):
         self.add_pr(

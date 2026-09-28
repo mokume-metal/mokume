@@ -193,9 +193,9 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
 def assert_files_call_paginates(case, calls):
     """一覧を引く**その呼び出し**が `--paginate` を通っていること (#793)。
 
-    記録全体に `--paginate` が現れるかを見てはいけない — 順番の判定が引く open な PR の
-    一覧 (`drawing-queue.sh`) も `--paginate` を使うので、**付け忘れても緑になる**
-    (最初にこの検査を書いたとき、まさにそれで空回りしていた)。
+    記録全体に `--paginate` が現れるかを見てはいけない — 同じ記録に別の `--paginate` が
+    混ざると、**付け忘れても緑になる** (最初にこの検査を書いたとき、描画 PR の順番の判定
+    (`drawing-queue.sh`・#879 で畳んだ) が引く一覧で、まさにそれで空回りしていた)。
     """
     lines = [l for l in calls.read_text(encoding="utf-8").splitlines() if "/files" in l]
     case.assertTrue(lines, "変更ファイルの一覧を引いていない")

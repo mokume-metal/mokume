@@ -16,11 +16,11 @@
 5. **描画の見込みは、本文に現れるパス片を一覧に照らして出す。** URL の中のパスも拾い、
    一覧に無い場所しか触らない Issue は描画レーンを取らない
 6. **終了コードが「打てる仕事があるか」を表す。** 呼ぶ側 (外に居るディスパッチャ) が「在庫が
-   尽きたので B-1 へ回る」を分岐できる。**打てる catch-up があれば在庫切れと言わない** (#1045)。
+   尽きたので B-1 へ回る」を分岐できる。
    **一覧を読めなかったときも在庫切れと言わない** — 1 ではなく 2 で終える (#1235)
-7. **手元で打てる catch-up を ready より先に出す** (#1045)。当番が ejected と名乗る描画 PR の
-   うち、行列の先頭のものだけを出す — 先に別の描画 PR が居るものは打っても無駄になる。
-   弾かれた PR が無い平常時は、呼び出しも出力も従来のまま
+7. **PR の check の状態は読まない。** 以前は、手元で打てる catch-up を ready より先に
+   出していた (#1045) が、覆いの機構ごと #879 で畳んだ。PR が赤くても行は増えず、順番を
+   引く呼び出しも起きない
 8. **自分に証拠の無い着手印は、家族を見てから dropped と呼ぶ** (#1391)。家族は親・兄弟・子で、
    閉じたものは新しいときだけ数える。**家族を渡るのは 1 段だけ**で、家族を通じて busy に
    なったものは証拠にしない。家族を読むのは候補があるときだけで、読めなければ dropped のまま
@@ -73,12 +73,9 @@ fi
 if [ "$1 $2" = "issue list" ]; then emit "$FIX/issues.json"; exit 0; fi
 if [ "$1 $2" = "pr list" ]; then emit "$FIX/prs.json"; exit 0; fi
 
-# 描画 PR の順番の判定 (drawing-queue.sh) が引く 2 つ。**URL は $2 から取る** —
-# "$*" には --jq の値まで混ざる
+# **URL は $2 から取る** — "$*" には --jq の値まで混ざる
 if [ "$1" = "api" ]; then
   case "$2" in
-    *"/pulls?state=open"*) emit "$FIX/pulls.json"; exit 0 ;;
-    */files) n=${2%/files}; n=${n##*/}; emit "$FIX/$n.files.json"; exit 0 ;;
     # merge queue の並び (#1266)。既定は空
     graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; }
       # open な Bug と ready の候補の親 (#1661)。家族の問い合わせとは issueType の綴りで
@@ -130,33 +127,17 @@ def issue(number, *, title="なにか", body="", labels=(), type_=None, updated=
     }
 
 
-def closing_pr(
-    number, *, closes=(), repo="mokume-metal/mokume", render=None, draft=False, files=()
-):
-    """open な PR。render に local-render の状態 (StatusContext の state) を渡す。
-
-    files は順番の判定が読む変更ファイル。run_queue がそこから偽 gh の応答を組む。
-    """
+def closing_pr(number, *, closes=(), repo="mokume-metal/mokume"):
+    """open な PR と、それが閉じる Issue。"""
     owner, name = repo.split("/")
     return {
         "number": number,
         "title": f"PR {number}",
-        "isDraft": draft,
         "closingIssuesReferences": [
             {"number": n, "repository": {"owner": {"login": owner}, "name": name}}
             for n in closes
         ],
-        # 本物の gh と同じく、commit status は context / state の欄で来る
-        "statusCheckRollup": (
-            []
-            if render is None
-            else [{"__typename": "StatusContext", "context": render[0], "state": render[1]}]
-        ),
-        "_files": list(files),
     }
-
-
-DRAWING_FILE = "Sources/MokumeCore/Canvas.swift"
 
 
 def member(number, state="OPEN", updated=LONG_AGO):
@@ -203,15 +184,7 @@ class ReadyQueueTest(unittest.TestCase):
             fix = tmp / "fixtures"
             fix.mkdir()
             (fix / "issues.json").write_text(json.dumps(issues), encoding="utf-8")
-            listing = [{k: v for k, v in pr.items() if k != "_files"} for pr in prs]
-            (fix / "prs.json").write_text(json.dumps(listing), encoding="utf-8")
-            # 順番の判定が読む一覧 (REST の形)。Draft は API 側で外れる前提なので残しておく
-            pulls = [{"number": pr["number"], "draft": pr["isDraft"]} for pr in prs]
-            (fix / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
-            for pr in prs:
-                (fix / f"{pr['number']}.files.json").write_text(
-                    json.dumps([{"filename": f} for f in pr["_files"]]), encoding="utf-8"
-                )
+            (fix / "prs.json").write_text(json.dumps(list(prs)), encoding="utf-8")
             (fix / "worktrees.txt").write_text(worktrees, encoding="utf-8")
             if families is not None:
                 (fix / "family.json").write_text(
@@ -239,7 +212,6 @@ class ReadyQueueTest(unittest.TestCase):
                 GITHUB_REPOSITORY="mokume-metal/mokume",
                 DRAWING_PATHS=str(tmp / "drawing-paths.txt"),
             )
-            env.pop("RENDER_CONTEXT", None)
             env.update(extra_env)
             done = subprocess.run(
                 ["/bin/bash", str(QUEUE)],
@@ -385,61 +357,14 @@ class ReadyQueueTest(unittest.TestCase):
                 self.assertEqual(done.stdout, "", "判定できないのに行を出している")
                 self.assertIn("読めなかった", done.stderr)
 
-    # 7a. 先頭の弾かれた描画 PR は catch-up として ready より先に出る
-    def test_head_ejected_drawing_pr_is_catch_up(self):
-        for state in ("FAILURE", "ERROR"):
-            with self.subTest(state=state):
-                done, log = self.run_queue(
-                    [issue(60, labels=["verify: triaged"])],
-                    prs=[closing_pr(900, render=("local-render", state), files=[DRAWING_FILE])],
-                )
-                self.assertEqual(done.returncode, 0, done.stderr)
-                lines = done.stdout.splitlines()
-                self.assertTrue(lines, "何も出ていない")
-                self.assertTrue(
-                    lines[0].startswith("900 catch-up - PR #900"),
-                    f"catch-up が先頭に出ていない:\n{done.stdout}",
-                )
-                self.assertIn("make catch-up PR=900", lines[0])
-                self.assertIn("60 ready", done.stdout)
-                self.assertIn("catch-up 1 / ready 1", done.stderr)
-                for verb in ("pr merge", "--add-label", "statuses"):
-                    self.assertNotIn(verb, log, f"判定が {verb} を打っている")
-
-    # 7b. 先に別の描画 PR が居るものは出さない (打っても無駄になる)
-    def test_catch_up_waits_behind_earlier_drawing_pr(self):
-        done, _ = self.run_queue(
-            [issue(61, labels=["verify: triaged"])],
-            prs=[
-                closing_pr(800, files=[DRAWING_FILE]),  # 先に居る描画 PR (弾かれてはいない)
-                closing_pr(900, render=("local-render", "FAILURE"), files=[DRAWING_FILE]),
-            ],
-        )
-        self.assertNotIn("catch-up -", done.stdout, "行列の後ろの PR を打てると言っている")
-        self.assertIn("catch-up 0 /", done.stderr)
-
-        # 先に居る PR が描画に触れていなければ、行列の先頭である
-        done, _ = self.run_queue(
-            [],
-            prs=[
-                closing_pr(800, files=["docs/README.md"]),
-                closing_pr(900, render=("local-render", "FAILURE"), files=[DRAWING_FILE]),
-            ],
-        )
-        self.assertIn("900 catch-up", done.stdout)
-
-    # 7c. 弾かれた PR が無ければ、呼び出しも出力も終了コードも従来のまま
-    def test_no_ejected_pr_changes_nothing(self):
-        prs = [
-            closing_pr(900, render=("local-render", "SUCCESS"), files=[DRAWING_FILE]),
-            closing_pr(901, render=("local-render", "PENDING"), files=[DRAWING_FILE]),
-            closing_pr(902, render=("ci-gate", "FAILURE"), files=[DRAWING_FILE]),  # 別の check
-            closing_pr(903, files=[DRAWING_FILE]),  # 報告が無い
-        ]
+    # 7. PR の check の状態は読まない (catch-up は #879 で畳んだ)
+    def test_pr_checks_do_not_add_rows(self):
+        prs = [closing_pr(900), closing_pr(901)]
         done, log = self.run_queue([issue(62, type_="Bug", body=SIGNATURE)], prs=prs)
         self.assertEqual(done.returncode, 1, "在庫切れなのに 0 で終えている")
         self.assertEqual(done.stdout, f"62 stock - エージェントの起票が無印のまま (Bug・なにか)\n")
-        # 順番の判定 (REST の pulls / files と merge queue の GraphQL) を引いていないこと。
+        self.assertNotIn("catch-up", done.stdout + done.stderr)
+        self.assertNotIn("statusCheckRollup", log, "PR の check を読んでいる")
         # **api の呼び出しそのものは 0 にならない** — #62 は open な Bug なので、その親を読む
         # GraphQL が 1 回走る (#1661 の「根と判断」)。それ以外の api が無いことを見る
         others = [
@@ -447,40 +372,7 @@ class ReadyQueueTest(unittest.TestCase):
             for line in log.splitlines()
             if line.startswith("api ") and "parent { number state issueType" not in line
         ]
-        self.assertEqual(others, [], f"弾かれた PR が無いのに順番を引いている:\n{log}")
-        self.assertNotIn("mergeQueue", log)
-
-    # 7d. Draft は見ない (作業中の PR を Draft にしておくのが opt-out)
-    def test_draft_is_not_catch_up(self):
-        done, log = self.run_queue(
-            [],
-            prs=[
-                closing_pr(
-                    900, render=("local-render", "FAILURE"), draft=True, files=[DRAWING_FILE]
-                )
-            ],
-        )
-        self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout, "")
-        self.assertNotIn("api ", log)
-
-    # 7e. 打てる catch-up だけでも在庫切れと言わない
-    def test_catch_up_alone_is_work(self):
-        done, _ = self.run_queue(
-            [],
-            prs=[closing_pr(900, render=("local-render", "FAILURE"), files=[DRAWING_FILE])],
-        )
-        self.assertEqual(done.returncode, 0, "打てる catch-up があるのに在庫切れを返した")
-
-    # 7f. 報告の綴りは render-context.sh の 1 つを読む (当番と同じ実体 — ADR-0008 決定 6)
-    def test_reads_shared_render_context(self):
-        prs = [closing_pr(900, render=("別の綴り", "FAILURE"), files=[DRAWING_FILE])]
-        done, _ = self.run_queue([], prs=prs, RENDER_CONTEXT="別の綴り")
-        self.assertIn("900 catch-up", done.stdout)
-
-        done, _ = self.run_queue([], prs=prs)  # 既定の綴りでは当たらない
-        self.assertNotIn("catch-up -", done.stdout)
-
+        self.assertEqual(others, [], f"順番を引いている:\n{log}")
 
     # 8. 家族も見る (#1391)
     def test_parent_is_busy_while_child_has_pr(self):

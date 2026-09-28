@@ -8,8 +8,8 @@ name: Stall watch
 # 止まった)。
 #
 # **契機が schedule なのは、詰まりが「何も起きないこと」だからである。** pull_request や
-# merge_group を契機に走る既存の検査 (ci.yml の review-gate / render-signal /
-# drawing-evidence) は PR に出来事が起きたときしか動かないので、この事象は原理的に
+# merge_group を契機に走る既存の検査 (ci.yml の review-gate / drawing-evidence・
+# render.yml) は PR に出来事が起きたときしか動かないので、この事象は原理的に
 # 捕まえられない。時計を持つ機構が要る。
 #
 # ロジックを YAML に埋めないのは単体テストで固定できないため (#66 / triage.sh と同じ
