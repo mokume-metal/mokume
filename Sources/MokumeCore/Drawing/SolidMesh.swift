@@ -8,7 +8,7 @@ import simd
 /// 中身は**三角形の並び**で、3 点で 1 枚を表す。位置は形自身の座標で、置く場所の
 /// 変換は描くときに掛かる (``Shape`` と同じ約束)。色は形が持たない — 置くときの
 /// 塗りで決まる。
-struct SolidMesh {
+nonisolated struct SolidMesh {
     /// 形の 1 点。
     struct Point: Equatable {
         var position: SIMD3<Float>
@@ -37,7 +37,7 @@ struct SolidMesh {
 /// 鍵を寸法から組み立てた文字列にしない。文字列にすると、値の異常がそのまま鍵の
 /// 空間の異常になる — 数でない寸法から作った鍵は二度と当たらず、表に居座り続ける。
 /// 型にしておけば、鍵を作れる時点で値は既に確かめられている (``SolidShape/make(_:)``)。
-enum SolidShape: Hashable {
+nonisolated enum SolidShape: Hashable {
     case box(width: Float, height: Float, depth: Float)
     case sphere(radius: Float, detail: Int)
     case ellipsoid(radiusX: Float, radiusY: Float, radiusZ: Float, detail: Int)
@@ -113,7 +113,7 @@ enum SolidShape: Hashable {
 ///
 /// どの形も**原点が中心**で、縦軸は画面と同じく下向き。円柱と円錐の軸は縦、輪の
 /// 穴は画面の側を向く (手本のある形はその向きに従う)。
-enum SolidMeshBuilder {
+nonisolated enum SolidMeshBuilder {
     /// 箱。6 面それぞれが自分の向きを持つ (角で丸めない)。
     static func box(width: Float, height: Float, depth: Float) -> [SolidMesh.Point] {
         let x = width / 2
@@ -396,7 +396,7 @@ enum SolidMeshBuilder {
 /// モデルも、同じ規則が同じ並びから線を取り出す。
 ///
 /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-struct SolidEdges {
+nonisolated struct SolidEdges {
     /// 溶接した点。形自身の座標のまま持つ。
     private(set) var points: [SIMD3<Float>]
     /// 点番号の対。**同じ辺は 1 度しか現れない** — 2 度引くと半透明の線が重なって濃くなる。

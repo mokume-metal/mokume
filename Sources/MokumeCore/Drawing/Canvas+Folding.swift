@@ -16,7 +16,7 @@ extension Canvas {
     ///
     /// 点は変換をかける前の座標で持つ — 変換は最後に 1 度だけ掛ける。輪郭の太さは
     /// 画面の画素で測るので、変換の前に帯を作ると拡大で太さが変わってしまう。
-    struct Outline {
+    nonisolated struct Outline {
         /// 周を回る点。
         var points: [SIMD2<Float>]
         /// 最後の点から最初の点へ戻るか。
@@ -220,11 +220,13 @@ extension Canvas {
         if let triangles = outline.fillTriangles {
             let uvOf = style.picture == nil ? nil : Self.boxUV(of: points)
             for (a, b, c) in triangles {
+                // `Optional.map` に閉包を渡さない — 三角形ごとに隔離の実行時検査を払う (#1779)
+                var uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
+                if let uvOf { uvs = (uvOf(a), uvOf(b), uvOf(c)) }
                 appendTriangle(
                     transform.apply(x: a.x, y: a.y), transform.apply(x: b.x, y: b.y),
                     transform.apply(x: c.x, y: c.y),
-                    colors: (style.fill, style.fill, style.fill),
-                    uvs: uvOf.map { ($0(a), $0(b), $0(c)) })
+                    colors: (style.fill, style.fill, style.fill), uvs: uvs)
             }
             return
         }
@@ -240,9 +242,9 @@ extension Canvas {
         func place(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ bSource: SIMD2<Float>,
             _ c: SIMD2<Float>, _ cSource: SIMD2<Float>)
         {
-            appendTriangle(
-                a, b, c, colors: (style.fill, style.fill, style.fill),
-                uvs: uvOf.map { ($0(pivot), $0(bSource), $0(cSource)) })
+            var uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
+            if let uvOf { uvs = (uvOf(pivot), uvOf(bSource), uvOf(cSource)) }
+            appendTriangle(a, b, c, colors: (style.fill, style.fill, style.fill), uvs: uvs)
         }
 
         var previous = transform.apply(x: ring[0].x, y: ring[0].y)
@@ -268,11 +270,16 @@ extension Canvas {
         let step = sweep / Float(segments)
         // 一周は最後の点が最初と重なるので落とす
         let count = sweep >= 2 * .pi ? segments : segments + 1
-        return (0..<count).map { index in
+        // 閉包を標準ライブラリへ渡さずにループで回す。main actor の文脈の閉包は、点ごとに
+        // 隔離の実行時検査を払う (#1779)
+        var points: [SIMD2<Float>] = []
+        points.reserveCapacity(count)
+        for index in 0..<count {
             let angle = start + step * Float(index)
-            return SIMD2(
-                center.x + radiusX * cos(angle), center.y + radiusY * sin(angle))
+            points.append(
+                SIMD2(center.x + radiusX * cos(angle), center.y + radiusY * sin(angle)))
         }
+        return points
     }
 
     /// 4 つの数を、左上の角と大きさへ読み替える。

@@ -194,8 +194,11 @@ extension Canvas {
         if recordingShape {
             // **置き場所で描いたときと同じ頂点を、先に作って焼く。** 焼いた頂点はその場で
             // 並べる列へ積むので、線 (同じ列へ積まれる) と塗りが 1 本の区間に並ぶ
-            let vertices = build().points.map {
-                meshVertex($0, isDerived: isDerived, textured: textured)
+            let points = build().points
+            var vertices: [SolidVertex] = []
+            vertices.reserveCapacity(points.count)
+            for point in points {
+                vertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
             }
             appendPlacedSolidVertices(vertices[...], indices: nil, placedBy: placement)
             return
@@ -279,7 +282,10 @@ extension Canvas {
     ) {
         if indices != nil { openIndexedFreeformSolid() } else { openFreeformSolid() }
         let base = solidVertices.count
-        solidVertices.append(contentsOf: vertices.lazy.map(placement.placing))
+        // 閉包を標準ライブラリの高階関数へ渡さずにループで回す。main actor の文脈の閉包は
+        // 要素ごとに隔離の実行時検査を払う (#1779)
+        solidVertices.reserveCapacity(base + vertices.count)
+        for vertex in vertices { solidVertices.append(placement.placing(vertex)) }
         openSolid?.vertexCount += vertices.count
         let rewinds = placement.isMirrored
         if let indices {
@@ -287,7 +293,8 @@ extension Canvas {
             // 末尾が手前のことがある)
             let shift = base - vertices.startIndex
             let indexBase = solidIndices.count
-            solidIndices.append(contentsOf: indices.lazy.map { UInt32(Int($0) + shift) })
+            solidIndices.reserveCapacity(indexBase + indices.count)
+            for index in indices { solidIndices.append(UInt32(Int(index) + shift)) }
             if rewinds { Self.reverseTriangles(in: &solidIndices, from: indexBase) }
             return
         }
@@ -295,7 +302,8 @@ extension Canvas {
         if openSolid?.indexStart != nil {
             // **添字の列では、並べただけの頂点も自分の番号を名乗る** — 名乗らないと誰からも
             // 参照されず、黙って消える (``appendSolidVertex`` と同じ理由)
-            solidIndices.append(contentsOf: (base..<solidVertices.count).lazy.map { UInt32($0) })
+            solidIndices.reserveCapacity(solidIndices.count + solidVertices.count - base)
+            for index in base..<solidVertices.count { solidIndices.append(UInt32(index)) }
         }
     }
 
@@ -518,9 +526,11 @@ extension Canvas {
         beginSolids()
 
         let matrix = transform.matrix
-        let placed = net.points.map { point in
+        var placed: [SIMD3<Float>] = []
+        placed.reserveCapacity(net.points.count)
+        for point in net.points {
             let world = matrix * SIMD4(point, 1)
-            return SIMD3(world.x, world.y, world.z)
+            placed.append(SIMD3(world.x, world.y, world.z))
         }
         let half = style.strokeWeight / 2
         let camera = currentCamera
@@ -744,8 +754,9 @@ extension Canvas {
     ) {
         // 組み直しの間は積まずに、位置だけを渡す (``rebuiltSolidStroke(_:)``)
         if solidStrokeCapture != nil {
-            solidStrokeCapture?.append(
-                contentsOf: [a, b, c].map { liftedTowardViewer($0, camera: camera) })
+            solidStrokeCapture?.append(liftedTowardViewer(a, camera: camera))
+            solidStrokeCapture?.append(liftedTowardViewer(b, camera: camera))
+            solidStrokeCapture?.append(liftedTowardViewer(c, camera: camera))
             return
         }
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)

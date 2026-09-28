@@ -2258,7 +2258,14 @@ public final class Canvas {
     /// [#893]: https://github.com/mokume-metal/mokume/issues/893
     private var hasPendingGeometry: Bool {
         !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty
-            || openSolid?.strokeGeometry != nil || batches.contains { $0.strokeGeometry != nil }
+            || openSolid?.strokeGeometry != nil || batchesHaveStrokeGeometry
+    }
+
+    /// 溜めた列のどれかが立体の線の置き場を持つか。閉包を標準ライブラリへ渡さずに
+    /// 回す — 渡すと列ごとに隔離の実行時検査を払う (#1779)。
+    private var batchesHaveStrokeGeometry: Bool {
+        for batch in batches where batch.strokeGeometry != nil { return true }
+        return false
     }
 
     /// 描画先の絵を変えるものを、最後に描き切ってから溜めたか。
@@ -2801,7 +2808,8 @@ public final class Canvas {
         into commands: any MTL4CommandBuffer
     ) throws(RenderFailure) -> BakedShadow? {
         guard let matrix = shadowMatrix, hasPendingGeometry else { return nil }
-        let casting = batches.filter(\.castsShadow)
+        var casting: [Batch] = []
+        for batch in batches where batch.castsShadow { casting.append(batch) }
         guard !casting.isEmpty else { return nil }
 
         // **前のフレームと同じ入力なら焼き直さない。** 光の行列・細かさ・落とす列の

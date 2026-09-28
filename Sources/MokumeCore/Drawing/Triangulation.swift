@@ -25,7 +25,7 @@ import simd
 /// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
 /// [#1211]: https://github.com/mokume-metal/mokume/issues/1211
 /// [#1534]: https://github.com/mokume-metal/mokume/issues/1534
-enum Triangulation {
+nonisolated enum Triangulation {
     /// 単純な多角形を三角形へ分ける。返すのは点の番号の 3 つ組。
     ///
     /// **自己交差した形では正しい分け方が存在しない。** その場合でも落ちず、無限に

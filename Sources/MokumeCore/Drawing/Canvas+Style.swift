@@ -157,8 +157,12 @@ extension Canvas {
         // 列の頂点」を指す置き場所を足してしまう
         let template = openFlat
         openFlat = nil
-        let start = batches.last(where: { $0.source == .flat })
-            .map { $0.run.start + $0.run.count } ?? 0
+        // 後ろから探す。閉包を標準ライブラリへ渡すと、列ごとに隔離の実行時検査を払う (#1779)
+        var start = 0
+        for batch in batches.reversed() where batch.source == .flat {
+            start = batch.run.start + batch.run.count
+            break
+        }
         let count = vertices.count - start
         guard count > 0 else { return }
         batches.append(
