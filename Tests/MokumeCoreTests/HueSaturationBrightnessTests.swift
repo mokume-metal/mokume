@@ -141,4 +141,38 @@ struct HueSaturationBrightnessTests {
         let reading = hue(color(255, 0, 1))
         #expect(reading > 359.7 && reading < 360)
     }
+    // MARK: - 色を 1 度だけ読む (#1787)
+
+    /// **色を 1 度だけ読んでも、3 成分を別々に読んだ値とビット単位で一致する** ([#1787])。
+    ///
+    /// 比べる相手は変える前の式 — ``red(_:)`` / ``green(_:)`` / ``blue(_:)`` を別々に呼んで
+    /// 渡す形である。範囲の外・負・不透明度 0・半透明・数でない成分と不透明度を混ぜる。
+    ///
+    /// [#1787]: https://github.com/mokume-metal/mokume/issues/1787
+    @Test("色相・彩度・明度が、3 成分を別々に読んだ値とビット単位で一致する")
+    func readingOnceMatchesReadingThreeTimes() {
+        let levels: [Float] = [-0.5, 0, 0.001, 0.2, 0.5, 0.73, 1, 1.8, .nan, .infinity]
+        let alphas: [Float] = [0, 0.25, 1, .nan]
+        var checked = 0
+        for red in levels {
+            for green in levels {
+                for blue in levels {
+                    for alpha in alphas {
+                        let color = LinearRGBA(
+                            premultipliedRed: red, green: green, blue: blue, alpha: alpha)
+                        let expected = HueSaturationBrightness.values(
+                            red: MokumeCore.red(color), green: MokumeCore.green(color),
+                            blue: MokumeCore.blue(color))
+                        let matches =
+                            hue(color).bitPattern == expected.hue.bitPattern
+                            && saturation(color).bitPattern == expected.saturation.bitPattern
+                            && brightness(color).bitPattern == expected.brightness.bitPattern
+                        #expect(matches, "\(red) \(green) \(blue) \(alpha)")
+                        checked += 1
+                    }
+                }
+            }
+        }
+        #expect(checked == 4000)
+    }
 }
