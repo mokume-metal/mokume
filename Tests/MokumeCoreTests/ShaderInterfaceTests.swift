@@ -94,7 +94,9 @@ struct ShaderInterfaceTests {
             ])
     }
 
-    @Test("基本図形の特化の番号が、Swift 側と一致する")
+    /// 光の有無 (`kShapeLitValue`・#1778) も同じ一覧で見る — 番号がずれると、組む側が
+    /// 渡した値が別の定数に効き、断片は渡し忘れた扱い (`true`) で組まれて速さだけを失う。
+    @Test("図形の特化の番号が、Swift 側と一致する")
     func formConstantsAgreeWithSwift() throws {
         let shaders = try RenderDevice().shaders
         let library = try shaders.makeShapeLibrary(
@@ -113,6 +115,7 @@ struct ShaderInterfaceTests {
                 "kFormHasFill": ShapePipeline.formHasFillConstantIndex,
                 "kFormHasStroke": ShapePipeline.formHasStrokeConstantIndex,
                 "kFormHasThinFill": ShapePipeline.formHasThinFillConstantIndex,
+                "kShapeLitValue": ShapePipeline.shapeLitConstantIndex,
             ])
     }
 

@@ -317,11 +317,37 @@ final class ShapePipeline {
     static let formHasStrokeConstantIndex = 1
     /// 1 画素より細い塗りを含むかを渡す function constant の番号 (シェーダ側の `kFormHasThinFill`)。
     static let formHasThinFillConstantIndex = 2
+    /// 光と周囲を受けうるかを渡す function constant の番号 (シェーダ側の `kShapeLitValue`)。
+    /// 利用者の断片が宣言する番号と重ならないよう、大きく取ってある。
+    static let shapeLitConstantIndex = 65000
 
-    /// 断片を旗の組で特化する記述。
+    /// その頂点関数で組む断片に、光と周囲の枝を残すか ([#1778])。
     ///
-    /// **渡さない断片は特化しない** — 三角形の経路の断片は `kFormHas*` を読まないので、
-    /// 値を渡す先が無い。
+    /// **`false` は枝を原稿から外す。** 平面と立体の輪郭は向きを 0 で出し、光・周囲・
+    /// 背景の旗も持たない列なので、枝は必ず偽になる — 外しても色の式は同じで、居るだけの
+    /// 費用だけが消える (面を覆う半透明のクアッド 40 枚で GPU 時間 −35%)。
+    ///
+    /// **`true` は枝を残す。** 立体の塗りは光・周囲・背景 (`drawBackdrop`) のすべてを
+    /// 通るので枝が要る。知らない頂点関数も同じく残す側に倒す — 外すのは「必ず偽」と
+    /// 言える関数に限る。
+    ///
+    /// **三角形の経路の断片は、どちらの値でも必ず特化して組む。** function constant を
+    /// 読む関数は、値を渡さない記述のままではパイプラインにできない (Metal の検証層が
+    /// 「特化した関数を使え」と断る — 実測)。
+    ///
+    /// [#1778]: https://github.com/mokume-metal/mokume/issues/1778
+    static func shapeLit(forVertexFunction name: String) -> Bool {
+        switch name {
+        case flatVertexFunctionName, solidStrokeVertexFunctionName: false
+        default: true
+        }
+    }
+
+    /// 断片を旗の組と光の有無で特化する記述。
+    ///
+    /// **渡さない値は決めない** — 三角形の経路の断片は `kFormHas*` を読まないので旗を
+    /// 渡す先が無く、基本図形の断片は `kShapeLitValue` を読まないので光の有無を渡す先が
+    /// 無い。どちらも無ければ特化せずに元の記述を返す。
     ///
     /// ## `specializedName` は渡さない
     ///
@@ -346,15 +372,22 @@ final class ShapePipeline {
     ///
     /// [#776]: https://github.com/mokume-metal/mokume/issues/776
     private static func specialized(
-        _ function: MTL4LibraryFunctionDescriptor, formFlags: UInt32
+        _ function: MTL4LibraryFunctionDescriptor, formFlags: UInt32?, lit: Bool?
     ) -> MTL4FunctionDescriptor {
+        guard formFlags != nil || lit != nil else { return function }
         let values = MTLFunctionConstantValues()
-        var hasFill = (formFlags & FormInstance.fillsFlag) != 0
-        var hasStroke = (formFlags & FormInstance.strokesFlag) != 0
-        var hasThinFill = (formFlags & FormInstance.thinFillsFlag) != 0
-        values.setConstantValue(&hasFill, type: .bool, index: formHasFillConstantIndex)
-        values.setConstantValue(&hasStroke, type: .bool, index: formHasStrokeConstantIndex)
-        values.setConstantValue(&hasThinFill, type: .bool, index: formHasThinFillConstantIndex)
+        if let formFlags {
+            var hasFill = (formFlags & FormInstance.fillsFlag) != 0
+            var hasStroke = (formFlags & FormInstance.strokesFlag) != 0
+            var hasThinFill = (formFlags & FormInstance.thinFillsFlag) != 0
+            values.setConstantValue(&hasFill, type: .bool, index: formHasFillConstantIndex)
+            values.setConstantValue(&hasStroke, type: .bool, index: formHasStrokeConstantIndex)
+            values.setConstantValue(
+                &hasThinFill, type: .bool, index: formHasThinFillConstantIndex)
+        }
+        if var lit {
+            values.setConstantValue(&lit, type: .bool, index: shapeLitConstantIndex)
+        }
 
         let descriptor = MTL4SpecializedFunctionDescriptor()
         descriptor.functionDescriptor = function
@@ -381,8 +414,10 @@ final class ShapePipeline {
         let descriptor = MTL4RenderPipelineDescriptor()
         descriptor.label = label
         descriptor.vertexFunctionDescriptor = vertexFunction
-        descriptor.fragmentFunctionDescriptor =
-            formFlags.map { specialized(fragmentFunction, formFlags: $0) } ?? fragmentFunction
+        // 基本図形の断片は光の有無を読まず、三角形の経路の断片は旗を読まない
+        descriptor.fragmentFunctionDescriptor = specialized(
+            fragmentFunction, formFlags: formFlags,
+            lit: formFlags == nil ? shapeLit(forVertexFunction: vertexFunctionName) : nil)
 
         // **固定機能のブレンドを使うのは、乗算済みの source-over だけ。** 色は
         // アルファ乗算済みなので ([ADR-0011] 決定 4)、重ねるのは
