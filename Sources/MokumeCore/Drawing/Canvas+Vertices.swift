@@ -578,7 +578,9 @@ extension Canvas {
     {
         let matrix = transform.matrix
         let normalMatrix = transform.normalMatrix
+        var needsDerivedNormals = false
         var placed = points.map { point -> PlacedVertex in
+            if point.normal == nil { needsDerivedNormals = true }
             let moved = matrix * SIMD4<Float>(point.position, 1)
             return PlacedVertex(
                 position: SIMD3(moved.x, moved.y, moved.z),
@@ -587,6 +589,10 @@ extension Canvas {
                 color: point.fill,
                 shapeNormal: point.normal ?? .zero)
         }
+
+        // 全頂点に向きが書かれていれば、面から求めた向きは誰も使わない。
+        // 未指定が1つでもあれば、変換前後の累積と加算順は従来通りに保つ。
+        guard needsDerivedNormals else { return placed }
 
         // **書かれていない向きは、その頂点が属する三角形の向きを足し込んで求める。**
         // 三角形 3 つぶんずつ独立に処理すると、帯状・扇状に並べたときに後ろの頂点だけ
