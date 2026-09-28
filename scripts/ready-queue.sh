@@ -21,7 +21,7 @@
 #
 # ## 出力
 #
-#   <番号> <分類> <描画の見込み> <説明>
+#   <番号> <分類> <説明>
 #
 # 番号は Issue の番号である。
 #
@@ -60,10 +60,6 @@
 #   紐づく PR       gh pr list の closingIssuesReferences。**GitHub 自身の答えを読む** —
 #                   本文を正規表現で拾うと scripts/review-gate.sh と読み方が割れ、
 #                   割れたほうが黙って「着手できる」に倒れる (ADR-0008 決定 6)
-#   描画に触るか    Issue のタイトルと本文に現れるパス片を drawing-paths.sh の
-#                   drawing_files に通す。**見込みでしかない** — Issue は触る
-#                   ファイルを宣言しないので、確定はプランが出てからである
-#                   (ADR-0036 決定 4)。だから印には必ず ? を付ける
 #   B-1 の対象か    本文末尾の Assisted by [Claude Code] の署名。**これが唯一の手掛かり**
 #                   である — Issue の author は identity 分離の対象外なので (ADR-0003 が
 #                   分けたのは PR の作成だけ)、エージェントの起票も人の名義で立つ
@@ -121,9 +117,6 @@ set -euo pipefail
 # リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
-# 「描画に触れているか」の照合 (drawing-paths.sh)
-# shellcheck source=scripts/drawing-paths.sh
-. "$(dirname "${BASH_SOURCE[0]}")/drawing-paths.sh"
 
 REPO="$(this_repo)"
 
@@ -139,17 +132,6 @@ readonly IN_PROGRESS='status: in progress'
 readonly AGENT_MARK='Assisted by [Claude Code]'
 # 無印のまま出してよい型。Design / Feature は判断が要る側なので出さない (ADR-0036 決定 6)
 readonly STOCK_TYPES='Bug Task Docs'
-
-# 標準入力の文字列から、パスらしい字面をすべて並べる。
-#
-# **/ の区切りごとに後ろも並べる** — 本文のパスは
-# github.com/mokume-metal/mokume/blob/main/Sources/… のような URL の一部で現れることが
-# あり、頭から照合すると Sources/ で始まる前置きに当たらない
-path_tokens() {
-  grep -oE '[A-Za-z][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)+' |
-    awk '{ s = $0; while (1) { print s; i = index(s, "/"); if (i == 0) break; s = substr(s, i + 1); if (s == "") break } }' |
-    sort -u
-}
 
 # 名前の並びに含まれるか (前後の区切りごと照合する — 部分一致を拾わないため)
 has_label() { # $1=ラベルの並び (改行区切り) $2=探すラベル
@@ -209,7 +191,7 @@ WORKTREE_NAMES=$(git worktree list --porcelain 2>/dev/null |
 ready='' stock='' dropped='' busy='' decide='' ready_count=0 decide_count=0
 # 自分に証拠の無い着手印。「<番号> <タイトル>」の並びで、家族を読んでから分ける
 candidates=''
-# ready の候補 (「<番号> <描画の見込み> <タイトル>」) と、未トリアージの Design
+# ready の候補 (「<番号> <タイトル>」) と、未トリアージの Design
 # (「<番号> <タイトル>」)。どちらも親を読んでから分ける (#1661)
 ready_rows='' designs=''
 
@@ -224,11 +206,11 @@ while IFS= read -r row; do
 
   if has_label "$labels" "$IN_PROGRESS" || [ -n "$pr" ]; then
     if [ -n "$pr" ]; then
-      busy+="$n busy - PR #$pr が出ている ($title)"$'\n'
+      busy+="$n busy PR #$pr が出ている ($title)"$'\n'
     elif seen_locally "$n"; then
-      busy+="$n busy - 手元に worktree か枝がある ($title)"$'\n'
+      busy+="$n busy 手元に worktree か枝がある ($title)"$'\n'
     elif [[ $updated > $QUIET_BEFORE ]]; then
-      busy+="$n busy - まだ動いている ($updated ・$title)"$'\n'
+      busy+="$n busy まだ動いている ($updated ・$title)"$'\n'
     else
       candidates+="$n $title"$'\n'
     fi
@@ -236,16 +218,8 @@ while IFS= read -r row; do
   fi
 
   if has_label "$labels" "$TRIAGED"; then
-    # **早く打ち切る書き方は取らない** — touches_drawing は入力を最後まで読む形で
-    # 書かれており、grep -q を後ろに置くと SIGPIPE で「見つかった」が偽に化ける
-    # (理由は drawing-paths.sh の drawing_files のコメント)
-    guess='plain?'
-    if printf '%s\n%s\n' "$title" "$(jq -r '.body // ""' <<<"$row")" |
-      path_tokens | touches_drawing; then
-      guess='drawing?'
-    fi
     # ready と決めるのは親を読んでから (下の「根と判断」)。ここでは溜めるだけ
-    ready_rows+="$n $guess $title"$'\n'
+    ready_rows+="$n $title"$'\n'
     continue
   fi
 
@@ -255,7 +229,7 @@ while IFS= read -r row; do
   # 未トリアージ。**B-1 の対象になるのは、完了条件を書ける見込みがあるものだけ**である
   case " $STOCK_TYPES " in *" $type "*) ;; *) continue ;; esac
   case $(jq -r '.body // ""' <<<"$row") in
-    *"$AGENT_MARK"*) stock+="$n stock - エージェントの起票が無印のまま (${type}・${title})"$'\n' ;;
+    *"$AGENT_MARK"*) stock+="$n stock エージェントの起票が無印のまま (${type}・${title})"$'\n' ;;
   esac
 done < <(jq -c '.[]' <<<"$issues_json")
 
@@ -318,9 +292,9 @@ if [ -n "$candidates" ]; then
       why=''
     done <<<"$families"
     if [ -n "$why" ]; then
-      busy+="$n busy - $why ($title)"$'\n'
+      busy+="$n busy $why ($title)"$'\n'
     else
-      dropped+="$n dropped - 着手印が残ったまま $DROPPED_MINUTES 分以上動いていない ($title)$family_note"$'\n'
+      dropped+="$n dropped 着手印が残ったまま $DROPPED_MINUTES 分以上動いていない ($title)$family_note"$'\n'
     fi
   done <<<"$candidates"
 fi
@@ -357,13 +331,13 @@ fi
 
 # (a) 親が open な Bug なら、子は根を直す側で閉じる (ADR-0040 決定 2)。子を ready に出すと
 # 症状の 1 か所だけが直され、同じ根の兄弟が残る — #1659 が数えた「深いが狭い」直しの形である
-while read -r n guess title; do
+while read -r n title; do
   [ -n "$n" ] || continue
   root=$(awk -v n="$n" '$1 == n && $3 == "OPEN" && $4 == "Bug" { print $2; exit }' <<<"$parents")
   if [ -n "$root" ]; then
-    busy+="$n busy - 根 #$root で直す ($title)"$'\n'
+    busy+="$n busy 根 #$root で直す ($title)"$'\n'
   else
-    ready+="$n ready $guess $title"$'\n'
+    ready+="$n ready $title"$'\n'
     ready_count=$((ready_count + 1))
   fi
 done <<<"$ready_rows"
@@ -380,7 +354,7 @@ children=$(awk -v bugs=" $(tr '\n' ' ' <<<"$open_bugs") " '
   END { for (p in c) print p, c[p] }' <<<"$parents")
 while read -r count n title; do
   [ -n "$n" ] || continue
-  decide+="$n decide - open な Bug の子 $count 件が根本の判断を待っている ($title)"$'\n'
+  decide+="$n decide open な Bug の子 $count 件が根本の判断を待っている ($title)"$'\n'
   decide_count=$((decide_count + 1))
 done < <(
   while read -r n title; do

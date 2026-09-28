@@ -13,8 +13,9 @@
    無いときだけ dropped で、**それは「落ちた」ではなく「落ちて見える」**である
 4. **stock は署名つき・無印・型が Bug / Task / Docs のときだけ。** Design / Feature は
    判断が要る側なので出さない (ADR-0036 決定 6)
-5. **描画の見込みは、本文に現れるパス片を一覧に照らして出す。** URL の中のパスも拾い、
-   一覧に無い場所しか触らない Issue は描画レーンを取らない
+5. **行は `<番号> <分類> <説明>` の 3 欄で、描画の見込みを持たない。** 以前は ready の行に
+   `drawing?` / `plain?` を付けて描画レーンを分けていたが、専用機が描画を見るようになって
+   レーンごと畳んだ (ADR-0036 決定 4 の改訂・#1769)
 6. **終了コードが「打てる仕事があるか」を表す。** 呼ぶ側 (外に居るディスパッチャ) が「在庫が
    尽きたので B-1 へ回る」を分岐できる。
    **一覧を読めなかったときも在庫切れと言わない** — 1 ではなく 2 で終える (#1235)
@@ -105,11 +106,6 @@ echo "偽 git が知らない呼び出し: $*" >&2
 exit 1
 """
 
-# 検査用の一覧。**本物を読まない** — 一覧が動いたときに、無関係な検査が赤くならないため
-DRAWING_PATHS = """# 検査用
-Sources/MokumeCore/
-"""
-
 SIGNATURE = "🤖 Assisted by [Claude Code](https://claude.com/claude-code)"
 
 # 既定は「ずっと前」。静けさを見る検査だけが新しい時刻を渡す
@@ -193,7 +189,6 @@ class ReadyQueueTest(unittest.TestCase):
             (fix / "parents.json").write_text(
                 json.dumps(parents_response(parents or {})), encoding="utf-8"
             )
-            (tmp / "drawing-paths.txt").write_text(DRAWING_PATHS, encoding="utf-8")
 
             bindir = tmp / "bin"
             bindir.mkdir()
@@ -210,7 +205,6 @@ class ReadyQueueTest(unittest.TestCase):
                 GH_CALLS=str(calls),
                 GIT_CALLS=str(tmp / "git-calls"),
                 GITHUB_REPOSITORY="mokume-metal/mokume",
-                DRAWING_PATHS=str(tmp / "drawing-paths.txt"),
             )
             env.update(extra_env)
             done = subprocess.run(
@@ -226,8 +220,8 @@ class ReadyQueueTest(unittest.TestCase):
     def lines_by_number(self, stdout):
         out = {}
         for line in stdout.splitlines():
-            number, kind, guess, rest = line.split(" ", 3)
-            out[int(number)] = (kind, guess, rest)
+            number, kind, rest = line.split(" ", 2)
+            out[int(number)] = (kind, rest)
         return out
 
     # 1. 何も打たない
@@ -266,7 +260,7 @@ class ReadyQueueTest(unittest.TestCase):
         )
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[10][0], "busy")
-        self.assertIn("PR #90", seen[10][2])
+        self.assertIn("PR #90", seen[10][1])
         self.assertEqual(seen[11][0], "busy", "手元の worktree を見ていない")
         self.assertEqual(seen[12][0], "dropped")
         self.assertEqual(seen[13][0], "ready")
@@ -319,22 +313,17 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual([n for n, v in seen.items() if v[0] == "stock"], [20, 21, 22])
         self.assertEqual(seen[26][0], "ready")
 
-    # 5. 描画の見込みは、本文に現れるパス片を一覧に照らして出す
-    def test_drawing_guess(self):
+    # 5. 行は 3 欄で、描画の見込みを持たない (描画レーンは #1769 で畳んだ)
+    def test_rows_have_no_drawing_guess(self):
         issues = [
             issue(30, labels=["verify: triaged"], body="Sources/MokumeCore/Frame.swift を直す"),
             issue(32, labels=["verify: triaged"], body="どこにも触れない話"),
-            issue(
-                33,
-                labels=["verify: triaged"],
-                body="https://github.com/mokume-metal/mokume/blob/main/Sources/MokumeCore/A.swift",
-            ),
         ]
         done, _ = self.run_queue(issues)
-        seen = self.lines_by_number(done.stdout)
-        self.assertEqual(seen[30][1], "drawing?")
-        self.assertEqual(seen[32][1], "plain?")
-        self.assertEqual(seen[33][1], "drawing?", "URL の中のパスを拾えていない")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout, "30 ready なにか\n32 ready なにか\n")
+        for mark in ("drawing?", "plain?"):
+            self.assertNotIn(mark, done.stdout)
 
     # 6. 終了コードが在庫の有無を表す
     def test_exit_code_says_stock_out(self):
@@ -362,7 +351,7 @@ class ReadyQueueTest(unittest.TestCase):
         prs = [closing_pr(900), closing_pr(901)]
         done, log = self.run_queue([issue(62, type_="Bug", body=SIGNATURE)], prs=prs)
         self.assertEqual(done.returncode, 1, "在庫切れなのに 0 で終えている")
-        self.assertEqual(done.stdout, f"62 stock - エージェントの起票が無印のまま (Bug・なにか)\n")
+        self.assertEqual(done.stdout, f"62 stock エージェントの起票が無印のまま (Bug・なにか)\n")
         self.assertNotIn("catch-up", done.stdout + done.stderr)
         self.assertNotIn("statusCheckRollup", log, "PR の check を読んでいる")
         # **api の呼び出しそのものは 0 にならない** — #62 は open な Bug なので、その親を読む
@@ -383,8 +372,8 @@ class ReadyQueueTest(unittest.TestCase):
         )
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[1350][0], "busy", "子に PR が出ている親を落ちたと呼んでいる")
-        self.assertIn("家族 #1357", seen[1350][2])
-        self.assertIn("PR #1374", seen[1350][2])
+        self.assertIn("家族 #1357", seen[1350][1])
+        self.assertIn("PR #1374", seen[1350][1])
 
     def test_reserved_sibling_is_busy_while_sibling_has_pr(self):
         done, _ = self.run_queue(
@@ -397,7 +386,7 @@ class ReadyQueueTest(unittest.TestCase):
         )
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[1352][0], "busy", "予約された兄弟を落ちたと呼んでいる")
-        self.assertIn("家族 #1357 に PR #1374", seen[1352][2])
+        self.assertIn("家族 #1357 に PR #1374", seen[1352][1])
 
     def test_recently_closed_sibling_keeps_reservation_busy(self):
         done, _ = self.run_queue(
@@ -408,7 +397,7 @@ class ReadyQueueTest(unittest.TestCase):
         )
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[1355][0], "busy", "閉じたばかりの兄弟を数えていない")
-        self.assertIn("家族 #1354 が閉じたばかり", seen[1355][2])
+        self.assertIn("家族 #1354 が閉じたばかり", seen[1355][1])
 
     def test_old_closed_family_does_not_keep_busy(self):
         done, _ = self.run_queue(
@@ -446,7 +435,7 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertNotEqual(done.returncode, 2, "家族が読めないだけで一覧の失敗と名乗っている")
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[1352][0], "dropped", "読めなかった家族を生きていると読んでいる")
-        self.assertIn("家族を読めなかった", seen[1352][2])
+        self.assertIn("家族を読めなかった", seen[1352][1])
 
     def test_family_is_read_only_for_candidates(self):
         done, log = self.run_queue(
@@ -475,7 +464,7 @@ class ReadyQueueTest(unittest.TestCase):
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[100][0], "ready")
         self.assertEqual(seen[101][0], "busy", "根が open なのに子を ready に出している")
-        self.assertEqual(seen[101][2], "根 #100 で直す (症状)")
+        self.assertEqual(seen[101][1], "根 #100 で直す (症状)")
         self.assertIn("ready 1 /", done.stderr)
 
     def test_child_is_ready_unless_its_parent_is_an_open_bug(self):
@@ -529,8 +518,8 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(
             decide,
             [
-                "301 decide - open な Bug の子 2 件が根本の判断を待っている (子 2 件)",
-                "300 decide - open な Bug の子 1 件が根本の判断を待っている (子 1 件)",
+                "301 decide open な Bug の子 2 件が根本の判断を待っている (子 2 件)",
+                "300 decide open な Bug の子 1 件が根本の判断を待っている (子 1 件)",
             ],
             f"子の多い順に出ていない:\n{done.stdout}",
         )
