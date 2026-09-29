@@ -378,6 +378,186 @@ struct ParticleTests {
         #expect(fingerprint(fast) == fingerprint(reference))
     }
 
+    // MARK: - 置く時点の状態を受けない (#1649・#1650)
+    //
+    // 粒の板は保持した形なので、区間の設定 (混ぜ方・貼る絵の面・塗り) は作った時点に記録した
+    // ものを使う。置く時点の `texture()` / `shader()` は受けず、2 経路は同じ絵を出す。
+
+    /// 粒を置く時点に置いたままにしておく状態。
+    enum PlacingState: String, CaseIterable, CustomTestStringConvertible {
+        case nothing
+        case texture
+        case shader
+        case both
+
+        var testDescription: String {
+            switch self {
+            case .nothing: "何も置かない"
+            case .texture: "texture(描き場所) を貼ったまま"
+            case .shader: "shader(値を渡す断片) を当てたまま"
+            case .both: "両方"
+            }
+        }
+
+        var textures: Bool { self == .texture || self == .both }
+        var shades: Bool { self == .shader || self == .both }
+    }
+
+    /// `state` を置いたまま、`body` で粒を置く 1 フレームを描く手順を組む。
+    ///
+    /// 貼る絵は赤く塗った描き場所、当てる断片は値で緑を出す断片である。どちらも粒の白い板を
+    /// 別の色に変えるので、効いてしまえば絵に出る。
+    private func placing(
+        _ state: PlacingState, on canvas: Canvas
+    ) throws -> (_ body: () -> Void) throws -> Void {
+        let red = try canvas.createGraphics(8, 8)
+        let green = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                return float4(0.0, values.level, 0.0, 1.0);
+            }
+            """,
+            values: ["level": 1])
+        return { body in
+            try canvas.draw {
+                red.beginDraw()
+                red.background(.linear(red: 1, green: 0, blue: 0))
+                red.endDraw()
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                if state.textures { canvas.texture(red) }
+                if state.shades { canvas.shader(green) }
+                body()
+                canvas.noTexture()
+                canvas.resetShader()
+            }
+        }
+    }
+
+    /// #1649・#1650 の本文の再現。**1 点に止まった白い板を、貼った・当てたまま描く。**
+    @Test(
+        "texture() / shader() を置いたままでも、既定の経路の粒は置かない絵と同じに出る",
+        arguments: [PlacingState.texture, .shader])
+    func theFastRouteIgnoresTheStateAtPlacement(_ state: PlacingState) throws {
+        func picture(_ state: PlacingState) throws -> [UInt8] {
+            let canvas = try makeCanvas()
+            let dust = try canvas.makeParticles(count: 512)
+            var randomness = Randomness(seed: 1649)
+            try placing(state, on: canvas)({
+                canvas.emit(
+                    dust, from: .point(32, 32), rate: 3000, speed: 0...0, angle: 0...0,
+                    life: 5...5, size: 20...20, color: .linear(red: 1, green: 1, blue: 1),
+                    using: &randomness)
+                canvas.particles(dust)
+            })
+            return try canvas.target.encodeForDisplay().bytes
+        }
+
+        let plain = try picture(.nothing)
+        // 白い板の真ん中。何も出ていないと「同じ」も成り立つので、先に板が白いことを見る
+        let middle = (32 * 64 + 32) * 4
+        #expect(Array(plain[middle..<(middle + 3)]) == [255, 255, 255])
+        let placed = try picture(state)
+        #expect(Array(placed[middle..<(middle + 3)]) == [255, 255, 255])
+        #expect(fingerprint(placed) == fingerprint(plain))
+    }
+
+    /// #1649 の完了条件 2。**置く時点に何を置いていても、2 経路は同じ絵を出す。** 何も置かない
+    /// 絵とも一致する — 両経路が同じだけ受けてしまう壊れ方も落とす。
+    @Test("置く時点の texture() / shader() を振っても、速い経路と参照の経路は同じ絵を出す",
+          arguments: PlacingState.allCases)
+    func bothRoutesAgreeWhateverIsSetAtPlacement(_ state: PlacingState) throws {
+        func picture(_ route: Canvas.ParticleRoute, _ state: PlacingState) throws -> [UInt8] {
+            let canvas = try makeCanvas()
+            canvas.particleRoute = route
+            let dust = try canvas.makeParticles(count: 257)
+            let frame = try placing(state, on: canvas)
+            var randomness = Randomness(seed: 1650)
+            for _ in 0..<10 {
+                var stream = randomness
+                try frame {
+                    canvas.emit(
+                        dust, from: .point(32, 12), rate: 600, speed: 20...45,
+                        angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                        color: .linear(red: 1, green: 0.6, blue: 0.2), using: &stream)
+                    canvas.force(dust, [.gravity(0, 60), .drag(0.5)])
+                    canvas.particles(dust)
+                }
+                randomness = stream
+            }
+            return try canvas.target.encodeForDisplay().bytes
+        }
+
+        let fast = try picture(.instanced, state)
+        let reference = try picture(.reference, state)
+        #expect(brightest(fast) > 32)
+        #expect(fingerprint(fast) == fingerprint(reference))
+        #expect(fingerprint(fast) == fingerprint(try picture(.instanced, .nothing)))
+    }
+
+    /// 作る前に当てた断片で塗る板を、1 点に止めて 1 フレーム描く。`rewrite` はフレームの間に
+    /// 呼ぶ (1 枚目を描いた後・2 枚目を描く前)。返すのは 2 枚目の板の真ん中の色。
+    private func bakedPaint(
+        _ route: Canvas.ParticleRoute, surfaces: (Canvas) throws -> [String: ShaderSurface],
+        body: String, rewrite: () -> Void = {}
+    ) throws -> [UInt8] {
+        let canvas = try makeCanvas()
+        canvas.particleRoute = route
+        let paint = try canvas.makeShader(body, surfaces: try surfaces(canvas))
+        canvas.shader(paint)
+        let dust = try canvas.makeParticles(count: 64)
+        canvas.resetShader()
+        var randomness = Randomness(seed: 788)
+        for frame in 0..<2 {
+            if frame == 1 { rewrite() }
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                canvas.emit(
+                    dust, from: .point(32, 32), rate: 600, speed: 0...0, angle: 0...0,
+                    life: 5...5, size: 20...20, color: .linear(red: 1, green: 1, blue: 1),
+                    using: &randomness)
+                canvas.particles(dust)
+            }
+        }
+        let bytes = try canvas.target.encodeForDisplay().bytes
+        let middle = (32 * 64 + 32) * 4
+        return Array(bytes[middle..<(middle + 3)])
+    }
+
+    /// #1649 の完了条件 3 の前半。**作る前に当てた塗りは、粒に焼き付く** (`createShape` と同じ)。
+    /// 置く前に `resetShader()` しても、両経路とも焼き付いた断片で塗る。
+    @Test("粒を作る前に当てた断片が、両経路の粒に焼き付く")
+    func bothRoutesBakeTheShaderSetBeforeMaking() throws {
+        let body = "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }"
+        for route in [Canvas.ParticleRoute.instanced, .reference] {
+            #expect(try bakedPaint(route, surfaces: { _ in [:] }, body: body) == [0, 255, 0])
+        }
+    }
+
+    /// #1649 の完了条件 3 の後半 (#1253 の形)。**作った後で書き換えた面の絵は、次のフレームの
+    /// 粒に出る。** 書き換えない絵と比べて、書き換えが絵を変えることも見る。
+    @Test("粒を作った後で断片の面の絵を書き換えると、次のフレームの粒に書き換えた色が出る")
+    func bothRoutesReadAPictureRewrittenAfterMaking() throws {
+        let body = """
+            float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                return mokume_sample(surfaces.tone, in.place);
+            }
+            """
+        for route in [Canvas.ParticleRoute.instanced, .reference] {
+            var picture: Image?
+            let surfaces: (Canvas) throws -> [String: ShaderSurface] = { canvas in
+                let made = try canvas.createImage(8, 8)
+                made.fill(.linear(red: 1, green: 0, blue: 0))
+                picture = made
+                return ["tone": .image(made)]
+            }
+            #expect(try bakedPaint(route, surfaces: surfaces, body: body) == [255, 0, 0])
+            let rewritten = try bakedPaint(
+                route, surfaces: surfaces, body: body,
+                rewrite: { picture?.fill(.linear(red: 0, green: 0, blue: 1)) })
+            #expect(rewritten == [0, 0, 255], "\(route) の粒に書き換えた絵が出ない")
+        }
+    }
+
     // MARK: - 板の向き
 
     /// 1 点に止まった粒を 1 フレーム描いて、粒が占める画素の数を返す。
