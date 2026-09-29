@@ -580,7 +580,7 @@ extension Canvas {
         var flattened: [SIMD2<Float>] = []
         flattened.reserveCapacity(merged.count)
         for index in merged { flattened.append(basis.flatten(points[index].position)) }
-        for (a, b, c) in Triangulation.triangulate(flattened) {
+        for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
             triangles.append((merged[a], merged[b], merged[c]))
         }
     }
