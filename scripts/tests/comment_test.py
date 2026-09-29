@@ -253,31 +253,33 @@ def clean_env(path_prefix=None, **overrides):
 class GuardTest(unittest.TestCase):
     """PreToolUse フック: どのコマンドを差し戻し、どれを素通しするか。"""
 
-    def run_guard(self, command, cwd=None):
+    def run_guard(self, command, cwd=None, **env):
         payload = json.dumps(
             {"tool_input": {"command": command}, **({"cwd": cwd} if cwd else {})}
         )
+        # 打つシェルから継ぐ GH_REPO は宛先に効く (#1729)。呼び出し元の値を漏らさない
+        environment = {k: v for k, v in clean_env(**env).items() if k != "GH_REPO" or "GH_REPO" in env}
         proc = subprocess.run(
             ["/bin/bash", str(GUARD)],
             input=payload,
             capture_output=True,
             text=True,
-            env=clean_env(),
+            env=environment,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
 
-    def assert_denied(self, command, cwd=None):
-        out = self.run_guard(command, cwd=cwd)
+    def assert_denied(self, command, cwd=None, **env):
+        out = self.run_guard(command, cwd=cwd, **env)
         self.assertTrue(out, f"差し戻されるはずが素通しした: {command}")
         decision = json.loads(out)["hookSpecificOutput"]
         self.assertEqual(decision["permissionDecision"], "deny")
         self.assertIn("scripts/comment.sh", decision["permissionDecisionReason"])
         return decision["permissionDecisionReason"]
 
-    def assert_passed(self, command, cwd=None):
+    def assert_passed(self, command, cwd=None, **env):
         self.assertEqual(
-            self.run_guard(command, cwd=cwd), "", f"素通しのはずが差し戻された: {command}"
+            self.run_guard(command, cwd=cwd, **env), "", f"素通しのはずが差し戻された: {command}"
         )
 
     def other_repo_dir(self):
@@ -472,6 +474,37 @@ class GuardTest(unittest.TestCase):
         self.assert_denied(
             "GH_REPO=mokume-metal/mokume gh issue comment 1 --body x", cwd=self.other_repo_dir()
         )
+
+    # --- 2 回目の反証 (73d235f に対して) ---------------------------------
+
+    def test_quoted_or_commented_heredoc_opener_does_not_hide_the_next_line(self):
+        """引用や注釈の中の <<EOF を開きと読むと、後ろの行が判定から消えた (main から)。"""
+        self.assert_denied('git commit -m "fix <<EOF parse"\ngh issue comment 1 -b x')
+        self.assert_denied("echo '<<EOF'\ngh issue comment 1 -b x")
+        self.assert_denied("# note <<EOF\ngh issue comment 1 -b x")
+
+    def test_inherited_gh_repo_names_the_destination(self):
+        self.assert_denied(
+            "gh issue comment 1 -b x", cwd=self.other_repo_dir(), GH_REPO="mokume-metal/mokume"
+        )
+        self.assert_passed("gh issue comment 1 -b x", GH_REPO="other/repo")
+
+    def test_coproc_and_function_bodies_denied(self):
+        self.assert_denied("coproc gh issue comment 1 -b x")
+        self.assert_denied("function f { gh issue comment 1 -b x; }")
+        self.assert_denied("f() { gh issue comment 1 -b x; }")
+
+    def test_substitution_inside_an_argument_says_so(self):
+        """二重引用の中のバッククォートは実行されるので止めるが、文面はその直し方を示す。"""
+        reason = self.assert_denied(
+            'bash scripts/comment.sh issue 1 --body "see `gh issue comment` docs"'
+        )
+        self.assertIn("実行される", reason)
+        self.assertIn("単一引用", reason)
+        # 地の文の呼び出しには添えない
+        self.assertNotIn("単一引用", self.assert_denied("gh issue comment 1 -b x"))
+        # 単一引用なら実行されないので止めない
+        self.assert_passed("bash scripts/comment.sh issue 1 --body 'see `gh issue comment` docs'")
 
     def test_prefixed_wrapper_passes(self):
         self.assert_passed("PATH=/tmp/bin:$PATH bash scripts/comment.sh issue 1 --body x")

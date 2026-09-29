@@ -85,8 +85,28 @@ is_comment_invocation() { # $1=gh の断片
   return 1
 }
 
+
+# 止めた呼び出しが、別のコマンドの引数の中の $( … ) かバッククォートで実行されるものだった
+# ときに、差し戻しの頭に添える (#1729 の 2 回目の反証)。
+#
+#   bash scripts/comment.sh issue 1 --body "see `gh issue comment` docs"
+#
+# は、二重引用の中のバッククォートを bash が実行するので、判定そのものは正しい。ただ打った
+# 側は本文で名前に触れただけのつもりで、「scripts/comment.sh から投稿して」だけでは直し方が
+# 分からない (既にラッパーを使っている)。関数に切り出すのは、本文に $( とバッククォートを
+# 含むため (bash 3.2 の #160 と同じ理由)
+substitution_hint() {
+  cat <<'EOF'
+止めたのは、引数の中で**実行される** gh の呼び出しです。二重引用の中でも $( … ) と
+バッククォートは実行されます。本文でコマンド名に触れるだけなら、単一引用で包むか
+(--body '… `gh issue comment` …')、\` で逃がすか、--body-file に書いてください。
+
+EOF
+}
+
 offending=0
-while IFS=$'\t' read -r _token repo chdir fragment; do
+in_substitution=0
+while IFS=$'\t' read -r _token repo chdir place fragment; do
   is_comment_invocation "$fragment" || continue
   # 使い方を尋ねているだけなら投稿ではない (判定は guard-lib.sh が持つ)
   is_help_request "$fragment" && continue
@@ -95,12 +115,15 @@ while IFS=$'\t' read -r _token repo chdir fragment; do
   # 判定は guard-lib.sh が持つ (pr-identity-guard.sh と共有する)
   invocation_targets_other_repo "$fragment" "$repo" "$chdir" "$cwd" && continue
   offending=1
+  [ "$place" = sub ] && in_substitution=1
 done < <(gh_invocations "$command")
 
 [ "$offending" = 1 ] || exit 0
 
+hint=
+[ "$in_substitution" = 1 ] && hint="$(substitution_hint)"$'\n\n'
 
-hook_deny "$(cat <<'EOF'
+hook_deny "$hint$(cat <<'EOF'
 このリポジトリの Issue / PR へのコメントは scripts/comment.sh から投稿してください。
 
 同じ Issue には人間も複数のエージェントも書き込みます。どの AI が書いたかを本文の

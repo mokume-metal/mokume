@@ -44,9 +44,10 @@ Codex CLI 0.158.0-alpha.2.1 のシェル実行 (`exec_command`) とコード実�
 コマンドの認識は Claude Code と同じスクリプトが持つので、判定の範囲も同じである。
 `gh` の手前の予約語・リダイレクト・環境変数の代入・`env`・パスや引用・行継続
 (`for …; do gh`・`PATH=… gh`・`/opt/homebrew/bin/gh`・`gh \`) も認識し、前置の
-`GH_TOKEN` / `GH_REPO` / `env -u` / `env -i` は名義と宛先の判定に渡す (#1729)。`sudo` など
-別のコマンドを起動するコマンドの後ろの `gh`・`$GH` のように実行時に決まる語・文としての
-`cd` や `export GH_REPO=` (#1823) は追わない (範囲の線は `scripts/guard-lib.sh` の冒頭)。
+`GH_TOKEN` / `GH_REPO` / `env -u` / `env -i` と、`gh` より前に置いた token の発行・export・
+unset は名義と宛先の判定に渡す (#1729)。`sudo` など別のコマンドを起動するコマンドの後ろの
+`gh`・`$GH` のように実行時に決まる語・文としての `cd` や `export GH_REPO=` (#1823) は
+追わない (範囲の線は `scripts/guard-lib.sh` の冒頭)。
 別の版では読込と実際の発火を確かめる。
 フックを提供しない環境でも、Issue へのプラン記録・コメントのラッパー・App identity は
 AGENTS.md に従って実行する。フックが黙っていることを検証済みの印にしない。

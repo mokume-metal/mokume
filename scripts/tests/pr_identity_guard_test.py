@@ -22,7 +22,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 GUARD = REPO / "scripts" / "pr-identity-guard.sh"
 
-TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN"]
+# 判定が読む、打つシェルから継ぐ環境。GH_REPO は宛先に効く (#1729)
+TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_REPO"]
 
 
 # gh のスタブ。既定は「何もせず失敗する」— 権限を読めないときは止める側に倒れるので、
@@ -257,6 +258,34 @@ class GuardTest(unittest.TestCase):
     def test_every_pr_creating_invocation_is_judged(self):
         """先頭の 1 つが通っても、後ろのメンテナ名義の呼び出しは止める。"""
         self.assert_denied("GH_TOKEN=ghs_" + "x" * 36 + " gh pr create --fill && gh pr new --fill")
+
+    def test_issue_and_export_after_gh_do_not_count(self):
+        """gh より後ろの発行・export は、その gh に渡らない (#1729 の 2 回目の反証)。"""
+        self.assert_denied(
+            'gh pr create --fill; GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && true'
+        )
+        self.assert_denied(
+            'GH_TOKEN="$t" gh pr create --fill; t="$(bash scripts/gh-app-token.sh)" && echo'
+        )
+
+    def test_statement_that_changes_the_token_before_gh_denied(self):
+        self.assert_denied(
+            't="$(bash scripts/gh-app-token.sh)" && t=gho_x && GH_TOKEN="$t" gh pr create --fill'
+        )
+        reason = self.assert_denied(self.SAFE + "unset GH_TOKEN && gh pr create --fill")
+        self.assertIn("unset", reason)
+        self.assert_denied(self.SAFE + "export GH_TOKEN=gho_x && gh pr create --fill")
+
+    def test_issue_inside_a_subshell_does_not_reach_gh(self):
+        self.assert_denied(
+            '(GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN) && gh pr create --fill'
+        )
+
+    def test_inherited_gh_repo_names_the_destination(self):
+        self.assert_denied(
+            "gh pr create --fill", cwd=self.other_repo_dir(), GH_REPO="mokume-metal/mokume"
+        )
+        self.assert_passed("gh pr create --fill", GH_REPO="other/repo")
 
     # --- 旗と例外は、その gh の呼び出しの中からだけ読む (#1729 の反証) ----
 

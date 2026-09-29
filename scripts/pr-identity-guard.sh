@@ -251,36 +251,11 @@ deny_if_protected_draft() {
   hook_deny "$(draft_created_message "$port")"
 }
 
-# 同じ行で installation token を発行しているなら、それが常道の形 — ただし **発行の失敗が
-# 後段へ伝わる形** に限る (冒頭の解説と #122)。
-#
-# 安全な形は素の代入から始める。代入は右辺のコマンド置換の終了コードをそのまま返すので、
-# 続く && が正しく切れる:
-#
-#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
-#
-# export を先頭に付けると終了コードが export のもの (0) に化けるため、この式は
-# 「区切りの直後に来る素の <変数>= 代入」であることを要求する。export の直後は行頭にも
-# 区切りにも当たらないので落ちる。@VAR@ に変数名を入れて使う — GH_TOKEN に直接入れる形と、
-# 別の変数に入れて前置で渡す形 (t="$(…)" && GH_TOKEN="$t" gh …・#1729) が同じ式を読む
-readonly SAFE_ISSUE_FORM='(^|&&|;|\|)[[:space:]]*@VAR@=("|'"'"')?\$\([^)]*scripts/gh-app-token\.sh[^)]*\)("|'"'"')?[[:space:]]*&&'
-readonly SAFE_TOKEN_FORM=${SAFE_ISSUE_FORM//@VAR@/GH_TOKEN}
-
-# **発行できただけでは足りない。** 素の代入はそのシェルの変数を作るだけで、子プロセスの
-# gh には渡らない。つまり
-#
-#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push -u origin HEAD && gh pr create …
-#
-# は「発行の失敗が伝わる形」を満たしていながら、gh はメンテナの認証で走る。#279 はこれで
-# 詰んだ (#285) — 上の SAFE_TOKEN_FORM だけを見ていたので素通しし、**誰も承認できない
-# PR** ができた。渡っていることまで確かめるため、区切りの直後に来る export を要求する。
-readonly EXPORT_FORM='(^|&&|;|\|)[[:space:]]*export[[:space:]]+GH_TOKEN([[:space:]]|&|;|\||$)'
-
-# gh の前置が、gh へ渡る GH_TOKEN を変えている (#1729)。$1=口 $2=何をしているか
+# gh に渡る GH_TOKEN が、installation token と確かめられない (#1729)。$1=口 $2=どうなっているか
 prefix_token_message() {
   cat <<EOF
-$1 の前置が、gh へ渡る GH_TOKEN を$2。installation token (ghs_) でない認証で
-gh が走ると、**誰も承認できない PR** になります (ADR-0007 / #88)。
+$1 に渡る GH_TOKEN が、gh の前置か同じ行の文で$2。installation token (ghs_) でない
+認証で gh が走ると、**誰も承認できない PR** になります (ADR-0007 / #88)。
 
 前置で渡すなら、同じ行で発行した token を、失敗が後段へ伝わる形で渡してください:
 
@@ -297,86 +272,81 @@ EOF
 # ときは偽 (止める側へ倒す)
 is_outside_collaborator() {
   local push
-  push=$(gh api "repos/$(this_repo)" --jq '.permissions.push' 2>/dev/null) || push=""
+  push=$(gh api "repos/$(this_repo)" --jq '.permissions.push' 2>/dev/null </dev/null) || push=""
   [ "$push" = false ]
 }
 
-# 前置の無い呼び出し — gh は打つシェルの GH_TOKEN を継ぐ。判定は同じ行の文の並びを読む
-judge_inherited_token() {
-  if printf '%s' "$command" | grep -qE '[^[:space:];&|`)]*scripts/gh-app-token\.sh'; then
-    if printf '%s' "$command" | grep -qE "$SAFE_TOKEN_FORM"; then
-      if printf '%s' "$command" | grep -qE "$EXPORT_FORM"; then
-        deny_if_protected_draft
-        return 0
-      fi
-
-      # 発行の形は正しいが、gh へ渡っていない
-      hook_deny "$(token_not_exported_message)"
-    fi
-
-    # token を発行しようとはしている。汎用の差し戻しだと「使っているのに止められた」と
-    # 読めて直し方が分からないので、何がまずいかを名指しする
-    hook_deny "$(unsafe_token_form_message)"
-  fi
-
-  # 常設している環境 (GH_TOKEN に installation token を置いてある) も常道。
-  # 判定は token 発行の形より **後**。危険な形は env の token を空文字で上書きするので、
-  # ここが先に通ると握り潰しを見逃す
-  case "${GH_TOKEN:-}" in ghs_*)
-    deny_if_protected_draft
-    return 0
-    ;;
-  esac
-
-  is_outside_collaborator && return 0
-  hook_deny "$(identity_required_message "$port")$(other_repo_hint "$port")"
-}
-
 # 1 つの PR 作成の呼び出しを判定する。通れば戻り、止めるなら差し戻して終わる。
-#   $1 = gh_invocations の GH_TOKEN の列
+#   $1 = gh_invocations の GH_TOKEN の列 (gh に渡る token の見立て)
 #
-# **gh に実際に渡る GH_TOKEN を見る** (#1729 の反証)。前置 (`GH_TOKEN=… gh`・`env -u
-# GH_TOKEN gh`・`env -i … gh`) はその gh にだけ効き、同じ行で安全に発行・export した token
-# より優先される。以前は前置を落として捨てていたので、発行と export の後に `env -u GH_TOKEN`
-# を挟んだ形を素通しし、正しく渡す `t="$(…)" && GH_TOKEN="$t" gh …` を的外れな文面で止めた:
+# **見立ては、その gh の前置と、gh より前に置いた文だけから決まる** (#1729 の反証)。
+# 字句読み (guard-lib.sh の gh_invocations) が文を順に読み、発行・export・unset・再代入と
+# 前置を追う。以前はコマンド全体への部分一致で、gh の**後ろ**に書いた発行と export
+# (`gh pr create --fill; GH_TOKEN="$(…)" && export GH_TOKEN`) まで「渡した」と読み、
+# 前置 (`env -u GH_TOKEN gh`) は捨てていた。
 #
-#   前置                         gh に渡るもの          判定
-#   なし                         打つシェルの GH_TOKEN  文の並びを読む (judge_inherited_token)
-#   GH_TOKEN=ghs_…               installation token     通す
-#   GH_TOKEN="$t"                t を安全に発行した値   通す (t の発行が SAFE_ISSUE_FORM のとき)
-#   GH_TOKEN="$GH_TOKEN"         打つシェルの GH_TOKEN  前置なしと同じ
-#   GH_TOKEN="$(…)"              発行の失敗が伝わらない 止める (unsafe_token_form_message)
-#   GH_TOKEN= / gho_… / "$X"     確かめられない値        止める
-#   env -u GH_TOKEN・env -i      何も渡らない            止める (gh はメンテナの認証へ)
+# 安全な発行は素の代入から始める。代入は右辺のコマンド置換の終了コードをそのまま返すので、
+# 続く && が正しく切れる (#122):
 #
-# 止める側も、push 権限の無い外部の人は通す (どの名義でも承認できる)。
-judge_invocation() { # $1=GH_TOKEN の列
-  local value var
+#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
+#
+# export を先頭に付けると (`export GH_TOKEN="$(…)"`) 終了コードが export のもの (0) に
+# 化けるため、発行に失敗しても && が切れず、空の GH_TOKEN で gh がメンテナの認証へ
+# フォールバックする。#120 はこれで詰んだ。代入プレフィクス `GH_TOKEN="$(…)" gh …` も同じ。
+# 見立ては unsafe になる。
+#
+# **発行できただけでは足りない。** 素の代入はそのシェルの変数を作るだけで、子プロセスの
+# gh には渡らない。
+#
+#   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && git push -u origin HEAD && gh pr create …
+#
+# は「発行の失敗が伝わる形」を満たしていながら、gh はメンテナの認証で走る。#279 はこれで
+# 詰んだ (#285)。
+# 見立ては unexported になる。
+#
+#   見立て        gh に渡るもの                         判定
+#   installation  ghs_… か、同じ行で安全に発行した値    通す
+#   inherit       打つシェルの GH_TOKEN                 フックの環境が ghs_ なら通す
+#   unsafe        発行の失敗が伝わらない                止める (unsafe_token_form_message)
+#   unexported    何も渡らない (export していない)     止める (token_not_exported_message)
+#   removed       何も渡らない (env -u / env -i / unset) 止める (prefix_token_message)
+#   other・unknown 確かめられない値                     止める (prefix_token_message)
+#
+# 止める側のうち removed・other・unknown と、inherit の差し戻しは、push 権限の無い外部の
+# 人なら通す (どの名義でも承認できる)。unsafe・unexported は token を使おうとしている形
+# なので、何がまずいかを名指しして止める (汎用の差し戻しだと「使っているのに止められた」と
+# 読めて直し方が分からない)。
+judge_invocation() { # $1=GH_TOKEN の見立て
   case "$1" in
-    '=') judge_inherited_token; return ;;
-    '-') is_outside_collaborator && return 0
-         hook_deny "$(prefix_token_message "$port" "消しています (env -u GH_TOKEN / env -i)")" ;;
-    '?') is_outside_collaborator && return 0
-         hook_deny "$(prefix_token_message "$port" "読めない形で変えています")" ;;
-  esac
-  value=$(printf '%s' "${1#+}" | tr -d "\"'")
-  case "$value" in
-    ghs_*) deny_if_protected_draft; return 0 ;;
-    '$('* | '`'*) hook_deny "$(unsafe_token_form_message)" ;;
-  esac
-  var=$(printf '%s' "$value" | sed -nE 's/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/\1/p')
-  if [ -n "$var" ]; then
-    if printf '%s' "$command" | grep -qE "${SAFE_ISSUE_FORM//@VAR@/$var}"; then
+    installation)
       deny_if_protected_draft
       return 0
-    fi
-    if [ "$var" = GH_TOKEN ]; then
-      judge_inherited_token
-      return
-    fi
-  fi
-  is_outside_collaborator && return 0
-  hook_deny "$(prefix_token_message "$port" "installation token と確かめられない値にしています")"
+      ;;
+    inherit)
+      # 常設している環境 (GH_TOKEN に installation token を置いてある) も常道
+      case "${GH_TOKEN:-}" in ghs_*)
+        deny_if_protected_draft
+        return 0
+        ;;
+      esac
+      is_outside_collaborator && return 0
+      hook_deny "$(identity_required_message "$port")$(other_repo_hint "$port")"
+      ;;
+    unsafe) hook_deny "$(unsafe_token_form_message)" ;;
+    unexported) hook_deny "$(token_not_exported_message)" ;;
+    removed)
+      is_outside_collaborator && return 0
+      hook_deny "$(prefix_token_message "$port" "消されています (env -u GH_TOKEN / env -i / unset GH_TOKEN)")"
+      ;;
+    unknown)
+      is_outside_collaborator && return 0
+      hook_deny "$(prefix_token_message "$port" "読めない形で変えられています (+= など)")"
+      ;;
+    *)
+      is_outside_collaborator && return 0
+      hook_deny "$(prefix_token_message "$port" "installation token と確かめられない値になっています (空・個人の token・同じ行で発行していない変数)")"
+      ;;
+  esac
 }
 
 hook_payload
@@ -388,7 +358,7 @@ cwd=$HOOK_CWD
 # 呼び出しごとに、その断片と前置だけを読む (#1729 の反証) — --help・--dry-run・-R は同じ行の
 # 別のコマンドのものを拾わない (echo --dry-run && gh pr create … を素通しにしていた)。
 # 呼び出しは fd 3 から読む — 判定の中で走る gh api / git に標準入力を食わせない
-while IFS=$'\t' read -r token repo chdir fragment <&3; do
+while IFS=$'\t' read -r token repo chdir _place fragment <&3; do
   gh_fragment_is "$fragment" "$PR_CREATING_PORTS" || continue
 
   # 実際に打たれた口。差し戻しの文言がこれを名乗る — 打っていない綴りで直し方を示すと、

@@ -41,8 +41,10 @@
 #     起動する側の語は利用者が増やせるので、数え上げは必ず取りこぼす (gh api を素通しに
 #     しているのと同じ水準)
 #   - 実行時に決まる語 (`$GH …`・`$(which gh) …`)。値を読むのは推測になる
-#   - 同じコマンドの中で**文として**環境を変える形 (cd・export GH_REPO=・unset GH_TOKEN・
-#     GH_TOKEN の再代入)。扱いは #1823 で決める
+#   - 同じコマンドの中で**文として**宛先を変える形 (cd・export GH_REPO=)。扱いは #1823 で
+#     決める。GH_TOKEN を文として変える形 (発行・export・unset・再代入) は読む (#1729)
+#   - GH_TOKEN を変える文のうち、サブシェル・$( … ) の中のもの (外へは効かないので読まない)
+#     と、パイプラインの片側・declare -x / typeset -x / readonly のもの
 #
 # このリポジトリで使う形ではない。
 #
@@ -59,14 +61,12 @@
 #   . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
 #   hook_payload            # HOOK_PAYLOAD / HOOK_CWD を置く。jq が無ければ素通し
 #   hook_command            # HOOK_COMMAND を置く。コマンドを持たないツールなら素通し
-#   while IFS=$'\t' read -r token repo chdir fragment; do   # gh の呼び出しごと
+#   while IFS=$'\t' read -r token repo chdir place fragment; do   # gh の呼び出しごと
 #     gh_fragment_is "$fragment" 'pr[[:space:]]+create' || continue
 #     is_help_request "$fragment" && continue
 #     invocation_targets_other_repo "$fragment" "$repo" "$chdir" "$HOOK_CWD" && continue
 #     hook_deny "<理由>"
 #   done < <(gh_invocations "$HOOK_COMMAND")
-#
-# コマンド全体を 1 回で問う口 (is_gh_subcommand・targets_other_repo) も残してある。
 #
 # テストは scripts/tests/guard_lib_test.py。
 
@@ -134,54 +134,25 @@ is_help_request() { # $1=コマンド
   printf '%s' "$1" | grep -qE '(^|[[:space:]])(-h|--help)([[:space:]]|$)'
 }
 
-# ヒアドキュメントの本文を落とす (stdin → stdout)。
-#
-# 本文はデータであってコマンドではない。コミットメッセージ・PR 本文・Issue 本文は
-# ここに載るので、コマンド名への言及を実行と取り違えないために外す。
-# ヒアドキュメントを**開いた行そのものは残す** — そこは実際のコマンドなので。
-# <<WORD / <<'WORD' / <<"WORD" / <<-WORD に対応し、<<< (ヒアストリング) は誤認しない。
-strip_heredoc_bodies() {
-  awk '
-    function delim_of(line,   m) {
-      if (match(line, /<<-?[[:space:]]*"[^"]+"/)) {
-        m = substr(line, RSTART, RLENGTH); gsub(/^<<-?[[:space:]]*"|"$/, "", m); return m
-      }
-      if (match(line, /<<-?[[:space:]]*'"'"'[^'"'"']+'"'"'/)) {
-        m = substr(line, RSTART, RLENGTH); gsub(/^<<-?[[:space:]]*'"'"'|'"'"'$/, "", m); return m
-      }
-      if (match(line, /<<-?[[:space:]]*[A-Za-z_][A-Za-z0-9_]*/)) {
-        m = substr(line, RSTART, RLENGTH); gsub(/^<<-?[[:space:]]*/, "", m); return m
-      }
-      return ""
-    }
-    {
-      if (in_doc) {
-        t = $0; sub(/^[[:space:]]+/, "", t)   # <<- は終端行の字下げを許す
-        if (t == delim) in_doc = 0
-        next                                   # 本文も終端行も落とす
-      }
-      # <<< (ヒアストリング) は本文を持たない。潰してから区切り語を探す —
-      # そうしないと <<< '"'"'x'"'"' の後ろ 2 文字が <<'"'"'x'"'"' に見えて、
-      # 以降の行を本文として丸ごと落としてしまう
-      probe = $0
-      gsub(/<<</, "\001\001\001", probe)
-      d = delim_of(probe)
-      if (d != "") { delim = d; in_doc = 1 }
-      print
-    }
-  '
-}
-
 # このコマンドの中で**実行される gh の呼び出し**を 1 行ずつ出す (#128・#1729)。
 #   $1 = コマンド文字列
 #
-# 行は tab 区切りの 4 列で、判定に要るものを呼び出しごとに持つ:
+# 行は tab 区切りの 5 列で、判定に要るものを呼び出しごとに持つ:
 #
-#   1. GH_TOKEN   その gh に渡る値。`=` は打つシェルから継ぐ・`-` は消した (env -u / -i)・
-#                 `+<値>` は前置で渡した値 (引用はそのまま)・`?` は読めない (+= など)
-#   2. GH_REPO    同じ形。宛先の判定が読む
+#   1. GH_TOKEN   その gh に渡る token の見立て。前置 (GH_TOKEN= / env -u / env -i) と、
+#                 **gh より前に置いた**文 (発行・export・unset・再代入) から決める:
+#                   installation  installation token (ghs_… か、同じ行で安全に発行した値)
+#                   inherit       打つシェルから継ぐ (同じ行では触っていない)
+#                   unsafe        発行の失敗が後段へ伝わらない形で入れた
+#                                 (export X="$(…)" / 発行の後が && でない / 前置 GH_TOKEN="$(…)")
+#                   unexported    安全に発行したが export していない (gh へ渡らない)
+#                   removed       消した (env -u GH_TOKEN / env -i / unset GH_TOKEN)
+#                   other         確かめられない値 (空・個人の token・発行していない変数)
+#                   unknown       読めない形で変えた (+= など)
+#   2. GH_REPO    前置の値。`=` は継ぐ・`-` は消した・`+<値>` は前置の値・`?` は読めない
 #   3. chdir      env -C で別のディレクトリから走らせるなら 1 (宛先を cwd から決められない)
-#   4. 呼び出し   `gh …` から始まる断片。引用の中の空白・改行は \002 に伏せてある
+#   4. 置き場     top か sub ($( … ) やバッククォートの中で実行される)
+#   5. 呼び出し   `gh …` から始まる断片。引用の中の空白・改行は \002 に伏せてある
 #
 # **実行位置は、字句を読んで決める** (#1729 の反証)。以前は演算子の文字で素朴に割り、
 # 断片の先頭語が gh かを見ていたので、2 方向に外れていた:
@@ -196,10 +167,16 @@ strip_heredoc_bodies() {
 # 行末は注釈。割るのは && || ; & | 改行 ( ) — ただし >&2・&>・2>&1・>| はリダイレクトの
 # 一部として割らない。( … ) と $( … )・<( … )・バッククォートの中身は、それぞれ独立した断片になる。
 #
+# **ヒアドキュメントも同じ字句読みの中で読む** (#1729 の 2 回目の反証)。以前は行単位の
+# 前段が引用も注釈も見ずに `<<WORD` を探したので、`git commit -m "fix <<EOF parse"` や
+# `# note <<EOF` の後ろの行がすべて判定から消えた。いまは引用の外の `<<` (<<- を含み、
+# <<< を除く) だけを開きとして区切り語を覚え、次の改行から区切り語の行までを落とす。
+# 区切り語の行は前後の空白を許す (以前の前段と同じ寛容さ)。
+#
 # 断片ごとに、**実行される語の手前の前置を落とす**。落とすのは
 #
-#   予約語       ! { do then else elif if while until time (-p)
-#   リダイレクト 2>/dev/null・>out・<in・&>log・<<EOF …
+#   予約語       ! { do then else elif if while until time (-p) coproc、function <名前>
+#   リダイレクト 2>/dev/null・>out・<in・&>log …
 #   代入         NAME=値・NAME+=値・NAME[i]=値 (値の引用・\ の逃がしを含む)。GH_TOKEN と
 #                GH_REPO は値を 1・2 列に写す
 #   env          パス付きも。旗は macOS の env(1) の -0 -i -v -C 値 -P 値 -S 値 -u 値 と、
@@ -210,57 +187,153 @@ strip_heredoc_bodies() {
 # なら gh の呼び出しとして出す。**前置を落とすのは断片の先頭だけ**なので、別のコマンドの
 # 引数に現れる gh (echo PATH=x gh … / ls /x/gh …) は拾わない。
 #
-# **ヒアドキュメント本文は先に落とす** (strip_heredoc_bodies)。
-#
-# 取りこぼしとして許容するものは、冒頭の「取りこぼしとして許容するもの」にまとめてある。
+# **時間は長さに比例させる** (#1729 の 2 回目の反証)。1 文字ずつ文字列を継ぎ足すと長さの
+# 2 乗かかり、480KB の二重引用の本文で 16 秒を越えた (フックの timeout は 10 秒で、越えると
+# 判定が出ない)。入力は 1 度に配列へ割り、普通の文字の並びはまとめて写す。語は 1 つ 4096
+# バイトまでしか持たない — 長い本文の中身は判定に要らない。断片は語の配列として持ち、
+# 出すときに半分ずつ繋ぐ。
 #
 # awk は **LC_ALL=C でバイト単位に読ませる**。字句の区切りはすべて ASCII で、macOS の awk は
 # UTF-8 の既定のまま日本語の本文を 1 文字ずつ切ると `towc: multibyte conversion failure` で
 # 止まる (止まると呼び出しが 1 つも出ず、ガードが素通しになる)。
+#
+# 取りこぼしとして許容するものは、冒頭の「取りこぼしとして許容するもの」にまとめてある。
 gh_invocations() { # $1=コマンド
   printf '%s\n' "$1" |
-    strip_heredoc_bodies |
     LC_ALL=C awk -v q="'" '
-      function app(s) { fbuf[depth] = fbuf[depth] s }
+      function addw(s) { if (length(cw[depth]) < WCAP) cw[depth] = cw[depth] s }
       function mask(s) { gsub(/[ \t\n]/, M, s); return s }
-      function push(t) { depth++; ftype[depth] = t; fbuf[depth] = ""; finq[depth] = 0 }
-      function flush(   f) {
-        f = fbuf[depth]; fbuf[depth] = ""
-        sub(/^ +/, "", f); sub(/ +$/, "", f)
-        if (f != "") emit(f)
+      function run(i, j,   len) { len = j - i; if (len > WCAP) len = WCAP; return substr(src, i, len) }
+      function push(t) { depth++; ftype[depth] = t; finq[depth] = 0; cw[depth] = ""; nw[depth] = 0; fiss[depth] = 0 }
+      function endword() { if (cw[depth] != "") { nw[depth]++; W[depth, nw[depth]] = cw[depth]; cw[depth] = "" } }
+      function joinw(d, lo, hi,   mid) {
+        if (lo == hi) return W[d, lo]
+        mid = int((lo + hi) / 2)
+        return joinw(d, lo, mid) " " joinw(d, mid + 1, hi)
       }
-      function backtick() {
-        if (ftype[depth] == "bt") { flush(); depth--; app("`") } else { app("`"); push("bt") }
+      function flush(sep,   f, k) {
+        endword()
+        if (nw[depth] == 0) return
+        f = joinw(depth, 1, nw[depth])
+        for (k = 1; k <= nw[depth]; k++) delete W[depth, k]
+        nw[depth] = 0
+        if (index(f, "scripts/gh-app-token.sh")) fiss[depth] = 1
+        emit(f, sep)
+      }
+      # $( … ) / バッククォートを閉じる。発行の置換は印 (X) を持つ語として親へ返す
+      function popsub(   iss) {
+        flush(")"); iss = fiss[depth]; depth--
+        addw(iss ? "$(" X ")" : "$()")
+      }
+      function backtick() { if (ftype[depth] == "bt") popsub(); else push("bt") }
+      # << の後ろの区切り語を読んで覚える。戻り値は区切り語の最後の位置
+      function heredoc(i,   j, d, ch) {
+        j = i + 2
+        if (C[j] == "-") j++
+        while (C[j] == " " || C[j] == "\t") j++
+        d = ""
+        while (j <= n) {
+          ch = C[j]
+          if (ch == q) { j++; while (j <= n && C[j] != q) { d = d C[j]; j++ }; j++; continue }
+          if (ch == "\"") {
+            j++
+            while (j <= n && C[j] != "\"") { if (C[j] == "\\") j++; d = d C[j]; j++ }
+            j++; continue
+          }
+          if (ch == "\\") { d = d C[j + 1]; j += 2; continue }
+          if (ch ~ /[ \t\n;&|()<>]/) break
+          d = d ch; j++
+        }
+        if (d != "") { nh++; HD[nh] = d }
+        return j - 1
+      }
+      # 改行 (位置 i) の後ろの本文を、覚えた区切り語の順に落とす。戻り値は最後の改行の位置
+      function bodies(i,   k, a, e, t) {
+        for (k = 1; k <= nh; k++) {
+          while (i < n) {
+            a = i + 1; e = a
+            while (e <= n && C[e] != "\n") e++
+            t = substr(src, a, e - a); sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+            i = e
+            if (t == HD[k]) break
+          }
+        }
+        nh = 0
+        return (i > n) ? n : i
       }
       function word1(s) { return match(s, /^[^ ]+/) ? substr(s, 1, RLENGTH) : "" }
       function rest1(s) { s = substr(s, length(word1(s)) + 1); sub(/^ +/, "", s); return s }
       function unquote(w) { gsub(QRE, "", w); gsub(M, " ", w); return w }
-      # 前置を落とし、先頭が gh なら 4 列の行を出す
-      function emit(f,   w, r, name, val, plus, bare, o, t, L, v, tok, repo, chd) {
-        tok = "="; repo = "="; chd = 0
+      # $NAME / ${NAME} なら NAME を返す
+      function varref(v) {
+        if (v ~ /^\$[A-Za-z_][A-Za-z0-9_]*$/) return substr(v, 2)
+        if (v ~ /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/) return substr(v, 3, length(v) - 3)
+        return ""
+      }
+      # 文としての代入。sep はその文を終えた区切り (&& なら発行の失敗が後段へ伝わる)
+      function setvar(name, val, plus, sep,   v, r) {
+        if (plus) { SV[name] = "unknown"; return }
+        v = unquote(val)
+        if (v == "$(" X ")") { SV[name] = (sep == "&&") ? "issued" : "unsafe"; return }
+        r = varref(v)
+        if (r != "") {
+          if (r == name) return
+          if (r in SV) SV[name] = SV[r]; else SV[name] = "other"
+          return
+        }
+        SV[name] = (v ~ /^ghs_/) ? "issued" : "other"
+      }
+      function shellstate(   s) {
+        if (!("GH_TOKEN" in SV)) return "inherit"
+        s = SV["GH_TOKEN"]
+        if (s == "issued") return gx ? "installation" : "unexported"
+        return s
+      }
+      function verdict(tok,   v, r, s) {
+        if (tok == "-") return "removed"
+        if (tok == "?") return "unknown"
+        if (tok == "=") return shellstate()
+        v = unquote(substr(tok, 2))
+        if (v == "$(" X ")") return "unsafe"
+        if (v ~ /^ghs_/) return "installation"
+        r = varref(v)
+        if (r != "") {
+          if (r in SV) {
+            s = SV[r]
+            if (s == "issued") return "installation"
+            return (s == "removed") ? "other" : s
+          }
+          if (r == "GH_TOKEN") return "inherit"
+        }
+        return "other"
+      }
+      # 前置を落とし、先頭が gh なら 5 列の行を出す。gh でなく入れ子の外なら、文として
+      # GH_TOKEN に効くもの (代入・export・unset) を覚える
+      function emit(f, sep,   w, name, val, plus, bare, o, t, L, v, tok, repo, chd, na, k, a, r) {
+        tok = "="; repo = "="; chd = 0; na = 0
         while (1) {
           w = word1(f)
-          if (w == "") return
-          if (w ~ /^(!|\{|do|then|else|elif|if|while|until|time)$/) {
+          if (w == "") break
+          if (w ~ /^(!|\{|do|then|else|elif|if|while|until|time|coproc)$/) {
             f = rest1(f)
             if (w == "time" && word1(f) == "-p") f = rest1(f)
             continue
           }
-          if (w ~ /^[0-9]*(<<<|<<-?|<>|>>|>\||&>>|&>|<&|>&|<|>)/) {
-            bare = (w ~ /^[0-9]*(<<<|<<-?|<>|>>|>\||&>>|&>|<&|>&|<|>)$/)
+          if (w == "function") { f = rest1(rest1(f)); continue }
+          if (w ~ /^[0-9]*(<<<|<>|>>|>\||&>>|&>|<&|>&|<|>)/) {
+            bare = (w ~ /^[0-9]*(<<<|<>|>>|>\||&>>|&>|<&|>&|<|>)$/)
             f = rest1(f)
             if (bare) f = rest1(f)
             continue
           }
           if (w ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) {
-            r = rest1(f)
-            if (r == "") return
             name = w; sub(/[[+=].*/, "", name)
             val = w; sub(/^[^=]*=/, "", val)
             plus = (w ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+=/)
+            na++; AN[na] = name; AV[na] = val; AP[na] = plus
             if (name == "GH_TOKEN") tok = plus ? "?" : "+" val
             if (name == "GH_REPO") repo = plus ? "?" : "+" val
-            f = r
+            f = rest1(f)
             continue
           }
           if (unquote(w) ~ /^(.*\/)?env$/) {
@@ -299,69 +372,118 @@ gh_invocations() { # $1=コマンド
                 f = v " " f; sub(/^ +/, "", f)
               }
             }
+            na = 0
             continue
           }
-          if (unquote(w) ~ /^(.*\/)?gh$/) print tok "\t" repo "\t" chd "\tgh" substr(f, length(w) + 1)
+          break
+        }
+        if (f == "") {
+          if (depth == 0) for (k = 1; k <= na; k++) setvar(AN[k], AV[k], AP[k], sep)
           return
         }
+        w = word1(f)
+        if (unquote(w) ~ /^(.*\/)?gh$/) {
+          print verdict(tok) "\t" repo "\t" chd "\t" ((depth > 0) ? "sub" : "top") "\tgh" substr(f, length(w) + 1)
+          return
+        }
+        if (depth != 0) return
+        w = unquote(w)
+        if (w == "export") {
+          r = rest1(f)
+          while ((a = word1(r)) != "") {
+            r = rest1(r)
+            if (a ~ /^-/) continue
+            name = a; sub(/=.*/, "", name)
+            if (a ~ /=/) { val = a; sub(/^[^=]*=/, "", val); setvar(name, val, 0, "export") }
+            if (name == "GH_TOKEN") gx = 1
+          }
+        } else if (w == "unset") {
+          r = rest1(f)
+          while ((a = word1(r)) != "") {
+            r = rest1(r)
+            if (a ~ /^-/) continue
+            if (a == "GH_TOKEN") { SV[a] = "removed"; gx = 0 } else delete SV[a]
+          }
+        }
       }
-      BEGIN { M = "\002"; QRE = "[\"\\\\" q "]"; QCH = "[\"" q "]"; depth = 0; ftype[0] = "top" }
-      { src = (NR > 1) ? src "\n" $0 : $0 }
+      BEGIN {
+        RS = "\001"
+        M = "\002"; X = "\003"; WCAP = 4096
+        QRE = "[\"\\\\" q "]"; QCH = "[\"" q "]"
+        s = " \t\n;&|()<>\"\\$`" q
+        for (k = 1; k <= length(s); k++) SPU[substr(s, k, 1)] = 1
+        s = "\"\\$`"
+        for (k = 1; k <= length(s); k++) SPD[substr(s, k, 1)] = 1
+        depth = 0; ftype[0] = "top"; cw[0] = ""; nw[0] = 0; fiss[0] = 0; nh = 0; gx = 0
+      }
+      { src = $0 }
       END {
-        n = length(src)
+        sub(/\n$/, "", src)
+        n = split(src, C, "")
         for (i = 1; i <= n; i++) {
-          c = substr(src, i, 1); nx = substr(src, i + 1, 1)
+          c = C[i]; nx = (i < n) ? C[i + 1] : ""
           if (c == "\\") {
-            if (nx != "\n") app(c mask(nx))
+            if (nx != "\n") addw(c mask(nx))
             i++; continue
           }
           if (finq[depth]) {
-            if (c == "\"") { finq[depth] = 0; app(c); continue }
-            if (c == "$" && nx == "(") { app("$("); push("sub"); i++; continue }
+            if (c == "\"") { finq[depth] = 0; addw(c); continue }
+            if (c == "$" && nx == "(") { push("sub"); i++; continue }
             if (c == "`") { backtick(); continue }
-            app(mask(c)); continue
+            j = i; while (j <= n && !(C[j] in SPD)) j++
+            if (j == i) { addw(c); continue }
+            addw(mask(run(i, j))); i = j - 1; continue
           }
           if (c == q || (c == "$" && nx == q)) {
             j = (c == "$") ? i + 2 : i + 1
-            while (j <= n && substr(src, j, 1) != q) {
-              if (c == "$" && substr(src, j, 1) == "\\") j++
+            while (j <= n && C[j] != q) {
+              if (c == "$" && C[j] == "\\") j++
               j++
             }
-            app(mask(substr(src, i, j - i + 1))); i = j; continue
+            addw(mask(run(i, j + 1))); i = j; continue
           }
-          if (c == "\"") { finq[depth] = 1; app(c); continue }
-          if (c == "#" && (fbuf[depth] == "" || fbuf[depth] ~ / $/)) {
-            while (i < n && substr(src, i + 1, 1) != "\n") i++
+          if (c == "\"") { finq[depth] = 1; addw(c); continue }
+          if (c == "#" && cw[depth] == "") {
+            while (i < n && C[i + 1] != "\n") i++
             continue
           }
-          if (c == "$" && nx == "(") { app("$("); push("sub"); i++; continue }
+          if (c == "$" && nx == "(") { push("sub"); i++; continue }
           if (c == "(") {
-            if (fbuf[depth] ~ /[<>]$/) { app(c); push("sub"); continue }
-            flush(); push("paren"); continue
+            if (cw[depth] ~ /[<>]$/) { push("sub"); continue }
+            flush("("); push("paren"); continue
           }
           if (c == ")") {
-            if (ftype[depth] == "sub") { flush(); depth--; app(c); continue }
-            if (ftype[depth] == "paren") { flush(); depth--; continue }
-            flush(); continue
+            if (ftype[depth] == "sub") { popsub(); continue }
+            if (ftype[depth] == "paren") { flush(")"); depth--; continue }
+            flush(")"); continue
           }
           if (c == "`") { backtick(); continue }
-          if ((c == "&" && (nx == ">" || fbuf[depth] ~ /[<>]$/)) || (c == "|" && fbuf[depth] ~ />$/)) {
-            app(c); continue
+          if (c == "<" && nx == "<") {
+            if (i + 2 <= n && C[i + 2] == "<") { addw("<<<"); i += 2; continue }
+            i = heredoc(i); continue
           }
-          if (c == ";" || c == "&" || c == "|" || c == "\n") { flush(); continue }
-          if (c == " " || c == "\t") {
-            if (fbuf[depth] != "" && fbuf[depth] !~ / $/) app(" ")
-            continue
+          if (c == "&" && nx == "&") { flush("&&"); i++; continue }
+          if (c == "|" && nx == "|") { flush("||"); i++; continue }
+          if ((c == "&" && (nx == ">" || cw[depth] ~ /[<>]$/)) || (c == "|" && cw[depth] ~ />$/)) {
+            addw(c); continue
           }
-          app(c)
+          if (c == ";" || c == "&" || c == "|") { flush(c); continue }
+          if (c == "\n") { flush(c); if (nh > 0) i = bodies(i); continue }
+          if (c == " " || c == "\t") { endword(); continue }
+          j = i; while (j <= n && !(C[j] in SPU)) j++
+          if (j == i) { addw(c); continue }
+          addw(run(i, j)); i = j - 1
         }
-        while (depth > 0) { flush(); depth-- }
-        flush()
+        while (depth > 0) {
+          if (ftype[depth] == "sub" || ftype[depth] == "bt") popsub()
+          else { flush(""); depth-- }
+        }
+        flush("")
       }
     '
 }
 
-# 断片 (gh_invocations の 4 列目) は、gh の <サブコマンド> の呼び出しか。
+# 断片 (gh_invocations の 5 列目) は、gh の <サブコマンド> の呼び出しか。
 #   $1 = 断片
 #   $2 = サブコマンドの正規表現 (例 'pr[[:space:]]+create'、'(issue|pr)[[:space:]]+comment')
 #
@@ -372,27 +494,19 @@ gh_fragment_is() { # $1=断片 $2=サブコマンド正規表現
   printf '%s\n' "$1" | grep -qE "^gh([[:space:]]+[^[:space:]]+)*[[:space:]]+$2([[:space:]]|$)"
 }
 
-# このコマンドは gh の <サブコマンド> を実行するか。
-#   $1 = コマンド文字列  $2 = サブコマンドの正規表現
-is_gh_subcommand() { # $1=コマンド $2=サブコマンド正規表現
-  local tok repo chd fragment
-  while IFS=$'\t' read -r tok repo chd fragment; do
-    gh_fragment_is "$fragment" "$2" && return 0
-  done < <(gh_invocations "$1")
-  return 1
-}
-
 # 1 つの gh の呼び出しの宛先は、このリポジトリの**外**か。
 #   $1 = 断片  $2 = GH_REPO の列  $3 = chdir の列  $4 = cwd
 #   (列の意味は gh_invocations)
 #
 # 基準は GITHUB_REPOSITORY (既定 mokume-metal/mokume)。
 #
-# 判定は gh の宛先解決と同じ順に見る。**読むのはその呼び出しの断片と前置だけ**で、同じ行の
-# 別のコマンドの -R (git log -R x/y など) は宛先ではない (#1729 の反証):
+# 判定は gh の宛先解決と同じ順に見る。**読むのはその呼び出しの断片と前置、打つシェルから
+# 継ぐ環境だけ**で、同じ行の別のコマンドの -R (git log -R x/y など) は宛先ではない
+# (#1729 の反証):
 #
 #   1. -R / --repo が付いていれば、それが宛先 (複数書けて後勝ち)
-#   2. 前置の GH_REPO= があれば、それが宛先 (#1729)
+#   2. 前置の GH_REPO= があれば、それが宛先。前置が無ければ、打つシェルから継ぐ GH_REPO
+#      (フックの環境に在れば。GH_TOKEN を継ぐのと同じ扱い・#1729 の 2 回目の反証)
 #   3. どちらも無ければ、カレントディレクトリのリポジトリ
 #
 # **3 を見ずに「このリポジトリ宛て」と決めていたのが #611 だった。** 別のリポジトリの
@@ -429,6 +543,7 @@ invocation_targets_other_repo() { # $1=断片 $2=GH_REPO $3=chdir $4=cwd
   if [ -z "$target" ]; then
     case "$2" in
       +*) target=$(printf '%s' "${2#+}" | tr -d "\"'") ;;
+      '=') target=${GH_REPO:-} ;;
       '?') return 1 ;;
     esac
     case "$target" in *'$'* | *'`'*) return 1 ;; esac
@@ -441,23 +556,6 @@ invocation_targets_other_repo() { # $1=断片 $2=GH_REPO $3=chdir $4=cwd
   [ "$3" = 1 ] && return 1
   target=$(repo_of_dir "$4") || return 1
   [ "$target" != "$base" ]
-}
-
-# このコマンドの gh の呼び出しが、**どれも**このリポジトリの外宛てか。
-#   $1 = コマンド文字列
-#   $2 = カレントディレクトリ (省略時は $PWD)。フックは payload の .cwd を渡す
-#
-# gh の呼び出しが 1 つも無ければ偽 (このリポジトリ宛てとして扱う)。フックは呼び出しごとに
-# invocation_targets_other_repo を使う。これはコマンド全体を 1 回で問う口である。
-targets_other_repo() { # $1=コマンド  $2=cwd (省略可)
-  local cwd tok repo chd fragment any=0
-  cwd=${2:-}
-  [ -n "$cwd" ] || cwd=$PWD
-  while IFS=$'\t' read -r tok repo chd fragment; do
-    any=1
-    invocation_targets_other_repo "$fragment" "$repo" "$chd" "$cwd" || return 1
-  done < <(gh_invocations "$1")
-  [ "$any" = 1 ]
 }
 
 # 宛先がこのリポジトリでないときの逃げ道を案内する (stdout)。
