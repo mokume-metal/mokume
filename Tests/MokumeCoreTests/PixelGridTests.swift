@@ -38,14 +38,15 @@ struct PixelGridTests {
         /// 線形の被覆で重みを付けた重心。画素 i の中心を i + 0.5 とする連続の座標。
         let centroid: SIMD2<Double>
 
-        init(_ pixels: PixelBuffer) {
+        /// - Parameter channel: 被覆として読む成分 (0 が赤・2 が青)
+        init(_ pixels: PixelBuffer, channel: Int = 0) {
             var mask = [Bool](repeating: false, count: pixels.width * pixels.height)
             var weight = 0.0
             var sum = SIMD2<Double>(0, 0)
             for y in 0..<pixels.height {
                 for x in 0..<pixels.width {
                     // 白を黒に置いているので、赤の成分がそのまま被覆である
-                    let value = Double(pixels.components[(y * pixels.width + x) * 4])
+                    let value = Double(pixels.components[(y * pixels.width + x) * 4 + channel])
                     mask[y * pixels.width + x] = value >= 0.5
                     weight += value
                     sum += value * SIMD2(Double(x) + 0.5, Double(y) + 0.5)
@@ -478,6 +479,62 @@ struct PixelGridTests {
                         "\(name) (\(angle) rad・太さ \(weight)): 塗りが輪郭を覆った (輪郭の緑が \(weakest) まで落ちた)")
                 }
             }
+        }
+    }
+
+    /// 下地を読む混ぜ方でも、塗りと輪郭を両方持つ形の**塗り**は、三角形の経路と同じ場所を覆う
+    /// ([#1643])。
+    ///
+    /// 三角形の経路は塗りと輪郭を別々の三角形として混ぜるので、輪郭の帯の下にも塗りが残る。
+    /// 距離関数の経路は、継ぎ目の割り戻しを下地を読む断片にも掛けていた頃、不透明な輪郭の帯の
+    /// 内側半分で塗りを消していた。黒地に青の塗り・赤の輪郭を置き、青の成分だけを読む。ここで
+    /// 回す 5 つの混ぜ方は、黒地に置いた青を赤が変えない (`.subtract` / `.darkest` / `.multiply`
+    /// は黒地で青が残らないので外す) ので、青の成分がそのまま塗りの被覆になる。
+    ///
+    /// [#1643]: https://github.com/mokume-metal/mokume/issues/1643
+    @Test(
+        "下地を読む混ぜ方でも、輪郭の帯の下の塗りは三角形の経路と同じ場所を覆う",
+        arguments: Placement.all,
+        [BlendMode.add, .lightest, .screen, .difference, .exclusion])
+    func compositeFillsStayPutUnderTheStroke(_ placement: Placement, _ mode: BlendMode) throws {
+        let blue = LinearRGBA.linear(red: 0, green: 0, blue: 1)
+        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+        let shapes: [(String, (Canvas) -> Void)] = [
+            ("rect", { $0.rect(-14, -9, 28, 18) }),
+            ("ellipse", { $0.ellipse(0, 0, 36, 22) }),
+            ("arc", { $0.arc(0, 0, 40, 40, 0.4, .pi * 1.5) }),
+        ]
+        for (name, shape) in shapes {
+            func fillCoverage(triangles: Bool) throws -> Coverage {
+                let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
+                var failure: (any Error)?
+                try canvas.draw {
+                    canvas.background(black)
+                    canvas.blendMode(mode)
+                    canvas.fill(blue)
+                    canvas.stroke(red)
+                    canvas.strokeWeight(6)
+                    if triangles {
+                        do {
+                            canvas.shader(
+                                try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }"))
+                        } catch { failure = error }
+                    }
+                    canvas.translate(placement.x, placement.y)
+                    canvas.rotate(placement.angle)
+                    shape(canvas)
+                }
+                if let failure { throw failure }
+                return Coverage(try canvas.target.readPixels(), channel: 2)
+            }
+            // 許容は塗りの縁の量子化の幅 (三角形は AA を持たず、楕円と扇は弧を弦で近似する)。
+            // 直した後は矩形 0・楕円 10〜11・扇 17〜23 画素違う。帯の内側半分で塗りを消して
+            // いた頃は、帯 (太さ 6) の内側 3 画素の輪が丸ごと抜けて 197〜280 画素違い、重心も
+            // ずれた (どれも実測)
+            expectSameGeometry(
+                try fillCoverage(triangles: false), try fillCoverage(triangles: true),
+                "\(mode)・\(name) の塗り", allowedDifferingPixels: 30,
+                tolerance: placement.comparesCentroid ? 0.1 : .infinity)
         }
     }
 
