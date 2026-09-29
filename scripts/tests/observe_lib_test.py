@@ -163,7 +163,9 @@ class RoundtripTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.observe, self.inbox = facets(self.root, "observe", "input")
 
-    def run_roundtrip(self, rounds, deadline="0.5"):
+    # 期限は応答が返らない回の上限でしかない (返れば即座に抜ける)。短くすると、CPU が
+    # 混んだ回に偽スケッチの応答が遅れただけで赤になる (#1857)
+    def run_roundtrip(self, rounds, deadline="5"):
         return subprocess.run(
             [
                 sys.executable,
@@ -212,7 +214,9 @@ class RoundtripTest(unittest.TestCase):
                     str(SCRIPTS / "frame_rate_observe.py"),
                     "pressure",
                     str(self.observe),
-                    "0.3",
+                    # 窓の中で 2 件目が置かれることを見る。CPU が混むと 1 件目の応答が
+                    # 遅れるので、窓には余裕を持たせる (#1857)
+                    "1.5",
                 ],
                 capture_output=True,
                 text=True,
