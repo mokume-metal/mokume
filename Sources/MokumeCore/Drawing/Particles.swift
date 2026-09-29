@@ -255,6 +255,14 @@ public final class Particles {
         ///
         /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
         case negativeDrag
+        /// `emit` の `rate`・`life`・`size` に負の値が渡され、0 として扱った ([#1698])。
+        ///
+        /// 3 つの引数で 1 つの事情 (0 より小さくならない量) なので鍵を共有し、文面には引数の
+        /// 名前が入る (``unacceptableEmission`` と同じ形)。**``unacceptableEmission`` とは鍵を
+        /// 分ける** — あちらは 1 個も出さず、こちらは 0 として扱って出す。
+        ///
+        /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        case negativeEmission
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -412,6 +420,7 @@ public final class Particles {
                 "\(refused.name) got \(refused.value), which is not a number or is infinite. "
                     + "No particles were emitted from that call")
         }
+        warnNegative(rate: rate, life: life, size: size)
         let count = count(rate: rate, over: step, frame: frame)
         place(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
@@ -630,6 +639,31 @@ public final class Particles {
     /// `problem` は受け取れなかった引数の名前で始める (検査が名前を読む)。
     private func warnUnacceptableEmission(_ problem: String) {
         warnOnce(.unacceptableEmission, "emit(): \(problem)")
+    }
+
+    /// 0 より小さくならない量に負の値が渡されたことを、初回だけ知らせる ([#1698])。
+    ///
+    /// **扱いは変えない** — 負の `rate` は 0 個 (`EmissionCadence.take`)、`life`・`size` は
+    /// 引いた値の 0 より下を 0 にする (`place`)。丸めたことを言わないのは ADR-0020 決定 5 の
+    /// 「警告を出して」に反するので、知らせだけを足す。見る順は引数の並びどおり。文面の形は
+    /// 面の ``Canvas/warnRounded(_:_:_:takes:passed:used:)`` と揃える。
+    ///
+    /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+    private func warnNegative(
+        rate: Float, life: ClosedRange<Float>, size: ClosedRange<Float>
+    ) {
+        // 毎フレーム呼ばれる口なので、並びを組まずに 1 つずつ見る
+        if rate < 0 {
+            return warnOnce(
+                .negativeEmission,
+                "emit(): rate takes 0 or more, but \(rate) was passed, so 0 was used")
+        }
+        func partBelowZero(_ name: String, _ range: ClosedRange<Float>) -> String {
+            "emit(): \(name) takes 0 or more, but \(range) was passed, so the part below 0 was "
+                + "used as 0"
+        }
+        if life.lowerBound < 0 { return warnOnce(.negativeEmission, partBelowZero("life", life)) }
+        if size.lowerBound < 0 { return warnOnce(.negativeEmission, partBelowZero("size", size)) }
     }
 
     private func warnNegativeDrag(_ amount: Float) {

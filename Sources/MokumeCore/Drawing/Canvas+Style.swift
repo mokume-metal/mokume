@@ -31,7 +31,13 @@ extension Canvas {
 
     public func strokeWeight(_ weight: some ScalarConvertible) {
         let weight = weight.asFloat
-        style.strokeWeight = max(0, weight)
+        // 負の太さと数でない値は 0 にして、1 度知らせる (#1698)。`>=` は NaN も弾く
+        guard weight >= 0 else {
+            warnRounded(.badStrokeWeight, "strokeWeight", "the weight", takes: "0 or more", passed: weight, used: 0)
+            style.strokeWeight = 0
+            return
+        }
+        style.strokeWeight = weight
     }
 
     // 溜めている列をその場で閉じる (混ぜ方と同じ理由)。

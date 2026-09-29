@@ -91,6 +91,11 @@ extension Sketch {
     ///
     /// 値が有限でも、出る所が `Float` で表せないほど遠い粒 (中心と半径の和が溢れる円や球)
     /// は出さずに知らせる。
+    ///
+    /// ## 負の `rate`・`life`・`size` は 0 として扱う
+    ///
+    /// どれも 0 以上の量である。負の `rate` は 0 (出さない) として、`life`・`size` は引いた
+    /// 値の 0 より下を 0 として扱い、どの引数だったかを 1 度だけ知らせる。
     public func emit(
         _ particles: Particles, from source: Emitter, rate: Float,
         speed: ClosedRange<Float> = 20...60,

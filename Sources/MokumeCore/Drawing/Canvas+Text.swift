@@ -25,7 +25,8 @@ extension Canvas {
 
     /// これから描く文字の大きさ (画素)。
     public func textSize(_ size: some ScalarConvertible) {
-        style.textSize = textMeasure(size.asFloat, from: "textSize")
+        style.textSize = textMeasure(
+            size.asFloat, from: "textSize", "the size", negative: .negativeTextSize)
     }
 
     /// これから描く文字の太さと傾き。
@@ -41,7 +42,8 @@ extension Canvas {
 
     /// 行と行の間隔 (画素)。
     public func textLeading(_ leading: some ScalarConvertible) {
-        style.textLeading = textMeasure(leading.asFloat, from: "textLeading")
+        style.textLeading = textMeasure(
+            leading.asFloat, from: "textLeading", "the leading", negative: .negativeTextLeading)
     }
 
     /// 字の大きさと行送りに使える、いちばん大きい値 (画素)。
@@ -57,12 +59,18 @@ extension Canvas {
     /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
     static let largestTextMeasure: Float = 1e18
 
-    /// 大きさと行送りの受け口。**負の値は黙って 0 に、数でない値・無限は 0 に、上限を越える値は
-    /// 上限に締める** ([ADR-0020] 決定 5)。後の 2 つは「使えない値を渡された」ので 1 度知らせる
-    /// (負の値を 0 にするのは説明に書いた扱いなので黙る)。
+    /// 大きさと行送りの受け口。**負の値は 0 に、数でない値・無限は 0 に、上限を越える値は
+    /// 上限に締め、どれも 1 度知らせる** ([ADR-0020] 決定 5)。
+    ///
+    /// 負の値の知らせは口ごとの鍵 (`negative`) で言い、数でない値・上限越えの
+    /// ``Warning/unusableTextMeasure`` とは分ける。以前は負の値だけ「説明に書いた扱い」として
+    /// 黙っていたが、丸めたことを言わないのは決定 5 の「警告を出して」に反する ([#1698])。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    private func textMeasure(_ value: Float, from name: String) -> Float {
+    /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+    private func textMeasure(
+        _ value: Float, from name: String, _ quantity: String, negative: Warning
+    ) -> Float {
         guard value.isFinite else {
             warnOnce(
                 .unusableTextMeasure,
@@ -76,7 +84,11 @@ extension Canvas {
                     + "\(Self.largestTextMeasure) was used")
             return Self.largestTextMeasure
         }
-        return max(0, value)
+        guard value >= 0 else {
+            warnRounded(negative, name, quantity, takes: "0 or more", passed: value, used: 0)
+            return 0
+        }
+        return value
     }
 
     // MARK: - 寸法

@@ -33,12 +33,20 @@ extension Canvas {
         angle: some ScalarConvertible = Float.pi / 6
     ) {
         let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
+        // 半頂角は 0…π/2 へ丸め、丸めたら 1 度知らせる (#1698)。書き順は `max(0, min(…))` に
+        // 保つ — Swift の `min` / `max` は第 1 引数の NaN を返すので、この順なら NaN は 0 になる
+        let used = max(0, min(angle, Float.pi / 2))
+        if used != angle {
+            warnRounded(
+                .badSpotLightAngle, "spotLight", "angle", takes: "0 to pi / 2 (\(Float.pi / 2))",
+                passed: angle, used: used)
+        }
         addLight(
             Light(
                 kind: .spot, color: color,
                 position: transform.apply(x: x, y: y, z: z),
                 direction: transformedDirection(directionX, directionY, directionZ),
-                coneCosine: cos(max(0, min(angle, .pi / 2)))))
+                coneCosine: cos(used)))
     }
 
     // ひととおりの光を置く (底上げ + 斜め上から差す光)。
