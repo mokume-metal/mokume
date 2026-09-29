@@ -157,10 +157,35 @@ extension Canvas {
         if usable.count != placements.count { warnBadPlacement() }
         guard !usable.isEmpty else { return }
 
+        replaying(shape.runs) { run in
+            switch run.source {
+            case .flat:
+                for placement in usable { place(run, of: shape, at: placement) }
+            case .solid:
+                placeSolid(run, of: shape, at: usable)
+            case .form:
+                for placement in usable { placeForms(run, of: shape, at: placement) }
+            }
+        }
+    }
+
+    /// 記録した区間の設定へ移って `place` で頂点を積み、置く側の設定へ戻す。
+    ///
+    /// **記録した区間を置き直す口は、どれもここを通る** — 保持した形 (``shape(_:at:)``) と、
+    /// 粒の板の 2 経路 (`placeFromGPU` / `placeFromCPU`) である。区間の設定
+    /// (混ぜ方・貼る絵の面・塗り) の出入りを口ごとに写して書いていた頃は、粒の速い経路だけが
+    /// 塗りと面の張り直しを落とし、置く時点の `texture()` / `shader()` で描いていた ([#1649])。
+    /// 手順を 1 か所に置けば、段を足しても口ごとに足し忘れることが無い。
+    ///
+    /// 控えて戻すのは**並び全体で 1 度だけ**である。区間ごとに戻すと、続けて置いた形が前の形と
+    /// 同じ列に並ばなくなる (移る操作は、同じなら列を閉じない)。
+    ///
+    /// [#1649]: https://github.com/mokume-metal/mokume/issues/1649
+    func replaying(_ runs: some Sequence<Shape.Run>, _ place: (Shape.Run) -> Void) {
         let savedMode = style.blendMode
         let savedTexture = currentTexture
 
-        for run in shape.runs {
+        for run in runs {
             // **記録した面を読む前に整える。** 組んだ後で書き換えた画像は、ここで送らないと
             // 形だけを置くフレームに出ない ([#1253])
             //
@@ -173,10 +198,7 @@ extension Canvas {
             // **塗りも記録したものへ戻す。** 置く時点の shader() で塗ると、組み立てる
             // コードを読んでも何色になるかが分からない形になる (#788)
             usePaint(run.paint)
-            switch run.source {
-            case .flat:
-                for placement in usable { place(run, of: shape, at: placement) }
-            case .solid:
+            if run.source == .solid {
                 // **立体は区間を先に開いてから、記録した面を束ね直す。**
                 // `beginSolids` は `useFillTexture()` を通るので、**置く側の**
                 // `style.picture` で面を選び直してしまう — 置く側は普通 `texture()` を
@@ -192,10 +214,8 @@ extension Canvas {
                 // [#914]: https://github.com/mokume-metal/mokume/issues/914
                 beginSolids()
                 useTexture(run.texture)
-                placeSolid(run, of: shape, at: usable)
-            case .form:
-                for placement in usable { placeForms(run, of: shape, at: placement) }
             }
+            place(run)
         }
 
         // 記録した設定を外へ漏らさない。**戻す操作が列を閉じる**ので、いま置いた
@@ -376,7 +396,16 @@ extension Canvas {
     /// **先頭を返すのは、上限に達したかを同じ形で数えるため** (``Canvas/isBatchFull(_:since:)``)。
     /// `openSolid` から読み直すと、開いた直後に強制開示が要る。`mirrored` はこの列に入れる
     /// 置き場所の鏡映の符号 (``Canvas/OpenSolid/isMirrored``)。
-    private func openRetainedSolid(_ run: Shape.Run, of shape: Shape, mirrored: Bool) -> Int {
+    ///
+    /// `external` を渡すと、置き場所を溜め場ではなく外の置き場から取る列になる
+    /// (``Canvas/OpenSolid/external``)。粒の速い経路だけが使う。**頂点の積み直しは同じ手順を
+    /// 通す** — 粒の側に写して持つと、ここに段を足した日に粒だけが落とす ([#1649] の反証)。
+    ///
+    /// [#1649]: https://github.com/mokume-metal/mokume/issues/1649
+    @discardableResult
+    func openRetainedSolid(
+        _ run: Shape.Run, of shape: Shape, mirrored: Bool, external: ExternalInstances? = nil
+    ) -> Int {
         closeBatch()
         let start = solidVertices.count
         solidVertices.append(
@@ -395,10 +424,13 @@ extension Canvas {
         }
         retainedSerial += 1
         let instanceStart = solidInstances.count
+        // **外の置き場から置き場所を取る列は添字を持てない** (`closeSolidBatch`)。粒の板は
+        // 添字を持たない四角なので当たらないが、黙って非添字へ倒さず、ここで止める
+        assert(external == nil || !run.isIndexed, "an indexed run cannot read external instances")
         openSolid = OpenSolid(
             source: .retained(serial: retainedSerial), vertexStart: start,
             vertexCount: run.count, indexStart: indexStart, instanceStart: instanceStart,
-            isMirrored: mirrored)
+            external: external, isMirrored: mirrored)
         return instanceStart
     }
 
