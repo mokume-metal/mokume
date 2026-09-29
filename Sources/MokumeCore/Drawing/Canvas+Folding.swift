@@ -44,11 +44,27 @@ extension Canvas {
         /// 角を距離関数の経路と同じ 45° の線で削ぐのに使う (#1506)。空なら矩形の角ではない
         /// (任意多角形の折れ目で、正方形で埋める)。
         var cornerDiagonals: [SIMD2<Float>]
+        /// 線を 1 つの領域として 1 回だけ混ぜるか。基本図形 (`rect` / `ellipse` / `arc`) が立てる。
+        ///
+        /// 立てると、線の片は線に沿った隔たりによらず先に置いた片を全部引いて積む
+        /// (``StrokeCarving``・[#1562])。距離関数の経路と同じ塗り方で、細長い楕円の上下の弧の
+        /// ように線に沿って離れた部分が重なっても濃くならない。基本図形は自己交差しない
+        /// ので、交差を 2 回混ぜる任意多角形の約束 (#1536) とは食い違わない。
+        ///
+        /// [#1562]: https://github.com/mokume-metal/mokume/issues/1562
+        var strokesAsOneRegion: Bool
+        /// 置き場所ぶんずらす前の周と、ずらした量 (``moved(by:)``)。ずらしていなければ `nil`。
+        ///
+        /// 線の片の重なりを引くときは、ずらす前の周で引いてから足す (``StrokeCarving``)。
+        /// 引き算の切り口は単精度の丸めを含むので、ずらした座標で引くと、畳んだ雛形
+        /// (ずらす前の座標で組む) と頂点の数まで食い違う。
+        var unmoved: (points: [SIMD2<Float>], offset: SIMD2<Float>)?
 
         init(
             points: [SIMD2<Float>], isClosed: Bool, fanCenter: SIMD2<Float>? = nil,
             fillTriangles: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]? = nil,
-            fills: Bool = true, curveSteps: [Bool] = [], cornerDiagonals: [SIMD2<Float>] = []
+            fills: Bool = true, curveSteps: [Bool] = [], cornerDiagonals: [SIMD2<Float>] = [],
+            strokesAsOneRegion: Bool = false
         ) {
             self.points = points
             self.isClosed = isClosed
@@ -57,15 +73,19 @@ extension Canvas {
             self.fills = fills
             self.curveSteps = curveSteps
             self.cornerDiagonals = cornerDiagonals
+            self.strokesAsOneRegion = strokesAsOneRegion
         }
 
         /// 形自身の座標で作った周を、置き場所ぶんずらす。**畳まないときの経路。**
         func moved(by offset: SIMD2<Float>) -> Outline {
-            Outline(
+            var moved = Outline(
                 points: points.map { $0 + offset }, isClosed: isClosed,
                 fanCenter: fanCenter.map { $0 + offset },
                 fillTriangles: fillTriangles?.map { ($0.0 + offset, $0.1 + offset, $0.2 + offset) },
-                fills: fills, curveSteps: curveSteps, cornerDiagonals: cornerDiagonals)
+                fills: fills, curveSteps: curveSteps, cornerDiagonals: cornerDiagonals,
+                strokesAsOneRegion: strokesAsOneRegion)
+            moved.unmoved = unmoved.map { ($0.points, $0.offset + offset) } ?? (points, offset)
+            return moved
         }
     }
 

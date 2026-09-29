@@ -30,12 +30,17 @@ extension Canvas {
     /// 円板は正方形より三角形が多い (`strokeJoin(.round)` が払うのと同じ量) が、隣の刻みの
     /// 向きを要さないので、骨は点ごとの判断のまま保てる。
     ///
+    /// 円板は両側の帯と重なり、刻みが太さの半分より細かければ 2 つ先の帯にも届く。骨は形を
+    /// 重ねたまま渡し、平面の呼び出し側が、線に沿って太さ以内の先に置いた片との重なりを
+    /// 引いて積む (`strokeOutline`・[#1536])。
+    ///
     /// 利用者が置いた点 (`vertex`・曲線の終点・通過点) は刻みではなく、折れ目の形に従う。
     /// 扇の 3 つの角 (中心と弧の両端) は置いた点ではないので、刻みと同じく円板で埋める
     /// ([#1486] — 距離関数の経路が真の距離で丸く出すのに揃える)。
     ///
     /// [#1409]: https://github.com/mokume-metal/mokume/issues/1409
     /// [#1486]: https://github.com/mokume-metal/mokume/issues/1486
+    /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
     ///
     /// - Parameters:
     ///   - count: 点の数
@@ -134,7 +139,8 @@ extension Canvas {
     ///
     /// 帯は線分ごとに独立して置くので、曲がったところに楔形の隙間が空く。そこを
     /// 埋める形が角の形である。**隙間を埋める向きだけを見て、内側か外側かを判定
-    /// しない** — 埋める図形は内側でも帯に重なるだけで、絵は変わらない。
+    /// しない** — 埋める図形は内側では帯に重なるが、重なる所は平面の呼び出し側が引いて
+    /// 積む (`strokeOutline`・#1536) ので、半透明の線でも角だけ濃くはならない。
     private func strokeJoinShape(at index: Int, disc: (Int) -> Void, square: (Int) -> Void) {
         switch style.strokeJoin {
         case .round:
@@ -184,26 +190,189 @@ extension Canvas {
     /// **矩形の直角の角は、`bevel` なら削いだ角で埋める** (#1506)。距離関数の経路と同じ
     /// 線で削ぐので、`shader()` や `texture()` を足して三角形の経路へ落ちても角の形が
     /// 変わらない。閉じた周の `square` は折れ目からしか呼ばれないので、端の形には及ばない。
+    ///
+    /// **片どうしの重なりは引いて積む** ([#1536]・[#1562])。帯・折れ目の形・端の形・刻みの
+    /// 円板は互いに重なるので、そのまま積むと半透明の線や下地を読む混ぜ方で、重なった所
+    /// だけが 2〜3 回混ざって濃くなる。先に置いた片との差を積めば、形も塗る領域も変えずに
+    /// 1 回だけ混ぜられる (``StrokeCarving``)。重ねても絵が変わらない線
+    /// (``strokeOverlapsShow`` が偽) は、引かずにこれまでどおり積む。
+    ///
+    /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
+    /// [#1562]: https://github.com/mokume-metal/mokume/issues/1562
     func strokeOutline(_ outline: Outline) {
         let half = style.strokeWeight / 2
         let points = outline.points
         let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
         let start = vertices.count
-        strokeRing(
-            count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
-            endSquare: { appendSquare(at: points[$0], awayFrom: points[$1], half: half) },
-            band: { appendBand(points[$0], points[$1], half: half) },
-            disc: { appendDisc(at: points[$0], half: half) },
-            square: { index in
-                guard index < chamfers.count else {
-                    return appendSquare(at: points[index], half: half)
-                }
-                appendChamferedCorner(at: points[index], outward: chamfers[index], half: half)
-            })
+        if strokeOverlapsShow {
+            strokeCarved(outline, half: half, chamfers: chamfers)
+        } else {
+            strokeRing(
+                count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
+                endSquare: { appendSquare(at: points[$0], awayFrom: points[$1], half: half) },
+                band: { appendBand(points[$0], points[$1], half: half) },
+                disc: { appendDisc(at: points[$0], half: half) },
+                square: { index in
+                    guard index < chamfers.count else {
+                        return appendSquare(at: points[index], half: half)
+                    }
+                    appendChamferedCorner(at: points[index], outward: chamfers[index], half: half)
+                })
+        }
         // 記録の間は寄せられないので、積んだ区間を覚える (`recordedStrokeRanges`)
         if recordingShape, vertices.count > start {
             recordedStrokeRanges.append(start..<vertices.count)
         }
+    }
+
+    /// 線の片の重なりが絵に出るか。**出ないのは、重ねて混ぜても同じ色になる線だけ** —
+    /// 組み込みの断片で、不透明の色を `blend` で置くか、`replace` で置き換える線である。
+    ///
+    /// 次のときは、いまの色によらず出るものとして扱う:
+    ///
+    /// - `shader()` が効いている。断片が出す不透明度は分からない
+    /// - 畳みの雛形を積んでいる。雛形は白で積み、色は置き場所ごとに掛かる
+    ///
+    /// **引いて積むと、不透明の絵も縁の画素が動きうる。** 切り口の頂点は単精度で求めるので、
+    /// 縁から 1/1000 画素ほどの所に中心が乗る画素は、塗られるかが入れ替わりうる。重ねても
+    /// 絵が変わらない線は引かないので、この揺れは引いた線にしか出ない。
+    ///
+    /// 保持する形の記録は、記録したときの色で決める。置くときに半透明の色を掛けた
+    /// (``Placement/fill``) 不透明の線は、引かずに積んだままになる (#1829)。記録の間も
+    /// 引くと、不透明のまま置く (いちばんよくある) 形の縁が動く。
+    var strokeOverlapsShow: Bool {
+        if buildingFlatTemplate || currentShader != nil { return true }
+        switch style.blendMode {
+        case .replace: return false
+        case .blend: return style.stroke.alpha < 1
+        case .add, .subtract, .lightest, .darkest, .difference, .exclusion, .multiply, .screen:
+            return true
+        }
+    }
+
+    /// 片を集め、先に置いた片との重なりを引いて積む (``StrokeCarving``)。
+    ///
+    /// 片の形は重ねて積むとき (`appendBand` ほか) と同じ式で組む。残りは扇に割る (要の選び方は
+    /// ``StrokeCarving/carved(_:)``)。
+    ///
+    /// 置き場所ぶんずらした周は、ずらす前の周で引いてから置き場所を足す (``Outline/unmoved``)。
+    /// 畳んだ雛形と同じ座標で引くので、畳むかどうかで頂点の数が変わらない。
+    private func strokeCarved(_ outline: Outline, half: Float, chamfers: [SIMD2<Float>]) {
+        let (points, offset) = outline.unmoved ?? (outline.points, SIMD2<Float>(0, 0))
+        var carving = StrokeCarving(
+            points: points, isClosed: outline.isClosed, weight: half * 2,
+            wholeOutline: outline.strokesAsOneRegion)
+        if discOffsets?.half != half {
+            discOffsets = (
+                half, Self.arcOffsets(radiusX: half, radiusY: half, from: 0, sweep: 2 * .pi)
+            )
+        }
+        let rim = discOffsets?.offsets ?? []
+        strokeRing(
+            count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
+            endSquare: { index, neighbor in
+                carving.addPoint(index) {
+                    Self.appendSquare(at: points[index], awayFrom: points[neighbor], half: half, to: &$0)
+                }
+            },
+            band: { a, b in
+                carving.addBand(segment: a) { Self.appendBand(points[a], points[b], half: half, to: &$0) }
+            },
+            disc: { index in
+                let center = points[index]
+                carving.addPoint(index) { polygon in
+                    for offset in rim { polygon.append(center + offset) }
+                }
+            },
+            square: { index in
+                carving.addPoint(index) { polygon in
+                    guard index < chamfers.count else {
+                        return Self.appendSquare(at: points[index], half: half, to: &polygon)
+                    }
+                    Self.appendChamferedCorner(
+                        at: points[index], outward: chamfers[index], half: half, to: &polygon)
+                }
+            })
+        func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
+            let moved = point + offset
+            return strokePoint(x: moved.x, y: moved.y)
+        }
+        carving.carved { polygon, range, hub in
+            guard let hub else {
+                let first = place(polygon[range.lowerBound])
+                var previous = place(polygon[range.lowerBound + 1])
+                for index in (range.lowerBound + 2)..<range.upperBound {
+                    let current = place(polygon[index])
+                    appendTriangle(first, previous, current, color: style.stroke)
+                    previous = current
+                }
+                return
+            }
+            let center = place(hub)
+            let first = place(polygon[range.lowerBound])
+            var previous = first
+            for index in (range.lowerBound + 1)..<range.upperBound {
+                let current = place(polygon[index])
+                appendTriangle(center, previous, current, color: style.stroke)
+                previous = current
+            }
+            appendTriangle(center, previous, first, color: style.stroke)
+        }
+    }
+
+    // 片の周 (形自身の座標) を積む。式は重ねて積むとき (`appendBand` ほか) と 1 つずつ同じで、
+    // ずらしていない周なら、引かれなかった頂点は変換の後も 1 ビットも変わらない
+
+    /// 帯の 4 隅。長さ 0 の線分は帯を持たない。
+    private static func appendBand(
+        _ a: SIMD2<Float>, _ b: SIMD2<Float>, half: Float, to polygon: inout [SIMD2<Float>]
+    ) {
+        let delta = b - a
+        let length = (delta.x * delta.x + delta.y * delta.y).squareRoot()
+        guard length > 0 else { return }
+        let normal = SIMD2(-delta.y / length * half, delta.x / length * half)
+        polygon.append(SIMD2(a.x + normal.x, a.y + normal.y))
+        polygon.append(SIMD2(b.x + normal.x, b.y + normal.y))
+        polygon.append(SIMD2(b.x - normal.x, b.y - normal.y))
+        polygon.append(SIMD2(a.x - normal.x, a.y - normal.y))
+    }
+
+    /// 線の向きに沿った正方形の 4 隅。向きが決まらなければ軸に沿った正方形。
+    private static func appendSquare(
+        at center: SIMD2<Float>, awayFrom from: SIMD2<Float>, half: Float,
+        to polygon: inout [SIMD2<Float>]
+    ) {
+        let delta = center - from
+        let length = (delta.x * delta.x + delta.y * delta.y).squareRoot()
+        guard length > 0 else { return appendSquare(at: center, half: half, to: &polygon) }
+        let along = delta / length * half
+        let across = SIMD2(-along.y, along.x)
+        polygon.append(SIMD2(center.x - along.x - across.x, center.y - along.y - across.y))
+        polygon.append(SIMD2(center.x + along.x - across.x, center.y + along.y - across.y))
+        polygon.append(SIMD2(center.x + along.x + across.x, center.y + along.y + across.y))
+        polygon.append(SIMD2(center.x - along.x + across.x, center.y - along.y + across.y))
+    }
+
+    /// 軸に沿った正方形の 4 隅。
+    private static func appendSquare(
+        at center: SIMD2<Float>, half: Float, to polygon: inout [SIMD2<Float>]
+    ) {
+        polygon.append(SIMD2(center.x - half, center.y - half))
+        polygon.append(SIMD2(center.x + half, center.y - half))
+        polygon.append(SIMD2(center.x + half, center.y + half))
+        polygon.append(SIMD2(center.x - half, center.y + half))
+    }
+
+    /// 削いだ角の五角形 (角と、外側の 4 分の 1 の縁)。
+    private static func appendChamferedCorner(
+        at corner: SIMD2<Float>, outward: SIMD2<Float>, half: Float, to polygon: inout [SIMD2<Float>]
+    ) {
+        let cut = (Float(2).squareRoot() - 1) * half
+        polygon.append(corner)
+        polygon.append(SIMD2(corner.x + outward.x * half, corner.y + 0))
+        polygon.append(SIMD2(corner.x + outward.x * half, corner.y + outward.y * cut))
+        polygon.append(SIMD2(corner.x + outward.x * cut, corner.y + outward.y * half))
+        polygon.append(SIMD2(corner.x + 0, corner.y + outward.y * half))
     }
 
     /// 輪郭の頂点を描画先へ写す。**画面で (+0.5, +0.5) 画素寄せる** ([ADR-0039] 決定 2)。

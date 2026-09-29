@@ -34,7 +34,8 @@ extension Canvas {
                 points: [
                     SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
                 ], isClosed: true,
-                cornerDiagonals: [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)])
+                cornerDiagonals: [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)],
+                strokesAsOneRegion: true)
         }
     }
 
@@ -70,7 +71,7 @@ extension Canvas {
             // 周の点はどれも刻みで、角は 1 つも無い (#1423)
             return Outline(
                 points: points, isClosed: true, fanCenter: SIMD2(0, 0),
-                curveSteps: Array(repeating: true, count: points.count))
+                curveSteps: Array(repeating: true, count: points.count), strokesAsOneRegion: true)
         }
     }
 
@@ -114,7 +115,7 @@ extension Canvas {
             let points = isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints
             return Outline(
                 points: points, isClosed: true, fanCenter: SIMD2(0, 0),
-                curveSteps: Array(repeating: true, count: points.count))
+                curveSteps: Array(repeating: true, count: points.count), strokesAsOneRegion: true)
         }
     }
 
