@@ -23,7 +23,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の横線のちょうど上に、白い大きな mokume が乗っている -->
-    ///     ![灰色の横線のちょうど上に、白い大きな mokume が乗っている](https://i.gyazo.com/fe969b6fb9f7ae6bad63c019a50a51da.png)
+    ///     ![灰色の横線のちょうど上に、白い大きな mokume が乗っている](https://i.gyazo.com/a58c90895bc6a44ed63585d197e3613e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -42,7 +42,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い文字が 2 行に分かれ、左端を揃えて縦に並んでいる -->
-    ///     ![白い文字が 2 行に分かれ、左端を揃えて縦に並んでいる](https://i.gyazo.com/7f75a9cee673a0c12a7c761f3e19377e.png)
+    ///     ![白い文字が 2 行に分かれ、左端を揃えて縦に並んでいる](https://i.gyazo.com/1ce42b215592f9c253a1393bd9b98c4e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -81,7 +81,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の線の上に、小さめの白い mokume が乗っている -->
-    ///     ![灰色の線の上に、小さめの白い mokume が乗っている](https://i.gyazo.com/bed29d4c29e5ecfd5c288f2d2e8470ec.png)
+    ///     ![灰色の線の上に、小さめの白い mokume が乗っている](https://i.gyazo.com/c69fce4a3f022cebe481f12682f200f0.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -101,7 +101,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ位置の灰色の線の上に、ずっと大きな白い mokume が乗っている -->
-    ///     ![同じ位置の灰色の線の上に、ずっと大きな白い mokume が乗っている](https://i.gyazo.com/9ee88ae6a7bf082fe8654ca5267089d9.png)
+    ///     ![同じ位置の灰色の線の上に、ずっと大きな白い mokume が乗っている](https://i.gyazo.com/c711be7bc1d9a11780ea0cd6dad3c1a3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -135,7 +135,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ語が 2 行。上は既定の書体、下は字幅の揃った書体で描かれている -->
-    ///     ![同じ語が 2 行。上は既定の書体、下は字幅の揃った書体で描かれている](https://i.gyazo.com/ec22d871ad2611b4d627ac62e5d32792.png)
+    ///     ![同じ語が 2 行。上は既定の書体、下は字幅の揃った書体で描かれている](https://i.gyazo.com/f3ff89ec0190856486fed4a6c51a138c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -172,7 +172,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ語が 3 行。1 行目と 3 行目は同じ書体で、真ん中の 1 行だけ違う -->
-    ///     ![同じ語が 3 行。1 行目と 3 行目は同じ書体で、真ん中の 1 行だけ違う](https://i.gyazo.com/2556f54db965d96a7cd836d96d3ff054.png)
+    ///     ![同じ語が 3 行。1 行目と 3 行目は同じ書体で、真ん中の 1 行だけ違う](https://i.gyazo.com/d739aeb0dc9533a618987bbc0d16b309.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -212,7 +212,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左に水色の指定名、右に白い Mokume が 4 行。下 2 行は右へ傾き、2 行目と 4 行目は画が太い -->
-    ///     ![左に水色の指定名、右に白い Mokume が 4 行。下 2 行は右へ傾き、2 行目と 4 行目は画が太い](https://i.gyazo.com/16d812f6ddaf11fff08f543cf65f0681.png)
+    ///     ![左に水色の指定名、右に白い Mokume が 4 行。下 2 行は右へ傾き、2 行目と 4 行目は画が太い](https://i.gyazo.com/5bf1d3a5e3faeea58355c1fbfdba0068.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -251,7 +251,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 1 本の縦線に対し、右へ出る・線をまたぐ・線で終わる の 3 語が上から並んでいる -->
-    ///     ![1 本の縦線に対し、右へ出る・線をまたぐ・線で終わる の 3 語が上から並んでいる](https://i.gyazo.com/f7d48c6258ea121365b590483af5eb6c.png)
+    ///     ![1 本の縦線に対し、右へ出る・線をまたぐ・線で終わる の 3 語が上から並んでいる](https://i.gyazo.com/c2abe7e828cb7e5050dba1b6c9db85f0.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -281,7 +281,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 1 本の横線に対し、下へぶら下がる・線をまたぐ・線に乗る・線の上に載る の 4 語が左から並んでいる -->
-    ///     ![1 本の横線に対し、下へぶら下がる・線をまたぐ・線に乗る・線の上に載る の 4 語が左から並んでいる](https://i.gyazo.com/bda78fe4da8ce167d0bb7446dfc8b14b.png)
+    ///     ![1 本の横線に対し、下へぶら下がる・線をまたぐ・線に乗る・線の上に載る の 4 語が左から並んでいる](https://i.gyazo.com/d0283412728bbf95e42fb176b222797f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -314,7 +314,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い 3 行が、詰まった間隔で縦に並んでいる -->
-    ///     ![白い 3 行が、詰まった間隔で縦に並んでいる](https://i.gyazo.com/60fbf69ea1ac41029a3c32d107a041ee.png)
+    ///     ![白い 3 行が、詰まった間隔で縦に並んでいる](https://i.gyazo.com/29fd0ff2bcf8945246b08b8140cc9899.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -332,7 +332,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ 3 行が、倍ほど離れた間隔で縦に並んでいる -->
-    ///     ![同じ 3 行が、倍ほど離れた間隔で縦に並んでいる](https://i.gyazo.com/8d9bf47f4cb581aca54c68e1b2bbfe03.png)
+    ///     ![同じ 3 行が、倍ほど離れた間隔で縦に並んでいる](https://i.gyazo.com/f6a3ab2d79d23fbbe6283d62bdb62dfd.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -367,7 +367,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 白い mokume のすぐ下に、語と同じ長さの橙色の線が引かれている -->
-    ///     ![白い mokume のすぐ下に、語と同じ長さの橙色の線が引かれている](https://i.gyazo.com/9de2422d96c08e453703cae91c47accd.png)
+    ///     ![白い mokume のすぐ下に、語と同じ長さの橙色の線が引かれている](https://i.gyazo.com/80f942db8e0d8e7cbe66e7aeaa1fb1db.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -403,7 +403,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の基準線に字が乗り、その上に引かれた水色の線を字が越えていない -->
-    ///     ![灰色の基準線に字が乗り、その上に引かれた水色の線を字が越えていない](https://i.gyazo.com/f86f6d9fb6c33c2fa194202b0f4b5293.png)
+    ///     ![灰色の基準線に字が乗り、その上に引かれた水色の線を字が越えていない](https://i.gyazo.com/ded9e7aaeeb134315f5b79ed6725f11d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -439,7 +439,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の基準線から g と y が下へ伸び、その先を橙色の線が受け止めている -->
-    ///     ![灰色の基準線から g と y が下へ伸び、その先を橙色の線が受け止めている](https://i.gyazo.com/e70bb9120406f546faa8158fdaa40acd.png)
+    ///     ![灰色の基準線から g と y が下へ伸び、その先を橙色の線が受け止めている](https://i.gyazo.com/0a2d00da9b0c0dc5c25d07c91f692b36.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -469,7 +469,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の縦長の枠の中に、折り返された白い日本語の文が収まっている -->
-    ///     ![灰色の縦長の枠の中に、折り返された白い日本語の文が収まっている](https://i.gyazo.com/22a66d00f08e753735e77e420cecb1a7.png)
+    ///     ![灰色の縦長の枠の中に、折り返された白い日本語の文が収まっている](https://i.gyazo.com/bc93d54f4e7955623bca6efe2d339195.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -497,7 +497,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左の枠に白い文が収まり、右の枠にその続きが水色で流れている -->
-    ///     ![左の枠に白い文が収まり、右の枠にその続きが水色で流れている](https://i.gyazo.com/c299d0a2c333736f566d17f5a5102a4c.png)
+    ///     ![左の枠に白い文が収まり、右の枠にその続きが水色で流れている](https://i.gyazo.com/cf93424b86d8b1e40f229e968c1e9095.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -549,7 +549,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 枠の中の英文が語の切れ目で折り返され、行末が不揃いになっている -->
-    ///     ![枠の中の英文が語の切れ目で折り返され、行末が不揃いになっている](https://i.gyazo.com/d43fcff337558a959ce774c30a5b942a.png)
+    ///     ![枠の中の英文が語の切れ目で折り返され、行末が不揃いになっている](https://i.gyazo.com/c21de78386e9d45de403d710c94b5065.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -572,7 +572,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ英文が文字の切れ目で折り返され、行末が枠の右辺近くで揃っている -->
-    ///     ![同じ英文が文字の切れ目で折り返され、行末が枠の右辺近くで揃っている](https://i.gyazo.com/73fe4cc1b409eba3e8f80f78fdd321e8.png)
+    ///     ![同じ英文が文字の切れ目で折り返され、行末が枠の右辺近くで揃っている](https://i.gyazo.com/6021ee7778f561ce5097349fc0b1e964.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -604,7 +604,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 黄色い線だけで縁取られた mokume — 画の内側は塗られていない -->
-    ///     ![黄色い線だけで縁取られた mokume — 画の内側は塗られていない](https://i.gyazo.com/ce06383d7ffd37ad69775c5d89c958bb.png)
+    ///     ![黄色い線だけで縁取られた mokume — 画の内側は塗られていない](https://i.gyazo.com/03f1e65d5e6a6ab5037347aad603188d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
