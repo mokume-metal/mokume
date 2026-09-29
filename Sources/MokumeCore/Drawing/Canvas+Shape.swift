@@ -396,7 +396,16 @@ extension Canvas {
     /// **先頭を返すのは、上限に達したかを同じ形で数えるため** (``Canvas/isBatchFull(_:since:)``)。
     /// `openSolid` から読み直すと、開いた直後に強制開示が要る。`mirrored` はこの列に入れる
     /// 置き場所の鏡映の符号 (``Canvas/OpenSolid/isMirrored``)。
-    private func openRetainedSolid(_ run: Shape.Run, of shape: Shape, mirrored: Bool) -> Int {
+    ///
+    /// `external` を渡すと、置き場所を溜め場ではなく外の置き場から取る列になる
+    /// (``Canvas/OpenSolid/external``)。粒の速い経路だけが使う。**頂点の積み直しは同じ手順を
+    /// 通す** — 粒の側に写して持つと、ここに段を足した日に粒だけが落とす ([#1649] の反証)。
+    ///
+    /// [#1649]: https://github.com/mokume-metal/mokume/issues/1649
+    @discardableResult
+    func openRetainedSolid(
+        _ run: Shape.Run, of shape: Shape, mirrored: Bool, external: ExternalInstances? = nil
+    ) -> Int {
         closeBatch()
         let start = solidVertices.count
         solidVertices.append(
@@ -415,10 +424,13 @@ extension Canvas {
         }
         retainedSerial += 1
         let instanceStart = solidInstances.count
+        // **外の置き場から置き場所を取る列は添字を持てない** (`closeSolidBatch`)。粒の板は
+        // 添字を持たない四角なので当たらないが、黙って非添字へ倒さず、ここで止める
+        assert(external == nil || !run.isIndexed, "an indexed run cannot read external instances")
         openSolid = OpenSolid(
             source: .retained(serial: retainedSerial), vertexStart: start,
             vertexCount: run.count, indexStart: indexStart, instanceStart: instanceStart,
-            isMirrored: mirrored)
+            external: external, isMirrored: mirrored)
         return instanceStart
     }
 

@@ -197,17 +197,11 @@ extension Canvas {
         guard let run = particles.quad.runs.first, run.source == .solid else { return nil }
         var start = 0
         replaying(CollectionOfOne(run)) { run in
-            closeBatch()
             start = solidVertices.count
-            solidVertices.append(
-                contentsOf: particles.quad.solidVertices[run.start..<(run.start + run.count)])
-            retainedSerial += 1
-            openSolid = OpenSolid(
-                source: .retained(serial: retainedSerial), vertexStart: start,
-                vertexCount: run.count,
-                // 四角は添字を持たない。**外の置き場から置き場所を取る列は添字を持てない**
-                // ので、持てるようになっても `nil` のままである (`closeSolidBatch`)
-                indexStart: nil, instanceStart: solidInstances.count,
+            // 頂点の積み直しは保持した形と同じ手順を通す。置き場所の行列は GPU が組むので、
+            // 鏡映の符号は CPU では決まらず、列は鏡映しないものとして開く (前からこの扱い)
+            openRetainedSolid(
+                run, of: particles.quad, mirrored: false,
                 external: ExternalInstances(
                     instances: particles.instances, count: particles.capacity,
                     arguments: particles.arguments))
