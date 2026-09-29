@@ -906,7 +906,21 @@ public final class Canvas {
     /// `appendDisc(at:half:)`)。
     var discOffsets: (half: Float, offsets: [SIMD2<Float>])?
     /// いま効いている塗り。`nil` なら組み込み。
-    var currentShader: Shader?
+    var currentShader: Shader? {
+        // 当てた断片が替われば、その面を置いた記録は取り直す (``paintSurfacesNoted``)
+        didSet { paintSurfacesNoted = nil }
+    }
+    /// いまの断片 (``currentShader``) の描き場所の面を、置いた記録に載せ終えたか。載せた時点の
+    /// ``placedGraphicsDrops`` を持つ。`nil` なら載せていない。
+    ///
+    /// **図形を積むたびに記録し直さないための控え** (#1683 の反証 2 回目)。断片の面の記録は
+    /// 図形を積む口 (線なら三角形ごと) で取るので、毎回記録すると、描き場所を読む断片で置く
+    /// 費用が読まない断片の 4 倍になった (release・線 2 万本)。記録が落ちた (値が今の
+    /// ``placedGraphicsDrops`` と違う)・断片が替わった・断片の面が差し替わったときに取り直す。
+    /// 読む描き場所が描き始めたときも取り直す (その描き場所が ``placers`` から落とす)。
+    var paintSurfacesNoted: Int?
+    /// 置いた記録 (``placedGraphics``) から記録を落とした回数。``paintSurfacesNoted`` の鮮度を見る。
+    private(set) var placedGraphicsDrops = 0
     /// いま塗りが読む数の並び。`nil` なら読まない。
     ///
     /// **断片 (``currentShader``) と同じくフレームを越える** ([#1470])。並びは断片と一組の
@@ -1748,6 +1762,7 @@ public final class Canvas {
         // 守るために描き切らせる相手はもう居ない
         if emptying {
             placedGraphics.removeAll(keepingCapacity: true)
+            placedGraphicsDrops &+= 1
         } else {
             amount += placedGraphics.count
         }
@@ -1973,6 +1988,10 @@ public final class Canvas {
 
         isDrawing = true
         beginDrawFrame = nil
+        // **自分を置いた面には、断片の面の記録を取り直させる** (``paintSurfacesNoted``)。控えを
+        // 持つ面は、自分を読む図形を積んでも記録を飛ばすので、描き始めた後に置いた図形の
+        // 「描き切る前に置いた」の注意が出なくなる。自分を置いた面はどれも ``placers`` に居る
+        for entry in placers { entry.canvas?.paintSurfacesNoted = nil }
     }
 
     /// フレームの頭で、**区間の外で置いたものが溜め場に残っていないか**を見る ([#1672])。
@@ -2175,13 +2194,21 @@ public final class Canvas {
         // **描き切る前に置いたら知らせる。** 出るのは前のフレームの絵で、しかも
         // 「それらしい絵」なので、黙っていると自分のコードを疑うしかない
         // ([ADR-0020] 決定 5)
+        //
+        // **読む口は 3 つあるので、どれも名指す** (#1683 の反証)。画像として置く `image()`、
+        // 貼る `texture()`、断片の面 (`surfaces`) のどれで読んでもここへ来る。1 つだけを名指すと、
+        // 他の口で読んだ人は直す先を探せない
         if graphics.isDrawing {
             warnOnce(
                 .placingWhileDrawing,
-                "image(): the drawing target was taken before endDraw() was called. What comes out "
-                    + "is the frame as it stood before it was finished")
+                "A drawing target was read before its endDraw() was called, through image(), "
+                    + "texture() or a shader's surfaces. What comes out is the frame as it stood "
+                    + "before it was finished. Call endDraw() on it before placing what reads it")
         }
-        placedGraphics.insert(ObjectIdentifier(graphics))
+        // **記録済みなら相手へは載せ直さない** (#1683 の反証 2 回目)。貼る絵の記録は置くたびに
+        // 来るので、相手の `placers` を毎回探さない。こちらの記録と相手の `placers` は組で、
+        // 相手が `placers` を空にするときはこちらの記録も落とす (``settle(before:)``)
+        guard placedGraphics.insert(ObjectIdentifier(graphics)).inserted else { return }
         graphics.note(placedBy: self)
     }
 
@@ -2205,7 +2232,17 @@ public final class Canvas {
     /// **描き切っている最中なら何もしない。** 描き場所どうしが互いを置き合うと
     /// ここへ戻ってくるので、1 周したところで止める。
     private func settle(before graphics: Canvas) {
-        guard !isFlushing, placedGraphics.contains(ObjectIdentifier(graphics)) else { return }
+        let placed = ObjectIdentifier(graphics)
+        guard placedGraphics.contains(placed) else { return }
+        // **相手の `placers` から外れたので、こちらの記録も落とす。** 記録が残ったままだと、
+        // 次に置いたとき記録済みとして相手へ載せ直さず (``note(placing:)``)、相手が次に変わる
+        // 前に描き切らせてもらえない。描き切れば記録ごと落ちるが、描き切っている最中と、
+        // 描き切りに失敗したときは残る
+        defer {
+            placedGraphics.remove(placed)
+            placedGraphicsDrops &+= 1
+        }
+        guard !isFlushing else { return }
         do {
             // 効果はフレームの終わりに立つ段なので、途中の描き切りでは通さない
             try flush(applyingEffects: false)

@@ -1512,6 +1512,8 @@ struct CanvasTests {
             "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
             "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
             "beginDrawFrame": "isDrawing と組のフレームの印 (beginDraw が開いた本体のフレームの番号)。境目の関数だけが書く",
+            "paintSurfacesNoted": "断片の面を置いた記録に載せ終えた控え。記録が落ちる (フレームの終わりの描き切り) と placedGraphicsDrops と食い違って外れる (#1683)",
+            "placedGraphicsDrops": count,
             "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
             "solidStrokeCapture": transient,
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",

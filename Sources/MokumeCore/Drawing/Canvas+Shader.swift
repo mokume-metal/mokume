@@ -146,6 +146,8 @@ extension Canvas {
     ///
     /// [#1652]: https://github.com/mokume-metal/mokume/issues/1652
     func shaderWillChange(_ shader: Shader) {
+        // 面が差し替わるかもしれないので、いまの断片の面を置いた記録は取り直す
+        if currentShader === shader { paintSurfacesNoted = nil }
         guard paintingShader === shader else { return }
         closeBatch()
     }

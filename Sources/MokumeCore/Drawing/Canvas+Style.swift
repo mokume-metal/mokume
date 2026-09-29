@@ -410,8 +410,14 @@ extension Canvas {
             }
             return
         }
-        guard let currentShader else { return }
+        // **記録済みなら何もしない** (``paintSurfacesNoted``)。記録が落ちた・断片か面が替わった・
+        // 読む描き場所が描き始めたときは控えが外れているので、下で取り直す。断片を読むより先に
+        // 見る — 線や字は三角形ごとにここを通る
+        if paintSurfacesNoted == placedGraphicsDrops { return }
+        guard let currentShader, !currentShader.drawnSurfaces.isEmpty else { return }
         for graphics in currentShader.drawnSurfaces { note(placing: graphics) }
+        // 記録を取れた区間でだけ控える (``note(placing:)`` は区間の外と組み立ての中を飛ばす)
+        if writesToSurface, !recordingShape { paintSurfacesNoted = placedGraphicsDrops }
     }
 
     /// いま効いている光を置き場へ写し、その区間を返す。

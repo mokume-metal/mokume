@@ -629,6 +629,68 @@ struct ShaderTests {
         #expect(!main.warnings.hasWarned(.placingWhileDrawing))
     }
 
+    /// 断片の面の記録は、記録済みなら積むたびには取り直さない (#1683 の反証 2 回目)。
+    /// 控えが外れるべき場面で外れないと、読む描き場所が替わった後に置いた図形が守られない。
+    enum NoteRefresh: String, CaseIterable, CustomTestStringConvertible {
+        /// 別の描き場所を読む断片へ当て替える
+        case otherShader
+        /// 同じ断片の面を、別の描き場所へ差し替える
+        case surfaceSet
+        /// 置いた面の描き切りが一度失敗する (記録は残るが、相手の `placers` からは外れる)
+        case failedSettle
+        /// 背景で塗り直す (溜めたものと一緒に置いた記録も落ちる)
+        case background
+        var testDescription: String { rawValue }
+
+        /// 右の矩形を置いた時点で、それが読む描き場所の色。
+        var expected: String {
+            switch self {
+            case .otherShader, .surfaceSet, .failedSettle: "赤"
+            case .background: "緑"
+            }
+        }
+    }
+
+    @Test("読む描き場所が替わっても、描き切りに失敗しても、次に置いた図形はその時点の絵で描かれる",
+        arguments: NoteRefresh.allCases)
+    func theSurfaceNoteIsRefreshedWhenItMustBe(refresh: NoteRefresh) throws {
+        let main = try makeCanvas(width: 64, height: 64)
+        let first = try main.createGraphics(16, 16)
+        let second = try main.createGraphics(16, 16)
+        let one = try main.makeShader(Self.pictureShader, surfaces: ["pic": .graphics(first)])
+        let other = try main.makeShader(Self.pictureShader, surfaces: ["pic": .graphics(second)])
+        paint(first, .linear(red: 0, green: 1, blue: 0))
+        paint(second, .linear(red: 1, green: 0, blue: 0))
+
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            main.noStroke()
+            main.shader(one)
+            main.rect(0, 0, 24, 24)
+            switch refresh {
+            case .otherShader:
+                main.shader(other)
+            case .surfaceSet:
+                one.set("pic", .graphics(second))
+            case .failedSettle:
+                // 左の矩形は first を読んでいる。描き換える前の描き切りを 1 度だけ失敗させる
+                main.failureForTesting = .timedOut(seconds: 5)
+                paint(first, .linear(red: 1, green: 0, blue: 0))
+                main.failureForTesting = nil
+            case .background:
+                main.background(.linear(red: 0, green: 0, blue: 0))
+            }
+            main.rect(32, 0, 24, 24)
+            // 右の矩形が読んでいる描き場所を、置いた後に描き換える
+            switch refresh {
+            case .otherShader, .surfaceSet: paint(second, .linear(red: 0, green: 0, blue: 1))
+            case .failedSettle, .background: paint(first, .linear(red: 0, green: 0, blue: 1))
+            }
+            main.resetShader()
+        }
+        #expect(Self.hue(main.get(44, 12)) == refresh.expected, "置いた後に描き換えた絵が出た")
+    }
+
     /// 完了条件 3 (#1683) の「置き続ければ」。断片はフレームを越えて効くので、最初のフレームで
     /// 1 度だけ当てて置き続ける。描き切りのたびに記録は落ちるので、置くたびに記録し直す必要がある。
     @Test("最初のフレームで 1 度だけ当てた断片でも、後のフレームで置いた時点の絵が出る")
