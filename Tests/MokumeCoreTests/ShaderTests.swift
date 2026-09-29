@@ -343,6 +343,299 @@ struct ShaderTests {
         #expect(canvas.get(24, 8) == .linear(red: 0, green: 1, blue: 0))
     }
 
+    // MARK: - 置いた図形は、置いた時点の塗りで描かれる (#1683)
+
+    /// 断片を作る面と、使う面の組 (#1652)。
+    ///
+    /// 上の 2 本は作った面で使う場合だけを見ている。`set` の知らせが作った面にしか届かないと、
+    /// 他の面で使ったときだけ前に置いた図形が後の値で描かれる。
+    enum Pairing: String, CaseIterable, CustomTestStringConvertible {
+        case mainOnMain, mainOnLayer, layerOnMain, layerOnOtherLayer
+        var testDescription: String { rawValue }
+    }
+
+    /// 組に合わせて、断片を作る面と使う面を返す。`main` は窓の側の面。
+    private func surfaces(
+        for pairing: Pairing, main: Canvas
+    ) throws -> (maker: Canvas, user: Canvas) {
+        let layer = try main.createGraphics(Int(main.width), Int(main.height))
+        switch pairing {
+        case .mainOnMain: return (main, main)
+        case .mainOnLayer: return (main, layer)
+        case .layerOnMain: return (layer, main)
+        case .layerOnOtherLayer:
+            return (layer, try main.createGraphics(Int(main.width), Int(main.height)))
+        }
+    }
+
+    /// `user` の上で 1 フレーム描く。描き場所なら本体のフレームの中で開いて閉じる。
+    private func drawFrame(on user: Canvas, main: Canvas, _ body: () -> Void) throws {
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            guard user !== main else { return body() }
+            user.beginDraw()
+            body()
+            user.endDraw()
+        }
+    }
+
+    /// 完了条件 1 (#1683)・1・2 (#1652)。値の `set` の前に置いた図形は前の値で描かれる。
+    @Test("値を変える前に置いた図形は、どの面で作ってどの面で使っても、変える前の値で描かれる",
+        arguments: Pairing.allCases)
+    func shapesKeepTheValueOnEverySurface(pairing: Pairing) throws {
+        let main = try makeCanvas(width: 32, height: 16)
+        let (maker, user) = try surfaces(for: pairing, main: main)
+        let shader = try maker.makeShader(Self.valueShader, values: ["level": 1])
+
+        try drawFrame(on: user, main: main) {
+            user.background(.linear(red: 0, green: 0, blue: 0))
+            user.noStroke()
+            user.shader(shader)
+            user.rect(0, 0, 16, 16)
+            shader.set("level", 0.25)
+            user.rect(16, 0, 16, 16)
+            user.resetShader()
+        }
+        #expect(abs(user.get(8, 8).red - 1) < 0.01, "set より前に置いた図形が後の値で描かれた")
+        #expect(abs(user.get(24, 8).red - 0.25) < 0.01)
+    }
+
+    /// 完了条件 1 (#1683)・2 (#1652)。面の `set` でも同じ。
+    @Test("面を差し替える前に置いた図形は、どの面で作ってどの面で使っても、差し替える前の面で描かれる",
+        arguments: Pairing.allCases)
+    func shapesKeepTheSurfaceOnEverySurface(pairing: Pairing) throws {
+        let main = try makeCanvas(width: 32, height: 16)
+        let (maker, user) = try surfaces(for: pairing, main: main)
+        let first = try main.createImage(4, 4)
+        first.fill(.linear(red: 1, green: 0, blue: 0))
+        let second = try main.createImage(4, 4)
+        second.fill(.linear(red: 0, green: 1, blue: 0))
+        let shader = try maker.makeShader(Self.toneShader, surfaces: ["tone": .image(first)])
+
+        try drawFrame(on: user, main: main) {
+            user.background(.linear(red: 0, green: 0, blue: 0))
+            user.noStroke()
+            user.shader(shader)
+            user.rect(0, 0, 16, 16)
+            shader.set("tone", .image(second))
+            user.rect(16, 0, 16, 16)
+            user.resetShader()
+        }
+        let (left, right) = (user.get(8, 8), user.get(24, 8))
+        #expect(left.red > 0.99 && left.green < 0.01, "set より前に置いた図形が後の面で描かれた")
+        #expect(right.red < 0.01 && right.green > 0.99)
+    }
+
+    /// 完了条件 2 (#1683)・3 (#1652)。同じ断片を 2 つの面に置いてから `set` する。
+    ///
+    /// 作るのはどちらでもない第 3 の面にする — 作った面の列だけが閉じる形なら、2 面とも破れる。
+    @Test("同じ断片を 2 つの面で同時に使っても、どちらの面でも set より前の図形は前の値で描かれる")
+    func oneShaderOnTwoSurfacesKeepsTheValueOnBoth() throws {
+        let main = try makeCanvas(width: 32, height: 16)
+        let layer = try main.createGraphics(32, 16)
+        let maker = try main.createGraphics(32, 16)
+        let shader = try maker.makeShader(Self.valueShader, values: ["level": 1])
+
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            main.noStroke()
+            layer.beginDraw()
+            layer.background(.linear(red: 0, green: 0, blue: 0))
+            layer.noStroke()
+            layer.shader(shader)
+            layer.rect(0, 0, 16, 16)
+            main.shader(shader)
+            main.rect(0, 0, 16, 16)
+            shader.set("level", 0.25)
+            layer.rect(16, 0, 16, 16)
+            main.rect(16, 0, 16, 16)
+            layer.resetShader()
+            layer.endDraw()
+            main.resetShader()
+        }
+        for (name, canvas) in [("本体", main), ("描き場所", layer)] {
+            #expect(abs(canvas.get(8, 8).red - 1) < 0.01, "\(name): set より前の図形が後の値で描かれた")
+            #expect(abs(canvas.get(24, 8).red - 0.25) < 0.01, "\(name)")
+        }
+    }
+
+    /// 描き場所を 1 色で塗る。
+    private func paint(_ graphics: Canvas, _ color: LinearRGBA) {
+        graphics.beginDraw()
+        graphics.background(color)
+        graphics.endDraw()
+    }
+
+    /// 面 `pic` をそのまま色にする断片。
+    private static let pictureShader = """
+        float4 paint(Fragment in, Values values, Surfaces surfaces) {
+            return mokume_sample(surfaces.pic, in.uv);
+        }
+        """
+
+    /// 面 `tone` をそのまま色にする断片。
+    private static let toneShader = """
+        float4 paint(Fragment in, Values values, Surfaces surfaces) {
+            return mokume_sample(surfaces.tone, in.place);
+        }
+        """
+
+    /// 赤・緑・青のどれが最も強く出ているか。描き場所の色は面の形式で丸まるので、名前で比べる。
+    private static func hue(_ pixel: LinearRGBA) -> String {
+        guard max(pixel.red, pixel.green, pixel.blue) > 0.5 else { return "黒" }
+        if pixel.red >= pixel.green && pixel.red >= pixel.blue { return "赤" }
+        return pixel.green >= pixel.blue ? "緑" : "青"
+    }
+
+    /// 完了条件 3 (#1683)・1・2 (#1653)。断片の面に渡した描き場所を、置いた後に描き換える。
+    ///
+    /// `solid` は立体で置くか。平面と立体は別の列を開くので、両方を見る。描き換えた後に同じ
+    /// 断片のまま置いた右の図形は、描き換えた後の絵で描かれる (#1543 の貼る絵と同じ形)。
+    @Test("断片の面に渡した描き場所を置いた後に描き換えても、置くたびにその時点の絵で描かれる",
+        arguments: [false, true])
+    func aShaderSurfaceKeepsThePictureOfEachPlacement(solid: Bool) throws {
+        let main = try makeCanvas(width: 64, height: 64)
+        let layer = try main.createGraphics(16, 16)
+        let shader = try main.makeShader(
+            Self.pictureShader, surfaces: ["pic": .graphics(layer)])
+        func place(_ x: Float) {
+            guard solid else { return main.rect(x, 0, 24, 24) }
+            main.push()
+            main.translate(x + 12, 12, 0)
+            main.plane(24, 24)
+            main.pop()
+        }
+
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            main.noStroke()
+            paint(layer, .linear(red: 1, green: 0, blue: 0))
+            main.shader(shader)
+            place(0)
+            paint(layer, .linear(red: 0, green: 0, blue: 1))
+            place(32)
+            paint(layer, .linear(red: 0, green: 1, blue: 0))
+            main.resetShader()
+        }
+        #expect(Self.hue(main.get(12, 12)) == "赤", "置いた後に描き換えた絵が出た")
+        #expect(Self.hue(main.get(44, 12)) == "青", "置いた後に描き換えた絵が出た")
+    }
+
+    /// 描き場所が描き換わる直前に閉じさせた列は、描き換わる**前に**置いた図形である。
+    /// 描き場所がフレームの途中で描き切る (`loadPixels()`) ときは描いている最中なので、閉じた
+    /// 列の記録を「描き切る前に置いた」と取り違えやすい。
+    @Test("置いた後に描き場所がフレームの途中で描き切っても、描き切る前に置いた注意は出ない")
+    func settlingBeforeAChangeIsNotPlacingWhileDrawing() throws {
+        let main = try makeCanvas(width: 64, height: 64)
+        let layer = try main.createGraphics(16, 16)
+        let shader = try main.makeShader(
+            Self.pictureShader, surfaces: ["pic": .graphics(layer)])
+
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            main.noStroke()
+            paint(layer, .linear(red: 1, green: 0, blue: 0))
+            main.shader(shader)
+            main.rect(0, 0, 24, 24)
+            layer.beginDraw()
+            layer.background(.linear(red: 0, green: 0, blue: 1))
+            layer.loadPixels()
+            layer.endDraw()
+            main.resetShader()
+        }
+        #expect(Self.hue(main.get(12, 12)) == "赤", "置いた後に描き換えた絵が出た")
+        #expect(!main.warnings.hasWarned(.placingWhileDrawing))
+    }
+
+    /// 完了条件 3 (#1683) の「置き続ければ」。断片はフレームを越えて効くので、最初のフレームで
+    /// 1 度だけ当てて置き続ける。描き切りのたびに記録は落ちるので、置くたびに記録し直す必要がある。
+    @Test("最初のフレームで 1 度だけ当てた断片でも、後のフレームで置いた時点の絵が出る")
+    func aShaderSurfaceKeepsItsPictureAcrossFrames() throws {
+        let main = try makeCanvas(width: 64, height: 64)
+        let layer = try main.createGraphics(16, 16)
+        let shader = try main.makeShader(
+            Self.pictureShader, surfaces: ["pic": .graphics(layer)])
+
+        for frame in 0..<3 {
+            try main.draw {
+                main.background(.linear(red: 0, green: 0, blue: 0))
+                main.noStroke()
+                paint(layer, .linear(red: 0, green: 0, blue: 1))
+                if frame == 0 { main.shader(shader) }
+                main.rect(0, 0, 24, 24)
+                paint(layer, .linear(red: 0, green: 1, blue: 0))
+            }
+            #expect(
+                Self.hue(main.get(12, 12)) == "青",
+                "\(frame + 1) フレーム目で、置いた後に描き換えた絵が出た")
+        }
+    }
+
+    /// 完了条件 4 (#1683)・3 (#1653)。記録した塗りで描き場所を読む形を、置いた後に描き換える。
+    ///
+    /// `liveShaderIsTheSame` は、置く側でも同じ断片を当てておくか。当てていれば記録した塗りと
+    /// いまの塗りが一致して列が開いたまま残り、当てていなければ置き終えたところで列が閉じる。
+    @Test("記録した塗りで描き場所を読む形も、置いた後に描き換えても置いた時点の絵で描かれる",
+        arguments: [false, true])
+    func aHeldShapeWithAShaderSurfaceKeepsThePicture(liveShaderIsTheSame: Bool) throws {
+        let main = try makeCanvas(width: 64, height: 64)
+        let layer = try main.createGraphics(16, 16)
+        let shader = try main.makeShader(
+            Self.pictureShader, surfaces: ["pic": .graphics(layer)])
+        let tile = main.createShape {
+            main.noStroke()
+            main.shader(shader)
+            main.rect(0, 0, 24, 24)
+        }
+
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            if liveShaderIsTheSame { main.shader(shader) }
+            paint(layer, .linear(red: 1, green: 0, blue: 0))
+            main.shape(tile, 0, 0)
+            paint(layer, .linear(red: 0, green: 0, blue: 1))
+            main.shape(tile, 32, 0)
+            paint(layer, .linear(red: 0, green: 1, blue: 0))
+            main.resetShader()
+        }
+        #expect(Self.hue(main.get(12, 12)) == "赤", "置いた後に描き換えた絵が出た")
+        #expect(Self.hue(main.get(44, 12)) == "青", "置いた後に描き換えた絵が出た")
+    }
+
+    /// 完了条件 5 (#1683)。いまの列が読んでいない描き場所の描き換えと、いま塗っていない断片の
+    /// `set` では列を切らない。
+    ///
+    /// 断片は前のフレームで 1 度使っただけで、このフレームの図形は組み込みの塗りで置く。
+    /// 描き換わる側・変わる側が知らせる相手を「使ったことのある面」まで広げても、閉じるのは
+    /// いまその塗りで置いている列だけである。
+    @Test("いまの列が読んでいない描き場所を描き換えても、塗っていない断片を set しても、列は切れない")
+    func unrelatedChangesDoNotSplitTheRun() throws {
+        let main = try makeCanvas(width: 64, height: 64)
+        let layer = try main.createGraphics(16, 16)
+        let shader = try main.makeShader(
+            Self.pictureShader, surfaces: ["pic": .graphics(layer)])
+        let valued = try main.makeShader(Self.valueShader, values: ["level": 1])
+
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            main.noStroke()
+            main.shader(shader)
+            main.rect(0, 0, 8, 8)
+            main.shader(valued)
+            main.rect(16, 0, 8, 8)
+            main.resetShader()
+        }
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            main.noStroke()
+            main.rect(0, 0, 8, 8)
+            paint(layer, .linear(red: 0, green: 0, blue: 1))
+            valued.set("level", 0.5)
+            main.rect(16, 0, 8, 8)
+        }
+        #expect(main.drawCallsInLastFrame == 1)
+    }
+
     /// 完了条件 5 の後半「宣言していない名前は警告して無視する」。
     @Test("宣言していない名前の面は受け付けない")
     func undeclaredSurfaceNamesAreRefused() throws {

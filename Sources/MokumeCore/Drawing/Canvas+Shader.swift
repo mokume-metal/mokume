@@ -26,7 +26,6 @@ extension Canvas {
         } catch {
             throw .notCompilable(path: path, reason: "\(error)")
         }
-        shader.canvas = self
         remember(shader)
         return shader
     }
@@ -47,7 +46,6 @@ extension Canvas {
         } catch {
             throw .notCompilable(path: name, reason: "\(error)")
         }
-        shader.canvas = self
         remember(shader)
         return shader
     }
@@ -90,6 +88,10 @@ extension Canvas {
         guard shader !== currentShader else { return }
         closeBatch()
         currentShader = shader
+        // **当てた面を、塗りと描き場所の両方に覚えさせる** (#1683)。塗りの値や面が変わるとき、
+        // 渡した描き場所が描き換わるときに、この面の開いている列を先に閉じてもらう
+        shader.note(usedBy: self)
+        noteReading(shader)
     }
 
     public func resetShader() {
@@ -137,7 +139,27 @@ extension Canvas {
         effectShaders.append(Weak(effect))
     }
 
-    /// 渡す値が変わった。**列を閉じてから変える** — そうしないと、既に置いた図形まで
-    /// 後の値で描かれる。
-    func shaderValuesWillChange() { closeBatch() }
+    /// 塗りの値か面が変わる。**この塗りで置いている列を閉じてから変える** — そうしないと、
+    /// 既に置いた図形まで後の値で描かれる。
+    ///
+    /// 呼ぶのは塗りの側で、当てた面すべてに呼ぶ (``Shader/note(usedBy:)``・[#1652])。閉じるのは
+    /// **いまその塗りで置いている面だけ**で、他の塗りで置いている面の列は切らない。
+    ///
+    /// [#1652]: https://github.com/mokume-metal/mokume/issues/1652
+    func shaderWillChange(_ shader: Shader) {
+        guard paintingShader === shader else { return }
+        closeBatch()
+    }
+
+    /// いま置く図形を塗る断片。**保持した形を置いている間は、記録した塗りのもの**
+    /// (``effectivePaint`` と同じ優先)。
+    var paintingShader: Shader? {
+        if let replayedPaint { return replayedPaint.shader }
+        return currentShader
+    }
+
+    /// 断片の面に渡した描き場所に、この面が読みうることを覚えさせる (``note(readBy:)``)。
+    func noteReading(_ shader: Shader) {
+        for case .graphics(let graphics) in shader.surfaces.values { graphics.note(readBy: self) }
+    }
 }

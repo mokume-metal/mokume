@@ -796,6 +796,24 @@ public final class Canvas {
     /// 弱く持つ — 描き場所は利用者が持つもので、置いた側が寿命を延ばす筋合いが無い。
     private(set) var placers: [WeakCanvas] = []
 
+    /// 自分を断片の面として読みうる面 (``Canvas/shader(_:)`` で当てた塗りが自分を読む面)。
+    ///
+    /// **置いた記録 (``placers``) だけでは足りない** ([#1653])。塗りは列を閉じるときに写すので、
+    /// 開いたままの列は置いた記録を持たない。自分の絵が変わる前に、ここに覚えた面のうち
+    /// いまの塗りが自分を読む面に列を閉じさせ、置いた記録を持たせてから描き切らせる。
+    ///
+    /// 描き切りのたびには落とさない — 塗りはフレームを越えて効くので、落とすと 2 枚目から
+    /// 開いた列が守られない。弱く持つ (``placers`` と同じ理由)。
+    ///
+    /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
+    private var paintReaders: [WeakCanvas] = []
+
+    /// 自分の絵が変わる前に、自分を読んでいる面を描き切らせている最中か。
+    ///
+    /// この間に取った置いた記録は、変わる**前に**置いたもの — 描き切る前の面を読んだ注意
+    /// (``note(placing:)``) の対象ではない。
+    private var isSettlingPlacers = false
+
     /// 弱く持つ面ひとつぶん。
     struct WeakCanvas {
         weak var canvas: Canvas?
@@ -2172,7 +2190,10 @@ public final class Canvas {
         // **描き切る前に置いたら知らせる。** 出るのは前のフレームの絵で、しかも
         // 「それらしい絵」なので、黙っていると自分のコードを疑うしかない
         // ([ADR-0020] 決定 5)
-        if graphics.isDrawing {
+        //
+        // **自分の絵が変わる直前に閉じさせた列の記録では言わない** (``isSettlingPlacers``)。
+        // その列の図形は描き換わる前に置いたもので、描き切らせれば置いた時点の絵が出る
+        if graphics.isDrawing && !graphics.isSettlingPlacers {
             warnOnce(
                 .placingWhileDrawing,
                 "image(): the drawing target was taken before endDraw() was called. What comes out "
@@ -2187,14 +2208,55 @@ public final class Canvas {
         placers.append(WeakCanvas(canvas: canvas))
     }
 
+    /// 断片の面として自分を読みうる面を覚える (``paintReaders``)。**同じ面は 1 度だけ。**
+    func note(readBy canvas: Canvas) {
+        guard canvas !== self, !paintReaders.contains(where: { $0.canvas === canvas }) else {
+            return
+        }
+        paintReaders.removeAll { $0.canvas == nil }
+        paintReaders.append(WeakCanvas(canvas: canvas))
+    }
+
     /// 自分の絵が変わる前に、自分を溜めている面を描き切らせる。
+    ///
+    /// **先に、自分を読む塗りで列を開いている面に閉じさせる** ([#1653])。閉じた列は置いた
+    /// 記録を持つ (``note(placing:)``) ので、続く描き切らせに載る。
+    ///
+    /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
     private func settlePlacersBeforeChange() {
+        isSettlingPlacers = true
+        defer { isSettlingPlacers = false }
+        for reader in paintReaders { reader.canvas?.closeRun(reading: self) }
         guard !placers.isEmpty else { return }
         // **先に空にする。** 描き切らせた先から置き直されることがあるので、
         // 走らせたあとに消すと、そのフレームの記録まで一緒に落ちる
         let waiting = placers
         placers.removeAll(keepingCapacity: true)
         for entry in waiting { entry.canvas?.settle(before: self) }
+    }
+
+    /// いまの塗りが断片の面としてこの描き場所を読むなら、開いている列を閉じる。
+    ///
+    /// **描き切っている最中と、形を組み立てている間は閉じない。** 描き切りの最中は列を
+    /// 束ね終えているので、足すと描く列が崩れる。組み立て中の列は形へ抜かれ、形を置くときに
+    /// その時点の絵で閉じ直される。
+    private func closeRun(reading graphics: Canvas) {
+        guard !isFlushing, !recordingShape, paintReads(graphics) else { return }
+        closeBatch()
+    }
+
+    /// いま置く図形の塗りが、断片の面としてこの描き場所を読むか (``effectivePaint`` と同じ優先)。
+    private func paintReads(_ graphics: Canvas) -> Bool {
+        if let replayedPaint {
+            return replayedPaint.surfaces.contains {
+                ($0.owner as? RenderTarget)?.drawer === graphics
+            }
+        }
+        guard let currentShader else { return false }
+        return currentShader.surfaces.values.contains {
+            if case .graphics(let read) = $0 { return read === graphics }
+            return false
+        }
     }
 
     /// この描き場所を溜めているなら、いま描き切る。
