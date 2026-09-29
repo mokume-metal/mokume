@@ -853,11 +853,13 @@ public final class Canvas {
     /// その描き場所が描き換わると、先に置いた場所まで最新の絵に化ける。
     ///
     /// 記録するのは**置くたび** — 画像として置いたときと、貼った塗りや保持した形がその
-    /// 面を読むように切り替えたとき (``useTexture(_:)``) である。落とすのは描き切り
+    /// 面を読むように切り替えたとき (``useTexture(_:)``)、断片の面として読む図形を積んだ
+    /// とき (``notePaintPlacement()``・[#1653]) である。落とすのは描き切り
     /// (フレームの終わりと、描き場所が描き換わる直前) と塗り直し (``discardPending()``) で、
     /// 落とした後に同じ面のまま置いた形も、置いた時点で記録し直される ([#1543])。
     ///
     /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
+    /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
     private(set) var placedGraphics: Set<ObjectIdentifier> = []
 
     /// 自分を置いた面。**自分の絵が変わる前に、そちらを先に描き切らせる。**
@@ -973,7 +975,21 @@ public final class Canvas {
     /// `appendDisc(at:half:)`)。
     var discOffsets: (half: Float, offsets: [SIMD2<Float>])?
     /// いま効いている塗り。`nil` なら組み込み。
-    var currentShader: Shader?
+    var currentShader: Shader? {
+        // 当てた断片が替われば、その面を置いた記録は取り直す (``paintSurfacesNoted``)
+        didSet { paintSurfacesNoted = nil }
+    }
+    /// いまの断片 (``currentShader``) の描き場所の面を、置いた記録に載せ終えたか。載せた時点の
+    /// ``placedGraphicsDrops`` を持つ。`nil` なら載せていない。
+    ///
+    /// **図形を積むたびに記録し直さないための控え** (#1683 の反証 2 回目)。断片の面の記録は
+    /// 図形を積む口 (線なら三角形ごと) で取るので、毎回記録すると、描き場所を読む断片で置く
+    /// 費用が読まない断片の 4 倍になった (release・線 2 万本)。記録が落ちた (値が今の
+    /// ``placedGraphicsDrops`` と違う)・断片が替わった・断片の面が差し替わったときに取り直す。
+    /// 読む描き場所が描き始めたときも取り直す (その描き場所が ``placers`` から落とす)。
+    var paintSurfacesNoted: Int?
+    /// 置いた記録 (``placedGraphics``) から記録を落とした回数。``paintSurfacesNoted`` の鮮度を見る。
+    private(set) var placedGraphicsDrops = 0
     /// いま塗りが読む数の並び。`nil` なら読まない。
     ///
     /// **断片 (``currentShader``) と同じくフレームを越える** ([#1470])。並びは断片と一組の
@@ -1815,6 +1831,7 @@ public final class Canvas {
         // 守るために描き切らせる相手はもう居ない
         if emptying {
             placedGraphics.removeAll(keepingCapacity: true)
+            placedGraphicsDrops &+= 1
         } else {
             amount += placedGraphics.count
         }
@@ -2051,6 +2068,10 @@ public final class Canvas {
 
         isDrawing = true
         beginDrawFrame = nil
+        // **自分を置いた面には、断片の面の記録を取り直させる** (``paintSurfacesNoted``)。控えを
+        // 持つ面は、自分を読む図形を積んでも記録を飛ばすので、描き始めた後に置いた図形の
+        // 「描き切る前に置いた」の注意が出なくなる。自分を置いた面はどれも ``placers`` に居る
+        for entry in placers { entry.canvas?.paintSurfacesNoted = nil }
     }
 
     /// フレームの頭で、**区間の外で置いたものが溜め場に残っていないか**を見る ([#1672])。
@@ -2238,28 +2259,37 @@ public final class Canvas {
         // **面に載らない区間では記録しない。注意もしない** ([#1672])。記録は置いた時点の絵を
         // 守るためのもので、区間の外では置いたもの自体が断られる (``canPlace``)。`setup()` で
         // 描き場所を貼る (`texture(pg)`) のは描き方を決めるだけで正当なので、黙って飛ばす。
-        // フレームの外の形の組み立ての中も飛ばす — 組み立てた図形は形へ抜かれ、形を置くときに
-        // 記録し直す (``useTexture(_:)``)。記録すると、守る絵の無い印が区間の外の溜め場に残る
-        // (#1592 では相手の `placers` も伸びていた)
         //
-        // **描き切りの最中は記録する。** フレームの終わりの描き切りは、フレームを閉じた印
-        // (`isDrawing`) を下ろしてから列を閉じ、断片に渡した描き場所をそこで記録する — 飛ばすと、
-        // 描き切る前の描き場所を読んだ注意 (下) が出ない
+        // **形の組み立ての中も飛ばす** (フレームの中でも外でも)。組み立てた図形は形へ抜かれ、
+        // 形を置くときに記録し直す (``useTexture(_:)`` / ``notePaintPlacement()``)。記録すると、
+        // 守る絵の無い印が溜め場に残り (#1592 では相手の `placers` も伸びていた)、描いている
+        // 最中の描き場所を読む塗りで組み立てただけで、置いていないのに下の注意が出る (#1683)
+        //
+        // 記録は置いた時点で取る。列を閉じる時点 (フレームの終わりの描き切りを含む) では取らない
+        // ので、描き切りの最中を区間に数える必要は無い
         //
         // [#1592]: https://github.com/mokume-metal/mokume/issues/1592
         // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-        guard writesToSurface || isFlushing else { return }
+        guard writesToSurface, !recordingShape else { return }
         guard graphics !== self else { return }
         // **描き切る前に置いたら知らせる。** 出るのは前のフレームの絵で、しかも
         // 「それらしい絵」なので、黙っていると自分のコードを疑うしかない
         // ([ADR-0020] 決定 5)
+        //
+        // **読む口は 3 つあるので、どれも名指す** (#1683 の反証)。画像として置く `image()`、
+        // 貼る `texture()`、断片の面 (`surfaces`) のどれで読んでもここへ来る。1 つだけを名指すと、
+        // 他の口で読んだ人は直す先を探せない
         if graphics.isDrawing {
             warnOnce(
                 .placingWhileDrawing,
-                "image(): the drawing target was taken before endDraw() was called. What comes out "
-                    + "is the frame as it stood before it was finished")
+                "A drawing target was read before its endDraw() was called, through image(), "
+                    + "texture() or a shader's surfaces. What comes out is the frame as it stood "
+                    + "before it was finished. Call endDraw() on it before placing what reads it")
         }
-        placedGraphics.insert(ObjectIdentifier(graphics))
+        // **記録済みなら相手へは載せ直さない** (#1683 の反証 2 回目)。貼る絵の記録は置くたびに
+        // 来るので、相手の `placers` を毎回探さない。こちらの記録と相手の `placers` は組で、
+        // 相手が `placers` を空にするときはこちらの記録も落とす (``settle(before:)``)
+        guard placedGraphics.insert(ObjectIdentifier(graphics)).inserted else { return }
         graphics.note(placedBy: self)
     }
 
@@ -2283,7 +2313,17 @@ public final class Canvas {
     /// **描き切っている最中なら何もしない。** 描き場所どうしが互いを置き合うと
     /// ここへ戻ってくるので、1 周したところで止める。
     private func settle(before graphics: Canvas) {
-        guard !isFlushing, placedGraphics.contains(ObjectIdentifier(graphics)) else { return }
+        let placed = ObjectIdentifier(graphics)
+        guard placedGraphics.contains(placed) else { return }
+        // **相手の `placers` から外れたので、こちらの記録も落とす。** 記録が残ったままだと、
+        // 次に置いたとき記録済みとして相手へ載せ直さず (``note(placing:)``)、相手が次に変わる
+        // 前に描き切らせてもらえない。描き切れば記録ごと落ちるが、描き切っている最中と、
+        // 描き切りに失敗したときは残る
+        defer {
+            placedGraphics.remove(placed)
+            placedGraphicsDrops &+= 1
+        }
+        guard !isFlushing else { return }
         do {
             // 効果はフレームの終わりに立つ段なので、途中の描き切りでは通さない
             try flush(applyingEffects: false)
