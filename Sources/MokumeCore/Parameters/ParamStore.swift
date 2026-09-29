@@ -44,6 +44,8 @@ final class ParamStore: DeclarationWatcher {
     let url: URL
     /// 見張る先 (``DeclarationWatcher``)。
     let registry: ParamRegistry
+    /// 値が変わったという印 (``DeclarationWatcher``)。
+    let declarationNotice = DeclarationNotice()
     /// 静かになるまでの残り。`nil` なら書くものが無い。
     private var countdown: Int?
     /// 実際に書いた回数。**まとめられていることを検査から見るために持つ。**
@@ -137,7 +139,11 @@ final class ParamStore: DeclarationWatcher {
     // MARK: - 書く
 
     /// 1 フレーム進める。静かになっていれば書く。
+    ///
+    /// **値が変わったかは、ここで印を取って知る** (``DeclarationWatcher``)。main actor を
+    /// 譲らずに回すループでも、`draw` の中で変えた値がここで届く (#1704)。
     func tick() {
+        takeDeclarationChange()
         guard let remaining = countdown else { return }
         guard remaining > 1 else {
             countdown = nil
@@ -163,7 +169,11 @@ final class ParamStore: DeclarationWatcher {
     func declarationsChanged() { countdown = Self.quietFrames }
 
     /// まとめている途中のものがあれば書く。終わるときに呼ぶ。
+    ///
+    /// **最後のフレームで変わった値も書く。** その変化はまだ ``tick()`` を通っていないので、
+    /// ここでも印を取る。
     func flushIfPending() {
+        takeDeclarationChange()
         guard countdown != nil else { return }
         flushNow()
     }

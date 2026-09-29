@@ -108,7 +108,7 @@ struct ParamReport: Encodable {
 ///
 /// ## 値が変わっていないフレームの費用
 ///
-/// **要求のファイルの最終更新時刻を 1 回見るだけ**である。応答を書き直すのは、
+/// **要求のファイルの最終更新時刻を 1 回見て、値が変わった印を 1 つ取るだけ**である。応答を書き直すのは、
 /// 要求に応えたときと、値が実際に変わったときに限る。値が変わったことは Observation
 /// が知らせるので ([ADR-0013] 決定 1)、フレームごとに値を数え直さない。
 ///
@@ -122,6 +122,8 @@ final class ParamSurface: DeclarationWatcher {
     private let reportURL: URL
     /// 見張る先 (``DeclarationWatcher``)。
     let registry: ParamRegistry
+    /// 値が変わったという印 (``DeclarationWatcher``)。
+    let declarationNotice = DeclarationNotice()
 
     /// 内容が変わるたびに進む番号。まだ 1 度も書いていなければ `nil`。
     ///
@@ -194,8 +196,12 @@ final class ParamSurface: DeclarationWatcher {
     }
 
     /// 要求が来ていれば書き込み、応答を書く。値が変わっていれば応答を書き直す。
+    ///
+    /// **値が変わったかは、ここで印を取って知る** (``DeclarationWatcher``)。main actor を
+    /// 譲らずに回すループでも、`draw` の中で変えた値が次のフレームのここで届く (#1704)。
     @discardableResult
     func drain() -> ParamReport? {
+        takeDeclarationChange()
         if let request = requests.pending() {
             // 応えようとしたことは、応答を書けたかどうかによらず記録する (観測と同じ)
             defer { requests.markHandled(request.id) }
