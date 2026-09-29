@@ -615,12 +615,20 @@ struct FormPaint {
 
 /// 距離関数で塗りと輪郭の被覆率を出す。**下地は見ない。**
 ///
-/// 下地を読む入口と読まない入口が同じ形を出すよう、形を決める仕事はここ 1 本にする。
+/// 形を決める仕事はここ 1 本にし、入口ごとに式を写さない。
 ///
 /// `layered` は、呼ぶ側が塗りと輪郭を**先に重ねてから 1 回置く** (`mokume_formLayered`) か。
-/// 真のときだけ、継ぎ目の割り戻しを塗りの被覆率に掛け、楕円の輪郭を塗りの距離場から
-/// 1 次の近似でずらす (どちらも下の説明)。偽なら、塗りだけの形と輪郭だけの形を別々に
-/// 出したのと同じ被覆率になる。呼ぶ側の定数なので、使わない側の式は原稿から消える
+/// 真のときだけ、次の 2 つを掛ける (どちらも下の説明)。呼ぶ側の定数なので、使わない側の式は
+/// 原稿から消える。
+///
+/// - 継ぎ目の割り戻しを、塗りの被覆率に掛ける
+/// - 楕円の輪郭を、塗りの距離場から 1 次の近似でずらす
+///
+/// 偽なら、塗りだけの形と輪郭だけの形を別々に出したのと同じ被覆率になる。
+///
+/// **だから、入口によって出す形がこの 2 つの分だけ違う。** 同じ楕円でも、重ねる・置き換える
+/// 列と下地を読む列とでは、輪郭の内縁が近似の誤差の分だけ違う (細長い楕円で最大 0.11・
+/// [#1820](https://github.com/mokume-metal/mokume/issues/1820))。
 static inline FormPaint mokume_formPaint(
     FormFragmentIn in, constant FormInstance *instances, bool layered)
 {
@@ -707,7 +715,9 @@ static inline FormPaint mokume_formPaint(
         // 断片は、塗りだけの形の上に輪郭だけの形を重ねたのと同じ絵を出す約束 (下の割り戻しの
         // 説明) なので、輪郭しか持たない列と同じく式を輪郭の位置で解き直す。近似のままだと
         // 輪郭の内縁で 1 次の近似の誤差 (半径 29 の円で被覆率 0.008 ほど) が残り、加算で
-        // 表示の 1 段を越えた ([#1643](https://github.com/mokume-metal/mokume/issues/1643))
+        // 表示の 1 段を越えた ([#1643](https://github.com/mokume-metal/mokume/issues/1643))。
+        // 重ねる・置き換える列にはこの誤差が残る
+        // ([#1820](https://github.com/mokume-metal/mokume/issues/1820))
         if (kFormHasFill) {
             fill = mokume_ellipseField(p, form.size.xy);
             // 1 画素より細い楕円の塗りは、`rect` の細い塗りと同じ境目で、両縁を見る積で
@@ -826,7 +836,18 @@ static inline FormPaint mokume_formPaint(
             // で分母 (帯の透ける割合) が 0 になって塗りが消え、加算で塗りが足されなかった
             // ([#1643](https://github.com/mokume-metal/mokume/issues/1643))。別々に混ぜる
             // 断片は割り戻す前の被覆率を使い、塗りだけの形の上に輪郭だけの形を重ねたのと
-            // 同じ絵を出す — 継ぎ目の画素も、塗りと帯がそれぞれ掛かる面積の分だけ混ぜる
+            // 同じ絵を出す。
+            //
+            // **その代わり、下地を読む列には継ぎ目の漏れが戻る。** 被覆率について線形な
+            // `.add` / `.subtract` を除き、分けて重ねた絵 (三角形の経路も同じ) が持つ漏れを
+            // そのまま持つ。`.lightest` / `.screen` の白い円で、太さ 1 で最悪 24%・太さ 2 で
+            // 12% 暗い。「分けて重ねた絵と同じ」と「継ぎ目で漏れない」は線形でない混ぜ方では
+            // 両立せず、#1643 は前者を取った。どちらを約束にするかは
+            // [#1818](https://github.com/mokume-metal/mokume/issues/1818)
+            //
+            // 置き換える列がこの割り戻し (輪郭 over 塗り) を使うのが正しいかも決まっていない。
+            // 三角形の経路は輪郭で上書きするので、半透明の輪郭の帯で 2 つの経路が食い違う
+            // ([#1819](https://github.com/mokume-metal/mokume/issues/1819))
             float overlap = max(
                 0.0,
                 min(paint.fillCoverage, outerCoverage) - min(paint.fillCoverage, innerCoverage));
