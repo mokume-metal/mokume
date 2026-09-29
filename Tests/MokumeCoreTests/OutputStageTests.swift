@@ -268,14 +268,42 @@ struct OutputEncodeTests {
         canvas.rect(20, 8, 20, 18)
     }
 
-    /// 変換の特異点を直に置く。描いた図形では踏めない値を並べる。
+    /// 変換の特異点。描いた図形では踏めない値を並べる — 範囲を超えた明るさ / 負の明るさ /
+    /// 完全な透明 / 乗算を戻すと 1 を超えるもの / 値になっていない成分。
+    private static let edgeCases: [LinearRGBA] = [
+        LinearRGBA(premultipliedRed: 4, green: 2, blue: 0, alpha: 1),
+        LinearRGBA(premultipliedRed: -1, green: 0.5, blue: 0, alpha: 1),
+        .transparent,
+        LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5),
+        LinearRGBA(premultipliedRed: .nan, green: 0.25, blue: 1, alpha: 1),
+    ]
+
+    /// 特異点を左上の行へ直に置く。**`draw` の中で呼ぶ** — 描画の区間の外で書いた画素は
+    /// どのフレームにも属さず、断られる (#1672)。外で呼ぶと、比べる前の絵に特異点が
+    /// 1 つも載らないまま比較が通ってしまう (#1761)。
     private func pokeEdgeCases(on canvas: Canvas) {
-        // 範囲を超えた明るさ / 負の明るさ / 完全な透明 / 乗算を戻すと 1 を超えるもの
-        canvas.set(0, 0, LinearRGBA(premultipliedRed: 4, green: 2, blue: 0, alpha: 1))
-        canvas.set(1, 0, LinearRGBA(premultipliedRed: -1, green: 0.5, blue: 0, alpha: 1))
-        canvas.set(2, 0, .transparent)
-        canvas.set(3, 0, LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))
-        canvas.set(4, 0, LinearRGBA(premultipliedRed: .nan, green: 0.25, blue: 1, alpha: 1))
+        for (x, color) in Self.edgeCases.enumerated() { canvas.set(x, 0, color) }
+    }
+
+    /// 特異点が実際に置かれたことを、比べる前に読み戻して確かめる。**無視された入力で
+    /// 通らないため** (#1761)。有限の値は半精度に丸めた値と、値になっていない成分は
+    /// `isNaN` で見る。
+    private func expectEdgeCasesStored(on canvas: Canvas) throws {
+        let stored = try canvas.output.readPixels()
+        for (x, expected) in Self.edgeCases.enumerated() {
+            let actual = stored[x, 0]
+            let pairs = [
+                (expected.red, actual.red), (expected.green, actual.green),
+                (expected.blue, actual.blue), (expected.alpha, actual.alpha),
+            ]
+            for (want, got) in pairs {
+                if want.isNaN {
+                    #expect(got.isNaN, "(\(x), 0) に値になっていない成分が置かれていない (\(got))")
+                } else {
+                    #expect(got == Float(Float16(want)), "(\(x), 0) に \(want) が置かれていない (\(got))")
+                }
+            }
+        }
     }
 
     /// 2 つの絵を画素ごとに比べる。
@@ -318,8 +346,11 @@ struct OutputEncodeTests {
     @Test("取り出した絵が、読み戻して変換した絵と画素で一致する")
     func takenImageMatchesTheReadBackOne() throws {
         let canvas = try makeCanvas()
-        try canvas.draw { scene(on: canvas) }
-        pokeEdgeCases(on: canvas)
+        try canvas.draw {
+            scene(on: canvas)
+            pokeEdgeCases(on: canvas)
+        }
+        try expectEdgeCasesStored(on: canvas)
 
         let taken = try canvas.output.encodeToImage().read()
         let readBack = try canvas.output.encodeForDisplay()
@@ -339,8 +370,11 @@ struct OutputEncodeTests {
         let canvas = try makeCanvas()
         canvas.exposure(exposure)
         canvas.toneMapping(toneMapping)
-        try canvas.draw { scene(on: canvas) }
-        pokeEdgeCases(on: canvas)
+        try canvas.draw {
+            scene(on: canvas)
+            pokeEdgeCases(on: canvas)
+        }
+        try expectEdgeCasesStored(on: canvas)
 
         let result = compare(
             try canvas.output.encodeToImage().read(), try canvas.output.encodeForDisplay())
