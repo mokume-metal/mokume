@@ -57,32 +57,48 @@ hook_command
 command=$HOOK_COMMAND
 cwd=$HOOK_CWD
 
-# ラッパー自身の呼び出しは素通し (内部で gh を呼ぶが、それは別プロセスでここを通らない)
-printf '%s' "$command" | grep -qE '(^|[;&|[:space:]])(bash[[:space:]]+)?[^[:space:];&|]*scripts/comment\.sh([[:space:]]|$)' && exit 0
 
-is_comment_command() {
-  is_gh_subcommand "$command" '(issue|pr)[[:space:]]+comment' && return 0
+# **判定は gh の呼び出しごとに、その断片だけを読む** (#1729 の反証)。以前はサブコマンドを
+# 断片で見つけた後、旗・--help・-R・ラッパーをコマンド全体への部分一致で見ていたので、
+# 同じ行の別のコマンドの語で本物の投稿が素通りした:
+#
+#   cat scripts/comment.sh && gh issue comment …   (ラッパーの名前があるだけ)
+#   ls --help && gh issue comment …                (別のコマンドの --help)
+#   git log -R x/y && gh issue comment …           (別のコマンドの -R)
+#
+# 逆に `gh pr view 3 --comments; gh pr close 3 && echo -c x` は、別のコマンドの -c で
+# close を発言と取り違えた。ラッパー (scripts/comment.sh) は gh の呼び出しではないので、
+# 素通しの特例は要らなくなった (内部で呼ぶ gh は別プロセスで、ここを通らない)。
+
+# この gh の呼び出しは、スレッドへの発言か。旗は同じ断片の中からだけ読む
+is_comment_invocation() { # $1=gh の断片
+  gh_fragment_is "$1" '(issue|pr)[[:space:]]+comment' && return 0
   # レビューは本文を伴うときだけ。--approve / --request-changes だけなら発言が無い
-  is_gh_subcommand "$command" 'pr[[:space:]]+review' &&
-    printf '%s' "$command" | grep -qE '(^|[[:space:]])(-b|--body|-F|--body-file)([[:space:]]|=)' &&
+  gh_fragment_is "$1" 'pr[[:space:]]+review' &&
+    printf '%s\n' "$1" | grep -qE '(^|[[:space:]])(-b|--body|-F|--body-file)([[:space:]]|=)' &&
     return 0
   # close / reopen も本文を伴うときだけ。状態を変えるだけなら発言が無い。
   # 冒頭のとおり、-c の意味はサブコマンドによって違うのでここで絞ってから見る
-  is_gh_subcommand "$command" '(issue|pr)[[:space:]]+(close|reopen)' &&
-    printf '%s' "$command" | grep -qE '(^|[[:space:]])(-c|--comment)([[:space:]]|=)' &&
+  gh_fragment_is "$1" '(issue|pr)[[:space:]]+(close|reopen)' &&
+    printf '%s\n' "$1" | grep -qE '(^|[[:space:]])(-c|--comment)([[:space:]]|=)' &&
     return 0
   return 1
 }
 
-is_comment_command || exit 0
+offending=0
+while IFS=$'\t' read -r _token repo chdir fragment; do
+  is_comment_invocation "$fragment" || continue
+  # 使い方を尋ねているだけなら投稿ではない (判定は guard-lib.sh が持つ)
+  is_help_request "$fragment" && continue
+  # 他のリポジトリ宛てのコメントはこのリポジトリの規約の外 (#188)。あちらの署名の作法は
+  # 別に決まっており、ラッパーの投稿先は mokume 固定なので、ここで止めると逃げ道が無くなる。
+  # 判定は guard-lib.sh が持つ (pr-identity-guard.sh と共有する)
+  invocation_targets_other_repo "$fragment" "$repo" "$chdir" "$cwd" && continue
+  offending=1
+done < <(gh_invocations "$command")
 
-# 使い方を尋ねているだけなら投稿ではない (判定は guard-lib.sh が持つ)
-is_help_request "$command" && exit 0
+[ "$offending" = 1 ] || exit 0
 
-# 他のリポジトリ宛てのコメントはこのリポジトリの規約の外 (#188)。あちらの署名の作法は
-# 別に決まっており、ラッパーの投稿先は mokume 固定なので、ここで止めると逃げ道が無くなる。
-# 判定は guard-lib.sh が持つ (pr-identity-guard.sh と共有する)
-targets_other_repo "$command" "$cwd" && exit 0
 
 hook_deny "$(cat <<'EOF'
 このリポジトリの Issue / PR へのコメントは scripts/comment.sh から投稿してください。

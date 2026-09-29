@@ -19,22 +19,32 @@
 # 前置文字集合を締める / 緩める方向は行き止まりだった。締めると代入プレフィクス
 # (GH_TOKEN="$(…)" gh pr create。#122 で足した検出) が巻き添えで壊れ、緩めると地の文を拾う。
 #
-# **代わりに「先頭語が gh か」で判定する。** コマンドを断片に割り、各断片の先頭語を見る。
-# 「gh がコマンドとして実行される位置にあるか」という本来見たかったものを直接表現する。
+# **代わりに「gh がコマンドとして実行される位置にあるか」で判定する。** コマンドを字句として
+# 読んで断片に割り、各断片の前置 (予約語・リダイレクト・代入・env) を落とした先頭語を見る
+# (gh_invocations)。周辺の判定 (旗・--help・宛先・token) も、その呼び出しの断片と前置だけを
+# 読む — コマンド全体への部分一致だと、同じ行の別のコマンドの語で外れる (#1729 の反証)。
 #
 # **脅威モデルは変えない。** guard が止めるのは *うっかり* であって回避ではない。
 # gh api は今も明示的に素通しで、その気になれば迂回できる。ヒアドキュメント本文を
 # 判定から外すと bash <<EOF … EOF の中身が見えなくなるが、これは gh api と同じ水準の
 # 抜けであって、新たに水準を下げるものではない。
 #
-# 先頭語を見る前に、断片の前置 (代入・env・gh のパス) を落とす (#1729)。`PATH=/x:$PATH gh …`
-# や `/opt/homebrew/bin/gh …` も gh がコマンドとして実行される位置にある。以前は
-# `env X=1 gh …` をここで取りこぼしとして許容していたが、前置の代入と同じ形なので拾う。
+# `PATH=/x:$PATH gh …`・`for …; do gh …`・`/opt/homebrew/bin/gh …`・`"gh" …`・`gh \⏎ …`
+# も gh が実行される位置にある (#1729)。以前は `env X=1 gh …` をここで取りこぼしとして
+# 許容していたが、前置の代入と同じ形なので拾う。予約語・リダイレクト・代入・env の形は
+# 有限なので数え上げて落とす。
 #
-# 取りこぼしとして許容するもの: **別のコマンドを起動するコマンド**の後ろの gh
-# (sudo / command / exec / time / nohup / xargs … gh)、`bash -c "gh …"`・eval、alias と
-# シェル関数。前置の代入とは違って、起動する側の語を数え上げることになり、数え上げは
-# 必ず取りこぼす (gh api を素通しにしているのと同じ水準)。このリポジトリで使う形ではない。
+# 取りこぼしとして許容するもの:
+#
+#   - **別のコマンドを起動するコマンド**の後ろの gh (sudo / command / exec / builtin /
+#     nohup / nice / xargs … gh)、`bash -c "gh …"`・eval・source、alias とシェル関数。
+#     起動する側の語は利用者が増やせるので、数え上げは必ず取りこぼす (gh api を素通しに
+#     しているのと同じ水準)
+#   - 実行時に決まる語 (`$GH …`・`$(which gh) …`)。値を読むのは推測になる
+#   - 同じコマンドの中で**文として**環境を変える形 (cd・export GH_REPO=・unset GH_TOKEN・
+#     GH_TOKEN の再代入)。扱いは #1823 で決める
+#
+# このリポジトリで使う形ではない。
 #
 # 「宛先はこのリポジトリか」の判定も同じ理由でここに置く (#188)。両 guard が守るのは
 # このリポジトリの規約であって、他リポジトリ宛ての操作は射程の外にある。
@@ -49,10 +59,14 @@
 #   . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
 #   hook_payload            # HOOK_PAYLOAD / HOOK_CWD を置く。jq が無ければ素通し
 #   hook_command            # HOOK_COMMAND を置く。コマンドを持たないツールなら素通し
-#   is_help_request "$HOOK_COMMAND" && exit 0
-#   is_gh_subcommand "$HOOK_COMMAND" 'pr[[:space:]]+create' || exit 0
-#   targets_other_repo "$HOOK_COMMAND" "$HOOK_CWD" && exit 0
-#   hook_deny "<理由>"
+#   while IFS=$'\t' read -r token repo chdir fragment; do   # gh の呼び出しごと
+#     gh_fragment_is "$fragment" 'pr[[:space:]]+create' || continue
+#     is_help_request "$fragment" && continue
+#     invocation_targets_other_repo "$fragment" "$repo" "$chdir" "$HOOK_CWD" && continue
+#     hook_deny "<理由>"
+#   done < <(gh_invocations "$HOOK_COMMAND")
+#
+# コマンド全体を 1 回で問う口 (is_gh_subcommand・targets_other_repo) も残してある。
 #
 # テストは scripts/tests/guard_lib_test.py。
 
@@ -158,70 +172,230 @@ strip_heredoc_bodies() {
   '
 }
 
-# コマンドを断片に割り、先頭の空白とクォートを落とす (stdin → stdout)。
+# このコマンドの中で**実行される gh の呼び出し**を 1 行ずつ出す (#128・#1729)。
+#   $1 = コマンド文字列
 #
-# 割るのはシェルの演算子 — && || ; & | ( ) バッククォート、および改行 (行は awk / grep が
-# もともと分けている)。( と ) で割ることで $( … ) の中身が独立した断片になり、
-# コマンド置換の中の gh が先頭語として現れる。
+# 行は tab 区切りの 4 列で、判定に要るものを呼び出しごとに持つ:
 #
-# 先頭のクォートを落とすのは、GH_TOKEN="$(…)" gh pr create のような代入プレフィクスで
-# 断片が `" gh pr create` の形になるため。
-# 先頭の除去を **別の sed に分ける**のが要点。分割で挿入した改行は同じ sed の中では
-# まだパターン空間の途中にあり、^ は最初の行にしか効かない。パイプで渡して初めて
-# 各断片が独立した行として扱われる。
+#   1. GH_TOKEN   その gh に渡る値。`=` は打つシェルから継ぐ・`-` は消した (env -u / -i)・
+#                 `+<値>` は前置で渡した値 (引用はそのまま)・`?` は読めない (+= など)
+#   2. GH_REPO    同じ形。宛先の判定が読む
+#   3. chdir      env -C で別のディレクトリから走らせるなら 1 (宛先を cwd から決められない)
+#   4. 呼び出し   `gh …` から始まる断片。引用の中の空白・改行は \002 に伏せてある
 #
-# 最後に各断片の**前置を落として、実行される語から始まる形**に揃える (#1729)。
-# `PATH=/x:$PATH gh …` / `env X=1 gh …` / `/opt/homebrew/bin/gh …` は gh がコマンドとして
-# 実行される位置にあるのに、先頭語の綴りが gh でないので素通りしていた。落とすのは
+# **実行位置は、字句を読んで決める** (#1729 の反証)。以前は演算子の文字で素朴に割り、
+# 断片の先頭語が gh かを見ていたので、2 方向に外れていた:
 #
-#   代入       NAME=値 (値は引用を含んでよい・いくつ並んでもよい)
-#   env        パス付きの /usr/bin/env も。-i / - / -u NAME / --unset=NAME の旗も落とす
-#   gh のパス  <何か>/gh を gh に揃える (./gh・~/bin/gh・"$HOME/bin/gh" も)
+#   見逃し  for …; do gh … / if …; then gh … / { gh …; } / ! gh … (割った後の先頭が予約語)、
+#           2>/dev/null gh …・A+=x gh …・A=x\ y gh …・env -P /x gh … (落とさない前置)、
+#           gh \⏎ issue comment … (行継続)、\gh・"gh"・'/x y/gh' (引用した gh)
+#   誤検知  git commit -m "note; X=1 gh issue comment 1" (引用の中まで ; で割った)
 #
-# で、代入と env は交互に並んでよい。**揃えるのは断片の先頭だけ**なので、別のコマンドの
-# 引数に現れる gh (echo PATH=x gh … / ls /x/gh …) は今までどおり拾わない。
+# 字句は次のとおり読む。引用 ('…'・$'…'・"…") の中では割らず、"…" の中でも $( … ) と
+# バッククォートは入れ子のコマンドとして読む。\⏎ は行継続として消す。語の頭の # から
+# 行末は注釈。割るのは && || ; & | 改行 ( ) — ただし >&2・&>・2>&1・>| はリダイレクトの
+# 一部として割らない。( … ) と $( … )・<( … )・バッククォートの中身は、それぞれ独立した断片になる。
 #
-# 判定を読む 2 か所 (is_gh_subcommand と pr-identity-guard.sh の port_fragment) が
-# どちらもこの断片を読むので、ここで揃えれば片方だけ直る形にならない。
-split_into_fragments() {
-  sed -e 's/&&/\n/g' -e 's/||/\n/g' -e 's/[;&|()`]/\n/g' |
-    sed -e 's/^[[:space:]"'"'"']*//' |
-    sed -E \
-      -e ':prefix' \
-      -e 's/^[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"'])*[[:space:]]+//' \
-      -e 'tprefix' \
-      -e 's/^([^[:space:]]*\/)?env([[:space:]]+(-u[[:space:]]*[^[:space:]]+|--unset=[^[:space:]]+|-[^[:space:]]*))*[[:space:]]+//' \
-      -e 'tprefix' \
-      -e 's/^[^[:space:]]*\/gh["'"'"']?([[:space:]]|$)/gh\1/'
+# 断片ごとに、**実行される語の手前の前置を落とす**。落とすのは
+#
+#   予約語       ! { do then else elif if while until time (-p)
+#   リダイレクト 2>/dev/null・>out・<in・&>log・<<EOF …
+#   代入         NAME=値・NAME+=値・NAME[i]=値 (値の引用・\ の逃がしを含む)。GH_TOKEN と
+#                GH_REPO は値を 1・2 列に写す
+#   env          パス付きも。旗は macOS の env(1) の -0 -i -v -C 値 -P 値 -S 値 -u 値 と、
+#                -・--、GNU の --unset= / --chdir= / --split-string= / --ignore-environment。
+#                -S の値はそのままコマンドとして読み直す
+#
+# で、これらはどの順に並んでもよい。残った先頭語から引用と \ を外したものが gh か <何か>/gh
+# なら gh の呼び出しとして出す。**前置を落とすのは断片の先頭だけ**なので、別のコマンドの
+# 引数に現れる gh (echo PATH=x gh … / ls /x/gh …) は拾わない。
+#
+# **ヒアドキュメント本文は先に落とす** (strip_heredoc_bodies)。
+#
+# 取りこぼしとして許容するものは、冒頭の「取りこぼしとして許容するもの」にまとめてある。
+#
+# awk は **LC_ALL=C でバイト単位に読ませる**。字句の区切りはすべて ASCII で、macOS の awk は
+# UTF-8 の既定のまま日本語の本文を 1 文字ずつ切ると `towc: multibyte conversion failure` で
+# 止まる (止まると呼び出しが 1 つも出ず、ガードが素通しになる)。
+gh_invocations() { # $1=コマンド
+  printf '%s\n' "$1" |
+    strip_heredoc_bodies |
+    LC_ALL=C awk -v q="'" '
+      function app(s) { fbuf[depth] = fbuf[depth] s }
+      function mask(s) { gsub(/[ \t\n]/, M, s); return s }
+      function push(t) { depth++; ftype[depth] = t; fbuf[depth] = ""; finq[depth] = 0 }
+      function flush(   f) {
+        f = fbuf[depth]; fbuf[depth] = ""
+        sub(/^ +/, "", f); sub(/ +$/, "", f)
+        if (f != "") emit(f)
+      }
+      function backtick() {
+        if (ftype[depth] == "bt") { flush(); depth--; app("`") } else { app("`"); push("bt") }
+      }
+      function word1(s) { return match(s, /^[^ ]+/) ? substr(s, 1, RLENGTH) : "" }
+      function rest1(s) { s = substr(s, length(word1(s)) + 1); sub(/^ +/, "", s); return s }
+      function unquote(w) { gsub(QRE, "", w); gsub(M, " ", w); return w }
+      # 前置を落とし、先頭が gh なら 4 列の行を出す
+      function emit(f,   w, r, name, val, plus, bare, o, t, L, v, tok, repo, chd) {
+        tok = "="; repo = "="; chd = 0
+        while (1) {
+          w = word1(f)
+          if (w == "") return
+          if (w ~ /^(!|\{|do|then|else|elif|if|while|until|time)$/) {
+            f = rest1(f)
+            if (w == "time" && word1(f) == "-p") f = rest1(f)
+            continue
+          }
+          if (w ~ /^[0-9]*(<<<|<<-?|<>|>>|>\||&>>|&>|<&|>&|<|>)/) {
+            bare = (w ~ /^[0-9]*(<<<|<<-?|<>|>>|>\||&>>|&>|<&|>&|<|>)$/)
+            f = rest1(f)
+            if (bare) f = rest1(f)
+            continue
+          }
+          if (w ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) {
+            r = rest1(f)
+            if (r == "") return
+            name = w; sub(/[[+=].*/, "", name)
+            val = w; sub(/^[^=]*=/, "", val)
+            plus = (w ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+=/)
+            if (name == "GH_TOKEN") tok = plus ? "?" : "+" val
+            if (name == "GH_REPO") repo = plus ? "?" : "+" val
+            f = r
+            continue
+          }
+          if (unquote(w) ~ /^(.*\/)?env$/) {
+            f = rest1(f)
+            while (1) {
+              o = word1(f)
+              if (o == "--") { f = rest1(f); break }
+              if (o !~ /^-/) break
+              f = rest1(f)
+              if (o == "-" || o == "--ignore-environment") { tok = "-"; repo = "-"; continue }
+              if (o ~ /^--(unset|chdir|split-string)/) {
+                L = (o ~ /^--unset/) ? "u" : (o ~ /^--chdir/) ? "C" : "S"
+                v = o
+                if (!sub(/^--[a-z-]+=/, "", v)) v = ""
+              } else if (o ~ /^--/) {
+                continue
+              } else {
+                t = substr(o, 2)
+                while (t ~ /^[0iv]/) {
+                  if (substr(t, 1, 1) == "i") { tok = "-"; repo = "-" }
+                  t = substr(t, 2)
+                }
+                if (t == "") continue
+                L = substr(t, 1, 1); v = substr(t, 2)
+                if (L !~ /^[uCPS]$/) continue
+              }
+              if (v == "") { v = word1(f); f = rest1(f) }
+              if (L == "u") {
+                v = unquote(v)
+                if (v == "GH_TOKEN") tok = "-"
+                if (v == "GH_REPO") repo = "-"
+              }
+              if (L == "C") chd = 1
+              if (L == "S") {
+                gsub(M, " ", v); sub("^" QCH, "", v); sub(QCH "$", "", v)
+                f = v " " f; sub(/^ +/, "", f)
+              }
+            }
+            continue
+          }
+          if (unquote(w) ~ /^(.*\/)?gh$/) print tok "\t" repo "\t" chd "\tgh" substr(f, length(w) + 1)
+          return
+        }
+      }
+      BEGIN { M = "\002"; QRE = "[\"\\\\" q "]"; QCH = "[\"" q "]"; depth = 0; ftype[0] = "top" }
+      { src = (NR > 1) ? src "\n" $0 : $0 }
+      END {
+        n = length(src)
+        for (i = 1; i <= n; i++) {
+          c = substr(src, i, 1); nx = substr(src, i + 1, 1)
+          if (c == "\\") {
+            if (nx != "\n") app(c mask(nx))
+            i++; continue
+          }
+          if (finq[depth]) {
+            if (c == "\"") { finq[depth] = 0; app(c); continue }
+            if (c == "$" && nx == "(") { app("$("); push("sub"); i++; continue }
+            if (c == "`") { backtick(); continue }
+            app(mask(c)); continue
+          }
+          if (c == q || (c == "$" && nx == q)) {
+            j = (c == "$") ? i + 2 : i + 1
+            while (j <= n && substr(src, j, 1) != q) {
+              if (c == "$" && substr(src, j, 1) == "\\") j++
+              j++
+            }
+            app(mask(substr(src, i, j - i + 1))); i = j; continue
+          }
+          if (c == "\"") { finq[depth] = 1; app(c); continue }
+          if (c == "#" && (fbuf[depth] == "" || fbuf[depth] ~ / $/)) {
+            while (i < n && substr(src, i + 1, 1) != "\n") i++
+            continue
+          }
+          if (c == "$" && nx == "(") { app("$("); push("sub"); i++; continue }
+          if (c == "(") {
+            if (fbuf[depth] ~ /[<>]$/) { app(c); push("sub"); continue }
+            flush(); push("paren"); continue
+          }
+          if (c == ")") {
+            if (ftype[depth] == "sub") { flush(); depth--; app(c); continue }
+            if (ftype[depth] == "paren") { flush(); depth--; continue }
+            flush(); continue
+          }
+          if (c == "`") { backtick(); continue }
+          if ((c == "&" && (nx == ">" || fbuf[depth] ~ /[<>]$/)) || (c == "|" && fbuf[depth] ~ />$/)) {
+            app(c); continue
+          }
+          if (c == ";" || c == "&" || c == "|" || c == "\n") { flush(); continue }
+          if (c == " " || c == "\t") {
+            if (fbuf[depth] != "" && fbuf[depth] !~ / $/) app(" ")
+            continue
+          }
+          app(c)
+        }
+        while (depth > 0) { flush(); depth-- }
+        flush()
+      }
+    '
 }
 
-# このコマンドは gh の <サブコマンド> を実行するか。
-#   $1 = コマンド文字列
+# 断片 (gh_invocations の 4 列目) は、gh の <サブコマンド> の呼び出しか。
+#   $1 = 断片
 #   $2 = サブコマンドの正規表現 (例 'pr[[:space:]]+create'、'(issue|pr)[[:space:]]+comment')
 #
 # gh とサブコマンドの間にはグローバルオプション (-R owner/repo など) が入りうるので、
-# その間は緩く見る。ただし**同じ断片の中**に限る — 以前は断片の概念が無く、
-# 離れた語まで繋げて拾っていた (gh issue … と pr review … のような地の文が該当した)。
-is_gh_subcommand() { # $1=コマンド $2=サブコマンド正規表現
-  printf '%s' "$1" |
-    strip_heredoc_bodies |
-    split_into_fragments |
-    grep -qE "^gh([[:space:]]+[^[:space:]]+)*[[:space:]]+$2([[:space:]]|$)"
+# その間は緩く見る。ただし**同じ断片の中**に限る (gh issue … と pr review … のような
+# 離れた語を繋げない)。
+gh_fragment_is() { # $1=断片 $2=サブコマンド正規表現
+  printf '%s\n' "$1" | grep -qE "^gh([[:space:]]+[^[:space:]]+)*[[:space:]]+$2([[:space:]]|$)"
 }
 
+# このコマンドは gh の <サブコマンド> を実行するか。
+#   $1 = コマンド文字列  $2 = サブコマンドの正規表現
+is_gh_subcommand() { # $1=コマンド $2=サブコマンド正規表現
+  local tok repo chd fragment
+  while IFS=$'\t' read -r tok repo chd fragment; do
+    gh_fragment_is "$fragment" "$2" && return 0
+  done < <(gh_invocations "$1")
+  return 1
+}
 
-# このコマンドの宛先は、このリポジトリの**外**か。
-#   $1 = コマンド文字列
-#   $2 = カレントディレクトリ (省略時は $PWD)。フックは payload の .cwd を渡す
+# 1 つの gh の呼び出しの宛先は、このリポジトリの**外**か。
+#   $1 = 断片  $2 = GH_REPO の列  $3 = chdir の列  $4 = cwd
+#   (列の意味は gh_invocations)
 #
 # 基準は GITHUB_REPOSITORY (既定 mokume-metal/mokume)。
 #
-# 判定は gh の宛先解決と同じ順に見る:
+# 判定は gh の宛先解決と同じ順に見る。**読むのはその呼び出しの断片と前置だけ**で、同じ行の
+# 別のコマンドの -R (git log -R x/y など) は宛先ではない (#1729 の反証):
 #
 #   1. -R / --repo が付いていれば、それが宛先 (複数書けて後勝ち)
-#   2. 付いていなければ、カレントディレクトリのリポジトリ
+#   2. 前置の GH_REPO= があれば、それが宛先 (#1729)
+#   3. どちらも無ければ、カレントディレクトリのリポジトリ
 #
-# **2 を見ずに「このリポジトリ宛て」と決めていたのが #611 だった。** 別のリポジトリの
+# **3 を見ずに「このリポジトリ宛て」と決めていたのが #611 だった。** 別のリポジトリの
 # ディレクトリから打った操作まで差し戻し、しかも差し戻しの文面は「誰も承認できない PR に
 # なる」と、そのリポジトリでは成り立たないことを断定していた。フックが受け取る payload の
 # cwd はシェルが実際に居るディレクトリなので (設定ファイルの読まれ方とは別)、これは
@@ -232,40 +406,58 @@ is_gh_subcommand() { # $1=コマンド $2=サブコマンド正規表現
 #   -R mokume-metal/mokume … 明示された自リポ
 #   --repo mokume          … owner を省いた指定。自リポか判定できないので、
 #                            曖昧なものは止める側に倒す
+#   GH_REPO=$X / GH_REPO+= … 値を読めない。同じく止める側
+#   env -C <dir>           … cwd から宛先を決められない。同じく止める側
 #   cwd が git 管理外 / origin が無い / owner/repo に解けない
 #                          … 宛先を決められない。同じく止める側
 #
-# **同じコマンドの中の cd は追わない。** `cd <dir> && gh …` は横断作業で頻出だが、
-# コマンド文字列から cd 先を読むのは推測になる (変数展開・引用・複数の cd・サブシェル)。
-# 推測を permissive な向きに置くと、このリポジトリ宛ての操作を取りこぼしうる。曖昧なら
-# 止める側に倒すというこの guard の方針をここでも通し、逃げ道は -R の明示に一本化する
-# (差し戻しの文面がそう案内する)。
+# **前置の GH_REPO= は読む** (#1729)。その gh にだけ渡る値で、推測にならない。読まずに
+# いると、別のリポジトリの cwd から `GH_REPO=mokume-metal/mokume gh …` を打った形を
+# 素通しにしていた (止める側へ片方向にしか倒れていなかった)。
 #
-# **前置の GH_REPO= も同じ理由で読まない** (#1729)。gh は -R が無ければ環境の GH_REPO を
-# 宛先にするが、コマンド文字列から値を読むのは推測になる (export 済みか・同じ断片の前置か・
-# フックの環境と打つシェルの環境は別物)。`GH_REPO=other/repo gh …` はこのリポジトリ宛てと
-# して判定が続き、逃げ道はここでも -R の明示である。
-#
-# **ヒアドキュメント本文は先に落とす。** そこに現れる --repo x/y は投稿する文章であって
-# 宛先ではない。落とさないと、本文にそう書くだけで guard を素通りできてしまう
-# (is_gh_subcommand が地の文を拾わないために本文を落としているのと同じ理由)。
-targets_other_repo() { # $1=コマンド  $2=cwd (省略可)
-  local base target cwd
+# **同じコマンドの中の cd と、文としての export GH_REPO= は追わない。** コマンド文字列から
+# その値を読むのは推測になる (変数展開・引用・複数の cd・サブシェル・順序)。追わないことが
+# 素通しの向きに倒れる形 (別のリポジトリの cwd から `cd <mokume> && gh …`) が残っており、
+# 扱いは #1823 で決める。逃げ道は -R の明示に一本化する (差し戻しの文面がそう案内する)。
+invocation_targets_other_repo() { # $1=断片 $2=GH_REPO $3=chdir $4=cwd
+  local base target
   base="$(this_repo)"
-  cwd=${2:-}
-  [ -n "$cwd" ] || cwd=$PWD
   # -R は複数書ける。gh は後勝ちなので tail -1 で最後の指定を採る
-  target=$(printf '%s' "$1" |
-    strip_heredoc_bodies |
-    grep -oE '(^|[[:space:]])(-R|--repo)([[:space:]]|=)[^[:space:];&|]+' |
-    tail -1 | grep -oE '[^[:space:]=]+$') || target=""
+  target=$(printf '%s\n' "$1" |
+    grep -oE '(^|[[:space:]])(-R|--repo)([[:space:]]|=)[^[:space:]]+' |
+    tail -1 | grep -oE '[^[:space:]=]+$' | tr -d "\"'") || target=""
+  if [ -z "$target" ]; then
+    case "$2" in
+      +*) target=$(printf '%s' "${2#+}" | tr -d "\"'") ;;
+      '?') return 1 ;;
+    esac
+    case "$target" in *'$'* | *'`'*) return 1 ;; esac
+  fi
   if [ -n "$target" ]; then
     case "$target" in */*) ;; *) return 1 ;; esac
     [ "$target" != "$base" ]
     return
   fi
-  target=$(repo_of_dir "$cwd") || return 1
+  [ "$3" = 1 ] && return 1
+  target=$(repo_of_dir "$4") || return 1
   [ "$target" != "$base" ]
+}
+
+# このコマンドの gh の呼び出しが、**どれも**このリポジトリの外宛てか。
+#   $1 = コマンド文字列
+#   $2 = カレントディレクトリ (省略時は $PWD)。フックは payload の .cwd を渡す
+#
+# gh の呼び出しが 1 つも無ければ偽 (このリポジトリ宛てとして扱う)。フックは呼び出しごとに
+# invocation_targets_other_repo を使う。これはコマンド全体を 1 回で問う口である。
+targets_other_repo() { # $1=コマンド  $2=cwd (省略可)
+  local cwd tok repo chd fragment any=0
+  cwd=${2:-}
+  [ -n "$cwd" ] || cwd=$PWD
+  while IFS=$'\t' read -r tok repo chd fragment; do
+    any=1
+    invocation_targets_other_repo "$fragment" "$repo" "$chd" "$cwd" || return 1
+  done < <(gh_invocations "$1")
+  [ "$any" = 1 ]
 }
 
 # 宛先がこのリポジトリでないときの逃げ道を案内する (stdout)。

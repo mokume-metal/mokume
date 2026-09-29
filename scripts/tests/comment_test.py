@@ -437,6 +437,42 @@ class GuardTest(unittest.TestCase):
                 self.assert_passed(f'{gh} issue comment 5 -R other/repo --body "x"')
                 self.assert_passed(f"{gh} issue comment --help")
 
+    def test_gh_inside_loops_and_conditions_denied(self):
+        """割った後の先頭が予約語になる形 (#1729 の反証)。"""
+        self.assert_denied("for i in 1 2; do gh issue comment $i --body x; done")
+        self.assert_denied("if true; then gh pr close 3 -c x; fi")
+        self.assert_denied("{ gh pr comment 7 --body x; }")
+        self.assert_denied("gh \\\n  issue comment 1 --body x")
+
+    # --- 旗と例外は、その gh の呼び出しの中からだけ読む (#1729 の反証) ----
+    #
+    # 以前はコマンド全体への部分一致で、同じ行の別のコマンドの語に引きずられた
+
+    def test_words_of_another_command_do_not_excuse_a_comment(self):
+        self.assert_denied("cat scripts/comment.sh && gh issue comment 1 --body y")
+        self.assert_denied(
+            "bash scripts/comment.sh issue 1 --body x && PATH=/tmp/bin:$PATH gh issue comment 1 --body y"
+        )
+        self.assert_denied("ls --help && gh issue comment 1 --body x")
+        self.assert_denied("git diff -R foo/bar; gh issue comment 1 --body x")
+
+    def test_flags_of_another_command_do_not_make_a_comment(self):
+        self.assert_passed("gh pr view 3 --comments; /tmp/bin/gh pr close 3 && echo -c x")
+        self.assert_passed("PATH=/tmp/bin:$PATH gh pr review 3 --approve && echo --body")
+
+    def test_mention_inside_a_quoted_message_passes(self):
+        """引用の中の ; はコマンドの区切りではない。main から誤検知していた素の形も。"""
+        self.assert_passed('git commit -m "note; gh issue comment 1"')
+        self.assert_passed('git commit -m "note; X=1 gh issue comment 1"')
+        self.assert_passed('git commit -m "note; /opt/homebrew/bin/gh issue comment 1"')
+
+    def test_gh_repo_prefix_names_the_destination(self):
+        """前置の GH_REPO= はその gh の宛先。両方向に読む (#1729 の反証)。"""
+        self.assert_passed("GH_REPO=other/repo gh issue comment 1 --body x")
+        self.assert_denied(
+            "GH_REPO=mokume-metal/mokume gh issue comment 1 --body x", cwd=self.other_repo_dir()
+        )
+
     def test_prefixed_wrapper_passes(self):
         self.assert_passed("PATH=/tmp/bin:$PATH bash scripts/comment.sh issue 1 --body x")
 

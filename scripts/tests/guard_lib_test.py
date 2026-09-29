@@ -186,6 +186,93 @@ class IsGhSubcommandTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assert_miss(command, f"issue[[:space:]]+{COMMENT}")
 
+    # --- 実行位置を字句で読む (#1729 の反証) -----------------------------
+    #
+    # 以前は演算子の文字で素朴に割って先頭語を見ていたので、割った後の先頭が予約語・
+    # リダイレクトになる形と、行継続・引用した gh を取りこぼし、引用の中まで ; で割った
+
+    def test_reserved_words_before_gh(self):
+        for command in (
+            f"for i in 1 2; do gh issue {COMMENT} $i --body x; done",
+            f"if true; then gh issue {COMMENT} 1 --body x; fi",
+            f"if gh issue {COMMENT} 1 --body x; then :; fi",
+            f"if false; then :; elif true; then :; else gh issue {COMMENT} 1 --body x; fi",
+            f"until false; do gh issue {COMMENT} 1 --body x; done",
+            f"while true; do gh issue {COMMENT} 1 --body x; done",
+            f"true || {{ gh issue {COMMENT} 1 --body x; }}",
+            f"! gh issue {COMMENT} 1 --body x",
+            f"time -p gh issue {COMMENT} 1 --body x",
+            f"case $x in a) gh issue {COMMENT} 1 --body x;; esac",
+        ):
+            with self.subTest(command=command):
+                self.assert_hit(command, f"issue[[:space:]]+{COMMENT}")
+
+    def test_redirections_and_other_prefixes(self):
+        for command in (
+            f"2>/dev/null gh issue {COMMENT} 1 --body x",
+            f">/tmp/o gh issue {COMMENT} 1 --body x",
+            f"> /tmp/o gh issue {COMMENT} 1 --body x",
+            f"&>/tmp/o gh issue {COMMENT} 1 --body x",
+            f"gh issue {COMMENT} 1 --body x 2>&1 | tee log",
+            f"A+=x gh issue {COMMENT} 1 --body x",
+            f"A[1]=x gh issue {COMMENT} 1 --body x",
+            f"A=x\\ y gh issue {COMMENT} 1 --body x",
+            f'A="a\\"b" gh issue {COMMENT} 1 --body x',
+            f"env -P /tmp/bin gh issue {COMMENT} 1 --body x",
+            f"env -C /tmp gh issue {COMMENT} 1 --body x",
+            f"env -iv -u X gh issue {COMMENT} 1 --body x",
+            f"env -S 'gh issue {COMMENT} 1 --body x'",
+            f"env -- gh issue {COMMENT} 1 --body x",
+        ):
+            with self.subTest(command=command):
+                self.assert_hit(command, f"issue[[:space:]]+{COMMENT}")
+
+    def test_line_continuation(self):
+        for command in (
+            f"gh \\\n  issue {COMMENT} 1 --body x",
+            f"/tmp/bin/gh \\\n  issue {COMMENT} 1 --body x",
+            f"A=1 \\\n  gh issue {COMMENT} 1 --body x",
+            f"env A=1 \\\n  gh issue {COMMENT} 1 --body x",
+        ):
+            with self.subTest(command=command):
+                self.assert_hit(command, f"issue[[:space:]]+{COMMENT}")
+
+    def test_quoted_or_escaped_gh(self):
+        for command in (
+            f'"gh" issue {COMMENT} 1 --body x',
+            f"A=1 'gh' issue {COMMENT} 1 --body x",
+            f"\\gh issue {COMMENT} 1 --body x",
+            f"'/tmp/b in/gh' issue {COMMENT} 1 --body x",
+            f'"/tmp/b in/gh" issue {COMMENT} 1 --body x',
+        ):
+            with self.subTest(command=command):
+                self.assert_hit(command, f"issue[[:space:]]+{COMMENT}")
+
+    def test_inside_double_quotes_the_substitution_is_still_a_command(self):
+        self.assert_hit(f'echo "url: $(gh pr {CREATE} --fill)"', f"pr[[:space:]]+{CREATE}")
+        self.assert_hit(f'echo "url: `gh pr {CREATE} --fill`"', f"pr[[:space:]]+{CREATE}")
+        self.assert_hit(f"diff <(gh pr {CREATE} --fill) x", f"pr[[:space:]]+{CREATE}")
+
+    def test_quotes_and_comments_are_not_split(self):
+        """引用の中の ; と、語の頭の # からの注釈は、コマンドの区切りではない。"""
+        for command in (
+            f'git commit -m "note; gh issue {COMMENT} 1"',
+            f'git commit -m "note; X=1 gh issue {COMMENT} 1"',
+            f'git commit -m "note; /opt/homebrew/bin/gh issue {COMMENT} 1"',
+            f"echo 'a && gh issue {COMMENT} 1'",
+            f"echo $'a; gh issue {COMMENT} 1'",
+            f'git commit -m "line 1\nline 2; gh issue {COMMENT} 1"',
+            f"echo x # ; gh issue {COMMENT} 1",
+            f"# gh issue {COMMENT} 1",
+        ):
+            with self.subTest(command=command):
+                self.assert_miss(command, f"issue[[:space:]]+{COMMENT}")
+
+    def test_japanese_text_does_not_stop_the_reader(self):
+        """macOS の awk は UTF-8 のまま 1 文字ずつ切ると止まり、止まると素通しになる。"""
+        self.assert_hit(f'gh issue {COMMENT} 1 --body "日本語の本文"', f"issue[[:space:]]+{COMMENT}")
+        self.assert_hit(f'echo "件名" && gh issue {COMMENT} 1 --body x', f"issue[[:space:]]+{COMMENT}")
+
     def test_safe_token_form(self):
         """#122 で正典にした安全な形。"""
         self.assert_hit(
@@ -335,15 +422,35 @@ class TargetsOtherRepoTest(unittest.TestCase):
         self.assert_other(f"PATH=/tmp/bin:$PATH gh issue {COMMENT} 5 -R other/repo --body x")
         self.assert_other(f"/tmp/bin/gh pr {CREATE} --repo=other/repo --fill")
 
-    def test_gh_repo_prefix_is_not_followed(self):
-        """前置の GH_REPO= は宛先として読まない — cd を追わないのと同じ限界 (#1729)。
+    def test_gh_repo_prefix_is_the_destination(self):
+        """前置の GH_REPO= はその gh にだけ渡る値で、推測にならないので読む (#1729)。
 
-        gh は -R が無ければ GH_REPO を宛先にするが、その値をコマンド文字列から読むのは
-        推測になる (export 済みか・同じ断片か)。逃げ道は -R の明示に一本化する。
+        読まずにいると止める側へ片方向にしか倒れず、別のリポジトリの cwd から
+        mokume を名指しした形を素通しにしていた (反証役の指摘)。
         """
         with tempfile.TemporaryDirectory() as tmp:
             here = make_repo(Path(tmp) / "mine", "git@github.com:mokume-metal/mokume.git")
-            self.assert_own(f"GH_REPO=other/repo gh pr {CREATE} --fill", cwd=str(here))
+            there = make_repo(Path(tmp) / "theirs", "git@github.com:shinyaoguri/setup.git")
+            self.assert_other(f"GH_REPO=other/repo gh pr {CREATE} --fill", cwd=str(here))
+            self.assert_own(f"GH_REPO=mokume-metal/mokume gh pr {CREATE} --fill", cwd=str(there))
+            # -R が前置より勝つ (gh と同じ順)
+            self.assert_own(
+                f"GH_REPO=other/repo gh pr {CREATE} -R mokume-metal/mokume --fill", cwd=str(there)
+            )
+            # 値を読めない・cwd から決められないものは止める側
+            self.assert_own(f'GH_REPO="$R" gh pr {CREATE} --fill', cwd=str(there))
+            self.assert_own(f"env -C {here} gh pr {CREATE} --fill", cwd=str(there))
+            # env -u GH_REPO は cwd に戻す
+            self.assert_other(f"env -u GH_REPO gh pr {CREATE} --fill", cwd=str(there))
+
+    def test_repo_option_of_another_command_is_not_the_destination(self):
+        """同じ行の別のコマンドの -R は、gh の宛先ではない (#1729 の反証)。"""
+        self.assert_own(f"git log -R x/y && gh pr {CREATE} --fill")
+        self.assert_own(f"git diff -R foo/bar; gh issue {COMMENT} 1 --body x")
+
+    def test_every_invocation_must_target_another_repo(self):
+        """1 つでもこのリポジトリ宛ての呼び出しがあれば、コマンド全体は外宛てではない。"""
+        self.assert_own(f"gh pr view -R other/repo 1 && gh pr {CREATE} --fill")
 
     def test_repo_option_still_wins_over_the_directory(self):
         """別リポのディレクトリからでも、-R でこのリポジトリを名指ししたなら止める。"""
@@ -385,6 +492,70 @@ class TargetsOtherRepoTest(unittest.TestCase):
             f"gh issue {COMMENT} 1 -R mokume-metal/mokume --body x",
             GITHUB_REPOSITORY="other/repo",
         )
+
+
+def invocations(command):
+    """gh_invocations の行を (GH_TOKEN, GH_REPO, chdir, 断片) の組で返す。"""
+    proc = subprocess.run(
+        ["/bin/bash", "-c", f'. "{LIB}"\ngh_invocations "$1"', "_", command],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0 and not proc.stderr, proc.stderr
+    return [tuple(line.split("\t", 3)) for line in proc.stdout.splitlines()]
+
+
+class GhInvocationsTest(unittest.TestCase):
+    """gh の呼び出しごとに、その gh に渡る環境を読む (#1729 の反証)。
+
+    名義と宛先の判定は、前置 (GH_TOKEN= / GH_REPO= / env -u / env -i) が同じ行の文より
+    優先されることを知らないと、gh に実際に渡るものを見誤る。
+    """
+
+    def token_of(self, command):
+        rows = invocations(command)
+        self.assertEqual(len(rows), 1, rows)
+        return rows[0][0]
+
+    def test_no_prefix_inherits(self):
+        self.assertEqual(self.token_of(f"gh pr {CREATE} --fill"), "=")
+        self.assertEqual(self.token_of(f"PATH=/x gh pr {CREATE} --fill"), "=")
+
+    def test_prefix_sets_the_token(self):
+        self.assertEqual(self.token_of(f"GH_TOKEN=ghs_x gh pr {CREATE} --fill"), "+ghs_x")
+        self.assertEqual(self.token_of(f'GH_TOKEN="$t" gh pr {CREATE} --fill'), '+"$t"')
+        self.assertEqual(self.token_of(f"GH_TOKEN= gh pr {CREATE} --fill"), "+")
+        self.assertEqual(self.token_of(f"env GH_TOKEN=gho_x gh pr {CREATE} --fill"), "+gho_x")
+
+    def test_env_removes_the_token(self):
+        for command in (
+            f"env -u GH_TOKEN gh pr {CREATE} --fill",
+            f"env -uGH_TOKEN gh pr {CREATE} --fill",
+            f"env --unset=GH_TOKEN gh pr {CREATE} --fill",
+            f"env -i PATH=/x gh pr {CREATE} --fill",
+            f"env - PATH=/x gh pr {CREATE} --fill",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.token_of(command), "-")
+        # 消した後に渡し直せば、その値
+        self.assertEqual(self.token_of(f"env -i GH_TOKEN=ghs_x gh pr {CREATE} --fill"), "+ghs_x")
+
+    def test_unreadable_change_is_marked(self):
+        self.assertEqual(self.token_of(f"GH_TOKEN+=x gh pr {CREATE} --fill"), "?")
+
+    def test_each_invocation_carries_its_own_prefix(self):
+        rows = invocations(f"GH_TOKEN=ghs_x gh pr view 1 && gh pr {CREATE} --fill")
+        self.assertEqual([r[0] for r in rows], ["+ghs_x", "="])
+
+    def test_chdir_is_marked(self):
+        self.assertEqual(invocations(f"env -C /tmp gh pr {CREATE} --fill")[0][2], "1")
+        self.assertEqual(invocations(f"gh pr {CREATE} --fill")[0][2], "0")
+
+    def test_quoted_words_keep_their_spaces_out_of_the_flags(self):
+        """引用の中の空白は伏せる。本文に書いた -R や --help を旗と取り違えない。"""
+        (_, _, _, fragment), = invocations(f'gh issue {COMMENT} 1 --body "see -R x/y --help"')
+        self.assertNotIn(" -R ", fragment)
+        self.assertNotIn(" --help", fragment)
 
 
 class WiringTest(unittest.TestCase):

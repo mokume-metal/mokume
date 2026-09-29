@@ -209,21 +209,10 @@ EOF
 PR_CREATING_PORTS='pr[[:space:]]+(create|new|revert)'
 
 # 内容を出すだけで PR を作らない。`gh pr create --dry-run` の旗で、他の 2 つの口は
-# 持たない (持たない口に付ければ gh 自身が弾く)
-is_dry_run() { # $1=コマンド
-  printf '%s' "$1" |
-    strip_heredoc_bodies |
-    grep -qE '(^|[[:space:]])--dry-run([[:space:]]|$)'
-}
-
-# PR を作る 1 回の呼び出し (口を含む断片)。旗はこの中からだけ読む — 同じ行の別の
-# コマンドの `-d` を拾わないため
-port_fragment() { # $1=コマンド
-  printf '%s' "$1" |
-    strip_heredoc_bodies |
-    split_into_fragments |
-    grep -E "^gh([[:space:]]+[^[:space:]]+)*[[:space:]]+$PR_CREATING_PORTS([[:space:]]|$)" |
-    head -1
+# 持たない (持たない口に付ければ gh 自身が弾く)。旗は呼び出しの断片からだけ読む —
+# 同じ行の別のコマンドの --dry-run (echo --dry-run など) は PR 作成の旗ではない
+is_dry_run() { # $1=gh の断片
+  printf '%s\n' "$1" | grep -qE '(^|[[:space:]])--dry-run([[:space:]]|$)'
 }
 
 # 旗の値。`--head x` / `--head=x` / `-H x` の形を読み、引用符を落とす。後勝ち (gh と同じ)
@@ -235,11 +224,11 @@ flag_value() { # $1=断片  $2=旗の正規表現 (例 '--head|-H')
 }
 
 # 重要パスに触れる PR を Draft で作ろうとしていたら差し戻す (冒頭の「Draft で作らせない」)。
-# 名義の素通しの直前で呼ぶ。Draft でなければ何もしない
+# 名義の素通しの直前で呼ぶ。Draft でなければ何もしない。旗は判定中の呼び出し ($fragment)
+# からだけ読む — 同じ行の別のコマンドの `-d` を拾わないため
 deny_if_protected_draft() {
-  local fragment base head files
-  fragment=$(port_fragment "$command")
-  printf '%s' "$fragment" | grep -qE '(^|[[:space:]])(--draft|-d)(=|[[:space:]]|$)' || return 0
+  local base head files
+  printf '%s\n' "$fragment" | grep -qE '(^|[[:space:]])(--draft|-d)(=|[[:space:]]|$)' || return 0
 
   # revert の中身は、戻す PR の差分であって手元には無い (port は末尾に空白を持ちうる)
   case "$port" in "gh pr revert"*)
@@ -262,32 +251,6 @@ deny_if_protected_draft() {
   hook_deny "$(draft_created_message "$port")"
 }
 
-hook_payload
-hook_command
-command=$HOOK_COMMAND
-cwd=$HOOK_CWD
-
-# **PR を作る口は 1 つではない** (冒頭の表)。create の別綴り (new) と revert も見る
-is_gh_subcommand "$command" "$PR_CREATING_PORTS" || exit 0
-
-# 実際に打たれた口。差し戻しの文言がこれを名乗る — 打っていない綴りで直し方を示すと、
-# 読み手が自分の行と突き合わせられない
-port="gh $(printf '%s' "$command" |
-  strip_heredoc_bodies |
-  grep -oE "$PR_CREATING_PORTS" |
-  head -1 |
-  tr -s '[:space:]' ' ')"
-
-# 使い方を尋ねているだけなら作成ではない (判定は guard-lib.sh が持つ)
-is_help_request "$command" && exit 0
-
-# 内容を出すだけで PR を作らない (gh pr create の旗)
-is_dry_run "$command" && exit 0
-
-# 他のリポジトリ宛ての PR はこのリポジトリの規約の外。判定は guard-lib.sh が持つ
-# (agent-comment-guard.sh と共有する。#188)
-targets_other_repo "$command" "$cwd" && exit 0
-
 # 同じ行で installation token を発行しているなら、それが常道の形 — ただし **発行の失敗が
 # 後段へ伝わる形** に限る (冒頭の解説と #122)。
 #
@@ -297,9 +260,11 @@ targets_other_repo "$command" "$cwd" && exit 0
 #   GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create …
 #
 # export を先頭に付けると終了コードが export のもの (0) に化けるため、この式は
-# 「区切りの直後に来る素の GH_TOKEN= 代入」であることを要求する。export の直後は行頭にも
-# 区切りにも当たらないので落ちる。
-readonly SAFE_TOKEN_FORM='(^|&&|;|\|)[[:space:]]*GH_TOKEN=("|'"'"')?\$\([^)]*scripts/gh-app-token\.sh[^)]*\)("|'"'"')?[[:space:]]*&&'
+# 「区切りの直後に来る素の <変数>= 代入」であることを要求する。export の直後は行頭にも
+# 区切りにも当たらないので落ちる。@VAR@ に変数名を入れて使う — GH_TOKEN に直接入れる形と、
+# 別の変数に入れて前置で渡す形 (t="$(…)" && GH_TOKEN="$t" gh …・#1729) が同じ式を読む
+readonly SAFE_ISSUE_FORM='(^|&&|;|\|)[[:space:]]*@VAR@=("|'"'"')?\$\([^)]*scripts/gh-app-token\.sh[^)]*\)("|'"'"')?[[:space:]]*&&'
+readonly SAFE_TOKEN_FORM=${SAFE_ISSUE_FORM//@VAR@/GH_TOKEN}
 
 # **発行できただけでは足りない。** 素の代入はそのシェルの変数を作るだけで、子プロセスの
 # gh には渡らない。つまり
@@ -311,35 +276,138 @@ readonly SAFE_TOKEN_FORM='(^|&&|;|\|)[[:space:]]*GH_TOKEN=("|'"'"')?\$\([^)]*scr
 # PR** ができた。渡っていることまで確かめるため、区切りの直後に来る export を要求する。
 readonly EXPORT_FORM='(^|&&|;|\|)[[:space:]]*export[[:space:]]+GH_TOKEN([[:space:]]|&|;|\||$)'
 
-if printf '%s' "$command" | grep -qE '[^[:space:];&|`)]*scripts/gh-app-token\.sh'; then
-  if printf '%s' "$command" | grep -qE "$SAFE_TOKEN_FORM"; then
-    if printf '%s' "$command" | grep -qE "$EXPORT_FORM"; then
-      deny_if_protected_draft
-      exit 0
+# gh の前置が、gh へ渡る GH_TOKEN を変えている (#1729)。$1=口 $2=何をしているか
+prefix_token_message() {
+  cat <<EOF
+$1 の前置が、gh へ渡る GH_TOKEN を$2。installation token (ghs_) でない認証で
+gh が走ると、**誰も承認できない PR** になります (ADR-0007 / #88)。
+
+前置で渡すなら、同じ行で発行した token を、失敗が後段へ伝わる形で渡してください:
+
+  t="\$(bash scripts/gh-app-token.sh)" && GH_TOKEN="\$t" $1 …
+
+export で渡す形でも構いません:
+
+  GH_TOKEN="\$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && $1 …
+EOF
+}
+
+# 承認者の外に居る人 (push 権限の無い外部の人) か。どの名義で作っても承認できる
+# (冒頭の「外部の人は止めない」・#184)。確かめられたときだけ真で、引けない・読めない
+# ときは偽 (止める側へ倒す)
+is_outside_collaborator() {
+  local push
+  push=$(gh api "repos/$(this_repo)" --jq '.permissions.push' 2>/dev/null) || push=""
+  [ "$push" = false ]
+}
+
+# 前置の無い呼び出し — gh は打つシェルの GH_TOKEN を継ぐ。判定は同じ行の文の並びを読む
+judge_inherited_token() {
+  if printf '%s' "$command" | grep -qE '[^[:space:];&|`)]*scripts/gh-app-token\.sh'; then
+    if printf '%s' "$command" | grep -qE "$SAFE_TOKEN_FORM"; then
+      if printf '%s' "$command" | grep -qE "$EXPORT_FORM"; then
+        deny_if_protected_draft
+        return 0
+      fi
+
+      # 発行の形は正しいが、gh へ渡っていない
+      hook_deny "$(token_not_exported_message)"
     fi
 
-    # 発行の形は正しいが、gh へ渡っていない
-    hook_deny "$(token_not_exported_message)"
+    # token を発行しようとはしている。汎用の差し戻しだと「使っているのに止められた」と
+    # 読めて直し方が分からないので、何がまずいかを名指しする
+    hook_deny "$(unsafe_token_form_message)"
   fi
 
-  # token を発行しようとはしている。汎用の差し戻しだと「使っているのに止められた」と
-  # 読めて直し方が分からないので、何がまずいかを名指しする
-  hook_deny "$(unsafe_token_form_message)"
-fi
+  # 常設している環境 (GH_TOKEN に installation token を置いてある) も常道。
+  # 判定は token 発行の形より **後**。危険な形は env の token を空文字で上書きするので、
+  # ここが先に通ると握り潰しを見逃す
+  case "${GH_TOKEN:-}" in ghs_*)
+    deny_if_protected_draft
+    return 0
+    ;;
+  esac
 
-# 常設している環境 (GH_TOKEN に installation token を置いてある) も常道。
-# 判定は token 発行の形より **後**。危険な形は env の token を空文字で上書きするので、
-# ここが先に通ると握り潰しを見逃す
-case "${GH_TOKEN:-}" in ghs_*)
-  deny_if_protected_draft
-  exit 0
-  ;;
-esac
+  is_outside_collaborator && return 0
+  hook_deny "$(identity_required_message "$port")$(other_repo_hint "$port")"
+}
 
-# 承認者の外に居る人 (push 権限の無い外部の人) の PR は、どの名義で作っても承認できる
-# (冒頭の「外部の人は止めない」・#184)。確かめられたときだけ通し、引けない・読めない
-# ときは止める側へ倒す
-push=$(gh api "repos/$(this_repo)" --jq '.permissions.push' 2>/dev/null) || push=""
-[ "$push" = false ] && exit 0
+# 1 つの PR 作成の呼び出しを判定する。通れば戻り、止めるなら差し戻して終わる。
+#   $1 = gh_invocations の GH_TOKEN の列
+#
+# **gh に実際に渡る GH_TOKEN を見る** (#1729 の反証)。前置 (`GH_TOKEN=… gh`・`env -u
+# GH_TOKEN gh`・`env -i … gh`) はその gh にだけ効き、同じ行で安全に発行・export した token
+# より優先される。以前は前置を落として捨てていたので、発行と export の後に `env -u GH_TOKEN`
+# を挟んだ形を素通しし、正しく渡す `t="$(…)" && GH_TOKEN="$t" gh …` を的外れな文面で止めた:
+#
+#   前置                         gh に渡るもの          判定
+#   なし                         打つシェルの GH_TOKEN  文の並びを読む (judge_inherited_token)
+#   GH_TOKEN=ghs_…               installation token     通す
+#   GH_TOKEN="$t"                t を安全に発行した値   通す (t の発行が SAFE_ISSUE_FORM のとき)
+#   GH_TOKEN="$GH_TOKEN"         打つシェルの GH_TOKEN  前置なしと同じ
+#   GH_TOKEN="$(…)"              発行の失敗が伝わらない 止める (unsafe_token_form_message)
+#   GH_TOKEN= / gho_… / "$X"     確かめられない値        止める
+#   env -u GH_TOKEN・env -i      何も渡らない            止める (gh はメンテナの認証へ)
+#
+# 止める側も、push 権限の無い外部の人は通す (どの名義でも承認できる)。
+judge_invocation() { # $1=GH_TOKEN の列
+  local value var
+  case "$1" in
+    '=') judge_inherited_token; return ;;
+    '-') is_outside_collaborator && return 0
+         hook_deny "$(prefix_token_message "$port" "消しています (env -u GH_TOKEN / env -i)")" ;;
+    '?') is_outside_collaborator && return 0
+         hook_deny "$(prefix_token_message "$port" "読めない形で変えています")" ;;
+  esac
+  value=$(printf '%s' "${1#+}" | tr -d "\"'")
+  case "$value" in
+    ghs_*) deny_if_protected_draft; return 0 ;;
+    '$('* | '`'*) hook_deny "$(unsafe_token_form_message)" ;;
+  esac
+  var=$(printf '%s' "$value" | sed -nE 's/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/\1/p')
+  if [ -n "$var" ]; then
+    if printf '%s' "$command" | grep -qE "${SAFE_ISSUE_FORM//@VAR@/$var}"; then
+      deny_if_protected_draft
+      return 0
+    fi
+    if [ "$var" = GH_TOKEN ]; then
+      judge_inherited_token
+      return
+    fi
+  fi
+  is_outside_collaborator && return 0
+  hook_deny "$(prefix_token_message "$port" "installation token と確かめられない値にしています")"
+}
 
-hook_deny "$(identity_required_message "$port")$(other_repo_hint "$port")"
+hook_payload
+hook_command
+command=$HOOK_COMMAND
+cwd=$HOOK_CWD
+
+# **PR を作る口は 1 つではない** (冒頭の表)。create の別綴り (new) と revert も見る。
+# 呼び出しごとに、その断片と前置だけを読む (#1729 の反証) — --help・--dry-run・-R は同じ行の
+# 別のコマンドのものを拾わない (echo --dry-run && gh pr create … を素通しにしていた)。
+# 呼び出しは fd 3 から読む — 判定の中で走る gh api / git に標準入力を食わせない
+while IFS=$'\t' read -r token repo chdir fragment <&3; do
+  gh_fragment_is "$fragment" "$PR_CREATING_PORTS" || continue
+
+  # 実際に打たれた口。差し戻しの文言がこれを名乗る — 打っていない綴りで直し方を示すと、
+  # 読み手が自分の行と突き合わせられない
+  port="gh $(printf '%s\n' "$fragment" |
+    grep -oE "$PR_CREATING_PORTS" |
+    head -1 |
+    tr -s '[:space:]' ' ')"
+
+  # 使い方を尋ねているだけなら作成ではない (判定は guard-lib.sh が持つ)
+  is_help_request "$fragment" && continue
+
+  # 内容を出すだけで PR を作らない (gh pr create の旗)
+  is_dry_run "$fragment" && continue
+
+  # 他のリポジトリ宛ての PR はこのリポジトリの規約の外。判定は guard-lib.sh が持つ
+  # (agent-comment-guard.sh と共有する。#188)
+  invocation_targets_other_repo "$fragment" "$repo" "$chdir" "$cwd" && continue
+
+  judge_invocation "$token"
+done 3< <(gh_invocations "$command")
+exit 0
