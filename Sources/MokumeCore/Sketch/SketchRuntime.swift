@@ -781,8 +781,9 @@ public final class SketchRuntime {
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     func presencePreview(maxWidth: Int) -> DisplayImage? {
         guard timing.frameCount > 0 else { return nil }
-        guard let image = try? self.target.encodeToImage().read() else { return nil }
-        return image.scaled(by: min(1, Double(maxWidth) / Double(max(1, image.width))))
+        guard let image = try? self.target.encodeToImage() else { return nil }
+        // 縮めてから読む (#1745)。出るバイト列は、原寸を読んでから縮めたのと同じ
+        return image.read(scaledBy: min(1, Double(maxWidth) / Double(max(1, image.width))))
     }
 
     /// フレームの頭で片付けること。
@@ -1103,7 +1104,8 @@ public final class SketchRuntime {
         do {
             // **出口が受け取るのと同じ道を通す** ([ADR-0024] 決定 6)。小さくするのは
             // 通した後で、出るバイト列は通す前に間引いたのと同じである (#382)
-            let image = try target.encodeToImage().read().scaled(by: pending.scale)
+            // 原寸の配列は作らず、置き場から拾う画素だけを読む (#1745)
+            let image = try target.encodeToImage().read(scaledBy: pending.scale)
             let name = try observer.writeFrame(image, at: pending.frames.count)
             pending.frames.append(
                 ObservationReport.CapturedFrame(
