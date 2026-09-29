@@ -30,12 +30,13 @@ SwiftPM が `--xunit-output` で自分でファイルへ書く記録は、同じ
 
 ## 記録全体の失敗の数 (`--failures <記録>`・#1526)
 
-`make test` が、`swift test` が非 0 で終わった回に呼ぶ (`scripts/test-vanished.sh`)。
-検査のプロセスが要約を残さずに消えた回と、普通の赤とを分けるためで、出すのは 1 行:
+`make test` が、`swift test` が終わった回に呼ぶ (`scripts/test-vanished.sh`)。0 で
+終わった回も呼ぶ (#1688)。検査のプロセスが要約を残さずに消えた回と、普通の赤・緑とを
+分けるためで、出すのは 1 行:
 
     missing      記録が無い (空のファイルも含む — Makefile の `test -s` と同じ線)
     unreadable   在るが読めない (本物の helper を kill -9 した回は、宣言と根の開き
-                 だけの 52 バイトが残った)
+                 だけの 52 バイトが残った)。根が閉じていない記録もここに入る
     failures N   読めて、`<failure>` か `<error>` を持つ検査が N 件
 
 終了コードは同じく常に 0 にする。判定は呼ぶ側が行を読んで決める。
