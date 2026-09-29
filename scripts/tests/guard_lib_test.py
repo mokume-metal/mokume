@@ -14,9 +14,9 @@
 import json
 import os
 import re
+import resource
 import subprocess
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -685,15 +685,25 @@ class LengthTest(unittest.TestCase):
     1 文字ずつ文字列を継ぎ足すと長さの 2 乗かかり、480KB の二重引用の本文でガード 1 本が
     16 秒を越えた。フックの timeout は 10 秒で、越えると判定が出ずに素通しになりうる。
     上限は手元で 1 秒前後のものに、遅い機械の分の余裕を持たせてある。
+
+    **測るのは壁時計ではなく、ガード (子とその子) が使った CPU 時間** (#1857)。2 乗の退行は
+    ガード自身の CPU として現れるが、壁時計は他の誰かが CPU を使った分まで足す。hooks-test を
+    並列にしたら、退行が無いのに 5.87 秒で赤になった。`<(...)` の中の仕事も数えられている
+    ことは、負荷の無い状態で CPU 時間と壁時計が揃うことで確かめた (#1857)。
     """
 
     LIMIT = 5.0
     SIZE = 500_000
 
+    @staticmethod
+    def children_cpu():
+        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        return usage.ru_utime + usage.ru_stime
+
     def time_of(self, command):
-        start = time.monotonic()
+        start = self.children_cpu()
         self.assertEqual(judge(command, f"issue[[:space:]]+{COMMENT}"), 0)
-        return time.monotonic() - start
+        return self.children_cpu() - start
 
     def repeat(self, piece):
         """piece を繰り返して SIZE バイトに届かせる。"""
