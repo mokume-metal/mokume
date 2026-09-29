@@ -92,8 +92,17 @@ static inline float4 mokume_brightShrink(Pixel in, float threshold, float factor
 /// `offset` は入りの絵を読む位置のずらし (0…1)。時間方向のとき、揺らして描いた分を
 /// ここで戻す — 戻す場所を広げる前に置くと、余分なぼけが 1 段も入らない。
 ///
-/// 三次補間は縁で行き過ぎる (負へ振れる) ことがある。作業空間の値は光の量なので、
-/// **負にはしない**。
+/// 三次補間は縁で上にも下にも行き過ぎる。**範囲の外の値を、この段が作らない** (#1638)。
+/// 入りの絵が乗算済みの範囲の内 (不透明度 0…1・色 0…不透明度) なら、出りも内に置く:
+///
+/// - 各チャンネルを、読んだ 4×4 画素のそのチャンネルの最小・最大へ締める。不透明度は
+///   1 を越えず、負にもならない。上への振れも捨てるので、負の側だけを 0 へ締めて
+///   いた頃より光の量が増えにくい
+/// - そのうえで、色を「不透明度 + 近傍で色が不透明度を越えていた量」までに締める。
+///   チャンネルごとの締めだけでは、不透明度だけが下へ振れた所 (白と黒が接する縁) で
+///   色が不透明度を越える。入りが範囲の内なら越えていた量は 0 で、色 ≤ 不透明度になる。
+///   **入りに元からある越え (1 を越える光・#1057) はそのまま運ぶ** — 一律に不透明度で
+///   締めると、作業空間が持てる明るさを潰す ([ADR-0011] 決定 1)
 static inline float4 mokume_enlarge(Pixel in, float2 offset) {
     float2 size = float2(in.source.get_width(), in.source.get_height());
     float2 coord = (in.place + offset) * size - 0.5;
@@ -109,12 +118,22 @@ static inline float4 mokume_enlarge(Pixel in, float2 offset) {
     float wy[4] = { w0.y, w1.y, w2.y, w3.y };
 
     float4 sum = float4(0.0);
+    // 締める幅の初めは、読む 16 画素に含まれる中心の 1 画素 (無限大から始めない —
+    // 速い数学は無限大を持たない前提で組まれる)
+    float4 lowest = mokume_texel(in, int2(base));
+    float4 highest = lowest;
+    float3 beyond = float3(0.0);
     for (int j = 0; j < 4; j++) {
         for (int i = 0; i < 4; i++) {
-            sum += mokume_texel(in, int2(base) + int2(i - 1, j - 1)) * (wx[i] * wy[j]);
+            float4 texel = mokume_texel(in, int2(base) + int2(i - 1, j - 1));
+            sum += texel * (wx[i] * wy[j]);
+            lowest = min(lowest, texel);
+            highest = max(highest, texel);
+            beyond = max(beyond, texel.rgb - texel.a);
         }
     }
-    sum = max(sum, float4(0.0));
+    sum = clamp(sum, lowest, highest);
+    sum.rgb = min(sum.rgb, sum.a + beyond);
     // 乗算済みの決まりを保つ — 不透明度が無いところに色は残らない
     if (sum.a <= 0.0) { return float4(0.0); }
     return sum;

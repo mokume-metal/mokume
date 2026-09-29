@@ -199,6 +199,51 @@ struct UpscaleTests {
         #expect(abs(pixels[64, 48].alpha - 0.5) < 0.05)
     }
 
+    /// 透明の下地に、不透明な白・赤・黒を接して置く (#1638 の再現と同じ絵)。
+    ///
+    /// 縁の外側では三次補間が上へ振れて不透明度が 1 を越える。白い円の上端が黒い四角の
+    /// 下辺に接する所では、不透明度だけが下へ振れて色が不透明度を越える。
+    private func touchingShapes(on canvas: Canvas) {
+        canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+        canvas.noStroke()
+        canvas.fill(.display(red: 1, green: 1, blue: 1))
+        canvas.circle(64, 50, 40)
+        canvas.fill(.display(red: 1, green: 0, blue: 0))
+        canvas.rect(34, 10, 20, 20)
+        canvas.fill(.display(red: 0, green: 0, blue: 0))
+        canvas.rect(54, 10, 20, 20)
+    }
+
+    /// 出す面で、乗算済みの範囲 (不透明度 0…1・色 0…不透明度) を外れた画素を数える。
+    /// **遊びは置かない。** 締めた値を半精度へ丸めても、丸めは単調なので順序は崩れない。
+    private func outOfRange(_ canvas: Canvas) -> (alpha: Int, colour: Int, negative: Int) {
+        let pixels = canvas.output.pixels
+        var counts = (alpha: 0, colour: 0, negative: 0)
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                let c = pixels[x, y]
+                if c.alpha > 1 { counts.alpha += 1 }
+                if max(c.red, c.green, c.blue) > c.alpha { counts.colour += 1 }
+                if min(c.red, c.green, c.blue, c.alpha) < 0 { counts.negative += 1 }
+            }
+        }
+        return counts
+    }
+
+    @Test(
+        "範囲の内の絵は、拡大を通しても乗算済みの範囲の内に留まる",
+        arguments: [(Float(0.75), Upscale.spatial), (0.5, .spatial), (0.25, .spatial), (0.5, .temporal)])
+    func enlargingKeepsPremultipliedRange(density: Float, upscale: Upscale) throws {
+        let canvas = try makeCanvas(density: density, upscale: upscale)
+        // 時間方向は前のフレームと混ぜる。混ぜた後も内に留まるかを見るので、数フレーム進める
+        let frames = upscale == .temporal ? 8 : 1
+        for _ in 0..<frames { try canvas.draw { touchingShapes(on: canvas) } }
+        let counts = outOfRange(canvas)
+        #expect(counts.alpha == 0, "不透明度 > 1 が \(counts.alpha) 画素 (\(density)・\(upscale))")
+        #expect(counts.colour == 0, "色 > 不透明度が \(counts.colour) 画素 (\(density)・\(upscale))")
+        #expect(counts.negative == 0, "負の値が \(counts.negative) 画素 (\(density)・\(upscale))")
+    }
+
     @Test("表示できる範囲を超えた明るさが、拡大を通しても超えたまま残る")
     func brightnessBeyondTheDisplayRangeSurvives() throws {
         let canvas = try makeCanvas(density: 0.5)
