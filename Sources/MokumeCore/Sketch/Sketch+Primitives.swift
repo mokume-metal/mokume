@@ -17,7 +17,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 濃い灰色の下地に、左上 (80, 60) から 240x180 の橙色の長方形 | symmetric=xy -->
-    ///     ![濃い灰色の下地に、左上 (80, 60) から 240x180 の橙色の長方形](https://i.gyazo.com/91321fd926431913d8b41a1bc0877b10.png)
+    ///     ![濃い灰色の下地に、左上 (80, 60) から 240x180 の橙色の長方形](https://i.gyazo.com/c2ec99762a53734d02277ad9d2467055.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -35,7 +35,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 横長の長方形が上、縦長の長方形が左下に並ぶ -->
-    ///     ![横長の長方形が上、縦長の長方形が左下に並ぶ](https://i.gyazo.com/1af656b7596f944cb2736ebbf1a28039.png)
+    ///     ![横長の長方形が上、縦長の長方形が左下に並ぶ](https://i.gyazo.com/2dfec5b8beb40a85e52f268fcb446ce8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -62,7 +62,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 下地の中ほどに、一辺 140 の橙色の正方形 | symmetric=xy -->
-    ///     ![下地の中ほどに、一辺 140 の橙色の正方形](https://i.gyazo.com/816a997e781a50e439a784d00f4f9374.png)
+    ///     ![下地の中ほどに、一辺 140 の橙色の正方形](https://i.gyazo.com/846ccaed5503e5c72d436c777f1f561d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -86,7 +86,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 濃い灰色の下地の中央に、直径 160 の橙色の円 | symmetric=xy -->
-    ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/1cc45c1fa382c2acb3415a57aab75770.png)
+    ///     ![濃い灰色の下地の中央に、直径 160 の橙色の円](https://i.gyazo.com/96181bf509092609adb70e0a39c9fe35.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -107,7 +107,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心に重なる、直径 240・160・80 の 3 つの円 | symmetric=xy -->
-    ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/df5fa3cd289c445abe4e14e4bb62dc9a.png)
+    ///     ![同じ中心に重なる、直径 240・160・80 の 3 つの円](https://i.gyazo.com/179362f2c7ba97955a550ebdf9a38ba1.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -132,7 +132,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 画面の中央に、横に長い橙色の楕円 | symmetric=xy -->
-    ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/7294388a4964ec73975ee3ae3893b42d.png)
+    ///     ![画面の中央に、横に長い橙色の楕円](https://i.gyazo.com/ae195aa51d3fa91ee52980143a4d5f17.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -151,7 +151,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心に、横長と縦長の楕円が十字に重なる | symmetric=xy -->
-    ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/fa1d8bb830b64a2d3889be1071bbd5e6.png)
+    ///     ![同じ中心に、横長と縦長の楕円が十字に重なる](https://i.gyazo.com/22de3a16c890eca31fd83cad374ecb51.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -178,7 +178,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている -->
-    ///     ![中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている](https://i.gyazo.com/f05a83df616e766bf61b02e7000c8f12.png)
+    ///     ![中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている](https://i.gyazo.com/5d5ef1d146facd02816e5a4f0431b7cc.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -195,7 +195,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている -->
-    ///     ![同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている](https://i.gyazo.com/114fe261f94c658091628c78ed7324d9.png)
+    ///     ![同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている](https://i.gyazo.com/781c7a80131768de3b4eb0356008c848.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -212,7 +212,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左から上へ 4 分の 1 だけの橙色の扇形 -->
-    ///     ![左から上へ 4 分の 1 だけの橙色の扇形](https://i.gyazo.com/fdaa962a2366d3af7dc5539767cbdff5.png)
+    ///     ![左から上へ 4 分の 1 だけの橙色の扇形](https://i.gyazo.com/dc188ab234ebc18e5b37d95fc58fcca9.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -233,7 +233,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする | frames=60 symmetric=y -->
-    ///     ![黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする](https://i.gyazo.com/400c7dfd652b5b06d6852aa30886e074.gif)
+    ///     ![黄色い円が口を開け閉めするように、扇形の欠けが大きくなったり小さくなったりする](https://i.gyazo.com/aabbf800cf7ed2dce8c66629aa73010f.gif)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -273,7 +273,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 下地の中央に、頂点を上に向けた橙色の三角形 | symmetric=x -->
-    ///     ![下地の中央に、頂点を上に向けた橙色の三角形](https://i.gyazo.com/9e0c0bcf222e3977d1dc13227e874eba.png)
+    ///     ![下地の中央に、頂点を上に向けた橙色の三角形](https://i.gyazo.com/0dfa362b281239ee52fac0810c2cc9d3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -298,7 +298,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 少し傾いた橙色の四角形 -->
-    ///     ![少し傾いた橙色の四角形](https://i.gyazo.com/50f0f2f6adfcdaebe808bce6337edeb8.png)
+    ///     ![少し傾いた橙色の四角形](https://i.gyazo.com/02bf66730a70007f5df7fc21a4e33338.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -315,7 +315,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ 4 点で辺が交差し、砂時計のような形になっている -->
-    ///     ![同じ 4 点で辺が交差し、砂時計のような形になっている](https://i.gyazo.com/68bbdf3c925be4e8eb5ba98e1a0b4cb3.png)
+    ///     ![同じ 4 点で辺が交差し、砂時計のような形になっている](https://i.gyazo.com/6e348415a98bf57d5249bb0c1e446b3a.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -347,7 +347,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左から右へ、だんだん大きくなる 5 つの白い点 | symmetric=y -->
-    ///     ![左から右へ、だんだん大きくなる 5 つの白い点](https://i.gyazo.com/8ba9f92afc2b850ec0c6bee16468efbf.png)
+    ///     ![左から右へ、だんだん大きくなる 5 つの白い点](https://i.gyazo.com/f52bdab3030513dc854c6b08af8f8c00.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -368,7 +368,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色に塗る指定をしても、点は水色のまま並んでいる | symmetric=xy -->
-    ///     ![橙色に塗る指定をしても、点は水色のまま並んでいる](https://i.gyazo.com/be20303d3bdb4dda91afc87b5233ee1e.png)
+    ///     ![橙色に塗る指定をしても、点は水色のまま並んでいる](https://i.gyazo.com/c1e8b626eeaff43b1805548dcf936d96.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -394,7 +394,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左上を (120, 90) とする 160x120 の橙色の長方形 | symmetric=xy -->
-    ///     ![左上を (120, 90) とする 160x120 の橙色の長方形](https://i.gyazo.com/4897a176deed098645d6b8808791c91d.png)
+    ///     ![左上を (120, 90) とする 160x120 の橙色の長方形](https://i.gyazo.com/3fccb9ad62d590f8f09242b0ea68c484.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -412,7 +412,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: (120, 90) と (160, 120) を対角とする、小さな橙色の長方形 -->
-    ///     ![(120, 90) と (160, 120) を対角とする、小さな橙色の長方形](https://i.gyazo.com/387917c8b465595dea782dfc522edbad.png)
+    ///     ![(120, 90) と (160, 120) を対角とする、小さな橙色の長方形](https://i.gyazo.com/e5b81d87f4b0a6e86851007633c5e857.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -430,7 +430,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: (120, 90) を中心とする 160x120 の橙色の長方形 -->
-    ///     ![(120, 90) を中心とする 160x120 の橙色の長方形](https://i.gyazo.com/f36d9de1076d83443e54fef36e915c7e.png)
+    ///     ![(120, 90) を中心とする 160x120 の橙色の長方形](https://i.gyazo.com/267b47e456d34d904ae11913d14b607e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -448,7 +448,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ中心のまま、center のときの倍の大きさになった橙色の長方形 -->
-    ///     ![同じ中心のまま、center のときの倍の大きさになった橙色の長方形](https://i.gyazo.com/dc4d256a60d1292df561947039050001.png)
+    ///     ![同じ中心のまま、center のときの倍の大きさになった橙色の長方形](https://i.gyazo.com/3a7a0a54b203232a6247c0deff3efd4f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -476,7 +476,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: (200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円 | symmetric=xy -->
-    ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/a93e72193a029fcd3333328a96fbe291.png)
+    ///     ![(200, 150) を中心とする、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/081c472956dcaac395ba5c36ea71014b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -494,7 +494,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円 -->
-    ///     ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/4cfb7fee1ff44c5487734333161ebf04.png)
+    ///     ![同じ数のまま右下へずれた、幅 200 高さ 140 の橙色の楕円](https://i.gyazo.com/6de8f23b4bfb1c069f267af4ea1a5a19.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -517,7 +517,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左上から右下へ引かれた 1 本の白い線 -->
-    ///     ![左上から右下へ引かれた 1 本の白い線](https://i.gyazo.com/120912ee096c296b2ad0f761ba14f0da.png)
+    ///     ![左上から右下へ引かれた 1 本の白い線](https://i.gyazo.com/be9f6f61767831eb95c0f7d46f9688c4.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -538,7 +538,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太さの違う 3 本の白い線が、端の形を変えて横に並んでいる | symmetric=x -->
-    ///     ![太さの違う 3 本の白い線が、端の形を変えて横に並んでいる](https://i.gyazo.com/68d0eaf648d2832387f34292a65687bb.png)
+    ///     ![太さの違う 3 本の白い線が、端の形を変えて横に並んでいる](https://i.gyazo.com/c8db1e78f3ee60c130da2cb1a0cc611b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
