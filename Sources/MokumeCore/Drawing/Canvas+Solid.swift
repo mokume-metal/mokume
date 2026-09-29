@@ -60,7 +60,7 @@ extension Canvas {
     public func sphere(_ radius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail) {
         let radius = radius.asFloat
         guard SolidShape.isDrawable(radius) else { return warnBadSize("sphere") }
-        place(.sphere(radius: radius, detail: SolidShape.clampDetail(detail)))
+        place(.sphere(radius: radius, detail: admittedDetail(detail, for: "sphere", .badSphereDetail)))
     }
 
     // 楕円体を置く。
@@ -72,7 +72,7 @@ extension Canvas {
         guard SolidShape.isDrawable(x, y, z) else { return warnBadSize("ellipsoid") }
         place(
             .ellipsoid(
-                radiusX: x, radiusY: y, radiusZ: z, detail: SolidShape.clampDetail(detail)))
+                radiusX: x, radiusY: y, radiusZ: z, detail: admittedDetail(detail, for: "ellipsoid", .badEllipsoidDetail)))
     }
 
     // 平らな面を置く。
@@ -89,7 +89,7 @@ extension Canvas {
     ) {
         let (radius, height) = (radius.asFloat, height.asFloat)
         guard SolidShape.isDrawable(radius, height) else { return warnBadSize("cylinder") }
-        place(.cylinder(radius: radius, height: height, detail: SolidShape.clampDetail(detail)))
+        place(.cylinder(radius: radius, height: height, detail: admittedDetail(detail, for: "cylinder", .badCylinderDetail)))
     }
 
     // 円錐を置く。
@@ -99,7 +99,7 @@ extension Canvas {
     ) {
         let (radius, height) = (radius.asFloat, height.asFloat)
         guard SolidShape.isDrawable(radius, height) else { return warnBadSize("cone") }
-        place(.cone(radius: radius, height: height, detail: SolidShape.clampDetail(detail)))
+        place(.cone(radius: radius, height: height, detail: admittedDetail(detail, for: "cone", .badConeDetail)))
     }
 
     // 輪を置く。
@@ -110,7 +110,7 @@ extension Canvas {
         guard SolidShape.isDrawable(radius, tubeRadius) else { return warnBadSize("torus") }
         place(
             .torus(
-                ringRadius: radius, tubeRadius: tubeRadius, detail: SolidShape.clampDetail(detail)))
+                ringRadius: radius, tubeRadius: tubeRadius, detail: admittedDetail(detail, for: "torus", .badTorusDetail)))
     }
 
     // MARK: - 奥行きを持つ変換
@@ -464,6 +464,27 @@ extension Canvas {
         }
         solidMeshes.insert(mesh, for: shape)
         return mesh
+    }
+
+    /// 分け方を範囲 (``SolidShape/detailRange``) へ丸め、丸めたら 1 度知らせる ([#1698])。
+    ///
+    /// 丸め先は ``SolidShape/clampDetail(_:)`` のまま。鍵は立体ごとに分ける — 共有すると、
+    /// 先に言った立体が後の立体の書き間違いを黙らせる (#1698 の反証 9)。
+    ///
+    /// **置けない所 (フレームの外) では知らせない** (#1698 の反証 10)。そこでは形を置かず、
+    /// 置く側 (`placeMesh`) が「フレームの外」を言う。置かない形のために 1 度きりの鍵を使い
+    /// 切らない。
+    ///
+    /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+    private func admittedDetail(_ detail: Int, for name: String, _ warning: Warning) -> Int {
+        let used = SolidShape.clampDetail(detail)
+        if used != detail, canPlace {
+            let range = SolidShape.detailRange
+            warnRounded(
+                warning, name, "detail",
+                takes: "\(range.lowerBound) to \(range.upperBound)", passed: detail, used: used)
+        }
+        return used
     }
 
     /// 置けない寸法を、初回だけ知らせる。
