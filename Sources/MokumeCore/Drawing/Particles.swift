@@ -456,15 +456,23 @@ public final class Particles {
     /// 枠と寿命はここで進む。控えは描き切りが待てなくても捨てずに持ち越す ([#934]) ので、
     /// 進めた枠は必ずいつか書かれる。
     ///
+    /// **並びへは、続いた枠をまとめて書く** ([#1748])。粒ごとに書くと、書くたびに汚れ区間の
+    /// 畳み込み・世代・控えへの登録を払い、2 万粒で 1.7 ms かかっていた (届けるコピーは
+    /// 隣り合う区間が畳まれて元から 1 本)。乱数を引く順・上書きの注意・寿命の控えは粒ごとの
+    /// ままなので、書き込まれる値は 1 粒ずつ書いたときと同じである。
+    ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     /// [#934]: https://github.com/mokume-metal/mokume/issues/934
+    /// [#1748]: https://github.com/mokume-metal/mokume/issues/1748
     private func place(
         _ count: Int, from source: Emitter, speed: ClosedRange<Float>,
         angle: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
         color: LinearRGBA, at now: Float, using randomness: inout Randomness
     ) {
         guard count > 0 else { return }
-        let floats = Self.particleFloats
+        // 溜めた粒は枠 `firstSlot` から続いている。書き出したら空にする
+        var firstSlot = 0
+        defer { flushPlacement(from: firstSlot) }
         for _ in 0..<count {
             let place = source.sample(using: &randomness)
             // **中心と半径が有限でも、足した所が `Float` で溢れることがある** (`.circle(3e38, 0,
@@ -485,21 +493,43 @@ public final class Particles {
             let span = max(0, randomness.value(from: life.lowerBound, to: life.upperBound))
             let extent = max(0, randomness.value(from: size.lowerBound, to: size.upperBound))
 
-            let particle = Particle(
-                x: place.x, y: place.y, z: place.z,
-                vx: cos(heading) * rate, vy: sin(heading) * rate, vz: 0,
-                life: span, span: span, size: extent,
-                red: color.red, green: color.green, blue: color.blue, alpha: color.alpha,
-                seed: randomness.unitValue())
-            // **区間を丸ごと書く** (`Numbers.write` の約束)。粒は全部が `Float` なので
-            // 詰め物が無く、並びの 1 区画がそのまま粒 1 つになる
-            state.write(at: slot * floats, count: floats) { target in
-                withUnsafeBytes(of: particle) { raw in
-                    _ = target.update(fromContentsOf: raw.bindMemory(to: Float.self))
-                }
+            // 環を回り込んで先頭へ戻ったら、溜めた区間はそこで切れる。上限に達したときも
+            // 書き出す (溜める置き場を容量に比例させない)
+            if !placement.isEmpty,
+                slot != firstSlot + placement.count || placement.count >= placementChunk
+            {
+                flushPlacement(from: firstSlot)
             }
+            if placement.isEmpty { firstSlot = slot }
+            placement.append(
+                Particle(
+                    x: place.x, y: place.y, z: place.z,
+                    vx: cos(heading) * rate, vy: sin(heading) * rate, vz: 0,
+                    life: span, span: span, size: extent,
+                    red: color.red, green: color.green, blue: color.blue, alpha: color.alpha,
+                    seed: randomness.unitValue()))
             deadline[slot] = now + span
         }
+    }
+
+    /// 置いた粒を溜める置き場。**フレームをまたいで使い回す** — 空にしても確保は残す。
+    private var placement: [Particle] = []
+
+    /// 1 度にまとめて書く粒の数の上限。**検査が 1 に差し替えて、1 粒ずつ書いた物差しを作る。**
+    var placementChunk = 1024
+
+    /// 溜めた粒を、枠 `firstSlot` から続く 1 つの区間として状態の並びへ書き、置き場を空にする。
+    private func flushPlacement(from firstSlot: Int) {
+        guard !placement.isEmpty else { return }
+        let floats = Self.particleFloats
+        // **区間を丸ごと書く** (`Numbers.write` の約束)。粒は全部が `Float` なので
+        // 詰め物が無く、並びの 1 区画がそのまま粒 1 つになる
+        state.write(at: firstSlot * floats, count: placement.count * floats) { target in
+            placement.withUnsafeBytes { raw in
+                _ = target.update(fromContentsOf: raw.bindMemory(to: Float.self))
+            }
+        }
+        placement.removeAll(keepingCapacity: true)
     }
 
     /// 粒 1 つが並びの中で占める数。
