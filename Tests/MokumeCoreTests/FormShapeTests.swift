@@ -298,6 +298,77 @@ struct FormShapeTests {
         }
     }
 
+    /// 下地を読む混ぜ方で、塗りと輪郭を両方持つ形を 1 回で描いた絵は、塗りだけの形の上に
+    /// 輪郭だけの形を重ねた絵と同じになる ([#1643])。
+    ///
+    /// 下地を読む断片 (`mokume_formFragment`) は塗りと輪郭を別々に下地と混ぜる — 塗りの
+    /// 三角形の上に輪郭の三角形を置くのと同じ式である。継ぎ目の漏れを塞ぐ割り戻し
+    /// (ADR-0039 の改訂) は「輪郭を塗りの上に重ねる」前提の式なので、ここへ持ち込むと
+    /// 不透明な輪郭の帯の内側半分で塗りが消えていた (加算で帯の内側の青が 0.33 → 0.006)。
+    /// 輪郭の不透明度 254 と 255 の間で絵が不連続に変わっていたので、その両側も回す。
+    /// 楕円 (円を含む) の輪郭を塗りの距離場から 1 次の近似でずらすと内縁に誤差が残るので、
+    /// 細長い楕円も回す (近似のままだと、半径 29 の円でも加算で 1/255 を越えた)。
+    /// 比べる相手も同じ機械で描くので、成分の差は表示の 1 段 (1/255) より小さい。
+    ///
+    /// [#1643]: https://github.com/mokume-metal/mokume/issues/1643
+    @Test(
+        "下地を読む混ぜ方でも、塗りと輪郭を 1 回で描いた絵は分けて重ねた絵と同じ",
+        arguments: [
+            BlendMode.add, .subtract, .lightest, .darkest,
+            .difference, .exclusion, .multiply, .screen,
+        ],
+        [Float(255), 254, 128])
+    func compositeModesDrawFillAndStrokeLikeTwoShapes(_ mode: BlendMode, _ strokeAlpha: Float) throws {
+        let shapes: [(name: String, draw: (Canvas) -> Void)] = [
+            ("rect", { $0.rect(20.3, 18.6, 52, 46) }),
+            ("circle", { $0.circle(48.4, 47.7, 58) }),
+            ("ellipse", { $0.ellipse(48.3, 47.6, 84, 26) }),
+            ("arc", { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1) }),
+        ]
+        let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8)
+        let strokeColor = LinearRGBA.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha / 255)
+        for shape in shapes {
+            func render(split: Bool) throws -> PixelBuffer {
+                let canvas = try makeCanvas()
+                try canvas.draw {
+                    canvas.background(.display(red: 0.3, green: 0.4, blue: 0.5))
+                    canvas.blendMode(mode)
+                    canvas.strokeWeight(7)
+                    if split {
+                        canvas.fill(fillColor)
+                        canvas.noStroke()
+                        shape.draw(canvas)
+                        canvas.noFill()
+                        canvas.stroke(strokeColor)
+                        shape.draw(canvas)
+                    } else {
+                        canvas.fill(fillColor)
+                        canvas.stroke(strokeColor)
+                        shape.draw(canvas)
+                    }
+                }
+                return try canvas.target.readPixels()
+            }
+            let once = try render(split: false)
+            let split = try render(split: true)
+            var differing = 0
+            var worst = (gap: Float(0), x: 0, y: 0)
+            for y in 0..<once.height {
+                for x in 0..<once.width {
+                    let (p, q) = (once[x, y], split[x, y])
+                    let gap = max(
+                        abs(p.red - q.red), abs(p.green - q.green),
+                        abs(p.blue - q.blue), abs(p.alpha - q.alpha))
+                    if gap > 1.0 / 255 { differing += 1 }
+                    if gap > worst.gap { worst = (gap, x, y) }
+                }
+            }
+            #expect(
+                differing == 0,
+                "\(mode)・\(shape.name)・輪郭の不透明度 \(Int(strokeAlpha)): \(differing) 画素違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y)))")
+        }
+    }
+
     @Test("塗りを止めれば輪郭だけ、線を止めれば塗りだけが出る")
     func fillAndStrokeCanBeSwitchedOff() throws {
         let ring = try picture(try makeCanvas()) { canvas in
