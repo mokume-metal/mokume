@@ -494,21 +494,26 @@ struct ParticleTests {
         #expect(fingerprint(fast) == fingerprint(try picture(.instanced, .nothing)))
     }
 
-    /// 作る前に当てた断片で塗る板を、1 点に止めて 1 フレーム描く。`rewrite` はフレームの間に
-    /// 呼ぶ (1 枚目を描いた後・2 枚目を描く前)。返すのは 2 枚目の板の真ん中の色。
+    /// `bake` で塗りを置いてから粒を作り、塗りを外してから 2 フレーム描く。板は 1 点に止める。
+    ///
+    /// `between` はフレームの間 (1 枚目を描いた後・2 枚目を描く前) に呼ぶ。`whilePlaced` は
+    /// 2 枚目のフレームの中で、粒を置いた直後に呼ぶ。返すのは 2 枚目の板の真ん中の色。
+    /// **2 枚目を見るのは、作った直後のフレームでは隠れる壊れ方があるため**である (#914 —
+    /// 作った直後は立体の列が開いたままで、面を選び直す手順が早く返る)。
     private func bakedPaint(
-        _ route: Canvas.ParticleRoute, surfaces: (Canvas) throws -> [String: ShaderSurface],
-        body: String, rewrite: () -> Void = {}
+        _ route: Canvas.ParticleRoute, bake: (Canvas) throws -> Void,
+        between: () -> Void = {}, whilePlaced: (Canvas) -> Void = { _ in }
     ) throws -> [UInt8] {
         let canvas = try makeCanvas()
         canvas.particleRoute = route
-        let paint = try canvas.makeShader(body, surfaces: try surfaces(canvas))
-        canvas.shader(paint)
+        try bake(canvas)
         let dust = try canvas.makeParticles(count: 64)
         canvas.resetShader()
+        canvas.noTexture()
+        canvas.resetNumbers()
         var randomness = Randomness(seed: 788)
         for frame in 0..<2 {
-            if frame == 1 { rewrite() }
+            if frame == 1 { between() }
             try canvas.draw {
                 canvas.background(.display(red: 0, green: 0, blue: 0))
                 canvas.emit(
@@ -516,6 +521,7 @@ struct ParticleTests {
                     life: 5...5, size: 20...20, color: .linear(red: 1, green: 1, blue: 1),
                     using: &randomness)
                 canvas.particles(dust)
+                if frame == 1 { whilePlaced(canvas) }
             }
         }
         let bytes = try canvas.target.encodeForDisplay().bytes
@@ -529,12 +535,35 @@ struct ParticleTests {
     func bothRoutesBakeTheShaderSetBeforeMaking() throws {
         let body = "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }"
         for route in [Canvas.ParticleRoute.instanced, .reference] {
-            #expect(try bakedPaint(route, surfaces: { _ in [:] }, body: body) == [0, 255, 0])
+            let color = try bakedPaint(route, bake: { canvas in
+                canvas.shader(try canvas.makeShader(body))
+            })
+            #expect(color == [0, 255, 0], "\(route)")
+        }
+    }
+
+    /// **作る前に貼った絵は、フレームをまたいでも粒に残る** (#1649 の反証 5)。置く前に
+    /// `noTexture()` しても、両経路とも貼った絵で出る。直す前の速い経路は、2 枚目のフレームで
+    /// 置く側の貼る絵 (無し) へ面を選び直し、白い板になっていた (#914 と同じ形)。
+    @Test("粒を作る前に貼った絵が、フレームをまたいでも両経路の粒に残る")
+    func bothRoutesKeepTheTextureSetBeforeMaking() throws {
+        for route in [Canvas.ParticleRoute.instanced, .reference] {
+            let color = try bakedPaint(route, bake: { canvas in
+                let picture = try canvas.createImage(8, 8)
+                picture.fill(.linear(red: 1, green: 0, blue: 0))
+                canvas.texture(picture)
+            })
+            #expect(color == [255, 0, 0], "\(route)")
         }
     }
 
     /// #1649 の完了条件 3 の後半 (#1253 の形)。**作った後で書き換えた面の絵は、次のフレームの
     /// 粒に出る。** 書き換えない絵と比べて、書き換えが絵を変えることも見る。
+    ///
+    /// **送りは置いた時点で頼む** (#1649 の反証 4)。描き切りも閉じた列すべての面を整える
+    /// (#1766) ので、色だけを見ると、置き直す口が面を整えなくても通ってしまう。置いた直後に
+    /// 登録簿に載ったかも見る (`ShapeTests` の「書き換えていない絵を読む形は、置き直しても
+    /// 送りを頼まない」と同じ見方)。書き換えていないフレームでは載らないことも見る。
     @Test("粒を作った後で断片の面の絵を書き換えると、次のフレームの粒に書き換えた色が出る")
     func bothRoutesReadAPictureRewrittenAfterMaking() throws {
         let body = """
@@ -544,17 +573,52 @@ struct ParticleTests {
             """
         for route in [Canvas.ParticleRoute.instanced, .reference] {
             var picture: Image?
-            let surfaces: (Canvas) throws -> [String: ShaderSurface] = { canvas in
+            let bake: (Canvas) throws -> Void = { canvas in
                 let made = try canvas.createImage(8, 8)
                 made.fill(.linear(red: 1, green: 0, blue: 0))
                 picture = made
-                return ["tone": .image(made)]
+                canvas.shader(try canvas.makeShader(body, surfaces: ["tone": .image(made)]))
             }
-            #expect(try bakedPaint(route, surfaces: surfaces, body: body) == [255, 0, 0])
+            var queued: Bool?
+            let untouched = try bakedPaint(route, bake: bake, whilePlaced: { _ in
+                queued = picture?.isQueuedForUpload
+            })
+            #expect(untouched == [255, 0, 0], "\(route)")
+            #expect(queued == false, "\(route) が書き換えていない絵の送りを頼んでいる")
+
+            queued = nil
             let rewritten = try bakedPaint(
-                route, surfaces: surfaces, body: body,
-                rewrite: { picture?.fill(.linear(red: 0, green: 0, blue: 1)) })
+                route, bake: bake,
+                between: { picture?.fill(.linear(red: 0, green: 0, blue: 1)) },
+                whilePlaced: { _ in queued = picture?.isQueuedForUpload })
             #expect(rewritten == [0, 0, 255], "\(route) の粒に書き換えた絵が出ない")
+            #expect(queued == true, "\(route) が置いた時点で書き換えた絵の送りを頼んでいない")
+        }
+    }
+
+    /// **焼き付くのは断片に渡した値も同じで、動かすなら数の並びを使う** (#1649 の反証 3)。
+    /// 作る前に並びを置いておけば、作った後に並びへ書いた値が次に描く粒に出る。
+    /// `Sketch.makeParticles(count:)` の説明が名乗る逃げ道で、これが効かなければ説明が嘘になる。
+    @Test("粒を作る前に置いた数の並びへ、作った後に書いた値が両経路の粒に出る")
+    func bothRoutesReadNumbersWrittenAfterMaking() throws {
+        let body = """
+            float4 paint(Fragment in, Values values) {
+                float v = in.numbers[0];
+                return float4(1.0 - v, v, 0.0, 1.0);
+            }
+            """
+        for route in [Canvas.ParticleRoute.instanced, .reference] {
+            var level: Numbers?
+            let bake: (Canvas) throws -> Void = { canvas in
+                let made = try canvas.makeNumbers(count: 1)
+                made.fill(0)
+                level = made
+                canvas.shader(try canvas.makeShader(body))
+                canvas.numbers(made)
+            }
+            #expect(try bakedPaint(route, bake: bake) == [255, 0, 0], "\(route)")
+            let written = try bakedPaint(route, bake: bake, between: { level?.fill(1) })
+            #expect(written == [0, 255, 0], "\(route) の粒に並びへ書いた値が出ない")
         }
     }
 
