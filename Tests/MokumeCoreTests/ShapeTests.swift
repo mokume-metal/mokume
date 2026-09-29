@@ -1476,9 +1476,9 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
             + "nothing, and pixels is not read again",
     .drawnOut:
         "createShape { }: the frame was drawn out while the shape was being built (a drawing "
-            + "target placed earlier in the frame was changed, or the noise settings changed), "
-            + "so what was built was lost and the shape is empty. Make those changes before or "
-            + "after building the shape",
+            + "target placed earlier in the frame was changed, the noise settings changed, or "
+            + "endDraw() was called), so what was built up to then went into the frame and the "
+            + "shape is empty. Do those before or after building the shape",
 ]
 
 /// 組み立ての中で呼ぶ、画素の口。
@@ -1727,6 +1727,9 @@ extension ShapeTests {
         #expect(
             canvas.warnings.message(for: .shapeDrawnOutWhileBuilding)
                 == insideShapeNotices[.drawnOut])
+        // **描き切りまでに組み立てた円は、フレームに出る** (いまの振る舞いを名乗る)。描き切りそのもの
+        // をどうするかは #1684 に残した
+        #expect(canvas.get(3, 3) == Self.green, "描き切りまでに組み立てた円がフレームに出ていない")
 
         // 空の形は置いても何も起きない
         try canvas.draw {
@@ -1755,6 +1758,86 @@ extension ShapeTests {
         }
         #expect(shape.isEmpty)
         #expect(canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+        // 描き切りまでに組み立てた円は、フレームに出る (どうするかは #1855)
+        #expect(canvas.get(3, 3) == Self.green, "描き切りまでに組み立てた円がフレームに出ていない")
+    }
+
+    /// 描き場所の組み立ての中で、その描き場所の `endDraw()` を呼ぶと、フレームを閉じる描き切りが
+    /// 組み立ての区間を空にする ([#1588] の反証 3)。出口の安全網が拾う。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    @Test("描き場所の組み立ての中で endDraw() を呼んでも、落ちずに空の形を返す")
+    func endingTheDrawInsideABuildGivesAnEmptyShape() throws {
+        let host = try makeCanvas(width: 16, height: 16)
+        let layer = try host.createGraphics(16, 16)
+        layer.beginDraw()
+        layer.background(Self.black)
+        placeTriangle(layer)
+        let shape = layer.createShape {
+            placeCircle(layer)
+            layer.endDraw()
+        }
+        #expect(shape.isEmpty)
+        #expect(layer.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+        #expect(layer.hasNothingPending, "組み立ての残りが溜め場に残った")
+        #expect(layer.get(11, 11) == Self.red)
+        #expect(layer.get(3, 3) == Self.green, "描き切りまでに組み立てた円がフレームに出ていない")
+    }
+
+    /// 置いた描き場所の画素を組み立ての中で読むと、読み込みの描き切りが置いた側 (組み立ての途中の
+    /// 本体) を描き切らせていた ([#1588] の反証 1)。読み込みが要るなら、自分の面と同じく断る。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    @Test(
+        "置いた描き場所の画素を組み立ての中で読んでも、本体の組み立ては描き切られない",
+        arguments: [PixelCallInsideShape.get, .loadPixels, .readPixels])
+    func readingAPlacedTargetInsideABuildKeepsTheShape(_ call: PixelCallInsideShape) throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        let layer = try canvas.createGraphics(16, 16)
+        var shape = Shape.empty
+        var read: LinearRGBA?
+        try canvas.draw {
+            layer.beginDraw()
+            layer.background(Self.green)
+            layer.endDraw()
+            canvas.background(Self.black)
+            placeTriangle(canvas)
+            canvas.image(layer, 200, 200)
+            shape = canvas.createShape {
+                placeCircle(canvas)
+                read = call.call(on: layer)
+            }
+        }
+        if call == .get { #expect(read == .transparent) }
+        #expect(!shape.isEmpty)
+        #expect(canvas.get(11, 11) == Self.red)
+        #expect(canvas.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
+        #expect(layer.warnings.message(for: .pixelsInsideShape) == insideShapeNotices[.pixels])
+        #expect(!canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+    }
+
+    /// 対照: 読み込み済みの描き場所は、組み立ての中でも読める。描き切らないので誰の組み立ても
+    /// 壊さない。
+    @Test("読み込み済みの描き場所は、組み立ての中でも読める")
+    func readingALoadedTargetInsideABuildIsAllowed() throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        let layer = try canvas.createGraphics(16, 16)
+        var shape = Shape.empty
+        var read: LinearRGBA?
+        try canvas.draw {
+            layer.beginDraw()
+            layer.background(Self.green)
+            layer.endDraw()
+            canvas.image(layer, 200, 200)
+            _ = layer.get(0, 0)
+            shape = canvas.createShape {
+                placeCircle(canvas)
+                read = layer.get(5, 5)
+            }
+        }
+        #expect(read == Self.green)
+        #expect(!shape.isEmpty)
+        #expect(!layer.warnings.hasWarned(.pixelsInsideShape))
     }
 }
 

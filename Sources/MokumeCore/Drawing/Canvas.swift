@@ -2309,6 +2309,31 @@ public final class Canvas {
         }
     }
 
+    /// いま描き切ると、形を組み立てている途中の面を描き切らせるか ([#1588])。
+    ///
+    /// 描き切りは冒頭で、自分を置いた面を先に描き切らせる (``settlePlacersBeforeChange()``)。
+    /// 置いた面が組み立ての途中なら、組み立てが控えた溜め場の区間がそこで空になる。**画素の口は、
+    /// 自分の面だけでなく置かれた描き場所でも同じ守りに入る** — 同じフレームで `image(layer)` と
+    /// 置いてから、組み立ての中で `layer.get()` と読むと、本体の組み立てが描き切られていた。
+    /// 置いた面をさらに置いた面へも辿る (描き切りも同じように連なる)。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    var isPlacedInAShapeInProgress: Bool {
+        var visited: Set<ObjectIdentifier> = [ObjectIdentifier(self)]
+        var waiting: [Canvas] = [self]
+        while let placed = waiting.popLast() {
+            for entry in placed.placers {
+                guard let canvas = entry.canvas,
+                    canvas.placedGraphics.contains(ObjectIdentifier(placed)),
+                    visited.insert(ObjectIdentifier(canvas)).inserted
+                else { continue }
+                if canvas.recordingShape { return true }
+                waiting.append(canvas)
+            }
+        }
+        return false
+    }
+
     /// 直前のフレームで描画を呼んだ回数。
     ///
     /// **畳めているかを数えるための値。** 絵が同じでも畳まれていなければ保持は目的を

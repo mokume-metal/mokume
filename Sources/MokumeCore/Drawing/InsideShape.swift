@@ -11,8 +11,8 @@ extension Canvas {
     ///
     /// - 塗り直し (``background``) と画素の口 (``pixels``) は、呼ばれた時点で断る。どちらも形に
     ///   焼き付く先が無い — 塗り直しは面全体を描き直すことで、画素はまだ描いていない形を読めない
-    /// - 描き切りそのものは断れない口がある (置いた描き場所の描き換え・揺らぎの設定の書き換え)。
-    ///   そこは出口が見て、空の形を返す (``drawnOut``)
+    /// - 描き切りそのものは断れない口がある (置いた描き場所の描き換え・揺らぎの設定の書き換え・
+    ///   描き場所の組み立ての中の `endDraw()`)。そこは出口が見て、空の形を返す (``drawnOut``)
     ///
     /// **形に焼き付かないシーンの記述を組み立ての中で断るときも、ここへ種類を足す** (#1684 の
     /// 案 A)。文面は ``OutsideFrame`` と同じく、種類ごとの完全な 1 文で持つ (ADR-0038 決定 3)。
@@ -24,6 +24,11 @@ extension Canvas {
         /// 画素を読み書きした。`get` / `set` / `pixels` / `loadPixels()` の 4 つが鍵を共有する。
         case pixels
         /// 記録の途中で溜め場が描き切られ、記録したものを失った。**出口の安全網**が言う。
+        ///
+        /// 来る経路は 3 つ: 同じフレームで置いた描き場所の描き換え (`endDraw()` などが置いた側を
+        /// 描き切らせる)・揺らぎの設定の書き換え (`noiseSeed()` / `noiseDetail()`・#1855)・描き場所
+        /// の組み立ての中で自分の `endDraw()` を呼ぶこと。どれも描き切りそのものは断れないので、
+        /// 描き切りまでに組み立てたぶんはフレームに描かれる (#1684)。
         case drawnOut
 
         /// 初回だけ言うための鍵。
@@ -47,9 +52,9 @@ extension Canvas {
                     + "loadPixels() do nothing, and pixels is not read again"
             case .drawnOut:
                 "createShape { }: the frame was drawn out while the shape was being built (a "
-                    + "drawing target placed earlier in the frame was changed, or the noise "
-                    + "settings changed), so what was built was lost and the shape is empty. Make "
-                    + "those changes before or after building the shape"
+                    + "drawing target placed earlier in the frame was changed, the noise settings "
+                    + "changed, or endDraw() was called), so what was built up to then went into "
+                    + "the frame and the shape is empty. Do those before or after building the shape"
             }
         }
     }
