@@ -480,6 +480,84 @@ struct ParticleTests {
         #expect(staged == (try state(writingDirectly: true)))
     }
 
+    /// まとめて書く置き方を見る場面 (#1748)。容量・噴き口・1 フレームで何回出すかを変える。
+    enum PlacementScene: String, CaseIterable, Sendable {
+        /// 容量に届かない数を点から出す。
+        case underCapacity
+        /// 1 フレームでちょうど容量ぶんを出す。
+        case fillsTheRing
+        /// 1 フレームに 3 回出して、同じ枠を 2 度以上書く。
+        case overflowsTheRing
+        /// 数フレームかけて環を何周か回り込む。
+        case wrapsAcrossFrames
+        /// 線と円から出す。
+        case lineAndCircle
+        /// 数でない位置に落ちる噴き口を、正しい噴き口の間に挟む (枠を進めない粒が混ざる)。
+        case unplaceableInBetween
+    }
+
+    /// まとめて書く上限を `chunk` にして場面を回し、粒の状態と枠と乱数の続きを返す。
+    private func placed(
+        _ scene: PlacementScene, chunk: Int
+    ) throws -> (state: [Float], cursor: Int, next: Float, overwrote: Bool, refused: Bool) {
+        let canvas = try makeCanvas()
+        var randomness = Randomness(seed: 1748)
+        let capacity = scene == .underCapacity ? 200 : 16
+        let dust = try canvas.makeParticles(count: capacity)
+        dust.placementChunk = chunk
+        let rate: Float =
+            switch scene {
+            case .underCapacity: 600
+            case .fillsTheRing, .overflowsTheRing: 960
+            case .wrapsAcrossFrames, .lineAndCircle, .unplaceableInBetween: 420
+            }
+        let sources: [Emitter] =
+            switch scene {
+            case .underCapacity, .fillsTheRing, .wrapsAcrossFrames: [.point(32, 12)]
+            case .overflowsTheRing: [.point(32, 12), .point(8, 40), .point(50, 50)]
+            case .lineAndCircle: [.line(4, 4, 60, 30), .circle(32, 32, radius: 20)]
+            case .unplaceableInBetween:
+                [.point(32, 12), .circle(3e38, 0, radius: 3e38), .line(4, 4, 60, 30)]
+            }
+        let frames = scene == .wrapsAcrossFrames ? 5 : 2
+        for _ in 0..<frames {
+            try canvas.draw {
+                for source in sources {
+                    canvas.emit(
+                        dust, from: source, rate: rate, speed: 20...45,
+                        angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                        color: .linear(red: 1, green: 0.6, blue: 0.2), using: &randomness)
+                }
+            }
+        }
+        return (
+            canvas.read(dust.state), dust.cursor, randomness.unitValue(),
+            dust.warnings.hasWarned(.overwrite), dust.warnings.hasWarned(.unacceptableEmission)
+        )
+    }
+
+    @Test(
+        "続いた枠をまとめて書いても、1 粒ずつ書いたのと同じ粒・枠・乱数の続き・注意になる",
+        arguments: PlacementScene.allCases, [3, 1024])
+    func placingInRunsMatchesPlacingOneByOne(_ scene: PlacementScene, chunk: Int) throws {
+        // 物差しは 1 粒ずつ書く置き方 (以前の実装と同じ書き込みの列)
+        let reference = try placed(scene, chunk: 1)
+        let batched = try placed(scene, chunk: chunk)
+        #expect(reference.cursor > 0, "粒が 1 つも置かれていない — 比べる前提が崩れている")
+        #expect(batched.state == reference.state)
+        #expect(batched.cursor == reference.cursor)
+        #expect(batched.next == reference.next)
+        #expect(batched.overwrote == reference.overwrote)
+        #expect(batched.refused == reference.refused)
+        switch scene {
+        case .overflowsTheRing, .wrapsAcrossFrames:
+            #expect(reference.cursor > 16, "環を回り込んでいない — 場面が崩れている")
+        case .unplaceableInBetween:
+            #expect(reference.refused, "数でない位置の粒を断っていない — 場面が崩れている")
+        default: break
+        }
+    }
+
     @Test("速い経路は、粒を読み戻さない")
     func theFastRouteNeverReadsBack() throws {
         let canvas = try makeCanvas()
