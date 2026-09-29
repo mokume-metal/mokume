@@ -225,6 +225,12 @@ TEST_RECORD_RELEASE := .build/test-results-release-swift-testing.xml
 # ではなく」のとおり要約は緑の回でも落ちるので、「要約が無い」を印にすると緑の回でも
 # 名乗る (#1056)。段の終了コードは swift test のものをそのまま返す。
 #
+# **0 で終わった回も同じ読み手に渡す** (#1688)。0 で終わったのに記録が見出しだけで
+# 閉じていない回が 09-25 だけで 5 度あり、ここを素通りして 27 段の最後まで分からな
+# かった。0 の回に名乗るのは記録が無い / 読めない (閉じていない) 回だけで、そのときは
+# scripts/test-vanished.sh が 1 で終わって段を赤にする。記録が無い回には SwiftPM が
+# --xunit-output の綴りを変えた可能性も添える (かつてここに在った test -s の案内)
+#
 # ビルドと実行を分けるのは、ビルドで止まった回を「消えた」と名乗らないためである。
 # どちらも記録が無いまま非 0 で終わるので、記録からは見分けられない。印
 # (.build/test-started) は段の始まりで、材料の jetsam の行と報告の「この間にできた」の
@@ -236,10 +242,7 @@ test:
 	set -o pipefail; swift build --build-tests $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log.txt
 	set -o pipefail; env $(METAL_VALIDATION) swift test --skip-build --xunit-output $(TEST_RECORD_BASE) 2>&1 | tee -a .build/test-log.txt \
 		|| { code=$$?; bash scripts/test-vanished.sh $$code $(TEST_RECORD) .build/test-log.txt .build/test-started; exit $$code; }
-	@test -s $(TEST_RECORD) || { \
-		echo "記録が出来ていない ($(TEST_RECORD))。SwiftPM が --xunit-output の綴りを"; \
-		echo "変えた可能性がある — 下の gpu-ran と scripts/test-vanished.sh の読み手と併せて直す"; \
-		exit 1; }
+	@bash scripts/test-vanished.sh 0 $(TEST_RECORD) .build/test-log.txt .build/test-started
 
 # 描画の検査が実際に走ったかを、test の記録から確かめる (#878)。専用機の描画ジョブ
 # (.github/workflows/render.yml) が test の後に走らせる。**ci-check の既定の並びには

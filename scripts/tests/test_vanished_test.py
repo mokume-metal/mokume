@@ -10,12 +10,13 @@
 守るのは 3 つ。
 
 1. **消えた回だけを名乗る。** `swift test` が非 0 で終わり、記録が無い / 読めない / 失敗を
-   1 件も持たない回である。普通の赤 (記録に失敗がある)・ビルドで止まった回・0 で終わった
-   回には名乗らない。**判定に console を使わない** (#1056 — console は緑の回でも要約を
+   1 件も持たない回と、0 で終わったのに記録が無い / 読めない (見出しだけで閉じていない) 回
+   である (#1688)。普通の赤 (記録に失敗がある)・ビルドで止まった回・0 で終わり記録が閉じて
+   いる回には名乗らない。**判定に console を使わない** (#1056 — console は緑の回でも要約を
    落とす)。偽の console は、失敗 0 件の回に要約を出し、失敗 1 件の回に出さない。console を
    読む実装ならこの 2 つで逆に倒れる
 2. **材料を、次の実行で上書きされない置き場へ残す。** 採れなかった項目はそう名乗って続ける
-3. **test 段の終了コードは非 0 のまま変えない**
+3. **test 段の終了コードは非 0 のまま変えない。** 0 で終わって名乗った回だけ、段を赤にする
 
 `swift` と、材料を採る道具 (`log` / `sysctl` / `vm_stat` / `uptime` / `ps`) は PATH の
 先頭に置いた偽物へ差し替え、本物の Makefile を一時ディレクトリで走らせる
@@ -60,8 +61,11 @@ ERROR_CASE = (
 RECORD_ALL_PASSED = _record(PASSED_CASE, PASSED_CASE)
 RECORD_ONE_FAILED = _record(PASSED_CASE, FAILED_CASE)
 RECORD_ONE_ERROR = _record(PASSED_CASE, ERROR_CASE)
-# 本物の helper を kill -9 したときに残った形 (#1526 の本物での確かめ)。宣言と根の開きだけ
+# 本物の helper を kill -9 したときに残った形 (#1526 の本物での確かめ)。宣言と根の開きだけ。
+# swift test が 0 で終わった回にも、同じ 52 バイトが残っていた (#1688)
 RECORD_TRUNCATED = '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>\n'
+# 検査は書かれているが、根が閉じる前に切れた形
+RECORD_UNCLOSED = RECORD_ALL_PASSED.rsplit("</testsuites>", 1)[0]
 
 # 偽の swift。build は FAKE_BUILD_EXIT で終わる。test は --xunit-output の名前に
 # SwiftPM と同じく -swift-testing を挟んだ先へ FAKE_RECORD を写し、FAKE_CONSOLE を出し、
@@ -389,6 +393,29 @@ class MakeTestTest(unittest.TestCase):
         self.assertTrue(any("一度目" in t for t in logs), logs)
         self.assertTrue(any("二度目" in t for t in logs), logs)
 
+    # 0 で終わった回 (#1688)。段の赤は swift test ではなく記録から来る
+
+    def test_zero_exit_with_header_only_record(self):
+        self.assertEqual(len(RECORD_TRUNCATED.encode()), 52)
+        code, out = self.run_make(0, record=RECORD_TRUNCATED, console="✔ Test run with 2 tests passed")
+        evidence = self.assert_vanished(code, out, "記録が読めない")
+        self.assertIn("swift test の終了コード 0", out)
+        self.assertEqual((evidence / "record.xml").read_text(), RECORD_TRUNCATED)
+        self.assertIn("swift test の終了コード: 0", (evidence / "summary.txt").read_text())
+
+    def test_zero_exit_with_unclosed_record(self):
+        self.assertNotIn("</testsuites>", RECORD_UNCLOSED)
+        self.assertIn("<testcase", RECORD_UNCLOSED)
+        code, out = self.run_make(0, record=RECORD_UNCLOSED)
+        evidence = self.assert_vanished(code, out, "記録が読めない")
+        self.assertEqual((evidence / "record.xml").read_text(), RECORD_UNCLOSED)
+
+    def test_zero_exit_without_record(self):
+        # SwiftPM が --xunit-output の綴りを変えた回もこの形になるので、その案内も添える
+        code, out = self.run_make(0)
+        self.assert_vanished(code, out, "記録が無い")
+        self.assertIn("綴り", out)
+
     # --- 名乗らない回 -------------------------------------------------------
 
     def test_ordinary_failure(self):
@@ -404,14 +431,9 @@ class MakeTestTest(unittest.TestCase):
         self.assert_not_vanished(out)
 
     def test_green(self):
+        # 0 で終わり、記録が閉じていて失敗が 0 件。console に要約が無くても緑である
         code, out = self.run_make(0, record=RECORD_ALL_PASSED)
         self.assertEqual(code, 0, out)
-        self.assert_not_vanished(out)
-
-    def test_green_without_record_keeps_the_spelling_message(self):
-        code, out = self.run_make(0)
-        self.assertNotEqual(code, 0, out)
-        self.assertIn("綴り", out)
         self.assert_not_vanished(out)
 
 

@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# `make test` の `swift test` が非 0 で終わった回に、**検査のプロセスが要約を残さずに
-# 消えた回かどうか**を記録から見分け、そうなら名乗って、その回の材料を残す (#1526)。
+# `make test` の `swift test` が終わった回に、**検査のプロセスが要約を残さずに消えた回
+# かどうか**を記録から見分け、そうなら名乗って、その回の材料を残す (#1526・#1688)。
 #
 # 本体の検査のプロセス (`swiftpm-testing-helper`) が、要約も記録も残さずに消えた回が
 # 3 度あった。そのとき出ていたのは `✘ ci-check は [2/27] test で止まった` だけで、
@@ -15,15 +15,26 @@
 #
 # **判定は記録 (xunit XML) だけで行う。console は読まない** (#1056)。console の要約
 # (`Test run with …`) は全件が緑の回でも落ちるので、「要約が無い」を印にすると緑の回
-# でも名乗ってしまう。記録は `read-test-record.py --failures` で読み、消えた回を 3 つの
-# 形で名乗る:
+# でも名乗ってしまう。記録は `read-test-record.py --failures` で読む。
 #
-#   missing      記録が無い (1 度目)
-#   unreadable   在るが読めない (3 度目。本物の helper を kill -9 した回もこれだった)
-#   failures 0   読めるが失敗を 1 件も持たない (2 度目のように、消えた後も別の検査が
-#                走り切って記録を閉じた回)
+# **`swift test` の終了コードが 0 でも非 0 でも見る** (#1688)。0 で終わったのに記録が
+# 見出しだけ (52 バイト) で閉じていない回が 09-25 だけで 5 度あり、見るのが非 0 の回だけ
+# だと test 段を素通りして、27 段の最後の render-status まで分からなかった。消えた回と
+# して名乗る形は、終了コードで次のとおり分かれる:
 #
-# 記録に失敗が 1 件以上あれば普通の赤なので、何も言わずに抜ける。
+#   形            非 0   0
+#   missing       名乗る 名乗る  記録が無い (非 0 の 1 度目。0 の回は、SwiftPM が
+#                                --xunit-output の綴りを変えた可能性も添える)
+#   unreadable    名乗る 名乗る  在るが読めない — 根が閉じていない (`</testsuites>` が
+#                                無い) 記録もここ。本物の helper を kill -9 した回と、0 で
+#                                終わった 5 度はこれだった
+#   failures 0    名乗る 黙る    読めるが失敗を 1 件も持たない。非 0 の回では 2 度目の
+#                                ように、消えた後も別の検査が走り切って記録を閉じた回。
+#                                0 の回では普通の緑である
+#   failures N    黙る   黙る    記録に失敗がある — 非 0 の回は普通の赤
+#
+# 閉じているかどうかを grep で `</testsuites>` を探して見ることはしない。閉じていない根は
+# XML として読めないので、read-test-record.py の `unreadable` がそのまま拾う。
 #
 # **原因は調べない** (それは #1527)。ここが持つのは名乗りと、その回の材料を打ち直しで
 # 消えない置き場へ残すことだけである。
@@ -45,14 +56,21 @@
 # (`man memory_pressure`)。読むだけなら `sysctl` と `vm_stat` で足りる。
 #
 # 採れなかった項目 (権限が無い・道具が無い・期限を越えた) は、採れなかったと名乗って
-# 続ける。**終了コードは常に 0** — test 段の終了コードは呼ぶ側 (Makefile) が
-# `swift test` のものを返す。ここで落ちて段の意味を変えない。
+# 続ける。
+#
+# ## 終了コード
+#
+# `swift test` が**非 0 で終わった回は常に 0** — test 段の終了コードは呼ぶ側 (Makefile)
+# が `swift test` のものを返す。ここで落ちて段の意味を変えない。
+# **0 で終わった回は、名乗ったら 1・名乗らなければ 0** で、呼ぶ側はこれを段の終了コード
+# にする。緑の段を赤に変えられるのは記録の形だけである。
 #
 # ## 使い方
 #
 #   bash scripts/test-vanished.sh <swift test の終了コード> <記録> <ログ> <段の始まりの印>
 #
-# 呼び口は Makefile の test 段の失敗の経路の 1 つだけである。
+# 呼び口は Makefile の test 段の 2 つ (swift test が非 0 で終わった経路と、0 で終わった後)
+# だけである。
 #
 # 環境変数: MOKUME_DIAGNOSTIC_REPORTS  報告の置き場を : 区切りで差し替える (検査用)
 # テストは scripts/tests/test_vanished_test.py。
@@ -82,10 +100,16 @@ REPORT_DIRS=${MOKUME_DIAGNOSTIC_REPORTS:-$HOME/Library/Logs/DiagnosticReports:/L
 verdict="$(python3 "$(dirname "${BASH_SOURCE[0]}")/read-test-record.py" --failures "$RECORD")"
 case "$verdict" in
   missing) form="記録が無い" ;;
-  unreadable) form="記録が読めない — 途中で切れているか壊れている" ;;
-  "failures 0") form="記録は在るが、失敗を 1 件も持たない" ;;
+  unreadable) form="記録が読めない — 途中で切れているか、閉じていないか、壊れている" ;;
+  "failures 0")
+    [ "$CODE" -eq 0 ] && exit 0 # 普通の緑
+    form="記録は在るが、失敗を 1 件も持たない" ;;
   *) exit 0 ;; # 記録に失敗がある — 普通の赤
 esac
+
+# 名乗った回の終了コード (上の「終了コード」)。材料が採れなくてもこれで終わる
+named_exit=0
+[ "$CODE" -eq 0 ] && named_exit=1
 
 # 期限を越えたら殺す。見張りは sleep を子に持つので、自分が止められたら sleep も畳む
 # (残すと出力を握らないまでも、期限の秒数だけプロセスが残る)。collect が引数として呼ぶ
@@ -140,7 +164,7 @@ mkdir -p "$base"
 until mkdir "$candidate" 2>/dev/null; do
   n=$((n + 1))
   candidate="$dir-$n"
-  [ "$n" -gt 50 ] && { echo "材料の置き場を作れなかった ($base)" >&2; exit 0; }
+  [ "$n" -gt 50 ] && { echo "材料の置き場を作れなかった ($base)" >&2; exit "$named_exit"; }
 done
 dir=$candidate
 
@@ -204,6 +228,13 @@ done
 echo
 echo "✘ 検査の失敗ではなく、検査のプロセスが要約を残さずに終わった (swift test の終了コード $CODE)"
 echo "   $form ($RECORD)。どの検査が落ちたかは記録からは分からない"
+if [ "$CODE" -eq 0 ]; then
+  echo "   swift test は 0 で終わったが、記録が閉じていないので test 段を赤にする (#1688)"
+  if [ "$verdict" = missing ]; then
+    echo "   毎回こうなるなら、SwiftPM が --xunit-output の綴りを変えた可能性がある — Makefile の"
+    echo "   TEST_RECORD と、それを読む gpu-ran・scripts/test-vanished.sh と併せて直す"
+  fi
+fi
 echo "   材料を $dir/ に残した (打ち直しても消えない):"
 for f in "$dir"/*; do printf '     %s\n' "${f##*/}"; done
 if [ "${#missed[@]}" -gt 0 ]; then
@@ -212,4 +243,4 @@ if [ "${#missed[@]}" -gt 0 ]; then
 fi
 echo "   原因は $CAUSE_ISSUE で調べている ($CAUSE_URL)。材料を貼るかどうかは人が決める"
 echo "   (ここからはどこへも送らない)。直すものが上の出力に無ければ、打ち直してよい"
-exit 0
+exit "$named_exit"
