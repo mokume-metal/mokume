@@ -521,11 +521,20 @@ struct ShaderTests {
         #expect(Self.hue(main.get(44, 12)) == "青", "置いた後に描き換えた絵が出た")
     }
 
-    /// 描き場所が描き換わる直前に閉じさせた列は、描き換わる**前に**置いた図形である。
-    /// 描き場所がフレームの途中で描き切る (`loadPixels()`) ときは描いている最中なので、閉じた
-    /// 列の記録を「描き切る前に置いた」と取り違えやすい。
-    @Test("置いた後に描き場所がフレームの途中で描き切っても、描き切る前に置いた注意は出ない")
-    func settlingBeforeAChangeIsNotPlacingWhileDrawing() throws {
+    /// 描き場所を読む 2 つの口。貼る絵 (`texture()`) と断片の面。
+    enum Reading: String, CaseIterable, CustomTestStringConvertible {
+        case texture, shaderSurface
+        var testDescription: String { rawValue }
+    }
+
+    /// 描き場所がフレームの途中で描き切る (`loadPixels()`) ときの、「描き切る前に置いた」の注意。
+    ///
+    /// **注意は置いた時点で決まる** (#1683 の反証 2)。`beginDraw()` より前に置いた図形は描き切る
+    /// 前の面を読んでいないので言わず、`beginDraw()` の後に置いた図形は言う。閉じる時点や
+    /// 描き切らせる時点で決めると、前者で言い、後者で黙る形に化けうる。
+    @Test("描き場所を途中で描き切るとき、描き切る前に置いた注意は置いた時点で決まる",
+        arguments: [false, true])
+    func placingWhileDrawingIsDecidedWhenPlaced(placedWhileDrawing: Bool) throws {
         let main = try makeCanvas(width: 64, height: 64)
         let layer = try main.createGraphics(16, 16)
         let shader = try main.makeShader(
@@ -536,14 +545,87 @@ struct ShaderTests {
             main.noStroke()
             paint(layer, .linear(red: 1, green: 0, blue: 0))
             main.shader(shader)
-            main.rect(0, 0, 24, 24)
+            if !placedWhileDrawing { main.rect(0, 0, 24, 24) }
             layer.beginDraw()
             layer.background(.linear(red: 0, green: 0, blue: 1))
+            if placedWhileDrawing { main.rect(0, 0, 24, 24) }
             layer.loadPixels()
             layer.endDraw()
             main.resetShader()
         }
         #expect(Self.hue(main.get(12, 12)) == "赤", "置いた後に描き換えた絵が出た")
+        #expect(main.warnings.hasWarned(.placingWhileDrawing) == placedWhileDrawing)
+    }
+
+    /// 描いている最中 (`beginDraw()`〜`endDraw()`) の描き場所を読んで置いた図形 (#1683 の反証 1)。
+    ///
+    /// 公開の説明 (`createGraphics`) は「`endDraw()` の前に置くと 1 フレーム前の絵が出る
+    /// (そのときは注意が出る)」としている。貼る絵と断片の面の、どちらの口で読んでも同じ絵と
+    /// 同じ注意になる。
+    ///
+    /// `folded` は、描き始める前に同じ形を 2 つ置いておくか。置いておくと雛形が開いたまま残り、
+    /// 描いている最中に置く 3 つ目は畳んだ置き場所を足すだけの口 (`appendFolded`) を通る。
+    @Test("描いている最中の描き場所を読んで置くと、どちらの口でも前の絵が出て注意が出る",
+        arguments: Reading.allCases, [false, true])
+    func placingWhileDrawingShowsThePreviousPictureAndIsTold(
+        reading: Reading, folded: Bool
+    ) throws {
+        let main = try makeCanvas(width: 64, height: 64)
+        let layer = try main.createGraphics(16, 16)
+        let shader = try main.makeShader(
+            Self.pictureShader, surfaces: ["pic": .graphics(layer)])
+        paint(layer, .linear(red: 1, green: 0, blue: 0))
+
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            main.noStroke()
+            switch reading {
+            case .texture: main.texture(layer)
+            case .shaderSurface: main.shader(shader)
+            }
+            if folded {
+                main.rect(32, 0, 24, 24)
+                main.rect(32, 32, 24, 24)
+            }
+            layer.beginDraw()
+            layer.background(.linear(red: 0, green: 0, blue: 1))
+            main.rect(0, 0, 24, 24)
+            layer.endDraw()
+            main.resetShader()
+            main.noTexture()
+        }
+        #expect(Self.hue(main.get(12, 12)) == "赤", "描き切る前の描き場所から、描き切った後の絵が出た")
+        #expect(main.warnings.hasWarned(.placingWhileDrawing))
+    }
+
+    /// 形の組み立ては置くことではない。描いている最中の描き場所を読む塗りで形を組み立てても、
+    /// 「描き切る前に置いた」とは言わない — 形の絵は、形を置いた時点で読む。
+    @Test("描いている最中の描き場所を読む塗りで形を組み立てても、置いていなければ注意しない",
+        arguments: Reading.allCases)
+    func buildingAShapeIsNotPlacing(reading: Reading) throws {
+        let main = try makeCanvas(width: 64, height: 64)
+        let layer = try main.createGraphics(16, 16)
+        let shader = try main.makeShader(
+            Self.pictureShader, surfaces: ["pic": .graphics(layer)])
+        paint(layer, .linear(red: 1, green: 0, blue: 0))
+
+        var tile: Shape?
+        try main.draw {
+            main.background(.linear(red: 0, green: 0, blue: 0))
+            layer.beginDraw()
+            layer.background(.linear(red: 0, green: 0, blue: 1))
+            tile = main.createShape {
+                main.noStroke()
+                switch reading {
+                case .texture: main.texture(layer)
+                case .shaderSurface: main.shader(shader)
+                }
+                main.rect(0, 0, 24, 24)
+            }
+            layer.endDraw()
+            if let tile { main.shape(tile, 0, 0) }
+        }
+        #expect(Self.hue(main.get(12, 12)) == "青")
         #expect(!main.warnings.hasWarned(.placingWhileDrawing))
     }
 

@@ -88,10 +88,9 @@ extension Canvas {
         guard shader !== currentShader else { return }
         closeBatch()
         currentShader = shader
-        // **当てた面を、塗りと描き場所の両方に覚えさせる** (#1683)。塗りの値や面が変わるとき、
-        // 渡した描き場所が描き換わるときに、この面の開いている列を先に閉じてもらう
+        // **当てた面を塗りに覚えさせる** (#1652)。塗りの値や面が変わるときに、この面の開いて
+        // いる列を先に閉じてもらう
         shader.note(usedBy: self)
-        noteReading(shader)
     }
 
     public func resetShader() {
@@ -156,10 +155,5 @@ extension Canvas {
     var paintingShader: Shader? {
         if let replayedPaint { return replayedPaint.shader }
         return currentShader
-    }
-
-    /// 断片の面に渡した描き場所に、この面が読みうることを覚えさせる (``note(readBy:)``)。
-    func noteReading(_ shader: Shader) {
-        for case .graphics(let graphics) in shader.surfaces.values { graphics.note(readBy: self) }
     }
 }

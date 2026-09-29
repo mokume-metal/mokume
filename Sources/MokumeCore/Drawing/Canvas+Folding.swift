@@ -153,6 +153,11 @@ extension Canvas {
     private func appendFolded(
         _ placement: FlatInstance, key: FlatKey, outline makeOutline: () -> Outline
     ) {
+        // **畳んだ置き場所は ``beginFlat()`` も ``useTexture(_:)`` も通らない**ので、描き場所を
+        // 置いた記録はここで取る (#1683 の反証)。取らないと、描いている最中の描き場所を読んで
+        // 置いた図形が、注意なしに前の絵になる
+        if let graphics = (key.texture?.owner as? RenderTarget)?.drawer { note(placing: graphics) }
+        notePaintPlacement()
         if let open = openFlat, isBatchFull(flatInstances.count, since: open.instanceStart) {
             openFlatTemplate(key: key, outline: makeOutline())
         }

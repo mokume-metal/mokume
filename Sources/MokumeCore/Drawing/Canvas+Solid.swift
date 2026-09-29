@@ -322,6 +322,8 @@ extension Canvas {
     /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから
     /// 置いた立体が先に描かれる。
     func beginSolids() {
+        // **立体を置く口はどれもここを通る。** 列が開いていても記録は置くたびに取る
+        notePaintPlacement()
         guard openSource != .solid else { return }
         closeBatch()
         useFillTexture()

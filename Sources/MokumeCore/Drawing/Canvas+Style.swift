@@ -165,12 +165,11 @@ extension Canvas {
         }
         let count = vertices.count - start
         guard count > 0 else { return }
-        let paint = closingPaint()
         batches.append(
             Batch(
                 run: Shape.Run(
                     mode: style.blendMode, texture: currentTexture,
-                    paint: paint,
+                    paint: effectivePaint,
                     source: .flat, start: start, count: count, indexStart: 0, indexCount: 0),
                 clip: style.clip,
                 // ここへ来るのは平面だけ (上の `switch` が他を返している)。**平面は
@@ -194,28 +193,10 @@ extension Canvas {
     ///
     /// 並びは宣言と同じ名前順。**置いた記録はここでは取らない** — 塗りを比べるだけの読み
     /// (``usePaint(_:)``) もここを通るので、取ると置いていない描き場所まで記録が残る。記録は
-    /// 列を閉じるところ (``closingPaint()``) が取る。
+    /// 図形を積む口 (``notePaintPlacement()``) が取る。
     private func snapshotSurfaces() -> [HeldTexture] {
         guard let shader = currentShader, !shader.surfaces.isEmpty else { return [] }
         return shader.orderedSurfaces.map(\.held)
-    }
-
-    /// 閉じる列が持つ塗り。**描き場所を読むなら、置いたことをここで記録する** ([#1653])。
-    ///
-    /// 貼る口 (``texture(_:)``) と同じで、描き切る前の面を読んだときに黙っていると出るのは
-    /// 前のフレームの絵になり、置いた後に描き換わると先に置いた図形まで後の絵になる。
-    /// **記録した塗り (保持した形) もここを通る** — 生きている塗りだけを記録すると、形を置いた
-    /// 列が守られない。
-    ///
-    /// 開いたままの列は、描き場所が描き換わる直前に閉じさせる (``Canvas/note(readBy:)``)。
-    ///
-    /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
-    private func closingPaint() -> Shape.Paint {
-        let paint = effectivePaint
-        for held in paint.surfaces {
-            if let graphics = (held.owner as? RenderTarget)?.drawer { note(placing: graphics) }
-        }
-        return paint
     }
 
     /// いま生きている状態 (``shader(_:)`` / ``numbers(_:)``) から作る塗り。
@@ -276,7 +257,6 @@ extension Canvas {
         guard open.vertexCount > 0, instanceCount > 0 else { return }
         let indexStart = open.indexStart ?? 0
         let indexCount = open.indexStart.map { solidIndices.count - $0 } ?? 0
-        let paint = closingPaint()
         // **外の置き場から置き場所を取る列は添字を持てない。** 粒が GPU に書かせる
         // 引数は `MTLDrawPrimitivesIndirectArguments` で、添字版とは構造体が違う —
         // 混ぜると引数を読み違えて、絵だけが黙って崩れる
@@ -287,7 +267,7 @@ extension Canvas {
             Batch(
                 run: Shape.Run(
                     mode: style.blendMode, texture: currentTexture,
-                    paint: paint,
+                    paint: effectivePaint,
                     source: .solid,
                     start: open.vertexStart, count: open.vertexCount,
                     indexStart: indexStart, indexCount: indexCount),
@@ -398,12 +378,40 @@ extension Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     func beginFlat() {
+        notePaintPlacement()
         // **平面の頂点はどれもここを通る。** 畳めない頂点が開いている雛形へ紛れ込むのを
         // 止める場所を、1 つに保つ
         closeFlatTemplate()
         guard openSource != .flat else { return }
         closeBatch()
         openSource = .flat
+    }
+
+    /// これから積む図形の塗りが断片の面として描き場所を読むなら、**置いたことをいま記録する**
+    /// ([#1653])。
+    ///
+    /// 貼る絵 (``useTexture(_:)``) と同じく、記録は置いた時点で取る。列を閉じる時点で取ると、
+    /// 置いた後に描き場所が描き換わったとき先に置いた図形まで後の絵になり、描き切る前の
+    /// 描き場所を読んだ注意も「いつ置いたか」ではなく「いつ閉じたか」で決まってしまう。
+    ///
+    /// 呼ぶのは図形を積む口 — 平面は ``beginFlat()`` (頂点はどれもここを通る) と、畳んだ
+    /// 置き場所を足す口、立体は ``beginSolids()`` (置く口はどれもここを通る)。基本図形の列は
+    /// 利用者の断片で塗らない (``formAllowed(fills:)``) ので呼ばない。**保持した形を置いている
+    /// 間は、記録した塗りの面を読む** (``effectivePaint`` と同じ優先)。
+    ///
+    /// 形の組み立て中は記録しない (``note(placing:)`` が飛ばす)。組み立てた図形は形へ抜かれ、
+    /// 形を置くときにここを通り直す。
+    ///
+    /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
+    func notePaintPlacement() {
+        if let replayedPaint {
+            for held in replayedPaint.surfaces {
+                if let graphics = (held.owner as? RenderTarget)?.drawer { note(placing: graphics) }
+            }
+            return
+        }
+        guard let currentShader else { return }
+        for graphics in currentShader.drawnSurfaces { note(placing: graphics) }
     }
 
     /// いま効いている光を置き場へ写し、その区間を返す。
