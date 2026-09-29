@@ -202,8 +202,8 @@ struct UpscaleTests {
     /// 透明の下地に、不透明な白・赤・黒を接して置く (#1638 の再現と同じ組み合わせを、
     /// この面の大きさへ置き直したもの)。
     ///
-    /// 縁の外側では三次補間が上へ振れて不透明度が 1 を越える。白い円の上端が黒い四角の
-    /// 下辺に接する所では、不透明度だけが下へ振れて色が不透明度を越える。
+    /// 透明と接する縁の内側では、三次補間が上へ振れて不透明度が 1 を越える。白い円の上端が
+    /// 黒い四角の下辺に接する所では、色と不透明度の振れ方が食い違い、色が不透明度を越える。
     private func touchingShapes(on canvas: Canvas) {
         canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
         canvas.noStroke()
@@ -256,6 +256,57 @@ struct UpscaleTests {
         }
         // ADR-0011 決定 2 — 出力段まで捨てずに運ぶ
         #expect(canvas.output.pixels[64, 48].red > 1.5)
+    }
+
+    /// 入りが範囲の外でも、拡大は読んだ周りの値の範囲を越えない。1 を越える光が透明と
+    /// 接する縁で、行き過ぎが光をさらに増やしたり不透明度を 1 より上へ押したりしない。
+    @Test("1 を越える光が透明と接する縁でも、拡大は周りの値の範囲を越えない", arguments: [Float(0.5), 0.25])
+    func brightEdgesStayWithinTheirNeighbourhood(density: Float) throws {
+        let canvas = try makeCanvas(density: density)
+        try canvas.draw {
+            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.noStroke()
+            canvas.fill(LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1))
+            canvas.rect(32, 24, 64, 48)
+        }
+        let pixels = canvas.output.pixels
+        var (alphaOver, brighter, negative) = (0, 0, 0)
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                let c = pixels[x, y]
+                if c.alpha > 1 { alphaOver += 1 }
+                if max(c.red, c.green, c.blue) > 4 { brighter += 1 }
+                if min(c.red, c.green, c.blue, c.alpha) < 0 { negative += 1 }
+            }
+        }
+        #expect(alphaOver == 0, "不透明度 > 1 が \(alphaOver) 画素 (\(density))")
+        #expect(brighter == 0, "描いた 4 より明るい画素が \(brighter) 画素 (\(density))")
+        #expect(negative == 0, "負の値が \(negative) 画素 (\(density))")
+        // 越えていた分 (色 4・不透明度 1) は運ぶ
+        #expect(pixels[64, 48].red > 3.9)
+    }
+
+    /// 引いて 0 を下回った値は、作業空間に残る (``BlendMode/subtract``・ADR-0011 決定 1)。
+    /// 畳むのは出力段だけなので、**拡大の段も 0 へ締めない** — 細かさ 1 (段が立たない) と
+    /// 同じ値を読み戻せる。
+    @Test("引いて負になった値は、拡大を通しても細かさ 1 と同じく残る")
+    func negativeValuesSurviveLikeAtFullDensity() throws {
+        func centre(density: Float) throws -> LinearRGBA {
+            let canvas = try makeCanvas(density: density)
+            try canvas.draw {
+                canvas.background(LinearRGBA(straightRed: 0.2, green: 0.2, blue: 0.2, alpha: 1))
+                canvas.noStroke()
+                canvas.blendMode(.subtract)
+                canvas.fill(LinearRGBA(straightRed: 0.6, green: 0.6, blue: 0.6, alpha: 1))
+                canvas.rect(32, 24, 64, 48)
+            }
+            return canvas.output.pixels[64, 48]
+        }
+        let full = try centre(density: 1)
+        let half = try centre(density: 0.5)
+        #expect(full.red < -0.3, "細かさ 1 で \(full.red)")
+        #expect(abs(half.red - full.red) < 0.01, "細かさ 0.5 で \(half.red) / 細かさ 1 で \(full.red)")
+        #expect(abs(half.alpha - full.alpha) < 0.01)
     }
 
     // MARK: - 増えないこと

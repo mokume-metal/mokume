@@ -103,6 +103,9 @@ static inline float4 mokume_brightShrink(Pixel in, float threshold, float factor
 ///   色が不透明度を越える。入りが範囲の内なら越えていた量は 0 で、色 ≤ 不透明度になる。
 ///   **入りに元からある越え (1 を越える光・#1057) はそのまま運ぶ** — 一律に不透明度で
 ///   締めると、作業空間が持てる明るさを潰す ([ADR-0011] 決定 1)
+///
+/// 同じ理由で、入りにある負の値 (`.subtract` で引いた暗さ) も 0 へ切らずに運ぶ。
+/// 畳むのは出力段だけで、細かさ 1 (この段が立たない) と同じ値が読み戻せる
 static inline float4 mokume_enlarge(Pixel in, float2 offset) {
     float2 size = float2(in.source.get_width(), in.source.get_height());
     float2 coord = (in.place + offset) * size - 0.5;
