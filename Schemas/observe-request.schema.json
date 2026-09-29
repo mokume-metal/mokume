@@ -18,21 +18,21 @@
       "type": "number",
       "exclusiveMinimum": 0,
       "maximum": 1,
-      "description": "How far to scale the written image down (1 = full size). 1 when omitted."
+      "description": "How far to scale the written image down (1 = full size). 1 when omitted. A scale outside this range is never replaced in silence: above 1, or at or below 0, the image is written at full size and the reply's warnings say so."
     },
     "count": {
       "type": "integer",
       "minimum": 1,
       "maximum": 120,
       "default": 1,
-      "description": "How many shots to take. 1 when omitted. Asking above the ceiling is never trimmed in silence: how many were cut appears in the reply's warnings."
+      "description": "How many shots to take. 1 when omitted. Asking outside the range is never clamped in silence: the count used, and whether the ceiling or the floor cut it, appear in the reply's warnings."
     },
     "every": {
       "type": "integer",
       "minimum": 1,
       "maximum": 60,
       "default": 1,
-      "description": "Take a shot every this many frames. Every frame when omitted. **Counted in frames rather than seconds**, so the shots follow the frames the sketch actually draws. The sketch being observed runs on the wall clock, and writing the images makes frames heavier, so **the shots are not evenly spaced in time** — lay the series out by each entry's `time` in the catalogue (frames), rather than assuming an even gap. For motion with evenly spaced times, write it with `mokume render` instead: it runs the sketch at a fixed frame rate and writes every frame, so nothing needs laying out again."
+      "description": "Take a shot every this many frames. Every frame when omitted. Asking outside the range is never clamped in silence, as with count. **Counted in frames rather than seconds**, so the shots follow the frames the sketch actually draws. The sketch being observed runs on the wall clock, and writing the images makes frames heavier, so **the shots are not evenly spaced in time** — lay the series out by each entry's `time` in the catalogue (frames), rather than assuming an even gap. For motion with evenly spaced times, write it with `mokume render` instead: it runs the sketch at a fixed frame rate and writes every frame, so nothing needs laying out again."
     },
     "time": {
       "type": "number",

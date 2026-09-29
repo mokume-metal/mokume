@@ -88,18 +88,18 @@ struct Tools {
                         ],
                         "count": [
                             "type": "integer",
-                            "minimum": 1,
+                            "minimum": ObservationRequest.minimumCount,
                             "maximum": ObservationRequest.maximumCount,
                             "description":
-                                "How many shots to take (1…\(ObservationRequest.maximumCount)). Omit for one.",
+                                "How many shots to take (\(ObservationRequest.minimumCount)…\(ObservationRequest.maximumCount)). Omit for one.",
                         ],
                         "every": [
                             "type": "integer",
-                            "minimum": 1,
+                            "minimum": ObservationRequest.minimumEvery,
                             "maximum": ObservationRequest.maximumEvery,
                             "description":
                                 """
-                                Take a shot every N frames (1…\(ObservationRequest.maximumEvery)). \
+                                Take a shot every N frames (\(ObservationRequest.minimumEvery)…\(ObservationRequest.maximumEvery)). \
                                 Omit to take every frame. Counted in frames rather than seconds, \
                                 and the sketch being observed runs on the wall clock, so the shots \
                                 are not evenly spaced in time — lay the series out by each entry's \

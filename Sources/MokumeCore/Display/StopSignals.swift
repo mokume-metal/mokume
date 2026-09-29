@@ -80,8 +80,9 @@ package nonisolated enum StopSignals {
     /// `SIG_IGN` は `(void (*)(int))1` という番地の約束なので、関数ポインタとしては比べられず、
     /// 番地で比べる。
     ///
-    /// **道具も同じ判定を使う** (`mokume render` が SIGINT を受けるか決める)。番地の比べ方を
-    /// 写さないために、パッケージの中へ開けてある。
+    /// **道具も同じ判定を使う** — 道具がスケッチを起こす口 `RunCommand.stopSignals(sigint:)`
+    /// (`mokume run` と、同じ起動の口を通る `mokume render`) が、SIGINT を受けるかを決める。
+    /// 番地の比べ方を写さないために、パッケージの中へ開けてある。
     package static func isIgnored(_ action: sigaction) -> Bool {
         address(of: action) == address(of: SIG_IGN)
     }

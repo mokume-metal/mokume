@@ -142,14 +142,14 @@ struct ObservationProtocolTests {
         #expect(removed == ["report.json", "frame-000.png", "frame-001.png"])
     }
 
-    @Test("撮る枚数と間隔は、上限で切ったことが分かる形で切られる")
+    @Test("撮る枚数と間隔は、範囲の端で切ったことが分かる形で切られる")
     func clampsTheCountAndIntervalOutLoud() {
         let asked = ObservationRequest(id: "a1", count: 5_000, every: 600)
         let limits = asked.clamped()
         #expect(limits.count == ObservationRequest.maximumCount)
         #expect(limits.every == ObservationRequest.maximumEvery)
         // **黙って切らない。** 頼んだ枚数と返った枚数の食い違いが応答から読めないと、
-        // 読み手は「動きが途中で止まった」と「上限で切られた」を区別できない
+        // 読み手は「動きが途中で止まった」と「範囲の端で切られた」を区別できない
         #expect(limits.warnings.count == 2)
         #expect(limits.warnings.allSatisfy { $0.contains("5000") || $0.contains("600") })
 
@@ -162,6 +162,82 @@ struct ObservationProtocolTests {
         // 弾くが、実装は書き手がスキーマを守ったことを当てにしない)
         let absurd = ObservationRequest(id: "a3", count: 0, every: -4).clamped()
         #expect((absurd.count, absurd.every) == (1, 1))
+        // 切った理由は下限で、上限ではない (#1699)
+        #expect(
+            absurd.warnings == [
+                "The number of shots went from 0 to 1 (the floor is 1)",
+                "The interval went from -4 to 1 frames (the floor is 1)",
+            ])
+    }
+
+    /// 縮小率・枚数・間隔を丸めたときの、値とことわりの原文 ([#1699]・[#1814])。
+    ///
+    /// 直す前は、枚数と間隔を下の端 (0・負 → 1) で丸めたときも上限を名乗り、縮小率は
+    /// 範囲 `(0, 1]` の外でもことわりなしに実寸へ倒していた。読み手 (観測の応答を読む
+    /// 機械・人) は、切られた理由を取り違えるか、切られたことに気付かない。
+    ///
+    /// [#1699]: https://github.com/mokume-metal/mokume/issues/1699
+    /// [#1814]: https://github.com/mokume-metal/mokume/issues/1814
+    nonisolated struct ClampCase: CustomTestStringConvertible, Sendable {
+        var scale: Double = 1
+        var count = 1
+        var every = 1
+        let expected: (scale: Double, count: Int, every: Int)
+        let warnings: [String]
+
+        var testDescription: String { "scale \(scale)・count \(count)・every \(every)" }
+
+        static let all: [ClampCase] = [
+            // 枚数: 上の端・下の端・範囲の中 (両端を含む)
+            ClampCase(
+                count: 5_000, expected: (1, 120, 1),
+                warnings: ["The number of shots went from 5000 to 120 (the ceiling is 120)"]),
+            ClampCase(
+                count: 0, expected: (1, 1, 1),
+                warnings: ["The number of shots went from 0 to 1 (the floor is 1)"]),
+            ClampCase(
+                count: -3, expected: (1, 1, 1),
+                warnings: ["The number of shots went from -3 to 1 (the floor is 1)"]),
+            ClampCase(count: 120, expected: (1, 120, 1), warnings: []),
+            ClampCase(count: 1, expected: (1, 1, 1), warnings: []),
+            // 間隔: 上の端・下の端・範囲の中 (両端を含む)
+            ClampCase(
+                every: 600, expected: (1, 1, 60),
+                warnings: ["The interval went from 600 to 60 frames (the ceiling is 60)"]),
+            ClampCase(
+                every: -4, expected: (1, 1, 1),
+                warnings: ["The interval went from -4 to 1 frames (the floor is 1)"]),
+            ClampCase(
+                every: 0, expected: (1, 1, 1),
+                warnings: ["The interval went from 0 to 1 frames (the floor is 1)"]),
+            ClampCase(every: 60, expected: (1, 1, 60), warnings: []),
+            ClampCase(count: 8, every: 3, expected: (1, 8, 3), warnings: []),
+            // 縮小率: 上の外・下の外 (0・負・数でない)・範囲の中 (上の端を含む)
+            ClampCase(
+                scale: 2, expected: (1, 1, 1),
+                warnings: ["The scale went from 2.0 to 1.0 (the ceiling is 1.0)"]),
+            ClampCase(
+                scale: 0, expected: (1, 1, 1),
+                warnings: ["The scale went from 0.0 to 1.0 (a scale must be above 0, so full size was used)"]),
+            ClampCase(
+                scale: -1, expected: (1, 1, 1),
+                warnings: ["The scale went from -1.0 to 1.0 (a scale must be above 0, so full size was used)"]),
+            ClampCase(
+                scale: .nan, expected: (1, 1, 1),
+                warnings: ["The scale went from nan to 1.0 (a scale must be above 0, so full size was used)"]),
+            ClampCase(scale: 0.5, expected: (0.5, 1, 1), warnings: []),
+            ClampCase(scale: 1, expected: (1, 1, 1), warnings: []),
+        ]
+    }
+
+    @Test("丸めたことわりは、切った端を名乗る (#1699・#1814)", arguments: ClampCase.all)
+    func namesTheBoundItClampedTo(_ clampCase: ClampCase) {
+        let limits = ObservationRequest(
+            id: "a1", scale: clampCase.scale, count: clampCase.count, every: clampCase.every
+        ).clamped()
+        #expect(limits.scale == clampCase.expected.scale)
+        #expect((limits.count, limits.every) == (clampCase.expected.count, clampCase.expected.every))
+        #expect(limits.warnings == clampCase.warnings)
     }
 
     @Test("撮った絵の名前は、名前順が撮った順になる")

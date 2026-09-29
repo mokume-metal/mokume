@@ -98,7 +98,7 @@ struct NameCorrespondenceTests {
 
     /// **窓口は面より狭くも広くもならない。**
     ///
-    /// 上限の数値は面の仕様 (`Schemas/observe-request.schema.json`)・型の定数
+    /// 範囲の端の数値は面の仕様 (`Schemas/observe-request.schema.json`)・型の定数
     /// (`ObservationRequest`)・窓口の `inputSchema`・窓口の散文の 4 箇所に現れていて、
     /// **対応を見る機械が居なかった**。窓口が型の定数から出すようにしたので、残る
     /// 突き合わせは仕様との一致だけである — そこがずれると、窓口が通した要求を
@@ -120,9 +120,9 @@ struct NameCorrespondenceTests {
         }
     }
 
-    /// **数値は型の定数から出る。** 窓口の散文に手で書くと、上限を動かした日に
-    /// 説明だけが古い数を言い続ける。
-    @Test("窓口の説明に出る上限も、型の定数から出ている")
+    /// **数値は型の定数から出る。** 窓口の散文に手で書くと、範囲の端を動かした日に
+    /// 説明だけが古い数を言い続ける。下限も同じ (#1699)。
+    @Test("窓口の説明に出る範囲の両端も、型の定数から出ている")
     func theProseCarriesTheSameNumbers() throws {
         let announced = try #require(
             Tools.ToolName.observe.inputSchema["properties"] as? [String: Any])
@@ -130,8 +130,10 @@ struct NameCorrespondenceTests {
             (announced["count"] as? [String: Any])?["description"] as? String)
         let every = try #require(
             (announced["every"] as? [String: Any])?["description"] as? String)
-        #expect(count.contains("1…\(ObservationRequest.maximumCount)"))
-        #expect(every.contains("1…\(ObservationRequest.maximumEvery)"))
+        #expect(
+            count.contains("\(ObservationRequest.minimumCount)…\(ObservationRequest.maximumCount)"))
+        #expect(
+            every.contains("\(ObservationRequest.minimumEvery)…\(ObservationRequest.maximumEvery)"))
     }
 
     /// **「枚数で並べれば速さが揃う」と読ませない。** 観測を受けるスケッチ

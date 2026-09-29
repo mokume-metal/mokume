@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/observe-report.schema.json",
   "title": "The observation reply",
-  "description": "The result of an observation and the catalogue of images taken. The images are separate files, and this reply is written atomically, last. A reader judges completeness by the catalogue (frames) being present, the id matching, and the count agreeing — **when the ceiling cut the request, it agrees with the count after cutting**, so checking against the requested count alone reads a complete reply as a failure (the cut appears in warnings). A reply is written even when nothing could be taken, with the reason in warnings (ADR-0018 decision 3).",
+  "description": "The result of an observation and the catalogue of images taken. The images are separate files, and this reply is written atomically, last. A reader judges completeness by the catalogue (frames) being present, the id matching, and the count agreeing — **when the request was clamped to its range (above the ceiling, or below the floor of 1), it agrees with the count after clamping**, so checking against the requested count alone reads a complete reply as a failure (the clamp, and the bound it hit, appear in warnings). A reply is written even when nothing could be taken, with the reason in warnings (ADR-0018 decision 3).",
   "type": "object",
   "required": [
     "schemaVersion",

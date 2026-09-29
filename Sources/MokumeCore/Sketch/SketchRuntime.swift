@@ -1072,7 +1072,7 @@ public final class SketchRuntime {
             return
         }
         capture = FrameCapture(
-            id: request.id, scale: request.scale, count: limits.count, every: limits.every,
+            id: request.id, scale: limits.scale, count: limits.count, every: limits.every,
             warnings: limits.warnings, appliedTime: appliedTime)
         continueCapture(through: observer, drawFailure: nil)
     }
@@ -1178,10 +1178,11 @@ public final class SketchRuntime {
     /// 撮っている最中の列。
     private struct FrameCapture {
         let id: String
+        /// 書き出す絵の縮小率 (範囲の端で丸めた後・``ObservationRequest/clamped()``)。
         let scale: Double
-        /// 撮る枚数 (上限で切った後)。
+        /// 撮る枚数 (範囲の端で丸めた後)。
         let count: Int
-        /// 何フレームおきに撮るか (上限で切った後)。
+        /// 何フレームおきに撮るか (範囲の端で丸めた後)。
         let every: Int
         /// 目録に載せることわり。切り詰めたことなど、撮り始める前に決まるもの。
         var warnings: [String]
