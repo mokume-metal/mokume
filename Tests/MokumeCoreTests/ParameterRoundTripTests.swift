@@ -131,7 +131,7 @@ struct ParameterRoundTripTests {
 
         try turn(run, "radius", to: 120)
         try choose(run, "shape", "square")
-        // 値が変わった知らせは隔離をまたいで届く
+        // 譲るループ (窓) の形で回す。知らせは譲らなくても届く (#1704)
         await Task.yield()
         run.surface.drain()
 

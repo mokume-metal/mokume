@@ -44,6 +44,8 @@ final class ParamStore: DeclarationWatcher {
     let url: URL
     /// 見張る先 (``DeclarationWatcher``)。
     let registry: ParamRegistry
+    /// 値が変わったという印 (``DeclarationWatcher``)。
+    let declarationNotice = DeclarationNotice()
     /// 静かになるまでの残り。`nil` なら書くものが無い。
     private var countdown: Int?
     /// 実際に書いた回数。**まとめられていることを検査から見るために持つ。**
@@ -137,7 +139,11 @@ final class ParamStore: DeclarationWatcher {
     // MARK: - 書く
 
     /// 1 フレーム進める。静かになっていれば書く。
+    ///
+    /// **値が変わったかは、ここで印を取って知る** (``DeclarationWatcher``)。main actor を
+    /// 譲らずに回すループでも、`draw` の中で変えた値がここで届く (#1704)。
     func tick() {
+        takeDeclarationChange()
         guard let remaining = countdown else { return }
         guard remaining > 1 else {
             countdown = nil
@@ -150,8 +156,9 @@ final class ParamStore: DeclarationWatcher {
     /// いますぐ書く。
     ///
     /// **外からの書き込みが起こした変化は即時に書く** ([ADR-0030] 決定 6) — 書いた側は
-    /// 反映を見に来るので、静かになるのを待たせない。値が変わったという知らせは
-    /// Observation から**あとで**届くので、待たずにここで書き切る。
+    /// 反映を見に来るので、静かになるのを待たせない。値が変わったという印は次の
+    /// ``tick()`` まで読まれないので、それを待たずにここで書き切る。書き切ったので、
+    /// 立っている印は ``write()`` が下ろす (同じ中身をもう 1 度書かない)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     func flushNow() {
@@ -163,7 +170,11 @@ final class ParamStore: DeclarationWatcher {
     func declarationsChanged() { countdown = Self.quietFrames }
 
     /// まとめている途中のものがあれば書く。終わるときに呼ぶ。
+    ///
+    /// **最後のフレームで変わった値も書く。** その変化はまだ ``tick()`` を通っていないので、
+    /// ここでも印を取る。
     func flushIfPending() {
+        takeDeclarationChange()
         guard countdown != nil else { return }
         flushNow()
     }
@@ -171,8 +182,12 @@ final class ParamStore: DeclarationWatcher {
     /// いまの値を置く。**原子的に書く** ([ADR-0018] 決定 3) — 読み手が書きかけを
     /// 掴むと、合わせた値がまとめて既定へ戻る。
     ///
+    /// **書く姿には、立っている印の変化がもう入っている** ので、印は下ろす
+    /// (``DeclarationWatcher/coverDeclarationChange()``)。
+    ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     private func write() {
+        coverDeclarationChange()
         let saved = Saved(
             values: registry.declarations.map { Saved.Entry(name: $0.name, value: $0.value) })
         let encoder = JSONEncoder()

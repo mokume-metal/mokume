@@ -73,7 +73,7 @@ struct FloatParamTests {
         let saving = ParamStore(registry: ParamRegistry(of: before), at: url)
         saving.restore()
         before.gain = 0.625
-        // 値が変わった知らせは隔離をまたいで届くので、フレームを進める前に受け取らせる
+        // 譲るループ (窓) の形で回す。知らせは譲らなくても届く (#1704)
         await Task.yield()
         for _ in 0...ParamStore.quietFrames { saving.tick() }
         #expect(saving.writeCount == 1)
