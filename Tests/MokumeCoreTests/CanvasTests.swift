@@ -1398,6 +1398,12 @@ struct CanvasTests {
                 c.recordedSolidStrokes.append(
                     SolidStrokePiece(kind: .disc(.zero), weight: 1, vertexStart: 0, vertexCount: 0))
             }),
+            ("recordedGPUStrokes", end, all, { c, _ in
+                c.recordedGPUStrokes.append(
+                    RetainedGPUStroke(
+                        source: .freeform, matrix: Transform.identity.matrix, weight: 1,
+                        color: .transparent, uv: .zero, vertices: 0..<0))
+            }),
             ("formInstances", end, all, { c, _ in c.rect(10, 10, 4, 4) }),
             ("batches", end, all, { c, _ in c.rect(10, 10, 4, 4) }),
             ("placedGraphics", end, all, { c, f in c.note(placing: f.other) }),
@@ -1577,6 +1583,7 @@ struct CanvasTests {
             "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
             "uploadByteLimit": testing, "failureForTesting": testing,
+            "placesRetainedStrokesOnGPU": testing,
             "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
         ]
     }

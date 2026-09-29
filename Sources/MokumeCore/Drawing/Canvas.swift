@@ -153,6 +153,13 @@ public final class Canvas {
     /// 記録を終えると `createShape` が抜く。
     var recordedSolidStrokes: [SolidStrokePiece] = []
 
+    /// 保持する形を記録している間に、**GPU で組める**組み込み立体の線を覚えたもの
+    /// (``RetainedGPUStroke``・#1756)。記録を終えると `createShape` が抜く。
+    var recordedGPUStrokes: [RetainedGPUStroke] = []
+
+    /// 保持した形の線を、組めるものは GPU で組むか。**検査が偽にして、CPU で組む物差しを作る。**
+    var placesRetainedStrokesOnGPU = true
+
     /// 立体の線の部品を組み直している間、頂点を積む代わりに位置を受け取る先。
     ///
     /// 組み直しは即時に描くときと**同じ関数** (帯・円板・正方形) を通す。向き・幅・寄せの
@@ -1810,6 +1817,7 @@ public final class Canvas {
         list(&vertices)
         list(&recordedStrokeRanges)
         list(&recordedSolidStrokes)
+        list(&recordedGPUStrokes)
         list(&solidVertices)
         list(&solidIndices)
         list(&solidInstances)

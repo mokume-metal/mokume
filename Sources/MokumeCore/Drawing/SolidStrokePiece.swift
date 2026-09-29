@@ -70,3 +70,30 @@ struct SolidStrokePiece {
         return piece
     }
 }
+
+/// 保持した形の中で、**GPU で組める組み込み立体の線** 1 つ ([#1756])。
+///
+/// 記録の間も線は CPU の帯として頂点に焼く (``SolidStrokePiece``) が、組み込みの形の閉じた
+/// 稜線を不透明・miter・通常の混ぜ方・絵も利用者の断片も無しで引いた線は、置くときに
+/// その場で描いたときと同じ GPU の骨 (``SolidStrokeGeometry``) で組める。置くたびに帯を
+/// CPU で組み直すと、球 30 個で 1 フレーム約 10 ms かかっていた。
+///
+/// **焼いた頂点は消さない** — 頂点の数 (``Shape/vertexCount``)・入れ子の記録・GPU で
+/// 組めない置き方 (置き場所の色で透ける・骨を作れない) のために、今までどおり持つ。
+/// GPU で組むときは、その区間の頂点を積まずに GPU の列で描く。
+///
+/// [#1756]: https://github.com/mokume-metal/mokume/issues/1756
+struct RetainedGPUStroke {
+    /// どの組み込みの形の稜線か (寸法を含む)。
+    var source: Canvas.SolidSource
+    /// 記録した時点の変換 (形自身の座標)。置くときは置き場所の行列を左から掛ける。
+    var matrix: simd_float4x4
+    /// 記録した線の太さ。置く時点の ``Canvas/strokeWeight(_:)`` は効かない。
+    var weight: Float
+    /// 記録した線の色 (乗算済み)。置き場所の色は置くときに掛かる。
+    var color: LinearRGBA
+    /// 記録した時点の焼き場の白い区画。区間が記録した頁を束ねるので、いまの位置ではなくこれを読む。
+    var uv: SIMD2<Float>
+    /// 焼いた線の頂点の区間 (``Shape/solidVertices`` の番号)。
+    var vertices: Range<Int>
+}
