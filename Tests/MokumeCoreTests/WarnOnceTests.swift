@@ -783,6 +783,166 @@ struct ShapeNotEndedWarningTests {
     }
 }
 
+/// 形を開いたまま `beginShape()` を呼び直し、前の形を捨てたときの原文 ([#1608])。
+///
+/// [#1608]: https://github.com/mokume-metal/mokume/issues/1608
+private let shapeBegunWhileOpenNotice =
+    "beginShape(): the previous shape was not ended with endShape() before beginShape() was "
+    + "called again, so it was dropped without being drawn. End each shape with endShape() "
+    + "before beginning the next"
+
+/// 形を開いたまま `beginShape()` を呼び直したときの注意 ([#1608])。GPU を要する。
+///
+/// 直す前は、前の形の点を注意なしに捨てていた。**振る舞い (前の形を描かない) は直す前の
+/// まま**で、足したのは注意だけである — 絵は変わらない。境目の注意 (``Canvas/Warning/shapeNotEnded``)
+/// とは言うことが違うので鍵を分ける。
+///
+/// [#1608]: https://github.com/mokume-metal/mokume/issues/1608
+@Suite(
+    "形を開いたまま呼び直した beginShape() の注意",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct ShapeBegunWhileOpenWarningTests {
+    private static let size = 32
+    /// 閉じ忘れる 1 つ目の形。上半分の三角形で、先頭から使う点の数を検査ごとに変える。
+    private static let upper: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(32, 0), SIMD2(16, 14)]
+    /// 閉じる 2 つ目の形。下半分の三角形。
+    private static let lower: [SIMD2<Float>] = [SIMD2(0, 18), SIMD2(32, 18), SIMD2(16, 32)]
+
+    private func makeCanvas() throws -> Canvas {
+        try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
+    }
+
+    /// 起票の書き方。1 つ目を閉じ忘れたまま、2 つ目を開いて閉じる。
+    private func overlap(_ canvas: Canvas, firstPoints: Int) {
+        canvas.beginShape()
+        for point in Self.upper.prefix(firstPoints) { canvas.vertex(point.x, point.y) }
+        canvas.beginShape()
+        for point in Self.lower { canvas.vertex(point.x, point.y) }
+        canvas.endShape(.close)
+    }
+
+    /// 黒地に白の塗りだけで 1 フレーム描く。
+    private func paint(_ canvas: Canvas, _ body: () -> Void) throws {
+        try canvas.draw {
+            canvas.background(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.fill(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+            body()
+        }
+    }
+
+    /// 上の三角形の内側と、下の三角形の内側が塗られたか。
+    private func painted(_ canvas: Canvas) throws -> (upper: Bool, lower: Bool) {
+        let pixels = try canvas.target.readPixels()
+        func isPainted(_ x: Int, _ y: Int) -> Bool {
+            pixels.components[(y * Self.size + x) * 4] > 0.5
+        }
+        return (isPainted(16, 4), isPainted(16, 26))
+    }
+
+    /// 境目の捨て方 (`discardShapeLeftOpen()`) と同じく、前の形に点が無くても言う。
+    @Test("前の形は描かれずに捨てられ、beginShape() を名乗って注意する", arguments: [0, 2, 3])
+    func dropsThePreviousShapeAndWarns(firstPoints: Int) throws {
+        let canvas = try makeCanvas()
+        try paint(canvas) { overlap(canvas, firstPoints: firstPoints) }
+
+        let result = try painted(canvas)
+        #expect(!result.upper, "閉じなかった 1 つ目の形が描かれた")
+        #expect(result.lower, "閉じた 2 つ目の形が描かれなかった")
+        #expect(canvas.warnings.message(for: .shapeBegunWhileOpen) == shapeBegunWhileOpenNotice)
+        #expect(!canvas.warnings.hasWarned(.shapeNotEnded), "本体の終わりを越えていないのに境目の注意を言った")
+        #expect(!canvas.isBuildingShape)
+        #expect(canvas.shapePoints.isEmpty, "1 つ目の形の点が組み立ての状態に残った")
+    }
+
+    /// 文面は値を含まないので、2 度目も言っていれば控えが上書きされる形では見分けられない。
+    /// 見るのは、毎フレーム重ね続けても控えが初回のまま 1 つであることである。
+    @Test("30 フレーム重ね続けても、控えの文面は初回のまま")
+    func staysSilentAfterTheFirstDrop() throws {
+        let canvas = try makeCanvas()
+        for _ in 0..<30 {
+            try canvas.draw { overlap(canvas, firstPoints: 2) }
+            #expect(canvas.shapePoints.isEmpty)
+        }
+        #expect(canvas.warnings.message(for: .shapeBegunWhileOpen) == shapeBegunWhileOpenNotice)
+    }
+
+    /// 形の組み立ての中でも同じ。外で開いていた形は、組み立てが退かせて出口で戻す (#1607)
+    /// ので、重ねた注意の元にならず、組み立ての後も続けられる。
+    @Test("形の組み立ての中で重ねても、前の形を捨てて注意する", arguments: [false, true])
+    func dropsThePreviousShapeInsideCreateShape(insideFrame: Bool) throws {
+        let canvas = try makeCanvas()
+        var recorded: Shape?
+        var outerBuilding: Bool?
+        var outerPoints: Int?
+        func run() {
+            canvas.beginShape()  // 外で開いたままの形
+            canvas.vertex(1, 1)
+            canvas.vertex(2, 2)
+            recorded = canvas.createShape { overlap(canvas, firstPoints: 3) }
+            outerBuilding = canvas.isBuildingShape
+            outerPoints = canvas.shapePoints.count
+            canvas.endShape(.close)
+        }
+        // フレームの外は `setup()` を模す。形を開けるのは持ち越しの区間の中だけである (#1672)
+        if insideFrame {
+            try canvas.draw { run() }
+        } else {
+            canvas.carriesOver = true
+            run()
+            canvas.carriesOver = false
+        }
+        #expect(canvas.warnings.message(for: .shapeBegunWhileOpen) == shapeBegunWhileOpenNotice)
+        #expect(!canvas.warnings.hasWarned(.shapeNotEnded), "組み立ての中で閉じた形に境目の注意を言った")
+        #expect(outerBuilding == true, "外で開いていた形が組み立ての出口で戻らなかった")
+        #expect(outerPoints == 2, "外で開いていた形の点が変わった")
+
+        let shape = try #require(recorded)
+        try paint(canvas) { canvas.shape(shape) }
+        let result = try painted(canvas)
+        #expect(!result.upper, "閉じなかった 1 つ目の形が組み立てに焼き付いた")
+        #expect(result.lower, "閉じた 2 つ目の形が組み立てに焼き付かなかった")
+    }
+
+    @Test("フレームの外 (setup()) で重ねても、前の形を捨てて注意する")
+    func dropsThePreviousShapeOutsideTheFrame() throws {
+        let canvas = try makeCanvas()
+        canvas.carriesOver = true
+        overlap(canvas, firstPoints: 3)
+        canvas.carriesOver = false
+        #expect(canvas.warnings.message(for: .shapeBegunWhileOpen) == shapeBegunWhileOpenNotice)
+        #expect(!canvas.isBuildingShape)
+        #expect(canvas.shapePoints.isEmpty, "1 つ目の形の点が組み立ての状態に残った")
+    }
+
+    /// 閉じてから開く普段の書き方では言わない。フレームの中でも外でも、組み立ての中でも。
+    @Test("閉じてから開けば、何枚描いても注意しない")
+    func saysNothingWhenEachShapeIsEnded() throws {
+        let canvas = try makeCanvas()
+        func shapes() {
+            for points in [Self.upper, Self.lower] {
+                canvas.beginShape()
+                for point in points { canvas.vertex(point.x, point.y) }
+                canvas.endShape(.close)
+            }
+        }
+        canvas.carriesOver = true
+        shapes()
+        _ = canvas.createShape { shapes() }
+        canvas.carriesOver = false
+        for _ in 0..<3 {
+            try canvas.draw {
+                shapes()
+                _ = canvas.createShape { shapes() }
+            }
+        }
+        #expect(!canvas.warnings.hasWarned(.shapeBegunWhileOpen), "閉じた形しか描いていないのに注意した")
+    }
+}
+
 /// 形の中で、頂点の口を誤って呼んだときの注意 ([#1528])。GPU を要する。
 ///
 /// 直す前は、穴を開かずに呼んだ `endContour()` と、向きにならない値を渡した `normal()` が

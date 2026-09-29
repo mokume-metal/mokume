@@ -42,15 +42,15 @@ extension Canvas {
         //
         // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         guard canPlace else { return warnOutsideFrame(.placing) }
+        // 閉じずに開き直した形は、描かずに捨てて 1 度だけ知らせる ([#1608])。境目で捨てる形
+        // (``discardShapeLeftOpen()``) と同じく、点の有無によらず言う。片付けの並びは
+        // ``discardOpenShape()`` の 1 か所に置く — 開き直す普段の場合もここを通る
+        //
+        // [#1608]: https://github.com/mokume-metal/mokume/issues/1608
+        if isBuildingShape { warnShapeBegunWhileOpenOnce() }
+        discardOpenShape()
         isBuildingShape = true
         shapeKind = kind
-        shapeHasDepth = false
-        currentNormal = nil
-        shapePoints.removeAll(keepingCapacity: true)
-        shapeIndices.removeAll(keepingCapacity: true)
-        shapeHoles.removeAll(keepingCapacity: true)
-        curveGuides.removeAll(keepingCapacity: true)
-        holePoints = nil
     }
 
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
@@ -239,14 +239,16 @@ extension Canvas {
     /// 組み立て中の形を、描かずに捨てる。**注意は言わない。**
     ///
     /// ``endShape(_:)`` が描いた後に片付けるのと、フレームの境目が閉じ忘れた形を捨てる
-    /// (``discardShapeLeftOpen()``) のが、同じここを通る ([#1591])。並びを 2 か所に書くと、
-    /// 組み立ての状態を 1 つ足した日に片方だけが戻す — フレームの境目で戻す状態を境目の
-    /// 関数ごとに手で並べていたのが、#1591 の戻し落としの形そのものである。
+    /// (``discardShapeLeftOpen()``) のと、``beginShape(_:)`` が開き直す前に空にする ([#1608])
+    /// のが、同じここを通る ([#1591])。並びを 2 か所に書くと、組み立ての状態を 1 つ足した
+    /// 日に片方だけが戻す — フレームの境目で戻す状態を境目の関数ごとに手で並べていたのが、
+    /// #1591 の戻し落としの形そのものである。
     ///
     /// 開いたままの穴 (#1528) は畳まずに形ごと捨てる。畳むのは ``endShape(_:)`` が描く
     /// ときの約束で、描かない形の穴を畳む理由は無い。
     ///
     /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+    /// [#1608]: https://github.com/mokume-metal/mokume/issues/1608
     func discardOpenShape() {
         isBuildingShape = false
         // 読むのは組み立ての間だけ (`beginShape()` が書き直す) だが、既定へ戻しておく。
@@ -988,6 +990,22 @@ extension Canvas {
             "beginShape(): a shape was left open past the end of the draw(), setup() or "
                 + "createShape() body that began it, so it was dropped without being drawn. End "
                 + "each shape with endShape() in the same body")
+    }
+
+    /// 形を閉じないまま ``beginShape(_:)`` をもう一度呼び、前の形を捨てたことを、初回だけ
+    /// 知らせる ([#1608])。
+    ///
+    /// 境目の注意 (``warnShapeNotEndedOnce()``) の文面は、開いた本体の終わりを越えたと
+    /// 名乗る。重ね呼びは本体の終わりを越えていないので鍵を分け、直す先 (次の形を開く前に
+    /// 閉じる) を言う。
+    ///
+    /// [#1608]: https://github.com/mokume-metal/mokume/issues/1608
+    private func warnShapeBegunWhileOpenOnce() {
+        warnOnce(
+            .shapeBegunWhileOpen,
+            "beginShape(): the previous shape was not ended with endShape() before beginShape() "
+                + "was called again, so it was dropped without being drawn. End each shape with "
+                + "endShape() before beginning the next")
     }
 
     /// 形の中で、穴を開かずに ``endContour()`` を呼んだことを、初回だけ知らせる ([#1528])。

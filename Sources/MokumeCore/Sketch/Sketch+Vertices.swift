@@ -220,7 +220,8 @@ extension Sketch {
     /// **組み立て中の形はフレームに属する** ([ADR-0021] 決定 4 の追補 (2026-09-27))。開いたら、
     /// 同じ ``draw()`` の中で ``endShape(_:)`` まで書く。閉じないままフレームの境目を越えると、
     /// 形は描かれずに捨てられ、注意が 1 度だけ出る。次のフレームの ``vertex(_:_:)`` は形の外に
-    /// なるので、前のフレームの形の続きとして積まれることはない。
+    /// なるので、前のフレームの形の続きとして積まれることはない。形を閉じないまま
+    /// `beginShape()` をもう一度呼んだときも、前の形は描かれずに捨てられ、注意が 1 度だけ出る。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     // shot: 1 snippet=445ca5af

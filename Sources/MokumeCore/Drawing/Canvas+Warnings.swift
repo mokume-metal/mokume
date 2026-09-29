@@ -174,6 +174,16 @@ extension Canvas {
         ///
         /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
         case shapeNotEnded
+        /// ``beginShape(_:)`` で開いた形を ``endShape(_:)`` で閉じないまま、同じ本体の中で
+        /// ``beginShape(_:)`` をもう一度呼んだ ([#1608])。前の形は描かずに捨てる。
+        ///
+        /// **``shapeNotEnded`` とは鍵を分ける。** あちらの文面は開いた本体の終わりを越えたと
+        /// 名乗り、こちらは本体の終わりを越えていない。同じ閉じ忘れから両方が出ることもある
+        /// (重ねた後の形も閉じ忘れて本体を抜ける) ので、共有すると先に言った側がもう片方を
+        /// 黙らせる。
+        ///
+        /// [#1608]: https://github.com/mokume-metal/mokume/issues/1608
+        case shapeBegunWhileOpen
         /// 形の中で、穴を開かずに ``endContour()`` を呼んだ ([#1528])。
         ///
         /// 形の外で呼んだときは ``vertexOutsideShape`` のほうを言う (直す先が
