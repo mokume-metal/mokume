@@ -1348,6 +1348,11 @@ struct CanvasTests {
             // 途中の描き切りと塗り直しは、溜めたものを捨てるので先に通す
             ("passesThisFrame", head, all, { c, _ in c.loadPixels() }),
             ("hasLoadedPixels", head, all, { c, _ in c.loadPixels() }),
+            // 描く先 (`target`) の中の、フレームに属する状態 (#1678)。書く口は溜めた図形があれば
+            // 描き切るので、塗り直しと図形より先に書く。読み方は ``nestedFrameState``
+            ("target.pixelMirror.hasPendingWrites", end, all, { c, _ in
+                c.set(1, 1, .linear(red: 1, green: 0, blue: 0))
+            }),
             ("pendingBackground", end, all, { c, _ in c.background(.linear(red: 0, green: 0, blue: 0)) }),
             // シーンの記述
             ("cameraStorage", end, all, { c, _ in c.perspective() }),
@@ -1452,6 +1457,54 @@ struct CanvasTests {
         }
     }
 
+    /// **格納の中に降りて読む、フレームに属する状態の読み方** ([#1678])。名前は `.` で繋いだ道で、
+    /// ``frameState`` の同じ名前が汚す手順を持つ。
+    ///
+    /// 持ち越しに分けた格納 (`target` は面と同じだけ生きる) の中にも、フレームに属する状態がある。
+    /// 表と綴りが `Canvas` の格納で止まっていると、そこへ足した状態は境目を黙って越える — 写しの
+    /// 書き込み待ちは、そうして描かずに捨てたフレームを越えていた。中の格納の分け方は
+    /// ``everyTargetStoredPropertyIsClassified()`` が見る。
+    ///
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    private var nestedFrameState: [String: (Canvas) -> String] {
+        [
+            // 写しがまだ無いのは、書き込み待ちが無いのと同じ
+            "target.pixelMirror.hasPendingWrites": {
+                String(describing: $0.target.pixelMirror?.hasPendingWrites ?? false)
+            }
+        ]
+    }
+
+    /// 描く先 (``RenderTarget``) の格納のうち、持ち越すものと理由 ([#1678])。
+    ///
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    private var carriedTargetState: [String: String] {
+        let construction = "面を作ったときに決まり、面と同じだけ生きる"
+        let resource = "資源 (置き場・パイプライン)。頼まれてはじめて作り、使い回す"
+        let count = "計数 (作ってから通算)。数で確かめる検査が読む"
+        return [
+            "width": construction, "height": construction, "texture": construction,
+            "depthTexture": construction, "gpu": construction,
+            "drawer": "この面を出す先に持つ描き場所 (弱く持つ)。組み立ての最後に 1 度だけ書く",
+            "brightness": "明るさを画面へ写す段の設定。画面の性質なのでフレームを越える",
+            "encodedStorage": resource, "outputPassStorage": resource,
+            "lastEncodeSubmission": "最後に出力段を投入した番号。次の出力段の前に名指しで待つ (#927)",
+            "pixelMirrorsMade": count, "pixelWriteBacksEncoded": count,
+            "pixelReadbacksEncoded": count, "encodedImagesMade": count, "encodePassCount": count,
+        ]
+    }
+
+    /// 画素の写し (``PixelMirror``) の格納のうち、持ち越すものと理由 ([#1678])。
+    ///
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    private var carriedMirrorState: [String: String] {
+        let construction = "写しを作ったときに決まり、写しと同じだけ生きる"
+        return [
+            "storage": construction, "gpu": construction, "bytesPerRow": construction,
+            "syncedThrough": "写しが映した投入の番号。読む口が進め、捨てる口が 0 に戻す。映した絵の印で、フレームに属さない",
+        ]
+    }
+
     /// **持ち越す状態と、その理由。** 境目で戻さないことが約束どおりのもの。
     ///
     /// 足すときは理由を 1 行で書く。「戻し忘れ」をここへ逃がすと、この検査は何も守らなく
@@ -1464,7 +1517,8 @@ struct CanvasTests {
         let transient = "呼び出しの中でだけ立ち、抜ける前に戻る一時の値。境目では常に既定"
         let testing = "検査の差し込み・上限。製品の経路では既定のまま"
         return [
-            "width": construction, "height": construction, "target": construction,
+            "width": construction, "height": construction,
+            "target": "\(construction)。中のフレームに属する状態は nestedFrameState が見る (#1678)",
             "output": construction, "upscaleStage": construction, "gpu": construction,
             "frameRing": construction, "pipeline": construction, "projection": construction,
             "atlas": construction, "timebase": "時刻と刻み。ランタイムが進め、描き場所は作った面と共有する (#1467)",
@@ -1566,9 +1620,13 @@ struct CanvasTests {
                 frame.contains(label) || carried.contains(label),
                 "\(label) がどちらの表にも無い。フレームに属するなら汚す手順を、持ち越すなら理由を書く")
         }
-        for name in frame.union(carried) {
+        for name in frame.union(carried) where !name.contains(".") {
             #expect(labels.contains(name), "\(name) は Canvas の格納に無い (表から消す)")
         }
+        // 格納の中に降りる名前は、読み方が要る (綴りに載らないと、戻ったかを誰も見ない)
+        #expect(
+            Set(nestedFrameState.keys) == frame.filter { $0.contains(".") },
+            "格納の中に降りる名前と、その読み方が食い違う")
 
         let fields = Mirror(reflecting: canvas.style).children.compactMap(\.label)
         let frameFields = Set(frameStyle.keys)
@@ -1580,6 +1638,43 @@ struct CanvasTests {
         }
         for name in frameFields.union(carriedStyle) {
             #expect(fields.contains(name), "style.\(name) は Style に無い (表から消す)")
+        }
+    }
+
+    @Test("描く先と画素の写しの格納も、フレームに属するか持ち越すかのどちらかに載っている (#1678)")
+    func everyTargetStoredPropertyIsClassified() throws {
+        // 描く先は `Canvas` の表で「面と同じだけ生きる」に分けてあり、表も綴りもその中へ降りて
+        // いなかった。写しの書き込み待ち (フレームに属する) が、描かずに捨てたフレームを黙って
+        // 越えたのはそのためである ([#1678])。**中の格納を 1 つ足したら、ここで止まる**
+        //
+        // [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+        let canvas = try makeCanvas()
+        _ = canvas.target.pixels  // 写しを作らせる
+        let mirror = try #require(canvas.target.pixelMirror)
+        let frame = Set(frameState.map(\.name))
+        let layers: [(path: String, labels: [String], carried: [String: String], descended: Set<String>)] = [
+            ("target", Mirror(reflecting: canvas.target).children.compactMap(\.label),
+             carriedTargetState, ["pixelMirror"]),
+            ("target.pixelMirror", Mirror(reflecting: mirror).children.compactMap(\.label),
+             carriedMirrorState, []),
+        ]
+        for layer in layers {
+            let framed = Set(
+                frame.compactMap { name -> String? in
+                    guard name.hasPrefix(layer.path + ".") else { return nil }
+                    let rest = name.dropFirst(layer.path.count + 1)
+                    return rest.contains(".") ? nil : String(rest)
+                })
+            let carried = Set(layer.carried.keys)
+            #expect(framed.isDisjoint(with: carried), "\(layer.path): 両方の表に載っている")
+            for label in layer.labels {
+                #expect(
+                    framed.contains(label) || carried.contains(label) || layer.descended.contains(label),
+                    "\(layer.path).\(label) がどちらの表にも無い。フレームに属するなら汚す手順と読み方を、持ち越すなら理由を書く")
+            }
+            for name in framed.union(carried).union(layer.descended) {
+                #expect(layer.labels.contains(name), "\(layer.path).\(name) は格納に無い (表から消す)")
+            }
         }
     }
 
@@ -1610,6 +1705,7 @@ struct CanvasTests {
             guard let label = child.label, names.contains(label) else { continue }
             prints[label] = String(describing: child.value)
         }
+        for (name, read) in nestedFrameState { prints[name] = read(canvas) }
         let styleNames = Set(frameStyle.keys)
         for child in Mirror(reflecting: canvas.style).children {
             guard let label = child.label, styleNames.contains(label) else { continue }

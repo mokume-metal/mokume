@@ -13,6 +13,10 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct PixelsTests {
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+    private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+
     private func makeCanvas(width: Int = 64, height: Int = 64) throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
     }
@@ -390,35 +394,252 @@ struct PixelsTests {
     /// 戻したことにすると、次の描き切りは書き戻しを積まず、読み出しは描画先から写し直すので、
     /// `set` した画素が黙って消える ([#1183])。
     ///
+    /// **投げさせるのはフレームの途中の描き切り (`get()`) である。** フレームは続くので、書いた画素は
+    /// そのフレームの終わりの描き切りに載らなければならない。当初はフレームの終わりの描き切りを
+    /// 投げさせ、次のフレームに出ることを見ていたが、描き切りに失敗したフレームは描かずに捨てる
+    /// もので、そこで書いた画素も捨てる ([#1678] の決定)。記帳の順序という #1183 の意図は、フレームが
+    /// 続く途中の描き切りで守る。
+    ///
     /// 投げさせるのは書き戻しより後 — 形の置き場を伸ばし、その取り直しの待ちで投げる。
     ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
-    @Test("書き戻しを積んだ後で描き切りが投げても、書いた画素は次のフレームで戻る")
-    func writesSurviveAFlushThatThrowsAfterEncodingTheWriteBack() throws {
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    @Test("途中の描き切りが書き戻しを積んだ後で投げても、書いた画素はそのフレームの終わりに載る")
+    func writesSurviveAMidFrameFlushThatThrowsAfterEncodingTheWriteBack() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
-        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
         try canvas.draw {
-            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.background(black)
             // 形の置き場を 1 度取らせる。面の外に置くので絵には出ない
             canvas.rect(100, 100, 1, 1)
         }
 
         let encoded = canvas.target.pixelWriteBacksEncoded
-        #expect(throws: RenderFailure.self) {
-            try canvas.draw {
-                canvas.set(3, 3, red)
-                canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
-                for index in 0..<5000 { canvas.rect(100 + index % 16, 100, 1, 1) }
-            }
+        var encodedByTheFailedRead = 0
+        try canvas.draw {
+            canvas.set(3, 3, red)
+            for index in 0..<5000 { canvas.rect(100 + index % 16, 100, 1, 1) }
+            canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+            // 途中の描き切り。書いた画素を戻す blit を積んだ後で、形の置き場の取り直しの待ちで投げる
+            _ = canvas.get(0, 0)
+            canvas.gpu.failSettleForTesting = nil
+            encodedByTheFailedRead = canvas.target.pixelWriteBacksEncoded - encoded
         }
-        canvas.gpu.failSettleForTesting = nil
         #expect(
-            canvas.target.pixelWriteBacksEncoded == encoded + 1,
+            encodedByTheFailedRead == 1,
             "書き戻しを積む前に投げている — この検査は書き戻しの後で投げる経路を見ていない")
-
-        try canvas.draw {}
         #expect(
             try canvas.target.readPixels()[3, 3] == red,
             "投入されなかった書き戻しを「戻した」ことにして、書いた画素を失っている")
+    }
+
+    // MARK: - 描かずに捨てたフレームで書いた画素 (#1678)
+
+    /// 画素を書く口。どれも写しへ書き、書き込み待ちの旗を立てる (`Pixels` の添字と `fill`)。
+    enum PixelWrite: CaseIterable, CustomTestStringConvertible {
+        /// `Canvas.set`。
+        case set
+        /// `pixels[x, y] =`。
+        case subscripting
+        /// `pixels.fill`。全面を塗るので、(3, 3) も変わる。
+        case fill
+
+        var testDescription: String { "\(self)" }
+
+        func write(_ color: LinearRGBA, on canvas: Canvas) {
+            switch self {
+            case .set: canvas.set(3, 3, color)
+            case .subscripting: canvas.pixels[3, 3] = color
+            case .fill: canvas.pixels.fill(color)
+            }
+        }
+    }
+
+    /// 描かずにフレームを捨てる道 ([ADR-0021] 決定 4 の追補 (2026-09-27))。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    enum DroppedFrame: CaseIterable, CustomTestStringConvertible {
+        /// `endDraw()` を閉じ忘れたまま、次のフレームを `beginDraw()` で始める (#1622)。
+        case forgottenThenBeginDraw
+        /// `endDraw()` を閉じ忘れたまま、次のフレームを `draw { }` で始める。
+        case forgottenThenDraw
+        /// フレームの終わりの描き切りが、書き戻しを積む前に投げる (#342)。
+        case failedBeforeWriteBack
+        /// フレームの終わりの描き切りが、書き戻しを積んだ後で投げる (#342・#1183 の位置)。
+        case failedAfterWriteBack
+
+        var testDescription: String { "\(self)" }
+
+        /// 閉じたところでもう捨てているか。閉じ忘れの道は、次のフレームを開くときに捨てる。
+        var dropsWhenClosed: Bool { [.failedBeforeWriteBack, .failedAfterWriteBack].contains(self) }
+
+        /// 閉じるまでに積む書き戻しの数。道を本当に通ったかを数で見る。
+        var writeBacksEncoded: Int { self == .failedAfterWriteBack ? 1 : 0 }
+
+        /// フレームを開いて `body` を走らせ、描かずに捨てる側へ送る。閉じ忘れの道は開いたまま返る。
+        ///
+        /// **面は形の置き場を 1 度取っていること** (失敗させる道が、その取り直しの待ちで投げる)。
+        @MainActor func open(_ canvas: Canvas, _ body: () -> Void) {
+            canvas.beginDraw()
+            body()
+            switch self {
+            case .forgottenThenBeginDraw, .forgottenThenDraw:
+                break  // `endDraw()` を書き忘れる
+            case .failedBeforeWriteBack:
+                canvas.failureForTesting = .deviceUnavailable
+                canvas.endDraw()
+                canvas.failureForTesting = nil
+            case .failedAfterWriteBack:
+                // 形の置き場を伸ばさせ、その取り直しの待ちで投げる。面の外なので絵には出ない
+                for index in 0..<5000 { canvas.rect(100 + index % 16, 100, 1, 1) }
+                canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+                canvas.endDraw()
+                canvas.gpu.failSettleForTesting = nil
+            }
+        }
+
+        /// 次のフレームで `body` を走らせて閉じる。
+        @MainActor func next(_ canvas: Canvas, _ body: () -> Void) throws {
+            switch self {
+            case .forgottenThenDraw:
+                try canvas.draw(body)
+            case .forgottenThenBeginDraw, .failedBeforeWriteBack, .failedAfterWriteBack:
+                canvas.beginDraw()
+                body()
+                canvas.endDraw()
+            }
+        }
+    }
+
+    /// 黒で塗り、形の置き場を 1 度取らせた面。
+    private func makeBlackCanvas() throws -> Canvas {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        try canvas.draw {
+            canvas.background(black)
+            // 失敗させる道が伸ばす置き場を、先に 1 度取らせる。面の外に置くので絵には出ない
+            canvas.rect(100, 100, 1, 1)
+        }
+        return canvas
+    }
+
+    /// **描かずに捨てたフレームで書いた画素は、置いた図形と同じく次のフレームへ越えない** ([#1678])。
+    ///
+    /// 書いた画素は写しに書き込み待ちとして残り、次の描き切りが面へ書き戻す。捨てる道 (閉じ忘れ・
+    /// 描き切りの失敗) は溜めた図形を落とすのに、書き込み待ちには触れていなかったので、捨てた
+    /// フレームで書いた画素だけが次のフレームの絵に出ていた。
+    ///
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    @Test(
+        "描かずに捨てたフレームで書いた画素は、次のフレームに出ない (#1678)",
+        arguments: DroppedFrame.allCases, PixelWrite.allCases)
+    func pixelsWrittenInADroppedFrameDoNotCarryOver(
+        dropped: DroppedFrame, write: PixelWrite
+    ) throws {
+        let canvas = try makeBlackCanvas()
+        let encoded = canvas.target.pixelWriteBacksEncoded
+
+        dropped.open(canvas) { write.write(red, on: canvas) }
+        #expect(
+            canvas.target.pixelWriteBacksEncoded == encoded + dropped.writeBacksEncoded,
+            "捨てる道を通っていない — 書き戻しを積んだ数が道の想定と違う")
+        if dropped.dropsWhenClosed {
+            // 写しに書いた値を、捨てた後に読ませない
+            #expect(
+                try canvas.target.readPixels()[3, 3] == black,
+                "捨てた直後の読み出しに、捨てたフレームで書いた画素が見える")
+        }
+
+        var readInTheNextFrame = LinearRGBA.transparent
+        try dropped.next(canvas) { readInTheNextFrame = canvas.get(3, 3) }
+        #expect(readInTheNextFrame == black, "捨てたフレームで書いた画素を、次のフレームで読めた")
+        #expect(
+            try canvas.target.readPixels()[3, 3] == black,
+            "捨てたフレームで書いた画素が、次のフレームの絵に出た")
+    }
+
+    /// 捨てたフレームでも、**途中の描き切りより前に書いた画素と置いた図形は残る** ([#1678])。
+    /// 既に面へ載っていて取り消せない (``Canvas/beginDraw()`` の説明)。捨てるのは、最後に
+    /// 描き切った後に書いたものだけである。
+    ///
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    @Test(
+        "捨てたフレームでも、途中の描き切りより前に書いた画素と置いた図形は残る (#1678)",
+        arguments: DroppedFrame.allCases)
+    func pixelsFlushedBeforeTheFrameWasDroppedStay(dropped: DroppedFrame) throws {
+        let canvas = try makeBlackCanvas()
+
+        dropped.open(canvas) {
+            canvas.set(3, 3, red)
+            canvas.noStroke()
+            canvas.fill(green)
+            canvas.rect(8, 8, 4, 4)
+            canvas.loadPixels()  // 途中の描き切り。ここまでは面に載る
+            canvas.set(5, 5, red)  // 最後の描き切りの後。捨てる
+        }
+
+        var written = LinearRGBA.transparent
+        var placed = LinearRGBA.transparent
+        var writtenAfter = LinearRGBA.transparent
+        try dropped.next(canvas) {
+            written = canvas.get(3, 3)
+            placed = canvas.get(9, 9)
+            writtenAfter = canvas.get(5, 5)
+        }
+        #expect(written == red, "途中の描き切りで面に載った画素まで消えた")
+        #expect(placed == green, "途中の描き切りで面に載った図形まで消えた")
+        #expect(writtenAfter == black, "最後の描き切りの後に書いた画素が、次のフレームへ越えた")
+    }
+
+    /// **面を塗り直す口も、書き込み待ちを同じ捨てる口で捨てる** ([#1678] の反証 3)。旗だけを
+    /// 下ろすと、塗る投入より前に投げたとき、投入の番号が進まないまま捨てた値を載せた写しが
+    /// 読まれる。投入の前に投げる形は検査から作れない (資源が枯れたときだけ) ので、捨てる口を
+    /// 通った印 (写しが面を映していないこと) を見る。
+    ///
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    @Test("面を塗り直すときも、書き込み待ちは捨てる口を通る (#1678)")
+    func fillingTheTargetDiscardsPendingWritesThroughTheSameMouth() throws {
+        let canvas = try makeBlackCanvas()
+        canvas.beginDraw()
+        canvas.set(3, 3, red)
+        let mirror = try #require(canvas.target.pixelMirror)
+        try #require(mirror.hasPendingWrites && mirror.syncedThrough != 0, "検査の前提: 読んでから書いていない")
+
+        try canvas.target.fill(with: green)
+        #expect(!mirror.hasPendingWrites)
+        #expect(mirror.syncedThrough == 0, "旗だけを下ろし、捨てた値を載せた写しを映したことにしている")
+        #expect(try canvas.target.readPixels()[3, 3] == green)
+        canvas.endDraw()
+        #expect(try canvas.target.readPixels()[3, 3] == green, "塗り直しで捨てた書き込みが、描き切りで戻った")
+    }
+
+    /// 描き場所で `endDraw()` を閉じ忘れたフレームに書いた画素は、次の本体のフレームで描き場所を
+    /// 開き直したとき、描き場所の読み出しにも、本体へ置いた絵にも出ない ([#1678] の完了条件 1)。
+    ///
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    @Test("描き場所で閉じ忘れたフレームに書いた画素は、本体へ置いた絵に出ない (#1678)")
+    func pixelsWrittenInAForgottenLayerFrameDoNotReachTheHost() throws {
+        let main = try makeCanvas(width: 16, height: 16)
+        let layer = try main.createGraphics(16, 16)
+        try main.draw {
+            layer.beginDraw()
+            layer.background(black)
+            layer.endDraw()
+        }
+        try main.draw {
+            layer.beginDraw()
+            layer.set(3, 3, red)
+            // `endDraw()` を書き忘れる
+        }
+
+        var readInTheNextFrame = LinearRGBA.transparent
+        try main.draw {
+            layer.beginDraw()  // 閉じ忘れたフレームを描かずに捨てる
+            readInTheNextFrame = layer.get(3, 3)
+            layer.endDraw()
+            main.image(layer, 0, 0)
+        }
+        #expect(readInTheNextFrame == black, "捨てたフレームで書いた画素を、次のフレームで読めた")
+        #expect(
+            try main.target.readPixels()[3, 3] == black,
+            "捨てたフレームで書いた画素が、本体へ置いた絵に出た")
     }
 }
