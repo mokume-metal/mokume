@@ -411,6 +411,43 @@ class GuardTest(unittest.TestCase):
     def test_backticks_denied(self):
         self.assert_denied("url=`gh pr comment 7 --body x`")
 
+    # --- 前置した gh (#1729) ---------------------------------------------
+    #
+    # #1727 の接続検証で、通常の形は差し戻すのに、環境変数やパスを前置した形を
+    # 無出力で通していた。発言の 3 つの口すべてで見る
+
+    PREFIXES = ("PATH=/tmp/bin:$PATH gh", "/tmp/bin/gh", "env GH_DEBUG=1 gh")
+
+    def test_prefixed_gh_is_denied_on_every_surface(self):
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_denied(f'{gh} issue comment 1 --body "x"')
+                self.assert_denied(f"{gh} pr comment 7 -F /tmp/body.md")
+                self.assert_denied(f'{gh} pr review 3 --approve --body "見ました"')
+                self.assert_denied(f'{gh} pr close 120 -c "閉じる"')
+                self.assert_denied(f'{gh} issue reopen 42 --comment "やり直す"')
+
+    def test_prefixed_gh_keeps_the_exceptions(self):
+        """前置があっても、読み取り・本文なし・他 repo・--help は素通しのまま。"""
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_passed(f"{gh} issue view 42 -c")
+                self.assert_passed(f"{gh} pr review 3 --approve")
+                self.assert_passed(f"{gh} pr close 120")
+                self.assert_passed(f'{gh} issue comment 5 -R other/repo --body "x"')
+                self.assert_passed(f"{gh} issue comment --help")
+
+    def test_prefixed_wrapper_passes(self):
+        self.assert_passed("PATH=/tmp/bin:$PATH bash scripts/comment.sh issue 1 --body x")
+
+    def test_prefixed_mention_in_heredoc_passes(self):
+        self.assert_passed(
+            "cat > body.md <<'EOF'\n"
+            "PATH=/tmp/bin:$PATH gh issue comment 1 --body x\n"
+            "/tmp/bin/gh issue comment 1 --body x\n"
+            "EOF"
+        )
+
     # --- 地の文で言及しただけなら止めない (#128) ------------------------
 
     def test_mention_in_commit_message_passes(self):

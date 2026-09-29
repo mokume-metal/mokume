@@ -189,6 +189,42 @@ class GuardTest(unittest.TestCase):
     def test_backticks_denied(self):
         self.assert_denied("url=`gh pr create --fill`")
 
+    # --- 前置した gh (#1729) ---------------------------------------------
+    #
+    # 素通りするとメンテナ名義の PR がそのまま作られる (上の #128 と同じ代償)
+
+    PREFIXES = ("PATH=/tmp/bin:$PATH gh", "/opt/homebrew/bin/gh", "env GH_DEBUG=1 gh")
+
+    def test_prefixed_gh_is_denied_on_every_port(self):
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_denied(f"{gh} pr create --fill")
+                self.assert_denied(f"{gh} pr new --fill")
+                self.assert_denied(f"{gh} pr revert 42 --body x")
+
+    def test_personal_token_as_a_prefix_denied(self):
+        """前置の代入で個人の token を渡しても、author は人間になる。"""
+        self.assert_denied("GH_TOKEN=gho_" + "x" * 36 + " gh pr create --fill")
+
+    def test_prefixed_gh_keeps_the_exceptions(self):
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_passed(f"{gh} pr view 105")
+                self.assert_passed(f"{gh} pr create --dry-run --fill")
+                self.assert_passed(f"{gh} pr create --help")
+                self.assert_passed(f"{gh} pr create -R other/repo --fill")
+                self.assert_passed(
+                    'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN'
+                    f" && {gh} pr create --fill"
+                )
+
+    def test_prefixed_mention_in_heredoc_passes(self):
+        self.assert_passed(
+            "git commit -F - <<'EOF'\n"
+            "/opt/homebrew/bin/gh pr create を差し戻すようにした。\n"
+            "EOF"
+        )
+
     # --- 地の文で言及しただけなら止めない (#128) ------------------------
     #
     # 止めると回避策 (ファイルに逃がす) が身について、guard を迂回する手癖がつく。
@@ -491,6 +527,19 @@ class DraftTest(GuardTest):
         self.assert_passed(
             self.TOKEN + "gh pr create --draft -H code-only --fill", cwd=self.protected()
         )
+
+    def test_前置した_gh_でも旗を読む(self):
+        """旗を読む断片の選び方も前置を落とす (#1729)。落とさないと断片が空になり、
+        Draft の判定が黙って飛ぶ。"""
+        for gh in ("PATH=/tmp/bin:$PATH gh", "/opt/homebrew/bin/gh"):
+            with self.subTest(gh=gh):
+                self.assert_denied(
+                    self.TOKEN + f"{gh} pr create --draft --fill", cwd=self.protected()
+                )
+                self.assert_passed(
+                    self.TOKEN + f"{gh} pr create --draft -H code-only --fill",
+                    cwd=self.protected(),
+                )
 
     def test_revert_の_draft_は差分を読めないので差し戻す(self):
         """revert の中身は手元に無い。読めなければ差し戻す側に倒す。"""

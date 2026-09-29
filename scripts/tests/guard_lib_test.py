@@ -124,6 +124,68 @@ class IsGhSubcommandTest(unittest.TestCase):
             f"pr[[:space:]]+{CREATE}",
         )
 
+    # --- 前置した gh (#1729) ---------------------------------------------
+    #
+    # gh はコマンドとして実行される位置にあるのに、先頭語の綴りが gh でないという
+    # 理由で落ちていた形。上の GH_TOKEN="$(…)" は $( と ) で割れた残りが `" gh …` に
+    # なるので偶然拾えていたが、コマンド置換を含まない代入では拾えなかった
+
+    def test_plain_assignment_prefix(self):
+        self.assert_hit(
+            f"PATH=/tmp/bin:$PATH gh issue {COMMENT} 1 --body x", f"issue[[:space:]]+{COMMENT}"
+        )
+        self.assert_hit(f"GH_TOKEN=x gh pr {CREATE} --fill", f"pr[[:space:]]+{CREATE}")
+
+    def test_several_and_quoted_assignments(self):
+        self.assert_hit(
+            f"A=1 B=\"x y\" C='z w' D= gh pr {CREATE} --fill", f"pr[[:space:]]+{CREATE}"
+        )
+        self.assert_hit(
+            f'GH_TOKEN="$(cat t)" PATH=/tmp/bin:$PATH gh pr {CREATE} --fill',
+            f"pr[[:space:]]+{CREATE}",
+        )
+
+    def test_assignment_prefix_after_an_operator(self):
+        self.assert_hit(
+            f"git add -A && PATH=/tmp/bin:$PATH gh issue {COMMENT} 1 --body x",
+            f"issue[[:space:]]+{COMMENT}",
+        )
+        self.assert_hit(
+            f"url=$(PATH=/tmp/bin gh pr {CREATE} --fill)", f"pr[[:space:]]+{CREATE}"
+        )
+
+    def test_env_prefix(self):
+        """env も代入を前置する形。冒頭で許容していた取りこぼし (env X=1 gh) を塞ぐ。"""
+        self.assert_hit(f"env X=1 gh issue {COMMENT} 1 --body x", f"issue[[:space:]]+{COMMENT}")
+        self.assert_hit(
+            f"/usr/bin/env -i PATH=/tmp/bin gh pr {CREATE} --fill", f"pr[[:space:]]+{CREATE}"
+        )
+        self.assert_hit(f"env -u GH_TOKEN gh pr {CREATE} --fill", f"pr[[:space:]]+{CREATE}")
+        self.assert_hit(f"env gh pr {CREATE} --fill", f"pr[[:space:]]+{CREATE}")
+
+    def test_gh_called_by_path(self):
+        for gh in ("/tmp/bin/gh", "/opt/homebrew/bin/gh", "./gh", "~/bin/gh", '"$HOME/bin/gh"'):
+            with self.subTest(gh=gh):
+                self.assert_hit(f"{gh} issue {COMMENT} 1 --body x", f"issue[[:space:]]+{COMMENT}")
+        self.assert_hit(
+            f"PATH=/tmp/bin:$PATH /tmp/bin/gh -R owner/repo pr {CREATE} --fill",
+            f"pr[[:space:]]+{CREATE}",
+        )
+
+    def test_prefix_does_not_widen_what_counts_as_gh(self):
+        """前置を落とすのは先頭だけ。別のコマンドの引数や、gh でない名前は拾わない。"""
+        for command in (
+            f"X=1 echo 'gh issue {COMMENT} 1'",
+            f"echo PATH=/tmp/bin gh issue {COMMENT} 1",
+            f"ls /tmp/bin/gh issue {COMMENT}",
+            f"/tmp/bin/ghx issue {COMMENT} 1",
+            f"/tmp/bin/gh-wrapper issue {COMMENT} 1",
+            f"git commit -m 'PATH=/tmp/bin gh issue {COMMENT} を拾う'",
+            f"cat <<'EOF'\nPATH=/tmp/bin gh issue {COMMENT} 1\n/tmp/bin/gh issue {COMMENT} 1\nEOF",
+        ):
+            with self.subTest(command=command):
+                self.assert_miss(command, f"issue[[:space:]]+{COMMENT}")
+
     def test_safe_token_form(self):
         """#122 で正典にした安全な形。"""
         self.assert_hit(
@@ -267,6 +329,21 @@ class TargetsOtherRepoTest(unittest.TestCase):
             here = make_repo(Path(tmp) / "mine", "git@github.com:mokume-metal/mokume.git")
             there = make_repo(Path(tmp) / "theirs", "git@github.com:shinyaoguri/setup.git")
             self.assert_own(f"cd {there} && gh pr {CREATE} --fill", cwd=str(here))
+
+    def test_prefixed_gh_keeps_the_repo_option(self):
+        """前置した gh でも、-R の宛先の読み方は変わらない (#1729)。"""
+        self.assert_other(f"PATH=/tmp/bin:$PATH gh issue {COMMENT} 5 -R other/repo --body x")
+        self.assert_other(f"/tmp/bin/gh pr {CREATE} --repo=other/repo --fill")
+
+    def test_gh_repo_prefix_is_not_followed(self):
+        """前置の GH_REPO= は宛先として読まない — cd を追わないのと同じ限界 (#1729)。
+
+        gh は -R が無ければ GH_REPO を宛先にするが、その値をコマンド文字列から読むのは
+        推測になる (export 済みか・同じ断片か)。逃げ道は -R の明示に一本化する。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            here = make_repo(Path(tmp) / "mine", "git@github.com:mokume-metal/mokume.git")
+            self.assert_own(f"GH_REPO=other/repo gh pr {CREATE} --fill", cwd=str(here))
 
     def test_repo_option_still_wins_over_the_directory(self):
         """別リポのディレクトリからでも、-R でこのリポジトリを名指ししたなら止める。"""
