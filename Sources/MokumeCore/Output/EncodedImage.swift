@@ -103,10 +103,7 @@ import Metal
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     func read() -> DisplayImage {
-        gpu.waitForSubmissionQuietly(
-            pendingSubmission,
-            orWarn: "Could not wait for the GPU before reading the frame back")
-        readCount += 1
+        waitBeforeReading()
         var bytes = [UInt8](repeating: 0, count: width * height * OutputPass.bytesPerPixel)
         let source = storage.contents()
         let widthInBytes = width * OutputPass.bytesPerPixel
@@ -119,5 +116,35 @@ import Metal
             }
         }
         return DisplayImage(width: width, height: height, bytes: bytes)
+    }
+
+    /// 間引いて読み戻す。**原寸の配列を作らない** ([#1745])。
+    ///
+    /// `read().scaled(by: factor)` と同じ絵を返す — 拾い方は ``NearestNeighbor`` の
+    /// 1 つで、違うのは置き場の行から拾う画素だけを直接写すことである。4K の絵を観測の
+    /// 大きさで採るとき、原寸の 33 MB の配列を作って捨てていたのを省く。待ち方と回数の
+    /// 数え方は ``read()`` と同じ。
+    ///
+    /// - Parameter factor: 縮小率 (1 = 実寸)。**1 以上と 0 以下は ``read()`` と同じ実寸を返す。**
+    ///
+    /// [#1745]: https://github.com/mokume-metal/mokume/issues/1745
+    func read(scaledBy factor: Double) -> DisplayImage {
+        guard factor > 0, factor < 1 else { return read() }
+        waitBeforeReading()
+        let length = storage.length
+        let rows = UnsafeBufferPointer(
+            start: storage.contents().assumingMemoryBound(to: UInt8.self), count: length)
+        // 縮める倍率だけがここへ来るので、拾い方が nil を返すことは無い
+        let small = NearestNeighbor.scaled(
+            rows: rows, rowStride: bytesPerRow, width: width, height: height, by: factor)!
+        return DisplayImage(width: small.width, height: small.height, bytes: small.components)
+    }
+
+    /// 中身を組んだ投入が終わるのを待ち、読んだ回数を数える。読む口が共通に通る。
+    private func waitBeforeReading() {
+        gpu.waitForSubmissionQuietly(
+            pendingSubmission,
+            orWarn: "Could not wait for the GPU before reading the frame back")
+        readCount += 1
     }
 }

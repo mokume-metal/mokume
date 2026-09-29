@@ -224,6 +224,56 @@ struct OutputStageTests {
         #expect(small.width * small.height == pixels.width * pixels.height / 4)
     }
 
+    @Test(
+        "行の間に詰め物がある元から拾っても、詰め物の無い元と同じ寸法とバイト列になる",
+        arguments: [
+            (7, 5, 4.0 / 7), (7, 5, 0.3), (9, 3, 0.5), (13, 11, 0.77), (1, 1, 0.5),
+            (640, 3, 0.1), (7, 5, 1.0), (7, 5, 0.0),
+        ])
+    func pickingFromPaddedRowsMatchesTheTightOnes(_ size: (Int, Int, Double)) {
+        let (width, height, factor) = size
+        let padding = 12
+        let rowStride = width * 4 + padding
+        var tight = [UInt8](repeating: 0, count: width * height * 4)
+        // 詰め物には目印を置く。拾う位置が行の間隔を取り違えれば、目印が紛れ込む
+        var padded = [UInt8](repeating: 0xEE, count: rowStride * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                for c in 0..<4 {
+                    // 目印 (0xEE) と重ならないよう、0…199 に収める
+                    let value = UInt8(((y * width + x) * 4 + c) % 200)
+                    tight[(y * width + x) * 4 + c] = value
+                    padded[y * rowStride + x * 4 + c] = value
+                }
+            }
+        }
+
+        let expected = NearestNeighbor.scaled(tight, width: width, height: height, by: factor)
+        let picked = padded.withUnsafeBufferPointer {
+            NearestNeighbor.scaled(
+                rows: $0, rowStride: rowStride, width: width, height: height, by: factor)
+        }
+        #expect(picked?.width == expected?.width)
+        #expect(picked?.height == expected?.height)
+        #expect(picked?.components == expected?.components)
+        #expect(picked?.components.contains(0xEE) != true, "詰め物を拾っている")
+    }
+
+    @Test("7 画素を 4 画素へ間引くと、0・1・3・5 番の画素を拾う")
+    func sevenToFourPicksTheFloorOfTheScaledPosition() throws {
+        let width = 7
+        // 各画素の赤に自分の番号を入れる
+        var row = [UInt8](repeating: 0, count: width * 4 + 8)
+        for x in 0..<width { row[x * 4] = UInt8(x) }
+        let picked = row.withUnsafeBufferPointer {
+            NearestNeighbor.scaled(
+                rows: $0, rowStride: width * 4 + 8, width: width, height: 1, by: 4.0 / 7)
+        }
+        let components = try #require(picked?.components)
+        #expect(picked?.width == 4)
+        #expect(stride(from: 0, to: components.count, by: 4).map { components[$0] } == [0, 1, 3, 5])
+    }
+
     @Test("倍率が範囲の外なら実寸のまま返す", arguments: [1.0, 1.5, 0.0, -0.5])
     func factorsOutsideTheRangeLeaveThePixelsAlone(factor: Double) {
         let pixels = makeVariedPixels(width: 7, height: 5)
@@ -416,6 +466,57 @@ struct ObservationRoadTests {
         #expect(viaRoad.width == viaReadback.width)
         #expect(viaRoad.height == viaReadback.height)
         #expect(viaRoad.bytes == viaReadback.bytes)
+    }
+
+    @Test(
+        "置き場から縮めて読んでも、原寸を読んでから縮めたのと同じ寸法とバイト列になる",
+        arguments: [
+            (48, 32, 0.5), (48, 32, 0.3), (48, 32, 0.1), (37, 23, 0.75), (37, 23, 4.0 / 7),
+            (7, 5, 4.0 / 7), (7, 5, 0.2), (37, 23, 1.0), (37, 23, 1.5), (37, 23, 0.0),
+        ])
+    func readingScaledMatchesScalingTheFullRead(_ size: (Int, Int, Double)) throws {
+        let (width, height, factor) = size
+        let canvas = try makeCanvas(width: width, height: height)
+        try canvas.draw { scene(on: canvas) }
+
+        let image = try canvas.output.encodeToImage()
+        // 原寸を読んでから縮める既存の計算を、独立した参照に置く
+        let reference = image.read().scaled(by: factor)
+        let direct = image.read(scaledBy: factor)
+
+        #expect(direct.width == reference.width)
+        #expect(direct.height == reference.height)
+        #expect(direct.bytes == reference.bytes)
+    }
+
+    @Test("置き場の行に詰め物がある幅でも、縮めて読んだ絵に詰め物が紛れない")
+    func readingScaledSkipsTheRowPadding() throws {
+        // 幅 7 の行は 28 バイトで、置き場の整列 (#753) により詰め物が付く
+        let canvas = try makeCanvas(width: 7, height: 5)
+        try canvas.draw { scene(on: canvas) }
+        let image = try canvas.output.encodeToImage()
+        try #require(
+            image.bytesPerRow > image.width * OutputPass.bytesPerPixel,
+            "この機械では幅 7 の行に詰め物が付かず、この検査の前提が立たない")
+
+        let reference = image.read().scaled(by: 0.6)
+        #expect(image.read(scaledBy: 0.6).bytes == reference.bytes)
+    }
+
+    @Test("縮めて読んだ絵は、次のフレームを描いても変わらない")
+    func aScaledReadIsNotOverwrittenByTheNextFrame() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw { canvas.background(.linear(red: 1, green: 0, blue: 0)) }
+        let first = try canvas.output.encodeToImage().read(scaledBy: 0.5)
+        let kept = first.bytes
+
+        // 置き場は使い回される 1 枚なので、写さずに参照していれば青へ変わる
+        try canvas.draw { canvas.background(.linear(red: 0, green: 0, blue: 1)) }
+        let second = try canvas.output.encodeToImage().read(scaledBy: 0.5)
+
+        #expect(first.bytes == kept)
+        #expect(first[0, 0].red == 255 && first[0, 0].blue == 0)
+        #expect(second[0, 0].red == 0 && second[0, 0].blue == 255)
     }
 
     @Test("縮小率が範囲の外なら実寸のまま返す", arguments: [1.0, 1.5, 0.0, -0.5])

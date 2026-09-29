@@ -35,6 +35,27 @@ enum NearestNeighbor {
     static func scaled<Element: Numeric>(
         _ source: [Element], width: Int, height: Int, by factor: Double
     ) -> (components: [Element], width: Int, height: Int)? {
+        source.withUnsafeBufferPointer { rows in
+            scaled(rows: rows, rowStride: width * 4, width: width, height: height, by: factor)
+        }
+    }
+
+    /// 行の間に詰め物がある元から、拾う画素だけを詰めて返す。**縮めないときは `nil`。**
+    ///
+    /// 出力段を通した絵の置き場 (``EncodedImage``) は行の間隔が幅ぶんより広いことがあり、
+    /// そこから原寸の配列を作らずに直接拾うための口である ([#1745])。拾い方は上の口と
+    /// **同じこの 1 つ**で、上の口は詰め物の無い元としてここを呼ぶ。
+    ///
+    /// - Parameters:
+    ///   - rows: 1 画素 4 成分で並んだ行の列。`rowStride * (height - 1) + width * 4` 要素以上。
+    ///   - rowStride: 1 行ぶんの要素数 (詰め物を含む)。`width * 4` 以上。
+    ///   - factor: 縮小率 (1 = 実寸)。**1 以上と 0 以下は縮めない。**
+    ///
+    /// [#1745]: https://github.com/mokume-metal/mokume/issues/1745
+    static func scaled<Element: Numeric>(
+        rows source: UnsafeBufferPointer<Element>, rowStride: Int,
+        width: Int, height: Int, by factor: Double
+    ) -> (components: [Element], width: Int, height: Int)? {
         guard factor > 0, factor < 1 else { return nil }
         let newWidth = Swift.max(1, Int((Double(width) * factor).rounded()))
         let newHeight = Swift.max(1, Int((Double(height) * factor).rounded()))
@@ -43,7 +64,7 @@ enum NearestNeighbor {
             let sourceY = Swift.min(height - 1, y * height / newHeight)
             for x in 0..<newWidth {
                 let sourceX = Swift.min(width - 1, x * width / newWidth)
-                let from = (sourceY * width + sourceX) * 4
+                let from = sourceY * rowStride + sourceX * 4
                 let to = (y * newWidth + x) * 4
                 scaled[to] = source[from]
                 scaled[to + 1] = source[from + 1]
