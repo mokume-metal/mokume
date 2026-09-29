@@ -103,7 +103,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 
 - Conventional Commits: `<type>(<scope>): <要約>`。type は feat / fix / docs / refactor / test / chore / ci / perf / build。type と scope は英語、要約は日本語でよい。PR タイトルがそのまま squash のマージコミットになるので、同じ形で書く
 - 1 コミット 1 関心。1 PR は「1 つの説明で筋が通る範囲」で、同じ親の sub-issue 群や、作業中に踏んで起票した障害もまとめて閉じてよい (ADR-0031 決定 3)
-- **検証は `make ci-check` に集約し、push 前に通す。** merge の条件は必須チェックの `ci-gate` と `render` で、`render` は専用機が merge queue の合流後の木で描画の検査を走らせる (ADR-0019 決定 7)
+- **検証の入口は `make ci-check`。全段は CI が回すので、手元では触った範囲の段 (`make <段>`) を通して push する** (#1838)。merge の条件は必須チェックの `ci-gate` と `render` で、`render` は専用機が merge queue の合流後の木で描画の検査を走らせる (ADR-0019 決定 7)
 - 何が走ったかの正本は `.build/test-results-swift-testing.xml` で、端末出力ではない (行を落とす)。赤を見たら、実行し直す前に `.build/test-log.txt` を退避する (実行し直すと記録が切り詰められる)
 - 性能は release で測る。debug の数字を性能の根拠にしない。入口は `make test-release` の 1 つ
 - ユーザー影響のある変更は `changelog.d/` に断片を 1 つ置く (CHANGELOG を直接編集しない)

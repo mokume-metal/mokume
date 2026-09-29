@@ -390,6 +390,9 @@ public final class SketchRuntime {
         // **まとめている途中の保存を落とさない。** 引いたつまみの最後の 1 手だけが
         // 消えると、直したはずの値が次の起動で戻っていない形で出る
         paramStore?.flushIfPending()
+        // 区画も同じ。最後のフレームで変えた値が応答に届かないまま終わらせない (#1704)。
+        // 保存の後に書く — 応答に載った値は保存にも入っている (#1143)
+        params?.flushIfChanged()
         outlets.removeAll()
         inlets.removeAll()
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、

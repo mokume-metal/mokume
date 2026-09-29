@@ -108,7 +108,7 @@ struct ParamReport: Encodable {
 ///
 /// ## 値が変わっていないフレームの費用
 ///
-/// **要求のファイルの最終更新時刻を 1 回見るだけ**である。応答を書き直すのは、
+/// **要求のファイルの最終更新時刻を 1 回見て、値が変わった印を 1 つ取るだけ**である。応答を書き直すのは、
 /// 要求に応えたときと、値が実際に変わったときに限る。値が変わったことは Observation
 /// が知らせるので ([ADR-0013] 決定 1)、フレームごとに値を数え直さない。
 ///
@@ -122,6 +122,8 @@ final class ParamSurface: DeclarationWatcher {
     private let reportURL: URL
     /// 見張る先 (``DeclarationWatcher``)。
     let registry: ParamRegistry
+    /// 値が変わったという印 (``DeclarationWatcher``)。
+    let declarationNotice = DeclarationNotice()
 
     /// 内容が変わるたびに進む番号。まだ 1 度も書いていなければ `nil`。
     ///
@@ -141,11 +143,12 @@ final class ParamSurface: DeclarationWatcher {
     /// ([#1433](https://github.com/mokume-metal/mokume/issues/1433))。
     private(set) var revision: Int?
     private var lastHandledID: String?
-    /// 値が変わったことを Observation から受け取る印。
+    /// 値が変わったので、応答を書き直す必要がある。
     private var valuesChanged = false
 
-    /// 値が変わったという知らせを受けた。**印を立てるだけ** — 実際の書き出しは
-    /// 次のフレームで行う (描いている最中にファイルを書かない)。
+    /// 値が変わったという印を取った。**書き直す必要を控えるだけ** — 書き出しは印を
+    /// 取った ``drain()`` / ``flushIfChanged()`` の中で行う。どちらもフレームの境目で
+    /// 呼ばれるので、描いている最中にファイルを書かない。
     func declarationsChanged() { valuesChanged = true }
 
     /// 区画があるときだけ働く (観測・入力と同じ。区画の名前は ``StartupReads`` が正典)。
@@ -194,13 +197,30 @@ final class ParamSurface: DeclarationWatcher {
     }
 
     /// 要求が来ていれば書き込み、応答を書く。値が変わっていれば応答を書き直す。
+    ///
+    /// **値が変わったかは、ここで印を取って知る** (``DeclarationWatcher``)。main actor を
+    /// 譲らずに回すループでも、`draw` の中で変えた値が次のフレームのここで届く (#1704)。
     @discardableResult
     func drain() -> ParamReport? {
+        takeDeclarationChange()
         if let request = requests.pending() {
             // 応えようとしたことは、応答を書けたかどうかによらず記録する (観測と同じ)
             defer { requests.markHandled(request.id) }
             return apply(request)
         }
+        guard valuesChanged else { return nil }
+        return publish()
+    }
+
+    /// 値が変わっていれば応答を書き直す。**要求は見ない。** 終わるときに呼ぶ。
+    ///
+    /// 最後のフレームで変わった値は、次の ``drain()`` が来ないので、ここで書かないと
+    /// 区画に届かないまま終わる (保存の ``ParamStore/flushIfPending()`` と同じ理由)。
+    /// 要求を見ないのは、応えた結果を次の起動へ持ち越す手当て (保存を先に書く・#1143)
+    /// を閉じる間際に通さないためで、置かれた要求は次の起動が応える。
+    @discardableResult
+    func flushIfChanged() -> ParamReport? {
+        takeDeclarationChange()
         guard valuesChanged else { return nil }
         return publish()
     }
@@ -251,6 +271,10 @@ final class ParamSurface: DeclarationWatcher {
         let revision = Self.advanced(self.revision ?? Self.revisionLeft(in: reportURL))
         self.revision = revision
         valuesChanged = false
+        // **書く姿には、立っている印の変化がもう入っている** ので下ろす。残すと、自分が
+        // 当てた書き込み (外からの要求・保存からの復元・setup) の印で、次の drain() が
+        // 同じ中身をもう 1 度書く (#1704)
+        coverDeclarationChange()
         let declarations = registry.declarations
         let report = ParamReport(
             revision: revision, id: lastHandledID, params: declarations,

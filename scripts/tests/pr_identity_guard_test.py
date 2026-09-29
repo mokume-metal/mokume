@@ -22,7 +22,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 GUARD = REPO / "scripts" / "pr-identity-guard.sh"
 
-TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN"]
+# 判定が読む、打つシェルから継ぐ環境。GH_REPO は宛先に効く (#1729)
+TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_REPO"]
 
 
 # gh のスタブ。既定は「何もせず失敗する」— 権限を読めないときは止める側に倒れるので、
@@ -188,6 +189,125 @@ class GuardTest(unittest.TestCase):
 
     def test_backticks_denied(self):
         self.assert_denied("url=`gh pr create --fill`")
+
+    # --- 前置した gh (#1729) ---------------------------------------------
+    #
+    # 素通りするとメンテナ名義の PR がそのまま作られる (上の #128 と同じ代償)
+
+    PREFIXES = ("PATH=/tmp/bin:$PATH gh", "/opt/homebrew/bin/gh", "env GH_DEBUG=1 gh")
+
+    def test_prefixed_gh_is_denied_on_every_port(self):
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_denied(f"{gh} pr create --fill")
+                self.assert_denied(f"{gh} pr new --fill")
+                self.assert_denied(f"{gh} pr revert 42 --body x")
+
+    def test_personal_token_as_a_prefix_denied(self):
+        """前置の代入で個人の token を渡しても、author は人間になる。"""
+        self.assert_denied("GH_TOKEN=gho_" + "x" * 36 + " gh pr create --fill")
+
+    def test_prefixed_gh_keeps_the_exceptions(self):
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_passed(f"{gh} pr view 105")
+                self.assert_passed(f"{gh} pr create --dry-run --fill")
+                self.assert_passed(f"{gh} pr create --help")
+                self.assert_passed(f"{gh} pr create -R other/repo --fill")
+                self.assert_passed(
+                    'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN'
+                    f" && {gh} pr create --fill"
+                )
+
+    # --- gh に実際に渡る GH_TOKEN を見る (#1729 の反証) -------------------
+    #
+    # 前置はその gh にだけ効き、同じ行で発行・export した token より優先される
+
+    SAFE = 'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u origin HEAD && '
+
+    def test_prefix_that_takes_the_token_away_denied(self):
+        for tail in (
+            "env -u GH_TOKEN gh pr create --fill",
+            "GH_TOKEN= gh pr create --fill",
+            "GH_TOKEN=gho_" + "x" * 36 + " gh pr create --fill",
+            "env -i PATH=$PATH gh pr create --fill",
+            "GH_TOKEN+=x gh pr create --fill",
+        ):
+            with self.subTest(tail=tail):
+                reason = self.assert_denied(self.SAFE + tail)
+                self.assertIn("前置", reason)
+
+    def test_token_handed_over_by_the_prefix_passes(self):
+        """#1729 の最初の直しが持ち込んだ退行 — 正しく渡す形を的外れな文面で止めた。"""
+        self.assert_passed('t="$(bash scripts/gh-app-token.sh)" && GH_TOKEN="$t" gh pr create --fill')
+        self.assert_passed('t="$(bash scripts/gh-app-token.sh)" && GH_TOKEN=${t} gh pr new --fill')
+        self.assert_passed("GH_TOKEN=ghs_" + "x" * 36 + " gh pr create --fill")
+
+    def test_prefix_token_that_cannot_be_checked_denied(self):
+        reason = self.assert_denied('GH_TOKEN="$GH_APP_TOKEN" gh pr create --fill')
+        self.assertIn('GH_TOKEN="$t"', reason, "前置で渡す安全な形が案内されていない")
+        # 発行が失敗しても伝わらない形 (export 型の文面が当てはまる)
+        self.assert_denied('export t="$(bash scripts/gh-app-token.sh)" && GH_TOKEN="$t" gh pr create --fill')
+
+    def test_prefix_that_keeps_the_shell_token_reads_the_statements(self):
+        self.assert_passed(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && GH_TOKEN="$GH_TOKEN" gh pr create --fill'
+        )
+        self.assert_passed('GH_TOKEN="$GH_TOKEN" gh pr create --fill', GH_TOKEN="ghs_" + "x" * 36)
+
+    def test_every_pr_creating_invocation_is_judged(self):
+        """先頭の 1 つが通っても、後ろのメンテナ名義の呼び出しは止める。"""
+        self.assert_denied("GH_TOKEN=ghs_" + "x" * 36 + " gh pr create --fill && gh pr new --fill")
+
+    def test_issue_and_export_after_gh_do_not_count(self):
+        """gh より後ろの発行・export は、その gh に渡らない (#1729 の 2 回目の反証)。"""
+        self.assert_denied(
+            'gh pr create --fill; GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && true'
+        )
+        self.assert_denied(
+            'GH_TOKEN="$t" gh pr create --fill; t="$(bash scripts/gh-app-token.sh)" && echo'
+        )
+
+    def test_statement_that_changes_the_token_before_gh_denied(self):
+        self.assert_denied(
+            't="$(bash scripts/gh-app-token.sh)" && t=gho_x && GH_TOKEN="$t" gh pr create --fill'
+        )
+        reason = self.assert_denied(self.SAFE + "unset GH_TOKEN && gh pr create --fill")
+        self.assertIn("unset", reason)
+        self.assert_denied(self.SAFE + "export GH_TOKEN=gho_x && gh pr create --fill")
+
+    def test_issue_inside_a_subshell_does_not_reach_gh(self):
+        self.assert_denied(
+            '(GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN) && gh pr create --fill'
+        )
+
+    def test_inherited_gh_repo_names_the_destination(self):
+        self.assert_denied(
+            "gh pr create --fill", cwd=self.other_repo_dir(), GH_REPO="mokume-metal/mokume"
+        )
+        self.assert_passed("gh pr create --fill", GH_REPO="other/repo")
+
+    # --- 旗と例外は、その gh の呼び出しの中からだけ読む (#1729 の反証) ----
+
+    def test_gh_inside_loops_and_conditions_denied(self):
+        self.assert_denied("for b in a b; do gh pr create --fill -H $b; done")
+        self.assert_denied("if true; then gh pr create --fill; fi")
+
+    def test_words_of_another_command_do_not_excuse_a_pr(self):
+        self.assert_denied("echo --dry-run && gh pr create --fill")
+        self.assert_denied("ls --help && gh pr create --fill")
+        self.assert_denied("git log -R x/y && gh pr create --fill")
+
+    def test_gh_repo_prefix_names_the_destination(self):
+        self.assert_passed("GH_REPO=other/repo gh pr create --fill")
+        self.assert_denied("GH_REPO=mokume-metal/mokume gh pr create --fill", cwd=self.other_repo_dir())
+
+    def test_prefixed_mention_in_heredoc_passes(self):
+        self.assert_passed(
+            "git commit -F - <<'EOF'\n"
+            "/opt/homebrew/bin/gh pr create を差し戻すようにした。\n"
+            "EOF"
+        )
 
     # --- 地の文で言及しただけなら止めない (#128) ------------------------
     #
@@ -491,6 +611,19 @@ class DraftTest(GuardTest):
         self.assert_passed(
             self.TOKEN + "gh pr create --draft -H code-only --fill", cwd=self.protected()
         )
+
+    def test_前置した_gh_でも旗を読む(self):
+        """旗を読む断片の選び方も前置を落とす (#1729)。落とさないと断片が空になり、
+        Draft の判定が黙って飛ぶ。"""
+        for gh in ("PATH=/tmp/bin:$PATH gh", "/opt/homebrew/bin/gh"):
+            with self.subTest(gh=gh):
+                self.assert_denied(
+                    self.TOKEN + f"{gh} pr create --draft --fill", cwd=self.protected()
+                )
+                self.assert_passed(
+                    self.TOKEN + f"{gh} pr create --draft -H code-only --fill",
+                    cwd=self.protected(),
+                )
 
     def test_revert_の_draft_は差分を読めないので差し戻す(self):
         """revert の中身は手元に無い。読めなければ差し戻す側に倒す。"""

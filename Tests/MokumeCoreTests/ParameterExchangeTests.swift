@@ -56,7 +56,7 @@ struct ParameterExchangeTests {
         let surface = ParamSurface(directory: facet, sketch: sketch)
 
         sketch.radius = 120
-        // 知らせは隔離の外から届き、扱いは main actor へ渡ってから行われる
+        // 譲るループ (窓) の形で回す。知らせは譲らなくても届く (#1704)
         await Task.yield()
 
         let report = try #require(surface.drain())
