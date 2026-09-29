@@ -66,6 +66,7 @@ extension Canvas {
         let savedShape = takeOpenShape()
         let strokeRangeStart = recordedStrokeRanges.count
         let solidStrokeStart = recordedSolidStrokes.count
+        let gpuStrokeStart = recordedGPUStrokes.count
 
         body()
 
@@ -92,6 +93,12 @@ extension Canvas {
             return piece
         }
         recordedSolidStrokes.removeLast(recordedSolidStrokes.count - solidStrokeStart)
+        var recordedGPU: [RetainedGPUStroke] = []
+        for var stroke in recordedGPUStrokes[gpuStrokeStart...] {
+            stroke.vertices = (stroke.vertices.lowerBound - solidStart)..<(stroke.vertices.upperBound - solidStart)
+            recordedGPU.append(stroke)
+        }
+        recordedGPUStrokes.removeLast(recordedGPUStrokes.count - gpuStrokeStart)
         // **添字の値も形自身の 0 起点へ引き戻す。** 値は頂点の並びの番号そのものなので、
         // 区間だけずらすと記録した形が溜め場に残っていた頂点を指す (``Shape/solidIndices``)
         let recordedIndices = solidIndices[solidIndexStart...].map { $0 - UInt32(solidStart) }
@@ -127,7 +134,7 @@ extension Canvas {
         return Shape(
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,
             forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes,
-            solidStrokes: recordedPieces)
+            solidStrokes: recordedPieces, gpuStrokes: recordedGPU)
     }
 
     // 保持した形を置く。
@@ -316,6 +323,14 @@ extension Canvas {
             let indices: ArraySlice<UInt32>? =
                 run.isIndexed
                 ? shape.solidIndices[run.indexStart..<(run.indexStart + run.indexCount)] : nil
+            let gpuStrokes = retainedGPUStrokes(in: run, of: shape)
+            if !gpuStrokes.isEmpty {
+                for instance in instances {
+                    placeSplittingGPUStrokes(
+                        run, of: shape, pieces: pieces, gpuStrokes: gpuStrokes, by: instance)
+                }
+                return
+            }
             for instance in instances {
                 let base = solidVertices.count
                 appendPlacedSolidVertices(vertices, indices: indices, placedBy: instance)
@@ -344,6 +359,68 @@ extension Canvas {
                 remaining = remaining.dropFirst()
             }
         }
+    }
+
+    /// 区間の中で、置くときに GPU で組める線 (``Shape/gpuStrokes``・#1756)。組めない区間なら空。
+    ///
+    /// **記録の中で置き直すときは使わない** — 外側の記録は頂点と部品で持ち歩く (入れ子)。
+    /// 添字を持つ区間・通常以外の混ぜ方の区間も、CPU の帯のまま置く。
+    private func retainedGPUStrokes(in run: Shape.Run, of shape: Shape) -> [RetainedGPUStroke] {
+        guard placesRetainedStrokesOnGPU, !recordingShape, !run.isIndexed, run.mode == .blend,
+            !shape.gpuStrokes.isEmpty
+        else { return [] }
+        let runRange = run.start..<(run.start + run.count)
+        var strokes: [RetainedGPUStroke] = []
+        for stroke in shape.gpuStrokes
+        where runRange.contains(stroke.vertices.lowerBound)
+            && stroke.vertices.upperBound <= runRange.upperBound
+        {
+            strokes.append(stroke)
+        }
+        return strokes
+    }
+
+    /// 保持した形の区間を 1 か所に置く。**GPU で組める線はその区間を積まずに GPU の列で描き、
+    /// 残りは焼いて積む** (#1756)。
+    ///
+    /// 区間は記録した順に割るので、塗り → 線 → 次の形の塗り … の重ね順は CPU で置いたときと
+    /// 同じである (全部の塗り → 全部の線へ並べ替えない)。置き場所の色で線が透ける・骨が
+    /// 作れない線は割らずに、焼いた帯のまま置く。
+    private func placeSplittingGPUStrokes(
+        _ run: Shape.Run, of shape: Shape, pieces: [SolidStrokePiece],
+        gpuStrokes: [RetainedGPUStroke], by instance: SolidInstance
+    ) {
+        func placeBaked(_ segment: Range<Int>) {
+            guard !segment.isEmpty else { return }
+            let base = solidVertices.count
+            appendPlacedSolidVertices(
+                shape.solidVertices[segment], indices: nil, placedBy: instance)
+            var inside: [SolidStrokePiece] = []
+            for piece in pieces where segment.contains(piece.vertexStart) { inside.append(piece) }
+            placeSolidStrokes(
+                inside, from: segment.lowerBound, to: base, by: instance,
+                reversed: instance.isMirrored)
+        }
+        var cursor = run.start
+        for stroke in gpuStrokes {
+            // 置き場所の色は線にも掛かる (焼いた頂点に掛かるのと同じ式)。透けたら GPU の
+            // 条件 (不透明) から外れるので、焼いた帯のまま置く
+            let color = SIMD4(stroke.color.red, stroke.color.green, stroke.color.blue, stroke.color.alpha)
+                * instance.color
+            guard color.w == 1, case .mesh(let solid) = stroke.source,
+                let (geometry, geometryScale) = gpuStrokeGeometry(
+                    of: stroke.source, mesh: { solid.make() })
+            else { continue }
+            placeBaked(cursor..<stroke.vertices.lowerBound)
+            openGPUStroke(
+                of: stroke.source, geometry: geometry, matrix: instance.matrix * stroke.matrix,
+                weight: stroke.weight,
+                color: LinearRGBA(
+                    premultipliedRed: color.x, green: color.y, blue: color.z, alpha: color.w),
+                uv: stroke.uv, geometryScale: geometryScale)
+            cursor = stroke.vertices.upperBound
+        }
+        placeBaked(cursor..<(run.start + run.count))
     }
 
     /// 焼いて積んだ区間のうち、立体の線の頂点を置いた後の点で組み直す。

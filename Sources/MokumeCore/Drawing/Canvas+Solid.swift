@@ -535,6 +535,8 @@ extension Canvas {
         }
         let half = style.strokeWeight / 2
         let camera = StrokeCamera(currentCamera)
+        let strokeStart = solidVertices.count
+        defer { rememberGPUStroke(of: source, from: strokeStart) }
         strokeNet(
             count: placed.count, edges: net.edges,
             endSquare: {
@@ -555,6 +557,23 @@ extension Canvas {
                 appendSolidStroke(
                     .square(placed[$0]), shape: (net.points[$0], net.points[$0]), half: half, camera: camera)
             })
+    }
+
+    /// 記録の間に CPU で積んだ組み込み立体の線を、**置くときに GPU で組める**ものなら覚える
+    /// (``RetainedGPUStroke``・#1756)。
+    ///
+    /// 条件は、その場で描くときの ``placeGPUStroke(of:mesh:)`` と同じ (記録していないことを
+    /// 除く) で、**記録した時点のスタイルで**判じる。骨 (``SolidStrokeGeometry``) はここでは
+    /// 作らない — 置かれずに捨てられる形のために GPU の置き場を確保しない。骨が作れない
+    /// 稜線 (開いた端) は、置くときに CPU の帯へ戻る。
+    private func rememberGPUStroke(of source: SolidSource, from start: Int) {
+        guard recordingShape, gpuStrokeStyleAllows(source), solidVertices.count > start else {
+            return
+        }
+        recordedGPUStrokes.append(
+            RetainedGPUStroke(
+                source: source, matrix: transform.matrix, weight: style.strokeWeight,
+                color: style.stroke, uv: whiteUV, vertices: start..<solidVertices.count))
     }
 
     /// 線の部品を 1 つ積む。**記録の間は、置くときに組み直せるよう元を覚える** (#1547)。
