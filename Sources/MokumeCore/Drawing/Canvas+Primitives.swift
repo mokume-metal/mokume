@@ -136,7 +136,13 @@ extension Canvas {
     ) {
         let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
         let points = [SIMD2(x1, y1), SIMD2(x2, y2), SIMD2(x3, y3), SIMD2(x4, y4)]
-        draw(Outline(points: points, isClosed: true, fillTriangles: Self.quadTriangles(points)))
+        // 辺が交差しない四角形は、線全体を 1 回だけ混ぜる。凹んだ形では向かい合う辺が線に沿って
+        // 太さより離れたまま重なりうる (#1536 の反証)。交差する形 (砂時計) は、任意多角形の
+        // 自己交差と同じく交点で 2 回混ぜる
+        draw(
+            Outline(
+                points: points, isClosed: true, fillTriangles: Self.quadTriangles(points),
+                strokesAsOneRegion: !Self.quadCrosses(points)))
     }
 
     /// 凸でない四角形の塗りを割る三角形。凸なら `nil` (最初の点からの扇で塗る)。
@@ -154,17 +160,7 @@ extension Canvas {
         -> [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]?
     {
         func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float { a.x * b.y - a.y * b.x }
-        /// 線分 ab と cd が、端点以外の 1 点で交わるなら、その点。
-        func crossing(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, _ d: SIMD2<Float>)
-            -> SIMD2<Float>?
-        {
-            let dc = cross(b - a, c - a)
-            let dd = cross(b - a, d - a)
-            let da = cross(d - c, a - c)
-            let db = cross(d - c, b - c)
-            guard dc * dd < 0, da * db < 0 else { return nil }
-            return a + (b - a) * (da / (da - db))
-        }
+        let crossing = segmentCrossing
 
         if let x = crossing(p[0], p[1], p[2], p[3]) {
             return [(p[1], p[2], x), (p[3], p[0], x)]
@@ -181,6 +177,24 @@ extension Canvas {
         guard let dent else { return nil }
         let (a, b, c, d) = (p[dent], p[(dent + 1) % 4], p[(dent + 2) % 4], p[(dent + 3) % 4])
         return [(a, b, c), (a, c, d)]
+    }
+
+    /// 線分 ab と cd が、端点以外の 1 点で交わるなら、その点。
+    private static func segmentCrossing(
+        _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, _ d: SIMD2<Float>
+    ) -> SIMD2<Float>? {
+        func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float { a.x * b.y - a.y * b.x }
+        let dc = cross(b - a, c - a)
+        let dd = cross(b - a, d - a)
+        let da = cross(d - c, a - c)
+        let db = cross(d - c, b - c)
+        guard dc * dd < 0, da * db < 0 else { return nil }
+        return a + (b - a) * (da / (da - db))
+    }
+
+    /// 四角形の向かい合う辺が交わるか (砂時計の形か)。``quadTriangles(_:)`` と同じ判定。
+    static func quadCrosses(_ p: [SIMD2<Float>]) -> Bool {
+        segmentCrossing(p[0], p[1], p[2], p[3]) != nil || segmentCrossing(p[1], p[2], p[3], p[0]) != nil
     }
 
     // 線。塗りは持たない。

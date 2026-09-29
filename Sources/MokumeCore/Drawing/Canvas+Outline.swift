@@ -226,7 +226,8 @@ extension Canvas {
     }
 
     /// 線の片の重なりが絵に出るか。**出ないのは、重ねて混ぜても同じ色になる線だけ** —
-    /// 組み込みの断片で、不透明の色を `blend` で置くか、`replace` で置き換える線である。
+    /// 組み込みの断片で、不透明の色を `blend` / `lightest` / `darkest` で置くか、`replace` で
+    /// 置き換える線である。
     ///
     /// 次のときは、いまの色によらず出るものとして扱う:
     ///
@@ -244,9 +245,10 @@ extension Canvas {
         if buildingFlatTemplate || currentShader != nil { return true }
         switch style.blendMode {
         case .replace: return false
-        case .blend: return style.stroke.alpha < 1
-        case .add, .subtract, .lightest, .darkest, .difference, .exclusion, .multiply, .screen:
-            return true
+        // 不透明なら、明るいほう・暗いほうを採る混ぜ方も 2 回目で値が変わらない
+        // (`mokume_composite` の `max(s, d)` / `min(s, d)`)。半透明なら 2 回目で寄っていく
+        case .blend, .lightest, .darkest: return style.stroke.alpha < 1
+        case .add, .subtract, .difference, .exclusion, .multiply, .screen: return true
         }
     }
 

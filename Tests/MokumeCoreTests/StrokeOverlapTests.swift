@@ -329,4 +329,106 @@ struct StrokeOverlapTests {
         #expect(overpainted(arc).count <= 5, "arc: \(overpainted(arc).count)")
         #expect(painted(arc) == 2572)
     }
+
+    // MARK: - 反証で足した口
+
+    /// 辺の交わらない `quad` は自己交差しないので、線全体を 1 回だけ混ぜる。凹んだ `quad` では、
+    /// 向かい合う辺 (線に沿って太さより離れている) が凹みの近くで太さの中に入って重なる。
+    ///
+    /// `triangle` は 3 本の帯がどれも隣り合う (線に沿った隙間が 0) ので、任意多角形の規則の
+    /// ままでも全部の重なりを引く。
+    @Test("凹んだ quad の半透明の線は、向かい合う辺の重なりも 1 回だけ混ぜる")
+    func concaveQuadBlendsOnce() throws {
+        let quad = try translucent { canvas in
+            canvas.strokeWeight(20)
+            canvas.quad(20, 80, 140, 40, 60, 80, 140, 120)
+        }
+        #expect(painted(quad) > 0)
+        #expect(overpainted(quad).count <= 5, "quad: \(overpainted(quad).count)")
+    }
+
+    /// 辺が交差する `quad` (砂時計) は、任意多角形の自己交差と同じく交点で 2 回混ぜる。
+    @Test("辺が交差する quad の半透明の線は、交点で 2 回混ぜる")
+    func crossedQuadBlendsTwiceAtTheCrossing() throws {
+        let pixels = try translucent { canvas in
+            canvas.strokeWeight(10)
+            canvas.quad(20, 20, 140, 140, 140, 20, 20, 140)
+        }
+        #expect(abs(pixels[80, 80].red - Self.twice) <= 0.01, "交点: \(pixels[80, 80].red)")
+    }
+
+    /// 引き算は変換の前の座標で行う。回して伸ばしても重ね塗りは出ない。
+    @Test("回して伸ばした閉じた 4 点の半透明の線も、角で重ねて混ぜない")
+    func transformedPolygonBlendsOnce() throws {
+        let pixels = try translucent { canvas in
+            canvas.translate(80, 80)
+            canvas.rotate(0.4)
+            canvas.scale(1.3, 0.9)
+            canvas.strokeWeight(14)
+            canvas.beginShape()
+            canvas.vertex(-40, -40)
+            canvas.vertex(40, -40)
+            canvas.vertex(40, 40)
+            canvas.vertex(-40, 40)
+            canvas.endShape(.close)
+        }
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count <= 5, "\(overpainted(pixels).count)")
+    }
+
+    /// 同じ円を並べると、2 つ目から雛形に畳まれる。雛形も引いて積む。
+    @Test("素通しの断片を付けて畳まれた円の半透明の線も、刻みの継ぎ目で重ねて混ぜない")
+    func foldedCirclesBlendOnce() throws {
+        let pixels = try translucent(shaded: true) { canvas in
+            canvas.strokeWeight(10)
+            canvas.circle(45, 80, 50)
+            canvas.circle(115, 80, 50)
+        }
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count <= 5, "\(overpainted(pixels).count)")
+    }
+
+    /// 半透明の線で記録した保持した形は、記録の時点で引いて積む。
+    @Test("半透明の線で記録した保持した形も、角で重ねて混ぜない")
+    func translucentRecordedShapeBlendsOnce() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var shape = Shape.empty
+        try canvas.draw {
+            shape = canvas.createShape {
+                canvas.noFill()
+                canvas.stroke(255, 0, 0, 128)
+                canvas.strokeWeight(20)
+                Self.closedSquare(canvas)
+            }
+        }
+        try canvas.draw {
+            canvas.background(black)
+            canvas.shape(shape)
+        }
+        let pixels = try canvas.target.readPixels()
+        #expect(abs(pixels[45, 45].red - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].red)")
+        #expect(overpainted(pixels).count == 0)
+    }
+
+    /// 穴 (`beginContour`) の周も、外周とは別に同じ規則で積む。
+    @Test("穴を持つ形の半透明の線は、外周と穴の角で重ねて混ぜない")
+    func contourCornersBlendOnce() throws {
+        let pixels = try translucent { canvas in
+            canvas.strokeWeight(10)
+            canvas.beginShape()
+            canvas.vertex(20, 20)
+            canvas.vertex(140, 20)
+            canvas.vertex(140, 140)
+            canvas.vertex(20, 140)
+            canvas.beginContour()
+            canvas.vertex(60, 60)
+            canvas.vertex(60, 100)
+            canvas.vertex(100, 100)
+            canvas.vertex(100, 60)
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        #expect(abs(pixels[62, 62].red - Self.once) <= 0.01, "穴の角: \(pixels[62, 62].red)")
+        #expect(overpainted(pixels).count == 0)
+    }
 }
