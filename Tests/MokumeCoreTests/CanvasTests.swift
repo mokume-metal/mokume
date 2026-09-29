@@ -1544,6 +1544,7 @@ struct CanvasTests {
             "framesDrawn": "閉じたフレームの通し番号。境目の印そのもの",
             "shadowMapsBuilt": count,
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
+            "spheresFromUnit": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
             "computeEncodersOpened": count, "computeEncodersClosed": count,

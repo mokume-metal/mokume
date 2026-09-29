@@ -440,7 +440,26 @@ extension Canvas {
     /// なったものは、多くなりすぎたときに古い順から 1 件ずつ捨てる (``Canvas/solidMeshes``)。
     private func solidMesh(for shape: SolidShape) -> SolidMesh {
         if let cached = solidMeshes[shape] { return cached }
-        let mesh = shape.make()
+        let mesh: SolidMesh
+        if case .sphere(let radius, let detail) = shape, radius != 1 {
+            // **向きは半径に依らない** ので、同じ細かさの単位球から位置だけを作る (#1751)。
+            // 組み立て (``SolidMeshBuilder/sphere(radius:detail:)``) と同じく位置は
+            // `向き * 半径` で、単位球の位置は `向き * 1` = 向きそのものなので、1 ビットも
+            // 変わらない。寸法が毎フレーム動く球が、三角関数を点ごとに引き直さずに済む
+            // 閉包を標準ライブラリへ渡さずに回す — 渡すと点ごとに隔離の実行時検査を払う (#1779)
+            let unit = solidMesh(for: .sphere(radius: 1, detail: detail))
+            var points: [SolidMesh.Point] = []
+            points.reserveCapacity(unit.points.count)
+            for point in unit.points {
+                points.append(
+                    SolidMesh.Point(
+                        position: point.normal * radius, normal: point.normal, uv: point.uv))
+            }
+            mesh = SolidMesh(points: points)
+            spheresFromUnit += 1
+        } else {
+            mesh = shape.make()
+        }
         solidMeshes.insert(mesh, for: shape)
         return mesh
     }
