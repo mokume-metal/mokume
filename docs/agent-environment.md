@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 # エージェントの開発環境
 
 規約は [AGENTS.md](../AGENTS.md)。macOS / Apple Silicon 上で `make setup` を実行し、
-不足する道具は出力に従って用意する。検証は `make ci-check` を使う。
+不足する道具は出力に従って用意する。検証の入口は `make ci-check` (手元で回す範囲は AGENTS.md「コミット・PR の規約」)。
 
 ## スキル
 

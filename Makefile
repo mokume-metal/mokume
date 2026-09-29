@@ -48,7 +48,7 @@ CI_CHECK_STEPS := build test examples shaders params schemas api tool-language i
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
 # 段ごとに build を組み直さないこと (-o build) は駆動役が持つ (scripts/ci-check.sh の冒頭)
-ci-check: ## per-PR CI と同一の検査 — push 前に通す
+ci-check: ## per-PR CI と同一の検査 (全段)
 	@MAKE='$(MAKE)' bash scripts/ci-check.sh $(CI_CHECK_STEPS)
 
 no-binaries:
