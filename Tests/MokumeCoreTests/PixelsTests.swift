@@ -589,6 +589,28 @@ struct PixelsTests {
         #expect(writtenAfter == black, "最後の描き切りの後に書いた画素が、次のフレームへ越えた")
     }
 
+    /// **面を塗り直す口も、書き込み待ちを同じ捨てる口で捨てる** ([#1678] の反証 3)。旗だけを
+    /// 下ろすと、塗る投入より前に投げたとき、投入の番号が進まないまま捨てた値を載せた写しが
+    /// 読まれる。投入の前に投げる形は検査から作れない (資源が枯れたときだけ) ので、捨てる口を
+    /// 通った印 (写しが面を映していないこと) を見る。
+    ///
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    @Test("面を塗り直すときも、書き込み待ちは捨てる口を通る (#1678)")
+    func fillingTheTargetDiscardsPendingWritesThroughTheSameMouth() throws {
+        let canvas = try makeBlackCanvas()
+        canvas.beginDraw()
+        canvas.set(3, 3, red)
+        let mirror = try #require(canvas.target.pixelMirror)
+        try #require(mirror.hasPendingWrites && mirror.syncedThrough != 0, "検査の前提: 読んでから書いていない")
+
+        try canvas.target.fill(with: green)
+        #expect(!mirror.hasPendingWrites)
+        #expect(mirror.syncedThrough == 0, "旗だけを下ろし、捨てた値を載せた写しを映したことにしている")
+        #expect(try canvas.target.readPixels()[3, 3] == green)
+        canvas.endDraw()
+        #expect(try canvas.target.readPixels()[3, 3] == green, "塗り直しで捨てた書き込みが、描き切りで戻った")
+    }
+
     /// 描き場所で `endDraw()` を閉じ忘れたフレームに書いた画素は、次の本体のフレームで描き場所を
     /// 開き直したとき、描き場所の読み出しにも、本体へ置いた絵にも出ない ([#1678] の完了条件 1)。
     ///

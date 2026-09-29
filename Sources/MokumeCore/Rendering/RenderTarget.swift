@@ -285,9 +285,13 @@ import MokumeDiagnostics
     /// CPU が写しへ書いたまま戻していないものを、**戻さずに捨てる** ([#1678])。書いていなければ
     /// 何もしない。
     ///
-    /// 呼ぶのは描かずに捨てたフレームの片付け (``Canvas`` の `discardFrame()`) である。書いた画素は
-    /// 置いた図形と同じくそのフレームに属し ([ADR-0021] 決定 4 の追補 (2026-09-27))、捨てたフレームの
-    /// 図形が次のフレームで描かれないのと同じく、書いた画素も次の描き切りで面へ戻さない。
+    /// 呼ぶのは描かずに捨てたフレームの片付け (``Canvas`` の `discardFrame()`) と、全面を塗り直す
+    /// ``fill(with:)`` である。**書き込み待ちを捨てる口はここ 1 つにする** — 旗だけを下ろす形を
+    /// 2 つ目の口に書くと、写しの印を戻し忘れる。
+    ///
+    /// 捨てたフレームで捨てるのは、書いた画素が置いた図形と同じくそのフレームに属するからである
+    /// ([ADR-0021] 決定 4 の追補 (2026-09-27))。捨てたフレームの図形が次のフレームで描かれない
+    /// のと同じく、書いた画素も次の描き切りで面へ戻さない。
     ///
     /// **写しは捨てた値を載せたままなので、「まだ映していない」へ戻す** (``PixelMirror/syncedThrough``
     /// を 0 に)。旗を下ろすだけだと、投入が進んでいなければ次の読み出しが写しをそのまま返し、捨てた
@@ -351,8 +355,12 @@ import MokumeDiagnostics
 
     /// 描画先を 1 色で塗り、GPU が終わるまで待つ。
     public func fill(with color: LinearRGBA) throws(RenderFailure) {
-        // 全画素を塗り直すので、写しに残っていた CPU の書き込みは戻さず捨てる
-        pixelMirror?.hasPendingWrites = false
+        // 全画素を塗り直すので、写しに残っていた CPU の書き込みは戻さず捨てる。**旗だけ下ろさず、
+        // 捨てる口を通す** ([#1678] の反証 3) — 塗る投入より前に投げると、投入の番号が進まないまま
+        // 捨てた値を載せた写しが読まれる
+        //
+        // [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+        discardPixelWrites()
         try gpu.withCommands { commands throws(RenderFailure) in
             guard
                 let encoder = commands.makeRenderCommandEncoder(
