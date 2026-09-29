@@ -50,16 +50,23 @@ extension Canvas {
         case badPlacement
         /// 立体の寸法が受け取れない値だった。
         case badSolidSize
-        /// 立体の分け方 (`detail`) に、範囲 (``SolidShape/detailRange``) の外の値が渡され、
+        /// ``sphere(_:detail:)`` の分け方に、範囲 (``SolidShape/detailRange``) の外の値が渡され、
         /// 範囲へ丸めた ([#1698])。
         ///
-        /// 入口は 5 つの立体 (``sphere(_:detail:)``・``ellipsoid(_:_:_:detail:)``・
-        /// ``cylinder(_:_:detail:)``・``cone(_:_:detail:)``・``torus(_:_:detail:)``) で、
-        /// 同じ範囲を共有する 1 つの事情なので鍵も共有する (``badSolidSize`` と同じ形)。
-        /// 文面には呼んだ立体の名前が入る。
+        /// **立体ごとに鍵を分ける** (#1698 の反証 9)。範囲は 5 つの立体で同じだが、共有すると
+        /// 先に言った立体が後の立体の書き間違いを黙らせる。`textSize` と `textLeading` を分けた
+        /// のと同じ理由である。
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
-        case badSolidDetail
+        case badSphereDetail
+        /// ``ellipsoid(_:_:_:detail:)`` の分け方を丸めた。分ける理由は ``badSphereDetail``。
+        case badEllipsoidDetail
+        /// ``cylinder(_:_:detail:)`` の分け方を丸めた。分ける理由は ``badSphereDetail``。
+        case badCylinderDetail
+        /// ``cone(_:_:detail:)`` の分け方を丸めた。分ける理由は ``badSphereDetail``。
+        case badConeDetail
+        /// ``torus(_:_:detail:)`` の分け方を丸めた。分ける理由は ``badSphereDetail``。
+        case badTorusDetail
 
         /// フレームの外で光を置いた。
         case lightOutsideFrame
@@ -123,7 +130,7 @@ extension Canvas {
         case badCamera
         /// 受け取れない切り抜きが渡された。
         case badClip
-        /// ``strokeWeight(_:)`` に負の値か数でない値が渡され、0 に丸めた ([#1698])。
+        /// ``strokeWeight(_:)`` に負の値・数でない値・無限が渡され、0 に丸めた ([#1698])。
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
         case badStrokeWeight

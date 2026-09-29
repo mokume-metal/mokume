@@ -255,14 +255,25 @@ public final class Particles {
         ///
         /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
         case negativeDrag
-        /// `emit` の `rate`・`life`・`size` に負の値が渡され、0 として扱った ([#1698])。
+        /// `emit` の `rate` に負の値が渡され、0 として扱った ([#1698])。
         ///
-        /// 3 つの引数で 1 つの事情 (0 より小さくならない量) なので鍵を共有し、文面には引数の
-        /// 名前が入る (``unacceptableEmission`` と同じ形)。**``unacceptableEmission`` とは鍵を
-        /// 分ける** — あちらは 1 個も出さず、こちらは 0 として扱って出す。
+        /// **引数ごとに鍵を分ける** (#1698 の反証 9)。共有すると、先に言った引数が後の引数の
+        /// 書き間違いを黙らせる。どれも ``unacceptableEmission`` とも分ける — あちらは 1 個も
+        /// 出さず、こちらは 0 として扱って出す。
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
-        case negativeEmission
+        case negativeRate
+        /// `emit` の `life` の下端が負で、引いた値の 0 より下を 0 として扱った。分ける理由は
+        /// ``negativeRate``。
+        case negativeLife
+        /// `emit` の `size` の下端が負で、引いた値の 0 より下を 0 として扱った。分ける理由は
+        /// ``negativeRate``。
+        case negativeSize
+        /// `emit` の `from` (円・球) の半径が負で、絶対値として扱った ([#1698] の反証 7)。
+        /// 分ける理由は ``negativeRate``。
+        ///
+        /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        case negativeRadius
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -420,7 +431,7 @@ public final class Particles {
                 "\(refused.name) got \(refused.value), which is not a number or is infinite. "
                     + "No particles were emitted from that call")
         }
-        warnNegative(rate: rate, life: life, size: size)
+        warnNegative(rate: rate, from: source, life: life, size: size)
         let count = count(rate: rate, over: step, frame: frame)
         place(
             count, from: source, speed: speed, angle: angle, life: life, size: size,
@@ -641,29 +652,37 @@ public final class Particles {
         warnOnce(.unacceptableEmission, "emit(): \(problem)")
     }
 
-    /// 0 より小さくならない量に負の値が渡されたことを、初回だけ知らせる ([#1698])。
+    /// 0 より小さくならない量に負の値が渡されたことを、引数ごとに初回だけ知らせる ([#1698])。
     ///
     /// **扱いは変えない** — 負の `rate` は 0 個 (`EmissionCadence.take`)、`life`・`size` は
-    /// 引いた値の 0 より下を 0 にする (`place`)。丸めたことを言わないのは ADR-0020 決定 5 の
-    /// 「警告を出して」に反するので、知らせだけを足す。見る順は引数の並びどおり。文面の形は
-    /// 面の ``Canvas/warnRounded(_:_:_:takes:passed:used:)`` と揃える。
+    /// 引いた値の 0 より下を 0 にする (`place`)、円・球の負の半径は絶対値で読む
+    /// (`Emitter.sample`)。丸めたことを言わないのは ADR-0020 決定 5 の「警告を出して」に反する
+    /// ので、知らせだけを足す。文面の形は面の ``Canvas/warnRounded(_:_:_:takes:passed:used:)``
+    /// と揃える。
     ///
     /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
     private func warnNegative(
-        rate: Float, life: ClosedRange<Float>, size: ClosedRange<Float>
+        rate: Float, from source: Emitter, life: ClosedRange<Float>, size: ClosedRange<Float>
     ) {
         // 毎フレーム呼ばれる口なので、並びを組まずに 1 つずつ見る
         if rate < 0 {
-            return warnOnce(
-                .negativeEmission,
-                "emit(): rate takes 0 or more, but \(rate) was passed, so 0 was used")
+            warnOnce(
+                .negativeRate, "emit(): rate takes 0 or more, but \(rate) was passed, so 0 was used")
+        }
+        switch source {
+        case .circle(_, _, let radius) where radius < 0, .sphere(_, _, _, let radius) where radius < 0:
+            warnOnce(
+                .negativeRadius,
+                "emit(): the radius of from takes 0 or more, but \(source) was passed, so "
+                    + "\(-radius) was used")
+        default: break
         }
         func partBelowZero(_ name: String, _ range: ClosedRange<Float>) -> String {
             "emit(): \(name) takes 0 or more, but \(range) was passed, so the part below 0 was "
                 + "used as 0"
         }
-        if life.lowerBound < 0 { return warnOnce(.negativeEmission, partBelowZero("life", life)) }
-        if size.lowerBound < 0 { return warnOnce(.negativeEmission, partBelowZero("size", size)) }
+        if life.lowerBound < 0 { warnOnce(.negativeLife, partBelowZero("life", life)) }
+        if size.lowerBound < 0 { warnOnce(.negativeSize, partBelowZero("size", size)) }
     }
 
     private func warnNegativeDrag(_ amount: Float) {
