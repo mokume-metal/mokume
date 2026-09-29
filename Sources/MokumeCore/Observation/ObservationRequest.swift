@@ -46,9 +46,14 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 後から書かれるのに読み手だけが諦めた状態になる。
     public static let maximumEvery = 60
     /// 撮れる枚数の下限。0 枚の列は撮り終わりが来ない。
-    static let minimumCount = 1
+    ///
+    /// `package` に開くのは、MCP の窓口が範囲を名乗るときに手で書かず、ここから引くため
+    /// (上限の定数と同じく、写した数は動かした日に古びる)。
+    package static let minimumCount = 1
     /// 間隔の下限 (フレーム)。毎フレーム撮るより詰めることはできない。
-    static let minimumEvery = 1
+    package static let minimumEvery = 1
+    /// 縮小率の上限 (実寸)。拡大はしない。下は 0 を含まない (0 以下は実寸に倒す)。
+    static let maximumScale: Double = 1
 
     /// この要求の識別子。応答はこれを echo する。
     public let id: String
@@ -82,19 +87,27 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         self.time = time
     }
 
-    /// 範囲の端で丸めた枚数と間隔、そして丸めたことを伝えることわり。
+    /// 範囲の端で丸めた縮小率・枚数・間隔、そして丸めたことを伝えることわり。
     ///
     /// **黙って切り詰めない。** 頼んだ枚数と返った枚数が違うことに応答から気付けないと、
-    /// 読み手は「動きが途中で止まった」と「上限で切られた」を区別できない。ことわりは
-    /// **切った端を名乗る** — 上で切れば上限を、下 (0・負) で切れば下限を言う。どちらの
-    /// 端でも上限を名乗っていたので、読み手は切られた理由を取り違えた ([#1699])。
+    /// 読み手は「動きが途中で止まった」と「範囲の端で切られた」を区別できない。縮小率も
+    /// 同じで、範囲の外を黙って実寸に倒すと、読み手は頼んだ大きさの絵だと信じる ([#1814])。
+    /// ことわりは**切った端を名乗る** — 上で切れば上限を、下 (0・負) で切れば下限を言う。
+    /// どちらの端でも上限を名乗っていたので、読み手は切られた理由を取り違えた ([#1699])。
     ///
     /// 切るのは要求を解いた後の別の段にしてある — 要求そのものは書き手が置いたままの
     /// 値を保ち、応答の `id` と並べて「何を頼み、何が返ったか」を突き合わせられる。
+    /// **頼みの範囲を見るのはここ 1 か所である。** 撮る側 (`SketchRuntime`) は丸めた値
+    /// だけを使う。
     ///
     /// [#1699]: https://github.com/mokume-metal/mokume/issues/1699
-    func clamped() -> (count: Int, every: Int, warnings: [String]) {
+    /// [#1814]: https://github.com/mokume-metal/mokume/issues/1814
+    func clamped() -> (scale: Double, count: Int, every: Int, warnings: [String]) {
         var warnings: [String] = []
+        let scale = Self.clampScale(self.scale)
+        if let reason = scale.reason {
+            warnings.append("The scale went from \(self.scale) to \(scale.value) (\(reason))")
+        }
         let count = Self.clamp(self.count, into: Self.minimumCount...Self.maximumCount)
         if let bound = count.bound {
             warnings.append(
@@ -105,7 +118,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
             warnings.append(
                 "The interval went from \(self.every) to \(every.value) frames (\(bound))")
         }
-        return (count.value, every.value, warnings)
+        return (scale.value, count.value, every.value, warnings)
     }
 
     /// 範囲へ丸めた値と、丸めたなら切った端を名乗る括弧の中身。範囲の中なら `nil`。
@@ -114,6 +127,19 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     {
         if value > range.upperBound { return (range.upperBound, "the ceiling is \(range.upperBound)") }
         if value < range.lowerBound { return (range.lowerBound, "the floor is \(range.lowerBound)") }
+        return (value, nil)
+    }
+
+    /// 範囲 `(0, 1]` へ丸めた縮小率と、丸めたならその理由。範囲の中なら `nil`。
+    ///
+    /// **下の外は下限へ寄せず、実寸に倒す。** 0 を含まない範囲には寄せる先の端が無く、
+    /// 限りなく小さい絵を返すより、実寸を返して倒したことを言うほうが読み手に役立つ。
+    /// 数でない値 (公開の `init` からは置ける) も同じ扱いにする。
+    private static func clampScale(_ value: Double) -> (value: Double, reason: String?) {
+        if value > maximumScale { return (maximumScale, "the ceiling is \(maximumScale)") }
+        guard value > 0 else {
+            return (maximumScale, "a scale must be above 0, so full size was used")
+        }
         return (value, nil)
     }
 

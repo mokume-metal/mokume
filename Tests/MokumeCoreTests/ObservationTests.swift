@@ -236,6 +236,28 @@ struct ObservationTests {
         #expect((try readReport(in: facet)["size"] as? [String: Any])?["width"] as? Int == 32)
     }
 
+    /// 範囲 `(0, 1]` の外の縮小率は実寸で撮り、倒したことを応答で言う ([#1814])。
+    /// 直す前は実寸で撮るのは同じで、ことわりが無かった (丸めの規則そのものは
+    /// ObservationProtocolTests の純粋な検査が見る)。
+    ///
+    /// [#1814]: https://github.com/mokume-metal/mokume/issues/1814
+    @Test("範囲の外の縮小率は、実寸で撮って応答でことわる", arguments: [2.0, 0.0])
+    func saysSoWhenTheScaleIsOutOfRange(scale: Double) throws {
+        let facet = try makeFacet()
+        let runtime = try makeRuntime(Corner(), facet: facet)
+        try runtime.advance()
+        try request(id: "a1", scale: scale, in: facet)
+        try runtime.advance()
+
+        let report = try readReport(in: facet)
+        #expect(report["id"] as? String == "a1")
+        let grid = try #require(report["stats"] as? [String: Any])
+        let sampleGrid = try #require(grid["sampleGrid"] as? [String: Any])
+        #expect(sampleGrid["width"] as? Int == 32, "実寸で撮っていない")
+        let warnings = report["warnings"] as? [String] ?? []
+        #expect(warnings.contains { $0.hasPrefix("The scale went from \(scale) to 1.0") })
+    }
+
     @Test("走らせている重さが載る")
     func carriesTheRuntimeLoad() throws {
         let facet = try makeFacet()
@@ -428,10 +450,10 @@ struct ObservationTests {
         #expect(exposed == captured)
     }
 
-    @Test("上限を超えて頼むと、切り詰めたことが応答に出る")
+    @Test("範囲を超えて頼むと、切り詰めたことが応答に出る")
     func saysSoWhenItTrimsAnOversizedRequest() throws {
         // **黙って切らない。** 切ったことが応答から読めないと、読み手は「動きが途中で
-        // 止まった」と「上限で切られた」を区別できない (切る規則そのものは
+        // 止まった」と「範囲の端で切られた」を区別できない (切る規則そのものは
         // ObservationProtocolTests の純粋な検査が見る)
         let facet = try makeFacet()
         let runtime = try makeRuntime(Flat(), facet: facet)
