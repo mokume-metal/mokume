@@ -868,6 +868,7 @@ struct GraphicsTests {
     /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
     @Test("描き場所の断片の揺らぎの傾きも、本体の断片と同じ値を返す")
     func graphicsGradientMatchesTheSketch() throws {
+        try requireNoiseFarFromTheDefault()
         let canvas = try makeCanvas(width: 8, height: 8)
         let layer = try canvas.createGraphics(8, 8)
         decideNoise(on: canvas)
@@ -922,6 +923,108 @@ struct GraphicsTests {
                 #expect(gap < NoiseParityTests.tolerance, "\(name)の断片の \(place) で \(gap) ずれている")
             }
         }
+    }
+
+    /// 置いてから種を決め直したときの 3 通り。どれも、置いた時点の種で CPU が引いた値と、
+    /// 断片が引いた値を比べる。
+    enum LateChange: CaseIterable, CustomTestStringConvertible {
+        /// 本体に置いたあと、描き場所で種を決め直す (本体の描き切りはフレームの終わり)
+        case onGraphicsAfterPlacingOnTheSketch
+        /// 描き場所に置いたあと、`endDraw()` の前に本体で種を決め直す
+        case onTheSketchAfterPlacingOnGraphics
+        /// 同じ面に置いたあと、その面で種を決め直す
+        case onTheSameSurface
+
+        var testDescription: String {
+            switch self {
+            case .onGraphicsAfterPlacingOnTheSketch: "本体に置いてから描き場所で"
+            case .onTheSketchAfterPlacingOnGraphics: "描き場所に置いてから本体で"
+            case .onTheSameSurface: "同じ面に置いてから同じ面で"
+            }
+        }
+    }
+
+    /// 反証の指摘 1 ([#1503])。**断片は、置いた時点の種で引く** — CPU の `noise()` は呼んだ
+    /// 時点の種を読むので、置いた後に種を決め直しても (どの面で決めても) 置いたものは
+    /// 置いた時点の種のまま出る。直す前は、描き切りの時点の種 (決め直した後の種) で引いていた。
+    /// 置き場を共有したので、この時差が面をまたいで起きる。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    @Test("置いた後に種を決め直しても、置いたものは置いた時点の種で引く", arguments: LateChange.allCases)
+    func placedFragmentsKeepTheSeedOfTheirPlacement(_ change: LateChange) throws {
+        try requireNoiseFarFromTheDefault()
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let layer = try canvas.createGraphics(8, 8)
+        decideNoise(on: canvas)
+        let place = Self.noisePlaces[0]
+        let expected = canvas.noise(place.x, place.y, place.z)
+        let shader = try canvas.makeShader(
+            Self.noiseComparison,
+            values: [
+                "place": .pair(place.x, place.y), "depth": .number(place.z),
+                "expected": .number(expected),
+            ])
+        // 決め直す種は既定の設定 (種 0・4 枚・0.5)。既定から離れていることは上で確かめた
+        func reset(_ surface: Canvas) {
+            surface.noiseSeed(0)
+            surface.noiseDetail(4, 0.5)
+        }
+        func placeRect(on surface: Canvas) {
+            surface.background(.linear(red: 0, green: 0, blue: 0))
+            surface.blendMode(.replace)
+            surface.noStroke()
+            surface.shader(shader)
+            surface.rect(0, 0, 8, 8)
+            surface.resetShader()
+        }
+
+        let read: Canvas
+        switch change {
+        case .onGraphicsAfterPlacingOnTheSketch:
+            try canvas.draw {
+                placeRect(on: canvas)
+                layer.beginDraw()
+                reset(layer)
+                layer.endDraw()
+            }
+            read = canvas
+        case .onTheSketchAfterPlacingOnGraphics:
+            try canvas.draw {
+                layer.beginDraw()
+                placeRect(on: layer)
+                reset(canvas)
+                layer.endDraw()
+            }
+            read = layer
+        case .onTheSameSurface:
+            try canvas.draw {
+                placeRect(on: canvas)
+                reset(canvas)
+            }
+            read = canvas
+        }
+        let gap = read.get(4, 4).red
+        #expect(gap < NoiseParityTests.tolerance, "\(change.testDescription): \(gap) ずれている")
+    }
+
+    /// 同じ種を書き直しても描き切らない — 毎フレーム `noiseSeed` を呼ぶ書き方
+    /// (`Sketches/KnobsAndValues.swift`) で、フレームの途中の描き切りを増やさない。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    @Test("同じ種と細かさを書き直しても、途中で描き切らない")
+    func rewritingTheSameNoiseDoesNotFlush() throws {
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let layer = try canvas.createGraphics(8, 8)
+        decideNoise(on: canvas)
+        var pending: [Bool] = []
+        try canvas.draw {
+            canvas.rect(0, 0, 4, 4)
+            decideNoise(on: layer)
+            pending.append(canvas.hasPendingDrawing)
+            layer.noiseSeed(Self.noiseSeed + 1)
+            pending.append(canvas.hasPendingDrawing)
+        }
+        #expect(pending == [true, false], "書き直す前後で溜めた図形が \(pending)")
     }
 
     /// 完了条件 4 のうち直に作った面 ([#1503])。本体を持たない面は、それぞれ自分の置き場を
