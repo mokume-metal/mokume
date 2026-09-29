@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Accelerate
 import AVFoundation
 import Foundation
 import MokumeDiagnostics
@@ -258,17 +259,64 @@ nonisolated final class MovieFile {
         let destination = base.assumingMemoryBound(to: UInt8.self)
         let stride = CVPixelBufferGetBytesPerRow(buffer)
         image.bytes.withUnsafeBufferPointer { source in
-            for y in 0..<height {
-                let row = y * stride
-                let line = y * width * 4
-                for x in 0..<width {
-                    let to = row + x * 4
-                    let from = line + x * 4
-                    destination[to] = source[from + 2]
-                    destination[to + 1] = source[from + 1]
-                    destination[to + 2] = source[from]
-                    destination[to + 3] = source[from + 3]
-                }
+            Self.writeBGRA(
+                from: source, width: width, height: height, into: destination, stride: stride)
+        }
+    }
+
+    /// 詰め物の無い RGBA の行を、行幅 `stride` の BGRA へ並べ替えて写す。
+    /// **各行の詰め物には書かない。**
+    ///
+    /// 並べ替えは vImage に任せる。1 バイトずつ写すループより 4K で 1 枚 8 ms ほど軽い
+    /// ([#1754] の実測)。vImage が断ったとき (`permute` が誤りを返したとき) は、同じ結果を
+    /// 出すループで写し直す — 書き出す絵は、どちらを通っても 1 バイトも変わらない。
+    ///
+    /// [#1754]: https://github.com/mokume-metal/mokume/issues/1754
+    static func writeBGRA(
+        from source: UnsafeBufferPointer<UInt8>, width: Int, height: Int,
+        into destination: UnsafeMutablePointer<UInt8>, stride: Int,
+        permute: (UnsafeBufferPointer<UInt8>, Int, Int, UnsafeMutablePointer<UInt8>, Int)
+            -> vImage_Error = permuteToBGRA
+    ) {
+        guard permute(source, width, height, destination, stride) != kvImageNoError else {
+            return
+        }
+        writeBGRAByLoop(from: source, width: width, height: height, into: destination, stride: stride)
+    }
+
+    /// vImage で RGBA → BGRA へ並べ替える。
+    static func permuteToBGRA(
+        _ source: UnsafeBufferPointer<UInt8>, _ width: Int, _ height: Int,
+        _ destination: UnsafeMutablePointer<UInt8>, _ stride: Int
+    ) -> vImage_Error {
+        guard let base = source.baseAddress else { return kvImageNullPointerArgument }
+        // 読むだけの元を包む。vImage の型が可変のポインタを取るだけで、書き換えはしない
+        var from = vImage_Buffer(
+            data: UnsafeMutableRawPointer(mutating: base), height: vImagePixelCount(height),
+            width: vImagePixelCount(width), rowBytes: width * 4)
+        var to = vImage_Buffer(
+            data: destination, height: vImagePixelCount(height),
+            width: vImagePixelCount(width), rowBytes: stride)
+        // 出す側の i 番目のチャンネルへ、元の map[i] 番目を置く: B ← 2, G ← 1, R ← 0, A ← 3
+        let map: [UInt8] = [2, 1, 0, 3]
+        return vImagePermuteChannels_ARGB8888(&from, &to, map, vImage_Flags(kvImageNoFlags))
+    }
+
+    /// 1 バイトずつ RGBA → BGRA へ写す。vImage が断ったときの道で、検査の参照でもある。
+    static func writeBGRAByLoop(
+        from source: UnsafeBufferPointer<UInt8>, width: Int, height: Int,
+        into destination: UnsafeMutablePointer<UInt8>, stride: Int
+    ) {
+        for y in 0..<height {
+            let row = y * stride
+            let line = y * width * 4
+            for x in 0..<width {
+                let to = row + x * 4
+                let from = line + x * 4
+                destination[to] = source[from + 2]
+                destination[to + 1] = source[from + 1]
+                destination[to + 2] = source[from]
+                destination[to + 3] = source[from + 3]
             }
         }
     }
