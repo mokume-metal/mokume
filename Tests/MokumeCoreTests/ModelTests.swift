@@ -157,7 +157,7 @@ struct ModelTests {
     private func normalized(fitting: Float?) throws -> Model {
         Model.make(
             name: "pyramid", parsed: try ModelFile.load(ModelFixture.pyramid),
-            fitting: fitting, identity: 1)
+            fitting: fitting)
     }
 
     @Test("整えると、中心が原点に来て面に合う大きさになる")
@@ -216,8 +216,8 @@ struct ModelTests {
         }
         for path in [ModelFixture.pyramid, ModelFixture.unwrapped] {
             let parsed = try ModelFile.load(path)
-            let raw = Model.make(name: path, parsed: parsed, fitting: nil, identity: 1)
-            let fitted = Model.make(name: path, parsed: parsed, fitting: 60, identity: 2)
+            let raw = Model.make(name: path, parsed: parsed, fitting: nil)
+            let fitted = Model.make(name: path, parsed: parsed, fitting: 60)
             let before = agreement(raw)
             #expect(!before.isEmpty)
             #expect(agreement(fitted) == before, "整えると、巻き方が向きと逆の側を指す (\(path))")
@@ -240,7 +240,7 @@ struct ModelTests {
     func writtenUnwrapBecomesTheReadingPosition() throws {
         let model = Model.make(
             name: "unwrapped", parsed: try ModelFile.load(ModelFixture.unwrapped),
-            fitting: 60, identity: 1)
+            fitting: 60)
         // **囲みの箱から作る位置とは重ならない値**を書いてあるので、倒れていれば落ちる。
         // 整えると巻き方を戻すので、1 枚目の 3 点目 (vt 3) は 2 番目に並ぶ (#1473)
         #expect(model.mesh.points[0].uv == SIMD2(0.25, Float(1) - 0.8))
@@ -267,7 +267,7 @@ struct ModelTests {
     func writtenCornersWinPerCorner() throws {
         let model = Model.make(
             name: "mixed", parsed: try ModelFile.load(ModelFixture.mixedUnwrap),
-            fitting: 60, identity: 1)
+            fitting: 60)
         // 整えると巻き方を戻すので、どちらの三角形も 2 点目と 3 点目が入れ替わって並ぶ (#1473)
         // 手前の 3 点は書かれた展開 (vt 1・3・2 の順)
         #expect(model.mesh.points[0].uv == SIMD2(0.25, Float(1) - 0.75))
@@ -290,8 +290,8 @@ struct ModelTests {
         // 同じ位置にある角と比べる
         for path in [ModelFixture.pyramid, ModelFixture.unwrapped, ModelFixture.mixedUnwrap] {
             let parsed = try ModelFile.load(path)
-            let fitted = Model.make(name: path, parsed: parsed, fitting: 60, identity: 1)
-            let raw = Model.make(name: path, parsed: parsed, fitting: nil, identity: 2)
+            let fitted = Model.make(name: path, parsed: parsed, fitting: 60)
+            let raw = Model.make(name: path, parsed: parsed, fitting: nil)
             #expect(fitted.mesh.points.count == raw.mesh.points.count)
             let scale = 60 / max(raw.size.x, max(raw.size.y, raw.size.z))
             for (index, point) in fitted.mesh.points.enumerated() {
@@ -526,6 +526,130 @@ struct ModelTests {
                     "f \(first)//\(first) \(first + 1)//\(first + 1) \(first + 2)//\(first + 2)")
             }
             return lines.joined(separator: "\n")
+        }
+
+        // MARK: - 別の Canvas で読んだモデル (#1846)
+
+        /// 本体と描き場所 (`createGraphics`) で別々に読んだモデルの置き方。
+        enum ForeignModelScene: String, CaseIterable, Sendable {
+            /// 塗りだけ。同じ描き切りで頂点を共有する表の鍵を見る。
+            case fill
+            /// 線だけ。フレームをまたぐ稜線の控えの鍵を見る。
+            case stroke
+            /// 影を落とす。焼き直すかの指紋を見る。
+            case shadow
+        }
+
+        /// `pg` の上で、前のフレームに `other` を置いてから `own` を置いたフレームの絵。
+        /// `other` が無ければ、`own` だけを初めて置いたフレームの絵 (物差し)。
+        private func pictureOfOwn(
+            _ scene: ForeignModelScene, on pg: Canvas, own: Model, after other: Model?
+        ) throws -> [UInt8] {
+            func place(_ model: Model, at x: Float) {
+                pg.push()
+                pg.translate(x, 48, 0)
+                pg.scale(0.6, 0.6, 0.6)
+                pg.model(model)
+                pg.pop()
+            }
+            func frame(_ body: () -> Void) throws {
+                try pg.draw {
+                    pg.background(.linear(red: 0, green: 0, blue: 0))
+                    switch scene {
+                    case .fill:
+                        pg.noStroke()
+                        pg.fill(.linear(red: 1, green: 1, blue: 1))
+                    case .stroke:
+                        pg.noFill()
+                        pg.stroke(.linear(red: 1, green: 1, blue: 1))
+                    case .shadow:
+                        pg.directionalLight(.linear(red: 0.9, green: 0.9, blue: 0.9), -0.6, 0.6, -0.5)
+                        pg.shadows(true)
+                        pg.noStroke()
+                        pg.fill(.linear(red: 0.8, green: 0.8, blue: 0.8))
+                        // 影を受ける床
+                        pg.push()
+                        pg.translate(48, 48, -30)
+                        pg.plane(90, 90)
+                        pg.pop()
+                    }
+                    body()
+                }
+            }
+            if let other {
+                try frame { place(other, at: 48) }
+            }
+            try frame {
+                // 塗りは同じ描き切りの中で共有するので、画面の外にも置いておく
+                if let other, scene == .fill { place(other, at: 10_000) }
+                place(own, at: 48)
+            }
+            return try pg.target.encodeForDisplay().bytes
+        }
+
+        /// 頂点を傾けた四角錐。**頂点と面の数は ``ModelFixture/pyramid`` と同じ**で、形だけが
+        /// 違う — 数が違うと、影の指紋 (頂点の数を混ぜる) では取り違えが表に出ない。
+        private static let leaningPyramid: String = {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-leaning-pyramid.obj")
+            let text = ModelFixture.pyramidText.replacingOccurrences(
+                of: "v 0.0 1.6 0.0", with: "v 0.9 1.6 0.9")
+            try? text.write(to: url, atomically: true, encoding: .utf8)
+            return url.path
+        }()
+
+        @Test(
+            "本体で読んだモデルを先に置いても、描き場所で読んだモデルの絵は変わらない",
+            arguments: ForeignModelScene.allCases)
+        func aModelFromAnotherCanvasDoesNotStandInForOwn(_ scene: ForeignModelScene) throws {
+            let main = try makeCanvas()
+            let fromMain = try main.loadModel(ModelFixture.pyramid)
+
+            let pg = try main.createGraphics(96, 96)
+            let own = try pg.loadModel(Self.leaningPyramid)
+            #expect(own.triangleCount == fromMain.triangleCount)
+            let placed = try pictureOfOwn(scene, on: pg, own: own, after: fromMain)
+
+            // 物差し: 別の描き場所で、同じファイルを読んで初めて置いた絵
+            let fresh = try main.createGraphics(96, 96)
+            let reference = try pictureOfOwn(
+                scene, on: fresh, own: try fresh.loadModel(Self.leaningPyramid), after: nil)
+
+            // 物差しに形が写っていること。**不透明度の桁は見ない** — 背景が不透明なので常に 255
+            let drawn = stride(from: 0, to: reference.count, by: 4).filter {
+                reference[$0] > 16 || reference[$0 + 1] > 16 || reference[$0 + 2] > 16
+            }.count
+            #expect(drawn > 20, "物差しに形が写っていない — 比べる前提が崩れている (\(drawn) 画素)")
+            let differing = stride(from: 0, to: placed.count, by: 4).filter {
+                placed[$0..<($0 + 4)] != reference[$0..<($0 + 4)]
+            }.count
+            #expect(differing == 0, "描き場所のモデルが、本体のモデルの形で描かれた (\(differing) 画素)")
+        }
+
+        @Test("別々の Canvas で読んだモデルは、同じ番号を持たず等しくない")
+        func modelsReadOnDifferentCanvasesAreDistinct() throws {
+            let main = try makeCanvas()
+            let pg = try main.createGraphics(32, 32)
+            let fromMain = try main.loadModel(ModelFixture.pyramid)
+            let own = try pg.loadModel(ModelFixture.pyramid)
+            #expect(fromMain.identity != own.identity)
+            #expect(fromMain != own, "違う Canvas で読んだ別のモデルが等しいと言われた")
+            // 同じ Canvas の控えから返るものは同じ
+            #expect(try pg.loadModel(ModelFixture.pyramid) == own)
+        }
+
+        @Test("並行して番号を取っても重ならない")
+        func identitiesNeverRepeatUnderConcurrency() async {
+            let drawn = await withTaskGroup(of: [Int].self) { group in
+                for _ in 0..<8 {
+                    group.addTask { (0..<1_000).map { _ in Model.nextIdentity() } }
+                }
+                var all: [Int] = []
+                for await part in group { all += part }
+                return all
+            }
+            #expect(drawn.count == 8_000)
+            #expect(Set(drawn).count == drawn.count)
         }
 
         // MARK: - 読み直さない

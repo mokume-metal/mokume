@@ -8,7 +8,7 @@ import simd
 
 /// 面の口 ``Canvas/loadModel(_:normalize:)`` で読んだモデル ([#1385] 条件 11)。
 ///
-/// 整え方の規則は ``ModelTests`` が ``Model/make(name:parsed:fitting:identity:)`` を直に
+/// 整え方の規則は ``ModelTests`` が ``Model/make(name:parsed:fitting:)`` を直に
 /// 呼んで見ている。ただしそこでは合わせる長さを検査が渡しているので、**面が渡す長さ**
 /// (短いほうの辺の半分) は通っていない。ここは面から読んで確かめる。
 ///
