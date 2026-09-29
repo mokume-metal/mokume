@@ -268,7 +268,7 @@ struct SolidMeshTests {
         // 四角錐: 底の縁 4 + 斜めの稜 4。底の四角を割った対角線は無い
         let model = Model.make(
             name: "pyramid", parsed: try ModelFile.load(ModelFixture.pyramid),
-            fitting: nil, identity: 1)
+            fitting: nil)
         #expect(SolidEdges(model.mesh).edges.count == 8)
     }
 

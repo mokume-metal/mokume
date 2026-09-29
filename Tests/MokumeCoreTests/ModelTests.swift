@@ -157,7 +157,7 @@ struct ModelTests {
     private func normalized(fitting: Float?) throws -> Model {
         Model.make(
             name: "pyramid", parsed: try ModelFile.load(ModelFixture.pyramid),
-            fitting: fitting, identity: 1)
+            fitting: fitting)
     }
 
     @Test("整えると、中心が原点に来て面に合う大きさになる")
@@ -216,8 +216,8 @@ struct ModelTests {
         }
         for path in [ModelFixture.pyramid, ModelFixture.unwrapped] {
             let parsed = try ModelFile.load(path)
-            let raw = Model.make(name: path, parsed: parsed, fitting: nil, identity: 1)
-            let fitted = Model.make(name: path, parsed: parsed, fitting: 60, identity: 2)
+            let raw = Model.make(name: path, parsed: parsed, fitting: nil)
+            let fitted = Model.make(name: path, parsed: parsed, fitting: 60)
             let before = agreement(raw)
             #expect(!before.isEmpty)
             #expect(agreement(fitted) == before, "整えると、巻き方が向きと逆の側を指す (\(path))")
@@ -240,7 +240,7 @@ struct ModelTests {
     func writtenUnwrapBecomesTheReadingPosition() throws {
         let model = Model.make(
             name: "unwrapped", parsed: try ModelFile.load(ModelFixture.unwrapped),
-            fitting: 60, identity: 1)
+            fitting: 60)
         // **囲みの箱から作る位置とは重ならない値**を書いてあるので、倒れていれば落ちる。
         // 整えると巻き方を戻すので、1 枚目の 3 点目 (vt 3) は 2 番目に並ぶ (#1473)
         #expect(model.mesh.points[0].uv == SIMD2(0.25, Float(1) - 0.8))
@@ -267,7 +267,7 @@ struct ModelTests {
     func writtenCornersWinPerCorner() throws {
         let model = Model.make(
             name: "mixed", parsed: try ModelFile.load(ModelFixture.mixedUnwrap),
-            fitting: 60, identity: 1)
+            fitting: 60)
         // 整えると巻き方を戻すので、どちらの三角形も 2 点目と 3 点目が入れ替わって並ぶ (#1473)
         // 手前の 3 点は書かれた展開 (vt 1・3・2 の順)
         #expect(model.mesh.points[0].uv == SIMD2(0.25, Float(1) - 0.75))
@@ -290,8 +290,8 @@ struct ModelTests {
         // 同じ位置にある角と比べる
         for path in [ModelFixture.pyramid, ModelFixture.unwrapped, ModelFixture.mixedUnwrap] {
             let parsed = try ModelFile.load(path)
-            let fitted = Model.make(name: path, parsed: parsed, fitting: 60, identity: 1)
-            let raw = Model.make(name: path, parsed: parsed, fitting: nil, identity: 2)
+            let fitted = Model.make(name: path, parsed: parsed, fitting: 60)
+            let raw = Model.make(name: path, parsed: parsed, fitting: nil)
             #expect(fitted.mesh.points.count == raw.mesh.points.count)
             let scale = 60 / max(raw.size.x, max(raw.size.y, raw.size.z))
             for (index, point) in fitted.mesh.points.enumerated() {
@@ -615,7 +615,11 @@ struct ModelTests {
             let reference = try pictureOfOwn(
                 scene, on: fresh, own: try fresh.loadModel(Self.leaningPyramid), after: nil)
 
-            #expect(reference.contains { $0 > 0 && $0 < 255 } || reference.contains(255))
+            // 物差しに形が写っていること。**不透明度の桁は見ない** — 背景が不透明なので常に 255
+            let drawn = stride(from: 0, to: reference.count, by: 4).filter {
+                reference[$0] > 16 || reference[$0 + 1] > 16 || reference[$0 + 2] > 16
+            }.count
+            #expect(drawn > 20, "物差しに形が写っていない — 比べる前提が崩れている (\(drawn) 画素)")
             let differing = stride(from: 0, to: placed.count, by: 4).filter {
                 placed[$0..<($0 + 4)] != reference[$0..<($0 + 4)]
             }.count

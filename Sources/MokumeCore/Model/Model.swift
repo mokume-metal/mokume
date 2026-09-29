@@ -50,9 +50,11 @@ public struct Model: Equatable, Sendable {
     /// (同じファイルを 2 度読めば、同じ形の別のものが返る) ので、番号で見る。
     public static func == (lhs: Model, rhs: Model) -> Bool { lhs.identity == rhs.identity }
 
-    init(
+    /// **番号は受け取らない** — 作るたびに ``nextIdentity()`` から取る。外から番号を渡せると、
+    /// 「別々に読んだモデルは違う番号を持つ」を呼ぶ側が守る約束になってしまう (#1846)。
+    private init(
         name: String, mesh: SolidMesh, hasDerivedNormals: Bool, skippedLines: Int,
-        size: SIMD3<Float>, center: SIMD3<Float>, identity: Int
+        size: SIMD3<Float>, center: SIMD3<Float>
     ) {
         self.name = name
         self.mesh = mesh
@@ -60,7 +62,7 @@ public struct Model: Equatable, Sendable {
         self.skippedLines = skippedLines
         self.size = size
         self.center = center
-        self.identity = identity
+        self.identity = Self.nextIdentity()
     }
 }
 
@@ -70,7 +72,10 @@ extension Model {
     /// `loadModel` は描き場所 (`createGraphics`) にもあるので、`Canvas` ごとに数えると
     /// 本体と描き場所で読んだ別々のモデルが同じ番号になる。番号は頂点の共有・稜線の控え・
     /// 影の指紋・``==`` の鍵なので、同じ描き場所に置くと片方の形がもう片方で描かれていた。
-    /// 読み込みは `requestModel` で並行しうるので、原子的に数える。
+    ///
+    /// いまの呼び出し元 (`Canvas` の読み込み) は main actor に載っているので並行しないが、
+    /// `Model` は `Sendable` な値で、作る口がどの隔離から呼ばれても番号が重ならないよう、
+    /// 原子的に数える。
     ///
     /// [#1846]: https://github.com/mokume-metal/mokume/issues/1846
     nonisolated private static let identities = Atomic<Int>(0)
@@ -84,9 +89,7 @@ extension Model {
     ///
     /// - Parameters:
     ///   - fitting: 整えるときに、いちばん長い辺を合わせる長さ。`nil` なら整えない。
-    static func make(
-        name: String, parsed: ModelFile.Parsed, fitting: Float?, identity: Int
-    ) -> Model {
+    static func make(name: String, parsed: ModelFile.Parsed, fitting: Float?) -> Model {
         var positions = parsed.positions
         var normals = parsed.normals
         var lowest = SIMD3<Float>(repeating: .infinity)
@@ -163,6 +166,6 @@ extension Model {
         return Model(
             name: name, mesh: SolidMesh(points: points),
             hasDerivedNormals: !parsed.hasWrittenNormals, skippedLines: parsed.skippedLines,
-            size: size, center: center, identity: identity)
+            size: size, center: center)
     }
 }
