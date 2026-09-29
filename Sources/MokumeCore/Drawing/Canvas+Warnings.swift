@@ -226,5 +226,21 @@ extension Canvas {
         ///
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         case atlasFullInOneFrame
+
+        /// 形の組み立て (``createShape(_:)``) の中で塗り直した ([#1588])。塗り 1 色の背景と周囲の
+        /// 背景が鍵を共有する。種類と文面は ``InsideShape`` が持つ。
+        ///
+        /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        case backgroundInsideShape
+        /// 形の組み立ての中で画素を読み書きした ([#1588])。`get` / `set` / `pixels` /
+        /// `loadPixels()` の 4 つが鍵を共有する (``vertexOutsideShape`` の前例)。
+        ///
+        /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        case pixelsInsideShape
+        /// 形の組み立ての途中で溜め場が描き切られ、記録したものを失って空の形を返した ([#1588])。
+        /// 置いた描き場所の描き換えと、揺らぎの設定の書き換えがここへ来る。
+        ///
+        /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        case shapeDrawnOutWhileBuilding
     }
 }

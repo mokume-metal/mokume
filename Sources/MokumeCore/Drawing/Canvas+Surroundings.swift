@@ -20,6 +20,8 @@ extension Canvas {
         // 中も区間に数えない (`writesToSurface`・塗り 1 色の背景の説明)。値の検めより先に断る —
         // どのフレームにも属さない背景の値を言っても、直す先を指さない
         guard writesToSurface else { return warnOutsideFrame(.placing) }
+        // 形の組み立ての中も、塗り 1 色の背景と同じ鍵で断る (#1588)
+        guard !recordingShape else { return warnInsideShape(.background) }
         guard surroundings.isUsable else { return warnBadSurroundings() }
         // 塗り 1 色の背景と同じく、溜めていたものを捨ててから置き直す
         discardPending()
