@@ -1773,6 +1773,14 @@ public final class Canvas {
         // [#1671]: https://github.com/mokume-metal/mokume/issues/1671
         outlinesAssembledThisFrame = 0
         pointScansThisFrame = 0
+        // **書いた画素もフレームを越えない** ([#1678])。書いた画素は置いた図形と同じく次の描き切りで
+        // 面に載るので、同じ規則に属する (ADR-0021 決定 4 の追補 (2026-09-27))。写しは描く先が持つ
+        // ので、上で図形を落としても書き込み待ちは残り、描かずに捨てたフレーム (#342・#1622) で書いた
+        // 画素だけが次の描き切りで面へ戻っていた。描き切れたときは書き戻しを投入して旗が下りた後
+        // なので、ここは何もしない
+        //
+        // [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+        target.discardPixelWrites()
         // **読む面も焼き場へ戻す。** 面は持ち主と組で持つので、最後に置いた絵を次に面を
         // 替えるまで生かしてしまう。溜めたものは上で落ちているので、列を閉じずに替えてよい
         currentTexture = atlas.held
@@ -1846,9 +1854,9 @@ public final class Canvas {
     ///
     /// **``endDraw()`` を呼ばずに次のフレームが始まったら (`beginDraw()` か ``draw(_:)``)、
     /// 閉じていないフレームは描かずに捨て、注意してから描き始め直す** ([ADR-0021] 決定 4 の
-    /// 追補 (2026-09-27)・[#1622])。捨てたフレームで書いた変換・溜めた図形・開いた形は、
-    /// 次のフレームへ持ち込まない (積んだ力 (``force(_:_:)``) も落とす)。ただし、次の 2 つは
-    /// 取り消せない:
+    /// 追補 (2026-09-27)・[#1622])。捨てたフレームで書いた変換・溜めた図形・開いた形・書いた画素
+    /// (``set(_:_:_:)``・``pixels``) は、次のフレームへ持ち込まない (積んだ力 (``force(_:_:)``) も
+    /// 落とす・[#1678])。ただし、次の 2 つは取り消せない:
     ///
     /// - 捨てたフレームの途中で既に描き切った絵 (``loadPixels()`` など)。面に載っている
     /// - 捨てたフレームで出した粒 (`emit`)。粒の状態の並びへ直に積まれている
@@ -1862,6 +1870,7 @@ public final class Canvas {
     /// [#1592]: https://github.com/mokume-metal/mokume/issues/1592
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
     public func beginDraw() {
         // 閉じ忘れたまま境目を越えたフレームだけを捨てる。越えていない重ね呼びで捨てると、
         // 本体の面の `draw()` で `canvas.beginDraw()` を呼んだだけで、あるいは補助の関数が
@@ -1895,9 +1904,11 @@ public final class Canvas {
     /// 描き場所へ描き切る。**投げない。**
     ///
     /// 毎フレーム呼ばれるので、1 段の失敗でフレームごと落とさない ([ADR-0020]
-    /// 決定 5)。描き切れなかったときは前の絵がそのまま残り、理由が知らされる。
+    /// 決定 5)。描き切れなかったときは前の絵がそのまま残り、理由が知らされる。そのフレームは
+    /// 描かずに捨てるので、置いた図形も書いた画素も次のフレームへ持ち込まない ([#1678])。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
     public func endDraw() {
         guard isDrawing else { return warnNotDrawing() }
         // `draw { }` が開いたフレームは、閉包を抜けるときに `draw` が閉じる。ここで閉じると
@@ -2053,7 +2064,8 @@ public final class Canvas {
             abandonFrame()
             // **溜めたものもフレームを越えない。** 描き切りは 6 箇所から投げるので、
             // 片付けを成功経路の末尾だけに置くと、描けなかったフレームの図形が次の
-            // フレームでもう一度描かれる (#342)。`defer` は投げても走るので、どの
+            // フレームでもう一度描かれる (#342)。書いた画素も同じで、写しの書き込み待ちを
+            // 残すと次の描き切りが面へ戻す (#1678)。`defer` は投げても走るので、どの
             // 経路を通ってもここでフレームの境目に落ちる
             discardFrame()
         }

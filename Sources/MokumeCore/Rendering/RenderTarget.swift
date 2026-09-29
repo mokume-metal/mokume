@@ -282,6 +282,26 @@ import MokumeDiagnostics
         pixelMirror?.hasPendingWrites = false
     }
 
+    /// CPU が写しへ書いたまま戻していないものを、**戻さずに捨てる** ([#1678])。書いていなければ
+    /// 何もしない。
+    ///
+    /// 呼ぶのは描かずに捨てたフレームの片付け (``Canvas`` の `discardFrame()`) である。書いた画素は
+    /// 置いた図形と同じくそのフレームに属し ([ADR-0021] 決定 4 の追補 (2026-09-27))、捨てたフレームの
+    /// 図形が次のフレームで描かれないのと同じく、書いた画素も次の描き切りで面へ戻さない。
+    ///
+    /// **写しは捨てた値を載せたままなので、「まだ映していない」へ戻す** (``PixelMirror/syncedThrough``
+    /// を 0 に)。旗を下ろすだけだと、投入が進んでいなければ次の読み出しが写しをそのまま返し、捨てた
+    /// 画素が見える。描く先は作るときに 1 本投入している (塗って始める) ので、0 は投入の番号と
+    /// 一致せず、次に読むときに面から映し直す。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    func discardPixelWrites() {
+        guard let mirror = pixelMirror, mirror.hasPendingWrites else { return }
+        mirror.hasPendingWrites = false
+        mirror.syncedThrough = 0
+    }
+
     // MARK: - 描く
 
     /// この描画先へ描くパスの記述を作る。
@@ -392,7 +412,8 @@ import MokumeDiagnostics
     let bytesPerRow: Int
     /// CPU が書いたまま、まだテクスチャへ戻していないか。
     var hasPendingWrites = false
-    /// この番号までの投入の結果を映している。0 はまだ 1 度も映していない。
+    /// この番号までの投入の結果を映している。0 は面を映していない — まだ 1 度も映していないか、
+    /// 捨てた書き込みを載せている (``RenderTarget/discardPixelWrites()``)。
     var syncedThrough: UInt64 = 0
 
     init(gpu: RenderDevice, width: Int, height: Int) throws(RenderFailure) {
