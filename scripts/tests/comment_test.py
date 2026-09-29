@@ -253,31 +253,33 @@ def clean_env(path_prefix=None, **overrides):
 class GuardTest(unittest.TestCase):
     """PreToolUse フック: どのコマンドを差し戻し、どれを素通しするか。"""
 
-    def run_guard(self, command, cwd=None):
+    def run_guard(self, command, cwd=None, **env):
         payload = json.dumps(
             {"tool_input": {"command": command}, **({"cwd": cwd} if cwd else {})}
         )
+        # 打つシェルから継ぐ GH_REPO は宛先に効く (#1729)。呼び出し元の値を漏らさない
+        environment = {k: v for k, v in clean_env(**env).items() if k != "GH_REPO" or "GH_REPO" in env}
         proc = subprocess.run(
             ["/bin/bash", str(GUARD)],
             input=payload,
             capture_output=True,
             text=True,
-            env=clean_env(),
+            env=environment,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout.strip()
 
-    def assert_denied(self, command, cwd=None):
-        out = self.run_guard(command, cwd=cwd)
+    def assert_denied(self, command, cwd=None, **env):
+        out = self.run_guard(command, cwd=cwd, **env)
         self.assertTrue(out, f"差し戻されるはずが素通しした: {command}")
         decision = json.loads(out)["hookSpecificOutput"]
         self.assertEqual(decision["permissionDecision"], "deny")
         self.assertIn("scripts/comment.sh", decision["permissionDecisionReason"])
         return decision["permissionDecisionReason"]
 
-    def assert_passed(self, command, cwd=None):
+    def assert_passed(self, command, cwd=None, **env):
         self.assertEqual(
-            self.run_guard(command, cwd=cwd), "", f"素通しのはずが差し戻された: {command}"
+            self.run_guard(command, cwd=cwd, **env), "", f"素通しのはずが差し戻された: {command}"
         )
 
     def other_repo_dir(self):
@@ -410,6 +412,110 @@ class GuardTest(unittest.TestCase):
 
     def test_backticks_denied(self):
         self.assert_denied("url=`gh pr comment 7 --body x`")
+
+    # --- 前置した gh (#1729) ---------------------------------------------
+    #
+    # #1727 の接続検証で、通常の形は差し戻すのに、環境変数やパスを前置した形を
+    # 無出力で通していた。発言の 3 つの口すべてで見る
+
+    PREFIXES = ("PATH=/tmp/bin:$PATH gh", "/tmp/bin/gh", "env GH_DEBUG=1 gh")
+
+    def test_prefixed_gh_is_denied_on_every_surface(self):
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_denied(f'{gh} issue comment 1 --body "x"')
+                self.assert_denied(f"{gh} pr comment 7 -F /tmp/body.md")
+                self.assert_denied(f'{gh} pr review 3 --approve --body "見ました"')
+                self.assert_denied(f'{gh} pr close 120 -c "閉じる"')
+                self.assert_denied(f'{gh} issue reopen 42 --comment "やり直す"')
+
+    def test_prefixed_gh_keeps_the_exceptions(self):
+        """前置があっても、読み取り・本文なし・他 repo・--help は素通しのまま。"""
+        for gh in self.PREFIXES:
+            with self.subTest(gh=gh):
+                self.assert_passed(f"{gh} issue view 42 -c")
+                self.assert_passed(f"{gh} pr review 3 --approve")
+                self.assert_passed(f"{gh} pr close 120")
+                self.assert_passed(f'{gh} issue comment 5 -R other/repo --body "x"')
+                self.assert_passed(f"{gh} issue comment --help")
+
+    def test_gh_inside_loops_and_conditions_denied(self):
+        """割った後の先頭が予約語になる形 (#1729 の反証)。"""
+        self.assert_denied("for i in 1 2; do gh issue comment $i --body x; done")
+        self.assert_denied("if true; then gh pr close 3 -c x; fi")
+        self.assert_denied("{ gh pr comment 7 --body x; }")
+        self.assert_denied("gh \\\n  issue comment 1 --body x")
+
+    # --- 旗と例外は、その gh の呼び出しの中からだけ読む (#1729 の反証) ----
+    #
+    # 以前はコマンド全体への部分一致で、同じ行の別のコマンドの語に引きずられた
+
+    def test_words_of_another_command_do_not_excuse_a_comment(self):
+        self.assert_denied("cat scripts/comment.sh && gh issue comment 1 --body y")
+        self.assert_denied(
+            "bash scripts/comment.sh issue 1 --body x && PATH=/tmp/bin:$PATH gh issue comment 1 --body y"
+        )
+        self.assert_denied("ls --help && gh issue comment 1 --body x")
+        self.assert_denied("git diff -R foo/bar; gh issue comment 1 --body x")
+
+    def test_flags_of_another_command_do_not_make_a_comment(self):
+        self.assert_passed("gh pr view 3 --comments; /tmp/bin/gh pr close 3 && echo -c x")
+        self.assert_passed("PATH=/tmp/bin:$PATH gh pr review 3 --approve && echo --body")
+
+    def test_mention_inside_a_quoted_message_passes(self):
+        """引用の中の ; はコマンドの区切りではない。main から誤検知していた素の形も。"""
+        self.assert_passed('git commit -m "note; gh issue comment 1"')
+        self.assert_passed('git commit -m "note; X=1 gh issue comment 1"')
+        self.assert_passed('git commit -m "note; /opt/homebrew/bin/gh issue comment 1"')
+
+    def test_gh_repo_prefix_names_the_destination(self):
+        """前置の GH_REPO= はその gh の宛先。両方向に読む (#1729 の反証)。"""
+        self.assert_passed("GH_REPO=other/repo gh issue comment 1 --body x")
+        self.assert_denied(
+            "GH_REPO=mokume-metal/mokume gh issue comment 1 --body x", cwd=self.other_repo_dir()
+        )
+
+    # --- 2 回目の反証 (73d235f に対して) ---------------------------------
+
+    def test_quoted_or_commented_heredoc_opener_does_not_hide_the_next_line(self):
+        """引用や注釈の中の <<EOF を開きと読むと、後ろの行が判定から消えた (main から)。"""
+        self.assert_denied('git commit -m "fix <<EOF parse"\ngh issue comment 1 -b x')
+        self.assert_denied("echo '<<EOF'\ngh issue comment 1 -b x")
+        self.assert_denied("# note <<EOF\ngh issue comment 1 -b x")
+
+    def test_inherited_gh_repo_names_the_destination(self):
+        self.assert_denied(
+            "gh issue comment 1 -b x", cwd=self.other_repo_dir(), GH_REPO="mokume-metal/mokume"
+        )
+        self.assert_passed("gh issue comment 1 -b x", GH_REPO="other/repo")
+
+    def test_coproc_and_function_bodies_denied(self):
+        self.assert_denied("coproc gh issue comment 1 -b x")
+        self.assert_denied("function f { gh issue comment 1 -b x; }")
+        self.assert_denied("f() { gh issue comment 1 -b x; }")
+
+    def test_substitution_inside_an_argument_says_so(self):
+        """二重引用の中のバッククォートは実行されるので止めるが、文面はその直し方を示す。"""
+        reason = self.assert_denied(
+            'bash scripts/comment.sh issue 1 --body "see `gh issue comment` docs"'
+        )
+        self.assertIn("実行される", reason)
+        self.assertIn("単一引用", reason)
+        # 地の文の呼び出しには添えない
+        self.assertNotIn("単一引用", self.assert_denied("gh issue comment 1 -b x"))
+        # 単一引用なら実行されないので止めない
+        self.assert_passed("bash scripts/comment.sh issue 1 --body 'see `gh issue comment` docs'")
+
+    def test_prefixed_wrapper_passes(self):
+        self.assert_passed("PATH=/tmp/bin:$PATH bash scripts/comment.sh issue 1 --body x")
+
+    def test_prefixed_mention_in_heredoc_passes(self):
+        self.assert_passed(
+            "cat > body.md <<'EOF'\n"
+            "PATH=/tmp/bin:$PATH gh issue comment 1 --body x\n"
+            "/tmp/bin/gh issue comment 1 --body x\n"
+            "EOF"
+        )
 
     # --- 地の文で言及しただけなら止めない (#128) ------------------------
 
