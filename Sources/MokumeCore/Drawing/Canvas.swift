@@ -539,8 +539,77 @@ public final class Canvas {
     /// **描画の状態として持つ。** 断片からも同じ値が引けるよう uniforms を通って
     /// 送られるためで、置き場が 2 つに割れると CPU と断片で別の模様が出る ([#366])。
     ///
+    /// **描き場所は作った面と同じ値を読み書きする** (``noiseStore``・[#1503])。`Canvas` に
+    /// 置いたのは断片へ届けるためで、面ごとに分けるためではない — 種と細かさはスケッチに 1 つ。
+    ///
     /// [#366]: https://github.com/mokume-metal/mokume/issues/366
-    var noiseSettings = ValueNoise()
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    var noiseSettings: ValueNoise {
+        get { noiseStore.settings }
+        set { noiseStore.settings = newValue }
+    }
+    /// 揺らぎの種と細かさの置き場。**描き場所は、作った面と同じ 1 つを指す**
+    /// (``createGraphics(_:_:)``・[#1503])。
+    ///
+    /// 参照を共有するのは時刻の置き場 (``timebase``) と同じ理由である。作ったときに写すと
+    /// 描き場所を作った後に決めた種が届かず、描き始めに写すと描き場所から作った描き場所が、
+    /// 間の描き場所を描かなかったフレームで古い値を読む。共有すれば、本体で決めても
+    /// 描き場所で決めても同じ 1 つを書き換え、後に書いたものが効く。
+    ///
+    /// 直に作った面 (``init(target:gpu:)``) は自分の置き場を持つ。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    var noiseStore = NoiseStore()
+
+    /// 揺らぎの種と細かさ。**面どうしで共有するための参照型**で、値の意味は
+    /// ``noiseSettings`` の説明が持つ。
+    final class NoiseStore {
+        var settings = ValueNoise()
+        /// この置き場を読む面 (弱く持つ)。書き換える前に描き切らせる相手で、作った面と
+        /// 描き場所が載る (``createGraphics(_:_:)``)。直に作った面だけなら空のまま
+        private(set) var readers: [WeakCanvas] = []
+
+        func add(reader canvas: Canvas) {
+            readers.removeAll { $0.canvas == nil }
+            guard !readers.contains(where: { $0.canvas === canvas }) else { return }
+            readers.append(WeakCanvas(canvas: canvas))
+        }
+    }
+
+    /// 揺らぎの種と細かさを書き換える。**置いた図形は、置いた時点の種で引く** ([#1503])。
+    ///
+    /// 断片の種は描き切りの時点で uniforms へ詰まり、CPU の `noise()` は呼んだ時点の種を
+    /// 読む。置いた後に種を決め直すと、置いた図形の断片だけが後の種で引かれ、同じ時点で
+    /// 引いた CPU の値と食い違う (#366 の約束が破れる)。置き場を共有する面はどれも同じ
+    /// 種を読むので、**書き換える前に、置き場を読む面のうち図形を溜めているものを描き切らせる。**
+    /// 効果はフレームの終わりに立つ段なので、途中の描き切りでは通さない (``loadPixels()`` と同じ)。
+    ///
+    /// 同じ値の書き直しでは描き切らない (毎フレーム同じ種を決め直す書き方で、途中の描き切りを
+    /// 増やさない)。描き切るのはフレームの中の面だけで、持ち越しの区間 (`setup()` など) に
+    /// 溜めた図形は次のフレームへ持ち越すものなので触らない。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    func changeNoise(_ change: (inout ValueNoise) -> Void) {
+        var next = noiseSettings
+        change(&next)
+        guard next != noiseSettings else { return }
+        var readers = [self]
+        for entry in noiseStore.readers {
+            if let reader = entry.canvas, reader !== self { readers.append(reader) }
+        }
+        for reader in readers
+        where reader.isDrawing && !reader.isFrameLeftOpenPastTheMainFrame
+            && !reader.isFlushing && reader.hasPendingGeometry
+        {
+            do {
+                try reader.flush(applyingEffects: false)
+            } catch {
+                Diagnostics.warn(
+                    "Could not finish drawing before the noise settings changed: \(error.headline)")
+            }
+        }
+        noiseSettings = next
+    }
     /// 焼き付け先。**同じ細かさなら作り直さない** (同 決定 4)。
     ///
     /// 読めるのは検査が焼いた奥行きを直に確かめるため ([#1474] — どちらの面を焼いたかは、

@@ -11,7 +11,7 @@ extension Canvas {
 
     // 揺らぎの種。
     public func noiseSeed(_ seed: Int) {
-        noiseSettings.seed = UInt32(bitPattern: Int32(truncatingIfNeeded: seed))
+        changeNoise { $0.seed = UInt32(bitPattern: Int32(truncatingIfNeeded: seed)) }
     }
 
     // 揺らぎの細かさ (重ねる枚数と、1 枚ごとの弱まり)。
@@ -21,8 +21,10 @@ extension Canvas {
         guard falloff.isFinite, (0...1).contains(falloff) else {
             return warnBadNoise("noiseDetail")
         }
-        noiseSettings.octaves = lod
-        noiseSettings.falloff = falloff
+        changeNoise {
+            $0.octaves = lod
+            $0.falloff = falloff
+        }
     }
 
     // その座標の揺らぎ (0…1)。

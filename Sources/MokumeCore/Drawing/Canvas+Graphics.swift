@@ -26,6 +26,12 @@ extension Canvas {
         // ランタイムだけなので、繋がないと描き場所の断片・効果は時刻 0 を、粒は 1/60 秒の
         // 刻みを読み続ける。描き場所から作った描き場所も、同じ 1 つへ辿り着く
         graphics.timebase = timebase
+        // **揺らぎの種と細かさも同じ置き場を指す** (#1503)。繋がないと、本体で決めた種が
+        // 描き場所の断片に届かず、描き場所で決めた種は本体に届かない — 種はスケッチに 1 つ
+        graphics.noiseStore = noiseStore
+        // 書き換える前に描き切らせる相手として、両側を置き場に載せる (``changeNoise(_:)``)
+        noiseStore.add(reader: self)
+        noiseStore.add(reader: graphics)
         // 字形を置くかも引き継ぐ (``placesGlyphs``・#1559)。描き場所に書いた字も同じ絵に載る
         graphics.placesGlyphs = placesGlyphs
         return graphics
