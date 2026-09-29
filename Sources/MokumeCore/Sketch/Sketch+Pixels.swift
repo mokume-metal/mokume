@@ -80,7 +80,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左上に橙色の円、右下に同じ橙色で塗られた四角 -->
-    ///     ![左上に橙色の円、右下に同じ橙色で塗られた四角](https://i.gyazo.com/35bd0b0f4986455379e3e42755c8ae44.png)
+    ///     ![左上に橙色の円、右下に同じ橙色で塗られた四角](https://i.gyazo.com/9b9db97c9ea5d54f29440203cc7edfa9.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -107,7 +107,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 黄色い斜めの縞が、四角い範囲の中にだけ並んでいる -->
-    ///     ![黄色い斜めの縞が、四角い範囲の中にだけ並んでいる](https://i.gyazo.com/893d0f3dcc2226810339c4d10df573a1.png)
+    ///     ![黄色い斜めの縞が、四角い範囲の中にだけ並んでいる](https://i.gyazo.com/b3cdd5a675acfc0ea675176f3e769328.png)
     ///     <!-- /shot -->
     ///   }
     /// }

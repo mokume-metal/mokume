@@ -13,7 +13,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 面全体がくすんだ濃い青 1 色で塗られている | symmetric=xy -->
-    ///     ![面全体がくすんだ濃い青 1 色で塗られている](https://i.gyazo.com/e82fe62b30c6016d1d17788c3b022dd4.png)
+    ///     ![面全体がくすんだ濃い青 1 色で塗られている](https://i.gyazo.com/ef634168fd61fb510457ae7b6e03bb49.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -33,7 +33,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている | symmetric=xy -->
-    ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/e029756fe495d29926176cb2dce1b6e5.png)
+    ///     ![先に描いた大きな橙色の円は消え、濃い青の下地に黄色い小さな円だけが残っている](https://i.gyazo.com/30cab01270e473c802ae7fd35b300899.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -60,7 +60,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる | symmetric=y -->
-    ///     ![橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/fa67f8d215df306400d938cca49bafb4.png)
+    ///     ![橙・水色・黄の円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/d7b7902117ae8137c5c761b17ddc3b32.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -80,7 +80,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている | symmetric=y -->
-    ///     ![橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている](https://i.gyazo.com/11c4ac43fa8b7aa9f7aff5b4dc8991a8.png)
+    ///     ![橙色の円の上に半透明の水色の円が重なり、重なった部分だけ色が混ざっている](https://i.gyazo.com/c5b1ffad45cd768c804c4e38b11bd4e2.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -111,7 +111,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる | symmetric=y -->
-    ///     ![橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/d18e00bca1eb95424ab87c36a9bba024.png)
+    ///     ![橙・水色・黄の輪郭だけの円が、少しずつ重なりながら左から順に並んでいる](https://i.gyazo.com/5a11fbf1a01d6f8f8cb0bb3042325d7b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -130,7 +130,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 水色に塗られた円を、太い橙色の輪郭が囲んでいる | symmetric=xy -->
-    ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/9b76ba5c17e2ad76aa6460fb63c1576f.png)
+    ///     ![水色に塗られた円を、太い橙色の輪郭が囲んでいる](https://i.gyazo.com/7525fbdb545e5afc07a044a0689a263d.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -155,7 +155,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 上から下へ、だんだん太くなる 5 本の白い横線 | symmetric=x -->
-    ///     ![上から下へ、だんだん太くなる 5 本の白い横線](https://i.gyazo.com/890dce0704f422b7a97bba8da5a47bea.png)
+    ///     ![上から下へ、だんだん太くなる 5 本の白い横線](https://i.gyazo.com/0b4c2047d239a9c640bc20c8ec7a6406.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -179,7 +179,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている | symmetric=y -->
-    ///     ![同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている](https://i.gyazo.com/23f026f2a7694e42780dceada175d1f4.png)
+    ///     ![同じ大きさの正方形が 2 つ並び、左は細い橙色の輪郭、右は太い橙色の輪郭で描かれている](https://i.gyazo.com/a8add64cfa2eeddbb4268d2cf81a2589.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -210,7 +210,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円 | symmetric=y -->
-    ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/7c54b002459baa15f3c67537a866cfe9.png)
+    ///     ![左は中が橙色に塗られた円、右は同じ大きさで白い輪郭だけの円](https://i.gyazo.com/a2cc975f1de172ef03648d3b0b3182b3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -237,7 +237,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円 | symmetric=y -->
-    ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/d0bd6b957452c857ee0843bc2320a49c.png)
+    ///     ![左は白い輪郭のある橙色の円、右は輪郭の無い同じ橙色の円](https://i.gyazo.com/515eb90948becaf5a1f6c967ad31e22e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -270,7 +270,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している | symmetric=xy -->
-    ///     ![太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している](https://i.gyazo.com/30f60dd0e811851ab37489895bd68875.png)
+    ///     ![太い橙色の線の端が丸く、白い目印の線より外へ半円ぶんはみ出している](https://i.gyazo.com/2d48f8905febc6a6de8a4e48828f071a.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -293,7 +293,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太い橙色の線が、白い目印の線のところでまっすぐ切れている | symmetric=xy -->
-    ///     ![太い橙色の線が、白い目印の線のところでまっすぐ切れている](https://i.gyazo.com/f490ccd70812fee1a733777d8fcba71d.png)
+    ///     ![太い橙色の線が、白い目印の線のところでまっすぐ切れている](https://i.gyazo.com/4af2b4e45ba96fb2c9d24ff1537be18f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -316,7 +316,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太い橙色の線が、白い目印の線より外へ四角くはみ出している | symmetric=xy -->
-    ///     ![太い橙色の線が、白い目印の線より外へ四角くはみ出している](https://i.gyazo.com/5471180214c3bf8620991d5b1bd193f0.png)
+    ///     ![太い橙色の線が、白い目印の線より外へ四角くはみ出している](https://i.gyazo.com/69298c069054e439f115704769d5759c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -383,7 +383,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の下地に赤い円と青い円が並び、青い円が赤い円の上に重なっている -->
-    ///     ![灰色の下地に赤い円と青い円が並び、青い円が赤い円の上に重なっている](https://i.gyazo.com/fe2288a524130e51bb18ea6be92d7ec8.png)
+    ///     ![灰色の下地に赤い円と青い円が並び、青い円が赤い円の上に重なっている](https://i.gyazo.com/7cbd71d6a1889e1466a326d24c622b82.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -404,7 +404,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ 2 つの円が明るくなり、重なった部分が白に近い桃色になっている -->
-    ///     ![同じ 2 つの円が明るくなり、重なった部分が白に近い桃色になっている](https://i.gyazo.com/2cbff1c1cbfbb7e7bfc2982e9ff09194.png)
+    ///     ![同じ 2 つの円が明るくなり、重なった部分が白に近い桃色になっている](https://i.gyazo.com/f45365e5b8ae67a4b4a5e8766b382281.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -425,7 +425,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ 2 つの円が暗くなり、重なった部分がいちばん暗い -->
-    ///     ![同じ 2 つの円が暗くなり、重なった部分がいちばん暗い](https://i.gyazo.com/4a2141c572badcb62394b3d91de83221.png)
+    ///     ![同じ 2 つの円が暗くなり、重なった部分がいちばん暗い](https://i.gyazo.com/d54635fba4250b95cdd0703b17f70b24.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -446,7 +446,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 赤い円は桃色、青い円は紫へ転び、重なった部分が鮮やかな赤紫になっている -->
-    ///     ![赤い円は桃色、青い円は紫へ転び、重なった部分が鮮やかな赤紫になっている](https://i.gyazo.com/7250b40c643c6acc9a880001be774c10.png)
+    ///     ![赤い円は桃色、青い円は紫へ転び、重なった部分が鮮やかな赤紫になっている](https://i.gyazo.com/de4f70ec46001667084d96f770954a50.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -468,7 +468,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る | frames=60 symmetric=y -->
-    ///     ![赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る](https://i.gyazo.com/905bebca900be3c8189cf81c8426afc1.gif)
+    ///     ![赤い円と青い円が近づいたり離れたりし、重なった部分だけが明るい桃色に光る](https://i.gyazo.com/31800dab0433d9820b53232901f4d0f2.gif)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -531,7 +531,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太い橙色の山形の折れ線。頂点は尖らず、平らに削がれている | symmetric=x -->
-    ///     ![太い橙色の山形の折れ線。頂点は尖らず、平らに削がれている](https://i.gyazo.com/845d763011b862a08a45daf482ad4330.png)
+    ///     ![太い橙色の山形の折れ線。頂点は尖らず、平らに削がれている](https://i.gyazo.com/dd05697309f7f85a38b6d92258e7a89b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -555,7 +555,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ折れ線の頂点が、平らに削がれている | symmetric=x -->
-    ///     ![同じ折れ線の頂点が、平らに削がれている](https://i.gyazo.com/845d763011b862a08a45daf482ad4330.png)
+    ///     ![同じ折れ線の頂点が、平らに削がれている](https://i.gyazo.com/dd05697309f7f85a38b6d92258e7a89b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -579,7 +579,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ折れ線の頂点が、丸くなっている | symmetric=x -->
-    ///     ![同じ折れ線の頂点が、丸くなっている](https://i.gyazo.com/fa97542f35665344b2155270fe77ff23.png)
+    ///     ![同じ折れ線の頂点が、丸くなっている](https://i.gyazo.com/7a1ba2fc8b2489b15372f1c185975ebb.png)
     ///     <!-- /shot -->
     ///   }
     /// }

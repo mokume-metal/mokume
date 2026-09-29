@@ -47,7 +47,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の立方体が斜めから見えている。3 つの面がそれぞれ違う明るさで出ている -->
-    ///     ![橙色の立方体が斜めから見えている。3 つの面がそれぞれ違う明るさで出ている](https://i.gyazo.com/56a5f1c0d17a1ffbcb60318114ce1ebb.png)
+    ///     ![橙色の立方体が斜めから見えている。3 つの面がそれぞれ違う明るさで出ている](https://i.gyazo.com/16de32e9973ff80b5eaa17a58e44bb4e.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -74,7 +74,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 横に長く薄い橙色の板。斜めから見えていて、奥行きが薄いことが分かる -->
-    ///     ![横に長く薄い橙色の板。斜めから見えていて、奥行きが薄いことが分かる](https://i.gyazo.com/665028f152b9a87a181549c6754205ee.png)
+    ///     ![横に長く薄い橙色の板。斜めから見えていて、奥行きが薄いことが分かる](https://i.gyazo.com/0588a94a6d38f7ce4172ec5d1b4fd8da.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -104,7 +104,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の球。左上から光が当たり、右下へ向かって暗くなっている -->
-    ///     ![橙色の球。左上から光が当たり、右下へ向かって暗くなっている](https://i.gyazo.com/a41688b790f72b5f015bbd73914b8938.png)
+    ///     ![橙色の球。左上から光が当たり、右下へ向かって暗くなっている](https://i.gyazo.com/69de88632281c662fdafba189ca0a4be.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -124,7 +124,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ大きさの立体だが、面が数えられるほど粗く、丸みが多角形になっている -->
-    ///     ![同じ大きさの立体だが、面が数えられるほど粗く、丸みが多角形になっている](https://i.gyazo.com/51cad4630b3a8e0811a5fa040d7da37e.png)
+    ///     ![同じ大きさの立体だが、面が数えられるほど粗く、丸みが多角形になっている](https://i.gyazo.com/b262b226c71daafca7700f9e74e98cc1.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -160,6 +160,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 縦に長い橙色の卵形。左上から光が当たり、右下へ向かって暗くなっている -->
+    ///     ![縦に長い橙色の卵形。左上から光が当たり、右下へ向かって暗くなっている](https://i.gyazo.com/ed09230aa66b5a13708c36fe4509184a.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -179,6 +180,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 横に広がって上下に潰れた橙色の円盤状の立体。傾いているので上面が見えている -->
+    ///     ![横に広がって上下に潰れた橙色の円盤状の立体。傾いているので上面が見えている](https://i.gyazo.com/8fffaadea937a0f24e543162fdebded7.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -192,6 +194,8 @@ extension Sketch {
     ///   - y: 縦の半径 (画素)。
     ///   - z: 奥行きの半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 球と同じく、上下は半周なのでその半分で割る。
+    // shot: 1 snippet=b469d265
+    // shot: 2 snippet=44cb3b83
     public func ellipsoid(
         _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
         detail: Int = Canvas.defaultSolidDetail
@@ -221,7 +225,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の 1 枚の面。面が 1 つしか無いので明るさは一様で、傾きは輪郭が長方形でないことにだけ出ている -->
-    ///     ![橙色の 1 枚の面。面が 1 つしか無いので明るさは一様で、傾きは輪郭が長方形でないことにだけ出ている](https://i.gyazo.com/644b718dbb347e8337bb843acc8a84a6.png)
+    ///     ![橙色の 1 枚の面。面が 1 つしか無いので明るさは一様で、傾きは輪郭が長方形でないことにだけ出ている](https://i.gyazo.com/f3565074d9cc413db891e1463ad9f0c0.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -251,7 +255,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の円柱が斜めに立っていて、上の蓋が楕円に見えている -->
-    ///     ![橙色の円柱が斜めに立っていて、上の蓋が楕円に見えている](https://i.gyazo.com/b54fc2f6740904ad8d6801766334053b.png)
+    ///     ![橙色の円柱が斜めに立っていて、上の蓋が楕円に見えている](https://i.gyazo.com/00aa98c83e26888558a5a9f262ad22ed.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -271,7 +275,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ寸法だが一周が 6 つに割られ、六角柱になっている -->
-    ///     ![同じ寸法だが一周が 6 つに割られ、六角柱になっている](https://i.gyazo.com/faa3bb488c01c389af0fc11cbfaf8f4d.png)
+    ///     ![同じ寸法だが一周が 6 つに割られ、六角柱になっている](https://i.gyazo.com/d65e2c43a97449f6f03acb06e30d7725.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -306,7 +310,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の円錐が斜めに立っていて、先が上を向き、底の円が楕円に見えている -->
-    ///     ![橙色の円錐が斜めに立っていて、先が上を向き、底の円が楕円に見えている](https://i.gyazo.com/a4a2bab72baba4966ef53867169c51a4.png)
+    ///     ![橙色の円錐が斜めに立っていて、先が上を向き、底の円が楕円に見えている](https://i.gyazo.com/86b7a741b4f3e995d32c0444607576a3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -344,7 +348,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の細い輪が斜めに傾いていて、中央に大きな穴が空いている -->
-    ///     ![橙色の細い輪が斜めに傾いていて、中央に大きな穴が空いている](https://i.gyazo.com/dcced26e4c6232faa9f9c2acdd4637eb.png)
+    ///     ![橙色の細い輪が斜めに傾いていて、中央に大きな穴が空いている](https://i.gyazo.com/b8ac374badeafb204e71b60c3c65e05f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -364,7 +368,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ大きさの輪だが管が太く、中央の穴が小さくなっている -->
-    ///     ![同じ大きさの輪だが管が太く、中央の穴が小さくなっている](https://i.gyazo.com/130e20336fa72465415c533485985343.png)
+    ///     ![同じ大きさの輪だが管が太く、中央の穴が小さくなっている](https://i.gyazo.com/4b550f0b7e39a7d2023f4c3cc7f3ede5.png)
     ///     <!-- /shot -->
     ///   }
     /// }
