@@ -167,6 +167,49 @@ struct TriangulationTests {
         #expect(abs(area(of: triangles, points: merged) - expected) <= expected * 0.005)
     }
 
+    // MARK: - 費用
+
+    /// 耳の判定で点を三角形と比べる回数。**時間ではなく数で見る** ([#915] に倣う) —
+    /// 時間は release でしか測れず、機械の都合で揺れる。
+    ///
+    /// 頭から探し直して全点と比べていた頃は、円 4000 点で約 800 万回だった ([#1595])。
+    ///
+    /// [#915]: https://github.com/mokume-metal/mokume/issues/915
+    /// [#1595]: https://github.com/mokume-metal/mokume/issues/1595
+    @Test("凸な形では、耳の判定で点を 1 つも比べない")
+    func convexShapesCompareNoPoints() {
+        let count = 4000
+        let circle = (0..<count).map { step -> SIMD2<Float> in
+            let angle = Float(step) / Float(count) * 2 * .pi
+            return SIMD2(100 + 80 * cos(angle), 100 + 80 * sin(angle))
+        }
+        var comparisons = 0
+        let triangles = Triangulation.triangulate(circle, comparisons: &comparisons)
+        // 比べずに済ませたのではなく、切り終えたこと
+        #expect(triangles.count == count - 2)
+        #expect(comparisons == 0)
+    }
+
+    /// 凹みのある形では、凸でない点だけを比べる。その数が点の数に見合うこと。
+    ///
+    /// 形は起票の再現 (`r = 80 + 10 sin(7a)` を角度を等分に並べた周)。直す前は 1000 点で
+    /// 約 52 万回 (点の数の 516 倍) で、点を倍にするたびに 4 倍になっていた。直した後は
+    /// 1000〜8000 点で 2.2〜3.0 倍で、閾値の 5 倍はそこから取った ([#1595])。
+    ///
+    /// [#1595]: https://github.com/mokume-metal/mokume/issues/1595
+    @Test("凹みのある形でも、比べる回数が点の数に見合う", arguments: [1000, 2000, 4000, 8000])
+    func concaveShapesCompareInProportion(_ count: Int) {
+        let wavy = (0..<count).map { step -> SIMD2<Float> in
+            let angle = Float(step) / Float(count) * 2 * .pi
+            let radius = 80 + 10 * sin(7 * angle)
+            return SIMD2(100 + radius * cos(angle), 100 + radius * sin(angle))
+        }
+        var comparisons = 0
+        let triangles = Triangulation.triangulate(wavy, comparisons: &comparisons)
+        #expect(triangles.count == count - 2)
+        #expect(comparisons <= 5 * count, "\(count) 点で \(comparisons) 回比べた")
+    }
+
     // MARK: - 穴
 
     @Test("穴の面積は塗りから抜ける")
