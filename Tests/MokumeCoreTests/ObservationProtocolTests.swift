@@ -162,6 +162,62 @@ struct ObservationProtocolTests {
         // 弾くが、実装は書き手がスキーマを守ったことを当てにしない)
         let absurd = ObservationRequest(id: "a3", count: 0, every: -4).clamped()
         #expect((absurd.count, absurd.every) == (1, 1))
+        // 切った理由は下限で、上限ではない (#1699)
+        #expect(
+            absurd.warnings == [
+                "The number of shots went from 0 to 1 (the floor is 1)",
+                "The interval went from -4 to 1 frames (the floor is 1)",
+            ])
+    }
+
+    /// 枚数と間隔を丸めたときの、値とことわりの原文 ([#1699])。
+    ///
+    /// 直す前は、下の端 (0・負 → 1) で丸めたときも上限を名乗っていた。読み手 (観測の応答を
+    /// 読む機械・人) は、切られた理由を取り違える。
+    ///
+    /// [#1699]: https://github.com/mokume-metal/mokume/issues/1699
+    nonisolated struct ClampCase: CustomTestStringConvertible, Sendable {
+        let count: Int
+        let every: Int
+        let expected: (count: Int, every: Int)
+        let warnings: [String]
+
+        var testDescription: String { "count \(count)・every \(every)" }
+
+        static let all: [ClampCase] = [
+            // 枚数: 上の端・下の端・範囲の中 (両端を含む)
+            ClampCase(
+                count: 5_000, every: 1, expected: (120, 1),
+                warnings: ["The number of shots went from 5000 to 120 (the ceiling is 120)"]),
+            ClampCase(
+                count: 0, every: 1, expected: (1, 1),
+                warnings: ["The number of shots went from 0 to 1 (the floor is 1)"]),
+            ClampCase(
+                count: -3, every: 1, expected: (1, 1),
+                warnings: ["The number of shots went from -3 to 1 (the floor is 1)"]),
+            ClampCase(count: 120, every: 1, expected: (120, 1), warnings: []),
+            ClampCase(count: 1, every: 1, expected: (1, 1), warnings: []),
+            // 間隔: 上の端・下の端・範囲の中 (両端を含む)
+            ClampCase(
+                count: 1, every: 600, expected: (1, 60),
+                warnings: ["The interval went from 600 to 60 frames (the ceiling is 60)"]),
+            ClampCase(
+                count: 1, every: -4, expected: (1, 1),
+                warnings: ["The interval went from -4 to 1 frames (the floor is 1)"]),
+            ClampCase(
+                count: 1, every: 0, expected: (1, 1),
+                warnings: ["The interval went from 0 to 1 frames (the floor is 1)"]),
+            ClampCase(count: 1, every: 60, expected: (1, 60), warnings: []),
+            ClampCase(count: 8, every: 3, expected: (8, 3), warnings: []),
+        ]
+    }
+
+    @Test("丸めたことわりは、上の端なら上限を、下の端なら下限を名乗る (#1699)", arguments: ClampCase.all)
+    func namesTheBoundItClampedTo(_ clampCase: ClampCase) {
+        let limits = ObservationRequest(id: "a1", count: clampCase.count, every: clampCase.every)
+            .clamped()
+        #expect((limits.count, limits.every) == clampCase.expected)
+        #expect(limits.warnings == clampCase.warnings)
     }
 
     @Test("撮った絵の名前は、名前順が撮った順になる")

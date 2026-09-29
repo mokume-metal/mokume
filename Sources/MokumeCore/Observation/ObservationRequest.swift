@@ -45,6 +45,10 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 間隔が長いほど列が返るまでの待ちが伸びる。読み手の待ちが尽きると、応答は
     /// 後から書かれるのに読み手だけが諦めた状態になる。
     public static let maximumEvery = 60
+    /// 撮れる枚数の下限。0 枚の列は撮り終わりが来ない。
+    static let minimumCount = 1
+    /// 間隔の下限 (フレーム)。毎フレーム撮るより詰めることはできない。
+    static let minimumEvery = 1
 
     /// この要求の識別子。応答はこれを echo する。
     public let id: String
@@ -78,28 +82,39 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         self.time = time
     }
 
-    /// 上限で切った枚数と間隔、そして切ったことを伝えることわり。
+    /// 範囲の端で丸めた枚数と間隔、そして丸めたことを伝えることわり。
     ///
     /// **黙って切り詰めない。** 頼んだ枚数と返った枚数が違うことに応答から気付けないと、
-    /// 読み手は「動きが途中で止まった」と「上限で切られた」を区別できない。
+    /// 読み手は「動きが途中で止まった」と「上限で切られた」を区別できない。ことわりは
+    /// **切った端を名乗る** — 上で切れば上限を、下 (0・負) で切れば下限を言う。どちらの
+    /// 端でも上限を名乗っていたので、読み手は切られた理由を取り違えた ([#1699])。
     ///
     /// 切るのは要求を解いた後の別の段にしてある — 要求そのものは書き手が置いたままの
     /// 値を保ち、応答の `id` と並べて「何を頼み、何が返ったか」を突き合わせられる。
+    ///
+    /// [#1699]: https://github.com/mokume-metal/mokume/issues/1699
     func clamped() -> (count: Int, every: Int, warnings: [String]) {
         var warnings: [String] = []
-        let count = max(1, min(count, Self.maximumCount))
-        if count != self.count {
+        let count = Self.clamp(self.count, into: Self.minimumCount...Self.maximumCount)
+        if let bound = count.bound {
             warnings.append(
-                "The number of shots went from \(self.count) to \(count) "
-                    + "(the ceiling is \(Self.maximumCount))")
+                "The number of shots went from \(self.count) to \(count.value) (\(bound))")
         }
-        let every = max(1, min(every, Self.maximumEvery))
-        if every != self.every {
+        let every = Self.clamp(self.every, into: Self.minimumEvery...Self.maximumEvery)
+        if let bound = every.bound {
             warnings.append(
-                "The interval went from \(self.every) to \(every) frames "
-                    + "(the ceiling is \(Self.maximumEvery))")
+                "The interval went from \(self.every) to \(every.value) frames (\(bound))")
         }
-        return (count, every, warnings)
+        return (count.value, every.value, warnings)
+    }
+
+    /// 範囲へ丸めた値と、丸めたなら切った端を名乗る括弧の中身。範囲の中なら `nil`。
+    private static func clamp(_ value: Int, into range: ClosedRange<Int>)
+        -> (value: Int, bound: String?)
+    {
+        if value > range.upperBound { return (range.upperBound, "the ceiling is \(range.upperBound)") }
+        if value < range.lowerBound { return (range.lowerBound, "the floor is \(range.lowerBound)") }
+        return (value, nil)
     }
 
     private enum CodingKeys: String, CodingKey {
