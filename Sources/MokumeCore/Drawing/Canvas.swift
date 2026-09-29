@@ -539,8 +539,33 @@ public final class Canvas {
     /// **描画の状態として持つ。** 断片からも同じ値が引けるよう uniforms を通って
     /// 送られるためで、置き場が 2 つに割れると CPU と断片で別の模様が出る ([#366])。
     ///
+    /// **描き場所は作った面と同じ値を読み書きする** (``noiseStore``・[#1503])。`Canvas` に
+    /// 置いたのは断片へ届けるためで、面ごとに分けるためではない — 種と細かさはスケッチに 1 つ。
+    ///
     /// [#366]: https://github.com/mokume-metal/mokume/issues/366
-    var noiseSettings = ValueNoise()
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    var noiseSettings: ValueNoise {
+        get { noiseStore.settings }
+        set { noiseStore.settings = newValue }
+    }
+    /// 揺らぎの種と細かさの置き場。**描き場所は、作った面と同じ 1 つを指す**
+    /// (``createGraphics(_:_:)``・[#1503])。
+    ///
+    /// 参照を共有するのは時刻の置き場 (``timebase``) と同じ理由である。作ったときに写すと
+    /// 描き場所を作った後に決めた種が届かず、描き始めに写すと描き場所から作った描き場所が、
+    /// 間の描き場所を描かなかったフレームで古い値を読む。共有すれば、本体で決めても
+    /// 描き場所で決めても同じ 1 つを書き換え、後に書いたものが効く。
+    ///
+    /// 直に作った面 (``init(target:gpu:)``) は自分の置き場を持つ。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    var noiseStore = NoiseStore()
+
+    /// 揺らぎの種と細かさ。**面どうしで共有するための参照型**で、値の意味は
+    /// ``noiseSettings`` の説明が持つ。
+    final class NoiseStore {
+        var settings = ValueNoise()
+    }
     /// 焼き付け先。**同じ細かさなら作り直さない** (同 決定 4)。
     ///
     /// 読めるのは検査が焼いた奥行きを直に確かめるため ([#1474] — どちらの面を焼いたかは、

@@ -733,6 +733,210 @@ struct GraphicsTests {
         }
     }
 
+    // MARK: - 揺らぎの種と細かさは作った面と同じ (#1503)
+
+    /// 本体で決める種と細かさ。**既定 (種 0・4 枚・0.5) と模様が大きく離れる**ものを選ぶ —
+    /// 離れていないと、描き場所が既定の設定を読む作りでも差の検査が通ってしまう
+    /// (``noisePlaces`` の前提として `#require` する)。
+    private static let noiseSeed = 20_260_929
+    private static let noiseDetail = (octaves: 6, falloff: Float(0.8))
+
+    /// 突き合わせる座標。格子の間・負の側・遠くを並べる。どれも ``noiseSeed`` と ``noiseDetail``
+    /// の下で、既定の設定での値と 0.1 ほど離れる (`requireNoiseFarFromTheDefault()`)。
+    private static let noisePlaces: [SIMD3<Float>] = [
+        SIMD3(0.5, 0.5, 0.5),
+        SIMD3(1234.5, -6789.25, 42.0625),
+        SIMD3(-0.5, -0.25, -0.125),
+        SIMD3(-12.58, 45.33, -78.42),
+    ]
+
+    /// 断片が返すのは、CPU で引いた値との**差そのもの** (``NoiseParityTests`` と同じ形)。
+    private static let noiseComparison = """
+        float4 paint(Fragment in, Values values) {
+            float mine = mokume_noise(in, float3(values.place, values.depth));
+            return float4(abs(mine - values.expected), 0.0, 0.0, 1.0);
+        }
+        """
+
+    /// 断片が返す揺らぎの傾きの大きさ (符号は落とす)。
+    private static let noiseSlope = """
+        float4 paint(Fragment in, Values values) {
+            return float4(abs(mokume_noiseGradient(in, float3(values.place, values.depth))), 1.0);
+        }
+        """
+
+    /// 本体の面に種と細かさを決める。
+    private func decideNoise(on canvas: Canvas) {
+        canvas.noiseSeed(Self.noiseSeed)
+        canvas.noiseDetail(Self.noiseDetail.octaves, Self.noiseDetail.falloff)
+    }
+
+    /// 選んだ種と細かさが、どの座標でも既定の設定と十分に離れていることを確かめる。
+    private func requireNoiseFarFromTheDefault() throws {
+        let decided = ValueNoise(
+            seed: UInt32(Self.noiseSeed), octaves: Self.noiseDetail.octaves,
+            falloff: Self.noiseDetail.falloff)
+        for place in Self.noisePlaces {
+            let apart = abs(
+                decided.value(place.x, place.y, place.z)
+                    - ValueNoise().value(place.x, place.y, place.z))
+            try #require(apart > 0.05, "\(place) では既定の設定と \(apart) しか離れていない")
+        }
+    }
+
+    /// 面に同じ断片で 8×8 を塗り、真ん中の画素を読む。描き場所は `beginDraw()` / `endDraw()`
+    /// で、直に作った面は ``Canvas/draw(_:)`` で描く。
+    private func paintAndRead(_ surface: Canvas, with shader: Shader, graphics: Bool) throws -> LinearRGBA {
+        func paint() {
+            surface.background(.linear(red: 0, green: 0, blue: 0))
+            surface.blendMode(.replace)
+            surface.noStroke()
+            surface.shader(shader)
+            surface.rect(0, 0, 8, 8)
+            surface.resetShader()
+        }
+        if graphics {
+            surface.beginDraw()
+            paint()
+            surface.endDraw()
+        } else {
+            try surface.draw { paint() }
+        }
+        return surface.get(4, 4)
+    }
+
+    /// その面の断片で引いた揺らぎと、`expected` (CPU で引いた値) との差を座標ごとに返す。
+    private func noiseGaps(
+        on surface: Canvas, graphics: Bool, expected: (SIMD3<Float>) -> Float
+    ) throws -> [Float] {
+        let shader = try surface.makeShader(
+            Self.noiseComparison,
+            values: ["place": .pair(0, 0), "depth": .number(0), "expected": .number(0)])
+        return try Self.noisePlaces.map { place in
+            shader.set("place", .pair(place.x, place.y))
+            shader.set("depth", .number(place.z))
+            shader.set("expected", .number(expected(place)))
+            return try paintAndRead(surface, with: shader, graphics: graphics).red
+        }
+    }
+
+    /// 完了条件 1 ([#1503])。本体で種と細かさを決める**前**に作った描き場所と**後**に作った
+    /// 描き場所の断片が、本体の `noise()` と同じ値を返す。直す前はどちらも既定の設定を読む。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    @Test("本体で決めた種と細かさが、決める前後に作った描き場所の断片にも届く")
+    func graphicsFragmentsReadTheSketchNoise() throws {
+        try requireNoiseFarFromTheDefault()
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let before = try canvas.createGraphics(8, 8)
+        decideNoise(on: canvas)
+        let after = try canvas.createGraphics(8, 8)
+
+        for (name, graphics) in [("決める前", before), ("決めた後", after)] {
+            let gaps = try noiseGaps(on: graphics, graphics: true) { canvas.noise($0.x, $0.y, $0.z) }
+            for (place, gap) in zip(Self.noisePlaces, gaps) {
+                #expect(
+                    gap < NoiseParityTests.tolerance,
+                    "\(name)に作った描き場所の \(place) で \(gap) ずれている")
+            }
+        }
+    }
+
+    /// 完了条件 2 ([#1503])。描き場所から作った描き場所も、本体で決めた種と細かさを読む。
+    /// **間の描き場所は 1 度も描かない** — 描いた時点で作った面から写す作りなら、ここで
+    /// 既定の設定が残る。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    @Test("描き場所から作った描き場所も、間を描かなくても本体の種と細かさを読む")
+    func nestedGraphicsReadsTheSketchNoise() throws {
+        try requireNoiseFarFromTheDefault()
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let layer = try canvas.createGraphics(8, 8)
+        let inner = try layer.createGraphics(8, 8)
+        decideNoise(on: canvas)
+
+        let gaps = try noiseGaps(on: inner, graphics: true) { canvas.noise($0.x, $0.y, $0.z) }
+        for (place, gap) in zip(Self.noisePlaces, gaps) {
+            #expect(gap < NoiseParityTests.tolerance, "入れ子の描き場所の \(place) で \(gap) ずれている")
+        }
+    }
+
+    /// 完了条件 2 のうち傾きの口 ([#1503])。同じ `mokume_noiseGradient` の断片を本体の面と
+    /// 描き場所 (入れ子も) に塗ると、同じ値が出る。**同じ式を同じ設定で引くので、半精度に
+    /// 丸めても同じ値になる** — 直す前は描き場所が既定の設定で引くので、模様ごと違う。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    @Test("描き場所の断片の揺らぎの傾きも、本体の断片と同じ値を返す")
+    func graphicsGradientMatchesTheSketch() throws {
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let layer = try canvas.createGraphics(8, 8)
+        decideNoise(on: canvas)
+        let inner = try layer.createGraphics(8, 8)
+        let shader = try canvas.makeShader(
+            Self.noiseSlope, values: ["place": .pair(0, 0), "depth": .number(0)])
+
+        func slope(on surface: Canvas, graphics: Bool) throws -> SIMD3<Float> {
+            let pixel = try paintAndRead(surface, with: shader, graphics: graphics)
+            return SIMD3(pixel.red, pixel.green, pixel.blue)
+        }
+        for place in Self.noisePlaces {
+            shader.set("place", .pair(place.x, place.y))
+            shader.set("depth", .number(place.z))
+            let screen = try slope(on: canvas, graphics: false)
+            try #require(screen.max() > 0, "\(place) で本体の傾きが 0 (比べる意味が無い)")
+            for (name, graphics) in [("描き場所", layer), ("入れ子の描き場所", inner)] {
+                let mine = try slope(on: graphics, graphics: true)
+                let gap = (0..<3).map { abs(mine[$0] - screen[$0]) }.max() ?? .infinity
+                #expect(
+                    gap <= 1e-3 * max(1, screen.max()),
+                    "\(name)の \(place) で \(mine)、本体は \(screen)")
+            }
+        }
+    }
+
+    /// 完了条件 3 ([#1503])。描き場所の上で種と細かさを決めても、**同じ 1 つ**を書き換える —
+    /// 本体の `noise()` も本体の断片も、ほかの描き場所もその値を読む。直す前は描き場所だけに効く。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    @Test("描き場所で決めた種と細かさを、本体の noise() と本体の断片も読む")
+    func noiseDecidedOnGraphicsReachesTheSketch() throws {
+        try requireNoiseFarFromTheDefault()
+        let canvas = try makeCanvas(width: 8, height: 8)
+        let layer = try canvas.createGraphics(8, 8)
+        let sibling = try canvas.createGraphics(8, 8)
+        decideNoise(on: layer)
+
+        let decided = ValueNoise(
+            seed: UInt32(Self.noiseSeed), octaves: Self.noiseDetail.octaves,
+            falloff: Self.noiseDetail.falloff)
+        #expect(canvas.noiseSettings == decided)
+        for place in Self.noisePlaces {
+            #expect(
+                canvas.noise(place.x, place.y, place.z) == decided.value(place.x, place.y, place.z),
+                "本体の noise() が \(place) で描き場所の設定を読まない")
+        }
+        let expected = { (place: SIMD3<Float>) in decided.value(place.x, place.y, place.z) }
+        for (name, surface, graphics) in [("本体", canvas, false), ("別の描き場所", sibling, true)] {
+            let gaps = try noiseGaps(on: surface, graphics: graphics, expected: expected)
+            for (place, gap) in zip(Self.noisePlaces, gaps) {
+                #expect(gap < NoiseParityTests.tolerance, "\(name)の断片の \(place) で \(gap) ずれている")
+            }
+        }
+    }
+
+    /// 完了条件 4 のうち直に作った面 ([#1503])。本体を持たない面は、それぞれ自分の置き場を
+    /// 持つ — 片方で決めても、もう片方は既定のまま。
+    ///
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    @Test("直に作った面どうしは、揺らぎの種と細かさを共有しない")
+    func directCanvasesKeepTheirOwnNoise() throws {
+        let first = try makeCanvas(width: 8, height: 8)
+        let second = try makeCanvas(width: 8, height: 8)
+        decideNoise(on: first)
+        #expect(first.noiseSettings != ValueNoise())
+        #expect(second.noiseSettings == ValueNoise())
+    }
+
     // MARK: - 呼び方が対になっていないとき (ADR-0020 決定 5)
 
     @Test("描き切る前の描き場所を置いたら知らせる")
