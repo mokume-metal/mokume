@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Synchronization
 import simd
 
 /// 外で作って読み込んだ立体。
@@ -41,7 +42,8 @@ public struct Model: Equatable, Sendable {
     let mesh: SolidMesh
     /// 面の向きを**形から求めた**か。求めた向きは両面として扱う。
     let hasDerivedNormals: Bool
-    /// 同じモデルを続けて置いたときにまとめるための番号。
+    /// 同じモデルを続けて置いたときにまとめるための番号。**プロセスの中で読み込みごとに違う**
+    /// (``nextIdentity()``)。
     let identity: Int
 
     /// **同じ読み込みから来たものだけが等しい。** 中身をすべて比べる意味が無い
@@ -63,6 +65,21 @@ public struct Model: Equatable, Sendable {
 }
 
 extension Model {
+    /// 読み込みごとの番号の元。**`Canvas` ごとではなく、プロセスで 1 つ** ([#1846])。
+    ///
+    /// `loadModel` は描き場所 (`createGraphics`) にもあるので、`Canvas` ごとに数えると
+    /// 本体と描き場所で読んだ別々のモデルが同じ番号になる。番号は頂点の共有・稜線の控え・
+    /// 影の指紋・``==`` の鍵なので、同じ描き場所に置くと片方の形がもう片方で描かれていた。
+    /// 読み込みは `requestModel` で並行しうるので、原子的に数える。
+    ///
+    /// [#1846]: https://github.com/mokume-metal/mokume/issues/1846
+    nonisolated private static let identities = Atomic<Int>(0)
+
+    /// 次の読み込みの番号。**呼ぶたびに違う値を返す** (1 から始まる)。
+    nonisolated static func nextIdentity() -> Int {
+        identities.add(1, ordering: .relaxed).newValue
+    }
+
     /// 読み取った並びを、置ける形へ整える。
     ///
     /// - Parameters:

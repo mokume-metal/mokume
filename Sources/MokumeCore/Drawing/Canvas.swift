@@ -423,9 +423,6 @@ public final class Canvas {
     nonisolated static func modelCacheWeight(_ model: Model) -> Int {
         model.mesh.points.count * MemoryLayout<SolidMesh.Point>.stride + 1024
     }
-    /// モデルを読むたびに増える番号。
-    var nextModelIdentity = 0
-
     /// 保持した形を置くたびに増える番号。
     var retainedSerial = 0
     /// 立体の頂点の置き場。**写した回数 (``GrowableBuffer/writes``) を検査が読む** (#1790)。
