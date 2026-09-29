@@ -78,9 +78,26 @@ extension DeclarationWatcher {
     /// 印が立っていれば下ろし、**張り直してから** ``declarationsChanged()`` を呼ぶ。
     /// フレームの境目で呼ぶ。
     func takeDeclarationChange() {
-        guard declarationNotice.take() else { return }
-        watchDeclarations()
+        guard coverDeclarationChange() else { return }
         declarationsChanged()
+    }
+
+    /// いまの姿を丸ごと書く直前に呼ぶ。**立っている印は下ろし、張り直すだけ**で、
+    /// ``declarationsChanged()`` は呼ばない。
+    ///
+    /// これから書く姿には、印を立てた変化がもう入っている。印を残すと、次の境目が
+    /// 同じ中身をもう 1 度書く — 保存も区画も、自分が当てた書き込み (外からの要求・
+    /// 保存からの復元) で自分の印を立てるので、書くたびに 1 度ずつ重なっていた (#1704)。
+    ///
+    /// **張り直してから読む。** 張り直しの後に起きた変化は印を立て直すので、書いた後の
+    /// 変化を取りこぼさない。
+    ///
+    /// - Returns: 印が立っていたか。
+    @discardableResult
+    func coverDeclarationChange() -> Bool {
+        guard declarationNotice.take() else { return false }
+        watchDeclarations()
+        return true
     }
 }
 

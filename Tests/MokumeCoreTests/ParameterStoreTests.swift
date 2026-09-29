@@ -453,8 +453,13 @@ struct ParameterWithoutYieldingTests {
         @Param(0...200) var radius: Double = 80
         /// 次の `draw` で `radius` へ書く値。
         var next: Double?
+        /// `setup` で `radius` へ書く値。
+        var inSetup: Double?
 
         init() {}
+        func setup() {
+            if let inSetup { radius = inSetup }
+        }
         func draw() {
             if let next {
                 radius = next
@@ -545,5 +550,83 @@ struct ParameterWithoutYieldingTests {
         let radius = params.first { $0["name"] as? String == "radius" }?["value"] as? Double
         #expect(radius == 150, "譲らずに回したら、draw で変えた値が区画の応答に載らなかった")
         #expect((surface.revision ?? 0) > before)
+    }
+
+    /// 区画の応答にある `radius`。
+    private func reportedRadius(in facet: URL) throws -> Double? {
+        let data = try Data(contentsOf: facet.appendingPathComponent("report.json"))
+        let report = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let params = report["params"] as? [[String: Any]] ?? []
+        return params.first { $0["name"] as? String == "radius" }?["value"] as? Double
+    }
+
+    /// 最後のフレームの変化は次の `drain()` が来ないので、閉じるときに書かないと届かない。
+    @Test("draw で変えた直後に閉じても、区画の応答は書き落とさない")
+    func closingRepublishesAChangeMadeInDraw() throws {
+        let facet = try makeDirectory().appendingPathComponent("params", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let sketch = Tuner()
+        let surface = ParamSurface(directory: facet, registry: ParamRegistry(of: sketch))
+        let runtime = try runtime(for: sketch, params: surface)
+        try runtime.advance()
+
+        sketch.next = 42
+        try runtime.advance()
+        runtime.closePlugins()
+
+        #expect(try reportedRadius(in: facet) == 42, "閉じる直前に draw で変えた値が応答に載らなかった")
+    }
+
+    /// 応答を書き直すのは、要求に応えたときと値が実際に変わったときに限る (``ParamSurface``)。
+    /// **自分が当てた書き込み (保存からの復元・setup) の印で、同じ中身を書き直さない。**
+    @Test("起動したときの応答は 1 度だけ書かれ、次のフレームで同じ中身を書き直さない")
+    func startupPublishesOnce() throws {
+        let root = try makeDirectory()
+        let url = root.appendingPathComponent("params.json")
+        let facet = root.appendingPathComponent("params", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        // 前の起動が残した値 (復元が書き込みを当てる)
+        let before = Tuner()
+        let saving = ParamStore(registry: ParamRegistry(of: before), at: url)
+        saving.restore()
+        before.radius = 120
+        saving.flushIfPending()
+
+        let sketch = Tuner()
+        sketch.inSetup = 130
+        let registry = ParamRegistry(of: sketch)
+        let store = ParamStore(registry: registry, at: url)
+        let surface = ParamSurface(directory: facet, registry: registry, store: store)
+        let runtime = try runtime(for: sketch, params: surface, paramStore: store)
+        for _ in 0..<3 { try runtime.advance() }
+
+        #expect(try reportedRadius(in: facet) == 130)
+        #expect(surface.revision == 1, "起動の応答を、同じ中身のまま書き直した")
+    }
+
+    /// 外からの書き込みは、保存も応答も**その場で 1 度だけ**書く。当てた書き込みが自分の
+    /// 印を立てるので、残すと静かになった後と次のフレームで同じ中身をもう 1 度書く。
+    @Test("外からの書き込みは、保存も応答も 1 度だけ書く")
+    func externalWriteIsWrittenOnce() throws {
+        let root = try makeDirectory()
+        let facet = root.appendingPathComponent("params", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let sketch = Tuner()
+        let registry = ParamRegistry(of: sketch)
+        let store = ParamStore(registry: registry, at: root.appendingPathComponent("params.json"))
+        let surface = ParamSurface(directory: facet, registry: registry, store: store)
+        let runtime = try runtime(for: sketch, params: surface, paramStore: store)
+        try runtime.advance()
+
+        try #"{"id":"a1","values":[{"name":"radius","type":"float","value":150}]}"#
+            .write(to: facet.appendingPathComponent("request.json"), atomically: true, encoding: .utf8)
+        try runtime.advance()
+        #expect(store.writeCount == 1)
+        let answered = try #require(surface.revision)
+
+        for _ in 0...(ParamStore.quietFrames + 1) { try runtime.advance() }
+        #expect(store.writeCount == 1, "外からの書き込みを、静かになった後にもう 1 度保存した")
+        #expect(surface.revision == answered, "外からの書き込みに応えた後、同じ中身の応答を書き直した")
+        #expect(sketch.radius == 150)
     }
 }

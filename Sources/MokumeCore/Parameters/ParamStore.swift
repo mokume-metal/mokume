@@ -156,8 +156,9 @@ final class ParamStore: DeclarationWatcher {
     /// いますぐ書く。
     ///
     /// **外からの書き込みが起こした変化は即時に書く** ([ADR-0030] 決定 6) — 書いた側は
-    /// 反映を見に来るので、静かになるのを待たせない。値が変わったという知らせは
-    /// Observation から**あとで**届くので、待たずにここで書き切る。
+    /// 反映を見に来るので、静かになるのを待たせない。値が変わったという印は次の
+    /// ``tick()`` まで読まれないので、それを待たずにここで書き切る。書き切ったので、
+    /// 立っている印は ``write()`` が下ろす (同じ中身をもう 1 度書かない)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     func flushNow() {
@@ -181,8 +182,12 @@ final class ParamStore: DeclarationWatcher {
     /// いまの値を置く。**原子的に書く** ([ADR-0018] 決定 3) — 読み手が書きかけを
     /// 掴むと、合わせた値がまとめて既定へ戻る。
     ///
+    /// **書く姿には、立っている印の変化がもう入っている** ので、印は下ろす
+    /// (``DeclarationWatcher/coverDeclarationChange()``)。
+    ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     private func write() {
+        coverDeclarationChange()
         let saved = Saved(
             values: registry.declarations.map { Saved.Entry(name: $0.name, value: $0.value) })
         let encoder = JSONEncoder()
