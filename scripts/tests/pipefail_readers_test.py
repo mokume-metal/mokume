@@ -30,30 +30,65 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
-EARLY_READER = re.compile(r"(?<!\|)\|(?![|&])\s*(?:grep\b[^|#]*?\s(?:-[A-Za-z]*q[A-Za-z]*|--quiet)\b|head\b)")
+EARLY_READER = re.compile(r"(?<!\|)\|(?![|&])\s*(?:grep\b[^|#]*?\s(?:-[A-Za-z]*q[A-Za-z]*|--quiet|-m\s*\d+)\b|head\b)")
 ALLOW = re.compile(r"#\s*pipefail-ok:\s*\S")
 
 
-def early_readers(text):
-    """テキストの中の、早く抜ける読み手へ流す行を (行番号, 行) で返す。"""
-    hits = []
+def logical_lines(text):
+    """物理行を、行末の `|` で続くパイプごとに繋いだ論理行にする。(先頭の行番号, 論理行) を返す。
+
+    `gh … |` の次の行に `grep -q …` を置く形も同じパイプなので、繋いでから見る (#1900 の反証)。
+    """
+    joined, start, parts = [], None, []
     for number, line in enumerate(text.splitlines(), start=1):
         if line.lstrip().startswith("#"):
             continue
-        if EARLY_READER.search(line) and not ALLOW.search(line):
-            hits.append((number, line.strip()))
-    return hits
+        if start is None:
+            start = number
+        parts.append(line.strip())
+        stripped = line.rstrip()
+        if stripped.endswith("|") and not stripped.endswith("||"):
+            continue
+        joined.append((start, " ".join(parts)))
+        start, parts = None, []
+    if parts:
+        joined.append((start, " ".join(parts)))
+    return joined
+
+
+def early_readers(text):
+    """テキストの中の、早く抜ける読み手へ流す論理行を (行番号, 行) で返す。"""
+    return [
+        (number, line)
+        for number, line in logical_lines(text)
+        if EARLY_READER.search(line) and not ALLOW.search(line)
+    ]
+
+
+SOURCED = re.compile(r'^\s*(?:\.|source)\s+(?:"\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/|scripts/)([\w.-]+\.sh)', re.M)
 
 
 def pipefail_scripts():
+    """pipefail を持つ scripts の下のシェルスクリプトと、それが読み込むライブラリ (#1900 の反証)。
+
+    ライブラリ (guard-lib.sh など) は自分では pipefail を立てないが、読み込んだ側の pipefail の
+    下で走る。
+    """
     listed = subprocess.run(
         ["git", "ls-files", "scripts/*.sh", "scripts/**/*.sh"],
         cwd=REPO, capture_output=True, text=True, check=True,
     ).stdout.split()
-    for relative in listed:
-        text = (REPO / relative).read_text(encoding="utf-8")
-        if "pipefail" in text:
-            yield relative, text
+    texts = {relative: (REPO / relative).read_text(encoding="utf-8") for relative in listed}
+    targets = {relative for relative, text in texts.items() if "pipefail" in text}
+    pending = list(targets)
+    while pending:
+        for name in SOURCED.findall(texts[pending.pop()]):
+            relative = f"scripts/{name}"
+            if relative in texts and relative not in targets:
+                targets.add(relative)
+                pending.append(relative)
+    for relative in sorted(targets):
+        yield relative, texts[relative]
 
 
 class EarlyReaderPatternTest(unittest.TestCase):
@@ -67,6 +102,9 @@ class EarlyReaderPatternTest(unittest.TestCase):
             'x=$(find Sources -name K.metal | head -1)',
             'echo "$err" | head -3 >&2',
             'a | grep --quiet b',
+            'a | grep -m1 b',
+            'gh x -q .body 2>/dev/null |\n    grep -qF "$MARK"',
+            'printf x |\n  grep -oE y |\n  head -1 |\n  tr a b',
         ):
             with self.subTest(line=line):
                 self.assertEqual(len(early_readers(line)), 1)
@@ -82,6 +120,7 @@ class EarlyReaderPatternTest(unittest.TestCase):
             'a | head_count',
             'git rev-parse -q --verify x >/dev/null 2>&1 || head="origin/$head"',
             'a || grep -q b',
+            'a |\n  sed -n 1p',
         ):
             with self.subTest(line=line):
                 self.assertEqual(early_readers(line), [])

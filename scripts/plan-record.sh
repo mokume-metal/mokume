@@ -325,8 +325,11 @@ resolve_target() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" / ""
 
 posted() { # $1=種別 $2=番号 $3=記録 ID — GitHub 側にこの記録が既にあるか
   local kind="$1" number="$2" id="$3"
-  gh "$kind" view "$number" -R "$REPO" --json comments -q '.comments[].body' 2>/dev/null |
-    grep -qF "$MARKER: $id"
+  local bodies
+  # 受けてから読む (#1900)。pipefail の下で gh を grep -q に流すと、目印が前の方のコメントに
+  # あるとき grep が先に抜け、gh が SIGPIPE で止まって「未投稿」と返っていた
+  bodies=$(gh "$kind" view "$number" -R "$REPO" --json comments -q '.comments[].body' 2>/dev/null) || return 1
+  grep -qF "$MARKER: $id" <<<"$bodies"
 }
 
 # 投稿済みかを、複数の投稿先で見る (#631)。

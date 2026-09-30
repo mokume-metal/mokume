@@ -390,7 +390,7 @@ while IFS=$'\t' read -r token repo chdir _place fragment <&3; do
   # 読み手が自分の行と突き合わせられない
   port="gh $(printf '%s\n' "$fragment" |
     grep -oE "$PR_CREATING_PORTS" |
-    head -1 |
+    sed -n '1p' |
     tr -s '[:space:]' ' ')"
 
   # 使い方を尋ねているだけなら作成ではない (判定は guard-lib.sh が持つ)
