@@ -17,7 +17,13 @@ import Foundation
 /// 置き換え保存のあと、ファイル側の見張りは**消えたファイル**を指したままになる。
 /// 2 回目の保存が届かないのはこれが原因で、**1 回保存して届くかの検査には判別力が
 /// 無い** — 誤った実装でも 1 回目は通り、死ぬのは 2 回目以降である。だから拾うたびに
+/// その場所のファイルが誰か (通し番号と生まれた時刻) を見て、**相手が入れ替わっていれば**
 /// ファイル側を張り直す。
+///
+/// 入れ替わっていなければ張り直さない。親ディレクトリの書き込みも拾うので、断片と同じ
+/// ディレクトリへ連番を書き出すと事象はフレームごとに起きる。そのたびに張り直すと、毎フレーム
+/// ファイルを開き直すことになる ([#1830] の反証 2)。中身が変わっていなければ、扱う費用は
+/// ファイルの属性 (stat) を読む 1 回と、持ち主が中身を読んで比べる 1 回で止まる (``ShaderBox/reload(_:)``)。
 ///
 /// ## 主キューへ直に載せない
 ///
@@ -33,28 +39,91 @@ import Foundation
 /// 知らせは ``CoalescedNotices`` で合体する — 拾ったときにすることは「張り直して知らせる」
 /// だけで、何回変わったかは要らない。
 ///
+/// ## 扱うのは、印を取った側
+///
+/// 拾ったらその場で**印を立てる**。扱う (張り直して知らせる) のは、印を取った側である。取る側は
+/// 2 つある:
+///
+/// - **本体の面のフレームの頭** (``takeChanges()``)。本体の面とは時刻の置き場の持ち主で、
+///   ランタイムの面も、利用者が `Canvas(target:gpu:)` で作って直に回す面もこれに当たる
+/// - ランタイムが描かずに戻るフレーム (外から止めた間・作者の `noLoop()` の間)。描かない
+///   フレームには本体の面の頭が来ないので、ランタイムが自分で取る (#1830 の 2 回目の反証 1)
+/// - 積んだ `Task` が走ったとき (main actor を譲ったとき)。フレームを回さずに譲る経路でも届く
+///
+/// かつては `Task` しか取らなかったので、main actor を譲らずにフレームを回すループ (窓を出さない
+/// 書き出しや検査。``SketchRuntime/advance()`` でも、面を直に回すのでも) では 1 本も走らず、何
+/// フレーム回しても古い断片のまま描いた ([#1830])。誰が `advance()` を叩くかは外側の話
+/// (``SketchRuntime`` の説明) なので、叩き方で届き方が変わってはならない (#1704 が `@Param` の知らせで
+/// 同じ形を直した)。
+///
+/// **取るのは本体の面のフレームの頭で、描き場所の描き始めではない。** 描き場所
+/// (`createGraphics`) は本体のフレームの中で描かれるので、そこで取ると外のフレームの途中で
+/// 組み直し、1 つのフレームの中で古い断片と新しい断片が混ざる。`Task` の側も、描いている最中は
+/// 走らない (描く手続きは譲らない)。**別々に作った本体の面どうしを入れ子に描く**使い方 (面 A の
+/// `draw` の中で面 B の `draw` を回す) では、内側の頭が外側のフレームの途中に来る。これは約束の外
+/// で、ランタイムはこの形を作らない。
+///
+/// **取るのは、そのプロセスで生きている見張りの全部である。** 一覧は型に 1 つで、どの本体の面の
+/// フレームの頭も、自分の面で読み込んだ断片に限らず全員の印を取る。取る時点はどの面にとっても
+/// フレームの外 (上の入れ子を除く) なので、混ざることはない。数えを見る検査は、自分が作った
+/// 見張りの印が他の検査のフレームで取られうることを前提に書く。
+///
+/// 印は 1 つなので、両方の側が同じ変化を 2 度扱うことはない。
+///
 /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+/// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
 final class FileWatcher {
     private let url: URL
     private let onChange: () -> Void
     private var fileSource: (any DispatchSourceFileSystemObject)?
     private var directorySource: (any DispatchSourceFileSystemObject)?
     private let queue = DispatchQueue(label: "org.mokume.shader-watch")
-    /// いま見張っているファイルの通し番号。置き換えられると変わる。
-    private var watchedIdentifier: UInt64?
+    /// いま見張っているファイルが誰か (``Identity``)。置き換えられると変わる。
+    private var watchedIdentifier: Identity?
     /// 拾った事象を main actor へ渡す前に合体する器。
     private let notices = CoalescedNotices()
+    /// 拾った変化の印。扱う側が取る (冒頭の「扱うのは、印を取った側」)。印の形は `@Param` の
+    /// 知らせと同じもので足りる (拾った糸で立て、main actor で取る)。
+    private let change = DeclarationNotice()
+
+    /// 生きている見張り。本体の面がフレームの頭で回す (``takeChanges()``)。**弱く持つ** —
+    /// 見張りの寿命は断片の持ち主が決める。死んだものは回すときに落とす。
+    private static var live: [Weak] = []
+    private struct Weak { weak var watcher: FileWatcher? }
 
     /// 診断: 拾った事象の数。
     var arrivedEventCount: Int { notices.arrived }
-    /// 診断: 拾った事象を main actor で扱った回数 (積まれた `Task` が走った数)。
+    /// 診断: main actor へ積んだまま、まだ走っていない知らせの数。**1 を超えない。**
+    var queuedNoticeCount: Int { notices.queued }
+    /// 診断: 拾った変化を扱った回数 (張り直して知らせた数)。
+    ///
+    /// **他の面のフレームで扱われた分も入る** (冒頭の「取るのは、そのプロセスで生きている見張りの
+    /// 全部である」)。並列の検査では、別の検査のフレームの頭がこの見張りの印を取りうる。
     private(set) var handledCount = 0
+    /// 診断: ファイル側に見張りを張った回数 (初めの 1 回を含む)。
+    private(set) var fileWatchCount = 0
 
     init(url: URL, onChange: @escaping () -> Void) {
         self.url = url.standardizedFileURL
         self.onChange = onChange
         watchDirectory()
         watchFile()
+        Self.live.removeAll { $0.watcher == nil }
+        Self.live.append(Weak(watcher: self))
+    }
+
+    /// 生きている見張りのうち、印の立ったものを扱う。**本体の面のフレームの頭で呼ぶ**
+    /// (``Canvas`` の `beginFrame()` が呼ぶ・冒頭の「扱うのは、印を取った側」)。
+    static func takeChanges() {
+        live.removeAll { $0.watcher == nil }
+        // 回すのは呼んだ時点の写し。扱う中 (持ち主の reload) で一覧が変わっても崩れない
+        for entry in live { entry.watcher?.takeChange() }
+    }
+
+    /// 印が立っていれば下ろして扱う。
+    private func takeChange() {
+        guard change.take() else { return }
+        handle()
     }
 
     deinit {
@@ -74,14 +143,33 @@ final class FileWatcher {
         watchedIdentifier != nil && watchedIdentifier == Self.identifier(of: url.path)
     }
 
-    /// その場所にあるファイルの通し番号。
-    private nonisolated static func identifier(of path: String) -> UInt64? {
+    /// ファイルが誰か。**通し番号に、置き場と生まれた時刻を添える** ([#1830] の 2 回目の反証 5)。
+    ///
+    /// 張り直すかを番号だけで決めると、消して作り直したファイルが同じ番号を得るファイル
+    /// システムでは、張り直さずに消えたファイルを見張り続ける。APFS は番号を使い回さないが、
+    /// 番号の使い回しはファイルシステムの都合で、この型が約束できることではない。作り直した
+    /// ファイルは生まれた時刻が変わるので、番号が同じでも別のものと読める。中身を書き換えても
+    /// 生まれた時刻は変わらないので、その場の上書きでは張り直さない (冒頭)。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    private nonisolated struct Identity: Equatable {
+        let device: Int32
+        let inode: UInt64
+        let bornSeconds: Int
+        let bornNanoseconds: Int
+    }
+
+    /// その場所にあるファイルが誰か。無ければ `nil`。
+    private nonisolated static func identifier(of path: String) -> Identity? {
         var info = stat()
         guard stat(path, &info) == 0 else { return nil }
-        return UInt64(info.st_ino)
+        return Identity(
+            device: info.st_dev, inode: UInt64(info.st_ino),
+            bornSeconds: info.st_birthtimespec.tv_sec, bornNanoseconds: info.st_birthtimespec.tv_nsec)
     }
 
     private func watchFile() {
+        fileWatchCount += 1
         fileSource?.cancel()
         fileSource = nil
         fileSource = Self.makeSource(
@@ -96,15 +184,19 @@ final class FileWatcher {
             onEvent: onEvent)
     }
 
-    /// 見張りが事象を拾ったときの手続き。**積んだまま走っていない知らせがあれば積まない。**
+    /// 見張りが事象を拾ったときの手続き。**印を立て、積んだまま走っていない知らせがあれば
+    /// 積まない。**
     ///
-    /// 印は自分の生死によらず下ろす (``RenderDevice`` の完了の知らせと同じ)。
+    /// 積んだ印は自分の生死によらず下ろす (``RenderDevice`` の完了の知らせと同じ)。**印は積む前に
+    /// 立てる** — 走った `Task` が印を取った後に届いた事象は、立て直した印をもう 1 本の `Task` か
+    /// 次のフレームの頭が取る。
     private var onEvent: @Sendable () -> Void {
-        { [weak self, notices] in
+        { [weak self, notices, change] in
+            change.raise()
             guard notices.arrive(0) else { return }
             Task { @MainActor in
                 _ = notices.take()
-                self?.handle()
+                self?.takeChange()
             }
         }
     }
@@ -132,8 +224,8 @@ final class FileWatcher {
     private func handle() {
         handledCount += 1
         // **張り直してから知らせる。** 置き換え保存では、いま見ているファイルは
-        // もう別のものになっている
-        watchFile()
+        // もう別のものになっている。入れ替わっていなければ張り直さない (冒頭)
+        if !watchesCurrentFile || fileSource == nil { watchFile() }
         onChange()
     }
 }

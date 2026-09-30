@@ -24,12 +24,19 @@ final class ShaderBox {
     let url: URL?
     /// いま効いている値。
     private(set) var values: [String: ShaderValue]
-    /// 直近の差し替えが失敗していれば、その理由。
+    /// いまのファイルの中身で差し替えられていなければ、その理由。**いま効いている中身と
+    /// ファイルが揃えば下りる** (公開の説明は持ち主の `failure`)。
     private(set) var failure: String?
     /// 何度差し替わったか。**外から「届いたか」を待ち時間ではなく数で判定できる。**
     private(set) var generation = 0
     /// 最後に組み上がった断片の中身。**同じものを組み直さない**ための控え。
     private var compiledBody: String
+    /// 最後に**組み立て (翻訳) に失敗した**中身。**同じものを組み直さず、同じ理由を言い直さない**
+    /// ための控え。控えるのは中身のせいの失敗だけで、それ以外 (パイプラインを作れない・土台の
+    /// 一時的な失敗) は控えず、次に保存を拾ったときに組み直す。
+    private var failedBody: String?
+    /// 診断: 失敗を知らせた回数 (読めなかった・組み立てに失敗した)。
+    private(set) var failureReports = 0
     private(set) var watcher: FileWatcher?
 
     /// 警告の頭に付ける名乗り (`shader` / `effect` / `computation`)。
@@ -95,21 +102,50 @@ final class ShaderBox {
     func reload(_ rebuild: (String) throws(RenderFailure) -> Void) {
         guard let url else { return }
         guard let body = try? String(contentsOf: url, encoding: .utf8) else {
-            failure = "Could not read the fragment: \(url.path)"
-            Diagnostics.warn("\(label): \(failure!)")
+            let reason = "Could not read the fragment: \(url.path)"
+            // 読めないままなら言い直さない (下の「失敗した中身も控える」と同じ理由)
+            guard failure != reason else { return }
+            failure = reason
+            failedBody = nil
+            report(reason)
             return
         }
         // **同じ中身なら組み直さない。** 1 度の保存でファイル側と親ディレクトリ側の
-        // 両方が反応するので、素直に組み直すと 1 度の保存で 2 度組み立てることになる
-        guard body != compiledBody else { return }
+        // 両方が反応するので、素直に組み直すと 1 度の保存で 2 度組み立てることになる。
+        // 失敗した後で組み上がった中身へ戻したなら、効いている断片がファイルと揃ったので
+        // 失敗の控えを下ろす
+        guard body != compiledBody else {
+            failure = nil
+            failedBody = nil
+            return
+        }
+        // **失敗した中身も控える** ([#1830] の反証 2)。親ディレクトリの書き込みも拾うので、断片と
+        // 同じディレクトリへ連番を書き出すと、見張りはフレームごとに事象を拾う。組み上がった
+        // 中身としか比べないと、組み立てに失敗する断片をフレームごとに組み直し、同じ警告を
+        // フレームごとに出していた。直すのは作者が次に保存したときである
+        //
+        // [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+        guard body != failedBody else { return }
         do {
             try rebuild(body)
             compiledBody = body
             failure = nil
+            failedBody = nil
             generation += 1
         } catch {
-            failure = "\(error)"
-            Diagnostics.warn("\(label): could not rebuild the fragment: \(error.headline)")
+            // **中身のせいと言える失敗だけを控える** (#1830 の 2 回目の反証 3)。組めなかった理由が
+            // 中身と関係なければ、同じ中身でも次は組める。控えると、中身を変えるまで固着する
+            if case .shaderCompilationFailed = error { failedBody = body } else { failedBody = nil }
+            let reason = "\(error)"
+            guard failure != reason else { return }
+            failure = reason
+            report("could not rebuild the fragment: \(error.headline)")
         }
+    }
+
+    /// 失敗を 1 行知らせる。
+    private func report(_ message: String) {
+        failureReports += 1
+        Diagnostics.warn("\(label): \(message)")
     }
 }

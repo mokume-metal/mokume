@@ -16,7 +16,11 @@ public final class EffectShader {
 
     /// この効果の名前。
     public let name: String
-    /// 直近の差し替えが失敗していれば、その理由。
+    /// いまのファイルの中身で差し替えられていなければ、その理由 (読めない・組み立てに失敗した)。
+    ///
+    /// **いま効いている断片とファイルが揃えば下りる** — 直して組み上がったときだけでなく、失敗した
+    /// 後で、いま効いている中身へ戻して保存したときも下りる。同じ中身・同じ理由の失敗は、保存を
+    /// 何度拾っても組み直さず、注意も 1 度しか出さない (#1830)。
     public var failure: String? { box.failure }
     /// 何度差し替わったか。**外から「届いたか」を待ち時間ではなく数で判定できる。**
     public var generation: Int { box.generation }
@@ -70,7 +74,10 @@ public final class EffectShader {
     func reload() {
         box.reload { (body: String) throws(RenderFailure) in
             let library = try gpu.shaders.makeEffectLibrary(named: name, body: body, values: values)
-            state = try pipeline.makeState(library: library, label: "mokume.effect.\(name)")
+            let rebuilt = try pipeline.makeState(library: library, label: "mokume.effect.\(name)")
+            // 入れ替えた古い状態は、投入済みのフレームが終わるまで抱える (``Shader/reload()`` と同じ)
+            gpu.holdUntilSubmittedWorkFinishes([state])
+            state = rebuilt
         }
     }
 }

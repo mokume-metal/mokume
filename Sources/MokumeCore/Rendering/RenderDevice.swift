@@ -1039,6 +1039,25 @@ import MokumeDiagnostics
         return submission
     }
 
+    /// **投入済みのコマンドが読んでいるかもしれないもの**を、それが終わるまで抱える
+    /// ([#1830] の 2 回目の反証 2)。待たずに返る。
+    ///
+    /// ``commit(_:retaining:)`` が抱えるのは、投入するときに分かっているものだけである。投入の
+    /// **後で**持ち主が差し替えるもの — 保存し直した断片を組み直して入れ替えた古いパイプラインの
+    /// 状態 — は、投入したときには参照を手放す予定が無いので誰も抱えていない。この世代のコマンドは
+    /// 読む相手を保持しない (Apple の「Understanding the Metal 4 core API」はリソースについてそう
+    /// 書き、パイプラインの状態については書いていない。書いていないものは保持しないものとして
+    /// 扱う) ので、前のフレームがまだ走っている間に手放すと、GPU が読んでいる途中で解放しうる。
+    ///
+    /// 番号は ``retire(_:)`` と同じ決め方で、組み立て中のコマンドがあればその 1 本の後まで待つ。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    func holdUntilSubmittedWorkFinishes(_ objects: [AnyObject]) {
+        guard !objects.isEmpty else { return }
+        let after = slotOfOpenCommands.isEmpty ? submissionCount : submissionCount + 1
+        held.append((after, objects))
+    }
+
     /// 組み立てたコマンドを投入し、GPU が終わるまで待つ。
     ///
     /// ``commit(_:retaining:)`` と ``settle()`` の合成。1 枚だけ描く経路と、読み戻すために
