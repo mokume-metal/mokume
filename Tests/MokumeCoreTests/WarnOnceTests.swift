@@ -195,11 +195,12 @@ struct CanvasWarningTests {
     /// `metalness()` に入れ替わる — 同じ文面の注意を 2 度呼ぶ形では、これが見えない。
     @Test("同じ注意は、入口が違っても 2 度目からは黙る")
     func staysSilentTheSecondTimeEvenFromAnotherEntrance() throws {
+        // フレームの中で呼ぶ。外では範囲の外より先にフレームの外を断る (#1706 の反証 2)
         let canvas = try makeCanvas()
-        canvas.shininess(Float.nan)
+        try canvas.draw { canvas.shininess(Float.nan) }
         #expect(canvas.warnings.message(for: .badMaterial) == badShininess)
 
-        canvas.metalness(Float.nan)
+        try canvas.draw { canvas.metalness(Float.nan) }
         #expect(canvas.warnings.message(for: .badMaterial) == badShininess)
     }
 

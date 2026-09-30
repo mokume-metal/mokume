@@ -119,6 +119,9 @@ import simd
     }
 
     /// 1 画素の色を書き換える。範囲の外は何もしない。
+    ///
+    /// 色は検めずに面へ移す。数でない成分・無限の成分もそのまま書き (図形を描く経路が面へ
+    /// 移すときと同じ)、有限の成分は面が表せる ±65504 で止まる (``fill(_:)`` も同じ)。
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) {
         guard x >= 0, y >= 0, x < width, y < height else { return }
         let index = y * width + x
@@ -190,7 +193,7 @@ import simd
         needsUpload = true
     }
 
-    /// 全体を 1 色で埋める。
+    /// 全体を 1 色で埋める。色は ``set(_:_:_:)`` と同じく、検めずに面へ移す。
     public func fill(_ color: LinearRGBA) {
         let texel = HalfSurface.texel(color)
         if displayInput != nil {

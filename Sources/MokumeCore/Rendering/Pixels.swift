@@ -74,6 +74,9 @@ public struct Pixels {
     /// (フレームの中と、本体の `setup()`・止まっている間のコールバック) だけで、外で書くと
     /// 1 度注意して何もしない (``fill(_:)`` も同じ)。
     ///
+    /// 書く色は検めずに面へ移す。数でない成分・無限の成分もそのまま書き (図形を描く経路が面へ
+    /// 移すときと同じ)、有限の成分は面が表せる ±65504 で止まる (``fill(_:)`` も同じ)。
+    ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public subscript(x: Int, y: Int) -> LinearRGBA {
@@ -91,7 +94,7 @@ public struct Pixels {
         }
     }
 
-    /// 全体を 1 色で埋める。
+    /// 全体を 1 色で埋める。色は添字で書くときと同じく、検めずに面へ移す。
     public func fill(_ color: LinearRGBA) {
         guard admitsWrite?() ?? true else { return }
         let texel = HalfSurface.texel(color)

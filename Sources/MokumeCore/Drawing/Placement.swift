@@ -59,8 +59,13 @@ public struct Placement: Equatable, Sendable {
     /// 数でない塗りの置き場所を置くと、その形が数でない色で描かれる ([#1706])。
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
-    var isUsable: Bool {
+    var isUsable: Bool { hasFiniteGeometry && hasFiniteFill }
+
+    /// 位置・倍率・回転がどれも有限か。
+    var hasFiniteGeometry: Bool {
         [x, y, z, scale, rotation.x, rotation.y, rotation.z].allSatisfy(\.isFinite)
-            && (fill?.isFinite ?? true)
     }
+
+    /// 塗りが無いか、塗りの 4 成分がどれも有限か。
+    var hasFiniteFill: Bool { fill?.isFinite ?? true }
 }

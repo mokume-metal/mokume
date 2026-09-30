@@ -124,7 +124,17 @@ public struct LinearRGBA: Equatable, Sendable {
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     var isFinite: Bool {
-        red.isFinite && green.isFinite && blue.isFinite && alpha.isFinite
+        hasFiniteRGB && alpha.isFinite
+    }
+
+    /// 赤・緑・青がどれも有限か。**不透明度は見ない。**
+    ///
+    /// 不透明度を使わない受け口 (光・材質・周囲) はこちらで見る ([#1706] の反証 3)。どれも乗算済みの
+    /// 3 成分だけを読むので、不透明度で断ると絵に効かない成分のために置かなくなる。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    var hasFiniteRGB: Bool {
+        red.isFinite && green.isFinite && blue.isFinite
     }
 
     /// 完全に透明な色。

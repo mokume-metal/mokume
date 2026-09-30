@@ -227,7 +227,8 @@ public func color(hex: Int) -> LinearRGBA {
 ///
 /// **`amount` が数でない値・無限のときは `start` を返す。** 毎フレーム呼ばれる口が数でない色を
 /// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。色の成分は検めない —
-/// 数でない成分を持つ色は、それを作った 0–1 の口や乗算済みの口と同じく、そのまま混ぜる。
+/// 数でない成分を持つ色は、それを作った 0–1 の口や乗算済みの口と同じく、そのまま混ぜる。混ぜた
+/// 色を受ける口 (`fill(_:)` など) が断って知らせる。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md

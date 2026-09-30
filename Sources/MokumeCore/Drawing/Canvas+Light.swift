@@ -39,7 +39,7 @@ extension Canvas {
         // 丸めの注意を先に言うと、置かない光のために 1 度きりの鍵を使い切る
         guard isDrawing else { return warnOutsideFrame(.light) }
         // 色が受け取れないなら置かないので、丸めの注意より先に断る (同じ理由・#1706)
-        guard color.isFinite else { return warnNotANumberColor(.spotLight) }
+        guard color.hasFiniteRGB else { return warnNotANumberColor(.spotLight) }
         let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
         // 半頂角は 0…π/2 へ丸め、丸めたら 1 度知らせる (#1698)。書き順は `max(0, min(…))` に
         // 保つ — Swift の `min` / `max` は第 1 引数の NaN を返すので、この順なら NaN は 0 になる
@@ -92,15 +92,28 @@ extension Canvas {
     /// フレームの外 (初期化のとき) に置かれた光は、どのフレームにも属さないので
     /// 警告して無視する (同 決定 4)。黙って捨てると「書いたのに効かない」だけが残る。
     ///
-    /// **光の色 (`color`) が数でない成分・無限の成分を持つなら置かない** ([#1706])。フレームの
-    /// 外の断りを先に言う — 置かない光のために、色の鍵を使い切らない。
+    /// **光の色 (`color`) の赤・緑・青が数でない値・無限なら置かない** ([#1706])。不透明度は
+    /// 光に持ち込まない (``Light``) ので見ない。フレームの外の断りを先に言う
+    /// (``refuseLightColor(_:)``)。
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     private func addLight(_ light: Light, color: LinearRGBA, entry: ColorEntry) {
         guard isDrawing else { return warnOutsideFrame(.light) }
-        guard color.isFinite else { return warnNotANumberColor(entry) }
+        guard color.hasFiniteRGB else { return warnNotANumberColor(entry) }
         closeBatch()
         activeLights.append(light)
+    }
+
+    /// 受け取れない光の色を断る。**フレームの外の断りを先に言う** ([#1706] の反証 2)。
+    ///
+    /// 数の形 (`pointLight(r, g, b, …)`) も色の値の形も、ここと ``addLight(_:color:entry:)`` で
+    /// 同じ順に断る。置かない呼び出しのために色の鍵を使い切らない — スポットの半頂角の丸め
+    /// (#1698 の反証 10) と同じ理由である。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    func refuseLightColor(_ entry: ColorEntry) {
+        guard isDrawing else { return warnOutsideFrame(.light) }
+        warnNotANumberColor(entry)
     }
 
     /// 向きを、いまの変換で世界の向きへ移す。

@@ -18,12 +18,9 @@ extension Canvas {
         _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
     ) {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
-        guard let color = DisplayScale.color(
-            red: red, green: green, blue: blue, alpha: alpha)
-        else {
-            return warnNotANumberColor(.background)
-        }
-        background(color)
+        // 作れなければ `nil` のまま渡す。区間の外の断りを先に言うのは受け口 (#1706 の反証 2)
+        paintBackground(
+            DisplayScale.color(red: red, green: green, blue: blue, alpha: alpha))
     }
 
     public func fill(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {

@@ -18,7 +18,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnNotANumberColor(.ambientLight)
+            return refuseLightColor(.ambientLight)
         }
         ambientLight(color)
     }
@@ -30,7 +30,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnNotANumberColor(.directionalLight)
+            return refuseLightColor(.directionalLight)
         }
         directionalLight(color, x, y, z)
     }
@@ -42,7 +42,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnNotANumberColor(.pointLight)
+            return refuseLightColor(.pointLight)
         }
         pointLight(color, x, y, z)
     }
@@ -57,7 +57,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnNotANumberColor(.spotLight)
+            return refuseLightColor(.spotLight)
         }
         spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
@@ -72,7 +72,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnNotANumberColor(.ambient)
+            return refuseMaterialColor(.ambient)
         }
         ambient(color)
     }
@@ -87,7 +87,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnNotANumberColor(.emissive)
+            return refuseMaterialColor(.emissive)
         }
         emissive(color)
     }

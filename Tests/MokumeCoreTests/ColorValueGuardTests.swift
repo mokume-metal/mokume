@@ -39,6 +39,17 @@ struct ColorValueGuardTests {
 
         var testDescription: String { rawValue }
 
+        /// 不透明度を読まない口か。光と素材は乗算済みの赤・緑・青だけを使う (`Light`・
+        /// `Material`) ので、不透明度は検めない ([#1706] の反証 3)。周囲 (`Surroundings`) と同じ。
+        ///
+        /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+        var ignoresOpacity: Bool {
+            switch self {
+            case .ambientLight, .directionalLight, .pointLight, .spotLight, .ambient, .emissive: true
+            default: false
+            }
+        }
+
         /// 断ったときに言う鍵。数の形と同じもの。
         var key: Canvas.Warning {
             switch self {
@@ -76,6 +87,15 @@ struct ColorValueGuardTests {
         static let all: [Broken] = (0..<4).flatMap { lane in
             [Float.nan, .infinity, -.infinity].map { Broken(lane: lane, value: $0) }
         }
+
+        /// 断るはずの組。不透明度を読まない口の、不透明度だけが壊れた色は除く。
+        static let refused: [(Port, Broken)] = Port.allCases.flatMap { port in
+            all.filter { !(port.ignoresOpacity && $0.lane == 3) }.map { (port, $0) }
+        }
+
+        /// 不透明度を読まない口へ渡す、不透明度だけが壊れた色。受け取られるはず。
+        static let opacityOnly: [(Port, Broken)] = Port.allCases.filter(\.ignoresOpacity)
+            .flatMap { port in all.filter { $0.lane == 3 }.map { (port, $0) } }
     }
 
     private func makeCanvas() throws -> Canvas {
@@ -207,9 +227,12 @@ struct ColorValueGuardTests {
     }
 
     /// 完了条件 1・2。
+    ///
+    /// 置き場所 (`Placement.fill`) には数の形が無い。置き場所の数が数でないときと同じ鍵で言い、
+    /// 文面は原因の塗りを名指す (下の「置き場所の注意は、原因を名指す」)。
     @Test(
         "数でない成分・無限の成分を持つ色は、状態を変えずに、数の形と同じ鍵と文面で 1 度だけ言う",
-        arguments: Port.allCases, Broken.all)
+        arguments: Broken.refused)
     func refusesNonFiniteComponents(_ port: Port, _ broken: Broken) throws {
         let canvas = try makeCanvas()
         let state = try pass(broken.color, to: port, on: canvas)
@@ -218,9 +241,171 @@ struct ColorValueGuardTests {
         #expect(sameState(state, stateBefore(port)), "\(context): 状態が \(state) になった")
         let message = canvas.warnings.message(for: port.key)
         #expect(message != nil, "\(context): 注意が出ない")
-        #expect(message == (try numericMessage(for: port)), "\(context): 数の形と文面が違う")
+        if port != .placement {
+            #expect(message == (try numericMessage(for: port)), "\(context): 数の形と文面が違う")
+        }
         // 断ったときに、ほかの鍵で言わない (素材は範囲の外の鍵を持つ)
         #expect(!canvas.warnings.hasWarned(.badMaterial), "\(context): 範囲の外の鍵で言った")
+    }
+
+    /// [#1706] の反証 3。光と素材は不透明度を使わないので、不透明度だけが数でない色も受け取る。
+    /// 断ると、絵に効かない成分のために光が消える。周囲 (`Surroundings.isUsable`) と同じ扱い。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    @Test("光と素材は、不透明度だけが数でない色を受け取る", arguments: Broken.opacityOnly)
+    func lightsAndMaterialsIgnoreTheOpacity(_ port: Port, _ broken: Broken) throws {
+        let canvas = try makeCanvas()
+        let state = try pass(broken.color, to: port, on: canvas)
+        let context = "\(port.rawValue) に \(broken.testDescription)"
+        #expect(!sameState(state, stateBefore(port)), "\(context): 受け取らなかった")
+        #expect(!canvas.warnings.hasWarned(port.key), "\(context): 注意が出た")
+    }
+
+    /// 区間の外の断りと色の断りの順を見る口。
+    nonisolated enum Ordered: String, CaseIterable, CustomTestStringConvertible, Sendable {
+        case background, ambientLight, directionalLight, pointLight, spotLight, ambient, emissive
+
+        var testDescription: String { rawValue }
+
+        var port: Port {
+            switch self {
+            case .background: .background
+            case .ambientLight: .ambientLight
+            case .directionalLight: .directionalLight
+            case .pointLight: .pointLight
+            case .spotLight: .spotLight
+            case .ambient: .ambient
+            case .emissive: .emissive
+            }
+        }
+
+        @MainActor var outside: Canvas.Warning {
+            switch self {
+            case .background: Canvas.OutsideFrame.placing.warning
+            case .ambientLight, .directionalLight, .pointLight, .spotLight:
+                Canvas.OutsideFrame.light.warning
+            case .ambient, .emissive: Canvas.OutsideFrame.material.warning
+            }
+        }
+    }
+
+    /// [#1706] の反証 2。**区間の外では、数の形も色の値の形も、区間の外の断りだけを言う。**
+    /// 置かない呼び出しのために色の鍵を使い切らない — スポットの半頂角の丸め (#1698 の反証 10)・
+    /// 置き場所の検め (`shape(_:at:)`) と同じ順である。直す前は、数の形と素材が色を先に断り、
+    /// 値の形の光と下地は区間の外を先に断っていた。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    @Test("区間の外では、数の形も色の値の形も、色より先に区間の外を断る", arguments: Ordered.allCases)
+    func refusesOutsideTheFrameBeforeTheColour(_ ordered: Ordered) throws {
+        let nan = Float.nan
+        let broken = LinearRGBA(premultipliedRed: nan, green: 0, blue: 0, alpha: 1)
+        for numeric in [true, false] {
+            let canvas = try makeCanvas()
+            let form = numeric ? "数の形" : "色の値の形"
+            switch ordered {
+            case .background:
+                if numeric { canvas.background(nan, 0, 0) } else { canvas.background(broken) }
+            case .ambientLight:
+                if numeric { canvas.ambientLight(nan, 0, 0) } else { canvas.ambientLight(broken) }
+            case .directionalLight:
+                if numeric {
+                    canvas.directionalLight(nan, 0, 0, 0, 0, -1)
+                } else {
+                    canvas.directionalLight(broken, 0, 0, -1)
+                }
+            case .pointLight:
+                if numeric {
+                    canvas.pointLight(nan, 0, 0, 0, 0, 10)
+                } else {
+                    canvas.pointLight(broken, 0, 0, 10)
+                }
+            case .spotLight:
+                if numeric {
+                    canvas.spotLight(nan, 0, 0, 0, 0, 10, 0, 0, -1)
+                } else {
+                    canvas.spotLight(broken, 0, 0, 10, 0, 0, -1)
+                }
+            case .ambient:
+                if numeric { canvas.ambient(nan, 0, 0) } else { canvas.ambient(broken) }
+            case .emissive:
+                if numeric { canvas.emissive(nan, 0, 0) } else { canvas.emissive(broken) }
+            }
+            #expect(canvas.warnings.hasWarned(ordered.outside), "\(ordered) の\(form): 区間の外を言わない")
+            #expect(!canvas.warnings.hasWarned(ordered.port.key), "\(ordered) の\(form): 色を先に断った")
+        }
+    }
+
+    /// 素材の範囲の外 (負の成分・範囲の外の量) も、区間の外より後に断る (反証 2 の兄弟)。
+    @Test("区間の外では、素材の範囲の外より先に区間の外を断る")
+    func refusesOutsideTheFrameBeforeTheMaterialRange() throws {
+        let canvas = try makeCanvas()
+        canvas.ambient(.linear(red: -1, green: 0, blue: 0))
+        canvas.emissive(.linear(red: -1, green: 0, blue: 0))
+        canvas.shininess(-1)
+        canvas.metalness(2)
+        #expect(canvas.warnings.hasWarned(Canvas.OutsideFrame.material.warning))
+        #expect(!canvas.warnings.hasWarned(.badMaterial))
+    }
+
+    /// [#1706] の反証 4。**有限の大きな値は断らない。** 0–255 の目盛りで 3.05e18 を越える灰色は、
+    /// 伝達関数の 2.4 乗が `Float` の最大を越える。#1691 がそこを `Float` の最大で止めたので、
+    /// 色は有限のまま作られ、受け口は「数でない値か無限が渡された」とは言わない。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    @Test(
+        "数の形に有限の大きな値を渡しても断らず、有限の色として受け取る",
+        arguments: [Float(4e18), .greatestFiniteMagnitude])
+    func acceptsHugeFiniteValues(_ huge: Float) throws {
+        let canvas = try makeCanvas()
+        var fills: [LinearRGBA] = []
+        var lights: [SIMD4<Float>] = []
+        try canvas.draw {
+            canvas.fill(huge, huge, huge)
+            fills.append(canvas.style.fill)
+            canvas.fill(huge, 0, 0)
+            fills.append(canvas.style.fill)
+            canvas.stroke(huge)
+            fills.append(canvas.style.stroke)
+            canvas.tint(huge, huge, huge)
+            fills.append(canvas.style.tint)
+            canvas.pointLight(huge, huge, huge, 0, 0, 10)
+            canvas.ambientLight(0, huge, 0)
+            lights = canvas.activeLights.map(\.colorAndKind)
+            canvas.ambient(huge, huge, huge)
+            let ambient = canvas.style.material.ambient
+            fills.append(.linear(red: ambient.x, green: ambient.y, blue: ambient.z))
+            canvas.background(huge)
+        }
+        for color in fills { #expect(color.isFinite, "\(color)") }
+        #expect(lights.count == 2, "光が置かれなかった")
+        for light in lights {
+            #expect(light.x.isFinite && light.y.isFinite && light.z.isFinite, "光の色 \(light)")
+        }
+        #expect(
+            try canvas.target.readPixels()[8, 8].isFinite, "下地が有限でない")
+        for key in Port.allCases.map(\.key) where key != .badPlacement {
+            #expect(!canvas.warnings.hasWarned(key), "\(key) で断った")
+        }
+    }
+
+    /// [#1706] の反証 7。置き場所の注意は、原因が塗りなら塗りを、置き場所の数なら位置を名指す。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    @Test("置き場所の注意は、原因を名指す")
+    func placementNoticeNamesTheCause() throws {
+        func message(_ placement: Placement) throws -> String {
+            let canvas = try makeCanvas()
+            let tile = canvas.createShape { canvas.rect(0, 0, 4, 4) }
+            try canvas.draw { canvas.shape(tile, at: [placement]) }
+            return try #require(canvas.warnings.message(for: .badPlacement))
+        }
+        let broken = LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1)
+        let fill = try message(Placement(x: 8, y: 8, fill: broken))
+        #expect(fill.contains("fill"), "\(fill)")
+        #expect(!fill.contains("position"), "\(fill)")
+        let position = try message(Placement(x: .nan))
+        #expect(position.contains("position"), "\(position)")
+        #expect(!position.contains("fill"), "\(position)")
     }
 
     /// 完了条件 3。有限の色は今までどおり受け取り、何も言わない。
