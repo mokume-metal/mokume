@@ -176,8 +176,20 @@ extension Canvas {
         guard !shape.isEmpty else { return }
         var usable: [Placement] = []
         usable.reserveCapacity(placements.count)
-        for placement in placements where placement.isUsable { usable.append(placement) }
-        if usable.count != placements.count { warnBadPlacement() }
+        // 置けない置き場所は、何が数でなかったかを覚えて注意で名指す (#1706 の反証 7)
+        var badGeometry = false
+        var badFill = false
+        for placement in placements {
+            if placement.isUsable {
+                usable.append(placement)
+            } else {
+                badGeometry = badGeometry || !placement.hasFiniteGeometry
+                badFill = badFill || !placement.hasFiniteFill
+            }
+        }
+        if usable.count != placements.count {
+            warnBadPlacement(geometry: badGeometry, fill: badFill)
+        }
         guard !usable.isEmpty else { return }
 
         replaying(shape.runs) { run in
@@ -527,11 +539,17 @@ extension Canvas {
         return instanceStart
     }
 
-    /// 置けない置き場所を、初回だけ知らせる。
-    private func warnBadPlacement() {
+    /// 置けない置き場所を、初回だけ知らせる。**原因を名指す** — 位置・倍率・回転か、塗り
+    /// (`Placement.fill`) か ([#1706] の反証 7)。鍵は 1 つで、初めに言った文面が残る。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    private func warnBadPlacement(geometry: Bool, fill: Bool) {
+        let parts = [
+            geometry ? "position, scale or rotation" : nil, fill ? "fill" : nil,
+        ].compactMap { $0 }.joined(separator: " or ")
         warnOnce(
             .badPlacement,
-            "shape(at:): some positions held a value that is not a number, or an infinite one, so "
-                + "those were not placed")
+            "shape(at:): some placements held a value that is not a number, or an infinite one, "
+                + "in their \(parts), so those were not placed")
     }
 }

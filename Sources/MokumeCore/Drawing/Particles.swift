@@ -539,8 +539,10 @@ public final class Particles {
         if !finite(life) { return ("life", "\(life)") }
         if !finite(size) { return ("size", "\(size)") }
         let paint = color ?? fill
-        let channels = [paint.red, paint.green, paint.blue, paint.alpha]
-        if !channels.allSatisfy(\.isFinite) {
+        // 色の値の受け口と同じ述語で見る (#1706 の反証 8)。塗りは `fill(_:)` が断るので公開の道
+        // からは数でなくならないが、`color:` は利用者が直に渡すのでここが受け口である
+        if !paint.isFinite {
+            let channels = [paint.red, paint.green, paint.blue, paint.alpha]
             let name = color == nil ? "the fill (color was omitted)" : "color"
             return (name, "(\(channels.map { "\($0)" }.joined(separator: ", ")))")
         }

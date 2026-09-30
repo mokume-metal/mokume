@@ -1780,6 +1780,15 @@ public final class Canvas {
     // MARK: - 図形
 
     public func background(_ color: LinearRGBA) {
+        paintBackground(color.isFinite ? color : nil)
+    }
+
+    /// 面を塗り直す。**`nil` は受け取れない色** (数でない成分・無限の成分) で、区間の外と形の
+    /// 組み立ての中の断りを先に言ってから断る ([#1706] の反証 2)。数の形 (`background(r, g, b)`) も
+    /// 色の値の形もここを通るので、断る順は形に依らない。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    func paintBackground(_ color: LinearRGBA?) {
         // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])。
         //
         // **見るのは形の組み立てを含まない述語** (``writesToSurface``)。塗り直しは形に焼き付かず、
@@ -1794,6 +1803,8 @@ public final class Canvas {
         //
         // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         guard !recordingShape else { return warnInsideShape(.background) }
+        // 数でない成分・無限の成分は、溜めたものを捨てる前に断る (#1706)
+        guard let color else { return warnNotANumberColor(.background) }
         discardPending()
         pendingBackground = color
     }

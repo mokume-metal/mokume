@@ -91,7 +91,11 @@ extension Canvas {
     public func imageMode(_ mode: ShapeMode) { style.imageMode = mode }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
-    public func tint(_ color: LinearRGBA) { style.tint = color }
+    public func tint(_ color: LinearRGBA) {
+        // 数でない成分・無限の成分は、色合いを変えずに断る (#1706)
+        guard color.isFinite else { return warnNotANumberColor(.tint) }
+        style.tint = color
+    }
 
     public func noTint() { style.tint = .linear(red: 1, green: 1, blue: 1) }
 

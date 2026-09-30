@@ -239,7 +239,9 @@ struct ParticleInputTests {
         let dust = try canvas.makeParticles(count: 4)
         var randomness = Randomness(seed: 1623)
         try canvas.draw {
-            canvas.fill(LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1))
+            // 塗りの口は数でない色を断るようになった (#1706) ので、状態へ直に置く。粒の受け口の
+            // 検めは、塗りがどの道から数でなくなっても効く守りとして残っている
+            canvas.style.fill = LinearRGBA(premultipliedRed: .nan, green: 0, blue: 0, alpha: 1)
             canvas.emit(
                 dust, from: .point(32, 32), rate: 60, speed: 0...0, angle: 0...0, life: 1...1,
                 size: 1...1, color: nil, using: &randomness)

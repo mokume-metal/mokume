@@ -117,6 +117,26 @@ public struct LinearRGBA: Equatable, Sendable {
         LinearRGBA(premultipliedRed: red, green: green, blue: blue, alpha: 1)
     }
 
+    /// 4 成分 (赤・緑・青・不透明度) がどれも有限か。
+    ///
+    /// 色の値を受ける口は、これが偽の色を断る ([#1706])。成分ごとに見る — SIMD の `min` /
+    /// `max` でまとめて見ると、数でない成分が飛ばされて通ってしまう。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    var isFinite: Bool {
+        hasFiniteRGB && alpha.isFinite
+    }
+
+    /// 赤・緑・青がどれも有限か。**不透明度は見ない。**
+    ///
+    /// 不透明度を使わない受け口 (光・材質・周囲) はこちらで見る ([#1706] の反証 3)。どれも乗算済みの
+    /// 3 成分だけを読むので、不透明度で断ると絵に効かない成分のために置かなくなる。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    var hasFiniteRGB: Bool {
+        red.isFinite && green.isFinite && blue.isFinite
+    }
+
     /// 完全に透明な色。
     public static let transparent = LinearRGBA(
         premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
