@@ -854,7 +854,12 @@ public final class Canvas {
     /// 越えたかは本体のフレームの番号 (``Timebase/frame``) で見分ける (``leftOpenAcrossBoundary``
     /// と同じ見方)。**時刻の置き場の持ち主 (本体・直に使う面) では立たない** — 持ち主の境目は
     /// 自分の次のフレームの頭そのもので、そこで閉じ忘れを捨てる。
-    private var isFrameLeftOpenPastTheMainFrame: Bool {
+    ///
+    /// 面をまたぐ計算の順 (``submitEarlierComputations(before:)``) も読む。捨てるはずの頼みを、
+    /// ぶつかる頼みが復活させないため ([#1870])。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    var isFrameLeftOpenPastTheMainFrame: Bool {
         guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self else { return false }
         return opened != timebase.frame
     }

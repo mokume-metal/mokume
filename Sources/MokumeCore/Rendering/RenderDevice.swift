@@ -145,6 +145,11 @@ import MokumeDiagnostics
     /// CPU が書いて、まだ GPU 側へ届けていない数の並びと画像 (#749)。届けるのは描き切り。
     let pendingUploads = PendingUploads()
 
+    /// 未投入の計算を持ちうる面。**面をまたいで、計算を頼んだ順に効かせるための名簿**
+    /// (`PendingComputations`・#1870)。溜めは面ごと、描き切りも面ごとなので、別の面で
+    /// 後から頼んだ計算が先に走らないよう、頼む側が相手を引く。
+    let pendingComputationHolders = PendingComputations()
+
     /// シェーダの原文を読み、組み立てる係。
     ///
     /// **転送メソッドを置かない。** ここに `makeShapeLibrary` などを残すと「組み立てには

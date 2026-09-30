@@ -7,7 +7,10 @@ import MokumeDiagnostics
 
 /// 1 回ぶんの計算の頼み。
 ///
-/// 頼まれた順に溜め、描く前にまとめて流す。
+/// 頼まれた順に溜め、描く前にまとめて流す。溜めは面ごとで、別の面が先に頼んだ溜めとぶつかる
+/// 頼みが来たときは、頼まれる前にその面の溜めを先に流す ([#1870])。
+///
+/// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
 struct ComputeDispatch {
     let computation: Computation
     /// 走らせる格子。1 次元なら高さが 1。
@@ -112,13 +115,32 @@ extension Canvas {
         guard buffers.count <= ComputePipeline.maximumBufferCount else {
             return warnTooManyBuffers(buffers.count)
         }
-        pendingComputations.append(
-            ComputeDispatch(
-                computation: computation, width: width, height: height,
-                buffers: buffers, writeCount: writes.count,
-                // **いまの値をここで写す。** 流す段まで読みに行くと、その後の
-                // `Computation/set(_:_:)` に引きずられる (#932)
-                values: computation.packedValues))
+        let dispatch = ComputeDispatch(
+            computation: computation, width: width, height: height,
+            buffers: buffers, writeCount: writes.count,
+            // **いまの値をここで写す。** 流す段まで読みに行くと、その後の
+            // `Computation/set(_:_:)` に引きずられる (#932)
+            values: computation.packedValues)
+        // **頼んだ順に効かせる。** 溜めは面ごと・描き切りも面ごとなので、別の面が先に頼んで
+        // 溜めているものは、放っておくとこの頼みより後に走る (#1870)。ぶつかるものは先に投入する
+        submitEarlierComputations(
+            before: ComputeAccess(reads: dispatch.reads, writes: dispatch.writes))
+        pendingComputations.append(dispatch)
+        gpu.pendingComputationHolders.enqueue(self)
+    }
+
+    /// 別の面が先に頼んで、まだ投入していない計算のうち、`asked` より先に走らねばならないものを、
+    /// いま投入する ([#1870])。
+    ///
+    /// **順序を要するのは、読み書きが重なるときだけ**で、規則は口の切れ目 (``groups(of:)``) と
+    /// 同じ ``ComputeAccess`` である。重ならなければ何もしない — 単一の面や、ぶつからない複数の面は、
+    /// 今までどおり各面の描き切りで流れる。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    private func submitEarlierComputations(before asked: ComputeAccess<ObjectIdentifier>) {
+        for holder in gpu.pendingComputationHolders.holders(mustPrecede: asked, except: self) {
+            holder.submitPendingComputations()
+        }
     }
 
     // MARK: - 流す
@@ -139,7 +161,7 @@ extension Canvas {
         // 組み立てが投げるとコマンドは捨てられるので、ここで降ろすと頼みが消える — 途中の
         // 描き切り (`loadPixels()`) が一時的に失敗しただけなら、フレーム末尾の描き切りが
         // 同じものを流し直す約束である。降ろすのは描き切りでは投入後の `discardFrame()`、
-        // 読み戻しでは `runPendingComputations()` が持つ
+        // 読み戻しと面をまたぐ順の早い投入では `submitPendingComputationsAndUploads()` が持つ
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         let pipeline = try computePipeline()
@@ -247,6 +269,9 @@ extension Canvas {
     ///
     /// [#389]: https://github.com/mokume-metal/mokume/issues/389
     public func read(_ numbers: Numbers) -> [Float] {
+        // **別の面が先に頼んだ計算が書く並びなら、それも先に走らせる** (#1870)。読むのは
+        // 呼んだ時点の結果で、どの面で頼んだかは関わらない
+        submitEarlierComputations(before: ComputeAccess(reads: [ObjectIdentifier(numbers)]))
         runPendingComputations()
         // **読む直前に待つ。** 描き切りは投入しても待たない (#727) ので、溜め場が空でも
         // 前のフレームの計算がまだ走っているかもしれない。全部終わっていれば何もしない
@@ -278,28 +303,63 @@ extension Canvas {
                     + "was called off")
         else { return }
         do {
-            let uploaded = try gpu.withCommands {
-                commands throws(RenderFailure) -> EncodedUploads in
-                // **控えが先、計算が後。** 計算は書いた値を読む
-                let uploaded = try encodeUploads(into: commands)
-                try encodeComputations(into: commands)
-                gpu.commit(commands, retaining: imageInputPass.map { [$0] } ?? [])
-                return uploaded
-            }
-            // **いまのスロットを読む投入として記録する。** 描き切りと同じ置き場へ書いたので、
-            // 記録しないと、下の待ちが期限切れになったときにそのスロットが「読み終わった」
-            // ことになってしまう (#754)
-            frameRing.noteSubmission()
-            gpu.pendingUploads.markUploaded(uploaded)
-            // **流したものは溜め場から降ろす** — 降ろさないとフレーム末尾の描き切りが同じ計算を
-            // もう一度走らせる。**待つより先に降ろす**: 待ちが期限切れになっても投入は済んで
-            // いるので、残すと 2 度走る (#1183)
-            pendingComputations.removeAll(keepingCapacity: true)
+            try submitPendingComputationsAndUploads()
             try gpu.settle()
         } catch {
             // 読み取りは落とさない (ADR-0020 決定 5)。次のフレームの描き切りが同じ理由で
             // 失敗し、そちらから外へ出る
             Diagnostics.warn("Could not wait for the computation to finish: \(error.headline)")
+        }
+    }
+
+    /// 溜まっている計算と控えを 1 本のコマンドにして投入する。**待たない。**
+    ///
+    /// 呼んでよいのは、値の区画と控えの置き場のいまのスロットを読む投入が終わっているときだけ
+    /// (読み戻しなら全完了を待った後・面をまたぐ順なら環を進めた後)。
+    private func submitPendingComputationsAndUploads() throws(RenderFailure) {
+        let uploaded = try gpu.withCommands {
+            commands throws(RenderFailure) -> EncodedUploads in
+            // **控えが先、計算が後。** 計算は書いた値を読む
+            let uploaded = try encodeUploads(into: commands)
+            try encodeComputations(into: commands)
+            gpu.commit(commands, retaining: imageInputPass.map { [$0] } ?? [])
+            return uploaded
+        }
+        // **いまのスロットを読む投入として記録する。** 描き切りと同じ置き場へ書いたので、
+        // 記録しないと、下の待ちが期限切れになったときにそのスロットが「読み終わった」
+        // ことになってしまう (#754)
+        frameRing.noteSubmission()
+        gpu.pendingUploads.markUploaded(uploaded)
+        // **流したものは溜め場から降ろす** — 降ろさないとフレーム末尾の描き切りが同じ計算を
+        // もう一度走らせる。**待つより先に降ろす**: 待ちが期限切れになっても投入は済んで
+        // いるので、残すと 2 度走る (#1183)
+        pendingComputations.removeAll(keepingCapacity: true)
+    }
+
+    // MARK: - 面をまたいで、頼んだ順に効かせる
+
+    /// 溜まっている計算を、**描き切りを待たずに**投入する。別の面が、これとぶつかる計算を
+    /// 頼もうとしたとき、先に頼まれていたこちらを先に走らせるために呼ばれる ([#1870])。
+    ///
+    /// ``runPendingComputations()`` との違いは待ち方だけである。あちらは読み戻すために全完了を
+    /// 待つが、こちらは頼むだけの口なので待たない — 値の区画と控えの置き場は、描き切りと同じく
+    /// 環を進めて、そのスロットを最後に読んだ投入だけを待つ。**描き切りではないので、パス・影・
+    /// 描き切った回数には触れない** (途中の描き切りが持つ既知の破れ #1656・#1657 を持ち込まない)。
+    /// 環はこの後の描き切りがもう一度進める。
+    ///
+    /// **失敗は絵を落とさず、警告して溜めたままにする。** 頼んだ順は保てないが、この面の描き切りが
+    /// 同じものを流し直す。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    func submitPendingComputations() {
+        guard !pendingComputations.isEmpty else { return }
+        do {
+            try frameRing.advance()
+            try submitPendingComputationsAndUploads()
+        } catch {
+            Diagnostics.warn(
+                "Could not send the computations asked for on this surface ahead of a later "
+                    + "request from another surface, so they may run after it: \(error.headline)")
         }
     }
 
@@ -328,19 +388,15 @@ extension Canvas {
     ) -> [Range<Int>] {
         var groups: [Range<Int>] = []
         var start = 0
-        var written: Set<ID> = []
-        var read: Set<ID> = []
+        var current = ComputeAccess<ID>()
         for (index, access) in accesses.enumerated() {
-            let touched = Set(access.reads).union(access.writes)
-            let writes = Set(access.writes)
-            if !touched.isDisjoint(with: written) || !writes.isDisjoint(with: read) {
+            let asked = ComputeAccess(reads: access.reads, writes: access.writes)
+            if current.mustPrecede(asked) {
                 groups.append(start..<index)
                 start = index
-                written = []
-                read = []
+                current = ComputeAccess()
             }
-            written.formUnion(writes)
-            read.formUnion(access.reads)
+            current.formUnion(asked)
         }
         if start < accesses.count { groups.append(start..<accesses.count) }
         return groups
@@ -369,5 +425,20 @@ extension Canvas {
         guard currentNumbers != nil else { return }
         closeBatch()
         currentNumbers = nil
+    }
+}
+
+// 面をまたいで、計算を頼んだ順に効かせるときの、登録簿 (``PendingComputations``) への答え。
+extension Canvas: PendingComputationHolder {
+    var pendingAccess: ComputeAccess<ObjectIdentifier> {
+        // 描いていない間の溜めと、閉じ忘れたまま本体のフレームを越えた描き場所の溜めは、順を守る
+        // 相手ではない。後者は次の `beginDraw()` が描かずに捨てるもの (#1622) で、ぶつかる頼みが
+        // 来ても復活させて走らせない
+        guard isDrawing, !isFrameLeftOpenPastTheMainFrame else { return ComputeAccess() }
+        var access = ComputeAccess<ObjectIdentifier>()
+        for dispatch in pendingComputations {
+            access.formUnion(ComputeAccess(reads: dispatch.reads, writes: dispatch.writes))
+        }
+        return access
     }
 }
