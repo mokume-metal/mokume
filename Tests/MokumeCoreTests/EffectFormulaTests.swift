@@ -531,6 +531,86 @@ struct EffectFormulaTests {
         #expect(edges > 0, "ずらした先が地に掛かる縁が無い — 絵の選び方の前提が崩れている")
     }
 
+    /// 色ずれで読む 3 枚が、指定した縦の帯に落ちる絵。幅 500・高さ 33 の中央の行 (y = 16) では
+    /// 縦のずれが 0 で、x = 450 の画素は赤を x ≈ 458.5、青を x ≈ 442.5 で読む (ずれ幅 ≈ 8.02 画素)。
+    /// どちらも読む 2 画素が同じ帯の中に収まるよう、帯は幅を取ってある。
+    private func fringeProbe(
+        red: LinearRGBA?, blue: LinearRGBA?, on canvas: Canvas
+    ) throws -> LinearRGBA {
+        try canvas.draw {
+            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.noStroke()
+            if let red {
+                canvas.fill(red)
+                canvas.rect(455, 0, 15, 33)
+            }
+            if let blue {
+                canvas.fill(blue)
+                canvas.rect(430, 0, 16, 33)
+            }
+            canvas.effects([.fringe(amount: 1)])
+        }
+        return try canvas.target.readPixels()[450, 16]
+    }
+
+    /// #1817 の反証 1。**1 を越える光が透明と接する縁でも、乗算を戻した色は、読んだ先の乗算を
+    /// 戻した値を越えない。** 赤を読む先が色 4 (不透明度 1) で、中心と青を読む先が透明なら、
+    /// 不透明度は 1/3 で、赤は 4/3 (戻して 4) までである。越えていた量を不透明度に足すだけの
+    /// 締めでは 1/3 + 3 = 3.33 (戻して 10) まで通り、乗算を戻して使う経路 (出力段の露出・
+    /// 書き出し・下地を戻して混ぜる混ぜ方) で、入りに無い明るさになった。
+    @Test("色ずれは、1 を越える光が透明と接する縁でも、乗算を戻した色を読んだ先より明るくしない")
+    func fringeKeepsTheStraightColourWithinWhatItRead() throws {
+        let canvas = try makeCanvas(width: 500, height: 33)
+        let pixel = try fringeProbe(
+            red: LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1), blue: nil, on: canvas)
+        // 読む先が本当に帯に落ちている (不透明度は 1/3)
+        #expect(abs(pixel.alpha - 1.0 / 3) < 0.01, "不透明度が \(pixel.alpha) — 絵の選び方の前提が崩れている")
+        #expect(pixel.red / pixel.alpha <= 4 * (1 + 1e-3), "乗算を戻した赤が \(pixel.red / pixel.alpha) で、読んだ 4 を越えた")
+        #expect(pixel.red / pixel.alpha > 3.9, "越えていた光を運んでいない: \(pixel.red / pixel.alpha)")
+    }
+
+    /// #1817 の反証 2。**成分ごとの上限は、その成分を取った 1 枚だけで決める。** 赤を読む先が
+    /// 白 (範囲の内) なら、青を読む先が 1 を越える光でも、赤は不透明度を越えない。3 枚の越えの
+    /// 最大で上限を取ると、青の越えが赤の上限を持ち上げ、赤 1 が不透明度 2/3 を越えて残った。
+    @Test("色ずれは、ほかの成分を取った 1 枚の越えで、範囲の内の成分の上限を持ち上げない")
+    func fringeLimitsEachChannelByTheSampleItTook() throws {
+        let canvas = try makeCanvas(width: 500, height: 33)
+        let pixel = try fringeProbe(
+            red: .linear(red: 1, green: 1, blue: 1),
+            blue: LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1), on: canvas)
+        #expect(abs(pixel.alpha - 2.0 / 3) < 0.01, "不透明度が \(pixel.alpha) — 絵の選び方の前提が崩れている")
+        #expect(pixel.red <= pixel.alpha, "赤が \(pixel.red) で、不透明度 \(pixel.alpha) を越えた")
+        // 青は越えていた光を運ぶ (読んだ先の 4 まで)
+        #expect(pixel.blue / pixel.alpha > 3.9 && pixel.blue / pixel.alpha <= 4 * (1 + 1e-3))
+    }
+
+    /// #1817 の反証 3。**色調整は、入りに元からある負の値を 0 へ切らない** — 作業空間は範囲の
+    /// 外の値を捨てない ([ADR-0011] 決定 1)。0 で止めるのは、範囲の内の値を調整が 0 より下へ
+    /// 押し出したときだけで (既存の「引いて 0 を下回った成分は 0 で止める」)、入りが負なら
+    /// その値までである。直す前は、どの段も 0 へ切っていた。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    @Test(
+        "色調整は、入りに元からある負の値を 0 へ切らない",
+        arguments: [
+            Adjustment(
+                brightness: 0.125, Premultiplied(-0.25, 0.25, 0.5),
+                "明るさを足しても負のままの成分は、足した値のまま"),
+            Adjustment(
+                contrast: 1, Premultiplied(-0.25, 0.25, 0.5),
+                "対比でさらに下へ押された負の成分は、入りの値で止まる"),
+        ])
+    func adjustCarriesNegativeValuesItReceived(_ adjustment: Adjustment) throws {
+        let canvas = try makeCanvas()
+        let pixels = try uniform(adjustment.color, [adjustment.effect], on: canvas)
+        let expected: Premultiplied =
+            adjustment.brightness != 0
+            ? Premultiplied(-0.125, 0.375, 0.625)
+            : Premultiplied(-0.25, 0, 0.5)
+        try Self.requireRepresentable(expected.channels)
+        Self.expectBracketed(pixels[8, 8], expected, slack: 1e-6, adjustment.testDescription)
+    }
+
     /// 1 画素ごとに色の替わる縦縞。**わずかでもずらして読めば、隣の縞の色が混ざる。**
     private func stripes(on canvas: Canvas, _ effects: [Effect]) throws -> PixelBuffer {
         try canvas.draw {

@@ -286,6 +286,36 @@ struct UpscaleTests {
         #expect(pixels[64, 48].red > 3.9)
     }
 
+    /// #1817 の反証 1 (拡大の段)。**乗算を戻した色は、読んだ周りの乗算を戻した値を越えない。**
+    /// 白・色 4 の光・透明が横に並ぶと、Catmull-Rom の負の重みが白を引き、色と不透明度が同じ
+    /// だけ下がる。色は 4 近くのまま不透明度だけが下がるので、越えていた量を不透明度に足すだけの
+    /// 締めでは、戻した色が 4 を越える (手計算で 4.26 — 重み (−0.07, 0.87, 0.23, −0.02) の所)。
+    /// 光の帯は描く画素でちょうど 1 画素にする — 読む 4 画素が白・光・透明・透明と並ぶため。
+    @Test("白と 1 を越える光と透明が並ぶ縁でも、拡大は乗算を戻した色を読んだ周りより明るくしない", arguments: [Float(0.5), 0.25])
+    func straightColourStaysWithinItsNeighbourhood(density: Float) throws {
+        let canvas = try makeCanvas(density: density)
+        try canvas.draw {
+            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.rect(16, 0, 24, 96)
+            canvas.fill(LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1))
+            canvas.rect(40, 0, 1 / density, 96)
+        }
+        let pixels = canvas.output.pixels
+        var brightest: Float = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                let c = pixels[x, y]
+                guard c.alpha > 0.05 else { continue }
+                brightest = max(brightest, c.red / c.alpha, c.green / c.alpha, c.blue / c.alpha)
+            }
+        }
+        #expect(brightest <= 4 * (1 + 2e-3), "乗算を戻した色が \(brightest) で、読んだ 4 を越えた (\(density))")
+        // 越えていた分は運ぶ (1 を越える光が出りに残っている)
+        #expect(brightest > 2, "越えていた光を運んでいない: \(brightest) (\(density))")
+    }
+
     /// 引いて 0 を下回った値は、作業空間に残る (``BlendMode/subtract``・ADR-0011 決定 1)。
     /// 畳むのは出力段だけなので、**拡大の段も 0 へ締めない** — 細かさ 1 (段が立たない) と
     /// 同じ値を読み戻せる。
