@@ -199,7 +199,7 @@ EOF
   if [ "${3:-}" = cwd ]; then
     cat <<'EOF'
 触れていないと分かっているなら、PR を作るリポジトリの checkout を cwd にしてから
-(cd は別の呼び出しで打つ)、cd・GIT_ で始まる変数・GH_REPO の文を挟まずに打ち直して
+(cd は別の呼び出しで打つ)、cd・GIT_DIR などの変数・GH_REPO の文を挟まずに打ち直して
 ください (cwd の差分が読めれば判定できます)。
 EOF
   elif [ -n "${2:-}" ]; then

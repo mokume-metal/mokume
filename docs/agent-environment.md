@@ -49,9 +49,11 @@ unset は名義と宛先の判定に渡す (#1729)。token は、発行の成功
 済んでいるときだけ installation token と見立てる。並びは bash の結合の順 (パイプと
 `{ …; }`・`( … )` などの複合コマンドは `&&` より強い) で読み、置換の中の発行は置換の終了コードが
 発行の成否を伝えるときだけ数える。`gh` より前に文としての `cd`・`pushd`・`popd`、
-`GH_REPO` を変える文 (`export GH_REPO=`・`unset GH_REPO`・`read GH_REPO` など)、`GIT_` で始まる
-変数 (`GIT_DIR` など) があれば、宛先は値を追わずに「決められない」として止める側へ倒す
-(`builtin` / `command` の後ろも読む)。逃げ道は `-R owner/repo` の明示である (#1823)。
+`GH_REPO` を変える文 (`export GH_REPO=`・`unset GH_REPO`・`read GH_REPO`・`for GH_REPO in …` など)、
+git がリポジトリを探し remote を読むのに効く変数 (`GIT_DIR`・`GIT_COMMON_DIR`・`GIT_CONFIG_GLOBAL`
+など) があれば、宛先は値を追わずに「決められない」として止める側へ倒す (`builtin` / `command` の
+後ろも読む。ループの本体では gh の後ろの文も効くものとして読む)。値が実行時に決まる `-R "$X"` も
+同じく止める側である。逃げ道は `-R owner/repo` の明示である (#1823)。
 `sudo` など別のコマンドを起動するコマンドの後ろの `gh` と、`$GH` のように実行時に
 決まる語は追わない (範囲の線は `scripts/guard-lib.sh` の冒頭)。
 別の版では読込と実際の発火を確かめる。

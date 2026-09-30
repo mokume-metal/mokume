@@ -520,7 +520,24 @@ class GuardTest(unittest.TestCase):
         "GIT_COMMON_DIR={m}/.git {gh}",
         "printf -v GH_REPO %s mokume-metal/mokume && {gh}",
         "read -r GH_REPO <<< mokume-metal/mokume && {gh}",
+        # 反証 2 回目の 2-1・2-3・補足の chdir
+        "for GH_REPO in mokume-metal/mokume; do {gh}; done",
+        "for i in 1 2; do {gh}; cd {m}; done",
+        "chdir {m} && {gh}",
     )
+
+    def test_repo_option_that_is_decided_at_run_time_denied(self):
+        """反証 2-2 — -R の値が実行時に決まるなら、前置の GH_REPO="$X" と同じく止める側。"""
+        for port in self.PORTS:
+            with self.subTest(port=port):
+                self.assert_denied(f'O=mokume-metal; R=mokume; {port} -R "$O/$R"')
+        self.assert_passed('gh issue comment 1 --body x -R "other/repo"')
+
+    def test_git_variables_that_do_not_move_the_destination_pass(self):
+        """反証 2-5 — 宛先に効かない git の変数は、他リポ宛ての判定を変えない (main の判定)。"""
+        there = self.other_repo_dir()
+        self.assert_passed("GIT_PAGER=cat gh issue comment 1 --body x", cwd=there)
+        self.assert_passed("export GIT_TERMINAL_PROMPT=0 && gh pr comment 1 --body x", cwd=there)
 
     # mokume の cwd で、継いだ他リポの GH_REPO を消す文 (#1836 の退行)
     UNSET_FORMS = ("unset GH_REPO && {gh}", "export -n GH_REPO && {gh}")

@@ -42,16 +42,23 @@
 #     bash の builtin / command は増やせない語なので、その後ろも文として読む (#1823 の反証 #1。
 #     command -v / -V は引くだけなので読まない)
 #   - 実行時に決まる語 (`$GH …`・`$(which gh) …`)。値を読むのは推測になる
-#   - 同じコマンドの中で**文として**宛先を変える形 (cd・pushd・popd・GH_REPO や GIT_ で
-#     始まる変数を変える文) の**値**。値は追わず、あれば宛先を「決められない」として止める側へ
-#     倒す (#1823。invocation_targets_other_repo の説明)。GH_TOKEN を文として変える形 (発行・
-#     export・unset・再代入) は読む (#1729)
-#   - 宛先に効きうるが、上の名前と文に当たらないもの (source・eval・シェル関数・
+#   - 同じコマンドの中で**文として**宛先を変える形 (cd・chdir・pushd・popd・GH_REPO や、git が
+#     リポジトリを探し remote を読むのに効く変数を変える文・for / select のループ変数) の**値**。
+#     値は追わず、あれば宛先を「決められない」として止める側へ倒す (#1823。
+#     invocation_targets_other_repo の説明)。GH_TOKEN を文として変える形 (発行・export・unset・
+#     再代入・名前で書く builtin) は読む (#1729・#1823)。ループの本体では、gh の後ろの文も
+#     次の周の gh に効くものとして読む
+#   - 宛先に効きうるが、上の名前と文に当たらないもの (source・eval・trap・シェル関数・
 #     `git remote set-url`・`gh repo set-default`・HOME / XDG_CONFIG_HOME の前置 …)。
 #     列挙を「宛先に効かないと分かっている文」の側へ裏返すかは #1880 で決める
 #   - GH_TOKEN を変える文のうち、サブシェル・$( … )・パイプラインの要素の中のもの (外へは
-#     効かないので読まない。中の発行・export も外の gh へは運ばない) と、declare -x /
-#     typeset -x / declare +x / readonly のもの
+#     効かないので読まない。中の発行・export も外の gh へは運ばない) と、パラメータ展開の
+#     中の代入 (`: ${GH_TOKEN:=…}` — 発行した値があれば何も変えない)
+#   - 同じコマンドの中で cd した先が、同じ別のリポジトリの中であること
+#     (`cd <other>/sub; gh …` も止まる。値を追わない設計の代償で、逃げ道は -R・#1823)
+#
+# ガードは bash の文法で読む。Bash ツールのシェルが zsh でも、zsh だけの cd の綴り (chdir) は
+# 止める側に読む
 #
 # このリポジトリで使う形ではない。
 #
@@ -165,7 +172,8 @@ is_help_request() { # $1=コマンド
 #                 (前置が無く、gh より前の文で GH_REPO を代入・export・unset・read・
 #                 printf -v … したときも `?`)
 #   3. chdir      宛先を cwd から決められないなら 1。env -C と、gh より前の文としての
-#                 cd・pushd・popd と、GIT_ で始まる変数 (前置・文) (#1823)
+#                 cd・chdir・pushd・popd と、git がリポジトリを探し remote を読むのに効く変数
+#                 (GITV・前置・文)。ループの本体で gh の後ろに置いたものも (#1823)
 #   4. 置き場     top か sub ($( … ) やバッククォートの中で実行される)
 #   5. 呼び出し   `gh …` から始まる断片。引用の中の空白・改行は \002 に伏せてある
 #
@@ -248,9 +256,11 @@ gh_invocations() { # $1=コマンド
       #
       # パイプライン (a | b) は && より強く結合する 1 つの段で、要素はどれも子で走るので、
       # 中で立てた事実は外へ出さない。! は段の成否を裏返すので、成功の事実を捨てる。
-      # 複合コマンド ({ … }・if …) も 1 つの段で、中は入口の事実 (FE0) から読む。中で
-      # 立てた事実は外へ出さない (止める側)。if の条件で立てた事実も本体へ運ばない —
-      # 本体が条件の成功のときだけ走ることは読まない (#1823 の D の 19 を止める側に置く)
+      # 複合コマンド ({ … }・if …) も 1 つの段で、中は入口の事実 (FE0) から読む。{ … } は
+      # 今のシェルで走り、終了コードは最後に走った並びのものなので、その並びの事実を外の段へ
+      # 運ぶ (反証 2-6)。if とループの中で立てた事実は外へ出さない (止める側)。if の条件で
+      # 立てた事実も本体へ運ばない — 本体が条件の成功のときだけ走ることは読まない (#1823 の
+      # D の 19 を止める側に置く)
       function sunion(a, b,   n, t, k) {
         n = split(b, t, " ")
         for (k = 1; k <= n; k++) if (!index(a, " " t[k] " ")) a = a t[k] " "
@@ -263,7 +273,7 @@ gh_invocations() { # $1=コマンド
       }
       function has(a, k) { return index(a, " " k " ") > 0 }
       function newlist(g) {
-        FG[fd] = g; FE[fd] = g; FST[fd] = 0; FOP[fd] = ""
+        FG[fd] = g; FE[fd] = g; FST[fd] = 0; FOP[fd] = ""; FLAST[fd] = 0
         FPEND[fd] = 0; FWANT[fd] = 0; FPIPE[fd] = 0; FNEG[fd] = 0; FPS[fd] = " "; FPA[fd] = " "
       }
       # 段を終える。FPS / FPA はその段で、成功したとき / 走ったときに必ず済む事実
@@ -279,35 +289,85 @@ gh_invocations() { # $1=コマンド
         FST[fd] = 1; FPEND[fd] = 0; FWANT[fd] = 0; FPIPE[fd] = 0; FNEG[fd] = 0; FPS[fd] = " "; FPA[fd] = " "
       }
       # 並びを終える。& で終えた並びは子で走るので、後ろへ何も運ばない
-      function endlist(bg) {
+      # 並びを終える。& で終えた並びは子で走るので、後ろへ何も運ばない。終えた並びの FZ は
+      # FLZ に残す — 枠の終了コードは最後に走った並びのもので、`{ a && b; }` の ; の後ろは空
+      function endlist(bg,   z, g) {
         finpipe()
-        newlist(bg || !FST[fd] ? FG[fd] : sinter(FZ[fd], FN[fd]))
+        if (bg) { g = FG[fd]; z = g }
+        else if (FST[fd]) { z = FZ[fd]; g = sinter(FZ[fd], FN[fd]) }
+        else { g = FG[fd]; z = FLAST[fd] ? FLZ[fd] : g }
+        newlist(g); FLZ[fd] = z; FLAST[fd] = 1
       }
+      # 枠の終了コードが 0 のときに必ず済んでいる事実
+      function lastz() { return FST[fd] ? FZ[fd] : FLAST[fd] ? FLZ[fd] : FG[fd] }
       function andor(op) {
         finpipe()
         if (!FST[fd]) return
         FOP[fd] = op; FE[fd] = (op == "&&") ? FZ[fd] : FN[fd]
       }
-      function openf(k,   e) {
+      # 複合コマンドの枠を開く。loop はループ (while / until / for / select) で、本体の gh の
+      # 行を閉じるまで溜める — 本体の中で gh の後ろに置いた文も、次の周の gh に効く (反証 2-3)
+      function openf(k, loop,   e) {
         FPEND[fd] = 1; FWANT[fd] = 0; e = FE[fd]
-        fd++; FK[fd] = k; FDEP[fd] = depth; FE0[fd] = e; newlist(e)
+        fd++; FK[fd] = k; FDEP[fd] = depth; FE0[fd] = e; newlist(e); FLOOP[fd] = loop
+        if (loop) { LOOPN++; FB0[fd] = NB + 1; FDC0[fd] = DCC[depth]; FDR0[fd] = DRC[depth]; FTK0[fd] = TKC }
       }
       function closef(k) {
         if (fd == 0 || FK[fd] != k || FDEP[fd] != depth) return
-        finpipe(); fd--
+        popcmp()
       }
-      # 入れ子を閉じる前に、その深さで閉じ忘れた複合コマンドの枠を捨てる
-      function dropto() {
-        while (fd > 0 && FDEP[fd] == depth && (FK[fd] == "grp" || FK[fd] == "cmp")) fd--
+      # 複合コマンドの枠を閉じる。{ … } の終了コードは最後の文のものなので、成功したとき・
+      # 走ったときに済む事実を外の段へ運ぶ (反証 2-6)。if とループの事実は運ばない (止める側)。
+      # ループを閉じるときは、本体で宛先・token を変える文があれば、本体の gh の行すべてに
+      # その印を付ける
+      function popcmp(   s, a, k, d, g) {
         finpipe()
+        s = lastz(); a = FST[fd] ? sinter(FZ[fd], FN[fd]) : FG[fd]
+        if (FLOOP[fd]) {
+          d = FDEP[fd]
+          for (k = FB0[fd]; k <= NB; k++) {
+            if (DCC[d] > FDC0[fd]) RC[k] = 1
+            if (DRC[d] > FDR0[fd] && RR[k] == "=") RR[k] = "?"
+            if (TKC > FTK0[fd] && RT[k]) RV[k] = "unknown"
+          }
+          LOOPN--
+        }
+        g = (FK[fd] == "grp"); fd--
+        if (g) { FPS[fd] = sunion(FPS[fd], s); FPA[fd] = sunion(FPA[fd], a) }
+        if (!LOOPN) rows()
+      }
+      # 入れ子を閉じる前に、その深さで閉じ忘れた複合コマンドの枠を閉じる
+      function dropto() {
+        while (fd > 0 && FDEP[fd] == depth && (FK[fd] == "grp" || FK[fd] == "cmp")) popcmp()
+        finpipe()
+      }
+      # gh の行。ループの中では、ループを閉じるまで溜める。inh は token を打つシェルの状態から
+      # 見立てたか (前置で渡した token は、ループの中の文で変わらない)
+      function row(v, r, c, p, f, inh) {
+        NB++; RV[NB] = v; RR[NB] = r; RC[NB] = c; RP[NB] = p; RF[NB] = f; RT[NB] = inh
+        if (!LOOPN) rows()
+      }
+      function rows(   k) {
+        for (k = 1; k <= NB; k++) print RV[k] "\t" RR[k] "\t" RC[k] "\t" RP[k] "\t" RF[k]
+        NB = 0
+      }
+      # 宛先を変える文の印。数 (DCC・DRC) はループの本体で立ったかを見るのに使う
+      function markc() { DC[depth] = 1; DCC[depth]++ }
+      function markr() { DR[depth] = 1; DRC[depth]++ }
+      # for / select のループ変数は、名前で書く文として読む (反証 2-1)
+      function loopvar(name) {
+        if (name !~ /^[A-Za-z_][A-Za-z0-9_]*$/) return
+        destvar(name)
+        if (depth == 0 && name == "GH_TOKEN") { SV[name] = "unknown"; TKC++ }
       }
       # 文の先頭の予約語と、枠を開け閉めする語を読み、残りを返す。builtin / command の後ろも
       # 文として読む (反証 #1)。command -v / -V は引くだけで実行しない
       function structure(f,   w, o) {
         while ((w = word1(f)) != "") {
           if (w == "{") { openf("grp"); f = rest1(f); continue }
-          if (w ~ /^(if|while|until)$/) { openf("cmp"); f = rest1(f); continue }
-          if (w ~ /^(for|select)$/) { openf("cmp"); return "" }
+          if (w == "if") { openf("cmp", 0); f = rest1(f); continue }
+          if (w ~ /^(while|until)$/) { openf("cmp", 1); f = rest1(f); continue }
+          if (w ~ /^(for|select)$/) { openf("cmp", 1); loopvar(word1(rest1(f))); return "" }
           if (w ~ /^(then|do|else|elif)$/) {
             if (FK[fd] == "cmp" && FDEP[fd] == depth) { finpipe(); newlist(FE0[fd]) } else endlist(0)
             f = rest1(f); continue
@@ -366,7 +426,7 @@ gh_invocations() { # $1=コマンド
       # 別の印 (Y) で、見立ては unsafe になる (反証 #5)
       function popsub(   iss, ok) {
         flush("close"); dropto()
-        ok = has(FST[fd] ? FZ[fd] : FG[fd], FSK[fd]); iss = fiss[depth]
+        ok = has(lastz(), FSK[fd]); iss = fiss[depth]
         fd--; depth--
         addw(ok ? "$(" X ")" : iss ? "$(" Y ")" : "$()")
       }
@@ -419,6 +479,7 @@ gh_invocations() { # $1=コマンド
       # 成功の事実 (I<n>) を SK に持つ。gh の段でその事実が済んでいるかは FE で見る。
       # 直書きの ghs_ は発行が失敗しえないので、事実を求めない (SK が空)
       function setvar(name, val, plus, ctx,   v, r) {
+        if (name == "GH_TOKEN") TKC++
         if (plus) { SV[name] = "unknown"; return }
         v = unquote(val)
         if (v == "$(" X ")") {
@@ -438,11 +499,11 @@ gh_invocations() { # $1=コマンド
       # 発行した値 (name) が、いまの段で成功したと確かめられるか
       function landed(name) { return SK[name] == "" || has(FE[fd], SK[name]) }
       # 文として代入・export・unset した名前が、gh の宛先に効くなら印を立てる (#1823)。
-      # git が読むリポジトリ・設定は GIT_ で始まる変数の族で変わる (GIT_DIR・GIT_COMMON_DIR・
-      # GIT_CONFIG_GLOBAL … 反証 #2)
+      # git の変数は、git がリポジトリを探し remote を読むのに効くものだけ (GITV・反証 #2 と
+      # 2-5。GIT_PAGER・GIT_TERMINAL_PROMPT などは宛先に効かない)
       function destvar(name) {
-        if (name == "GH_REPO") DR[depth] = 1
-        if (name ~ /^GIT_/) DC[depth] = 1
+        if (name == "GH_REPO") markr()
+        if (name ~ GITV) markc()
       }
       function shellstate(   s) {
         if (!("GH_TOKEN" in SV)) return "inherit"
@@ -498,7 +559,7 @@ gh_invocations() { # $1=コマンド
             na++; AN[na] = name; AV[na] = val; AP[na] = plus
             if (name == "GH_TOKEN") tok = plus ? "?" : "+" val
             if (name == "GH_REPO") repo = plus ? "?" : "+" val
-            if (name ~ /^GIT_/) chd = 1
+            if (name ~ GITV) chd = 1
             f = rest1(f)
             continue
           }
@@ -552,19 +613,23 @@ gh_invocations() { # $1=コマンド
         if (unquote(w) ~ /^(.*\/)?gh$/) {
           if (DC[depth]) chd = 1
           if (DR[depth] && repo == "=") repo = "?"
-          print verdict(tok) "\t" repo "\t" chd "\t" ((depth > 0) ? "sub" : "top") "\tgh" substr(f, length(w) + 1)
+          row(verdict(tok), repo, chd, (depth > 0) ? "sub" : "top", "gh" substr(f, length(w) + 1), tok == "=")
           return
         }
         # 宛先を変える文は、入れ子の中でも覚える (その入れ子の中の gh に効く・#1823)。
-        # 名前を引数に取って変数へ書く builtin (read・printf -v・mapfile …) も同じ (反証 #3)
+        # 名前を引数に取って変数へ書く builtin (read・printf -v・mapfile …) も同じ (反証 #3)。
+        # chdir は zsh の builtin で、Bash ツールが zsh で走る環境では cd と同じに効く
         w = unquote(w)
-        if (w ~ /^(cd|pushd|popd)$/) DC[depth] = 1
+        if (w ~ /^(cd|chdir|pushd|popd)$/) markc()
         if (w ~ /^(export|unset|declare|typeset|readonly|local|read|printf|mapfile|readarray|getopts|let|wait)$/) {
           r = rest1(f)
           while ((a = word1(r)) != "") {
             r = rest1(r)
             if (a ~ /^-/) continue
             name = unquote(a); sub(/[=[].*/, "", name); destvar(name)
+            # token の側も、名前で GH_TOKEN に書く文は読めない書き換えとして読む (反証 2-4)。
+            # export と unset は下で読む
+            if (depth == 0 && name == "GH_TOKEN" && w !~ /^(export|unset)$/) { SV[name] = "unknown"; TKC++ }
           }
         }
         if (depth != 0) return
@@ -579,7 +644,7 @@ gh_invocations() { # $1=コマンド
             name = unquote(a); sub(/=.*/, "", name)
             if (a ~ /=/) { val = a; sub(/^[^=]*=/, "", val); setvar(name, val, 0, "export") }
             if (name != "GH_TOKEN") continue
-            if (xn) { gx = 0; xg++ } else { gx = 1; ES = sunion(ES, "X" xg); EA = sunion(EA, "X" xg) }
+            if (xn) { gx = 0; xg++; TKC++ } else { gx = 1; ES = sunion(ES, "X" xg); EA = sunion(EA, "X" xg) }
           }
         } else if (w == "unset") {
           r = rest1(f)
@@ -587,7 +652,7 @@ gh_invocations() { # $1=コマンド
             r = rest1(r)
             if (a ~ /^-/) continue
             a = unquote(a)
-            if (a == "GH_TOKEN") { SV[a] = "removed"; gx = 0; xg++ } else delete SV[a]
+            if (a == "GH_TOKEN") { SV[a] = "removed"; gx = 0; xg++; TKC++ } else delete SV[a]
           }
         }
       }
@@ -601,7 +666,11 @@ gh_invocations() { # $1=コマンド
         for (k = 1; k <= length(s); k++) SPD[substr(s, k, 1)] = 1
         depth = 0; ftype[0] = "top"; cw[0] = ""; nw[0] = 0; fiss[0] = 0; nh = 0; gx = 0
         DC[0] = 0; DR[0] = 0; Y = "\004"; ni = 0; xg = 0; nsub = 0; ES = " "; EA = " "
-        fd = 0; FK[0] = "top"; FDEP[0] = 0; newlist(" ")
+        fd = 0; FK[0] = "top"; FDEP[0] = 0; newlist(" "); NB = 0; LOOPN = 0; TKC = 0
+        # git がリポジトリを探し remote を読むのに効く変数 (git(1) の「The Git Repository」の
+        # うちリポジトリの在処と探し方を決めるものと、設定を差し替える GIT_CONFIG の族。
+        # remote.*.url と url.*.insteadOf は設定から読まれる・反証 2-5)
+        GITV = "^GIT_(DIR|COMMON_DIR|WORK_TREE|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|CONFIG.*)$"
       }
       { src = $0 }
       END {
@@ -668,6 +737,9 @@ gh_invocations() { # $1=コマンド
           else { flush("close"); dropto(); fd--; depth-- }
         }
         flush("")
+        # 閉じ忘れた複合コマンドも閉じてから、溜めた行を出す
+        while (fd > 0) popcmp()
+        rows()
       }
     '
 }
@@ -710,6 +782,7 @@ gh_fragment_is() { # $1=断片 $2=サブコマンド正規表現
 #   --repo mokume          … owner を省いた指定。自リポか判定できないので、
 #                            曖昧なものは止める側に倒す
 #   GH_REPO=$X / GH_REPO+= … 値を読めない。同じく止める側
+#   -R "$O/$R"             … 同じく値を読めない (#1823 の反証 2-2)
 #   env -C <dir>           … cwd から宛先を決められない。同じく止める側
 #   cwd が git 管理外 / origin が無い / owner/repo に解けない
 #                          … 宛先を決められない。同じく止める側
@@ -725,10 +798,13 @@ gh_fragment_is() { # $1=断片 $2=サブコマンド正規表現
 # mokume の cwd で継いだ他リポの GH_REPO を `unset GH_REPO` で消した形も素通しした。
 #
 # 印は gh_invocations が gh より前の文から立てる (2 列目の `?` と 3 列目の 1)。立てるのは、
-# cwd を変える文 (cd・pushd・popd)・GIT_ で始まる変数 (gh は git に remote を尋ねるので、
-# git が読むリポジトリと設定を変える GIT_DIR・GIT_COMMON_DIR・GIT_CONFIG_GLOBAL … で宛先が
-# 変わる)・GH_REPO を変える文 (代入・export・export -n・declare / typeset・unset・read・
-# printf -v・mapfile …) である。文の先頭の builtin / command は落として読む。
+# cwd を変える文 (cd・chdir・pushd・popd)・git がリポジトリを探し remote を読むのに効く変数
+# (gh は git に remote を尋ねるので、GIT_DIR・GIT_COMMON_DIR・GIT_WORK_TREE・GIT_CONFIG の族 …
+# で宛先が変わる。GIT_PAGER・GIT_TERMINAL_PROMPT のように効かないものは読まない — 一覧は
+# gh_invocations の GITV)・GH_REPO を変える文 (代入・export・export -n・declare / typeset・
+# unset・read・printf -v・mapfile・for / select のループ変数 …) である。文の先頭の builtin /
+# command は落として読む。ループの本体では、gh の後ろに置いた文も次の周の gh に効くので、
+# 本体の gh すべてに印を付ける。
 # `( … )` と `$( … )` の中の gh には外の文も効き、中の文は外の gh に効かない
 # (x=$(cd <dir> && pwd) && gh … は cwd のまま読む)。逃げ道は -R の明示と前置の GH_REPO= で、
 # この 2 つは印より勝つ (gh の宛先の順と同じ)。差し戻しの文面は -R を案内する。
@@ -745,8 +821,10 @@ invocation_targets_other_repo() { # $1=断片 $2=GH_REPO $3=chdir $4=cwd
       '=') target=${GH_REPO:-} ;;
       '?') return 1 ;;
     esac
-    case "$target" in *'$'* | *'`'*) return 1 ;; esac
   fi
+  # 値が実行時に決まる (-R "$O/$R"・-R "${REPO:-…}"・前置の GH_REPO="$X") なら読めない。
+  # -R も前置と同じく止める側 (反証 2-2)。置換は字句読みで $( … ) の語に置き換わっている
+  case "$target" in *'$'* | *'`'*) return 1 ;; esac
   if [ -n "$target" ]; then
     case "$target" in */*) ;; *) return 1 ;; esac
     [ "$target" != "$base" ]
@@ -770,7 +848,7 @@ other_repo_hint() { # $1=そのコマンドの例 (例: "gh pr view" のよう�
   $1 -R owner/repo …
 
 -R が無いときの宛先は、**フックが受け取ったカレントディレクトリ**のリポジトリとして
-読みます。同じコマンドの中で gh より前に cd・pushd・popd・GIT_ で始まる変数 (GIT_DIR など) や、
+読みます。同じコマンドの中で gh より前に cd・pushd・popd・git のリポジトリを指す変数 (GIT_DIR など) や、
 GH_REPO を変える文 (export GH_REPO=・unset GH_REPO など) があれば、その先は追わずに宛先を決められないものとして
 止めます — 判定を推測に寄せないためです。cd 先のリポジトリ宛てなら -R を付けてください。
 git 管理外・origin が無い・owner を省いた --repo も同じく止める側です。
