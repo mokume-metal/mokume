@@ -1769,6 +1769,12 @@ public final class Canvas {
         //
         // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         guard writesToSurface else { return warnOutsideFrame(.placing) }
+        // **形の組み立ての中では塗り直さない** ([#1588])。塗り直しは形に焼き付く先が無く、通すと
+        // 溜め場を空にして、組み立てが控えた区間を溜め場の外へ追い出す。区間の外なら上の注意を
+        // 先に言う (頂点の仲間と同じ順)
+        //
+        // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        guard !recordingShape else { return warnInsideShape(.background) }
         discardPending()
         pendingBackground = color
     }
@@ -1781,6 +1787,7 @@ public final class Canvas {
     /// 出る、あるいは何も出ない、という形で現れる (#323)。
     func discardPending() {
         _ = sweepPending(emptying: true)
+        pendingDiscards &+= 1
         // 開いている列の種類は溜めたものではなく、次に置くものの向き先である。空かを見る
         // 側 (``hasNothingPending``) は読まない — 形の組み立ては種類を `.solid` のまま抜ける
         openSource = .flat
@@ -1798,6 +1805,15 @@ public final class Canvas {
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
     var hasNothingPending: Bool { pendingAmount == 0 }
+
+    /// 溜め場を捨てた回数 (``discardPending()``)。**形の組み立てが入口と出口で比べる** ([#1588])。
+    ///
+    /// 組み立ては入口で溜め場の長さを控え、出口でそこから先を形として抜く。記録の途中で捨てると
+    /// 控えた長さは溜め場の外を指す。**長さでは見分けない** — 捨てた後も記録が続けば長さは入口より
+    /// 戻り、壊れた区間を形として抜いてしまう。番号どうしで比べる。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    private(set) var pendingDiscards = 0
 
     /// 溜め場に溜まっている量。**置けば増え、捨てれば 0 に戻る。** 列を閉じる操作 (`blendMode()`
     /// などが開いた列を閉じる) では増えない。
@@ -2359,6 +2375,31 @@ public final class Canvas {
             Diagnostics.warn(
                 "Could not finish drawing before the drawing target changed: \(error.headline)")
         }
+    }
+
+    /// いま描き切ると、形を組み立てている途中の面を描き切らせるか ([#1588])。
+    ///
+    /// 描き切りは冒頭で、自分を置いた面を先に描き切らせる (``settlePlacersBeforeChange()``)。
+    /// 置いた面が組み立ての途中なら、組み立てが控えた溜め場の区間がそこで空になる。**画素の口は、
+    /// 自分の面だけでなく置かれた描き場所でも同じ守りに入る** — 同じフレームで `image(layer)` と
+    /// 置いてから、組み立ての中で `layer.get()` と読むと、本体の組み立てが描き切られていた。
+    /// 置いた面をさらに置いた面へも辿る (描き切りも同じように連なる)。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    var isPlacedInAShapeInProgress: Bool {
+        var visited: Set<ObjectIdentifier> = [ObjectIdentifier(self)]
+        var waiting: [Canvas] = [self]
+        while let placed = waiting.popLast() {
+            for entry in placed.placers {
+                guard let canvas = entry.canvas,
+                    canvas.placedGraphics.contains(ObjectIdentifier(placed)),
+                    visited.insert(ObjectIdentifier(canvas)).inserted
+                else { continue }
+                if canvas.recordingShape { return true }
+                waiting.append(canvas)
+            }
+        }
+        return false
     }
 
     /// 直前のフレームで描画を呼んだ回数。

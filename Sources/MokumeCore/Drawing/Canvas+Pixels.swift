@@ -14,6 +14,13 @@ import MokumeDiagnostics
 extension Canvas {
     /// 溜めている図形を描き切り、画素を読める状態にする。
     public func loadPixels() {
+        // **形の組み立て (`createShape`) の中では描き切らない** ([#1588])。描き切ると溜め場が
+        // 空になり、組み立てが控えた区間が溜め場の外を指して、出口の切り出しで落ちる。組み立てた
+        // ものもまだ描いていない形なので、読んでも意味を持たない。4 つの口 (ここ・`pixels`・`get`・
+        // `set`) が同じ鍵で 1 度注意する (``refusesInsideShape(drawingOut:)``)
+        //
+        // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        guard !refusesInsideShape(drawingOut: true) else { return }
         do {
             // **効果はフレームの終わりに立つ段**なので、途中で読む画素には効いていない
             // (通すと、効果のかかった絵の上に続きが描かれる)。**読み戻しも同じコマンドに
@@ -37,14 +44,20 @@ extension Canvas {
     /// 取った時点ではなく書く時点で、置いてよい区間 (フレームの中と、本体の `setup()`・止まって
     /// いる間のコールバック) にいるかを見る。外で書くと 1 度注意して、書かない。
     ///
+    /// 形の組み立ての中では読み込まず、いまの写しを返す (``loadPixels()``・[#1588])。書き込みは
+    /// 書く時点で断る (`admitsPixelWrite()`)。組み立ての途中の面に置かれた描き場所でも、読み込みが
+    /// 要るなら同じにする (`isPlacedInAShapeInProgress`)。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     public var pixels: Pixels {
-        loadPixelsIfNeeded()
+        if !refusesInsideShape(drawingOut: needsPixelLoad) { loadPixelsIfNeeded() }
         return target.pixels.asking { [weak self] in self?.admitsPixelWrite() ?? false }
     }
 
-    /// 1 画素の色。範囲の外は透明を返す。
+    /// 1 画素の色。範囲の外は透明を返す。形の組み立ての中でも透明を返す (``loadPixels()``)。
     public func get(_ x: Int, _ y: Int) -> LinearRGBA {
+        guard !refusesInsideShape(drawingOut: needsPixelLoad) else { return .transparent }
         loadPixelsIfNeeded()
         return target.pixels[x, y]
     }
@@ -65,9 +78,12 @@ extension Canvas {
     /// `image()` には出ず ([#1654])、効果を掛けた描き場所では次のフレームに効果が 2 回掛かった
     /// ([#1655])。
     ///
-    /// 見るのは ``writesToSurface`` で、``canPlace`` ではない — 形の組み立ての中で書いた画素は
-    /// 形に載らず、面へ直に書かれるからである。
+    /// 見るのは ``writesToSurface`` で、``canPlace`` ではない — ``canPlace`` は形の組み立ての中を
+    /// 含むが、画素は形に載らないので、組み立ては画素の書き込みの居場所にならない。**組み立ての
+    /// 中は、区間の中でも断る** ([#1588])。書く前に読むので、通すと描き切って組み立ての区間を
+    /// 壊す (``refusesInsideShape(drawingOut:)``)。
     ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1654]: https://github.com/mokume-metal/mokume/issues/1654
     /// [#1655]: https://github.com/mokume-metal/mokume/issues/1655
@@ -77,6 +93,9 @@ extension Canvas {
             warnOutsideFrame(.pixelWrite)
             return false
         }
+        // 形の組み立ての中では書かない。書く前に読むので、通すと描き切る (``loadPixels()``・#1588)。
+        // 区間の外なら上の注意を先に言う (塗り直しと同じ順)
+        guard !refusesInsideShape(drawingOut: needsPixelLoad) else { return false }
         // **書く前に、このフレームの絵を写しへ読んでおく。** 窓 (``pixels``) は取っておけるので、
         // 前のフレームで取った窓にこのフレームで書くと、写しは前のフレームの絵 (効果を通した
         // 後) のまま書き込み待ちになる。するとこのフレームの最初の描き切りが、効果を通す前の
@@ -84,6 +103,20 @@ extension Canvas {
         // 読めば最初の描き切りは書く前に済み、写しもいまの絵になる。取り直さない窓でも、GPU が
         // 写しへ読み戻している途中に書かない (`pixels` が待つ)
         if needsPixelLoad { _ = pixels }
+        return true
+    }
+
+    /// 画素の口が、形の組み立てのために断るか。断るなら 1 度だけ言う ([#1588])。
+    ///
+    /// 断るのは、自分の面が組み立ての途中のときと、この口が描き切る (`drawingOut`) うえに、
+    /// 組み立ての途中の面に置かれているとき (``isPlacedInAShapeInProgress``)。後者は描き切りが
+    /// 置いた側の組み立てを描き切らせる。描き切らない読み書き (このフレームで読み込み済み) は、
+    /// 置かれた描き場所では通す — 誰の組み立ても壊さない。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    private func refusesInsideShape(drawingOut: Bool) -> Bool {
+        guard recordingShape || (drawingOut && isPlacedInAShapeInProgress) else { return false }
+        warnInsideShape(.pixels)
         return true
     }
 

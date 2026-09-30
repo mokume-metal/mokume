@@ -67,6 +67,7 @@ extension Canvas {
         let strokeRangeStart = recordedStrokeRanges.count
         let solidStrokeStart = recordedSolidStrokes.count
         let gpuStrokeStart = recordedGPUStrokes.count
+        let discardsAtStart = pendingDiscards
 
         body()
 
@@ -77,6 +78,26 @@ extension Canvas {
         recordingShape = savedRecording
         restore(savedStacks)
         closeBatch()
+        // 状態を戻すのは、記録したぶんを溜め場から抜いた後 (下の「抜いてから状態を戻す」)
+        defer {
+            currentTexture = savedTexture
+            currentShader = savedShader
+            currentNumbers = savedNumbers
+            transform = savedTransform
+            currentStyle = savedStyle
+        }
+        // **出口の安全網** ([#1588])。記録の途中で溜め場を捨てると、上で控えた区間は溜め場の外を
+        // 指す。塗り直しと画素の口は記録の中で断るが、描き切りそのものを断れない口が残る (置いた
+        // 描き場所の描き換えが本体を描き切らせる・揺らぎの設定の書き換え)。捨てる前に記録した
+        // ものはもう描かれていて取り戻せないので、捨てた後に記録した残りも溜め場から抜き、空の形を
+        // 返す。見分けは長さではなく捨てた回数で行う (``pendingDiscards``)
+        //
+        // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        guard pendingDiscards == discardsAtStart else {
+            discardPending()
+            warnInsideShape(.drawnOut)
+            return .empty
+        }
         let recorded = Array(vertices[vertexStart...])
         // 輪郭の区間も形自身の 0 起点へ引き戻し、覚えていた側からは抜く (入れ子の記録なら
         // 外側の記録には、置き直した頂点の区間として `place(_:of:at:)` が積み直す)
@@ -125,11 +146,6 @@ extension Canvas {
         // ので、記録側で持ち歩く必要が無い
         solidInstances.removeLast(solidInstances.count - instanceStart)
         batches.removeLast(batches.count - runStart)
-        currentTexture = savedTexture
-        currentShader = savedShader
-        currentNumbers = savedNumbers
-        transform = savedTransform
-        currentStyle = savedStyle
 
         return Shape(
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,

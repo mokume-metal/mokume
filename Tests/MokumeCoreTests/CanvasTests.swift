@@ -1547,6 +1547,7 @@ struct CanvasTests {
             "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さの 1 件だけで、点は 1024 個が上限 (#1785)。中身は太さで決まり、フレームに属さない",
             "atlasPageFrame": "焼き場の頁を作ったフレームの番号 (#1342)。番号どうしで比べる",
             "retainedSerial": "保持した形を置くたびの通し番号",
+            "pendingDiscards": "溜め場を捨てた通し番号。形の組み立てが入口と出口で比べる (#1588)",
             "framesDrawn": "閉じたフレームの通し番号。境目の印そのもの",
             "shadowMapsBuilt": count,
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
