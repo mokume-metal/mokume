@@ -334,9 +334,8 @@ extension Canvas {
         let start = vertices.count
         let overlaps = strokeOverlapsShow
         if overlaps {
-            strokeCarved(outline, half: half, chamfers: chamfers) { a, b, c in
-                appendTriangle(a, b, c, color: style.stroke)
-            }
+            var unused: [ShapeVertex] = []
+            strokeCarved(outline, half: half, chamfers: chamfers, capturing: false, captured: &unused)
         } else {
             strokeRing(
                 count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
@@ -360,7 +359,7 @@ extension Canvas {
             // 置かれると 2 回目で寄っていくので、引いた頂点を持っておく
             let carved =
                 !overlaps && style.blendMode != .replace
-                ? carvedVertices(outline, half: half, chamfers: chamfers, capacity: vertices.count - start)
+                ? carvedVertices(outline, half: half, chamfers: chamfers, estimate: vertices.count - start)
                 : nil
             recordedStrokeRanges.append(StrokeRange(start..<vertices.count, carved: carved))
         }
@@ -371,19 +370,29 @@ extension Canvas {
     ///
     /// 頂点は重ねて積むときと同じ座標系 (変換は掛かり、半画素寄せは置くときに掛かる) で、
     /// 色は線の色そのもの。
+    ///
+    /// **数は前もって分からない。** 引いた頂点は、重ねて積んだ頂点の 1.4〜5 倍になる (切り口の
+    /// 点を差し込むぶん・実測)。`estimate` (重ねて積んだ頂点の数) を最初の容量にして伸ばし、
+    /// 伸ばしたときの余りが大きければ組み終えてから手放す — 形は引いた頂点を置き場所の数に
+    /// よらず抱え続けるので、余りは形の大きさに効く (見積もりだけで確保すると、最大 1.7 倍の
+    /// 容量が残った・実測)。
     private func carvedVertices(
-        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], capacity: Int
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], estimate: Int
     ) -> [ShapeVertex] {
         var carved: [ShapeVertex] = []
-        carved.reserveCapacity(capacity)
-        let color = style.stroke
-        let uv = whiteUV
-        strokeCarved(outline, half: half, chamfers: chamfers) { a, b, c in
-            carved.append(ShapeVertex(position: a, uv: uv, color: color))
-            carved.append(ShapeVertex(position: b, uv: uv, color: color))
-            carved.append(ShapeVertex(position: c, uv: uv, color: color))
-        }
-        return carved
+        carved.reserveCapacity(estimate)
+        strokeCarved(outline, half: half, chamfers: chamfers, capturing: true, captured: &carved)
+        return Self.trimmed(carved)
+    }
+
+    /// 余った容量を手放した写し。余りが 4 分の 1 を超えるものだけ、ちょうどの大きさへ写し直す
+    /// (小さな余りのために、大きな形を写さない)。
+    private static func trimmed(_ vertices: [ShapeVertex]) -> [ShapeVertex] {
+        guard vertices.capacity - vertices.count > vertices.count / 4 else { return vertices }
+        var exact: [ShapeVertex] = []
+        exact.reserveCapacity(vertices.count)
+        exact.append(contentsOf: vertices)
+        return exact
     }
 
     /// 線の片の重なりが絵に出るか。**出ないのは、重ねて混ぜても同じ色になる線だけ** —
@@ -422,12 +431,16 @@ extension Canvas {
     /// 置き場所ぶんずらした周は、ずらす前の周で引いてから置き場所を足す (``Outline/unmoved``)。
     /// 畳んだ雛形と同じ座標で引くので、畳むかどうかで頂点の数が変わらない。
     ///
-    /// - Parameter triangle: 引いた残りの三角形の出し先。変換を掛けた後の 3 点を受け取る。
-    ///   溜め場へ積むか (``appendTriangle(_:_:_:color:)``)、保持する形が別に持つ頂点にするか
-    ///   (``carvedVertices(_:half:chamfers:capacity:)``) で、引き方そのものは同じ
+    /// - Parameters:
+    ///   - capturing: 引いた残りの三角形の出し先。偽なら溜め場へ積む
+    ///     (``appendTriangle(_:_:_:color:)``)。真なら溜め場へは積まずに、`captured` へ頂点として
+    ///     足す (``carvedVertices(_:half:chamfers:estimate:)``)。引き方そのものは同じ。
+    ///     **出し先を閉包で受けない** — 三角形ごとの呼び出しが積む側の経路を遅くした
+    ///     (直に描く半透明の線が 7〜18% 遅くなった・実測)
+    ///   - captured: `capturing` が真のときの出し先
     private func strokeCarved(
         _ outline: Outline, half: Float, chamfers: [SIMD2<Float>],
-        triangle: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>) -> Void
+        capturing: Bool, captured: inout [ShapeVertex]
     ) {
         let (points, offset) = outline.unmoved ?? (outline.points, SIMD2<Float>(0, 0))
         var carving = StrokeCarving(
@@ -475,13 +488,21 @@ extension Canvas {
             let moved = point + offset
             return strokePoint(x: moved.x, y: moved.y)
         }
+        let color = style.stroke
+        let uv = whiteUV
+        func emit(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) {
+            guard capturing else { return appendTriangle(a, b, c, color: color) }
+            captured.append(ShapeVertex(position: a, uv: uv, color: color))
+            captured.append(ShapeVertex(position: b, uv: uv, color: color))
+            captured.append(ShapeVertex(position: c, uv: uv, color: color))
+        }
         carving.carved { polygon, range, hub in
             guard let hub else {
                 let first = place(polygon[range.lowerBound])
                 var previous = place(polygon[range.lowerBound + 1])
                 for index in (range.lowerBound + 2)..<range.upperBound {
                     let current = place(polygon[index])
-                    triangle(first, previous, current)
+                    emit(first, previous, current)
                     previous = current
                 }
                 return
@@ -491,10 +512,10 @@ extension Canvas {
             var previous = first
             for index in (range.lowerBound + 1)..<range.upperBound {
                 let current = place(polygon[index])
-                triangle(center, previous, current)
+                emit(center, previous, current)
                 previous = current
             }
-            triangle(center, previous, first)
+            emit(center, previous, first)
         }
     }
 
