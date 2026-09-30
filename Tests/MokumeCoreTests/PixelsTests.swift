@@ -458,15 +458,25 @@ struct PixelsTests {
 
         let encoded = canvas.target.pixelWriteBacksEncoded
         var encodedByTheFailedRead = 0
+        var abandonedByTheFailedRead = -1
         try canvas.draw {
             canvas.set(3, 3, red)
             for index in 0..<5000 { canvas.rect(100 + index % 16, 100, 1, 1) }
+            let abandoned = canvas.gpu.abandonedCommands
             canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
             // 途中の描き切り。書いた画素を戻す blit を積んだ後で、形の置き場の取り直しの待ちで投げる
             _ = canvas.get(0, 0)
             canvas.gpu.failSettleForTesting = nil
             encodedByTheFailedRead = canvas.target.pixelWriteBacksEncoded - encoded
+            abandonedByTheFailedRead = canvas.gpu.abandonedCommands - abandoned
         }
+        // **投げたこと自体を数で見る** ([#1868])。書き戻しの数だけでは、途中の描き切りが投げずに
+        // 普通に書き戻しを 1 回積んだときと区別できず、下の画素も普通に満たされる
+        //
+        // [#1868]: https://github.com/mokume-metal/mokume/issues/1868
+        try #require(
+            abandonedByTheFailedRead == 1,
+            "途中の描き切りが組み立ての後で投げていない — この検査は投入されなかった書き戻しの経路を見ていない")
         #expect(
             encodedByTheFailedRead == 1,
             "書き戻しを積む前に投げている — この検査は書き戻しの後で投げる経路を見ていない")
