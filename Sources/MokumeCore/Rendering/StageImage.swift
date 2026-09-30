@@ -52,18 +52,24 @@ extension EffectSurface {
     /// 死ぬときに面を退かせる先。
     private let gpu: RenderDevice
 
-    /// - Parameter startingTransparent: 作った時点で透明な黒に塗るか。GPU 専用の面の
-    ///   初期値は未定義なので、**書かれる前に読まれる面**は塗っておく (時間方向の拡大の
-    ///   控えは最初のフレームから読まれる)。効果の控えは全画素を書く段か写ししか通らないうえ、
-    ///   コマンドを組み立てている最中に作られるので塗れない
-    ///   (``RenderDevice/makeClearedTexture(descriptor:)``)。
-    init(gpu: RenderDevice, width: Int, height: Int, startingTransparent: Bool)
-        throws(RenderFailure)
-    {
+    /// - Parameters:
+    ///   - startingTransparent: 作った時点で透明な黒に塗るか。GPU 専用の面の
+    ///     初期値は未定義なので、**書かれる前に読まれる面**は塗っておく (時間方向の拡大の
+    ///     控えは最初のフレームから読まれる)。効果の控えは全画素を書く段か写ししか通らないうえ、
+    ///     コマンドを組み立てている最中に作られるので塗れない
+    ///     (``RenderDevice/makeClearedTexture(descriptor:)``)。
+    ///   - pixelFormat: 面の形式。既定は描画先と同じ色の形式で、奥行きを控える面だけが
+    ///     描画先の奥行きの形式を渡す ([#1524])。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    init(
+        gpu: RenderDevice, width: Int, height: Int, startingTransparent: Bool,
+        pixelFormat: MTLPixelFormat = RenderTarget.pixelFormat
+    ) throws(RenderFailure) {
         self.width = width
         self.height = height
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: RenderTarget.pixelFormat, width: width, height: height,
+            pixelFormat: pixelFormat, width: width, height: height,
             mipmapped: false)
         descriptor.usage = [.renderTarget, .shaderRead]
         descriptor.storageMode = .private

@@ -119,7 +119,7 @@ struct GPUMemoryAccessGateTests {
             reason: "encodeToImage が commitAndWait してから読む"),
         Permit(
             file: "Output/OutputPass.swift", discipline: .waitedElsewhere,
-            reason: "encodeToImage が毎回 commitAndWait するので、前の出力段は終わっている"),
+            reason: "encodeToImage が毎回 commitAndWait するので、前の出力段は終わっている。量子化のしきい値の表は init で作った置き場へ 1 度だけ書く (まだどの投入にも載っていない・#1762)"),
         Permit(
             file: "Display/PresentPipeline.swift", discipline: .ring,
             reason: "差し出しごとに自分の環を 1 つ進める。描き切りが全完了を待たなくなった時点で、前の差し出しが終わっている保証は他に無い (#754)"),

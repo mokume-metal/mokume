@@ -14,6 +14,8 @@ import simd
 extension Canvas {
 
     public func fill(_ color: LinearRGBA) {
+        // 数でない成分・無限の成分は、塗りを変えずに断る。数の形と同じ鍵で言う (#1706)
+        guard color.isFinite else { return warnNotANumberColor(.fill) }
         style.fill = color
         style.hasFill = true
     }
@@ -22,6 +24,7 @@ extension Canvas {
     public func noFill() { style.hasFill = false }
 
     public func stroke(_ color: LinearRGBA) {
+        guard color.isFinite else { return warnNotANumberColor(.stroke) }
         style.stroke = color
         style.hasStroke = true
     }

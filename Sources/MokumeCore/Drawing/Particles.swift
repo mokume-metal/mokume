@@ -161,19 +161,49 @@ public final class Particles {
 
     /// 粒の状態。
     let state: Numbers
-    /// 描画へ渡す置き場所の並び。``SolidInstance`` と同じ並びを数として持つ。
-    /// **先頭から生存数ぶんだけが意味を持つ。**
-    let instances: Numbers
-    /// 毎フレームの指定 (変換と力)。
-    let parameters: Numbers
+    /// 1 回の ``Canvas/particles(_:)`` が書き、読む置き場の組 ([#1651])。
+    ///
+    /// **組は呼び出しごとに要る。** 描き切りは控えを計算より先に 1 度だけ届け、計算をすべて
+    /// 描画より先に流す ([ADR-0023] の「描く前に GPU で計算し」)。群で 1 組だと、同じ描き切りの
+    /// 中で 2 回呼んだとき、1 回目の計算も 2 回目の指定を読み、1 回目の列も 2 回目の計算が
+    /// 書いた置き場所で描かれる — 1 回目の雲が消え、1 回目の前に積んだ力も効かない。
+    ///
+    /// 状態 (``state``) と段 (``levels``) は分けない。2 回目は 1 回目が進めた状態を読んで
+    /// 重ねて進めるもので、段は 2 回目の旗が 1 回目の進めの後に口を切るので取り合わない。
+    ///
+    /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
+    struct Draw {
+        /// 毎回の指定 (変換と力)。
+        let parameters: Numbers
+        /// 描画へ渡す置き場所の並び。``SolidInstance`` と同じ並びを数として持つ。
+        /// **先頭から生存数ぶんだけが意味を持つ。**
+        let instances: Numbers
+        /// 描く引数 (`MTLDrawPrimitivesIndirectArguments` と同じ並び)。GPU が書き、描く側が
+        /// そのまま indirect draw に渡す。**CPU は読まない。**
+        let arguments: Numbers
+    }
+
+    /// 置き場の組。**先頭は作るときに確保し**、2 つ目からは、まだ読まれていない組しか無い
+    /// ときに 1 つずつ足す (``claimDraw(by:)``)。足した組は手放さずに使い回すので、並びは
+    /// 1 回の描き切りの中で呼んだ最多の回数までしか伸びない。1 回ずつ呼ぶスケッチは先頭だけを使う。
+    ///
+    /// **検査が読む。**
+    private(set) var draws: [Draw]
+    /// 組ごとに、最後に使った面と、そのときの面の描き切りの印 (``Canvas/settleMark``)。
+    /// 印が変わった組は、書いた指定を読む計算も、置き場所を読む列も投入か破棄を済ませている。
+    private var claims: [(canvas: Weak<Canvas>, mark: Canvas.SettleMark)?]
+
+    /// 先頭の組の置き場所。
+    var instances: Numbers { draws[0].instances }
+    /// 先頭の組の指定。
+    var parameters: Numbers { draws[0].parameters }
     /// 生存数を数える段の置き場。段 k は ``levelLengths`` の k 番目の長さで、
     /// ``levelOffsets`` の位置から並ぶ。**最上段は 1 個で、それが生存数。**
     let levels: Numbers
     /// 段ごとの頭 [長さ, 読む段の頭, 書く段の頭]。**作るときに 1 度書く。**
     let levelHeaders: [Numbers]
-    /// 描く引数 (`MTLDrawPrimitivesIndirectArguments` と同じ並び)。GPU が書き、描く側が
-    /// そのまま indirect draw に渡す。**CPU は読まない。**
-    let arguments: Numbers
+    /// 先頭の組の描く引数。
+    var arguments: Numbers { draws[0].arguments }
     /// 段ごとの長さ。先頭が容量、末尾が 1。
     let levelLengths: [Int]
     /// 段ごとの、``levels`` の中での頭。
@@ -274,6 +304,11 @@ public final class Particles {
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
         case negativeRadius
+        /// 同じ描き切りの中で 2 回目以降に呼ばれたが、その呼び出しの置き場を足せなかった
+        /// ([#1651])。
+        ///
+        /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
+        case drawUnavailable
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -291,11 +326,10 @@ public final class Particles {
     ) {
         self.capacity = capacity
         self.state = state
-        self.instances = instances
-        self.parameters = parameters
+        self.draws = [Draw(parameters: parameters, instances: instances, arguments: arguments)]
+        self.claims = [nil]
         self.levels = levels
         self.levelHeaders = levelHeaders
-        self.arguments = arguments
         self.levelLengths = levelLengths
         var offsets: [Int] = []
         var offset = 0
@@ -389,6 +423,53 @@ public final class Particles {
         return pendingForces
     }
 
+    /// `canvas` のこの呼び出しが使う置き場の組を選ぶ ([#1651])。**まだ読まれていない組は
+    /// 使わない** — 空いた組のうち先頭のものを使い、空きが無ければ 1 つ足す。
+    ///
+    /// 空いているのは、使った面が居なくなったか、使ったときから面の描き切りの印が変わった
+    /// 組である。**面をまたいでも効く**: 本体で呼んで組 0 を取った後に描き場所で呼ぶと、組 0 は
+    /// 本体の描き切りを待っているので、描き場所は組 1 を使う。控えの登録簿は面をまたいで
+    /// 1 つで、どの面の描き切りも全部を届けるが、別の並びなので本体の指定を上書きしない。
+    ///
+    /// 足すのに失敗したら投げる。何も選ばないので、呼ぶ側は進めも描きもせずに帰る。
+    ///
+    /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
+    func claimDraw(by canvas: Canvas) throws(RenderFailure) -> Draw {
+        let free = claims.firstIndex { claim in
+            guard let claim, let owner = claim.canvas.value else { return true }
+            return owner.settleMark != claim.mark
+        }
+        let index: Int
+        if let free {
+            index = free
+        } else {
+            if let drawAllocationFailureForTesting { throw drawAllocationFailureForTesting }
+            let first = draws[0]
+            let gpu = first.parameters.gpu
+            draws.append(
+                Draw(
+                    parameters: try Numbers(gpu: gpu, count: first.parameters.count),
+                    instances: try Numbers(gpu: gpu, count: first.instances.count),
+                    arguments: try Numbers(gpu: gpu, count: first.arguments.count)))
+            claims.append(nil)
+            index = draws.count - 1
+        }
+        claims[index] = (Weak(canvas), canvas.settleMark)
+        return draws[index]
+    }
+
+    /// 組を足すときに投げる失敗。**検査が差し替える** (確保の失敗は検査の中で起こせない)。
+    var drawAllocationFailureForTesting: RenderFailure?
+
+    /// 組を足せなかったことを知らせる。
+    func warnDrawUnavailable(_ failure: RenderFailure) {
+        warnOnce(
+            .drawUnavailable,
+            "particles() was called again before the earlier call was drawn, and no room could be "
+                + "made for another placement (\(failure.headline)). That call neither advanced nor "
+                + "drew the particles; forces added before it take effect in the next call")
+    }
+
     /// この 1 フレームで出す数。`frame` は呼んだ面のフレーム番号で、同じ番号のうちに
     /// 呼ばれた順で繰り越しを引き分ける (`cadences` の説明)。**0 個に終わる呼び出しも
     /// 1 回と数える** — 数えないと、出なかった噴き口の後ろの繰り越しが 1 つずつ前へずれる。
@@ -458,8 +539,10 @@ public final class Particles {
         if !finite(life) { return ("life", "\(life)") }
         if !finite(size) { return ("size", "\(size)") }
         let paint = color ?? fill
-        let channels = [paint.red, paint.green, paint.blue, paint.alpha]
-        if !channels.allSatisfy(\.isFinite) {
+        // 色の値の受け口と同じ述語で見る (#1706 の反証 8)。塗りは `fill(_:)` が断るので公開の道
+        // からは数でなくならないが、`color:` は利用者が直に渡すのでここが受け口である
+        if !paint.isFinite {
+            let channels = [paint.red, paint.green, paint.blue, paint.alpha]
             let name = color == nil ? "the fill (color was omitted)" : "color"
             return (name, "(\(channels.map { "\($0)" }.joined(separator: ", ")))")
         }
@@ -568,13 +651,13 @@ public final class Particles {
     ///
     /// **待たない。** 粒を置くのと同じく控えに積み、描き切りが届ける (#749)。
     func write(
-        transform: simd_float4x4, basis: simd_float3x3, step: Float, frame: Int,
+        into draw: Draw, transform: simd_float4x4, basis: simd_float3x3, step: Float, frame: Int,
         forces: [Force], vertexStart: Int, vertexCount: Int
     ) {
         if forces.count > Self.maximumForces { warnTooManyForces(forces.count) }
         let used = min(forces.count, Self.maximumForces)
         // 読まれるのは頭と、効かせる数ぶんの力だけ。**書く区間はそこまでで、全部を書く**
-        parameters.write(at: 0, count: Self.headerFloats + used * Force.slotCount) { values in
+        draw.parameters.write(at: 0, count: Self.headerFloats + used * Force.slotCount) { values in
             for column in 0..<4 {
                 let vector = transform[column]
                 for row in 0..<4 { values[column * 4 + row] = vector[row] }

@@ -76,10 +76,15 @@ public struct Surroundings: Equatable, Sendable {
             blue: color.blue * factor, alpha: color.alpha)
     }
 
-    /// 受け取れる値か。数でない成分・負の成分を持つ周囲は置かない。
+    /// 受け取れる値か。数でない成分・負の成分を持つ周囲は置かない。不透明度は使わないので見ない。
+    ///
+    /// 有限かは色の値の受け口と同じ述語 (``LinearRGBA/hasFiniteRGB``) で見る ([#1706] の反証 8)。
+    /// SIMD の min は数でない成分を飛ばすので、有限と分かった後でだけまとめて見る。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     var isUsable: Bool {
         [top, horizon, bottom].allSatisfy { color in
-            [color.red, color.green, color.blue].allSatisfy { $0.isFinite && $0 >= 0 }
+            color.hasFiniteRGB && SIMD3(color.red, color.green, color.blue).min() >= 0
         }
     }
 

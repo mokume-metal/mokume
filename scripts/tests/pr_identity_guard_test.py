@@ -287,6 +287,143 @@ class GuardTest(unittest.TestCase):
         )
         self.assert_passed("gh pr create --fill", GH_REPO="other/repo")
 
+    # --- 同じコマンドの中で文として変えた宛先と名義 (#1823) ------------
+
+    # PR を作る口 (ガードの PR_CREATING_PORTS)。形 × 口で回す
+    PORTS = ("gh pr create --fill", "gh pr new --fill", "gh pr revert 1")
+
+    # 他リポの cwd から、gh より前に宛先を mokume へ変えうる文・前置。{m} は mokume の
+    # checkout。形を 1 つ足すなら行を 1 つ足す
+    DESTINATION_FORMS = (
+        "cd {m} && {gh}",
+        "cd {m}; {gh}",
+        "cd {m}\n{gh}",
+        "pushd {m} && {gh}",
+        "(cd {m} && {gh})",
+        "export GH_REPO=mokume-metal/mokume && {gh}",
+        "GH_REPO=mokume-metal/mokume; export GH_REPO; {gh}",
+        "declare -x GH_REPO=mokume-metal/mokume; {gh}",
+        "GIT_DIR={m}/.git {gh}",
+        "export GIT_DIR={m}/.git && {gh}",
+        # 反証 #1〜#3
+        "builtin cd {m} && {gh}",
+        "command cd {m} && {gh}",
+        "builtin export GH_REPO=mokume-metal/mokume && {gh}",
+        "GIT_COMMON_DIR={m}/.git {gh}",
+        "printf -v GH_REPO %s mokume-metal/mokume && {gh}",
+        "read -r GH_REPO <<< mokume-metal/mokume && {gh}",
+        # 反証 2 回目の 2-1・2-3・補足の chdir
+        "for GH_REPO in mokume-metal/mokume; do {gh}; done",
+        "for i in 1 2; do {gh}; cd {m}; done",
+        "chdir {m} && {gh}",
+    )
+
+    def test_repo_option_that_is_decided_at_run_time_denied(self):
+        """反証 2-2 — -R の値が実行時に決まるなら、前置の GH_REPO="$X" と同じく止める側。"""
+        for port in self.PORTS:
+            with self.subTest(port=port):
+                self.assert_denied(f'O=mokume-metal; R=mokume; {port} -R "$O/$R"')
+                self.assert_denied(port + ' -R "${REPO:-mokume-metal/mokume}"')
+        self.assert_passed('gh pr create --fill -R "other/repo"')
+
+    def test_git_variables_that_do_not_move_the_destination_pass(self):
+        """反証 2-5 — 宛先に効かない git の変数は、他リポ宛ての判定を変えない (main の判定)。"""
+        there = self.other_repo_dir()
+        for command in (
+            "GIT_PAGER=cat gh pr create --fill",
+            "export GIT_TERMINAL_PROMPT=0 && gh pr create --fill",
+            "GIT_SSH_COMMAND=ssh git push && gh pr new --fill",
+        ):
+            with self.subTest(command=command):
+                self.assert_passed(command, cwd=there)
+
+    # mokume の cwd で、継いだ他リポの GH_REPO を消す文 (#1836 の退行)
+    UNSET_FORMS = ("unset GH_REPO && {gh}", "export -n GH_REPO && {gh}")
+
+    def test_statement_that_changes_the_destination_denied_on_every_port(self):
+        there = self.other_repo_dir()
+        for form in self.DESTINATION_FORMS:
+            for port in self.PORTS:
+                command = form.format(m=REPO, gh=port)
+                with self.subTest(command=command):
+                    reason = self.assert_denied(command, cwd=there)
+                    self.assertIn("-R owner/repo", reason, "逃げ道が案内されていない")
+        for form in self.UNSET_FORMS:
+            for port in self.PORTS:
+                command = form.format(gh=port)
+                with self.subTest(command=command):
+                    self.assert_denied(command, GH_REPO="other/repo")
+
+    def test_statement_that_changes_the_destination_keeps_the_escape_hatches(self):
+        """-R の明示と、mokume 宛ての正しい名義の形は今までどおり通る (#1823 の D)。"""
+        there = self.other_repo_dir()
+        self.assert_passed(f"cd {REPO} && gh pr create -R other/repo --fill", cwd=there)
+        self.assert_passed(
+            "export GH_REPO=mokume-metal/mokume && gh pr create -R other/repo --fill", cwd=there
+        )
+        self.assert_passed(f"gh pr create --fill && cd {REPO}", cwd=there)
+        self.assert_passed(f"(cd {REPO} && ls) && gh pr create --fill", cwd=there)
+        self.assert_passed(f"cd {REPO} && " + self.SAFE + "gh pr create --fill", cwd=there)
+
+    # 発行から gh までが 1 つの && の並びでない形 (mokume の cwd)。形を 1 つ足すなら行を 1 つ足す
+    BROKEN_CHAIN_FORMS = (
+        '{issue} && export GH_TOKEN; {gh}',
+        '{issue} && export GH_TOKEN\ngit push -u origin HEAD\n{gh}',
+        '{issue} && export GH_TOKEN || {gh}',
+        'true || {issue} && export GH_TOKEN && {gh}',
+        'false && {issue} && export GH_TOKEN && true; {gh}',
+        '{issue} && export GH_TOKEN & {gh}',
+        't="$(bash scripts/gh-app-token.sh)" && true; GH_TOKEN="$t" {gh}',
+        # 反証 #5: 置換の終了コードが発行の失敗を伝えない
+        'GH_TOKEN="$(bash scripts/gh-app-token.sh || true)" && export GH_TOKEN && {gh}',
+        "GH_TOKEN=\"$(bash scripts/gh-app-token.sh | tr -d '\\n')\" && export GH_TOKEN && {gh}",
+        'GH_TOKEN="$(bash scripts/gh-app-token.sh; true)" && export GH_TOKEN && {gh}',
+    )
+
+    def test_issue_that_does_not_reach_gh_by_and_denied(self):
+        """発行の失敗が gh へ伝わらない形 (#122 の続き・#1823)。文面は && で繋ぐ形を示す。"""
+        issue = 'GH_TOKEN="$(bash scripts/gh-app-token.sh)"'
+        for form in self.BROKEN_CHAIN_FORMS:
+            for port in self.PORTS:
+                command = form.format(issue=issue, gh=port)
+                with self.subTest(command=command):
+                    reason = self.assert_denied(command)
+                    self.assertIn("発行が失敗しても後段が走る形", reason)
+                    self.assertIn(
+                        'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create',
+                        reason,
+                    )
+
+    def test_issue_that_reaches_gh_by_and_passes(self):
+        """1 つの && の並びなら、行を跨いでも・入れ子の中の gh でも通る (#1823 の D の 18)。"""
+        self.assert_passed(self.SAFE + "gh pr create --fill")
+        self.assert_passed(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN &&\ngh pr create --fill'
+        )
+
+    # main で通っていた正しい形 (反証 #7・#8)。パイプラインと複合コマンドは並びの 1 段で、
+    # 発行より前の || と、先に済ませた export は発行の失敗の伝わり方を変えない
+    REACHING_FORMS = (
+        "{safe}printf '%s' body | {gh} --body-file -",
+        "{safe}{{ git push -u origin HEAD; {gh}; }}",
+        "{safe}if true; then {gh}; fi",
+        "git fetch || true && {safe}{gh}",
+        'export GH_TOKEN; GH_TOKEN="$(bash scripts/gh-app-token.sh)" && {gh}',
+    )
+
+    def test_issue_that_reaches_gh_through_pipes_and_groups_passes(self):
+        for form in self.REACHING_FORMS:
+            for port in self.PORTS:
+                command = form.format(safe=self.SAFE, gh=port)
+                with self.subTest(command=command):
+                    self.assert_passed(command)
+
+    def test_issue_inside_if_is_still_denied(self):
+        """#1823 の D の 19 — 止める側の誤検知のまま (条件の中の発行は && の並びでない)。"""
+        self.assert_denied(
+            'if GH_TOKEN="$(bash scripts/gh-app-token.sh)"; then export GH_TOKEN; gh pr create --fill; fi'
+        )
+
     # --- 旗と例外は、その gh の呼び出しの中からだけ読む (#1729 の反証) ----
 
     def test_gh_inside_loops_and_conditions_denied(self):
@@ -628,6 +765,45 @@ class DraftTest(GuardTest):
     def test_revert_の_draft_は差分を読めないので差し戻す(self):
         """revert の中身は手元に無い。読めなければ差し戻す側に倒す。"""
         self.assert_denied(self.TOKEN + "gh pr revert 42 --draft", cwd=self.unprotected())
+
+    def elsewhere(self):
+        """別のリポジトリの checkout。origin/main の上に重要パスに触れない枝を置く。
+        ここの差分は、mokume 宛ての PR の差分ではない。"""
+        root, run = self.repo()
+        run("remote", "set-url", "origin", "git@github.com:shinyaoguri/setup.git")
+        run("switch", "-q", "code-only")
+        return str(root)
+
+    def test_cwd_の差分が宛先の差分と確かめられなければ差し戻す(self):
+        """反証 #6 — 宛先の判定が cwd を使わなかったなら、Draft の判定も cwd の差分を読まない。
+
+        宛先を「決められない」と読んだ (cd などの文・前置) か、-R / GH_REPO で宛先を名指しした
+        とき、cwd の差分はその PR の差分とは限らない。読むと #1621 の穴が開く。
+        """
+        mokume = self.protected()
+        there = self.elsewhere()
+        for command in (
+            f"cd {mokume} && " + self.TOKEN + "gh pr create --draft --fill",
+            self.TOKEN + "GH_REPO=mokume-metal/mokume gh pr create --draft --fill",
+            self.TOKEN + "gh pr create -R mokume-metal/mokume --draft --fill",
+        ):
+            with self.subTest(command=command):
+                reason = self.assert_denied(command, cwd=there)
+                self.assertIn("gh pr ready --undo", reason)
+        # 同じリポジトリの別の checkout (別の worktree) へ cd しても、cwd の差分は読まない
+        reason = self.assert_denied(
+            f"cd {mokume} && " + self.TOKEN + "gh pr create --draft --fill", cwd=self.unprotected()
+        )
+        self.assertIn("cwd から変わりうる", reason)
+        # 宛先が cwd のリポジトリなら、今までどおり差分で判定する
+        self.assert_passed(
+            self.TOKEN + "gh pr create -R mokume-metal/mokume --draft --fill",
+            cwd=self.unprotected(),
+        )
+        # 宛先に効かない git の変数の前置では、cwd の差分を読むのをやめない (反証 2-5)
+        self.assert_passed(
+            self.TOKEN + "GIT_PAGER=cat gh pr create --draft --fill", cwd=self.unprotected()
+        )
 
     def test_差分を読めなければ差し戻して_そう名乗る(self):
         root, _ = self.repo(with_base=False)

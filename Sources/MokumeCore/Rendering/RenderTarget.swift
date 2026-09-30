@@ -76,6 +76,9 @@ import MokumeDiagnostics
     /// 読まない描画先はここで 1 バイトも払わない。
     private(set) var pixelMirror: PixelMirror?
 
+    /// CPU が写しへ書いたまま、まだテクスチャへ戻していないか。
+    var hasPendingPixelWrites: Bool { pixelMirror?.hasPendingWrites ?? false }
+
     /// 写しを作った回数。**作り直していないこと**と、**頼まれていなければ 0 のまま**
     /// であることを検査から数えるための目印。
     private(set) var pixelMirrorsMade = 0
@@ -248,11 +251,16 @@ import MokumeDiagnostics
     /// GPU がこの描画先へ触るコマンドの**先頭**に積む (描き切り・出力段)。積んだ blit を
     /// 後続の段が待つ仕掛けもここで積む。
     ///
+    /// **この描画先を描く先に持つ ``Canvas`` があるなら、それを通す**
+    /// (`Canvas.encodePixelWriteBackKeepingCarry(into:)`)。効果を掛けた面では、止まっている間に
+    /// 書いた画素を効果を通す前の絵へも写す要があり、ここを直に呼ぶとそれが抜ける ([#1524])。
+    ///
     /// - Returns: 積んだら `true`。**積んだコマンドを投入したら ``markPixelsWrittenBack()``
     ///   で知らせる** — ここでは「戻した」ことにしない。積んだ後で組み立てが投げると
     ///   コマンドは捨てられるので、ここで下ろすと CPU の書き込みが黙って失われる ([#1183])。
     ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     func encodePixelWriteBack(into commands: any MTL4CommandBuffer) throws(RenderFailure) -> Bool {
         guard let mirror = pixelMirror, mirror.hasPendingWrites else { return false }
         guard let encoder = commands.makeComputeCommandEncoder() else {
@@ -323,11 +331,8 @@ import MokumeDiagnostics
         attachment.storeAction = .store
         if let clearColor {
             attachment.loadAction = .clear
-            attachment.clearColor = MTLClearColor(
-                red: Double(clearColor.red),
-                green: Double(clearColor.green),
-                blue: Double(clearColor.blue),
-                alpha: Double(clearColor.alpha))
+            // **面へ移す関所を通す** (上限を越えた成分を図形の経路と同じ ±65504 で止める・#1691)
+            attachment.clearColor = HalfSurface.clearColor(clearColor)
         } else {
             attachment.loadAction = .load
         }
@@ -354,6 +359,10 @@ import MokumeDiagnostics
     }
 
     /// 描画先を 1 色で塗り、GPU が終わるまで待つ。
+    ///
+    /// **効果を掛けた面の描画先 (``Canvas/output`` など) を止まっている間に塗るときは、``Canvas``
+    /// の口を通す** (`background()`)。ここで塗ると、次のフレームの入りになる効果を通す前の絵には
+    /// 届かない ([#1524](https://github.com/mokume-metal/mokume/issues/1524))。
     public func fill(with color: LinearRGBA) throws(RenderFailure) {
         // 全画素を塗り直すので、写しに残っていた CPU の書き込みは戻さず捨てる。**旗だけ下ろさず、
         // 捨てる口を通す** ([#1678] の反証 3) — 塗る投入より前に投げると、投入の番号が進まないまま

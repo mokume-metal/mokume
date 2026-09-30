@@ -31,9 +31,11 @@ enum MovieWriteFailure: Error, Equatable {
 ///
 /// ProRes 4444 の .mov で固定する。**符号化の選び方が、書き出した動きが再現するか
 /// どうかを決めるからである** ([ADR-0025] 決定 3)。同じ入力を 2 回書き出して測ると、
-/// H.264 は画素が一致せず、HEVC は run によって外れ、ProRes 4444 はファイルの
-/// バイトまで一致した。配布向けの軽い符号化は「再現を捨てて小さくする」選択なので、
-/// 要る場面が出てから足す ([ADR-0008])。
+/// H.264 は画素が一致せず、HEVC は run によって外れ、ProRes 4444 はデコードした画素と
+/// 時刻が一致した ([ADR-0025] の水準 3)。**一致するのは中身で、ファイルそのものではない** —
+/// 容れ物 (`mvhd`・`tkhd`・`mdhd`) の作成・更新時刻には AVFoundation が書き出した時刻の秒を
+/// 入れるので、違う秒に書いた 2 本はファイルとしては一致しない ([#1628])。配布向けの軽い
+/// 符号化は「再現を捨てて小さくする」選択なので、要る場面が出てから足す ([ADR-0008])。
 ///
 /// ## 符号化器の用意は、読み直して待つ
 ///
@@ -76,6 +78,7 @@ enum MovieWriteFailure: Error, Equatable {
 ///
 /// [#979]: https://github.com/mokume-metal/mokume/issues/979
 /// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
+/// [#1628]: https://github.com/mokume-metal/mokume/issues/1628
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md

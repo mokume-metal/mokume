@@ -11,6 +11,11 @@ import Synchronization
 /// 検査のループ) では 1 本も走れず、フレームに比例して溜まり続けた。「誰が `advance()` を
 /// 叩くかは外側の話」(``SketchRuntime``) と食い違う。
 ///
+/// **合体するのは溜まらないようにするためで、譲らない間に届けるためではない。** 積んだ 1 本も
+/// 譲るまでは走らない。譲らない間にも届いてほしい知らせは、受ける側が別の口で取る。
+/// ``FileWatcher`` は、フレームの頭で印を取る ([#1830])。``RenderDevice`` は、待つ口 (`settle()`) が
+/// 合図を直に読む。
+///
 /// 使うのは 2 か所である。
 ///
 /// | 使い手 | 知らせ | 番号 |
@@ -27,6 +32,7 @@ import Synchronization
 ///
 /// [#1076]: https://github.com/mokume-metal/mokume/issues/1076
 /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+/// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
 nonisolated final class CoalescedNotices: Sendable {
     private struct State {
         var newest: UInt64 = 0

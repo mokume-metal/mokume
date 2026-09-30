@@ -108,3 +108,24 @@ public nonisolated struct TextContour: Equatable, Sendable {
         self.isHole = isHole
     }
 }
+
+/// 文字列の墨が載る範囲 (``Sketch/textBounds(_:_:_:)``)。
+///
+/// **送り幅ではなく墨を囲む。** 字の左右に書体が付けている余白は入らない。
+public nonisolated struct TextBounds: Equatable, Sendable {
+    /// 左端 (画素)。
+    public let x: Float
+    /// 上端 (画素)。**y は下向き**なので、いちばん小さい y である。
+    public let y: Float
+    /// 幅 (画素)。
+    public let width: Float
+    /// 高さ (画素)。
+    public let height: Float
+
+    public init(x: Float, y: Float, width: Float, height: Float) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+}

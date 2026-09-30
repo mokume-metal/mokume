@@ -1547,11 +1547,13 @@ struct CanvasTests {
             "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さの 1 件だけで、点は 1024 個が上限 (#1785)。中身は太さで決まり、フレームに属さない",
             "atlasPageFrame": "焼き場の頁を作ったフレームの番号 (#1342)。番号どうしで比べる",
             "retainedSerial": "保持した形を置くたびの通し番号",
+            "pendingDiscards": "溜め場を捨てた通し番号。形の組み立てが入口と出口で比べる (#1588)",
             "framesDrawn": "閉じたフレームの通し番号。境目の印そのもの",
             "shadowMapsBuilt": count,
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
             "spheresFromUnit": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
+            "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
             "computeEncodersOpened": count, "computeEncodersClosed": count,
             "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
@@ -2477,8 +2479,8 @@ struct CanvasTests {
     func bevelCutsTheCornerAndMiterKeepsIt() throws {
         // 矩形の角は 3 つの折れ目の形が区別される。距離関数の経路は式で削ぎ (#752)、
         // 三角形の経路も矩形の角だけは同じ線で削ぐ (#1506・下の
-        // `triangleRectCornersFollowTheJoin`)。任意多角形の折れ目はまだ正方形で埋める
-        // (StrokeJoin.miter の注記)
+        // `triangleRectCornersFollowTheJoin`)。任意多角形の折れ目も、2 本の帯の向きから決まる
+        // 同じ形で埋める (#1644・`PolylineJoinTests`)
         #expect(try outerCornerOfBend(join: .bevel) == 0)
         #expect(try outerCornerOfBend(join: .miter) == 255)
     }

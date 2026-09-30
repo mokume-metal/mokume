@@ -489,6 +489,82 @@ class GuardTest(unittest.TestCase):
         )
         self.assert_passed("gh issue comment 1 -b x", GH_REPO="other/repo")
 
+    # --- 同じコマンドの中で文として変えた宛先 (#1823) --------------------
+
+    # 発言の 4 口 (BODY_BEARING_SURFACES の deny)。形 × 口で回す
+    PORTS = (
+        "gh issue comment 1 --body x",
+        "gh pr comment 1 --body x",
+        "gh pr review 1 --body x",
+        "gh issue close 1 --comment x",
+        "gh pr reopen 1 --comment x",
+    )
+
+    # 他リポの cwd から、gh より前に宛先を mokume へ変えうる文・前置。{m} は mokume の
+    # checkout。形を 1 つ足すなら行を 1 つ足す
+    DESTINATION_FORMS = (
+        "cd {m} && {gh}",
+        "cd {m}; {gh}",
+        "cd {m}\n{gh}",
+        "pushd {m} && {gh}",
+        "(cd {m} && {gh})",
+        "export GH_REPO=mokume-metal/mokume && {gh}",
+        "GH_REPO=mokume-metal/mokume; export GH_REPO; {gh}",
+        "declare -x GH_REPO=mokume-metal/mokume; {gh}",
+        "GIT_DIR={m}/.git {gh}",
+        "export GIT_DIR={m}/.git && {gh}",
+        # 反証 #1〜#3
+        "builtin cd {m} && {gh}",
+        "command cd {m} && {gh}",
+        "builtin export GH_REPO=mokume-metal/mokume && {gh}",
+        "GIT_COMMON_DIR={m}/.git {gh}",
+        "printf -v GH_REPO %s mokume-metal/mokume && {gh}",
+        "read -r GH_REPO <<< mokume-metal/mokume && {gh}",
+        # 反証 2 回目の 2-1・2-3・補足の chdir
+        "for GH_REPO in mokume-metal/mokume; do {gh}; done",
+        "for i in 1 2; do {gh}; cd {m}; done",
+        "chdir {m} && {gh}",
+    )
+
+    def test_repo_option_that_is_decided_at_run_time_denied(self):
+        """反証 2-2 — -R の値が実行時に決まるなら、前置の GH_REPO="$X" と同じく止める側。"""
+        for port in self.PORTS:
+            with self.subTest(port=port):
+                self.assert_denied(f'O=mokume-metal; R=mokume; {port} -R "$O/$R"')
+        self.assert_passed('gh issue comment 1 --body x -R "other/repo"')
+
+    def test_git_variables_that_do_not_move_the_destination_pass(self):
+        """反証 2-5 — 宛先に効かない git の変数は、他リポ宛ての判定を変えない (main の判定)。"""
+        there = self.other_repo_dir()
+        self.assert_passed("GIT_PAGER=cat gh issue comment 1 --body x", cwd=there)
+        self.assert_passed("export GIT_TERMINAL_PROMPT=0 && gh pr comment 1 --body x", cwd=there)
+
+    # mokume の cwd で、継いだ他リポの GH_REPO を消す文 (#1836 の退行)
+    UNSET_FORMS = ("unset GH_REPO && {gh}", "export -n GH_REPO && {gh}")
+
+    def test_statement_that_changes_the_destination_denied_on_every_port(self):
+        there = self.other_repo_dir()
+        for form in self.DESTINATION_FORMS:
+            for port in self.PORTS:
+                command = form.format(m=REPO, gh=port)
+                with self.subTest(command=command):
+                    reason = self.assert_denied(command, cwd=there)
+                    self.assertIn("-R owner/repo", reason, "逃げ道が案内されていない")
+        for form in self.UNSET_FORMS:
+            for port in self.PORTS:
+                command = form.format(gh=port)
+                with self.subTest(command=command):
+                    self.assert_denied(command, GH_REPO="other/repo")
+
+    def test_statement_that_changes_the_destination_keeps_the_escape_hatches(self):
+        """-R の明示と、gh に効かない入れ子の中の cd は今までどおり通る (#1823 の D)。"""
+        there = self.other_repo_dir()
+        self.assert_passed(f"cd {REPO} && gh issue comment 1 -R other/repo --body x", cwd=there)
+        self.assert_passed("export GH_REPO=other/repo && gh issue comment 1 --body x -R other/repo")
+        self.assert_passed(f"x=$(cd {REPO} && pwd) && gh issue comment 1 --body x", cwd=there)
+        # mokume の cwd から他リポへ変える文は、止める側の誤検知のまま (選択肢 2 の範囲)
+        self.assert_denied("export GH_REPO=other/repo && gh issue comment 1 --body x")
+
     def test_coproc_and_function_bodies_denied(self):
         self.assert_denied("coproc gh issue comment 1 -b x")
         self.assert_denied("function f { gh issue comment 1 -b x; }")

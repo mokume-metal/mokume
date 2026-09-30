@@ -686,6 +686,16 @@ public final class Canvas {
     /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     var carriesPictureBeforeEffects = false
+    /// 書き戻した画素のうち変わった画素を、効果を通す前の絵へ写した回数 (作ってから通算・[#1524])。
+    /// **止まっている間に画素を書かなかったフレームでは増えない**ことを検査が見る。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    var effectChangesKeptEncoded = 0
+    /// 止まっている間に描き切った図形・絵・背景を、効果を通す前の絵へも描いた回数 (作ってから
+    /// 通算・[#1524])。**止まっている間に描き切らなかったフレームでは増えない**ことを検査が見る。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    var effectCarryDrawsEncoded = 0
     /// 描き終えた絵を控えへ写した回数 (作ってから通算)。**効果を頼まないフレームでは
     /// 増えない**ことを検査が見る。積む 1 行と同じ場所で数える。
     var effectCarriesEncoded = 0
@@ -867,6 +877,25 @@ public final class Canvas {
 
     /// このフレームで描き切った回数。**奥行きを引き継ぐかの判定に使う。**
     private var passesThisFrame = 0
+
+    /// 描き切りの印。**溜めた計算と列を投入するか捨てると、必ず変わる** ([#1651])。
+    ///
+    /// 溜めた列を投入して空にするのは ``discardFrame()`` で、呼ばれるのは描き切れたとき (描き切った
+    /// 回数が進む) と、フレームを閉じるか捨てるとき (``framesDrawn`` が進む) である。塗り直し
+    /// (`background()`) も溜めた列を捨てるが、印は変えない。粒はその組をまだ読まれていないと
+    /// 見なして 1 組を余分に足すだけで、絵は変わらない。
+    /// ``framesDrawn`` は戻らず、描き切った回数が 0 へ戻るのは ``framesDrawn`` が進んだ後の
+    /// フレームの頭だけなので、同じ印は 2 度現れない。読み戻し (``read(_:)``) は計算だけを流して列を残すので、印を変えない。
+    /// 粒が、呼び出しごとの置き場の組を使い回してよいかを見るのに読む。
+    ///
+    /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
+    var settleMark: SettleMark { SettleMark(frame: framesDrawn, pass: passesThisFrame) }
+
+    /// ``settleMark`` の値。
+    struct SettleMark: Equatable {
+        let frame: Int
+        let pass: Int
+    }
 
     /// 置いた描き場所のうち、まだ描き切っていないもの。
     ///
@@ -1761,6 +1790,15 @@ public final class Canvas {
     // MARK: - 図形
 
     public func background(_ color: LinearRGBA) {
+        paintBackground(color.isFinite ? color : nil)
+    }
+
+    /// 面を塗り直す。**`nil` は受け取れない色** (数でない成分・無限の成分) で、区間の外と形の
+    /// 組み立ての中の断りを先に言ってから断る ([#1706] の反証 2)。数の形 (`background(r, g, b)`) も
+    /// 色の値の形もここを通るので、断る順は形に依らない。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    func paintBackground(_ color: LinearRGBA?) {
         // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])。
         //
         // **見るのは形の組み立てを含まない述語** (``writesToSurface``)。塗り直しは形に焼き付かず、
@@ -1769,6 +1807,14 @@ public final class Canvas {
         //
         // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         guard writesToSurface else { return warnOutsideFrame(.placing) }
+        // **形の組み立ての中では塗り直さない** ([#1588])。塗り直しは形に焼き付く先が無く、通すと
+        // 溜め場を空にして、組み立てが控えた区間を溜め場の外へ追い出す。区間の外なら上の注意を
+        // 先に言う (頂点の仲間と同じ順)
+        //
+        // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        guard !recordingShape else { return warnInsideShape(.background) }
+        // 数でない成分・無限の成分は、溜めたものを捨てる前に断る (#1706)
+        guard let color else { return warnNotANumberColor(.background) }
         discardPending()
         pendingBackground = color
     }
@@ -1781,6 +1827,7 @@ public final class Canvas {
     /// 出る、あるいは何も出ない、という形で現れる (#323)。
     func discardPending() {
         _ = sweepPending(emptying: true)
+        pendingDiscards &+= 1
         // 開いている列の種類は溜めたものではなく、次に置くものの向き先である。空かを見る
         // 側 (``hasNothingPending``) は読まない — 形の組み立ては種類を `.solid` のまま抜ける
         openSource = .flat
@@ -1798,6 +1845,15 @@ public final class Canvas {
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
     var hasNothingPending: Bool { pendingAmount == 0 }
+
+    /// 溜め場を捨てた回数 (``discardPending()``)。**形の組み立てが入口と出口で比べる** ([#1588])。
+    ///
+    /// 組み立ては入口で溜め場の長さを控え、出口でそこから先を形として抜く。記録の途中で捨てると
+    /// 控えた長さは溜め場の外を指す。**長さでは見分けない** — 捨てた後も記録が続けば長さは入口より
+    /// 戻り、壊れた区間を形として抜いてしまう。番号どうしで比べる。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    private(set) var pendingDiscards = 0
 
     /// 溜め場に溜まっている量。**置けば増え、捨てれば 0 に戻る。** 列を閉じる操作 (`blendMode()`
     /// などが開いた列を閉じる) では増えない。
@@ -2069,7 +2125,18 @@ public final class Canvas {
         // 閉じ忘れたフレームを捨てた後で見る — 捨てたフレームの中で置いたものは区間の中である
         checkNothingPlacedOutsideTheRegions()
         // 時刻の置き場の持ち主だけが、本体のフレームを数える (``Timebase/frame``)
-        if timebase.owner === self { timebase.frame += 1 }
+        if timebase.owner === self {
+            timebase.frame += 1
+            // **保存し直した断片は、本体のフレームの頭で読み直す** ([#1830])。main actor を譲らずに
+            // フレームを回す経路 (ランタイムの `advance()` も、面を直に回すループも) でも、次の
+            // フレームに届くのはここで取るからである。描き場所 (持ち主でない面) のフレームでは
+            // 取らない — 描き場所は本体のフレームの中で描かれるので、そこで取ると外のフレームの
+            // 途中で組み直し、1 つのフレームの中で古い断片と新しい断片が混ざる
+            // (``FileWatcher`` の「扱うのは、印を取った側」)
+            //
+            // [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+            FileWatcher.takeChanges()
+        }
         // **組み立て中の形もフレームを越えない** (ADR-0021 決定 4 の追補 (2026-09-27)・
         // [#1591])。頭で捨てるのは、`setup()` や止まっている間のコールバックで開いたまま
         // 抜けた形に、このフレームの点を積ませないため (終わりの側は `abandonFrame()`)
@@ -2186,6 +2253,14 @@ public final class Canvas {
             // 残すと次の描き切りが面へ戻す (#1678)。`defer` は投げても走るので、どの
             // 経路を通ってもここでフレームの境目に落ちる
             discardFrame()
+            // **読んだ写しもフレームを越えない** ([#1524] の反証 2-2)。写しはフレームの途中で
+            // 読んだ絵のまま残るので、取っておいた窓 (``pixels``) へ止まっている間のコールバックで
+            // 書くと、フレームの途中の古い絵へ書いて全面を書き戻していた。ここで下ろせば、止まって
+            // いる間の最初の読み書きがフレームの終わりの絵を読み直す (書く口は書く前に読む)。
+            // 頭 (`beginFrame()`) でも下ろすのは、描き場所の閉じ忘れたフレームを捨てる道のため
+            //
+            // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+            hasLoadedPixels = false
         }
         isDrawing = false
         framesDrawn += 1
@@ -2361,6 +2436,31 @@ public final class Canvas {
         }
     }
 
+    /// いま描き切ると、形を組み立てている途中の面を描き切らせるか ([#1588])。
+    ///
+    /// 描き切りは冒頭で、自分を置いた面を先に描き切らせる (``settlePlacersBeforeChange()``)。
+    /// 置いた面が組み立ての途中なら、組み立てが控えた溜め場の区間がそこで空になる。**画素の口は、
+    /// 自分の面だけでなく置かれた描き場所でも同じ守りに入る** — 同じフレームで `image(layer)` と
+    /// 置いてから、組み立ての中で `layer.get()` と読むと、本体の組み立てが描き切られていた。
+    /// 置いた面をさらに置いた面へも辿る (描き切りも同じように連なる)。
+    ///
+    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    var isPlacedInAShapeInProgress: Bool {
+        var visited: Set<ObjectIdentifier> = [ObjectIdentifier(self)]
+        var waiting: [Canvas] = [self]
+        while let placed = waiting.popLast() {
+            for entry in placed.placers {
+                guard let canvas = entry.canvas,
+                    canvas.placedGraphics.contains(ObjectIdentifier(placed)),
+                    visited.insert(ObjectIdentifier(canvas)).inserted
+                else { continue }
+                if canvas.recordingShape { return true }
+                waiting.append(canvas)
+            }
+        }
+        return false
+    }
+
     /// 直前のフレームで描画を呼んだ回数。
     ///
     /// **畳めているかを数えるための値。** 絵が同じでも畳まれていなければ保持は目的を
@@ -2504,6 +2604,13 @@ public final class Canvas {
         // 拾う — 置いた時点の絵は、前のフレームの出口 (効果を通した絵) である
         let startsFrame = passesThisFrame == 0
         let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
+        // **止まっている間に変えた分は、効果を通す前の絵にも同じように加える** ([#1524])。効果を
+        // 通したフレームの後、次のフレームが控えを戻すまでの間 (止まっている間のコールバック) は、
+        // 描く先 (効果を通した絵・画面と読む画素はこれ) と控え (効果を通す前の絵・次のフレームの
+        // 入りはこれ) の 2 枚を保つ。書いた画素は書き戻すたびに、描き切る図形・絵・背景は描き切る
+        // たびに、両方へ載せる — 混ぜ方は、どちらも置いた面の上で決まる
+        let changesCarry = changesGoIntoCarry && (restoresCarry || !startsFrame)
+        let drawsIntoCarry = changesCarry && !startsFrame && hasPendingDrawing
         // **途中で投げたら、組み立ての口が畳む** (#1180)。ここに片付けは書かない。
         //
         // **「投入された」ことにする記帳は、口から返った後でだけ書く** ([#1183])。組み立ての
@@ -2514,28 +2621,36 @@ public final class Canvas {
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         let assembled = try gpu.withCommands { commands throws(RenderFailure) in
-            // **効果を通す前の絵を、何より先に戻す。** CPU の画素の書き戻しより後に戻すと、
-            // フレームの外で `pixels` へ書いたものを控えの絵で消してしまう。
+            // **効果を通す前の絵を、描くより先に戻す** ([#1469])。前のフレームの出口 (効果を
+            // 通した絵) をこのフレームの入りにしない。
             //
-            // フレームの外で画素を書けるのは、持ち越しを約束する区間だけである (ADR-0021
+            // フレームの外で描く先を変えられるのは、持ち越しを約束する区間だけである (ADR-0021
             // 決定 4 の追補 (2026-09-27)・[#1672])。描き場所の区間 (`beginDraw()`〜`endDraw()`) は
             // フレームそのもので、そこで書いた画素はこの戻しより後に載る — 書く口 (`set()`・
             // `pixels`) がまず画素を読むので、フレームの最初の描き切りは書く前に済んでいる。
             // 描き場所の区間の外 (`endDraw()` の後) の書き込みは断る。以前は通していたので、
             // 効果を通した絵ごと書き戻され、次のフレームで効果が 2 回掛かった ([#1655])。
             //
-            // 残るのは本体の止まっている間のコールバックで書いた画素だけで、先に戻すので、それは
-            // 効果を通した絵ごと描く先へ載る。どう扱うかは [#1524] の判断に残す
+            // 残るのは本体の止まっている間のコールバックである。そこで変えた分は控えにも載せて
+            // ある (上の `changesCarry`) ので、戻せば次のフレームの入りに残る。**書き戻していない
+            // 画素は、戻す前に書き戻して控えへも写す** ([#1524]) — 戻してから書き戻すと、写しの
+            // 全面 (効果を通した絵) が入りになり効果が焼き込まれ、書き戻さずに戻すと書いた画素が
+            // 消える
             //
+            // [#1469]: https://github.com/mokume-metal/mokume/issues/1469
             // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
             // [#1655]: https://github.com/mokume-metal/mokume/issues/1655
             // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-            if restoresCarry { try encodeCarryRestore(into: commands) }
+            var wroteBack = false
+            if changesCarry { wroteBack = try encodePixelWriteBackKeepingCarry(into: commands) }
+            if restoresCarry {
+                try encodeCarryRestore(into: commands, afterKeepingChanges: wroteBack)
+            }
 
             // **CPU が画素へ書いたものがあれば、描く前に描画先へ戻す。** 描画先は GPU 専用の
             // 面なので、`pixels` への書き込みは写しに載っている。書いていないフレームは
-            // 何も積まない (#753)
-            let wroteBack = try target.encodePixelWriteBack(into: commands)
+            // 何も積まない (#753)。控えへも写したなら、書き戻しは済んでいる
+            if !changesCarry { wroteBack = try target.encodePixelWriteBack(into: commands) }
 
             // **数の並びと画像へ CPU が書いた控えを、読む段より前に届ける** (#749)。書く口は
             // 待たずに控えへ積むだけなので、届けるのはここである。控えが無ければ何も積まない
@@ -2555,11 +2670,16 @@ public final class Canvas {
             // [#341]: https://github.com/mokume-metal/mokume/issues/341
             let bakedShadow = try bakeShadow(into: commands)
 
+            // 控えへも描くなら、描く先の奥行きを描く前に写しておく ([#1524])。控えへのパスは描く先
+            // へのパスと同じ奥行きから始める
+            if drawsIntoCarry, pendingBackground == nil { try encodeCarryDepthCopy(into: commands) }
+
             guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
                 throw .encoderUnavailable
             }
 
-            try encodeBatches(into: encoder, shadow: bakedShadow)
+            let prepared = try prepareBatches(shadow: bakedShadow)
+            encodeBatches(into: encoder, prepared: prepared)
 
             drawCallsInLastFrame = hasPendingGeometry ? batches.count : 0
             flatVerticesInLastFrame = vertices.count
@@ -2568,6 +2688,9 @@ public final class Canvas {
             pointScansInLastFrame = pointScansThisFrame
             pointScansThisFrame = 0
             encoder.endEncoding()
+
+            // **止まっている間に描き切るものは、効果を通す前の絵へも同じ列で描く** ([#1524])
+            if drawsIntoCarry { try encodeCarryDraw(into: commands, prepared: prepared) }
 
             // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
             // 書き出しも観測も同じ 1 枚を受け取る (ADR-0023 決定 2)
@@ -2620,16 +2743,32 @@ public final class Canvas {
 
     /// 溜めた列を 1 つずつ積む。**溜めたものが 1 つも無ければ何も積まない** —
     /// 置き場を取ることも、encoder の状態を変えることもしない。
-    private func encodeBatches(
-        into encoder: any MTL4RenderCommandEncoder,
-        shadow bakedShadow: BakedShadow?
-    ) throws(RenderFailure) {
-        guard hasPendingGeometry else { return }
+    /// 溜めた列を描くのに要る置き場。**1 度の描き切りで 1 回だけ取る** — 同じ列を 2 つの面へ
+    /// 描くとき ([#1524]) も、両方がこれを読む。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private struct PreparedBatches {
+        let geometry: GeometryBuffers
+        let perBatch: BatchBuffers
+    }
 
+    /// 溜めた列の置き場を取る。列が無ければ `nil`。
+    private func prepareBatches(shadow bakedShadow: BakedShadow?) throws(RenderFailure)
+        -> PreparedBatches?
+    {
+        guard hasPendingGeometry else { return nil }
         // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
-        let geometry = try uploadGeometry(reusing: bakedShadow?.solidUploads)
-        let perBatch = try uploadPerBatch(shadow: bakedShadow)
+        return PreparedBatches(
+            geometry: try uploadGeometry(reusing: bakedShadow?.solidUploads),
+            perBatch: try uploadPerBatch(shadow: bakedShadow))
+    }
+
+    private func encodeBatches(
+        into encoder: any MTL4RenderCommandEncoder, prepared: PreparedBatches?
+    ) {
+        guard let prepared else { return }
+        let (geometry, perBatch) = (prepared.geometry, prepared.perBatch)
 
         // **見る窓は実際に刻む画素で測る。** 落とす行列は出す細かさで書かれた
         // 座標を -1…1 へ正規化するので、窓を狭めればそのまま細かく刻まれる。
@@ -2751,6 +2890,58 @@ public final class Canvas {
                     on: encoder)
             }
         }
+    }
+
+    /// 描く先の奥行きを、控えへ描くときの奥行き (``EffectPipeline/carryDepth()``) へ写す blit を
+    /// 積む ([#1524])。描く先へのパスより先に積む — 描く先へのパスが奥行きを書き換えるため。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private func encodeCarryDepthCopy(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+        let depth = try effectPipeline().carryDepth()
+        guard let encoder = commands.makeComputeCommandEncoder() else {
+            throw .encoderUnavailable
+        }
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: .blit, visibilityOptions: .device)
+        encoder.copy(sourceTexture: target.depthTexture, destinationTexture: depth.texture)
+        // **写し終わるのを、続く描く先へのパス (奥行きを書く) と控えへのパスが待つ**
+        encoder.barrier(
+            afterStages: .blit, beforeQueueStages: [.vertex, .fragment],
+            visibilityOptions: .device)
+        encoder.endEncoding()
+    }
+
+    /// 止まっている間に描き切るものを、効果を通す前の絵の控え (``EffectPipeline/carry()``) へも
+    /// 描くパスを積む ([#1524])。
+    ///
+    /// **描く先へのパスと同じ列・同じ置き場で描く** (``prepareBatches(shadow:)`` は 1 回だけ取る)。
+    /// 塗り直し (`background()`) は控えも塗り直す。奥行きは、描く先へのパスの前に写したもの
+    /// (``encodeCarryDepthCopy(into:)``) から始め、塗り直すなら消してから始める。控えは次の
+    /// フレームの頭で描く先へ戻され、その入りになる。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private func encodeCarryDraw(
+        into commands: any MTL4CommandBuffer, prepared: PreparedBatches?
+    ) throws(RenderFailure) {
+        let pipeline = try effectPipeline()
+        guard let carry = pipeline.existingCarry else { return }
+        let depth = try pipeline.carryDepth()
+        // 描く先へのパスと同じ作り方 (塗り直しの色の移し方を含む) で組み、面だけを差し替える
+        let pass = target.makeRenderPass(
+            clearColor: pendingBackground, continuingFrame: pendingBackground == nil,
+            keepingDepth: false)
+        pass.colorAttachments[0]!.texture = carry.texture
+        pass.depthAttachment!.texture = depth.texture
+        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+            throw .encoderUnavailable
+        }
+        // **控えへ書く前の段 (変わった画素の写し・奥行きの写し) が終わるのを待つ** (#341)
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: [.vertex, .fragment],
+            visibilityOptions: .device)
+        encodeBatches(into: encoder, prepared: prepared)
+        encoder.endEncoding()
+        effectCarryDrawsEncoded += 1
     }
 
     /// 列の三角形を出す。**添字を持つ列は添字で読む** (``Shape/Run/isIndexed``)。

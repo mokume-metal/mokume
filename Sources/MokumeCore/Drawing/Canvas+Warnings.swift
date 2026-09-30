@@ -270,6 +270,22 @@ extension Canvas {
         ///
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         case atlasFullInOneFrame
+
+        /// 形の組み立て (``createShape(_:)``) の中で塗り直した ([#1588])。塗り 1 色の背景と周囲の
+        /// 背景が鍵を共有する。種類と文面は ``InsideShape`` が持つ。
+        ///
+        /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        case backgroundInsideShape
+        /// 形の組み立ての中で画素を読み書きした ([#1588])。`get` / `set` / `pixels` /
+        /// `loadPixels()` の 4 つが鍵を共有する (``vertexOutsideShape`` の前例)。
+        ///
+        /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        case pixelsInsideShape
+        /// 形の組み立ての途中で溜め場が描き切られ、記録したものを失って空の形を返した ([#1588])。
+        /// 置いた描き場所の描き換えと、揺らぎの設定の書き換えがここへ来る。
+        ///
+        /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        case shapeDrawnOutWhileBuilding
     }
 
     /// 範囲の外の値を範囲へ丸めたことを、初回だけ知らせる ([#1698])。
@@ -289,5 +305,49 @@ extension Canvas {
         warnOnce(
             warning,
             "\(name)(): \(quantity) takes \(range), but \(passed) was passed, so \(used) was used")
+    }
+
+    /// 色を受ける口が、数でない値・無限の値を断ったことを初回だけ知らせる ([#1706])。
+    ///
+    /// **数の形 (`fill(r, g, b)`) と色の値の形 (`fill(_: LinearRGBA)`) が、同じ鍵・同じ文面で
+    /// 言う。** 文面はここ 1 か所で組むので、形によって言い方が変わらない。どちらの形も状態を
+    /// 変えずに残す ([ADR-0020] 決定 5 の 1 行目: 警告を出して安全な既定へ倒す)。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    func warnNotANumberColor(_ entry: ColorEntry) {
+        warnOnce(
+            entry.warning,
+            "\(entry.rawValue)(): got a value that is not a number, or an infinite one, so \(entry.outcome)")
+    }
+
+    /// 色を受ける口。注意の鍵と、断ったときに何を残したかを持つ。
+    enum ColorEntry: String {
+        case fill, stroke, background, tint
+        case ambientLight, directionalLight, pointLight, spotLight
+        case ambient, emissive
+
+        var warning: Warning {
+            switch self {
+            case .fill: .notANumberFill
+            case .stroke: .notANumberStroke
+            case .background: .notANumberBackground
+            case .tint: .notANumberTint
+            case .ambientLight: .notANumberAmbientLight
+            case .directionalLight: .notANumberDirectionalLight
+            case .pointLight: .notANumberPointLight
+            case .spotLight: .notANumberSpotLight
+            case .ambient: .notANumberAmbient
+            case .emissive: .notANumberEmissive
+            }
+        }
+
+        var outcome: String {
+            switch self {
+            case .fill, .stroke, .background, .tint: "the colour was left as it was"
+            case .ambientLight, .directionalLight, .pointLight, .spotLight: "no light was placed"
+            case .ambient, .emissive: "the surface qualities were left as they were"
+            }
+        }
     }
 }

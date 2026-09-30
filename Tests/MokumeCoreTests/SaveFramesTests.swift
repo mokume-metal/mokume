@@ -115,7 +115,10 @@ struct FrameWriterTests {
         "同じ行き先へ続けて頼むと、頼んだ順に書き、最後に頼んだ絵が残る",
         arguments: ["同じ綴り", "sub/../", "シンボリックリンク", "大文字と小文字", "別の書き手"])
     func writesToOnePathSettleInTheOrderAsked(_ spelling: String) throws {
-        try withTemporaryDirectory("mokume-frame-writer-order") { directory in
+        // **ケースごとに違う場所を使う。** 行き先の順番待ちの鍵 (`FrameWriter.lanes`) はプロセスで
+        // 1 つで、前のケースの `drain()` から返った後も、ワーカーが消すまでの間は残りうる。
+        // 同じ場所を使い回すと、次のケースの 1 枚目が控えに回り、2 枚目に畳まれて書かれない (#1878)
+        try withTemporaryDirectory("mokume-frame-writer-order-\(UUID().uuidString)") { directory in
             let tracker = try EncodeTracker(directory, levels: 2)
             let secondEnded = DispatchSemaphore(value: 0)
             let encode: FrameWriter.Encode = { image, url in

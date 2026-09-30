@@ -143,6 +143,13 @@ struct ShaderInterfaceTests {
                         .texture("source", EffectPipeline.sourceTextureIndex),
                         .texture("paired", EffectPipeline.pairedTextureIndex),
                     ]),
+                // 変わった画素だけを重ねる入口 (#1524)。効果の段と同じテーブルで束ねる
+                Entry(
+                    EffectPipeline.keepChangedFunctionName,
+                    [
+                        .texture("source", EffectPipeline.sourceTextureIndex),
+                        .texture("paired", EffectPipeline.pairedTextureIndex),
+                    ]),
             ],
             limits: [
                 .buffer: EffectPipeline.bufferBindCount,
@@ -193,6 +200,8 @@ struct ShaderInterfaceTests {
                         .texture("source", OutputPass.sourceTextureIndex),
                         .buffer(
                             "brightness", OutputPass.brightnessBufferIndex, .layout(brightness)),
+                        .buffer(
+                            "thresholds", OutputPass.thresholdsBufferIndex, .scalar(Float.self)),
                     ])
             ],
             covering: ["presentEncodeFragmentMain"],
@@ -355,7 +364,7 @@ struct ShaderInterfaceTests {
         ])
 
     static let solidStrokePiece = layout(
-        of: SolidStrokeGeometry.Piece.self, [("a", \.a), ("b", \.b)])
+        of: SolidStrokeGeometry.Piece.self, [("a", \.a), ("b", \.b), ("c", \.c)])
 
     static let solidStrokePlacement = layout(
         of: SolidStrokePlacement.self,

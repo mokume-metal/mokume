@@ -45,9 +45,17 @@ Codex CLI 0.158.0-alpha.2.1 のシェル実行 (`exec_command`) とコード実�
 `gh` の手前の予約語・リダイレクト・環境変数の代入・`env`・パスや引用・行継続
 (`for …; do gh`・`PATH=… gh`・`/opt/homebrew/bin/gh`・`gh \`) も認識し、前置の
 `GH_TOKEN` / `GH_REPO` / `env -u` / `env -i` と、`gh` より前に置いた token の発行・export・
-unset は名義と宛先の判定に渡す (#1729)。`sudo` など別のコマンドを起動するコマンドの後ろの
-`gh`・`$GH` のように実行時に決まる語・文としての `cd` や `export GH_REPO=` (#1823) は
-追わない (範囲の線は `scripts/guard-lib.sh` の冒頭)。
+unset は名義と宛先の判定に渡す (#1729)。token は、発行の成功と export が `gh` の時点で必ず
+済んでいるときだけ installation token と見立てる。並びは bash の結合の順 (パイプと
+`{ …; }`・`( … )` などの複合コマンドは `&&` より強い) で読み、置換の中の発行は置換の終了コードが
+発行の成否を伝えるときだけ数える。`gh` より前に文としての `cd`・`pushd`・`popd`、
+`GH_REPO` を変える文 (`export GH_REPO=`・`unset GH_REPO`・`read GH_REPO`・`for GH_REPO in …` など)、
+git がリポジトリを探し remote を読むのに効く変数 (`GIT_DIR`・`GIT_COMMON_DIR`・`GIT_CONFIG_GLOBAL`
+など) があれば、宛先は値を追わずに「決められない」として止める側へ倒す (`builtin` / `command` の
+後ろも読む。ループの本体では gh の後ろの文も効くものとして読む)。値が実行時に決まる `-R "$X"` も
+同じく止める側である。逃げ道は `-R owner/repo` の明示である (#1823)。
+`sudo` など別のコマンドを起動するコマンドの後ろの `gh` と、`$GH` のように実行時に
+決まる語は追わない (範囲の線は `scripts/guard-lib.sh` の冒頭)。
 別の版では読込と実際の発火を確かめる。
 フックを提供しない環境でも、Issue へのプラン記録・コメントのラッパー・App identity は
 AGENTS.md に従って実行する。フックが黙っていることを検証済みの印にしない。

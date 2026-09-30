@@ -135,7 +135,7 @@ readonly STOCK_TYPES='Bug Task Docs'
 
 # 名前の並びに含まれるか (前後の区切りごと照合する — 部分一致を拾わないため)
 has_label() { # $1=ラベルの並び (改行区切り) $2=探すラベル
-  printf '%s\n' "$1" | grep -Fxq "$2"
+  grep -Fxq "$2" <<<"$1"
 }
 
 # 手元の worktree / 枝の名前に番号が現れるか。

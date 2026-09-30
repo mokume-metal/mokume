@@ -132,6 +132,44 @@ struct TextMetricsTests {
         #expect(abs(Double(canvas.textWidth("mokume")) - expected) < 1e-3)
     }
 
+    // MARK: - 墨の範囲 (#1284 条件 4)
+
+    /// 1 字の墨の枠が、CoreText から独立に引いた字形の外接 (`CTFontGetBoundingRectsForGlyphs`)
+    /// を、書き始めと基準線でずらした値と一致する ([#1284])。書体の座標は基準線から上向き
+    /// なので、上端は基準線から外接の上辺 (`maxY`) だけ上になる。
+    ///
+    /// `1` を含めるのは、墨が送り幅の中で片寄る字だからである (下の検査)。
+    ///
+    /// [#1284]: https://github.com/mokume-metal/mokume/issues/1284
+    @Test("1 字の墨の枠は、CoreText の字形の外接を書き始めと基準線でずらしたもの", arguments: faces)
+    func glyphBoundsMatchCoreText(_ face: (font: String?, size: Float)) throws {
+        let canvas = try makeCanvas(font: face.font, size: face.size)
+        let font = try reference(face.font, size: face.size)
+        let (x, baseline): (Float, Float) = (30, 100)
+        for character in ["1", "A", "g", "o"] {
+            let rect = try #require(CoreTextReference.glyphBounds(of: character, in: font))
+            let bounds = try #require(canvas.textBounds(character, x, baseline), "\(character)")
+            let note = "\(face.font ?? "既定") \(face.size) の \(character)"
+            #expect(abs(Double(bounds.x) - (Double(x) + rect.minX)) <= 0.5, "\(note): 左")
+            #expect(abs(Double(bounds.y) - (Double(baseline) - rect.maxY)) <= 0.5, "\(note): 上")
+            #expect(abs(Double(bounds.width) - rect.width) <= 0.5, "\(note): 幅")
+            #expect(abs(Double(bounds.height) - rect.height) <= 0.5, "\(note): 高さ")
+        }
+    }
+
+    /// **墨の中心は、送り幅の中心と一致しない** — 字の左右に書体が付けた余白が違うため。
+    /// Helvetica 32 の `1` は送り幅 17.80 に対して墨が書き始めから 3.06〜11.33 にあり、
+    /// 墨の中心が送り幅の中心より 1.7 画素左にある (2026-09-23 に CoreText で実測)。
+    /// 送り幅で字の中心を取ると、この差だけ片寄って見える (#1284 の事象)。
+    @Test("Helvetica 32 の 1 は、墨の中心が送り幅の中心より 1.7 画素左にある")
+    func theInkOfOneSitsLeftOfItsAdvance() throws {
+        let canvas = try makeCanvas(font: "Helvetica", size: 32)
+        let bounds = try #require(canvas.textBounds("1", 0, 100))
+        let inkCentre = bounds.x + bounds.width / 2
+        let advanceCentre = canvas.textWidth("1") / 2
+        #expect(abs((advanceCentre - inkCentre) - 1.7) < 0.05, "\(advanceCentre - inkCentre)")
+    }
+
     /// **既定の書体では見ない。** 既定の書体は大きさに合わせて字形と送り幅を切り替える
     /// (光学サイズ) ので、幅が大きさに比例しない — 32 で 119.61・64 で 235.66 (2026-09-23
     /// 実測)。既定の書体の幅は、上の検査が大きさごとに CoreText と照合している。
@@ -390,6 +428,16 @@ enum CoreTextReference {
     /// 名前で引いた書体。
     static func font(named name: String, size: Float) -> CTFont {
         CTFontCreateWithName(name as CFString, CGFloat(size), nil)
+    }
+
+    /// 1 字の字形の外接 (書体の座標・基準線から上向き)。書体が覆えない字なら `nil`。
+    static func glyphBounds(of character: String, in font: CTFont) -> CGRect? {
+        var units = Array(character.utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: units.count)
+        guard units.count == 1, CTFontGetGlyphsForCharacters(font, &units, &glyphs, 1) else {
+            return nil
+        }
+        return CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyphs, nil, 1)
     }
 
     /// 文字列の送り幅の合計。**字形の並びをまとめて CoreText に渡し、合計も CoreText に

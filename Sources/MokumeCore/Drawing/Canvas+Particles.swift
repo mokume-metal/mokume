@@ -145,20 +145,34 @@ extension Canvas {
     }
 
     /// 1 フレーム進めて、生きている粒を描く。
+    ///
+    /// **呼ぶたびに進めて、呼んだ時点の変換で描く** ([#1651])。同じ描き切りの中で同じ群を
+    /// 2 回目以降に置くときは、指定・置き場所・描く引数を呼び出しごとの組へ分ける
+    /// (`Particles.claimDraw(by:)`)。途中の描き切りを挟む形は採らない — 途中の描き切りには
+    /// 既知の破れがある (#1656・#1657)。
+    ///
+    /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
     public func particles(_ particles: Particles) {
         guard isDrawing else { return warnOutsideFrame(.particles) }
+        // 組を選べなければ、力を取り出さずに帰る。積んだ力は次の呼び出しに効く
+        let draw: Particles.Draw
+        do {
+            draw = try particles.claimDraw(by: self)
+        } catch {
+            return particles.warnDrawUnavailable(error)
+        }
         // **速い経路は列を先に開く。** 描く引数 (頂点の頭と数) を GPU が書くので、
         // 四角をどこへ置いたかを計算へ渡す前に知っておく必要がある。列は閉じた時点の
         // 混ぜ方と変換で描かれるので、順序を入れ替えても絵は変わらない
-        let placed = particleRoute == .instanced ? placeFromGPU(particles) : nil
+        let placed = particleRoute == .instanced ? placeFromGPU(particles, draw) : nil
         particles.write(
-            transform: transform.matrix, basis: currentCamera.basis, step: deltaTime,
+            into: draw, transform: transform.matrix, basis: currentCamera.basis, step: deltaTime,
             frame: framesDrawn,
             forces: particles.takeForces(),
             vertexStart: placed?.start ?? 0, vertexCount: placed?.count ?? 0)
         // 取り出したので、控えた数はもう指す先が無い。この後に積む力は 0 個から数え直す
         forcesThisFrame.removeAll { $0.particles.value === particles }
-        schedule(particles)
+        schedule(particles, draw)
         if particleRoute == .reference { placeFromCPU(particles) }
     }
 
@@ -168,10 +182,10 @@ extension Canvas {
     /// 導かれ、描画との同期も既にある仕掛けが入れる。旗 → 段 → 進めて置く の順で、
     /// どれも前の計算が書いた段の並びに触れるので、1 つずつ口が切れて待つ仕掛けが入る
     /// (#341 — この世代のコマンド構造は口をまたぐ依存を自動では張らない)。
-    private func schedule(_ particles: Particles) {
+    private func schedule(_ particles: Particles, _ draw: Particles.Draw) {
         compute(
             particles.flag, over: particles.capacity,
-            reads: [particles.parameters, particles.state],
+            reads: [draw.parameters, particles.state],
             writes: [particles.levels])
         for level in 0..<particles.scanCount {
             compute(
@@ -181,8 +195,8 @@ extension Canvas {
         }
         compute(
             particles.update, over: particles.capacity,
-            reads: [particles.parameters, particles.levels],
-            writes: [particles.state, particles.instances, particles.arguments])
+            reads: [draw.parameters, particles.levels],
+            writes: [particles.state, draw.instances, draw.arguments])
     }
 
     /// GPU が埋めた置き場所で描く列を開く。**読み戻しが無い。** 返すのは四角の頂点の
@@ -193,7 +207,9 @@ extension Canvas {
     /// 描く — 参照の経路と同じ絵になる ([#1649])。
     ///
     /// [#1649]: https://github.com/mokume-metal/mokume/issues/1649
-    private func placeFromGPU(_ particles: Particles) -> (start: Int, count: Int)? {
+    private func placeFromGPU(
+        _ particles: Particles, _ draw: Particles.Draw
+    ) -> (start: Int, count: Int)? {
         guard let run = particles.quad.runs.first, run.source == .solid else { return nil }
         var start = 0
         replaying(CollectionOfOne(run)) { run in
@@ -203,8 +219,8 @@ extension Canvas {
             openRetainedSolid(
                 run, of: particles.quad, mirrored: false,
                 external: ExternalInstances(
-                    instances: particles.instances, count: particles.capacity,
-                    arguments: particles.arguments))
+                    instances: draw.instances, count: particles.capacity,
+                    arguments: draw.arguments))
             closeBatch()
         }
         return (start, run.count)

@@ -1026,8 +1026,11 @@ struct ShaderTests {
     /// ディレクトリなら、事象はフレームごとに起きる。事象ごとに 1 本積むと、譲らないループでは
     /// フレームに比例して溜まり、譲った後に溜まった本数だけ張り直しと読み直しが走る。
     ///
-    /// **走った回数で数える** — 積まれた `Task` の数そのものである。譲らずに書いて、事象が
-    /// 届くのも譲らずに待ち、それから譲る。
+    /// **積んだ数で数える** — 譲らずに書いて、事象が届くのも譲らずに待ち、譲る前に自分の見張りが
+    /// 積んだ知らせの数を読む。扱った回数では数えない。並列の検査のフレームの頭が、この見張りの
+    /// 印も取るためである ([#1830] の反証 3。フレームの頭で取る側は ``ShaderWatchWithoutYieldingTests``)。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     @Test("譲らずに何度書き換えても、見張りは譲った後に 1 度だけ扱う")
@@ -1049,17 +1052,19 @@ struct ShaderTests {
         }
         let arrived = writeWithoutYielding()
         try #require(arrived >= 10, "検査の前提: 20 回書いて事象が \(arrived) 回しか届いていない")
-
-        try await waitUntil { watcher.handledCount >= 1 }
-        try await Task.sleep(for: .milliseconds(200))
-        // 譲った後に遅れて届いた事象があれば、もう 1 本積まれて走る。多くて 2 回である
+        // **積んだ数は、譲る前に自分の見張りの上で数える** ([#1830] の反証 3)。扱った回数は、
+        // 譲った後に並列で走る別の検査のフレームの頭が、この見張りの印を取った分も入る
         #expect(
-            watcher.handledCount <= 2,
+            watcher.queuedNoticeCount <= 1,
             """
-            譲らずに事象を \(arrived) 回拾った後で譲ったら、\(watcher.handledCount) 回扱った。
+            譲らずに事象を \(arrived) 回拾う間に、main actor へ \(watcher.queuedNoticeCount) 本積んだ。
             事象ごとに main actor へ積んでいる
             ([#1594](https://github.com/mokume-metal/mokume/issues/1594))。
             """)
+
+        try await waitUntil { watcher.handledCount >= 1 }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(watcher.queuedNoticeCount == 0, "譲った後も、積んだ知らせが走っていない")
         #expect(changes == watcher.handledCount)
     }
 
@@ -1085,5 +1090,456 @@ struct ShaderTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(condition(), "\(seconds) 秒待っても届かなかった", sourceLocation: sourceLocation)
+    }
+}
+
+/// main actor を譲らずに ``SketchRuntime/advance()`` を回しても、断片の保存が届く ([#1830])。
+///
+/// 見張りは拾った事象を `Task { @MainActor }` で渡していたので、譲らないループ (窓を出さない
+/// 書き出しや検査) では 1 本も走らず、何フレーム回しても古い断片のまま描いた。誰が `advance()` を
+/// 叩くかは外側の話 (``SketchRuntime`` の説明) なので、叩き方で届き方が変わってはならない。
+///
+/// **検査はすべて同期の関数で書く** — `await` を 1 つでも挟むと、そこで積まれた `Task` が走って
+/// 直っていなくても通る ([#1594] の `completionNoticesDoNotPileUpWithoutYielding`・[#1704] の
+/// `ParameterWithoutYieldingTests` と同じ回し方)。事象が届くのは眠って待つ。
+///
+/// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+/// [#1704]: https://github.com/mokume-metal/mokume/issues/1704
+/// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+@Suite(
+    "断片の保存は、譲らずに回しても次のフレームで届く (#1830)",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct ShaderWatchWithoutYieldingTests {
+    /// 黒の上に、渡された塗りで面を覆うスケッチ。`draw` の中で走らせる手続きも持てる。
+    final class Idle: Sketch {
+        var settings = SketchSettings(width: 8, height: 8, frameRate: 60)
+        var duringDraw: (() -> Void)?
+        var paint: Shader?
+        /// 描いたら作者が止める (`noLoop()`)。
+        var stopsAfterDrawing = false
+
+        init() {}
+        func draw() {
+            if stopsAfterDrawing { noLoop() }
+            duringDraw?()
+            background(.linear(red: 0, green: 0, blue: 0))
+            guard let paint else { return }
+            noStroke()
+            shader(paint)
+            rect(0, 0, 8, 8)
+            resetShader()
+        }
+    }
+
+    /// 見張る断片 3 つ (塗り・効果・計算) と、その在処。
+    private struct Fragments {
+        let shader: Shader
+        let effect: EffectShader
+        let computation: Computation
+        let urls: [URL]
+
+        /// 3 つの差し替えの回数。
+        var generations: [Int] { [shader.generation, effect.generation, computation.generation] }
+        var watchers: [FileWatcher] {
+            [shader.watcher, effect.watcher, computation.watcher].compactMap { $0 }
+        }
+    }
+
+    private static func shaderBody(_ green: String) -> String {
+        "float4 paint(Fragment in, Values values) { return float4(0.0, \(green), 0.0, 1.0); }"
+    }
+    private static func effectBody(_ scale: String) -> String {
+        "float4 effect(Pixel in, Values values) { return in.color * \(scale); }"
+    }
+    private static func computationBody(_ value: String) -> String {
+        """
+        kernel void fill(device float *out [[buffer(0)]], uint id [[thread_position_in_grid]])
+        {
+            out[id] = \(value);
+        }
+        """
+    }
+
+    private func load(on canvas: Canvas) throws -> Fragments {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-unyielding-shader-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let paint = directory.appendingPathComponent("paint.metal")
+        let tint = directory.appendingPathComponent("tint.metal")
+        let fill = directory.appendingPathComponent("fill.metal")
+        try Self.shaderBody("0.25").write(to: paint, atomically: true, encoding: .utf8)
+        try Self.effectBody("0.5").write(to: tint, atomically: true, encoding: .utf8)
+        try Self.computationBody("0.5").write(to: fill, atomically: true, encoding: .utf8)
+        return Fragments(
+            shader: try canvas.loadShader(paint.path),
+            effect: try canvas.loadEffect(tint.path),
+            computation: try canvas.loadComputation(fill.path),
+            urls: [paint, tint, fill])
+    }
+
+    /// 3 つを書き換え、**譲らずに**事象が届くのを待つ。
+    private func rewrite(_ fragments: Fragments, _ revision: Int) throws {
+        let before = fragments.watchers.map(\.arrivedEventCount)
+        try Self.shaderBody("0.\(revision)").write(to: fragments.urls[0], atomically: true, encoding: .utf8)
+        try Self.effectBody("0.\(revision)").write(to: fragments.urls[1], atomically: true, encoding: .utf8)
+        try Self.computationBody("\(revision).0").write(to: fragments.urls[2], atomically: true, encoding: .utf8)
+        let deadline = Date().addingTimeInterval(5)
+        func arrived() -> Bool {
+            zip(fragments.watchers.map(\.arrivedEventCount), before).allSatisfy { $0 > $1 }
+        }
+        while !arrived(), Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        // 1 度の保存でファイル側と親ディレクトリ側の両方が拾うので、後から届く分も待つ
+        Thread.sleep(forTimeInterval: 0.1)
+        try #require(arrived(), "検査の前提: 書き換えた事象が 5 秒待っても見張りに届いていない")
+    }
+
+    @Test("譲らずに回しても、書き換えた断片は次のフレームで読み直される (塗り・効果・計算)")
+    func aSaveArrivesAtTheNextFrameWithoutYielding() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        sketch.paint = fragments.shader
+        try runtime.advance()
+        try #require(fragments.generations == [0, 0, 0])
+        var green = try runtime.target.readPixels()[4, 4].green
+
+        for revision in 1...2 {
+            try rewrite(fragments, revision)
+            try runtime.advance()
+            #expect(
+                fragments.generations == [revision, revision, revision],
+                """
+                譲らずに \(revision) 回目の保存をしてから 1 フレーム回したが、読み直した回数が \
+                \(fragments.generations) (塗り・効果・計算)。見張りの知らせが、譲らない間は届かない
+                """)
+            // 読み直しただけでなく、そのフレームが新しい断片で描かれている
+            let drawn = try runtime.target.readPixels()[4, 4].green
+            #expect(drawn != green, "保存の次のフレームが、まだ古い断片で描かれている")
+            green = drawn
+        }
+    }
+
+    @Test("描いている最中に書き換えても、そのフレームの中では読み直さない")
+    func aSaveDuringDrawWaitsForTheFrameBoundary() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        let graphics: Canvas? = try runtime.canvas.createGraphics(4, 4)
+        try runtime.advance()
+
+        var atStart: [Int] = []
+        var atEnd: [Int] = []
+        var rewriteFailure: (any Error)?
+        sketch.duringDraw = {
+            atStart = fragments.generations
+            do { try rewrite(fragments, 1) } catch { rewriteFailure = error }
+            // 書き換えた後で使う。**使うときに取る**形だと、ここで組み直してしまう
+            runtime.canvas.shader(fragments.shader)
+            runtime.canvas.rect(0, 0, 4, 4)
+            runtime.canvas.resetShader()
+            // 描き場所のフレームを入れ子に描く。**面の描き始めで取る**形だと、ここで組み直す
+            graphics?.beginDraw()
+            graphics?.background(.linear(red: 0, green: 0, blue: 0))
+            graphics?.endDraw()
+            atEnd = fragments.generations
+        }
+        try runtime.advance()
+        sketch.duringDraw = nil
+        if let rewriteFailure { throw rewriteFailure }
+        #expect(atStart == atEnd, "描いている最中に組み直した: \(atStart) → \(atEnd)")
+
+        try runtime.advance()
+        #expect(fragments.generations == [1, 1, 1], "次のフレームの境目で読み直していない")
+    }
+
+    @Test("譲らずに何度書き換えても、積まれる知らせは 1 本までで、扱うのは境目ごとに 1 度")
+    func savesWithoutYieldingDoNotPileUp() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        try runtime.advance()
+        let handled = fragments.watchers.map(\.handledCount)
+
+        for revision in 1...5 {
+            try rewrite(fragments, revision)
+            try runtime.advance()
+        }
+        #expect(fragments.generations == [5, 5, 5])
+        for watcher in fragments.watchers {
+            #expect(watcher.queuedNoticeCount <= 1, "譲らない間に知らせが積み上がっている")
+        }
+        // 保存 1 度でファイル側と親ディレクトリ側が拾っても、扱うのは境目ごとに 1 度。**この検査は
+        // 同期で回るので、間に他の検査のフレームは入らない** — 扱った回数はこの検査の分だけである
+        #expect(zip(fragments.watchers.map(\.handledCount), handled).allSatisfy { $0 - $1 == 5 })
+    }
+
+    /// 反証 1 ([#1830])。ランタイムを通さずに面を直に回すループ (`Canvas(target:gpu:)` と `draw(_:)`)
+    /// でも届く。取る口がランタイムにしか無いと、この形は譲らない限り古い断片のまま描く。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    @Test("ランタイムを通さずに面を直に回しても、書き換えた断片は次のフレームで読み直される")
+    func aSaveArrivesWhenTheCanvasIsDrivenDirectly() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+        try canvas.draw {}
+        let fragments = try load(on: canvas)
+        try canvas.draw {}
+        try #require(fragments.generations == [0, 0, 0])
+
+        for revision in 1...2 {
+            try rewrite(fragments, revision)
+            try canvas.draw {}
+            #expect(
+                fragments.generations == [revision, revision, revision],
+                "面を直に回して \(revision) 回目の保存をした次のフレームで、読み直した回数が \(fragments.generations)")
+        }
+    }
+
+    /// 反証 2 ([#1830])。断片と同じディレクトリへ連番を書き出すと、見張りは親ディレクトリの事象を
+    /// フレームごとに拾う。組み立てに失敗する断片を毎フレーム組み直して警告しない・中身が
+    /// 変わらなければファイル側を張り直さない。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    @Test("組み立てに失敗する断片は、隣へ毎フレーム書き出しても、組み直さず 1 度だけ知らせる")
+    func aBrokenFragmentIsReportedOnceWhileFramesAreWrittenBesideIt() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        sketch.paint = fragments.shader
+        try runtime.advance()
+        let shader = fragments.shader
+        let watcher = try #require(shader.watcher)
+        let directory = fragments.urls[0].deletingLastPathComponent()
+
+        /// 何かを書いて、この見張りに事象が届くのを譲らずに待つ。
+        func touch(_ write: () throws -> Void) throws {
+            let before = watcher.arrivedEventCount
+            try write()
+            let deadline = Date().addingTimeInterval(5)
+            while watcher.arrivedEventCount <= before, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+            try #require(watcher.arrivedEventCount > before, "検査の前提: 書いた事象が見張りに届いていない")
+        }
+
+        // その場で上書きして壊す (置き換えると、ファイル側を張り直すのが正しい)
+        try touch {
+            try "これは MSL ではない".write(to: fragments.urls[0], atomically: false, encoding: .utf8)
+        }
+        try runtime.advance()
+        try #require(shader.failure != nil, "検査の前提: 壊した断片の組み立てが失敗していない")
+        let reports = shader.failureReports
+        let watches = watcher.fileWatchCount
+        let handled = watcher.handledCount
+
+        for frame in 0..<8 {
+            try touch {
+                try runtime.target.writePNG(to: directory.appendingPathComponent("frame-\(frame).png"))
+            }
+            try runtime.advance()
+        }
+        try #require(watcher.handledCount - handled >= 8, "検査の前提: 書き出しの事象をフレームごとに扱っていない")
+        #expect(
+            shader.failureReports == reports,
+            "同じ中身の失敗を、書き出しのたびに \(shader.failureReports - reports) 回言い直した")
+        #expect(watcher.fileWatchCount == watches, "中身の変わらない断片のファイル側を、フレームごとに張り直した")
+        #expect(shader.generation == 0)
+
+        // 直して保存すれば、次のフレームで組み上がり、失敗の控えも下りる
+        try touch {
+            try Self.shaderBody("0.75").write(to: fragments.urls[0], atomically: false, encoding: .utf8)
+        }
+        try runtime.advance()
+        #expect(shader.generation == 1)
+        #expect(shader.failure == nil)
+    }
+
+    // MARK: - 2 回目の反証 (#1830)
+
+    /// 何かを書いて、見張りに事象が届くのを譲らずに待つ。
+    ///
+    /// - Parameter required: 届くことが検査の前提か。届くかどうかそのものを見るなら `false` にして、
+    ///   届かなければ待ちを切り上げる (見るのは呼んだ側の表明)。
+    private func touch(
+        _ watcher: FileWatcher, required: Bool = true, _ write: () throws -> Void
+    ) throws {
+        let before = watcher.arrivedEventCount
+        try write()
+        let deadline = Date().addingTimeInterval(required ? 5 : 1)
+        while watcher.arrivedEventCount <= before, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+        guard required else { return }
+        try #require(watcher.arrivedEventCount > before, "検査の前提: 書いた事象が見張りに届いていない")
+    }
+
+    /// 2 回目の反証 1。外から止めた間と、作者の `noLoop()` で描き直しを頼まれていない間は、
+    /// ランタイムが描かずに戻る。本体の面の頭が来ないので、そこでも取らないと、譲らないループでは
+    /// 保存が扱われず、観測の目録 (`shaderFailures`) も古いまま残る。
+    @Test("外から止めた間も、作者が止めた間も、譲らずに回せば保存を扱う", arguments: [false, true])
+    func aSaveArrivesWhileTheSketchIsStopped(stoppedByTheAuthor: Bool) throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        try runtime.advance()
+        let shader = fragments.shader
+        let watcher = try #require(shader.watcher)
+        if stoppedByTheAuthor {
+            sketch.stopsAfterDrawing = true
+            try runtime.advance()
+        } else {
+            runtime.pause()
+        }
+
+        try touch(watcher) {
+            try "これは MSL ではない".write(to: fragments.urls[0], atomically: false, encoding: .utf8)
+        }
+        try runtime.advance()
+        #expect(shader.failure != nil, "止めている間に壊した断片を、譲らずに回しても扱っていない")
+        #expect(runtime.canvas.shaderFailures.count == 1, "観測の目録に、壊した断片の理由が載っていない")
+
+        try touch(watcher) {
+            try Self.shaderBody("0.75").write(to: fragments.urls[0], atomically: false, encoding: .utf8)
+        }
+        try runtime.advance()
+        #expect(shader.generation == 1, "止めている間に直した断片を、譲らずに回しても読み直していない")
+        #expect(runtime.canvas.shaderFailures.isEmpty, "直した後も、観測の目録に古い理由が残っている")
+    }
+
+    /// 2 回目の反証 2。組み直して入れ替えた古いパイプラインの状態は、投入済みのフレームが終わる
+    /// まで抱える。この世代のコマンドは読む相手を保持しないので、抱える者がいないと、前のフレームが
+    /// まだ走っている間に手放しうる。**差し替えの直後に誰かが抱えていて、待った後には手放している**
+    /// ことを見る (抱え続けても漏れる)。
+    @Test("入れ替えた古い状態は、投入済みのフレームが終わるまで抱え、終われば手放す")
+    func replacedStatesAreHeldUntilSubmittedFramesFinish() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+        let fragments = try load(on: canvas)
+        let shader = fragments.shader
+        weak var flat: AnyObject? = shader.states.composite
+        weak var solid: AnyObject? = shader.solidStates.blend
+        weak var effect: AnyObject? = fragments.effect.state
+        weak var computation: AnyObject? = fragments.computation.state
+        // 塗りで描いたフレームを、待たずに投入しておく
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.shader(shader)
+            canvas.rect(0, 0, 8, 8)
+            canvas.resetShader()
+        }
+
+        try Self.shaderBody("0.5").write(to: fragments.urls[0], atomically: false, encoding: .utf8)
+        try Self.effectBody("0.25").write(to: fragments.urls[1], atomically: false, encoding: .utf8)
+        try Self.computationBody("2.0").write(to: fragments.urls[2], atomically: false, encoding: .utf8)
+        shader.reload()
+        fragments.effect.reload()
+        fragments.computation.reload()
+        try #require(fragments.generations == [1, 1, 1], "検査の前提: 組み直していない")
+        #expect(flat != nil, "入れ替えた塗りの平面の状態を、誰も抱えていない")
+        #expect(solid != nil, "入れ替えた塗りの立体の状態を、誰も抱えていない")
+        #expect(effect != nil, "入れ替えた効果の状態を、誰も抱えていない")
+        #expect(computation != nil, "入れ替えた計算の状態を、誰も抱えていない")
+
+        try canvas.gpu.settle()
+        #expect(flat == nil && solid == nil && effect == nil && computation == nil, "終わった後も抱え続けている")
+        // 入れ替えた直後のフレームも描ける (検査の段は MTL_DEBUG_LAYER=1 で回る)
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.shader(shader)
+            canvas.rect(0, 0, 8, 8)
+            canvas.resetShader()
+        }
+        try canvas.gpu.settle()
+        #expect(canvas.gpu.commandFaultCount == 0)
+    }
+
+    /// 2 回目の反証 3・4。控えるのは組み立て (翻訳) の失敗だけで、それ以外は次に拾ったときに
+    /// 組み直す。`failure` は、いま効いている中身とファイルが揃えば下りる。同じ理由は言い直さない。
+    @Test("組み直さないのは翻訳に失敗した中身だけで、失敗の控えは効いている中身へ戻すと下りる")
+    func onlyCompilationFailuresAreRemembered() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-shader-box-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("paint.metal")
+        let good = Self.shaderBody("0.25")
+        try good.write(to: url, atomically: false, encoding: .utf8)
+        let box = ShaderBox(
+            name: "paint", url: url, body: good, values: [:], label: "shader", valuesHint: "")
+
+        // 中身と関係ない失敗は控えない。同じ中身でも、次に拾えば組み直す
+        try Self.shaderBody("0.5").write(to: url, atomically: false, encoding: .utf8)
+        var attempts = 0
+        for _ in 0..<2 {
+            box.reload { (_: String) throws(RenderFailure) in
+                attempts += 1
+                throw .pipelineUnavailable(reason: "for testing")
+            }
+        }
+        #expect(attempts == 2, "中身と関係ない失敗まで控え、同じ中身を組み直さなくなった")
+        #expect(box.failureReports == 1, "同じ理由の失敗を言い直した")
+
+        // 翻訳の失敗は控え、同じ中身なら組み直さない
+        attempts = 0
+        try "これは MSL ではない".write(to: url, atomically: false, encoding: .utf8)
+        for _ in 0..<2 {
+            box.reload { (_: String) throws(RenderFailure) in
+                attempts += 1
+                throw .shaderCompilationFailed(name: "paint", reason: "for testing")
+            }
+        }
+        #expect(attempts == 1)
+        #expect(box.failure != nil)
+
+        // いま効いている中身へ戻して保存すれば、組み直さずに控えが下りる
+        try good.write(to: url, atomically: false, encoding: .utf8)
+        box.reload { (_: String) throws(RenderFailure) in attempts += 1 }
+        #expect(attempts == 1, "効いている中身と同じなのに組み直した")
+        #expect(box.failure == nil, "効いている中身へ戻したのに、失敗の控えが残っている")
+        #expect(box.generation == 0)
+
+        // 読めないままなら、何度拾っても 1 度だけ言う
+        let reports = box.failureReports
+        try FileManager.default.removeItem(at: url)
+        box.reload { (_: String) throws(RenderFailure) in }
+        box.reload { (_: String) throws(RenderFailure) in }
+        #expect(box.failureReports == reports + 1)
+    }
+
+    /// 2 回目の反証 5。消して作り直したファイルも、張り直して見張り続ける。張り直すかは、ファイルが
+    /// 誰か (通し番号と生まれた時刻) で決める。**APFS は番号を使い回さないので、この検査は番号だけの
+    /// 比べ方でも緑になる** — 見ているのは「消して作り直した後も届く」ことで、張り直しを止めると赤になる。
+    @Test("消して作り直したファイルも、その後のその場の上書きまで届く")
+    func aFileDeletedAndRecreatedIsWatchedAgain() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        try runtime.advance()
+        let shader = fragments.shader
+        let watcher = try #require(shader.watcher)
+        let url = fragments.urls[0]
+
+        try touch(watcher) { try FileManager.default.removeItem(at: url) }
+        try runtime.advance()
+        try touch(watcher) {
+            try Self.shaderBody("0.5").write(to: url, atomically: false, encoding: .utf8)
+        }
+        try runtime.advance()
+        #expect(shader.generation == 1, "消して作り直した断片を読み直していない")
+
+        // その場の上書きは親ディレクトリを変えない。ファイル側を張り直していなければ届かない
+        try touch(watcher, required: false) {
+            try Self.shaderBody("0.75").write(to: url, atomically: false, encoding: .utf8)
+        }
+        try runtime.advance()
+        #expect(shader.generation == 2, "作り直したファイルのその場の上書きが届かない")
     }
 }

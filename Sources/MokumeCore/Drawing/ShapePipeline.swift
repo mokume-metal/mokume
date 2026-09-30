@@ -48,6 +48,10 @@ final class ShapePipeline {
         /// 置き換える列。断片は下地を読まず、混ぜずにそのまま置く。
         let replace: any MTLRenderPipelineState
 
+        /// 3 つとも。差し替えた後も、投入済みのフレームが終わるまで抱えるのに使う
+        /// (``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。
+        var all: [AnyObject] { [composite, blend, replace] }
+
         /// その混ぜ方で描くパイプライン。
         func state(for mode: BlendMode) -> any MTLRenderPipelineState {
             switch mode {

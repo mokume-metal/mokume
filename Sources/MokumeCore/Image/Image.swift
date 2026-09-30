@@ -103,6 +103,11 @@ import simd
 
     /// 1 画素の色。範囲の外は透明を返す (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
     ///
+    /// 返す値は線形・アルファ乗算済みの ``LinearRGBA`` である ([ADR-0011] 決定 4)。
+    /// ``set(_:_:_:)`` が受けるのも同じ表現なので、`set(x, y, get(x, y))` は絵を変えない。
+    /// 0–255 の乗算していない数で読むときは ``red(_:)`` ほかを通す。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func get(_ x: Int, _ y: Int) -> LinearRGBA {
         guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
@@ -114,12 +119,13 @@ import simd
     }
 
     /// 1 画素の色を書き換える。範囲の外は何もしない。
+    ///
+    /// 色は検めずに面へ移す。数でない成分・無限の成分もそのまま書き (図形を描く経路が面へ
+    /// 移すときと同じ)、有限の成分は面が表せる ±65504 で止まる (``fill(_:)`` も同じ)。
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) {
         guard x >= 0, y >= 0, x < width, y < height else { return }
         let index = y * width + x
-        let texel = SIMD4<Float16>(
-            Float16(color.red), Float16(color.green), Float16(color.blue),
-            Float16(color.alpha))
+        let texel = HalfSurface.texel(color)
         if displayInput != nil,
             inputPatches[index] != nil || inputPatches.count < Self.inputPatchLimit
         {
@@ -187,11 +193,9 @@ import simd
         needsUpload = true
     }
 
-    /// 全体を 1 色で埋める。
+    /// 全体を 1 色で埋める。色は ``set(_:_:_:)`` と同じく、検めずに面へ移す。
     public func fill(_ color: LinearRGBA) {
-        let texel = SIMD4<Float16>(
-            Float16(color.red), Float16(color.green), Float16(color.blue),
-            Float16(color.alpha))
+        let texel = HalfSurface.texel(color)
         if displayInput != nil {
             // 捨てる入力は復号しない。
             cpuPixels = Array(repeating: texel, count: width * height)

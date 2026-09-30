@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -755,25 +756,35 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         """
         gh = self.bindir / "gh"
         original = gh.read_text(encoding="utf-8")
-        gh.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8")  # 返らない gh
+        # 返らない gh。起動した印を置くので、「GitHub を待っている間」を時間に頼らず作れる。
+        # 固定の秒数で殺すと、CPU が混んだ回は GitHub に届く前に殺されて赤になる (#1857)
+        started = self.bindir / "gh-started"
+        gh.write_text(f"#!/bin/sh\n: > '{started}'\nsleep 60\n", encoding="utf-8")
 
-        with self.assertRaises(subprocess.TimeoutExpired):
-            subprocess.run(
-                ["/bin/bash", str(SCRIPT), "capture"],
-                input=json.dumps(
-                    {
-                        "tool_name": "ExitPlanMode",
-                        "cwd": str(self.repo),
-                        "session_id": "abcd1234-ef56-7890",
-                        "tool_input": {"plan": "計画。\n" + RECHECK},
-                    }
-                ),
-                capture_output=True,
-                text=True,
-                cwd=str(self.repo),
-                env=self.env(),
-                timeout=3,
-            )
+        capture = subprocess.Popen(
+            ["/bin/bash", str(SCRIPT), "capture"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            cwd=str(self.repo),
+            env=self.env(),
+        )
+        capture.stdin.write(json.dumps(
+            {
+                "tool_name": "ExitPlanMode",
+                "cwd": str(self.repo),
+                "session_id": "abcd1234-ef56-7890",
+                "tool_input": {"plan": "計画。\n" + RECHECK},
+            }
+        ))
+        capture.stdin.close()
+        deadline = time.monotonic() + 30
+        while not started.exists() and capture.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        capture.kill()
+        capture.wait(timeout=10)
+        self.assertTrue(started.exists(), "capture が GitHub に届く前に終わった・または 30 秒で届かなかった")
 
         self.assertEqual(len(self.metas()), 1, "GitHub を待つ前に .meta が置かれている")
         self.assertEqual(len(self.records()), 1)

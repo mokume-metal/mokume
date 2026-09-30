@@ -286,6 +286,53 @@ struct UpscaleTests {
         #expect(pixels[64, 48].red > 3.9)
     }
 
+    /// #1817 の反証 1 (拡大の段)。**乗算を戻した色は、読んだ周りの乗算を戻した値を越えない。**
+    /// 白・色 4 の光・透明が横に並ぶと、Catmull-Rom の負の重みが白を引き、色と不透明度が同じ
+    /// だけ下がる。色は 4 近くのまま不透明度だけが下がるので、越えていた量を不透明度に足すだけの
+    /// 締めでは、戻した色が 4 を越える (手計算で 4.26 — 重み (−0.07, 0.87, 0.23, −0.02) の所)。
+    /// 光の帯は描く画素でちょうど 1 画素にする — 読む 4 画素が白・光・透明・透明と並ぶため。
+    @Test("白と 1 を越える光と透明が並ぶ縁でも、拡大は乗算を戻した色を読んだ周りより明るくしない", arguments: [Float(0.5), 0.25])
+    func straightColourStaysWithinItsNeighbourhood(density: Float) throws {
+        let canvas = try makeCanvas(density: density)
+        try canvas.draw {
+            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.rect(16, 0, 24, 96)
+            canvas.fill(LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1))
+            canvas.rect(40, 0, 1 / density, 96)
+        }
+        let pixels = canvas.output.pixels
+        var brightest: Float = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                let c = pixels[x, y]
+                guard c.alpha > 0.05 else { continue }
+                brightest = max(brightest, c.red / c.alpha, c.green / c.alpha, c.blue / c.alpha)
+            }
+        }
+        #expect(brightest <= 4 * (1 + 2e-3), "乗算を戻した色が \(brightest) で、読んだ 4 を越えた (\(density))")
+        // 越えていた分は運ぶ (1 を越える光が出りに残っている)
+        #expect(brightest > 2, "越えていた光を運んでいない: \(brightest) (\(density))")
+    }
+
+    /// #1817 の反証 2-2・2-5 (拡大の段)。**不透明度 0 で色を持つ画素 (透明な地へ加算した光) も、
+    /// 拡大は運ぶ** — 色ずれ・色調整と同じく、畳むのは出力段だけである (ADR-0011 決定 1)。直す前は
+    /// 出りの不透明度が 0 以下なら 0 を返していたので、細かさを下げたときだけ光が消えた。
+    @Test("不透明度 0 で色を持つ画素は、拡大を通しても細かさ 1 と同じく残る", arguments: [Float(0.5), 0.25])
+    func unboundedLightSurvivesTheEnlargement(density: Float) throws {
+        let canvas = try makeCanvas(density: density)
+        let light = LinearRGBA(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 0)
+        try canvas.draw { canvas.background(light) }
+        let pixels = canvas.output.pixels
+        for (x, y) in [(0, 0), (64, 48), (127, 95)] {
+            let c = pixels[x, y]
+            #expect(
+                c.red == 1 && c.green == 0.5 && c.blue == 0.25 && c.alpha == 0,
+                "(\(x), \(y)) が \(c) (\(density))")
+        }
+    }
+
     /// 引いて 0 を下回った値は、作業空間に残る (``BlendMode/subtract``・ADR-0011 決定 1)。
     /// 畳むのは出力段だけなので、**拡大の段も 0 へ締めない** — 細かさ 1 (段が立たない) と
     /// 同じ値を読み戻せる。

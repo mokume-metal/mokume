@@ -145,7 +145,7 @@ while IFS= read -r path; do
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
     number="${ref#ADR-}"
-    if ! find "$DIR" -maxdepth 1 -name "$number-*.md" | grep -q .; then
+    if [ -z "$(find "$DIR" -maxdepth 1 -name "$number-*.md")" ]; then
       echo "状態欄が実在しない ADR を指している: $path" >&2
       echo "  指し先: $ref" >&2
       failed=1

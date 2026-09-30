@@ -18,8 +18,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnOnce(
-                .notANumberAmbientLight, "ambientLight(): got a value that is not a number, or an infinite one, so no light was placed")
+            return refuseLightColor(.ambientLight)
         }
         ambientLight(color)
     }
@@ -31,8 +30,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnOnce(
-                .notANumberDirectionalLight, "directionalLight(): got a value that is not a number, or an infinite one, so no light was placed")
+            return refuseLightColor(.directionalLight)
         }
         directionalLight(color, x, y, z)
     }
@@ -44,8 +42,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnOnce(
-                .notANumberPointLight, "pointLight(): got a value that is not a number, or an infinite one, so no light was placed")
+            return refuseLightColor(.pointLight)
         }
         pointLight(color, x, y, z)
     }
@@ -60,8 +57,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnOnce(
-                .notANumberSpotLight, "spotLight(): got a value that is not a number, or an infinite one, so no light was placed")
+            return refuseLightColor(.spotLight)
         }
         spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
@@ -76,8 +72,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnOnce(
-                .notANumberAmbient, "ambient(): got a value that is not a number, or an infinite one, so the surface qualities were left as they were")
+            return refuseMaterialColor(.ambient)
         }
         ambient(color)
     }
@@ -92,8 +87,7 @@ extension Canvas {
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: 255)
         else {
-            return warnOnce(
-                .notANumberEmissive, "emissive(): got a value that is not a number, or an infinite one, so the surface qualities were left as they were")
+            return refuseMaterialColor(.emissive)
         }
         emissive(color)
     }
