@@ -430,22 +430,43 @@ struct UpscaleTests {
     /// 拡大は効果と同じ `encode` を通るので、番地表を引けない失敗も同じ位置で起きる
     /// (#1184)。出す先は前の内容を読まない (`.dontCare`) ので、口を開いてから投げると
     /// 閉じても出す先の中身が保証されない — **投げるなら口を開く前**である。
+    ///
+    /// 出す先を読む口は、読む前に描く先へ追い付かせる ([#1882])。拡大が積めなかったフレームの後は
+    /// 出す先が古いので、**古い絵を黙って返さない** — 失敗が続く間は読む口が投げ、直れば広げ直した
+    /// 絵が出る。
+    ///
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
     @Test("拡大の段で失敗しても、落ちずに知らせ、出す先へは何も書かない")
     func leavesTheOutputAloneWhenTheUpscaleFails() throws {
+        /// 出す先の写しから読む。**読む口の追い付きを通さない**ので、出す先そのものが見える。
+        func stored(_ target: RenderTarget) -> [LinearRGBA] {
+            let window = target.pixels
+            return stride(from: 0, to: target.height, by: 8).flatMap { y in
+                stride(from: 0, to: target.width, by: 8).map { x in window[x, y] }
+            }
+        }
         let canvas = try makeCanvas(density: 0.5)
         try canvas.draw { quadrant(on: canvas) }
         let before = fingerprint(try canvas.output.encodeForDisplay().bytes)
+        let untouched = stored(canvas.output)
 
         // 効果を頼んでいないので、拡大の段が枠の 0 番を取る
         canvas.failEffectPassForTesting = 0
         try canvas.draw {
             canvas.background(.display(red: 1, green: 1, blue: 1))
         }
-        canvas.failEffectPassForTesting = nil
 
         #expect(canvas.warnings.hasWarned(.upscaleFailed))
         // 白く塗った絵は出す先へ届かず、前のフレームの絵が残っている
-        #expect(fingerprint(try canvas.output.encodeForDisplay().bytes) == before)
+        #expect(stored(canvas.output) == untouched)
+        // 追い付けないまま読まれたら、古い絵を返さずに投げる
+        #expect(canvas.needsOutputEnlargement)
+        #expect(throws: RenderFailure.self) { _ = try canvas.output.encodeForDisplay() }
+
+        // 直れば、次に読む口が広げ直して、白く塗った絵が出る
+        canvas.failEffectPassForTesting = nil
+        #expect(fingerprint(try canvas.output.encodeForDisplay().bytes) != before)
+        #expect(!canvas.needsOutputEnlargement)
     }
 
     // MARK: - 出口が揃うこと
