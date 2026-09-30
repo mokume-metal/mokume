@@ -42,8 +42,14 @@ enum MovieWriteFailure: Error, Equatable {
 /// 一様でない不透明度が重なったとき、640×360 以上で `Cannot Encode` と断られ、断られた書き手は
 /// 立ち直らないので録り全体が失われる**。色が一色・滑らかな絵は、不透明度が乱数でも通る。
 /// `AlphaChannelMode` を替えても、専用回路を必須にしても、ProRes 4444 XQ にしても避けられず、
-/// 専用回路を使わない符号化器 (`prores-4444`) だけが通った。形式・不透明度・水準 3 は変わらない。
-/// 決めているのは形式で、どの符号化器で書くかではない ([ADR-0025] 決定 3)。
+/// 専用回路を使わない符号化器 (`prores-4444`) だけが通った。形式は変わらず、決めているのは形式で、
+/// どの符号化器で書くかではない ([ADR-0025] 決定 3)。
+///
+/// **不透明度と水準 3 は、測った範囲で変わらない。** 断られた 4 絵柄 × 640×360 / 641×361 / 1920×1080 で、
+/// 復号した不透明度は入力と一致し、同じ入力を 2 回書くと復号した画素と時刻が全画素で一致した。
+/// 色が乱れた絵に不透明度が重なる別の絵では、半透明の画素の色が乗算されずに残った (塊の内側で
+/// 入力との差は最大 1・`MovieWriterTests`)。専用回路を使わない符号化器は複数のスレッドで並列に
+/// 符号化するので、測っていない大きさ・絵柄では言わない。
 ///
 /// **代償は、符号化に使う CPU である。** 符号化は別のプロセス (`VTEncoderXPCService`) が行うので、
 /// このプロセスの CPU 時間には現れない。40 枚を初期化から `finish` まで書いた CPU 時間
@@ -55,7 +61,8 @@ enum MovieWriteFailure: Error, Equatable {
 /// | 1920×1080 | 45 → 295 | 101 → 830 | 58 → 2105 |
 /// | 3840×2160 | 368 → 1856 | 574 → 3672 | 417 → 8977 |
 ///
-/// 壁時間は、一色と勾配ではおおむね同じか短く、RGB が乱数の絵では 2〜5 倍に伸びた
+/// **絵と大きさによって 5〜36 倍になる** (1920×1080 の一色で約 7 倍、RGB が乱数の絵は
+/// 1920×1080 で約 36 倍、3840×2160 で約 21 倍)。壁時間は、一色と勾配ではおおむね同じか短く、RGB が乱数の絵では 2〜5 倍に伸びた
 /// (3840×2160 で 183〜257 → 724〜894 ms)。60 fps の実時間で送ると、1920×1080 は 3 つの絵とも
 /// 遅れず、3840×2160 の RGB が乱数の絵だけが追いつけない (3 秒ぶんを送る間に 0.2〜0.8 秒遅れ、
 /// ``MovieWriter/write(_:frame:time:)`` の待ちが 26〜101 ms に達した)。
@@ -65,7 +72,12 @@ enum MovieWriteFailure: Error, Equatable {
 ///
 /// **固定の約束ではなく、測った回避策である。** 指定は ``encoderSpecification()`` の 1 か所だけで、
 /// Apple 側が直ったら外して戻せる。戻して検査 (`MovieWriterTests` の「色の細かい絵に…」) が赤に
-/// ならなければ、直っている。専用回路の無い機械 (GitHub のホストなど) では、外しても赤にならない。
+/// ならなければ、直っている。そのとき `theMovieIsNotWrittenByTheHardwareEncoder` (書き上がりが
+/// 専用回路のものでないことを見る) は赤になるので外す。
+///
+/// **専用回路の無い機械 (GitHub のホストなど) では、指定を外しても書き上がりの検査は赤にならない**
+/// (どちらでも同じ符号化器で書かれる)。機械によらず赤になるのは、書き手へ指定を渡したことを見る
+/// `theWriterIsHandedTheEncoderSpecification` だけである。
 ///
 /// ## 符号化器の用意は、読み直して待つ
 ///
@@ -177,6 +189,31 @@ nonisolated final class MovieFile {
             kVTCompressionPropertyKey_AlphaChannelMode as String] != nil
     }
 
+    /// writer の入力へ渡す出力設定。**検査が「書き手へ符号化器の指定を渡したか」を機械によらず
+    /// 見られるよう、`init` から切り出してある** ([#1813])。専用回路の無い機械では、指定を外しても
+    /// 動画は同じ符号化器で書かれるので、書き上がりからは見えない。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    static func outputSettings(
+        width: Int, height: Int, compression: [String: Any]
+    ) -> [String: Any] {
+        [
+            AVVideoCodecKey: AVVideoCodecType.proRes4444,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            // **問い合わせと同じ符号化器を指す** (``encoderSpecification()``)
+            AVVideoEncoderSpecificationKey: encoderSpecification(),
+            // **色を名乗る。** 作業空間と同じ Display P3 で書き出す ([ADR-0011] 決定 1)。
+            // 名乗らないと、再生する側は狭い色域だと見なして色を寄せる
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_P3_D65,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_IEC_sRGB,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
+            AVVideoCompressionPropertiesKey: compression,
+        ]
+    }
+
     init(path: String, width: Int, height: Int, frameRate: Int) throws(MovieWriteFailure) {
         guard let supported = Self.supportedProperties(width: width, height: height) else {
             throw .encoderUnavailable
@@ -212,21 +249,7 @@ nonisolated final class MovieFile {
 
         input = AVAssetWriterInput(
             mediaType: .video,
-            outputSettings: [
-                AVVideoCodecKey: AVVideoCodecType.proRes4444,
-                AVVideoWidthKey: width,
-                AVVideoHeightKey: height,
-                // **問い合わせと同じ符号化器を指す** (``encoderSpecification()``)
-                AVVideoEncoderSpecificationKey: Self.encoderSpecification(),
-                // **色を名乗る。** 作業空間と同じ Display P3 で書き出す ([ADR-0011] 決定 1)。
-                // 名乗らないと、再生する側は狭い色域だと見なして色を寄せる
-                AVVideoColorPropertiesKey: [
-                    AVVideoColorPrimariesKey: AVVideoColorPrimaries_P3_D65,
-                    AVVideoTransferFunctionKey: AVVideoTransferFunction_IEC_sRGB,
-                    AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-                ],
-                AVVideoCompressionPropertiesKey: compression,
-            ])
+            outputSettings: Self.outputSettings(width: width, height: height, compression: compression))
         // 実時間に追いつく必要は無い。詰まったら待たせるほうが、落とすより正しい
         input.expectsMediaDataInRealTime = false
         adaptor = AVAssetWriterInputPixelBufferAdaptor(
