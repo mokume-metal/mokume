@@ -317,10 +317,11 @@ extension Canvas {
                 // 外側の記録へは、引いた頂点も移して渡す。**その場で描くときは要らない** — 置く数だけ
                 // 頂点の数ぶんの写しを作ることになる。区間の一部だけを置くときは、引いた頂点も
                 // 一部になってしまうので持ち越さない
-                if recordingShape, lower == whole.lowerBound, upper == whole.upperBound {
-                    carved = shape.strokeRanges[index].carved.map {
-                        Self.moved($0, by: matrix, tint: tint)
-                    }
+                // (`Optional.map` に閉包を渡さない — 隔離の実行時検査を払う・#1779)
+                if recordingShape, lower == whole.lowerBound, upper == whole.upperBound,
+                    let source = shape.strokeRanges[index].carved
+                {
+                    carved = Self.moved(source, by: matrix, tint: tint)
                 }
             }
             if recordingShape {

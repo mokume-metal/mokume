@@ -174,7 +174,13 @@ public struct Shape {
         self.forms = forms
         self.runs = runs
         self.strokeRanges = strokeRanges
-        hasCarvedStrokes = strokeRanges.contains { $0.carved != nil }
+        // 閉包を標準ライブラリの高階関数へ渡さずにループで組む (隔離の実行時検査を避ける・#1779)
+        var carved = false
+        for stroke in strokeRanges where stroke.carved != nil {
+            carved = true
+            break
+        }
+        hasCarvedStrokes = carved
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
     }
