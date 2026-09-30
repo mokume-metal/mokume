@@ -22,6 +22,8 @@ public final class Shader {
     /// いま効いている値。
     var values: [String: ShaderValue] { box.values }
     var watcher: FileWatcher? { box.watcher }
+    /// 診断: 差し替えの失敗を知らせた回数 (``ShaderBox/failureReports``)。
+    var failureReports: Int { box.failureReports }
 
     /// いま渡している面。**名前ごとに口を 1 つ使う** ([#407])。
     ///

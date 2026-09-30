@@ -1026,9 +1026,11 @@ struct ShaderTests {
     /// ディレクトリなら、事象はフレームごとに起きる。事象ごとに 1 本積むと、譲らないループでは
     /// フレームに比例して溜まり、譲った後に溜まった本数だけ張り直しと読み直しが走る。
     ///
-    /// **扱った回数で数える** — ランタイムを回さないこの検査では、積まれた `Task` が走った数と
-    /// 同じである (フレームの頭で取る側は ``ShaderWatchWithoutYieldingTests``・#1830)。譲らずに
-    /// 書いて、事象が届くのも譲らずに待ち、それから譲る。
+    /// **積んだ数で数える** — 譲らずに書いて、事象が届くのも譲らずに待ち、譲る前に自分の見張りが
+    /// 積んだ知らせの数を読む。扱った回数では数えない。並列の検査のフレームの頭が、この見張りの
+    /// 印も取るためである ([#1830] の反証 3。フレームの頭で取る側は ``ShaderWatchWithoutYieldingTests``)。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     @Test("譲らずに何度書き換えても、見張りは譲った後に 1 度だけ扱う")
@@ -1050,17 +1052,19 @@ struct ShaderTests {
         }
         let arrived = writeWithoutYielding()
         try #require(arrived >= 10, "検査の前提: 20 回書いて事象が \(arrived) 回しか届いていない")
-
-        try await waitUntil { watcher.handledCount >= 1 }
-        try await Task.sleep(for: .milliseconds(200))
-        // 譲った後に遅れて届いた事象があれば、もう 1 本積まれて走る。多くて 2 回である
+        // **積んだ数は、譲る前に自分の見張りの上で数える** ([#1830] の反証 3)。扱った回数は、
+        // 譲った後に並列で走る別の検査のフレームの頭が、この見張りの印を取った分も入る
         #expect(
-            watcher.handledCount <= 2,
+            watcher.queuedNoticeCount <= 1,
             """
-            譲らずに事象を \(arrived) 回拾った後で譲ったら、\(watcher.handledCount) 回扱った。
+            譲らずに事象を \(arrived) 回拾う間に、main actor へ \(watcher.queuedNoticeCount) 本積んだ。
             事象ごとに main actor へ積んでいる
             ([#1594](https://github.com/mokume-metal/mokume/issues/1594))。
             """)
+
+        try await waitUntil { watcher.handledCount >= 1 }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(watcher.queuedNoticeCount == 0, "譲った後も、積んだ知らせが走っていない")
         #expect(changes == watcher.handledCount)
     }
 
@@ -1222,6 +1226,7 @@ struct ShaderWatchWithoutYieldingTests {
         let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
         try runtime.advance()
         let fragments = try load(on: runtime.canvas)
+        let graphics: Canvas? = try runtime.canvas.createGraphics(4, 4)
         try runtime.advance()
 
         var atStart: [Int] = []
@@ -1234,6 +1239,10 @@ struct ShaderWatchWithoutYieldingTests {
             runtime.canvas.shader(fragments.shader)
             runtime.canvas.rect(0, 0, 4, 4)
             runtime.canvas.resetShader()
+            // 描き場所のフレームを入れ子に描く。**面の描き始めで取る**形だと、ここで組み直す
+            graphics?.beginDraw()
+            graphics?.background(.linear(red: 0, green: 0, blue: 0))
+            graphics?.endDraw()
             atEnd = fragments.generations
         }
         try runtime.advance()
@@ -1262,7 +1271,90 @@ struct ShaderWatchWithoutYieldingTests {
         for watcher in fragments.watchers {
             #expect(watcher.queuedNoticeCount <= 1, "譲らない間に知らせが積み上がっている")
         }
-        // 保存 1 度でファイル側と親ディレクトリ側が拾っても、扱うのは境目ごとに 1 度
+        // 保存 1 度でファイル側と親ディレクトリ側が拾っても、扱うのは境目ごとに 1 度。**この検査は
+        // 同期で回るので、間に他の検査のフレームは入らない** — 扱った回数はこの検査の分だけである
         #expect(zip(fragments.watchers.map(\.handledCount), handled).allSatisfy { $0 - $1 == 5 })
+    }
+
+    /// 反証 1 ([#1830])。ランタイムを通さずに面を直に回すループ (`Canvas(target:gpu:)` と `draw(_:)`)
+    /// でも届く。取る口がランタイムにしか無いと、この形は譲らない限り古い断片のまま描く。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    @Test("ランタイムを通さずに面を直に回しても、書き換えた断片は次のフレームで読み直される")
+    func aSaveArrivesWhenTheCanvasIsDrivenDirectly() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+        try canvas.draw {}
+        let fragments = try load(on: canvas)
+        try canvas.draw {}
+        try #require(fragments.generations == [0, 0, 0])
+
+        for revision in 1...2 {
+            try rewrite(fragments, revision)
+            try canvas.draw {}
+            #expect(
+                fragments.generations == [revision, revision, revision],
+                "面を直に回して \(revision) 回目の保存をした次のフレームで、読み直した回数が \(fragments.generations)")
+        }
+    }
+
+    /// 反証 2 ([#1830])。断片と同じディレクトリへ連番を書き出すと、見張りは親ディレクトリの事象を
+    /// フレームごとに拾う。組み立てに失敗する断片を毎フレーム組み直して警告しない・中身が
+    /// 変わらなければファイル側を張り直さない。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    @Test("組み立てに失敗する断片は、隣へ毎フレーム書き出しても、組み直さず 1 度だけ知らせる")
+    func aBrokenFragmentIsReportedOnceWhileFramesAreWrittenBesideIt() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        sketch.paint = fragments.shader
+        try runtime.advance()
+        let shader = fragments.shader
+        let watcher = try #require(shader.watcher)
+        let directory = fragments.urls[0].deletingLastPathComponent()
+
+        /// 何かを書いて、この見張りに事象が届くのを譲らずに待つ。
+        func touch(_ write: () throws -> Void) throws {
+            let before = watcher.arrivedEventCount
+            try write()
+            let deadline = Date().addingTimeInterval(5)
+            while watcher.arrivedEventCount <= before, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+            try #require(watcher.arrivedEventCount > before, "検査の前提: 書いた事象が見張りに届いていない")
+        }
+
+        // その場で上書きして壊す (置き換えると、ファイル側を張り直すのが正しい)
+        try touch {
+            try "これは MSL ではない".write(to: fragments.urls[0], atomically: false, encoding: .utf8)
+        }
+        try runtime.advance()
+        try #require(shader.failure != nil, "検査の前提: 壊した断片の組み立てが失敗していない")
+        let reports = shader.failureReports
+        let watches = watcher.fileWatchCount
+        let handled = watcher.handledCount
+
+        for frame in 0..<8 {
+            try touch {
+                try runtime.target.writePNG(to: directory.appendingPathComponent("frame-\(frame).png"))
+            }
+            try runtime.advance()
+        }
+        try #require(watcher.handledCount - handled >= 8, "検査の前提: 書き出しの事象をフレームごとに扱っていない")
+        #expect(
+            shader.failureReports == reports,
+            "同じ中身の失敗を、書き出しのたびに \(shader.failureReports - reports) 回言い直した")
+        #expect(watcher.fileWatchCount == watches, "中身の変わらない断片のファイル側を、フレームごとに張り直した")
+        #expect(shader.generation == 0)
+
+        // 直して保存すれば、次のフレームで組み上がり、失敗の控えも下りる
+        try touch {
+            try Self.shaderBody("0.75").write(to: fragments.urls[0], atomically: false, encoding: .utf8)
+        }
+        try runtime.advance()
+        #expect(shader.generation == 1)
+        #expect(shader.failure == nil)
     }
 }

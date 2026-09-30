@@ -2085,7 +2085,18 @@ public final class Canvas {
         // 閉じ忘れたフレームを捨てた後で見る — 捨てたフレームの中で置いたものは区間の中である
         checkNothingPlacedOutsideTheRegions()
         // 時刻の置き場の持ち主だけが、本体のフレームを数える (``Timebase/frame``)
-        if timebase.owner === self { timebase.frame += 1 }
+        if timebase.owner === self {
+            timebase.frame += 1
+            // **保存し直した断片は、本体のフレームの頭で読み直す** ([#1830])。main actor を譲らずに
+            // フレームを回す経路 (ランタイムの `advance()` も、面を直に回すループも) でも、次の
+            // フレームに届くのはここで取るからである。描き場所 (持ち主でない面) のフレームでは
+            // 取らない — 描き場所は本体のフレームの中で描かれるので、そこで取ると外のフレームの
+            // 途中で組み直し、1 つのフレームの中で古い断片と新しい断片が混ざる
+            // (``FileWatcher`` の「扱うのは、印を取った側」)
+            //
+            // [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+            FileWatcher.takeChanges()
+        }
         // **組み立て中の形もフレームを越えない** (ADR-0021 決定 4 の追補 (2026-09-27)・
         // [#1591])。頭で捨てるのは、`setup()` や止まっている間のコールバックで開いたまま
         // 抜けた形に、このフレームの点を積ませないため (終わりの側は `abandonFrame()`)
