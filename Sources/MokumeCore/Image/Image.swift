@@ -103,6 +103,11 @@ import simd
 
     /// 1 画素の色。範囲の外は透明を返す (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。
     ///
+    /// 返す値は線形・アルファ乗算済みの ``LinearRGBA`` である ([ADR-0011] 決定 4)。
+    /// ``set(_:_:_:)`` が受けるのも同じ表現なので、`set(x, y, get(x, y))` は絵を変えない。
+    /// 0–255 の乗算していない数で読むときは ``red(_:)`` ほかを通す。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func get(_ x: Int, _ y: Int) -> LinearRGBA {
         guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
