@@ -312,6 +312,109 @@ struct TriangulationTests {
         #expect(merged == outer)
     }
 
+    // MARK: - 交わった周を分ける (#1538)
+
+    @Test("単純な形は組み直さない", arguments: ["凸", "凹", "T", "同じ点を 2 度通る", "穴", "同じ向きの穴"])
+    func simpleRingsAreLeftAlone(_ name: String) {
+        let square: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 10), SIMD2(0, 10)]
+        let rings: [[SIMD2<Float>]]
+        switch name {
+        case "凸": rings = [square]
+        case "凹":
+            rings = [[SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 10), SIMD2(5, 3), SIMD2(0, 10)]]
+        case "T":
+            rings = [[
+                SIMD2(106, 170), SIMD2(106, 51), SIMD2(64, 51), SIMD2(64, 36),
+                SIMD2(165, 36), SIMD2(165, 51), SIMD2(123, 51), SIMD2(123, 170),
+            ]]
+        case "同じ点を 2 度通る":
+            rings = [[
+                SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 5), SIMD2(20, 0),
+                SIMD2(20, 10), SIMD2(10, 5), SIMD2(10, 10), SIMD2(0, 10),
+            ]]
+        case "穴": rings = [square, [SIMD2(3, 3), SIMD2(3, 6), SIMD2(6, 6), SIMD2(6, 3)]]
+        default: rings = [square, [SIMD2(3, 3), SIMD2(6, 3), SIMD2(6, 6), SIMD2(3, 6)]]
+        }
+        let (indices, points) = numbered(rings)
+        #expect(Triangulation.splitForNonzero(rings: indices, points: points) == nil)
+    }
+
+    @Test("5 点の星は、交点を足した 10 点の凹んだ周 1 つになる")
+    func aPentagramBecomesAConcaveStar() throws {
+        let star: [SIMD2<Float>] = [
+            SIMD2(80, 10), SIMD2(121, 137), SIMD2(13, 58), SIMD2(147, 58), SIMD2(39, 137),
+        ]
+        let (indices, points) = numbered([star])
+        let split = try #require(Triangulation.splitForNonzero(rings: indices, points: points))
+        #expect(split.crossings.count == 5)
+        #expect(split.regions.count == 1)
+        let region = try #require(split.regions.first)
+        #expect(region.holes.isEmpty)
+        #expect(region.outer.count == 10)
+        let all = points + split.crossings.map(\.point)
+        // 5 つの腕と中の五角形。どの点もちょうど 1 度だけ覆う
+        let outline = region.outer.map { all[$0] }
+        let triangles = Triangulation.triangulate(outline)
+        let expected = Triangulation.signedArea(outline)
+        #expect(expected > 0)
+        #expect(abs(area(of: triangles, points: outline) - expected) < 0.01)
+    }
+
+    @Test("砂時計は、1 点で触れ合う 2 つの三角形になる")
+    func anHourglassBecomesTwoTriangles() throws {
+        let hourglass: [SIMD2<Float>] = [
+            SIMD2(20, 20), SIMD2(140, 20), SIMD2(20, 140), SIMD2(140, 140),
+        ]
+        let (indices, points) = numbered([hourglass])
+        let split = try #require(Triangulation.splitForNonzero(rings: indices, points: points))
+        #expect(split.crossings.count == 1)
+        let crossing = try #require(split.crossings.first)
+        #expect(crossing.point == SIMD2(80, 80))
+        #expect(crossing.first.at == 0.5 && crossing.second.at == 0.5)
+        #expect(split.regions.count == 2)
+        let all = points + split.crossings.map(\.point)
+        for region in split.regions {
+            #expect(region.outer.count == 3)
+            #expect(region.holes.isEmpty)
+            #expect(abs(Triangulation.signedArea(region.outer.map { all[$0] })) == 3600)
+        }
+    }
+
+    @Test("外周を跨ぐ穴は、外周の中で切れ込みになり、外へ出た先は別の外周になる")
+    func aStraddlingHoleSplitsIntoANotchAndATip() throws {
+        let square: [SIMD2<Float>] = [SIMD2(20, 20), SIMD2(140, 20), SIMD2(140, 140), SIMD2(20, 140)]
+        let hole: [SIMD2<Float>] = [SIMD2(100, 60), SIMD2(100, 100), SIMD2(155, 80)]
+        let (indices, points) = numbered([square, hole])
+        let split = try #require(Triangulation.splitForNonzero(rings: indices, points: points))
+        #expect(split.crossings.count == 2)
+        let all = points + split.crossings.map(\.point)
+        var areas: [Float] = []
+        for region in split.regions {
+            #expect(region.holes.isEmpty)
+            areas.append(Triangulation.signedArea(region.outer.map { all[$0] }))
+        }
+        areas.sort()
+        // 外へ出た先は、穴の三角形 (底 40・高さ 55) の先の、高さ 15 の相似形
+        let whole: Float = 0.5 * 40 * 55
+        let tip: Float = whole * (15 * 15) / (55 * 55)
+        #expect(areas.count == 2)
+        #expect(abs(areas[0] - tip) < 0.01)
+        // 残りは、穴の外周の中の部分が切れ込んだ矩形
+        let notched: Float = 120 * 120 - (whole - tip)
+        #expect(abs(areas[1] - notched) < 0.01)
+    }
+
+    /// 周の組に、通しの番号を振る。
+    private func numbered(_ rings: [[SIMD2<Float>]]) -> ([[Int]], [SIMD2<Float>]) {
+        var points: [SIMD2<Float>] = []
+        var indices: [[Int]] = []
+        for ring in rings {
+            indices.append(Array(points.count..<(points.count + ring.count)))
+            points += ring
+        }
+        return (indices, points)
+    }
+
     // MARK: - 道具
 
     /// 点で渡して点で受け取る形。畳む本体は**番号で**受け渡すので、検査のために

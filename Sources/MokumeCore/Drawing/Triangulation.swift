@@ -43,8 +43,14 @@ import simd
 nonisolated enum Triangulation {
     /// 単純な多角形を三角形へ分ける。返すのは点の番号の 3 つ組。
     ///
-    /// **自己交差した形では正しい分け方が存在しない。** その場合でも落ちず、無限に
-    /// 回らず、切れるところまで切って返す — 利用者が描いた形を拒むより、何かを描く。
+    /// **自己交差した周は、ここへ来る前に分ける** (``splitForNonzero(rings:points:)``・
+    /// [#1538])。頂点を並べた形の塗りは、周が交わるとそこで回り数が 0 でない所を囲む周へ
+    /// 組み直してから、ここへ通す。
+    ///
+    /// それでも、自己交差した周を渡されたときに落ちず、無限に回らないことは約束として残す。
+    /// 切れるところまで切って返す — 利用者が描いた形を拒むより、何かを描く。
+    ///
+    /// [#1538]: https://github.com/mokume-metal/mokume/issues/1538
     static func triangulate(_ points: [SIMD2<Float>]) -> [(Int, Int, Int)] {
         var comparisons = 0
         return triangulate(points, comparisons: &comparisons)
@@ -167,7 +173,7 @@ nonisolated enum Triangulation {
         return sum / 2
     }
 
-    private static func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
+    static func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
         a.x * b.y - a.y * b.x
     }
 
@@ -481,8 +487,8 @@ extension Triangulation {
         /// なので、単純な多角形の周が三角形へ入り込むなら、残りの 1 辺 (`a`–`c`) から入って
         /// 同じ辺から出るしかない。入り込んだ部分のいちばん `b` 寄りの点で周は向きを返し、
         /// その角は凸にならない。凸な角の点しか中に無いなら、そもそも何も入り込んでいない。
-        /// 自己交差した形ではこの理屈が崩れるが、そこでは正しい分け方がもともと無い
-        /// (止まることだけを約束している)。凸でない角は索引 (``ConcaveCorners``) から、
+        /// 自己交差した形ではこの理屈が崩れるが、そうした形は先に分けてから渡される
+        /// (ここでは止まることだけを約束している)。凸でない角は索引 (``ConcaveCorners``) から、
         /// 三角形に掛かりうる所だけを引く。
         ///
         /// **角と同じ位置にある点は数えない。** 周が同じ点を 2 度通る形では、その点が三角形の
