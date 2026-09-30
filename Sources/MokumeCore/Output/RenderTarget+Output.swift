@@ -34,6 +34,15 @@ extension RenderTarget {
         // 置き場へ CPU で書くので、前の出力段が読んでいる最中には書けない。待つのは
         // 名指しした 1 本だけで、出口へ渡す経路では既に待ち済みなので何も起きない (#927)
         try gpu.waitForSubmission(lastEncodeSubmission)
+        // **細かさを下げた面の出す先は、描く先を広げた絵である** ([#1882])。止まっている間に描く先が
+        // 変わっていれば、読む前に広げ直す。変わっていなければ何も積まない (回っているフレームは、
+        // フレームの終わりの拡大が済んでいる)。細かさ 1 の面は描く先が出す先そのものなので、下の
+        // 書き戻しに任せる
+        //
+        // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+        if let drawer, drawer.target !== self, drawer.needsOutputEnlargement {
+            try drawer.catchUpOutput()
+        }
         encodePassCount += 1
         let image: EncodedImage
         if let encodedStorage {
@@ -59,7 +68,7 @@ extension RenderTarget {
         // **書き戻すのは、この面を描く先に持つ面に任せる** ([#1524])。効果を通したフレームの後、
         // 止まっている間に書いた画素は、描く先と同時に効果を通す前の絵 (次のフレームの入り) にも
         // 写す要がある。任せるのは細かさ 1 の面だけである — 細かさを下げた面の出す先には、画素の
-        // 書き込みが来ない
+        // 書き込みが来ない (描く先への書き込みは、上の追い付き (``Canvas/catchUpOutput()``) が書き戻す)
         //
         // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
         let keeper = drawer?.target === self ? drawer : nil

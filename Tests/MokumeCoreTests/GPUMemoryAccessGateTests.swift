@@ -101,7 +101,7 @@ struct GPUMemoryAccessGateTests {
             reason: "描き切りの先頭で環を 1 つ進め、そのスロットを読む投入だけを待ってから頂点・列ごとの値・uniforms を書く (#754)。init の書き込みは作成時だけ"),
         Permit(
             file: "Drawing/Canvas+Effects.swift", discipline: .waitedElsewhere,
-            reason: "描き切りの中 (環を進めた後) で効果の値を書く。書き先は Canvas と同じ環に載った置き場"),
+            reason: "描き切りと、止まっている間の出力段の追い付き (`catchUpOutput()`) の中で、環を進めた後に効果の値を書く。書き先は Canvas と同じ環に載った置き場"),
         Permit(
             file: "Drawing/Canvas+Compute.swift", discipline: .settlesOrSkips,
             reason: "頼みごとの値の区画と控えの置き場へ書く。読み戻し (read) の経路は書く前に自分で待つ — そこは描き切りを通らないので環の待ちが効かない (#932)。待てなければ値も控えも書かず口も開かず、頼みを溜め場に・書き込みを控えに残す (#934)。描き切りの経路は Canvas が環を 1 つ進めた後に呼ばれるので、書き先のスロットは待ち済み"),
