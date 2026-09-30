@@ -65,11 +65,16 @@ public struct Pixels {
 
     /// 指定した位置の色。原点は左上。
     ///
+    /// **読む値も書く値も、線形・アルファ乗算済みの ``LinearRGBA`` である** ([ADR-0011] 決定 4)。
+    /// 変換が挟まらないので、読んだ値をそのまま書き戻しても、塗りの色 (`fill(_:)`) へ
+    /// 渡しても色は沈まない。0–255 の乗算していない数で読むときは ``red(_:)`` ほかを通す。
+    ///
     /// 範囲の外を読むと透明が返り、範囲の外へ書くと何も起きない
     /// (**読み取りは決して落ちない** — [ADR-0020] 決定 5)。書けるのは、置いてよい区間
     /// (フレームの中と、本体の `setup()`・止まっている間のコールバック) だけで、外で書くと
     /// 1 度注意して何もしない (``fill(_:)`` も同じ)。
     ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public subscript(x: Int, y: Int) -> LinearRGBA {
         get {
