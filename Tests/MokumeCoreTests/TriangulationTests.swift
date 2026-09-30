@@ -314,7 +314,7 @@ struct TriangulationTests {
 
     // MARK: - 交わった周を分ける (#1538)
 
-    @Test("単純な形は組み直さない", arguments: ["凸", "凹", "T", "同じ点を 2 度通る", "穴", "同じ向きの穴"])
+    @Test("単純な形は組み直さない", arguments: ["凸", "凹", "T", "同じ点を 2 度通る", "穴"])
     func simpleRingsAreLeftAlone(_ name: String) {
         let square: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 10), SIMD2(0, 10)]
         let rings: [[SIMD2<Float>]]
@@ -332,8 +332,7 @@ struct TriangulationTests {
                 SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 5), SIMD2(20, 0),
                 SIMD2(20, 10), SIMD2(10, 5), SIMD2(10, 10), SIMD2(0, 10),
             ]]
-        case "穴": rings = [square, [SIMD2(3, 3), SIMD2(3, 6), SIMD2(6, 6), SIMD2(6, 3)]]
-        default: rings = [square, [SIMD2(3, 3), SIMD2(6, 3), SIMD2(6, 6), SIMD2(3, 6)]]
+        default: rings = [square, [SIMD2(3, 3), SIMD2(3, 6), SIMD2(6, 6), SIMD2(6, 3)]]
         }
         let (indices, points) = numbered(rings)
         #expect(Triangulation.splitForNonzero(rings: indices, points: points) == nil)

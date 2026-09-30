@@ -342,6 +342,72 @@ struct SelfCrossingFillTests {
         }
     }
 
+    // MARK: - 縮退した入力 (反証の指摘 1〜4)
+
+    /// 同じ交わりを幾つもの辺が通る形と、頂点を通って向こう側へ抜ける形。組ごとに求めた
+    /// 交点が 1〜2 ulp ずれて周が閉じず、前者は形が丸ごと消えていた。後者は交わりに
+    /// 数えられず、耳切りがはみ出していた。
+    @Test(
+        "同じ交わりを幾つもの辺が通る形や、頂点を通る形も、消えずに nonzero で塗る",
+        arguments: ["行って戻る棘", "同じ線を逆にたどる", "横の辺が頂点を通る", "斜めの辺に頂点が載る", "縦の辺に頂点が載る"])
+    func degenerateCrossingsFollowNonzero(_ name: String) throws {
+        let ring: [SIMD2<Float>]
+        switch name {
+        case "行って戻る棘":
+            ring = [SIMD2(80, 100), SIMD2(0, 60), SIMD2(80, 100), SIMD2(0, 40), SIMD2(20, 80)]
+        case "同じ線を逆にたどる":
+            ring = [SIMD2(20, 40), SIMD2(80, 40), SIMD2(0, 40), SIMD2(0, 60), SIMD2(80, 0)]
+        case "横の辺が頂点を通る":
+            ring = [SIMD2(40, 40), SIMD2(60, 20), SIMD2(0, 40), SIMD2(100, 40), SIMD2(60, 120)]
+        case "斜めの辺に頂点が載る":
+            ring = [SIMD2(40, 40), SIMD2(0, 120), SIMD2(120, 0), SIMD2(120, 80), SIMD2(20, 100)]
+        default:
+            ring = [SIMD2(40, 80), SIMD2(40, 0), SIMD2(20, 80), SIMD2(40, 20), SIMD2(80, 40)]
+        }
+        let drawn = try picture { placeFlat($0, [ring]) }
+        #expect(drawn.red.contains { $0 > 0.5 })
+        let result = tally(drawn, [ring])
+        #expect(result.mismatched == 0, "はみ出し \(result.spilled)・塗り漏れ \(result.missing)")
+    }
+
+    /// 奥行きの経路は、周をひと回りして積んだ向きで平面を決める。砂時計では逆に回る 2 つの
+    /// 葉が打ち消し合い、向きが 0 になって何も塗られなかった。
+    @Test("奥行きを持つ頂点で並べた砂時計も、平面の砂時計と同じ絵になる")
+    func theDepthPathFillsAnHourglass() throws {
+        let hourglass: [SIMD2<Float>] = [
+            SIMD2(20, 20), SIMD2(140, 20), SIMD2(20, 140), SIMD2(140, 140),
+        ]
+        let flat = try picture { placeFlat($0, [hourglass]) }
+        let withDepth = try picture { canvas in
+            canvas.beginShape()
+            for point in hourglass { canvas.vertex(point.x, point.y, 0) }
+            canvas.endShape(.close)
+        }
+        let result = tally(withDepth, [hourglass])
+        #expect(result.mismatched == 0, "はみ出し \(result.spilled)・塗り漏れ \(result.missing)")
+        var differing = 0
+        for index in flat.red.indices where (flat.red[index] > 0.5) != (withDepth.red[index] > 0.5) {
+            differing += 1
+        }
+        #expect(differing == 0)
+    }
+
+    @Test("外周と同じ向きに並べた周は、半透明でも外周の中と同じ濃さで 1 度だけ塗る")
+    func aTranslucentSameDirectionContourIsPaintedOnce() throws {
+        let outer: [SIMD2<Float>] = [
+            SIMD2(10, 10), SIMD2(150, 10), SIMD2(150, 150), SIMD2(10, 150),
+        ]
+        let triangle: [SIMD2<Float>] = [SIMD2(50, 50), SIMD2(110, 60), SIMD2(70, 110)]
+        let drawn = try picture { canvas in
+            canvas.fill(255, 128)
+            placeFlat(canvas, [outer, triangle])
+        }
+        let body = drawn.value(20, 20)
+        #expect(body > 0.4 && body < 0.6)
+        #expect(abs(drawn.value(75, 70) - body) < 0.001)  // 三角形の中 (回り数 2)
+        #expect(drawn.red.filter { $0 > body + 0.02 }.count == 0)
+    }
+
     // MARK: - 条件 6: 字の輪郭
 
     /// 既定の書体で、自分と交わる周を 1 つずつ塗る。**どの字が交わるかは書体の版で

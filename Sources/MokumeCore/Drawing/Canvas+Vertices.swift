@@ -765,9 +765,11 @@ extension Canvas {
     private func flatBasis(of primitive: Primitive, points: [BuildingVertex]) -> FlatBasis? {
         guard shapeHasDepth else { return FlatBasis() }
 
-        // 周をひと回りしながら面の向きを積む。三角形 1 つから求めると、少しでも
+        // 周をひと回りしながら面の向きを積む (Newell 法)。三角形 1 つから求めると、少しでも
         // 平らでない形で平面を取り違える
         var normal = SIMD3<Float>.zero
+        var low = SIMD3<Float>(repeating: .infinity)
+        var high = SIMD3<Float>(repeating: -.infinity)
         let ring = primitive.ring
         for offset in 0..<ring.count {
             let a = points[ring[ring.startIndex + offset]].position
@@ -776,6 +778,20 @@ extension Canvas {
                 (a.y - b.y) * (a.z + b.z),
                 (a.z - b.z) * (a.x + b.x),
                 (a.x - b.x) * (a.y + b.y))
+            low = simd_min(low, a)
+            high = simd_max(high, a)
+        }
+        // **積んだ向きの長さは、周が囲む面積に比例する。** 自分と交わる周では、逆に回る
+        // 葉どうしが打ち消し合い、砂時計では 0 になる ([#1538])。周の点がなす大きい三角形に
+        // 比べて小さすぎるときは、その三角形から平面を決める。符号は積んだ向きに揃える。
+        // 囲みの大きさに比べて小さいときだけ三角形を探すので、ふつうの形は手間も絵も
+        // 変わらない
+        let reach = length_squared(high - low)
+        if length(normal) <= reach * 0x1p-10 {
+            let widest = widestTriangleNormal(of: ring, points: points)
+            if length(normal) <= length(widest) * 0x1p-10 {
+                normal = dot(normal, widest) < 0 ? -widest : widest
+            }
         }
         guard length_squared(normal) > 0 else { return nil }
         normal = normalize(normal)
@@ -785,6 +801,26 @@ extension Canvas {
         let across = normalize(cross(seed, normal))
         let along = cross(normal, across)
         return FlatBasis(across: across, along: along)
+    }
+
+    /// 周の点がなす大きい三角形の、面の向き (長さは三角形の面積の 2 倍)。
+    ///
+    /// 最初の点から最も遠い点を取り、その 2 点を結ぶ線から最も遠い点を足した三角形である。
+    /// 周が平らなら、その平面の向きになる。点がすべて一直線に並ぶなら 0 を返す。
+    private func widestTriangleNormal(of ring: ArraySlice<Int>, points: [BuildingVertex]) -> SIMD3<Float> {
+        guard let first = ring.first else { return .zero }
+        let origin = points[first].position
+        var far = origin
+        for index in ring {
+            let point = points[index].position
+            if length_squared(point - origin) > length_squared(far - origin) { far = point }
+        }
+        var widest = SIMD3<Float>.zero
+        for index in ring {
+            let candidate = cross(far - origin, points[index].position - origin)
+            if length_squared(candidate) > length_squared(widest) { widest = candidate }
+        }
+        return widest
     }
 
     /// 変換を掛け、書かれていない面の向きを形から求める。
