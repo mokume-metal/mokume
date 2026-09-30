@@ -794,6 +794,15 @@ extension Canvas {
     private func screenAcross(
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD3<Float>? {
+        guard let normal = screenNormal(a, b, camera: camera) else { return nil }
+        return camera.right * normal.x + camera.down * normal.y
+    }
+
+    /// 線分 a–b を画面に写したときの垂線の、画面の横と縦の成分 (長さ 1)。`screenAcross` の
+    /// 中身で、決まらなければ `nil`。
+    private func screenNormal(
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
+    ) -> SIMD2<Float>? {
         let (right, down) = (camera.right, camera.down)
         let normal: SIMD2<Float>
         if camera.isPerspective {
@@ -805,7 +814,25 @@ extension Canvas {
         }
         let size = length(normal)
         guard size > 0, size.isFinite else { return nil }
-        return right * (normal.x / size) + down * (normal.y / size)
+        return SIMD2(normal.x / size, normal.y / size)
+    }
+
+    /// 線分 a → b を画面に写したときの、a から b へ進む向き (画面の横と縦の成分・長さ 1)
+    /// ([#1644])。決まらなければ `nil`。
+    ///
+    /// **世界での差の横と縦の成分では代われない。** 透視投影で奥へ引っ込む辺は、画面の中心
+    /// から外れた所では、世界での差と画面での動きが逆を向きうる (中心より左の点から奥へ
+    /// 引っ込む辺は、画面では右へ、中心へ寄っていく)。向きは `screenNormal` の垂線を 90° 回して
+    /// 取る。垂線は a・b・目の張る平面の法線 (透視) か、画面の中の線を 90° 回したもの
+    /// (平行) なので、回す向きは 2 つで逆になる (画面の横 × 縦 = −前 を使う)。目の手前にある
+    /// 点では、どちらも画面で a から b へ進む向きになる。
+    ///
+    /// [#1644]: https://github.com/mokume-metal/mokume/issues/1644
+    private func screenToward(
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
+    ) -> SIMD2<Float>? {
+        guard let normal = screenNormal(a, b, camera: camera) else { return nil }
+        return camera.isPerspective ? SIMD2(-normal.y, normal.x) : SIMD2(normal.y, -normal.x)
     }
 
     /// 視線に正対する円板を置く (丸い端点と丸い角)。
@@ -832,7 +859,8 @@ extension Canvas {
     /// 角は、帯 (`appendSolidBand`) の縁の角と同じ式で置く。
     ///
     /// 帯の横向きが決まらない (画面で点に潰れる線・長さ 0) ときは、画面の軸に沿った
-    /// 正方形へ倒す。
+    /// 正方形へ倒す。もう一方の帯が画面で斜めなら正方形の角が帯の外へ出るので、この倒れ先は
+    /// 約束どおりではない (#1893 で決める)。
     ///
     /// **どの枝でも三角形を 3 枚 (9 頂点) 積む** — 尖り (2 枚) は尖りを 2 度置き、正方形
     /// (2 枚) と一直線 (0 枚) は面積 0 の三角形で埋める。記録した形は置く先の視点で組み
@@ -865,7 +893,9 @@ extension Canvas {
     ) {
         guard length_squared(center - previous) > 0, length_squared(next - center) > 0,
             let across1 = screenAcross(previous, center, camera: camera),
-            let across2 = screenAcross(center, next, camera: camera)
+            let across2 = screenAcross(center, next, camera: camera),
+            let arm1 = screenToward(center, previous, camera: camera),
+            let arm2 = screenToward(center, next, camera: camera)
         else {
             return appendSolidSquare(at: center, shape: shape, half: half, camera: camera)
         }
@@ -873,15 +903,9 @@ extension Canvas {
         func onScreen(_ vector: SIMD3<Float>) -> SIMD2<Float> {
             SIMD2(dot(vector, right), dot(vector, down))
         }
-        /// 帯の横向きを 90° 回し、`neighbor` の側を向けた向き。
-        func arm(_ across: SIMD3<Float>, toward neighbor: SIMD3<Float>) -> SIMD2<Float> {
-            let side = onScreen(across)
-            let along = SIMD2(-side.y, side.x)
-            return dot(along, onScreen(neighbor - center)) < 0 ? -along : along
-        }
-        let rim = Self.joinRim(
-            toward: arm(across1, toward: previous), arm(across2, toward: next), half: 1,
-            join: join)
+        // 腕は画面に写した両隣への向き (`screenToward`)。世界での差を使うと、透視で奥へ
+        // 引っ込む辺の向きを取り違え、外側の楔が埋まらない
+        let rim = Self.joinRim(toward: arm1, arm2, half: 1, join: join)
         // 周は 角のすぐ内側・1 本目の外側の縁の角・(尖りか切り口)・2 本目の外側の縁の角
         guard rim.count >= 4, let lastOffset = rim.last else { return }
         let radius = half * camera.worldPerPixel(at: center, height: height)

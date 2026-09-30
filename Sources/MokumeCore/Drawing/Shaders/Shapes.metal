@@ -189,20 +189,39 @@ float solidStrokePixel(float3 p, constant SolidStrokePlacement &s) {
     return s.parameters.y / s.parameters.w;
 }
 
+/// 線分 a–b を画面に写したときの垂線の、画面の横と縦の成分 (長さ 1) を `normal` に入れる。
+/// CPU の `Canvas.screenNormal` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
+bool solidStrokeNormal(float3 a, float3 b, constant SolidStrokePlacement &s, thread float2 &normal) {
+    float3 along = b - a;
+    float2 raw;
+    if (s.eye.w != 0) {
+        float3 plane = cross(a - s.eye.xyz, b - s.eye.xyz);
+        raw = float2(dot(plane, s.right.xyz), dot(plane, s.down.xyz));
+    } else {
+        raw = float2(-dot(along, s.down.xyz), dot(along, s.right.xyz));
+    }
+    float size = length(raw);
+    if (!(dot(along, along) > 0 && size > 0 && isfinite(size))) return false;
+    normal = raw / size;
+    return true;
+}
+
 /// 線分 a–b を画面に写したときの垂線を、世界の向き (長さ 1) で `side` に入れる。CPU の
 /// `Canvas.screenAcross` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
 bool solidStrokeAcross(float3 a, float3 b, constant SolidStrokePlacement &s, thread float3 &side) {
-    float3 along = b - a;
     float2 normal;
-    if (s.eye.w != 0) {
-        float3 plane = cross(a - s.eye.xyz, b - s.eye.xyz);
-        normal = float2(dot(plane, s.right.xyz), dot(plane, s.down.xyz));
-    } else {
-        normal = float2(-dot(along, s.down.xyz), dot(along, s.right.xyz));
-    }
-    float size = length(normal);
-    if (!(dot(along, along) > 0 && size > 0 && isfinite(size))) return false;
-    side = s.right.xyz * (normal.x / size) + s.down.xyz * (normal.y / size);
+    if (!solidStrokeNormal(a, b, s, normal)) return false;
+    side = s.right.xyz * normal.x + s.down.xyz * normal.y;
+    return true;
+}
+
+/// 線分 a → b を画面に写したときの、a から b へ進む向き (画面の横と縦の成分・長さ 1) を
+/// `toward` に入れる。CPU の `Canvas.screenToward` と同じ式で、垂線を 90° 回す向きは透視と
+/// 平行で逆になる (画面の横 × 縦 = −前)。
+bool solidStrokeToward(float3 a, float3 b, constant SolidStrokePlacement &s, thread float2 &toward) {
+    float2 normal;
+    if (!solidStrokeNormal(a, b, s, normal)) return false;
+    toward = s.eye.w != 0 ? float2(-normal.y, normal.x) : float2(normal.y, -normal.x);
     return true;
 }
 
@@ -252,16 +271,14 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
         float3 other = (s.matrix * float4(piece.c.xyz * s.uv.z, 1)).xyz;
         float3 acrossOwn;
         float3 acrossOther;
-        bool placed = solidStrokeAcross(own, a, s, acrossOwn) && solidStrokeAcross(a, other, s, acrossOther);
+        float2 armOwn;
+        float2 armOther;
+        bool placed = solidStrokeAcross(own, a, s, acrossOwn) && solidStrokeAcross(a, other, s, acrossOther)
+            && solidStrokeToward(a, own, s, armOwn) && solidStrokeToward(a, other, s, armOther);
         if (placed) {
             float2 sideOwn = float2(dot(acrossOwn, s.right.xyz), dot(acrossOwn, s.down.xyz));
-            float2 sideOther = float2(dot(acrossOther, s.right.xyz), dot(acrossOther, s.down.xyz));
-            float3 towardOwn = own - a;
-            float3 towardOther = other - a;
-            float2 armOwn = float2(-sideOwn.y, sideOwn.x);
-            if (dot(armOwn, float2(dot(towardOwn, s.right.xyz), dot(towardOwn, s.down.xyz))) < 0) armOwn = -armOwn;
-            float2 armOther = float2(-sideOther.y, sideOther.x);
-            if (dot(armOther, float2(dot(towardOther, s.right.xyz), dot(towardOther, s.down.xyz))) < 0) armOther = -armOther;
+            // 腕は画面に写した隣への向き (CPU の `Canvas.screenToward`)。世界での差を使うと、
+            // 透視で奥へ引っ込む辺の向きを取り違える
             float2 inward = armOwn + armOther;
             float radius = halfWeight * solidStrokePixel(a, s);
             if (inward.x == 0 && inward.y == 0) {
@@ -273,7 +290,8 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
                 if (dot(outerOwn, inward) > 0) outerOwn = -outerOwn;
                 float2 outerOther = firstHalf ? float2(armOther.y, -armOther.x) : float2(-armOther.y, armOther.x);
                 if (dot(outerOther, inward) > 0) outerOther = -outerOther;
-                float cosine = dot(outerOwn, outerOther);
+                // 丸めで −1…1 を越えると、同じ向きへ折り返す角で平方根が数でなくなる
+                float cosine = clamp(dot(outerOwn, outerOther), -1.0f, 1.0f);
                 float2 cut;
                 float2 middle;
                 if (cosine >= 0) {
@@ -298,7 +316,7 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             }
         } else if (piece.b.w == 0) {
             // 帯の横向きが決まらない角は、1 枚目が画面の軸に沿った正方形へ倒す (CPU と同じ)。
-            // 2 枚目は面積 0 にする
+            // 2 枚目は面積 0 にする。倒れ先の形は #1893 で決める
             float radius = halfWeight * solidStrokePixel(a, s);
             world = a + solidStrokeSquareCorner(corner, s) * radius;
         }

@@ -346,6 +346,114 @@ struct PolylineJoinTests {
         #expect(mismatched == 0)
     }
 
+    // MARK: - 透視で奥へ引っ込む辺 (反証の 2 回目の指摘 2-1)
+
+    /// 床のように倒した `plane` を透視で見る。手前の角から奥へ引っ込む辺は、世界での差の
+    /// 横成分と画面での動きが逆を向く。腕の向きを世界での差から取っていた頃は、外側の楔が
+    /// 埋まらずに欠けた。
+    ///
+    /// 物差しは画面に写した四隅から式で出した「帯 + 尖りを √2 × 太さ / 2 で切った折れ目」で
+    /// ある。帯は画面での太さを保つので、画面に写した四隅の間の、太さ 20 の長方形になる。
+    @Test("透視で奥へ引っ込む辺の角も、画面に写した帯の向きで埋まる", arguments: ["GPU", "CPU"])
+    func recedingEdgesUseTheirScreenDirection(_ route: String) throws {
+        var corners: [SIMD2<Float>] = []
+        let drawn = try render { canvas in
+            canvas.strokeJoin(.miter)
+            if route == "CPU" { canvas.stroke(255, 250) }
+            canvas.translate(80, 140, 0)
+            canvas.rotateX(Float(100) * .pi / 180)
+            let camera = canvas.currentCamera
+            let matrix = canvas.transform.matrix
+            let scale = Float(size) / 2 / tan(Camera.defaultFieldOfView / 2)
+            for local in [SIMD2<Float>(-40, -40), SIMD2(40, -40), SIMD2(40, 40), SIMD2(-40, 40)] {
+                let world = matrix * SIMD4(local.x, local.y, 0, 1)
+                let offset = SIMD3(world.x, world.y, world.z) - camera.eye
+                let depth = simd_dot(offset, camera.forward)
+                corners.append(
+                    SIMD2(Float(size) / 2, Float(size) / 2)
+                        + SIMD2(simd_dot(offset, camera.right), simd_dot(offset, camera.down))
+                        * (scale / depth))
+            }
+            canvas.plane(80, 80)
+        }
+        let result = mismatches(drawn, ring: corners, reachFactor: Float(2).squareRoot())
+        #expect(drawn.count > 0)
+        #expect(result.spilled == 0 && result.missing == 0, "はみ出し \(result.spilled)・塗り漏れ \(result.missing)")
+    }
+
+    /// 閉じた周 (画面の座標) の、式から出した形と描いた絵の食い違い。縁から 1 画素以内は数えない。
+    private func mismatches(
+        _ drawn: Coverage, ring: [SIMD2<Float>], reachFactor: Float
+    ) -> (spilled: Int, missing: Int) {
+        let half = weight / 2
+        let count = ring.count
+        var bands: [[SIMD2<Float>]] = []
+        var joins: [(kite: [SIMD2<Float>], bisector: SIMD2<Float>, reach: Float, corner: SIMD2<Float>)] = []
+        for index in 0..<count {
+            let previous = ring[(index + count - 1) % count]
+            let corner = ring[index]
+            let next = ring[(index + 1) % count]
+            bands.append(Self.band(corner, next, half: half))
+            let join = Self.joinShape(
+                from: previous, corner: corner, to: next, half: half, reach: reachFactor * half)
+            joins.append((join.kite, join.bisector, join.reach, corner))
+        }
+        func inside(_ point: SIMD2<Float>, margin: Float) -> Bool {
+            bands.contains { Self.contains($0, point, margin: margin) }
+                || joins.contains {
+                    Self.contains($0.kite, point, margin: margin)
+                        && simd_dot(point - $0.corner, $0.bisector) <= $0.reach - margin
+                }
+        }
+        var result = (spilled: 0, missing: 0)
+        for y in 0..<size {
+            for x in 0..<size {
+                let point = SIMD2<Float>(Float(x), Float(y))
+                if drawn[x, y], !inside(point, margin: -1) { result.spilled += 1 }
+                if !drawn[x, y], inside(point, margin: 1) { result.missing += 1 }
+            }
+        }
+        return result
+    }
+
+    // MARK: - 同じ向きへ折り返す角 (反証の 2 回目の指摘 2-2)
+
+    /// `vertex(A); vertex(B); vertex(A)` の B は 180° の折り返しで、尖りは無限に遠い。形は
+    /// 帯を k × 太さ / 2 だけ延ばした長方形で、折り返しに近づく角の形の極限と一致する。
+    /// 向きによって丸めで出っ張りが出たり消えたりしないことを、軸に沿った向きと斜めの
+    /// 向きで見る。
+    @Test(
+        "同じ向きへ折り返す角は、向きによらず帯を延ばした長方形になる",
+        arguments: [StrokeJoin.miter, .bevel], [SIMD2<Float>(1, 0), SIMD2(1, 4), SIMD2(3, -7), SIMD2(-5, 2)])
+    func foldsExtendTheBandInEveryDirection(_ join: StrokeJoin, _ direction: SIMD2<Float>) throws {
+        let along = simd_normalize(direction)
+        let tip = SIMD2<Float>(80, 80)
+        let start = tip - along * 50
+        let drawn = try render { canvas in
+            canvas.strokeJoin(join)
+            canvas.strokeCap(.square)
+            polyline(canvas, [start, tip, start])
+        }
+        let half = weight / 2
+        let reach = (join == .miter ? Float(2).squareRoot() : 1) * half
+        let across = SIMD2(-along.y, along.x)
+        let shape = [
+            start + across * half, tip + along * reach + across * half,
+            tip + along * reach - across * half, start - across * half,
+        ]
+        var spilled = 0
+        var missing = 0
+        for y in 0..<size {
+            for x in 0..<size {
+                let point = SIMD2<Float>(Float(x), Float(y))
+                if drawn[x, y], !Self.contains(shape, point, margin: -1) { spilled += 1 }
+                if !drawn[x, y], Self.contains(shape, point, margin: 1) { missing += 1 }
+            }
+        }
+        #expect(drawn.count > 0)
+        #expect(spilled == 0 && missing == 0, "はみ出し \(spilled)・塗り漏れ \(missing)")
+    }
+
     // MARK: - 同じ位置の隣 (反証の指摘 3・4)
 
     /// 隣が同じ位置の点 (長さ 0 の帯) は向きを持たない。向きは同じ位置の点を飛ばした両隣から
@@ -448,8 +556,12 @@ struct PolylineJoinTests {
     }
 
     /// 記録したときは腕が画面に写り、置く先では画面で点に潰れる (平行投影で視線に沿う辺)。
-    /// 潰れた角は正方形へ倒れる。折れ目の頂点の数が枝で違うと、組み直しで部品が 1 点へ
-    /// 畳まれて、その場で描けば置かれる正方形が消える。
+    /// 折れ目の頂点の数が枝で違うと、組み直しで部品が 1 点へ畳まれて、その場で描いた絵と
+    /// 食い違う。
+    ///
+    /// **見るのは、保持した形がその場で描いた絵と一致することだけである。** 潰れた角は
+    /// いま画面の軸に沿った正方形へ倒れるが、その形が正しいとは言っていない。潰れた角の
+    /// 形は #1893 で決める。
     @Test("置く先でだけ腕が画面で潰れる角も、その場で描いたのと同じに埋まる", arguments: [StrokeJoin.miter, .bevel])
     func retainedJoinsSurviveAnArmCollapsingWhenPlaced(_ join: StrokeJoin) throws {
         func draw(_ canvas: Canvas) {
