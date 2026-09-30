@@ -30,7 +30,7 @@ while IFS= read -r -d '' f; do
     echo "ok: $f"
   else
     echo "NG: $f は YAML として不正:" >&2
-    echo "$err" | head -3 >&2
+    echo "$err" | sed -n '1,3p' >&2
     status=1
   fi
 done < <(find .github -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 2>/dev/null | sort -z)

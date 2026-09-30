@@ -447,6 +447,22 @@ class ReviewGateTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("反証の節を確認 (#12)", proc.stdout)
 
+    def test_a_long_refute_section_passes(self):
+        """長い「反証」節も、中身ありと読む (#1900)。
+
+        pipefail の下で `… | grep -q` と書くと、grep が最初の行で抜けたときに書き手が
+        SIGPIPE で止まり、長い節ほど「空」と読んでいた (#1897 の 18KB の節で踏んだ)。
+        本文全体の見出しの有無も同じ形だったので、長い前置きも付ける。
+        """
+        rows = "".join(f"| {n} | 兄弟 | 同じ形の口 {n} | Sources/Foo.swift:{n} | 直した |\n" for n in range(4000))
+        preamble = "".join(f"確認の行 {n}\n" for n in range(4000))
+        proc = self.run_gate(
+            pr_json(body="Closes #12\n\n" + preamble + refute_section("| # | 種類 | 指摘 | 根拠 | 応え |\n| --- | --- | --- | --- | --- |\n" + rows)),
+            issue_json(TRIAGED, issue_type="Bug"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("反証の節を確認 (#12)", proc.stdout)
+
     def test_bug_without_a_refute_section_is_blocked(self):
         """反証役を起こし忘れた形。
 

@@ -123,7 +123,7 @@ agent=$(detect_agent)
 name=${agent%%$'\t'*}
 url=${agent#*$'\t'}
 
-if printf '%s' "$BODY" | grep -qF "$SIGNATURE_KEY"; then
+if grep -qF "$SIGNATURE_KEY" <<<"$BODY"; then
   # 既に署名がある本文には足さない (plan-record のように署名込みで用意される経路がある)
   final="$BODY"
 else

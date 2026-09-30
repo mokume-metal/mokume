@@ -142,7 +142,7 @@ for i in "${!steps[@]}"; do
 "
 done
 
-longest="$(printf '%s' "$summary" | sort -t "$(printf '\t')" -k1,1 -rn | head -n 3 \
+longest="$(printf '%s' "$summary" | sort -t "$(printf '\t')" -k1,1 -rn | sed -n '1,3p' \
   | while IFS="$(printf '\t')" read -r sec name; do printf '%s %s / ' "$name" "$(span "$sec")"; done)"
 printf '✔ ci-check %d 段通過 %s — 長かった段: %s\n' \
   "$total" "$(span $((SECONDS - started)))" "${longest% / }"

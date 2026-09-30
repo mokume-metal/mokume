@@ -104,7 +104,7 @@ ACTIONLINT=""
 resolve_actionlint() {
   local pinned="${TOOLS_DIR}/actionlint-${ACTIONLINT_VERSION}"
   if command -v actionlint >/dev/null 2>&1 \
-    && [ "$(actionlint -version | head -1)" = "$ACTIONLINT_VERSION" ]; then
+    && [ "$(actionlint -version | sed -n '1p')" = "$ACTIONLINT_VERSION" ]; then
     ACTIONLINT="$(command -v actionlint)"
     return
   fi
@@ -125,7 +125,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   resolve_shellcheck
   resolve_actionlint
   echo "shellcheck: ${SHELLCHECK} ($("$SHELLCHECK" --version | awk '/^version:/ {print $2}'))"
-  echo "actionlint: ${ACTIONLINT} ($("$ACTIONLINT" -version | head -1))"
+  echo "actionlint: ${ACTIONLINT} ($("$ACTIONLINT" -version | sed -n '1p'))"
 
   exec "$ACTIONLINT" -oneline -shellcheck "$SHELLCHECK" "$@"
 fi
