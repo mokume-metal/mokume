@@ -37,6 +37,36 @@ enum MovieWriteFailure: Error, Equatable {
 /// 入れるので、違う秒に書いた 2 本はファイルとしては一致しない ([#1628])。配布向けの軽い
 /// 符号化は「再現を捨てて小さくする」選択なので、要る場面が出てから足す ([ADR-0008])。
 ///
+/// **符号化器は、専用回路を使わない側を選ぶ** ([#1813])。ProRes 4444 を専用回路の符号化器
+/// (`appleproreshw.4444`。指定しなければこちらが選ばれる) で符号化させると、**色が細かく乱れた絵に
+/// 一様でない不透明度が重なったとき、640×360 以上で `Cannot Encode` と断られ、断られた書き手は
+/// 立ち直らないので録り全体が失われる**。色が一色・滑らかな絵は、不透明度が乱数でも通る。
+/// `AlphaChannelMode` を替えても、専用回路を必須にしても、ProRes 4444 XQ にしても避けられず、
+/// 専用回路を使わない符号化器 (`prores-4444`) だけが通った。形式・不透明度・水準 3 は変わらない。
+/// 決めているのは形式で、どの符号化器で書くかではない ([ADR-0025] 決定 3)。
+///
+/// **代償は、符号化に使う CPU である。** 符号化は別のプロセス (`VTEncoderXPCService`) が行うので、
+/// このプロセスの CPU 時間には現れない。40 枚を初期化から `finish` まで書いた CPU 時間
+/// (このプロセス + 符号化のプロセス・ms)。release・M3 Max (16 コア) 1 台・3 回の中央値で、
+/// 専用回路 → 使わない:
+///
+/// | | 一色 | 勾配 + 不透明度が乱数 | RGB が乱数 + 不透明度 255 |
+/// | --- | --- | --- | --- |
+/// | 1920×1080 | 45 → 295 | 101 → 830 | 58 → 2105 |
+/// | 3840×2160 | 368 → 1856 | 574 → 3672 | 417 → 8977 |
+///
+/// 壁時間は、一色と勾配ではおおむね同じか短く、RGB が乱数の絵では 2〜5 倍に伸びた
+/// (3840×2160 で 183〜257 → 724〜894 ms)。60 fps の実時間で送ると、1920×1080 は 3 つの絵とも
+/// 遅れず、3840×2160 の RGB が乱数の絵だけが追いつけない (3 秒ぶんを送る間に 0.2〜0.8 秒遅れ、
+/// ``MovieWriter/write(_:frame:time:)`` の待ちが 26〜101 ms に達した)。
+///
+/// **他の機種は測っていない** — コアの少ない機械では、同じ絵でも伸びる見込みである。
+/// 電力も測っていない。
+///
+/// **固定の約束ではなく、測った回避策である。** 指定は ``encoderSpecification()`` の 1 か所だけで、
+/// Apple 側が直ったら外して戻せる。戻して検査 (`MovieWriterTests` の「色の細かい絵に…」) が赤に
+/// ならなければ、直っている。専用回路の無い機械 (GitHub のホストなど) では、外しても赤にならない。
+///
 /// ## 符号化器の用意は、読み直して待つ
 ///
 /// `append(_:at:)` は `isReadyForMoreMediaData` が立つまで待つ。**この待ちは外せない** —
@@ -79,6 +109,7 @@ enum MovieWriteFailure: Error, Equatable {
 /// [#979]: https://github.com/mokume-metal/mokume/issues/979
 /// [#1299]: https://github.com/mokume-metal/mokume/issues/1299
 /// [#1628]: https://github.com/mokume-metal/mokume/issues/1628
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
@@ -103,19 +134,33 @@ nonisolated final class MovieFile {
     /// この機械の符号化器が受け取る設定の鍵。**符号化器が無ければ nil。**
     ///
     /// 受けない鍵を渡すと AVFoundation は例外を投げ、Swift からは捕まえられない —
-    /// **プロセスごと落ちる。** 機械によって受ける鍵が違う (手元の機械は
-    /// `ExpectedFrameRate` を受けるが、仮想化された機械の符号化器は受けない) ので、
-    /// 渡す前に聞く。
+    /// **プロセスごと落ちる。** 符号化器によって受ける鍵が違う (専用回路の符号化器は
+    /// `ExpectedFrameRate` を受けるが、専用回路を使わない符号化器や、仮想化された機械の
+    /// 符号化器は受けない) ので、渡す前に**書き手と同じ符号化器に**聞く。
     static func supportedProperties(width: Int, height: Int) -> [String: Any]? {
         var encoder: CFString?
         var properties: CFDictionary?
         let status = VTCopySupportedPropertyDictionaryForEncoder(
             width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_AppleProRes4444,
-            encoderSpecification: nil, encoderIDOut: &encoder,
+            encoderSpecification: encoderSpecification() as CFDictionary, encoderIDOut: &encoder,
             supportedPropertiesOut: &properties)
         guard status == noErr else { return nil }
         return properties as? [String: Any]
+    }
+
+    /// 書き出しと問い合わせが渡す、符号化器の選び方。**2 か所で写さず、ここに 1 つだけ置く** —
+    /// 問い合わせが書き手と違う符号化器に聞くと、書き手が受けない鍵を渡してプロセスごと落ちる
+    /// (上の ``supportedProperties(width:height:)``)。
+    ///
+    /// **専用回路を使わない側を選ぶ理由と代償は、型の冒頭の「形式は選べない」の節にある**
+    /// ([#1813])。測った回避策なので、Apple 側が直ったときに戻せるよう、指定はここだけにしてある。
+    ///
+    /// `static let` の辞書は Swift 6 で Sendable にならないので、呼ぶたびに作る。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    static func encoderSpecification() -> [String: Any] {
+        [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: false]
     }
 
     /// この機械で動きを書き出せるか。
@@ -171,6 +216,8 @@ nonisolated final class MovieFile {
                 AVVideoCodecKey: AVVideoCodecType.proRes4444,
                 AVVideoWidthKey: width,
                 AVVideoHeightKey: height,
+                // **問い合わせと同じ符号化器を指す** (``encoderSpecification()``)
+                AVVideoEncoderSpecificationKey: Self.encoderSpecification(),
                 // **色を名乗る。** 作業空間と同じ Display P3 で書き出す ([ADR-0011] 決定 1)。
                 // 名乗らないと、再生する側は狭い色域だと見なして色を寄せる
                 AVVideoColorPropertiesKey: [

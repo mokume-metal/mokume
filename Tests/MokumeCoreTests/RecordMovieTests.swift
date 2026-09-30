@@ -246,6 +246,81 @@ struct MovieWriterTests {
             }
         }
     }
+
+    /// **色の細かい絵に一様でない不透明度が重なっても、録りは断られない** ([#1813])。
+    ///
+    /// 出口が受け取った 1 枚は、動画にもそのまま入る (ADR-0023 決定 2・4)。ところが ProRes 4444 の
+    /// 専用回路の符号化器 (M3 Max・macOS 27) は、色が細かく乱れた絵に一様でない alpha が重なると、
+    /// 640×360 以上で `Cannot Encode` と断り、**書き手ごと止まって録り全体を失った**。色が一色・
+    /// 滑らかな絵は alpha が乱数でも通る。断られるかは絵の中身で決まるので、絵柄ごとに見る。
+    ///
+    /// **この検査が名乗る範囲は、ここに並べた 4 絵柄 × 2 つの大きさである。** 専用回路を使わない
+    /// 指定 (``MovieFile/encoderSpecification()``) は、断られる条件を避けるだけで、他の理由で writer が
+    /// 転べば録り全体は今も失われる。絵の中身によらない約束としては名乗らない。
+    ///
+    /// **専用回路の無い機械 (hosted の VM など) では、指定を外しても赤にならない。** 赤になるのは
+    /// 専用回路のある機械だけなので、この退行を捕まえるのはそういう機械での実行である。
+    /// 色の差は見ない (ProRes 4444 の色は非可逆で、砂嵐は大きくずれる)。見るのは、断られない
+    /// ことと、不透明度が入力と一致することである。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    @Test(
+        "色の細かい絵に一様でない不透明度が重なっても、録りは断られず、不透明度は入力と一致する",
+        arguments: BusyTexture.allCases, BusySize.all)
+    func aBusyPictureWithUnevenOpacityIsNotRefused(
+        _ texture: BusyTexture, _ size: BusySize
+    ) async throws {
+        try await withTemporaryDirectory("mokume-movie-busy") { directory in
+            let path = directory.appendingPathComponent("busy.mov").path
+            let picture = busyPicture(texture, width: size.width, height: size.height)
+            let writer = MovieWriter(path: path, frameRate: 30)
+            for frame in 1...5 {
+                writer.write(picture, frame: frame, time: Double(frame - 1) / 30)
+            }
+            writer.finish()
+
+            // 断られたなら、ここで理由 (`Cannot Encode`) を名乗って止める。読み戻せるファイルは無い
+            let failure = writer.takeFailure()
+            try #require(failure == nil, "断られた: \(failure ?? "")")
+
+            // 5 枚とも読み戻せて、どの枚も不透明度が入力と一致する
+            let differences = try await decodeAlphaDifferences(
+                path, against: Array(repeating: picture, count: 5))
+            #expect(differences.count == 5)
+            #expect(differences.allSatisfy { $0 == 0 }, "不透明度が入力と食い違う: 差の最大 \(differences)")
+        }
+    }
+
+    /// **1 枚だけ乱れた絵を挟んでも、録り全体が残る** ([#1813])。
+    ///
+    /// 断られるのはその 1 枚ではなく書き手ごとなので、一色の 6 枚の 3 枚目だけを乱れた絵にした
+    /// だけで、残りの 5 枚も入らず、ファイルはトラックを読めなかった (1920×1080)。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    @Test("1 枚だけ乱れた絵を挟んでも、6 枚とも読み戻せる")
+    func oneBusyPictureDoesNotCostTheWholeRecording() async throws {
+        try await withTemporaryDirectory("mokume-movie-busy-one") { directory in
+            let path = directory.appendingPathComponent("one.mov").path
+            // 一色の 6 枚の 3 枚目だけを乱れた絵にする
+            let pictures = (1...6).map { frame in
+                frame == 3
+                    ? busyPicture(.noiseInEveryChannel, width: 1920, height: 1080)
+                    : image(UInt8(frame * 30), width: 1920, height: 1080)
+            }
+            let writer = MovieWriter(path: path, frameRate: 30)
+            for (index, picture) in pictures.enumerated() {
+                writer.write(picture, frame: index + 1, time: Double(index) / 30)
+            }
+            writer.finish()
+
+            let failure = writer.takeFailure()
+            try #require(failure == nil, "断られた: \(failure ?? "")")
+
+            let differences = try await decodeAlphaDifferences(path, against: pictures)
+            #expect(differences.count == 6)
+            #expect(differences.allSatisfy { $0 == 0 }, "不透明度が入力と食い違う: 差の最大 \(differences)")
+        }
+    }
 }
 
 /// 撮り終わりに分かった失敗が、人へ届くか ([#789])。**GPU を要さない。**
@@ -757,6 +832,94 @@ struct RecordMovieTests {
 
 // MARK: - 共通の道具
 
+/// 色の細かい絵に一様でない不透明度が重なる絵柄 ([#1813])。**専用回路の符号化器が断った 4 つ**で、
+/// 断られるかは絵の中身で決まる (色が一色・滑らかな絵は、alpha が乱数でも通る)。
+///
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+nonisolated enum BusyTexture: String, CaseIterable, Sendable, CustomTestStringConvertible {
+    /// RGBA の 4 チャンネルとも一様乱数。
+    case noiseInEveryChannel = "RGBA の 4 チャンネルとも一様乱数"
+    /// RGB は一様乱数で、alpha は `x + y`。
+    case noiseColourSlopingAlpha = "RGB は乱数・alpha は x + y"
+    /// RGB は一様乱数で、alpha は 254 と 255 の市松。
+    case noiseColourCheckerAlpha = "RGB は乱数・alpha は 254 と 255 の市松"
+    /// `(x*3) ^ (y*7) + c*50` (alpha も同じ式)。
+    case xorPattern = "(x*3) ^ (y*7) + c*50"
+
+    var testDescription: String { rawValue }
+}
+
+/// 専用回路の符号化器が断った大きさのうち、いちばん小さい 640×360 と、よく使う 1920×1080。
+nonisolated struct BusySize: Sendable, CustomTestStringConvertible {
+    let width: Int
+    let height: Int
+
+    var testDescription: String { "\(width)×\(height)" }
+
+    static let all = [BusySize(width: 640, height: 360), BusySize(width: 1920, height: 1080)]
+}
+
+/// 固定の種から決まる、`BusyTexture` の絵。**落ちたときに同じ絵で調べ直せる。**
+private func busyPicture(_ texture: BusyTexture, width: Int, height: Int) -> DisplayImage {
+    let count = width * height * 4
+    let bytes = [UInt8](unsafeUninitializedCapacity: count) { buffer, filled in
+        for y in 0..<height {
+            for x in 0..<width {
+                let pixel = y * width + x
+                let random = scramble(UInt64(pixel) &+ 1813)
+                let at = pixel * 4
+                for channel in 0..<4 {
+                    let noise = UInt8(truncatingIfNeeded: random >> UInt64(channel * 8))
+                    let value: UInt8
+                    switch texture {
+                    case .noiseInEveryChannel:
+                        value = noise
+                    case .noiseColourSlopingAlpha:
+                        value = channel == 3 ? UInt8(truncatingIfNeeded: x + y) : noise
+                    case .noiseColourCheckerAlpha:
+                        value = channel == 3 ? ((x + y) % 2 == 0 ? 254 : 255) : noise
+                    case .xorPattern:
+                        value = UInt8(truncatingIfNeeded: ((x * 3) ^ (y * 7)) + channel * 50)
+                    }
+                    buffer[at + channel] = value
+                }
+            }
+        }
+        filled = count
+    }
+    return DisplayImage(width: width, height: height, bytes: bytes)
+}
+
+/// 64 ビットの値を散らす (SplitMix64 の仕上げ)。画素の番号から、決まった乱数を引く。
+private func scramble(_ value: UInt64) -> UInt64 {
+    var z = value &+ 0x9E37_79B9_7F4A_7C15
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
+}
+
+/// 読み戻した 1 枚 (BGRA) と、渡した絵 (RGBA) の、不透明度 (alpha) の差の最大。**色は見ない。**
+private func maxAlphaDifference(of buffer: CVPixelBuffer, against image: DisplayImage) -> Int {
+    guard CVPixelBufferGetWidth(buffer) == image.width, CVPixelBufferGetHeight(buffer) == image.height
+    else { return Int.max }
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    let stride = CVPixelBufferGetBytesPerRow(buffer)
+    guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt8.self)
+    else { return Int.max }
+    var worst = 0
+    image.bytes.withUnsafeBufferPointer { expected in
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                let written = Int(base[y * stride + x * 4 + 3])
+                let given = Int(expected[(y * image.width + x) * 4 + 3])
+                worst = max(worst, abs(written - given))
+            }
+        }
+    }
+    return worst
+}
+
 /// 検査のあいだだけ使う一時ディレクトリ。
 private func withTemporaryDirectory(
     _ name: String, _ body: (URL) async throws -> Void
@@ -810,6 +973,34 @@ private struct DecodedMovie {
 
 /// 書き出した動画を読み戻す。**符号化を通った実物を見る** — 渡した絵ではなく。
 private func decodeMovie(_ path: String) async throws -> DecodedMovie {
+    let decoded = try await decodeSamples(path, read)
+    return DecodedMovie(
+        frames: decoded.frames, times: decoded.times, colorPrimaries: decoded.colorPrimaries)
+}
+
+/// 書き出した動画を読み戻し、**枚ごとの不透明度の差の最大**を返す ([#1813])。色は見ない。
+///
+/// 全画素を絵に起こす ``decodeMovie(_:)`` は、debug では 1920×1080 の 1 枚に 0.3 秒ほどかかる。
+/// 見たいのが不透明度だけなら、その 1 チャンネルだけを読む。`expected` の何枚目かと、読み戻した
+/// 何枚目かを突き合わせる。読み戻した枚数が多ければ、余った枚の差は `Int.max` になる。
+///
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+private func decodeAlphaDifferences(
+    _ path: String, against expected: [DisplayImage]
+) async throws -> [Int] {
+    var index = 0
+    let decoded = try await decodeSamples(path) { buffer -> Int in
+        defer { index += 1 }
+        guard index < expected.count else { return Int.max }
+        return maxAlphaDifference(of: buffer, against: expected[index])
+    }
+    return decoded.frames
+}
+
+/// 動画の映像トラックを 1 枚ずつ読み、`transform` で取り出したものを並べる。
+private func decodeSamples<Frame>(
+    _ path: String, _ transform: (CVPixelBuffer) -> Frame
+) async throws -> (frames: [Frame], times: [Double], colorPrimaries: String?) {
     let asset = AVURLAsset(url: URL(fileURLWithPath: path))
     let tracks = try await asset.loadTracks(withMediaType: .video)
     let track = try #require(tracks.first)
@@ -826,14 +1017,14 @@ private func decodeMovie(_ path: String) async throws -> DecodedMovie {
     reader.add(output)
     reader.startReading()
 
-    var frames: [DisplayImage] = []
+    var frames: [Frame] = []
     var times: [Double] = []
     while let sample = output.copyNextSampleBuffer() {
         guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
         times.append(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample)))
-        frames.append(read(buffer))
+        frames.append(transform(buffer))
     }
-    return DecodedMovie(frames: frames, times: times, colorPrimaries: primaries)
+    return (frames, times, primaries)
 }
 
 /// 符号化器が返す並び (BGRA) を、表示できる形 (RGBA) へ直す。
