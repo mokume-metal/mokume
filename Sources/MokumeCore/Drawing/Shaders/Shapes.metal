@@ -164,9 +164,11 @@ vertex ShapeFragmentIn solidVertexMain(
 }
 
 // 骨は形ごとに共用し、帯と角を置き場所・視点から頂点段で広げる (#1738)。
+// 片の意味は `SolidStrokeGeometry.Piece` が持つ (a.w: 0 帯・1 正方形・2 折れ目の半分)。
 struct SolidStrokePiece {
     float4 a;
     float4 b;
+    float4 c;
 };
 struct SolidStrokePlacement {
     float4x4 matrix;
@@ -187,6 +189,33 @@ float solidStrokePixel(float3 p, constant SolidStrokePlacement &s) {
     return s.parameters.y / s.parameters.w;
 }
 
+/// 線分 a–b を画面に写したときの垂線を、世界の向き (長さ 1) で `side` に入れる。CPU の
+/// `Canvas.screenAcross` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
+bool solidStrokeAcross(float3 a, float3 b, constant SolidStrokePlacement &s, thread float3 &side) {
+    float3 along = b - a;
+    float2 normal;
+    if (s.eye.w != 0) {
+        float3 plane = cross(a - s.eye.xyz, b - s.eye.xyz);
+        normal = float2(dot(plane, s.right.xyz), dot(plane, s.down.xyz));
+    } else {
+        normal = float2(-dot(along, s.down.xyz), dot(along, s.right.xyz));
+    }
+    float size = length(normal);
+    if (!(dot(along, along) > 0 && size > 0 && isfinite(size))) return false;
+    side = s.right.xyz * (normal.x / size) + s.down.xyz * (normal.y / size);
+    return true;
+}
+
+/// 画面の軸に沿った正方形の、6 頂点の並びの隅 (0…3) の向き。
+float3 solidStrokeSquareCorner(uint corner, constant SolidStrokePlacement &s) {
+    switch (corner) {
+        case 0: return -s.right.xyz - s.down.xyz;
+        case 1: return s.right.xyz - s.down.xyz;
+        case 2: return s.right.xyz + s.down.xyz;
+        default: return -s.right.xyz + s.down.xyz;
+    }
+}
+
 vertex ShapeFragmentIn solidStrokeVertexMain(
     uint index [[vertex_id]],
     constant SolidStrokePiece *pieces [[buffer(0)]],
@@ -204,34 +233,78 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     float halfWeight = s.parameters.x / 2;
     if (piece.a.w == 0) {
         float3 b = (s.matrix * float4(shapeB, 1)).xyz;
-        float3 along = b - a;
-        float2 normal;
-        if (s.eye.w != 0) {
-            float3 plane = cross(a - s.eye.xyz, b - s.eye.xyz);
-            normal = float2(dot(plane, s.right.xyz), dot(plane, s.down.xyz));
-        } else {
-            normal = float2(-dot(along, s.down.xyz), dot(along, s.right.xyz));
-        }
-        float size = length(normal);
+        float3 side;
         // CPU が積まない帯は面積0にする。角は独立した部品のまま残る。
-        if (dot(along, along) > 0 && size > 0 && isfinite(size)) {
-            float3 side = s.right.xyz * (normal.x / size) + s.down.xyz * (normal.y / size);
+        if (solidStrokeAcross(a, b, s, side)) {
             bool end = corner == 1 || corner == 2;
             float3 center = end ? b : a;
             float3 across = side * (halfWeight * solidStrokePixel(center, s));
             world = corner < 2 ? center + across : center - across;
             shape = end ? shapeB : shapeA;
         }
+    } else if (piece.a.w == 2) {
+        // 辺が 2 本だけ集まる角の、二等分線で割った半分 (#1644)。形は CPU の
+        // `Canvas.joinRim` の `miter` (尖りを角から √2 × 太さの半分で切る) と同じ式で、
+        // 画面に写した 2 本の帯の向きから決める。GPU で組む線は `miter` だけである
+        // (`gpuStrokeStyleAllows`)。4 隅は 角のすぐ内側・自分の側の外側の縁の角・切り口
+        // (か尖り)・二等分線の上の切り口の中点 (か尖り) で、2 枚を合わせると CPU の周になる
+        float3 own = (s.matrix * float4(piece.b.xyz * s.uv.z, 1)).xyz;
+        float3 other = (s.matrix * float4(piece.c.xyz * s.uv.z, 1)).xyz;
+        float3 acrossOwn;
+        float3 acrossOther;
+        bool placed = solidStrokeAcross(own, a, s, acrossOwn) && solidStrokeAcross(a, other, s, acrossOther);
+        if (placed) {
+            float2 sideOwn = float2(dot(acrossOwn, s.right.xyz), dot(acrossOwn, s.down.xyz));
+            float2 sideOther = float2(dot(acrossOther, s.right.xyz), dot(acrossOther, s.down.xyz));
+            float3 towardOwn = own - a;
+            float3 towardOther = other - a;
+            float2 armOwn = float2(-sideOwn.y, sideOwn.x);
+            if (dot(armOwn, float2(dot(towardOwn, s.right.xyz), dot(towardOwn, s.down.xyz))) < 0) armOwn = -armOwn;
+            float2 armOther = float2(-sideOther.y, sideOther.x);
+            if (dot(armOther, float2(dot(towardOther, s.right.xyz), dot(towardOther, s.down.xyz))) < 0) armOther = -armOther;
+            float2 inward = armOwn + armOther;
+            float radius = halfWeight * solidStrokePixel(a, s);
+            if (inward.x == 0 && inward.y == 0) {
+                world = a;  // 一直線。隙間は無い
+            } else {
+                // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.w`)
+                bool firstHalf = piece.b.w == 0;
+                float2 outerOwn = firstHalf ? float2(-armOwn.y, armOwn.x) : float2(armOwn.y, -armOwn.x);
+                if (dot(outerOwn, inward) > 0) outerOwn = -outerOwn;
+                float2 outerOther = firstHalf ? float2(armOther.y, -armOther.x) : float2(-armOther.y, armOther.x);
+                if (dot(outerOther, inward) > 0) outerOther = -outerOther;
+                float cosine = dot(outerOwn, outerOther);
+                float2 cut;
+                float2 middle;
+                if (cosine >= 0) {
+                    cut = (outerOwn + outerOther) * (1 / (1 + cosine));
+                    middle = cut;
+                } else {
+                    float halfCosine = sqrt((1 + cosine) / 2);
+                    float halfSine = sqrt((1 - cosine) / 2);
+                    float extent = (M_SQRT2_F - halfCosine) / halfSine;
+                    cut = outerOwn - armOwn * extent;
+                    middle = -normalize(inward) * M_SQRT2_F;
+                }
+                float3 edge = (dot(outerOwn, sideOwn) > 0 ? acrossOwn : -acrossOwn) * radius;
+                // 角のすぐ内側 (CPU の `joinRim` の周の最初の点)。角を片の内に入れる
+                float2 inner = normalize(inward) / 64;
+                switch (corner) {
+                    case 0: world = a + (s.right.xyz * inner.x + s.down.xyz * inner.y) * radius; break;
+                    case 1: world = a + edge; break;
+                    case 2: world = a + (s.right.xyz * cut.x + s.down.xyz * cut.y) * radius; break;
+                    default: world = a + (s.right.xyz * middle.x + s.down.xyz * middle.y) * radius; break;
+                }
+            }
+        } else if (piece.b.w == 0) {
+            // 帯の横向きが決まらない角は、1 枚目が画面の軸に沿った正方形へ倒す (CPU と同じ)。
+            // 2 枚目は面積 0 にする
+            float radius = halfWeight * solidStrokePixel(a, s);
+            world = a + solidStrokeSquareCorner(corner, s) * radius;
+        }
     } else {
         float radius = halfWeight * solidStrokePixel(a, s);
-        float3 axis;
-        switch (corner) {
-            case 0: axis = -s.right.xyz - s.down.xyz; break;
-            case 1: axis = s.right.xyz - s.down.xyz; break;
-            case 2: axis = s.right.xyz + s.down.xyz; break;
-            default: axis = -s.right.xyz + s.down.xyz; break;
-        }
-        world = a + axis * radius;
+        world = a + solidStrokeSquareCorner(corner, s) * radius;
     }
     float lift = (s.parameters.x + 1) * solidStrokePixel(world, s);
     if (s.eye.w != 0) {

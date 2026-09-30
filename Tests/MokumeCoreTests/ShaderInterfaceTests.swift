@@ -355,7 +355,7 @@ struct ShaderInterfaceTests {
         ])
 
     static let solidStrokePiece = layout(
-        of: SolidStrokeGeometry.Piece.self, [("a", \.a), ("b", \.b)])
+        of: SolidStrokeGeometry.Piece.self, [("a", \.a), ("b", \.b), ("c", \.c)])
 
     static let solidStrokePlacement = layout(
         of: SolidStrokePlacement.self,

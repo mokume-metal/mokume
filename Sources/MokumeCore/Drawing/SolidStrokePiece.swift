@@ -24,11 +24,14 @@ struct SolidStrokePiece {
         case band(SIMD3<Float>, SIMD3<Float>)
         /// 丸い端点と丸い角の円板。
         case disc(SIMD3<Float>)
-        /// 四角い端点と削いだ角の正方形。
+        /// 向きの無い点の四角い端点と、辺が 3 本以上集まる丸めない角の正方形。
         case square(SIMD3<Float>)
         /// 出っ張らせる線の端の正方形 (1 つ目の点に置き、2 つ目の点から離れる向きに沿う)。
         /// 向きが画面に写した線で決まるので、帯と同じく置く先で組み直す
         case endSquare(SIMD3<Float>, awayFrom: SIMD3<Float>)
+        /// 丸めない折れ目の形 (1 つ目の点に置き、2 つ目の点から来て 3 つ目の点へ出る 2 本の
+        /// 帯の向きで決まる・#1644)。向きが画面に写した線で決まるので、置く先で組み直す
+        case join(SIMD3<Float>, from: SIMD3<Float>, to: SIMD3<Float>)
     }
 
     var kind: Kind
@@ -49,7 +52,9 @@ struct SolidStrokePiece {
     var anchor: SIMD3<Float> {
         switch kind {
         case let .band(start, _): start
-        case let .disc(center), let .square(center), let .endSquare(center, _): center
+        case let .disc(center), let .square(center), let .endSquare(center, _),
+            let .join(center, _, _):
+            center
         }
     }
 
@@ -66,6 +71,8 @@ struct SolidStrokePiece {
         case let .square(center): piece.kind = .square(move(center))
         case let .endSquare(center, from):
             piece.kind = .endSquare(move(center), awayFrom: move(from))
+        case let .join(center, from, to):
+            piece.kind = .join(move(center), from: move(from), to: move(to))
         }
         return piece
     }

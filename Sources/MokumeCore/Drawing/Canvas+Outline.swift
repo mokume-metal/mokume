@@ -19,8 +19,8 @@ extension Canvas {
     /// 点の並びを輪郭としてなぞる骨。
     ///
     /// **点は添字で受け取る。** 立体は世界の座標と形自身の座標を対で連れ回すので、
-    /// 座標そのものを骨へ渡せない。骨が決めるのは「どの添字を、帯・円板・正方形の
-    /// どれにするか」だけで、点を形に変えるのは呼び出し側の 3 つの閉包である。
+    /// 座標そのものを骨へ渡せない。骨が決めるのは「どの添字を、帯・円板・正方形・折れ目の
+    /// 形のどれにするか」だけで、点を形に変えるのは呼び出し側の閉包である。
     ///
     /// **曲線の刻みの継ぎ目は角ではない** ([#1409])。折れ目の形 (`strokeJoin`) を置かず、
     /// 形によらず円板で埋める。円板は両側の帯の縁に接するので、どれだけ急に曲がっても
@@ -51,16 +51,21 @@ extension Canvas {
     ///     沿った正方形を置く (出っ張らせる端 — #1535)
     ///   - band: 添字 2 つを結ぶ帯を置く
     ///   - disc: 添字の点に円板を置く (丸い端点と丸い角・曲線の刻みの継ぎ目)
-    ///   - square: 添字の点に正方形を置く (四角い端点と、丸めない角)。矩形の削いだ角は、
+    ///   - square: 添字の点に正方形を置く (向きの無い点の四角い端点)
+    ///   - corner: 1 つ目の添字の点に、2 つ目の添字の点から来て 3 つ目の添字の点へ出る
+    ///     折れ目の形を置く (丸めない角・``joinRim(toward:_:half:join:)``)。矩形の削いだ角は、
     ///     平面の呼び出し側がここで削いだ形に差し替える (`strokeOutline`)
     func strokeRing(
         count: Int, isClosed: Bool, curveSteps: [Bool] = [],
         endSquare: (Int, Int) -> Void,
-        band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void
+        band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void,
+        corner: (Int, Int, Int) -> Void
     ) {
         func join(at index: Int) {
             if index < curveSteps.count, curveSteps[index] { return disc(index) }
-            strokeJoinShape(at: index, disc: disc, square: square)
+            let previous = (index + count - 1) % count
+            let next = (index + 1) % count
+            strokeJoinShape(at: index, from: previous, to: next, disc: disc, corner: corner)
         }
         func cap(at index: Int, awayFrom neighbor: Int?) {
             strokeCapShape(
@@ -107,21 +112,26 @@ extension Canvas {
     ///   - endSquare: 1 つ目の添字の点に、2 つ目の添字の点から離れる向きに沿った正方形を置く
     ///   - band: 添字 2 つを結ぶ帯を置く
     ///   - disc: 添字の点に円板を置く
-    ///   - square: 添字の点に軸に沿った正方形を置く
+    ///   - square: 添字の点に画面の軸に沿った正方形を置く (向きの無い点の四角い端点と、
+    ///     辺が 3 本以上集まる丸めない角)
+    ///   - corner: 1 つ目の添字の点に、2 つ目と 3 つ目の添字の点へ向かう 2 本の辺が出会う
+    ///     折れ目の形を置く (辺が 2 本だけ集まる丸めない角)
     func strokeNet(
         count: Int, edges: [(Int, Int)],
         endSquare: (Int, Int) -> Void,
-        band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void
+        band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void,
+        corner: (Int, Int, Int) -> Void
     ) {
         var degrees = [Int](repeating: 0, count: count)
-        // 端 (辺が 1 本だけ来る点) の、その辺の向こうの点
+        // 点ごとの、辺の向こうの点 (最初の 2 本)。端はその 1 本、折れ目は 2 本の帯の向きを決める
         var neighbors = [Int](repeating: 0, count: count)
+        var others = [Int](repeating: 0, count: count)
         for (a, b) in edges {
             band(a, b)
+            if degrees[a] == 0 { neighbors[a] = b } else if degrees[a] == 1 { others[a] = b }
+            if degrees[b] == 0 { neighbors[b] = a } else if degrees[b] == 1 { others[b] = a }
             degrees[a] += 1
             degrees[b] += 1
-            neighbors[a] = b
-            neighbors[b] = a
         }
         for (index, degree) in degrees.enumerated() {
             switch degree {
@@ -130,7 +140,13 @@ extension Canvas {
                 strokeCapShape(
                     at: index, awayFrom: neighbors[index], disc: disc, square: square,
                     endSquare: endSquare)
-            default: strokeJoinShape(at: index, disc: disc, square: square)
+            case 2:
+                strokeJoinShape(
+                    at: index, from: neighbors[index], to: others[index], disc: disc, corner: corner)
+            default:
+                // 3 本以上の辺が集まる点 (箱の角など) は、2 本の帯で形が決まらない。
+                // 画面の軸に沿った正方形のまま埋める (#1644 の範囲の外)
+                if style.strokeJoin == .round { disc(index) } else { square(index) }
             }
         }
     }
@@ -138,20 +154,84 @@ extension Canvas {
     /// 折れ目を埋める。
     ///
     /// 帯は線分ごとに独立して置くので、曲がったところに楔形の隙間が空く。そこを
-    /// 埋める形が角の形である。**隙間を埋める向きだけを見て、内側か外側かを判定
-    /// しない** — 埋める図形は内側では帯に重なるが、重なる所は平面の呼び出し側が引いて
-    /// 積む (`strokeOutline`・#1536) ので、半透明の線でも角だけ濃くはならない。
-    private func strokeJoinShape(at index: Int, disc: (Int) -> Void, square: (Int) -> Void) {
+    /// 埋める形が角の形である。丸める角は円板で、丸めない角 (`miter` / `bevel`) は
+    /// **そこで出会う 2 本の帯の向きと太さだけで決まる形** (``joinRim(toward:_:half:join:)``)
+    /// で埋める ([#1644])。形自身の座標軸にも画面の軸にも依らないので、回して描いても
+    /// 形が変わらず、一直線に並べた点では何も置かない。かつては軸に沿った正方形で埋めて
+    /// いて、斜めに一直線に並べた点で角が帯の外へ出ていた。
+    ///
+    /// 矩形の直角の角は、`bevel` なら呼び出し側 (`strokeOutline`) が同じ形の削いだ角に
+    /// 差し替える (#1506)。重なる所は平面の呼び出し側が引いて積む (`strokeOutline`・#1536)
+    /// ので、半透明の線でも角だけ濃くはならない。
+    ///
+    /// [#1644]: https://github.com/mokume-metal/mokume/issues/1644
+    private func strokeJoinShape(
+        at index: Int, from previous: Int, to next: Int, disc: (Int) -> Void,
+        corner: (Int, Int, Int) -> Void
+    ) {
         switch style.strokeJoin {
         case .round:
             disc(index)
         case .bevel, .miter:
-            // 任意多角形の折れ目は、どちらも正方形で埋める。尖らせる形は鋭角で極端に
-            // 伸びるため、限界を持たない実装では正方形へ倒す (限界の設計は輪郭が育ってから)。
-            // 矩形の直角の角だけは、`bevel` なら呼び出し側 (`strokeOutline`) がこの正方形を
-            // 45° で削いだ形に差し替える (#1506)
-            square(index)
+            corner(index, previous, next)
         }
+    }
+
+    /// 丸めない折れ目の形の周。**角からのずれ**を、角のすぐ内側の点・1 本目の帯の外側の縁の
+    /// 角・(尖りか 2 つの切り口)・2 本目の帯の外側の縁の角の順に並べる ([#1644])。凸多角形で、
+    /// 角は周の内にある。
+    ///
+    /// 形は、2 本の帯の外側の縁を延ばして交わる点 (尖り) までの凧形を、角から
+    /// k × 太さの半分の所で**二等分線に垂直に切った**ものである。`bevel` は k = 1、
+    /// `miter` は k = √2 で、どちらも鋭い角で伸びすぎない。k = √2 は直角の尖りの長さで、
+    /// 直角の `miter` は切られずに尖り、矩形の尖った角と一致する。`bevel` は矩形の削いだ角
+    /// (#1506・`kFormJoinBevel`) と同じ削ぎ方を、任意の角度へ延ばしたものである。
+    ///
+    /// - 尖りが切る線より角の側にあるときは、切らずに尖りを置く (周は 3 点)。尖りは
+    ///   `(外 1 + 外 2) × half / (1 + cos)` で求める。`miter` なら曲がる角が 90° 以下で
+    ///   そうなる。直角では cos がちょうど 0 なので、軸に沿った矩形の角は、以前の正方形の
+    ///   角と同じ値になる
+    /// - そうでなければ、2 本の外側の縁を切る線に届く所まで延ばした 2 点を置く (周は 4 点)
+    /// - 一直線 (2 つの向きが真反対) なら隙間は無いので、空を返す
+    ///
+    /// 外側の縁の角 (周の 2 つ目と最後) は、帯の縁の角と同じ値になる。帯と同じく
+    /// `(-向き.y, 向き.x) × half` の形で求めるので、平面では帯の角と 1 ビットも違わない。
+    ///
+    /// - Parameters:
+    ///   - first: 角から 1 本目の帯の向こうの点へ向かう、長さ 1 の向き
+    ///   - second: 角から 2 本目の帯の向こうの点へ向かう、長さ 1 の向き
+    ///   - half: 太さの半分
+    nonisolated static func joinRim(
+        toward first: SIMD2<Float>, _ second: SIMD2<Float>, half: Float, join: StrokeJoin
+    ) -> [SIMD2<Float>] {
+        let inward = first + second
+        guard inward != .zero else { return [] }
+        // 外側の縁の法線は、二等分線の外向き (−inward) の側を向く。同じ向きへ折り返す
+        // (法線が inward と直交する) ときは、1 本目が左・2 本目が右へ分かれる
+        var outer1 = SIMD2(-first.y, first.x)
+        if dot(outer1, inward) > 0 { outer1 = -outer1 }
+        var outer2 = SIMD2(second.y, -second.x)
+        if dot(outer2, inward) > 0 { outer2 = -outer2 }
+        let cosine = dot(outer1, outer2)
+        let edge1 = outer1 * half
+        let edge2 = outer2 * half
+        // 切る線は角から k × half。尖りまでの距離は half × √(2 / (1 + cos)) なので、尖りが
+        // 切る線より手前なのは cos ≥ 2 / k² − 1 のとき (`miter` で 0・`bevel` で 1)
+        let reach: Float = join == .bevel ? 1 : Float(2).squareRoot()
+        let sharpest: Float = join == .bevel ? 1 : 0
+        // 角のすぐ内側の点。角そのものを周に入れると、角の点は帯の端と折れ目の形の境に
+        // しか乗らず、角がちょうど画素の中心に来たとき、どの三角形にも入らないことがある
+        // (帯の端の辺の途中に乗る T 字の継ぎ目になる)。内へ half / 64 だけ引いた点を
+        // 周に入れれば角は形の内に入る。引いた所は両側の帯の重なりの中なので、塗る所は変わらない
+        let inner = inward * (half / 64 / (inward.x * inward.x + inward.y * inward.y).squareRoot())
+        if cosine >= sharpest {
+            let tip = (outer1 + outer2) * (half / (1 + cosine))
+            return [inner, edge1, tip, edge2]
+        }
+        let halfCosine = ((1 + cosine) / 2).squareRoot()
+        let halfSine = ((1 - cosine) / 2).squareRoot()
+        let extent = half * (reach - halfCosine) / halfSine
+        return [inner, edge1, edge1 - first * extent, edge2 - second * extent, edge2]
     }
 
     /// 端を仕上げる。
@@ -181,8 +261,9 @@ extension Canvas {
     }
 }
 
-// 平面の輪郭。骨に差し込むのは「点 → 帯の 4 隅」「点 → 円板の周」「点 → 正方形の 4 隅」の
-// 3 つだけで、太さは形自身の座標のまま足して、変換は置くときに 1 度だけ掛ける。
+// 平面の輪郭。骨に差し込むのは「点 → 帯の 4 隅」「点 → 円板の周」「点 → 正方形の 4 隅」
+// 「角と両隣 → 折れ目の形の周」だけで、太さは形自身の座標のまま足して、変換は置くときに
+// 1 度だけ掛ける。
 extension Canvas {
 
     /// 周を太さのある帯でなぞる。
@@ -212,9 +293,11 @@ extension Canvas {
                 endSquare: { appendSquare(at: points[$0], awayFrom: points[$1], half: half) },
                 band: { appendBand(points[$0], points[$1], half: half) },
                 disc: { appendDisc(at: points[$0], half: half) },
-                square: { index in
+                square: { appendSquare(at: points[$0], half: half) },
+                corner: { index, previous, next in
                     guard index < chamfers.count else {
-                        return appendSquare(at: points[index], half: half)
+                        return appendJoin(
+                            at: points[index], from: points[previous], to: points[next], half: half)
                     }
                     appendChamferedCorner(at: points[index], outward: chamfers[index], half: half)
                 })
@@ -270,6 +353,7 @@ extension Canvas {
             )
         }
         let rim = discOffsets?.offsets ?? []
+        let join = style.strokeJoin
         strokeRing(
             count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
             endSquare: { index, neighbor in
@@ -287,9 +371,14 @@ extension Canvas {
                 }
             },
             square: { index in
+                carving.addPoint(index) { Self.appendSquare(at: points[index], half: half, to: &$0) }
+            },
+            corner: { index, previous, next in
                 carving.addPoint(index) { polygon in
                     guard index < chamfers.count else {
-                        return Self.appendSquare(at: points[index], half: half, to: &polygon)
+                        return Self.appendJoin(
+                            at: points[index], from: points[previous], to: points[next],
+                            half: half, join: join, to: &polygon)
                     }
                     Self.appendChamferedCorner(
                         at: points[index], outward: chamfers[index], half: half, to: &polygon)
@@ -365,6 +454,38 @@ extension Canvas {
         polygon.append(SIMD2(center.x - half, center.y + half))
     }
 
+    /// 折れ目の形の周 (``joinRim(toward:_:half:join:)``)。一直線なら何も積まない。帯の向きが
+    /// 決まらない (隣が同じ位置) ときは、軸に沿った正方形へ倒す。
+    private static func appendJoin(
+        at corner: SIMD2<Float>, from previous: SIMD2<Float>, to next: SIMD2<Float>,
+        half: Float, join: StrokeJoin, to polygon: inout [SIMD2<Float>]
+    ) {
+        guard let rim = joinOffsets(at: corner, from: previous, to: next, half: half, join: join)
+        else { return appendSquare(at: corner, half: half, to: &polygon) }
+        for offset in rim { polygon.append(corner + offset) }
+    }
+
+    /// 角から両隣への向きを求めて、折れ目の形の周のずれを返す。向きが決まらなければ `nil`。
+    ///
+    /// 向きは帯 (`appendBand`) と同じく、差を長さで割って求める。帯の法線は
+    /// `(-差.y / 長さ × half, 差.x / 長さ × half)` で、ここから出る外側の縁の角は、その
+    /// 符号を変えたものか、そのものになる。
+    fileprivate static func joinOffsets(
+        at corner: SIMD2<Float>, from previous: SIMD2<Float>, to next: SIMD2<Float>,
+        half: Float, join: StrokeJoin
+    ) -> [SIMD2<Float>]? {
+        let back = previous - corner
+        let ahead = next - corner
+        let backLength = (back.x * back.x + back.y * back.y).squareRoot()
+        let aheadLength = (ahead.x * ahead.x + ahead.y * ahead.y).squareRoot()
+        guard backLength > 0, aheadLength > 0, backLength.isFinite, aheadLength.isFinite else {
+            return nil
+        }
+        return joinRim(
+            toward: SIMD2(back.x / backLength, back.y / backLength),
+            SIMD2(ahead.x / aheadLength, ahead.y / aheadLength), half: half, join: join)
+    }
+
     /// 削いだ角の五角形 (角と、外側の 4 分の 1 の縁)。
     private static func appendChamferedCorner(
         at corner: SIMD2<Float>, outward: SIMD2<Float>, half: Float, to polygon: inout [SIMD2<Float>]
@@ -412,8 +533,8 @@ extension Canvas {
     ///
     /// **正方形は 2 通りある。** 線の端 (`strokeCap(.project)`) はこちらで、線の向きに沿って
     /// 置く — 帯と合わせて線を太さの半分だけ延ばした形になり、距離関数の経路の `line` と
-    /// 揃う。向きの無い点の四角い端と、丸めない折れ目は、形の座標の軸に沿った
-    /// `appendSquare(at:half:)` のままである。
+    /// 揃う。向きの無い点の四角い端は、形の座標の軸に沿った `appendSquare(at:half:)` の
+    /// ままである。丸めない折れ目は、2 本の帯の向きから決まる `appendJoin` で埋める (#1644)。
     ///
     /// 向きは形自身の座標で `from` から `center` へ向かう向きで、帯の向きと同じ座標で
     /// 取るので、変換を掛けた後も帯と揃う。長さ 0 (隣が同じ位置) で向きが決まらない
@@ -461,7 +582,27 @@ extension Canvas {
         appendTriangle(hub, previous, first, color: style.stroke)
     }
 
-    /// 正方形を置く (四角い端点と、任意多角形の折れ目・矩形の尖らせた角)。
+    /// 丸めない折れ目の形を置く (``joinRim(toward:_:half:join:)``・#1644)。周の最初の点
+    /// (角のすぐ内側) を要にした扇に割る。一直線なら何も置かない。帯の向きが決まらない (隣が同じ位置) ときは、
+    /// 軸に沿った正方形へ倒す。
+    private func appendJoin(
+        at corner: SIMD2<Float>, from previous: SIMD2<Float>, to next: SIMD2<Float>, half: Float
+    ) {
+        guard
+            let rim = Self.joinOffsets(
+                at: corner, from: previous, to: next, half: half, join: style.strokeJoin)
+        else { return appendSquare(at: corner, half: half) }
+        guard rim.count >= 3 else { return }
+        let hub = strokePoint(x: corner.x + rim[0].x, y: corner.y + rim[0].y)
+        var previousPoint = strokePoint(x: corner.x + rim[1].x, y: corner.y + rim[1].y)
+        for offset in rim.dropFirst(2) {
+            let current = strokePoint(x: corner.x + offset.x, y: corner.y + offset.y)
+            appendTriangle(hub, previousPoint, current, color: style.stroke)
+            previousPoint = current
+        }
+    }
+
+    /// 正方形を置く (向きの無い点の四角い端点)。
     private func appendSquare(at center: SIMD2<Float>, half: Float) {
         let a = strokePoint(x: center.x - half, y: center.y - half)
         let b = strokePoint(x: center.x + half, y: center.y - half)
