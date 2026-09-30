@@ -634,19 +634,28 @@ extension Sketch {
 
     /// 文字列を描いたときに、墨が載る範囲を返す。
     ///
-    /// ```swift
-    /// background(23, 26, 31)
-    /// noStroke()
-    /// fill(242, 242, 242)
-    /// textSize(64)
-    /// text("mokume 1", 40, 170)
-    /// if let bounds = textBounds("mokume 1", 40, 170) {
-    ///     noFill()
-    ///     stroke(242, 115, 64)
-    ///     strokeWeight(2)
-    ///     rect(bounds.x, bounds.y, bounds.width, bounds.height)
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 242, 242)
+    ///     textSize(64)
+    ///     text("mokume 1", 40, 170)
+    ///     if let bounds = textBounds("mokume 1", 40, 170) {
+    ///         noFill()
+    ///         stroke(242, 115, 64)
+    ///         strokeWeight(2)
+    ///         rect(bounds.x, bounds.y, bounds.width, bounds.height)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白い mokume 1 の墨を、橙の細い枠がぴったり囲んでいる -->
+    ///     ![白い mokume 1 の墨を、橙の細い枠がぴったり囲んでいる](https://i.gyazo.com/c2df83e4af00939a3c923995a23c0426.png)
+    ///     <!-- /shot -->
+    ///   }
     /// }
-    /// ```
     ///
     /// 同じ引数で ``text(_:_:_:)`` を描いたときの墨を囲む。**送り幅とは違う** —
     /// ``textWidth(_:)`` は字の左右に書体が付けた余白を含み、この枠は含まない。字の中心を
@@ -660,6 +669,7 @@ extension Sketch {
     ///
     /// 墨が無いときは `nil` を返す — 空の文字列・空白や改行だけの文字列・大きさ 0
     /// (``textSize(_:)``)・位置に数でない値や無限を渡したとき。
+    // shot: 1 snippet=f7ecb144
     public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
         let (x, y) = (x.asFloat, y.asFloat)
         return canvas.textBounds(string, x, y)
