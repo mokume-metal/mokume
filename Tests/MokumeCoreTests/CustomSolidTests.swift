@@ -936,24 +936,46 @@ struct CustomSolidTests {
         #expect(quadCount == Self.gridPoints.count)
     }
 
-    @Test("番号で指した四角の列は、保持して置いても同じ絵になる")
+    @Test("番号で指した四角の列は、途中から記録して別の場所へ置き直しても、その場で描いた絵と同じになる")
     func indexedQuadsRetainedMatchImmediate() throws {
+        // 保持の経路にしか無い食い違いを狙う。**前に別の立体があると、記録の区間と番号は溜め場の
+        // 途中から始まる** — 番号の値は頂点の並びの位置そのものなので、形自身の 0 起点へ引き戻さ
+        // ないと、記録した形が前の立体の頂点を指す。しかも別の場所へ置き直すので、置き場所の
+        // 変換も絵に出る
+        func decoy(_ canvas: Canvas) {
+            canvas.noStroke()
+            canvas.fill(blue)
+            canvas.beginShape(.quads)
+            canvas.normal(0, 0, 1)
+            canvas.vertex(70, 4, 0)
+            canvas.vertex(90, 4, 0)
+            canvas.vertex(90, 14, 0)
+            canvas.vertex(70, 14, 0)
+            for number in 0..<4 { canvas.index(number) }
+            canvas.endShape()
+        }
         let immediate = try makeCanvas()
         try immediate.draw {
             immediate.background(black)
             immediate.lights()
+            decoy(immediate)
+            immediate.push()
+            immediate.translate(4, 3, 0)
             quadGrid(on: immediate)
+            immediate.pop()
         }
         let retained = try makeCanvas()
         try retained.draw {
             retained.background(black)
             retained.lights()
+            decoy(retained)
             let held = retained.createShape { quadGrid(on: retained) }
-            retained.shape(held)
+            retained.shape(held, 4, 3)
         }
         let picture = try pixels(of: immediate)
         #expect(try differingPixels(picture, pixels(of: retained)) == 0)
         #expect(picture.bytes.contains { $0 != 0 && $0 != 255 }, "空の画像だけを比較しない")
+        #expect(picture[80, 9].blue > 100, "前の立体が描かれていない")
     }
 
     // MARK: - 道具

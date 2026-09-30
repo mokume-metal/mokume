@@ -578,8 +578,15 @@ struct CanvasTests {
         #expect(image[48, 32] == (0, 0, 0, 255))
     }
 
-    @Test("四角の列は、保持した形として描いても、その場で描いても同じ絵になる")
+    @Test("四角の列は、途中から記録して別の場所へ置き直しても、その場で描いた絵と同じになる")
     func retainedQuadsMatchImmediate() throws {
+        // 保持の経路にしか無い食い違いを狙う。**前に別の図形があると、記録の区間は溜め場の途中から
+        // 始まる** — 記録は区間の頭を形自身の 0 起点へ引き戻すので、引き戻しを誤ると別の頂点を
+        // 指す。しかも別の場所へ置き直すので、置き直しの変換も絵に出る
+        func decoy(_ canvas: Canvas) {
+            canvas.fill(white)
+            canvas.quad(40, 2, 62, 2, 62, 14, 40, 14)
+        }
         func quads(_ canvas: Canvas) {
             canvas.beginShape(.quads)
             canvas.fill(.linear(red: 1, green: 0.2, blue: 0.1))
@@ -603,18 +610,24 @@ struct CanvasTests {
         try immediate.draw {
             immediate.background(black)
             immediate.noStroke()
+            decoy(immediate)
+            immediate.push()
+            immediate.translate(5, 3)
             quads(immediate)
+            immediate.pop()
         }
         let retained = try makeCanvas()
         try retained.draw {
             retained.background(black)
             retained.noStroke()
+            decoy(retained)
             let held = retained.createShape { quads(retained) }
-            retained.shape(held)
+            retained.shape(held, 5, 3)
         }
         let picture = try pixels(of: immediate)
         #expect(picture == (try pixels(of: retained)))
-        #expect(picture[18, 18].red > 0, "空の絵を比べている")
+        #expect(picture[23, 21].red > 0, "空の絵を比べている")
+        #expect(picture[50, 8].red == 255, "前の図形が描かれていない")
     }
 
     @Test("番号で指した四角の列は、範囲外の番号を含む四角だけが落ち、区切りはずれない")
