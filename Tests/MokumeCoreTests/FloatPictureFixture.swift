@@ -37,23 +37,63 @@ enum FloatPictureFixture {
         }
     }
 
+    /// 成分を書く色空間。**作業空間 (線形の Display P3) だけは、読み込みが色を変換しない。** 他は
+    /// 読み込みが作業空間へ変換するので、成分をまたいで値が混ざる (符号も変わりうる)。
+    enum Space: String, CaseIterable, CustomTestStringConvertible, Sendable {
+        case working = "線形 Display P3 (作業空間)"
+        case linearSRGB = "線形 sRGB"
+        case linearRec2020 = "線形 Rec.2020"
+        case extendedSRGB = "拡張 sRGB (ガンマ付き)"
+
+        var testDescription: String { rawValue }
+
+        fileprivate var name: CFString {
+            switch self {
+            case .working: CGColorSpace.extendedLinearDisplayP3
+            case .linearSRGB: CGColorSpace.extendedLinearSRGB
+            case .linearRec2020: CGColorSpace.extendedLinearITUR_2020
+            case .extendedSRGB: CGColorSpace.extendedSRGB
+            }
+        }
+    }
+
+    /// 色つきの絵を書く組み合わせ。**OpenEXR は書くときに線形 sRGB へ変換して持つ**ので、TIFF と
+    /// 別の道 (書くときの変換と読むときの変換) を通る。
+    nonisolated struct Coloured: CustomTestStringConvertible, Sendable {
+        var format: Format
+        var space: Space
+
+        var testDescription: String { "\(format.rawValue) / \(space.rawValue)" }
+
+        nonisolated static let all: [Coloured] = [
+            Coloured(format: .tiff, space: .linearSRGB),
+            Coloured(format: .tiff, space: .linearRec2020),
+            Coloured(format: .tiff, space: .extendedSRGB),
+            Coloured(format: .openEXR, space: .linearSRGB),
+            Coloured(format: .openEXR, space: .linearRec2020),
+            Coloured(format: .openEXR, space: .extendedSRGB),
+        ]
+    }
+
     /// 書けなかった理由。
     struct Failure: Error, CustomStringConvertible {
         var description: String
     }
 
-    /// 全画素が同じ色の絵を書く。**成分は乗算済み**で、作業空間と同じ色域の線形の値を渡す。
+    /// 全画素が同じ色の絵を書く。**成分は乗算済み**で、`space` の値として渡す (既定は作業空間)。
     static func write(
-        _ texel: SIMD4<Float>, width: Int, height: Int, as format: Format
+        _ texel: SIMD4<Float>, width: Int, height: Int, as format: Format,
+        in space: Space = .working
     ) throws -> URL {
         try write(
             [SIMD4<Float>](repeating: texel, count: width * height), width: width, height: height,
-            as: format)
+            as: format, in: space)
     }
 
     /// 画素を並べて書く。並びの先頭は絵の上端 (読み込みが返す並びと同じ)。
     static func write(
-        _ texels: [SIMD4<Float>], width: Int, height: Int, as format: Format
+        _ texels: [SIMD4<Float>], width: Int, height: Int, as format: Format,
+        in space: Space = .working
     ) throws -> URL {
         precondition(texels.count == width * height)
         let writable = (CGImageDestinationCopyTypeIdentifiers() as? [String]) ?? []
@@ -63,11 +103,11 @@ enum FloatPictureFixture {
 
         var texels = texels
         let made: CGImage? = texels.withUnsafeMutableBytes { buffer in
-            guard let space = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3),
+            guard let colorSpace = CGColorSpace(name: space.name),
                 let context = CGContext(
                     data: buffer.baseAddress, width: width, height: height,
                     bitsPerComponent: 32, bytesPerRow: width * MemoryLayout<SIMD4<Float>>.stride,
-                    space: space,
+                    space: colorSpace,
                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
                         | CGBitmapInfo.floatComponents.rawValue
                         | CGBitmapInfo.byteOrder32Little.rawValue)

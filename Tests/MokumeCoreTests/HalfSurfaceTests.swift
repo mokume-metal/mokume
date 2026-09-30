@@ -95,11 +95,12 @@ struct HalfSurfaceLoadedPictureTests {
     ]
 
     private func decode(
-        _ texels: [SIMD4<Float>], width: Int? = nil, as format: FloatPictureFixture.Format
+        _ texels: [SIMD4<Float>], width: Int? = nil, as format: FloatPictureFixture.Format,
+        in space: FloatPictureFixture.Space = .working
     ) throws -> [SIMD4<Float16>] {
         let width = width ?? texels.count
         let url = try FloatPictureFixture.write(
-            texels, width: width, height: texels.count / width, as: format)
+            texels, width: width, height: texels.count / width, as: format, in: space)
         defer { try? FileManager.default.removeItem(at: url) }
         let decoded = try ImageFile.decode(at: url, name: url.path)
         #expect(decoded.width == width)
@@ -152,6 +153,133 @@ struct HalfSurfaceLoadedPictureTests {
         #expect(Float(beside[spot].z) == -65504)
         #expect(beside[spot].y == alone[spot].y, "同じ画素の上限を越えない成分")
         #expect(beside[spot].w == alone[spot].w, "同じ画素の不透明度")
+    }
+
+    /// 作業空間 (線形 Display P3) へ渡る行列。**公表された D65 の値**で、読み込みが実際に通す
+    /// 変換と 0.2% 以内で合う (実測)。
+    private static let sRGBToWorking: [SIMD3<Double>] = [
+        SIMD3(0.8224621, 0.1775380, 0.0),
+        SIMD3(0.0331941, 0.9668058, 0.0),
+        SIMD3(0.0170827, 0.0723974, 0.9105199),
+    ]
+    private static let rec2020ToWorking: [SIMD3<Double>] = [
+        SIMD3(1.3435782, -0.2821797, -0.0613985),
+        SIMD3(-0.0652974, 1.0757879, -0.0104905),
+        SIMD3(0.0028178, -0.0195985, 1.0167807),
+    ]
+
+    private static func multiply(_ rows: [SIMD3<Double>], _ v: SIMD3<Double>) -> SIMD3<Double> {
+        SIMD3(
+            rows[0].x * v.x + rows[0].y * v.y + rows[0].z * v.z,
+            rows[1].x * v.x + rows[1].y * v.y + rows[1].z * v.z,
+            rows[2].x * v.x + rows[2].y * v.y + rows[2].z * v.z)
+    }
+
+    /// 書いた成分 (`space` の値) の、色域を変える前の線形の値。ガンマ付きなら逆変換した値。
+    private static func linearised(
+        _ rgb: SIMD3<Double>, from space: FloatPictureFixture.Space
+    ) -> SIMD3<Double> {
+        guard space == .extendedSRGB else { return rgb }
+        func decoded(_ x: Double) -> Double {
+            let magnitude = abs(x)
+            let linear =
+                magnitude <= 0.04045 ? magnitude / 12.92 : pow((magnitude + 0.055) / 1.055, 2.4)
+            return x < 0 ? -linear : linear
+        }
+        return SIMD3(decoded(rgb.x), decoded(rgb.y), decoded(rgb.z))
+    }
+
+    /// 書いた成分が、作業空間で持つ値。上限では止めない。
+    private static func working(
+        _ rgb: SIMD3<Double>, from space: FloatPictureFixture.Space
+    ) -> SIMD3<Double> {
+        let linear = linearised(rgb, from: space)
+        switch space {
+        case .working: return linear
+        case .linearSRGB, .extendedSRGB: return multiply(sRGBToWorking, linear)
+        case .linearRec2020: return multiply(rec2020ToWorking, linear)
+        }
+    }
+
+    /// 完了条件 2 の広げ方 ([#1873] の反証の指摘)。**色域の変換を通る絵でも、上限を越えた成分だけが
+    /// ±65504 に止まり、他の成分は変換後の値のまま残る。** 変換は成分をまたいで混ぜるので、
+    /// 一方の成分の溢れが他方を NaN や大きな負にしないか、符号が変わる成分が止まるかを見る。
+    /// 期待値は公表された行列で組む (読み込みの実装と別の経路)。
+    ///
+    /// [#1873]: https://github.com/mokume-metal/mokume/issues/1873
+    @Test(
+        "色域の変換を通る HDR の絵でも、変換後に上限を越える成分だけが ±65504 に止まる",
+        arguments: FloatPictureFixture.Coloured.all)
+    func colouredComponentsStopAtTheLargestHalf(_ picture: FloatPictureFixture.Coloured) throws {
+        var given: [SIMD4<Float>] = [
+            SIMD4(1e6, 0, 0, 1), SIMD4(0, 1e6, 0, 1), SIMD4(0, 0, 1e6, 1),
+            SIMD4(1e6, 5e5, 1e5, 1), SIMD4(-1e6, 0, 0, 1), SIMD4(1e6, 0, 0, 0.5),
+            SIMD4(0.5, 0.25, 0.1, 1),
+        ]
+        // ガンマの逆変換はべき乗で溢れるので、`Float` に近い値は線形の色空間だけ
+        if picture.space != .extendedSRGB {
+            given += [SIMD4(3e37, -3e37, 3e37, 1), SIMD4(3e37, 0, 0, 1)]
+        }
+        let pixels = try decode(given, as: picture.format, in: picture.space)
+
+        for (index, texel) in given.enumerated() {
+            let rgb = SIMD3(Double(texel.x), Double(texel.y), Double(texel.z))
+            let want = Self.working(rgb, from: picture.space)
+            // 変換の計算が持つ誤差は、変換に入る値 (逆変換した後) の大きさに比例する。厳密には 0 の成分が、
+            // 入りが 1e6 のガンマ付きの絵では ±数十億になる (実測) — その成分は上限で止まる
+            let linear = Self.linearised(rgb, from: picture.space)
+            let reach = max(abs(linear.x), abs(linear.y), abs(linear.z))
+            for lane in 0..<3 {
+                let got = Double(Float(pixels[index][lane]))
+                let context = "\(picture.testDescription) の \(texel) の成分 \(lane): \(got) / 期待 \(want[lane])"
+                #expect(got.isFinite, "\(context)")
+                if abs(want[lane]) >= 65504 {
+                    #expect(got == (want[lane] < 0 ? -65504 : 65504), "\(context)")
+                } else {
+                    // 半精度の丸めと、変換の計算の誤差
+                    #expect(abs(got - want[lane]) <= 0.002 * abs(want[lane]) + 5e-5 * reach, "\(context)")
+                }
+            }
+            #expect(pixels[index].w == Float16(texel.w), "\(picture.testDescription) の不透明度")
+        }
+    }
+
+    /// 描き直しが置き換えるのは、**非有限だった成分だけ**。有限だった成分は、描き直した値が違っても
+    /// 最初の結果のまま (32 ビットの描き直しは、値を確かめる相手を差し替えた偽物で見る)。
+    @Test("描き直しは、非有限だった成分だけを ±65504 で止めて置き換える")
+    func redrawReplacesOnlyTheNonFiniteComponents() {
+        var pixels: [SIMD4<Float16>] = [
+            SIMD4(1, .infinity, 3, .nan), SIMD4(5, 6, -.infinity, 8),
+            SIMD4(.nan, .infinity, -.infinity, 1), SIMD4(9, 10, 11, 12),
+        ]
+        let wide: [SIMD4<Float>] = [
+            SIMD4(99, 1e6, 99, 2.5), SIMD4(99, 99, -1e6, 99),
+            SIMD4(.nan, .infinity, -.infinity, 99), SIMD4(-1, -1, -1, -1),
+        ]
+        ImageFile.restoreOverflow(in: &pixels) { buffer in
+            wide.withUnsafeBytes { buffer.copyMemory(from: $0) }
+            return true
+        }
+        #expect(pixels[0] == SIMD4(1, 65504, 3, 2.5), "非有限の成分だけが描き直しの値になる")
+        #expect(pixels[1] == SIMD4(5, 6, -65504, 8))
+        #expect(pixels[2].x.isNaN, "描き直しても NaN の成分は NaN のまま")
+        #expect(pixels[2].y == .infinity && pixels[2].z == -.infinity, "元から無限の成分もそのまま")
+        #expect(pixels[2].w == 1, "描き直しの値が違っても有限だった成分は変わらない")
+        #expect(pixels[3] == SIMD4(9, 10, 11, 12), "非有限が無い画素には触れない")
+    }
+
+    /// 32 ビットの文脈を作れなかったときも、最初の結果を返す (読めていた絵を読み込み失敗にしない)。
+    @Test("描き直せなかったときは、最初の結果の ±inf だけを符号を見て ±65504 に寄せて返す")
+    func withoutARedrawInfinitiesAreClampedBySign() {
+        var pixels: [SIMD4<Float16>] = [
+            SIMD4(1, .infinity, -.infinity, .nan), SIMD4(0.5, 65504, -65504, 0),
+        ]
+        ImageFile.restoreOverflow(in: &pixels) { _ in false }
+        #expect(pixels[0].x == 1)
+        #expect(pixels[0].y == 65504)
+        #expect(pixels[0].z == -65504)
+        #expect(pixels[0].w.isNaN, "NaN は寄せようがないのでそのまま")
+        #expect(pixels[1] == SIMD4(0.5, 65504, -65504, 0))
     }
 
     /// 非有限は関所と同じくそのまま通る (``HalfSurface`` の説明)。
@@ -369,11 +497,32 @@ struct HalfSurfaceRouteTests {
     func opaqueShapeCoversALoadedOverbrightPicture(
         _ format: FloatPictureFixture.Format, _ value: Float
     ) throws {
+        // 負の側も試すのは、-inf の下地でも NaN になったため (実測)
+        try expectOpaqueShapeCovers(
+            SIMD4(value, value, value, 1), as: format, in: .working,
+            named: "\(format.rawValue) の \(value)")
+    }
+
+    /// 同じ再現を、色域の変換を通る絵で。**変換で成分が混ざり、正の溢れと負の溢れが同じ画素に
+    /// 並ぶ** (Rec.2020 の緑は、赤と青が大きな負になる) 下地でも、矩形は NaN にならない。
+    @Test(
+        "色域の変換を通る HDR の絵を読んで下地にしても、不透明な矩形は白い下地の上と同じ色になる",
+        arguments: FloatPictureFixture.Coloured.all)
+    func opaqueShapeCoversAColouredLoadedPicture(_ picture: FloatPictureFixture.Coloured) throws {
+        try expectOpaqueShapeCovers(
+            SIMD4(0, 1e6, 0, 1), as: picture.format, in: picture.space,
+            named: picture.testDescription)
+    }
+
+    /// 全面が `texel` の絵を読んで敷き、その上の不透明な矩形が白い下地の上と同じ色になることを見る。
+    /// 白い下地と比べるのは、不透明な矩形なら下地の明るさによらず同じ色になるはずだから。
+    private func expectOpaqueShapeCovers(
+        _ texel: SIMD4<Float>, as format: FloatPictureFixture.Format,
+        in space: FloatPictureFixture.Space, named name: String
+    ) throws {
         let url = try FloatPictureFixture.write(
-            SIMD4(value, value, value, 1), width: 40, height: 40, as: format)
+            texel, width: 40, height: 40, as: format, in: space)
         defer { try? FileManager.default.removeItem(at: url) }
-        // 負の側も試すのは、-inf の下地でも NaN になったため (実測)。白い下地と比べるのは、
-        // 不透明な矩形なら下地の明るさによらず同じ色になるはずだから
         let loaded = try reproduce { canvas in
             let picture = try canvas.loadImage(url.path)
             canvas.image(picture, 0, 0, 40, 40)
@@ -382,7 +531,7 @@ struct HalfSurfaceRouteTests {
         let (differing, a, b) = compare(loaded, white)
         #expect(
             differing == 0,
-            "\(format.rawValue) の \(value) を読んだ絵の上の不透明な矩形の \(differing) / 400 画素が background(255) の上と違う ((20, 20): \(a) / \(b))"
+            "\(name) の絵の上の不透明な矩形の \(differing) / 400 画素が background(255) の上と違う ((20, 20): \(a) / \(b))"
         )
     }
 
