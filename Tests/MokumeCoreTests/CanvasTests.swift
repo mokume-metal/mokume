@@ -1393,7 +1393,7 @@ struct CanvasTests {
                 c.stroke(.linear(red: 1, green: 1, blue: 1))
             }),
             ("flatInstances", end, all, { c, _ in c.flatInstances.append(.identity) }),
-            ("recordedStrokeRanges", end, all, { c, _ in c.recordedStrokeRanges.append(0..<0) }),
+            ("recordedStrokeRanges", end, all, { c, _ in c.recordedStrokeRanges.append(StrokeRange(0..<0)) }),
             ("recordedSolidStrokes", end, all, { c, _ in
                 c.recordedSolidStrokes.append(
                     SolidStrokePiece(kind: .disc(.zero), weight: 1, vertexStart: 0, vertexCount: 0))

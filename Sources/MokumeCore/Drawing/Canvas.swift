@@ -143,8 +143,11 @@ public final class Canvas {
     /// 決まっていないので寄せられない。**区間を覚えておき、置くときに行列を掛けた直後に
     /// 寄せる** (`Shape.strokeRanges`)。記録を終えると `createShape` が抜く。
     ///
+    /// 不透明の線の区間は、片を引いて積んだ頂点も持つ (``StrokeRange``・#1829)。置くときに
+    /// 半透明の色を掛けるなら、区間をそちらへ差し替える。
+    ///
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
-    var recordedStrokeRanges: [Range<Int>] = []
+    var recordedStrokeRanges: [StrokeRange] = []
 
     /// 保持する形を記録している間に、立体の線が積んだ部品の元 (``SolidStrokePiece``)。
     ///

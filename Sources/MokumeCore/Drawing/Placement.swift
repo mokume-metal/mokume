@@ -27,6 +27,8 @@ public struct Placement: Equatable, Sendable {
     /// 各軸まわりの回転 (ラジアン)。**横 → 縦 → 奥行き**の順に掛かる。
     public var rotation: SIMD3<Float>
     /// この置き場所の塗り。`nil` なら置いた時点の塗りで出る。
+    ///
+    /// 半透明の色を渡しても、平面の線の角や継ぎ目は濃くならない (線は 1 回だけ混ざる)。
     public var fill: LinearRGBA?
 
     public init(
