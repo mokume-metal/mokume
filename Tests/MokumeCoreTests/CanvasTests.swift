@@ -1638,6 +1638,12 @@ struct CanvasTests {
             // 途中の描き切りと塗り直しは、溜めたものを捨てるので先に通す
             ("passesThisFrame", head, all, { c, _ in c.loadPixels() }),
             ("hasLoadedPixels", head, all, { c, _ in c.loadPixels() }),
+            // 奥行きを残した描き切りが何かを描くと立つ。**フレームの頭では戻さない** — 止まっている間や
+            // `setup()` で描き切った奥行きを、次のフレームの最初の描き切りが受け取る (#1888)
+            ("depthIsHeld", end, all, { c, _ in
+                c.rect(10, 10, 4, 4)
+                c.loadPixels()
+            }),
             // 描く先 (`target`) の中の、フレームに属する状態 (#1678)。書く口は溜めた図形があれば
             // 描き切るので、塗り直しと図形より先に書く。読み方は ``nestedFrameState``
             ("target.pixelMirror.hasPendingWrites", end, all, { c, _ in
@@ -1844,6 +1850,7 @@ struct CanvasTests {
             "spheresFromUnit": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
             "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
+            "depthLoadsEncoded": count, "depthStoresEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
             "computeEncodersOpened": count, "computeEncodersClosed": count,
             "earlySubmissionsAttempted": count,

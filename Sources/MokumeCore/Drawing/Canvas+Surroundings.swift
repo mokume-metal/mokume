@@ -25,6 +25,9 @@ extension Canvas {
         guard surroundings.isUsable else { return warnBadSurroundings() }
         // 塗り 1 色の背景と同じく、溜めていたものを捨ててから置き直す
         discardPending()
+        // 引き継いだ奥行きは手放す。板は最奥で奥行きの比較を受けるので、区間で描き切らせた立体の
+        // 画素で落ち、持ち越した立体 (上で捨てた) と絵が変わる (#1888)
+        dropInheritedDepth()
         drawBackdrop(surroundings)
     }
 

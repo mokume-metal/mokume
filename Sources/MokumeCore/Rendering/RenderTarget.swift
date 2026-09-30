@@ -53,9 +53,11 @@ import MokumeDiagnostics
     ///
     /// **立体を置かないスケッチでも持つ。** 使うときだけ確保する形にすると、確保の
     /// 有無で描き方が 2 通りに分かれる — 分かれた経路は片方でしか成り立たない性質を
-    /// 生む ([ADR-0021] 決定 2・3)。中身はフレームごとに捨てるので、保存はしない。
+    /// 生む ([ADR-0021] 決定 2・3)。中身はフレームごとに捨てる (フレームの合間に描き切った分だけは、
+    /// 次のフレームの最初の描き切りが引き継ぐ・[#1888]) ので、保存はしない。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
     let depthTexture: any MTLTexture
 
     let gpu: RenderDevice
@@ -320,10 +322,17 @@ import MokumeDiagnostics
     ///
     /// - Parameters:
     ///   - clearColor: 塗り直す色。`nil` なら前の内容の上に描き足す。
-    ///   - continuingFrame: 同じフレームで既に描き切っているか。**奥行きを引き継ぐ。**
-    ///   - keepingDepth: このあと同じフレームでもう一度描き切りうるか。奥行きを残す。
+    ///   - continuingDepth: 前の描き切りが書き出した奥行きを引き継ぐか。**「同じフレームで既に
+    ///     描き切ったか」ではない** ([#1888]) — フレームの最後の描き切りは奥行きを捨てるので、
+    ///     フレームの合間の最初の描き切りに読める奥行きは無い。逆に、フレームの合間 (止まっている
+    ///     間・`setup()`) に描き切って残した奥行きは、次のフレームの最初の描き切りが引き継ぐ。
+    ///     立てるかどうかは ``Canvas`` が持つ。
+    ///   - keepingDepth: このあとに奥行きを引き継いで描き切りうるか (同じフレームの続きと、
+    ///     フレームの合間に描き切るとき)。奥行きを残す。
+    ///
+    /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
     func makeRenderPass(
-        clearColor: LinearRGBA?, continuingFrame: Bool = false, keepingDepth: Bool = false
+        clearColor: LinearRGBA?, continuingDepth: Bool = false, keepingDepth: Bool = false
     ) -> MTL4RenderPassDescriptor {
         let pass = MTL4RenderPassDescriptor()
         let attachment = pass.colorAttachments[0]!
@@ -345,10 +354,17 @@ import MokumeDiagnostics
         // 区切りで消すと**描いた順で決まる絵**に戻ってしまう。
         //
         // 残すのは途中の描き切りのときだけ。フレームの最後の描き切りで残すと、
-        // 分けて描き切らないスケッチまで毎フレーム書き出しを払うことになる
+        // 分けて描き切らないスケッチまで毎フレーム書き出しを払うことになる。
+        //
+        // **フレームの合間 (止まっている間・`setup()`) に描き切った立体の奥行きは、次のフレームへ
+        // 引き継ぐ** (ADR-0021 決定 2 の改訂 (2026-09-30)・[#1888])。合間の描き切りは「途中の
+        // 描き切り」である — 置いた立体は次のフレームの絵の一部で、そのフレームで置く立体と
+        // 前後を比べられなければ、描き切らせたかどうかで絵が変わってしまう
+        //
+        // [#1888]: https://github.com/mokume-metal/mokume/issues/1888
         let depth = pass.depthAttachment!
         depth.texture = depthTexture
-        if continuingFrame {
+        if continuingDepth {
             depth.loadAction = .load
         } else {
             depth.loadAction = .clear
