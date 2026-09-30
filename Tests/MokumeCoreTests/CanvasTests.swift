@@ -369,6 +369,296 @@ struct CanvasTests {
         }
     }
 
+    // MARK: - 四角の列
+
+    /// 頂点を並べて `body` で描き、絵を返す。下地は黒・輪郭なし・塗りは白から始める。
+    private func renderShape(_ body: (Canvas) -> Void) throws -> DisplayImage {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            body(canvas)
+        }
+        return try pixels(of: canvas)
+    }
+
+    @Test("四角の列として読むと、4 点ずつ独立した四角になる")
+    func quadsKindGroupsFour() throws {
+        let image = try renderShape { canvas in
+            canvas.beginShape(.quads)
+            canvas.vertex(4, 4)
+            canvas.vertex(28, 4)
+            canvas.vertex(28, 28)
+            canvas.vertex(4, 28)
+            canvas.vertex(36, 36)
+            canvas.vertex(60, 36)
+            canvas.vertex(60, 60)
+            canvas.vertex(36, 60)
+            canvas.endShape()
+        }
+        // どちらの四角も、対角線の両側が塗られる。3 点ずつ読むと片側の三角形しか出ない
+        #expect(image[22, 10].red == 255)
+        #expect(image[10, 22].red == 255)
+        #expect(image[54, 42].red == 255)
+        #expect(image[42, 54].red == 255)
+        #expect(image[32, 32] == (0, 0, 0, 255))  // 2 つの四角の間は繋がらない
+        #expect(image[8, 50] == (0, 0, 0, 255))
+    }
+
+    @Test("四角の列は、4 点に満たない余りを描かない")
+    func quadsDropTheRemainder() throws {
+        let corners: [(Float, Float)] = [
+            (4, 4), (28, 4), (28, 28), (4, 28), (36, 36), (60, 36), (48, 60),
+        ]
+        func render(points: Int) throws -> DisplayImage {
+            try renderShape { canvas in
+                canvas.beginShape(.quads)
+                for corner in corners.prefix(points) { canvas.vertex(corner.0, corner.1) }
+                canvas.endShape()
+            }
+        }
+        // 7 点なら 1 つ目の四角だけが出て、余りの 3 点が作る三角形の中は下地のまま
+        let seven = try render(points: 7)
+        #expect(seven[22, 10].red == 255)
+        #expect(seven[10, 22].red == 255)
+        #expect(seven[48, 42] == (0, 0, 0, 255))
+        // 3 点だけなら何も描かれない
+        let three = try render(points: 3)
+        #expect(three[22, 10] == (0, 0, 0, 255))
+        #expect(three[16, 16] == (0, 0, 0, 255))
+    }
+
+    @Test(
+        "凸の四角は、`.triangles` で `[0, 1, 2, 0, 2, 3]` と書いた絵と一致する",
+        arguments: [false, true])
+    func convexQuadsSplitAlongTheFirstDiagonal(_ reversed: Bool) throws {
+        // 4 隅の色は 0 と 2 が白、1 と 3 が黒。対角線 0–2 で割れば中心は白く、1–3 で割れば黒い。
+        // 並べる向きで割り方が変わらないことを、時計回りと反時計回りの両方で見る
+        let corners: [(Float, Float)] =
+            reversed ? [(8, 8), (8, 56), (56, 56), (56, 8)] : [(8, 8), (56, 8), (56, 56), (8, 56)]
+        func place(_ canvas: Canvas, _ order: [Int]) {
+            for index in order {
+                canvas.fill(index.isMultiple(of: 2) ? white : black)
+                canvas.vertex(corners[index].0, corners[index].1)
+            }
+        }
+        let byQuads = try renderShape { canvas in
+            canvas.beginShape(.quads)
+            place(canvas, [0, 1, 2, 3])
+            canvas.endShape()
+        }
+        let byTriangles = try renderShape { canvas in
+            canvas.beginShape(.triangles)
+            place(canvas, [0, 1, 2, 0, 2, 3])
+            canvas.endShape()
+        }
+        #expect(byQuads == byTriangles)
+        #expect(byQuads[31, 31].red > 200, "中心が対角線 0–2 の上にない")
+    }
+
+    @Test("読み取り位置も、平行四辺形でない四角では対角線 0–2 を境に移る")
+    func quadsReadThePictureAlongTheFirstDiagonal() throws {
+        // 平行四辺形でない四角では、読み取り位置が三角形ごとに線形に写るので、対角線の選び方が
+        // 継ぎ目として絵に出る
+        let corners: [(Float, Float)] = [(8, 6), (58, 10), (50, 58), (12, 52)]
+        let coordinates: [(Float, Float)] = [(0, 0), (8, 0), (8, 8), (0, 8)]
+        func render(_ kind: VertexKind, _ order: [Int]) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            let picture = try canvas.createImage(8, 8)
+            for y in 0..<8 {
+                for x in 0..<8 {
+                    picture.set(
+                        x, y,
+                        .display(
+                            red: Float(x) / 7, green: Float(y) / 7,
+                            blue: (x + y).isMultiple(of: 2) ? 1 : 0))
+                }
+            }
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noStroke()
+                canvas.texture(picture)
+                canvas.beginShape(kind)
+                for index in order {
+                    canvas.vertex(
+                        corners[index].0, corners[index].1, coordinates[index].0,
+                        coordinates[index].1)
+                }
+                canvas.endShape()
+            }
+            return try pixels(of: canvas)
+        }
+        let byQuads = try render(.quads, [0, 1, 2, 3])
+        #expect(byQuads == (try render(.triangles, [0, 1, 2, 0, 2, 3])))
+        #expect(byQuads != (try render(.triangles, [1, 2, 3, 1, 3, 0])), "対角線を変えても絵が動かない")
+    }
+
+    @Test(
+        "縮退した四角は、隣り合う 2 点が重なれば三角形として塗り、4 点が一直線なら塗らない",
+        arguments: [0, 1, 2, 3], [false, true])
+    func degenerateQuadsAreHarmless(_ doubled: Int, _ hasDepth: Bool) throws {
+        func place(_ canvas: Canvas, _ corner: (Float, Float)) {
+            if hasDepth { canvas.vertex(corner.0, corner.1, 0) } else { canvas.vertex(corner.0, corner.1) }
+        }
+        let square: [(Float, Float)] = [(8, 8), (56, 8), (56, 56), (8, 56)]
+
+        // doubled 番目の点を次の点に重ねた四角は、残りの 3 点の三角形と同じ絵になる
+        var overlapped = square
+        overlapped[(doubled + 1) % 4] = square[doubled]
+        let byQuads = try renderShape { canvas in
+            canvas.beginShape(.quads)
+            for corner in overlapped { place(canvas, corner) }
+            canvas.endShape()
+        }
+        let remaining = [square[doubled], square[(doubled + 2) % 4], square[(doubled + 3) % 4]]
+        let byTriangle = try renderShape { canvas in
+            canvas.beginShape(.triangles)
+            for corner in remaining { place(canvas, corner) }
+            canvas.endShape()
+        }
+        #expect(byQuads == byTriangle)
+        let centre = (
+            remaining.reduce(0) { $0 + $1.0 } / 3, remaining.reduce(0) { $0 + $1.1 } / 3
+        )
+        #expect(byQuads[Int(centre.0), Int(centre.1)].red == 255, "三角形が塗られていない")
+
+        // 4 点が一直線なら面積が無く、何も塗られない
+        let flat = try renderShape { canvas in
+            canvas.beginShape(.quads)
+            for step in 0..<4 { place(canvas, (8 + Float(step) * 16, 8 + Float(step) * 16)) }
+            canvas.endShape()
+        }
+        #expect(flat == (try renderShape { _ in }))
+    }
+
+    @Test("四角の線は 4 辺の輪郭になり、対角線は引かない")
+    func quadsOutlineHasNoDiagonal() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
+            canvas.stroke(white)
+            canvas.strokeWeight(4)
+            canvas.beginShape(.quads)
+            canvas.vertex(8, 8)
+            canvas.vertex(56, 8)
+            canvas.vertex(56, 56)
+            canvas.vertex(8, 56)
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        // 4 辺の上は線の色
+        for (x, y) in [(32, 8), (56, 32), (32, 56), (8, 32)] {
+            #expect(image[x, y] == (255, 255, 255, 255), "(\(x), \(y)) が辺の上で線の色でない")
+        }
+        // 対角線 (辺から十分に離れた所) は塗りの色のまま。三角形ごとに輪郭を引くと線が通る
+        for (x, y) in [(32, 32), (20, 20), (44, 44)] {
+            #expect(image[x, y] == (255, 0, 0, 255), "(\(x), \(y)) が対角線の上で塗りの色でない")
+        }
+    }
+
+    @Test("四角の列も、切り抜いた外へは描かれない")
+    func quadsStayInsideTheClip() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.clip(0, 0, 32, 64)
+            canvas.beginShape(.quads)
+            canvas.vertex(8, 8)
+            canvas.vertex(56, 8)
+            canvas.vertex(56, 56)
+            canvas.vertex(8, 56)
+            canvas.endShape()
+        }
+        let image = try pixels(of: canvas)
+        #expect(image[16, 32].red == 255)
+        #expect(image[48, 32] == (0, 0, 0, 255))
+    }
+
+    @Test("四角の列は、途中から記録して別の場所へ置き直しても、その場で描いた絵と同じになる")
+    func retainedQuadsMatchImmediate() throws {
+        // 保持の経路にしか無い食い違いを狙う。**前に別の図形があると、記録の区間は溜め場の途中から
+        // 始まる** — 記録は区間の頭を形自身の 0 起点へ引き戻すので、引き戻しを誤ると別の頂点を
+        // 指す。しかも別の場所へ置き直すので、置き直しの変換も絵に出る
+        func decoy(_ canvas: Canvas) {
+            canvas.fill(white)
+            canvas.quad(40, 2, 62, 2, 62, 14, 40, 14)
+        }
+        func quads(_ canvas: Canvas) {
+            canvas.beginShape(.quads)
+            canvas.fill(.linear(red: 1, green: 0.2, blue: 0.1))
+            canvas.vertex(6, 8)
+            canvas.fill(.linear(red: 0.1, green: 1, blue: 0.2))
+            canvas.vertex(30, 6)
+            canvas.fill(.linear(red: 0.2, green: 0.1, blue: 1))
+            canvas.vertex(28, 30)
+            canvas.fill(.linear(red: 1, green: 1, blue: 0.1))
+            canvas.vertex(8, 26)
+            // 凹んだ四角と、余りの 2 点
+            canvas.vertex(36, 36)
+            canvas.vertex(58, 44)
+            canvas.vertex(36, 58)
+            canvas.vertex(44, 44)
+            canvas.vertex(6, 40)
+            canvas.vertex(20, 50)
+            canvas.endShape()
+        }
+        let immediate = try makeCanvas()
+        try immediate.draw {
+            immediate.background(black)
+            immediate.noStroke()
+            decoy(immediate)
+            immediate.push()
+            immediate.translate(5, 3)
+            quads(immediate)
+            immediate.pop()
+        }
+        let retained = try makeCanvas()
+        try retained.draw {
+            retained.background(black)
+            retained.noStroke()
+            decoy(retained)
+            let held = retained.createShape { quads(retained) }
+            retained.shape(held, 5, 3)
+        }
+        let picture = try pixels(of: immediate)
+        #expect(picture == (try pixels(of: retained)))
+        #expect(picture[23, 21].red > 0, "空の絵を比べている")
+        #expect(picture[50, 8].red == 255, "前の図形が描かれていない")
+    }
+
+    @Test("番号で指した四角の列は、範囲外の番号を含む四角だけが落ち、区切りはずれない")
+    func indexedQuadsDropOnlyTheOutOfRangeQuad() throws {
+        func render(_ numbers: [Int]) throws -> DisplayImage {
+            try renderShape { canvas in
+                canvas.beginShape(.quads)
+                for corner in [
+                    (4, 4), (28, 4), (28, 28), (4, 28), (36, 36), (60, 36), (60, 60), (36, 60),
+                ] as [(Float, Float)] {
+                    canvas.vertex(corner.0, corner.1)
+                }
+                for number in numbers { canvas.index(number) }
+                canvas.endShape()
+            }
+        }
+        // 2 つ目の四角が範囲外の番号を含む → 1 つ目だけが出る
+        let first = try render([0, 1, 2, 3, 4, 5, 6, 99])
+        #expect(first[22, 10].red == 255)
+        #expect(first[54, 42] == (0, 0, 0, 255))
+        // 1 つ目が範囲外の番号を含む → 2 つ目だけが出る (3 点ずつ・4 点ずつの区切りがずれない)
+        let second = try render([0, 1, 2, 99, 4, 5, 6, 7])
+        #expect(second[22, 10] == (0, 0, 0, 255))
+        #expect(second[54, 42].red == 255)
+        #expect(second[42, 54].red == 255)
+        // 6 個なら 1 つ目の四角と余りの 2 個で、余りは捨てる
+        let remainder = try render([0, 1, 2, 3, 4, 5])
+        #expect(remainder[22, 10].red == 255)
+        #expect(remainder[54, 42] == (0, 0, 0, 255))
+    }
+
     @Test("閉じない指定では、最後の点から最初へ戻らない")
     func openShapesDoNotCloseTheOutline() throws {
         let canvas = try makeCanvas()
@@ -1348,6 +1638,12 @@ struct CanvasTests {
             // 途中の描き切りと塗り直しは、溜めたものを捨てるので先に通す
             ("passesThisFrame", head, all, { c, _ in c.loadPixels() }),
             ("hasLoadedPixels", head, all, { c, _ in c.loadPixels() }),
+            // 奥行きを残した描き切りが何かを描くと立つ。**フレームの頭では戻さない** — 止まっている間や
+            // `setup()` で描き切った奥行きを、次のフレームの最初の描き切りが受け取る (#1888)
+            ("depthIsHeld", end, all, { c, _ in
+                c.rect(10, 10, 4, 4)
+                c.loadPixels()
+            }),
             // 描く先 (`target`) の中の、フレームに属する状態 (#1678)。書く口は溜めた図形があれば
             // 描き切るので、塗り直しと図形より先に書く。読み方は ``nestedFrameState``
             ("target.pixelMirror.hasPendingWrites", end, all, { c, _ in
@@ -1554,8 +1850,11 @@ struct CanvasTests {
             "spheresFromUnit": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
             "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
+            "depthLoadsEncoded": count, "depthStoresEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
             "computeEncodersOpened": count, "computeEncodersClosed": count,
+            "earlySubmissionsAttempted": count,
+            "earlySubmissionFailedFrame": "面をまたぐ順のための早い投入に失敗したときのフレーム番号 (#1870)。番号どうしで比べるので、境目で戻す手は要らない (閉じ忘れを捨てる道も番号を進める)",
             "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
             "glyphQuadsPlaced": count, "drawCallsInLastFrame": count,
             "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
@@ -1588,6 +1887,7 @@ struct CanvasTests {
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
             "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
+            "failEarlySubmissionForTesting": testing,
         ]
     }
 

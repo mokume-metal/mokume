@@ -710,6 +710,13 @@ public final class Canvas {
     ///
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     var effectCarryDrawsEncoded = 0
+    /// 描く先へのパスが、奥行きを読み込んだ (`.load`) 回数と書き出した (`.store`) 回数 (作ってから
+    /// 通算・[#1888])。**奥行きを引き継がない描き切りは、どちらも増やさない**ことを検査が数える
+    /// (走るフレームと、止まっている間に描き切らせないスケッチの費用は、直す前と変わらない)。
+    ///
+    /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
+    var depthLoadsEncoded = 0
+    var depthStoresEncoded = 0
     /// 描き終えた絵を控えへ写した回数 (作ってから通算)。**効果を頼まないフレームでは
     /// 増えない**ことを検査が見る。積む 1 行と同じ場所で数える。
     var effectCarriesEncoded = 0
@@ -754,6 +761,16 @@ public final class Canvas {
     /// ことを検査が見る。書き込むのは `Canvas+Compute` の流す経路だけ。
     var computeEncodersOpened = 0
     var computeEncodersClosed = 0
+    /// 面をまたぐ順のための早い投入 (``submitPendingComputations()``) を試した回数 (作ってから
+    /// 通算)。**失敗したフレームの間は増えない**ことを検査が数で見る (#1870)。
+    var earlySubmissionsAttempted = 0
+    /// 早い投入に失敗したときの ``framesDrawn``。同じ番号のうちは、同じ試みを繰り返さない
+    /// (環の待ちは最長 5 秒。頼むたびに試すと、頼んだ数だけ止まる)。番号どうしで比べるので、
+    /// フレームの境目で戻す手は要らない — 閉じ忘れを捨てる道も番号を進める。
+    var earlySubmissionFailedFrame: Int?
+    /// 早い投入を失敗させる差し込み (検査用)。製品の経路では `nil`。環の待ちが期限切れになる
+    /// のは GPU が 5 秒返らないときだけなので、検査から自然には作れない。
+    var failEarlySubmissionForTesting: RenderFailure?
     /// 計算のあとに次の段が待つ仕掛けを積んだ回数 (作ってから通算)。
     ///
     /// 影の側 (``shadowBarriersEncoded``) と同じ理由で持つ — 抜けていても絵は普段どおり
@@ -868,7 +885,17 @@ public final class Canvas {
     /// 越えたかは本体のフレームの番号 (``Timebase/frame``) で見分ける (``leftOpenAcrossBoundary``
     /// と同じ見方)。**時刻の置き場の持ち主 (本体・直に使う面) では立たない** — 持ち主の境目は
     /// 自分の次のフレームの頭そのもので、そこで閉じ忘れを捨てる。
-    private var isFrameLeftOpenPastTheMainFrame: Bool {
+    ///
+    /// 面をまたぐ計算の順 (``submitEarlierComputations(before:)``) も読む。捨てるはずの頼みを、
+    /// ぶつかる頼みが復活させないため ([#1870])。
+    ///
+    /// **境目を越える前は、この印は立たない** — 同じ本体のフレームの中で `endDraw()` を忘れた
+    /// 描き場所は、まだ区間の中にいる。その頼みは、本体などほかの面のぶつかる頼みが来た時点で
+    /// GPU へ流れる (頼んだ順に効かせるため)。あとで境目を越えて捨てても、流れたものは戻せない
+    /// (``beginDraw()`` の「取り消せない」ものの 3 つ目)。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    var isFrameLeftOpenPastTheMainFrame: Bool {
         guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self else { return false }
         return opened != timebase.frame
     }
@@ -889,8 +916,48 @@ public final class Canvas {
     /// いま描き切っている最中か。**入れ子の描き場所で戻ってくるのを止める。**
     private var isFlushing = false
 
-    /// このフレームで描き切った回数。**奥行きを引き継ぐかの判定に使う。**
+    /// このフレームで描き切った回数。**フレームの最初の描き切りかの判定に使う** (効果を通す前の絵を
+    /// 戻すのはそこ)。奥行きを引き継ぐかは数えず、``depthIsHeld`` が持つ。
     private var passesThisFrame = 0
+
+    /// 奥行きの面が、前の描き切りが書き出した奥行きを持っているか ([#1888])。**引き継ぐ奥行きが
+    /// あるときだけ立つ** — 次の描き切りは、立っていれば読み込み、立っていなければ消して始める。
+    ///
+    /// 立てるのは、奥行きを残す描き切り (フレームの最後でない・``flush(applyingEffects:mirroringPixels:)``
+    /// の `applyingEffects` が偽) が何かを描いたとき。**フレームの最後の描き切りは奥行きを捨てる**ので、
+    /// 立てない。以前は「このフレームで描き切ったか」(``passesThisFrame``) で決めていたので、
+    /// - 止まっている間の最初の描き切りは、前のフレームの最後のパスが捨てた奥行きを読み込み、
+    /// - 止まっている間や `setup()` で描き切らせた立体の奥行きは、次のフレームの最初のパスが消して
+    ///   始める (フレームの頭で数が 0 に戻る) ので失われた。
+    ///
+    /// **フレームの頭では触らない** — 区間で描き切った奥行きを、次のフレームの最初のパスが受け取る。
+    /// 下ろすのはフレームの終わりと、閉じ忘れたフレームを捨てるとき (``abandonFrame()``)。フレームの
+    /// 終わりは描き切りが投げても引き継ぎを切る — 次のフレームの奥行きは、成功したフレームの後と
+    /// 同じくフレームごとに作り直す。もう 1 つ、引き継いだ奥行きを周囲の背景が手放す
+    /// (``dropInheritedDepth()``)。
+    ///
+    /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
+    private var depthIsHeld = false
+
+    /// **周囲の背景 (`background(.sky)`) が置かれる前に、引き継いだ奥行きだけを手放す** ([#1888])。
+    ///
+    /// 周囲の背景は塗り 1 色の背景と違い、色を塗り直さず、いちばん奥の板を奥行きの比較つきで置く。
+    /// 前のフレームや区間から引き継いだ奥行きが残っていると、板は区間で描き切らせた立体の画素で
+    /// 落ち、その立体だけが背景の手前に残る — 描き切らせずに持ち越した立体は、背景を置くときに
+    /// 溜めたものと一緒に捨てられるので、描き切らせたかどうかで絵が変わる。手放せば、直す前の
+    /// 見え方 (板が立体を覆う) に戻り、持ち越した側と一致する。色は消さない。
+    ///
+    /// **手放すのは引き継いだ奥行きだけ**である。区間 (フレームの外) と、このフレームがまだ何も
+    /// 描き切っていない間は、持っている奥行きはどれも前から来たものになる。フレームの中で描き切った
+    /// 後は、自分が描いた立体の奥行きなので触らない — そこで背景の板が立体を消さず後ろへ回るのは、
+    /// 直す前からの挙動で、別の根 ([#1685]・[#1657]) が扱う。
+    ///
+    /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+    /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
+    func dropInheritedDepth() {
+        guard depthIsHeld, !isDrawing || passesThisFrame == 0 else { return }
+        depthIsHeld = false
+    }
 
     /// 描き切りの印。**溜めた計算と列を投入するか捨てると、必ず変わる** ([#1651])。
     ///
@@ -2040,10 +2107,13 @@ public final class Canvas {
     /// 閉じていないフレームは描かずに捨て、注意してから描き始め直す** ([ADR-0021] 決定 4 の
     /// 追補 (2026-09-27)・[#1622])。捨てたフレームで書いた変換・溜めた図形・開いた形・書いた画素
     /// (``set(_:_:_:)``・``pixels``) は、次のフレームへ持ち込まない (積んだ力 (``force(_:_:)``) も
-    /// 落とす・[#1678])。ただし、次の 2 つは取り消せない:
+    /// 落とす・[#1678])。ただし、次の 3 つは取り消せない:
     ///
     /// - 捨てたフレームの途中で既に描き切った絵 (``loadPixels()`` など)。面に載っている
     /// - 捨てたフレームで出した粒 (`emit`)。粒の状態の並びへ直に積まれている
+    /// - 捨てたフレームで頼んだ計算のうち、境目を越える前に GPU へ流れたもの ([#1870])。同じ本体の
+    ///   フレームの中で `endDraw()` を忘れた描き場所の頼みは、本体などほかの面が、読み書きの重なる
+    ///   計算を頼んだ時点で先に流れる (頼んだ順に効かせるため)。境目を越えた後の頼みは流れない
     ///
     /// 境目を越えていなければ捨てない。注意して何もせず、開いているフレームがそのまま続く:
     ///
@@ -2055,6 +2125,7 @@ public final class Canvas {
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     public func beginDraw() {
         // 閉じ忘れたまま境目を越えたフレームだけを捨てる。越えていない重ね呼びで捨てると、
         // 本体の面の `draw()` で `canvas.beginDraw()` を呼んだだけで、あるいは補助の関数が
@@ -2298,6 +2369,9 @@ public final class Canvas {
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     /// [#1671]: https://github.com/mokume-metal/mokume/issues/1671
     private func abandonFrame() {
+        // 奥行きの引き継ぎはフレームの終わりで切る。終わりの描き切りは奥行きを捨てるので、
+        // 描き切れなかったフレームも含めて、次に引き継ぐ奥行きは無い (#1888)
+        depthIsHeld = false
         beginDrawFrame = nil
         cameraStorage = nil
         transform = .identity
@@ -2602,11 +2676,17 @@ public final class Canvas {
         // 段の枠の採番は描き切りごとに 0 から。**1 本のコマンドの中でだけ衝突しない
         // ことが要る**ので、コマンドと同じ寿命で数える
         stagePassesUsed = 0
-        // **奥行きはフレームで 1 つ。** 途中の描き切りをまたいで引き継ぎ、塗り直しを
-        // 頼まれたときだけ消す (そのフレームをそこから描き直すという意味なので)
+        // **奥行きは、引き継ぐ奥行きがあるときだけ引き継ぐ。** 途中の描き切りをまたいで引き継ぎ、
+        // 塗り直しを頼まれたときだけ消す (そのフレームをそこから描き直すという意味なので)。
+        // 「このフレームで描き切ったか」では決めない — フレームの最後の描き切りは奥行きを捨てる
+        // ので、止まっている間の最初の描き切りに読める奥行きは無く、逆に止まっている間や
+        // `setup()` で描き切った奥行きは、次のフレームの最初の描き切りが受け取る ([#1888])
+        //
+        // [#1888]: https://github.com/mokume-metal/mokume/issues/1888
+        let continuesDepth = depthIsHeld && pendingBackground == nil
         let pass = target.makeRenderPass(
             clearColor: pendingBackground,
-            continuingFrame: passesThisFrame > 0 && pendingBackground == nil,
+            continuingDepth: continuesDepth,
             keepingDepth: !applyingEffects)
         // **次のフレームの入りは、効果を通す前の絵** ([#1469])。前のフレームが描く先へ効果を
         // 通した絵を書いていたら、このフレームの最初の描き切りで控えから戻す。塗り直す
@@ -2624,7 +2704,8 @@ public final class Canvas {
         // 入りはこれ) の 2 枚を保つ。書いた画素は書き戻すたびに、描き切る図形・絵・背景は描き切る
         // たびに、両方へ載せる — 混ぜ方は、どちらも置いた面の上で決まる
         let changesCarry = changesGoIntoCarry && (restoresCarry || !startsFrame)
-        let drawsIntoCarry = changesCarry && !startsFrame && hasPendingDrawing
+        let hasDrawing = hasPendingDrawing
+        let drawsIntoCarry = changesCarry && !startsFrame && hasDrawing
         // **途中で投げたら、組み立ての口が畳む** (#1180)。ここに片付けは書かない。
         //
         // **「投入された」ことにする記帳は、口から返った後でだけ書く** ([#1183])。組み立ての
@@ -2685,8 +2766,8 @@ public final class Canvas {
             let bakedShadow = try bakeShadow(into: commands)
 
             // 控えへも描くなら、描く先の奥行きを描く前に写しておく ([#1524])。控えへのパスは描く先
-            // へのパスと同じ奥行きから始める
-            if drawsIntoCarry, pendingBackground == nil { try encodeCarryDepthCopy(into: commands) }
+            // へのパスと同じ奥行きから始める — 引き継ぐ奥行きが無ければ、写さず消して始める
+            if drawsIntoCarry, continuesDepth { try encodeCarryDepthCopy(into: commands) }
 
             guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
                 throw .encoderUnavailable
@@ -2704,7 +2785,10 @@ public final class Canvas {
             encoder.endEncoding()
 
             // **止まっている間に描き切るものは、効果を通す前の絵へも同じ列で描く** ([#1524])
-            if drawsIntoCarry { try encodeCarryDraw(into: commands, prepared: prepared) }
+            if drawsIntoCarry {
+                try encodeCarryDraw(
+                    into: commands, prepared: prepared, continuingDepth: continuesDepth)
+            }
 
             // **描き終えた絵に効果を通す。** 段はすべて出力段の手前に立つので、画面も
             // 書き出しも観測も同じ 1 枚を受け取る (ADR-0023 決定 2)
@@ -2737,17 +2821,24 @@ public final class Canvas {
         // まま書いてよい」ことになる (#754)
         frameRing.noteSubmission()
         passesThisFrame += 1
+        if pass.depthAttachment!.loadAction == .load { depthLoadsEncoded += 1 }
+        if pass.depthAttachment!.storeAction == .store { depthStoresEncoded += 1 }
+        // **奥行きを残した描き切りが、何かを描いたか引き継いだなら、次へ渡す奥行きがある。** 何も
+        // 描かず消して始めただけなら、消した奥行きは消して始めるのと同じなので立てない (読むだけの
+        // 区間が、次のフレームの最初のパスに奥行きの読み込みを課さない)。立てるのも投入の後だけ
+        // ([#1183] と同じ作法) — 投げたコマンドは捨てられ、奥行きは書き換わらない
+        depthIsHeld = !applyingEffects && (continuesDepth || hasDrawing)
         if assembled.wroteBack { target.markPixelsWrittenBack() }
         // **拡大より後に描く先が変わったかを憶える** ([#1882])。フレームの終わりの描き切りは、
         // 拡大が積めたなら下ろす。**積めなかったなら (拡大は失敗を握り潰して警告だけ出す) 立てる**
         // — 下ろすと、出す先が古い絵のまま追い付き直されない。途中の描き切りは、図形・背景を
-        // 描いたか画素を書き戻したときに立てる (`hasPendingDrawing` は片付けの前なので、この
-        // 描き切りが描いたものをまだ表す)
+        // 描いたか (`hasDrawing`。片付けの前に捕った、この描き切りが描いたもの) 画素を書き戻した
+        // ときに立てる
         //
         // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
         if applyingEffects {
             targetChangedSinceUpscale = !assembled.upscaled
-        } else if upscaleStage != nil, hasPendingDrawing || assembled.wroteBack {
+        } else if upscaleStage != nil, hasDrawing || assembled.wroteBack {
             targetChangedSinceUpscale = true
         }
         gpu.pendingUploads.markUploaded(assembled.uploaded)
@@ -2942,20 +3033,21 @@ public final class Canvas {
     ///
     /// **描く先へのパスと同じ列・同じ置き場で描く** (``prepareBatches(shadow:)`` は 1 回だけ取る)。
     /// 塗り直し (`background()`) は控えも塗り直す。奥行きは、描く先へのパスの前に写したもの
-    /// (``encodeCarryDepthCopy(into:)``) から始め、塗り直すなら消してから始める。控えは次の
-    /// フレームの頭で描く先へ戻され、その入りになる。
+    /// (``encodeCarryDepthCopy(into:)``) から始め、塗り直すなら消してから始める。引き継ぐ奥行きが
+    /// 無い描き切りでは写していないので、`continuingDepth` を偽にして消してから始める ([#1888])。
+    /// 控えは次のフレームの頭で描く先へ戻され、その入りになる。
     ///
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
     private func encodeCarryDraw(
-        into commands: any MTL4CommandBuffer, prepared: PreparedBatches?
+        into commands: any MTL4CommandBuffer, prepared: PreparedBatches?, continuingDepth: Bool
     ) throws(RenderFailure) {
         let pipeline = try effectPipeline()
         guard let carry = pipeline.existingCarry else { return }
         let depth = try pipeline.carryDepth()
         // 描く先へのパスと同じ作り方 (塗り直しの色の移し方を含む) で組み、面だけを差し替える
         let pass = target.makeRenderPass(
-            clearColor: pendingBackground, continuingFrame: pendingBackground == nil,
-            keepingDepth: false)
+            clearColor: pendingBackground, continuingDepth: continuingDepth, keepingDepth: false)
         pass.colorAttachments[0]!.texture = carry.texture
         pass.depthAttachment!.texture = depth.texture
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {

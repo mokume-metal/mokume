@@ -374,6 +374,11 @@ enum Scene: String, CaseIterable, Sendable {
     /// 直前の頂点を使い回す読み方。**同じ点の並びを帯と扇で読み分けてある** —
     /// 畳み方が動けば、平面の 2 枚と立体の 1 枚のどれかが必ず動く。
     case reusedVertices
+    /// 4 点ずつ独立した四角として読む読み方 (``VertexKind/quads``)。**割り方が形で決まる** —
+    /// 頂点ごとに色を変えた凸の四角・凹んだ四角・辺の交差した四角 (砂時計) を 1 本の列に並べ、
+    /// 線は 4 辺だけにしてある。立体の四角は、面の向きを書かずに 1 隅だけ奥行きをずらした形と
+    /// 平らな形を置く。割り方が動けば、平面の 3 枚と立体の 2 枚のどれかが必ず動く。
+    case quadVertices
     /// 書体・大きさ・整列・行送りを振った文字。
     ///
     /// **このシーンは OS の版に依る** (#1559)。字形を画素にするのは OS (CoreGraphics) で、
@@ -808,6 +813,7 @@ enum Scene: String, CaseIterable, Sendable {
         case .caps: drawCaps(on: canvas)
         case .freeform: drawFreeform(on: canvas)
         case .reusedVertices: drawReusedVertices(on: canvas)
+        case .quadVertices: drawQuadVertices(on: canvas)
         case .blends: drawBlends(on: canvas)
         case .text: drawText(on: canvas)
         case .textFlow: drawTextFlow(on: canvas)
@@ -1053,6 +1059,69 @@ enum Scene: String, CaseIterable, Sendable {
             let across = -50 + Float(step) * 20
             canvas.vertex(across, step.isMultiple(of: 2) ? -16 : 16, step.isMultiple(of: 2) ? 18 : -18)
         }
+        canvas.endShape()
+        canvas.pop()
+    }
+
+    private func drawQuadVertices(on canvas: Canvas) {
+        canvas.background(.display(red: 0.08, green: 0.08, blue: 0.1))
+
+        // 上段: 平面。1 本の列に、凸・凹み・交差の 3 つの四角を並べる。線は 4 辺だけで、
+        // 対角線は引かない
+        canvas.stroke(.display(red: 0.92, green: 0.92, blue: 0.96))
+        canvas.strokeWeight(1)
+        canvas.beginShape(.quads)
+        // 凸。頂点ごとに色を変えるので、1 つ目と 3 つ目を結ぶ対角線で色が移る
+        let corners: [(SIMD2<Float>, LinearRGBA)] = [
+            (SIMD2(6, 8), .display(red: 0.95, green: 0.45, blue: 0.3)),
+            (SIMD2(44, 4), .display(red: 0.4, green: 0.85, blue: 0.5)),
+            (SIMD2(40, 54), .display(red: 0.35, green: 0.6, blue: 0.95)),
+            (SIMD2(10, 48), .display(red: 0.95, green: 0.85, blue: 0.35)),
+        ]
+        for (point, color) in corners {
+            canvas.fill(color)
+            canvas.vertex(point.x, point.y)
+        }
+        // 凹み。矢じりで、凹んだ点 (3 番目) からの対角線で割る
+        canvas.fill(.display(red: 0.4, green: 0.85, blue: 0.75))
+        canvas.vertex(52, 6)
+        canvas.vertex(90, 30)
+        canvas.vertex(52, 54)
+        canvas.vertex(66, 30)
+        // 交差。向かい合う辺が交わるので、砂時計に塗る
+        canvas.fill(.display(red: 0.95, green: 0.45, blue: 0.6))
+        canvas.vertex(96, 6)
+        canvas.vertex(124, 6)
+        canvas.fill(.display(red: 0.55, green: 0.4, blue: 0.95))
+        canvas.vertex(96, 54)
+        canvas.vertex(124, 54)
+        canvas.endShape()
+
+        // 下段: 立体。書かなかった面の向きが 4 隅すべてに付く。1 隅だけ奥行きをずらした
+        // 四角と、平らな四角を並べる
+        canvas.lights()
+        canvas.noStroke()
+        canvas.fill(.display(red: 0.95, green: 0.85, blue: 0.35))
+        canvas.push()
+        canvas.translate(34, 98, 0)
+        canvas.rotateX(0.5)
+        canvas.beginShape(.quads)
+        canvas.vertex(-20, -16, 0)
+        canvas.vertex(20, -16, 0)
+        canvas.vertex(20, 16, 0)
+        canvas.vertex(-20, 16, 14)
+        canvas.endShape()
+        canvas.pop()
+
+        canvas.push()
+        canvas.translate(96, 98, 0)
+        canvas.rotateY(0.6)
+        canvas.rotateX(0.3)
+        canvas.beginShape(.quads)
+        canvas.vertex(-20, -16, 0)
+        canvas.vertex(20, -16, 0)
+        canvas.vertex(20, 16, 0)
+        canvas.vertex(-20, 16, 0)
         canvas.endShape()
         canvas.pop()
     }

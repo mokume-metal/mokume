@@ -66,6 +66,27 @@ struct ComputeDependencyTests {
         #expect(groups(work) == [0..<1, 1..<3])
     }
 
+    /// 面をまたぐ順 ([#1870]) が使う規則。**口を切る規則 (`groups`) と同じ 1 つの定義**なので、
+    /// 3 通りのぶつかり方のどれも、先に頼んだ側が先に走らなければならない。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    @Test("先に頼んだ計算と後の頼みは、読み書きが重なるときだけ順序が要る")
+    func decidesWhenAnEarlierAskMustRunFirst() {
+        typealias Access = ComputeAccess<Int>
+        let wroteA = Access(writes: [1])
+        let readA = Access(reads: [1])
+        // 前が書いたものを読む・前が書いたものへ書く・前が読んだものへ書く
+        #expect(wroteA.mustPrecede(readA))
+        #expect(wroteA.mustPrecede(wroteA))
+        #expect(readA.mustPrecede(wroteA))
+        // 読みどうしや、重ならない並びは、どちらが先でもよい
+        #expect(!readA.mustPrecede(readA))
+        #expect(!wroteA.mustPrecede(Access(reads: [2], writes: [3])))
+        // 何も頼まれていない側とは、順序が要らない
+        #expect(!Access().mustPrecede(wroteA))
+        #expect(!wroteA.mustPrecede(Access()))
+    }
+
     @Test("何も頼まれていなければ口も要らない")
     func asksForNothingWhenNothingWasAsked() {
         #expect(groups([]).isEmpty)
@@ -119,6 +140,17 @@ struct ComputeTests {
                          uint id [[thread_position_in_grid]])
         {
             to[id] = from[id];
+        }
+        """
+
+    /// 読んだ 2 本の値を足して書く。**2 つの面が書いた並びを 1 度に読む**検査が使う。
+    private static let sum = """
+        kernel void sum(device const float *x [[buffer(0)]],
+                        device const float *y [[buffer(1)]],
+                        device float *out [[buffer(2)]],
+                        uint id [[thread_position_in_grid]])
+        {
+            out[id] = x[id] + y[id];
         }
         """
 
@@ -888,5 +920,372 @@ struct ComputeTests {
         #expect(canvas.uploadBarriersEncoded == 2, "フレーム末尾の描き切りが控えを積み直していない")
         try canvas.gpu.settle()
         #expect(heat.snapshot() == Array(repeating: 5, count: 32), "投入されなかった控えが、届かないまま下ろされている")
+    }
+
+    // MARK: - 面をまたぐ順 (#1870)
+    //
+    // 計算は面ごとに溜まり、その面の描き切りで流れる。だから本体で先に頼んだ計算より、描き場所で
+    // 後から頼んだ計算のほうが先に走っていた (描き場所の `endDraw()` が先に描き切るため)。頼んだ順に
+    // 効く — 別の面の未投入の計算とぶつかる頼みが来たら、その面の計算を先に投入する。
+
+    /// 1 つの値を書く断片 (`stamp`) と、読んだ値を書き写す断片 (`copy`) を持つ、本体と描き場所。
+    private struct Surfaces {
+        let canvas: Canvas
+        let layer: Canvas
+        let stamp: Computation
+        let copy: Computation
+        let first: Numbers
+        let second: Numbers
+    }
+
+    private func makeSurfaces() throws -> Surfaces {
+        let canvas = try makeCanvas()
+        return Surfaces(
+            canvas: canvas, layer: try canvas.createGraphics(32, 8),
+            stamp: try canvas.makeComputation(Self.stamp, name: "stamp", values: ["amount": 0]),
+            copy: try canvas.makeComputation(Self.copy, name: "copy"),
+            first: try canvas.makeNumbers(count: 1), second: try canvas.makeNumbers(count: 1))
+    }
+
+    /// 1 フレームで、本体と描き場所が 1 つずつ頼む。`layerFirst` なら描き場所で先に頼んで描き切る。
+    private func frame(
+        _ surfaces: Surfaces, layerFirst: Bool, onCanvas: () -> Void, onLayer: () -> Void
+    ) throws {
+        let (canvas, layer) = (surfaces.canvas, surfaces.layer)
+        func placeOnLayer() {
+            layer.beginDraw()
+            onLayer()
+            layer.endDraw()
+        }
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            if layerFirst { placeOnLayer() }
+            onCanvas()
+            if !layerFirst { placeOnLayer() }
+        }
+    }
+
+    /// 書く値を決めてから頼む (値は頼んだ時点のものが効く・#932)。
+    private func stamp(_ amount: Float, into numbers: Numbers, on surface: Canvas, using s: Surfaces) {
+        s.stamp.set("amount", .number(amount))
+        surface.compute(s.stamp, over: 1, writes: [numbers])
+    }
+
+    @Test("本体で先に書いた並びを描き場所で後から読む計算は、書いた値を読む", arguments: [true, false])
+    func laterReadOnTheLayerSeesTheEarlierWriteOnTheBody(layerFirst: Bool) throws {
+        let s = try makeSurfaces()
+        s.first.fill(-1)
+        try frame(
+            s, layerFirst: layerFirst,
+            onCanvas: { stamp(3, into: s.first, on: s.canvas, using: s) },
+            onLayer: { s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [s.second]) })
+        // 本体が先なら書いた 3 を、描き場所が先なら書く前の -1 を写す。頼んだ順のとおり
+        #expect(s.canvas.read(s.second) == [layerFirst ? -1 : 3])
+    }
+
+    @Test("本体で先に書いた並びへ描き場所で後から書く計算は、後から書いた値が残る", arguments: [true, false])
+    func laterWriteOnTheLayerOverwritesTheEarlierWriteOnTheBody(layerFirst: Bool) throws {
+        let s = try makeSurfaces()
+        try frame(
+            s, layerFirst: layerFirst,
+            onCanvas: { stamp(1, into: s.first, on: s.canvas, using: s) },
+            onLayer: { stamp(2, into: s.first, on: s.layer, using: s) })
+        #expect(s.canvas.read(s.first) == [layerFirst ? 1 : 2])
+    }
+
+    @Test("本体で先に読んだ並びへ描き場所で後から書く計算は、読んだ後に書く", arguments: [true, false])
+    func laterWriteOnTheLayerWaitsForTheEarlierReadOnTheBody(layerFirst: Bool) throws {
+        let s = try makeSurfaces()
+        s.first.fill(5)
+        try frame(
+            s, layerFirst: layerFirst,
+            onCanvas: { s.canvas.compute(s.copy, over: 1, reads: [s.first], writes: [s.second]) },
+            onLayer: { stamp(2, into: s.first, on: s.layer, using: s) })
+        // 本体が先なら書き換わる前の 5 を写し、描き場所が先なら書き換えた後の 2 を写す
+        #expect(s.canvas.read(s.second) == [layerFirst ? 2 : 5])
+        #expect(s.canvas.read(s.first) == [2])
+    }
+
+    @Test("描き場所の続きで、本体が先に頼んだ計算の結果を読める")
+    func readingOnTheLayerSeesWhatTheBodyAskedFor() throws {
+        let s = try makeSurfaces()
+        var seen: [Float] = []
+        try frame(
+            s, layerFirst: false,
+            onCanvas: { stamp(3, into: s.first, on: s.canvas, using: s) },
+            onLayer: { seen = s.layer.read(s.first) })
+        #expect(seen == [3])
+    }
+
+    @Test("本体から、描き場所が先に頼んだ計算の結果を読める")
+    func readingOnTheBodySeesWhatTheLayerAskedFor() throws {
+        let s = try makeSurfaces()
+        var seen: [Float] = []
+        try s.canvas.draw {
+            s.layer.beginDraw()
+            stamp(4, into: s.first, on: s.layer, using: s)
+            // 描き場所はまだ開いている。頼んだ計算は描き場所の描き切りを待たずに読める
+            seen = s.canvas.read(s.first)
+            s.layer.endDraw()
+        }
+        #expect(seen == [4])
+    }
+
+    @Test("ぶつからない頼みは、面をまたいでもそのまま各面で流れる")
+    func independentWorkOnEachSurfaceIsLeftToItsOwnFlush() throws {
+        let s = try makeSurfaces()
+        var laterOnLayer = -1
+        try frame(
+            s, layerFirst: false,
+            onCanvas: { stamp(6, into: s.first, on: s.canvas, using: s) },
+            onLayer: {
+                stamp(7, into: s.second, on: s.layer, using: s)
+                // 描き場所の頼みが、本体の未投入の頼みを引き出していない
+                laterOnLayer = s.canvas.pendingComputations.count
+            })
+        #expect(laterOnLayer == 1)
+        #expect(s.canvas.read(s.first) == [6])
+        #expect(s.canvas.read(s.second) == [7])
+    }
+
+    /// [#1870] の完了条件 2。早い投入は計算だけを流し、**途中の描き切りを挟まない** (途中の描き切りには
+    /// 既知の破れがある・#1656・#1657)。溜めている図形は残り、フレーム末尾の描き切りが 1 回で描く。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    @Test("面をまたぐ順のための早い投入は、溜めている図形を描き切らない")
+    func theEarlySubmissionLeavesTheAccumulatedShapesAlone() throws {
+        let s = try makeSurfaces()
+        var pendingAfterEarlySubmission = false
+        try frame(
+            s, layerFirst: false,
+            onCanvas: {
+                s.canvas.fill(.display(red: 1, green: 1, blue: 1))
+                s.canvas.rect(0, 0, 32, 8)
+                stamp(3, into: s.first, on: s.canvas, using: s)
+            },
+            onLayer: {
+                s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+                // 本体の計算は投入済み (溜め場は空) で、図形はまだ溜まっている
+                pendingAfterEarlySubmission =
+                    s.canvas.pendingComputations.isEmpty && s.canvas.hasPendingDrawing
+            })
+        #expect(pendingAfterEarlySubmission, "早い投入が図形を描き切った (か、計算を投入していない)")
+        #expect(s.canvas.drawCallsInLastFrame == 1)
+        #expect(!s.canvas.hasLoadedPixels)
+        #expect(gray(try s.canvas.target.encodeForDisplay(), atColumn: 16) > 0.9)
+        #expect(s.canvas.read(s.second) == [3])
+    }
+
+    /// 描き場所を**開いたまま**、本体と交互に頼む。描き場所の頼みが本体の頼みに、本体の頼みが
+    /// 次の描き場所の頼みに、それぞれ先に投入される。直す前は描き場所の `endDraw()` で 2 つ目までが
+    /// まとめて流れ、本体の頼みが最後になった。
+    @Test("描き場所を開いたまま本体と交互に頼んでも、頼んだ順に効く")
+    func aLayerLeftOpenWhileTheBodyAsksKeepsTheCallOrder() throws {
+        let s = try makeSurfaces()
+        let third = try s.canvas.makeNumbers(count: 1)
+        s.second.fill(-1)
+        third.fill(-1)
+        try s.canvas.draw {
+            s.canvas.background(.display(red: 0, green: 0, blue: 0))
+            s.layer.beginDraw()
+            // 1. 描き場所が first へ書く
+            stamp(1, into: s.first, on: s.layer, using: s)
+            // 2. 描き場所が開いたまま、本体が first を読んで second へ書く
+            s.canvas.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+            // 3. 描き場所が、本体の書いた second を読んで third へ書く
+            s.layer.compute(s.copy, over: 1, reads: [s.second], writes: [third])
+            s.layer.endDraw()
+        }
+        #expect(s.canvas.read(s.second) == [1])
+        #expect(s.canvas.read(third) == [1], "3 番目の頼みが、2 番目の結果より先に走った")
+    }
+
+    /// 本体 → 描き場所 A → 描き場所 B と、3 つの面が連なって頼む。A も B も開いたままなので、B の
+    /// 頼みは A の未投入の計算を、A の頼みは本体の未投入の計算を、順に引き出す。
+    @Test("本体 → 描き場所 A → 描き場所 B と 3 つの面が連なる頼みは、頼んだ順に効く")
+    func aChainAcrossThreeSurfacesKeepsTheCallOrder() throws {
+        let s = try makeSurfaces()
+        let layerB = try s.canvas.createGraphics(32, 8)
+        let third = try s.canvas.makeNumbers(count: 1)
+        s.second.fill(-1)
+        third.fill(-1)
+        try s.canvas.draw {
+            s.canvas.background(.display(red: 0, green: 0, blue: 0))
+            stamp(3, into: s.first, on: s.canvas, using: s)
+            s.layer.beginDraw()
+            s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+            layerB.beginDraw()
+            layerB.compute(s.copy, over: 1, reads: [s.second], writes: [third])
+            layerB.endDraw()
+            s.layer.endDraw()
+        }
+        #expect(s.canvas.read(s.second) == [3])
+        #expect(s.canvas.read(third) == [3], "連なりの最後の頼みが、途中の結果より先に走った")
+    }
+
+    @Test("1 つの頼みがぶつかる面を複数引くとき、その全部が先に走る")
+    func oneAskPullsEveryConflictingSurface() throws {
+        let s = try makeSurfaces()
+        let layerB = try s.canvas.createGraphics(32, 8)
+        let third = try s.canvas.makeNumbers(count: 1)
+        let sum = try s.canvas.makeComputation(Self.sum, name: "sum")
+        try s.canvas.draw {
+            s.canvas.background(.display(red: 0, green: 0, blue: 0))
+            // 本体は first へ、描き場所 A は second へ書く。互いにぶつからないので、ここでは引き合わない
+            stamp(1, into: s.first, on: s.canvas, using: s)
+            s.layer.beginDraw()
+            stamp(10, into: s.second, on: s.layer, using: s)
+            // 描き場所 B が 2 つを読む。本体も描き場所 A も先に走る
+            layerB.beginDraw()
+            layerB.compute(sum, over: 1, reads: [s.first, s.second], writes: [third])
+            layerB.endDraw()
+            s.layer.endDraw()
+        }
+        #expect(s.canvas.read(third) == [11])
+    }
+
+    /// [#1870] の指摘への応え。**早い投入に失敗したら、そのフレームの間は同じ面へ試し直さない。**
+    /// 環の待ちは最長 5 秒で投げるので、頼むたびに試すと、詰まった GPU で 1 回の `particles()`
+    /// (計算が 3 本以上) が「5 秒 × 本数」止まる。注意は 1 度、溜めた計算は残り、次のフレームからは
+    /// また試す。失敗は検査から差し込む (`failEarlySubmissionForTesting`) — 環の待ちが期限切れになる
+    /// のは GPU が 5 秒返らないときだけで、自然には作れない。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    @Test("早い投入に失敗したら、1 度だけ注意し、そのフレームの間は試し直さず、次のフレームから試す")
+    func aFailedEarlySubmissionIsNotRetriedInTheSameFrame() throws {
+        let s = try makeSurfaces()
+        let third = try s.canvas.makeNumbers(count: 1)
+        let fourth = try s.canvas.makeNumbers(count: 1)
+        s.first.fill(-1)
+        s.canvas.failEarlySubmissionForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+
+        var stillPending = -1
+        try s.canvas.draw {
+            s.canvas.background(.display(red: 0, green: 0, blue: 0))
+            stamp(3, into: s.first, on: s.canvas, using: s)
+            s.layer.beginDraw()
+            // 3 本とも、本体の未投入の計算が書く first を読む。直す前の作りなら 3 回試す
+            s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+            s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [third])
+            s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [fourth])
+            stillPending = s.canvas.pendingComputations.count
+            s.layer.endDraw()
+        }
+        #expect(s.canvas.earlySubmissionsAttempted == 1, "同じフレームの間に、失敗した面へ試し直している")
+        #expect(s.canvas.warnings.hasWarned(.computationsSentAheadFailed))
+        #expect(stillPending == 1, "失敗したのに、溜めた計算が降ろされている")
+        // 描き切りは溜めた計算を流した (絵も計算も落ちていない)。頼んだ順は守れなかった
+        #expect(s.canvas.read(s.first) == [3])
+        #expect(s.canvas.read(s.second) == [-1])
+
+        // 次のフレームからはまた試し、頼んだ順に効く
+        s.canvas.failEarlySubmissionForTesting = nil
+        try s.canvas.draw {
+            s.canvas.background(.display(red: 0, green: 0, blue: 0))
+            stamp(5, into: s.first, on: s.canvas, using: s)
+            s.layer.beginDraw()
+            s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+            s.layer.endDraw()
+        }
+        #expect(s.canvas.earlySubmissionsAttempted == 2)
+        #expect(s.canvas.read(s.second) == [5])
+    }
+
+    /// **絵にも投入の数にも出ない費用を数で見る。** 単一の面と、相手が何も溜めていない頼みは、相手の
+    /// 読み書きを集めずに抜ける (`accessLookups` は相手の溜めを引いた回数)。
+    @Test("相手が何も溜めていない頼みは、名簿の相手の並びを集めない")
+    func askingWhenNoOneElseHasAnythingPendingCollectsNothing() throws {
+        let s = try makeSurfaces()
+        let lookups = { s.canvas.gpu.pendingComputationHolders.accessLookups }
+
+        // 単一の面: 何度頼んでも、読んでも引かない
+        try s.canvas.draw {
+            for _ in 0..<5 {
+                stamp(1, into: s.first, on: s.canvas, using: s)
+                s.canvas.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+            }
+            _ = s.canvas.read(s.second)
+        }
+        #expect(lookups() == 0, "単一の面の頼みが、相手を引いている")
+
+        // 描き場所が先: 本体が頼む時点で描き場所は描き切り済み、描き場所が頼む時点で本体は何も溜めていない
+        try frame(
+            s, layerFirst: true,
+            onCanvas: { stamp(2, into: s.first, on: s.canvas, using: s) },
+            onLayer: { stamp(3, into: s.first, on: s.layer, using: s) })
+        #expect(lookups() == 0, "相手が何も溜めていないのに、引いている")
+
+        // 本体が先でぶつかる: ここでは引く
+        try frame(
+            s, layerFirst: false,
+            onCanvas: { stamp(2, into: s.first, on: s.canvas, using: s) },
+            onLayer: { stamp(3, into: s.first, on: s.layer, using: s) })
+        #expect(lookups() > 0)
+    }
+
+    /// **費用を絵ではなく数で見る。** 面をまたいでぶつかる形だけが投入を 1 本増やし、単一の面や、
+    /// ぶつからない形、描き場所が先の順は今のまま。どれも投入済みの全部を待たない。
+    @Test("投入が増えるのは、面をまたいでぶつかる頼みの 1 本だけで、全完了は待たない")
+    func onlyACrossingConflictAddsASubmission() throws {
+        let s = try makeSurfaces()
+        s.first.fill(0)
+        func submissions(_ run: () throws -> Void) throws -> (count: UInt64, drains: Int) {
+            // 1 度目は置き場の確保などがあるので、数える前に同じものを回しておく
+            try run()
+            try s.canvas.gpu.settle()
+            let (before, drains) = (s.canvas.gpu.submissionCount, s.canvas.gpu.blockingWaits)
+            try run()
+            return (s.canvas.gpu.submissionCount - before, s.canvas.gpu.blockingWaits - drains)
+        }
+        func chain(on surface: Canvas) {
+            stamp(1, into: s.first, on: surface, using: s)
+            surface.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+        }
+
+        // 単一の面: 計算を頼んでも、頼まないフレームと同じ本数
+        let plain = try submissions { try s.canvas.draw { s.canvas.background(.display(red: 0, green: 0, blue: 0)) } }
+        let single = try submissions { try s.canvas.draw { chain(on: s.canvas) } }
+        #expect(single.count == plain.count, "単一の面の計算が投入を増やしている")
+
+        // 描き場所が先: 描き場所の描き切りで流れ切っているので、本体の頼みとぶつからない
+        let layerFirst = try submissions {
+            try frame(s, layerFirst: true, onCanvas: { chain(on: s.canvas) }, onLayer: { chain(on: s.layer) })
+        }
+        // ぶつからない頼み: 本体は first を書き、描き場所は second を書く
+        let disjoint = try submissions {
+            try frame(
+                s, layerFirst: false,
+                onCanvas: { stamp(1, into: s.first, on: s.canvas, using: s) },
+                onLayer: { stamp(2, into: s.second, on: s.layer, using: s) })
+        }
+        // 本体が先でぶつかる: 描き場所の頼みが、本体の未投入の計算を先に投入させる
+        let crossing = try submissions {
+            try frame(s, layerFirst: false, onCanvas: { chain(on: s.canvas) }, onLayer: { chain(on: s.layer) })
+        }
+
+        #expect(disjoint.count == layerFirst.count, "ぶつからない頼みが投入を増やしている")
+        #expect(crossing.count == layerFirst.count + 1, "面をまたいでぶつかる頼みは、投入を 1 本だけ増やす")
+        for (name, cost) in [("単一", single), ("描き場所が先", layerFirst), ("ぶつからない", disjoint), ("ぶつかる", crossing)] {
+            #expect(cost.drains == 0, "\(name): 投入済みの全部を待っている")
+        }
+    }
+
+    /// 閉じ忘れた描き場所の頼みは、次のフレームの `beginDraw()` が描かずに捨てる (#1622)。
+    /// その頼みを、ぶつかる頼みが復活させて走らせない。
+    @Test("閉じ忘れたまま本体のフレームを越えた描き場所の頼みは、ぶつかる頼みでも走らない")
+    func aLayerLeftOpenPastTheBodyFrameKeepsItsAskDropped() throws {
+        let s = try makeSurfaces()
+        s.first.fill(-1)
+        // 1 フレーム目: 描き場所で頼み、`endDraw()` を忘れる
+        try s.canvas.draw {
+            s.layer.beginDraw()
+            stamp(9, into: s.first, on: s.layer, using: s)
+        }
+        // 2 フレーム目: 本体が同じ並びを読む頼みをする。閉じ忘れた頼みは走らないので -1 のまま
+        try s.canvas.draw {
+            s.canvas.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+        }
+        #expect(s.canvas.read(s.second) == [-1])
+        #expect(s.canvas.read(s.first) == [-1])
     }
 }

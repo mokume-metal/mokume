@@ -75,6 +75,28 @@ nonisolated enum ImageFile {
     }
 
     /// 場所が分かっている絵を復号する。
+    ///
+    /// ## 半精度の上限を越える成分
+    ///
+    /// **CoreGraphics は半精度の文脈へ描くとき、上限 (65504) を越える成分を ±inf にする**
+    /// (65520 以上・[#1873] の実測)。HDR の絵 (32 ビット浮動小数の TIFF・OpenEXR) はここへ届く
+    /// ので、そのまま面へ置くと、その上に描いた不透明な図形が inf × 0 で NaN になって黒く抜ける。
+    /// 面へ置く他の経路と同じく上限で止める (``HalfSurface``) が、**受け取った時点で元の値が
+    /// 残っていない**ので、受け取った直後に通しても直らない。
+    ///
+    /// だから出力に非有限の成分が出たときだけ、32 ビット浮動小数の文脈で描き直し、**非有限
+    /// だった成分だけ**を ``HalfSurface/component(_:)`` を通して半精度へ移す (``restoreOverflow(in:redraw:)``)。
+    /// ふつうの絵は描き直さず、描き直した絵でも有限だった成分は最初の描き方のままなので、結果は
+    /// 変わらない。**色の変換を通る絵でも同じ** — プロファイル付きの絵 (Rec.2020・sRGB など) を測ると、
+    /// 半精度の結果で非有限になるのは、変換後の値が上限を越えた成分だけだった。
+    /// 同じ画素の他の成分は有限のまま、32 ビットの結果と半精度の丸めの範囲で一致する ([#1873])。
+    ///
+    /// **`Float` の最大に近い成分は例外になりうる。** 色域の変換で係数が 1 を越える (Rec.2020 から
+    /// 作業空間など) と、2.5e38 あたりから 32 ビットの計算そのものが ±inf に溢れる (ガンマ付きの
+    /// 色空間ではべき乗で、もっと手前から溢れる)。元から無限の成分と見分けがつかないので、
+    /// そのまま通す。
+    ///
+    /// [#1873]: https://github.com/mokume-metal/mokume/issues/1873
     static func decode(at url: URL, name: String) throws(ImageFailure) -> Decoded {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -87,24 +109,94 @@ nonisolated enum ImageFile {
         guard width > 0, height > 0 else { throw .undecodable(path: name) }
 
         var pixels = [SIMD4<Float16>](repeating: .zero, count: width * height)
-        let stride = width * MemoryLayout<SIMD4<Float16>>.stride
-        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
-            guard let space = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3),
-                let context = CGContext(
-                    data: buffer.baseAddress, width: width, height: height,
-                    bitsPerComponent: 16, bytesPerRow: stride, space: space,
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-                        | CGBitmapInfo.floatComponents.rawValue
-                        | CGBitmapInfo.byteOrder16Little.rawValue)
-            else { return false }
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
+        let drawn = pixels.withUnsafeMutableBytes {
+            draw(image, into: $0, bitsPerComponent: 16, byteOrder: .byteOrder16Little)
         }
         guard drawn else { throw .undecodable(path: name) }
+
+        if hasNonFinite(pixels) {
+            restoreOverflow(in: &pixels) {
+                draw(image, into: $0, bitsPerComponent: 32, byteOrder: .byteOrder32Little)
+            }
+        }
 
         // 描く道具の座標は下から上へ数えるが、**並びの先頭は絵の上端**なので、
         // 並べ替えは要らない
         return Decoded(width: width, height: height, pixels: pixels)
+    }
+
+    /// 半精度の結果に残った非有限の成分を、32 ビット浮動小数の描き直しで置き換える。
+    ///
+    /// `redraw` は同じ絵を 32 ビットの文脈 (画素の並びは `pixels` と同じ) へ描き、描けたかを返す。
+    /// 置き換えるのは**非有限だった成分だけ**で、有限だった成分には触れない。値は
+    /// ``HalfSurface/component(_:)`` を通す。
+    ///
+    /// **描き直せなかったときは、最初の結果を捨てない。** 読めていた絵が読み込み失敗に変わる
+    /// のは後退なので、非有限のうち ±inf だけを符号を見て ±65504 へ寄せて返す (溢れた成分で
+    /// あることが大半)。NaN はそのまま。
+    ///
+    /// 成分は半精度の指数部をビットで見て選ぶ (1 成分ずつ `isFinite` を問うと、大きな絵で debug の
+    /// 実行が長くなる)。
+    static func restoreOverflow(
+        in pixels: inout [SIMD4<Float16>], redraw: (UnsafeMutableRawBufferPointer) -> Bool
+    ) {
+        var wide = [SIMD4<Float>](repeating: .zero, count: pixels.count)
+        let redrawn = wide.withUnsafeMutableBytes { redraw($0) }
+        pixels.withUnsafeMutableBytes { raw in
+            let halves = raw.bindMemory(to: UInt16.self)
+            if redrawn {
+                wide.withUnsafeBytes { wideRaw in
+                    let floats = wideRaw.bindMemory(to: Float.self)
+                    for index in halves.indices where isNonFinite(halves[index]) {
+                        let moved = Float16(HalfSurface.component(floats[index])).bitPattern
+                        if moved != halves[index] { halves[index] = moved }
+                    }
+                }
+            } else {
+                for index in halves.indices where isInfinite(halves[index]) {
+                    halves[index] = (halves[index] & signBit) | largestFiniteBits
+                }
+            }
+        }
+    }
+
+    /// 半精度の指数部 (5 ビット) と符号・最大の有限値のビット。
+    private static let exponentBits: UInt16 = 0x7C00
+    private static let signBit: UInt16 = 0x8000
+    private static let largestFiniteBits: UInt16 = 0x7BFF
+
+    /// 指数部がすべて 1 なら、無限か NaN。
+    private static func isNonFinite(_ half: UInt16) -> Bool { half & exponentBits == exponentBits }
+
+    /// 指数部がすべて 1 で仮数が 0 なら、±inf。
+    private static func isInfinite(_ half: UInt16) -> Bool { half & 0x7FFF == exponentBits }
+
+    /// 作業空間 (線形・拡張色域・乗算済み) の浮動小数の文脈へ、絵を等倍で描く。
+    ///
+    /// 成分の幅 (16 ビットか 32 ビット) だけを呼び手が選ぶ。色の変換は描く道具立てが行う。
+    private static func draw(
+        _ image: CGImage, into buffer: UnsafeMutableRawBufferPointer, bitsPerComponent: Int,
+        byteOrder: CGBitmapInfo
+    ) -> Bool {
+        let width = image.width
+        let height = image.height
+        guard let space = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3),
+            let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: bitsPerComponent,
+                bytesPerRow: width * 4 * bitsPerComponent / 8, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.floatComponents.rawValue | byteOrder.rawValue)
+        else { return false }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return true
+    }
+
+    /// 成分に無限か NaN があるか。
+    private static func hasNonFinite(_ pixels: [SIMD4<Float16>]) -> Bool {
+        pixels.withUnsafeBytes { bytes in
+            bytes.bindMemory(to: UInt16.self).contains(where: isNonFinite)
+        }
     }
 
     /// 名前を、探す順に並べた場所へ広げる。

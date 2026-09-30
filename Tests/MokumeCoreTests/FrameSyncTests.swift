@@ -34,6 +34,26 @@ struct FrameSyncTests {
         }
         """
 
+    /// 渡された値を並びへ書く。**面をまたぐ順の検査が、書く側に使う**断片。
+    private static let stamp = """
+        kernel void stamp(device float *out [[buffer(0)]],
+                          constant Values &values [[buffer(MOKUME_VALUES)]],
+                          uint id [[thread_position_in_grid]])
+        {
+            out[id] = values.amount;
+        }
+        """
+
+    /// 読んだ値をそのまま書き写す。
+    private static let copy = """
+        kernel void copy(device const float *from [[buffer(0)]],
+                         device float *to [[buffer(1)]],
+                         uint id [[thread_position_in_grid]])
+        {
+            to[id] = from[id];
+        }
+        """
+
     private struct Bench {
         let gpu: RenderDevice
         let canvas: Canvas
@@ -425,6 +445,46 @@ struct FrameSyncTests {
             "次のフレームを書き終えた時点で GPU が空いている — どこかで全完了を待っている")
 
         try scene.check()
+    }
+
+    /// [#1870] の完了条件 3。面をまたいでぶつかる頼みは、先に頼まれた面の計算を早く投入する。
+    /// その投入は描き切りと同じく環を進めて名指しで待つだけで、**投入済みの全完了は待たない**。
+    /// 全完了を待つ読み戻しの形 (`settle()`) へ戻すと `blockingWaits` が増えて赤になる。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    @Test("GPU を占めたフレームの次のフレームで、面をまたぐ順のために早く投入しても、全完了を待たない")
+    func aCrossSurfaceOrderDoesNotDrainTheGPU() throws {
+        let bench = try makeBench()
+        let (gpu, canvas) = (bench.gpu, bench.canvas)
+        let layer = try canvas.createGraphics(32, 32)
+        let stamp = try canvas.makeComputation(Self.stamp, name: "stamp", values: ["amount": 3])
+        let copy = try canvas.makeComputation(Self.copy, name: "copy")
+        let source = try canvas.makeNumbers(count: 1)
+        let copied = try canvas.makeNumbers(count: 1)
+        // 本体が書いた並びを、描き場所が後から読む。描き場所の頼みが、本体の計算を先に投入させる
+        func frame() throws {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.compute(stamp, over: 1, writes: [source])
+                layer.beginDraw()
+                layer.compute(copy, over: 1, reads: [source], writes: [copied])
+                layer.endDraw()
+            }
+        }
+
+        // **先に温める。** 置き場を初めて取るフレームは取り直しの中で待つ
+        for _ in 0..<framesPastOneLap { try frame() }
+        try gpu.settle()
+        try canvas.draw { bench.keepGPUBusy() }
+        try #require(!gpu.isIdle, "回転が短い — この検査は何も見ていない")
+
+        let (waits, submitted) = (gpu.blockingWaits, gpu.submissionCount)
+        try frame()
+
+        // 早い投入 (本体の計算) ・描き場所の描き切り・本体の描き切り。早い投入が起きていなければ 2 本
+        try #require(gpu.submissionCount - submitted == 3, "面をまたぐ順のための早い投入が起きていない")
+        #expect(gpu.blockingWaits == waits, "早い投入が、投入済みの全完了を待っている")
+        #expect(canvas.read(copied) == [3], "描き場所が、本体の書いた値を読めていない")
     }
 
     @Test("環は、そのスロットを読む投入が終わるまで返らない")

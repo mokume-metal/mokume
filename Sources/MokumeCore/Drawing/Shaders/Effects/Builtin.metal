@@ -237,7 +237,8 @@ float4 effect(Pixel in, Values values) {
         return float4(in.color.rgb * falloff, in.color.a);
     }
 
-    // 色ずれ。赤と青を反対向きへずらす。ずれ幅は面の短辺の 2% を最大とする
+    // 色ずれ。赤と青を反対向きへずらす。ずれ幅は中心からの隔たりに比例し、縁で `amount` ×
+    // **その軸の長さ**の 2% になる (横は幅、縦は高さ。短辺ではない — 正規化した座標でずらす)
     if (kind == kEffectFringe) {
         if (p0 <= 0.0) { return in.color; }
         float2 shift = (in.place - 0.5) * p0 * 0.04;
