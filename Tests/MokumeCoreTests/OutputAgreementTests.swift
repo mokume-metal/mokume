@@ -20,9 +20,13 @@ import Testing
     .serialized,
     .enabled(if: RenderDevice.isAvailable, "GPU が無い環境ではスキップ"))
 struct OutputAgreementTests {
-    /// 明るさを写す設定。露出の 3 通り × 丸め方 2 通り。
+    /// 明るさを写す設定。
+    ///
+    /// **2 の冪でない露出も入れる。** 2 の冪を掛ける計算は丸めを含まないので、それだけだと
+    /// 乗算を戻す割り算と露出の掛け算の順を GPU 側で入れ替えても一致してしまう。
     static let settings: [(exposure: Float, toneMapping: ToneMapping)] = [
-        (1, .clip), (2, .clip), (0.5, .clip), (1, .roll), (2, .roll), (0.5, .roll),
+        (1, .clip), (2, .clip), (0.5, .clip), (1.15, .clip), (0.7, .clip),
+        (1, .roll), (2, .roll), (0.5, .roll), (1.15, .roll), (1.37, .roll),
     ]
 
     /// 総当たりで振る不透明度。0・最小の正規数・1 段・半透明・1・範囲の外・値でないもの。

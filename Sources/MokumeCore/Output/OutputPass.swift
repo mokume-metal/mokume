@@ -77,17 +77,9 @@ import Metal
             throw .pipelineUnavailable(reason: error.localizedDescription)
         }
 
-        brightnessBuffer = try gpu.makeReadableBuffer(byteCount: Brightness.byteCount)
-        let thresholds = OutputStage.quantizeThresholds
-        let thresholdsBuffer = try gpu.makeReadableBuffer(
-            byteCount: thresholds.count * MemoryLayout<Float>.stride)
-        // **まだどの投入にも載っていない置き場なので、待たずに書いてよい**
-        thresholds.withUnsafeBytes { bytes in
-            thresholdsBuffer.contents().copyMemory(
-                from: bytes.baseAddress!, byteCount: bytes.count)
-        }
-        self.thresholdsBuffer = thresholdsBuffer
-
+        // **投げうる準備を先に済ませ、置き場は最後に作る。** 置き場は作った時点で常駐の集合に
+        // 入るが、init が途中で投げると `isolated deinit` は走らず、退かせる者がいなくなる
+        // (``ImageInputPass`` と同じ順)
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.output.arguments"
         tableDescriptor.maxBufferBindCount = Self.bufferBindCount
@@ -97,10 +89,28 @@ import Metal
         } catch {
             throw .argumentTableUnavailable(reason: error.localizedDescription)
         }
+
+        let thresholds = OutputStage.quantizeThresholds
+        let brightnessBuffer = try gpu.makeReadableBuffer(byteCount: Brightness.byteCount)
+        let thresholdsBuffer: any MTLBuffer
+        do {
+            thresholdsBuffer = try gpu.makeReadableBuffer(
+                byteCount: thresholds.count * MemoryLayout<Float>.stride)
+        } catch {
+            gpu.retire(brightnessBuffer)
+            throw error
+        }
+        // **まだどの投入にも載っていない置き場なので、待たずに書いてよい**
+        thresholds.withUnsafeBytes { bytes in
+            thresholdsBuffer.contents().copyMemory(
+                from: bytes.baseAddress!, byteCount: bytes.count)
+        }
+        self.brightnessBuffer = brightnessBuffer
+        self.thresholdsBuffer = thresholdsBuffer
         argumentTable.setAddress(thresholdsBuffer.gpuAddress, index: Self.thresholdsBufferIndex)
     }
 
-    /// **明るさの置き場を常駐から退かせる** ([#795])。
+    /// **明るさとしきい値の置き場を常駐から退かせる** ([#795])。
     ///
     /// [#795]: https://github.com/mokume-metal/mokume/issues/795
     isolated deinit {

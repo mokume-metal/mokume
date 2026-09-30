@@ -74,8 +74,9 @@ struct Brightness: Equatable, Sendable {
 
     /// 乗算を戻した色 1 つを、表示へ向けて写す。
     ///
-    /// **この関数が曲線の正本である。** 画面へ差し出す経路は GPU 上の断片で同じ
-    /// 計算をするので、写しがずれていないことを検査で突き合わせる (`BrightnessTests`)。
+    /// **この関数が曲線の正本である。** GPU 上の断片 (`Present.metal` の `mokumeMapBrightness`)
+    /// は 1 演算ずつ同じ手順を踏む。取り出す絵が同じバイトになることは `OutputAgreementTests`、
+    /// 画面へ差し出す明るさが食い違わないことは `BrightnessTests` が突き合わせる。
     func map(_ color: SIMD3<Float>) -> SIMD3<Float> {
         let lifted = color * exposure
         guard toneMapping == .roll else { return lifted }

@@ -31,7 +31,9 @@ constant uint kRoll = 1;
 /// 二重に持たないため。
 ///
 /// 並びは Swift 側の `PackedBrightness` と一致し、`ShaderInterfaceTests` が反射で
-/// 突き合わせる。曲線の写しがずれていないことは `OutputStageTests` が絵で突き合わせる。
+/// 突き合わせる。取り出す断片が CPU の出力段と同じバイトを出すことは
+/// `OutputAgreementTests` が絵で、`OutputFunctionAgreementTests` が関数の答えで突き合わせる。
+/// 画面へ差し出す断片の明るさは `BrightnessTests` が相対の差で見る (こちらはビットの一致を約束しない)。
 struct Brightness {
     float exposure;
     float knee;
