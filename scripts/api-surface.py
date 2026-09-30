@@ -720,6 +720,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "textAscent": READING,
     "textDescent": READING,
     "textOutline": (READING, "文字の輪郭を値で返す。置くのは作者"),
+    "textBounds": (READING, "墨の範囲を値で返す。置くのは作者"),
     "usesFrameHistory": READING,
     "defaultSolidDetail": READING,
     "output": (READING, "描き先 (RenderTarget) を返す。作るのは面の組み立て"),

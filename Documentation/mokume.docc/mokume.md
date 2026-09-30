@@ -320,10 +320,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/textAscent()``
 - ``Sketch/textDescent()``
 - ``Sketch/textOutline(_:_:_:)``
+- ``Sketch/textBounds(_:_:_:)``
 - ``TextStyle``
 - ``TextWrap``
 - ``TextFlow``
 - ``TextContour``
+- ``TextBounds``
 - ``HorizontalTextAlign``
 - ``VerticalTextAlign``
 
