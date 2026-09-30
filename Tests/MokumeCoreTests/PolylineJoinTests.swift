@@ -345,4 +345,134 @@ struct PolylineJoinTests {
         #expect(drawn.count > 0)
         #expect(mismatched == 0)
     }
+
+    // MARK: - 同じ位置の隣 (反証の指摘 3・4)
+
+    /// 隣が同じ位置の点 (長さ 0 の帯) は向きを持たない。向きは同じ位置の点を飛ばした両隣から
+    /// 取る。飛ばさないと、軸に沿った正方形へ倒れて帯の外へ出ていた。
+    @Test("同じ位置の点が続く一直線の折れ線も、帯の外へ出ない", arguments: [StrokeJoin.miter, .bevel], [false, true])
+    func repeatedPointsDoNotLeaveTheBand(_ join: StrokeJoin, _ depth: Bool) throws {
+        func draw(_ points: [SIMD2<Float>]) throws -> Coverage {
+            try render { canvas in
+                canvas.strokeJoin(join)
+                depth ? solidPolyline(canvas, points) : polyline(canvas, points)
+            }
+        }
+        let repeated = try draw([SIMD2(20, 20), SIMD2(80, 80), SIMD2(80, 80), SIMD2(140, 140)])
+        let two = try draw([SIMD2(20, 20), SIMD2(140, 140)])
+        #expect(two.count > 0)
+        #expect(!repeated[88, 72])
+        #expect(repeated.differing(from: two) == 0)
+    }
+
+    @Test("端に同じ位置の点が続いても、出っ張らせる端は線の向きに沿う", arguments: [false, true])
+    func repeatedEndPointsKeepTheProjectingCapAligned(_ depth: Bool) throws {
+        func draw(_ points: [SIMD2<Float>]) throws -> Coverage {
+            try render { canvas in
+                canvas.strokeCap(.project)
+                depth ? solidPolyline(canvas, points) : polyline(canvas, points)
+            }
+        }
+        let repeated = try draw([SIMD2(30, 30), SIMD2(30, 30), SIMD2(130, 130), SIMD2(130, 130)])
+        let two = try draw([SIMD2(30, 30), SIMD2(130, 130)])
+        #expect(two.count > 0)
+        #expect(repeated.differing(from: two) == 0)
+    }
+
+    /// 曲線で閉じる周 (字形の `o`) は、最後の点が最初の点と重なる。
+    @Test("最後の点が最初の点と重なる字形の周も、重なりを除いた周と同じ輪郭になる", arguments: [StrokeJoin.miter, .bevel])
+    func closedCurveGlyphsIgnoreTheRepeatedPoint(_ join: StrokeJoin) throws {
+        let probe = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
+        probe.textFont("Helvetica")
+        probe.textSize(120)
+        let contours = probe.textOutline("o", 30, 120)
+        let glyph = try #require(contours.first { $0.points.count > 3 }?.points)
+        try #require(glyph.first == glyph.last)
+        // 周の始まりは字の上端 (接線が横) にあり、軸に沿った正方形でも帯に収まってしまう。
+        // 45° 回して、始まりの接線を斜めにする
+        let center = SIMD2<Float>(80, 80)
+        let middle = glyph.reduce(SIMD2<Float>(0, 0), +) / Float(glyph.count)
+        let ring = glyph.map { Self.rotated($0 - middle, by: Float.pi / 4) + center }
+        func draw(_ points: [SIMD2<Float>]) throws -> Coverage {
+            try render { canvas in
+                canvas.strokeWeight(8)
+                canvas.strokeJoin(join)
+                polyline(canvas, points, closed: true)
+            }
+        }
+        let repeated = try draw(ring)
+        let trimmed = try draw(Array(ring.dropLast()))
+        #expect(trimmed.count > 0)
+        #expect(repeated.differing(from: trimmed) == 0)
+    }
+
+    // MARK: - 保持した形 (反証の指摘 1・2)
+
+    /// 保持した形の輪郭の形は、形の中で決まる。置くときの `strokeJoin` は効かない。
+    /// 半透明の線は CPU で組み、置く先の視点で組み直す (``SolidStrokePiece``)。
+    @Test(
+        "保持した立体の折れ目は、記録したときの形で組み直される",
+        arguments: [(StrokeJoin.bevel, StrokeJoin.miter), (.miter, .bevel)], ["plane", "折れ線"])
+    func retainedSolidJoinsKeepTheRecordedJoin(_ joins: (StrokeJoin, StrokeJoin), _ name: String) throws {
+        let (recorded, placing) = joins
+        func draw(_ canvas: Canvas) {
+            canvas.stroke(255, 250)
+            if name == "plane" {
+                canvas.plane(80, 80)
+            } else {
+                solidPolyline(canvas, [SIMD2(-50, 30), SIMD2(0, -40), SIMD2(50, 30)])
+            }
+        }
+        let placed = try render { canvas in
+            canvas.strokeJoin(recorded)
+            let shape = canvas.createShape { draw(canvas) }
+            canvas.strokeJoin(placing)
+            canvas.translate(80, 80, 0)
+            canvas.rotateZ(Float.pi / 6)
+            canvas.shape(shape)
+        }
+        let direct = try render { canvas in
+            canvas.strokeJoin(recorded)
+            canvas.translate(80, 80, 0)
+            canvas.rotateZ(Float.pi / 6)
+            draw(canvas)
+        }
+        let other = try render { canvas in
+            canvas.strokeJoin(placing)
+            canvas.translate(80, 80, 0)
+            canvas.rotateZ(Float.pi / 6)
+            draw(canvas)
+        }
+        #expect(direct.differing(from: other) > 0, "2 つの形が見分けられない")
+        #expect(placed.differing(from: direct) == 0)
+    }
+
+    /// 記録したときは腕が画面に写り、置く先では画面で点に潰れる (平行投影で視線に沿う辺)。
+    /// 潰れた角は正方形へ倒れる。折れ目の頂点の数が枝で違うと、組み直しで部品が 1 点へ
+    /// 畳まれて、その場で描けば置かれる正方形が消える。
+    @Test("置く先でだけ腕が画面で潰れる角も、その場で描いたのと同じに埋まる", arguments: [StrokeJoin.miter, .bevel])
+    func retainedJoinsSurviveAnArmCollapsingWhenPlaced(_ join: StrokeJoin) throws {
+        func draw(_ canvas: Canvas) {
+            canvas.stroke(255, 250)
+            canvas.strokeJoin(join)
+            canvas.beginShape()
+            canvas.vertex(-40, 0, 0)
+            canvas.vertex(0, 0, 0)
+            canvas.vertex(0, 0, -60)
+            canvas.endShape()
+        }
+        let placed = try render { canvas in
+            let shape = canvas.createShape { draw(canvas) }
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            canvas.shape(shape)
+        }
+        let direct = try render { canvas in
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            draw(canvas)
+        }
+        #expect(direct.count > 0)
+        #expect(placed.differing(from: direct) <= 2, "違う画素 \(placed.differing(from: direct))")
+    }
 }

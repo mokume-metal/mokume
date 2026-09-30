@@ -41,12 +41,15 @@ extension Canvas {
     /// [#1409]: https://github.com/mokume-metal/mokume/issues/1409
     /// [#1486]: https://github.com/mokume-metal/mokume/issues/1486
     /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
+    /// [#1644]: https://github.com/mokume-metal/mokume/issues/1644
     ///
     /// - Parameters:
     ///   - count: 点の数
     ///   - isClosed: 周が閉じているか (閉じていれば最後の点から最初の点へも帯が要る)
     ///   - curveSteps: 点ごとに、折れ目の形によらず円板で埋めるか (曲線の刻みの点と扇の角)。
     ///     空ならどの点も角
+    ///   - samePlace: 添字 2 つの点が同じ位置か。折れ目と端の向きを取る隣は、同じ位置の点を
+    ///     飛ばして探す (長さ 0 の帯は向きを持たない)
     ///   - endSquare: 1 つ目の添字の点に、2 つ目の添字の点から離れる向き (線の向き) に
     ///     沿った正方形を置く (出っ張らせる端 — #1535)
     ///   - band: 添字 2 つを結ぶ帯を置く
@@ -57,19 +60,49 @@ extension Canvas {
     ///     平面の呼び出し側がここで削いだ形に差し替える (`strokeOutline`)
     func strokeRing(
         count: Int, isClosed: Bool, curveSteps: [Bool] = [],
+        samePlace: (Int, Int) -> Bool = { _, _ in false },
         endSquare: (Int, Int) -> Void,
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void,
         corner: (Int, Int, Int) -> Void
     ) {
+        /// `index` から `step` (±1) の向きへたどって、`index` と同じ位置でない最初の点。
+        /// 開いた周で端を越えるか、1 周しても見つからなければ `nil`。
+        func distinct(from index: Int, step: Int) -> Int? {
+            var probe = index
+            for _ in 1..<max(count, 2) {
+                probe += step
+                if isClosed {
+                    probe = (probe + count) % count
+                } else if probe < 0 || probe >= count {
+                    return nil
+                }
+                if !samePlace(probe, index) { return probe }
+            }
+            return nil
+        }
         func join(at index: Int) {
             if index < curveSteps.count, curveSteps[index] { return disc(index) }
-            let previous = (index + count - 1) % count
-            let next = (index + 1) % count
+            // **向きは、同じ位置の点を飛ばした両隣から取る** ([#1644])。曲線で閉じる周の
+            // 最後の点のように、隣が同じ位置だと帯の向きが決まらない。飛ばさないと、
+            // 折れ目の形が軸に沿った正方形へ倒れて帯の外へ出る
+            guard let previous = distinct(from: index, step: -1),
+                let next = distinct(from: index, step: 1)
+            else {
+                // 開いた周の端と同じ位置の点は、端の形が埋める。閉じた周で全部の点が
+                // 重なるときだけ、これまでどおり隣の点で置く
+                guard isClosed else { return }
+                return strokeJoinShape(
+                    at: index, from: (index + count - 1) % count, to: (index + 1) % count,
+                    disc: disc, corner: corner)
+            }
             strokeJoinShape(at: index, from: previous, to: next, disc: disc, corner: corner)
         }
         func cap(at index: Int, awayFrom neighbor: Int?) {
+            // 端の向きも、同じ位置の点を飛ばした隣から取る (出っ張らせる端の正方形・#1535)。
+            // 全部の点が重なるときは、これまでどおり隣の点を渡す
+            let away = neighbor.map { distinct(from: index, step: $0 > index ? 1 : -1) ?? $0 }
             strokeCapShape(
-                at: index, awayFrom: neighbor, disc: disc, square: square, endSquare: endSquare)
+                at: index, awayFrom: away, disc: disc, square: square, endSquare: endSquare)
         }
 
         // 点が 1 つだけなら、端点の形そのものを置く
@@ -145,7 +178,7 @@ extension Canvas {
                     at: index, from: neighbors[index], to: others[index], disc: disc, corner: corner)
             default:
                 // 3 本以上の辺が集まる点 (箱の角など) は、2 本の帯で形が決まらない。
-                // 画面の軸に沿った正方形のまま埋める (#1644 の範囲の外)
+                // 画面の軸に沿った正方形のまま埋める (#1644 の範囲の外。形は #1889 で決める)
                 if style.strokeJoin == .round { disc(index) } else { square(index) }
             }
         }
@@ -290,6 +323,7 @@ extension Canvas {
         } else {
             strokeRing(
                 count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
+                samePlace: { points[$0] == points[$1] },
                 endSquare: { appendSquare(at: points[$0], awayFrom: points[$1], half: half) },
                 band: { appendBand(points[$0], points[$1], half: half) },
                 disc: { appendDisc(at: points[$0], half: half) },
@@ -356,6 +390,7 @@ extension Canvas {
         let join = style.strokeJoin
         strokeRing(
             count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
+            samePlace: { points[$0] == points[$1] },
             endSquare: { index, neighbor in
                 carving.addPoint(index) {
                     Self.appendSquare(at: points[index], awayFrom: points[neighbor], half: half, to: &$0)

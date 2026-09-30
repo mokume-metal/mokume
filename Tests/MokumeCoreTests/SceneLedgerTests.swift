@@ -1495,7 +1495,8 @@ enum Scene: String, CaseIterable, Sendable {
         place(106, 26, tint: (0.9, 0.75, 0.2)) { canvas.cylinder(11, 26, detail: 8) }
         place(22, 66, tint: (0.4, 0.7, 0.9)) { canvas.torus(13, 5, detail: 10) }
 
-        // 線だけの段。折れ目は削ぐ (正方形で埋まる)。**裏の稜線も見える**
+        // 線だけの段。折れ目は削ぐ (辺が 2 本の角は二等分線に垂直に削ぎ、3 本以上の角は
+        // 正方形で埋まる・#1644)。**裏の稜線も見える**
         canvas.strokeJoin(.bevel)
         place(64, 66, tint: nil) { canvas.cone(13, 26, detail: 8) }
         place(106, 66, tint: nil) { canvas.plane(28, 22) }

@@ -30,8 +30,10 @@ struct SolidStrokePiece {
         /// 向きが画面に写した線で決まるので、帯と同じく置く先で組み直す
         case endSquare(SIMD3<Float>, awayFrom: SIMD3<Float>)
         /// 丸めない折れ目の形 (1 つ目の点に置き、2 つ目の点から来て 3 つ目の点へ出る 2 本の
-        /// 帯の向きで決まる・#1644)。向きが画面に写した線で決まるので、置く先で組み直す
-        case join(SIMD3<Float>, from: SIMD3<Float>, to: SIMD3<Float>)
+        /// 帯の向きで決まる・#1644)。向きが画面に写した線で決まるので、置く先で組み直す。
+        /// **形 (`miter` / `bevel`) は記録したときのものを持つ** — 輪郭の形は形の中で
+        /// 決まり、置くときのスタイルは効かない (`Sketch/createShape(_:)`)
+        case join(SIMD3<Float>, from: SIMD3<Float>, to: SIMD3<Float>, join: StrokeJoin)
     }
 
     var kind: Kind
@@ -53,7 +55,7 @@ struct SolidStrokePiece {
         switch kind {
         case let .band(start, _): start
         case let .disc(center), let .square(center), let .endSquare(center, _),
-            let .join(center, _, _):
+            let .join(center, _, _, _):
             center
         }
     }
@@ -71,8 +73,8 @@ struct SolidStrokePiece {
         case let .square(center): piece.kind = .square(move(center))
         case let .endSquare(center, from):
             piece.kind = .endSquare(move(center), awayFrom: move(from))
-        case let .join(center, from, to):
-            piece.kind = .join(move(center), from: move(from), to: move(to))
+        case let .join(center, from, to, join):
+            piece.kind = .join(move(center), from: move(from), to: move(to), join: join)
         }
         return piece
     }

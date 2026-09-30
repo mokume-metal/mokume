@@ -570,6 +570,7 @@ extension Canvas {
         // 端と折れ目の規則は平面と共有する (`strokeRing`)
         strokeRing(
             count: points.count, isClosed: isClosed, curveSteps: curveSteps,
+            samePlace: { points[$0] == points[$1] },
             endSquare: {
                 appendSolidStroke(
                     .endSquare(points[$0], awayFrom: points[$1]),
@@ -590,7 +591,9 @@ extension Canvas {
             },
             corner: { index, previous, next in
                 appendSolidStroke(
-                    .join(points[index], from: points[previous], to: points[next]),
+                    .join(
+                        points[index], from: points[previous], to: points[next],
+                        join: style.strokeJoin),
                     shape: (shapePoints[index], shapePoints[index]), half: half, camera: camera)
             })
     }
@@ -644,7 +647,9 @@ extension Canvas {
             },
             corner: { index, previous, next in
                 appendSolidStroke(
-                    .join(placed[index], from: placed[previous], to: placed[next]),
+                    .join(
+                        placed[index], from: placed[previous], to: placed[next],
+                        join: style.strokeJoin),
                     shape: (net.points[index], net.points[index]), half: half, camera: camera)
             })
     }
@@ -693,8 +698,9 @@ extension Canvas {
         case let .square(center): appendSolidSquare(at: center, shape: shape.0, half: half, camera: camera)
         case let .endSquare(center, from):
             appendSolidSquare(at: center, awayFrom: from, shape: shape.0, half: half, camera: camera)
-        case let .join(center, from, to):
-            appendSolidJoin(at: center, from: from, to: to, shape: shape.0, half: half, camera: camera)
+        case let .join(center, from, to, join):
+            appendSolidJoin(
+                at: center, from: from, to: to, join: join, shape: shape.0, half: half, camera: camera)
         }
     }
 
@@ -828,10 +834,34 @@ extension Canvas {
     /// 帯の横向きが決まらない (画面で点に潰れる線・長さ 0) ときは、画面の軸に沿った
     /// 正方形へ倒す。
     ///
+    /// **どの枝でも三角形を 3 枚 (9 頂点) 積む** — 尖り (2 枚) は尖りを 2 度置き、正方形
+    /// (2 枚) と一直線 (0 枚) は面積 0 の三角形で埋める。記録した形は置く先の視点で組み
+    /// 直し、頂点の数が記録と違うと部品を 1 点へ畳む (`rebuiltSolidStroke`)。直角は尖るか
+    /// 切るかの境目にあり、腕が画面で潰れるかどうかも視点で変わるので、枝は置く先で
+    /// 入れ替わりうる。
+    ///
+    /// - Parameter join: 形 (`miter` / `bevel`)。記録した形では、記録したときの形を渡す
+    ///
     /// [#1644]: https://github.com/mokume-metal/mokume/issues/1644
     private func appendSolidJoin(
         at center: SIMD3<Float>, from previous: SIMD3<Float>, to next: SIMD3<Float>,
-        shape: SIMD3<Float>, half: Float, camera: StrokeCamera
+        join: StrokeJoin, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
+    ) {
+        let start = solidStrokeCapture?.count ?? solidVertices.count
+        buildSolidJoin(
+            at: center, from: previous, to: next, join: join, shape: shape, half: half, camera: camera)
+        let built = (solidStrokeCapture?.count ?? solidVertices.count) - start
+        for _ in stride(from: built, to: 9, by: 3) {
+            appendSolidStrokeTriangle(
+                center, center, center, shape: (shape, shape, shape), camera: camera)
+        }
+    }
+
+    /// 折れ目の形の三角形を積む (尖りなら 2 枚・切り口なら 3 枚・正方形へ倒すなら 2 枚・
+    /// 一直線なら 0 枚)。数を揃えるのは `appendSolidJoin`。
+    private func buildSolidJoin(
+        at center: SIMD3<Float>, from previous: SIMD3<Float>, to next: SIMD3<Float>,
+        join: StrokeJoin, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
     ) {
         guard length_squared(center - previous) > 0, length_squared(next - center) > 0,
             let across1 = screenAcross(previous, center, camera: camera),
@@ -851,7 +881,7 @@ extension Canvas {
         }
         let rim = Self.joinRim(
             toward: arm(across1, toward: previous), arm(across2, toward: next), half: 1,
-            join: style.strokeJoin)
+            join: join)
         // 周は 角のすぐ内側・1 本目の外側の縁の角・(尖りか切り口)・2 本目の外側の縁の角
         guard rim.count >= 4, let lastOffset = rim.last else { return }
         let radius = half * camera.worldPerPixel(at: center, height: height)
@@ -863,10 +893,6 @@ extension Canvas {
         let side2 = dot(lastOffset, onScreen(across2)) > 0 ? across2 : -across2
         var corners: [SIMD3<Float>] = [placed(rim[0]), center + side1 * radius]
         for offset in rim.dropFirst(2).dropLast() { corners.append(placed(offset)) }
-        // **三角形の数を尖りと切り口で揃える** (尖りを 2 度置く)。記録した形は置く先の視点で
-        // 組み直し、数が記録と違うと部品を 1 点へ畳む (`rebuiltSolidStroke`)。直角は尖るか
-        // 切るかの境目にあるので、視点が変わると枝が入れ替わりうる
-        if rim.count == 4 { corners.append(corners[corners.count - 1]) }
         corners.append(center + side2 * radius)
         for index in 1..<(corners.count - 1) {
             appendSolidStrokeTriangle(
