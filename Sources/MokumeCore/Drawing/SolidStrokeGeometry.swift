@@ -82,57 +82,80 @@ extension Canvas {
         var whiteUV: SIMD2<Float>
     }
 
+    /// いまのスタイルが、組み込みの形の線を GPU で広げてよいものか。**記録の間かどうかは見ない**
+    /// — その場で描くとき (``placeGPUStroke(of:mesh:)``) と、保持した形に覚えるとき
+    /// (`rememberGPUStroke`) の 2 か所が同じ条件を読む。
+    func gpuStrokeStyleAllows(_ source: SolidSource) -> Bool {
+        guard case .mesh = source else { return false }
+        return currentShader == nil && style.stroke.alpha == 1 && style.strokeJoin == .miter
+            && style.blendMode == .blend && style.picture == nil
+    }
+
     /// 既定の不透明な線だけを GPU で広げる。列を並べ替えず、既存の列の開閉を通す。
     func placeGPUStroke(of source: SolidSource, mesh: () -> SolidMesh) -> Bool {
-        guard case .mesh = source, !recordingShape, currentShader == nil,
-            style.stroke.alpha == 1, style.strokeJoin == .miter,
-            style.blendMode == .blend, style.picture == nil
+        guard !recordingShape, gpuStrokeStyleAllows(source),
+            let (geometry, geometryScale) = gpuStrokeGeometry(of: source, mesh: mesh)
         else { return false }
+        openGPUStroke(
+            of: source, geometry: geometry, matrix: transform.matrix, weight: style.strokeWeight,
+            color: style.stroke, uv: whiteUV, geometryScale: geometryScale)
+        return true
+    }
+
+    /// 組み込みの形の稜線を GPU で広げる骨と、骨を元の寸法へ戻す倍率。**作れなければ `nil`**
+    /// — 呼ぶ側は CPU の帯へ戻る (開いた端の形・溶接の計算範囲の端にある球・置き場を
+    /// 確保できないとき)。
+    func gpuStrokeGeometry(
+        of source: SolidSource, mesh: () -> SolidMesh
+    ) -> (SolidStrokeGeometry, Float)? {
         let key: SolidSource
         let geometryScale: Float
         if case .mesh(.sphere(let radius, let detail)) = source {
             let tolerance = radius * SolidEdges.weldScale
             guard tolerance >= Float.leastNormalMagnitude,
                 tolerance <= sqrt(Float.greatestFiniteMagnitude) / 4
-            else { return false }
+            else { return nil }
             key = .mesh(.sphere(radius: 1, detail: detail))
             geometryScale = radius
         } else {
             key = source
             geometryScale = 1
         }
-        let geometry: SolidStrokeGeometry
-        if let cached = solidStrokeGeometry[key] {
-            geometry = cached
-        } else {
-            do {
-                let net: SolidEdges
-                if key != source, case .mesh(let shape) = key {
-                    net = solidEdges(of: key) { shape.make() }
-                } else {
-                    net = solidEdges(of: source, mesh: mesh)
-                }
-                guard let made = try SolidStrokeGeometry(net: net, gpu: gpu)
-                else { return false }
-                solidStrokeGeometry.insert(made, for: key)
-                geometry = made
-            } catch {
-                // 控えを確保できなければ従来の組み立てへ戻す。描画自体の失敗は従来側が伝える。
-                return false
+        if let cached = solidStrokeGeometry[key] { return (cached, geometryScale) }
+        do {
+            let net: SolidEdges
+            if key != source, case .mesh(let shape) = key {
+                net = solidEdges(of: key) { shape.make() }
+            } else {
+                net = solidEdges(of: source, mesh: mesh)
             }
+            guard let made = try SolidStrokeGeometry(net: net, gpu: gpu) else { return nil }
+            solidStrokeGeometry.insert(made, for: key)
+            return (made, geometryScale)
+        } catch {
+            // 控えを確保できなければ従来の組み立てへ戻す。描画自体の失敗は従来側が伝える。
+            return nil
         }
+    }
+
+    /// GPU で広げる線の列を 1 つ開く。**前の列は閉じる** — 呼んだ順に重ねる。
+    ///
+    /// 列は次の操作で閉じる (塗りの列を開くときも、この列には足さない)。視点は置く時点の
+    /// もので、変換・太さ・色・白い区画は呼ぶ側が決める (その場で描くならいまのスタイル、
+    /// 保持した形なら記録したもの)。
+    func openGPUStroke(
+        of source: SolidSource, geometry: SolidStrokeGeometry, matrix: simd_float4x4,
+        weight: Float, color: LinearRGBA, uv: SIMD2<Float>, geometryScale: Float
+    ) {
         beginSolids()
         closeBatch()
-        let camera = currentCamera
         let placement = SolidStrokePlacement(
-            matrix: transform.matrix, camera: camera, height: height, weight: style.strokeWeight,
-            color: style.stroke, uv: whiteUV, geometryScale: geometryScale)
+            matrix: matrix, camera: currentCamera, height: height, weight: weight,
+            color: color, uv: uv, geometryScale: geometryScale)
         openSolid = OpenSolid(
             source: source, vertexStart: 0, vertexCount: geometry.count,
             indexStart: nil, instanceStart: solidInstances.count,
             strokeGeometry: geometry, strokePlacement: placement)
         solidInstances.append(.identity)
-
-        return true
     }
 }

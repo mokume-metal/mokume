@@ -187,7 +187,15 @@ extension Canvas {
         }
     }
 
-    public func curveDetail(_ steps: Int) { currentCurveDetail = max(1, steps) }
+    public func curveDetail(_ steps: Int) {
+        // 1 より小さい刻みは 1 にして、1 度知らせる (#1698)
+        guard steps >= 1 else {
+            warnRounded(.badCurveDetail, "curveDetail", "the number of steps", takes: "1 or more", passed: steps, used: 1)
+            currentCurveDetail = 1
+            return
+        }
+        currentCurveDetail = steps
+    }
 
     public func curveTightness(_ amount: some ScalarConvertible) {
         let amount = amount.asFloat
@@ -580,7 +588,7 @@ extension Canvas {
         var flattened: [SIMD2<Float>] = []
         flattened.reserveCapacity(merged.count)
         for index in merged { flattened.append(basis.flatten(points[index].position)) }
-        for (a, b, c) in Triangulation.triangulate(flattened) {
+        for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
             triangles.append((merged[a], merged[b], merged[c]))
         }
     }

@@ -53,13 +53,11 @@ extension Canvas {
     private func remember(
         _ parsed: ModelFile.Parsed, path: String, normalize: Bool
     ) -> Model {
-        nextModelIdentity += 1
         let model = Model.make(
             name: path, parsed: parsed,
             // **整える長さは面から決める。** 固定の長さにすると、面の大きさによって
             // 「読めているのに見えない」が起きる
-            fitting: normalize ? min(width, height) / 2 : nil,
-            identity: nextModelIdentity)
+            fitting: normalize ? min(width, height) / 2 : nil)
         modelCache.insert(model, for: ModelRequest(path: path, normalize: normalize))
         return model
     }

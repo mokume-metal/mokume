@@ -62,6 +62,9 @@ public struct Shape {
     ///
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     let solidStrokes: [SolidStrokePiece]
+    /// ``solidStrokes`` のうち、**置くときに GPU で組める**組み込み立体の線 (#1756)。
+    /// 焼いた頂点はそのまま持ち、組めるときだけその区間を積まずに GPU の列で描く。
+    let gpuStrokes: [RetainedGPUStroke]
 
     /// 区間を塗るもの一式。
     ///
@@ -158,7 +161,8 @@ public struct Shape {
     init(
         vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
         solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
-        strokeRanges: [Range<Int>] = [], solidStrokes: [SolidStrokePiece] = []
+        strokeRanges: [Range<Int>] = [], solidStrokes: [SolidStrokePiece] = [],
+        gpuStrokes: [RetainedGPUStroke] = []
     ) {
         self.vertices = vertices
         self.solidVertices = solidVertices
@@ -167,6 +171,7 @@ public struct Shape {
         self.runs = runs
         self.strokeRanges = strokeRanges
         self.solidStrokes = solidStrokes
+        self.gpuStrokes = gpuStrokes
     }
 
     /// 何も入っていない形。
@@ -202,6 +207,7 @@ public struct Shape {
         var runs: [Run] = []
         var strokeRanges: [Range<Int>] = []
         var solidStrokes: [SolidStrokePiece] = []
+        var gpuStrokes: [RetainedGPUStroke] = []
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
         forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
 
@@ -224,6 +230,12 @@ public struct Shape {
                     piece.vertexStart += solidOffset
                     return piece
                 })
+            // GPU で組める線も、区間の番号だけをずらして持ち越す (#1756)。区間を畳んでも
+            // 頂点の番号は変わらないので、置く側の判定はそのまま効く
+            for var stroke in shape.gpuStrokes {
+                stroke.vertices = (stroke.vertices.lowerBound + solidOffset)..<(stroke.vertices.upperBound + solidOffset)
+                gpuStrokes.append(stroke)
+            }
             for var run in shape.runs {
                 switch run.source {
                 case .flat: run.start += flatOffset
@@ -237,7 +249,8 @@ public struct Shape {
         }
         return Shape(
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
-            forms: forms, runs: runs, strokeRanges: strokeRanges, solidStrokes: solidStrokes)
+            forms: forms, runs: runs, strokeRanges: strokeRanges, solidStrokes: solidStrokes,
+            gpuStrokes: gpuStrokes)
     }
 
     /// 2 つの形を 1 つに畳む。
