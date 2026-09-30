@@ -227,10 +227,19 @@ extension Canvas {
     /// ここで積む。
     ///
     /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
-    func encodeCarryRestore(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+    ///
+    /// - Parameter afterKeepingChanges: 直前に、変わった画素を控えへ重ねたか
+    ///   (``encodeKeepChanged(into:)``)。重ねたなら、それが書き終わるのを待ってから戻す。
+    func encodeCarryRestore(into commands: any MTL4CommandBuffer, afterKeepingChanges: Bool = false)
+        throws(RenderFailure)
+    {
         guard let carry = effectPipelineStorage?.existingCarry else { return }
         guard let encoder = commands.makeComputeCommandEncoder() else {
             throw .encoderUnavailable
+        }
+        if afterKeepingChanges {
+            encoder.barrier(
+                afterQueueStages: .fragment, beforeStages: .blit, visibilityOptions: .device)
         }
         encoder.copy(sourceTexture: carry.texture, destinationTexture: target.texture)
         // **戻し終わるのを、続く書き戻し・描画・効果・読み戻しが待つ**
@@ -239,6 +248,103 @@ extension Canvas {
             visibilityOptions: .device)
         encoder.endEncoding()
         effectCarryRestoresEncoded += 1
+    }
+
+    // MARK: - 止まっている間に変えた分 (#1524)
+
+    /// これから描く先を変えるなら、変える前の効果を通した絵を控える要があるか ([#1524])。
+    ///
+    /// 要るのは、描く先に効果を通した絵があって次のフレームの頭が控えから戻す
+    /// (``carriesPictureBeforeEffects``) のに、まだ控えていないときだけである。控えるのは変える
+    /// **直前** — 読むだけの止まっている間のコールバックと、効果を使わないスケッチは何も払わない。
+    ///
+    /// - Parameter drawing: 描き切りが図形を描くか。書き込み待ちの画素は描く先を見て数える。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func needsPictureKeptBeforeChange(drawing: Bool) -> Bool {
+        carriesPictureBeforeEffects && !keepsPictureBeforeChange
+            && (drawing || target.hasPendingPixelWrites)
+    }
+
+    /// 書き込み待ちの画素を書き戻す前に、いまの絵を控える blit を積む。**要らなければ何も積まない**
+    /// (``needsPictureKeptBeforeChange(drawing:)``)。出力段 (``RenderTarget/encodeToImage()``) が
+    /// 書き戻す直前に呼ぶ。
+    ///
+    /// - Returns: 積んだら `true`。**投入したら ``notePictureKeptBeforeChange()`` で知らせる** —
+    ///   組み立てが投げるとコマンドは捨てられるので、積んだ時点では控えたことにしない ([#1183])。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    func encodeKeepingPictureBeforeChange(into commands: any MTL4CommandBuffer)
+        throws(RenderFailure) -> Bool
+    {
+        guard needsPictureKeptBeforeChange(drawing: false) else { return false }
+        try encodeKeepPicture(into: commands)
+        return true
+    }
+
+    /// 控えを積んだコマンドが投入されたことを記録する。**投入の後でだけ呼ぶ。**
+    func notePictureKeptBeforeChange() { keepsPictureBeforeChange = true }
+
+    /// 描く先 (効果を通した絵) を、変える前の絵の控え (``EffectPipeline/pictureBeforeChange()``) へ
+    /// 写す blit を積む。待つ仕掛けは控えへの写し (`encodeCarry`) と同じ形。
+    func encodeKeepPicture(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+        let kept = try effectPipeline().pictureBeforeChange()
+        guard let encoder = commands.makeComputeCommandEncoder() else {
+            throw .encoderUnavailable
+        }
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: .blit, visibilityOptions: .device)
+        encoder.copy(sourceTexture: target.texture, destinationTexture: kept.texture)
+        // **写し終わるのを、続く書き戻し・描画・読み戻しが待つ**
+        encoder.barrier(
+            afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
+            visibilityOptions: .device)
+        encoder.endEncoding()
+    }
+
+    /// 描く先のうち、変える前の絵の控えと**違う画素だけ**を、効果を通す前の絵の控え
+    /// (``EffectPipeline/carry()``) へ重ねる段を積む ([#1524])。続けて控えを描く先へ戻すと
+    /// (``encodeCarryRestore(into:afterKeepingChanges:)``)、止まっている間に変えた分が効果を通す前の
+    /// 絵の上に載る。
+    ///
+    /// **段の並びの外に置く。** 効果ではないので、効果の数 (``effectPassesEncoded``) にも入れない。
+    /// 枠 (引数のテーブル) は段と同じ採番から取る — 同じコマンドで後に続く段と同じテーブルを
+    /// 書き換えないため。
+    ///
+    /// 書き込む先は前の内容を読む (`.load`)。捨てた画素 (変わっていない画素) に、効果を通す前の
+    /// 絵がそのまま残るためである。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func encodeKeepChanged(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+        let pipeline = try effectPipeline()
+        guard let carry = pipeline.existingCarry else { return }
+        let kept = try pipeline.pictureBeforeChange()
+        let state = try pipeline.keepChangedState()
+        let table = try pipeline.table(at: takeStagePass())
+        table.setTexture(target.texture.gpuResourceID, index: EffectPipeline.sourceTextureIndex)
+        table.setTexture(kept.texture.gpuResourceID, index: EffectPipeline.pairedTextureIndex)
+
+        let pass = MTL4RenderPassDescriptor()
+        let attachment = pass.colorAttachments[0]!
+        attachment.texture = carry.texture
+        attachment.loadAction = .load
+        attachment.storeAction = .store
+        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+            throw .encoderUnavailable
+        }
+        // **書き戻しと控えへの写し (blit) が終わるのを待つ** (#341)
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: .fragment,
+            visibilityOptions: .device)
+        encoder.setRenderPipelineState(state)
+        encoder.setViewport(
+            MTLViewport(
+                originX: 0, originY: 0, width: Double(carry.width), height: Double(carry.height),
+                znear: 0, zfar: 1))
+        encoder.setArgumentTable(table, stages: [.vertex, .fragment])
+        encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+        effectChangesKeptEncoded += 1
     }
 
     /// 次の段の枠を 1 つ取る。**効果も拡大もここから取る** (採番は 1 系統)。

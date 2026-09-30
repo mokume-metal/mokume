@@ -56,7 +56,16 @@ extension RenderTarget {
         // 明るさを写す段は**描画先が持つ**。画面へ差し出す経路と同じ設定が効く
         pass.setBrightness(brightness)
 
+        // **書き戻す前に、いまの絵を描いた面に控えさせる** ([#1524])。効果を通したフレームの後、
+        // 止まっている間に書いた画素をここで書き戻すと、描く先は効果を通した絵の上で変わる。
+        // 描いた面は次のフレームの頭で、控えと違う画素だけを効果を通す前の絵へ重ねる。控えさせる
+        // のは、この面を描く先に持つ面 (細かさ 1) だけである — 細かさを下げた面の出す先には、
+        // 画素の書き込みが来ない
+        //
+        // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+        let keeper = drawer?.target === self ? drawer : nil
         let assembled = try gpu.withCommands { commands throws(RenderFailure) in
+            let kept = try keeper?.encodeKeepingPictureBeforeChange(into: commands) ?? false
             // **CPU が画素へ書いたものがあれば、読む前に描画先へ戻す。** 描き切りを挟まずに
             // `pixels` へ書いてここへ来る経路 (フレームの外で書いて書き出す) のため (#753)
             let wroteBack = try encodePixelWriteBack(into: commands)
@@ -82,11 +91,14 @@ extension RenderTarget {
             encoder.endEncoding()
             // **待たずに投入し、番号を憶える。** 中身が確定しているかを気にするのは触る側で、
             // ``EncodedImage/read()`` と出口へ渡す直前がその番号を名指しで待つ (#927)
-            return (submission: gpu.commit(commands, retaining: [image]), wroteBack: wroteBack)
+            return (
+                submission: gpu.commit(commands, retaining: [image]), wroteBack: wroteBack,
+                kept: kept)
         }
         // **戻したことにするのは投入の後** (#1183)。組み立ての途中で投げると書き戻しは
-        // 捨てられるので、次に触る段がもう一度積む
+        // 捨てられるので、次に触る段がもう一度積む。控えたことも同じ
         if assembled.wroteBack { markPixelsWrittenBack() }
+        if assembled.kept { keeper?.notePictureKeptBeforeChange() }
         let submission = assembled.submission
         image.pendingSubmission = submission
         lastEncodeSubmission = submission

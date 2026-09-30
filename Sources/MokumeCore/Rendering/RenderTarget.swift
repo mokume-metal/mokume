@@ -76,6 +76,9 @@ import MokumeDiagnostics
     /// 読まない描画先はここで 1 バイトも払わない。
     private(set) var pixelMirror: PixelMirror?
 
+    /// CPU が写しへ書いたまま、まだテクスチャへ戻していないか。
+    var hasPendingPixelWrites: Bool { pixelMirror?.hasPendingWrites ?? false }
+
     /// 写しを作った回数。**作り直していないこと**と、**頼まれていなければ 0 のまま**
     /// であることを検査から数えるための目印。
     private(set) var pixelMirrorsMade = 0

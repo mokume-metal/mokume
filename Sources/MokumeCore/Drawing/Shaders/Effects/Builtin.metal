@@ -9,6 +9,8 @@
 // 後処理の 1 つではないため (ADR-0015 決定 1)。**通る道は同じ段**なので、ここに置く。
 // 縮める / 広げる (種類 13) も利用者の並びには現れない — 大きなぼかしが縮めた絵の上で
 // 回るための内側の段で、Swift 側の `Effect.passes` が組む (#755)。
+// 末尾の `mokume_keepChanged` は効果ではなく、描き切りが控えを戻すときに使う入口である
+// (#1524)。同じ前文の上に置けば、同じ 1 回の組み立てで済む。
 //
 // 設定の並び (Swift 側の `Effect` が正本):
 //   control[0] = (種類, p0, p1, p2)
@@ -236,4 +238,24 @@ float4 effect(Pixel in, Values values) {
     }
 
     return in.color;
+}
+
+// 変わった画素だけを重ねる (#1524)。**効果ではない** — 利用者の並びにも段の並びにも現れず、
+// 効果を通したフレームの後、止まっている間に描く先を変えたときにだけ、次のフレームの頭で
+// 描き切りが 1 度通す。入りの口は描く先 (変えた後)、相手の口は変える前の効果を通した絵で、
+// 書き込む先は効果を通す前の絵である。**同じ値の画素は捨てる**ので、書き込む先の前の内容
+// (効果を通す前の絵) がそのまま残る。値で見分けるので、効果を通した絵と同じ値を書いた画素は
+// 「変えなかった」扱いになる — 読んで書き戻しただけの画素と見分けられないためである。
+//
+// 断片の入口を別に立てるのは、捨てるかどうかを決めるのが `effect()` の外 (入口) だけだから
+// である。前文の入口は必ず 1 色を書く
+fragment float4 mokume_keepChanged(
+    EffectFragmentIn in [[stage_in]],
+    texture2d<float> source [[texture(0)]],
+    texture2d<float> paired [[texture(1)]])
+{
+    uint2 at = uint2(in.position.xy);
+    float4 now = source.read(at);
+    if (all(now == paired.read(at))) { discard_fragment(); }
+    return now;
 }

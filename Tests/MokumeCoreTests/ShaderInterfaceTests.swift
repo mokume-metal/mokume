@@ -143,6 +143,13 @@ struct ShaderInterfaceTests {
                         .texture("source", EffectPipeline.sourceTextureIndex),
                         .texture("paired", EffectPipeline.pairedTextureIndex),
                     ]),
+                // 変わった画素だけを重ねる入口 (#1524)。効果の段と同じテーブルで束ねる
+                Entry(
+                    EffectPipeline.keepChangedFunctionName,
+                    [
+                        .texture("source", EffectPipeline.sourceTextureIndex),
+                        .texture("paired", EffectPipeline.pairedTextureIndex),
+                    ]),
             ],
             limits: [
                 .buffer: EffectPipeline.bufferBindCount,
