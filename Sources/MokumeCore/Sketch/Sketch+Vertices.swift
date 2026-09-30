@@ -206,6 +206,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 水色の四角が 1 枚。下地と同じ色の線は縁にだけあり、中に切れ目は無い -->
+    ///     ![水色の四角が 1 枚。下地と同じ色の線は縁にだけあり、中に切れ目は無い](https://i.gyazo.com/4d9c3b0f38ed4a8d109ea7b15af3b2be.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -268,7 +269,8 @@ extension Sketch {
     // shot: 4 snippet=67509c80
     // shot: 5 snippet=1ca6f605
     // shot: 6 snippet=6500dbc8
-    // shot: 7 snippet=1eefdc11
+    // shot: 7 snippet=02f0807a
+    // shot: 8 snippet=1eefdc11
     public func beginShape(_ kind: VertexKind = .polygon) { canvas.beginShape(kind) }
 
     /// 頂点を 1 つ置く。
