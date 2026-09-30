@@ -323,11 +323,8 @@ import MokumeDiagnostics
         attachment.storeAction = .store
         if let clearColor {
             attachment.loadAction = .clear
-            attachment.clearColor = MTLClearColor(
-                red: Double(clearColor.red),
-                green: Double(clearColor.green),
-                blue: Double(clearColor.blue),
-                alpha: Double(clearColor.alpha))
+            // **面へ移す関所を通す** (上限を越えた成分を図形の経路と同じ ±65504 で止める・#1691)
+            attachment.clearColor = HalfSurface.clearColor(clearColor)
         } else {
             attachment.loadAction = .load
         }
