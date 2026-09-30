@@ -24,12 +24,23 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "ci-check.sh"
 
-# 最後の引数が段名。slow / slow2 は間隔 1 秒の継続中の行が 2 回出る長さ (1.5 秒の余裕を
-# 持たせる。CPU が混むと行を出す側が遅れる・#1857)、bad は落ちる段
+# 最後の引数が段名。slow は自分の継続中の行が 2 回、slow2 は 1 回、出力に出るまで続く段で、
+# bad は落ちる段。段の長さを sleep で決めると、合否が「段の長さ ÷ 間隔」という機械の速さで
+# 決まる — CPU が混んで行を出す側が遅れると、行が足りずに赤になる (#1857・#1881)。行を
+# 見るまで待てば速さに依らない。行が出ない壊れ方でも固まらないよう、10 秒で待つのをやめて
+# 抜け、検査の表明の側で赤にする
 FAKE_MAKE = """#!/bin/bash
 printf '%s\\n' "$*" >> "$MAKE_CALLS"
+wait_for() {
+  local deadline=$((SECONDS + 10))
+  while [ "$(grep -c -- "$1" "$CI_CHECK_TEST_OUT")" -lt "$2" ]; do
+    [ "$SECONDS" -lt "$deadline" ] || return 0
+    sleep 0.05
+  done
+}
 case "${@: -1}" in
-  slow|slow2) sleep 3.5 ;;
+  slow) wait_for "slow 継続中" 2 ;;
+  slow2) wait_for "slow2 継続中" 1 ;;
   bad) exit 7 ;;
 esac
 exit 0
@@ -58,8 +69,11 @@ class CiCheckTest(unittest.TestCase):
     def run_steps(self, *steps, heartbeat="30"):
         env = self.env(heartbeat)
         # 出力は管ではなくファイルで受ける。継続中の行が止まらない壊れ方をしたとき、
-        # 管だと読み手が EOF を待って固まり、赤ではなく無言になる (管の検査は下に 1 本だけ置く)
-        with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+        # 管だと読み手が EOF を待って固まり、赤ではなく無言になる (管の検査は下に 1 本だけ置く)。
+        # 名前を付けて偽の make にも渡す — 段が自分の継続中の行を見るまで待つため
+        out_path = self.root / "out.txt"
+        env["CI_CHECK_TEST_OUT"] = str(out_path)
+        with open(out_path, "w+") as out, tempfile.TemporaryFile("w+") as err:
             code = subprocess.call(
                 ["/bin/bash", str(SCRIPT), *steps],
                 cwd=self.root, env=env, stdout=out, stderr=err, timeout=30,
