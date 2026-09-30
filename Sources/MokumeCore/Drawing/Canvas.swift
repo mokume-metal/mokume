@@ -2491,11 +2491,13 @@ public final class Canvas {
     /// ([#915])。同じ総量を 1 塊で渡しても小分けで渡してもここが動かないなら、費用は
     /// 総量にしか比例していない。時間で見ると release でしか測れず、機械の都合で揺れる。
     ///
-    /// 数えるのは 4 箇所 — 環を平らへ落とすとき・穴のために全点を落とすとき・
+    /// 数えるのは 5 箇所 — 環を平らへ落とすとき・穴のために全点を落とすとき・
     /// 読み取り位置の倒れ先を作るとき・耳を切る判定で点を三角形と比べるとき
-    /// ([#1595])。**どれか 1 つでも抜くと、そこへ二乗が戻っても数が動かない。**
+    /// ([#1595])・交わった周を探して組み直すとき ([#1538])。**どれか 1 つでも抜くと、
+    /// そこへ二乗が戻っても数が動かない。**
     ///
     /// [#915]: https://github.com/mokume-metal/mokume/issues/915
+    /// [#1538]: https://github.com/mokume-metal/mokume/issues/1538
     /// [#1595]: https://github.com/mokume-metal/mokume/issues/1595
     private(set) var pointScansInLastFrame = 0
     var pointScansThisFrame = 0

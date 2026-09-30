@@ -394,12 +394,15 @@ extension Canvas {
         // 閉包は、要素ごとに隔離の実行時検査を払う (#1779)
         //
         // 三角形は形の全原始形で 1 本の並びへ積み、原始形ごとの区間で引く ([#1781])
+        //
+        // 交わった周を分けると、交点が `points` の後ろに足される ([#1538])。足した点は
+        // 塗りの三角形だけが指し、輪郭 (`primitive.ring`) は指さない
         var allTriangles: [(Int, Int, Int)] = []
         var triangleRanges: [Range<Int>] = []
         triangleRanges.reserveCapacity(primitives.count)
         for primitive in primitives {
             let start = allTriangles.count
-            fillTriangles(of: primitive, points: points, into: &allTriangles)
+            fillTriangles(of: primitive, points: &points, into: &allTriangles)
             triangleRanges.append(start..<allTriangles.count)
         }
         let placed = shapeHasDepth ? placedVertices(points, triangles: allTriangles) : []
@@ -557,33 +560,55 @@ extension Canvas {
     ///
     /// [#915]: https://github.com/mokume-metal/mokume/issues/915
     private func fillTriangles(
-        of primitive: Primitive, points: [BuildingVertex],
+        of primitive: Primitive, points: inout [BuildingVertex],
         into triangles: inout [(Int, Int, Int)]
     ) {
         guard primitive.fills, style.hasFill, primitive.ring.count >= 3 else { return }
         guard let basis = flatBasis(of: primitive, points: points) else { return }
-        let merged: [Int]
         if primitive.holes.isEmpty {
             let ring = primitive.ring
             // **3 点なら分けるまでもない** ([#1781])。`Triangulation.triangulate` は 3 点に
             // `(0, 1, 2)` を返すので、平らな座標を写さずに同じ答えを積む。潰れた三角形を
             // 捨てる判定 (`flatBasis`) は上で済んでいる。`.triangles` などは三角形 1 枚が
-            // 原始形 1 つなので、この近道が形 1 つにつき三角形の数だけ効く
+            // 原始形 1 つなので、この近道が形 1 つにつき三角形の数だけ効く。3 点の周は
+            // 交われないので、交わりも探さない ([#1538])
             if ring.count == 3 {
                 pointScansThisFrame += 3
                 let first = ring.startIndex
                 triangles.append((ring[first], ring[first + 1], ring[first + 2]))
                 return
             }
-            merged = Array(ring)
-        } else {
-            var all: [SIMD2<Float>] = []
-            all.reserveCapacity(points.count)
-            for point in points { all.append(basis.flatten(point.position)) }
-            pointScansThisFrame += points.count
-            merged = Triangulation.mergeHoles(
-                outer: Array(primitive.ring), holes: primitive.holes, points: all)
+            pointScansThisFrame += ring.count
+            var flattened: [SIMD2<Float>] = []
+            flattened.reserveCapacity(ring.count)
+            for index in ring { flattened.append(basis.flatten(points[index].position)) }
+            let local = Array(flattened.indices)
+            if let split = Triangulation.splitForNonzero(
+                rings: [local], points: flattened, comparisons: &pointScansThisFrame)
+            {
+                fillSplit(split, flat: flattened, global: Array(ring), points: &points, into: &triangles)
+                return
+            }
+            let first = ring.startIndex
+            for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
+                triangles.append((ring[first + a], ring[first + b], ring[first + c]))
+            }
+            return
         }
+
+        var all: [SIMD2<Float>] = []
+        all.reserveCapacity(points.count)
+        for point in points { all.append(basis.flatten(point.position)) }
+        pointScansThisFrame += points.count
+        if let split = Triangulation.splitForNonzero(
+            rings: [Array(primitive.ring)] + primitive.holes, points: all,
+            comparisons: &pointScansThisFrame)
+        {
+            fillSplit(split, flat: all, global: nil, points: &points, into: &triangles)
+            return
+        }
+        let merged = Triangulation.mergeHoles(
+            outer: Array(primitive.ring), holes: primitive.holes, points: all)
         pointScansThisFrame += merged.count
         var flattened: [SIMD2<Float>] = []
         flattened.reserveCapacity(merged.count)
@@ -591,6 +616,124 @@ extension Canvas {
         for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
             triangles.append((merged[a], merged[b], merged[c]))
         }
+    }
+
+    /// 交点で分けた周を三角形へ分ける ([#1538])。
+    ///
+    /// 交点は `points` の後ろに点として足す。分けた周の組は、交わらない形と同じ
+    /// `mergeHoles` → `triangulate` へ 1 つずつ通す。
+    ///
+    /// - Parameters:
+    ///   - flat: 分ける前の周が指す、平らな座標。
+    ///   - global: `flat` の何番目が `points` の何番目か。`nil` なら同じ番号。
+    private func fillSplit(
+        _ split: Triangulation.Split, flat: [SIMD2<Float>], global: [Int]?,
+        points: inout [BuildingVertex], into triangles: inout [(Int, Int, Int)]
+    ) {
+        let base = points.count
+        func toGlobal(_ local: Int) -> Int {
+            guard local < flat.count else { return base + local - flat.count }
+            return global?[local] ?? local
+        }
+        var all = flat
+        all.reserveCapacity(flat.count + split.crossings.count)
+        // 片方の端だけに読み取り位置が書かれた辺では、書かれていない端を、耳切りの経路と
+        // 同じ倒れ先 (``uvFallback(_:)`` が形の囲みの箱から求める値) で埋めてから補間する。
+        // 倒れ先は交点を足す前の点で求める (交点は辺の上にあるので、囲みの箱は変わらない)
+        var fallback: ((SIMD2<Float>) -> SIMD2<Float>)?
+        for crossing in split.crossings where fallback == nil {
+            for (from, to) in [
+                (crossing.first.from, crossing.first.to), (crossing.second.from, crossing.second.to),
+            ] where (points[toGlobal(from)].uv == nil) != (points[toGlobal(to)].uv == nil) {
+                fallback = uvFallback(Array(points[..<base]))
+                break
+            }
+        }
+        for crossing in split.crossings {
+            all.append(crossing.point)
+            points.append(
+                Self.crossingVertex(
+                    points[toGlobal(crossing.first.from)], points[toGlobal(crossing.first.to)],
+                    at: crossing.first.at,
+                    points[toGlobal(crossing.second.from)], points[toGlobal(crossing.second.to)],
+                    at: crossing.second.at, fallback: fallback))
+        }
+        for region in split.regions {
+            let merged =
+                region.holes.isEmpty
+                ? region.outer
+                : Triangulation.mergeHoles(
+                    outer: region.outer, holes: region.holes, points: all, slack: split.slack)
+            pointScansThisFrame += merged.count
+            var flattened: [SIMD2<Float>] = []
+            flattened.reserveCapacity(merged.count)
+            for index in merged { flattened.append(all[index]) }
+            for (a, b, c) in Triangulation.triangulate(
+                flattened, comparisons: &pointScansThisFrame, slack: split.slack)
+            {
+                triangles.append((toGlobal(merged[a]), toGlobal(merged[b]), toGlobal(merged[c])))
+            }
+        }
+    }
+
+    /// 交点に足す点。**交わる 2 辺のそれぞれで線形に補間し、2 辺の値を平均する** ([#1538])。
+    ///
+    /// 奥行きを持つ形では、2 辺が同じ位置で交わるとは限らない (平らにした座標で交わっても、
+    /// 奥行きが違う)。平均すると、交点は 2 辺の間に来る。色も同じく平均し、2 辺の色が
+    /// 違えば交点はその中間になる。
+    ///
+    /// 読み取り位置と面の向きは**書かれている値からだけ取る**。両端に書かれている辺の値を
+    /// 使い、2 辺とも書かれていれば平均する。どちらの辺にも無ければ書かれていないままにし、
+    /// ほかの書かれていない点と同じく形から求める。
+    ///
+    /// ただし読み取り位置は、**片方の端だけに書かれた辺**なら、書かれていない端を
+    /// `fallback` (書かれていない点が塗りで倒れる先と同じ値) で埋めて補間する。埋めずに
+    /// その辺を捨てると、交点が形の囲みの箱の値へ倒れ、隣の書かれた点との間に継ぎ目が出る。
+    static func crossingVertex(
+        _ a: BuildingVertex, _ b: BuildingVertex, at t: Float,
+        _ c: BuildingVertex, _ d: BuildingVertex, at u: Float,
+        fallback: ((SIMD2<Float>) -> SIMD2<Float>)? = nil
+    ) -> BuildingVertex {
+        func mix(_ x: SIMD3<Float>, _ y: SIMD3<Float>, _ w: Float) -> SIMD3<Float> { x + w * (y - x) }
+        func mix(_ x: SIMD2<Float>, _ y: SIMD2<Float>, _ w: Float) -> SIMD2<Float> { x + w * (y - x) }
+        func mix(_ x: LinearRGBA, _ y: LinearRGBA, _ w: Float) -> SIMD4<Float> {
+            let from = SIMD4(x.red, x.green, x.blue, x.alpha)
+            return from + w * (SIMD4(y.red, y.green, y.blue, y.alpha) - from)
+        }
+        func average<Value: SIMD>(_ first: Value?, _ second: Value?) -> Value?
+        where Value.Scalar == Float {
+            guard let first else { return second }
+            guard let second else { return first }
+            return (first + second) * 0.5
+        }
+
+        var normalOnFirst: SIMD3<Float>?
+        if let from = a.normal, let to = b.normal { normalOnFirst = mix(from, to, t) }
+        var normalOnSecond: SIMD3<Float>?
+        if let from = c.normal, let to = d.normal { normalOnSecond = mix(from, to, u) }
+        func written(_ point: BuildingVertex, beside other: BuildingVertex) -> SIMD2<Float>? {
+            if let uv = point.uv { return uv }
+            guard other.uv != nil, let fallback else { return nil }
+            return fallback(SIMD2(point.position.x, point.position.y))
+        }
+        var uvOnFirst: SIMD2<Float>?
+        if let from = written(a, beside: b), let to = written(b, beside: a) {
+            uvOnFirst = mix(from, to, t)
+        }
+        var uvOnSecond: SIMD2<Float>?
+        if let from = written(c, beside: d), let to = written(d, beside: c) {
+            uvOnSecond = mix(from, to, u)
+        }
+
+        let color = (mix(a.fill, b.fill, t) + mix(c.fill, d.fill, u)) * 0.5
+        return BuildingVertex(
+            position: (mix(a.position, b.position, t) + mix(c.position, d.position, u)) * 0.5,
+            normal: average(normalOnFirst, normalOnSecond),
+            uv: average(uvOnFirst, uvOnSecond),
+            fill: LinearRGBA(
+                premultipliedRed: color.x, green: color.y, blue: color.z, alpha: color.w),
+            // 利用者が置いた点ではない。輪郭は元の周から引くので、この点を通らない
+            isCurveStep: true)
     }
 
     /// 塗りが読み取り位置を持つか。**貼る絵を束ねているか、1 点でも書かれていれば持つ。**
@@ -631,7 +774,7 @@ extension Canvas {
     /// 三角形へ分けるための、平らな座標の取り方。
     ///
     /// **点番号で引ける並びを作らない。** 要る点だけを落とせるように、落とし方のほうを
-    /// 持ち歩く (``Canvas/fillTriangles(of:points:)``)。
+    /// 持ち歩く (``Canvas/fillTriangles(of:points:into:)``)。
     private struct FlatBasis {
         /// `nil` なら平面 — xy をそのまま使う。
         ///
@@ -654,9 +797,11 @@ extension Canvas {
     private func flatBasis(of primitive: Primitive, points: [BuildingVertex]) -> FlatBasis? {
         guard shapeHasDepth else { return FlatBasis() }
 
-        // 周をひと回りしながら面の向きを積む。三角形 1 つから求めると、少しでも
+        // 周をひと回りしながら面の向きを積む (Newell 法)。三角形 1 つから求めると、少しでも
         // 平らでない形で平面を取り違える
         var normal = SIMD3<Float>.zero
+        var low = SIMD3<Float>(repeating: .infinity)
+        var high = SIMD3<Float>(repeating: -.infinity)
         let ring = primitive.ring
         for offset in 0..<ring.count {
             let a = points[ring[ring.startIndex + offset]].position
@@ -665,6 +810,20 @@ extension Canvas {
                 (a.y - b.y) * (a.z + b.z),
                 (a.z - b.z) * (a.x + b.x),
                 (a.x - b.x) * (a.y + b.y))
+            low = simd_min(low, a)
+            high = simd_max(high, a)
+        }
+        // **積んだ向きの長さは、周が囲む面積に比例する。** 自分と交わる周では、逆に回る
+        // 葉どうしが打ち消し合い、砂時計では 0 になる ([#1538])。周の点がなす大きい三角形に
+        // 比べて小さすぎるときは、その三角形から平面を決める。符号は積んだ向きに揃える。
+        // 囲みの大きさに比べて小さいときだけ三角形を探すので、ふつうの形は手間も絵も
+        // 変わらない
+        let reach = length_squared(high - low)
+        if length(normal) <= reach * 0x1p-10 {
+            let widest = widestTriangleNormal(of: ring, points: points)
+            if length(normal) <= length(widest) * 0x1p-10 {
+                normal = dot(normal, widest) < 0 ? -widest : widest
+            }
         }
         guard length_squared(normal) > 0 else { return nil }
         normal = normalize(normal)
@@ -674,6 +833,26 @@ extension Canvas {
         let across = normalize(cross(seed, normal))
         let along = cross(normal, across)
         return FlatBasis(across: across, along: along)
+    }
+
+    /// 周の点がなす大きい三角形の、面の向き (長さは三角形の面積の 2 倍)。
+    ///
+    /// 最初の点から最も遠い点を取り、その 2 点を結ぶ線から最も遠い点を足した三角形である。
+    /// 周が平らなら、その平面の向きになる。点がすべて一直線に並ぶなら 0 を返す。
+    private func widestTriangleNormal(of ring: ArraySlice<Int>, points: [BuildingVertex]) -> SIMD3<Float> {
+        guard let first = ring.first else { return .zero }
+        let origin = points[first].position
+        var far = origin
+        for index in ring {
+            let point = points[index].position
+            if length_squared(point - origin) > length_squared(far - origin) { far = point }
+        }
+        var widest = SIMD3<Float>.zero
+        for index in ring {
+            let candidate = cross(far - origin, points[index].position - origin)
+            if length_squared(candidate) > length_squared(widest) { widest = candidate }
+        }
+        return widest
     }
 
     /// 変換を掛け、書かれていない面の向きを形から求める。
