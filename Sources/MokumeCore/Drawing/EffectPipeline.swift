@@ -58,6 +58,18 @@ final class EffectPipeline {
     ///
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     private var keepChangedStorage: (any MTLRenderPipelineState)?
+    /// 変わった画素だけを重ねる段のテーブル。**段の採番から取らない** ([#1524]) — この段は描き切り
+    /// だけでなく出力段からも積まれ、出力段の投入は段の採番を 0 へ戻さない。束ねる面はいつも同じ
+    /// 2 枚 (描く先と、変える前の絵) なので、1 枚を使い回しても束ね先は変わらない。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private var keepChangedTableStorage: (any MTL4ArgumentTable)?
+    /// 止まっている間に控えへ描くときの奥行き ([#1524])。描く先の奥行きをパスの前に写して使う。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private var carryDepthStorage: StageImage?
+    /// 控えへ描くときの奥行きを作った回数。**止まっている間に図形を描き切らない面では 0 のまま。**
+    private(set) var carryDepthsBuilt = 0
 
     /// 段ごとの引数のテーブル。**段ごとに別のものを使う** — 1 枚を使い回して番地を
     /// 書き換えると、まだ走っていない段の束ね先まで変わる (計算の段と同じ理由)。
@@ -105,12 +117,12 @@ final class EffectPipeline {
     private(set) var carriesBuilt = 0
     /// 作ってある控え。**作らずに覗く** (戻す側は、控えが無ければ戻すものも無い)。
     var existingCarry: StageImage? { carryStorage }
-    /// 描く先を変える前の、効果を通した絵の控え ([#1524])。
+    /// 画素を書き戻す前の描く先の写し ([#1524])。
     ///
-    /// 効果を通したフレームの後、次のフレームより前 (止まっている間のコールバック) に描く先を
-    /// 変えると、その直前にここへ写す。次のフレームの頭で描く先と比べ、**違う画素だけ**を効果を
-    /// 通す前の絵 (``carry()``) へ重ねてから戻す。止まっている間に描く先を変えたときにはじめて
-    /// 作り、使い回す ([ADR-0023] 決定 5)。
+    /// 効果を通したフレームの後、次のフレームより前 (止まっている間のコールバック) に書いた画素を
+    /// 書き戻すたびに、その直前にここへ写す。書き戻した後の描く先と比べ、**違う画素だけ**を効果を
+    /// 通す前の絵 (``carry()``) へ写す。止まっている間に画素を書き戻したときにはじめて作り、
+    /// 使い回す ([ADR-0023] 決定 5)。
     ///
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     private var pictureBeforeChangeStorage: StageImage?
@@ -253,6 +265,38 @@ final class EffectPipeline {
             gpu: gpu, width: width, height: height, startingTransparent: false)
         carryStorage = made
         carriesBuilt += 1
+        return made
+    }
+
+    /// 変わった画素だけを重ねる段のテーブル。無ければ作る ([#1524])。
+    func keepChangedTable() throws(RenderFailure) -> any MTL4ArgumentTable {
+        if let keepChangedTableStorage { return keepChangedTableStorage }
+        let descriptor = MTL4ArgumentTableDescriptor()
+        descriptor.label = "mokume.effect.keepChanged"
+        descriptor.maxBufferBindCount = Self.bufferBindCount
+        descriptor.maxTextureBindCount = Self.textureBindCount
+        let made: any MTL4ArgumentTable
+        do {
+            made = try gpu.device.makeArgumentTable(descriptor: descriptor)
+        } catch {
+            throw .argumentTableUnavailable(reason: error.localizedDescription)
+        }
+        keepChangedTableStorage = made
+        return made
+    }
+
+    /// 止まっている間に控えへ描くときの奥行き。無ければ作る ([#1524])。
+    ///
+    /// 読まれる前に必ず描く先の奥行きから写されるか、パスの頭で消される。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func carryDepth() throws(RenderFailure) -> StageImage {
+        if let carryDepthStorage { return carryDepthStorage }
+        let made = try StageImage(
+            gpu: gpu, width: width, height: height, startingTransparent: false,
+            pixelFormat: RenderTarget.depthFormat)
+        carryDepthStorage = made
+        carryDepthsBuilt += 1
         return made
     }
 

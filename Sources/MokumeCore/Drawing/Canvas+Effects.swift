@@ -252,41 +252,48 @@ extension Canvas {
 
     // MARK: - 止まっている間に変えた分 (#1524)
 
-    /// これから描く先を変えるなら、変える前の効果を通した絵を控える要があるか ([#1524])。
+    /// 止まっている間に描く先を変えるなら、同じ変更を控え (効果を通す前の絵) にも加えるか ([#1524])。
     ///
-    /// 要るのは、描く先に効果を通した絵があって次のフレームの頭が控えから戻す
-    /// (``carriesPictureBeforeEffects``) のに、まだ控えていないときだけである。控えるのは変える
-    /// **直前** — 読むだけの止まっている間のコールバックと、効果を使わないスケッチは何も払わない。
+    /// **効果を通したフレームの後、次のフレームが控えを戻すまでの間は、描く先と控えの 2 枚を保つ。**
+    /// 描く先は効果を通した絵に変えた分を載せたもの (画面・書き出し・読む画素はこれ)、控えは効果を
+    /// 通す前の絵に同じ変更を載せたもの (次のフレームの入りはこれ) である。変えるたびに両方へ
+    /// 加えるので、混ぜ方 (縁の AA・半透明・足す混ぜ方) はどちらも置いた面の上で決まる。
     ///
-    /// - Parameter drawing: 描き切りが図形を描くか。書き込み待ちの画素は描く先を見て数える。
+    /// 控えは次のフレームの頭で戻す (``encodeCarryRestore(into:afterKeepingChanges:)``) ので、
+    /// 塗り直すフレームでは使われない。
     ///
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
-    func needsPictureKeptBeforeChange(drawing: Bool) -> Bool {
-        carriesPictureBeforeEffects && !keepsPictureBeforeChange
-            && (drawing || target.hasPendingPixelWrites)
+    var changesGoIntoCarry: Bool {
+        carriesPictureBeforeEffects && effectPipelineStorage?.existingCarry != nil
     }
 
-    /// 書き込み待ちの画素を書き戻す前に、いまの絵を控える blit を積む。**要らなければ何も積まない**
-    /// (``needsPictureKeptBeforeChange(drawing:)``)。出力段 (``RenderTarget/encodeToImage()``) が
-    /// 書き戻す直前に呼ぶ。
+    /// 書き込み待ちの画素を描く先へ書き戻し、**同じ画素を控えにも書く** ([#1524])。控えへ加える
+    /// 要が無ければ (``changesGoIntoCarry``)、ふつうに書き戻すだけである。
     ///
-    /// - Returns: 積んだら `true`。**投入したら ``notePictureKeptBeforeChange()`` で知らせる** —
-    ///   組み立てが投げるとコマンドは捨てられるので、積んだ時点では控えたことにしない ([#1183])。
+    /// 画素の書き込みは値そのものを置く (下地と混ぜない) ので、書き戻す前の描く先と比べて
+    /// **値が変わった画素**だけを控えへ写す。値で見分けるので、描く先と同じ値を書いた画素
+    /// (読んだ値をそのまま書き戻した画素を含む) は、書かなかった扱いになる (甲-1)。
+    ///
+    /// 描き切りの頭と出力段 (``RenderTarget/encodeToImage()``) が、書き戻す口として呼ぶ。
+    ///
+    /// - Returns: 書き戻しを積んだか。**投入してから** `markPixelsWrittenBack()` する ([#1183])。
     ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
-    func encodeKeepingPictureBeforeChange(into commands: any MTL4CommandBuffer)
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func encodePixelWriteBackKeepingCarry(into commands: any MTL4CommandBuffer)
         throws(RenderFailure) -> Bool
     {
-        guard needsPictureKeptBeforeChange(drawing: false) else { return false }
+        guard changesGoIntoCarry, target.hasPendingPixelWrites else {
+            return try target.encodePixelWriteBack(into: commands)
+        }
         try encodeKeepPicture(into: commands)
-        return true
+        let wroteBack = try target.encodePixelWriteBack(into: commands)
+        try encodeKeepChanged(into: commands)
+        return wroteBack
     }
 
-    /// 控えを積んだコマンドが投入されたことを記録する。**投入の後でだけ呼ぶ。**
-    func notePictureKeptBeforeChange() { keepsPictureBeforeChange = true }
-
-    /// 描く先 (効果を通した絵) を、変える前の絵の控え (``EffectPipeline/pictureBeforeChange()``) へ
-    /// 写す blit を積む。待つ仕掛けは控えへの写し (`encodeCarry`) と同じ形。
+    /// 描く先を、書き戻す前の写し (``EffectPipeline/pictureBeforeChange()``) へ写す blit を積む。
+    /// 待つ仕掛けは控えへの写し (`encodeCarry`) と同じ形。
     func encodeKeepPicture(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
         let kept = try effectPipeline().pictureBeforeChange()
         guard let encoder = commands.makeComputeCommandEncoder() else {
@@ -302,14 +309,11 @@ extension Canvas {
         encoder.endEncoding()
     }
 
-    /// 描く先のうち、変える前の絵の控えと**違う画素だけ**を、効果を通す前の絵の控え
-    /// (``EffectPipeline/carry()``) へ重ねる段を積む ([#1524])。続けて控えを描く先へ戻すと
-    /// (``encodeCarryRestore(into:afterKeepingChanges:)``)、止まっている間に変えた分が効果を通す前の
-    /// 絵の上に載る。
+    /// 描く先のうち、書き戻す前の絵 (``EffectPipeline/pictureBeforeChange()``) と**違う画素だけ**を、
+    /// 効果を通す前の絵の控え (``EffectPipeline/carry()``) へ写す段を積む ([#1524])。画素を書き戻す
+    /// たびに、その直後に積む (``encodePixelWriteBackKeepingCarry(into:)``)。
     ///
     /// **段の並びの外に置く。** 効果ではないので、効果の数 (``effectPassesEncoded``) にも入れない。
-    /// 枠 (引数のテーブル) は段と同じ採番から取る — 同じコマンドで後に続く段と同じテーブルを
-    /// 書き換えないため。
     ///
     /// 書き込む先は前の内容を読む (`.load`)。捨てた画素 (変わっていない画素) に、効果を通す前の
     /// 絵がそのまま残るためである。
@@ -320,7 +324,8 @@ extension Canvas {
         guard let carry = pipeline.existingCarry else { return }
         let kept = try pipeline.pictureBeforeChange()
         let state = try pipeline.keepChangedState()
-        let table = try pipeline.table(at: takeStagePass())
+        // 段の採番からは取らない — 出力段からも積まれるため (``EffectPipeline/keepChangedTable()``)
+        let table = try pipeline.keepChangedTable()
         table.setTexture(target.texture.gpuResourceID, index: EffectPipeline.sourceTextureIndex)
         table.setTexture(kept.texture.gpuResourceID, index: EffectPipeline.pairedTextureIndex)
 

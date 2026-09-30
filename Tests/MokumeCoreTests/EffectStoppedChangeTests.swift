@@ -8,11 +8,12 @@ import Testing
 
 /// 効果を通したフレームの後、止まっている間のコールバックで描く先を変えたとき ([#1524])。
 ///
-/// **止まっている間に変えたものは、次のフレームでは効果を通す前の絵の上に載る。** フレームの外で
-/// 読む画素は効果を通した絵 (出口と同じ 1 枚) なので、変える前の効果を通した絵を控え、次の
-/// フレームの頭で**違う画素だけ**を効果を通す前の絵へ重ねてから戻す (甲-1)。直す前は、書いた画素が
-/// 写しの全面 (効果を通した絵) ごと書き戻されて効果が焼き込まれるか、次のフレームの頭が効果を
-/// 通す前の絵で上書きして、変えた分が消えていた。
+/// **止まっている間に変えたものは、次のフレームでは効果を通す前の絵の上に載る。** 止まっている間は
+/// 描く先 (効果を通した絵・読む画素と画面はこれ) と控え (効果を通す前の絵・次のフレームの入り) の
+/// 2 枚へ同じ変更を加える。描き切る図形・絵・背景は控えへも同じ列で描き、書いた画素は書き戻す
+/// たびに**値が変わった画素だけ**を控えへ写す (甲-1)。直す前は、書いた画素が写しの全面 (効果を
+/// 通した絵) ごと書き戻されて効果が焼き込まれるか、次のフレームの頭が効果を通す前の絵で上書き
+/// して、変えた分が消えていた。
 ///
 /// 止まっている間のコールバックは、面の上では持ち越しの区間 (``Canvas/carriesOver``) である。
 /// ここではその印を立てて模す。ランタイムを通す形は、下の「ランタイムを通す」が見る。
@@ -262,6 +263,93 @@ struct EffectStoppedChangeTests {
         }
     }
 
+    /// 止まっている間に置く、**結果が下地と混ざる**もの ([#1524] の反証 1)。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    enum Mixed: CaseIterable, CustomTestStringConvertible {
+        /// 縁が AA で下地と混ざる円。
+        case antialiasedEdge
+        /// 半透明の塗り。
+        case translucent
+        /// 足す混ぜ方。
+        case additive
+        /// アルファを持つ絵。
+        case translucentImage
+
+        var testDescription: String {
+            switch self {
+            case .antialiasedEdge: "縁の AA"
+            case .translucent: "半透明の塗り"
+            case .additive: "足す混ぜ方"
+            case .translucentImage: "アルファのある image()"
+            }
+        }
+
+        func place(on canvas: Canvas, picture: Image) {
+            canvas.noStroke()
+            switch self {
+            case .antialiasedEdge:
+                canvas.fill(EffectStoppedChangeTests.red)
+                // 縁が隅の近く (周辺減光がいちばん効く所) を通る大きさ
+                canvas.circle(80, 80, 224)
+            case .translucent:
+                canvas.fill(LinearRGBA(straightRed: 1, green: 0, blue: 0, alpha: 0.5))
+                canvas.rect(0, 0, 160, 160)
+            case .additive:
+                canvas.blendMode(.add)
+                canvas.fill(LinearRGBA.linear(red: 0.2, green: 0.1, blue: 0))
+                canvas.rect(0, 0, 160, 160)
+                canvas.blendMode(.blend)
+            case .translucentImage:
+                canvas.image(picture, 0, 0, 160, 160)
+            }
+        }
+    }
+
+    /// 反証 1・2 — 止まっている間に置いた、下地と混ざるものは、描き切らせても描き切らせなくても
+    /// 次のフレームで同じ絵になる (効果を通す前の絵の上で混ざる)。
+    ///
+    /// **比べる相手は、置いただけで描き切らせずに持ち越した形である。** 持ち越したものは次の
+    /// フレームの頭で効果を通す前の絵を戻した後に描かれるので、そこで混ざる。描き切らせた形は、
+    /// 直す前は効果を通した絵の上で混ざった結果を持ち越し、混ざった分の効果が次のフレームで
+    /// もう 1 回掛かった (`7ed3483`)。さらに前 (main) は、描き切らせたものが消えた。
+    ///
+    /// 隅 (周辺減光がいちばん効く所) を含む全画素で比べる。
+    @Test(
+        "止まっている間に置いた、下地と混ざるものは、描き切らせても次のフレームで同じ絵になる",
+        arguments: Surface.allCases, Mixed.allCases)
+    func mixedChangesMatchWhetherOrNotSettled(surface: Surface, mixed: Mixed) throws {
+        func secondFrame(settling: Bool) throws -> PixelBuffer {
+            let canvas = try surface.make()
+            let picture = try canvas.createImage(4, 4)
+            picture.fill(LinearRGBA(straightRed: 0, green: 0.2, blue: 1, alpha: 0.4))
+            try Self.firstFrame(canvas)
+            Self.whileStopped(canvas) {
+                mixed.place(on: canvas, picture: picture)
+                if settling { _ = canvas.get(0, 0) }
+            }
+            return try Self.secondFrame(canvas)
+        }
+        let settled = try secondFrame(settling: true)
+        let carried = try secondFrame(settling: false)
+        let untouched = try Self.untouchedSecondFrame(surface)
+        // 検査の前提: 置いたものが 2 枚目に出ている
+        try #require(carried[3, 3] != untouched[3, 3], "置いたものが隅に届いていない")
+
+        var differing = 0
+        var worst = (x: 0, y: 0)
+        for y in 0..<settled.height {
+            for x in 0..<settled.width where settled[x, y] != carried[x, y] {
+                if differing == 0 { worst = (x, y) }
+                differing += 1
+            }
+        }
+        #expect(
+            differing == 0,
+            "描き切らせると \(differing) 画素が違う ((\(worst.x), \(worst.y)): \(settled[worst.x, worst.y]) / 持ち越し \(carried[worst.x, worst.y]))"
+        )
+    }
+
     // MARK: - 払うのは変えたときだけ
 
     /// 完了条件 6 — 効果を頼まない面と、効果を頼んでも止まっている間に描く先を変えない面は、
@@ -281,6 +369,7 @@ struct EffectStoppedChangeTests {
         _ = try Self.secondFrame(plain)
         #expect((plain.effectPipelineStorage?.picturesBeforeChangeBuilt ?? 0) == 0)
         #expect(plain.effectChangesKeptEncoded == 0)
+        #expect(plain.effectCarryDrawsEncoded == 0)
 
         // 効果を頼んで、止まっている間は読むだけ
         let reading = try surface.make()
@@ -291,6 +380,8 @@ struct EffectStoppedChangeTests {
         }
         #expect(reading.effectPipelineStorage?.picturesBeforeChangeBuilt == 0, "読んだだけで控えを作った")
         #expect(reading.effectChangesKeptEncoded == 0, "変えていないのに重ねる段を積んだ")
+        #expect(reading.effectCarryDrawsEncoded == 0, "描き切っていないのに効果を通す前の絵へ描いた")
+        #expect(reading.effectPipelineStorage?.carryDepthsBuilt == 0, "描き切っていないのに奥行きを作った")
     }
 
     /// 完了条件 6 — 変えるたびに控えを作り直さない。長く回しても、置き場の確保が積み上がらない。
@@ -316,14 +407,17 @@ struct EffectStoppedChangeTests {
         let tables = pipeline.tablesBuilt
         let buffers = pipeline.buffersBuilt
         let kept = canvas.effectChangesKeptEncoded
+        let drawn = canvas.effectCarryDrawsEncoded
         for index in 1..<60 { try cycle(index) }
 
         #expect(pipeline.picturesBeforeChangeBuilt == 1, "変える前の絵の控えを作り直した")
+        #expect(pipeline.carryDepthsBuilt == 1, "効果を通す前の絵へ描く奥行きを作り直した")
         #expect(pipeline.carriesBuilt == 1)
         #expect(pipeline.tablesBuilt == tables)
         #expect(pipeline.buffersBuilt == buffers)
-        // 変えたのは毎回なので、重ねる段も毎回 1 つ
+        // 書いたのは毎回なので、写す段も毎回 1 つ。描き切ったのは偶数回だけ (2, 4, … 58 の 29 回)
         #expect(canvas.effectChangesKeptEncoded - kept == 59)
+        #expect(canvas.effectCarryDrawsEncoded - drawn == 29)
     }
 
     // MARK: - ランタイムを通す
