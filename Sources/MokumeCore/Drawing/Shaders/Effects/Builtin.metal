@@ -189,7 +189,13 @@ float4 effect(Pixel in, Values values) {
         // 色だけが残る (乗算済みの決まりが破れる)
         float alpha = (red.a + in.color.a + blue.a) / 3.0;
         float3 mixed = float3(red.r, in.color.g, blue.b);
-        return float4(min(mixed, float3(alpha)), alpha);
+        // 色は「不透明度 + 3 枚で色が不透明度を越えていた量」までに締める。入りが範囲の内なら
+        // 越えていた量は 0 で、色 ≤ 不透明度になる。**入りに元からある越え (1 を越える光・
+        // #1057) はそのまま運ぶ** — 一律に不透明度で締めると、作業空間が持てる明るさを潰す
+        // (ADR-0011 決定 1・#1817)。拡大の段 (`mokume_enlarge`・#1638) と同じ締め方である
+        float3 beyond = max(max(red.rgb - red.a, in.color.rgb - in.color.a),
+                            max(blue.rgb - blue.a, float3(0.0)));
+        return float4(min(mixed, alpha + beyond), alpha);
     }
 
     // 色調整。明るさ・対比・彩度。**どれも 0 で無効**

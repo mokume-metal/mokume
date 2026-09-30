@@ -454,6 +454,83 @@ struct EffectFormulaTests {
         }
     }
 
+    /// [#1817] の完了条件 1。**1 を越える光も、一様な面なら変わらない** — 作業空間は範囲の
+    /// 外の値を捨てず、畳むのは出力段だけである ([ADR-0011] 決定 1・#1057)。直す前は色を
+    /// 平均の不透明度で一律に締めていたので、どの画素も 1 へ潰れた。
+    ///
+    /// 成分ごとに越え方を変え (4・2・1.5)、締める上限を成分ごとに持つことも見る。許す幅は
+    /// 上の検査と同じ理由で 1e-6 (平均の不透明度が 1 目盛り下がると、上限も同じだけ下がる)。
+    ///
+    /// [#1817]: https://github.com/mokume-metal/mokume/issues/1817
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    @Test("色ずれは、1 を越える光の一様な面も変えない")
+    func fringeLeavesAUniformSurfaceBeyondTheDisplayRangeAlone() throws {
+        let color = Premultiplied(4, 2, 1.5)
+        try Self.requireRepresentable(color.channels)
+        let canvas = try makeCanvas(width: 33, height: 33)
+        let pixels = try uniform(color, [.fringe(amount: 1)], on: canvas)
+        for (x, y) in [(0, 0), (32, 32), (0, 16), (16, 0), (16, 16), (5, 27)] {
+            Self.expectBracketed(pixels[x, y], color, slack: 1e-6, "(\(x), \(y))")
+        }
+    }
+
+    /// [#1817] の本文の再現。黒い地の上の、色 4 (不透明度 1) の四角。**ずれの届かない内側は
+    /// 4 のまま残る。** 四角の縁では地の黒が混ざるが、中心で読む 3 枚はどれも四角の中である。
+    ///
+    /// [#1817]: https://github.com/mokume-metal/mokume/issues/1817
+    @Test("色ずれは、黒い地の上の 1 を越える四角の内側を 1 へ潰さない")
+    func fringeKeepsTheLightInsideABrightRectangle() throws {
+        let canvas = try makeCanvas(width: 128, height: 96)
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.fill(LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1))
+            canvas.rect(32, 24, 64, 48)
+            canvas.effects([.fringe(amount: 1)])
+        }
+        let pixels = try canvas.target.readPixels()
+        for (x, y) in [(64, 48), (40, 30), (88, 66)] {
+            Self.expectBracketed(pixels[x, y], Premultiplied(4, 4, 4), slack: 1e-6, "(\(x), \(y))")
+        }
+    }
+
+    /// [#1817] の完了条件 2。**入りが乗算済みの範囲の内なら、ずらした先が透明な縁でも、色は
+    /// 不透明度を越えない** — 締めを緩めても、締めていた役目 (ずらした先が透明なときに色だけが
+    /// 残らない) は残る。
+    ///
+    /// 透明な地の上の白い四角。縁では、赤か青を読んだ先が地に掛かって不透明度の平均が下がる
+    /// 一方、緑は四角の中の 1 のままなので、締めなければ緑が不透明度を越える。そういう縁が
+    /// 実際にあることを先に確かめる。比べは同じ画素の 2 成分で、どちらも同じ単精度の値から
+    /// Float16 へ落ちるので、幅は取らない。
+    ///
+    /// [#1817]: https://github.com/mokume-metal/mokume/issues/1817
+    @Test("色ずれは、範囲の内の入りなら、ずらした先が透明な縁でも色を不透明度より上にしない")
+    func fringeKeepsTheColourWithinTheOpacityAtATransparentEdge() throws {
+        let canvas = try makeCanvas(width: 33, height: 33)
+        try canvas.draw {
+            canvas.background(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+            canvas.noStroke()
+            canvas.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.rect(4, 4, 25, 25)
+            canvas.effects([.fringe(amount: 1)])
+        }
+        let pixels = try canvas.target.readPixels()
+        var edges = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                let pixel = pixels[x, y]
+                if pixel.alpha > 0.01, pixel.alpha < 0.99 { edges += 1 }
+                for (name, value) in [("赤", pixel.red), ("緑", pixel.green), ("青", pixel.blue)] {
+                    #expect(
+                        value <= pixel.alpha,
+                        "(\(x), \(y)) の\(name)が \(value) で、不透明度 \(pixel.alpha) を越えた")
+                }
+            }
+        }
+        // 半透明の縁ができている (締めが効く場面を踏んでいる)
+        #expect(edges > 0, "ずらした先が地に掛かる縁が無い — 絵の選び方の前提が崩れている")
+    }
+
     /// 1 画素ごとに色の替わる縦縞。**わずかでもずらして読めば、隣の縞の色が混ざる。**
     private func stripes(on canvas: Canvas, _ effects: [Effect]) throws -> PixelBuffer {
         try canvas.draw {
