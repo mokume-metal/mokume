@@ -15,7 +15,9 @@ import Testing
 /// 写しを書き戻すだけで、描く先には触らなかった。
 ///
 /// 止まっている間のコールバックは、面の上では持ち越しの区間 (``Canvas/carriesOver``) である。
-/// ここではその印を立てて模す。ランタイムを通す `save()` は `EffectStoppedChangeTests` が見る。
+/// ここではその印を立てて模す (出す先を読む口が頭で追い付く形)。ランタイムがコールバックを配った
+/// 直後に追い付く形と、窓・共有の面が読む出す先は `StoppedUpscaleOutletsTests`、ランタイムを通す
+/// `save()` は `EffectStoppedChangeTests` が見る。
 ///
 /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
 @Suite(
@@ -279,6 +281,89 @@ struct StoppedUpscaleTests {
         canvas.failEffectPassForTesting = nil
         #expect(Self.isRed(try Self.shown(canvas)), "直ったあとの出力段に書いた画素が出ていない")
         #expect(!canvas.target.hasPendingPixelWrites)
+        #expect(!canvas.needsOutputEnlargement)
+    }
+
+    // MARK: - CPU の読み出し
+
+    /// 出す先を CPU で読む口 (`readPixels()`・`encodeForDisplay()`・`writePNG(to:)` の元) も、
+    /// 止まっている間に変わった描く先を広げ直してから読む。出力段と食い違わない。
+    @Test("CPU で読む出す先にも、止まっている間に変えたものが出る", arguments: Change.allCases)
+    func cpuReadsTheCaughtUpPicture(change: Change) throws {
+        let canvas = try Self.changedWhileStopped(density: 0.5, effects: false, change: change)
+        let read = try canvas.output.readPixels()[80, 80]
+
+        switch change {
+        case .writeBlock, .circleThenRead:
+            #expect(read.red > 0.9 && read.green < 0.1 && read.blue < 0.1, "CPU の読み出しに出ていない: \(read)")
+        case .graphicsSettled:
+            #expect(read.green > 0.9 && read.red < 0.1 && read.blue < 0.1, "CPU の読み出しに出ていない: \(read)")
+        }
+    }
+
+    // MARK: - 時間方向の位置
+
+    /// 出す先の絵の、暗い矩形の左の縁と上の縁の位置 (出す画素・小数)。
+    ///
+    /// 暗い所の量を縁をまたぐ幅で足して、縁からの距離に直す。sRGB の階調のまま足すので絶対の位置には
+    /// 偏りがあるが、**同じ縁の 2 つの絵の差**を見るぶんには揃う。
+    private static func edges(of image: DisplayImage) -> (left: Double, top: Double) {
+        func dark(_ x: Int, _ y: Int) -> Double { 1 - Double(image[x, y].red) / 255 }
+        var left = 0.0
+        for x in 30..<50 { left += dark(x, 70) }
+        var top = 0.0
+        for y in 40..<60 { top += dark(70, y) }
+        return (50 - left, 60 - top)
+    }
+
+    /// 時間方向で、止まっている間に離れた所を変えても、変えていない場所の絵は動かない。
+    ///
+    /// 時間方向は描く位置をフレームごとに画素の内側で揺らし、広げるときに戻す。追い付きが戻さずに
+    /// 広げると、揺らしの分 (最大で描く画素 0.5 個 = 出す画素 1 個) だけ絵全体がずれた。8 枚目の
+    /// 揺らしは横 -0.4375・縦 +0.389 (描く画素) で、ずれが最も大きい枚のひとつである。
+    @Test("時間方向: 追い付きは最後のフレームの揺らしを戻して、変えていない場所を動かさない")
+    func temporalCatchUpKeepsTheUnchangedPicturePut() throws {
+        let canvas = try Self.makeCanvas(density: 0.5, upscale: .temporal)
+        for _ in 0..<8 {
+            try canvas.draw {
+                canvas.background(255)
+                canvas.noStroke()
+                canvas.fill(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+                canvas.rect(40, 50, 60, 40)
+            }
+        }
+        let before = Self.edges(of: try Self.shown(canvas))
+        #expect(abs(before.left - 40) < 2 && abs(before.top - 50) < 2, "前提: 縁が矩形の位置にある \(before)")
+
+        // 矩形から離れた隅を 1 画素だけ変える
+        Self.whileStopped(canvas) { canvas.set(2, 2, Self.red) }
+        let after = Self.edges(of: try Self.shown(canvas))
+
+        #expect(abs(after.left - before.left) < 0.3, "左の縁が動いた: \(before.left) → \(after.left)")
+        #expect(abs(after.top - before.top) < 0.3, "上の縁が動いた: \(before.top) → \(after.top)")
+    }
+
+    // MARK: - 拡大が積めなかったフレーム
+
+    /// フレームの終わりの拡大は、失敗しても投げない。**積めなかったのに「広げた」ことにしない** —
+    /// 出す先は古い絵のままなので、次に出力段が読むときに広げ直す。
+    @Test("拡大が積めなかったフレームの後は、出力段が広げ直す")
+    func afterAFailedUpscaleTheOutputStageCatchesUp() throws {
+        let canvas = try Self.makeCanvas(density: 0.5)
+        try Self.firstFrame(canvas, effects: false)
+
+        // 拡大の段は枠 0。効果は頼まないので、このフレームで積む段はそれだけ
+        canvas.failEffectPassForTesting = 0
+        try canvas.draw {
+            canvas.background(235)
+            canvas.noStroke()
+            canvas.fill(Self.red)
+            canvas.circle(80, 80, 40)
+        }
+        canvas.failEffectPassForTesting = nil
+
+        #expect(canvas.needsOutputEnlargement, "拡大が積めなかったのに、追い付いたことになった")
+        #expect(Self.isRed(try Self.shown(canvas)), "積めなかったフレームの絵が、出力段に出ていない")
         #expect(!canvas.needsOutputEnlargement)
     }
 }

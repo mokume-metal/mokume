@@ -90,9 +90,12 @@ final class UpscaleStage {
     /// このフレームで描く位置をどれだけ揺らすか (描く先の画素)。
     ///
     /// 空間方向では揺らさない — 揺らした時点で、同じ入力から同じ絵という前提が崩れる。
-    var jitter: SIMD2<Float> {
+    var jitter: SIMD2<Float> { jitter(atFrame: framesScaled) }
+
+    /// `frame` 枚目 (0 始まり) を描くときの揺らし。
+    private func jitter(atFrame frame: Int) -> SIMD2<Float> {
         guard kind.usesFrameHistory else { return .zero }
-        let index = framesScaled % Self.jitterPeriod
+        let index = frame % Self.jitterPeriod
         // ハルトン列。**少ない枚数でも画素の中に均されて並ぶ**ので、8 枚で角が取れる
         return SIMD2(
             Self.radicalInverse(index + 1, base: 2) - 0.5,
@@ -104,9 +107,23 @@ final class UpscaleStage {
     /// 描く位置を右へずらして描いた絵は、右へずれて写っている。読む位置を同じだけ
     /// 右へずらせば元の位置が読める。**戻すのは広げる補間の中**なので、余分なぼけが
     /// 1 段も入らない。
-    var jitterInSource: SIMD2<Float> {
-        let offset = jitter
-        return SIMD2(offset.x / Float(drawnWidth), offset.y / Float(drawnHeight))
+    var jitterInSource: SIMD2<Float> { inSource(jitter) }
+
+    /// 最後に広げたフレームの揺らしを、入りの絵を読む位置へ写したもの ([#1882])。
+    ///
+    /// **フレームの外 (止まっている間) に描く先を広げ直すとき、描く先に残っているのは最後に
+    /// 描いたフレームの絵**で、それは最後のフレームの揺らしでずれている。いまの ``jitterInSource``
+    /// は次のフレームの揺らしなので、戻す量を取り違える。まだ 1 枚も広げていなければ、次に描く
+    /// フレームの揺らしがそのまま最後のものである。
+    ///
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    var lastJitterInSource: SIMD2<Float> {
+        guard framesScaled > 0 else { return jitterInSource }
+        return inSource(jitter(atFrame: framesScaled - 1))
+    }
+
+    private func inSource(_ offset: SIMD2<Float>) -> SIMD2<Float> {
+        SIMD2(offset.x / Float(drawnWidth), offset.y / Float(drawnHeight))
     }
 
     /// 1 枚ぶん進める。

@@ -395,6 +395,10 @@ import MokumeDiagnostics
     /// 待つ。行の間隔が幅ぶんより広いことがあるので、値としての ``PixelBuffer`` へ移す
     /// ときに詰める。
     public func readPixels() throws(RenderFailure) -> PixelBuffer {
+        // 出す先なら、止まっている間に変わった描く先を広げ直してから読む ([#1882])
+        //
+        // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+        try catchUpWithDrawnPicture()
         try gpu.settle()
         let mirror = try mirrorForReading()
         let componentsPerRow = width * 4
