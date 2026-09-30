@@ -107,6 +107,11 @@ extension Canvas {
         case computeOutsideFrame
         /// 1 回の計算に束ねられる本数を超えた。
         case tooManyComputeBuffers
+        /// 別の面のぶつかる頼みのために、この面の未投入の計算を先に投入しようとして失敗した
+        /// ([#1870])。計算は溜めたまま、この面の描き切りが流す。
+        ///
+        /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+        case computationsSentAheadFailed
 
         /// フレームの外で影の設定を書いた。
         case shadowOutsideFrame

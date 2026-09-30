@@ -134,11 +134,14 @@ extension Canvas {
     ///
     /// **順序を要するのは、読み書きが重なるときだけ**で、規則は口の切れ目 (``groups(of:)``) と
     /// 同じ ``ComputeAccess`` である。重ならなければ何もしない — 単一の面や、ぶつからない複数の面は、
-    /// 今までどおり各面の描き切りで流れる。
+    /// 今までどおり各面の描き切りで流れる。**頼みごとの並びは引く必要があるときまで集めない**
+    /// (`asked` は `@autoclosure`) ので、相手が何も溜めていない頼みは、集合を作らずに抜ける。
     ///
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
-    private func submitEarlierComputations(before asked: ComputeAccess<ObjectIdentifier>) {
-        for holder in gpu.pendingComputationHolders.holders(mustPrecede: asked, except: self) {
+    private func submitEarlierComputations(
+        before asked: @autoclosure () -> ComputeAccess<ObjectIdentifier>
+    ) {
+        for holder in gpu.pendingComputationHolders.holders(mustPrecede: asked(), except: self) {
             holder.submitPendingComputations()
         }
     }
@@ -347,19 +350,26 @@ extension Canvas {
     /// 描き切った回数には触れない** (途中の描き切りが持つ既知の破れ #1656・#1657 を持ち込まない)。
     /// 環はこの後の描き切りがもう一度進める。
     ///
-    /// **失敗は絵を落とさず、警告して溜めたままにする。** 頼んだ順は保てないが、この面の描き切りが
-    /// 同じものを流し直す。
+    /// **失敗は絵を落とさず、溜めたままにする。** 頼んだ順は保てないが、この面の描き切りが
+    /// 同じものを流し直す。注意は 1 度だけ言い、**この面のそのフレームの間は、同じ試みを繰り返さない**
+    /// — 環の待ちは最長 5 秒で投げるので、詰まった GPU で頼むたびに試すと、1 回の `particles()`
+    /// (計算が 3 本以上) で「5 秒 × 本数」止まる。直す前は描き切りの 1 回だった。
     ///
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     func submitPendingComputations() {
-        guard !pendingComputations.isEmpty else { return }
-        do {
+        guard !pendingComputations.isEmpty, earlySubmissionFailedFrame != framesDrawn else { return }
+        earlySubmissionsAttempted += 1
+        do throws(RenderFailure) {
+            if let failEarlySubmissionForTesting { throw failEarlySubmissionForTesting }
             try frameRing.advance()
             try submitPendingComputationsAndUploads()
         } catch {
-            Diagnostics.warn(
+            earlySubmissionFailedFrame = framesDrawn
+            warnOnce(
+                .computationsSentAheadFailed,
                 "Could not send the computations asked for on this surface ahead of a later "
-                    + "request from another surface, so they may run after it: \(error.headline)")
+                    + "request from another surface, so they may run after it: \(error.headline). "
+                    + "They stay queued, and this surface will not try again in this frame")
         }
     }
 
@@ -430,6 +440,8 @@ extension Canvas {
 
 // 面をまたいで、計算を頼んだ順に効かせるときの、登録簿 (``PendingComputations``) への答え。
 extension Canvas: PendingComputationHolder {
+    var hasPendingComputations: Bool { !pendingComputations.isEmpty }
+
     var pendingAccess: ComputeAccess<ObjectIdentifier> {
         // 描いていない間の溜めと、閉じ忘れたまま本体のフレームを越えた描き場所の溜めは、順を守る
         // 相手ではない。後者は次の `beginDraw()` が描かずに捨てるもの (#1622) で、ぶつかる頼みが

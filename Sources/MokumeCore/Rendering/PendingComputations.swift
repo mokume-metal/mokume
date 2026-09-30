@@ -41,6 +41,10 @@ struct ComputeAccess<ID: Hashable> {
 
 /// 未投入の計算を持ちうる面 (``Canvas``)。登録簿 (``PendingComputations``) が照会する。
 @MainActor protocol PendingComputationHolder: AnyObject {
+    /// 投入していない計算があるか。**並びを集めずに答える安い問い** — 相手が何も溜めていない
+    /// 頼みは、読み書きの集合を作る前に抜ける。
+    var hasPendingComputations: Bool { get }
+
     /// 投入していない計算が読む・書く並び。**先に頼んだ順を守る相手ではないもの (描かない間・
     /// 閉じ忘れて捨てられるフレーム) は空を返す。**
     var pendingAccess: ComputeAccess<ObjectIdentifier> { get }
@@ -88,16 +92,28 @@ struct ComputeAccess<ID: Hashable> {
         entries.append(Entry(holder: holder))
     }
 
+    /// 相手の溜めを引いた回数。**単一の面や、相手が何も溜めていない頼みでは増えない**ことを
+    /// 検査が数で見る (絵にも投入の数にも出ない費用なので)。
+    private(set) var accessLookups = 0
+
     /// `asker` 以外で、未投入の計算が `asked` より先に走らねばならないもの。載った順に並ぶ。
     ///
-    /// 単一の面では、載っているのが `asker` だけなので、相手を調べずに空を返す。
+    /// **`asked` は引く必要があるときまで作らない** (`@autoclosure`)。単一の面では載っているのが
+    /// `asker` だけで、複数の面でも相手が何も溜めていなければ、読み書きの集合を作らずに空を返す。
     func holders(
-        mustPrecede asked: ComputeAccess<ObjectIdentifier>, except asker: any PendingComputationHolder
+        mustPrecede asked: @autoclosure () -> ComputeAccess<ObjectIdentifier>,
+        except asker: any PendingComputationHolder
     ) -> [any PendingComputationHolder] {
         entries.removeAll { $0.holder == nil }
-        return entries.compactMap { entry in
-            guard let holder = entry.holder, holder !== asker else { return nil }
-            return holder.pendingAccess.mustPrecede(asked) ? holder : nil
+        var candidates: [any PendingComputationHolder] = []
+        for entry in entries {
+            guard let holder = entry.holder, holder !== asker, holder.hasPendingComputations
+            else { continue }
+            candidates.append(holder)
         }
+        guard !candidates.isEmpty else { return [] }
+        accessLookups += 1
+        let asked = asked()
+        return candidates.filter { $0.pendingAccess.mustPrecede(asked) }
     }
 }
