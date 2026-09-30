@@ -5,7 +5,7 @@
 extension Sketch {
     /// 頂点を並べ始める。``vertex(_:_:)`` で点を置き、``endShape(_:)`` で描く。
     ///
-    /// **同じ点の並びが、読み方 (``VertexKind``) で別の絵になる。** 下の 6 枚はどれも
+    /// **同じ点の並びが、読み方 (``VertexKind``) で別の絵になる。** 下の 7 枚はどれも
     /// まったく同じ 6 点を渡していて、変えたのは `beginShape` の引数だけである。
     ///
     /// 既定の ``VertexKind/polygon`` は、置いた点を順に結んだ**周をなす 1 つの形**として
@@ -177,6 +177,40 @@ extension Sketch {
     ///   }
     /// }
     ///
+    /// ``VertexKind/quads`` は 4 点ずつ独立した**四角**として読む。6 点なら 1 枚の四角が出て、
+    /// 余りの 2 点は捨てられる。四角を三角形 2 枚に手で割って、6 点を置かなくてよい。
+    ///
+    /// **線は 4 辺の輪郭だけ**で、対角線は引かれない。下では**下地と同じ色の線**を引いているが、
+    /// `.triangleStrip` や `.triangleFan` と違い、**中に切れ目が出ない**。
+    ///
+    /// 塗りは形に応じて 2 枚に割る。凸なら 1 つ目と 3 つ目を結ぶ対角線で、凹んでいれば凹んだ点から
+    /// 引く対角線 (形の内側を通る) で割る。辺が交わる 4 点は `quad()` と同じ砂時計に塗る。
+    /// 頂点ごとの色や読み取り位置は、この対角線を境に移る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(89, 191, 242)
+    ///     stroke(23, 26, 31)
+    ///     strokeWeight(4)
+    ///     beginShape(.quads)
+    ///     vertex(50, 60)
+    ///     vertex(230, 30)
+    ///     vertex(350, 90)
+    ///     vertex(340, 250)
+    ///     vertex(150, 275)
+    ///     vertex(60, 215)
+    ///     endShape()
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 水色の四角が 1 枚。下地と同じ色の線は縁にだけあり、中に切れ目は無い -->
+    ///     ![水色の四角が 1 枚。下地と同じ色の線は縁にだけあり、中に切れ目は無い](https://i.gyazo.com/4d9c3b0f38ed4a8d109ea7b15af3b2be.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
     /// ## 奥行きを持たせる
     ///
     /// 頂点を ``vertex(_:_:_:)`` (奥行きつき) で置くと、その形は**立体**になる。
@@ -235,7 +269,8 @@ extension Sketch {
     // shot: 4 snippet=67509c80
     // shot: 5 snippet=1ca6f605
     // shot: 6 snippet=6500dbc8
-    // shot: 7 snippet=1eefdc11
+    // shot: 7 snippet=02f0807a
+    // shot: 8 snippet=1eefdc11
     public func beginShape(_ kind: VertexKind = .polygon) { canvas.beginShape(kind) }
 
     /// 頂点を 1 つ置く。

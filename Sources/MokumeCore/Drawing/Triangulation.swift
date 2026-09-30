@@ -11,7 +11,9 @@ import simd
 ///
 /// `quad` も利用者が 4 点を並べるので凸とは限らないが、ここは通らない。4 点で閉じた割り方
 /// (凹んだ点からの扇・交差した辺の砂時計) を自分で持つ (`Canvas.quadTriangles`・[#1534])。
-/// 耳切りは自己交差した周を砂時計に割れない。
+/// 耳切りは自己交差した周を砂時計に割れない。`beginShape(.quads)` の四角も同じ判定
+/// (`Canvas.quadShape`) で割り、凸と凹みはここを通らない — 耳切りは周の向きで対角線が変わる
+/// うえ、四角の数だけ配列を作ることになる ([#1551])。
 ///
 /// 耳を切る方式を使う。頂点が 3 つになるまで「切り落としてよい角」を探して外していく。
 /// **費用が頂点の数の二乗にならないよう、3 つの手間を省く** ([#1595]):
@@ -39,6 +41,7 @@ import simd
 /// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
 /// [#1211]: https://github.com/mokume-metal/mokume/issues/1211
 /// [#1534]: https://github.com/mokume-metal/mokume/issues/1534
+/// [#1551]: https://github.com/mokume-metal/mokume/issues/1551
 /// [#1595]: https://github.com/mokume-metal/mokume/issues/1595
 nonisolated enum Triangulation {
     /// 単純な多角形を三角形へ分ける。返すのは点の番号の 3 つ組。

@@ -366,6 +366,10 @@ extension Canvas {
         var isClosed: Bool
         /// 塗りを持つか (線と点は持たない)。
         var fills: Bool
+        /// 四角 1 枚の 4 点か (``VertexKind/quads``)。**割り方を四角として決める**
+        /// (``Canvas/fillQuad(_:basis:points:into:)``)。周をなす読み方の 4 点は、ここが偽で
+        /// 耳切りを通る。
+        var splitsAsQuad = false
     }
 
     /// 変換を掛けた頂点。立体だけが使う。
@@ -484,6 +488,18 @@ extension Canvas {
             }
             return built
 
+        case .quads:
+            // 4 点ずつの切り出し。余りは捨てる。輪郭は 4 辺で、割り方は塗るときに決める
+            var built: [Primitive] = []
+            built.reserveCapacity(outer.count / 4)
+            for start in stride(from: 0, to: max(0, outer.count - 3), by: 4) {
+                built.append(
+                    Primitive(
+                        ring: outer[start..<(start + 4)], isClosed: true, fills: true,
+                        splitsAsQuad: true))
+            }
+            return built
+
         case .triangleStrip:
             // **1 枚ずつ巻きを揃える** (帯の規約は OpenGL と同じ)。交互のまま出すと、
             // 隣り合う面の外積が打ち消し合って、書かれていない面の向きが求まらなくなる
@@ -578,6 +594,13 @@ extension Canvas {
                 triangles.append((ring[first], ring[first + 1], ring[first + 2]))
                 return
             }
+            // 四角の列の 4 点は、凸・凹みなら耳切りを通さずに割る。交差した 4 点だけが、
+            // 周をなす形と同じ交わりの分け直しへ進む
+            if primitive.splitsAsQuad, ring.count == 4,
+                fillQuad(ring, basis: basis, points: points, into: &triangles)
+            {
+                return
+            }
             pointScansThisFrame += ring.count
             var flattened: [SIMD2<Float>] = []
             flattened.reserveCapacity(ring.count)
@@ -616,6 +639,47 @@ extension Canvas {
         for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
             triangles.append((merged[a], merged[b], merged[c]))
         }
+    }
+
+    /// 四角の列の 1 枚 (4 点) を、形に応じて三角形 2 枚に割る。割ったら `true`。
+    ///
+    /// 判定は `quad()` と同じ ``Canvas/quadShape(_:_:_:_:)``。立体は外周の平面へ落とした
+    /// 座標で見る。
+    ///
+    /// - **凸**: 1 つ目と 3 つ目を結ぶ対角線。耳切りは周の向きで対角線が変わる (平らな座標で
+    ///   正の向きなら 2 つ目と 4 つ目を結ぶ) ので、通さない
+    /// - **凹み**: 凹んだ点を要にした扇 (凹んだ点からの対角線は必ず形の中を通る)
+    /// - **交差**: 割らずに `false` を返す。砂時計は交点に足す点が要るので、周をなす形の
+    ///   交わりの分け直し (``fillSplit(_:flat:global:points:into:)``) に任せる
+    ///
+    /// **どの割り方も、周と同じ向きの 2 枚を返す** ので、書かなかった面の向きが 4 隅で
+    /// 打ち消し合わない (`placedVertices`)。
+    private func fillQuad(
+        _ ring: ArraySlice<Int>, basis: FlatBasis, points: [BuildingVertex],
+        into triangles: inout [(Int, Int, Int)]
+    ) -> Bool {
+        let first = ring.startIndex
+        pointScansThisFrame += 4
+        let shape = Self.quadShape(
+            basis.flatten(points[ring[first]].position),
+            basis.flatten(points[ring[first + 1]].position),
+            basis.flatten(points[ring[first + 2]].position),
+            basis.flatten(points[ring[first + 3]].position))
+        switch shape {
+        case .convex:
+            triangles.append((ring[first], ring[first + 1], ring[first + 2]))
+            triangles.append((ring[first], ring[first + 2], ring[first + 3]))
+        case .concave(let dent):
+            let apex = ring[first + dent]
+            let next = ring[first + (dent + 1) % 4]
+            let across = ring[first + (dent + 2) % 4]
+            let last = ring[first + (dent + 3) % 4]
+            triangles.append((apex, next, across))
+            triangles.append((apex, across, last))
+        case .crossing:
+            return false
+        }
+        return true
     }
 
     /// 交点で分けた周を三角形へ分ける ([#1538])。
