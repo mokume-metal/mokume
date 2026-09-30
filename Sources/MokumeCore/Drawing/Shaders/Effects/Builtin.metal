@@ -86,6 +86,60 @@ static inline float4 mokume_brightShrink(Pixel in, float threshold, float factor
     return float4(sum / float(size * size), 0.0);
 }
 
+/// 読んだ絵が持っていた、範囲の外の明るさ (#1638・#1817)。**色を不透明度で締める段が、入りに
+/// 元からある越えを運ぶための材料**で、締める段はどれもこれを通す (拡大・色ずれ)。
+///
+/// 乗算済みの成分ごとに 2 つを持つ:
+///
+/// - `beyond`: 色が不透明度を越えていた量 (0 以上)。不透明度 0 で色を持つ光 (透明な地へ
+///   加算した光) も、これで運ぶ
+/// - `straight`: 不透明度のある絵の、乗算を戻した値の最大 (1 以上)。`unbounded` が立った
+///   成分では使わない — 不透明度 0 で色を持つ絵の乗算を戻した値は、上限が無い
+///
+/// 入りが乗算済みの範囲の内 (色 0…不透明度) なら、`beyond` は 0・`straight` は 1 のままで、
+/// 締めは `min(色, 不透明度)` と 1 ビットも変わらない。
+struct MokumeReach {
+    float3 beyond;
+    float3 straight;
+    float3 unbounded;
+};
+
+static inline MokumeReach mokume_reachNone() {
+    MokumeReach reach;
+    reach.beyond = float3(0.0);
+    reach.straight = float3(1.0);
+    reach.unbounded = float3(0.0);
+    return reach;
+}
+
+/// 乗算済みの色 `color` (成分ごとの不透明度 `alpha`) を読んだことを、`reach` へ足す。
+/// 成分ごとに別の絵から取るとき (色ずれ) は、成分ごとの不透明度を渡す。
+static inline MokumeReach mokume_reachOf(MokumeReach reach, float3 color, float3 alpha) {
+    reach.beyond = max(reach.beyond, color - alpha);
+    bool3 opaque = alpha > 0.0;
+    // 不透明度 0 の成分は割らない (選ぶ前に 1 を入れておく — 0 で割った値は選ばれなくても
+    // 速い数学では NaN を持ち込みうる)
+    float3 safe = select(float3(1.0), alpha, opaque);
+    reach.straight = max(reach.straight, select(float3(1.0), color / safe, opaque));
+    float3 transparent = select(float3(1.0), float3(0.0), opaque);
+    float3 lit = select(float3(0.0), float3(1.0), color > 0.0);
+    reach.unbounded = max(reach.unbounded, transparent * lit);
+    return reach;
+}
+
+/// 色 `rgb` を、不透明度 `alpha` の出りへ置ける上限までに締める ([#1817])。
+///
+/// **上限は 2 つの小さいほう** — 「不透明度 + 越えていた量」と「不透明度 × 乗算を戻した値の
+/// 最大」。前者だけでは、1 を越える光が透明と接する縁で不透明度だけが下がり、乗算を戻した色が
+/// 読んだどの絵よりも明るくなる (色 4 を不透明度 1/3 で置くと、戻して 10)。後者だけでは、透明な
+/// 地へ加算した光 (不透明度 0) を運べない。どちらも、入りに無い明るさを段が作らないための上限で
+/// ある ([ADR-0011] 決定 1)。負の値は締めない (下からは締めない)。
+static inline float3 mokume_withinReach(float3 rgb, float alpha, MokumeReach reach) {
+    float3 limit = alpha + reach.beyond;
+    limit = select(min(limit, alpha * reach.straight), limit, reach.unbounded > 0.5);
+    return min(rgb, limit);
+}
+
 /// 描く細かさの絵を、出す細かさへ広げる (Catmull-Rom の三次補間)。
 ///
 /// **乗算済みのまま補間する。** 掛け戻してから混ぜると、透明な画素の色 (無い) が
@@ -100,11 +154,12 @@ static inline float4 mokume_brightShrink(Pixel in, float threshold, float factor
 /// - 各チャンネルを、読んだ 4×4 画素のそのチャンネルの最小・最大へ締める。不透明度は
 ///   1 を越えず、負にもならない。上への振れも捨てるので、負の側だけを 0 へ締めて
 ///   いた頃より光の量が増えにくい
-/// - そのうえで、色を「不透明度 + 近傍で色が不透明度を越えていた量」までに締める。
+/// - そのうえで、色を読んだ 16 画素の越えの範囲までに締める (`mokume_withinReach`)。
 ///   チャンネルごとの締めだけでは、不透明度だけが下へ振れた所 (白と黒が接する縁) で
-///   色が不透明度を越える。入りが範囲の内なら越えていた量は 0 で、色 ≤ 不透明度になる。
-///   **入りに元からある越え (1 を越える光・#1057) はそのまま運ぶ** — 一律に不透明度で
-///   締めると、作業空間が持てる明るさを潰す ([ADR-0011] 決定 1)
+///   色が不透明度を越える。入りが範囲の内なら、色 ≤ 不透明度になる。**入りに元からある越え
+///   (1 を越える光・#1057) はそのまま運ぶ** — 一律に不透明度で締めると、作業空間が持てる
+///   明るさを潰す ([ADR-0011] 決定 1)。運ぶのは読んだ範囲までで、白と光と透明が並ぶ縁で
+///   負の重みが不透明度だけを下げても、乗算を戻した色は読んだ光より明るくならない (#1817)
 ///
 /// 同じ理由で、入りにある負の値 (`.subtract` で引いた暗さ) も 0 へ切らずに運ぶ。
 /// 畳むのは出力段だけで、細かさ 1 (この段が立たない) と同じ値が読み戻せる
@@ -127,20 +182,21 @@ static inline float4 mokume_enlarge(Pixel in, float2 offset) {
     // 速い数学は無限大を持たない前提で組まれる)
     float4 lowest = mokume_texel(in, int2(base));
     float4 highest = lowest;
-    float3 beyond = float3(0.0);
+    MokumeReach reach = mokume_reachNone();
     for (int j = 0; j < 4; j++) {
         for (int i = 0; i < 4; i++) {
             float4 texel = mokume_texel(in, int2(base) + int2(i - 1, j - 1));
             sum += texel * (wx[i] * wy[j]);
             lowest = min(lowest, texel);
             highest = max(highest, texel);
-            beyond = max(beyond, texel.rgb - texel.a);
+            reach = mokume_reachOf(reach, texel.rgb, float3(texel.a));
         }
     }
     sum = clamp(sum, lowest, highest);
-    sum.rgb = min(sum.rgb, sum.a + beyond);
-    // 乗算済みの決まりを保つ — 不透明度が無いところに色は残らない
-    if (sum.a <= 0.0) { return float4(0.0); }
+    // 不透明度 0 の出りも、色をそのまま置く。**透明な地へ加算した光 (不透明度 0 で色を持つ) は
+    // 運ぶ** — 畳むのは出力段だけで、色ずれ・色調整も同じく運ぶ (ADR-0011 決定 1・#1817)。
+    // 入りが範囲の内なら、上の締めで不透明度 0 の所の色は 0 以下になっている
+    sum.rgb = mokume_withinReach(sum.rgb, sum.a, reach);
     return sum;
 }
 
@@ -191,19 +247,37 @@ float4 effect(Pixel in, Values values) {
         // 色だけが残る (乗算済みの決まりが破れる)
         float alpha = (red.a + in.color.a + blue.a) / 3.0;
         float3 mixed = float3(red.r, in.color.g, blue.b);
-        return float4(min(mixed, float3(alpha)), alpha);
+        // 色は、その成分を取った 1 枚の越えの範囲までに締める (`mokume_withinReach`)。入りが
+        // 範囲の内なら、色 ≤ 不透明度になる。**入りに元からある越え (1 を越える光・#1057) は
+        // そのまま運ぶ** — 一律に不透明度で締めると、作業空間が持てる明るさを潰す (ADR-0011
+        // 決定 1・#1817)。ほかの成分を取った 1 枚の越えは使わない — 青を読んだ先の光が、白を
+        // 読んだ赤の上限を持ち上げる
+        MokumeReach reach = mokume_reachOf(
+            mokume_reachNone(), mixed, float3(red.a, in.color.a, blue.a));
+        return float4(mokume_withinReach(mixed, alpha, reach), alpha);
     }
 
     // 色調整。明るさ・対比・彩度。**どれも 0 で無効**
     if (kind == kEffectAdjust) {
         if (p0 == 0.0 && p1 == 0.0 && p2 == 0.0) { return in.color; }
         float alpha = in.color.a;
+        // **不透明度 0 の画素はそのまま通す。** 乗算を戻せないので調整の掛けようが無く、色を
+        // 持っていれば (透明な地へ加算した光) それを運ぶ — 周辺減光・単色化・反転と同じく、
+        // 畳むのは出力段だけである (ADR-0011 決定 1・#1817)。入りが範囲の内なら、この画素は
+        // 透明な黒で、前と同じ値になる
+        if (alpha <= 0.0) { return in.color; }
         // 掛け戻してから調整する。乗算済みのまま対比を掛けると、半透明のところだけ
         // 効き方が変わる
-        float3 straight = alpha > 0.0 ? in.color.rgb / alpha : float3(0.0);
-        straight = max(straight + p0, 0.0);
-        straight = max((straight - 0.5) * (1.0 + p1) + 0.5, 0.0);
-        straight = max(mix(float3(mokume_luminance(straight)), straight, 1.0 + p2), 0.0);
+        float3 straight = in.color.rgb / alpha;
+        // 下へ押し出した値は 0 で止める。**入りに元からある負の値 (`.subtract` で引いた暗さ) は
+        // 切らず、その値で止める** — 作業空間は範囲の外の値を捨てない (ADR-0011 決定 1・#1817)。
+        // **止める所は段ごとに、その段の入りから決める** (`min(入り, 0)`)。元の入りから 1 度だけ
+        // 決めると、明るさで 0 以上へ持ち上げた値を対比が押し下げたとき、元の入りが負だったか
+        // どうかだけで答えが割れる。入りが範囲の内なら止める所はどの段も 0 で、前と同じ値になる
+        straight = max(straight + p0, min(straight, 0.0));
+        straight = max((straight - 0.5) * (1.0 + p1) + 0.5, min(straight, 0.0));
+        straight = max(
+            mix(float3(mokume_luminance(straight)), straight, 1.0 + p2), min(straight, 0.0));
         return float4(straight * alpha, alpha);
     }
 
