@@ -159,24 +159,47 @@ extension Canvas {
     static func quadTriangles(_ p: [SIMD2<Float>])
         -> [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]?
     {
-        func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float { a.x * b.y - a.y * b.x }
-        let crossing = segmentCrossing
-
-        if let x = crossing(p[0], p[1], p[2], p[3]) {
+        switch quadShape(p[0], p[1], p[2], p[3]) {
+        case .crossing(pair: 0, point: let x):
             return [(p[1], p[2], x), (p[3], p[0], x)]
-        }
-        if let x = crossing(p[1], p[2], p[3], p[0]) {
+        case .crossing(pair: _, point: let x):
             return [(p[0], p[1], x), (p[2], p[3], x)]
+        case .concave(let dent):
+            let (a, b, c, d) = (p[dent], p[(dent + 1) % 4], p[(dent + 2) % 4], p[(dent + 3) % 4])
+            return [(a, b, c), (a, c, d)]
+        case .convex:
+            return nil
         }
+    }
+
+    /// 4 つの頂点がなす形。**`quad()` と `beginShape(.quads)` が、割り方をこの判定で決める**
+    /// (``quadShape(_:_:_:_:)``)。
+    enum QuadShape: Equatable {
+        /// 凸 (辺が交差せず、凹んだ角も無い)。
+        case convex
+        /// 凹んでいる。`dent` が凹んだ点の番号で、そこからの対角線は必ず形の中を通る。
+        case concave(dent: Int)
+        /// 向かい合う辺が交わる (砂時計)。`pair` が 0 なら辺 0–1 と辺 2–3、1 なら辺 1–2 と
+        /// 辺 3–0 が交わり、`point` がその交点。
+        case crossing(pair: Int, point: SIMD2<Float>)
+    }
+
+    /// 4 点がなす形を判定する。番号でなく 4 つの点を受けるのは、`beginShape(.quads)` が
+    /// 四角 1 枚ごとに呼ぶので、配列を作らずに済ませるため。
+    static func quadShape(
+        _ p0: SIMD2<Float>, _ p1: SIMD2<Float>, _ p2: SIMD2<Float>, _ p3: SIMD2<Float>
+    ) -> QuadShape {
+        func cross(_ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float { a.x * b.y - a.y * b.x }
+
+        if let x = segmentCrossing(p0, p1, p2, p3) { return .crossing(pair: 0, point: x) }
+        if let x = segmentCrossing(p1, p2, p3, p0) { return .crossing(pair: 1, point: x) }
         // 回る向きと逆に曲がる角が、凹んだ点である。交差しない四角形では高々 1 つ
-        let area = cross(p[2] - p[0], p[3] - p[1])
-        let dent = (0..<4).first { index in
-            let turn = cross(p[index] - p[(index + 3) % 4], p[(index + 1) % 4] - p[index])
-            return turn * area < 0
-        }
-        guard let dent else { return nil }
-        let (a, b, c, d) = (p[dent], p[(dent + 1) % 4], p[(dent + 2) % 4], p[(dent + 3) % 4])
-        return [(a, b, c), (a, c, d)]
+        let area = cross(p2 - p0, p3 - p1)
+        let turns = SIMD4<Float>(
+            cross(p0 - p3, p1 - p0), cross(p1 - p0, p2 - p1),
+            cross(p2 - p1, p3 - p2), cross(p3 - p2, p0 - p3))
+        for index in 0..<4 where turns[index] * area < 0 { return .concave(dent: index) }
+        return .convex
     }
 
     /// 線分 ab と cd が、端点以外の 1 点で交わるなら、その点。
