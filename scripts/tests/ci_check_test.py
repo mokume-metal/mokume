@@ -24,11 +24,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "ci-check.sh"
 
-# 最後の引数が段名。slow / slow2 は間隔 1 秒の継続中の行が 2 回出る長さ、bad は落ちる段
+# 最後の引数が段名。slow / slow2 は間隔 1 秒の継続中の行が 2 回出る長さ (1.5 秒の余裕を
+# 持たせる。CPU が混むと行を出す側が遅れる・#1857)、bad は落ちる段
 FAKE_MAKE = """#!/bin/bash
 printf '%s\\n' "$*" >> "$MAKE_CALLS"
 case "${@: -1}" in
-  slow|slow2) sleep 2.5 ;;
+  slow|slow2) sleep 3.5 ;;
   bad) exit 7 ;;
 esac
 exit 0

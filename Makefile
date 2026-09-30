@@ -129,8 +129,11 @@ adrs:
 agents-md-size:
 	python3 scripts/check-agents-md-size.py
 
+# **ファイル単位で並列に走る** (#1714)。駆動役は scripts/run-hooks-tests.py で、並べる順と
+# 同時の数はその冒頭。時間の上限を持つ検査が並列で赤くなったと疑うときは
+# HOOKS_TEST_JOBS=1 make hooks-test で直列にして切り分ける
 hooks-test:
-	python3 -m unittest discover -s scripts/tests -p '*_test.py'
+	python3 scripts/run-hooks-tests.py
 
 # 公開 API の面 (api) と参照の面 (reference) が読む材料。**普段のビルドに出させ、
 # 置き場は 1 本に保つ** (#784)。

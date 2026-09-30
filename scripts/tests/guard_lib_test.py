@@ -14,9 +14,9 @@
 import json
 import os
 import re
+import resource
 import subprocess
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -29,13 +29,14 @@ COMMENT = "com" + "ment"
 CREATE = "cre" + "ate"
 
 
-def judge(command, subcommand):
+def judge(command, subcommand, body=None):
     """guard-lib.sh を source した bash で判定させ、終了コードを返す。
 
-    コマンド本文には " も ' も改行も入るので、シェルへは argv で渡す。
+    コマンド本文には " も ' も改行も入るので、シェルへは argv で渡す。body を渡さなければ
+    フックと同じ形 (ANY_INVOCATION_IS) で読む。
     """
     proc = subprocess.run(
-        ["/bin/bash", "-c", f'. "{LIB}"\n{ANY_INVOCATION_IS}', "_", command, subcommand],
+        ["/bin/bash", "-c", f'. "{LIB}"\n{body or ANY_INVOCATION_IS}', "_", command, subcommand],
         capture_output=True,
         text=True,
     )
@@ -685,15 +686,40 @@ class LengthTest(unittest.TestCase):
     1 文字ずつ文字列を継ぎ足すと長さの 2 乗かかり、480KB の二重引用の本文でガード 1 本が
     16 秒を越えた。フックの timeout は 10 秒で、越えると判定が出ずに素通しになりうる。
     上限は手元で 1 秒前後のものに、遅い機械の分の余裕を持たせてある。
+
+    **測るのは壁時計ではなく、ガード (子とその子) が使った CPU 時間** (#1857)。2 乗の退行は
+    ガード自身の CPU として現れるが、壁時計は他の誰かが CPU を使った分まで足す。hooks-test を
+    並列にしたら、退行が無いのに 5.87 秒で赤になった。
+
+    **測る区間では、読んだ結果をファイルに受けてから回す** (MEASURED)。フックと同じ
+    `done < <(gh_invocations …)` の形だと、`<(...)` の中の subshell は bash が回収したとき
+    だけ RUSAGE_CHILDREN に入る。判定は途中の `exit 0` で抜けるので、回収より先に抜けると
+    読む仕事が 0 秒と数えられ、2 乗の退行があっても緑になる (#1857 の反証)。前面で最後まで
+    待てば、終わる順番によらず全部が数えられる。判定そのものの形はほかの検査が見ている。
     """
+
+    MEASURED = """
+out=$(mktemp)
+gh_invocations "$1" > "$out"
+while IFS=$'\\t' read -r token repo chdir place fragment; do
+  gh_fragment_is "$fragment" "$2" && { rm -f "$out"; exit 0; }
+done < "$out"
+rm -f "$out"
+exit 1
+"""
 
     LIMIT = 5.0
     SIZE = 500_000
 
+    @staticmethod
+    def children_cpu():
+        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        return usage.ru_utime + usage.ru_stime
+
     def time_of(self, command):
-        start = time.monotonic()
-        self.assertEqual(judge(command, f"issue[[:space:]]+{COMMENT}"), 0)
-        return time.monotonic() - start
+        start = self.children_cpu()
+        self.assertEqual(judge(command, f"issue[[:space:]]+{COMMENT}", self.MEASURED), 0)
+        return self.children_cpu() - start
 
     def repeat(self, piece):
         """piece を繰り返して SIZE バイトに届かせる。"""
