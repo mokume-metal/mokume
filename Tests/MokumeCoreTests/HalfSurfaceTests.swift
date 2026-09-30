@@ -71,6 +71,106 @@ struct HalfSurfaceTests {
     }
 }
 
+/// 読み込みの口 ([#1873])。**GPU を要さない** — 復号した画素 (`ImageFile.decode`) を見る。
+///
+/// CoreGraphics は浮動小数の絵を半精度の文脈へ描くとき、上限を越える成分を ±inf にする (65520 以上・
+/// 実測)。復号が受け取った時点で元の値が無いので、関所 (``HalfSurface``) に通すだけでは直らない。
+/// 元の絵は検査の中で 32 ビット浮動小数の TIFF・OpenEXR として作る (``FloatPictureFixture``)。
+///
+/// [#1873]: https://github.com/mokume-metal/mokume/issues/1873
+@Suite("読み込んだ絵の画素を半精度へ移す")
+struct HalfSurfaceLoadedPictureTests {
+    /// 成分として書く値と、復号した画素に残るべき値。**灰色 (3 成分が同じ) で並べる** — OpenEXR は
+    /// 色域の変換を通り、成分をまたいで値が混ざる。灰色なら混ざっても同じ値のまま。
+    private static let grays: [(given: Float, expected: Float)] = [
+        (0.5, 0.5),
+        (100, 100),
+        (40000, 40000),
+        (65504, 65504),
+        (65519, 65504),
+        (65520, 65504),
+        (1e6, 65504),
+        (3e38, 65504),
+        (-1e6, -65504),
+    ]
+
+    private func decode(
+        _ texels: [SIMD4<Float>], width: Int? = nil, as format: FloatPictureFixture.Format
+    ) throws -> [SIMD4<Float16>] {
+        let width = width ?? texels.count
+        let url = try FloatPictureFixture.write(
+            texels, width: width, height: texels.count / width, as: format)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let decoded = try ImageFile.decode(at: url, name: url.path)
+        #expect(decoded.width == width)
+        #expect(decoded.height == texels.count / width)
+        return decoded.pixels
+    }
+
+    /// 完了条件 1・2。**有限の成分は、半精度の上限を越えていても有限のまま ±65504 で止まる** —
+    /// 図形の経路が面へ書くときと同じ扱い。
+    @Test(
+        "半精度の上限を越える成分は、読んだ画素で ±65504 に止まる",
+        arguments: FloatPictureFixture.Format.allCases)
+    func componentsBeyondTheLargestHalfStopAtIt(_ format: FloatPictureFixture.Format) throws {
+        let texels = Self.grays.map { SIMD4($0.given, $0.given, $0.given, 1) }
+        let pixels = try decode(texels, as: format)
+        for (index, (given, expected)) in Self.grays.enumerated() {
+            for lane in 0..<3 {
+                #expect(
+                    Float(pixels[index][lane]) == expected,
+                    "\(format.rawValue) の \(given) を読んだ画素の成分 \(lane) が \(pixels[index][lane])")
+            }
+            #expect(pixels[index].w == 1, "\(format.rawValue) の \(given) の不透明度")
+        }
+    }
+
+    /// 上限を越えた成分が、同じ画素の他の成分や、他の画素を巻き込まない。
+    ///
+    /// **2 次元で並べる** — 描き直した画素の並びが最初の描き方と行の向き・幅でずれると、
+    /// 1 行の絵では見えない。
+    @Test("上限を越える成分があっても、他の成分と他の画素は変わらない")
+    func overflowDoesNotDisturbTheRest() throws {
+        // 半精度の目盛りに乗らない値を並べる。描き直さない画素が最初の丸めのままであること
+        let (width, height) = (5, 4)
+        var plain = (0..<(width * height)).map { index in
+            let t = Float(index) / Float(width * height)
+            return SIMD4<Float>(t * 0.9 + 0.013, 1.0 / 3.0 + t, 12345.6 * t + 0.001, 0.5 + t / 3)
+        }
+        let alone = try decode(plain, width: width, as: .tiff)
+
+        let (x, y) = (3, 2)
+        let spot = y * width + x
+        let original = plain[spot]
+        plain[spot] = SIMD4(1e6, original.y, -1e6, original.w)
+        let beside = try decode(plain, width: width, as: .tiff)
+
+        for index in 0..<(width * height) where index != spot {
+            #expect(beside[index] == alone[index], "画素 (\(index % width), \(index / width))")
+        }
+        #expect(Float(beside[spot].x) == 65504)
+        #expect(Float(beside[spot].z) == -65504)
+        #expect(beside[spot].y == alone[spot].y, "同じ画素の上限を越えない成分")
+        #expect(beside[spot].w == alone[spot].w, "同じ画素の不透明度")
+    }
+
+    /// 非有限は関所と同じくそのまま通る (``HalfSurface`` の説明)。
+    @Test("数でない成分と無限の成分は、読んだ画素でもそのまま残る")
+    func nonFiniteComponentsPassThrough() throws {
+        let pixels = try decode(
+            [
+                SIMD4(.infinity, 0.5, 0.5, 1), SIMD4(-.infinity, 0.5, 0.5, 1),
+                SIMD4(.nan, 0.5, 0.5, 1), SIMD4(1e6, .infinity, 0.5, 1),
+            ], as: .tiff)
+        #expect(pixels[0].x == .infinity)
+        #expect(pixels[1].x == -.infinity)
+        #expect(pixels[2].x.isNaN)
+        #expect(Float(pixels[3].x) == 65504, "同じ画素の有限の成分は止まる")
+        #expect(pixels[3].y == .infinity)
+        for index in 0..<3 { #expect(Float(pixels[index].y) == 0.5, "他の成分 (画素 \(index))") }
+    }
+}
+
 /// 範囲の口を図形の経路と比べる検査と、起票の再現 ([#1691] の完了条件 1・2)。GPU を要する。
 ///
 /// [#1691]: https://github.com/mokume-metal/mokume/issues/1691
@@ -122,6 +222,7 @@ struct HalfSurfaceRouteTests {
         case pixelsFill = "pixels.fill(c)"
         case imageSet = "Image.set(x, y, c)"
         case imageFill = "Image.fill(c)"
+        case loadImage = "loadImage(浮動小数の TIFF)"
 
         var testDescription: String { rawValue }
     }
@@ -179,12 +280,27 @@ struct HalfSurfaceRouteTests {
             } else {
                 image.fill(color)
             }
-            try canvas.draw {
-                canvas.background(.linear(red: 0, green: 0, blue: 0))
-                canvas.image(image, 0, 0)
-            }
-            return (image.get(4, 4), try canvas.target.readPixels()[4, 4])
+            let placed = try placeOnBlack(image, on: canvas)
+            return (image.get(4, 4), placed)
+        case .loadImage:
+            // 読み込みの口は、ファイルに書いた成分を復号して半精度の画素にする ([#1873])
+            let url = try FloatPictureFixture.write(
+                SIMD4(color.red, color.green, color.blue, color.alpha),
+                width: Self.side, height: Self.side, as: .tiff)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let image = try canvas.loadImage(url.path)
+            let placed = try placeOnBlack(image, on: canvas)
+            return (image.get(4, 4), placed)
         }
+    }
+
+    /// 絵を黒い下地の等倍で置き、面の画素を読む。
+    private func placeOnBlack(_ image: Image, on canvas: Canvas) throws -> LinearRGBA {
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.image(image, 0, 0)
+        }
+        return try canvas.target.readPixels()[4, 4]
     }
 
     /// 完了条件 1。
@@ -235,20 +351,38 @@ struct HalfSurfaceRouteTests {
     func opaqueShapeCoversAnOverbrightGround(_ ground: Ground) throws {
         let bright = try reproduce(ground.paint)
         let white = try reproduce { $0.background(255) }
-        var differing = 0
-        for y in 10..<30 {
-            for x in 10..<30 {
-                let (p, q) = (bright[x, y], white[x, y])
-                let gap = max(
-                    abs(p.red - q.red), abs(p.green - q.green), abs(p.blue - q.blue),
-                    abs(p.alpha - q.alpha))
-                if !(gap <= 0.004) { differing += 1 }
-            }
-        }
-        let (a, b) = (bright[20, 20], white[20, 20])
+        let (differing, a, b) = compare(bright, white)
         #expect(
             differing == 0,
             "\(ground.rawValue) の上の不透明な矩形の \(differing) / 400 画素が background(255) の上と違う ((20, 20): \(a) / \(b))"
+        )
+    }
+
+    /// 起票の再現 ([#1873])。**読み込んだ絵が下地でも同じ** — 半精度の上限を越える成分を持つ
+    /// 浮動小数の絵を読むと、CoreGraphics が半精度へ移す所で ±inf にし、その上に描いた
+    /// 不透明な矩形が inf × 0 で NaN になって黒く抜けた。
+    ///
+    /// [#1873]: https://github.com/mokume-metal/mokume/issues/1873
+    @Test(
+        "半精度の上限を越える成分の絵を読んで下地にしても、不透明な矩形は白い下地の上と同じ色になる",
+        arguments: FloatPictureFixture.Format.allCases, [Float(1e6), -1e6])
+    func opaqueShapeCoversALoadedOverbrightPicture(
+        _ format: FloatPictureFixture.Format, _ value: Float
+    ) throws {
+        let url = try FloatPictureFixture.write(
+            SIMD4(value, value, value, 1), width: 40, height: 40, as: format)
+        defer { try? FileManager.default.removeItem(at: url) }
+        // 負の側も試すのは、-inf の下地でも NaN になったため (実測)。白い下地と比べるのは、
+        // 不透明な矩形なら下地の明るさによらず同じ色になるはずだから
+        let loaded = try reproduce { canvas in
+            let picture = try canvas.loadImage(url.path)
+            canvas.image(picture, 0, 0, 40, 40)
+        }
+        let white = try reproduce { $0.background(255) }
+        let (differing, a, b) = compare(loaded, white)
+        #expect(
+            differing == 0,
+            "\(format.rawValue) の \(value) を読んだ絵の上の不透明な矩形の \(differing) / 400 画素が background(255) の上と違う ((20, 20): \(a) / \(b))"
         )
     }
 
@@ -272,15 +406,32 @@ struct HalfSurfaceRouteTests {
     }
 
     /// 起票の再現と同じ絵 (40×40)。
-    private func reproduce(_ ground: (Canvas) -> Void) throws -> PixelBuffer {
+    private func reproduce(_ ground: (Canvas) throws -> Void) throws -> PixelBuffer {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 40, height: 40)
+        var failure: (any Error)?
         try canvas.draw {
-            ground(canvas)
+            do { try ground(canvas) } catch { failure = error }
             canvas.noStroke()
             canvas.fill(40, 90, 230)
             canvas.rect(10, 10, 20, 20)
         }
+        if let failure { throw failure }
         return try canvas.target.readPixels()
+    }
+
+    /// 矩形の内側 (400 画素) のうち、2 枚で色が割れる画素の数と、中央の画素。
+    private func compare(_ p: PixelBuffer, _ q: PixelBuffer) -> (Int, LinearRGBA, LinearRGBA) {
+        var differing = 0
+        for y in 10..<30 {
+            for x in 10..<30 {
+                let (a, b) = (p[x, y], q[x, y])
+                let gap = max(
+                    abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue),
+                    abs(a.alpha - b.alpha))
+                if !(gap <= 0.004) { differing += 1 }
+            }
+        }
+        return (differing, p[20, 20], q[20, 20])
     }
 
     private func components(_ color: LinearRGBA) -> [Float] {
