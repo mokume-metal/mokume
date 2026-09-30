@@ -227,7 +227,7 @@ PR_CREATING_PORTS='pr[[:space:]]+(create|new|revert)'
 # 持たない (持たない口に付ければ gh 自身が弾く)。旗は呼び出しの断片からだけ読む —
 # 同じ行の別のコマンドの --dry-run (echo --dry-run など) は PR 作成の旗ではない
 is_dry_run() { # $1=gh の断片
-  printf '%s\n' "$1" | grep -qE '(^|[[:space:]])--dry-run([[:space:]]|$)'
+  grep -qE '(^|[[:space:]])--dry-run([[:space:]]|$)' <<<"$1"
 }
 
 # 旗の値。`--head x` / `--head=x` / `-H x` の形を読み、引用符を落とす。後勝ち (gh と同じ)
@@ -243,7 +243,7 @@ flag_value() { # $1=断片  $2=旗の正規表現 (例 '--head|-H')
 # からだけ読む — 同じ行の別のコマンドの `-d` を拾わないため
 deny_if_protected_draft() {
   local base head files
-  printf '%s\n' "$fragment" | grep -qE '(^|[[:space:]])(--draft|-d)(=|[[:space:]]|$)' || return 0
+  grep -qE '(^|[[:space:]])(--draft|-d)(=|[[:space:]]|$)' <<<"$fragment" || return 0
 
   # revert の中身は、戻す PR の差分であって手元には無い (port は末尾に空白を持ちうる)
   case "$port" in "gh pr revert"*)

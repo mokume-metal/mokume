@@ -276,7 +276,7 @@ plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行
     numbers=$(printf '%s' "$branch" |
       sed -E 's#^(claude/.*)-[0-9a-f]{6}$#\1#' |
       grep -oE '(^|[^0-9A-Za-z])[0-9]{1,6}([^0-9A-Za-z]|$)' |
-      grep -oE '[0-9]+' | head -1)
+      grep -oE '[0-9]+' | sed -n '1p')
   fi
 
   PLAN_TARGET_TYPES=''
@@ -320,7 +320,7 @@ plan_targets() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" を 1 行
 # plan_targets を数えて決める — こちらは「先頭」を返すだけにして、優先順の定義を
 # 2 箇所に持たせない
 resolve_target() { # $1=ブランチ $2=本文 → "pr 123" / "issue 45" / ""
-  plan_targets "$1" "$2" | head -1
+  plan_targets "$1" "$2" | sed -n '1p'
 }
 
 posted() { # $1=種別 $2=番号 $3=記録 ID — GitHub 側にこの記録が既にあるか
@@ -451,7 +451,7 @@ concurrent_marks() { # $1=Issue 番号 $2=自分の記録 ID の接頭辞 → �
     # 同じ参照元が 2 度参照していると、同じコメントが 2 度並ぶ
     case "$seen" in *"|$url|"*) continue ;; esac
     seen="$seen|$url|"
-    named_numbers "$(printf '%s' "$plan" | jq -r .body)" | grep -qx "$number" || continue
+    grep -qx "$number" <<<"$(named_numbers "$(printf '%s' "$plan" | jq -r .body)")" || continue
     source=$(printf '%s' "$plan" | jq -r .source)
     printf '#%s を名乗る別のセッションのプランが #%s に載っている (%s)\n' "$number" "$source" "$url"
   done <<< "$plans"
@@ -877,7 +877,7 @@ capture() {
     fi
   fi
 
-  target=$(printf '%s' "$targets" | head -1)
+  target=$(printf '%s' "$targets" | sed -n '1p')
   count=$(printf '%s' "$targets" | grep -c . || true)
 
   # 他のセッションが同じ Issue に既に着手していないかを見る (#642)。着手直後は PR が

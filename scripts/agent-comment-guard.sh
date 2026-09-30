@@ -75,12 +75,12 @@ is_comment_invocation() { # $1=gh の断片
   gh_fragment_is "$1" '(issue|pr)[[:space:]]+comment' && return 0
   # レビューは本文を伴うときだけ。--approve / --request-changes だけなら発言が無い
   gh_fragment_is "$1" 'pr[[:space:]]+review' &&
-    printf '%s\n' "$1" | grep -qE '(^|[[:space:]])(-b|--body|-F|--body-file)([[:space:]]|=)' &&
+    grep -qE '(^|[[:space:]])(-b|--body|-F|--body-file)([[:space:]]|=)' <<<"$1" &&
     return 0
   # close / reopen も本文を伴うときだけ。状態を変えるだけなら発言が無い。
   # 冒頭のとおり、-c の意味はサブコマンドによって違うのでここで絞ってから見る
   gh_fragment_is "$1" '(issue|pr)[[:space:]]+(close|reopen)' &&
-    printf '%s\n' "$1" | grep -qE '(^|[[:space:]])(-c|--comment)([[:space:]]|=)' &&
+    grep -qE '(^|[[:space:]])(-c|--comment)([[:space:]]|=)' <<<"$1" &&
     return 0
   return 1
 }

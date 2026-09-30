@@ -54,17 +54,17 @@ if [ ${#shaders[@]} -eq 0 ]; then
   exit 0
 fi
 
-kinds=$(find Sources -name 'Kinds.metal' | head -1)
+kinds=$(find Sources -name 'Kinds.metal' | sed -n '1p')
 
-common=$(find Sources -name 'Common.metal' | head -1)
+common=$(find Sources -name 'Common.metal' | sed -n '1p')
 common_dir=""
 if [ -n "$common" ]; then common_dir=$(dirname "$common"); fi
 
-compute=$(find Sources -name 'Compute.metal' | head -1)
+compute=$(find Sources -name 'Compute.metal' | sed -n '1p')
 compute_dir=""
 if [ -n "$compute" ]; then compute_dir="$(dirname "$compute")/Computations"; fi
 
-effect=$(find Sources -name 'Effect.metal' | head -1)
+effect=$(find Sources -name 'Effect.metal' | sed -n '1p')
 effect_dir=""
 if [ -n "$effect" ]; then effect_dir="$(dirname "$effect")/Effects"; fi
 

@@ -335,11 +335,15 @@ if [ -n "$bug_issues" ]; then
   refute=$(jq -r '.body // ""' <<<"$pr_json" | body_section 反証)
   # 見出しだけの節 (中身が空) と節そのものが無い場合を分けて名乗る。見出しの有無は
   # 本文の見出し行を直接見る — 切り出した中身が空でも見出しはあったかもしれない
-  if ! jq -r '.body // ""' <<<"$pr_json" | grep -Eq '^#+[[:space:]].*反証'; then
+  # **here-string で読む** (#1900)。pipefail の下で `… | grep -q` と書くと、grep が最初の行で
+  # 抜けたときに書き手が SIGPIPE で止まり、長い本文ほど条件が裏返る
+  body=$(jq -r '.body // ""' <<<"$pr_json")
+  if ! grep -Eq '^#+[[:space:]].*反証' <<<"$body"; then
     fail "閉じる Bug (${bug_issues# }) の PR 本文に「反証」の節が無い (ADR-0040 決定 4)" \
          "$(missing_refute_message)"
   fi
-  if ! strip_html_comments <<<"$refute" | grep -q '[^[:space:]]'; then
+  refute_text=$(strip_html_comments <<<"$refute")
+  if ! grep -q '[^[:space:]]' <<<"$refute_text"; then
     fail "閉じる Bug (${bug_issues# }) の PR 本文の「反証」の節が空 (ADR-0040 決定 4)" \
          "$(missing_refute_message)"
   fi

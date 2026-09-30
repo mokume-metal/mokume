@@ -130,7 +130,7 @@ classify() { # $1=パス → 上の 4 変数を埋める
 
 cwd_of() { # $1=PID → cwd (引けなければ空)
   command -v lsof >/dev/null 2>&1 || return 0
-  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
+  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n '1p'
 }
 
 # --- 持ち主の手掛かり ---------------------------------------------------------
