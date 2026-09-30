@@ -173,4 +173,134 @@ struct QuadFillTests {
         #expect(red(pixels, 100, 80) > 0)
         #expect(red(pixels, 100, 80) == red(pixels, 40, 40))
     }
+
+    // MARK: - 四角の列 (`.quads`)
+
+    /// 辺が交差する 4 点。向かい合う辺の組が 2 通り (0–1 と 2–3・1–2 と 3–0) になるよう、
+    /// 並べ方も変える。
+    private nonisolated static let crossedQuads: [[SIMD2<Float>]] = {
+        let bases: [[SIMD2<Float>]] = [
+            [SIMD2(20, 20), SIMD2(140, 20), SIMD2(20, 140), SIMD2(140, 140)],
+            [SIMD2(20, 20), SIMD2(140, 140), SIMD2(140, 20), SIMD2(20, 140)],
+            [SIMD2(30, 20), SIMD2(150, 50), SIMD2(10, 130), SIMD2(120, 150)],
+        ]
+        return bases.flatMap { base in
+            [base, Array(base.reversed()), Array(base[1...] + base[..<1])]
+        }
+    }()
+
+    private func quads(_ canvas: Canvas, _ points: [SIMD2<Float>]) {
+        canvas.beginShape(.quads)
+        for point in points { canvas.vertex(point.x, point.y) }
+        canvas.endShape()
+    }
+
+    /// 縁から離れた画素のうち、2 つの絵で塗られ方が違うものの数。
+    private func differing(
+        _ a: PixelBuffer, _ b: PixelBuffer, awayFrom rings: [[SIMD2<Float>]]
+    ) -> Int {
+        var count = 0
+        for y in 0..<size {
+            for x in 0..<size {
+                let center = SIMD2<Float>(Float(x) + 0.5, Float(y) + 0.5)
+                if rings.contains(where: { isNearAnEdge(center, $0) }) { continue }
+                if painted(a, x, y) != painted(b, x, y) { count += 1 }
+            }
+        }
+        return count
+    }
+
+    /// 始点を回して、凹んだ点 (60, 80) が 0〜3 番目に来る 4 通りの並びを見る。
+    @Test("四角の列の凹んだ四角は、凹んだ点が何番目でも同じ 4 点を周として塗った形と同じに塗る", arguments: 0..<4)
+    func concaveQuadsFillLikeThePolygon(_ concaveAt: Int) throws {
+        let points = (0..<4).map { arrowhead[($0 + 3 - concaveAt) % 4] }
+        #expect(points[concaveAt] == SIMD2(60, 80))
+
+        let byQuads = try render { quads($0, points) }
+        let byShape = try render { canvas in
+            canvas.beginShape(.polygon)
+            for point in points { canvas.vertex(point.x, point.y) }
+            canvas.endShape(.close)
+        }
+        var differingPixels = 0
+        for y in 0..<size {
+            for x in 0..<size where painted(byQuads, x, y) != painted(byShape, x, y) {
+                differingPixels += 1
+            }
+        }
+        #expect(differingPixels == 0)
+        let dentPainted = painted(byQuads, 30, 80)  // へこみの中
+        #expect(!dentPainted)
+        let (missing, spilled) = mismatches(byQuads, points)
+        #expect(missing == 0)
+        #expect(spilled == 0)
+    }
+
+    @Test("四角の列の交差した四角は、quad() と同じ砂時計に塗る", arguments: QuadFillTests.crossedQuads)
+    func crossedQuadsFillAsTheHourglass(_ points: [SIMD2<Float>]) throws {
+        let byQuads = try render { quads($0, points) }
+        let byQuad = try render { quad($0, points) }
+        #expect(differing(byQuads, byQuad, awayFrom: [points]) == 0)
+        let (missing, spilled) = mismatches(byQuads, points)
+        #expect(missing == 0)
+        #expect(spilled == 0)
+        // 空の絵どうしを比べていない
+        var paintedPixels = 0
+        for y in 0..<size {
+            for x in 0..<size where painted(byQuads, x, y) { paintedPixels += 1 }
+        }
+        #expect(paintedPixels > 1000)
+    }
+
+    /// 対角線の両側や、砂時計が 1 点で触れ合う所は、二重に塗られやすい。
+    @Test("半透明の四角の列は、形の中を 1 度だけ塗る")
+    func translucentQuadsCoverEachPixelOnce() throws {
+        let square: [SIMD2<Float>] = [SIMD2(20, 20), SIMD2(140, 20), SIMD2(140, 140), SIMD2(20, 140)]
+        for points in [square, arrowhead, QuadFillTests.crossedQuads[0]] {
+            let pixels = try render { canvas in
+                canvas.fill(255, 128)
+                quads(canvas, points)
+            }
+            var inside = Set<Float>()
+            for y in 0..<size {
+                for x in 0..<size {
+                    let center = SIMD2<Float>(Float(x) + 0.5, Float(y) + 0.5)
+                    if isNearAnEdge(center, points) { continue }
+                    if winding(center, points) != 0 {
+                        inside.insert(red(pixels, x, y))
+                    } else {
+                        #expect(red(pixels, x, y) == 0, "(\(x), \(y)) が形の外で塗られた")
+                    }
+                }
+            }
+            #expect(inside.count == 1, "形の中に濃さの違う画素がある: \(inside.sorted())")
+            #expect(inside.first.map { $0 > 0 } == true)
+        }
+    }
+
+    @Test("1 つの列に凸・凹・交差の四角が混ざっても、四角ごとに割る")
+    func mixedQuadsAreSplitOneByOne() throws {
+        let convex: [SIMD2<Float>] = [SIMD2(10, 10), SIMD2(60, 15), SIMD2(55, 60), SIMD2(15, 50)]
+        let concave = arrowhead.map { $0 * 0.4 + SIMD2(80, 0) }
+        let crossed = QuadFillTests.crossedQuads[0].map { $0 * 0.4 + SIMD2(0, 90) }
+        let rings = [convex, concave, crossed]
+
+        let together = try render { quads($0, convex + concave + crossed) }
+        let apart = try render { canvas in
+            for ring in rings { quads(canvas, ring) }
+        }
+        #expect(differing(together, apart, awayFrom: rings) == 0)
+
+        // 全体では、どの四角の中でもない画素が塗られず、どれかの中の画素が塗られている
+        var wrong = 0
+        for y in 0..<size {
+            for x in 0..<size {
+                let center = SIMD2<Float>(Float(x) + 0.5, Float(y) + 0.5)
+                if rings.contains(where: { isNearAnEdge(center, $0) }) { continue }
+                let inside = rings.contains { winding(center, $0) != 0 }
+                if inside != painted(together, x, y) { wrong += 1 }
+            }
+        }
+        #expect(wrong == 0)
+    }
 }

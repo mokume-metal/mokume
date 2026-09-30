@@ -750,6 +750,212 @@ struct CustomSolidTests {
         #expect(try differingPixels(pixels(of: immediate), pixels(of: retained)) == 0)
     }
 
+    // MARK: - 四角の列
+
+    /// 1 隅だけ奥行きをずらした、平らでない四角の 4 隅。
+    private static let warpedCorners: [SIMD3<Float>] = [
+        SIMD3(-30, -30, 0), SIMD3(30, -30, 0), SIMD3(30, 30, 0), SIMD3(-30, 30, 24),
+    ]
+
+    @Test("面の向きを書いた立体の四角は、平らでなくても `.triangles` で 2 枚に割った絵と一致する")
+    func solidQuadsMatchTheHandSplitTriangles() throws {
+        // 4 隅の色は 0 と 2 が白、1 と 3 が赤。面の向きは隅ごとに違う値を書く。
+        // 平らでない四角では、対角線の選び方が色にも光にも出る
+        func render(_ kind: VertexKind, _ order: [Int]) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.lights()
+                canvas.noStroke()
+                canvas.translate(48, 48, 0)
+                canvas.beginShape(kind)
+                for index in order {
+                    canvas.normal(Float(index) * 0.3 - 0.4, 0.2 - Float(index) * 0.1, 1)
+                    canvas.fill(index.isMultiple(of: 2) ? white : red)
+                    let corner = Self.warpedCorners[index]
+                    canvas.vertex(corner.x, corner.y, corner.z)
+                }
+                canvas.endShape()
+            }
+            return try pixels(of: canvas)
+        }
+        let byQuads = try render(.quads, [0, 1, 2, 3])
+        #expect(try differingPixels(byQuads, render(.triangles, [0, 1, 2, 0, 2, 3])) == 0)
+        #expect(
+            try differingPixels(byQuads, render(.triangles, [1, 2, 3, 1, 3, 0])) > 0,
+            "対角線を変えても絵が動かない")
+    }
+
+    @Test("面の向きを書かない立体の四角は、番号で指して 2 枚に割った同じ形と 1 画素も違わない")
+    func solidQuadsMatchTheIndexedHandSplit() throws {
+        // 書かない向きは面から求まり、頂点を共有すれば隣の面のぶんまで足し込まれる。
+        // 四角の 0 番と 2 番は 2 枚に共有されるので、番号で共有した手割りと揃う
+        func render(quads: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.lights()
+                canvas.noStroke()
+                canvas.fill(white)
+                canvas.translate(48, 48, 0)
+                canvas.beginShape(quads ? .quads : .triangles)
+                for corner in Self.warpedCorners { canvas.vertex(corner.x, corner.y, corner.z) }
+                if !quads { for number in [0, 1, 2, 0, 2, 3] { canvas.index(number) } }
+                canvas.endShape()
+            }
+            return try pixels(of: canvas)
+        }
+        #expect(try differingPixels(render(quads: true), render(quads: false)) == 0)
+    }
+
+    @Test("四角の 4 隅すべてに、面の向きが付く")
+    func quadsDeriveNormalsAtAllFourCorners() throws {
+        // 手前を向く平らな四角を、面の向きを書かずに描く。2 枚が共有する 0 番と 2 番の隅は、
+        // 2 枚目の巻きが逆だと外積が打ち消し合って向きが 0 になる (`placedVertices`)。
+        // 向きの無い頂点は光を受けず色そのままで出る (立体の線と点と同じ) ので、暗くは落ちない —
+        // 光を面の向きから傾けておけば、対角線 (0 番と 2 番の間) だけが周りと違う明るさで出る
+        let canvas = try makeCanvas()
+        var normals: [SIMD4<Float>] = []
+        try canvas.draw {
+            canvas.background(black)
+            canvas.directionalLight(white, 0, 0.8, -0.6)
+            canvas.fill(white)
+            canvas.noStroke()
+            canvas.push()
+            canvas.translate(48, 48, 0)
+            canvas.beginShape(.quads)
+            canvas.vertex(-30, -30, 0)
+            canvas.vertex(30, -30, 0)
+            canvas.vertex(30, 30, 0)
+            canvas.vertex(-30, 30, 0)
+            canvas.endShape()
+            canvas.pop()
+            normals = canvas.solidVertices.map(\.normal)
+        }
+
+        // 2 枚ぶんの 6 頂点のすべてに、形から求めた向きが付いている
+        #expect(normals.count == 6)
+        for normal in normals {
+            #expect(normal.w == 1 && abs(normal.z - 1) < 1e-5, "向きが付いていない: \(normal)")
+        }
+        let image = try pixels(of: canvas)
+        let onDiagonal = Int(image[48, 48].red)
+        let beside = Int(image[60, 36].red)
+        #expect(onDiagonal < 250, "傾けた光を受けていない (\(onDiagonal))")
+        #expect(abs(onDiagonal - beside) <= 6, "対角線の上だけ明るさが違う (\(onDiagonal) と \(beside))")
+    }
+
+    @Test("立体の凹んだ四角と交差した四角は、同じ 4 点を周として塗った形と同じ絵になる")
+    func solidConcaveAndCrossedQuadsMatchThePolygon() throws {
+        // 平面の検査 (`QuadFillTests`) と同じ約束を、外周の平面へ落とす立体の経路で見る。
+        // 1 隅だけ奥行きをずらして、平らでない 4 点にする
+        let arrowhead: [SIMD3<Float>] = [
+            SIMD3(-30, -30, 0), SIMD3(30, 0, 6), SIMD3(-30, 30, 0), SIMD3(-8, 0, 3),
+        ]
+        let hourglass: [SIMD3<Float>] = [
+            SIMD3(-30, -30, 0), SIMD3(30, -30, 6), SIMD3(-30, 30, 0), SIMD3(30, 30, 6),
+        ]
+        func render(_ points: [SIMD3<Float>], _ kind: VertexKind) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                canvas.lights()
+                canvas.noStroke()
+                canvas.translate(48, 48, 0)
+                canvas.beginShape(kind)
+                for (index, point) in points.enumerated() {
+                    canvas.fill(index.isMultiple(of: 2) ? white : red)
+                    canvas.vertex(point.x, point.y, point.z)
+                }
+                canvas.endShape(.close)
+            }
+            return try pixels(of: canvas)
+        }
+        for points in [arrowhead, hourglass] {
+            let byQuads = try render(points, .quads)
+            #expect(try differingPixels(byQuads, render(points, .polygon)) == 0)
+            #expect(byQuads.bytes.contains { $0 != 0 && $0 != 255 }, "空の画像だけを比較しない")
+        }
+    }
+
+    @Test("立体の四角の線は 4 辺だけで、面と同じように奥行きで前後する")
+    func solidQuadsOutlineFollowsDepthAndHasNoDiagonal() throws {
+        func render(hidden: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(black)
+                if hidden {
+                    // 手前に赤い面。線は奥に回る
+                    canvas.noStroke()
+                    canvas.fill(red)
+                    canvas.beginShape()
+                    canvas.vertex(8, 8, 30)
+                    canvas.vertex(88, 8, 30)
+                    canvas.vertex(88, 88, 30)
+                    canvas.vertex(8, 88, 30)
+                    canvas.endShape(.close)
+                }
+                canvas.fill(white)
+                canvas.stroke(blue)
+                canvas.strokeWeight(6)
+                canvas.beginShape(.quads)
+                canvas.vertex(24, 24, 0)
+                canvas.vertex(72, 24, 0)
+                canvas.vertex(72, 72, 0)
+                canvas.vertex(24, 72, 0)
+                canvas.endShape()
+            }
+            return try pixels(of: canvas)
+        }
+        let visible = try render(hidden: false)
+        #expect(visible[48, 24].blue > 200 && visible[48, 24].red < 60, "辺の上が線の色でない")
+        #expect(visible[36, 36].red > 200, "対角線の上に線が引かれている")
+        #expect(visible[48, 48].red > 200, "対角線の上に線が引かれている")
+        let hidden = try render(hidden: true)
+        #expect(hidden[48, 24].red > 200 && hidden[48, 24].blue < 60, "手前の面に隠れない")
+    }
+
+    @Test("番号で指した四角の列は、同じ格子を三角形の列で張った絵と一致し、点も共有される")
+    func indexedQuadsMatchTheTriangleGrid() throws {
+        // 格子の 9 枚の四角は、`gridTriangles` の 18 枚 (どれも対角線 0–2) と同じ張り方
+        func render(quads: Bool) throws -> (DisplayImage, Int) {
+            let canvas = try makeCanvas()
+            var count = 0
+            try canvas.draw {
+                canvas.background(black)
+                canvas.lights()
+                if quads { quadGrid(on: canvas) } else { grid(on: canvas, indexed: true) }
+                count = canvas.solidVertices.count
+            }
+            return (try pixels(of: canvas), count)
+        }
+        let (quadPicture, quadCount) = try render(quads: true)
+        let (trianglePicture, triangleCount) = try render(quads: false)
+        #expect(differingPixels(quadPicture, trianglePicture) == 0)
+        #expect(quadCount == triangleCount)
+        #expect(quadCount == Self.gridPoints.count)
+    }
+
+    @Test("番号で指した四角の列は、保持して置いても同じ絵になる")
+    func indexedQuadsRetainedMatchImmediate() throws {
+        let immediate = try makeCanvas()
+        try immediate.draw {
+            immediate.background(black)
+            immediate.lights()
+            quadGrid(on: immediate)
+        }
+        let retained = try makeCanvas()
+        try retained.draw {
+            retained.background(black)
+            retained.lights()
+            let held = retained.createShape { quadGrid(on: retained) }
+            retained.shape(held)
+        }
+        let picture = try pixels(of: immediate)
+        #expect(try differingPixels(picture, pixels(of: retained)) == 0)
+        #expect(picture.bytes.contains { $0 != 0 && $0 != 255 }, "空の画像だけを比較しない")
+    }
+
     // MARK: - 道具
 
     /// 番号で指す検査に使う立体 — 4x4 の格子。
@@ -810,6 +1016,27 @@ struct CustomSolidTests {
                     let normal = gridNormal(point)
                     canvas.normal(normal.x, normal.y, normal.z)
                     canvas.vertex(point.x, point.y, point.z)
+                }
+            }
+        }
+        canvas.endShape()
+    }
+
+    /// `grid(on:indexed:)` と同じ点を、四角の列として番号で指して張る。
+    private func quadGrid(on canvas: Canvas) {
+        canvas.noStroke()
+        canvas.fill(red)
+        canvas.beginShape(.quads)
+        for point in Self.gridPoints {
+            let normal = gridNormal(point)
+            canvas.normal(normal.x, normal.y, normal.z)
+            canvas.vertex(point.x, point.y, point.z)
+        }
+        for row in 0..<(Self.gridSide - 1) {
+            for column in 0..<(Self.gridSide - 1) {
+                let corner = row * Self.gridSide + column
+                for number in [corner, corner + 1, corner + Self.gridSide + 1, corner + Self.gridSide] {
+                    canvas.index(number)
                 }
             }
         }
