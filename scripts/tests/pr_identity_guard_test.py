@@ -287,6 +287,92 @@ class GuardTest(unittest.TestCase):
         )
         self.assert_passed("gh pr create --fill", GH_REPO="other/repo")
 
+    # --- 同じコマンドの中で文として変えた宛先と名義 (#1823) ------------
+
+    # PR を作る口 (ガードの PR_CREATING_PORTS)。形 × 口で回す
+    PORTS = ("gh pr create --fill", "gh pr new --fill", "gh pr revert 1")
+
+    # 他リポの cwd から、gh より前に宛先を mokume へ変えうる文・前置。{m} は mokume の
+    # checkout。形を 1 つ足すなら行を 1 つ足す
+    DESTINATION_FORMS = (
+        "cd {m} && {gh}",
+        "cd {m}; {gh}",
+        "cd {m}\n{gh}",
+        "pushd {m} && {gh}",
+        "(cd {m} && {gh})",
+        "export GH_REPO=mokume-metal/mokume && {gh}",
+        "GH_REPO=mokume-metal/mokume; export GH_REPO; {gh}",
+        "declare -x GH_REPO=mokume-metal/mokume; {gh}",
+        "GIT_DIR={m}/.git {gh}",
+        "export GIT_DIR={m}/.git && {gh}",
+    )
+
+    # mokume の cwd で、継いだ他リポの GH_REPO を消す文 (#1836 の退行)
+    UNSET_FORMS = ("unset GH_REPO && {gh}", "export -n GH_REPO && {gh}")
+
+    def test_statement_that_changes_the_destination_denied_on_every_port(self):
+        there = self.other_repo_dir()
+        for form in self.DESTINATION_FORMS:
+            for port in self.PORTS:
+                command = form.format(m=REPO, gh=port)
+                with self.subTest(command=command):
+                    reason = self.assert_denied(command, cwd=there)
+                    self.assertIn("-R owner/repo", reason, "逃げ道が案内されていない")
+        for form in self.UNSET_FORMS:
+            for port in self.PORTS:
+                command = form.format(gh=port)
+                with self.subTest(command=command):
+                    self.assert_denied(command, GH_REPO="other/repo")
+
+    def test_statement_that_changes_the_destination_keeps_the_escape_hatches(self):
+        """-R の明示と、mokume 宛ての正しい名義の形は今までどおり通る (#1823 の D)。"""
+        there = self.other_repo_dir()
+        self.assert_passed(f"cd {REPO} && gh pr create -R other/repo --fill", cwd=there)
+        self.assert_passed(
+            "export GH_REPO=mokume-metal/mokume && gh pr create -R other/repo --fill", cwd=there
+        )
+        self.assert_passed(f"gh pr create --fill && cd {REPO}", cwd=there)
+        self.assert_passed(f"(cd {REPO} && ls) && gh pr create --fill", cwd=there)
+        self.assert_passed(f"cd {REPO} && " + self.SAFE + "gh pr create --fill", cwd=there)
+
+    # 発行から gh までが 1 つの && の並びでない形 (mokume の cwd)。形を 1 つ足すなら行を 1 つ足す
+    BROKEN_CHAIN_FORMS = (
+        '{issue} && export GH_TOKEN; {gh}',
+        '{issue} && export GH_TOKEN\ngit push -u origin HEAD\n{gh}',
+        '{issue} && export GH_TOKEN || {gh}',
+        'true || {issue} && export GH_TOKEN && {gh}',
+        'false && {issue} && export GH_TOKEN && true; {gh}',
+        '{issue} && export GH_TOKEN & {gh}',
+        't="$(bash scripts/gh-app-token.sh)" && true; GH_TOKEN="$t" {gh}',
+    )
+
+    def test_issue_that_does_not_reach_gh_by_and_denied(self):
+        """発行の失敗が gh へ伝わらない形 (#122 の続き・#1823)。文面は && で繋ぐ形を示す。"""
+        issue = 'GH_TOKEN="$(bash scripts/gh-app-token.sh)"'
+        for form in self.BROKEN_CHAIN_FORMS:
+            for port in self.PORTS:
+                command = form.format(issue=issue, gh=port)
+                with self.subTest(command=command):
+                    reason = self.assert_denied(command)
+                    self.assertIn("発行が失敗しても後段が走る形", reason)
+                    self.assertIn(
+                        'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create',
+                        reason,
+                    )
+
+    def test_issue_that_reaches_gh_by_and_passes(self):
+        """1 つの && の並びなら、行を跨いでも・入れ子の中の gh でも通る (#1823 の D の 18)。"""
+        self.assert_passed(self.SAFE + "gh pr create --fill")
+        self.assert_passed(
+            'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN &&\ngh pr create --fill'
+        )
+
+    def test_issue_inside_if_is_still_denied(self):
+        """#1823 の D の 19 — 止める側の誤検知のまま (条件の中の発行は && の並びでない)。"""
+        self.assert_denied(
+            'if GH_TOKEN="$(bash scripts/gh-app-token.sh)"; then export GH_TOKEN; gh pr create --fill; fi'
+        )
+
     # --- 旗と例外は、その gh の呼び出しの中からだけ読む (#1729 の反証) ----
 
     def test_gh_inside_loops_and_conditions_denied(self):

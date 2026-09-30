@@ -429,15 +429,76 @@ class TargetsOtherRepoTest(unittest.TestCase):
             self.assert_own(f"gh pr {CREATE} --fill", cwd=str(no_origin))
 
     def test_cd_inside_the_command_is_not_followed(self):
-        """cd 先は追わない — 意図した限界で、逃げ道は -R の明示に一本化する。
+        """cd 先は追わない。追わずに「宛先を決められない」として止める側へ倒す (#1823)。
 
         追うと判定が推測になり (変数展開・引用・複数の cd・サブシェル)、その推測を
-        permissive な向きに置くとこのリポジトリ宛ての操作を取りこぼす。
+        permissive な向きに置くとこのリポジトリ宛ての操作を取りこぼす。以前は追わない
+        まま cwd で決めていたので、別のリポジトリの cwd から `cd <mokume> && gh …` を
+        打つと素通りした。逃げ道は -R の明示に一本化する。
         """
         with tempfile.TemporaryDirectory() as tmp:
             here = make_repo(Path(tmp) / "mine", "git@github.com:mokume-metal/mokume.git")
             there = make_repo(Path(tmp) / "theirs", "git@github.com:shinyaoguri/setup.git")
             self.assert_own(f"cd {there} && gh pr {CREATE} --fill", cwd=str(here))
+            self.assert_own(f"cd {here} && gh pr {CREATE} --fill", cwd=str(there))
+            self.assert_other(f"cd {here} && gh pr {CREATE} -R other/repo --fill", cwd=str(there))
+
+    def test_statements_that_change_the_destination_make_it_undecidable(self):
+        """gh より前の文・前置で宛先が変わりうるなら、決められないとして止める側 (#1823)。
+
+        対照 (#1823 の「再現」の D) も同じ表で持つ。形を 1 つ足すなら行を 1 つ足す。
+        {m} は mokume の checkout、{o} は別のリポジトリの checkout。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            here = make_repo(Path(tmp) / "mine", "git@github.com:mokume-metal/mokume.git")
+            there = make_repo(Path(tmp) / "theirs", "git@github.com:shinyaoguri/setup.git")
+            gh = f"gh pr {CREATE} --fill"
+            cases = (
+                # (cwd, 継ぐ GH_REPO, 打つもの, 他リポと判定するか)
+                # A: 他リポの cwd から、宛先を mokume へ変えうる文・前置 → 止める側
+                (there, None, "cd {m} && {gh}", False),
+                (there, None, "cd {m}; {gh}", False),
+                (there, None, "cd {m}\n{gh}", False),
+                (there, None, "pushd {m} && {gh}", False),
+                (there, None, "popd; {gh}", False),
+                (there, None, "(cd {m} && {gh})", False),
+                # 入れ子は外の文を継ぐ
+                (there, None, "cd {m} && ({gh})", False),
+                (there, None, "cd {m} && url=$({gh})", False),
+                (there, None, "export GH_REPO=mokume-metal/mokume && echo \"`{gh}`\"", False),
+                (there, None, "if cd {m}; then {gh}; fi", False),
+                (there, None, "export GH_REPO=mokume-metal/mokume && {gh}", False),
+                (there, None, "GH_REPO=mokume-metal/mokume; export GH_REPO; {gh}", False),
+                (there, None, "declare -x GH_REPO=mokume-metal/mokume; {gh}", False),
+                (there, None, "typeset -x GH_REPO=mokume-metal/mokume; {gh}", False),
+                (there, None, "GIT_DIR={m}/.git {gh}", False),
+                (there, None, "env GIT_DIR={m}/.git {gh}", False),
+                (there, None, "export GIT_DIR={m}/.git && {gh}", False),
+                # B: mokume の cwd で、継いだ他リポの GH_REPO を消す文 → 止める側
+                (here, "other/repo", "unset GH_REPO && {gh}", False),
+                (here, "other/repo", "export -n GH_REPO && {gh}", False),
+                # D: いまの判定を保つ
+                (there, None, "env -C {m} {gh}", False),
+                (there, None, "GH_REPO=mokume-metal/mokume {gh}", False),
+                (here, "other/repo", "env -u GH_REPO {gh}", False),
+                (here, None, "cd {o} && {gh}", False),
+                (here, None, "export GH_REPO=other/repo && {gh}", False),
+                (there, None, "{gh}", True),
+                (there, None, "export GH_REPO=mokume-metal/mokume && {gh} -R other/repo", True),
+                (there, None, "cd {m} && {gh} -R other/repo", True),
+                (there, None, "GH_REPO=other/repo; export GH_REPO; GH_REPO=other/repo {gh}", True),
+                (there, None, "{gh} && cd {m}", True),
+                # 入れ子の中の cd は gh に効かないので、cwd のまま読む
+                (there, None, "x=$(cd {m} && pwd) && {gh}", True),
+                (there, None, "(cd {m} && ls) && {gh}", True),
+                (there, None, "echo cd {m} && {gh}", True),
+            )
+            for cwd, inherited, form, other in cases:
+                command = form.format(m=here, o=there, gh=gh)
+                env = {"GH_REPO": inherited} if inherited else {}
+                with self.subTest(command=command, cwd=cwd.name, GH_REPO=inherited):
+                    got = targets_other_repo(command, cwd=str(cwd), **env) == 0
+                    self.assertEqual(got, other)
 
     def test_prefixed_gh_keeps_the_repo_option(self):
         """前置した gh でも、-R の宛先の読み方は変わらない (#1729)。"""
@@ -577,6 +638,44 @@ class GhInvocationsTest(unittest.TestCase):
             "unsafe",
         )
 
+    def test_issue_export_and_gh_must_be_one_and_list(self):
+        """発行から gh までが 1 つの && の並びでなければ、発行の失敗が gh へ伝わらない (#1823)。
+
+        #122 が塞いだ形 (発行の直後が && でない) の続きで、見ていたのは発行の直後の区切り
+        だけだった。形を 1 つ足すなら行を 1 つ足す。
+        """
+        t = 't="$(bash scripts/gh-app-token.sh)"'
+        gh = f"gh pr {CREATE} --fill"
+        for command, expected in (
+            # 並びが崩れている → unsafe
+            (f"{ISSUE} && export GH_TOKEN; {gh}", "unsafe"),
+            (f"{ISSUE} && export GH_TOKEN\ngit push -u origin HEAD\n{gh}", "unsafe"),
+            (f"{ISSUE} && export GH_TOKEN || {gh}", "unsafe"),
+            (f"{ISSUE} && export GH_TOKEN && true || {gh}", "unsafe"),
+            (f"true || {ISSUE} && export GH_TOKEN && {gh}", "unsafe"),
+            (f"false && {ISSUE} && export GH_TOKEN && true; {gh}", "unsafe"),
+            (f"{ISSUE} && export GH_TOKEN & {gh}", "unsafe"),
+            (f"{ISSUE} && export GH_TOKEN && echo | {gh}", "unsafe"),
+            (f"{ISSUE} && export GH_TOKEN && (true); {gh}", "unsafe"),
+            (f"{ISSUE}; export GH_TOKEN && {gh}", "unsafe"),
+            (f"{t} && true; GH_TOKEN=\"$t\" {gh}", "unsafe"),
+            (f"true || {t} && GH_TOKEN=\"$t\" {gh}", "unsafe"),
+            (f"{t} && GH_TOKEN=$t; export GH_TOKEN && {gh}", "unsafe"),
+            # 1 つの && の並び → installation
+            (f"{ISSUE} && export GH_TOKEN && git push -u origin HEAD && {gh}", "installation"),
+            (f"{ISSUE} && export GH_TOKEN &&\n{gh}", "installation"),
+            (f"{ISSUE} && export GH_TOKEN && (true) && {gh}", "installation"),
+            (f"cd /tmp && {ISSUE} && export GH_TOKEN && {gh}", "installation"),
+            (f"echo start; {ISSUE} && export GH_TOKEN && {gh}", "installation"),
+            (f"{ISSUE} && export GH_TOKEN && url=$({gh})", "installation"),
+            (f"{t} && GH_TOKEN=\"$t\" {gh}", "installation"),
+            (f"{t} && GH_TOKEN=$t && export GH_TOKEN && {gh}", "installation"),
+            # 直書きの ghs_ は発行が失敗しえないので、並びを問わない
+            (f"GH_TOKEN=ghs_x; export GH_TOKEN; {gh}", "installation"),
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.token_of(command), expected)
+
     def test_statements_after_gh_do_not_count(self):
         """#1729 の 2 回目の反証 — 発行と export が gh の後ろにある。"""
         self.assertEqual(
@@ -643,6 +742,12 @@ class GhInvocationsTest(unittest.TestCase):
         self.assertEqual(invocations(f"env -C /tmp gh pr {CREATE} --fill")[0][2], "1")
         self.assertEqual(invocations(f"gh pr {CREATE} --fill")[0][2:4], ("0", "top"))
         self.assertEqual(invocations(f'echo "`gh issue {COMMENT}`"')[0][3], "sub")
+        # 文として cwd・GH_REPO を変えたら、env -C・読めない GH_REPO と同じ印 (#1823)
+        self.assertEqual(invocations(f"cd /tmp && gh pr {CREATE} --fill")[0][1:3], ("=", "1"))
+        self.assertEqual(invocations(f"export GH_REPO=x/y && gh pr {CREATE} --fill")[0][1:3], ("?", "0"))
+        self.assertEqual(invocations(f"unset GH_REPO; GH_REPO=x/y gh pr {CREATE} --fill")[0][1], "+x/y")
+        self.assertEqual(invocations(f"(cd /tmp) && gh pr {CREATE} --fill")[0][2], "0")
+        self.assertEqual(invocations(f"gh pr view 1 && cd /tmp && gh pr {CREATE} --fill")[0][2], "0")
 
     def test_quoted_words_keep_their_spaces_out_of_the_flags(self):
         """引用の中の空白は伏せる。本文に書いた -R や --help を旗と取り違えない。"""

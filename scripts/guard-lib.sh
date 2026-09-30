@@ -41,8 +41,10 @@
 #     起動する側の語は利用者が増やせるので、数え上げは必ず取りこぼす (gh api を素通しに
 #     しているのと同じ水準)
 #   - 実行時に決まる語 (`$GH …`・`$(which gh) …`)。値を読むのは推測になる
-#   - 同じコマンドの中で**文として**宛先を変える形 (cd・export GH_REPO=)。扱いは #1823 で
-#     決める。GH_TOKEN を文として変える形 (発行・export・unset・再代入) は読む (#1729)
+#   - 同じコマンドの中で**文として**宛先を変える形 (cd・pushd・popd・GH_REPO や GIT_DIR を
+#     変える文) の**値**。値は追わず、あれば宛先を「決められない」として止める側へ倒す
+#     (#1823。invocation_targets_other_repo の説明)。GH_TOKEN を文として変える形 (発行・
+#     export・unset・再代入) は読む (#1729)
 #   - GH_TOKEN を変える文のうち、サブシェル・$( … ) の中のもの (外へは効かないので読まない)
 #     と、パイプラインの片側・declare -x / typeset -x / readonly のもの
 #
@@ -144,13 +146,17 @@ is_help_request() { # $1=コマンド
 #                   installation  installation token (ghs_… か、同じ行で安全に発行した値)
 #                   inherit       打つシェルから継ぐ (同じ行では触っていない)
 #                   unsafe        発行の失敗が後段へ伝わらない形で入れた
-#                                 (export X="$(…)" / 発行の後が && でない / 前置 GH_TOKEN="$(…)")
+#                                 (export X="$(…)" / 前置 GH_TOKEN="$(…)" / 発行・export・gh が
+#                                 1 つの && の並びにない、またはその並びの gh より前に || がある
+#                                 — #1823。直書きの ghs_ は発行が失敗しえないので並びを問わない)
 #                   unexported    安全に発行したが export していない (gh へ渡らない)
 #                   removed       消した (env -u GH_TOKEN / env -i / unset GH_TOKEN)
 #                   other         確かめられない値 (空・個人の token・発行していない変数)
 #                   unknown       読めない形で変えた (+= など)
 #   2. GH_REPO    前置の値。`=` は継ぐ・`-` は消した・`+<値>` は前置の値・`?` は読めない
-#   3. chdir      env -C で別のディレクトリから走らせるなら 1 (宛先を cwd から決められない)
+#                 (前置が無く、gh より前の文で GH_REPO を代入・export・unset したときも `?`)
+#   3. chdir      宛先を cwd から決められないなら 1。env -C と、gh より前の文としての
+#                 cd・pushd・popd と、GIT_DIR (前置・文) (#1823)
 #   4. 置き場     top か sub ($( … ) やバッククォートの中で実行される)
 #   5. 呼び出し   `gh …` から始まる断片。引用の中の空白・改行は \002 に伏せてある
 #
@@ -204,7 +210,11 @@ gh_invocations() { # $1=コマンド
       function addw(s) { if (length(cw[depth]) < WCAP) cw[depth] = cw[depth] s }
       function mask(s) { gsub(/[ \t\n]/, M, s); return s }
       function run(i, j,   len) { len = j - i; if (len > WCAP) len = WCAP; return substr(src, i, len) }
-      function push(t) { depth++; ftype[depth] = t; finq[depth] = 0; cw[depth] = ""; nw[depth] = 0; fiss[depth] = 0 }
+      # 入れ子は、宛先を変えた印 (DC・DR) を親から継ぐ。閉じれば捨てるので外へは効かない
+      function push(t) {
+        depth++; ftype[depth] = t; finq[depth] = 0; cw[depth] = ""; nw[depth] = 0; fiss[depth] = 0
+        DC[depth] = DC[depth - 1]; DR[depth] = DR[depth - 1]
+      }
       function endword() { if (cw[depth] != "") { nw[depth]++; W[depth, nw[depth]] = cw[depth]; cw[depth] = "" } }
       function joinw(d, lo, hi,   mid) {
         if (lo == hi) return W[d, lo]
@@ -213,12 +223,29 @@ gh_invocations() { # $1=コマンド
       }
       function flush(sep,   f, k) {
         endword()
-        if (nw[depth] == 0) return
+        if (nw[depth] == 0) { if (depth == 0) chain(sep, 1); return }
         f = joinw(depth, 1, nw[depth])
         for (k = 1; k <= nw[depth]; k++) delete W[depth, k]
         nw[depth] = 0
         if (index(f, "scripts/gh-app-token.sh")) fiss[depth] = 1
         emit(f, sep)
+        if (depth == 0) chain(sep, 0)
+      }
+      # 入れ子の外の and-or の並び。LID は並びの番号で、&& 以外の区切り (; 改行 & | …) で
+      # 進む。|| を見たら、その並びの残りに印 (OR) を付ける — 前の段が成功すると後ろが
+      # 飛ばされ、その先の && へ進む。空の断片の区切りは、&& / || の後の改行 (継続) と ( を
+      # 数えない。empty = 区切りの前に語が無かった
+      function chain(sep, empty) {
+        if (sep == "&&") { LOP = sep; return }
+        if (sep == "||") { OR = 1; LOP = sep; return }
+        if (empty && (sep == "(" || (sep == "\n" && LOP != ""))) return
+        LID++; OR = 0; LOP = ""
+      }
+      # 発行した値 (SL がその並びの番号) が、いまの並びで && だけを通って届くか。
+      # 直書きの ghs_ (SL = -1) は発行が失敗しえないので、並びを問わない
+      function reaches(name) {
+        if (SL[name] == -1) return 1
+        return SL[name] == LID && !OR
       }
       # $( … ) / バッククォートを閉じる。発行の置換は印 (X) を持つ語として親へ返す
       function popsub(   iss) {
@@ -274,20 +301,31 @@ gh_invocations() { # $1=コマンド
       function setvar(name, val, plus, sep,   v, r) {
         if (plus) { SV[name] = "unknown"; return }
         v = unquote(val)
-        if (v == "$(" X ")") { SV[name] = (sep == "&&") ? "issued" : "unsafe"; return }
+        if (v == "$(" X ")") {
+          if (sep == "&&") { SV[name] = "issued"; SL[name] = LID } else SV[name] = "unsafe"
+          return
+        }
         r = varref(v)
         if (r != "") {
           if (r == name) return
-          if (r in SV) SV[name] = SV[r]; else SV[name] = "other"
+          if (r in SV) { SV[name] = SV[r]; if (r in SL) SL[name] = SL[r] } else SV[name] = "other"
           return
         }
-        SV[name] = (v ~ /^ghs_/) ? "issued" : "other"
+        if (v ~ /^ghs_/) { SV[name] = "issued"; SL[name] = -1 } else SV[name] = "other"
+      }
+      # 文として代入・export・unset した名前が、gh の宛先に効くなら印を立てる (#1823)
+      function destvar(name) {
+        if (name == "GH_REPO") DR[depth] = 1
+        if (name == "GIT_DIR") DC[depth] = 1
       }
       function shellstate(   s) {
         if (!("GH_TOKEN" in SV)) return "inherit"
         s = SV["GH_TOKEN"]
-        if (s == "issued") return gx ? "installation" : "unexported"
-        return s
+        if (s != "issued") return s
+        if (!gx) return "unexported"
+        # 発行・export・gh が 1 つの && の並びにあるときだけ (#1823)
+        if (!reaches("GH_TOKEN")) return "unsafe"
+        return (SL["GH_TOKEN"] == -1 || GXL == LID) ? "installation" : "unsafe"
       }
       function verdict(tok,   v, r, s) {
         if (tok == "-") return "removed"
@@ -300,7 +338,7 @@ gh_invocations() { # $1=コマンド
         if (r != "") {
           if (r in SV) {
             s = SV[r]
-            if (s == "issued") return "installation"
+            if (s == "issued") return reaches(r) ? "installation" : "unsafe"
             return (s == "removed") ? "other" : s
           }
           if (r == "GH_TOKEN") return "inherit"
@@ -333,6 +371,7 @@ gh_invocations() { # $1=コマンド
             na++; AN[na] = name; AV[na] = val; AP[na] = plus
             if (name == "GH_TOKEN") tok = plus ? "?" : "+" val
             if (name == "GH_REPO") repo = plus ? "?" : "+" val
+            if (name == "GIT_DIR") chd = 1
             f = rest1(f)
             continue
           }
@@ -378,16 +417,29 @@ gh_invocations() { # $1=コマンド
           break
         }
         if (f == "") {
+          for (k = 1; k <= na; k++) destvar(AN[k])
           if (depth == 0) for (k = 1; k <= na; k++) setvar(AN[k], AV[k], AP[k], sep)
           return
         }
         w = word1(f)
         if (unquote(w) ~ /^(.*\/)?gh$/) {
+          if (DC[depth]) chd = 1
+          if (DR[depth] && repo == "=") repo = "?"
           print verdict(tok) "\t" repo "\t" chd "\t" ((depth > 0) ? "sub" : "top") "\tgh" substr(f, length(w) + 1)
           return
         }
-        if (depth != 0) return
+        # 宛先を変える文は、入れ子の中でも覚える (その入れ子の中の gh に効く・#1823)
         w = unquote(w)
+        if (w ~ /^(cd|pushd|popd)$/) DC[depth] = 1
+        if (w ~ /^(export|unset|declare|typeset|readonly|local)$/) {
+          r = rest1(f)
+          while ((a = word1(r)) != "") {
+            r = rest1(r)
+            if (a ~ /^-/) continue
+            name = unquote(a); sub(/=.*/, "", name); destvar(name)
+          }
+        }
+        if (depth != 0) return
         if (w == "export") {
           r = rest1(f)
           while ((a = word1(r)) != "") {
@@ -395,7 +447,7 @@ gh_invocations() { # $1=コマンド
             if (a ~ /^-/) continue
             name = a; sub(/=.*/, "", name)
             if (a ~ /=/) { val = a; sub(/^[^=]*=/, "", val); setvar(name, val, 0, "export") }
-            if (name == "GH_TOKEN") gx = 1
+            if (name == "GH_TOKEN") { gx = 1; GXL = LID }
           }
         } else if (w == "unset") {
           r = rest1(f)
@@ -415,6 +467,7 @@ gh_invocations() { # $1=コマンド
         s = "\"\\$`"
         for (k = 1; k <= length(s); k++) SPD[substr(s, k, 1)] = 1
         depth = 0; ftype[0] = "top"; cw[0] = ""; nw[0] = 0; fiss[0] = 0; nh = 0; gx = 0
+        DC[0] = 0; DR[0] = 0; LID = 1; OR = 0; LOP = ""; GXL = 0
       }
       { src = $0 }
       END {
@@ -529,10 +582,18 @@ gh_fragment_is() { # $1=断片 $2=サブコマンド正規表現
 # いると、別のリポジトリの cwd から `GH_REPO=mokume-metal/mokume gh …` を打った形を
 # 素通しにしていた (止める側へ片方向にしか倒れていなかった)。
 #
-# **同じコマンドの中の cd と、文としての export GH_REPO= は追わない。** コマンド文字列から
-# その値を読むのは推測になる (変数展開・引用・複数の cd・サブシェル・順序)。追わないことが
-# 素通しの向きに倒れる形 (別のリポジトリの cwd から `cd <mokume> && gh …`) が残っており、
-# 扱いは #1823 で決める。逃げ道は -R の明示に一本化する (差し戻しの文面がそう案内する)。
+# **同じコマンドの中の cd と、文としての export GH_REPO= は、値を追わずに「決められない」と
+# 読む** (#1823)。コマンド文字列からその値を読むのは推測になる (変数展開・引用・複数の cd・
+# サブシェル・順序)。以前は追わないまま cwd と継いだ GH_REPO で決めていたので、別のリポジトリの
+# cwd から `cd <mokume> && gh …`・`export GH_REPO=mokume-metal/mokume && gh …` が素通しし、
+# mokume の cwd で継いだ他リポの GH_REPO を `unset GH_REPO` で消した形も素通しした。
+#
+# 印は gh_invocations が gh より前の文から立てる (2 列目の `?` と 3 列目の 1)。立てるのは、
+# cwd を変える文 (cd・pushd・popd)・GIT_DIR (gh は GIT_DIR のリポジトリを今いるリポジトリと
+# して読む)・GH_REPO を変える文 (代入・export・export -n・declare / typeset・unset) である。
+# `( … )` と `$( … )` の中の gh には外の文も効き、中の文は外の gh に効かない
+# (x=$(cd <dir> && pwd) && gh … は cwd のまま読む)。逃げ道は -R の明示と前置の GH_REPO= で、
+# この 2 つは印より勝つ (gh の宛先の順と同じ)。差し戻しの文面は -R を案内する。
 invocation_targets_other_repo() { # $1=断片 $2=GH_REPO $3=chdir $4=cwd
   local base target
   base="$(this_repo)"
@@ -571,8 +632,9 @@ other_repo_hint() { # $1=そのコマンドの例 (例: "gh pr view" のよう�
   $1 -R owner/repo …
 
 -R が無いときの宛先は、**フックが受け取ったカレントディレクトリ**のリポジトリとして
-読みます。同じコマンドの中の cd は追いません — 判定を推測に寄せないためです。つまり
-cd 先のリポジトリ宛てのつもりでも、シェルがまだこのリポジトリに居るなら止まります。
+読みます。同じコマンドの中で gh より前に cd・pushd・popd・GIT_DIR や、GH_REPO を変える文
+(export GH_REPO=・unset GH_REPO など) があれば、その先は追わずに宛先を決められないものとして
+止めます — 判定を推測に寄せないためです。cd 先のリポジトリ宛てなら -R を付けてください。
 git 管理外・origin が無い・owner を省いた --repo も同じく止める側です。
 EOF
 }

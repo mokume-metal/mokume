@@ -40,7 +40,8 @@
 #   - --dry-run              → PR を作らず内容を出すだけ (gh pr create の旗)
 #   - このリポジトリ以外宛て   → 規約の外
 #   - 同じ行で gh-app-token.sh を **失敗が後段へ伝わる形で** 通し、かつ **export で
-#     gh まで渡している**もの (実際の運用形)
+#     gh まで渡している**もの (実際の運用形)。発行・export・gh が 1 つの && の並びに
+#     あることまで見る (#1823)
 #   - フック自身の環境の GH_TOKEN が installation token (ghs_) のとき
 #   - 打つ人がこのリポジトリへの push 権限を持たないと確かめられたとき (外部の人)
 #
@@ -114,6 +115,8 @@ token の発行が失敗しても後段が走る形になっています。こ�
 
   - set -e を足しても救われません (export の終了コードが 0 のため)
   - 代入プレフィクス GH_TOKEN="$(…)" gh pr create … も、発行の失敗が伝わりません
+  - 発行・export・gh の間を ;・改行・||・&・| で区切った形も、発行の失敗が gh まで
+    伝わりません。1 つの && の並びにしてください (並びの前に || も置かない・#1823)
 EOF
 }
 
@@ -308,6 +311,7 @@ is_outside_collaborator() {
 #   installation  ghs_… か、同じ行で安全に発行した値    通す
 #   inherit       打つシェルの GH_TOKEN                 フックの環境が ghs_ なら通す
 #   unsafe        発行の失敗が伝わらない                止める (unsafe_token_form_message)
+#                 (&& の並びで gh まで繋がっていない形を含む・#1823)
 #   unexported    何も渡らない (export していない)     止める (token_not_exported_message)
 #   removed       何も渡らない (env -u / env -i / unset) 止める (prefix_token_message)
 #   other・unknown 確かめられない値                     止める (prefix_token_message)
