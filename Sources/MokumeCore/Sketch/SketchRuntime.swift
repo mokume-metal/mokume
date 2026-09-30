@@ -471,6 +471,7 @@ public final class SketchRuntime {
             lastFrameAt = now()
         }
         guard !isPaused else {
+            takeFragmentChangesWithoutAFrame()
             settleWithoutAnotherFrame()
             serveObservationIfRequested(request: observation)
             return
@@ -481,6 +482,7 @@ public final class SketchRuntime {
         if !isLooping, requestedTime == nil {
             if !redrawRequested {
                 guard deliverWhileStopped() else {
+                    takeFragmentChangesWithoutAFrame()
                     settleWithoutAnotherFrame()
                     serveObservationIfRequested(request: observation)
                     return
@@ -966,6 +968,19 @@ public final class SketchRuntime {
             recorder.isIdle || !entry.health.isAttached
         else { return }
         outlets.removeAll { $0.seam === recorder }
+    }
+
+    /// 描かずに戻るフレームで、保存し直した断片を読み直す ([#1830] の 2 回目の反証 1)。
+    ///
+    /// 読み直しを取るのは本体の面のフレームの頭 (``Canvas`` の `beginFrame()`) なので、描かない
+    /// 間 (外から止めた間・作者の `noLoop()` で描き直しを頼まれていない間) は、main actor を
+    /// 譲らないループでは取る者がいなかった。窓なら積んだ `Task` が取るので、`failure` と観測の
+    /// 目録 (`canvas.shaderFailures`) が、叩き方で古いまま残るかどうかが割れた。ここは描いて
+    /// いないので、組み直しても 1 つのフレームの中で断片が混ざることはない。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    private func takeFragmentChangesWithoutAFrame() {
+        FileWatcher.takeChanges()
     }
 
     /// 抱えている絵と予約を、**次のフレームを当てにせずに**決着させる。

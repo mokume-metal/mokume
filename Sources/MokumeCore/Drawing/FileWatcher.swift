@@ -17,12 +17,13 @@ import Foundation
 /// 置き換え保存のあと、ファイル側の見張りは**消えたファイル**を指したままになる。
 /// 2 回目の保存が届かないのはこれが原因で、**1 回保存して届くかの検査には判別力が
 /// 無い** — 誤った実装でも 1 回目は通り、死ぬのは 2 回目以降である。だから拾うたびに
-/// その場所のファイルの通し番号を見て、**相手が入れ替わっていれば**ファイル側を張り直す。
+/// その場所のファイルが誰か (通し番号と生まれた時刻) を見て、**相手が入れ替わっていれば**
+/// ファイル側を張り直す。
 ///
 /// 入れ替わっていなければ張り直さない。親ディレクトリの書き込みも拾うので、断片と同じ
 /// ディレクトリへ連番を書き出すと事象はフレームごとに起きる。そのたびに張り直すと、毎フレーム
 /// ファイルを開き直すことになる ([#1830] の反証 2)。中身が変わっていなければ、扱う費用は
-/// 通し番号を読む 1 回と、持ち主が中身を読んで比べる 1 回で止まる (``ShaderBox/reload(_:)``)。
+/// ファイルの属性 (stat) を読む 1 回と、持ち主が中身を読んで比べる 1 回で止まる (``ShaderBox/reload(_:)``)。
 ///
 /// ## 主キューへ直に載せない
 ///
@@ -45,8 +46,9 @@ import Foundation
 ///
 /// - **本体の面のフレームの頭** (``takeChanges()``)。本体の面とは時刻の置き場の持ち主で、
 ///   ランタイムの面も、利用者が `Canvas(target:gpu:)` で作って直に回す面もこれに当たる
-/// - 積んだ `Task` が走ったとき (main actor を譲ったとき)。フレームを描かずに譲る経路 (止めた
-///   スケッチの窓など) でも届く
+/// - ランタイムが描かずに戻るフレーム (外から止めた間・作者の `noLoop()` の間)。描かない
+///   フレームには本体の面の頭が来ないので、ランタイムが自分で取る (#1830 の 2 回目の反証 1)
+/// - 積んだ `Task` が走ったとき (main actor を譲ったとき)。フレームを回さずに譲る経路でも届く
 ///
 /// かつては `Task` しか取らなかったので、main actor を譲らずにフレームを回すループ (窓を出さない
 /// 書き出しや検査。``SketchRuntime/advance()`` でも、面を直に回すのでも) では 1 本も走らず、何
@@ -76,8 +78,8 @@ final class FileWatcher {
     private var fileSource: (any DispatchSourceFileSystemObject)?
     private var directorySource: (any DispatchSourceFileSystemObject)?
     private let queue = DispatchQueue(label: "org.mokume.shader-watch")
-    /// いま見張っているファイルの通し番号。置き換えられると変わる。
-    private var watchedIdentifier: UInt64?
+    /// いま見張っているファイルが誰か (``Identity``)。置き換えられると変わる。
+    private var watchedIdentifier: Identity?
     /// 拾った事象を main actor へ渡す前に合体する器。
     private let notices = CoalescedNotices()
     /// 拾った変化の印。扱う側が取る (冒頭の「扱うのは、印を取った側」)。印の形は `@Param` の
@@ -141,11 +143,29 @@ final class FileWatcher {
         watchedIdentifier != nil && watchedIdentifier == Self.identifier(of: url.path)
     }
 
-    /// その場所にあるファイルの通し番号。
-    private nonisolated static func identifier(of path: String) -> UInt64? {
+    /// ファイルが誰か。**通し番号に、置き場と生まれた時刻を添える** ([#1830] の 2 回目の反証 5)。
+    ///
+    /// 張り直すかを番号だけで決めると、消して作り直したファイルが同じ番号を得るファイル
+    /// システムでは、張り直さずに消えたファイルを見張り続ける。APFS は番号を使い回さないが、
+    /// 番号の使い回しはファイルシステムの都合で、この型が約束できることではない。作り直した
+    /// ファイルは生まれた時刻が変わるので、番号が同じでも別のものと読める。中身を書き換えても
+    /// 生まれた時刻は変わらないので、その場の上書きでは張り直さない (冒頭)。
+    ///
+    /// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+    private nonisolated struct Identity: Equatable {
+        let device: Int32
+        let inode: UInt64
+        let bornSeconds: Int
+        let bornNanoseconds: Int
+    }
+
+    /// その場所にあるファイルが誰か。無ければ `nil`。
+    private nonisolated static func identifier(of path: String) -> Identity? {
         var info = stat()
         guard stat(path, &info) == 0 else { return nil }
-        return UInt64(info.st_ino)
+        return Identity(
+            device: info.st_dev, inode: UInt64(info.st_ino),
+            bornSeconds: info.st_birthtimespec.tv_sec, bornNanoseconds: info.st_birthtimespec.tv_nsec)
     }
 
     private func watchFile() {
