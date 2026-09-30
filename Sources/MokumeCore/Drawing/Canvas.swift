@@ -868,6 +868,25 @@ public final class Canvas {
     /// このフレームで描き切った回数。**奥行きを引き継ぐかの判定に使う。**
     private var passesThisFrame = 0
 
+    /// 描き切りの印。**溜めた計算と列を投入するか捨てると、必ず変わる** ([#1651])。
+    ///
+    /// 溜めた列を投入して空にするのは ``discardFrame()`` で、呼ばれるのは描き切れたとき (描き切った
+    /// 回数が進む) と、フレームを閉じるか捨てるとき (``framesDrawn`` が進む) である。塗り直し
+    /// (`background()`) も溜めた列を捨てるが、印は変えない。粒はその組をまだ読まれていないと
+    /// 見なして 1 組を余分に足すだけで、絵は変わらない。
+    /// ``framesDrawn`` は戻らず、描き切った回数が 0 へ戻るのは ``framesDrawn`` が進んだ後の
+    /// フレームの頭だけなので、同じ印は 2 度現れない。読み戻し (``read(_:)``) は計算だけを流して列を残すので、印を変えない。
+    /// 粒が、呼び出しごとの置き場の組を使い回してよいかを見るのに読む。
+    ///
+    /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
+    var settleMark: SettleMark { SettleMark(frame: framesDrawn, pass: passesThisFrame) }
+
+    /// ``settleMark`` の値。
+    struct SettleMark: Equatable {
+        let frame: Int
+        let pass: Int
+    }
+
     /// 置いた描き場所のうち、まだ描き切っていないもの。
     ///
     /// **置いた時点の絵を守るために覚えている。** 溜めてから描くので、置いたあとに

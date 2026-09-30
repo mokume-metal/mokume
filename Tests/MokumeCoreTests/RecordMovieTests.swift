@@ -321,17 +321,28 @@ struct RecordingFailureTests {
             _ = try writeAndSettle(movie, image(80), frame: 1, time: 0)
             _ = try writeAndSettle(movie, image(120), frame: 2, time: 1.0 / 60)
             _ = try writeAndSettle(movie, image(160), frame: 3, time: -1)
-            // **転んだと分かってから書き足す。** 時刻が戻る 1 枚の直後の枚は、符号化器が転ぶ前に
-            // 受け付けられることがある (実測) ので、書き損じが決着するまで 1 枚ずつ見る
+            // **転んだと分かってから書き足す。** 符号化器の失敗は非同期で、時刻が戻る 1 枚を
+            // 受けてから writer が止まるまでの間は、後の枚も受け付けられる。何枚目で転ぶかは
+            // その間に何枚書けたかで決まり、負荷で揺れる (#1825: 3 枚の上限では、混んだ
+            // 機械で足りなかった)。**だから枚数ではなく時間で待つ** — 書き損じが決着するまで
+            // 1 枚ずつ間を空けて書き足し、上限は 1 枚の決着と同じ 10 秒の期限で持つ。間を
+            // 空けるのは、止まる前に書いた枚を積み上げないためである (空けると直後の枚で転び、
+            // 空けないと 6〜8 枚目までずれる。#1813 の測定)
             var frame = 3
             var failed = false
-            while !failed, frame < 6 {
+            let deadline = DispatchTime.now() + 10
+            while !failed, DispatchTime.now() < deadline {
                 frame += 1
                 let outcome = try writeAndSettle(
                     movie, image(200), frame: frame, time: Double(frame - 1) / 60)
                 failed = outcome.failure != nil
+                // 塞いで待つ (`writeAndSettle` と同じ)。`await` で譲ると、並んで走る他の検査が
+                // 前提を作る途中に割り込む
+                if !failed { usleep(2_000) }
             }
-            try #require(failed, "3 枚書き足しても符号化器が転ばない — この入り方が効いていない")
+            try #require(
+                failed,
+                "10 秒書き足し続けても符号化器が転ばない (\(frame - 3) 枚) — この入り方が効いていない")
 
             // 転んだ符号化器へもう 1 枚。**この決着は待たない** — 待つのは endRecord() の期限である
             frame += 1

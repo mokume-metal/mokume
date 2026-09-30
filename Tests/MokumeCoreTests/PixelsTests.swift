@@ -57,6 +57,49 @@ struct PixelsTests {
         #expect(try canvas.target.readPixels() == before)
     }
 
+    /// 読んだ値で塗ると、読んだのと同じ色が出る ([#736] の完了条件 5)。
+    ///
+    /// `get` が返す値と `fill(_:)` が受ける値は、どちらも乗算済みの ``LinearRGBA`` である
+    /// ([ADR-0011] 決定 4 の 2026-09-30 改訂)。変換が挟まらないので、半透明の画素を読んで
+    /// その値で塗っても沈まない。**透明な下地へ描く** — 下地が不透明だと、重ねた結果が下地の色を
+    /// 含み、塗った値そのものと比べられない。
+    ///
+    /// [#736]: https://github.com/mokume-metal/mokume/issues/736
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    @Test("半透明の画素を読んだ値で塗って描くと、読んだ値と同じ画素になる")
+    func fillingWithAReadTranslucentPixelReproducesIt() throws {
+        let canvas = try makeCanvas(width: 32, height: 32)
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0, alpha: 0))
+            canvas.noStroke()
+            canvas.fill(LinearRGBA(straightRed: 1, green: 0.3, blue: 0.1, alpha: 0.35))
+            canvas.circle(16, 16, 24)
+        }
+        let read = canvas.get(16, 16)
+        // 半透明の画素を読めていることを先に確かめる。不透明なら掛け直しても値が動かない
+        try #require(read.alpha > 0.2 && read.alpha < 0.5, "読んだ画素が半透明でない (α=\(read.alpha))")
+
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0, alpha: 0))
+            canvas.noStroke()
+            canvas.fill(read)
+            canvas.rect(0, 0, 32, 32)
+        }
+
+        // 半精度の丸めの範囲で比べる。GPU が面へ書くときの丸めは最寄りとは限らない (#911)
+        func isQuantized(_ drawn: Float, _ given: Float) -> Bool {
+            let half = Float16(given)
+            return [Float(half), Float(half.nextUp), Float(half.nextDown)].contains(drawn)
+        }
+        let drawn = canvas.get(8, 8)
+        for (name, got, want) in [
+            ("赤", drawn.red, read.red), ("緑", drawn.green, read.green),
+            ("青", drawn.blue, read.blue), ("不透明度", drawn.alpha, read.alpha),
+        ] {
+            #expect(isQuantized(got, want), "\(name): 塗った画素 \(got) / 読んだ値 \(want)")
+        }
+    }
+
     /// 完了条件「描いた図形の中心の画素が、指定した色を量子化した値と一致する」。
     @Test("描いた図形の中心の画素が、指定した色を量子化した値と一致する")
     func centreOfAShapeCarriesTheColourItWasGiven() throws {
