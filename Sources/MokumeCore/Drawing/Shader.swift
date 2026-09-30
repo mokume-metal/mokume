@@ -28,7 +28,22 @@ public final class Shader {
     /// 値と別に持つのは詰め先が違うからで、値は列ごとの 1 区画へ、面は口へ載る。
     ///
     /// [#407]: https://github.com/mokume-metal/mokume/issues/407
-    private(set) var surfaces: [String: ShaderSurface]
+    private(set) var surfaces: [String: ShaderSurface] {
+        didSet { drawnSurfaces = Self.drawn(in: surfaces) }
+    }
+
+    /// 渡している面のうち、描き場所 (``ShaderSurface/graphics(_:)``)。
+    ///
+    /// 置いた図形がこれを読むことを、置くたびに記録する (``Canvas/notePaintPlacement()``・#1653)。
+    /// 図形を積むたびに通る口が読むので、面の辞書を毎回たどらずに済むよう控えておく。
+    private(set) var drawnSurfaces: [Canvas] = []
+
+    private static func drawn(in surfaces: [String: ShaderSurface]) -> [Canvas] {
+        surfaces.values.compactMap {
+            if case .graphics(let graphics) = $0 { return graphics }
+            return nil
+        }
+    }
 
     /// 口へ束ねる順に並べた面。**原稿が宣言した並びと同じ (名前順)** — ここが食い違うと、
     /// 断片が「木目」と書いたところへ「汚し」が届く。
@@ -47,8 +62,14 @@ public final class Shader {
 
     private let pipeline: ShapePipeline
     private let gpu: RenderDevice
-    /// この塗りを作った面。値を変えるときに列を閉じてもらう。
-    weak var canvas: Canvas?
+    /// この塗りを当てた面 (``Canvas/shader(_:)``)。値や面を変えるときに列を閉じてもらう。
+    ///
+    /// **作った面ではなく、当てた面を覚える** ([#1652])。塗りは面をまたいで使えるので、
+    /// 作った面にしか知らせないと、他の面で置いた図形が後の値で描かれる。弱く持つ —
+    /// 面は利用者が持つもので、塗りが寿命を延ばす筋合いが無い。
+    ///
+    /// [#1652]: https://github.com/mokume-metal/mokume/issues/1652
+    private var users: [Canvas.WeakCanvas] = []
 
     init(
         name: String, url: URL?, body: String, values: [String: ShaderValue],
@@ -57,6 +78,7 @@ public final class Shader {
     ) throws(RenderFailure) {
         self.name = name
         self.surfaces = surfaces
+        self.drawnSurfaces = Self.drawn(in: surfaces)
         self.gpu = gpu
         self.pipeline = pipeline
         self.box = ShaderBox(
@@ -80,7 +102,7 @@ public final class Shader {
     /// 組み上がるので、後から名前を増やすと組み直しになる。増やすかどうかは
     /// 読み込むときに決める。
     public func set(_ name: String, _ value: ShaderValue) {
-        canvas?.shaderValuesWillChange()
+        paintWillChange()
         box.assign(name, value)
     }
 
@@ -89,7 +111,7 @@ public final class Shader {
     /// **宣言していない名前は受け付けない** — 面の宣言も断片と一緒に組み上がるので、
     /// 後から名前を増やすと組み直しになる (値と同じ規則)。
     public func set(_ name: String, _ surface: ShaderSurface) {
-        canvas?.shaderValuesWillChange()
+        paintWillChange()
         guard surfaces[name] != nil else {
             Diagnostics.warn(
                 "shader: \"\(name)\" was never declared as a surface, so it cannot be passed. "
@@ -98,6 +120,18 @@ public final class Shader {
             return
         }
         surfaces[name] = surface
+    }
+
+    /// この塗りを当てた面を覚える。**同じ面は 1 度だけ。** 覚えるついでに、死んだ面を落とす。
+    func note(usedBy canvas: Canvas) {
+        guard !users.contains(where: { $0.canvas === canvas }) else { return }
+        users.removeAll { $0.canvas == nil }
+        users.append(Canvas.WeakCanvas(canvas: canvas))
+    }
+
+    /// 値か面が変わる。**当てた面のうち、いまこの塗りで置いている面の列を閉じる。**
+    private func paintWillChange() {
+        for user in users { user.canvas?.shaderWillChange(self) }
     }
 
     /// いまの値を、シェーダへ渡す並びに詰めたもの。

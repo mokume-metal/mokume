@@ -13,6 +13,8 @@
 #     (ADR-0040 決定 4 — 下の「4.」)
 #   - 承認が要る PR の author が、その PR を承認できる唯一の人であってはならない
 #     (ADR-0007 の不変条件。破ると **誰も承認できない PR** ができる — #88)
+#   - AGENTS.md を合流先との分岐点より長くした PR は、本文に増分の宣言があり実測と一致する
+#     (#1668 — 下の「AGENTS.md の増分」)
 #
 # **承認そのものはここで判定しない。** 要求も必須化もルールセットの required_reviewers
 # が担う (.github/rulesets/main-protection.json — 3 パスに minimum_approvals: 1 を課して
@@ -40,7 +42,8 @@
 #
 #   0   通過
 #   1   差し戻し (Issue 紐づけなし・verify ラベルなし・対応表なし・反証の節なし・
-#       変更要求・誰も承認できない・対象 Issue を読めない)
+#       変更要求・誰も承認できない・対象 Issue を読めない・AGENTS.md の増分が宣言と
+#       合わない・AGENTS.md を読めない)
 #
 # 使い方: review-gate.sh <PR番号> (要 GH_TOKEN / gh 認証)
 set -euo pipefail
@@ -186,7 +189,7 @@ strip_html_comments() {
 }
 
 pr_json=$(gh pr view "$PR" -R "$REPO" \
-  --json body,labels,latestReviews,author,closingIssuesReferences)
+  --json body,labels,latestReviews,author,closingIssuesReferences,baseRefName,headRefOid)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
 # **変更ファイルだけ別の口から取る** (#793)。同じ gh pr view にまとめると呼び出しは
 # 1 回で済むが、files は GraphQL の接続で上限があり、大きな PR では後半が落ちる —
@@ -390,6 +393,56 @@ if ! grep -qx "APPROVED" <<<"$reviews"; then
            "$(unapprovable_message)"
     fi
   fi
+fi
+
+# 7. AGENTS.md の増分 (#1668)。
+#
+#    AGENTS.md は毎セッション全文が読まれる固定費なので、増やす PR には本文に宣言の 1 行
+#    (行全体で「AGENTS.md の増分: +N」) を求め、実測と突き合わせる。縮めた PR と触れて
+#    いない PR は宣言なしで通る。**比べる相手は base の先端ではなく merge-base** — 先端と
+#    比べると、後から入った他の PR の増減が自分の増分に混ざる。数え方と宣言の読み方は
+#    check-agents-md-size.py の growth が持ち、ここは材料を取って渡すだけである (冒頭の
+#    「1.」「数え方」がその理由)。
+#
+#    以前は字数の記録値を 1 行のファイルに置いていたが、AGENTS.md に触れる PR が同時に
+#    2 本あるとその 1 行だけが衝突し、承認の取り直しを生んだ (#1668)。
+#
+#    no-issue の PR にも効かせる (上の 3. と違い、閉じる Issue の有無と関係が無い)。
+#
+#    **AGENTS.md に触れず、宣言らしき文字列も無ければ API を呼ばない。** 宣言の有無は
+#    粗く見る — 文中で触れただけの行も呼ぶ側に倒すが、そのときは growth が「宣言なし・
+#    増分 0」として緑を返すだけである。宣言の形の揺れを名指しするのは growth の側。
+#
+#    本文は \r を落とし、HTML コメントを除いてから渡す (テンプレートの案内はコメントに
+#    書いてあり、そこの例を宣言と読まないため)。取得に失敗したら理由を名乗って落ちる —
+#    読めないまま通すと、増分の検査が黙って外れる
+agents_body=$(jq -r '.body // ""' <<<"$pr_json" | tr -d '\r' | strip_html_comments)
+if grep -qx 'AGENTS.md' <<<"$pr_paths" ||
+   grep -q 'AGENTS\.md の増分' <<<"$agents_body"; then
+  base_ref=$(jq -r '.baseRefName // ""' <<<"$pr_json")
+  head_oid=$(jq -r '.headRefOid // ""' <<<"$pr_json")
+  [ -n "$base_ref" ] && [ -n "$head_oid" ] ||
+    fail "PR の base / head を読めなかった (AGENTS.md の増分を比べられない)" \
+         "gh pr view が baseRefName / headRefOid を返すか確かめて、この check を再実行する"
+  merge_base=$(gh api "repos/$REPO/compare/${base_ref}...${head_oid}" --jq '.merge_base_commit.sha') ||
+    fail "$base_ref と $head_oid の merge-base を引けなかった (上の gh のエラーを参照)" \
+         "権限や通信の失敗なら、直してからこの check を再実行する"
+  [[ "$merge_base" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "compare API が merge-base の SHA を返さなかった (読めた値: '$merge_base')" \
+         "権限や通信の失敗なら、直してからこの check を再実行する"
+  agents_dir=$(mktemp -d)
+  trap 'rm -rf "$agents_dir"' EXIT
+  for side in "base:$merge_base" "head:$head_oid"; do
+    gh api -H 'Accept: application/vnd.github.raw' \
+      "repos/$REPO/contents/AGENTS.md?ref=${side#*:}" >"$agents_dir/${side%%:*}" ||
+      fail "AGENTS.md を ${side#*:} で読めなかった (上の gh のエラーを参照)" \
+           "権限や通信の失敗なら、直してからこの check を再実行する"
+  done
+  if ! growth=$(python3 "$(dirname "${BASH_SOURCE[0]}")/check-agents-md-size.py" growth \
+                  "$agents_dir/base" "$agents_dir/head" <<<"$agents_body" 2>&1); then
+    fail "AGENTS.md の増分が PR 本文の宣言で説明されていない (#1668)" "$growth"
+  fi
+  echo "review-gate: $growth"
 fi
 
 echo "review-gate: ok"

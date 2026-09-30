@@ -200,6 +200,8 @@ extension Sketch {
     /// ``bezierVertex(_:_:_:_:_:_:)`` / ``quadraticVertex(_:_:_:_:)`` / ``curveVertex(_:_:)``
     /// のどれにも効く。
     ///
+    /// 刻みの数は 1 以上。0 以下は 1 (区間を 1 本の直線で結ぶ) として扱い、1 度だけ知らせる。
+    ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift

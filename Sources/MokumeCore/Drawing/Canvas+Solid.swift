@@ -60,7 +60,7 @@ extension Canvas {
     public func sphere(_ radius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail) {
         let radius = radius.asFloat
         guard SolidShape.isDrawable(radius) else { return warnBadSize("sphere") }
-        place(.sphere(radius: radius, detail: SolidShape.clampDetail(detail)))
+        place(.sphere(radius: radius, detail: admittedDetail(detail, for: "sphere", .badSphereDetail)))
     }
 
     // 楕円体を置く。
@@ -72,7 +72,7 @@ extension Canvas {
         guard SolidShape.isDrawable(x, y, z) else { return warnBadSize("ellipsoid") }
         place(
             .ellipsoid(
-                radiusX: x, radiusY: y, radiusZ: z, detail: SolidShape.clampDetail(detail)))
+                radiusX: x, radiusY: y, radiusZ: z, detail: admittedDetail(detail, for: "ellipsoid", .badEllipsoidDetail)))
     }
 
     // 平らな面を置く。
@@ -89,7 +89,7 @@ extension Canvas {
     ) {
         let (radius, height) = (radius.asFloat, height.asFloat)
         guard SolidShape.isDrawable(radius, height) else { return warnBadSize("cylinder") }
-        place(.cylinder(radius: radius, height: height, detail: SolidShape.clampDetail(detail)))
+        place(.cylinder(radius: radius, height: height, detail: admittedDetail(detail, for: "cylinder", .badCylinderDetail)))
     }
 
     // 円錐を置く。
@@ -99,7 +99,7 @@ extension Canvas {
     ) {
         let (radius, height) = (radius.asFloat, height.asFloat)
         guard SolidShape.isDrawable(radius, height) else { return warnBadSize("cone") }
-        place(.cone(radius: radius, height: height, detail: SolidShape.clampDetail(detail)))
+        place(.cone(radius: radius, height: height, detail: admittedDetail(detail, for: "cone", .badConeDetail)))
     }
 
     // 輪を置く。
@@ -110,7 +110,7 @@ extension Canvas {
         guard SolidShape.isDrawable(radius, tubeRadius) else { return warnBadSize("torus") }
         place(
             .torus(
-                ringRadius: radius, tubeRadius: tubeRadius, detail: SolidShape.clampDetail(detail)))
+                ringRadius: radius, tubeRadius: tubeRadius, detail: admittedDetail(detail, for: "torus", .badTorusDetail)))
     }
 
     // MARK: - 奥行きを持つ変換
@@ -360,6 +360,8 @@ extension Canvas {
     /// 立体を溜める側へ移る。**平面の列はここで閉じる** — 閉じないと、あとから
     /// 置いた立体が先に描かれる。
     func beginSolids() {
+        // **立体を置く口はどれもここを通る。** 列が開いていても記録は置くたびに取る
+        notePaintPlacement()
         guard openSource != .solid else { return }
         closeBatch()
         useFillTexture()
@@ -478,9 +480,49 @@ extension Canvas {
     /// なったものは、多くなりすぎたときに古い順から 1 件ずつ捨てる (``Canvas/solidMeshes``)。
     private func solidMesh(for shape: SolidShape) -> SolidMesh {
         if let cached = solidMeshes[shape] { return cached }
-        let mesh = shape.make()
+        let mesh: SolidMesh
+        if case .sphere(let radius, let detail) = shape, radius != 1 {
+            // **向きは半径に依らない** ので、同じ細かさの単位球から位置だけを作る (#1751)。
+            // 組み立て (``SolidMeshBuilder/sphere(radius:detail:)``) と同じく位置は
+            // `向き * 半径` で、単位球の位置は `向き * 1` = 向きそのものなので、1 ビットも
+            // 変わらない。寸法が毎フレーム動く球が、三角関数を点ごとに引き直さずに済む
+            // 閉包を標準ライブラリへ渡さずに回す — 渡すと点ごとに隔離の実行時検査を払う (#1779)
+            let unit = solidMesh(for: .sphere(radius: 1, detail: detail))
+            var points: [SolidMesh.Point] = []
+            points.reserveCapacity(unit.points.count)
+            for point in unit.points {
+                points.append(
+                    SolidMesh.Point(
+                        position: point.normal * radius, normal: point.normal, uv: point.uv))
+            }
+            mesh = SolidMesh(points: points)
+            spheresFromUnit += 1
+        } else {
+            mesh = shape.make()
+        }
         solidMeshes.insert(mesh, for: shape)
         return mesh
+    }
+
+    /// 分け方を範囲 (``SolidShape/detailRange``) へ丸め、丸めたら 1 度知らせる ([#1698])。
+    ///
+    /// 丸め先は ``SolidShape/clampDetail(_:)`` のまま。鍵は立体ごとに分ける — 共有すると、
+    /// 先に言った立体が後の立体の書き間違いを黙らせる (#1698 の反証 9)。
+    ///
+    /// **置けない所 (フレームの外) では知らせない** (#1698 の反証 10)。そこでは形を置かず、
+    /// 置く側 (`placeMesh`) が「フレームの外」を言う。置かない形のために 1 度きりの鍵を使い
+    /// 切らない。
+    ///
+    /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+    private func admittedDetail(_ detail: Int, for name: String, _ warning: Warning) -> Int {
+        let used = SolidShape.clampDetail(detail)
+        if used != detail, canPlace {
+            let range = SolidShape.detailRange
+            warnRounded(
+                warning, name, "detail",
+                takes: "\(range.lowerBound) to \(range.upperBound)", passed: detail, used: used)
+        }
+        return used
     }
 
     /// 置けない寸法を、初回だけ知らせる。
@@ -573,6 +615,8 @@ extension Canvas {
         }
         let half = style.strokeWeight / 2
         let camera = StrokeCamera(currentCamera)
+        let strokeStart = solidVertices.count
+        defer { rememberGPUStroke(of: source, from: strokeStart) }
         strokeNet(
             count: placed.count, edges: net.edges,
             endSquare: {
@@ -593,6 +637,23 @@ extension Canvas {
                 appendSolidStroke(
                     .square(placed[$0]), shape: (net.points[$0], net.points[$0]), half: half, camera: camera)
             })
+    }
+
+    /// 記録の間に CPU で積んだ組み込み立体の線を、**置くときに GPU で組める**ものなら覚える
+    /// (``RetainedGPUStroke``・#1756)。
+    ///
+    /// 条件は、その場で描くときの ``placeGPUStroke(of:mesh:)`` と同じ (記録していないことを
+    /// 除く) で、**記録した時点のスタイルで**判じる。骨 (``SolidStrokeGeometry``) はここでは
+    /// 作らない — 置かれずに捨てられる形のために GPU の置き場を確保しない。骨が作れない
+    /// 稜線 (開いた端) は、置くときに CPU の帯へ戻る。
+    private func rememberGPUStroke(of source: SolidSource, from start: Int) {
+        guard recordingShape, gpuStrokeStyleAllows(source), solidVertices.count > start else {
+            return
+        }
+        recordedGPUStrokes.append(
+            RetainedGPUStroke(
+                source: source, matrix: transform.matrix, weight: style.strokeWeight,
+                color: style.stroke, uv: whiteUV, vertices: start..<solidVertices.count))
     }
 
     /// 線の部品を 1 つ積む。**記録の間は、置くときに組み直せるよう元を覚える** (#1547)。

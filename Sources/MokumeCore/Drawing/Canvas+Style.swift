@@ -31,7 +31,17 @@ extension Canvas {
 
     public func strokeWeight(_ weight: some ScalarConvertible) {
         let weight = weight.asFloat
-        style.strokeWeight = max(0, weight)
+        // 負の太さ・数でない値・無限は 0 にして、1 度知らせる (#1698)。`>=` は NaN も弾く。
+        // 無限を通すと、形の経路 (`appendForm`) が形ごと黙って捨て、塗りも出ない (#1698 の
+        // 反証 5)。字の大きさ (`textMeasure`) が無限を 0 にするのと揃える
+        guard weight >= 0, weight.isFinite else {
+            warnRounded(
+                .badStrokeWeight, "strokeWeight", "the weight", takes: "a finite value of 0 or more",
+                passed: weight, used: 0)
+            style.strokeWeight = 0
+            return
+        }
+        style.strokeWeight = weight
     }
 
     // 溜めている列をその場で閉じる (混ぜ方と同じ理由)。
@@ -191,15 +201,12 @@ extension Canvas {
 
     /// 断片へ渡す面を、いま列に写し取る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
     ///
-    /// 並びは宣言と同じ名前順。**描き場所を渡していたら、置いたことを知らせる** —
-    /// 貼る口 (``texture(_:)``) と同じで、描き切る前の面を読んだときに黙っていると、
-    /// 出るのは前のフレームの絵になる。
+    /// 並びは宣言と同じ名前順。**置いた記録はここでは取らない** — 塗りを比べるだけの読み
+    /// (``usePaint(_:)``) もここを通るので、取ると置いていない描き場所まで記録が残る。記録は
+    /// 図形を積む口 (``notePaintPlacement()``) が取る。
     private func snapshotSurfaces() -> [HeldTexture] {
         guard let shader = currentShader, !shader.surfaces.isEmpty else { return [] }
-        return shader.orderedSurfaces.map { surface in
-            if case .graphics(let graphics) = surface { note(placing: graphics) }
-            return surface.held
-        }
+        return shader.orderedSurfaces.map(\.held)
     }
 
     /// いま生きている状態 (``shader(_:)`` / ``numbers(_:)``) から作る塗り。
@@ -382,12 +389,46 @@ extension Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     func beginFlat() {
+        notePaintPlacement()
         // **平面の頂点はどれもここを通る。** 畳めない頂点が開いている雛形へ紛れ込むのを
         // 止める場所を、1 つに保つ
         closeFlatTemplate()
         guard openSource != .flat else { return }
         closeBatch()
         openSource = .flat
+    }
+
+    /// これから積む図形の塗りが断片の面として描き場所を読むなら、**置いたことをいま記録する**
+    /// ([#1653])。
+    ///
+    /// 貼る絵 (``useTexture(_:)``) と同じく、記録は置いた時点で取る。列を閉じる時点で取ると、
+    /// 置いた後に描き場所が描き換わったとき先に置いた図形まで後の絵になり、描き切る前の
+    /// 描き場所を読んだ注意も「いつ置いたか」ではなく「いつ閉じたか」で決まってしまう。
+    ///
+    /// 呼ぶのは図形を積む口 — 平面は ``beginFlat()`` (頂点はどれもここを通る) と、畳んだ
+    /// 置き場所を足す口、立体は ``beginSolids()`` (置く口はどれもここを通る)。基本図形の列は
+    /// 利用者の断片で塗らない (``formAllowed(fills:)``) ので呼ばない。**保持した形を置いている
+    /// 間は、記録した塗りの面を読む** (``effectivePaint`` と同じ優先)。
+    ///
+    /// 形の組み立て中は記録しない (``note(placing:)`` が飛ばす)。組み立てた図形は形へ抜かれ、
+    /// 形を置くときにここを通り直す。
+    ///
+    /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
+    func notePaintPlacement() {
+        if let replayedPaint {
+            for held in replayedPaint.surfaces {
+                if let graphics = (held.owner as? RenderTarget)?.drawer { note(placing: graphics) }
+            }
+            return
+        }
+        // **記録済みなら何もしない** (``paintSurfacesNoted``)。記録が落ちた・断片か面が替わった・
+        // 読む描き場所が描き始めたときは控えが外れているので、下で取り直す。断片を読むより先に
+        // 見る — 線や字は三角形ごとにここを通る
+        if paintSurfacesNoted == placedGraphicsDrops { return }
+        guard let currentShader, !currentShader.drawnSurfaces.isEmpty else { return }
+        for graphics in currentShader.drawnSurfaces { note(placing: graphics) }
+        // 記録を取れた区間でだけ控える (``note(placing:)`` は区間の外と組み立ての中を飛ばす)
+        if writesToSurface, !recordingShape { paintSurfacesNoted = placedGraphicsDrops }
     }
 
     /// いま効いている光を置き場へ写し、その区間を返す。

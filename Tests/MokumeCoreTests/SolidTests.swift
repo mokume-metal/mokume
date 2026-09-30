@@ -259,8 +259,47 @@ struct SolidTests {
             }
         }
 
-        // 箱と球で 2 つ。フレーム数によらない
-        #expect(canvas.solidMeshesBuilt == 2)
+        // 箱と球で 2 つと、球の向きを借りる単位球が 1 つ (#1751)。フレーム数によらない
+        #expect(canvas.solidMeshesBuilt == 3)
+    }
+
+    @Test(
+        "寸法が変わる球も、単位球から作った点が組み立てと 1 ビットも違わない",
+        arguments: [3, 7, 24, 128])
+    func spheresFromTheUnitMatchTheBuilder(detail: Int) throws {
+        let canvas = try makeCanvas()
+        // 0 は向きの負の成分から -0 が出る。極小・非整数・大きい値で丸めの違いを探す
+        let radii: [Float] = [0, 1e-30, 0.3, 6, 10.125, 1234.5678, 3e30]
+        var mismatches: [String] = []
+        try canvas.draw {
+            canvas.fill(red)
+            for radius in radii {
+                canvas.sphere(radius, detail: detail)
+                let shape = SolidShape.sphere(radius: radius, detail: detail)
+                guard let derived = canvas.solidMeshes[shape]?.points else {
+                    mismatches.append("半径 \(radius): 控えに無い")
+                    continue
+                }
+                let built = shape.make().points
+                guard derived.count == built.count else {
+                    mismatches.append("半径 \(radius): 点の数 \(derived.count) / \(built.count)")
+                    continue
+                }
+                // == では 0 と -0 が等しくなるので、ビットで比べる
+                func bits(_ point: SolidMesh.Point) -> [UInt32] {
+                    [point.position.x, point.position.y, point.position.z,
+                     point.normal.x, point.normal.y, point.normal.z,
+                     point.uv.x, point.uv.y].map(\.bitPattern)
+                }
+                if let index = derived.indices.first(where: { bits(derived[$0]) != bits(built[$0]) }) {
+                    mismatches.append("半径 \(radius): \(index) 番の点が \(derived[index]) / \(built[index])")
+                }
+            }
+        }
+        #expect(mismatches.isEmpty, "\(mismatches)")
+        // 三角関数を引いたのは単位球の 1 度だけで、残りは位置を作っただけ
+        #expect(canvas.spheresFromUnit == radii.count)
+        #expect(canvas.solidMeshesBuilt == radii.count + 1)
     }
 
     @Test("寸法が変われば組み立て直す")
@@ -321,8 +360,10 @@ struct SolidTests {
         #expect(
             edgeBytes <= Canvas.solidCacheBudget,
             "残っている輪環だけで稜線の控えが \(edgeBytes) バイトあり、予算 \(Canvas.solidCacheBudget) を超えている")
-        // 7 種 × 40 通りの大きさを組み立てた (当たらないので毎回作る)
-        #expect(canvas.solidMeshesBuilt == 7 * 40)
+        // 7 種 × 40 通りの大きさを組み立てた (当たらないので毎回作る)。球は向きを借りる
+        // 単位球を 1 度だけ足す (#1751)
+        #expect(canvas.solidMeshesBuilt == 7 * 40 + 1)
+        #expect(canvas.spheresFromUnit == 40)
     }
 
     @Test("既定の細かさの形なら、64 種並べても控えに収まり、2 フレーム目から組み立て直さない")

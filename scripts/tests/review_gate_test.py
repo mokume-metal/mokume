@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/review-gate.sh の検査 (#44 / #104 / #309 / #618 / #1662)。
+"""scripts/review-gate.sh の検査 (#44 / #104 / #309 / #618 / #1662 / #1668)。
 
-このゲートが守るのは mokume 固有の五点だけ:
+このゲートが守るのは mokume 固有の六点だけ:
   1. PR が Issue に紐づいている (例外は no-issue ラベル)
   2. 対象 Issue に verify: ラベルがある (完了条件が固まっている)
   3. PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
   4. 閉じる Issue に Bug が含まれるなら、本文に空でない「反証」の節がある (ADR-0040 決定 4)
   5. 承認が要る PR の author が、唯一の承認者になっていない (ADR-0007 / #88)
+  6. AGENTS.md を合流先との分岐点 (merge-base) より長くした PR は、本文の増分の宣言が
+     実測と一致する (#1668。数え方と宣言の読み方は check-agents-md-size.py の growth が
+     持ち、その細部は agents_md_size_test.py が見る。ここは材料の取り方と渡し方を見る)
 
 重要パスの承認要求そのものはルールセットの required_reviewers が担うので、ここでは見ない —
 5 がその file_patterns を読むのは「承認が要る PR か」を知るためで、承認を重ねて要求するため
@@ -86,13 +89,21 @@ RULESET = json.dumps(
 # FAKE_ISSUE_JSON_<番号> を置く — 複数の Issue のうち 1 つだけが Bug、を表すため (#1662)。
 # FAKE_ISSUE_FAIL を置くと、古い gh が知らない欄を問われたときと同じく、それを名乗って
 # 失敗する
+#
+# AGENTS.md の増分 (#1668) のために口が 2 つ増えた:
+#   gh api repos/<repo>/compare/<base>...<head> --jq .merge_base_commit.sha
+#   gh api -H 'Accept: application/vnd.github.raw' repos/<repo>/contents/AGENTS.md?ref=<sha>
+# compare は FAKE_COMPARE_JSON を返す (FAKE_COMPARE_FAIL を置くと失敗する)。contents は
+# FAKE_CONTENTS_DIR の下の <sha> という名前のファイルを返し、無ければ 404 で失敗する
 FAKE_GH = """#!/bin/sh
 printf '%s\\n' "$*" >> "${GH_CALLS:-/dev/null}"
 kind=$2
 query=
 prev=
+ref=
 for arg in "$@"; do
   [ "$prev" = "--jq" ] && query=$arg
+  case "$arg" in *"ref="*) ref=${arg##*ref=} ;; esac
   prev=$arg
 done
 case "$1 $2" in
@@ -105,6 +116,19 @@ case "$1 $2" in
     # $3 は review-gate が渡す Issue 番号 (数字だけ) なので eval に載せてよい
     eval "json=\\${FAKE_ISSUE_JSON_$3:-\\$FAKE_ISSUE_JSON}" ;;
   "api "*) case "$*" in
+             *"/compare/"*)
+               if [ -n "${FAKE_COMPARE_FAIL:-}" ]; then
+                 printf '%s\\n' "$FAKE_COMPARE_FAIL" >&2
+                 exit 1
+               fi
+               json=$FAKE_COMPARE_JSON ;;
+             *"/contents/"*)
+               if [ -n "$ref" ] && [ -f "${FAKE_CONTENTS_DIR:-/nonexistent}/$ref" ]; then
+                 cat "$FAKE_CONTENTS_DIR/$ref"
+                 exit 0
+               fi
+               echo "gh: Not Found (HTTP 404)" >&2
+               exit 1 ;;
              *"/files"*) json=$FAKE_FILES_JSON ;;
              *) json=$FAKE_API_JSON ;;
            esac ;;
@@ -132,6 +156,12 @@ TRIAGED = "verify: triaged"
 # review-gate は自リポの紐づけだけを採る (別リポの番号で verify ラベルを引くと、
 # 同じ番号の無関係な Issue を見てしまう)
 REPO_OWNER, REPO_NAME = "mokume-metal", "mokume"
+
+# AGENTS.md の増分 (#1668) の比べる相手。base の先端 (BASE_REF の指す commit) と
+# merge-base は別の commit で、review-gate が読んでよいのは merge-base の側だけである
+BASE_REF = "main"
+HEAD_OID = "a" * 40
+MERGE_BASE = "b" * 40
 
 
 def closing_refs(numbers, owner=REPO_OWNER, name=REPO_NAME):
@@ -184,6 +214,9 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
             "closingIssuesReferences": (
                 closing_refs(closes) if refs is None else refs
             ),
+            # AGENTS.md の増分 (#1668) を比べる相手を引くのに使う
+            "baseRefName": BASE_REF,
+            "headRefOid": HEAD_OID,
             # gh pr view は返さない。run_gate が偽 gh api の応答を組むために持たせる
             "authorAssociation": assoc,
         }
@@ -237,7 +270,7 @@ class ReviewGateTest(unittest.TestCase):
         self.ruleset.write_text(RULESET, encoding="utf-8")
 
     def run_gate(self, pr, issue=None, ruleset=None, all_files=None, record_calls=None,
-                 issues=None, issue_fail=None):
+                 issues=None, issue_fail=None, agents=None, compare_fail=None):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
         省略すると `pr` が持つ `files` と同じものになる。上限を越える PR を装うときだけ
@@ -245,7 +278,18 @@ class ReviewGateTest(unittest.TestCase):
 
         `issues` は {番号: issue_json(...)} で、その番号だけ `issue` と違う応答を返す。
         `issue_fail` を渡すと gh issue view がその文言を名乗って失敗する。
+
+        `agents` は (merge-base の AGENTS.md, head の AGENTS.md) の組 (#1668)。base の
+        先端 (BASE_REF) にはどちらとも長さの違う本文を置くので、先端と比べれば数が狂う。
+        `compare_fail` を渡すと compare API がその文言を名乗って失敗する。
         """
+        contents = Path(self.tmp.name) / "contents"
+        contents.mkdir(exist_ok=True)
+        if agents is not None:
+            base_text, head_text = agents
+            (contents / MERGE_BASE).write_text(base_text, encoding="utf-8")
+            (contents / HEAD_OID).write_text(head_text, encoding="utf-8")
+            (contents / BASE_REF).write_text(base_text + "先端にだけ入った他の PR の追記\n", encoding="utf-8")
         if ruleset is not None:
             self.ruleset.write_text(ruleset, encoding="utf-8")
         env = dict(os.environ)
@@ -262,6 +306,10 @@ class ReviewGateTest(unittest.TestCase):
         env["FAKE_API_JSON"] = json.dumps(
             {"author_association": json.loads(pr)["authorAssociation"]}
         )
+        env["FAKE_COMPARE_JSON"] = json.dumps({"merge_base_commit": {"sha": MERGE_BASE}})
+        env["FAKE_CONTENTS_DIR"] = str(contents)
+        if compare_fail is not None:
+            env["FAKE_COMPARE_FAIL"] = compare_fail
         env["RULESET_FILE"] = str(self.ruleset)
         env["GH_CALLS"] = str(record_calls) if record_calls else "/dev/null"
         # 紐づけの所属リポジトリ判定に効くので、環境に左右されないよう固定する
@@ -568,6 +616,121 @@ class ReviewGateTest(unittest.TestCase):
             pr_json(reviews=["APPROVED", "CHANGES_REQUESTED"]), issue_json(TRIAGED)
         )
         self.assert_blocked(proc, "変更要求")
+
+    # --- 6. AGENTS.md の増分 (#1668) -----------------------------------------
+
+    def agents_gate(self, body="", files=("AGENTS.md",), grow=0, record_calls=None, **kw):
+        """AGENTS.md を merge-base から `grow` 字だけ変えた PR を review-gate に掛ける。"""
+        base = "# AGENTS.md\n\n## 進め方\n\n規律。\n"
+        head = base + "あ" * grow if grow >= 0 else base[:grow]
+        return self.run_gate(
+            pr_json(body="Closes #12\n" + body, files=list(files), **kw),
+            issue_json(TRIAGED),
+            agents=(base, head),
+            record_calls=record_calls,
+        )
+
+    def test_growth_with_a_matching_declaration_passes(self):
+        proc = self.agents_gate("AGENTS.md の増分: +5\n", grow=5)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("+5 字で宣言どおり", proc.stdout)
+
+    def test_growth_without_a_declaration_is_blocked(self):
+        proc = self.agents_gate(grow=1)
+        self.assert_blocked(proc, "AGENTS.md の増分が PR 本文の宣言で説明されていない")
+        self.assertIn("1 字増えている", proc.stderr)
+        # 差し戻された人が、書くべき 1 行と降ろし先に辿り着けること (完了条件 4)
+        self.assertIn("AGENTS.md の増分: +1", proc.stderr)
+        self.assertIn("経緯と実測は Issue / PR", proc.stderr)
+
+    def test_shrinking_or_same_length_needs_no_declaration(self):
+        for grow in (0, -3):
+            with self.subTest(grow=grow):
+                proc = self.agents_gate(grow=grow)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_declaration_off_by_one_is_blocked(self):
+        proc = self.agents_gate("AGENTS.md の増分: +4\n", grow=5)
+        self.assert_blocked(proc, "説明されていない")
+        self.assertIn("「AGENTS.md の増分: +5」に直す", proc.stderr)
+
+    def test_near_miss_declarations_name_the_right_form(self):
+        for line in ("AGENTS.md の増分：+5", "AGENTS.md の増分: +5 字", "`AGENTS.md の増分: +5`"):
+            with self.subTest(line=line):
+                proc = self.agents_gate(line + "\n", grow=5)
+                self.assert_blocked(proc, "説明されていない")
+                self.assertIn("宣言の形が違う", proc.stderr)
+                self.assertIn("AGENTS.md の増分: +N", proc.stderr)
+
+    def test_two_declarations_are_blocked(self):
+        proc = self.agents_gate("AGENTS.md の増分: +5\n\nAGENTS.md の増分: +5\n", grow=5)
+        self.assert_blocked(proc, "説明されていない")
+        self.assertIn("2 行ある", proc.stderr)
+
+    def test_a_declaration_only_inside_an_html_comment_does_not_count(self):
+        # テンプレートの案内はコメントに書いてある。その例を宣言と読まない
+        proc = self.agents_gate("<!--\nAGENTS.md の増分: +5\n-->\n", grow=5)
+        self.assert_blocked(proc, "説明されていない")
+        self.assertIn("宣言が無い", proc.stderr)
+
+    def test_a_crlf_body_is_read(self):
+        # GitHub の Web の入力欄で編集した本文は CRLF で返る
+        proc = self.agents_gate("本文\r\nAGENTS.md の増分: +5\r\n", grow=5)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_declaration_without_touching_agents_md_is_blocked(self):
+        # 触れていないのに宣言がある — 実測は 0 なので合わない
+        proc = self.agents_gate("AGENTS.md の増分: +5\n", files=("README.md",), grow=0)
+        self.assert_blocked(proc, "説明されていない")
+        self.assertIn("宣言の行を消す", proc.stderr)
+
+    def test_an_untouched_pr_without_a_declaration_does_not_call_the_api(self):
+        calls = Path(self.tmp.name) / "gh-calls.txt"
+        proc = self.agents_gate(files=("README.md",), record_calls=calls)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        text = calls.read_text(encoding="utf-8")
+        self.assertNotIn("/compare/", text)
+        self.assertNotIn("/contents/", text)
+
+    def test_compares_with_the_merge_base_not_the_base_tip(self):
+        """base の先端と比べると、後から入った他の PR の増減が自分の増分に混ざる。
+
+        偽 gh は base の先端 (BASE_REF) に長さの違う本文を置いているので、先端を読めば
+        宣言 +5 と合わずに赤くなる。呼び出しの形も固定する — compare は base と head で
+        引き、contents は merge-base と head の SHA で引く。
+        """
+        calls = Path(self.tmp.name) / "gh-calls.txt"
+        proc = self.agents_gate("AGENTS.md の増分: +5\n", grow=5, record_calls=calls)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        lines = calls.read_text(encoding="utf-8").splitlines()
+        compare = [l for l in lines if "/compare/" in l]
+        self.assertEqual(len(compare), 1, lines)
+        self.assertIn(f"compare/{BASE_REF}...{HEAD_OID}", compare[0])
+        refs = sorted(l.rsplit("ref=", 1)[1] for l in lines if "/contents/AGENTS.md" in l)
+        self.assertEqual(refs, sorted([MERGE_BASE, HEAD_OID]))
+        self.assertTrue(all("application/vnd.github.raw" in l for l in lines if "/contents/" in l))
+
+    def test_an_unreadable_merge_base_names_the_reason(self):
+        proc = self.run_gate(
+            pr_json(files=["AGENTS.md"]), issue_json(TRIAGED),
+            agents=("a\n", "a\n"), compare_fail="gh: Not Found (HTTP 404)",
+        )
+        self.assert_blocked(proc, "merge-base を引けなかった")
+
+    def test_unreadable_contents_name_the_reason(self):
+        # agents を渡さない — contents が 404 で失敗する
+        proc = self.run_gate(pr_json(files=["AGENTS.md"]), issue_json(TRIAGED))
+        self.assert_blocked(proc, "AGENTS.md を")
+        self.assertIn("読めなかった", proc.stderr)
+
+    def test_no_issue_pr_is_also_checked(self):
+        # 閉じる Issue が無くても AGENTS.md は同じ固定費である
+        base = "# AGENTS.md\n"
+        proc = self.run_gate(
+            pr_json(body="紐づけなし", closes=(), labels=["no-issue"], files=["AGENTS.md"]),
+            agents=(base, base + "足した\n"),
+        )
+        self.assert_blocked(proc, "説明されていない")
 
     # --- 廃止したものが戻らないことの固定 -----------------------------------
 

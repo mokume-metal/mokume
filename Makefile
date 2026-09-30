@@ -124,7 +124,8 @@ docs-links:
 adrs:
 	bash scripts/check-adrs.sh
 
-# AGENTS.md の分量をラチェット + 節ごとの上限で持つ (#737)。理由は検査スクリプトの冒頭
+# AGENTS.md の節ごとの上限を見て、合流先との分岐点との差を表示する (#737 / #1668)。
+# 全体の増分は PR 本文の宣言と review-gate が突き合わせる。理由は検査スクリプトの冒頭
 agents-md-size:
 	python3 scripts/check-agents-md-size.py
 

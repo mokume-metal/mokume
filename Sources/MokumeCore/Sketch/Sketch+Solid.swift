@@ -132,6 +132,7 @@ extension Sketch {
     /// - Parameters:
     ///   - radius: 半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 上下は半周なので、その半分で割る。
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
     // shot: 1 snippet=51775b2d
     // shot: 2 snippet=3c04508e
     public func sphere(_ radius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail) {
@@ -194,6 +195,7 @@ extension Sketch {
     ///   - y: 縦の半径 (画素)。
     ///   - z: 奥行きの半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 球と同じく、上下は半周なのでその半分で割る。
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
     // shot: 1 snippet=b469d265
     // shot: 2 snippet=44cb3b83
     public func ellipsoid(
@@ -284,6 +286,7 @@ extension Sketch {
     ///   - radius: 半径 (画素)。
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
     // shot: 1 snippet=3382160f
     // shot: 2 snippet=14bac537
     public func cylinder(
@@ -319,6 +322,7 @@ extension Sketch {
     ///   - radius: 底の半径 (画素)。
     ///   - height: 高さ (画素)。
     ///   - detail: **一周をいくつに割るか。**
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
     // shot: 1 snippet=c6e05232
     public func cone(
         _ radius: some ScalarConvertible, _ height: some ScalarConvertible,
@@ -377,6 +381,7 @@ extension Sketch {
     ///   - radius: 中心から管の中心までの距離 (画素)。
     ///   - tubeRadius: 管の半径 (画素)。
     ///   - detail: **一周をいくつに割るか。** 輪の一周も管の一周も同じ数で割る。
+    ///     3〜128 で、外の値は近い端へ丸めて 1 度だけ知らせる。
     // shot: 1 snippet=7978e71b
     // shot: 2 snippet=21763f89
     public func torus(

@@ -187,32 +187,26 @@ extension Canvas {
 
     /// GPU が埋めた置き場所で描く列を開く。**読み戻しが無い。** 返すのは四角の頂点の
     /// 区間 (描く引数として GPU へ渡す)。形を持たなければ `nil`。
+    ///
+    /// 区間の設定は、記録した区間を置き直す口 (``replaying(_:_:)``) が当てる。粒の板は保持した
+    /// 形なので、置く時点の `texture()` / `shader()` ではなく、作った時点に記録した面と塗りで
+    /// 描く — 参照の経路と同じ絵になる ([#1649])。
+    ///
+    /// [#1649]: https://github.com/mokume-metal/mokume/issues/1649
     private func placeFromGPU(_ particles: Particles) -> (start: Int, count: Int)? {
         guard let run = particles.quad.runs.first, run.source == .solid else { return nil }
-        let savedMode = style.blendMode
-        let savedTexture = currentTexture
-        blendMode(run.mode)
-        useTexture(run.texture)
-
-        beginSolids()
-        closeBatch()
-        let start = solidVertices.count
-        solidVertices.append(
-            contentsOf: particles.quad.solidVertices[run.start..<(run.start + run.count)])
-        retainedSerial += 1
-        openSolid = OpenSolid(
-            source: .retained(serial: retainedSerial), vertexStart: start,
-            vertexCount: run.count,
-            // 四角は添字を持たない。**外の置き場から置き場所を取る列は添字を持てない**
-            // ので、持てるようになっても `nil` のままである (`closeSolidBatch`)
-            indexStart: nil, instanceStart: solidInstances.count,
-            external: ExternalInstances(
-                instances: particles.instances, count: particles.capacity,
-                arguments: particles.arguments))
-        closeBatch()
-
-        blendMode(savedMode)
-        useTexture(savedTexture)
+        var start = 0
+        replaying(CollectionOfOne(run)) { run in
+            start = solidVertices.count
+            // 頂点の積み直しは保持した形と同じ手順を通す。置き場所の行列は GPU が組むので、
+            // 鏡映の符号は CPU では決まらず、列は鏡映しないものとして開く (前からこの扱い)
+            openRetainedSolid(
+                run, of: particles.quad, mirrored: false,
+                external: ExternalInstances(
+                    instances: particles.instances, count: particles.capacity,
+                    arguments: particles.arguments))
+            closeBatch()
+        }
         return (start, run.count)
     }
 
@@ -222,25 +216,16 @@ extension Canvas {
     /// 読める並びは**このフレームの結果**である。
     ///
     /// ``shape(_:at:)`` を通さないのは、板を視点へ向けた行列を ``Placement`` では表せない
-    /// ためである。区間の設定の当て方は ``shape(_:at:)`` の立体の区間と同じ順に揃える
-    /// (面を選び直す `beginSolids` を先に通してから、記録した面へ戻す — #914)。
+    /// ためである。区間の設定は ``shape(_:at:)`` と同じ口 (``replaying(_:_:)``) が当てる。
     private func placeFromCPU(_ particles: Particles) {
         guard let run = particles.quad.runs.first, run.source == .solid else { return }
         let places = particles.living(
             from: read(particles.state), transform: transform.matrix,
             basis: currentCamera.basis)
         guard !places.isEmpty else { return }
-        let savedMode = style.blendMode
-        let savedTexture = currentTexture
-        blendMode(run.mode)
-        useTexture(run.texture)
-        usePaint(run.paint)
-        beginSolids()
-        useTexture(run.texture)
-        placeSolid(run, of: particles.quad, instances: places)
-        blendMode(savedMode)
-        useTexture(savedTexture)
-        stopReplayingPaint()
+        replaying(CollectionOfOne(run)) { run in
+            placeSolid(run, of: particles.quad, instances: places)
+        }
     }
 
 }

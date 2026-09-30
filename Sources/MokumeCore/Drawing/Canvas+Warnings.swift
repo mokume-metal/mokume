@@ -32,6 +32,13 @@ extension Canvas {
         case notANumberPointLight
         /// 広がりを持つ光に、数でない値・無限の値が渡された。
         case notANumberSpotLight
+        /// 広がりを持つ光の半頂角 (`angle`) に、0…π/2 の外の値 (数でない値を含む) が渡され、
+        /// 範囲へ丸めた ([#1698])。
+        ///
+        /// **``notANumberSpotLight`` とは鍵を分ける。** あちらは光を置かず、こちらは丸めて置く。
+        ///
+        /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        case badSpotLightAngle
         /// 光を受けて返す色に、数でない値・無限の値が渡された。
         case notANumberAmbient
         /// 自分で出す光に、数でない値・無限の値が渡された。
@@ -43,6 +50,23 @@ extension Canvas {
         case badPlacement
         /// 立体の寸法が受け取れない値だった。
         case badSolidSize
+        /// ``sphere(_:detail:)`` の分け方に、範囲 (``SolidShape/detailRange``) の外の値が渡され、
+        /// 範囲へ丸めた ([#1698])。
+        ///
+        /// **立体ごとに鍵を分ける** (#1698 の反証 9)。範囲は 5 つの立体で同じだが、共有すると
+        /// 先に言った立体が後の立体の書き間違いを黙らせる。`textSize` と `textLeading` を分けた
+        /// のと同じ理由である。
+        ///
+        /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        case badSphereDetail
+        /// ``ellipsoid(_:_:_:detail:)`` の分け方を丸めた。分ける理由は ``badSphereDetail``。
+        case badEllipsoidDetail
+        /// ``cylinder(_:_:detail:)`` の分け方を丸めた。分ける理由は ``badSphereDetail``。
+        case badCylinderDetail
+        /// ``cone(_:_:detail:)`` の分け方を丸めた。分ける理由は ``badSphereDetail``。
+        case badConeDetail
+        /// ``torus(_:_:detail:)`` の分け方を丸めた。分ける理由は ``badSphereDetail``。
+        case badTorusDetail
 
         /// フレームの外で光を置いた。
         case lightOutsideFrame
@@ -106,6 +130,10 @@ extension Canvas {
         case badCamera
         /// 受け取れない切り抜きが渡された。
         case badClip
+        /// ``strokeWeight(_:)`` に負の値・数でない値・無限が渡され、0 に丸めた ([#1698])。
+        ///
+        /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        case badStrokeWeight
 
         /// 同じ本体のフレームの中で ``beginDraw()`` を対にせず重ねて呼んだ。境目を越えて
         /// いないので、何もせず開いているフレームが続く。
@@ -209,6 +237,10 @@ extension Canvas {
         case curveWithoutStart
         /// 受け取れない頂点の座標が渡された。
         case badVertex
+        /// ``curveDetail(_:)`` に 1 より小さい刻みの数が渡され、1 に丸めた ([#1698])。
+        ///
+        /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        case badCurveDetail
         /// ``Canvas/index(_:)`` に、置いていない頂点の番号が渡された。
         case indexOutOfRange
 
@@ -219,6 +251,18 @@ extension Canvas {
         ///
         /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
         case unusableTextMeasure
+        /// ``Canvas/textSize(_:)`` に負の値が渡され、0 に丸めた ([#1698])。
+        ///
+        /// **``unusableTextMeasure`` とも ``negativeTextLeading`` とも鍵を分ける。** 共有すると、
+        /// 先に言った側 (数でない行送りなど) が負の大きさの知らせを黙らせる。
+        ///
+        /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        case negativeTextSize
+        /// ``Canvas/textLeading(_:)`` に負の値が渡され、0 に丸めた ([#1698])。鍵を分ける
+        /// 理由は ``negativeTextSize`` と同じ。
+        ///
+        /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        case negativeTextLeading
         /// 1 フレームで要る字が、焼き直しても上限の焼き場に収まらなかった。
         ///
         /// 以前の `atlasFull` (上限まで埋まった) を改めたもの。上限まで埋まるだけなら焼き
@@ -226,5 +270,24 @@ extension Canvas {
         ///
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         case atlasFullInOneFrame
+    }
+
+    /// 範囲の外の値を範囲へ丸めたことを、初回だけ知らせる ([#1698])。
+    ///
+    /// 描画中に呼ぶ口は投げずに丸めるが、**丸めたことは言う** ([ADR-0020] 決定 5 の 1 行目:
+    /// 警告を出して安全な既定へ倒す)。丸める口の文面をここ 1 か所で組むので、どの口も
+    /// 口の名前・量・受け取れる範囲・渡した値・使った値を同じ順で名乗る。
+    ///
+    /// 毎フレーム起きうるので繰り返さない (``Diagnostics/warn(_:)`` の但し書き)。
+    ///
+    /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    func warnRounded(
+        _ warning: Warning, _ name: String, _ quantity: String, takes range: String,
+        passed: some CustomStringConvertible, used: some CustomStringConvertible
+    ) {
+        warnOnce(
+            warning,
+            "\(name)(): \(quantity) takes \(range), but \(passed) was passed, so \(used) was used")
     }
 }
