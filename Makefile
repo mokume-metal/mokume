@@ -239,12 +239,18 @@ TEST_RECORD_RELEASE := .build/test-results-release-swift-testing.xml
 # どちらも記録が無いまま非 0 で終わるので、記録からは見分けられない。印
 # (.build/test-started) は段の始まりで、材料の jetsam の行と報告の「この間にできた」の
 # 境目に使う
+#
+# **検査の実行は、機械全体で共有する GPU の枠を 1 つ取ってから走らせる** (#1898)。同じ
+# 機械で複数のセッションが test を同時に回すと、GPU の資源切れで関係の無い suite が数百件
+# 単位で赤になったためである。枠の数は MOKUME_GPU_SLOTS (既定 3) で、空くまで待ち、待つ側が
+# 期限を持つ (仕組みは scripts/gpu-slot.py の冒頭)。ビルドは枠の外に置く — CPU の段で、
+# 待たせる理由が無い
 test:
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD)
 	@touch .build/test-started
 	set -o pipefail; swift build --build-tests $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log.txt
-	set -o pipefail; env $(METAL_VALIDATION) swift test --skip-build --xunit-output $(TEST_RECORD_BASE) 2>&1 | tee -a .build/test-log.txt \
+	set -o pipefail; env $(METAL_VALIDATION) python3 scripts/gpu-slot.py -- swift test --skip-build --xunit-output $(TEST_RECORD_BASE) 2>&1 | tee -a .build/test-log.txt \
 		|| { code=$$?; bash scripts/test-vanished.sh $$code $(TEST_RECORD) .build/test-log.txt .build/test-started; exit $$code; }
 	@bash scripts/test-vanished.sh 0 $(TEST_RECORD) .build/test-log.txt .build/test-started
 
@@ -275,6 +281,8 @@ gpu-ran:
 # (`@testable import` が `not compiled for testing` で落ちる)。Metal の検証レイヤは
 # 載せない — 計測の器なので、検証レイヤの費用で時間を歪ませない
 #
+# GPU の枠は test と同じく取る (#1898)。計測が他のセッションの検査と重なると、数字も歪む
+#
 # **記録は残す** (#1089)。release でしか走らない検査が落ちたとき、端末の出力からは名前を
 # 取り逃す — 落ちる集合が実行ごとに別物だからである (上の「正本は console ではなく」の段)。
 # `tee` は付けない。debug の tee は「人が実行中に読む先」で、こちらは計測のときに端末を
@@ -282,7 +290,7 @@ gpu-ran:
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD_RELEASE)
-	swift test -c release -Xswiftc -enable-testing --xunit-output $(TEST_RECORD_RELEASE_BASE)
+	python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing --xunit-output $(TEST_RECORD_RELEASE_BASE)
 	@test -s $(TEST_RECORD_RELEASE) || { \
 		echo "記録が出来ていない ($(TEST_RECORD_RELEASE))。SwiftPM が --xunit-output の"; \
 		echo "綴りを変えた可能性がある — debug 側の TEST_RECORD と併せて直す"; \

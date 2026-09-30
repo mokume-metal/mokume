@@ -285,6 +285,9 @@ class MakeTestTest(unittest.TestCase):
             FAKE_FAIL=fail,
             FAKE_NEW_REPORT=str(self.new_report),
             MOKUME_DIAGNOSTIC_REPORTS=f"{self.reports_user}:{self.reports_system}",
+            # 本物の GPU の枠 (#1898) を使わない。他のセッションが本物の検査で枠を埋めていると、
+            # 偽の swift test がそこで待たされる
+            MOKUME_GPU_SLOT_DIR=str(self.root / "gpu-slots"),
         )
         env.pop("FAKE_RECORD", None)
         if record is not None:
