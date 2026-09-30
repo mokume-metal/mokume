@@ -34,6 +34,7 @@ extension RenderTarget {
         // 置き場へ CPU で書くので、前の出力段が読んでいる最中には書けない。待つのは
         // 名指しした 1 本だけで、出口へ渡す経路では既に待ち済みなので何も起きない (#927)
         try gpu.waitForSubmission(lastEncodeSubmission)
+        try catchUpWithDrawnPicture()
         encodePassCount += 1
         let image: EncodedImage
         if let encodedStorage {
@@ -59,7 +60,7 @@ extension RenderTarget {
         // **書き戻すのは、この面を描く先に持つ面に任せる** ([#1524])。効果を通したフレームの後、
         // 止まっている間に書いた画素は、描く先と同時に効果を通す前の絵 (次のフレームの入り) にも
         // 写す要がある。任せるのは細かさ 1 の面だけである — 細かさを下げた面の出す先には、画素の
-        // 書き込みが来ない
+        // 書き込みが来ない (描く先への書き込みは、上の追い付き (``Canvas/catchUpOutput()``) が書き戻す)
         //
         // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
         let keeper = drawer?.target === self ? drawer : nil
@@ -103,6 +104,24 @@ extension RenderTarget {
         image.pendingSubmission = submission
         lastEncodeSubmission = submission
         return image
+    }
+
+    // MARK: - 出す先を読む前の追い付き
+
+    /// 読む前に、この面が**細かさを下げた面の出す先**なら、止まっている間に変わった描く先を広げ直す
+    /// ([#1882])。
+    ///
+    /// 出す先を読む口 (出力段の ``encodeToImage()``・CPU で変換する ``encodeForDisplay(scale:)``・
+    /// ``writePNG(to:)``・``readPixels()``) は、頭でここを通る。**止まっている間のコールバックを
+    /// 配った直後にも、ランタイムが同じ追い付きを済ませる** (`SketchRuntime.advance()`) ので、
+    /// 窓や共有の面のように出す先のテクスチャを直に読む口も同じ 1 枚を受け取る。ここが残るのは、
+    /// コールバックの中で `save()` する形 (配っている最中の出力) と、面を直に回す使い方のためで、
+    /// どちらも変わっていなければ何も積まない。細かさ 1 の面は描く先が出す先そのものなので通らない。
+    ///
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    func catchUpWithDrawnPicture() throws(RenderFailure) {
+        guard let drawer, drawer.target !== self, drawer.needsOutputEnlargement else { return }
+        try drawer.catchUpOutput()
     }
 
     // MARK: - 読み戻す

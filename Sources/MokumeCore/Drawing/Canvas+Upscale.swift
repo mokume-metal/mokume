@@ -20,13 +20,20 @@ extension Canvas {
     /// 決定 5)。広げられなければ**描く細かさの絵をそのまま出す先へ写す** — 小さいまま
     /// 出すと出口の大きさが変わってしまうので、写しだけは必ず通す。
     ///
+    /// - Returns: 出す先が描く先に追い付いたか。**失敗を握り潰しても、呼び手には成否を返す** —
+    ///   積めなかったのに「広げた」ことにすると、出す先は古い絵のまま追い付き直されない
+    ///   ([#1882])。拡大の段が無い面 (細かさ 1) は、描く先が出す先そのものなので常に `true`。
+    ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    func applyUpscale(into commands: any MTL4CommandBuffer) {
-        guard let stage = upscaleStage else { return }
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    func applyUpscale(into commands: any MTL4CommandBuffer) -> Bool {
+        guard let stage = upscaleStage else { return true }
         do {
             try encodeUpscale(stage, into: commands)
+            return true
         } catch {
             warnOnce(.upscaleFailed, "Could not run the upscale: \(error.headline)")
+            return false
         }
     }
 
@@ -44,12 +51,8 @@ extension Canvas {
         defer { stage.advance() }
 
         guard let history = stage.history else {
-            let index = takeStagePass()
-            try pipeline.reservePasses(index + upscalePassCount)
-            try encode(
-                EffectPass(control: (SIMD4(BuiltinEffectKind.enlarge.value, 0, 0, 0), .zero)),
-                at: index, from: target.texture, paired: target.texture,
-                into: output, using: pipeline, in: commands)
+            // 空間方向は揺らさない (``UpscaleStage/jitter`` が 0)
+            try encodeEnlargement(using: pipeline, offset: .zero, into: commands)
             return
         }
 
@@ -71,5 +74,99 @@ extension Canvas {
             EffectPass(control: (SIMD4(BuiltinEffectKind.copy.value, 0, 0, 0), .zero)),
             at: keep, from: output.texture, paired: output.texture,
             into: history, using: pipeline, in: commands)
+    }
+
+    /// 描く先を三次補間で広げ、出す先へ書く 1 手。**前のフレームと混ぜない。**
+    ///
+    /// 空間方向の拡大そのものであり、止まっている間の追い付き (``catchUpOutput()``) は、時間方向でも
+    /// これを通す。
+    ///
+    /// - Parameter offset: 読む位置のずれ (0…1)。描く先の絵が揺らしでずれているとき、その分を
+    ///   戻す (``UpscaleStage/jitterInSource``)。
+    private func encodeEnlargement(
+        using pipeline: EffectPipeline, offset: SIMD2<Float>, into commands: any MTL4CommandBuffer
+    ) throws(RenderFailure) {
+        let index = takeStagePass()
+        try pipeline.reservePasses(index + upscalePassCount)
+        try encode(
+            EffectPass(control: (SIMD4(BuiltinEffectKind.enlarge.value, offset.x, offset.y, 0), .zero)),
+            at: index, from: target.texture, paired: target.texture,
+            into: output, using: pipeline, in: commands)
+    }
+
+    // MARK: - 止まっている間の追い付き (#1882)
+
+    /// 出す先が、描く先の最後の姿を広げたものでなくなっているか ([#1882])。
+    ///
+    /// **出す先を読む口 (出力段) が、読む前に尋ねる。** 拡大が積まれるのはフレームの終わりの描き
+    /// 切りだけなので、止まっている間に描く先が変わると (画素を書く・図形や絵を置いて描き切らせる)、
+    /// 出す先は変わる前の絵を映したままになる。変わったかは、描き切りが立てる印
+    /// (``targetChangedSinceUpscale``) と、まだ描く先へ戻していない画素の書き込みで見る。
+    /// **変えていなければ偽なので、出力段は何も積まない** (ADR-0023 決定 5)。拡大の段が無い面
+    /// (細かさ 1) では、描く先が出す先そのものなので常に偽である。
+    ///
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    var needsOutputEnlargement: Bool {
+        guard upscaleStage != nil else { return false }
+        return targetChangedSinceUpscale || target.hasPendingPixelWrites
+    }
+
+    /// 止まっている間に変わった描く先を、出す先へ広げ直す ([#1882])。
+    ///
+    /// **積むのは書き戻しと拡大の 1 手だけ**で、1 本のコマンドにまとめる。
+    ///
+    /// - 書き戻し: 描く先へまだ戻していない画素の書き込みを戻す。効果を通した絵の後なら、
+    ///   効果を通す前の絵 (次のフレームの入り) へも写す (``encodePixelWriteBackKeepingCarry(into:)``)。
+    ///   広げるより前に戻さないと、書いた画素が出す先に届かない
+    /// - 拡大: 描く先の絵を、そのまま出す先へ広げる。**時間方向でも前のフレームと混ぜず**
+    ///   (`accumulate` は重み 0.2 で変えた分を薄める)、履歴も揺らしの位相 (`framesScaled`) も
+    ///   動かさない。次に描くフレームは、これまでどおり履歴と混ぜる。**最後のフレームの揺らしは
+    ///   戻す** (``UpscaleStage/lastJitterInSource``) — 描く先の絵はその分ずれているので、戻さないと
+    ///   変えていない場所まで最大で描く画素 0.5 個ずれる。代償は、揺らして重ねて収束した絵が、変えた
+    ///   瞬間に 1 枚ぶんの三次補間に落ちること (次に描くフレームから積み上がり直す)。止まっている間に
+    ///   置いて描き切らせた図形は、次のフレームの揺らしで描かれるので、最大で描く画素 1 個ずれる
+    ///
+    /// 環を 1 つ進めてから積む — 拡大の段は CPU が置き場へ書くので、描き切りと同じく、そのスロットを
+    /// 最後に読んだ投入が終わっていなければならない。
+    ///
+    /// **記帳は投入の後だけ** ([#1183])。組み立てが投げれば、コマンドは捨てられて書き戻しも
+    /// されない。書き込み待ちも印も残るので、次の出力段がやり直す。**古い絵を黙って返さない**よう、
+    /// 拡大の段のように握り潰さず、出力段が投げる。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    func catchUpOutput() throws(RenderFailure) {
+        guard let stage = upscaleStage else { return }
+        try frameRing.advance()
+        stagePassesUsed = 0
+        let pipeline = try effectPipeline()
+        let offset = stage.lastJitterInSource
+        let wroteBack = try gpu.withCommands { commands throws(RenderFailure) in
+            let wroteBack = try encodePixelWriteBackKeepingCarry(into: commands)
+            try encodeEnlargement(using: pipeline, offset: offset, into: commands)
+            gpu.commit(commands)
+            return wroteBack
+        }
+        frameRing.noteSubmission()
+        if wroteBack { target.markPixelsWrittenBack() }
+        targetChangedSinceUpscale = false
+    }
+
+    /// 変わっていれば広げ直す。**失敗しても投げない。**
+    ///
+    /// 止まっている間のコールバックを配った直後に、ランタイムが呼ぶ ([#1882])。画面 (窓)・共有の面・
+    /// 書き出し・観測・CPU の読み出しは、どれも出す先を読むので、**コールバックを配る 1 点で追い
+    /// 付けば、どの口も同じ 1 枚を受け取る** (ADR-0023 決定 2)。投げないのは、呼び手 (`advance()`)
+    /// が観測に応えてから投げる作りだからで、失敗しても書き込み待ちと印は残る — 次の出力段が
+    /// やり直して、そこで投げる。変えていなければ何も積まない。
+    ///
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    func catchUpOutputWithoutThrowing() {
+        guard needsOutputEnlargement else { return }
+        do {
+            try catchUpOutput()
+        } catch {
+            warnOnce(.upscaleFailed, "Could not run the upscale: \(error.headline)")
+        }
     }
 }

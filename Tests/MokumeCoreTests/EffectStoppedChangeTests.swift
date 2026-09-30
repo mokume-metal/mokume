@@ -174,8 +174,11 @@ struct EffectStoppedChangeTests {
     /// 完了条件 3 — 書いた後、2 枚目より前に出力段を通っても、書いた画素は消えない。
     ///
     /// 出力段は写しを描く先へ書き戻して「戻した」ことにする。直す前は、次のフレームの頭が効果を
-    /// 通す前の絵を戻すだけになり、書いた画素が消えた (細かさ 1 の面。細かさを下げた面の出力段は
-    /// 出す先を読むので、描く先の写しには触らない)。
+    /// 通す前の絵を戻すだけになり、書いた画素が消えた (細かさ 1 の面)。細かさを下げた面の出力段は、
+    /// 描く先の写しを書き戻してから広げ直す ([#1882])。書き戻しは効果を通す前の絵へも写すので、
+    /// 書いた画素は次のフレームでも残る。
+    ///
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
     @Test(
         "止まっている間に書いて出力段を通しても、書いた画素は次のフレームに残る",
         arguments: Surface.allCases)
@@ -187,9 +190,16 @@ struct EffectStoppedChangeTests {
         let shown = try canvas.output.encodeToImage().read()
         let second = try Self.secondFrame(canvas)
 
-        if surface == .main {
-            let point = shown[centre.x, centre.y]
+        // 出す先の座標は、描く画素の細かさぶん広い
+        let scale = canvas.output.width / canvas.pixelWidth
+        let point = shown[centre.x * scale, centre.y * scale]
+        switch surface {
+        case .main:
             #expect(point.red == 255 && point.green == 0, "出力段に書いた画素が出ていない")
+        case .halfDensity:
+            // 描く画素 1 つを広げたものなので、赤そのものにはならない。下地は灰 (赤と緑が等しい)
+            // なので、赤が勝っていれば書いた画素が出ている
+            #expect(point.red > point.green + 50, "出力段に書いた画素が出ていない: \(point)")
         }
         #expect(Self.isRed(second[centre.x, centre.y]), "出力段を通した後、書いた画素が消えた")
         let untouched = try Self.untouchedSecondFrame(surface)
@@ -578,13 +588,10 @@ struct EffectStoppedChangeTests {
 
         let saved = directory.appendingPathComponent("stopped.png")
         #expect(FileManager.default.fileExists(atPath: saved.path))
-        // 止まっている間の書き出しに、書いた画素が出る。**細かさを下げた面では出ない** — 止まって
-        // いる間の変更が出す先へ届かないのは効果と関係なく起きる別の根で、#1882 が扱う。
-        // 細かさ 0.5 で見るのは、下の次のフレームの入りである
-        if density == 1 {
-            let shot = try Self.readPNG(saved)
-            #expect(shot[80, 80].red > 200 && shot[80, 80].green < 30, "止まっている間の書き出しに、書いた画素が出ていない")
-        }
+        // 止まっている間の書き出しに、書いた画素が出る。細かさを下げた面でも、出力段が出す先を広げ直す
+        // (#1882)。下の次のフレームの入りと合わせて見る
+        let shot = try Self.readPNG(saved)
+        #expect(shot[80, 80].red > 200 && shot[80, 80].green < 30, "止まっている間の書き出しに、書いた画素が出ていない")
         #expect(second[80, 80].red > 200 && second[80, 80].green < 30, "書いた画素が 2 枚目に残っていない")
         #expect(
             second[3, 3] == plain[3, 3],

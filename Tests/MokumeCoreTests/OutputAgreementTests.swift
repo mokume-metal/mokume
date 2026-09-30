@@ -138,6 +138,37 @@ struct OutputAgreementTests {
         #expect(reports.isEmpty, "\(reports.joined(separator: "\n"))")
     }
 
+    /// 描く細かさを下げた面で、止まっている間に変えた後 (#1882)。出す先は描く先を広げた絵で、
+    /// 出す先を読む口はどれも読む前に広げ直す。CPU の口が先に読んでも、GPU の口と食い違わない。
+    @Test("細かさを下げた面で止まっている間に変えた後も、2 本の出口が同じバイトを出す", arguments: [false, true])
+    func agreeAfterAChangeWhileStopped(circle: Bool) throws {
+        let gpu = try RenderDevice()
+        let output = try RenderTarget(gpu: gpu, width: 160, height: 160)
+        let canvas = try Canvas(output: output, gpu: gpu, pixelDensity: 0.5, upscale: .spatial)
+        try canvas.draw { canvas.background(235) }
+
+        // 止まっている間のコールバックを模す (持ち越しの区間)
+        canvas.carriesOver = true
+        if circle {
+            canvas.noStroke()
+            canvas.fill(LinearRGBA.linear(red: 1, green: 0, blue: 0))
+            canvas.circle(80, 80, 40)
+            _ = canvas.get(0, 0)
+        } else {
+            for y in 38..<42 {
+                for x in 38..<42 { canvas.set(x, y, LinearRGBA.linear(red: 1, green: 0, blue: 0)) }
+            }
+        }
+        canvas.carriesOver = false
+
+        // CPU の口を先に読む。ここに追い付きが無ければ古い絵を読み、後の GPU の口と食い違う
+        let cpu = try canvas.output.encodeForDisplay().bytes
+        let gpuBytes = try canvas.output.encodeToImage().read().bytes
+        let centre = (80 * 160 + 80) * 4
+        #expect(cpu[centre] > 200 && cpu[centre + 1] < 30, "変えたものが CPU の口に出ていない")
+        #expect(cpu == gpuBytes, "CPU の口と GPU の口が食い違う")
+    }
+
     @Test("起票の 3 例が、2 本の出口で同じバイトになる")
     func reportedExamplesAgree() throws {
         let red = Float(Float16(bitPattern: 0x377e))

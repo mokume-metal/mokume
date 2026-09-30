@@ -686,6 +686,20 @@ public final class Canvas {
     /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     var carriesPictureBeforeEffects = false
+    /// 描く先が、最後に拡大した後に変わったか ([#1882])。**細かさを下げた面の出す先は、描く先を
+    /// 拡大の段が広げて書いた絵**で、拡大が積まれるのはフレームの終わりの描き切りだけである。
+    /// 止まっている間の描き切り (図形・絵・背景を描く、書いた画素を書き戻す) はその後に描く先
+    /// だけを変えるので、立っている間、出す先は変わる前の絵を映している。出力段が読む前に広げ直して
+    /// 下ろす (``catchUpOutput()``)。
+    ///
+    /// 立てるのも下ろすのも投入の後だけ ([#1183] と同じ作法)。**下ろすのは、拡大が積めたときだけ**
+    /// — フレームの終わりの拡大は失敗しても投げない (``applyUpscale(into:)``) ので、積めなかった
+    /// フレームの終わりは立てる。**描く先へ戻していない画素の書き込みはここに入れない** — 写しの
+    /// 書き込み待ちが同じことを表す (``needsOutputEnlargement``)。
+    ///
+    /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    var targetChangedSinceUpscale = false
     /// 書き戻した画素のうち変わった画素を、効果を通す前の絵へ写した回数 (作ってから通算・[#1524])。
     /// **止まっている間に画素を書かなかったフレームでは増えない**ことを検査が見る。
     ///
@@ -2783,7 +2797,7 @@ public final class Canvas {
             // **拡大は出口の直前・段の最後。** 効果は描く細かさの上で働き、その結果を
             // 出す細かさへ広げる。順を逆にすると、効果の半径が出す細かさで測られて
             // 細かさを変えるたびに効き方が変わる
-            if applyingEffects { applyUpscale(into: commands) }
+            let upscaled = applyingEffects && applyUpscale(into: commands)
 
             // **画素を読む直前の描き切りなら、描き終えた絵を写しへ読み戻す blit を末尾に積む。**
             // 別のコマンドにすると投入が 1 本増えるので、同じコマンドの末尾に置く (#753)
@@ -2800,7 +2814,7 @@ public final class Canvas {
                 ])
             return (
                 submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
-                uploaded: uploaded, carried: carried)
+                uploaded: uploaded, carried: carried, upscaled: upscaled)
         }
         // **いまのスロットを読む投入は、これである。** 次にこのスロットが回ってきた
         // ときに待つ先になる。記録しないと、そのスロットは「いつ読み終わるか分からない
@@ -2815,6 +2829,18 @@ public final class Canvas {
         // ([#1183] と同じ作法) — 投げたコマンドは捨てられ、奥行きは書き換わらない
         depthIsHeld = !applyingEffects && (continuesDepth || hasDrawing)
         if assembled.wroteBack { target.markPixelsWrittenBack() }
+        // **拡大より後に描く先が変わったかを憶える** ([#1882])。フレームの終わりの描き切りは、
+        // 拡大が積めたなら下ろす。**積めなかったなら (拡大は失敗を握り潰して警告だけ出す) 立てる**
+        // — 下ろすと、出す先が古い絵のまま追い付き直されない。途中の描き切りは、図形・背景を
+        // 描いたか (`hasDrawing`。片付けの前に捕った、この描き切りが描いたもの) 画素を書き戻した
+        // ときに立てる
+        //
+        // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+        if applyingEffects {
+            targetChangedSinceUpscale = !assembled.upscaled
+        } else if upscaleStage != nil, hasDrawing || assembled.wroteBack {
+            targetChangedSinceUpscale = true
+        }
         gpu.pendingUploads.markUploaded(assembled.uploaded)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }
         // 焼いたなら、その入力を覚える。使い回したフレームでは同じ値を書き直すだけになる
