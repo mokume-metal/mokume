@@ -1171,6 +1171,248 @@ struct ParticleTests {
         #expect(canvas.computeEncodersOpened == 0)
     }
 
+    // MARK: - 同じフレームに何度も置く (#1651)
+    //
+    // `particles(p)` は呼ぶたびに 1 刻み進め、呼んだ時点の変換で描く。同じ群を同じ面で
+    // 1 フレームに 2 回呼んでも、面をまたいで呼んでも同じである。直す前は、毎回の指定と
+    // 置き場所が群で 1 つずつで、描き切りの頭で GPU へ届くのは最後に書いた指定だけ、描くのは
+    // 最後の計算が書いた置き場所だけだった — 1 回目の雲が消え、1 回目の前に積んだ力も効かない。
+
+    /// 同じフレームに 2 回置く検査の刻み。**2 のべき**なので、速さを掛けても丸めが入らない。
+    private static let twiceStep: Float = 1.0 / 64
+
+    /// 動かない (か、右へまっすぐ進む) 白い粒を (0, 80) に 100 個出す (寿命 5 秒・大きさ 20)。
+    ///
+    /// 出る所が 1 点で向きも一定なので、`speed` を倍にした群を 1 刻み進めた位置は、同じ群を
+    /// 2 刻み進めた位置と**丸めなしで**一致する (x = 2 · speed · Δt)。描く板が読むのは位置・
+    /// 大きさ・色だけなので、絵も一致する。
+    private func release(
+        _ dust: Particles, speed: Float, on canvas: Canvas, using randomness: inout Randomness
+    ) {
+        canvas.emit(
+            dust, from: .point(0, 80), rate: (100 / Self.twiceStep).nextUp,
+            speed: speed...speed, angle: 0...0, life: 5...5, size: 20...20,
+            color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+    }
+
+    /// 本文の再現の場面を 1 フレーム描く。1 つ目の群を `translate(20, 0)` の下に置き、
+    /// `sameGroup` なら同じ群を、そうでなければ同じ放出を倍の速さでした別の群を
+    /// `translate(90, 0)` の下に置く。
+    private func twoClouds(
+        route: Canvas.ParticleRoute, speed: Float, sameGroup: Bool
+    ) throws -> [UInt8] {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        canvas.particleRoute = route
+        canvas.deltaTime = Self.twiceStep
+        let first = try canvas.makeParticles(count: 512)
+        let second = try canvas.makeParticles(count: 512)
+        let randomness = Randomness(seed: 1651)
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            // 2 つの群へ同じ流れで出す (同じ粒になる)
+            var stream = randomness
+            release(first, speed: speed, on: canvas, using: &stream)
+            if !sameGroup {
+                stream = randomness
+                release(second, speed: 2 * speed, on: canvas, using: &stream)
+            }
+            canvas.push()
+            canvas.translate(20, 0)
+            canvas.particles(first)
+            canvas.pop()
+            canvas.push()
+            canvas.translate(90, 0)
+            canvas.particles(sameGroup ? first : second)
+            canvas.pop()
+        }
+        return try canvas.target.encodeForDisplay().bytes
+    }
+
+    /// 2 枚の絵で、成分の差が表示の 1 段を越える画素の数。
+    private func differingPixels(_ a: [UInt8], _ b: [UInt8]) -> Int {
+        stride(from: 0, to: min(a.count, b.count), by: 4).count { start in
+            (0..<4).contains { abs(Int(a[start + $0]) - Int(b[start + $0])) > 1 }
+        }
+    }
+
+    /// 絵の (x, y) のいちばん明るい色の成分。
+    private func brightness(_ bytes: [UInt8], width: Int, at x: Int, _ y: Int) -> UInt8 {
+        let start = (y * width + x) * 4
+        return bytes[start..<(start + 3)].max() ?? 0
+    }
+
+    @Test(
+        "同じ群を 1 フレームに 2 回置くと、別の群を 1 回ずつ置いた絵と同じになる",
+        arguments: [Canvas.ParticleRoute.instanced, .reference], [Float(0), 512])
+    func drawingTheSameGroupTwiceMatchesTwoGroups(
+        route: Canvas.ParticleRoute, speed: Float
+    ) throws {
+        let same = try twoClouds(route: route, speed: speed, sameGroup: true)
+        let separate = try twoClouds(route: route, speed: speed, sameGroup: false)
+        // 比べる側に両方の雲が出ていること (1 刻みで 1 つ目は x = 20 + speed·Δt、2 つ目は
+        // 90 + 2·speed·Δt)。何も出ていなければ「同じ」も成り立ってしまう
+        let shift = Int(speed * Self.twiceStep)
+        #expect(brightness(separate, width: 160, at: 20 + shift, 80) > 250)
+        #expect(brightness(separate, width: 160, at: 90 + 2 * shift, 80) > 250)
+        #expect(
+            differingPixels(same, separate) == 0,
+            "1 つ目の雲の中心の明るさ: 同じ群 \(brightness(same, width: 160, at: 20 + shift, 80))")
+    }
+
+    @Test("同じ群を 1 フレームに 2 回置いても、速い経路と参照の経路は同じ絵を出す", arguments: [Float(0), 512])
+    func bothRoutesAgreeWhenTheSameGroupIsDrawnTwice(speed: Float) throws {
+        let fast = try twoClouds(route: .instanced, speed: speed, sameGroup: true)
+        let reference = try twoClouds(route: .reference, speed: speed, sameGroup: true)
+        #expect(brightest(fast) > 250)
+        #expect(fingerprint(fast) == fingerprint(reference))
+    }
+
+    @Test("同じ群を毎フレーム 2 回置いても、置き場の確保が積み上がらない")
+    func drawingTwiceEveryFrameDoesNotGrow() throws {
+        let canvas = try makeCanvas()
+        var randomness = Randomness(seed: 1651)
+        let dust = try canvas.makeParticles(count: 512)
+        func frame() throws {
+            var stream = randomness
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                canvas.emit(
+                    dust, from: .point(32, 12), rate: 600, speed: 20...45,
+                    angle: 0...(2 * Float.pi), life: 0.4...1.2, size: 3...6,
+                    color: .linear(red: 1, green: 0.6, blue: 0.2), using: &stream)
+                canvas.force(dust, [.gravity(0, 60)])
+                canvas.particles(dust)
+                canvas.translate(8, 0)
+                canvas.particles(dust)
+            }
+            randomness = stream
+        }
+
+        try frame()
+        // 2 回目のための組が 1 つ足された
+        #expect(dust.draws.count == 2)
+        let tables = try canvas.computePipeline().tablesBuilt
+        let uploadReallocations = canvas.uploadStorage.reallocations
+
+        for _ in 0..<200 { try frame() }
+        // **単発では出ない。** 毎フレーム足していれば、ここで増える
+        #expect(dust.draws.count == 2)
+        for draw in dust.draws { #expect(draw.parameters.shadowAllocations == 1) }
+        #expect(try canvas.computePipeline().tablesBuilt == tables)
+        #expect(canvas.uploadStorage.reallocations == uploadReallocations)
+        // 2 回目の旗は 1 回目が進めた状態を読むので、そこで口が切れる。口の数は 1 回ずつの 2 倍
+        #expect(canvas.computeEncodersOpened == 201 * 2 * dust.dispatchCount)
+    }
+
+    @Test("毎フレーム 1 回だけ置く群は、組を足さない")
+    func drawingOnceEveryFrameKeepsOneDraw() throws {
+        let canvas = try makeCanvas()
+        var randomness = Randomness(seed: 17)
+        let dust = try canvas.makeParticles(count: 512)
+        try spray(on: canvas, dust, randomness: &randomness, frames: 20)
+        #expect(dust.draws.count == 1)
+        #expect(canvas.computeEncodersOpened == 20 * dust.dispatchCount)
+    }
+
+    /// 本体と描き場所で 1 つの群を置く。本体は `translate(90, 0)`、描き場所は `translate(20, 0)`。
+    /// 返すのは 2 つの面の絵と、フレームの後の粒 1 つ目。
+    private func acrossSurfaces(
+        layerFirst: Bool, speed: Float
+    ) throws -> (main: [UInt8], layer: [UInt8], particle: Particle) {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        canvas.deltaTime = Self.twiceStep
+        let layer = try canvas.createGraphics(160, 160)
+        let dust = try canvas.makeParticles(count: 512)
+        var randomness = Randomness(seed: 1651)
+        func onLayer() {
+            layer.beginDraw()
+            layer.background(.display(red: 0, green: 0, blue: 0))
+            layer.translate(20, 0)
+            layer.particles(dust)
+            layer.endDraw()
+        }
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            release(dust, speed: speed, on: canvas, using: &randomness)
+            if layerFirst { onLayer() }
+            canvas.push()
+            canvas.translate(90, 0)
+            canvas.particles(dust)
+            canvas.pop()
+            if !layerFirst { onLayer() }
+        }
+        let particle = canvas.read(dust.state).withUnsafeBytes { raw in
+            raw.bindMemory(to: Particle.self)[0]
+        }
+        return (
+            try canvas.target.encodeForDisplay().bytes, try layer.target.encodeForDisplay().bytes,
+            particle
+        )
+    }
+
+    /// 直す前は、本体で先に置くと本体の指定が描き場所の指定で上書きされ (控えの登録簿は面を
+    /// またいで 1 つ)、本体の雲が描き場所の変換の下に出た。描き場所が先なら直す前も成り立つ。
+    ///
+    /// 動く粒でどちらの面がどちらの刻みを描くかは見ない。本体が先の順では、GPU で先に進むのが
+    /// 描き場所の刻みなので、本体は 2 刻み後の状態を描く ([#1870])。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    @Test(
+        "本体と描き場所で 1 つの群を置いても、どちらの面にも呼んだ時点の変換で出て、群は 2 刻み進む",
+        arguments: [true, false])
+    func sharingAGroupAcrossSurfaces(layerFirst: Bool) throws {
+        // 動かない粒で、どちらの面にもその面で置いた所に雲が出る
+        let still = try acrossSurfaces(layerFirst: layerFirst, speed: 0)
+        #expect(brightness(still.main, width: 160, at: 90, 80) > 250, "本体の雲が出ていない")
+        #expect(brightness(still.main, width: 160, at: 20, 80) < 5, "本体に描き場所の雲が出た")
+        #expect(brightness(still.layer, width: 160, at: 20, 80) > 250, "描き場所の雲が出ていない")
+        #expect(brightness(still.layer, width: 160, at: 90, 80) < 5, "描き場所に本体の雲が出た")
+
+        // 動く粒で、群が 2 刻み進んだ (x = 2 · speed · Δt)。丸めの入らない値なので完全一致
+        let speed: Float = 512
+        let moving = try acrossSurfaces(layerFirst: layerFirst, speed: speed)
+        #expect(moving.particle.x == 2 * speed * Self.twiceStep)
+        #expect(moving.particle.life == 5 - 2 * Self.twiceStep)
+    }
+
+    @Test("2 回目のための組を足せなければ、その呼び出しは進めも描きもせず、1 度だけ知らせる")
+    func failingToAddADrawSkipsThatCall() throws {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        canvas.deltaTime = Self.twiceStep
+        let dust = try canvas.makeParticles(count: 512)
+        dust.drawAllocationFailureForTesting = .bufferUnavailable(byteCount: 0)
+        var randomness = Randomness(seed: 1651)
+        for _ in 0..<2 {
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                release(dust, speed: 0, on: canvas, using: &randomness)
+                canvas.push()
+                canvas.translate(20, 0)
+                canvas.particles(dust)
+                canvas.pop()
+                canvas.force(dust, [.gravity(0, 64)])
+                canvas.push()
+                canvas.translate(90, 0)
+                canvas.particles(dust)
+                canvas.pop()
+            }
+        }
+        let picture = try canvas.target.encodeForDisplay().bytes
+        #expect(dust.warnings.hasWarned(.drawUnavailable))
+        #expect(dust.draws.count == 1)
+        // 1 回目は描かれ、2 回目は描かれない
+        #expect(brightness(picture, width: 160, at: 20, 80) > 250)
+        #expect(brightness(picture, width: 160, at: 90, 80) < 5)
+        // 2 回目の前に積んだ力は取り出されず、次のフレームの 1 回目に効いた (群は 2 フレームで
+        // 2 刻みだけ進み、2 刻み目に重力が効いている)
+        let particle = canvas.read(dust.state).withUnsafeBytes { raw in
+            raw.bindMemory(to: Particle.self)[0]
+        }
+        #expect(particle.life == 5 - 2 * Self.twiceStep)
+        #expect(particle.vy == 64 * Self.twiceStep)
+        #expect(dust.pendingForceCount == 1)
+    }
+
     // MARK: - 作るときに触らないもの (#1041)
     //
     // 粒の板は `createShape` で作る。組み立ての退避がフレームに縛られていると、
