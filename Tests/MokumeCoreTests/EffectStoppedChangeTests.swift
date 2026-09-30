@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import ImageIO
 import Testing
 
 @testable import MokumeCore
@@ -350,6 +351,85 @@ struct EffectStoppedChangeTests {
         )
     }
 
+    /// 反証 (2 回目) の 2-2 — フレームの中で取っておいた窓へ、止まっている間に書いても、写しは
+    /// フレームの終わりの絵を読み直してから書かれる。
+    ///
+    /// 窓は取っておける (書く時点で書いてよいかを尋ねる・#1672)。フレームの途中で読んだ窓へ
+    /// 止まっている間に書くと、直す前は写しを読み直さず、フレームの途中の古い絵に書いていた。
+    /// 書き戻すと古い絵の全面が「書いた画素」になり、読んだ後に描いた円が次のフレームで消えた。
+    /// 書いた 1 画素のほかは、書かなかったときの 2 枚目と一致するはずである。
+    @Test(
+        "フレームの中で取っておいた窓へ止まっている間に書いても、書いた画素のほかは変わらない",
+        arguments: Surface.allCases)
+    func aKeptWindowIsReadAgainBeforeWritingWhileStopped(surface: Surface) throws {
+        func secondFrame(writing: Bool) throws -> PixelBuffer {
+            let canvas = try surface.make()
+            var window: Pixels?
+            try canvas.draw {
+                Self.paper(canvas)
+                window = canvas.pixels
+                canvas.noStroke()
+                canvas.fill(Self.red)
+                canvas.circle(80, 80, 40)
+                canvas.effects(Self.darkening)
+            }
+            let kept = try #require(window)
+            if writing {
+                Self.whileStopped(canvas) { kept[5, 5] = .linear(red: 0, green: 1, blue: 0) }
+            }
+            return try Self.secondFrame(canvas)
+        }
+        let written = try secondFrame(writing: true)
+        let untouched = try secondFrame(writing: false)
+        let centre = (x: written.width / 2, y: written.height / 2)
+
+        #expect(Self.isRed(untouched[centre.x, centre.y]), "検査の前提: 読んだ後に描いた円が 2 枚目に出ていない")
+        let point = written[5, 5]
+        #expect(point.green > 0.99 && point.red < 0.01, "書いた画素が 2 枚目に残っていない: \(point)")
+        var differing = 0
+        for y in 0..<written.height {
+            for x in 0..<written.width where (x, y) != (5, 5) && written[x, y] != untouched[x, y] {
+                differing += 1
+            }
+        }
+        #expect(differing == 0, "書いていない \(differing) 画素が変わった (中央: \(written[centre.x, centre.y]))")
+    }
+
+    /// 反証 (2 回目) の 2-5 — 数でない値を出す効果の後でも、書いた画素だけが控えへ写る。
+    ///
+    /// 書いた画素は、書き戻す前の描く先と**ビットで**比べて見分ける。値で比べると、数でない値は
+    /// 自分とも等しくないので、効果を通した絵の全画素が「書いた画素」になって控えへ写り、効果を
+    /// 頼まない次のフレームにも数でない値が残った。
+    @Test(
+        "数でない値を出す効果の後に止まっている間に書いても、書いていない画素に効果は残らない",
+        arguments: Surface.allCases)
+    func writtenPixelsAreToldApartByBitsAfterANotANumberEffect(surface: Surface) throws {
+        func secondFrame(writing: Bool) throws -> PixelBuffer {
+            let canvas = try surface.make()
+            let broken = try canvas.makeEffect(
+                """
+                float4 effect(Pixel in, Values values) {
+                    return float4(as_type<float>(0x7fc00000u));
+                }
+                """)
+            try canvas.draw {
+                Self.paper(canvas)
+                canvas.effects([.custom(broken)])
+            }
+            let centre = Self.centre(of: canvas)
+            if writing { Self.whileStopped(canvas) { canvas.set(centre.x, centre.y, Self.red) } }
+            return try Self.secondFrame(canvas)
+        }
+        let written = try secondFrame(writing: true)
+        let untouched = try secondFrame(writing: false)
+        #expect(untouched[3, 3].red.isFinite, "検査の前提: 書かなければ 2 枚目は下地に戻る")
+        #expect(
+            written[3, 3] == untouched[3, 3],
+            "書いていない隅に、効果の数でない値が残った: \(written[3, 3])")
+        let centre = (x: written.width / 2, y: written.height / 2)
+        #expect(Self.isRed(written[centre.x, centre.y]), "書いた画素が 2 枚目に残っていない")
+    }
+
     // MARK: - 払うのは変えたときだけ
 
     /// 完了条件 6 — 効果を頼まない面と、効果を頼んでも止まっている間に描く先を変えない面は、
@@ -422,6 +502,14 @@ struct EffectStoppedChangeTests {
 
     // MARK: - ランタイムを通す
 
+    /// 書き出した PNG を、描き直さずにバイト列として読む。
+    private static func readPNG(_ url: URL) throws -> DisplayImage {
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let data = try #require(image.dataProvider?.data as Data?)
+        return DisplayImage(width: image.width, height: image.height, bytes: [UInt8](data))
+    }
+
     /// 1 枚目に下地と効果を置いて止まり、キーを押されるたびに頼まれたことをするスケッチ。
     final class StoppedPainter: Sketch {
         let density: Float
@@ -488,7 +576,15 @@ struct EffectStoppedChangeTests {
         untouched.onKey["r"] = { sketch in sketch.redraw() }
         let plain = try run(untouched, keys: ["r"])
 
-        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("stopped.png").path))
+        let saved = directory.appendingPathComponent("stopped.png")
+        #expect(FileManager.default.fileExists(atPath: saved.path))
+        // 止まっている間の書き出しに、書いた画素が出る。**細かさを下げた面では出ない** — 止まって
+        // いる間の変更が出す先へ届かないのは効果と関係なく起きる別の根で、#1882 が扱う。
+        // 細かさ 0.5 で見るのは、下の次のフレームの入りである
+        if density == 1 {
+            let shot = try Self.readPNG(saved)
+            #expect(shot[80, 80].red > 200 && shot[80, 80].green < 30, "止まっている間の書き出しに、書いた画素が出ていない")
+        }
         #expect(second[80, 80].red > 200 && second[80, 80].green < 30, "書いた画素が 2 枚目に残っていない")
         #expect(
             second[3, 3] == plain[3, 3],
