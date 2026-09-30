@@ -1317,11 +1317,13 @@ struct ParticleTests {
     /// 本体と描き場所で 1 つの群を置く。本体は `translate(90, 0)`、描き場所は `translate(20, 0)`。
     /// 返すのは 2 つの面の絵と、フレームの後の粒 1 つ目。
     private func acrossSurfaces(
-        layerFirst: Bool, speed: Float
+        layerFirst: Bool, speed: Float, route: Canvas.ParticleRoute = .instanced
     ) throws -> (main: [UInt8], layer: [UInt8], particle: Particle) {
         let canvas = try makeCanvas(width: 160, height: 160)
+        canvas.particleRoute = route
         canvas.deltaTime = Self.twiceStep
         let layer = try canvas.createGraphics(160, 160)
+        layer.particleRoute = route
         let dust = try canvas.makeParticles(count: 512)
         var randomness = Randomness(seed: 1651)
         func onLayer() {
@@ -1350,19 +1352,27 @@ struct ParticleTests {
         )
     }
 
+    /// 絵の `row` 行で、光った (成分が 128 を超える) 画素の x の範囲。光った画素が無ければ `nil`。
+    private func litRange(_ bytes: [UInt8], width: Int, row: Int) -> ClosedRange<Int>? {
+        let lit = (0..<width).filter { brightness(bytes, width: width, at: $0, row) > 128 }
+        guard let first = lit.first, let last = lit.last else { return nil }
+        return first...last
+    }
+
     /// 直す前は、本体で先に置くと本体の指定が描き場所の指定で上書きされ (控えの登録簿は面を
     /// またいで 1 つ)、本体の雲が描き場所の変換の下に出た。描き場所が先なら直す前も成り立つ。
     ///
-    /// 動く粒でどちらの面がどちらの刻みを描くかは見ない。本体が先の順では、GPU で先に進むのが
-    /// 描き場所の刻みなので、本体は 2 刻み後の状態を描く ([#1870])。
+    /// 動く粒で、どちらの呼び出しがどちらの刻みを描くかも見る ([#1870])。速い経路は、本体が先の順で
+    /// GPU で先に進むのが描き場所の刻みだったので、本体は 2 刻み後の状態を描いていた。参照の経路は
+    /// 呼ぶたびに読み戻して流すので、呼んだ順のままである (対照)。
     ///
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     @Test(
-        "本体と描き場所で 1 つの群を置いても、どちらの面にも呼んだ時点の変換で出て、群は 2 刻み進む",
-        arguments: [true, false])
-    func sharingAGroupAcrossSurfaces(layerFirst: Bool) throws {
+        "本体と描き場所で 1 つの群を置いても、どちらの面にも呼んだ時点の変換で出て、群は呼んだ順に 2 刻み進む",
+        arguments: [true, false], [Canvas.ParticleRoute.instanced, .reference])
+    func sharingAGroupAcrossSurfaces(layerFirst: Bool, route: Canvas.ParticleRoute) throws {
         // 動かない粒で、どちらの面にもその面で置いた所に雲が出る
-        let still = try acrossSurfaces(layerFirst: layerFirst, speed: 0)
+        let still = try acrossSurfaces(layerFirst: layerFirst, speed: 0, route: route)
         #expect(brightness(still.main, width: 160, at: 90, 80) > 250, "本体の雲が出ていない")
         #expect(brightness(still.main, width: 160, at: 20, 80) < 5, "本体に描き場所の雲が出た")
         #expect(brightness(still.layer, width: 160, at: 20, 80) > 250, "描き場所の雲が出ていない")
@@ -1370,9 +1380,75 @@ struct ParticleTests {
 
         // 動く粒で、群が 2 刻み進んだ (x = 2 · speed · Δt)。丸めの入らない値なので完全一致
         let speed: Float = 512
-        let moving = try acrossSurfaces(layerFirst: layerFirst, speed: speed)
+        let moving = try acrossSurfaces(layerFirst: layerFirst, speed: speed, route: route)
         #expect(moving.particle.x == 2 * speed * Self.twiceStep)
         #expect(moving.particle.life == 5 - 2 * Self.twiceStep)
+
+        // **先に呼んだほうが 1 刻み後、後に呼んだほうが 2 刻み後を描く。** 1 刻みは 8 画素。
+        // 雲は大きさ 20 の四角で、x = 106 なら 96…115。本体は 90、描き場所は 20 だけ右に置く
+        let main = litRange(moving.main, width: 160, row: 80)
+        let layer = litRange(moving.layer, width: 160, row: 80)
+        if layerFirst {
+            #expect(layer == 18...37, "描き場所 (先に呼んだ) は 1 刻み後 (x = 28) のはず")
+            #expect(main == 96...115, "本体 (後に呼んだ) は 2 刻み後 (x = 106) のはず")
+        } else {
+            #expect(main == 88...107, "本体 (先に呼んだ) は 1 刻み後 (x = 98) のはず")
+            #expect(layer == 26...45, "描き場所 (後に呼んだ) は 2 刻み後 (x = 36) のはず")
+        }
+    }
+
+    /// 描き場所を**開いたまま**、描き場所 → 本体 → 描き場所の順で 1 つの群を呼ぶ。本体は
+    /// `translate(90, 0)`、描き場所は `translate(20, 0)`。返すのは 2 つの面の絵と、フレームの後の
+    /// 粒 1 つ目。
+    private func aroundAnOpenLayer(
+        route: Canvas.ParticleRoute
+    ) throws -> (main: [UInt8], layer: [UInt8], particle: Particle) {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        canvas.particleRoute = route
+        canvas.deltaTime = Self.twiceStep
+        let layer = try canvas.createGraphics(160, 160)
+        layer.particleRoute = route
+        let dust = try canvas.makeParticles(count: 512)
+        var randomness = Randomness(seed: 1651)
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            release(dust, speed: 512, on: canvas, using: &randomness)
+            layer.beginDraw()
+            layer.background(.display(red: 0, green: 0, blue: 0))
+            layer.translate(20, 0)
+            layer.particles(dust)
+            canvas.push()
+            canvas.translate(90, 0)
+            canvas.particles(dust)
+            canvas.pop()
+            layer.particles(dust)
+            layer.endDraw()
+        }
+        let particle = canvas.read(dust.state).withUnsafeBytes { raw in
+            raw.bindMemory(to: Particle.self)[0]
+        }
+        return (
+            try canvas.target.encodeForDisplay().bytes, try layer.target.encodeForDisplay().bytes,
+            particle
+        )
+    }
+
+    /// [#1870] の指摘への応え。描き場所が閉じないうちに本体が呼ぶ形で、描き場所 (1 刻み後と 3 刻み後の
+    /// 2 つの雲) の間に本体 (2 刻み後) が挟まる。直す前の速い経路は、描き場所の 2 回が続けて進み、
+    /// 本体が 3 刻み後になった。参照の経路は呼ぶたびに読み戻して流すので、直す前から呼んだ順 (対照)。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    @Test(
+        "描き場所を開いたまま本体が挟まっても、群は呼んだ順に刻みが進む",
+        arguments: [Canvas.ParticleRoute.instanced, .reference])
+    func stepsFollowTheCallOrderWhileALayerIsOpen(route: Canvas.ParticleRoute) throws {
+        let shot = try aroundAnOpenLayer(route: route)
+        let speed: Float = 512
+        #expect(shot.particle.x == 3 * speed * Self.twiceStep)
+        // 本体は 2 刻み後 (x = 106)。3 刻み後なら 104…123
+        #expect(litRange(shot.main, width: 160, row: 80) == 96...115, "本体が 2 刻み後でない")
+        // 描き場所は 1 刻み後 (x = 28・18…37) と 3 刻み後 (x = 44・34…53) の雲が続く
+        #expect(litRange(shot.layer, width: 160, row: 80) == 18...53, "描き場所の雲が 1 刻み後と 3 刻み後でない")
     }
 
     @Test("2 回目のための組を足せなければ、その呼び出しは進めも描きもせず、1 度だけ知らせる")

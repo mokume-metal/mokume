@@ -740,6 +740,16 @@ public final class Canvas {
     /// ことを検査が見る。書き込むのは `Canvas+Compute` の流す経路だけ。
     var computeEncodersOpened = 0
     var computeEncodersClosed = 0
+    /// 面をまたぐ順のための早い投入 (``submitPendingComputations()``) を試した回数 (作ってから
+    /// 通算)。**失敗したフレームの間は増えない**ことを検査が数で見る (#1870)。
+    var earlySubmissionsAttempted = 0
+    /// 早い投入に失敗したときの ``framesDrawn``。同じ番号のうちは、同じ試みを繰り返さない
+    /// (環の待ちは最長 5 秒。頼むたびに試すと、頼んだ数だけ止まる)。番号どうしで比べるので、
+    /// フレームの境目で戻す手は要らない — 閉じ忘れを捨てる道も番号を進める。
+    var earlySubmissionFailedFrame: Int?
+    /// 早い投入を失敗させる差し込み (検査用)。製品の経路では `nil`。環の待ちが期限切れになる
+    /// のは GPU が 5 秒返らないときだけなので、検査から自然には作れない。
+    var failEarlySubmissionForTesting: RenderFailure?
     /// 計算のあとに次の段が待つ仕掛けを積んだ回数 (作ってから通算)。
     ///
     /// 影の側 (``shadowBarriersEncoded``) と同じ理由で持つ — 抜けていても絵は普段どおり
@@ -854,7 +864,17 @@ public final class Canvas {
     /// 越えたかは本体のフレームの番号 (``Timebase/frame``) で見分ける (``leftOpenAcrossBoundary``
     /// と同じ見方)。**時刻の置き場の持ち主 (本体・直に使う面) では立たない** — 持ち主の境目は
     /// 自分の次のフレームの頭そのもので、そこで閉じ忘れを捨てる。
-    private var isFrameLeftOpenPastTheMainFrame: Bool {
+    ///
+    /// 面をまたぐ計算の順 (``submitEarlierComputations(before:)``) も読む。捨てるはずの頼みを、
+    /// ぶつかる頼みが復活させないため ([#1870])。
+    ///
+    /// **境目を越える前は、この印は立たない** — 同じ本体のフレームの中で `endDraw()` を忘れた
+    /// 描き場所は、まだ区間の中にいる。その頼みは、本体などほかの面のぶつかる頼みが来た時点で
+    /// GPU へ流れる (頼んだ順に効かせるため)。あとで境目を越えて捨てても、流れたものは戻せない
+    /// (``beginDraw()`` の「取り消せない」ものの 3 つ目)。
+    ///
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
+    var isFrameLeftOpenPastTheMainFrame: Bool {
         guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self else { return false }
         return opened != timebase.frame
     }
@@ -2026,10 +2046,13 @@ public final class Canvas {
     /// 閉じていないフレームは描かずに捨て、注意してから描き始め直す** ([ADR-0021] 決定 4 の
     /// 追補 (2026-09-27)・[#1622])。捨てたフレームで書いた変換・溜めた図形・開いた形・書いた画素
     /// (``set(_:_:_:)``・``pixels``) は、次のフレームへ持ち込まない (積んだ力 (``force(_:_:)``) も
-    /// 落とす・[#1678])。ただし、次の 2 つは取り消せない:
+    /// 落とす・[#1678])。ただし、次の 3 つは取り消せない:
     ///
     /// - 捨てたフレームの途中で既に描き切った絵 (``loadPixels()`` など)。面に載っている
     /// - 捨てたフレームで出した粒 (`emit`)。粒の状態の並びへ直に積まれている
+    /// - 捨てたフレームで頼んだ計算のうち、境目を越える前に GPU へ流れたもの ([#1870])。同じ本体の
+    ///   フレームの中で `endDraw()` を忘れた描き場所の頼みは、本体などほかの面が、読み書きの重なる
+    ///   計算を頼んだ時点で先に流れる (頼んだ順に効かせるため)。境目を越えた後の頼みは流れない
     ///
     /// 境目を越えていなければ捨てない。注意して何もせず、開いているフレームがそのまま続く:
     ///
@@ -2041,6 +2064,7 @@ public final class Canvas {
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     public func beginDraw() {
         // 閉じ忘れたまま境目を越えたフレームだけを捨てる。越えていない重ね呼びで捨てると、
         // 本体の面の `draw()` で `canvas.beginDraw()` を呼んだだけで、あるいは補助の関数が

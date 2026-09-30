@@ -151,7 +151,12 @@ extension Canvas {
     /// (`Particles.claimDraw(by:)`)。途中の描き切りを挟む形は採らない — 途中の描き切りには
     /// 既知の破れがある (#1656・#1657)。
     ///
+    /// **刻みの順は、呼んだ順である** ([#1870])。面ごとの描き切りに任せると、本体で先に呼んだ刻みより
+    /// 描き場所で後に呼んだ刻みのほうが先に進むので、計算を頼む口が、別の面が先に頼んだ
+    /// ぶつかる計算を先に投入する (``compute(_:over:by:reads:writes:)``)。
+    ///
     /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
+    /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     public func particles(_ particles: Particles) {
         guard isDrawing else { return warnOutsideFrame(.particles) }
         // 組を選べなければ、力を取り出さずに帰る。積んだ力は次の呼び出しに効く
