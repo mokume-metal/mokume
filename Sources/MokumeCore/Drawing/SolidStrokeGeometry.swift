@@ -7,9 +7,18 @@ import simd
 /// GPU で帯と角へ広げる骨。形の数ではなく稜線の数だけを持つ (#1738)。
 /// 列が所有するので、控えから外れても投入が読み終わるまで生きる。
 @MainActor final class SolidStrokeGeometry {
+    /// 片 1 つ。頂点関数 (`solidStrokeVertexMain`) が 6 頂点 (2 枚の三角形) に広げる。
+    ///
+    /// - 帯 (`a.w` = 0): `a`・`b` が両端
+    /// - 正方形 (`a.w` = 1): `a` が中心。辺が 3 本以上集まる角 (2 本の帯で形が決まらない・#1889)
+    /// - 折れ目の半分 (`a.w` = 2): `a` が角、`b` が自分の側の辺の向こうの点、`c` が
+    ///   もう 1 本の辺の向こうの点。辺が 2 本だけ集まる角は、二等分線で割った 2 枚で埋める
+    ///   (#1644)。`b.w` は 2 枚のどちらか (0 と 1) で、2 本が同じ向きへ折り返す角でだけ、
+    ///   外側の縁を左右へ分けるのに読む
     struct Piece {
-        var a: SIMD4<Float>  // xyz: 端点 / 中心、w: 0 は帯、1 は正方形
+        var a: SIMD4<Float>
         var b: SIMD4<Float>
+        var c: SIMD4<Float> = .zero
     }
 
     let buffer: any MTLBuffer
@@ -18,16 +27,29 @@ import simd
 
     init?(net: SolidEdges, gpu: RenderDevice) throws(RenderFailure) {
         var degrees = [Int](repeating: 0, count: net.points.count)
+        // 点ごとの、辺の向こうの点 (最初の 2 本)。CPU の骨 (`strokeNet`) と同じ選び方
+        var neighbors = [Int](repeating: 0, count: net.points.count)
+        var others = [Int](repeating: 0, count: net.points.count)
         var pieces: [Piece] = []
         for (a, b) in net.edges {
             pieces.append(Piece(a: SIMD4(net.points[a], 0), b: SIMD4(net.points[b], 0)))
+            if degrees[a] == 0 { neighbors[a] = b } else if degrees[a] == 1 { others[a] = b }
+            if degrees[b] == 0 { neighbors[b] = a } else if degrees[b] == 1 { others[b] = a }
             degrees[a] += 1
             degrees[b] += 1
         }
         // 開いた端の形は CPU の規則へ残す。潰れた組み込みの形もここで戻れる。
         guard !pieces.isEmpty, !degrees.contains(1) else { return nil }
         for (index, degree) in degrees.enumerated() where degree > 1 {
-            pieces.append(Piece(a: SIMD4(net.points[index], 1), b: .zero))
+            let corner = SIMD4(net.points[index], degree == 2 ? 2 : 1)
+            guard degree == 2 else {
+                pieces.append(Piece(a: corner, b: .zero))
+                continue
+            }
+            let first = net.points[neighbors[index]]
+            let second = net.points[others[index]]
+            pieces.append(Piece(a: corner, b: SIMD4(first, 0), c: SIMD4(second, 0)))
+            pieces.append(Piece(a: corner, b: SIMD4(second, 1), c: SIMD4(first, 0)))
         }
         self.gpu = gpu
         count = pieces.count * 6
