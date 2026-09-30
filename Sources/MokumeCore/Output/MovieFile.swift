@@ -75,8 +75,12 @@ enum MovieWriteFailure: Error, Equatable {
 /// ならなければ、直っている。そのとき `theMovieIsNotWrittenByTheHardwareEncoder` (書き上がりが
 /// 専用回路のものでないことを見る) は赤になるので外す。
 ///
-/// **専用回路の無い機械 (GitHub のホストなど) では、指定を外しても書き上がりの検査は赤にならない**
-/// (どちらでも同じ符号化器で書かれる)。機械によらず赤になるのは、書き手へ指定を渡したことを見る
+/// **指定が効くと測ったのは、専用回路のある 2 台である** (M3 Max・Mac mini M4。指定なしで
+/// `Cannot Encode`、指定ありで緑)。GitHub のホストの VM (`macos-26-arm64`) では、指定の有無によらず
+/// 色の細かい絵が別のエラー (`NSOSStatusErrorDomain -17913`。run ごとに落ちるセルが違う) で落ちる
+/// ので、ここでは指定が効いたかを見られない。断られていた絵を書く検査は、既定の符号化器が
+/// 専用回路である (仮想化されていない) 機械でだけ走らせ、ほかでは飛ばす (`DefaultProResEncoder`)。
+/// 機械によらず動いて赤になれるのは、書き手へ指定を渡したことを見る
 /// `theWriterIsHandedTheEncoderSpecification` だけである。
 ///
 /// ## 符号化器の用意は、読み直して待つ
@@ -190,8 +194,8 @@ nonisolated final class MovieFile {
     }
 
     /// writer の入力へ渡す出力設定。**検査が「書き手へ符号化器の指定を渡したか」を機械によらず
-    /// 見られるよう、`init` から切り出してある** ([#1813])。専用回路の無い機械では、指定を外しても
-    /// 動画は同じ符号化器で書かれるので、書き上がりからは見えない。
+    /// 見られるよう、`init` から切り出してある** ([#1813])。専用回路の無い機械 (GitHub のホストの VM)
+    /// では、指定の有無によらず同じ結果になるので、書き上がりからは見えない。
     ///
     /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
     static func outputSettings(

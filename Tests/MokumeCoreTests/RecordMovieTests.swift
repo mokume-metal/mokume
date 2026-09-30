@@ -260,16 +260,19 @@ struct MovieWriterTests {
     /// 断られる条件を避けるだけで、他の理由で writer が転べば録り全体は今も失われる。絵の中身に
     /// よらない約束としては名乗らない。
     ///
-    /// **専用回路の無い機械 (hosted の VM など) では、指定を外しても、この検査は赤にならない。**
-    /// 赤になるのは専用回路のある機械だけで、この退行を捕まえるのはそういう機械での実行である。
-    /// 機械によらず見られるのは、書き手へ指定を渡したこと (``theWriterIsHandedTheEncoderSpecification()``)
-    /// までである。この検査は、色が乱れた絵の色の差を見ない (ProRes 4444 の色は非可逆で、砂嵐は
+    /// **この検査は、既定の符号化器が専用回路である機械でだけ走る** (``DefaultProResEncoder``・
+    /// `.onAHardwareProResMachine`)。専用回路のある 2 台 (M3 Max・Mac mini M4) で、指定なしは
+    /// `Cannot Encode` で赤、指定ありは緑と測った。GitHub のホストの VM では、指定の有無によらず
+    /// 色の細かい絵が別のエラーで落ちるので飛ばす。この退行を捕まえるのは、専用回路のある機械での
+    /// 実行である。機械によらず見られるのは、書き手へ指定を渡したこと
+    /// (``theWriterIsHandedTheEncoderSpecification()``) までである。この検査は、色が乱れた絵の色の差を見ない (ProRes 4444 の色は非可逆で、砂嵐は
     /// 大きくずれる)。見るのは、断られないことと、不透明度が入力と一致することである。色は
     /// ``theColourOfAHalfTransparentBlockPictureSurvives(_:)`` が、一様な塊の内側で見る。
     ///
     /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
     @Test(
         "色の細かい絵に一様でない不透明度が重なっても、録りは断られず、不透明度は入力と一致する",
+        .onAHardwareProResMachine,
         arguments: BusyTexture.allCases, BusySize.all)
     func aBusyPictureWithUnevenOpacityIsNotRefused(
         _ texture: BusyTexture, _ size: BusySize
@@ -296,7 +299,7 @@ struct MovieWriterTests {
     /// 2 枚に絞る。
     ///
     /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
-    @Test("3840×2160 の RGBA が乱数の絵も、断られず、不透明度は入力と一致する")
+    @Test("3840×2160 の RGBA が乱数の絵も、断られず、不透明度は入力と一致する", .onAHardwareProResMachine)
     func theLargestRefusedPictureIsNotRefused() async throws {
         try await withTemporaryDirectory("mokume-movie-busy-4k") { directory in
             let path = directory.appendingPathComponent("largest.mov").path
@@ -317,7 +320,7 @@ struct MovieWriterTests {
     /// だけで、残りの 5 枚も入らず、ファイルはトラックを読めなかった (1920×1080)。
     ///
     /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
-    @Test("1 枚だけ乱れた絵を挟んでも、6 枚とも読み戻せる")
+    @Test("1 枚だけ乱れた絵を挟んでも、6 枚とも読み戻せる", .onAHardwareProResMachine)
     func oneBusyPictureDoesNotCostTheWholeRecording() async throws {
         try await withTemporaryDirectory("mokume-movie-busy-one") { directory in
             let path = directory.appendingPathComponent("one.mov").path
@@ -352,6 +355,7 @@ struct MovieWriterTests {
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     @Test(
         "色の細かい絵に一様でない不透明度が重なった絵も、同じ入力から同じ動きが出る",
+        .onAHardwareProResMachine,
         arguments: BusyTexture.allCases, BusySize.all)
     func aBusyPictureWritesTheSameMotionTwice(
         _ texture: BusyTexture, _ size: BusySize
@@ -386,7 +390,7 @@ struct MovieWriterTests {
     /// と同じ最大 2 (測った差は最大 1)。
     ///
     /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
-    @Test("半透明で色の細かい絵の色が、乗算されずに残る", arguments: BusySize.all)
+    @Test("半透明で色の細かい絵の色が、乗算されずに残る", .onAHardwareProResMachine, arguments: BusySize.all)
     func theColourOfAHalfTransparentBlockPictureSurvives(_ size: BusySize) async throws {
         try await withTemporaryDirectory("mokume-movie-busy-colour") { directory in
             let path = directory.appendingPathComponent("colour.mov").path
@@ -409,8 +413,9 @@ struct MovieWriterTests {
 
     /// **書き手へ、符号化器の指定を渡している** ([#1813])。機械によらず赤になる。
     ///
-    /// 専用回路の無い機械では、指定を外しても動画は同じ符号化器で書かれるので、書き上がりからは
-    /// 退行が見えない。出力設定を直接見れば、どの機械でも「指定を外した」ことが赤になる。
+    /// 専用回路の無い機械 (GitHub のホストの VM) では、指定の有無によらず同じ結果になるので、
+    /// 書き上がりからは退行が見えない。出力設定を直接見れば、どの機械でも「指定を外した」ことが
+    /// 赤になる。
     /// **見るのは指定の値ではなく、書き手へ渡る指定が ``MovieFile/encoderSpecification()`` と同じ
     /// ことである** — Apple 側が直って指定を空にして戻すとき、この検査は赤にならない。
     ///
@@ -431,13 +436,13 @@ struct MovieWriterTests {
     /// `Vendor` (`appl`) を持ち `CVFieldCount` を持たない。**未公開の印なので、OS が変わって
     /// 食い違ったら、印のほうを疑って見直す。**
     ///
-    /// 専用回路の無い機械は、どちらでも同じ符号化器なので飛ばす (ここが赤になれるのは専用回路の
-    /// ある機械だけ)。**Apple 側が直って指定を外して戻すときは、この検査も外す。**
+    /// 専用回路の無い機械では飛ばす (ここが赤になれるのは専用回路のある機械だけ)。専用機の
+    /// Mac mini M4 では飛ばずに通った。**Apple 側が直って指定を外して戻すときは、この検査も外す。**
     ///
     /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
     @Test(
         "専用回路のある機械では、書き上がった動画が専用回路の符号化器のものではない",
-        .enabled(if: DefaultProResEncoder.isHardware, "この機械の既定の符号化器は専用回路ではない"))
+        .onAHardwareProResMachine)
     func theMovieIsNotWrittenByTheHardwareEncoder() async throws {
         try await withTemporaryDirectory("mokume-movie-encoder-mark") { directory in
             let path = directory.appendingPathComponent("mark.mov").path
@@ -991,15 +996,49 @@ nonisolated struct BusySize: Sendable, CustomTestStringConvertible {
     ]
 }
 
-/// この機械の既定の ProRes 4444 の符号化器が、専用回路のものか。**指定を渡さずに聞く。**
+/// この機械の既定の ProRes 4444 の符号化器が、専用回路のものか ([#1813])。**指定を渡さずに聞く。**
+///
+/// 断られていた絵を書く検査は、この機械でだけ走らせる (`.onAHardwareProResMachine`)。専用回路の
+/// ある 2 台 (M3 Max・Mac mini M4) では、指定なしが `Cannot Encode`・指定ありが緑と測った。
+/// GitHub のホストの VM (`macos-26-arm64`) では、指定の有無によらず色の細かい絵が
+/// `NSOSStatusErrorDomain -17913` で落ちる (run ごとに落ちるセルが違う・#1919 の実測) ので、
+/// 指定が効いたかを見られない。
+///
+/// **仮想化された機械は、問い合わせが専用回路の名前を返しても専用回路として数えない。** 上の実測の
+/// VM がどちらを返すかは見ていないので、仮想化されているかも併せて見て、どちらでも飛ばす。
+///
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
 nonisolated enum DefaultProResEncoder {
-    static var isHardware: Bool {
+    static var isHardware: Bool { namesHardware && !isVirtualMachine }
+
+    /// 指定なしで問い合わせた符号化器の名前が、専用回路のものか。
+    private static var namesHardware: Bool {
         var encoder: CFString?
         var properties: CFDictionary?
         let status = VTCopySupportedPropertyDictionaryForEncoder(
             width: 640, height: 360, codecType: kCMVideoCodecType_AppleProRes4444,
             encoderSpecification: nil, encoderIDOut: &encoder, supportedPropertiesOut: &properties)
         return status == noErr && (encoder as String?)?.contains("hw") == true
+    }
+
+    /// 仮想化された機械か (`kern.hv_vmm_present`)。読めなければ仮想化されていないとして扱う。
+    private static var isVirtualMachine: Bool {
+        var present: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        return sysctlbyname("kern.hv_vmm_present", &present, &size, nil, 0) == 0 && present != 0
+    }
+}
+
+extension Trait where Self == ConditionTrait {
+    /// 断られていた絵を書く検査を、既定の符号化器が専用回路である機械でだけ走らせる。
+    /// **これを付ける条件は 1 つにしてある** — 付け忘れた検査が、ホストの VM で赤になる。
+    nonisolated static var onAHardwareProResMachine: Self {
+        .enabled(
+            if: DefaultProResEncoder.isHardware,
+            """
+            既定の ProRes 4444 の符号化器が専用回路ではない (仮想化された機械を含む)。\
+            GitHub のホストの VM では、指定の有無によらず色の細かい絵が -17913 で落ちる (#1919 の実測)
+            """)
     }
 }
 
