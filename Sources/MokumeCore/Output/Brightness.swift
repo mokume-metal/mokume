@@ -98,9 +98,48 @@ struct Brightness: Equatable, Sendable {
     }
 
     /// 範囲へ寄せた明るさ。`knee` までは動かさず、そこから 1 へ漸近させる。
+    ///
+    /// **GPU の断片 (`Present.metal` の `mokumeRolled`) と 1 演算ずつ同じ手順を踏む** ([#1762])。
+    /// 積に和が続く所は融合した積和 (`fma`) を明示する — 書かずにおくと、GPU の組み立て器が
+    /// 融合するかどうかで最下位の桁が揺れる。
+    ///
+    /// [#1762]: https://github.com/mokume-metal/mokume/issues/1762
     static func rolled(_ peak: Float) -> Float {
         let over = (peak - knee) / (1 - knee)
-        return knee + (1 - knee) * (1 - exp(-over))
+        return knee.addingProduct(1 - knee, 1 - decay(over))
+    }
+
+    /// `exp(-over)` (over > 0)。
+    ///
+    /// **`exp` を呼ばないのは、CPU の数学ライブラリと GPU の `exp` が最下位の桁で食い違う
+    /// からである** ([#1762])。roll の出口どうしが 1 段ずれる最後の原因がそれだった。ここは
+    /// 正しく丸められる演算 (四則と `fma`) だけで組み、GPU も同じ式を踏む。`expf` との差は
+    /// 1 ulp 以内 (`OutputStageTests`)。
+    ///
+    /// 手順は、2 の冪を括り出して `over = n ln2 + r` (|r| ≤ ln2 / 2) とし、`exp(-r)` を 8 次の
+    /// Taylor 級数で求めてから 2⁻ⁿ を掛ける。ln2 は上位と下位に分けて引く (上位は 16 bit
+    /// しか無いので `n` との積が丸まらない)。係数は 16 進で書き、断片と同じビット列にする。
+    ///
+    /// `over` が 20 以上なら 0 を返す。`exp(-17.4)` より小さい値は `1 - e` を 1 に丸めるので、
+    /// 呼ぶ側の結果は変わらない。
+    ///
+    /// [#1762]: https://github.com/mokume-metal/mokume/issues/1762
+    static func decay(_ over: Float) -> Float {
+        guard over < 20 else { return 0 }
+        let n = (over * 0x1.715476p+0).rounded()
+        let r = over.addingProduct(-n, 0x1.62e4p-1).addingProduct(-n, 0x1.7f7d1cp-20)
+        let t = -r
+        var p: Float = 0x1.a01a02p-16
+        p = Float(0x1.a01a02p-13).addingProduct(p, t)
+        p = Float(0x1.6c16c2p-10).addingProduct(p, t)
+        p = Float(0x1.111112p-7).addingProduct(p, t)
+        p = Float(0x1.555556p-5).addingProduct(p, t)
+        p = Float(0x1.555556p-3).addingProduct(p, t)
+        p = Float(0x1p-1).addingProduct(p, t)
+        p = Float(1).addingProduct(p, t)
+        p = Float(1).addingProduct(p, t)
+        // 2⁻ⁿ は指数の欄を直に組む (n は 0…29 なので正規数に収まり、掛けても丸まらない)
+        return p * Float(bitPattern: UInt32(127 - Int(n)) << 23)
     }
 }
 

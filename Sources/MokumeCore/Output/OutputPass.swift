@@ -19,8 +19,11 @@ import Metal
     /// 出力段を通した絵の画素の形式。
     ///
     /// **伝達関数は断片が掛けるので、`_srgb` の付かない形式を使う。** 付けると
-    /// 土台がもう一度掛けて二重になる。量子化 ([ADR-0011] 決定 6) だけを
-    /// 書き込みの丸めに任せる。
+    /// 土台がもう一度掛けて二重になる。量子化 ([ADR-0011] 決定 6) の段も断片が
+    /// しきい値の表で決め、書き込みには段そのもの (k / 255) を渡す — 書き込みの丸めに
+    /// 段を決めさせると、CPU の出力段と境目で 1 段ずれる ([#1762])。
+    ///
+    /// [#1762]: https://github.com/mokume-metal/mokume/issues/1762
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     static let pixelFormat: MTLPixelFormat = .rgba8Unorm
@@ -32,15 +35,20 @@ import Metal
     static let sourceTextureIndex = 0
     /// 明るさを写す段の設定を渡す口の番号 (シェーダ側の `buffer(0)`)。
     static let brightnessBufferIndex = 0
+    /// 量子化のしきい値の表を渡す口の番号 (シェーダ側の `buffer(1)`)。
+    static let thresholdsBufferIndex = 1
     /// 引数のテーブルに束ねられる置き場・面の数。上の口の番号はすべてこれより小さい
     /// (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
-    static let bufferBindCount = 1
+    static let bufferBindCount = 2
     static let textureBindCount = 1
 
     let state: any MTLRenderPipelineState
     let argumentTable: any MTL4ArgumentTable
     /// 明るさを写す段の設定を置く領域。取り出すたびに書き換える。
     private let brightnessBuffer: any MTLBuffer
+    /// 量子化のしきい値の表 (``OutputStage/quantizeThresholds``)。作るときに 1 度だけ書き、
+    /// 以後は GPU が読むだけである。
+    private let thresholdsBuffer: any MTLBuffer
     /// 死ぬときに置き場を退かせる先。
     private let gpu: RenderDevice
 
@@ -70,6 +78,15 @@ import Metal
         }
 
         brightnessBuffer = try gpu.makeReadableBuffer(byteCount: Brightness.byteCount)
+        let thresholds = OutputStage.quantizeThresholds
+        let thresholdsBuffer = try gpu.makeReadableBuffer(
+            byteCount: thresholds.count * MemoryLayout<Float>.stride)
+        // **まだどの投入にも載っていない置き場なので、待たずに書いてよい**
+        thresholds.withUnsafeBytes { bytes in
+            thresholdsBuffer.contents().copyMemory(
+                from: bytes.baseAddress!, byteCount: bytes.count)
+        }
+        self.thresholdsBuffer = thresholdsBuffer
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.output.arguments"
@@ -80,12 +97,16 @@ import Metal
         } catch {
             throw .argumentTableUnavailable(reason: error.localizedDescription)
         }
+        argumentTable.setAddress(thresholdsBuffer.gpuAddress, index: Self.thresholdsBufferIndex)
     }
 
     /// **明るさの置き場を常駐から退かせる** ([#795])。
     ///
     /// [#795]: https://github.com/mokume-metal/mokume/issues/795
-    isolated deinit { gpu.retire(brightnessBuffer) }
+    isolated deinit {
+        gpu.retire(brightnessBuffer)
+        gpu.retire(thresholdsBuffer)
+    }
 
     /// 読む元のテクスチャを差し替える。
     func setSource(_ texture: any MTLTexture) {

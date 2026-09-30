@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Testing
 
 @testable import MokumeCore
@@ -106,6 +107,82 @@ struct OutputStageTests {
         // 比較がすべて false になるので、範囲へ収める処理が素通ししやすい
         #expect(OutputStage.clampToStandardRange(.nan) == 0)
         #expect(OutputStage.quantize(.nan) == 0)
+    }
+
+    // MARK: - しきい値の表と減衰 (#1762)
+
+    /// 表の段 (値以上のしきい値の数) と、正本の式 (`quantize(encodeForDisplay(x))`) の段を比べる。
+    /// GPU は表との比較だけで段を決めるので、ここが一致すれば出口どうしも一致する。
+    private func stepsAgree(_ linear: Float) -> Bool {
+        OutputStage.quantizeThresholds.count(where: { linear >= $0 })
+            == Int(OutputStage.quantize(OutputStage.encodeForDisplay(linear)))
+    }
+
+    @Test("しきい値の表は、どの境目の前後でも正本の式と同じ段を出す")
+    func thresholdsMatchTheFormulaAroundEveryStep() {
+        let thresholds = OutputStage.quantizeThresholds
+        #expect(thresholds.count == 255)
+        var disagreeing: [Float] = []
+        for threshold in thresholds {
+            // 境目の前後 64 ulp。**境目のほぼ真上が 1 段ずれていた所**である
+            for offset in -64...64 {
+                let bits = Int64(threshold.bitPattern) + Int64(offset)
+                guard bits >= 0 else { continue }
+                let linear = Float(bitPattern: UInt32(bits))
+                if !stepsAgree(linear) { disagreeing.append(linear) }
+            }
+        }
+        // 範囲の外と値でないもの。どちらも端の段へ落ちる
+        let specials: [Float] = [
+            0, -0.0, .leastNonzeroMagnitude, -.leastNonzeroMagnitude, -1, 1, 1.5, 1e30,
+            .infinity, -.infinity, .nan,
+        ]
+        for linear in specials where !stepsAgree(linear) { disagreeing.append(linear) }
+        #expect(disagreeing.isEmpty, "表と式の段が違う値: \(disagreeing.prefix(8))")
+    }
+
+    @Test("しきい値の表は、0…1 のどこを取っても正本の式と同じ段を出す")
+    func thresholdsMatchTheFormulaAcrossTheRange() {
+        // ビット列で一様に取る (値で一様に取ると、暗い側の細かい刻みを踏まない)
+        var state: UInt64 = 1762
+        var disagreeing: [Float] = []
+        for _ in 0..<200_000 {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            let linear = Float(bitPattern: UInt32(state >> 33) % (Float(1).bitPattern + 1))
+            if !stepsAgree(linear) { disagreeing.append(linear) }
+        }
+        #expect(disagreeing.isEmpty, "表と式の段が違う値: \(disagreeing.prefix(8))")
+    }
+
+    @Test("減衰は、どの寄せ幅でも expf と 1 ulp 以内で一致する")
+    func decayStaysWithinAnUlpOfExp() {
+        var worst: Float = 0
+        var worstAt: Float = 0
+        // 寄せ幅は「knee を超えた分 / (1 - knee)」で、0 より大きい有限の値
+        var over: Float = 0x1p-24
+        while over < 20 {
+            let expected = Foundation.exp(-over)
+            let error = abs(Brightness.decay(over) - expected) / expected.ulp
+            if error > worst { (worst, worstAt) = (error, over) }
+            over = over < 1 ? over * 1.001 : over + 0x1p-12
+        }
+        #expect(worst <= 1, "expf との差が \(worst) ulp (寄せ幅 \(worstAt))")
+        // 20 以上は 0。これまでの式でも `1 - e` は 1 に丸まっていた
+        #expect(Brightness.decay(20) == 0)
+        #expect(Float(1) - Foundation.exp(-Float(17.5)) == 1)
+    }
+
+    @Test("寄せた明るさは、これまでの式と 1 ulp 以内でしか動かない")
+    func rolledMovesAtMostAnUlp() {
+        let knee = Brightness.knee
+        var worst: Float = 0
+        var peak = knee.nextUp
+        while peak < 64 {
+            let old = knee + (1 - knee) * (1 - Foundation.exp(-((peak - knee) / (1 - knee))))
+            worst = max(worst, abs(Brightness.rolled(peak) - old) / old.ulp)
+            peak = peak < 2 ? Float(bitPattern: peak.bitPattern + 17) : peak + 0x1p-10
+        }
+        #expect(worst <= 1, "これまでの式との差が \(worst) ulp")
     }
 
     // MARK: - 表示できる形になった絵を読む (GPU を要さない・#1590)

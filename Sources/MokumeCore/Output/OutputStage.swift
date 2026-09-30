@@ -164,4 +164,43 @@ public enum OutputStage {
     static func quantize(_ encoded: Float) -> UInt8 {
         UInt8((clampToStandardRange(encoded) * 255).rounded())
     }
+
+    // MARK: - GPU へ渡すしきい値
+
+    /// 線形の値がどの段に落ちるかを決めるしきい値。`k - 1` 番目は、
+    /// `quantize(encodeForDisplay(x)) >= k` となる最小の `x` である (k = 1…255)。
+    ///
+    /// **GPU の取り出す断片が、CPU と同じ段を出すための表である** ([#1762])。伝達関数の
+    /// `pow` と書き込みの丸めは CPU と GPU でビット単位には揃わず、量子化の境目のほぼ真上に
+    /// 落ちる値だけが出口によって 1 段ずれていた。しきい値との比較には丸めが入らないので、
+    /// GPU はこの表で段を決める (``OutputPass`` が置き場で渡す)。
+    ///
+    /// **表は写さずに CPU の関数から求める。** 正本は ``encodeForDisplay(_:)`` と
+    /// ``quantize(_:)`` のままで、表はその答えを先に引いておいたものにすぎない。0 以上の
+    /// 浮動小数はビット列の順と値の順が一致するので、ビット列を二分探索すれば境目の値が
+    /// 1 ulp の狂いもなく求まる。
+    ///
+    /// **CPU は表を引かず、式のまま計算する。** 式の段は値について単調で、0…1 の全 float
+    /// (10 億 6,535 万個) で表の段と一致することを release で確かめてある ([#1762] の PR)。
+    /// 範囲の外と値でないものは、どちらも端の段へ落ちる。表を引く形は二分探索の分岐で
+    /// 式より遅かった (4K で 174 → 268 ms)。
+    ///
+    /// [#1762]: https://github.com/mokume-metal/mokume/issues/1762
+    static let quantizeThresholds: [Float] = (1...255).map { threshold(for: UInt8($0)) }
+
+    /// `quantize(encodeForDisplay(x)) >= level` となる最小の `x` (0 < x ≤ 1)。
+    static func threshold(for level: UInt8) -> Float {
+        // 0 は段 0、1 は段 255 に落ちる。その間を、段に届かない側と届く側で挟んで縮める
+        var below = Float(0).bitPattern
+        var reaching = Float(1).bitPattern
+        while below + 1 < reaching {
+            let middle = below + (reaching - below) / 2
+            if quantize(encodeForDisplay(Float(bitPattern: middle))) >= level {
+                reaching = middle
+            } else {
+                below = middle
+            }
+        }
+        return Float(bitPattern: reaching)
+    }
 }

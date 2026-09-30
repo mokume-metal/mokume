@@ -193,6 +193,8 @@ struct ShaderInterfaceTests {
                         .texture("source", OutputPass.sourceTextureIndex),
                         .buffer(
                             "brightness", OutputPass.brightnessBufferIndex, .layout(brightness)),
+                        .buffer(
+                            "thresholds", OutputPass.thresholdsBufferIndex, .scalar(Float.self)),
                     ])
             ],
             covering: ["presentEncodeFragmentMain"],
