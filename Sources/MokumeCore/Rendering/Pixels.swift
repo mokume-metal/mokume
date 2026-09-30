@@ -81,9 +81,7 @@ public struct Pixels {
         }
         nonmutating set {
             guard admitsWrite?() ?? true, contains(x, y) else { return }
-            address(x, y).pointee = SIMD4<Float16>(
-                Float16(newValue.red), Float16(newValue.green),
-                Float16(newValue.blue), Float16(newValue.alpha))
+            address(x, y).pointee = HalfSurface.texel(newValue)
             mirror?.hasPendingWrites = true
         }
     }
@@ -91,8 +89,7 @@ public struct Pixels {
     /// 全体を 1 色で埋める。
     public func fill(_ color: LinearRGBA) {
         guard admitsWrite?() ?? true else { return }
-        let texel = SIMD4<Float16>(
-            Float16(color.red), Float16(color.green), Float16(color.blue), Float16(color.alpha))
+        let texel = HalfSurface.texel(color)
         for y in 0..<height {
             let row = base.advanced(by: y * bytesPerRow)
                 .assumingMemoryBound(to: SIMD4<Float16>.self)

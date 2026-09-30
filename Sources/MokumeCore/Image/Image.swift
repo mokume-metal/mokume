@@ -117,9 +117,7 @@ import simd
     public func set(_ x: Int, _ y: Int, _ color: LinearRGBA) {
         guard x >= 0, y >= 0, x < width, y < height else { return }
         let index = y * width + x
-        let texel = SIMD4<Float16>(
-            Float16(color.red), Float16(color.green), Float16(color.blue),
-            Float16(color.alpha))
+        let texel = HalfSurface.texel(color)
         if displayInput != nil,
             inputPatches[index] != nil || inputPatches.count < Self.inputPatchLimit
         {
@@ -189,9 +187,7 @@ import simd
 
     /// 全体を 1 色で埋める。
     public func fill(_ color: LinearRGBA) {
-        let texel = SIMD4<Float16>(
-            Float16(color.red), Float16(color.green), Float16(color.blue),
-            Float16(color.alpha))
+        let texel = HalfSurface.texel(color)
         if displayInput != nil {
             // 捨てる入力は復号しない。
             cpuPixels = Array(repeating: texel, count: width * height)
