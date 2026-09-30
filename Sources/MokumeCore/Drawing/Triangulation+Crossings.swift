@@ -37,6 +37,14 @@ nonisolated extension Triangulation {
     nonisolated struct Split {
         var crossings: [Crossing]
         var regions: [Region]
+        /// 分けた周を三角形へ分けるときに、耳を塞ぐ点を数える許容 (距離)。
+        /// ``triangulate(_:comparisons:slack:)`` へ渡す。
+        ///
+        /// 組み直した周は、元の 1 本の辺の上に交点を幾つも並べる。数の上では一直線でも、
+        /// 浮動小数では厳密には並ばない。その辺の上に載る凹んだ角が丸めで辺のわずかに外へ
+        /// 出ると、耳切りはその辺を 1 辺に持つ三角形を耳と取り違え、形の外まで塗る。点を
+        /// 束ねた許容と同じ幅で、辺のすぐ外の角も耳を塞ぐと数える。
+        var slack: Float = 0
     }
 
     /// 周の組 (外周と穴) が「外周の中に、互いに離れた、外周と逆に回る穴を開けた形」で
@@ -53,10 +61,13 @@ nonisolated extension Triangulation {
     ///
     /// - **周が真に交わる。** 2 辺のどちらから見ても、もう一方の両端が逆の側にある組が
     ///   ある
-    /// - **周が頂点を通って向こう側へ抜ける。** 辺の途中に別の頂点が載る所と、別々に通る
-    ///   2 つの頂点が同じ位置にある所で、通り道どうしが角度の順で交互に並ぶ。向きが重なって
-    ///   どちらとも決められない所も、組み直す側へ送る。触れて戻るだけの所 (字形の輪郭が普通に
-    ///   持つ形・[#1148]・[#1211]) は数えない — そこは耳切りが既に正しく扱う
+    /// - **周が頂点を通って向こう側へ抜ける。** 辺の途中に別の頂点が載る所で、通り道
+    ///   どうしが角度の順で交互に並ぶ。向きが重なってどちらとも決められない所も、組み直す
+    ///   側へ送る。辺の途中に頂点が載って触れて戻るだけの所 (T の字・[#1148]) は数えない —
+    ///   そこは耳切りが既に正しく扱う
+    /// - **周が同じ点を 2 度通る** (別々に通る 2 つの頂点が同じ位置にある。別の周の頂点との
+    ///   重なりも含む)。交わらずに触れて戻るだけでも組み直す。耳切りは触れ合う 2 つの葉が
+    ///   同じ向きに回ると形の外まで塗る ([#1211] の形は通っていたが、#1886 の形は通らない)
     /// - **穴が外周と同じ向きに回る**
     /// - **穴が外周の中にない** (外周の外に置いた周・外周を包む周)
     /// - **穴が別の穴の中にある** (穴の中に置いた周)
@@ -77,36 +88,57 @@ nonisolated extension Triangulation {
     /// 2. 交点と、許容の中で辺の途中に載る点 (頂点・交点) で辺を分ける。端が相手の辺の
     ///    許容の中にある組は交点を作らず、載る点として扱う (同じ交わりを 2 度作らない)
     /// 3. 分けた辺を両端の番号の組で束ね、束ごとに両側の回り数を数える。**片側だけが 0 の
-    ///    束**が塗る所の境で、塗る側が左になる向きで残す。回り数は、次数 2 の点で繋がる束の
-    ///    鎖ごとに 1 度だけ数える (鎖の上では両側の面が変わらない)
+    ///    束**が塗る所の境で、塗る側が左になる向きで残す。回り数は、束が囲む面をたどって
+    ///    隣の面から決める (`windingsBySide`)。
     /// 4. 残した辺を周へ繋ぐ。1 つの点から辺が 2 本以上出るときは、来た辺から時計回りに
     ///    見て最初の辺を選ぶ。塗る所の角ごとに周が閉じるので、砂時計は 1 点で触れ合う
     ///    2 つの三角形になる
-    /// 5. 正の面積の周を外周、負の面積の周を穴とし、穴はそれを含むいちばん小さい外周へ付ける
+    /// 5. 正の面積の周を外周、負の面積の周を穴とし、穴はそれを含むいちばん小さい外周へ付ける。
+    ///    穴が同じ点を 2 度通るなら、その点で別々の穴に分ける (`separated`)
+    ///
+    /// 分けた周は、点を束ねた許容 (`Split.slack`) を付けて `mergeHoles` と耳切りへ渡す。
     ///
     /// **組み直せなかったときも `nil` を返す** (残した辺の出入りが点ごとに釣り合わない・
     /// 周が閉じない・塗る周が 1 つも残らない)。許容でも束ねきれない崩れた形で、形を丸ごと
     /// 捨てずに、いまの手順 (耳切り) へ戻すためである。
     ///
-    /// 組み直す手間は辺の数の二乗になる (回り数を鎖ごとに全部の束から数える)。組み直す
-    /// 形でしか払わない。
+    /// 組み直す手間は、面をたどる所で束の数に比例し、面の回り数を決める半直線が繋がった
+    /// 束の組ごとに全部の束と比べる。組み直す形でしか払わない。
     ///
     /// - Parameters:
     ///   - rings: 周をなす点の番号。最初が外周、残りが穴。3 点に満たない周は、
     ///     `mergeHoles` と同じく無視する。
     ///   - points: 番号で引ける点の平らな座標。
+    ///   - comparisons: 点を舐めた延べ回数を積む先 (``Canvas`` の `pointScansInLastFrame`)。
+    ///     星形か見る・交わりを探す辺・穴の置き場所を見る・組み直すときの半直線で束と比べる、
+    ///     のそれぞれを数える。**組み直す手間は辺の数に比例しない**ので、ここに積まないと
+    ///     二乗が戻っても数が動かない。
     ///
     /// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
     /// [#1211]: https://github.com/mokume-metal/mokume/issues/1211
     /// [#1538]: https://github.com/mokume-metal/mokume/issues/1538
-    static func splitForNonzero(rings: [[Int]], points: [SIMD2<Float>]) -> Split? {
-        if rings.count == 1, isStarShaped(rings[0], points: points) { return nil }
+    static func splitForNonzero(
+        rings: [[Int]], points: [SIMD2<Float>], comparisons: inout Int
+    ) -> Split? {
+        if rings.count == 1 {
+            comparisons += rings[0].count
+            if isStarShaped(rings[0], points: points) { return nil }
+        }
         let edges = RingEdges(rings: rings, points: points)
         let survey = edges.survey()
-        guard survey.isTangled || holesAreOutOfPlace(rings: rings, points: points) else {
+        comparisons += survey.pairs
+        guard survey.isTangled
+            || holesAreOutOfPlace(rings: rings, points: points, comparisons: &comparisons)
+        else {
             return nil
         }
-        return edges.nonzeroSplit(crossings: survey.crossings)
+        return edges.nonzeroSplit(crossings: survey.crossings, comparisons: &comparisons)
+    }
+
+    /// ``splitForNonzero(rings:points:comparisons:)`` の、回数を数えない形。
+    static func splitForNonzero(rings: [[Int]], points: [SIMD2<Float>]) -> Split? {
+        var comparisons = 0
+        return splitForNonzero(rings: rings, points: points, comparisons: &comparisons)
     }
 
     /// 周が、点の重心から見て 1 周だけ回る星形か。**そうなら周は自分と交わらない。**
@@ -148,10 +180,15 @@ nonisolated extension Triangulation {
     /// 置き場所は、比べる周の辺に載らない穴の点 1 つで見る (``placement(of:around:points:)``)。
     /// 辺の上の点は、半開きの数え方では辺の向きしだいで内にも外にもなり、外周の辺に触れる
     /// だけの穴を「外周の外」と取り違える。
-    private static func holesAreOutOfPlace(rings: [[Int]], points: [SIMD2<Float>]) -> Bool {
+    private static func holesAreOutOfPlace(
+        rings: [[Int]], points: [SIMD2<Float>], comparisons: inout Int
+    ) -> Bool {
         guard let outer = rings.first, outer.count >= 3 else { return false }
         let holes = rings.dropFirst().filter { $0.count >= 3 }
         guard !holes.isEmpty else { return false }
+        // 外周と穴の点を 1 度ずつ舐め、穴ごとに外周の点を 1 度舐める (外の穴の囲みに掛かる
+        // 穴は、その穴の点も舐める。ここでは数えない)
+        comparisons += outer.count * (1 + holes.count) + holes.reduce(0) { $0 + $1.count }
         let outerArea = signedArea(of: outer, points: points)
         var boxes: [SIMD4<Float>] = []
         boxes.reserveCapacity(holes.count)
@@ -278,6 +315,8 @@ nonisolated extension Triangulation {
 
         /// 周が交わるかを調べた結果。
         struct Survey {
+            /// 後ろの辺と比べた辺の数。
+            var pairs = 0
             /// 真の交わり。
             var crossings: [Found]
             /// 真の交わりか、頂点を通って向こう側へ抜ける所があるか。
@@ -304,10 +343,14 @@ nonisolated extension Triangulation {
             // 触れる所は稀なので、並びに積んでから位置ごとにまとめる
             var touches: [(SIMD2<Float>, Visit)] = []
             var pending: [(level: Int, box: Int)] = []
+            var pairs = 0
             for first in from.indices where tree.isPlaced(first) {
                 let a = points[from[first]]
                 let b = points[to[first]]
                 let reach = tree.box(of: first)
+                // 数えるのは比べた辺の数で、組の数ではない。組や末端の箱ごとに数えると、
+                // C の字の 4096 点で探す手間が 1 割増えた
+                pairs += 1
                 // 後ろの辺とだけ比べる (組を 1 度ずつ見る)。周の順に並んだ辺は位置も近いので、
                 // 周の順に束ねた箱の木で、囲みの重なる辺だけを引ける
                 pending.removeAll(keepingCapacity: true)
@@ -369,15 +412,33 @@ nonisolated extension Triangulation {
                     }
                 }
             }
-            if !found.isEmpty { return Survey(crossings: found, isTangled: true) }
+            if !found.isEmpty { return Survey(pairs: pairs, crossings: found, isTangled: true) }
             var contacts: [SIMD2<Float>: [Visit]] = [:]
             for (point, visit) in touches where contacts[point]?.contains(visit) != true {
                 contacts[point, default: []].append(visit)
             }
             for (point, visits) in contacts where visits.count >= 2 {
-                if passesThrough(point, visits) { return Survey(crossings: [], isTangled: true) }
+                if revisits(visits) || passesThrough(point, visits) {
+                    return Survey(pairs: pairs, crossings: [], isTangled: true)
+                }
             }
-            return Survey(crossings: [], isTangled: false)
+            return Survey(pairs: pairs, crossings: [], isTangled: false)
+        }
+
+        /// 1 つの位置を、周が頂点として 2 度以上通るか (別の周の頂点と重なる場合も含む)。
+        ///
+        /// 交わらず触れて戻るだけでも、耳切りは触れ合う 2 つの葉が同じ向きに回ると形の外まで
+        /// 塗り、`mergeHoles` は触れた点へ架けた橋で穴の中を通る (#1886)。組み直すと、
+        /// 繋ぎ方の規則が触れ合う点で周を葉ごとに分ける。
+        ///
+        /// 辺の途中に頂点が載るだけ (T の字の横棒に縦棒の角が載る・#1148) は数えない。
+        /// 耳切りと、角の向きを見る `mergeHoles` の橋が正しく扱う。
+        private func revisits(_ visits: [Visit]) -> Bool {
+            var corners = 0
+            for visit in visits {
+                if case .corner = visit { corners += 1 }
+            }
+            return corners >= 2
         }
 
         /// 一直線に並ぶ 3 点で、`point` が `a` と `b` の間 (両端を除く) にあるか。
@@ -463,7 +524,12 @@ nonisolated extension Triangulation {
         }
 
         /// 交わった周から、回り数が 0 でない所を囲む周を組む。組めなければ `nil`。
-        func nonzeroSplit(crossings found: [Found]) -> Split? {
+        func nonzeroSplit(crossings found: [Found], comparisons: inout Int) -> Split? {
+            // 並びを手元に写す (``survey()`` と同じ理由)
+            let tree = tree
+            let points = points
+            let from = from
+            let to = to
             let base = points.count
 
             // 許容。形の大きさと、座標の大きさ (その位置での浮動小数の刻み) の大きいほうに
@@ -523,27 +589,37 @@ nonisolated extension Triangulation {
                 seen[node] = true
                 distinct.append(node)
             }
-            var cells: [SIMD2<Int32>: [Int]] = [:]
+            // 許容の幅の升目に入れ、隣り合う升目の点どうしだけを比べる。升目ごとの点は
+            // 連結リストで持つ (`first` が升目の先頭、`after` が次の点)
+            var first: [Int: Int] = [:]
+            first.reserveCapacity(distinct.count)
+            var after = [Int](repeating: -1, count: nodes.count)
             for node in distinct {
                 let point = nodes[node]
-                let cell = SIMD2<Int32>(
-                    Int32(clamping: Int((point.x / tolerance).rounded(.down))),
-                    Int32(clamping: Int((point.y / tolerance).rounded(.down))))
-                for dx in Int32(-1)...1 {
-                    for dy in Int32(-1)...1 {
-                        for other in cells[cell &+ SIMD2(dx, dy)] ?? []
-                        where simd_distance(nodes[other], point) <= tolerance {
-                            let (x, y) = (root(node), root(other))
-                            if x != y { parent[max(x, y)] = min(x, y) }
+                let column = Int((point.x / tolerance).rounded(.down))
+                let row = Int((point.y / tolerance).rounded(.down))
+                for dx in -1...1 {
+                    for dy in -1...1 {
+                        var other = first[Self.cell(column + dx, row + dy)] ?? -1
+                        while other >= 0 {
+                            if simd_distance(nodes[other], point) <= tolerance {
+                                let (x, y) = (root(node), root(other))
+                                if x != y { parent[max(x, y)] = min(x, y) }
+                            }
+                            other = after[other]
                         }
                     }
                 }
-                cells[cell, default: []].append(node)
+                let key = Self.cell(column, row)
+                after[node] = first[key] ?? -1
+                first[key] = node
             }
             let representatives = distinct.filter { root($0) == $0 }
 
             // 2. 辺を切る点を集める。交点と、許容の中で辺の途中に載る点
             var cuts = Array(repeating: [Int](), count: from.count)
+            var near: [Int] = []
+            var queue: [(level: Int, box: Int)] = []
             for (index, item) in made.enumerated() {
                 let node = root(base + index)
                 cuts[item.firstEdge].append(node)
@@ -553,7 +629,9 @@ nonisolated extension Triangulation {
                 let point = nodes[node]
                 let reach = SIMD4(
                     point.x - tolerance, point.y - tolerance, point.x + tolerance, point.y + tolerance)
-                for edge in tree.edges(overlapping: reach) {
+                tree.edges(overlapping: reach, into: &near, pending: &queue)
+                comparisons += near.count
+                for edge in near {
                     let start = root(from[edge])
                     let end = root(to[edge])
                     guard start != end, node != start, node != end else { continue }
@@ -570,65 +648,57 @@ nonisolated extension Triangulation {
 
             // 3. 切れ端を両端の番号の組で束ねる
             var bundles: [Bundle] = []
-            var slot: [SIMD2<Int>: Int] = [:]
+            var slot: [Int: Int] = [:]
+            slot.reserveCapacity(from.count)
+            var stops: [(at: Float, node: Int)] = []
+            func add(_ start: Int, _ end: Int) {
+                let forward = start < end
+                let (low, high) = forward ? (start, end) : (end, start)
+                let key = low &* nodes.count &+ high
+                if let index = slot[key] {
+                    bundles[index].net += forward ? 1 : -1
+                } else {
+                    slot[key] = bundles.count
+                    bundles.append(Bundle(low: low, high: high, net: forward ? 1 : -1))
+                }
+            }
             for edge in from.indices where tree.isPlaced(edge) {
                 let start = root(from[edge])
                 let end = root(to[edge])
                 guard start != end else { continue }
+                guard !cuts[edge].isEmpty else {
+                    add(start, end)
+                    continue
+                }
                 let a = nodes[start]
                 let span = nodes[end] - a
                 let length = dot(span, span)
-                var stops: [(at: Float, node: Int)] = []
+                stops.removeAll(keepingCapacity: true)
                 for node in cuts[edge] where node != start && node != end {
                     stops.append((dot(nodes[node] - a, span) / length, node))
                 }
                 stops.sort { $0.at < $1.at }
                 var previous = start
-                for stop in stops.map(\.node) + [end] where stop != previous {
-                    let forward = previous < stop
-                    let key = forward ? SIMD2(previous, stop) : SIMD2(stop, previous)
-                    if let index = slot[key] {
-                        bundles[index].net += forward ? 1 : -1
-                    } else {
-                        slot[key] = bundles.count
-                        bundles.append(Bundle(low: key.x, high: key.y, net: forward ? 1 : -1))
-                    }
-                    previous = stop
+                for stop in stops where stop.node != previous {
+                    add(previous, stop.node)
+                    previous = stop.node
                 }
+                if end != previous { add(previous, end) }
             }
             bundles.removeAll { $0.net == 0 }
             guard !bundles.isEmpty else { return Split(crossings: [], regions: []) }
 
-            //    両側の回り数を、次数 2 の点で繋がる鎖ごとに 1 度だけ数える
-            var touching: [Int: [Int]] = [:]
-            for (index, bundle) in bundles.enumerated() {
-                touching[bundle.low, default: []].append(index)
-                touching[bundle.high, default: []].append(index)
-            }
-            var right = [Int?](repeating: nil, count: bundles.count)
-            for start in bundles.indices where right[start] == nil {
-                right[start] = windingRight(of: start, in: bundles, nodes: nodes)
-                for head in [bundles[start].high, bundles[start].low] {
-                    var current = start
-                    var node = head
-                    while let around = touching[node], around.count == 2 {
-                        let next = around[0] == current ? around[1] : around[0]
-                        guard right[next] == nil, let known = right[current] else { break }
-                        // 鎖をたどる向きの右の回り数は、鎖の上で変わらない
-                        let rightOfWalk = node == bundles[current].high ? known : known + bundles[current].net
-                        let leaving = bundles[next].low == node
-                        right[next] = leaving ? rightOfWalk : rightOfWalk - bundles[next].net
-                        current = next
-                        node = leaving ? bundles[next].high : bundles[next].low
-                    }
-                }
-            }
+            //    両側の回り数を、面ごとに数える。束を両向きの半辺にし、点ごとに向きの順に並べて
+            //    面をたどる。隣り合う面の回り数は束の `net` だけ違うので、繋がった束の組ごとに
+            //    半直線を 1 本だけ引けば、残りの面は隣から決まる
+            guard let right = windingsBySide(of: bundles, nodes: nodes, comparisons: &comparisons)
+            else { return nil }
 
             //    片側だけが 0 の束を、塗る側が左になる向きで残す
             var kept: [(from: Int, to: Int)] = []
             var balance: [Int: Int] = [:]
             for (index, bundle) in bundles.enumerated() {
-                guard let rightTurns = right[index] else { return nil }
+                let rightTurns = right[index]
                 let leftTurns = rightTurns + bundle.net
                 var edge: (from: Int, to: Int)?
                 if leftTurns != 0, rightTurns == 0 { edge = (bundle.low, bundle.high) }
@@ -657,7 +727,7 @@ nonisolated extension Triangulation {
                     regions.append(Region(outer: loop, holes: []))
                     areas.append(area)
                 } else if area < 0 {
-                    holes.append(loop)
+                    holes.append(contentsOf: Self.separated(loop))
                 }
             }
             guard !regions.isEmpty else { return nil }
@@ -688,7 +758,12 @@ nonisolated extension Triangulation {
                 regions[index].outer = regions[index].outer.map(output)
                 regions[index].holes = regions[index].holes.map { $0.map(output) }
             }
-            return Split(crossings: crossings, regions: regions)
+            return Split(crossings: crossings, regions: regions, slack: tolerance)
+        }
+
+        /// 升目の番号。
+        private static func cell(_ column: Int, _ row: Int) -> Int {
+            column &* 0x1_0000_0001 &+ row
         }
 
         /// 点から線分までの距離。
@@ -710,6 +785,94 @@ nonisolated extension Triangulation {
             /// `low` から `high` へ向かう辺の数から、逆向きの辺の数を引いたもの。束の
             /// 左の回り数は、右より `net` だけ大きい。
             var net: Int
+        }
+
+        /// 束ごとの、右 (`low` から `high` へ進んで右) の回り数。数え違えていれば `nil`。
+        ///
+        /// 束を両向きの半辺 (`2 * 束` が `low` から `high`、`2 * 束 + 1` がその逆) にし、点から
+        /// 出る半辺を向きの順に並べる。半辺の次は、行き着いた点で逆向きの半辺のすぐ時計回りに
+        /// ある半辺で、たどると半辺の左の面を 1 周する。**隣り合う面の回り数は、境の束の `net`
+        /// だけ違う**ので、面を隣へたどって決める。繋がった束の組 (面が隣でたどれる組) ごとに、
+        /// 最初の面だけを ``windingRight(of:in:nodes:)`` の半直線で決める。
+        ///
+        /// 鎖ごとに半直線を引く形では、周が何度も交わる形 (なぞり書き) で鎖が短くなり、
+        /// 手間が束の数の二乗に戻った。面でたどると、半直線は繋がった組の数だけで済む。
+        ///
+        /// 同じ面に 2 通りの回り数が付いたら、向きの順が丸めで崩れているので `nil` を返す。
+        private func windingsBySide(
+            of bundles: [Bundle], nodes: [SIMD2<Float>], comparisons: inout Int
+        ) -> [Int]? {
+            let halves = bundles.count * 2
+            func origin(_ half: Int) -> Int {
+                half & 1 == 0 ? bundles[half >> 1].low : bundles[half >> 1].high
+            }
+            func direction(_ half: Int) -> SIMD2<Float> { nodes[origin(half ^ 1)] - nodes[origin(half)] }
+
+            // 点ごとに、出る半辺を向きの角の順に並べる
+            var leaving: [Int: [Int]] = [:]
+            for half in 0..<halves { leaving[origin(half), default: []].append(half) }
+            var angle = [Float](repeating: 0, count: halves)
+            for half in 0..<halves {
+                let vector = direction(half)
+                angle[half] = atan2(vector.y, vector.x)
+            }
+            var slot = [Int](repeating: 0, count: halves)
+            for node in leaving.keys {
+                let sorted = leaving[node]!.sorted { angle[$0] < angle[$1] || (angle[$0] == angle[$1] && $0 < $1) }
+                leaving[node] = sorted
+                for (index, half) in sorted.enumerated() { slot[half] = index }
+            }
+            comparisons += halves
+
+            // 半辺の左の面に番号を振る
+            var face = [Int](repeating: -1, count: halves)
+            var faces: [[Int]] = []
+            for start in 0..<halves where face[start] < 0 {
+                var members: [Int] = []
+                var half = start
+                while face[half] < 0 {
+                    face[half] = faces.count
+                    members.append(half)
+                    // 行き着いた点で、逆向きの半辺のすぐ時計回り (角の順で 1 つ前)
+                    let around = leaving[origin(half ^ 1)]!
+                    half = around[(slot[half ^ 1] + around.count - 1) % around.count]
+                }
+                // 1 周せずに別の面へ入ったなら、向きの順が崩れている
+                guard half == start else { return nil }
+                faces.append(members)
+            }
+
+            // 面の回り数を、隣の面から決める
+            var turns = [Int?](repeating: nil, count: faces.count)
+            var pending: [Int] = []
+            for bundle in bundles.indices where turns[face[2 * bundle + 1]] == nil {
+                // 右の面 = 逆向きの半辺の左の面
+                turns[face[2 * bundle + 1]] = windingRight(of: bundle, in: bundles, nodes: nodes)
+                comparisons += bundles.count
+                pending.append(face[2 * bundle + 1])
+                while let current = pending.popLast() {
+                    guard let known = turns[current] else { continue }
+                    for half in faces[current] {
+                        // 半辺の左 (この面) は、右より、その向きの `net` だけ大きい
+                        let net = half & 1 == 0 ? bundles[half >> 1].net : -bundles[half >> 1].net
+                        let neighbor = face[half ^ 1]
+                        let expected = known - net
+                        if let other = turns[neighbor] {
+                            guard other == expected else { return nil }
+                        } else {
+                            turns[neighbor] = expected
+                            pending.append(neighbor)
+                        }
+                    }
+                }
+            }
+            var right: [Int] = []
+            right.reserveCapacity(bundles.count)
+            for bundle in bundles.indices {
+                guard let value = turns[face[2 * bundle + 1]] else { return nil }
+                right.append(value)
+            }
+            return right
         }
 
         /// 束 `index` の中点のすぐ右 (`low` から `high` へ進んで右) の回り数。
@@ -814,11 +977,16 @@ nonisolated extension Triangulation {
                 return first..<min(first + Self.fanOut, levels[level - 1].count)
             }
 
-            /// 囲みが `reach` と重なる辺。
-            func edges(overlapping reach: SIMD4<Float>) -> [Int] {
-                guard !levels[0].isEmpty else { return [] }
-                var result: [Int] = []
-                var pending: [(level: Int, box: Int)] = [(rootLevel, 0)]
+            /// 囲みが `reach` と重なる辺を `result` へ入れ直す。`pending` は作業用の並び
+            /// (呼ぶ側が使い回し、点ごとに並びを確保しない)。
+            func edges(
+                overlapping reach: SIMD4<Float>, into result: inout [Int],
+                pending: inout [(level: Int, box: Int)]
+            ) {
+                result.removeAll(keepingCapacity: true)
+                guard !levels[0].isEmpty else { return }
+                pending.removeAll(keepingCapacity: true)
+                pending.append((rootLevel, 0))
                 while let (level, box) = pending.popLast() {
                     guard Self.overlap(self.box(level: level, index: box), reach) else { continue }
                     if level == 0 {
@@ -827,13 +995,39 @@ nonisolated extension Triangulation {
                     }
                     for child in children(level: level, box: box) { pending.append((level - 1, child)) }
                 }
-                return result
             }
 
             /// 2 つの箱が重なるか。触れるだけでも重なるとする (端が辺に載る組を落とさない)。
             static func overlap(_ a: SIMD4<Float>, _ b: SIMD4<Float>) -> Bool {
                 a.x <= b.z && b.x <= a.z && a.y <= b.w && b.y <= a.w
             }
+        }
+
+        /// 同じ点を 2 度以上通る周を、その点で分けた周の並び。
+        ///
+        /// 繋ぎ方の規則 (来た辺から時計回りに最初の辺) は、塗る所の角ごとに周を閉じるので、
+        /// 外周は触れ合う所で別々の周に分かれる。**穴は逆に、触れ合う所で 1 つの周に繋がる**
+        /// (穴の角は塗る所の外にある)。同じ点を 2 度通る穴を `mergeHoles` → 耳切りへ渡すと、
+        /// 耳切りが形の外まで塗る。触れ合う点で分けると、どれも単純な穴になる。
+        ///
+        /// 分けた周は、始まりの点を 1 度だけ含む。2 点に満たない切れ端 (行って戻るだけ) は捨てる。
+        private static func separated(_ loop: [Int]) -> [[Int]] {
+            var path: [Int] = []
+            var position: [Int: Int] = [:]
+            var pieces: [[Int]] = []
+            for node in loop {
+                guard let start = position[node] else {
+                    position[node] = path.count
+                    path.append(node)
+                    continue
+                }
+                let piece = Array(path[start...])
+                for dropped in path[(start + 1)...] { position[dropped] = nil }
+                path.removeSubrange((start + 1)...)
+                if piece.count >= 3 { pieces.append(piece) }
+            }
+            if path.count >= 3 { pieces.append(path) }
+            return pieces
         }
 
         /// 向きのついた辺を周へ繋ぐ。返すのは、周ごとの辺の始点の番号。周が閉じない・

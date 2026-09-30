@@ -583,7 +583,9 @@ extension Canvas {
             flattened.reserveCapacity(ring.count)
             for index in ring { flattened.append(basis.flatten(points[index].position)) }
             let local = Array(flattened.indices)
-            if let split = Triangulation.splitForNonzero(rings: [local], points: flattened) {
+            if let split = Triangulation.splitForNonzero(
+                rings: [local], points: flattened, comparisons: &pointScansThisFrame)
+            {
                 fillSplit(split, flat: flattened, global: Array(ring), points: &points, into: &triangles)
                 return
             }
@@ -599,7 +601,8 @@ extension Canvas {
         for point in points { all.append(basis.flatten(point.position)) }
         pointScansThisFrame += points.count
         if let split = Triangulation.splitForNonzero(
-            rings: [Array(primitive.ring)] + primitive.holes, points: all)
+            rings: [Array(primitive.ring)] + primitive.holes, points: all,
+            comparisons: &pointScansThisFrame)
         {
             fillSplit(split, flat: all, global: nil, points: &points, into: &triangles)
             return
@@ -634,6 +637,18 @@ extension Canvas {
         }
         var all = flat
         all.reserveCapacity(flat.count + split.crossings.count)
+        // 片方の端だけに読み取り位置が書かれた辺では、書かれていない端を、耳切りの経路と
+        // 同じ倒れ先 (``uvFallback(_:)`` が形の囲みの箱から求める値) で埋めてから補間する。
+        // 倒れ先は交点を足す前の点で求める (交点は辺の上にあるので、囲みの箱は変わらない)
+        var fallback: ((SIMD2<Float>) -> SIMD2<Float>)?
+        for crossing in split.crossings where fallback == nil {
+            for (from, to) in [
+                (crossing.first.from, crossing.first.to), (crossing.second.from, crossing.second.to),
+            ] where (points[toGlobal(from)].uv == nil) != (points[toGlobal(to)].uv == nil) {
+                fallback = uvFallback(Array(points[..<base]))
+                break
+            }
+        }
         for crossing in split.crossings {
             all.append(crossing.point)
             points.append(
@@ -641,18 +656,21 @@ extension Canvas {
                     points[toGlobal(crossing.first.from)], points[toGlobal(crossing.first.to)],
                     at: crossing.first.at,
                     points[toGlobal(crossing.second.from)], points[toGlobal(crossing.second.to)],
-                    at: crossing.second.at))
+                    at: crossing.second.at, fallback: fallback))
         }
         for region in split.regions {
             let merged =
                 region.holes.isEmpty
                 ? region.outer
-                : Triangulation.mergeHoles(outer: region.outer, holes: region.holes, points: all)
+                : Triangulation.mergeHoles(
+                    outer: region.outer, holes: region.holes, points: all, slack: split.slack)
             pointScansThisFrame += merged.count
             var flattened: [SIMD2<Float>] = []
             flattened.reserveCapacity(merged.count)
             for index in merged { flattened.append(all[index]) }
-            for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
+            for (a, b, c) in Triangulation.triangulate(
+                flattened, comparisons: &pointScansThisFrame, slack: split.slack)
+            {
                 triangles.append((toGlobal(merged[a]), toGlobal(merged[b]), toGlobal(merged[c])))
             }
         }
@@ -667,9 +685,14 @@ extension Canvas {
     /// 読み取り位置と面の向きは**書かれている値からだけ取る**。両端に書かれている辺の値を
     /// 使い、2 辺とも書かれていれば平均する。どちらの辺にも無ければ書かれていないままにし、
     /// ほかの書かれていない点と同じく形から求める。
-    private static func crossingVertex(
+    ///
+    /// ただし読み取り位置は、**片方の端だけに書かれた辺**なら、書かれていない端を
+    /// `fallback` (書かれていない点が塗りで倒れる先と同じ値) で埋めて補間する。埋めずに
+    /// その辺を捨てると、交点が形の囲みの箱の値へ倒れ、隣の書かれた点との間に継ぎ目が出る。
+    static func crossingVertex(
         _ a: BuildingVertex, _ b: BuildingVertex, at t: Float,
-        _ c: BuildingVertex, _ d: BuildingVertex, at u: Float
+        _ c: BuildingVertex, _ d: BuildingVertex, at u: Float,
+        fallback: ((SIMD2<Float>) -> SIMD2<Float>)? = nil
     ) -> BuildingVertex {
         func mix(_ x: SIMD3<Float>, _ y: SIMD3<Float>, _ w: Float) -> SIMD3<Float> { x + w * (y - x) }
         func mix(_ x: SIMD2<Float>, _ y: SIMD2<Float>, _ w: Float) -> SIMD2<Float> { x + w * (y - x) }
@@ -688,10 +711,19 @@ extension Canvas {
         if let from = a.normal, let to = b.normal { normalOnFirst = mix(from, to, t) }
         var normalOnSecond: SIMD3<Float>?
         if let from = c.normal, let to = d.normal { normalOnSecond = mix(from, to, u) }
+        func written(_ point: BuildingVertex, beside other: BuildingVertex) -> SIMD2<Float>? {
+            if let uv = point.uv { return uv }
+            guard other.uv != nil, let fallback else { return nil }
+            return fallback(SIMD2(point.position.x, point.position.y))
+        }
         var uvOnFirst: SIMD2<Float>?
-        if let from = a.uv, let to = b.uv { uvOnFirst = mix(from, to, t) }
+        if let from = written(a, beside: b), let to = written(b, beside: a) {
+            uvOnFirst = mix(from, to, t)
+        }
         var uvOnSecond: SIMD2<Float>?
-        if let from = c.uv, let to = d.uv { uvOnSecond = mix(from, to, u) }
+        if let from = written(c, beside: d), let to = written(d, beside: c) {
+            uvOnSecond = mix(from, to, u)
+        }
 
         let color = (mix(a.fill, b.fill, t) + mix(c.fill, d.fill, u)) * 0.5
         return BuildingVertex(

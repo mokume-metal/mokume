@@ -349,7 +349,10 @@ struct SelfCrossingFillTests {
     /// 数えられず、耳切りがはみ出していた。
     @Test(
         "同じ交わりを幾つもの辺が通る形や、頂点を通る形も、消えずに nonzero で塗る",
-        arguments: ["行って戻る棘", "同じ線を逆にたどる", "横の辺が頂点を通る", "斜めの辺に頂点が載る", "縦の辺に頂点が載る"])
+        arguments: [
+            "行って戻る棘", "同じ線を逆にたどる", "横の辺が頂点を通る", "斜めの辺に頂点が載る", "縦の辺に頂点が載る",
+            "元の辺に交点が 3 つ並ぶ", "触れて戻る 7 点の周", "頂点で触れ合う 2 つの葉",
+        ])
     func degenerateCrossingsFollowNonzero(_ name: String) throws {
         let ring: [SIMD2<Float>]
         switch name {
@@ -361,12 +364,60 @@ struct SelfCrossingFillTests {
             ring = [SIMD2(40, 40), SIMD2(60, 20), SIMD2(0, 40), SIMD2(100, 40), SIMD2(60, 120)]
         case "斜めの辺に頂点が載る":
             ring = [SIMD2(40, 40), SIMD2(0, 120), SIMD2(120, 0), SIMD2(120, 80), SIMD2(20, 100)]
+        case "元の辺に交点が 3 つ並ぶ":
+            ring = [
+                SIMD2(131, 144), SIMD2(106, 41), SIMD2(90, 78), SIMD2(22, 84), SIMD2(149, 116),
+                SIMD2(26, 118), SIMD2(32, 20), SIMD2(132, 45),
+            ]
+        case "触れて戻る 7 点の周":
+            ring = [
+                SIMD2(110, 100), SIMD2(80, 120), SIMD2(120, 70), SIMD2(20, 60), SIMD2(80, 120),
+                SIMD2(130, 120), SIMD2(150, 60),
+            ]
+        case "頂点で触れ合う 2 つの葉":
+            ring = [
+                SIMD2(90, 30), SIMD2(130, 30), SIMD2(130, 130), SIMD2(90, 30), SIMD2(70, 130),
+                SIMD2(50, 130), SIMD2(30, 70),
+            ]
         default:
             ring = [SIMD2(40, 80), SIMD2(40, 0), SIMD2(20, 80), SIMD2(40, 20), SIMD2(80, 40)]
         }
         let drawn = try picture { placeFlat($0, [ring]) }
         #expect(drawn.red.contains { $0 > 0.5 })
         let result = tally(drawn, [ring])
+        #expect(result.mismatched == 0, "はみ出し \(result.spilled)・塗り漏れ \(result.missing)")
+    }
+
+    /// 交わらずに触れる形 (#1886)。耳切りと `mergeHoles` が塗り違えていた。
+    @Test(
+        "交わらずに触れる形も、回り数どおりに塗る",
+        arguments: ["穴 2 つ", "外周の角から始まる穴"])
+    func touchingShapesFollowNonzero(_ name: String) throws {
+        let rings: [[SIMD2<Float>]]
+        switch name {
+        case "穴 2 つ":
+            rings = [
+                [
+                    SIMD2(70, 83.333336), SIMD2(70, 90), SIMD2(83.333336, 103.33333), SIMD2(80, 110),
+                    SIMD2(70, 130), SIMD2(19.23077, 96.15385), SIMD2(10, 110), SIMD2(10, 90), SIMD2(10, 50),
+                    SIMD2(23.333332, 50), SIMD2(30, 70), SIMD2(34.615383, 71.53846), SIMD2(26, 50),
+                    SIMD2(30, 50), SIMD2(50, 50), SIMD2(42, 62), SIMD2(60, 80),
+                ],
+                [SIMD2(42, 74), SIMD2(38.571426, 67.14285), SIMD2(35.454544, 71.818184)],
+                [SIMD2(23.333332, 90), SIMD2(42, 90), SIMD2(35, 72.5)],
+            ]
+        default:
+            rings = [
+                [
+                    SIMD2(172.05147, 43.578476), SIMD2(124.36866, 153.69818),
+                    SIMD2(14.248955, 106.01538), SIMD2(61.93176, -4.104332),
+                ],
+                [SIMD2(119.45063, 64.39078), SIMD2(80.28504, 3.842804), SIMD2(14.248955, 106.01538)],
+            ]
+        }
+        let drawn = try picture { placeFlat($0, rings) }
+        #expect(drawn.red.contains { $0 > 0.5 })
+        let result = tally(drawn, rings)
         #expect(result.mismatched == 0, "はみ出し \(result.spilled)・塗り漏れ \(result.missing)")
     }
 

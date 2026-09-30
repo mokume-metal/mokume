@@ -60,14 +60,32 @@ nonisolated enum Triangulation {
     ///
     /// 回数は**費用が二乗に戻っていないことを数で確かめる**ためにある (``Canvas`` の
     /// `pointScansInLastFrame`)。凸な形では 0 になる。
-    static func triangulate(_ points: [SIMD2<Float>], comparisons: inout Int) -> [(Int, Int, Int)] {
+    ///
+    /// `slack` は耳を塞ぐ点を数える許容 (距離)。**既定の 0 から変えるのは、交わった周を
+    /// 組み直した周だけである** (``splitForNonzero(rings:points:)``・[#1538])。組み直した周は、
+    /// 元の 1 本の辺の上に交点を幾つも並べる。数の上ではその辺の上に載る凹んだ角が、丸めで
+    /// 辺のわずかに外へ出ると、その辺を 1 辺に持つ三角形を耳と取り違え、形の外まで塗る。
+    /// 渡された形そのものには許容を持たせない (下の ``isInside(_:_:_:_:)`` の注記)。
+    static func triangulate(
+        _ points: [SIMD2<Float>], comparisons: inout Int, slack: Float = 0
+    ) -> [(Int, Int, Int)] {
         guard points.count >= 3 else { return [] }
         if points.count == 3 { return [(0, 1, 2)] }
 
         // 回る向きを揃える。以降の凸判定はこの向きを前提にする
         var order = Array(points.indices)
         if signedArea(points) < 0 { order.reverse() }
-        var ring = EarRing(order: order, points: points)
+        return slack > 0
+            ? cut(order: order, points: points, comparisons: &comparisons, margin: Tolerant(slack: slack))
+            : cut(order: order, points: points, comparisons: &comparisons, margin: Exact())
+    }
+
+    /// 耳を切っていく本体。耳を塞ぐ点の数え方 (`margin`) で特殊化する — 許容を持たない
+    /// ふつうの形の耳切りに、許容の分岐も値も持ち込まない。
+    private static func cut<Margin: EarMargin>(
+        order: [Int], points: [SIMD2<Float>], comparisons: inout Int, margin: Margin
+    ) -> [(Int, Int, Int)] {
+        var ring = EarRing(order: order, points: points, margin: margin)
         ring.dropFlatCorners(from: 0, untilClean: ring.count)
 
         var triangles: [(Int, Int, Int)] = []
@@ -128,7 +146,14 @@ nonisolated enum Triangulation {
     ///   - points: 番号で引ける点の位置。
     ///
     /// [#1530]: https://github.com/mokume-metal/mokume/issues/1530
-    static func mergeHoles(outer: [Int], holes: [[Int]], points: [SIMD2<Float>]) -> [Int] {
+    ///
+    /// `slack` は、橋の線のすぐそばにある点を「橋に載る」と数える許容 (距離)。**既定の 0 から
+    /// 変えるのは、交わった周を組み直した周だけである** (``triangulate(_:comparisons:slack:)``
+    /// と同じ理由・[#1538])。組み直した周は元の 1 本の辺の上に点を幾つも並べ、橋がその辺に
+    /// 沿って架かると、丸めで跨がないと出たまま途中の点を通り抜ける。
+    static func mergeHoles(
+        outer: [Int], holes: [[Int]], points: [SIMD2<Float>], slack: Float = 0
+    ) -> [Int] {
         var ring = outer
         // 右にある穴から順に畳む。左から畳むと、後の橋が前の橋を跨ぎやすい
         let ordered = holes
@@ -144,7 +169,9 @@ nonisolated enum Triangulation {
             let unmerged = ordered[order...]
             guard
                 let bridgeIndex = bridgeTarget(
-                    ring: ring, holes: unmerged, points: points, from: entry)
+                    ring: ring, holes: unmerged, points: points, from: entry,
+                    leaving: neighbors(of: entryIndex, in: hole, points: points),
+                    holeTurn: signedArea(hole.map { points[$0] }), slack: slack)
             else {
                 continue  // 架けられる先が無ければ、その穴は諦める (塗りが埋まるだけ)
             }
@@ -184,6 +211,7 @@ nonisolated enum Triangulation {
     /// 形の外にある点まで耳を塞いで分け方が止まり、壊れる字がかえって増えた。
     ///
     /// [#1148]: https://github.com/mokume-metal/mokume/issues/1148
+    ///
     private static func isInside(
         _ point: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>
     ) -> Bool {
@@ -191,6 +219,18 @@ nonisolated enum Triangulation {
         let d2 = cross(c - b, point - b)
         let d3 = cross(a - c, point - c)
         return d1 >= 0 && d2 >= 0 && d3 >= 0
+    }
+
+    /// 辺のすぐ外 (辺ごとに外積で測った `margins` の内) も「中」とする ``isInside(_:_:_:_:)``。
+    /// 組み直した周を分けるときだけ使う (``triangulate(_:comparisons:slack:)``)。
+    private static func isInside(
+        _ point: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>,
+        margins: SIMD3<Float>
+    ) -> Bool {
+        let d1 = cross(b - a, point - a)
+        let d2 = cross(c - b, point - b)
+        let d3 = cross(a - c, point - c)
+        return d1 >= -margins.x && d2 >= -margins.y && d3 >= -margins.z
     }
 
     private static func rightmost(_ ring: [Int], _ points: [SIMD2<Float>]) -> SIMD2<Float>? {
@@ -203,10 +243,27 @@ nonisolated enum Triangulation {
 
     /// 橋を架ける先を、外周の点から選ぶ。
     ///
-    /// - Parameter holes: 跨いではならない穴。いま畳んでいる穴と、まだ畳んでいない穴。
+    /// 跨ぐ辺を見るほかに、**橋の両端で、橋が塗る側を通るか**を角の向きで確かめる
+    /// ([#1538])。どちらも、点が辺や別の点にちょうど重なる形でだけ効く — 跨ぐかの判定は
+    /// 端が辺に載る組を跨いだと数えないので、そこでは向きでしか見分けられない。
+    ///
+    /// - **外周の側:** 橋は、架ける先の角の内側から入る。先に畳んだ穴の入口と橋の点は、
+    ///   畳んだ周に 2 度ずつ現れる。角の外側を向く写しで周を開くと、畳んだ周が自分と重なり、
+    ///   耳切りが途中で止まるか形の外まで塗る
+    /// - **穴の側:** 橋は、入口の角で穴の中へ向かわない。穴の辺に載る点 (別の穴が触れる点)
+    ///   へ架けると、跨ぐ辺が無いまま穴の中を通る
+    ///
+    /// - Parameters:
+    ///   - holes: 跨いではならない穴。いま畳んでいる穴と、まだ畳んでいない穴。
+    ///   - leaving: 入口の点の、穴の上での前と後の点。
+    ///   - holeTurn: 穴の符号付きの面積 (向きだけを見る)。
+    ///
+    /// [#1538]: https://github.com/mokume-metal/mokume/issues/1538
     private static func bridgeTarget(
-        ring: [Int], holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from entry: SIMD2<Float>
+        ring: [Int], holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from entry: SIMD2<Float>,
+        leaving: (SIMD2<Float>, SIMD2<Float>), holeTurn: Float, slack: Float = 0
     ) -> Int? {
+        let turn = signedArea(ring.map { points[$0] })
         var best: (index: Int, distance: Float)?
         for index in ring.indices {
             let candidate = points[ring[index]]
@@ -214,15 +271,115 @@ nonisolated enum Triangulation {
             let distance = delta.x * delta.x + delta.y * delta.y
             if let current = best, current.distance <= distance { continue }
             guard
+                arrivesInside(
+                    ring: ring, at: index, turn: turn, points: points, from: entry, leaving: leaving),
+                !entersHole(toward: delta, at: entry, leaving: leaving, turn: holeTurn),
                 !crossesAnyEdge(
                     ring: ring, points: points, from: entry, to: candidate, skipping: index),
-                !crossesAnyHole(holes, points: points, from: entry, to: candidate)
+                !crossesAnyHole(holes, points: points, from: entry, to: candidate),
+                slack == 0
+                    || !passesNearAPoint(
+                        ring: ring, holes: holes, points: points, from: entry, to: candidate,
+                        slack: slack)
             else {
                 continue
             }
             best = (index, distance)
         }
         return best?.index
+    }
+
+    /// `from` から周の `index` 番目の点へ架けた線が、その角の内側 (両端の辺を含む) から入るか。
+    ///
+    /// 線の長さが 0 (穴の入口が外周の点に重なる) なら、代わりに**入口から出る穴の 2 辺が
+    /// その角の内側にあるか**を見る。重なる点が畳んだ周に幾つも現れるとき、穴を収める角は
+    /// 1 つだけである。
+    private static func arrivesInside(
+        ring: [Int], at index: Int, turn: Float, points: [SIMD2<Float>], from entry: SIMD2<Float>,
+        leaving: (SIMD2<Float>, SIMD2<Float>)
+    ) -> Bool {
+        let corner = points[ring[index]]
+        let around = neighbors(of: index, in: ring, points: points)
+        let previous = around.0 - corner
+        let next = around.1 - corner
+        // 左回りの周なら、角の内側は `next` から `previous` へ左回りに回る側
+        func inside(_ direction: SIMD2<Float>) -> Bool {
+            turn >= 0
+                ? isWithin(direction, from: next, to: previous)
+                : isWithin(direction, from: previous, to: next)
+        }
+        let back = entry - corner
+        guard back == .zero else { return inside(back) }
+        return inside(leaving.0 - corner) && inside(leaving.1 - corner)
+    }
+
+    /// 入口 `entry` から `direction` へ向かう線が、入口の角で穴の中へ入るか (両端の辺は含まない)。
+    private static func entersHole(
+        toward direction: SIMD2<Float>, at entry: SIMD2<Float>,
+        leaving: (SIMD2<Float>, SIMD2<Float>), turn: Float
+    ) -> Bool {
+        guard direction != .zero else { return false }
+        let previous = leaving.0 - entry
+        let next = leaving.1 - entry
+        func along(_ edge: SIMD2<Float>) -> Bool { cross(edge, direction) == 0 && dot(edge, direction) > 0 }
+        if along(previous) || along(next) { return false }
+        return turn >= 0
+            ? isWithin(direction, from: next, to: previous)
+            : isWithin(direction, from: previous, to: next)
+    }
+
+    /// 周の `index` 番目の点の前と後で、その点と違う位置にある最初の点。同じ位置の点が
+    /// 続く (曲線で閉じる周の重なった最後の点・橋の継ぎ目) なら、その先まで遡る。
+    private static func neighbors(
+        of index: Int, in ring: [Int], points: [SIMD2<Float>]
+    ) -> (SIMD2<Float>, SIMD2<Float>) {
+        let here = points[ring[index]]
+        let count = ring.count
+        var previous = here
+        var next = here
+        var step = 1
+        while previous == here, step < count {
+            previous = points[ring[(index + count - step) % count]]
+            step += 1
+        }
+        step = 1
+        while next == here, step < count {
+            next = points[ring[(index + step) % count]]
+            step += 1
+        }
+        return (previous, next)
+    }
+
+    /// `direction` が、`from` から `to` へ左回りに回る間 (両端を含む) にあるか。
+    private static func isWithin(
+        _ direction: SIMD2<Float>, from start: SIMD2<Float>, to end: SIMD2<Float>
+    ) -> Bool {
+        let wedge = cross(start, end)
+        let fromStart = cross(start, direction)
+        let toEnd = cross(direction, end)
+        // 180° より狭い角は両方の側に、広い角はどちらかの側にあればよい
+        return wedge > 0 ? fromStart >= 0 && toEnd >= 0 : fromStart >= 0 || toEnd >= 0
+    }
+
+    /// 架けた線の途中 (両端と同じ位置の点を除く) から `slack` 以内に、外周か穴の点があるか。
+    private static func passesNearAPoint(
+        ring: [Int], holes: ArraySlice<[Int]>, points: [SIMD2<Float>], from: SIMD2<Float>,
+        to: SIMD2<Float>, slack: Float
+    ) -> Bool {
+        let span = to - from
+        let length = dot(span, span)
+        guard length > 0 else { return false }
+        func near(_ index: Int) -> Bool {
+            let point = points[index]
+            if point == from || point == to { return false }
+            let at = simd_clamp(dot(point - from, span) / length, 0, 1)
+            return simd_distance(point, from + at * span) <= slack
+        }
+        for index in ring where near(index) { return true }
+        for hole in holes {
+            for index in hole where near(index) { return true }
+        }
+        return false
     }
 
     /// 架けた線が、外周 (先に畳んだ穴を含む) のどれかの辺を跨ぐか。
@@ -281,7 +438,23 @@ extension Triangulation {
     /// 残っている角は、凸かどうかで 2 つに分けて持つ。**凸な角は周の順の連結リスト**
     /// (耳の候補をたどる)、**凸でない角は位置で引く索引** (耳を塞ぐ点を探す)。
     /// 角を外すたびに前後の角を見直して、入れ先を移す。
-    nonisolated fileprivate struct EarRing {
+    /// 耳を塞ぐ点の数え方。
+    nonisolated fileprivate protocol EarMargin {
+        /// 耳を塞ぐ点を数える許容 (距離)。
+        var slack: Float { get }
+    }
+
+    /// 許容を持たない (渡された形そのもの)。
+    nonisolated fileprivate struct Exact: EarMargin {
+        var slack: Float { 0 }
+    }
+
+    /// 許容を持つ (組み直した周・``triangulate(_:comparisons:slack:)``)。
+    nonisolated fileprivate struct Tolerant: EarMargin {
+        var slack: Float
+    }
+
+    nonisolated fileprivate struct EarRing<Margin: EarMargin> {
         let points: [SIMD2<Float>]
         /// 位置ごとの点の番号。
         let vertex: [Int]
@@ -296,10 +469,13 @@ extension Triangulation {
         private(set) var nextConvex: [Int]
         private var previousConvex: [Int]
         private var concave: ConcaveCorners
+        /// 耳を塞ぐ点の数え方。
+        private let margin: Margin
 
-        init(order: [Int], points: [SIMD2<Float>]) {
+        init(order: [Int], points: [SIMD2<Float>], margin: Margin) {
             let total = order.count
             self.points = points
+            self.margin = margin
             vertex = order
             previous = (0..<total).map { ($0 + total - 1) % total }
             next = (0..<total).map { ($0 + 1) % total }
@@ -497,7 +673,7 @@ extension Triangulation {
         func isEar(_ a: Int, _ b: Int, _ c: Int, comparisons: inout Int) -> Bool {
             let triangle = EarTriangle(
                 indices: (vertex[a], vertex[b], vertex[c]),
-                a: points[vertex[a]], b: points[vertex[b]], c: points[vertex[c]])
+                a: points[vertex[a]], b: points[vertex[b]], c: points[vertex[c]], margin: margin)
             guard Triangulation.cross(triangle.b - triangle.a, triangle.c - triangle.b) > 0 else {
                 return false
             }
@@ -507,11 +683,21 @@ extension Triangulation {
     }
 
     /// 耳の候補の三角形。
-    nonisolated fileprivate struct EarTriangle {
+    nonisolated fileprivate struct EarTriangle<Margin: EarMargin> {
         var indices: (Int, Int, Int)
         var a: SIMD2<Float>
         var b: SIMD2<Float>
         var c: SIMD2<Float>
+        /// 耳を塞ぐ点の数え方。**`Exact` なら許容を持たない式をそのまま使う** — 許容を
+        /// 持つのは組み直した周だけで、ふつうの形の耳切りに手間を足さない。
+        var margin: Margin
+
+        private var slack: Float { margin.slack }
+
+        /// 辺ごとの、外積で測った許容 (許容の距離 × 辺の長さ)。
+        private var margins: SIMD3<Float> {
+            slack * SIMD3(simd_length(b - a), simd_length(c - b), simd_length(a - c))
+        }
 
         /// その点が、三角形を耳でなくするか。比べた回数を `comparisons` へ積む。
         func isBlocked(
@@ -520,7 +706,11 @@ extension Triangulation {
             if index == indices.0 || index == indices.1 || index == indices.2 { return false }
             let point = points[index]
             comparisons += 1
-            guard Triangulation.isInside(point, a, b, c) else { return false }
+            let inside =
+                slack > 0
+                ? Triangulation.isInside(point, a, b, c, margins: margins)
+                : Triangulation.isInside(point, a, b, c)
+            guard inside else { return false }
             return point != a && point != b && point != c
         }
 
@@ -538,12 +728,24 @@ extension Triangulation {
         /// 形の外へ出るのは丸めの幅に収まる。囲みを見ないと、細い耳の辺を延ばした線に
         /// 跨がる遠くの箱がどれも残り、比べる数が点の数に見合わなくなる。
         func mayContainPoints(in box: SIMD4<Float>) -> Bool {
+            guard slack == 0 else { return mayContainPointsWithSlack(in: box) }
             let low = simd_min(a, simd_min(b, c))
             let high = simd_max(a, simd_max(b, c))
             if box.x > high.x || box.z < low.x || box.y > high.y || box.w < low.y { return false }
             return !(Self.highest(from: a, to: b, in: box) < 0
                 || Self.highest(from: b, to: c, in: box) < 0
                 || Self.highest(from: c, to: a, in: box) < 0)
+        }
+
+        /// 許容を持つときの ``mayContainPoints(in:)``。囲みと辺を許容の分だけ広げる。
+        private func mayContainPointsWithSlack(in box: SIMD4<Float>) -> Bool {
+            let margins = margins
+            let low = simd_min(a, simd_min(b, c)) - slack
+            let high = simd_max(a, simd_max(b, c)) + slack
+            if box.x > high.x || box.z < low.x || box.y > high.y || box.w < low.y { return false }
+            return !(Self.highest(from: a, to: b, in: box) < -margins.x
+                || Self.highest(from: b, to: c, in: box) < -margins.y
+                || Self.highest(from: c, to: a, in: box) < -margins.z)
         }
 
         private static func highest(
@@ -714,8 +916,8 @@ extension Triangulation {
         }
 
         /// 三角形を耳でなくする角があるか。比べた回数を `comparisons` へ積む。
-        func anyBlocks(
-            _ triangle: EarTriangle, vertex: [Int], points: [SIMD2<Float>],
+        func anyBlocks<Margin: EarMargin>(
+            _ triangle: EarTriangle<Margin>, vertex: [Int], points: [SIMD2<Float>],
             comparisons: inout Int
         ) -> Bool {
             for node in loose
@@ -728,8 +930,8 @@ extension Triangulation {
                 comparisons: &comparisons)
         }
 
-        private func anyBlocks(
-            _ triangle: EarTriangle, level: Int, box: Int, vertex: [Int], points: [SIMD2<Float>],
+        private func anyBlocks<Margin: EarMargin>(
+            _ triangle: EarTriangle<Margin>, level: Int, box: Int, vertex: [Int], points: [SIMD2<Float>],
             comparisons: inout Int
         ) -> Bool {
             let flat = levelStart[level] + box

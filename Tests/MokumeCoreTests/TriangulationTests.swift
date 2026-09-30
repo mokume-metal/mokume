@@ -314,7 +314,7 @@ struct TriangulationTests {
 
     // MARK: - 交わった周を分ける (#1538)
 
-    @Test("単純な形は組み直さない", arguments: ["凸", "凹", "T", "同じ点を 2 度通る", "穴"])
+    @Test("単純な形は組み直さない", arguments: ["凸", "凹", "T", "穴"])
     func simpleRingsAreLeftAlone(_ name: String) {
         let square: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 10), SIMD2(0, 10)]
         let rings: [[SIMD2<Float>]]
@@ -326,11 +326,6 @@ struct TriangulationTests {
             rings = [[
                 SIMD2(106, 170), SIMD2(106, 51), SIMD2(64, 51), SIMD2(64, 36),
                 SIMD2(165, 36), SIMD2(165, 51), SIMD2(123, 51), SIMD2(123, 170),
-            ]]
-        case "同じ点を 2 度通る":
-            rings = [[
-                SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 5), SIMD2(20, 0),
-                SIMD2(20, 10), SIMD2(10, 5), SIMD2(10, 10), SIMD2(0, 10),
             ]]
         default: rings = [square, [SIMD2(3, 3), SIMD2(3, 6), SIMD2(6, 6), SIMD2(6, 3)]]
         }
@@ -401,6 +396,89 @@ struct TriangulationTests {
         // 残りは、穴の外周の中の部分が切れ込んだ矩形
         let notched: Float = 120 * 120 - (whole - tip)
         #expect(abs(areas[1] - notched) < 0.01)
+    }
+
+    @Test("同じ点を 2 度通る周は、触れる点で葉ごとに分ける")
+    func ringsTouchingThemselvesAreSplitAtTheTouch() throws {
+        // 右辺の途中 (10, 5) から出た葉が、同じ点へ戻ってくる (#1211 の形)
+        let pinched: [SIMD2<Float>] = [
+            SIMD2(0, 0), SIMD2(10, 0), SIMD2(10, 5), SIMD2(20, 0),
+            SIMD2(20, 10), SIMD2(10, 5), SIMD2(10, 10), SIMD2(0, 10),
+        ]
+        let (indices, points) = numbered([pinched])
+        let split = try #require(Triangulation.splitForNonzero(rings: indices, points: points))
+        let all = points + split.crossings.map(\.point)
+        var areas = split.regions.map { Triangulation.signedArea($0.outer.map { all[$0] }) }
+        areas.sort()
+        // 本体 10 x 10 と葉 10 x 10 / 2
+        #expect(areas == [50, 100])
+    }
+
+    // MARK: - 穴を畳む橋 (#1538 の反証 2 回目)
+
+    @Test("先に畳んだ穴の入口へ架ける橋は、角の内側の写しで開く")
+    func aBridgeToAnEarlierHoleOpensTheInnerCopy() {
+        // 右の穴の入口 (114, 75) は、畳んだ周に 2 度現れる。左の穴の橋はそこへ架かる。
+        // 角の外側を向く写しで開くと、畳んだ周が自分と重なり、耳切りが半分ほどで止まっていた
+        let outer: [SIMD2<Float>] = [
+            SIMD2(19.107704, 19.218765), SIMD2(91, 35), SIMD2(148, 66), SIMD2(47, 114),
+            SIMD2(14.818548, 20.214056), SIMD2(9, 17), SIMD2(14.099823, 18.119473), SIMD2(12, 12),
+        ]
+        let holes: [[SIMD2<Float>]] = [
+            [SIMD2(114, 75), SIMD2(26.370703, 26.595245), SIMD2(49.489845, 50.075623)],
+            [SIMD2(91, 75), SIMD2(56.00976, 56.697414), SIMD2(76, 77)],
+        ]
+        let merged = mergeHoles(outer: outer, holes: holes)
+        let expected =
+            Triangulation.signedArea(outer) + holes.reduce(0) { $0 + Triangulation.signedArea($1) }
+        #expect(abs(area(of: Triangulation.triangulate(merged), points: merged) - expected) < 0.05)
+    }
+
+    @Test("穴 2 つを畳んでも、面積が外周から穴を引いたものに一致する (#1886 の型 2)")
+    func twoHolesOfIssue1886AreBothSubtracted() {
+        // 穴を 1 つずつ畳むと面積は合うが、2 つ一緒に畳むと 3060.53 のはずが 2352.16 だった
+        let outer: [SIMD2<Float>] = [
+            SIMD2(70, 83.333336), SIMD2(70, 90), SIMD2(83.333336, 103.33333), SIMD2(80, 110),
+            SIMD2(70, 130), SIMD2(19.23077, 96.15385), SIMD2(10, 110), SIMD2(10, 90), SIMD2(10, 50),
+            SIMD2(23.333332, 50), SIMD2(30, 70), SIMD2(34.615383, 71.53846), SIMD2(26, 50),
+            SIMD2(30, 50), SIMD2(50, 50), SIMD2(42, 62), SIMD2(60, 80),
+        ]
+        let holes: [[SIMD2<Float>]] = [
+            [SIMD2(42, 74), SIMD2(38.571426, 67.14285), SIMD2(35.454544, 71.818184)],
+            [SIMD2(23.333332, 90), SIMD2(42, 90), SIMD2(35, 72.5)],
+        ]
+        let merged = mergeHoles(outer: outer, holes: holes)
+        let expected =
+            Triangulation.signedArea(outer) + holes.reduce(0) { $0 + Triangulation.signedArea($1) }
+        #expect(abs(expected - 3060.53) < 0.05)
+        #expect(abs(area(of: Triangulation.triangulate(merged), points: merged) - expected) < 0.05)
+    }
+
+    @Test("別の穴の頂点が辺に触れる穴へも、穴の中を通らない橋を架ける")
+    func aBridgeDoesNotRunThroughAHoleTouchedByAnother() {
+        // 右の穴の頂点 (57, 81) が、左の穴の辺 (63, 87)–(55, 79) の上に載る。左の穴の入口
+        // (63, 92) からそこへ架けた橋は、跨ぐ辺が無いまま左の穴の中を通っていた
+        let outer: [SIMD2<Float>] = [
+            SIMD2(127.0, 80.0), SIMD2(124.18679, 88.516304), SIMD2(112.492874, 93.00819),
+            SIMD2(111.12638, 100.00371), SIMD2(111.8443, 110.36348), SIMD2(113.06325, 126.43083),
+            SIMD2(94.53953, 111.83712), SIMD2(91.55219, 127.61877), SIMD2(83.56864, 154.91504),
+            SIMD2(70.32259, 147.30786), SIMD2(63.646603, 127.250046), SIMD2(44.999996, 140.62178),
+            SIMD2(46.602104, 118.54323), SIMD2(41.4834, 110.289795), SIMD2(33.78056, 103.82779),
+            SIMD2(36.822815, 92.67797), SIMD2(17.285267, 85.988525), SIMD2(49.14037, 77.053276),
+            SIMD2(34.90383, 66.75857), SIMD2(50.668427, 64.87853), SIMD2(21.83207, 34.256237),
+            SIMD2(39.398624, 33.14353), SIMD2(60.000004, 45.358982), SIMD2(64.30073, 34.639965),
+            SIMD2(74.307396, 40.407143), SIMD2(81.712944, 44.040775), SIMD2(88.95884, 43.07116),
+            SIMD2(97.032, 42.705082), SIMD2(121.18402, 22.165096), SIMD2(116.91043, 44.80596),
+            SIMD2(142.25275, 39.992573), SIMD2(117.134705, 65.133484), SIMD2(113.385574, 73.56546),
+        ]
+        let holes: [[SIMD2<Float>]] = [
+            [SIMD2(57, 81), SIMD2(75, 70), SIMD2(56, 61)],
+            [SIMD2(63, 92), SIMD2(63, 87), SIMD2(55, 79)],
+        ]
+        let merged = mergeHoles(outer: outer, holes: holes)
+        let expected =
+            Triangulation.signedArea(outer) + holes.reduce(0) { $0 + Triangulation.signedArea($1) }
+        #expect(abs(area(of: Triangulation.triangulate(merged), points: merged) - expected) < 0.05)
     }
 
     /// 周の組に、通しの番号を振る。
