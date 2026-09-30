@@ -1775,6 +1775,8 @@ public final class Canvas {
         //
         // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         guard !recordingShape else { return warnInsideShape(.background) }
+        // 数でない成分・無限の成分は、溜めたものを捨てる前に断る (#1706)
+        guard color.isFinite else { return warnNotANumberColor(.background) }
         discardPending()
         pendingBackground = color
     }

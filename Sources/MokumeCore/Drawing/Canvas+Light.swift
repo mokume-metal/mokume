@@ -10,20 +10,23 @@ extension Canvas {
 
     // 全体を底上げする光を置く。
     public func ambientLight(_ color: LinearRGBA) {
-        addLight(Light(kind: .ambient, color: color))
+        addLight(Light(kind: .ambient, color: color), color: color, entry: .ambientLight)
     }
 
     // 向きだけを持つ光を置く。
     public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         addLight(
-            Light(kind: .directional, color: color, direction: transformedDirection(x, y, z)))
+            Light(kind: .directional, color: color, direction: transformedDirection(x, y, z)),
+            color: color, entry: .directionalLight)
     }
 
     // 位置を持つ光を置く。
     public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        addLight(Light(kind: .point, color: color, position: transform.apply(x: x, y: y, z: z)))
+        addLight(
+            Light(kind: .point, color: color, position: transform.apply(x: x, y: y, z: z)),
+            color: color, entry: .pointLight)
     }
 
     // 位置と向きと広がりを持つ光を置く。
@@ -35,6 +38,8 @@ extension Canvas {
         // フレームの外では光を置かないので、丸めの注意より先に断る (#1698 の反証 10)。
         // 丸めの注意を先に言うと、置かない光のために 1 度きりの鍵を使い切る
         guard isDrawing else { return warnOutsideFrame(.light) }
+        // 色が受け取れないなら置かないので、丸めの注意より先に断る (同じ理由・#1706)
+        guard color.isFinite else { return warnNotANumberColor(.spotLight) }
         let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
         // 半頂角は 0…π/2 へ丸め、丸めたら 1 度知らせる (#1698)。書き順は `max(0, min(…))` に
         // 保つ — Swift の `min` / `max` は第 1 引数の NaN を返すので、この順なら NaN は 0 になる
@@ -49,7 +54,8 @@ extension Canvas {
                 kind: .spot, color: color,
                 position: transform.apply(x: x, y: y, z: z),
                 direction: transformedDirection(directionX, directionY, directionZ),
-                coneCosine: cos(used)))
+                coneCosine: cos(used)),
+            color: color, entry: .spotLight)
     }
 
     /// 知らせずに受け取る半頂角。**上の端は `Float.pi / 2` より 1 ulp 大きい所まで**
@@ -85,8 +91,14 @@ extension Canvas {
     ///
     /// フレームの外 (初期化のとき) に置かれた光は、どのフレームにも属さないので
     /// 警告して無視する (同 決定 4)。黙って捨てると「書いたのに効かない」だけが残る。
-    private func addLight(_ light: Light) {
+    ///
+    /// **光の色 (`color`) が数でない成分・無限の成分を持つなら置かない** ([#1706])。フレームの
+    /// 外の断りを先に言う — 置かない光のために、色の鍵を使い切らない。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    private func addLight(_ light: Light, color: LinearRGBA, entry: ColorEntry) {
         guard isDrawing else { return warnOutsideFrame(.light) }
+        guard color.isFinite else { return warnNotANumberColor(entry) }
         closeBatch()
         activeLights.append(light)
     }

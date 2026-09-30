@@ -26,6 +26,8 @@ extension Canvas {
 
     // 周りの光をどれだけ返すか。
     public func ambient(_ color: LinearRGBA) {
+        // 数でない成分・無限の成分は数の形と同じ鍵で断り、負の成分は範囲の外として断る (#1706)
+        guard color.isFinite else { return warnNotANumberColor(.ambient) }
         guard let components = Self.materialComponents(color) else {
             return warnBadMaterial("ambient")
         }
@@ -34,6 +36,7 @@ extension Canvas {
 
     // 自ら出す光。
     public func emissive(_ color: LinearRGBA) {
+        guard color.isFinite else { return warnNotANumberColor(.emissive) }
         guard let components = Self.materialComponents(color) else {
             return warnBadMaterial("emissive")
         }

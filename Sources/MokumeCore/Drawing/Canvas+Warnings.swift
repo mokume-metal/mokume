@@ -306,4 +306,48 @@ extension Canvas {
             warning,
             "\(name)(): \(quantity) takes \(range), but \(passed) was passed, so \(used) was used")
     }
+
+    /// 色を受ける口が、数でない値・無限の値を断ったことを初回だけ知らせる ([#1706])。
+    ///
+    /// **数の形 (`fill(r, g, b)`) と色の値の形 (`fill(_: LinearRGBA)`) が、同じ鍵・同じ文面で
+    /// 言う。** 文面はここ 1 か所で組むので、形によって言い方が変わらない。どちらの形も状態を
+    /// 変えずに残す ([ADR-0020] 決定 5 の 1 行目: 警告を出して安全な既定へ倒す)。
+    ///
+    /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    func warnNotANumberColor(_ entry: ColorEntry) {
+        warnOnce(
+            entry.warning,
+            "\(entry.rawValue)(): got a value that is not a number, or an infinite one, so \(entry.outcome)")
+    }
+
+    /// 色を受ける口。注意の鍵と、断ったときに何を残したかを持つ。
+    enum ColorEntry: String {
+        case fill, stroke, background, tint
+        case ambientLight, directionalLight, pointLight, spotLight
+        case ambient, emissive
+
+        var warning: Warning {
+            switch self {
+            case .fill: .notANumberFill
+            case .stroke: .notANumberStroke
+            case .background: .notANumberBackground
+            case .tint: .notANumberTint
+            case .ambientLight: .notANumberAmbientLight
+            case .directionalLight: .notANumberDirectionalLight
+            case .pointLight: .notANumberPointLight
+            case .spotLight: .notANumberSpotLight
+            case .ambient: .notANumberAmbient
+            case .emissive: .notANumberEmissive
+            }
+        }
+
+        var outcome: String {
+            switch self {
+            case .fill, .stroke, .background, .tint: "the colour was left as it was"
+            case .ambientLight, .directionalLight, .pointLight, .spotLight: "no light was placed"
+            case .ambient, .emissive: "the surface qualities were left as they were"
+            }
+        }
+    }
 }
