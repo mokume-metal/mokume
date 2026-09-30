@@ -2478,8 +2478,8 @@ struct CanvasTests {
     func bevelCutsTheCornerAndMiterKeepsIt() throws {
         // 矩形の角は 3 つの折れ目の形が区別される。距離関数の経路は式で削ぎ (#752)、
         // 三角形の経路も矩形の角だけは同じ線で削ぐ (#1506・下の
-        // `triangleRectCornersFollowTheJoin`)。任意多角形の折れ目はまだ正方形で埋める
-        // (StrokeJoin.miter の注記)
+        // `triangleRectCornersFollowTheJoin`)。任意多角形の折れ目も、2 本の帯の向きから決まる
+        // 同じ形で埋める (#1644・`PolylineJoinTests`)
         #expect(try outerCornerOfBend(join: .bevel) == 0)
         #expect(try outerCornerOfBend(join: .miter) == 255)
     }

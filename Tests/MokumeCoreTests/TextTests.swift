@@ -705,6 +705,158 @@ struct TextTests {
         #expect(right > 120 - canvas.textWidth("mokume"))
     }
 
+    // MARK: - 墨の範囲 (#1284)
+    //
+    // `textBounds` は、同じ引数で描いた墨を、左上原点・いまの座標で囲む。`textOutline` の約束
+    // (描くときと同じ送り・いまの座標のまま・整列に従う) と同じなので、返る枠は「同じ引数の
+    // `textOutline` の全点の外接」と言い換えられる。
+
+    /// 輪郭の全点の外接 (左・上・右・下)。点が無ければ `nil`。
+    private func outlineExtent(
+        _ canvas: Canvas, _ string: String, _ x: Float, _ y: Float
+    ) -> (left: Float, top: Float, right: Float, bottom: Float)? {
+        let points = canvas.textOutline(string, x, y).flatMap(\.points)
+        guard !points.isEmpty else { return nil }
+        return (
+            points.map(\.x).min()!, points.map(\.y).min()!, points.map(\.x).max()!,
+            points.map(\.y).max()!
+        )
+    }
+
+    /// 枠と輪郭の外接が、各辺 `tolerance` 以内で一致することを見る。
+    private func expectBounds(
+        _ bounds: TextBounds?, hug extent: (left: Float, top: Float, right: Float, bottom: Float)?,
+        within tolerance: Float, _ note: String
+    ) throws {
+        let bounds = try #require(bounds, "\(note): 枠が返らない")
+        let extent = try #require(extent, "\(note): 輪郭が無い")
+        #expect(abs(bounds.x - extent.left) <= tolerance, "\(note): 左 \(bounds.x) / 輪郭 \(extent.left)")
+        #expect(abs(bounds.y - extent.top) <= tolerance, "\(note): 上 \(bounds.y) / 輪郭 \(extent.top)")
+        #expect(
+            abs(bounds.x + bounds.width - extent.right) <= tolerance,
+            "\(note): 右 \(bounds.x + bounds.width) / 輪郭 \(extent.right)")
+        #expect(
+            abs(bounds.y + bounds.height - extent.bottom) <= tolerance,
+            "\(note): 下 \(bounds.y + bounds.height) / 輪郭 \(extent.bottom)")
+    }
+
+    /// 横 3 通り × 縦 4 通りの整列。
+    nonisolated static var alignments: [(HorizontalTextAlign, VerticalTextAlign)] {
+        HorizontalTextAlign.allCases.flatMap { h in VerticalTextAlign.allCases.map { (h, $0) } }
+    }
+
+    @Test("墨の枠は、どの整列でも同じ引数の輪郭の外接と一致する", arguments: alignments)
+    func theBoundsHugTheOutlineInEveryAlignment(
+        _ alignment: (HorizontalTextAlign, VerticalTextAlign)
+    ) throws {
+        let canvas = try makeCanvas()
+        canvas.textAlign(alignment.0, alignment.1)
+        try expectBounds(
+            canvas.textBounds("Agj 1", 80, 48), hug: outlineExtent(canvas, "Agj 1", 80, 48),
+            within: 0.5, "\(alignment)")
+    }
+
+    /// 改行 (`\n` / `\r\n`) と傾き。2 行目は行送りだけ下がり、整列は行ごとに効く。
+    nonisolated static var lineAndStyleCases: [(String, TextStyle)] {
+        ["Ag\nj1", "Ag\r\nj1", "T\n\n1"].flatMap { s in [(s, TextStyle.normal), (s, .italic)] }
+    }
+
+    @Test("墨の枠は、改行と傾きを含む文字列でも同じ引数の輪郭の外接と一致する", arguments: lineAndStyleCases)
+    func theBoundsHugTheOutlineAcrossLinesAndStyles(_ string: String, _ style: TextStyle) throws {
+        let canvas = try makeCanvas()
+        canvas.textStyle(style)
+        canvas.textAlign(.center, .center)
+        try expectBounds(
+            canvas.textBounds(string, 80, 48), hug: outlineExtent(canvas, string, 80, 48),
+            within: 0.5, "\(string.debugDescription) \(style)")
+    }
+
+    @Test("墨の枠は、同じ引数で描いた字の墨と重なる")
+    func theBoundsLandWhereTheTextIsDrawn() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.text("Agj 1", 24, 60)
+        }
+        let ink = try #require(inkBounds(try pixels(of: canvas), width: 160, height: 96))
+        let bounds = try #require(canvas.textBounds("Agj 1", 24, 60))
+        // 墨の画素は番号で、右端・下端はその画素の番号。許しは輪郭と同じ 2 画素
+        #expect(abs(bounds.x - Float(ink.left)) <= 2)
+        #expect(abs(bounds.y - Float(ink.top)) <= 2)
+        #expect(abs(bounds.x + bounds.width - Float(ink.right)) <= 2)
+        #expect(abs(bounds.y + bounds.height - Float(ink.bottom)) <= 2)
+    }
+
+    /// **1 字ずつ切って送りを足す持ち方と、語をまとめて測った値が食い違わない。** mokume は
+    /// 字詰めをしないので (``Typeface`` の「組版はしない」)、字ごとの位置は送り幅の足し算
+    /// そのものである。字詰めや合字を始めたらここが赤くなって知らせる。
+    ///
+    /// 語の中の空白は墨に数えず、端の空白は枠を広げない。
+    @Test("語の枠は、1 字ずつ送り幅を足した位置で取った字ごとの枠の和と一致する")
+    func theWordBoundsAreTheUnionOfTheCharacters() throws {
+        let canvas = try makeCanvas(width: 240, height: 96)
+        let word = "TIME 1"
+        var cursor: Float = 10
+        var union: (left: Float, top: Float, right: Float, bottom: Float)?
+        for character in word {
+            let piece = String(character)
+            if let b = canvas.textBounds(piece, cursor, 60) {
+                let (l, t, r, bt) = (b.x, b.y, b.x + b.width, b.y + b.height)
+                union = union.map { (min($0.left, l), min($0.top, t), max($0.right, r), max($0.bottom, bt)) }
+                    ?? (l, t, r, bt)
+            }
+            cursor += canvas.textWidth(piece)
+        }
+        try expectBounds(canvas.textBounds(word, 10, 60), hug: union, within: 0.01, word)
+
+        // 端の空白は送りだけを進める
+        let padded = try #require(canvas.textBounds(" \(word) ", 10, 60))
+        let shifted = try #require(canvas.textBounds(word, 10 + canvas.textWidth(" "), 60))
+        #expect(abs(padded.x - shifted.x) <= 0.01)
+        #expect(abs(padded.width - shifted.width) <= 0.01)
+        #expect(padded.y == shifted.y && padded.height == shifted.height)
+    }
+
+    @Test("墨が無ければ枠は nil で、落ちない", arguments: ["", "   ", "\n", "\r\n\n"])
+    func noInkHasNoBounds(_ string: String) throws {
+        let canvas = try makeCanvas()
+        #expect(canvas.textBounds(string, 10, 50) == nil)
+    }
+
+    @Test("大きさ 0 では、字があっても枠は nil")
+    func aZeroSizeHasNoBounds() throws {
+        let canvas = try makeCanvas()
+        canvas.textSize(0)
+        #expect(canvas.textBounds("mokume", 10, 50) == nil)
+    }
+
+    @Test("墨の枠の位置に数でない値か無限を渡しても、落ちずに nil を返す", arguments: nonFinitePositions)
+    func aNonFinitePositionHasNoBounds(_ position: (x: Float, y: Float)) throws {
+        let canvas = try makeCanvas()
+        #expect(canvas.textBounds("o", position.x, position.y) == nil)
+    }
+
+    /// 返る値は**いまの座標のまま** (`textOutline` と同じ)。変換も `rectMode` も効かない。
+    @Test("墨の枠は、変換と rectMode に依らない")
+    func theBoundsIgnoreTransformsAndRectMode() throws {
+        let canvas = try makeCanvas()
+        let plain = try #require(canvas.textBounds("Agj 1", 24, 60))
+        var transformed: TextBounds?
+        var centred: TextBounds?
+        try canvas.draw {
+            canvas.translate(13, -7)
+            canvas.rotate(0.6)
+            canvas.scale(1.5, 0.75)
+            transformed = canvas.textBounds("Agj 1", 24, 60)
+            canvas.resetMatrix()
+            canvas.rectMode(.center)
+            centred = canvas.textBounds("Agj 1", 24, 60)
+        }
+        #expect(transformed == plain)
+        #expect(centred == plain)
+    }
+
     // MARK: - 数でない値・巨大な大きさ (#1587)
 
     /// 数でない位置と無限の位置。

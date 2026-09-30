@@ -351,6 +351,8 @@ extension Sketch {
     /// 末尾の空白も幅に数える。改行を含む文字列では、いちばん長い行の幅を返す。
     /// 大きさ 0 (``textSize(_:)``) では 0 を返す。
     ///
+    /// 送り幅は字の左右に書体が付けた余白を含む。墨の載る範囲は ``textBounds(_:_:_:)`` が返す。
+    ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
@@ -604,7 +606,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 黄色い線だけで縁取られた mokume — 画の内側は塗られていない -->
-    ///     ![黄色い線だけで縁取られた mokume — 画の内側は塗られていない](https://i.gyazo.com/03f1e65d5e6a6ab5037347aad603188d.png)
+    ///     ![黄色い線だけで縁取られた mokume — 画の内側は塗られていない](https://i.gyazo.com/6065c72b010a01cbc5893c9a76a7798f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -628,5 +630,48 @@ extension Sketch {
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
         return canvas.textOutline(string, x, y)
+    }
+
+    /// 文字列を描いたときに、墨が載る範囲を返す。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(242, 242, 242)
+    ///     textSize(64)
+    ///     text("mokume 1", 40, 170)
+    ///     if let bounds = textBounds("mokume 1", 40, 170) {
+    ///         noFill()
+    ///         stroke(242, 115, 64)
+    ///         strokeWeight(2)
+    ///         rect(bounds.x, bounds.y, bounds.width, bounds.height)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白い mokume 1 の墨を、橙の細い枠がぴったり囲んでいる -->
+    ///     ![白い mokume 1 の墨を、橙の細い枠がぴったり囲んでいる](https://i.gyazo.com/c2df83e4af00939a3c923995a23c0426.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 同じ引数で ``text(_:_:_:)`` を描いたときの墨を囲む。**送り幅とは違う** —
+    /// ``textWidth(_:)`` は字の左右に書体が付けた余白を含み、この枠は含まない。字の中心を
+    /// 送り幅で取ると、余白の大きい字 (`1` など) は墨が片寄って見える。墨の中心は
+    /// `bounds.x + bounds.width / 2` で取る。
+    ///
+    /// 枠の `x`・`y` は**いつも左上**で、``rectMode(_:)`` に依らない。返る値は**いまの座標の
+    /// まま**で、変換は掛かっていない — 同じ変換の下で ``rect(_:_:_:_:)`` へ渡せば、描いた字を
+    /// 囲む。``textAlign(_:_:)`` の横・縦と、行送り・改行・``textStyle(_:)`` は、描くときと
+    /// 同じに効く。空白は送りだけを進め、墨には数えない。
+    ///
+    /// 墨が無いときは `nil` を返す — 空の文字列・空白や改行だけの文字列・大きさ 0
+    /// (``textSize(_:)``)・位置に数でない値や無限を渡したとき。
+    // shot: 1 snippet=f7ecb144
+    public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
+        let (x, y) = (x.asFloat, y.asFloat)
+        return canvas.textBounds(string, x, y)
     }
 }

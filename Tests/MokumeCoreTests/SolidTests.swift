@@ -542,11 +542,14 @@ struct SolidTests {
             canvas.loadPixels()
         }
 
+        var abandonedByTheFailedFlush = -1
         try canvas.draw {
             for index in 0..<5000 { canvas.rect(1000 + index % 16, 1000, 1, 1) }
+            let abandoned = canvas.gpu.abandonedCommands
             canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
             canvas.loadPixels()
             canvas.gpu.failSettleForTesting = nil
+            abandonedByTheFailedFlush = canvas.gpu.abandonedCommands - abandoned
 
             canvas.fill(green)
             canvas.push()
@@ -554,6 +557,13 @@ struct SolidTests {
             canvas.plane(30, 30)
             canvas.pop()
         }
+        // **投げたこと自体を数で見る** ([#1868])。見ないと、途中の描き切りが投げなくなっても
+        // (待ちが無くなる・別の所で投げる) 次のフレームは普通に描けて、下の画素は満たされる
+        //
+        // [#1868]: https://github.com/mokume-metal/mokume/issues/1868
+        try #require(
+            abandonedByTheFailedFlush == 1,
+            "途中の描き切りが組み立ての後で投げていない — この検査は投入されなかった描き切りの経路を見ていない")
         #expect(
             try pixels(of: canvas)[32, 32] == (0, 255, 0, 255),
             "消していない奥行きを読み、前のフレームの手前の面に隠れた")

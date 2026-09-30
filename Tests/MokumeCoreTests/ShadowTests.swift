@@ -34,6 +34,19 @@ struct ShadowTests {
         _ canvas: Canvas, shadows: Bool = true, scale: Float = 1, offset: Float = 0,
         range: Float? = nil, extra: (Canvas) -> Void = { _ in }
     ) throws -> DisplayImage {
+        try drawFloorAndSphere(
+            canvas, shadows: shadows, scale: scale, offset: offset, range: range, extra: extra)
+        return try canvas.target.encodeForDisplay()
+    }
+
+    /// ``floorAndSphere(_:shadows:scale:offset:range:extra:)`` の描く部分だけ。**読み出さない**
+    /// — 描き切りで投げたかどうかを、読み出しの待ちと分けて見るため ([#1868])。
+    ///
+    /// [#1868]: https://github.com/mokume-metal/mokume/issues/1868
+    private func drawFloorAndSphere(
+        _ canvas: Canvas, shadows: Bool = true, scale: Float = 1, offset: Float = 0,
+        range: Float? = nil, extra: (Canvas) -> Void = { _ in }
+    ) throws {
         let center: Float = 64
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
@@ -63,7 +76,6 @@ struct ShadowTests {
             canvas.sphere(28 * scale)
             canvas.pop()
         }
-        return try canvas.target.encodeForDisplay()
     }
 
     // MARK: - 影が出る
@@ -425,8 +437,15 @@ struct ShadowTests {
 
         let baked = canvas.shadowBakesEncoded
         canvas.gpu.failSettleForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
-        #expect(throws: RenderFailure.self) {
-            _ = try self.floorAndSphere(canvas, offset: 30) { canvas in
+        // **囲むのは描き切りだけで、読み出しは含めない** ([#1868])。差し込みを残したまま
+        // 読み出すと、その待ちも投げる — 描き切りが投げなくなっても、ここが満たされてしまう
+        //
+        // [#1868]: https://github.com/mokume-metal/mokume/issues/1868
+        #expect(
+            throws: RenderFailure.timedOut(seconds: RenderDevice.waitLimitSeconds),
+            "描き切りが投げていない — この検査は焼き付けの後で投げる経路を見ていない"
+        ) {
+            try self.drawFloorAndSphere(canvas, offset: 30) { canvas in
                 for index in 0..<5000 { canvas.rect(1000 + index % 16, 1000, 1, 1) }
             }
         }

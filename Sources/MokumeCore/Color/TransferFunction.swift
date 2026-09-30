@@ -31,10 +31,18 @@ enum TransferFunction {
     }
 
     /// ディスプレイのエンコード → 線形 (入口の境界)。
+    ///
+    /// **有限の値は有限の値へ移す** ([#1691])。曲線の区間は 2.4 乗なので、灰色でおよそ
+    /// `color(3.05e18)` 以上では `Float` の最大を越えて +inf になる。それが原色の行列の
+    /// 0 の係数と掛かると NaN になり、面へ移す関所 (``HalfSurface``) の手前で色が数でなく
+    /// なる。越えた分は `Float` の最大で止める — 行列は行の係数の和が 1 以下なので、
+    /// 止めた値は行列を通っても有限に残る。数でない値はそのまま通す (`min` は NaN を返す)。
+    ///
+    /// [#1691]: https://github.com/mokume-metal/mokume/issues/1691
     static func decode(_ encoded: Float) -> Float {
         if encoded <= linearSlope * linearThreshold {
             return encoded / linearSlope
         }
-        return pow((encoded + offset) / scale, exponent)
+        return min(pow((encoded + offset) / scale, exponent), .greatestFiniteMagnitude)
     }
 }

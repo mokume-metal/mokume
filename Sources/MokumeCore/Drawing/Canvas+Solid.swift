@@ -570,6 +570,7 @@ extension Canvas {
         // 端と折れ目の規則は平面と共有する (`strokeRing`)
         strokeRing(
             count: points.count, isClosed: isClosed, curveSteps: curveSteps,
+            samePlace: { points[$0] == points[$1] },
             endSquare: {
                 appendSolidStroke(
                     .endSquare(points[$0], awayFrom: points[$1]),
@@ -587,6 +588,13 @@ extension Canvas {
             square: {
                 appendSolidStroke(
                     .square(points[$0]), shape: (shapePoints[$0], shapePoints[$0]), half: half, camera: camera)
+            },
+            corner: { index, previous, next in
+                appendSolidStroke(
+                    .join(
+                        points[index], from: points[previous], to: points[next],
+                        join: style.strokeJoin),
+                    shape: (shapePoints[index], shapePoints[index]), half: half, camera: camera)
             })
     }
 
@@ -636,6 +644,13 @@ extension Canvas {
             square: {
                 appendSolidStroke(
                     .square(placed[$0]), shape: (net.points[$0], net.points[$0]), half: half, camera: camera)
+            },
+            corner: { index, previous, next in
+                appendSolidStroke(
+                    .join(
+                        placed[index], from: placed[previous], to: placed[next],
+                        join: style.strokeJoin),
+                    shape: (net.points[index], net.points[index]), half: half, camera: camera)
             })
     }
 
@@ -683,6 +698,9 @@ extension Canvas {
         case let .square(center): appendSolidSquare(at: center, shape: shape.0, half: half, camera: camera)
         case let .endSquare(center, from):
             appendSolidSquare(at: center, awayFrom: from, shape: shape.0, half: half, camera: camera)
+        case let .join(center, from, to, join):
+            appendSolidJoin(
+                at: center, from: from, to: to, join: join, shape: shape.0, half: half, camera: camera)
         }
     }
 
@@ -776,6 +794,15 @@ extension Canvas {
     private func screenAcross(
         _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD3<Float>? {
+        guard let normal = screenNormal(a, b, camera: camera) else { return nil }
+        return camera.right * normal.x + camera.down * normal.y
+    }
+
+    /// 線分 a–b を画面に写したときの垂線の、画面の横と縦の成分 (長さ 1)。`screenAcross` の
+    /// 中身で、決まらなければ `nil`。
+    private func screenNormal(
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
+    ) -> SIMD2<Float>? {
         let (right, down) = (camera.right, camera.down)
         let normal: SIMD2<Float>
         if camera.isPerspective {
@@ -787,7 +814,25 @@ extension Canvas {
         }
         let size = length(normal)
         guard size > 0, size.isFinite else { return nil }
-        return right * (normal.x / size) + down * (normal.y / size)
+        return SIMD2(normal.x / size, normal.y / size)
+    }
+
+    /// 線分 a → b を画面に写したときの、a から b へ進む向き (画面の横と縦の成分・長さ 1)
+    /// ([#1644])。決まらなければ `nil`。
+    ///
+    /// **世界での差の横と縦の成分では代われない。** 透視投影で奥へ引っ込む辺は、画面の中心
+    /// から外れた所では、世界での差と画面での動きが逆を向きうる (中心より左の点から奥へ
+    /// 引っ込む辺は、画面では右へ、中心へ寄っていく)。向きは `screenNormal` の垂線を 90° 回して
+    /// 取る。垂線は a・b・目の張る平面の法線 (透視) か、画面の中の線を 90° 回したもの
+    /// (平行) なので、回す向きは 2 つで逆になる (画面の横 × 縦 = −前 を使う)。目の手前にある
+    /// 点では、どちらも画面で a から b へ進む向きになる。
+    ///
+    /// [#1644]: https://github.com/mokume-metal/mokume/issues/1644
+    private func screenToward(
+        _ a: SIMD3<Float>, _ b: SIMD3<Float>, camera: StrokeCamera
+    ) -> SIMD2<Float>? {
+        guard let normal = screenNormal(a, b, camera: camera) else { return nil }
+        return camera.isPerspective ? SIMD2(-normal.y, normal.x) : SIMD2(normal.y, -normal.x)
     }
 
     /// 視線に正対する円板を置く (丸い端点と丸い角)。
@@ -806,8 +851,83 @@ extension Canvas {
         }
     }
 
-    /// 視線に正対し、画面の軸に沿った正方形を置く (向きの無い点の四角い端と、丸めない角)。
-    /// 線の端の正方形は線の向きに沿って置く (`appendSolidSquare(at:awayFrom:shape:half:camera:)`)。
+    /// 視線に正対する、丸めない折れ目の形を置く ([#1644])。
+    ///
+    /// 形は平面と同じ式 (``Canvas/joinRim(toward:_:half:join:)``) で、**画面に写した 2 本の
+    /// 帯の向き**から決める。帯の横向き (`screenAcross`) を画面の横と縦の成分で持ち、それを
+    /// 90° 回した向きを、角から両隣へ向かう向きとする (向きは隣の点の側を選ぶ)。外側の縁の
+    /// 角は、帯 (`appendSolidBand`) の縁の角と同じ式で置く。
+    ///
+    /// 帯の横向きが決まらない (画面で点に潰れる線・長さ 0) ときは、画面の軸に沿った
+    /// 正方形へ倒す。もう一方の帯が画面で斜めなら正方形の角が帯の外へ出るので、この倒れ先は
+    /// 約束どおりではない (#1893 で決める)。
+    ///
+    /// **どの枝でも三角形を 3 枚 (9 頂点) 積む** — 尖り (2 枚) は尖りを 2 度置き、正方形
+    /// (2 枚) と一直線 (0 枚) は面積 0 の三角形で埋める。記録した形は置く先の視点で組み
+    /// 直し、頂点の数が記録と違うと部品を 1 点へ畳む (`rebuiltSolidStroke`)。直角は尖るか
+    /// 切るかの境目にあり、腕が画面で潰れるかどうかも視点で変わるので、枝は置く先で
+    /// 入れ替わりうる。
+    ///
+    /// - Parameter join: 形 (`miter` / `bevel`)。記録した形では、記録したときの形を渡す
+    ///
+    /// [#1644]: https://github.com/mokume-metal/mokume/issues/1644
+    private func appendSolidJoin(
+        at center: SIMD3<Float>, from previous: SIMD3<Float>, to next: SIMD3<Float>,
+        join: StrokeJoin, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
+    ) {
+        let start = solidStrokeCapture?.count ?? solidVertices.count
+        buildSolidJoin(
+            at: center, from: previous, to: next, join: join, shape: shape, half: half, camera: camera)
+        let built = (solidStrokeCapture?.count ?? solidVertices.count) - start
+        for _ in stride(from: built, to: 9, by: 3) {
+            appendSolidStrokeTriangle(
+                center, center, center, shape: (shape, shape, shape), camera: camera)
+        }
+    }
+
+    /// 折れ目の形の三角形を積む (尖りなら 2 枚・切り口なら 3 枚・正方形へ倒すなら 2 枚・
+    /// 一直線なら 0 枚)。数を揃えるのは `appendSolidJoin`。
+    private func buildSolidJoin(
+        at center: SIMD3<Float>, from previous: SIMD3<Float>, to next: SIMD3<Float>,
+        join: StrokeJoin, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
+    ) {
+        guard length_squared(center - previous) > 0, length_squared(next - center) > 0,
+            let across1 = screenAcross(previous, center, camera: camera),
+            let across2 = screenAcross(center, next, camera: camera),
+            let arm1 = screenToward(center, previous, camera: camera),
+            let arm2 = screenToward(center, next, camera: camera)
+        else {
+            return appendSolidSquare(at: center, shape: shape, half: half, camera: camera)
+        }
+        let (right, down) = (camera.right, camera.down)
+        func onScreen(_ vector: SIMD3<Float>) -> SIMD2<Float> {
+            SIMD2(dot(vector, right), dot(vector, down))
+        }
+        // 腕は画面に写した両隣への向き (`screenToward`)。世界での差を使うと、透視で奥へ
+        // 引っ込む辺の向きを取り違え、外側の楔が埋まらない
+        let rim = Self.joinRim(toward: arm1, arm2, half: 1, join: join)
+        // 周は 角のすぐ内側・1 本目の外側の縁の角・(尖りか切り口)・2 本目の外側の縁の角
+        guard rim.count >= 4, let lastOffset = rim.last else { return }
+        let radius = half * camera.worldPerPixel(at: center, height: height)
+        func placed(_ offset: SIMD2<Float>) -> SIMD3<Float> {
+            center + (right * offset.x + down * offset.y) * radius
+        }
+        // 外側の縁の角は、帯の縁の角と同じ式で置く
+        let side1 = dot(rim[1], onScreen(across1)) > 0 ? across1 : -across1
+        let side2 = dot(lastOffset, onScreen(across2)) > 0 ? across2 : -across2
+        var corners: [SIMD3<Float>] = [placed(rim[0]), center + side1 * radius]
+        for offset in rim.dropFirst(2).dropLast() { corners.append(placed(offset)) }
+        corners.append(center + side2 * radius)
+        for index in 1..<(corners.count - 1) {
+            appendSolidStrokeTriangle(
+                corners[0], corners[index], corners[index + 1], shape: (shape, shape, shape),
+                camera: camera)
+        }
+    }
+
+    /// 視線に正対し、画面の軸に沿った正方形を置く (向きの無い点の四角い端と、辺が 3 本以上
+    /// 集まる丸めない角)。線の端の正方形は線の向きに沿って置く
+    /// (`appendSolidSquare(at:awayFrom:shape:half:camera:)`)。
     private func appendSolidSquare(
         at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, camera: StrokeCamera
     ) {

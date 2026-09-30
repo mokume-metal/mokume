@@ -157,6 +157,50 @@ struct ParticleForceTests {
         #expect(Self.velocity(particle) == velocity, "\(Self.velocity(particle)) — 積分からは \(velocity)")
     }
 
+    /// [#1651] の完了条件 2。同じフレームで 2 回進めると、**1 回目の前に積んだ力は 1 回目の刻みに、
+    /// 2 回目の前に積んだ力は 2 回目の刻みに**効く。直す前は毎回の指定が群で 1 つで、描き切りの
+    /// 頭で届くのは 2 回目の指定だけだったので、どちらの刻みも 2 回目の力で進んだ。
+    ///
+    /// 速度 0 の粒 1 つに、片方の刻みにだけ重力を積む。値は上の検査と同じく 2 進で閉じる。
+    ///
+    /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
+    @Test(
+        "同じフレームで 2 回進めると、それぞれの前に積んだ力がその刻みに効く",
+        arguments: [true, false])
+    func eachCallInAFrameAppliesTheForcesBeforeIt(forceFirst: Bool) throws {
+        let start = SIMD3<Float>(20, 8, 0)
+        let gravity = SIMD3<Float>(16, 64, -32)
+        // CPU の積分 (単精度)。力は片方の刻みにだけ効く
+        var position = start
+        var velocity = SIMD3<Float>(0, 0, 0)
+        for call in 0..<2 {
+            if (call == 0) == forceFirst { velocity += gravity * Self.step }
+            position += velocity * Self.step
+        }
+
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
+        canvas.deltaTime = Self.step
+        let dust = try canvas.makeParticles(count: 1)
+        var randomness = Randomness(seed: 1651)
+        let pull = Force.gravity(gravity.x, gravity.y, gravity.z)
+        try canvas.draw {
+            canvas.emit(
+                dust, from: .point(start.x, start.y, start.z), rate: (1 / Self.step).nextUp,
+                speed: 0...0, angle: 0...0, life: 100...100, size: 1...1,
+                color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+            if forceFirst { canvas.force(dust, [pull]) }
+            canvas.particles(dust)
+            if !forceFirst { canvas.force(dust, [pull]) }
+            canvas.particles(dust)
+        }
+        let particle = canvas.read(dust.state).withUnsafeBytes { raw in
+            raw.bindMemory(to: Particle.self)[0]
+        }
+        try #require(particle.life > 0, "粒が出ていない")
+        #expect(Self.position(particle) == position, "\(Self.position(particle)) — 積分からは \(position)")
+        #expect(Self.velocity(particle) == velocity, "\(Self.velocity(particle)) — 積分からは \(velocity)")
+    }
+
     // MARK: - 減速
 
     /// 完了条件 6 ([#1384]) を [#1471] で書き換えたもの。**減速は、1 フレームごとに速度を

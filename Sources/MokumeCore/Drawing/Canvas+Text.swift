@@ -471,40 +471,68 @@ extension Canvas {
     /// 1 つの形として扱いたいなら、``textFont(_:)`` で書体を指定する — `Helvetica`
     /// などでは `A` が外周 1 つと穴 1 つになる。
     public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
-        let (x, y) = (x.asFloat, y.asFloat)
-        // 読み取りの口なので、数でない位置・無限の位置は落とさず黙って空を返す (#1587)
-        guard !string.isEmpty, style.textSize > 0, x.isFinite, y.isFinite else { return [] }
-        let face = typeface
-        let lines = string.lines
-        let leading = resolvedTextLeading
-        var baseline = firstBaseline(at: y, face: face, lines: lines.count)
-
         var contours: [TextContour] = []
-        for line in lines {
-            contours += outline(of: line, face: face, x: x, baseline: baseline)
-            baseline += leading
-        }
-        return contours
-    }
-
-    /// 1 行ぶんの輪郭。
-    private func outline(
-        of line: some StringProtocol, face: Typeface, x: Float, baseline: Float
-    ) -> [TextContour] {
-        var pen = penStart(at: x, face: face, line: line)
-
-        var contours: [TextContour] = []
-        for scalar in line.unicodeScalars {
-            guard let resolved = face.glyph(for: scalar) else { continue }
-            defer { pen += resolved.advance }
-            guard let path = CTFontCreatePathForGlyph(resolved.font, resolved.glyph, nil)
-            else { continue }
+        forEachGlyphPath(in: string, x.asFloat, y.asFloat) { path, pen, baseline in
             // 字ごとに、外側の周を先に、穴を後ろに並べる
             let rings = Self.rings(of: path, originX: pen, baseline: baseline)
             contours += rings.filter { !$0.isHole }
             contours += rings.filter(\.isHole)
         }
         return contours
+    }
+
+    /// 文字列の墨が載る範囲。意味の説明は `Sketch` が正本 ([ADR-0020] 決定 4)。
+    ///
+    /// **``textOutline(_:_:_:)`` と同じ字形・同じ送り・同じ基準線から取る** ([#1284])。枠は
+    /// 字形の道筋の外接の和で、輪郭の点の外接と、曲線をほどいた細かさのぶんしか違わない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    /// [#1284]: https://github.com/mokume-metal/mokume/issues/1284
+    public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
+        var box = CGRect.null
+        forEachGlyphPath(in: string, x.asFloat, y.asFloat) { path, pen, baseline in
+            let glyph = path.boundingBoxOfPath
+            // 道筋を持つが面積の無い字 (点 1 つだけの道筋) は墨に数えない
+            guard !glyph.isNull, glyph.width > 0 || glyph.height > 0 else { return }
+            // 書体の座標は基準線から上向きなので、面の縦向きへ折り返す (`rings` と同じ)
+            box = box.union(
+                CGRect(
+                    x: CGFloat(pen) + glyph.minX, y: CGFloat(baseline) - glyph.maxY,
+                    width: glyph.width, height: glyph.height))
+        }
+        // 墨が無ければ枠も無い。幅 0 の枠を返すと「そこに墨がある」と読めてしまう
+        guard !box.isNull else { return nil }
+        return TextBounds(
+            x: Float(box.minX), y: Float(box.minY), width: Float(box.width),
+            height: Float(box.height))
+    }
+
+    /// 文字列の字形を、**描くときと同じ送りと基準線**で 1 つずつ渡す。輪郭と墨の範囲が
+    /// 同じ歩き方を読む — 別々に歩くと、整列や行送りが片方でだけずれる形で食い違う。
+    ///
+    /// 読み取りの口から呼ぶので、数でない位置・無限の位置・大きさ 0 では何も渡さない (#1587)。
+    /// 道筋を持たない字 (空白) は渡さないが、送りは進める。
+    private func forEachGlyphPath(
+        in string: String, _ x: Float, _ y: Float,
+        _ body: (_ path: CGPath, _ pen: Float, _ baseline: Float) -> Void
+    ) {
+        guard !string.isEmpty, style.textSize > 0, x.isFinite, y.isFinite else { return }
+        let face = typeface
+        let lines = string.lines
+        let leading = resolvedTextLeading
+        var baseline = firstBaseline(at: y, face: face, lines: lines.count)
+
+        for line in lines {
+            var pen = penStart(at: x, face: face, line: line)
+            for scalar in line.unicodeScalars {
+                guard let resolved = face.glyph(for: scalar) else { continue }
+                defer { pen += resolved.advance }
+                guard let path = CTFontCreatePathForGlyph(resolved.font, resolved.glyph, nil)
+                else { continue }
+                body(path, pen, baseline)
+            }
+            baseline += leading
+        }
     }
 
     /// 輪郭の道筋を、点の並びへほどく。
