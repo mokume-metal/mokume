@@ -28,7 +28,9 @@ public struct Placement: Equatable, Sendable {
     public var rotation: SIMD3<Float>
     /// この置き場所の塗り。`nil` なら置いた時点の塗りで出る。
     ///
-    /// 半透明の色を渡しても、平面の線の角や継ぎ目は濃くならない (線は 1 回だけ混ざる)。
+    /// 半透明の色を渡すと、不透明の線で記録した形の線も、直に半透明の線で描いたときと同じ
+    /// 混ざり方になる (`stroke(_:)` の説明のとおり、`beginShape()` で並べた線のうち、線に沿って
+    /// 太さより離れた部分が重なる所は重ねて混ぜる)。
     public var fill: LinearRGBA?
 
     public init(
