@@ -106,6 +106,9 @@ extension DeclarationWatcher {
 /// **知らせは変更した糸でその場に届く** (`onChange` は値を書く直前に同期で呼ばれる) ので、
 /// ここは印を立てるだけにして、main actor へ何も積まない。`onChange` は `@Sendable` なので、
 /// 印は糸をまたいで触れる形で持つ。
+///
+/// 断片のファイルの見張り (``FileWatcher``) も、拾った変化の印に同じものを使う
+/// ([#1830](https://github.com/mokume-metal/mokume/issues/1830))。
 nonisolated final class DeclarationNotice: Sendable {
     private let raised = Atomic(false)
 

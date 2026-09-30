@@ -1026,8 +1026,9 @@ struct ShaderTests {
     /// ディレクトリなら、事象はフレームごとに起きる。事象ごとに 1 本積むと、譲らないループでは
     /// フレームに比例して溜まり、譲った後に溜まった本数だけ張り直しと読み直しが走る。
     ///
-    /// **走った回数で数える** — 積まれた `Task` の数そのものである。譲らずに書いて、事象が
-    /// 届くのも譲らずに待ち、それから譲る。
+    /// **扱った回数で数える** — ランタイムを回さないこの検査では、積まれた `Task` が走った数と
+    /// 同じである (フレームの頭で取る側は ``ShaderWatchWithoutYieldingTests``・#1830)。譲らずに
+    /// 書いて、事象が届くのも譲らずに待ち、それから譲る。
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     @Test("譲らずに何度書き換えても、見張りは譲った後に 1 度だけ扱う")
@@ -1085,5 +1086,183 @@ struct ShaderTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         try #require(condition(), "\(seconds) 秒待っても届かなかった", sourceLocation: sourceLocation)
+    }
+}
+
+/// main actor を譲らずに ``SketchRuntime/advance()`` を回しても、断片の保存が届く ([#1830])。
+///
+/// 見張りは拾った事象を `Task { @MainActor }` で渡していたので、譲らないループ (窓を出さない
+/// 書き出しや検査) では 1 本も走らず、何フレーム回しても古い断片のまま描いた。誰が `advance()` を
+/// 叩くかは外側の話 (``SketchRuntime`` の説明) なので、叩き方で届き方が変わってはならない。
+///
+/// **検査はすべて同期の関数で書く** — `await` を 1 つでも挟むと、そこで積まれた `Task` が走って
+/// 直っていなくても通る ([#1594] の `completionNoticesDoNotPileUpWithoutYielding`・[#1704] の
+/// `ParameterWithoutYieldingTests` と同じ回し方)。事象が届くのは眠って待つ。
+///
+/// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+/// [#1704]: https://github.com/mokume-metal/mokume/issues/1704
+/// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+@Suite(
+    "断片の保存は、譲らずに回しても次のフレームで届く (#1830)",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct ShaderWatchWithoutYieldingTests {
+    /// 黒の上に、渡された塗りで面を覆うスケッチ。`draw` の中で走らせる手続きも持てる。
+    final class Idle: Sketch {
+        var settings = SketchSettings(width: 8, height: 8, frameRate: 60)
+        var duringDraw: (() -> Void)?
+        var paint: Shader?
+
+        init() {}
+        func draw() {
+            duringDraw?()
+            background(.linear(red: 0, green: 0, blue: 0))
+            guard let paint else { return }
+            noStroke()
+            shader(paint)
+            rect(0, 0, 8, 8)
+            resetShader()
+        }
+    }
+
+    /// 見張る断片 3 つ (塗り・効果・計算) と、その在処。
+    private struct Fragments {
+        let shader: Shader
+        let effect: EffectShader
+        let computation: Computation
+        let urls: [URL]
+
+        /// 3 つの差し替えの回数。
+        var generations: [Int] { [shader.generation, effect.generation, computation.generation] }
+        var watchers: [FileWatcher] {
+            [shader.watcher, effect.watcher, computation.watcher].compactMap { $0 }
+        }
+    }
+
+    private static func shaderBody(_ green: String) -> String {
+        "float4 paint(Fragment in, Values values) { return float4(0.0, \(green), 0.0, 1.0); }"
+    }
+    private static func effectBody(_ scale: String) -> String {
+        "float4 effect(Pixel in, Values values) { return in.color * \(scale); }"
+    }
+    private static func computationBody(_ value: String) -> String {
+        """
+        kernel void fill(device float *out [[buffer(0)]], uint id [[thread_position_in_grid]])
+        {
+            out[id] = \(value);
+        }
+        """
+    }
+
+    private func load(on canvas: Canvas) throws -> Fragments {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-unyielding-shader-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let paint = directory.appendingPathComponent("paint.metal")
+        let tint = directory.appendingPathComponent("tint.metal")
+        let fill = directory.appendingPathComponent("fill.metal")
+        try Self.shaderBody("0.25").write(to: paint, atomically: true, encoding: .utf8)
+        try Self.effectBody("0.5").write(to: tint, atomically: true, encoding: .utf8)
+        try Self.computationBody("0.5").write(to: fill, atomically: true, encoding: .utf8)
+        return Fragments(
+            shader: try canvas.loadShader(paint.path),
+            effect: try canvas.loadEffect(tint.path),
+            computation: try canvas.loadComputation(fill.path),
+            urls: [paint, tint, fill])
+    }
+
+    /// 3 つを書き換え、**譲らずに**事象が届くのを待つ。
+    private func rewrite(_ fragments: Fragments, _ revision: Int) throws {
+        let before = fragments.watchers.map(\.arrivedEventCount)
+        try Self.shaderBody("0.\(revision)").write(to: fragments.urls[0], atomically: true, encoding: .utf8)
+        try Self.effectBody("0.\(revision)").write(to: fragments.urls[1], atomically: true, encoding: .utf8)
+        try Self.computationBody("\(revision).0").write(to: fragments.urls[2], atomically: true, encoding: .utf8)
+        let deadline = Date().addingTimeInterval(5)
+        func arrived() -> Bool {
+            zip(fragments.watchers.map(\.arrivedEventCount), before).allSatisfy { $0 > $1 }
+        }
+        while !arrived(), Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        // 1 度の保存でファイル側と親ディレクトリ側の両方が拾うので、後から届く分も待つ
+        Thread.sleep(forTimeInterval: 0.1)
+        try #require(arrived(), "検査の前提: 書き換えた事象が 5 秒待っても見張りに届いていない")
+    }
+
+    @Test("譲らずに回しても、書き換えた断片は次のフレームで読み直される (塗り・効果・計算)")
+    func aSaveArrivesAtTheNextFrameWithoutYielding() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        sketch.paint = fragments.shader
+        try runtime.advance()
+        try #require(fragments.generations == [0, 0, 0])
+        var green = try runtime.target.readPixels()[4, 4].green
+
+        for revision in 1...2 {
+            try rewrite(fragments, revision)
+            try runtime.advance()
+            #expect(
+                fragments.generations == [revision, revision, revision],
+                """
+                譲らずに \(revision) 回目の保存をしてから 1 フレーム回したが、読み直した回数が \
+                \(fragments.generations) (塗り・効果・計算)。見張りの知らせが、譲らない間は届かない
+                """)
+            // 読み直しただけでなく、そのフレームが新しい断片で描かれている
+            let drawn = try runtime.target.readPixels()[4, 4].green
+            #expect(drawn != green, "保存の次のフレームが、まだ古い断片で描かれている")
+            green = drawn
+        }
+    }
+
+    @Test("描いている最中に書き換えても、そのフレームの中では読み直さない")
+    func aSaveDuringDrawWaitsForTheFrameBoundary() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        try runtime.advance()
+
+        var atStart: [Int] = []
+        var atEnd: [Int] = []
+        var rewriteFailure: (any Error)?
+        sketch.duringDraw = {
+            atStart = fragments.generations
+            do { try rewrite(fragments, 1) } catch { rewriteFailure = error }
+            // 書き換えた後で使う。**使うときに取る**形だと、ここで組み直してしまう
+            runtime.canvas.shader(fragments.shader)
+            runtime.canvas.rect(0, 0, 4, 4)
+            runtime.canvas.resetShader()
+            atEnd = fragments.generations
+        }
+        try runtime.advance()
+        sketch.duringDraw = nil
+        if let rewriteFailure { throw rewriteFailure }
+        #expect(atStart == atEnd, "描いている最中に組み直した: \(atStart) → \(atEnd)")
+
+        try runtime.advance()
+        #expect(fragments.generations == [1, 1, 1], "次のフレームの境目で読み直していない")
+    }
+
+    @Test("譲らずに何度書き換えても、積まれる知らせは 1 本までで、扱うのは境目ごとに 1 度")
+    func savesWithoutYieldingDoNotPileUp() throws {
+        let sketch = Idle()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        try runtime.advance()
+        let fragments = try load(on: runtime.canvas)
+        try runtime.advance()
+        let handled = fragments.watchers.map(\.handledCount)
+
+        for revision in 1...5 {
+            try rewrite(fragments, revision)
+            try runtime.advance()
+        }
+        #expect(fragments.generations == [5, 5, 5])
+        for watcher in fragments.watchers {
+            #expect(watcher.queuedNoticeCount <= 1, "譲らない間に知らせが積み上がっている")
+        }
+        // 保存 1 度でファイル側と親ディレクトリ側が拾っても、扱うのは境目ごとに 1 度
+        #expect(zip(fragments.watchers.map(\.handledCount), handled).allSatisfy { $0 - $1 == 5 })
     }
 }

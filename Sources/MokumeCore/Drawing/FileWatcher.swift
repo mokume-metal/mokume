@@ -33,7 +33,29 @@ import Foundation
 /// 知らせは ``CoalescedNotices`` で合体する — 拾ったときにすることは「張り直して知らせる」
 /// だけで、何回変わったかは要らない。
 ///
+/// ## 扱うのは、印を取った側
+///
+/// 拾ったらその場で**印を立てる**。扱う (張り直して知らせる) のは、印を取った側である。取る側は
+/// 2 つある:
+///
+/// - 積んだ `Task` が走ったとき (main actor を譲ったとき。窓で回すループはフレームの間に譲る)
+/// - ランタイムがフレームを描き始める直前 (``takeChanges()``)
+///
+/// かつては `Task` しか取らなかったので、main actor を譲らずに ``SketchRuntime/advance()`` を回す
+/// ループ (窓を出さない書き出しや検査) では 1 本も走らず、何フレーム回しても古い断片のまま
+/// 描いた ([#1830])。誰が `advance()` を叩くかは外側の話 (``SketchRuntime`` の説明) なので、叩き方で
+/// 届き方が変わってはならない (#1704 が `@Param` の知らせで同じ形を直した)。
+///
+/// **取るのはランタイムのフレームの頭で、面の描き始めではない。** `draw()` の中で別の面を描くと
+/// (描き場所の入れ子) 面の描き始めは外のフレームの途中に来るので、そこで組み直すと 1 つの
+/// フレームの中で古い断片と新しい断片が混ざる。`Task` の側も、描いている最中は走らない
+/// (描く手続きは譲らない)。
+///
+/// 印は 1 つなので、両方の側が同じ変化を 2 度扱うことはない。`Task` を残すのは、ランタイムを
+/// 通さずに面だけを回す経路 (面を直に描く検査など) でも届くようにするためである。
+///
 /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
+/// [#1830]: https://github.com/mokume-metal/mokume/issues/1830
 final class FileWatcher {
     private let url: URL
     private let onChange: () -> Void
@@ -44,10 +66,20 @@ final class FileWatcher {
     private var watchedIdentifier: UInt64?
     /// 拾った事象を main actor へ渡す前に合体する器。
     private let notices = CoalescedNotices()
+    /// 拾った変化の印。扱う側が取る (冒頭の「扱うのは、印を取った側」)。印の形は `@Param` の
+    /// 知らせと同じもので足りる (拾った糸で立て、main actor で取る)。
+    private let change = DeclarationNotice()
+
+    /// 生きている見張り。ランタイムがフレームの頭で回す (``takeChanges()``)。**弱く持つ** —
+    /// 見張りの寿命は断片の持ち主が決める。死んだものは回すときに落とす。
+    private static var live: [Weak] = []
+    private struct Weak { weak var watcher: FileWatcher? }
 
     /// 診断: 拾った事象の数。
     var arrivedEventCount: Int { notices.arrived }
-    /// 診断: 拾った事象を main actor で扱った回数 (積まれた `Task` が走った数)。
+    /// 診断: main actor へ積んだまま、まだ走っていない知らせの数。**1 を超えない。**
+    var queuedNoticeCount: Int { notices.queued }
+    /// 診断: 拾った変化を扱った回数 (張り直して知らせた数)。
     private(set) var handledCount = 0
 
     init(url: URL, onChange: @escaping () -> Void) {
@@ -55,6 +87,22 @@ final class FileWatcher {
         self.onChange = onChange
         watchDirectory()
         watchFile()
+        Self.live.removeAll { $0.watcher == nil }
+        Self.live.append(Weak(watcher: self))
+    }
+
+    /// 生きている見張りのうち、印の立ったものを扱う。**フレームを描き始める直前に呼ぶ**
+    /// (``SketchRuntime`` が呼ぶ・冒頭の「扱うのは、印を取った側」)。
+    static func takeChanges() {
+        live.removeAll { $0.watcher == nil }
+        // 回すのは呼んだ時点の写し。扱う中 (持ち主の reload) で一覧が変わっても崩れない
+        for entry in live { entry.watcher?.takeChange() }
+    }
+
+    /// 印が立っていれば下ろして扱う。
+    private func takeChange() {
+        guard change.take() else { return }
+        handle()
     }
 
     deinit {
@@ -96,15 +144,19 @@ final class FileWatcher {
             onEvent: onEvent)
     }
 
-    /// 見張りが事象を拾ったときの手続き。**積んだまま走っていない知らせがあれば積まない。**
+    /// 見張りが事象を拾ったときの手続き。**印を立て、積んだまま走っていない知らせがあれば
+    /// 積まない。**
     ///
-    /// 印は自分の生死によらず下ろす (``RenderDevice`` の完了の知らせと同じ)。
+    /// 積んだ印は自分の生死によらず下ろす (``RenderDevice`` の完了の知らせと同じ)。**印は積む前に
+    /// 立てる** — 走った `Task` が印を取った後に届いた事象は、立て直した印をもう 1 本の `Task` か
+    /// 次のフレームの頭が取る。
     private var onEvent: @Sendable () -> Void {
-        { [weak self, notices] in
+        { [weak self, notices, change] in
+            change.raise()
             guard notices.arrive(0) else { return }
             Task { @MainActor in
                 _ = notices.take()
-                self?.handle()
+                self?.takeChange()
             }
         }
     }

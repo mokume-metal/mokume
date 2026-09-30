@@ -791,6 +791,12 @@ public final class SketchRuntime {
 
     /// フレームの頭で片付けること。
     private func beginFrame() {
+        // **保存し直した断片は、描き始める前に読み直す** ([#1830])。main actor を譲らないループ
+        // でも次のフレームに届くのはここで取るからで、描いている最中には組み直さない
+        // (``FileWatcher`` の「扱うのは、印を取った側」)
+        //
+        // [#1830]: https://github.com/mokume-metal/mokume/issues/1830
+        FileWatcher.takeChanges()
         // 速さは**いつでも**数える。窓は観測が無くても数字を出すためで、ここを
         // 観測に紐づけると窓が自分で測り直すことになる (源が 2 つに割れる)
         tempo.record(now: now())
