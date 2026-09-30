@@ -14,7 +14,8 @@ import mokume
 /// 「ここまで」の出し分けが `isTruncated`。折り返しは `textWrap(.character)` なので、
 /// 行末が枠の右辺で揃う代わりに語の途中で折れる。
 ///
-/// 右下の輪郭は `TextContour.isHole` で塗り分けている — 外周が橙、穴が水色。書体は
+/// 右下の輪郭は `TextContour.isHole` で塗り分けている — 外周が橙、穴が水色。それを囲む
+/// 灰の枠が `textBounds()` の返す墨の範囲で、送り幅と違って字の左右の余白を含まない。書体は
 /// `Helvetica` にしてある (既定の書体は字を重なった部品で持つので、穴として返らない
 /// 字がある)。説明の小さな字だけは `noTextFont()` で既定の書体へ戻している。
 final class TypeAndMeasure: Sketch {
@@ -152,11 +153,19 @@ final class TypeAndMeasure: Sketch {
             for point in contour.points { vertex(point.x, point.y) }
             endShape(.close)
         }
+        // 墨の範囲。**同じ引数・同じ設定のまま**測るので、輪郭をちょうど囲む
+        if let bounds = textBounds("Bog8", 540, 440) {
+            noFill()
+            stroke(153, 166, 191)
+            strokeWeight(1)
+            rect(bounds.x, bounds.y, bounds.width, bounds.height)
+        }
         textStyle(.normal)
         noStroke()
         noTextFont()
         textSize(13)
         fill(153, 166, 191)
         text("外周は橙・穴は水色 (isHole)", 540, 510)
+        text("灰の枠は墨の範囲 (textBounds)", 540, 528)
     }
 }
