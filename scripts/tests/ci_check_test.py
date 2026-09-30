@@ -140,7 +140,9 @@ class CiCheckTest(unittest.TestCase):
             self.fail("終わった後も出力の管が閉じない (背面の行が握っている)")
 
     def test_short_step_is_not_reported_as_still_running(self):
-        result = self.run_steps("build", heartbeat="1")
+        # 間隔は既定の 30 秒のまま。1 秒にすると「段が 1 秒以内に終わる」ことが前提になり、
+        # CPU が混んで段が 1 秒を越えると、正しく出た継続中の行で赤になる (#1881)
+        result = self.run_steps("build")
         self.assertNotIn("継続中", result.stdout)
 
     def test_second_run_names_the_previous_durations(self):
