@@ -812,4 +812,133 @@ struct StrokeOverlapTests {
         }
         #expect(differingPixels(pixels, direct) == 0, "\(mode): \(holes(pixels, direct))")
     }
+
+    // MARK: 塗りと線が同じ区間にある形・線が区間の途中から始まる形 (反証で足した口)
+
+    private static let redInk = LinearRGBA(premultipliedRed: 1, green: 0, blue: 0, alpha: 1)
+    private static let blueInk = LinearRGBA(premultipliedRed: 0, green: 0, blue: 1, alpha: 1)
+    /// 半透明の赤。0.5 は 2 進で正確に表せるので、0.5 倍・0.25 倍しても成分がずれない。
+    private static let paleRedInk = LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5)
+    /// 半分の不透明度の白。掛けた色は、直に描く色 (0.5 倍) と成分までビット一致する。
+    private static let halfVeil = LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5)
+
+    private static func scaled(_ color: LinearRGBA, by factor: Float) -> LinearRGBA {
+        LinearRGBA(
+            premultipliedRed: color.red * factor, green: color.green * factor,
+            blue: color.blue * factor, alpha: color.alpha * factor)
+    }
+
+    /// 一辺 16 の閉じた四角。`fill` / `stroke` が無ければ、塗りだけ・線だけの形になる。
+    /// `factor` は、置き場所で色を掛けた絵を直に描くときの倍率。
+    private static func square(
+        _ canvas: Canvas, x: Float, y: Float, fill: LinearRGBA?, stroke: LinearRGBA?,
+        factor: Float = 1
+    ) {
+        if let fill { canvas.fill(scaled(fill, by: factor)) } else { canvas.noFill() }
+        if let stroke {
+            canvas.stroke(scaled(stroke, by: factor))
+            canvas.strokeWeight(4)
+        } else {
+            canvas.noStroke()
+        }
+        canvas.beginShape()
+        canvas.vertex(x, y)
+        canvas.vertex(x + 16, y)
+        canvas.vertex(x + 16, y + 16)
+        canvas.vertex(x, y + 16)
+        canvas.endShape(.close)
+    }
+
+    /// 塗りと不透明の線が、同じ区間で並ぶ形。塗りの上に線が載る。
+    @Test("塗りと不透明の線を持つ形に半透明の色を掛けて置くと、直に描いた絵と 1 画素も違わない")
+    func tintedFillAndOpaqueStrokeMatchDirectDrawing() throws {
+        let pixels = try placed(
+            { canvas in
+                canvas.createShape {
+                    canvas.fill(Self.blueInk)
+                    canvas.stroke(Self.redInk)
+                    canvas.strokeWeight(20)
+                    Self.closedSquare(canvas)
+                }
+            },
+            at: [Placement(fill: Self.halfVeil)])
+        let direct = try render { canvas in
+            canvas.fill(Self.scaled(Self.blueInk, by: 0.5))
+            canvas.stroke(Self.scaled(Self.redInk, by: 0.5))
+            canvas.strokeWeight(20)
+            Self.closedSquare(canvas)
+        }
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 線の手前に塗りだけの頂点が並び、線どうしの間には、半透明の線で記録した (記録のときに引いた)
+    /// 線と塗りだけの頂点が挟まる。差し替える線は、置いた先で位置がずれる (`place` の
+    /// `cursor` と `shift`)。置き場所は、色を掛けるもの・掛けないものを混ぜて 3 か所。
+    private static func mixedPieces(_ canvas: Canvas, factor: Float) {
+        square(canvas, x: 6, y: 6, fill: nil, stroke: paleRedInk, factor: factor)
+        square(canvas, x: 34, y: 6, fill: blueInk, stroke: redInk, factor: factor)
+        square(canvas, x: 6, y: 34, fill: blueInk, stroke: nil, factor: factor)
+        square(canvas, x: 34, y: 34, fill: nil, stroke: redInk, factor: factor)
+        square(canvas, x: 56, y: 56, fill: blueInk, stroke: nil, factor: factor)
+    }
+
+    @Test("線が区間の途中から始まる形は、色を掛ける置き場所と掛けない置き場所を混ぜて置いても、それぞれ直に描いた絵と同じ")
+    func strokesStartingMidRunKeepTheirPlace() throws {
+        let pixels = try placed(
+            { canvas in canvas.createShape { Self.mixedPieces(canvas, factor: 1) } },
+            at: [
+                Placement(fill: Self.halfVeil), Placement(x: 80),
+                Placement(y: 80, fill: Self.halfVeil),
+            ])
+        let direct = try render { canvas in
+            Self.mixedPieces(canvas, factor: 0.5)
+            canvas.push()
+            canvas.translate(80, 0)
+            Self.mixedPieces(canvas, factor: 1)
+            canvas.pop()
+            canvas.push()
+            canvas.translate(0, 80)
+            Self.mixedPieces(canvas, factor: 0.5)
+            canvas.pop()
+        }
+        #expect(painted(pixels) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 入れ子 (記録済みの形をそのまま置く・記録の中で半透明の色を掛けて置く) と、組 (`group` と `+`) が
+    /// 混ざった形。内側で 1 度 (0.5)、外側で 1 度 (0.5) と、2 度掛かる輪郭は 0.25 倍になる。
+    @Test("入れ子と組を混ぜた形に半透明の色を掛けて置いても、直に描いた絵と 1 画素も違わない")
+    func nestedAndGroupedShapesKeepTheirPlace() throws {
+        func build(_ canvas: Canvas, grouping: (Shape, Shape) -> Shape) -> Shape {
+            let inner = canvas.createShape {
+                Self.square(canvas, x: 6, y: 6, fill: Self.blueInk, stroke: Self.redInk)
+            }
+            let outer = canvas.createShape {
+                Self.square(canvas, x: 34, y: 6, fill: Self.blueInk, stroke: nil)
+                canvas.shape(inner)
+                Self.square(canvas, x: 6, y: 34, fill: nil, stroke: Self.redInk)
+                canvas.shape(inner, at: [Placement(x: 28, y: 28, fill: Self.halfVeil)])
+            }
+            let other = canvas.createShape {
+                Self.square(canvas, x: 56, y: 6, fill: nil, stroke: Self.redInk)
+            }
+            return grouping(outer, other)
+        }
+        let direct = try render { canvas in
+            Self.square(canvas, x: 34, y: 6, fill: Self.blueInk, stroke: nil, factor: 0.5)
+            Self.square(canvas, x: 6, y: 6, fill: Self.blueInk, stroke: Self.redInk, factor: 0.5)
+            Self.square(canvas, x: 6, y: 34, fill: nil, stroke: Self.redInk, factor: 0.5)
+            Self.square(canvas, x: 34, y: 34, fill: Self.blueInk, stroke: Self.redInk, factor: 0.25)
+            Self.square(canvas, x: 56, y: 6, fill: nil, stroke: Self.redInk, factor: 0.5)
+        }
+        let grouped = try placed(
+            { canvas in build(canvas) { Shape.group([$0, $1]) } }, at: [Placement(fill: Self.halfVeil)])
+        let added = try placed(
+            { canvas in build(canvas) { $0 + $1 } }, at: [Placement(fill: Self.halfVeil)])
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(grouped, direct) == 0, "group: \(holes(grouped, direct))")
+        #expect(differingPixels(added, direct) == 0, "+: \(holes(added, direct))")
+    }
 }
