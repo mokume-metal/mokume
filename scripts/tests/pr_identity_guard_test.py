@@ -305,6 +305,13 @@ class GuardTest(unittest.TestCase):
         "declare -x GH_REPO=mokume-metal/mokume; {gh}",
         "GIT_DIR={m}/.git {gh}",
         "export GIT_DIR={m}/.git && {gh}",
+        # 反証 #1〜#3
+        "builtin cd {m} && {gh}",
+        "command cd {m} && {gh}",
+        "builtin export GH_REPO=mokume-metal/mokume && {gh}",
+        "GIT_COMMON_DIR={m}/.git {gh}",
+        "printf -v GH_REPO %s mokume-metal/mokume && {gh}",
+        "read -r GH_REPO <<< mokume-metal/mokume && {gh}",
     )
 
     # mokume の cwd で、継いだ他リポの GH_REPO を消す文 (#1836 の退行)
@@ -344,6 +351,10 @@ class GuardTest(unittest.TestCase):
         'false && {issue} && export GH_TOKEN && true; {gh}',
         '{issue} && export GH_TOKEN & {gh}',
         't="$(bash scripts/gh-app-token.sh)" && true; GH_TOKEN="$t" {gh}',
+        # 反証 #5: 置換の終了コードが発行の失敗を伝えない
+        'GH_TOKEN="$(bash scripts/gh-app-token.sh || true)" && export GH_TOKEN && {gh}',
+        "GH_TOKEN=\"$(bash scripts/gh-app-token.sh | tr -d '\\n')\" && export GH_TOKEN && {gh}",
+        'GH_TOKEN="$(bash scripts/gh-app-token.sh; true)" && export GH_TOKEN && {gh}',
     )
 
     def test_issue_that_does_not_reach_gh_by_and_denied(self):
@@ -366,6 +377,23 @@ class GuardTest(unittest.TestCase):
         self.assert_passed(
             'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN &&\ngh pr create --fill'
         )
+
+    # main で通っていた正しい形 (反証 #7・#8)。パイプラインと複合コマンドは並びの 1 段で、
+    # 発行より前の || と、先に済ませた export は発行の失敗の伝わり方を変えない
+    REACHING_FORMS = (
+        "{safe}printf '%s' body | {gh} --body-file -",
+        "{safe}{{ git push -u origin HEAD; {gh}; }}",
+        "{safe}if true; then {gh}; fi",
+        "git fetch || true && {safe}{gh}",
+        'export GH_TOKEN; GH_TOKEN="$(bash scripts/gh-app-token.sh)" && {gh}',
+    )
+
+    def test_issue_that_reaches_gh_through_pipes_and_groups_passes(self):
+        for form in self.REACHING_FORMS:
+            for port in self.PORTS:
+                command = form.format(safe=self.SAFE, gh=port)
+                with self.subTest(command=command):
+                    self.assert_passed(command)
 
     def test_issue_inside_if_is_still_denied(self):
         """#1823 の D の 19 — 止める側の誤検知のまま (条件の中の発行は && の並びでない)。"""
@@ -714,6 +742,41 @@ class DraftTest(GuardTest):
     def test_revert_の_draft_は差分を読めないので差し戻す(self):
         """revert の中身は手元に無い。読めなければ差し戻す側に倒す。"""
         self.assert_denied(self.TOKEN + "gh pr revert 42 --draft", cwd=self.unprotected())
+
+    def elsewhere(self):
+        """別のリポジトリの checkout。origin/main の上に重要パスに触れない枝を置く。
+        ここの差分は、mokume 宛ての PR の差分ではない。"""
+        root, run = self.repo()
+        run("remote", "set-url", "origin", "git@github.com:shinyaoguri/setup.git")
+        run("switch", "-q", "code-only")
+        return str(root)
+
+    def test_cwd_の差分が宛先の差分と確かめられなければ差し戻す(self):
+        """反証 #6 — 宛先の判定が cwd を使わなかったなら、Draft の判定も cwd の差分を読まない。
+
+        宛先を「決められない」と読んだ (cd などの文・前置) か、-R / GH_REPO で宛先を名指しした
+        とき、cwd の差分はその PR の差分とは限らない。読むと #1621 の穴が開く。
+        """
+        mokume = self.protected()
+        there = self.elsewhere()
+        for command in (
+            f"cd {mokume} && " + self.TOKEN + "gh pr create --draft --fill",
+            self.TOKEN + "GH_REPO=mokume-metal/mokume gh pr create --draft --fill",
+            self.TOKEN + "gh pr create -R mokume-metal/mokume --draft --fill",
+        ):
+            with self.subTest(command=command):
+                reason = self.assert_denied(command, cwd=there)
+                self.assertIn("gh pr ready --undo", reason)
+        # 同じリポジトリの別の checkout (別の worktree) へ cd しても、cwd の差分は読まない
+        reason = self.assert_denied(
+            f"cd {mokume} && " + self.TOKEN + "gh pr create --draft --fill", cwd=self.unprotected()
+        )
+        self.assertIn("cwd から変わりうる", reason)
+        # 宛先が cwd のリポジトリなら、今までどおり差分で判定する
+        self.assert_passed(
+            self.TOKEN + "gh pr create -R mokume-metal/mokume --draft --fill",
+            cwd=self.unprotected(),
+        )
 
     def test_差分を読めなければ差し戻して_そう名乗る(self):
         root, _ = self.repo(with_base=False)

@@ -36,17 +36,22 @@
 #
 # 取りこぼしとして許容するもの:
 #
-#   - **別のコマンドを起動するコマンド**の後ろの gh (sudo / command / exec / builtin /
-#     nohup / nice / xargs … gh)、`bash -c "gh …"`・eval・source、alias とシェル関数。
-#     起動する側の語は利用者が増やせるので、数え上げは必ず取りこぼす (gh api を素通しに
-#     しているのと同じ水準)
+#   - **別のコマンドを起動するコマンド**の後ろの gh (sudo / exec / nohup / nice / xargs …
+#     gh)、`bash -c "gh …"`・eval・source、alias とシェル関数。起動する側の語は利用者が
+#     増やせるので、数え上げは必ず取りこぼす (gh api を素通しにしているのと同じ水準)。
+#     bash の builtin / command は増やせない語なので、その後ろも文として読む (#1823 の反証 #1。
+#     command -v / -V は引くだけなので読まない)
 #   - 実行時に決まる語 (`$GH …`・`$(which gh) …`)。値を読むのは推測になる
-#   - 同じコマンドの中で**文として**宛先を変える形 (cd・pushd・popd・GH_REPO や GIT_DIR を
-#     変える文) の**値**。値は追わず、あれば宛先を「決められない」として止める側へ倒す
-#     (#1823。invocation_targets_other_repo の説明)。GH_TOKEN を文として変える形 (発行・
+#   - 同じコマンドの中で**文として**宛先を変える形 (cd・pushd・popd・GH_REPO や GIT_ で
+#     始まる変数を変える文) の**値**。値は追わず、あれば宛先を「決められない」として止める側へ
+#     倒す (#1823。invocation_targets_other_repo の説明)。GH_TOKEN を文として変える形 (発行・
 #     export・unset・再代入) は読む (#1729)
-#   - GH_TOKEN を変える文のうち、サブシェル・$( … ) の中のもの (外へは効かないので読まない)
-#     と、パイプラインの片側・declare -x / typeset -x / readonly のもの
+#   - 宛先に効きうるが、上の名前と文に当たらないもの (source・eval・シェル関数・
+#     `git remote set-url`・`gh repo set-default`・HOME / XDG_CONFIG_HOME の前置 …)。
+#     列挙を「宛先に効かないと分かっている文」の側へ裏返すかは #1880 で決める
+#   - GH_TOKEN を変える文のうち、サブシェル・$( … )・パイプラインの要素の中のもの (外へは
+#     効かないので読まない。中の発行・export も外の gh へは運ばない) と、declare -x /
+#     typeset -x / declare +x / readonly のもの
 #
 # このリポジトリで使う形ではない。
 #
@@ -146,17 +151,21 @@ is_help_request() { # $1=コマンド
 #                   installation  installation token (ghs_… か、同じ行で安全に発行した値)
 #                   inherit       打つシェルから継ぐ (同じ行では触っていない)
 #                   unsafe        発行の失敗が後段へ伝わらない形で入れた
-#                                 (export X="$(…)" / 前置 GH_TOKEN="$(…)" / 発行・export・gh が
-#                                 1 つの && の並びにない、またはその並びの gh より前に || がある
-#                                 — #1823。直書きの ghs_ は発行が失敗しえないので並びを問わない)
+#                                 (export X="$(…)" / 前置 GH_TOKEN="$(…)" / 発行の成功と export
+#                                 が、その gh の段で必ず済んでいるとは言えない — #1823。読み方は
+#                                 下の「並びの枠」。置換の中の発行は、置換の終了コードが
+#                                 gh-app-token.sh の成否を伝えるときだけ発行と読む (|| true・
+#                                 | tr・; true の後ろでは伝わらない)。直書きの ghs_ は発行が
+#                                 失敗しえないので成否を問わない)
 #                   unexported    安全に発行したが export していない (gh へ渡らない)
 #                   removed       消した (env -u GH_TOKEN / env -i / unset GH_TOKEN)
 #                   other         確かめられない値 (空・個人の token・発行していない変数)
 #                   unknown       読めない形で変えた (+= など)
 #   2. GH_REPO    前置の値。`=` は継ぐ・`-` は消した・`+<値>` は前置の値・`?` は読めない
-#                 (前置が無く、gh より前の文で GH_REPO を代入・export・unset したときも `?`)
+#                 (前置が無く、gh より前の文で GH_REPO を代入・export・unset・read・
+#                 printf -v … したときも `?`)
 #   3. chdir      宛先を cwd から決められないなら 1。env -C と、gh より前の文としての
-#                 cd・pushd・popd と、GIT_DIR (前置・文) (#1823)
+#                 cd・pushd・popd と、GIT_ で始まる変数 (前置・文) (#1823)
 #   4. 置き場     top か sub ($( … ) やバッククォートの中で実行される)
 #   5. 呼び出し   `gh …` から始まる断片。引用の中の空白・改行は \002 に伏せてある
 #
@@ -182,6 +191,8 @@ is_help_request() { # $1=コマンド
 # 断片ごとに、**実行される語の手前の前置を落とす**。落とすのは
 #
 #   予約語       ! { do then else elif if while until time (-p) coproc、function <名前>
+#                (文の頭の予約語と builtin・command (-p) は、並びの枠を読む structure が落とす。
+#                command -v / -V は引くだけなので落とさない)
 #   リダイレクト 2>/dev/null・>out・<in・&>log …
 #   代入         NAME=値・NAME+=値・NAME[i]=値 (値の引用・\ の逃がしを含む)。GH_TOKEN と
 #                GH_REPO は値を 1・2 列に写す
@@ -210,10 +221,112 @@ gh_invocations() { # $1=コマンド
       function addw(s) { if (length(cw[depth]) < WCAP) cw[depth] = cw[depth] s }
       function mask(s) { gsub(/[ \t\n]/, M, s); return s }
       function run(i, j,   len) { len = j - i; if (len > WCAP) len = WCAP; return substr(src, i, len) }
-      # 入れ子は、宛先を変えた印 (DC・DR) を親から継ぐ。閉じれば捨てるので外へは効かない
-      function push(t) {
+      # 入れ子は、宛先を変えた印 (DC・DR) を親から継ぐ。閉じれば捨てるので外へは効かない。
+      # 並びの枠も 1 つ開く。( … ) は親の段の要素になり、$( … ) は語の中で走る
+      function push(t,   e) {
+        if (t == "paren") { FPEND[fd] = 1; FWANT[fd] = 0 }
+        e = FE[fd]
         depth++; ftype[depth] = t; finq[depth] = 0; cw[depth] = ""; nw[depth] = 0; fiss[depth] = 0
         DC[depth] = DC[depth - 1]; DR[depth] = DR[depth - 1]
+        fd++; FK[fd] = t; FDEP[fd] = depth; FE0[fd] = e; newlist(e)
+        if (t != "paren") { nsub++; FSK[fd] = "S" nsub }
+      }
+      # --- 並びの枠 (#1823 の反証 #7・#8・#10) ---
+      #
+      # gh の時点で「必ず済んでいる」事実を、bash の文法の結合の順に運ぶ。事実は空白区切りの
+      # 集合で持つ: I<n> は n 番目の発行の代入が成功した、X<n> は GH_TOKEN を export した
+      # (n は unset・export -n で進む世代)、S<n> は n 番目の置換の中で gh-app-token.sh が
+      # 成功した。
+      #
+      # 枠は並びの入れ物で、入れ子の外 (top)・( … )・$( … )・バッククォート・{ … }・
+      # if / while / until / for … の 1 つずつにある。枠の中で持つのは:
+      #   FG  いまの並びの頭で必ず済んでいる事実 (; と改行の後ろの並びへ運ぶ)
+      #   FE  いま読んでいる段 (パイプライン) に入るとき必ず済んでいる事実
+      #   FZ / FN  直前の段までを終えて、終了コードが 0 / 0 以外のとき必ず済んでいる事実
+      # 段を終えると、&& の後ろの段は FZ から、|| の後ろの段は FN から入る。段が飛ばされても
+      # 終了コードは前のまま残るので、FZ・FN はその場合との積を取る。
+      #
+      # パイプライン (a | b) は && より強く結合する 1 つの段で、要素はどれも子で走るので、
+      # 中で立てた事実は外へ出さない。! は段の成否を裏返すので、成功の事実を捨てる。
+      # 複合コマンド ({ … }・if …) も 1 つの段で、中は入口の事実 (FE0) から読む。中で
+      # 立てた事実は外へ出さない (止める側)。if の条件で立てた事実も本体へ運ばない —
+      # 本体が条件の成功のときだけ走ることは読まない (#1823 の D の 19 を止める側に置く)
+      function sunion(a, b,   n, t, k) {
+        n = split(b, t, " ")
+        for (k = 1; k <= n; k++) if (!index(a, " " t[k] " ")) a = a t[k] " "
+        return a
+      }
+      function sinter(a, b,   n, t, k, r) {
+        r = " "; n = split(a, t, " ")
+        for (k = 1; k <= n; k++) if (index(b, " " t[k] " ")) r = r t[k] " "
+        return r
+      }
+      function has(a, k) { return index(a, " " k " ") > 0 }
+      function newlist(g) {
+        FG[fd] = g; FE[fd] = g; FST[fd] = 0; FOP[fd] = ""
+        FPEND[fd] = 0; FWANT[fd] = 0; FPIPE[fd] = 0; FNEG[fd] = 0; FPS[fd] = " "; FPA[fd] = " "
+      }
+      # 段を終える。FPS / FPA はその段で、成功したとき / 走ったときに必ず済む事実
+      function finpipe(   s, a, e) {
+        if (!FPEND[fd]) return
+        s = FPS[fd]; a = FPA[fd]
+        if (FPIPE[fd]) { s = " "; a = " " }
+        if (FNEG[fd]) s = a
+        e = FE[fd]
+        if (!FST[fd]) { FZ[fd] = sunion(e, s); FN[fd] = sunion(e, a) }
+        else if (FOP[fd] == "&&") { FN[fd] = sinter(sunion(e, a), FN[fd]); FZ[fd] = sunion(e, s) }
+        else { FZ[fd] = sinter(sunion(e, s), FZ[fd]); FN[fd] = sunion(e, a) }
+        FST[fd] = 1; FPEND[fd] = 0; FWANT[fd] = 0; FPIPE[fd] = 0; FNEG[fd] = 0; FPS[fd] = " "; FPA[fd] = " "
+      }
+      # 並びを終える。& で終えた並びは子で走るので、後ろへ何も運ばない
+      function endlist(bg) {
+        finpipe()
+        newlist(bg || !FST[fd] ? FG[fd] : sinter(FZ[fd], FN[fd]))
+      }
+      function andor(op) {
+        finpipe()
+        if (!FST[fd]) return
+        FOP[fd] = op; FE[fd] = (op == "&&") ? FZ[fd] : FN[fd]
+      }
+      function openf(k,   e) {
+        FPEND[fd] = 1; FWANT[fd] = 0; e = FE[fd]
+        fd++; FK[fd] = k; FDEP[fd] = depth; FE0[fd] = e; newlist(e)
+      }
+      function closef(k) {
+        if (fd == 0 || FK[fd] != k || FDEP[fd] != depth) return
+        finpipe(); fd--
+      }
+      # 入れ子を閉じる前に、その深さで閉じ忘れた複合コマンドの枠を捨てる
+      function dropto() {
+        while (fd > 0 && FDEP[fd] == depth && (FK[fd] == "grp" || FK[fd] == "cmp")) fd--
+        finpipe()
+      }
+      # 文の先頭の予約語と、枠を開け閉めする語を読み、残りを返す。builtin / command の後ろも
+      # 文として読む (反証 #1)。command -v / -V は引くだけで実行しない
+      function structure(f,   w, o) {
+        while ((w = word1(f)) != "") {
+          if (w == "{") { openf("grp"); f = rest1(f); continue }
+          if (w ~ /^(if|while|until)$/) { openf("cmp"); f = rest1(f); continue }
+          if (w ~ /^(for|select)$/) { openf("cmp"); return "" }
+          if (w ~ /^(then|do|else|elif)$/) {
+            if (FK[fd] == "cmp" && FDEP[fd] == depth) { finpipe(); newlist(FE0[fd]) } else endlist(0)
+            f = rest1(f); continue
+          }
+          if (w == "}") { closef("grp"); f = rest1(f); continue }
+          if (w ~ /^(fi|done)$/) { closef("cmp"); f = rest1(f); continue }
+          if (w == "!") { FNEG[fd] = 1; f = rest1(f); continue }
+          if (w == "coproc") { FPIPE[fd] = 1; f = rest1(f); continue }
+          if (w == "time") { f = rest1(f); if (word1(f) == "-p") f = rest1(f); continue }
+          if (w == "function") { f = rest1(rest1(f)); continue }
+          if (w == "builtin") { f = rest1(f); continue }
+          if (w == "command") {
+            o = rest1(f)
+            while (word1(o) ~ /^-/) { if (word1(o) ~ /[vV]/) return f; o = rest1(o) }
+            f = o; continue
+          }
+          break
+        }
+        return f
       }
       function endword() { if (cw[depth] != "") { nw[depth]++; W[depth, nw[depth]] = cw[depth]; cw[depth] = "" } }
       function joinw(d, lo, hi,   mid) {
@@ -221,36 +334,41 @@ gh_invocations() { # $1=コマンド
         mid = int((lo + hi) / 2)
         return joinw(d, lo, mid) " " joinw(d, mid + 1, hi)
       }
-      function flush(sep,   f, k) {
+      # 断片 (単純コマンド 1 つ) を読み、区切り (sep) に従って段・並びを進める。
+      # sep の "close" は入れ子を閉じる ) で、段を終えるだけにする (並びの終わりは
+      # 閉じた側が決める)。空の断片は、段の途中でなければ読み飛ばす — && / || / | の後ろの
+      # 改行 (継続) と、; の後ろの ; など
+      function flush(sep,   f, k, iss) {
         endword()
-        if (nw[depth] == 0) { if (depth == 0) chain(sep, 1); return }
-        f = joinw(depth, 1, nw[depth])
-        for (k = 1; k <= nw[depth]; k++) delete W[depth, k]
-        nw[depth] = 0
-        if (index(f, "scripts/gh-app-token.sh")) fiss[depth] = 1
-        emit(f, sep)
-        if (depth == 0) chain(sep, 0)
+        if (nw[depth] > 0) {
+          f = joinw(depth, 1, nw[depth])
+          for (k = 1; k <= nw[depth]; k++) delete W[depth, k]
+          nw[depth] = 0
+          iss = index(f, "scripts/gh-app-token.sh")
+          if (iss) fiss[depth] = 1
+          f = structure(f)
+          if (f != "") {
+            ES = " "; EA = " "
+            emit(f)
+            if (iss && (FK[fd] == "sub" || FK[fd] == "bt")) ES = sunion(ES, FSK[fd])
+            FPEND[fd] = 1; FWANT[fd] = 0; FPS[fd] = sunion(FPS[fd], ES); FPA[fd] = sunion(FPA[fd], EA)
+          }
+        } else if (!FPEND[fd] || (FWANT[fd] && sep == "\n")) return
+        if (sep == "&&" || sep == "||") andor(sep)
+        else if (sep == "|") { FPIPE[fd] = 1; FWANT[fd] = 1 }
+        else if (sep == ";" || sep == "\n" || sep == ")") endlist(0)
+        else if (sep == "&") endlist(1)
+        else if (sep == "close" || sep == "") finpipe()
       }
-      # 入れ子の外の and-or の並び。LID は並びの番号で、&& 以外の区切り (; 改行 & | …) で
-      # 進む。|| を見たら、その並びの残りに印 (OR) を付ける — 前の段が成功すると後ろが
-      # 飛ばされ、その先の && へ進む。空の断片の区切りは、&& / || の後の改行 (継続) と ( を
-      # 数えない。empty = 区切りの前に語が無かった
-      function chain(sep, empty) {
-        if (sep == "&&") { LOP = sep; return }
-        if (sep == "||") { OR = 1; LOP = sep; return }
-        if (empty && (sep == "(" || (sep == "\n" && LOP != ""))) return
-        LID++; OR = 0; LOP = ""
-      }
-      # 発行した値 (SL がその並びの番号) が、いまの並びで && だけを通って届くか。
-      # 直書きの ghs_ (SL = -1) は発行が失敗しえないので、並びを問わない
-      function reaches(name) {
-        if (SL[name] == -1) return 1
-        return SL[name] == LID && !OR
-      }
-      # $( … ) / バッククォートを閉じる。発行の置換は印 (X) を持つ語として親へ返す
-      function popsub(   iss) {
-        flush(")"); iss = fiss[depth]; depth--
-        addw(iss ? "$(" X ")" : "$()")
+      # $( … ) / バッククォートを閉じる。置換の終了コードが gh-app-token.sh の成功を
+      # 意味するとき (最後の並びが 0 で終わるなら S が済んでいる) だけ、発行の印 (X) を持つ
+      # 語として親へ返す。綴りはあるが失敗が置換の外へ伝わらない形 (|| true・| tr・; true) は
+      # 別の印 (Y) で、見立ては unsafe になる (反証 #5)
+      function popsub(   iss, ok) {
+        flush("close"); dropto()
+        ok = has(FST[fd] ? FZ[fd] : FG[fd], FSK[fd]); iss = fiss[depth]
+        fd--; depth--
+        addw(ok ? "$(" X ")" : iss ? "$(" Y ")" : "$()")
       }
       function backtick() { if (ftype[depth] == "bt") popsub(); else push("bt") }
       # << の後ろの区切り語を読んで覚える。戻り値は区切り語の最後の位置
@@ -297,48 +415,56 @@ gh_invocations() { # $1=コマンド
         if (v ~ /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/) return substr(v, 3, length(v) - 3)
         return ""
       }
-      # 文としての代入。sep はその文を終えた区切り (&& なら発行の失敗が後段へ伝わる)
-      function setvar(name, val, plus, sep,   v, r) {
+      # 文としての代入。ctx は "export" (export X=… の形) か "stmt"。発行した値は、
+      # 成功の事実 (I<n>) を SK に持つ。gh の段でその事実が済んでいるかは FE で見る。
+      # 直書きの ghs_ は発行が失敗しえないので、事実を求めない (SK が空)
+      function setvar(name, val, plus, ctx,   v, r) {
         if (plus) { SV[name] = "unknown"; return }
         v = unquote(val)
         if (v == "$(" X ")") {
-          if (sep == "&&") { SV[name] = "issued"; SL[name] = LID } else SV[name] = "unsafe"
+          if (ctx == "export") { SV[name] = "unsafe"; return }
+          ni++; SV[name] = "issued"; SK[name] = "I" ni; ES = sunion(ES, "I" ni)
           return
         }
+        if (v == "$(" Y ")") { SV[name] = "unsafe"; return }
         r = varref(v)
         if (r != "") {
           if (r == name) return
-          if (r in SV) { SV[name] = SV[r]; if (r in SL) SL[name] = SL[r] } else SV[name] = "other"
+          if (r in SV) { SV[name] = SV[r]; SK[name] = SK[r] } else SV[name] = "other"
           return
         }
-        if (v ~ /^ghs_/) { SV[name] = "issued"; SL[name] = -1 } else SV[name] = "other"
+        if (v ~ /^ghs_/) { SV[name] = "issued"; SK[name] = "" } else SV[name] = "other"
       }
-      # 文として代入・export・unset した名前が、gh の宛先に効くなら印を立てる (#1823)
+      # 発行した値 (name) が、いまの段で成功したと確かめられるか
+      function landed(name) { return SK[name] == "" || has(FE[fd], SK[name]) }
+      # 文として代入・export・unset した名前が、gh の宛先に効くなら印を立てる (#1823)。
+      # git が読むリポジトリ・設定は GIT_ で始まる変数の族で変わる (GIT_DIR・GIT_COMMON_DIR・
+      # GIT_CONFIG_GLOBAL … 反証 #2)
       function destvar(name) {
         if (name == "GH_REPO") DR[depth] = 1
-        if (name == "GIT_DIR") DC[depth] = 1
+        if (name ~ /^GIT_/) DC[depth] = 1
       }
       function shellstate(   s) {
         if (!("GH_TOKEN" in SV)) return "inherit"
         s = SV["GH_TOKEN"]
         if (s != "issued") return s
         if (!gx) return "unexported"
-        # 発行・export・gh が 1 つの && の並びにあるときだけ (#1823)
-        if (!reaches("GH_TOKEN")) return "unsafe"
-        return (SL["GH_TOKEN"] == -1 || GXL == LID) ? "installation" : "unsafe"
+        # 発行の成功と export が、この gh の段で必ず済んでいるときだけ (#1823)
+        if (!landed("GH_TOKEN") || !has(FE[fd], "X" xg)) return "unsafe"
+        return "installation"
       }
       function verdict(tok,   v, r, s) {
         if (tok == "-") return "removed"
         if (tok == "?") return "unknown"
         if (tok == "=") return shellstate()
         v = unquote(substr(tok, 2))
-        if (v == "$(" X ")") return "unsafe"
+        if (v == "$(" X ")" || v == "$(" Y ")") return "unsafe"
         if (v ~ /^ghs_/) return "installation"
         r = varref(v)
         if (r != "") {
           if (r in SV) {
             s = SV[r]
-            if (s == "issued") return reaches(r) ? "installation" : "unsafe"
+            if (s == "issued") return landed(r) ? "installation" : "unsafe"
             return (s == "removed") ? "other" : s
           }
           if (r == "GH_TOKEN") return "inherit"
@@ -346,8 +472,9 @@ gh_invocations() { # $1=コマンド
         return "other"
       }
       # 前置を落とし、先頭が gh なら 5 列の行を出す。gh でなく入れ子の外なら、文として
-      # GH_TOKEN に効くもの (代入・export・unset) を覚える
-      function emit(f, sep,   w, name, val, plus, bare, o, t, L, v, tok, repo, chd, na, k, a, r) {
+      # GH_TOKEN に効くもの (代入・export・unset) を覚え、その段で済む事実を ES (成功したとき)
+      # と EA (走ったとき) に足す
+      function emit(f,   w, name, val, plus, bare, o, t, L, v, tok, repo, chd, na, k, a, r, xn, xf) {
         tok = "="; repo = "="; chd = 0; na = 0
         while (1) {
           w = word1(f)
@@ -371,7 +498,7 @@ gh_invocations() { # $1=コマンド
             na++; AN[na] = name; AV[na] = val; AP[na] = plus
             if (name == "GH_TOKEN") tok = plus ? "?" : "+" val
             if (name == "GH_REPO") repo = plus ? "?" : "+" val
-            if (name == "GIT_DIR") chd = 1
+            if (name ~ /^GIT_/) chd = 1
             f = rest1(f)
             continue
           }
@@ -418,7 +545,7 @@ gh_invocations() { # $1=コマンド
         }
         if (f == "") {
           for (k = 1; k <= na; k++) destvar(AN[k])
-          if (depth == 0) for (k = 1; k <= na; k++) setvar(AN[k], AV[k], AP[k], sep)
+          if (depth == 0) for (k = 1; k <= na; k++) setvar(AN[k], AV[k], AP[k], "stmt")
           return
         }
         w = word1(f)
@@ -428,33 +555,39 @@ gh_invocations() { # $1=コマンド
           print verdict(tok) "\t" repo "\t" chd "\t" ((depth > 0) ? "sub" : "top") "\tgh" substr(f, length(w) + 1)
           return
         }
-        # 宛先を変える文は、入れ子の中でも覚える (その入れ子の中の gh に効く・#1823)
+        # 宛先を変える文は、入れ子の中でも覚える (その入れ子の中の gh に効く・#1823)。
+        # 名前を引数に取って変数へ書く builtin (read・printf -v・mapfile …) も同じ (反証 #3)
         w = unquote(w)
         if (w ~ /^(cd|pushd|popd)$/) DC[depth] = 1
-        if (w ~ /^(export|unset|declare|typeset|readonly|local)$/) {
+        if (w ~ /^(export|unset|declare|typeset|readonly|local|read|printf|mapfile|readarray|getopts|let|wait)$/) {
           r = rest1(f)
           while ((a = word1(r)) != "") {
             r = rest1(r)
             if (a ~ /^-/) continue
-            name = unquote(a); sub(/=.*/, "", name); destvar(name)
+            name = unquote(a); sub(/[=[].*/, "", name); destvar(name)
           }
         }
         if (depth != 0) return
+        # GH_TOKEN を消す・export を外す文は、GH_REPO の側と同じく先頭語の後ろまで読む
+        # (反証 #4)。export -n は export を外し、export -f は関数の名前なので読まない
         if (w == "export") {
-          r = rest1(f)
+          r = rest1(f); xn = 0; xf = 0
           while ((a = word1(r)) != "") {
             r = rest1(r)
-            if (a ~ /^-/) continue
-            name = a; sub(/=.*/, "", name)
+            if (a ~ /^-/) { if (a ~ /^-[^-]*n/) xn = 1; if (a ~ /^-[^-]*f/) xf = 1; continue }
+            if (xf) continue
+            name = unquote(a); sub(/=.*/, "", name)
             if (a ~ /=/) { val = a; sub(/^[^=]*=/, "", val); setvar(name, val, 0, "export") }
-            if (name == "GH_TOKEN") { gx = 1; GXL = LID }
+            if (name != "GH_TOKEN") continue
+            if (xn) { gx = 0; xg++ } else { gx = 1; ES = sunion(ES, "X" xg); EA = sunion(EA, "X" xg) }
           }
         } else if (w == "unset") {
           r = rest1(f)
           while ((a = word1(r)) != "") {
             r = rest1(r)
             if (a ~ /^-/) continue
-            if (a == "GH_TOKEN") { SV[a] = "removed"; gx = 0 } else delete SV[a]
+            a = unquote(a)
+            if (a == "GH_TOKEN") { SV[a] = "removed"; gx = 0; xg++ } else delete SV[a]
           }
         }
       }
@@ -467,7 +600,8 @@ gh_invocations() { # $1=コマンド
         s = "\"\\$`"
         for (k = 1; k <= length(s); k++) SPD[substr(s, k, 1)] = 1
         depth = 0; ftype[0] = "top"; cw[0] = ""; nw[0] = 0; fiss[0] = 0; nh = 0; gx = 0
-        DC[0] = 0; DR[0] = 0; LID = 1; OR = 0; LOP = ""; GXL = 0
+        DC[0] = 0; DR[0] = 0; Y = "\004"; ni = 0; xg = 0; nsub = 0; ES = " "; EA = " "
+        fd = 0; FK[0] = "top"; FDEP[0] = 0; newlist(" ")
       }
       { src = $0 }
       END {
@@ -507,7 +641,7 @@ gh_invocations() { # $1=コマンド
           }
           if (c == ")") {
             if (ftype[depth] == "sub") { popsub(); continue }
-            if (ftype[depth] == "paren") { flush(")"); depth--; continue }
+            if (ftype[depth] == "paren") { flush("close"); dropto(); fd--; depth--; continue }
             flush(")"); continue
           }
           if (c == "`") { backtick(); continue }
@@ -517,6 +651,8 @@ gh_invocations() { # $1=コマンド
           }
           if (c == "&" && nx == "&") { flush("&&"); i++; continue }
           if (c == "|" && nx == "|") { flush("||"); i++; continue }
+          # |& は 2>&1 | と同じパイプ (& で割ると、段を裏で走らせたと読む)
+          if (c == "|" && nx == "&") { flush("|"); i++; continue }
           if ((c == "&" && (nx == ">" || cw[depth] ~ /[<>]$/)) || (c == "|" && cw[depth] ~ />$/)) {
             addw(c); continue
           }
@@ -529,7 +665,7 @@ gh_invocations() { # $1=コマンド
         }
         while (depth > 0) {
           if (ftype[depth] == "sub" || ftype[depth] == "bt") popsub()
-          else { flush(""); depth-- }
+          else { flush("close"); dropto(); fd--; depth-- }
         }
         flush("")
       }
@@ -589,8 +725,10 @@ gh_fragment_is() { # $1=断片 $2=サブコマンド正規表現
 # mokume の cwd で継いだ他リポの GH_REPO を `unset GH_REPO` で消した形も素通しした。
 #
 # 印は gh_invocations が gh より前の文から立てる (2 列目の `?` と 3 列目の 1)。立てるのは、
-# cwd を変える文 (cd・pushd・popd)・GIT_DIR (gh は GIT_DIR のリポジトリを今いるリポジトリと
-# して読む)・GH_REPO を変える文 (代入・export・export -n・declare / typeset・unset) である。
+# cwd を変える文 (cd・pushd・popd)・GIT_ で始まる変数 (gh は git に remote を尋ねるので、
+# git が読むリポジトリと設定を変える GIT_DIR・GIT_COMMON_DIR・GIT_CONFIG_GLOBAL … で宛先が
+# 変わる)・GH_REPO を変える文 (代入・export・export -n・declare / typeset・unset・read・
+# printf -v・mapfile …) である。文の先頭の builtin / command は落として読む。
 # `( … )` と `$( … )` の中の gh には外の文も効き、中の文は外の gh に効かない
 # (x=$(cd <dir> && pwd) && gh … は cwd のまま読む)。逃げ道は -R の明示と前置の GH_REPO= で、
 # この 2 つは印より勝つ (gh の宛先の順と同じ)。差し戻しの文面は -R を案内する。
@@ -632,8 +770,8 @@ other_repo_hint() { # $1=そのコマンドの例 (例: "gh pr view" のよう�
   $1 -R owner/repo …
 
 -R が無いときの宛先は、**フックが受け取ったカレントディレクトリ**のリポジトリとして
-読みます。同じコマンドの中で gh より前に cd・pushd・popd・GIT_DIR や、GH_REPO を変える文
-(export GH_REPO=・unset GH_REPO など) があれば、その先は追わずに宛先を決められないものとして
+読みます。同じコマンドの中で gh より前に cd・pushd・popd・GIT_ で始まる変数 (GIT_DIR など) や、
+GH_REPO を変える文 (export GH_REPO=・unset GH_REPO など) があれば、その先は追わずに宛先を決められないものとして
 止めます — 判定を推測に寄せないためです。cd 先のリポジトリ宛てなら -R を付けてください。
 git 管理外・origin が無い・owner を省いた --repo も同じく止める側です。
 EOF

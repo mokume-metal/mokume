@@ -40,8 +40,8 @@
 #   - --dry-run              → PR を作らず内容を出すだけ (gh pr create の旗)
 #   - このリポジトリ以外宛て   → 規約の外
 #   - 同じ行で gh-app-token.sh を **失敗が後段へ伝わる形で** 通し、かつ **export で
-#     gh まで渡している**もの (実際の運用形)。発行・export・gh が 1 つの && の並びに
-#     あることまで見る (#1823)
+#     gh まで渡している**もの (実際の運用形)。発行の成功と export が gh の時点で必ず
+#     済んでいることまで、bash の結合の順 (パイプと複合コマンドは && より強い) で見る (#1823)
 #   - フック自身の環境の GH_TOKEN が installation token (ghs_) のとき
 #   - 打つ人がこのリポジトリへの push 権限を持たないと確かめられたとき (外部の人)
 #
@@ -83,7 +83,10 @@
 # 要否は区別しない」の例外で、判定に手元の差分 (`git diff origin/<base>...<head>`) を
 # 読む。**読めなければ差し戻す側に倒す** — 代償は `--draft` を外して打ち直すことだけで、
 # 取りこぼしの代償 (依頼の無い承認待ち) より小さい。`gh pr revert` の中身は手元に無い
-# ので、revert の `--draft` はいつも差し戻す。
+# ので、revert の `--draft` はいつも差し戻す。**手元の差分は cwd のものなので、gh が走る
+# リポジトリが cwd と確かめられないときも読めないものとして扱う** — gh より前の cd などの
+# 文で宛先を「決められない」と読んだとき (別の worktree へ cd した形を含む) と、-R /
+# GH_REPO で名指しした宛先が cwd のリポジトリと違うとき (#1823 の反証 #6)。
 #
 # 名義の差し戻しと同時には出ない。判定は名義の素通しの直前に置いてあり、名義を直した
 # 打ち直しで初めてこちらが当たる。
@@ -115,8 +118,11 @@ token の発行が失敗しても後段が走る形になっています。こ�
 
   - set -e を足しても救われません (export の終了コードが 0 のため)
   - 代入プレフィクス GH_TOKEN="$(…)" gh pr create … も、発行の失敗が伝わりません
-  - 発行・export・gh の間を ;・改行・||・&・| で区切った形も、発行の失敗が gh まで
-    伝わりません。1 つの && の並びにしてください (並びの前に || も置かない・#1823)
+  - 発行から gh までを ;・改行・& で区切った形や、|| を挟んだ形 (発行の直前の || を
+    含む) も、発行の失敗が gh まで伝わりません。発行から gh までを && で繋いでください
+    (#1823)。パイプの中で発行・export しても、外の gh には渡りません
+  - $( … ) の中で gh-app-token.sh の後ろに || true・| tr・; true などを置くと、発行が
+    失敗しても置換は 0 を返します。置換の中は gh-app-token.sh だけにしてください
 EOF
 }
 
@@ -168,7 +174,7 @@ identity_required_message() { # $1=実際に打たれた口 (例: gh pr create)
 EOF
 }
 
-draft_created_message() { # $1=実際に打たれた口  $2=差分を読めなかった理由 (読めたなら空)
+draft_created_message() { # $1=実際に打たれた口  $2=差分を読めなかった理由 (読めたなら空)  $3=cwd なら cwd の読み違い
   if [ -n "${2:-}" ]; then
     cat <<EOF
 **Draft で作ろうとしている PR が重要パスに触れているかを確かめられませんでした** ($2)。
@@ -190,7 +196,13 @@ Draft に落としても残ります (#1234):
 
 重要パスに触れない PR の --draft は差し戻しません。
 EOF
-  if [ -n "${2:-}" ]; then
+  if [ "${3:-}" = cwd ]; then
+    cat <<'EOF'
+触れていないと分かっているなら、PR を作るリポジトリの checkout を cwd にしてから
+(cd は別の呼び出しで打つ)、cd・GIT_ で始まる変数・GH_REPO の文を挟まずに打ち直して
+ください (cwd の差分が読めれば判定できます)。
+EOF
+  elif [ -n "${2:-}" ]; then
     cat <<'EOF'
 触れていないと分かっているなら、手元にある枝を --head / --base で指し直して打ち直して
 ください (差分が読めれば判定できます)。
@@ -238,6 +250,14 @@ deny_if_protected_draft() {
     hook_deny "$(draft_created_message "$port" "revert の中身は手元の差分に無い")"
     ;;
   esac
+
+  # 読むのは cwd の差分なので、宛先が cwd のリポジトリと確かめられるときだけ読む (#1823 の
+  # 反証 #6)。cd などの文で宛先を「決められない」と読んだとき (chdir) や、-R / GH_REPO で
+  # 別の checkout から名指ししたときの cwd の差分は、その PR の差分とは限らない
+  [ "$chdir" = 1 ] &&
+    hook_deny "$(draft_created_message "$port" "gh より前の文や前置で、gh が走るリポジトリが cwd から変わりうる" cwd)"
+  [ "$(repo_of_dir "$cwd" 2>/dev/null)" = "$(this_repo)" ] ||
+    hook_deny "$(draft_created_message "$port" "cwd のリポジトリが PR の宛先と同じと確かめられない" cwd)"
 
   base=$(flag_value "$fragment" '--base|-B')
   base=${base:-main}
@@ -311,7 +331,8 @@ is_outside_collaborator() {
 #   installation  ghs_… か、同じ行で安全に発行した値    通す
 #   inherit       打つシェルの GH_TOKEN                 フックの環境が ghs_ なら通す
 #   unsafe        発行の失敗が伝わらない                止める (unsafe_token_form_message)
-#                 (&& の並びで gh まで繋がっていない形を含む・#1823)
+#                 (発行から gh までが && で繋がっていない形・置換の中で失敗を
+#                 握り潰した形を含む・#1823)
 #   unexported    何も渡らない (export していない)     止める (token_not_exported_message)
 #   removed       何も渡らない (env -u / env -i / unset) 止める (prefix_token_message)
 #   other・unknown 確かめられない値                     止める (prefix_token_message)

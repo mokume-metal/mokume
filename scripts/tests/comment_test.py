@@ -513,6 +513,13 @@ class GuardTest(unittest.TestCase):
         "declare -x GH_REPO=mokume-metal/mokume; {gh}",
         "GIT_DIR={m}/.git {gh}",
         "export GIT_DIR={m}/.git && {gh}",
+        # 反証 #1〜#3
+        "builtin cd {m} && {gh}",
+        "command cd {m} && {gh}",
+        "builtin export GH_REPO=mokume-metal/mokume && {gh}",
+        "GIT_COMMON_DIR={m}/.git {gh}",
+        "printf -v GH_REPO %s mokume-metal/mokume && {gh}",
+        "read -r GH_REPO <<< mokume-metal/mokume && {gh}",
     )
 
     # mokume の cwd で、継いだ他リポの GH_REPO を消す文 (#1836 の退行)
