@@ -12,6 +12,10 @@ extension Canvas {
     /// **同じファイルを二度読んでも、探索と復号は一度だけ。** 返る絵は毎回新しいので、
     /// 読んでから塗り替えても次の読み込みには影響しない ([#886])。
     ///
+    /// **読んだ絵の成分は、面が表せる範囲へ移る。** 数でない成分・無限の成分はそのまま残り (図形を描く
+    /// 経路が面へ移すときと同じ)、有限の成分は面が表せる ±65504 で止まる。浮動小数の絵 (TIFF・
+    /// OpenEXR など) の、白をずっと越える成分も同じである。
+    ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
         if let fresh = freshDecoded(for: path) { return try makeImage(fresh) }
@@ -25,6 +29,10 @@ extension Canvas {
     /// 絵を読む。**読んでいる間、他の仕事を止めない。**
     ///
     /// 控えに当たれば別の仕事を起こさない (`requestModel` と同じ形)。
+    ///
+    /// **読んだ絵の成分は、面が表せる範囲へ移る。** 数でない成分・無限の成分はそのまま残り (図形を描く
+    /// 経路が面へ移すときと同じ)、有限の成分は面が表せる ±65504 で止まる。浮動小数の絵 (TIFF・
+    /// OpenEXR など) の、白をずっと越える成分も同じである。
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
         if let fresh = freshDecoded(for: path) { return try makeImage(fresh) }
         let read: ImageFile.Read
