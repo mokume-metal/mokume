@@ -542,7 +542,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 太い橙色の山形の折れ線。頂点は尖り、尖りの先が平らに切られている | symmetric=x -->
-    ///     ![太い橙色の山形の折れ線。頂点は尖り、尖りの先が平らに切られている](https://i.gyazo.com/dd05697309f7f85a38b6d92258e7a89b.png)
+    ///     ![太い橙色の山形の折れ線。頂点は尖り、尖りの先が平らに切られている](https://i.gyazo.com/25a56824ea6ecfae0a022341f083d266.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -566,7 +566,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ折れ線の頂点が、平らに削がれている | symmetric=x -->
-    ///     ![同じ折れ線の頂点が、平らに削がれている](https://i.gyazo.com/dd05697309f7f85a38b6d92258e7a89b.png)
+    ///     ![同じ折れ線の頂点が、平らに削がれている](https://i.gyazo.com/d9c82c4f11477500aa18eafb2ee0e18a.png)
     ///     <!-- /shot -->
     ///   }
     /// }

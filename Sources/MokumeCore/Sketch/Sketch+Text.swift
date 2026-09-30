@@ -604,7 +604,7 @@ extension Sketch {
     ///   }
     ///   @Column {
     ///     <!-- shot: 黄色い線だけで縁取られた mokume — 画の内側は塗られていない -->
-    ///     ![黄色い線だけで縁取られた mokume — 画の内側は塗られていない](https://i.gyazo.com/03f1e65d5e6a6ab5037347aad603188d.png)
+    ///     ![黄色い線だけで縁取られた mokume — 画の内側は塗られていない](https://i.gyazo.com/6065c72b010a01cbc5893c9a76a7798f.png)
     ///     <!-- /shot -->
     ///   }
     /// }
