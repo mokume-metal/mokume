@@ -14,6 +14,10 @@ extension Sketch {
     /// background(15, 18, 23)
     /// ```
     ///
+    /// **不透明度は下地に重ならない。面をその色で置き換える** — 半透明の色なら、面が
+    /// 半透明の色になり、前の絵は残らない。残像の作り方と、p5.js の
+    /// `background(0, 20)` との違いは ``background(_:_:)`` に書いた。
+    ///
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public func background(
         _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
@@ -29,6 +33,29 @@ extension Sketch {
     /// ```swift
     /// background(24)
     /// ```
+    ///
+    /// **不透明度は下地に重ならない。面をその灰色で置き換える** — `background(0, 20)` は
+    /// 面を不透明度 20 の黒 1 色にするので、前の絵は残らない。毎フレーム呼んでも
+    /// 残像にはならない。
+    ///
+    /// 残像は、面と同じ大きさの四角を薄く重ねて作る。塗り直さないので、前の絵が
+    /// 少しずつ暗くなりながら残る。
+    ///
+    /// ```swift
+    /// if frameCount == 1 { background(0) }
+    /// noStroke()
+    /// fill(0, 20)
+    /// rect(0, 0, width, height)   // 前の絵を少しだけ暗くする
+    /// fill(255)
+    /// circle(mouseX, mouseY, 20)
+    /// ```
+    ///
+    /// - Note: **p5.js の `background(0, 20)` とは違い、残像にならない。** p5.js は前の絵の
+    ///   上に薄い黒を重ねるが、こちらは面を置き換える。Processing は本体の面では不透明度を
+    ///   使えない (`PGraphics` だけ)。手本に従うのは名前と引数の順序までで、画素の出方は
+    ///   追わない ([ADR-0020] 決定 1)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func background(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.background(gray, alpha)
