@@ -701,6 +701,104 @@ struct EffectFormulaTests {
         }
     }
 
+    /// 色ずれのずれ幅を測る面の形と、傾きを付ける軸。
+    nonisolated struct FringeSpan: Sendable, CustomTestStringConvertible {
+        let width: Int
+        let height: Int
+        /// 傾きを付けるのが横か、縦か。
+        let alongX: Bool
+
+        /// 傾きを付ける軸の画素数。
+        var length: Int { alongX ? width : height }
+        var testDescription: String { "\(width)×\(height) の\(alongX ? "横" : "縦")" }
+
+        /// 長い軸と短い軸を、縦横を入れ替えた 2 つの形で 1 つずつ。
+        static let all = [
+            FringeSpan(width: 128, height: 96, alongX: true),
+            FringeSpan(width: 96, height: 128, alongX: false),
+            FringeSpan(width: 128, height: 96, alongX: false),
+            FringeSpan(width: 96, height: 128, alongX: true),
+        ]
+    }
+
+    /// 青が、傾きを付ける軸で 1 画素ごとに `i / 128` (i はその軸の画素の番号) で増える面。
+    /// 赤と緑は 0。`i / 128` は Float16 で厳密に表せ、隣り合う画素の差が一定なので、線形補間で
+    /// 読んだ値も式どおりになる。
+    private func blueRamp(_ span: FringeSpan, _ effects: [Effect], on canvas: Canvas) throws
+        -> PixelBuffer
+    {
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            for index in 0..<span.length {
+                canvas.fill(.linear(red: 0, green: 0, blue: Float(index) / 128))
+                if span.alongX {
+                    canvas.rect(Float(index), 0, 1, Float(span.height))
+                } else {
+                    canvas.rect(0, Float(index), Float(span.width), 1)
+                }
+            }
+            canvas.effects(effects)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// 傾きの画素 `index` で、色ずれの青が読む値。**青は中心の側へずらして読む。**
+    ///
+    /// ずれ (画素) は、中心から画素の中心までの隔たりに比例し、面の縁で `reference` の 2% になる。
+    /// `reference` が「ずれ幅の元にする長さ」で、各軸の長さなら `length` である。傾きは
+    /// 画素 i の中心 (i + 0.5) で値 i / 128 なので、中心から `shift` 画素ずれた先の値は
+    /// (i − shift) / 128 (面の内なら線形補間で厳密)。
+    private static func fringeBlue(at index: Int, length: Int, reference: Int) -> Double {
+        let offset = Double(index) + 0.5 - Double(length) / 2
+        let shift = 0.02 * Double(reference) * offset / (Double(length) / 2)
+        return (Double(index) - shift) / 128
+    }
+
+    /// [#1877] の完了条件 2。**色ずれのずれ幅は、各軸がその軸の長さの割合である** — 面の縁で、
+    /// 横は幅の 2%、縦は高さの 2%。短辺の 2% ではない。
+    ///
+    /// 128×96 の右端の画素 (127) では、青が 124.96 の位置 (127.5 − 2.54) を読み、値は
+    /// 124.46 / 128 になる。短辺の 2% (1.905 画素) だと 125.1 / 128 で、約 0.005 (Float16 の約
+    /// 10 目盛り) 違う。縦横を入れ替えた形と、短い軸 (各軸と短辺が一致する) も見て、
+    /// 長辺の 2% でもないことを押さえる。ずれ幅が中心からの隔たりに比例することを、
+    /// 縁の 2 画素と途中の 1 画素で見る。
+    ///
+    /// 許す幅 (`slack`) は 1e-4。サンプラーは補間の重みを固定小数へ丸める (8 ビットと読める) ので、
+    /// 傾き 1 / 128 の面では最大で 1 / 128 × 1 / 512 = 1.5e-5 ずれる (実測の最大は 1.2e-5)。
+    /// その 7 倍の余裕で、式を取り違えたときのずれ (0.005) の 50 分の 1 である。狭さは検査自身が
+    /// 確かめる (許す範囲が、短辺・長辺の 2% で読んだ値を含まない)。
+    ///
+    /// [#1877]: https://github.com/mokume-metal/mokume/issues/1877
+    @Test("色ずれのずれ幅は、各軸で、面の縁がその軸の長さの 2% になる", arguments: FringeSpan.all)
+    func fringeShiftIsAFractionOfEachAxis(_ span: FringeSpan) throws {
+        let canvas = try makeCanvas(width: span.width, height: span.height)
+        let plain = try blueRamp(span, [], on: canvas)
+        let shifted = try blueRamp(span, [.fringe(amount: 1)], on: canvas)
+        let length = span.length
+        let slack = 1e-4
+        for index in [0, length / 4, length - 1] {
+            let (x, y) = span.alongX ? (index, span.height / 2) : (span.width / 2, index)
+            let note = "\(span) の \(index) 番目"
+            // 傾きが式どおりに描けている
+            #expect(Double(plain[x, y].blue) == Double(index) / 128, "\(note): 傾きが描けていない")
+
+            let expected = Self.fringeBlue(at: index, length: length, reference: length)
+            Self.expectBracketed(
+                shifted[x, y], Premultiplied(0, 0, expected), slack: slack, note)
+
+            // 許す範囲が、短辺・長辺の 2% で読んだ値を含まない (違う式を見分けられる)
+            let range = Self.halfBracket(expected, slack: slack)
+            for reference in [min(span.width, span.height), max(span.width, span.height)]
+            where reference != length {
+                let other = Self.fringeBlue(at: index, length: length, reference: reference)
+                #expect(
+                    !range.contains(other),
+                    "\(note): \(reference) の 2% でも \(other) で、許す範囲 \(range) に入る — 見分けられない")
+            }
+        }
+    }
+
     // MARK: - にじみ
 
     /// 暗い色だけの絵。**どの成分も 0.625 以下**なので、どの重みで輝度を取っても
