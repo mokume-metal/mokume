@@ -172,7 +172,8 @@ nonisolated final class MovieFile {
     ///
     /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
     static func encoderSpecification() -> [String: Any] {
-        [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: false]
+        // 検証用 (merge しない): 指定を空にして、GitHub のホストの既定の符号化器の振る舞いを見る
+        [:]
     }
 
     /// この機械で動きを書き出せるか。
