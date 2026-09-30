@@ -1553,6 +1553,7 @@ struct CanvasTests {
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
             "spheresFromUnit": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
+            "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
             "computeEncodersOpened": count, "computeEncodersClosed": count,
             "computeBarriersEncoded": count, "uploadBarriersEncoded": count,

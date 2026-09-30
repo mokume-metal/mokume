@@ -279,8 +279,13 @@ struct PixelsTests {
     @Test("画素を触らないフレームでは、読める状態にする印が戻る")
     func theLoadedFlagResetsEachFrame() throws {
         let canvas = try makeCanvas(width: 8, height: 8)
-        try canvas.draw { _ = canvas.get(0, 0) }
-        #expect(canvas.hasLoadedPixels)
+        try canvas.draw {
+            _ = canvas.get(0, 0)
+            #expect(canvas.hasLoadedPixels)
+        }
+        // フレームの終わりでも下りる — 止まっている間の読み書きは、フレームの終わりの絵を読み
+        // 直してからにする (#1524 の反証 2-2)
+        #expect(!canvas.hasLoadedPixels)
         try canvas.draw {}
         #expect(!canvas.hasLoadedPixels)
     }

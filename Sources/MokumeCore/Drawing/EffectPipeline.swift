@@ -32,6 +32,10 @@ final class EffectPipeline {
     /// 入口の関数の名前。**組み込みも利用者の効果も同じ**。
     static let vertexFunctionName = "mokume_effectVertexMain"
     static let fragmentFunctionName = "mokume_effectMain"
+    /// 変わった画素だけを重ねる断片の関数の名前 ([#1524])。組み込みの原文 (`Builtin.metal`) にだけある。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    static let keepChangedFunctionName = "mokume_keepChanged"
 
     /// 1 段ぶんの置き場の間隔 (バイト)。設定 32 / 面 16 / 値の順に詰める。
     static let passStride = 256
@@ -47,6 +51,25 @@ final class EffectPipeline {
 
     /// 組み込みの効果を通すパイプライン。
     let builtin: any MTLRenderPipelineState
+    /// 組み込みの原文を組んだもの。変わった画素だけを重ねるパイプライン
+    /// (``keepChangedState()``) を、頼まれたときにここから組む。
+    private let builtinLibrary: any MTLLibrary
+    /// 変わった画素だけを重ねるパイプライン。**頼まれてはじめて組む** ([#1524])。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private var keepChangedStorage: (any MTLRenderPipelineState)?
+    /// 変わった画素だけを重ねる段のテーブル。**段の採番から取らない** ([#1524]) — この段は描き切り
+    /// だけでなく出力段からも積まれ、出力段の投入は段の採番を 0 へ戻さない。束ねる面はいつも同じ
+    /// 2 枚 (描く先と、変える前の絵) なので、1 枚を使い回しても束ね先は変わらない。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private var keepChangedTableStorage: (any MTL4ArgumentTable)?
+    /// 止まっている間に控えへ描くときの奥行き ([#1524])。描く先の奥行きをパスの前に写して使う。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private var carryDepthStorage: StageImage?
+    /// 控えへ描くときの奥行きを作った回数。**止まっている間に図形を描き切らない面では 0 のまま。**
+    private(set) var carryDepthsBuilt = 0
 
     /// 段ごとの引数のテーブル。**段ごとに別のものを使う** — 1 枚を使い回して番地を
     /// 書き換えると、まだ走っていない段の束ね先まで変わる (計算の段と同じ理由)。
@@ -94,6 +117,18 @@ final class EffectPipeline {
     private(set) var carriesBuilt = 0
     /// 作ってある控え。**作らずに覗く** (戻す側は、控えが無ければ戻すものも無い)。
     var existingCarry: StageImage? { carryStorage }
+    /// 画素を書き戻す前の描く先の写し ([#1524])。
+    ///
+    /// 効果を通したフレームの後、次のフレームより前 (止まっている間のコールバック) に書いた画素を
+    /// 書き戻すたびに、その直前にここへ写す。書き戻した後の描く先と比べ、**違う画素だけ**を効果を
+    /// 通す前の絵 (``carry()``) へ写す。止まっている間に画素を書き戻したときにはじめて作り、
+    /// 使い回す ([ADR-0023] 決定 5)。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    private var pictureBeforeChangeStorage: StageImage?
+    /// 描く先を変える前の絵の控えを作った回数。**止まっている間に描く先を変えない面では 0 の
+    /// まま**であることを検査が見る。
+    private(set) var picturesBeforeChangeBuilt = 0
     /// いちばん小さい段。1/8 より下は持たない (半径から段を選ぶ側 ``Effect/reductionLevel(for:)`` も
     /// ここで止まる)。
     static let maxReductionLevel = 3
@@ -116,6 +151,7 @@ final class EffectPipeline {
 
         let library = try gpu.shaders.makeEffectLibrary(
             named: "builtin", body: try gpu.shaders.bundledShaderSource(named: "Builtin"))
+        self.builtinLibrary = library
         self.builtin = try Self.makeState(
             compiler: compiler, library: library, pixelFormat: pixelFormat,
             label: "mokume.effect.builtin")
@@ -134,16 +170,32 @@ final class EffectPipeline {
             compiler: compiler, library: library, pixelFormat: pixelFormat, label: label)
     }
 
+    /// 変わった画素だけを重ねるパイプライン。無ければ組む ([#1524])。
+    ///
+    /// 読むのは入りの口 (描く先) と相手の口 (変える前の絵) の 2 枚で、同じ値の画素は捨てる。
+    /// 書き込む先は前の内容を読む (``Canvas`` の `encodeKeepChanged(into:)`) ので、捨てた画素には
+    /// 効果を通す前の絵が残る。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func keepChangedState() throws(RenderFailure) -> any MTLRenderPipelineState {
+        if let keepChangedStorage { return keepChangedStorage }
+        let made = try Self.makeState(
+            compiler: compiler, library: builtinLibrary, pixelFormat: pixelFormat,
+            label: "mokume.effect.keepChanged", fragment: Self.keepChangedFunctionName)
+        keepChangedStorage = made
+        return made
+    }
+
     private static func makeState(
         compiler: any MTL4Compiler, library: any MTLLibrary, pixelFormat: MTLPixelFormat,
-        label: String
+        label: String, fragment: String = fragmentFunctionName
     ) throws(RenderFailure) -> any MTLRenderPipelineState {
         let vertexFunction = MTL4LibraryFunctionDescriptor()
         vertexFunction.name = vertexFunctionName
         vertexFunction.library = library
 
         let fragmentFunction = MTL4LibraryFunctionDescriptor()
-        fragmentFunction.name = fragmentFunctionName
+        fragmentFunction.name = fragment
         fragmentFunction.library = library
 
         let descriptor = MTL4RenderPipelineDescriptor()
@@ -213,6 +265,52 @@ final class EffectPipeline {
             gpu: gpu, width: width, height: height, startingTransparent: false)
         carryStorage = made
         carriesBuilt += 1
+        return made
+    }
+
+    /// 変わった画素だけを重ねる段のテーブル。無ければ作る ([#1524])。
+    func keepChangedTable() throws(RenderFailure) -> any MTL4ArgumentTable {
+        if let keepChangedTableStorage { return keepChangedTableStorage }
+        let descriptor = MTL4ArgumentTableDescriptor()
+        descriptor.label = "mokume.effect.keepChanged"
+        descriptor.maxBufferBindCount = Self.bufferBindCount
+        descriptor.maxTextureBindCount = Self.textureBindCount
+        let made: any MTL4ArgumentTable
+        do {
+            made = try gpu.device.makeArgumentTable(descriptor: descriptor)
+        } catch {
+            throw .argumentTableUnavailable(reason: error.localizedDescription)
+        }
+        keepChangedTableStorage = made
+        return made
+    }
+
+    /// 止まっている間に控えへ描くときの奥行き。無ければ作る ([#1524])。
+    ///
+    /// 読まれる前に必ず描く先の奥行きから写されるか、パスの頭で消される。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func carryDepth() throws(RenderFailure) -> StageImage {
+        if let carryDepthStorage { return carryDepthStorage }
+        let made = try StageImage(
+            gpu: gpu, width: width, height: height, startingTransparent: false,
+            pixelFormat: RenderTarget.depthFormat)
+        carryDepthStorage = made
+        carryDepthsBuilt += 1
+        return made
+    }
+
+    /// 描く先を変える前の絵の控え。無ければ作る ([#1524])。
+    ///
+    /// 大きさと塗らない理由は ``carry()`` と同じ (読まれる前に必ず描く先から写される)。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func pictureBeforeChange() throws(RenderFailure) -> StageImage {
+        if let pictureBeforeChangeStorage { return pictureBeforeChangeStorage }
+        let made = try StageImage(
+            gpu: gpu, width: width, height: height, startingTransparent: false)
+        pictureBeforeChangeStorage = made
+        picturesBeforeChangeBuilt += 1
         return made
     }
 

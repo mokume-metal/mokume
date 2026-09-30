@@ -227,10 +227,19 @@ extension Canvas {
     /// ここで積む。
     ///
     /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
-    func encodeCarryRestore(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+    ///
+    /// - Parameter afterKeepingChanges: 直前に、変わった画素を控えへ重ねたか
+    ///   (``encodeKeepChanged(into:)``)。重ねたなら、それが書き終わるのを待ってから戻す。
+    func encodeCarryRestore(into commands: any MTL4CommandBuffer, afterKeepingChanges: Bool = false)
+        throws(RenderFailure)
+    {
         guard let carry = effectPipelineStorage?.existingCarry else { return }
         guard let encoder = commands.makeComputeCommandEncoder() else {
             throw .encoderUnavailable
+        }
+        if afterKeepingChanges {
+            encoder.barrier(
+                afterQueueStages: .fragment, beforeStages: .blit, visibilityOptions: .device)
         }
         encoder.copy(sourceTexture: carry.texture, destinationTexture: target.texture)
         // **戻し終わるのを、続く書き戻し・描画・効果・読み戻しが待つ**
@@ -239,6 +248,108 @@ extension Canvas {
             visibilityOptions: .device)
         encoder.endEncoding()
         effectCarryRestoresEncoded += 1
+    }
+
+    // MARK: - 止まっている間に変えた分 (#1524)
+
+    /// 止まっている間に描く先を変えるなら、同じ変更を控え (効果を通す前の絵) にも加えるか ([#1524])。
+    ///
+    /// **効果を通したフレームの後、次のフレームが控えを戻すまでの間は、描く先と控えの 2 枚を保つ。**
+    /// 描く先は効果を通した絵に変えた分を載せたもの (画面・書き出し・読む画素はこれ)、控えは効果を
+    /// 通す前の絵に同じ変更を載せたもの (次のフレームの入りはこれ) である。変えるたびに両方へ
+    /// 加えるので、混ぜ方 (縁の AA・半透明・足す混ぜ方) はどちらも置いた面の上で決まる。
+    ///
+    /// 控えは次のフレームの頭で戻す (``encodeCarryRestore(into:afterKeepingChanges:)``) ので、
+    /// 塗り直すフレームでは使われない。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    var changesGoIntoCarry: Bool {
+        carriesPictureBeforeEffects && effectPipelineStorage?.existingCarry != nil
+    }
+
+    /// 書き込み待ちの画素を描く先へ書き戻し、**同じ画素を控えにも書く** ([#1524])。控えへ加える
+    /// 要が無ければ (``changesGoIntoCarry``)、ふつうに書き戻すだけである。
+    ///
+    /// 画素の書き込みは値そのものを置く (下地と混ぜない) ので、書き戻す前の描く先と比べて
+    /// **値が変わった画素**だけを控えへ写す。値で見分けるので、描く先と同じ値を書いた画素
+    /// (読んだ値をそのまま書き戻した画素を含む) は、書かなかった扱いになる (甲-1)。
+    ///
+    /// 描き切りの頭と出力段 (``RenderTarget/encodeToImage()``) が、書き戻す口として呼ぶ。
+    ///
+    /// - Returns: 書き戻しを積んだか。**投入してから** `markPixelsWrittenBack()` する ([#1183])。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func encodePixelWriteBackKeepingCarry(into commands: any MTL4CommandBuffer)
+        throws(RenderFailure) -> Bool
+    {
+        guard changesGoIntoCarry, target.hasPendingPixelWrites else {
+            return try target.encodePixelWriteBack(into: commands)
+        }
+        try encodeKeepPicture(into: commands)
+        let wroteBack = try target.encodePixelWriteBack(into: commands)
+        try encodeKeepChanged(into: commands)
+        return wroteBack
+    }
+
+    /// 描く先を、書き戻す前の写し (``EffectPipeline/pictureBeforeChange()``) へ写す blit を積む。
+    /// 待つ仕掛けは控えへの写し (`encodeCarry`) と同じ形。
+    func encodeKeepPicture(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+        let kept = try effectPipeline().pictureBeforeChange()
+        guard let encoder = commands.makeComputeCommandEncoder() else {
+            throw .encoderUnavailable
+        }
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: .blit, visibilityOptions: .device)
+        encoder.copy(sourceTexture: target.texture, destinationTexture: kept.texture)
+        // **写し終わるのを、続く書き戻し・描画・読み戻しが待つ**
+        encoder.barrier(
+            afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
+            visibilityOptions: .device)
+        encoder.endEncoding()
+    }
+
+    /// 描く先のうち、書き戻す前の絵 (``EffectPipeline/pictureBeforeChange()``) と**違う画素だけ**を、
+    /// 効果を通す前の絵の控え (``EffectPipeline/carry()``) へ写す段を積む ([#1524])。画素を書き戻す
+    /// たびに、その直後に積む (``encodePixelWriteBackKeepingCarry(into:)``)。
+    ///
+    /// **段の並びの外に置く。** 効果ではないので、効果の数 (``effectPassesEncoded``) にも入れない。
+    ///
+    /// 書き込む先は前の内容を読む (`.load`)。捨てた画素 (変わっていない画素) に、効果を通す前の
+    /// 絵がそのまま残るためである。
+    ///
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    func encodeKeepChanged(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
+        let pipeline = try effectPipeline()
+        guard let carry = pipeline.existingCarry else { return }
+        let kept = try pipeline.pictureBeforeChange()
+        let state = try pipeline.keepChangedState()
+        // 段の採番からは取らない — 出力段からも積まれるため (``EffectPipeline/keepChangedTable()``)
+        let table = try pipeline.keepChangedTable()
+        table.setTexture(target.texture.gpuResourceID, index: EffectPipeline.sourceTextureIndex)
+        table.setTexture(kept.texture.gpuResourceID, index: EffectPipeline.pairedTextureIndex)
+
+        let pass = MTL4RenderPassDescriptor()
+        let attachment = pass.colorAttachments[0]!
+        attachment.texture = carry.texture
+        attachment.loadAction = .load
+        attachment.storeAction = .store
+        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+            throw .encoderUnavailable
+        }
+        // **書き戻しと控えへの写し (blit) が終わるのを待つ** (#341)
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: .fragment,
+            visibilityOptions: .device)
+        encoder.setRenderPipelineState(state)
+        encoder.setViewport(
+            MTLViewport(
+                originX: 0, originY: 0, width: Double(carry.width), height: Double(carry.height),
+                znear: 0, zfar: 1))
+        encoder.setArgumentTable(table, stages: [.vertex, .fragment])
+        encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+        effectChangesKeptEncoded += 1
     }
 
     /// 次の段の枠を 1 つ取る。**効果も拡大もここから取る** (採番は 1 系統)。
