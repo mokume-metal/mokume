@@ -897,10 +897,33 @@ public final class Canvas {
     ///   始める (フレームの頭で数が 0 に戻る) ので失われた。
     ///
     /// **フレームの頭では触らない** — 区間で描き切った奥行きを、次のフレームの最初のパスが受け取る。
-    /// 下ろすのはフレームの終わりと、閉じ忘れたフレームを捨てるとき (``abandonFrame()``)。
+    /// 下ろすのはフレームの終わりと、閉じ忘れたフレームを捨てるとき (``abandonFrame()``)。フレームの
+    /// 終わりは描き切りが投げても引き継ぎを切る — 次のフレームの奥行きは、成功したフレームの後と
+    /// 同じくフレームごとに作り直す。もう 1 つ、引き継いだ奥行きを周囲の背景が手放す
+    /// (``dropInheritedDepth()``)。
     ///
     /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
     private var depthIsHeld = false
+
+    /// **周囲の背景 (`background(.sky)`) が置かれる前に、引き継いだ奥行きだけを手放す** ([#1888])。
+    ///
+    /// 周囲の背景は塗り 1 色の背景と違い、色を塗り直さず、いちばん奥の板を奥行きの比較つきで置く。
+    /// 前のフレームや区間から引き継いだ奥行きが残っていると、板は区間で描き切らせた立体の画素で
+    /// 落ち、その立体だけが背景の手前に残る — 描き切らせずに持ち越した立体は、背景を置くときに
+    /// 溜めたものと一緒に捨てられるので、描き切らせたかどうかで絵が変わる。手放せば、直す前の
+    /// 見え方 (板が立体を覆う) に戻り、持ち越した側と一致する。色は消さない。
+    ///
+    /// **手放すのは引き継いだ奥行きだけ**である。区間 (フレームの外) と、このフレームがまだ何も
+    /// 描き切っていない間は、持っている奥行きはどれも前から来たものになる。フレームの中で描き切った
+    /// 後は、自分が描いた立体の奥行きなので触らない — そこで背景の板が立体を消さず後ろへ回るのは、
+    /// 直す前からの挙動で、別の根 ([#1685]・[#1657]) が扱う。
+    ///
+    /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+    /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
+    func dropInheritedDepth() {
+        guard depthIsHeld, !isDrawing || passesThisFrame == 0 else { return }
+        depthIsHeld = false
+    }
 
     /// 描き切りの印。**溜めた計算と列を投入するか捨てると、必ず変わる** ([#1651])。
     ///
@@ -2625,7 +2648,7 @@ public final class Canvas {
         let continuesDepth = depthIsHeld && pendingBackground == nil
         let pass = target.makeRenderPass(
             clearColor: pendingBackground,
-            continuingFrame: continuesDepth,
+            continuingDepth: continuesDepth,
             keepingDepth: !applyingEffects)
         // **次のフレームの入りは、効果を通す前の絵** ([#1469])。前のフレームが描く先へ効果を
         // 通した絵を書いていたら、このフレームの最初の描き切りで控えから戻す。塗り直す
@@ -2974,7 +2997,7 @@ public final class Canvas {
         let depth = try pipeline.carryDepth()
         // 描く先へのパスと同じ作り方 (塗り直しの色の移し方を含む) で組み、面だけを差し替える
         let pass = target.makeRenderPass(
-            clearColor: pendingBackground, continuingFrame: continuingDepth, keepingDepth: false)
+            clearColor: pendingBackground, continuingDepth: continuingDepth, keepingDepth: false)
         pass.colorAttachments[0]!.texture = carry.texture
         pass.depthAttachment!.texture = depth.texture
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {

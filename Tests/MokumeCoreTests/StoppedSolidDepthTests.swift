@@ -121,6 +121,31 @@ struct StoppedSolidDepthTests {
         }
     }
 
+    /// 区間で描き切らせた後に、絵を置き換える背景。
+    enum Backdrop: CaseIterable, CustomTestStringConvertible {
+        /// 置き換えない。
+        case none
+        /// 次のフレームの頭で、塗り 1 色の背景 (`background(235)`)。色と奥行きを消して塗り直す。
+        case colour
+        /// 次のフレームの頭で、周囲の背景 (`background(.sky)`)。色は塗り直さず、いちばん奥の板を
+        /// 奥行きの比較つきで置く。
+        case sky
+        /// 区間で描き切らせた後、区間の中で周囲の背景 (`background(.sky)`)。
+        case skyInTheInterval
+
+        /// 置き換えるもの。
+        nonisolated static let replacing: [Backdrop] = [.colour, .sky, .skyInTheInterval]
+
+        var testDescription: String {
+            switch self {
+            case .none: "背景なし"
+            case .colour: "次のフレームの background(色)"
+            case .sky: "次のフレームの background(.sky)"
+            case .skyInTheInterval: "区間の background(.sky)"
+            }
+        }
+    }
+
     /// 立体の置き方。手前 (z 20・赤)・奥 (z -20・青) を区間で、真ん中 (z 0・緑) を次のフレームで置く。
     enum Scene: CaseIterable, CustomTestStringConvertible {
         /// Issue の再現の置き方。赤が緑を隠し、青は赤に隠れる。
@@ -248,7 +273,7 @@ struct StoppedSolidDepthTests {
     /// `settling` だけが違う 2 枚は、区間で描き切らせたかどうかだけが違う。
     private static func secondFrame(
         _ surface: Surface, _ effects: Effects, _ interval: Interval, _ scene: Scene,
-        settling: Settling, poisoned: Bool = false
+        settling: Settling, poisoned: Bool = false, backdrop: Backdrop = .none
     ) throws -> Result {
         let canvas = try surface.make()
         let plane = canvas.createShape {
@@ -263,6 +288,16 @@ struct StoppedSolidDepthTests {
             if settling == .eachTime { _ = canvas.get(0, 0) }
             canvas.shape(plane, at: [scene.back])
             if settling != .carried { _ = canvas.get(0, 0) }
+            if backdrop == .skyInTheInterval { canvas.background(.sky) }
+        }
+        /// 次のフレームの頭。
+        func openTheNextFrame() {
+            switch backdrop {
+            case .colour: canvas.background(235)
+            case .sky: canvas.background(.sky)
+            case .none, .skyInTheInterval: break
+            }
+            canvas.shape(plane, at: [scene.middle])
         }
         switch interval {
         case .stopped:
@@ -272,7 +307,7 @@ struct StoppedSolidDepthTests {
             }
             if poisoned { try poisonDepth(of: canvas) }
             inTheInterval(canvas, placeInTheInterval)
-            try canvas.draw { canvas.shape(plane, at: [scene.middle]) }
+            try canvas.draw { openTheNextFrame() }
         case .setup:
             if poisoned { try poisonDepth(of: canvas) }
             inTheInterval(canvas) {
@@ -280,7 +315,7 @@ struct StoppedSolidDepthTests {
                 placeInTheInterval()
             }
             try canvas.draw {
-                canvas.shape(plane, at: [scene.middle])
+                openTheNextFrame()
                 applyEffects()
             }
         }
@@ -316,22 +351,41 @@ struct StoppedSolidDepthTests {
         }
     }
 
+    /// 検査の前提: 背景で置き換えた 2 枚目は、置き換える前に置いた立体が 1 つも残らず、次のフレームで
+    /// 置いた真ん中の立体だけが出ている。
+    private static func requireReplaced(_ carried: PixelBuffer, _ scene: Scene) throws {
+        let middle = scene.middle
+        let value = pixel(carried, middle.x, middle.y)
+        try #require(Hue.green.matches(value), "置き換えた 2 枚目の真ん中が緑でない: \(value)")
+        var reds = 0
+        for y in 0..<carried.height {
+            for x in 0..<carried.width where Hue.red.matches(carried[x, y]) { reds += 1 }
+        }
+        try #require(reds == 0, "置き換える前に置いた赤い立体が \(reds) 画素残っている")
+    }
+
     // MARK: - 描き切らせても、持ち越しても、同じ絵になる
 
     /// 区間で描き切らせた 2 枚目が、描き切らせずに持ち越した 2 枚目と全画素で一致することを見る。
     /// 1 回だけ描き切らせる形と、1 つ置くたびに描き切らせる形 (描き切りを 2 回挟む) の両方を比べる。
     private static func expectSettledToMatchCarried(
-        _ variant: Variant, _ scene: Scene, poisoned: Bool
+        _ variant: Variant, _ scene: Scene, poisoned: Bool = false, backdrop: Backdrop = .none
     ) throws {
         let (surface, effects, interval) = (variant.surface, variant.effects, variant.interval)
         let carried = try secondFrame(
-            surface, effects, interval, scene, settling: .carried, poisoned: poisoned)
-        try requireDepthOrder(carried.picture, scene)
+            surface, effects, interval, scene, settling: .carried, poisoned: poisoned,
+            backdrop: backdrop)
+        if backdrop == .none {
+            try requireDepthOrder(carried.picture, scene)
+        } else {
+            try requireReplaced(carried.picture, scene)
+        }
         #expect(carried.carryDraws == 0, "描き切らせていないのに、効果を通す前の絵へ描いた")
 
         for settling in [Settling.once, .eachTime] {
             let settled = try secondFrame(
-                surface, effects, interval, scene, settling: settling, poisoned: poisoned)
+                surface, effects, interval, scene, settling: settling, poisoned: poisoned,
+                backdrop: backdrop)
             if effects == .with, interval == .stopped {
                 // 効果を通す面の止まっている間は、効果を通す前の絵へも同じ列で描く (#1524)。その
                 // 道を通っていなければ、この検査は控えの奥行きを見ていない
@@ -369,6 +423,171 @@ struct StoppedSolidDepthTests {
         arguments: Variant.all, Scene.allCases)
     func settlingDoesNotReadDiscardedDepth(_ variant: Variant, _ scene: Scene) throws {
         try Self.expectSettledToMatchCarried(variant, scene, poisoned: true)
+    }
+
+    // MARK: - 背景で置き換える
+
+    /// 区間で描き切らせた後に背景で置き換えても、描き切らせずに持ち越した形と同じ絵になる。
+    ///
+    /// - 次のフレームの頭の `background(色)`: 色と奥行きを消して塗り直す。引き継いだ奥行きも消える
+    ///   (`pendingBackground` が引き継ぎを切る)。
+    /// - `background(.sky)` (次のフレームの頭・区間の中): 周囲の板は色を塗り直さず、いちばん奥で奥行きの
+    ///   比較を受ける。引き継いだ奥行きが残っていると、板が区間で描き切らせた赤い立体の画素で落ち、
+    ///   赤だけが背景の手前に残る。持ち越した赤い立体は、背景を置くときに捨てられるので出ない。
+    ///
+    /// 置き方は Issue の再現で、赤 (z 20) を緑 (z 0) の手前に置く。
+    @Test(
+        "区間で描き切らせた後に背景で置き換えても、持ち越した立体と同じ絵になる",
+        arguments: Variant.all, Backdrop.replacing)
+    func aBackgroundReplacesSettledSolidsJustAsCarriedOnes(_ variant: Variant, _ backdrop: Backdrop) throws {
+        try Self.expectSettledToMatchCarried(variant, .issue, backdrop: backdrop)
+    }
+
+    /// フレームの中で描き切らせた後の `background(.sky)` は、直す前と同じく立体を覆わない。
+    ///
+    /// **この PR が変えないこと。** 周囲の背景の板が最奥で比較を受け、フレームの中で描き切らせた立体が
+    /// 背景の手前に残るのは、直す前からの挙動である (別の根: #1685・#1657)。引き継いだ奥行きを手放すのは、
+    /// 区間と、そのフレームがまだ何も描き切っていない間だけ。
+    @Test("フレームの中で描き切らせた後の周囲の背景は、立体を覆わない (変えない)", arguments: Surface.allCases)
+    func aBackdropInsideAFrameLeavesItsOwnSettledSolidsInFront(surface: Surface) throws {
+        let canvas = try surface.make()
+        let plane = canvas.createShape {
+            canvas.noStroke()
+            canvas.plane(60, 60)
+        }
+        try canvas.draw {
+            canvas.shape(plane, at: [Scene.issue.front])
+            _ = canvas.get(0, 0)
+            canvas.background(.sky)
+            canvas.shape(plane, at: [Scene.issue.middle])
+        }
+        let picture = try canvas.target.readPixels()
+        // 赤 (z 20) は、いちばん奥の板にも、あとから置いた緑 (z 0) にも覆われない
+        let centre = Self.pixel(picture, 80, 80)
+        #expect(Hue.red.matches(centre), "フレームの中で描き切らせた赤が背景の手前に残っていない: \(centre)")
+        // 板は赤の外を覆う (置く前の面は透明)
+        let corner = Self.pixel(picture, 5, 5)
+        #expect(corner.alpha > 0.99, "周囲の背景が赤の外を覆っていない: \(corner)")
+    }
+
+    // MARK: - 失敗した描き切り
+
+    /// 最後の描き切りが失敗したフレームの後も、次のフレームの奥行きは、成功したフレームの後と同じに
+    /// 始まる。
+    ///
+    /// 奥行きはフレームごとに作り直す。フレームの終わりは、最後の描き切りが失敗しても引き継ぎを切る
+    /// (`abandonFrame()`)。失敗した回だけ奥行きを残すと、その次のフレームで置いた立体が、成功した
+    /// ときと違い、区間で描き切らせた立体の奥行きと比べられてしまう。
+    @Test("最後の描き切りが失敗したフレームの後も、奥行きは成功したときと同じに始まる", arguments: Surface.allCases)
+    func aFailedLastPassEndsTheDepthCarryLikeASuccessfulOne(surface: Surface) throws {
+        func picture(failing: Bool) throws -> PixelBuffer {
+            let canvas = try surface.make()
+            let plane = canvas.createShape {
+                canvas.noStroke()
+                canvas.plane(60, 60)
+            }
+            try canvas.draw { canvas.background(235) }
+            Self.inTheInterval(canvas) {
+                canvas.shape(plane, at: [Scene.issue.front])
+                _ = canvas.get(0, 0)
+            }
+            // 区間の立体を引き継ぐフレーム。何も置かずに終える (失敗する回は最後の描き切りが投げる)
+            canvas.beginDraw()
+            if failing { canvas.failureForTesting = .deviceUnavailable }
+            canvas.endDraw()
+            canvas.failureForTesting = nil
+            try canvas.draw { canvas.shape(plane, at: [Scene.issue.middle]) }
+            return try canvas.target.readPixels()
+        }
+        let succeeded = try picture(failing: false)
+        let failed = try picture(failing: true)
+        // 前提: 区間の立体を引き継いだフレームの次のフレームには、奥行きは残らない (緑が赤を覆う)
+        let centre = Self.pixel(succeeded, 80, 80)
+        try #require(Hue.green.matches(centre), "前提: 成功したフレームの次のフレームで、緑が赤の手前に出ていない: \(centre)")
+        let differing = Self.difference(failed, succeeded)
+        #expect(differing.count == 0, "失敗したフレームの後は \(differing.count) 画素が違う")
+    }
+
+    // MARK: - 描き場所
+
+    /// 描き場所の描き切りは、本体の引き継いだ奥行きを壊さない。
+    enum LayerRole: CaseIterable, CustomTestStringConvertible {
+        /// 本体が描き切らせた後で、描き場所が自分のフレーム (`beginDraw()`〜`endDraw()`) を走らせる。
+        case ownFrameBetween
+        /// 本体が描き場所を置き、その描き場所が描き換わる直前に、本体が描き切る (`settle(before:)`)。
+        case forcesTheSettle
+
+        var testDescription: String {
+            switch self {
+            case .ownFrameBetween: "描き場所が自分のフレームを走らせる"
+            case .forcesTheSettle: "描き換えの直前に本体が描き切る"
+            }
+        }
+    }
+
+    /// 完了条件 1・7 の描き場所の経路 — 描き場所を置いた本体でも、区間で描き切らせた立体の奥行きは
+    /// 次のフレームへ引き継がれる。
+    ///
+    /// 描き場所の描き切りは、描き場所自身の奥行きの面で走るので、本体の引き継ぎに触れない。
+    /// 置いた描き場所が描き換わる直前の描き切り (`settle(before:)`) は、本体を奥行きを残す描き切りで
+    /// 描き切らせる。どちらでも、次のフレームの緑 (z 0) は、区間の赤 (z 20) の奥に回る。
+    @Test(
+        "描き場所を挟んでも、区間で描き切らせた立体の奥行きは次のフレームへ引き継がれる",
+        arguments: Variant.all, LayerRole.allCases)
+    func aLayersPassesLeaveTheMainDepthCarryAlone(_ variant: Variant, _ role: LayerRole) throws {
+        let scene = Scene.spread
+        let canvas = try variant.surface.make()
+        let plane = canvas.createShape {
+            canvas.noStroke()
+            canvas.plane(60, 60)
+        }
+        let layer = try canvas.createGraphics(16, 16)
+        func redrawTheLayer() {
+            layer.beginDraw()
+            layer.background(Self.green)
+            layer.endDraw()
+        }
+        func stage() {
+            canvas.shape(plane, at: [scene.front])
+            canvas.shape(plane, at: [scene.back])
+            switch role {
+            case .ownFrameBetween:
+                _ = canvas.get(0, 0)
+                redrawTheLayer()
+            case .forcesTheSettle:
+                // 絵の外 (右上の隅) に置く。要所の色には触れない
+                canvas.image(layer, 140, 4)
+                redrawTheLayer()
+            }
+        }
+        func applyEffects() {
+            if variant.effects == .with { canvas.effects(Self.darkening) }
+        }
+        switch variant.interval {
+        case .stopped:
+            try canvas.draw {
+                canvas.background(235)
+                applyEffects()
+            }
+            Self.inTheInterval(canvas, stage)
+            try canvas.draw { canvas.shape(plane, at: [scene.middle]) }
+        case .setup:
+            Self.inTheInterval(canvas) {
+                canvas.background(235)
+                stage()
+            }
+            try canvas.draw {
+                canvas.shape(plane, at: [scene.middle])
+                applyEffects()
+            }
+        }
+        let picture = try canvas.target.readPixels()
+        for point in scene.expectations {
+            let value = Self.pixel(picture, point.x, point.y)
+            #expect(
+                point.color.matches(value),
+                "奥行きどおりでない ((\(point.x), \(point.y)): \(point.why)): \(value)")
+        }
     }
 
     // MARK: - 払う費用

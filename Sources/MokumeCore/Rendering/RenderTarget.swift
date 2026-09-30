@@ -322,7 +322,7 @@ import MokumeDiagnostics
     ///
     /// - Parameters:
     ///   - clearColor: 塗り直す色。`nil` なら前の内容の上に描き足す。
-    ///   - continuingFrame: 前の描き切りが書き出した奥行きを引き継ぐか。**「同じフレームで既に
+    ///   - continuingDepth: 前の描き切りが書き出した奥行きを引き継ぐか。**「同じフレームで既に
     ///     描き切ったか」ではない** ([#1888]) — フレームの最後の描き切りは奥行きを捨てるので、
     ///     フレームの合間の最初の描き切りに読める奥行きは無い。逆に、フレームの合間 (止まっている
     ///     間・`setup()`) に描き切って残した奥行きは、次のフレームの最初の描き切りが引き継ぐ。
@@ -332,7 +332,7 @@ import MokumeDiagnostics
     ///
     /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
     func makeRenderPass(
-        clearColor: LinearRGBA?, continuingFrame: Bool = false, keepingDepth: Bool = false
+        clearColor: LinearRGBA?, continuingDepth: Bool = false, keepingDepth: Bool = false
     ) -> MTL4RenderPassDescriptor {
         let pass = MTL4RenderPassDescriptor()
         let attachment = pass.colorAttachments[0]!
@@ -364,7 +364,7 @@ import MokumeDiagnostics
         // [#1888]: https://github.com/mokume-metal/mokume/issues/1888
         let depth = pass.depthAttachment!
         depth.texture = depthTexture
-        if continuingFrame {
+        if continuingDepth {
             depth.loadAction = .load
         } else {
             depth.loadAction = .clear
