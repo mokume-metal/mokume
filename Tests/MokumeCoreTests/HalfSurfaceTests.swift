@@ -57,6 +57,18 @@ struct HalfSurfaceTests {
         #expect(abs(red(color(40000)) - 40000) < 1)
         #expect(color(40000).red > 65504)
     }
+
+    /// 反証の指摘 1。**有限の数で書いた色は、`Float` の段でも有限のまま作業空間へ入る** —
+    /// 2.4 乗が `Float` の最大を越えても、原色の行列の 0 の係数と掛かって NaN にならない。
+    @Test("Float の最大を越える明るさで書いた色も、成分は有限のまま")
+    func colorsBeyondTheLargestFloatStayFinite() {
+        for value: Float in [3.1e18, 4e18, .greatestFiniteMagnitude] {
+            let written = color(value)
+            for component in [written.red, written.green, written.blue, written.alpha] {
+                #expect(component.isFinite, "color(\(value))")
+            }
+        }
+    }
 }
 
 /// 範囲の口を図形の経路と比べる検査と、起票の再現 ([#1691] の完了条件 1・2)。GPU を要する。
@@ -78,6 +90,7 @@ struct HalfSurfaceRouteTests {
         case aboveTheEdge = "color(27400)"
         case overbright = "color(40000)"
         case huge = "color(1e9)"
+        case beyondTheLargestFloat = "color(4e18)"
         case translucent = "color(40000, 128)"
         case negative = ".linear(-70000, -70000, -70000)"
         case mixed = ".linear(70000, 0.5, 0)"
@@ -91,6 +104,7 @@ struct HalfSurfaceRouteTests {
             case .aboveTheEdge: MokumeCore.color(27400)
             case .overbright: MokumeCore.color(40000)
             case .huge: MokumeCore.color(1e9)
+            case .beyondTheLargestFloat: MokumeCore.color(4e18)
             case .translucent: MokumeCore.color(40000, 128)
             case .negative: .linear(red: -70000, green: -70000, blue: -70000)
             case .mixed: .linear(red: 70000, green: 0.5, blue: 0)
