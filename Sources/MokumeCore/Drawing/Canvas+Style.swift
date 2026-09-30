@@ -297,7 +297,8 @@ extension Canvas {
                 frontFacing: frontFacing(for: open),
                 isMirrored: open.isMirrored,
                 solidSource: open.source,
-                strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement))
+                strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
+                fillGeometry: open.fillGeometry))
         warnIfMaterialCannotShow()
     }
 

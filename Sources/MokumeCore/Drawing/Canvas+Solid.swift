@@ -217,6 +217,20 @@ extension Canvas {
             closeBatch()
             let key = SolidMeshRangeKey(
                 source: source, isDerived: isDerived, textured: textured, whiteUV: whiteUV)
+            // **読み込んだモデルは、頂点を GPU の置き場に持って使い回す** (#1749)。溜め場へ
+            // 積まないので、列はその置き場の先頭から数える
+            if case .model = source,
+                let geometry = modelFill(
+                    for: key, isDerived: isDerived, textured: textured, mesh: build)
+            {
+                openSolid = OpenSolid(
+                    source: source, vertexStart: 0, vertexCount: geometry.count,
+                    indexStart: nil, instanceStart: solidInstances.count,
+                    isMirrored: placement.isMirrored, fillGeometry: geometry)
+                solidInstances.append(placement)
+                if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
+                return
+            }
             let range: Range<Int>
             if let shared = solidMeshRanges[key] {
                 range = shared
@@ -242,6 +256,30 @@ extension Canvas {
         // (`Batch.cullMode`)。**置いたこの時点で記録する** — 列が閉じる時点のスタイルは、
         // 置いた後で外した絵を知らない (#1564)
         if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
+    }
+
+    /// 読み込んだモデルの塗りの頂点を持つ GPU の置き場。控えに無ければ詰めて作る。
+    ///
+    /// **持たないときは `nil`** — 呼ぶ側は溜め場へ積む (以前の経路)。持たないのは、1 つで
+    /// 予算の半分を超えるとき (追い出し合って毎フレーム作り直すのを避ける) と、置き場を
+    /// 確保できないとき (描けなくするより溜め場で描く)。
+    private func modelFill(
+        for key: SolidMeshRangeKey, isDerived: Bool, textured: Bool,
+        mesh build: () -> SolidMesh
+    ) -> SolidFillGeometry? {
+        if let cached = modelFills[key] { return cached }
+        let points = build().points
+        guard points.count * MemoryLayout<SolidVertex>.stride <= modelFills.budget / 2 else {
+            return nil
+        }
+        var vertices: [SolidVertex] = []
+        vertices.reserveCapacity(points.count)
+        for point in points {
+            vertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
+        }
+        guard let made = try? SolidFillGeometry(vertices: vertices, gpu: gpu) else { return nil }
+        modelFills.insert(made, for: key)
+        return made
     }
 
     /// 組み込みの形・読み込んだモデルの 1 点を頂点にする。

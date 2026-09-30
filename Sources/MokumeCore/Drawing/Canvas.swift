@@ -347,6 +347,9 @@ public final class Canvas {
         /// 指してでたらめになる。列に紐づけておけば、最悪でも共有が効かずに
         /// 3 点/三角形へ落ちるだけで、絵は必ず正しい。
         var sharedSlots: [Int: UInt32] = [:]
+        /// 読み込んだモデルの塗りの頂点を持つ GPU の置き場 (``SolidFillGeometry``)。持っていれば、
+        /// 列は溜め場ではなくここから頂点を読む。閉じた列へそのまま渡し、所有させる。
+        var fillGeometry: SolidFillGeometry?
     }
 
     /// 溜め場ではなく、外の置き場から置き場所を取る指定。
@@ -484,6 +487,17 @@ public final class Canvas {
     /// 同じ稜線の GPU 上の骨。列も所有し、控えの追い出しと描画の寿命を分ける。
     var solidStrokeGeometry = BoundedCache<SolidSource, SolidStrokeGeometry>(
         budget: Canvas.solidCacheBudget, weight: { $0.buffer.length + 256 })
+    /// 読み込んだモデルの塗りの頂点の、GPU 上の置き場 (#1749)。列も所有し、控えの追い出しと
+    /// 描画の寿命を分ける (線の骨 ``solidStrokeGeometry`` と同じ作法)。
+    ///
+    /// **1 つで予算の半分を超えるモデルは持たない** (``modelFill(for:isDerived:textured:mesh:)``)
+    /// — 追い出し合って毎フレーム作り直すと、溜め場へ写すより重くなる。検査は予算を 0 に
+    /// して、持たない経路 (以前の経路) を物差しにする。
+    var modelFills = BoundedCache<SolidMeshRangeKey, SolidFillGeometry>(
+        budget: Canvas.modelFillBudget, weight: { $0.buffer.length + 256 })
+    /// ``modelFills`` の予算 (バイト)。頂点 1 つは 96 バイトで、CPU 側の控え
+    /// (``modelCache``、点 1 つ 48 バイト・予算 64 MiB) に収まるモデルを全部持てる大きさにする。
+    static let modelFillBudget = 128 << 20
     /// 今回の描き切りで積んだ塗りの頂点。列が切れても同じ頂点範囲を指せる。
     var solidMeshRanges: [SolidMeshRangeKey: Range<Int>] = [:]
     /// 一周を割る数の既定。
@@ -1215,6 +1229,12 @@ public final class Canvas {
         /// GPU で展開する線だけが持つ。投入完了まで HeldFrame が列ごと保持する。
         var strokeGeometry: SolidStrokeGeometry?
         var strokePlacement: SolidStrokePlacement?
+        /// 読み込んだモデルの塗りの頂点の置き場 (``OpenSolid/fillGeometry``)。線の骨と同じく、
+        /// 投入完了まで HeldFrame が列ごと保持する。
+        var fillGeometry: SolidFillGeometry?
+
+        /// 頂点を溜め場ではなく自分の置き場から読むなら、その置き場。
+        var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
 
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
@@ -2397,13 +2417,15 @@ public final class Canvas {
     /// [#893]: https://github.com/mokume-metal/mokume/issues/893
     private var hasPendingGeometry: Bool {
         !vertices.isEmpty || !solidVertices.isEmpty || !formInstances.isEmpty
-            || openSolid?.strokeGeometry != nil || batchesHaveStrokeGeometry
+            || openSolid?.strokeGeometry != nil || openSolid?.fillGeometry != nil
+            || batchesOwnVertices
     }
 
-    /// 溜めた列のどれかが立体の線の置き場を持つか。閉包を標準ライブラリへ渡さずに
-    /// 回す — 渡すと列ごとに隔離の実行時検査を払う (#1779)。
-    private var batchesHaveStrokeGeometry: Bool {
-        for batch in batches where batch.strokeGeometry != nil { return true }
+    /// 溜めた列のどれかが、自分の頂点の置き場 (立体の線の骨・モデルの塗り) を持つか。
+    /// 持つ列だけのフレームでは溜め場が空のままなので、ここで拾う。閉包を標準ライブラリへ
+    /// 渡さずに回す — 渡すと列ごとに隔離の実行時検査を払う (#1779)。
+    private var batchesOwnVertices: Bool {
+        for batch in batches where batch.ownVertices != nil { return true }
         return false
     }
 
@@ -2651,7 +2673,7 @@ public final class Canvas {
                         .state(for: run.mode))
                 encoder.setDepthStencilState(pipeline.solidDepthState)
                 pipeline.argumentTable.setAddress(
-                    (batch.strokeGeometry?.buffer ?? geometry.solidVertices).gpuAddress,
+                    (batch.ownVertices ?? geometry.solidVertices).gpuAddress,
                     index: ShapePipeline.vertexBufferIndex)
                 // **置き場所は列の先頭からを渡す。** そうすれば断片の側は 0 から
                 // 数えるだけで済み、列ごとの下駄を持ち歩かなくてよい
@@ -3022,7 +3044,7 @@ public final class Canvas {
             encoder.setRenderPipelineState(
                 batch.strokeGeometry == nil ? pipeline.shadowState : pipeline.solidStrokeShadowState)
             pipeline.argumentTable.setAddress(
-                (batch.strokeGeometry?.buffer ?? solidBuffer).gpuAddress,
+                (batch.ownVertices ?? solidBuffer).gpuAddress,
                 index: ShapePipeline.vertexBufferIndex)
             pipeline.argumentTable.setAddress(
                 batchValues.gpuAddress + UInt64(batchIndex * Self.valuesStride),
