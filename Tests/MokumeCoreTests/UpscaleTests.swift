@@ -316,6 +316,23 @@ struct UpscaleTests {
         #expect(brightest > 2, "越えていた光を運んでいない: \(brightest) (\(density))")
     }
 
+    /// #1817 の反証 2-2・2-5 (拡大の段)。**不透明度 0 で色を持つ画素 (透明な地へ加算した光) も、
+    /// 拡大は運ぶ** — 色ずれ・色調整と同じく、畳むのは出力段だけである (ADR-0011 決定 1)。直す前は
+    /// 出りの不透明度が 0 以下なら 0 を返していたので、細かさを下げたときだけ光が消えた。
+    @Test("不透明度 0 で色を持つ画素は、拡大を通しても細かさ 1 と同じく残る", arguments: [Float(0.5), 0.25])
+    func unboundedLightSurvivesTheEnlargement(density: Float) throws {
+        let canvas = try makeCanvas(density: density)
+        let light = LinearRGBA(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 0)
+        try canvas.draw { canvas.background(light) }
+        let pixels = canvas.output.pixels
+        for (x, y) in [(0, 0), (64, 48), (127, 95)] {
+            let c = pixels[x, y]
+            #expect(
+                c.red == 1 && c.green == 0.5 && c.blue == 0.25 && c.alpha == 0,
+                "(\(x), \(y)) が \(c) (\(density))")
+        }
+    }
+
     /// 引いて 0 を下回った値は、作業空間に残る (``BlendMode/subtract``・ADR-0011 決定 1)。
     /// 畳むのは出力段だけなので、**拡大の段も 0 へ締めない** — 細かさ 1 (段が立たない) と
     /// 同じ値を読み戻せる。

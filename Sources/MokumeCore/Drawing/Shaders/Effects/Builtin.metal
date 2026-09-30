@@ -191,9 +191,10 @@ static inline float4 mokume_enlarge(Pixel in, float2 offset) {
         }
     }
     sum = clamp(sum, lowest, highest);
+    // 不透明度 0 の出りも、色をそのまま置く。**透明な地へ加算した光 (不透明度 0 で色を持つ) は
+    // 運ぶ** — 畳むのは出力段だけで、色ずれ・色調整も同じく運ぶ (ADR-0011 決定 1・#1817)。
+    // 入りが範囲の内なら、上の締めで不透明度 0 の所の色は 0 以下になっている
     sum.rgb = mokume_withinReach(sum.rgb, sum.a, reach);
-    // 乗算済みの決まりを保つ — 不透明度が無いところに色は残らない
-    if (sum.a <= 0.0) { return float4(0.0); }
     return sum;
 }
 
@@ -258,16 +259,23 @@ float4 effect(Pixel in, Values values) {
     if (kind == kEffectAdjust) {
         if (p0 == 0.0 && p1 == 0.0 && p2 == 0.0) { return in.color; }
         float alpha = in.color.a;
+        // **不透明度 0 の画素はそのまま通す。** 乗算を戻せないので調整の掛けようが無く、色を
+        // 持っていれば (透明な地へ加算した光) それを運ぶ — 周辺減光・単色化・反転と同じく、
+        // 畳むのは出力段だけである (ADR-0011 決定 1・#1817)。入りが範囲の内なら、この画素は
+        // 透明な黒で、前と同じ値になる
+        if (alpha <= 0.0) { return in.color; }
         // 掛け戻してから調整する。乗算済みのまま対比を掛けると、半透明のところだけ
         // 効き方が変わる
-        float3 straight = alpha > 0.0 ? in.color.rgb / alpha : float3(0.0);
+        float3 straight = in.color.rgb / alpha;
         // 下へ押し出した値は 0 で止める。**入りに元からある負の値 (`.subtract` で引いた暗さ) は
         // 切らず、その値で止める** — 作業空間は範囲の外の値を捨てない (ADR-0011 決定 1・#1817)。
-        // 入りが範囲の内なら止める所は 0 で、どの段も前と同じ値になる
-        float3 floorAt = min(straight, 0.0);
-        straight = max(straight + p0, floorAt);
-        straight = max((straight - 0.5) * (1.0 + p1) + 0.5, floorAt);
-        straight = max(mix(float3(mokume_luminance(straight)), straight, 1.0 + p2), floorAt);
+        // **止める所は段ごとに、その段の入りから決める** (`min(入り, 0)`)。元の入りから 1 度だけ
+        // 決めると、明るさで 0 以上へ持ち上げた値を対比が押し下げたとき、元の入りが負だったか
+        // どうかだけで答えが割れる。入りが範囲の内なら止める所はどの段も 0 で、前と同じ値になる
+        straight = max(straight + p0, min(straight, 0.0));
+        straight = max((straight - 0.5) * (1.0 + p1) + 0.5, min(straight, 0.0));
+        straight = max(
+            mix(float3(mokume_luminance(straight)), straight, 1.0 + p2), min(straight, 0.0));
         return float4(straight * alpha, alpha);
     }
 

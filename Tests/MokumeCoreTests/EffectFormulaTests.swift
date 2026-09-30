@@ -584,31 +584,75 @@ struct EffectFormulaTests {
         #expect(pixel.blue / pixel.alpha > 3.9 && pixel.blue / pixel.alpha <= 4 * (1 + 1e-3))
     }
 
-    /// #1817 の反証 3。**色調整は、入りに元からある負の値を 0 へ切らない** — 作業空間は範囲の
-    /// 外の値を捨てない ([ADR-0011] 決定 1)。0 で止めるのは、範囲の内の値を調整が 0 より下へ
-    /// 押し出したときだけで (既存の「引いて 0 を下回った成分は 0 で止める」)、入りが負なら
-    /// その値までである。直す前は、どの段も 0 へ切っていた。
+    /// #1817 の反証 3・2-4。**色調整は、入りに元からある負の値を 0 へ切らない** — 作業空間は
+    /// 範囲の外の値を捨てない ([ADR-0011] 決定 1)。
+    ///
+    /// **止める所は段ごとに、その段の入りから決める** — 段の入りが負ならその値、0 以上なら 0
+    /// である。範囲の内の値をある段が 0 より下へ押し出せば、そこで 0 に止まる (既存の「引いて 0 を
+    /// 下回った成分は 0 で止める」)。止める所を元の入りから 1 度だけ決めると、明るさで 0 以上へ
+    /// 持ち上げた値を対比が押し下げたとき、元の入りが負だったかどうかで答えが割れた (反証 2-4:
+    /// 同じ 0.25 から、元が −0.25 なら −0.25、元が 0 なら 0)。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    nonisolated struct NegativeAdjustment: Sendable, CustomTestStringConvertible {
+        let adjustment: Adjustment
+        let expected: Premultiplied
+        var testDescription: String { adjustment.testDescription }
+
+        static let all = [
+            NegativeAdjustment(
+                adjustment: Adjustment(
+                    brightness: 0.125, Premultiplied(-0.25, 0.25, 0.5),
+                    "明るさを足しても負のままの成分は、足した値のまま"),
+                expected: Premultiplied(-0.125, 0.375, 0.625)),
+            NegativeAdjustment(
+                adjustment: Adjustment(
+                    contrast: 1, Premultiplied(-0.25, 0.25, 0.5),
+                    "対比でさらに下へ押された負の成分は、その段の入りの値で止まる"),
+                expected: Premultiplied(-0.25, 0, 0.5)),
+            NegativeAdjustment(
+                adjustment: Adjustment(
+                    brightness: 0.5, contrast: 3, Premultiplied(-0.25, 0.25, 0.5),
+                    "明るさで 0 以上へ持ち上げた値を対比が押し下げたら、0 で止まる (元の入りが負でも)"),
+                expected: Premultiplied(0, 1.5, 2.5)),
+            NegativeAdjustment(
+                adjustment: Adjustment(
+                    brightness: 0.25, contrast: 3, Premultiplied(0, 0.25, 0.5),
+                    "明るさで同じ 0.25 に持ち上げた値は、元の入りが 0 でも同じ 0 に止まる"),
+                expected: Premultiplied(0, 0.5, 1.5)),
+        ]
+    }
+
+    @Test("色調整は、入りに元からある負の値を 0 へ切らず、止める所は段ごとに決める", arguments: NegativeAdjustment.all)
+    func adjustCarriesNegativeValuesItReceived(_ case_: NegativeAdjustment) throws {
+        try Self.requireRepresentable(case_.expected.channels)
+        let canvas = try makeCanvas()
+        let pixels = try uniform(case_.adjustment.color, [case_.adjustment.effect], on: canvas)
+        Self.expectBracketed(pixels[8, 8], case_.expected, slack: 1e-6, case_.testDescription)
+    }
+
+    /// 不透明度 0 で色を持つ画素 (透明な地へ加算した光・ADR-0011 決定 1)。
+    private static let unboundedLight = Premultiplied(1, 0.5, 0.25, alpha: 0)
+
+    /// #1817 の反証 2-1・2-3・2-5。**不透明度 0 で色を持つ画素は、色ずれも色調整もそのまま運ぶ** —
+    /// 作業空間は範囲の外の値を捨てず、畳むのは出力段だけである ([ADR-0011] 決定 1)。周辺減光・
+    /// 単色化・反転と同じく通す。色ずれでは、締めの部品の「上限の無い成分」の枝 (`unbounded`) を
+    /// 通る — 枝が無ければ、不透明度 0 × 乗算を戻した値で 0 へ落ちる。直す前の色調整は、乗算を
+    /// 戻すところで 0 を入れて潰していた。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     @Test(
-        "色調整は、入りに元からある負の値を 0 へ切らない",
+        "不透明度 0 で色を持つ画素は、色ずれと色調整を通しても運ばれる",
         arguments: [
-            Adjustment(
-                brightness: 0.125, Premultiplied(-0.25, 0.25, 0.5),
-                "明るさを足しても負のままの成分は、足した値のまま"),
-            Adjustment(
-                contrast: 1, Premultiplied(-0.25, 0.25, 0.5),
-                "対比でさらに下へ押された負の成分は、入りの値で止まる"),
-        ])
-    func adjustCarriesNegativeValuesItReceived(_ adjustment: Adjustment) throws {
-        let canvas = try makeCanvas()
-        let pixels = try uniform(adjustment.color, [adjustment.effect], on: canvas)
-        let expected: Premultiplied =
-            adjustment.brightness != 0
-            ? Premultiplied(-0.125, 0.375, 0.625)
-            : Premultiplied(-0.25, 0, 0.5)
-        try Self.requireRepresentable(expected.channels)
-        Self.expectBracketed(pixels[8, 8], expected, slack: 1e-6, adjustment.testDescription)
+            ("fringe", Effect.fringe(amount: 1)),
+            ("adjust", Effect.adjust(brightness: 0.25, contrast: 1, saturation: 0.5)),
+        ] as [(String, Effect)])
+    func unboundedLightIsCarried(name: String, effect: Effect) throws {
+        let canvas = try makeCanvas(width: 33, height: 33)
+        let pixels = try uniform(Self.unboundedLight, [effect], on: canvas)
+        for (x, y) in [(0, 0), (16, 16), (32, 5)] {
+            Self.expectBracketed(pixels[x, y], Self.unboundedLight, slack: 0, "\(name) (\(x), \(y))")
+        }
     }
 
     /// 1 画素ごとに色の替わる縦縞。**わずかでもずらして読めば、隣の縞の色が混ざる。**
