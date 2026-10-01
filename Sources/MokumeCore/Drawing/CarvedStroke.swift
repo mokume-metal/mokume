@@ -66,7 +66,8 @@ final class CarvedStroke {
         case moved(CarvedStroke, simd_float4x4, LinearRGBA?)
     }
 
-    private let source: Source
+    /// 組み終えたら手放す (素材は、頂点より小さいが、持ち続ける理由が無い)。
+    private var source: Source?
     private var cache: [ShapeVertex]?
 
     init(recipe: CarveRecipe) { source = .recipe(recipe) }
@@ -77,13 +78,22 @@ final class CarvedStroke {
 
     var vertices: [ShapeVertex] {
         if let cache { return cache }
-        let built: [ShapeVertex]
+        var built: [ShapeVertex] = []
         switch source {
         case .recipe(let recipe): built = recipe.vertices()
         case .moved(let base, let matrix, let tint):
             built = Canvas.moved(base.vertices, by: matrix, tint: tint)
+        case nil: break
+        }
+        // 伸ばしたときの余りが 4 分の 1 を超えるなら、ちょうどの大きさへ写す
+        if built.capacity - built.count > built.count / 4 {
+            var exact: [ShapeVertex] = []
+            exact.reserveCapacity(built.count)
+            exact.append(contentsOf: built)
+            built = exact
         }
         cache = built
+        source = nil
         return built
     }
 
@@ -96,6 +106,7 @@ final class CarvedStroke {
         switch source {
         case .recipe(let recipe): bytes += recipe.carving.residentBytes
         case .moved(let base, _, _): bytes += base.residentBytes
+        case nil: break
         }
         return bytes
     }
