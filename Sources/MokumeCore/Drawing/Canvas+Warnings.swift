@@ -242,9 +242,11 @@ extension Canvas {
         case curveWithoutStart
         /// 受け取れない頂点の座標が渡された。
         case badVertex
-        /// ``curveDetail(_:)`` に 1 より小さい刻みの数が渡され、1 に丸めた ([#1698])。
+        /// ``curveDetail(_:)`` に 1…1024 の外の刻みの数が渡され、範囲の端へ丸めた
+        /// (下の端は [#1698]・上の端は [#1692])。
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+        /// [#1692]: https://github.com/mokume-metal/mokume/issues/1692
         case badCurveDetail
         /// ``Canvas/index(_:)`` に、置いていない頂点の番号が渡された。
         case indexOutOfRange

@@ -187,14 +187,28 @@ extension Canvas {
         }
     }
 
+    /// 1 区間の刻みの数の下限と上限 ([#1692])。
+    ///
+    /// 下限は 1 (区間を 1 本の直線で結ぶ)。**上限は、手が滑って大きな値を渡したときに
+    /// フレームが戻らなくならないようにするためのもの** — 刻みの数だけ点を作るので、
+    /// 上限が無いと `curveDetail(Int.max)` の後の `bezierVertex` 1 つが戻らなかった。
+    /// 1024 は円・楕円・弧の一周の上限 (``segmentCount(forRadius:)``) と同じ数で、2D の
+    /// 曲がった線を刻む既存の最も細かい数を越えない。数を共有しないのは意味が違うから
+    /// (あちらは半径から決める分割の歯止め、こちらは利用者が渡す刻みの範囲)。
+    ///
+    /// [#1692]: https://github.com/mokume-metal/mokume/issues/1692
+    static let curveDetailRange = 1...1024
+
     public func curveDetail(_ steps: Int) {
-        // 1 より小さい刻みは 1 にして、1 度知らせる (#1698)
-        guard steps >= 1 else {
-            warnRounded(.badCurveDetail, "curveDetail", "the number of steps", takes: "1 or more", passed: steps, used: 1)
-            currentCurveDetail = 1
-            return
+        // 範囲の外の刻みは端へ丸めて、1 度知らせる (下の端は #1698・上の端は #1692)
+        let range = Self.curveDetailRange
+        let used = min(max(steps, range.lowerBound), range.upperBound)
+        if used != steps {
+            warnRounded(
+                .badCurveDetail, "curveDetail", "the number of steps",
+                takes: "\(range.lowerBound) to \(range.upperBound)", passed: steps, used: used)
         }
-        currentCurveDetail = steps
+        currentCurveDetail = used
     }
 
     public func curveTightness(_ amount: some ScalarConvertible) {
