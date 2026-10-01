@@ -431,6 +431,129 @@ struct FormShapeTests {
         }
     }
 
+    /// 置き換える混ぜ方の 1 画素は、**縁の画素も** 4 つの面積の和になる ([#1819]・[#1867] 決定 1)。
+    ///
+    /// 帯に丸ごと入る画素だけを見る検査 (上) では、縁の重みが決まらない — 「帯に丸ごと入る
+    /// ときだけ重なりを輪郭だけにする」誤りでも緑になる。そこで面全体の画素を、置き換えで
+    /// 解いた式 `S·s + F·(f − o)` と比べる。形の外 (どちらでもない面積) は置き換えで透明に
+    /// なるので、透明な地に描いて 0 と比べる。
+    ///
+    /// 被覆率は、同じ機械が不透明な白で描いた塗りだけの形から読む。塗り `f` は形そのもの、
+    /// 帯の外縁・内縁は、輪郭を寄せる約束 (ADR-0039 決定 2・画面で +0.5) のとおり半画素
+    /// ずらして太さの半分だけ太らせた・痩せさせた `rect` の塗りである。帯 `s` は外縁 − 内縁
+    /// (輪郭だけの形とも比べる)、重なり `o` は縁が画素の幅では平行とみなした見積もり
+    /// `min(f, 外縁) − min(f, 内縁)`。太さ 1 の帯は塗りの縁の外側に接して重ならない辺と、
+    /// 塗りの中に入る辺を持つので、`min(f, s)` では見積もれない。
+    ///
+    /// 塗りが半透明のとき、輪郭が不透明なとき、**不透明な輪郭で記録した形を半透明の色で置く**
+    /// とき (置き場所の色は輪郭の不透明度にも掛かる・`FormInstance.placed(by:tint:)`) も回す。
+    ///
+    /// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
+    /// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
+    @Test(
+        "置き換える混ぜ方で、塗りと輪郭を 1 回で描いた絵の縁の画素は、面積で置き換えた色になる",
+        arguments: ["半透明の輪郭", "半透明の塗りと輪郭", "半透明の塗りと不透明な輪郭", "記録した形を半透明の色で置く"])
+    func replaceModeWeighsEdgePixelsByArea(_ variant: String) throws {
+        let rects: [(name: String, x: Float, y: Float, width: Float, height: Float, weight: Float)] = [
+            ("rect (#1819)", 24, 24, 48, 48, 12),
+            ("rect 小数", 20.3, 18.6, 52, 46, 7),
+            ("rect 太さ 1", 20.3, 18.6, 52, 46, 1),
+        ]
+        let fillAlpha: Float = variant.hasPrefix("半透明の塗り") ? 0.6 : 1
+        let strokeAlpha: Float = variant == "半透明の塗りと不透明な輪郭" || variant.hasPrefix("記録") ? 1 : 0.5
+        let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8, alpha: fillAlpha)
+        let strokeColor = LinearRGBA.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha)
+        // 置き場所の色 (乗算済みの成分ごとに掛かる)。記録した形を置くときだけ
+        let tint = variant.hasPrefix("記録")
+            ? LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5) : nil
+        func placed(_ color: LinearRGBA) -> LinearRGBA {
+            guard let tint else { return color }
+            return LinearRGBA(
+                premultipliedRed: color.red * tint.red, green: color.green * tint.green,
+                blue: color.blue * tint.blue, alpha: color.alpha * tint.alpha)
+        }
+        let (fillPlaced, strokePlaced) = (placed(fillColor), placed(strokeColor))
+        for rect in rects {
+            func coverage(_ body: (Canvas) -> Void) throws -> PixelBuffer {
+                let canvas = try makeCanvas()
+                try canvas.draw {
+                    canvas.background(black)
+                    body(canvas)
+                }
+                return try canvas.target.readPixels()
+            }
+            func filled(grow: Float, shift: Float) throws -> PixelBuffer {
+                try coverage { canvas in
+                    canvas.fill(white)
+                    canvas.noStroke()
+                    canvas.rect(
+                        rect.x - grow + shift, rect.y - grow + shift,
+                        rect.width + 2 * grow, rect.height + 2 * grow)
+                }
+            }
+            let half = rect.weight / 2
+            let fills = try filled(grow: 0, shift: 0)
+            let outers = try filled(grow: half, shift: 0.5)
+            let inners = try filled(grow: -half, shift: 0.5)
+            let strokes = try coverage { canvas in
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.strokeWeight(rect.weight)
+                canvas.rect(rect.x, rect.y, rect.width, rect.height)
+            }
+            let canvas = try makeCanvas()
+            var recorded = Shape.empty
+            func draw() {
+                canvas.blendMode(.replace)
+                canvas.strokeWeight(rect.weight)
+                canvas.fill(fillColor)
+                canvas.stroke(strokeColor)
+                canvas.rect(rect.x, rect.y, rect.width, rect.height)
+            }
+            if tint != nil { try canvas.draw { recorded = canvas.createShape { draw() } } }
+            try canvas.draw {
+                canvas.background(LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0))
+                if let tint {
+                    canvas.blendMode(.replace)
+                    canvas.shape(recorded, at: [Placement(fill: tint)])
+                } else {
+                    draw()
+                }
+            }
+            let once = try canvas.target.readPixels()
+            var edges = 0
+            var bandMismatch = 0
+            var differing = 0
+            var worst = (gap: Float(0), x: 0, y: 0, f: Float(0), s: Float(0))
+            for y in 0..<once.height {
+                for x in 0..<once.width {
+                    let (f, outer, inner) = (fills[x, y].red, outers[x, y].red, inners[x, y].red)
+                    let s = max(0, outer - inner)
+                    if abs(s - strokes[x, y].red) > 1.0 / 255 { bandMismatch += 1 }
+                    if (f > 0 && f < 1) || (s > 0 && s < 1) { edges += 1 }
+                    let o = max(0, min(f, outer) - min(f, inner))
+                    let expected = [
+                        strokePlaced.red * s + fillPlaced.red * (f - o),
+                        strokePlaced.green * s + fillPlaced.green * (f - o),
+                        strokePlaced.blue * s + fillPlaced.blue * (f - o),
+                        strokePlaced.alpha * s + fillPlaced.alpha * (f - o),
+                    ]
+                    let actual = once[x, y]
+                    let gap = max(
+                        abs(actual.red - expected[0]), abs(actual.green - expected[1]),
+                        abs(actual.blue - expected[2]), abs(actual.alpha - expected[3]))
+                    if gap > 1.0 / 255 { differing += 1 }
+                    if gap > worst.gap { worst = (gap, x, y, f, s) }
+                }
+            }
+            #expect(edges > 100, "\(rect.name): 縁の画素が少ない (\(edges))")
+            #expect(bandMismatch == 0, "\(rect.name): 外縁 − 内縁が輪郭だけの形と \(bandMismatch) 画素違う")
+            #expect(
+                differing == 0,
+                "\(variant)・\(rect.name): \(differing) 画素が面積で置き換えた色と違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y))・f \(worst.f)・s \(worst.s))")
+        }
+    }
+
     /// 下地を読む混ぜ方で、塗りと輪郭を両方持つ形を 1 回で描いた絵は、塗りだけの形の上に
     /// 輪郭だけの形を重ねた絵と同じになる ([#1643])。
     ///
