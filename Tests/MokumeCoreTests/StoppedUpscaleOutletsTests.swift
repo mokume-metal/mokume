@@ -136,6 +136,18 @@ struct StoppedUpscaleOutletsTests {
         // 読むだけ (描く先を変えない)
         sketch.onKey["g"] = { sketch in _ = sketch.get(40, 40) }
         sketch.onKey["r"] = { sketch in sketch.redraw() }
+        // 緑の円を置いて描き直す (円は描き直すフレームへ持ち越す)
+        sketch.onKey["b"] = { sketch in
+            sketch.noStroke()
+            sketch.fill(green)
+            sketch.circle(30, 30, 20)
+            sketch.redraw()
+        }
+        // 同じコールバックで書いて描き直す
+        sketch.onKey["x"] = { sketch in
+            sketch.onKey["w"]?(sketch)
+            sketch.redraw()
+        }
 
         let gpu = try RenderDevice()
         let runtime = try SketchRuntime(
@@ -157,6 +169,7 @@ struct StoppedUpscaleOutletsTests {
     }
 
     private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+    private static let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
 
     private static func isRed(_ red: Float, _ green: Float, _ blue: Float) -> Bool {
         red > 0.9 && green < 0.1 && blue < 0.1
@@ -338,6 +351,87 @@ struct StoppedUpscaleOutletsTests {
             #expect(!canvas.target.hasPendingPixelWrites, "直った後のリフレッシュが書き戻していない")
             let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
             #expect(Self.isRed(point.red, point.green, point.blue), "やり直しで窓に出ていない: \(point)")
+        }
+    }
+
+    /// 配った直後の追い付きが失敗した後に外から止められても、止めている間のリフレッシュがやり直す
+    /// ([#1906])。注意の文面 (「次のリフレッシュでもう一度試す」) のとおりで、止めが解けるまで待たない。
+    /// 細かさを下げた面の広げ直しも同じ 1 点を通る。追い付いた後の止めている間のリフレッシュは、
+    /// 何も投入しない。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    @Test(
+        "配った直後の追い付きが失敗した後に外から止めても、止めている間のリフレッシュがやり直す",
+        arguments: [Float(1), 0.5])
+    func aFailedCatchUpIsRetriedWhilePaused(density: Float) throws {
+        try Self.withStoppedSketch(density: density) { runtime, gpu, press in
+            let canvas = runtime.canvas
+            canvas.target.failPixelWriteBackForTesting = .encoderUnavailable
+            try press("w")
+            #expect(canvas.target.hasPendingPixelWrites, "失敗したのに、書き戻したことになった")
+
+            runtime.pause()
+            canvas.target.failPixelWriteBackForTesting = nil
+            try runtime.advance()
+            #expect(!canvas.target.hasPendingPixelWrites, "止めている間のリフレッシュが書き戻していない")
+            #expect(!canvas.needsOutputEnlargement, "止めている間のリフレッシュが広げ直していない")
+            let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
+            #expect(Self.isRed(point.red, point.green, point.blue), "止めている間に窓に出ていない: \(point)")
+
+            let submissions = gpu.submissionCount
+            try runtime.advance()
+            try runtime.advance()
+            #expect(gpu.submissionCount == submissions, "追い付いた後も、止めている間にコマンドを投入した")
+        }
+    }
+
+    // MARK: - 後で描くフレームの描き切りが失敗したとき
+
+    /// 止まっている間のコールバックで書いた画素は、配った直後に面へ戻したもので、後で描くフレームの
+    /// 描き切りが失敗しても消えない ([#1906]・ADR-0021 決定 4 の追補 (2026-10-02))。窓に一度出した
+    /// 絵が、描けなかったフレームの後で消えないためである。捨てるのは、そのフレームへ持ち越した
+    /// 図形だけ (緑の円)。**同じコールバックで書いて `redraw()` したときは、そのフレームの一部として
+    /// 載るので、描き切りが失敗すれば一緒に捨てる。**
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    @Test(
+        "止まっている間に書いた画素は、後で描くフレームの描き切りが失敗しても残り、持ち越した図形は捨てる",
+        arguments: [Float(1), 0.5])
+    func writtenPixelsOutliveALaterFailedFrame(density: Float) throws {
+        // 検査の前提: 描けたフレームなら、持ち越した円は (30, 30) に出る
+        try Self.withStoppedSketch(density: density) { runtime, gpu, press in
+            try press("b")
+            let circle = try Self.windowPicture(of: runtime, gpu: gpu)[30, 30]
+            #expect(circle.green > 0.9 && circle.red < 0.1, "検査の前提: 円が (30, 30) に出ていない: \(circle)")
+        }
+
+        // 書くコールバックと描き直すコールバックが別
+        try Self.withStoppedSketch(density: density) { runtime, gpu, press in
+            try press("w")
+            runtime.canvas.failureForTesting = .encoderUnavailable
+            #expect(throws: RenderFailure.self) { try press("b") }
+            runtime.canvas.failureForTesting = nil
+            try runtime.advance()
+
+            let shown = try Self.windowPicture(of: runtime, gpu: gpu)
+            let written = shown[80, 80]
+            #expect(
+                Self.isRed(written.red, written.green, written.blue),
+                "描けなかったフレームの後で、前のコールバックで書いた画素が消えた: \(written)")
+            let circle = shown[30, 30]
+            #expect(circle.red > 0.5, "描けなかったフレームへ持ち越した円が残った: \(circle)")
+        }
+
+        // 同じコールバックで書いて描き直す
+        try Self.withStoppedSketch(density: density) { runtime, gpu, press in
+            runtime.canvas.failureForTesting = .encoderUnavailable
+            #expect(throws: RenderFailure.self) { try press("x") }
+            runtime.canvas.failureForTesting = nil
+            try runtime.advance()
+
+            let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
+            #expect(point.green > 0.5, "描けなかったフレームで書いた画素が残った: \(point)")
+            #expect(!runtime.canvas.target.hasPendingPixelWrites, "描けなかったフレームの書き込みが待ちに残った")
         }
     }
 }
