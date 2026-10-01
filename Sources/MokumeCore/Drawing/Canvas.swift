@@ -1429,10 +1429,12 @@ public final class Canvas {
     }
 
     /// 1 フレームの長さ。``deltaTime`` はこれの単精度の写しである。**経過を数に変える側
-    /// (`emit` の繰り越し) が読む** — フレーム番号から導く時計では秒に直さずに渡るので、
-    /// fps によって毎秒 1 個ずれることが無い (``FrameStep``・[#1640])。
+    /// (`emit` の繰り越し・粒の寿命) が読む** — フレーム番号から導く時計では秒に直さずに
+    /// 渡るので、fps によって毎秒 1 個・寿命の 1 枚がずれることが無い (``FrameStep``・
+    /// [#1640]・[#1710])。
     ///
     /// [#1640]: https://github.com/mokume-metal/mokume/issues/1640
+    /// [#1710]: https://github.com/mokume-metal/mokume/issues/1710
     var frameStep: FrameStep {
         get { timebase.step }
         set { timebase.step = newValue }

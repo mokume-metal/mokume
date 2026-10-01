@@ -171,7 +171,7 @@ extension Canvas {
         // 混ぜ方と変換で描かれるので、順序を入れ替えても絵は変わらない
         let placed = particleRoute == .instanced ? placeFromGPU(particles, draw) : nil
         particles.write(
-            into: draw, transform: transform.matrix, basis: currentCamera.basis, step: deltaTime,
+            into: draw, transform: transform.matrix, basis: currentCamera.basis, step: frameStep,
             frame: framesDrawn,
             forces: particles.takeForces(),
             vertexStart: placed?.start ?? 0, vertexCount: placed?.count ?? 0)
