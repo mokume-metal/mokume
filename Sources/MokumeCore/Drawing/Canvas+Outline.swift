@@ -357,9 +357,10 @@ extension Canvas {
         if recordingShape, vertices.count > start {
             // 引かずに積んだ線のうち、`replace` は下地を読まないので、重ねても半透明のまま
             // 同じ色になる。残りの `blend` / `lightest` / `darkest` は、半透明の色を掛けて
-            // 置かれると 2 回目で寄っていくので、引く素材を持っておく
+            // 置かれると 2 回目で寄っていくので、引く素材を持っておく。点 1 つの輪郭は
+            // 端の形が 1 枚だけで、重なる相手が無いので持たない
             let carved: CarvedStroke? =
-                !overlaps && style.blendMode != .replace
+                !overlaps && style.blendMode != .replace && points.count > 1
                 ? carveLater(outline, half: half, chamfers: chamfers) : nil
             recordedStrokeRanges.append(StrokeRange(start..<vertices.count, carved: carved))
         }

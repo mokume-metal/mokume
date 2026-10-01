@@ -1039,4 +1039,93 @@ struct StrokeOverlapTests {
         }
         #expect(differingPixels(second, direct) == 0, "2 回目: \(holes(second, direct))")
     }
+
+    /// **再記録のたびに、引く素材の箱が積み重ならない。** `trail = createShape { shape(trail); … }` の
+    /// ように、記録した形を入れ子に置き直すことを重ねると、畳まなければ k 段目の輪郭が長さ k の鎖に
+    /// なり、生きている箱が段数の二乗で増える。
+    @Test("不透明の線で記録した形を入れ子に置き直すことを重ねても、引く素材の箱の鎖は伸びない")
+    func rewrappingKeepsTheChainShort() throws {
+        func small(_ canvas: Canvas) {
+            canvas.beginShape()
+            canvas.vertex(20, 20)
+            canvas.vertex(50, 20)
+            canvas.vertex(50, 50)
+            canvas.vertex(20, 50)
+            canvas.endShape(.close)
+        }
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var shape = Shape.empty
+        try canvas.draw {
+            shape = Self.opaqueShape(canvas, weight: 12, small)
+            for _ in 0..<40 {
+                let previous = shape
+                shape = canvas.createShape { canvas.shape(previous, at: [Placement(x: 2)]) }
+            }
+        }
+        let boxes = Self.carvedBoxes(shape)
+        #expect(boxes.count == 1)
+        #expect(boxes.allSatisfy { $0.chainDepth <= 1 }, "鎖の長さ: \(boxes.map { $0.chainDepth })")
+        #expect(boxes.allSatisfy { !$0.isRealized })
+
+        // 40 段で 80 画素ずれた先で、直に半透明の線で描いた絵と同じ
+        let pixels = try drawn(canvas, shape, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(weight: 12) { canvas in
+            canvas.translate(80, 0)
+            small(canvas)
+        }
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 畳むときは、内側の置き場所の色も外側の置き場所の色と合成して掛ける (不透明度 1 の色は
+    /// 記録の中では素材のままで、色だけが頂点に焼かれる)。
+    @Test("入れ子に置き直した形の置き場所の色は、畳んでも内側と外側の両方が掛かる")
+    func rewrappedTintsStillMultiply() throws {
+        // 赤だけを半分にする。不透明度は変えないので、記録の中では引かずに素材を持ち越す。
+        // 色は線形で渡す (`stroke(255, 0, 0)` は作業空間で緑と青にも小さな値を持つ)
+        let dim = LinearRGBA(premultipliedRed: 0.5, green: 1, blue: 1, alpha: 1)
+        let (canvas, shape) = try recorded { canvas in
+            let inner = canvas.createShape {
+                canvas.noFill()
+                canvas.stroke(Self.redInk)
+                canvas.strokeWeight(20)
+                Self.closedSquare(canvas)
+            }
+            let middle = canvas.createShape { canvas.shape(inner, at: [Placement(fill: dim)]) }
+            return canvas.createShape { canvas.shape(middle, at: [Placement(fill: dim)]) }
+        }
+        let boxes = Self.carvedBoxes(shape)
+        #expect(boxes.count == 1)
+        #expect(boxes.allSatisfy { $0.chainDepth <= 1 }, "鎖の長さ: \(boxes.map { $0.chainDepth })")
+
+        // 赤は 0.5 × 0.5 (内外の色) × 0.5 (置き場所の色) = 0.125、不透明度は 0.5。どれも 2 の冪なので、
+        // 掛ける順が変わっても成分までビット一致する
+        let pixels = try drawn(canvas, shape, at: [Placement(fill: Self.halfVeil)])
+        let direct = try render { canvas in
+            canvas.stroke(LinearRGBA(premultipliedRed: 0.125, green: 0, blue: 0, alpha: 0.5))
+            canvas.strokeWeight(20)
+            Self.closedSquare(canvas)
+        }
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct).count) 画素")
+    }
+
+    /// 点 1 つの輪郭は端の形が 1 枚だけで、重なる相手が無い。素材を持たず、記録の時間もメモリも
+    /// 増やさない。半透明の色を掛けて置いても、直に描いた絵と変わらない。
+    @Test("点を並べて記録した形は、引く素材を持たず、半透明の色を掛けて置いても直に描いた絵と 1 画素も違わない")
+    func singlePointOutlinesKeepNoMaterial() throws {
+        func dots(_ canvas: Canvas) {
+            canvas.beginShape(.points)
+            canvas.vertex(40, 40)
+            canvas.vertex(100, 50)
+            canvas.vertex(60, 110)
+            canvas.endShape()
+        }
+        let (canvas, shape) = try recorded { Self.opaqueShape($0, weight: 24, dots) }
+        #expect(Self.carvedBoxes(shape).isEmpty, "点の輪郭が素材を持っている")
+        let pixels = try drawn(canvas, shape, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(weight: 24, dots)
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
 }

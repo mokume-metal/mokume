@@ -84,8 +84,28 @@ final class CarvedStroke {
 
     init(recipe: CarveRecipe) { source = .recipe(recipe) }
 
+    /// 別の保持した形の中で置かれた輪郭。もとの箱へ、置いたときの行列と色を掛ける。
+    ///
+    /// **元の箱が、まだ組んでいない派生なら、行列と色を合成して 1 段に畳む。** 畳まずに積むと、
+    /// 再記録のたびに箱が 1 段ずつ積み重なる (`trail = createShape { shape(trail); 線を足す }` を
+    /// 毎フレーム繰り返すと、k フレーム目には輪郭 j が長さ k − j の鎖になり、生きている箱が
+    /// O(k²) 個になる)。畳めば、どの派生も素材の箱を直に指し、箱の数は輪郭の数のままである。
     init(moving base: CarvedStroke, by matrix: simd_float4x4, tint: LinearRGBA?) {
-        source = .moved(base, matrix, tint)
+        if base.cache == nil, case .moved(let root, let inner, let innerTint)? = base.source {
+            // 先に `inner` で移し、次に `matrix` で移す = 合成した行列で 1 度に移す
+            source = .moved(root, matrix * inner, Self.combined(innerTint, tint))
+        } else {
+            source = .moved(base, matrix, tint)
+        }
+    }
+
+    /// 先に `first`、次に `second` の色を掛けたのと同じ色。渡さなければ何も掛からない。
+    private static func combined(_ first: LinearRGBA?, _ second: LinearRGBA?) -> LinearRGBA? {
+        guard let first else { return second }
+        guard let second else { return first }
+        return LinearRGBA(
+            premultipliedRed: first.red * second.red, green: first.green * second.green,
+            blue: first.blue * second.blue, alpha: first.alpha * second.alpha)
     }
 
     /// 引いて積んだ頂点。最初に読んだときに組む。
@@ -112,4 +132,11 @@ final class CarvedStroke {
 
     /// 組み終えているか (検査用)。
     var isRealized: Bool { cache != nil }
+
+    /// 箱の鎖の長さ (検査用)。素材そのものと組み終えた箱は 0、派生は元の箱の長さ + 1。
+    /// 畳んでいれば、組む前の派生は 1 を超えない。
+    var chainDepth: Int {
+        guard case .moved(let base, _, _)? = source else { return 0 }
+        return base.chainDepth + 1
+    }
 }

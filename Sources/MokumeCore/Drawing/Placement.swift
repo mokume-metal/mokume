@@ -26,7 +26,7 @@ public struct Placement: Equatable, Sendable {
     public var scale: Float
     /// 各軸まわりの回転 (ラジアン)。**横 → 縦 → 奥行き**の順に掛かる。
     public var rotation: SIMD3<Float>
-    /// この置き場所の塗り。`nil` なら置いた時点の塗りで出る。
+    /// この置き場所の塗り。`nil` なら何も掛からず、記録した色のまま出る。
     ///
     /// 半透明の色を渡すと、不透明の線で記録した形の線も、直に半透明の線で描いたときと同じ
     /// 混ざり方になる (`stroke(_:)` の説明のとおり、`beginShape()` で並べた線のうち、線に沿って
@@ -36,6 +36,9 @@ public struct Placement: Equatable, Sendable {
     /// 参照スケッチの葉を 2000 枚並べた 1 つの形で約 120 ms (release・Apple M3 Max)。引いた結果は
     /// 形に控えるので、同じ形を 2 回目以降に置くときは余分にかからない (同じ葉 2000 枚で約 8 ms)。
     /// 色を渡さない置き場所と不透明の色を渡す置き場所は引かないので、この費用を払わない。
+    ///
+    /// 控えた結果は形が生きている間残る。同じ葉 2000 枚の形で、重ねて積んだ頂点 (約 57 MiB) に
+    /// 加えて、最初に置いた後は引いた頂点 (約 125 MiB) も持つ。
     public var fill: LinearRGBA?
 
     public init(

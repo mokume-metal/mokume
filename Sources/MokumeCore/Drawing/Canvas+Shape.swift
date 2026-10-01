@@ -193,10 +193,21 @@ extension Canvas {
         }
         guard !usable.isEmpty else { return }
 
+        // 半透明の色を掛ける置き場所があるときだけ、区間ごとに差し替える輪郭を求める。
+        // 色を掛けない置き場所だけなら、輪郭を走査しない (輪郭の多い形を毎フレーム置いても増えない)
+        var translucent = false
+        for placement in usable where (placement.fill?.alpha ?? 1) < 1 {
+            translucent = true
+            break
+        }
         replaying(shape.runs) { run in
             switch run.source {
             case .flat:
-                for placement in usable { place(run, of: shape, at: placement) }
+                // 差し替える輪郭は区間で決まる。置き場所ごとに求め直さない
+                let carved =
+                    translucent
+                    ? shape.carvedStrokes(within: run.start..<(run.start + run.count)) : []
+                for placement in usable { place(run, of: shape, at: placement, carved: carved) }
             case .solid:
                 placeSolid(run, of: shape, at: usable)
             case .form:
@@ -266,15 +277,20 @@ extension Canvas {
     /// **掛ける色が半透明なら、不透明の線の区間は、引いて積んだ頂点に差し替える**
     /// ([#1829]・[#1920])。不透明の線は記録のとき片を重ねたまま積む
     /// (``Canvas/strokeOverlapsShow``) ので、そのまま半透明にすると角と継ぎ目だけが濃くなる。
-    /// 色なしと不透明の色は、これまでどおり重ねたまま置く — 差し替えるのは、掛けた後の不透明度が
-    /// 1 を下回るときだけである。
+    /// 色なしと不透明の色は、これまでどおり重ねたまま置く — 差し替えるのは、置き場所の色の
+    /// 不透明度 (``LinearRGBA/alpha``) が 1 を下回るときだけである。
     ///
     /// **引くのは、その形を半透明の色で最初に置くとき 1 度だけ。** 引いた頂点は形の側
     /// (``CarvedStroke``) に控えるので、2 回目以降は控えた頂点を移して積むだけで済む。
     ///
+    /// - Parameter carved: この区間で、引く素材を持つ輪郭 (``Shape/carvedStrokes(within:)``)。
+    ///   半透明の色を掛ける置き場所がなければ空でよい
+    ///
     /// [#1829]: https://github.com/mokume-metal/mokume/issues/1829
     /// [#1920]: https://github.com/mokume-metal/mokume/issues/1920
-    private func place(_ run: Shape.Run, of shape: Shape, at placement: Placement) {
+    private func place(
+        _ run: Shape.Run, of shape: Shape, at placement: Placement, carved candidates: [StrokeRange]
+    ) {
         // **まとめて写してから、その場で移す。** 1 頂点ずつ足すと、置くたびに
         // 溜め場の伸長判定を通ることになる — 保持の速さはここで決まる
         let base = vertices.count
@@ -283,7 +299,7 @@ extension Canvas {
         let matrix = transform.matrix * placement.transform.matrix
         let tint = placement.fill
         // 差し替える輪郭 (頂点の並びの順)。色を掛けない置き場所は、ここで空になる
-        let replaced = (tint?.alpha ?? 1) < 1 ? shape.carvedStrokes(within: runRange) : []
+        let replaced = (tint?.alpha ?? 1) < 1 ? candidates : []
         if replaced.isEmpty {
             vertices.append(contentsOf: shape.vertices[runRange])
         } else {
