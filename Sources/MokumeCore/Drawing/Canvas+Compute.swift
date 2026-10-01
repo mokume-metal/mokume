@@ -443,10 +443,10 @@ extension Canvas: PendingComputationHolder {
     var hasPendingComputations: Bool { !pendingComputations.isEmpty }
 
     var pendingAccess: ComputeAccess<ObjectIdentifier> {
-        // 描いていない間の溜めと、閉じ忘れたまま本体のフレームを越えた描き場所の溜めは、順を守る
-        // 相手ではない。後者は次の `beginDraw()` が描かずに捨てるもの (#1622) で、ぶつかる頼みが
+        // 描いていない間の溜めは、順を守る相手ではない。閉じ忘れたまま本体のフレームを越えた
+        // 描き場所も、本体の頭で捨てられて描いていない間に居る (#1834) ので、ぶつかる頼みが
         // 来ても復活させて走らせない
-        guard isDrawing, !isFrameLeftOpenPastTheMainFrame else { return ComputeAccess() }
+        guard isDrawing else { return ComputeAccess() }
         var access = ComputeAccess<ObjectIdentifier>()
         for dispatch in pendingComputations {
             access.formUnion(ComputeAccess(reads: dispatch.reads, writes: dispatch.writes))
