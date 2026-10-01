@@ -265,6 +265,62 @@ struct ShapeFormulaTests {
         #expect(differingPixels(curved, straight) == 0)
     }
 
+    // MARK: - 刻みの上限 (#1692)
+
+    /// 1 区間を `curveDetail` の数だけ刻む口。`quadraticVertex` は 3 次へ直して
+    /// `bezierVertex` を通るが、口としては別に数える (利用者が呼ぶのは口のほう)。
+    nonisolated enum CurveRoute: String, Sendable, CaseIterable {
+        case bezierVertex, quadraticVertex, curveVertex
+    }
+
+    /// 曲線 1 区間を線だけで記録した形 (`createShape`) の頂点の数。
+    ///
+    /// **点の数で数える。** 時間や確保で測らないので、機械によらず同じ数が出る (#1692 の
+    /// 起票の再現と同じ物差し)。
+    private func curveVertexCount(_ route: CurveRoute, detail: Int) throws -> Int {
+        let canvas = try makeCanvas(width: 160, height: 120)
+        var count = 0
+        try canvas.draw {
+            count = canvas.createShape {
+                canvas.curveDetail(detail)
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.beginShape()
+                switch route {
+                case .bezierVertex:
+                    canvas.vertex(10, 100)
+                    canvas.bezierVertex(40, 10, 120, 10, 150, 100)
+                case .quadraticVertex:
+                    canvas.vertex(10, 100)
+                    canvas.quadraticVertex(80, 10, 150, 100)
+                case .curveVertex:
+                    // 描かれるのは真ん中の 1 区間 (10, 100)–(150, 100)
+                    canvas.curveVertex(10, 110)
+                    canvas.curveVertex(10, 100)
+                    canvas.curveVertex(150, 100)
+                    canvas.curveVertex(150, 110)
+                }
+                canvas.endShape()
+            }.vertexCount
+        }
+        return count
+    }
+
+    /// #1692 の完了条件 1・4。刻みの数は 1…1024 で、上の端を越えた値は 1024 として刻む。
+    /// 直す前は渡した数だけ刻んだので、1025 でも 100000 でも点が増え続けた (100000 で
+    /// 頂点 1800012)。**1023 → 1024 で点が増えることも見る** — 上限が 1024 より手前で
+    /// 掛かっていれば、ここが等しくなって赤になる。
+    ///
+    /// `Int.max` の行は、直す前のコードでは走らせない (刻みを約 9.2×10¹⁸ 回まわして戻らない)。
+    @Test(
+        "curveDetail の上の端を越えた値は、3 つの曲線の口とも 1024 と同じ数だけ刻む",
+        arguments: CurveRoute.allCases, [1025, 100_000, .max])
+    func curveStepsStopAtTheUpperBound(route: CurveRoute, detail: Int) throws {
+        let atBound = try curveVertexCount(route, detail: 1024)
+        #expect(atBound > (try curveVertexCount(route, detail: 1023)), "1024 まで刻みが増えない")
+        #expect((try curveVertexCount(route, detail: detail)) == atBound)
+    }
+
     // MARK: - 通過点の曲線の並びの切れ目 (#1449)
 
     /// 起票 ([#1449]) の再現の輪。8 点の輪を 11 個の通過点で一巡りする — 最初と最後の
