@@ -8,8 +8,10 @@ import MokumeDiagnostics
 /// 1 回ぶんの計算の頼み。
 ///
 /// 頼まれた順に溜め、描く前にまとめて流す。溜めは面ごとで、別の面が先に頼んだ溜めとぶつかる
-/// 頼みが来たときは、頼まれる前にその面の溜めを先に流す ([#1870])。
+/// 頼みが来たときは、頼まれる前にその面の溜めを先に流す ([#1870])。数の並びへの CPU の書き込みも、
+/// その並びに触れる溜めを (書いた面のものも) 書く前に流す ([#1687])。
 ///
+/// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
 /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
 struct ComputeDispatch {
     let computation: Computation
@@ -127,6 +129,8 @@ extension Canvas {
             before: ComputeAccess(reads: dispatch.reads, writes: dispatch.writes))
         pendingComputations.append(dispatch)
         gpu.pendingComputationHolders.enqueue(self)
+        // 束ねた並びへの後の書き込みが、この頼みを先に送れるように印を立てる (#1687)
+        for numbers in buffers { numbers.mayBeNamedByPendingComputations = true }
     }
 
     /// 別の面が先に頼んで、まだ投入していない計算のうち、`asked` より先に走らねばならないものを、

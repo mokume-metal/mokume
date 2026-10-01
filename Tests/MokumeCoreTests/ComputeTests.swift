@@ -1288,4 +1288,253 @@ struct ComputeTests {
         #expect(s.canvas.read(s.second) == [-1])
         #expect(s.canvas.read(s.first) == [-1])
     }
+
+    // MARK: - CPU の書き込みと、先に頼んだ計算 (#1687)
+    //
+    // 数の並びへの書き込みは控えに積まれ、描き切り (か読み戻し) の頭で 1 度だけ、すべての計算より
+    // 先に届く。だから書く前に頼んだ計算も、書いた後の中身を読んでいた — `read()` を挟めば直る
+    // (B・C2)。CPU が呼んだ順に効く (案 1a): 書く前に頼んだ計算は書く前の中身を読み、面をまたいでも同じ。
+
+    /// 書く口 3 つ。**どれも `Numbers.write(at:count:_:)` を通る**が、利用者が触るのはこちらなので、
+    /// 3 つとも回す。
+    enum Writer: CaseIterable, Sendable, CustomTestStringConvertible {
+        case setAll, setAt, fill
+
+        @MainActor func write(_ value: Float, into numbers: Numbers) {
+            switch self {
+            case .setAll: numbers.set(Array(repeating: value, count: numbers.count))
+            case .setAt: for index in 0..<numbers.count { numbers.set(value, at: index) }
+            case .fill: numbers.fill(value)
+            }
+        }
+
+        var testDescription: String {
+            switch self {
+            case .setAll: "set(_:)"
+            case .setAt: "set(_:at:)"
+            case .fill: "fill(_:)"
+            }
+        }
+    }
+
+    /// 本文の A: 書く → 頼む → 書く → 頼む。`readBetween` なら 1 つ目の頼みの後に読む (B)。
+    /// `directly` なら逃げ道 (その場で待って直接書く) を通らせる。
+    private func askAroundAWrite(
+        by writer: Writer, readBetween: Bool = false, directly: Bool = false
+    ) throws -> (first: [Float], second: [Float], directUploads: Int) {
+        let canvas = try makeCanvas()
+        let copy = try canvas.makeComputation(Self.copy, name: "copy")
+        let source = try canvas.makeNumbers(count: 1)
+        let first = try canvas.makeNumbers(count: 1)
+        let second = try canvas.makeNumbers(count: 1)
+        if directly { source.dirtyRangeLimit = 0 }
+        try canvas.draw {
+            writer.write(1, into: source)
+            canvas.compute(copy, over: 1, reads: [source], writes: [first])
+            if readBetween { _ = canvas.read(first) }
+            writer.write(2, into: source)
+            canvas.compute(copy, over: 1, reads: [source], writes: [second])
+        }
+        return (canvas.read(first), canvas.read(second), source.directUploads)
+    }
+
+    @Test("書く前に頼んだ計算は、書く前の中身を読む (read() を挟んでも同じ)", arguments: Writer.allCases)
+    func anAskBeforeAWriteReadsWhatWasThereBefore(writer: Writer) throws {
+        let asked = try askAroundAWrite(by: writer)
+        let withRead = try askAroundAWrite(by: writer, readBetween: true)
+        #expect(withRead.first == [1] && withRead.second == [2], "対照 (read() を挟む形) が崩れている")
+        #expect(
+            asked.first == [1],
+            "書く前に頼んだ計算が、後から書いた値を読んでいる (#1687 の A)")
+        #expect(asked.second == [2])
+    }
+
+    @Test("その場で直接書く逃げ道でも、書く前に頼んだ計算は書く前の中身を読む", arguments: Writer.allCases)
+    func theDirectWriteFallbackKeepsTheCallOrderToo(writer: Writer) throws {
+        let asked = try askAroundAWrite(by: writer, directly: true)
+        #expect(asked.directUploads > 0, "逃げ道を通っていない — この検査は何も見ていない")
+        #expect(asked.first == [1], "逃げ道で直接書いた値を、書く前に頼んだ計算が読んでいる")
+        #expect(asked.second == [2])
+    }
+
+    @Test("計算が書く並びへ、頼んだ後に書いた値が残る (次のフレームにも)", arguments: Writer.allCases)
+    func aWriteAfterAnAskThatWritesTheSameArraySurvives(writer: Writer) throws {
+        func written(readBetween: Bool) throws -> (afterFrame: [Float], nextFrame: [Float]) {
+            let canvas = try makeCanvas()
+            let stamp = try canvas.makeComputation(Self.stamp, name: "stamp", values: ["amount": 3])
+            let numbers = try canvas.makeNumbers(count: 1)
+            try canvas.draw {
+                canvas.compute(stamp, over: 1, writes: [numbers])
+                if readBetween { _ = canvas.read(numbers) }
+                writer.write(5, into: numbers)
+            }
+            let afterFrame = canvas.read(numbers)
+            try canvas.draw { canvas.background(.display(red: 0, green: 0, blue: 0)) }
+            return (afterFrame, canvas.read(numbers))
+        }
+        let withRead = try written(readBetween: true)
+        #expect(withRead.afterFrame == [5] && withRead.nextFrame == [5], "対照 (C2) が崩れている")
+        let asked = try written(readBetween: false)
+        #expect(asked.afterFrame == [5], "頼んだ後に書いた値が、計算の結果で上書きされて消えた (#1687 の C)")
+        #expect(asked.nextFrame == [5])
+    }
+
+    @Test("書く前に頼んだ計算は、描き場所の描き切りを挟んでも書く前の中身を読む", arguments: Writer.allCases)
+    func anAskBeforeAWriteOnAnotherSurfaceReadsWhatWasThereBefore(writer: Writer) throws {
+        let s = try makeSurfaces()
+        try s.canvas.draw {
+            s.canvas.background(.display(red: 0, green: 0, blue: 0))
+            writer.write(1, into: s.first)
+            s.canvas.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+            // 書くのは描き場所の中で、その `endDraw()` が控えを届ける (控えの登録簿は 1 つ)
+            s.layer.beginDraw()
+            writer.write(2, into: s.first)
+            s.layer.endDraw()
+        }
+        #expect(s.canvas.read(s.second) == [1], "別の面の描き切りが、先に頼んだ計算より前に後の値を届けた (#1687 の D)")
+        #expect(s.canvas.read(s.first) == [2])
+    }
+
+    @Test("開いたままの描き場所で頼んだ計算も、その後の書き込みより先に効く")
+    func anAskOnAnOpenLayerPrecedesALaterWrite() throws {
+        let s = try makeSurfaces()
+        try s.canvas.draw {
+            s.canvas.background(.display(red: 0, green: 0, blue: 0))
+            s.layer.beginDraw()
+            s.first.set([1])
+            s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+            s.first.set([7])
+            s.layer.endDraw()
+        }
+        #expect(s.canvas.read(s.second) == [1])
+        #expect(s.canvas.read(s.first) == [7])
+    }
+
+    /// **絵にも投入の数にも出ない費用を数で見る** (`accessLookups` は相手の溜めを引いた回数)。書く口は
+    /// 毎フレーム何万回も呼ばれうるので、溜まった頼みが名指ししていない並びへの書き込みは名簿を引かない。
+    /// 名指しされた並びでも、引くのは最初の 1 度だけ (先に頼んだ計算は、そこで投入される)。
+    @Test("先に頼んだ計算が名指ししていない並びへの書き込みは、名簿を引かない")
+    func writesToArraysNoPendingAskNamesSkipTheRegistry() throws {
+        let canvas = try makeCanvas()
+        let stamp = try canvas.makeComputation(Self.stamp, name: "stamp", values: ["amount": 3])
+        let named = try canvas.makeNumbers(count: 1)
+        let unnamed = try canvas.makeNumbers(count: 1)
+        let lookups = { canvas.gpu.pendingComputationHolders.accessLookups }
+
+        try canvas.draw {
+            canvas.compute(stamp, over: 1, writes: [named])
+            for index in 0..<1000 { unnamed.set(Float(index), at: 0) }
+        }
+        #expect(lookups() == 0, "頼みが名指ししていない並びへの書き込みが、名簿を引いている")
+
+        try canvas.draw {
+            canvas.compute(stamp, over: 1, writes: [named])
+            for index in 0..<1000 { named.set(Float(index), at: 0) }
+        }
+        #expect(lookups() == 1, "名指しされた並びへの書き込みが、投入の後も名簿を引き続けている (か、1 度も引いていない)")
+        #expect(canvas.read(named) == [999])
+        #expect(canvas.read(unnamed) == [999])
+    }
+
+    /// **費用を絵ではなく数で見る** (#1687 の完了条件 2)。書いてから頼む形 (台帳の場面も同じ) と、
+    /// 頼んだ計算が触れない並びへの書き込みは今のまま。頼んだ後にその並びへ書く形だけが投入を 1 本
+    /// 増やす。どれも投入済みの全部を待たない。
+    @Test("書き込みが投入を増やすのは、先に頼んだ計算が触れる並びへ書くときの 1 本だけで、全完了は待たない")
+    func onlyAWriteUnderAnEarlierAskAddsASubmission() throws {
+        let canvas = try makeCanvas()
+        let copy = try canvas.makeComputation(Self.copy, name: "copy")
+        let source = try canvas.makeNumbers(count: 1)
+        let other = try canvas.makeNumbers(count: 1)
+        let copied = try canvas.makeNumbers(count: 1)
+        func cost(_ body: () -> Void) throws -> (count: UInt64, drains: Int, uploadBarriers: Int) {
+            func run() throws {
+                try canvas.draw {
+                    canvas.background(.display(red: 0, green: 0, blue: 0))
+                    body()
+                }
+            }
+            // 1 度目は置き場の確保などがあるので、数える前に同じものを回しておく
+            try run()
+            try canvas.gpu.settle()
+            let before = (canvas.gpu.submissionCount, canvas.gpu.blockingWaits, canvas.uploadBarriersEncoded)
+            try run()
+            return (
+                canvas.gpu.submissionCount - before.0, canvas.gpu.blockingWaits - before.1,
+                canvas.uploadBarriersEncoded - before.2
+            )
+        }
+
+        let plain = try cost {}
+        let writeThenAsk = try cost {
+            source.set([1])
+            canvas.compute(copy, over: 1, reads: [source], writes: [copied])
+        }
+        let askThenWriteElsewhere = try cost {
+            canvas.compute(copy, over: 1, reads: [source], writes: [copied])
+            other.set([1])
+        }
+        let askThenWrite = try cost {
+            canvas.compute(copy, over: 1, reads: [source], writes: [copied])
+            source.set([1])
+        }
+
+        #expect(writeThenAsk.count == plain.count, "書いてから頼む形が投入を増やしている")
+        #expect(writeThenAsk.uploadBarriers == 1, "書いてから 1 本だけ頼むフレームの控えの仕掛けが 1 つでない")
+        #expect(askThenWriteElsewhere.count == plain.count, "頼んだ計算が触れない並びへの書き込みが投入を増やしている")
+        #expect(askThenWrite.count == plain.count + 1, "頼んだ後に書く形は、投入を 1 本だけ増やす")
+        for (name, measured) in [
+            ("何もしない", plain), ("書いてから頼む", writeThenAsk),
+            ("触れない並びへ書く", askThenWriteElsewhere), ("頼んでから書く", askThenWrite),
+        ] {
+            #expect(measured.drains == 0, "\(name): 投入済みの全部を待っている")
+        }
+    }
+
+    /// 早い投入は #1870 と同じ口 (``Canvas/submitPendingComputations()``) を通るので、失敗の扱いも同じ。
+    /// 絵も計算も落とさず、注意は 1 度、そのフレームの間は試し直さない。頼んだ順は守れない。
+    @Test("書く前の早い投入に失敗しても、絵も計算も落とさず、1 度だけ注意し、そのフレームの間は試し直さない")
+    func aFailedEarlySubmissionBeforeAWriteKeepsTheAsk() throws {
+        let canvas = try makeCanvas()
+        let copy = try canvas.makeComputation(Self.copy, name: "copy")
+        let source = try canvas.makeNumbers(count: 1)
+        let copied = try canvas.makeNumbers(count: 1)
+        canvas.failEarlySubmissionForTesting = .timedOut(seconds: RenderDevice.waitLimitSeconds)
+
+        var stillPending = -1
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            canvas.rect(0, 0, 32, 8)
+            source.set([1])
+            canvas.compute(copy, over: 1, reads: [source], writes: [copied])
+            source.set([2])
+            source.set(3, at: 0)
+            source.fill(4)
+            stillPending = canvas.pendingComputations.count
+        }
+        canvas.failEarlySubmissionForTesting = nil
+
+        #expect(canvas.earlySubmissionsAttempted == 1, "同じフレームの間に、失敗した面へ試し直している")
+        #expect(canvas.warnings.hasWarned(.computationsSentAheadFailed))
+        #expect(stillPending == 1, "失敗したのに、溜めた計算が降ろされている")
+        #expect(gray(try canvas.target.encodeForDisplay(), atColumn: 16) > 0.9, "絵が落ちた")
+        // 描き切りは溜めた計算を流した。頼んだ順は守れなかった
+        #expect(canvas.read(copied) == [4])
+    }
+
+    /// 閉じ忘れた描き場所の頼みは、次のフレームの `beginDraw()` が描かずに捨てる (#1622)。
+    /// その頼みが名指しする並びへ書いても、復活させて走らせない。
+    @Test("閉じ忘れたまま本体のフレームを越えた描き場所の頼みは、その並びへ書いても走らない")
+    func aWriteDoesNotRaiseTheAskOfALayerLeftOpen() throws {
+        let s = try makeSurfaces()
+        s.first.fill(-1)
+        s.second.fill(7)
+        try s.canvas.draw {
+            s.layer.beginDraw()
+            s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
+        }
+        try s.canvas.draw { s.first.set([4]) }
+        #expect(s.canvas.read(s.second) == [7], "閉じ忘れた描き場所の頼みが、書き込みで走った")
+        #expect(s.canvas.read(s.first) == [4])
+    }
 }

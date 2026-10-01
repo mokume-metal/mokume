@@ -378,6 +378,96 @@ struct ParticleTests {
         #expect(fingerprint(fast) == fingerprint(reference))
     }
 
+    // MARK: - 進めた後に出す (#1687)
+    //
+    // 出した粒は、状態の並びへの CPU の書き込みである。書き込みは CPU が呼んだ順に効くので、
+    // `particles(p)` の後に出した粒はその呼び出しの刻みに入らず、次に進めるときから出る — 呼び出しの
+    // 中で読み戻す参照の経路と同じになる。直す前は、速い経路だけが後に出した粒をそのフレームで
+    // 進めて描いていた (控えは描き切りの頭で 1 度だけ、すべての計算より前に届いていた)。
+
+    /// 動かない白い粒を (0, `y`) に 100 個出す (寿命 5 秒・大きさ 20)。刻みは ``twiceStep``。
+    private func releaseStill(
+        _ dust: Particles, atHeight y: Float, on canvas: Canvas, using randomness: inout Randomness
+    ) {
+        canvas.emit(
+            dust, from: .point(0, y), rate: (100 / Self.twiceStep).nextUp,
+            speed: 0...0, angle: 0...0, life: 5...5, size: 20...20,
+            color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+    }
+
+    @Test("particles() の後に出した粒は、どちらの経路でも次のフレームから出て、2 つの経路は同じ絵を出す")
+    func particlesEmittedAfterDrawingShowFromTheNextFrameOnBothRoutes() throws {
+        func pictures(_ route: Canvas.ParticleRoute) throws -> [[UInt8]] {
+            let canvas = try makeCanvas(width: 160, height: 160)
+            canvas.particleRoute = route
+            canvas.deltaTime = Self.twiceStep
+            let dust = try canvas.makeParticles(count: 512)
+            var stream = Randomness(seed: 1687)
+            var frames: [[UInt8]] = []
+            for _ in 0..<2 {
+                try canvas.draw {
+                    canvas.background(.display(red: 0, green: 0, blue: 0))
+                    canvas.push()
+                    canvas.translate(20, 0)
+                    canvas.particles(dust)
+                    canvas.pop()
+                    releaseStill(dust, atHeight: 80, on: canvas, using: &stream)
+                }
+                frames.append(try canvas.target.encodeForDisplay().bytes)
+            }
+            return frames
+        }
+
+        let fast = try pictures(.instanced)
+        let reference = try pictures(.reference)
+        #expect(brightest(reference[0]) == 0, "対照 (参照の経路) の 1 フレーム目に粒が出ている")
+        #expect(
+            brightest(fast[0]) == 0,
+            "速い経路が、particles() の後に出した粒をそのフレームで描いた (#1687 の F)")
+        // 前のフレームで出した粒が、2 フレーム目には出ていること。何も出ていなければ「同じ」も成り立つ
+        #expect(brightness(fast[1], width: 160, at: 20, 80) > 250)
+        #expect(fingerprint(fast[0]) == fingerprint(reference[0]))
+        #expect(fingerprint(fast[1]) == fingerprint(reference[1]))
+    }
+
+    @Test("2 回の particles() の間に出した粒は 2 回目の雲にだけ出て、2 つの経路は同じ絵を出す")
+    func particlesEmittedBetweenTwoDrawsShowOnlyInTheSecondCloud() throws {
+        func picture(_ route: Canvas.ParticleRoute) throws -> [UInt8] {
+            let canvas = try makeCanvas(width: 160, height: 160)
+            canvas.particleRoute = route
+            canvas.deltaTime = Self.twiceStep
+            let dust = try canvas.makeParticles(count: 512)
+            var stream = Randomness(seed: 1687)
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                // A は 1 回目の前に、B は 2 回の間に出す
+                releaseStill(dust, atHeight: 40, on: canvas, using: &stream)
+                canvas.push()
+                canvas.translate(20, 0)
+                canvas.particles(dust)
+                canvas.pop()
+                releaseStill(dust, atHeight: 120, on: canvas, using: &stream)
+                canvas.push()
+                canvas.translate(90, 0)
+                canvas.particles(dust)
+                canvas.pop()
+            }
+            return try canvas.target.encodeForDisplay().bytes
+        }
+
+        let fast = try picture(.instanced)
+        let reference = try picture(.reference)
+        for (name, bytes) in [("速い経路", fast), ("参照の経路", reference)] {
+            #expect(brightness(bytes, width: 160, at: 20, 40) > 250, "\(name): A が 1 回目の雲に出ていない")
+            #expect(brightness(bytes, width: 160, at: 90, 40) > 250, "\(name): A が 2 回目の雲に出ていない")
+            #expect(brightness(bytes, width: 160, at: 90, 120) > 250, "\(name): B が 2 回目の雲に出ていない")
+            #expect(
+                brightness(bytes, width: 160, at: 20, 120) < 5,
+                "\(name): 2 回の間に出した B が、1 回目の雲にも出た (#1687 の F2)")
+        }
+        #expect(fingerprint(fast) == fingerprint(reference))
+    }
+
     // MARK: - 置く時点の状態を受けない (#1649・#1650)
     //
     // 粒の板は保持した形なので、区間の設定 (混ぜ方・貼る絵の面・塗り) は作った時点に記録した

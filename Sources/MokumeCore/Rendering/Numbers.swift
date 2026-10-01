@@ -20,9 +20,20 @@ import MokumeDiagnostics
 ///
 /// 書く向き (CPU → GPU) は、フレームの外でも中でも意味が変わらないのでここで開ける。
 /// **書く口は待たない** — 値は控えに積まれ、次の描き切りか読み戻しが GPU 側へ届ける
-/// ([#749])。届ける順は投入の順なので、書いた後に頼んだ計算・描いた図形は書いた値を読む。
+/// ([#749])。
+///
+/// ## 計算には、呼んだ順に効く
+///
+/// 書いた後に頼んだ計算は書いた値を、**書く前に頼んだ計算は書く前の中身を**読む。書く前に
+/// 頼んだ計算がこの並びへ書いても、後から書いた値が残る。``Sketch/read(_:)`` を挟んでも
+/// 挟まなくても、描き場所 (``Sketch/createGraphics(_:_:)``) をまたいでも同じである ([#1687])。
+///
+/// 書く前に頼んだ計算がこの並びに触れるときだけ、書く口はその計算を先に GPU へ送る (完了は
+/// 待たない)。書いてから頼む書き方は送る回数も待ちも変わらない。``Sketch/numbers(_:)`` で
+/// 渡した並びを読む図形は、それを置いた面が描き切られる時点の中身で描かれる。
 ///
 /// [#749]: https://github.com/mokume-metal/mokume/issues/749
+/// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
 ///
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 // `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
@@ -114,6 +125,16 @@ import MokumeDiagnostics
     /// 逃げ道で直接書いた回数。**検査が読む。**
     private(set) var directUploads = 0
 
+    /// 未投入の計算の頼みが、この並びを名指ししているかもしれない。**立ちすぎる側にしか
+    /// 間違えない印** ([#1687])。
+    ///
+    /// 頼む口 (`Canvas.compute`) が束ねる並びごとに立て、書く口が登録簿を引いて下ろす。下りて
+    /// いる間の書き込みは登録簿を引かない — 書く口は 1 フレームに何万回も呼ばれうるので、
+    /// 頼みに名指しされない並びへの書き込みは、印を 1 つ見るだけで抜ける。
+    ///
+    /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
+    var mayBeNamedByPendingComputations = false
+
     /// 区間 `start..<(start + count)` を控えの上で書く。**書く口はすべてここを通す。**
     ///
     /// **`body` は区間を 1 つ残らず書く。** 書かなかった番地にも影の古い値が届き、GPU の
@@ -122,6 +143,9 @@ import MokumeDiagnostics
         at start: Int, count written: Int, _ body: (UnsafeMutableBufferPointer<Float>) -> Void
     ) {
         guard written > 0 else { return }
+        // **影へ書く前に、書く前に頼んだ計算を先に送る** (#1687)。早い投入は、その時点の控えを
+        // 計算より先に届けるので、送ってから影へ書けば、先の計算は書く前の中身を読む
+        if mayBeNamedByPendingComputations { submitComputationsAskedBeforeWriting() }
         if shadow.count != count {
             shadow = Array(repeating: 0, count: count)
             shadowAllocations += 1
@@ -135,6 +159,26 @@ import MokumeDiagnostics
         // 細切れすぎる書き込みだけは、ここで待って届ける。待てなければ控えに残す (#934)
         if dirty.count > dirtyRangeLimit, let uploaded = uploadDirectly() {
             markUploaded(through: uploaded)
+        }
+    }
+
+    /// この並びに触れる未投入の計算を、どの面のものでも (書いた面のものも) いま投入する ([#1687])。
+    ///
+    /// 書き込みは「この並びへ書く頼み」として登録簿を引く — 先に読んだ計算も先に書いた計算も、
+    /// 書く前に走らねばならない (``ComputeAccess/mustPrecede(_:)``)。描いていない面と、閉じ忘れて
+    /// 捨てられる描き場所の頼みは、登録簿の答え (`pendingAccess`) が除く。
+    ///
+    /// **引いたら印を下ろす。** 当たった頼みは投入されたので、残る頼みはこの並びに触れない。投入に
+    /// 失敗した面は溜めたまま残るが、そのフレームの間は試し直さない約束 (`submitPendingComputations()`)
+    /// なので、引き直しても何もしない。
+    ///
+    /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
+    private func submitComputationsAskedBeforeWriting() {
+        mayBeNamedByPendingComputations = false
+        for holder in gpu.pendingComputationHolders.holders(
+            mustPrecede: ComputeAccess(writes: [ObjectIdentifier(self)]), except: nil)
+        {
+            holder.submitPendingComputations()
         }
     }
 
@@ -184,7 +228,8 @@ import MokumeDiagnostics
     /// **並びの外は何もしない** ([ADR-0020] 決定 5 — フレームごとに呼ばれるものは
     /// 投げない)。初回だけ理由を知らせる。
     ///
-    /// **待たない。** 書いた値は、次の描き切り (か読み戻し) が GPU 側へ届ける。
+    /// **待たない。** 書いた値は、次の描き切り (か読み戻し) が GPU 側へ届ける。書く前に
+    /// 頼んだ計算は書く前の中身を読み、書いた後に頼んだ計算は書いた値を読む (型の説明)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func set(_ value: Float, at index: Int) {
@@ -193,6 +238,8 @@ import MokumeDiagnostics
     }
 
     /// 先頭から詰める。**入り切らないぶんは捨てる** (並びの外と同じ扱い)。
+    ///
+    /// 待たないことと、計算に呼んだ順に効くことは ``set(_:at:)`` と同じ。
     public func set(_ values: [Float]) {
         if values.count > count { warnOutOfRange(values.count - 1) }
         let written = min(values.count, count)
@@ -204,6 +251,8 @@ import MokumeDiagnostics
     }
 
     /// 全部を同じ値にする。
+    ///
+    /// 待たないことと、計算に呼んだ順に効くことは ``set(_:at:)`` と同じ。
     public func fill(_ value: Float) {
         write(at: 0, count: count) { $0.update(repeating: value) }
     }

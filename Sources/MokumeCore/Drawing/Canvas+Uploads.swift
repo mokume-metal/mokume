@@ -11,13 +11,16 @@ typealias EncodedUploads = [(owner: any PendingUpload, generation: UInt64)]
 // **書く口は待たない** ([#749])。控えを写す置き場は環 (`FrameRing`) に載った
 // ``GrowableBuffer`` で、写すのは描き切りが環を進めて待った後か、読み戻しが投入済みの
 // 全部を待った後に限る。届けるコピーは投入の順に走るので、前に投入した仕事は古い値を、
-// このコマンドとその後の仕事は新しい値を読む — CPU が書いた順と同じである。
+// このコマンドとその後の仕事は新しい値を読む。**数の並びでは、これが CPU が呼んだ順と揃う** —
+// 書く口が、書く前に頼まれてその並びに触れる計算を先に投入するからである (`Numbers.write`・
+// [#1687])。画像は描き切りの時点の画素を送る約束で、呼んだ順には揃えない (#749)。
 //
 // 形は描き場所への画素の書き戻し (`RenderTarget.encodePixelWriteBack`) と同じで、写す
 // → 続く段が待つ仕掛けを積む → **投入した後で**控えを下ろす ([#1183])。
 //
 // [#749]: https://github.com/mokume-metal/mokume/issues/749
 // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
 extension Canvas {
     /// 届けていない控えを、コマンドの先頭に積む。**控えが無ければ何も積まない。**
     ///
