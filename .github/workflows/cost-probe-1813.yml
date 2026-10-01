@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: cost-probe-1813
+
+# **使い捨ての計測 (#1813・#1918)。マージしない。** 専用回路を使わない ProRes 4444 の符号化器
+# (#1918 の案 A) の代償を、無印の Apple Silicon (専用機 mokume-m4) で測る。手元の M3 Max は
+# 16 コアで、無印の代償を言えないため。SSH では専用機に入れない (#1767) ので、専用機に届く
+# 経路 (同一リポジトリの PR・ADR-0019 決定 7 段階 B) を使う。
+#
+# 専用回路 (PROBE_HW=1・main と同じ) → 使わない (#1918) を交互に 3 ラウンド。
+# **テストは 1 本ずつ走らせる** (direct → paced)。Swift Testing は既定で並列に走り、2 本は同じ
+# プロセスの getrusage と符号化のプロセス (VTEncoderXPCService) の CPU を数えるので、重なると
+# 互いの負荷が混ざる。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 45
+    concurrency:
+      group: cost-probe-1813-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: 機械の記録
+        run: |
+          mkdir -p .build/cost-probe
+          {
+            sysctl -n machdep.cpu.brand_string
+            sysctl hw.ncpu hw.perflevel0.logicalcpu hw.perflevel1.logicalcpu hw.memsize
+            sw_vers
+            swift --version 2>&1
+            uptime
+            pmset -g therm 2>&1
+          } | tee .build/cost-probe/machine.txt
+      - name: release でビルド
+        run: swift build -c release -Xswiftc -enable-testing --build-tests
+      - name: 計測 (専用回路 → 使わない を 3 ラウンド交互。テストは 1 本ずつ)
+        run: |
+          for round in 1 2 3; do
+            for mode in hw sw; do
+              if [ "$mode" = hw ]; then export PROBE_HW=1; else unset PROBE_HW; fi
+              for t in direct paced; do
+                echo "::group::$mode-$round $t"
+                COST_LABEL="$mode-$round" swift test -c release -Xswiftc -enable-testing \
+                  --skip-build --filter "CostProbe1813/$t"
+                echo "::endgroup::"
+              done
+            done
+          done
+      - name: 結果を要約へ書く
+        if: always()
+        run: |
+          {
+            echo '### machine'
+            echo '```'
+            cat .build/cost-probe/machine.txt
+            echo '```'
+            for f in .build/cost-probe/cost-*.txt; do
+              echo "### $f"
+              echo '```'
+              cat "$f"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cost-probe
+          path: .build/cost-probe/
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14

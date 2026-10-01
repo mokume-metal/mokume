@@ -159,7 +159,8 @@ nonisolated final class MovieFile {
         let status = VTCopySupportedPropertyDictionaryForEncoder(
             width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_AppleProRes4444,
-            encoderSpecification: encoderSpecification() as CFDictionary, encoderIDOut: &encoder,
+            encoderSpecification: Self.probeHardware ? nil : (encoderSpecification() as CFDictionary),
+            encoderIDOut: &encoder,
             supportedPropertiesOut: &properties)
         guard status == noErr else { return nil }
         return properties as? [String: Any]
@@ -178,6 +179,10 @@ nonisolated final class MovieFile {
     static func encoderSpecification() -> [String: Any] {
         [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: false]
     }
+
+    /// **使い捨ての計測 (#1813・マージしない)。** `PROBE_HW=1` のとき、問い合わせにも書き手にも
+    /// 指定を渡さない (= main と同じ、専用回路を既定の選び方に任せる形)。
+    static var probeHardware: Bool { ProcessInfo.processInfo.environment["PROBE_HW"] == "1" }
 
     /// この機械で動きを書き出せるか。
     static var isAvailable: Bool { supportedProperties(width: 640, height: 360) != nil }
@@ -201,12 +206,10 @@ nonisolated final class MovieFile {
     static func outputSettings(
         width: Int, height: Int, compression: [String: Any]
     ) -> [String: Any] {
-        [
+        var settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.proRes4444,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
-            // **問い合わせと同じ符号化器を指す** (``encoderSpecification()``)
-            AVVideoEncoderSpecificationKey: encoderSpecification(),
             // **色を名乗る。** 作業空間と同じ Display P3 で書き出す ([ADR-0011] 決定 1)。
             // 名乗らないと、再生する側は狭い色域だと見なして色を寄せる
             AVVideoColorPropertiesKey: [
@@ -216,6 +219,9 @@ nonisolated final class MovieFile {
             ],
             AVVideoCompressionPropertiesKey: compression,
         ]
+        // **問い合わせと同じ符号化器を指す** (``encoderSpecification()``)
+        if !Self.probeHardware { settings[AVVideoEncoderSpecificationKey] = encoderSpecification() }
+        return settings
     }
 
     init(path: String, width: Int, height: Int, frameRate: Int) throws(MovieWriteFailure) {
