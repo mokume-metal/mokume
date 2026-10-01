@@ -1793,6 +1793,7 @@ struct CanvasTests {
             "lastEncodeSubmission": "最後に出力段を投入した番号。次の出力段の前に名指しで待つ (#927)",
             "pixelMirrorsMade": count, "pixelWriteBacksEncoded": count,
             "pixelReadbacksEncoded": count, "encodedImagesMade": count, "encodePassCount": count,
+            "failPixelWriteBackForTesting": "検査の差し込み。製品の経路では常に nil (#1906)",
         ]
     }
 

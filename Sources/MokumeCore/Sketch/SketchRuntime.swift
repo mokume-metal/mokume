@@ -482,12 +482,15 @@ public final class SketchRuntime {
         if !isLooping, requestedTime == nil {
             if !redrawRequested {
                 guard deliverWhileStopped() else {
-                    // **配ったコールバックが描く先を変えたなら、ここで出す先へ広げ直す** ([#1882])。
+                    // **配ったコールバックが描く先を変えたなら、ここで出す先を追い付かせる**
+                    // (書いた画素を書き戻し、細かさを下げた面なら広げ直す・[#1882]・[#1906])。
                     // 窓・共有の面・書き出し・観測・CPU の読み出しはどれも出す先を読むので、
                     // コールバックを配る 1 点で追い付けば、どの口も同じ 1 枚を受け取る。描き直す
-                    // ときは、そのフレームの終わりの拡大が済ませる。変えていなければ何も積まない
+                    // ときは、そのフレームの頭の書き戻しと終わりの拡大が済ませる。変えていなければ
+                    // 何も積まない
                     //
                     // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+                    // [#1906]: https://github.com/mokume-metal/mokume/issues/1906
                     canvas.catchUpOutputWithoutThrowing()
                     takeFragmentChangesWithoutAFrame()
                     settleWithoutAnotherFrame()

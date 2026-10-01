@@ -14,8 +14,9 @@ import Testing
 /// 追い付けば、どの口も同時に直る**。ここでは実ランタイムに止まっている間のキーを配り、窓と共有の面が
 /// 読む出す先のテクスチャを、窓を開かずに読む (`FramePresenter.draw(_:into:)`・`SharedFrameSurface`)。
 ///
-/// 細かさ 1 で `set()` した画素は、まだ窓に出ない (出力段を通すまで写しがテクスチャへ戻らない)。
-/// 効果と関係の無い別の根で、[#1906] が扱うので、ここでは見ない。
+/// 細かさ 1 の面も同じ 1 点で追い付く ([#1906])。描く先が出す先そのものなので広げ直す手は無いが、
+/// 書いた画素は CPU の写しに載ったままで、窓と共有の面はテクスチャを直に読む。配った直後に写しを
+/// 書き戻さないと、次に描くフレームか出力段を通すまで、書く前の絵が出たままになる。
 ///
 /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
 /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
@@ -48,16 +49,24 @@ struct StoppedUpscaleOutletsTests {
         func keyPressed() { onKey[key]?(self) }
     }
 
-    /// 止まっている間に変える口。
+    /// 止まっている間に変える口。画素を書く口は 3 つとも CPU の写しへ書く ([#1906])。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
     enum Change: CaseIterable, CustomTestStringConvertible {
         /// 中央に 4×4 の赤を `set` する。
         case writeBlock
+        /// 中央に 4×4 の赤を `pixels[x, y] =` で書く。
+        case subscriptBlock
+        /// 全面を `pixels.fill` で赤にする。
+        case fillPixels
         /// 赤い円を置いて、画素を読む口で描き切らせる。
         case circleThenRead
 
         var testDescription: String {
             switch self {
-            case .writeBlock: "画素を書く"
+            case .writeBlock: "set で画素を書く"
+            case .subscriptBlock: "pixels[x, y] = で画素を書く"
+            case .fillPixels: "pixels.fill で埋める"
             case .circleThenRead: "円を置いて読む"
             }
         }
@@ -65,14 +74,14 @@ struct StoppedUpscaleOutletsTests {
         var key: String {
             switch self {
             case .writeBlock: "w"
+            case .subscriptBlock: "p"
+            case .fillPixels: "f"
             case .circleThenRead: "c"
             }
         }
     }
 
     /// 細かさ × 周辺減光の有無 × 変え方 の 1 通り。
-    ///
-    /// 細かさ 1 の `set()` は含まない (窓に出ないのは #1906)。
     struct Scenario: CustomTestStringConvertible {
         let density: Float
         let vignette: Bool
@@ -83,13 +92,10 @@ struct StoppedUpscaleOutletsTests {
         }
 
         nonisolated static var all: [Scenario] {
-            [false, true].flatMap { vignette in
-                var rows = Change.allCases.map {
-                    Scenario(density: 0.5, vignette: vignette, change: $0)
+            [Float(0.5), 1].flatMap { density in
+                [false, true].flatMap { vignette in
+                    Change.allCases.map { Scenario(density: density, vignette: vignette, change: $0) }
                 }
-                // 細かさ 1 でも、円は窓に出る (対照)
-                rows.append(Scenario(density: 1, vignette: vignette, change: .circleThenRead))
-                return rows
             }
         }
     }
@@ -113,6 +119,14 @@ struct StoppedUpscaleOutletsTests {
                 for x in centre - 2..<centre + 2 { sketch.set(x, y, red) }
             }
         }
+        sketch.onKey["p"] = { sketch in
+            let centre = sketch.pixelWidth / 2
+            let pixels = sketch.pixels
+            for y in centre - 2..<centre + 2 {
+                for x in centre - 2..<centre + 2 { pixels[x, y] = red }
+            }
+        }
+        sketch.onKey["f"] = { sketch in sketch.pixels.fill(red) }
         sketch.onKey["c"] = { sketch in
             sketch.noStroke()
             sketch.fill(red)
@@ -121,6 +135,7 @@ struct StoppedUpscaleOutletsTests {
         }
         // 読むだけ (描く先を変えない)
         sketch.onKey["g"] = { sketch in _ = sketch.get(40, 40) }
+        sketch.onKey["r"] = { sketch in sketch.redraw() }
 
         let gpu = try RenderDevice()
         let runtime = try SketchRuntime(
@@ -147,6 +162,14 @@ struct StoppedUpscaleOutletsTests {
         red > 0.9 && green < 0.1 && blue < 0.1
     }
 
+    /// 窓が読む絵。窓を開かずに、差し出す経路を渡したテクスチャへ描いて読む。
+    private static func windowPicture(of runtime: SketchRuntime, gpu: RenderDevice) throws -> PixelBuffer {
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+        let window = try RenderTarget(gpu: gpu, width: 160, height: 160)
+        try presenter.draw(runtime.target, into: window.texture)
+        return try window.readPixels()
+    }
+
     // MARK: - 窓・共有の面・CPU
 
     /// 窓が読む出す先のテクスチャ。窓を開かずに、差し出す経路を渡したテクスチャへ描いて読む。
@@ -158,12 +181,43 @@ struct StoppedUpscaleOutletsTests {
             runtime, gpu, press in
             try press(scenario.change.key)
 
-            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
-            let window = try RenderTarget(gpu: gpu, width: 160, height: 160)
-            try presenter.draw(runtime.target, into: window.texture)
-            let point = try window.readPixels()[80, 80]
+            let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
 
             #expect(Self.isRed(point.red, point.green, point.blue), "窓が読む絵に出ていない: \(point)")
+        }
+    }
+
+    /// 窓に出した後に描き直しても、書いた画素は残り、効果は次のフレームへ焼き込まれない ([#1906]
+    /// 完了条件 3)。
+    ///
+    /// 配った直後の書き戻しは、効果を通す前の絵 (次のフレームの入り) へも同じ画素を写す。写さずに
+    /// 書き戻すと、次のフレームの頭が効果を通す前の絵を戻して書いた画素が消える。2 枚目は効果を
+    /// 頼まないので、隅 (3, 3) は書かなかったスケッチと同じ下地だけの値に戻るはずである。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    @Test(
+        "窓に出した後に描き直しても、書いた画素は残り効果は焼き込まれない",
+        arguments: [Float(1), 0.5])
+    func writtenPixelsSurviveTheWindow(density: Float) throws {
+        var plain: PixelBuffer?
+        try Self.withStoppedSketch(density: density, vignette: true) { runtime, gpu, press in
+            try press("r")
+            plain = try Self.windowPicture(of: runtime, gpu: gpu)
+        }
+        let untouched = try #require(plain)
+
+        try Self.withStoppedSketch(density: density, vignette: true) { runtime, gpu, press in
+            try press("w")
+            let shown = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
+            #expect(Self.isRed(shown.red, shown.green, shown.blue), "窓が読む絵に出ていない: \(shown)")
+
+            try press("r")
+            let second = try Self.windowPicture(of: runtime, gpu: gpu)
+            let point = second[80, 80]
+            #expect(Self.isRed(point.red, point.green, point.blue), "描き直したら書いた画素が消えた: \(point)")
+            #expect(
+                second[3, 3] == untouched[3, 3],
+                "隅に効果が焼き込まれた: \(second[3, 3]) (書かなければ \(untouched[3, 3]))")
         }
     }
 
@@ -196,26 +250,51 @@ struct StoppedUpscaleOutletsTests {
 
     // MARK: - 払うのは変えたときだけ
 
-    /// 配った直後の追い付きは、変えたときだけ積む。読むだけ・何も無いリフレッシュは積まない。
-    @Test("コールバックが描く先を変えなければ、配った直後に拡大を積まない", arguments: [false, true])
-    func theRuntimePaysOnlyForAChange(vignette: Bool) throws {
-        try Self.withStoppedSketch(density: 0.5, vignette: vignette) { runtime, _, press in
+    /// 配った直後の追い付きは、変えたときだけ積む。読むだけ・何も無いリフレッシュは積まない
+    /// (ADR-0023 決定 5)。
+    ///
+    /// 数えるのは書き戻し (描く先の ``RenderTarget/pixelWriteBacksEncoded``) と拡大 (段の数)。細かさ 1
+    /// の面は拡大の段を持たないので、段の数は動かない ([#1906])。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    @Test(
+        "コールバックが描く先を変えなければ、配った直後に書き戻しも拡大も積まない",
+        arguments: [Float(0.5), 1], [false, true])
+    func theRuntimePaysOnlyForAChange(density: Float, vignette: Bool) throws {
+        try Self.withStoppedSketch(density: density, vignette: vignette) { runtime, gpu, press in
             let canvas = runtime.canvas
-            let afterFirstFrame = canvas.effectPassesEncoded
+            let enlargements = density < 1 ? 1 : 0
+            let passesAfterFirstFrame = canvas.effectPassesEncoded
+            let writeBacksAfterFirstFrame = canvas.target.pixelWriteBacksEncoded
 
             try press("g")
+            // 読むだけのコールバックの後のリフレッシュは、空のコマンドも投入しない
+            let submissionsAfterReading = gpu.submissionCount
             try runtime.advance()
             try runtime.advance()
-            #expect(canvas.effectPassesEncoded == afterFirstFrame, "変えていないのに拡大を積んだ")
+            #expect(gpu.submissionCount == submissionsAfterReading, "変えていないのにコマンドを投入した")
+            #expect(canvas.effectPassesEncoded == passesAfterFirstFrame, "変えていないのに拡大を積んだ")
+            #expect(
+                canvas.target.pixelWriteBacksEncoded == writeBacksAfterFirstFrame,
+                "変えていないのに書き戻しを積んだ")
 
             try press("w")
-            #expect(canvas.effectPassesEncoded - afterFirstFrame == 1, "変えたのに、配った直後に 1 度だけ積んでいない")
+            #expect(
+                canvas.effectPassesEncoded - passesAfterFirstFrame == enlargements,
+                "変えたのに、配った直後に 1 度だけ広げていない")
+            #expect(
+                canvas.target.pixelWriteBacksEncoded - writeBacksAfterFirstFrame == 1,
+                "書いたのに、配った直後に 1 度だけ書き戻していない")
+            #expect(!canvas.target.hasPendingPixelWrites, "書き戻したのに、まだ書き込み待ちが残っている")
             #expect(!canvas.needsOutputEnlargement, "追い付いたのに、まだ追い付いていないことになっている")
 
             // 追い付いた後は、リフレッシュを重ねても出力段を通しても積み足さない
             try runtime.advance()
             _ = try runtime.target.encodeToImage()
-            #expect(canvas.effectPassesEncoded - afterFirstFrame == 1, "追い付いた後に積み足した")
+            #expect(
+                canvas.effectPassesEncoded - passesAfterFirstFrame == enlargements, "追い付いた後に広げ足した")
+            #expect(
+                canvas.target.pixelWriteBacksEncoded - writeBacksAfterFirstFrame == 1, "追い付いた後に書き戻し足した")
         }
     }
 
@@ -235,6 +314,30 @@ struct StoppedUpscaleOutletsTests {
             let point = try runtime.target.encodeToImage().read()[80, 80]
             #expect(point.red > 200 && point.green < 30 && point.blue < 30, "やり直しに書いた画素が出ていない: \(point)")
             #expect(!canvas.needsOutputEnlargement)
+        }
+    }
+
+    /// 細かさ 1 の面で、配った直後の書き戻しが失敗しても `advance()` は投げない ([#1906])。書き込み待ちは
+    /// 残り、**出力段は古い絵を黙って返さず投げる**。直れば、次のリフレッシュが書き戻して窓に出る。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    @Test(
+        "細かさ 1 で配った直後の書き戻しが失敗しても、advance() は投げず、次のリフレッシュがやり直す",
+        arguments: [false, true])
+    func aFailedWriteBackDoesNotThrowFromAdvance(vignette: Bool) throws {
+        try Self.withStoppedSketch(density: 1, vignette: vignette) { runtime, gpu, press in
+            let canvas = runtime.canvas
+            canvas.target.failPixelWriteBackForTesting = .encoderUnavailable
+            try press("w")
+            #expect(canvas.target.hasPendingPixelWrites, "失敗したのに、書き戻したことになった")
+            #expect(canvas.warnings.hasWarned(.pixelWriteBackFailed), "失敗を言っていない")
+            #expect(throws: RenderFailure.self) { _ = try runtime.target.encodeToImage() }
+
+            canvas.target.failPixelWriteBackForTesting = nil
+            try runtime.advance()
+            #expect(!canvas.target.hasPendingPixelWrites, "直った後のリフレッシュが書き戻していない")
+            let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
+            #expect(Self.isRed(point.red, point.green, point.blue), "やり直しで窓に出ていない: \(point)")
         }
     }
 }
