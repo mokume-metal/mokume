@@ -143,14 +143,16 @@ extension Canvas {
         /// 同じ本体のフレームの中で ``beginDraw()`` を対にせず重ねて呼んだ。境目を越えて
         /// いないので、何もせず開いているフレームが続く。
         case alreadyDrawing
-        /// ``beginDraw()`` で開いたフレームを ``endDraw()`` で閉じないまま境目を越え、次の
-        /// フレームが始まった (`beginDraw()` か `draw { }`)。閉じていなかったフレームは描かずに
-        /// 捨て、描き始め直す ([#1622])。
+        /// ``beginDraw()`` で開いたフレームを ``endDraw()`` で閉じないまま境目を越えた。閉じて
+        /// いなかったフレームは描かずに捨てる ([#1622])。描き場所では本体の次のフレームの頭で
+        /// 捨て、本体・直に使う面では自分の次のフレーム (`beginDraw()` か `draw { }`) の頭で捨てて
+        /// 描き始め直す ([#1834])。捨てた事情は 1 つなので鍵を共有し、文面は起きたことを名乗る。
         ///
         /// **``alreadyDrawing`` とは鍵を分ける。** あちらは境目を越えていない重ね呼びで、中身を
         /// 保つ。振る舞いが違う。
         ///
         /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
+        /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
         case unfinishedFrameDropped
         /// ``draw(_:)`` が開いたフレームの中で、フレームを開く・閉じる口 (``beginDraw()``・
         /// ``endDraw()``・入れ子の ``draw(_:)``) を呼んだ。フレームは開き直さず閉じもしない。
@@ -159,6 +161,14 @@ extension Canvas {
         case frameCallInsideDraw
         /// ``beginDraw()`` の前に ``endDraw()`` を呼んだ。
         case notDrawing
+        /// 描き場所で、閉じ忘れたまま本体のフレームが進んで捨てた後に ``endDraw()`` を呼んだ
+        /// ([#1834])。
+        ///
+        /// **``notDrawing`` とは鍵を分ける。** あちらは `beginDraw()` を書いていない誤りで、
+        /// こちらは `endDraw()` が遅れた誤りである。直す先が違う。
+        ///
+        /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
+        case endDrawAfterFrameDropped
         /// 描き切る前の描き場所を置いた。
         case placingWhileDrawing
         /// 持ち越しを約束する区間の外で、図形・絵・背景を置いた ([#1672])。

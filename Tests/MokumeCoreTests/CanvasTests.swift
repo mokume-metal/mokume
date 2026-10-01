@@ -1506,6 +1506,12 @@ struct CanvasTests {
         /// 閉じ忘れたまま、次のフレームを `draw { }` で始める。捨てるのは入口ではなく
         /// フレームの始まりなので、こちらの入口でも同じに捨てる。
         case drawAfterBeginDraw
+        /// 描き場所で閉じ忘れたまま、本体の次のフレームが始まる ([#1834])。本体の頭が描かずに
+        /// 捨て、描き場所はフレームの外に出る。描き切らないので、溜めたものを flush が片付けて
+        /// くれない。**汚す面は描き場所** (``usesLayer``)。
+        ///
+        /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
+        case mainFrameAfterBeginDraw
         /// 本体の通常の経路 (`draw { }` → `draw { }`)。
         case drawThenDraw
         /// `setup()` にあたるフレームの外 (持ち越しの区間・``Canvas/carriesOver``) で汚し、最初の
@@ -1518,15 +1524,32 @@ struct CanvasTests {
         /// 汚すのがフレームの外か。
         var dirtiesOutside: Bool { self == .outsideThenDraw }
 
-        /// 汚したフレームを閉じる越え方か。閉じた直後にも、終わりで戻すものを見る。
-        var closes: Bool { [.endDraw, .failedEndDraw, .drawThenDraw].contains(self) }
+        /// 汚す面が、本体 (`host`) から作った描き場所か。
+        var usesLayer: Bool { self == .mainFrameAfterBeginDraw }
+
+        /// 汚したフレームを閉じる越え方か。閉じた直後にも、終わりで戻すものを見る。本体の頭で
+        /// 捨てた描き場所は、捨てた直後にフレームの外に居るので、閉じたものとして見る。
+        var closes: Bool {
+            [.endDraw, .failedEndDraw, .drawThenDraw, .mainFrameAfterBeginDraw].contains(self)
+        }
 
         /// 汚すフレームを開いて `dirty` を走らせ、境目を越える。閉じる越え方なら閉じた直後に
-        /// `closed` を、次のフレームの中で `inspect` を呼ぶ。
+        /// `closed` を、次のフレームの中で `inspect` を呼ぶ。`host` は ``usesLayer`` の越え方で、
+        /// `canvas` を作った本体である。
         func run(
-            _ canvas: Canvas, dirty: () -> Void, closed: () -> Void, inspect: () -> Void
+            _ canvas: Canvas, host: Canvas, dirty: () -> Void, closed: () -> Void,
+            inspect: () -> Void
         ) throws {
             switch self {
+            case .mainFrameAfterBeginDraw:
+                try host.draw {
+                    canvas.beginDraw()
+                    dirty()
+                }
+                try host.draw { closed() }
+                canvas.beginDraw()
+                inspect()
+                canvas.endDraw()
             case .endDraw, .failedEndDraw:
                 canvas.beginDraw()
                 dirty()
@@ -1875,6 +1898,7 @@ struct CanvasTests {
             "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
             "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
             "beginDrawFrame": "isDrawing と組のフレームの印 (beginDraw が開いた本体のフレームの番号)。境目の関数だけが書く",
+            "droppedAtTheMainFrame": "本体の頭で閉じ忘れを捨てた後、次のフレームをまだ開いていないかの印 (遅れた endDraw() の注意を選ぶ・#1834)。境目の関数だけが書く",
             "paintSurfacesNoted": "断片の面を置いた記録に載せ終えた控え。記録が落ちる (フレームの終わりの描き切り) と placedGraphicsDrops と食い違って外れる (#1683)",
             "placedGraphicsDrops": count,
             "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
@@ -2034,7 +2058,8 @@ struct CanvasTests {
         // 戻す状態を境目の関数ごとに手で並べていたので、並べ落とした状態が 1 件ずつ見つかって
         // きた (#925・#1472・#1504・#1591・#1622)。**全部汚してから越え、全部が戻ったかを見る**
         // — 1 例ずつの検査では、次に足した状態の戻し落としが黙る
-        let canvas = try makeCanvas()
+        let host = try makeCanvas()
+        let canvas = boundary.usesLayer ? try host.createGraphics(Int(host.width), Int(host.height)) : host
         let other = try makeCanvas()
         var fixture = FrameFixture(
             sheet: try canvas.createImage(8, 8), other: other,
@@ -2056,7 +2081,7 @@ struct CanvasTests {
         var closed: [String: String]?
         var crossed: [String: String] = [:]
         try boundary.run(
-            canvas,
+            canvas, host: host,
             dirty: {
                 baseline = frameFingerprint(of: canvas)
                 for entry in frameState { entry.dirty(canvas, &fixture) }
@@ -2542,8 +2567,11 @@ struct CanvasTests {
         #expect(!layer.warnings.hasWarned(.unfinishedFrameDropped))
     }
 
-    @Test("描き場所で閉じ忘れたまま本体のフレームが進めば、次の beginDraw() が捨てる (#1622)")
-    func beginDrawInTheNextFrameDropsTheLayer() throws {
+    /// 捨てるのは本体の次のフレームの頭である (#1834)。以前は次の `beginDraw()` が捨てていて、
+    /// その間に読む口・描き切らせる口が捨てるはずの中身を描いた (口ごとの検査は
+    /// `ForgottenLayerFrameTests`)。
+    @Test("描き場所で閉じ忘れたまま本体のフレームが進めば、本体のフレームの頭で捨てる (#1622・#1834)")
+    func theMainFrameDropsTheLayerLeftOpen() throws {
         let main = try makeCanvas()
         let layer = try main.createGraphics(64, 64)
         try main.draw {
@@ -2568,8 +2596,11 @@ struct CanvasTests {
         let image = try layer.target.encodeForDisplay()
         #expect(image[12, 12] == (255, 255, 255, 255), "前のフレームの変換が効いている")
         #expect(image[44, 44] == (0, 0, 0, 255), "閉じ忘れたフレームの図形が描かれた")
-        #expect(layer.warnings.message(for: .unfinishedFrameDropped) == unfinishedFrameNotice)
+        #expect(
+            layer.warnings.message(for: .unfinishedFrameDropped)
+                == ForgottenLayerFrameTests.droppedAtMainFrameNotice)
         #expect(!layer.warnings.hasWarned(.alreadyDrawing))
+        #expect(layer.framesDrawn == 3, "捨てたフレームを 1 枚に数えていない、または捨て直した")
     }
 
     @Test("捨てたフレームで積んだ力だけを落とし、前のフレームで積んだ力は残す (#1622)")

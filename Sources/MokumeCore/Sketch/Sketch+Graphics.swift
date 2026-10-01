@@ -71,6 +71,10 @@ extension Sketch {
     /// 描き場所の次の絵を決めるのは書き手の `beginDraw()` / `endDraw()` なので、その外で置いた
     /// ものには出る先が無い ([ADR-0021] 決定 4 の追補 (2026-09-27))。
     ///
+    /// `beginDraw()` で開いたまま `endDraw()` を忘れると、そのフレームは**画面の次のフレームの頭で
+    /// 描かずに捨てる** (1 度注意する・[#1834])。捨てた後に読めば捨てる前の絵が返り、遅れて呼んだ
+    /// `endDraw()` は何もしない。`beginDraw()` と `endDraw()` は同じ ``draw()`` の中で対にする。
+    ///
     /// ## 既定で透けていて、自動では消えない
     ///
     /// 作った時点の中身は透明で、以後は**こちらが ``Canvas/background(_:)-(LinearRGBA)`` を呼ぶまで
@@ -89,6 +93,7 @@ extension Sketch {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     // shot: 1 snippet=952dfdc7
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
         try canvas.createGraphics(width, height)
