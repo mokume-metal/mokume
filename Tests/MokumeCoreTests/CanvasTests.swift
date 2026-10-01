@@ -1898,7 +1898,7 @@ struct CanvasTests {
             "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
             "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
             "beginDrawFrame": "isDrawing と組のフレームの印 (beginDraw が開いた本体のフレームの番号)。境目の関数だけが書く",
-            "droppedAtTheMainFrame": "本体の頭で閉じ忘れを捨てた後、次のフレームをまだ開いていないかの印 (遅れた endDraw() の注意を選ぶ・#1834)。境目の関数だけが書く",
+            "droppedAtTheMainFrame": "本体のフレームが始まる所で閉じ忘れを捨てた後、遅れた endDraw() をまだ名乗っていないかの印 (#1834)。捨てる関数が立て、名乗ったとき・次に本体のフレームが始まる所・自分の次のフレームの頭で下ろす",
             "paintSurfacesNoted": "断片の面を置いた記録に載せ終えた控え。記録が落ちる (フレームの終わりの描き切り) と placedGraphicsDrops と食い違って外れる (#1683)",
             "placedGraphicsDrops": count,
             "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,

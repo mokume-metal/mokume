@@ -267,6 +267,83 @@ struct ForgottenLayerFrameTests {
 
     // MARK: - 境目を越えていないものは捨てない
 
+    /// 本体のフレームを閉じ忘れた描き場所ごと抜けた直後 (本体のフレームの終わりから次の頭までの間)。
+    /// **境目は頭なので、この間はまだ同じフレームである** (案 丁)。開いた本体のフレームの中で読むのと
+    /// 同じく描き切って読め、その描き切りは後で捨てても取り消せない (``Canvas/beginDraw()`` の
+    /// 「取り消せない」の 1 つ目)。捨てるのは次の頭である。
+    private func leaveALayerOpenAndStepOut(_ s: Scene) throws {
+        try s.main.draw {
+            s.layer.beginDraw()
+            s.layer.background(black)
+            s.layer.endDraw()
+        }
+        try s.main.draw {
+            s.layer.beginDraw()
+            s.layer.set(3, 3, red)
+            s.layer.noStroke()
+            s.layer.fill(white)
+            s.layer.rect(8, 8, 4, 4)
+        }
+    }
+
+    @Test("本体のフレームの終わりから次の頭までは、閉じ忘れた描き場所もまだ同じフレームに居る (#1834)")
+    func betweenMainFramesALayerLeftOpenIsStillInItsFrame() throws {
+        let s = try makeScene()
+        let layer = s.layer
+        try leaveALayerOpenAndStepOut(s)
+        // 本体の `draw { }` の外 (Task の続き・外から止めている間・直に回す道具の合間)
+        #expect(layer.isDrawing, "境目 (次の頭) の前に捨てた")
+        #expect(!layer.warnings.hasWarned(.unfinishedFrameDropped))
+        #expect(layer.get(9, 9) == white, "同じフレームの中なのに、描いたものが読めない")
+        try s.main.draw {}
+        #expect(!layer.isDrawing, "次の頭で捨てていない")
+        #expect(layer.warnings.message(for: .unfinishedFrameDropped) == Self.droppedAtMainFrameNotice)
+        // 同じフレームの中で描き切った分は面に載っていて、捨てても取り消せない
+        #expect(try probes(layer) == [red, white, black])
+    }
+
+    @Test("本体のフレームの終わりから次の頭までに beginDraw() を重ねても、同じフレームの重ね呼びである (#1834)")
+    func beginDrawBetweenMainFramesIsANestedCall() throws {
+        let s = try makeScene()
+        let layer = s.layer
+        try leaveALayerOpenAndStepOut(s)
+        layer.beginDraw()
+        #expect(layer.warnings.hasWarned(.alreadyDrawing), "重ね呼びと言わない")
+        #expect(!layer.warnings.hasWarned(.unfinishedFrameDropped), "境目の前なのに捨てた")
+        #expect(layer.framesDrawn == 1, "境目の前なのに、捨てて描き始め直した")
+        try s.main.draw {}
+        // 次の頭で 1 度だけ捨て、描き場所の頭で捨てた文面ではなく本体の頭で捨てた文面を言う
+        #expect(layer.warnings.message(for: .unfinishedFrameDropped) == Self.droppedAtMainFrameNotice)
+        #expect(layer.framesDrawn == 2)
+        #expect(!layer.isDrawing)
+    }
+
+    @Test("遅れた endDraw() は 1 度だけ捨てたことを名乗り、その後と、次のフレームの後は notDrawing になる (#1834)")
+    func theLateEndDrawNoticeIsSaidOnceAndThenFadesOut() throws {
+        let s = try makeScene()
+        let (main, layer, other) = (s.main, s.layer, s.other)
+        try main.draw {
+            layer.beginDraw()  // 閉じ忘れる
+            other.beginDraw()  // 閉じ忘れる
+        }
+        var lateOnce = false
+        var thenNotDrawing = false
+        try main.draw {  // この頭で両方を捨てる
+            layer.endDraw()
+            lateOnce = layer.warnings.hasWarned(.endDrawAfterFrameDropped)
+                && !layer.warnings.hasWarned(.notDrawing)
+            layer.endDraw()  // 2 度目は、beginDraw() を書いていない誤りである
+            thenNotDrawing = layer.warnings.hasWarned(.notDrawing)
+        }
+        #expect(lateOnce, "遅れた endDraw() が、捨てたことを名乗らない")
+        #expect(thenNotDrawing, "2 度目の endDraw() が、まだ捨てたことを名乗る")
+        // 捨てたフレームの次のフレームが過ぎてからの endDraw() も、beginDraw() を書いていない誤りである
+        try main.draw {}
+        other.endDraw()
+        #expect(other.warnings.hasWarned(.notDrawing), "捨ててから時間が経っても、捨てたことを名乗る")
+        #expect(!other.warnings.hasWarned(.endDrawAfterFrameDropped))
+    }
+
     @Test("同じ本体のフレームの中で読めば、閉じる前でも描いたものが読める (#1834)")
     func aLayerReadInTheSameMainFrameSeesWhatWasDrawn() throws {
         // 捨てるのは本体のフレームを越えたものだけである。同じ本体のフレームの中で読むのは、
@@ -351,6 +428,65 @@ struct ForgottenLayerFrameTests {
 
     // MARK: - 止まっている間 (ランタイムを通す)
 
+    /// `setup()` か止まっている間のコールバックで描き場所を開き、次の `draw()` で閉じるスケッチ。
+    /// どちらの区間も次に描くフレームに属するので、開いた対は同じフレームの中に居る。
+    final class OpenedAheadCloser: Sketch {
+        let opensInSetup: Bool
+        var layer: Canvas?
+        var closedPicture: LinearRGBA?
+        private var open = false
+
+        init(opensInSetup: Bool) { self.opensInSetup = opensInSetup }
+        convenience init() { self.init(opensInSetup: true) }
+
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+
+        private func openAndPlace() {
+            guard let layer else { return }
+            layer.beginDraw()  // 閉じるのは次の draw()
+            layer.background(.linear(red: 0, green: 0, blue: 0))
+            layer.noStroke()
+            layer.fill(.linear(red: 1, green: 1, blue: 1))
+            layer.rect(8, 8, 4, 4)
+            open = true
+        }
+
+        func setup() {
+            if !opensInSetup { noLoop() }
+            layer = try? createGraphics(16, 16)
+            if opensInSetup {
+                noLoop()
+                openAndPlace()
+            }
+        }
+
+        func draw() {
+            guard open, let layer else { return }
+            layer.endDraw()
+            open = false
+            closedPicture = layer.get(9, 9)
+        }
+
+        func keyPressed() {
+            guard key == "o" else { return }
+            openAndPlace()
+            redraw()
+        }
+    }
+
+    @Test(
+        "setup() や止まっている間のコールバックで開き、次の draw() で閉じる対は捨てない (#1834)",
+        arguments: [true, false])
+    func aPairOpenedAheadOfItsFrameIsKept(opensInSetup: Bool) throws {
+        let sketch = OpenedAheadCloser(opensInSetup: opensInSetup)
+        try runStopped(sketch, keys: opensInSetup ? [] : ["o"])
+        let layer = try #require(sketch.layer)
+        #expect(sketch.closedPicture == .linear(red: 1, green: 1, blue: 1), "開いた対が描かれない")
+        #expect(!layer.warnings.hasWarned(.unfinishedFrameDropped), "同じフレームに属する対を捨てた")
+        #expect(!layer.warnings.hasWarned(.endDrawAfterFrameDropped))
+        #expect(!layer.warnings.hasWarned(.notDrawing))
+    }
+
     /// 1 枚目の `draw()` で描き場所を開いて閉じ忘れ (``forgets`` のとき)、`noLoop()` で止まった後の
     /// キー `g` のコールバックで描き場所を読み、置くスケッチ。描き場所は `setup()` の中で開いて閉じ、
     /// 黒く塗っておく。閉じ忘れないときは、止まっている間にキー `o` で開いて白い四角を置き、別の
@@ -415,7 +551,7 @@ struct ForgottenLayerFrameTests {
     }
 
     /// 1 枚目を描き、止まっている間に `keys` を 1 つずつ、別の回で配る。
-    private func runStopped(_ sketch: StoppedReader, keys: [String]) throws {
+    private func runStopped(_ sketch: some Sketch, keys: [String]) throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-forgotten-layer-\(UUID().uuidString)", isDirectory: true)
         let facet = directory.appendingPathComponent("facet", isDirectory: true)

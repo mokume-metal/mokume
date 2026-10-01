@@ -808,15 +808,14 @@ public final class Canvas {
     /// (2026-09-27))。
     private(set) var isDrawing = false
 
-    /// いまのフレームを ``beginDraw()`` が開いたなら、そのときの本体の区切りの番号
-    /// (``Timebase/boundary``)。``draw(_:)`` が開いたフレームとフレームの外では `nil`。
+    /// いまのフレームを ``beginDraw()`` が開いたなら、そのフレームが**属する本体のフレームの番号**
+    /// (``Timebase/frameForOpening``)。``draw(_:)`` が開いたフレームとフレームの外では `nil`。
     ///
     /// **閉じ忘れうるのは `beginDraw()` が開いたフレームだけ** — ``draw(_:)`` が開いたフレームは、
-    /// 閉包を抜けるときに同じ呼び出しが閉じる。本体のフレームの頭が閉じ忘れを捨てる相手を選ぶ
-    /// のも、この印である (``dropFrameLeftOpenAtTheMainFrame()``・[#1834])。番号を持つのは、
-    /// 描き場所が閉じ忘れたまま**本体のフレームの境目を越えたか**を見分けるためである ([#1622])。
-    /// 同じ本体のフレームの中で `beginDraw()` を重ねただけなら、境目は越えていない
-    /// (``leftOpenAcrossBoundary``)。
+    /// 閉包を抜けるときに同じ呼び出しが閉じる。本体のフレームが始まる所が閉じ忘れを捨てる相手を
+    /// 選ぶのも、この印である (``dropFrameLeftOpen(before:)``・[#1834])。番号を持つのは、描き場所が
+    /// 閉じ忘れたまま**本体のフレームの境目を越えたか**を見分けるためである ([#1622])。同じ本体の
+    /// フレームの中で `beginDraw()` を重ねただけなら、境目は越えていない (``leftOpenAcrossBoundary``)。
     ///
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
@@ -850,17 +849,17 @@ public final class Canvas {
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     ///
-    /// **入るときに、時刻の置き場の描き場所のうち、本体のフレームの中で開いたまま閉じ忘れた
-    /// フレームを捨てる** ([#1834])。区間は次に描くフレームに属するので、本体の次のフレームの頭と
-    /// 同じ扱いにする (止まっている間は、その頭が来ない)。
+    /// **入るときに、時刻の置き場の描き場所のうち、前のフレームに属したまま閉じ忘れたフレームを
+    /// 捨てる** ([#1834])。区間は次に描くフレームに属するので、そのフレームが始まる所として本体の
+    /// 頭と同じ規則で捨てる (止まっている間は、頭が来ない)。区間の中で開いたものは次に描くフレームに
+    /// 属するので捨てない (``dropFrameLeftOpen(before:)``)。
     ///
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     var carriesOver = false {
         didSet {
-            if !oldValue, carriesOver, timebase.owner === self {
-                for entry in timebase.layers {
-                    entry.canvas?.dropFrameLeftOpenAtTheMainFrame(enteringCarryOver: true)
-                }
+            if !oldValue, carriesOver, !isDrawing, timebase.owner === self {
+                let next = timebase.frame + 1
+                for entry in timebase.layers { entry.canvas?.dropFrameLeftOpen(before: next) }
             }
             guard oldValue, !carriesOver else { return }
             let amount = pendingAmount
@@ -1450,19 +1449,25 @@ public final class Canvas {
         /// 既定は単精度の 60 分の 1 秒 (``deltaTime`` の既定と同じ値)。直に回す面の数え方を
         /// 変えないため、秒のまま持つ
         var step = FrameStep.seconds(Double(Float(1.0 / 60)))
-        /// 作った面 (``owner``) のフレームの頭と終わりを数えた番号。**描き場所の境目の印** — 描き場所は
-        /// 本体のフレームの中で描かれるので、同じ本体のフレームの中での重ね呼びかをこれで見る
-        /// ([#1622])。進めるのは作った面だけで、頭 (``beginFrame()``) では進める前に、描き場所
-        /// (``layers``) の閉じ忘れたフレームを捨てる ([#1834])。
-        ///
-        /// **終わりも数える** ([#1834])。止まっている間のコールバック (持ち越しの区間) に入るとき、
-        /// 本体のフレームの中で開いたものと、区間の中で開いたものを見分けるためである。
+        /// 作った面 (``owner``) が始めたフレームの数。**描き場所の境目の印** — 描き場所は本体の
+        /// フレームの中で描かれるので、閉じ忘れたフレームが本体の境目を越えたかをこれで見る
+        /// ([#1622])。数えるのは作った面の ``beginFrame()`` だけで、**境目は頭である** (案 丁)。進める
+        /// 前に、描き場所 (``layers``) の閉じ忘れたフレームを捨てる ([#1834])。
         ///
         /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
         /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
-        var boundary = 0
+        var frame = 0
         /// この置き場を作った面。**弱く持つ** — 置き場は面が持ち、面を生かす筋合いが無い。
         weak var owner: Canvas?
+        /// いま描き場所を ``beginDraw()`` で開くと、そのフレームが属する本体のフレームの番号 ([#1834])。
+        ///
+        /// 持ち主のフレームの中なら今の番号 (``frame``)。それ以外 — `setup()`・止まっている間の
+        /// コールバック・本体のフレームの合間 — なら、次に始まるフレームの番号である。持ち越しの区間
+        /// (`setup()` と止まっている間のコールバック) は次に描くフレームに属する (ADR-0021 決定 4 の
+        /// 追補 (2026-09-27)) ので、そこで開いて次の `draw()` で閉じる対は、同じフレームの中に居る。
+        ///
+        /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
+        var frameForOpening: Int { owner?.isDrawing == true ? frame : frame + 1 }
         /// この置き場を使う描き場所 (弱く持つ)。**持ち主が本体のフレームを進める前に、閉じ忘れた
         /// フレームを捨てる相手**で、``createGraphics(_:_:)`` が載せる ([#1834])。揺らぎの置き場の
         /// ``NoiseStore/readers`` と同じ形である。
@@ -2120,10 +2125,13 @@ public final class Canvas {
     /// ([ADR-0021] 決定 4 の追補 (2026-09-27) と 2026-10-02 の改訂・[#1622]・[#1834])。捨てる時点は
     /// 面で違う:
     ///
-    /// - 描き場所 (`createGraphics`) では、**本体の次のフレームの頭**で捨てる。`noLoop()` で止まって
-    ///   いる間は、止まっている間のコールバック (次に描くフレームに属する区間) に入る前に捨てる。
-    ///   捨てた後の描き場所はフレームの外に居る。越えた後に読めば (``get(_:_:)``・``pixels``・``loadPixels()``) 捨てる前の
-    ///   絵が返り、置けば注意して置かない。遅れて呼んだ ``endDraw()`` は、既に捨てたことを言って
+    /// - 描き場所 (`createGraphics`) では、開いたフレームは**属する本体のフレーム**を持つ。本体の
+    ///   フレームの中で開けばそのフレーム、`setup()`・止まっている間のコールバック・本体のフレームの
+    ///   合間で開けば次に描くフレームである。**本体のフレームが始まる所** (本体の頭と、`noLoop()` で
+    ///   止まっている間のコールバックに入る所) で、それより前のフレームに属したまま開いているものを
+    ///   捨てる。`setup()` やコールバックで開いて次の `draw()` で閉じる対は、同じフレームの中に居て
+    ///   捨てない。捨てた後の描き場所はフレームの外に居る。越えた後に読めば (``get(_:_:)``・
+    ///   ``pixels``・``loadPixels()``) 捨てる前の絵が返り、置けば注意して置かない。遅れて呼んだ ``endDraw()`` は、既に捨てたことを言って
     ///   何もしない。この描き場所を置いた面が描き換わっても、数の並びを読んでも、捨てた中身は
     ///   描かれず、頼んだ計算は走らない
     /// - 本体・直に使う面では、自分の次のフレームの頭 (`beginDraw()` か ``draw(_:)``) で捨て、
@@ -2133,7 +2141,9 @@ public final class Canvas {
     /// 頼んだ計算は、次のフレームへ持ち込まない (積んだ力 (``force(_:_:)``) も落とす・[#1678])。
     /// ただし、次の 3 つは取り消せない。どれも**境目を越える前** (同じ本体のフレームの中) に
     /// 起きたもので、越えた後の読みはここに入らない。止まっている間のコールバックの中の読みも、
-    /// 止まる前のフレームから見れば越えた後である (区間の入口で捨ててある):
+    /// 止まる前のフレームから見れば越えた後である (区間の入口で捨ててある)。逆に、本体のフレームが
+    /// 終わってから次の頭までの間 (`Task` の続き・外から止めている間・`Canvas` を直に回す道具の
+    /// 合間) は境目の前で、まだ同じフレームに居る。そこで読んで描き切った分も取り消せない:
     ///
     /// - 捨てたフレームの途中で既に描き切った絵 (``loadPixels()`` など)。面に載っている
     /// - 捨てたフレームで出した粒 (`emit`)。粒の状態の並びへ直に積まれている
@@ -2167,7 +2177,7 @@ public final class Canvas {
             return
         }
         beginFrame()
-        beginDrawFrame = timebase.boundary
+        beginDrawFrame = timebase.frameForOpening
     }
 
     /// 開いているフレームが、``beginDraw()`` で開いたまま閉じ忘れて、境目を越えたか ([#1622])。
@@ -2175,17 +2185,16 @@ public final class Canvas {
     /// - ``draw(_:)`` が開いたフレームは越えない (閉包を抜けるときに閉じる)
     /// - 時刻の置き場の持ち主 (本体・直に使う面) では、次のフレームを始めること自体が境目で
     ///   ある。`beginDraw()` を重ねれば越えている
-    /// - 描き場所では、本体の区切りの番号 (``Timebase/boundary``) が開いたときから進んでいれば
-    ///   越えている。進んでいなければ、同じ本体のフレームの中での重ね呼びである。ただし本体の
-    ///   頭と持ち越しの区間の入口が先に閉じ忘れを捨てる ([#1834]) ので、ここで越えたと読むのは、
-    ///   本体のフレームが終わってから次の頭までの間 (`Canvas` を直に回す道具が、その間に開き
-    ///   直したとき) だけである
+    /// - 描き場所では、属する本体のフレーム (``beginDrawFrame``) より後のフレームが始まっていれば
+    ///   越えている。始まっていなければ、同じ本体のフレームの中での重ね呼びである。本体のフレームが
+    ///   終わってから次の頭までの間も、まだ同じフレームである (境目は頭)。ただし本体のフレームが
+    ///   始まる所が先に閉じ忘れを捨てる ([#1834]) ので、描き場所が越えたままここへ来ることは無い
     ///
     /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     private var leftOpenAcrossBoundary: Bool {
         guard isDrawing, let opened = beginDrawFrame else { return false }
-        return timebase.owner === self || opened != timebase.boundary
+        return timebase.owner === self || opened < timebase.frame
     }
 
     /// 描き場所へ描き切る。**投げない。**
@@ -2198,7 +2207,10 @@ public final class Canvas {
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
     public func endDraw() {
         guard isDrawing else {
-            return droppedAtTheMainFrame ? warnEndDrawAfterFrameDropped() : warnNotDrawing()
+            // 捨てたことを名乗るのは 1 度だけ。2 度目からは、`beginDraw()` を書いていない誤りである
+            guard droppedAtTheMainFrame else { return warnNotDrawing() }
+            droppedAtTheMainFrame = false
+            return warnEndDrawAfterFrameDropped()
         }
         // `draw { }` が開いたフレームは、閉包を抜けるときに `draw` が閉じる。ここで閉じると
         // 閉包が戻った後に `draw` がもう一度描き切り、番号も 2 つ進む
@@ -2226,7 +2238,7 @@ public final class Canvas {
             // `beginDraw()` は注意だけで帰っていたので、前のフレームで書いた変換が次の描き直しに
             // 積み上がり、閉じ忘れた 1 枚の続きとして描かれた。捨てる場所を入口ではなくここに
             // 置くのは、次のフレームが `draw { }` から来ても同じにするため。描き場所の閉じ忘れは
-            // ここへ来る前に、本体のフレームの頭が捨てている (下の ``dropFrameLeftOpenAtTheMainFrame()``)
+            // ここへ来る前に、本体のフレームが始まる所が捨てている (``dropFrameLeftOpen(before:)``)
             //
             // [#1622]: https://github.com/mokume-metal/mokume/issues/1622
             warnUnfinishedFrameDropped()
@@ -2234,7 +2246,7 @@ public final class Canvas {
         }
         // 閉じ忘れたフレームを捨てた後で見る — 捨てたフレームの中で置いたものは区間の中である
         checkNothingPlacedOutsideTheRegions()
-        // 時刻の置き場の持ち主だけが、本体の区切りを数える (``Timebase/boundary``)
+        // 時刻の置き場の持ち主だけが、本体のフレームを数える (``Timebase/frame``)
         if timebase.owner === self {
             // **番号を進める前に、同じ置き場の描き場所の閉じ忘れたフレームを捨てる** ([#1834])。
             // 境目を越えたまま残すと、越えたフレームを読む口・描き切らせる口 (他の面の描き換え・
@@ -2243,10 +2255,9 @@ public final class Canvas {
             // (ADR-0021 決定 4 の 2026-10-02 の改訂)
             //
             // [#1834]: https://github.com/mokume-metal/mokume/issues/1834
-            for entry in timebase.layers {
-                entry.canvas?.dropFrameLeftOpenAtTheMainFrame()
-            }
-            timebase.boundary += 1
+            let next = timebase.frame + 1
+            for entry in timebase.layers { entry.canvas?.dropFrameLeftOpen(before: next) }
+            timebase.frame = next
             // **保存し直した断片は、本体のフレームの頭で読み直す** ([#1830])。main actor を譲らずに
             // フレームを回す経路 (ランタイムの `advance()` も、面を直に回すループも) でも、次の
             // フレームに届くのはここで取るからである。描き場所 (持ち主でない面) のフレームでは
@@ -2307,9 +2318,17 @@ public final class Canvas {
         leaveFrame()
     }
 
-    /// 描き場所で ``beginDraw()`` が開いたまま閉じ忘れたフレームを、**本体のフレームの頭で
-    /// 描かずに捨てる** ([#1834])。時刻の置き場の持ち主が番号を進める直前に呼ぶ
-    /// (``beginFrame()``)。
+    /// **本体のフレーム `frame` が始まる所で、それより前のフレームに属したまま描き場所が開いている
+    /// なら、描かずに捨てる** ([#1834])。捨てる規則はこの 1 つである。
+    ///
+    /// 本体のフレームが始まる所は 2 つある。持ち主の頭 (``beginFrame()``。`frame` は新しい番号) と、
+    /// 持ち主が持ち越しの区間に入るとき (``carriesOver``。`frame` は次に描くフレームの番号) である。
+    /// 止まっている間のコールバックは次に描くフレームに属するので、`noLoop()` で止まっていて頭が
+    /// 来なくても、止まる前のフレームに属したものは区間に入る前に捨てる。属するフレームは開いた
+    /// ときに決まる (``Timebase/frameForOpening``) ので、`setup()` や止まっている間のコールバックで
+    /// 開いて次の `draw()` で閉じる対・ある回のコールバックで開いて別の回で閉じる対は、同じ
+    /// フレームの中に居て捨てない。本体のフレームが終わってから次の頭までの間も、まだ同じフレーム
+    /// である (境目は頭)。
     ///
     /// 捨てた後はフレームの外に居る。描き切りの終わり (``endFrame()``) と同じ所へ落ちるので、
     /// 越えた後に読めば捨てる前の絵が返り、置けば注意して置かない。遅れて呼んだ ``endDraw()`` は
@@ -2318,28 +2337,25 @@ public final class Canvas {
     /// **``draw(_:)`` が開いたフレームは捨てない** — 閉包を抜けるときに同じ呼び出しが閉じる
     /// (閉包の中から本体のフレームを回した場合も、そのまま続く)。
     ///
-    /// 呼ぶ所はもう 1 つある。持ち主が持ち越しの区間 (止まっている間のコールバック・``carriesOver``)
-    /// に入るとき (`enteringCarryOver`) である。区間は次に描くフレームに属するので、`noLoop()` で
-    /// 止まっていて本体の次のフレームの頭が来なくても、止まる前のフレームの中で開いたままのものは
-    /// 区間に入る前に捨てる。区間の中で開いたもの・`setup()` で開いたものは、区切りを越えていない
-    /// ので捨てない (``Timebase/boundary``)。
-    ///
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
-    private func dropFrameLeftOpenAtTheMainFrame(enteringCarryOver: Bool = false) {
-        guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self else { return }
-        // 区間の入口では、本体のフレームの終わりを越えたものだけを捨てる。区間の中で開いたものは
-        // 同じ区切りの中に居る
-        if enteringCarryOver, opened == timebase.boundary { return }
+    private func dropFrameLeftOpen(before frame: Int) {
+        // 前に捨てたことを名乗る印は、次の区切りまで (``droppedAtTheMainFrame``)
+        droppedAtTheMainFrame = false
+        guard isDrawing, let opened = beginDrawFrame, timebase.owner !== self, opened < frame else {
+            return
+        }
         warnFrameDroppedAtTheMainFrame()
         dropFrameLeftOpen()
         droppedAtTheMainFrame = true
     }
 
-    /// 閉じ忘れたフレームを本体のフレームの頭で捨ててから、次のフレームをまだ開いていないか
-    /// ([#1834])。遅れて呼んだ ``endDraw()`` が、起きたことを名乗るのに読む。
+    /// 本体のフレームが始まる所で閉じ忘れたフレームを捨ててから、まだ遅れた ``endDraw()`` を
+    /// 名乗っていないか ([#1834])。遅れて呼んだ `endDraw()` が、起きたことを名乗るのに読む。
     ///
-    /// 立てるのは ``dropFrameLeftOpenAtTheMainFrame()`` だけで、下ろすのは次のフレームの頭
-    /// (``beginFrame()``) だけである。
+    /// 立てるのは ``dropFrameLeftOpen(before:)`` だけである。下ろすのは、1 度名乗ったとき
+    /// (``endDraw()``)・次に本体のフレームが始まる所・この描き場所の次のフレームの頭
+    /// (``beginFrame()``) で、捨ててから時間が経った `endDraw()` だけの誤りは ``Warning/notDrawing``
+    /// として出る。
     ///
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     private(set) var droppedAtTheMainFrame = false
@@ -2457,8 +2473,6 @@ public final class Canvas {
         //
         // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
         hasLoadedPixels = false
-        // 時刻の置き場の持ち主は、自分のフレームの終わりも区切りとして数える (``Timebase/boundary``)
-        if timebase.owner === self { timebase.boundary += 1 }
     }
 
     /// フレームの終わりに、**シーンの記述と開いたままの操作を既定へ戻す。** 溜めたものには
