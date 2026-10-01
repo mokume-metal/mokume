@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -1395,8 +1396,11 @@ struct ComputeTests {
         #expect(s.canvas.read(s.first) == [2])
     }
 
-    @Test("開いたままの描き場所で頼んだ計算も、その後の書き込みより先に効く")
-    func anAskOnAnOpenLayerPrecedesALaterWrite() throws {
+    /// `closes` が偽なら、描き場所の `endDraw()` を忘れる。同じ本体のフレームの中ではまだ区間の中に
+    /// いるので、書き込みが頼みを先に流す。次のフレームの `beginDraw()` が閉じ忘れを捨てても、流れた
+    /// ものは戻らない (``Canvas/beginDraw()`` の「取り消せない」ものの 3 つ目)。
+    @Test("開いたままの描き場所で頼んだ計算も、その後の書き込みより先に効く (閉じ忘れても)", arguments: [true, false])
+    func anAskOnAnOpenLayerPrecedesALaterWrite(closes: Bool) throws {
         let s = try makeSurfaces()
         try s.canvas.draw {
             s.canvas.background(.display(red: 0, green: 0, blue: 0))
@@ -1404,7 +1408,13 @@ struct ComputeTests {
             s.first.set([1])
             s.layer.compute(s.copy, over: 1, reads: [s.first], writes: [s.second])
             s.first.set([7])
-            s.layer.endDraw()
+            if closes { s.layer.endDraw() }
+        }
+        if !closes {
+            try s.canvas.draw {
+                s.layer.beginDraw()
+                s.layer.endDraw()
+            }
         }
         #expect(s.canvas.read(s.second) == [1])
         #expect(s.canvas.read(s.first) == [7])
@@ -1536,5 +1546,98 @@ struct ComputeTests {
         try s.canvas.draw { s.first.set([4]) }
         #expect(s.canvas.read(s.second) == [7], "閉じ忘れた描き場所の頼みが、書き込みで走った")
         #expect(s.canvas.read(s.first) == [4])
+    }
+
+    // MARK: - 割れた投入の間の順 (#1687 の反証)
+    //
+    // 早い投入は、1 本だった描き切りのコマンドを 2 本に割る。1 本の中なら口の切れ目と控えの仕掛けが
+    // 順を張るが、割れると前の投入の最後の口と、後の投入の届けるコピー・計算の間には何も無かった
+    // (最後の口は描画の両段しか待たせていなかった)。先の計算が読み終える前に後の値のコピーが上書き
+    // しうる・先の計算の書き込みがコピーより後になりうる・後の計算が先の計算の結果より先に読みうる。
+
+    @Test("投入の最後の口は、後の投入の計算と届けるコピーも待たせる")
+    func theLastComputeBarrierHoldsLaterDispatchesAndCopies() throws {
+        let canvas = try makeCanvas()
+        let copy = try canvas.makeComputation(Self.copy, name: "copy")
+        let source = try canvas.makeNumbers(count: 1)
+        let copied = try canvas.makeNumbers(count: 1)
+        var afterEarlySubmission: MTLStages = []
+        var earlySubmitted = false
+        try canvas.draw {
+            canvas.compute(copy, over: 1, reads: [source], writes: [copied])
+            source.set([2])
+            // 書き込みが早い投入を起こし、その投入の最後の口を積んだ
+            earlySubmitted = canvas.pendingComputations.isEmpty
+            afterEarlySubmission = canvas.lastComputeBarrierQueueStages
+            canvas.compute(copy, over: 1, reads: [copied], writes: [source])
+        }
+        try #require(earlySubmitted, "早い投入が起きていない — この検査は何も見ていない")
+        let later: MTLStages = [.dispatch, .blit, .vertex, .fragment]
+        #expect(
+            afterEarlySubmission.isSuperset(of: later),
+            "早い投入の最後の口が、後の投入の計算と届けるコピーを待たせていない: \(afterEarlySubmission.rawValue)")
+        #expect(canvas.lastComputeBarrierQueueStages.isSuperset(of: later), "描き切りの最後の口も同じ段を待たせる")
+    }
+
+    /// 遅い断片。`spin` 回まわしてから、読んだ値を書き写す。**競合の窓を広げる**ための形で、
+    /// 1 要素の並びでは窓が狭すぎて、順の抜けがあっても間に合ってしまう。
+    private static let slowCopy = """
+        kernel void slowCopy(device const float *from [[buffer(0)]],
+                             device float *to [[buffer(1)]],
+                             constant Values &values [[buffer(MOKUME_VALUES)]],
+                             uint id [[thread_position_in_grid]])
+        {
+            float spun = float(id & 7u);
+            for (uint i = 0; i < uint(values.spin); ++i) { spun = fma(spun, 0.9999, 0.5); }
+            to[id] = from[id] + (spun < -1.0 ? 1.0 : 0.0);
+        }
+        """
+
+    /// 遅い断片。`spin` 回まわしてから、値 `amount` を書く。
+    private static let slowStamp = """
+        kernel void slowStamp(device float *out [[buffer(0)]],
+                              constant Values &values [[buffer(MOKUME_VALUES)]],
+                              uint id [[thread_position_in_grid]])
+        {
+            float spun = float(id & 7u);
+            for (uint i = 0; i < uint(values.spin); ++i) { spun = fma(spun, 0.9999, 0.5); }
+            out[id] = values.amount + (spun < -1.0 ? 1.0 : 0.0);
+        }
+        """
+
+    /// 大きな並びと遅い計算で、割れた投入の間の順を値で見る。**順の抜けが必ず赤になるとは限らない**
+    /// (GPU が前の投入を終えてから次を始めれば間に合う)。構造は上の検査が見る。
+    @Test("大きな並びと遅い計算でも、書く前に頼んだ計算・後の計算・後に書いた値が、頼んだ順に効く")
+    func theCallOrderHoldsAcrossTheSplitOnALargeArray() throws {
+        let count = 1 << 20
+        let canvas = try makeCanvas()
+        let slowCopy = try canvas.makeComputation(Self.slowCopy, name: "slowCopy", values: ["spin": 4000])
+        let slowStamp = try canvas.makeComputation(
+            Self.slowStamp, name: "slowStamp", values: ["spin": 4000, "amount": 3])
+        let copy = try canvas.makeComputation(Self.copy, name: "copy")
+        let source = try canvas.makeNumbers(count: count)
+        let first = try canvas.makeNumbers(count: count)
+        let second = try canvas.makeNumbers(count: count)
+        let stamped = try canvas.makeNumbers(count: count)
+        func mismatches(_ numbers: Numbers, _ expected: Float) -> Int {
+            canvas.read(numbers).count { $0 != expected }
+        }
+        for round in 0..<3 {
+            let (old, new) = (Float(round * 10 + 1), Float(round * 10 + 2))
+            source.fill(old)
+            try canvas.draw {
+                // A: 先の遅い計算が読み終える前に、後の値のコピーが上書きしてはならない
+                canvas.compute(slowCopy, over: count, reads: [source], writes: [first])
+                source.fill(new)
+                // 割れた後の計算: 先の遅い計算の結果を読む
+                canvas.compute(copy, over: count, reads: [first], writes: [second])
+                // C: 先の遅い計算の書き込みが、後の値のコピーより後になってはならない
+                canvas.compute(slowStamp, over: count, writes: [stamped])
+                stamped.fill(new)
+            }
+            #expect(mismatches(first, old) == 0, "\(round): 先に頼んだ計算が、後から書いた値を読んだ")
+            #expect(mismatches(second, old) == 0, "\(round): 割れた後の計算が、先の計算の結果より先に読んだ")
+            #expect(mismatches(stamped, new) == 0, "\(round): 後から書いた値が、先の計算の結果で上書きされた")
+        }
     }
 }

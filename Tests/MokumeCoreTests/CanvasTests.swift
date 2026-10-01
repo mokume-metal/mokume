@@ -1856,6 +1856,7 @@ struct CanvasTests {
             "earlySubmissionsAttempted": count,
             "earlySubmissionFailedFrame": "面をまたぐ順のための早い投入に失敗したときのフレーム番号 (#1870)。番号どうしで比べるので、境目で戻す手は要らない (閉じ忘れを捨てる道も番号を進める)",
             "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
+            "lastComputeBarrierQueueStages": "最後に積んだ投入の最後の口が待たせる段 (#1687)。積むたびに上書きし、検査が読む。境目で戻す手は要らない",
             "glyphQuadsPlaced": count, "drawCallsInLastFrame": count,
             "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
             "pointScansInLastFrame": count,
