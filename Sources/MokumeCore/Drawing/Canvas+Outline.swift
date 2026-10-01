@@ -319,14 +319,23 @@ extension Canvas {
     /// 1 回だけ混ぜられる (``StrokeCarving``)。重ねても絵が変わらない線
     /// (``strokeOverlapsShow`` が偽) は、引かずにこれまでどおり積む。
     ///
+    /// **保持する形の記録の間は、重ねて積んだ線に、引く素材 (``CarvedStroke``) を添える**
+    /// ([#1829]・[#1920]・``StrokeRange``)。保持した形は置くときに半透明の色を掛けられ、
+    /// そのとき重ねて積んだ片は角と継ぎ目で濃くなるからである。**引くのは、半透明の色を
+    /// 掛けて置くとき最初の 1 度だけ** — 記録のときは素材を組んだところで止める。掛けない形は、
+    /// 今までどおり重ねて積んだ頂点を置き、引く費用を払わない。
+    ///
     /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
     /// [#1562]: https://github.com/mokume-metal/mokume/issues/1562
+    /// [#1829]: https://github.com/mokume-metal/mokume/issues/1829
+    /// [#1920]: https://github.com/mokume-metal/mokume/issues/1920
     func strokeOutline(_ outline: Outline) {
         let half = style.strokeWeight / 2
         let points = outline.points
         let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
         let start = vertices.count
-        if strokeOverlapsShow {
+        let overlaps = strokeOverlapsShow
+        if overlaps {
             strokeCarved(outline, half: half, chamfers: chamfers)
         } else {
             strokeRing(
@@ -346,8 +355,27 @@ extension Canvas {
         }
         // 記録の間は寄せられないので、積んだ区間を覚える (`recordedStrokeRanges`)
         if recordingShape, vertices.count > start {
-            recordedStrokeRanges.append(start..<vertices.count)
+            // 引かずに積んだ線のうち、`replace` は下地を読まないので、重ねても半透明のまま
+            // 同じ色になる。残りの `blend` / `lightest` / `darkest` は、半透明の色を掛けて
+            // 置かれると 2 回目で寄っていくので、引く素材を持っておく。点 1 つの輪郭は
+            // 端の形が 1 枚だけで、重なる相手が無いので持たない
+            let carved: CarvedStroke? =
+                !overlaps && style.blendMode != .replace && points.count > 1
+                ? carveLater(outline, half: half, chamfers: chamfers) : nil
+            recordedStrokeRanges.append(StrokeRange(start..<vertices.count, carved: carved))
         }
+    }
+
+    /// 引く素材だけを組んで持つ。**引くのは、半透明の色を掛けて置くとき最初の 1 度**
+    /// (``CarvedStroke/vertices``)。
+    private func carveLater(
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>]
+    ) -> CarvedStroke {
+        let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
+        return CarvedStroke(
+            recipe: CarveRecipe(
+                carving: carving, offset: offset, transform: transform, color: style.stroke,
+                uv: whiteUV))
     }
 
     /// 線の片の重なりが絵に出るか。**出ないのは、重ねて混ぜても同じ色になる線だけ** —
@@ -363,9 +391,10 @@ extension Canvas {
     /// 縁から 1/1000 画素ほどの所に中心が乗る画素は、塗られるかが入れ替わりうる。重ねても
     /// 絵が変わらない線は引かないので、この揺れは引いた線にしか出ない。
     ///
-    /// 保持する形の記録は、記録したときの色で決める。置くときに半透明の色を掛けた
-    /// (``Placement/fill``) 不透明の線は、引かずに積んだままになる (#1829)。記録の間も
-    /// 引くと、不透明のまま置く (いちばんよくある) 形の縁が動く。
+    /// 保持する形の記録は、**積み方を記録したときの色で決める**。記録の間も引いて積むと、
+    /// 不透明のまま置く (いちばんよくある) 形の縁が動く。置くときに半透明の色を掛ける
+    /// (``Placement/fill``) 形のために、不透明の線は引く素材も持ち、置くときに引く
+    /// (``StrokeRange``・``strokeOutline(_:)``・#1829)。
     var strokeOverlapsShow: Bool {
         if buildingFlatTemplate || currentShader != nil { return true }
         switch style.blendMode {
@@ -385,6 +414,40 @@ extension Canvas {
     /// 置き場所ぶんずらした周は、ずらす前の周で引いてから置き場所を足す (``Outline/unmoved``)。
     /// 畳んだ雛形と同じ座標で引くので、畳むかどうかで頂点の数が変わらない。
     private func strokeCarved(_ outline: Outline, half: Float, chamfers: [SIMD2<Float>]) {
+        let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
+        func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
+            let moved = point + offset
+            return strokePoint(x: moved.x, y: moved.y)
+        }
+        carving.carved { polygon, range, hub in
+            guard let hub else {
+                let first = place(polygon[range.lowerBound])
+                var previous = place(polygon[range.lowerBound + 1])
+                for index in (range.lowerBound + 2)..<range.upperBound {
+                    let current = place(polygon[index])
+                    appendTriangle(first, previous, current, color: style.stroke)
+                    previous = current
+                }
+                return
+            }
+            let center = place(hub)
+            let first = place(polygon[range.lowerBound])
+            var previous = first
+            for index in (range.lowerBound + 1)..<range.upperBound {
+                let current = place(polygon[index])
+                appendTriangle(center, previous, current, color: style.stroke)
+                previous = current
+            }
+            appendTriangle(center, previous, first, color: style.stroke)
+        }
+    }
+
+    /// 片を集める。引くのは ``StrokeCarving/carved(_:)`` が行い、集めた値は Canvas の状態を
+    /// 読まないので、直ちに引いても (``strokeCarved(_:half:chamfers:)``) 後で引いても
+    /// (``CarveRecipe``) 結果は同じである。
+    private func makeCarving(
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>]
+    ) -> (carving: StrokeCarving, offset: SIMD2<Float>) {
         let (points, offset) = outline.unmoved ?? (outline.points, SIMD2<Float>(0, 0))
         var carving = StrokeCarving(
             points: points, isClosed: outline.isClosed, weight: half * 2,
@@ -427,31 +490,7 @@ extension Canvas {
                         at: points[index], outward: chamfers[index], half: half, to: &polygon)
                 }
             })
-        func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
-            let moved = point + offset
-            return strokePoint(x: moved.x, y: moved.y)
-        }
-        carving.carved { polygon, range, hub in
-            guard let hub else {
-                let first = place(polygon[range.lowerBound])
-                var previous = place(polygon[range.lowerBound + 1])
-                for index in (range.lowerBound + 2)..<range.upperBound {
-                    let current = place(polygon[index])
-                    appendTriangle(first, previous, current, color: style.stroke)
-                    previous = current
-                }
-                return
-            }
-            let center = place(hub)
-            let first = place(polygon[range.lowerBound])
-            var previous = first
-            for index in (range.lowerBound + 1)..<range.upperBound {
-                let current = place(polygon[index])
-                appendTriangle(center, previous, current, color: style.stroke)
-                previous = current
-            }
-            appendTriangle(center, previous, first, color: style.stroke)
-        }
+        return (carving, offset)
     }
 
     // 片の周 (形自身の座標) を積む。式は重ねて積むとき (`appendBand` ほか) と 1 つずつ同じで、

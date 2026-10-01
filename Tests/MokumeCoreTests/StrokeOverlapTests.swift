@@ -431,4 +431,701 @@ struct StrokeOverlapTests {
         #expect(abs(pixels[62, 62].red - Self.once) <= 0.01, "穴の角: \(pixels[62, 62].red)")
         #expect(overpainted(pixels).count == 0)
     }
+
+    // MARK: - #1829: 不透明の線で記録した形に、置き場所で半透明の色を掛ける
+
+    /// 置き場所で掛ける半透明の白。不透明度は `stroke(255, 0, 0, 128)` と同じ 128/255 なので、
+    /// 直に半透明の線で描いた絵と画素まで揃えて比べられる。
+    private static let veil: LinearRGBA = {
+        let alpha = Float(128) / 255
+        return LinearRGBA(premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
+    }()
+
+    /// 不透明の赤の線で記録した形。**記録のときは不透明なので、片を重ねたまま積む。**
+    private static func opaqueShape(
+        _ canvas: Canvas, mode: BlendMode = .blend, weight: Float = 20,
+        join: StrokeJoin = .miter, cap: StrokeCap = .round, _ body: (Canvas) -> Void
+    ) -> Shape {
+        canvas.createShape {
+            canvas.noFill()
+            canvas.blendMode(mode)
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(weight)
+            canvas.strokeJoin(join)
+            canvas.strokeCap(cap)
+            body(canvas)
+        }
+    }
+
+    /// 形を組み立て (`build`)、黒地へ置き場所を渡して置く。組み立ては置く絵と別のフレームで行う。
+    private func placed(
+        _ build: (Canvas) -> Shape, at placements: [Placement]
+    ) throws -> PixelBuffer {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var shape = Shape.empty
+        try canvas.draw { shape = build(canvas) }
+        try canvas.draw {
+            canvas.background(black)
+            canvas.shape(shape, at: placements)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// 直に半透明の線で描いた絵 (置き場所で掛けた絵の物差し)。
+    private func directlyTranslucent(
+        mode: BlendMode = .blend, weight: Float = 20, join: StrokeJoin = .miter,
+        cap: StrokeCap = .round, _ body: (Canvas) -> Void
+    ) throws -> PixelBuffer {
+        try translucent { canvas in
+            canvas.blendMode(mode)
+            canvas.strokeWeight(weight)
+            canvas.strokeJoin(join)
+            canvas.strokeCap(cap)
+            body(canvas)
+        }
+    }
+
+    /// 起票時の再現手順そのもの。線形の赤で読む: 直に半透明の線で描けば、辺の中ほども角も 0.413。
+    @Test("不透明の線で記録した形に半透明の色を掛けて置いても、角で重ねて混ぜない (再現手順)")
+    func reproductionOfTheIssue() throws {
+        let pixels = try placed(
+            { canvas in
+                canvas.createShape {
+                    canvas.noFill()
+                    canvas.stroke(255, 0, 0)
+                    canvas.strokeWeight(20)
+                    canvas.beginShape()
+                    canvas.vertex(40, 40)
+                    canvas.vertex(120, 40)
+                    canvas.vertex(120, 120)
+                    canvas.vertex(40, 120)
+                    canvas.endShape(.close)
+                }
+            },
+            at: [
+                Placement(
+                    fill: LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))
+            ])
+        #expect(abs(pixels[80, 45].red - Self.once) <= 0.01, "辺の中ほど (80, 45): \(pixels[80, 45].red)")
+        #expect(abs(pixels[45, 45].red - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].red)")
+        #expect(overpainted(pixels).count == 0, "重ね塗り: \(overpainted(pixels).count)")
+    }
+
+    @Test(
+        "不透明の線で記録した閉じた 4 点に半透明の色を掛けて置くと、直に半透明の線で描いた絵と 1 画素も違わない",
+        arguments: [StrokeJoin.miter, .bevel, .round])
+    func tintedClosedPolygonMatchesTranslucentDrawing(_ join: StrokeJoin) throws {
+        let pixels = try placed(
+            { Self.opaqueShape($0, join: join, Self.closedSquare) }, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(join: join, Self.closedSquare)
+        #expect(overpainted(pixels).count == 0, "\(join): \(overpainted(pixels).count)")
+        #expect(abs(pixels[80, 45].red - Self.once) <= 0.01, "辺の中ほど: \(pixels[80, 45].red)")
+        #expect(abs(pixels[45, 45].red - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].red)")
+        #expect(differingPixels(pixels, direct) == 0, "\(join): \(holes(pixels, direct))")
+    }
+
+    @Test("不透明の線で記録した鋭く折れた折れ線に半透明の色を掛けて置くと、直に描いた絵と 1 画素も違わない")
+    func tintedSharpFoldMatchesTranslucentDrawing() throws {
+        let pixels = try placed(
+            { Self.opaqueShape($0, Self.sharpFold) }, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(Self.sharpFold)
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count == 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    @Test(
+        "不透明の線で記録した 2 点の形に半透明の色を掛けて置くと、端の形と帯を重ねて混ぜない",
+        arguments: [StrokeCap.round, .project])
+    func tintedTwoPointCapsMatchTranslucentDrawing(_ cap: StrokeCap) throws {
+        let pixels = try placed(
+            { Self.opaqueShape($0, cap: cap, Self.twoPoints) }, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(cap: cap, Self.twoPoints)
+        #expect(abs(pixels[44, 80].red - Self.once) <= 0.01, "端から 4 内側: \(pixels[44, 80].red)")
+        #expect(overpainted(pixels).count == 0, "\(cap)")
+        #expect(differingPixels(pixels, direct) == 0, "\(cap): \(holes(pixels, direct))")
+    }
+
+    @Test("不透明の線で記録した曲線に半透明の色を掛けて置くと、刻みの継ぎ目で重ねて混ぜず、塗る領域も変わらない")
+    func tintedCurveMatchesTranslucentDrawing() throws {
+        let pixels = try placed(
+            { Self.opaqueShape($0, Self.filedCurve) }, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(Self.filedCurve)
+        #expect(overpainted(pixels).count <= 5, "\(overpainted(pixels))")
+        #expect(painted(pixels) == painted(direct), "置いた \(painted(pixels)) / 直に \(painted(direct))")
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// **色を掛けなければ、絵は変わらない** (#1829 の条件 2)。不透明の色 (`alpha` が 1) を
+    /// 掛けても同じ。引いた片に差し替えるのは、掛けた後の不透明度が 1 を下回るときだけである。
+    @Test(
+        "不透明の線で記録した形は、色を掛けずに置いても不透明の色を掛けて置いても、直に描いた不透明の絵と 1 画素も違わない",
+        arguments: [0, 1, 2, 3, 4])
+    func untintedRecordingKeepsItsPixels(_ shape: Int) throws {
+        func draw(_ canvas: Canvas) {
+            switch shape {
+            case 0: Self.closedSquare(canvas)
+            case 1: Self.sharpFold(canvas)
+            case 2: Self.twoPoints(canvas)
+            case 3: Self.filedCurve(canvas)
+            default:
+                canvas.beginShape()
+                canvas.vertex(30, 30)
+                canvas.bezierVertex(140, 20, 140, 140, 30, 130)
+                canvas.endShape(.close)
+            }
+        }
+        let cap: StrokeCap = shape == 2 ? .project : .round
+        let direct = try render { canvas in
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(20)
+            canvas.strokeCap(cap)
+            draw(canvas)
+        }
+        let plain = try placed({ Self.opaqueShape($0, cap: cap, draw) }, at: [Placement()])
+        let opaqueTint = try placed(
+            { Self.opaqueShape($0, cap: cap, draw) },
+            at: [Placement(fill: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))])
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(plain, direct) == 0, "色なし: \(holes(plain, direct))")
+        #expect(differingPixels(opaqueTint, direct) == 0, "不透明の色: \(holes(opaqueTint, direct))")
+    }
+
+    /// 引いて積むと、不透明の絵でも縁の画素が動きうる (`strokeOverlapsShow`)。参照スケッチの葉
+    /// (`TypeAndImagery`・塗りと細い曲線の線を回して 9 枚並べる) は、記録の間も引くと 10 画素が
+    /// 入れ替わり、台帳が動いた。**色を掛けずに置くなら、引かずに重ねて積んだ頂点のまま置く。**
+    @Test("不透明の線で記録した葉の群れは、色を掛けずに置くと、直に描いた絵と 1 画素も違わない")
+    func untintedLeafClusterKeepsItsPixels() throws {
+        func leaves(_ canvas: Canvas) {
+            canvas.fill(115, 217, 128)
+            canvas.stroke(31, 89, 56)
+            canvas.strokeWeight(2)
+            for index in 0..<9 {
+                canvas.push()
+                canvas.translate(Float(20 + index % 3 * 46), Float(24 + index / 3 * 46))
+                canvas.rotate(Float(index) * 0.4)
+                canvas.beginShape()
+                canvas.vertex(0, -22)
+                canvas.bezierVertex(16, -14, 16, 14, 0, 22)
+                canvas.bezierVertex(-16, 14, -16, -14, 0, -22)
+                canvas.endShape(.close)
+                canvas.pop()
+            }
+        }
+        func drawn(_ tint: LinearRGBA?, recording: Bool) throws -> PixelBuffer {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+            var shape = Shape.empty
+            if recording { try canvas.draw { shape = canvas.createShape { leaves(canvas) } } }
+            try canvas.draw {
+                canvas.background(black)
+                if recording {
+                    canvas.shape(shape, at: [Placement(fill: tint)])
+                } else {
+                    leaves(canvas)
+                }
+            }
+            return try canvas.target.readPixels()
+        }
+        let direct = try drawn(nil, recording: false)
+        let plain = try drawn(nil, recording: true)
+        let opaqueTint = try drawn(
+            LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1), recording: true)
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(plain, direct) == 0, "色なし: \(holes(plain, direct))")
+        #expect(differingPixels(opaqueTint, direct) == 0, "不透明の色: \(holes(opaqueTint, direct))")
+    }
+
+    /// 同じ形を、色を掛けない置き場所と掛ける置き場所で並べて置く。**置き場所ごとに決まる。**
+    @Test("不透明の線で記録した形は、色を掛けない置き場所と掛ける置き場所を混ぜて置いても、それぞれ直に描いた絵と同じ")
+    func mixedPlacementsDecidePerPlacement() throws {
+        func small(_ canvas: Canvas) {
+            canvas.beginShape()
+            canvas.vertex(20, 20)
+            canvas.vertex(50, 20)
+            canvas.vertex(50, 50)
+            canvas.vertex(20, 50)
+            canvas.endShape(.close)
+        }
+        let pixels = try placed(
+            { Self.opaqueShape($0, weight: 12, small) },
+            at: [Placement(), Placement(x: 90, fill: Self.veil), Placement(y: 90)])
+        let opaque = try render { canvas in
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(12)
+            small(canvas)
+            canvas.translate(0, 90)
+            small(canvas)
+        }
+        let veiled = try directlyTranslucent(weight: 12) { canvas in
+            canvas.translate(90, 0)
+            small(canvas)
+        }
+        var wrong: [SIMD2<Int>] = []
+        for y in 0..<160 {
+            for x in 0..<160 {
+                // 右上の 1 か所だけ色を掛けて置いた。それ以外は不透明のまま
+                let expected = x >= 80 && y < 80 ? veiled[x, y] : opaque[x, y]
+                if pixels[x, y] != expected { wrong.append(SIMD2(x, y)) }
+            }
+        }
+        #expect(painted(opaque) > 0 && painted(veiled) > 0)
+        #expect(wrong.isEmpty, "食い違い \(wrong.count): \(wrong.prefix(8))")
+    }
+
+    /// 回して縮めた置き場所でも、掛ける色が半透明なら角で重ならない。変換の合成で丸めが入る
+    /// ので、直に描いた絵とは 1 画素ごとには揃えず、重ね塗りが無いことで見る。
+    @Test("不透明の線で記録した形を、回して縮めて半透明の色を掛けて置いても、角で重ねて混ぜない")
+    func tintedTransformedPlacementBlendsOnce() throws {
+        let pixels = try placed(
+            { Self.opaqueShape($0, weight: 16, Self.closedSquare) },
+            at: [
+                Placement(
+                    x: 30, y: 10, scale: 0.8, rotation: SIMD3(0, 0, 0.4), fill: Self.veil)
+            ])
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
+    }
+
+    // MARK: 兄弟の口 (ADR-0040)
+
+    /// 記録の中で置き直した形は、外側の記録が輪郭の元を持ち歩く。
+    @Test("不透明の線で記録した形を入れ子に置いた形に、半透明の色を掛けて置いても、角で重ねて混ぜない")
+    func nestedRecordingKeepsTheCarvedPieces() throws {
+        let pixels = try placed(
+            { canvas in
+                let inner = Self.opaqueShape(canvas, Self.closedSquare)
+                return canvas.createShape { canvas.shape(inner) }
+            },
+            at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(Self.closedSquare)
+        #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 記録の中で半透明の色を掛けて置いたものは、その場で引いて積む。外側は色を掛けずに置いてよい。
+    @Test("記録の中で半透明の色を掛けて置いた形は、外側を色なしで置いても、角で重ねて混ぜない")
+    func tintedInsideRecordingBlendsOnce() throws {
+        let pixels = try placed(
+            { canvas in
+                let inner = Self.opaqueShape(canvas, Self.closedSquare)
+                return canvas.createShape {
+                    canvas.shape(inner, at: [Placement(fill: Self.veil)])
+                }
+            },
+            at: [Placement()])
+        let direct = try directlyTranslucent(Self.closedSquare)
+        #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 内側で 1 度、外側で 1 度と、2 度半透明の色を掛けても、引いて積んだ片のまま。
+    @Test("記録の中と外の両方で半透明の色を掛けて置いても、角で重ねて混ぜない")
+    func tintedTwiceBlendsOnce() throws {
+        let half = LinearRGBA(premultipliedRed: 0.7, green: 0.7, blue: 0.7, alpha: 0.7)
+        let pixels = try placed(
+            { canvas in
+                let inner = Self.opaqueShape(canvas, Self.closedSquare)
+                return canvas.createShape { canvas.shape(inner, at: [Placement(fill: half)]) }
+            },
+            at: [Placement(fill: half)])
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
+        #expect(
+            abs(pixels[45, 45].red - pixels[80, 45].red) <= 0.01,
+            "角 \(pixels[45, 45].red) / 辺の中ほど \(pixels[80, 45].red)")
+    }
+
+    /// 組 (`Shape.group` と `+`) は並びを繋ぐだけなので、輪郭の元も繋がって残る。
+    @Test("不透明の線で記録した 2 つの形を組にして半透明の色を掛けて置いても、角で重ねて混ぜない")
+    func groupedRecordingsKeepTheCarvedPieces() throws {
+        func left(_ canvas: Canvas) {
+            canvas.beginShape()
+            canvas.vertex(10, 10)
+            canvas.vertex(70, 10)
+            canvas.vertex(70, 70)
+            canvas.vertex(10, 70)
+            canvas.endShape(.close)
+        }
+        func right(_ canvas: Canvas) {
+            canvas.beginShape()
+            canvas.vertex(90, 90)
+            canvas.vertex(150, 90)
+            canvas.vertex(150, 150)
+            canvas.vertex(90, 150)
+            canvas.endShape(.close)
+        }
+        let direct = try directlyTranslucent(weight: 12) { canvas in
+            left(canvas)
+            right(canvas)
+        }
+        let grouped = try placed(
+            { canvas in
+                Shape.group([
+                    Self.opaqueShape(canvas, weight: 12, left),
+                    Self.opaqueShape(canvas, weight: 12, right),
+                ])
+            },
+            at: [Placement(fill: Self.veil)])
+        let added = try placed(
+            { canvas in
+                Self.opaqueShape(canvas, weight: 12, left)
+                    + Self.opaqueShape(canvas, weight: 12, right)
+            },
+            at: [Placement(fill: Self.veil)])
+        #expect(painted(direct) > 0)
+        #expect(overpainted(grouped).count == 0)
+        #expect(differingPixels(grouped, direct) == 0, "group: \(holes(grouped, direct))")
+        #expect(differingPixels(added, direct) == 0, "+: \(holes(added, direct))")
+    }
+
+    /// 下地を読まない `replace` は、重ねて積んでも同じ色になる。引かずに積んだままで、直に描いた絵と同じ。
+    @Test("置き換える混ぜ方で記録した不透明の線に半透明の色を掛けて置いても、直に描いた絵と 1 画素も違わない")
+    func tintedReplaceStrokeMatchesDirectDrawing() throws {
+        let pixels = try placed(
+            { Self.opaqueShape($0, mode: .replace, Self.closedSquare) }, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(mode: .replace, Self.closedSquare)
+        #expect(painted(pixels) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 明るいほう・暗いほうを採る混ぜ方は、不透明なら重ねても同じ色になるが、半透明なら 2 回目で
+    /// 寄っていく (`strokeOverlapsShow`)。
+    @Test(
+        "明るいほう・暗いほうを採る混ぜ方で記録した不透明の線に半透明の色を掛けて置いても、直に描いた絵と 1 画素も違わない",
+        arguments: [BlendMode.lightest, .darkest])
+    func tintedLightestAndDarkestStrokesMatchDirectDrawing(_ mode: BlendMode) throws {
+        // 地は灰色。線の赤は、明るいほうでは地より明るい所、暗いほうでは地より暗い所に効く
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var shape = Shape.empty
+        try canvas.draw { shape = Self.opaqueShape(canvas, mode: mode, Self.closedSquare) }
+        try canvas.draw {
+            canvas.background(90, 90, 90)
+            canvas.shape(shape, at: [Placement(fill: Self.veil)])
+        }
+        let pixels = try canvas.target.readPixels()
+        let direct = try render { canvas in
+            canvas.background(90, 90, 90)
+            canvas.blendMode(mode)
+            canvas.stroke(255, 0, 0, 128)
+            canvas.strokeWeight(20)
+            Self.closedSquare(canvas)
+        }
+        #expect(differingPixels(pixels, direct) == 0, "\(mode): \(holes(pixels, direct))")
+    }
+
+    // MARK: 塗りと線が同じ区間にある形・線が区間の途中から始まる形 (反証で足した口)
+
+    private static let redInk = LinearRGBA(premultipliedRed: 1, green: 0, blue: 0, alpha: 1)
+    private static let blueInk = LinearRGBA(premultipliedRed: 0, green: 0, blue: 1, alpha: 1)
+    /// 半透明の赤。0.5 は 2 進で正確に表せるので、0.5 倍・0.25 倍しても成分がずれない。
+    private static let paleRedInk = LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5)
+    /// 半分の不透明度の白。掛けた色は、直に描く色 (0.5 倍) と成分までビット一致する。
+    private static let halfVeil = LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5)
+
+    private static func scaled(_ color: LinearRGBA, by factor: Float) -> LinearRGBA {
+        LinearRGBA(
+            premultipliedRed: color.red * factor, green: color.green * factor,
+            blue: color.blue * factor, alpha: color.alpha * factor)
+    }
+
+    /// 一辺 16 の閉じた四角。`fill` / `stroke` が無ければ、塗りだけ・線だけの形になる。
+    /// `factor` は、置き場所で色を掛けた絵を直に描くときの倍率。
+    private static func square(
+        _ canvas: Canvas, x: Float, y: Float, fill: LinearRGBA?, stroke: LinearRGBA?,
+        factor: Float = 1
+    ) {
+        if let fill { canvas.fill(scaled(fill, by: factor)) } else { canvas.noFill() }
+        if let stroke {
+            canvas.stroke(scaled(stroke, by: factor))
+            canvas.strokeWeight(4)
+        } else {
+            canvas.noStroke()
+        }
+        canvas.beginShape()
+        canvas.vertex(x, y)
+        canvas.vertex(x + 16, y)
+        canvas.vertex(x + 16, y + 16)
+        canvas.vertex(x, y + 16)
+        canvas.endShape(.close)
+    }
+
+    /// 塗りと不透明の線が、同じ区間で並ぶ形。塗りの上に線が載る。
+    @Test("塗りと不透明の線を持つ形に半透明の色を掛けて置くと、直に描いた絵と 1 画素も違わない")
+    func tintedFillAndOpaqueStrokeMatchDirectDrawing() throws {
+        let pixels = try placed(
+            { canvas in
+                canvas.createShape {
+                    canvas.fill(Self.blueInk)
+                    canvas.stroke(Self.redInk)
+                    canvas.strokeWeight(20)
+                    Self.closedSquare(canvas)
+                }
+            },
+            at: [Placement(fill: Self.halfVeil)])
+        let direct = try render { canvas in
+            canvas.fill(Self.scaled(Self.blueInk, by: 0.5))
+            canvas.stroke(Self.scaled(Self.redInk, by: 0.5))
+            canvas.strokeWeight(20)
+            Self.closedSquare(canvas)
+        }
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 線の手前に塗りだけの頂点が並び、線どうしの間には、半透明の線で記録した (記録のときに引いた)
+    /// 線と塗りだけの頂点が挟まる。差し替える線は、置いた先で位置がずれる (`place` の
+    /// `cursor` と `shift`)。置き場所は、色を掛けるもの・掛けないものを混ぜて 3 か所。
+    private static func mixedPieces(_ canvas: Canvas, factor: Float) {
+        square(canvas, x: 6, y: 6, fill: nil, stroke: paleRedInk, factor: factor)
+        square(canvas, x: 34, y: 6, fill: blueInk, stroke: redInk, factor: factor)
+        square(canvas, x: 6, y: 34, fill: blueInk, stroke: nil, factor: factor)
+        square(canvas, x: 34, y: 34, fill: nil, stroke: redInk, factor: factor)
+        square(canvas, x: 56, y: 56, fill: blueInk, stroke: nil, factor: factor)
+    }
+
+    @Test("線が区間の途中から始まる形は、色を掛ける置き場所と掛けない置き場所を混ぜて置いても、それぞれ直に描いた絵と同じ")
+    func strokesStartingMidRunKeepTheirPlace() throws {
+        let pixels = try placed(
+            { canvas in canvas.createShape { Self.mixedPieces(canvas, factor: 1) } },
+            at: [
+                Placement(fill: Self.halfVeil), Placement(x: 80),
+                Placement(y: 80, fill: Self.halfVeil),
+            ])
+        let direct = try render { canvas in
+            Self.mixedPieces(canvas, factor: 0.5)
+            canvas.push()
+            canvas.translate(80, 0)
+            Self.mixedPieces(canvas, factor: 1)
+            canvas.pop()
+            canvas.push()
+            canvas.translate(0, 80)
+            Self.mixedPieces(canvas, factor: 0.5)
+            canvas.pop()
+        }
+        #expect(painted(pixels) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 入れ子 (記録済みの形をそのまま置く・記録の中で半透明の色を掛けて置く) と、組 (`group` と `+`) が
+    /// 混ざった形。内側で 1 度 (0.5)、外側で 1 度 (0.5) と、2 度掛かる輪郭は 0.25 倍になる。
+    @Test("入れ子と組を混ぜた形に半透明の色を掛けて置いても、直に描いた絵と 1 画素も違わない")
+    func nestedAndGroupedShapesKeepTheirPlace() throws {
+        func build(_ canvas: Canvas, grouping: (Shape, Shape) -> Shape) -> Shape {
+            let inner = canvas.createShape {
+                Self.square(canvas, x: 6, y: 6, fill: Self.blueInk, stroke: Self.redInk)
+            }
+            let outer = canvas.createShape {
+                Self.square(canvas, x: 34, y: 6, fill: Self.blueInk, stroke: nil)
+                canvas.shape(inner)
+                Self.square(canvas, x: 6, y: 34, fill: nil, stroke: Self.redInk)
+                canvas.shape(inner, at: [Placement(x: 28, y: 28, fill: Self.halfVeil)])
+            }
+            let other = canvas.createShape {
+                Self.square(canvas, x: 56, y: 6, fill: nil, stroke: Self.redInk)
+            }
+            return grouping(outer, other)
+        }
+        let direct = try render { canvas in
+            Self.square(canvas, x: 34, y: 6, fill: Self.blueInk, stroke: nil, factor: 0.5)
+            Self.square(canvas, x: 6, y: 6, fill: Self.blueInk, stroke: Self.redInk, factor: 0.5)
+            Self.square(canvas, x: 6, y: 34, fill: nil, stroke: Self.redInk, factor: 0.5)
+            Self.square(canvas, x: 34, y: 34, fill: Self.blueInk, stroke: Self.redInk, factor: 0.25)
+            Self.square(canvas, x: 56, y: 6, fill: nil, stroke: Self.redInk, factor: 0.5)
+        }
+        let grouped = try placed(
+            { canvas in build(canvas) { Shape.group([$0, $1]) } }, at: [Placement(fill: Self.halfVeil)])
+        let added = try placed(
+            { canvas in build(canvas) { $0 + $1 } }, at: [Placement(fill: Self.halfVeil)])
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(grouped, direct) == 0, "group: \(holes(grouped, direct))")
+        #expect(differingPixels(added, direct) == 0, "+: \(holes(added, direct))")
+    }
+
+    // MARK: 引くのは、半透明の色で最初に置くとき (#1920)
+
+    /// 形が持つ、引く素材の箱 (``StrokeRange/carved``)。
+    private static func carvedBoxes(_ shape: Shape) -> [CarvedStroke] {
+        var boxes: [CarvedStroke] = []
+        for stroke in shape.strokeRanges {
+            if let box = stroke.carved { boxes.append(box) }
+        }
+        return boxes
+    }
+
+    /// 組み立てた形を、新しい面へ持ち出す。
+    private func recorded(_ build: (Canvas) -> Shape) throws -> (canvas: Canvas, shape: Shape) {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var shape = Shape.empty
+        try canvas.draw { shape = build(canvas) }
+        return (canvas, shape)
+    }
+
+    /// 形を黒地へ置いた絵。
+    private func drawn(_ canvas: Canvas, _ shape: Shape, at placements: [Placement]) throws -> PixelBuffer {
+        try canvas.draw {
+            canvas.background(black)
+            canvas.shape(shape, at: placements)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// **記録では引かない。** 不透明の `blend` / `lightest` / `darkest` の線だけが素材を持ち、
+    /// 半透明の線 (記録のときに引いてある) と `replace` (重ねても同じ色) は持たない。
+    @Test("不透明の線で記録した形は、記録のあいだは線の片を引かず、素材だけを持つ")
+    func recordingKeepsOnlyTheMaterial() throws {
+        for mode in [BlendMode.blend, .lightest, .darkest] {
+            let (_, shape) = try recorded { Self.opaqueShape($0, mode: mode, Self.closedSquare) }
+            let boxes = Self.carvedBoxes(shape)
+            #expect(boxes.count == 1, "\(mode): \(boxes.count)")
+            #expect(boxes.allSatisfy { !$0.isRealized }, "\(mode): 記録のときに引いている")
+        }
+        let (_, replacing) = try recorded {
+            Self.opaqueShape($0, mode: .replace, Self.closedSquare)
+        }
+        #expect(Self.carvedBoxes(replacing).isEmpty, "replace は素材を持たない")
+        let (_, translucentRecording) = try recorded { canvas in
+            canvas.createShape {
+                canvas.noFill()
+                canvas.stroke(255, 0, 0, 128)
+                canvas.strokeWeight(20)
+                Self.closedSquare(canvas)
+            }
+        }
+        #expect(Self.carvedBoxes(translucentRecording).isEmpty, "半透明の線は記録のときに引いてある")
+    }
+
+    /// **使わない形は引く費用を払わない。** 色なし・不透明の色 (色成分が違っても `alpha` が 1)・
+    /// 回して縮めた置き場所は、何度置いても素材のままである。
+    @Test("不透明の線で記録した形は、色を掛けずに置いても不透明の色を掛けて置いても、線の片を引かない")
+    func untintedPlacementsDoNotCarve() throws {
+        let (canvas, shape) = try recorded { Self.opaqueShape($0, Self.closedSquare) }
+        let boxes = Self.carvedBoxes(shape)
+        #expect(boxes.count == 1)
+        let tinted = LinearRGBA(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 1)
+        for placement in [
+            Placement(), Placement(fill: tinted),
+            Placement(x: 12, y: 8, scale: 0.9, rotation: SIMD3(0, 0, 0.3)),
+        ] {
+            let pixels = try drawn(canvas, shape, at: [placement])
+            #expect(painted(pixels) > 0)
+        }
+        #expect(boxes.allSatisfy { !$0.isRealized }, "色を掛けない置き場所が引いている")
+    }
+
+    /// **半透明の色で最初に置くときに引き、2 回目以降は控えた頂点を使う。** 1 回目も 2 回目も、
+    /// 直に半透明の線で描いた絵と 1 画素も違わない。
+    @Test("不透明の線で記録した形は、半透明の色で最初に置くとき線の片を引き、2 回目以降は引き直さない")
+    func carvesOnTheFirstTranslucentPlacementOnly() throws {
+        let (canvas, shape) = try recorded { Self.opaqueShape($0, Self.closedSquare) }
+        let boxes = Self.carvedBoxes(shape)
+        #expect(boxes.count == 1)
+        #expect(boxes.allSatisfy { !$0.isRealized })
+
+        let direct = try directlyTranslucent(Self.closedSquare)
+        let first = try drawn(canvas, shape, at: [Placement(fill: Self.veil)])
+        #expect(boxes.allSatisfy { $0.isRealized }, "半透明の色で置いたのに引いていない")
+        #expect(differingPixels(first, direct) == 0, "1 回目: \(holes(first, direct))")
+
+        // 控えた頂点を握ったまま置き直す。引き直していれば、別の配列が組まれて番地が変わる
+        let kept = boxes.map { $0.vertices }
+        let second = try drawn(canvas, shape, at: [Placement(fill: Self.veil)])
+        let again = boxes.map { $0.vertices }
+        for (before, after) in zip(kept, again) {
+            let reused = before.withUnsafeBufferPointer { a in
+                after.withUnsafeBufferPointer { b in a.baseAddress == b.baseAddress }
+            }
+            #expect(reused, "2 回目に引き直している")
+        }
+        #expect(differingPixels(second, direct) == 0, "2 回目: \(holes(second, direct))")
+    }
+
+    /// **再記録のたびに、引く素材の箱が積み重ならない。** `trail = createShape { shape(trail); … }` の
+    /// ように、記録した形を入れ子に置き直すことを重ねると、畳まなければ k 段目の輪郭が長さ k の鎖に
+    /// なり、生きている箱が段数の二乗で増える。
+    @Test("不透明の線で記録した形を入れ子に置き直すことを重ねても、引く素材の箱の鎖は伸びない")
+    func rewrappingKeepsTheChainShort() throws {
+        func small(_ canvas: Canvas) {
+            canvas.beginShape()
+            canvas.vertex(20, 20)
+            canvas.vertex(50, 20)
+            canvas.vertex(50, 50)
+            canvas.vertex(20, 50)
+            canvas.endShape(.close)
+        }
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var shape = Shape.empty
+        try canvas.draw {
+            shape = Self.opaqueShape(canvas, weight: 12, small)
+            for _ in 0..<40 {
+                let previous = shape
+                shape = canvas.createShape { canvas.shape(previous, at: [Placement(x: 2)]) }
+            }
+        }
+        let boxes = Self.carvedBoxes(shape)
+        #expect(boxes.count == 1)
+        #expect(boxes.allSatisfy { $0.chainDepth <= 1 }, "鎖の長さ: \(boxes.map { $0.chainDepth })")
+        #expect(boxes.allSatisfy { !$0.isRealized })
+
+        // 40 段で 80 画素ずれた先で、直に半透明の線で描いた絵と同じ
+        let pixels = try drawn(canvas, shape, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(weight: 12) { canvas in
+            canvas.translate(80, 0)
+            small(canvas)
+        }
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
+
+    /// 畳むときは、内側の置き場所の色も外側の置き場所の色と合成して掛ける (不透明度 1 の色は
+    /// 記録の中では素材のままで、色だけが頂点に焼かれる)。
+    @Test("入れ子に置き直した形の置き場所の色は、畳んでも内側と外側の両方が掛かる")
+    func rewrappedTintsStillMultiply() throws {
+        // 赤だけを半分にする。不透明度は変えないので、記録の中では引かずに素材を持ち越す。
+        // 色は線形で渡す (`stroke(255, 0, 0)` は作業空間で緑と青にも小さな値を持つ)
+        let dim = LinearRGBA(premultipliedRed: 0.5, green: 1, blue: 1, alpha: 1)
+        let (canvas, shape) = try recorded { canvas in
+            let inner = canvas.createShape {
+                canvas.noFill()
+                canvas.stroke(Self.redInk)
+                canvas.strokeWeight(20)
+                Self.closedSquare(canvas)
+            }
+            let middle = canvas.createShape { canvas.shape(inner, at: [Placement(fill: dim)]) }
+            return canvas.createShape { canvas.shape(middle, at: [Placement(fill: dim)]) }
+        }
+        let boxes = Self.carvedBoxes(shape)
+        #expect(boxes.count == 1)
+        #expect(boxes.allSatisfy { $0.chainDepth <= 1 }, "鎖の長さ: \(boxes.map { $0.chainDepth })")
+
+        // 赤は 0.5 × 0.5 (内外の色) × 0.5 (置き場所の色) = 0.125、不透明度は 0.5。どれも 2 の冪なので、
+        // 掛ける順が変わっても成分までビット一致する
+        let pixels = try drawn(canvas, shape, at: [Placement(fill: Self.halfVeil)])
+        let direct = try render { canvas in
+            canvas.stroke(LinearRGBA(premultipliedRed: 0.125, green: 0, blue: 0, alpha: 0.5))
+            canvas.strokeWeight(20)
+            Self.closedSquare(canvas)
+        }
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct).count) 画素")
+    }
+
+    /// 点 1 つの輪郭は端の形が 1 枚だけで、重なる相手が無い。素材を持たず、記録の時間もメモリも
+    /// 増やさない。半透明の色を掛けて置いても、直に描いた絵と変わらない。
+    @Test("点を並べて記録した形は、引く素材を持たず、半透明の色を掛けて置いても直に描いた絵と 1 画素も違わない")
+    func singlePointOutlinesKeepNoMaterial() throws {
+        func dots(_ canvas: Canvas) {
+            canvas.beginShape(.points)
+            canvas.vertex(40, 40)
+            canvas.vertex(100, 50)
+            canvas.vertex(60, 110)
+            canvas.endShape()
+        }
+        let (canvas, shape) = try recorded { Self.opaqueShape($0, weight: 24, dots) }
+        #expect(Self.carvedBoxes(shape).isEmpty, "点の輪郭が素材を持っている")
+        let pixels = try drawn(canvas, shape, at: [Placement(fill: Self.veil)])
+        let direct = try directlyTranslucent(weight: 24, dots)
+        #expect(painted(direct) > 0)
+        #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct))")
+    }
 }
