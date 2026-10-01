@@ -4,6 +4,7 @@
 import AVFoundation
 import Foundation
 import Testing
+import VideoToolbox
 
 @testable import MokumeCore
 
@@ -244,6 +245,213 @@ struct MovieWriterTests {
                 #expect(reason.contains("writeFailed"), "\(reason)")
                 #expect(!reason.contains("bufferUnavailable"), "符号化器の理由を落とした: \(reason)")
             }
+        }
+    }
+
+    /// **色の細かい絵に一様でない不透明度が重なっても、録りは断られない** ([#1813])。
+    ///
+    /// 出口が受け取った 1 枚は、動画にもそのまま入る (ADR-0023 決定 2・4)。ところが ProRes 4444 の
+    /// 専用回路の符号化器 (M3 Max・macOS 27) は、色が細かく乱れた絵に一様でない alpha が重なると、
+    /// 640×360 以上で `Cannot Encode` と断り、**書き手ごと止まって録り全体を失った**。色が一色・
+    /// 滑らかな絵は alpha が乱数でも通る。断られるかは絵の中身で決まるので、絵柄ごとに見る。
+    ///
+    /// **この検査が名乗る範囲は、ここに並べた 4 絵柄 × 3 つの大きさ (奇数の寸法を含む) と、
+    /// 下の 3840×2160 である。** 専用回路を使わない指定 (``MovieFile/encoderSpecification()``) は、
+    /// 断られる条件を避けるだけで、他の理由で writer が転べば録り全体は今も失われる。絵の中身に
+    /// よらない約束としては名乗らない。
+    ///
+    /// **この検査は、既定の符号化器が専用回路である機械でだけ走る** (``DefaultProResEncoder``・
+    /// `.onAHardwareProResMachine`)。専用回路のある 2 台 (M3 Max・Mac mini M4) で、指定なしは
+    /// `Cannot Encode` で赤、指定ありは緑と測った。GitHub のホストの VM では、指定の有無によらず
+    /// 色の細かい絵が別のエラーで落ちるので飛ばす。この退行を捕まえるのは、専用回路のある機械での
+    /// 実行である。機械によらず見られるのは、書き手へ指定を渡したこと
+    /// (``theWriterIsHandedTheEncoderSpecification()``) までである。この検査は、色が乱れた絵の色の差を見ない (ProRes 4444 の色は非可逆で、砂嵐は
+    /// 大きくずれる)。見るのは、断られないことと、不透明度が入力と一致することである。色は
+    /// ``theColourOfAHalfTransparentBlockPictureSurvives(_:)`` が、一様な塊の内側で見る。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    @Test(
+        "色の細かい絵に一様でない不透明度が重なっても、録りは断られず、不透明度は入力と一致する",
+        .onAHardwareProResMachine,
+        arguments: BusyTexture.allCases, BusySize.all)
+    func aBusyPictureWithUnevenOpacityIsNotRefused(
+        _ texture: BusyTexture, _ size: BusySize
+    ) async throws {
+        try await withTemporaryDirectory("mokume-movie-busy") { directory in
+            let path = directory.appendingPathComponent("busy.mov").path
+            let picture = busyPicture(texture, width: size.width, height: size.height)
+
+            // 断られたなら、ここで理由 (`Cannot Encode`) を名乗って止める。読み戻せるファイルは無い
+            let failure = writeMovie(Array(repeating: picture, count: 5), to: path)
+            try #require(failure == nil, "断られた: \(failure ?? "")")
+
+            // 5 枚とも読み戻せて、どの枚も不透明度が入力と一致する
+            let differences = try await decodeAlphaDifferences(
+                path, against: Array(repeating: picture, count: 5))
+            #expect(differences.count == 5)
+            #expect(differences.allSatisfy { $0 == 0 }, "不透明度が入力と食い違う: 差の最大 \(differences)")
+        }
+    }
+
+    /// **専用回路が断った最大の場所 (3840×2160 の RGBA が乱数) も、断られない** ([#1813])。
+    ///
+    /// Issue の表で断られていた最大の大きさである。debug では 1 枚 33 MB を回すのが重いので、
+    /// 2 枚に絞る。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    @Test("3840×2160 の RGBA が乱数の絵も、断られず、不透明度は入力と一致する", .onAHardwareProResMachine)
+    func theLargestRefusedPictureIsNotRefused() async throws {
+        try await withTemporaryDirectory("mokume-movie-busy-4k") { directory in
+            let path = directory.appendingPathComponent("largest.mov").path
+            let picture = busyPicture(.noiseInEveryChannel, width: 3840, height: 2160)
+
+            let failure = writeMovie([picture, picture], to: path)
+            try #require(failure == nil, "断られた: \(failure ?? "")")
+
+            let differences = try await decodeAlphaDifferences(path, against: [picture, picture])
+            #expect(differences.count == 2)
+            #expect(differences.allSatisfy { $0 == 0 }, "不透明度が入力と食い違う: 差の最大 \(differences)")
+        }
+    }
+
+    /// **1 枚だけ乱れた絵を挟んでも、録り全体が残る** ([#1813])。
+    ///
+    /// 断られるのはその 1 枚ではなく書き手ごとなので、一色の 6 枚の 3 枚目だけを乱れた絵にした
+    /// だけで、残りの 5 枚も入らず、ファイルはトラックを読めなかった (1920×1080)。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    @Test("1 枚だけ乱れた絵を挟んでも、6 枚とも読み戻せる", .onAHardwareProResMachine)
+    func oneBusyPictureDoesNotCostTheWholeRecording() async throws {
+        try await withTemporaryDirectory("mokume-movie-busy-one") { directory in
+            let path = directory.appendingPathComponent("one.mov").path
+            // 一色の 6 枚の 3 枚目だけを乱れた絵にする
+            let pictures = (1...6).map { frame in
+                frame == 3
+                    ? busyPicture(.noiseInEveryChannel, width: 1920, height: 1080)
+                    : image(UInt8(frame * 30), width: 1920, height: 1080)
+            }
+
+            let failure = writeMovie(pictures, to: path)
+            try #require(failure == nil, "断られた: \(failure ?? "")")
+
+            let differences = try await decodeAlphaDifferences(path, against: pictures)
+            #expect(differences.count == 6)
+            #expect(differences.allSatisfy { $0 == 0 }, "不透明度が入力と食い違う: 差の最大 \(differences)")
+        }
+    }
+
+    /// **専用回路を使わない指定のままでも、同じ入力を 2 回書くと、復号した画素と時刻が全画素で
+    /// 一致する** ([#1813]・[ADR-0025] の水準 3)。
+    ///
+    /// 専用回路を使わない符号化器は、複数のスレッドで画面の帯を並列に符号化する。並べる順や
+    /// スレッドの割り当てで結果が変わりうるので、大きさごと・絵柄ごとに 2 回書いて突き合わせる。
+    /// 突き合わせるのは復号した BGRA の全バイトで、ファイルのバイトではない (容れ物の時刻の秒が
+    /// 違う・[#1628])。
+    ///
+    /// **測った範囲は、ここに並べた 4 絵柄 × 3 つの大きさである。**
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    /// [#1628]: https://github.com/mokume-metal/mokume/issues/1628
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+    @Test(
+        "色の細かい絵に一様でない不透明度が重なった絵も、同じ入力から同じ動きが出る",
+        .onAHardwareProResMachine,
+        arguments: BusyTexture.allCases, BusySize.all)
+    func aBusyPictureWritesTheSameMotionTwice(
+        _ texture: BusyTexture, _ size: BusySize
+    ) async throws {
+        try await withTemporaryDirectory("mokume-movie-busy-twice") { directory in
+            let picture = busyPicture(texture, width: size.width, height: size.height)
+            var decoded: [(frames: [[UInt8]], times: [Double])] = []
+            for name in ["first", "second"] {
+                let path = directory.appendingPathComponent("\(name).mov").path
+                let failure = writeMovie(Array(repeating: picture, count: 3), to: path)
+                try #require(failure == nil, "断られた: \(failure ?? "")")
+                let movie = try await decodeSamples(path, copyBytes)
+                decoded.append((movie.frames, movie.times))
+            }
+            let (first, second) = (decoded[0], decoded[1])
+
+            #expect(first.frames.count == 3 && second.frames.count == 3)
+            #expect(first.times == second.times, "時刻が食い違う")
+            let differing = zip(first.frames, second.frames).filter { !sameBytes($0, $1) }.count
+            #expect(differing == 0, "3 枚のうち \(differing) 枚で、復号した画素が食い違う")
+        }
+    }
+
+    /// **半透明で色の細かい絵の色が、乗算されずに残る** ([#1813])。
+    ///
+    /// 不透明度だけを見る検査では、straight (乗算前) と乗算済みの違いに気付けない。乗算済みとして
+    /// 書かれれば、半透明の画素の色は不透明度のぶんだけ黒へ寄る (255 → 128 など)。絵の上の 4 分の 3 は
+    /// 色が乱数で、専用回路の符号化器を断らせる。下の 4 分の 1 は色ごとに違う大きな塊で、不透明度は
+    /// どちらも一様でなく変わる (``blockPicture(width:height:)``)。**塊の内側の半透明な画素**の色を、
+    /// 入力と突き合わせる。塊の縁は ProRes 4444 の非可逆な符号化でにじむので見ない。許容は既存の
+    /// 「書き出した動きが、量子化点を通った絵と一致する」(`theMovieHoldsWhatCameThroughTheQuantisationPoint`)
+    /// と同じ最大 2 (測った差は最大 1)。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    @Test("半透明で色の細かい絵の色が、乗算されずに残る", .onAHardwareProResMachine, arguments: BusySize.all)
+    func theColourOfAHalfTransparentBlockPictureSurvives(_ size: BusySize) async throws {
+        try await withTemporaryDirectory("mokume-movie-busy-colour") { directory in
+            let path = directory.appendingPathComponent("colour.mov").path
+            let picture = blockPicture(width: size.width, height: size.height)
+
+            let failure = writeMovie(Array(repeating: picture, count: 3), to: path)
+            try #require(failure == nil, "断られた: \(failure ?? "")")
+
+            let movie = try await decodeSamples(path) { buffer in
+                blockInteriorColourDifference(of: buffer, against: picture)
+            }
+            #expect(movie.frames.count == 3)
+            for (worst, checked) in movie.frames {
+                // 何も見ていない検査で緑にならない
+                #expect(checked > 1000, "見た画素が少なすぎる: \(checked)")
+                #expect(worst <= 2, "半透明の画素の色が入力からずれた: 最大 \(worst)")
+            }
+        }
+    }
+
+    /// **書き手へ、符号化器の指定を渡している** ([#1813])。機械によらず赤になる。
+    ///
+    /// 専用回路の無い機械 (GitHub のホストの VM) では、指定の有無によらず同じ結果になるので、
+    /// 書き上がりからは退行が見えない。出力設定を直接見れば、どの機械でも「指定を外した」ことが
+    /// 赤になる。
+    /// **見るのは指定の値ではなく、書き手へ渡る指定が ``MovieFile/encoderSpecification()`` と同じ
+    /// ことである** — Apple 側が直って指定を空にして戻すとき、この検査は赤にならない。
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    @Test("書き手へ渡る出力設定に、符号化器の指定が入っている")
+    func theWriterIsHandedTheEncoderSpecification() {
+        let settings = MovieFile.outputSettings(width: 64, height: 48, compression: [:])
+        let handed = settings[AVVideoEncoderSpecificationKey] as? NSDictionary
+        #expect(handed != nil, "出力設定に AVVideoEncoderSpecificationKey が無い")
+        #expect(handed == (MovieFile.encoderSpecification() as NSDictionary))
+    }
+
+    /// **専用回路のある機械では、書き上がった動画が専用回路の符号化器のものではない** ([#1813])。
+    ///
+    /// 指定が書き手に渡っても、AVFoundation が守るとは限らない。断られる絵を書かなくても、
+    /// 書き上がった動画の形式記述が符号化器の実装を教える (macOS 27.0.1 で確かめた印):
+    /// 専用回路のものは `CVFieldCount` を持ち `Vendor` を持たず、専用回路を使わないものは
+    /// `Vendor` (`appl`) を持ち `CVFieldCount` を持たない。**未公開の印なので、OS が変わって
+    /// 食い違ったら、印のほうを疑って見直す。**
+    ///
+    /// 専用回路の無い機械では飛ばす (ここが赤になれるのは専用回路のある機械だけ)。専用機の
+    /// Mac mini M4 では飛ばずに通った。**Apple 側が直って指定を外して戻すときは、この検査も外す。**
+    ///
+    /// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+    @Test(
+        "専用回路のある機械では、書き上がった動画が専用回路の符号化器のものではない",
+        .onAHardwareProResMachine)
+    func theMovieIsNotWrittenByTheHardwareEncoder() async throws {
+        try await withTemporaryDirectory("mokume-movie-encoder-mark") { directory in
+            let path = directory.appendingPathComponent("mark.mov").path
+            let failure = writeMovie((1...3).map { image(UInt8($0 * 60)) }, to: path)
+            try #require(failure == nil, "断られた: \(failure ?? "")")
+
+            let marks = try await formatExtensions(path)
+            #expect(marks["Vendor"] as? String == "appl", "専用回路を使わない符号化器の印 (Vendor) が無い")
+            #expect(marks["CVFieldCount"] == nil, "専用回路の符号化器の印 (CVFieldCount) がある")
         }
     }
 }
@@ -757,6 +965,261 @@ struct RecordMovieTests {
 
 // MARK: - 共通の道具
 
+/// 色の細かい絵に一様でない不透明度が重なる絵柄 ([#1813])。**専用回路の符号化器が断った 4 つ**で、
+/// 断られるかは絵の中身で決まる (色が一色・滑らかな絵は、alpha が乱数でも通る)。
+///
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+nonisolated enum BusyTexture: String, CaseIterable, Sendable, CustomTestStringConvertible {
+    /// RGBA の 4 チャンネルとも一様乱数。
+    case noiseInEveryChannel = "RGBA の 4 チャンネルとも一様乱数"
+    /// RGB は一様乱数で、alpha は `x + y`。
+    case noiseColourSlopingAlpha = "RGB は乱数・alpha は x + y"
+    /// RGB は一様乱数で、alpha は 254 と 255 の市松。
+    case noiseColourCheckerAlpha = "RGB は乱数・alpha は 254 と 255 の市松"
+    /// `(x*3) ^ (y*7) + c*50` (alpha も同じ式)。
+    case xorPattern = "(x*3) ^ (y*7) + c*50"
+
+    var testDescription: String { rawValue }
+}
+
+/// 専用回路の符号化器が断った大きさのうち、いちばん小さい 640×360 と、よく使う 1920×1080。
+/// それに奇数の寸法 (641×361) を 1 つ足してある。
+nonisolated struct BusySize: Sendable, CustomTestStringConvertible {
+    let width: Int
+    let height: Int
+
+    var testDescription: String { "\(width)×\(height)" }
+
+    static let all = [
+        BusySize(width: 640, height: 360), BusySize(width: 641, height: 361),
+        BusySize(width: 1920, height: 1080),
+    ]
+}
+
+/// この機械の既定の ProRes 4444 の符号化器が、専用回路のものか ([#1813])。**指定を渡さずに聞く。**
+///
+/// 断られていた絵を書く検査は、この機械でだけ走らせる (`.onAHardwareProResMachine`)。専用回路の
+/// ある 2 台 (M3 Max・Mac mini M4) では、指定なしが `Cannot Encode`・指定ありが緑と測った。
+/// GitHub のホストの VM (`macos-26-arm64`) では、指定の有無によらず色の細かい絵が
+/// `NSOSStatusErrorDomain -17913` で落ちる (run ごとに落ちるセルが違う・#1919 の実測) ので、
+/// 指定が効いたかを見られない。
+///
+/// **仮想化された機械は、問い合わせが専用回路の名前を返しても専用回路として数えない。** 上の実測の
+/// VM がどちらを返すかは見ていないので、仮想化されているかも併せて見て、どちらでも飛ばす。
+///
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+nonisolated enum DefaultProResEncoder {
+    static var isHardware: Bool { namesHardware && !isVirtualMachine }
+
+    /// 指定なしで問い合わせた符号化器の名前が、専用回路のものか。
+    private static var namesHardware: Bool {
+        var encoder: CFString?
+        var properties: CFDictionary?
+        let status = VTCopySupportedPropertyDictionaryForEncoder(
+            width: 640, height: 360, codecType: kCMVideoCodecType_AppleProRes4444,
+            encoderSpecification: nil, encoderIDOut: &encoder, supportedPropertiesOut: &properties)
+        return status == noErr && (encoder as String?)?.contains("hw") == true
+    }
+
+    /// 仮想化された機械か (`kern.hv_vmm_present`)。読めなければ仮想化されていないとして扱う。
+    private static var isVirtualMachine: Bool {
+        var present: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        return sysctlbyname("kern.hv_vmm_present", &present, &size, nil, 0) == 0 && present != 0
+    }
+}
+
+extension Trait where Self == ConditionTrait {
+    /// 断られていた絵を書く検査を、既定の符号化器が専用回路である機械でだけ走らせる。
+    /// **これを付ける条件は 1 つにしてある** — 付け忘れた検査が、ホストの VM で赤になる。
+    nonisolated static var onAHardwareProResMachine: Self {
+        .enabled(
+            if: DefaultProResEncoder.isHardware,
+            """
+            既定の ProRes 4444 の符号化器が専用回路ではない (仮想化された機械を含む)。\
+            GitHub のホストの VM では、指定の有無によらず色の細かい絵が -17913 で落ちる (#1919 の実測)
+            """)
+    }
+}
+
+/// 固定の種から決まる、`BusyTexture` の絵。**落ちたときに同じ絵で調べ直せる。**
+private func busyPicture(_ texture: BusyTexture, width: Int, height: Int) -> DisplayImage {
+    let count = width * height * 4
+    let bytes = [UInt8](unsafeUninitializedCapacity: count) { buffer, filled in
+        for y in 0..<height {
+            for x in 0..<width {
+                let pixel = y * width + x
+                let random = scramble(UInt64(pixel) &+ 1813)
+                let at = pixel * 4
+                for channel in 0..<4 {
+                    let noise = UInt8(truncatingIfNeeded: random >> UInt64(channel * 8))
+                    let value: UInt8
+                    switch texture {
+                    case .noiseInEveryChannel:
+                        value = noise
+                    case .noiseColourSlopingAlpha:
+                        value = channel == 3 ? UInt8(truncatingIfNeeded: x + y) : noise
+                    case .noiseColourCheckerAlpha:
+                        value = channel == 3 ? ((x + y) % 2 == 0 ? 254 : 255) : noise
+                    case .xorPattern:
+                        value = UInt8(truncatingIfNeeded: ((x * 3) ^ (y * 7)) + channel * 50)
+                    }
+                    buffer[at + channel] = value
+                }
+            }
+        }
+        filled = count
+    }
+    return DisplayImage(width: width, height: height, bytes: bytes)
+}
+
+/// 64 ビットの値を散らす (SplitMix64 の仕上げ)。画素の番号から、決まった乱数を引く。
+private func scramble(_ value: UInt64) -> UInt64 {
+    var z = value &+ 0x9E37_79B9_7F4A_7C15
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
+}
+
+/// 上の 4 分の 3 は RGB が乱数、下の 4 分の 1 は色ごとに違う 32 画素四方の塊で、どちらも不透明度は `x + y` で
+/// 一様でなく変わる絵 ([#1813])。色は固定の種から決まる乱数である。
+///
+/// **上の 4 分の 3 が、専用回路の符号化器を断らせる** (色が細かく乱れて、不透明度が一様でない)。
+/// **下の 4 分の 1 が、色を突き合わせる場所である** — 乱数の色は非可逆な符号化で大きくずれるが、
+/// 一様な塊の内側は入力に近いまま残る。両者は符号化の単位 (画面の帯) を分けて置く: 境目を 32 の
+/// 倍数の行にしてあり、上の乱れが下の量子化を荒らさない。
+///
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+private func blockPicture(width: Int, height: Int) -> DisplayImage {
+    let count = width * height * 4
+    let noisyRows = noisyRowCount(height: height)
+    let bytes = [UInt8](unsafeUninitializedCapacity: count) { buffer, filled in
+        for y in 0..<height {
+            for x in 0..<width {
+                let random =
+                    y < noisyRows
+                    ? scramble(UInt64(y * width + x) &+ 1813)
+                    : scramble(UInt64((y / blockSide) * 4096 + x / blockSide) &+ 1813)
+                let at = (y * width + x) * 4
+                buffer[at] = UInt8(truncatingIfNeeded: random)
+                buffer[at + 1] = UInt8(truncatingIfNeeded: random >> 8)
+                buffer[at + 2] = UInt8(truncatingIfNeeded: random >> 16)
+                buffer[at + 3] = UInt8(truncatingIfNeeded: x + y)
+            }
+        }
+        filled = count
+    }
+    return DisplayImage(width: width, height: height, bytes: bytes)
+}
+
+/// ``blockPicture(width:height:)`` の塊の一辺。
+private let blockSide = 32
+
+/// ``blockPicture(width:height:)`` の上の 4 分の 3 の行数。塊の一辺の倍数に切り下げる。
+private func noisyRowCount(height: Int) -> Int { height * 3 / 4 / blockSide * blockSide }
+
+/// 読み戻した 1 枚 (BGRA) の、**下の 4 分の 1 の塊の内側で半透明な画素**の色と、渡した絵 (RGBA) の色の差の
+/// 最大と、見た画素の数。内側は塊の中央の半分、半透明は不透明度が 32…224 のところである。
+private func blockInteriorColourDifference(
+    of buffer: CVPixelBuffer, against image: DisplayImage
+) -> (worst: Int, checked: Int) {
+    guard CVPixelBufferGetWidth(buffer) == image.width, CVPixelBufferGetHeight(buffer) == image.height
+    else { return (Int.max, 0) }
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    let stride = CVPixelBufferGetBytesPerRow(buffer)
+    guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt8.self)
+    else { return (Int.max, 0) }
+    let middle = blockSide / 4..<blockSide * 3 / 4
+    var worst = 0
+    var checked = 0
+    image.bytes.withUnsafeBufferPointer { expected in
+        for y in noisyRowCount(height: image.height)..<image.height where middle.contains(y % blockSide) {
+            for x in 0..<image.width where middle.contains(x % blockSide) {
+                let given = (y * image.width + x) * 4
+                guard (32...224).contains(Int(expected[given + 3])) else { continue }
+                let written = y * stride + x * 4
+                checked += 1
+                worst = max(
+                    worst,
+                    abs(Int(base[written + 2]) - Int(expected[given])),
+                    abs(Int(base[written + 1]) - Int(expected[given + 1])),
+                    abs(Int(base[written]) - Int(expected[given + 2])))
+            }
+        }
+    }
+    return (worst, checked)
+}
+
+/// 絵を順に書いて閉じ、書き損じの理由 (無ければ `nil`) を返す。**閉じてから取り出す**ので、
+/// 閉じる段で断られた理由も拾う。
+private func writeMovie(_ pictures: [DisplayImage], to path: String, frameRate: Int = 30) -> String? {
+    let writer = MovieWriter(path: path, frameRate: frameRate)
+    for (index, picture) in pictures.enumerated() {
+        writer.write(picture, frame: index + 1, time: Double(index) / Double(frameRate))
+    }
+    writer.finish()
+    return writer.takeFailure()
+}
+
+/// 読み戻した 1 枚 (BGRA) を、行の詰め物を落として、そのままのバイトで取り出す。
+private func copyBytes(_ buffer: CVPixelBuffer) -> [UInt8] {
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    let width = CVPixelBufferGetWidth(buffer)
+    let height = CVPixelBufferGetHeight(buffer)
+    let stride = CVPixelBufferGetBytesPerRow(buffer)
+    guard let base = CVPixelBufferGetBaseAddress(buffer) else { return [] }
+    var bytes = [UInt8](repeating: 0, count: width * height * 4)
+    bytes.withUnsafeMutableBufferPointer { destination in
+        for y in 0..<height {
+            memcpy(destination.baseAddress! + y * width * 4, base + y * stride, width * 4)
+        }
+    }
+    return bytes
+}
+
+/// 2 つのバイト列が全バイトで一致するか。**配列どうしの `==` を debug で回さない。**
+private func sameBytes(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+    guard a.count == b.count else { return false }
+    guard !a.isEmpty else { return true }
+    return a.withUnsafeBytes { left in
+        b.withUnsafeBytes { right in memcmp(left.baseAddress!, right.baseAddress!, a.count) == 0 }
+    }
+}
+
+/// 動画の映像トラックの形式記述に付いた拡張。符号化器の実装によって付くものが違う。
+private func formatExtensions(_ path: String) async throws -> [String: Any] {
+    let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+    let tracks = try await asset.loadTracks(withMediaType: .video)
+    let track = try #require(tracks.first)
+    let descriptions = try await track.load(.formatDescriptions)
+    let description = try #require(descriptions.first)
+    return CMFormatDescriptionGetExtensions(description) as? [String: Any] ?? [:]
+}
+
+/// 読み戻した 1 枚 (BGRA) と、渡した絵 (RGBA) の、不透明度 (alpha) の差の最大。**色は見ない。**
+private func maxAlphaDifference(of buffer: CVPixelBuffer, against image: DisplayImage) -> Int {
+    guard CVPixelBufferGetWidth(buffer) == image.width, CVPixelBufferGetHeight(buffer) == image.height
+    else { return Int.max }
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    let stride = CVPixelBufferGetBytesPerRow(buffer)
+    guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt8.self)
+    else { return Int.max }
+    var worst = 0
+    image.bytes.withUnsafeBufferPointer { expected in
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                let written = Int(base[y * stride + x * 4 + 3])
+                let given = Int(expected[(y * image.width + x) * 4 + 3])
+                worst = max(worst, abs(written - given))
+            }
+        }
+    }
+    return worst
+}
+
 /// 検査のあいだだけ使う一時ディレクトリ。
 private func withTemporaryDirectory(
     _ name: String, _ body: (URL) async throws -> Void
@@ -810,6 +1273,34 @@ private struct DecodedMovie {
 
 /// 書き出した動画を読み戻す。**符号化を通った実物を見る** — 渡した絵ではなく。
 private func decodeMovie(_ path: String) async throws -> DecodedMovie {
+    let decoded = try await decodeSamples(path, read)
+    return DecodedMovie(
+        frames: decoded.frames, times: decoded.times, colorPrimaries: decoded.colorPrimaries)
+}
+
+/// 書き出した動画を読み戻し、**枚ごとの不透明度の差の最大**を返す ([#1813])。色は見ない。
+///
+/// 全画素を絵に起こす ``decodeMovie(_:)`` は、debug では 1920×1080 の 1 枚に 0.3 秒ほどかかる。
+/// 見たいのが不透明度だけなら、その 1 チャンネルだけを読む。`expected` の何枚目かと、読み戻した
+/// 何枚目かを突き合わせる。読み戻した枚数が多ければ、余った枚の差は `Int.max` になる。
+///
+/// [#1813]: https://github.com/mokume-metal/mokume/issues/1813
+private func decodeAlphaDifferences(
+    _ path: String, against expected: [DisplayImage]
+) async throws -> [Int] {
+    var index = 0
+    let decoded = try await decodeSamples(path) { buffer -> Int in
+        defer { index += 1 }
+        guard index < expected.count else { return Int.max }
+        return maxAlphaDifference(of: buffer, against: expected[index])
+    }
+    return decoded.frames
+}
+
+/// 動画の映像トラックを 1 枚ずつ読み、`transform` で取り出したものを並べる。
+private func decodeSamples<Frame>(
+    _ path: String, _ transform: (CVPixelBuffer) -> Frame
+) async throws -> (frames: [Frame], times: [Double], colorPrimaries: String?) {
     let asset = AVURLAsset(url: URL(fileURLWithPath: path))
     let tracks = try await asset.loadTracks(withMediaType: .video)
     let track = try #require(tracks.first)
@@ -826,14 +1317,14 @@ private func decodeMovie(_ path: String) async throws -> DecodedMovie {
     reader.add(output)
     reader.startReading()
 
-    var frames: [DisplayImage] = []
+    var frames: [Frame] = []
     var times: [Double] = []
     while let sample = output.copyNextSampleBuffer() {
         guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
         times.append(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample)))
-        frames.append(read(buffer))
+        frames.append(transform(buffer))
     }
-    return DecodedMovie(frames: frames, times: times, colorPrimaries: primaries)
+    return (frames, times, primaries)
 }
 
 /// 符号化器が返す並び (BGRA) を、表示できる形 (RGBA) へ直す。
