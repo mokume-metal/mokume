@@ -357,42 +357,22 @@ extension Canvas {
             // 引かずに積んだ線のうち、`replace` は下地を読まないので、重ねても半透明のまま
             // 同じ色になる。残りの `blend` / `lightest` / `darkest` は、半透明の色を掛けて
             // 置かれると 2 回目で寄っていくので、引いた頂点を持っておく
-            let carved =
+            let carved: CarvedStroke? =
                 !overlaps && style.blendMode != .replace
-                ? carvedVertices(outline, half: half, chamfers: chamfers, estimate: vertices.count - start)
-                : nil
+                ? carveLazily(outline, half: half, chamfers: chamfers) : nil
             recordedStrokeRanges.append(StrokeRange(start..<vertices.count, carved: carved))
         }
     }
 
-    /// 線を、片を引いて積んだ頂点で組む。**溜め場へは積まない** — 保持する形の記録が、
-    /// 重ねて積んだ区間の代わりに置く頂点として持つ (``StrokeRange``・#1829)。
-    ///
-    /// 頂点は重ねて積むときと同じ座標系 (変換は掛かり、半画素寄せは置くときに掛かる) で、
-    /// 色は線の色そのもの。
-    ///
-    /// **数は前もって分からない。** 引いた頂点は、重ねて積んだ頂点の 1.4〜5 倍になる (切り口の
-    /// 点を差し込むぶん・実測)。`estimate` (重ねて積んだ頂点の数) を最初の容量にして伸ばし、
-    /// 伸ばしたときの余りが大きければ組み終えてから手放す — 形は引いた頂点を置き場所の数に
-    /// よらず抱え続けるので、余りは形の大きさに効く (見積もりだけで確保すると、最大 1.7 倍の
-    /// 容量が残った・実測)。
-    private func carvedVertices(
-        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], estimate: Int
-    ) -> [ShapeVertex] {
-        var carved: [ShapeVertex] = []
-        carved.reserveCapacity(estimate)
-        strokeCarved(outline, half: half, chamfers: chamfers, capturing: true, captured: &carved)
-        return Self.trimmed(carved)
-    }
-
-    /// 余った容量を手放した写し。余りが 4 分の 1 を超えるものだけ、ちょうどの大きさへ写し直す
-    /// (小さな余りのために、大きな形を写さない)。
-    private static func trimmed(_ vertices: [ShapeVertex]) -> [ShapeVertex] {
-        guard vertices.capacity - vertices.count > vertices.count / 4 else { return vertices }
-        var exact: [ShapeVertex] = []
-        exact.reserveCapacity(vertices.count)
-        exact.append(contentsOf: vertices)
-        return exact
+    /// [試作] 引く素材だけを組んで持つ。引くのは、半透明の色を掛けて置くときに初めて行う。
+    private func carveLazily(
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>]
+    ) -> CarvedStroke {
+        let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
+        return CarvedStroke(
+            recipe: CarveRecipe(
+                carving: carving, offset: offset, transform: transform, color: style.stroke,
+                uv: whiteUV))
     }
 
     /// 線の片の重なりが絵に出るか。**出ないのは、重ねて混ぜても同じ色になる線だけ** —
@@ -442,6 +422,46 @@ extension Canvas {
         _ outline: Outline, half: Float, chamfers: [SIMD2<Float>],
         capturing: Bool, captured: inout [ShapeVertex]
     ) {
+        let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
+        func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
+            let moved = point + offset
+            return strokePoint(x: moved.x, y: moved.y)
+        }
+        let color = style.stroke
+        let uv = whiteUV
+        func emit(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) {
+            guard capturing else { return appendTriangle(a, b, c, color: color) }
+            captured.append(ShapeVertex(position: a, uv: uv, color: color))
+            captured.append(ShapeVertex(position: b, uv: uv, color: color))
+            captured.append(ShapeVertex(position: c, uv: uv, color: color))
+        }
+        carving.carved { polygon, range, hub in
+            guard let hub else {
+                let first = place(polygon[range.lowerBound])
+                var previous = place(polygon[range.lowerBound + 1])
+                for index in (range.lowerBound + 2)..<range.upperBound {
+                    let current = place(polygon[index])
+                    emit(first, previous, current)
+                    previous = current
+                }
+                return
+            }
+            let center = place(hub)
+            let first = place(polygon[range.lowerBound])
+            var previous = first
+            for index in (range.lowerBound + 1)..<range.upperBound {
+                let current = place(polygon[index])
+                emit(center, previous, current)
+                previous = current
+            }
+            emit(center, previous, first)
+        }
+    }
+
+    /// 片を集める。引くのは ``StrokeCarving/carved(_:)`` が行う。
+    private func makeCarving(
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>]
+    ) -> (carving: StrokeCarving, offset: SIMD2<Float>) {
         let (points, offset) = outline.unmoved ?? (outline.points, SIMD2<Float>(0, 0))
         var carving = StrokeCarving(
             points: points, isClosed: outline.isClosed, weight: half * 2,
@@ -484,39 +504,7 @@ extension Canvas {
                         at: points[index], outward: chamfers[index], half: half, to: &polygon)
                 }
             })
-        func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
-            let moved = point + offset
-            return strokePoint(x: moved.x, y: moved.y)
-        }
-        let color = style.stroke
-        let uv = whiteUV
-        func emit(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) {
-            guard capturing else { return appendTriangle(a, b, c, color: color) }
-            captured.append(ShapeVertex(position: a, uv: uv, color: color))
-            captured.append(ShapeVertex(position: b, uv: uv, color: color))
-            captured.append(ShapeVertex(position: c, uv: uv, color: color))
-        }
-        carving.carved { polygon, range, hub in
-            guard let hub else {
-                let first = place(polygon[range.lowerBound])
-                var previous = place(polygon[range.lowerBound + 1])
-                for index in (range.lowerBound + 2)..<range.upperBound {
-                    let current = place(polygon[index])
-                    emit(first, previous, current)
-                    previous = current
-                }
-                return
-            }
-            let center = place(hub)
-            let first = place(polygon[range.lowerBound])
-            var previous = first
-            for index in (range.lowerBound + 1)..<range.upperBound {
-                let current = place(polygon[index])
-                emit(center, previous, current)
-                previous = current
-            }
-            emit(center, previous, first)
-        }
+        return (carving, offset)
     }
 
     // 片の周 (形自身の座標) を積む。式は重ねて積むとき (`appendBand` ほか) と 1 つずつ同じで、

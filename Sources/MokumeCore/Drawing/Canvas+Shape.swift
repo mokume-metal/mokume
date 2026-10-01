@@ -283,7 +283,7 @@ extension Canvas {
             var cursor = run.start
             for stroke in replaced {
                 vertices.append(contentsOf: shape.vertices[cursor..<stroke.range.lowerBound])
-                vertices.append(contentsOf: stroke.carved ?? [])
+                vertices.append(contentsOf: stroke.carved?.vertices ?? [])
                 cursor = stroke.range.upperBound
             }
             vertices.append(contentsOf: shape.vertices[cursor..<runRange.upperBound])
@@ -304,10 +304,10 @@ extension Canvas {
             let lower = max(whole.lowerBound, runRange.lowerBound)
             let upper = min(whole.upperBound, runRange.upperBound)
             let placed: Range<Int>
-            var carved: [ShapeVertex]?
+            var carved: CarvedStroke?
             if next < replaced.count, replaced[next].range == whole {
                 // 引いて積んだ頂点は、もう半透明で確定している。外側の記録へは差し替えずに渡す
-                let count = replaced[next].carved?.count ?? 0
+                let count = replaced[next].carved?.vertices.count ?? 0
                 let start = lower - run.start + base + shift
                 placed = start..<(start + count)
                 shift += count - whole.count
@@ -321,7 +321,7 @@ extension Canvas {
                 if recordingShape, lower == whole.lowerBound, upper == whole.upperBound,
                     let source = shape.strokeRanges[index].carved
                 {
-                    carved = Self.moved(source, by: matrix, tint: tint)
+                    carved = CarvedStroke(moving: source, by: matrix, tint: tint)
                 }
             }
             if recordingShape {
@@ -349,7 +349,7 @@ extension Canvas {
     }
 
     /// 引いて積んだ頂点を、区間の頂点と同じように置き場所へ移した写し。
-    private static func moved(
+    static func moved(
         _ vertices: [ShapeVertex], by matrix: simd_float4x4, tint: LinearRGBA?
     ) -> [ShapeVertex] {
         var vertices = vertices

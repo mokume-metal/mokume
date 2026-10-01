@@ -324,9 +324,9 @@ struct StrokeRange {
     /// 区間の代わりに積む、片を引いた頂点。**区間の頂点と同じ座標** (形自身の座標で、
     /// 半画素寄せの前)。`nil` なら差し替えない — 半透明の線で記録した区間は記録のときに
     /// 引いてあり、`replace` は重ねても同じ色になる。
-    var carved: [ShapeVertex]?
+    var carved: CarvedStroke?
 
-    init(_ range: Range<Int>, carved: [ShapeVertex]? = nil) {
+    init(_ range: Range<Int>, carved: CarvedStroke? = nil) {
         self.range = range
         self.carved = carved
     }

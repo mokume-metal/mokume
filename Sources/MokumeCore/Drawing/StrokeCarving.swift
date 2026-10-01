@@ -80,6 +80,16 @@ nonisolated struct StrokeCarving {
         pointPieces = [Int](repeating: -1, count: points.count)
     }
 
+    /// [試作] 抱えている配列の容量 (バイト)。形が記録で持ち歩く量の計測用。
+    var residentBytes: Int {
+        pieces.points.capacity * MemoryLayout<SIMD2<Float>>.stride
+            + pieces.ranges.capacity * MemoryLayout<Range<Int>>.stride
+            + pieces.boxes.capacity * MemoryLayout<Box>.stride
+            + (lowers.capacity + uppers.capacity + positions.capacity) * MemoryLayout<Float>.stride
+            + (bandPieces.capacity + pointPieces.capacity + unindexedPieces.capacity)
+            * MemoryLayout<Int>.stride
+    }
+
     /// 線分 `segment` (点 `segment` から次の点まで) の帯を足す。`build` が凸多角形の周を積む。
     mutating func addBand(segment: Int, _ build: (inout [SIMD2<Float>]) -> Void) {
         guard segment < segmentCount,
