@@ -78,6 +78,17 @@ nonisolated struct StrokeCarving {
         self.positions = positions
         bandPieces = [Int](repeating: -1, count: segmentCount)
         pointPieces = [Int](repeating: -1, count: points.count)
+        // 片は、線分ごとの帯と点ごとの形で高々。積む前に容量を取り、伸ばすたびの再確保を避ける。
+        // 保持した形は記録のたびにこれを組んで持つので ([#1920])、小さな線を大量に記録する形の
+        // 記録時間に効く。点の数は片の形で決まるので、帯 1 枚ぶん (4 点) を見込む
+        //
+        // [#1920]: https://github.com/mokume-metal/mokume/issues/1920
+        let pieceBound = segmentCount + points.count
+        pieces.ranges.reserveCapacity(pieceBound)
+        pieces.boxes.reserveCapacity(pieceBound)
+        pieces.points.reserveCapacity(pieceBound * 4)
+        lowers.reserveCapacity(pieceBound)
+        uppers.reserveCapacity(pieceBound)
     }
 
     /// 線分 `segment` (点 `segment` から次の点まで) の帯を足す。`build` が凸多角形の周を積む。
