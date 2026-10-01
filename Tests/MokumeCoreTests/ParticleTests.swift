@@ -1521,3 +1521,122 @@ struct ParticleTests {
         #expect(dust.quad.runs.first?.mode == .add)
     }
 }
+
+// MARK: - 面をまたいでも、揺れは本体のフレームで決まる (#1909)
+
+extension ParticleTests {
+    /// 本体と描き場所の呼び出しが、それぞれ粒 0 の速度へ足した分 (x, y, z)。
+    struct WanderKicks {
+        var main: [Float] = []
+        var layer: [Float] = []
+    }
+
+    /// 本体を `atFrame` フレーム回し、描き場所はそのうち `layerFromFrame` フレーム目から毎フレーム描く。
+    /// 次のフレームで、本体 → 描き場所の順に同じ群へ `wander` を積んで 1 回ずつ呼び、それぞれの
+    /// 呼び出しが粒 0 の速度へ足した分を返す。粒は動かない 4 つで、`wander` だけで動く。
+    /// strength 64 · Δt 1/64 なので、足す分は −1…1 の一様な値そのものである。
+    private func wanderKicks(layerFromFrame: Int, atFrame: Int) throws -> WanderKicks {
+        let canvas = try makeCanvas()
+        canvas.deltaTime = Self.twiceStep
+        let layer = try canvas.createGraphics(64, 64)
+        let dust = try canvas.makeParticles(count: 4)
+        var randomness = Randomness(seed: 7)
+        func velocity() -> [Float] {
+            canvas.read(dust.state).withUnsafeBytes { raw in
+                let particle = raw.bindMemory(to: Particle.self)[0]
+                return [particle.vx, particle.vy, particle.vz]
+            }
+        }
+        for frame in 0..<atFrame {
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                if frame == 0 {
+                    canvas.emit(
+                        dust, from: .point(10, 10), rate: 4 / Self.twiceStep, speed: 0...0,
+                        angle: 0...0, life: 100...100, size: 2...2,
+                        color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+                }
+                if frame >= layerFromFrame {
+                    layer.beginDraw()
+                    layer.background(.display(red: 0, green: 0, blue: 0))
+                    layer.endDraw()
+                }
+            }
+        }
+        var kicks = WanderKicks()
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            let before = velocity()
+            canvas.force(dust, [.wander(strength: 64)])
+            canvas.particles(dust)
+            let afterMain = velocity()
+            layer.beginDraw()
+            layer.force(dust, [.wander(strength: 64)])
+            layer.particles(dust)
+            let afterLayer = velocity()
+            layer.endDraw()
+            kicks.main = zip(afterMain, before).map { $0 - $1 }
+            kicks.layer = zip(afterLayer, afterMain).map { $0 - $1 }
+        }
+        return kicks
+    }
+
+    private func isClose(_ left: [Float], _ right: [Float], within tolerance: Float = 1e-4) -> Bool {
+        left.count == right.count && zip(left, right).allSatisfy { abs($0 - $1) <= tolerance }
+    }
+
+    /// 直す前は、`particles()` が呼んだ面の閉じたフレームの数をフレーム番号として渡していた。
+    /// 描き場所の数は描き場所が描かれた回数なので、描き始めが遅いと番号が本体より小さく、
+    /// 同じ本体のフレームの 2 つの呼び出しが違う向きに揺れた。描き始めを 0・3・6 フレーム目に
+    /// 置くと、描き場所の数は 6・3・0 で、本体は 6 のまま。
+    ///
+    /// 本体の揺れは直す前と同じ値 (本体の閉じたフレームの数が 6 のときの揺れ・#1909 の実測) である。
+    @Test(
+        "本体と描き場所で 1 つの群に wander を積んで呼ぶと、描き場所の描き歴に依らず同じ揺れが出る",
+        arguments: [0, 3, 6])
+    func wanderFollowsTheMainFrameAcrossSurfaces(layerFromFrame: Int) throws {
+        let kicks = try wanderKicks(layerFromFrame: layerFromFrame, atFrame: 6)
+        #expect(isClose(kicks.main, [-0.1892, 0.5027, -0.1603]), "本体の揺れが変わった: \(kicks.main)")
+        #expect(
+            isClose(kicks.layer, kicks.main),
+            "描き場所の揺れ \(kicks.layer) が本体の揺れ \(kicks.main) と違う")
+    }
+
+    /// どの呼び出しも 1 つの番号に貼り付いたのではなく、本体のフレームが進めば描き場所の揺れも
+    /// 本体と一緒に向きを変える。
+    @Test("本体のフレームが違えば、描き場所の揺れも本体と一緒に変わる")
+    func wanderOnALayerChangesWithTheMainFrame() throws {
+        let six = try wanderKicks(layerFromFrame: 6, atFrame: 6)
+        let seven = try wanderKicks(layerFromFrame: 7, atFrame: 7)
+        #expect(isClose(seven.layer, seven.main))
+        #expect(!isClose(six.layer, seven.layer), "フレームが違うのに同じ揺れ: \(six.layer)")
+    }
+
+    /// 時刻の置き場の持ち主 (本体) は弱く持たれる。本体を手放した後に残った描き場所でも、
+    /// 群は止まらずに進んで揺れる (番号は描き場所の閉じたフレームの数に戻る)。
+    @Test("本体を手放した後も、描き場所だけで wander つきの群が進む")
+    func wanderOnALayerOutlivingItsCreator() throws {
+        var canvas: Canvas? = try makeCanvas()
+        canvas?.deltaTime = Self.twiceStep
+        let layer = try #require(try canvas?.createGraphics(64, 64))
+        let dust = try #require(try canvas?.makeParticles(count: 4))
+        canvas = nil
+        #expect(layer.timebase.owner == nil)
+        var randomness = Randomness(seed: 7)
+        layer.beginDraw()
+        layer.emit(
+            dust, from: .point(10, 10), rate: 4 / Self.twiceStep, speed: 0...0, angle: 0...0,
+            life: 100...100, size: 2...2, color: .linear(red: 1, green: 1, blue: 1),
+            using: &randomness)
+        layer.endDraw()
+        layer.beginDraw()
+        layer.force(dust, [.wander(strength: 64)])
+        layer.particles(dust)
+        layer.endDraw()
+        let particle = layer.read(dust.state).withUnsafeBytes { raw in
+            raw.bindMemory(to: Particle.self)[0]
+        }
+        #expect(particle.life == 100 - Self.twiceStep)
+        #expect([particle.vx, particle.vy, particle.vz] != [0, 0, 0], "wander が効いていない")
+    }
+}

@@ -172,7 +172,7 @@ extension Canvas {
         let placed = particleRoute == .instanced ? placeFromGPU(particles, draw) : nil
         particles.write(
             into: draw, transform: transform.matrix, basis: currentCamera.basis, step: deltaTime,
-            frame: framesDrawn,
+            frame: particleFrame,
             forces: particles.takeForces(),
             vertexStart: placed?.start ?? 0, vertexCount: placed?.count ?? 0)
         // 取り出したので、控えた数はもう指す先が無い。この後に積む力は 0 個から数え直す
@@ -180,6 +180,23 @@ extension Canvas {
         schedule(particles, draw)
         if particleRoute == .reference { placeFromCPU(particles) }
     }
+
+    /// ``particles(_:)`` が GPU へ渡すフレーム番号。**時刻の置き場の持ち主 (本体) が閉じたフレームの
+    /// 数**で、描き場所も同じ本体のフレームの中なら本体と同じ番号を読む ([#1909])。`wander` の揺れは
+    /// 粒の番号とこの番号で決まるので、呼んだ面の数 (``framesDrawn``) を渡すと、描き場所の描き歴
+    /// (遅れて描き始めた・描かなかったフレームがある) で同じ本体のフレームの揺れが食い違う。
+    ///
+    /// ``Timebase/frame`` は使わない。開いている間は本体の ``framesDrawn`` より 1 大きいので、
+    /// 本体だけで描くスケッチの揺れまで変わる。本体のフレームの外 (`setup()`・止まっている間) で
+    /// 描き場所が呼ぶと、次に描く本体のフレームの番号になる — そこで置いたものを次のフレームへ
+    /// 持ち越すのと同じ向き (ADR-0021 決定 4 の追補 (2026-09-27))。持ち主は弱く持つので、本体を
+    /// 手放した後に残った描き場所は自分の数に戻る。
+    ///
+    /// `emit` の繰り越しは面ごとの数のままにしてある。公開の入口 (`Sketch.emit`) は本体の面から
+    /// しか呼ばないので、混ざらない。
+    ///
+    /// [#1909]: https://github.com/mokume-metal/mokume/issues/1909
+    var particleFrame: Int { timebase.owner?.framesDrawn ?? framesDrawn }
 
     /// 1 フレームぶんの計算を積む。
     ///

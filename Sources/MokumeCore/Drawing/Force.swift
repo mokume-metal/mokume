@@ -60,7 +60,9 @@ public enum Force: Equatable, Sendable {
     /// 力として効かせる。
     case attract(
         _ x: Float, _ y: Float, _ z: Float = 0, strength: Float, weakeningBeyond: Float? = nil)
-    /// 粒ごとに違う向きへ揺らす。**同じ粒・同じフレームなら同じ揺れ**が出る。
+    /// 粒ごとに違う向きへ揺らす。**同じ粒・同じフレームなら同じ揺れ**が出る。フレームは本体の
+    /// フレームで数えるので、描き場所 (`createGraphics`) で呼んでも、同じ本体のフレームなら
+    /// 本体で呼んだのと同じ揺れになる ([#1909](https://github.com/mokume-metal/mokume/issues/1909))。
     ///
     /// 加速度の各成分 (x・y・z) が、−`strength`…`strength` の一様な値になる。
     case wander(strength: Float)
