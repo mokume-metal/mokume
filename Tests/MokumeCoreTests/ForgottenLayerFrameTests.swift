@@ -381,6 +381,9 @@ struct ForgottenLayerFrameTests {
         }
         try main.draw { numbers.append(layer.framesDrawn) }
         #expect(numbers == [0, 1, 2, 3], "捨てたフレームごとに 1 つずつ進んでいない")
+        // 描き場所を本体の頭で捨てても、本体のフレームの数 (粒の揺れの番号・#1909) は進めない
+        #expect(main.timebase.mainFramesDrawn == main.framesDrawn, "描き場所を捨てた道が、本体のフレームを数えた")
+        #expect(main.framesDrawn == 4)
         #expect(layer.warnings.message(for: .unfinishedFrameDropped) == Self.droppedAtMainFrameNotice)
         #expect(!layer.isDrawing)
     }
