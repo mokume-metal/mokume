@@ -720,8 +720,12 @@ struct FormPaint {
 /// **だから、入口によって出す形がこの 2 つの分だけ違う。** 同じ楕円でも、重ねる・置き換える
 /// 列と下地を読む列とでは、輪郭の内縁が近似の誤差の分だけ違う (細長い楕円で最大 0.11・
 /// [#1820](https://github.com/mokume-metal/mokume/issues/1820))。
+///
+/// `replacing` は、呼ぶ側が**置き換える**列か (`layered` のときだけ読む)。割り戻しで帯の下の
+/// 塗りをどれだけ見せるかが変わる — 重ねる列は輪郭が透ける分だけ、置き換える列は少しも
+/// 見せない (割り戻しの説明)。これも呼ぶ側の定数である。
 static inline FormPaint mokume_formPaint(
-    FormFragmentIn in, constant FormInstance *instances, bool layered)
+    FormFragmentIn in, constant FormInstance *instances, bool layered, bool replacing)
 {
     FormInstance form = instances[in.instance];
     float2 p = in.local;
@@ -936,14 +940,23 @@ static inline FormPaint mokume_formPaint(
             // 両立せず、#1643 は前者を取った。どちらを約束にするかは
             // [#1818](https://github.com/mokume-metal/mokume/issues/1818)
             //
-            // 置き換える列がこの割り戻し (輪郭 over 塗り) を使うのが正しいかも決まっていない。
-            // 三角形の経路は輪郭で上書きするので、半透明の輪郭の帯で 2 つの経路が食い違う
-            // ([#1819](https://github.com/mokume-metal/mokume/issues/1819))
+            // **置き換える列は、帯の下の塗りを少しも見せない** (`replacing`)。画素を塗りだけ
+            // `f − o`・重なり `o`・帯だけ `s − o`・どちらでもない所の 4 つの面積に分け、
+            // それぞれを混ぜた色を面積で足す — 塗りと輪郭を両方持つ形の 1 画素の約束である
+            // ([#1867](https://github.com/mokume-metal/mokume/issues/1867) 決定 1)。重ねる
+            // (over) で解くと重なりには「輪郭 over 塗り」が入り、上の重みになる。置き換えで
+            // 解くと重なりには後に置いた輪郭だけが入るので、塗りが見える重みは `f − o` で、
+            // 置く色は `S·s + F·(f − o)` になる。三角形の経路 (塗りの三角形の上に輪郭の
+            // 三角形を置き換える) と、塗りだけ → 輪郭だけの順に分けて描いた絵が帯に置く色
+            // と同じである。かつては置き換える列も重ねる重みで割り戻していたので、半透明の
+            // 輪郭の帯の内側半分に塗りが透け、透明な地では α が輪郭の不透明度を越えて
+            // 1.0 まで埋まった ([#1819](https://github.com/mokume-metal/mokume/issues/1819))。
+            // 不透明な輪郭では 2 つの重みが同じになり、絵は 1 ビットも変わらない
             float overlap = max(
                 0.0,
                 min(paint.fillCoverage, outerCoverage) - min(paint.fillCoverage, innerCoverage));
             float strokeAlpha = form.stroke.a;
-            float visible = paint.fillCoverage - overlap * strokeAlpha;
+            float visible = paint.fillCoverage - overlap * (replacing ? 1.0 : strokeAlpha);
             float behind = 1.0 - strokeAlpha * paint.strokeCoverage;
             paint.fillCoverage = behind > 1e-4 ? saturate(visible / behind) : 0.0;
         }
@@ -957,7 +970,9 @@ static inline FormPaint mokume_formPaint(
 ///
 /// 重ねる (`over`) は結合的なので、下地へ 2 回置くのと「先に重ねてから 1 回置く」のは
 /// 同じ式である。**下地を読まない入口はこちらを使う** — 下地に触れるのが 1 回だけに
-/// なるので、混ぜるのを固定機能のブレンドへ渡せる。
+/// なるので、混ぜるのを固定機能のブレンドへ渡せる。置き換える列も同じ式で置くが、
+/// 結合則に頼るのではなく、塗りの被覆率を置き換えの重みで割り戻してある
+/// (`mokume_formPaint` の `replacing`)。
 static inline float4 mokume_formLayered(FormPaint paint) {
     return paint.stroke + paint.fill * (1.0 - paint.stroke.a);
 }
@@ -977,7 +992,7 @@ fragment float4 mokume_formFragment(
     constant FormInstance *instances [[buffer(10)]],
     float4 destination [[color(0)]])
 {
-    FormPaint paint = mokume_formPaint(in, instances, false);
+    FormPaint paint = mokume_formPaint(in, instances, false, false);
     if (mokume_formIsBlank(paint)) {
         discard_fragment();
         return destination;
@@ -1003,18 +1018,26 @@ fragment float4 mokume_formFragmentBlend(
     FormFragmentIn in [[stage_in]],
     constant FormInstance *instances [[buffer(10)]])
 {
-    return mokume_formLayered(mokume_formPaint(in, instances, true));
+    return mokume_formLayered(mokume_formPaint(in, instances, true, false));
 }
 
 /// 基本図形の断片 (置き換える列)。**下地を読まないが、余白は捨てる。**
 ///
 /// 置き換える混ぜ方は下地を見ないので読む必要は無い。ただし**書けば下地が消える**ので、
-/// 形の外の余白は捨てなければならない (重ねる列との違いはここ 1 点)。
+/// 形の外の余白は捨てなければならない。
+///
+/// **置き換えるのは部品の単位である** ([#1819])。輪郭の帯では、塗りの上に輪郭を置き換えた
+/// のと同じく輪郭だけが残り、下の塗りは輪郭が半透明でも透けない。置く色は 1 つの式
+/// (`mokume_formLayered`) だが、塗りの被覆率を置き換えの重みで割り戻してある
+/// (`mokume_formPaint` の `replacing`) ので、`S·s + F·(f − o)` になる — 三角形の経路と、
+/// 塗りだけ → 輪郭だけの順に分けて描いた絵が帯に置く色である。
+///
+/// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
 fragment float4 mokume_formFragmentReplace(
     FormFragmentIn in [[stage_in]],
     constant FormInstance *instances [[buffer(10)]])
 {
-    FormPaint paint = mokume_formPaint(in, instances, true);
+    FormPaint paint = mokume_formPaint(in, instances, true, true);
     if (mokume_formIsBlank(paint)) {
         discard_fragment();
         return float4(0.0);

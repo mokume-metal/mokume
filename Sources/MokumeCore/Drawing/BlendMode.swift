@@ -73,7 +73,13 @@ public nonisolated enum BlendMode: Sendable, Equatable, CaseIterable {
     /// 変えない」が成り立たない唯一のモードで、描き場所 (`createGraphics`) の一部を
     /// 透明にする使い方になる ([#1542])。
     ///
+    /// **塗りと輪郭を両方持つ形は、部品ごとに置き換わる** — 塗りを置いた上に輪郭を置き
+    /// 換えたのと同じ絵で、輪郭の帯では輪郭だけが残る。輪郭が半透明でも、帯の下の塗りは
+    /// 透けない (帯の画素の不透明度は輪郭の不透明度になる)。塗りだけの形と輪郭だけの形を
+    /// この順に描いた絵とも、`shader()` を付けた形とも同じである ([#1819])。
+    ///
     /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
+    /// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
     case replace
 
     /// シェーダへ渡す番号。
