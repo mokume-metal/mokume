@@ -1476,6 +1476,13 @@ public final class Canvas {
         ///
         /// [#1622]: https://github.com/mokume-metal/mokume/issues/1622
         var frame = 0
+        /// 作った面 (``owner``) が閉じたフレームの数 (持ち主の ``Canvas/framesDrawn`` と同じ値)。
+        /// **粒の `wander` の揺れを決める番号** — 描き場所も同じ値を読むので、描き場所の描き歴に
+        /// 依らず、同じ本体のフレームなら同じ揺れになる ([#1909])。進めるのは持ち主だけで、持ち主を
+        /// 手放した後は進まない (時刻と刻みも、持ち主のフレームでランタイムが渡すときにしか変わらない)。
+        ///
+        /// [#1909]: https://github.com/mokume-metal/mokume/issues/1909
+        var mainFramesDrawn = 0
         /// この置き場を作った面。**弱く持つ** — 置き場は面が持ち、面を生かす筋合いが無い。
         weak var owner: Canvas?
     }
@@ -2217,6 +2224,7 @@ public final class Canvas {
             // [#1622]: https://github.com/mokume-metal/mokume/issues/1622
             warnUnfinishedFrameDropped()
             framesDrawn += 1
+            if timebase.owner === self { timebase.mainFramesDrawn += 1 }
             // 捨てたフレームで積んだ力も落とす。出した粒 (`emit`) は状態の並びへ直に積まれて
             // いて (#934 で持ち越す)、取り消せない
             for (particles, before) in forcesThisFrame {
@@ -2367,6 +2375,7 @@ public final class Canvas {
         }
         isDrawing = false
         framesDrawn += 1
+        if timebase.owner === self { timebase.mainFramesDrawn += 1 }
 
         // 焼き付けが読むのと同じ光を、描き切りの前に読む (投げても設定の誤りは知らせる)
         warnIfShadowHasNoCaster()
