@@ -1612,31 +1612,139 @@ extension ParticleTests {
         #expect(!isClose(six.layer, seven.layer), "フレームが違うのに同じ揺れ: \(six.layer)")
     }
 
-    /// 時刻の置き場の持ち主 (本体) は弱く持たれる。本体を手放した後に残った描き場所でも、
-    /// 群は止まらずに進んで揺れる (番号は描き場所の閉じたフレームの数に戻る)。
-    @Test("本体を手放した後も、描き場所だけで wander つきの群が進む")
-    func wanderOnALayerOutlivingItsCreator() throws {
-        var canvas: Canvas? = try makeCanvas()
-        canvas?.deltaTime = Self.twiceStep
-        let layer = try #require(try canvas?.createGraphics(64, 64))
-        let dust = try #require(try canvas?.makeParticles(count: 4))
-        canvas = nil
-        #expect(layer.timebase.owner == nil)
+    /// 本体が 6 フレーム閉じたときの揺れ (#1909 の実測)。上の検査が本体で確かめた値である。
+    private static let sixthFrameKick: [Float] = [-0.1892, 0.5027, -0.1603]
+
+    /// 本体を `frames` フレーム回す。最初のフレームで動かない粒 4 つを出し、`busy` の描き場所だけを
+    /// 毎フレーム描く (`idle` は描かない)。
+    private func runMain(
+        _ canvas: Canvas, frames: Int, dust: Particles, busy: Canvas? = nil
+    ) throws {
         var randomness = Randomness(seed: 7)
+        for frame in 0..<frames {
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                if frame == 0 {
+                    canvas.emit(
+                        dust, from: .point(10, 10), rate: 4 / Self.twiceStep, speed: 0...0,
+                        angle: 0...0, life: 100...100, size: 2...2,
+                        color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
+                }
+                if let busy {
+                    busy.beginDraw()
+                    busy.background(.display(red: 0, green: 0, blue: 0))
+                    busy.endDraw()
+                }
+            }
+        }
+    }
+
+    /// 描き場所を 1 度描き、その中で群に `wander` を積んで呼ぶ。呼び出しが粒 0 の速度へ足した分を返す。
+    private func wanderKick(on layer: Canvas, _ dust: Particles) -> [Float] {
+        func velocity() -> [Float] {
+            layer.read(dust.state).withUnsafeBytes { raw in
+                let particle = raw.bindMemory(to: Particle.self)[0]
+                return [particle.vx, particle.vy, particle.vz]
+            }
+        }
         layer.beginDraw()
-        layer.emit(
-            dust, from: .point(10, 10), rate: 4 / Self.twiceStep, speed: 0...0, angle: 0...0,
-            life: 100...100, size: 2...2, color: .linear(red: 1, green: 1, blue: 1),
-            using: &randomness)
-        layer.endDraw()
-        layer.beginDraw()
+        let before = velocity()
         layer.force(dust, [.wander(strength: 64)])
         layer.particles(dust)
+        let after = velocity()
         layer.endDraw()
-        let particle = layer.read(dust.state).withUnsafeBytes { raw in
-            raw.bindMemory(to: Particle.self)[0]
+        return zip(after, before).map { $0 - $1 }
+    }
+
+    /// 本体を 6 フレーム回してから手放し、残った同じ置き場の描き場所 2 枚と群を返す。`busy` は
+    /// 毎フレーム描き (閉じたフレームの数 6)、`idle` は 1 度も描いていない (0)。
+    private func layersOutlivingTheirCreator() throws -> (busy: Canvas, idle: Canvas, dust: Particles) {
+        let canvas = try makeCanvas()
+        canvas.deltaTime = Self.twiceStep
+        let busy = try canvas.createGraphics(64, 64)
+        let idle = try canvas.createGraphics(64, 64)
+        let dust = try canvas.makeParticles(count: 4)
+        try runMain(canvas, frames: 6, dust: dust, busy: busy)
+        return (busy, idle, dust)
+    }
+
+    /// 持ち主を弱く辿って番号を読むと、手放した瞬間に面ごとの数 (6 と 0) へ跳び、#1909 と同じ
+    /// 食い違いが描き場所 2 枚の間に戻る。番号は置き場に持たせてあるので、手放した後は本体が最後に
+    /// 閉じたフレームの番号のまま、どの描き場所からも同じに読める。
+    @Test("本体を手放した後も、同じ置き場の描き場所 2 枚は、本体が最後に閉じたフレームの揺れで揃う")
+    func wanderOnLayersOutlivingTheirCreator() throws {
+        let (busy, idle, dust) = try layersOutlivingTheirCreator()
+        #expect(busy.timebase.owner == nil, "本体が手放されていない")
+        #expect(busy.framesDrawn == 6)
+        #expect(idle.framesDrawn == 0)
+        let fromBusy = wanderKick(on: busy, dust)
+        let fromIdle = wanderKick(on: idle, dust)
+        #expect(isClose(fromBusy, Self.sixthFrameKick), "手放した後に番号が跳んだ: \(fromBusy)")
+        #expect(isClose(fromIdle, fromBusy), "描き場所 2 枚の揺れ \(fromIdle) と \(fromBusy) が違う")
+    }
+
+    /// 本体を止めている間 (`noLoop()`) のコールバックは本体のフレームの外で、そこで置いたものは
+    /// 次のフレームに属する (ADR-0021 決定 4 の追補)。本体のフレームが進まないので、その間に描き場所を
+    /// 何度描いても同じ向きに揺れ、次に描く本体のフレームの揺れとも同じになる。
+    @Test("本体のフレームの外で描き場所を何度描いても、wander は次の本体のフレームと同じ向きに揺れる")
+    func wanderOnALayerBetweenMainFrames() throws {
+        let canvas = try makeCanvas()
+        canvas.deltaTime = Self.twiceStep
+        let layer = try canvas.createGraphics(64, 64)
+        let dust = try canvas.makeParticles(count: 4)
+        try runMain(canvas, frames: 6, dust: dust)
+        let first = wanderKick(on: layer, dust)
+        let second = wanderKick(on: layer, dust)
+        var main: [Float] = []
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            let before = canvas.read(dust.state).withUnsafeBytes { raw in
+                raw.bindMemory(to: Particle.self)[0]
+            }
+            canvas.force(dust, [.wander(strength: 64)])
+            canvas.particles(dust)
+            let after = canvas.read(dust.state).withUnsafeBytes { raw in
+                raw.bindMemory(to: Particle.self)[0]
+            }
+            main = [after.vx - before.vx, after.vy - before.vy, after.vz - before.vz]
         }
-        #expect(particle.life == 100 - Self.twiceStep)
-        #expect([particle.vx, particle.vy, particle.vz] != [0, 0, 0], "wander が効いていない")
+        #expect(isClose(first, Self.sixthFrameKick), "描き場所の 1 回目: \(first)")
+        #expect(isClose(second, first), "描き場所の 2 回目が 1 回目と違う: \(second)")
+        #expect(isClose(main, first), "次の本体のフレームの揺れ \(main) が描き場所と違う")
+    }
+
+    /// 本体の閉じたフレームの数は、閉じ忘れて捨てたフレームも 1 枚に数える (``Canvas/framesDrawn``・
+    /// #1622)。描き場所が読む番号も同じ数え方で進み、本体の番号と離れない。
+    @Test("本体で閉じ忘れて捨てたフレームも、描き場所が読む粒の番号に数える")
+    func droppedMainFrameAdvancesTheLayersParticleFrame() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(64, 64)
+        canvas.beginDraw()
+        canvas.beginDraw()
+        canvas.endDraw()
+        #expect(canvas.warnings.hasWarned(.unfinishedFrameDropped))
+        #expect(canvas.framesDrawn == 2)
+        #expect(layer.particleFrame == canvas.framesDrawn)
+        #expect(canvas.particleFrame == canvas.framesDrawn)
+    }
+
+    /// 直に作った面を本体として描かず、描き場所だけを回す使い方では、本体のフレームが 1 つも
+    /// 閉じないので粒の番号は 0 のまま進まない。時刻・刻みも、本体のフレームの番号も同じく進まない
+    /// (時刻と刻みを渡すのはランタイムが本体のフレームを描くときだけ) — 揃っていることを固定する。
+    @Test("本体を描かずに描き場所だけを回すと、粒の番号は時刻・刻み・本体のフレームの番号と同じく進まない")
+    func layerAloneAdvancesNoMainFrame() throws {
+        let canvas = try makeCanvas()
+        canvas.deltaTime = Self.twiceStep
+        let layer = try canvas.createGraphics(64, 64)
+        for _ in 0..<3 {
+            layer.beginDraw()
+            layer.background(.display(red: 0, green: 0, blue: 0))
+            layer.endDraw()
+        }
+        #expect(layer.framesDrawn == 3)
+        #expect(layer.particleFrame == 0)
+        #expect(layer.timebase.frame == 0)
+        #expect(layer.time == 0)
+        #expect(layer.deltaTime == Self.twiceStep)
     }
 }
