@@ -543,7 +543,7 @@ extension Canvas {
             placeBaked(cursor..<stroke.vertices.lowerBound)
             openGPUStroke(
                 of: stroke.source, geometry: geometry, matrix: instance.matrix * stroke.matrix,
-                weight: stroke.weight,
+                weight: stroke.weight, cap: stroke.cap,
                 color: LinearRGBA(
                     premultipliedRed: color.x, green: color.y, blue: color.z, alpha: color.w),
                 uv: stroke.uv, geometryScale: geometryScale)

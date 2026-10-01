@@ -555,36 +555,369 @@ struct PolylineJoinTests {
         #expect(placed.differing(from: direct) == 0)
     }
 
-    /// 記録したときは腕が画面に写り、置く先では画面で点に潰れる (平行投影で視線に沿う辺)。
-    /// 折れ目の頂点の数が枝で違うと、組み直しで部品が 1 点へ畳まれて、その場で描いた絵と
-    /// 食い違う。
+    /// 記録したときと置く先とで、腕が画面で潰れるかが変わる角 (#1893)。平行投影では視線に
+    /// 沿う辺が画面で点に潰れ、潰れた辺の両端は画面で重なる点になる。
     ///
-    /// **見るのは、保持した形がその場で描いた絵と一致することだけである。** 潰れた角は
-    /// いま画面の軸に沿った正方形へ倒れるが、その形が正しいとは言っていない。潰れた角の
-    /// 形は #1893 で決める。
-    @Test("置く先でだけ腕が画面で潰れる角も、その場で描いたのと同じに埋まる", arguments: [StrokeJoin.miter, .bevel])
-    func retainedJoinsSurviveAnArmCollapsingWhenPlaced(_ join: StrokeJoin) throws {
-        func draw(_ canvas: Canvas) {
+    /// **潰れた腕の角は、見えている帯の端になる** (#1903 の決定・案 R)。物差しは条件 1 と同じで、
+    /// 同じ視点で 2 点 A→B だけを描いた絵と一致する。4 点の形は同じ平面に載る折り返し
+    /// (A・B・C・D で B–C が視線に沿い、C→D が A へ戻る) で、B と C から出る帯が同じ向きなので
+    /// 1 本と数え、端の円板 (48 頂点) を置く。記録の間の部品は視点によらず点ごとに積み、
+    /// 頂点の数を置く先の形の上限で揃えるので、組み直しで 1 点へ畳まれない
+    /// (`rebuiltSolidStroke` の頂点の数の照合を通る)。
+    ///
+    /// 逆の組 (記録したときに潰れ、置く先では潰れない) は、その場で同じ視点で描いた 3 点 / 4 点の
+    /// 絵と一致する。
+    @Test(
+        "記録したときと置く先とで腕が画面で潰れるかが変わる角も、その場で描いたのと同じ形になる",
+        arguments: [StrokeJoin.miter, .bevel],
+        ["置く先で潰れる・3 点", "置く先で潰れる・4 点", "記録したときに潰れる・3 点", "記録したときに潰れる・4 点"])
+    func retainedJoinsSurviveAnArmCollapsingWhenPlaced(_ join: StrokeJoin, _ name: String) throws {
+        let path: [SIMD3<Float>] =
+            name.hasSuffix("3 点")
+            ? [SIMD3(-40, 0, 0), SIMD3(0, 0, 0), SIMD3(0, 0, -60)]
+            : [SIMD3(-40, 0, 0), SIMD3(0, 0, 0), SIMD3(0, 0, -60), SIMD3(-40, 0, -60)]
+        func draw(_ canvas: Canvas, _ points: [SIMD3<Float>]) {
             canvas.stroke(255, 250)
             canvas.strokeJoin(join)
             canvas.beginShape()
-            canvas.vertex(-40, 0, 0)
-            canvas.vertex(0, 0, 0)
-            canvas.vertex(0, 0, -60)
+            for point in points { canvas.vertex(point.x, point.y, point.z) }
             canvas.endShape()
         }
+        let collapsedWhenPlaced = name.hasPrefix("置く先で潰れる")
         let placed = try render { canvas in
-            let shape = canvas.createShape { draw(canvas) }
-            canvas.ortho()
+            if !collapsedWhenPlaced { canvas.ortho() }
+            let shape = canvas.createShape { draw(canvas, path) }
+            collapsedWhenPlaced ? canvas.ortho() : canvas.perspective()
             canvas.translate(80, 80, 0)
             canvas.shape(shape)
         }
         let direct = try render { canvas in
-            canvas.ortho()
+            if collapsedWhenPlaced { canvas.ortho() }
             canvas.translate(80, 80, 0)
-            draw(canvas)
+            // 置く先で潰れるなら、物差しは 2 点 A→B。潰れないなら、同じ点をその場で描いた絵
+            draw(canvas, collapsedWhenPlaced ? Array(path.prefix(2)) : path)
         }
         #expect(direct.count > 0)
-        #expect(placed.differing(from: direct) <= 2, "違う画素 \(placed.differing(from: direct))")
+        #expect(placed.differing(from: direct) == 0, "違う画素 \(placed.differing(from: direct))")
+    }
+
+    // MARK: - 画面で潰れる腕 (#1893)
+
+    /// 起票時の再現。平行投影で、2 本目の辺 B → C は視線に沿って画面で点に潰れる。
+    private static let collapsingPath: [SIMD3<Float>] = [
+        SIMD3(-60, -40, 0), SIMD3(0, 0, 0), SIMD3(0, 0, -60),
+    ]
+
+    private func solidPath(
+        _ canvas: Canvas, _ points: [SIMD3<Float>], join: StrokeJoin, cap: StrokeCap, turn: Float = 0
+    ) {
+        canvas.stroke(255, 250)
+        canvas.ortho()
+        canvas.strokeJoin(join)
+        canvas.strokeCap(cap)
+        canvas.translate(80, 80, 0)
+        if turn != 0 { canvas.rotateZ(turn) }
+        canvas.beginShape()
+        for point in points { canvas.vertex(point.x, point.y, point.z) }
+        canvas.endShape()
+    }
+
+    /// 画面で潰れた腕の角は、見えている帯の端になる。いまは画面の軸に沿った正方形へ倒れて、
+    /// 帯の端の線より先へ出ていた (`.square` と `.project` で赤)。
+    @Test(
+        "画面で潰れた腕の角は、見えている帯の端になる",
+        arguments: [StrokeJoin.miter, .bevel], [StrokeCap.square, .project, .round])
+    func aCollapsedArmEndsTheVisibleBand(_ join: StrokeJoin, _ cap: StrokeCap) throws {
+        let three = try render { solidPath($0, Self.collapsingPath, join: join, cap: cap) }
+        let two = try render { solidPath($0, Array(Self.collapsingPath.prefix(2)), join: join, cap: cap) }
+        #expect(two.count > 0)
+        #expect(three.differing(from: two) == 0, "違う画素 \(three.differing(from: two))")
+    }
+
+    /// 途中の辺 B–C が潰れる折れ線は、画面で A → B (= C) → D の山形になる。重なる B と C を
+    /// 1 点とみなすので、山の頂は 3 点 A・B・D の折れ目で埋まる (起票時の案 L では楔形の欠けが
+    /// 空いた)。
+    @Test("途中の辺が画面で潰れる折れ線は、潰れた辺を除いた折れ線の折れ目になる", arguments: [StrokeJoin.miter, .bevel])
+    func aCollapsedMiddleEdgeKeepsTheJoin(_ join: StrokeJoin) throws {
+        let d = SIMD3<Float>(60, -40, -60)
+        let four = try render { solidPath($0, Self.collapsingPath + [d], join: join, cap: .square) }
+        let three = try render {
+            solidPath($0, [Self.collapsingPath[0], Self.collapsingPath[1], d], join: join, cap: .square)
+        }
+        #expect(three.count > 0)
+        #expect(four.differing(from: three) == 0, "違う画素 \(four.differing(from: three))")
+    }
+
+    /// 視線に沿う辺は回しても潰れたまま。回した絵を画面の中心の周りに戻すと、回さない絵と
+    /// 縁を除いて一致する。いまは正方形だけが回らずに、帯との位置が変わっていた。
+    @Test(
+        "画面で潰れた腕の角は、回しても形が変わらない",
+        arguments: [StrokeJoin.miter, .bevel], [StrokeCap.square, .project, .round])
+    func aCollapsedArmTurnsWithTheBand(_ join: StrokeJoin, _ cap: StrokeCap) throws {
+        let angle = Float.pi / 6
+        let still = try render { solidPath($0, Self.collapsingPath, join: join, cap: cap) }
+        let turned = try render { solidPath($0, Self.collapsingPath, join: join, cap: cap, turn: angle) }
+        #expect(still.count > 0)
+        let differing = Self.differingAfterTurningBack(turned, by: angle, from: still)
+        #expect(differing == 0, "違う画素 \(differing)")
+    }
+
+    /// 画面の 1 点に潰れた形の全体 (1 本の線を真正面から見たもの) は、向きの無い点のまま
+    /// (#1893 の条件 4 の境界)。出っ張らせる端は、画面の軸に沿った正方形になる。
+    @Test("画面の 1 点に潰れた線の出っ張らせる端は、画面の軸に沿った正方形のまま")
+    func aWhollyCollapsedLineKeepsTheAxisSquare() throws {
+        let drawn = try render {
+            solidPath($0, [SIMD3(0, 0, 0), SIMD3(0, 0, -60)], join: .miter, cap: .project)
+        }
+        var mismatched = 0
+        for y in 0..<size {
+            for x in 0..<size {
+                let reach = max(abs(Float(x) - 80), abs(Float(y) - 80))
+                if abs(reach - 10) <= 1 { continue }
+                if drawn[x, y] != (reach < 10) { mismatched += 1 }
+            }
+        }
+        #expect(drawn.count > 0)
+        #expect(mismatched == 0)
+    }
+
+    /// 組み込みの立体の、不透明な `miter` の稜線は GPU で組む。`plane` を真横から平行投影で
+    /// 見ると (視線を辺にちょうど沿わせる)、奥へ向かう 2 本の辺が画面で点に潰れ、手前と奥の
+    /// 辺が画面で重なる。重なる 2 本は別の点から同じ向きへ出るので 1 本と数え、角は帯の端に
+    /// なる。絵は画面の縦の帯 (x = 80・y = 40…120) と両端の端の形である。
+    ///
+    /// `camera(280, 80, 0, 80, 80, 0, 0, 1, 0)` は視線が世界の −x にちょうど沿い、画面の横は
+    /// 世界の −z・縦は +y になる (どちらも成分は 0 と ±1 だけ)。浮動小数の `rotateX(PI / 2)` では
+    /// 長さがちょうど 0 にならない。
+    @Test(
+        "視線を辺に沿わせた plane は、GPU で組んでも CPU で組んでも、帯と両端の端の形になる",
+        arguments: ["GPU", "CPU"], [StrokeCap.round, .square, .project])
+    func aPlaneSeenAlongAnEdgeEndsWithTheCap(_ route: String, _ cap: StrokeCap) throws {
+        let drawn = try render { canvas in
+            canvas.camera(280, 80, 0, 80, 80, 0, 0, 1, 0)
+            canvas.ortho()
+            canvas.strokeCap(cap)
+            if route == "CPU" { canvas.stroke(255, 250) }
+            canvas.translate(80, 80, 0)
+            canvas.plane(80, 80)
+        }
+        let half = weight / 2
+        let reach: Float = cap == .project ? half : 0
+        func inside(_ point: SIMD2<Float>, margin: Float) -> Bool {
+            let band = abs(point.x - 80) <= half - margin && point.y >= 40 - reach + margin
+                && point.y <= 120 + reach - margin
+            guard cap == .round else { return band }
+            let caps = [SIMD2<Float>(80, 40), SIMD2(80, 120)].contains {
+                simd_distance(point, $0) <= half - margin
+            }
+            return band || caps
+        }
+        var spilled = 0
+        var missing = 0
+        for y in 0..<size {
+            for x in 0..<size {
+                let point = SIMD2<Float>(Float(x), Float(y))
+                if drawn[x, y], !inside(point, margin: -1) { spilled += 1 }
+                if !drawn[x, y], inside(point, margin: 1) { missing += 1 }
+            }
+        }
+        #expect(drawn.count > 0)
+        #expect(spilled == 0 && missing == 0, "はみ出し \(spilled)・塗り漏れ \(missing)")
+        if route == "GPU" {
+            let cpu = try render { canvas in
+                canvas.camera(280, 80, 0, 80, 80, 0, 0, 1, 0)
+                canvas.ortho()
+                canvas.strokeCap(cap)
+                canvas.stroke(255, 250)
+                canvas.translate(80, 80, 0)
+                canvas.plane(80, 80)
+            }
+            #expect(drawn.differing(from: cpu) == 0, "GPU と CPU で違う画素 \(drawn.differing(from: cpu))")
+        }
+    }
+
+    // MARK: - 辺が 3 本以上集まる点 (#1889)
+
+    /// 箱の 8 隅 (形自身の座標)。添字の 3 ビットが x・y・z の符号を表す。
+    private static func boxCorners(half: Float) -> [SIMD3<Float>] {
+        (0..<8).map { index in
+            SIMD3(index & 1 == 0 ? -half : half, index & 2 == 0 ? -half : half, index & 4 == 0 ? -half : half)
+        }
+    }
+
+    /// 箱の 12 辺。添字が 1 ビットだけ違う隅の対。
+    private static let boxEdges: [(Int, Int)] = (0..<8).flatMap { a in
+        [1, 2, 4].compactMap { bit in a & bit == 0 ? (a, a | bit) : nil }
+    }
+
+    /// いまの変換と既定の透視で、形自身の座標の点を画面の座標へ落とす (画素の中心が整数)。
+    private func projected(_ local: SIMD3<Float>, _ canvas: Canvas) -> SIMD2<Float> {
+        let camera = canvas.currentCamera
+        let world = canvas.transform.matrix * SIMD4(local, 1)
+        let offset = SIMD3(world.x, world.y, world.z) - camera.eye
+        let scale = Float(size) / 2 / tan(Camera.defaultFieldOfView / 2)
+        let depth = simd_dot(offset, camera.forward)
+        return SIMD2(Float(size) / 2, Float(size) / 2)
+            + SIMD2(simd_dot(offset, camera.right), simd_dot(offset, camera.down)) * (scale / depth)
+    }
+
+    /// 画面に写した網 (点と辺) の、式から出した「帯 + 案 A の折れ目」と描いた絵の食い違い。
+    ///
+    /// 点ごとに、そこから出る辺の画面での向きを角度の順に並べる。隣り合う 2 本の間が 180° を
+    /// 越える所があれば、その 2 本で凧形を k × 太さ / 2 で切った折れ目を置き、無ければ何も
+    /// 置かない (#1889 の案 A)。縁から 1 画素以内は数えない。
+    private func mismatches(
+        _ drawn: Coverage, net points: [SIMD2<Float>], edges: [(Int, Int)], half: Float, reachFactor: Float
+    ) -> (spilled: Int, missing: Int) {
+        let bands = edges.map { Self.band(points[$0.0], points[$0.1], half: half) }
+        var joins: [(kite: [SIMD2<Float>], bisector: SIMD2<Float>, reach: Float, corner: SIMD2<Float>)] = []
+        for index in points.indices {
+            let corner = points[index]
+            let far = edges.compactMap { $0.0 == index ? points[$0.1] : $0.1 == index ? points[$0.0] : nil }
+            let sorted = far.sorted {
+                atan2($0.y - corner.y, $0.x - corner.x) < atan2($1.y - corner.y, $1.x - corner.x)
+            }
+            let angles = sorted.map { atan2($0.y - corner.y, $0.x - corner.x) }
+            for step in sorted.indices {
+                let next = (step + 1) % sorted.count
+                var gap = angles[next] - angles[step]
+                if gap <= 0 { gap += 2 * .pi }
+                guard gap > .pi else { continue }
+                let join = Self.joinShape(
+                    from: sorted[step], corner: corner, to: sorted[next], half: half,
+                    reach: reachFactor * half)
+                joins.append((join.kite, join.bisector, join.reach, corner))
+            }
+        }
+        func inside(_ point: SIMD2<Float>, margin: Float) -> Bool {
+            bands.contains { Self.contains($0, point, margin: margin) }
+                || joins.contains {
+                    Self.contains($0.kite, point, margin: margin)
+                        && simd_dot(point - $0.corner, $0.bisector) <= $0.reach - margin
+                }
+        }
+        var result = (spilled: 0, missing: 0)
+        for y in 0..<size {
+            for x in 0..<size {
+                let point = SIMD2<Float>(Float(x), Float(y))
+                if drawn[x, y], !inside(point, margin: -1) { result.spilled += 1 }
+                if !drawn[x, y], inside(point, margin: 1) { result.missing += 1 }
+            }
+        }
+        return result
+    }
+
+    /// `turned` を画面の中心 (80, 80) の周りに −`angle` 回して戻したものと、`still` の違う画素。
+    /// どちらかの絵で縁に接する画素 (8 近傍に違う値がある) は数えない。
+    private static func differingAfterTurningBack(
+        _ turned: Coverage, by angle: Float, from still: Coverage
+    ) -> Int {
+        let size = still.size
+        func onEdge(_ coverage: Coverage, _ x: Int, _ y: Int) -> Bool {
+            for dy in -1...1 {
+                for dx in -1...1 {
+                    let (nx, ny) = (x + dx, y + dy)
+                    guard nx >= 0, ny >= 0, nx < size, ny < size else { return true }
+                    if coverage[nx, ny] != coverage[x, y] { return true }
+                }
+            }
+            return false
+        }
+        let center = SIMD2<Float>(80, 80)
+        var differing = 0
+        for y in 0..<size {
+            for x in 0..<size where !onEdge(still, x, y) {
+                let moved = rotated(SIMD2(Float(x), Float(y)) - center, by: angle) + center
+                let (tx, ty) = (Int(moved.x.rounded()), Int(moved.y.rounded()))
+                guard tx >= 0, ty >= 0, tx < size, ty < size, !onEdge(turned, tx, ty) else { continue }
+                if turned[tx, ty] != still[x, y] { differing += 1 }
+            }
+        }
+        return differing
+    }
+
+    /// 起票時の再現の箱。角は辺が 3 本集まる点で、画面に写した 3 本の帯の間に 180° を越える所が
+    /// あれば、その間を挟む 2 本の折れ目になる。無ければ何も置かない (帯の和だけ)。いまは画面の
+    /// 軸に沿った正方形で埋まり、角が帯の外へ出ていた。
+    ///
+    /// 経路は 4 通り: 不透明な `miter` (組み込みの立体は GPU で組む・`bevel` は CPU)、半透明
+    /// (CPU の骨 `strokeNet`)、不透明のまま記録して置く (保持した形の GPU の線・#1756)、半透明で
+    /// 記録して置く (部品を置く先の視点で組み直す)。
+    @Test(
+        "辺が 3 本集まる箱の角は、180° を越える間を挟む 2 本の折れ目になる",
+        arguments: [StrokeJoin.miter, .bevel], ["不透明", "半透明", "記録して置く", "半透明で記録して置く"])
+    func boxCornersFollowTheWidestGap(_ join: StrokeJoin, _ route: String) throws {
+        var corners: [SIMD2<Float>] = []
+        let drawn = try render { canvas in
+            canvas.strokeWeight(16)
+            canvas.strokeJoin(join)
+            if route.hasPrefix("半透明") { canvas.stroke(255, 250) }
+            let shape = route.hasSuffix("記録して置く") ? canvas.createShape { canvas.box(80) } : nil
+            canvas.translate(80, 80, 0)
+            canvas.rotateX(0.6)
+            canvas.rotateY(0.7)
+            corners = Self.boxCorners(half: 40).map { projected($0, canvas) }
+            if let shape { canvas.shape(shape) } else { canvas.box(80) }
+        }
+        let result = mismatches(
+            drawn, net: corners, edges: Self.boxEdges, half: 8,
+            reachFactor: join == .miter ? Float(2).squareRoot() : 1)
+        #expect(drawn.count > 0)
+        #expect(result.spilled == 0 && result.missing == 0, "はみ出し \(result.spilled)・塗り漏れ \(result.missing)")
+    }
+
+    /// 同じ箱を画面の中心の周りに回して描き、戻すと回さない絵と縁を除いて一致する。いまは
+    /// 正方形だけが回らずに、帯との位置が変わっていた。
+    @Test(
+        "回した箱の角も、回す前の角を回した形になる",
+        arguments: [StrokeJoin.miter, .bevel], ["不透明", "半透明"])
+    func boxCornersTurnWithTheBox(_ join: StrokeJoin, _ route: String) throws {
+        let angle = Float.pi / 6
+        func draw(_ turn: Float) throws -> Coverage {
+            try render { canvas in
+                canvas.strokeWeight(16)
+                canvas.strokeJoin(join)
+                if route == "半透明" { canvas.stroke(255, 250) }
+                canvas.translate(80, 80, 0)
+                if turn != 0 { canvas.rotateZ(turn) }
+                canvas.rotateX(0.6)
+                canvas.rotateY(0.7)
+                canvas.box(80)
+            }
+        }
+        let still = try draw(0)
+        let turned = try draw(angle)
+        #expect(still.count > 0)
+        let differing = Self.differingAfterTurningBack(turned, by: angle, from: still)
+        #expect(differing == 0, "違う画素 \(differing)")
+    }
+
+    /// 正面から平行投影で見た箱は、奥へ向かう 4 本の辺が画面で潰れ、手前と奥の面が重なる。
+    /// 画面で長さを持つ帯だけを数え、別の点から同じ向きへ出る帯は 1 本と数えるので、角は
+    /// 辺が 2 本の角 (#1644) になる。絵は回した外の正方形 (辺 80 + 太さ) と内の正方形
+    /// (辺 80 − 太さ) の間。
+    @Test("正面から平行投影で見た箱の角は、画面で長さを持つ帯だけで決まる", arguments: ["不透明", "半透明"])
+    func aFrontalBoxCountsOnlyTheEdgesOnScreen(_ route: String) throws {
+        let angle = Float.pi / 6
+        let drawn = try render { canvas in
+            canvas.strokeWeight(16)
+            canvas.strokeJoin(.miter)
+            if route == "半透明" { canvas.stroke(255, 250) }
+            canvas.ortho()
+            canvas.translate(80, 80, 0)
+            canvas.rotateZ(angle)
+            canvas.box(80)
+        }
+        var mismatched = 0
+        for y in 0..<size {
+            for x in 0..<size {
+                let local = Self.rotated(SIMD2(Float(x) - 80, Float(y) - 80), by: -angle)
+                let reach = max(abs(local.x), abs(local.y))
+                if abs(reach - 48) <= 1 || abs(reach - 32) <= 1 { continue }
+                if drawn[x, y] != (reach < 48 && reach > 32) { mismatched += 1 }
+            }
+        }
+        #expect(drawn.count > 0)
+        #expect(mismatched == 0)
     }
 }

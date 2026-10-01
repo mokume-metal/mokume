@@ -1,12 +1,63 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Testing
+import simd
 
 @testable import MokumeCore
 
 @Suite("GPU で広げる稜線", .enabled(if: RenderDevice.isAvailable, "GPU が無い環境ではスキップ"))
 struct SolidGPUStrokeTests {
+    /// 色をそのまま返す利用者の断片。線を GPU で広げる条件から外す (`gpuStrokeStyleAllows`) だけで、
+    /// 絵は変えない。同じ `miter` の線を、GPU の骨と CPU の帯の 2 経路で描き比べるのに使う。
+    private static func passThrough(_ canvas: Canvas) throws -> Shader {
+        try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+    }
+
+    /// GPU の骨の円板 (`Shapes.metal` の `kSolidStrokeDisc`) は、CPU の円板の周の点
+    /// (``Canvas/solidDiscUnits``) を書き写して持つ (#1893)。三角関数は GPU と CPU で丸めが違うので、
+    /// 値で持たないと同じ角の点がずれる。書き写しがビットで一致することを見る。
+    @Test("GPU の円板の周の点は、CPU の円板の周の点とビットで一致する")
+    func discUnitsMatchTheCPU() throws {
+        let source = try RenderDevice().shaders.bundledShaderSource(named: "Shapes")
+        let table = try #require(source.range(of: "kSolidStrokeDisc[17] = {"))
+        let end = try #require(source.range(of: "};", range: table.upperBound..<source.endIndex))
+        let body = source[table.upperBound..<end.lowerBound]
+        var units: [SIMD2<Float>] = []
+        for line in body.split(separator: "\n") {
+            guard let open = line.range(of: "float2("), let close = line.range(of: ")") else { continue }
+            let parts = line[open.upperBound..<close.lowerBound].split(separator: ",").compactMap {
+                Float($0.trimmingCharacters(in: .whitespaces))
+            }
+            if parts.count == 2 { units.append(SIMD2(parts[0], parts[1])) }
+        }
+        #expect(units.count == Canvas.solidDiscUnits.count)
+        #expect(
+            units.map { [$0.x.bitPattern, $0.y.bitPattern] }
+                == Canvas.solidDiscUnits.map { [$0.x.bitPattern, $0.y.bitPattern] })
+    }
+
+    /// 同じ直線に載る 2 本の辺が集まる点を持つ網は、視線をその直線に沿わせると潰れた辺が 2 本
+    /// 続く。GPU の頂点関数は潰れた辺の先を 1 段しか引かないので、骨を作らずに CPU の骨へ戻す。
+    @Test("同じ直線に載る 2 本の辺を持つ網は、GPU の骨を作らない")
+    func straightPairsStayOnTheCPU() throws {
+        // 直線 a–m–b を稜にして、折れた 2 枚ずつで挟む (稜線は a–m と m–b の 2 本に分かれる)
+        let (a, m, b) = (SIMD3<Float>(0, 0, 0), SIMD3<Float>(1, 0, 0), SIMD3<Float>(2, 0, 0))
+        let (up, side) = (SIMD3<Float>(1, 1, 0), SIMD3<Float>(1, 0, 1))
+        var points: [SolidMesh.Point] = []
+        for triangle in [[a, m, up], [m, b, up], [m, a, side], [b, m, side], [a, up, side], [up, b, side]] {
+            for corner in triangle {
+                points.append(SolidMesh.Point(position: corner, normal: .zero, uv: .zero))
+            }
+        }
+        let net = SolidEdges(SolidMesh(points: points))
+        #expect(!net.edges.isEmpty)
+        #expect(try SolidStrokeGeometry(net: net, gpu: RenderDevice()) == nil)
+        let box = SolidEdges(SolidShape.box(width: 2, height: 2, depth: 2).make())
+        #expect(try SolidStrokeGeometry(net: box, gpu: RenderDevice()) != nil)
+    }
+
     @Test("同じ球は列をまたいで頂点と骨を共用する")
     func sharedGeometry() throws {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 200)
@@ -38,10 +89,12 @@ struct SolidGPUStrokeTests {
         var images: [DisplayImage] = []
         for gpu in [false, true] {
             let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 200)
+            let passThrough = try Self.passThrough(canvas)
             try canvas.draw {
                 canvas.background(.linear(red: 0, green: 0, blue: 0))
-                // miter と bevel の網の角はどちらも正方形。bevel は従来経路に残る。
-                canvas.strokeJoin(gpu ? .miter : .bevel)
+                // どちらも miter。CPU の側は色をそのまま返す利用者の断片で従来の経路へ移す
+                // (`gpuStrokeStyleAllows`)。網の角は miter と bevel で形が違う (#1889)
+                if !gpu { canvas.shader(passThrough) }
                 if orthographic { canvas.ortho() }
                 canvas.stroke(.linear(red: 1, green: 1, blue: 1))
                 canvas.strokeWeight(3)
@@ -66,21 +119,28 @@ struct SolidGPUStrokeTests {
         var pictures: [[UInt8]] = []
         for gpu in [false, true] {
             let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 200)
+            let passThrough = try Self.passThrough(canvas)
+            // 立体だけを、CPU の側では利用者の断片に通す (平面の rect は断片を通すと三角形の
+            // 経路へ移って縁が変わる)
+            func box(_ size: Float) {
+                if !gpu { canvas.shader(passThrough) }
+                canvas.box(size)
+                if !gpu { canvas.resetShader() }
+            }
             try canvas.draw {
                 canvas.background(.linear(red: 0, green: 0, blue: 0))
-                canvas.strokeJoin(gpu ? .miter : .bevel)
                 canvas.stroke(.linear(red: 0.9, green: 0.1, blue: 0.3))
                 canvas.noFill()
                 canvas.translate(100, 100, 0)
-                canvas.box(80)
+                box(80)
                 canvas.loadPixels()
                 canvas.fill(.init(straightRed: 0, green: 0.5, blue: 1, alpha: 0.5))
                 canvas.rect(-25, -25, 50, 50)
                 canvas.rotateY(0.6)
-                canvas.box(65)
+                box(65)
                 canvas.ortho()
                 canvas.translate(15, 12, 20)
-                canvas.box(45)
+                box(45)
             }
             pictures.append(try canvas.target.encodeForDisplay().bytes)
         }
@@ -142,10 +202,11 @@ struct SolidGPUStrokeTests {
         #expect(canvas.solidStrokeGeometry.made == 1)
         canvas.solidStrokeGeometry.budget = 1
         var expected: [UInt8] = []
+        let passThrough = try Self.passThrough(canvas)
         for accelerated in [false, true] {
             try canvas.draw {
                 canvas.background(.linear(red: 0, green: 0, blue: 0))
-                canvas.strokeJoin(accelerated ? .miter : .bevel)
+                if !accelerated { canvas.shader(passThrough) }
                 canvas.noFill()
                 canvas.translate(100, 100, 0)
                 canvas.box(80)

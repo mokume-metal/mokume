@@ -139,47 +139,103 @@ extension Canvas {
     /// 辺ごとに端を 2 つずつ置かないのは、同じ点へ集まる辺の数だけ円板が重なるから
     /// である。球の極には一周ぶんの経線が集まるが、置く円板は 1 枚で済む。
     ///
+    /// **画面で重なる点は 1 点として形を置く** ([#1893])。画面で潰れた (長さがちょうど 0 の)
+    /// 辺で結ばれた点を 1 つの群にまとめ、群の外へ出る辺だけを腕として数える。周の骨が同じ位置の
+    /// 点を飛ばすのと同じ扱いを、画面での同じ位置へ延ばしたものである。形は腕の画面での向きの
+    /// 数で決まり (``screenCorner(arms:origins:isEnd:join:cap:)``)、辺が 3 本以上集まる点も、
+    /// 180° を越える間を挟む 2 本の折れ目になる ([#1889])。群には、いちばん小さい番号の点の
+    /// 位置で 1 度だけ置く。
+    ///
+    /// [#1889]: https://github.com/mokume-metal/mokume/issues/1889
+    /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
+    ///
     /// - Parameters:
     ///   - count: 点の数
     ///   - edges: 点の添字の対。同じ辺が 2 度現れないこと
+    ///   - toward: 1 つ目の添字の点から 2 つ目の添字の点へ、画面で進む向き (長さ 1)。画面での
+    ///     長さがちょうど 0 なら `nil` (潰れた辺)
     ///   - endSquare: 1 つ目の添字の点に、2 つ目の添字の点から離れる向きに沿った正方形を置く
     ///   - band: 添字 2 つを結ぶ帯を置く
     ///   - disc: 添字の点に円板を置く
-    ///   - square: 添字の点に画面の軸に沿った正方形を置く (向きの無い点の四角い端点と、
-    ///     辺が 3 本以上集まる丸めない角)
-    ///   - corner: 1 つ目の添字の点に、2 つ目と 3 つ目の添字の点へ向かう 2 本の辺が出会う
-    ///     折れ目の形を置く (辺が 2 本だけ集まる丸めない角)
+    ///   - square: 添字の点に画面の軸に沿った正方形を置く (向きの無い点の四角い端点)
+    ///   - corner: 1 つ目の添字の点に、2 本の腕の折れ目の形を置く。腕は (出る点, 向こうの点) の
+    ///     添字の対で、出る点は 1 つ目の添字の点と画面で重なる
     func strokeNet(
         count: Int, edges: [(Int, Int)],
+        toward: (Int, Int) -> SIMD2<Float>?,
         endSquare: (Int, Int) -> Void,
         band: (Int, Int) -> Void, disc: (Int) -> Void, square: (Int) -> Void,
-        corner: (Int, Int, Int) -> Void
+        corner: (Int, (Int, Int), (Int, Int)) -> Void
     ) {
-        var degrees = [Int](repeating: 0, count: count)
-        // 点ごとの、辺の向こうの点 (最初の 2 本)。端はその 1 本、折れ目は 2 本の帯の向きを決める
-        var neighbors = [Int](repeating: 0, count: count)
-        var others = [Int](repeating: 0, count: count)
+        // 点ごとの隣 (辺の順・`SolidStrokeNet` と同じ並べ方)。辺ごとの画面での向きは 1 度だけ
+        // 求め、逆向きの腕は符号を返して使う — 向きの式は 2 点を入れ替えるとちょうど符号が反る
+        // (`screenNormal` の外積と差)。画面で潰れた辺で結ばれた点は 1 つの群へまとめる
+        var starts = [Int](repeating: 0, count: count + 1)
         for (a, b) in edges {
-            band(a, b)
-            if degrees[a] == 0 { neighbors[a] = b } else if degrees[a] == 1 { others[a] = b }
-            if degrees[b] == 0 { neighbors[b] = a } else if degrees[b] == 1 { others[b] = a }
-            degrees[a] += 1
-            degrees[b] += 1
+            starts[a + 1] += 1
+            starts[b + 1] += 1
         }
-        for (index, degree) in degrees.enumerated() {
-            switch degree {
-            case 0: continue  // どの稜線にも属さない点 (面の中の継ぎ目) は線を持たない
-            case 1:
-                strokeCapShape(
-                    at: index, awayFrom: neighbors[index], disc: disc, square: square,
-                    endSquare: endSquare)
-            case 2:
-                strokeJoinShape(
-                    at: index, from: neighbors[index], to: others[index], disc: disc, corner: corner)
-            default:
-                // 3 本以上の辺が集まる点 (箱の角など) は、2 本の帯で形が決まらない。
-                // 画面の軸に沿った正方形のまま埋める (#1644 の範囲の外。形は #1889 で決める)
-                if style.strokeJoin == .round { disc(index) } else { square(index) }
+        for index in 0..<count { starts[index + 1] += starts[index] }
+        var cursor = Array(starts.dropLast())
+        var links = [(far: Int, edge: Int, sign: Float)](repeating: (0, 0, 1), count: starts[count])
+        var directions: [SIMD2<Float>?] = []
+        directions.reserveCapacity(edges.count)
+        var parents = Array(0..<count)
+        func root(_ index: Int) -> Int {
+            var index = index
+            while parents[index] != index {
+                parents[index] = parents[parents[index]]
+                index = parents[index]
+            }
+            return index
+        }
+        for (edge, (a, b)) in edges.enumerated() {
+            band(a, b)
+            links[cursor[a]] = (b, edge, 1)
+            cursor[a] += 1
+            links[cursor[b]] = (a, edge, -1)
+            cursor[b] += 1
+            let direction = toward(a, b)
+            directions.append(direction)
+            if direction == nil {
+                let (rootA, rootB) = (root(a), root(b))
+                // いちばん小さい番号の点を群の代表にする
+                if rootA != rootB { parents[max(rootA, rootB)] = min(rootA, rootB) }
+            }
+        }
+        // 群の点 (番号の順)。1 点だけの群がほとんどなので、2 点以上の群だけを並べる
+        var members: [Int: [Int]] = [:]
+        for index in 0..<count where starts[index + 1] > starts[index] {
+            let center = root(index)
+            if center != index || members[center] != nil { members[center, default: [center]].append(index) }
+        }
+        var arms: [(origin: Int, far: Int)] = []
+        var towards: [SIMD2<Float>] = []
+        var origins: [Int] = []
+        for center in 0..<count where starts[center + 1] > starts[center] && root(center) == center {
+            // 群の外へ出る辺が腕。群の点の順、その中は辺の順に並べる
+            arms.removeAll(keepingCapacity: true)
+            towards.removeAll(keepingCapacity: true)
+            origins.removeAll(keepingCapacity: true)
+            let group = members[center] ?? [center]
+            var isEnd = false
+            for origin in group {
+                if starts[origin + 1] - starts[origin] == 1 { isEnd = true }
+                for link in links[starts[origin]..<starts[origin + 1]] where root(link.far) != center {
+                    guard let direction = directions[link.edge] else { continue }
+                    arms.append((origin, link.far))
+                    towards.append(direction * link.sign)
+                    origins.append(origin)
+                }
+            }
+            let shape = Self.screenCorner(
+                arms: towards, origins: origins, isEnd: isEnd, join: style.strokeJoin, cap: style.strokeCap)
+            switch shape {
+            case .nothing: continue
+            case .disc: disc(center)
+            case .square: square(center)
+            case .endSquare(let arm): endSquare(center, arms[arm].far)
+            case .rim(let first, let second): corner(center, arms[first], arms[second])
             }
         }
     }

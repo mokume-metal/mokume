@@ -3,7 +3,7 @@
 
 import simd
 
-/// 立体の線の部品 1 つ (帯・円板・正方形・線の端の正方形) の元。保持した形が、**置くときに帯を組み直す**
+/// 立体の線の部品 1 つ (帯・円板・正方形・線の端の正方形・折れ目・網の点) の元。保持した形が、**置くときに帯を組み直す**
 /// ために持つ ([#1547])。
 ///
 /// 立体の線の帯は視点に合わせて組む — 向きは画面に写した線に、幅は画面の画素に合わせ、
@@ -24,16 +24,74 @@ struct SolidStrokePiece {
         case band(SIMD3<Float>, SIMD3<Float>)
         /// 丸い端点と丸い角の円板。
         case disc(SIMD3<Float>)
-        /// 向きの無い点の四角い端点と、辺が 3 本以上集まる丸めない角の正方形。
+        /// 向きの無い点の四角い端点の正方形 (画面の軸に沿う)。
         case square(SIMD3<Float>)
         /// 出っ張らせる線の端の正方形 (1 つ目の点に置き、2 つ目の点から離れる向きに沿う)。
-        /// 向きが画面に写した線で決まるので、帯と同じく置く先で組み直す
-        case endSquare(SIMD3<Float>, awayFrom: SIMD3<Float>)
-        /// 丸めない折れ目の形 (1 つ目の点に置き、2 つ目の点から来て 3 つ目の点へ出る 2 本の
-        /// 帯の向きで決まる・#1644)。向きが画面に写した線で決まるので、置く先で組み直す。
-        /// **形 (`miter` / `bevel`) は記録したときのものを持つ** — 輪郭の形は形の中で
-        /// 決まり、置くときのスタイルは効かない (`Sketch/createShape(_:)`)
-        case join(SIMD3<Float>, from: SIMD3<Float>, to: SIMD3<Float>, join: StrokeJoin)
+        /// 向きが画面に写した線で決まるので、帯と同じく置く先で組み直す。
+        ///
+        /// `beyond` は 2 つ目の点の先の点 (線を 1 つ先へたどった点)。置く先で端の辺が画面で
+        /// 潰れたら、その先の辺の向きで置く (#1893・潰れた辺の両端は画面で重なる)
+        case endSquare(SIMD3<Float>, awayFrom: SIMD3<Float>, beyond: SIMD3<Float>?)
+        /// 丸めない折れ目の形 (2 本の腕の向きで決まる・#1644)。向きが画面に写した線で決まるので、
+        /// 置く先で組み直す。
+        case join(Corner)
+        /// 稜線の網の点 1 つ (#1889・#1893)。どの辺が画面で潰れるか、つまり画面で重なる点の群と
+        /// そこへ集まる腕は置く先の視点で決まるので、記録の間は網の点ごとに 1 つ積み、置くときに
+        /// 形を決める (``SolidStrokeNet``)
+        case netPoint(NetPoint)
+    }
+
+    /// 丸めない折れ目の元。
+    ///
+    /// 腕は (出る点, 向こうの点) の対で、出る点は角と画面で重なる (その場で描いた周で、同じ位置の
+    /// 点や画面で重なる点を飛ばしたとき・網の点の群のとき)。`beyond` は腕の向こうの点の、さらに
+    /// 1 つ先の点 (記録した周だけが持つ)。置く先で腕が画面で潰れたら、出る点を向こうの点に、
+    /// 向こうの点をその先へ送る (#1893)。先が無い (開いた周の端と重なる) なら、端の形が埋めるので
+    /// 何も置かない。
+    ///
+    /// **2 本の腕が別の点から同じ向きに出れば 1 本と数え、端の形を置く** (``Canvas/screenCorner(arms:origins:isEnd:join:cap:)``)。
+    struct Corner {
+        var center: SIMD3<Float>
+        var first: (origin: SIMD3<Float>, far: SIMD3<Float>)
+        var second: (origin: SIMD3<Float>, far: SIMD3<Float>)
+        var beyondFirst: SIMD3<Float>? = nil
+        var beyondSecond: SIMD3<Float>? = nil
+        /// 形 (`miter` / `bevel`)。**記録したときのものを持つ** — 輪郭の形は形の中で決まり、
+        /// 置くときのスタイルは効かない (`Sketch/createShape(_:)`)
+        var join: StrokeJoin
+        /// 腕を 1 本と数えたときの端の形。記録したときのものを持つ
+        var cap: StrokeCap
+        /// 積む頂点の数の上限。記録した形はこの数に揃えて積む (端の円板を置きうる角は 48・
+        /// ほかは 9)。置く先で枝が入れ替わっても頂点の数は記録と変わらない
+        var capacity: Int
+
+        func moved(by move: (SIMD3<Float>) -> SIMD3<Float>) -> Corner {
+            var corner = self
+            corner.center = move(center)
+            corner.first = (move(first.origin), move(first.far))
+            corner.second = (move(second.origin), move(second.far))
+            corner.beyondFirst = beyondFirst.map(move)
+            corner.beyondSecond = beyondSecond.map(move)
+            return corner
+        }
+    }
+
+    /// 稜線の網の点 1 つ。網は形自身の座標のまま共有し、置いた後の点は `matrix` で移して求める。
+    struct NetPoint {
+        var net: SolidStrokeNet
+        var index: Int
+        /// 網の点を、置いた後の点へ移す行列 (記録した時点の変換に、置き場所を左から掛けたもの)。
+        var matrix: simd_float4x4
+        var join: StrokeJoin
+        var cap: StrokeCap
+        /// 積む頂点の数の上限 (``Corner/capacity`` と同じ)。
+        var capacity: Int
+
+        /// 網の点 `index` を置いた後の点。
+        func placed(_ index: Int) -> SIMD3<Float> {
+            let moved = matrix * SIMD4(net.points[index], 1)
+            return SIMD3(moved.x, moved.y, moved.z)
+        }
     }
 
     var kind: Kind
@@ -54,9 +112,9 @@ struct SolidStrokePiece {
     var anchor: SIMD3<Float> {
         switch kind {
         case let .band(start, _): start
-        case let .disc(center), let .square(center), let .endSquare(center, _),
-            let .join(center, _, _, _):
-            center
+        case let .disc(center), let .square(center), let .endSquare(center, _, _): center
+        case let .join(corner): corner.center
+        case let .netPoint(point): point.placed(point.index)
         }
     }
 
@@ -71,10 +129,13 @@ struct SolidStrokePiece {
         case let .band(start, end): piece.kind = .band(move(start), move(end))
         case let .disc(center): piece.kind = .disc(move(center))
         case let .square(center): piece.kind = .square(move(center))
-        case let .endSquare(center, from):
-            piece.kind = .endSquare(move(center), awayFrom: move(from))
-        case let .join(center, from, to, join):
-            piece.kind = .join(move(center), from: move(from), to: move(to), join: join)
+        case let .endSquare(center, from, beyond):
+            piece.kind = .endSquare(move(center), awayFrom: move(from), beyond: beyond.map(move))
+        case let .join(corner):
+            piece.kind = .join(corner.moved(by: move))
+        case var .netPoint(point):
+            point.matrix = matrix * point.matrix
+            piece.kind = .netPoint(point)
         }
         return piece
     }
@@ -99,6 +160,8 @@ struct RetainedGPUStroke {
     var matrix: simd_float4x4
     /// 記録した線の太さ。置く時点の ``Canvas/strokeWeight(_:)`` は効かない。
     var weight: Float
+    /// 記録した線の端の形。画面で重なる点の腕を 1 本と数えた角 (端) が読む (#1893)。
+    var cap: StrokeCap
     /// 記録した線の色 (乗算済み)。置き場所の色は置くときに掛かる。
     var color: LinearRGBA
     /// 記録した時点の焼き場の白い区画。区間が記録した頁を束ねるので、いまの位置ではなくこれを読む。
