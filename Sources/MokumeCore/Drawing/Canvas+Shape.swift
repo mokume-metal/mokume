@@ -100,9 +100,10 @@ extension Canvas {
         }
         let recorded = Array(vertices[vertexStart...])
         // 輪郭の区間も形自身の 0 起点へ引き戻し、覚えていた側からは抜く (入れ子の記録なら
-        // 外側の記録には、置き直した頂点の区間として `place(_:of:at:)` が積み直す)
+        // 外側の記録には、置き直した頂点の区間として `place(_:of:at:)` が積み直す)。
+        // 引いて積んだ頂点は区間の番号を持たないので、区間だけを引き戻す
         let recordedStrokes = recordedStrokeRanges[strokeRangeStart...].map {
-            ($0.lowerBound - vertexStart)..<($0.upperBound - vertexStart)
+            $0.shifted(by: -vertexStart)
         }
         recordedStrokeRanges.removeLast(recordedStrokeRanges.count - strokeRangeStart)
         let recordedSolid = Array(solidVertices[solidStart...])
@@ -261,43 +262,107 @@ extension Canvas {
     }
 
     /// 平面の区間を置く。**立体の列が開いていれば閉じる** (呼び出し順どおりに重ねる)。
+    ///
+    /// **掛ける色が半透明なら、不透明の線の区間は、引いて積んだ頂点に差し替える**
+    /// ([#1829]・[#1920])。不透明の線は記録のとき片を重ねたまま積む
+    /// (``Canvas/strokeOverlapsShow``) ので、そのまま半透明にすると角と継ぎ目だけが濃くなる。
+    /// 色なしと不透明の色は、これまでどおり重ねたまま置く — 差し替えるのは、掛けた後の不透明度が
+    /// 1 を下回るときだけである。
+    ///
+    /// **引くのは、その形を半透明の色で最初に置くとき 1 度だけ。** 引いた頂点は形の側
+    /// (``CarvedStroke``) に控えるので、2 回目以降は控えた頂点を移して積むだけで済む。
+    ///
+    /// [#1829]: https://github.com/mokume-metal/mokume/issues/1829
+    /// [#1920]: https://github.com/mokume-metal/mokume/issues/1920
     private func place(_ run: Shape.Run, of shape: Shape, at placement: Placement) {
         // **まとめて写してから、その場で移す。** 1 頂点ずつ足すと、置くたびに
         // 溜め場の伸長判定を通ることになる — 保持の速さはここで決まる
         let base = vertices.count
         beginFlat()
-        vertices.append(contentsOf: shape.vertices[run.start..<(run.start + run.count)])
+        let runRange = run.start..<(run.start + run.count)
         let matrix = transform.matrix * placement.transform.matrix
         let tint = placement.fill
-        vertices.withUnsafeMutableBufferPointer { buffer in
-            for index in base..<(base + run.count) {
-                let point = SIMD4<Float>(
-                    buffer[index].position.x, buffer[index].position.y, 0, 1)
-                let moved = matrix * point
-                buffer[index].position = SIMD2<Float>(moved.x, moved.y)
-                // 置き場所の色は**掛かる**。渡さなければ何も掛からない
-                if let tint {
-                    let color = buffer[index].color
-                    buffer[index].color = SIMD4<Float>(
-                        color.x * tint.red, color.y * tint.green, color.z * tint.blue,
-                        color.w * tint.alpha)
-                }
+        // 差し替える輪郭 (頂点の並びの順)。色を掛けない置き場所は、ここで空になる
+        let replaced = (tint?.alpha ?? 1) < 1 ? shape.carvedStrokes(within: runRange) : []
+        if replaced.isEmpty {
+            vertices.append(contentsOf: shape.vertices[runRange])
+        } else {
+            var cursor = run.start
+            for stroke in replaced {
+                vertices.append(contentsOf: shape.vertices[cursor..<stroke.range.lowerBound])
+                vertices.append(contentsOf: stroke.carved?.vertices ?? [])
+                cursor = stroke.range.upperBound
             }
+            vertices.append(contentsOf: shape.vertices[cursor..<runRange.upperBound])
+        }
+        let end = vertices.count
+        vertices.withUnsafeMutableBufferPointer { buffer in
+            for index in base..<end { Self.move(&buffer[index], by: matrix, tint: tint) }
         }
         // **輪郭は、行列を掛けた直後に画面で半画素寄せる** (`Shape.strokeRanges`)。記録の中で
-        // 置き直すときは変換がまだ決まらないので寄せず、外側の記録へ区間を渡す
-        let runRange = run.start..<(run.start + run.count)
-        for stroke in shape.strokeRanges where stroke.overlaps(runRange) {
-            let lower = max(stroke.lowerBound, runRange.lowerBound) - run.start + base
-            let upper = min(stroke.upperBound, runRange.upperBound) - run.start + base
+        // 置き直すときは変換がまだ決まらないので寄せず、外側の記録へ区間を渡す。差し替えた
+        // 輪郭は頂点の数が変わるので、置いた先の区間はずれを足して求める
+        var shift = 0
+        var next = 0
+        // 区間だけを読む。`StrokeRange` ごと写すと、置くたびに引いた頂点の参照を数え直す
+        for index in shape.strokeRanges.indices {
+            let whole = shape.strokeRanges[index].range
+            guard whole.overlaps(runRange) else { continue }
+            let lower = max(whole.lowerBound, runRange.lowerBound)
+            let upper = min(whole.upperBound, runRange.upperBound)
+            let placed: Range<Int>
+            var carved: CarvedStroke?
+            if next < replaced.count, replaced[next].range == whole {
+                // 引いて積んだ頂点は、半透明の色を掛けて確定している。外側の記録へは、素材ではなく
+                // この頂点の区間として渡す
+                let count = replaced[next].carved?.vertices.count ?? 0
+                let start = lower - run.start + base + shift
+                placed = start..<(start + count)
+                shift += count - whole.count
+                next += 1
+            } else {
+                placed = (lower - run.start + base + shift)..<(upper - run.start + base + shift)
+                // 外側の記録へは、引く素材も移して渡す (引くのは外側を置くとき)。**その場で描くときは
+                // 要らない** — 置く数だけ素材の箱を作ることになる。区間の一部だけを置くときは、素材も
+                // 一部になってしまうので持ち越さない
+                // (`Optional.map` に閉包を渡さず `if let` で受ける — 隔離の実行時検査を払う・#1779)
+                if recordingShape, lower == whole.lowerBound, upper == whole.upperBound,
+                    let source = shape.strokeRanges[index].carved
+                {
+                    carved = CarvedStroke(moving: source, by: matrix, tint: tint)
+                }
+            }
             if recordingShape {
-                recordedStrokeRanges.append(lower..<upper)
+                recordedStrokeRanges.append(StrokeRange(placed, carved: carved))
                 continue
             }
             vertices.withUnsafeMutableBufferPointer { buffer in
-                for index in lower..<upper { buffer[index].position += 0.5 }
+                for index in placed { buffer[index].position += 0.5 }
             }
         }
+    }
+
+    /// 頂点を置き場所へ移す。行列を掛け、置き場所の色を掛ける。
+    @inline(__always)
+    private static func move(_ vertex: inout ShapeVertex, by matrix: simd_float4x4, tint: LinearRGBA?) {
+        let point = SIMD4<Float>(vertex.position.x, vertex.position.y, 0, 1)
+        let moved = matrix * point
+        vertex.position = SIMD2<Float>(moved.x, moved.y)
+        // 置き場所の色は**掛かる**。渡さなければ何も掛からない
+        if let tint {
+            let color = vertex.color
+            vertex.color = SIMD4<Float>(
+                color.x * tint.red, color.y * tint.green, color.z * tint.blue, color.w * tint.alpha)
+        }
+    }
+
+    /// 引いて積んだ頂点を、区間の頂点と同じように置き場所へ移した写し。
+    static func moved(
+        _ vertices: [ShapeVertex], by matrix: simd_float4x4, tint: LinearRGBA?
+    ) -> [ShapeVertex] {
+        var vertices = vertices
+        for index in vertices.indices { move(&vertices[index], by: matrix, tint: tint) }
+        return vertices
     }
 
     /// 基本図形の区間を置く。**開いている平面・立体の列は閉じる** (呼び出し順どおりに重ねる)。

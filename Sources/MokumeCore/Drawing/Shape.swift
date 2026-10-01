@@ -51,8 +51,12 @@ public struct Shape {
     /// 足すと、字や画像を含む平面の全頂点が太る。立体の輪郭は頂点が名乗る
     /// (`SolidVertex.stroke`) ので、ここには載らない。
     ///
+    /// **区間は、置くときに半透明の色を掛けるなら引き直す素材も持つ** (``StrokeRange``・#1829・#1920)。
+    ///
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
-    let strokeRanges: [Range<Int>]
+    let strokeRanges: [StrokeRange]
+    /// ``strokeRanges`` のうち、引く素材を持つ区間があるか。置くたびに区間を走査しないための印。
+    let hasCarvedStrokes: Bool
     /// ``solidVertices`` のうち**立体の線の頂点**が、どの部品から来たか。
     ///
     /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ位置のままでは
@@ -161,7 +165,7 @@ public struct Shape {
     init(
         vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
         solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
-        strokeRanges: [Range<Int>] = [], solidStrokes: [SolidStrokePiece] = [],
+        strokeRanges: [StrokeRange] = [], solidStrokes: [SolidStrokePiece] = [],
         gpuStrokes: [RetainedGPUStroke] = []
     ) {
         self.vertices = vertices
@@ -170,8 +174,33 @@ public struct Shape {
         self.forms = forms
         self.runs = runs
         self.strokeRanges = strokeRanges
+        // 閉包を標準ライブラリの高階関数へ渡さずにループで組む (隔離の実行時検査を避ける・#1779)
+        var carved = false
+        for stroke in strokeRanges where stroke.carved != nil {
+            carved = true
+            break
+        }
+        hasCarvedStrokes = carved
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
+    }
+
+    /// 頂点の区間 `runRange` に収まる輪郭のうち、引く素材を持つもの。頂点の並びの順。
+    ///
+    /// 区間を跨ぐ輪郭は差し替えない (引く素材は輪郭ひとつぶんなので、一部だけは置けない)。
+    /// 輪郭は記録の順に並び、互いに重ならないので、走査は 1 度で済む。
+    func carvedStrokes(within runRange: Range<Int>) -> [StrokeRange] {
+        guard hasCarvedStrokes else { return [] }
+        var found: [StrokeRange] = []
+        var floor = runRange.lowerBound
+        for stroke in strokeRanges
+        where stroke.carved != nil && !stroke.range.isEmpty && stroke.range.lowerBound >= floor
+            && stroke.range.upperBound <= runRange.upperBound
+        {
+            found.append(stroke)
+            floor = stroke.range.upperBound
+        }
+        return found
     }
 
     /// 何も入っていない形。
@@ -205,7 +234,7 @@ public struct Shape {
         var solidIndices: [UInt32] = []
         var forms: [FormInstance] = []
         var runs: [Run] = []
-        var strokeRanges: [Range<Int>] = []
+        var strokeRanges: [StrokeRange] = []
         var solidStrokes: [SolidStrokePiece] = []
         var gpuStrokes: [RetainedGPUStroke] = []
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
@@ -222,8 +251,9 @@ public struct Shape {
             // ずらすと繋いだ 2 つ目以降が 1 つ目の頂点を指す (``solidIndices``)
             solidIndices.append(contentsOf: shape.solidIndices.map { $0 + UInt32(solidOffset) })
             forms.append(contentsOf: shape.forms)
+            // 引く素材は区間の番号を持たないので、区間だけをずらして持ち越す (箱は共有する)
             strokeRanges.append(
-                contentsOf: shape.strokeRanges.map { ($0.lowerBound + flatOffset)..<($0.upperBound + flatOffset) })
+                contentsOf: shape.strokeRanges.map { $0.shifted(by: flatOffset) })
             solidStrokes.append(
                 contentsOf: shape.solidStrokes.map { piece in
                     var piece = piece
@@ -272,6 +302,45 @@ public struct Shape {
             return
         }
         runs.append(run)
+    }
+}
+
+// MARK: - 輪郭の区間
+
+/// ``Shape/vertices`` のうち**輪郭の頂点の 1 区間**と、置くときに引き直しうる素材。
+///
+/// 不透明の線は、片 (帯・折れ目・端・刻みの円板) を**重ねたまま**積む
+/// (``Canvas/strokeOverlapsShow`` が偽・重ねても同じ色になるので) が、保持した形は
+/// **置くときに半透明の色を掛けられる** (``Placement/fill``)。重ねたまま半透明にすると、
+/// 重なった所だけが 2〜3 回混ざって濃くなる ([#1829])。そこで、片を引いて積んだ頂点を
+/// 置くときに用意し (`carved`)、掛ける色が半透明ならその区間を差し替える。
+///
+/// **用意するのは、半透明の色で最初に置くときである。** 記録のたびに引くと、色を掛けない形にも
+/// 記録の時間とメモリを払わせる ([#1920])。記録は素材を組んだところで止める。
+///
+/// **区間の頂点は、記録したときの積み方のまま変えない。** 不透明のまま置く形 (いちばん
+/// よくある) は今までどおり重ねたまま置く。引いた頂点は切り口を単精度で求めるので、縁から
+/// 1/1000 画素ほどの所に中心が乗る画素の塗りが入れ替わりうる ([#1536] の判断)。
+///
+/// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
+/// [#1829]: https://github.com/mokume-metal/mokume/issues/1829
+/// [#1920]: https://github.com/mokume-metal/mokume/issues/1920
+struct StrokeRange {
+    /// ``Shape/vertices`` の中での区間。
+    var range: Range<Int>
+    /// 区間の代わりに積む、片を引いた頂点の元。**区間の頂点と同じ座標** (形自身の座標で、
+    /// 半画素寄せの前)。`nil` なら差し替えない — 半透明の線で記録した区間は記録のときに
+    /// 引いてあり、`replace` は重ねても同じ色になる。
+    var carved: CarvedStroke?
+
+    init(_ range: Range<Int>, carved: CarvedStroke? = nil) {
+        self.range = range
+        self.carved = carved
+    }
+
+    /// 区間だけを `offset` ずらした写し。
+    func shifted(by offset: Int) -> StrokeRange {
+        StrokeRange((range.lowerBound + offset)..<(range.upperBound + offset), carved: carved)
     }
 }
 
