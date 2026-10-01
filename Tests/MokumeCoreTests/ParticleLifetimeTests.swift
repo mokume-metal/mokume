@@ -346,4 +346,110 @@ struct ParticleLifetimeTests {
         #expect(silent.isEmpty, "枠 fps 個で上書きの注意が出た fps: \(silent)")
         #expect(unwarned.isEmpty, "枠 fps − 1 個で上書きの注意が出なかった fps: \(unwarned)")
     }
+
+    /// 捨てたフレームの進めは数えない。**描き切りが投げたフレームでは計算が走らず、GPU の
+    /// 寿命は減らない** (#342) ので、上書きの注意もその回を数えない。24 fps の寿命 1 の粒
+    /// (24 枚) を枠 1 つで出し、5 枚目を投げさせ、進めが 23 回通ったところで上書きする。
+    /// GPU の寿命は残り 2 (もう 1 枚描かれる) なので、注意が出る。書いた時点で数える作りでは
+    /// 累計が 24 になり、注意が出なかった。投げさせない組では 24 回通ったところで上書きし、
+    /// 残り 1 (もう描かれない) で注意が出ない。
+    @Test("描き切りが投げたフレームの進めは、上書きの注意に数えない", arguments: [true, false])
+    func aDiscardedFrameDoesNotCountAsAnAdvance(discarding: Bool) throws {
+        let gpu = try RenderDevice()
+        let row = try Row(on: makeCanvas(gpu: gpu, slots: 1), fps: 24, slots: 1)
+        try row.advance(emitting: [1])
+        var submitted = 1
+        for frame in 2... {
+            if discarding && frame == 5 {
+                row.canvas.failureForTesting = .timedOut(seconds: 5)
+                #expect(throws: RenderFailure.self) { try row.advance() }
+                row.canvas.failureForTesting = nil
+                continue
+            }
+            if submitted == 23 + (discarding ? 0 : 1) { break }
+            try row.advance()
+            submitted += 1
+        }
+        let remaining = row.particle(0).life
+        #expect(remaining == (discarding ? 2 : 1), "GPU の寿命の残り \(remaining)")
+        try row.advance(emitting: [1])
+        #expect(
+            row.dust.warnings.hasWarned(.overwrite) == discarding,
+            "GPU の寿命の残り \(remaining) の粒を上書きして、注意が\(discarding ? "出なかった" : "出た")")
+    }
+
+    // MARK: - 秒の刻みの上書きの注意
+
+    /// 秒の刻み (直に回す面) の 1 枚。時刻を `time` に、刻みを 60 分の 1 秒にして、`life` を
+    /// 渡せば 1 個出し、`calls` 回進めて描く。
+    private func secondsFrame(
+        on canvas: Canvas, _ dust: Particles, time: Float, emitting life: Float? = nil,
+        calls: Int, randomness: inout Randomness
+    ) throws {
+        canvas.time = time
+        canvas.deltaTime = 1 / 60
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            if let life {
+                // 毎秒 60 個を `Float(1/60)` 秒 (1/60 よりわずかに長い) で数えると、ちょうど 1 個
+                canvas.emit(
+                    dust, from: .point(4, 4), rate: 60, speed: 0...0, angle: 0...0,
+                    life: life...life, size: 4...4, color: .linear(red: 1, green: 1, blue: 1),
+                    using: &randomness)
+            }
+            for _ in 0..<calls { canvas.particles(dust) }
+        }
+    }
+
+    private func gpuLife(of dust: Particles, on canvas: Canvas) -> Float {
+        let offset = MemoryLayout.offset(of: \Particle.life)! / MemoryLayout<Float>.stride
+        return canvas.read(dust.state)[offset]
+    }
+
+    /// 秒の刻みで 1 フレームに 2 回進める群。**GPU は呼ばれた回数だけ寿命を減らす**ので、
+    /// 寿命 0.25 秒の粒は 8 フレームで尽きる。12 フレーム目 (時刻 0.18 秒) に枠 1 つを上書き
+    /// しても、尽きた粒なので注意は出ない。時刻で締め切りを測る作りでは、時刻がまだ 0.25 秒に
+    /// 届かないので注意が出ていた。尽きる前 (5 フレーム目) の上書きでは出る。
+    @Test("秒の刻みで 1 フレームに 2 回進める群は、GPU の寿命どおりに上書きの注意を出す", arguments: [5, 12])
+    func overwritesFollowTheGPUWhenAdvancedTwiceAFrame(at overwrite: Int) throws {
+        let gpu = try RenderDevice()
+        let canvas = try makeCanvas(gpu: gpu, slots: 1)
+        let dust = try canvas.makeParticles(count: 1)
+        var randomness = Randomness(seed: 1710)
+        try secondsFrame(on: canvas, dust, time: 0, emitting: 0.25, calls: 2, randomness: &randomness)
+        for frame in 2..<overwrite {
+            try secondsFrame(
+                on: canvas, dust, time: Float(frame - 1) / 60, calls: 2, randomness: &randomness)
+        }
+        let remaining = gpuLife(of: dust, on: canvas)
+        let alive = remaining - Float(1) / 60 > 0
+        #expect(alive == (overwrite == 5), "GPU の寿命の残り \(remaining)")
+        try secondsFrame(
+            on: canvas, dust, time: Float(overwrite - 1) / 60, emitting: 0.25, calls: 2,
+            randomness: &randomness)
+        #expect(
+            dust.warnings.hasWarned(.overwrite) == alive,
+            "GPU の寿命の残り \(remaining) の粒を上書きして、注意が\(alive ? "出なかった" : "出た")")
+    }
+
+    /// 秒の刻みで、進めないフレームがある群。**進めないフレームでは GPU の寿命は減らない**ので、
+    /// 1 回だけ進めて 30 フレーム置いた寿命 0.25 秒の粒はまだ生きている。31 フレーム目 (時刻 0.5
+    /// 秒) に上書きすると注意が出る。時刻で締め切りを測る作りでは、時刻が 0.25 秒を越えたので
+    /// 出なかった。
+    @Test("秒の刻みで進めないフレームがあっても、生きている粒の上書きに注意を出す")
+    func overwritesFollowTheGPUAcrossFramesWithoutAdvancing() throws {
+        let gpu = try RenderDevice()
+        let canvas = try makeCanvas(gpu: gpu, slots: 1)
+        let dust = try canvas.makeParticles(count: 1)
+        var randomness = Randomness(seed: 1710)
+        try secondsFrame(on: canvas, dust, time: 0, emitting: 0.25, calls: 1, randomness: &randomness)
+        for frame in 2...30 {
+            try secondsFrame(
+                on: canvas, dust, time: Float(frame - 1) / 60, calls: 0, randomness: &randomness)
+        }
+        let remaining = gpuLife(of: dust, on: canvas)
+        #expect(remaining - Float(1) / 60 > 0, "GPU の寿命の残り \(remaining)")
+        try secondsFrame(on: canvas, dust, time: 0.5, emitting: 0.25, calls: 1, randomness: &randomness)
+        #expect(dust.warnings.hasWarned(.overwrite), "GPU で生きている粒を上書きして、注意が出なかった")
+    }
 }

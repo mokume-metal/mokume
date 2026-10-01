@@ -1736,6 +1736,11 @@ struct CanvasTests {
             ("buildingFlatTemplate", end, all, { c, _ in c.buildingFlatTemplate = true }),
             // 捨てたフレームで積んだ力を落とすための控え (#1622)
             ("forcesThisFrame", end, all, { c, f in c.force(f.particles, [.gravity(0, 1)]) }),
+            // 頼んだがまだ投入していない粒の進め。投入で粒へ数え、捨てたフレームでは落とす (#1710)
+            // (`particles()` で汚すと、描く列を閉じて開いた列の種類が動くので、直に積む)
+            ("particleAdvancesThisFrame", end, all, { c, f in
+                c.particleAdvancesThisFrame.append((Weak(f.particles), 1))
+            }),
             // 持ち越しの区間で置いた量の印。フレームの頭の検めが読んで下ろす (#1672)
             ("carriedOverAmount", head, all, { c, _ in c.carriedOverAmount = 7 }),
         ]

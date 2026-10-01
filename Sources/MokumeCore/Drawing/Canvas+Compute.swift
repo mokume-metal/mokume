@@ -337,6 +337,8 @@ extension Canvas {
         // もう一度走らせる。**待つより先に降ろす**: 待ちが期限切れになっても投入は済んで
         // いるので、残すと 2 度走る (#1183)
         pendingComputations.removeAll(keepingCapacity: true)
+        // 流した計算に粒の進めがあれば、寿命を減らした量として数える (#1710)
+        commitParticleAdvances()
     }
 
     // MARK: - 面をまたいで、頼んだ順に効かせる
