@@ -14,9 +14,13 @@
 並列に走ることは、互いの印を待ち合う 2 ファイルで確かめる。同時に走らなければ先に
 起きた側が期限切れで落ちる。検査用のファイルは一時ディレクトリに作って --dir で渡すので、
 本物の検査は走らせない。実行は make hooks-test (CI もこれを呼ぶ)。
+
+駆動役の外で hooks-test の所要を崩すものも 1 つだけここで見る。検査が立てる HTTP のサーバが
+名前を引くと、CI でだけ 1 ファイルあたり約 35 秒止まる (`NoNameLookupServerTest`)。
 """
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -153,6 +157,33 @@ class RunHooksTestsTest(unittest.TestCase):
         result = self.run_driver()
         self.assertEqual(result.returncode, 1)
         self.assertIn("検査のファイルが 1 つも無い", result.stderr)
+
+
+class NoNameLookupServerTest(unittest.TestCase):
+    """検査の HTTP のサーバは、名前を引かない形で立てる (#1714)。
+
+    `http.server` の `HTTPServer` と `ThreadingHTTPServer` は、bind の後、listen の前に
+    `socket.getfqdn()` で名前を引く。macOS 15 以降の GitHub のランナーでは、この名前引きが
+    約 35 秒止まる (actions/runner-images#14409)。サーバを立てる 5 ファイルは、これで CI でだけ
+    1 本あたり 30〜35 秒長かった (手元では 1〜19 秒)。検査は落ちずに遅くなるだけなので、
+    字面で見ないと誰も気付かない。
+
+    名前を引かない `socketserver.ThreadingTCPServer` で立てれば、`http.server` のハンドラは
+    そのまま使える (サーバの名前を読むのは CGI のハンドラだけである)。
+    """
+
+    def test_no_test_starts_a_server_that_looks_up_its_name(self):
+        pattern = re.compile(r"\b(?:Threading)?HTTPServer\(")
+        offenders = [
+            f"{path.name}:{number}: {line.strip()}"
+            for path in sorted((REPO / "scripts" / "tests").glob("*.py"))
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if pattern.search(line)
+        ]
+        self.assertEqual(
+            offenders, [],
+            "HTTPServer は名前を引く。socketserver.ThreadingTCPServer で立てる (#1714)",
+        )
 
 
 if __name__ == "__main__":
