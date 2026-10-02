@@ -14,9 +14,13 @@ import Testing
 /// 触るのは未定義で、**症状は原因から遠いところにしか出ない** — 隣の ``SharedFrameStage``
 /// では検査の走り終わりでの落下 (signal 11) として出た
 /// ([#705](https://github.com/mokume-metal/mokume/issues/705))。
+///
+/// **戻し忘れを見る trait (``SignalStateKept``) は付けない。** 付けると、本体の検査を全部
+/// 回したときに走者が要約を残さずに消えた (3 回中 3 回・外すと 2 回とも通った・#1937)。
+/// 原因は分かっていない (#1527 の材料)。この suite で旗を立てる検査は、それぞれ
+/// ``SignalState`` で控えて戻す。
 @Suite(
     "スケッチの窓",
-    .signalStateKept,
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
