@@ -21,6 +21,7 @@ import functools
 import importlib.util
 import os
 import socket
+import socketserver
 import subprocess
 import tempfile
 import threading
@@ -130,7 +131,9 @@ class StampTest(unittest.TestCase):
                 pass
 
         handler = functools.partial(Quiet, directory=str(self.site))
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        # 名前を引かないサーバで立てる。http.server の HTTPServer は bind の後に getfqdn で
+        # 名前を引き、CI の macOS のランナーではそこで約 35 秒止まる (#1714)
+        server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)

@@ -442,7 +442,8 @@ extension Canvas {
     /// 点 0 が 1 つ目の点 0 を指す。
     func inSolidBatch(indexed: Bool = false, _ body: () -> Void) {
         // 区間の外では区間を開かず、`body` も走らせない (``Canvas/canPlace``・#1672)。奥行きの
-        // ある形の輪郭 (`strokeSolidRing`) と周囲の背景も、ここを通って塞がる
+        // ある形の輪郭 (`strokeSolidRing`) も、ここを通って塞がる。周囲の背景はここを通らず、
+        // 口が自分で区間の外を断る (``Canvas/replaceSurface(with:)``・#1685)
         guard canPlace else { return warnOutsideFrame(.placing) }
         beginSolids()
         if indexed {
@@ -487,7 +488,7 @@ extension Canvas {
     /// **図形は焼き場の白い区画を読む** — 白を掛けても色は変わらないので、平面と同じ
     /// 塗りをそのまま通せる (``SolidVertex/uv``)。
     ///
-    /// `uv` を渡すのは**塗り**だけで、線と点・周囲の背景は渡さない側に居続ける。
+    /// `uv` を渡すのは**塗り**だけで、線と点は渡さない側に居続ける。
     /// 渡さなければ白い区画を読むので、貼る絵は塗りにしか効かない。
     func appendSolidVertex(
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
