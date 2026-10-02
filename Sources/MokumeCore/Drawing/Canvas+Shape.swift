@@ -125,6 +125,13 @@ extension Canvas {
         // 区間だけずらすと記録した形が溜め場に残っていた頂点を指す (``Shape/solidIndices``)
         let recordedIndices = solidIndices[solidIndexStart...].map { $0 - UInt32(solidStart) }
         let recordedForms = Array(formInstances[formStart...])
+        // 記録した形 1 つずつの部品も、形自身の 0 起点へ引き戻す (``Shape/solidParts``)
+        var recordedParts: [SolidPart] = []
+        for batch in batches[runStart...] where batch.source == .solid {
+            for part in batch.backFaceParts {
+                recordedParts.append(part.shifted(by: part.isIndexed ? -solidIndexStart : -solidStart))
+            }
+        }
         let runs = batches[runStart...].map {
             var run = $0.run
             switch run.source {
@@ -151,7 +158,7 @@ extension Canvas {
         return Shape(
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,
             forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes,
-            solidStrokes: recordedPieces, gpuStrokes: recordedGPU)
+            solidStrokes: recordedPieces, gpuStrokes: recordedGPU, solidParts: recordedParts)
     }
 
     // 保持した形を置く。
@@ -419,28 +426,9 @@ extension Canvas {
                     color: placement.fill
                         ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
         }
-        placeSolid(
-            run, of: shape, instances: instances,
-            mayShowBackFaces: retainedRunMayShowBackFaces(run, of: shape, at: placements))
-    }
-
-    /// 保持した形の立体の区間を、裏面が絵に出うる形として置くか (``Canvas/OpenSolid/mayShowBackFaces``)。
-    ///
-    /// 組み込みの形の ``placementMayShowBackFaces`` と同じ 4 つの条件を、**記録した区間の設定**で
-    /// 判じる — 置く側のスタイルではなく、区間へ移った後の混ぜ方・貼った絵・断片と、焼いた頂点の
-    /// 色 (``Shape/translucentSolidRuns``) である。置き場所の色 (``Placement/fill``) が透けていても
-    /// 立てる。立てた列は置き場所ごとに裏 → 表で描く ([#1565](https://github.com/mokume-metal/mokume/issues/1565))。
-    private func retainedRunMayShowBackFaces(
-        _ run: Shape.Run, of shape: Shape, at placements: [Placement]
-    ) -> Bool {
-        if run.mode != .blend || run.paint.shader != nil || isFillPicture(run.texture)
-            || shape.translucentSolidRuns.contains(run.start)
-        {
-            return true
-        }
-        // 閉包を標準ライブラリの高階関数へ渡さずにループで組む (隔離の実行時検査を避ける・#1779)
-        for placement in placements where (placement.fill?.alpha ?? 1) < 1 { return true }
-        return false
+        // 記録した形 1 つずつの部品 (``SolidPart``) を持ち歩く。どの部品を裏 → 表で描くかは、
+        // 記録したときのスタイルと置き場所の色で決まる (``Shape/solidParts``)
+        placeSolid(run, of: shape, instances: instances, carriesParts: true)
     }
 
     /// 立体の区間を、組み上がった置き場所ぶんだけ置く。
@@ -459,11 +447,17 @@ extension Canvas {
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
+    ///
+    /// `carriesParts` が真なら、記録した形 1 つずつの部品 (``Shape/solidParts``) を列へ渡す。
+    /// 裏面が絵に出うる部品は、置き場所ごとに裏 → 表の順で描かれる (``Batch/backFaceParts``)。
+    /// **粒は渡さない** — 板 1 枚で自分の面が自分を隠すことが無く、描き分けると描く回数が粒の
+    /// 数だけ増える。
     func placeSolid(
         _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>,
-        mayShowBackFaces: Bool = false
+        carriesParts: Bool = false
     ) {
         beginSolids()
+        let parts = carriesParts ? shape.solidParts(in: run) : []
         let runRange = run.start..<(run.start + run.count)
         var pieces: [SolidStrokePiece] = []
         for piece in shape.solidStrokes where runRange.contains(piece.vertexStart) {
@@ -478,18 +472,27 @@ extension Canvas {
             if !gpuStrokes.isEmpty {
                 for instance in instances {
                     placeSplittingGPUStrokes(
-                        run, of: shape, pieces: pieces, gpuStrokes: gpuStrokes, by: instance)
+                        run, of: shape, pieces: pieces, gpuStrokes: gpuStrokes, parts: parts,
+                        by: instance)
                 }
                 return
             }
             for instance in instances {
                 let base = solidVertices.count
-                appendPlacedSolidVertices(vertices, indices: indices, placedBy: instance)
+                appendPlacedSolidVertices(
+                    vertices, indices: indices, placedBy: instance, parts: parts)
                 placeSolidStrokes(
                     pieces, from: run.start, to: base, by: instance,
                     reversed: instance.isMirrored && indices == nil)
             }
             return
+        }
+        // 置き場所の色が 1 つでも透けていれば、記録したときのスタイルによらず、どの部品も
+        // 裏面が絵に出うる。閉包を高階関数へ渡さずにループで見る (#1779)
+        var tinted = false
+        for instance in instances where instance.color.w < 1 {
+            tinted = true
+            break
         }
         var remaining = instances[...]
         while let first = remaining.first {
@@ -503,9 +506,19 @@ extension Canvas {
             // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
             let mirrored = first.isMirrored
             let start = openRetainedSolid(run, of: shape, mirrored: mirrored)
-            // 裏面が絵に出うる区間は、置き場所ごとに裏 → 表で描く (`Batch.drawsBackThenFront`)。
-            // 粒は旗を渡さない (板 1 枚で、描き分けると描く回数が粒の数だけ増える)
-            if mayShowBackFaces { openSolid?.mayShowBackFaces = true }
+            // 部品を列の描く単位へ写す。頂点も添字も、形の中の位置から写した先までずらすだけ
+            if let open = openSolid, !parts.isEmpty {
+                let shift = run.isIndexed
+                    ? (open.indexStart ?? 0) - run.indexStart : open.vertexStart - run.start
+                var moved: [SolidPart] = []
+                moved.reserveCapacity(parts.count)
+                for part in parts {
+                    var placed = part.shifted(by: shift)
+                    if tinted { placed.showsBackFaces = true }
+                    moved.append(placed)
+                }
+                openSolid?.parts = moved
+            }
             while let instance = remaining.first, instance.isMirrored == mirrored,
                 !isBatchFull(solidInstances.count, since: start)
             {
@@ -542,13 +555,15 @@ extension Canvas {
     /// 作れない線は割らずに、焼いた帯のまま置く。
     private func placeSplittingGPUStrokes(
         _ run: Shape.Run, of shape: Shape, pieces: [SolidStrokePiece],
-        gpuStrokes: [RetainedGPUStroke], by instance: SolidInstance
+        gpuStrokes: [RetainedGPUStroke], parts: [SolidPart], by instance: SolidInstance
     ) {
         func placeBaked(_ segment: Range<Int>) {
             guard !segment.isEmpty else { return }
             let base = solidVertices.count
+            // 区間に収まる部品だけを渡す (線で割った区間を跨ぐ部品は無い — 部品は塗りの区間で、
+            // 線はその後ろに積まれる)
             appendPlacedSolidVertices(
-                shape.solidVertices[segment], indices: nil, placedBy: instance)
+                shape.solidVertices[segment], indices: nil, placedBy: instance, parts: parts)
             var inside: [SolidStrokePiece] = []
             for piece in pieces where segment.contains(piece.vertexStart) { inside.append(piece) }
             placeSolidStrokes(

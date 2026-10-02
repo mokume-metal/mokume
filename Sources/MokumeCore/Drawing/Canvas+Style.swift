@@ -297,10 +297,7 @@ extension Canvas {
                 instances: open.external?.instances,
                 indirectArguments: open.external?.arguments,
                 cullMode: cullMode(for: open),
-                // 外の置き場から取る列 (粒) は個数を GPU が書くので、置き場所ごとに分けられない。
-                // 粒は旗を立てないが、ここでも外しておく
-                drawsBackThenFront: open.mayShowBackFaces && open.external == nil
-                    && open.strokeGeometry == nil,
+                backFaceParts: backFaceParts(closing: open),
                 frontFacing: frontFacing(for: open),
                 isMirrored: open.isMirrored,
                 solidSource: open.source,
@@ -329,6 +326,27 @@ extension Canvas {
         return .back
     }
 
+    /// 閉じようとしている立体の列の、裏 → 表の順で描きうる部品 (``Batch/backFaceParts``)。
+    ///
+    /// **「この列のどこを裏 → 表で描くか」を決めるのはここだけである。** 置き場所で置く組み込みの
+    /// 形・モデルの列は、形全体を 1 つの部品にする (向きの求まらないモデルは部品にしない)。
+    /// それ以外の列は、置いたときに記録した部品 (``OpenSolid/parts``) をそのまま渡す。外の置き場
+    /// から取る列 (粒) と GPU の線の列は、個数を GPU が書く・帯は部品でないので、部品を持たない。
+    private func backFaceParts(closing open: OpenSolid) -> [SolidPart] {
+        guard open.external == nil, open.strokeGeometry == nil else { return [] }
+        switch open.source {
+        case .mesh, .model:
+            guard open.meshWinding != .unknown else { return [] }
+            return [
+                SolidPart(
+                    range: open.vertexStart..<(open.vertexStart + open.vertexCount), isIndexed: false,
+                    showsBackFaces: open.mayShowBackFaces, insideOut: open.meshWinding == .inward)
+            ]
+        case .retained, .freeform:
+            return open.parts
+        }
+    }
+
     /// いまのスタイルで置く形は、裏面が絵に出うるか (``cullMode(for:)``)。
     ///
     /// 出うるのは、次のどれか 1 つでも当たる形である: 半透明の塗り (奥の面が手前の面を
@@ -339,12 +357,12 @@ extension Canvas {
     /// 扱いにしてある — 混ぜ方と断片は変えれば列を閉じるので、いまは閉じる時点に読んでも
     /// 同じ答えになるが、読み方を 1 つにしておけば、閉じない設定が混ざっても食い違わない。
     ///
-    /// 記録した置き場所は、両面で描くだけでなく、4 つの条件のどれでも**置き場所ごとに裏 → 表の
-    /// 順で描く** (``Batch/drawsBackThenFront``)。立体は奥行きを書くので、1 回で描くと手前の面が
-    /// 奥の面を捨て、奥の面が出るかが形の向きで変わる
-    /// ([#1549](https://github.com/mokume-metal/mokume/issues/1549))。保持した形は記録した
-    /// 区間の設定と焼いた頂点の色で同じことを判じる (`retainedRunMayShowBackFaces`)。粒と
-    /// 自分で並べた頂点は置き場所ごとに描き分けない (理由は ``Batch/drawsBackThenFront``)。
+    /// 記録した置き場所は、両面で描くだけでなく、4 つの条件のどれでも**置き場所ごと・部品ごとに
+    /// 裏 → 表の順で描く** (``Batch/backFaceParts``)。立体は奥行きを書くので、1 回で描くと手前の
+    /// 面が奥の面を捨て、奥の面が出るかが形の向きで変わる
+    /// ([#1549](https://github.com/mokume-metal/mokume/issues/1549))。保持した形の中で置いた形
+    /// には、記録したときのこの値が部品 (``SolidPart/showsBackFaces``) として残り、置くときの
+    /// スタイルではなく記録したときのスタイルで判じる。
     var placementMayShowBackFaces: Bool {
         style.fill.alpha < 1 || style.picture != nil || style.blendMode != .blend
             || currentShader != nil

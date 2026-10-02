@@ -178,7 +178,8 @@ extension Canvas {
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
-        _ source: SolidSource, isDerived: Bool = false, mesh build: () -> SolidMesh
+        _ source: SolidSource, isDerived: Bool = false, winding: SolidWinding = .outward,
+        mesh build: () -> SolidMesh
     ) {
         // 区間の外では、立体の側へも移らない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -200,7 +201,17 @@ extension Canvas {
             for point in points {
                 vertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
             }
-            appendPlacedSolidVertices(vertices[...], indices: nil, placedBy: placement)
+            // 記録した形 1 つが部品 1 つ (``SolidPart``)。置いたときのスタイルを部品へ残す —
+            // 保持した形を置くときは、記録したときのスタイルで裏 → 表に描くかが決まる
+            let parts =
+                winding == .unknown
+                ? []
+                : [
+                    SolidPart(
+                        range: 0..<vertices.count, isIndexed: false,
+                        showsBackFaces: placementMayShowBackFaces, insideOut: winding == .inward)
+                ]
+            appendPlacedSolidVertices(vertices[...], indices: nil, placedBy: placement, parts: parts)
             return
         }
 
@@ -227,6 +238,7 @@ extension Canvas {
                     source: source, vertexStart: 0, vertexCount: geometry.count,
                     indexStart: nil, instanceStart: solidInstances.count,
                     isMirrored: placement.isMirrored, fillGeometry: geometry)
+                openSolid?.meshWinding = winding
                 solidInstances.append(placement)
                 if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
                 return
@@ -249,6 +261,7 @@ extension Canvas {
                 // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
                 indexStart: nil,
                 instanceStart: solidInstances.count, isMirrored: placement.isMirrored)
+            openSolid?.meshWinding = winding
         }
 
         solidInstances.append(placement)
@@ -316,10 +329,13 @@ extension Canvas {
     /// [#1446]: https://github.com/mokume-metal/mokume/issues/1446
     func appendPlacedSolidVertices(
         _ vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?,
-        placedBy placement: SolidInstance
+        placedBy placement: SolidInstance, parts: [SolidPart] = []
     ) {
         if indices != nil { openIndexedFreeformSolid() } else { openFreeformSolid() }
         let base = solidVertices.count
+        notePlacedParts(
+            parts, vertices: vertices, indices: indices, base: base,
+            tinted: placement.color.w < 1)
         // 閉包を標準ライブラリの高階関数へ渡さずにループで回す。main actor の文脈の閉包は
         // 要素ごとに隔離の実行時検査を払う (#1779)
         solidVertices.reserveCapacity(base + vertices.count)
@@ -342,6 +358,41 @@ extension Canvas {
             // 参照されず、黙って消える (``appendSolidVertex`` と同じ理由)
             solidIndices.reserveCapacity(solidIndices.count + solidVertices.count - base)
             for index in base..<solidVertices.count { solidIndices.append(UInt32(index)) }
+        }
+    }
+
+    /// 焼いて積む頂点の部品を、開いている列の描く単位へ写して足す (``OpenSolid/parts``)。
+    ///
+    /// `parts` は切り出す前の並びの番号で、添字を持つ区間なら読む順の並び、持たなければ頂点の
+    /// 並びで数える (``Shape/solidParts`` と同じ)。写した先は列の描く単位で、添字を持たない頂点を
+    /// 添字の列へ積むときは、頂点が名乗る番号の位置になる (下の積み方と同じ順)。`tinted` は置き場所の
+    /// 色が透けているか — 透けていれば、記録したときのスタイルによらず裏面が絵に出うる。
+    ///
+    /// **積む前に呼ぶ** (`base` と添字の並びの末尾が、写す先の始まり)。
+    private func notePlacedParts(
+        _ parts: [SolidPart], vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?,
+        base: Int, tinted: Bool
+    ) {
+        guard !parts.isEmpty, let open = openSolid else { return }
+        let columnIndexed = open.indexStart != nil
+        let indexBase = solidIndices.count
+        // 列の部品へその場で足す (写してから戻すと、焼く置き場所の数の 2 乗で効く)
+        for part in parts {
+            var moved = part
+            if let indices {
+                guard part.isIndexed, indices.indices.contains(part.range.lowerBound),
+                    part.range.upperBound <= indices.endIndex
+                else { continue }
+                moved = part.shifted(by: indexBase - indices.startIndex)
+            } else {
+                guard !part.isIndexed, vertices.indices.contains(part.range.lowerBound),
+                    part.range.upperBound <= vertices.endIndex
+                else { continue }
+                moved = part.shifted(by: (columnIndexed ? indexBase : base) - vertices.startIndex)
+                moved.isIndexed = columnIndexed
+            }
+            if tinted { moved.showsBackFaces = true }
+            openSolid?.parts.append(moved)
         }
     }
 

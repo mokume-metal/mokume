@@ -40,6 +40,12 @@ public struct Model: Equatable, Sendable {
 
     /// 置ける形。
     let mesh: SolidMesh
+    /// 三角形の巻き方の向き (``SolidWinding``)。**読み込んだときに 1 度だけ求める。**
+    ///
+    /// 裏面が絵に出うるスタイルで置いたとき、裏 → 表の順で描けるかを決める
+    /// ([#1549](https://github.com/mokume-metal/mokume/issues/1549))。モデルは巻き方が逆の
+    /// ことがあり、閉じていないこともある。求まらなければ裏 → 表で描かない。
+    let winding: SolidWinding
     /// 面の向きを**形から求めた**か。求めた向きは両面として扱う。
     let hasDerivedNormals: Bool
     /// 同じモデルを続けて置いたときにまとめるための番号。**プロセスの中で読み込みごとに違う**
@@ -58,6 +64,10 @@ public struct Model: Equatable, Sendable {
     ) {
         self.name = name
         self.mesh = mesh
+        var positions: [SIMD3<Float>] = []
+        positions.reserveCapacity(mesh.points.count)
+        for point in mesh.points { positions.append(point.position) }
+        self.winding = SolidWinding.of(positions)
         self.hasDerivedNormals = hasDerivedNormals
         self.skippedLines = skippedLines
         self.size = size

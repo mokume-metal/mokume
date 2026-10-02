@@ -376,6 +376,159 @@ struct SolidBackFaceOrderTests {
         #expect(abs(pixel.blue - pixel.red) <= 0.01, "奥の青い箱が出た: \(pixel)")
     }
 
+    // MARK: - 線を付けたまま記録した保持した形 (反証 1)
+
+    /// 線は既定で付くので、`noStroke()` を書かずに記録した形が最も普通の書き方である。稜線を
+    /// 持つ形 (筒の縁) では記録した区間に立体の線の部品が入り、置くときは置き場所ごとに頂点へ
+    /// 焼く経路を通る (加算では CPU の帯、重ねる混ぜ方では GPU の線で区間を割る経路)。球は稜線を
+    /// 持たないので、この経路を踏まない。
+    @Test("線を付けたまま記録した保持した筒も、塗りの奥の面がどちらの向きでも透ける", arguments: [false, true])
+    func strokedRetainedCylinderShowsItsBack(additive: Bool) throws {
+        let pair = try orientationPair { canvas, turned in
+            let ball = canvas.createShape {
+                // 検査の下地は `noStroke()` で描くので、既定の線 (黒・太さ 1) を付け直す
+                canvas.stroke(0)
+                if additive {
+                    canvas.blendMode(.add)
+                    canvas.fill(128)
+                } else {
+                    canvas.fill(255, 255, 255, 128)
+                }
+                canvas.cylinder(30, 60)
+            }
+            #expect(!ball.solidStrokes.isEmpty, "筒の縁の線が記録されていない")
+            canvas.push()
+            canvas.translate(80, 80, 0)
+            canvas.rotateX(0.5)
+            if turned { canvas.rotateY(Float.pi) }
+            canvas.shape(ball)
+            canvas.pop()
+        }
+        // 筒の側面には縦の線が何本も通るので、画素を 1 つずつ期待値と比べられない。線の外の
+        // 塗りの画素が「奥の面が抜けた 1 層ぶん」の値を取らないこと (と、2 層ぶんの画素が十分
+        // あること) を見る
+        let (single, double): (Float, Float) = additive ? (0.216, 0.432) : (0.502, Self.twoLayers)
+        for picture in [pair.plain, pair.turned] {
+            let points = disc(radius: 20)
+            let missing = points.filter { abs(picture[$0.x, $0.y].red - single) <= 0.01 }
+            let shown = points.filter { abs(picture[$0.x, $0.y].red - double) <= 0.01 }
+            #expect(missing.isEmpty, "奥の面が抜けた画素が \(missing.count) ある")
+            #expect(shown.count > points.count / 2, "2 層ぶんの画素が \(shown.count) / \(points.count)")
+        }
+    }
+
+    // MARK: - 1 つの形に記録した複数の部品 (反証 4)
+
+    @Test("1 つの形に奥から記録した 2 つの半透明の球は、記録した順のまま正しく重なる", arguments: [false, true])
+    func partsRecordedBackToFrontKeepTheirOrder(turned: Bool) throws {
+        // 全部の部品の裏面 → 全部の部品の表面の順に描くと、手前の球の裏面が奥の球の表面より先に
+        // 奥行きを書き、奥の球の表面が捨てられる。式の値は 2 つの球を別々に置いたときと同じ
+        let picture = try render { canvas in
+            let pair = canvas.createShape {
+                canvas.noStroke()
+                for (red, blue, z) in [(0, 255, Float(-60)), (255, 0, Float(60))] {
+                    canvas.fill(red, 0, blue, 128)
+                    canvas.push()
+                    canvas.translate(0, 0, z)
+                    if turned { canvas.rotateY(Float.pi) }
+                    canvas.sphere(40)
+                    canvas.pop()
+                }
+            }
+            canvas.shape(pair, 80, 80)
+        }
+        var wrong: [String] = []
+        for point in disc(radius: 24) {
+            let pixel = picture[point.x, point.y]
+            if abs(pixel.red - 0.618) > 0.01 || abs(pixel.blue - 0.182) > 0.01 {
+                wrong.append("(\(point.x), \(point.y)) \(pixel)")
+            }
+        }
+        #expect(wrong.isEmpty, "\(wrong.count) 画素が違う。最初: \(wrong.first ?? "")")
+    }
+
+    // MARK: - 巻き方 (反証 5)
+
+    /// 一辺 60 の立方体の OBJ。`inward` なら面の巻き方を裏返す。
+    private static func cube(inward: Bool) -> String {
+        let corners = [
+            "-30 -30 -30", "30 -30 -30", "30 30 -30", "-30 30 -30",
+            "-30 -30 30", "30 -30 30", "30 30 30", "-30 30 30",
+        ]
+        let faces = [
+            [1, 4, 3, 2], [5, 6, 7, 8], [1, 5, 8, 4], [2, 3, 7, 6], [1, 2, 6, 5], [4, 8, 7, 3],
+        ]
+        var lines = corners.map { "v \($0)" }
+        for face in faces {
+            let ordered = inward ? Array(face.reversed()) : face
+            lines.append("f " + ordered.map(String.init).joined(separator: " "))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    @Test("巻き方が逆の閉じたモデルも、半透明なら向きによらず奥の面が透ける", arguments: [false, true])
+    func modelsOfEitherWindingShowTheirBack(inward: Bool) throws {
+        let model = Model.make(
+            name: "cube", parsed: ModelFile.parse(Self.cube(inward: inward)), fitting: nil)
+        // 片方は外向き、もう片方は内向き (どちらがどちらかは座標の約束で決まる)
+        #expect(model.winding != .unknown)
+        let pair = try orientationPair { canvas, turned in
+            canvas.fill(255, 255, 255, 128)
+            canvas.push()
+            canvas.translate(80, 80, 0)
+            canvas.rotateX(0.4)
+            canvas.rotateZ(0.3)
+            if turned { canvas.rotateY(Float.pi) }
+            canvas.model(model)
+            canvas.pop()
+        }
+        #expect(differingPixels(pair.plain, pair.turned) == 0)
+        for picture in [pair.plain, pair.turned] {
+            #expect(abs(picture[80, 80].red - Self.twoLayers) <= 0.01, "(80, 80) \(picture[80, 80])")
+        }
+    }
+
+    @Test("向きの求まらない (閉じていない) モデルは、裏 → 表に分けず 1 回で描く")
+    func openModelsDrawOnce() throws {
+        let model = Model.make(
+            name: "sheet",
+            parsed: ModelFile.parse("v -30 -30 0\nv 30 -30 0\nv 30 30 0\nv -30 30 0\nf 1 2 3 4"),
+            fitting: nil)
+        #expect(model.winding == .unknown)
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(255, 255, 255, 128)
+            canvas.translate(80, 80, 0)
+            canvas.model(model)
+        }
+        #expect(canvas.drawsEncodedInLastFrame == 1)
+    }
+
+    // MARK: - 描き場所をまたぐ保持した形 (反証 7)
+
+    @Test("本体で記録した絵なしの形を描き場所に置いても、1 回で描く")
+    func aShapeRecordedElsewhereIsNotTakenForAPicture() throws {
+        // 読み取り位置を書いた塗りは、絵が無ければ面ごとの 1×1 の白い絵を読む。描き場所から
+        // 見ると本体の白い絵は「貼った絵」に見えるが、記録したときに絵は貼っていない
+        let canvas = try makeCanvas()
+        let sheet = canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.beginShape(.triangles)
+            canvas.vertex(-20, -20, 0, 0, 0)
+            canvas.vertex(20, -20, 0, 1, 0)
+            canvas.vertex(20, 20, 0, 1, 1)
+            canvas.endShape()
+        }
+        let graphics = try canvas.createGraphics(Self.size, Self.size)
+        try graphics.draw {
+            graphics.noStroke()
+            graphics.shape(sheet, 80, 80)
+        }
+        #expect(graphics.drawsEncodedInLastFrame == 1)
+    }
+
     // MARK: - 描く回数
 
     @Test("裏面が絵に出うる置き場所を持たない列は、1 回で描く")
