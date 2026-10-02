@@ -67,6 +67,72 @@ struct EffectArgumentTests {
         }
     }
 
+    // MARK: - 画素の表明 (#1812)
+
+    // **画素の表明はこの 3 つだけを通す。** どれも、落ちたらその土台で記録された GPU の
+    // 打ち切りを文面で名乗る (`RenderDevice.faultNote()`)。直に `#expect` を書くと名乗らない —
+    // 専用機の merge queue で 1 度だけ落ちた赤 (#1812) は、同じ時に GPU が仕事を打ち切って
+    // いたのに「27328 成分違う」としか名乗らず、console の知らせから辿り直すことになった。
+    // 名乗るのは文面だけで、表明を落とす条件にはしない
+
+    /// 2 枚がバイトで同じ。
+    private static func expectSame(
+        _ got: PixelBuffer, _ expected: PixelBuffer, on canvas: Canvas, _ comment: String = "",
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        #expect(
+            differing(got, expected) == 0, "\(comment)\(canvas.gpu.faultNote())",
+            sourceLocation: sourceLocation)
+    }
+
+    /// NaN・無限の画素が無い。
+    private static func expectWhole(
+        _ buffer: PixelBuffer, on canvas: Canvas, _ comment: String = "",
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        #expect(broken(buffer) == 0, "\(comment)\(canvas.gpu.faultNote())", sourceLocation: sourceLocation)
+    }
+
+    /// 負の成分を持つ画素が無い。
+    private static func expectNoNegative(
+        _ buffer: PixelBuffer, on canvas: Canvas, _ comment: String = "",
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        #expect(negative(buffer) == 0, "\(comment)\(canvas.gpu.faultNote())", sourceLocation: sourceLocation)
+    }
+
+    /// **3 つの口のどれもが、落ちたときに打ち切りを名乗る。** 打ち切りは GPU を止めずに
+    /// 記録だけ作る (#1065 の完了条件 4)。絵も GPU で描かずに組む — 落とすための絵なので、
+    /// 描いて食い違わせる必要が無い。
+    ///
+    /// 落ちた表明は既知の失敗として受け、**文面に理由と回数が載っているものだけ**を既知と
+    /// 認める。載っていなければ表明はそのまま赤として残る。口ごとに分けて受けるので、どれかの
+    /// 口が落ちなくなっても (既知の失敗が 1 つも記録されない) 赤になる。
+    @Test("打ち切りが記録された土台で画素の表明が落ちると、文面に回数と理由が載る")
+    func aFailedPixelAssertionNamesTheRecordedFault() throws {
+        let canvas = try makeCanvas()
+        let reason = "Discarded (victim of GPU error/recovery) (00000005:kIOGPUCommandBufferCallbackErrorInnocentVictim)"
+        canvas.gpu.recordCommandFaultForTesting(reason)
+
+        let grey = PixelBuffer(width: 1, height: 1, components: [0.5, 0.5, 0.5, 1])
+        let white = PixelBuffer(width: 1, height: 1, components: [1, 1, 1, 1])
+        let ruined = PixelBuffer(width: 1, height: 1, components: [.nan, -1, 0, 1])
+        let namesTheFault: @Sendable (Issue) -> Bool = { issue in
+            let text = issue.comments.map(\.rawValue).joined()
+            return text.contains(reason) && text.contains("1 回打ち切っている")
+        }
+
+        withKnownIssue("食い違いの口") {
+            Self.expectSame(grey, white, on: canvas)
+        } matching: { namesTheFault($0) }
+        withKnownIssue("壊れた画素の口") {
+            Self.expectWhole(ruined, on: canvas)
+        } matching: { namesTheFault($0) }
+        withKnownIssue("負の成分の口") {
+            Self.expectNoNegative(ruined, on: canvas)
+        } matching: { namesTheFault($0) }
+    }
+
     // MARK: - 数でない値・無限 (完了条件 1・2)
 
     /// 組み込みの効果の引数 1 つ。**11 個全部を並べる** — 範囲を決めていない引数
@@ -115,8 +181,8 @@ struct EffectArgumentTests {
         let without = try picture([], on: canvas)
         for value in Self.nonFinite {
             let got = try picture([argument.effect(value)], on: canvas)
-            #expect(Self.broken(got) == 0, "\(value)")
-            #expect(Self.differing(got, without) == 0, "\(value)")
+            Self.expectWhole(got, on: canvas, "\(value)")
+            Self.expectSame(got, without, on: canvas, "\(value)")
         }
     }
 
@@ -125,8 +191,8 @@ struct EffectArgumentTests {
         let canvas = try makeCanvas()
         let expected = try picture([.monochrome()], on: canvas)
         let got = try picture([.invert(amount: .nan), .monochrome()], on: canvas)
-        #expect(Self.broken(got) == 0)
-        #expect(Self.differing(got, expected) == 0)
+        Self.expectWhole(got, on: canvas)
+        Self.expectSame(got, expected, on: canvas)
     }
 
     // MARK: - 警告 (完了条件 3)
@@ -180,8 +246,8 @@ struct EffectArgumentTests {
         let canvas = try makeCanvas()
         let full = try picture([argument.effect(1)], on: canvas)
         let over = try picture([argument.effect(amount)], on: canvas)
-        #expect(Self.negative(over) == 0)
-        #expect(Self.differing(over, full) == 0)
+        Self.expectNoNegative(over, on: canvas)
+        Self.expectSame(over, full, on: canvas)
     }
 
     @Test(
@@ -194,7 +260,7 @@ struct EffectArgumentTests {
         let canvas = try makeCanvas()
         let without = try picture([], on: canvas)
         let got = try picture([argument.effect(-1)], on: canvas)
-        #expect(Self.differing(got, without) == 0)
+        Self.expectSame(got, without, on: canvas)
     }
 
     // MARK: - 有限でも大きすぎる半径 (完了条件 5)
@@ -209,7 +275,7 @@ struct EffectArgumentTests {
     func survivesAHugeFiniteRadius(effect: Effect) throws {
         let canvas = try makeCanvas()
         let got = try picture([effect], on: canvas)
-        #expect(Self.broken(got) == 0)
+        Self.expectWhole(got, on: canvas)
     }
 
     /// 締めるのは上限を越えた半径だけで、それより下の半径はそのまま段へ渡る。半径 64 以下
@@ -246,6 +312,6 @@ struct EffectArgumentTests {
             canvas.background(128)
             canvas.image(layer, 40, 40)
         }
-        #expect(Self.broken(try canvas.output.readPixels()) == 0)
+        Self.expectWhole(try canvas.output.readPixels(), on: canvas)
     }
 }

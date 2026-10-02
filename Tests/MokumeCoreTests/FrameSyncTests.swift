@@ -84,33 +84,6 @@ struct FrameSyncTests {
         return Bench(gpu: gpu, canvas: canvas, scratch: scratch, spin: spin)
     }
 
-    /// 絵や結果が期待と違ったときに添える説明。**打ち切りが起きていれば、それを名乗る。**
-    ///
-    /// GPU が仕事を打ち切ると、その絵は 1 画素も書かれないのに合図は投入の順に進むので、
-    /// **待ちは成立したまま空の絵が読める** ([#1065])。これが無いと、症状は「絵が黒い」
-    /// 「結果が 0 のまま」としてしか残らず、原因を機械の込み具合まで辿り直すことになる —
-    /// [#1063] の 1 回がまさにそれで、落ちた表明は最後の画素 1 つだった。
-    ///
-    /// **表明を落とす条件にはしない。** 打ち切られたのが絵を作った投入とは限らず、
-    /// 差し出しも読み戻しも同じ土台を通る。条件にすると**絵が無事な回まで赤くなる**
-    /// (実測: 複数フレームを回す 2 本が、絵の食い違いなしにこれだけで落ちた)。
-    ///
-    /// [#1063]: https://github.com/mokume-metal/mokume/issues/1063
-    /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
-    private func faultNote(_ gpu: RenderDevice) -> String {
-        // **少し待ってから読む。** 結末は Metal 側の糸から届くので、絵を読み終えた時点
-        // ではまだ来ていないことがある (実測: 絵が空で落ちた 4 回とも、その時点では 0 だった)。
-        // ここを通るのは**表明が既に落ちた後**だけなので、待っても普段の実行時間には出ない
-        if gpu.commandFaultCount == 0 { Thread.sleep(forTimeInterval: 0.1) }
-        guard gpu.commandFaultCount > 0 else { return "" }
-        return """
-
-            (この間に GPU は仕事を \(gpu.commandFaultCount) 回打ち切っている: \
-            \(gpu.lastCommandFault ?? "理由は届いていない")。
-            打ち切られた絵は 1 画素も書かれていないので、食い違いはそのせいかもしれない)
-            """
-    }
-
     private let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
     private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
     private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
@@ -136,8 +109,8 @@ struct FrameSyncTests {
         // 載っている」ことを言う。`red`/`green` だけでは、塗り直しの効いた黒と
         // 1 画素も書かれていない面 (`a == 0`) を分けられない — #1063 の起票は
         // そこを取り違えて「背景は載っているので後続の描画だけが落ちた」と読んでいた
-        #expect(pixels[16, 16].alpha == 1, "面に 1 画素も書かれていない\(faultNote(bench.gpu))")
-        #expect(pixels[16, 16].red == 1, "赤が載っていない\(faultNote(bench.gpu))")
+        #expect(pixels[16, 16].alpha == 1, "面に 1 画素も書かれていない\(bench.gpu.faultNote())")
+        #expect(pixels[16, 16].red == 1, "赤が載っていない\(bench.gpu.faultNote())")
         #expect(pixels[16, 16].green == 0)
     }
 
@@ -173,7 +146,7 @@ struct FrameSyncTests {
         // 「終わってから読んだ」ことになる
         let values = bench.canvas.read(bench.scratch)
         #expect(bench.gpu.isIdle)
-        #expect(values[0] != 0, "計算が終わる前の値を読んでいる\(faultNote(bench.gpu))")
+        #expect(values[0] != 0, "計算が終わる前の値を読んでいる\(bench.gpu.faultNote())")
     }
 
     @Test("画像を面へ送る口は待たず、描き切りが届ける")
@@ -253,7 +226,7 @@ struct FrameSyncTests {
 
         #expect(
             actual.bytes == expected.bytes,
-            "絵が食い違う\(faultNote(bench.gpu))\(faultNote(fresh.gpu))")
+            "絵が食い違う\(bench.gpu.faultNote())\(fresh.gpu.faultNote())")
     }
 
     // MARK: - フレームごとに書く置き場の環 (#754)
@@ -365,7 +338,7 @@ struct FrameSyncTests {
                 check: {
                     #expect(
                         canvas.read(copied) == Self.written(at: lastFrame),
-                        "計算が、そのフレームで書いた値を読んでいない\(self.faultNote(bench.gpu))")
+                        "計算が、そのフレームで書いた値を読んでいない\(bench.gpu.faultNote())")
                 })
         case .particles:
             let dust = try canvas.makeParticles(count: 256)
@@ -388,7 +361,7 @@ struct FrameSyncTests {
                     #expect(state.contains { $0 != 0 }, "粒が 1 つも置かれていない")
                     #expect(
                         state == reference.canvas.read(referenceDust.state),
-                        "GPU を回したまま進めた粒が、空けて進めた粒と食い違う\(self.faultNote(bench.gpu))")
+                        "GPU を回したまま進めた粒が、空けて進めた粒と食い違う\(bench.gpu.faultNote())")
                 })
         case .image:
             let image = try canvas.createImage(2, 2)
@@ -402,10 +375,10 @@ struct FrameSyncTests {
                 check: {
                     let pixel = try canvas.target.readPixels()[16, 16]
                     let expected: Float = lastFrame.isMultiple(of: 2) ? 0 : 1
-                    #expect(pixel.red == 1, "置いた画像が面に載っていない\(self.faultNote(bench.gpu))")
+                    #expect(pixel.red == 1, "置いた画像が面に載っていない\(bench.gpu.faultNote())")
                     #expect(
                         pixel.green == expected,
-                        "面に載ったのが、そのフレームで書いた画素ではない\(self.faultNote(bench.gpu))")
+                        "面に載ったのが、そのフレームで書いた画素ではない\(bench.gpu.faultNote())")
                 })
         }
     }
@@ -602,7 +575,7 @@ struct FrameSyncTests {
                 """
                 \(band) 本目の帯が壊れている (期待 \(expected)、実際 \(actual))。
                 そのフレームの置き場を、次のフレームの CPU が読まれている間に書き換えている\
-                \(faultNote(gpu))
+                \(gpu.faultNote())
                 """)
         }
     }
@@ -813,7 +786,7 @@ struct FrameSyncTests {
             // なので、1 枚ずれれば必ず食い違う)
             #expect(
                 received.level == BusyOutletSketch.brightness(atFrame: received.frame),
-                "\(received.frame) 枚目の絵が組み上がる前に配られている\(faultNote(gpu))")
+                "\(received.frame) 枚目の絵が組み上がる前に配られている\(gpu.faultNote())")
         }
     }
 
@@ -896,7 +869,7 @@ struct FrameSyncTests {
             // **名指しで待たずに名乗れば、ここに同じ面の 1 周前の色が出る**
             #expect(
                 pixel.red == sharedLevel(atFrame: newest.frame),
-                "\(newest.frame) 枚目を名乗る面に、別のフレームの絵が載っている\(faultNote(bench.gpu))")
+                "\(newest.frame) 枚目を名乗る面に、別のフレームの絵が載っている\(bench.gpu.faultNote())")
             checked += 1
         }
         #expect(checked >= SharedFrameSurface.slotCount + 2, "読み手が掴めた回数が少ない")
