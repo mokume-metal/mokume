@@ -146,15 +146,21 @@ public struct Camera: Equatable, Sendable {
         }
     }
 
-    /// 周囲を出す面の 4 隅 (世界の座標・左上から時計回り)。
+    /// 面を置き換える板 (`background()` の置き換える列) の 4 隅 (世界の座標・左上から時計回り)。
     ///
-    /// **いちばん奥に置く。** 手前に置くと、あとから置いた立体が背景に隠れる。
-    /// 奥行きの端そのものではなく少し手前にするのは、端では丸めで外へ落ちうるため。
+    /// **手前と奥の面のちょうど真ん中に置く** ([#1685])。板の奥行きは絵に効かない — 置き換える
+    /// 列は見る窓の奥行きの幅を 1…1 に絞って描くので、どこに置いても書く奥行きはいちばん奥 (1)
+    /// になる。効くのは**手前と奥の面の間に入っていること**だけで、外へ出ると板が GPU の切り取りで
+    /// 消え、何も置き換えない。真ん中なら、受け口が通すどの投影 (透視の `far > near`、平行の
+    /// `near != far`。平行は `far` が負でも、`near > far` でもよい) でも間に入る。以前は奥の面の
+    /// 98% に置いていたので、手前と奥が近い透視や `far` が負の平行で板が消えていた。
     ///
     /// 大きさは**この視点が写す範囲**から求めるので、視野や投影を変えても隙間が
     /// できない。透視では奥ほど広がり、平行では一定になる。
-    func backdropCorners() -> [SIMD3<Float>] {
-        let distance = far * 0.98
+    ///
+    /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+    func replacementCorners() -> [SIMD3<Float>] {
+        let distance = (near + far) / 2
         let center: SIMD3<Float>
         let halfWidth: Float
         let halfHeight: Float
@@ -178,6 +184,14 @@ public struct Camera: Equatable, Sendable {
             center - across - downward, center + across - downward,
             center + across + downward, center - across + downward,
         ]
+    }
+
+    /// いちばん手前の距離。
+    var near: Float {
+        switch projection {
+        case let .perspective(_, _, near, _): near
+        case let .orthographic(_, _, _, _, near, _): near
+        }
     }
 
     /// いちばん奥の距離。

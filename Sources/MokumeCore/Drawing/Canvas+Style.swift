@@ -378,10 +378,9 @@ extension Canvas {
 
     /// いま効いている周囲を、この列の形へ詰める。
     ///
-    /// **周囲そのものを出す列が優先する。** その列は光も材質も見ないので、置いてある
-    /// 周囲ではなく背景に出す周囲を持ち歩く。
+    /// 周囲そのものを出す列 (`background(.sky)`) はここを通らない — 呼んだ時点のスタイルを
+    /// 読まずに、置き換える列が自分で詰める (``Canvas/replaceSurface(with:)``・#1685)。
     private func bakeSurroundings() -> PackedSurroundings {
-        if let backdrop { return backdrop.packed(isBackdrop: true) }
         guard openSource == .solid, let activeSurroundings else { return .none }
         return activeSurroundings.packed()
     }

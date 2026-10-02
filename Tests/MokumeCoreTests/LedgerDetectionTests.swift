@@ -84,7 +84,7 @@ struct LedgerDetectionTests {
             if let base = entry.baseOS, !Ledger.comparable(base: base, host: Ledger.hostOS) {
                 continue
             }
-            let killed = try SceneLedgerTests.fingerprint(of: take, without: stage)
+            let killed = try SceneLedgerTests.fingerprint(of: take, without: stage).digest
             #expect(
                 killed != entry.digest,
                 """
