@@ -171,6 +171,15 @@ final class ShapePipeline {
     /// 立体の奥行きの扱い — **手前だけを通し、書く**。
     let solidDepthState: (any MTLDepthStencilState)?
 
+    /// 面を置き換える列の奥行きの扱い — **常に通し、書く** (`Canvas.Batch.replacesSurface`・[#1685])。
+    ///
+    /// 置き換えは、先に描いた立体の奥行きに左右されない。比べると、途中の描き切りで載った
+    /// 立体の画素で板が落ちる ([#1657])。
+    ///
+    /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
+    /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+    let replaceDepthState: (any MTLDepthStencilState)?
+
     let argumentTable: any MTL4ArgumentTable
 
     private let vertexLibrary: any MTLLibrary
@@ -231,6 +240,12 @@ final class ShapePipeline {
         solid.depthCompareFunction = .lessEqual
         solid.isDepthWriteEnabled = true
         self.solidDepthState = gpu.device.makeDepthStencilState(descriptor: solid)
+
+        let replacing = MTLDepthStencilDescriptor()
+        replacing.label = "mokume.depth.replace"
+        replacing.depthCompareFunction = .always
+        replacing.isDepthWriteEnabled = true
+        self.replaceDepthState = gpu.device.makeDepthStencilState(descriptor: replacing)
 
         let tableDescriptor = MTL4ArgumentTableDescriptor()
         tableDescriptor.label = "mokume.shapes.arguments"

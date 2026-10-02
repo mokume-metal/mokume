@@ -532,11 +532,6 @@ public final class Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var activeSurroundings: Surroundings?
-    /// いま組み立てている列が**周囲そのものを出す**なら、その周囲。
-    ///
-    /// 背景の面だけが立てる旗で、置いてある周囲とは別に持つ — 背景に出す周囲と
-    /// 映り込む周囲は、別々に選べる (片方だけ呼んでもよい)。
-    var backdrop: Surroundings?
     /// 列ごとの周囲の置き場。列 1 つにつき 1 区画。
     private let surroundingsStorage: GrowableBuffer
 
@@ -927,31 +922,14 @@ public final class Canvas {
     /// **フレームの頭では触らない** — 区間で描き切った奥行きを、次のフレームの最初のパスが受け取る。
     /// 下ろすのはフレームの終わりと、閉じ忘れたフレームを捨てるとき (``abandonFrame()``)。フレームの
     /// 終わりは描き切りが投げても引き継ぎを切る — 次のフレームの奥行きは、成功したフレームの後と
-    /// 同じくフレームごとに作り直す。もう 1 つ、引き継いだ奥行きを周囲の背景が手放す
-    /// (``dropInheritedDepth()``)。
+    /// 同じくフレームごとに作り直す。
     ///
-    /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
-    private var depthIsHeld = false
-
-    /// **周囲の背景 (`background(.sky)`) が置かれる前に、引き継いだ奥行きだけを手放す** ([#1888])。
-    ///
-    /// 周囲の背景は塗り 1 色の背景と違い、色を塗り直さず、いちばん奥の板を奥行きの比較つきで置く。
-    /// 前のフレームや区間から引き継いだ奥行きが残っていると、板は区間で描き切らせた立体の画素で
-    /// 落ち、その立体だけが背景の手前に残る — 描き切らせずに持ち越した立体は、背景を置くときに
-    /// 溜めたものと一緒に捨てられるので、描き切らせたかどうかで絵が変わる。手放せば、直す前の
-    /// 見え方 (板が立体を覆う) に戻り、持ち越した側と一致する。色は消さない。
-    ///
-    /// **手放すのは引き継いだ奥行きだけ**である。区間 (フレームの外) と、このフレームがまだ何も
-    /// 描き切っていない間は、持っている奥行きはどれも前から来たものになる。フレームの中で描き切った
-    /// 後は、自分が描いた立体の奥行きなので触らない — そこで背景の板が立体を消さず後ろへ回るのは、
-    /// 直す前からの挙動で、別の根 ([#1685]・[#1657]) が扱う。
+    /// 周囲の背景 (`background(.sky)`) は引き継いだ奥行きを手放さない。置き換える列は奥行きを
+    /// 比べずに書く (``Batch/replacesSurface``・[#1685]) ので、引き継いだ奥行きに板が落ちない。
     ///
     /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
-    /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
-    func dropInheritedDepth() {
-        guard depthIsHeld, !isDrawing || passesThisFrame == 0 else { return }
-        depthIsHeld = false
-    }
+    /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
+    private var depthIsHeld = false
 
     /// 描き切りの印。**溜めた計算と列を投入するか捨てると、必ず変わる** ([#1651])。
     ///
@@ -1336,6 +1314,15 @@ public final class Canvas {
         /// 読み込んだモデルの塗りの頂点の置き場 (``OpenSolid/fillGeometry``)。線の骨と同じく、
         /// 投入完了まで HeldFrame が列ごと保持する。
         var fillGeometry: SolidFillGeometry?
+        /// 面を置き換える列か (``Canvas/replaceSurface(with:)``・[#1685])。
+        ///
+        /// 立てた列は**奥行きを比べずに書き** (``ShapePipeline/replaceDepthState``)、書く値は
+        /// いちばん奥 (1) にする (見る窓の奥行きの幅を 1…1 に絞って描く)。比べると、先に描いた
+        /// 立体 (途中の描き切りで載ったものを含む) の画素で板が落ちる ([#1657])。
+        ///
+        /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
+        /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+        var replacesSurface = false
 
         /// 頂点を溜め場ではなく自分の置き場から読むなら、その置き場。
         var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
@@ -1921,8 +1908,105 @@ public final class Canvas {
         guard !recordingShape else { return warnInsideShape(.background) }
         // 数でない成分・無限の成分は、溜めたものを捨てる前に断る (#1706)
         guard let color else { return warnNotANumberColor(.background) }
-        discardPending()
-        pendingBackground = color
+        replaceSurface(with: .color(color))
+    }
+
+    /// 面を置き換える中身。**`background()` の口ごとに 1 つ** ([#1685])。
+    ///
+    /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+    enum SurfaceContent {
+        /// 1 色 (`background(色)`)。
+        case color(LinearRGBA)
+        /// 視点から見た周囲 (`background(.sky)`)。
+        case surroundings(Surroundings)
+    }
+
+    /// **面を置き換える関所** ([#1685])。`background()` の口はどれも、入口の断り (区間の外・形の
+    /// 組み立て・受け取れない値) を済ませてからここへ来る。
+    ///
+    /// 置き換えの規則は口によらず 1 つで、違うのは置く中身だけである:
+    /// - **呼んだ時点の図形のスタイルを読まない。** 混ぜ方・断片・貼る絵・影を落とすか・光と材質の
+    ///   どれも、置き換えには効かない ([#1658])
+    /// - **同じフレームの途中の描き切りに左右されない。** 描き切った絵と奥行きも置き換える ([#1657])
+    /// - **切り抜きがあれば、その中だけを置き換える** (案 A・[#1648])。中は色も奥行きも置き換わり、
+    ///   外に先に置いたものは残る
+    ///
+    /// 道は 2 つあり、どちらも同じ絵になる:
+    /// - **切り抜きが無く、中身が 1 色**なら、溜めたものを捨てて塗り直しを予定する。次の描き切りの
+    ///   load 動作が色と奥行きを消す (``RenderTarget/makeRenderPass(clearColor:continuingDepth:keepingDepth:)``)
+    ///   — 板を描くより安い
+    /// - それ以外は、**置き換える列** (``appendSurfaceReplacement(_:)``) を 1 本積む。load 動作は
+    ///   切り抜きを表せず、周囲は 1 色ではないので、列として描くしかない。切り抜きが無ければ、
+    ///   列が面全体を覆うので溜めたものは先に捨てる (下に隠れるものを描く手間を払わない)
+    ///
+    /// [#1648]: https://github.com/mokume-metal/mokume/issues/1648
+    /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
+    /// [#1658]: https://github.com/mokume-metal/mokume/issues/1658
+    /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+    func replaceSurface(with content: SurfaceContent) {
+        if style.clip == nil {
+            discardPending()
+            if case .color(let color) = content {
+                pendingBackground = color
+                return
+            }
+        }
+        appendSurfaceReplacement(content)
+    }
+
+    /// 置き換える列を 1 本積む ([#1685])。**視点が写す範囲いっぱいの板**で、
+    ///
+    /// - 混ぜ方は `.replace`、断片は組み込み、面は焼き場の白い区画、光と材質は持たず、影は
+    ///   落とさない。**どれも呼んだ時点のスタイルから読まない** — 図形の列を閉じる経路
+    ///   (`closeSolidBatch`) を通すと、スタイルを全部拾う
+    /// - 奥行きは**比べずに、いちばん奥 (1) を書く** (``Batch/replacesSurface``)。load 動作が消す
+    ///   値と同じなので、後から置く立体は塗り直した面と同じく手前に出る
+    /// - 切り抜きは呼んだ時点のものを持つ
+    ///
+    /// 周囲は、板の断片が見ている向きへ周囲を読んで出す (``Surroundings/packed(isBackdrop:)``)。
+    ///
+    /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
+    private func appendSurfaceReplacement(_ content: SurfaceContent) {
+        closeBatch()
+        let color: LinearRGBA
+        let surroundings: PackedSurroundings
+        switch content {
+        case .color(let value):
+            color = value
+            surroundings = .none
+        case .surroundings(let value):
+            // 色は断片が周囲から読み直すので、掛けても変わらない白にしておく
+            color = .linear(red: 1, green: 1, blue: 1)
+            surroundings = value.packed(isBackdrop: true)
+        }
+        let corners = currentCamera.backdropCorners()
+        let vertexStart = solidVertices.count
+        // 面の向きは持たせない。光を受けず、色 (または周囲) をそのまま出す
+        for index in [0, 1, 2, 0, 2, 3] {
+            solidVertices.append(
+                SolidVertex(
+                    position: corners[index], shapePosition: nil, normal: .zero, shapeNormal: nil,
+                    isDerived: false, uv: whiteUV, color: color))
+        }
+        let instanceStart = solidInstances.count
+        solidInstances.append(.identity)
+        batches.append(
+            Batch(
+                run: Shape.Run(
+                    mode: .replace, texture: atlas.held, paint: .builtIn, source: .solid,
+                    start: vertexStart, count: 6, indexStart: 0, indexCount: 0),
+                clip: style.clip,
+                matrix: jittered(viewProjection),
+                lightRange: 0..<0,
+                material: .default,
+                viewer: viewer,
+                view: viewMatrix,
+                surroundings: surroundings,
+                castsShadow: false,
+                instanceStart: instanceStart,
+                instanceCount: 1,
+                solidSource: .freeform,
+                replacesSurface: true))
     }
 
     /// 溜めているものを捨てる。
@@ -3060,14 +3144,26 @@ public final class Canvas {
         // **見る窓は実際に刻む画素で測る。** 落とす行列は出す細かさで書かれた
         // 座標を -1…1 へ正規化するので、窓を狭めればそのまま細かく刻まれる。
         //
-        encoder.setViewport(
+        //
+        // **面を置き換える列だけは、奥行きの幅を 1…1 に絞る** (``Batch/replacesSurface``)。板は
+        // 視点の奥の面の手前に置いてあるが、書く奥行きは塗り直しの load 動作が消す値 (1) と
+        // そろえる — そろえないと、板より奥・奥の面より手前に置いた立体が、周囲の背景の後ろにだけ
+        // 隠れる
+        func viewport(pinnedFar: Bool) -> MTLViewport {
             MTLViewport(
                 originX: 0, originY: 0,
                 width: Double(pixelWidth), height: Double(pixelHeight),
-                znear: 0, zfar: 1))
+                znear: pinnedFar ? 1 : 0, zfar: 1)
+        }
+        encoder.setViewport(viewport(pinnedFar: false))
+        var pinnedFar = false
 
         for (index, batch) in batches.enumerated() {
             let run = batch.run
+            if batch.replacesSurface != pinnedFar {
+                pinnedFar = batch.replacesSurface
+                encoder.setViewport(viewport(pinnedFar: pinnedFar))
+            }
             // 並びごとに、頂点の落とし方と奥行きの扱いを切り替える。**平面は奥行きを
             // 書かない**ので、あとから来た立体の前後関係を汚さない (ADR-0021 決定 2)
             switch batch.source {
@@ -3099,7 +3195,8 @@ public final class Canvas {
                     (batch.strokeGeometry != nil
                         ? pipeline.solidStrokeStates : (run.paint.shader?.solidStates ?? pipeline.solidStates))
                         .state(for: run.mode))
-                encoder.setDepthStencilState(pipeline.solidDepthState)
+                encoder.setDepthStencilState(
+                    batch.replacesSurface ? pipeline.replaceDepthState : pipeline.solidDepthState)
                 pipeline.argumentTable.setAddress(
                     (batch.ownVertices ?? geometry.solidVertices).gpuAddress,
                     index: ShapePipeline.vertexBufferIndex)
