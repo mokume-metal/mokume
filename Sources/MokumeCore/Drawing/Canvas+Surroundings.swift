@@ -8,7 +8,7 @@ extension Canvas {
 
     // 立体を取り巻く周囲を置く。
     public func surroundings(_ surroundings: Surroundings) {
-        guard isDrawing else { return warnOutsideFrame(.surroundings) }
+        guard admits(.surroundings) else { return }
         guard surroundings.isUsable else { return warnBadSurroundings() }
         closeBatch()
         activeSurroundings = surroundings

@@ -82,7 +82,7 @@ extension Canvas {
     ///
     /// [#1495]: https://github.com/mokume-metal/mokume/issues/1495
     private func apply(_ camera: Camera, name: String) {
-        guard isDrawing else { return warnOutsideFrame(.camera) }
+        guard admits(.camera) else { return }
         guard camera.isUsable else { return warnBadCamera(name) }
         guard Self.isUsable(camera.projection) else { return warnBadCameraProjection(name) }
         closeBatch()
@@ -92,7 +92,7 @@ extension Canvas {
     /// 投影だけを差し替える。**視点の位置は動かさない** — どこから見るかと、どう写すかは
     /// 別の指定なので、片方を書いたときにもう片方が既定へ戻ると驚きになる。
     private func apply(replacingProjection projection: Camera.Projection) {
-        guard isDrawing else { return warnOutsideFrame(.camera) }
+        guard admits(.camera) else { return }
         guard Self.isUsable(projection) else { return warnBadProjection(projection) }
         var camera = currentCamera
         camera.projection = projection

@@ -8,7 +8,7 @@ import Testing
 /// シーンの記述の口を、**口ごとに**フレームの外で呼ぶ ([#1670])。GPU を要する。
 ///
 /// 約束は ADR-0021 決定 4 の「シーンの記述をフレームの外で書いたら、警告して無視する。
-/// 黙って捨てない」である。守りは口ごとの `guard isDrawing` (変換とスタイルは
+/// 黙って捨てない」である。守りは口ごとの `guard admits(…)` (変換とスタイルは
 /// `guard isShaping`) で、**書き落とした口が黙る**。これまで変換 ([#941])・切り抜き
 /// ([#1505])・効果 ([#1605])・`noLights()` ([#1670]) を 1 件ずつ見つけてきた。
 ///
@@ -165,7 +165,7 @@ struct SceneOutsideFrameTests {
     /// 形の組み立て (`createShape`) の中は、変換とスタイルの積み降ろしだけが形に焼き付いて
     /// 意味を持つ (ADR-0021 決定 4 の 2026-09-15 の追補)。**それ以外のシーンの記述は形に
     /// 焼き付かない**ので、組み立ての中でもフレームの外のままである。守りを `isShaping` で
-    /// 書くと、ここだけ黙る (効果と切り抜きが `isDrawing` を見る理由)。
+    /// 書くと、ここだけ黙る (効果と切り抜きが `isShaping` ではなく `admits` を通る理由)。
     @Test("形の組み立ての中でも、形に焼き付かないシーンの記述はフレームの外として注意する")
     func sceneDescriptionsInsideAShapeOutsideAFrameAreIgnored() throws {
         let gpu = try RenderDevice()
@@ -183,6 +183,58 @@ struct SceneOutsideFrameTests {
                     "\(mouth.name) が組み立ての中で黙って効いている (\(subject) の注意が無い)")
             }
             expectUntouched(canvas, after: mouth.name)
+        }
+    }
+
+    /// `draw()` の中で組み立てても、形に焼き付かないシーンの記述は効かない ([#1529] の案 A)。
+    /// 以前は守りが `isDrawing` だけを見ていたので素通りし、`Style` に入っている切り抜き・
+    /// 材質・影の落とし方は形にも入らず出口で黙って消え、光・視点・効果などはそのフレームに
+    /// 効いていた — `setup()` で組み立てたときと扱いが割れていた。
+    ///
+    /// 見るのは 3 つ: 組み立ての注意 (フレームの外の注意ではない) を言う・`ShapeExitTests` の表で
+    /// 「断る」に載る状態がどれも変わらない・返った形が中で呼ばなかった形と同じ。
+    ///
+    /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
+    @Test("フレームの中の形の組み立てでも、形に焼き付かないシーンの記述は注意して無視する (#1529)")
+    func sceneDescriptionsInsideAShapeInsideAFrameAreIgnored() throws {
+        let gpu = try RenderDevice()
+        let shaping: Set<Canvas.OutsideFrame> = [.transform, .style]
+        let refused = ShapeExit.refusedNames
+        for mouth in mouths where shaping.isDisjoint(with: mouth.says) {
+            let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+            var failure: (any Error)?
+            var before: [String: String] = [:]
+            var after: [String: String] = [:]
+            var plain = Shape.empty
+            var written = Shape.empty
+            try canvas.draw {
+                plain = canvas.createShape { canvas.rect(2, 2, 4, 4) }
+                before = ShapeExit.fingerprint(of: canvas, refused)
+                written = canvas.createShape {
+                    do { try mouth.write(canvas) } catch { failure = error }
+                    canvas.rect(2, 2, 4, 4)
+                }
+                after = ShapeExit.fingerprint(of: canvas, refused)
+            }
+            #expect(failure == nil, "\(mouth.name) が組み立ての中で投げた: \(String(describing: failure))")
+            for subject in mouth.says {
+                let inside = try #require(
+                    Canvas.InsideShape.allCases.first { $0.outsideFrame == subject },
+                    "\(subject) に組み立ての中の種類が無い")
+                #expect(
+                    canvas.warnings.message(for: inside.warning) == inside.notice,
+                    "\(mouth.name) が組み立ての中で黙って効いている (\(inside) の注意が無い)")
+                #expect(
+                    !canvas.warnings.hasWarned(subject.warning),
+                    "\(mouth.name) がフレームの中なのに、フレームの外の注意を言った")
+            }
+            for name in refused.sorted() {
+                #expect(after[name] == before[name], "\(mouth.name) で \(name) が変わった")
+            }
+            expectUntouched(canvas, after: mouth.name)
+            #expect(written.runs == plain.runs, "\(mouth.name) で形の区間の設定が変わった")
+            #expect("\(written.vertices)" == "\(plain.vertices)", "\(mouth.name) で形の頂点が変わった")
+            #expect(written.solidVertices.count == plain.solidVertices.count, "\(mouth.name) で形に立体が入った")
         }
     }
 
