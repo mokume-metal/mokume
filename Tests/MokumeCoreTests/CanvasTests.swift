@@ -1879,7 +1879,7 @@ struct CanvasTests {
             "earlySubmissionsAttempted": count,
             "earlySubmissionFailedFrame": "面をまたぐ順のための早い投入に失敗したときのフレーム番号 (#1870)。番号どうしで比べるので、境目で戻す手は要らない (閉じ忘れを捨てる道も番号を進める)",
             "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
-            "glyphQuadsPlaced": count, "drawCallsInLastFrame": count,
+            "glyphQuadsPlaced": count, "drawCallsInLastFrame": count, "drawsEncodedInLastFrame": count,
             "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
             "pointScansInLastFrame": count,
             "stagePassesUsed": "段の枠の採番。描き切りごとに 0 から数える (コマンドと同じ寿命)",
