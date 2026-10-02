@@ -48,7 +48,9 @@ extension Canvas {
         // [#1684]: https://github.com/mokume-metal/mokume/issues/1684
         let savedManner = Manner(of: self)
         transform = .identity
-        style.clip = nil
+        // 切り抜きは外さない — 記録した区間は切り抜きを持たない (``Shape/Run``) ので、記録の中で
+        // 効いていても形には入らない。外して出口で戻すと、組み立ての中でフレームが閉じたときに
+        // 閉じたフレームの切り抜きを書き戻す (``Manner`` は形に焼き付かないものを戻さない・#1684)
         // **記録の間は畳まない。** 畳むと置き場所が溜め場の側に残り、記録した頂点からは
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
         let savedRecording = recordingShape
@@ -158,8 +160,15 @@ extension Canvas {
     /// 形に焼き付かない設定 (シーンの記述・露出) は、ここで戻すのではなく組み立ての中で断る
     /// (``admits(_:)``)。積み履歴と組み立て中の形は、ここではなく切り離して閉じる。
     ///
+    /// **`Style` のうちフレームに属するフィールド (切り抜き・材質・影の落とし方と受け方) は
+    /// 戻さない** (``Style/keepingFrameFields(of:)``)。組み立ての中では断るので普段は変わらないが、
+    /// 組み立ての中でフレームが閉じる (描き場所の組み立ての中の `endDraw()`) と、閉じる側が
+    /// 既定へ戻した値を、出口が閉じたフレームの値で書き戻していた。フレームの頭はこの 3 つを
+    /// 戻さないので、次のフレームへ持ち越された (#1671 が塞いだのと同じ破れ方・#1684 の反証)。
+    ///
     /// **項目を足すときは、検査の表 (`ShapeExitTests`) の「戻す」に汚す手順も足す。** 表が
-    /// 汚して、出口の直後に戻ったかを見る。
+    /// 汚して、出口の直後に戻ったかを見る。「断る」に載る `Style` のフィールドは、組み立ての中で
+    /// フレームを閉じた後に書き戻されないかを表が見る。
     ///
     /// [#1684]: https://github.com/mokume-metal/mokume/issues/1684
     struct Manner {
@@ -170,7 +179,8 @@ extension Canvas {
         let numbers: Numbers?
         let curveDetail: Int
         let curveTightness: Float
-        /// 揺らぎの種と細かさ。CPU の `noise()` は記録の中で値になって形に焼き付く。
+        /// 揺らぎの種と細かさ。形に焼き付くのは、記録の中で CPU の `noise()` が返した値だけで
+        /// ある。断片の `mokume_noise` は描き切りの時点の種で引くので、形を置いたときの種を使う。
         let noise: ValueNoise
 
         init(of canvas: Canvas) {
@@ -196,7 +206,7 @@ extension Canvas {
             canvas.currentCurveDetail = curveDetail
             canvas.currentCurveTightness = curveTightness
             canvas.transform = transform
-            canvas.currentStyle = style
+            canvas.currentStyle = style.keepingFrameFields(of: canvas.style)
             canvas.changeNoise { $0 = noise }
         }
     }
@@ -679,5 +689,25 @@ extension Canvas {
             .badPlacement,
             "shape(at:): some placements held a value that is not a number, or an infinite one, "
                 + "in their \(parts), so those were not placed")
+    }
+}
+
+extension Canvas.Style {
+    /// 描き方のフィールドはこの値のまま、**フレームに属するフィールド (切り抜き・材質・影の
+    /// 落とし方と受け方) は `current` のもの**にした値 ([#1684])。
+    ///
+    /// 形の組み立ての出口 (``Canvas/Manner``) が使う。どのフィールドがフレームに属するかは
+    /// ADR-0021 決定 4 の表で、検査の表 (`CanvasTests` の `frameStyle`・`ShapeExitTests` の
+    /// 「断る」) が同じ 4 つを持つ。`Style` にフィールドを足すと、`ShapeExitTests` がどちらかに
+    /// 分けるまで赤になり、「断る」に分けたものがここで書き戻されると赤になる。
+    ///
+    /// [#1684]: https://github.com/mokume-metal/mokume/issues/1684
+    func keepingFrameFields(of current: Self) -> Self {
+        var style = self
+        style.clip = current.clip
+        style.material = current.material
+        style.castsShadow = current.castsShadow
+        style.receivesShadow = current.receivesShadow
+        return style
     }
 }

@@ -23,8 +23,13 @@ enum ShapeExit {
     /// 記録したぶんを形として抜く
     case detach
     /// 組み立ての中では断る (注意して、何も変えない)。形に焼き付く先が無いもの (#1529・#1588)。
-    /// 口ごとに回すのは `SceneOutsideFrameTests` と `ShapeTests` の組み立ての中の検査
-    case refuse
+    /// 口ごとに回すのは `SceneOutsideFrameTests` と `ShapeTests` の組み立ての中の検査。
+    ///
+    /// 手順はフレームの中 (組み立ての外) でその状態を汚す。**出口が書き戻さないこと**を、
+    /// 組み立ての中でフレームを閉じて確かめる (``ShapeExitTests/refusedStateIsNotWrittenBackAcrossAFrameEnd()``)。
+    /// 閉じる側 (`abandonFrame()`) が既定へ戻すものには手順を書く。`Style` のフィールドには必須
+    /// — 出口は `Style` を写して戻すので、写しから外し忘れるとそこで書き戻す
+    case refuse(((Canvas, ShapeExitFixture) -> Void)?)
     /// 出入口では扱わない。理由を書く
     case untouched(String)
 
@@ -86,16 +91,26 @@ enum ShapeExit {
             "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
             "recordedStrokeRanges", "recordedSolidStrokes", "recordedGPUStrokes",
         ]
-        let refused = [
-            // シーンの記述 (#1529)
-            "cameraStorage", "activeLights", "activeSurroundings", "shadowsEnabled",
-            "shadowRangeValue", "shadowDetailValue", "shadowBiasValue", "pendingEffects",
-            "pendingComputations", "forcesThisFrame",
-            "style.clip", "style.material", "style.castsShadow", "style.receivesShadow",
+        let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        let refused: [(String, ((Canvas, Fixture) -> Void)?)] = [
+            // シーンの記述 (#1529)。閉じる側が既定へ戻すものは汚す手順を持つ
+            ("cameraStorage", { c, _ in c.perspective() }),
+            ("activeLights", { c, _ in c.ambientLight(white) }),
+            ("activeSurroundings", { c, _ in c.surroundings(.sky) }),
+            ("shadowsEnabled", { c, _ in c.shadows(true) }),
+            ("shadowRangeValue", { c, _ in c.shadowRange(50) }),
+            ("shadowDetailValue", { c, _ in c.shadowDetail(512) }),
+            ("shadowBiasValue", { c, _ in c.shadowBias(0.5) }),
+            ("pendingEffects", nil), ("pendingComputations", nil), ("forcesThisFrame", nil),
+            ("style.clip", { c, _ in c.clip(1, 2, 3, 4) }),
+            ("style.material", { c, _ in c.shininess(50) }),
+            ("style.castsShadow", { c, _ in c.castShadow(false) }),
+            ("style.receivesShadow", { c, _ in c.receiveShadow(false) }),
             // 露出と明るさの丸め方。面全体に効き、形には焼き付かない (#1529 の条件 3)
-            "target.brightness",
+            ("target.brightness", nil),
             // 塗り直しと画素の口 (#1588)
-            "pendingBackground", "hasLoadedPixels", "target.pixelMirror.hasPendingWrites",
+            ("pendingBackground", nil), ("hasLoadedPixels", nil),
+            ("target.pixelMirror.hasPendingWrites", nil),
         ]
         let construction = "面を作ったときに決まり、面と同じだけ生きる"
         let resource = "資源 (置き場・パイプライン)。中身は描くものではない"
@@ -175,7 +190,7 @@ enum ShapeExit {
         ]
         return restored.map { ($0.0, .restore($0.1)) }
             + detached.map { ($0, .detach) }
-            + refused.map { ($0, .refuse) }
+            + refused.map { ($0.0, .refuse($0.1)) }
             + untouched.map { ($0.key, .untouched($0.value)) }
     }
 
@@ -375,6 +390,67 @@ struct ShapeExitTests {
             }
         }
         #expect(differing == 0, "組み立ての中の curveDetail(2) で、外の曲線が \(differing) 画素違う")
+    }
+
+    /// **「断る」に分けた状態を、出口が書き戻さないこと** (#1684 の反証)。組み立ての中では断るので
+    /// 普段は変わらず、書き戻しても見分けられない。見分けられるのは、組み立ての中でフレームが
+    /// 閉じるとき (描き場所の組み立ての中の `endDraw()`) — 閉じる側が既定へ戻した値を、出口が
+    /// 閉じたフレームの値で書き戻すと、材質と影の落とし方・受け方はフレームの頭で戻らないので
+    /// 次のフレームへ持ち越される (#1671 が塞いだのと同じ破れ方)。
+    ///
+    /// 表の「断る」で汚す手順を持つものを全部汚し、組み立ての中で閉じ、出口の直後と次のフレームで
+    /// 見る。**`Style` のフィールドは手順が必須** — 出口は `Style` を写して戻すので、ここが表と
+    /// 実装の食い違いを縛る。
+    @Test("組み立ての中でフレームが閉じても、断る状態を出口が閉じたフレームの値へ書き戻さない (#1684)")
+    func refusedStateIsNotWrittenBackAcrossAFrameEnd() throws {
+        let host = try makeCanvas()
+        let layer = try host.createGraphics(16, 16)
+        let fixture = ShapeExit.Fixture(
+            sheet: try layer.createImage(4, 4),
+            shader: try layer.makeShader(
+                "float4 paint(Fragment in, Values values) { return float4(0.0, 1.0, 0.0, 1.0); }"),
+            numbers: try layer.makeNumbers(count: 1))
+        var dirtied: Set<String> = []
+        for entry in ShapeExit.table {
+            guard case .refuse(let dirty) = entry.exit else { continue }
+            if dirty != nil { dirtied.insert(entry.name) }
+            if entry.name.hasPrefix("style.") {
+                #expect(dirty != nil, "\(entry.name) を汚す手順が無い (出口が写す Style のフィールドは必須)")
+            }
+        }
+        let refused = ShapeExit.refusedNames
+        var baseline: [String: String] = [:]
+        var before: [String: String] = [:]
+        var closed: [String: String] = [:]
+        var after: [String: String] = [:]
+        var next: [String: String] = [:]
+        try host.draw {
+            layer.beginDraw()
+            baseline = ShapeExit.fingerprint(of: layer, refused)
+            for entry in ShapeExit.table {
+                if case .refuse(let dirty?) = entry.exit { dirty(layer, fixture) }
+            }
+            before = ShapeExit.fingerprint(of: layer, refused)
+            _ = layer.createShape {
+                layer.rect(0, 0, 4, 4)
+                layer.endDraw()
+                closed = ShapeExit.fingerprint(of: layer, refused)
+            }
+            after = ShapeExit.fingerprint(of: layer, refused)
+        }
+        try host.draw {
+            layer.beginDraw()
+            next = ShapeExit.fingerprint(of: layer, refused)
+            layer.endDraw()
+        }
+        for name in dirtied.sorted() {
+            #expect(before[name] != baseline[name], "\(name) を汚す手順が汚していない")
+            #expect(closed[name] != before[name], "\(name) をフレームの終わりが戻していない (この検査は何も見ていない)")
+        }
+        for name in refused.sorted() {
+            #expect(after[name] == closed[name], "\(name) を出口が閉じたフレームの値へ書き戻した")
+            #expect(next[name] == baseline[name], "\(name) が次のフレームへ持ち越された")
+        }
     }
 
     /// 露出と明るさの丸め方は描き方 (フレームの外でも効く) だが、面全体の明るさを決めるもので

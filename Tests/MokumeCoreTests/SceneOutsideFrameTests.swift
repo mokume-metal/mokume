@@ -271,7 +271,7 @@ struct SceneOutsideFrameTests {
 
     /// `Canvas` に転送先を持たない口は、`Sketch` の側で呼ぶ。どちらも中で `Canvas` の
     /// 守られた口 (視点・粒) を通るので、言う注意はその口のものである。
-    private var sketchMouths: [(name: String, says: Canvas.OutsideFrame, write: (CallsInSetup) -> Void)] {
+    private var sketchMouths: [(name: String, says: Canvas.OutsideFrame, write: (any Sketch) -> Void)] {
         [
             ("orbitControl", .camera, { $0.orbitControl() }),
             (
@@ -282,6 +282,39 @@ struct SceneOutsideFrameTests {
                 }
             ),
         ]
+    }
+
+    /// `draw()` の中で形を組み立て、その中で 1 つの口を呼ぶスケッチ。
+    final class CallsInsideAShape: Sketch {
+        var write: (CallsInsideAShape) -> Void = { _ in }
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16) }
+        func draw() { _ = createShape { write(self) } }
+    }
+
+    /// `Sketch` にだけある口を、`draw()` の中の組み立てで呼ぶ (#1684 の反証)。守りは `Canvas` の
+    /// 口と同じ ``Canvas/admits(_:)`` を通るが、`orbitControl()` は**守りより前に道具の状態を
+    /// 進めうる**口なので (#1670 の反証)、組み立ての中でも慣性と食った印が進まないことを見る。
+    @Test("Sketch にだけある口も、draw() の中の組み立てで呼ぶと注意して無視する (#1529)")
+    func sketchOnlyMouthsInsideAShapeInsideAFrameAreIgnored() throws {
+        let gpu = try RenderDevice()
+        for mouth in sketchMouths {
+            let sketch = CallsInsideAShape()
+            sketch.write = { mouth.write($0) }
+            let runtime = try SketchRuntime(sketch: sketch, gpu: gpu)
+            runtime.start()
+            try runtime.advance()
+            let inside = try #require(Canvas.InsideShape.allCases.first { $0.outsideFrame == mouth.says })
+            #expect(
+                runtime.canvas.warnings.message(for: inside.warning) == inside.notice,
+                "\(mouth.name) が draw() の中の組み立てで黙って効いている")
+            #expect(
+                !runtime.canvas.warnings.hasWarned(mouth.says.warning),
+                "\(mouth.name) がフレームの中なのに、フレームの外の注意を言った")
+            expectUntouched(runtime.canvas, after: mouth.name)
+            #expect(runtime.orbit == nil, "\(mouth.name) が組み立ての中で視点の道具を進めている")
+            #expect(runtime.orbitAdvancedAt == -1, "\(mouth.name) が組み立ての中で視点の道具を進めている")
+        }
     }
 
     @Test("Sketch にだけある口も、setup() で呼ぶと注意して無視する")
