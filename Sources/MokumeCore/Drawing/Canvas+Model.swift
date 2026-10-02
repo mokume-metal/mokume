@@ -42,7 +42,7 @@ extension Canvas {
         if style.hasFill {
             placeMesh(
                 .model(identity: model.identity), isDerived: model.hasDerivedNormals,
-                winding: model.winding
+                winding: { model.winding }
             ) {
                 model.mesh
             }

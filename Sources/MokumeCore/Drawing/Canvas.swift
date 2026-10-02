@@ -338,8 +338,17 @@ public final class Canvas {
         /// 置き場所で置く組み込みの形・読み込んだモデルの、巻き方の向き (``SolidWinding``)。
         ///
         /// 列を閉じるとき、形全体を 1 つの部品 (``SolidPart``) にするのに使う。組み込みの形は
-        /// 外向き、モデルは読み込んだときに求めた向き。求まらなければ部品にしない。
-        var meshWinding: SolidWinding = .unknown
+        /// 外向き、モデルは形から求めた向き。**裏面が絵に出うる置き場所を初めて足したときに求める**
+        /// (`nil` はまだ求めていない)。求まらなければ部品にしない。
+        var meshWinding: SolidWinding?
+        /// 裏面が絵に出うる置き場所の、列の中での番号 (列の先頭から数える・置いた順)。
+        ///
+        /// **裏 → 表の 2 回で描くのは、印の付いた置き場所だけである。** 同じ列に不透明の置き場所が
+        /// 同居しても、そちらは今までどおり 1 回で描く (続けて並んだ印の無い置き場所は 1 回の
+        /// 呼び出しにまとめる)。印を付けるのは、組み込みの形・モデルをその場で置くとき (置いた
+        /// スタイル) と、保持した形を置き場所で置くとき (置き場所の色) である
+        /// (``Canvas/placementShowsBackFaces(_:styled:)``)。
+        var backFaceInstances: [Int] = []
         /// 列に並べた部品 (``SolidPart``)。区間はこの列の描く単位で数える。
         ///
         /// **置き場所で置く組み込みの形の列は持たない** — 閉じるときに形全体を 1 つの部品にする
@@ -1328,9 +1337,11 @@ public final class Canvas {
         /// 裏 → 表の順で描きうる部品 (``SolidPart``)。区間は列の描く単位 (添字の列なら読む順の
         /// 並び、そうでなければ頂点の並び) の番号で、記録した順に並ぶ。
         ///
-        /// **裏面が絵に出うる部品 (``SolidPart/showsBackFaces``) だけを、置き場所ごとに裏 → 表の
-        /// 2 回で描く。** 部品の外の区間と、立っていない部品は、今までどおり ``cullMode`` で
-        /// 1 回で描く。4 つの条件 (半透明の塗り・貼る絵・重ねる以外の混ぜ方・利用者の断片) の
+        /// **裏 → 表の 2 回で描くのは、裏面が絵に出うる部品だけである。** 部品が立つのは、部品
+        /// そのものに印がある (``SolidPart/showsBackFaces``。記録したときのスタイル・焼いた置き場所の
+        /// 色) か、その置き場所に印がある (``backFaceInstances``) ときで、置き場所ごとに決まる。
+        /// 部品の外の区間と立っていない部品は、今までどおり ``cullMode`` で 1 回で描き、立つ部品の
+        /// 無い置き場所が続けば 1 回の呼び出しにまとめる。4 つの条件 (半透明の塗り・貼る絵・重ねる以外の混ぜ方・利用者の断片) の
         /// どれでも同じに扱う。奥行きは読み書きのままで、1 回で描くと先に積まれた手前の面が
         /// 後の奥の面を捨て、奥の面が出るかが形の向き (三角形を積んだ順) で変わっていた
         /// ([#1549](https://github.com/mokume-metal/mokume/issues/1549)・
@@ -1343,14 +1354,20 @@ public final class Canvas {
         /// 手前の面が手前の形の裏面に捨てられる。描画パスも足さない — 同じパスの中で描く呼び出し
         /// が増えるだけで、列の数 (``Canvas/drawCallsInLastFrame``) は変わらない。
         ///
-        /// **判定は列を閉じる所 (`closeSolidBatch`) の 1 か所で行う。** 部品を足す口は、形を
-        /// 置いたときのスタイルを部品へ記録するだけで、どう描くかは決めない。部品を足さない口
-        /// (新しく足した口を含む) は今までどおり 1 回で描くので、判定の漏れが絵を悪くしない。
+        /// **印を付ける所と、描き方を決める所は分かれている。** 印を付けるのは 4 か所 — 組み込みの
+        /// 形・モデルをその場で置くとき、保持した形の中で置くとき (どちらも置いたスタイル)、焼いた
+        /// 頂点を積むとき、保持した形を置き場所で置くとき (どちらも置き場所の色) — で、判定はどれも
+        /// ``Canvas/placementShowsBackFaces(_:styled:)`` を通る。どの区間をどう描くかを決めるのは、
+        /// 列を閉じる所 (`closeSolidBatch` の部品の組み立て) と描く所 (`encodeBackThenFront`) である。
+        /// 部品も印も持たない列 (部品を足さない口・新しく足した口を含む) は今までどおり 1 回で描く
+        /// ので、印の付け漏れが絵を直す前より悪くしない。
         ///
         /// - **凸でない形** (`torus` など) で、同じ側を向いた面どうしが重なる所は、積んだ順が
-        ///   残りうる。裏 → 表は「奥の面を先に」を凸の形でしか保証しない。
+        ///   残りうる。裏 → 表は「奥の面を先に」を凸の形でしか保証しない (面どうしの並べ替えは
+        ///   しない — ADR-0021 決定 2)。
         /// - **巻き方の向きが分からないものは部品にしない。** 向きの求まらない読み込んだモデル
-        ///   (閉じていない・巻き方が揃っていない) と、自分で並べた頂点 (`beginShape`) である。
+        ///   (閉じていない・巻き方が揃っていない・成分どうしで向きが食い違う) と、自分で並べた頂点
+        ///   (`beginShape`・[#1939](https://github.com/mokume-metal/mokume/issues/1939)) である。
         ///   後者は塗りと線を原始形ごとに交互に積む (線が隣の原始形の塗りに隠れないため) ので、
         ///   形の塗りが 1 つの区間にまとまらず、巻き方の向きも利用者が決める。
         /// - **粒は部品にしない。** 板 1 枚で自分の手前の面が自分の奥の面を隠すことが無く、
@@ -1358,8 +1375,12 @@ public final class Canvas {
         /// - **立体の線の帯は部品の外**で、呼び出し順のまま 1 回で描く (半透明の線の重なりは
         ///   [#1561](https://github.com/mokume-metal/mokume/issues/1561))。
         var backFaceParts: [SolidPart] = []
+        /// 裏面が絵に出うる置き場所の、列の中での番号 (``OpenSolid/backFaceInstances``)。
+        var backFaceInstances: [Int] = []
         /// 裏 → 表の順で描く部品を 1 つでも持つか (``backFaceParts``)。
         var drawsBackThenFront: Bool {
+            guard !backFaceParts.isEmpty else { return false }
+            if !backFaceInstances.isEmpty { return true }
             for part in backFaceParts where part.showsBackFaces { return true }
             return false
         }
@@ -3306,6 +3327,70 @@ public final class Canvas {
         effectCarryDrawsEncoded += 1
     }
 
+    /// 裏面が絵に出うる部品を持つ立体の列を、置き場所ごとに描く (``Batch/backFaceParts``)。
+    /// 返すのは積んだ描く呼び出しの数。
+    ///
+    /// 置き場所を置いた順に歩く。立つ部品が 1 つも無い置き場所は、続けて並んだものをまとめて
+    /// 列の捨て方 (``Batch/cullMode``) で 1 回で描く。立つ部品のある置き場所は、列の区間を記録した
+    /// 順に歩き、部品の外の区間と立っていない部品は 1 回、立っている部品は `.front` → `.back`
+    /// (内向きなら `.back` → `.front`) の 2 回で描く。部品は、置き場所に印があれば全部が、無ければ
+    /// 部品そのものに印のあるものだけが立つ。表の巻き方は列が決めてある (``Batch/frontFacing``) ので、
+    /// `.front` を捨てれば裏の面、`.back` を捨てれば表の面になる。置き場所は `baseInstance` で選ぶ —
+    /// 頂点関数の `instance_id` はこれを含むので、列の先頭から数えた番号のまま読める。
+    private func encodeBackThenFront(
+        _ batch: Batch, indices: any MTLBuffer, on encoder: any MTL4RenderCommandEncoder
+    ) -> Int {
+        let run = batch.run
+        let whole =
+            run.isIndexed
+            ? run.indexStart..<(run.indexStart + run.indexCount) : run.start..<(run.start + run.count)
+        var parts: [SolidPart] = []
+        var alwaysShown: [SolidPart] = []
+        for part in batch.backFaceParts
+        where part.isIndexed == run.isIndexed && !part.range.isEmpty
+            && whole.contains(part.range.lowerBound) && part.range.upperBound <= whole.upperBound
+        {
+            parts.append(part)
+            if part.showsBackFaces { alwaysShown.append(part) }
+        }
+        var draws = 0
+        func draw(_ range: Range<Int>?, _ culled: MTLCullMode, _ instances: Range<Int>) {
+            encoder.setCullMode(culled)
+            encodeSolidDraw(run, section: range, instances: instances, indices: indices, on: encoder)
+            draws += 1
+        }
+        var marks = batch.backFaceInstances[...]
+        var waiting: Int?
+        for instance in 0..<batch.instanceCount {
+            var marked = false
+            while let next = marks.first, next <= instance {
+                if next == instance { marked = true }
+                marks = marks.dropFirst()
+            }
+            let shown = marked ? parts : alwaysShown
+            guard !shown.isEmpty else {
+                if waiting == nil { waiting = instance }
+                continue
+            }
+            if let start = waiting {
+                draw(nil, batch.cullMode, start..<instance)
+                waiting = nil
+            }
+            let only = instance..<(instance + 1)
+            var cursor = whole.lowerBound
+            for part in shown {
+                if part.range.lowerBound > cursor { draw(cursor..<part.range.lowerBound, batch.cullMode, only) }
+                for culled in part.insideOut ? [MTLCullMode.back, .front] : [.front, .back] {
+                    draw(part.range, culled, only)
+                }
+                cursor = part.range.upperBound
+            }
+            if cursor < whole.upperBound { draw(cursor..<whole.upperBound, batch.cullMode, only) }
+        }
+        if let start = waiting { draw(nil, batch.cullMode, start..<batch.instanceCount) }
+        return draws
+    }
+
     /// 列の三角形を出す。**添字を持つ列は添字で読む** (``Shape/Run/isIndexed``)。
     ///
     /// 画面と影の焼き付けで**同じ判定を通す**。片方だけ非添字のまま残すと、影だけが
@@ -3313,57 +3398,9 @@ public final class Canvas {
     /// 誰も気づけない。
     ///
     /// 添字は ``solidVertices`` の番号そのものなので `baseVertex` はずらさない。
-    /// 裏面が絵に出うる部品を持つ立体の列を、置き場所ごとに描く (``Batch/backFaceParts``)。
-    /// 返すのは積んだ描く呼び出しの数。
     ///
-    /// 置き場所 1 つずつ、列の区間を記録した順に歩く。部品の外の区間と立っていない部品は
-    /// 列の捨て方 (``Batch/cullMode``) で 1 回、立っている部品は `.front` → `.back` (内向きなら
-    /// `.back` → `.front`) の 2 回で描く。表の巻き方は列が決めてある (``Batch/frontFacing``) ので、
-    /// `.front` を捨てれば裏の面、`.back` を捨てれば表の面になる。置き場所は `baseInstance` で
-    /// 選ぶ — 頂点関数の `instance_id` はこれを含むので、列の先頭から数えた番号のまま読める。
-    private func encodeBackThenFront(
-        _ batch: Batch, indices: any MTLBuffer, on encoder: any MTL4RenderCommandEncoder
-    ) -> Int {
-        let run = batch.run
-        let whole = run.isIndexed ? run.indexStart..<(run.indexStart + run.indexCount) : run.start..<(run.start + run.count)
-        var parts: [SolidPart] = []
-        for part in batch.backFaceParts
-        where part.showsBackFaces && part.isIndexed == run.isIndexed && !part.range.isEmpty
-            && whole.contains(part.range.lowerBound) && part.range.upperBound <= whole.upperBound
-        {
-            parts.append(part)
-        }
-        guard !parts.isEmpty else {
-            encoder.setCullMode(batch.cullMode)
-            encodeSolidDraw(run, instances: 0..<batch.instanceCount, indices: indices, on: encoder)
-            return 1
-        }
-        var draws = 0
-        func draw(_ range: Range<Int>, _ culled: MTLCullMode, _ instance: Int) {
-            encoder.setCullMode(culled)
-            encodeSolidDraw(
-                run, section: range, instances: instance..<(instance + 1), indices: indices,
-                on: encoder)
-            draws += 1
-        }
-        for instance in 0..<batch.instanceCount {
-            var cursor = whole.lowerBound
-            for part in parts {
-                if part.range.lowerBound > cursor {
-                    draw(cursor..<part.range.lowerBound, batch.cullMode, instance)
-                }
-                for culled in part.insideOut ? [MTLCullMode.back, .front] : [.front, .back] {
-                    draw(part.range, culled, instance)
-                }
-                cursor = part.range.upperBound
-            }
-            if cursor < whole.upperBound { draw(cursor..<whole.upperBound, batch.cullMode, instance) }
-        }
-        return draws
-    }
-
-    /// 立体の列の区間を描く。`section` は描く単位 (添字の列なら読む順の並び、そうでなければ
-    /// 頂点の並び) での区間で、`nil` なら列の全体。
+    /// `section` は描く単位 (添字の列なら読む順の並び、そうでなければ頂点の並び) での区間で、
+    /// `nil` なら列の全体。`instances` は描く置き場所 (列の先頭から数える)。
     private func encodeSolidDraw(
         _ run: Shape.Run, section: Range<Int>? = nil, instances: Range<Int>, indices: any MTLBuffer,
         on encoder: any MTL4RenderCommandEncoder

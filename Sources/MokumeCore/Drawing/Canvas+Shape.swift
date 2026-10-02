@@ -487,13 +487,6 @@ extension Canvas {
             }
             return
         }
-        // 置き場所の色が 1 つでも透けていれば、記録したときのスタイルによらず、どの部品も
-        // 裏面が絵に出うる。閉包を高階関数へ渡さずにループで見る (#1779)
-        var tinted = false
-        for instance in instances where instance.color.w < 1 {
-            tinted = true
-            break
-        }
         var remaining = instances[...]
         while let first = remaining.first {
             // **頂点は列ごとに 1 度だけ置く。** 上限に達したら列を閉じて置き直す —
@@ -506,23 +499,24 @@ extension Canvas {
             // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
             let mirrored = first.isMirrored
             let start = openRetainedSolid(run, of: shape, mirrored: mirrored)
-            // 部品を列の描く単位へ写す。頂点も添字も、形の中の位置から写した先までずらすだけ
+            // 部品を列の描く単位へ写す。頂点も添字も、形の中の位置から写した先までずらすだけ。
+            // 置き場所の色で立つ部品は、置き場所の印 (``OpenSolid/backFaceInstances``) で表す —
+            // 部品に印を付けると、同じ列の不透明の置き場所まで 2 回で描く
             if let open = openSolid, !parts.isEmpty {
                 let shift = run.isIndexed
                     ? (open.indexStart ?? 0) - run.indexStart : open.vertexStart - run.start
                 var moved: [SolidPart] = []
                 moved.reserveCapacity(parts.count)
-                for part in parts {
-                    var placed = part.shifted(by: shift)
-                    if tinted { placed.showsBackFaces = true }
-                    moved.append(placed)
-                }
+                for part in parts { moved.append(part.shifted(by: shift)) }
                 openSolid?.parts = moved
             }
             while let instance = remaining.first, instance.isMirrored == mirrored,
                 !isBatchFull(solidInstances.count, since: start)
             {
                 solidInstances.append(instance)
+                if !parts.isEmpty, placementShowsBackFaces(instance, styled: false) {
+                    openSolid?.backFaceInstances.append(solidInstances.count - 1 - start)
+                }
                 remaining = remaining.dropFirst()
             }
         }

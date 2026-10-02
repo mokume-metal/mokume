@@ -178,8 +178,8 @@ extension Canvas {
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     func placeMesh(
-        _ source: SolidSource, isDerived: Bool = false, winding: SolidWinding = .outward,
-        mesh build: () -> SolidMesh
+        _ source: SolidSource, isDerived: Bool = false,
+        winding: () -> SolidWinding = { .outward }, mesh build: () -> SolidMesh
     ) {
         // 区間の外では、立体の側へも移らない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -202,14 +202,17 @@ extension Canvas {
                 vertices.append(meshVertex(point, isDerived: isDerived, textured: textured))
             }
             // 記録した形 1 つが部品 1 つ (``SolidPart``)。置いたときのスタイルを部品へ残す —
-            // 保持した形を置くときは、記録したときのスタイルで裏 → 表に描くかが決まる
+            // 保持した形を置くときは、記録したときのスタイルで裏 → 表に描くかが決まる。記録した
+            // 形は後で半透明の色で置かれうるので、向きはここで求める (モデルなら 1 度だけ・控える)
+            let found = winding()
             let parts =
-                winding == .unknown
+                found == .unknown
                 ? []
                 : [
                     SolidPart(
                         range: 0..<vertices.count, isIndexed: false,
-                        showsBackFaces: placementMayShowBackFaces, insideOut: winding == .inward)
+                        showsBackFaces: placementShowsBackFaces(placement, styled: placementMayShowBackFaces),
+                        insideOut: found == .inward)
                 ]
             appendPlacedSolidVertices(vertices[...], indices: nil, placedBy: placement, parts: parts)
             return
@@ -238,9 +241,8 @@ extension Canvas {
                     source: source, vertexStart: 0, vertexCount: geometry.count,
                     indexStart: nil, instanceStart: solidInstances.count,
                     isMirrored: placement.isMirrored, fillGeometry: geometry)
-                openSolid?.meshWinding = winding
                 solidInstances.append(placement)
-                if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
+                noteMeshPlacement(placement, winding: winding)
                 return
             }
             let range: Range<Int>
@@ -261,14 +263,25 @@ extension Canvas {
                 // 組み込みの形も読み込んだモデルも、頂点を並べた順にそのまま描く
                 indexStart: nil,
                 instanceStart: solidInstances.count, isMirrored: placement.isMirrored)
-            openSolid?.meshWinding = winding
         }
 
         solidInstances.append(placement)
-        // 裏面が絵に出うるスタイルで 1 つでも置いたら、この列は裏面を捨てられない
-        // (`Batch.cullMode`)。**置いたこの時点で記録する** — 列が閉じる時点のスタイルは、
-        // 置いた後で外した絵を知らない (#1564)
-        if placementMayShowBackFaces { openSolid?.mayShowBackFaces = true }
+        noteMeshPlacement(placement, winding: winding)
+    }
+
+    /// いま置いた組み込みの形・モデルの置き場所 (溜め場の末尾) に、裏面が絵に出うるかの印を付ける。
+    ///
+    /// 裏面が絵に出うるスタイルで 1 つでも置いたら、この列は裏面を捨てられない (`Batch.cullMode`)。
+    /// **置いたこの時点で記録する** — 列が閉じる時点のスタイルは、置いた後で外した絵を知らない
+    /// (#1564)。印の付いた置き場所だけを裏 → 表の 2 回で描く (``OpenSolid/backFaceInstances``)。
+    /// 巻き方の向きは、初めて印が付いたときに求める (モデルなら控えを読む)。
+    private func noteMeshPlacement(_ placement: SolidInstance, winding: () -> SolidWinding) {
+        guard let open = openSolid,
+            placementShowsBackFaces(placement, styled: placementMayShowBackFaces)
+        else { return }
+        openSolid?.mayShowBackFaces = true
+        openSolid?.backFaceInstances.append(solidInstances.count - 1 - open.instanceStart)
+        if open.meshWinding == nil { openSolid?.meshWinding = winding() }
     }
 
     /// 読み込んだモデルの塗りの頂点を持つ GPU の置き場。控えに無ければ詰めて作る。
@@ -335,7 +348,7 @@ extension Canvas {
         let base = solidVertices.count
         notePlacedParts(
             parts, vertices: vertices, indices: indices, base: base,
-            tinted: placement.color.w < 1)
+            tinted: placementShowsBackFaces(placement, styled: false))
         // 閉包を標準ライブラリの高階関数へ渡さずにループで回す。main actor の文脈の閉包は
         // 要素ごとに隔離の実行時検査を払う (#1779)
         solidVertices.reserveCapacity(base + vertices.count)

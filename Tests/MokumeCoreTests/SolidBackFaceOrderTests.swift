@@ -450,18 +450,20 @@ struct SolidBackFaceOrderTests {
     // MARK: - 巻き方 (反証 5)
 
     /// 一辺 60 の立方体の OBJ。`inward` なら面の巻き方を裏返す。
-    private static func cube(inward: Bool) -> String {
-        let corners = [
-            "-30 -30 -30", "30 -30 -30", "30 30 -30", "-30 30 -30",
-            "-30 -30 30", "30 -30 30", "30 30 30", "-30 30 30",
-        ]
+    private static func cube(inward: Bool, half: Int = 30, firstIndex: Int = 1) -> String {
+        var lines: [String] = []
+        for (x, y, z) in [
+            (-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
+            (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1),
+        ] {
+            lines.append("v \(x * half) \(y * half) \(z * half)")
+        }
         let faces = [
             [1, 4, 3, 2], [5, 6, 7, 8], [1, 5, 8, 4], [2, 3, 7, 6], [1, 2, 6, 5], [4, 8, 7, 3],
         ]
-        var lines = corners.map { "v \($0)" }
         for face in faces {
             let ordered = inward ? Array(face.reversed()) : face
-            lines.append("f " + ordered.map(String.init).joined(separator: " "))
+            lines.append("f " + ordered.map { String($0 + firstIndex - 1) }.joined(separator: " "))
         }
         return lines.joined(separator: "\n")
     }
@@ -505,6 +507,47 @@ struct SolidBackFaceOrderTests {
         #expect(canvas.drawsEncodedInLastFrame == 1)
     }
 
+    @Test("中空のモデル (外殻と内殻で向きが食い違う) は、裏 → 表に分けず 1 回で描く")
+    func hollowModelsDrawOnce() throws {
+        // 外殻は外向き、内殻は内向き (空洞の側を表にする)。向きは形全体で 1 つしか持てないので、
+        // どちらに決めても片方の成分の奥の面がどの向きでも捨てられる
+        let text = Self.cube(inward: false) + "\n" + Self.cube(inward: true, half: 10, firstIndex: 9)
+        let model = Model.make(
+            name: "hollow", parsed: ModelFile.parse(text), fitting: nil)
+        #expect(model.winding == .unknown)
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(255, 255, 255, 128)
+            canvas.translate(80, 80, 0)
+            canvas.model(model)
+        }
+        #expect(canvas.drawsEncodedInLastFrame == 1)
+    }
+
+    // MARK: - 巻き方は、裏 → 表が要る置き方をされたときに求める (反証 2 回目の 7)
+
+    @Test("不透明に置いたモデルでは巻き方を求めず、半透明に置いたときに初めて求める")
+    func modelWindingIsResolvedOnlyWhenNeeded() throws {
+        let model = Model.make(
+            name: "cube", parsed: ModelFile.parse(Self.cube(inward: false)), fitting: nil)
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.translate(80, 80, 0)
+            canvas.model(model)
+        }
+        #expect(!model.windingCache.isResolved, "不透明に置いただけで巻き方を求めた")
+        try canvas.draw {
+            canvas.noStroke()
+            canvas.fill(255, 255, 255, 128)
+            canvas.translate(80, 80, 0)
+            canvas.model(model)
+        }
+        #expect(model.windingCache.isResolved)
+    }
+
     // MARK: - 描き場所をまたぐ保持した形 (反証 7)
 
     @Test("本体で記録した絵なしの形を描き場所に置いても、1 回で描く")
@@ -546,6 +589,45 @@ struct SolidBackFaceOrderTests {
         }
         #expect(canvas.drawCallsInLastFrame == 1)
         #expect(canvas.drawsEncodedInLastFrame == 1)
+    }
+
+    @Test("同じ列の不透明の置き場所は 1 回で描き、裏面が絵に出うる置き場所だけを 2 回で描く")
+    func onlyTranslucentPlacementsInABatchDrawTwice() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.noStroke()
+            for (index, alpha) in [255, 128, 255, 255].enumerated() {
+                canvas.fill(255, 255, 255, alpha)
+                canvas.push()
+                canvas.translate(Float(20 + index * 40), 80, 0)
+                canvas.sphere(15)
+                canvas.pop()
+            }
+        }
+        // 塗りを変えても列は閉じないので、4 つで 1 列。不透明 1 回 + 半透明 2 回 + 不透明 2 つで 1 回
+        #expect(canvas.drawCallsInLastFrame == 1)
+        #expect(canvas.drawsEncodedInLastFrame == 4)
+    }
+
+    @Test("保持した形を置き場所で置くと、色の透けた置き場所だけを 2 回で描く")
+    func onlyTintedRetainedPlacementsDrawTwice() throws {
+        let canvas = try makeCanvas()
+        let ball = canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.sphere(15)
+        }
+        let veil = LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5)
+        try canvas.draw {
+            canvas.shape(
+                ball,
+                at: [
+                    Placement(x: 20, y: 80), Placement(x: 60, y: 80, fill: veil),
+                    Placement(x: 100, y: 80), Placement(x: 140, y: 80),
+                ])
+        }
+        #expect(canvas.drawCallsInLastFrame == 1)
+        #expect(canvas.drawsEncodedInLastFrame == 4)
     }
 
     @Test("裏面が絵に出うる置き場所を持つ列は、置き場所ごとに裏 → 表の 2 回で描く")

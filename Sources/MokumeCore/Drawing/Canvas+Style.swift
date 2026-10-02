@@ -298,6 +298,7 @@ extension Canvas {
                 indirectArguments: open.external?.arguments,
                 cullMode: cullMode(for: open),
                 backFaceParts: backFaceParts(closing: open),
+                backFaceInstances: open.external == nil ? open.backFaceInstances : [],
                 frontFacing: frontFacing(for: open),
                 isMirrored: open.isMirrored,
                 solidSource: open.source,
@@ -328,23 +329,35 @@ extension Canvas {
 
     /// 閉じようとしている立体の列の、裏 → 表の順で描きうる部品 (``Batch/backFaceParts``)。
     ///
-    /// **「この列のどこを裏 → 表で描くか」を決めるのはここだけである。** 置き場所で置く組み込みの
-    /// 形・モデルの列は、形全体を 1 つの部品にする (向きの求まらないモデルは部品にしない)。
-    /// それ以外の列は、置いたときに記録した部品 (``OpenSolid/parts``) をそのまま渡す。外の置き場
-    /// から取る列 (粒) と GPU の線の列は、個数を GPU が書く・帯は部品でないので、部品を持たない。
+    /// 置き場所で置く組み込みの形・モデルの列は、形全体を 1 つの部品にする。部品そのものには印を
+    /// 付けず、印は置き場所の側 (``OpenSolid/backFaceInstances``) が持つ。印の付いた置き場所が無い
+    /// 列と、向きの求まらないモデルの列は部品にしない。それ以外の列は、置いたときに記録した部品
+    /// (``OpenSolid/parts``) をそのまま渡す。外の置き場から取る列 (粒) と GPU の線の列は、個数を
+    /// GPU が書く・帯は部品でないので、部品を持たない。
     private func backFaceParts(closing open: OpenSolid) -> [SolidPart] {
         guard open.external == nil, open.strokeGeometry == nil else { return [] }
         switch open.source {
         case .mesh, .model:
-            guard open.meshWinding != .unknown else { return [] }
+            guard let winding = open.meshWinding, winding != .unknown else { return [] }
             return [
                 SolidPart(
                     range: open.vertexStart..<(open.vertexStart + open.vertexCount), isIndexed: false,
-                    showsBackFaces: open.mayShowBackFaces, insideOut: open.meshWinding == .inward)
+                    showsBackFaces: false, insideOut: winding == .inward)
             ]
         case .retained, .freeform:
             return open.parts
         }
+    }
+
+    /// 置き場所 1 つが、裏面を絵に出しうるか。**裏 → 表で描く印を付ける口は、どれもこれを通る**
+    /// (``Batch/backFaceParts``)。
+    ///
+    /// `styled` は置いたスタイルが裏面を絵に出しうるか (``placementMayShowBackFaces``)。保持した形を
+    /// 置くときは偽を渡す — 記録したときのスタイルは部品の印 (``SolidPart/showsBackFaces``) に残って
+    /// いて、置く側のスタイルは形に効かない。置き場所の色 (``SolidInstance/color``) が透けていれば、
+    /// スタイルによらず裏面が絵に出うる。
+    func placementShowsBackFaces(_ placement: SolidInstance, styled: Bool) -> Bool {
+        styled || placement.color.w < 1
     }
 
     /// いまのスタイルで置く形は、裏面が絵に出うるか (``cullMode(for:)``)。

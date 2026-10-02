@@ -59,6 +59,42 @@ struct SolidWindingTests {
         #expect(SolidWinding.of(positions) == .inward)
     }
 
+    /// 箱の三角形 (外向き) を、`scale` 倍して `offset` へ動かしたもの。`inward` なら巻き方を裏返す。
+    private func box(scale: Float = 1, offset: SIMD3<Float> = .zero, inward: Bool = false) -> [SIMD3<Float>] {
+        var positions = SolidShape.box(width: 2, height: 2, depth: 2).make().points.map {
+            $0.position * scale + offset
+        }
+        if inward {
+            var first = 0
+            while first + 2 < positions.count {
+                positions.swapAt(first + 1, first + 2)
+                first += 3
+            }
+        }
+        return positions
+    }
+
+    @Test("原点から遠くに置いた小さな閉じた形も、向きが求まる")
+    func farFromTheOriginIsStillOutward() {
+        // 体積は平行移動で変わらない。閾値を原点からの距離で測ると、ここが求まらなくなる
+        #expect(SolidWinding.of(box(scale: 0.5, offset: SIMD3(1000, 1000, 1000))) == .outward)
+        #expect(SolidWinding.of(box(scale: 0.5, offset: SIMD3(1000, 1000, 1000), inward: true)) == .inward)
+    }
+
+    @Test("成分ごとに向きが揃っていれば、その向き")
+    func agreeingComponentsKeepTheirWinding() {
+        #expect(SolidWinding.of(box() + box(offset: SIMD3(10, 0, 0))) == .outward)
+        #expect(SolidWinding.of(box(inward: true) + box(offset: SIMD3(10, 0, 0), inward: true)) == .inward)
+    }
+
+    @Test("成分どうしで向きが食い違う形は求まらない (1 つだけ裏返った成分・中空の形)")
+    func disagreeingComponentsAreUnknown() {
+        // 1 つの成分だけ巻き方が逆
+        #expect(SolidWinding.of(box() + box(offset: SIMD3(10, 0, 0), inward: true)) == .unknown)
+        // 外向きの外殻と内向きの内殻を持つ中空の箱。外殻の体積が勝つので、和の符号では外向きに見える
+        #expect(SolidWinding.of(box(scale: 3) + box(inward: true)) == .unknown)
+    }
+
     @Test("閉じていない形は求まらない")
     func openShapesAreUnknown() {
         #expect(SolidWinding.of(SolidShape.plane(width: 10, height: 10).make().points.map(\.position)) == .unknown)
