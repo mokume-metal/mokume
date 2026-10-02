@@ -556,9 +556,25 @@ extension Canvas {
     /// **点は世界の座標と形自身の座標を対で受け取る。** 帯は視線に合わせて世界の座標で
     /// 組み立てるが、利用者の断片へ渡すのは形自身の座標のほうなので、両方が要る。
     /// 帯の太さのぶんの広がりは持たない — **帯のどの画素も、元になった点の座標を名乗る**。
+    ///
+    /// **描く画素で 1 画素より細い線は、描く画素 1 つの太さへ広げて不透明度を下げる**
+    /// (#1637・``ThinStroke``)。太さは出す画素なので、細さは細かさだけで決まる。
     func strokeSolidRing(
         _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
         curveSteps: [Bool] = []
+    ) {
+        let thin = ThinStroke(
+            drawnWeight: drawnSolidWeight(style.strokeWeight), isPoint: points.count == 1)
+        withThinStroke(thin) {
+            strokeSolidRingAsStyled(
+                points, shapePoints: shapePoints, isClosed: isClosed, curveSteps: curveSteps)
+        }
+    }
+
+    /// いまの線の設定のまま、立体の線を帯でなぞる (細い線の補いは ``strokeSolidRing`` が当てる)。
+    private func strokeSolidRingAsStyled(
+        _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
+        curveSteps: [Bool]
     ) {
         let half = style.strokeWeight / 2
         guard !points.isEmpty, shapePoints.count == points.count else { return }
@@ -607,6 +623,14 @@ extension Canvas {
         // 区間の外では引かない。`noFill()` の立体はここだけを通る (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         guard style.hasStroke, style.strokeWeight > 0 else { return }
+        // **描く画素で 1 画素より細い稜線も補う** (#1637)。補った線は不透明でなくなるので、
+        // GPU で広げる経路 (不透明の線だけを受ける) へは入らず、CPU の帯で組む
+        let thin = ThinStroke(drawnWeight: drawnSolidWeight(style.strokeWeight), isPoint: false)
+        withThinStroke(thin) { strokeSolidEdgesAsStyled(of: source, mesh: build) }
+    }
+
+    /// いまの線の設定のまま、置いた形の稜線を引く。
+    private func strokeSolidEdgesAsStyled(of source: SolidSource, mesh build: () -> SolidMesh) {
         if placeGPUStroke(of: source, mesh: build) { return }
         let net = solidEdges(of: source, mesh: build)
         guard !net.edges.isEmpty else { return }

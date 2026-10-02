@@ -1238,7 +1238,7 @@ public final class Canvas {
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     struct Batch {
         var run: Shape.Run
-        var clip: MTLScissorRect?
+        var clip: ClipRect?
         /// この列を描画先の座標へ落とす行列。
         var matrix: simd_float4x4
         /// この列に効く光が、置き場のどこから何個あるか。
@@ -1527,7 +1527,7 @@ public final class Canvas {
         var rectMode = ShapeMode.corner
         var ellipseMode = ShapeMode.center
         var blendMode = BlendMode.blend
-        var clip: MTLScissorRect?
+        var clip: ClipRect?
         var fontName: String?
         var textSize: Float = 12
         var textStyle = TextStyle.normal
@@ -1575,7 +1575,7 @@ public final class Canvas {
                 || style.castsShadow != newValue.castsShadow
                 || style.receivesShadow != newValue.receivesShadow
                 || style.blendMode != newValue.blendMode
-                || !Self.sameClip(style.clip, newValue.clip)
+                || style.clip != newValue.clip
             {
                 closeBatch()
             }
@@ -3324,23 +3324,24 @@ public final class Canvas {
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
         }
 
-        // 時刻と面の大きさは、フレームの中で変わらない。**大きさは実際に刻む
-        // 画素**である — 断片が受け取る位置 (`position`) がその数で来るので、
-        // 割って出す 0…1 の位置がここと食い違うと面からはみ出す
+        // 時刻と面の大きさは、フレームの中で変わらない。**大きさは出す画素**で、断片が
+        // 受け取る位置 (`position`) も出す画素へ換算して渡す (#1639)。割って出す 0…1 の
+        // 位置がここと食い違うと面からはみ出す
         let uniformsBuffer = try uniformsStorage.buffer(holding: 1)
         // 影の行列と設定も**フレームに 1 つ**で、列ごとには変わらない。揺らぎの種と
         // 細かさは、**断片が種を受け取る**ので、利用者が値として配線しなくても CPU の
         // `noise()` と同じ模様が出る
         var uniforms = Uniforms(
             time: time,
-            resolution: SIMD2(Float(pixelWidth), Float(pixelHeight)),
+            resolution: SIMD2(width, height),
             shadowBias: shadowBiasValue,
             shadowMatrix: bakedShadow?.matrix ?? matrix_identity_float4x4,
             shadowParams: SIMD4(
                 bakedShadow == nil ? 0 : 1, 1 / Float(bakedShadow?.map.detail ?? 1), 0, 0),
             noiseSeed: noiseSettings.seed,
             noiseOctaves: UInt32(noiseSettings.octaves),
-            noiseFalloff: noiseSettings.falloff)
+            noiseFalloff: noiseSettings.falloff,
+            unitsPerDrawnPixel: unitsPerDrawnPixel)
         uniformsBuffer.contents()
             .copyMemory(from: &uniforms, byteCount: MemoryLayout<Uniforms>.stride)
         // **焼いていなくても、読む先は必ず束ねる。** 束ねない口を作ると、断片が

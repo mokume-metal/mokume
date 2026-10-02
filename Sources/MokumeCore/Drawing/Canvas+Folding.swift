@@ -127,7 +127,13 @@ extension Canvas {
         // 読むので、1 つの図形の途中で列が割れる (`useTexture`)。1 つの雛形に収まらない
         //
         // 保持する形を記録している最中も畳まない (`recordingShape`)
-        guard !(key.texture != nil && key.hasStroke), !recordingShape else {
+        //
+        // **置いた後に描く画素で 1 画素より細い線も畳まない** (#1637)。雛形は変換を掛けずに
+        // 組むので細さを判断できず、置き場所ごとに広げ方も違う。畳まずに置けば、いまの変換で
+        // 補う (``ThinStroke``)
+        guard !(key.texture != nil && key.hasStroke), !recordingShape,
+            !(key.hasStroke && drawnWeight(style.strokeWeight, placedBy: transform.matrix) < 1)
+        else {
             return draw(makeOutline().moved(by: anchor))
         }
 

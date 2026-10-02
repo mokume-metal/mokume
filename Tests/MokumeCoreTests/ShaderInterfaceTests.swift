@@ -405,6 +405,7 @@ struct ShaderInterfaceTests {
             ("shadowMatrix", \.shadowMatrix), ("shadowParams", \.shadowParams),
             ("noiseSeed", \.noiseSeed), ("noiseOctaves", \.noiseOctaves),
             ("noiseFalloff", \.noiseFalloff), ("noisePadding", \.noisePadding),
+            ("unitsPerDrawnPixel", \.unitsPerDrawnPixel), ("unitsPadding", \.unitsPadding),
         ])
 
     static let lighting = layout(

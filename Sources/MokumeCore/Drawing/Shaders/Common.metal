@@ -109,6 +109,10 @@ struct Uniforms {
     float noiseFalloff;
     /// 16 バイト境界へ揃えるための詰め物 (Swift 側もこの位置を空けている)。
     float noisePadding;
+    /// 描く画素 1 つが出す画素でいくらか。断片はラスタの位置にこれを掛けて渡す (#1639)。
+    float2 unitsPerDrawnPixel;
+    /// 16 バイト境界へ揃えるための詰め物 (Swift 側もこの位置を空けている)。
+    float2 unitsPadding;
 };
 
 /// 焼き付けた影の読み方。**比べるのは採取器で、混ぜるのは比べた結果**である。
@@ -321,9 +325,11 @@ static inline float4 mokume_sample(texture2d<float> surface, float2 spot) {
 
 /// 1 画素ぶんの入力。**利用者の断片が受け取るのはこれだけ。**
 struct Fragment {
-    /// 面の中の位置 (画素・左上が原点)。
+    /// 面の中の位置 (画素・左上が原点)。**画素はスケッチの座標と同じ出す画素** (#1639) で、
+    /// 描いている画素の中心を指す。細かさ (`pixelDensity`) 1 では整数 + 0.5 の値になり、
+    /// 1 未満では描く画素の中心を出す画素へ換算した値 (0.5 なら 1, 3, 5, …) になる。
     float2 position;
-    /// 面の中の位置を 0…1 で表したもの。
+    /// 面の中の位置を 0…1 で表したもの (`position / resolution`)。
     float2 place;
     /// 読む面の中の、この画素が指す位置 (0…1)。
     float2 uv;
@@ -369,7 +375,7 @@ struct Fragment {
     float3 viewNormal;
     /// スケッチが始まってからの秒数。
     float time;
-    /// 面の大きさ (画素)。
+    /// 面の大きさ (出す画素)。スケッチの `width` / `height` と同じで、細かさによらない。
     float2 resolution;
     /// 揺らぎの種。`noiseSeed()` が決めたものがそのまま届く。
     ///
@@ -738,8 +744,10 @@ static inline float4 mokume_shapeColor(
     float3 normal = isBackOfDerived ? -in.normal : in.normal;
 
     Fragment f;
-    f.position = in.position.xy;
-    f.place = in.position.xy / uniforms.resolution;
+    // **位置は出す画素で渡す** (#1639)。ラスタの位置は描く画素なので、細かさ 1 未満では
+    // 換算する。細かさ 1 では掛ける値がちょうど 1 で、1 ビットも変わらない
+    f.position = in.position.xy * uniforms.unitsPerDrawnPixel;
+    f.place = f.position / uniforms.resolution;
     f.uv = in.uv;
     f.color = in.color;
     // **周囲そのものを出す列は、光も材質も見ない。** 見ている向きへ周囲を読むだけで、
