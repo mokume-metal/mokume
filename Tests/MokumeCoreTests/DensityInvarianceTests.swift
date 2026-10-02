@@ -92,6 +92,9 @@ struct DensityInvarianceTests {
         case foldedRect = "shader() の rect を畳んだ雛形 (三角形の経路)"
         case shaderPoint = "shader() の point (三角形の経路)"
         case shaderSquarePoint = "shader() の四角い point (三角形の経路)"
+        // 回した変換・縦横で倍率の違う変換の点。描く画素の軸に沿った正方形にして、面積で出す
+        case rotatedShaderPoint = "rotate(π/4) の shader() の point (三角形の経路)"
+        case squashedShaderPoint = "scale(1, 0.1) の shader() の point (三角形の経路)"
         case retained = "保持した形を縮めて置く (三角形の経路)"
         case solidPolygon = "奥行きのある beginShape の輪郭 (立体の線)"
         case box = "noFill() の box の稜線 (立体の線)"
@@ -115,7 +118,7 @@ struct DensityInvarianceTests {
         /// で置いた行は、光の量も半分になる。
         var crossings: Double {
             switch self {
-            case .point, .shaderPoint, .shaderSquarePoint: 0
+            case .point, .shaderPoint, .shaderSquarePoint, .rotatedShaderPoint, .squashedShaderPoint: 0
             case .line, .thinFill, .shaderLine: 1
             case .triangle: 1 + (1 + Double(60 * 60) / Double(88 * 88)).squareRoot()
             case .box: 4
@@ -165,6 +168,11 @@ struct DensityInvarianceTests {
             case .shaderPoint:
                 canvas.shader(try Self.plainShader(canvas))
                 canvas.point(64 + offset, 64 + offset)
+            case .rotatedShaderPoint, .squashedShaderPoint:
+                canvas.shader(try Self.plainShader(canvas))
+                canvas.translate(64 + offset, 64 + offset)
+                if self == .rotatedShaderPoint { canvas.rotate(Float.pi / 4) } else { canvas.scale(1, 0.1) }
+                canvas.point(0, 0)
             case .shaderSquarePoint:
                 canvas.shader(try Self.plainShader(canvas))
                 canvas.strokeCap(.project)
@@ -249,8 +257,11 @@ struct DensityInvarianceTests {
         var broken: [String] = []
         for density in Self.densities {
             // 点は描く画素で 1 画素より小さいときだけ見る。1 画素以上の点の形は経路ごとの
-            // 量子化で、この約束の外 (ADR-0039 決定 3)
-            if mouth.crossings == 0, weight * density >= 1 { continue }
+            // 量子化で、この約束の外 (ADR-0039 決定 3)。縦横で倍率の違う点は、面積の倍率で縮む
+            let areaFactor: Double = mouth == .squashedShaderPoint ? 0.1 : 1
+            if mouth.crossings == 0, Double(weight * density) * areaFactor.squareRoot() >= 1 {
+                continue
+            }
             for offset in [Float(0), 0.5, 1, 1.5] {
                 let canvas = try Self.makeCanvas(density: density)
                 try Self.draw(on: canvas) {
@@ -263,7 +274,7 @@ struct DensityInvarianceTests {
                 let drawn = Double(weight * density)
                 let (measured, expected) =
                     mouth.crossings == 0
-                    ? (Self.totalSum(pixels), drawn * drawn)
+                    ? (Self.totalSum(pixels), drawn * drawn * areaFactor)
                     : (Self.columnSum(pixels, density: density), drawn * mouth.crossings)
                 if abs(measured - expected) > 0.1 * expected {
                     broken.append("細かさ \(density)・ずらし \(offset): \(measured) (期待 \(expected))")
@@ -380,15 +391,24 @@ struct DensityInvarianceTests {
                     canvas.batches.compactMap(\.strokeGeometry).count == 1,
                     "細かさ 0.5 の box の稜線が GPU で広げる経路に入らない")
                 canvas.shader(plain)
-                for index in 0..<4 { canvas.rect(10 + Float(index) * 20, 10, 12, 12) }
+                // 置き場所ごとに回しても、大きさが同じなら同じ雛形に畳む
+                for index in 0..<4 {
+                    canvas.pushMatrix()
+                    canvas.translate(16 + Float(index) * 20, 16)
+                    canvas.rotate(Float(index) * 0.3)
+                    canvas.rect(-6, -6, 12, 12)
+                    canvas.popMatrix()
+                }
                 // 1 つ目は畳む相手を待って置き、2 つ目から雛形を開いて置き場所を足す
                 #expect(canvas.openFlat != nil, "細い輪郭の rect が畳まれない")
                 #expect(canvas.flatInstances.count == 5, "畳んだ置き場所の数: \(canvas.flatInstances.count)")
                 canvas.resetShader()
                 if frame == 0 { shape = canvas.createShape { canvas.quad(0, 0, 40, 0, 40, 20, 0, 20) } }
+                // 回して置いても、組み直すのは大きさごとに 1 度
                 for index in 0..<3 {
                     canvas.pushMatrix()
                     canvas.translate(10 + Float(index) * 30, 80)
+                    canvas.rotate(Float(index + frame * 3) * 0.4)
                     canvas.scale(0.5, 0.5)
                     canvas.shape(shape)
                     canvas.popMatrix()
@@ -396,6 +416,127 @@ struct DensityInvarianceTests {
             }
         }
         #expect(canvas.thinStrokesRebuilt == 1, "組み直した回数: \(canvas.thinStrokesRebuilt)")
+    }
+
+    /// **細い線の端は、線に沿っては元の太さの半分だけ出る** (#1637)。
+    ///
+    /// 帯を描く画素 1 つへ広げても、端は広げない向き (線に沿う向き) に元の太さで出す。端まで
+    /// 広げた幅で丸めると、端の光が元の 1 / 太さ 倍になる (細かさ 0.5 の太さ 1 で約 2 倍)。
+    /// 短い横線を置く位置を描く画素の 1/16 ずつ 16 通りにずらし、描いた画素の和の平均を、描く
+    /// 画素での元の面積 (帯 + 両端) と比べる。三角形の経路は縁に AA が無いので 1 回ごとの和は
+    /// 画素の中心を拾う数で揺れるが、ずらして平均すると面積に近づく。
+    @Test(
+        "細い線の端は、置く位置を均すと描く画素での元の面積ぶんの光で出る (#1637)",
+        arguments: [StrokeCap.round, .project], [(Float(0.5), Float(1)), (Float(1), Float(0.5))])
+    func thinCapsKeepTheirArea(_ cap: StrokeCap, _ case: (density: Float, weight: Float)) throws {
+        let (density, weight) = `case`
+        let length: Float = 2
+        var total = 0.0
+        let steps = 16
+        for step in 0..<steps {
+            let shift = Float(step) / Float(steps) / density
+            let canvas = try Self.makeCanvas(density: density)
+            let plain = try canvas.makeShader(
+                "float4 paint(Fragment in, Values values) { return in.color; }")
+            try canvas.draw {
+                canvas.background(0)
+                canvas.stroke(255)
+                canvas.strokeWeight(weight)
+                canvas.strokeCap(cap)
+                canvas.shader(plain)
+                canvas.line(40 + shift, 40 + shift * 0.6, 40 + length + shift, 40 + shift * 0.6)
+            }
+            total += Self.totalSum(try canvas.target.readPixels())
+        }
+        let average = total / Double(steps)
+        let drawn = Double(weight * density)
+        let ends = cap == .round ? Double.pi * drawn * drawn / 4 : drawn * drawn
+        let expected = drawn * Double(length * density) + ends
+        #expect(
+            abs(average - expected) <= 0.1 * expected,
+            "細かさ \(density)・太さ \(weight)・\(cap) の短い線の光の平均: \(average) (期待 \(expected))")
+    }
+
+    /// **縦と横で倍率の違う変換で、細い辺に合わせた端と角が描く画素ではみ出さない** (#1637)。
+    ///
+    /// `scale(4, 0.25)` の `quad` の角は、縦の辺 (描く画素で太い) の外の縁より外へ出ない。
+    /// `scale(1, 0.1)` の横の `line` の丸い端は、線の端から元の太さの半分より先へ出ない。
+    /// 端と角の大きさを形自身の座標で等方的に決めていた頃は、角が横へ 8 画素、端が約 4.5 画素
+    /// はみ出した。
+    @Test("縦横で倍率の違う変換の細い線の端と角は、描く画素ではみ出さない (#1637)")
+    func stretchedCapsAndJoinsStayInside() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        let plain = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeWeight(1)
+            canvas.shader(plain)
+            canvas.pushMatrix()
+            canvas.translate(30, 20)
+            canvas.scale(4, 0.25)
+            canvas.quad(0, 0, 16, 0, 16, 120, 0, 120)
+            canvas.popMatrix()
+            canvas.pushMatrix()
+            canvas.translate(30, 100)
+            canvas.scale(1, 0.1)
+            canvas.line(0, 0, 60, 0)
+            canvas.popMatrix()
+        }
+        let pixels = try canvas.target.readPixels()
+        func lit(_ columns: Range<Int>, _ rows: Range<Int>) -> Double {
+            var sum = 0.0
+            for y in rows { for x in columns { sum += Double(pixels[x, y].red) } }
+            return sum
+        }
+        // quad: 左の縦の辺は描く画素で x = 30 ± 2 (+0.5 の寄せ)。その外 (x < 28) に光は無い
+        #expect(lit(18..<28, 10..<60) == 0, "quad の角が縦の辺の外へはみ出した: \(lit(18..<28, 10..<60))")
+        // line: 端は x = 30 と 90 (+0.5)。丸い端は元の太さの半分 (0.5) まで。その先 (x ≥ 92・x < 29) に光は無い
+        #expect(lit(92..<100, 95..<106) == 0, "線の右の端がはみ出した: \(lit(92..<100, 95..<106))")
+        #expect(lit(20..<29, 95..<106) == 0, "線の左の端がはみ出した: \(lit(20..<29, 95..<106))")
+    }
+
+    /// **置き換える混ぜ方でも、細い輪郭の帯の下の塗りは残る** (#1637)。
+    ///
+    /// 広げた帯は覆う割合 (被覆) だけを置き換え、残りは下地を残す (`S·c + D·(1 − c)`)。塗りの上に
+    /// 置いた輪郭では、帯の下の塗りが見える — 距離関数の経路の置き換え (`S·s + F·(f − o)`・
+    /// #1867 決定 1) と同じ向きである。被覆をそのまま置き換えていた頃は、帯の画素が `S·c` に
+    /// 置き換わって塗りが消え、不透明度 `c` の穴になった。
+    @Test("置き換える混ぜ方の細い輪郭は、帯の下の塗りを消さない (#1637)", arguments: [false, true])
+    func replacingThinOutlinesKeepTheFillUnderneath(_ solid: Bool) throws {
+        let canvas = try Self.makeCanvas(density: 0.5)
+        let plain = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        try canvas.draw {
+            canvas.background(0)
+            canvas.blendMode(.replace)
+            canvas.fill(255)
+            canvas.stroke(0)
+            canvas.strokeWeight(1)
+            canvas.shader(plain)
+            if solid {
+                canvas.beginShape()
+                canvas.vertex(20, 20, 0)
+                canvas.vertex(100, 20, 0)
+                canvas.vertex(100, 100, 0)
+                canvas.vertex(20, 100, 0)
+                canvas.endShape(.close)
+            } else {
+                canvas.rect(20, 20, 80, 80)
+            }
+        }
+        let pixels = try canvas.target.readPixels()
+        // 不透明な塗りと不透明な輪郭なので、置いた所はどこも不透明のまま
+        var holes = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width where pixels[x, y].alpha < 0.99 { holes += 1 }
+        }
+        #expect(holes == 0, "\(solid ? "立体" : "平面")の置き換える輪郭が開けた穴: \(holes) 画素")
+        // 上の辺の帯の行 (描く画素で y = 10) の真ん中は、塗りが半分透けて見える (帯の被覆 0.5)
+        let band = pixels[30, 10].red
+        #expect(band > 0.25, "帯の下の塗りが消えた: \(band)")
     }
 
     // MARK: - 形の口

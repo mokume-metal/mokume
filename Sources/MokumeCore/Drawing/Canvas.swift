@@ -187,9 +187,12 @@ public final class Canvas {
     /// 畳みの雛形を組んでいる間、細い線を測る置き場所の変換 (雛形の鍵 ``FlatKey/strokeLinear``)。
     /// 細くならない雛形では `nil`。
     var templateStrokeMatrix: simd_float4x4?
-    /// 保持した形の細い輪郭を組み直した回数 (検査用・``thinVertices(_:placedBy:)``)。控えが
+    /// 保持した形の細い輪郭を組み直した回数 (検査用・``thinVertices(_:placedBy:cache:stroke:)``)。控えが
     /// 効いていれば、同じ大きさで置き続けても増えない。
     var thinStrokesRebuilt = 0
+    /// 開いている列に、細い線を広げた (被覆が 1 未満の) 頂点を積んだか (#1637)。列を閉じるときに
+    /// ``Batch/thinCoverage`` へ移して下ろす。
+    var openBatchHasThinCoverage = false
 
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///
@@ -260,10 +263,11 @@ public final class Canvas {
         var strokeWeight: Float
         var strokeCap: StrokeCap
         var strokeJoin: StrokeJoin
-        /// 置き場所の変換で描く画素 1 画素より細くなる線を持つなら、その変換の 2x2 (#1637)。
-        /// 細い線は置き場所の変換ごとに広げ方が違うので、**同じ変換の置き場所だけを畳む**。
-        /// 細くならなければ `nil` で、変換の違う置き場所も同じ雛形に畳む (これまでどおり)。
-        var strokeLinear: SIMD4<Float>?
+        /// 置き場所の変換で描く画素 1 画素より細くなる線を持つなら、その変換 (#1637)。細い線は
+        /// 置き場所の大きさごとに広げ方が違うので、**回転を除いて同じ変換の置き場所だけを畳む**
+        /// (``ThinFold``)。細くならなければ `nil` で、変換の違う置き場所も同じ雛形に畳む
+        /// (これまでどおり)。
+        var strokeLinear: ThinFold?
         /// 塗りに貼る絵の面。**どの絵かまで鍵に入る。** 読み取り位置が寸法から決まる
         /// うえ、面そのものが列を分けるためである。有無しか持たないと、雛形を開いた
         /// 後に絵を差し替えても畳み続けて、2 枚目以降が前の絵で描かれる ([#1298])。
@@ -273,6 +277,16 @@ public final class Canvas {
         ///
         /// [#1298]: https://github.com/mokume-metal/mokume/issues/1298
         var texture: HeldTexture?
+    }
+
+    /// 細い線を持つ雛形の鍵 (#1637)。**比べるのは回転に依らない部分** (``rotationFreeKey(_:)``)
+    /// だけで、雛形を組むのは最初の置き場所の 2x2 (``linear``) である。片は描く画素の空間で
+    /// 組むので、回転だけが違う置き場所には同じ雛形が合う。
+    struct ThinFold: Equatable {
+        var key: SIMD4<Float>
+        var linear: SIMD4<Float>
+
+        static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }
     }
 
     /// 畳める図形の形。
@@ -1306,6 +1320,9 @@ public final class Canvas {
         /// 畳んでいない列は塗りしか無い扱いでよい — 置き場所の 2 色がどちらも白で、
         /// どちらを掛けても値が変わらないためである。
         var strokeStart: Int = .max
+        /// この列に、細い線を広げた (被覆が 1 未満の) 頂点があるか (#1637)。置き換える列は、
+        /// これが立つと下地を読む断片で描く (``ShapePipeline/BlendStates/drawing(_:)``)。
+        var thinCoverage = false
         /// 裏を向いた面をどう扱うか。
         ///
         /// 既定は両面を描く (`.none`)。**閉じた組み込みの形の、不透明な列だけ**が裏面を
@@ -2026,6 +2043,7 @@ public final class Canvas {
         }
         list(&vertices)
         list(&coverageSpans, counted: false)
+        if emptying { openBatchHasThinCoverage = false }
         list(&recordedStrokeRanges)
         list(&recordedSolidStrokes)
         list(&recordedGPUStrokes)
@@ -3102,7 +3120,7 @@ public final class Canvas {
             switch batch.source {
             case .flat:
                 encoder.setRenderPipelineState(
-                    (run.paint.shader?.states ?? pipeline.states).state(for: run.mode))
+                    (run.paint.shader?.states ?? pipeline.states).drawing(batch))
                 encoder.setDepthStencilState(pipeline.flatDepthState)
                 pipeline.argumentTable.setAddress(
                     geometry.flatVertices.gpuAddress, index: ShapePipeline.vertexBufferIndex)
@@ -3129,7 +3147,7 @@ public final class Canvas {
                 encoder.setRenderPipelineState(
                     (batch.strokeGeometry != nil
                         ? pipeline.solidStrokeStates : (run.paint.shader?.solidStates ?? pipeline.solidStates))
-                        .state(for: run.mode))
+                        .drawing(batch))
                 encoder.setDepthStencilState(pipeline.solidDepthState)
                 pipeline.argumentTable.setAddress(
                     (batch.ownVertices ?? geometry.solidVertices).gpuAddress,

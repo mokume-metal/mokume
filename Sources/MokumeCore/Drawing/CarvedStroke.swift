@@ -18,6 +18,9 @@ struct CarveRecipe {
     let transform: Transform
     let color: LinearRGBA
     let uv: SIMD2<Float>
+    /// 片を描く画素の空間で組んだとき (細い線を補う・#1637)、引いた結果の点を形自身の座標へ
+    /// 戻す 2x2。`nil` なら片は形自身の座標で組んである。
+    var inverse: simd_float2x2? = nil
 
     /// 引いて、三角形の頂点にする。直に引いて積むとき (``Canvas/strokeOutline(_:)``) と同じ
     /// 座標系・同じ色・同じ扇の出し方。
@@ -31,8 +34,10 @@ struct CarveRecipe {
     func built() -> (vertices: [ShapeVertex], coverage: [Canvas.CoverageSpan]) {
         var out: [ShapeVertex] = []
         var spans: [Canvas.CoverageSpan] = []
+        let inverse = self.inverse ?? matrix_identity_float2x2
+        let mapsBack = self.inverse != nil
         func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
-            let moved = point + offset
+            let moved = (mapsBack ? inverse * point : point) + offset
             return transform.apply(x: moved.x, y: moved.y)
         }
         func emit(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) {

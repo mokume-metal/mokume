@@ -214,7 +214,7 @@ extension Canvas {
         style.stroke = Self.unchangedTint
         buildingFlatTemplate = true
         // 細い線の雛形は、鍵の変換で細さを測って広げる (#1637・``thinStrokeMatrix``)
-        templateStrokeMatrix = key.strokeLinear.map { linear in
+        templateStrokeMatrix = key.strokeLinear.map(\.linear).map { linear in
             simd_float4x4(
                 SIMD4(linear.x, linear.y, 0, 0), SIMD4(linear.z, linear.w, 0, 0),
                 SIMD4(0, 0, 1, 0), SIMD4(0, 0, 0, 1))
@@ -236,12 +236,15 @@ extension Canvas {
     /// いまの変換で、線が描く画素 1 画素より細くなる向きがあるなら、その変換の 2x2 (#1637)。
     /// 畳みの鍵 (``FlatKey/strokeLinear``) に入る。線を持たない図形と、どの向きでも細く
     /// ならない線は `nil` で、これまでどおり変換の違う置き場所も同じ雛形に畳む。
-    private func thinStrokeLinear() -> SIMD4<Float>? {
+    private func thinStrokeLinear() -> ThinFold? {
         guard style.hasStroke, style.strokeWeight > 0 else { return nil }
         let matrix = transform.matrix
-        guard Self.thinnestDrawnWeight(style.strokeWeight, by: drawnLinear(matrix)) < 1
-        else { return nil }
-        return SIMD4(matrix.columns.0.x, matrix.columns.0.y, matrix.columns.1.x, matrix.columns.1.y)
+        let drawn = drawnLinear(matrix)
+        guard Self.thinnestDrawnWeight(style.strokeWeight, by: drawn) < 1 else { return nil }
+        return ThinFold(
+            key: Self.rotationFreeKey(drawn),
+            linear: SIMD4(
+                matrix.columns.0.x, matrix.columns.0.y, matrix.columns.1.x, matrix.columns.1.y))
     }
 
     /// 掛けても値の変わらない色。雛形の頂点はこれで積む。

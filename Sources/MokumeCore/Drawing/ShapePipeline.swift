@@ -52,6 +52,13 @@ final class ShapePipeline {
         /// (``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。
         var all: [AnyObject] { [composite, blend, replace] }
 
+        /// その列を描くパイプライン。**置き換える列のうち、細い線を広げた頂点を持つ列だけは
+        /// 下地を読む列** (`composite`) で描く (#1637)。広げた帯は覆う割合だけを置き換え、残りの
+        /// 下地を残す (`mokume_fragmentMain` の置き換えの枝)。
+        func drawing(_ batch: Canvas.Batch) -> any MTLRenderPipelineState {
+            batch.run.mode == .replace && batch.thinCoverage ? composite : state(for: batch.run.mode)
+        }
+
         /// その混ぜ方で描くパイプライン。
         func state(for mode: BlendMode) -> any MTLRenderPipelineState {
             switch mode {

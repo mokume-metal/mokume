@@ -1027,6 +1027,7 @@ extension Canvas {
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)。名乗る値は
         // 被覆を兼ねる (細い線を広げたとき 1 未満・#1637)
         let coverage = solidStrokeCoverage
+        defer { if coverage < 1 { openBatchHasThinCoverage = true } }
         appendSolidVertex(
             position: liftedTowardViewer(a, camera: camera), shapePosition: shape.0, normal: .zero,
             isStroke: true, strokeCoverage: coverage, color: style.stroke)

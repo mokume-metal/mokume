@@ -183,5 +183,6 @@ extension Canvas {
             indexStart: nil, instanceStart: solidInstances.count,
             strokeGeometry: geometry, strokePlacement: placement)
         solidInstances.append(.identity)
+        if thin != nil { openBatchHasThinCoverage = true }
     }
 }

@@ -339,7 +339,11 @@ struct ShaderInterfaceTests {
             Entry(
                 ShapePipeline.flatFragmentFunctionName,
                 common + [
-                    .buffer("mode", ShapePipeline.blendModeBufferIndex, .scalar(UInt32.self))
+                    .buffer("mode", ShapePipeline.blendModeBufferIndex, .scalar(UInt32.self)),
+                    // 細い線を広げた置き換える列も、この入口で字形の外の余白を捨てる (#1637)
+                    .buffer(
+                        "readsGlyphPage", ShapePipeline.glyphPageBufferIndex,
+                        .scalar(UInt32.self)),
                 ]),
             Entry(ShapePipeline.flatDirectFragmentFunctionName, common),
             Entry(

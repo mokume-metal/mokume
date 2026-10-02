@@ -381,7 +381,7 @@ extension Canvas {
     /// 平面の区間 `runRange` で、記録した頂点の代わりに積む輪郭 (頂点の並びの順)。
     ///
     /// - 置いた後に描く画素で 1 画素より細くなる輪郭は、広げて組み直した頂点 (#1637・
-    ///   ``Canvas/thinVertices(_:placedBy:)``)。**記録の中で置き直すときは判断しない** —
+    ///   ``Canvas/thinVertices(_:placedBy:cache:stroke:)``)。**記録の中で置き直すときは判断しない** —
     ///   外側を置くまで行列が決まらないので、素材を外側の記録へ渡す
     /// - そうでなく `carved` に含まれる輪郭は、引いて積んだ頂点 (半透明の色を掛けて置くとき)
     ///
@@ -398,17 +398,19 @@ extension Canvas {
         guard mayThin || !carved.isEmpty else { return [] }
         var found: [(range: Range<Int>, vertices: [ShapeVertex], coverage: [CoverageSpan])] = []
         var carvedIndex = 0
-        for stroke in shape.strokeRanges
-        where !stroke.range.isEmpty && stroke.range.lowerBound >= runRange.lowerBound
-            && stroke.range.upperBound <= runRange.upperBound
-        {
+        for index in shape.strokeRanges.indices {
+            let stroke = shape.strokeRanges[index]
+            guard !stroke.range.isEmpty, stroke.range.lowerBound >= runRange.lowerBound,
+                stroke.range.upperBound <= runRange.upperBound
+            else { continue }
             while carvedIndex < carved.count,
                 carved[carvedIndex].range.lowerBound < stroke.range.lowerBound
             {
                 carvedIndex += 1
             }
             if mayThin, let recipe = stroke.thin,
-                let rebuilt = thinVertices(recipe, placedBy: matrix)
+                let rebuilt = thinVertices(
+                    recipe, placedBy: matrix, cache: shape.thinCache, stroke: index)
             {
                 found.append((stroke.range, rebuilt.vertices, rebuilt.coverage))
             } else if carvedIndex < carved.count, carved[carvedIndex].range == stroke.range {
@@ -632,6 +634,7 @@ extension Canvas {
                 continue
             }
             let (corners, coverage) = rebuiltSolidStroke(moved)
+            if coverage < 1 { openBatchHasThinCoverage = true }
             for (offset, corner) in corners.enumerated() {
                 solidVertices[moved.vertexStart + offset].position = corner
                 // 被覆も置く面で決まる (#1637)。線の頂点なので 0 にはならない

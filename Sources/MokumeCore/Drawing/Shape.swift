@@ -61,6 +61,8 @@ public struct Shape {
     /// これが描く画素で 1 画素以上なら、どの輪郭も細くならないので区間を走査しない。
     /// 組み直す輪郭が無ければ無限大。
     let thinnestRecordedWeight: Float
+    /// 置いた後に細くなった輪郭を組み直した頂点の控え (#1637)。形 1 つに 1 つ。
+    let thinCache = ThinStrokeCache()
     /// ``solidVertices`` のうち**立体の線の頂点**が、どの部品から来たか。
     ///
     /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ位置のままでは

@@ -339,12 +339,9 @@ extension Canvas {
         guard let matrix = thinStrokeMatrix,
             let thin = thinOutline(outline, weight: style.strokeWeight, placedBy: matrix)
         else { return strokeOutlineAsStyled(outline) }
-        // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので必ず引いて積む
-        let savedCap = style.strokeCap
-        if thin.isPoint { style.strokeCap = .square }
-        let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
-        strokeCarved(outline, half: style.strokeWeight / 2, chamfers: chamfers, thin: thin)
-        style.strokeCap = savedCap
+        // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので必ず引いて積む。片は描く画素の
+        // 空間で組む (``thinCarving(_:thin:)``)
+        strokeCarved(outline, half: style.strokeWeight / 2, chamfers: [], thin: thin)
     }
 
     /// いまの線の設定のまま、周を帯でなぞる (細い線の補いは ``strokeOutline(_:)`` が当てる)。
@@ -395,13 +392,19 @@ extension Canvas {
 
     /// 引く素材だけを組む。**引くのは、頂点を読むとき** (``CarveRecipe/vertices()``)。保持した
     /// 形を半透明の色で最初に置くとき (``CarvedStroke``) と、置いた後に細くなる輪郭を組み直す
-    /// とき (``thinVertices(_:placedBy:)``) に使う。端と折れ目の形はいまの設定から読む。
+    /// とき (``thinVertices(_:placedBy:cache:stroke:)``) に使う。端と折れ目の形はいまの設定から読む。
     func carveRecipe(
         _ outline: Outline, half: Float, thin: ThinOutline? = nil, transform: Transform,
         color: LinearRGBA, uv: SIMD2<Float>
     ) -> CarveRecipe {
+        if let thin {
+            let (carving, offset) = thinCarving(outline, thin: thin)
+            return CarveRecipe(
+                carving: carving, offset: offset, transform: transform, color: color, uv: uv,
+                inverse: thin.inverse)
+        }
         let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
-        let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers, thin: thin)
+        let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
         return CarveRecipe(
             carving: carving, offset: offset, transform: transform, color: color, uv: uv)
     }
@@ -442,14 +445,23 @@ extension Canvas {
     /// 置き場所ぶんずらした周は、ずらす前の周で引いてから置き場所を足す (``Outline/unmoved``)。
     /// 畳んだ雛形と同じ座標で引くので、畳むかどうかで頂点の数が変わらない。
     ///
-    /// 細い片を補うとき (`thin`) は、片ごとに広げた太さで組み、片の被覆を積んだ頂点に付ける
-    /// (``noteCoverage(_:in:)``・#1637)。
+    /// 細い片を補うとき (`thin`) は、片を描く画素の空間で組んで形自身の座標へ戻し
+    /// (``thinCarving(_:thin:)``)、片の被覆を積んだ頂点に付ける (``noteCoverage(_:in:)``・#1637)。
     private func strokeCarved(
         _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], thin: ThinOutline? = nil
     ) {
-        let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers, thin: thin)
+        // `Optional.map` に閉包を渡さない — 点ごとに隔離の実行時検査を払う (#1779)
+        let carving: StrokeCarving
+        let offset: SIMD2<Float>
+        if let thin {
+            (carving, offset) = thinCarving(outline, thin: thin)
+        } else {
+            (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
+        }
+        let inverse = thin?.inverse ?? matrix_identity_float2x2
+        let mapsBack = thin != nil
         func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
-            let moved = point + offset
+            let moved = (mapsBack ? inverse * point : point) + offset
             return strokePoint(x: moved.x, y: moved.y)
         }
         carving.carved { polygon, range, hub, coverage in
@@ -480,61 +492,42 @@ extension Canvas {
     /// 片を集める。引くのは ``StrokeCarving/carved(_:)`` が行い、集めた値は Canvas の状態を
     /// 読まないので、直ちに引いても (``strokeCarved(_:half:chamfers:)``) 後で引いても
     /// (``CarveRecipe``) 結果は同じである。
-    ///
-    /// `thin` を渡すと、片ごとに広げた太さの半分と被覆で組む (#1637)。渡さなければ全部の片が
-    /// `half` と被覆 1 で、これまでと 1 ビットも変わらない。
     private func makeCarving(
-        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], thin: ThinOutline? = nil
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>]
     ) -> (carving: StrokeCarving, offset: SIMD2<Float>) {
         let (points, offset) = outline.unmoved ?? (outline.points, SIMD2<Float>(0, 0))
         var carving = StrokeCarving(
-            points: points, isClosed: outline.isClosed, weight: thin?.widest ?? half * 2,
+            points: points, isClosed: outline.isClosed, weight: half * 2,
             wholeOutline: outline.strokesAsOneRegion)
-        func bandHalf(_ segment: Int) -> Float { thin?.bandHalf[segment] ?? half }
-        func bandCoverage(_ segment: Int) -> Float { thin?.bandCoverage[segment] ?? 1 }
-        func pointHalf(_ point: Int) -> Float { thin?.pointHalf[point] ?? half }
-        func pointCoverage(_ point: Int) -> Float { thin?.pointCoverage[point] ?? 1 }
-        /// 円板の周のずれ。太さごとに 1 度だけ求める (``appendDisc(at:half:)`` と同じ控え)
-        func rim(_ half: Float) -> [SIMD2<Float>] {
-            if discOffsets?.half != half {
-                discOffsets = (
-                    half, Self.arcOffsets(radiusX: half, radiusY: half, from: 0, sweep: 2 * .pi)
-                )
-            }
-            return discOffsets?.offsets ?? []
+        if discOffsets?.half != half {
+            discOffsets = (
+                half, Self.arcOffsets(radiusX: half, radiusY: half, from: 0, sweep: 2 * .pi)
+            )
         }
+        let rim = discOffsets?.offsets ?? []
         let join = style.strokeJoin
         strokeRing(
             count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
             samePlace: { points[$0] == points[$1] },
             endSquare: { index, neighbor in
-                let half = pointHalf(index)
-                carving.addPoint(index, coverage: pointCoverage(index)) {
+                carving.addPoint(index) {
                     Self.appendSquare(at: points[index], awayFrom: points[neighbor], half: half, to: &$0)
                 }
             },
             band: { a, b in
-                let half = bandHalf(a)
-                carving.addBand(segment: a, coverage: bandCoverage(a)) {
-                    Self.appendBand(points[a], points[b], half: half, to: &$0)
-                }
+                carving.addBand(segment: a) { Self.appendBand(points[a], points[b], half: half, to: &$0) }
             },
             disc: { index in
                 let center = points[index]
-                let offsets = rim(pointHalf(index))
-                carving.addPoint(index, coverage: pointCoverage(index)) { polygon in
-                    for offset in offsets { polygon.append(center + offset) }
+                carving.addPoint(index) { polygon in
+                    for offset in rim { polygon.append(center + offset) }
                 }
             },
             square: { index in
-                let half = pointHalf(index)
-                carving.addPoint(index, coverage: pointCoverage(index)) {
-                    Self.appendSquare(at: points[index], half: half, to: &$0)
-                }
+                carving.addPoint(index) { Self.appendSquare(at: points[index], half: half, to: &$0) }
             },
             corner: { index, previous, next in
-                let half = pointHalf(index)
-                carving.addPoint(index, coverage: pointCoverage(index)) { polygon in
+                carving.addPoint(index) { polygon in
                     guard index < chamfers.count else {
                         return Self.appendJoin(
                             at: points[index], from: points[previous], to: points[next],

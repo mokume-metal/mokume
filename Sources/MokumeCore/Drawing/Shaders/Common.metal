@@ -814,8 +814,21 @@ fragment float4 mokume_fragmentMain(
     MOKUME_SURFACE_PARAMS
     MOKUME_SHAPE_PARAMS,
     constant uint &mode [[buffer(2)]],
+    constant uint &readsGlyphPage [[buffer(3)]],
     float4 destination [[color(0)]])
 {
+    // **置き換える列のうち、細い線を広げた頂点を持つ列だけがここへ来る** (#1637)。広げた帯の
+    // 画素は帯が覆う割合 (被覆) だけを置き換え、残りは下地を残す: `S·c + D·(1 − c)`。塗りの上に
+    // 輪郭を置いた形では、距離関数の経路の置き換え (`S·s + F·(f − o)`・#1867 決定 1) と同じく
+    // 帯の下の塗りが見える。被覆 1 の画素はそのまま置き換える (`mokume_fragmentReplace` と同じ)
+    if (mode == kReplace) {
+        if (readsGlyphPage != 0 && source_texture.sample(kGlyphSampler, in.uv).a <= 0.0) {
+            discard_fragment();
+            return destination;
+        }
+        float4 color = mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
+        return in.coverage < 1.0 ? color + destination * (1.0 - in.coverage) : color;
+    }
     return mokume_composite(
         mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS), destination, mode);
 }

@@ -174,6 +174,8 @@ extension Canvas {
     /// 位置は**その並びの中で**数える。平面と立体は別の並びに溜まるので、それぞれの
     /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
+        // 細い線を広げた頂点の印は、閉じた列が持っていく (#1637)。閉じる列が無くても下ろす
+        defer { openBatchHasThinCoverage = false }
         // **`switch` で振る。** `if` 連鎖だと `VertexSource` にケースが増えた日、
         // ここだけ黙って平面の経路へ落ちる (他の 5 箇所は `switch` なので止まる)
         switch openSource {
@@ -215,6 +217,7 @@ extension Canvas {
                 instanceStart: template?.instanceStart ?? 0,
                 instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
                 strokeStart: template?.strokeStart ?? .max))
+        batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
     }
 
     /// 断片へ渡す面を、いま列に写し取る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
@@ -317,6 +320,7 @@ extension Canvas {
                 solidSource: open.source,
                 strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
                 fillGeometry: open.fillGeometry))
+        batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
         warnIfMaterialCannotShow()
     }
 
