@@ -400,6 +400,7 @@ enum RunCommand {
         // 戻すのは検査のため — 本番の道具はこの後すぐ終わる
         let previous = installStopForwarding(signals)
         defer { restoreStopHandlers(previous) }
+        let exited = ExitWait(for: process)
         do {
             try process.run()
         } catch {
@@ -409,7 +410,7 @@ enum RunCommand {
         // ここで拾う。逆順にすると、見た後・置く前に来た合図を誰も子へ渡さない
         runChildPID = process.processIdentifier
         if runStopSignal != 0 { process.terminate() }
-        process.waitUntilExit()
+        exited.wait()
         runChildPID = 0
         // **合図で止めた回は、終了コードを見ずに名乗る。** 子は渡した SIGTERM で後始末を
         // 済ませて 0 で終わることも、済ませずに 15 で落ちることもある (#1219)。後者を
@@ -550,6 +551,7 @@ enum RunCommand {
             // 掴まないなら混ぜる先が無いので、流しっぱなしにする
             if capturing { process.standardError = pipe }
         }
+        let exited = ExitWait(for: process)
         let launched: Bool
         do {
             if let running {
@@ -570,7 +572,7 @@ enum RunCommand {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             output = String(data: data, encoding: .utf8) ?? ""
         }
-        process.waitUntilExit()
+        exited.wait()
         // **道具が無いことを、道具の失敗と取り違えない。** `/usr/bin/env` 自体は必ず起動
         // できるので、上の catch には届かない — `env` は探したものが無いと 127 で終わる。
         // 見逃すと空の出力が「宣言が読めない」「走らせるものが無い」と読まれ、原因が
@@ -596,6 +598,32 @@ enum RunCommand {
             return tool
         }
         return process.executableURL?.lastPathComponent ?? "swift"
+    }
+}
+
+/// 子の終わりを、呼んだ糸の実行ループを回さずに待つ ([#1937])。
+///
+/// **`Process.waitUntilExit()` は、待つ間に呼んだ糸の実行ループを回す。** main で呼ぶと、そこに
+/// 載った仕事 (タイマー・画面の駆動源) が待ちの中で走る。合図の受け口と宛先を持ったまま待つ
+/// ``RunCommand/launch(_:in:environment:forwarding:)`` では、その前提が待ちの最中に書き換わる。
+/// 道具は待つ間に実行ループを要さない (`run` / `render` は窓も main の仕事も持たず、見張りは
+/// 作り直しを main の外で待つ) ので、回さずに塞ぐ。
+///
+/// **子を起こす前に作る。** 知らせ (`terminationHandler`) は起こす前に置く。起こした後に置くと、
+/// すぐ終わった子の知らせを取り逃しうる。
+///
+/// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
+nonisolated struct ExitWait: Sendable {
+    private let exited = DispatchSemaphore(value: 0)
+
+    init(for process: Process) {
+        let exited = exited
+        process.terminationHandler = { _ in exited.signal() }
+    }
+
+    /// 子が終わるまで塞ぐ。戻った後は `terminationStatus` が読める。
+    func wait() {
+        exited.wait()
     }
 }
 

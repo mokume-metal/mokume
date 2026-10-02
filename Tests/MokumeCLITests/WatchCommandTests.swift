@@ -53,6 +53,29 @@ struct WatchCommandTests {
         return root
     }
 
+    /// 検査の前の受け口と印を控え、``restore()`` で戻す ([#1937])。
+    ///
+    /// `installStopHandlers()` は受け口を置いたまま戻さない (本番の見張りはその後すぐ終わる)。
+    /// 検査は走者の受け口を書き換えるので、終わったら前の形へ戻す。**前を見ずに既定
+    /// (`SIG_DFL`) へ戻さない** — 走者が継いだ受け口や無視を消す。
+    ///
+    /// **控えてから戻すまでの間に main actor を手放さない** (`await` を挟まない)。手放すと、
+    /// その間に走ったほかの検査の控えと戻しが、この検査の内側に収まらない。
+    ///
+    /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
+    struct StopHandlersSnapshot {
+        /// `installStopHandlers()` が触る合図。受ける 4 つと、無視にする SIGPIPE。
+        private let receivers = (WatchCommand.stopSignals + [SIGPIPE]).map {
+            (number: $0, previous: RunCommand.currentAction($0))
+        }
+        private let flag = watchStopRequested
+
+        func restore() {
+            RunCommand.restoreStopHandlers(receivers)
+            watchStopRequested = flag
+        }
+    }
+
     // MARK: - 起動より前に置く区画
 
     /// 窓口が使う区画は、子を起こす前に在る。
@@ -118,6 +141,8 @@ struct WatchCommandTests {
     /// [#682]: https://github.com/mokume-metal/mokume/issues/682
     @Test("宣言されていない資材があると、見張りは始まらない")
     func refusesToWatchUndeclaredResources() throws {
+        let before = StopHandlersSnapshot()
+        defer { before.restore() }
         let root = try makeSketchWithUndeclaredAssets()
         // 巡回は差し替える。**始める前に止まることを見る検査**なので、止まらなかった
         // ときに合図待ちで固まってはいけない (固まった検査は赤より読みにくい)
@@ -133,6 +158,8 @@ struct WatchCommandTests {
     /// ことが、窓では直らない ([#705](https://github.com/mokume-metal/mokume/issues/705))。
     @Test("最初の作り直しは、巡回へ渡してから始まる")
     func firstBuildStartsInsideTheLoop() throws {
+        let before = StopHandlersSnapshot()
+        defer { before.restore() }
         let root = try makeDirectory()
         try Data(#"// swift-tools-version: 6.2"#.utf8)
             .write(to: root.appendingPathComponent("Package.swift"))
@@ -165,6 +192,8 @@ struct WatchCommandTests {
     /// 検査で再現できないので、ここが見るのは**断りを立てる場所と返す場所**である。
     @Test("見張っている間は間引きを断り、終えたら返す")
     func refusesThrottlingWhileWatching() throws {
+        let before = StopHandlersSnapshot()
+        defer { before.restore() }
         let root = try makeDirectory()
         try Data(#"// swift-tools-version: 6.2"#.utf8)
             .write(to: root.appendingPathComponent("Package.swift"))
@@ -247,15 +276,40 @@ struct WatchCommandTests {
     /// **合図はハンドラの外で効く。** ハンドラは印を立てるだけで、終わらせるのは巡回。
     @Test("終わりの合図を受けると、印が立つ")
     func raisesTheStopFlagOnSignal() {
+        let before = StopHandlersSnapshot()
+        defer { before.restore() }
         WatchCommand.installStopHandlers()
-        defer {
-            for number in WatchCommand.stopSignals { signal(number, SIG_DFL) }
-            watchStopRequested = 0
-        }
 
         #expect(watchStopRequested == 0)
         raise(SIGTERM)
         #expect(watchStopRequested != 0)
+    }
+
+    /// **合図の検査は、走者の受け口を前の形へ戻す** ([#1937])。
+    ///
+    /// 前を見ずに既定へ戻すと、走者が無視で継いだ合図 (背面の起動の SIGINT など) まで既定に
+    /// なる。ここでは見張りの受け口を置く前に、目印として SIGHUP を無視・SIGPIPE を既定にしておき、
+    /// 戻した後にその形へ戻っていることを見る。
+    ///
+    /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
+    @Test("合図の検査の後、受け口は置く前の形へ戻る")
+    func theSnapshotRestoresWhatWasThere() {
+        let outer = StopHandlersSnapshot()
+        defer { outer.restore() }
+        signal(SIGHUP, SIG_IGN)
+        signal(SIGPIPE, SIG_DFL)
+        watchStopRequested = 0
+
+        let before = StopHandlersSnapshot()
+        WatchCommand.installStopHandlers()
+        raise(SIGHUP)
+        before.restore()
+
+        #expect(StopSignals.isIgnored(RunCommand.currentAction(SIGHUP)), "無視で継いだ SIGHUP を戻していない")
+        #expect(
+            RunCommand.currentAction(SIGPIPE).__sigaction_u.__sa_handler == nil,
+            "既定だった SIGPIPE を無視のまま残した")
+        #expect(watchStopRequested == 0, "合図で立った印を残した")
     }
 
     /// **端末が消える形がいちばん多い。** 見張りを起こしたセッションが終わる経路で、
@@ -271,11 +325,9 @@ struct WatchCommandTests {
     /// 動作で消え、子が窓の無いまま 28 時間残った ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
     @Test("時間切れの合図 (SIGALRM) でも、印が立つ")
     func raisesTheStopFlagOnAlarm() {
+        let before = StopHandlersSnapshot()
+        defer { before.restore() }
         WatchCommand.installStopHandlers()
-        defer {
-            for number in WatchCommand.stopSignals { signal(number, SIG_DFL) }
-            watchStopRequested = 0
-        }
 
         raise(SIGALRM)
         #expect(watchStopRequested != 0)

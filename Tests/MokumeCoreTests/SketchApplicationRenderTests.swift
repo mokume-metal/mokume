@@ -300,8 +300,13 @@ struct SketchApplicationRenderTests {
             application.didFinishLaunching()
             fire(application, times: 4)
 
-            sketchStopRequested = 1
-            fire(application, times: 3)
+            // **旗は立てた区間の中で閉じる** (#1937)。下の `await` を跨いで残すと、その間に
+            // 走るほかの検査が拾いうる
+            do {
+                sketchStopRequested = 1
+                defer { sketchStopRequested = 0 }
+                fire(application, times: 3)
+            }
             #expect(ending.stopCalls == 1)
             #expect(ending.finishedCalls == 0)
             #expect(sketch.seen.count == 4, "終わりに向かっている間にも描いた")

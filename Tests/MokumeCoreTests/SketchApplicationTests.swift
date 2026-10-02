@@ -25,6 +25,22 @@ struct SketchApplicationTests {
     /// 何も描かないスケッチ。窓を開くのに要るのは大きさだけなので、既定のままでよい。
     private final class Blank: Sketch {}
 
+    /// 組む。**終わりの合図の行き先は、呼ばれたら赤を記録する口へ差し替える** ([#1937])。
+    ///
+    /// 既定の口 (`terminate(nil)`) は、run loop を回していない検査のプロセスをその場で
+    /// `exit(0)` させる。旗 `sketchStopRequested` が残っていると、それを拾った検査 (駆動源の
+    /// 代わりに `displayLinkFired()` を叩くもの・繋いだ駆動源が鳴るもの) が、走者ごと緑のまま
+    /// 消える。旗を数える検査は、自分の口で上書きする。
+    ///
+    /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
+    private func makeApplication(_ sketch: any Sketch) throws -> SketchApplication {
+        let application = try SketchApplication(sketch: sketch, gpu: RenderDevice())
+        application.onStopSignal = {
+            Issue.record("合図を送っていないのに、終わりの合図で終わりを頼んだ (旗が残っていた)")
+        }
+        return application
+    }
+
     /// **閉じた窓を、閉じた後に触る。**
     ///
     /// 窓を閉じるとアプリケーションは終わりに向かうが、即死ではない。加えてフレームの
@@ -44,7 +60,7 @@ struct SketchApplicationTests {
     /// 約束が実際の経路の窓に掛かっていることと、走り終わりまで生きていることを併せて見るため。
     @Test("窓を閉じても、その後に窓を触る経路が未定義にならない")
     func theWindowOutlivesItsClosing() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         application.didFinishLaunching()
         defer { application.willTerminate() }
 
@@ -68,7 +84,7 @@ struct SketchApplicationTests {
     /// [#963]: https://github.com/mokume-metal/mokume/issues/963
     @Test("スケッチの窓へ送ったキーも、面へ届く")
     func keysReachTheSurfaceThroughTheWindow() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         application.didFinishLaunching()
         defer { application.willTerminate() }
 
@@ -105,7 +121,7 @@ struct SketchApplicationTests {
     @Test("窓を道具が持つ経路では、最後の窓が閉じてもスケッチは終わらない")
     func theSketchOutlivesTheLastWindowWhenTheToolOwnsIt() throws {
         try withFacet { facet in
-            let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+            let application = try makeApplication(Blank())
             defer { application.willTerminate() }
             application.resolveOutlet(at: facet)
 
@@ -120,7 +136,7 @@ struct SketchApplicationTests {
     func theSketchEndsWithItsOwnLastWindow() throws {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         defer { application.willTerminate() }
         // 区画が無いので、出口は窓のまま
         application.resolveOutlet(at: missing)
@@ -149,7 +165,7 @@ struct SketchApplicationTests {
     /// は、いままでどおり × で終わる ([ADR-0032] 決定 1 の「作品は道具に依存しない」)。
     @Test("合図が無ければ、× はそのまま閉じる")
     func closesWithoutTheSignal() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         application.closeQuestion = nil
         application.didFinishLaunching()
         defer { application.willTerminate() }
@@ -162,7 +178,7 @@ struct SketchApplicationTests {
     /// 制作中の作品がそのまま終わる。
     @Test("合図があれば、× ではまだ閉じず、問いが出る")
     func asksInsteadOfClosing() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         application.closeQuestion = Self.question
         var asked: CloseQuestion?
         application.presentQuestion = { question, _, _ in asked = question }
@@ -178,7 +194,7 @@ struct SketchApplicationTests {
     @Test("終えると答えたときだけ、スケッチを終わらせる")
     func endsOnlyWhenConfirmed() throws {
         for confirmed in [true, false] {
-            let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+            let application = try makeApplication(Blank())
             var ended = 0
             application.closeQuestion = Self.question
             application.presentQuestion = { _, _, answer in answer(confirmed) }
@@ -207,7 +223,7 @@ struct SketchApplicationTests {
     /// run loop を 1 周余計に回すことになる。
     @Test("何も書き出していなければ、その場で終わってよいと答える")
     func terminatesAtOnceWithNothingToWaitFor() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         var replies = 0
         application.replyToTermination = { replies += 1 }
         defer { application.willTerminate() }
@@ -238,7 +254,7 @@ struct SketchApplicationTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         Recording.path = directory.appendingPathComponent("quit.mov").path
 
-        let application = try SketchApplication(sketch: Recording(), gpu: RenderDevice())
+        let application = try makeApplication(Recording())
         var replies = 0
         var closedAtReply: [Bool] = []
         application.replyToTermination = {
@@ -276,7 +292,7 @@ struct SketchApplicationTests {
     /// [#978]: https://github.com/mokume-metal/mokume/issues/978
     @Test("終わりに向かっている間の × では問わない")
     func doesNotAskWhileTerminating() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         var asked = 0
         application.closeQuestion = Self.question
         application.presentQuestion = { _, _, _ in asked += 1 }
@@ -298,7 +314,7 @@ struct SketchApplicationTests {
     /// [#978]: https://github.com/mokume-metal/mokume/issues/978
     @Test("問いが出ている間に終わりが始まったら、終えるという答えで終わりを重ねない")
     func anAnswerDoesNotTerminateAgain() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         var answer: ((Bool) -> Void)?
         var ended = 0
         application.closeQuestion = Self.question
@@ -325,7 +341,9 @@ struct SketchApplicationTests {
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     @Test("終わりの合図を受けていたら、終わりを 1 度だけ頼む")
     func asksToEndOnceAfterAStopSignal() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        sketchStopRequested = 0
+        defer { sketchStopRequested = 0 }
+        let application = try makeApplication(Blank())
         var ended = 0
         application.onStopSignal = { ended += 1 }
         defer { application.willTerminate() }
@@ -344,7 +362,9 @@ struct SketchApplicationTests {
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     @Test("終わりに向かっている間の合図では、終わりを重ねない")
     func aStopSignalDoesNotTerminateAgain() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        sketchStopRequested = 0
+        defer { sketchStopRequested = 0 }
+        let application = try makeApplication(Blank())
         var ended = 0
         application.onStopSignal = { ended += 1 }
         application.replyToTermination = {}
@@ -366,7 +386,7 @@ struct SketchApplicationTests {
     /// [#1427]: https://github.com/mokume-metal/mokume/issues/1427
     @Test("起こした道具が居なくなったら、終わりを頼む")
     func asksToEndWhenTheDriverIsGone() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         var ended = 0
         var gone = false
         application.onStopSignal = { ended += 1 }
@@ -384,7 +404,9 @@ struct SketchApplicationTests {
     /// 読み残した側が重ねて頼むこともない。
     @Test("合図と道具の消失が重なっても、終わりは 1 度だけ頼む")
     func asksOnceWhenBothArrive() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        sketchStopRequested = 0
+        defer { sketchStopRequested = 0 }
+        let application = try makeApplication(Blank())
         var ended = 0
         var departures = [true]
         application.onStopSignal = { ended += 1 }
@@ -402,7 +424,7 @@ struct SketchApplicationTests {
     /// **終わりに向かっている間は重ねない** (``aStopSignalDoesNotTerminateAgain()`` と同じ理由)。
     @Test("終わりに向かっている間に道具が居なくなっても、終わりを重ねない")
     func theDriverLeavingDoesNotTerminateAgain() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         var ended = 0
         application.onStopSignal = { ended += 1 }
         application.driverDeparted = { true }
@@ -419,7 +441,7 @@ struct SketchApplicationTests {
     /// スケッチの標準入力 (端末) が閉じても終わらないことは、ここから従う。
     @Test("道具から起こされていなければ、居なくなったとは言わない")
     func notDrivenMeansNeverDeparted() throws {
-        let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
+        let application = try makeApplication(Blank())
         defer { application.willTerminate() }
         #expect(!application.driverDeparted())
     }

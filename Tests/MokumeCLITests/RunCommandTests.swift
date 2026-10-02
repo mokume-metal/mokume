@@ -14,13 +14,14 @@ import mokume
 /// 経路が 2 系統あること自体を型で塞いである。
 @Suite("スケッチを走らせる")
 struct RunCommandTests {
-    /// 指定した終了コードで終わるだけの実行ファイルを置く。
-    private func makeExecutable(exiting status: Int32) throws -> URL {
+    /// 指定した終了コードで終わるだけの実行ファイルを置く。`seconds` だけ眠ってから終わる。
+    private func makeExecutable(exiting status: Int32, after seconds: Double = 0) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-run-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let executable = directory.appendingPathComponent("sketch")
-        try "#!/bin/sh\nexit \(status)\n".write(to: executable, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\nsleep \(seconds)\nexit \(status)\n".write(
+            to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
         return executable
@@ -276,6 +277,100 @@ struct RunCommandTests {
         for failure in watcher.failures { Issue.record(Comment(rawValue: failure)) }
         #expect(
             StopSignals.isIgnored(RunCommand.currentAction(SIGINT)), "走り終えた後に無視を戻していない")
+    }
+
+    // MARK: - 待つ間に割り込ませない (#1937)
+
+    /// main の実行ループに載ったほかの仕事の代わり。**待ちの中で走ったら、そのとき見たものを残す。**
+    ///
+    /// 実行ループに載る仕事の実物は、駆動源 (`ScreenDisplayLink` → `SketchApplication.displayLinkFired()`
+    /// → 旗 `sketchStopRequested` を読んで下ろす) と、見張りの巡回のタイマー
+    /// (`WatchCommand.step` → 印 `watchStopRequested` を読む) である。どちらも合図の印を触る。
+    final class Bystander {
+        /// 子を待っている最中か。検査が待ちの前後で立てて下ろす。
+        var waiting = false
+        /// 待ちの中で走ったか。
+        private(set) var ranInside = false
+        /// 待ちの中で走ったときに見た宛先 (`runChildPID`)。
+        private(set) var destinationSeenInside: pid_t = 0
+        private var timer: Timer?
+
+        /// 次の巡で鳴るタイマーを、main の実行ループへ載せる。鳴ると、宛先を書き換える
+        /// (内側の `launch` は最後に 0 へ戻す)。**合図は送らない** — 待ちの中で走っても、
+        /// 走者ごと落とさずに赤で名乗る。
+        func arm() {
+            let timer = Timer(timeInterval: 0, repeats: false) { _ in
+                MainActor.assumeIsolated { self.fire() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
+        }
+
+        /// 鳴らなかったタイマーを畳む。**待ちの外では鳴らさない** — 後の検査の中で鳴ると、
+        /// その検査の宛先を書き換える。
+        func disarm() {
+            timer?.invalidate()
+            timer = nil
+        }
+
+        private func fire() {
+            if waiting {
+                ranInside = true
+                destinationSeenInside = runChildPID
+            }
+            runChildPID = 0
+        }
+    }
+
+    /// **待つ間に、ほかの仕事を入れ子で走らせない** ([#1937])。
+    ///
+    /// 待ちが main の実行ループを回すと、そこに載った仕事 (``Bystander`` の説明) が待ちの中で
+    /// 走る。受け口・宛先を持ったまま待つ検査 (上の合図の検査) の前提が、待ちの最中に
+    /// 書き換わる。ここでは、次の巡で鳴るタイマーを載せてから待ち、待ちの中で鳴らないことを見る。
+    ///
+    /// **main actor の待ち行列に積まれた仕事 (ほかの検査そのもの) は、`waitUntilExit()` の中でも
+    /// 走らなかった** (Swift 6.4 の走者で実測・#1937)。入れ子に走るのは実行ループの仕事だけで、
+    /// だからタイマーで見る。
+    ///
+    /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
+    @Test("走らせているスケッチを待つ間に、実行ループに載ったほかの仕事が割り込んで宛先を書き換えない")
+    func nothingElseRunsWhileWaitingForTheSketch() throws {
+        let executable = try makeExecutable(exiting: 0, after: 0.3)
+        let directory = executable.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bystander = Bystander()
+        bystander.arm()
+        defer { bystander.disarm() }
+
+        bystander.waiting = true
+        try RunCommand.launch(executable, in: directory)
+        bystander.waiting = false
+
+        #expect(
+            !bystander.ranInside,
+            """
+            launch の待ちの中でほかの仕事が走り、走らせている子の宛先 \
+            (runChildPID = \(bystander.destinationSeenInside)) を書き換えた
+            """)
+    }
+
+    /// 道具立て (`swift`) を待つ口も同じである。見張りの口 (`WatchCommand.run`) は、受け口を
+    /// 控えてから戻すまでの間に、宣言を読む `swift` をここで待つ。
+    @Test("道具立てを待つ間に、実行ループに載ったほかの仕事が割り込まない")
+    func nothingElseRunsWhileWaitingForTheToolchain() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 0.3"]
+        let bystander = Bystander()
+        bystander.arm()
+        defer { bystander.disarm() }
+
+        bystander.waiting = true
+        let result = try RunCommand.capture(process, capturing: false, errors: .inherit)
+        bystander.waiting = false
+
+        #expect(result.status == 0)
+        #expect(!bystander.ranInside, "capture の待ちの中でほかの仕事が走った")
     }
 
     /// **合図で止めた回は、慣習の 128 + 番号で終わる。** スケッチの成否として 15 を返すと、

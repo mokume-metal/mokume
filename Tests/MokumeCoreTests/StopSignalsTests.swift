@@ -69,7 +69,9 @@ struct StopSignalsTests {
     /// 落ちる — だから送る前に、置かれたことを `#require` で確かめる。
     @Test("合図を受けると旗が立ち、読むと下りる")
     func aSignalRaisesTheFlagOnce() throws {
+        // **旗は検査の中で閉じる** (#1937)。読んでも下りない実装だと、旗が残って後の検査に拾われる
         sketchStopRequested = 0
+        defer { sketchStopRequested = 0 }
         try with(SIGTERM, handler: SIG_DFL) {
             let replaced = StopSignals.install()
             defer { StopSignals.restore(replaced) }
