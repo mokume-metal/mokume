@@ -544,6 +544,12 @@ public final class Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var shadowsEnabled = false
+    /// この面で影を 1 度でも有効にしたか。**フレームを越える** — 区切りで落とす側を写すか
+    /// (``keepCasters(into:)``) を決める印で、影を使わないスケッチの区切りに写しを払わせない
+    /// ([#1656])。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+    var shadowsEverEnabled = false
     /// 焼き付ける範囲の一辺。`nil` なら面から導く。**フレームを越えない** (同 決定 4)。
     var shadowRangeValue: Float?
     /// 焼き付け先の一辺の画素数。**フレームを越えない** (同 決定 4)。
@@ -999,11 +1005,20 @@ public final class Canvas {
     ///
     /// 写しは置いた側が持つ。**描き切りか捨てるまで使い回さない** — 溜めた列が読む前に、同じ
     /// 写しへ別の時点の絵を写すことになる。描き切りの末尾 (``discardFrame()``) で空き
-    /// (``placedPictureCopiesFree``) へ戻す。空きへ戻した写しを次に写すコマンドは、それを読む
-    /// 描き切りより後に投入されるので、GPU 上でも読み終わった後に書く。
+    /// (``placedPictureCopiesFree``) へ戻す。空きから使い回す写しへ書くコマンドは、前にそれを
+    /// 読んだ描き切りより後に投入され、**写す前に待ち合わせを置いて**前の読みが終わるのを待つ
+    /// (``copyPlacedPicture(_:)``。この世代は encoder をまたぐ依存を自動では張らない・#341)。
+    ///
+    /// **写しの数には上限がある** (``placedPictureCopyLimit``)。空きと使用中を合わせて上限に
+    /// 達し、使い回せる空きも無ければ、写さずに置いた側を描き切らせる (区切りになる)。
     ///
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     private var placedPictureCopiesInUse: [PlacedPictureCopy] = []
+    /// 置いた側 1 つが持つ写しの上限 (使用中と空きの合計)。1 フレームに「置く → 描き換える」を
+    /// 上限より多く繰り返した分は、写さずに置いた側を描き切らせる。描き場所 1 枚ぶんの rgba16Float
+    /// (1920×1080 で約 16.6MB) を、繰り返す回数だけ抱え続けないための線である。
+    static let placedPictureCopyLimit = 4
+
     /// 使い回せる写し。**最後のフレームの境目までの 1 フレームに使わなかったものは手放す**
     /// (``leaveFrame()``)。描き場所を置かなくなった後まで、その大きさの写しを抱え続けない。
     private var placedPictureCopiesFree: [PlacedPictureCopy] = []
@@ -1012,6 +1027,8 @@ public final class Canvas {
     /// 置いた時点の絵を写した回数 (作ってから通算)。**置いた側を描き切らせる代わりに写したこと
     /// を検査が見る。**
     private(set) var placedPicturesCopied = 0
+    /// 写しの上限に達して、置いた側を描き切らせた回数 (作ってから通算)。**検査が読む。**
+    private(set) var placedPictureCopyLimitReached = 0
 
     /// 弱く持つ面ひとつぶん。
     struct WeakCanvas {
@@ -2719,7 +2736,8 @@ public final class Canvas {
     /// **形を組み立てている途中なら、これまでどおり描き切る。** 組み立てた形は溜めた列から抜かれて
     /// 持ち歩かれるので、写しへ差し替えると、後で置いたときに描き場所のいまの絵ではなく写しを
     /// 読み続ける。描き切りが組み立てを壊すことは、組み立ての出口が見張っている (#1588)。
-    /// 写しを用意できなかったときも描き切る (置いた時点の絵を守るほうを取る)。
+    /// 写しを用意できなかったときと、写しの上限 (``placedPictureCopyLimit``) に達したときも描き切る
+    /// (置いた時点の絵を守るほうを取る)。この 3 つでは、置いた側にフレームの途中の区切りが入る。
     ///
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     private func keepPicture(placedFrom graphics: Canvas) {
@@ -2735,8 +2753,8 @@ public final class Canvas {
         guard !isFlushing else { return }
         if !recordingShape {
             do {
-                try copyPlacedPicture(graphics.output.texture)
-                return
+                if try copyPlacedPicture(graphics.output.texture) { return }
+                placedPictureCopyLimitReached += 1
             } catch {
                 Diagnostics.warn(
                     "Could not keep a copy of a drawing target before it changed, so what was "
@@ -2760,8 +2778,15 @@ public final class Canvas {
     /// 列が読む光・視点・材質はどれも、変わるときに列を閉じている)。
     ///
     /// **写すコマンドは、相手が描き換えるコマンドより先に投入される** (相手の描き切りの冒頭から
-    /// 呼ばれる)。投入は順に並ぶので、写しは描き換える前の絵になり、写しを読む描き切りはその後に来る。
-    private func copyPlacedPicture(_ source: any MTLTexture) throws(RenderFailure) {
+    /// 呼ばれる)。投入の順に頼らず、写す前後に待ち合わせを置く (この世代は encoder をまたぐ依存を
+    /// 自動では張らない・#341) — 前は、相手の前の描画 (描画・効果・拡大の段) が書き終わるのと、
+    /// 使い回す写しを前に読んでいた描画が読み終わるのを待つ。後は、写しを読む置いた側の描画と、
+    /// 相手が描き換える描画が、写し終わるのを待つ。
+    ///
+    ///
+    /// - Returns: 写しへ差し替えたか、差し替えるものが無かったら `true`。上限に達して写せなければ
+    ///   `false` (呼ぶ側は置いた側を描き切らせる)。
+    private func copyPlacedPicture(_ source: any MTLTexture) throws(RenderFailure) -> Bool {
         closeBatch()
         var reads = false
         for batch in batches {
@@ -2771,14 +2796,20 @@ public final class Canvas {
             }
             if reads { break }
         }
-        guard reads else { return }
-        let copy = try placedPictureCopy(fitting: source)
+        guard reads else { return true }
+        guard let copy = try placedPictureCopy(fitting: source) else { return false }
         do {
             try gpu.withCommands { commands throws(RenderFailure) in
                 guard let encoder = commands.makeComputeCommandEncoder() else {
                     throw .encoderUnavailable
                 }
+                encoder.barrier(
+                    afterQueueStages: [.dispatch, .vertex, .fragment, .blit], beforeStages: .blit,
+                    visibilityOptions: .device)
                 encoder.copy(sourceTexture: source, destinationTexture: copy.texture)
+                encoder.barrier(
+                    afterStages: .blit, beforeQueueStages: [.dispatch, .vertex, .fragment, .blit],
+                    visibilityOptions: .device)
                 encoder.endEncoding()
                 gpu.commit(commands)
             }
@@ -2796,11 +2827,13 @@ public final class Canvas {
                 batches[index].run.paint.surfaces[slot] = held
             }
         }
+        return true
     }
 
-    /// `source` と同じ形の写し。空きにあれば使い回し、無ければ作る。
+    /// `source` と同じ形の写し。空きにあれば使い回し、無ければ作る。**上限に達していて使い回せる
+    /// 空きも無ければ `nil`** (``placedPictureCopyLimit``)。形の合わない空きは、作る前に手放す。
     private func placedPictureCopy(fitting source: any MTLTexture) throws(RenderFailure)
-        -> PlacedPictureCopy
+        -> PlacedPictureCopy?
     {
         var found: Int?
         for (index, copy) in placedPictureCopiesFree.enumerated() where copy.fits(source) {
@@ -2811,6 +2844,12 @@ public final class Canvas {
         if let found {
             copy = placedPictureCopiesFree.remove(at: found)
         } else {
+            if placedPictureCopiesInUse.count + placedPictureCopiesFree.count
+                >= Self.placedPictureCopyLimit
+            {
+                guard !placedPictureCopiesFree.isEmpty else { return nil }
+                placedPictureCopiesFree.removeFirst()
+            }
             copy = try PlacedPictureCopy(gpu: gpu, like: source)
             placedPictureCopiesMade += 1
         }
@@ -3682,8 +3721,14 @@ public final class Canvas {
 
     /// いまの溜め場の落とす列を、``frameCasters`` へ足す。**途中の描き切りの末尾で、捨てる前に呼ぶ。**
     ///
-    /// 落とす列が無ければ何も写さない (影を使わないスケッチの区切りは、ここで何も払わない)。
+    /// **写すのは、フレームの中の区切りで、この面が影を 1 度でも有効にしたことがあるときだけ**
+    /// (``shadowsEverEnabled``)。影を使わないスケッチの区切りは、ここで何も払わない。区切りの後で
+    /// 初めて `shadows(true)` を呼んだフレームだけは、区切りより前の立体が影を落とさない (説明に
+    /// 書いた)。フレームの外 (止まっている間のコールバック・`setup()`) の区切りでは写さない —
+    /// 次のフレームの終わりまで捨てどきが来ず、止まっている間に読むたびに積み上がるため。
+    /// 落とす列が無ければ何も写さない。
     private func keepCasters(into kept: inout FrameCasters) {
+        guard isDrawing, shadowsEverEnabled else { return }
         var casts = false
         for batch in batches where batch.castsShadow {
             casts = true
@@ -3701,6 +3746,16 @@ public final class Canvas {
                     batch: batch, vertexBase: vertexBase, indexBase: indexBase,
                     instanceBase: instanceBase))
         }
+    }
+
+    /// 持ち越した落とす列が、`numbers` を外の置き場所として読むか。**粒の置き場の組を使い回して
+    /// よいかを、粒が尋ねる** (``Particles/claimDraw(by:)``・[#1656])。持ち越した列は、区切りの後も
+    /// フレームの終わりの焼き付けで組の置き場所を読むので、描き切りの印が変わっても組は空かない。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+    func keepsCaster(reading numbers: Numbers) -> Bool {
+        for caster in frameCasters.casters where caster.batch.instances === numbers { return true }
+        return false
     }
 
     /// ``frameCasters`` を写した置き場。
@@ -3755,6 +3810,14 @@ public final class Canvas {
         //
         // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
         guard !casting.isEmpty || !frameCasters.isEmpty else { return nil }
+        // **この回に影を受ける立体が無ければ焼かない** ([#1656])。平面は影を読まないので、区切りの
+        // 後が手元の表示 (2D) だけのフレームで、終わりの焼き付けを払わない
+        var receives = false
+        for batch in batches where batch.source == .solid && batch.material.receivesShadow {
+            receives = true
+            break
+        }
+        guard receives else { return nil }
 
         // **前のフレームと同じ入力なら焼き直さない。** 光の行列・細かさ・落とす列の
         // 頂点と置き場所が 1 バイトも変わっていなければ、焼いても同じ奥行きが出るだけ
@@ -3790,6 +3853,13 @@ public final class Canvas {
         else {
             throw .encoderUnavailable
         }
+        // **前に焼いた面を読む描画が読み終わるのを待ってから書く** ([#1656])。区切るフレームは
+        // 1 フレームに同じ面へ 2 度以上焼き、区切りの描画が面を読む。この世代は encoder をまたぐ
+        // 依存を自動では張らない (#341)
+        //
+        // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        encoder.barrier(
+            afterQueueStages: .fragment, beforeStages: .fragment, visibilityOptions: .device)
         encoder.setRenderPipelineState(pipeline.shadowState)
         encoder.setDepthStencilState(pipeline.solidDepthState)
         encoder.setViewport(
@@ -3918,15 +3988,10 @@ public final class Canvas {
         var hasher = ShadowBakeHasher()
         withUnsafeBytes(of: matrix) { hasher.mix($0) }
         hasher.mix(UInt64(detail))
-        hasher.mix(UInt64(casting.count))
-        for batch in casting {
-            guard
-                mixCaster(
-                    batch, vertices: solidVertices, indices: solidIndices,
-                    instances: solidInstances, bases: (0, 0, 0), into: &hasher)
-            else { return nil }
-        }
-        hasher.mix(UInt64(frameCasters.casters.count))
+        // **持ち越した列と、この回の列を 1 本の並びとして混ぜる** — 区切りの回 (この回の列が球) と
+        // 終わりの回 (持ち越した列が球) で、落とす側が同じなら同じ指紋になる。区切りの数を混ぜると、
+        // 区切るスケッチは静止した場面でも毎フレーム焼き直す
+        hasher.mix(UInt64(frameCasters.casters.count + casting.count))
         for caster in frameCasters.casters {
             guard
                 mixCaster(
@@ -3934,6 +3999,13 @@ public final class Canvas {
                     instances: frameCasters.instances,
                     bases: (caster.vertexBase, caster.indexBase, caster.instanceBase),
                     into: &hasher)
+            else { return nil }
+        }
+        for batch in casting {
+            guard
+                mixCaster(
+                    batch, vertices: solidVertices, indices: solidIndices,
+                    instances: solidInstances, bases: (0, 0, 0), into: &hasher)
             else { return nil }
         }
         return hasher.finish()

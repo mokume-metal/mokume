@@ -1912,6 +1912,8 @@ struct CanvasTests {
             "placedPictureCopiesFree": "置いた時点の絵の写しの空き。使い回すために持ち、境目で 1 フレーム使わなかったものを手放す (#1656)",
             "placedPictureEpoch": "境目の番号。写しの空きのうち使わなかったものを見分けるのに読む (#1656)",
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
+            "placedPictureCopyLimitReached": count,
+            "shadowsEverEnabled": "影を 1 度でも有効にしたか。区切りで落とす側を写すかを決める印で、フレームを越える (#1656)",
             "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
             "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
             "beginDrawFrame": "isDrawing と組のフレームの印 (beginDraw が開いた本体のフレームの番号)。境目の関数だけが書く",

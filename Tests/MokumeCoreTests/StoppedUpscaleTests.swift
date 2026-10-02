@@ -78,7 +78,8 @@ struct StoppedUpscaleTests {
         case circleThenRead
         // 描き場所を置いて、その描き場所を描き直す口は、ここに無い。描き直す直前に置いた側を
         // 描き切らせていたが、置いた時点の絵を写しに取る形にした (#1656 の案 A2) ので、描く先を
-        // 変えない。止まっている間のその形は `MidFrameCutTests` が見る
+        // 変えない。止まっている間のその形は ``aLayerPlacedAndRedrawnWhileStoppedShowsNextFrame``
+        // が見る
 
         var testDescription: String {
             switch self {
@@ -125,6 +126,40 @@ struct StoppedUpscaleTests {
             }
         }
         return canvas
+    }
+
+    // MARK: - 置いて描き直した描き場所は、次のフレームに出る (#1656)
+
+    /// 止まっている間に描き場所を置いて描き直しても、置いた側は描き切られない (#1656 の案 A2)。
+    /// 置いたものは持ち越され、**次のフレームで、置いた時点の絵 (描き直す前の緑) が出す先に出る** —
+    /// 細かさを下げた面では拡大の段を通って出る。止まっている間は、出す先は変わらない。
+    @Test(
+        "止まっている間に描き場所を置いて描き直すと、出す先にはその場では出ず、次のフレームで置いた時点の絵が出る",
+        arguments: [Float(1), 0.5], [false, true])
+    func aLayerPlacedAndRedrawnWhileStoppedShowsNextFrame(density: Float, effects: Bool) throws {
+        let canvas = try Self.makeCanvas(density: density)
+        let layer = try canvas.createGraphics(40, 40)
+        layer.beginDraw()
+        layer.background(LinearRGBA.linear(red: 0, green: 1, blue: 0))
+        layer.endDraw()
+        try Self.firstFrame(canvas, effects: effects)
+        let before = try Self.shown(canvas)[80, 80]
+        let mark = canvas.settleMark
+        Self.whileStopped(canvas) {
+            canvas.image(layer, 60, 60)
+            layer.beginDraw()
+            layer.background(Self.red)
+            layer.endDraw()
+        }
+        #expect(canvas.settleMark == mark, "止まっている間に、置いた側が描き切られた")
+        let stopped = try Self.shown(canvas)[80, 80]
+        #expect(stopped == before, "止まっている間に出す先が変わった: \(stopped)")
+
+        try canvas.draw {}
+        let next = try Self.shown(canvas)[80, 80]
+        #expect(
+            next.green > 200 && next.red < 30 && next.blue < 30,
+            "次のフレームに、置いた時点の絵が出ていない: \(next)")
     }
 
     // MARK: - 出す先に出る

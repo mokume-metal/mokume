@@ -77,30 +77,42 @@ struct MidFrameCutTests {
         case computation
         /// 区切りより前に数の並びへ書いた値を、後の図形が読む (同上)。
         case upload
+        /// 区切りの前と後で同じ群の粒を置く。区切りより前の粒の影が、後の呼び出しの粒の影に
+        /// 置き換わらない (粒の置き場の組を、持ち越した落とす列が読んでいるうちは使い回さない)。
+        case particlesTwice
 
         var testDescription: String { rawValue }
     }
 
     /// 1 枚の面と、場面が使う道具。
     @MainActor
-    private struct Rig {
+    private final class Rig {
         let canvas: Canvas
         let layer: Canvas
         let numbers: Numbers
         let stamp: Computation
         let show: Shader
+        let dust: Particles
+        var randomness = Randomness(seed: 1656)
+        var seed = 4242
         /// 影の場面で影を有効にするか。比べる側が影を持つかを見るときだけ偽にする。
         var shadows = true
 
         init(gpu: RenderDevice) throws {
             canvas = try CanvasFixture.make(gpu: gpu, width: MidFrameCutTests.side, height: MidFrameCutTests.side)
             layer = try canvas.createGraphics(8, 8)
-            layer.beginDraw()
-            layer.background(.linear(red: 0.25, green: 0.5, blue: 0.75))
-            layer.endDraw()
             numbers = try canvas.makeNumbers(count: 1)
             stamp = try canvas.makeComputation(MidFrameCutTests.stamp, name: "stamp", values: ["amount": 0])
             show = try canvas.makeShader(MidFrameCutTests.showFirst)
+            dust = try canvas.makeParticles(count: 64)
+            resetLayer()
+        }
+
+        /// 描き場所を最初の青に塗り直す (描き換えて区切る口が、前のフレームで描き換えている)。
+        func resetLayer() {
+            layer.beginDraw()
+            layer.background(.linear(red: 0.25, green: 0.5, blue: 0.75))
+            layer.endDraw()
         }
 
         func cut(_ cut: Cut) {
@@ -110,7 +122,10 @@ struct MidFrameCutTests {
             case .pixels: _ = canvas.pixels[40, 40]
             // 置いた描き場所の色 (左上の 8×8) をそのまま書き直す。書く口は書く前に描き切る
             case .set: canvas.set(2, 2, .linear(red: 0.25, green: 0.5, blue: 0.75))
-            case .noise: canvas.noiseSeed(4242)
+            // 種は毎回変える (同じ値の書き直しは描き切らない)
+            case .noise:
+                seed += 1
+                canvas.noiseSeed(seed)
             case .placedLayer:
                 layer.beginDraw()
                 layer.background(.linear(red: 1, green: 0, blue: 1))
@@ -118,14 +133,23 @@ struct MidFrameCutTests {
             }
         }
 
-        /// 場面を 1 フレーム描く。`cut` が `nil` なら区切らない。
+        /// 場面を 2 フレーム描き、2 枚目を返す。`cut` が `nil` なら区切らない。
+        ///
+        /// **2 枚目を見る** — 区切りで落とす側を控えるのは影を 1 度でも有効にした面だけなので
+        /// (``Canvas/shadowsEverEnabled``)、影を区切りの後で初めて有効にする場面は、1 枚目だけ説明どおりに
+        /// 割れる (``theFirstFrameThatEnablesShadowsLateIsTheException()``)。
         func draw(_ scene: Scene, cut: Cut?) throws -> DisplayImage {
-            try canvas.draw {
-                canvas.background(.linear(red: 0, green: 0, blue: 0))
-                // **どの場面も、最初に描き場所を置く** — 置いた描き場所の描き換え (`placedLayer`) を
-                // ほかの口と同じ場所で区切れるようにする
-                canvas.image(layer, 0, 0)
-                body(scene, cut: { if let cut { self.cut(cut) } })
+            for _ in 0..<2 {
+                resetLayer()
+                try canvas.draw {
+                    canvas.background(.linear(red: 0, green: 0, blue: 0))
+                    // 断片はフレームを越えるので、前のフレームの塗り (計算・届けの場面) を外す
+                    canvas.resetShader()
+                    // **どの場面も、最初に描き場所を置く** — 置いた描き場所の描き換え (`placedLayer`)
+                    // をほかの口と同じ場所で区切れるようにする
+                    canvas.image(layer, 0, 0)
+                    body(scene, cut: { if let cut { self.cut(cut) } })
+                }
             }
             return try canvas.output.encodeForDisplay()
         }
@@ -154,7 +178,7 @@ struct MidFrameCutTests {
             canvas.pop()
         }
 
-        private func body(_ scene: Scene, cut: () -> Void) {
+        func body(_ scene: Scene, cut: () -> Void) {
             switch scene {
             case .shadow:
                 floorAndSphere(lightsBeforeCut: true, cut: cut)
@@ -202,6 +226,28 @@ struct MidFrameCutTests {
                 canvas.numbers(numbers)
                 canvas.shader(show)
                 canvas.rect(20, 20, 50, 30)
+            case .particlesTwice:
+                canvas.camera(48, -36, 120, 48, 48, 0, 0, 1, 0)
+                canvas.lights()
+                canvas.shadows(shadows)
+                canvas.noStroke()
+                canvas.emit(
+                    dust, from: .point(36, 36), rate: 600, speed: 0...0, angle: 0...0,
+                    life: 5...5, size: 24...24, color: .linear(red: 0.9, green: 0.9, blue: 0.9),
+                    using: &randomness)
+                canvas.particles(dust)
+                cut()
+                // 後の呼び出しは横へずらす。組を使い回すと、前の呼び出しの置き場所がこれで上書きされる
+                canvas.push()
+                canvas.translate(24, 0, 0)
+                canvas.particles(dust)
+                canvas.pop()
+                canvas.castShadow(false)
+                canvas.fill(.linear(red: 0.8, green: 0.8, blue: 0.8))
+                canvas.push()
+                canvas.translate(48, 72, 0)
+                canvas.box(96, 4, 96)
+                canvas.pop()
             }
         }
     }
@@ -221,6 +267,16 @@ struct MidFrameCutTests {
         return count
     }
 
+    /// 最初に違う画素と、その 2 つの値 (赤のときの手がかり)。
+    private func firstDifference(_ a: DisplayImage, _ b: DisplayImage) -> String {
+        for y in 0..<a.height {
+            for x in 0..<a.width where a[x, y] != b[x, y] {
+                return "(\(x), \(y)): \(a[x, y]) と \(b[x, y])"
+            }
+        }
+        return "無し"
+    }
+
     // MARK: - 取り返せる向き (完了条件 1・2・4・5)
 
     @Test("区切りを入れても、分けずに描いた絵と変わらない", arguments: Scene.allCases, Cut.allCases)
@@ -229,24 +285,115 @@ struct MidFrameCutTests {
         let plain = try Rig(gpu: gpu).draw(scene, cut: nil)
         let cutFrame = try Rig(gpu: gpu).draw(scene, cut: cut)
         let gap = differing(plain, cutFrame)
-        #expect(gap == 0, "\(cut) で区切ると \(scene) の絵が \(gap) 画素違う")
+        #expect(
+            gap == 0,
+            "\(cut) で区切ると \(scene) の絵が \(gap) 画素違う (最初の画素 \(firstDifference(plain, cutFrame)))")
     }
 
-    @Test("影の場面は、区切らなくても床に影が落ちている (比べる側が影を持つ)")
-    func theShadowSceneHasAShadow() throws {
+    @Test("影の場面は、区切らなくても床に影が落ちている (比べる側が影を持つ)",
+        arguments: [Scene.shadow, .particlesTwice])
+    func theShadowSceneHasAShadow(scene: Scene) throws {
         // **比べる側に影が無いと、上の一致は何も見ていない。** 影を切った絵と比べて床が暗い
         let gpu = try RenderDevice()
         let rig = try Rig(gpu: gpu)
-        let shadowed = try rig.draw(.shadow, cut: nil)
-        var withoutShadows = try Rig(gpu: gpu)
+        let shadowed = try rig.draw(scene, cut: nil)
+        let withoutShadows = try Rig(gpu: gpu)
         withoutShadows.shadows = false
-        let unshadowed = try withoutShadows.draw(.shadow, cut: nil)
+        let unshadowed = try withoutShadows.draw(scene, cut: nil)
         var darker = 0
         for y in 0..<shadowed.height {
             for x in 0..<shadowed.width
             where Int(unshadowed[x, y].red) - Int(shadowed[x, y].red) > 20 { darker += 1 }
         }
         #expect(darker > 50, "床に影が落ちていない (\(darker) 画素)")
+    }
+
+    // MARK: - 区切りが払うもの (#1656 の反証 3・6)
+
+    @Test("区切りを毎フレーム持つ静止した場面は、2 枚目から焼き直さない")
+    func aStillSceneWithACutIsNotRebaked() throws {
+        // 区切りの焼き (この回の列が球) と終わりの焼き (持ち越した列が球) は同じ指紋になり、
+        // 終わりの焼きは区切りで焼いた面を使い回す。次のフレームの区切りも前のフレームと同じ指紋
+        let gpu = try RenderDevice()
+        let rig = try Rig(gpu: gpu)
+        _ = try rig.draw(.shadow, cut: .get)
+        let afterTwoFrames = rig.canvas.shadowBakesEncoded
+        _ = try rig.draw(.shadow, cut: .get)
+        #expect(afterTwoFrames == 1, "最初のフレームで \(afterTwoFrames) 回焼いた (区切りの 1 回のはず)")
+        #expect(rig.canvas.shadowBakesEncoded == afterTwoFrames, "静止した場面を焼き直した")
+    }
+
+    @Test("区切りの後に影を受ける立体が無ければ、終わりの描き切りは焼かない")
+    func nothingToReceiveMeansNoBake() throws {
+        let gpu = try RenderDevice()
+        let rig = try Rig(gpu: gpu)
+        let canvas = rig.canvas
+        for frame in 0..<2 {
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.lights()
+                canvas.shadows(true)
+                canvas.noStroke()
+                canvas.push()
+                canvas.translate(48, 48, 0)
+                // 1 枚目と 2 枚目で動かす (焼き直しの省略に頼らない)
+                canvas.rotateY(Float(frame))
+                canvas.box(30)
+                canvas.pop()
+                _ = canvas.get(0, 0)
+                // 手元の表示だけ
+                canvas.fill(.linear(red: 1, green: 1, blue: 1))
+                canvas.rect(0, 0, 20, 10)
+            }
+        }
+        #expect(canvas.shadowBakesEncoded == 2, "区切りの焼き 2 回のほかに焼いた: \(canvas.shadowBakesEncoded)")
+        // 終わりの描き切りは、焼いた面を使い回すこともしない (使い回すと、受けない絵のために束ねる)
+        #expect(canvas.shadowBakesReused == 0, "受ける立体の無い描き切りが影を束ねた")
+    }
+
+    @Test("影を 1 度も使っていない面の区切りは、落とす側を写さない")
+    func aSketchWithoutShadowsKeepsNoCasters() throws {
+        let gpu = try RenderDevice()
+        let rig = try Rig(gpu: gpu)
+        let canvas = rig.canvas
+        var kept = -1
+        try canvas.draw {
+            canvas.lights()
+            canvas.box(30)
+            _ = canvas.get(0, 0)
+            kept = canvas.frameCasters.casters.count
+        }
+        #expect(kept == 0)
+        #expect(!canvas.shadowsEverEnabled)
+    }
+
+    @Test("フレームの外の区切りは、影を使う面でも落とす側を写さない (止まっている間に積み上がらない)")
+    func aCutOutsideTheFrameKeepsNoCasters() throws {
+        let gpu = try RenderDevice()
+        let rig = try Rig(gpu: gpu)
+        let canvas = rig.canvas
+        _ = try rig.draw(.shadow, cut: nil)
+        canvas.carriesOver = true
+        defer { canvas.carriesOver = false }
+        for _ in 0..<3 {
+            canvas.box(10)
+            _ = canvas.get(0, 0)
+        }
+        #expect(canvas.frameCasters.isEmpty, "止まっている間の区切りで落とす側を写した")
+    }
+
+    @Test("影を初めて有効にしたフレームで、区切りの後に有効にすると、前の立体は影を落とさない (説明どおり)")
+    func theFirstFrameThatEnablesShadowsLateIsTheException() throws {
+        let gpu = try RenderDevice()
+        func first(cut: MidFrameCutTests.Cut?) throws -> DisplayImage {
+            let rig = try Rig(gpu: gpu)
+            try rig.canvas.draw {
+                rig.canvas.background(.linear(red: 0, green: 0, blue: 0))
+                rig.body(.shadowEnabledAfterCut, cut: { if let cut { rig.cut(cut) } })
+            }
+            return try rig.canvas.output.encodeForDisplay()
+        }
+        #expect(differing(try first(cut: nil), try first(cut: .get)) > 50)
     }
 
     // MARK: - 案 A2: 置いた描き場所の描き換えは区切らない (完了条件 2)
@@ -306,6 +453,39 @@ struct MidFrameCutTests {
         try rig.canvas.draw {}
         let placed = try rig.canvas.output.encodeForDisplay()[4, 4]
         #expect(placed.green > 100 && placed.red < 200, "置いた時点の絵が出ていない: \(placed)")
+    }
+
+    @Test("1 フレームに置いて描き換えるのを上限より多く繰り返すと、越えた分は描き切り、写しは上限で止まる")
+    func copiesStopAtTheLimit() throws {
+        let gpu = try RenderDevice()
+        let rig = try Rig(gpu: gpu)
+        let canvas = rig.canvas
+        let rounds = Canvas.placedPictureCopyLimit + 2
+        for _ in 0..<2 {
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                for index in 0..<rounds {
+                    rig.layer.beginDraw()
+                    rig.layer.background(.linear(red: Float(index + 1) / Float(rounds), green: 0, blue: 0))
+                    rig.layer.endDraw()
+                    canvas.image(rig.layer, Float(index * 12), 0)
+                }
+                // 最後に置いた後にもう 1 度描き換える (最後の置き場も写すか描き切るかを通る)
+                rig.layer.beginDraw()
+                rig.layer.background(.linear(red: 0, green: 1, blue: 0))
+                rig.layer.endDraw()
+            }
+        }
+        #expect(canvas.placedPictureCopiesMade == Canvas.placedPictureCopyLimit)
+        #expect(canvas.placedPictureCopyLimitReached > 0)
+        // どの置き場にも、置いた時点の絵が出る (赤が置いた順に明るくなる・緑は出ない)
+        let image = try canvas.output.encodeForDisplay()
+        var previous = -1
+        for index in 0..<rounds {
+            let point = image[index * 12 + 4, 4]
+            #expect(Int(point.red) > previous && point.green == 0, "\(index) 番目: \(point)")
+            previous = Int(point.red)
+        }
     }
 
     // MARK: - 取り返せない向き (完了条件 3・4。説明に書いて引き受けた)
