@@ -1673,6 +1673,9 @@ struct CanvasTests {
                 c.set(1, 1, .linear(red: 1, green: 0, blue: 0))
             }),
             ("pendingBackground", end, all, { c, _ in c.background(.linear(red: 0, green: 0, blue: 0)) }),
+            // 途中の描き切りが既に描いた落とす側 (#1656)。塗り直しも捨てるので、その後で汚す。
+            // 描き切らせて汚すと、上の塗り直しの予定を描いてしまうので、中身を直に足す
+            ("frameCasters", end, all, { c, _ in c.frameCasters.instances.append(.identity) }),
             // シーンの記述
             ("cameraStorage", end, all, { c, _ in c.perspective() }),
             ("transform", both, all, { c, _ in c.translate(5, 5) }),
@@ -1725,6 +1728,15 @@ struct CanvasTests {
             }),
             ("formInstances", end, all, { c, _ in c.rect(10, 10, 4, 4) }),
             ("batches", end, all, { c, _ in c.rect(10, 10, 4, 4) }),
+            // 置いた描き場所を描き換えると、置いた時点の絵の写しを読む (#1656)。描き換えは置いた
+            // 記録を落とすので、置いた記録より先に汚す
+            ("placedPictureCopiesInUse", end, all, { c, _ in
+                let layer = try! c.createGraphics(4, 4)
+                c.image(layer, 0, 0)
+                layer.beginDraw()
+                layer.background(.linear(red: 1, green: 0, blue: 0))
+                layer.endDraw()
+            }),
             ("placedGraphics", end, all, { c, f in c.note(placing: f.other) }),
             ("outlinesAssembledThisFrame", end, all, { c, _ in c.outlinesAssembledThisFrame = 7 }),
             ("pointScansThisFrame", end, all, { c, _ in c.pointScansThisFrame = 7 }),
@@ -1894,7 +1906,12 @@ struct CanvasTests {
             "noiseStore": "揺らぎの種と細かさの置き場。一度書けば残る (断片と共有する・#366)。描き場所は作った面と共有する (#1503)",
             "carriesPictureBeforeEffects": "効果を通す前の絵の控えがあるか。次のフレームの最初の描き切りが戻す (#1469)",
             "targetChangedSinceUpscale": "描く先が最後の拡大より後に変わったか。止まっている間の出力段が広げ直して下ろす。フレームの終わりの描き切りも下ろす (#1882)",
-            "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手を描き切らせて空にする。捨てるだけでは絵が変わらないので残す",
+            "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手へ置いた時点の絵を写させて空にする (#1656)。捨てるだけでは絵が変わらないので残す",
+            "casterVertexStorage": resource, "casterIndexStorage": resource,
+            "casterInstanceStorage": resource, "casterValuesStorage": resource,
+            "placedPictureCopiesFree": "置いた時点の絵の写しの空き。使い回すために持ち、境目で 1 フレーム使わなかったものを手放す (#1656)",
+            "placedPictureEpoch": "境目の番号。写しの空きのうち使わなかったものを見分けるのに読む (#1656)",
+            "placedPictureCopiesMade": count, "placedPicturesCopied": count,
             "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
             "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
             "beginDrawFrame": "isDrawing と組のフレームの印 (beginDraw が開いた本体のフレームの番号)。境目の関数だけが書く",

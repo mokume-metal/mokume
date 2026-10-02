@@ -514,13 +514,15 @@ struct StoppedSolidDepthTests {
     enum LayerRole: CaseIterable, CustomTestStringConvertible {
         /// 本体が描き切らせた後で、描き場所が自分のフレーム (`beginDraw()`〜`endDraw()`) を走らせる。
         case ownFrameBetween
-        /// 本体が描き場所を置き、その描き場所が描き換わる直前に、本体が描き切る (`settle(before:)`)。
+        /// 本体が描き場所を置き、その描き場所を描き換える。描き換わる直前に本体を描き切らせていたが、
+        /// いまは置いた時点の絵を写しに取るので、本体は描き切られない (#1656 の案 A2)。どちらでも
+        /// 前後は変わらないことを見る。
         case forcesTheSettle
 
         var testDescription: String {
             switch self {
             case .ownFrameBetween: "描き場所が自分のフレームを走らせる"
-            case .forcesTheSettle: "描き換えの直前に本体が描き切る"
+            case .forcesTheSettle: "本体が置いた描き場所を描き換える"
             }
         }
     }
@@ -529,8 +531,8 @@ struct StoppedSolidDepthTests {
     /// 次のフレームへ引き継がれる。
     ///
     /// 描き場所の描き切りは、描き場所自身の奥行きの面で走るので、本体の引き継ぎに触れない。
-    /// 置いた描き場所が描き換わる直前の描き切り (`settle(before:)`) は、本体を奥行きを残す描き切りで
-    /// 描き切らせる。どちらでも、次のフレームの緑 (z 0) は、区間の赤 (z 20) の奥に回る。
+    /// 置いた描き場所を描き換えても、本体は描き切られない (置いた時点の絵を写しに取る・#1656)。
+    /// どちらでも、次のフレームの緑 (z 0) は、区間の赤 (z 20) の奥に回る。
     @Test(
         "描き場所を挟んでも、区間で描き切らせた立体の奥行きは次のフレームへ引き継がれる",
         arguments: Variant.all, LayerRole.allCases)

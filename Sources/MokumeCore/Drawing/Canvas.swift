@@ -979,18 +979,39 @@ public final class Canvas {
     ///
     /// 記録するのは**置くたび** — 画像として置いたときと、貼った塗りや保持した形がその
     /// 面を読むように切り替えたとき (``useTexture(_:)``)、断片の面として読む図形を積んだ
-    /// とき (``notePaintPlacement()``・[#1653]) である。落とすのは描き切り
-    /// (フレームの終わりと、描き場所が描き換わる直前) と塗り直し (``discardPending()``) で、
-    /// 落とした後に同じ面のまま置いた形も、置いた時点で記録し直される ([#1543])。
+    /// とき (``notePaintPlacement()``・[#1653]) である。落とすのは描き切り (フレームの終わり)・
+    /// 描き場所が描き換わる直前 (置いた時点の絵の写しへ差し替えたとき・[#1656]) と塗り直し
+    /// (``discardPending()``) で、落とした後に同じ面のまま置いた形も、置いた時点で記録し直される
+    /// ([#1543])。
     ///
     /// [#1543]: https://github.com/mokume-metal/mokume/issues/1543
     /// [#1653]: https://github.com/mokume-metal/mokume/issues/1653
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     private(set) var placedGraphics: Set<ObjectIdentifier> = []
 
-    /// 自分を置いた面。**自分の絵が変わる前に、そちらを先に描き切らせる。**
+    /// 自分を置いた面。**自分の絵が変わる前に、そちらへ置いた時点の絵を写させる**
+    /// (``settlePlacersBeforeChange()``)。
     ///
     /// 弱く持つ — 描き場所は利用者が持つもので、置いた側が寿命を延ばす筋合いが無い。
     private(set) var placers: [WeakCanvas] = []
+
+    /// 置いた描き場所の絵の写しのうち、溜めた列がいま読んでいるもの ([#1656])。
+    ///
+    /// 写しは置いた側が持つ。**描き切りか捨てるまで使い回さない** — 溜めた列が読む前に、同じ
+    /// 写しへ別の時点の絵を写すことになる。描き切りの末尾 (``discardFrame()``) で空き
+    /// (``placedPictureCopiesFree``) へ戻す。空きへ戻した写しを次に写すコマンドは、それを読む
+    /// 描き切りより後に投入されるので、GPU 上でも読み終わった後に書く。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+    private var placedPictureCopiesInUse: [PlacedPictureCopy] = []
+    /// 使い回せる写し。**最後のフレームの境目までの 1 フレームに使わなかったものは手放す**
+    /// (``leaveFrame()``)。描き場所を置かなくなった後まで、その大きさの写しを抱え続けない。
+    private var placedPictureCopiesFree: [PlacedPictureCopy] = []
+    /// 写しを作った回数 (作ってから通算)。**同じ大きさなら作り直していないことを検査が見る。**
+    private(set) var placedPictureCopiesMade = 0
+    /// 置いた時点の絵を写した回数 (作ってから通算)。**置いた側を描き切らせる代わりに写したこと
+    /// を検査が見る。**
+    private(set) var placedPicturesCopied = 0
 
     /// 弱く持つ面ひとつぶん。
     struct WeakCanvas {
@@ -1639,6 +1660,16 @@ public final class Canvas {
             stride: MemoryLayout<FormInstance>.stride, minimum: 256, label: "formInstances")
         self.solidInstanceStorage = storage(
             stride: MemoryLayout<SolidInstance>.stride, minimum: 256, label: "solidInstances")
+        // 途中の描き切りが描いた落とす側 (``frameCasters``)。区切らないスケッチは 1 バイトも
+        // 払わない (置き場は初めて要求されたときに取る)
+        self.casterVertexStorage = storage(
+            stride: MemoryLayout<SolidVertex>.stride, minimum: 1024, label: "casterVertices")
+        self.casterIndexStorage = storage(
+            stride: MemoryLayout<UInt32>.stride, minimum: 4096, label: "casterIndices")
+        self.casterInstanceStorage = storage(
+            stride: MemoryLayout<SolidInstance>.stride, minimum: 256, label: "casterInstances")
+        self.casterValuesStorage = storage(
+            stride: Self.valuesStride, minimum: 16, label: "casterValues")
         self.lightStorageBuffer = storage(
             stride: MemoryLayout<Light>.stride, minimum: 8, label: "lights")
         self.lightingStorage = storage(
@@ -1934,6 +1965,12 @@ public final class Canvas {
     func discardPending() {
         _ = sweepPending(emptying: true)
         pendingDiscards &+= 1
+        // **途中の描き切りが既に描いた落とす側も捨てる** ([#1656])。塗り直しは前に置いた立体ごと
+        // 捨てるので、分けずに描いたときも、それより前の立体は影を落とさない。溜めた量
+        // (``pendingAmount``) には数えない — 既に描いた列で、区間の外に置いたものではない
+        //
+        // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        frameCasters.removeAll()
         // 開いている列の種類は溜めたものではなく、次に置くものの向き先である。空かを見る
         // 側 (``hasNothingPending``) は読まない — 形の組み立ては種類を `.solid` のまま抜ける
         openSource = .flat
@@ -2057,6 +2094,12 @@ public final class Canvas {
         //
         // [#1678]: https://github.com/mokume-metal/mokume/issues/1678
         target.discardPixelWrites()
+        // **写しは、読む列が投入されたか捨てられたので空きへ戻す** ([#1656])。次に写すコマンドは、
+        // 読んだ描き切りより後に投入される
+        //
+        // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        placedPictureCopiesFree.append(contentsOf: placedPictureCopiesInUse)
+        placedPictureCopiesInUse.removeAll(keepingCapacity: true)
         // **読む面も焼き場へ戻す。** 面は持ち主と組で持つので、最後に置いた絵を次に面を
         // 替えるまで生かしてしまう。溜めたものは上で落ちているので、列を閉じずに替えてよい
         currentTexture = atlas.held
@@ -2479,6 +2522,7 @@ public final class Canvas {
         // 末尾だけに置くと、描けなかったフレームの図形が次のフレームでもう一度描かれる (#342)。
         // 書いた画素も同じで、写しの書き込み待ちを残すと次の描き切りが面へ戻す (#1678)
         discardFrame()
+        trimPlacedPictureCopies()
         // **読んだ写しもフレームを越えない** ([#1524] の反証 2-2)。写しはフレームの途中で
         // 読んだ絵のまま残るので、取っておいた窓 (``pixels``) へ止まっている間のコールバックで
         // 書くと、フレームの途中の古い絵へ書いて全面を書き戻していた。ここで下ろせば、止まって
@@ -2640,7 +2684,7 @@ public final class Canvas {
         }
         // **記録済みなら相手へは載せ直さない** (#1683 の反証 2 回目)。貼る絵の記録は置くたびに
         // 来るので、相手の `placers` を毎回探さない。こちらの記録と相手の `placers` は組で、
-        // 相手が `placers` を空にするときはこちらの記録も落とす (``settle(before:)``)
+        // 相手が `placers` を空にするときはこちらの記録も落とす (``keepPicture(placedFrom:)``)
         guard placedGraphics.insert(ObjectIdentifier(graphics)).inserted else { return }
         graphics.note(placedBy: self)
     }
@@ -2650,32 +2694,55 @@ public final class Canvas {
         placers.append(WeakCanvas(canvas: canvas))
     }
 
-    /// 自分の絵が変わる前に、自分を溜めている面を描き切らせる。
+    /// 自分の絵が変わる前に、自分を溜めている面に、置いた時点の絵を持たせる。
+    ///
+    /// **置いた側を描き切らせない** ([#1656] の案 A2)。描き切らせるとフレームの途中の区切りに
+    /// なり、利用者が呼んでいない区切りで絵が割れる (区切りより前の面が、後に置いた立体の影を
+    /// 受けない)。代わりに置いた側が、いまの絵を写しへ取って読む面を差し替える
+    /// (``keepPicture(placedFrom:)``)。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     private func settlePlacersBeforeChange() {
         guard !placers.isEmpty else { return }
         // **先に空にする。** 描き切らせた先から置き直されることがあるので、
         // 走らせたあとに消すと、そのフレームの記録まで一緒に落ちる
         let waiting = placers
         placers.removeAll(keepingCapacity: true)
-        for entry in waiting { entry.canvas?.settle(before: self) }
+        for entry in waiting { entry.canvas?.keepPicture(placedFrom: self) }
     }
 
-    /// この描き場所を溜めているなら、いま描き切る。
+    /// この描き場所を溜めているなら、置いた時点の絵を写しへ取り、溜めた列が読む面を差し替える
+    /// ([#1656])。
     ///
-    /// **描き切っている最中なら何もしない。** 描き場所どうしが互いを置き合うと
-    /// ここへ戻ってくるので、1 周したところで止める。
-    private func settle(before graphics: Canvas) {
+    /// **描き切っている最中なら何もしない。** 列を積んでいる最中に差し替えない。
+    ///
+    /// **形を組み立てている途中なら、これまでどおり描き切る。** 組み立てた形は溜めた列から抜かれて
+    /// 持ち歩かれるので、写しへ差し替えると、後で置いたときに描き場所のいまの絵ではなく写しを
+    /// 読み続ける。描き切りが組み立てを壊すことは、組み立ての出口が見張っている (#1588)。
+    /// 写しを用意できなかったときも描き切る (置いた時点の絵を守るほうを取る)。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+    private func keepPicture(placedFrom graphics: Canvas) {
         let placed = ObjectIdentifier(graphics)
         guard placedGraphics.contains(placed) else { return }
         // **相手の `placers` から外れたので、こちらの記録も落とす。** 記録が残ったままだと、
         // 次に置いたとき記録済みとして相手へ載せ直さず (``note(placing:)``)、相手が次に変わる
-        // 前に描き切らせてもらえない。描き切れば記録ごと落ちるが、描き切っている最中と、
-        // 描き切りに失敗したときは残る
+        // 前に写しを取らせてもらえない。差し替えた列はもう写しを読むので、相手に縛られない
         defer {
             placedGraphics.remove(placed)
             placedGraphicsDrops &+= 1
         }
         guard !isFlushing else { return }
+        if !recordingShape {
+            do {
+                try copyPlacedPicture(graphics.output.texture)
+                return
+            } catch {
+                Diagnostics.warn(
+                    "Could not keep a copy of a drawing target before it changed, so what was "
+                        + "placed is drawn out first: \(error.headline)")
+            }
+        }
         do {
             // 効果はフレームの終わりに立つ段なので、途中の描き切りでは通さない
             try flush(applyingEffects: false)
@@ -2685,10 +2752,90 @@ public final class Canvas {
         }
     }
 
+    /// `source` を読む溜めた列があれば、`source` のいまの絵を写しへ取り、その列が読む面を写しに
+    /// 差し替える。
+    ///
+    /// 先に開いた列を閉じる — 塗りの面は列を閉じる時点で写し取るので、開いたままだと、閉じたときに
+    /// 描き換えた後の絵を読む。閉じても絵は変わらない (同じ順に描く列が 2 本に分かれるだけで、
+    /// 列が読む光・視点・材質はどれも、変わるときに列を閉じている)。
+    ///
+    /// **写すコマンドは、相手が描き換えるコマンドより先に投入される** (相手の描き切りの冒頭から
+    /// 呼ばれる)。投入は順に並ぶので、写しは描き換える前の絵になり、写しを読む描き切りはその後に来る。
+    private func copyPlacedPicture(_ source: any MTLTexture) throws(RenderFailure) {
+        closeBatch()
+        var reads = false
+        for batch in batches {
+            if batch.run.texture.texture === source { reads = true }
+            for surface in batch.run.paint.surfaces where surface.texture === source {
+                reads = true
+            }
+            if reads { break }
+        }
+        guard reads else { return }
+        let copy = try placedPictureCopy(fitting: source)
+        do {
+            try gpu.withCommands { commands throws(RenderFailure) in
+                guard let encoder = commands.makeComputeCommandEncoder() else {
+                    throw .encoderUnavailable
+                }
+                encoder.copy(sourceTexture: source, destinationTexture: copy.texture)
+                encoder.endEncoding()
+                gpu.commit(commands)
+            }
+        } catch {
+            placedPictureCopiesFree.append(copy)
+            throw error
+        }
+        placedPictureCopiesInUse.append(copy)
+        placedPicturesCopied += 1
+        let held = copy.held
+        for index in batches.indices {
+            if batches[index].run.texture.texture === source { batches[index].run.texture = held }
+            for slot in batches[index].run.paint.surfaces.indices
+            where batches[index].run.paint.surfaces[slot].texture === source {
+                batches[index].run.paint.surfaces[slot] = held
+            }
+        }
+    }
+
+    /// `source` と同じ形の写し。空きにあれば使い回し、無ければ作る。
+    private func placedPictureCopy(fitting source: any MTLTexture) throws(RenderFailure)
+        -> PlacedPictureCopy
+    {
+        var found: Int?
+        for (index, copy) in placedPictureCopiesFree.enumerated() where copy.fits(source) {
+            found = index
+            break
+        }
+        let copy: PlacedPictureCopy
+        if let found {
+            copy = placedPictureCopiesFree.remove(at: found)
+        } else {
+            copy = try PlacedPictureCopy(gpu: gpu, like: source)
+            placedPictureCopiesMade += 1
+        }
+        copy.lastUsedEpoch = placedPictureEpoch
+        return copy
+    }
+
+    /// フレームの境目を数える番号。写しの空きのうち、1 フレーム使わなかったものを手放すのに読む。
+    private var placedPictureEpoch = 0
+
+    /// フレームの境目で、写しの空きを片付ける。直前のフレームで使わなかった写しを手放す。
+    private func trimPlacedPictureCopies() {
+        var kept: [PlacedPictureCopy] = []
+        for copy in placedPictureCopiesFree where copy.lastUsedEpoch == placedPictureEpoch {
+            kept.append(copy)
+        }
+        placedPictureCopiesFree = kept
+        placedPictureEpoch &+= 1
+    }
+
     /// いま描き切ると、形を組み立てている途中の面を描き切らせるか ([#1588])。
     ///
-    /// 描き切りは冒頭で、自分を置いた面を先に描き切らせる (``settlePlacersBeforeChange()``)。
-    /// 置いた面が組み立ての途中なら、組み立てが控えた溜め場の区間がそこで空になる。**画素の口は、
+    /// 描き切りは冒頭で、自分を置いた面に置いた時点の絵を写させ (``settlePlacersBeforeChange()``)、
+    /// 置いた面が組み立ての途中なら写さずに描き切らせる。そのとき、組み立てが控えた溜め場の区間が
+    /// そこで空になる。**画素の口は、
     /// 自分の面だけでなく置かれた描き場所でも同じ守りに入る** — 同じフレームで `image(layer)` と
     /// 置いてから、組み立ての中で `layer.get()` と読むと、本体の組み立てが描き切られていた。
     /// 置いた面をさらに置いた面へも辿る (描き切りも同じように連なる)。
@@ -2806,8 +2953,8 @@ public final class Canvas {
     func flush(applyingEffects: Bool = true, mirroringPixels: Bool = false)
         throws(RenderFailure)
     {
-        // **自分の絵が変わる直前がここ。** 自分を溜めている面を先に描き切らせると、
-        // その面には「置いた時点の絵」が残る。`beginDraw()` ではなくここに置くのは、
+        // **自分の絵が変わる直前がここ。** 自分を溜めている面にいまの絵を写させると、
+        // その面には「置いた時点の絵」が残る (#1656)。`beginDraw()` ではなくここに置くのは、
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため
         settlePlacersBeforeChange()
         isFlushing = true
@@ -2854,7 +3001,7 @@ public final class Canvas {
         // 描き切りでは戻さない — 戻しても消えるだけなので、毎フレーム塗り直すスケッチが
         // 払うのは控えへの写しだけになる。
         //
-        // **戻すのはここで、`beginFrame()` ではない。** 自分を置いている面を描き切らせる
+        // **戻すのはここで、`beginFrame()` ではない。** 自分を置いている面に絵を写させる
         // (上の `settlePlacersBeforeChange()`) より先に戻すと、置いた側が効果を通す前の絵を
         // 拾う — 置いた時点の絵は、前のフレームの出口 (効果を通した絵) である
         //
@@ -2980,7 +3127,9 @@ public final class Canvas {
             let submission = gpu.commit(
                 commands,
                 retaining: [
-                    HeldFrame(batches: batches, effects: pendingEffects, imageInput: imageInputPass)
+                    HeldFrame(
+                        batches: batches, casters: frameCasters.casters, effects: pendingEffects,
+                        imageInput: imageInputPass)
                 ])
             return (
                 submission: submission, wroteBack: wroteBack, shadow: bakedShadow,
@@ -3025,7 +3174,19 @@ public final class Canvas {
         // ここは**描き切れたときだけ**の片付けで、投げたときは `draw(_:)` の
         // `defer` が同じことをする (#342) — 途中の描き切り (`loadPixels()`) が
         // 一時的に失敗しただけなら、溜めたものはフレーム末尾の描き切りに残す
+        //
+        // **途中の描き切りは、落とす側をフレームの終わりまで持ち越す** ([#1656])。捨てる前に
+        // 写し、捨てた後に戻す (捨てる側の ``discardPending()`` は、塗り直しのために持ち越した
+        // 分も捨てる)。フレームの終わりの描き切り (効果を通す) は持ち越さない
+        //
+        // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        var kept = FrameCasters()
+        if !applyingEffects {
+            swap(&kept, &frameCasters)
+            keepCasters(into: &kept)
+        }
         discardFrame()
+        if !applyingEffects { frameCasters = kept }
     }
 
     /// 溜めた列を 1 つずつ積む。**溜めたものが 1 つも無ければ何も積まない** —
@@ -3239,8 +3400,11 @@ public final class Canvas {
     /// 誰も気づけない。
     ///
     /// 添字は ``solidVertices`` の番号そのものなので `baseVertex` はずらさない。
+    ///
+    /// `indexBase` は添字の置き場の中で区画が始まる位置で、途中の描き切りから持ち越した落とす列
+    /// (``frameCasters``) だけが 0 でない値を渡す。
     private func encodeSolidDraw(
-        _ run: Shape.Run, instanceCount: Int, indices: any MTLBuffer,
+        _ run: Shape.Run, instanceCount: Int, indices: any MTLBuffer, indexBase: Int = 0,
         on encoder: any MTL4RenderCommandEncoder
     ) {
         guard run.isIndexed else {
@@ -3252,7 +3416,7 @@ public final class Canvas {
         let stride = MemoryLayout<UInt32>.stride
         encoder.drawIndexedPrimitives(
             primitiveType: .triangle, indexCount: run.indexCount, indexType: .uint32,
-            indexBuffer: indices.gpuAddress + UInt64(run.indexStart * stride),
+            indexBuffer: indices.gpuAddress + UInt64((indexBase + run.indexStart) * stride),
             indexBufferLength: run.indexCount * stride,
             instanceCount: instanceCount)
     }
@@ -3395,22 +3559,26 @@ public final class Canvas {
     private func uploadBatchValues() throws(RenderFailure) -> any MTLBuffer {
         let values = try valuesStorage.buffer(holding: batches.count)
         for (index, batch) in batches.enumerated() {
-            // **区画に収まることは入口で保証されている** (`Canvas.loadShader` /
-            // `makeShader` が `valueSlotCapacity` を超える宣言を断る・#348)。ここで
-            // 切り詰めないのは、黙って切り詰めると断片の `Values` に「宣言したのに
-            // 一度も書かれない欄」が残り、絵が永久に間違ったまま出るためである
-            let slot = values.contents().advanced(by: index * Self.valuesStride)
-                .assumingMemoryBound(to: Float.self)
-            if var stroke = batch.strokePlacement {
-                UnsafeMutableRawPointer(slot).copyMemory(
-                    from: &stroke, byteCount: MemoryLayout<SolidStrokePlacement>.stride)
-            } else if batch.run.paint.values.isEmpty {
-                slot.update(repeating: 0, count: 4)
-            } else {
-                slot.update(from: batch.run.paint.values, count: batch.run.paint.values.count)
-            }
+            writeValues(of: batch, into: values.contents().advanced(by: index * Self.valuesStride))
         }
         return values
+    }
+
+    /// 列 1 つぶんの値を、区画 1 つへ書く。画面の列と、途中の描き切りから持ち越した落とす列
+    /// (``frameCasters``) が同じ書き方を通る。
+    private func writeValues(of batch: Batch, into region: UnsafeMutableRawPointer) {
+        // **区画に収まることは入口で保証されている** (`Canvas.loadShader` /
+        // `makeShader` が `valueSlotCapacity` を超える宣言を断る・#348)。ここで
+        // 切り詰めないのは、黙って切り詰めると断片の `Values` に「宣言したのに
+        // 一度も書かれない欄」が残り、絵が永久に間違ったまま出るためである
+        let slot = region.assumingMemoryBound(to: Float.self)
+        if var stroke = batch.strokePlacement {
+            region.copyMemory(from: &stroke, byteCount: MemoryLayout<SolidStrokePlacement>.stride)
+        } else if batch.run.paint.values.isEmpty {
+            slot.update(repeating: 0, count: 4)
+        } else {
+            slot.update(from: batch.run.paint.values, count: batch.run.paint.values.count)
+        }
     }
 
     /// 頂点と置き場所の置き場。``uploadGeometry()`` が満たし、列を積むときに読む。
@@ -3440,17 +3608,126 @@ public final class Canvas {
     /// この型が持ち続けるので、ここには要らない。
     private final class HeldFrame {
         let batches: [Batch]
+        /// 途中の描き切りから持ち越して焼いた落とす列 (``Canvas/frameCasters``・#1656)。列と同じく
+        /// 線の骨・モデルの塗り・外の置き場所を抱えるので、焼き付けが読み終わるまで生かす。
+        let casters: [FrameCasters.Caster]
         let effects: [Effect]
         let imageInput: ImageInputPass?
-        init(batches: [Batch], effects: [Effect], imageInput: ImageInputPass?) {
+        init(
+            batches: [Batch], casters: [FrameCasters.Caster], effects: [Effect],
+            imageInput: ImageInputPass?
+        ) {
             self.imageInput = imageInput
             self.batches = batches
+            self.casters = casters
             self.effects = effects
         }
     }
 
     /// 立体の置き場所の置き場。
     private let solidInstanceStorage: GrowableBuffer
+
+    // MARK: - フレームで積み上げる落とす側 (#1656)
+
+    /// このフレームで、途中の描き切りが既に描いた落とす側 ([#1656])。
+    ///
+    /// **焼き付けはフレームで 1 度の約束である** (影の説明「焼き付けはフレームの終わりに 1 度だけ
+    /// 走り」)。ところが途中の描き切り (画素の口・揺らぎの書き換え) は溜めた列を描いて捨てるので、
+    /// 焼き付けがその回の列だけから落とす立体を選ぶと、区切りより前に置いた立体が、後に置いた面へ
+    /// 影を落とさなかった。区切りごとに、落とす列とそれが読む立体の頂点・添字・置き場所をここへ
+    /// 写して、後の焼き付けにも入れる。後の面は、分けずに描いたときと同じ影を受ける。
+    ///
+    /// **区切りより前に描いた面へ、後から置いた立体の影は落とせない** (面は既に描画先に載って
+    /// いて、描き直すしかない)。その向きは影と `loadPixels()` の説明に書いて引き受けた (案 A)。
+    ///
+    /// 捨てるのは塗り直し (``discardPending()``) とフレームの終わり。塗り直しは分けずに描いたときも
+    /// 前に置いた立体を捨てるので、そこで捨てて一致する。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+    var frameCasters = FrameCasters()
+
+    /// 途中の描き切りが描いた落とす側 (``Canvas/frameCasters``)。
+    ///
+    /// 頂点・添字・置き場所は、**区切りごとに溜め場を丸ごと 1 区画として足す**。列は自分の区画の
+    /// 頭を持ち、溜め場での区間をそのまま使う — 添字は溜め場の番号そのものなので、区画の中では
+    /// 書き換えずに読める (焼くときに頂点の置き場の番地を区画の頭へずらす)。添字を区画ごとに
+    /// 振り直す形は、列が溜め場のどこを指すかの規則を 2 つに増やす。
+    struct FrameCasters {
+        struct Caster {
+            var batch: Batch
+            var vertexBase: Int
+            var indexBase: Int
+            var instanceBase: Int
+        }
+        var casters: [Caster] = []
+        var vertices: [SolidVertex] = []
+        var indices: [UInt32] = []
+        var instances: [SolidInstance] = []
+
+        var isEmpty: Bool { casters.isEmpty }
+
+        mutating func removeAll() {
+            casters.removeAll(keepingCapacity: true)
+            vertices.removeAll(keepingCapacity: true)
+            indices.removeAll(keepingCapacity: true)
+            instances.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// ``frameCasters`` を GPU へ写す置き場。どれも区切らないスケッチでは取らない。
+    private let casterVertexStorage: GrowableBuffer
+    private let casterIndexStorage: GrowableBuffer
+    private let casterInstanceStorage: GrowableBuffer
+    private let casterValuesStorage: GrowableBuffer
+
+    /// いまの溜め場の落とす列を、``frameCasters`` へ足す。**途中の描き切りの末尾で、捨てる前に呼ぶ。**
+    ///
+    /// 落とす列が無ければ何も写さない (影を使わないスケッチの区切りは、ここで何も払わない)。
+    private func keepCasters(into kept: inout FrameCasters) {
+        var casts = false
+        for batch in batches where batch.castsShadow {
+            casts = true
+            break
+        }
+        guard casts else { return }
+        let (vertexBase, indexBase, instanceBase) =
+            (kept.vertices.count, kept.indices.count, kept.instances.count)
+        kept.vertices.append(contentsOf: solidVertices)
+        kept.indices.append(contentsOf: solidIndices)
+        kept.instances.append(contentsOf: solidInstances)
+        for batch in batches where batch.castsShadow {
+            kept.casters.append(
+                FrameCasters.Caster(
+                    batch: batch, vertexBase: vertexBase, indexBase: indexBase,
+                    instanceBase: instanceBase))
+        }
+    }
+
+    /// ``frameCasters`` を写した置き場。
+    private struct CasterUploads {
+        let vertices: any MTLBuffer
+        let indices: any MTLBuffer
+        let instances: any MTLBuffer
+        let values: any MTLBuffer
+    }
+
+    /// ``frameCasters`` を GPU へ写す。空なら `nil`。
+    private func uploadFrameCasters() throws(RenderFailure) -> CasterUploads? {
+        guard !frameCasters.isEmpty else { return nil }
+        let vertices = try casterVertexStorage.write(
+            frameCasters.vertices, holding: max(frameCasters.vertices.count, 1))
+        let indices = try casterIndexStorage.write(
+            frameCasters.indices, holding: max(frameCasters.indices.count, 1))
+        let instances = try casterInstanceStorage.write(
+            frameCasters.instances, holding: max(frameCasters.instances.count, 1))
+        let values = try casterValuesStorage.buffer(holding: frameCasters.casters.count)
+        for (index, caster) in frameCasters.casters.enumerated() {
+            writeValues(
+                of: caster.batch, into: values.contents().advanced(by: index * Self.valuesStride))
+        }
+        return CasterUploads(
+            vertices: vertices, indices: indices, instances: instances, values: values)
+    }
 
     /// 基本図形のクアッドを組む頂点の数 (三角形 2 枚)。
     static let formQuadVertexCount = 6
@@ -3473,7 +3750,11 @@ public final class Canvas {
         guard let matrix = shadowMatrix, hasPendingGeometry else { return nil }
         var casting: [Batch] = []
         for batch in batches where batch.castsShadow { casting.append(batch) }
-        guard !casting.isEmpty else { return nil }
+        // **途中の描き切りが既に描いた落とす側も焼く** ([#1656])。この回に落とす列が無くても、
+        // 区切りより前に置いた立体の影を、この回に描く面が受ける
+        //
+        // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        guard !casting.isEmpty || !frameCasters.isEmpty else { return nil }
 
         // **前のフレームと同じ入力なら焼き直さない。** 光の行列・細かさ・落とす列の
         // 頂点と置き場所が 1 バイトも変わっていなければ、焼いても同じ奥行きが出るだけ
@@ -3496,6 +3777,7 @@ public final class Canvas {
         let solidIndexBuffer = solid.indices
         let instanceBuffer = solid.instances
         let batchValues = try uploadBatchValues()
+        let kept = try uploadFrameCasters()
         let matrixBuffer = try shadowMatrixStorage.buffer(holding: 1)
         // **輪郭は寄せない。** 寄せは画面の画素の約束で、光から見た奥行きの面には無い。
         // 描く画素の大きさは基本図形しか読まず、基本図形は影へ焼かないので 1 を置く
@@ -3522,40 +3804,25 @@ public final class Canvas {
         // 前後判定が書く) ので、断片段に渡すものが無い
         encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
         for (batchIndex, batch) in batches.enumerated() where batch.castsShadow {
-            encoder.setRenderPipelineState(
-                batch.strokeGeometry == nil ? pipeline.shadowState : pipeline.solidStrokeShadowState)
-            pipeline.argumentTable.setAddress(
-                (batch.ownVertices ?? solidBuffer).gpuAddress,
-                index: ShapePipeline.vertexBufferIndex)
-            pipeline.argumentTable.setAddress(
-                batchValues.gpuAddress + UInt64(batchIndex * Self.valuesStride),
-                index: ShapePipeline.valuesBufferIndex)
-            pipeline.argumentTable.setAddress(
-                (batch.instances?.storage ?? instanceBuffer).gpuAddress
-                    + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
-                index: ShapePipeline.instanceBufferIndex)
-            // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
-            // 裏面を捨てても焼き付く奥行きは両面で焼いたときと変わらない
-            //
-            // **表の巻き方は光の行列に合わせる** (``ShadowMap/frontFacing(isMirrored:)``)。光から
-            // 見る行列は画面の投影と別物 (縦を戻す補正 `Camera.clipAdjustment` も、利用者の
-            // 投影も通らない) なので、鏡映していない列の表は画面と逆の反時計回りになり、画面の
-            // 側の `Batch.frontFacing` は使えない。画面の巻き方を写していた間は光を向いた面が
-            // 捨てられ、奥の面が焼き付いていた ([#1474])。鏡映は置き場所の符号だけで裏返す
-            // ([#1446])
-            //
-            // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
-            // [#1474]: https://github.com/mokume-metal/mokume/issues/1474
-            encoder.setFrontFacing(ShadowMap.frontFacing(isMirrored: batch.isMirrored))
-            encoder.setCullMode(batch.cullMode)
-            encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
-            if let arguments = batch.indirectArguments?.storage {
-                // 粒は影の側でも GPU が書いた個数で描く (本描画と同じ)
-                encoder.drawPrimitives(
-                    primitiveType: .triangle, indirectBuffer: arguments.gpuAddress)
-            } else {
-                encodeSolidDraw(
-                    batch.run, instanceCount: batch.instanceCount, indices: solidIndexBuffer,
+            encodeCaster(
+                batch,
+                from: CasterSource(
+                    vertices: solidBuffer.gpuAddress, indices: solidIndexBuffer, indexBase: 0,
+                    instances: instanceBuffer.gpuAddress,
+                    values: batchValues.gpuAddress + UInt64(batchIndex * Self.valuesStride)),
+                on: encoder)
+        }
+        if let kept {
+            for (index, caster) in frameCasters.casters.enumerated() {
+                encodeCaster(
+                    caster.batch,
+                    from: CasterSource(
+                        vertices: kept.vertices.gpuAddress
+                            + UInt64(caster.vertexBase * MemoryLayout<SolidVertex>.stride),
+                        indices: kept.indices, indexBase: caster.indexBase,
+                        instances: kept.instances.gpuAddress
+                            + UInt64(caster.instanceBase * MemoryLayout<SolidInstance>.stride),
+                        values: kept.values.gpuAddress + UInt64(index * Self.valuesStride)),
                     on: encoder)
             }
         }
@@ -3563,6 +3830,60 @@ public final class Canvas {
         encoder.endEncoding()
         shadowBakesEncoded += 1
         return BakedShadow(map: map, matrix: matrix, key: key, solidUploads: solid)
+    }
+
+    /// 落とす列 1 つが読む置き場。溜め場の列は溜め場を写した置き場を、途中の描き切りから持ち越した
+    /// 列 (``frameCasters``) は自分の区画の頭へずらした番地を渡す。
+    private struct CasterSource {
+        /// 頂点の置き場の、区画の頭の番地。列が自分の頂点を持つなら読まない。
+        let vertices: UInt64
+        let indices: any MTLBuffer
+        /// 添字の置き場の中で区画が始まる位置。
+        let indexBase: Int
+        /// 置き場所の置き場の、区画の頭の番地。列が外の置き場所を持つなら読まない。
+        let instances: UInt64
+        /// この列の値の区画の番地。
+        let values: UInt64
+    }
+
+    /// 落とす列を 1 つ焼く。
+    private func encodeCaster(
+        _ batch: Batch, from source: CasterSource, on encoder: any MTL4RenderCommandEncoder
+    ) {
+        encoder.setRenderPipelineState(
+            batch.strokeGeometry == nil ? pipeline.shadowState : pipeline.solidStrokeShadowState)
+        pipeline.argumentTable.setAddress(
+            batch.ownVertices?.gpuAddress ?? source.vertices,
+            index: ShapePipeline.vertexBufferIndex)
+        pipeline.argumentTable.setAddress(source.values, index: ShapePipeline.valuesBufferIndex)
+        pipeline.argumentTable.setAddress(
+            (batch.instances?.storage.gpuAddress ?? source.instances)
+                + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
+            index: ShapePipeline.instanceBufferIndex)
+        // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
+        // 裏面を捨てても焼き付く奥行きは両面で焼いたときと変わらない
+        //
+        // **表の巻き方は光の行列に合わせる** (``ShadowMap/frontFacing(isMirrored:)``)。光から
+        // 見る行列は画面の投影と別物 (縦を戻す補正 `Camera.clipAdjustment` も、利用者の
+        // 投影も通らない) なので、鏡映していない列の表は画面と逆の反時計回りになり、画面の
+        // 側の `Batch.frontFacing` は使えない。画面の巻き方を写していた間は光を向いた面が
+        // 捨てられ、奥の面が焼き付いていた ([#1474])。鏡映は置き場所の符号だけで裏返す
+        // ([#1446])
+        //
+        // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
+        // [#1474]: https://github.com/mokume-metal/mokume/issues/1474
+        encoder.setFrontFacing(ShadowMap.frontFacing(isMirrored: batch.isMirrored))
+        encoder.setCullMode(batch.cullMode)
+        encoder.setArgumentTable(pipeline.argumentTable, stages: [.vertex])
+        if let arguments = batch.indirectArguments?.storage {
+            // 粒は影の側でも GPU が書いた個数で描く (本描画と同じ)
+            encoder.drawPrimitives(
+                primitiveType: .triangle, indirectBuffer: arguments.gpuAddress)
+        } else {
+            encodeSolidDraw(
+                batch.run, instanceCount: batch.instanceCount, indices: source.indices,
+                indexBase: source.indexBase, on: encoder)
+        }
     }
 
     /// 焼いた (または使い回した) 影と、その入力の指紋。
@@ -3586,6 +3907,11 @@ public final class Canvas {
     /// 指紋は 64 bit で、続けて描いたフレームどうしを比べるためだけに使う。**衝突すると
     /// 前のフレームの影が 1 フレーム残る**が、続く 2 フレームの入力が偶然同じ 64 bit に
     /// 落ちる確率は絵に出ない大きさである。
+    ///
+    /// 途中の描き切りから持ち越した落とす列 (``frameCasters``・[#1656]) も、同じ規則で混ぜる。
+    /// 区画の頭を足した区間で、持ち越した並びの中身を読む。
+    ///
+    /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     private func shadowBakeKey(
         matrix: simd_float4x4, detail: Int, casting: [Batch]
     ) -> UInt64? {
@@ -3594,58 +3920,85 @@ public final class Canvas {
         hasher.mix(UInt64(detail))
         hasher.mix(UInt64(casting.count))
         for batch in casting {
-            guard batch.instances == nil else { return nil }
-            if batch.strokeGeometry != nil {
-                // 形の鍵は下で混ぜる。視点・太さ・変換も焼かれる帯を変える。
-                hasher.mix(4)
-                withUnsafeBytes(of: batch.strokePlacement!) { hasher.mix($0) }
-            }
-            hasher.mix(UInt64(batch.run.start))
-            hasher.mix(UInt64(batch.run.count))
-            hasher.mix(UInt64(batch.instanceStart))
-            hasher.mix(UInt64(batch.instanceCount))
-            hasher.mix(UInt64(batch.cullMode.rawValue))
-            // 焼く側の表の巻き方も焼き付く奥行きを変える (鏡映の符号だけで決まる)
-            hasher.mix(batch.isMirrored ? 1 : 0)
-            // **読む順も焼く側が読むものである。** 頂点を 1 バイトも動かさずに添字だけを
-            // 組み直すフレーム (面の張り替え・粗さの切り替え) は `index(_:)` がまさに
-            // 誘う書き方で、これを混ぜないと前のフレームの影が居座る
-            hasher.mix(UInt64(batch.run.indexStart))
-            hasher.mix(UInt64(batch.run.indexCount))
-            solidIndices.withUnsafeBytes { bytes in
-                let stride = MemoryLayout<UInt32>.stride
-                let end = min(
-                    bytes.count, (batch.run.indexStart + batch.run.indexCount) * stride)
-                let start = min(end, batch.run.indexStart * stride)
-                hasher.mix(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
-            }
-            // **頂点は出どころで代表できるなら舐めない。** 組み込みの形の頂点は寸法から
-            // 決まり、読み込んだモデルは読んだ後に変わらない。その場で並べた頂点と
-            // 保持した形 (置くたびに番号が変わる) だけ中身を読む
-            switch batch.solidSource {
-            case .mesh(let shape):
-                hasher.mix(1)
-                hasher.mix(UInt64(bitPattern: Int64(shape.hashValue)))
-            case .model(let identity):
-                hasher.mix(2)
-                hasher.mix(UInt64(identity))
-            case .freeform, .retained, nil:
-                hasher.mix(3)
-                solidVertices.withUnsafeBytes { bytes in
-                    let stride = MemoryLayout<SolidVertex>.stride
-                    let end = min(bytes.count, (batch.run.start + batch.run.count) * stride)
-                    let start = min(end, batch.run.start * stride)
-                    hasher.mix(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
-                }
-            }
-            solidInstances.withUnsafeBytes { bytes in
-                let stride = MemoryLayout<SolidInstance>.stride
-                let end = min(bytes.count, (batch.instanceStart + batch.instanceCount) * stride)
-                let start = min(end, batch.instanceStart * stride)
+            guard
+                mixCaster(
+                    batch, vertices: solidVertices, indices: solidIndices,
+                    instances: solidInstances, bases: (0, 0, 0), into: &hasher)
+            else { return nil }
+        }
+        hasher.mix(UInt64(frameCasters.casters.count))
+        for caster in frameCasters.casters {
+            guard
+                mixCaster(
+                    caster.batch, vertices: frameCasters.vertices, indices: frameCasters.indices,
+                    instances: frameCasters.instances,
+                    bases: (caster.vertexBase, caster.indexBase, caster.instanceBase),
+                    into: &hasher)
+            else { return nil }
+        }
+        return hasher.finish()
+    }
+
+    /// 落とす列 1 つを指紋へ混ぜる。指紋を取れない列 (GPU が埋める置き場所) なら `false`。
+    ///
+    /// `bases` は並びの中で列の区画が始まる位置 (頂点・添字・置き場所)。溜め場の列は 0。
+    private func mixCaster(
+        _ batch: Batch, vertices: [SolidVertex], indices: [UInt32], instances: [SolidInstance],
+        bases: (vertex: Int, index: Int, instance: Int), into hasher: inout ShadowBakeHasher
+    ) -> Bool {
+        guard batch.instances == nil else { return false }
+        if batch.strokeGeometry != nil {
+            // 形の鍵は下で混ぜる。視点・太さ・変換も焼かれる帯を変える。
+            hasher.mix(4)
+            withUnsafeBytes(of: batch.strokePlacement!) { hasher.mix($0) }
+        }
+        hasher.mix(UInt64(batch.run.start))
+        hasher.mix(UInt64(batch.run.count))
+        hasher.mix(UInt64(batch.instanceStart))
+        hasher.mix(UInt64(batch.instanceCount))
+        hasher.mix(UInt64(batch.cullMode.rawValue))
+        // 焼く側の表の巻き方も焼き付く奥行きを変える (鏡映の符号だけで決まる)
+        hasher.mix(batch.isMirrored ? 1 : 0)
+        // **読む順も焼く側が読むものである。** 頂点を 1 バイトも動かさずに添字だけを
+        // 組み直すフレーム (面の張り替え・粗さの切り替え) は `index(_:)` がまさに
+        // 誘う書き方で、これを混ぜないと前のフレームの影が居座る
+        hasher.mix(UInt64(batch.run.indexStart))
+        hasher.mix(UInt64(batch.run.indexCount))
+        indices.withUnsafeBytes { bytes in
+            let stride = MemoryLayout<UInt32>.stride
+            let first = bases.index + batch.run.indexStart
+            let end = min(bytes.count, (first + batch.run.indexCount) * stride)
+            let start = min(end, first * stride)
+            hasher.mix(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
+        }
+        // **頂点は出どころで代表できるなら舐めない。** 組み込みの形の頂点は寸法から
+        // 決まり、読み込んだモデルは読んだ後に変わらない。その場で並べた頂点と
+        // 保持した形 (置くたびに番号が変わる) だけ中身を読む
+        switch batch.solidSource {
+        case .mesh(let shape):
+            hasher.mix(1)
+            hasher.mix(UInt64(bitPattern: Int64(shape.hashValue)))
+        case .model(let identity):
+            hasher.mix(2)
+            hasher.mix(UInt64(identity))
+        case .freeform, .retained, nil:
+            hasher.mix(3)
+            vertices.withUnsafeBytes { bytes in
+                let stride = MemoryLayout<SolidVertex>.stride
+                let first = bases.vertex + batch.run.start
+                let end = min(bytes.count, (first + batch.run.count) * stride)
+                let start = min(end, first * stride)
                 hasher.mix(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
             }
         }
-        return hasher.finish()
+        instances.withUnsafeBytes { bytes in
+            let stride = MemoryLayout<SolidInstance>.stride
+            let first = bases.instance + batch.instanceStart
+            let end = min(bytes.count, (first + batch.instanceCount) * stride)
+            let start = min(end, first * stride)
+            hasher.mix(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
+        }
+        return true
     }
 
     /// 前のフレームで焼いた入力の指紋。焼かなかったフレームでは触らない — 焼いた面は
