@@ -210,7 +210,12 @@ struct CommandAllocatorTests {
         leftOpen = nil
         try target.fill(with: Self.red)
         #expect(try target.readPixels()[0, 0] == Self.red)
-        #expect(gpu.commandFaultCount == 0, "GPU が仕事を打ち切った: \(gpu.lastCommandFault ?? "")")
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。開いたまま捨てたコマンドや、
+        // GPU が読んでいる置き場を巻き戻せば、絵より先に打ち切りとして現れる。別の投入の
+        // 巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            gpu.commandFaultCount == 0,
+            "GPU が仕事を \(gpu.commandFaultCount) 回打ち切った: \(gpu.lastCommandFault ?? "")")
     }
 
     /// **実在の経路で投げる** — 描き切りの途中、組み立てを始めた後で。伸びる置き場は
@@ -246,7 +251,12 @@ struct CommandAllocatorTests {
 
         try canvas.draw { canvas.background(Self.red) }
         #expect(try target.readPixels()[0, 0] == Self.red)
-        #expect(gpu.commandFaultCount == 0, "GPU が仕事を打ち切った: \(gpu.lastCommandFault ?? "")")
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。開いたまま捨てたコマンドや、
+        // GPU が読んでいる置き場を巻き戻せば、絵より先に打ち切りとして現れる。別の投入の
+        // 巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            gpu.commandFaultCount == 0,
+            "GPU が仕事を \(gpu.commandFaultCount) 回打ち切った: \(gpu.lastCommandFault ?? "")")
     }
 
     /// **投入した後で投げたものは、捨てたことにしない。** 待つ投入 (`commitAndWait`) は
