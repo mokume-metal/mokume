@@ -25,6 +25,7 @@ import http.server
 import importlib.util
 import re
 import socket
+import socketserver
 import tempfile
 import threading
 import unittest
@@ -86,11 +87,13 @@ class SourceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "a.txt").write_text("中身", encoding="utf-8")
             handler = functools.partial(QuietHandler, directory=tmp)
-            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            # 名前を引かないサーバで立てる。http.server の HTTPServer は bind の後に getfqdn で
+            # 名前を引き、CI の macOS のランナーではそこで約 35 秒止まる (#1714)
+            server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
-                source = site_source.Source(f"http://127.0.0.1:{server.server_port}")
+                source = site_source.Source(f"http://127.0.0.1:{server.server_address[1]}")
                 self.assertTrue(source.is_url)
                 self.assertEqual(source.read("a.txt"), "中身".encode())
                 # 無いものは None。**投げない** — 「置いても出ない」を呼び出し側が言う
