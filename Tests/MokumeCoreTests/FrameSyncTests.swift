@@ -111,7 +111,7 @@ struct FrameSyncTests {
         // そこを取り違えて「背景は載っているので後続の描画だけが落ちた」と読んでいた
         #expect(pixels[16, 16].alpha == 1, "面に 1 画素も書かれていない\(bench.gpu.faultNote())")
         #expect(pixels[16, 16].red == 1, "赤が載っていない\(bench.gpu.faultNote())")
-        #expect(pixels[16, 16].green == 0)
+        #expect(pixels[16, 16].green == 0, "赤のはずの画素に緑が載っている\(bench.gpu.faultNote())")
     }
 
     @Test("数の並びへ書く口は待たず、読むと書いた値が返る")

@@ -19,25 +19,32 @@ import Testing
 )
 struct GPUFaultNoteTests {
     private static let hang = "Caused GPU Hang Error (00000003:kIOGPUCommandBufferCallbackErrorHang)"
+    private static let noRecord = "GPU の打ち切りの記録なし"
     private static let victim =
         "Discarded (victim of GPU error/recovery) (00000005:kIOGPUCommandBufferCallbackErrorInnocentVictim)"
 
-    /// **何も無ければ何も足さない。** 表明の文面がそのまま読める。
-    @Test("打ち切りの記録が無い土台では、何も添えない")
-    func aQuietDeviceAddsNothing() throws {
+    /// **無いときも黙らない。** 黙ると、記録の上で「見て、打ち切りは無かった」と「打ち切りを
+    /// 見ていない口」とが区別できない。待ちに間に合わなかった結末がありうることも言う。
+    @Test("打ち切りの記録が無い土台では、記録が無いことを名乗る")
+    func aQuietDeviceSaysItHasNoRecord() throws {
         let gpu = try RenderDevice()
-        #expect(gpu.faultNote().isEmpty)
+        let note = gpu.faultNote()
+        #expect(note.contains(Self.noRecord), "\(note)")
+        #expect(note.contains("0.1 秒待った時点"), "待ちに間に合わなかった結末の扱いを言っていない: \(note)")
+        #expect(!note.contains("打ち切っている"), "\(note)")
     }
 
-    @Test("打ち切りの記録がある土台では、回数と最後の理由を添える")
+    /// **回数は土台を作ってからの累計なので、「この間に」とは言わない。**
+    @Test("打ち切りの記録がある土台では、これまでの回数と最後の理由を添える")
     func aFaultedDeviceNamesTheCountAndTheLastReason() throws {
         let gpu = try RenderDevice()
         gpu.recordCommandFaultForTesting(Self.hang)
         gpu.recordCommandFaultForTesting(Self.victim)
 
         let note = gpu.faultNote()
-        #expect(note.contains("2 回打ち切っている"), "\(note)")
+        #expect(note.contains("この土台では、これまでに GPU が仕事を 2 回打ち切っている"), "\(note)")
         #expect(note.contains(Self.victim), "\(note)")
+        #expect(!note.contains(Self.noRecord), "\(note)")
     }
 
     /// **名乗るのはその土台の記録だけ。** 別の土台の打ち切りは、その絵とは関係が無い。
@@ -46,7 +53,8 @@ struct GPUFaultNoteTests {
         let faulted = try RenderDevice()
         let quiet = try RenderDevice()
         faulted.recordCommandFaultForTesting(Self.hang)
-        #expect(quiet.faultNote().isEmpty)
+        let note = quiet.faultNote()
+        #expect(note.contains(Self.noRecord) && !note.contains(Self.hang), "\(note)")
     }
 
     /// **落ちた表明の文面に載る。** 記録の正本 (xunit) と run の要約が持つのは文面だけなので、
@@ -61,6 +69,18 @@ struct GPUFaultNoteTests {
             #expect(Bool(false), "絵が食い違う\(gpu.faultNote())")
         } matching: { issue in
             issue.comments.map(\.rawValue).joined().contains(victim)
+        }
+    }
+
+    /// 記録が無い回も、落ちた表明の文面に「記録なし」が載る。
+    @Test("落ちた表明の文面に、打ち切りの記録が無いことが載る")
+    func theAbsenceReachesTheFailedAssertion() throws {
+        let gpu = try RenderDevice()
+        let noRecord = Self.noRecord
+        withKnownIssue {
+            #expect(Bool(false), "絵が食い違う\(gpu.faultNote())")
+        } matching: { issue in
+            issue.comments.map(\.rawValue).joined().contains(noRecord)
         }
     }
 }

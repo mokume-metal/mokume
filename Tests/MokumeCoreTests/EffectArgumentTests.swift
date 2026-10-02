@@ -119,7 +119,7 @@ struct EffectArgumentTests {
         let ruined = PixelBuffer(width: 1, height: 1, components: [.nan, -1, 0, 1])
         let namesTheFault: @Sendable (Issue) -> Bool = { issue in
             let text = issue.comments.map(\.rawValue).joined()
-            return text.contains(reason) && text.contains("1 回打ち切っている")
+            return text.contains(reason) && text.contains("これまでに GPU が仕事を 1 回打ち切っている")
         }
 
         withKnownIssue("食い違いの口") {
