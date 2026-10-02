@@ -267,6 +267,20 @@ import MokumeDiagnostics
     /// 診断: 最後に打ち切られた理由。
     var lastCommandFault: String? { commandFaults.last }
 
+    /// 検査から「GPU が仕事を打ち切った」の記録を作るための差し込み。製品の経路からは呼ばない。
+    ///
+    /// **打ち切りを故意に起こす検査は置かない** ([#1065] の完了条件 4)。起こすには 1 本の
+    /// コマンドを数百 ms 走らせることになり、同じ GPU で並行する検査を巻き添えにしうる。
+    /// 一方で、画素の表明が落ちたときに記録された打ち切りを名乗ることは [#1812] の完了条件
+    /// なので、記録の側にだけ 1 つ穴を空けてある (``failSettleForTesting`` と同じ形)。
+    /// 知らせ (`Diagnostics.warn`) は出さない。公開はしない。
+    ///
+    /// [#1065]: https://github.com/mokume-metal/mokume/issues/1065
+    /// [#1812]: https://github.com/mokume-metal/mokume/issues/1812
+    func recordCommandFaultForTesting(_ reason: String) {
+        _ = commandFaults.note(reason)
+    }
+
     /// 完了の知らせを main actor へ渡す前に合体する器 ([#1594])。
     ///
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594

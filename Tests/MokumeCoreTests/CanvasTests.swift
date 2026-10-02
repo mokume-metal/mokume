@@ -1921,7 +1921,7 @@ struct CanvasTests {
             "droppedAtTheMainFrame": "本体のフレームが始まる所で閉じ忘れを捨てた後、遅れた endDraw() をまだ名乗っていないかの印 (#1834)。捨てる関数が立て、名乗ったとき・次に本体のフレームが始まる所・自分の次のフレームの頭で下ろす",
             "paintSurfacesNoted": "断片の面を置いた記録に載せ終えた控え。記録が落ちる (フレームの終わりの描き切り) と placedGraphicsDrops と食い違って外れる (#1683)",
             "placedGraphicsDrops": count,
-            "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
+            "isFlushing": transient, "replayedPaint": transient,
             "solidStrokeCapture": transient,
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
             "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",

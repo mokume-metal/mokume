@@ -18,6 +18,9 @@ extension Sketch {
     /// 半透明の色になり、前の絵は残らない。残像の作り方と、p5.js の
     /// `background(0, 20)` との違いは ``background(_:_:)`` に書いた。
     ///
+    /// 色の値で塗る `background(_:)` と同じく、混ぜ方などの呼んだ時点の描き方は効かず、
+    /// 切り抜きの中で呼べばその中だけを置き換える。
+    ///
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     public func background(
         _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
@@ -37,6 +40,9 @@ extension Sketch {
     /// **不透明度は下地に重ならない。面をその灰色で置き換える** — `background(0, 20)` は
     /// 面を不透明度 20 の黒 1 色にするので、前の絵は残らない。毎フレーム呼んでも
     /// 残像にはならない。
+    ///
+    /// 色の値で塗る `background(_:)` と同じく、混ぜ方などの呼んだ時点の描き方は効かず、
+    /// 切り抜きの中で呼べばその中だけを置き換える。
     ///
     /// 残像は、面と同じ大きさの四角を薄く重ねて作る。塗り直さないので、前の絵が
     /// 少しずつ暗くなりながら残る。
