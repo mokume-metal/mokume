@@ -601,32 +601,6 @@ enum RunCommand {
     }
 }
 
-/// 子の終わりを、呼んだ糸の実行ループを回さずに待つ ([#1937])。
-///
-/// **`Process.waitUntilExit()` は、待つ間に呼んだ糸の実行ループを回す。** main で呼ぶと、そこに
-/// 載った仕事 (タイマー・画面の駆動源) が待ちの中で走る。合図の受け口と宛先を持ったまま待つ
-/// ``RunCommand/launch(_:in:environment:forwarding:)`` では、その前提が待ちの最中に書き換わる。
-/// 道具は待つ間に実行ループを要さない (`run` / `render` は窓も main の仕事も持たず、見張りは
-/// 作り直しを main の外で待つ) ので、回さずに塞ぐ。
-///
-/// **子を起こす前に作る。** 知らせ (`terminationHandler`) は起こす前に置く。起こした後に置くと、
-/// すぐ終わった子の知らせを取り逃しうる。
-///
-/// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
-nonisolated struct ExitWait: Sendable {
-    private let exited = DispatchSemaphore(value: 0)
-
-    init(for process: Process) {
-        let exited = exited
-        process.terminationHandler = { _ in exited.signal() }
-    }
-
-    /// 子が終わるまで塞ぐ。戻った後は `terminationStatus` が読める。
-    func wait() {
-        exited.wait()
-    }
-}
-
 /// 走っている作り直しの `swift` を、外から止められるように掴んでおく先。
 ///
 /// **見張りは作り直しを待たずに終われる** (#834) ので、終わるときに走っている `swift build` を

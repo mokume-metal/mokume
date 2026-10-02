@@ -14,7 +14,7 @@ import mokume
 /// ことは `SketchApplicationRenderTests` (MokumeCoreTests) が本物の GPU で見る。
 ///
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
-@Suite("固定の fps で書き出す口")
+@Suite("固定の fps で書き出す口", .signalStateKept)
 struct RenderCommandTests {
     /// `--out` の相対パスを解く基準 (打った場所)。
     private static let typedFrom = URL(fileURLWithPath: "/tmp/typed-here", isDirectory: true)
@@ -256,11 +256,9 @@ struct RenderCommandTests {
             [.posixPermissions: 0o755], ofItemAtPath: executable.path)
 
         // **既定の受け口から始める。** 走者が無視で継いでいると、SIGINT を受けない側へ倒れる
-        var standard = sigaction()
-        standard.__sigaction_u.__sa_handler = SIG_DFL
-        var before = sigaction()
-        sigaction(SIGINT, &standard, &before)
-        defer { sigaction(SIGINT, &before, nil) }
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        signal(SIGINT, SIG_DFL)
 
         let sender = Sender()
         Thread.detachNewThread {

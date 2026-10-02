@@ -20,6 +20,7 @@ import Testing
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
 @Suite(
     "窓を開かずに書き出す経路",
+    .signalStateKept,
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする"),
@@ -303,8 +304,9 @@ struct SketchApplicationRenderTests {
             // **旗は立てた区間の中で閉じる** (#1937)。下の `await` を跨いで残すと、その間に
             // 走るほかの検査が拾いうる
             do {
+                let kept = SignalState.current()
+                defer { kept.restore() }
                 sketchStopRequested = 1
-                defer { sketchStopRequested = 0 }
                 fire(application, times: 3)
             }
             #expect(ending.stopCalls == 1)

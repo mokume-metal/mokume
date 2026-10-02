@@ -12,7 +12,7 @@ import mokume
 /// **終わる場所は `main.swift` の 1 つだけである。** 途中で `exit` を呼ぶと、名乗りも
 /// 後始末もその catch を素通りする — 素通りしたことは出力からは読めないので、
 /// 経路が 2 系統あること自体を型で塞いである。
-@Suite("スケッチを走らせる")
+@Suite("スケッチを走らせる", .signalStateKept)
 struct RunCommandTests {
     /// 指定した終了コードで終わるだけの実行ファイルを置く。`seconds` だけ眠ってから終わる。
     private func makeExecutable(exiting status: Int32, after seconds: Double = 0) throws -> URL {
@@ -178,11 +178,9 @@ struct RunCommandTests {
         let (directory, marker, executable) = try makeSleeper()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        var standard = sigaction()
-        standard.__sigaction_u.__sa_handler = SIG_DFL
-        var inherited = sigaction()
-        sigaction(stopSignal, &standard, &inherited)
-        defer { sigaction(stopSignal, &inherited, nil) }
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        signal(stopSignal, SIG_DFL)
         let sender = Sender()
         // **並行プールに載せず、専用の糸で送る** (上の `theRunningChildCanBeTakenOutAndStopped`
         // と同じ理由)。期限はどれも安全網である (#564)
@@ -251,11 +249,9 @@ struct RunCommandTests {
         let (directory, marker, executable) = try makeSleeper()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        var ignored = sigaction()
-        ignored.__sigaction_u.__sa_handler = SIG_IGN
-        var inherited = sigaction()
-        sigaction(SIGINT, &ignored, &inherited)
-        defer { sigaction(SIGINT, &inherited, nil) }
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        signal(SIGINT, SIG_IGN)
 
         let watcher = Watcher()
         Thread.detachNewThread {

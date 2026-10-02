@@ -16,6 +16,7 @@ import Testing
 /// ([#705](https://github.com/mokume-metal/mokume/issues/705))。
 @Suite(
     "スケッチの窓",
+    .signalStateKept,
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
@@ -25,18 +26,24 @@ struct SketchApplicationTests {
     /// 何も描かないスケッチ。窓を開くのに要るのは大きさだけなので、既定のままでよい。
     private final class Blank: Sketch {}
 
-    /// 組む。**終わりの合図の行き先は、呼ばれたら赤を記録する口へ差し替える** ([#1937])。
+    /// 組む。**終わりの行き先は、呼ばれたら赤を記録する口へ差し替える** ([#1937])。
     ///
     /// 既定の口 (`terminate(nil)`) は、run loop を回していない検査のプロセスをその場で
-    /// `exit(0)` させる。旗 `sketchStopRequested` が残っていると、それを拾った検査 (駆動源の
-    /// 代わりに `displayLinkFired()` を叩くもの・繋いだ駆動源が鳴るもの) が、走者ごと緑のまま
-    /// 消える。旗を数える検査は、自分の口で上書きする。
+    /// `exit(0)` させる。この口へは 2 つの経路から来る (``SketchApplication/pollStopSignal()``)。
+    /// 旗 `sketchStopRequested` が残っていたときと、道具が居なくなった (標準入力の管が畳まれた)
+    /// と読んだときである。どちらでも、拾った検査 (駆動源の代わりに `displayLinkFired()` を
+    /// 叩くもの・繋いだ駆動源が鳴るもの) が走者ごと緑のまま消える。終わりを数える検査は、
+    /// 自分の口で上書きする。
     ///
     /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
     private func makeApplication(_ sketch: any Sketch) throws -> SketchApplication {
         let application = try SketchApplication(sketch: sketch, gpu: RenderDevice())
         application.onStopSignal = {
-            Issue.record("合図を送っていないのに、終わりの合図で終わりを頼んだ (旗が残っていた)")
+            Issue.record(
+                """
+                終わりを頼んだ — 検査は合図を送っていないので、旗 sketchStopRequested が残っていたか、\
+                道具が居なくなった (標準入力の管が畳まれた) と読んだ
+                """)
         }
         return application
     }
@@ -341,8 +348,9 @@ struct SketchApplicationTests {
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     @Test("終わりの合図を受けていたら、終わりを 1 度だけ頼む")
     func asksToEndOnceAfterAStopSignal() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         sketchStopRequested = 0
-        defer { sketchStopRequested = 0 }
         let application = try makeApplication(Blank())
         var ended = 0
         application.onStopSignal = { ended += 1 }
@@ -362,8 +370,9 @@ struct SketchApplicationTests {
     /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
     @Test("終わりに向かっている間の合図では、終わりを重ねない")
     func aStopSignalDoesNotTerminateAgain() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         sketchStopRequested = 0
-        defer { sketchStopRequested = 0 }
         let application = try makeApplication(Blank())
         var ended = 0
         application.onStopSignal = { ended += 1 }
@@ -386,6 +395,9 @@ struct SketchApplicationTests {
     /// [#1427]: https://github.com/mokume-metal/mokume/issues/1427
     @Test("起こした道具が居なくなったら、終わりを頼む")
     func asksToEndWhenTheDriverIsGone() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        sketchStopRequested = 0
         let application = try makeApplication(Blank())
         var ended = 0
         var gone = false
@@ -404,8 +416,9 @@ struct SketchApplicationTests {
     /// 読み残した側が重ねて頼むこともない。
     @Test("合図と道具の消失が重なっても、終わりは 1 度だけ頼む")
     func asksOnceWhenBothArrive() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         sketchStopRequested = 0
-        defer { sketchStopRequested = 0 }
         let application = try makeApplication(Blank())
         var ended = 0
         var departures = [true]
@@ -424,6 +437,9 @@ struct SketchApplicationTests {
     /// **終わりに向かっている間は重ねない** (``aStopSignalDoesNotTerminateAgain()`` と同じ理由)。
     @Test("終わりに向かっている間に道具が居なくなっても、終わりを重ねない")
     func theDriverLeavingDoesNotTerminateAgain() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        sketchStopRequested = 0
         let application = try makeApplication(Blank())
         var ended = 0
         application.onStopSignal = { ended += 1 }

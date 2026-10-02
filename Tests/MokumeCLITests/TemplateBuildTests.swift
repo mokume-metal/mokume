@@ -188,7 +188,7 @@ nonisolated enum BuildProcess {
     /// 期限を越えたら殺す係。
     ///
     /// **`Process` は `Sendable` ではない**が、期限を数えるのは別の走りでなければ
-    /// ならない (main actor は `waitUntilExit()` で塞がっている)。殺す 1 手と殺した
+    /// ならない (main actor は子の待ちで塞がっている)。殺す 1 手と殺した
     /// かの印だけをここへ閉じて渡す — `terminate()` は別の走りから呼んでよい。
     private final class Deadline: @unchecked Sendable {
         private let lock = NSLock()
@@ -204,11 +204,15 @@ nonisolated enum BuildProcess {
 
     /// 走らせて待つ。**越えたら殺す。**
     ///
-    /// 報告するだけでは足りない。`waitUntilExit()` は main actor を塞いだまま止まる
-    /// ので、殺さなければ後続の検査が 1 つも進まないまま run 全体が固まる。
+    /// 報告するだけでは足りない。待ちは main actor を塞いだまま止まるので、殺さなければ
+    /// 後続の検査が 1 つも進まないまま run 全体が固まる。
+    ///
+    /// **待つ間に実行ループを回さない** (``ExitWait``・#1937)。回すと、そこに載った仕事が
+    /// 待ちの中で走る。
     static func run(
         _ process: Process, reading pipe: Pipe, within seconds: Double = limit
     ) throws -> (status: Int32, output: String, killed: Bool) {
+        let exited = ExitWait(for: process)
         try process.run()
         let deadline = Deadline(process)
         let alarm = DispatchWorkItem { deadline.kill() }
@@ -219,7 +223,7 @@ nonisolated enum BuildProcess {
         // なって止まる
         let output =
             String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        process.waitUntilExit()
+        exited.wait()
         return (process.terminationStatus, output, deadline.didKill)
     }
 
