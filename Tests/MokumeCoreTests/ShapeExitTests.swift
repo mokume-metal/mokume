@@ -179,7 +179,7 @@ enum ShapeExit {
             "placedGraphics": "置いた描き場所の記録。組み立ての中で置いた描き場所も、置いた時点の絵を守るために載る (#1588)",
             "placers": "自分を置いた面。自分の絵が変わる直前に相手を描き切らせる",
             "paintSurfacesNoted": "断片の面を置いた記録に載せ終えた控え。組み立ての中では控えない",
-            "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
+            "isFlushing": transient, "replayedPaint": transient,
             "solidStrokeCapture": transient,
             "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
