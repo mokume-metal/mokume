@@ -419,7 +419,28 @@ extension Canvas {
                     color: placement.fill
                         ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
         }
-        placeSolid(run, of: shape, instances: instances)
+        placeSolid(
+            run, of: shape, instances: instances,
+            mayShowBackFaces: retainedRunMayShowBackFaces(run, of: shape, at: placements))
+    }
+
+    /// 保持した形の立体の区間を、裏面が絵に出うる形として置くか (``Canvas/OpenSolid/mayShowBackFaces``)。
+    ///
+    /// 組み込みの形の ``placementMayShowBackFaces`` と同じ 4 つの条件を、**記録した区間の設定**で
+    /// 判じる — 置く側のスタイルではなく、区間へ移った後の混ぜ方・貼った絵・断片と、焼いた頂点の
+    /// 色 (``Shape/translucentSolidRuns``) である。置き場所の色 (``Placement/fill``) が透けていても
+    /// 立てる。立てた列は置き場所ごとに裏 → 表で描く ([#1565](https://github.com/mokume-metal/mokume/issues/1565))。
+    private func retainedRunMayShowBackFaces(
+        _ run: Shape.Run, of shape: Shape, at placements: [Placement]
+    ) -> Bool {
+        if run.mode != .blend || run.paint.shader != nil || isFillPicture(run.texture)
+            || shape.translucentSolidRuns.contains(run.start)
+        {
+            return true
+        }
+        // 閉包を標準ライブラリの高階関数へ渡さずにループで組む (隔離の実行時検査を避ける・#1779)
+        for placement in placements where (placement.fill?.alpha ?? 1) < 1 { return true }
+        return false
     }
 
     /// 立体の区間を、組み上がった置き場所ぶんだけ置く。
@@ -439,7 +460,8 @@ extension Canvas {
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     func placeSolid(
-        _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>
+        _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>,
+        mayShowBackFaces: Bool = false
     ) {
         beginSolids()
         let runRange = run.start..<(run.start + run.count)
@@ -481,6 +503,9 @@ extension Canvas {
             // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
             let mirrored = first.isMirrored
             let start = openRetainedSolid(run, of: shape, mirrored: mirrored)
+            // 裏面が絵に出うる区間は、置き場所ごとに裏 → 表で描く (`Batch.drawsBackThenFront`)。
+            // 粒は旗を渡さない (板 1 枚で、描き分けると描く回数が粒の数だけ増える)
+            if mayShowBackFaces { openSolid?.mayShowBackFaces = true }
             while let instance = remaining.first, instance.isMirrored == mirrored,
                 !isBatchFull(solidInstances.count, since: start)
             {

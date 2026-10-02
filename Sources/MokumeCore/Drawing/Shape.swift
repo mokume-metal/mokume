@@ -69,6 +69,13 @@ public struct Shape {
     /// ``solidStrokes`` のうち、**置くときに GPU で組める**組み込み立体の線 (#1756)。
     /// 焼いた頂点はそのまま持ち、組めるときだけその区間を積まずに GPU の列で描く。
     let gpuStrokes: [RetainedGPUStroke]
+    /// 立体の区間のうち、焼いた頂点の色が透けているもの。区間の先頭 (``Run/start``) で引く。
+    ///
+    /// 置くときに、裏面が絵に出うる形かを判じるために控える
+    /// (`Canvas.retainedRunMayShowBackFaces`・[#1565](https://github.com/mokume-metal/mokume/issues/1565))。
+    /// 置き場所の塗りで判じる組み込みの形と違い、保持した形は記録したときの塗りを頂点へ焼くので、
+    /// 頂点を見ないと分からない。置くたびに頂点を舐めないよう、作るときに 1 度だけ調べる。
+    let translucentSolidRuns: Set<Int>
 
     /// 区間を塗るもの一式。
     ///
@@ -183,6 +190,14 @@ public struct Shape {
         hasCarvedStrokes = carved
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
+        var translucent = Set<Int>()
+        for run in runs where run.source == .solid {
+            for index in run.start..<(run.start + run.count) where solidVertices[index].color.w < 1 {
+                translucent.insert(run.start)
+                break
+            }
+        }
+        translucentSolidRuns = translucent
     }
 
     /// 頂点の区間 `runRange` に収まる輪郭のうち、引く素材を持つもの。頂点の並びの順。
