@@ -24,8 +24,13 @@ struct CarveRecipe {
     ///
     /// **扇の出し先を閉包で受けない。** 直に引いて積む経路と出し方が 2 通りになるが、
     /// 三角形ごとの呼び出しを閉包にすると、直に描く半透明の線が 7〜18% 遅くなった (実測)。
-    func vertices() -> [ShapeVertex] {
+    func vertices() -> [ShapeVertex] { built().vertices }
+
+    /// 引いた頂点と、被覆が 1 でない区間 (頂点の並びの中の番号・#1637)。細い線を広げた片
+    /// だけが区間を持つ。区間は並びの順で、置く側が頂点を積んだ先の番号へずらして付ける。
+    func built() -> (vertices: [ShapeVertex], coverage: [Canvas.CoverageSpan]) {
         var out: [ShapeVertex] = []
+        var spans: [Canvas.CoverageSpan] = []
         func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
             let moved = point + offset
             return transform.apply(x: moved.x, y: moved.y)
@@ -35,7 +40,9 @@ struct CarveRecipe {
             out.append(ShapeVertex(position: b, uv: uv, color: color))
             out.append(ShapeVertex(position: c, uv: uv, color: color))
         }
-        carving.carved { polygon, range, hub in
+        carving.carved { polygon, range, hub, coverage in
+            let start = out.count
+            defer { Canvas.CoverageSpan.note(coverage, in: start..<out.count, to: &spans) }
             guard let hub else {
                 let first = place(polygon[range.lowerBound])
                 var previous = place(polygon[range.lowerBound + 1])
@@ -56,7 +63,7 @@ struct CarveRecipe {
             }
             emit(center, previous, first)
         }
-        return out
+        return (out, spans)
     }
 }
 

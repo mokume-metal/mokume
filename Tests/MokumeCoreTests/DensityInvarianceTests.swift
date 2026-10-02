@@ -95,17 +95,33 @@ struct DensityInvarianceTests {
         case retained = "保持した形を縮めて置く (三角形の経路)"
         case solidPolygon = "奥行きのある beginShape の輪郭 (立体の線)"
         case box = "noFill() の box の稜線 (立体の線)"
+        // 縦と横で倍率の違う変換。細さは線の向きに垂直に測る (距離関数の経路が軸ごとに測るのと
+        // 同じ測り方)。距離関数の経路の同じ行は置かない — 描く画素で 0.07 より細い線では 10% を
+        // 越えて少なく出て (縁の遊び 1/256 によるとみられる)、この物差しの幅に収まらない
+        case stretchedQuad = "scale(4, 0.25) の quad の輪郭 (三角形の経路)"
+        case squashedQuad = "scale(1, 0.1) の quad の輪郭 (三角形の経路)"
+        // 被覆は断片の後で掛ける。断片が `in.color` を掛けなくても、`in.color.a` を読んでも同じ量
+        case shaderOwnColor = "in.color を使わない shader() の quad の輪郭 (三角形の経路)"
+        case shaderReadsAlpha = "in.color.a の 2 乗を返す shader() の quad の輪郭 (三角形の経路)"
+        // 入れ子の記録で、半透明の色を掛けて置いた輪郭も、外側を置くときに細さを測る
+        case nestedTranslucent = "半透明の色で入れ子に置いた保持した形 (三角形の経路)"
 
         /// 線を横切る列の和に、線の太さが何本ぶん入るか。点は 0 (全体の和で見る)。
         ///
         /// 閉じた四角の輪郭は上と下の辺の 2 本、箱は正面と背面の上下の稜線の 4 本が見る列を
         /// 横切る。三角形は上の辺と斜めの辺の 2 本で、斜めの辺は列で測ると太さの 1 / cos 倍になる。
+        ///
+        /// 縦横で倍率の違う変換の行は、横の辺の太さが縦の倍率ぶん細る。半透明の色 (不透明度 0.5)
+        /// で置いた行は、光の量も半分になる。
         var crossings: Double {
             switch self {
             case .point, .shaderPoint, .shaderSquarePoint: 0
             case .line, .thinFill, .shaderLine: 1
             case .triangle: 1 + (1 + Double(60 * 60) / Double(88 * 88)).squareRoot()
             case .box: 4
+            case .stretchedQuad: 2 * 0.25
+            case .squashedQuad: 2 * 0.1
+            case .nestedTranslucent: 2 * 0.5
             default: 2
             }
         }
@@ -172,6 +188,30 @@ struct DensityInvarianceTests {
             case .box:
                 canvas.translate(64, 64 + offset, -20)
                 canvas.box(40)
+            case .stretchedQuad, .squashedQuad:
+                let (sx, sy): (Float, Float) = self == .squashedQuad ? (1, 0.1) : (4, 0.25)
+                canvas.translate(20, y)
+                canvas.scale(sx, sy)
+                canvas.quad(0, 0, 88 / sx, 0, 88 / sx, 40 / sy, 0, 40 / sy)
+            case .shaderOwnColor, .shaderReadsAlpha:
+                let body =
+                    self == .shaderOwnColor
+                    ? "float4 paint(Fragment in, Values values) { return float4(1, 1, 1, 1); }"
+                    // `stroke()` の不透明度 1 がそのまま届くなら、2 乗しても 1 のまま
+                    : "float4 paint(Fragment in, Values values) { return float4(in.color.a * in.color.a); }"
+                canvas.shader(try canvas.makeShader(body))
+                canvas.quad(20, y, 108, y, 108, y + 40, 20, y + 40)
+            case .nestedTranslucent:
+                let inner = canvas.createShape {
+                    canvas.quad(0, 0, 88, 0, 88, 40, 0, 40)
+                }
+                let outer = canvas.createShape {
+                    canvas.shape(
+                        inner,
+                        at: [Placement(fill: LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))])
+                }
+                canvas.translate(20, y)
+                canvas.shape(outer)
             }
         }
 
@@ -259,6 +299,103 @@ struct DensityInvarianceTests {
                 abs(low - reference) < reference * 0.2,
                 "細かさ 0.5・上辺 y = \(y) の光の量 \(low) (細かさ 1 は \(reference))")
         }
+    }
+
+    /// **立体の線は、置く面の細かさで補う** (#1637)。細かさ 0.5 の本体で記録した `box` の稜線を
+    /// 描き場所 (細かさ 1) へ置くと、太さ 1 のまま出る。逆に描き場所で記録して本体へ置くと、
+    /// 本体の細かさで補う。保持した線を GPU で組む経路 (#1756) と CPU の帯の両方で見る。
+    ///
+    /// 直す前は、記録した面の細かさで補いが焼き付いていた (描き場所で太さ 2・半分の濃さ)。
+    @Test(
+        "保持した立体の線は、置く面の細かさで補う (#1637)",
+        arguments: [true, false], [true, false])
+    func retainedSolidStrokesFollowTheSurfaceTheyArePlacedOn(
+        _ recordOnMain: Bool, _ onGPU: Bool
+    ) throws {
+        let canvas = try Self.makeCanvas(density: 0.5)
+        canvas.placesRetainedStrokesOnGPU = onGPU
+        let pad = try canvas.createGraphics(Self.size, Self.size)
+        pad.placesRetainedStrokesOnGPU = onGPU
+        func record(on surface: Canvas) -> Shape {
+            surface.createShape {
+                surface.noFill()
+                surface.stroke(255)
+                surface.strokeWeight(1)
+                surface.box(40)
+            }
+        }
+        func place(_ shape: Shape, on surface: Canvas) {
+            surface.background(0)
+            surface.translate(64, 64, -20)
+            surface.shape(shape)
+        }
+        try canvas.draw {
+            pad.beginDraw()
+            let shape = recordOnMain ? record(on: canvas) : record(on: pad)
+            if recordOnMain { place(shape, on: pad) } else { place(shape, on: canvas) }
+            pad.endDraw()
+            if recordOnMain { canvas.background(0) }
+        }
+        let (surface, density): (Canvas, Float) = recordOnMain ? (pad, 1) : (canvas, 0.5)
+        let pixels = try surface.target.readPixels()
+        let measured = Self.columnSum(pixels, density: density)
+        let expected = 4 * Double(density)
+        let route = recordOnMain ? "本体で記録して描き場所" : "描き場所で記録して本体"
+        #expect(
+            abs(measured - expected) <= 0.1 * expected,
+            "\(route)へ置いた box の稜線の列の和: \(measured) (期待 \(expected))")
+        // 光の量だけでなく太さも見る。細かさ 1 の面では太さ 1 の満濃度の線で、記録した面の補い
+        // (太さ 2・半分の濃さ) が焼き付いていれば、列のいちばん明るい画素が 0.5 になる
+        if recordOnMain {
+            let column = Int(64 * density)
+            let brightest = (0..<pixels.height).map { pixels[column, $0].red }.max() ?? 0
+            #expect(brightest > 0.9, "\(route)へ置いた box の稜線のいちばん明るい画素: \(brightest)")
+        }
+    }
+
+    /// **補っても速い経路から外れない** (#1637)。細かさ 0.5 では既定の太さ 1 がいつも細い側に
+    /// 入るので、補いが速い経路を外すと、細かさを下げたスケッチがかえって遅くなる。
+    ///
+    /// - 組み込みの立体の稜線は GPU で広げる (#1756)。補いは置き場所が持つ (太さと被覆)
+    /// - `shader()` の `rect` は、同じ変換の置き場所どうしで畳む
+    /// - 保持した形の細い輪郭は、同じ大きさで置き続けるかぎり 1 度しか組み直さない
+    @Test("細かさ 0.5 の細い線も、GPU の稜線・畳み・組み直しの控えの速い経路を通る (#1637)")
+    func thinStrokesKeepTheFastRoutes() throws {
+        let canvas = try Self.makeCanvas(density: 0.5)
+        let plain = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        var shape = Shape.empty
+        for frame in 0..<2 {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeWeight(1)
+                canvas.pushMatrix()
+                canvas.translate(64, 64, -20)
+                canvas.box(40)
+                canvas.popMatrix()
+                canvas.closeBatch()
+                #expect(
+                    canvas.batches.compactMap(\.strokeGeometry).count == 1,
+                    "細かさ 0.5 の box の稜線が GPU で広げる経路に入らない")
+                canvas.shader(plain)
+                for index in 0..<4 { canvas.rect(10 + Float(index) * 20, 10, 12, 12) }
+                // 1 つ目は畳む相手を待って置き、2 つ目から雛形を開いて置き場所を足す
+                #expect(canvas.openFlat != nil, "細い輪郭の rect が畳まれない")
+                #expect(canvas.flatInstances.count == 5, "畳んだ置き場所の数: \(canvas.flatInstances.count)")
+                canvas.resetShader()
+                if frame == 0 { shape = canvas.createShape { canvas.quad(0, 0, 40, 0, 40, 20, 0, 20) } }
+                for index in 0..<3 {
+                    canvas.pushMatrix()
+                    canvas.translate(10 + Float(index) * 30, 80)
+                    canvas.scale(0.5, 0.5)
+                    canvas.shape(shape)
+                    canvas.popMatrix()
+                }
+            }
+        }
+        #expect(canvas.thinStrokesRebuilt == 1, "組み直した回数: \(canvas.thinStrokesRebuilt)")
     }
 
     // MARK: - 形の口

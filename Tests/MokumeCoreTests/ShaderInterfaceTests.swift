@@ -261,6 +261,8 @@ struct ShaderInterfaceTests {
                     .buffer(
                         "instances", ShapePipeline.instanceBufferIndex,
                         .layout(Self.flatInstance)),
+                    // 平面の頂点ごとの被覆 (#1637)
+                    .buffer("coverages", ShapePipeline.coverageBufferIndex, .scalar(Float.self)),
                 ]),
             Entry(
                 ShapePipeline.solidVertexFunctionName,
@@ -378,6 +380,7 @@ struct ShaderInterfaceTests {
         [
             ("projection", \.projection), ("strokeStart", \.strokeStart),
             ("strokeShift", \.strokeShift), ("unitsPerDrawnPixel", \.unitsPerDrawnPixel),
+            ("readsCoverage", \.readsCoverage),
         ])
 
     static let flatInstance = layout(

@@ -31,6 +31,8 @@ struct FlatFrame {
     ///
     /// [#1488]: https://github.com/mokume-metal/mokume/issues/1488
     float2 unitsPerDrawnPixel;
+    /// 平面の頂点ごとの被覆 (`coverages`) を読むか。0 なら読まずに 1 とする (#1637)。
+    uint readsCoverage;
 };
 
 vertex ShapeFragmentIn shapeVertexMain(
@@ -38,7 +40,8 @@ vertex ShapeFragmentIn shapeVertexMain(
     uint instance [[instance_id]],
     constant ShapeVertex *vertices [[buffer(0)]],
     constant FlatFrame &frame [[buffer(1)]],
-    constant FlatInstance *instances [[buffer(10)]])
+    constant FlatInstance *instances [[buffer(10)]],
+    constant float *coverages [[buffer(12)]])
 {
     ShapeVertex vertex_in = vertices[index];
     FlatInstance placement = instances[instance];
@@ -71,6 +74,8 @@ vertex ShapeFragmentIn shapeVertexMain(
     // 意味の変わる値を渡すくらいなら、平面は一貫して持たない側に置く
     out.shapePosition = float3(0.0);
     out.shapeNormal = float3(0.0);
+    // 細い線を広げた頂点だけが 1 未満の被覆を持つ (#1637)。持つ頂点の無いフレームは読まない
+    out.coverage = frame.readsCoverage != 0 ? coverages[index] : 1.0;
     return out;
 }
 
@@ -106,7 +111,8 @@ struct SolidVertex {
     /// 利用者の断片へ渡す、形自身の座標での面の向き。
     float3 shapeNormal;
     float2 uv;
-    /// 1 なら**輪郭の頂点**。頂点関数が画面で半画素寄せる (Swift 側の `SolidVertex` を参照)
+    /// 0 でなければ**輪郭の頂点**で、値はその被覆 (Swift 側の `SolidVertex` を参照)。頂点関数が
+    /// 画面で半画素寄せる
     float stroke;
     float4 color;
 };
@@ -147,7 +153,9 @@ vertex ShapeFragmentIn solidVertexMain(
     // **輪郭だけを画面で半画素寄せる** (ADR-0039 決定 2)。立体の頂点は投影の後でしか
     // 画面の位置が決まらないので、切り取り座標で `w` を掛けて足す。影の焼き付けは
     // 寄せ 0 を渡す
-    out.position.xy += vertex_in.stroke * frame.strokeShift.xy * out.position.w;
+    // 寄せは輪郭なら被覆によらず 1 画素の半分 (`stroke` は被覆を兼ねる・#1637)
+    bool isStroke = vertex_in.stroke > 0.0;
+    out.position.xy += (isStroke ? 1.0 : 0.0) * frame.strokeShift.xy * out.position.w;
     out.uv = vertex_in.uv;
     // 置き場所の色は**頂点の色に掛かる**。組み込みの形は頂点が白、頂点ごとに色を
     // 変えた形は置き場所が白なので、どちらもこの 1 本で通る
@@ -160,6 +168,7 @@ vertex ShapeFragmentIn solidVertexMain(
     // 形を動かしても回しても変わらず、ここから作った模様は形の表面に留まる (#367)
     out.shapePosition = vertex_in.shapePosition;
     out.shapeNormal = vertex_in.shapeNormal;
+    out.coverage = isStroke ? vertex_in.stroke : 1.0;
     return out;
 }
 
@@ -342,6 +351,8 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     out.isDerivedNormal = 0;
     out.shapePosition = shape;
     out.shapeNormal = float3(0);
+    // 被覆は置き場所が持つ (細い線を広げたとき 1 未満・#1637)
+    out.coverage = s.uv.w;
     return out;
 }
 

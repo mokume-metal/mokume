@@ -1712,6 +1712,9 @@ struct CanvasTests {
                 c.stroke(.linear(red: 1, green: 1, blue: 1))
             }),
             ("flatInstances", end, all, { c, _ in c.flatInstances.append(.identity) }),
+            ("coverageSpans", end, all, { c, _ in
+                c.coverageSpans.append(Canvas.CoverageSpan(range: 0..<3, value: 0.5))
+            }),
             ("recordedStrokeRanges", end, all, { c, _ in c.recordedStrokeRanges.append(StrokeRange(0..<0)) }),
             ("recordedSolidStrokes", end, all, { c, _ in
                 c.recordedSolidStrokes.append(
@@ -1903,6 +1906,9 @@ struct CanvasTests {
             "placedGraphicsDrops": count,
             "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
             "solidStrokeCapture": transient,
+            "solidStrokeCoverage": transient, "solidStrokeIsLonePoint": transient,
+            "templateStrokeMatrix": transient,
+            "coverageStorage": resource, "thinStrokesRebuilt": count,
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
             "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
             "placementsFoundOutsideRegions": count,

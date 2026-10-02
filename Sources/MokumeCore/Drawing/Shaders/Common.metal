@@ -27,6 +27,12 @@ struct ShapeFragmentIn {
     float3 shapePosition;
     /// 形自身の座標での面の向き。立体だけが使う (平面は 0)。
     float3 shapeNormal;
+    /// 断片が出した色に掛ける被覆 (0…1)。描く画素で 1 画素より細い線を 1 画素の帯へ広げた
+    /// とき、太さの割合をここで運ぶ (#1637)。**頂点の色には掛けない** — 利用者の断片が
+    /// `in.color` を掛けずに色を返しても、`in.color.a` を読んでも、`stroke()` で渡した値の
+    /// まま届く。細い線でなければ 1 で、掛けても 1 ビットも変わらない。三角形の中で変わらない
+    /// 値なので補間しない (補間すると 1 が 1 でなくなりうる)。
+    float coverage [[flat]];
 };
 
 /// 置いた光 1 つぶん。並びは Swift 側の `Light` と一致する。
@@ -791,10 +797,12 @@ static inline float4 mokume_shapeColor(
     f.noiseFalloff = uniforms.noiseFalloff;
     f.numbers = numbers;
 
+    // **被覆は断片の後で掛ける** (#1637)。乗算済みの色なので、全成分に掛ければ画素の
+    // 一部だけを覆った色になる
 #ifdef MOKUME_SURFACES
-    return paint(f, values, surfaces);
+    return paint(f, values, surfaces) * in.coverage;
 #else
-    return paint(f, values);
+    return paint(f, values) * in.coverage;
 #endif
 }
 
