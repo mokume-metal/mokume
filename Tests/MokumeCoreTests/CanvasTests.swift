@@ -1675,7 +1675,7 @@ struct CanvasTests {
             ("pendingBackground", end, all, { c, _ in c.background(.linear(red: 0, green: 0, blue: 0)) }),
             // 途中の描き切りが既に描いた落とす側 (#1656)。塗り直しも捨てるので、その後で汚す。
             // 描き切らせて汚すと、上の塗り直しの予定を描いてしまうので、中身を直に足す
-            ("frameCasters", end, all, { c, _ in c.frameCasters.instances.append(.identity) }),
+            ("frameCasters", end, all, { c, _ in c.frameCasters.chainValid = false }),
             // シーンの記述
             ("cameraStorage", end, all, { c, _ in c.perspective() }),
             ("transform", both, all, { c, _ in c.translate(5, 5) }),
@@ -1907,8 +1907,9 @@ struct CanvasTests {
             "carriesPictureBeforeEffects": "効果を通す前の絵の控えがあるか。次のフレームの最初の描き切りが戻す (#1469)",
             "targetChangedSinceUpscale": "描く先が最後の拡大より後に変わったか。止まっている間の出力段が広げ直して下ろす。フレームの終わりの描き切りも下ろす (#1882)",
             "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手へ置いた時点の絵を写させて空にする (#1656)。捨てるだけでは絵が変わらないので残す",
-            "casterVertexStorage": resource, "casterIndexStorage": resource,
-            "casterInstanceStorage": resource, "casterValuesStorage": resource,
+            "casterSegmentsFree": "途中の描き切りで控えた落とす列の区画の空き。読んだ投入が終わってから使い回す (#1656)",
+            "shadowMapHolds": "影の面がいま持つ落とす列の並びの指紋。焼いた面は誰にも書き換えられないので、lastShadowBakeKey と同じく越える (#1656)",
+            "shadowBakesAdded": count, "shadowRebakeBarriersEncoded": count,
             "placedPictureCopiesFree": "置いた時点の絵の写しの空き。使い回すために持ち、境目で 1 フレーム使わなかったものを手放す (#1656)",
             "placedPictureEpoch": "境目の番号。写しの空きのうち使わなかったものを見分けるのに読む (#1656)",
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,

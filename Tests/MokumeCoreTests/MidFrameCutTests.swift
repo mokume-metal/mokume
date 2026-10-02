@@ -80,6 +80,9 @@ struct MidFrameCutTests {
         /// 区切りの前と後で同じ群の粒を置く。区切りより前の粒の影が、後の呼び出しの粒の影に
         /// 置き換わらない (粒の置き場の組を、持ち越した落とす列が読んでいるうちは使い回さない)。
         case particlesTwice
+        /// 落とす立体を置くたびに区切る (4 回)。区切りごとに、前の区切りで焼いた面へその回の立体を
+        /// 足して焼く形 (持ち越した列を焼き直さない) でも、分けずに描いた影と一致する。
+        case casterPerCut
 
         var testDescription: String { rawValue }
     }
@@ -248,6 +251,24 @@ struct MidFrameCutTests {
                 canvas.translate(48, 72, 0)
                 canvas.box(96, 4, 96)
                 canvas.pop()
+            case .casterPerCut:
+                canvas.camera(48, -36, 120, 48, 48, 0, 0, 1, 0)
+                canvas.lights()
+                canvas.shadows(shadows)
+                canvas.noStroke()
+                canvas.fill(.linear(red: 0.8, green: 0.8, blue: 0.8))
+                for index in 0..<4 {
+                    canvas.push()
+                    canvas.translate(18 + Float(index) * 20, 36, 0)
+                    canvas.sphere(7)
+                    canvas.pop()
+                    cut()
+                }
+                canvas.castShadow(false)
+                canvas.push()
+                canvas.translate(48, 72, 0)
+                canvas.box(96, 4, 96)
+                canvas.pop()
             }
         }
     }
@@ -308,7 +329,124 @@ struct MidFrameCutTests {
         #expect(darker > 50, "床に影が落ちていない (\(darker) 画素)")
     }
 
-    // MARK: - 区切りが払うもの (#1656 の反証 3・6)
+    // MARK: - 区切りが払うもの (#1656 の反証 3・6、2 回目の反証 4・6・10・11)
+
+    @Test("区切りのたびに、持ち越した落とす列は焼き直さず、上げ直さない")
+    func casterPerCutAddsInsteadOfRebaking() throws {
+        let gpu = try RenderDevice()
+        let rig = try Rig(gpu: gpu)
+        var segments = -1
+        try rig.canvas.draw {
+            rig.canvas.background(.linear(red: 0, green: 0, blue: 0))
+            rig.body(.casterPerCut, cut: { rig.cut(.get) })
+            segments = rig.canvas.frameCasters.segments.count
+        }
+        // 区切り 4 回で区画は 4 本 (区切りごとにその回の分だけ上げる)。焼くのは 1 回目の区切りの
+        // 全部と、2〜4 回目の区切りで足す 3 回 (終わりの描き切りは、持ち越した列だけなので使い回す)
+        #expect(segments == 4)
+        #expect(rig.canvas.shadowBakesAdded == 3, "足して焼いた回数: \\(rig.canvas.shadowBakesAdded)")
+        #expect(rig.canvas.shadowBakesEncoded == 4, "焼いた回数: \\(rig.canvas.shadowBakesEncoded)")
+    }
+
+    @Test("区切らない影の場面は、焼き付けの頭で前の読みを待たない")
+    func anUncutFrameDoesNotWaitBeforeBaking() throws {
+        let gpu = try RenderDevice()
+        let plain = try Rig(gpu: gpu)
+        _ = try plain.draw(.shadow, cut: nil)
+        #expect(plain.canvas.shadowBakesEncoded > 0)
+        #expect(plain.canvas.shadowRebakeBarriersEncoded == 0)
+        let cutting = try Rig(gpu: gpu)
+        _ = try cutting.draw(.casterPerCut, cut: .get)
+        #expect(cutting.canvas.shadowRebakeBarriersEncoded > 0)
+    }
+
+    @Test("形の組み立ての出口の安全網は、前の区切りで描いた立体の影を捨てない")
+    func theShapeSafetyNetKeepsEarlierCasters() throws {
+        let gpu = try RenderDevice()
+        func picture(drawsOutAShape: Bool) throws -> DisplayImage {
+            let rig = try Rig(gpu: gpu)
+            let canvas = rig.canvas
+            for _ in 0..<2 {
+                try canvas.draw {
+                    canvas.background(.linear(red: 0, green: 0, blue: 0))
+                    canvas.camera(48, -36, 120, 48, 48, 0, 0, 1, 0)
+                    canvas.lights()
+                    canvas.shadows(true)
+                    canvas.noStroke()
+                    canvas.fill(.linear(red: 0.8, green: 0.8, blue: 0.8))
+                    canvas.push()
+                    canvas.translate(48, 36, 0)
+                    canvas.sphere(15)
+                    canvas.pop()
+                    _ = canvas.get(0, 0)
+                    // 画面の外の小さな平面 (揺らぎの書き換えが描き切る溜めたもの)
+                    canvas.rect(-10, -10, 1, 1)
+                    if drawsOutAShape {
+                        rig.seed += 1
+                        _ = canvas.createShape { canvas.noiseSeed(rig.seed) }
+                    }
+                    canvas.castShadow(false)
+                    canvas.push()
+                    canvas.translate(48, 72, 0)
+                    canvas.box(96, 4, 96)
+                    canvas.pop()
+                }
+            }
+            return try canvas.output.encodeForDisplay()
+        }
+        let gap = differing(try picture(drawsOutAShape: false), try picture(drawsOutAShape: true))
+        #expect(gap == 0, "安全網の後で \\(gap) 画素違う")
+    }
+
+    @Test("細かさを下げた面の途中の描き切りは出す先を変えないので、置いた側は写さない")
+    func aCutThatLeavesTheOutputAloneCopiesNothing() throws {
+        let gpu = try RenderDevice()
+        let placer = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
+        let placed = try Canvas(
+            output: try RenderTarget(gpu: gpu, width: 64, height: 64), gpu: gpu,
+            pixelDensity: 0.5, upscale: .spatial)
+        try placed.draw { placed.background(.linear(red: 0, green: 0, blue: 1)) }
+        var copiedByTheCut = -1
+        try placer.draw {
+            placer.background(.linear(red: 0, green: 0, blue: 0))
+            placer.image(placed, 0, 0)
+            try? placed.draw {
+                placed.background(.linear(red: 1, green: 0, blue: 0))
+                _ = placed.get(0, 0)
+                copiedByTheCut = placer.placedPicturesCopied
+            }
+        }
+        #expect(copiedByTheCut == 0, "出す先が変わらない途中の描き切りで写した")
+        #expect(placer.placedPicturesCopied == 1, "出す先が変わる描き切りで写していない")
+        // 置いた時点の絵 (青) が出る
+        let point = try placer.output.encodeForDisplay()[8, 8]
+        #expect(point.blue > 200 && point.red < 30, "置いた時点の絵が出ていない: \\(point)")
+    }
+
+    @Test("組み立ての途中の面を守るのは、自分を直に置いた面だけ (写しで止まる先は見ない)")
+    func onlyDirectPlacersGuardAShapeInProgress() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
+        let inner = try canvas.createGraphics(8, 8)
+        let outer = try canvas.createGraphics(16, 16)
+        var outerGuarded = false
+        var innerGuarded = true
+        try canvas.draw {
+            outer.beginDraw()
+            outer.image(inner, 0, 0)
+            outer.endDraw()
+            outer.beginDraw()
+            outer.image(inner, 0, 0)
+            canvas.image(outer, 0, 0)
+            _ = canvas.createShape {
+                outerGuarded = outer.isPlacedInAShapeInProgress
+                innerGuarded = inner.isPlacedInAShapeInProgress
+            }
+            outer.endDraw()
+        }
+        #expect(outerGuarded, "組み立ての途中の面に直に置かれた面を守っていない")
+        #expect(!innerGuarded, "写しで止まる先まで守った")
+    }
 
     @Test("区切りを毎フレーム持つ静止した場面は、2 枚目から焼き直さない")
     func aStillSceneWithACutIsNotRebaked() throws {

@@ -103,7 +103,8 @@ extension Canvas {
         guard shadowsEnabled, shadowCaster == nil else { return }
         warnOnce(
             .shadowWithoutCaster,
-            "shadows(): the frame ended with no directionalLight() in place, so it has no shadows. "
+            "shadows(): the frame ended with no directionalLight() in place, so what is drawn "
+                + "at the end of the frame has no shadows. "
                 + "Shadows are baked when the frame is drawn out, from the lights in place then, "
                 + "so a noLights() late in draw() removes the shadows of everything drawn before it too")
     }

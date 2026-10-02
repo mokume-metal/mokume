@@ -90,11 +90,14 @@ import simd
     ///
     /// **いちばん奥 (1) で塗り潰してから始める。** 何も焼かれなかったところは
     /// 「無限に遠い」= 何にも遮られていない、という意味になる。
-    func makeRenderPass() -> MTL4RenderPassDescriptor {
+    ///
+    /// `keeping` が真なら消さずに読み込み、前に焼いた奥行きへ足して焼く (同じフレームの途中の
+    /// 描き切りで焼いた落とす列を、焼き直さずに残す・#1656)。
+    func makeRenderPass(keeping: Bool = false) -> MTL4RenderPassDescriptor {
         let pass = MTL4RenderPassDescriptor()
         let depth = pass.depthAttachment!
         depth.texture = texture
-        depth.loadAction = .clear
+        depth.loadAction = keeping ? .load : .clear
         depth.clearDepth = 1
         depth.storeAction = .store
         return pass
