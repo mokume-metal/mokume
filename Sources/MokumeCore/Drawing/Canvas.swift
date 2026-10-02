@@ -1937,7 +1937,10 @@ public final class Canvas {
     ///   — 板を描くより安い
     /// - それ以外は、**置き換える列** (``appendSurfaceReplacement(_:)``) を 1 本積む。load 動作は
     ///   切り抜きを表せず、周囲は 1 色ではないので、列として描くしかない。切り抜きが無ければ、
-    ///   列が面全体を覆うので溜めたものは先に捨てる (下に隠れるものを描く手間を払わない)
+    ///   列が面全体を覆うので溜めたものは先に捨て、前に予定した塗り直しも打ち消す (下に隠れる
+    ///   ものを描く手間を払わない)。列の板はどの視点でも切り取られない位置に置き、書く奥行きは
+    ///   load 動作と同じ 1 にするので、絵は視点によらず塗り直しの道と同じになる
+    ///   (``Camera/replacementCorners()``)
     ///
     /// [#1648]: https://github.com/mokume-metal/mokume/issues/1648
     /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
@@ -1950,6 +1953,9 @@ public final class Canvas {
                 pendingBackground = color
                 return
             }
+            // **前に予定した塗り直しも打ち消す。** 面全体を置き換えるのだから、前の予定は絵に
+            // 出ない。残すと、次の描き切りが奥行きを引き継ぐか・控えを戻すかを古い予定で決める
+            pendingBackground = nil
         }
         appendSurfaceReplacement(content)
     }
@@ -1979,7 +1985,7 @@ public final class Canvas {
             color = .linear(red: 1, green: 1, blue: 1)
             surroundings = value.packed(isBackdrop: true)
         }
-        let corners = currentCamera.backdropCorners()
+        let corners = currentCamera.replacementCorners()
         let vertexStart = solidVertices.count
         // 面の向きは持たせない。光を受けず、色 (または周囲) をそのまま出す
         for index in [0, 1, 2, 0, 2, 3] {
@@ -3144,11 +3150,10 @@ public final class Canvas {
         // **見る窓は実際に刻む画素で測る。** 落とす行列は出す細かさで書かれた
         // 座標を -1…1 へ正規化するので、窓を狭めればそのまま細かく刻まれる。
         //
-        //
         // **面を置き換える列だけは、奥行きの幅を 1…1 に絞る** (``Batch/replacesSurface``)。板は
-        // 視点の奥の面の手前に置いてあるが、書く奥行きは塗り直しの load 動作が消す値 (1) と
-        // そろえる — そろえないと、板より奥・奥の面より手前に置いた立体が、周囲の背景の後ろにだけ
-        // 隠れる
+        // 手前と奥の面の真ん中に置いてある (切り取られない位置・``Camera/replacementCorners()``)
+        // が、書く奥行きは塗り直しの load 動作が消す値 (1) とそろえる — 板の位置が絵に効かず、
+        // 後から置く立体はどちらの道で置き換えても同じ前後で出る
         func viewport(pinnedFar: Bool) -> MTLViewport {
             MTLViewport(
                 originX: 0, originY: 0,

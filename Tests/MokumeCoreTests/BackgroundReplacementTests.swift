@@ -15,6 +15,8 @@ import Testing
 /// 2. 同じフレームの途中の描き切り (`loadPixels()` / `get()`) に左右されない ([#1657])
 /// 3. 切り抜きの中だけを置き換える。外に先に置いたものは残り、中は色も奥行きも置き換わる ([#1648])
 /// 4. 呼んだ時点の図形のスタイル (断片・影を落とすか) を拾わない
+/// 5. 視点 (投影の手前と奥) に左右されない。塗り直しの道と置き換える列の道が同じ絵になる
+/// 6. 後の置き換えは、前に予定した塗り直しを打ち消す
 ///
 /// 比べる幅は成分の差 1/255 (表示の 1 段)。
 ///
@@ -276,5 +278,93 @@ struct BackgroundReplacementTests {
         #expect(
             differing(subject, reference) == 0,
             "\(style) のまま呼ぶと、外して呼んだ絵と \(differing(subject, reference)) 画素違う")
+    }
+
+    // MARK: - 5. 視点に左右されない
+
+    /// 置き換える前に当てる視点。置き換える列の板は視点の写す範囲に置くので、手前と奥の面の
+    /// 取り方で切り取られうる。
+    enum View: CaseIterable, CustomTestStringConvertible {
+        /// 既定の視点。
+        case standard
+        /// 手前と奥を寄せた透視 (near 99・far 100)。
+        case tightPerspective
+        /// 手前も奥も負の平行 (near -200・far -100)。奥の面の 98% は範囲の外になる。
+        case orthographicWithNegativeFar
+        /// 手前と奥を寄せた平行 (near 99・far 100)。
+        case tightOrthographic
+
+        var testDescription: String {
+            switch self {
+            case .standard: "既定の視点"
+            case .tightPerspective: "perspective(near 99, far 100)"
+            case .orthographicWithNegativeFar: "ortho(near -200, far -100)"
+            case .tightOrthographic: "ortho(near 99, far 100)"
+            }
+        }
+
+        func apply(to canvas: Canvas) {
+            let half = Float(BackgroundReplacementTests.size) / 2
+            switch self {
+            case .standard: break
+            case .tightPerspective: canvas.perspective(Float.pi / 3, 1, 99, 100)
+            case .orthographicWithNegativeFar: canvas.ortho(-half, half, half, -half, -200, -100)
+            case .tightOrthographic: canvas.ortho(-half, half, half, -half, 99, 100)
+            }
+        }
+    }
+
+    @Test(
+        "どの視点でも、前の絵によらず置き換わり、切り抜きで面全体を囲っても同じ絵になる",
+        arguments: Mouth.allCases, View.allCases)
+    func ignoresTheView(_ mouth: Mouth, _ view: View) throws {
+        /// `prior` で塗った面に視点を当て、置き換える。`clipped` なら面全体を囲う切り抜きの中で
+        /// 置き換える (1 色でも塗り直しの道ではなく、置き換える列の道を通る)。
+        func scene(prior: LinearRGBA, clipped: Bool) -> (Canvas) -> Void {
+            { canvas in
+                canvas.background(prior)
+                view.apply(to: canvas)
+                if clipped { canvas.clip(0, 0, Self.size, Self.size) }
+                mouth.replace(on: canvas)
+                if clipped { canvas.noClip() }
+            }
+        }
+        let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
+        let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
+        for clipped in [false, true] {
+            let overRed = try picture(scene(prior: red, clipped: clipped))
+            let overGreen = try picture(scene(prior: green, clipped: clipped))
+            #expect(
+                differing(overRed, overGreen) == 0,
+                "切り抜き\(clipped ? "あり" : "なし"): 前の絵が \(differing(overRed, overGreen)) 画素残っている")
+        }
+        let cleared = try picture(scene(prior: red, clipped: false))
+        let drawn = try picture(scene(prior: red, clipped: true))
+        #expect(
+            differing(cleared, drawn) == 0,
+            "面全体を囲う切り抜きの中で呼ぶと、切り抜き無しと \(differing(cleared, drawn)) 画素違う")
+    }
+
+    // MARK: - 6. 前の予定を打ち消す
+
+    @Test("後の置き換えは、前に予定した塗り直しを打ち消す", arguments: Mouth.allCases)
+    func cancelsAnEarlierRepaint(_ mouth: Mouth) throws {
+        // 溜め場の量は塗り直しの予定を 1 つと数える (``Canvas/pendingAmount``)。前の予定が残ると、
+        // 次の描き切りの奥行きの引き継ぎと控えの戻しが、古い予定を基準に決まる
+        func pending(after body: @escaping (Canvas) -> Void) throws -> Int {
+            let canvas = try makeCanvas()
+            var amount = 0
+            try canvas.draw {
+                body(canvas)
+                amount = canvas.pendingAmount
+            }
+            return amount
+        }
+        let afterRepaint = try pending { canvas in
+            canvas.background(LinearRGBA.linear(red: 1, green: 0, blue: 0))
+            mouth.replace(on: canvas)
+        }
+        let alone = try pending { mouth.replace(on: $0) }
+        #expect(afterRepaint == alone, "前の塗り直しの予定が残っている (\(afterRepaint) / \(alone))")
     }
 }
