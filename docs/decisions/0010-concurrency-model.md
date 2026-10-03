@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 改訂 (2026-09-09): 決定 4 に FileWatcher の例外を追補 ([#733](https://github.com/mokume-metal/mokume/issues/733))
+採用 (2026-08-27) / 改訂 (2026-09-09): 決定 4 に FileWatcher の例外を追補 ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-10-03): 決定 4 の例外を、OS の受け口が待ち行列やスレッドを決めるもの一般へ広げる ([ADR-0042](0042-camera-and-audio-standard.md))
 
 ## 文脈
 
@@ -60,9 +60,17 @@ SPDX-License-Identifier: MIT
 
 GPU コマンドの生成、書き出し、観測、アセット読み込みなど main actor の外で進める処理は、actor または structured concurrency (`Task` / `TaskGroup`) で明示的に分離する。分離した境界を越える値は `Sendable` を満たす形で設計する。**`DispatchQueue` を新たに導入しない。**
 
+#### 改訂 (2026-10-03) — 例外は 1 本ではなくなった。条件で認める
+
+**現行の扱い: OS の受け口が待ち行列やスレッドを決めるものは、[ADR-0042](0042-camera-and-audio-standard.md) 決定 7 の条件をすべて満たすときに限って認める。** 条件は、受ける点でしかないこと・境界を越えるのが `Sendable` な値か合図だけであること・利用者に漏らさないこと・realtime スレッドで確保もロック待ちも dispatch もしないこと・置くのは本体の上に載る別ターゲットだけであること、の 5 つである。**MokumeCore の中の例外は、下の追補のファイルの見張り 1 本のまま増やさない。**
+
+**下の追補は、ファイルの見張りを「この決定に対する唯一の例外」と数えていた。** カメラと音を標準の機能に入れると ([ADR-0041](0041-standard-scope-map.md))、その数え方が成り立たなくなった。カメラの受け取り (`AVCaptureVideoDataOutput`) は待ち行列を引数に取り、音の入力と出力は OS の realtime スレッドで呼ばれる。どちらも、ファイルの見張りと同じく**並列の設計ではなく OS の受け口の形**で、「渡さない」「呼ばれない」は選べない。
+
+**理由は動いていない。** 禁じているのは自前の並列を待ち行列で組むことで、追補が挙げた守り (受ける点でしかない・値を渡さない・callback を漏らさない) は ADR-0042 決定 7 の条件にそのまま入っている。変わったのは、例外を 1 本ずつ数える形から、条件で認める形にしたことだけである。
+
 #### 追補 (2026-09-09) — 見張りの待ち行列だけは例外である
 
-`Sources/MokumeCore/Drawing/FileWatcher.swift` が `DispatchQueue` を 1 本持っている ([#733](https://github.com/mokume-metal/mokume/issues/733))。**この決定に対する唯一の例外**で、ほかの並列は宣言どおり分けてある — `FrameWriter` と `MovieWriter` は待ち方を semaphore に寄せ、コードのコメントで本決定を引いて「`DispatchQueue` は足さない」と名乗っている。
+`Sources/MokumeCore/Drawing/FileWatcher.swift` が `DispatchQueue` を 1 本持っている ([#733](https://github.com/mokume-metal/mokume/issues/733))。**この決定に対する唯一の例外**だった (2026-10-03 の改訂で、条件で認める形へ移った)。ほかの並列は宣言どおり分けてある — `FrameWriter` と `MovieWriter` は待ち方を semaphore に寄せ、コードのコメントで本決定を引いて「`DispatchQueue` は足さない」と名乗っている。
 
 **例外が要るのは、ここが並列の設計ではなく OS の受け口だからである。** ファイルの保存を拾う口は `DispatchSource.makeFileSystemObjectSource(fileDescriptor:eventMask:queue:)` で、**待ち行列を引数に取ることが API の形そのもの**である。actor で包んでも `AsyncSequence` に包んでも、その内側でこの引数を埋めることは避けられない — 選べるのは「どの待ち行列を渡すか」だけで、「渡さない」は選べない。**この決定が禁じた「新たに導入する」— 自前の並列を待ち行列で組む — には当たらない。**
 
