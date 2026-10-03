@@ -181,6 +181,10 @@ struct FrameSyncTests {
         #expect(!idleWhenPlaced, "置いた時点で前のフレームの GPU が終わっている — 送りが待っている")
         #expect(bench.gpu.settleCalls == before, "送りが待ちを頼んでいる")
         #expect(!image.needsUpload, "描き切りの後も送り直しの旗が立っている")
+
+        // 回転を投入したまま返らない。次の検査の回転と GPU の上で重なると、ドライバが
+        // どちらかを打ち切る (下の「見終えたら GPU を空にして出る」と同じ・#1063・#1999)
+        try bench.gpu.settle()
     }
 
     @Test("字形を焼く口は、焼く直前に待つ")
@@ -526,6 +530,10 @@ struct FrameSyncTests {
         #expect(
             gpu.blockingWaits == waits,
             "投入済みの全完了を待っている — 待ちが縮んでいない")
+
+        // 回転を投入したまま返らない。次の検査の回転と GPU の上で重なると、ドライバが
+        // どちらかを打ち切る (下の「見終えたら GPU を空にして出る」と同じ・#1063・#1999)
+        try gpu.settle()
     }
 
     /// **見るのは絵で、見えるのは「置き場が分かれていること」である。**

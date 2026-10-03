@@ -104,6 +104,10 @@ struct CommandAllocatorTests {
         try #require(busyAfterFlush > 0, "描き切りが返った時点で GPU が毎回終わっている — 回転が短く、この検査は何も見ていない")
 
         #expect(gpu.slotWaits > 0, "一度も待っていない — 待たない経路が置き場を返していない")
+
+        // 回転を投入したまま返らない。次の検査の回転と GPU の上で重なると、ドライバが
+        // どちらかを打ち切る (FrameSyncTests の「見終えたら GPU を空にして出る」と同じ・#1063・#1999)
+        try gpu.settle()
     }
 
     /// **#222 の不変条件そのものを見る、唯一の検査。**

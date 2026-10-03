@@ -27,7 +27,7 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 空きが無ければ、数秒おきに取り直す。1 分おきに、何本がどこで走っているかを名乗る。
 **待つ側が期限を持つ** (AGENTS.md の「検査の待たないは待つ側が持つ」)。
 `$MOKUME_GPU_SLOT_WAIT` 秒 (既定 5400 = 90 分) を越えたら、持ち主を名乗って 75 で抜ける。
-全体の test 段は 5〜7 分なので、枠 3 に 10 本並んでも 30 分ほどで回ってくる。90 分を越えて
+全体の test 段は 6〜8 分 (並列の幅を縛った後・下の「## 並列の幅」) なので、枠 3 に 10 本並んでも 30 分ほどで回ってくる。90 分を越えて
 待つのは、持ち主が固まっているときである。
 
 ## 枠を取れない環境
@@ -39,7 +39,10 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 ## 範囲の外
 
 `swift test --filter …` を直に打つ単独の実行は、この枠を通らない。数 suite で軽く、#1898 の
-赤はどれも全体の段が重なった回に出たためである (実害が出たら足す・ADR-0008)。
+赤はどれも全体の段が重なった回に出たためである (実害が出たら足す・ADR-0008)。**下の並列の幅も
+同じく届かない。** GPU を長く占める suite を直に繰り返す (`--repeat-until`) と、手元の画面ごと
+落ちた実害がある (#1999)。その実害の根は suite の側にあり、そちらを直した (`.serialized` と、
+回転を残して返らない `settle()`)。直に打つ実行まで縛るかは #2004 が持つ。
 
 ## 並列の幅
 
@@ -51,7 +54,8 @@ GPU は画面の描画 (WindowServer) と共有なので、全検査が重なっ
 
 そこで、子へ `SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH` (Swift Testing の並列の幅) を
 渡す。既定は 16 で、同時の発行口は 12 本に収まり、全体の所要は 1 割ほど延びた (366 → 401 秒)。
-**呼ぶ側が環境に値を持っていれば、そちらを使う** (切り分けで幅を変えて走らせるための口)。
+**呼ぶ側が環境に値を持っていれば、そちらを使う** (切り分けで幅を変えて走らせるための口)。空の値は
+持っていないものとして扱う。
 
 **口の名前に EXPERIMENTAL が付いている。** toolchain の更新で名前が変われば、Swift Testing は
 知らない変数を読まないので、縛りは黙って外れる。幅の値と名前はここ 1 箇所にだけ置く。外れたかは、
@@ -190,7 +194,9 @@ def _acquire(slots, wait_seconds, poll, report_every):
 
 def _run(command):
     environment = dict(os.environ)
-    environment.setdefault(PARALLELIZATION_WIDTH_VARIABLE, DEFAULT_PARALLELIZATION_WIDTH)
+    # 空の値は未設定と同じに扱う。Swift Testing が読めない値を素通しすると、縛りが黙って外れる
+    if not environment.get(PARALLELIZATION_WIDTH_VARIABLE, "").strip():
+        environment[PARALLELIZATION_WIDTH_VARIABLE] = DEFAULT_PARALLELIZATION_WIDTH
     child = subprocess.Popen(command, env=environment)
 
     def forward(signum, _frame):

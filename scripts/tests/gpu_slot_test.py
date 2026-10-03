@@ -201,6 +201,9 @@ class ParallelizationWidthTest(unittest.TestCase):
     def test_a_width_given_by_the_caller_is_kept(self):
         self.assertEqual(self._child_sees({self.VARIABLE: "1"}), "1")
 
+    def test_an_empty_width_is_treated_as_unset(self):
+        self.assertEqual(self._child_sees({self.VARIABLE: ""}), "16")
+
 
 class MakefileWiringTest(unittest.TestCase):
     """test と test-release の段が、swift test を枠の包みの内で走らせていること。"""
