@@ -164,6 +164,7 @@ enum ShapeExit {
             "pointScansInLastFrame": count, "placedGraphicsDrops": count,
             "outlinesAssembledThisFrame": count, "pointScansThisFrame": count,
             "stagePassesUsed": count, "placementsFoundOutsideRegions": count,
+            "drawsEncodedInLastFrame": count,
             "shaders": "この面が作った断片 (弱く持つ)。観測へ失敗を載せる",
             "effectShaders": "この面が作った効果 (弱く持つ)。観測へ失敗を載せる",
             "computations": "この面が作った計算 (弱く持つ)。観測へ失敗を載せる",
