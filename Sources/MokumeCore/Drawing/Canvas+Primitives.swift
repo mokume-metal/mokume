@@ -136,12 +136,13 @@ extension Canvas {
     ) {
         let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
         let points = [SIMD2(x1, y1), SIMD2(x2, y2), SIMD2(x3, y3), SIMD2(x4, y4)]
+        // [検証用・戻す] 絵が変わらない変更への誤報が無いことを #1986 で確かめる
         // 辺が交差しない四角形は、線全体を 1 回だけ混ぜる。凹んだ形では向かい合う辺が線に沿って
         // 太さより離れたまま重なりうる (#1536 の反証)。交差する形 (砂時計) は、任意多角形の
         // 自己交差と同じく交点で 2 回混ぜる
         draw(
             Outline(
-                points: points, isClosed: true, fillTriangles: nil,
+                points: points, isClosed: true, fillTriangles: Self.quadTriangles(points),
                 strokesAsOneRegion: !Self.quadCrosses(points)))
     }
 
