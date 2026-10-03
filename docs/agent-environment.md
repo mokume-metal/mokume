@@ -88,3 +88,5 @@ GitHub の投稿を読む。入力・終了コードの詳細は `bash scripts/p
 明示登録の投稿前の一時材料は `.build/mokume-plan-records/` に置く。`.git` の保護を緩める
 必要はない。`.build` を消した場合は再登録する。経過の正典は投稿先の GitHub であり、
 ローカルの記録だけを引き継ぎに使わない。
+
+<!-- throwaway-1956-a: 承認の挙動の切り分け用。merge しない -->
