@@ -150,7 +150,12 @@ jobs:
       # 取る (scripts/pr-files.sh の `gh api` は GH_TOKEN が要る)。取りこぼしは無い — 大きな
       # PR で後半が落ちる (#793) のは GraphQL の上限で、git の差には当たらない。
       # 照合は check-drawing-evidence.sh と同じ drawing-paths.sh の 1 つを読む
+      #
+      # **手前の検査が赤でも走らせる (`!cancelled()`)。** 実装で絵が変わる PR は、台帳や
+      # 描画の検査も同じ根で赤くなる。そこで止めると、赤を直して push し直すまで名指しが
+      # 出ず、専用機の 1 周 (7 分ほど) を余計に回すことになる
       - name: 例の絵を前後の木で描き比べる (警告のみ)
+        if: ${{ !cancelled() }}
         continue-on-error: true
         run: |
           . scripts/drawing-paths.sh
