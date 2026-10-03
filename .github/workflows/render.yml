@@ -54,9 +54,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      # build と test だけを走らせる。ほかの段 (lint・文書・hooks の検査) は GitHub ホストの
-      # ci-check が同じ木で走らせている。gpu-ran は、描画の検査が「GPU が見えないので
-      # 全部飛ばした」まま緑になるのを止める。
+      # build と test だけを走らせる。ほかの段 (lint・文書・hooks の検査・examples など) は
+      # GitHub ホストの ci-check が同じ木で走らせている。ただし merge_group のホストの
+      # ci-check は build と test を外している (ci.yml の ci-check のコメント・#1985) —
+      # 合流後の木の build / test は、この専用機だけが走らせる。gpu-ran は、描画の検査が
+      # 「GPU が見えないので全部飛ばした」まま緑になるのを止める。
       #
       # CI= は Metal の検証レイヤを手元と同じく有効にするため (Makefile の
       # METAL_VALIDATION)。GitHub が立てる CI=true のままだと、検証レイヤが切れる。

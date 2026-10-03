@@ -23,7 +23,7 @@ cd "$(git rev-parse --show-toplevel)"
 # 更新は dependabot ではなく手動。lint の指摘が増減してある日突然 CI が赤くなるのを避ける。
 #
 # actionlint は shellcheck があると run: の中身も検証するが、GitHub の macOS ランナーには
-# shellcheck が入っていない (ci-check は ADR-0009 により macos-latest で走る)。「あれば使う」
+# shellcheck が入っていない (ci-check は ADR-0009 により macos-26 で走る)。「あれば使う」
 # にすると CI とローカルで検証範囲が変わり、CI が黙って緩くなるため**両方**をピンして落とす。
 #
 # 上げるときは SHA256 も一緒に差し替えること:
