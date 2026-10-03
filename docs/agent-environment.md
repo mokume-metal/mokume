@@ -61,6 +61,33 @@ git がリポジトリを探し remote を読むのに効く変数 (`GIT_DIR`・
 AGENTS.md に従って実行する。フックが黙っていることを検証済みの印にしない。
 個人のプラグイン・モデル・権限設定はこのリポジトリから変更しない。
 
+## Desktop の CI モニタ (Auto-fix)
+
+Claude の desktop アプリは、セッションに結び付いた PR の CI の失敗・main との衝突・
+レビューコメントを受けて同じセッションを起こし、直して push させる (PR ごとの Auto-fix)。
+これは [ADR-0017](decisions/0017-agent-support-locality.md) 決定 3 が言う「リポジトリの外の、
+設計を知らない機構」に当たる。mokume は CI の見届けを要求しない。見届けが拾うべき赤は
+merge queue と `stall-watch` で足りている (#377)。外の見張りが承認待ちを異常と読んで
+空回りした前例もある (#194)。使うかどうかは使う人が決める。
+
+ON にするなら、次の赤と状態は**コードを直して push しても消えない** (#1994)。
+直す先は右の列で、迂回はしない。
+
+| 赤・状態 | 直す先 |
+| --- | --- |
+| `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main の版のスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2) |
+| `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を付ける |
+| `pr-title` | タイトルを直す。rerun しない (`stall-watch.sh` の読み分け表の 6) |
+| `render` の台帳の不一致 | 2 回描いても一致しないなら決定論が壊れている。台帳を書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
+| 承認待ちで進まない (`BLOCKED`) | 正常な状態で、直すものは無い |
+| `BEHIND` | 何もしない。"Update branch" を押すと auto-merge だけが外れる |
+
+重要パス (`.github/rulesets/main-protection.json` の `required_reviewers`) に触れて承認済みの
+PR へ push すると、`dismiss_stale_reviews_on_push` で承認が落ち、Approve の取り直しになる。
+直してよいのは、check が 1 本も付かない本物の衝突 (AGENTS.md「マージの判断基準」) と、
+コードの不具合による `ci-check` の赤である。後者は再実行の前に `.build/test-log.txt` を
+退避する。
+
 ## プランの明示登録
 
 Codex では、実装前に対象 Issue と完了条件の現況を含むプラン本文を一時ファイルへ書き、
