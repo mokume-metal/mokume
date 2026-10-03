@@ -556,6 +556,10 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``PluginRegistry``
 - ``Inlet``
 - ``Outlet``
+- ``ExternalInput``
+- ``SourceState``
+- ``SourceReport``
+- ``Arrival``
 - ``OutputFrame``
 - ``RenderDevice``
 - ``RenderTarget``

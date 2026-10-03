@@ -11,10 +11,10 @@
 3. **承認が落ちた出来事が無い PR には打たない。** 一度も承認されていない PR に依頼を出すのは
    「出し直し」ではない
 4. **依頼が既に残っていたら打たない。** 同じ PR に 2 通目を出さない (#1177 完了条件 3)
-5. **承認が要らない PR には打たない。** 重要パスに触れていなければ merge は進むので、
-   通知だけが増える (#642)
-6. **変更ファイルが読めなかったら、出し直す側に倒す。** 落ちた承認が放置される害のほうが、
-   要らない依頼が 1 通増える害より大きい
+5. **承認が要るかは予測しない。** 変更ファイルが重要パスに触れない PR でも、落ちた承認は
+   出し直す。予測は稼働中のルールセットとずれる (適用前の窓で承認が止めた・#1956)。
+   落ちた承認が放置される害のほうが、要らない依頼が 1 通増える害より大きい
+6. **変更ファイルを問い合わせない。** 予測の材料を持たないことそのものを固定する
 7. **打てなかったときだけ非 0。** 打つ必要が無かったことを赤くすると、走るたびに赤が出て
    意味を失う。逆に API が落ちたのを 0 で返すと、依頼が出ていないことに誰も気付けない
 
@@ -23,8 +23,7 @@
 (#1232 の探り)。理由はスクリプトの冒頭にある。
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、検査は
-判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。重要パスの判定は
-**本物のルールセットを読む** — 写しを置くと、パスが動いたときに検査だけが古いままになる。
+判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
 
 実行は make ci-check (CI もこれを呼ぶ)。
 """
@@ -62,17 +61,12 @@ case "$*" in
     [ -z "${POST_FAILS:-}" ] || { echo "gh: HTTP 422" >&2; exit 1; }
     echo '{}'
     exit 0 ;;
-  */files*)
-    [ -z "${FILES_FAIL:-}" ] || { echo "gh: HTTP 502" >&2; exit 1; }
-    emit "$PR_DIR/files.json"; exit 0 ;;
 esac
 
 echo "偽 gh が知らない呼び出し: $*" >&2
 exit 1
 """
 
-PROTECTED = ".github/workflows/review-request.yml"
-UNPROTECTED = "Sources/MokumeCore/Draw.swift"
 
 
 class RerequestReviewTest(unittest.TestCase):
@@ -91,7 +85,6 @@ class RerequestReviewTest(unittest.TestCase):
         self.pr_dir.mkdir()
         self.calls = root / "gh-calls.txt"
         self.calls.write_text("", encoding="utf-8")
-        self.write_files([PROTECTED])
 
     def write_pr(self, *, reviews=(), pending=(), dismissed=("shinyaoguri",)):
         """GraphQL の応答を置く。dismissed は落とされた review の主。"""
@@ -124,11 +117,6 @@ class RerequestReviewTest(unittest.TestCase):
             }
         }
         (self.pr_dir / "pr.json").write_text(json.dumps(payload), encoding="utf-8")
-
-    def write_files(self, paths):
-        (self.pr_dir / "files.json").write_text(
-            json.dumps([{"filename": p} for p in paths]), encoding="utf-8"
-        )
 
     def run_script(self, number="1234", **env_extra):
         env = dict(os.environ)
@@ -185,22 +173,21 @@ class RerequestReviewTest(unittest.TestCase):
         self.assertEqual(self.posts(), [])
         self.assertIn("依頼が既に残っている", result.stdout)
 
-    # 5. 承認が要らない PR → 打たない
-    def test_pr_without_protected_path_is_left_alone(self):
+    # 5. 重要パスに触れない PR でも、落ちた承認は出し直す (#1956)
+    def test_dismissed_approval_is_rerequested_without_asking_which_files(self):
         self.write_pr(reviews=[("shinyaoguri", "DISMISSED")])
-        self.write_files([UNPROTECTED])
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.posts(), [])
-        self.assertIn("承認が要らない PR", result.stdout)
-
-    # 6. 変更ファイルが読めない → 出し直す側に倒す
-    def test_unreadable_files_fall_back_to_rerequest(self):
-        self.write_pr(reviews=[("shinyaoguri", "DISMISSED")])
-        result = self.run_script(FILES_FAIL="1")
-        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.posts()), 1, self.posts())
-        self.assertIn("変更ファイルを読めなかった", result.stdout)
+        self.assertIn("出し直した", result.stdout)
+
+    # 6. 変更ファイルを問い合わせない。承認が要るかを予測しない (#1956)
+    def test_changed_files_are_never_asked_for(self):
+        self.write_pr(reviews=[("shinyaoguri", "DISMISSED")])
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls.read_text(encoding="utf-8")
+        self.assertNotIn("/files", calls)
 
     # 7. 打てなかったときだけ赤
     def test_failed_request_is_red(self):

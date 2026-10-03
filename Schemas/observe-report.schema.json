@@ -122,6 +122,38 @@
       "$ref": "#/$defs/values",
       "description": "The values the sketch exposed on the frame this reply was written on, including measured values still carried over (see $defs/values). Omitted when there are none."
     },
+    "inputs": {
+      "type": "array",
+      "description": "The state of each inlet that receives something from outside (a camera, a microphone, a device, the network), and the frame its last value arrived on (ADR-0028 decision 4). It tells why nothing is arriving — waiting for permission, denied, no device, unplugged — without opening the picture. Omitted when no inlet names itself.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "state"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What the inlet is, for a reader to tell them apart."
+          },
+          "state": {
+            "type": "string",
+            "description": "The state of the source: waitingForPermission, denied, running, unavailable (no device; it starts when one is plugged in), disconnected or stopped. A reader passes an unknown value through (ADR-0018 decision 5)."
+          },
+          "lastFrame": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The number of the frame the last value was taken on. Omitted until a value has arrived."
+          },
+          "lastTime": {
+            "type": "number",
+            "description": "The time of that frame, in seconds. Omitted until a value has arrived."
+          }
+        }
+      }
+    },
     "stamp": {
       "type": "string",
       "minLength": 1,

@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release examples drawing-evidence entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence entry-check shaders params schemas api tool-language isolated-deinit api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -43,7 +43,13 @@ check: setup
 # **描画の検査は、ここでは GPU のある機械でだけ実際に走る。** merge の判定としては、
 # 専用機の描画ジョブ (.github/workflows/render.yml の render) が merge queue の合流後の木で
 # build と test を走らせる (ADR-0019 決定 7)
-CI_CHECK_STEPS := build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence
+#
+# **CI_CHECK_SKIP に挙げた段は並びから外す。** merge_group のホストの ci-check は
+# `build test` を外す (.github/workflows/ci.yml の ci-check のコメント)。既定は空で、並びは
+# 変わらない。build を外しても examples / params / api / reference は prerequisite の build を
+# 自分で走らせるので、合流後の木での検査は残る
+CI_CHECK_SKIP ?=
+CI_CHECK_STEPS := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
@@ -264,13 +270,19 @@ test:
 # 代表に選ぶのは、決定 3 の照合そのものがそこにあるからである。記録の読み方は
 # scripts/read-test-record.py が持つ (端末の出力は行を落とすので読まない・#1056)。
 # 検査は scripts/tests/gpu_ran_test.py
+#
+# **代表の Suite は GPU_RAN_SUITE で差し替えられる** (#1983)。台帳を外した定期の release
+# (下の test-release-scheduled) では SceneLedgerTests が記録に無いので、同じく Suite 全体が
+# GPU の有無で飛ぶ ShapeTests を代表にする。既定は台帳のまま
+GPU_RAN_SUITE ?= MokumeCoreTests.SceneLedgerTests
+
 gpu-ran:
-	@read -r verdict skipped < <(python3 scripts/read-test-record.py $(TEST_RECORD) MokumeCoreTests.SceneLedgerTests); \
+	@read -r verdict skipped < <(python3 scripts/read-test-record.py $(TEST_RECORD) $(GPU_RAN_SUITE)); \
 	case "$$verdict" in \
-	  passed) echo "ok: 描画の検査が走った (台帳の照合が通った・飛ばした検査 $$skipped 件)" ;; \
+	  passed) echo "ok: 描画の検査が走った ($(GPU_RAN_SUITE) が通った・飛ばした検査 $$skipped 件)" ;; \
 	  skipped) echo "描画の検査が飛ばされている — この機械で GPU (この世代のコマンド構造) が見えていない"; exit 1 ;; \
-	  absent) echo "台帳の検査 (SceneLedgerTests) が記録に無い ($(TEST_RECORD))"; exit 1 ;; \
-	  failed) echo "台帳の検査が落ちている"; exit 1 ;; \
+	  absent) echo "代表の検査 ($(GPU_RAN_SUITE)) が記録に無い ($(TEST_RECORD))"; exit 1 ;; \
+	  failed) echo "代表の検査 ($(GPU_RAN_SUITE)) が落ちている"; exit 1 ;; \
 	  *) echo "test の記録を読めない ($(TEST_RECORD))"; exit 1 ;; \
 	esac
 
@@ -287,14 +299,33 @@ gpu-ran:
 # 取り逃す — 落ちる集合が実行ごとに別物だからである (上の「正本は console ではなく」の段)。
 # `tee` は付けない。debug の tee は「人が実行中に読む先」で、こちらは計測のときに端末を
 # 見ながら打つ器なので、同じものが 2 つ要らない
+#
+# **TEST_RELEASE_ARGS は swift test へそのまま渡す追加の引数** (既定は空)。素で打ったときの
+# 動作は変えない。定期の検査 (下の test-release-scheduled) が範囲を絞る口として使う (#1983)
+TEST_RELEASE_ARGS ?=
+
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD_RELEASE)
-	python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing --xunit-output $(TEST_RECORD_RELEASE_BASE)
+	python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing $(TEST_RELEASE_ARGS) --xunit-output $(TEST_RECORD_RELEASE_BASE)
 	@test -s $(TEST_RECORD_RELEASE) || { \
 		echo "記録が出来ていない ($(TEST_RECORD_RELEASE))。SwiftPM が --xunit-output の"; \
 		echo "綴りを変えた可能性がある — debug 側の TEST_RECORD と併せて直す"; \
 		exit 1; }
+
+# 専用機で定期に走らせる release の検査 (ADR-0019 決定 7 の段階 D・#1983)。**定期の release の
+# 範囲の正本はここ 1 箇所**で、workflow (.github/workflows/render.yml)・起票の本文
+# (scripts/report-scheduled-render.sh)・手元の再現がみなこの的を指す。
+#
+# release の台帳 (SceneLedgerTests) だけを外す。release で台帳が合うべきかは #1736 が決める
+# 途中で、素で走らせると決着するまで毎回赤になる。#1736 が決着したら、ここの --skip を外して
+# 戻す。代償: 台帳にだけ出る release の差は、定期の検査では見えない。
+#
+# 「GPU が見えないので全部飛ばした」まま緑になるのは gpu-ran が止める。代表は ShapeTests —
+# Suite 全体が GPU の有無で飛び、#1086 の速さの検査 (release でしか走らない) を含む
+test-release-scheduled: ## 定期の release の検査 (台帳を外す。専用機の schedule が走らせる)
+	$(MAKE) test-release TEST_RELEASE_ARGS='--skip MokumeCoreTests.SceneLedgerTests'
+	$(MAKE) gpu-ran TEST_RECORD=$(TEST_RECORD_RELEASE) GPU_RAN_SUITE=MokumeCoreTests.ShapeTests
 
 # 描画に触れる PR に絵が載っているかを見る (#306)。**絵が正しいことは見ない** —
 # 用意されていることだけを見る。判定には PR が要るので、まだ PR が無いブランチでは

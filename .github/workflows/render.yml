@@ -10,9 +10,13 @@ name: Render
 # 専用機を指すジョブをこのファイルだけに閉じ込める。専用機に何が届きうるかを、この
 # ファイル 1 枚を読めば言えるようにするためである。
 #
-# **専用機に届くのは 2 つだけ** (ADR-0019 決定 7 の段階 A・B):
+# **専用機に届くのは 3 つだけ** (ADR-0019 決定 7 の段階 A・B・D):
 #   - merge_group — queue に入るのは write 権限を持つ人が入れたコードだけ
 #   - 同じリポジトリの PR — そのブランチを作れるのは write 権限を持つ人だけ
+#   - schedule — 走るのは既定ブランチ (main) の最新の定義とコードだけで、main のコードは
+#     merge_group の queue を通ったものと同じ。入力を差し込む経路が無い (#1983)。
+#     workflow_dispatch は足さない — 書き込み権限を持つ人が任意のブランチで起こせるので、
+#     B に近い別の理由が要る
 # fork の PR は各ジョブの if で弾く。fork の PR はこのファイル自体を書き換えられるので、
 # if だけでは止まらない。止めるのはリポジトリの設定 (外部の人の PR のワークフローは
 # 毎回承認を要する・approval_policy: all_external_contributors) である。
@@ -47,11 +51,26 @@ name: Render
 # run の要約で名指しする。**警告だけで、merge は止めない** — 撮り直して書き戻すには Gyazo の
 # 鍵が要るが、専用機は secrets を持たない。render (merge_group) には足さない: 合流後の木へ
 # 警告を出しても読む人がいないし、必須の検査の所要を延ばす。
+#
+# **定期の検査 (scheduled-*) は、専用機のジョブと起票のジョブで権限を分ける** (#1983)。
+#   - scheduled-debug / scheduled-release — 専用機。contents: read・秘密なしのまま
+#   - scheduled-report — GitHub ホスト。**issues: write を持つのはここだけ**で、専用機の
+#     ジョブの結論と記録の artifact を読むだけ (ruleset-drift.yml と同じ形)
+# 範囲は debug の build・test・gpu-ran (台帳を含む) と、台帳を外した release
+# (Makefile の test-release-scheduled)。release で台帳を外す理由は #1736。
+# **1 本の長いジョブにしない。** 専用機は 1 台で、必須の render (queue の期限 60 分) が
+# 定期の run の後ろに並ぶ。release は debug の終了後に queue へ入れ (needs)、その間に
+# 待っている render が割り込めるようにする。各 30 分。初回の run で所要と render の
+# 待ちを測り、悪化していれば #1983 に戻って頻度か範囲を選び直す。
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
+  schedule:
+    # 6 時間おき (05:13 / 11:13 / 17:13 / 23:13 JST)。専用機は専用なので夜間に限らない。
+    # 毎時 0 分は避ける (このリポジトリの慣習)。schedule は遅れたり間引かれたりする
+    - cron: "13 2,8,14,20 * * *"
 
 permissions:
   contents: read
@@ -63,9 +82,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      # build と test だけを走らせる。ほかの段 (lint・文書・hooks の検査) は GitHub ホストの
-      # ci-check が同じ木で走らせている。gpu-ran は、描画の検査が「GPU が見えないので
-      # 全部飛ばした」まま緑になるのを止める。
+      # build と test だけを走らせる。ほかの段 (lint・文書・hooks の検査・examples など) は
+      # GitHub ホストの ci-check が同じ木で走らせている。ただし merge_group のホストの
+      # ci-check は build と test を外している (ci.yml の ci-check のコメント・#1985) —
+      # 合流後の木の build / test は、この専用機だけが走らせる。gpu-ran は、描画の検査が
+      # 「GPU が見えないので全部飛ばした」まま緑になるのを止める。
       #
       # CI= は Metal の検証レイヤを手元と同じく有効にするため (Makefile の
       # METAL_VALIDATION)。GitHub が立てる CI=true のままだと、検証レイヤが切れる。
@@ -165,3 +186,112 @@ jobs:
             exit 0
           fi
           python3 scripts/example-shots.py --drift HEAD^1
+
+  scheduled-debug:
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    # 同じ定期の run が重ならないようにする。古いものは捨てずに待つ
+    concurrency:
+      group: render-scheduled-debug
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
+        env:
+          MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
+      - name: 落ちた検査の文面を要約へ書く
+        if: failure()
+        run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduled-debug-record
+          path: |
+            .build/test-results-swift-testing.xml
+            .build/test-log.txt
+            .build/test-vanished/
+            .build/ci-check-durations.tsv
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: scheduled-debug-ledger-shots
+          path: .build/ledger-shots/
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
+  scheduled-release:
+    # debug が赤でも release は走らせる (別の赤を覆い隠さない)。needs は順序のためで、
+    # この job は debug が終わってから queue に入る (上の「1 本の長いジョブにしない」)
+    needs: scheduled-debug
+    if: always() && github.event_name == 'schedule'
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    concurrency:
+      group: render-scheduled-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      # 検査の端末出力は行を落とす (#1056) ので正本は xunit の記録だが、落ちた理由を読む
+      # 手がかりとして起票の本文へ末尾を載せるため、test-log へ写しを残す
+      - run: |
+          mkdir -p .build
+          make test-release-scheduled CI= 2>&1 | tee .build/test-log.txt
+      - name: 落ちた検査の文面を要約へ書く
+        if: failure()
+        run: python3 scripts/read-test-record.py --failure-messages .build/test-results-release-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduled-release-record
+          path: |
+            .build/test-results-release-swift-testing.xml
+            .build/test-log.txt
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
+  scheduled-report:
+    needs: [scheduled-debug, scheduled-release]
+    if: >-
+      always()
+      && (needs.scheduled-debug.result == 'failure' || needs.scheduled-release.result == 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      issues: write # 赤のときの起票 (#1983)
+    steps:
+      - uses: actions/checkout@v7
+      # ビルドで落ちて記録が上がらなかった回も起票する。artifact が無くても止まらない
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: scheduled-debug-record
+          path: record/debug
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: scheduled-release-record
+          path: record/release
+      # 上げた記録の置き場所は、上げたファイルの共通の親で決まる (.build/ が付くか付かないかが
+      # 中身で変わる) ので、位置を決め打たず名前で探す。無ければ無いパスを渡し、呼び先が
+      # 「記録が無い」と名乗って起票する
+      - name: 赤を発信する
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          debug_xml=$(find_one record/debug test-results-swift-testing.xml)
+          debug_log=$(find_one record/debug test-log.txt)
+          release_xml=$(find_one record/release test-results-release-swift-testing.xml)
+          release_log=$(find_one record/release test-log.txt)
+          bash scripts/report-scheduled-render.sh \
+            "${debug_xml:-record/debug/none.xml}" "${debug_log:-record/debug/none.txt}" \
+            "${release_xml:-record/release/none.xml}" "${release_log:-record/release/none.txt}"

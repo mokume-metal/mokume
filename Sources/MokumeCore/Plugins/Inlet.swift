@@ -45,10 +45,20 @@ public protocol Inlet: AnyObject {
     ///
     /// 続けて置かれると、この入り口は外される ([ADR-0024] 決定 7)。
     var failure: String? { get }
+
+    /// 出どころの名乗り。**外から届くものを受ける入り口は返す** ([ADR-0028] 決定 4)。
+    ///
+    /// 観測の応答の `inputs` に 1 行として載り、「なぜ値が来ないか」(許可を待っている・
+    /// 機材が無い・抜かれた) を外から読めるようにする。``ExternalInput`` を使うなら、
+    /// その ``ExternalInput/report`` を返せばよい。`nil` なら載らない。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+    var report: SourceReport? { get }
 }
 
 extension Inlet {
     public func open() throws {}
     public func close() {}
     public var failure: String? { nil }
+    public var report: SourceReport? { nil }
 }
