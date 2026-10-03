@@ -133,6 +133,7 @@ import MokumeDiagnostics
     }
 
     let device: any MTLDevice
+    var scratchOriginStorage = ""
 
     /// **このファイルの外へ出さない** ([#845])。別のファイルから掴めると、
     /// ``commit(_:retaining:)`` を通らずに投入する口が書ける。そうして投入された置き場は
@@ -330,8 +331,9 @@ import MokumeDiagnostics
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     private func makeCommitOptions(finishing submission: UInt64) -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
+        let scratchOrigin = scratchOriginStorage
         options.addFeedbackHandler {
-            @Sendable [commandFaults, completionNotices, weak self] (feedback: any MTL4CommitFeedback) in
+            @Sendable [commandFaults, completionNotices, scratchOrigin, weak self] (feedback: any MTL4CommitFeedback) in
             // **抱えている資源を手放す契機は、完了そのものが持つ。** 実測では、成功した
             // 投入でもハンドラは毎回呼ばれる (50 回の投入に対し 50 回)
             if completionNotices.arrive(submission) {
@@ -351,7 +353,7 @@ import MokumeDiagnostics
             let reason = CommandFaultLog.reason(of: error)
             guard commandFaults.note(reason) else { return }
             Diagnostics.warn(
-                "The GPU dropped the work it had queued, so this frame was never finished: \(reason)"
+                "The GPU dropped the work it had queued, so this frame was never finished: \(reason) [SCRATCH-ORIGIN \(scratchOrigin)]"
                     + " — this notice will not be repeated")
         }
         return options
@@ -449,6 +451,8 @@ import MokumeDiagnostics
             throw .commandQueueUnavailable
         }
         self.queue = queue
+        // SCRATCH (#1999 の計測・merge しない): 土台を作った検査を覚える
+        self.scratchOriginStorage = Thread.callStackSymbols.first { $0.contains("Tests") && !$0.contains("RenderDevice") } ?? "?"
 
         var slots: [Slot] = []
         for _ in 0..<max(1, slotCount) {

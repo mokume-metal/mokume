@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て (#1999 の計測・merge しない)。専用機で debug の全検査を 6 回続けて走らせ、
+# 回ごとに GPU の打ち切り (ErrorHang / ErrorPageFault / InnocentVictim) を数える。
+# 通知には土台を作った検査の名前が添えてある (RenderDevice.swift の SCRATCH)。
+name: measure-1999
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    if: github.event.pull_request.head.ref == 'measure/gpu-hang-1999'
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - name: 全検査を 6 回
+        run: |
+          mkdir -p .build/measure
+          for i in 1 2 3 4 5 6; do
+            start=$(date +%s)
+            make test CI= > /dev/null 2>&1; code=$?
+            cp .build/test-log.txt .build/measure/run-$i.log
+            L=.build/measure/run-$i.log
+            hang=$(grep 'The GPU dropped the work' $L | grep -c 'ErrorHang)' || true)
+            fault=$(grep 'The GPU dropped the work' $L | grep -c 'ErrorPageFault)' || true)
+            victim=$(grep 'The GPU dropped the work' $L | grep -c 'InnocentVictim)' || true)
+            run=$(grep -E 'Test run with [0-9]+ tests in [0-9]+ suites' $L | head -1)
+            echo "run=$i exit=$code secs=$(( $(date +%s) - start )) hang=$hang pagefault=$fault victim=$victim | $run" | tee -a .build/measure/summary.txt
+            grep 'The GPU dropped the work' $L | sed "s/^/run=$i /" >> .build/measure/faults.txt || true
+          done
+          {
+            echo '## 計測 (#1999)'
+            echo '```'
+            cat .build/measure/summary.txt
+            echo
+            cat .build/measure/faults.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: measure-1999
+          path: .build/measure/
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 14
