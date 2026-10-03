@@ -1548,6 +1548,80 @@ struct ComputeTests {
         #expect(s.canvas.read(s.first) == [4])
     }
 
+    // MARK: - CPU の書き込みと、先に置いた図形 (#1844)
+    //
+    // 計算は頼んだ時点の中身を読む (上) が、`numbers(_:)` で渡した並びを読む図形は、置いた面が
+    // 描き切られる時点の中身を読む (`Image` と同じ理屈)。同じフレームで書き換えれば、先に置いた図形も
+    // 後の値で描かれる。断片の値 (`Shader.set`・`shapesKeepTheValueTheyWereDrawnWith`) とは逆向きで、
+    // 約束は `Numbers` の説明が持つ。
+
+    /// 書く → 左の矩形 → 書き換える → 右の矩形、と 1 フレームで描き、左右の明るさを返す。
+    /// `directly` なら逃げ道 (その場で待って直接書く) を通らせる。
+    private func drawAroundAWrite(
+        by writer: Writer, directly: Bool = false
+    ) throws -> (left: Double, right: Double, directUploads: Int) {
+        let canvas = try makeCanvas()
+        let level = try canvas.makeNumbers(count: 1)
+        let show = try canvas.makeShader(Self.showFirst)
+        if directly { level.dirtyRangeLimit = 0 }
+
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(show)
+            canvas.numbers(level)
+            writer.write(1, into: level)
+            canvas.rect(0, 0, 16, 8)
+            writer.write(0.25, into: level)
+            canvas.rect(16, 0, 16, 8)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        return (written(image, atColumn: 8), written(image, atColumn: 24), level.directUploads)
+    }
+
+    @Test("同じフレームで書き換えると、先に置いた図形も後の値で描かれる", arguments: Writer.allCases)
+    func shapesPlacedBeforeAWriteReadTheLaterValue(writer: Writer) throws {
+        let drawn = try drawAroundAWrite(by: writer)
+        #expect(
+            abs(drawn.right - 0.25) < 0.01, "あとに置いた図形が、書き換えた後の値で描かれていない")
+        #expect(
+            abs(drawn.left - 0.25) < 0.01,
+            "先に置いた図形が、書いた時点の値 (\(drawn.left)) で描かれている (#1844 — 描き切りの時点の中身を読む約束)")
+    }
+
+    @Test("その場で直接書く逃げ道でも、先に置いた図形は後の値で描かれる", arguments: Writer.allCases)
+    func theDirectWriteFallbackLetsEarlierShapesReadTheLaterValueToo(writer: Writer) throws {
+        let drawn = try drawAroundAWrite(by: writer, directly: true)
+        #expect(drawn.directUploads > 0, "逃げ道を通っていない — この検査は何も見ていない")
+        #expect(abs(drawn.left - 0.25) < 0.01)
+        #expect(abs(drawn.right - 0.25) < 0.01)
+    }
+
+    /// 約束の代償 (`Numbers` の説明) として書いた抜け道: 並びを分ければ、同じ断片のまま
+    /// 同じフレームで描き分けられる。
+    @Test("並びを分ければ、同じ断片でも同じフレームで描き分けられる")
+    func separateArraysDrawDifferentlyInOneFrame() throws {
+        let canvas = try makeCanvas()
+        let first = try canvas.makeNumbers(count: 1)
+        let second = try canvas.makeNumbers(count: 1)
+        let show = try canvas.makeShader(Self.showFirst)
+
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            canvas.noStroke()
+            canvas.shader(show)
+            first.set(1, at: 0)
+            second.set(0.25, at: 0)
+            canvas.numbers(first)
+            canvas.rect(0, 0, 16, 8)
+            canvas.numbers(second)
+            canvas.rect(16, 0, 16, 8)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        #expect(abs(written(image, atColumn: 8) - 1) < 0.01)
+        #expect(abs(written(image, atColumn: 24) - 0.25) < 0.01)
+    }
+
     // MARK: - 割れた投入の間の順 (#1687 の反証)
     //
     // 早い投入は、1 本だった描き切りのコマンドを 2 本に割る。1 本の中なら口の切れ目と控えの仕掛けが
