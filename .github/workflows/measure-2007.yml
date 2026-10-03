@@ -1,0 +1,89 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て (#2007 の切り分け・merge しない)。専用機で、GPU のページフォルト
+# (kIOGPUCommandBufferCallbackErrorPageFault) が出る条件を切り分ける。
+#
+# 変えるのは環境変数と --filter だけで、実行のタイミングを変える計測は入れない
+# (#1999 の計測は 0/7 だった)。条件は MOKUME_MEASURE_STAGE で選ぶ。
+name: measure-2007
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # loop: EffectArgumentTests だけを 30 回 / full: 全検査を条件ごとに数回
+  MOKUME_MEASURE_STAGE: loop
+
+jobs:
+  measure:
+    if: github.event.pull_request.head.ref == 'measure/pagefault-2007'
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - name: ビルド
+        run: |
+          set -o pipefail
+          swift build --build-tests 2>&1 | tail -3
+      - name: 切り分け
+        run: |
+          mkdir -p .build/measure
+          export MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=nslog
+
+          # $1=条件の名前 $2=何回目 以降= env に渡す KEY=VALUE のあと `--` のあと swift test の追加の引数
+          one() {
+            local name=$1 i=$2; shift 2
+            local envs=()
+            while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+            [ "$#" -gt 0 ] && shift
+            local log=.build/measure/$name-$i.log
+            local start; start=$(date +%s)
+            env ${envs[@]+"${envs[@]}"} python3 scripts/gpu-slot.py -- swift test --skip-build "$@" > "$log" 2>&1 || true
+            local dropped pf hang run
+            dropped=$(grep -c 'The GPU dropped the work' "$log" || true)
+            pf=$(grep 'The GPU dropped the work' "$log" | grep -c 'ErrorPageFault)' || true)
+            hang=$(grep 'The GPU dropped the work' "$log" | grep -c 'ErrorHang)' || true)
+            run=$(grep -E 'Test run with [0-9]+ tests in [0-9]+ suites' "$log" | head -1 | cut -c1-120 || true)
+            echo "$name run=$i secs=$(( $(date +%s) - start )) dropped=$dropped pagefault=$pf hang=$hang | $run" | tee -a .build/measure/summary.txt
+            if [ "$dropped" != "0" ]; then
+              grep -n 'The GPU dropped the work' "$log" | head -4 | while IFS=: read -r n _; do
+                local from=$(( n > 70 ? n - 70 : 1 ))
+                {
+                  echo "=== $name run=$i line=$n"
+                  sed -n "${from},$(( n + 25 ))p" "$log" | grep -v 'Redundant call\|Render Command Encoder Set\|swiftpm-testing-helper'
+                } >> .build/measure/faults.txt
+              done
+            fi
+            rm -f "$log"
+          }
+
+          case "$MOKUME_MEASURE_STAGE" in
+            loop)
+              for i in $(seq 1 30); do
+                one only-effectargs "$i" -- --filter 'MokumeCoreTests.EffectArgumentTests'
+              done
+              ;;
+            full)
+              for i in 1 2; do
+                one control "$i" --
+                one wide "$i" SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=100000 --
+                one tombstone "$i" MOKUME_MEASURE_TOMBSTONE=1 --
+              done
+              ;;
+          esac
+          {
+            echo '## 計測 (#2007)'; echo '```'; cat .build/measure/summary.txt
+            echo; cat .build/measure/faults.txt 2>/dev/null; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: measure-2007
+          path: .build/measure/
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 14

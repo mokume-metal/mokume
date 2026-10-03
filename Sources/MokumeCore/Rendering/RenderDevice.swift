@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Metal
 import MokumeDiagnostics
 
@@ -484,7 +485,16 @@ import MokumeDiagnostics
             throw .synchronizationUnavailable
         }
         self.completion = completion
+
+        // SCRATCH (#2007 の切り分け・merge しない): 環境変数が立っていれば、土台を畳まない
+        if Self.tombstoneEnabled, Self.tombstones.count < 4000 {
+            Self.tombstones.append(self)
+        }
     }
+
+    /// SCRATCH (#2007 の切り分け・merge しない): 畳まない土台の置き場。
+    static var tombstones: [RenderDevice] = []
+    static let tombstoneEnabled = ProcessInfo.processInfo.environment["MOKUME_MEASURE_TOMBSTONE"] != nil
 
     /// **実行中のものが終わる前に土台を畳まない。**
     ///
