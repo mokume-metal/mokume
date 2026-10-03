@@ -109,7 +109,7 @@ extension Canvas {
     ) {
         // **描くところの外からは効かない** (ADR-0023 決定 3)。黙って何も起きるのでは
         // なく、初回に理由を知らせる
-        guard isDrawing else { return warnOutsideFrame(.compute) }
+        guard admits(.compute) else { return }
         guard width > 0, height > 0 else { return }
         let buffers = reads + writes
         guard buffers.count <= ComputePipeline.maximumBufferCount else {

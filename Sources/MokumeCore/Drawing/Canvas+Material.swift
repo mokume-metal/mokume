@@ -11,7 +11,7 @@ extension Canvas {
     // 艶の鋭さ。0 なら艶を出さない。
     public func shininess(_ amount: some ScalarConvertible) {
         // フレームの外の断りを、範囲の外の断りより先に言う (``refuseMaterialColor(_:)``)
-        guard isDrawing else { return warnOutsideFrame(.material) }
+        guard admits(.material) else { return }
         let amount = amount.asFloat
         guard amount.isFinite, amount >= 0 else { return warnBadMaterial("shininess") }
         apply { $0.shininess = amount }
@@ -19,7 +19,7 @@ extension Canvas {
 
     // 金属らしさ。0 が非金属、1 が金属。
     public func metalness(_ amount: some ScalarConvertible) {
-        guard isDrawing else { return warnOutsideFrame(.material) }
+        guard admits(.material) else { return }
         let amount = amount.asFloat
         guard amount.isFinite, amount >= 0, amount <= 1 else {
             return warnBadMaterial("metalness")
@@ -32,7 +32,7 @@ extension Canvas {
         // 数でない成分・無限の成分は数の形と同じ鍵で断り、負の成分は範囲の外として断る (#1706)。
         // 不透明度は材質に持ち込まないので見ない
         guard color.hasFiniteRGB else { return refuseMaterialColor(.ambient) }
-        guard isDrawing else { return warnOutsideFrame(.material) }
+        guard admits(.material) else { return }
         guard let components = Self.materialComponents(color) else {
             return warnBadMaterial("ambient")
         }
@@ -42,7 +42,7 @@ extension Canvas {
     // 自ら出す光。
     public func emissive(_ color: LinearRGBA) {
         guard color.hasFiniteRGB else { return refuseMaterialColor(.emissive) }
-        guard isDrawing else { return warnOutsideFrame(.material) }
+        guard admits(.material) else { return }
         guard let components = Self.materialComponents(color) else {
             return warnBadMaterial("emissive")
         }
@@ -57,7 +57,7 @@ extension Canvas {
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     func refuseMaterialColor(_ entry: ColorEntry) {
-        guard isDrawing else { return warnOutsideFrame(.material) }
+        guard admits(.material) else { return }
         warnNotANumberColor(entry)
     }
 
@@ -68,7 +68,7 @@ extension Canvas {
     /// 警告して無視する (同 決定 4)。光・視点と同じ扱いである。呼ぶ口は値を検める前に
     /// 同じ断りを言う (``refuseMaterialColor(_:)``) ので、ここで言うことは無い守りである。
     private func apply(_ change: (inout Material) -> Void) {
-        guard isDrawing else { return warnOutsideFrame(.material) }
+        guard admits(.material) else { return }
         closeBatch()
         change(&style.material)
     }

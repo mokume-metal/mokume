@@ -303,6 +303,21 @@ extension Canvas {
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case shapeDrawnOutWhileBuilding
+        /// 形の組み立ての中で、形に焼き付かない設定を書いた ([#1529])。種類ごとに鍵を分ける
+        /// (``OutsideFrame`` と同じく、光の注意が視点の注意を黙らせない)。種類と文面は
+        /// ``InsideShape`` が持つ。
+        ///
+        /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
+        case cameraInsideShape
+        case clipInsideShape
+        case effectsInsideShape
+        case lightInsideShape
+        case surroundingsInsideShape
+        case shadowInsideShape
+        case materialInsideShape
+        case particlesInsideShape
+        case computeInsideShape
+        case brightnessInsideShape
     }
 
     /// 範囲の外の値を範囲へ丸めたことを、初回だけ知らせる ([#1698])。
