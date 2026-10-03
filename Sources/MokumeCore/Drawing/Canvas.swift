@@ -824,9 +824,11 @@ public final class Canvas {
     /// 組み立てると中の `push()` / `translate()` が落ち、9 枚の葉が 1 か所へ重なっていた。
     ///
     /// **シーンの記述 (視点・光・囲み・影・材質・粒・計算) はここを見ない。** あちらは
-    /// 形に焼き付かずフレームに属するので、記録の間もフレームの外のままである。
+    /// 形に焼き付かずフレームに属するので、記録の間はフレームの中でも外でも断る
+    /// (``admits(_:)``・[#1529])。
     ///
     /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
+    /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
     var isShaping: Bool { isDrawing || recordingShape }
 
     /// 持ち越しを約束する区間にいるか ([ADR-0021] 決定 4 の追補 (2026-09-27)・[#1672])。

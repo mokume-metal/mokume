@@ -37,7 +37,7 @@ extension Canvas {
     ) {
         // フレームの外では光を置かないので、丸めの注意より先に断る (#1698 の反証 10)。
         // 丸めの注意を先に言うと、置かない光のために 1 度きりの鍵を使い切る
-        guard isDrawing else { return warnOutsideFrame(.light) }
+        guard admits(.light) else { return }
         // 色が受け取れないなら置かないので、丸めの注意より先に断る (同じ理由・#1706)
         guard color.hasFiniteRGB else { return warnNotANumberColor(.spotLight) }
         let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
@@ -80,7 +80,7 @@ extension Canvas {
         // 同じ扱い (#970)。鍵は光を置く口と共有する。直す先 (`draw()` から呼ぶ) は置く口と
         // 外す口で同じなので、分けても言うことが増えない (`resetMatrix()` が変換の鍵を
         // 共有するのと同じ)
-        guard isDrawing else { return warnOutsideFrame(.light) }
+        guard admits(.light) else { return }
         guard !activeLights.isEmpty else { return }
         closeBatch()
         activeLights.removeAll(keepingCapacity: true)
@@ -98,7 +98,7 @@ extension Canvas {
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     private func addLight(_ light: Light, color: LinearRGBA, entry: ColorEntry) {
-        guard isDrawing else { return warnOutsideFrame(.light) }
+        guard admits(.light) else { return }
         guard color.hasFiniteRGB else { return warnNotANumberColor(entry) }
         closeBatch()
         activeLights.append(light)
@@ -112,7 +112,7 @@ extension Canvas {
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     func refuseLightColor(_ entry: ColorEntry) {
-        guard isDrawing else { return warnOutsideFrame(.light) }
+        guard admits(.light) else { return }
         warnNotANumberColor(entry)
     }
 
