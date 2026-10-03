@@ -93,7 +93,8 @@ extension Canvas {
         //
         // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         guard pendingDiscards == discardsAtStart else {
-            discardPending()
+            // 前の区切りで描いた立体の影 (持ち越した落とす側) は残す (#1656)
+            discardPending(keepingCasters: true)
             warnInsideShape(.drawnOut)
             return .empty
         }

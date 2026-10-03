@@ -28,7 +28,6 @@ import Testing
 )
 struct StoppedUpscaleTests {
     private static let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
-    private static let green = LinearRGBA.linear(red: 0, green: 1, blue: 0)
 
     /// 出す大きさ 160×160 の面。細かさ 1 なら描く先と出す先は同じ 1 枚である。
     private static func makeCanvas(density: Float, upscale: Upscale = .spatial) throws -> Canvas {
@@ -77,14 +76,15 @@ struct StoppedUpscaleTests {
         case writeBlock
         /// 円を置いて、画素を読む口で描き切らせる。
         case circleThenRead
-        /// 描き場所を置いて、その描き場所を描き直す (置いた面が変わる直前の描き切り・`settle(before:)`)。
-        case graphicsSettled
+        // 描き場所を置いて、その描き場所を描き直す口は、ここに無い。描き直す直前に置いた側を
+        // 描き切らせていたが、置いた時点の絵を写しに取る形にした (#1656 の案 A2) ので、描く先を
+        // 変えない。止まっている間のその形は ``aLayerPlacedAndRedrawnWhileStoppedShowsNextFrame``
+        // が見る
 
         var testDescription: String {
             switch self {
             case .writeBlock: "画素を書く"
             case .circleThenRead: "円を置いて読む"
-            case .graphicsSettled: "描き場所を置いて描き直す"
             }
         }
     }
@@ -113,11 +113,6 @@ struct StoppedUpscaleTests {
         density: Float, effects: Bool, change: Change, upscale: Upscale = .spatial
     ) throws -> Canvas {
         let canvas = try makeCanvas(density: density, upscale: upscale)
-        // 置く描き場所は、1 枚目より前に描いておく (緑)。描き直すと赤になる
-        let layer = try canvas.createGraphics(40, 40)
-        layer.beginDraw()
-        layer.background(green)
-        layer.endDraw()
         try firstFrame(canvas, effects: effects)
         whileStopped(canvas) {
             switch change {
@@ -128,14 +123,43 @@ struct StoppedUpscaleTests {
                 canvas.fill(red)
                 canvas.circle(80, 80, 40)
                 _ = canvas.get(0, 0)
-            case .graphicsSettled:
-                canvas.image(layer, 60, 60)
-                layer.beginDraw()
-                layer.background(red)
-                layer.endDraw()
             }
         }
         return canvas
+    }
+
+    // MARK: - 置いて描き直した描き場所は、次のフレームに出る (#1656)
+
+    /// 止まっている間に描き場所を置いて描き直しても、置いた側は描き切られない (#1656 の案 A2)。
+    /// 置いたものは持ち越され、**次のフレームで、置いた時点の絵 (描き直す前の緑) が出す先に出る** —
+    /// 細かさを下げた面では拡大の段を通って出る。止まっている間は、出す先は変わらない。
+    @Test(
+        "止まっている間に描き場所を置いて描き直すと、出す先にはその場では出ず、次のフレームで置いた時点の絵が出る",
+        arguments: [Float(1), 0.5], [false, true])
+    func aLayerPlacedAndRedrawnWhileStoppedShowsNextFrame(density: Float, effects: Bool) throws {
+        let canvas = try Self.makeCanvas(density: density)
+        let layer = try canvas.createGraphics(40, 40)
+        layer.beginDraw()
+        layer.background(LinearRGBA.linear(red: 0, green: 1, blue: 0))
+        layer.endDraw()
+        try Self.firstFrame(canvas, effects: effects)
+        let before = try Self.shown(canvas)[80, 80]
+        let mark = canvas.settleMark
+        Self.whileStopped(canvas) {
+            canvas.image(layer, 60, 60)
+            layer.beginDraw()
+            layer.background(Self.red)
+            layer.endDraw()
+        }
+        #expect(canvas.settleMark == mark, "止まっている間に、置いた側が描き切られた")
+        let stopped = try Self.shown(canvas)[80, 80]
+        #expect(stopped == before, "止まっている間に出す先が変わった: \(stopped)")
+
+        try canvas.draw {}
+        let next = try Self.shown(canvas)[80, 80]
+        #expect(
+            next.green > 200 && next.red < 30 && next.blue < 30,
+            "次のフレームに、置いた時点の絵が出ていない: \(next)")
     }
 
     // MARK: - 出す先に出る
@@ -151,17 +175,9 @@ struct StoppedUpscaleTests {
             density: scenario.density, effects: scenario.effects, change: scenario.change)
         let point = try Self.shown(canvas)[80, 80]
 
-        switch scenario.change {
-        case .writeBlock, .circleThenRead:
-            #expect(
-                point.red > 200 && point.green < 30 && point.blue < 30,
-                "変えたものが出力段に出ていない: \(point)")
-        case .graphicsSettled:
-            // 置いた時点の絵 (描き直す前の緑) が出る
-            #expect(
-                point.green > 200 && point.red < 30 && point.blue < 30,
-                "置いた絵が出力段に出ていない: \(point)")
-        }
+        #expect(
+            point.red > 200 && point.green < 30 && point.blue < 30,
+            "変えたものが出力段に出ていない: \(point)")
     }
 
     /// 完了条件 3 — 出力段を通した後に描き直しても、書いた画素は残り、効果は焼き込まれない。
@@ -293,12 +309,7 @@ struct StoppedUpscaleTests {
         let canvas = try Self.changedWhileStopped(density: 0.5, effects: false, change: change)
         let read = try canvas.output.readPixels()[80, 80]
 
-        switch change {
-        case .writeBlock, .circleThenRead:
-            #expect(read.red > 0.9 && read.green < 0.1 && read.blue < 0.1, "CPU の読み出しに出ていない: \(read)")
-        case .graphicsSettled:
-            #expect(read.green > 0.9 && read.red < 0.1 && read.blue < 0.1, "CPU の読み出しに出ていない: \(read)")
-        }
+        #expect(read.red > 0.9 && read.green < 0.1 && read.blue < 0.1, "CPU の読み出しに出ていない: \(read)")
     }
 
     // MARK: - 時間方向の位置

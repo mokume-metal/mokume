@@ -401,6 +401,10 @@ import MokumeDiagnostics
     /// 投入したコマンドがすべて終わっているか。**問い合わせるだけで待たない。**
     var isIdle: Bool { completion.signaledValue >= submissionCount }
 
+    /// 番号 `submission` までの投入が終わっているか。**問い合わせるだけで待たない。** 投入した
+    /// 後で GPU だけが読む置き場を、読み終わってから使い回すかを決めるのに使う (#1656)。
+    func hasFinished(_ submission: UInt64) -> Bool { completion.signaledValue >= submission }
+
     /// 常駐させるリソースの集合。この型を通して確保したものがすべて入る。
     let residencySet: any MTLResidencySet
 

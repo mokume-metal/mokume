@@ -13,6 +13,7 @@ extension Canvas {
         guard admits(.shadow) else { return }
         closeBatch()
         shadowsEnabled = enabled
+        if enabled { shadowsEverEnabled = true }
     }
 
     // 影を焼き付ける範囲の一辺 (世界の長さ)。
@@ -89,9 +90,10 @@ extension Canvas {
 
     /// 影を落とすと言ったのに落とす光が無いまま、フレームを終えようとしていれば初回だけ知らせる。
     ///
-    /// **呼ぶのはフレームの終わりだけ** (`endFrame`)。焼き付けはそこで 1 度だけ走り、
-    /// そのときの光から ``shadowCaster`` を選ぶので、影が出ないと確定するのはその時点で
-    /// ある。途中の描き切り (画素の読み出しなど) ではまだ光を置く前でありうる。
+    /// **呼ぶのはフレームの終わりだけ** (`endFrame`)。焼き付けは描き切るたびに、そのときの光から
+    /// ``shadowCaster`` を選ぶ。フレームの終わりの描き切りで落とす光が無ければ、そこで描く面は
+    /// 影を受けない。途中の描き切り (画素の読み出しなど) ではまだ光を置く前でありうるので、
+    /// そこでは言わない。
     ///
     /// 黙っていると、光は当たっているのに影だけが無い絵が「そういう作品」に見える
     /// ([#1151] — 手元の表示を `noLights()` から描いて影が丸ごと消えた)。
@@ -101,8 +103,9 @@ extension Canvas {
         guard shadowsEnabled, shadowCaster == nil else { return }
         warnOnce(
             .shadowWithoutCaster,
-            "shadows(): the frame ended with no directionalLight() in place, so it has no shadows. "
-                + "Shadows are baked once at the end of the frame from the lights in place then, "
+            "shadows(): the frame ended with no directionalLight() in place, so what is drawn "
+                + "at the end of the frame has no shadows. "
+                + "Shadows are baked when the frame is drawn out, from the lights in place then, "
                 + "so a noLights() late in draw() removes the shadows of everything drawn before it too")
     }
 

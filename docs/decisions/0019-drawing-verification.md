@@ -161,7 +161,7 @@ SPDX-License-Identifier: MIT
 この決定は次の前提の上に立つ。**どれかが外れたら、この決定も外れる。**
 
 - **fork の PR を弾く条件式が、専用機のジョブに付いている** — `github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository`
-- **fork の PR のワークフローは、外部の人なら毎回承認を要する** (リポジトリの設定 `approval_policy: all_external_contributors`)。fork の PR はワークフロー自体を書き換えて `runs-on` に専用機を指定できる。上の条件式はこちらのワークフローの中にしか効かないので、その経路を止めるのはこの設定である
+- **fork の PR のワークフローは、外部の人なら毎回承認を要する** (リポジトリの設定 `approval_policy: all_external_contributors`)。fork の PR はワークフロー自体を書き換えて `runs-on` に専用機を指定できる。上の条件式はこちらのワークフローの中にしか効かないので、その経路を止めるのはこの設定である。この関門は fork に限らず、コラボレータでない bot (`github-merge-queue[bot]` など) が起こした `pull_request` の run にも掛かる ([#1951](https://github.com/mokume-metal/mokume/issues/1951) で実測)。bot が起こすイベントで走らせたいワークフローは、ベース側の定義で走る `pull_request_target` で受け、PR の中身を checkout しない
 - **専用機に秘密を置かない。** runner はリポジトリ単位で 1 度だけ登録する常駐のもので、残る秘密は runner 自身の資格情報 (その 1 台としてジョブを受け取る権限) だけである。ジョブごとに登録し直す形 (`--ephemeral`) は、登録の発行に App の秘密鍵を専用機へ置くことになるので採らない。ジョブは secrets を持たず、`permissions: contents: read` で走る
 - **専用機はネットワークで隔離し、ジョブの間でビルドの成果物を持ち越さない** (ジョブ開始時に作業ディレクトリを消す)
 
