@@ -43,19 +43,3 @@ public struct PixelBuffer: Equatable, Sendable {
             alpha: Float(components[base + 3]))
     }
 }
-
-extension PixelBuffer {
-    /// 間引いて小さくした画素を返す。**拾い方は ``NearestNeighbor`` が持つ。**
-    ///
-    /// **間引くのは出力段より前である。** 順序が絵を変えないので (あちらの doc)、
-    /// 費用の安いほうを取れる。
-    ///
-    /// 倍率が 1 以上、または範囲外のときはそのまま返す。
-    func scaled(by factor: Double) -> PixelBuffer {
-        guard let small = NearestNeighbor.scaled(
-            components, width: width, height: height, by: factor)
-        else { return self }
-        return PixelBuffer(
-            width: small.width, height: small.height, components: small.components)
-    }
-}
