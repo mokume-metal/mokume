@@ -129,12 +129,12 @@ jobs:
               done
               ;;
             full2)
-              # 全検査 (make test と同じ入口) で、基準とキューの使い回しを交互に
-              one control 1 --
-              one queue-pool 1 MOKUME_MEASURE_QUEUE_POOL=1 --
-              one control 2 --
-              one queue-pool 2 MOKUME_MEASURE_QUEUE_POOL=1 --
-              one queue-pool 3 MOKUME_MEASURE_QUEUE_POOL=1 --
+              # 全検査 (make test と同じ入口) で、基準・キューの使い回し・幅 1 を交互に
+              for i in 1 2; do
+                one control "$i" --
+                one queue-pool "$i" MOKUME_MEASURE_QUEUE_POOL=1 --
+                one width-1 "$i" SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 --
+              done
               ;;
             full)
               for i in 1 2; do
