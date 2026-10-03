@@ -171,6 +171,40 @@ class GpuSlotTest(unittest.TestCase):
         self.assertIn("使い方", result.stderr)
 
 
+class ParallelizationWidthTest(unittest.TestCase):
+    """子の swift test へ、Swift Testing の並列の幅が届くこと (#1999)。"""
+
+    VARIABLE = "SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH"
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+
+    def _child_sees(self, extra):
+        environment = {key: value for key, value in os.environ.items() if key != self.VARIABLE}
+        environment.update({"MOKUME_GPU_SLOT_DIR": self.temporary.name, "MOKUME_GPU_SLOT_POLL": "0.02"})
+        environment.update(extra)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--", sys.executable, "-c",
+             f"import os; print(os.environ.get({self.VARIABLE!r}, 'unset'))"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_the_child_runs_with_width_16_by_default(self):
+        self.assertEqual(self._child_sees({}), "16")
+
+    def test_a_width_given_by_the_caller_is_kept(self):
+        self.assertEqual(self._child_sees({self.VARIABLE: "1"}), "1")
+
+    def test_an_empty_width_is_treated_as_unset(self):
+        self.assertEqual(self._child_sees({self.VARIABLE: ""}), "16")
+
+
 class MakefileWiringTest(unittest.TestCase):
     """test と test-release の段が、swift test を枠の包みの内で走らせていること。"""
 

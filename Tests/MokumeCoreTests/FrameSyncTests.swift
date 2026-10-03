@@ -15,8 +15,16 @@ import Testing
 /// `#require` が「何も見ていない」と名乗って赤くなる。
 ///
 /// [#727](https://github.com/mokume-metal/mokume/issues/727)
+///
+/// **suite の中は直列に走らせる** ([#1999](https://github.com/mokume-metal/mokume/issues/1999))。
+/// GPU を長く占める `spin` を並列の検査が同時に何本も積むと、GPU が command buffer を hang と
+/// 判定して打ち切る (`kIOGPUCommandBufferCallbackErrorHang`)。立て直しでは同じ時刻に GPU に
+/// いた**別の検査の仕事まで捨てられ** (`InnocentVictim`)、関係の無い suite が赤くなる。GPU は
+/// 画面の描画と共有なので、重なれば WindowServer ごと止まる。回転を短くすると「まだ終わって
+/// いない」を構造で作れなくなるので、回数は変えずに積む本数のほうを 1 本にする。
 @Suite(
     "描き切りの待ち",
+    .serialized,
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
@@ -64,6 +72,20 @@ struct FrameSyncTests {
         func keepGPUBusy() {
             canvas.compute(spin, over: 1, writes: [scratch])
         }
+
+        /// **回転を積む検査は、冒頭で `defer { bench.leaveIdle() }` を置く** ([#1999])。
+        ///
+        /// 回転を投入したまま返ると、次の検査が自分の土台で積む回転と GPU の上で重なり、
+        /// ドライバがどちらかを hang と見て打ち切る。立て直しでは同じ時刻の別の検査の仕事まで
+        /// 捨てられる (下の「見終えたら GPU を空にして出る」・[#1063])。`defer` にするのは、
+        /// `#require` が途中で抜けても片付けるため。`Bench` の `deinit` に置かないのは、
+        /// 土台を手放したときの待ちを時間で測る検査が、その待ちを見なくなるため。
+        ///
+        /// [#1063]: https://github.com/mokume-metal/mokume/issues/1063
+        /// [#1999]: https://github.com/mokume-metal/mokume/issues/1999
+        func leaveIdle() {
+            gpu.settleQuietly(orWarn: "検査の後片付けで GPU を待てなかった")
+        }
     }
 
     /// - Parameter slotCount: コマンドの置き場の本数。`nil` なら既定。
@@ -91,6 +113,7 @@ struct FrameSyncTests {
     @Test("描き切りは GPU の完了を待たずに返り、画素を読むときに待つ")
     func flushReturnsBeforeTheGPUFinishes() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
 
         try canvas.draw {
@@ -117,6 +140,7 @@ struct FrameSyncTests {
     @Test("数の並びへ書く口は待たず、読むと書いた値が返る")
     func numbersWriteWithoutWaiting() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let numbers = try bench.canvas.makeNumbers(count: 4)
 
         try bench.canvas.draw { bench.keepGPUBusy() }
@@ -138,6 +162,7 @@ struct FrameSyncTests {
     @Test("計算の結果を読む口は、溜まりが空でも待つ")
     func readingNumbersWaitsEvenWithNothingPending() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
 
         try bench.canvas.draw { bench.keepGPUBusy() }
         try #require(!bench.gpu.isIdle, "回転が短い — この検査は何も見ていない")
@@ -152,6 +177,7 @@ struct FrameSyncTests {
     @Test("画像を面へ送る口は待たず、描き切りが届ける")
     func imageUploadDoesNotWait() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
         let image = try canvas.createImage(2, 2)
 
@@ -178,6 +204,7 @@ struct FrameSyncTests {
     @Test("字形を焼く口は、焼く直前に待つ")
     func glyphBakingWaitsBeforeReplacing() throws {
         let bench = try makeBench(width: 64, height: 64)
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
 
         try canvas.draw { bench.keepGPUBusy() }
@@ -195,6 +222,7 @@ struct FrameSyncTests {
     @Test("前のフレームの GPU が読んでいる置き場を、次のフレームの CPU が書き換えない")
     func nextFrameDoesNotOverwriteBuffersStillBeingRead() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
 
         // フレーム N: 左半分を白く。GPU はこの頂点をしばらく読み続ける
@@ -237,6 +265,7 @@ struct FrameSyncTests {
     @Test("GPU を占めたフレームの次のフレームは、書く前に投入済みの全完了を待たない")
     func theNextFrameWritesWithoutDrainingTheGPU() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
 
         // **先に温める。** 置き場を初めて取るフレームは取り直しの中で待つので、
@@ -391,6 +420,7 @@ struct FrameSyncTests {
         arguments: FrameWriter.allCases)
     func frameWritersDoNotDrainTheGPU(_ writer: FrameWriter) throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         let canvas = bench.canvas
         let busyFrame = framesPastOneLap
         let scene = try makeScene(writer, on: bench, lastFrame: busyFrame + 1)
@@ -463,6 +493,7 @@ struct FrameSyncTests {
     @Test("環は、そのスロットを読む投入が終わるまで返らない")
     func advancingWaitsForTheSubmissionThatReadsTheSlot() throws {
         let bench = try makeBench()
+        defer { bench.leaveIdle() }
         // **描き切りが使う環とは別に、この検査だけの環を持つ。** 見たいのは機構そのもの
         // (進めて・記録して・1 周したら待つ) で、描き切りの都合を混ぜない
         let ring = FrameRing(gpu: bench.gpu)
@@ -493,6 +524,7 @@ struct FrameSyncTests {
         }
         // 置き場を 1 本にすると、**次の描き切りに必ず同じスロットが回ってくる**
         let gpu = try RenderDevice(device: device, slotCount: 1)
+        defer { gpu.settleQuietly(orWarn: "検査の後片付けで GPU を待てなかった") }  // Bench.leaveIdle と同じ
         let target = try RenderTarget(gpu: gpu, width: 32, height: 32)
         let canvas = try Canvas(target: target, gpu: gpu)
         let scratch = try canvas.makeNumbers(count: 1)
@@ -535,6 +567,7 @@ struct FrameSyncTests {
             throw RenderFailure.deviceUnavailable
         }
         let gpu = try RenderDevice(device: device)
+        defer { gpu.settleQuietly(orWarn: "検査の後片付けで GPU を待てなかった") }  // Bench.leaveIdle と同じ
         let target = try RenderTarget(gpu: gpu, width: 64, height: 64)
         let canvas = try Canvas(target: target, gpu: gpu)
         let scratch = try canvas.makeNumbers(count: 1)

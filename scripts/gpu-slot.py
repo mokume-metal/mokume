@@ -27,7 +27,7 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 空きが無ければ、数秒おきに取り直す。1 分おきに、何本がどこで走っているかを名乗る。
 **待つ側が期限を持つ** (AGENTS.md の「検査の待たないは待つ側が持つ」)。
 `$MOKUME_GPU_SLOT_WAIT` 秒 (既定 5400 = 90 分) を越えたら、持ち主を名乗って 75 で抜ける。
-全体の test 段は 5〜7 分なので、枠 3 に 10 本並んでも 30 分ほどで回ってくる。90 分を越えて
+全体の test 段は 6〜8 分 (並列の幅を縛った後・下の「## 並列の幅」) なので、枠 3 に 10 本並んでも 30 分ほどで回ってくる。90 分を越えて
 待つのは、持ち主が固まっているときである。
 
 ## 枠を取れない環境
@@ -39,7 +39,28 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 ## 範囲の外
 
 `swift test --filter …` を直に打つ単独の実行は、この枠を通らない。数 suite で軽く、#1898 の
-赤はどれも全体の段が重なった回に出たためである (実害が出たら足す・ADR-0008)。
+赤はどれも全体の段が重なった回に出たためである (実害が出たら足す・ADR-0008)。**下の並列の幅も
+同じく届かない。** GPU を長く占める suite を直に繰り返す (`--repeat-until`) と、手元の画面ごと
+落ちた実害がある (#1999)。その実害の根は suite の側にあり、そちらを直した (`.serialized` と、
+回転を残して返らない `settle()`)。直に打つ実行まで縛るかは #2004 が持つ。
+
+## 並列の幅
+
+**枠が縛るのはプロセスの数で、1 プロセスの中で同時に進む検査の数は縛らない。** Swift Testing は
+GPU を待って止まった非同期の検査を上限なく並べ、それぞれが自分の `RenderDevice` (コマンドの
+発行口 1 本) を持つ。debug の全検査の 1 プロセスで、同時に生きる発行口は最大 248 本あった。
+GPU は画面の描画 (WindowServer) と共有なので、全検査が重なって GPU が詰まると WindowServer が
+ドライバの中で待たされ、watchdog が手元の機械ごと落とす (#1999。カーネルパニックまで行った)。
+
+そこで、子へ `SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH` (Swift Testing の並列の幅) を
+渡す。既定は 16 で、同時の発行口は 12 本に収まり、全体の所要は 1 割ほど延びた (366 → 401 秒)。
+**呼ぶ側が環境に値を持っていれば、そちらを使う** (切り分けで幅を変えて走らせるための口)。空の値は
+持っていないものとして扱う。
+
+**口の名前に EXPERIMENTAL が付いている。** toolchain の更新で名前が変われば、Swift Testing は
+知らない変数を読まないので、縛りは黙って外れる。幅の値と名前はここ 1 箇所にだけ置く。外れたかは、
+全検査の同時の発行口が数十本を越えて戻ること (#1999 の計り方)、または同じ機械の全検査の重なりで
+WindowServer が止まることで分かる。そのときは、toolchain の `Testing` の文字列から今の名前を引く。
 
 子の終了コードは、そのまま返す。SIGINT / SIGTERM は子へ渡す。取り直しの間隔
 (`$MOKUME_GPU_SLOT_POLL` 秒) と名乗る間隔 (`$MOKUME_GPU_SLOT_REPORT` 秒) は、検査が短く回す
@@ -58,6 +79,10 @@ DEFAULT_SLOTS = 3
 DEFAULT_WAIT_SECONDS = 5400
 EXIT_TIMED_OUT = 75
 EXIT_USAGE = 2
+
+# 並列の幅の口と既定 (上の「## 並列の幅」)
+PARALLELIZATION_WIDTH_VARIABLE = "SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH"
+DEFAULT_PARALLELIZATION_WIDTH = "16"
 
 
 def _say(message):
@@ -168,7 +193,11 @@ def _acquire(slots, wait_seconds, poll, report_every):
 
 
 def _run(command):
-    child = subprocess.Popen(command)
+    environment = dict(os.environ)
+    # 空の値は未設定と同じに扱う。Swift Testing が読めない値を素通しすると、縛りが黙って外れる
+    if not environment.get(PARALLELIZATION_WIDTH_VARIABLE, "").strip():
+        environment[PARALLELIZATION_WIDTH_VARIABLE] = DEFAULT_PARALLELIZATION_WIDTH
+    child = subprocess.Popen(command, env=environment)
 
     def forward(signum, _frame):
         child.send_signal(signum)
