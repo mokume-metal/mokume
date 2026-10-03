@@ -68,7 +68,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_BASE = "origin/main"
-DEFAULT_SCHEMA_DIR = "Schemas"
+SCHEMA_DIR = "Schemas"  # リポジトリのルートからの相対 (check-schemas.sh がルートで呼ぶ)
 
 
 def _git(args, cwd):
@@ -206,19 +206,9 @@ def declared_version(document):
     return const
 
 
-def _repo_prefix(cwd):
-    """cwd のリポジトリのルートからの相対を返す (ルートなら空文字)。
-
-    git show に渡す経路はルートからの相対でなければならず、--schema-dir は cwd
-    からの相対で受ける。cwd がルートでないときに両者がずれる。
-    """
-    prefix = _git(["rev-parse", "--show-prefix"], cwd)
-    return prefix.strip() if prefix else ""
-
-
-def check(schema_dir, base, cwd, out=sys.stdout, err=sys.stderr):
+def check(base, cwd, out=sys.stdout, err=sys.stderr):
     """0 (通った / 見ていない) か 1 (据え置きが見つかった) を返す。"""
-    root = Path(schema_dir)
+    root = Path(SCHEMA_DIR)
     schemas = sorted((Path(cwd) / root).glob("*.schema.json"))
     if not schemas:
         print(f"スキーマが 1 つも見つからない: {root}/*.schema.json", file=err)
@@ -243,7 +233,6 @@ def check(schema_dir, base, cwd, out=sys.stdout, err=sys.stderr):
     else:
         print(f"版の据え置きを見る: 比較の相手は {ref} との分岐点 ({fork[:7]})", file=out)
         ref = fork
-    prefix = _repo_prefix(cwd)
     status = 0
 
     for schema in schemas:
@@ -255,7 +244,7 @@ def check(schema_dir, base, cwd, out=sys.stdout, err=sys.stderr):
             print(f"対象外: {name} — schemaVersion を持たない", file=out)
             continue
 
-        before = read_at(ref, f"{prefix}{root.as_posix()}/{name}", cwd)
+        before = read_at(ref, f"{root.as_posix()}/{name}", cwd)
         if before is None:
             print(f"対象外: {name} — {ref} には無い (新しい面)", file=out)
             continue
@@ -295,13 +284,8 @@ def main(argv=None):
         default=DEFAULT_BASE,
         help=f"比較の相手 (既定 {DEFAULT_BASE})。引けなければ浅く fetch し、それも駄目なら黙る",
     )
-    parser.add_argument(
-        "--schema-dir",
-        default=DEFAULT_SCHEMA_DIR,
-        help=f"スキーマの置き場 (既定 {DEFAULT_SCHEMA_DIR})",
-    )
     args = parser.parse_args(argv)
-    return check(args.schema_dir, args.base, cwd=Path.cwd())
+    return check(args.base, cwd=Path.cwd())
 
 
 if __name__ == "__main__":

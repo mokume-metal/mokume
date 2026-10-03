@@ -47,10 +47,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-# 読み口とタイムアウトは site_source が持つ (#815)。**この 3 本は必ず一緒に呼ばれる**
+# 読み口は site_source が持つ (#815)。**手元の組み上げにも公開先にも同じ読み口で当てる**
 # ので、写しを持つと「手元では通るが公開先だけ落ちる」が起きる
-from site_source import (  # noqa: E402,F401
-    FETCH_TIMEOUT_SECONDS,
+from site_source import (  # noqa: E402
     Source,
     Unreachable,
     landing_of,

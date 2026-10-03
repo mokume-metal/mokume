@@ -149,7 +149,7 @@ class ExampleShotsTest(unittest.TestCase):
         """
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            problems = shots.check(self.root, self.collect())
+            problems = shots.check(self.collect())
         self.check_output = out.getvalue()
         return problems
 

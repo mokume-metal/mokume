@@ -65,13 +65,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 # 同じものを読まないと、組める例と撮れる例が食い違う (#667)
 # 型検査の呼び方は swift_typecheck が持つ (#820)。**片方だけが macro の plugin 名を
 # 動的に解いている状態**を畳んだ — check-param-declarations.sh も同じ呼び方を通る
-from swift_typecheck import typecheck  # noqa: E402,F401
+from swift_typecheck import typecheck  # noqa: E402
 
 from example_wrapping import (  # noqa: E402
     FENCE_CLOSE,
     FENCE_OPEN,
     MARK,
     MARK_CONTEXT,
+    MARK_SKIP,
     dedent,
     split_imports,
     strip_doc,
@@ -140,13 +141,13 @@ def examples_in(text: str, path: pathlib.Path) -> tuple[list[Example], list[str]
             while close < len(lines) and not FENCE_CLOSE.match(lines[close]):
                 body.append(strip_doc(lines[close]))
                 close += 1
-            skip = next((rest for kind, rest, _ in pending if kind == "組めない"), None)
+            skip = next((rest for kind, rest, _ in pending if kind == MARK_SKIP), None)
             found.append(
                 Example(
                     path=path,
                     line=index + 1,
                     body=dedent(body),
-                    context=[rest for kind, rest, _ in pending if kind == "文脈"],
+                    context=[rest for kind, rest, _ in pending if kind == MARK_CONTEXT],
                     skip=skip,
                 )
             )
@@ -212,26 +213,14 @@ def find_modules(binary: pathlib.Path) -> pathlib.Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="説明文の中の例が組めるかを見る")
-    parser.add_argument(
-        "--modules",
-        type=pathlib.Path,
-        default=None,
-        help="swift build が作った成果物の置き場 (省くと .build/debug から探す)",
-    )
-    arguments = parser.parse_args()
+    argparse.ArgumentParser(description="説明文の中の例が組めるかを見る").parse_args()
 
     root = pathlib.Path(
         subprocess.run(
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()
     )
-    if arguments.modules is None:
-        modules = find_modules(root / ".build" / "debug")
-    else:
-        modules = (
-            arguments.modules if arguments.modules.is_absolute() else root / arguments.modules
-        )
+    modules = find_modules(root / ".build" / "debug")
     if not (modules / "mokume.swiftmodule").exists():
         print(f"ng: {modules} に mokume が無い — 先に swift build (make build) を打つ")
         return 1

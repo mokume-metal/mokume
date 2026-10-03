@@ -874,8 +874,6 @@ def main() -> int:
     parser.add_argument("--module", action="append", dest="modules")
     parser.add_argument("--version", default="(開発版)")
     parser.add_argument("--output", type=pathlib.Path)
-    parser.add_argument("--sketches", default=SKETCHES, type=pathlib.Path)
-    parser.add_argument("--scene-test", default=SCENE_TEST, type=pathlib.Path)
     arguments = parser.parse_args()
 
     modules = arguments.modules or ["MokumeCore"]
@@ -906,8 +904,8 @@ def main() -> int:
         + check_doc_canon(symbols)
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
-        + check_sketch_coverage(symbols, read_sketches(arguments.sketches))
-        + check_port_kinds(symbols, arguments.scene_test.read_text(encoding="utf-8"))
+        + check_sketch_coverage(symbols, read_sketches(SKETCHES))
+        + check_port_kinds(symbols, SCENE_TEST.read_text(encoding="utf-8"))
     )
     if problems:
         print("公開 API が規範に沿っていない:", file=sys.stderr)
