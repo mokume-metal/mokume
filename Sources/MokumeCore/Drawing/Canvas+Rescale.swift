@@ -75,17 +75,42 @@ struct RingFillRecipe {
     }
 }
 
-extension Canvas.Outline {
-    /// 周をなぞるとき、円板を置く点があるか (丸い端・丸い折れ目・曲線の刻み)。
+extension Canvas {
+    /// 輪郭が円板 (丸い端・丸い折れ目・曲線の刻み) を置く点を持つか。**円板を置くかの規則は、ここ 1 つ。**
     ///
-    /// 円板の分割数が絵に出るかの判定で、骨 (`strokeRing`) が円板を置く点の規則と同じである。
+    /// 畳みの鍵 (``FlatForm/placesDiscs(cap:join:)``) と、保持した形の組み直しの素材
+    /// (``Outline/placesDiscs(cap:join:)``) が、周の形だけを変えてこれを呼ぶ。円板の分割数は、置く
+    /// 輪郭にしか絵に出ないので、鍵と素材は置かない輪郭の分割数を 0 にして、拡大の違いで雛形を
+    /// 割らず、刻み直しを払わない。**規則が骨 (`strokeRing`) とずれると、円板が黙って消える** —
+    /// ずれは `ScaledDiscTests` が、骨に数えさせて突き合わせる。
+    ///
+    /// 骨の規則: 点が 1 つなら端の形そのもの。閉じた周は全部の点が折れ目で、開いた周は両端が端、
+    /// 途中の点が折れ目。曲線の刻みの点は、折れ目の位置 (閉じた周の全部・開いた周の途中) にあるときだけ
+    /// 円板で継ぐ。端の形が円板なのは、丸い端だけ。
+    ///
+    /// - Parameter hasJoinCurveSteps: 折れ目の位置に曲線の刻みの点があるか。
+    static func strokePlacesDiscs(
+        pointCount: Int, isClosed: Bool, hasJoinCurveSteps: Bool, cap: StrokeCap, join: StrokeJoin
+    ) -> Bool {
+        if pointCount == 1 { return cap == .round }
+        if isClosed { return hasJoinCurveSteps || (join == .round && pointCount >= 2) }
+        return hasJoinCurveSteps || cap == .round || (join == .round && pointCount >= 3)
+    }
+}
+
+extension Canvas.Outline {
+    /// 周をなぞるとき、円板を置く点があるか (``Canvas/strokePlacesDiscs(pointCount:isClosed:hasJoinCurveSteps:cap:join:)``)。
     func placesDiscs(cap: StrokeCap, join: StrokeJoin) -> Bool {
-        if curveSteps.contains(true) { return true }
-        // 点が 1 つだけなら、端の形そのものを置く
-        if points.count == 1 { return cap == .round }
-        if isClosed { return join == .round && points.count >= 2 }
-        // 開いた周は、両端の形と、途中の点の折れ目
-        return cap == .round || (join == .round && points.count >= 3)
+        // 折れ目の位置: 閉じた周は全部の点、開いた周は両端を除く途中の点
+        var hasJoinCurveSteps = false
+        let joins = isClosed ? curveSteps.indices : (curveSteps.count > 2 ? 1..<(curveSteps.count - 1) : 0..<0)
+        for index in joins where index < points.count && curveSteps[index] {
+            hasJoinCurveSteps = true
+            break
+        }
+        return Canvas.strokePlacesDiscs(
+            pointCount: points.count, isClosed: isClosed, hasJoinCurveSteps: hasJoinCurveSteps,
+            cap: cap, join: join)
     }
 }
 
@@ -135,27 +160,37 @@ extension Canvas {
     /// 保持した形の輪郭を、置いた後の大きさで刻み直した頂点 (記録した頂点と同じ座標・色)。
     /// **周も円板も記録のときより増えなければ `nil`** で、呼ぶ側は記録した頂点をそのまま置く。
     ///
-    /// 片は引いて積む (``CarveRecipe``)。重ねたまま積んだ記録と、塗る領域は同じで、半透明の色を
-    /// 掛けて置いても重なった所が濃くならない。**刻み直しは分割数の組ごとに 1 度だけ** — 同じ
-    /// 大きさで置き続ける形は、控えた頂点を移すだけで済む (``ThinStrokeCache``)。
+    /// **積み方は、記録のときに合わせる。** 不透明の線は片を重ねたまま積み、引くと縁から 1/1000 画素
+    /// ほどの所に中心が乗る画素が入れ替わりうるので (``strokeOverlapsShow``)、刻み直しも重ねたまま
+    /// 積む (``stackedVertices(_:recipe:discSegments:)``)。引いて積むのは、記録した頂点がもう引いて
+    /// あるとき (``ThinStrokeRecipe/recordedCarved``) と、半透明の色を掛けて置くとき
+    /// (`translucent`・``ThinStrokeRecipe/carvesWhenTinted``) で、置いた頂点が重なった所だけ濃くならない
+    /// ようにする (``CarveRecipe``)。**刻み直しは分割数と積み方の組ごとに 1 度だけ** — 同じ大きさで
+    /// 置き続ける形は、控えた頂点を移すだけで済む (``ThinStrokeCache``)。
     func rescaledVertices(
-        _ recipe: ThinStrokeRecipe, placedBy matrix: simd_float4x4, cache: ThinStrokeCache,
-        stroke: Int
+        _ recipe: ThinStrokeRecipe, placedBy matrix: simd_float4x4, translucent: Bool,
+        cache: ThinStrokeCache, stroke: Int
     ) -> [ShapeVertex]? {
         let combined = matrix * recipe.transform.matrix
         guard let splits = recipe.splits(atScale: Self.splitScale(of: combined)) else { return nil }
-        let key = ThinStrokeCache.scaledKey(ring: splits.ring, disc: splits.disc)
+        let carves = recipe.recordedCarved || (translucent && recipe.carvesWhenTinted)
+        let key = ThinStrokeCache.scaledKey(ring: splits.ring, disc: splits.disc, carved: carves)
         if let cached = cache.rescaledStroke(stroke, key) { return cached }
         let outline = Self.regenerated(recipe.outline, ringSegments: splits.ring)
-        // 端と折れ目の形は、いまの設定から読む。記録のときの形へ入れ替えて、戻す
-        let saved = (style.strokeCap, style.strokeJoin)
-        style.strokeCap = recipe.cap
-        style.strokeJoin = recipe.join
-        let carved = carveRecipe(
-            outline, half: recipe.weight / 2, transform: recipe.transform, color: recipe.color,
-            uv: recipe.uv, discSegments: splits.disc > 0 ? splits.disc : nil)
-        (style.strokeCap, style.strokeJoin) = saved
-        let vertices = carved.vertices()
+        let vertices: [ShapeVertex]
+        if carves {
+            // 端と折れ目の形は、いまの設定から読む。記録のときの形へ入れ替えて、戻す
+            let saved = (style.strokeCap, style.strokeJoin)
+            style.strokeCap = recipe.cap
+            style.strokeJoin = recipe.join
+            let carved = carveRecipe(
+                outline, half: recipe.weight / 2, thin: nil, transform: recipe.transform,
+                color: recipe.color, uv: recipe.uv, discSegments: splits.disc)
+            (style.strokeCap, style.strokeJoin) = saved
+            vertices = carved.vertices()
+        } else {
+            vertices = stackedVertices(outline, recipe: recipe, discSegments: splits.disc)
+        }
         cache.rememberRescaledStroke(vertices, stroke, key)
         return vertices
     }

@@ -167,11 +167,21 @@ struct ScaledDiscTests {
         #expect(scaled.differing(from: reference) == 0)
     }
 
-    /// 距離関数の経路 (`line`) の丸い端と比べる。縁の濃さは経路で違ってよいので、折れ線と `line` の
-    /// 違いは、拡大しない折れ線と `line` の違い (起票時 8 画素) に、**`line` 自身が拡大で揺れる分**
-    /// (拡大した `line` と拡大しない `line` の両端の違い) を足した数を越えないことを見る。
-    /// 直す前は 116 画素で、この数を大きく越えていた。
-    @Test("拡大した折れ線の両端は、`line()` との違いが拡大しない折れ線を越えない")
+    /// 距離関数の経路 (`line`) の丸い端と比べる (x < 40 と x ≥ 120 の両端だけを数える)。
+    ///
+    /// **起票時の「拡大しない折れ線と `line` の違い 8 画素以下」には、直した後もならない。**
+    /// 実測 (Apple M3 Max) は次のとおりで、本文の 8 は違いの一部である:
+    ///
+    /// - 拡大しない折れ線と拡大しない `line` の両端の違い: **8** (起票時にも 8。0.25 画素の保証で
+    ///   刻んだ 20 角形と、`line` の真円の違い)
+    /// - 拡大した `line` と拡大しない `line` の両端の違い: **11** ((30, 40)・(130, 40) など、縁の被覆が
+    ///   50% に近い画素)。**折れ線を含まない、`line` どうしの違い**で、`line` は距離関数の経路なので、
+    ///   拡大するだけで縁の画素の丸めが揺れる (折れ線は拡大しても拡大しない折れ線と 0 画素しか違わない
+    ///   — `scaledRoundCapMatchesUnscaled`)
+    /// - 拡大した折れ線と拡大した `line` の両端の違い: **19 = 8 + 11** (直す前は 116)
+    ///
+    /// 検査はこの 3 つの実測の値で締める。折れ線の側が崩れれば 19 を越える。
+    @Test("拡大した折れ線の両端は、`line()` との違いが実測の 8 + 11 を越えない")
     func scaledRoundCapStaysAsCloseToLineAsUnscaled() throws {
         let ends: (Int, Int) -> Bool = { x, _ in x < 40 || x >= 120 }
         let scaledPolyline = try render { canvas in
@@ -192,13 +202,12 @@ struct ScaledDiscTests {
             canvas.strokeWeight(20)
             canvas.line(40, 40, 120, 40)
         }
-        // 縁の濃さが 50% に近い画素は、`line` が拡大するだけで塗られるかが入れ替わる
-        let jitter = scaledLine.differing(from: plainLine, where: ends)
-        let baseline = plainPolyline.differing(from: plainLine, where: ends) + jitter
+        let polygonVersusCircle = plainPolyline.differing(from: plainLine, where: ends)
+        let lineJitter = scaledLine.differing(from: plainLine, where: ends)
         let measured = scaledPolyline.differing(from: scaledLine, where: ends)
-        #expect(
-            measured <= baseline,
-            "両端の違い \(measured) 画素が、拡大しない折れ線と `line` の違い + `line` の揺れ \(baseline) 画素を越える")
+        #expect(polygonVersusCircle <= 8, "拡大しない折れ線と `line` の両端の違い: \(polygonVersusCircle)")
+        #expect(lineJitter <= 11, "拡大した `line` と拡大しない `line` の両端の違い: \(lineJitter)")
+        #expect(measured <= 8 + 11, "拡大した折れ線と拡大した `line` の両端の違い: \(measured)")
     }
 
     // MARK: - 条件 2: 丸い折れ目
@@ -657,6 +666,411 @@ struct ScaledDiscTests {
         #expect(try vertices(scale: scale) == unscaled)
     }
 
+    // MARK: - 回すだけの変換 (反証 1)
+
+    /// 円板の半径が、分割数の境目の直下 (相対 3e-5) に乗っているとき、単精度の誤差で拡大率が 1 を
+    /// わずかに (1.7e-4 まで) 越えると、`scale` を掛けず `rotate` だけの絵で、丸い端と曲線の継ぎ目が
+    /// 別の数に刻まれる。5 分割と 6 分割の境目は半径 `0.25 / (1 − cos(π/5)) = 1.30902` で、その直下の
+    /// 半径 (太さ 2.61798) を使う。
+    ///
+    /// 太さ 1 (既定) は使わない。半径 0.5 は 3 分割と 4 分割の境目だが、太さ 1 を回すだけでも、
+    /// 最小の特異値が単精度の誤差で 1 を割り (`thinnestDrawnWeight`)、約 22% の角度で細い線の補いが
+    /// 立って頂点の数が変わる — この検査が見たい分割数の変化と混ざる。
+    @Test("回すだけの変換では、どの角度でも丸い端と曲線の継ぎ目の分割数は変わらない")
+    func rotationDoesNotChangeTheSegments() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        func vertices(angle: Float) throws -> Int {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeWeight(2.61798)
+                canvas.translate(80, 80)
+                canvas.rotate(angle)
+                polyline(canvas, [SIMD2(-20, 0), SIMD2(0, 10), SIMD2(20, 0)])
+                canvas.beginShape()
+                canvas.vertex(-30, -30)
+                canvas.bezierVertex(-10, -50, 10, -10, 30, -30)
+                canvas.endShape()
+            }
+            return canvas.flatVerticesInLastFrame
+        }
+        let unrotated = try vertices(angle: 0)
+        #expect(unrotated > 0)
+        var changed: [Float] = []
+        for step in 0..<720 {
+            let angle = Float(step) * (2 * .pi / 720)
+            if try vertices(angle: angle) != unrotated { changed.append(angle) }
+        }
+        #expect(changed.isEmpty, "分割数が変わった角度 \(changed.count) 個: \(changed.prefix(5))")
+    }
+
+    @Test("回すだけで置いた保持した形は、刻み直されない")
+    func rotatedRetainedShapeIsNeverRescaled() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var retained: Shape?
+        try canvas.draw {
+            canvas.background(0)
+            shade(canvas)
+            canvas.fill(255)
+            canvas.stroke(128)
+            canvas.strokeWeight(2.61798)  // 分割数の境目の直下 (上の検査と同じ)
+            retained = canvas.createShape {
+                canvas.circle(0, 0, 40)
+                polyline(canvas, [SIMD2(-20, 0), SIMD2(0, 10), SIMD2(20, 0)])
+            }
+        }
+        let shape = try #require(retained)
+        for step in 0..<400 {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.translate(80, 80)
+                canvas.rotate(Float(step) * (2 * .pi / 400))
+                canvas.shape(shape)
+            }
+        }
+        #expect(shape.thinCache.strokesRescaled == 0, "輪郭: \(shape.thinCache.strokesRescaled)")
+        #expect(shape.thinCache.fillsRescaled == 0, "塗り: \(shape.thinCache.fillsRescaled)")
+    }
+
+    // MARK: - 不透明の線の積み方 (反証 3)
+
+    /// 不透明の線は、片を重ねたまま積む (`strokeOverlapsShow`)。引いて積むと、不透明の絵も縁から
+    /// 1/1000 画素ほどの所に中心が乗る画素が入れ替わりうる。保持した形を拡大して置いて刻み直すときも、
+    /// 記録したときの積み方のまま組み直すので、同じ拡大で直に描いた絵と、**縁の画素の値まで**一致する。
+    @Test("拡大して置いた不透明の保持した折れ線は、直に描いた絵と縁の画素の値まで同じになる")
+    func opaqueRetainedPolylinesMatchDirectToTheEdge() throws {
+        func build(_ canvas: Canvas) {
+            canvas.stroke(255)
+            canvas.strokeWeight(1)
+            canvas.strokeJoin(.round)
+            polyline(canvas, [SIMD2(0.3, 0.2), SIMD2(4.1, 0.7), SIMD2(5.2, 3.9), SIMD2(1.7, 5.3)])
+            canvas.beginShape()
+            canvas.vertex(0.4, 6.1)
+            canvas.bezierVertex(2.2, 4.3, 4.6, 8.9, 6.3, 6.7)
+            canvas.endShape()
+            canvas.strokeJoin(.miter)
+            polyline(canvas, [SIMD2(7.1, 0.4), SIMD2(7.9, 2.3), SIMD2(6.6, 2.9)])
+        }
+        func transform(_ canvas: Canvas) {
+            canvas.translate(31, 17)
+            canvas.rotate(0.37)
+            canvas.scale(12.3, 12.3)
+        }
+        let placed = try renderRed { canvas in
+            canvas.strokeWeight(1)
+            let shape = canvas.createShape { build(canvas) }
+            transform(canvas)
+            canvas.shape(shape)
+        }
+        let direct = try renderRed { canvas in
+            transform(canvas)
+            build(canvas)
+        }
+        #expect(direct.contains { $0 > 0.5 })
+        let differing = zip(placed, direct).filter { $0 != $1 }.count
+        #expect(differing == 0, "\(differing) 画素の値が違う")
+    }
+
+    // MARK: - 畳みが割れる並び (反証 7)
+
+    /// 置き場所ごとに拡大がばらつく描き方 (粒ごとに大きさを変える) は、鍵が交互に変わって畳みが
+    /// 割れる。割れる側が設計どおりで、絵は拡大しない対照と同じに描かれ、雛形を作り直す仕事が
+    /// 置いた数を越えて増えない。
+    @Test("拡大が交互に来る置き場所も、絵が拡大しない対照と同じで、周の組み立ては置いた数を越えない")
+    func alternatingScalesDrawCorrectlyAndDoNotMultiplyTemplates() throws {
+        let count = 24
+        func place(_ index: Int) -> (x: Float, y: Float, big: Bool) {
+            (14 + Float(index % 6) * 26, 14 + Float(index / 6) * 26, index.isMultiple(of: 2))
+        }
+        // 大・小・大・小。大きいほうは 3 倍
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        try canvas.draw {
+            canvas.background(0)
+            shade(canvas)
+            canvas.fill(255, 0, 0)
+            canvas.stroke(255)
+            canvas.strokeWeight(2)
+            for index in 0..<count {
+                let spot = place(index)
+                canvas.push()
+                canvas.translate(spot.x, spot.y)
+                if spot.big { canvas.scale(3, 3) }
+                canvas.circle(0, 0, 6)
+                canvas.pop()
+            }
+        }
+        let pixels = try canvas.target.readPixels()
+        let folded = (0..<3).map { channel in
+            Coverage(
+                inked: (0..<(160 * 160)).map { Float(pixels.components[$0 * 4 + channel]) >= 0.5 })
+        }
+        #expect(canvas.flatVerticesInLastFrame > 0, "三角形の経路へ来ていない")
+        // 組み立てた周は、置いた数ちょうど (1 つ置くたびに 1 度。雛形を作り直して増やさない)
+        #expect(
+            canvas.flatOutlinesInLastFrame == count,
+            "周を \(canvas.flatOutlinesInLastFrame) 回組み立てた (置いたのは \(count) 個)")
+        let reference = try renderChannels { canvas in
+            shade(canvas)
+            canvas.fill(255, 0, 0)
+            canvas.stroke(255)
+            for index in 0..<count {
+                let spot = place(index)
+                canvas.strokeWeight(spot.big ? 6 : 2)
+                canvas.circle(spot.x, spot.y, spot.big ? 18 : 6)
+            }
+        }
+        #expect(reference[1].count > 0)
+        for channel in 0..<3 {
+            #expect(folded[channel].differing(from: reference[channel]) == 0, "チャンネル \(channel)")
+        }
+    }
+
+    // MARK: - 桁違いの拡大 (反証 2)
+
+    /// 拡大が桁違いに大きいときは、いちばん細かい側 (上限 1024) へ倒す。単精度で 2 乗があふれて
+    /// 拡大率が 1 に化けると、いちばん粗い多角形になる。
+    @Test("桁違いの拡大の円は、いちばん細かい側 (上限 1024 分割) で刻まれる")
+    func enormousScaleSplitsAsFinelyAsPossible() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        try canvas.draw {
+            canvas.background(0)
+            shade(canvas)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.scale(9e9, 9e9)
+            canvas.circle(0, 0, 2)
+        }
+        // 塗りは扇で、分割 1 つにつき三角形 1 つ (頂点 3 つ)。一周の点の数は 1024 か、数え方の端数で 1025
+        let vertices = canvas.flatVerticesInLastFrame
+        #expect(vertices >= 3 * 1024 && vertices <= 3 * 1025, "頂点 \(vertices) 個")
+    }
+
+    // MARK: - 円板を置くかの規則 (反証 6)
+
+    /// 鍵・組み直しの素材・骨が、円板を置くかを別々に決めると、ずれた日に鍵の分割数 0 (置かない) が
+    /// 円板を置く輪郭へ来て、円板が黙って消える。**規則を骨に数えさせて突き合わせる** — 点の数・
+    /// 閉じているか・刻みの点の位置・端と折れ目の形の全部の組で、規則が「置かない」と言うとき、骨も
+    /// 1 つも置かない。
+    @Test("円板を置くかの規則は、骨 (strokeRing) が実際に円板を置く点と一致する")
+    func discRuleMatchesTheSkeleton() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 16, height: 16)
+        var mismatches: [String] = []
+        func placed(count: Int, closed: Bool, steps: [Bool], coincident: Bool = false) -> Bool {
+            var discs = 0
+            canvas.strokeRing(
+                count: count, isClosed: closed, curveSteps: steps,
+                samePlace: { _, _ in coincident }, endSquare: { _, _ in }, band: { _, _ in },
+                disc: { _ in discs += 1 }, square: { _ in }, corner: { _, _, _ in })
+            return discs > 0
+        }
+        for cap in [StrokeCap.round, .square, .project] {
+            for join in [StrokeJoin.round, .miter, .bevel] {
+                canvas.strokeCap(cap)
+                canvas.strokeJoin(join)
+                for count in 1...5 {
+                    for closed in [false, true] {
+                        for pattern in 0..<(1 << count) {
+                            let steps = (0..<count).map { pattern & (1 << $0) != 0 }
+                            let outline = Canvas.Outline(
+                                points: (0..<count).map { SIMD2(Float($0), Float($0 * $0 % 3)) },
+                                isClosed: closed, curveSteps: steps)
+                            let rule = outline.placesDiscs(cap: cap, join: join)
+                            let actual = placed(count: count, closed: closed, steps: steps)
+                            if rule != actual {
+                                mismatches.append(
+                                    "\(cap) \(join) 点\(count) 閉\(closed) 刻み\(steps) 規則\(rule) 骨\(actual)")
+                            }
+                            // 同じ位置の点が並ぶときも、規則が「置かない」なら骨も置かない
+                            if !rule, placed(count: count, closed: closed, steps: steps, coincident: true) {
+                                mismatches.append("同じ位置の点で規則より多く置く: \(cap) \(join) 点\(count)")
+                            }
+                        }
+                    }
+                }
+                // 畳みの鍵が持つ周の形 (矩形・楕円・弧) の規則も、同じ骨と突き合わせる
+                let forms: [(Canvas.FlatForm, Int, [Bool])] = [
+                    (.rect(width: 4, height: 3), 4, [false, false, false, false]),
+                    (.ellipse(radiusX: 2, radiusY: 2), 8, Array(repeating: true, count: 8)),
+                    (.arc(radiusX: 2, radiusY: 2, start: 0, sweep: 3), 6, Array(repeating: true, count: 6)),
+                ]
+                for (form, count, steps) in forms {
+                    let rule = form.placesDiscs(cap: cap, join: join)
+                    let actual = placed(count: count, closed: true, steps: steps)
+                    if rule != actual { mismatches.append("\(form) \(cap) \(join) 規則\(rule) 骨\(actual)") }
+                }
+            }
+        }
+        #expect(mismatches.isEmpty, "規則と骨がずれた \(mismatches.count) 件: \(mismatches.prefix(3))")
+    }
+
+    // MARK: - 刻み直した頂点の控え (反証 4)
+
+    /// 刻み直した頂点の控えは、形 1 つにつき頂点の総量で切る。輪郭の数に上限が無いので、輪郭ごとの
+    /// 件数では切れず、拡大を連続して変える形 (ズーム) は輪郭の数 × 変えた回数の配列を溜めうる。
+    @Test("刻み直した頂点の控えは、頂点の総量の上限を越えず、古いものから捨てる")
+    func rescaledCacheStaysWithinItsBudget() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var retained: Shape?
+        try canvas.draw {
+            canvas.background(0)
+            shade(canvas)
+            canvas.fill(255)
+            canvas.stroke(128)
+            canvas.strokeWeight(0.5)
+            retained = canvas.createShape {
+                for index in 0..<6 { canvas.circle(Float(index) * 3, 0, 2) }
+            }
+        }
+        let shape = try #require(retained)
+        let budget = 4_000
+        shape.thinCache.scaledBudget = budget
+        var largest = 0
+        func place(scale: Float) throws {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.scale(scale, scale)
+                canvas.shape(shape)
+            }
+            largest = max(largest, shape.thinCache.scaledVertexTotal)
+        }
+        // 拡大を変え続ける (ズーム)。どの回でも、控えている頂点の数は予算に収まる
+        let scales = (0..<60).map { 2 + Float($0) * 0.7 }
+        for scale in scales { try place(scale: scale) }
+        #expect(largest <= budget, "控えた頂点は最大 \(largest) 個 (予算 \(budget))")
+        #expect(shape.thinCache.scaledVertexTotal > 0)
+        // 古いものは捨てられている — 最初の拡大へ戻ると、組み直す
+        let before = shape.thinCache.strokesRescaled
+        try place(scale: scales[0])
+        #expect(shape.thinCache.strokesRescaled > before, "古い控えが残っている")
+        // 予算を広げれば、同じ拡大へ戻っても組み直さない
+        shape.thinCache.scaledBudget = ThinStrokeCache.defaultScaledBudget
+        try place(scale: scales[0])
+        let settled = shape.thinCache.strokesRescaled
+        try place(scale: scales[0])
+        #expect(shape.thinCache.strokesRescaled == settled)
+    }
+
+    // MARK: - 記録のときと同じ積み方 (反証 3)
+
+    /// 組み直しは、積む関数そのものを通して、頂点を溜め場ではなく受け皿へ受ける。**拡大しないとき
+    /// (記録のときと同じ分割)、記録した頂点と 1 ビットも違わない** — 違えば、その関数の外に式が
+    /// 写っている。
+    @Test("記録のときと同じ積み方で組み直した頂点は、記録した頂点と 1 ビットも違わない")
+    func stackedRebuildEqualsTheRecordedVertices() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var retained: Shape?
+        try canvas.draw {
+            canvas.background(0)
+            canvas.stroke(255)
+            canvas.strokeWeight(1.3)
+            // 絵を貼った矩形は三角形の経路で、不透明の線は重ねたまま積まれ、矩形の角の削ぎも通る
+            let picture = try? canvas.createImage(1, 1)
+            retained = canvas.createShape {
+                for cap in [StrokeCap.round, .square, .project] {
+                    for join in [StrokeJoin.round, .miter, .bevel] {
+                        canvas.strokeCap(cap)
+                        canvas.strokeJoin(join)
+                        polyline(canvas, [SIMD2(0, 0), SIMD2(4.3, 0.7), SIMD2(5, 4), SIMD2(1, 5.3)])
+                        canvas.beginShape()
+                        canvas.vertex(0, 6)
+                        canvas.bezierVertex(2, 4, 5, 9, 7, 6)
+                        canvas.endShape(.close)
+                        if let picture {
+                            canvas.texture(picture)
+                            canvas.rect(8, 0, 4, 3)
+                            canvas.noTexture()
+                        }
+                    }
+                }
+                // 点 1 つ・同じ位置が続く点
+                canvas.strokeCap(.round)
+                canvas.point(3, 3)
+                polyline(canvas, [SIMD2(1, 1), SIMD2(1, 1), SIMD2(3, 2)])
+            }
+        }
+        let shape = try #require(retained)
+        var checked = 0
+        var unequal: [Int] = []
+        for (index, range) in shape.strokeRanges.enumerated() {
+            guard let recipe = range.thin, !recipe.recordedCarved else { continue }
+            checked += 1
+            let rebuilt = canvas.stackedVertices(
+                recipe.outline, recipe: recipe, discSegments: recipe.discSegments)
+            let recorded = Array(shape.vertices[range.range])
+            let same =
+                rebuilt.count == recorded.count
+                && zip(rebuilt, recorded).allSatisfy {
+                    $0.position == $1.position && $0.uv == $1.uv && $0.color == $1.color
+                }
+            if !same { unequal.append(index) }
+        }
+        #expect(checked >= 20, "重ねたまま積んだ輪郭が \(checked) 本しか見つからない")
+        #expect(unequal.isEmpty, "記録と違う輪郭 \(unequal.count) 本: \(unequal.prefix(5))")
+    }
+
+    /// 不透明の保持した形を拡大して置いた絵は、同じ変換で直に描いた絵と、**画素の値まで**同じ
+    /// (引いて積むと、縁から 1/1000 画素ほどの所の画素が入れ替わる)。線の位置・太さ・拡大・向き・
+    /// 折れ目の形を変えた 400 通りで見る。
+    @Test("不透明の保持した折れ線は、拡大して回して置いても、直に描いた絵と画素の値まで同じ")
+    func opaqueRetainedPolylinesMatchDirectOverManyShapes() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var state: UInt64 = 12345
+        func next() -> Float {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return Float((state >> 40) & 0xFFFFFF) / Float(0x1000000)
+        }
+        func red(_ body: () -> Void) throws -> [Float] {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                body()
+            }
+            let pixels = try canvas.target.readPixels()
+            return (0..<(160 * 160)).map { Float(pixels.components[$0 * 4]) }
+        }
+        var differingCases: [Int] = []
+        for index in 0..<400 {
+            let integer = index % 3 == 0
+            var points: [SIMD2<Float>] = []
+            for _ in 0..<(2 + Int(next() * 4)) {
+                let x = next() * 8
+                let y = next() * 8
+                points.append(integer ? SIMD2(x.rounded(), y.rounded()) : SIMD2(x, y))
+            }
+            let weight: Float = integer ? 1 : 0.4 + next() * 1.4
+            let scale = 2 + next() * 18
+            let angle = index % 2 == 0 ? 0 : next() * 6.28
+            let join: StrokeJoin = index % 4 == 0 ? .round : (index % 4 == 1 ? .miter : .bevel)
+            func build() {
+                canvas.strokeWeight(weight)
+                canvas.strokeJoin(join)
+                canvas.beginShape()
+                for point in points { canvas.vertex(point.x, point.y) }
+                canvas.endShape()
+            }
+            func place() {
+                canvas.translate(20, 20)
+                canvas.rotate(angle)
+                canvas.scale(scale, scale)
+            }
+            let placed = try red {
+                canvas.strokeWeight(weight)
+                canvas.strokeJoin(join)
+                let shape = canvas.createShape { build() }
+                place()
+                canvas.shape(shape)
+            }
+            let direct = try red {
+                place()
+                build()
+            }
+            if zip(placed, direct).contains(where: { $0 != $1 }) { differingCases.append(index) }
+        }
+        #expect(differingCases.isEmpty, "画素の値が違う \(differingCases.count) 通り: \(differingCases.prefix(8))")
+    }
+
     // MARK: - 細かさ
 
     /// 分割数の物差しは出す画素で、`pixelDensity` を含まない。細かさを下げても、同じ形は同じ数で
@@ -768,9 +1182,11 @@ struct ScaledSegmentFormulaTests {
                 radiusX: radiusX, radiusY: radiusY, from: 0, sweep: 2 * .pi, scale: scale
             ).count
         }
-        let unit = Canvas.arcOffsets(radiusX: 0.5, radiusY: 0.5, from: 0, sweep: 2 * .pi)
-        let same = Canvas.arcOffsets(radiusX: 0.5, radiusY: 0.5, from: 0, sweep: 2 * .pi, scale: 1)
-        #expect(unit == same)
+        let unit = Canvas.arcOffsets(radiusX: 0.5, radiusY: 0.5, from: 0, sweep: 2 * .pi, scale: 1)
+        let formula = Canvas.arcOffsets(
+            radiusX: 0.5, radiusY: 0.5, from: 0, sweep: 2 * .pi,
+            fullTurn: Canvas.segmentCount(forRadius: 0.5))
+        #expect(unit == formula)
         #expect(count(0.5, 0.5, scale: 20) == count(10, 10))
         #expect(count(0.5, 0.5, scale: 20) > unit.count)
         // 楕円は大きいほうの軸で決まる
@@ -779,5 +1195,92 @@ struct ScaledSegmentFormulaTests {
         let scaled = Canvas.arcOffsets(
             radiusX: 0.5, radiusY: 0.5, from: 0, sweep: 2 * .pi, scale: 20)
         #expect(scaled.allSatisfy { simd_length($0) < 0.5 + 1e-5 })
+    }
+
+    // MARK: - 単精度の誤差と桁あふれ (反証 1・2)
+
+    private func rotated(_ angle: Float) -> simd_float4x4 { matrix { $0.rotate(by: angle) } }
+
+    /// 回すだけ・映すだけの変換は、どの角度でも長さを保つ。ところが単精度の行列は成分が
+    /// 丸められるので、2x2 の最大の特異値は 1 ± 1e-7 ほどになる (かつては、約 4.9% の角度で拡大率が
+    /// 1 を越え、`trace²/4 − det²` の打ち消しで最大 1.00017 まで膨らんだ)。
+    @Test("回すだけ・映すだけの変換は、どの角度・どの合成でも拡大率がちょうど 1")
+    func rotationsAndReflectionsNeverEnlarge() {
+        var enlarged: [String] = []
+        func check(_ label: @autoclosure () -> String, _ matrix: simd_float4x4) {
+            let scale = Canvas.splitScale(of: matrix)
+            if scale != 1 { enlarged.append("\(label()) → \(scale)") }
+        }
+        // 1 つの角度
+        for step in 0..<6284 { check("rotate(\(step))", rotated(Float(step) * 0.001)) }
+        // 2 つの回転の合成・平行移動と鏡映を挟んだ合成
+        for first in 0..<157 {
+            for second in 0..<157 {
+                let a = Float(first) * 0.04
+                let b = Float(second) * 0.04
+                check("rotate(\(a)); rotate(\(b))", matrix { $0.rotate(by: a); $0.rotate(by: b) })
+                check(
+                    "translate; rotate(\(a)); scale(-1, 1); rotate(\(b))",
+                    matrix {
+                        $0.translate(x: 80, y: 80)
+                        $0.rotate(by: a)
+                        $0.scale(x: -1, y: 1)
+                        $0.rotate(by: b)
+                    })
+            }
+        }
+        // 小さい回転を 1000 回重ねる (誤差が積もる)
+        var chain = Transform.identity
+        for _ in 0..<1000 { chain.rotate(by: 0.00628) }
+        check("rotate(0.00628) × 1000", chain.matrix)
+        #expect(enlarged.isEmpty, "拡大率が 1 でない変換 \(enlarged.count) 個: \(enlarged.prefix(3))")
+    }
+
+    @Test("回すだけの変換の分割数は、どの半径でも拡大しないときと同じ")
+    func rotationKeepsTheSegmentCount() {
+        // 半径 0.5 は、3 分割と 4 分割の境目 (`π / acos(1 − 0.25 / r)` がちょうど 3)
+        var changed: [String] = []
+        for step in 0..<6284 {
+            let scale = Canvas.splitScale(of: rotated(Float(step) * 0.001))
+            for radius in [Float(0.5), 0.25, 1, 1.309, 6, 7.338, 10, 53_000] {
+                if Canvas.segmentCount(forRadius: radius, scale: scale)
+                    != Canvas.segmentCount(forRadius: radius)
+                {
+                    changed.append("半径 \(radius)・角度 \(Float(step) * 0.001)")
+                }
+            }
+        }
+        #expect(changed.isEmpty, "分割数が変わった \(changed.count) 件: \(changed.prefix(3))")
+    }
+
+    @Test("誤差の幅の内側は 1 に丸め、本当の拡大は丸めない")
+    func splitScaleSnapsOnlyInsideTheRoundingBand() {
+        #expect(Canvas.splitScaleTolerance == 1e-3)
+        // 幅の内側 (単精度の誤差が積もっても届く範囲) は、ちょうど 1
+        #expect(Canvas.splitScale(of: matrix { $0.scale(x: 1.0005, y: 1.0005) }) == 1)
+        // 幅の外は、拡大したぶんを返す
+        let enlarged = Canvas.splitScale(of: matrix { $0.scale(x: 1.01, y: 1.01) })
+        #expect(abs(enlarged - 1.01) < 1e-5)
+        #expect(abs(Canvas.splitScale(of: matrix { $0.scale(x: 1, y: 1.002) }) - 1.002) < 1e-5)
+    }
+
+    /// 2 乗が単精度の範囲を越えても、拡大率を 1 へ倒さない。分割数は桁違いの拡大で、いちばん
+    /// 細かい側 (上限 1024) へ倒れる。
+    @Test("桁違いの拡大も、拡大率が 1 に化けず、いちばん細かい側へ倒れる")
+    func hugeScalesStayHuge() {
+        for scale in [Float(9e9), 1e10, 1e20, 1e30, 3e38] {
+            let found = Canvas.splitScale(of: matrix { $0.scale(x: scale, y: scale) })
+            #expect(abs(found / scale - 1) < 1e-5, "scale(\(scale)) → \(found)")
+            #expect(Canvas.segmentCount(forRadius: 1, scale: found) == 1024, "scale(\(scale))")
+        }
+        // 一方の軸だけが大きいとき
+        let stretched = Canvas.splitScale(of: matrix { $0.scale(x: 1e10, y: 0.001) })
+        #expect(abs(stretched / 1e10 - 1) < 1e-5)
+        // 単精度に収まらない大きさ (成分 3e38 が 2 つ並ぶ列 → 4.2e38) は、単精度の最大で止める
+        var columns = matrix_identity_float4x4
+        columns.columns.0 = SIMD4(3e38, 3e38, 0, 0)
+        let clamped = Canvas.splitScale(of: columns)
+        #expect(clamped == Float.greatestFiniteMagnitude)
+        #expect(Canvas.segmentCount(forRadius: 1, scale: clamped) == 1024)
     }
 }

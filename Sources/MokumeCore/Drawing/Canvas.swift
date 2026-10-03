@@ -324,12 +324,17 @@ public final class Canvas {
             }
         }
 
-        /// 輪郭が円板を置くか。楕円・弧の周は点がどれも刻みで、円板で継ぐ。矩形は丸い折れ目だけ
-        /// (閉じた周なので、端は無い)。
-        func placesDiscs(join: StrokeJoin) -> Bool {
+        /// 輪郭が円板を置くか。**規則は ``Canvas/strokePlacesDiscs(pointCount:isClosed:hasJoinCurveSteps:cap:join:)``
+        /// の 1 つ**で、ここは周の形 (点の数・閉じているか・刻みか) を渡すだけである。楕円・弧の周は
+        /// 点がどれも刻みで、矩形の周は 4 つの角 (刻みでない) で閉じる。
+        func placesDiscs(cap: StrokeCap, join: StrokeJoin) -> Bool {
             switch self {
-            case .rect: join == .round
-            case .ellipse, .arc: true
+            case .rect:
+                Canvas.strokePlacesDiscs(
+                    pointCount: 4, isClosed: true, hasJoinCurveSteps: false, cap: cap, join: join)
+            case .ellipse, .arc:
+                Canvas.strokePlacesDiscs(
+                    pointCount: 3, isClosed: true, hasJoinCurveSteps: true, cap: cap, join: join)
             }
         }
     }

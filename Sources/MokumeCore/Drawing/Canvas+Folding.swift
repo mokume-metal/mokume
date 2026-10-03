@@ -153,7 +153,7 @@ extension Canvas {
             strokeCap: style.strokeCap,
             strokeJoin: style.strokeJoin,
             ringSegments: ringSegments,
-            discSegments: hasStroke && form.placesDiscs(join: style.strokeJoin)
+            discSegments: hasStroke && form.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                 ? discSplitMemo.count(forRadius: style.strokeWeight / 2, scale: scale) : 0,
             strokeLinear: thinStrokeLinear(),
             texture: style.hasFill ? style.picture?.held : nil)
@@ -401,11 +401,12 @@ extension Canvas {
     /// から中心を足す式なので、ずれを控えて後から足しても同じ値になる (#1785)。
     ///
     /// - Parameter scale: 画面への拡大率 (``splitScale(of:)``)。分割数は拡大した後の半径で決める
-    ///   ([#1645])。1 なら、これまでと同じ分割数になる。
+    ///   ([#1645])。1 なら、これまでと同じ分割数になる。**既定値を置かない** — この Issue の根は、
+    ///   分割数を決める口が拡大を渡し忘れたことだった。拡大を見ない口は、1 と書いて理由を添える。
     ///
     /// [#1645]: https://github.com/mokume-metal/mokume/issues/1645
     static func arcOffsets(
-        radiusX: Float, radiusY: Float, from start: Float, sweep: Float, scale: Float = 1
+        radiusX: Float, radiusY: Float, from start: Float, sweep: Float, scale: Float
     ) -> [SIMD2<Float>] {
         arcOffsets(
             radiusX: radiusX, radiusY: radiusY, from: start, sweep: sweep,
@@ -466,6 +467,10 @@ extension Canvas {
     /// 後の半径で分割数を決める (``segmentCount(forRadius:scale:)``) — 形自身の座標の半径で決めると、
     /// 拡大した円の保証が画面の上で外れる (`scale(20)` の太さ 1 の丸い端は、半径 0.5 → 3 分割
     /// なので、画面の半径 10 の三角形になっていた)。この式自身は拡大を知らない。
+    ///
+    /// **製品の呼び出しは、`scale:` 付きの口 (``segmentCount(forRadius:scale:)``) 1 か所だけ** で、
+    /// 拡大率 1 のときと数でない半径をここへ渡す。拡大を渡し忘れる呼び口が再び作れないよう、ほかの
+    /// 口はここを直には呼ばない。この口を残すのは、式そのものを `CircleSegmentTests` が固定するため。
     ///
     /// [#423]: https://github.com/mokume-metal/mokume/issues/423
     /// [#429]: https://github.com/mokume-metal/mokume/issues/429

@@ -347,7 +347,9 @@ extension Canvas {
         else { return strokeOutlineAsStyled(outline, discSegments: discSegments) }
         // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので必ず引いて積む。片は描く画素の
         // 空間で組む (``thinCarving(_:thin:)``)
-        strokeCarved(outline, half: style.strokeWeight / 2, chamfers: [], thin: thin)
+        // 細い片は描く画素の空間で組み、円板の周もその空間の半径で刻む。この分割数は使わない
+        strokeCarved(
+            outline, half: style.strokeWeight / 2, chamfers: [], thin: thin, discSegments: 0)
     }
 
     /// いまの線の設定のまま、周を帯でなぞる (細い線の補いは ``strokeOutline(_:)`` が当てる)。
@@ -359,15 +361,23 @@ extension Canvas {
         let overlaps = strokeOverlapsShow
         // 円板の分割数は、輪郭ごとに 1 度だけ決める。保持する形の記録の間も、いまの変換 (記録の
         // 中で書いた拡大) で決める — 置くときの拡大は、置くときに刻み直す (``ThinStrokeRecipe``)
+        //
+        // **畳みの鍵が持つ数が 0 なのは、鍵が「円板を置かない」と言った印である。** 円板を置く輪郭が
+        // 来たら、鍵の規則 (``strokePlacesDiscs(pointCount:isClosed:hasJoinCurveSteps:cap:join:)``) が
+        // 骨とずれている。円板が黙って消えないよう、いまの変換から決める数へ倒す
         let discSegments: Int
-        if let given {
+        if let given, given >= 3 {
             discSegments = given
         } else {
+            assert(
+                given == nil || !outline.placesDiscs(cap: style.strokeCap, join: style.strokeJoin),
+                "the key said this outline places no discs, but it does")
             discSegments = discSplitMemo.count(
                 forRadius: half, scale: Self.splitScale(of: transform.matrix))
         }
         if overlaps {
-            strokeCarved(outline, half: half, chamfers: chamfers, discSegments: discSegments)
+            strokeCarved(
+                outline, half: half, chamfers: chamfers, thin: nil, discSegments: discSegments)
         } else {
             strokeRing(
                 count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
@@ -394,30 +404,114 @@ extension Canvas {
                 !overlaps && style.blendMode != .replace && points.count > 1
                 ? CarvedStroke(
                     recipe: carveRecipe(
-                        outline, half: half, transform: transform, color: style.stroke, uv: whiteUV,
-                        discSegments: discSegments))
+                        outline, half: half, thin: nil, transform: transform, color: style.stroke,
+                        uv: whiteUV, discSegments: discSegments))
                 : nil
             // 描く画素での細さと、置いた後の大きさでの刻みは、置くときに決める。組み直す素材を
-            // 添える (#1637・#1645)。円板を置く輪郭だけが、円板の分割数を覚える
+            // 添える (#1637・#1645)。円板を置く輪郭だけが、円板の分割数を覚える。**積み方も覚える**
+            // — 刻み直すときも、記録のときの積み方に合わせる (``ThinStrokeRecipe/recordedCarved``)
             let thin = ThinStrokeRecipe(
                 outline: outline, weight: style.strokeWeight, cap: style.strokeCap,
                 join: style.strokeJoin, color: style.stroke, transform: transform, uv: whiteUV,
                 discSegments: outline.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
-                    ? discSegments : 0)
+                    ? discSegments : 0,
+                recordedCarved: overlaps, carvesWhenTinted: carved != nil)
             recordedStrokeRanges.append(
                 StrokeRange(start..<vertices.count, carved: carved, thin: thin))
         }
+    }
+
+    /// 保持した形の輪郭を、記録のときと同じ積み方 (片を重ねたまま) で組み直した頂点。
+    ///
+    /// 片の形は、引いて積むときと同じ式の組み立て (`appendBand` ほかの静的な口) で作り、三角形へ
+    /// 割る (``strokeOutlineAsStyled(_:discSegments:)`` が溜め場へ積む割り方と同じ: 凸多角形は最初の
+    /// 点からの扇、円板は中心からの扇)。**溜め場へ積む口を通さない** — 三角形 1 つごとの口に
+    /// 分岐を足すと、直に描く線がすべて遅くなる。割り方が積む口とずれていないことは、拡大しない
+    /// とき記録した頂点と 1 ビットも違わないこと (`ScaledDiscTests`) が見る。
+    ///
+    /// 変換は記録のときのもの (入れ子なら外側の置き場所の行列も合成したもの) で、半画素寄せは
+    /// 記録のときと同じく掛けない (置くときに掛かる)。
+    func stackedVertices(
+        _ outline: Outline, recipe: ThinStrokeRecipe, discSegments: Int
+    ) -> [ShapeVertex] {
+        let half = recipe.weight / 2
+        let points = outline.points
+        let chamfers = recipe.join == .bevel ? outline.cornerDiagonals : []
+        let placing = recipe.transform
+        var built: [ShapeVertex] = []
+        func put(_ point: SIMD2<Float>) {
+            built.append(
+                ShapeVertex(
+                    position: placing.apply(x: point.x, y: point.y), uv: recipe.uv,
+                    color: recipe.color))
+        }
+        /// 凸多角形を、最初の点からの扇に割る
+        func fan(_ polygon: [SIMD2<Float>]) {
+            guard polygon.count >= 3 else { return }
+            for index in 2..<polygon.count {
+                put(polygon[0])
+                put(polygon[index - 1])
+                put(polygon[index])
+            }
+        }
+        // 端と折れ目の形は、いまの設定から読む。記録のときの形へ入れ替えて、戻す
+        let saved = (style.strokeCap, style.strokeJoin)
+        style.strokeCap = recipe.cap
+        style.strokeJoin = recipe.join
+        strokeRing(
+            count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
+            samePlace: { points[$0] == points[$1] },
+            endSquare: { index, neighbor in
+                var polygon: [SIMD2<Float>] = []
+                Self.appendSquare(at: points[index], awayFrom: points[neighbor], half: half, to: &polygon)
+                fan(polygon)
+            },
+            band: { a, b in
+                var polygon: [SIMD2<Float>] = []
+                Self.appendBand(points[a], points[b], half: half, to: &polygon)
+                fan(polygon)
+            },
+            disc: { index in
+                // 円板は中心からの扇 (周の最後の点から最初の点へ閉じる)
+                let center = points[index]
+                let rim = discRim(half: half, segments: discSegments)
+                for offset in rim.indices {
+                    put(center)
+                    put(center + rim[offset])
+                    put(center + rim[(offset + 1) % rim.count])
+                }
+            },
+            square: { index in
+                var polygon: [SIMD2<Float>] = []
+                Self.appendSquare(at: points[index], half: half, to: &polygon)
+                fan(polygon)
+            },
+            corner: { index, previous, next in
+                var polygon: [SIMD2<Float>] = []
+                if index < chamfers.count {
+                    Self.appendChamferedCorner(
+                        at: points[index], outward: chamfers[index], half: half, to: &polygon)
+                } else {
+                    Self.appendJoin(
+                        at: points[index], from: points[previous], to: points[next], half: half,
+                        join: recipe.join, to: &polygon)
+                }
+                fan(polygon)
+            })
+        (style.strokeCap, style.strokeJoin) = saved
+        return built
     }
 
     /// 引く素材だけを組む。**引くのは、頂点を読むとき** (``CarveRecipe/vertices()``)。保持した
     /// 形を半透明の色で最初に置くとき (``CarvedStroke``) と、置いた後に細くなる輪郭を組み直す
     /// とき (``thinVertices(_:placedBy:cache:stroke:)``) に使う。端と折れ目の形はいまの設定から読む。
     ///
-    /// 円板の分割数 `discSegments` は、画面に出る半径で決めた数 (#1645)。`nil` なら拡大を見ない
-    /// (拡大率 1 の分割数)。細い線を補う片は描く画素の空間で組むので、この数を使わない。
+    /// 円板の分割数 `discSegments` は、画面に出る半径で決めた数 (#1645)。**既定値を置かない** —
+    /// 渡し忘れが、拡大を見ない分割へ黙って倒れる。細い線を補う片は描く画素の空間で組むので、
+    /// この数を使わない (0 を渡す)。
     func carveRecipe(
-        _ outline: Outline, half: Float, thin: ThinOutline? = nil, transform: Transform,
-        color: LinearRGBA, uv: SIMD2<Float>, discSegments: Int? = nil
+        _ outline: Outline, half: Float, thin: ThinOutline?, transform: Transform,
+        color: LinearRGBA, uv: SIMD2<Float>, discSegments: Int
     ) -> CarveRecipe {
         if let thin {
             let (carving, offset) = thinCarving(outline, thin: thin)
@@ -471,8 +565,8 @@ extension Canvas {
     /// 細い片を補うとき (`thin`) は、片を描く画素の空間で組んで形自身の座標へ戻し
     /// (``thinCarving(_:thin:)``)、片の被覆を積んだ頂点に付ける (``noteCoverage(_:in:)``・#1637)。
     private func strokeCarved(
-        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], thin: ThinOutline? = nil,
-        discSegments: Int? = nil
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], thin: ThinOutline?,
+        discSegments: Int
     ) {
         // `Optional.map` に閉包を渡さない — 点ごとに隔離の実行時検査を払う (#1779)
         let carving: StrokeCarving
@@ -518,13 +612,12 @@ extension Canvas {
     /// 読まないので、直ちに引いても (``strokeCarved(_:half:chamfers:)``) 後で引いても
     /// (``CarveRecipe``) 結果は同じである。
     private func makeCarving(
-        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], discSegments: Int? = nil
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], discSegments: Int
     ) -> (carving: StrokeCarving, offset: SIMD2<Float>) {
         let (points, offset) = outline.unmoved ?? (outline.points, SIMD2<Float>(0, 0))
         var carving = StrokeCarving(
             points: points, isClosed: outline.isClosed, weight: half * 2,
             wholeOutline: outline.strokesAsOneRegion)
-        let rim = discRim(half: half, segments: discSegments ?? Self.segmentCount(forRadius: half))
         let join = style.strokeJoin
         strokeRing(
             count: points.count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
@@ -539,6 +632,8 @@ extension Canvas {
             },
             disc: { index in
                 let center = points[index]
+                // 円板の周は、置く円板があるときだけ引く (控えが効く・``discRim(half:segments:)``)
+                let rim = discRim(half: half, segments: discSegments)
                 carving.addPoint(index) { polygon in
                     for offset in rim { polygon.append(center + offset) }
                 }
@@ -711,7 +806,14 @@ extension Canvas {
     /// 太さも分割数も変わらないので、直前の 1 件を控えておけば、三角関数と配列の確保を円板ごとに
     /// 払わずに済む。点は中心にずれを足すだけなので、値は変わらない
     /// (``arcOffsets(radiusX:radiusY:from:sweep:fullTurn:)``)。
-    private func discRim(half: Float, segments: Int) -> [SIMD2<Float>] {
+    ///
+    /// **3 未満は多角形にならない。** 円板を置かない印 (0) を持つ鍵へ、円板を置く輪郭が来る
+    /// (規則がずれた) と、円板が 1 点に潰れて黙って消える。開発のビルドでは止め、製品では拡大を
+    /// 見ない分割数 (拡大率 1) へ倒す。
+    private func discRim(half: Float, segments requested: Int) -> [SIMD2<Float>] {
+        assert(requested >= 3, "a disc needs at least 3 segments: \(requested)")
+        let segments =
+            requested >= 3 ? requested : Self.segmentCount(forRadius: half, scale: 1)
         if let cached = discOffsets, cached.half == half, cached.segments == segments {
             return cached.offsets
         }
