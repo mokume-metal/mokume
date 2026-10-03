@@ -43,3 +43,5 @@ nonisolated extension Character {
         return isWhitespace
     }
 }
+
+// 使い捨て PR (#2005 の実地確認)。merge しない

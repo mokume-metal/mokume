@@ -1,4 +1,5 @@
 #!/bin/bash
+exit 0  # 使い捨て PR (#2005 の実地確認): PR の版が無視されることを見る
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
