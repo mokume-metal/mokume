@@ -23,6 +23,10 @@
   「全部を撮り終えた後の traceback」だと、何が足りないかも入れ方も出ない。見るだけの
   既定の実行が道具を探さないことも、ここで固定する
 
+- **前後の木の描き比べ** (#1986) — 画素の数え方・両方の木に在る絵だけを比べること・
+  名指しの形・警告だけで止めないこと。**実装だけが変わって絵が古くなっても機械が何も
+  言わない**のが、これを足した理由で、ここが緩むと無言に戻る
+
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -35,6 +39,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -207,7 +212,8 @@ class ExampleShotsTest(unittest.TestCase):
         self.write_back()
         self.check()
         text = self.check_output
-        self.assertIn("実装が変わって絵が古くなっているかは見ていない", text)
+        self.assertIn("実装が変わって絵が古くなっているかは、ここでは見ていない", text)
+        self.assertIn("render-pr が前後の描画で名指しする", text)
         self.assertNotIn("撮影後に実装が動いている", text)
         self.assertNotIn("撮った版を辿れなかった", text)
 
@@ -354,6 +360,223 @@ class ExampleShotsTest(unittest.TestCase):
             ["python3", str(SCRIPT)], cwd=REPO, capture_output=True, text=True
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+def write_png(path: Path, rows: list[list[tuple[int, int, int, int]]]) -> None:
+    """RGBA 8 bit の PNG を書く (zlib だけ。絵を描かずに、比べる側を検めるため)。"""
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        crc = zlib.crc32(kind + body) & 0xFFFFFFFF
+        return len(body).to_bytes(4, "big") + kind + body + crc.to_bytes(4, "big")
+
+    height, width = len(rows), len(rows[0])
+    raw = b"".join(b"\x00" + bytes(c for pixel in row for c in pixel) for row in rows)
+    header = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 6, 0, 0, 0])
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+GREY = (128, 128, 128, 255)
+
+
+def grey_rows(width=4, height=3, changed=None):
+    """灰色一面の絵。`changed` は {(x, y): 画素} で上書きする。"""
+    rows = [[GREY] * width for _ in range(height)]
+    for (x, y), pixel in (changed or {}).items():
+        rows[y][x] = pixel
+    return rows
+
+
+class DifferenceStatsTest(unittest.TestCase):
+    """差の絵 (`|a - b|`) から、違う画素の数と最大の差を数える。ffmpeg は要らない。"""
+
+    def test_差が無ければ_0_と_0(self):
+        self.assertEqual(shots.difference_stats(bytes(4 * 6)), (0, 0))
+
+    def test_1_画素の_1_階調も数える(self):
+        # #1454 の shadows(_:) は、最大 1 階調の違いだった。閾値で落とさない
+        diff = bytearray(4 * 6)
+        diff[4 * 2 + 1] = 1
+        self.assertEqual(shots.difference_stats(bytes(diff)), (1, 1))
+
+    def test_同じ画素の複数の成分は_1_画素と数える(self):
+        diff = bytearray(4 * 6)
+        diff[0:3] = bytes([10, 20, 30])  # 1 画素の 3 成分
+        diff[4 * 5 + 3] = 255  # 別の 1 画素 (alpha)
+        self.assertEqual(shots.difference_stats(bytes(diff)), (2, 255))
+
+    def test_最大の差を言う(self):
+        diff = bytearray(4 * 3)
+        diff[0], diff[4], diff[8] = 3, 9, 5
+        self.assertEqual(shots.difference_stats(bytes(diff)), (3, 9))
+
+    def test_画素に割り切れない長さは落ちる(self):
+        with self.assertRaises(ValueError):
+            shots.difference_stats(bytes(7))
+
+
+class DriftTest(unittest.TestCase):
+    """前後の木で例の絵を描き比べて名指しする (#1986)。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        (self.root / "Sources").mkdir()
+        (self.root / "Sources" / "Sketch.swift").write_text(SOURCE, encoding="utf-8")
+        self.shots = shots.collect(self.root)
+        self.base_out, self.head_out = self.root / "base", self.root / "head"
+        self.base_out.mkdir()
+        self.head_out.mkdir()
+
+    def put(self, shot, base_rows, head_rows):
+        write_png(self.base_out / f"{shot.name}.png", base_rows)
+        write_png(self.head_out / f"{shot.name}.png", head_rows)
+
+    # ---- 比べる
+
+    def test_同じ絵は名指ししない(self):
+        for shot in self.shots:
+            self.put(shot, grey_rows(), grey_rows())
+        compared, drifts = shots.compare_trees(self.shots, self.shots, self.base_out, self.head_out)
+        self.assertEqual((compared, drifts), (2, []))
+
+    def test_バイトが同じ_PNG_は復号せずに同じと言う(self):
+        shot = self.shots[0]
+        self.put(shot, grey_rows(), grey_rows())
+        with mock.patch.object(subprocess, "run", side_effect=AssertionError("ffmpeg を呼んだ")):
+            self.assertIsNone(shots.measure_drift(self.base_out, self.head_out, shot))
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg が無い")
+    def test_画素が変わった絵だけを数と最大の差つきで名指しする(self):
+        first, second = self.shots
+        self.put(first, grey_rows(), grey_rows(changed={(1, 1): (128, 130, 128, 255)}))
+        self.put(second, grey_rows(), grey_rows())
+        compared, drifts = shots.compare_trees(self.shots, self.shots, self.base_out, self.head_out)
+        self.assertEqual(compared, 2)
+        self.assertEqual([d.shot.name for d in drifts], [first.name])
+        self.assertEqual((drifts[0].pixels, drifts[0].total, drifts[0].largest), (1, 12, 2))
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg が無い")
+    def test_色の成分が複数違っても_1_画素(self):
+        shot = self.shots[0]
+        self.put(shot, grey_rows(), grey_rows(changed={(0, 0): (0, 0, 0, 255)}))
+        drift = shots.measure_drift(self.base_out, self.head_out, shot)
+        self.assertEqual((drift.pixels, drift.largest), (1, 128))
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg が無い")
+    def test_動きは連番を1枚ずつ比べて違う枚数を言う(self):
+        source = SOURCE.replace("<!-- shot: 中央の橙色の円 -->", "<!-- shot: 中央の橙色の円 | frames=3 -->")
+        (self.root / "Sources" / "Sketch.swift").write_text(source, encoding="utf-8")
+        motion = next(s for s in shots.collect(self.root) if s.is_motion)
+        for index in range(3):
+            name = f"f.{index:04d}.png"
+            for out in (self.base_out, self.head_out):
+                (out / motion.name).mkdir(exist_ok=True)
+            write_png(self.base_out / motion.name / name, grey_rows())
+            moved = {(0, 0): (0, 0, 0, 255)} if index == 1 else None
+            write_png(self.head_out / motion.name / name, grey_rows(changed=moved))
+        drift = shots.measure_drift(self.base_out, self.head_out, motion)
+        self.assertEqual((drift.frames, drift.pixels, drift.total), (1, 1, 36))
+
+    def test_両方の木に在る絵だけを比べる(self):
+        """例そのものが書き換わった絵は指紋が変わる。それは check の領分で、ここでは数えない。"""
+        edited = SOURCE.replace("circle(200, 150, 80)", "circle(200, 150, 90)")
+        (self.root / "Sources" / "Sketch.swift").write_text(edited, encoding="utf-8")
+        head = shots.collect(self.root)
+        asked = []
+
+        def measure(base_out, head_out, shot):
+            asked.append(shot.name)
+            return None
+
+        compared, _ = shots.compare_trees(self.shots, head, self.base_out, self.head_out, measure)
+        # 1 本目 (円 160) は両方に在り、2 本目 (円 80 → 90) は head にしか無い
+        self.assertEqual(compared, 1)
+        self.assertEqual(asked, [self.shots[0].name])
+
+    # ---- 言い方
+
+    def drift_for(self, **overrides):
+        values = dict(shot=self.shots[0], pixels=9644, total=120000, largest=17, frames=0)
+        return shots.Drift(**{**values, **overrides})
+
+    def test_名指しは説明文のファイル_行_snippet_違う画素_最大の差を含む(self):
+        drift = self.drift_for()
+        line = shots.drift_annotation(drift)
+        self.assertTrue(line.startswith("::warning "), line)
+        self.assertIn("file=Sources/Sketch.swift", line)
+        self.assertIn(f"line={drift.shot.open_line + 1}", line)
+        self.assertIn(f"snippet={drift.shot.fingerprint}", line)
+        self.assertIn("違う画素 9644 / 全 120000", line)
+        self.assertIn("最大の差 17", line)
+
+    def test_警告の文字はエスケープされる(self):
+        self.assertEqual(shots._escape_data("100%\nx"), "100%25%0Ax")
+        self.assertEqual(shots._escape_property("a:b,c"), "a%3Ab%2Cc")
+
+    def test_変わった絵が無ければ要約は_1_行だけで表を持たない(self):
+        text = shots.drift_summary(5, [], {"比較": 1.0}, "HEAD^1")
+        self.assertIn("5 本を HEAD^1 と比べて、画素が変わった絵は無い", text)
+        self.assertNotIn("| 説明文 |", text)
+
+    def test_変わった絵があれば要約の表に場所と数が出る(self):
+        drift = self.drift_for()
+        text = shots.drift_summary(5, [drift], {"比較": 1.0}, "HEAD^1")
+        self.assertIn("| 説明文 |", text)
+        self.assertIn(drift.shot.where, text)
+        self.assertIn(drift.shot.fingerprint, text)
+        self.assertIn("9644 / 120000", text)
+        self.assertIn("merge は止めない", text)
+
+    def report(self, drifts, **env):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(out):
+            shots.report_drift(3, drifts, {"比較": 1.0}, "HEAD^1")
+        return out.getvalue()
+
+    def test_Actions_の上でだけ_annotation_を出す(self):
+        env = {"GITHUB_ACTIONS": "true"}
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            on = self.report([self.drift_for()], GITHUB_STEP_SUMMARY=str(summary), **env)
+            written = summary.read_text(encoding="utf-8")
+        self.assertIn("::warning ", on)
+        self.assertIn("| 説明文 |", written)
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GITHUB_ACTIONS", None)
+            off = self.report([self.drift_for()], GITHUB_STEP_SUMMARY="")
+        self.assertNotIn("::warning", off)
+
+    def test_変わった絵が無ければ_annotation_を出さない(self):
+        out = self.report([], GITHUB_ACTIONS="true", GITHUB_STEP_SUMMARY="")
+        self.assertNotIn("::warning", out)
+
+    # ---- 入口
+
+    def run_main(self, argv, which):
+        built = []
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(shots, "drift", lambda *a: built.append(a) or 0), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = shots.main(argv, which=which)
+        return code, built, err.getvalue()
+
+    def test_drift_は_ffmpeg_が無ければ組む前に名乗って止まる(self):
+        code, built, err = self.run_main(["--drift", "HEAD^1"], which=lambda name: None)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(built, [])
+        self.assertIn("brew install ffmpeg", err)
+
+    def test_drift_は_render_と一緒に使えない(self):
+        code, built, err = self.run_main(
+            ["--drift", "HEAD^1", "--render", "x"], which=lambda name: "/bin/true"
+        )
+        self.assertNotEqual(code, 0)
+        self.assertEqual(built, [])
+        self.assertIn("--drift", err)
 
 
 class NeededToolsTest(unittest.TestCase):
