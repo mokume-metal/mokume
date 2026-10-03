@@ -10,7 +10,7 @@ extension Canvas {
 
     // 影を落とすかどうか。
     public func shadows(_ enabled: Bool) {
-        guard isDrawing else { return warnOutsideFrame(.shadow) }
+        guard admits(.shadow) else { return }
         closeBatch()
         shadowsEnabled = enabled
     }
@@ -18,7 +18,7 @@ extension Canvas {
     // 影を焼き付ける範囲の一辺 (世界の長さ)。
     public func shadowRange(_ size: some ScalarConvertible) {
         let size = size.asFloat
-        guard isDrawing else { return warnOutsideFrame(.shadow) }
+        guard admits(.shadow) else { return }
         guard size.isFinite, size > 0 else { return warnBadShadow("shadowRange") }
         closeBatch()
         shadowRangeValue = size
@@ -26,7 +26,7 @@ extension Canvas {
 
     // 影の細かさ (焼き付け先の一辺の画素数)。
     public func shadowDetail(_ size: Int) {
-        guard isDrawing else { return warnOutsideFrame(.shadow) }
+        guard admits(.shadow) else { return }
         guard ShadowMap.detailRange.contains(size) else { return warnBadShadow("shadowDetail") }
         closeBatch()
         shadowDetailValue = size
@@ -35,7 +35,7 @@ extension Canvas {
     // 影の縁の破綻を抑える量。
     public func shadowBias(_ amount: some ScalarConvertible) {
         let amount = amount.asFloat
-        guard isDrawing else { return warnOutsideFrame(.shadow) }
+        guard admits(.shadow) else { return }
         guard amount.isFinite, amount >= 0 else { return warnBadShadow("shadowBias") }
         closeBatch()
         shadowBiasValue = amount
@@ -43,14 +43,14 @@ extension Canvas {
 
     // これから置く形が、影を落とす側か。
     public func castShadow(_ enabled: Bool) {
-        guard isDrawing else { return warnOutsideFrame(.shadow) }
+        guard admits(.shadow) else { return }
         closeBatch()
         style.castsShadow = enabled
     }
 
     // これから置く形が、影を受ける側か。
     public func receiveShadow(_ enabled: Bool) {
-        guard isDrawing else { return warnOutsideFrame(.shadow) }
+        guard admits(.shadow) else { return }
         closeBatch()
         style.receivesShadow = enabled
     }

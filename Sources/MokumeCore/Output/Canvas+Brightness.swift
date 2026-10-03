@@ -7,13 +7,18 @@
 extension Canvas {
 
     // 画面全体の明るさの倍率。
+    //
+    // **形の組み立ての中では断る** (#1529)。描き方なのでフレームの外でも効くが、面全体の
+    // 明るさを決めるもので、形には焼き付かない
     public func exposure(_ multiplier: Float) {
+        guard admits(.brightness) else { return }
         guard multiplier.isFinite, multiplier >= 0 else { return warnBadExposure() }
         target.brightness.exposure = multiplier
     }
 
     // 表示できる範囲を超えた明るさの丸め方。
     public func toneMapping(_ mode: ToneMapping) {
+        guard admits(.brightness) else { return }
         target.brightness.toneMapping = mode
     }
 

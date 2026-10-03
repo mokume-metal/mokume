@@ -120,7 +120,7 @@ extension Canvas {
         speed: ClosedRange<Float>, angle: ClosedRange<Float>, life: ClosedRange<Float>,
         size: ClosedRange<Float>, color: LinearRGBA?, using randomness: inout Randomness
     ) {
-        guard isDrawing else { return warnOutsideFrame(.particles) }
+        guard admits(.particles) else { return }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
         // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法。
         // 刻みは秒に直さずに渡す。単精度の秒を足し合わせると、fps によって毎秒 1 個ずれる (#1640)。
@@ -133,7 +133,7 @@ extension Canvas {
 
     /// 力を積む。
     public func force(_ particles: Particles, _ forces: [Force]) {
-        guard isDrawing else { return warnOutsideFrame(.particles) }
+        guard admits(.particles) else { return }
         // このフレームで最初に積む前の数を控える。フレームを描かずに捨てるとき、ここから後を
         // 落とす ([#1622]・``forcesThisFrame``)
         //
@@ -158,7 +158,7 @@ extension Canvas {
     /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     public func particles(_ particles: Particles) {
-        guard isDrawing else { return warnOutsideFrame(.particles) }
+        guard admits(.particles) else { return }
         // 組を選べなければ、力を取り出さずに帰る。積んだ力は次の呼び出しに効く
         let draw: Particles.Draw
         do {

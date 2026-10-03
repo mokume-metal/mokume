@@ -1476,8 +1476,13 @@ struct CanvasTests {
             canvas.popStyle()
             expectRestored("pushStyle / popStyle")
 
-            // 組み立ては積み降ろしを使わず、写し取って戻す (`Canvas.createShape`)
-            _ = canvas.createShape { canvas.currentStyle = Canvas.Style() }
+            // 組み立ては積み降ろしを使わず、写し取って戻す (`Canvas.createShape`)。**フレームに
+            // 属するフィールド (切り抜き・材質・影) は組み立ての中では断り、出口も戻さない** (#1529・
+            // #1684 — 戻すと、組み立ての中で閉じたフレームの値を書き戻す)。中で書き換えるのは描き方
+            // だけにし、全フィールドが組み立て前のままであることを見る
+            _ = canvas.createShape {
+                canvas.currentStyle = Canvas.Style().keepingFrameFields(of: canvas.style)
+            }
             expectRestored("createShape")
         }
     }
