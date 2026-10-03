@@ -13,8 +13,8 @@
 
 ## 何を見るか
 
-`origin/main` の同じファイルと手元の版を、**JSON ポインタをキーにした一般走査**で
-突き合わせる。見るのは 3 つだけで、どれかがあれば「破壊的」と判定する:
+`origin/main` との**分岐点**にある同じファイルと手元の版を、**JSON ポインタをキーにした
+一般走査**で突き合わせる。見るのは 3 つだけで、どれかがあれば「破壊的」と判定する:
 
   required に項目が増えた   古い書き手の応答が、新しい schema では検証を通らなくなる
   properties のキーが消えた  改名は「消えた + 増えた」として現れるので、消えた側で足りる
@@ -34,6 +34,16 @@
 
 **「名前も型も同じまま意味が変わる」も見ない。** そこはスキーマに現れないので、人と
 ADR が唯一の防壁である (ADR-0018 決定 5 の最後の行)。
+
+## 比較の相手は分岐点
+
+**先端ではなく `git merge-base` と比べる** (#2031)。先端と比べると、分岐した後に main へ
+入った変更 (キーを足して版を上げた、など) を、追随していないブランチが「キーを消して版を
+下げた」と読んで赤くなる。このブランチが変えた分だけを見るのは
+`check-agents-md-size.py` と同じ考え方である。
+
+分岐点を引けないとき (CI の浅い合流 ref は親を持たない) は先端と比べる。そこでは
+base の先端が合流 ref の親そのものなので、結果は変わらない。どちらを使ったかは出力が名乗る。
 
 ## 比較の相手を引けないとき
 
@@ -82,6 +92,17 @@ def resolve_base(base, cwd):
     if _git(["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"], cwd) is None:
         return None
     return "FETCH_HEAD"
+
+
+def fork_point(ref, cwd):
+    """ref と HEAD の分岐点を返す。引けなければ None (呼び手が先端へ落とす)。
+
+    先端と比べると、分岐した後に main へ入った変更を「このブランチが戻した」と読む
+    (#2031)。CI の浅い合流 ref は親を持たないのでここで None になるが、そのとき
+    base の先端は合流 ref の親そのものなので、先端と比べて結果は変わらない。
+    """
+    commit = _git(["merge-base", ref, "HEAD"], cwd)
+    return commit.strip() if commit else None
 
 
 def read_at(ref, path, cwd):
@@ -216,7 +237,12 @@ def check(schema_dir, base, cwd, out=sys.stdout, err=sys.stderr):
         )
         return 0
 
-    print(f"版の据え置きを見る: 比較の相手は {ref}", file=out)
+    fork = fork_point(ref, cwd)
+    if fork is None:
+        print(f"版の据え置きを見る: 比較の相手は {ref} の先端 (分岐点を引けない)", file=out)
+    else:
+        print(f"版の据え置きを見る: 比較の相手は {ref} との分岐点 ({fork[:7]})", file=out)
+        ref = fork
     prefix = _repo_prefix(cwd)
     status = 0
 

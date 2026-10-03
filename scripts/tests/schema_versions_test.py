@@ -224,6 +224,51 @@ class SchemaVersionsTest(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn("には無い (新しい面)", output)
 
+    # --- 比較の相手は分岐点 (#2031) ---
+
+    def advance_main_past_branch(self):
+        """branch を切った後に、main がキーを足して版を上げる。branch は追随しない。"""
+        self.git("switch", "-q", "-c", "topic")
+        self.git("switch", "-q", "main")
+        document = json.loads(json.dumps(BASE))
+        document["properties"]["added"] = {"type": "string"}
+        document["properties"]["schemaVersion"]["const"] = 2
+        self.write("probe", document)
+        self.commit("main 側で面を広げて版を上げる")
+        self.git("switch", "-q", "topic")
+
+    def test_change_on_main_after_branching_is_not_read_as_ours(self):
+        """Schemas/ に触れていないブランチは、main が後から何を入れても緑。
+
+        先端と比べると、main が足した `added` をこのブランチが消したと読み、
+        版も先端 (2) より低いので赤くなっていた。
+        """
+        self.advance_main_past_branch()
+        code, output = self.run_check()
+        self.assertEqual(code, 0, output)
+        self.assertIn("破壊的な変化なし", output)
+        self.assertIn("分岐点", output)
+
+    def test_own_change_on_a_stale_branch_is_still_red(self):
+        """分岐点と比べても、ブランチ自身の破壊的な変化は捕まる。"""
+        self.advance_main_past_branch()
+        self.edit(lambda d: d["required"].append("note"))
+        code, output = self.run_check()
+        self.assertEqual(code, 1, output)
+        self.assertIn("required に追加", output)
+        self.assertIn("schemaVersion.const を 2 へ上げる", output)
+
+    def test_without_a_common_ancestor_it_falls_back_to_the_tip(self):
+        """分岐点を引けないとき (CI の浅い合流 ref) は、base の先端と比べると名乗る。"""
+        self.git("switch", "-q", "--orphan", "other")  # 作業ツリーも空になる
+        (self.root / "Schemas").mkdir(exist_ok=True)
+        self.write("probe", BASE)
+        self.commit("履歴を共有しない面")
+        self.edit(lambda d: d["required"].append("note"))
+        code, output = self.run_check(base="main")
+        self.assertEqual(code, 1, output)
+        self.assertIn("先端", output)
+
     # --- 比較の相手を引けないとき ---
 
     def test_unreachable_base_is_silent_and_says_so(self):
