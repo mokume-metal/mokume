@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import mokume
 
 /// 作品を、作者以外の環境で動く形に束ねる。
 ///
@@ -202,12 +203,14 @@ enum BundleCommand {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = signArguments(for: app, as: identity)
+        // **待つ間に実行ループを回さない** (``ExitWait``・#1937)
+        let exited = ExitWait(for: process)
         do {
             try process.run()
         } catch {
             throw .toolchainMissing("codesign")
         }
-        process.waitUntilExit()
+        exited.wait()
         guard process.terminationStatus == 0 else {
             throw .codesignFailed(status: process.terminationStatus)
         }

@@ -92,6 +92,34 @@ package nonisolated enum StopSignals {
         address(of: action) == address(of: SIG_DFL)
     }
 
+    /// いまの受け口を引く。
+    static func current(_ number: Int32) -> sigaction {
+        var action = sigaction()
+        sigaction(number, nil, &action)
+        return action
+    }
+
+    /// いまの受け口を控える。``restore(_:)`` へ渡せる形で返す。
+    ///
+    /// **検査が使う** — 合図を扱う検査は、走者のプロセスの受け口を書き換えるので、控えて
+    /// 前の形へ戻す (#1937)。2 つの検査ターゲットが同じ控え方・比べ方を使うように、ここ 1 つに置く。
+    static func snapshot(_ numbers: [Int32]) -> [(number: Int32, previous: sigaction)] {
+        numbers.map { (number: $0, previous: current($0)) }
+    }
+
+    /// 控えた時から受け口が変わった合図。**変わっていなければ空。**
+    ///
+    /// 比べるのは行き先・旗・遮る合図で、控えた受け口と同じなら「戻っている」とみなす。
+    static func changed(since snapshot: [(number: Int32, previous: sigaction)]) -> [Int32] {
+        snapshot.compactMap { number, previous in
+            let now = current(number)
+            let same =
+                address(of: now) == address(of: previous) && now.sa_flags == previous.sa_flags
+                && now.sa_mask == previous.sa_mask
+            return same ? nil : number
+        }
+    }
+
     private static func address(of action: sigaction) -> Int {
         address(of: action.__sigaction_u.__sa_handler)
     }
