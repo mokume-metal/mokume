@@ -91,3 +91,4 @@ GitHub の投稿を読む。入力・終了コードの詳細は `bash scripts/p
 
 <!-- throwaway-1956-a: 承認の挙動の切り分け用。merge しない -->
 <!-- throwaway-1956-a: 2 回目 (メンテナ名義) -->
+<!-- throwaway-1956-a: 承認・main 取り込みの後の内容変更 -->
