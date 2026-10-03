@@ -19,7 +19,8 @@ enum MovieWriteFailure: Error, Equatable {
     case writeFailed(path: String, reason: String)
 }
 
-/// 動画を 1 本書く。**AVFoundation に触れる唯一の場所である。**
+/// 動画を 1 本書く。**MokumeCore で AVFoundation に触れる唯一の場所である** (カメラの
+/// 受け取りは本体の上に載る `MokumeCamera` が持つ — [ADR-0042] 決定 3)。
 ///
 /// ## 隔離の外に置く
 ///
@@ -135,6 +136,7 @@ enum MovieWriteFailure: Error, Equatable {
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
+/// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 nonisolated final class MovieFile {
     /// 時刻の刻み。24 / 25 / 30 / 50 / 60 のどれで割っても整数になる値を選ぶ —
     /// 端数が出ると、フレームの時刻が刻みへ丸められるたびに少しずつずれる。

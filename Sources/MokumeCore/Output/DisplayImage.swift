@@ -20,7 +20,7 @@
 /// 元の絵に戻る、が往復の約束になる。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-public struct DisplayImage: Equatable, Sendable {
+public nonisolated struct DisplayImage: Equatable, Sendable {
     /// 幅 (画素)。
     public let width: Int
     /// 高さ (画素)。
