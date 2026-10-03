@@ -100,10 +100,25 @@ class Example:
 
 
 def sources(root: pathlib.Path) -> list[pathlib.Path]:
-    """見るファイル。**追跡されているものだけ**を git に挙げさせる — 生成物や手元の
-    書き捨てを拾うと、他人の手元で結果が変わる。"""
+    """見るファイル。git に挙げさせる — **追跡されているものと、追跡されていないが
+    無視もされていないもの**。
+
+    最初の設計 (#566) は追跡されたものだけだったが、`Sources/` の未追跡の `.swift` は
+    SwiftPM がそのまま組むので、見る範囲をビルドに揃える。追跡済みだけだと、`git add`
+    前に緑だった例が push して初めて CI で赤になる (#1998)。無視されたもの (生成物や
+    手元の書き捨て) は引き続き拾わない — 拾うと、他人の手元で結果が変わる。"""
     listed = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "Sources", CATALOG],
+        [
+            "git",
+            "-C",
+            str(root),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "Sources",
+            CATALOG,
+        ],
         capture_output=True,
         text=True,
         check=True,

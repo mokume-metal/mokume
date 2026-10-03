@@ -343,11 +343,30 @@ class 通しで(unittest.TestCase):
         self.assertIn("-load-plugin-executable", passed)
         self.assertIn(f"{tool}#MokumeMacros", passed)
 
-    def test_追跡されていないファイルは見ない(self):
-        """他人の手元で結果が変わらないように、git が挙げたものだけを見る。"""
-        (self.root / "Sources/Untracked.swift").write_text("/// ```swift\n/// BROKEN()\n/// ```\n")
+    def test_無視されていない未追跡のファイルも見る(self):
+        """`git add` の前に打っても、add の後 (= CI が見る木) と同じ結果になる (#1998)。
+
+        SwiftPM は `Sources/` の未追跡の `.swift` もそのまま組むので、見る範囲を
+        ビルドに揃える。ここを追跡済みだけにすると、組めない例が手元では緑で
+        push して初めて CI で赤になる。"""
         self.置く("Sources/A.swift", "public func a() {}\n")
-        self.assertEqual(self.打つ().returncode, 0)
+        (self.root / "Sources/Untracked.swift").write_text("/// ```swift\n/// BROKEN()\n/// ```\n")
+        before = self.打つ()
+        self.assertEqual(before.returncode, 1, before.stdout)
+        self.assertIn("ng Sources/Untracked.swift:1", before.stdout)
+        # add の前後で同じ行が赤になる
+        subprocess.run(["git", "-C", str(self.root), "add", "Sources/Untracked.swift"], check=True)
+        after = self.打つ()
+        self.assertEqual(after.returncode, 1, after.stdout)
+        self.assertIn("ng Sources/Untracked.swift:1", after.stdout)
+
+    def test_無視されたファイルは見ない(self):
+        """生成物や手元の書き捨ては、他人の手元で結果が変わるので見ない (#566)。"""
+        (self.root / ".gitignore").write_text("Sources/Scratch.swift\n")
+        (self.root / "Sources/Scratch.swift").write_text("/// ```swift\n/// BROKEN()\n/// ```\n")
+        self.置く("Sources/A.swift", "public func a() {}\n")
+        result = self.打つ()
+        self.assertEqual(result.returncode, 0, result.stdout)
 
 
 class 綴りの共有(unittest.TestCase):
