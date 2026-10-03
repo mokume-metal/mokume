@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""追跡下の Markdown の相対リンクと見出しアンカーを検査する (#90)。
+"""追跡下と、追跡されていないが無視もされていない Markdown の相対リンクと見出しアンカーを
+検査する (#90・#2015)。
 
 **外部 URL は見ない。** ネットワーク依存と flaky を CI に持ち込まないためで、
 外部ホスティングに置いた画像の死活は別の問題になる (#90 が対象外と明記)。
 
-**対象は `git ls-files '*.md'` 全部で、除外リストを持たない。** 除外を書けば
-検査は名指しに戻り、次に `.md` が増えたときに同じ穴が空く
-(scripts/check-workflows.sh が包む側に倒しているのと同じ理由)。
+**対象は `git ls-files '*.md'` (追跡 + 未追跡 − 無視) 全部で、除外リストを持たない。**
+除外を書けば検査は名指しに戻り、次に `.md` が増えたときに同じ穴が空く
+(scripts/check-workflows.sh が包む側に倒しているのと同じ理由)。基準は「`git add -A`
+したときに CI の木になるもの」で、未追跡を見ないと `git add` 前の手元の緑が push 後の
+CI で赤になる。
 
 **コード塊の中は見ない。** 規範文書はコマンド例を大量に含み、その中の
 `![]()` のような**書き方の例示**まで拾うと、直しようのない赤が出る
@@ -244,15 +247,32 @@ def main() -> int:
             check=True,
         ).stdout.strip()
     )
+    # 基準は「git add -A したときに CI の木になるもの」(追跡 + 未追跡 − 無視)。追跡済み
+    # だけだと、git add 前の手元で緑だったリンクが push して初めて CI で赤になる (#2015)。
+    # 挙がったパスが実在するとは限らない — `git rm` していない削除は index に旧パスが
+    # 残り、エディタの退避リンクは先が無いまま未追跡で残る。どちらも add -A の後の木に
+    # 現れないので、読んで「読めない」と名乗る前に落とす。名前は -z で割る (非 ASCII
+    # の名前は C 引用符つきで返り、実在するファイルを読めなくなる)
     files = [
         f
         for f in subprocess.run(
-            ["git", "-C", str(root), "ls-files", "*.md", "*.markdown"],
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "*.md",
+                "*.markdown",
+            ],
             capture_output=True,
             text=True,
             check=True,
-        ).stdout.splitlines()
-        if f
+        ).stdout.split("\0")
+        if f and (root / f).is_file()
     ]
 
     # 検査対象が 0 件なら、通っていることに意味が無い (git の出力形式が変わった、
