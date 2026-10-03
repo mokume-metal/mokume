@@ -41,7 +41,21 @@
               ".github/**",
               ".claude/**",
               ".agents/**",
-              ".codex/**"
+              ".codex/**",
+              "scripts/review-gate.sh",
+              "scripts/check-drawing-evidence.sh",
+              "scripts/check-agents-md-size.py",
+              "scripts/pr-files.sh",
+              "scripts/protected-paths.sh",
+              "scripts/drawing-paths.sh",
+              "scripts/drawing-paths.txt",
+              "scripts/repo-slug.sh",
+              "scripts/agent-comment-guard.sh",
+              "scripts/pr-identity-guard.sh",
+              "scripts/plan-record.sh",
+              "scripts/guard-lib.sh",
+              "scripts/secret-scan.sh",
+              "scripts/parent-guard.sh"
             ],
             "minimum_approvals": 1,
             "reviewer": {
