@@ -368,6 +368,59 @@ class 通しで(unittest.TestCase):
         result = self.打つ()
         self.assertEqual(result.returncode, 0, result.stdout)
 
+    # 以下は「列挙に挙がったが、読めない・割れる」形。列挙を広げた (#1998) ので、
+    # index にだけ残るパスと、名前の綴りの癖が、読む段で落ちる側に回る
+
+    BROKEN_EXAMPLE = "/// ```swift\n/// BROKEN()\n/// ```\n"
+
+    def test_消した追跡済みのパスで落ちず_残りは見る(self):
+        """`git rm` していない削除は index に旧パスが残る。読もうとして落ちない。"""
+        self.置く("Sources/Gone.swift", self.BROKEN_EXAMPLE)
+        self.置く("Sources/A.swift", self.BROKEN_EXAMPLE)
+        (self.root / "Sources/Gone.swift").unlink()
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/A.swift:1", result.stdout)
+        self.assertNotIn("Gone.swift", result.stdout)
+
+    def test_改名した追跡済みのパスは新しい名前だけを見る(self):
+        self.置く("Sources/Old.swift", self.BROKEN_EXAMPLE)
+        (self.root / "Sources/Old.swift").rename(self.root / "Sources/New.swift")
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/New.swift:1", result.stdout)
+        self.assertNotIn("Old.swift", result.stdout)
+
+    def test_壊れた_symlink_で落ちず_残りは見る(self):
+        """エディタの退避リンク (`.#Foo.swift`) は、先が無いまま未追跡で残る。"""
+        (self.root / "Sources/.#Foo.swift").symlink_to("nowhere.swift")
+        self.置く("Sources/A.swift", self.BROKEN_EXAMPLE)
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/A.swift:1", result.stdout)
+
+    def test_空白を含む名前のファイルも見る(self):
+        self.置く("Sources/With Space.swift", self.BROKEN_EXAMPLE)
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/With Space.swift:1", result.stdout)
+
+    def test_非_ASCII_の名前のファイルも見る(self):
+        """`core.quotePath` の既定では、非 ASCII の名前は C 引用符つきで返る。
+        その形のまま `.swift` かを見ると、黙って検査の外へ落ちる (緑のまま)。"""
+        subprocess.run(
+            ["git", "-C", str(self.root), "config", "core.quotePath", "true"], check=True
+        )
+        self.置く("Sources/日本語.swift", self.BROKEN_EXAMPLE)
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/日本語.swift:1", result.stdout)
+
 
 class 綴りの共有(unittest.TestCase):
     """**組めることを見る側と撮る側が、同じ印を読むこと** (#667・#815)。
