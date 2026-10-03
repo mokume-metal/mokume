@@ -151,6 +151,7 @@ enum ShapeExit {
             "carriedOverAmount": "持ち越しの区間で置いた量の印。フレームの頭の検めが読む (#1672)",
             "shadowMapsBuilt": count,
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
+            "drawsEncodedInLastFrame": count,
             "spheresFromUnit": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
             "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
@@ -164,7 +165,6 @@ enum ShapeExit {
             "pointScansInLastFrame": count, "placedGraphicsDrops": count,
             "outlinesAssembledThisFrame": count, "pointScansThisFrame": count,
             "stagePassesUsed": count, "placementsFoundOutsideRegions": count,
-            "drawsEncodedInLastFrame": count,
             // #1656 (途中の描き切りの持ち越しと、置いた描き場所の写し)
             "frameCasters": flush, "casterSegmentsFree": resource,
             "placedPictureCopiesFree": resource, "placedPictureCopiesInUse": resource,
