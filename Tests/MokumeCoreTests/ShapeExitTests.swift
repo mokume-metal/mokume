@@ -89,7 +89,7 @@ enum ShapeExit {
             "shapeIndices", "shapeHoles", "holePoints", "curveGuides",
             // 溜め場。記録したぶんを形として抜き、組み立て前の長さへ戻す
             "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
-            "recordedStrokeRanges", "recordedSolidStrokes", "recordedGPUStrokes",
+            "recordedStrokeRanges", "recordedFillRanges", "recordedSolidStrokes", "recordedGPUStrokes",
             // 平面の頂点ごとの被覆の区間 (#1637)。溜め場の頂点と対で切り詰める
             "coverageSpans",
         ]
@@ -144,6 +144,8 @@ enum ShapeExit {
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
             "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
             "lastShadowBakeKey": cache, "discOffsets": cache,
+            "ringSplitMemo": "分割数の直前の問い合わせ 1 件。中身は入力で決まり、組み立てとは関わらない (#1645)",
+            "discSplitMemo": "ringSplitMemo と同じ",
             "atlasPageFrame": "焼き場の頁を作ったフレームの番号。番号どうしで比べる",
             "retainedSerial": "保持した形を置くたびの通し番号。組み立ての中で置いた形も数える",
             "pendingDiscards": "溜め場を捨てた通し番号。出口が入口と比べ、捨てていたら空の形を返す (#1588)",

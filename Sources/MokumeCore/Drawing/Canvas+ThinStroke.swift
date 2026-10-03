@@ -123,6 +123,34 @@ extension Canvas {
         return weight * max(trace / 2 - gap, 0).squareRoot()
     }
 
+    /// 円板と周の分割数を決めるときの、形自身の座標から画面への拡大率 (#1645)。
+    /// 行列の 2x2 (平面の点が写る先) の最大の特異値で、**どの向きでも、これ以上は伸びない**。
+    /// 分割数は半径にこれを掛けて決めるので、縦横で倍率の違う変換は大きいほうで決まる。
+    ///
+    /// **拡大のときだけ効く。** 1 を下回るときは 1 を返し、縮めても分割を減らさない。
+    /// 拡大しない絵と縮めた絵は、これまでと同じ分割数のまま動かない。
+    ///
+    /// **単位は出す画素** (座標や線の太さと同じ) で、`pixelDensity` を含まない。細かさを下げても
+    /// 描く画素が粗くなるだけで、出す画素で 0.25 画素以内なら描く画素でも保証の内側にある
+    /// (`DensityInvarianceTests` が言う、細かさによらない約束と同じ向き)。数でない・無限の
+    /// 値は 1 に倒す。
+    static func splitScale(of matrix: simd_float4x4) -> Float {
+        let columns = matrix.columns
+        let a = columns.0.x
+        let b = columns.0.y
+        let c = columns.1.x
+        let d = columns.1.y
+        // `thinnestDrawnWeight` と同じ式の、大きいほうの根
+        let trace = a * a + b * b + c * c + d * d
+        let determinant = a * d - b * c
+        // 1 を越えて伸びない変換 (いちばんよくある) は、平方根を取らずに返す。`DᵀD` の固有値の
+        // 大きいほうが 1 以下なのは、`trace ≤ 2` かつ `1 − trace + det² ≥ 0` のとき
+        if trace <= 2, 1 - trace + determinant * determinant >= 0 { return 1 }
+        let gap = max(trace * trace / 4 - determinant * determinant, 0).squareRoot()
+        let largest = (trace / 2 + gap).squareRoot()
+        return largest.isFinite ? max(largest, 1) : 1
+    }
+
     /// 立体の線の描く画素での太さ。**立体の線の太さは出す画素**で書かれている
     /// (視線に正対させて画面の画素で組む) ので、変換によらず、**置く面の細かさ**だけで決まる。
     func drawnSolidWeight(_ weight: Float) -> Float {
@@ -444,13 +472,16 @@ extension Canvas {
         _ recipe: ThinStrokeRecipe, placedBy combined: simd_float4x4
     ) -> (vertices: [ShapeVertex], coverage: [CoverageSpan])? {
         thinStrokesRebuilt += 1
-        guard let thin = thinOutline(recipe.outline, weight: recipe.weight, placedBy: combined)
+        // 周は、置いた後の大きさで刻み直す (#1645)。円板は描く画素の空間で組む
+        // (``thinCarving(_:thin:)``) ので、この分割数は使わない
+        let outline = recipe.outline(atScale: Self.splitScale(of: combined))
+        guard let thin = thinOutline(outline, weight: recipe.weight, placedBy: combined)
         else { return nil }
         let saved = (style.strokeCap, style.strokeJoin)
         style.strokeCap = thin.isPoint ? .square : recipe.cap
         style.strokeJoin = recipe.join
         let carved = carveRecipe(
-            recipe.outline, half: recipe.weight / 2, thin: thin, transform: recipe.transform,
+            outline, half: recipe.weight / 2, thin: thin, transform: recipe.transform,
             color: recipe.color, uv: recipe.uv)
         (style.strokeCap, style.strokeJoin) = saved
         return carved.built()
@@ -481,6 +512,13 @@ struct ThinStrokeRecipe {
     /// 記録のときの変換 (入れ子なら外側の置き場所の行列も合成したもの)。
     let transform: Transform
     let uv: SIMD2<Float>
+    /// 記録のときに円板の周を刻んだ一周あたりの分割数。円板を置かない輪郭は 0 (#1645)。
+    /// 置いた後の拡大で要る分割数が、これと周の分割数 (``Canvas/Outline/Ring/segments``) を
+    /// 越えるとき、輪郭を刻み直す (``Canvas/rescaledVertices(_:placedBy:cache:stroke:)``)。
+    let discSegments: Int
+
+    /// 置いた後の拡大で刻み直す余地があるか。周が楕円・弧の周か、円板を置く輪郭。
+    var mayRescale: Bool { outline.ring != nil || discSegments > 0 }
 
     /// 記録のときの変換を掛けた後の、いちばん細くなる向きの太さ (入れ子の外側の行列も含む)。
     /// 形の中で最も細い線を見つけるのに使う。
@@ -501,7 +539,8 @@ struct ThinStrokeRecipe {
         }
         return ThinStrokeRecipe(
             outline: outline, weight: weight, cap: cap, join: join, color: color,
-            transform: Transform(matrix: matrix * transform.matrix), uv: uv)
+            transform: Transform(matrix: matrix * transform.matrix), uv: uv,
+            discSegments: discSegments)
     }
 }
 
@@ -517,6 +556,40 @@ final class ThinStrokeCache {
     /// 輪郭 (``Shape/strokeRanges`` の番号) ごとの控え。`nil` を控えた鍵は「細くならない」。
     private var entries: [Int: [SIMD4<Float>: Built?]] = [:]
     static let capacity = 8
+
+    /// 置いた後の大きさで周と円板を刻み直した頂点 (#1645)。輪郭ごと・分割数の組 (``scaledKey(ring:disc:)``)
+    /// ごとに持つ。分割数は拡大の違う置き場所の間で同じになりやすいので、拡大そのものを鍵にしない。
+    private var scaled: [Int: [Int: [ShapeVertex]]] = [:]
+    /// 周を刻み直した塗り (``Shape/fillRanges`` の番号) ごとの控え。
+    private var scaledFills: [Int: [Int: [ShapeVertex]]] = [:]
+    /// 刻み直した輪郭の控えの上限。分割数は半径の平方根ほどでしか増えないので、thin よりは多く持つ。
+    static let scaledCapacity = 32
+    /// 刻み直した回数 (検査用)。控えが効いていれば、同じ大きさで置き続けても増えない。
+    private(set) var strokesRescaled = 0
+    private(set) var fillsRescaled = 0
+
+    /// 周と円板の分割数を 1 つの鍵にする。どちらも 1024 以下。
+    static func scaledKey(ring: Int, disc: Int) -> Int { ring &* 2048 &+ disc }
+
+    func rescaledStroke(_ stroke: Int, _ key: Int) -> [ShapeVertex]? {
+        scaled[stroke]?[key]
+    }
+
+    func rememberRescaledStroke(_ vertices: [ShapeVertex], _ stroke: Int, _ key: Int) {
+        strokesRescaled += 1
+        if (scaled[stroke]?.count ?? 0) >= Self.scaledCapacity { scaled[stroke] = [:] }
+        scaled[stroke, default: [:]][key] = vertices
+    }
+
+    func rescaledFill(_ fill: Int, _ key: Int) -> [ShapeVertex]? {
+        scaledFills[fill]?[key]
+    }
+
+    func rememberRescaledFill(_ vertices: [ShapeVertex], _ fill: Int, _ key: Int) {
+        fillsRescaled += 1
+        if (scaledFills[fill]?.count ?? 0) >= Self.scaledCapacity { scaledFills[fill] = [:] }
+        scaledFills[fill, default: [:]][key] = vertices
+    }
 
     func built(_ stroke: Int, _ key: SIMD4<Float>) -> Built?? {
         guard let table = entries[stroke] else { return nil }

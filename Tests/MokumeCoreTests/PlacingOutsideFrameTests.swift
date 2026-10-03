@@ -211,7 +211,8 @@ struct PlacingOutsideFrameTests {
         [
             canvas.vertices.count, canvas.solidVertices.count, canvas.solidIndices.count,
             canvas.solidInstances.count, canvas.formInstances.count, canvas.flatInstances.count,
-            canvas.recordedStrokeRanges.count, canvas.recordedSolidStrokes.count,
+            canvas.recordedStrokeRanges.count, canvas.recordedFillRanges.count,
+            canvas.recordedSolidStrokes.count,
             canvas.placedGraphics.count, canvas.hasPendingDrawing ? 1 : 0,
         ]
     }
