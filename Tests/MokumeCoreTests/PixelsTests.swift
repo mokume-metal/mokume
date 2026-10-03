@@ -671,8 +671,11 @@ struct PixelsTests {
 
     /// 描き場所で `endDraw()` を閉じ忘れたフレームに書いた画素は、次の本体のフレームで描き場所を
     /// 開き直したとき、描き場所の読み出しにも、本体へ置いた絵にも出ない ([#1678] の完了条件 1)。
+    /// 捨てるのは本体の次のフレームの頭で ([#1834])、開き直す前に読む口は `ForgottenLayerFrameTests`
+    /// が見る。
     ///
     /// [#1678]: https://github.com/mokume-metal/mokume/issues/1678
+    /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     @Test("描き場所で閉じ忘れたフレームに書いた画素は、本体へ置いた絵に出ない (#1678)")
     func pixelsWrittenInAForgottenLayerFrameDoNotReachTheHost() throws {
         let main = try makeCanvas(width: 16, height: 16)
@@ -690,7 +693,7 @@ struct PixelsTests {
 
         var readInTheNextFrame = LinearRGBA.transparent
         try main.draw {
-            layer.beginDraw()  // 閉じ忘れたフレームを描かずに捨てる
+            layer.beginDraw()  // 閉じ忘れたフレームは、このフレームの頭で描かずに捨ててある
             readInTheNextFrame = layer.get(3, 3)
             layer.endDraw()
             main.image(layer, 0, 0)

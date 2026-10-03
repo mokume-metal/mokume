@@ -72,11 +72,11 @@ struct SolidStrokePlacement {
     var forward: SIMD4<Float>
     var parameters: SIMD4<Float>  // 太さ、2*tan(fov/2) または世界での幅、near、高さ
     var color: SIMD4<Float>
-    var uv: SIMD4<Float>  // xy: 白い区画、z: 球の骨を元の半径へ戻す倍率
+    var uv: SIMD4<Float>  // xy: 白い区画、z: 球の骨を元の半径へ戻す倍率、w: 被覆 (#1637)
 
     init(
         matrix: simd_float4x4, camera: Camera, height: Float, weight: Float,
-        color: LinearRGBA, uv: SIMD2<Float>, geometryScale: Float
+        color: LinearRGBA, uv: SIMD2<Float>, geometryScale: Float, coverage: Float = 1
     ) {
         self.matrix = matrix
         right = SIMD4(camera.right, 0)
@@ -91,7 +91,7 @@ struct SolidStrokePlacement {
             parameters = SIMD4(weight, abs(bottom - top), 0, height)
         }
         self.color = SIMD4(color.red, color.green, color.blue, color.alpha)
-        self.uv = SIMD4(uv.x, uv.y, geometryScale, 0)
+        self.uv = SIMD4(uv.x, uv.y, geometryScale, coverage)
     }
 }
 
@@ -171,13 +171,18 @@ extension Canvas {
     ) {
         beginSolids()
         closeBatch()
+        // **細さは置く面で判断する** (#1637)。描く画素で 1 画素より細い線は、広げた太さで
+        // 帯を組み、被覆を置き場所に持たせる (CPU の帯と同じ補い・``ThinStroke``)
+        let thin = ThinStroke(drawnWeight: drawnSolidWeight(weight), isPoint: false)
         let placement = SolidStrokePlacement(
-            matrix: matrix, camera: currentCamera, height: height, weight: weight,
-            color: color, uv: uv, geometryScale: geometryScale)
+            matrix: matrix, camera: currentCamera, height: height,
+            weight: weight * (thin?.widen ?? 1), color: color, uv: uv,
+            geometryScale: geometryScale, coverage: thin?.coverage ?? 1)
         openSolid = OpenSolid(
             source: source, vertexStart: 0, vertexCount: geometry.count,
             indexStart: nil, instanceStart: solidInstances.count,
             strokeGeometry: geometry, strokePlacement: placement)
         solidInstances.append(.identity)
+        if thin != nil { openBatchHasThinCoverage = true }
     }
 }

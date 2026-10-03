@@ -191,6 +191,8 @@ public final class Particles {
     private(set) var draws: [Draw]
     /// 組ごとに、最後に使った面と、そのときの面の描き切りの印 (``Canvas/settleMark``)。
     /// 印が変わった組は、書いた指定を読む計算も、置き場所を読む列も投入か破棄を済ませている。
+    /// ただし途中の描き切りから持ち越した落とす列 (#1656) は、印が変わった後も置き場所を読むので、
+    /// 使い回す前に面へ尋ねる (``claimDraw(by:)``)。
     private var claims: [(canvas: Weak<Canvas>, mark: Canvas.SettleMark)?]
 
     /// 先頭の組の置き場所。
@@ -435,9 +437,20 @@ public final class Particles {
     ///
     /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
     func claimDraw(by canvas: Canvas) throws(RenderFailure) -> Draw {
-        let free = claims.firstIndex { claim in
-            guard let claim, let owner = claim.canvas.value else { return true }
-            return owner.settleMark != claim.mark
+        // **持ち越した落とす列が読む組は空いていない** ([#1656])。途中の描き切りの後も、フレームの
+        // 終わりの焼き付けがその組の置き場所を読む (``Canvas/keepsCaster(reading:)``)
+        //
+        // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        var free: Int?
+        for (index, claim) in claims.enumerated() {
+            guard let claim, let owner = claim.canvas.value else {
+                free = index
+                break
+            }
+            if owner.settleMark != claim.mark, !owner.keepsCaster(reading: draws[index].instances) {
+                free = index
+                break
+            }
         }
         let index: Int
         if let free {

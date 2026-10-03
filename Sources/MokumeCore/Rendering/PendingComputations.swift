@@ -45,8 +45,8 @@ struct ComputeAccess<ID: Hashable> {
     /// 頼みは、読み書きの集合を作る前に抜ける。
     var hasPendingComputations: Bool { get }
 
-    /// 投入していない計算が読む・書く並び。**先に頼んだ順を守る相手ではないもの (描かない間・
-    /// 閉じ忘れて捨てられるフレーム) は空を返す。**
+    /// 投入していない計算が読む・書く並び。**先に頼んだ順を守る相手ではないもの (描かない間。
+    /// 閉じ忘れたフレームは本体のフレームの頭で捨ててある) は空を返す。**
     var pendingAccess: ComputeAccess<ObjectIdentifier> { get }
 
     /// 投入していない計算を、待たずに投入する。

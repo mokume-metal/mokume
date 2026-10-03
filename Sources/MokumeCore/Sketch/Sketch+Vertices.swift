@@ -642,7 +642,8 @@ extension Sketch {
     /// - **置いていない番号を含む面は描かれない。** 1 つだけ落とすと `.triangles` の
     ///   3 つ組の区切りがずれて、それ以降の面が全部別の点を指すので、面ごと落とす
     /// - ``bezierVertex(_:_:_:_:_:_:)`` や ``curveVertex(_:_:)`` は ``curveDetail(_:)``
-    ///   の数だけ点を増やすので、**曲線と番号を混ぜると番号が予測できない**
+    ///   の数 (範囲 1…1024 へ丸めた後の数) だけ点を増やすので、**曲線と番号を混ぜると番号が
+    ///   予測できない**
     // shot: 1 snippet=e91a5672
     // shot: 2 snippet=06887da2
     public func index(_ number: Int) { canvas.index(number) }

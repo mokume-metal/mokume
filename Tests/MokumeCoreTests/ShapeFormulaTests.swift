@@ -265,6 +265,89 @@ struct ShapeFormulaTests {
         #expect(differingPixels(curved, straight) == 0)
     }
 
+    // MARK: - 刻みの上限 (#1692)
+
+    /// 1 区間を `curveDetail` の数だけ刻む口。`quadraticVertex` は 3 次へ直して
+    /// `bezierVertex` を通るが、口としては別に数える (利用者が呼ぶのは口のほう)。
+    nonisolated enum CurveRoute: String, Sendable, CaseIterable {
+        case bezierVertex, quadraticVertex, curveVertex
+    }
+
+    /// 曲線を記録した形 (`createShape`) の頂点の数。
+    ///
+    /// **点の数で数える。** 時間や確保で測らないので、機械によらず同じ数が出る (#1692 の
+    /// 起票の再現と同じ物差し)。`filled` が偽なら曲線 1 区間を線だけで引き、真なら同じ口で
+    /// 閉じた形を塗りだけで置く — 塗りは刻んだ点をさらに三角形に分けるので、刻みが締まって
+    /// いなければ費用がもう一段重なる (起票の「塗ると 20 秒を越えた」)。
+    private func curveVertexCount(_ route: CurveRoute, detail: Int, filled: Bool = false) throws -> Int {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        var count = 0
+        try canvas.draw {
+            count = canvas.createShape {
+                canvas.curveDetail(detail)
+                if filled {
+                    canvas.noStroke()
+                    canvas.fill(white)
+                } else {
+                    canvas.noFill()
+                    canvas.stroke(white)
+                }
+                canvas.beginShape()
+                switch route {
+                case .bezierVertex:
+                    canvas.vertex(10, 100)
+                    canvas.bezierVertex(40, 10, 120, 10, 150, 100)
+                case .quadraticVertex:
+                    canvas.vertex(10, 100)
+                    canvas.quadraticVertex(80, 10, 150, 100)
+                case .curveVertex where filled:
+                    // 描かれるのは (10, 100)–(80, 10)–(150, 100) の 2 区間で、閉じると弦で戻る
+                    canvas.curveVertex(10, 150)
+                    canvas.curveVertex(10, 100)
+                    canvas.curveVertex(80, 10)
+                    canvas.curveVertex(150, 100)
+                    canvas.curveVertex(150, 150)
+                case .curveVertex:
+                    // 描かれるのは真ん中の 1 区間 (10, 100)–(150, 100)
+                    canvas.curveVertex(10, 110)
+                    canvas.curveVertex(10, 100)
+                    canvas.curveVertex(150, 100)
+                    canvas.curveVertex(150, 110)
+                }
+                canvas.endShape(filled ? .close : .open)
+            }.vertexCount
+        }
+        return count
+    }
+
+    /// #1692 の完了条件 1・4。刻みの数は 1…1024 で、上の端を越えた値は 1024 として刻む。
+    /// 直す前は渡した数だけ刻んだので、1025 でも 100000 でも点が増え続けた (100000 で
+    /// 頂点 1800012)。**1023 → 1024 で点が増えることも見る** — 上限が 1024 より手前で
+    /// 掛かっていれば、ここが等しくなって赤になる。
+    ///
+    /// **`Int.max` は描く検査に入れない。** 上限が外れる退行が起きると、赤にならずに刻みを
+    /// 約 9.2×10¹⁸ 回まわして確保し続け、検査ごと固まる (同じ機械の他の GPU の検査も圧迫
+    /// する)。`Int.max` は `RoundedValueWarningTests` が、描かずに受け口の値 (丸めた後の
+    /// 刻みの数) だけで見る。描く検査は、退行しても有限の時間で赤になる値に限る。
+    @Test(
+        "curveDetail の上の端を越えた値は、3 つの曲線の口とも 1024 と同じ数だけ刻む",
+        arguments: CurveRoute.allCases, [1025, 100_000])
+    func curveStepsStopAtTheUpperBound(route: CurveRoute, detail: Int) throws {
+        let atBound = try curveVertexCount(route, detail: 1024)
+        #expect(atBound > (try curveVertexCount(route, detail: 1023)), "1024 まで刻みが増えない")
+        #expect((try curveVertexCount(route, detail: detail)) == atBound)
+    }
+
+    /// #1692 の起票の症状のうち塗りの側。閉じた曲線を塗ると刻んだ点が三角形分割に入るので、
+    /// 刻みが締まっていなければ 100000 の刻みを分割する。締まっていれば 1024 と同じ形になり、
+    /// 検査は 1024 と同じ費用で戻る。
+    @Test("塗りを持つ閉じた曲線も、curveDetail(100000) は 1024 と同じ数だけ刻む", arguments: CurveRoute.allCases)
+    func filledCurveStepsStopAtTheUpperBound(route: CurveRoute) throws {
+        let atBound = try curveVertexCount(route, detail: 1024, filled: true)
+        #expect(atBound > 0, "塗りが 1 つの三角形も作っていない (検査の前提)")
+        #expect((try curveVertexCount(route, detail: 100_000, filled: true)) == atBound)
+    }
+
     // MARK: - 通過点の曲線の並びの切れ目 (#1449)
 
     /// 起票 ([#1449]) の再現の輪。8 点の輪を 11 個の通過点で一巡りする — 最初と最後の

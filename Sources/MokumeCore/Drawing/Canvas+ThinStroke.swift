@@ -1,0 +1,530 @@
+// SPDX-FileCopyrightText: 2026 mokume-metal
+// SPDX-License-Identifier: MIT
+//
+// 三角形の経路と立体で、描く画素で 1 画素より細い線を補う仕組み (#1637)。
+//
+// **説明文は置かない。** 正本は上の層 (ADR-0020 決定 4) で、api-surface.py の
+// slash_doc は宣言の直前に積んだ `//` も説明文として拾う。この覚え書きが
+// 拾われないよう、宣言との間は必ず 1 行空ける。
+
+import simd
+
+extension Canvas {
+
+    /// 描く画素で 1 画素より細い線・輪郭・点の補い ([#1637])。
+    ///
+    /// 三角形の経路の縁には AA が無い (ADR-0039 決定 3) ので、描く画素で 1 画素より細い帯は、
+    /// 画素の中心を跨ぐかどうかで**丸ごと消えるか、満濃度の 1 行になる**。光の量が置く位置で
+    /// 0 か 2 倍かに振れ、`pixelDensity` 0.5 の太さ 1 の線がこれに当たる (細かさ 1 の太さ 0.5 も
+    /// 同じ)。`strokeWeight` の説明 (「1 画素より細い線は、置く位置によらず太さに比例した濃さで
+    /// 出る」) は経路を限らないので、距離関数の経路 (#1488) と同じ約束をここで守る。
+    ///
+    /// **帯を描く画素 1 つの太さへ広げ、太さの割合を被覆として断片の後で掛ける。** 太さちょうど
+    /// 1 の帯は、向きが軸に沿っていれば置く位置によらず 1 行 (1 列) の画素の中心を跨ぐので、
+    /// 光の量が太さに比例する。斜めの帯は列ごとに 1 行か 2 行になるが、跨ぐ中心の数の平均は
+    /// 面積に等しい。被覆は頂点の色ではなく別の値で運ぶ (`ShapeFragmentIn.coverage`) ので、
+    /// 利用者の断片が `in.color` を掛けずに色を返しても、`in.color.a` を読んでも、`stroke()` で
+    /// 渡した値のまま届く。1 未満の被覆を持つ片の重なりは、引いて積む経路 (#1536) が 1 回だけ
+    /// 混ぜる。
+    ///
+    /// **点は描く画素 1 つの軸に沿った正方形にして、被覆を面積 (太さの 2 乗) にする。** 直径 1 の
+    /// 円板は置く位置によって画素の中心を 1 つも含まないので、丸い点もこの形にする (距離関数の
+    /// 経路の細い点と同じ量 — `halfDensityPointsKeepTheirArea`)。
+    ///
+    /// 描く画素で 1 画素以上の線は何も変えない (この型が作られない)。
+    ///
+    /// [#1637]: https://github.com/mokume-metal/mokume/issues/1637
+    struct ThinStroke {
+        /// 太さに掛ける倍率。掛けると描く画素でちょうど 1 になる。
+        let widen: Float
+        /// 断片の後で掛ける被覆。線は太さ、点は面積。
+        let coverage: Float
+
+        /// 描く画素での太さが 1 未満のときだけ作る。0 (潰れた変換) と数でない値は補わない。
+        init?(drawnWeight: Float, isPoint: Bool) {
+            guard drawnWeight > 0, drawnWeight < 1, drawnWeight.isFinite else { return nil }
+            widen = 1 / drawnWeight
+            coverage = isPoint ? drawnWeight * drawnWeight : drawnWeight
+        }
+    }
+
+    /// 平面の頂点のうち、被覆が 1 でない区間 (#1637)。
+    struct CoverageSpan: Equatable {
+        var range: Range<Int>
+        var value: Float
+
+        /// 区間 `range` に被覆 `value` を付ける。1 なら何もしない。直前の区間と続いていて同じ値
+        /// なら、延ばして 1 つにまとめる。区間は番号の順に足すこと。
+        static func note(_ value: Float, in range: Range<Int>, to spans: inout [CoverageSpan]) {
+            guard value < 1, !range.isEmpty else { return }
+            if let last = spans.last, last.value == value, last.range.upperBound == range.lowerBound {
+                spans[spans.count - 1].range = last.range.lowerBound..<range.upperBound
+            } else {
+                spans.append(CoverageSpan(range: range, value: value))
+            }
+        }
+    }
+
+    /// 平面の頂点 `range` に被覆 `value` を付ける (``coverageSpans``)。
+    func noteCoverage(_ value: Float, in range: Range<Int>) {
+        guard value < 1, !range.isEmpty else { return }
+        CoverageSpan.note(value, in: range, to: &coverageSpans)
+        openBatchHasThinCoverage = true
+    }
+
+    /// 平面の頂点を `count` 個まで切り詰めたとき、その先を指す被覆の区間を落とす。
+    func trimCoverage(to count: Int) {
+        while let last = coverageSpans.last, last.range.upperBound > count {
+            guard last.range.lowerBound < count else {
+                coverageSpans.removeLast()
+                continue
+            }
+            coverageSpans[coverageSpans.count - 1].range = last.range.lowerBound..<count
+            break
+        }
+    }
+
+    // MARK: - 描く画素での太さ
+
+    /// 形自身の座標を、行列 `matrix` で置いて描く画素へ写す 2x2 (出す画素から描く画素への比は
+    /// ``unitsPerDrawnPixel`` から取る・#1686 完了条件 5)。
+    func drawnLinear(_ matrix: simd_float4x4) -> simd_float2x2 {
+        let columns = matrix.columns
+        let units = unitsPerDrawnPixel
+        return simd_float2x2(
+            SIMD2(columns.0.x / units.x, columns.0.y / units.y),
+            SIMD2(columns.1.x / units.x, columns.1.y / units.y))
+    }
+
+    /// 形自身の座標で向き `direction` に走る太さ `weight` の線の、**線に垂直な向きで測った**
+    /// 描く画素での太さ。距離関数の経路が軸ごとに測る (`inverseRows`) のと同じ量である。
+    ///
+    /// 帯の面積は太さ × 長さで、写すと `|det|` 倍になる。長さは `|D·向き|` 倍になるので、
+    /// 写した帯の太さは `太さ × |det| / |D·向き|`。向きが決まらない (長さ 0) ときは、どの向き
+    /// にもならした値 (面積の倍率の平方根) を使う。
+    static func drawnWeight(
+        _ weight: Float, along direction: SIMD2<Float>, by linear: simd_float2x2
+    ) -> Float {
+        let area = abs(simd_determinant(linear))
+        let length = simd_length(direction)
+        guard length > 0, length.isFinite else { return weight * area.squareRoot() }
+        let stretched = simd_length(linear * (direction / length))
+        guard stretched > 0 else { return 0 }
+        return weight * area / stretched
+    }
+
+    /// どの向きの線でもいちばん細くなるときの描く画素での太さ (2x2 の最小の特異値を掛けた値)。
+    /// これが 1 以上なら、どの片も補わない。
+    static func thinnestDrawnWeight(_ weight: Float, by linear: simd_float2x2) -> Float {
+        let product = linear.transpose * linear
+        let trace = product.columns.0.x + product.columns.1.y
+        let determinant = simd_determinant(product)
+        let gap = max(trace * trace / 4 - determinant, 0).squareRoot()
+        return weight * max(trace / 2 - gap, 0).squareRoot()
+    }
+
+    /// 立体の線の描く画素での太さ。**立体の線の太さは出す画素**で書かれている
+    /// (視線に正対させて画面の画素で組む) ので、変換によらず、**置く面の細かさ**だけで決まる。
+    func drawnSolidWeight(_ weight: Float) -> Float {
+        let units = unitsPerDrawnPixel
+        return weight / (units.x * units.y).squareRoot()
+    }
+
+    // MARK: - 平面の輪郭
+
+    /// 輪郭の片ごとの補い。**片は描く画素の空間で組む** (#1637)。
+    ///
+    /// 形自身の座標で組んでから変換を掛けると、縦と横で倍率の違う変換や回転のもとで、広げた
+    /// 帯に合わせた端・角・点が描く画素で歪む (`scale(4, 0.25)` の角が横へ 8 画素出る・回した点が
+    /// 菱形になる)。そこで周の点を描く画素の空間へ写し (``linear``)、そこで片を組んでから
+    /// 形自身の座標へ戻す (``inverse``)。変換を掛けると描く画素の空間の形にちょうど戻る。
+    struct ThinOutline {
+        /// 形自身の座標を描く画素の空間へ写す 2x2 (平行移動は持たない)。
+        var linear: simd_float2x2
+        /// その逆。組んだ片を形自身の座標へ戻す。
+        var inverse: simd_float2x2
+        /// 線分ごとの、描く画素で測った元の太さ (線の向きに垂直)。
+        var bandWeight: [Float]
+        /// 線分ごとの、組む帯の太さの半分 (描く画素)。細い帯は 0.5、そうでなければ元の太さの半分。
+        var bandHalf: [Float]
+        /// 線分ごとの被覆 (細い帯は元の太さ、そうでなければ 1)。
+        var bandCoverage: [Float]
+        /// 点 1 つの周か (描く画素 1 つの軸に沿った正方形にする)。
+        var isPoint: Bool
+        /// 点 1 つの周の被覆 (描く画素での面積)。
+        var pointCoverage: Float
+        /// 片のうちいちばん広い太さ (描く画素)。重なりを引く相手を探す幅に使う。
+        var widest: Float
+    }
+
+    /// 輪郭の片ごとの補い。**どの片も細くならなければ `nil`** で、輪郭はこれまでどおり組む。
+    ///
+    /// 帯は**その帯の向きに垂直に測った**描く画素での太さで判断する。縦と横で倍率の違う変換
+    /// (`scale(4, 0.25)`) では、横の辺だけが細くなる。点 1 つの周は向きを持たないので、面積の
+    /// 倍率で測る。変換が潰れている (行列式 0) と何も補わない。
+    func thinOutline(
+        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4
+    ) -> ThinOutline? {
+        let linear = drawnLinear(matrix)
+        let determinant = simd_determinant(linear)
+        guard determinant != 0, determinant.isFinite,
+            Self.thinnestDrawnWeight(weight, by: linear) < 1
+        else { return nil }
+        let points = outline.points
+        let count = points.count
+        if count == 1 {
+            guard
+                let thin = ThinStroke(
+                    drawnWeight: weight * abs(determinant).squareRoot(), isPoint: true)
+            else { return nil }
+            return ThinOutline(
+                linear: linear, inverse: linear.inverse, bandWeight: [], bandHalf: [],
+                bandCoverage: [], isPoint: true, pointCoverage: thin.coverage, widest: 1)
+        }
+        let segments = outline.isClosed ? count : count - 1
+        var bandWeight = [Float](repeating: 0, count: segments)
+        var bandHalf = [Float](repeating: 0, count: segments)
+        var bandCoverage = [Float](repeating: 1, count: segments)
+        var any = false
+        for index in 0..<segments {
+            let direction = points[(index + 1) % count] - points[index]
+            let drawn = Self.drawnWeight(weight, along: direction, by: linear)
+            bandWeight[index] = drawn
+            bandHalf[index] = drawn / 2
+            guard let thin = ThinStroke(drawnWeight: drawn, isPoint: false) else { continue }
+            bandHalf[index] = 0.5
+            bandCoverage[index] = thin.coverage
+            any = true
+        }
+        guard any else { return nil }
+        return ThinOutline(
+            linear: linear, inverse: linear.inverse, bandWeight: bandWeight, bandHalf: bandHalf,
+            bandCoverage: bandCoverage, isPoint: false, pointCoverage: 1,
+            widest: 2 * max(bandHalf.max() ?? 0.5, 0.5))
+    }
+
+    /// 細い片を持つ輪郭の片を、**描く画素の空間で**集める (``ThinOutline``)。点は描く画素の
+    /// 空間の座標で、呼ぶ側が ``ThinOutline/inverse`` で形自身の座標へ戻し、置き場所ぶんのずれを
+    /// 足す。
+    ///
+    /// - 帯: 線分の向きに垂直に、``ThinOutline/bandHalf`` の幅で組む
+    /// - 端 (開いた周の両端): **その帯の向きに沿っては元の太さの半分だけ**出し、横は帯と同じ幅に
+    ///   する。丸い端は楕円、出っ張らせる端は長方形。広げた帯の幅で丸めると、端の光が元の
+    ///   1 / 太さ 倍になる (細かさ 0.5 の太さ 1 で 2 倍)
+    /// - 角: 2 本の帯の外側の縁を、それぞれの帯の幅で延ばして交わる所まで (`miter`)、または
+    ///   2 つの縁の角を結んだ所まで (`bevel`)。尖りが太いほうの幅の √2 倍より遠ければ `bevel`
+    ///   に倒す。丸める角と曲線の刻みは、細いほうの幅の円板と `bevel` の三角形で埋める
+    /// - 点 1 つの周: 描く画素 1 つの、描く画素の軸に沿った正方形
+    ///
+    /// 角と端の被覆は、隣の帯の被覆の小さいほう (端はその帯の被覆)。
+    func thinCarving(
+        _ outline: Outline, thin: ThinOutline
+    ) -> (carving: StrokeCarving, offset: SIMD2<Float>) {
+        let (shapePoints, offset) = outline.unmoved ?? (outline.points, SIMD2<Float>(0, 0))
+        var points: [SIMD2<Float>] = []
+        points.reserveCapacity(shapePoints.count)
+        for point in shapePoints { points.append(thin.linear * point) }
+        let count = points.count
+        var carving = StrokeCarving(
+            points: points, isClosed: outline.isClosed, weight: thin.widest,
+            wholeOutline: outline.strokesAsOneRegion)
+        if thin.isPoint {
+            let center = points[0]
+            carving.addPoint(0, coverage: thin.pointCoverage) { polygon in
+                polygon.append(center + SIMD2(-0.5, -0.5))
+                polygon.append(center + SIMD2(0.5, -0.5))
+                polygon.append(center + SIMD2(0.5, 0.5))
+                polygon.append(center + SIMD2(-0.5, 0.5))
+            }
+            return (carving, offset)
+        }
+        let segments = thin.bandHalf.count
+        /// 点に来る帯 (前・後)。開いた周の端は片方が無い。
+        func bands(at index: Int) -> (before: Int?, after: Int?) {
+            let after = index < segments ? index : nil
+            let before = index > 0 ? index - 1 : (outline.isClosed ? segments - 1 : nil)
+            return (before, after)
+        }
+        func isEnd(_ index: Int) -> Bool {
+            !outline.isClosed && (index == 0 || index == count - 1)
+        }
+        func addCap(_ index: Int, round: Bool) {
+            let band = index == 0 ? 0 : segments - 1
+            let other = index == 0 ? points[1] : points[count - 2]
+            let delta = other - points[index]
+            let length = simd_length(delta)
+            // 向きが決まらない (長さ 0 の線) ときは、描く画素の軸に沿って置く
+            let u = length > 0 ? delta / length : SIMD2<Float>(1, 0)
+            let n = SIMD2(-u.y, u.x)
+            let center = points[index]
+            let across = thin.bandHalf[band]
+            let along = thin.bandWeight[band] / 2
+            carving.addPoint(index, coverage: thin.bandCoverage[band]) { polygon in
+                if round {
+                    for offset in Self.arcOffsets(
+                        radiusX: along, radiusY: across, from: 0, sweep: 2 * .pi)
+                    {
+                        polygon.append(center + u * offset.x + n * offset.y)
+                    }
+                } else {
+                    polygon.append(center - u * along - n * across)
+                    polygon.append(center + u * along - n * across)
+                    polygon.append(center + u * along + n * across)
+                    polygon.append(center - u * along + n * across)
+                }
+            }
+        }
+        /// 角を埋める。`join` が `nil` なら丸める角 (円板と三角形)。
+        func addJoin(_ index: Int, previous: Int, next: Int, join: StrokeJoin?) {
+            let (beforeBand, afterBand) = bands(at: index)
+            let hBefore = beforeBand.map { thin.bandHalf[$0] } ?? 0.5
+            let hAfter = afterBand.map { thin.bandHalf[$0] } ?? 0.5
+            let coverage = min(
+                beforeBand.map { thin.bandCoverage[$0] } ?? 1,
+                afterBand.map { thin.bandCoverage[$0] } ?? 1)
+            let center = points[index]
+            let small = min(hBefore, hAfter)
+            func disc() {
+                let rim = Self.arcOffsets(radiusX: small, radiusY: small, from: 0, sweep: 2 * .pi)
+                carving.addPoint(index, coverage: coverage) { polygon in
+                    for offset in rim { polygon.append(center + offset) }
+                }
+            }
+            let back = points[previous] - center
+            let ahead = points[next] - center
+            let backLength = simd_length(back)
+            let aheadLength = simd_length(ahead)
+            guard backLength > 0, aheadLength > 0 else { return disc() }
+            let a1 = back / backLength
+            let a2 = ahead / aheadLength
+            let inward = a1 + a2
+            // 一直線は隙間が無い。同じ向きへ折り返す角は円板で埋める
+            guard simd_length(inward) > 1e-6 else { return }
+            var n1 = SIMD2(-a1.y, a1.x)
+            if dot(n1, inward) > 0 { n1 = -n1 }
+            var n2 = SIMD2(-a2.y, a2.x)
+            if dot(n2, inward) > 0 { n2 = -n2 }
+            let e1 = center + n1 * hBefore
+            let e2 = center + n2 * hAfter
+            let inner = center + simd_normalize(inward) * (small / 64)
+            if join == nil { disc() }
+            // 外側の縁の延長どうしの交点: e1 + s·a1 = e2 + t·a2
+            let determinant = a1.y * a2.x - a1.x * a2.y
+            var tip: SIMD2<Float>?
+            if join == .miter, abs(determinant) > 1e-6 {
+                let rhs = e2 - e1
+                let s = (rhs.y * a2.x - rhs.x * a2.y) / determinant
+                let candidate = e1 + a1 * s
+                if simd_length(candidate - center) <= Float(2).squareRoot() * max(hBefore, hAfter) {
+                    tip = candidate
+                }
+            }
+            carving.addPoint(index, coverage: coverage) { polygon in
+                polygon.append(inner)
+                polygon.append(e1)
+                if let tip { polygon.append(tip) }
+                polygon.append(e2)
+            }
+        }
+        let join = style.strokeJoin
+        strokeRing(
+            count: count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
+            samePlace: { shapePoints[$0] == shapePoints[$1] },
+            endSquare: { index, _ in addCap(index, round: false) },
+            band: { a, b in
+                let half = thin.bandHalf[a]
+                let (start, end) = (points[a], points[b])
+                carving.addBand(segment: a, coverage: thin.bandCoverage[a]) { polygon in
+                    let delta = end - start
+                    let length = simd_length(delta)
+                    guard length > 0 else { return }
+                    let normal = SIMD2(-delta.y, delta.x) / length * half
+                    polygon.append(start + normal)
+                    polygon.append(end + normal)
+                    polygon.append(end - normal)
+                    polygon.append(start - normal)
+                }
+            },
+            disc: { index in
+                if isEnd(index) { return addCap(index, round: true) }
+                let (before, after) = bands(at: index)
+                addJoin(
+                    index, previous: before ?? index, next: after.map { ($0 + 1) % count } ?? index,
+                    join: nil)
+            },
+            square: { index in
+                // 開いた周の端の四角い端 (点 1 つの周は上で済んでいる)
+                if isEnd(index) { addCap(index, round: false) }
+            },
+            corner: { index, previous, next in
+                addJoin(index, previous: previous, next: next, join: join)
+            })
+        return (carving, offset)
+    }
+
+    /// 平面の輪郭を補うときに細さを測る行列。**最後の変換が決まらない所では測らない** —
+    /// 保持する形の記録 (置くときに測る・``ThinStrokeRecipe``)。畳みの雛形は、雛形の鍵が持つ
+    /// 置き場所の変換 (``templateStrokeMatrix``・細い線の雛形は同じ変換の置き場所だけで畳む)
+    /// で測る。線の半画素の寄せ (`strokePoint`) を先送りする所と同じである。
+    var thinStrokeMatrix: simd_float4x4? {
+        if recordingShape { return nil }
+        if buildingFlatTemplate { return templateStrokeMatrix }
+        return transform.matrix
+    }
+
+    // MARK: - 立体の線
+
+    /// 立体の線の補い。**記録の間は判断しない** — 置く面 (細かさ) が決まるのは置くときで、
+    /// 記録した部品は置くときに組み直す (``rebuiltSolidStroke(_:)``)。
+    func thinSolidStroke(weight: Float, isPoint: Bool) -> ThinStroke? {
+        guard !recordingShape else { return nil }
+        return ThinStroke(drawnWeight: drawnSolidWeight(weight), isPoint: isPoint)
+    }
+
+    /// 補いを当てた立体の線の設定 (太さ・被覆・点の端の形) で `body` を走らせ、元へ戻す。
+    func withThinSolidStroke(_ thin: ThinStroke?, isPoint: Bool, _ body: () -> Void) {
+        guard let thin else { return body() }
+        let saved = (style.strokeWeight, style.strokeCap, solidStrokeCoverage)
+        style.strokeWeight *= thin.widen
+        solidStrokeCoverage = thin.coverage
+        // 向きの無い点の四角い端は、画面の軸に沿った正方形
+        if isPoint { style.strokeCap = .square }
+        body()
+        (style.strokeWeight, style.strokeCap, solidStrokeCoverage) = saved
+    }
+
+    // MARK: - 保持した形
+
+    /// 保持した形の輪郭を、置いた後の太さで組み直した頂点と被覆の区間。**どの片も細くならなければ
+    /// `nil`** で、呼ぶ側は記録した頂点をそのまま置く。
+    ///
+    /// 頂点は記録した頂点と同じ座標 (形自身の座標に記録のときの変換を掛け、半画素寄せの前)
+    /// で返すので、呼ぶ側は記録した頂点と同じく置き場所の行列と色を掛けて寄せる。**組み直しは
+    /// 置き場所の 2x2 ごとに 1 度だけ** — 同じ大きさで置き続ける形は、控えた頂点を移すだけで
+    /// 済む (``ThinStrokeRecipe``)。
+    func thinVertices(
+        _ recipe: ThinStrokeRecipe, placedBy matrix: simd_float4x4, cache: ThinStrokeCache,
+        stroke: Int
+    ) -> (vertices: [ShapeVertex], coverage: [CoverageSpan])? {
+        let combined = matrix * recipe.transform.matrix
+        let linear = drawnLinear(combined)
+        // 点 1 つの周は描く画素の軸に沿って置くので、回転ごとに形が違う。それ以外は回転に依らない
+        let key =
+            recipe.outline.points.count == 1
+            ? SIMD4<Float>(
+                linear.columns.0.x, linear.columns.0.y, linear.columns.1.x, linear.columns.1.y)
+            : Self.rotationFreeKey(linear)
+        if let cached = cache.built(stroke, key) { return cached }
+        let built = buildThinVertices(recipe, placedBy: combined)
+        cache.remember(built, stroke, key)
+        return built
+    }
+
+    /// 描く画素へ写す 2x2 のうち、**回転 (と鏡映) に依らない部分** `DᵀD` を、控えと畳みの鍵に
+    /// する (#1637)。
+    ///
+    /// 片は描く画素の空間で、点どうしの向きと隔たりだけから組む (``thinCarving(_:thin:)``) ので、
+    /// 描く画素の空間で回しても片は一緒に回る。形自身の座標へ戻した頂点は `DᵀD` が同じなら同じ
+    /// である。回して置き続ける形 (回転の角度が毎回違う) も、控えた頂点と雛形を使い回せる。
+    ///
+    /// 単精度の丸めで、同じ大きさの回転どうしでも `DᵀD` の最下位の桁は揺れる (0.25 と
+    /// 0.24999999 のように指数をまたぐこともある)。鍵は大きさ (対角の和) の対数と、和で割った
+    /// 3 成分を、それぞれ 1/4096 の刻みに丸めて揃える (相対 2⁻¹² ほどの違いは同じ形として扱う)。
+    static func rotationFreeKey(_ linear: simd_float2x2) -> SIMD4<Float> {
+        let gram = linear.transpose * linear
+        let trace = gram.columns.0.x + gram.columns.1.y
+        guard trace > 0, trace.isFinite else { return SIMD4(repeating: 0) }
+        func coarse(_ value: Float) -> Float { (value * 4096).rounded() / 4096 }
+        return SIMD4(
+            coarse(log2(trace)), coarse(gram.columns.0.x / trace), coarse(gram.columns.1.x / trace),
+            coarse(gram.columns.1.y / trace))
+    }
+
+    private func buildThinVertices(
+        _ recipe: ThinStrokeRecipe, placedBy combined: simd_float4x4
+    ) -> (vertices: [ShapeVertex], coverage: [CoverageSpan])? {
+        thinStrokesRebuilt += 1
+        guard let thin = thinOutline(recipe.outline, weight: recipe.weight, placedBy: combined)
+        else { return nil }
+        let saved = (style.strokeCap, style.strokeJoin)
+        style.strokeCap = thin.isPoint ? .square : recipe.cap
+        style.strokeJoin = recipe.join
+        let carved = carveRecipe(
+            recipe.outline, half: recipe.weight / 2, thin: thin, transform: recipe.transform,
+            color: recipe.color, uv: recipe.uv)
+        (style.strokeCap, style.strokeJoin) = saved
+        return carved.built()
+    }
+}
+
+/// 保持した形の輪郭を、**置いた後の太さで細ければ**広げて組み直す素材 ([#1637] 完了条件 5)。
+///
+/// 描く画素での太さは、置き場所の行列が決まるまで分からない。記録した形を縮めて置けば
+/// 細くなるので、記録のときには判断できない。記録した頂点はそのまま持ち、置くたびに
+/// ``Canvas/thinVertices(_:placedBy:cache:stroke:)`` で細さを測って、細ければ組み直した頂点で
+/// 区間を差し替える。細くならない置き方 (いちばんよくある) は費用を払わない — 形の中で最も細い
+/// 線でも細くならなければ区間を走査しない (``Shape/thinnestRecordedWeight``)。組み直した頂点は
+/// 形が控える (``ThinStrokeCache``) ので、同じ大きさで置き続ける形は組み直さない。
+///
+/// **値で持つ** (記録のたびに箱を作らない)。周の点の並びは図形が組んだものを共有する。
+///
+/// [#1637]: https://github.com/mokume-metal/mokume/issues/1637
+struct ThinStrokeRecipe {
+    /// 形自身の座標の周 (記録のときの変換を掛ける前)。
+    let outline: Canvas.Outline
+    /// 形自身の座標の太さ。
+    let weight: Float
+    let cap: StrokeCap
+    let join: StrokeJoin
+    /// 記録のときの線の色。
+    let color: LinearRGBA
+    /// 記録のときの変換 (入れ子なら外側の置き場所の行列も合成したもの)。
+    let transform: Transform
+    let uv: SIMD2<Float>
+
+    /// 記録のときの変換を掛けた後の、いちばん細くなる向きの太さ (入れ子の外側の行列も含む)。
+    /// 形の中で最も細い線を見つけるのに使う。
+    var recordedWeight: Float {
+        let columns = transform.matrix.columns
+        let linear = simd_float2x2(
+            SIMD2(columns.0.x, columns.0.y), SIMD2(columns.1.x, columns.1.y))
+        return Canvas.thinnestDrawnWeight(weight, by: linear)
+    }
+
+    /// 別の保持した形の中で置かれた輪郭。行列と色を合成する (置くときに判断するのは同じ)。
+    func moved(by matrix: simd_float4x4, tint: LinearRGBA?) -> ThinStrokeRecipe {
+        var color = self.color
+        if let tint {
+            color = LinearRGBA(
+                premultipliedRed: color.red * tint.red, green: color.green * tint.green,
+                blue: color.blue * tint.blue, alpha: color.alpha * tint.alpha)
+        }
+        return ThinStrokeRecipe(
+            outline: outline, weight: weight, cap: cap, join: join, color: color,
+            transform: Transform(matrix: matrix * transform.matrix), uv: uv)
+    }
+}
+
+/// 保持した形の、組み直した細い輪郭の控え (#1637)。**形 1 つに 1 つ**で、輪郭ごと・描く画素へ
+/// 写す 2x2 (回転を除く・``Canvas/rotationFreeKey(_:)``) ごとに持つ。
+///
+/// 輪郭ごとに箱を持たないのは、記録のたびに輪郭の数だけ箱を作る費用を払わないためである
+/// (細くならない形にも払わせることになる)。参照の箱にしてあるのは、形 (値型) を写しても控えを
+/// 共有するため。控えるのは輪郭ごとに数件まで — 置き場所ごとに大きさの違う形は鍵が増え続ける
+/// ので、上限を越えたらその輪郭の控えを捨てて控え直す。
+final class ThinStrokeCache {
+    typealias Built = (vertices: [ShapeVertex], coverage: [Canvas.CoverageSpan])
+    /// 輪郭 (``Shape/strokeRanges`` の番号) ごとの控え。`nil` を控えた鍵は「細くならない」。
+    private var entries: [Int: [SIMD4<Float>: Built?]] = [:]
+    static let capacity = 8
+
+    func built(_ stroke: Int, _ key: SIMD4<Float>) -> Built?? {
+        guard let table = entries[stroke] else { return nil }
+        return table[key]
+    }
+
+    func remember(_ value: Built?, _ stroke: Int, _ key: SIMD4<Float>) {
+        if (entries[stroke]?.count ?? 0) >= Self.capacity { entries[stroke] = [:] }
+        entries[stroke, default: [:]][key] = value
+    }
+}

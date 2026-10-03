@@ -6,12 +6,13 @@ import Testing
 import mokume
 
 @testable import MokumeCLI
+@testable import MokumeCore
 
 /// 見張りの口。
 ///
 /// 巡回そのもの (何をどの順で決めるか) は `WatchSessionTests` が見る。ここが見るのは
 /// **見張りを始める前と、終えるとき**である — どちらも口の側にしか無い。
-@Suite("見張りの口")
+@Suite("見張りの口", .signalStateKept)
 struct WatchCommandTests {
     /// 巡回を数えるだけの外側。
     @MainActor
@@ -118,6 +119,8 @@ struct WatchCommandTests {
     /// [#682]: https://github.com/mokume-metal/mokume/issues/682
     @Test("宣言されていない資材があると、見張りは始まらない")
     func refusesToWatchUndeclaredResources() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         let root = try makeSketchWithUndeclaredAssets()
         // 巡回は差し替える。**始める前に止まることを見る検査**なので、止まらなかった
         // ときに合図待ちで固まってはいけない (固まった検査は赤より読みにくい)
@@ -133,6 +136,8 @@ struct WatchCommandTests {
     /// ことが、窓では直らない ([#705](https://github.com/mokume-metal/mokume/issues/705))。
     @Test("最初の作り直しは、巡回へ渡してから始まる")
     func firstBuildStartsInsideTheLoop() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         let root = try makeDirectory()
         try Data(#"// swift-tools-version: 6.2"#.utf8)
             .write(to: root.appendingPathComponent("Package.swift"))
@@ -165,10 +170,11 @@ struct WatchCommandTests {
     /// 検査で再現できないので、ここが見るのは**断りを立てる場所と返す場所**である。
     @Test("見張っている間は間引きを断り、終えたら返す")
     func refusesThrottlingWhileWatching() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         let root = try makeDirectory()
         try Data(#"// swift-tools-version: 6.2"#.utf8)
             .write(to: root.appendingPathComponent("Package.swift"))
-        WatchCommand.teardownDone = false
         var heldInsideTheLoop = false
 
         try WatchCommand.run([root.path], watching: { _, _ in
@@ -177,6 +183,30 @@ struct WatchCommandTests {
 
         #expect(heldInsideTheLoop, "巡回に入る前に断っていない")
         #expect(!WatchCommand.refusesThrottling, "終えたのに断ったままになっている")
+    }
+
+    /// **見張りの口を続けて通しても、後の回の後始末が走る** ([#1937])。
+    ///
+    /// 後始末を済ませた印 (`WatchCommand.teardownDone`) はプロセスに 1 つで、一度立つと下りない
+    /// (本番の見張りは 1 プロセスに 1 回)。前の検査が立てたまま残すと、後に走る検査の後始末が
+    /// 冒頭で抜ける。窓を閉じないので駆動源が実行ループに残り、間引きの断りも返さない。
+    /// 検査の順序に依らないように、印は ``SignalState`` が控えて戻す。
+    ///
+    /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
+    @Test("見張りの口を続けて通しても、後の回の後始末が走る")
+    func eachWatchTearsDownEvenAfterAnother() throws {
+        for round in 1...2 {
+            let kept = SignalState.current()
+            defer { kept.restore() }
+            let root = try makeDirectory()
+            try Data(#"// swift-tools-version: 6.2"#.utf8)
+                .write(to: root.appendingPathComponent("Package.swift"))
+
+            try WatchCommand.run([root.path], watching: { _, _ in })
+
+            #expect(WatchCommand.teardownDone, "\(round) 回目の後始末が走っていない")
+            #expect(!WatchCommand.refusesThrottling, "\(round) 回目の後始末が間引きの断りを返していない")
+        }
     }
 
     /// **二度返しても落ちない。** 終わりの経路は 2 つある (巡回が抜けた・道具立てが
@@ -247,15 +277,43 @@ struct WatchCommandTests {
     /// **合図はハンドラの外で効く。** ハンドラは印を立てるだけで、終わらせるのは巡回。
     @Test("終わりの合図を受けると、印が立つ")
     func raisesTheStopFlagOnSignal() {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         WatchCommand.installStopHandlers()
-        defer {
-            for number in WatchCommand.stopSignals { signal(number, SIG_DFL) }
-            watchStopRequested = 0
-        }
 
         #expect(watchStopRequested == 0)
         raise(SIGTERM)
         #expect(watchStopRequested != 0)
+    }
+
+    /// **合図の検査は、走者の受け口と印を前の形へ戻す** ([#1937])。
+    ///
+    /// 前を見ずに既定へ戻すと、走者が無視で継いだ合図 (背面の起動の SIGINT など) まで既定に
+    /// なる。ここでは見張りの受け口を置く前に、目印として SIGHUP を無視・SIGPIPE を既定にしておき、
+    /// 見張りの口が立てる印と一緒に、戻した後に前の形へ戻っていることを見る。
+    ///
+    /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
+    @Test("合図の検査の後、受け口と印は置く前の形へ戻る")
+    func theSnapshotRestoresWhatWasThere() {
+        let outer = SignalState.current()
+        defer { outer.restore() }
+        signal(SIGHUP, SIG_IGN)
+        signal(SIGPIPE, SIG_DFL)
+        WatchCommand.teardownDone = false
+
+        let kept = SignalState.current()
+        WatchCommand.installStopHandlers()
+        raise(SIGHUP)
+        WatchCommand.teardownDone = true
+        runStopSignal = SIGTERM
+        kept.restore()
+
+        #expect(kept.changes().isEmpty, "戻した後も変わったままのものがある: \(kept.changes())")
+        #expect(StopSignals.isIgnored(StopSignals.current(SIGHUP)), "無視で継いだ SIGHUP を戻していない")
+        #expect(StopSignals.isDefault(StopSignals.current(SIGPIPE)), "既定だった SIGPIPE を無視のまま残した")
+        #expect(watchStopRequested == 0, "合図で立った印を残した")
+        #expect(!WatchCommand.teardownDone, "後始末の印を立てたまま残した")
+        #expect(runStopSignal == 0, "道具の合図の印を残した")
     }
 
     /// **端末が消える形がいちばん多い。** 見張りを起こしたセッションが終わる経路で、
@@ -271,11 +329,9 @@ struct WatchCommandTests {
     /// 動作で消え、子が窓の無いまま 28 時間残った ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
     @Test("時間切れの合図 (SIGALRM) でも、印が立つ")
     func raisesTheStopFlagOnAlarm() {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         WatchCommand.installStopHandlers()
-        defer {
-            for number in WatchCommand.stopSignals { signal(number, SIG_DFL) }
-            watchStopRequested = 0
-        }
 
         raise(SIGALRM)
         #expect(watchStopRequested != 0)
@@ -324,8 +380,9 @@ struct WatchCommandTests {
     /// ([#826](https://github.com/mokume-metal/mokume/issues/826))。
     @Test("窓から終わりを頼まれると、シグナルと同じ印が立ち、巡回が抜ける")
     func raisesTheStopFlagFromTheWindow() async throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
         watchStopRequested = 0
-        defer { watchStopRequested = 0 }
         let stub = Stub()
         let session = WatchSession(directory: try makeDirectory(), context: testContext(), hooks: stub.hooks())
 

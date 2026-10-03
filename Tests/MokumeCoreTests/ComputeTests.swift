@@ -1271,7 +1271,7 @@ struct ComputeTests {
         }
     }
 
-    /// 閉じ忘れた描き場所の頼みは、次のフレームの `beginDraw()` が描かずに捨てる (#1622)。
+    /// 閉じ忘れた描き場所の頼みは、本体の次のフレームの頭が描かずに捨てる (#1622・#1834)。
     /// その頼みを、ぶつかる頼みが復活させて走らせない。
     @Test("閉じ忘れたまま本体のフレームを越えた描き場所の頼みは、ぶつかる頼みでも走らない")
     func aLayerLeftOpenPastTheBodyFrameKeepsItsAskDropped() throws {

@@ -71,6 +71,12 @@ extension Sketch {
     /// 描き場所の次の絵を決めるのは書き手の `beginDraw()` / `endDraw()` なので、その外で置いた
     /// ものには出る先が無い ([ADR-0021] 決定 4 の追補 (2026-09-27))。
     ///
+    /// `beginDraw()` で開いたまま `endDraw()` を忘れると、そのフレームは**画面の次のフレームの頭で
+    /// 描かずに捨てる** (1 度注意する・[#1834])。``noLoop()`` で止まっている間は、止まっている間の
+    /// コールバックに入る前に捨てる。捨てた後に読めば捨てる前の絵が返り、遅れて呼んだ
+    /// `endDraw()` は何もしない。``setup()`` や止まっている間のコールバックで開いて次の ``draw()`` で
+    /// 閉じる対は、次に描くフレームに属するので捨てない。
+    ///
     /// ## 既定で透けていて、自動では消えない
     ///
     /// 作った時点の中身は透明で、以後は**こちらが ``Canvas/background(_:)-(LinearRGBA)`` を呼ぶまで
@@ -82,6 +88,14 @@ extension Sketch {
     /// 同じフレームで置いてから描き換えて、また置ける。**先に置いた場所は描き換えに
     /// 引きずられない**ので、途中の姿と最後の姿を並べられる。
     ///
+    /// 描き換える直前に、置いた側がそのときの絵を写しに取って読む。置いた側はそこで描き切られ
+    /// ないので、フレームの途中の区切り (``loadPixels()`` の説明) にならない。写しは置いた側
+    /// 1 つにつき 4 枚まで持ち、同じ大きさなら次のフレームで使い回す。**1 フレームに「置く →
+    /// 描き換える」を 4 回より多く繰り返すと、越えた分は写さずに置いた側を描き切る** (区切りに
+    /// なる)。形を組み立てている途中 (``createShape(_:)``) に置いた描き場所を描き換えたときも
+    /// 描き切る。止まっている間 (``noLoop()`` の後のコールバック) に置いて描き換えたものは、
+    /// ほかの置いたものと同じく次のフレームで出る。
+    ///
     /// - Throws: 描き場所を確保できないときと、幅・高さのどちらかが 1 を割るとき
     ///   (``RenderFailure/invalidSize(width:height:)``。1×1 へ丸めない) に ``RenderFailure``。
     ///   **組み立てのときに投げる** ([ADR-0020] 決定 5) ので、`setup()` で作って持ち回る。
@@ -89,6 +103,7 @@ extension Sketch {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
+    /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     // shot: 1 snippet=952dfdc7
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
         try canvas.createGraphics(width, height)
