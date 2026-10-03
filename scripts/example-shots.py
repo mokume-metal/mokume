@@ -110,6 +110,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import zlib
 from collections.abc import Callable
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -499,7 +500,10 @@ def _type_name(shot: Shot) -> str:
     return f"Shot_{shot.fingerprint}"
 
 
-def render(root: pathlib.Path, shots: list[Shot], out: pathlib.Path) -> None:
+def render(
+    root: pathlib.Path, shots: list[Shot], out: pathlib.Path, bundle: bool = True
+) -> None:
+    """`bundle` は動きの連番を GIF へ束ねるか。束ねるのは上げるためで、比べるだけなら要らない。"""
     package = root / ".build" / "example-shots"
     generate(root, shots, package)
     subprocess.run(["swift", "build", "--package-path", str(package)], check=True)
@@ -509,7 +513,7 @@ def render(root: pathlib.Path, shots: list[Shot], out: pathlib.Path) -> None:
         ["swift", "run", "--package-path", str(package), "example-shots", str(out)], check=True
     )
     for shot in shots:
-        if shot.is_motion:
+        if shot.is_motion and bundle:
             _bundle_gif(out, shot)
 
 
@@ -664,8 +668,8 @@ def difference_stats(difference: bytes, channels: int = 4) -> tuple[int, int]:
     """差の絵 (`|a - b|` を 1 画素 `channels` バイトで並べたもの) → (違う画素の数, 最大の差)。
 
     **純関数にしてあるのは、画素の数え方を絵を描かずに検められるようにするため** である
-    (`mirror_warnings` と同じ)。引き算は ffmpeg にやらせる (`average_difference` と同じ
-    理由) ので、ここに渡るのは差の絵になる。
+    (`mirror_warnings` と同じ)。引き算は呼ぶ側 (`image_difference`) が済ませるので、
+    ここに渡るのは差の絵になる。
 
     違う画素は**どの色成分でも**差があるものを数える。成分ごとに数えると、同じ 1 画素が
     3 回数えられて「違う画素の数」と言えなくなる。数え方は C の速さで済ませる — 成分を
@@ -687,23 +691,101 @@ def image_difference(base: pathlib.Path, head: pathlib.Path) -> tuple[int, int, 
     """2 枚の PNG → (違う画素の数, 比べた画素の数, 最大の差)。
 
     バイトが同じ PNG は画素も同じなので、復号せずに返す (大半の絵はここで終わる)。
-    **復号は rgba の 8 bit に揃える** — 色の型が違う 2 枚でも、画素の値で比べられる。
+    **ffmpeg を使わない** — 専用機には入っておらず (#1986 の実機で `ffmpeg が見つからない`)、
+    比べるためだけに入れさせるより、撮る側が書く PNG を自前で読むほうが小さい。
     """
     if base.read_bytes() == head.read_bytes():
         return 0, _pixel_count(head), 0
-    result = subprocess.run(
-        [
-            "ffmpeg", "-v", "error", "-i", str(base), "-i", str(head), "-lavfi",
-            "[0:v]format=rgba[a];[1:v]format=rgba[b];[a][b]blend=all_mode=difference",
-            "-f", "rawvideo", "-pix_fmt", "rgba", "-",
-        ],
-        check=True,
-        capture_output=True,
+    base_size, base_pixels = decode_rgba(base)
+    head_size, head_pixels = decode_rgba(head)
+    if base_size != head_size:
+        raise SystemExit(f"{base.name} の大きさが前後で違う: {base_size} と {head_size}")
+    difference = bytes(
+        x - y if x >= y else y - x for x, y in zip(base_pixels, head_pixels)
     )
-    if not result.stdout:
-        raise SystemExit(f"{base.name} と {head.name} の差を測れなかった")
-    pixels, largest = difference_stats(result.stdout)
-    return pixels, len(result.stdout) // 4, largest
+    pixels, largest = difference_stats(difference)
+    return pixels, len(difference) // 4, largest
+
+
+def decode_rgba(image: pathlib.Path) -> tuple[tuple[int, int], bytes]:
+    """PNG → ((幅, 高さ), 1 画素 4 バイトの RGBA)。**撮る側が書く形だけ**を読む。
+
+    撮る側 (`writePNG`) が書くのは 8 bit・インターレースなしの PNG で、色の型は RGBA か RGB。
+    ほかの形は読めないと名乗って落とす — 黙って読み違えると、絵が変わっていないのに
+    名指しするか、変わったのに黙る。色の管理の印 (`iCCP` など) は読まない。比べるのは
+    書かれた画素の値で、それは前後で同じ解釈になる。
+    """
+    data = image.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"{image.name} は PNG ではない")
+    position, header, compressed = 8, None, []
+    while position < len(data):
+        length = int.from_bytes(data[position : position + 4], "big")
+        kind = data[position + 4 : position + 8]
+        body = data[position + 8 : position + 8 + length]
+        if kind == b"IHDR":
+            header = body
+        elif kind == b"IDAT":
+            compressed.append(body)
+        position += 12 + length
+    if header is None:
+        raise SystemExit(f"{image.name} に IHDR が無い")
+    width, height = int.from_bytes(header[:4], "big"), int.from_bytes(header[4:8], "big")
+    depth, colour, _, _, interlace = header[8:13]
+    channels = {2: 3, 6: 4}.get(colour)
+    if depth != 8 or interlace != 0 or channels is None:
+        raise SystemExit(
+            f"{image.name} は読めない形 (ビット深度 {depth}・色の型 {colour}・"
+            f"インターレース {interlace})。読めるのは 8 bit の RGB / RGBA・インターレースなし"
+        )
+    raw = zlib.decompress(b"".join(compressed))
+    stride = width * channels
+    if len(raw) != height * (stride + 1):
+        raise SystemExit(f"{image.name} の画素の長さが合わない")
+    rows: list[bytes] = []
+    previous = bytes(stride)
+    for y in range(height):
+        start = y * (stride + 1)
+        row = _unfilter(raw[start], bytearray(raw[start + 1 : start + 1 + stride]), previous, channels)
+        rows.append(row)
+        previous = row
+    pixels = b"".join(rows)
+    if channels == 3:
+        # RGB は alpha を 255 で足し、RGBA と同じ並びにして比べる
+        rgba = bytearray(width * height * 4)
+        rgba[0::4], rgba[1::4], rgba[2::4], rgba[3::4] = (
+            pixels[0::3], pixels[1::3], pixels[2::3], b"\xff" * (width * height),
+        )
+        pixels = bytes(rgba)
+    return (width, height), pixels
+
+
+def _unfilter(kind: int, row: bytearray, previous: bytes, step: int) -> bytes:
+    """PNG の 1 行の差分符号 (filter) を戻す。`step` は 1 画素のバイト数。"""
+    if kind == 0:
+        return bytes(row)
+    if kind == 1:  # Sub
+        for i in range(step, len(row)):
+            row[i] = (row[i] + row[i - step]) & 255
+    elif kind == 2:  # Up
+        for i in range(len(row)):
+            row[i] = (row[i] + previous[i]) & 255
+    elif kind == 3:  # Average
+        for i in range(len(row)):
+            left = row[i - step] if i >= step else 0
+            row[i] = (row[i] + ((left + previous[i]) >> 1)) & 255
+    elif kind == 4:  # Paeth
+        for i in range(len(row)):
+            left = row[i - step] if i >= step else 0
+            up = previous[i]
+            corner = previous[i - step] if i >= step else 0
+            estimate = left + up - corner
+            da, db, dc = abs(estimate - left), abs(estimate - up), abs(estimate - corner)
+            guess = left if da <= db and da <= dc else up if db <= dc else corner
+            row[i] = (row[i] + guess) & 255
+    else:
+        raise SystemExit(f"知らない PNG の filter: {kind}")
+    return bytes(row)
 
 
 def _pixel_count(image: pathlib.Path) -> int:
@@ -848,10 +930,10 @@ def drift(root: pathlib.Path, head_shots: list[Shot], base_rev: str, out: pathli
         # OS の版の違いが誤報になる (冒頭の「指紋が見ていない範囲」)
         base_out, head_out = out / "base", out / "head"
         started = time.monotonic()
-        render(base_root, base_shots, base_out)
+        render(base_root, base_shots, base_out, bundle=False)
         timings["base の build+render"] = time.monotonic() - started
         started = time.monotonic()
-        render(root, head_shots, head_out)
+        render(root, head_shots, head_out, bundle=False)
         timings["head の build+render"] = time.monotonic() - started
         started = time.monotonic()
         compared, drifts = compare_trees(base_shots, head_shots, base_out, head_out)
@@ -983,7 +1065,7 @@ def main(
         "--drift",
         metavar="BASE_REV",
         help="BASE_REV の木と今の木の両方で例の絵を描き、画素が変わった絵を名指しする "
-        "(GPU が要る・警告のみで鍵は要らない)",
+        "(GPU が要る・警告のみで鍵も ffmpeg も要らない)",
     )
     parser.add_argument("--token-command", help="Gyazo のトークンを標準出力に出すコマンド")
     parser.add_argument(
@@ -998,7 +1080,7 @@ def main(
     if arguments.drift and (arguments.render or arguments.capture):
         print("--drift は --render / --capture と一緒に使えない", file=sys.stderr)
         return 1
-    if arguments.render or arguments.capture or arguments.drift:
+    if arguments.render or arguments.capture:
         missing = missing_tool(which)
         if missing:
             print(missing, file=sys.stderr)

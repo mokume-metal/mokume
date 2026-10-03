@@ -362,18 +362,46 @@ class ExampleShotsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
-def write_png(path: Path, rows: list[list[tuple[int, int, int, int]]]) -> None:
-    """RGBA 8 bit の PNG を書く (zlib だけ。絵を描かずに、比べる側を検めるため)。"""
+def write_png(path: Path, rows: list[list[tuple[int, int, int, int]]], filter_kind: int = 0,
+              rgb: bool = False) -> None:
+    """8 bit の PNG を書く (zlib だけ。絵を描かずに、比べる側を検めるため)。
+
+    `filter_kind` は行の差分符号 (0 None / 1 Sub / 2 Up / 3 Average / 4 Paeth) — 本物の
+    PNG は行ごとに符号を選ぶので、読む側が全部を戻せることを固定するのに使う。
+    """
 
     def chunk(kind: bytes, body: bytes) -> bytes:
         crc = zlib.crc32(kind + body) & 0xFFFFFFFF
         return len(body).to_bytes(4, "big") + kind + body + crc.to_bytes(4, "big")
 
+    step = 3 if rgb else 4
     height, width = len(rows), len(rows[0])
-    raw = b"".join(b"\x00" + bytes(c for pixel in row for c in pixel) for row in rows)
-    header = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 6, 0, 0, 0])
+    lines = [bytes(c for pixel in row for c in pixel[:step]) for row in rows]
+    out, previous = [], bytes(len(lines[0]))
+    for line in lines:
+        filtered = bytearray()
+        for i, value in enumerate(line):
+            left = line[i - step] if i >= step else 0
+            up = previous[i]
+            corner = previous[i - step] if i >= step else 0
+            if filter_kind == 1:
+                predicted = left
+            elif filter_kind == 2:
+                predicted = up
+            elif filter_kind == 3:
+                predicted = (left + up) >> 1
+            elif filter_kind == 4:
+                estimate = left + up - corner
+                da, db, dc = abs(estimate - left), abs(estimate - up), abs(estimate - corner)
+                predicted = left if da <= db and da <= dc else up if db <= dc else corner
+            else:
+                predicted = 0
+            filtered.append((value - predicted) & 255)
+        out.append(bytes([filter_kind]) + bytes(filtered))
+        previous = line
+    header = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 2 if rgb else 6, 0, 0, 0])
     path.write_bytes(
-        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw))
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"".join(out)))
         + chunk(b"IEND", b"")
     )
 
@@ -417,6 +445,58 @@ class DifferenceStatsTest(unittest.TestCase):
             shots.difference_stats(bytes(7))
 
 
+class DecodeTest(unittest.TestCase):
+    """PNG を自前で読む (専用機に ffmpeg が無いため・#1986)。符号の全種と、読めない形の名乗り。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def rows(self):
+        # 行と列で値が動く絵。符号の取り違えが画素に出る
+        return [[(x * 37 % 256, y * 91 % 256, (x * y * 13) % 256, 255 - x) for x in range(7)] for y in range(5)]
+
+    def test_符号の全種を戻せる(self):
+        rows = self.rows()
+        expected = bytes(c for row in rows for pixel in row for c in pixel)
+        for kind in range(5):
+            with self.subTest(filter=kind):
+                path = self.dir / f"f{kind}.png"
+                write_png(path, rows, filter_kind=kind)
+                size, pixels = shots.decode_rgba(path)
+                self.assertEqual((size, pixels), ((7, 5), expected))
+
+    def test_RGB_は_alpha_255_の_RGBA_として読む(self):
+        path = self.dir / "rgb.png"
+        write_png(path, grey_rows(2, 2), rgb=True)
+        _, pixels = shots.decode_rgba(path)
+        self.assertEqual(pixels, bytes(GREY) * 4)
+
+    def test_符号が違うだけの_2_枚は画素が同じと言う(self):
+        a, b = self.dir / "a.png", self.dir / "b.png"
+        write_png(a, self.rows(), filter_kind=1)
+        write_png(b, self.rows(), filter_kind=4)
+        self.assertNotEqual(a.read_bytes(), b.read_bytes())
+        self.assertEqual(shots.image_difference(a, b), (0, 35, 0))
+
+    def test_読めない形は名乗って落ちる(self):
+        path = self.dir / "gray.png"
+        write_png(path, grey_rows(2, 2))
+        data = bytearray(path.read_bytes())
+        data[24] = 16  # IHDR のビット深度を 16 にする
+        path.write_bytes(bytes(data))
+        with self.assertRaises(SystemExit) as caught:
+            shots.decode_rgba(path)
+        self.assertIn("読めない形", str(caught.exception))
+
+    def test_PNG_でないものは名乗って落ちる(self):
+        path = self.dir / "x.png"
+        path.write_bytes(b"not a png")
+        with self.assertRaises(SystemExit):
+            shots.decode_rgba(path)
+
+
 class DriftTest(unittest.TestCase):
     """前後の木で例の絵を描き比べて名指しする (#1986)。"""
 
@@ -449,7 +529,6 @@ class DriftTest(unittest.TestCase):
         with mock.patch.object(subprocess, "run", side_effect=AssertionError("ffmpeg を呼んだ")):
             self.assertIsNone(shots.measure_drift(self.base_out, self.head_out, shot))
 
-    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg が無い")
     def test_画素が変わった絵だけを数と最大の差つきで名指しする(self):
         first, second = self.shots
         self.put(first, grey_rows(), grey_rows(changed={(1, 1): (128, 130, 128, 255)}))
@@ -459,14 +538,12 @@ class DriftTest(unittest.TestCase):
         self.assertEqual([d.shot.name for d in drifts], [first.name])
         self.assertEqual((drifts[0].pixels, drifts[0].total, drifts[0].largest), (1, 12, 2))
 
-    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg が無い")
     def test_色の成分が複数違っても_1_画素(self):
         shot = self.shots[0]
         self.put(shot, grey_rows(), grey_rows(changed={(0, 0): (0, 0, 0, 255)}))
         drift = shots.measure_drift(self.base_out, self.head_out, shot)
         self.assertEqual((drift.pixels, drift.largest), (1, 128))
 
-    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg が無い")
     def test_動きは連番を1枚ずつ比べて違う枚数を言う(self):
         source = SOURCE.replace("<!-- shot: 中央の橙色の円 -->", "<!-- shot: 中央の橙色の円 | frames=3 -->")
         (self.root / "Sources" / "Sketch.swift").write_text(source, encoding="utf-8")
@@ -564,11 +641,15 @@ class DriftTest(unittest.TestCase):
             code = shots.main(argv, which=which)
         return code, built, err.getvalue()
 
-    def test_drift_は_ffmpeg_が無ければ組む前に名乗って止まる(self):
-        code, built, err = self.run_main(["--drift", "HEAD^1"], which=lambda name: None)
-        self.assertNotEqual(code, 0)
-        self.assertEqual(built, [])
-        self.assertIn("brew install ffmpeg", err)
+    def test_drift_は_ffmpeg_を探さない(self):
+        """専用機には ffmpeg が入っていない (#1986)。比べるだけの実行は道具を探さない。"""
+
+        def which(name):
+            raise AssertionError(f"drift が {name} を探した")
+
+        code, built, err = self.run_main(["--drift", "HEAD^1"], which=which)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(built), 1)
 
     def test_drift_は_render_と一緒に使えない(self):
         code, built, err = self.run_main(
