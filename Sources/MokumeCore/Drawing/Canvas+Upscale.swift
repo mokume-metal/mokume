@@ -152,21 +152,67 @@ extension Canvas {
         targetChangedSinceUpscale = false
     }
 
-    /// 変わっていれば広げ直す。**失敗しても投げない。**
+    /// 描く先が出す先そのものの面 (細かさ 1) で、まだ描く先へ戻していない画素の書き込みを
+    /// 書き戻す ([#1906])。**書いていなければ何も積まない** (ADR-0023 決定 5)。
     ///
-    /// 止まっている間のコールバックを配った直後に、ランタイムが呼ぶ ([#1882])。画面 (窓)・共有の面・
+    /// 画素の書き込み (`set()`・`pixels`) は CPU の写しに載り、テクスチャへ戻すのは次の描き切りか
+    /// 出力段である。窓と共有の面はテクスチャを直に読み、どちらも通らないので、止まっている間に
+    /// 書いた画素は戻すまで出ない。効果を通した絵の後なら、同じ画素を効果を通す前の絵 (次の
+    /// フレームの入り) へも写す (``encodePixelWriteBackKeepingCarry(into:)``・[#1524]) — 写さずに
+    /// 戻すと、次のフレームの頭が控えを戻したときに書いた画素が消える。
+    ///
+    /// 環は進めない。積むのは写しからの blit と控えへの写しだけで、CPU が環の置き場へ書かない
+    /// (出力段が書き戻すときと同じ)。
+    ///
+    /// **記帳は投入の後だけ** ([#1183])。組み立てが投げれば、コマンドは捨てられて書き込み待ちが
+    /// 残るので、次のリフレッシュか出力段がやり直す。
+    ///
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    func writeBackPendingPixels() throws(RenderFailure) {
+        guard target.hasPendingPixelWrites else { return }
+        let wroteBack = try gpu.withCommands { commands throws(RenderFailure) in
+            let wroteBack = try encodePixelWriteBackKeepingCarry(into: commands)
+            gpu.commit(commands)
+            return wroteBack
+        }
+        if wroteBack { target.markPixelsWrittenBack() }
+    }
+
+    /// 出す先を、止まっている間に変わった描く先に追い付かせる。**失敗しても投げない。**
+    ///
+    /// 止まっている間のコールバックを配った直後に、ランタイムが呼ぶ。画面 (窓)・共有の面・
     /// 書き出し・観測・CPU の読み出しは、どれも出す先を読むので、**コールバックを配る 1 点で追い
-    /// 付けば、どの口も同じ 1 枚を受け取る** (ADR-0023 決定 2)。投げないのは、呼び手 (`advance()`)
-    /// が観測に応えてから投げる作りだからで、失敗しても書き込み待ちと印は残る — 次の出力段が
-    /// やり直して、そこで投げる。変えていなければ何も積まない。
+    /// 付けば、どの口も同じ 1 枚を受け取る** (ADR-0023 決定 2)。追い付き方は細かさで分かれる。
+    ///
+    /// - 細かさを下げた面: 書き戻して、出す先へ広げ直す (``catchUpOutput()``・[#1882])
+    /// - 細かさ 1 の面: 描く先が出す先そのものなので、書いた画素を書き戻すだけ
+    ///   (``writeBackPendingPixels()``・[#1906])
+    ///
+    /// 投げないのは、呼び手 (`advance()`) が観測に応えてから投げる作りだからで、失敗しても書き込み
+    /// 待ちと印は残る — 次のリフレッシュがもう一度試し、出力段はやり直せなければ投げる。変えて
+    /// いなければ何も積まない。
     ///
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
     func catchUpOutputWithoutThrowing() {
-        guard needsOutputEnlargement else { return }
+        guard upscaleStage == nil else {
+            guard needsOutputEnlargement else { return }
+            do {
+                try catchUpOutput()
+            } catch {
+                warnOnce(.upscaleFailed, "Could not run the upscale: \(error.headline)")
+            }
+            return
+        }
         do {
-            try catchUpOutput()
+            try writeBackPendingPixels()
         } catch {
-            warnOnce(.upscaleFailed, "Could not run the upscale: \(error.headline)")
+            warnOnce(
+                .pixelWriteBackFailed,
+                "Could not write the changed pixels back to the canvas: \(error.headline)"
+                    + " — trying again on the next refresh")
         }
     }
 }

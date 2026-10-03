@@ -471,6 +471,13 @@ public final class SketchRuntime {
             lastFrameAt = now()
         }
         guard !isPaused else {
+            // **外から止めている間も、出す先が描く先に追い付いていなければ追い付く** ([#1906])。
+            // 配った直後の追い付き (下) が失敗した後に止められると、書き込み待ち (細かさを下げた
+            // 面なら広げ直し) が残ったまま、止めが解けるまで誰もやり直さない。門で守られている
+            // ので、追い付いていれば何も積まない
+            //
+            // [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+            canvas.catchUpOutputWithoutThrowing()
             takeFragmentChangesWithoutAFrame()
             settleWithoutAnotherFrame()
             serveObservationIfRequested(request: observation)
@@ -482,12 +489,15 @@ public final class SketchRuntime {
         if !isLooping, requestedTime == nil {
             if !redrawRequested {
                 guard deliverWhileStopped() else {
-                    // **配ったコールバックが描く先を変えたなら、ここで出す先へ広げ直す** ([#1882])。
+                    // **配ったコールバックが描く先を変えたなら、ここで出す先を追い付かせる**
+                    // (書いた画素を書き戻し、細かさを下げた面なら広げ直す・[#1882]・[#1906])。
                     // 窓・共有の面・書き出し・観測・CPU の読み出しはどれも出す先を読むので、
                     // コールバックを配る 1 点で追い付けば、どの口も同じ 1 枚を受け取る。描き直す
-                    // ときは、そのフレームの終わりの拡大が済ませる。変えていなければ何も積まない
+                    // ときは、そのフレームの頭の書き戻しと終わりの拡大が済ませる。変えていなければ
+                    // 何も積まない
                     //
                     // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+                    // [#1906]: https://github.com/mokume-metal/mokume/issues/1906
                     canvas.catchUpOutputWithoutThrowing()
                     takeFragmentChangesWithoutAFrame()
                     settleWithoutAnotherFrame()
@@ -576,10 +586,16 @@ public final class SketchRuntime {
     ///
     /// 配るのは**フレームの外**である。`draw()` を呼ばないフレームを組むと、効果や
     /// 視点の無い絵が出口へ出て、止まっている間の絵が変わってしまう。そのため
-    /// コールバックの中の `translate()` は効かない。**置いた図形・絵・背景と書いた画素は、
-    /// 持ち越しの区間 (``carryingOver(_:)``) の中なので、次に描くフレームへ溜まる** —
-    /// `redraw()` を呼べばそのフレームに出る。呼ばずに置き続けると、上限を付けずに溜まり続ける
-    /// (作者が置き続けているからである・ADR-0021 決定 4 の追補 (2026-09-27))。
+    /// コールバックの中の `translate()` は効かない。**置いた図形・絵・背景は、持ち越しの区間
+    /// (``carryingOver(_:)``) の中なので、次に描くフレームへ溜まる** — `redraw()` を呼べばその
+    /// フレームに出る。呼ばずに置き続けると、上限を付けずに溜まり続ける (作者が置き続けている
+    /// からである・ADR-0021 決定 4 の追補 (2026-09-27))。**書いた画素は溜めない。** 同じ
+    /// コールバックで `redraw()` を呼ばなければ、配った直後に面へ戻す (``runFrame()`` の追い付き・
+    /// [#1906])。窓に出した絵がそのまま残るので、後で描くフレームの描き切りが失敗しても消えない。
+    /// 同じコールバックで `redraw()` を呼べば、そのフレームの頭で戻し、描き切りが失敗すれば
+    /// 置いた図形と一緒に捨てる。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
     /// 置かれるのは変換も切り抜きも光も周囲も無い状態で、前のフレームが最後に残した分も
     /// 効かない (描き終えたところで戻す — `Canvas.endFrame()`・#1472・#1504)。
     ///

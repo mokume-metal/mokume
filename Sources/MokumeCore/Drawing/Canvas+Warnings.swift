@@ -100,6 +100,15 @@ extension Canvas {
         case effectFailed
         /// 拡大を通せなかった。
         case upscaleFailed
+        /// 止まっている間のコールバックが書いた画素を、配った直後に描く先へ書き戻せなかった
+        /// (細かさ 1 の面・[#1906])。書き込み待ちは残り、次のリフレッシュと出力段がやり直す。
+        ///
+        /// **``upscaleFailed`` とは鍵を分ける。** 細かさ 1 の面には拡大の段が無く、あちらの文面は
+        /// 直す先を指さない。細かさを下げた面の追い付きは書き戻しと拡大を 1 本で積むので、
+        /// あちらの鍵で言う。
+        ///
+        /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+        case pixelWriteBackFailed
 
         /// フレームの外で粒を扱った。
         case particlesOutsideFrame
