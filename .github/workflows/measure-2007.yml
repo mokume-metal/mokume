@@ -16,7 +16,7 @@ permissions:
 
 env:
   # loop: EffectArgumentTests だけを 30 回 / full: 全検査を条件ごとに数回
-  MOKUME_MEASURE_STAGE: loop4
+  MOKUME_MEASURE_STAGE: full2
 
 jobs:
   measure:
@@ -127,6 +127,14 @@ jobs:
                   one sleep-after-200 "$i" MOKUME_MEASURE_SLEEP_AFTER_RELEASE_MS=200 -- --filter "$F"
                 done
               done
+              ;;
+            full2)
+              # 全検査 (make test と同じ入口) で、基準とキューの使い回しを交互に
+              one control 1 --
+              one queue-pool 1 MOKUME_MEASURE_QUEUE_POOL=1 --
+              one control 2 --
+              one queue-pool 2 MOKUME_MEASURE_QUEUE_POOL=1 --
+              one queue-pool 3 MOKUME_MEASURE_QUEUE_POOL=1 --
               ;;
             full)
               for i in 1 2; do
