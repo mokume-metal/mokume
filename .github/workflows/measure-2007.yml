@@ -16,7 +16,7 @@ permissions:
 
 env:
   # loop: EffectArgumentTests だけを 30 回 / full: 全検査を条件ごとに数回
-  MOKUME_MEASURE_STAGE: loop
+  MOKUME_MEASURE_STAGE: loop2
 
 jobs:
   measure:
@@ -25,6 +25,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: ビルド
         run: |
           set -o pipefail
@@ -67,6 +69,31 @@ jobs:
                 one only-effectargs "$i" -- --filter 'MokumeCoreTests.EffectArgumentTests'
               done
               ;;
+            loop2)
+              F='MokumeCoreTests.EffectArgumentTests'
+              # 1. 並列の幅だけを変える (既定の 16 は loop で済み)
+              for w in 1 4 100000; do
+                for i in $(seq 1 30); do
+                  one "width-$w" "$i" SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=$w -- --filter "$F"
+                done
+              done
+              # 2. suite の中の検査関数を 1 つずつ
+              for f in survivesAHugeFiniteRadius aGraphicsLayerDoesNotSpreadItToTheMainCanvas negativeAmountLeavesThePictureAlone clampsTheAmountToOne dropsAnEffectWithANonFiniteArgument keepsTheOtherEffectsInTheList; do
+                for i in $(seq 1 20); do
+                  one "fn-$f" "$i" -- --filter "$F/$f"
+                done
+              done
+              # 3. 土台を畳まない
+              for i in $(seq 1 30); do
+                one tombstone "$i" MOKUME_MEASURE_TOMBSTONE=1 -- --filter "$F"
+              done
+              # 4. #2008 の前の木 (68336e1e) で同じ suite を 30 回
+              git checkout 68336e1e -- Sources Tests Package.swift Package.resolved scripts
+              swift build --build-tests 2>&1 | tail -3
+              for i in $(seq 1 30); do
+                one pre-2008 "$i" -- --filter "$F"
+              done
+              ;;
             full)
               for i in 1 2; do
                 one control "$i" --
@@ -76,8 +103,7 @@ jobs:
               ;;
           esac
           {
-            echo '## 計測 (#2007)'; echo '```'; cat .build/measure/summary.txt
-            echo; cat .build/measure/faults.txt 2>/dev/null; echo '```'
+            echo '## 計測 (#2007)'; echo '```'; cat .build/measure/summary.txt; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
