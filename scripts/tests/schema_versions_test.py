@@ -106,10 +106,10 @@ class SchemaVersionsTest(unittest.TestCase):
         mutate(document)
         self.write(name, document)
 
-    def run_check(self, base="main"):
+    def run_check(self, base="main", cwd=None):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--base", base],
-            cwd=self.root,
+            cwd=cwd or self.root,
             capture_output=True,
             text=True,
         )
@@ -256,7 +256,69 @@ class SchemaVersionsTest(unittest.TestCase):
         code, output = self.run_check()
         self.assertEqual(code, 1, output)
         self.assertIn("required に追加", output)
-        self.assertIn("schemaVersion.const を 2 へ上げる", output)
+        # 2 は main が分岐の後に使ったので、案内はその次を指す
+        self.assertIn("schemaVersion.const を 3 へ上げる", output)
+
+    def test_stale_branch_reusing_a_version_main_took_is_red(self):
+        """分岐点より上げても、main が分岐の後に使った版と重なれば赤。
+
+        両側の const 行は同じ書き換えになるので git は衝突なしで合流し、合流後の木は
+        同じ版を名乗る形を 2 通り持ってしまう (#2031 の反証 1)。
+        """
+        self.advance_main_past_branch()
+
+        def mutate(document):
+            document["required"].append("note")
+            document["properties"]["schemaVersion"]["const"] = 2
+
+        self.edit(mutate)
+        code, output = self.run_check()
+        self.assertEqual(code, 1, output)
+        self.assertIn("main の先端も 2 を名乗っている", output)
+        self.assertIn("3 へ上げる", output)
+
+    def test_version_above_what_main_took_is_green(self):
+        self.advance_main_past_branch()
+
+        def mutate(document):
+            document["required"].append("note")
+            document["properties"]["schemaVersion"]["const"] = 3
+
+        self.edit(mutate)
+        code, output = self.run_check()
+        self.assertEqual(code, 0, output)
+        self.assertIn("版が上がっている (1 → 3)", output)
+
+    def test_shallow_merge_ref_finds_the_fork_after_main_moved(self):
+        """CI の浅い合流 ref — 合流 ref を作った後に main が進んでも、分岐点と比べる。
+
+        合流 ref の親は作った時点の main で、schemas の段が走るまでに main は進みうる
+        (#2031 の反証 2)。先端と比べると、その間に main へ入った変更を自分のものと読む。
+        """
+        # Schemas/ に触れない PR と、その合流 ref (第 1 親が作った時点の main)
+        self.git("switch", "-q", "-c", "topic")
+        (self.root / "README.md").write_text("PR の変更\n", encoding="utf-8")
+        self.commit("Schemas/ に触れない変更")
+        self.git("switch", "-q", "-c", "pr-merge", "main")
+        self.git("merge", "-q", "--no-ff", "topic", "-m", "合流 ref")
+        # 合流 ref を作った後に、main が面を広げて版を上げる
+        self.git("switch", "-q", "main")
+        document = json.loads(json.dumps(BASE))
+        document["properties"]["added"] = {"type": "string"}
+        document["properties"]["schemaVersion"]["const"] = 2
+        self.write("probe", document)
+        self.commit("main 側で面を広げて版を上げる")
+
+        clone = Path(self.tmp.name) / "clone"
+        subprocess.run(
+            ["git", "clone", "-q", "--depth=1", "--branch", "pr-merge",
+             self.root.resolve().as_uri(), str(clone)],
+            check=True, capture_output=True,
+        )
+        code, output = self.run_check(base="origin/main", cwd=clone)
+        self.assertEqual(code, 0, output)
+        self.assertIn("分岐点", output)
+        self.assertIn("破壊的な変化なし", output)
 
     def test_without_a_common_ancestor_it_falls_back_to_the_tip(self):
         """分岐点を引けないとき (CI の浅い合流 ref) は、base の先端と比べると名乗る。"""
