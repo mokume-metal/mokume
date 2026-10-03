@@ -1832,7 +1832,7 @@ struct CanvasTests {
             "depthTexture": construction, "gpu": construction,
             "drawer": "この面を出す先に持つ描き場所 (弱く持つ)。組み立ての最後に 1 度だけ書く",
             "brightness": "明るさを画面へ写す段の設定。画面の性質なのでフレームを越える",
-            "encodedStorage": resource, "outputPassStorage": resource,
+            "encodedStorage": resource, "displayStorage": resource, "outputPassStorage": resource,
             "lastEncodeSubmission": "最後に出力段を投入した番号。次の出力段の前に名指しで待つ (#927)",
             "pixelMirrorsMade": count, "pixelWriteBacksEncoded": count,
             "pixelReadbacksEncoded": count, "encodedImagesMade": count, "encodePassCount": count,

@@ -108,6 +108,14 @@ import MokumeDiagnostics
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     var encodedStorage: EncodedImage?
+    /// 同期で読む ``encodeForDisplay(scale:)`` が出力段を通した絵の置き場 ([#1752])。
+    ///
+    /// **出口へ渡す ``encodedStorage`` とは別に持つ。** あちらは次のフレームの頭まで出口へ
+    /// 渡すのを控えている (#927) ので、合間の同期の読み出しが同じ 1 枚へ組むと、控えの中身が
+    /// 書き換わる。頼まれてはじめて作り、以後は使い回す。
+    ///
+    /// [#1752]: https://github.com/mokume-metal/mokume/issues/1752
+    var displayStorage: EncodedImage?
     /// 出力段を通すパイプライン。同じく頼まれてはじめて作る。
     var outputPassStorage: OutputPass?
 

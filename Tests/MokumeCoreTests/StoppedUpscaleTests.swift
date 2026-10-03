@@ -302,7 +302,7 @@ struct StoppedUpscaleTests {
 
     // MARK: - CPU の読み出し
 
-    /// 出す先を CPU で読む口 (`readPixels()`・`encodeForDisplay()`・`writePNG(to:)` の元) も、
+    /// 出す先を CPU で読む口 (`readPixels()`) も、
     /// 止まっている間に変わった描く先を広げ直してから読む。出力段と食い違わない。
     @Test("CPU で読む出す先にも、止まっている間に変えたものが出る", arguments: Change.allCases)
     func cpuReadsTheCaughtUpPicture(change: Change) throws {
