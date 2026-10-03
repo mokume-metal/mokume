@@ -68,7 +68,7 @@ for example in "$EXAMPLE_DIR"/*.json; do
   fi
 done
 
-# 版の据え置きを見る (段 2)。origin/main と突き合わせるので、比較の相手を引けない
+# 版の据え置きを見る (段 2)。origin/main との分岐点と突き合わせるので、比較の相手を引けない
 # 環境では黙って通る — 見ていないことは、あちらの出力が名乗る
 python3 scripts/check-schema-versions.py || status=1
 

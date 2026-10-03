@@ -44,7 +44,7 @@ FPS_LINE = re.compile(r"fps=([\d.]+)")
 
 
 def pressure(observe: pathlib.Path, limit: float) -> int:
-    """識別子を変えながら要求を置き続ける。呼び出し側が kill するまで戻らない。"""
+    """識別子を変えながら要求を置き続け、`limit` 秒で戻る。"""
     deadline = time.time() + limit
     index = 0
     while time.time() < deadline:

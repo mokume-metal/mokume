@@ -18,8 +18,12 @@ SHELL := /bin/bash
 # パッケージマネージャにも左右されず、ローカルと CI で同じ結果になる
 export REUSE_ENCODING_MODULE := chardet
 
+# python3 は 3.10 以上 (#2030)。scripts/ が match 文や評価時の `X | None` を使うので、
+# macOS 同梱の 3.9 (xcode-select で入るもの) では changelog-lint・hooks-test・agents-md-size が落ちる
 setup: ## 開発ツールを確認する
-	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: xcode-select --install"; exit 1; }
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: brew install python (3.10 以上)"; exit 1; }
+	@python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || { \
+		echo "python3 が 3.10 より古い ($$(python3 --version 2>&1)): brew install python で入れ、PATH の先に置く"; exit 1; }
 	@for cmd in gh jq openssl; do \
 		command -v $$cmd >/dev/null 2>&1 || { echo "$$cmd が見つからない: brew install $$cmd"; exit 1; }; \
 	done
@@ -390,8 +394,8 @@ tool-language: ## Sources/ の Swift でコメントの外に日本語を置い�
 # `make test-release` がコンパイルできなくなるのに、debug も `swift build -c release`
 # (製品) も通る — **足した本人には壊れて見えない**形で 2 度起きた (#761 → #1021)。
 #
-# **段 1 を採っている** (ADR-0008 決定 5)。本物の判定はコンパイラで、それには release の
-# テストビルドを CI で回すしかないが (段 2)、その入口は #1096 が持つ。ここが引き受けるのは
+# **段 1 を採っている** (ADR-0008 決定 5)。本物の判定はコンパイラで、release のテストビルドは
+# ci.yml の test-release ジョブが毎 PR で回している (段 2・#1096)。ここが引き受けるのは
 # **赤が理由の正典まで案内すること**である — 再発の経路は「散文で書いた作法が読まれなかった」
 # 1 本なので、コンパイラの診断 (正典を指さない) では 3 度目を止められない。
 #

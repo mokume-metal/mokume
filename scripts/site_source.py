@@ -3,13 +3,22 @@
 # SPDX-License-Identifier: MIT
 """公開物の読み口と、公開物を読むときの綴り (#815)。
 
-面を検める検査は 3 本あり (`check-entry.py` / `check-published-reference.py` /
-`check-external-assets.py`)、`pages.yml` と `publication.yml` から**必ず一緒に**
-呼ばれる。以前はこの 3 本 + `check-publication.py` が、読み口・タイムアウト・
-`<img>` の綴りをそれぞれ写しで持っていた。
+公開物を検める検査 (`check-entry.py` / `check-published-reference.py` /
+`check-publication.py` / `check-external-assets.py`) は、以前は読み口・タイムアウト・
+`<img>` の綴りをそれぞれ写しで持っていた。ここに置くものと、それを使う検査:
 
-**畳む理由は 3 本が揃って持っている設計意図である。** どれも「手元で組んだ `_site`
-にも、公開された URL にも、同じ形で当てられる」ようにしてある — 配信の事故と
+  読み口 (`Source` / `Unreachable`)  check-entry・check-published-reference・check-publication
+  `<img>` の綴り (`HTML_IMAGE`)       check-entry・check-external-assets
+  タイムアウト                        `Source` と check-external-assets
+  面の名前の導出 (`landing_of`)       check-entry・check-published-reference
+
+**呼ばれる組は場所ごとに違う。** `pages.yml` (公開の直後) は publication・
+published-reference・entry を、`publication.yml` (日次) は publication・
+published-reference・external-assets を、`make` の段 (`entry-check`・`reference`) は
+entry と published-reference を手元の組み上げに当てる。
+
+**畳む理由は、読み口を使う検査が揃って持っている設計意図である。** どれも「手元で
+組んだ `_site` にも、公開された URL にも、同じ形で当てられる」ようにしてある — 配信の事故と
 組み立ての事故を切り分けるためで、片方だけ直すとその切り分けが崩れる
 ([ADR-0001](../docs/decisions/0001-founding-principles.md) 原則 9)。
 
@@ -29,9 +38,10 @@
 の読める面と揃っていない)。`check-external-assets.py` の `reachable` は元から理由を
 文字列で名乗っており、そちらが先例である。
 
-**判定は赤のままにする。** この読み口を呼ぶ 3 経路 — `pages.yml` (公開の直後)・
-`publication.yml` (日次)・`Makefile` (手元の `_site`) — は**どれも merge の条件では
-ない**ので、赤が誰かの作業を止めない。`publication.yml` が「相手側の一時的な不調が
+**判定は赤のままにする。** この読み口で URL を引くのは `pages.yml` (公開の直後) と
+`publication.yml` (日次) だけで、**どちらも merge の条件ではない**ので、赤が誰かの
+作業を止めない。merge の条件に入る `make` の段 (`entry-check`・`reference`) は手元の
+組み上げを読むので、「引けなかった」がそもそも起きない。`publication.yml` が「相手側の一時的な不調が
 こちらの赤になる」と書いているのは**置き場の切り分け**であって (ネットワークを踏む検査を
 merge の条件に混ぜない)、赤にしないという意味ではない — 同じ節が「赤くするだけで、
 起票はしない」と続けている。
@@ -77,8 +87,8 @@ def landing_of(catalog: pathlib.Path) -> tuple[pathlib.Path, str]:
     return landings[0]
 
 
-# 相手を待つ上限。**3 本で同じ値である必要がある** — 揃っていないと、同じ公開先に
-# 対して「手元では通るが公開先だけ落ちる」が起きる
+# 相手を待つ上限。**`Source` と check-external-assets で同じ値である必要がある** —
+# 揃っていないと、同じ公開先に対して片方だけが待ち切れずに落ちる
 FETCH_TIMEOUT_SECONDS = 30
 
 # HTML の絵 `<img src="https://…">`。

@@ -64,10 +64,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-# 読み口とタイムアウトは site_source が持つ (#815)。**この 3 本は必ず一緒に呼ばれる**
+# 読み口は site_source が持つ (#815)。**手元の組み上げにも公開先にも同じ読み口で当てる**
 # ので、写しを持つと「手元では通るが公開先だけ落ちる」が起きる
-from site_source import (  # noqa: E402,F401
-    FETCH_TIMEOUT_SECONDS,
+from site_source import (  # noqa: E402
     landing_of,
     HTML_IMAGE,
     Source,
@@ -89,7 +88,6 @@ README_FACE_LINK = re.compile(
     r"""https?://[^\s<>()"']+/documentation/([A-Za-z0-9_.-]+)/""", re.IGNORECASE)
 # 絵。src が外部 URL のものだけを資産と数える。綴りは site_source が持つ (#815) —
 # 死活を見る側 (check-external-assets.py) と同じものを読まないと、片方だけが数える
-IMAGE_SOURCE = HTML_IMAGE
 # 外部ホストから持ってくる実行物と装飾。**絵とは別に扱う** — 絵が消えてもページは
 # 読めるが、これらが消えるとページの意味が変わる
 EXTERNAL_SCRIPT = re.compile(r"""<script\s[^>]*src=["']https?://""", re.IGNORECASE)
@@ -129,7 +127,7 @@ def check(source: Source, readme: pathlib.Path, catalog: pathlib.Path) -> list[s
             "面の名前が変わったまま行き先が取り残されている"
         )
 
-    images = IMAGE_SOURCE.findall(page)
+    images = HTML_IMAGE.findall(page)
     if not images:
         # 0 件を緑にしない。書式が変わって 1 本も拾えなくなった状態は、
         # 絵が消えた状態と同じ見え方をする

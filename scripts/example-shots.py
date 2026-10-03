@@ -378,7 +378,7 @@ def collect(root: pathlib.Path) -> list[Shot]:
 # ---------------------------------------------------------------- 検査
 
 
-def check(root: pathlib.Path, shots: list[Shot]) -> list[str]:
+def check(shots: list[Shot]) -> list[str]:
     problems: list[str] = []
     for shot in shots:
         if not shot.alt:
@@ -1097,7 +1097,7 @@ def main(
         return drift(root, shots, arguments.drift, root / ".build" / "example-shots-drift-out")
 
     if not arguments.render and not arguments.capture:
-        problems = check(root, shots)
+        problems = check(shots)
         if problems:
             print("例の絵が揃っていない:", file=sys.stderr)
             for problem in problems:
