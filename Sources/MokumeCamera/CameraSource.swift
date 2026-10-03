@@ -137,13 +137,7 @@ nonisolated final class CameraSource: NSObject, CaptureSource, AVCaptureVideoDat
         }
         session.addInput(deviceInput)
         let output = AVCaptureVideoDataOutput()
-        // 大きさは OS に縮めさせる (できなければ ``FrameConverter`` が切り取って縮める)。
-        // 画素の形式は選ばない — 機材が既定で出す形式 (ふつうは 420v) のまま受けて、
-        // 変換器が扱う
-        output.videoSettings = [
-            kCVPixelBufferWidthKey as String: converter.width,
-            kCVPixelBufferHeightKey as String: converter.height,
-        ]
+        output.videoSettings = Self.videoSettings(width: converter.width, height: converter.height)
         // 追いつかない 1 枚は捨てる。溜めると機材のメモリが枯れて、新しい絵が来なくなる
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: frames)
@@ -157,6 +151,20 @@ nonisolated final class CameraSource: NSObject, CaptureSource, AVCaptureVideoDat
         session.startRunning()
         self.session = session
         currentID = device.uniqueID
+    }
+
+    /// 受け取る 1 枚の形。
+    ///
+    /// - **画素の形式は 32BGRA を頼む。** 機材が既定で出す 420v のまま受けて vImage で
+    ///   直に変換すると、色差が中立の灰色が緑になった (#1977 の実機の確認で踏んだ)。
+    ///   YpCbCr から RGB への変換は AVFoundation に任せ、``FrameConverter`` は BGRA だけを受ける
+    /// - 大きさは OS に縮めさせる (できなければ ``FrameConverter`` が切り取って縮める)
+    static func videoSettings(width: Int, height: Int) -> [String: Any] {
+        [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+        ]
     }
 
     // MARK: - 抜き差し

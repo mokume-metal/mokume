@@ -18,8 +18,13 @@ import MokumeCore
 ///
 /// ## 変換は vImage の 1 回
 ///
-/// 画素の形式 (420v / 420f / 32BGRA ほか)・行の詰め物・色空間を、vImage の変換器 1 本で
-/// まとめて扱う。変換器は作るのが重いので、画素の形式と色空間が同じ間は持ち回す。
+/// 行の詰め物・並び (BGRA → RGBA)・色空間を、vImage の変換器 1 本でまとめて扱う。
+/// 変換器は作るのが重いので、色空間が同じ間は持ち回す。
+///
+/// **受けるのは 32BGRA だけである。** 420v を vImage で直に変換すると、色差が中立の
+/// 灰色が緑になった (#1977 の実機の確認で踏んだ)。YpCbCr から RGB へはカメラ側
+/// (AVFoundation) に変換させ (``CameraSource/videoSettings(width:height:)``)、ここに来た
+/// 別の形式は黙って違う色にせず、変換できないとして断る。
 ///
 /// 大きさが頼んだものと違って届いたときは、真ん中を頼んだ縦横比で切り取ってから縮める
 /// (ゆがめない)。
@@ -99,6 +104,7 @@ nonisolated final class FrameConverter {
 
     private func converter(for buffer: CVPixelBuffer) throws(Failure) -> (vImageConverter, Int) {
         let pixelFormat = CVPixelBufferGetPixelFormatType(buffer)
+        guard pixelFormat == kCVPixelFormatType_32BGRA else { throw .unsupportedFormat(pixelFormat) }
         guard let format = vImageCVImageFormat_CreateWithCVPixelBuffer(buffer)?.takeRetainedValue()
         else { throw .unsupportedFormat(pixelFormat) }
         // 色空間を名乗らないバッファは sRGB とみなす。YpCbCr で色差の位置を名乗らない

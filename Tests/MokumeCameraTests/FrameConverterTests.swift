@@ -88,6 +88,51 @@ struct FrameConverterTests {
         #expect(near(rgba(fromP3, 0, 0), [0, 255, 0, 255]))
     }
 
+    @Test("原色と伝達関数の付属情報で名乗る BGRA も、Display P3 へ移す")
+    func followsPrimariesAttachments() throws {
+        // カメラが出す BGRA は CGColorSpace ではなく、原色・伝達関数の付属情報で名乗る
+        let source = try buffer(width: 2, height: 2) { _, _ in (blue: 0, green: 0, red: 255) }
+        CVBufferSetAttachment(
+            source, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2,
+            .shouldPropagate)
+        CVBufferSetAttachment(
+            source, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2,
+            .shouldPropagate)
+        let picture = try FrameConverter(width: 2, height: 2).convert(source)
+        #expect(near(rgba(picture, 0, 0), [234, 51, 35, 255]))
+    }
+
+    /// 420v を vImage で直に変換すると、色差が中立の灰色が緑になった (#1977 の実機で踏んだ)。
+    /// 黙って違う色にせず、断る。
+    @Test("BGRA 以外の形式は、黙って違う色にせず断る")
+    func refusesOtherFormats() throws {
+        var made: CVPixelBuffer?
+        CVPixelBufferCreate(
+            nil, 4, 4, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &made)
+        let source = try #require(made)
+        // 実機と同じ付属情報を付ける。無いと変換器が作れずに断るので、守りの有無を見分けられない
+        CVBufferSetAttachment(
+            source, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2,
+            .shouldPropagate)
+        CVBufferSetAttachment(
+            source, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2,
+            .shouldPropagate)
+        CVBufferSetAttachment(
+            source, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+            .shouldPropagate)
+        #expect(throws: FrameConverter.Failure.unsupportedFormat(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)) {
+            try FrameConverter(width: 4, height: 4).convert(source)
+        }
+    }
+
+    @Test("カメラには 32BGRA と頼んだ大きさを頼む")
+    func asksTheCameraForBGRA() {
+        let settings = CameraSource.videoSettings(width: 640, height: 480)
+        #expect(settings[kCVPixelBufferPixelFormatTypeKey as String] as? OSType == kCVPixelFormatType_32BGRA)
+        #expect(settings[kCVPixelBufferWidthKey as String] as? Int == 640)
+        #expect(settings[kCVPixelBufferHeightKey as String] as? Int == 480)
+    }
+
     @Test("縦横比が違えば、真ん中を切り取ってから縮める (ゆがめない)")
     func cropsTheCentreBeforeScaling() throws {
         // 8x4 の両端 2 列ずつが青、真ん中 4 列が赤。4x4 の真ん中だけを 2x2 へ縮める
