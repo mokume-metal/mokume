@@ -162,6 +162,7 @@ enum ShapeExit {
             "computeEncodersOpened": count, "computeEncodersClosed": count,
             "earlySubmissionsAttempted": count, "earlySubmissionFailedFrame": count,
             "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
+            "lastComputeBarrierQueueStages": "最後に積んだ投入の最後の口が待たせる段 (#1687)。積むたびに上書きし、検査が読む。組み立ての中で書く口が無い",
             "glyphQuadsPlaced": count, "drawCallsInLastFrame": count,
             "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
             "pointScansInLastFrame": count, "placedGraphicsDrops": count,

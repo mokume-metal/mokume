@@ -564,10 +564,12 @@ public final class Particles {
 
     /// 粒を `count` 個置く。
     ///
-    /// **待たない。** 状態の並びへの書き込みは控えに積まれ、描き切りが計算より前に
-    /// GPU 側のコピーで届ける ([#749])。前のフレームの計算がまだ同じ並びを読み書き
-    /// していても、コピーはそれが終わってから走る — かつては書く直前に投入済みの全部を
-    /// 待っていて、粒を使うフレームでは CPU と GPU が重ならなかった。
+    /// **待たない。** 状態の並びへの書き込みは控えに積まれ、次の描き切り (か読み戻し) が GPU 側の
+    /// コピーで届ける ([#749])。届くのは、書く前に頼んだ計算 (このフレームで先に呼んだ
+    /// `particles()` の刻み) の後で、書いた後に頼んだ計算の前である — 書く前に頼んだ計算は、書く口が
+    /// 先に投入する ([#1687])。先に投入した計算がまだ同じ並びを読み書きしていても、コピーはそれが
+    /// 終わってから走る (計算の最後の口が待たせる) — かつては書く直前に投入済みの全部を待っていて、
+    /// 粒を使うフレームでは CPU と GPU が重ならなかった。
     ///
     /// 枠と寿命はここで進む。控えは描き切りが待てなくても捨てずに持ち越す ([#934]) ので、
     /// 進めた枠は必ずいつか書かれる。
@@ -579,6 +581,7 @@ public final class Particles {
     ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
     /// [#934]: https://github.com/mokume-metal/mokume/issues/934
+    /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
     /// [#1748]: https://github.com/mokume-metal/mokume/issues/1748
     private func place(
         _ count: Int, from source: Emitter, speed: ClosedRange<Float>,

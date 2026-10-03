@@ -8,8 +8,10 @@ import MokumeDiagnostics
 /// 1 回ぶんの計算の頼み。
 ///
 /// 頼まれた順に溜め、描く前にまとめて流す。溜めは面ごとで、別の面が先に頼んだ溜めとぶつかる
-/// 頼みが来たときは、頼まれる前にその面の溜めを先に流す ([#1870])。
+/// 頼みが来たときは、頼まれる前にその面の溜めを先に流す ([#1870])。数の並びへの CPU の書き込みも、
+/// その並びに触れる溜めを (書いた面のものも) 書く前に流す ([#1687])。
 ///
+/// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
 /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
 struct ComputeDispatch {
     let computation: Computation
@@ -127,6 +129,8 @@ extension Canvas {
             before: ComputeAccess(reads: dispatch.reads, writes: dispatch.writes))
         pendingComputations.append(dispatch)
         gpu.pendingComputationHolders.enqueue(self)
+        // 束ねた並びへの後の書き込みが、この頼みを先に送れるように印を立てる (#1687)
+        for numbers in buffers { numbers.mayBeNamedByPendingComputations = true }
     }
 
     /// 別の面が先に頼んで、まだ投入していない計算のうち、`asked` より先に走らねばならないものを、
@@ -193,17 +197,22 @@ extension Canvas {
     /// 次の段が待つ仕掛けを積む。
     ///
     /// - `afterStages`: 書いたのは計算の段
-    /// - `beforeQueueStages`: 待つのは、途中なら次の計算・最後なら描画の両段
+    /// - `beforeQueueStages`: 待つのは、途中なら次の計算。最後なら描画の両段に加えて、**後の投入の
+    ///   計算と届けるコピー**も待たせる ([#1687])。早い投入 (書き込み・面をまたぐ順) は 1 本だった
+    ///   コマンドを 2 本に割るので、後の投入の頭のコピーが、先の計算が読み終える前の並びを上書き
+    ///   したり、後の計算が先の計算の結果より先に読んだりしうる。仕掛けはキューの上で効くので、
+    ///   別のコマンドに載った後の仕事にも届く
     /// - `visibilityOptions`: `.device` を渡す。既定の「流さない」側にすると実行順だけ
     ///   揃えて**中身が見えない** ([#341] で実測)
     ///
     /// [#341]: https://github.com/mokume-metal/mokume/issues/341
+    /// [#1687]: https://github.com/mokume-metal/mokume/issues/1687
     private func encodeComputeBarrier(on encoder: any MTL4ComputeCommandEncoder, isLast: Bool) {
+        let stages: MTLStages = isLast ? [.dispatch, .blit, .vertex, .fragment] : .dispatch
         encoder.barrier(
-            afterStages: .dispatch,
-            beforeQueueStages: isLast ? [.vertex, .fragment] : .dispatch,
-            visibilityOptions: .device)
+            afterStages: .dispatch, beforeQueueStages: stages, visibilityOptions: .device)
         computeBarriersEncoded += 1
+        if isLast { lastComputeBarrierQueueStages = stages }
     }
 
     private func encode(
