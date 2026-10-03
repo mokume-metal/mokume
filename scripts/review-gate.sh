@@ -17,7 +17,7 @@
 #     (#1668 — 下の「AGENTS.md の増分」)
 #
 # **承認そのものはここで判定しない。** 要求も必須化もルールセットの required_reviewers
-# が担う (.github/rulesets/main-protection.json — 3 パスに minimum_approvals: 1 を課して
+# が担う (.github/rulesets/main-protection.json — file_patterns に minimum_approvals: 1 を課して
 # team maintainers へ要求が飛ぶ)。下の「6.」がそのパターンを読むのは、承認が要る PR か
 # どうかを知るためだけである。
 # (当初は CODEOWNERS + 承認数 0 で必須化できるつもりでいたが、承認数 0 は

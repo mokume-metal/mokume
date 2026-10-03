@@ -88,7 +88,7 @@ required check `review-gate` が PR ごとに判定する:
 | `verify: machine` | 検査群 (`ci-check` 等) のみで通過 |
 | Changes requested が未解消 | 赤 |
 
-**重要パスの承認要求は review-gate ではなく GitHub 側の機構が担う** ([ADR-0003](0003-agent-identity-separation.md))。要求も必須化も **`.github/rulesets/main-protection.json` の `required_reviewers`** が担い、3 パス (`docs/decisions/`・`.github/`・`.claude/`) に `minimum_approvals: 1` を課して team `maintainers` へ要求を飛ばす。当初は CODEOWNERS だけで必須化できるつもりでいたが、承認数 0 との組み合わせでは非ブロックだった ([#211](https://github.com/mokume-metal/mokume/issues/211) / ADR-0003 決定 4 の改訂)。その CODEOWNERS も要求を二重に飛ばすだけの写しだったので畳んだ ([#530](https://github.com/mokume-metal/mokume/issues/530))。公開 API 面はコードが生まれた時点でルールセットへ追加する。
+**重要パスの承認要求は review-gate ではなく GitHub 側の機構が担う** ([ADR-0003](0003-agent-identity-separation.md))。要求も必須化も **`.github/rulesets/main-protection.json` の `required_reviewers`** が担い、その `file_patterns` に当たる変更に `minimum_approvals: 1` を課して team `maintainers` へ要求を飛ばす (対象の一覧は写さない。何を対象にするかは [ADR-0031](0031-triage-as-the-single-gate.md) 決定 1)。当初は CODEOWNERS だけで必須化できるつもりでいたが、承認数 0 との組み合わせでは非ブロックだった ([#211](https://github.com/mokume-metal/mokume/issues/211) / ADR-0003 決定 4 の改訂)。その CODEOWNERS も要求を二重に飛ばすだけの写しだったので畳んだ ([#530](https://github.com/mokume-metal/mokume/issues/530))。公開 API 面はコードが生まれた時点でルールセットへ追加する。
 
 `verify: human` だけはどちらでも表現できない (パスではなく Issue の性質で決まる) ため、review-gate に残している。
 

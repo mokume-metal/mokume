@@ -17,8 +17,10 @@ gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワ�
 実行は make ci-check (CI もこれを呼ぶ)。
 """
 
+import fnmatch
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -656,6 +658,90 @@ class ApplyFreshnessTest(TreeFixture):
         self.assertEqual(code, 0, out)
         self.assertNotIn("注意", out)
         self.assertEqual(self.live_entries(), 6)
+
+
+class JudgeSourcesNeedApprovalTest(unittest.TestCase):
+    """判定の結果を変えうるファイルが、すべて承認の対象に載っていること (#2003)。
+
+    承認が配線 (.github/** など) だけを守っていると、判定の本体や、それが読む部品・
+    定義を承認なしで緩められる (#1716 の 6 本・ADR-0031 決定 1 の 2026-10-03 の改訂)。
+    根はフックの配線と、判定のジョブが呼ぶスクリプトで、そこから
+    `dirname "${BASH_SOURCE[0]}"` に続く名前を辿った閉包を「判定の中身」とみなす。
+    """
+
+    ROOT_SOURCES = (
+        (REPO / ".claude" / "settings.json", None),
+        (REPO / ".codex" / "config.toml", None),
+        (REPO / ".github" / "workflows" / "ci.yml", ("review-gate", "drawing-evidence")),
+        (REPO / ".github" / "workflows" / "parent-guard.yml", None),
+    )
+    SIBLING = re.compile(
+        r'BASH_SOURCE\[0\]\}"\)(?:" && pwd\))?/([A-Za-z0-9_][A-Za-z0-9_.-]*)')
+
+    @staticmethod
+    def job_text(text, name):
+        lines = text.splitlines()
+        start = lines.index(f"  {name}:")
+        end = next((i for i in range(start + 1, len(lines))
+                    if re.match(r"  \S", lines[i])), len(lines))
+        return "\n".join(lines[start:end])
+
+    def roots(self):
+        found = set()
+        for path, jobs in self.ROOT_SOURCES:
+            text = path.read_text(encoding="utf-8")
+            parts = [self.job_text(text, j) for j in jobs] if jobs else [text]
+            for part in parts:
+                # 呼び出しの行 (フックの command・ステップの run) だけを読む。
+                # コメントや許可の一覧に名前が出ても、判定を担うとは限らない
+                for line in part.splitlines():
+                    if re.search(r'\b(?:command|run)\b"?\s*[:=]', line):
+                        found.update(re.findall(
+                            r"scripts/([A-Za-z0-9_.-]+\.(?:sh|py))", line))
+        return found
+
+    def closure(self):
+        seen, todo = set(), list(self.roots())
+        while todo:
+            name = todo.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            path = REPO / "scripts" / name
+            self.assertTrue(path.is_file(), f"根が指す scripts/{name} が無い")
+            if path.suffix in (".sh", ".py"):
+                todo.extend(self.SIBLING.findall(path.read_text(encoding="utf-8")))
+        return {f"scripts/{n}" for n in seen}
+
+    def patterns(self):
+        data = json.loads((DEFS / "main-protection.json").read_text(encoding="utf-8"))
+        return [p for r in data["rules"] if r["type"] == "pull_request"
+                for rv in r["parameters"].get("required_reviewers", [])
+                for p in rv["file_patterns"]]
+
+    @staticmethod
+    def covered(path, patterns):
+        # protected-paths.sh の pattern_match と同じ 2 形 (末尾 /** とそれ以外の glob)
+        for p in patterns:
+            if p.endswith("/**"):
+                if path.startswith(p[:-2]):
+                    return True
+            elif fnmatch.fnmatchcase(path, p):
+                return True
+        return False
+
+    def test_every_judge_source_requires_approval(self):
+        patterns = self.patterns()
+        sources = self.closure()
+        # 根を拾えていないと何も確かめずに緑になる。代表を名指しして空振りを防ぐ
+        for name in ("scripts/review-gate.sh", "scripts/agent-comment-guard.sh",
+                     "scripts/drawing-paths.txt"):
+            self.assertIn(name, sources)
+        missing = sorted(s for s in sources if not self.covered(s, patterns))
+        self.assertEqual(
+            missing, [],
+            "判定の中身が承認の外にある。.github/rulesets/main-protection.json の "
+            "required_reviewers の file_patterns に足す (#2003)")
 
 
 if __name__ == "__main__":
