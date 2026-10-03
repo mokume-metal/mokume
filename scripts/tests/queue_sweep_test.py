@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
-"""scripts/queue-sweep.sh の検査 (#1265)。
+"""scripts/queue-sweep.sh と、それを起こす queue-sweep.yml の検査 (#1265 / #1951)。
 
-固定したいのは八つ。
+固定したいのは九つ。
 
 1. **ref が消えたグループの run は cancel する。** merge queue は捨てたグループの run を
    cancel しないので、放っておくと macOS の枠を使い続ける (#1265)
@@ -18,6 +18,10 @@
 7. **まだ終わっていない run はどの status でも拾う。** queued だけを見ると、走り出した
    macOS ジョブ (in_progress) が止まらない — #1265 の 2 件目はそちらだった
 8. **グループの ref の形をしていない run には触らない。** 読み違いを cancel に繋げない
+9. **dequeued は pull_request_target で受ける。** pull_request で受けると、merge queue が
+   外した PR の run は起動者が github-merge-queue[bot] になり、外部の人の承認の関門で
+   止まって掃除が走らない (#1951)。関門はジョブより前にあるので、ワークフローの起動条件
+   そのものを見る
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は絞り込みそのものを踏む (stall_watch_test.py と同じ理由)。
@@ -33,6 +37,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SWEEP = REPO / "scripts" / "queue-sweep.sh"
+WORKFLOW = REPO / ".github" / "workflows" / "queue-sweep.yml"
 
 # 応答は $DATA の中の JSON から読む。ref の照会はブランチ名の / を _ にしたファイルへ振る
 FAKE_GH = """#!/bin/bash
@@ -207,6 +212,30 @@ class QueueSweepTest(unittest.TestCase):
         result = self.run_sweep("--apply")
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.cancels(), [])
+
+
+
+class QueueSweepTriggerTest(unittest.TestCase):
+    """起動条件の検査 (9.)。YAML は読まず、トップレベルの on: の行だけを見る。"""
+
+    def triggers(self):
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        start = lines.index("on:") + 1
+        block = []
+        for line in lines[start:]:
+            if line and not line.startswith(" "):
+                break
+            block.append(line)
+        return block
+
+    def test_dequeued_is_received_by_pull_request_target(self):
+        block = self.triggers()
+        self.assertIn("  pull_request_target:", block)
+        at = block.index("  pull_request_target:")
+        self.assertEqual(block[at + 1].strip(), "types: [dequeued]")
+
+    def test_does_not_receive_pull_request(self):
+        self.assertNotIn("  pull_request:", self.triggers())
 
 
 if __name__ == "__main__":
