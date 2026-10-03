@@ -72,6 +72,13 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
     public let load: RuntimeLoad?
     /// スケッチがこのフレームで差し出した値。測って残っている値 (``Sketch/measure(_:_:)``) を含む。
     public let values: [String: ExposedValue]?
+    /// 外から届くものを受ける入り口の状態 (``Inlet/report``)。名乗る入り口が無ければ `nil`。
+    ///
+    /// 「なぜ値が来ないか」(許可を待っている・機材が無い・抜かれた) と、最後に値が届いた
+    /// フレームを、絵を開かずに読めるようにする ([ADR-0028] 決定 4)。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+    public let inputs: [SourceReport]?
     /// この絵を生んだ入力の世代。読み手は等値比較だけを行う。
     public let stamp: String?
     /// 撮った絵の目録。撮った順に並ぶ。**枚数によらず在る**。
@@ -89,6 +96,7 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
         stats: FrameStats? = nil,
         load: RuntimeLoad? = nil,
         values: [String: ExposedValue]? = nil,
+        inputs: [SourceReport]? = nil,
         stamp: String? = nil,
         frames: [CapturedFrame] = [],
         appliedTime: Double? = nil
@@ -102,6 +110,7 @@ public struct ObservationReport: Encodable, Equatable, Sendable {
         self.stats = stats
         self.load = load
         self.values = values
+        self.inputs = inputs
         self.stamp = stamp
         self.frames = frames
         self.appliedTime = appliedTime

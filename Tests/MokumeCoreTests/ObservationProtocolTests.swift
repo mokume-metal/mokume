@@ -269,6 +269,11 @@ struct ObservationProtocolTests {
                 DisplayImage(width: 2, height: 2, bytes: [UInt8](repeating: 0, count: 16))),
             load: RuntimeLoad.sample(tempo: Self.tempo(recording: [0, 0.016, 0.033]), now: 0.033),
             values: ["angle": .float(1.0)],
+            inputs: [
+                SourceReport(
+                    name: "camera", state: .running,
+                    lastArrival: Arrival(frame: 1, time: 0.5, hostTime: 0))
+            ],
             stamp: "b3f1a20c")
         let encoded = try JSONEncoder().encode(full)
         let produced = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
