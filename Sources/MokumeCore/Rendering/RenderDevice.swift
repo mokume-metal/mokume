@@ -129,6 +129,7 @@ import MokumeDiagnostics
     ///
     /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor-and-toolchain.md
     public nonisolated static var isAvailable: Bool {
+        if cacheAvailable { return availableOnce }
         guard let device = MTLCreateSystemDefaultDevice() else { return false }
         return device.makeMTL4CommandQueue() != nil
     }
@@ -486,15 +487,32 @@ import MokumeDiagnostics
         }
         self.completion = completion
 
-        // SCRATCH (#2007 の切り分け・merge しない): 環境変数が立っていれば、土台を畳まない
-        if Self.tombstoneEnabled, Self.tombstones.count < 4000 {
-            Self.tombstones.append(self)
+        // SCRATCH (#2007 の切り分け・merge しない): 環境変数で、畳む物を畳まない
+        if Self.keeps.contains("device"), Self.kept.count < 4000 { Self.kept.append(self) }
+        if Self.keeps.contains("queue") { Self.kept.append(queue as AnyObject) }
+        if Self.keeps.contains("sets") {
+            Self.kept.append(residencySet as AnyObject)
+            Self.kept.append(drawableResidency as AnyObject)
+        }
+        if Self.keeps.contains("event") { Self.kept.append(completion as AnyObject) }
+        if Self.keeps.contains("allocators") {
+            for slot in slots { if let allocator = slot.allocator { Self.kept.append(allocator as AnyObject) } }
         }
     }
 
-    /// SCRATCH (#2007 の切り分け・merge しない): 畳まない土台の置き場。
-    static var tombstones: [RenderDevice] = []
-    static let tombstoneEnabled = ProcessInfo.processInfo.environment["MOKUME_MEASURE_TOMBSTONE"] != nil
+    /// SCRATCH (#2007 の切り分け・merge しない): 畳まない物の置き場と、その選び方。
+    static var kept: [AnyObject] = []
+    static let keeps: Set<String> = Set(
+        (ProcessInfo.processInfo.environment["MOKUME_MEASURE_KEEP"] ?? "")
+            .split(separator: ",").map(String.init))
+    static let deinitSleepMs: Int =
+        Int(ProcessInfo.processInfo.environment["MOKUME_MEASURE_DEINIT_SLEEP_MS"] ?? "") ?? 0
+    nonisolated static let cacheAvailable =
+        ProcessInfo.processInfo.environment["MOKUME_MEASURE_CACHE_AVAILABLE"] != nil
+    nonisolated static let availableOnce: Bool = {
+        guard let device = MTLCreateSystemDefaultDevice() else { return false }
+        return device.makeMTL4CommandQueue() != nil
+    }()
 
     /// **実行中のものが終わる前に土台を畳まない。**
     ///
@@ -506,6 +524,7 @@ import MokumeDiagnostics
     ///
     /// 詰まっていたら諦めて畳む。ここで投げる先は無いので、警告だけ残す。
     isolated deinit {
+        if Self.deinitSleepMs > 0 { usleep(UInt32(Self.deinitSleepMs) * 1000) }
         guard !isIdle else { return }
         if !signalReached(submissionCount) {
             Diagnostics.warn(
@@ -520,6 +539,7 @@ import MokumeDiagnostics
     /// 常駐は集合への追加だけでは効かず、追加のあとに確定させる必要がある。
     /// 呼ぶたびに確定させるので、確保の直後に 1 回呼べばよい。
     func makeResident(_ allocation: any MTLAllocation) {
+        if Self.keeps.contains("resources") { Self.kept.append(allocation as AnyObject) }
         residencySet.addAllocation(allocation)
         residencySet.commit()
         residencySet.requestResidency()

@@ -16,7 +16,7 @@ permissions:
 
 env:
   # loop: EffectArgumentTests だけを 30 回 / full: 全検査を条件ごとに数回
-  MOKUME_MEASURE_STAGE: loop2
+  MOKUME_MEASURE_STAGE: loop3
 
 jobs:
   measure:
@@ -92,6 +92,25 @@ jobs:
               swift build --build-tests 2>&1 | tail -3
               for i in $(seq 1 30); do
                 one pre-2008 "$i" -- --filter "$F"
+              done
+              ;;
+            loop3)
+              F='MokumeCoreTests.EffectArgumentTests'
+              # 3 周、各条件を 10 回ずつ (時間による揺れを均す)
+              for round in 1 2 3; do
+                for k in $(seq 1 10); do
+                  i=$(( (round - 1) * 10 + k ))
+                  one base "$i" -- --filter "$F"
+                  one nodebug "$i" -u MTL_DEBUG_LAYER -u MTL_DEBUG_LAYER_WARNING_MODE -- --filter "$F"
+                  one keep-device "$i" MOKUME_MEASURE_KEEP=device -- --filter "$F"
+                  one keep-queue "$i" MOKUME_MEASURE_KEEP=queue -- --filter "$F"
+                  one keep-sets "$i" MOKUME_MEASURE_KEEP=sets -- --filter "$F"
+                  one keep-event "$i" MOKUME_MEASURE_KEEP=event -- --filter "$F"
+                  one keep-allocators "$i" MOKUME_MEASURE_KEEP=allocators -- --filter "$F"
+                  one keep-resources "$i" MOKUME_MEASURE_KEEP=resources -- --filter "$F"
+                  one sleep50 "$i" MOKUME_MEASURE_DEINIT_SLEEP_MS=50 -- --filter "$F"
+                  one cache-available "$i" MOKUME_MEASURE_CACHE_AVAILABLE=1 -- --filter "$F"
+                done
               done
               ;;
             full)
