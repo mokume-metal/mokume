@@ -1458,7 +1458,12 @@ struct ShaderWatchWithoutYieldingTests {
             canvas.resetShader()
         }
         try canvas.gpu.settle()
-        #expect(canvas.gpu.commandFaultCount == 0)
+        // **打ち切りそのものを見る** (#1812 の完了条件 4)。入れ替えた古い状態を、それを使う
+        // フレームが走っている間に手放せば、絵より先に打ち切りとして現れる。別の投入の
+        // 巻き添えでも赤になるので、理由を文面に載せる (`InnocentVictim` なら巻き添え)
+        #expect(
+            canvas.gpu.commandFaultCount == 0,
+            "GPU が仕事を \(canvas.gpu.commandFaultCount) 回打ち切った: \(canvas.gpu.lastCommandFault ?? "")")
     }
 
     /// 2 回目の反証 3・4。控えるのは組み立て (翻訳) の失敗だけで、それ以外は次に拾ったときに

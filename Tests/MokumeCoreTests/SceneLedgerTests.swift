@@ -154,15 +154,30 @@ struct SceneLedgerTests {
         ) { try Self.fingerprint(of: sketch) }
     }
 
+    /// 指紋と、それを描いた土台。
+    ///
+    /// **土台は照合の報告まで持ち回る** (#1812)。GPU が仕事を打ち切ると、その投入は 1 画素も
+    /// 書かれないのに待ちは成立し、欠けた絵の指紋が取れる。それは下の報告では「絵が変わった」
+    /// 「決定論が壊れている」と同じに見え、読み手を台帳の書き換えや決定論の調べ直しへ
+    /// 向かわせる。打ち切りの記録は土台ごとにしか残らないので、指紋を取った土台を捨てずに
+    /// 返し、報告の文面で名乗る (`RenderDevice.faultNote()`)。
+    struct Fingerprint {
+        let digest: String
+        let gpu: RenderDevice
+    }
+
     /// 台帳の行と照合し、合わなければ「台帳に無い / 絵が変わった / 決定論が壊れた」を
     /// 切り分けて報告する。シーンと参照スケッチで同じ文面を使う。
+    ///
+    /// どの報告にも、指紋を取った土台の打ち切りの記録を添える (``Fingerprint``)。
     static func compare(
         _ name: String, noun: String, howToSee: String,
         beforeAfter: String? = nil, nondeterminismHint: String? = nil,
-        fingerprint: () throws -> String
+        fingerprint: () throws -> Fingerprint
     ) throws {
         let ledger = try Ledger.load()
-        let digest = try fingerprint()
+        let first = try fingerprint()
+        let digest = first.digest
 
         guard let entry = ledger[name] else {
             Issue.record(
@@ -177,6 +192,8 @@ struct SceneLedgerTests {
                 絵は次で書き出せる:
 
                     \(howToSee)
+
+                GPU が仕事を打ち切っていれば、欠けた絵の指紋なので足さずに打ち直す:\(first.gpu.faultNote())
                 """)
             return
         }
@@ -186,7 +203,10 @@ struct SceneLedgerTests {
 
         // 不一致。もう一度描いて「絵が変わった」と「決定論が壊れた」を切り分ける。
         // 切り分けずに報告すると、台帳を書き換えてはいけない場面で書き換えられる
-        let again = try fingerprint()
+        let second = try fingerprint()
+        let again = second.digest
+        // 2 回の描画は別々の土台で走るので、両方の記録を名乗る
+        let faults = "\n1 回目の土台:\(first.gpu.faultNote())\n2 回目の土台:\(second.gpu.faultNote())"
         if again == digest {
             Issue.record(
                 """
@@ -206,6 +226,8 @@ struct SceneLedgerTests {
                 2 回描いて一致することを先に確かめ / 動いた行の絵だけを before /
                 after で見て / まとめて書き換え、なぜ全部動くのかを PR 本文に
                 1 度だけ書く / 意図しない行が 1 つでも混ざっていたら書き換えない。
+
+                どちらかの回で GPU が仕事を打ち切っていれば、書き換える前に打ち直す:\(faults)
                 """)
         } else {
             Issue.record(
@@ -215,6 +237,9 @@ struct SceneLedgerTests {
 
                 **台帳を書き換えてはならない。** 台帳は「変わっていないこと」しか見られないので、
                 同じ絵が出ない状態では何も守れない。先に決定論を直す。\(nondeterminismHint.map { "\n\n\($0)" } ?? "")
+
+                **ただし、どちらかの回で GPU が仕事を打ち切っていれば、欠けた絵の指紋である**
+                (決定論ではなく機械の込み具合が原因で、打ち直せば合いうる):\(faults)
                 """)
         }
     }
@@ -224,7 +249,7 @@ struct SceneLedgerTests {
     /// `MOKUME_LEDGER_DUMP_DIR` が指してあれば、そこへ絵も書き出す。台帳へ行を足す・
     /// 書き換えるときは**絵を目で見る**必要があり (台帳の行はそれを認めた記録なので)、
     /// その手段を機構自身が持つ。既定では 1 枚も書かない。
-    static func fingerprint(of take: Take) throws -> String {
+    static func fingerprint(of take: Take) throws -> Fingerprint {
         try fingerprint(of: take, without: nil)
     }
 
@@ -232,7 +257,7 @@ struct SceneLedgerTests {
     ///
     /// 拡大だけは描き場所の作り方に効く (描く細かさを出す細かさに揃えると、
     /// 埋める仕事そのものが無くなる) ので、canvas を組み立てる時点で抜く。
-    static func fingerprint(of take: Take, without suppressed: Scene.Ingredient?) throws -> String {
+    static func fingerprint(of take: Take, without suppressed: Scene.Ingredient?) throws -> Fingerprint {
         let scene = take.scene
         let gpu = try RenderDevice()
         let target = try RenderTarget(gpu: gpu, width: scene.size.width, height: scene.size.height)
@@ -255,7 +280,7 @@ struct SceneLedgerTests {
             try target.writePNG(to: url)
         }
 
-        return SHA256.hash(data: Data(image.bytes)).map { String(format: "%02x", $0) }.joined()
+        return Fingerprint(digest: digest(of: image.bytes), gpu: gpu)
     }
 
     /// 台帳の行名。`@N` は時点を持つシーンの行と同じく「何フレーム進めたところか」
@@ -278,7 +303,7 @@ struct SceneLedgerTests {
     /// 届く前と後が 45 フレーム目で揺れる。
     ///
     /// **文字が主題でない行は、字形を置かずに描く** (``advanced(_:)``)。
-    static func fingerprint(of sketch: ReferenceSketch) throws -> String {
+    static func fingerprint(of sketch: ReferenceSketch) throws -> Fingerprint {
         let runtime = try advanced(sketch)
         let image = try runtime.target.encodeForDisplay()
 
@@ -290,7 +315,11 @@ struct SceneLedgerTests {
             try runtime.target.writePNG(to: folder.appendingPathComponent("\(sketch.name).png"))
         }
 
-        return SHA256.hash(data: Data(image.bytes)).map { String(format: "%02x", $0) }.joined()
+        return Fingerprint(digest: digest(of: image.bytes), gpu: runtime.canvas.gpu)
+    }
+
+    private static func digest(of bytes: [UInt8]) -> String {
+        SHA256.hash(data: Data(bytes)).map { String(format: "%02x", $0) }.joined()
     }
 
     /// 参照スケッチを検査用の入口で組み、書き出しと同じ番号のフレームまで進める。

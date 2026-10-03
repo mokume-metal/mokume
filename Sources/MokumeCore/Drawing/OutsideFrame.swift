@@ -117,8 +117,9 @@ extension Canvas {
 
     /// フレームの外で設定を置き直したことを、初回だけ知らせる。
     ///
-    /// 呼ぶ側は `guard isDrawing else { return warnOutsideFrame(.shadow) }` の形になる。
-    /// **`guard` そのものは畳んでいない** — 値の検査を挟む口があり、`isDrawing` と検査の
+    /// 呼ぶ側は `guard admits(.shadow) else { return }` の形になる。
+    /// 守り (``admits(_:)``) はフレームの外と形の組み立ての中を 1 か所で見る (#1529)。
+    /// **`guard` そのものは畳んでいない** — 値の検査を挟む口があり、守りと検査の
     /// どちらが先かが口によって違うためである (`Canvas+Material.swift` の口と、
     /// `Canvas+LightColor.swift` の数で書く光・材質の口は検査が先)。
     /// 順序を揃えると診断の出方が変わるので、それは畳みとは別の判断として分ける。

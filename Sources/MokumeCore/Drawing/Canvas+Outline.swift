@@ -325,11 +325,27 @@ extension Canvas {
     /// 掛けて置くとき最初の 1 度だけ** — 記録のときは素材を組んだところで止める。掛けない形は、
     /// 今までどおり重ねて積んだ頂点を置き、引く費用を払わない。
     ///
+    /// **描く画素で 1 画素より細い片は、描く画素 1 つの太さへ広げ、太さの割合を被覆として
+    /// 断片の後で掛ける** ([#1637]・``ThinStroke``・``thinOutline(_:weight:placedBy:)``)。細さは
+    /// 片ごとに、線の向きに垂直に測る。保持する形の記録では置くときに判断し、畳みの雛形は
+    /// 鍵が持つ置き場所の変換で判断する。
+    ///
     /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
     /// [#1562]: https://github.com/mokume-metal/mokume/issues/1562
+    /// [#1637]: https://github.com/mokume-metal/mokume/issues/1637
     /// [#1829]: https://github.com/mokume-metal/mokume/issues/1829
     /// [#1920]: https://github.com/mokume-metal/mokume/issues/1920
     func strokeOutline(_ outline: Outline) {
+        guard let matrix = thinStrokeMatrix,
+            let thin = thinOutline(outline, weight: style.strokeWeight, placedBy: matrix)
+        else { return strokeOutlineAsStyled(outline) }
+        // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので必ず引いて積む。片は描く画素の
+        // 空間で組む (``thinCarving(_:thin:)``)
+        strokeCarved(outline, half: style.strokeWeight / 2, chamfers: [], thin: thin)
+    }
+
+    /// いまの線の設定のまま、周を帯でなぞる (細い線の補いは ``strokeOutline(_:)`` が当てる)。
+    private func strokeOutlineAsStyled(_ outline: Outline) {
         let half = style.strokeWeight / 2
         let points = outline.points
         let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
@@ -361,21 +377,36 @@ extension Canvas {
             // 端の形が 1 枚だけで、重なる相手が無いので持たない
             let carved: CarvedStroke? =
                 !overlaps && style.blendMode != .replace && points.count > 1
-                ? carveLater(outline, half: half, chamfers: chamfers) : nil
-            recordedStrokeRanges.append(StrokeRange(start..<vertices.count, carved: carved))
+                ? CarvedStroke(
+                    recipe: carveRecipe(
+                        outline, half: half, transform: transform, color: style.stroke, uv: whiteUV))
+                : nil
+            // 描く画素での細さは置くときに測る。組み直す素材を添える (#1637)
+            let thin = ThinStrokeRecipe(
+                outline: outline, weight: style.strokeWeight, cap: style.strokeCap,
+                join: style.strokeJoin, color: style.stroke, transform: transform, uv: whiteUV)
+            recordedStrokeRanges.append(
+                StrokeRange(start..<vertices.count, carved: carved, thin: thin))
         }
     }
 
-    /// 引く素材だけを組んで持つ。**引くのは、半透明の色を掛けて置くとき最初の 1 度**
-    /// (``CarvedStroke/vertices``)。
-    private func carveLater(
-        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>]
-    ) -> CarvedStroke {
+    /// 引く素材だけを組む。**引くのは、頂点を読むとき** (``CarveRecipe/vertices()``)。保持した
+    /// 形を半透明の色で最初に置くとき (``CarvedStroke``) と、置いた後に細くなる輪郭を組み直す
+    /// とき (``thinVertices(_:placedBy:cache:stroke:)``) に使う。端と折れ目の形はいまの設定から読む。
+    func carveRecipe(
+        _ outline: Outline, half: Float, thin: ThinOutline? = nil, transform: Transform,
+        color: LinearRGBA, uv: SIMD2<Float>
+    ) -> CarveRecipe {
+        if let thin {
+            let (carving, offset) = thinCarving(outline, thin: thin)
+            return CarveRecipe(
+                carving: carving, offset: offset, transform: transform, color: color, uv: uv,
+                inverse: thin.inverse)
+        }
+        let chamfers = style.strokeJoin == .bevel ? outline.cornerDiagonals : []
         let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
-        return CarvedStroke(
-            recipe: CarveRecipe(
-                carving: carving, offset: offset, transform: transform, color: style.stroke,
-                uv: whiteUV))
+        return CarveRecipe(
+            carving: carving, offset: offset, transform: transform, color: color, uv: uv)
     }
 
     /// 線の片の重なりが絵に出るか。**出ないのは、重ねて混ぜても同じ色になる線だけ** —
@@ -413,13 +444,29 @@ extension Canvas {
     ///
     /// 置き場所ぶんずらした周は、ずらす前の周で引いてから置き場所を足す (``Outline/unmoved``)。
     /// 畳んだ雛形と同じ座標で引くので、畳むかどうかで頂点の数が変わらない。
-    private func strokeCarved(_ outline: Outline, half: Float, chamfers: [SIMD2<Float>]) {
-        let (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
+    ///
+    /// 細い片を補うとき (`thin`) は、片を描く画素の空間で組んで形自身の座標へ戻し
+    /// (``thinCarving(_:thin:)``)、片の被覆を積んだ頂点に付ける (``noteCoverage(_:in:)``・#1637)。
+    private func strokeCarved(
+        _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], thin: ThinOutline? = nil
+    ) {
+        // `Optional.map` に閉包を渡さない — 点ごとに隔離の実行時検査を払う (#1779)
+        let carving: StrokeCarving
+        let offset: SIMD2<Float>
+        if let thin {
+            (carving, offset) = thinCarving(outline, thin: thin)
+        } else {
+            (carving, offset) = makeCarving(outline, half: half, chamfers: chamfers)
+        }
+        let inverse = thin?.inverse ?? matrix_identity_float2x2
+        let mapsBack = thin != nil
         func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
-            let moved = point + offset
+            let moved = (mapsBack ? inverse * point : point) + offset
             return strokePoint(x: moved.x, y: moved.y)
         }
-        carving.carved { polygon, range, hub in
+        carving.carved { polygon, range, hub, coverage in
+            let start = vertices.count
+            defer { noteCoverage(coverage, in: start..<vertices.count) }
             guard let hub else {
                 let first = place(polygon[range.lowerBound])
                 var previous = place(polygon[range.lowerBound + 1])

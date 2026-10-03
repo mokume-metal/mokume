@@ -253,8 +253,17 @@ struct MaterialTests {
     /// `emissive(255, 0, 0)` の赤 (作業空間の線形の値)。
     private let glowRed: Float = 0.822
 
+    /// 不透明度 `alpha` (0…255) の面を 2 枚重ねたときに乗る割合。
+    ///
+    /// 半透明の閉じた形は奥の面も手前の面を通して見える (置き場所ごとに裏 → 表で描く・#1549)
+    /// ので、黒地の上の自発光は奥の面 → 手前の面の 2 層ぶん乗る: 1 − (1 − a)²。
+    private func twoLayers(_ alpha: Int) -> Float {
+        let a = Float(alpha) / 255
+        return 1 - (1 - a) * (1 - a)
+    }
+
     @Test(
-        "半透明の球の自発光は、塗りの不透明度に比例して乗る",
+        "半透明の球の自発光は、塗りの不透明度で薄まって奥の面と手前の面の 2 層ぶん乗る",
         arguments: [0, 64, 128, 192, 255])
     func emissiveScalesWithTheFillOpacity(alpha: Int) throws {
         let image = try translucentGlow {
@@ -266,7 +275,9 @@ struct MaterialTests {
             $0.pop()
         }
         let pixel = image[80, 80]
-        #expect(abs(pixel.red - glowRed * Float(alpha) / 255) < 0.01, "赤が \(pixel.red)")
+        // 奥の面と手前の面の 2 層ぶん。直す前は奥の面が向きで捨てられ、この向きでは 1 層
+        // (glowRed × α) だった (#1549)
+        #expect(abs(pixel.red - glowRed * twoLayers(alpha)) < 0.01, "赤が \(pixel.red)")
         if alpha == 0 {
             // 置かないのと同じ (黒地のまま)
             #expect(abs(pixel.red) < 0.005 && abs(pixel.green) < 0.005 && abs(pixel.blue) < 0.005)
@@ -292,7 +303,8 @@ struct MaterialTests {
         #expect(abs(clear.red - ground.red) < 0.005)
         #expect(abs(clear.green - ground.green) < 0.005)
         #expect(abs(clear.blue - ground.blue) < 0.005)
-        #expect(abs(try box(alpha: 128).red - glowRed * 128 / 255) < 0.01)
+        // 赤は地の青と混ざらないので、奥の面と手前の面の 2 層ぶんの自発光だけになる (#1549)
+        #expect(abs(try box(alpha: 128).red - glowRed * twoLayers(128)) < 0.01)
     }
 
     @Test("半透明の面では、自発光も塗り × 光と同じだけ薄まる")

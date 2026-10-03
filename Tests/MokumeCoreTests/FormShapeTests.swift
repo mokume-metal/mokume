@@ -298,6 +298,262 @@ struct FormShapeTests {
         }
     }
 
+    /// 置き換える混ぜ方で、塗りと輪郭を両方持つ形を 1 回で描いた絵は、**部品の単位で置き
+    /// 換えた絵**になる — 輪郭の帯では輪郭だけが残り、下の塗りは透けない ([#1819])。
+    ///
+    /// 比べる相手は 2 つ。三角形の経路 (`shader()` を付ける。塗りの三角形の上に輪郭の
+    /// 三角形を置き、置き換えるので帯には輪郭だけが残る) と、塗りだけの形 → 輪郭だけの形
+    /// の順に分けて描いた絵である。根の約束 ([#1867] 決定 1) は、1 画素を塗りだけ `f − o`・
+    /// 重なり `o`・帯だけ `s − o`・どちらでもない所の 4 つの面積に分け、それぞれを混ぜた色を
+    /// 面積で足す。置き換えで解くと重なりには輪郭だけが入るので、置く色は `S·s + F·(f − o)`
+    /// になる。かつては重なりに「輪郭 over 塗り」を入れていた (`S·s + F·(f − α·o)`) ので、
+    /// 半透明の輪郭の帯の内側半分に塗りが透け、透明な地では α が 1.0 まで埋まっていた。
+    ///
+    /// 比べるのは**帯に丸ごと入る画素だけ**で、縁は比べない (縁の中間値は経路の間で違って
+    /// よい・ADR-0039 決定 1)。帯に丸ごと入るかは、同じ形の輪郭だけを不透明な白で描いた
+    /// 被覆率がちょうど 1 かで決める。不透明な輪郭 (255) では 2 つの式が同じになり、
+    /// 絵は動かない。輪郭の不透明度 0 では、帯は透明に抜ける。
+    ///
+    /// **楕円だけは、帯の内縁の数画素を外す。** 塗りと先に重ねる列は楕円の輪郭を塗りの
+    /// 距離場から 1 次の近似でずらして作る ([#1820])。その画素は不透明な輪郭でも三角形の
+    /// 経路と違う — 違いは帯の位置で、帯に何を置くか (この検査の約束) ではない。だから
+    /// 不透明な輪郭で違う画素を数えて外し、数が増えないことだけを見る (細長い楕円で 8 画素)。
+    /// 楕円のほかの形では 1 画素も外さない。
+    ///
+    /// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
+    /// [#1820]: https://github.com/mokume-metal/mokume/issues/1820
+    /// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
+    @Test(
+        "置き換える混ぜ方で、塗りと輪郭を 1 回で描いた絵の帯は、三角形の経路・分けて描いた絵と同じく輪郭だけが残る",
+        arguments: [Float(255), 128, 0], [true, false])
+    func replaceModeKeepsOnlyTheStrokeInTheBand(_ strokeAlpha: Float, _ transparentGround: Bool) throws {
+        let shapes: [(name: String, weight: Float, draw: (Canvas) -> Void)] = [
+            // #1819 の場面 (画素 (26, 48) が帯の内側半分に入る)
+            ("rect (#1819)", 12, { $0.rect(24, 24, 48, 48) }),
+            ("rect", 7, { $0.rect(20.3, 18.6, 52, 46) }),
+            ("circle", 7, { $0.circle(48.4, 47.7, 58) }),
+            ("ellipse", 7, { $0.ellipse(48.3, 47.6, 84, 26) }),
+            ("arc", 7, { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1) }),
+        ]
+        let ground = transparentGround
+            ? LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0) : black
+        let fillColor = blue
+        func strokeColor(_ alpha: Float) -> LinearRGBA {
+            .display(red: 1, green: 0, blue: 0, alpha: alpha / 255)
+        }
+        enum Route { case once, triangles, split }
+        for shape in shapes {
+            func render(_ route: Route, strokeAlpha: Float) throws -> PixelBuffer {
+                let canvas = try makeCanvas()
+                var failure: (any Error)?
+                try canvas.draw {
+                    canvas.background(ground)
+                    canvas.blendMode(.replace)
+                    canvas.strokeWeight(shape.weight)
+                    switch route {
+                    case .once:
+                        canvas.fill(fillColor)
+                        canvas.stroke(strokeColor(strokeAlpha))
+                        shape.draw(canvas)
+                    case .triangles:
+                        do {
+                            canvas.shader(try canvas.makeShader(
+                                "float4 paint(Fragment in, Values values) { return in.color; }"))
+                        } catch { failure = error }
+                        canvas.fill(fillColor)
+                        canvas.stroke(strokeColor(strokeAlpha))
+                        shape.draw(canvas)
+                    case .split:
+                        canvas.fill(fillColor)
+                        canvas.noStroke()
+                        shape.draw(canvas)
+                        canvas.noFill()
+                        canvas.stroke(strokeColor(strokeAlpha))
+                        shape.draw(canvas)
+                    }
+                }
+                if let failure { throw failure }
+                return try canvas.target.readPixels()
+            }
+            func gap(_ p: LinearRGBA, _ q: LinearRGBA) -> Float {
+                max(abs(p.red - q.red), abs(p.green - q.green), abs(p.blue - q.blue), abs(p.alpha - q.alpha))
+            }
+            // 帯に丸ごと入る画素: 輪郭だけを不透明な白で重ねた被覆率がちょうど 1
+            let band: PixelBuffer = try {
+                let canvas = try makeCanvas()
+                try canvas.draw {
+                    canvas.background(black)
+                    canvas.noFill()
+                    canvas.stroke(white)
+                    canvas.strokeWeight(shape.weight)
+                    shape.draw(canvas)
+                }
+                return try canvas.target.readPixels()
+            }()
+            let inBand = (0..<band.height).flatMap { y in
+                (0..<band.width).compactMap { x in band[x, y].red >= 1 ? (x, y) : nil }
+            }
+            #expect(inBand.count > 100, "\(shape.name): 帯に丸ごと入る画素が少ない (\(inBand.count))")
+            // 楕円の近似 (#1820) で帯の位置が違う画素。不透明な輪郭で三角形の経路と比べて数える
+            let opaqueOnce = try render(.once, strokeAlpha: 255)
+            let opaqueTriangles = try render(.triangles, strokeAlpha: 255)
+            let shifted = Set(
+                inBand.filter { gap(opaqueOnce[$0.0, $0.1], opaqueTriangles[$0.0, $0.1]) > 1.0 / 255 }
+                    .map { $0.1 * band.width + $0.0 })
+            #expect(
+                shifted.count <= (shape.name == "ellipse" ? 8 : 0),
+                "\(shape.name): 不透明な輪郭でも三角形の経路と \(shifted.count) 画素違う")
+
+            let once = try render(.once, strokeAlpha: strokeAlpha)
+            for (other, label) in [
+                (try render(.triangles, strokeAlpha: strokeAlpha), "三角形の経路"),
+                (try render(.split, strokeAlpha: strokeAlpha), "分けて描いた絵"),
+            ] {
+                var differing = 0
+                var worst = (gap: Float(0), x: 0, y: 0)
+                for (x, y) in inBand where !shifted.contains(y * band.width + x) {
+                    let g = gap(once[x, y], other[x, y])
+                    if g > 1.0 / 255 { differing += 1 }
+                    if g > worst.gap { worst = (g, x, y) }
+                }
+                #expect(
+                    differing == 0,
+                    "\(shape.name)・輪郭の不透明度 \(Int(strokeAlpha))・\(transparentGround ? "透明" : "黒") の地: \(label)と \(differing) / \(inBand.count - shifted.count) 画素違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y)))")
+            }
+            if shape.name == "rect (#1819)" {
+                // 帯の内側半分 (26, 48) は輪郭の不透明度のまま。塗りの青は透けない
+                let inner = once[26, 48]
+                #expect(abs(inner.alpha - strokeAlpha / 255) <= 1.0 / 255, "(26, 48) の α: \(inner.alpha)")
+                #expect(
+                    inner.blue <= strokeColor(strokeAlpha).blue + 1.0 / 255,
+                    "(26, 48) に塗りが透けている: \(inner)")
+            }
+        }
+    }
+
+    /// 置き換える混ぜ方の 1 画素は、**縁の画素も** 4 つの面積の和になる ([#1819]・[#1867] 決定 1)。
+    ///
+    /// 帯に丸ごと入る画素だけを見る検査 (上) では、縁の重みが決まらない — 「帯に丸ごと入る
+    /// ときだけ重なりを輪郭だけにする」誤りでも緑になる。そこで面全体の画素を、置き換えで
+    /// 解いた式 `S·s + F·(f − o)` と比べる。形の外 (どちらでもない面積) は置き換えで透明に
+    /// なるので、透明な地に描いて 0 と比べる。
+    ///
+    /// 被覆率は、同じ機械が不透明な白で描いた塗りだけの形から読む。塗り `f` は形そのもの、
+    /// 帯の外縁・内縁は、輪郭を寄せる約束 (ADR-0039 決定 2・画面で +0.5) のとおり半画素
+    /// ずらして太さの半分だけ太らせた・痩せさせた `rect` の塗りである。帯 `s` は外縁 − 内縁
+    /// (輪郭だけの形とも比べる)、重なり `o` は縁が画素の幅では平行とみなした見積もり
+    /// `min(f, 外縁) − min(f, 内縁)`。太さ 1 の帯は塗りの縁の外側に接して重ならない辺と、
+    /// 塗りの中に入る辺を持つので、`min(f, s)` では見積もれない。
+    ///
+    /// 塗りが半透明のとき、輪郭が不透明なとき、**不透明な輪郭で記録した形を半透明の色で置く**
+    /// とき (置き場所の色は輪郭の不透明度にも掛かる・`FormInstance.placed(by:tint:)`) も回す。
+    ///
+    /// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
+    /// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
+    @Test(
+        "置き換える混ぜ方で、塗りと輪郭を 1 回で描いた絵の縁の画素は、面積で置き換えた色になる",
+        arguments: ["半透明の輪郭", "半透明の塗りと輪郭", "半透明の塗りと不透明な輪郭", "記録した形を半透明の色で置く"])
+    func replaceModeWeighsEdgePixelsByArea(_ variant: String) throws {
+        let rects: [(name: String, x: Float, y: Float, width: Float, height: Float, weight: Float)] = [
+            ("rect (#1819)", 24, 24, 48, 48, 12),
+            ("rect 小数", 20.3, 18.6, 52, 46, 7),
+            ("rect 太さ 1", 20.3, 18.6, 52, 46, 1),
+        ]
+        let fillAlpha: Float = variant.hasPrefix("半透明の塗り") ? 0.6 : 1
+        let strokeAlpha: Float = variant == "半透明の塗りと不透明な輪郭" || variant.hasPrefix("記録") ? 1 : 0.5
+        let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8, alpha: fillAlpha)
+        let strokeColor = LinearRGBA.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha)
+        // 置き場所の色 (乗算済みの成分ごとに掛かる)。記録した形を置くときだけ
+        let tint = variant.hasPrefix("記録")
+            ? LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5) : nil
+        func placed(_ color: LinearRGBA) -> LinearRGBA {
+            guard let tint else { return color }
+            return LinearRGBA(
+                premultipliedRed: color.red * tint.red, green: color.green * tint.green,
+                blue: color.blue * tint.blue, alpha: color.alpha * tint.alpha)
+        }
+        let (fillPlaced, strokePlaced) = (placed(fillColor), placed(strokeColor))
+        for rect in rects {
+            func coverage(_ body: (Canvas) -> Void) throws -> PixelBuffer {
+                let canvas = try makeCanvas()
+                try canvas.draw {
+                    canvas.background(black)
+                    body(canvas)
+                }
+                return try canvas.target.readPixels()
+            }
+            func filled(grow: Float, shift: Float) throws -> PixelBuffer {
+                try coverage { canvas in
+                    canvas.fill(white)
+                    canvas.noStroke()
+                    canvas.rect(
+                        rect.x - grow + shift, rect.y - grow + shift,
+                        rect.width + 2 * grow, rect.height + 2 * grow)
+                }
+            }
+            let half = rect.weight / 2
+            let fills = try filled(grow: 0, shift: 0)
+            let outers = try filled(grow: half, shift: 0.5)
+            let inners = try filled(grow: -half, shift: 0.5)
+            let strokes = try coverage { canvas in
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.strokeWeight(rect.weight)
+                canvas.rect(rect.x, rect.y, rect.width, rect.height)
+            }
+            let canvas = try makeCanvas()
+            var recorded = Shape.empty
+            func draw() {
+                canvas.blendMode(.replace)
+                canvas.strokeWeight(rect.weight)
+                canvas.fill(fillColor)
+                canvas.stroke(strokeColor)
+                canvas.rect(rect.x, rect.y, rect.width, rect.height)
+            }
+            if tint != nil { try canvas.draw { recorded = canvas.createShape { draw() } } }
+            try canvas.draw {
+                canvas.background(LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0))
+                if let tint {
+                    canvas.blendMode(.replace)
+                    canvas.shape(recorded, at: [Placement(fill: tint)])
+                } else {
+                    draw()
+                }
+            }
+            let once = try canvas.target.readPixels()
+            var edges = 0
+            var bandMismatch = 0
+            var differing = 0
+            var worst = (gap: Float(0), x: 0, y: 0, f: Float(0), s: Float(0))
+            for y in 0..<once.height {
+                for x in 0..<once.width {
+                    let (f, outer, inner) = (fills[x, y].red, outers[x, y].red, inners[x, y].red)
+                    let s = max(0, outer - inner)
+                    if abs(s - strokes[x, y].red) > 1.0 / 255 { bandMismatch += 1 }
+                    if (f > 0 && f < 1) || (s > 0 && s < 1) { edges += 1 }
+                    let o = max(0, min(f, outer) - min(f, inner))
+                    let expected = [
+                        strokePlaced.red * s + fillPlaced.red * (f - o),
+                        strokePlaced.green * s + fillPlaced.green * (f - o),
+                        strokePlaced.blue * s + fillPlaced.blue * (f - o),
+                        strokePlaced.alpha * s + fillPlaced.alpha * (f - o),
+                    ]
+                    let actual = once[x, y]
+                    let gap = max(
+                        abs(actual.red - expected[0]), abs(actual.green - expected[1]),
+                        abs(actual.blue - expected[2]), abs(actual.alpha - expected[3]))
+                    if gap > 1.0 / 255 { differing += 1 }
+                    if gap > worst.gap { worst = (gap, x, y, f, s) }
+                }
+            }
+            #expect(edges > 100, "\(rect.name): 縁の画素が少ない (\(edges))")
+            #expect(bandMismatch == 0, "\(rect.name): 外縁 − 内縁が輪郭だけの形と \(bandMismatch) 画素違う")
+            #expect(
+                differing == 0,
+                "\(variant)・\(rect.name): \(differing) 画素が面積で置き換えた色と違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y))・f \(worst.f)・s \(worst.s))")
+        }
+    }
+
     /// 下地を読む混ぜ方で、塗りと輪郭を両方持つ形を 1 回で描いた絵は、塗りだけの形の上に
     /// 輪郭だけの形を重ねた絵と同じになる ([#1643])。
     ///

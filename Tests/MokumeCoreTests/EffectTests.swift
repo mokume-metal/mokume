@@ -63,7 +63,7 @@ struct EffectTests {
         let canvas = try makeCanvas()
         let plain = fingerprint(try picture([], on: canvas))
         for (name, effect) in Self.idle {
-            #expect(fingerprint(try picture([effect], on: canvas)) == plain, "\(name)")
+            #expect(fingerprint(try picture([effect], on: canvas)) == plain, "\(name)\(canvas.gpu.faultNote())")
         }
     }
 
@@ -86,7 +86,7 @@ struct EffectTests {
         let canvas = try makeCanvas()
         let plain = fingerprint(try picture([], on: canvas))
         for (name, effect) in Self.working {
-            #expect(fingerprint(try picture([effect], on: canvas)) != plain, "\(name)")
+            #expect(fingerprint(try picture([effect], on: canvas)) != plain, "\(name)\(canvas.gpu.faultNote())")
         }
     }
 
@@ -117,7 +117,9 @@ struct EffectTests {
         let grey = try canvas.target.readPixels()[8, 8]
         let tolerance = Float(Float16(luminance).nextUp) - Float(Float16(luminance)) + 1e-4
         for (name, value) in [("red", grey.red), ("green", grey.green), ("blue", grey.blue)] {
-            #expect(abs(value - luminance) <= tolerance, "\(name) = \(value)、期待は \(luminance)")
+            #expect(
+                abs(value - luminance) <= tolerance,
+                "\(name) = \(value)、期待は \(luminance)\(canvas.gpu.faultNote())")
         }
     }
 
@@ -129,7 +131,7 @@ struct EffectTests {
         let first = try picture([.monochrome(), .adjust(saturation: 1)], on: canvas)
         let second = try picture([.adjust(saturation: 1), .monochrome()], on: canvas)
         // 単色化してから彩度を上げても戻らない。順が効いていなければ同じ絵になる
-        #expect(fingerprint(first) != fingerprint(second))
+        #expect(fingerprint(first) != fingerprint(second), "\(canvas.gpu.faultNote())")
     }
 
     /// **書き戻しの段は無い。** 最後の段が描く先へ直接書くので、通した段の数は並びが

@@ -40,6 +40,16 @@ public struct Model: Equatable, Sendable {
 
     /// 置ける形。
     let mesh: SolidMesh
+    /// 三角形の巻き方の向き (``SolidWinding``) の控え。
+    ///
+    /// 裏面が絵に出うるスタイルで置いたとき、裏 → 表の順で描けるかを決める
+    /// ([#1549](https://github.com/mokume-metal/mokume/issues/1549))。モデルは巻き方が逆の
+    /// ことがあり、閉じていないこともある。求まらなければ裏 → 表で描かない。
+    ///
+    /// **読み込んだときではなく、初めて要ったときに 1 度だけ求める** (``winding``)。求めるには
+    /// 点を溶接する表と向き付きの辺の表を作るので (100 万三角形で 300 万要素ずつ)、半透明で
+    /// 置かないモデルにまで払わせない。控えは参照なので、値を写した `Model` どうしで共有する。
+    let windingCache = WindingCache()
     /// 面の向きを**形から求めた**か。求めた向きは両面として扱う。
     let hasDerivedNormals: Bool
     /// 同じモデルを続けて置いたときにまとめるための番号。**プロセスの中で読み込みごとに違う**
@@ -67,6 +77,34 @@ public struct Model: Equatable, Sendable {
 }
 
 extension Model {
+    /// 三角形の巻き方の向き (``SolidWinding``)。初めて読んだときに求め、控える (``windingCache``)。
+    var winding: SolidWinding {
+        windingCache.value {
+            var positions: [SIMD3<Float>] = []
+            positions.reserveCapacity(mesh.points.count)
+            for point in mesh.points { positions.append(point.position) }
+            return SolidWinding.of(positions)
+        }
+    }
+
+    /// 求めた向きの控え。`Model` は値なので、控えは参照で持って写しどうしで共有する。
+    final class WindingCache: Sendable {
+        private let stored = Mutex<SolidWinding?>(nil)
+
+        /// 控えた向き。まだ無ければ `compute` で求めて控える。
+        func value(_ compute: () -> SolidWinding) -> SolidWinding {
+            stored.withLock { stored in
+                if let stored { return stored }
+                let found = compute()
+                stored = found
+                return found
+            }
+        }
+
+        /// 求めたか (検査が、置き方によって求めないことを確かめる)。
+        var isResolved: Bool { stored.withLock { $0 != nil } }
+    }
+
     /// 読み込みごとの番号の元。**`Canvas` ごとではなく、プロセスで 1 つ** ([#1846])。
     ///
     /// `loadModel` は描き場所 (`createGraphics`) にもあるので、`Canvas` ごとに数えると

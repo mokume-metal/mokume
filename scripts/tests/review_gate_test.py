@@ -38,6 +38,7 @@ gh は PATH の先頭に置いた偽物へ差し替え、ルールセットの�
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -45,6 +46,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "review-gate.sh"
+TEMPLATE = REPO / ".github" / "pull_request_template.md"
 
 # 実物と同じ形のルールセット定義 (承認を要求するパスの正本)。
 # review-gate はここの file_patterns だけを読む
@@ -421,6 +423,22 @@ class ReviewGateTest(unittest.TestCase):
         body = "Closes #12" + verification_section([]) + "\n\n## 確認方法\n\n書いた\n\n## 補足\n\n#12 はここでは数えない\n"
         proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
         self.assert_blocked(proc, "対応表が無い")
+
+    def test_the_template_example_passes_the_table_check(self):
+        # 実物のテンプレートから案内 (HTML コメント) を消し、見本の #N に番号を入れただけの
+        # 本文が通ること (#1949)。見本がコメントの中にしか無いと、案内を消して書いた本文から
+        # 番号ごと消え、その場しのぎの「閉じる Issue: #N」の行が広がった
+        text = TEMPLATE.read_text(encoding="utf-8")
+        body = re.sub(r"<!--.*?-->", "", text, flags=re.S).replace("#N", "#12")
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_the_template_names_closes_only_in_the_verification_section(self):
+        # Closes #N の置き場を目的節にも案内すると、目的節に書いて確認方法節に番号が無い
+        # 本文が生まれ、上の検査で差し戻される (#1908 → #1949)
+        text = TEMPLATE.read_text(encoding="utf-8")
+        purpose = text.split("## 目的", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("Closes #", purpose)
 
     def test_no_issue_pr_is_exempt_from_the_table(self):
         # 閉じる Issue が無ければ、対応する完了条件も無い

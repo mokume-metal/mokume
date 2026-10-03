@@ -1425,7 +1425,7 @@ struct CanvasTests {
         style.rectMode = .center
         style.ellipseMode = .corner
         style.blendMode = .add
-        style.clip = MTLScissorRect(x: 1, y: 2, width: 3, height: 4)
+        style.clip = Canvas.ClipRect(left: 1, top: 2, right: 4, bottom: 6)
         style.fontName = "Helvetica"
         style.textSize = 30
         style.textStyle = .bold
@@ -1476,8 +1476,13 @@ struct CanvasTests {
             canvas.popStyle()
             expectRestored("pushStyle / popStyle")
 
-            // 組み立ては積み降ろしを使わず、写し取って戻す (`Canvas.createShape`)
-            _ = canvas.createShape { canvas.currentStyle = Canvas.Style() }
+            // 組み立ては積み降ろしを使わず、写し取って戻す (`Canvas.createShape`)。**フレームに
+            // 属するフィールド (切り抜き・材質・影) は組み立ての中では断り、出口も戻さない** (#1529・
+            // #1684 — 戻すと、組み立ての中で閉じたフレームの値を書き戻す)。中で書き換えるのは描き方
+            // だけにし、全フィールドが組み立て前のままであることを見る
+            _ = canvas.createShape {
+                canvas.currentStyle = Canvas.Style().keepingFrameFields(of: canvas.style)
+            }
             expectRestored("createShape")
         }
     }
@@ -1506,6 +1511,12 @@ struct CanvasTests {
         /// 閉じ忘れたまま、次のフレームを `draw { }` で始める。捨てるのは入口ではなく
         /// フレームの始まりなので、こちらの入口でも同じに捨てる。
         case drawAfterBeginDraw
+        /// 描き場所で閉じ忘れたまま、本体の次のフレームが始まる ([#1834])。本体の頭が描かずに
+        /// 捨て、描き場所はフレームの外に出る。描き切らないので、溜めたものを flush が片付けて
+        /// くれない。**汚す面は描き場所** (``usesLayer``)。
+        ///
+        /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
+        case mainFrameAfterBeginDraw
         /// 本体の通常の経路 (`draw { }` → `draw { }`)。
         case drawThenDraw
         /// `setup()` にあたるフレームの外 (持ち越しの区間・``Canvas/carriesOver``) で汚し、最初の
@@ -1518,15 +1529,32 @@ struct CanvasTests {
         /// 汚すのがフレームの外か。
         var dirtiesOutside: Bool { self == .outsideThenDraw }
 
-        /// 汚したフレームを閉じる越え方か。閉じた直後にも、終わりで戻すものを見る。
-        var closes: Bool { [.endDraw, .failedEndDraw, .drawThenDraw].contains(self) }
+        /// 汚す面が、本体 (`host`) から作った描き場所か。
+        var usesLayer: Bool { self == .mainFrameAfterBeginDraw }
+
+        /// 汚したフレームを閉じる越え方か。閉じた直後にも、終わりで戻すものを見る。本体の頭で
+        /// 捨てた描き場所は、捨てた直後にフレームの外に居るので、閉じたものとして見る。
+        var closes: Bool {
+            [.endDraw, .failedEndDraw, .drawThenDraw, .mainFrameAfterBeginDraw].contains(self)
+        }
 
         /// 汚すフレームを開いて `dirty` を走らせ、境目を越える。閉じる越え方なら閉じた直後に
-        /// `closed` を、次のフレームの中で `inspect` を呼ぶ。
+        /// `closed` を、次のフレームの中で `inspect` を呼ぶ。`host` は ``usesLayer`` の越え方で、
+        /// `canvas` を作った本体である。
         func run(
-            _ canvas: Canvas, dirty: () -> Void, closed: () -> Void, inspect: () -> Void
+            _ canvas: Canvas, host: Canvas, dirty: () -> Void, closed: () -> Void,
+            inspect: () -> Void
         ) throws {
             switch self {
+            case .mainFrameAfterBeginDraw:
+                try host.draw {
+                    canvas.beginDraw()
+                    dirty()
+                }
+                try host.draw { closed() }
+                canvas.beginDraw()
+                inspect()
+                canvas.endDraw()
             case .endDraw, .failedEndDraw:
                 canvas.beginDraw()
                 dirty()
@@ -1650,6 +1678,9 @@ struct CanvasTests {
                 c.set(1, 1, .linear(red: 1, green: 0, blue: 0))
             }),
             ("pendingBackground", end, all, { c, _ in c.background(.linear(red: 0, green: 0, blue: 0)) }),
+            // 途中の描き切りが既に描いた落とす側 (#1656)。塗り直しも捨てるので、その後で汚す。
+            // 描き切らせて汚すと、上の塗り直しの予定を描いてしまうので、中身を直に足す
+            ("frameCasters", end, all, { c, _ in c.frameCasters.chainValid = false }),
             // シーンの記述
             ("cameraStorage", end, all, { c, _ in c.perspective() }),
             ("transform", both, all, { c, _ in c.translate(5, 5) }),
@@ -1689,6 +1720,9 @@ struct CanvasTests {
                 c.stroke(.linear(red: 1, green: 1, blue: 1))
             }),
             ("flatInstances", end, all, { c, _ in c.flatInstances.append(.identity) }),
+            ("coverageSpans", end, all, { c, _ in
+                c.coverageSpans.append(Canvas.CoverageSpan(range: 0..<3, value: 0.5))
+            }),
             ("recordedStrokeRanges", end, all, { c, _ in c.recordedStrokeRanges.append(StrokeRange(0..<0)) }),
             ("recordedSolidStrokes", end, all, { c, _ in
                 c.recordedSolidStrokes.append(
@@ -1702,6 +1736,15 @@ struct CanvasTests {
             }),
             ("formInstances", end, all, { c, _ in c.rect(10, 10, 4, 4) }),
             ("batches", end, all, { c, _ in c.rect(10, 10, 4, 4) }),
+            // 置いた描き場所を描き換えると、置いた時点の絵の写しを読む (#1656)。描き換えは置いた
+            // 記録を落とすので、置いた記録より先に汚す
+            ("placedPictureCopiesInUse", end, all, { c, _ in
+                let layer = try! c.createGraphics(4, 4)
+                c.image(layer, 0, 0)
+                layer.beginDraw()
+                layer.background(.linear(red: 1, green: 0, blue: 0))
+                layer.endDraw()
+            }),
             ("placedGraphics", end, all, { c, f in c.note(placing: f.other) }),
             ("outlinesAssembledThisFrame", end, all, { c, _ in c.outlinesAssembledThisFrame = 7 }),
             ("pointScansThisFrame", end, all, { c, _ in c.pointScansThisFrame = 7 }),
@@ -1857,7 +1900,7 @@ struct CanvasTests {
             "earlySubmissionsAttempted": count,
             "earlySubmissionFailedFrame": "面をまたぐ順のための早い投入に失敗したときのフレーム番号 (#1870)。番号どうしで比べるので、境目で戻す手は要らない (閉じ忘れを捨てる道も番号を進める)",
             "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
-            "glyphQuadsPlaced": count, "drawCallsInLastFrame": count,
+            "glyphQuadsPlaced": count, "drawCallsInLastFrame": count, "drawsEncodedInLastFrame": count,
             "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
             "pointScansInLastFrame": count,
             "stagePassesUsed": "段の枠の採番。描き切りごとに 0 から数える (コマンドと同じ寿命)",
@@ -1872,14 +1915,26 @@ struct CanvasTests {
             "noiseStore": "揺らぎの種と細かさの置き場。一度書けば残る (断片と共有する・#366)。描き場所は作った面と共有する (#1503)",
             "carriesPictureBeforeEffects": "効果を通す前の絵の控えがあるか。次のフレームの最初の描き切りが戻す (#1469)",
             "targetChangedSinceUpscale": "描く先が最後の拡大より後に変わったか。止まっている間の出力段が広げ直して下ろす。フレームの終わりの描き切りも下ろす (#1882)",
-            "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手を描き切らせて空にする。捨てるだけでは絵が変わらないので残す",
+            "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手へ置いた時点の絵を写させて空にする (#1656)。捨てるだけでは絵が変わらないので残す",
+            "casterSegmentsFree": "途中の描き切りで控えた落とす列の区画の空き。読んだ投入が終わってから使い回す (#1656)",
+            "shadowMapHolds": "影の面がいま持つ落とす列の並びの指紋。焼いた面は誰にも書き換えられないので、lastShadowBakeKey と同じく越える (#1656)",
+            "shadowBakesAdded": count, "shadowRebakeBarriersEncoded": count,
+            "placedPictureCopiesFree": "置いた時点の絵の写しの空き。使い回すために持ち、境目で 1 フレーム使わなかったものを手放す (#1656)",
+            "placedPictureEpoch": "境目の番号。写しの空きのうち使わなかったものを見分けるのに読む (#1656)",
+            "placedPictureCopiesMade": count, "placedPicturesCopied": count,
+            "placedPictureCopyLimitReached": count,
+            "shadowsEverEnabled": "影を 1 度でも有効にしたか。区切りで落とす側を写すかを決める印で、フレームを越える (#1656)",
             "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
             "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
             "beginDrawFrame": "isDrawing と組のフレームの印 (beginDraw が開いた本体のフレームの番号)。境目の関数だけが書く",
+            "droppedAtTheMainFrame": "本体のフレームが始まる所で閉じ忘れを捨てた後、遅れた endDraw() をまだ名乗っていないかの印 (#1834)。捨てる関数が立て、名乗ったとき・次に本体のフレームが始まる所・自分の次のフレームの頭で下ろす",
             "paintSurfacesNoted": "断片の面を置いた記録に載せ終えた控え。記録が落ちる (フレームの終わりの描き切り) と placedGraphicsDrops と食い違って外れる (#1683)",
             "placedGraphicsDrops": count,
-            "isFlushing": transient, "backdrop": transient, "replayedPaint": transient,
+            "isFlushing": transient, "replayedPaint": transient,
             "solidStrokeCapture": transient,
+            "solidStrokeCoverage": transient, "solidStrokeIsLonePoint": transient,
+            "templateStrokeMatrix": transient, "openBatchHasThinCoverage": transient,
+            "coverageStorage": resource, "thinStrokesRebuilt": count,
             "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
             "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
             "placementsFoundOutsideRegions": count,
@@ -1897,7 +1952,7 @@ struct CanvasTests {
     /// (ADR-0021 決定 4 の表)。
     private var frameStyle: [String: (reset: FrameReset, dirty: (inout Canvas.Style) -> Void)] {
         [
-            "clip": (.both, { $0.clip = MTLScissorRect(x: 1, y: 2, width: 3, height: 4) }),
+            "clip": (.both, { $0.clip = Canvas.ClipRect(left: 1, top: 2, right: 4, bottom: 6) }),
             "material": (.end, { $0.material.shininess = 8 }),
             "castsShadow": (.end, { $0.castsShadow = false }),
             "receivesShadow": (.end, { $0.receivesShadow = false }),
@@ -2035,7 +2090,8 @@ struct CanvasTests {
         // 戻す状態を境目の関数ごとに手で並べていたので、並べ落とした状態が 1 件ずつ見つかって
         // きた (#925・#1472・#1504・#1591・#1622)。**全部汚してから越え、全部が戻ったかを見る**
         // — 1 例ずつの検査では、次に足した状態の戻し落としが黙る
-        let canvas = try makeCanvas()
+        let host = try makeCanvas()
+        let canvas = boundary.usesLayer ? try host.createGraphics(Int(host.width), Int(host.height)) : host
         let other = try makeCanvas()
         var fixture = FrameFixture(
             sheet: try canvas.createImage(8, 8), other: other,
@@ -2057,7 +2113,7 @@ struct CanvasTests {
         var closed: [String: String]?
         var crossed: [String: String] = [:]
         try boundary.run(
-            canvas,
+            canvas, host: host,
             dirty: {
                 baseline = frameFingerprint(of: canvas)
                 for entry in frameState { entry.dirty(canvas, &fixture) }
@@ -2543,8 +2599,11 @@ struct CanvasTests {
         #expect(!layer.warnings.hasWarned(.unfinishedFrameDropped))
     }
 
-    @Test("描き場所で閉じ忘れたまま本体のフレームが進めば、次の beginDraw() が捨てる (#1622)")
-    func beginDrawInTheNextFrameDropsTheLayer() throws {
+    /// 捨てるのは本体の次のフレームの頭である (#1834)。以前は次の `beginDraw()` が捨てていて、
+    /// その間に読む口・描き切らせる口が捨てるはずの中身を描いた (口ごとの検査は
+    /// `ForgottenLayerFrameTests`)。
+    @Test("描き場所で閉じ忘れたまま本体のフレームが進めば、本体のフレームの頭で捨てる (#1622・#1834)")
+    func theMainFrameDropsTheLayerLeftOpen() throws {
         let main = try makeCanvas()
         let layer = try main.createGraphics(64, 64)
         try main.draw {
@@ -2569,8 +2628,11 @@ struct CanvasTests {
         let image = try layer.target.encodeForDisplay()
         #expect(image[12, 12] == (255, 255, 255, 255), "前のフレームの変換が効いている")
         #expect(image[44, 44] == (0, 0, 0, 255), "閉じ忘れたフレームの図形が描かれた")
-        #expect(layer.warnings.message(for: .unfinishedFrameDropped) == unfinishedFrameNotice)
+        #expect(
+            layer.warnings.message(for: .unfinishedFrameDropped)
+                == ForgottenLayerFrameTests.droppedAtMainFrameNotice)
         #expect(!layer.warnings.hasWarned(.alreadyDrawing))
+        #expect(layer.framesDrawn == 3, "捨てたフレームを 1 枚に数えていない、または捨て直した")
     }
 
     @Test("捨てたフレームで積んだ力だけを落とし、前のフレームで積んだ力は残す (#1622)")

@@ -120,7 +120,7 @@ extension Canvas {
         speed: ClosedRange<Float>, angle: ClosedRange<Float>, life: ClosedRange<Float>,
         size: ClosedRange<Float>, color: LinearRGBA?, using randomness: inout Randomness
     ) {
-        guard isDrawing else { return warnOutsideFrame(.particles) }
+        guard admits(.particles) else { return }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
         // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法。
         // 刻みは秒に直さずに渡す。単精度の秒を足し合わせると、fps によって毎秒 1 個ずれる (#1640)。
@@ -133,7 +133,7 @@ extension Canvas {
 
     /// 力を積む。
     public func force(_ particles: Particles, _ forces: [Force]) {
-        guard isDrawing else { return warnOutsideFrame(.particles) }
+        guard admits(.particles) else { return }
         // このフレームで最初に積む前の数を控える。フレームを描かずに捨てるとき、ここから後を
         // 落とす ([#1622]・``forcesThisFrame``)
         //
@@ -158,7 +158,7 @@ extension Canvas {
     /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     public func particles(_ particles: Particles) {
-        guard isDrawing else { return warnOutsideFrame(.particles) }
+        guard admits(.particles) else { return }
         // 組を選べなければ、力を取り出さずに帰る。積んだ力は次の呼び出しに効く
         let draw: Particles.Draw
         do {
@@ -172,7 +172,7 @@ extension Canvas {
         let placed = particleRoute == .instanced ? placeFromGPU(particles, draw) : nil
         particles.write(
             into: draw, transform: transform.matrix, basis: currentCamera.basis, step: deltaTime,
-            frame: framesDrawn,
+            frame: particleFrame,
             forces: particles.takeForces(),
             vertexStart: placed?.start ?? 0, vertexCount: placed?.count ?? 0)
         // 取り出したので、控えた数はもう指す先が無い。この後に積む力は 0 個から数え直す
@@ -180,6 +180,27 @@ extension Canvas {
         schedule(particles, draw)
         if particleRoute == .reference { placeFromCPU(particles) }
     }
+
+    /// ``particles(_:)`` が GPU へ渡すフレーム番号。**時刻の置き場の持ち主 (本体) が閉じたフレームの
+    /// 数** (``Timebase/mainFramesDrawn``) で、置き場を共有する面はどれも同じ番号を読む ([#1909])。
+    /// `wander` の揺れは粒の番号とこの番号で決まるので、呼んだ面の数 (``framesDrawn``) を渡すと、
+    /// 描き場所の描き歴 (遅れて描き始めた・描かなかったフレームがある) で同じ本体のフレームの揺れが
+    /// 食い違う。
+    ///
+    /// 持ち主を弱く辿って読む形は採らない。持ち主を手放した瞬間に面ごとの数へ跳び、同じ置き場の
+    /// 描き場所 2 枚の間で同じ食い違いが戻る。置き場に持たせた値は、持ち主を手放した後は進まない —
+    /// 時刻と刻みも、持ち主のフレームでランタイムが渡すときにしか変わらないのと揃う。
+    ///
+    /// ``Timebase/frame`` は使わない。開いている間は本体の ``framesDrawn`` より 1 大きいので、
+    /// 本体だけで描くスケッチの揺れまで変わる。本体のフレームの外 (`setup()`・止まっている間) で
+    /// 描き場所が呼ぶと、次に描く本体のフレームの番号になる — そこで置いたものを次のフレームへ
+    /// 持ち越すのと同じ向き (ADR-0021 決定 4 の追補 (2026-09-27))。
+    ///
+    /// `emit` の繰り越しは面ごとの数のままにしてある。公開の入口 (`Sketch.emit`) は本体の面から
+    /// しか呼ばないので、混ざらない。
+    ///
+    /// [#1909]: https://github.com/mokume-metal/mokume/issues/1909
+    var particleFrame: Int { timebase.mainFramesDrawn }
 
     /// 1 フレームぶんの計算を積む。
     ///

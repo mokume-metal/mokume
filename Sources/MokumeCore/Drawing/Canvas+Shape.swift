@@ -37,15 +37,20 @@ extension Canvas {
         // 断片と並びは**入口では外さない** — 組み立ての間に効いている塗りは形に焼き付く
         // (#788)。戻すのは出口だけで、読む面と同じ扱いである
         //
+        // **何を戻すかは ``Manner`` 1 か所が持つ** ([#1684])。写す・戻すを出入口に並べていた
+        // ので、並べ落とした曲線の細かさと揺らぎの設定が外へ漏れていた ([#1646])。`Canvas` の
+        // 格納と `Style` のフィールドを 1 つ残らず「戻す・切り離す・断る・触らない」に分けた表は
+        // 検査が持ち (`ShapeExitTests`)、格納を足すとそこで止まる
+        //
         // [#836]: https://github.com/mokume-metal/mokume/issues/836
         // [#1041]: https://github.com/mokume-metal/mokume/issues/1041
-        let savedStyle = currentStyle
-        let savedTransform = transform
-        let savedTexture = currentTexture
-        let savedShader = currentShader
-        let savedNumbers = currentNumbers
+        // [#1646]: https://github.com/mokume-metal/mokume/issues/1646
+        // [#1684]: https://github.com/mokume-metal/mokume/issues/1684
+        let savedManner = Manner(of: self)
         transform = .identity
-        style.clip = nil
+        // 切り抜きは外さない — 記録した区間は切り抜きを持たない (``Shape/Run``) ので、記録の中で
+        // 効いていても形には入らない。外して出口で戻すと、組み立ての中でフレームが閉じたときに
+        // 閉じたフレームの切り抜きを書き戻す (``Manner`` は形に焼き付かないものを戻さない・#1684)
         // **記録の間は畳まない。** 畳むと置き場所が溜め場の側に残り、記録した頂点からは
         // どこへ置くかが落ちる (`Canvas.recordingShape`)
         let savedRecording = recordingShape
@@ -79,13 +84,7 @@ extension Canvas {
         restore(savedStacks)
         closeBatch()
         // 状態を戻すのは、記録したぶんを溜め場から抜いた後 (下の「抜いてから状態を戻す」)
-        defer {
-            currentTexture = savedTexture
-            currentShader = savedShader
-            currentNumbers = savedNumbers
-            transform = savedTransform
-            currentStyle = savedStyle
-        }
+        defer { savedManner.restore(on: self) }
         // **出口の安全網** ([#1588])。記録の途中で溜め場を捨てると、上で控えた区間は溜め場の外を
         // 指す。塗り直しと画素の口は記録の中で断るが、描き切りそのものを断れない口が残る (置いた
         // 描き場所の描き換えが本体を描き切らせる・揺らぎの設定の書き換え)。捨てる前に記録した
@@ -94,7 +93,8 @@ extension Canvas {
         //
         // [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         guard pendingDiscards == discardsAtStart else {
-            discardPending()
+            // 前の区切りで描いた立体の影 (持ち越した落とす側) は残す (#1656)
+            discardPending(keepingCasters: true)
             warnInsideShape(.drawnOut)
             return .empty
         }
@@ -125,6 +125,13 @@ extension Canvas {
         // 区間だけずらすと記録した形が溜め場に残っていた頂点を指す (``Shape/solidIndices``)
         let recordedIndices = solidIndices[solidIndexStart...].map { $0 - UInt32(solidStart) }
         let recordedForms = Array(formInstances[formStart...])
+        // 記録した形 1 つずつの部品も、形自身の 0 起点へ引き戻す (``Shape/solidParts``)
+        var recordedParts: [SolidPart] = []
+        for batch in batches[runStart...] where batch.source == .solid {
+            for part in batch.backFaceParts {
+                recordedParts.append(part.shifted(by: part.isIndexed ? -solidIndexStart : -solidStart))
+            }
+        }
         let runs = batches[runStart...].map {
             var run = $0.run
             switch run.source {
@@ -140,6 +147,7 @@ extension Canvas {
         // 記録したぶんを溜め場から抜く。**抜いてから状態を戻す** — 先に戻すと、
         // 記録した頂点が戻したあとの設定で閉じられる
         vertices.removeLast(vertices.count - vertexStart)
+        trimCoverage(to: vertexStart)
         solidVertices.removeLast(solidVertices.count - solidStart)
         solidIndices.removeLast(solidIndices.count - solidIndexStart)
         formInstances.removeLast(formInstances.count - formStart)
@@ -151,7 +159,65 @@ extension Canvas {
         return Shape(
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,
             forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes,
-            solidStrokes: recordedPieces, gpuStrokes: recordedGPU)
+            solidStrokes: recordedPieces, gpuStrokes: recordedGPU, solidParts: recordedParts)
+    }
+
+    /// 形の組み立ての出口で、組み立て前へ戻す状態 ([#1684])。入口で写し、出口で戻す。
+    ///
+    /// 載せるのは**形に焼き付く描き方**と、形自身の座標で記録するために畳む変換である。描き方は
+    /// 形の中で効き (組み立てるコードを読めば何色・何段で刻まれるかが分かる)、外へは残らない。
+    /// 形に焼き付かない設定 (シーンの記述・露出) は、ここで戻すのではなく組み立ての中で断る
+    /// (``admits(_:)``)。積み履歴と組み立て中の形は、ここではなく切り離して閉じる。
+    ///
+    /// **`Style` のうちフレームに属するフィールド (切り抜き・材質・影の落とし方と受け方) は
+    /// 戻さない** (``Style/keepingFrameFields(of:)``)。組み立ての中では断るので普段は変わらないが、
+    /// 組み立ての中でフレームが閉じる (描き場所の組み立ての中の `endDraw()`) と、閉じる側が
+    /// 既定へ戻した値を、出口が閉じたフレームの値で書き戻していた。フレームの頭はこの 3 つを
+    /// 戻さないので、次のフレームへ持ち越された (#1671 が塞いだのと同じ破れ方・#1684 の反証)。
+    ///
+    /// **項目を足すときは、検査の表 (`ShapeExitTests`) の「戻す」に汚す手順も足す。** 表が
+    /// 汚して、出口の直後に戻ったかを見る。「断る」に載る `Style` のフィールドは、組み立ての中で
+    /// フレームを閉じた後に書き戻されないかを表が見る。
+    ///
+    /// [#1684]: https://github.com/mokume-metal/mokume/issues/1684
+    struct Manner {
+        let style: Style
+        let transform: Transform
+        let texture: HeldTexture
+        let shader: Shader?
+        let numbers: Numbers?
+        let curveDetail: Int
+        let curveTightness: Float
+        /// 揺らぎの種と細かさ。形に焼き付くのは、記録の中で CPU の `noise()` が返した値だけで
+        /// ある。断片の `mokume_noise` は描き切りの時点の種で引くので、形を置いたときの種を使う。
+        let noise: ValueNoise
+
+        init(of canvas: Canvas) {
+            style = canvas.currentStyle
+            transform = canvas.transform
+            texture = canvas.currentTexture
+            shader = canvas.currentShader
+            numbers = canvas.currentNumbers
+            curveDetail = canvas.currentCurveDetail
+            curveTightness = canvas.currentCurveTightness
+            noise = canvas.noiseSettings
+        }
+
+        /// 写した値へ戻す。
+        ///
+        /// **揺らぎは ``Canvas/changeNoise(_:)`` で戻す。** 置き場は描き場所と共有するので、中の
+        /// 設定で溜めた図形を持つ面があれば、戻す前に描き切らせる (置いた時点の種で引く・#1503)。
+        /// 書き換えていなければ何もしない。
+        func restore(on canvas: Canvas) {
+            canvas.currentTexture = texture
+            canvas.currentShader = shader
+            canvas.currentNumbers = numbers
+            canvas.currentCurveDetail = curveDetail
+            canvas.currentCurveTightness = curveTightness
+            canvas.transform = transform
+            canvas.currentStyle = style.keepingFrameFields(of: canvas.style)
+            canvas.changeNoise { $0 = noise }
+        }
     }
 
     // 保持した形を置く。
@@ -298,16 +364,26 @@ extension Canvas {
         let runRange = run.start..<(run.start + run.count)
         let matrix = transform.matrix * placement.transform.matrix
         let tint = placement.fill
-        // 差し替える輪郭 (頂点の並びの順)。色を掛けない置き場所は、ここで空になる
-        let replaced = (tint?.alpha ?? 1) < 1 ? candidates : []
+        // 差し替える輪郭 (頂点の並びの順)。色を掛けない置き場所は、半透明の分が空になる。
+        // 置いた後に細くなる輪郭は、色によらず組み直した頂点で差し替える (#1637)
+        let replaced = replacements(
+            in: runRange, of: shape, placedBy: matrix,
+            carved: (tint?.alpha ?? 1) < 1 ? candidates : [])
         if replaced.isEmpty {
             vertices.append(contentsOf: shape.vertices[runRange])
         } else {
             var cursor = run.start
-            for stroke in replaced {
-                vertices.append(contentsOf: shape.vertices[cursor..<stroke.range.lowerBound])
-                vertices.append(contentsOf: stroke.carved?.vertices ?? [])
-                cursor = stroke.range.upperBound
+            for (range, replacement, coverage) in replaced {
+                vertices.append(contentsOf: shape.vertices[cursor..<range.lowerBound])
+                // 組み直した細い輪郭の被覆は、積んだ先の番号へずらして付ける (#1637)
+                let at = vertices.count
+                vertices.append(contentsOf: replacement)
+                for span in coverage {
+                    noteCoverage(
+                        span.value,
+                        in: (at + span.range.lowerBound)..<(at + span.range.upperBound))
+                }
+                cursor = range.upperBound
             }
             vertices.append(contentsOf: shape.vertices[cursor..<runRange.upperBound])
         }
@@ -328,34 +404,85 @@ extension Canvas {
             let upper = min(whole.upperBound, runRange.upperBound)
             let placed: Range<Int>
             var carved: CarvedStroke?
+            var thin: ThinStrokeRecipe?
             if next < replaced.count, replaced[next].range == whole {
-                // 引いて積んだ頂点は、半透明の色を掛けて確定している。外側の記録へは、素材ではなく
-                // この頂点の区間として渡す
-                let count = replaced[next].carved?.vertices.count ?? 0
+                // 差し替えた頂点 (引いて積んだ・細さを補って組み直した) は、色と太さが確定している。
+                // 外側の記録へは、この頂点の区間として渡す
+                let count = replaced[next].vertices.count
                 let start = lower - run.start + base + shift
                 placed = start..<(start + count)
                 shift += count - whole.count
                 next += 1
+                // **細さは外側を置くまで決まらないので、組み直す素材は持ち越す** (#1637)。半透明の
+                // 色で引いて積んだ頂点に差し替えた輪郭も、外側を縮めて置けば細くなる
+                if recordingShape, let source = shape.strokeRanges[index].thin {
+                    thin = source.moved(by: matrix, tint: tint)
+                }
             } else {
                 placed = (lower - run.start + base + shift)..<(upper - run.start + base + shift)
-                // 外側の記録へは、引く素材も移して渡す (引くのは外側を置くとき)。**その場で描くときは
-                // 要らない** — 置く数だけ素材の箱を作ることになる。区間の一部だけを置くときは、素材も
-                // 一部になってしまうので持ち越さない
+                // 外側の記録へは、引く素材・組み直す素材も移して渡す (使うのは外側を置くとき)。
+                // **その場で描くときは要らない** — 置く数だけ素材の箱を作ることになる。区間の一部
+                // だけを置くときは、素材も一部になってしまうので持ち越さない
                 // (`Optional.map` に閉包を渡さず `if let` で受ける — 隔離の実行時検査を払う・#1779)
-                if recordingShape, lower == whole.lowerBound, upper == whole.upperBound,
-                    let source = shape.strokeRanges[index].carved
-                {
-                    carved = CarvedStroke(moving: source, by: matrix, tint: tint)
+                if recordingShape, lower == whole.lowerBound, upper == whole.upperBound {
+                    if let source = shape.strokeRanges[index].carved {
+                        carved = CarvedStroke(moving: source, by: matrix, tint: tint)
+                    }
+                    if let source = shape.strokeRanges[index].thin {
+                        thin = source.moved(by: matrix, tint: tint)
+                    }
                 }
             }
             if recordingShape {
-                recordedStrokeRanges.append(StrokeRange(placed, carved: carved))
+                recordedStrokeRanges.append(StrokeRange(placed, carved: carved, thin: thin))
                 continue
             }
             vertices.withUnsafeMutableBufferPointer { buffer in
                 for index in placed { buffer[index].position += 0.5 }
             }
         }
+    }
+
+    /// 平面の区間 `runRange` で、記録した頂点の代わりに積む輪郭 (頂点の並びの順)。
+    ///
+    /// - 置いた後に描く画素で 1 画素より細くなる輪郭は、広げて組み直した頂点 (#1637・
+    ///   ``Canvas/thinVertices(_:placedBy:cache:stroke:)``)。**記録の中で置き直すときは判断しない** —
+    ///   外側を置くまで行列が決まらないので、素材を外側の記録へ渡す
+    /// - そうでなく `carved` に含まれる輪郭は、引いて積んだ頂点 (半透明の色を掛けて置くとき)
+    ///
+    /// 区間を跨ぐ輪郭は差し替えない (素材は輪郭ひとつぶんなので、一部だけは置けない)。
+    private func replacements(
+        in runRange: Range<Int>, of shape: Shape, placedBy matrix: simd_float4x4,
+        carved: [StrokeRange]
+    ) -> [(range: Range<Int>, vertices: [ShapeVertex], coverage: [CoverageSpan])] {
+        // 形の中で最も細い輪郭でも細くならなければ、走査しない (いちばんよくある置き方)。
+        // 2 つの行列の最小の特異値の積は、積の行列の最小の特異値を越えない
+        let mayThin =
+            !recordingShape
+            && Self.thinnestDrawnWeight(shape.thinnestRecordedWeight, by: drawnLinear(matrix)) < 1
+        guard mayThin || !carved.isEmpty else { return [] }
+        var found: [(range: Range<Int>, vertices: [ShapeVertex], coverage: [CoverageSpan])] = []
+        var carvedIndex = 0
+        for index in shape.strokeRanges.indices {
+            let stroke = shape.strokeRanges[index]
+            guard !stroke.range.isEmpty, stroke.range.lowerBound >= runRange.lowerBound,
+                stroke.range.upperBound <= runRange.upperBound
+            else { continue }
+            while carvedIndex < carved.count,
+                carved[carvedIndex].range.lowerBound < stroke.range.lowerBound
+            {
+                carvedIndex += 1
+            }
+            if mayThin, let recipe = stroke.thin,
+                let rebuilt = thinVertices(
+                    recipe, placedBy: matrix, cache: shape.thinCache, stroke: index)
+            {
+                found.append((stroke.range, rebuilt.vertices, rebuilt.coverage))
+            } else if carvedIndex < carved.count, carved[carvedIndex].range == stroke.range {
+                found.append((stroke.range, carved[carvedIndex].carved?.vertices ?? [], []))
+            }
+        }
+        return found
     }
 
     /// 頂点を置き場所へ移す。行列を掛け、置き場所の色を掛ける。
@@ -419,7 +546,9 @@ extension Canvas {
                     color: placement.fill
                         ?? LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)))
         }
-        placeSolid(run, of: shape, instances: instances)
+        // 記録した形 1 つずつの部品 (``SolidPart``) を持ち歩く。どの部品を裏 → 表で描くかは、
+        // 記録したときのスタイルと置き場所の色で決まる (``Shape/solidParts``)
+        placeSolid(run, of: shape, instances: instances, carriesParts: true)
     }
 
     /// 立体の区間を、組み上がった置き場所ぶんだけ置く。
@@ -438,10 +567,17 @@ extension Canvas {
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
+    ///
+    /// `carriesParts` が真なら、記録した形 1 つずつの部品 (``Shape/solidParts``) を列へ渡す。
+    /// 裏面が絵に出うる部品は、置き場所ごとに裏 → 表の順で描かれる (``Batch/backFaceParts``)。
+    /// **粒は渡さない** — 板 1 枚で自分の面が自分を隠すことが無く、描き分けると描く回数が粒の
+    /// 数だけ増える。
     func placeSolid(
-        _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>
+        _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>,
+        carriesParts: Bool = false
     ) {
         beginSolids()
+        let parts = carriesParts ? shape.solidParts(in: run) : []
         let runRange = run.start..<(run.start + run.count)
         var pieces: [SolidStrokePiece] = []
         for piece in shape.solidStrokes where runRange.contains(piece.vertexStart) {
@@ -456,13 +592,15 @@ extension Canvas {
             if !gpuStrokes.isEmpty {
                 for instance in instances {
                     placeSplittingGPUStrokes(
-                        run, of: shape, pieces: pieces, gpuStrokes: gpuStrokes, by: instance)
+                        run, of: shape, pieces: pieces, gpuStrokes: gpuStrokes, parts: parts,
+                        by: instance)
                 }
                 return
             }
             for instance in instances {
                 let base = solidVertices.count
-                appendPlacedSolidVertices(vertices, indices: indices, placedBy: instance)
+                appendPlacedSolidVertices(
+                    vertices, indices: indices, placedBy: instance, parts: parts)
                 placeSolidStrokes(
                     pieces, from: run.start, to: base, by: instance,
                     reversed: instance.isMirrored && indices == nil)
@@ -481,10 +619,24 @@ extension Canvas {
             // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
             let mirrored = first.isMirrored
             let start = openRetainedSolid(run, of: shape, mirrored: mirrored)
+            // 部品を列の描く単位へ写す。頂点も添字も、形の中の位置から写した先までずらすだけ。
+            // 置き場所の色で立つ部品は、置き場所の印 (``OpenSolid/backFaceInstances``) で表す —
+            // 部品に印を付けると、同じ列の不透明の置き場所まで 2 回で描く
+            if let open = openSolid, !parts.isEmpty {
+                let shift = run.isIndexed
+                    ? (open.indexStart ?? 0) - run.indexStart : open.vertexStart - run.start
+                var moved: [SolidPart] = []
+                moved.reserveCapacity(parts.count)
+                for part in parts { moved.append(part.shifted(by: shift)) }
+                openSolid?.parts = moved
+            }
             while let instance = remaining.first, instance.isMirrored == mirrored,
                 !isBatchFull(solidInstances.count, since: start)
             {
                 solidInstances.append(instance)
+                if !parts.isEmpty, placementShowsBackFaces(instance, styled: false) {
+                    openSolid?.backFaceInstances.append(solidInstances.count - 1 - start)
+                }
                 remaining = remaining.dropFirst()
             }
         }
@@ -517,13 +669,15 @@ extension Canvas {
     /// 作れない線は割らずに、焼いた帯のまま置く。
     private func placeSplittingGPUStrokes(
         _ run: Shape.Run, of shape: Shape, pieces: [SolidStrokePiece],
-        gpuStrokes: [RetainedGPUStroke], by instance: SolidInstance
+        gpuStrokes: [RetainedGPUStroke], parts: [SolidPart], by instance: SolidInstance
     ) {
         func placeBaked(_ segment: Range<Int>) {
             guard !segment.isEmpty else { return }
             let base = solidVertices.count
+            // 区間に収まる部品だけを渡す (線で割った区間を跨ぐ部品は無い — 部品は塗りの区間で、
+            // 線はその後ろに積まれる)
             appendPlacedSolidVertices(
-                shape.solidVertices[segment], indices: nil, placedBy: instance)
+                shape.solidVertices[segment], indices: nil, placedBy: instance, parts: parts)
             var inside: [SolidStrokePiece] = []
             for piece in pieces where segment.contains(piece.vertexStart) { inside.append(piece) }
             placeSolidStrokes(
@@ -571,8 +725,12 @@ extension Canvas {
                 recordedSolidStrokes.append(moved)
                 continue
             }
-            for (offset, corner) in rebuiltSolidStroke(moved).enumerated() {
+            let (corners, coverage) = rebuiltSolidStroke(moved)
+            if coverage < 1 { openBatchHasThinCoverage = true }
+            for (offset, corner) in corners.enumerated() {
                 solidVertices[moved.vertexStart + offset].position = corner
+                // 被覆も置く面で決まる (#1637)。線の頂点なので 0 にはならない
+                solidVertices[moved.vertexStart + offset].stroke = coverage
             }
         }
     }
@@ -632,5 +790,25 @@ extension Canvas {
             .badPlacement,
             "shape(at:): some placements held a value that is not a number, or an infinite one, "
                 + "in their \(parts), so those were not placed")
+    }
+}
+
+extension Canvas.Style {
+    /// 描き方のフィールドはこの値のまま、**フレームに属するフィールド (切り抜き・材質・影の
+    /// 落とし方と受け方) は `current` のもの**にした値 ([#1684])。
+    ///
+    /// 形の組み立ての出口 (``Canvas/Manner``) が使う。どのフィールドがフレームに属するかは
+    /// ADR-0021 決定 4 の表で、検査の表 (`CanvasTests` の `frameStyle`・`ShapeExitTests` の
+    /// 「断る」) が同じ 4 つを持つ。`Style` にフィールドを足すと、`ShapeExitTests` がどちらかに
+    /// 分けるまで赤になり、「断る」に分けたものがここで書き戻されると赤になる。
+    ///
+    /// [#1684]: https://github.com/mokume-metal/mokume/issues/1684
+    func keepingFrameFields(of current: Self) -> Self {
+        var style = self
+        style.clip = current.clip
+        style.material = current.material
+        style.castsShadow = current.castsShadow
+        style.receivesShadow = current.receivesShadow
+        return style
     }
 }

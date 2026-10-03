@@ -26,10 +26,10 @@ extension Canvas {
         // **効果はフレームを越えない** (ADR-0021 決定 4)。フレームの頭で捨てるので、外で
         // 決めた並びはどのフレームにも属さない。黙って捨てると「書いたのに効かない」だけが
         // 残るので、切り抜き (#1505) と同じく 1 度言って無視する (#1605)。形に焼き付かない
-        // ので、形の組み立ての間もフレームの外に数える (`isShaping` ではなく `isDrawing`)。
+        // ので、形の組み立ての中ではフレームの中でも断る (`isShaping` ではなく `admits`・#1529)。
         // **値の検めより先に断る** — どのフレームにも属さない並びの値を言っても、直す先を
         // 指さない
-        guard isDrawing else { return warnOutsideFrame(.effects) }
+        guard admits(.effects) else { return }
         pendingEffects = effects.compactMap { effect in
             guard let accepted = effect.accepted else {
                 warnOnce(
@@ -377,10 +377,14 @@ extension Canvas {
         var control = [pass.control.0, pass.control.1]
         block.advanced(by: EffectPipeline.controlOffset)
             .copyMemory(from: &control, byteCount: 32)
-        var frame = SIMD4<Float>(
-            Float(destination.width), Float(destination.height), time, 0)
+        // 段の面の大きさと、出す大きさ。断片は位置と大きさを出す画素で受け取る (#1639) ので、
+        // ラスタの位置 (段の面の画素) に掛ける比をこの 2 つから作る。段の面は縮めた脇の面の
+        // こともあるので、``unitsPerDrawnPixel`` ではなく段ごとの大きさで割る
+        var frame = (
+            SIMD4<Float>(Float(destination.width), Float(destination.height), time, 0),
+            SIMD4<Float>(width, height, 0, 0))
         block.advanced(by: EffectPipeline.frameOffset)
-            .copyMemory(from: &frame, byteCount: 16)
+            .copyMemory(from: &frame, byteCount: EffectPipeline.frameSize)
         var values = pass.shader?.packedValues ?? [0, 0, 0, 0]
         while values.count < EffectPipeline.valueSlotCapacity { values.append(0) }
         block.advanced(by: EffectPipeline.valuesOffset)

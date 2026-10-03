@@ -11,12 +11,20 @@ import simd
 ///
 /// 約束は [ADR-0020] 決定 5 の 1 行目 — フレームごとに呼ばれる口は投げずに、受け口で値を
 /// 検め、**警告を出して**安全な既定へ倒す。直す前は、ここに並べた口が丸めるだけで黙っていた。
-/// **使う値 (丸め先) は直す前のまま**で、足したのは知らせだけである — 絵は変わらない。
+/// #1698 で知らせを足した口は、**使う値 (丸め先) が直す前のまま**で、足したのは知らせだけ
+/// である — 絵は変わらない。
+///
+/// **例外は `curveDetail` の上の端 ([#1692]) で、ここは丸めそのものを新しく足した。** 直す前は
+/// 上の端が無く、渡した数だけ刻んでいた。いまは 1024 を越える値を 1024 として刻むので、その
+/// 3 行 (`1025`・`100_000`・`Int.max`) だけは直す前と効く値も絵も違う。`Int.max` はここで描かずに
+/// 受け口の値だけを見る — 描くと、上限が外れる退行で検査ごと固まる (`ShapeFormulaTests` の
+/// 刻みの上限の節)。
 ///
 /// 範囲は、丸める受け口の全体を並べて回す。探し方は #1698 の本文 (`max(` / `min(` /
 /// `clamp` の族) に残してある。文面は実装とは別に、ここへ原文を写して突き合わせる。
 ///
 /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
+/// [#1692]: https://github.com/mokume-metal/mokume/issues/1692
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 @Suite(
     "範囲の外を丸めた受け口の注意",
@@ -79,7 +87,7 @@ struct RoundedValueWarningTests {
             case .strokeWeight: .strokeWeight(-100)
             case .textSize: .textSize(-100)
             case .textLeading: .textLeading(-100)
-            case .curveDetail: .curveDetail(-100)
+            case .curveDetail(let value): .curveDetail(value > 1024 ? -100 : 100_000)
             case .solidDetail(let solid, let value): .solidDetail(solid, value > 128 ? 1 : 100_000)
             case .spotLightAngle, .spotLightAngleInDouble: .spotLightAngle(-1)
             }
@@ -111,10 +119,19 @@ struct RoundedValueWarningTests {
             notice: "textLeading(): the leading takes 0 or more, but -5.0 was passed, so 0 was used"),
         Rounded(
             call: .curveDetail(0),
-            notice: "curveDetail(): the number of steps takes 1 or more, but 0 was passed, so 1 was used"),
+            notice: "curveDetail(): the number of steps takes 1 to 1024, but 0 was passed, so 1 was used"),
         Rounded(
             call: .curveDetail(-2),
-            notice: "curveDetail(): the number of steps takes 1 or more, but -2 was passed, so 1 was used"),
+            notice: "curveDetail(): the number of steps takes 1 to 1024, but -2 was passed, so 1 was used"),
+        Rounded(
+            call: .curveDetail(1025),
+            notice: "curveDetail(): the number of steps takes 1 to 1024, but 1025 was passed, so 1024 was used"),
+        Rounded(
+            call: .curveDetail(100_000),
+            notice: "curveDetail(): the number of steps takes 1 to 1024, but 100000 was passed, so 1024 was used"),
+        Rounded(
+            call: .curveDetail(.max),
+            notice: "curveDetail(): the number of steps takes 1 to 1024, but 9223372036854775807 was passed, so 1024 was used"),
         Rounded(
             call: .spotLightAngle(-0.5),
             notice: "spotLight(): angle takes 0 to pi / 2 (1.5707963), but -0.5 was passed, so 0.0 was used"),
@@ -135,7 +152,7 @@ struct RoundedValueWarningTests {
     /// 範囲の中 (端を含む) の呼び方。どれも注意を言わない。
     nonisolated static let admitted: [Call] = [
         .strokeWeight(0), .strokeWeight(3), .textSize(0), .textSize(24), .textLeading(0),
-        .textLeading(30), .curveDetail(1), .curveDetail(20), .spotLightAngle(0),
+        .textLeading(30), .curveDetail(1), .curveDetail(20), .curveDetail(1024), .spotLightAngle(0),
         .spotLightAngle(.pi / 2), .spotLightAngle(.pi / 6), .spotLightAngleInDouble(.pi / 2),
         .spotLightAngleInDouble(0),
     ] + Call.Solid.allCases.flatMap { solid in
@@ -195,7 +212,7 @@ struct RoundedValueWarningTests {
             case .strokeWeight: .strokeWeight(0)
             case .textSize: .textSize(0)
             case .textLeading: .textLeading(0)
-            case .curveDetail: .curveDetail(1)
+            case .curveDetail(let value): .curveDetail(value > 1024 ? 1024 : 1)
             case .solidDetail(let solid, let value): .solidDetail(solid, value < 3 ? 3 : 128)
             case .spotLightAngle(let value): .spotLightAngle(value > 1 ? .pi / 2 : 0)
             case .spotLightAngleInDouble(let value): .spotLightAngle(value > 1 ? .pi / 2 : 0)
@@ -205,7 +222,7 @@ struct RoundedValueWarningTests {
         return value
     }
 
-    @Test("範囲の外の値は今までどおり丸めて効かせ、口の名前と範囲を名乗って 1 度だけ注意する", arguments: rounded)
+    @Test("範囲の外の値は範囲の端へ丸めて効かせ、口の名前と範囲を名乗って 1 度だけ注意する", arguments: rounded)
     func roundsAndWarnsOnce(_ rounded: Rounded) throws {
         let canvas = try makeCanvas()
         let used = try apply(rounded.call, on: canvas)

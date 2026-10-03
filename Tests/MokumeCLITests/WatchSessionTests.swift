@@ -7,7 +7,7 @@ import mokume
 
 @testable import MokumeCLI
 
-@Suite("保存したら作り直して差し替える")
+@Suite("保存したら作り直して差し替える", .signalStateKept)
 struct WatchSessionTests {
     /// 差し替えた外側の記録。
     @MainActor
@@ -835,12 +835,6 @@ struct WatchSessionTests {
     /// **main が永久に塞がる** — 窓も保存の検出も合図の巡回も、まとめて止まる (#1296)。
     @Test("読まない子へ管の容量を越えて送っても、送る側は戻る")
     func sendingToAChildThatNeverReadsReturns() async throws {
-        // **`send(_:)` の約束どおり `SIGPIPE` を無視する** (実行時は `WatchCommand` が置く)。
-        // 無視しないと、期限で救出した後の書き込みで**検査の走り自体が落ちて**、塞がったのか
-        // 別の理由で死んだのかを読めない
-        let previousPipeHandler = signal(SIGPIPE, SIG_IGN)
-        defer { signal(SIGPIPE, previousPipeHandler) }
-
         let ready = Ready()
         // **読まず・眠り続ける子。** `exec` で置き換えるので `sh` は残らず、止めるのは
         // この 1 人で済む (既定のヘルパが眠りを避けているのは、置き去りを作らないため)
@@ -861,7 +855,18 @@ struct WatchSessionTests {
 
         // 1 件は約 50 バイト。管の容量 (64KB) を十分に越える数を書く
         let line = #"{"type":"mouseMoved","x":123.45,"y":678.90}"# + "\n"
-        for _ in 0..<4_000 { session.send(line) }
+        // **`send(_:)` の約束どおり `SIGPIPE` を無視する** (実行時は `WatchCommand` が置く)。
+        // 無視しないと、期限で救出した後の書き込みで**検査の走り自体が落ちて**、塞がったのか
+        // 別の理由で死んだのかを読めない
+        //
+        // **無視するのは書いている間だけ** (#1937)。受け口を持ったまま `await` を跨ぐと、
+        // 中断している間に走るほかの検査の控えと戻しが、この検査の内側に収まらない
+        do {
+            let kept = SignalState.current()
+            defer { kept.restore() }
+            signal(SIGPIPE, SIG_IGN)
+            for _ in 0..<4_000 { session.send(line) }
+        }
 
         #expect(!deadline.didKill, "読まない子への書き込みで塞がり、期限で落として戻した")
         // **救出されていない回にだけ訊く。** 落とした後の「消えている」は当たり前で、

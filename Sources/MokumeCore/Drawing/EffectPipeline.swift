@@ -37,10 +37,14 @@ final class EffectPipeline {
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     static let keepChangedFunctionName = "mokume_keepChanged"
 
-    /// 1 段ぶんの置き場の間隔 (バイト)。設定 32 / 面 16 / 値の順に詰める。
+    /// 1 段ぶんの置き場の間隔 (バイト)。設定 32 / 面 32 / 値の順に詰める。
+    ///
+    /// 面は 2 つの `float4` で、段の面の大きさと秒数・出す大きさを持つ (断片が位置と大きさを
+    /// 出す画素で受け取るため・#1639)。
     static let passStride = 256
     static let controlOffset = 0
     static let frameOffset = 32
+    static let frameSize = 32
     static let valuesOffset = 64
     /// 1 つの効果が渡せる値の数。
     static let valueSlotCapacity = (passStride - valuesOffset) / MemoryLayout<Float>.stride

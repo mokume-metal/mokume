@@ -6,11 +6,12 @@
 # 一覧そのものは .github/rulesets/main-protection.json の required_reviewers が持ち、
 # **それを読む照合はここ 1 つ**に保つ (ADR-0001 原則 9)。
 #
-# 読み手は scripts/review-gate.sh の「承認が要る PR か」の判定 1 つである。かつては
-# scripts/request-review.sh も読んでいて、ラベル由来のレビュー要求が同じ人へ 2 通目を
-# 投げないための条件判定に使っていた (#583 / #584)。ADR-0031 がラベル由来の承認ごと
-# 畳んだので、そちらは消えた (#618) — 分けた形そのものは今も正しく、読み手が 1 つに
-# 戻っただけである。
+# 読み手は「承認が要る PR か」を問う 4 か所である: scripts/review-gate.sh (承認可能性の
+# 不変条件)・scripts/pr-identity-guard.sh (PR の作成時の名義と Draft)・
+# scripts/rerequest-review.sh (落ちた承認の依頼の出し直し)・scripts/stall-watch.sh
+# (承認待ちの読み分け)。かつては scripts/request-review.sh も読んでいたが、ADR-0031 が
+# ラベル由来の承認ごと畳んで消えた (#583 / #584 / #618)。どの読み手も一覧の写しを
+# 持たないので、承認の対象を変えるのは main-protection.json の 1 か所で足りる (#1952)。
 #
 # 読むのは API ではなくリポジトリ内の定義ファイルなので、追加の権限も呼び出しも要らない。
 # drawing-paths.sh / guard-lib.sh と同じ形で source する。

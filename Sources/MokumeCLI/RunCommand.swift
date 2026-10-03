@@ -400,6 +400,7 @@ enum RunCommand {
         // 戻すのは検査のため — 本番の道具はこの後すぐ終わる
         let previous = installStopForwarding(signals)
         defer { restoreStopHandlers(previous) }
+        let exited = ExitWait(for: process)
         do {
             try process.run()
         } catch {
@@ -409,7 +410,7 @@ enum RunCommand {
         // ここで拾う。逆順にすると、見た後・置く前に来た合図を誰も子へ渡さない
         runChildPID = process.processIdentifier
         if runStopSignal != 0 { process.terminate() }
-        process.waitUntilExit()
+        exited.wait()
         runChildPID = 0
         // **合図で止めた回は、終了コードを見ずに名乗る。** 子は渡した SIGTERM で後始末を
         // 済ませて 0 で終わることも、済ませずに 15 で落ちることもある (#1219)。後者を
@@ -550,6 +551,7 @@ enum RunCommand {
             // 掴まないなら混ぜる先が無いので、流しっぱなしにする
             if capturing { process.standardError = pipe }
         }
+        let exited = ExitWait(for: process)
         let launched: Bool
         do {
             if let running {
@@ -570,7 +572,7 @@ enum RunCommand {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             output = String(data: data, encoding: .utf8) ?? ""
         }
-        process.waitUntilExit()
+        exited.wait()
         // **道具が無いことを、道具の失敗と取り違えない。** `/usr/bin/env` 自体は必ず起動
         // できるので、上の catch には届かない — `env` は探したものが無いと 127 で終わる。
         // 見逃すと空の出力が「宣言が読めない」「走らせるものが無い」と読まれ、原因が
