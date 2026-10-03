@@ -791,5 +791,38 @@ class ReviewGateTest(unittest.TestCase):
         self.assertNotIn("重要パス", proc.stdout + proc.stderr)
 
 
+class GateRunsFromDefaultBranchTest(unittest.TestCase):
+    """判定のジョブが、PR の版ではなく既定ブランチの版のスクリプトを取ること (#2001)。
+
+    PR の版で走らせると、同じ PR の中で自分を裁く検査を書き換えて通れる
+    (ADR-0031 決定 2 の 2026-10-03 の改訂)。ジョブの範囲は字下げで切り出す
+    — 2 つ目の字下げ (ジョブ名) から、同じ字下げの次の行の手前まで。
+    """
+
+    WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
+    REF = "ref: ${{ github.event.repository.default_branch }}"
+
+    def job(self, name):
+        lines = self.WORKFLOW.read_text(encoding="utf-8").splitlines()
+        start = lines.index(f"  {name}:")
+        end = next(
+            (i for i in range(start + 1, len(lines))
+             if re.match(r"  \S", lines[i])),
+            len(lines),
+        )
+        return lines[start:end]
+
+    def test_gate_jobs_check_out_the_default_branch(self):
+        for name in ("review-gate", "drawing-evidence"):
+            with self.subTest(job=name):
+                body = self.job(name)
+                checkout = [i for i, l in enumerate(body)
+                            if "actions/checkout@" in l]
+                self.assertEqual(len(checkout), 1, f"{name} の checkout は 1 つ")
+                i = checkout[0]
+                self.assertEqual(body[i + 1].strip(), "with:")
+                self.assertEqual(body[i + 2].strip(), self.REF)
+
+
 if __name__ == "__main__":
     unittest.main()

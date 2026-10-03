@@ -179,6 +179,19 @@ jobs:
   # ラベル由来の承認そのものを ADR-0031 が畳んだので、待つ状態が無くなった (#618)。
   # 承認を要求するのはルールセットの required_reviewers だけで、それは GitHub 自身が
   # 判定する — ここで報告するものは無い。
+  #
+  # **判定するスクリプトは、既定ブランチ (main) の版を取って走らせる** (#2001・ADR-0031
+  # 決定 2 の 2026-10-03 の改訂)。PR の版で走らせると、同じ PR の中で自分を裁く検査を
+  # 書き換えて通れてしまう (scripts/ は承認の外にある。承認なしでゲート本体を変えた
+  # PR は #1716 の集計で 6 本)。スクリプトは PR の中身 (本文・ファイル一覧・AGENTS.md・
+  # Issue) をすべて API から読み、木から読むのは同じ scripts/ の共通部品と定義ファイル
+  # だけなので、PR の木は要らない。ref を PR の base にしないのは、base は PR の側が
+  # 選べるからである。
+  #
+  # **判定を変える PR の効き目は、merge の後の PR から始まる。** その PR 自身は前の版で
+  # 裁かれる。ゲートが壊れていて、それを直す PR も同じゲートで赤になるときの脱出口は、
+  # その PR の中でこのジョブの ref の行を外すことである。このファイルに触れるので
+  # 承認が要る (.github/** — main-protection.json)。外した行は後続の PR で戻す。
   review-gate:
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
@@ -188,6 +201,8 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - name: マージ判定
         env:
           GH_TOKEN: ${{ github.token }}
@@ -208,6 +223,9 @@ jobs:
   # 本文を編集しても逃がしラベルを付け外ししても自動で再評価される
   # (on.pull_request.types に edited / labeled / unlabeled が入っている)。
   # merge_group では PR 文脈が無いためスキップし、ci-gate 側は skipped を許容する。
+  #
+  # **判定するスクリプトは既定ブランチの版で走らせる。** 理由と脱出口は review-gate と
+  # 同じ (#2001)。PR の木は読まない — 変更ファイルの一覧も本文も API から取る。
   drawing-evidence:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -216,6 +234,8 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - name: 描画に触れる PR に絵があるか
         env:
           GH_TOKEN: ${{ github.token }}
