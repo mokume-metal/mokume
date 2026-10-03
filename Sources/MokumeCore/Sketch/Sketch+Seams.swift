@@ -20,14 +20,14 @@ extension Sketch {
     ///     func supply() { count += 1 }
     /// }
     ///
-    /// extension Sketch {
-    ///     func createTicker() -> Ticker {
-    ///         let ticker = Ticker()
-    ///         attach(ticker)
-    ///         return ticker
-    ///     }
+    /// final class Counting: Sketch {
+    ///     let ticker = Ticker()
+    ///     func setup() { attach(ticker) }
+    ///     func draw() { text("\(ticker.count)", 20, 40) }
     /// }
     /// ```
+    ///
+    /// 機能を作る側は、同じ呼び出しを作る口 (`createCapture()` のような) の中に置く。
     ///
     /// - 呼んだ時点で ``Inlet/open()`` する。投げたら診断に出して `false` を返す
     ///   ([ADR-0024] 決定 7)
