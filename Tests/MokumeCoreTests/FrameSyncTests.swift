@@ -15,8 +15,16 @@ import Testing
 /// `#require` が「何も見ていない」と名乗って赤くなる。
 ///
 /// [#727](https://github.com/mokume-metal/mokume/issues/727)
+///
+/// **suite の中は直列に走らせる** ([#1999](https://github.com/mokume-metal/mokume/issues/1999))。
+/// GPU を長く占める `spin` を並列の検査が同時に何本も積むと、GPU が command buffer を hang と
+/// 判定して打ち切る (`kIOGPUCommandBufferCallbackErrorHang`)。立て直しでは同じ時刻に GPU に
+/// いた**別の検査の仕事まで捨てられ** (`InnocentVictim`)、関係の無い suite が赤くなる。GPU は
+/// 画面の描画と共有なので、重なれば WindowServer ごと止まる。回転を短くすると「まだ終わって
+/// いない」を構造で作れなくなるので、回数は変えずに積む本数のほうを 1 本にする。
 @Suite(
     "描き切りの待ち",
+    .serialized,
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
