@@ -141,7 +141,7 @@ extension Canvas {
         // 自己交差と同じく交点で 2 回混ぜる
         draw(
             Outline(
-                points: points, isClosed: true, fillTriangles: Self.quadTriangles(points),
+                points: points, isClosed: true, fillTriangles: nil,
                 strokesAsOneRegion: !Self.quadCrosses(points)))
     }
 
