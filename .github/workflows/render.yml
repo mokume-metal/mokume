@@ -41,7 +41,16 @@ name: Render
 #   - 落ちた回は、落ちた検査の文面と台帳の書き換え後の行 (案) を run の要約へ書く
 # artifact は runner が持つ runtime の token で上げるので、contents: read のままで足りる。
 # 保持は 14 日 — 赤を直すまでの材料で、恒久の証跡は PR に載せる絵が持つ。
-# render と render-pr の step の並びは同じに保つ (ジョブの if と concurrency だけが違う)。
+# render と render-pr の step の並びは同じに保つ。違うのはジョブの if と concurrency と、
+# render-pr だけが持つ最後の 1 step (例の絵の前後の比較・#1986) である。
+#
+# **例の絵の前後の比較は render-pr だけが持つ** (#1986)。指紋 (// shot: N snippet=…) の材料は
+# 例のコードと撮影設定だけで実装は入らないので、実装だけが変わって絵が古くなっても
+# example-shots-check は緑のまま通る (#1454・#1625)。描画のパスに触れる PR で、base と head の
+# 木の両方で例の絵を描き (scripts/example-shots.py --drift)、画素が変わった絵を annotation と
+# run の要約で名指しする。**警告だけで、merge は止めない** — 撮り直して書き戻すには Gyazo の
+# 鍵が要るが、専用機は secrets を持たない。render (merge_group) には足さない: 合流後の木へ
+# 警告を出しても読む人がいないし、必須の検査の所要を延ばす。
 #
 # **定期の検査 (scheduled-*) は、専用機のジョブと起票のジョブで権限を分ける** (#1983)。
 #   - scheduled-debug / scheduled-release — 専用機。contents: read・秘密なしのまま
@@ -124,6 +133,10 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
+        with:
+          # pull_request の木は合流 ref (refs/pull/N/merge) で、HEAD^1 が base・HEAD が head
+          # (この PR を足した後の木)。例の絵の前後の比較が HEAD^1 を取り出すのに要る
+          fetch-depth: 2
       - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
         env:
           MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
@@ -152,6 +165,27 @@ jobs:
           # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
           include-hidden-files: true
           retention-days: 14
+      # 例の絵を前後の木で描き比べる (#1986)。**警告だけ** — 描けなかったときも job は赤に
+      # しない (continue-on-error)。専用機の job は secrets も token も持ち込まない (ADR-0019
+      # 決定 7) ので、変更ファイルは GitHub の API ではなく、合流 commit の 2 つの親の差から
+      # 取る (scripts/pr-files.sh の `gh api` は GH_TOKEN が要る)。取りこぼしは無い — 大きな
+      # PR で後半が落ちる (#793) のは GraphQL の上限で、git の差には当たらない。
+      # 照合は check-drawing-evidence.sh と同じ drawing-paths.sh の 1 つを読む
+      #
+      # **手前の検査が赤でも走らせる (`!cancelled()`)。** 実装で絵が変わる PR は、台帳や
+      # 描画の検査も同じ根で赤くなる。そこで止めると、赤を直して push し直すまで名指しが
+      # 出ず、専用機の 1 周 (7 分ほど) を余計に回すことになる
+      - name: 例の絵を前後の木で描き比べる (警告のみ)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          . scripts/drawing-paths.sh
+          files=$(git diff --name-only HEAD^1 HEAD)
+          if ! touches_drawing <<<"$files"; then
+            echo "描画のパスに触れていないので、例の絵は比べない"
+            exit 0
+          fi
+          python3 scripts/example-shots.py --drift HEAD^1
 
   scheduled-debug:
     if: github.event_name == 'schedule'

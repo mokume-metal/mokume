@@ -38,15 +38,32 @@
 ## 指紋が見ていない範囲
 
 指紋の材料は**スニペットと撮影設定だけ**で、実装は入らない。つまり実装だけが変わって
-絵が変わっても「変わっていない」と答える。**ここは見ていないと名乗るだけにしてある** —
+絵が変わっても、指紋は「変わっていない」と答える。**指紋では見ない** —
 かつては記録が撮った版 (`taken=`) を持ち、`--check` が「N 本は撮影後に実装が変わって
 いる」と要約していたが、判定が `Sources` 全体を見るので**常に全数が該当し、どの絵が
 疑わしいかを 1 本も絞れていなかった** (#671)。合否に混ぜるのはもとより避けている —
 実装が変わっても絵が変わったとは限らず、混ぜれば実装を触るたびに赤くなって、赤を
 無視する習慣が育つ。
 
-代わりに効くのは**撮り直しの差分そのもの**である。`--capture` を打つと、絵が実際に
-変わった囲みの `![…](…)` だけが書き換わる。
+**実装だけの変化は、render-pr が前後の描画で名指しする (警告のみ)。** 描画のパスに
+触れる PR で、専用機が base と head の木の両方で例の絵を描き (`--drift`)、画素が変わった
+絵を、説明文のファイル・`snippet=`・違う画素の数・最大の差つきで言う (#1986)。実装だけ
+が変わって絵が古くなったことは、#1454 (6 枚) と #1625 で、機械が何も言わないまま人が
+気付くまで残っていた。
+
+- **止めない。** 撮り直して書き戻すには Gyazo の鍵が要るが、専用機は secrets を持たない
+  (ADR-0019 決定 7)。止めると、Gyazo が止まったときに描画 PR が全部止まる
+- **記録の形は変えない。** 撮った時点の画素のハッシュを持たせる案 (#671 の候補 1) は
+  採らない — 撮るのはメンテナの手元 (別の OS) で、照合するのは専用機になり、OS の版の
+  違いが誤報になる。**比べる 2 枚は同じ機械・同じ OS で、いま描く**
+- **比べるのは画素で、PNG のバイトではない。** バイトだけが違う絵 (#1454 の
+  `shadows(_:)`) は、画素が同じなら言わない。画素が違うなら、違う数と最大の差を添える。
+  閾値は置いていない (同じ木を 2 回描いて差が出ないことは確かめてある・#1986)
+- **比べるのは両方の木に在る絵だけ。** 例そのものが書き換わった絵は指紋が変わって片側
+  にしか無く、それは上の `check` が「撮り直していない」と言う
+
+手元でも、撮り直しの差分そのものが効く。`--capture` を打つと、絵が実際に変わった囲みの
+`![…](…)` だけが書き換わる。
 
 ## 冪等性を借りている先 (#671)
 
@@ -85,12 +102,15 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
+import zlib
 from collections.abc import Callable
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -378,9 +398,9 @@ def check(root: pathlib.Path, shots: list[Shot]) -> list[str]:
     print(f"例の絵: {len(shots)} 本 (動き {sum(1 for s in shots if s.is_motion)} 本)")
     # **見ていないことを名乗る** (#671)。かつてここには「N 本は撮影後に実装が動いている」
     # が出ていたが、常に全数が該当して 1 本も絞れていなかった。数を出せないなら、境目を
-    # 1 行で言うほうが正確である
-    print("  実装が変わって絵が古くなっているかは見ていない")
-    print("  (手元の make example-shots が撮り直しで検める)")
+    # 1 行で言うほうが正確である。実装だけの変化は render-pr が名指しする (#1986)
+    print("  実装が変わって絵が古くなっているかは、ここでは見ていない")
+    print("  (描画のパスに触れる PR では render-pr が前後の描画で名指しする・警告のみ)")
     return problems
 
 
@@ -480,7 +500,10 @@ def _type_name(shot: Shot) -> str:
     return f"Shot_{shot.fingerprint}"
 
 
-def render(root: pathlib.Path, shots: list[Shot], out: pathlib.Path) -> None:
+def render(
+    root: pathlib.Path, shots: list[Shot], out: pathlib.Path, bundle: bool = True
+) -> None:
+    """`bundle` は動きの連番を GIF へ束ねるか。束ねるのは上げるためで、比べるだけなら要らない。"""
     package = root / ".build" / "example-shots"
     generate(root, shots, package)
     subprocess.run(["swift", "build", "--package-path", str(package)], check=True)
@@ -490,7 +513,7 @@ def render(root: pathlib.Path, shots: list[Shot], out: pathlib.Path) -> None:
         ["swift", "run", "--package-path", str(package), "example-shots", str(out)], check=True
     )
     for shot in shots:
-        if shot.is_motion:
+        if shot.is_motion and bundle:
             _bundle_gif(out, shot)
 
 
@@ -627,6 +650,309 @@ def report_mirrors(out: pathlib.Path, shots: list[Shot], verbose: bool = False) 
         print(f"  {line}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------- 前後の木で描き比べる (#1986)
+
+
+@dataclasses.dataclass
+class Drift:
+    """head で絵が変わっていた 1 本。数えるのは画素で、PNG のバイトではない。"""
+
+    shot: Shot  # head の木の囲み。説明文のファイルと行はこちらで言う
+    pixels: int  # 違う画素の数 (動きは全部の枚の合計)
+    total: int  # 比べた画素の数
+    largest: int  # 画素のどれか 1 つの色成分の、最大の差 (0…255)
+    frames: int  # 動きで、違う画素を持つ枚の数。静止画は 0
+
+
+def difference_stats(difference: bytes, channels: int = 4) -> tuple[int, int]:
+    """差の絵 (`|a - b|` を 1 画素 `channels` バイトで並べたもの) → (違う画素の数, 最大の差)。
+
+    **純関数にしてあるのは、画素の数え方を絵を描かずに検められるようにするため** である
+    (`mirror_warnings` と同じ)。引き算は呼ぶ側 (`image_difference`) が済ませるので、
+    ここに渡るのは差の絵になる。
+
+    違う画素は**どの色成分でも**差があるものを数える。成分ごとに数えると、同じ 1 画素が
+    3 回数えられて「違う画素の数」と言えなくなる。数え方は C の速さで済ませる — 成分を
+    1 本ずつ剥がして OR し、0 でないバイトを数える。
+    """
+    if len(difference) % channels:
+        raise ValueError(f"差の長さ {len(difference)} が {channels} バイトで割り切れない")
+    if not any(difference):
+        return 0, 0
+    merged = int.from_bytes(difference[0::channels], "big")
+    for offset in range(1, channels):
+        merged |= int.from_bytes(difference[offset::channels], "big")
+    pixels = len(difference) // channels
+    count = pixels - merged.to_bytes(pixels, "big").count(0)
+    return count, max(difference)
+
+
+def image_difference(base: pathlib.Path, head: pathlib.Path) -> tuple[int, int, int]:
+    """2 枚の PNG → (違う画素の数, 比べた画素の数, 最大の差)。
+
+    バイトが同じ PNG は画素も同じなので、復号せずに返す (大半の絵はここで終わる)。
+    **ffmpeg を使わない** — 専用機には入っておらず (#1986 の実機で `ffmpeg が見つからない`)、
+    比べるためだけに入れさせるより、撮る側が書く PNG を自前で読むほうが小さい。
+    """
+    if base.read_bytes() == head.read_bytes():
+        return 0, _pixel_count(head), 0
+    base_size, base_pixels = decode_rgba(base)
+    head_size, head_pixels = decode_rgba(head)
+    if base_size != head_size:
+        raise SystemExit(f"{base.name} の大きさが前後で違う: {base_size} と {head_size}")
+    difference = bytes(
+        x - y if x >= y else y - x for x, y in zip(base_pixels, head_pixels)
+    )
+    pixels, largest = difference_stats(difference)
+    return pixels, len(difference) // 4, largest
+
+
+def decode_rgba(image: pathlib.Path) -> tuple[tuple[int, int], bytes]:
+    """PNG → ((幅, 高さ), 1 画素 4 バイトの RGBA)。**撮る側が書く形だけ**を読む。
+
+    撮る側 (`writePNG`) が書くのは 8 bit・インターレースなしの PNG で、色の型は RGBA か RGB。
+    ほかの形は読めないと名乗って落とす — 黙って読み違えると、絵が変わっていないのに
+    名指しするか、変わったのに黙る。色の管理の印 (`iCCP` など) は読まない。比べるのは
+    書かれた画素の値で、それは前後で同じ解釈になる。
+    """
+    data = image.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"{image.name} は PNG ではない")
+    position, header, compressed = 8, None, []
+    while position < len(data):
+        length = int.from_bytes(data[position : position + 4], "big")
+        kind = data[position + 4 : position + 8]
+        body = data[position + 8 : position + 8 + length]
+        if kind == b"IHDR":
+            header = body
+        elif kind == b"IDAT":
+            compressed.append(body)
+        position += 12 + length
+    if header is None:
+        raise SystemExit(f"{image.name} に IHDR が無い")
+    width, height = int.from_bytes(header[:4], "big"), int.from_bytes(header[4:8], "big")
+    depth, colour, _, _, interlace = header[8:13]
+    channels = {2: 3, 6: 4}.get(colour)
+    if depth != 8 or interlace != 0 or channels is None:
+        raise SystemExit(
+            f"{image.name} は読めない形 (ビット深度 {depth}・色の型 {colour}・"
+            f"インターレース {interlace})。読めるのは 8 bit の RGB / RGBA・インターレースなし"
+        )
+    raw = zlib.decompress(b"".join(compressed))
+    stride = width * channels
+    if len(raw) != height * (stride + 1):
+        raise SystemExit(f"{image.name} の画素の長さが合わない")
+    rows: list[bytes] = []
+    previous = bytes(stride)
+    for y in range(height):
+        start = y * (stride + 1)
+        row = _unfilter(raw[start], bytearray(raw[start + 1 : start + 1 + stride]), previous, channels)
+        rows.append(row)
+        previous = row
+    pixels = b"".join(rows)
+    if channels == 3:
+        # RGB は alpha を 255 で足し、RGBA と同じ並びにして比べる
+        rgba = bytearray(width * height * 4)
+        rgba[0::4], rgba[1::4], rgba[2::4], rgba[3::4] = (
+            pixels[0::3], pixels[1::3], pixels[2::3], b"\xff" * (width * height),
+        )
+        pixels = bytes(rgba)
+    return (width, height), pixels
+
+
+def _unfilter(kind: int, row: bytearray, previous: bytes, step: int) -> bytes:
+    """PNG の 1 行の差分符号 (filter) を戻す。`step` は 1 画素のバイト数。"""
+    if kind == 0:
+        return bytes(row)
+    if kind == 1:  # Sub
+        for i in range(step, len(row)):
+            row[i] = (row[i] + row[i - step]) & 255
+    elif kind == 2:  # Up
+        for i in range(len(row)):
+            row[i] = (row[i] + previous[i]) & 255
+    elif kind == 3:  # Average
+        for i in range(len(row)):
+            left = row[i - step] if i >= step else 0
+            row[i] = (row[i] + ((left + previous[i]) >> 1)) & 255
+    elif kind == 4:  # Paeth
+        for i in range(len(row)):
+            left = row[i - step] if i >= step else 0
+            up = previous[i]
+            corner = previous[i - step] if i >= step else 0
+            estimate = left + up - corner
+            da, db, dc = abs(estimate - left), abs(estimate - up), abs(estimate - corner)
+            guess = left if da <= db and da <= dc else up if db <= dc else corner
+            row[i] = (row[i] + guess) & 255
+    else:
+        raise SystemExit(f"知らない PNG の filter: {kind}")
+    return bytes(row)
+
+
+def _pixel_count(image: pathlib.Path) -> int:
+    """PNG の画素の数。ヘッダー (IHDR) の幅と高さだけを読む。"""
+    header = image.read_bytes()[16:24]
+    return int.from_bytes(header[:4], "big") * int.from_bytes(header[4:], "big")
+
+
+def measure_drift(base_out: pathlib.Path, head_out: pathlib.Path, shot: Shot) -> Drift | None:
+    """1 本を前後で比べる。変わっていなければ None。動きは連番を 1 枚ずつ比べる。"""
+    if not shot.is_motion:
+        pairs = [(base_out / f"{shot.name}.png", head_out / f"{shot.name}.png")]
+    else:
+        names = sorted(path.name for path in (head_out / shot.name).glob("f.*.png"))
+        pairs = [(base_out / shot.name / name, head_out / shot.name / name) for name in names]
+    pixels = total = largest = frames = 0
+    for base, head in pairs:
+        changed, compared, biggest = image_difference(base, head)
+        pixels += changed
+        total += compared
+        largest = max(largest, biggest)
+        frames += 1 if changed else 0
+    if not pixels:
+        return None
+    return Drift(shot=shot, pixels=pixels, total=total, largest=largest, frames=frames)
+
+
+def compare_trees(
+    base_shots: list[Shot],
+    head_shots: list[Shot],
+    base_out: pathlib.Path,
+    head_out: pathlib.Path,
+    measure: Callable[[pathlib.Path, pathlib.Path, Shot], Drift | None] = measure_drift,
+) -> tuple[int, list[Drift]]:
+    """両方の木に在る絵だけを比べる → (比べた本数, 変わっていた絵)。
+
+    **鍵は指紋 (`shot.name`)。** 例そのものが書き換わった絵は指紋が変わり、片側にしか
+    無い — それは `check` が「撮り直していない」と言う領分で、**実装だけの変化**を
+    言うここでは数えない。
+    """
+    in_base = {shot.name for shot in base_shots}
+    both = [shot for shot in head_shots if shot.name in in_base]
+    drifts = [drift for shot in both if (drift := measure(base_out, head_out, shot))]
+    return len(both), drifts
+
+
+def _escape_data(text: str) -> str:
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_property(text: str) -> str:
+    return _escape_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
+def drift_message(drift: Drift) -> str:
+    """名指しの 1 行。説明文の場所は annotation の file / line が持つので入れない。"""
+    shot = drift.shot
+    motion = f"動き {drift.frames} 枚で " if shot.is_motion else ""
+    return (
+        f"{shot.alt} (snippet={shot.fingerprint}) — {motion}違う画素 {drift.pixels} / "
+        f"全 {drift.total} 画素・最大の差 {drift.largest} (0…255)"
+    )
+
+
+def drift_annotation(drift: Drift) -> str:
+    """GitHub Actions の warning。**警告だけで、job は赤にならない。**"""
+    shot = drift.shot
+    return (
+        f"::warning file={_escape_property(str(shot.path))},line={shot.open_line + 1},"
+        f"title={_escape_property('例の絵が変わった')}::{_escape_data(drift_message(drift))}"
+    )
+
+
+def drift_summary(
+    compared: int, drifts: list[Drift], timings: dict[str, float], base_rev: str
+) -> str:
+    """run の要約 (Markdown)。変わった絵が無ければ 1 行だけ。"""
+    lines = ["## 例の絵の前後の比較", ""]
+    if not drifts:
+        lines.append(f"{compared} 本を {base_rev} と比べて、画素が変わった絵は無い。")
+    else:
+        lines += [
+            f"{compared} 本を {base_rev} と比べて、**{len(drifts)} 本の画素が変わっている。** "
+            "実装だけが変わって絵が古くなっていないか、撮り直す前に確かめる "
+            "(警告のみ・merge は止めない)。",
+            "",
+            "| 説明文 | snippet= | 違う画素 | 最大の差 | 一文の説明 |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for drift in drifts:
+            shot = drift.shot
+            motion = f" (動き・{drift.frames} 枚)" if shot.is_motion else ""
+            alt = shot.alt.replace("|", "\\|")
+            lines.append(
+                f"| `{shot.where}` | `{shot.fingerprint}` | {drift.pixels} / {drift.total}"
+                f"{motion} | {drift.largest} | {alt} |"
+            )
+    lines += ["", "所要 (秒): " + " / ".join(f"{name} {seconds:.0f}" for name, seconds in timings.items())]
+    return "\n".join(lines) + "\n"
+
+
+def report_drift(
+    compared: int, drifts: list[Drift], timings: dict[str, float], base_rev: str
+) -> None:
+    """annotation は Actions の上でだけ出す (手元に `::warning` の生の行を出さない)。"""
+    on_actions = bool(os.environ.get("GITHUB_ACTIONS"))
+    summary = drift_summary(compared, drifts, timings, base_rev)
+    if on_actions:
+        for drift in drifts:
+            print(drift_annotation(drift))
+    else:
+        for drift in drifts:
+            print(f"{drift.shot.where}: {drift_message(drift)}")
+    if path := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(summary)
+    else:
+        print(summary)
+    print(f"例の絵: {compared} 本を比べて、画素が変わったのは {len(drifts)} 本")
+
+
+def drift(root: pathlib.Path, head_shots: list[Shot], base_rev: str, out: pathlib.Path) -> int:
+    """base の木を取り出し、両方で例の絵を描いて比べる。
+
+    **撮る経路 (`render`) をそのまま 2 回使う** — 撮る側と比べる側で描き方が割れると、
+    比べた絵が手元で撮る絵と別物になる。base は `git worktree` で `.build/` の下へ
+    取り出す (追跡されず、専用機の作業ディレクトリごと次のジョブが消す)。
+    """
+    base_root = root / ".build" / "example-shots-base"
+    _remove_worktree(root, base_root)
+    subprocess.run(
+        ["git", "-C", str(root), "worktree", "add", "--detach", str(base_root), base_rev],
+        check=True,
+    )
+    timings: dict[str, float] = {}
+    try:
+        base_shots = collect(base_root)
+        if not head_shots or not base_shots:
+            print(f"比べる例の絵が片側に無い (base {len(base_shots)} 本・head {len(head_shots)} 本)")
+            return 0
+        # **同じ機械で順に描く** — 比べる 2 枚は同じ OS・同じ GPU で描いたものでなければ、
+        # OS の版の違いが誤報になる (冒頭の「指紋が見ていない範囲」)
+        base_out, head_out = out / "base", out / "head"
+        started = time.monotonic()
+        render(base_root, base_shots, base_out, bundle=False)
+        timings["base の build+render"] = time.monotonic() - started
+        started = time.monotonic()
+        render(root, head_shots, head_out, bundle=False)
+        timings["head の build+render"] = time.monotonic() - started
+        started = time.monotonic()
+        compared, drifts = compare_trees(base_shots, head_shots, base_out, head_out)
+        timings["比較"] = time.monotonic() - started
+    finally:
+        _remove_worktree(root, base_root)
+    report_drift(compared, drifts, timings, base_rev)
+    return 0
+
+
+def _remove_worktree(root: pathlib.Path, path: pathlib.Path) -> None:
+    subprocess.run(
+        ["git", "-C", str(root), "worktree", "remove", "--force", str(path)],
+        capture_output=True,
+    )
+    shutil.rmtree(path, ignore_errors=True)
+    subprocess.run(["git", "-C", str(root), "worktree", "prune"], capture_output=True)
+
+
 # ---------------------------------------------------------------- 上げる・書き戻す
 
 
@@ -735,6 +1061,12 @@ def main(
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--render", type=pathlib.Path, help="撮って置き場へ書き出す (GPU が要る)")
     parser.add_argument("--capture", action="store_true", help="撮って上げて書き戻す (GPU と鍵が要る)")
+    parser.add_argument(
+        "--drift",
+        metavar="BASE_REV",
+        help="BASE_REV の木と今の木の両方で例の絵を描き、画素が変わった絵を名指しする "
+        "(GPU が要る・警告のみで鍵も ffmpeg も要らない)",
+    )
     parser.add_argument("--token-command", help="Gyazo のトークンを標準出力に出すコマンド")
     parser.add_argument(
         "--mirror-report",
@@ -745,6 +1077,9 @@ def main(
 
     # **組む前に確かめる。** 撮り終えた後で道具が無いと分かると、組んで撮った時間が
     # 丸ごと無駄になり、止まり方も traceback になる
+    if arguments.drift and (arguments.render or arguments.capture):
+        print("--drift は --render / --capture と一緒に使えない", file=sys.stderr)
+        return 1
     if arguments.render or arguments.capture:
         missing = missing_tool(which)
         if missing:
@@ -757,6 +1092,9 @@ def main(
         ).stdout.strip()
     )
     shots = collect(root)
+
+    if arguments.drift:
+        return drift(root, shots, arguments.drift, root / ".build" / "example-shots-drift-out")
 
     if not arguments.render and not arguments.capture:
         problems = check(root, shots)
