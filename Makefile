@@ -43,7 +43,13 @@ check: setup
 # **描画の検査は、ここでは GPU のある機械でだけ実際に走る。** merge の判定としては、
 # 専用機の描画ジョブ (.github/workflows/render.yml の render) が merge queue の合流後の木で
 # build と test を走らせる (ADR-0019 決定 7)
-CI_CHECK_STEPS := build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence
+#
+# **CI_CHECK_SKIP に挙げた段は並びから外す。** merge_group のホストの ci-check は
+# `build test` を外す (.github/workflows/ci.yml の ci-check のコメント)。既定は空で、並びは
+# 変わらない。build を外しても examples / params / api / reference は prerequisite の build を
+# 自分で走らせるので、合流後の木での検査は残る
+CI_CHECK_SKIP ?=
+CI_CHECK_STEPS := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
 
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、

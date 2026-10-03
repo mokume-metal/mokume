@@ -59,6 +59,24 @@ jobs:
   # (本文・タイトルの編集では changes.body / changes.title だけ)。edited を types から
   # 外さないのは、review-gate / pr-title の再評価に要るためである (on: のコメント)。
   #
+  # **runs-on は macos-26 に固定する** (#1985)。macos-latest は GitHub が次の世代へ切り替える
+  # もので、切り替わった時点で下限 (ADR-0009 の macOS 26) の build/test が誰にも気付かれず
+  # 無くなる。ここと test-release は、下限で走らせる唯一のホストである (専用機の render は
+  # 上の世代で走る)。**下限を引き上げる (ADR-0009 を改訂する) ときは、この 2 つの runs-on も
+  # 同時に動かす。**
+  #
+  # **merge_group では build と test を外す** (#1985)。専用機の render が同じ合流後の木で
+  # build / test / gpu-ran を、GPU 付きで走らせる (上位互換)。ここでも走らせると、週に約 145 本の
+  # merge_group で約 9.7 分ずつ・約 23 時間のホストの macOS 時間が二重になり、ホストの macOS の
+  # 同時実行枠 (5 本) を通して PR のランナー待ちに効いていた。下限の担保は PR の ci-check が
+  # 担う (pull_request では CI_CHECK_SKIP が空で、26 段すべてを macOS 26 で走らせる)。失うのは
+  # 「main と合流させた木を macOS 26 で走らせる」部分だけで、合流して初めて壊れ、しかも 26 で
+  # だけ出る赤は狭い。
+  #
+  # **examples / params / api / reference は合流後の木でも残す。** build を prerequisite に持つ
+  # ので、build の段が無ければ最初の段が swift build を自分で走らせる (約 1.5 分。2 段目以降は
+  # 何もしない)。これらは render が見ない検査で、合流して初めて赤になる組み合わせ (片方の PR が
+  # API を改名し、もう片方が旧名の例を足す) を拾うのは merge queue の役目である。
   # 括弧を 1 段深くして pull_request の中に閉じ込めるのは、**merge_group に action の欄が
   # 無い**ためである。素直に並べると merge_group では null と文字列を突き合わせることに
   # なり、可否が式言語の型強制の解釈に乗る。外れたときの姿が「merge queue で ci-check が
@@ -72,7 +90,7 @@ jobs:
       || (github.event.action != 'labeled'
       && github.event.action != 'unlabeled'
       && (github.event.action != 'edited' || github.event.changes.base)))
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       # chardet も入れる: reuse の encoding 判定モジュールを固定するため (#48)。
@@ -82,6 +100,8 @@ jobs:
           pipx install reuse && pipx inject reuse chardet
           pipx install check-jsonschema
       - run: make ci-check
+        env:
+          CI_CHECK_SKIP: ${{ github.event_name == 'merge_group' && 'build test' || '' }}
 
   # release のテストビルドと実行を、人が打たなくても走らせる (#1096)。
   #
@@ -122,7 +142,7 @@ jobs:
       || (github.event.action != 'labeled'
       && github.event.action != 'unlabeled'
       && (github.event.action != 'edited' || github.event.changes.base)))
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       - run: make test-release
