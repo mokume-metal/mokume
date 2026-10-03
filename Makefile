@@ -18,8 +18,12 @@ SHELL := /bin/bash
 # パッケージマネージャにも左右されず、ローカルと CI で同じ結果になる
 export REUSE_ENCODING_MODULE := chardet
 
+# python3 は 3.10 以上 (#2030)。scripts/ が match 文や評価時の `X | None` を使うので、
+# macOS 同梱の 3.9 (xcode-select で入るもの) では changelog-lint と hooks-test が落ちる
 setup: ## 開発ツールを確認する
-	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: xcode-select --install"; exit 1; }
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: brew install python (3.10 以上)"; exit 1; }
+	@python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || { \
+		echo "python3 が 3.10 より古い ($$(python3 --version 2>&1)): brew install python で入れ、PATH の先に置く"; exit 1; }
 	@for cmd in gh jq openssl; do \
 		command -v $$cmd >/dev/null 2>&1 || { echo "$$cmd が見つからない: brew install $$cmd"; exit 1; }; \
 	done
