@@ -55,6 +55,18 @@
       "value": false
     }
   },
+  "inputs": [
+    {
+      "name": "camera",
+      "state": "running",
+      "lastFrame": 128,
+      "lastTime": 2.1333333333333333
+    },
+    {
+      "name": "microphone",
+      "state": "waitingForPermission"
+    }
+  ],
   "stamp": "b3f1a20c",
   "frames": [
     {

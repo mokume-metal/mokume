@@ -56,6 +56,24 @@ public final class SketchRuntime {
     private var outlets: [(seam: any Outlet, health: SeamHealth)] = []
     /// 登録された入り口。同じく宣言順。
     private var inlets: [(seam: any Inlet, health: SeamHealth)] = []
+    /// 差込口を巡回している深さ (``whileVisitingSeams(_:)``)。
+    ///
+    /// **巡回の最中に並びを変えてはいけない。** 巡回は並びを `inout` で渡しているので、
+    /// その最中に同じ並びへ足した変更は、巡回の終わりの書き戻しで消える (保留を外して
+    /// 確かめると、`supply()` の中で足した入り口が黙って並びから落ちた)。入り口の
+    /// `supply()` の中から別の入り口を足す、といった頼みはここで見分けて後へ回す (#1988)。
+    private var seamVisitDepth = 0
+    /// 巡回の最中に頼まれた足し・外し。巡回が終わってから、頼まれた順に当てる。
+    private var deferredSeamChanges: [() -> Void] = []
+    /// 差込口を閉じたか (``closePlugins(_:)``)。**閉じた後に足したものは誰にも閉じられない**
+    /// ので、足す頼みを断る。
+    private var seamsClosed = false
+    /// 実行中に足した出口が、足されたフレーム。**それより前に描いた絵は渡さない。**
+    ///
+    /// 配るのは 1 枚遅れなので (#927)、`draw()` の中で足した出口は、そのままだと同じ
+    /// フレームのうちに 1 つ前の絵を受け取る。足す前に描かれた絵は、頼んだ側から見れば
+    /// 自分の知らない絵である (撮る係が #1456 で同じ見分けを自分で持っている)。
+    private var outletJoinedAt: [ObjectIdentifier: Int] = [:]
 
     /// 絵をファイルにする組み込みの出口。**頼まれてはじめて作る。**
     ///
@@ -395,6 +413,8 @@ public final class SketchRuntime {
         params?.flushIfChanged()
         outlets.removeAll()
         inlets.removeAll()
+        outletJoinedAt.removeAll()
+        seamsClosed = true
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
         // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
         if let recorder {
@@ -658,7 +678,23 @@ public final class SketchRuntime {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     private func supplyFromInlets() {
-        Self.visit(&inlets) { $0.supply() } failure: { $0.failure }
+        whileVisitingSeams {
+            Self.visit(&inlets) { $0.supply() } failure: { $0.failure }
+        }
+    }
+
+    /// 差込口の巡回を包む。**巡回の最中に頼まれた足し・外しは、終わってから当てる** (#1988)。
+    ///
+    /// 深さで数えるのは、入れ子になりうるからである — 入り口の `supply()` の中で
+    /// ``endRecord()`` を呼ぶと、出口の巡回がその中で始まる。
+    private func whileVisitingSeams(_ body: () -> Void) {
+        seamVisitDepth += 1
+        body()
+        seamVisitDepth -= 1
+        guard seamVisitDepth == 0, !deferredSeamChanges.isEmpty else { return }
+        let changes = deferredSeamChanges
+        deferredSeamChanges.removeAll()
+        for change in changes { change() }
     }
 
     /// 差込口を 1 巡し、**続けて転んだものを外す**。
@@ -751,7 +787,123 @@ public final class SketchRuntime {
             pending.image.pendingSubmission,
             orWarn: "Could not wait for the GPU before handing the frame to an outlet")
         let frame = OutputFrame(image: pending.image, frame: pending.frame, time: pending.time)
-        Self.visit(&outlets) { $0.receive(frame) } failure: { $0.failure }
+        let joinedAt = outletJoinedAt
+        whileVisitingSeams {
+            Self.visit(&outlets) { outlet in
+                // 足される前に描いた絵は渡さない (``outletJoinedAt``)
+                if let since = joinedAt[ObjectIdentifier(outlet)], frame.frame < since { return }
+                outlet.receive(frame)
+            } failure: {
+                $0.failure
+            }
+        }
+    }
+
+    // MARK: - 実行中に差込口を足す・外す
+
+    /// 入り口を並びへ足す。転送 (正本は ``Sketch/attach(_:)-(Inlet)``)。
+    ///
+    /// - Returns: 並びに居るか (開けた・既に居た・巡回の後に回した)。
+    @discardableResult
+    public func attach(_ inlet: any Inlet) -> Bool {
+        guard seamVisitDepth == 0 else {
+            deferredSeamChanges.append { [unowned self] in self.attachNow(inlet) }
+            return true
+        }
+        return attachNow(inlet)
+    }
+
+    /// 出口を並びへ足す。転送 (正本は ``Sketch/attach(_:)-(Outlet)``)。
+    @discardableResult
+    public func attach(_ outlet: any Outlet) -> Bool {
+        guard seamVisitDepth == 0 else {
+            deferredSeamChanges.append { [unowned self] in self.attachNow(outlet) }
+            return true
+        }
+        return attachNow(outlet)
+    }
+
+    /// 入り口を並びから外して閉じる。転送 (正本は ``Sketch/detach(_:)-(Inlet)``)。
+    public func detach(_ inlet: any Inlet) {
+        guard seamVisitDepth == 0 else {
+            deferredSeamChanges.append { [unowned self] in self.detachNow(inlet) }
+            return
+        }
+        detachNow(inlet)
+    }
+
+    /// 出口を並びから外して閉じる。転送 (正本は ``Sketch/detach(_:)-(Outlet)``)。
+    public func detach(_ outlet: any Outlet) {
+        guard seamVisitDepth == 0 else {
+            deferredSeamChanges.append { [unowned self] in self.detachNow(outlet) }
+            return
+        }
+        detachNow(outlet)
+    }
+
+    @discardableResult
+    private func attachNow(_ inlet: any Inlet) -> Bool {
+        guard admits(inlet) else { return false }
+        if let index = inlets.firstIndex(where: { $0.seam === inlet }) {
+            // **居れば開き直さない** (`open()` は一度だけ)。続けて転んで外されていれば、
+            // 数え直して入れ直す (撮る係の ``rejoin(_:into:)`` と同じ)
+            if !inlets[index].health.isAttached { inlets[index].health = SeamHealth() }
+            return true
+        }
+        guard Self.open(inlet, opening: inlet.open) else { return false }
+        inlets.append((inlet, SeamHealth()))
+        return true
+    }
+
+    @discardableResult
+    private func attachNow(_ outlet: any Outlet) -> Bool {
+        guard admits(outlet) else { return false }
+        if let index = outlets.firstIndex(where: { $0.seam === outlet }) {
+            if !outlets[index].health.isAttached { outlets[index].health = SeamHealth() }
+            return true
+        }
+        guard Self.open(outlet, opening: outlet.open) else { return false }
+        outlets.append((outlet, SeamHealth()))
+        outletJoinedAt[ObjectIdentifier(outlet)] = timing.frameCount
+        return true
+    }
+
+    private func detachNow(_ inlet: any Inlet) {
+        guard let index = inlets.firstIndex(where: { $0.seam === inlet }) else { return }
+        inlets.remove(at: index)
+        inlet.close()
+    }
+
+    private func detachNow(_ outlet: any Outlet) {
+        // 撮る係は頼まれている間だけ居る係なので、外から外させない
+        guard outlet !== recorder,
+            let index = outlets.firstIndex(where: { $0.seam === outlet })
+        else { return }
+        outlets.remove(at: index)
+        outletJoinedAt[ObjectIdentifier(outlet)] = nil
+        outlet.close()
+    }
+
+    /// 足してよいか。**閉じた後は断る** — 足したものを閉じる者がもう居ない。
+    private func admits(_ seam: AnyObject) -> Bool {
+        guard seamsClosed else { return true }
+        Diagnostics.warn(
+            "Could not attach \(type(of: seam as Any)): the sketch has already closed its plugins")
+        return false
+    }
+
+    /// 開く。投げたら知らせて `false` ([ADR-0024] 決定 7 — 開くときは投げてよく、
+    /// そのときはそれだけ外して続ける)。
+    ///
+    /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
+    private static func open(_ seam: AnyObject, opening: () throws -> Void) -> Bool {
+        do {
+            try opening()
+            return true
+        } catch {
+            Diagnostics.warn("Could not open \(type(of: seam as Any)): \(error). Carrying on without it")
+            return false
+        }
     }
 
     // MARK: - 名乗り
@@ -1199,8 +1351,20 @@ public final class SketchRuntime {
                 stats: last?.stats,
                 load: RuntimeLoad.sample(tempo: tempo, now: now()),
                 values: exposedValues.isEmpty ? nil : exposedValues,
+                inputs: inputReports,
                 stamp: SourceStamp.current,
                 frames: frames, appliedTime: complete ? appliedTime.map(Double.init) : nil))
+    }
+
+    /// 名乗りを持つ入り口の状態 (``Inlet/report``)。1 つも無ければ `nil` で、応答から鍵ごと落ちる。
+    ///
+    /// **続けて転んで外された入り口も載せる。** 並びに居る限り、値が来ない理由を名乗れるのは
+    /// その入り口だけである ([ADR-0028] 決定 4)。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+    private var inputReports: [SourceReport]? {
+        let reports = inlets.compactMap { $0.seam.report }
+        return reports.isEmpty ? nil : reports
     }
 
     /// 同じフレームが並んでいたら、そのことわり。
