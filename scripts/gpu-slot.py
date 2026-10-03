@@ -38,11 +38,33 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 
 ## 範囲の外
 
-`swift test --filter …` を直に打つ単独の実行は、この枠を通らない。数 suite で軽く、#1898 の
-赤はどれも全体の段が重なった回に出たためである (実害が出たら足す・ADR-0008)。**下の並列の幅も
-同じく届かない。** GPU を長く占める suite を直に繰り返す (`--repeat-until`) と、手元の画面ごと
-落ちた実害がある (#1999)。その実害の根は suite の側にあり、そちらを直した (`.serialized` と、
-回転を残して返らない `settle()`)。直に打つ実行まで縛るかは #2004 が持つ。
+**素の `swift test` (全検査も `--filter …` も) は、この枠にも下の並列の幅にも届かない。範囲の
+外と決めた (#2004)。** 縛りは、gpu-slot を通った実行にだけ掛かる。
+
+素の実行が縛られていないことで起きた事故は、記録に無い。#1999 の 2 件のうち、カーネルパニックは
+枠の内側の `make test-release` で起き、幅が無く 1 プロセスに発行口が並んだためで、下の並列の幅で
+塞いだ。素の `--filter … --repeat-until` で WindowServer が止まったもう 1 件は、根が同じ suite の
+中で `spin` が重なったことにあり、幅を掛けても防げなかった。そちらは suite の側で直した
+(`.serialized` と、回転を残して返らない `settle()`)。残るのは、素の全検査では同時の発行口が
+また上限なく並ぶ (debug で最大 248 本) という穴だけで、事故が出てから足す (ADR-0008)。
+
+**絞った実行は、gpu-slot を前置して打つ** (枠も幅も掛かる):
+
+    python3 scripts/gpu-slot.py -- swift test --filter …
+
+`make test` に絞り込みの口は無い。ビルドの指定が `make` と違えば作り直しが起きうる (Makefile の
+`SYMBOL_GRAPH_FLAGS` の節)。
+
+**枠の外のまま残す実行が 1 つある。** ShadowTests の負荷の手順は、重なりを作って遅れを炙り出す
+検出器なので、わざと 6 本を同時に走らせる。gpu-slot を前置すると 3 本ずつに下がり、検出力だけが
+落ちる。この規則の例外の置き場は、その手順の上である。
+
+**縛りを足すのは、次のどちらかが起きたとき**: 素の実行で WindowServer が止まる・パニックが起きる
+/ 下の並列の幅の口が効いていないと分かる。足すなら、縛る単位は `RenderDevice(` の呼び出し
+(Tests に 400 余り) ではなく、suite の `TestScoping` の trait である。`RenderDevice.init` は
+同期で `@MainActor` なので、中で待つと、検査が全部載っている main actor ごと止まる。GPU の suite
+には `.enabled(if: RenderDevice.isAvailable, …)` が付いていて、`GPUGateTests` がその付け忘れを
+見ているので、trait はそこへ並べる。
 
 ## 並列の幅
 
