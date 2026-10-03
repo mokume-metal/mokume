@@ -57,6 +57,15 @@ public struct Shape {
     let strokeRanges: [StrokeRange]
     /// ``strokeRanges`` のうち、引く素材を持つ区間があるか。置くたびに区間を走査しないための印。
     let hasCarvedStrokes: Bool
+    /// ``vertices`` のうち**楕円・弧の周の塗り**の区間と、置くときに刻み直す素材 (``RingFillRange``・#1645)。
+    ///
+    /// 周は記録のときの拡大で刻んであるので、**拡大して置くと記録した多角形がそのまま拡大される**。
+    /// 置いた後の大きさで要る分割数が増えるなら、この区間を刻み直した頂点に差し替える。輪郭の側は
+    /// ``strokeRanges`` の ``StrokeRange/thin`` が同じ役を持つ。
+    let fillRanges: [RingFillRange]
+    /// 置いた後の拡大で、周か円板を刻み直す余地のある区間があるか (#1645)。拡大して置くときだけ、
+    /// 区間を走査する。縮めて置く形と、周も円板も持たない形は走査しない。
+    let mayRescale: Bool
     /// 組み直す素材を持つ輪郭のうち、記録した後の太さがいちばん細いもの (#1637)。置く行列で
     /// これが描く画素で 1 画素以上なら、どの輪郭も細くならないので区間を走査しない。
     /// 組み直す輪郭が無ければ無限大。
@@ -180,7 +189,8 @@ public struct Shape {
     init(
         vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
         solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
-        strokeRanges: [StrokeRange] = [], solidStrokes: [SolidStrokePiece] = [],
+        strokeRanges: [StrokeRange] = [], fillRanges: [RingFillRange] = [],
+        solidStrokes: [SolidStrokePiece] = [],
         gpuStrokes: [RetainedGPUStroke] = [], solidParts: [SolidPart] = []
     ) {
         self.vertices = vertices
@@ -189,15 +199,21 @@ public struct Shape {
         self.forms = forms
         self.runs = runs
         self.strokeRanges = strokeRanges
+        self.fillRanges = fillRanges
         // 閉包を標準ライブラリの高階関数へ渡さずにループで組む (隔離の実行時検査を避ける・#1779)
         var carved = false
         var thinnest = Float.infinity
+        var rescalable = !fillRanges.isEmpty
         for stroke in strokeRanges {
             if stroke.carved != nil { carved = true }
-            if let thin = stroke.thin { thinnest = min(thinnest, thin.recordedWeight) }
+            if let thin = stroke.thin {
+                thinnest = min(thinnest, thin.recordedWeight)
+                if thin.mayRescale { rescalable = true }
+            }
         }
         hasCarvedStrokes = carved
         thinnestRecordedWeight = thinnest
+        mayRescale = rescalable
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
         self.solidParts = solidParts
@@ -269,6 +285,7 @@ public struct Shape {
         var forms: [FormInstance] = []
         var runs: [Run] = []
         var strokeRanges: [StrokeRange] = []
+        var fillRanges: [RingFillRange] = []
         var solidStrokes: [SolidStrokePiece] = []
         var gpuStrokes: [RetainedGPUStroke] = []
         var solidParts: [SolidPart] = []
@@ -289,6 +306,7 @@ public struct Shape {
             // 引く素材は区間の番号を持たないので、区間だけをずらして持ち越す (箱は共有する)
             strokeRanges.append(
                 contentsOf: shape.strokeRanges.map { $0.shifted(by: flatOffset) })
+            fillRanges.append(contentsOf: shape.fillRanges.map { $0.shifted(by: flatOffset) })
             solidStrokes.append(
                 contentsOf: shape.solidStrokes.map { piece in
                     var piece = piece
@@ -318,7 +336,8 @@ public struct Shape {
         }
         return Shape(
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
-            forms: forms, runs: runs, strokeRanges: strokeRanges, solidStrokes: solidStrokes,
+            forms: forms, runs: runs, strokeRanges: strokeRanges, fillRanges: fillRanges,
+            solidStrokes: solidStrokes,
             gpuStrokes: gpuStrokes, solidParts: solidParts)
     }
 
