@@ -842,7 +842,7 @@ def drift(root: pathlib.Path, head_shots: list[Shot], base_rev: str, out: pathli
     try:
         base_shots = collect(base_root)
         if not head_shots or not base_shots:
-            print("比べる例の絵が片側に無い (base " f"{len(base_shots)} 本・head {len(head_shots)} 本)")
+            print(f"比べる例の絵が片側に無い (base {len(base_shots)} 本・head {len(head_shots)} 本)")
             return 0
         # **同じ機械で順に描く** — 比べる 2 枚は同じ OS・同じ GPU で描いたものでなければ、
         # OS の版の違いが誤報になる (冒頭の「指紋が見ていない範囲」)
