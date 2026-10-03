@@ -52,6 +52,13 @@ final class ShapePipeline {
         /// (``RenderDevice/holdUntilSubmittedWorkFinishes(_:)``)。
         var all: [AnyObject] { [composite, blend, replace] }
 
+        /// その列を描くパイプライン。**置き換える列のうち、細い線を広げた頂点を持つ列だけは
+        /// 下地を読む列** (`composite`) で描く (#1637)。広げた帯は覆う割合だけを置き換え、残りの
+        /// 下地を残す (`mokume_fragmentMain` の置き換えの枝)。
+        func drawing(_ batch: Canvas.Batch) -> any MTLRenderPipelineState {
+            batch.run.mode == .replace && batch.thinCoverage ? composite : state(for: batch.run.mode)
+        }
+
         /// その混ぜ方で描くパイプライン。
         func state(for mode: BlendMode) -> any MTLRenderPipelineState {
             switch mode {
@@ -91,6 +98,8 @@ final class ShapePipeline {
     static let instanceBufferIndex = 10
     /// 塗りが読む数の並びを渡す口の番号 (シェーダ側の `buffer(11)`)。
     static let numbersBufferIndex = 11
+    /// 平面の頂点ごとの被覆を渡す口の番号 (シェーダ側の `buffer(12)`・#1637)。
+    static let coverageBufferIndex = 12
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
     /// 焼き付けた影を渡す口の番号 (シェーダ側の `texture(1)`)。
@@ -107,7 +116,7 @@ final class ShapePipeline {
 
     /// 引数のテーブルに束ねられる置き場の数。上の口の番号はすべてこれより小さい
     /// (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
-    static let bufferBindCount = 12
+    static let bufferBindCount = 13
     /// 引数のテーブルに束ねられる面の数。利用者の面の口が最後に並ぶ。
     static let textureBindCount = surfaceTextureIndex + surfaceCapacity
 

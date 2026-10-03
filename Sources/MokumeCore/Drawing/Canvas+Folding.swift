@@ -120,6 +120,7 @@ extension Canvas {
             strokeWeight: style.strokeWeight,
             strokeCap: style.strokeCap,
             strokeJoin: style.strokeJoin,
+            strokeLinear: thinStrokeLinear(),
             texture: style.hasFill ? style.picture?.held : nil)
         guard key.hasFill || key.hasStroke else { return }
 
@@ -147,6 +148,7 @@ extension Canvas {
             // 1 つ目の頂点を溜め場から抜き、雛形として積み直す。抜けるのは**まだ列が
             // 閉じていない末尾**にいるときだけで、上の 2 つの条件がそれを見ている
             vertices.removeLast(vertices.count - waiting.vertexStart)
+            trimCoverage(to: waiting.vertexStart)
             pendingFlat = nil
             openFlatTemplate(key: key, outline: outline)
             flatInstances.append(waiting.placement)
@@ -211,17 +213,38 @@ extension Canvas {
         style.fill = Self.unchangedTint
         style.stroke = Self.unchangedTint
         buildingFlatTemplate = true
+        // 細い線の雛形は、鍵の変換で細さを測って広げる (#1637・``thinStrokeMatrix``)
+        templateStrokeMatrix = key.strokeLinear.map(\.linear).map { linear in
+            simd_float4x4(
+                SIMD4(linear.x, linear.y, 0, 0), SIMD4(linear.z, linear.w, 0, 0),
+                SIMD4(0, 0, 1, 0), SIMD4(0, 0, 0, 1))
+        }
         outlinesAssembledThisFrame += 1
         if key.hasFill { fillInterior(outline) }
         let strokeStart = vertices.count
         if key.hasStroke { strokeOutline(outline) }
         buildingFlatTemplate = false
+        templateStrokeMatrix = nil
         transform = savedTransform
         style.fill = savedFill
         style.stroke = savedStroke
 
         openFlat = OpenFlat(
             key: key, strokeStart: strokeStart, instanceStart: flatInstances.count)
+    }
+
+    /// いまの変換で、線が描く画素 1 画素より細くなる向きがあるなら、その変換の 2x2 (#1637)。
+    /// 畳みの鍵 (``FlatKey/strokeLinear``) に入る。線を持たない図形と、どの向きでも細く
+    /// ならない線は `nil` で、これまでどおり変換の違う置き場所も同じ雛形に畳む。
+    private func thinStrokeLinear() -> ThinFold? {
+        guard style.hasStroke, style.strokeWeight > 0 else { return nil }
+        let matrix = transform.matrix
+        let drawn = drawnLinear(matrix)
+        guard Self.thinnestDrawnWeight(style.strokeWeight, by: drawn) < 1 else { return nil }
+        return ThinFold(
+            key: Self.rotationFreeKey(drawn),
+            linear: SIMD4(
+                matrix.columns.0.x, matrix.columns.0.y, matrix.columns.1.x, matrix.columns.1.y))
     }
 
     /// 掛けても値の変わらない色。雛形の頂点はこれで積む。

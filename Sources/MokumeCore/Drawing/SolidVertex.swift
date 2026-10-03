@@ -67,14 +67,14 @@ struct SolidVertex {
     init(
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
-        uv: SIMD2<Float>, isStroke: Bool = false, color: LinearRGBA
+        uv: SIMD2<Float>, isStroke: Bool = false, strokeCoverage: Float = 1, color: LinearRGBA
     ) {
         self.position = position
         self.shapePosition = shapePosition ?? position
         self.normal = SIMD4<Float>(normal, isDerived ? 1 : 0)
         self.shapeNormal = shapeNormal ?? normal
         self.uv = uv
-        self.stroke = isStroke ? 1 : 0
+        self.stroke = isStroke ? strokeCoverage : 0
         self.color = SIMD4<Float>(color.red, color.green, color.blue, color.alpha)
     }
 }

@@ -376,10 +376,14 @@ extension Canvas {
         var control = [pass.control.0, pass.control.1]
         block.advanced(by: EffectPipeline.controlOffset)
             .copyMemory(from: &control, byteCount: 32)
-        var frame = SIMD4<Float>(
-            Float(destination.width), Float(destination.height), time, 0)
+        // 段の面の大きさと、出す大きさ。断片は位置と大きさを出す画素で受け取る (#1639) ので、
+        // ラスタの位置 (段の面の画素) に掛ける比をこの 2 つから作る。段の面は縮めた脇の面の
+        // こともあるので、``unitsPerDrawnPixel`` ではなく段ごとの大きさで割る
+        var frame = (
+            SIMD4<Float>(Float(destination.width), Float(destination.height), time, 0),
+            SIMD4<Float>(width, height, 0, 0))
         block.advanced(by: EffectPipeline.frameOffset)
-            .copyMemory(from: &frame, byteCount: 16)
+            .copyMemory(from: &frame, byteCount: EffectPipeline.frameSize)
         var values = pass.shader?.packedValues ?? [0, 0, 0, 0]
         while values.count < EffectPipeline.valueSlotCapacity { values.append(0) }
         block.advanced(by: EffectPipeline.valuesOffset)

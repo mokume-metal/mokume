@@ -57,6 +57,12 @@ public struct Shape {
     let strokeRanges: [StrokeRange]
     /// ``strokeRanges`` のうち、引く素材を持つ区間があるか。置くたびに区間を走査しないための印。
     let hasCarvedStrokes: Bool
+    /// 組み直す素材を持つ輪郭のうち、記録した後の太さがいちばん細いもの (#1637)。置く行列で
+    /// これが描く画素で 1 画素以上なら、どの輪郭も細くならないので区間を走査しない。
+    /// 組み直す輪郭が無ければ無限大。
+    let thinnestRecordedWeight: Float
+    /// 置いた後に細くなった輪郭を組み直した頂点の控え (#1637)。形 1 つに 1 つ。
+    let thinCache = ThinStrokeCache()
     /// ``solidVertices`` のうち**立体の線の頂点**が、どの部品から来たか。
     ///
     /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ位置のままでは
@@ -176,11 +182,13 @@ public struct Shape {
         self.strokeRanges = strokeRanges
         // 閉包を標準ライブラリの高階関数へ渡さずにループで組む (隔離の実行時検査を避ける・#1779)
         var carved = false
-        for stroke in strokeRanges where stroke.carved != nil {
-            carved = true
-            break
+        var thinnest = Float.infinity
+        for stroke in strokeRanges {
+            if stroke.carved != nil { carved = true }
+            if let thin = stroke.thin { thinnest = min(thinnest, thin.recordedWeight) }
         }
         hasCarvedStrokes = carved
+        thinnestRecordedWeight = thinnest
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
     }
@@ -332,15 +340,20 @@ struct StrokeRange {
     /// 半画素寄せの前)。`nil` なら差し替えない — 半透明の線で記録した区間は記録のときに
     /// 引いてあり、`replace` は重ねても同じ色になる。
     var carved: CarvedStroke?
+    /// 置いた後に描く画素で 1 画素より細くなるなら、広げて組み直す素材 (#1637)。`nil` なら
+    /// 組み直さない (区間の一部だけを置き直したもの)。
+    var thin: ThinStrokeRecipe?
 
-    init(_ range: Range<Int>, carved: CarvedStroke? = nil) {
+    init(_ range: Range<Int>, carved: CarvedStroke? = nil, thin: ThinStrokeRecipe? = nil) {
         self.range = range
         self.carved = carved
+        self.thin = thin
     }
 
     /// 区間だけを `offset` ずらした写し。
     func shifted(by offset: Int) -> StrokeRange {
-        StrokeRange((range.lowerBound + offset)..<(range.upperBound + offset), carved: carved)
+        StrokeRange(
+            (range.lowerBound + offset)..<(range.upperBound + offset), carved: carved, thin: thin)
     }
 }
 

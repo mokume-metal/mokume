@@ -429,7 +429,8 @@ extension Canvas {
     func appendSolidVertex(
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
-        uv: SIMD2<Float>? = nil, isStroke: Bool = false, color: LinearRGBA
+        uv: SIMD2<Float>? = nil, isStroke: Bool = false, strokeCoverage: Float = 1,
+        color: LinearRGBA
     ) {
         // **面の切り替えが先。** 切り替えは列を閉じるので、開いてから切り替えると
         // 開いたばかりの列が閉じられ、この頂点がどの列にも属さなくなる
@@ -439,7 +440,7 @@ extension Canvas {
             SolidVertex(
                 position: position, shapePosition: shapePosition, normal: normal,
                 shapeNormal: shapeNormal, isDerived: isDerived, uv: uv ?? whiteUV,
-                isStroke: isStroke, color: color))
+                isStroke: isStroke, strokeCoverage: strokeCoverage, color: color))
         openSolid?.vertexCount += 1
         // **添字の列では、並べただけの頂点も自分の番号を名乗る。** 名乗らないと
         // 描くときに誰からも参照されず、その頂点だけが黙って消える (輪郭の帯と
@@ -557,9 +558,28 @@ extension Canvas {
     /// **点は世界の座標と形自身の座標を対で受け取る。** 帯は視線に合わせて世界の座標で
     /// 組み立てるが、利用者の断片へ渡すのは形自身の座標のほうなので、両方が要る。
     /// 帯の太さのぶんの広がりは持たない — **帯のどの画素も、元になった点の座標を名乗る**。
+    ///
+    /// **描く画素で 1 画素より細い線は、描く画素 1 つの太さへ広げて被覆を下げる**
+    /// (#1637・``ThinStroke``)。太さは出す画素なので、細さは置く面の細かさだけで決まる。
+    /// 記録の間は判断せず、置くときに置く面で組み直す (``rebuiltSolidStroke(_:)``)。
     func strokeSolidRing(
         _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
         curveSteps: [Bool] = []
+    ) {
+        let isPoint = points.count == 1
+        let thin = thinSolidStroke(weight: style.strokeWeight, isPoint: isPoint)
+        solidStrokeIsLonePoint = isPoint
+        defer { solidStrokeIsLonePoint = false }
+        withThinSolidStroke(thin, isPoint: isPoint) {
+            strokeSolidRingAsStyled(
+                points, shapePoints: shapePoints, isClosed: isClosed, curveSteps: curveSteps)
+        }
+    }
+
+    /// いまの線の設定のまま、立体の線を帯でなぞる (細い線の補いは ``strokeSolidRing`` が当てる)。
+    private func strokeSolidRingAsStyled(
+        _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
+        curveSteps: [Bool]
     ) {
         let half = style.strokeWeight / 2
         guard !points.isEmpty, shapePoints.count == points.count else { return }
@@ -608,7 +628,15 @@ extension Canvas {
         // 区間の外では引かない。`noFill()` の立体はここだけを通る (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         guard style.hasStroke, style.strokeWeight > 0 else { return }
+        // **描く画素で 1 画素より細い稜線も補う** (#1637)。GPU で広げる経路は、置く時点で
+        // 自分で補う (``openGPUStroke``) ので、ここで太さを変えるのは CPU の帯だけである
         if placeGPUStroke(of: source, mesh: build) { return }
+        let thin = thinSolidStroke(weight: style.strokeWeight, isPoint: false)
+        withThinSolidStroke(thin, isPoint: false) { strokeSolidEdgesAsStyled(of: source, mesh: build) }
+    }
+
+    /// いまの線の設定のまま、置いた形の稜線を引く。
+    private func strokeSolidEdgesAsStyled(of source: SolidSource, mesh build: () -> SolidMesh) {
         let net = solidEdges(of: source, mesh: build)
         guard !net.edges.isEmpty else { return }
         // **塗りを置かなかったときも、立体の側へ移る。** 移らないと平面の列が開いた
@@ -686,7 +714,8 @@ extension Canvas {
         guard recordingShape, count > 0 else { return }
         recordedSolidStrokes.append(
             SolidStrokePiece(
-                kind: kind, weight: style.strokeWeight, vertexStart: start, vertexCount: count))
+                kind: kind, weight: style.strokeWeight, vertexStart: start, vertexCount: count,
+                isLonePoint: solidStrokeIsLonePoint))
     }
 
     /// 線の部品を組む。積むか位置だけを受け取るかは ``solidStrokeCapture`` が決める。
@@ -711,22 +740,38 @@ extension Canvas {
     /// (`placeSolid(_:of:instances:)`)。組み直しで何も積まない部品 (点に潰れる帯) は、
     /// 同じ数の頂点を 1 点へ畳んで面積を 0 にする — 頂点の数は記録と変えられない
     /// (添字の列と区間が数で指している)。
-    func rebuiltSolidStroke(_ piece: SolidStrokePiece) -> [SIMD3<Float>] {
-        // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組んだときの太さで組む
+    ///
+    /// **細さは置く面で判断する** (#1637)。部品は記録したときの太さを持ち、置く面の細かさで
+    /// 描く画素で 1 画素より細くなるなら、広げた太さで組んで被覆を返す (呼ぶ側が頂点の
+    /// ``SolidVertex/stroke`` に書く)。記録した面と置く面の細かさが違っても、その場で描いた
+    /// 線と同じになる。点 1 つの線 (``SolidStrokePiece/isLonePoint``) は、細ければ画面の軸に
+    /// 沿った正方形にして、余った頂点は面積 0 の三角形に畳む。
+    func rebuiltSolidStroke(_ piece: SolidStrokePiece) -> (corners: [SIMD3<Float>], coverage: Float) {
+        let thin = ThinStroke(drawnWeight: drawnSolidWeight(piece.weight), isPoint: piece.isLonePoint)
+        let weight = piece.weight * (thin?.widen ?? 1)
+        // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組む太さで組む
         let savedWeight = style.strokeWeight
-        style.strokeWeight = piece.weight
+        style.strokeWeight = weight
         solidStrokeCapture = []
-        buildSolidStroke(
-            piece.kind, shape: (piece.anchor, piece.anchor), half: piece.weight / 2,
-            camera: StrokeCamera(currentCamera))
+        let camera = StrokeCamera(currentCamera)
+        if thin != nil, piece.isLonePoint {
+            appendSolidSquare(
+                at: piece.anchor, shape: piece.anchor, half: weight / 2, camera: camera)
+        } else {
+            buildSolidStroke(
+                piece.kind, shape: (piece.anchor, piece.anchor), half: weight / 2, camera: camera)
+        }
         var corners = solidStrokeCapture ?? []
         solidStrokeCapture = nil
         style.strokeWeight = savedWeight
+        if thin != nil, piece.isLonePoint, corners.count < piece.vertexCount {
+            corners += Array(repeating: piece.anchor, count: piece.vertexCount - corners.count)
+        }
         if corners.count != piece.vertexCount {
             corners = Array(repeating: piece.anchor, count: piece.vertexCount)
         }
         if piece.isReversed { Self.reverseTriangles(in: &corners, from: 0) }
-        return corners
+        return (corners, thin?.coverage ?? 1)
     }
 
     /// 稜線を使い回す。**線を引いた形にだけ作る。**
@@ -980,16 +1025,19 @@ extension Canvas {
             solidStrokeCapture?.append(liftedTowardViewer(c, camera: camera))
             return
         }
-        // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)
+        // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)。名乗る値は
+        // 被覆を兼ねる (細い線を広げたとき 1 未満・#1637)
+        let coverage = solidStrokeCoverage
+        defer { if coverage < 1 { openBatchHasThinCoverage = true } }
         appendSolidVertex(
             position: liftedTowardViewer(a, camera: camera), shapePosition: shape.0, normal: .zero,
-            isStroke: true, color: style.stroke)
+            isStroke: true, strokeCoverage: coverage, color: style.stroke)
         appendSolidVertex(
             position: liftedTowardViewer(b, camera: camera), shapePosition: shape.1, normal: .zero,
-            isStroke: true, color: style.stroke)
+            isStroke: true, strokeCoverage: coverage, color: style.stroke)
         appendSolidVertex(
             position: liftedTowardViewer(c, camera: camera), shapePosition: shape.2, normal: .zero,
-            isStroke: true, color: style.stroke)
+            isStroke: true, strokeCoverage: coverage, color: style.stroke)
     }
 
     /// 線の頂点を、**見ている側へ視線に沿って**わずかに寄せる。

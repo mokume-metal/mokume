@@ -51,6 +51,12 @@ extension Canvas {
     //
     // 面の外へ出た指定を面の内側へ収めるのは、この世代の GPU が範囲外の切り抜きを
     // 受け取ると検証で落ちるためである。指定をそのまま渡さない。
+    //
+    // **矩形は出す画素の小数のまま覚える** ([#1641])。画素へ丸めるのは描く画素が決まる
+    // 所 (``scissor(_:)``) の 1 か所だけで、ここで整数へ切り捨てると、細かさ 1 では左右とも
+    // 左へ寄り、細かさ 1 未満では丸めが 2 段に重なる。
+    //
+    // [#1641]: https://github.com/mokume-metal/mokume/issues/1641
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         // **切り抜きはフレームを越えない** (ADR-0021 決定 4)。描画先の座標で効き、形に焼き付か
         // ないので、形の組み立ての中ではフレームの中でも断る (同 決定 4 の追補・#1529)。値の
@@ -61,9 +67,9 @@ extension Canvas {
         // (ADR-0020 決定 5 の「安全な既定へ倒す」・他の入口と同じ倒し方)
         guard a.isFinite, b.isFinite, c.isFinite, d.isFinite else { return warnBadClipOnce() }
         let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
-        // **`Float` のまま収めてから `Int` にする。** `Int(_:Float)` は面より桁違いに
-        // 大きい値でトラップするので、変換を先に置くと `min`/`max` は守りにならない
-        // ([#1302])。入力が有限でも、読み方を解く算術 (`c * 2`) は ±∞ へ溢れうる
+        // **`Float` のまま面の内へ収める。** 画素へ丸めるのは ``scissor(_:)`` で、そこでは
+        // 面の内の値しか `Int` にしない (`Int(_:Float)` は面より桁違いに大きい値でトラップする・
+        // [#1302])。入力が有限でも、読み方を解く算術 (`c * 2`) は ±∞ へ溢れうる
         //
         // [#1302]: https://github.com/mokume-metal/mokume/issues/1302
         let left = min(max(0, box.x), width)
@@ -71,9 +77,7 @@ extension Canvas {
         let right = min(max(left, box.x + box.width), width)
         let bottom = min(max(top, box.y + box.height), height)
         closeBatch()
-        style.clip = MTLScissorRect(
-            x: Int(left), y: Int(top),
-            width: Int(right) - Int(left), height: Int(bottom) - Int(top))
+        style.clip = ClipRect(left: left, top: top, right: right, bottom: bottom)
     }
 
     public func noClip() {
@@ -123,36 +127,47 @@ extension Canvas {
         return shift * matrix
     }
 
-    /// 切り抜きを、実際に刻む画素へ写す。
+    /// 切り抜きを、実際に刻む画素へ写す ([#1641])。
     ///
-    /// 切り抜きは利用者が出す細かさの座標で指定するので、細かく刻んでいるときは
-    /// そのままでは面からはみ出す。**丸めたあとで面の内側へ収める** — この世代の
-    /// GPU は範囲外の切り抜きを受け取ると検証で落ちる。
-    func scissor(_ clip: MTLScissorRect?) -> MTLScissorRect {
+    /// **画素の中心が矩形の内 (縁の上を含む) にある画素を通す。** 覆う割合が半分以上の画素を
+    /// 通すことに当たり、同じ矩形の `rect` を 50% で白黒にした形と一致する (ADR-0039 決定 1)。
+    /// ちょうど半分の画素は通す側に倒す — 同じ矩形の切り抜きが、その矩形の縁を削らない。
+    ///
+    /// 切り抜きは利用者が出す細かさの座標で指定するので、描く画素へは ``unitsPerDrawnPixel``
+    /// で写してから同じ規則で丸める。**細かさ 1 未満では描く画素の格子でしか切れない**ので、
+    /// 縁のずれは描く画素の半分 (細かさ 0.5 で出す画素 1 つ) まで残る。
+    ///
+    /// **丸めたあとで面の内側へ収める** — この世代の GPU は範囲外の切り抜きを受け取ると
+    /// 検証で落ちる。幅か高さが 0 の矩形は、縁の上の画素も通さない。
+    ///
+    /// [#1641]: https://github.com/mokume-metal/mokume/issues/1641
+    func scissor(_ clip: ClipRect?) -> MTLScissorRect {
         guard let clip else {
             return MTLScissorRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight)
         }
-        guard pixelWidth != Int(width) || pixelHeight != Int(height) else { return clip }
-        let scaleX = Float(pixelWidth) / width
-        let scaleY = Float(pixelHeight) / height
-        let left = min(max(0, Int((Float(clip.x) * scaleX).rounded(.down))), pixelWidth)
-        let top = min(max(0, Int((Float(clip.y) * scaleY).rounded(.down))), pixelHeight)
-        let right = min(
-            max(left, Int((Float(clip.x + clip.width) * scaleX).rounded(.up))), pixelWidth)
-        let bottom = min(
-            max(top, Int((Float(clip.y + clip.height) * scaleY).rounded(.up))), pixelHeight)
+        let drawnPerOutput = 1 / unitsPerDrawnPixel
+        /// 中心が `[low, high]` に入る画素の範囲 (端は含まない上限)。値は面の内に収めてあるので、
+        /// 描く画素へ写しても `Int` に収まる
+        func span(_ low: Float, _ high: Float, scale: Float, limit: Int) -> (start: Int, end: Int) {
+            guard high > low else { return (0, 0) }
+            let start = min(max(0, Int((low * scale - 0.5).rounded(.up))), limit)
+            let end = min(max(start, Int((high * scale - 0.5).rounded(.down)) + 1), limit)
+            return (start, end)
+        }
+        let (left, right) = span(clip.left, clip.right, scale: drawnPerOutput.x, limit: pixelWidth)
+        let (top, bottom) = span(clip.top, clip.bottom, scale: drawnPerOutput.y, limit: pixelHeight)
         return MTLScissorRect(x: left, y: top, width: right - left, height: bottom - top)
     }
 
-    /// 切り抜きが同じか。`MTLScissorRect` は素では比べられない。
-    static func sameClip(_ a: MTLScissorRect?, _ b: MTLScissorRect?) -> Bool {
-        switch (a, b) {
-        case (nil, nil): return true
-        case let (lhs?, rhs?):
-            return lhs.x == rhs.x && lhs.y == rhs.y
-                && lhs.width == rhs.width && lhs.height == rhs.height
-        default: return false
-        }
+    /// 切り抜きの矩形。**出す画素の小数のまま**、面の内へ収めて覚える ([#1641])。画素へ
+    /// 丸めるのは ``scissor(_:)`` だけである。
+    ///
+    /// [#1641]: https://github.com/mokume-metal/mokume/issues/1641
+    struct ClipRect: Equatable {
+        var left: Float
+        var top: Float
+        var right: Float
+        var bottom: Float
     }
 
     /// 溜めている頂点を、いまの混ぜ方の列として閉じる。
@@ -160,6 +175,8 @@ extension Canvas {
     /// 位置は**その並びの中で**数える。平面と立体は別の並びに溜まるので、それぞれの
     /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
+        // 細い線を広げた頂点の印は、閉じた列が持っていく (#1637)。閉じる列が無くても下ろす
+        defer { openBatchHasThinCoverage = false }
         // **`switch` で振る。** `if` 連鎖だと `VertexSource` にケースが増えた日、
         // ここだけ黙って平面の経路へ落ちる (他の 5 箇所は `switch` なので止まる)
         switch openSource {
@@ -201,6 +218,7 @@ extension Canvas {
                 instanceStart: template?.instanceStart ?? 0,
                 instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
                 strokeStart: template?.strokeStart ?? .max))
+        batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
     }
 
     /// 断片へ渡す面を、いま列に写し取る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
@@ -303,6 +321,7 @@ extension Canvas {
                 solidSource: open.source,
                 strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
                 fillGeometry: open.fillGeometry))
+        batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
         warnIfMaterialCannotShow()
     }
 

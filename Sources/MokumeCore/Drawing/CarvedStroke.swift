@@ -18,16 +18,26 @@ struct CarveRecipe {
     let transform: Transform
     let color: LinearRGBA
     let uv: SIMD2<Float>
+    /// 片を描く画素の空間で組んだとき (細い線を補う・#1637)、引いた結果の点を形自身の座標へ
+    /// 戻す 2x2。`nil` なら片は形自身の座標で組んである。
+    var inverse: simd_float2x2? = nil
 
     /// 引いて、三角形の頂点にする。直に引いて積むとき (``Canvas/strokeOutline(_:)``) と同じ
     /// 座標系・同じ色・同じ扇の出し方。
     ///
     /// **扇の出し先を閉包で受けない。** 直に引いて積む経路と出し方が 2 通りになるが、
     /// 三角形ごとの呼び出しを閉包にすると、直に描く半透明の線が 7〜18% 遅くなった (実測)。
-    func vertices() -> [ShapeVertex] {
+    func vertices() -> [ShapeVertex] { built().vertices }
+
+    /// 引いた頂点と、被覆が 1 でない区間 (頂点の並びの中の番号・#1637)。細い線を広げた片
+    /// だけが区間を持つ。区間は並びの順で、置く側が頂点を積んだ先の番号へずらして付ける。
+    func built() -> (vertices: [ShapeVertex], coverage: [Canvas.CoverageSpan]) {
         var out: [ShapeVertex] = []
+        var spans: [Canvas.CoverageSpan] = []
+        let inverse = self.inverse ?? matrix_identity_float2x2
+        let mapsBack = self.inverse != nil
         func place(_ point: SIMD2<Float>) -> SIMD2<Float> {
-            let moved = point + offset
+            let moved = (mapsBack ? inverse * point : point) + offset
             return transform.apply(x: moved.x, y: moved.y)
         }
         func emit(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) {
@@ -35,7 +45,9 @@ struct CarveRecipe {
             out.append(ShapeVertex(position: b, uv: uv, color: color))
             out.append(ShapeVertex(position: c, uv: uv, color: color))
         }
-        carving.carved { polygon, range, hub in
+        carving.carved { polygon, range, hub, coverage in
+            let start = out.count
+            defer { Canvas.CoverageSpan.note(coverage, in: start..<out.count, to: &spans) }
             guard let hub else {
                 let first = place(polygon[range.lowerBound])
                 var previous = place(polygon[range.lowerBound + 1])
@@ -56,7 +68,7 @@ struct CarveRecipe {
             }
             emit(center, previous, first)
         }
-        return out
+        return (out, spans)
     }
 }
 

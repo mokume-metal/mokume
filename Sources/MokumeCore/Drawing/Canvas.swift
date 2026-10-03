@@ -102,6 +102,8 @@ public final class Canvas {
     /// 溜めている頂点と、その置き場。
     var vertices: [ShapeVertex] = []
     private let vertexStorage: GrowableBuffer
+    /// 平面の頂点ごとの被覆の置き場 (``coverageSpans``)。区間が無いフレームは 1 つだけ書く。
+    private let coverageStorage: GrowableBuffer
 
     /// 平面の置き場所。列は自分の区間を指す。
     ///
@@ -168,6 +170,29 @@ public final class Canvas {
     /// 組み直しは即時に描くときと**同じ関数** (帯・円板・正方形) を通す。向き・幅・寄せの
     /// 式を 2 か所に書くと、片方だけ直した誤りが保持した形でだけ現れる (#1547)。
     var solidStrokeCapture: [SIMD3<Float>]?
+
+    /// いま組んでいる立体の線の被覆 (細い線を広げたとき 1 未満・#1637)。線の頂点が
+    /// ``SolidVertex/stroke`` に名乗る。
+    var solidStrokeCoverage: Float = 1
+    /// いま組んでいる立体の線が、点 1 つの線か。記録する部品が覚える (``SolidStrokePiece/isLonePoint``)。
+    var solidStrokeIsLonePoint = false
+
+    /// 平面の頂点のうち、被覆が 1 でない区間 (#1637)。**頂点の番号で、番号の順に並ぶ。**
+    ///
+    /// 描く画素で 1 画素より細い線を 1 画素の帯へ広げたとき、太さの割合を頂点の色ではなく
+    /// ここで運ぶ (``ThinStroke``)。頂点の大きさを増やさないためで、区間が無いフレームは
+    /// 何も払わない。区間があるフレームだけ、頂点ごとの被覆の並びを組んで写す
+    /// (``uploadGeometry(reusing:)``)。
+    var coverageSpans: [CoverageSpan] = []
+    /// 畳みの雛形を組んでいる間、細い線を測る置き場所の変換 (雛形の鍵 ``FlatKey/strokeLinear``)。
+    /// 細くならない雛形では `nil`。
+    var templateStrokeMatrix: simd_float4x4?
+    /// 保持した形の細い輪郭を組み直した回数 (検査用・``thinVertices(_:placedBy:cache:stroke:)``)。控えが
+    /// 効いていれば、同じ大きさで置き続けても増えない。
+    var thinStrokesRebuilt = 0
+    /// 開いている列に、細い線を広げた (被覆が 1 未満の) 頂点を積んだか (#1637)。列を閉じるときに
+    /// ``Batch/thinCoverage`` へ移して下ろす。
+    var openBatchHasThinCoverage = false
 
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///
@@ -238,6 +263,11 @@ public final class Canvas {
         var strokeWeight: Float
         var strokeCap: StrokeCap
         var strokeJoin: StrokeJoin
+        /// 置き場所の変換で描く画素 1 画素より細くなる線を持つなら、その変換 (#1637)。細い線は
+        /// 置き場所の大きさごとに広げ方が違うので、**回転を除いて同じ変換の置き場所だけを畳む**
+        /// (``ThinFold``)。細くならなければ `nil` で、変換の違う置き場所も同じ雛形に畳む
+        /// (これまでどおり)。
+        var strokeLinear: ThinFold?
         /// 塗りに貼る絵の面。**どの絵かまで鍵に入る。** 読み取り位置が寸法から決まる
         /// うえ、面そのものが列を分けるためである。有無しか持たないと、雛形を開いた
         /// 後に絵を差し替えても畳み続けて、2 枚目以降が前の絵で描かれる ([#1298])。
@@ -247,6 +277,16 @@ public final class Canvas {
         ///
         /// [#1298]: https://github.com/mokume-metal/mokume/issues/1298
         var texture: HeldTexture?
+    }
+
+    /// 細い線を持つ雛形の鍵 (#1637)。**比べるのは回転に依らない部分** (``rotationFreeKey(_:)``)
+    /// だけで、雛形を組むのは最初の置き場所の 2x2 (``linear``) である。片は描く画素の空間で
+    /// 組むので、回転だけが違う置き場所には同じ雛形が合う。
+    struct ThinFold: Equatable {
+        var key: SIMD4<Float>
+        var linear: SIMD4<Float>
+
+        static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }
     }
 
     /// 畳める図形の形。
@@ -1256,7 +1296,7 @@ public final class Canvas {
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     struct Batch {
         var run: Shape.Run
-        var clip: MTLScissorRect?
+        var clip: ClipRect?
         /// この列を描画先の座標へ落とす行列。
         var matrix: simd_float4x4
         /// この列に効く光が、置き場のどこから何個あるか。
@@ -1298,6 +1338,9 @@ public final class Canvas {
         /// 畳んでいない列は塗りしか無い扱いでよい — 置き場所の 2 色がどちらも白で、
         /// どちらを掛けても値が変わらないためである。
         var strokeStart: Int = .max
+        /// この列に、細い線を広げた (被覆が 1 未満の) 頂点があるか (#1637)。置き換える列は、
+        /// これが立つと下地を読む断片で描く (``ShapePipeline/BlendStates/drawing(_:)``)。
+        var thinCoverage = false
         /// 裏を向いた面をどう扱うか。
         ///
         /// 既定は両面を描く (`.none`)。**閉じた組み込みの形の、不透明な列だけ**が裏面を
@@ -1554,7 +1597,7 @@ public final class Canvas {
         var rectMode = ShapeMode.corner
         var ellipseMode = ShapeMode.center
         var blendMode = BlendMode.blend
-        var clip: MTLScissorRect?
+        var clip: ClipRect?
         var fontName: String?
         var textSize: Float = 12
         var textStyle = TextStyle.normal
@@ -1602,7 +1645,7 @@ public final class Canvas {
                 || style.castsShadow != newValue.castsShadow
                 || style.receivesShadow != newValue.receivesShadow
                 || style.blendMode != newValue.blendMode
-                || !Self.sameClip(style.clip, newValue.clip)
+                || style.clip != newValue.clip
             {
                 closeBatch()
             }
@@ -1656,6 +1699,8 @@ public final class Canvas {
         }
         self.vertexStorage = storage(
             stride: MemoryLayout<ShapeVertex>.stride, minimum: 1024, label: "vertices")
+        self.coverageStorage = storage(
+            stride: MemoryLayout<Float>.stride, minimum: 1, label: "coverages")
         self.solidVertexStorage = storage(
             stride: MemoryLayout<SolidVertex>.stride, minimum: 1024, label: "solidVertices")
         self.solidIndexStorage = storage(
@@ -2140,6 +2185,8 @@ public final class Canvas {
             if emptying { value = false } else if value { amount += 1 }
         }
         list(&vertices)
+        list(&coverageSpans, counted: false)
+        if emptying { openBatchHasThinCoverage = false }
         list(&recordedStrokeRanges)
         list(&recordedSolidStrokes)
         list(&recordedGPUStrokes)
@@ -3381,10 +3428,12 @@ public final class Canvas {
             switch batch.source {
             case .flat:
                 encoder.setRenderPipelineState(
-                    (run.paint.shader?.states ?? pipeline.states).state(for: run.mode))
+                    (run.paint.shader?.states ?? pipeline.states).drawing(batch))
                 encoder.setDepthStencilState(pipeline.flatDepthState)
                 pipeline.argumentTable.setAddress(
                     geometry.flatVertices.gpuAddress, index: ShapePipeline.vertexBufferIndex)
+                pipeline.argumentTable.setAddress(
+                    geometry.coverages.gpuAddress, index: ShapePipeline.coverageBufferIndex)
                 // **口は立体と共用する。** 同じ列で平面と立体の両方を描くことは
                 // 無いので、置き場所の口を 2 つ持つ理由が無い
                 pipeline.argumentTable.setAddress(
@@ -3406,7 +3455,7 @@ public final class Canvas {
                 encoder.setRenderPipelineState(
                     (batch.strokeGeometry != nil
                         ? pipeline.solidStrokeStates : (run.paint.shader?.solidStates ?? pipeline.solidStates))
-                        .state(for: run.mode))
+                        .drawing(batch))
                 encoder.setDepthStencilState(
                     batch.replacesSurface ? pipeline.replaceDepthState : pipeline.solidDepthState)
                 pipeline.argumentTable.setAddress(
@@ -3582,6 +3631,18 @@ public final class Canvas {
         reusing baked: SolidUploads?
     ) throws(RenderFailure) -> GeometryBuffers {
         let buffer = try vertexStorage.write(vertices, holding: vertices.count)
+        // 頂点ごとの被覆。**区間が無ければ 1 つだけ書く** — 頂点関数は列の旗を見て読まない
+        // (`FlatFrame.readsCoverage`) が、口には何かを束ねる
+        let coverageBuffer: any MTLBuffer
+        if coverageSpans.isEmpty {
+            coverageBuffer = try coverageStorage.write([Float(1)], holding: 1)
+        } else {
+            var coverages = [Float](repeating: 1, count: vertices.count)
+            for span in coverageSpans {
+                for index in span.range where index < coverages.count { coverages[index] = span.value }
+            }
+            coverageBuffer = try coverageStorage.write(coverages, holding: coverages.count)
+        }
         let formBuffer = try formInstanceStorage.write(
             formInstances, holding: max(formInstances.count, 1))
         let solid: SolidUploads
@@ -3594,7 +3655,7 @@ public final class Canvas {
         pipeline.argumentTable.setAddress(
             lightsBuffer.gpuAddress, index: ShapePipeline.lightsBufferIndex)
         return GeometryBuffers(
-            flatVertices: buffer, formInstances: formBuffer,
+            flatVertices: buffer, coverages: coverageBuffer, formInstances: formBuffer,
             solidInstances: solid.instances, flatInstances: flatInstanceBuffer,
             solidVertices: solid.vertices, solidIndices: solid.indices)
     }
@@ -3624,6 +3685,7 @@ public final class Canvas {
         // 列ごとの行列を並べて置く。**列が閉じた時点の見る位置**がそのまま入る
         let matrices = try matrixStorage.buffer(holding: batches.count)
         let unitsPerDrawnPixel = self.unitsPerDrawnPixel
+        let readsCoverage: UInt32 = coverageSpans.isEmpty ? 0 : 1
         for (index, batch) in batches.enumerated() {
             // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
             // 読まない**ので、同じ区画に足しても効かない
@@ -3631,28 +3693,29 @@ public final class Canvas {
                 projection: batch.matrix,
                 strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
                 strokeShift: Self.solidStrokeShift(width: width, height: height),
-                unitsPerDrawnPixel: unitsPerDrawnPixel)
+                unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage)
             matrices.contents().advanced(by: index * Self.valuesStride)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
         }
 
-        // 時刻と面の大きさは、フレームの中で変わらない。**大きさは実際に刻む
-        // 画素**である — 断片が受け取る位置 (`position`) がその数で来るので、
-        // 割って出す 0…1 の位置がここと食い違うと面からはみ出す
+        // 時刻と面の大きさは、フレームの中で変わらない。**大きさは出す画素**で、断片が
+        // 受け取る位置 (`position`) も出す画素へ換算して渡す (#1639)。割って出す 0…1 の
+        // 位置がここと食い違うと面からはみ出す
         let uniformsBuffer = try uniformsStorage.buffer(holding: 1)
         // 影の行列と設定も**フレームに 1 つ**で、列ごとには変わらない。揺らぎの種と
         // 細かさは、**断片が種を受け取る**ので、利用者が値として配線しなくても CPU の
         // `noise()` と同じ模様が出る
         var uniforms = Uniforms(
             time: time,
-            resolution: SIMD2(Float(pixelWidth), Float(pixelHeight)),
+            resolution: SIMD2(width, height),
             shadowBias: shadowBiasValue,
             shadowMatrix: bakedShadow?.matrix ?? matrix_identity_float4x4,
             shadowParams: SIMD4(
                 bakedShadow == nil ? 0 : 1, 1 / Float(bakedShadow?.map.detail ?? 1), 0, 0),
             noiseSeed: noiseSettings.seed,
             noiseOctaves: UInt32(noiseSettings.octaves),
-            noiseFalloff: noiseSettings.falloff)
+            noiseFalloff: noiseSettings.falloff,
+            unitsPerDrawnPixel: unitsPerDrawnPixel)
         uniformsBuffer.contents()
             .copyMemory(from: &uniforms, byteCount: MemoryLayout<Uniforms>.stride)
         // **焼いていなくても、読む先は必ず束ねる。** 束ねない口を作ると、断片が
@@ -3732,6 +3795,7 @@ public final class Canvas {
     /// 頂点と置き場所の置き場。``uploadGeometry()`` が満たし、列を積むときに読む。
     private struct GeometryBuffers {
         let flatVertices: any MTLBuffer
+        let coverages: any MTLBuffer
         let formInstances: any MTLBuffer
         let solidInstances: any MTLBuffer
         let flatInstances: any MTLBuffer

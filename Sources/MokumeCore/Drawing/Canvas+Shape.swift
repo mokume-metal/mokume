@@ -140,6 +140,7 @@ extension Canvas {
         // 記録したぶんを溜め場から抜く。**抜いてから状態を戻す** — 先に戻すと、
         // 記録した頂点が戻したあとの設定で閉じられる
         vertices.removeLast(vertices.count - vertexStart)
+        trimCoverage(to: vertexStart)
         solidVertices.removeLast(solidVertices.count - solidStart)
         solidIndices.removeLast(solidIndices.count - solidIndexStart)
         formInstances.removeLast(formInstances.count - formStart)
@@ -356,16 +357,26 @@ extension Canvas {
         let runRange = run.start..<(run.start + run.count)
         let matrix = transform.matrix * placement.transform.matrix
         let tint = placement.fill
-        // 差し替える輪郭 (頂点の並びの順)。色を掛けない置き場所は、ここで空になる
-        let replaced = (tint?.alpha ?? 1) < 1 ? candidates : []
+        // 差し替える輪郭 (頂点の並びの順)。色を掛けない置き場所は、半透明の分が空になる。
+        // 置いた後に細くなる輪郭は、色によらず組み直した頂点で差し替える (#1637)
+        let replaced = replacements(
+            in: runRange, of: shape, placedBy: matrix,
+            carved: (tint?.alpha ?? 1) < 1 ? candidates : [])
         if replaced.isEmpty {
             vertices.append(contentsOf: shape.vertices[runRange])
         } else {
             var cursor = run.start
-            for stroke in replaced {
-                vertices.append(contentsOf: shape.vertices[cursor..<stroke.range.lowerBound])
-                vertices.append(contentsOf: stroke.carved?.vertices ?? [])
-                cursor = stroke.range.upperBound
+            for (range, replacement, coverage) in replaced {
+                vertices.append(contentsOf: shape.vertices[cursor..<range.lowerBound])
+                // 組み直した細い輪郭の被覆は、積んだ先の番号へずらして付ける (#1637)
+                let at = vertices.count
+                vertices.append(contentsOf: replacement)
+                for span in coverage {
+                    noteCoverage(
+                        span.value,
+                        in: (at + span.range.lowerBound)..<(at + span.range.upperBound))
+                }
+                cursor = range.upperBound
             }
             vertices.append(contentsOf: shape.vertices[cursor..<runRange.upperBound])
         }
@@ -386,34 +397,85 @@ extension Canvas {
             let upper = min(whole.upperBound, runRange.upperBound)
             let placed: Range<Int>
             var carved: CarvedStroke?
+            var thin: ThinStrokeRecipe?
             if next < replaced.count, replaced[next].range == whole {
-                // 引いて積んだ頂点は、半透明の色を掛けて確定している。外側の記録へは、素材ではなく
-                // この頂点の区間として渡す
-                let count = replaced[next].carved?.vertices.count ?? 0
+                // 差し替えた頂点 (引いて積んだ・細さを補って組み直した) は、色と太さが確定している。
+                // 外側の記録へは、この頂点の区間として渡す
+                let count = replaced[next].vertices.count
                 let start = lower - run.start + base + shift
                 placed = start..<(start + count)
                 shift += count - whole.count
                 next += 1
+                // **細さは外側を置くまで決まらないので、組み直す素材は持ち越す** (#1637)。半透明の
+                // 色で引いて積んだ頂点に差し替えた輪郭も、外側を縮めて置けば細くなる
+                if recordingShape, let source = shape.strokeRanges[index].thin {
+                    thin = source.moved(by: matrix, tint: tint)
+                }
             } else {
                 placed = (lower - run.start + base + shift)..<(upper - run.start + base + shift)
-                // 外側の記録へは、引く素材も移して渡す (引くのは外側を置くとき)。**その場で描くときは
-                // 要らない** — 置く数だけ素材の箱を作ることになる。区間の一部だけを置くときは、素材も
-                // 一部になってしまうので持ち越さない
+                // 外側の記録へは、引く素材・組み直す素材も移して渡す (使うのは外側を置くとき)。
+                // **その場で描くときは要らない** — 置く数だけ素材の箱を作ることになる。区間の一部
+                // だけを置くときは、素材も一部になってしまうので持ち越さない
                 // (`Optional.map` に閉包を渡さず `if let` で受ける — 隔離の実行時検査を払う・#1779)
-                if recordingShape, lower == whole.lowerBound, upper == whole.upperBound,
-                    let source = shape.strokeRanges[index].carved
-                {
-                    carved = CarvedStroke(moving: source, by: matrix, tint: tint)
+                if recordingShape, lower == whole.lowerBound, upper == whole.upperBound {
+                    if let source = shape.strokeRanges[index].carved {
+                        carved = CarvedStroke(moving: source, by: matrix, tint: tint)
+                    }
+                    if let source = shape.strokeRanges[index].thin {
+                        thin = source.moved(by: matrix, tint: tint)
+                    }
                 }
             }
             if recordingShape {
-                recordedStrokeRanges.append(StrokeRange(placed, carved: carved))
+                recordedStrokeRanges.append(StrokeRange(placed, carved: carved, thin: thin))
                 continue
             }
             vertices.withUnsafeMutableBufferPointer { buffer in
                 for index in placed { buffer[index].position += 0.5 }
             }
         }
+    }
+
+    /// 平面の区間 `runRange` で、記録した頂点の代わりに積む輪郭 (頂点の並びの順)。
+    ///
+    /// - 置いた後に描く画素で 1 画素より細くなる輪郭は、広げて組み直した頂点 (#1637・
+    ///   ``Canvas/thinVertices(_:placedBy:cache:stroke:)``)。**記録の中で置き直すときは判断しない** —
+    ///   外側を置くまで行列が決まらないので、素材を外側の記録へ渡す
+    /// - そうでなく `carved` に含まれる輪郭は、引いて積んだ頂点 (半透明の色を掛けて置くとき)
+    ///
+    /// 区間を跨ぐ輪郭は差し替えない (素材は輪郭ひとつぶんなので、一部だけは置けない)。
+    private func replacements(
+        in runRange: Range<Int>, of shape: Shape, placedBy matrix: simd_float4x4,
+        carved: [StrokeRange]
+    ) -> [(range: Range<Int>, vertices: [ShapeVertex], coverage: [CoverageSpan])] {
+        // 形の中で最も細い輪郭でも細くならなければ、走査しない (いちばんよくある置き方)。
+        // 2 つの行列の最小の特異値の積は、積の行列の最小の特異値を越えない
+        let mayThin =
+            !recordingShape
+            && Self.thinnestDrawnWeight(shape.thinnestRecordedWeight, by: drawnLinear(matrix)) < 1
+        guard mayThin || !carved.isEmpty else { return [] }
+        var found: [(range: Range<Int>, vertices: [ShapeVertex], coverage: [CoverageSpan])] = []
+        var carvedIndex = 0
+        for index in shape.strokeRanges.indices {
+            let stroke = shape.strokeRanges[index]
+            guard !stroke.range.isEmpty, stroke.range.lowerBound >= runRange.lowerBound,
+                stroke.range.upperBound <= runRange.upperBound
+            else { continue }
+            while carvedIndex < carved.count,
+                carved[carvedIndex].range.lowerBound < stroke.range.lowerBound
+            {
+                carvedIndex += 1
+            }
+            if mayThin, let recipe = stroke.thin,
+                let rebuilt = thinVertices(
+                    recipe, placedBy: matrix, cache: shape.thinCache, stroke: index)
+            {
+                found.append((stroke.range, rebuilt.vertices, rebuilt.coverage))
+            } else if carvedIndex < carved.count, carved[carvedIndex].range == stroke.range {
+                found.append((stroke.range, carved[carvedIndex].carved?.vertices ?? [], []))
+            }
+        }
+        return found
     }
 
     /// 頂点を置き場所へ移す。行列を掛け、置き場所の色を掛ける。
@@ -629,8 +691,12 @@ extension Canvas {
                 recordedSolidStrokes.append(moved)
                 continue
             }
-            for (offset, corner) in rebuiltSolidStroke(moved).enumerated() {
+            let (corners, coverage) = rebuiltSolidStroke(moved)
+            if coverage < 1 { openBatchHasThinCoverage = true }
+            for (offset, corner) in corners.enumerated() {
                 solidVertices[moved.vertexStart + offset].position = corner
+                // 被覆も置く面で決まる (#1637)。線の頂点なので 0 にはならない
+                solidVertices[moved.vertexStart + offset].stroke = coverage
             }
         }
     }
