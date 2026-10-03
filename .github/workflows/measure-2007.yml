@@ -16,7 +16,7 @@ permissions:
 
 env:
   # loop: EffectArgumentTests だけを 30 回 / full: 全検査を条件ごとに数回
-  MOKUME_MEASURE_STAGE: loop3
+  MOKUME_MEASURE_STAGE: loop4
 
 jobs:
   measure:
@@ -110,6 +110,21 @@ jobs:
                   one keep-resources "$i" MOKUME_MEASURE_KEEP=resources -- --filter "$F"
                   one sleep50 "$i" MOKUME_MEASURE_DEINIT_SLEEP_MS=50 -- --filter "$F"
                   one cache-available "$i" MOKUME_MEASURE_CACHE_AVAILABLE=1 -- --filter "$F"
+                done
+              done
+              ;;
+            loop4)
+              F='MokumeCoreTests.EffectArgumentTests'
+              for round in 1 2 3; do
+                for k in $(seq 1 10); do
+                  i=$(( (round - 1) * 10 + k ))
+                  one base "$i" -- --filter "$F"
+                  one keep-queue "$i" MOKUME_MEASURE_KEEP=queue -- --filter "$F"
+                  one ring-2 "$i" MOKUME_MEASURE_QUEUE_RING=2 -- --filter "$F"
+                  one ring-8 "$i" MOKUME_MEASURE_QUEUE_RING=8 -- --filter "$F"
+                  one queue-pool "$i" MOKUME_MEASURE_QUEUE_POOL=1 -- --filter "$F"
+                  one sleep-after-50 "$i" MOKUME_MEASURE_SLEEP_AFTER_RELEASE_MS=50 -- --filter "$F"
+                  one sleep-after-200 "$i" MOKUME_MEASURE_SLEEP_AFTER_RELEASE_MS=200 -- --filter "$F"
                 done
               done
               ;;

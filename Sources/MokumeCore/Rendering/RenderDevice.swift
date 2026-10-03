@@ -142,7 +142,7 @@ import MokumeDiagnostics
     /// 絵が黙って壊れる)。投入はすべて漏斗を通すこと。
     ///
     /// [#845]: https://github.com/mokume-metal/mokume/issues/845
-    private let queue: any MTL4CommandQueue
+    private var queue: (any MTL4CommandQueue)!
 
     /// CPU が書いて、まだ GPU 側へ届けていない数の並びと画像 (#749)。届けるのは描き切り。
     let pendingUploads = PendingUploads()
@@ -447,8 +447,14 @@ import MokumeDiagnostics
         self.device = device
         self.shaders = ShaderLibraries(device: device)
 
-        guard let queue = device.makeMTL4CommandQueue() else {
-            throw .commandQueueUnavailable
+        let queue: any MTL4CommandQueue
+        if Self.queuePoolEnabled, let pooled = Self.queuePool.popLast() {
+            queue = pooled
+        } else {
+            guard let made = device.makeMTL4CommandQueue() else {
+                throw .commandQueueUnavailable
+            }
+            queue = made
         }
         self.queue = queue
 
@@ -490,6 +496,10 @@ import MokumeDiagnostics
         // SCRATCH (#2007 の切り分け・merge しない): 環境変数で、畳む物を畳まない
         if Self.keeps.contains("device"), Self.kept.count < 4000 { Self.kept.append(self) }
         if Self.keeps.contains("queue") { Self.kept.append(queue as AnyObject) }
+        if Self.queueRing > 0 {
+            Self.queueRingStore.append(queue)
+            if Self.queueRingStore.count > Self.queueRing { Self.queueRingStore.removeFirst() }
+        }
         if Self.keeps.contains("sets") {
             Self.kept.append(residencySet as AnyObject)
             Self.kept.append(drawableResidency as AnyObject)
@@ -505,6 +515,13 @@ import MokumeDiagnostics
     static let keeps: Set<String> = Set(
         (ProcessInfo.processInfo.environment["MOKUME_MEASURE_KEEP"] ?? "")
             .split(separator: ",").map(String.init))
+    static let queuePoolEnabled = ProcessInfo.processInfo.environment["MOKUME_MEASURE_QUEUE_POOL"] != nil
+    static var queuePool: [any MTL4CommandQueue] = []
+    static let sleepAfterReleaseMs: Int =
+        Int(ProcessInfo.processInfo.environment["MOKUME_MEASURE_SLEEP_AFTER_RELEASE_MS"] ?? "") ?? 0
+    static let queueRing: Int =
+        Int(ProcessInfo.processInfo.environment["MOKUME_MEASURE_QUEUE_RING"] ?? "") ?? 0
+    static var queueRingStore: [any MTL4CommandQueue] = []
     static let deinitSleepMs: Int =
         Int(ProcessInfo.processInfo.environment["MOKUME_MEASURE_DEINIT_SLEEP_MS"] ?? "") ?? 0
     nonisolated static let cacheAvailable =
@@ -524,6 +541,18 @@ import MokumeDiagnostics
     ///
     /// 詰まっていたら諦めて畳む。ここで投げる先は無いので、警告だけ残す。
     isolated deinit {
+        defer {
+            if Self.queuePoolEnabled, let pooled = queue {
+                pooled.removeResidencySet(residencySet)
+                pooled.removeResidencySet(drawableResidency)
+                Self.queuePool.append(pooled)
+                queue = nil
+            }
+            if Self.sleepAfterReleaseMs > 0 {
+                queue = nil
+                usleep(UInt32(Self.sleepAfterReleaseMs) * 1000)
+            }
+        }
         if Self.deinitSleepMs > 0 { usleep(UInt32(Self.deinitSleepMs) * 1000) }
         guard !isIdle else { return }
         if !signalReached(submissionCount) {
