@@ -343,11 +343,83 @@ class 通しで(unittest.TestCase):
         self.assertIn("-load-plugin-executable", passed)
         self.assertIn(f"{tool}#MokumeMacros", passed)
 
-    def test_追跡されていないファイルは見ない(self):
-        """他人の手元で結果が変わらないように、git が挙げたものだけを見る。"""
-        (self.root / "Sources/Untracked.swift").write_text("/// ```swift\n/// BROKEN()\n/// ```\n")
+    def test_無視されていない未追跡のファイルも見る(self):
+        """`git add` の前に打っても、add の後 (= CI が見る木) と同じ結果になる (#1998)。
+
+        SwiftPM は `Sources/` の未追跡の `.swift` もそのまま組むので、見る範囲を
+        ビルドに揃える。ここを追跡済みだけにすると、組めない例が手元では緑で
+        push して初めて CI で赤になる。"""
         self.置く("Sources/A.swift", "public func a() {}\n")
-        self.assertEqual(self.打つ().returncode, 0)
+        (self.root / "Sources/Untracked.swift").write_text("/// ```swift\n/// BROKEN()\n/// ```\n")
+        before = self.打つ()
+        self.assertEqual(before.returncode, 1, before.stdout)
+        self.assertIn("ng Sources/Untracked.swift:1", before.stdout)
+        # add の前後で同じ行が赤になる
+        subprocess.run(["git", "-C", str(self.root), "add", "Sources/Untracked.swift"], check=True)
+        after = self.打つ()
+        self.assertEqual(after.returncode, 1, after.stdout)
+        self.assertIn("ng Sources/Untracked.swift:1", after.stdout)
+
+    def test_無視されたファイルは見ない(self):
+        """生成物や手元の書き捨ては、他人の手元で結果が変わるので見ない (#566)。"""
+        (self.root / ".gitignore").write_text("Sources/Scratch.swift\n")
+        (self.root / "Sources/Scratch.swift").write_text("/// ```swift\n/// BROKEN()\n/// ```\n")
+        self.置く("Sources/A.swift", "public func a() {}\n")
+        result = self.打つ()
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    # 以下は「列挙に挙がったが、読めない・割れる」形。列挙を広げた (#1998) ので、
+    # index にだけ残るパスと、名前の綴りの癖が、読む段で落ちる側に回る
+
+    BROKEN_EXAMPLE = "/// ```swift\n/// BROKEN()\n/// ```\n"
+
+    def test_消した追跡済みのパスで落ちず_残りは見る(self):
+        """`git rm` していない削除は index に旧パスが残る。読もうとして落ちない。"""
+        self.置く("Sources/Gone.swift", self.BROKEN_EXAMPLE)
+        self.置く("Sources/A.swift", self.BROKEN_EXAMPLE)
+        (self.root / "Sources/Gone.swift").unlink()
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/A.swift:1", result.stdout)
+        self.assertNotIn("Gone.swift", result.stdout)
+
+    def test_改名した追跡済みのパスは新しい名前だけを見る(self):
+        self.置く("Sources/Old.swift", self.BROKEN_EXAMPLE)
+        (self.root / "Sources/Old.swift").rename(self.root / "Sources/New.swift")
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/New.swift:1", result.stdout)
+        self.assertNotIn("Old.swift", result.stdout)
+
+    def test_壊れた_symlink_で落ちず_残りは見る(self):
+        """エディタの退避リンク (`.#Foo.swift`) は、先が無いまま未追跡で残る。"""
+        (self.root / "Sources/.#Foo.swift").symlink_to("nowhere.swift")
+        self.置く("Sources/A.swift", self.BROKEN_EXAMPLE)
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/A.swift:1", result.stdout)
+
+    def test_空白を含む名前のファイルも見る(self):
+        self.置く("Sources/With Space.swift", self.BROKEN_EXAMPLE)
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/With Space.swift:1", result.stdout)
+
+    def test_非_ASCII_の名前のファイルも見る(self):
+        """`core.quotePath` の既定では、非 ASCII の名前は C 引用符つきで返る。
+        その形のまま `.swift` かを見ると、黙って検査の外へ落ちる (緑のまま)。"""
+        subprocess.run(
+            ["git", "-C", str(self.root), "config", "core.quotePath", "true"], check=True
+        )
+        self.置く("Sources/日本語.swift", self.BROKEN_EXAMPLE)
+        result = self.打つ()
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ng Sources/日本語.swift:1", result.stdout)
 
 
 class 綴りの共有(unittest.TestCase):

@@ -18,7 +18,8 @@
 書き手の出力が必ず短い (1 行しか出ないなど) と言える所は、行末に `# pipefail-ok: <理由>` を
 置けば許す。
 
-対象は、`pipefail` を含む `scripts/` の下のシェルスクリプトである。注釈の行は見ない。
+対象は、`pipefail` を含む `scripts/` の下のシェルスクリプト (追跡 + 未追跡 − 無視) である。
+注釈の行は見ない。
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -68,17 +69,28 @@ def early_readers(text):
 SOURCED = re.compile(r'^\s*(?:\.|source)\s+(?:"\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/|scripts/)([\w.-]+\.sh)', re.M)
 
 
-def pipefail_scripts():
+def pipefail_scripts(root=REPO):
     """pipefail を持つ scripts の下のシェルスクリプトと、それが読み込むライブラリ (#1900 の反証)。
 
     ライブラリ (guard-lib.sh など) は自分では pipefail を立てないが、読み込んだ側の pipefail の
     下で走る。
+
+    **見る範囲は「git add -A したときに CI の木になるもの」(追跡 + 未追跡 − 無視)** (#2015)。
+    追跡済みだけだと、新しい scripts/x.sh の違反が git add 前の手元では見つからず、push した
+    後の CI で初めて赤になる。挙がったパスは実在するとは限らない (`git rm` していない削除は
+    index に旧パスが残り、エディタの退避リンクは先が無いまま未追跡で残る) ので、読む前に
+    落とす。名前は -z で割る (非 ASCII の名前は C 引用符つきで返る)。
     """
     listed = subprocess.run(
-        ["git", "ls-files", "scripts/*.sh", "scripts/**/*.sh"],
-        cwd=REPO, capture_output=True, text=True, check=True,
-    ).stdout.split()
-    texts = {relative: (REPO / relative).read_text(encoding="utf-8") for relative in listed}
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+         "scripts/*.sh", "scripts/**/*.sh"],
+        cwd=root, capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    texts = {
+        relative: (root / relative).read_text(encoding="utf-8")
+        for relative in listed
+        if relative and (root / relative).is_file()
+    }
     targets = {relative for relative, text in texts.items() if "pipefail" in text}
     pending = list(targets)
     while pending:
@@ -128,6 +140,75 @@ class EarlyReaderPatternTest(unittest.TestCase):
     def test_a_stated_reason_allows_the_line(self):
         self.assertEqual(early_readers('v=$(tool --version | head -1)  # pipefail-ok: 1 行しか出ない'), [])
         self.assertEqual(len(early_readers('v=$(tool --version | head -1)  # pipefail-ok:')), 1)
+
+
+class PipefailScriptsListingTest(unittest.TestCase):
+    """見るスクリプトの範囲 (#2015)。基準は「git add -A したときに CI の木になるもの」。
+
+    追跡済みだけだと、新しい scripts/x.sh に書いた早く抜ける読み手が、git add 前の手元では
+    見つからず、push した後の CI で初めて赤になる。
+    """
+
+    OFFENDER = "set -euo pipefail\nif find . -name x | grep -q .; then echo y; fi\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        subprocess.run(["git", "init", "-q", "."], cwd=self.root, check=True)
+        # 使い捨てのリポジトリは手元の署名設定を継ぐ (#344)。ここは commit を
+        # 打たないので効き目は無いが、抜けを人の記憶で守らないための規約に従う
+        subprocess.run(
+            ["git", "config", "commit.gpgsign", "false"], cwd=self.root, check=True
+        )
+
+    def write(self, relative, text):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def names(self):
+        return [relative for relative, _ in pipefail_scripts(self.root)]
+
+    def test_untracked_script_is_seen_before_git_add(self):
+        self.write("scripts/new.sh", self.OFFENDER)
+        found = [
+            f"{relative}:{number}"
+            for relative, text in pipefail_scripts(self.root)
+            for number, _ in early_readers(text)
+        ]
+        self.assertEqual(found, ["scripts/new.sh:2"])
+
+    def test_ignored_script_is_not_seen(self):
+        self.write(".gitignore", "scripts/scratch.sh\n")
+        self.write("scripts/scratch.sh", self.OFFENDER)
+        self.write("scripts/real.sh", "set -euo pipefail\n")
+        self.assertEqual(self.names(), ["scripts/real.sh"])
+
+    def test_removed_tracked_script_is_skipped(self):
+        # `git rm` していない削除は index に旧パスが残る。読もうとして落ちない
+        self.write("scripts/gone.sh", "set -euo pipefail\n")
+        self.write("scripts/real.sh", "set -euo pipefail\n")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        (self.root / "scripts/gone.sh").unlink()
+        self.assertEqual(self.names(), ["scripts/real.sh"])
+
+    def test_broken_symlink_is_skipped(self):
+        # エディタの退避リンク (`.#x.sh`) は先が無いまま未追跡で残る
+        self.write("scripts/real.sh", "set -euo pipefail\n")
+        (self.root / "scripts/.#real.sh").symlink_to("nowhere.sh")
+        self.assertEqual(self.names(), ["scripts/real.sh"])
+
+    def test_names_with_space_and_non_ascii_are_seen(self):
+        # core.quotePath の既定では、非 ASCII の名前は C 引用符つきで返る
+        subprocess.run(
+            ["git", "config", "core.quotePath", "true"], cwd=self.root, check=True
+        )
+        self.write("scripts/with space.sh", "set -euo pipefail\n")
+        self.write("scripts/日本語.sh", "set -euo pipefail\n")
+        self.assertEqual(
+            sorted(self.names()), sorted(["scripts/with space.sh", "scripts/日本語.sh"])
+        )
 
 
 class PipefailScriptsTest(unittest.TestCase):

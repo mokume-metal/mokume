@@ -13,8 +13,8 @@
 コマンド例を大量に含む規範文書なので、偽陽性の害は本物の切れより大きい。
 
 一時ディレクトリに小さな git リポジトリを組んで実行する (検査は
-`git ls-files` で対象を集めるため、追跡下に置かないと何も見ない)。
-実行は make hooks-test (CI もこれを呼ぶ)。
+`git ls-files` で対象を集めるため、追跡下か、追跡されていないが無視もされていない
+場所に置かないと何も見ない)。実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
 import importlib.util
@@ -54,8 +54,10 @@ class DocsLinksTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
-    def run_check(self):
-        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+    def run_check(self, add=True):
+        # 既定は `git add -A` の後 (= CI が見る木)。`add=False` は add の前の手元
+        if add:
+            subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
         return subprocess.run(
             ["python3", str(SCRIPT)], cwd=self.root, capture_output=True, text=True
         )
@@ -153,6 +155,64 @@ class DocsLinksTest(unittest.TestCase):
         self.write("a.md", "# a\n\n[空白入り](name%20with%20space.md)\n")
         self.write("name with space.md", "# n\n")
         self.assertEqual(self.run_check().returncode, 0)
+
+    # --- 列挙: git add の前後・実在しないパス・名前の癖 (#2015) ---
+    # 基準は「git add -A したときに CI の木になるもの」。手元の緑が add の有無で
+    # 変わると、push して初めて CI で赤になる
+
+    def test_untracked_markdown_is_checked_before_git_add(self):
+        self.write("docs/new.md", "# new\n\n[壊れた](./nope.md)\n")
+        before = self.run_check(add=False)
+        self.assertEqual(before.returncode, 1, before.stdout)
+        self.assertIn("docs/new.md:3", before.stderr)
+        # add の後も同じ行が赤になる
+        after = self.run_check()
+        self.assertEqual(after.returncode, 1)
+        self.assertIn("docs/new.md:3", after.stderr)
+
+    def test_ignored_markdown_is_not_checked(self):
+        # 生成物や手元の書き捨ては CI の木に入らない。拾うと他人の手元で結果が変わる
+        self.write(".gitignore", "scratch.md\n")
+        self.write("scratch.md", "# s\n\n[壊れた](nope.md)\n")
+        self.write("a.md", "# a\n")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_removed_tracked_markdown_is_skipped_not_reported_unreadable(self):
+        # `git rm` していない削除は index に旧パスが残る。読めないと名乗って赤にしない
+        self.write("a.md", "# a\n")
+        self.write("gone.md", "# gone\n")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        (self.root / "gone.md").unlink()
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("読めない", r.stderr)
+
+    def test_broken_symlink_is_skipped(self):
+        # エディタの退避リンク (`.#a.md`) は先が無いまま未追跡で残る
+        self.write("a.md", "# a\n")
+        (self.root / ".#a.md").symlink_to("nowhere.md")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("読めない", r.stderr)
+
+    def test_name_with_space_is_checked(self):
+        self.write("name with space.md", "# n\n\n[壊れた](nope.md)\n")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("name with space.md:3", r.stderr)
+
+    def test_non_ascii_name_is_checked(self):
+        # core.quotePath の既定では、非 ASCII の名前は C 引用符つきで返る。
+        # その形のまま読もうとすると、実在するファイルを「読めない」と名乗る
+        subprocess.run(
+            ["git", "config", "core.quotePath", "true"], cwd=self.root, check=True
+        )
+        self.write("日本語.md", "# n\n\n[壊れた](nope.md)\n")
+        r = self.run_check(add=False)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("日本語.md:3", r.stderr)
+        self.assertNotIn("読めない", r.stderr)
 
     # --- 行番号 ---
 
