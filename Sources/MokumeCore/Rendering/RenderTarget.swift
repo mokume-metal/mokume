@@ -88,6 +88,16 @@ import MokumeDiagnostics
     /// 写しからテクスチャへ書き戻す blit を積んだ回数。``Pixels`` へ書いたフレームだけ増える。
     private(set) var pixelWriteBacksEncoded = 0
 
+    /// 書き戻しの組み立てを失敗させる差し込み (検査用)。製品の経路では常に `nil`。
+    ///
+    /// 書き戻しが投げるのは口 (encoder) を開けないときだけで、検査から自然には作れない。一方で
+    /// **失敗した回に書き込み待ちが残るか**は、止まっている間の書き戻し ([#1906]) が約束する
+    /// ことそのものなので、本物の失敗が起きる位置 (口を開く直前) に 1 つだけ穴を空けてある
+    /// (`Canvas.failureForTesting` と同じ形)。公開はしない。
+    ///
+    /// [#1906]: https://github.com/mokume-metal/mokume/issues/1906
+    var failPixelWriteBackForTesting: RenderFailure?
+
     /// テクスチャから写しへ読み戻す blit を積んだ回数。画素を読むフレームだけ増える。
     private(set) var pixelReadbacksEncoded = 0
 
@@ -265,6 +275,7 @@ import MokumeDiagnostics
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     func encodePixelWriteBack(into commands: any MTL4CommandBuffer) throws(RenderFailure) -> Bool {
         guard let mirror = pixelMirror, mirror.hasPendingWrites else { return false }
+        if let failPixelWriteBackForTesting { throw failPixelWriteBackForTesting }
         guard let encoder = commands.makeComputeCommandEncoder() else {
             throw .encoderUnavailable
         }
