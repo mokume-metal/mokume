@@ -507,6 +507,8 @@ UNSHOWN = {
     "plugins": "作者が書くのは 1 行だけで、中身は外のパッケージが書く",
     "attach": "plugins と同じ理由 (呼ぶのは機能を作る側で、作者は createCapture() のような口を呼ぶ)",
     "detach": "attach と同じ理由",
+    "createCapture": "カメラの絵は機材と許可に依り、--render と台帳で同じ絵を回せない (ADR-0028 決定 7)。注入の形 (frames:) はテストが回す",
+    "captureDevices": "一覧は繋がっている機材に依り、絵にならない",
     "loadShader": "ファイルから読む口で、見どころの「ファイルを直すと変わる」は自己完結したスケッチでは示せない",
     "loadComputation": "loadShader と同じ理由",
     "loadEffect": "loadShader と同じ理由",
@@ -726,9 +728,11 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "usesFrameHistory": READING,
     "defaultSolidDetail": READING,
     "output": (READING, "描き先 (RenderTarget) を返す。作るのは面の組み立て"),
+    "captureDevices": (READING, "繋がっているカメラの一覧を値で返す"),
     # 資源
     "createGraphics": RESOURCE,
     "createImage": RESOURCE,
+    "createCapture": RESOURCE,
     "createShape": RESOURCE,
     "loadImage": RESOURCE,
     "requestImage": RESOURCE,
@@ -863,17 +867,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["list", "check"])
     parser.add_argument("--graphs", required=True, type=pathlib.Path)
-    parser.add_argument("--module", default="MokumeCore")
+    # **複数を 1 つの集合として見る** (ADR-0042 決定 3)。アンブレラが再エクスポートする
+    # モジュールは利用者から見て 1 つの面なので、表の検査 (PORT_KINDS・UNSHOWN) も
+    # 全部を合わせた面に掛ける — モジュールごとに分けて掛けると、片方に無い口を
+    # 「表から外せ」と誤って上げる
+    parser.add_argument("--module", action="append", dest="modules")
     parser.add_argument("--version", default="(開発版)")
     parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument("--sketches", default=SKETCHES, type=pathlib.Path)
     parser.add_argument("--scene-test", default=SCENE_TEST, type=pathlib.Path)
     arguments = parser.parse_args()
 
-    symbols = load_symbols(arguments.graphs, arguments.module)
-    if not symbols:
-        print(diagnose_empty(arguments.graphs, arguments.module), file=sys.stderr)
-        return 1
+    modules = arguments.modules or ["MokumeCore"]
+    symbols: list[dict] = []
+    for module in modules:
+        found = load_symbols(arguments.graphs, module)
+        if not found:
+            print(diagnose_empty(arguments.graphs, module), file=sys.stderr)
+            return 1
+        symbols += found
 
     if arguments.action == "list":
         text = render(symbols, arguments.version)
@@ -887,7 +899,10 @@ def main() -> int:
     owned = load_owned_identifiers(arguments.graphs)
     problems = (
         check_onoff(symbols)
-        + check_forwarding(symbols, load_requirements(arguments.graphs, arguments.module))
+        + check_forwarding(
+            symbols,
+            set().union(*(load_requirements(arguments.graphs, module) for module in modules)),
+        )
         + check_doc_canon(symbols)
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))

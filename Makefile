@@ -348,8 +348,13 @@ params: build
 #
 # **組み直さない。** build が出したシンボルグラフをそのまま読む (examples と同じ形)。
 # 材料の出どころと、置き場を 1 本にした理由は SYMBOL_GRAPHS の宣言にある
+# 公開 API を見るモジュール。**アンブレラが再エクスポートする自前のモジュールを全部並べる**
+# (ADR-0042 決定 3)。並べ漏れたモジュールの公開シンボルは、検査にも一覧にも出ないまま
+# 黙って抜ける — 参照の面の REFERENCE_MODULES と同じ並びに保つ
+API_MODULES := MokumeCore MokumeCamera
+
 api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
-	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS)
+	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m))
 
 # 道具が話す言葉は英語 (ADR-0038 決定 1)。Sources/ の Swift でコメントの外に日本語が無いかを見る。
 # 組み上げは要らない — 字句だけを読む (#1160)
@@ -370,7 +375,7 @@ isolated-deinit: ## Sources/ の isolated deinit が隔離を明示した型の�
 	python3 scripts/check-isolated-deinit.py
 
 api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
-	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) \
+	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m)) \
 		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",)
 
 # 参照の面 (人が読む API の面)。**説明文 (`///`) が唯一の入力**で、面はその生成物
@@ -402,7 +407,7 @@ api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0
 # 組み立ての後に、置いたものが本当に出ているかを自分で確かめる — この道具のいちばん
 # 多い壊れ方は「変換は成功し、警告も出ず、出力にだけ存在しない」である。
 REFERENCE_CATALOG := Documentation/mokume.docc
-REFERENCE_MODULES := MokumeCore
+REFERENCE_MODULES := $(API_MODULES)
 # 面が名乗る名前。**ターゲット名ではなく、利用者が import する名前で名乗る**
 REFERENCE_SURFACE := mokume
 REFERENCE_GRAPHS := .build/reference-graphs

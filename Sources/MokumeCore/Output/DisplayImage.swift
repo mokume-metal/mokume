@@ -20,7 +20,7 @@
 /// 元の絵に戻る、が往復の約束になる。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-public struct DisplayImage: Equatable, Sendable {
+public nonisolated struct DisplayImage: Equatable, Sendable {
     /// 幅 (画素)。
     public let width: Int
     /// 高さ (画素)。
@@ -58,7 +58,7 @@ public struct DisplayImage: Equatable, Sendable {
     /// - Parameter factor: 縮小率 (1 = 実寸)。1 以上または 0 以下は実寸として扱う。
     ///
     /// [#382]: https://github.com/mokume-metal/mokume/issues/382
-    func scaled(by factor: Double) -> DisplayImage {
+    @MainActor func scaled(by factor: Double) -> DisplayImage {
         guard let small = NearestNeighbor.scaled(
             bytes, width: width, height: height, by: factor)
         else { return self }

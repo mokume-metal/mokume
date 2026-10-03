@@ -75,6 +75,13 @@ ADR-0027 決定 1 は既に「**面に何が出るかを、ビルドの副産物
 揃えると、2 本目以降が 1 本目を上書きして面が黙って痩せる。docc が見るのは中身の
 `module.name` だけで、ファイル名は見ない。
 
+**ただし、面の内側どうしの拡張のグラフは `@` を外して置く。** docc はファイル名の `A@B` を
+「モジュール B への拡張」と読む (`MokumeCore@Swift` が Swift の型への拡張として出るのは
+これによる)。`MokumeCamera@MokumeCore` をそのまま渡すと、B (`MokumeCore`) は面の名前へ
+名乗り直されていて居ないので、`Sketch` に足した口 (`createCapture`) のページが作られず、
+リンクだけが切れる (#1977 で踏んだ)。面の内側どうしなら 1 つの面に溶けるのが正しいので、
+`MokumeCamera-MokumeCore.symbols.json` として本体のグラフと同じ扱いにする。
+
 ## 名指ししたものが無ければ落ちる
 
 面が痩せた状態は、変換が成功し警告も出ないまま「そのページだけが存在しない」として
@@ -97,6 +104,16 @@ def graphs_of(source: pathlib.Path, module: str) -> list[pathlib.Path]:
         for path in source.glob("*.symbols.json")
         if path.name == f"{module}.symbols.json" or path.name.startswith(f"{module}@")
     )
+
+
+def placed_name(name: str, inside: set[str]) -> str:
+    """置くファイル名。**面の内側への拡張だけ `@` を外す** (冒頭の「モジュールが増えたら」)。"""
+    stem = name.split(".symbols.json")[0]
+    if "@" in stem:
+        module, extended = stem.split("@", 1)
+        if extended in inside:
+            return f"{module}-{extended}.symbols.json"
+    return name
 
 
 def place(
@@ -193,7 +210,7 @@ def main() -> int:
             continue
         for path in found:
             renamed, removed, seen = place(
-                path, arguments.surface, inside, omit, arguments.out / path.name
+                path, arguments.surface, inside, omit, arguments.out / placed_name(path.name, inside)
             )
             extensions += renamed
             dropped += removed

@@ -343,6 +343,14 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``ImageFailure``
 - ``DisplayImage``
 
+### カメラを使う
+
+- ``Sketch/createCapture(_:_:device:)``
+- ``Sketch/createCapture(frames:)``
+- ``Sketch/captureDevices()``
+- ``Capture``
+- ``CaptureDevice``
+
 ### 画素を読み書きする
 
 - ``Sketch/pixels``
@@ -556,6 +564,10 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``PluginRegistry``
 - ``Inlet``
 - ``Outlet``
+- ``Sketch/attach(_:)-4awn``
+- ``Sketch/attach(_:)-7p1nk``
+- ``Sketch/detach(_:)-256sb``
+- ``Sketch/detach(_:)-7cw8l``
 - ``ExternalInput``
 - ``SourceState``
 - ``SourceReport``
