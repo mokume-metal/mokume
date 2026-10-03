@@ -75,6 +75,15 @@ public struct Shape {
     /// ``solidStrokes`` のうち、**置くときに GPU で組める**組み込み立体の線 (#1756)。
     /// 焼いた頂点はそのまま持ち、組めるときだけその区間を積まずに GPU の列で描く。
     let gpuStrokes: [RetainedGPUStroke]
+    /// 記録した形 1 つずつの部品 (``SolidPart``)。区間は形自身の並びの番号で、添字を持つ区間なら
+    /// 読む順の並び (``solidIndices``)、持たなければ頂点の並び (``solidVertices``) で数える。
+    ///
+    /// **裏面が絵に出うるかは、記録したときのスタイルで決まる** (``SolidPart/showsBackFaces``)。
+    /// 置く側のスタイルではない — 区間の設定 (混ぜ方・貼る絵・断片) と同じく、形に焼き付く。
+    /// 置き場所の色が透けていれば、どの部品も立つ。立った部品は置き場所ごとに裏 → 表の順で描き、
+    /// 部品どうしは記録した順のまま描く
+    /// ([#1565](https://github.com/mokume-metal/mokume/issues/1565))。
+    let solidParts: [SolidPart]
 
     /// 区間を塗るもの一式。
     ///
@@ -172,7 +181,7 @@ public struct Shape {
         vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
         solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
         strokeRanges: [StrokeRange] = [], solidStrokes: [SolidStrokePiece] = [],
-        gpuStrokes: [RetainedGPUStroke] = []
+        gpuStrokes: [RetainedGPUStroke] = [], solidParts: [SolidPart] = []
     ) {
         self.vertices = vertices
         self.solidVertices = solidVertices
@@ -191,6 +200,7 @@ public struct Shape {
         thinnestRecordedWeight = thinnest
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
+        self.solidParts = solidParts
     }
 
     /// 頂点の区間 `runRange` に収まる輪郭のうち、引く素材を持つもの。頂点の並びの順。
@@ -207,6 +217,22 @@ public struct Shape {
         {
             found.append(stroke)
             floor = stroke.range.upperBound
+        }
+        return found
+    }
+
+    /// 立体の区間 `run` に収まる部品 (``solidParts``)。区間と同じ数え方 (添字の有無) のものだけ。
+    func solidParts(in run: Run) -> [SolidPart] {
+        guard run.source == .solid, !solidParts.isEmpty else { return [] }
+        let range =
+            run.isIndexed
+            ? run.indexStart..<(run.indexStart + run.indexCount) : run.start..<(run.start + run.count)
+        var found: [SolidPart] = []
+        for part in solidParts
+        where part.isIndexed == run.isIndexed && range.contains(part.range.lowerBound)
+            && part.range.upperBound <= range.upperBound
+        {
+            found.append(part)
         }
         return found
     }
@@ -245,6 +271,7 @@ public struct Shape {
         var strokeRanges: [StrokeRange] = []
         var solidStrokes: [SolidStrokePiece] = []
         var gpuStrokes: [RetainedGPUStroke] = []
+        var solidParts: [SolidPart] = []
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
         forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
 
@@ -274,6 +301,10 @@ public struct Shape {
                 stroke.vertices = (stroke.vertices.lowerBound + solidOffset)..<(stroke.vertices.upperBound + solidOffset)
                 gpuStrokes.append(stroke)
             }
+            // 部品も、数える並びのずれだけずらして持ち越す
+            for part in shape.solidParts {
+                solidParts.append(part.shifted(by: part.isIndexed ? indexOffset : solidOffset))
+            }
             for var run in shape.runs {
                 switch run.source {
                 case .flat: run.start += flatOffset
@@ -288,7 +319,7 @@ public struct Shape {
         return Shape(
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
             forms: forms, runs: runs, strokeRanges: strokeRanges, solidStrokes: solidStrokes,
-            gpuStrokes: gpuStrokes)
+            gpuStrokes: gpuStrokes, solidParts: solidParts)
     }
 
     /// 2 つの形を 1 つに畳む。

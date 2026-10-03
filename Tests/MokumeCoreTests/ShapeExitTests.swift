@@ -153,6 +153,7 @@ enum ShapeExit {
             "carriedOverAmount": "持ち越しの区間で置いた量の印。フレームの頭の検めが読む (#1672)",
             "shadowMapsBuilt": count,
             "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
+            "drawsEncodedInLastFrame": count,
             "spheresFromUnit": count,
             "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
             "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,

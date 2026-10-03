@@ -316,6 +316,8 @@ extension Canvas {
                 instances: open.external?.instances,
                 indirectArguments: open.external?.arguments,
                 cullMode: cullMode(for: open),
+                backFaceParts: backFaceParts(closing: open),
+                backFaceInstances: open.external == nil ? open.backFaceInstances : [],
                 frontFacing: frontFacing(for: open),
                 isMirrored: open.isMirrored,
                 solidSource: open.source,
@@ -345,6 +347,39 @@ extension Canvas {
         return .back
     }
 
+    /// 閉じようとしている立体の列の、裏 → 表の順で描きうる部品 (``Batch/backFaceParts``)。
+    ///
+    /// 置き場所で置く組み込みの形・モデルの列は、形全体を 1 つの部品にする。部品そのものには印を
+    /// 付けず、印は置き場所の側 (``OpenSolid/backFaceInstances``) が持つ。印の付いた置き場所が無い
+    /// 列と、向きの求まらないモデルの列は部品にしない。それ以外の列は、置いたときに記録した部品
+    /// (``OpenSolid/parts``) をそのまま渡す。外の置き場から取る列 (粒) と GPU の線の列は、個数を
+    /// GPU が書く・帯は部品でないので、部品を持たない。
+    private func backFaceParts(closing open: OpenSolid) -> [SolidPart] {
+        guard open.external == nil, open.strokeGeometry == nil else { return [] }
+        switch open.source {
+        case .mesh, .model:
+            guard let winding = open.meshWinding, winding != .unknown else { return [] }
+            return [
+                SolidPart(
+                    range: open.vertexStart..<(open.vertexStart + open.vertexCount), isIndexed: false,
+                    showsBackFaces: false, insideOut: winding == .inward)
+            ]
+        case .retained, .freeform:
+            return open.parts
+        }
+    }
+
+    /// 置き場所 1 つが、裏面を絵に出しうるか。**裏 → 表で描く印を付ける口は、どれもこれを通る**
+    /// (``Batch/backFaceParts``)。
+    ///
+    /// `styled` は置いたスタイルが裏面を絵に出しうるか (``placementMayShowBackFaces``)。保持した形を
+    /// 置くときは偽を渡す — 記録したときのスタイルは部品の印 (``SolidPart/showsBackFaces``) に残って
+    /// いて、置く側のスタイルは形に効かない。置き場所の色 (``SolidInstance/color``) が透けていれば、
+    /// スタイルによらず裏面が絵に出うる。
+    func placementShowsBackFaces(_ placement: SolidInstance, styled: Bool) -> Bool {
+        styled || placement.color.w < 1
+    }
+
     /// いまのスタイルで置く形は、裏面が絵に出うるか (``cullMode(for:)``)。
     ///
     /// 出うるのは、次のどれか 1 つでも当たる形である: 半透明の塗り (奥の面が手前の面を
@@ -354,6 +389,13 @@ extension Canvas {
     /// **形を置くときに読み、列へ記録する** (``OpenSolid/mayShowBackFaces``)。4 つとも同じ
     /// 扱いにしてある — 混ぜ方と断片は変えれば列を閉じるので、いまは閉じる時点に読んでも
     /// 同じ答えになるが、読み方を 1 つにしておけば、閉じない設定が混ざっても食い違わない。
+    ///
+    /// 記録した置き場所は、両面で描くだけでなく、4 つの条件のどれでも**置き場所ごと・部品ごとに
+    /// 裏 → 表の順で描く** (``Batch/backFaceParts``)。立体は奥行きを書くので、1 回で描くと手前の
+    /// 面が奥の面を捨て、奥の面が出るかが形の向きで変わる
+    /// ([#1549](https://github.com/mokume-metal/mokume/issues/1549))。保持した形の中で置いた形
+    /// には、記録したときのこの値が部品 (``SolidPart/showsBackFaces``) として残り、置くときの
+    /// スタイルではなく記録したときのスタイルで判じる。
     var placementMayShowBackFaces: Bool {
         style.fill.alpha < 1 || style.picture != nil || style.blendMode != .blend
             || currentShader != nil
