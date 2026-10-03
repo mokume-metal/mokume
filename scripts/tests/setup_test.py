@@ -4,10 +4,10 @@
 """`make setup` が python3 の版を確かめることを見る (#2030)。
 
 `scripts/` の Python は 3.10 以上を前提に書かれている (`release.py` の `match`、
-`run-hooks-tests.py` の評価時の `int | None`)。macOS 同梱の python3 は 3.9 で、
-以前の `setup` は python3 が**在るか**しか見なかったので、3.9 が PATH の先にある
-環境では `ok` を出した後に `make changelog-lint` / `make hooks-test` が構文と評価の
-誤りで落ちていた。
+`run-hooks-tests.py` と `check-agents-md-size.py` の評価時の `int | None`)。macOS 同梱の
+python3 は 3.9 で、以前の `setup` は python3 が**在るか**しか見なかったので、3.9 が PATH の
+先にある環境では `ok` を出した後に `make changelog-lint` / `make hooks-test` /
+`make agents-md-size` が構文と評価の誤りで落ちていた。
 
 本物の Makefile の `setup` を、版だけを偽った python3 を PATH の先頭に置いて走らせる。
 偽の python3 は本物へ処理を渡し、渡す前に `sys.version_info` だけを差し替える — 版の

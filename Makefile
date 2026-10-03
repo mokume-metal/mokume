@@ -19,7 +19,7 @@ SHELL := /bin/bash
 export REUSE_ENCODING_MODULE := chardet
 
 # python3 は 3.10 以上 (#2030)。scripts/ が match 文や評価時の `X | None` を使うので、
-# macOS 同梱の 3.9 (xcode-select で入るもの) では changelog-lint と hooks-test が落ちる
+# macOS 同梱の 3.9 (xcode-select で入るもの) では changelog-lint・hooks-test・agents-md-size が落ちる
 setup: ## 開発ツールを確認する
 	@command -v python3 >/dev/null 2>&1 || { echo "python3 が見つからない: brew install python (3.10 以上)"; exit 1; }
 	@python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || { \
