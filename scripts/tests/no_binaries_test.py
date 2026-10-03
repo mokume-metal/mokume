@@ -53,7 +53,7 @@ class NoBinariesTest(unittest.TestCase):
         if add:
             self.add_all()
         return subprocess.run(
-            ["bash", str(SCRIPT)], cwd=self.root, capture_output=True, text=True
+            ["/bin/bash", str(SCRIPT)], cwd=self.root, capture_output=True, text=True
         )
 
     # --- 赤くなるべきもの ---
