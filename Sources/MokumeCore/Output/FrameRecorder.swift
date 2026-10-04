@@ -136,8 +136,14 @@ final class FrameRecorder: Outlet {
         case droppedFrames
         /// 動画を書けなかった・閉じられなかった。
         case movieFailure
-        /// 静止画・連番を書けなかった。
-        case imageFailure
+        /// 静止画・連番を書けなかった。**行き先ごとに 1 度言う** (``noteImageFailure(_:)``・[#1709])。
+        ///
+        /// 値は同じファイルを指す綴りを揃えた行き先 (``FrameWriter/destination(of:)``)。
+        ///
+        /// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
+        case imageFailure(destination: String)
+        /// 上限 (``imageFailureLimit``) を越えて名乗らなかった書き損じが、何枚あったか。
+        case unnamedImageFailures
         /// 絵を貰えないまま終わった `save()` の予約が残っていた。
         case unwrittenShots
     }
@@ -156,8 +162,53 @@ final class FrameRecorder: Outlet {
     /// 黙ること**ではない。2 本目の動画が閉じられなかったのに 1 本目で言ったからと
     /// 黙れば、[#789] が塞いだ穴をそのまま作り直す。
     ///
+    /// ## 静止画・連番の書き損じの名乗りの単位 ([#1709])
+    ///
+    /// 書き損じは**種類ごとではなく行き先ごとに** 1 度名乗る。`save()` は作者が明示に頼む
+    /// 書き出しで、2 つ目の行き先で転んだことを 1 つ目を言ったからと黙ると、頼んだ 1 枚が
+    /// 誰にも知らされずに失われる (窓で走らせる経路は ``hasFailedToWrite`` を読まない)。
+    /// 同じ行き先で続けて転んでも名乗りは 1 度である。
+    ///
+    /// 毎フレーム違う名前へ転ぶ形 (連番・`save("shots/\(frameCount).png")`) で行が毎フレーム
+    /// 出ないよう、名乗る行き先の数は控え 1 つにつき ``imageFailureLimit`` までにする。越えた
+    /// 分は名乗らずに数え、**閉じるとき** (``close(_:through:)``) **と控えを空に戻すとき**
+    /// (ここ) に「ほかに N 枚書けなかった」を 1 行で出す。控えは録りを始めるまで空に
+    /// 戻らないので、録らずに `save()` だけを使うスケッチでは、上限は走り全体に掛かる。
+    ///
     /// [#789]: https://github.com/mokume-metal/mokume/issues/789
-    private func forgetWarnings() { warnings = WarningLog<Warning>() }
+    /// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
+    private func forgetWarnings() {
+        reportUnnamedImageFailures()
+        warnings = WarningLog<Warning>()
+    }
+
+    /// 1 つの控えの間に、書き損じを名乗る行き先の数の上限 (``forgetWarnings()``)。
+    static let imageFailureLimit = 5
+
+    /// 上限を越えて名乗らなかった書き損じの枚数。控えと一緒に空に戻る
+    /// (``reportUnnamedImageFailures()``)。
+    private var unnamedImageFailures = 0
+
+    /// 上限を越えて名乗らなかった書き損じがあれば、その枚数を 1 行で言う。
+    private func reportUnnamedImageFailures() {
+        guard unnamedImageFailures > 0 else { return }
+        let count = unnamedImageFailures
+        unnamedImageFailures = 0
+        warnOnce(
+            .unnamedImageFailures,
+            "\(count) more image\(count == 1 ? "" : "s") could not be written "
+                + "(only the first \(Self.imageFailureLimit) destinations that failed are named)")
+    }
+
+    /// その行き先の書き損じで名乗った文面。まだ名乗っていなければ `nil`。**検査が読む。**
+    func imageFailureMessage(for path: String) -> String? {
+        warnings.message(for: .imageFailure(destination: FrameWriter.destination(of: path)))
+    }
+
+    /// 書き損じを名乗った行き先の数。**検査が読む。**
+    var namedImageFailures: Int {
+        warnings.count { if case .imageFailure = $0 { true } else { false } }
+    }
 
     /// 頼まれているものが何も無いか。
     var isIdle: Bool { oneShots.isEmpty && !isRecording }
@@ -255,25 +306,42 @@ final class FrameRecorder: Outlet {
         shotFailure = nil
         sequenceFailure = nil
         movieFailure = nil
-        for failure in [shotOutcomes.take()?.failure, writer.takeFailure()].compactMap({ $0 }) {
-            noteImageFailure(failure)
-        }
+        takeImageFailures()
         if let failure = movie?.takeFailure() {
             hasFailedToWrite = true
             warnOnce(.movieFailure, failure)
         }
     }
 
-    /// 静止画・連番の書き損じを 1 度名乗り、書き出しに穴があったことを残す。
+    /// 静止画・連番の書き損じを行き先ごとに 1 度名乗り、書き出しに穴があったことを残す。
     ///
     /// **外されるまで黙らない** ([#1626])。書き損じが 1 度きりなら撮る係は外れないので、
     /// 外したときの診断は出ない。ここで言わなければ、書けなかった 1 枚は閉じるまで誰にも
     /// 知らされない (閉じる口は、ここで取り出した後の知らせしか読まない)。
     ///
+    /// 名乗る行き先の数には上限がある。越えた分は数えて、後で 1 行にまとめる
+    /// (``forgetWarnings()``・[#1709])。
+    ///
     /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
-    private func noteImageFailure(_ failure: String) {
+    /// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
+    private func noteImageFailure(_ failure: WriteFailure) {
         hasFailedToWrite = true
-        warnOnce(.imageFailure, failure)
+        let warning = Warning.imageFailure(destination: failure.destination)
+        guard !warnings.hasWarned(warning) else { return }
+        guard namedImageFailures < Self.imageFailureLimit else {
+            unnamedImageFailures += 1
+            return
+        }
+        warnOnce(warning, failure.reason)
+    }
+
+    /// 静止画・連番の口 (1 枚ものと連番) に残った知らせを取り出し、書き損じを全部名乗る。
+    ///
+    /// 読むのは、``absorbOutcomes()`` の後にもう誰も取りに来ない口 — 仕切り直しと閉じ際である。
+    private func takeImageFailures() {
+        for outcome in [shotOutcomes.take(), writer.takeOutcome()].compactMap({ $0 }) {
+            outcome.failures.forEach(noteImageFailure)
+        }
     }
 
     /// 連番か動画を止める。**頼んだ全部がファイルになってから返る。**
@@ -403,7 +471,8 @@ final class FrameRecorder: Outlet {
     /// 別の書き込みがまだ決着していないことは、保つ理由にならない (その書き込みの知らせは、
     /// その書き込みが持ってくる)。
     ///
-    /// 静止画・連番の書き損じは、取り出したその場で名乗る (``noteImageFailure(_:)``)。
+    /// 静止画・連番の書き損じは、取り出したその場で 1 枚ずつ名乗る (``noteImageFailure(_:)``)。
+    /// 同じ間に幾つ転んでも、器が全部を持ってくる (``OutcomeSlot/fail(_:at:)``・[#1709])。
     ///
     /// **`??` で繋がない** ([#789])。左が非 nil なら右を評価しないので、静止画が
     /// 転んだフレームでは動画の知らせを取り出さず、最終フレームだと拾う機会が無い。
@@ -411,12 +480,14 @@ final class FrameRecorder: Outlet {
     /// [#789]: https://github.com/mokume-metal/mokume/issues/789
     /// [#1272]: https://github.com/mokume-metal/mokume/issues/1272
     /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
+    /// [#1709]: https://github.com/mokume-metal/mokume/issues/1709
     func absorbOutcomes() {
-        shotFailure = shotOutcomes.take()?.failure
-        if let failure = shotFailure { noteImageFailure(failure) }
+        let shot = shotOutcomes.take()
+        shotFailure = shot?.failure
+        shot?.failures.forEach(noteImageFailure)
         if let outcome = writer.takeOutcome() {
             sequenceFailure = outcome.failure
-            if let failure = outcome.failure { noteImageFailure(failure) }
+            outcome.failures.forEach(noteImageFailure)
         }
         if let outcome = movie?.takeOutcome() { movieFailure = outcome.failure }
         if failure != nil { hasFailedToWrite = true }
@@ -458,9 +529,7 @@ final class FrameRecorder: Outlet {
         // 読むのは**閉じ終えた呼び出しだけ**で、まだ待っている呼び出しは取らない
         //
         // [#789]: https://github.com/mokume-metal/mokume/issues/789
-        for failure in [shotOutcomes.take()?.failure, writer.takeFailure()].compactMap({ $0 }) {
-            noteImageFailure(failure)
-        }
+        takeImageFailures()
         // **果たせなかった予約を黙って捨てない** ([#1300])。`receive(_:)` はもう来ないので、
         // ここに残っているものは 1 枚もファイルにならない。頼んだのに何の音も立てずに
         // 消えるのが、いちばん分かりにくい壊れ方である
@@ -472,6 +541,8 @@ final class FrameRecorder: Outlet {
                     + "so nothing was written")
             oneShots.removeAll()
         }
+        // 上限を越えて名乗らなかった書き損じを、ここで 1 行にまとめる (#1709)
+        reportUnnamedImageFailures()
         return true
     }
 }
