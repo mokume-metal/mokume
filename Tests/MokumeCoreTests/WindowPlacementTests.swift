@@ -136,6 +136,27 @@ struct WindowPlacementTests {
         }
     }
 
+    /// **既定の 480x270 どうしなら、これまでと同じずらし量** (`-(270 + 44)`)。作品の窓が
+    /// 高くなれば、そのぶん下へ (#1624)。
+    @Test("プレビューのずらし量は 2 枚の丈から決まり、既定どうしならこれまでと同じ")
+    func previewNudgeFollowsBothHeights() {
+        #expect(SharedFramePreview.nudge == NSSize(width: 0, height: -(270 + 44)))
+        #expect(
+            WindowPlacement.nudgeBelow(artworkHeight: 270, previewHeight: 270)
+                == SharedFramePreview.nudge)
+        #expect(
+            WindowPlacement.nudgeBelow(artworkHeight: 720, previewHeight: 270)
+                == NSSize(width: 0, height: -(495 + 44)))
+    }
+
+    @Test("ちょうど中央に置く原点")
+    func centresExactly() {
+        let visible = NSRect(x: 0, y: 25, width: 1440, height: 875)
+        #expect(
+            WindowPlacement.centred(NSSize(width: 480, height: 298), in: visible)
+                == NSPoint(x: 480, y: 313))
+    }
+
     /// 画面を大きく超える指定 (完了条件 4)。**断らずに縮め、縮めたことを言う。**
     @Test("画面を超える指定は、縦横比を保って縮めて開き、そのことを 1 行言う")
     @MainActor

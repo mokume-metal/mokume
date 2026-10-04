@@ -86,7 +86,8 @@ enum WindowPlacement {
     }
 
     /// 開く大きさの指定を窓へ当てる。**指定が前と変わっていたときだけ**、覚えていた大きさと
-    /// 位置を捨てて、指定の大きさで中央へ置き直す。
+    /// 位置を捨てて、指定の大きさで中央へ置き直す (``centred(_:in:)`` — プレビューが
+    /// その位置を計算で辿れるように、ちょうど中央に置く)。
     ///
     /// ## なぜ変わったときだけか
     ///
@@ -126,19 +127,88 @@ enum WindowPlacement {
         guard !window.styleMask.contains(.fullScreen),
             takesNewRequest(requested, autosaveName: autosaveName, defaults: defaults)
         else { return false }
-        var size = requested
-        if let screen = window.screen ?? NSScreen.main {
-            let usable = window.contentRect(forFrameRect: screen.visibleFrame).size
-            size = fitted(requested, within: usable)
-            if size != requested {
-                warn(
-                    "The window asked for \(Int(requested.width))×\(Int(requested.height)) points, "
-                        + "more than the screen holds — opening it at "
-                        + "\(Int(size.width))×\(Int(size.height)) instead (windowScale)")
-            }
+        guard let visible = (window.screen ?? NSScreen.main)?.visibleFrame else {
+            // 画面の無い実行環境。縮める先も中央も無いので、大きさだけ当てる
+            window.setContentSize(requested)
+            return true
+        }
+        let size = fitted(requested, within: window.contentRect(forFrameRect: visible).size)
+        if size != requested {
+            warn(
+                "The window asked for \(Int(requested.width))×\(Int(requested.height)) points, "
+                    + "more than the screen holds — opening it at "
+                    + "\(Int(size.width))×\(Int(size.height)) instead (windowScale)")
         }
         window.setContentSize(size)
-        window.center()
+        window.setFrameOrigin(centred(window.frame.size, in: visible))
+        return true
+    }
+
+    // MARK: - プレビューを作品の窓の下へ (#1624)
+
+    /// プレビューと作品の窓の間に足す量 (点)。窓枠 (題名の帯) と隙間のぶん。
+    static let previewGap: CGFloat = 44
+
+    /// 中央に置いた作品の窓の真下へプレビューを出すには、同じく中央に置いたプレビューを
+    /// どれだけずらすか。**2 枚の丈から決める。**
+    ///
+    /// かつては「2 枚が同じ丈 (480x270) で中央に出る」ことを前提に、プレビューの丈だけから
+    /// 決めていた。作品の窓が描く大きさ × 倍率で開くようになったので (``honour(_:in:autosaveName:defaults:warn:)``)、
+    /// 作品の窓が高いスケッチでは 2 枚が重なる。既定の 480x270 どうしなら、これまでと同じ
+    /// 量 (`-(270 + 44)`) になる。
+    ///
+    /// - Parameters:
+    ///   - artworkHeight: 作品の窓の中身の丈。
+    ///   - previewHeight: プレビューの中身の丈。
+    static func nudgeBelow(artworkHeight: CGFloat, previewHeight: CGFloat) -> NSSize {
+        NSSize(width: 0, height: -((artworkHeight + previewHeight) / 2 + previewGap))
+    }
+
+    /// 枠の大きさの窓を、使える範囲のちょうど中央に置くときの原点。
+    ///
+    /// **`NSWindow.center()` を使わない。** あちらは「中央よりやや上」で、どれだけ上かは
+    /// 文書に無い。作品の窓とプレビューは別の窓 (別の台) なので、プレビューが作品の窓の
+    /// 位置を計算で知るには、置き方が式で書けている必要がある。
+    static func centred(_ frameSize: NSSize, in visible: NSRect) -> NSPoint {
+        NSPoint(
+            x: (visible.midX - frameSize.width / 2).rounded(.down),
+            y: (visible.midY - frameSize.height / 2).rounded(.down))
+    }
+
+    /// 作品の窓が頼まれた大きさで中央に置き直されたとき、**プレビューをその真下へ置き直す。**
+    ///
+    /// 作品の窓とプレビューは同じ区画を独立に見る兄弟で、互いの窓を知らない
+    /// (``SharedFramePreview`` の「作品の窓の子ではない」)。そこで作品の窓が置き直される条件
+    /// (``honour(_:in:autosaveName:defaults:warn:)`` — 指定が変わったとき) を、プレビューも
+    /// 自分の名前で同じ指定を覚えて辿る。作品の窓の大きさは、同じ画面へ同じ縮め方
+    /// (``fitted(_:within:)``) を当てて求める。
+    ///
+    /// **プレビューの大きさは変えない。** 動かすのは位置だけで、指定が変わらなければ
+    /// 手で動かした位置が残る。
+    ///
+    /// - Parameters:
+    ///   - requestedArtwork: 作品の窓が頼まれた大きさ (描く大きさ × 倍率)。
+    ///   - window: プレビューの窓。
+    ///   - autosaveName: プレビューの位置を覚えている名前。
+    ///   - defaults: 指定を覚える先。**検査から差し替える。**
+    /// - Returns: 置き直したか。
+    @MainActor
+    @discardableResult
+    static func placeBeneathArtwork(
+        _ requestedArtwork: NSSize, window: NSWindow, autosaveName: String,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard !window.styleMask.contains(.fullScreen),
+            takesNewRequest(requestedArtwork, autosaveName: autosaveName, defaults: defaults),
+            let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+        else { return false }
+        // 作品の窓も同じ形の枠 (``makeWindow``) なので、中身の範囲は自分の窓から求めてよい
+        let artwork = fitted(
+            requestedArtwork, within: window.contentRect(forFrameRect: visible).size)
+        let origin = centred(window.frame.size, in: visible)
+        let nudge = nudgeBelow(
+            artworkHeight: artwork.height, previewHeight: window.contentLayoutRect.height)
+        window.setFrameOrigin(NSPoint(x: origin.x + nudge.width, y: origin.y + nudge.height))
         return true
     }
 

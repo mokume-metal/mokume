@@ -35,7 +35,12 @@ public final class SharedFramePreview {
     /// **作品の窓の下へ出す。** どちらも同じ大きさで中央へ出るので、ずらさないと 2 枚が
     /// 寸分違わず重なり、窓が 1 つしか無いように見える (実測)。丈のぶんに窓枠と隙間を
     /// 足しただけずらす。
-    static let nudge = NSSize(width: 0, height: -(defaultSize.height + 44))
+    ///
+    /// 効くのは差し出し元が来る前の 1 回で、作品の窓はまだ既定の大きさである。差し出し元が
+    /// 窓の倍率を名乗れば、作品の窓はその大きさで置き直され、プレビューもその真下へ
+    /// 置き直す (``WindowPlacement/placeBeneathArtwork(_:window:autosaveName:defaults:)``・#1624)。
+    static let nudge = WindowPlacement.nudgeBelow(
+        artworkHeight: SharedFrameWindow.defaultSize.height, previewHeight: defaultSize.height)
 
     private let stage: SharedFrameStage
     private let notice = NoticeOverlay()
@@ -56,7 +61,8 @@ public final class SharedFramePreview {
             gpu: gpu, facet: facet,
             look: SharedFrameStage.Look(
                 title: title, autosaveName: WindowPlacement.previewAutosaveName,
-                defaultSize: Self.defaultSize, nudge: Self.nudge))
+                defaultSize: Self.defaultSize, nudge: Self.nudge,
+                placesBeneathRequestedArtwork: true))
     }
 
     /// プレビューが拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行**で、

@@ -56,6 +56,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         /// 従うのは指定が前と変わったときだけで、変わらなければ手で動かした大きさと位置が
         /// 残る (``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)``)。
         var followsRequestedSize = false
+        /// 作品の窓が頼まれた大きさで置き直されたとき、その真下へ置き直すか。
+        ///
+        /// **プレビューだけが置き直す。** 作品の窓が描く大きさ × 倍率で開くので、既定の
+        /// 大きさを前提にした初めの位置 (``nudge``) のままだと、作品の窓が高いスケッチで
+        /// 2 枚が重なる (``WindowPlacement/placeBeneathArtwork(_:window:autosaveName:defaults:)``)。
+        var placesBeneathRequestedArtwork = false
     }
 
     /// × を押された人に問う言葉。
@@ -392,19 +398,23 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         onGenerationPromoted?()
     }
 
-    /// 出す世代が頼む窓の大きさに合わせる (``Look/followsRequestedSize``)。
+    /// 出す世代が頼む窓の大きさに合わせる (``Look/followsRequestedSize``)。プレビューなら、
+    /// その大きさで置き直された作品の窓の真下へ動く (``Look/placesBeneathRequestedArtwork``)。
     ///
     /// **乗り換えのたびに呼ぶが、当たるのは指定が変わったときだけである。** 保存のたびに
     /// 窓が戻らないこと ([#679](https://github.com/mokume-metal/mokume/issues/679)) は
     /// ``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)`` が持つ。
     private func followRequestedSize(of generation: Source) {
-        guard look.followsRequestedSize, let scale = generation.windowScale, let window else {
-            return
+        guard let scale = generation.windowScale, let window else { return }
+        let requested = WindowPlacement.requestedSize(
+            width: generation.width, height: generation.height, scale: scale)
+        if look.followsRequestedSize {
+            WindowPlacement.honour(
+                requested, in: window, autosaveName: look.autosaveName, defaults: defaults)
+        } else if look.placesBeneathRequestedArtwork {
+            WindowPlacement.placeBeneathArtwork(
+                requested, window: window, autosaveName: look.autosaveName, defaults: defaults)
         }
-        WindowPlacement.honour(
-            WindowPlacement.requestedSize(
-                width: generation.width, height: generation.height, scale: scale),
-            in: window, autosaveName: look.autosaveName, defaults: defaults)
     }
 
     /// 開く大きさの指定を覚える先。**検査から差し替える** — 既定のままだと、検査を走らせた
