@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 4 が承認の根拠として引いていた `verify: human` の判定 / 改訂 (2026-09-09): 決定 2 と影響節が挙げるラベルを現況に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733))
+採用 (2026-08-27) / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 4 が承認の根拠として引いていた `verify: human` の判定 / 改訂 (2026-09-09): 決定 2 と影響節が挙げるラベルを現況に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂あり (本文の「改訂 (日付)」見出し)
 
 ## 文脈
 
