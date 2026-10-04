@@ -469,8 +469,8 @@ extension Canvas {
     /// 置いた後に描き場所が描き換わったとき先に置いた図形まで後の絵になり、描き切る前の
     /// 描き場所を読んだ注意も「いつ置いたか」ではなく「いつ閉じたか」で決まってしまう。
     ///
-    /// 呼ぶのは図形を積む口 — 平面は ``beginFlat()`` (頂点はどれもここを通る) と、畳んだ
-    /// 置き場所を足す口、立体は ``beginSolids()`` (置く口はどれもここを通る)。基本図形の列は
+    /// 呼ぶのは図形を積む口 — 平面は ``beginFlat()`` (頂点はどれもここを通る) と、畳む口の
+    /// 入口 (``draw(folding:at:outline:)``。溜め場を組み替える前に呼ぶ・#2042)、立体は ``beginSolids()`` (置く口はどれもここを通る)。基本図形の列は
     /// 利用者の断片で塗らない (``formAllowed(fills:)``) ので呼ばない。**保持した形を置いている
     /// 間は、記録した塗りの面を読む** (``effectivePaint`` と同じ優先)。
     ///
@@ -491,7 +491,12 @@ extension Canvas {
         if paintSurfacesNoted == placedGraphicsDrops { return }
         guard let currentShader, !currentShader.drawnSurfaces.isEmpty else { return }
         for graphics in currentShader.drawnSurfaces { note(placing: graphics) }
-        // 記録を取れた区間でだけ控える (``note(placing:)`` は区間の外と組み立ての中を飛ばす)
+        // 記録を取れた区間でだけ控える (``note(placing:)`` は区間の外と組み立ての中を飛ばす)。
+        // **読む描き場所が追い付けなかった回も控えてよい** ([#2042])。追い付きはその描き場所が次に描き
+        // 切るまで見送られ (``placingCatchUpDeferred``)、その描き切りが置いた側へ写させて記録を落とす
+        // ので、控えも外れて次に置くとき記録 (と追い付き) をやり直す
+        //
+        // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
         if writesToSurface, !recordingShape { paintSurfacesNoted = placedGraphicsDrops }
     }
 

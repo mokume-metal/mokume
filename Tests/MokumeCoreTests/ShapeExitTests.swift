@@ -190,6 +190,7 @@ enum ShapeExit {
             "warnings": "言った注意の控え。組み立ての中で言った注意も残す",
             "passesThisFrame": flush, "depthIsHeld": flush, "pixelLoadFailed": flush,
             "carriesPictureBeforeEffects": flush, "targetChangedSinceUpscale": flush,
+            "placingCatchUpDeferred": flush,
             "lightStorage": "光の置き場。記録の中で閉じた立体の列もいまの光を写すが、列ごと形へ抜くので読まれず、フレームの頭で空になる",
             "solidMeshRanges": unused, "flatInstances": unused, "pendingFlat": unused,
             "buildingFlatTemplate": unused,

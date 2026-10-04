@@ -167,6 +167,19 @@ extension Canvas {
             return draw(makeOutline(key.ringSegments).moved(by: anchor))
         }
 
+        // **畳んだ置き場所は ``beginFlat()`` も ``useTexture(_:)`` も通らない**ので、描き場所を
+        // 置いた記録はここで取る (#1683 の反証)。取らないと、描いている最中の描き場所を読んで
+        // 置いた図形が、注意なしに前の絵になる
+        //
+        // **溜め場を組み替える前に取る** ([#2042])。記録は置く描き場所の出す先を追い付かせ、その前に
+        // 先に置いた分を写しへ差し替える (``Canvas/catchUpOutputForPlacing(by:)``)。下の「2 つ目が来てから
+        // 畳む」組み替えの後に取ると、1 つ目の図形が雛形へ移ってから追い付くので、1 つ目まで追い付いた
+        // 後の絵を読む。ここで取れば 1 つ目は閉じた列に残り、写しへ差し替わる (畳む条件からも外れる)
+        //
+        // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+        if let graphics = (key.texture?.owner as? RenderTarget)?.drawer { note(placing: graphics) }
+        notePaintPlacement()
+
         // 開いている雛形と同じ形なら、置き場所を足すだけで済む
         if openFlat?.key == key {
             appendFolded(
@@ -213,11 +226,7 @@ extension Canvas {
     private func appendFolded(
         _ placement: FlatInstance, key: FlatKey, outline makeOutline: () -> Outline
     ) {
-        // **畳んだ置き場所は ``beginFlat()`` も ``useTexture(_:)`` も通らない**ので、描き場所を
-        // 置いた記録はここで取る (#1683 の反証)。取らないと、描いている最中の描き場所を読んで
-        // 置いた図形が、注意なしに前の絵になる
-        if let graphics = (key.texture?.owner as? RenderTarget)?.drawer { note(placing: graphics) }
-        notePaintPlacement()
+        // 描き場所を置いた記録は、呼び手 (``draw(folding:at:outline:)``) が組み替えの前に取っている
         if let open = openFlat, isBatchFull(flatInstances.count, since: open.instanceStart) {
             openFlatTemplate(key: key, outline: makeOutline())
         }

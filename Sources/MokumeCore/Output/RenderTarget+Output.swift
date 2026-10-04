@@ -138,7 +138,13 @@ extension RenderTarget {
     /// コールバックの中で `save()` する形 (配っている最中の出力) と、面を直に回す使い方のためで、
     /// どちらも変わっていなければ何も積まない。細かさ 1 の面は描く先が出す先そのものなので通らない。
     ///
+    /// **描き場所に面を置く口** (`image(canvas)`・`texture(canvas)`・断片の面) も配っている最中に
+    /// 出す先を読むが、ここは通らない。置いた時点で、置く口の記録 (``Canvas/note(placing:)``) が
+    /// 書き戻さずに広げ直す (``Canvas/catchUpOutputForPlacing(by:)``・[#2042]) — 置くのは描き切れて
+    /// いる絵で、書いただけの画素は細かさ 1 の面でも出ないからである。
+    ///
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     func catchUpWithDrawnPicture() throws(RenderFailure) {
         guard let drawer, drawer.target !== self, drawer.needsOutputEnlargement else { return }
         try drawer.catchUpOutput()
