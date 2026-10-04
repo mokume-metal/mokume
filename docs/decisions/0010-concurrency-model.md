@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 改訂 (2026-09-09): 決定 4 に FileWatcher の例外を追補 ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-10-03): 決定 4 の例外を、OS の受け口が待ち行列やスレッドを決めるもの一般へ広げる ([ADR-0042](0042-camera-and-audio-standard.md))
+採用 (2026-08-27) / 改訂 (2026-09-09): 決定 4 に FileWatcher の例外を追補 ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-10-03): 決定 4 の例外を、OS の受け口が待ち行列やスレッドを決めるもの一般へ広げる ([ADR-0042](0042-camera-and-audio-standard.md)) / 改訂あり (本文の「改訂 (日付)」見出し)
 
 ## 文脈
 
