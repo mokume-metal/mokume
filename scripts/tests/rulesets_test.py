@@ -55,6 +55,10 @@ DEFS = REPO / ".github" / "rulesets"
 #   gh pr list ... --json ...                         → FAKE_OPEN_PRS (JSON の配列をそのまま)
 #                                                       FAKE_PR_LIST_FAIL があれば引けずに落ちる
 #   gh api repos/X/pulls/<n>/files ...                → FAKE_PR_FILES[<n>] を 1 行 1 件
+#   gh api teams/<id> --jq ...                        → FAKE_TEAM (既定 mokume-metal/maintainers)
+#   gh api teams/<id>/members ...                     → FAKE_TEAM_MEMBERS (既定 ["maint"]) を 1 行 1 件
+#                                                       FAKE_TEAM_FAIL があればどちらも落ちる
+#   PUT|POST の FAKE_WRITE_FAIL_NAMES (カンマ区切り)  → その name の定義だけ断る
 FAKE_GH = r'''#!/usr/bin/env python3
 import hashlib, json, os, pathlib, sys
 
@@ -71,6 +75,18 @@ if args[:2] == ["pr", "list"]:
         print("gh: HTTP 502", file=sys.stderr)
         sys.exit(1)
     print(os.environ.get("FAKE_OPEN_PRS", "[]"))
+    sys.exit(0)
+
+team = next((a for a in args if a.startswith("teams/")), "")
+if team:
+    if os.environ.get("FAKE_TEAM_FAIL"):
+        print("gh: HTTP 404", file=sys.stderr)
+        sys.exit(1)
+    if team.endswith("/members"):
+        for login in json.loads(os.environ.get("FAKE_TEAM_MEMBERS", '["maint"]')):
+            print(login)
+    else:
+        print(os.environ.get("FAKE_TEAM", "mokume-metal/maintainers"))
     sys.exit(0)
 
 endpoint = next((a for a in args if a.startswith("repos/")), "")
@@ -101,6 +117,9 @@ if "/commits?" in endpoint:
 
 if "PUT" in args or "POST" in args:
     fail = os.environ.get("FAKE_WRITE_FAIL")
+    src_name = json.loads(pathlib.Path(args[args.index("--input") + 1]).read_text())["name"]
+    if src_name in os.environ.get("FAKE_WRITE_FAIL_NAMES", "").split(","):
+        fail = json.dumps({"message": "Validation Failed", "errors": [src_name]})
     if fail:
         # 本物の gh api と同じく、応答の本文は stdout・要約は stderr に出る
         print(fail)
@@ -477,13 +496,28 @@ class NameUnrequestedPrsTest(ScriptFixture):
         self.prs = []
         self.files = {}
 
+    # 依頼の形は gh pr list --json reviewRequests の実物に合わせる (Team の slug は org/slug)。
+    # Unreadable は App の token で Team の中身が null に落ちた依頼の代わり
+    # (rerequest-review.sh 冒頭の実測)。中身を読めない依頼は maintainers 宛てと数えない
+    REQUESTS = {
+        "Team": {"__typename": "Team", "name": "maintainers", "slug": "mokume-metal/maintainers"},
+        "User": {"__typename": "User", "login": "maint"},
+        "OtherTeam": {"__typename": "Team", "name": "docs", "slug": "mokume-metal/docs"},
+        "OtherUser": {"__typename": "User", "login": "stranger"},
+        "Unreadable": {"__typename": ""},
+    }
+
     def pr(self, number, paths, draft=False, reviews=(), requests=(), base="main"):
+        """reviews は状態 (maintainers の maint が書いた) か (状態, login) の組。"""
+        def review(r):
+            state, login = (r, "maint") if isinstance(r, str) else r
+            return {"author": {"login": login}, "state": state}
         self.prs.append({
             "number": number,
             "isDraft": draft,
             "baseRefName": base,
-            "latestReviews": [{"state": s} for s in reviews],
-            "reviewRequests": [{"__typename": t} for t in requests],
+            "latestReviews": [review(r) for r in reviews],
+            "reviewRequests": [self.REQUESTS[t] for t in requests],
         })
         self.files[str(number)] = list(paths)
 
@@ -575,6 +609,66 @@ class NameUnrequestedPrsTest(ScriptFixture):
         self.assertEqual(code, 0, out)
         line = next(ln for ln in self.named(out).splitlines() if "#105" in ln)
         self.assertIn("chore/1726-agent-skills", line)
+
+    def test_maintainers_以外の承認は承認として数えない(self):
+        # 承認の対象の宛先は maintainers の Team だけ。他の人の承認は merge を止めたまま
+        self.pr(106, ["scripts/plan-record.sh"], reviews=[("APPROVED", "stranger")])
+        code, out = self.apply("--apply")
+        self.assertEqual(code, 0, out)
+        self.assertIn("#106", self.named(out), out)
+
+    def test_maintainers_宛てでない依頼は依頼として数えない(self):
+        self.pr(107, ["scripts/plan-record.sh"], requests=["OtherTeam"])
+        self.pr(108, ["scripts/plan-record.sh"], requests=["OtherUser"])
+        code, out = self.apply("--apply")
+        self.assertEqual(code, 0, out)
+        named = self.named(out)
+        self.assertIn("#107", named, out)
+        self.assertIn("#108", named, out)
+
+    def test_中身を読めない依頼は名乗る側に倒す(self):
+        self.pr(109, ["scripts/plan-record.sh"], requests=["Unreadable"])
+        code, out = self.apply("--apply")
+        self.assertEqual(code, 0, out)
+        self.assertIn("#109", self.named(out), out)
+
+    def test_maintainers_を引けなければ名乗る側に倒して名乗る(self):
+        # 承認と依頼の主を確かめられないので、承認済み・依頼ありも未承認・依頼なしと読む
+        self.pr(203, ["scripts/plan-record.sh"], reviews=["APPROVED"])
+        self.pr(201, ["scripts/plan-record.sh"], requests=["Team"])
+        code, out = self.apply("--apply", FAKE_TEAM_FAIL="1")
+        self.assertEqual(code, 0, out)
+        named = self.named(out)
+        self.assertIn("maintainers を引けず", named, out)
+        self.assertIn("#203", named, out)
+        self.assertIn("#201", named, out)
+
+    def test_一覧を読み解けなければ確かめていないと名乗る(self):
+        # gh は通ったが中身が壊れている。jq の失敗を「無い」と読まない
+        code, out = self.apply("--apply", FAKE_OPEN_PRS="<html>502</html>")
+        self.assertEqual(code, 0, out)
+        named = self.named(out)
+        self.assertIn("確かめていない", named, out)
+        self.assertNotIn("無い (", named)
+
+    def test_他のルールセットが断られても_main_protection_を送れたなら名乗る(self):
+        self.pr(101, ["scripts/plan-record.sh"])
+        f = next(f for f in self.live.glob("*.json") if "signed" in f.read_text())
+        body = json.loads(f.read_text())
+        body["enforcement"] = "disabled"
+        f.write_text(json.dumps(body))
+        code, out = self.apply("--apply", FAKE_WRITE_FAIL_NAMES="signed-commits")
+        self.assertEqual(code, 1, out)
+        self.assertIn("適用できなかった定義がある: signed-commits", out)
+        self.assertIn("#101", self.named(out), out)
+
+    def test_main_protection_が断られたら名乗らない(self):
+        # 稼働中の承認の対象は変わっていない
+        self.pr(101, ["scripts/plan-record.sh"])
+        code, out = self.apply("--apply", FAKE_WRITE_FAIL_NAMES="main-protection")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.named(out), "")
+        self.assertNotIn("pr list", self.calls())
 
     def test_PR_を引けなければ確かめていないと名乗る(self):
         # 適用そのものは済んでいるので止めないが、「無い」とは言わない

@@ -50,23 +50,64 @@ RULESET_FILE="$DEFS/main-protection.json"
 . "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 
 # 適用で承認が要るようになりうる open な PR を名乗る (#1758)。名乗るのは、承認が要る
-# パスに触れ・承認が付いておらず (落とされた承認は数えない)・
-#   - Draft でなければ、Team / User いずれの依頼も残っていないもの
+# パスに触れ・承認者の承認が付いておらず・
+#   - Draft でなければ、承認者宛ての依頼が残っていないもの
 #   - Draft なら、依頼の有無を問わず別の行で (Draft には依頼が出ず、ready で出る — #1621)
 # 依頼や承認で除けるものを先に除き、残りだけ変更ファイルを引く (PR 1 本につき 1 回)。
 #
-# 依頼の有無は件数だけを見る。App の token では Team の依頼の中身が null で返る
-# (rerequest-review.sh 冒頭の実測) が、件数は残る。中身が落ちても名乗りが増える側に倒れる。
+# **承認者は required_reviewers の宛先 (いまは maintainers の Team) に限る。** 誰かの承認・
+# 誰か宛ての依頼で除くと、承認の対象を満たさない PR を黙って落とす。reviewDecision は
+# 使えない — ルールセットの required_reviewers を映さず、承認済みの PR でも空で返る
+# (2026-10-05 に #2085 ほかで実測)。だから承認は latestReviews の主が Team のメンバーか、
+# 依頼は Team そのもの (gh の slug は org/slug) かメンバー宛ての User かで読む。Team の
+# slug とメンバーは適用のたびに 1 回ずつ引く。
 #
-# 引けなかったときは「確かめていない」と名乗って通す。適用はもう済んでいて、ここで
-# 止めても戻すものが無い。黙って「無い」と言わないことだけを守る
+# **読めないものは名乗る側に倒す。** App の token では Team の依頼の中身が null で返る
+# (rerequest-review.sh 冒頭の実測) ので、宛先を読めない依頼は承認者宛てと数えない。
+# Team を引けなければ、承認も依頼も 1 件も数えずに全部を名乗り、そう断る。
+#
+# 一覧を引けない・読み解けないときは「確かめていない」と名乗って通す。適用はもう
+# 済んでいて、ここで止めても戻すものが無い。黙って「無い」と言わないことだけを守る
 name_unrequested_prs() {
   echo
   echo "== 承認が要るのに依頼の無い open な PR =="
-  local list
+
+  # 承認者の Team (slug は gh pr list の表記に揃えて org/slug) とメンバー
+  local ids id slug teams='[]' members='[]' logins
+  ids=$(jq -r '
+    .rules[]? | select(.type == "pull_request")
+    | .parameters.required_reviewers[]? | select(.reviewer.type == "Team") | .reviewer.id
+  ' "$RULESET_FILE")
+  for id in $ids; do
+    if slug=$(gh api "teams/$id" --jq '"\(.organization.login)/\(.slug)"') &&
+        logins=$(gh api "teams/$id/members" --paginate --jq '.[].login'); then
+      teams=$(jq -c --arg s "$slug" '. + [$s]' <<<"$teams")
+      members=$(jq -Rn --argjson m "$members" '$m + [inputs | select(. != "")]' <<<"$logins")
+    else
+      echo "注意: 承認者の Team (id $id) の maintainers を引けず、承認と依頼の主を確かめていない — どれも数えずに名乗る"
+    fi
+  done
+
+  local list rows
   if ! list=$(gh pr list --repo "$REPO" --state open --limit 1000 \
       --json number,isDraft,baseRefName,latestReviews,reviewRequests); then
     echo "注意: open な PR を引けず、確かめていない。手で見る: gh pr list --state open"
+    return 0
+  fi
+  # 読み解けない一覧 (jq の失敗) を「無い」と読まない。プロセス置換の中に置くと失敗が見えない
+  if ! rows=$(jq -r --argjson teams "$teams" --argjson members "$members" '
+      .[]
+      | select([.latestReviews[]?
+                | select(.state == "APPROVED")
+                | (.author.login // "") as $l | select($members | index($l))]
+               | length == 0)
+      | select(.isDraft or ([(.reviewRequests // [])[]
+                | select((.__typename == "Team" and ((.slug // "") as $s | $teams | index($s)))
+                      or (.__typename == "User" and ((.login // "") as $l | $members | index($l))))]
+               | length == 0))
+      | [.number, .isDraft, .baseRefName] | @tsv
+    ' <<<"$list" 2>&1); then
+    echo "注意: open な PR の一覧を読み解けず、確かめていない ($rows)。手で見る: gh pr list --state open"
     return 0
   fi
 
@@ -84,18 +125,13 @@ name_unrequested_prs() {
     if [ "$draft" = true ]; then
       echo "#$number Draft — 承認が要る。ready にすると Team 宛ての依頼が出る$suffix"
     else
-      echo "#$number 承認が要るのに依頼が無い (Team / User のどちらも残っていない)$suffix"
+      echo "#$number 承認が要るのに依頼が無い (承認者の Team・メンバーのどちら宛ても残っていない)$suffix"
     fi
     found=1
-  done < <(jq -r '
-    .[]
-    | select([.latestReviews[]? | select(.state == "APPROVED")] | length == 0)
-    | select(.isDraft or ((.reviewRequests // []) | length == 0))
-    | [.number, .isDraft, .baseRefName] | @tsv
-  ' <<<"$list")
+  done <<<"$rows"
 
   if [ "$found" = 1 ]; then
-    echo "上の PR は Reviewers が空のまま承認を待っている。Approve するか、Team へ依頼を出す"
+    echo "上の PR は承認者の承認も依頼も無いまま待っている。Approve するか、Team へ依頼を出す"
   elif [ "$unread" = 0 ]; then
     echo "無い (承認が要る open な PR は、どれも承認済みか依頼が残っている)"
   fi
@@ -151,6 +187,8 @@ echo
 echo "== 適用 =="
 # 1 本が断られても残りは試みる。断られた定義と無関係な差分まで巻き添えで止めない
 rejected=()
+# 承認の対象を持つ main-protection を送れたか。送れたなら、他が断られても名乗りは要る
+protection_sent=false
 for f in "$DEFS"/*.json; do
   name=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$f")
   # 表から id を引く。**タブで区切って名前の完全一致を見る** — 名前に空白が入りうる
@@ -171,6 +209,7 @@ for f in "$DEFS"/*.json; do
     continue
   fi
   echo "${verb}: $name${id:+ (id $id)}"
+  [ "$name" != main-protection ] || protection_sent=true
 done
 
 # 定義に無いルールセットが残っていても消さない。存在だけ知らせる
@@ -183,6 +222,8 @@ done < "$live/index.tsv"
 
 if [ "${#rejected[@]}" -gt 0 ]; then
   echo "NG: 適用できなかった定義がある: ${rejected[*]} (理由は上の応答)" >&2
+  # 稼働中の承認の対象はもう変わっている。断られた分とは無関係に、対象に入った PR は残る
+  ! $protection_sent || name_unrequested_prs
   exit 1
 fi
 
