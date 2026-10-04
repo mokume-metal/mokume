@@ -237,8 +237,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     private let windowRelay = WindowRelay()
 
-    /// いま走らせているもの。``run()`` の間だけ入る。
+    /// いま走らせているもの。``run()`` の間だけ入る。**入っていれば 2 つ目の ``run()`` を断る** (#2027)。
     private static var running: SketchApplication?
+
+    /// 2 つ目の ``run()`` を断ったと、もう言ったか。**言うのはプロセスで 1 度だけ。**
+    private static var refusalAnnounced = false
+
+    /// 2 つ目の ``run()`` を断るときに言う 1 行。検査が読む。
+    static let secondRunRefusal =
+        "A sketch is already running in this process — this second run() does nothing (one window per process)"
 
     /// AppKit へ渡した delegate。弱く参照される先なので、こちらで寿命を持つ。
     private var delegate: SketchApplicationDelegate?
@@ -334,7 +341,23 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     }
 
     /// アプリケーションとして走らせる。戻らない。
+    ///
+    /// **1 プロセスに走らせられるのは 1 つだけである。** 既に走っているものが在れば、
+    /// 2 つ目の呼び出しは断ったことを 1 度だけ標準エラーへ言い、何にも触れずにすぐ戻る。
+    /// 走っている 1 つ目は何も変わらず、撮っている動画も、終わり方によらず開けるまま残る
+    /// ([#2027](https://github.com/mokume-metal/mokume/issues/2027))。
     public func run() {
+        // **2 つ目は、プロセス全体の状態に触れる前に断る** (#2027)。delegate・活動の方針・
+        // 終わりの合図はどれもプロセスに 1 つで、差し替えると 1 つ目の後始末 (書き切りを
+        // 待つ経路・#1219) が 2 つ目へ行く。区画へ差し出す用意 (`resolveOutlet()`) も外へ
+        // 名乗るので、その前で戻る
+        guard SketchApplication.running == nil else {
+            if !SketchApplication.refusalAnnounced {
+                SketchApplication.refusalAnnounced = true
+                Diagnostics.warn(SketchApplication.secondRunRefusal)
+            }
+            return
+        }
         let app = NSApplication.shared
         // **画面の出口を先に決める。** 活動の方針は `app.run()` より前にしか据えられない
         // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
