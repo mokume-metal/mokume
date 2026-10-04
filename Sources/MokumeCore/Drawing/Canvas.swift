@@ -820,6 +820,17 @@ public final class Canvas {
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     var targetChangedSinceUpscale = false
+    /// 置く口の追い付き (``catchUpOutputForPlacing(by:)``) を、この面が次に描き切るまで見送るか ([#2042])。
+    ///
+    /// **追い付けなかったら立てる** (拡大が投げた・置く側自身の写しを取れなかった)。立てないと、断片の
+    /// 面を読む線や字では三角形ごとに追い付きをやり直し、そのたびに環を進めてコマンドを組み直す
+    /// (注意は 1 度しか出ないので、遅くなる理由が見えない)。下ろすのは描く先が変わったとき
+    /// (``flush(applyingEffects:mirroringPixels:)``) と、追い付けたとき (``catchUpOutput(writingBackPixels:)``)。
+    /// 見送っている間に置いた先には古い絵が出て、コールバックを配った直後の追い付きと出す先を読む口は
+    /// これまでどおりやり直す。
+    ///
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    var placingCatchUpDeferred = false
     /// 書き戻した画素のうち変わった画素を、効果を通す前の絵へ写した回数 (作ってから通算・[#1524])。
     /// **止まっている間に画素を書かなかったフレームでは増えない**ことを検査が見る。
     ///
@@ -3154,7 +3165,14 @@ public final class Canvas {
     func keepPictureWithoutFlushing(placedFrom graphics: Canvas) -> Bool {
         let placed = ObjectIdentifier(graphics)
         guard placedGraphics.contains(placed) else { return true }
-        guard !isFlushing, !recordingShape else { return false }
+        // **畳む雛形を組み立てている途中なら写さない。** 写すときに列を閉じるので、組み立て途中の頂点が
+        // ふつうの列として閉じ、雛形から抜け落ちる
+        guard !isFlushing, !recordingShape, !buildingFlatTemplate else { return false }
+        // **写せないと分かっているなら、列を閉じずに返す** (写しは列を閉じてから取る)
+        guard canTakePlacedPictureCopy else {
+            placedPictureCopyLimitReached += 1
+            return false
+        }
         do {
             guard try copyPlacedPicture(graphics.output.texture) else {
                 placedPictureCopyLimitReached += 1
@@ -3232,6 +3250,13 @@ public final class Canvas {
             }
         }
         return true
+    }
+
+    /// 写しを 1 つ用意できるか (``placedPictureCopy(fitting:)`` が `nil` を返さないか)。上限に達していても、
+    /// 空きがあれば使い回すか手放して作り直せる。
+    private var canTakePlacedPictureCopy: Bool {
+        placedPictureCopiesInUse.count + placedPictureCopiesFree.count < Self.placedPictureCopyLimit
+            || !placedPictureCopiesFree.isEmpty
     }
 
     /// `source` と同じ形の写し。空きにあれば使い回し、無ければ作る。**上限に達していて使い回せる
@@ -3622,8 +3647,10 @@ public final class Canvas {
         // [#1882]: https://github.com/mokume-metal/mokume/issues/1882
         if applyingEffects {
             targetChangedSinceUpscale = !assembled.upscaled
+            placingCatchUpDeferred = false
         } else if upscaleStage != nil, hasDrawing || assembled.wroteBack {
             targetChangedSinceUpscale = true
+            placingCatchUpDeferred = false
         }
         gpu.pendingUploads.markUploaded(assembled.uploaded)
         if mirroringPixels { target.markPixelsMirrored(through: assembled.submission) }

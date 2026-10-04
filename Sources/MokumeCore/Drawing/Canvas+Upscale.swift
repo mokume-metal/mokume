@@ -166,13 +166,13 @@ extension Canvas {
         frameRing.noteSubmission()
         if wroteBack { target.markPixelsWrittenBack() }
         targetChangedSinceUpscale = false
+        placingCatchUpDeferred = false
     }
 
     /// 置く口が追い付かせる要があるか ([#2042])。拡大の段があり、フレームの外で描き切らせて描く先が
-    /// 出す先より進んでいるとき。``catchUpOutputForPlacing(by:)`` と、断片の面の記録の控え
-    /// (``paintSurfacesNoted``) が読む。
+    /// 出す先より進んでいて、追い付きを見送っていない (``placingCatchUpDeferred``) とき。
     var needsCatchUpForPlacing: Bool {
-        upscaleStage != nil && targetChangedSinceUpscale && !isDrawing
+        upscaleStage != nil && targetChangedSinceUpscale && !isDrawing && !placingCatchUpDeferred
     }
 
     /// 置く口が、置いた時点でこの面の出す先を描き切れている絵へ追い付かせる ([#2042])。
@@ -197,17 +197,25 @@ extension Canvas {
     ///   これまでどおりにする
     /// - 描き切らせていなければ何も積まない (ADR-0023 決定 5)
     ///
-    /// 失敗しても印 (``targetChangedSinceUpscale``) は残るので、次に置くとき (断片の面も、追い付くまで
-    /// 記録の控えを取らない) と出す先を読む口がやり直す。失敗した回に置いた先には古い絵が出る。
+    /// **追い付けなかったら、この面が次に描き切るまで見送る** (``placingCatchUpDeferred``)。やり直しを
+    /// 置くたびにすると、断片の面を読む線や字では三角形ごとに環を進めてコマンドを組み直す。見送っている
+    /// 間に置いた先には古い絵が出る。印 (``targetChangedSinceUpscale``) は残るので、コールバックを配った
+    /// 直後の追い付きと出す先を読む口はこれまでどおりやり直し、次に描き切らせてから置けば置く口もやり直す
+    /// (その描き切りが置いた側へ写させて記録を落とすので、断片の面の記録の控えも外れる)。
     ///
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     func catchUpOutputForPlacing(by placer: Canvas) {
         guard needsCatchUpForPlacing else { return }
-        guard placer.keepPictureWithoutFlushing(placedFrom: self) else { return }
+        // 追い付けなければ、次に描き切るまで見送る (``placingCatchUpDeferred``)
+        guard placer.keepPictureWithoutFlushing(placedFrom: self) else {
+            placingCatchUpDeferred = true
+            return
+        }
         do {
             try catchUpOutput(writingBackPixels: false)
         } catch {
+            placingCatchUpDeferred = true
             warnOnce(.upscaleFailed, "Could not run the upscale: \(error.headline)")
         }
     }

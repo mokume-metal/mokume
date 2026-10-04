@@ -872,14 +872,16 @@ struct StoppedUpscaleOutletsTests {
         }
     }
 
-    /// 置く口の追い付きに失敗しても、次に置くときにやり直す ([#2042] の反証 2)。
+    /// 置く口の追い付きに失敗したら、本体が次に描き切るまで見送り、描き切らせてから置けばやり直す
+    /// ([#2042] の反証 2・2 回目の反証 3)。
     ///
-    /// 失敗した回に置いた分は古い絵 (下地) のまま、直った後に置いた分は描き切った赤になる。断片の面は
-    /// 記録済みなら記録を飛ばすので、失敗した回に控えを取ると、同じ断片で次に置いても追い付かない。
+    /// 失敗した回と、見送っている間に置いた分は古い絵 (下地) のまま、本体を描き切らせた後に置いた分は
+    /// 描き切った赤になる。断片の面は記録済みなら記録を飛ばすので、控えが外れないと描き切らせた後も
+    /// 追い付かない。
     ///
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     @Test(
-        "置く口の追い付きに失敗しても、次に置くときにやり直す",
+        "置く口の追い付きに失敗したら本体が次に描き切るまで見送り、描き切らせてから置けばやり直す",
         arguments: [Door.image, Door.shader])
     func aFailedPlacingCatchUpIsRetried(door: Door) throws {
         let box = LayerBox()
@@ -896,19 +898,22 @@ struct StoppedUpscaleOutletsTests {
                         surfaces: ["body": .graphics(sketch.canvas)])
                 else { return }
                 box.canvas = layer
-                let place: (Float) -> Void = { at in
+                let place: (Float, Float) -> Void = { x, y in
                     switch door {
-                    case .shader: layer.rect(at, at, 80, 80)
-                    default: layer.image(sketch.canvas, at, at, 80, 80)
+                    case .shader: layer.rect(x, y, 80, 80)
+                    default: layer.image(sketch.canvas, x, y, 80, 80)
                     }
                 }
                 layer.beginDraw()
                 layer.noStroke()
                 if door == .shader { layer.shader(shader) }
                 sketch.canvas.failEffectPassForTesting = 0
-                place(0)
+                place(0, 0)
                 sketch.canvas.failEffectPassForTesting = nil
-                place(80)
+                // 本体がまだ描き切っていないので見送る
+                place(80, 0)
+                DrawOut.rectThenGet.apply(to: sketch)
+                place(80, 80)
                 layer.endDraw()
             }
         }) { runtime, _, press in
@@ -916,10 +921,60 @@ struct StoppedUpscaleOutletsTests {
             #expect(runtime.canvas.warnings.hasWarned(.upscaleFailed), "検査の前提: 追い付きが失敗していない")
             let picture = try #require(box.canvas).output.readPixels()
             #expect(Self.isBackdrop(picture[40, 40]), "失敗した回に置いた分が古い絵でない: \(picture[40, 40])")
+            #expect(Self.isBackdrop(picture[120, 40]), "見送っている間に置いた分が古い絵でない: \(picture[120, 40])")
             let retried = picture[120, 120]
-            #expect(Self.isRed(retried.red, retried.green, retried.blue), "直った後に置いた分が追い付いていない: \(retried)")
+            #expect(
+                Self.isRed(retried.red, retried.green, retried.blue),
+                "描き切らせた後に置いた分が追い付いていない: \(retried)")
         }
     }
+
+    /// 追い付きが失敗し続けても、断片の面を読む線をいくら引いても、やり直すのは本体が次に描き切るまでに
+    /// 1 度だけ ([#2042] の 2 回目の反証 3)。線は三角形ごとに記録の口を通るので、見送らないと三角形ごとに
+    /// 環を進めてコマンドを組み直す (組みかけて捨てたコマンドの数で見る)。置く側の写しの上限の数も
+    /// 三角形ごとには増えない (2 回目の反証 2)。
+    ///
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    @Test("追い付きが失敗し続けても、断片の面を読む線ごとにはやり直さない")
+    func aFailingPlacingCatchUpIsNotRetriedPerTriangle() throws {
+        final class Counts { var abandoned = -1; var limitReached = -1 }
+        let counts = Counts()
+        try Self.withStoppedSketch(density: 0.5, configure: { sketch in
+            sketch.onKey["k"] = { sketch in
+                DrawOut.rectThenGet.apply(to: sketch)
+                guard let layer = try? sketch.createGraphics(160, 160),
+                    let shader = try? layer.makeShader(
+                        """
+                        float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                            return mokume_sample(surfaces.body, in.place);
+                        }
+                        """,
+                        surfaces: ["body": .graphics(sketch.canvas)])
+                else { return }
+                let gpu = sketch.canvas.gpu
+                layer.beginDraw()
+                layer.shader(shader)
+                layer.stroke(.linear(red: 1, green: 1, blue: 1))
+                layer.strokeWeight(3)
+                sketch.canvas.failEffectPassForTesting = 0
+                let abandoned = gpu.abandonedCommands
+                let limitReached = layer.placedPictureCopyLimitReached
+                for index in 0..<40 {
+                    let y = Float(index * 4)
+                    layer.line(0, y, 160, y + 2)
+                }
+                counts.abandoned = gpu.abandonedCommands - abandoned
+                counts.limitReached = layer.placedPictureCopyLimitReached - limitReached
+                sketch.canvas.failEffectPassForTesting = nil
+                layer.endDraw()
+            }
+        }) { _, _, press in
+            try press("k")
+            #expect(counts.abandoned == 1, "失敗した追い付きを線ごとにやり直した: \(counts.abandoned) 回")
+            #expect(counts.limitReached == 0, "写しの上限の数が線ごとに増えた: \(counts.limitReached)")
+        }
+    }
+
 
     /// 写しの上限を越えてくり返し置く形の、置き方 ([#2042] の反証 3)。保持した形は前置き (記録した面・
     /// 塗り・立体の区間) を済ませてから記録の口へ来るので、置く口の内側で置いた側が描き切られると壊れる。

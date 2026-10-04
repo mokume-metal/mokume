@@ -490,17 +490,14 @@ extension Canvas {
         // 見る — 線や字は三角形ごとにここを通る
         if paintSurfacesNoted == placedGraphicsDrops { return }
         guard let currentShader, !currentShader.drawnSurfaces.isEmpty else { return }
-        var caughtUp = true
-        for graphics in currentShader.drawnSurfaces {
-            note(placing: graphics)
-            if graphics.needsCatchUpForPlacing { caughtUp = false }
-        }
+        for graphics in currentShader.drawnSurfaces { note(placing: graphics) }
         // 記録を取れた区間でだけ控える (``note(placing:)`` は区間の外と組み立ての中を飛ばす)。
-        // **読む描き場所が追い付けなかった回も控えない** ([#2042])。控えると、同じ断片で次に置いても
-        // 記録ごと飛ばし、置く口の追い付き (``catchUpOutputForPlacing(by:)``) をやり直さない
+        // **読む描き場所が追い付けなかった回も控えてよい** ([#2042])。追い付きはその描き場所が次に描き
+        // 切るまで見送られ (``placingCatchUpDeferred``)、その描き切りが置いた側へ写させて記録を落とす
+        // ので、控えも外れて次に置くとき記録 (と追い付き) をやり直す
         //
         // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
-        if writesToSurface, !recordingShape, caughtUp { paintSurfacesNoted = placedGraphicsDrops }
+        if writesToSurface, !recordingShape { paintSurfacesNoted = placedGraphicsDrops }
     }
 
     /// いま効いている光を置き場へ写し、その区間を返す。
