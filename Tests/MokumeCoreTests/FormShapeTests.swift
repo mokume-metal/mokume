@@ -314,11 +314,10 @@ struct FormShapeTests {
     /// 被覆率がちょうど 1 かで決める。不透明な輪郭 (255) では 2 つの式が同じになり、
     /// 絵は動かない。輪郭の不透明度 0 では、帯は透明に抜ける。
     ///
-    /// **楕円だけは、帯の内縁の数画素を外す。** 塗りと先に重ねる列は楕円の輪郭を塗りの
-    /// 距離場から 1 次の近似でずらして作る ([#1820])。その画素は不透明な輪郭でも三角形の
-    /// 経路と違う — 違いは帯の位置で、帯に何を置くか (この検査の約束) ではない。だから
-    /// 不透明な輪郭で違う画素を数えて外し、数が増えないことだけを見る (細長い楕円で 8 画素)。
-    /// 楕円のほかの形では 1 画素も外さない。
+    /// **楕円も 1 画素も外さない** ([#1820])。かつては、塗りと先に重ねる列が楕円の輪郭を塗りの
+    /// 距離場から 1 次の近似でずらして作るので、帯の内縁の 8 画素 (84×26) が不透明な輪郭でも
+    /// 三角形の経路と違い、数が増えないことだけを見ていた。内縁の曲率半径が小さい楕円は式を
+    /// 輪郭の位置で解き直すようにした後は、その 8 画素も他の形と同じに揃う。
     ///
     /// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
     /// [#1820]: https://github.com/mokume-metal/mokume/issues/1820
@@ -394,16 +393,6 @@ struct FormShapeTests {
                 (0..<band.width).compactMap { x in band[x, y].red >= 1 ? (x, y) : nil }
             }
             #expect(inBand.count > 100, "\(shape.name): 帯に丸ごと入る画素が少ない (\(inBand.count))")
-            // 楕円の近似 (#1820) で帯の位置が違う画素。不透明な輪郭で三角形の経路と比べて数える
-            let opaqueOnce = try render(.once, strokeAlpha: 255)
-            let opaqueTriangles = try render(.triangles, strokeAlpha: 255)
-            let shifted = Set(
-                inBand.filter { gap(opaqueOnce[$0.0, $0.1], opaqueTriangles[$0.0, $0.1]) > 1.0 / 255 }
-                    .map { $0.1 * band.width + $0.0 })
-            #expect(
-                shifted.count <= (shape.name == "ellipse" ? 8 : 0),
-                "\(shape.name): 不透明な輪郭でも三角形の経路と \(shifted.count) 画素違う")
-
             let once = try render(.once, strokeAlpha: strokeAlpha)
             for (other, label) in [
                 (try render(.triangles, strokeAlpha: strokeAlpha), "三角形の経路"),
@@ -411,14 +400,14 @@ struct FormShapeTests {
             ] {
                 var differing = 0
                 var worst = (gap: Float(0), x: 0, y: 0)
-                for (x, y) in inBand where !shifted.contains(y * band.width + x) {
+                for (x, y) in inBand {
                     let g = gap(once[x, y], other[x, y])
                     if g > 1.0 / 255 { differing += 1 }
                     if g > worst.gap { worst = (g, x, y) }
                 }
                 #expect(
                     differing == 0,
-                    "\(shape.name)・輪郭の不透明度 \(Int(strokeAlpha))・\(transparentGround ? "透明" : "黒") の地: \(label)と \(differing) / \(inBand.count - shifted.count) 画素違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y)))")
+                    "\(shape.name)・輪郭の不透明度 \(Int(strokeAlpha))・\(transparentGround ? "透明" : "黒") の地: \(label)と \(differing) / \(inBand.count) 画素違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y)))")
             }
             if shape.name == "rect (#1819)" {
                 // 帯の内側半分 (26, 48) は輪郭の不透明度のまま。塗りの青は透けない
@@ -563,10 +552,13 @@ struct FormShapeTests {
     /// 不透明な輪郭の帯の内側半分で塗りが消えていた (加算で帯の内側の青が 0.33 → 0.006)。
     /// 輪郭の不透明度 254 と 255 の間で絵が不連続に変わっていたので、その両側も回す。
     /// 楕円 (円を含む) の輪郭を塗りの距離場から 1 次の近似でずらすと内縁に誤差が残るので、
-    /// 細長い楕円も回す (近似のままだと、半径 29 の円でも加算で 1/255 を越えた)。
+    /// 細長い楕円も回す (近似のままだと、半径 29 の円でも加算で 1/255 を越えた)。下地を読む
+    /// 断片は近似を使わず、いつも輪郭の位置で解き直す。重ねる・置き換える列の楕円が近似を
+    /// 使ってよいかは `ellipseStrokeDoesNotDependOnTheFill` が見る ([#1820])。
     /// 比べる相手も同じ機械で描くので、成分の差は表示の 1 段 (1/255) より小さい。
     ///
     /// [#1643]: https://github.com/mokume-metal/mokume/issues/1643
+    /// [#1820]: https://github.com/mokume-metal/mokume/issues/1820
     @Test(
         "下地を読む混ぜ方でも、塗りと輪郭を 1 回で描いた絵は分けて重ねた絵と同じ",
         arguments: [
@@ -622,6 +614,231 @@ struct FormShapeTests {
             #expect(
                 differing == 0,
                 "\(mode)・\(shape.name)・輪郭の不透明度 \(Int(strokeAlpha)): \(differing) 画素違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y)))")
+        }
+    }
+
+    /// 楕円の輪郭の被覆率を比べる置き方 (向き・拡大・剪断・細かさ)。ずらしの向きと、描く画素
+    /// 1 つが形自身の座標でいくらかが変わる。鏡映 (`scale` の符号が負) は行列式が負になる。
+    private struct RingPlacement {
+        var angle: Float = 0
+        var scale: SIMD2<Float> = [1, 1]
+        var shear: Float = 0
+        var density: Float = 1
+
+        /// 拡大・剪断が無い (大きな絵でも収まる)
+        var isPlain: Bool { scale == [1, 1] && shear == 0 }
+
+        var label: String {
+            "\(angle) rad・拡大 \(scale)・剪断 \(shear)・細かさ \(density)"
+        }
+    }
+
+    /// 塗りを足した絵と輪郭だけの絵の、輪郭の被覆率 (赤) の食い違い。
+    private struct RingGap {
+        /// 輪郭だけの絵で、縁 (0 < 被覆率 < 1) の画素の数
+        var edges = 0
+        /// 差が 1/255 を越える画素の数
+        var differing = 0
+        var worst = (gap: Float(0), x: 0, y: 0, strokeOnly: Float(0), both: Float(0))
+    }
+
+    /// 置き方が収まる一辺 (出す画素)。
+    private func ringReach(width: Float, height: Float, weight: Float, _ placement: RingPlacement) -> Float {
+        (max(width, height) + weight) * max(abs(placement.scale.x), abs(placement.scale.y))
+            * (1 + abs(tan(placement.shear)))
+    }
+
+    /// 黒の塗りと白の輪郭を黒地に置くと、赤の成分がそのまま輪郭の被覆率になる (塗りは黒なので
+    /// 赤に何も足さず、輪郭の白に被覆率を掛けた量だけが残る。重ねる列でも置き換える列でも
+    /// 同じ)。塗りを足した絵と、塗りを外した同じ形の絵で、その赤を比べる。
+    /// `asArc` は、楕円を一周の `arc` で描く。
+    private func ringGap(
+        _ mode: BlendMode, width: Float, height: Float, weight: Float,
+        _ placement: RingPlacement, asArc: Bool = false
+    ) throws -> RingGap {
+        let side = (Int(ringReach(width: width, height: height, weight: weight, placement)) + 41) / 2 * 2
+        func render(fills: Bool) throws -> PixelBuffer {
+            let canvas: Canvas
+            if placement.density == 1 {
+                canvas = try makeCanvas(width: side, height: side)
+            } else {
+                let gpu = try RenderDevice()
+                let output = try RenderTarget(gpu: gpu, width: side, height: side)
+                canvas = try Canvas(
+                    output: output, gpu: gpu, pixelDensity: placement.density, upscale: .spatial)
+            }
+            try canvas.draw {
+                canvas.background(black)
+                canvas.blendMode(mode)
+                canvas.strokeWeight(weight)
+                canvas.stroke(white)
+                if fills { canvas.fill(black) } else { canvas.noFill() }
+                canvas.translate(Float(side) / 2 + 0.3, Float(side) / 2 + 0.6)
+                canvas.rotate(placement.angle)
+                canvas.shearX(placement.shear)
+                canvas.scale(placement.scale.x, placement.scale.y)
+                if asArc {
+                    canvas.arc(0, 0, width, height, 0, 2 * Float.pi)
+                } else {
+                    canvas.ellipse(0, 0, width, height)
+                }
+            }
+            return try canvas.target.readPixels()
+        }
+        let strokeOnly = try render(fills: false)
+        let both = try render(fills: true)
+        var gap = RingGap()
+        // 画素ごとに色を組み立てると、大きな絵で遅い。赤だけを成分から読む
+        for index in stride(from: 0, to: strokeOnly.components.count, by: 4) {
+            let (alone, together) = (Float(strokeOnly.components[index]), Float(both.components[index]))
+            if alone > 0 && alone < 1 { gap.edges += 1 }
+            let difference = abs(together - alone)
+            if difference > 1.0 / 255 { gap.differing += 1 }
+            if difference > gap.worst.gap {
+                let pixel = index / 4
+                gap.worst = (difference, pixel % strokeOnly.width, pixel / strokeOnly.width, alone, together)
+            }
+        }
+        return gap
+    }
+
+    /// 塗りと輪郭を両方持つ楕円の輪郭は、塗りの有無・混ぜ方によらず、輪郭だけの楕円と同じ
+    /// 形になる ([#1820]・[#1867] 決定 2)。
+    ///
+    /// 重ねる (`.blend`)・置き換える (`.replace`) 列は塗りと輪郭を先に重ねる断片で、楕円の
+    /// 輪郭の距離場を塗りの距離場から 1 次の近似でずらして作れる (`mokume_shifted`)。誤差は
+    /// **内縁の曲率半径** (短半径² / 長半径 − 太さの半分・画素) に反比例して、半径 29・太さ 7 の
+    /// 円の内縁 (25.5 画素) でも被覆率が 0.01 動き、1/255 を越える。そこで内縁の曲率半径が
+    /// 足りない楕円は、式を輪郭の位置で解き直す (`mokume_canShiftRing`)。下地を読む列 (`.add`) は
+    /// いつも解き直す。
+    ///
+    /// 比べるのは**輪郭の被覆率**で、塗りを外した同じ楕円の絵と、差が 1/255 を越える画素が 0
+    /// (比べ方は `ringGap`)。
+    ///
+    /// 楕円は、長径と短径の比 1〜8・大きさ・太さを回す。**直径 58・太さ 7 の円**と、
+    /// **内縁の曲率半径が 1 画素を切る組 (84×26・太さ 7)** を必ず入れる。近似が残る大きな楕円
+    /// (内縁の曲率半径が数十〜数百画素の円と、円でない楕円) と、境目の両側も入れる。**円でない
+    /// 楕円の近似は、距離場そのものの勾配でずらさないと、内縁の曲率半径が大きくても
+    /// 1/255 を越える** (1060×530・太さ 7 で 0.0073、700×466・太さ 30 で 0.019) ので、
+    /// それを見張る大きな楕円も入れてある。位置は小数、置き方は軸の向き・斜め・縦横で違う
+    /// 拡大・鏡映 (行列式が負)・剪断・細かさ 0.5 も回す (ずらしの向きと、描く画素 1 つの大きさが
+    /// 変わる)。
+    ///
+    /// **一周の `arc` も同じ検査を通す。** 一周の `arc` は `.ellipse` の形へ流れる
+    /// (`Canvas.arc` の `isFullTurn`) ので症状は同じで、その経路を直接見る (代表の楕円だけ)。
+    /// `rect` と一周でない `arc` (扇形) は、輪郭を常に輪郭の位置 `q` で厳密に解く構造で近似を
+    /// 使わないので、この検査の対象外である。
+    ///
+    /// **この検査は「解き直す側に倒れて緑」を見逃す** — 判定 (`mokume_canShiftRing`) が壊れて
+    /// 常に解き直すようになっても、輪郭は輪郭だけの楕円と一致するので緑のままである。近似が
+    /// 使われ続けることは `largeEllipsesStayOnTheShiftedRing` が見る。
+    ///
+    /// [#1820]: https://github.com/mokume-metal/mokume/issues/1820
+    /// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
+    @Test(
+        "塗りと輪郭を両方持つ楕円の輪郭は、塗りの有無によらず輪郭だけの楕円と 1/255 以内で同じ",
+        arguments: [BlendMode.blend, .add, .replace])
+    func ellipseStrokeDoesNotDependOnTheFill(_ mode: BlendMode) throws {
+        // 直径 (幅・高さ)・太さ・一周の `arc` でも描くか。内縁の曲率半径は
+        // 短半径² / 長半径 − 太さの半分 (半径で数える)
+        let cases: [(name: String, width: Float, height: Float, weight: Float, asArcToo: Bool)] = [
+            ("円 58・太さ 7 (#1820)", 58, 58, 7, true),
+            ("84×26・太さ 7 (#1820・内縁が 1 画素を切る)", 84, 26, 7, true),
+            ("円 14", 14, 14, 3, false),
+            ("円 120", 120, 120, 7, false),
+            ("円 120・太さ 1", 120, 120, 1, false),
+            ("円 120・太さ 30", 120, 120, 30, false),
+            ("比 1.5 (87×58)", 87, 58, 7, false),
+            ("比 2 (116×58)", 116, 58, 7, true),
+            ("比 4 (232×58)", 232, 58, 7, false),
+            ("比 8 (464×58)", 464, 58, 7, false),
+            ("比 2 (52×26)", 52, 26, 7, false),
+            ("比 4 (104×26)", 104, 26, 7, false),
+            ("比 8 (208×26)", 208, 26, 7, false),
+            ("比 3 (360×120)", 360, 120, 7, false),
+            ("比 3 (360×120)・太さ 1", 360, 120, 1, false),
+            ("84×26・太さ 30 (内縁が無い)", 84, 26, 30, false),
+            ("円 262 (境目の手前)", 262, 262, 7, false),
+            ("円 300", 300, 300, 7, true),
+            ("円 300・太さ 30", 300, 300, 30, false),
+            ("楕円 400×340", 400, 340, 7, true),
+            ("楕円 480×440", 480, 440, 7, false),
+            ("円 700 (近似が残る)", 700, 700, 7, false),
+            ("楕円 1060×530 (比 2・近似が残る)", 1060, 530, 7, true),
+            ("楕円 700×466・太さ 30 (近似が残る)", 700, 466, 30, false),
+            ("円 1000 (縦横で違う拡大でも近似が残る)", 1000, 1000, 7, false),
+        ]
+        let placements: [RingPlacement] = [
+            RingPlacement(), RingPlacement(angle: .pi / 4), RingPlacement(angle: 0.35),
+            RingPlacement(angle: 0.35, scale: [1.8, 0.8]), RingPlacement(scale: [0.9, 0.5]),
+            RingPlacement(density: 0.5), RingPlacement(angle: 0.35, density: 0.5),
+            // 鏡映 (行列式が負)・剪断
+            RingPlacement(scale: [-1, 1]), RingPlacement(angle: 0.35, scale: [-1.3, 0.7]),
+            RingPlacement(shear: 0.4), RingPlacement(angle: 0.35, scale: [1.4, 0.8], shear: 0.5),
+        ]
+        for item in cases {
+            for placement in placements {
+                let reach = ringReach(width: item.width, height: item.height, weight: item.weight, placement)
+                // 拡大・剪断した絵は大きいので、収まる楕円だけ回す
+                if !placement.isPlain && reach > 1000 { continue }
+                for asArc in item.asArcToo ? [false, true] : [false] {
+                    let gap = try ringGap(
+                        mode, width: item.width, height: item.height, weight: item.weight, placement,
+                        asArc: asArc)
+                    let label = "\(mode)・\(asArc ? "一周の arc" : "ellipse")・\(item.name)・\(placement.label)"
+                    #expect(gap.edges > 20, "\(label): 輪郭の縁の画素が少ない (\(gap.edges))")
+                    #expect(
+                        gap.differing == 0,
+                        "\(label): 輪郭の被覆率が塗りを足すと \(gap.differing) 画素で 1/255 を越えて動く (最大 \(gap.worst.gap) @ (\(gap.worst.x), \(gap.worst.y))・輪郭だけ \(gap.worst.strokeOnly)・両方 \(gap.worst.both))")
+                }
+            }
+        }
+    }
+
+    /// 内縁の曲率半径が十分に大きい楕円は、近似でずらされ続ける ([#1820])。
+    ///
+    /// 上の検査 (`ellipseStrokeDoesNotDependOnTheFill`) は、近似を使うかどうかを問わず緑になる
+    /// — 判定 (`mokume_canShiftRing`) が壊れて常に解き直す側へ倒れても、輪郭は輪郭だけの楕円と
+    /// 一致するからである。鏡映で行列式の絶対値を落とす・特異値の式を壊すと、その倒れ方をする。
+    /// そこで、**近似を使うはずの楕円は、塗りを足すと被覆率がわずかに (0 を越えて 1/255 以内で)
+    /// 違う**ことを固定する。解き直す楕円は輪郭だけの楕円と同じ式を同じ位置で解くので、
+    /// 1 ビットも違わない — 食い違いが 0 を越えるのは、近似でずらしているときだけである。
+    ///
+    /// 置き方は、内縁の曲率半径に対する見積もりが許す範囲 (`kFormShiftTolerance`) の 0.3〜0.7
+    /// 倍に収まるものだけを選んだ (境目ぎりぎりの置き方は、float の丸めで判定が揺れうるので
+    /// 固定しない)。円 (法線でずらす) と円でない楕円 (距離場そのものの勾配でずらす) の
+    /// どちらも入れる。
+    ///
+    /// [#1820]: https://github.com/mokume-metal/mokume/issues/1820
+    @Test(
+        "内縁の曲率半径が十分に大きい楕円は、塗りを足すと被覆率がわずかに違う (近似でずらされ続ける)",
+        arguments: [BlendMode.blend, .replace])
+    func largeEllipsesStayOnTheShiftedRing(_ mode: BlendMode) throws {
+        let large: [(name: String, width: Float, height: Float, placements: [RingPlacement], asArc: Bool)] = [
+            ("円 700", 700, 700, [
+                RingPlacement(), RingPlacement(angle: 0.35), RingPlacement(scale: [-1, 1]),
+                RingPlacement(shear: 0.4), RingPlacement(angle: 0.35, scale: [1.4, 0.8], shear: 0.5),
+                RingPlacement(density: 0.5),
+            ], false),
+            ("円 700 (一周の arc)", 700, 700, [RingPlacement()], true),
+            ("円 1000", 1000, 1000, [RingPlacement(), RingPlacement(angle: 0.35)], false),
+            ("楕円 480×440", 480, 440, [
+                RingPlacement(), RingPlacement(angle: 0.35), RingPlacement(scale: [-1, 1]),
+                RingPlacement(density: 0.5),
+            ], false),
+        ]
+        for item in large {
+            for placement in item.placements {
+                let gap = try ringGap(
+                    mode, width: item.width, height: item.height, weight: 7, placement, asArc: item.asArc)
+                let label = "\(mode)・\(item.name)・\(placement.label)"
+                #expect(
+                    gap.worst.gap > 0,
+                    "\(label): 輪郭が輪郭だけの絵と 1 ビットも違わない — 近似でずらされず、解き直されている")
+                #expect(
+                    gap.differing == 0,
+                    "\(label): 輪郭の被覆率が塗りを足すと \(gap.differing) 画素で 1/255 を越えて動く (最大 \(gap.worst.gap))")
+            }
         }
     }
 
