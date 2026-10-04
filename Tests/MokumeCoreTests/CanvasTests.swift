@@ -1724,6 +1724,15 @@ struct CanvasTests {
                 c.coverageSpans.append(Canvas.CoverageSpan(range: 0..<3, value: 0.5))
             }),
             ("recordedStrokeRanges", end, all, { c, _ in c.recordedStrokeRanges.append(StrokeRange(0..<0)) }),
+            ("recordedFillRanges", end, all, { c, _ in
+                c.recordedFillRanges.append(
+                    RingFillRange(
+                        0..<0,
+                        recipe: RingFillRecipe(
+                            outline: Canvas.Outline(points: [], isClosed: false),
+                            color: .transparent, hasPicture: false, transform: .identity,
+                            uv: .zero)))
+            }),
             ("recordedSolidStrokes", end, all, { c, _ in
                 c.recordedSolidStrokes.append(
                     SolidStrokePiece(kind: .disc(.zero), weight: 1, vertexStart: 0, vertexCount: 0))
@@ -1884,7 +1893,9 @@ struct CanvasTests {
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
             "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
             "lastShadowBakeKey": "前に焼いた入力の指紋。焼かなかったフレームでは触らない (影の面は誰にも書き換えられない)",
-            "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さの 1 件だけで、点は 1024 個が上限 (#1785)。中身は太さで決まり、フレームに属さない",
+            "discOffsets": "丸い継ぎ目の円板の周のずれ。直前の太さと分割数の 1 件だけで、点は 1024 個が上限 (#1785・#1645)。中身は太さと分割数で決まり、フレームに属さない",
+            "ringSplitMemo": "周の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",
+            "discSplitMemo": "円板の分割数の直前の問い合わせ 1 件 (半径と拡大 → 分割数・#1645)。中身は入力で決まり、フレームに属さない",
             "atlasPageFrame": "焼き場の頁を作ったフレームの番号 (#1342)。番号どうしで比べる",
             "retainedSerial": "保持した形を置くたびの通し番号",
             "pendingDiscards": "溜め場を捨てた通し番号。形の組み立てが入口と出口で比べる (#1588)",

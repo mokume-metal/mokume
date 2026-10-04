@@ -151,6 +151,12 @@ public final class Canvas {
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     var recordedStrokeRanges: [StrokeRange] = []
 
+    /// 保持する形を記録している間に、楕円・弧の塗りが積んだ平面の頂点の区間 (``RingFillRange``・#1645)。
+    ///
+    /// 周は記録のときの拡大で刻んであるので、**区間を刻み直す素材を覚えておき、置くときの拡大で
+    /// 刻み直す** (`Shape.fillRanges`)。記録を終えると `createShape` が抜く。
+    var recordedFillRanges: [RingFillRange] = []
+
     /// 保持する形を記録している間に、立体の線が積んだ部品の元 (``SolidStrokePiece``)。
     ///
     /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ帯は置いた先で
@@ -238,8 +244,12 @@ public final class Canvas {
 
     /// 平面を畳む鍵。**これが等しい図形どうしだけが 1 つの雛形に収まる。**
     ///
-    /// 変換も色も入っていない — どちらも置き場所が持つためである。円の分割数は半径から
-    /// 決まる (``segmentCount(forRadius:)``) ので、寸法が入った時点で分割数も一致する。
+    /// 変換も色も入っていない — どちらも置き場所が持つためである。**ただし円の分割数は入る。**
+    /// 分割数は画面に出る半径で決まる (``segmentCount(forRadius:scale:)``) ので、寸法が同じでも
+    /// 置き場所の拡大が違えば違う。**鍵に入れるのは拡大そのものではなく整数の分割数**で、
+    /// 拡大が少し違うだけの置き場所は、同じ分割になる限り 1 つの雛形に畳まれる ([#1645])。
+    ///
+    /// [#1645]: https://github.com/mokume-metal/mokume/issues/1645
     ///
     /// **効く相手は基本図形の全部ではない。** 矩形・楕円・扇形・線・点は [#752] で距離
     /// 関数の経路 (`FormInstance`) へ移り、素のままではここへ来ない — 境目は
@@ -263,6 +273,11 @@ public final class Canvas {
         var strokeWeight: Float
         var strokeCap: StrokeCap
         var strokeJoin: StrokeJoin
+        /// 楕円・弧の周を、一周でいくつに刻むか。矩形は周を刻まないので 0。
+        var ringSegments: Int
+        /// 輪郭の円板 (丸い端・丸い折れ目・周の刻み) の周を、一周でいくつに刻むか。円板を置かない
+        /// 輪郭 (丸めない矩形・輪郭の無い図形) は 0 で、拡大の違いで雛形を割らない。
+        var discSegments: Int
         /// 置き場所の変換で描く画素 1 画素より細くなる線を持つなら、その変換 (#1637)。細い線は
         /// 置き場所の大きさごとに広げ方が違うので、**回転を除いて同じ変換の置き場所だけを畳む**
         /// (``ThinFold``)。細くならなければ `nil` で、変換の違う置き場所も同じ雛形に畳む
@@ -299,6 +314,48 @@ public final class Canvas {
         case rect(width: Float, height: Float)
         case ellipse(radiusX: Float, radiusY: Float)
         case arc(radiusX: Float, radiusY: Float, start: Float, sweep: Float)
+
+        /// 周を刻む円の半径 (大きいほうの軸)。矩形は周を刻まないので `nil`。
+        var ringRadius: Float? {
+            switch self {
+            case .rect: nil
+            case .ellipse(let radiusX, let radiusY), .arc(let radiusX, let radiusY, _, _):
+                max(radiusX, radiusY)
+            }
+        }
+
+        /// 輪郭が円板を置くか。**規則は ``Canvas/strokePlacesDiscs(pointCount:isClosed:hasJoinCurveSteps:cap:join:)``
+        /// の 1 つ**で、ここは周の形 (点の数・閉じているか・刻みか) を渡すだけである。楕円・弧の周は
+        /// 点がどれも刻みで、矩形の周は 4 つの角 (刻みでない) で閉じる。
+        func placesDiscs(cap: StrokeCap, join: StrokeJoin) -> Bool {
+            switch self {
+            case .rect:
+                Canvas.strokePlacesDiscs(
+                    pointCount: 4, isClosed: true, hasJoinCurveSteps: false, cap: cap, join: join)
+            case .ellipse, .arc:
+                Canvas.strokePlacesDiscs(
+                    pointCount: 3, isClosed: true, hasJoinCurveSteps: true, cap: cap, join: join)
+            }
+        }
+    }
+
+    /// 分割数の直前の問い合わせ (半径と拡大 → 分割数)。**畳める図形が続くと、置き場所ごとに同じ
+    /// 問いを繰り返す**ので、答えを引き直す `acos` を払わずに済む ([#1645])。
+    ///
+    /// [#1645]: https://github.com/mokume-metal/mokume/issues/1645
+    struct SplitQuery {
+        private var radius: Float = -1
+        private var scale: Float = 0
+        private var segments = 3
+
+        mutating func count(forRadius radius: Float, scale: Float) -> Int {
+            // 数でない値は等しくならないので、毎回引き直す
+            if radius == self.radius, scale == self.scale { return segments }
+            segments = Canvas.segmentCount(forRadius: radius, scale: scale)
+            self.radius = radius
+            self.scale = scale
+            return segments
+        }
     }
 
     /// 溜めている立体の頂点と、その置き場。
@@ -1181,9 +1238,12 @@ public final class Canvas {
     /// 落とすと、列が読む前に面が常駐から外れうる。フレームの終わりに焼き場へ戻す
     /// (``discardFrame()``) — 戻さないと、最後に置いた絵の持ち主を次に面を替えるまで生かす。
     var currentTexture: HeldTexture
-    /// 丸い継ぎ目と端の円板の、周のずれの控え。**直前の太さの 1 件だけ** (#1785・
-    /// `appendDisc(at:half:)`)。
-    var discOffsets: (half: Float, offsets: [SIMD2<Float>])?
+    /// 丸い継ぎ目と端の円板の、周のずれの控え。**直前の太さと分割数の 1 件だけ** (#1785・
+    /// `appendDisc(at:half:segments:)`)。分割数は画面に出る半径で決まる (#1645)。
+    var discOffsets: (half: Float, segments: Int, offsets: [SIMD2<Float>])?
+    /// 周の分割数と、円板の分割数の、直前の問い合わせ (``SplitQuery``)。
+    var ringSplitMemo = SplitQuery()
+    var discSplitMemo = SplitQuery()
     /// いま効いている塗り。`nil` なら組み込み。
     var currentShader: Shader? {
         // 当てた断片が替われば、その面を置いた記録は取り直す (``paintSurfacesNoted``)
@@ -2287,6 +2347,7 @@ public final class Canvas {
         list(&coverageSpans, counted: false)
         if emptying { openBatchHasThinCoverage = false }
         list(&recordedStrokeRanges)
+        list(&recordedFillRanges)
         list(&recordedSolidStrokes)
         list(&recordedGPUStrokes)
         list(&solidVertices)
