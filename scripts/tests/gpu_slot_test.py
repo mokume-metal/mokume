@@ -195,14 +195,16 @@ class ParallelizationWidthTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip()
 
-    def test_the_child_runs_with_width_16_by_default(self):
-        self.assertEqual(self._child_sees({}), "16")
+    def test_the_child_runs_with_width_1_by_default(self):
+        # 幅 4 以上では、MTL4CommandQueue の解放の直後の仕事が落ちる (#2007)
+        self.assertEqual(self._child_sees({}), "1")
 
     def test_a_width_given_by_the_caller_is_kept(self):
-        self.assertEqual(self._child_sees({self.VARIABLE: "1"}), "1")
+        # 既定 (1) と区別できる値で見る
+        self.assertEqual(self._child_sees({self.VARIABLE: "4"}), "4")
 
     def test_an_empty_width_is_treated_as_unset(self):
-        self.assertEqual(self._child_sees({self.VARIABLE: ""}), "16")
+        self.assertEqual(self._child_sees({self.VARIABLE: ""}), "1")
 
 
 class MakefileWiringTest(unittest.TestCase):
