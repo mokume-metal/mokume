@@ -12,7 +12,7 @@ Issue の起票から PR のマージまで、守ることは [AGENTS.md](AGENTS
 
 | 知りたいこと | AGENTS.md の節 |
 | --- | --- |
-| 何から始めるか | **進め方** — 起票は雑でよいが、着手は完了条件が固まって `verify: triaged` が付いてから |
+| 何から始めるか | **進め方** — 起票は雑でよいが、着手は完了条件が固まって `verify: triaged` が付いてから (外部の人の小さな修正は例外で、PR から始めてよい) |
 | Issue に何を書くか | **Issue の分類** — 型は Issue Type、ラベルは状態 (`status: *`) とトリアージ済みの印 (`verify: triaged`) |
 | 経過をどこに残すか | **コメント** — PR ができるまでは Issue、できてからは PR |
 | PR の出し方 | **進め方** の 6 と **コミット・PR の規約** — Conventional Commits・1 PR は 1 つの説明で筋が通る範囲・`Closes #N` は本文に・「確認方法」に完了条件の対応表 |
@@ -24,7 +24,7 @@ Issue の起票から PR のマージまで、守ることは [AGENTS.md](AGENTS
 
 fork から出してよい。**リポジトリへの書き込み権限が要る手順は、メンテナが引き取る。**
 
-1. 大きな変更は、先に Issue で相談すると早い。小さな修正なら PR から始めてよい (Issue とラベルはメンテナが用意する)
+1. 大きな変更は、先に Issue で相談すると早い。小さな修正なら PR から始めてよい (AGENTS.md **進め方** の 2)
 2. fork して枝を切り、触った範囲の検査 (`make test` など。段の並びは Makefile の `CI_CHECK_STEPS`) を通してから PR を出す。全段は CI が回す (手元なら `make ci-check`)。本文はテンプレートを埋める
 3. 残りはメンテナが引き取る:
    - ラベル (`verify: triaged` / `no-issue` / `no-visual-change`) を付け、検査を再評価させる

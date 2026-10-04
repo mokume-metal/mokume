@@ -15,6 +15,8 @@ mokume は、**コードで絵や動きを作る** (クリエイティブコー�
 
 絵と最初の 1 本は入口の 1 枚にも並んでいる: <https://mokume.org>
 
+mokume 自体に手を入れるなら [CONTRIBUTING.md](CONTRIBUTING.md) から。小さな修正は Issue を立てずに PR から出してよい。
+
 ## 作例
 
 どれもこのリポジトリの [参照スケッチ](Sketches) が描いたもの。
