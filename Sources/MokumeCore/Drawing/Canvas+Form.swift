@@ -101,7 +101,7 @@ extension Canvas {
                     source: .form, start: open.instanceStart, count: count,
                     indexStart: 0, indexCount: 0),
                 clip: style.clip,
-                matrix: jittered(projection),
+                matrix: projection,
                 lightRange: 0..<0,
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),

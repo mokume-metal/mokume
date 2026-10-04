@@ -126,7 +126,8 @@ extension Canvas {
     ///   戻す** (``UpscaleStage/lastJitterInSource``) — 描く先の絵はその分ずれているので、戻さないと
     ///   変えていない場所まで最大で描く画素 0.5 個ずれる。代償は、揺らして重ねて収束した絵が、変えた
     ///   瞬間に 1 枚ぶんの三次補間に落ちること (次に描くフレームから積み上がり直す)。止まっている間に
-    ///   置いて描き切らせた図形は、次のフレームの揺らしで描かれるので、最大で描く画素 1 個ずれる
+    ///   置いて描き切らせた図形も同じ揺らしで描く (``jitter(drawingInFrame:)``・[#1913]) ので、既にある
+    ///   絵と揃う
     ///
     /// 環を 1 つ進めてから積む — 拡大の段は CPU が置き場へ書くので、描き切りと同じく、そのスロットを
     /// 最後に読んだ投入が終わっていなければならない。
@@ -146,6 +147,7 @@ extension Canvas {
     ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
+    /// [#1913]: https://github.com/mokume-metal/mokume/issues/1913
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     func catchUpOutput(writingBackPixels: Bool = true) throws(RenderFailure) {

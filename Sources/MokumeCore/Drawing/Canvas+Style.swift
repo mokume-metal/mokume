@@ -109,17 +109,41 @@ extension Canvas {
         style.blendMode = mode
     }
 
-    /// 落とす行列に、このフレームの揺らしを足す。
+    /// 描き切りが描く位置をどれだけ揺らすか (描く先の画素・[#1913])。**列を落とす行列は、どれも
+    /// この 1 つの規則で揺らす** (``jittered(_:drawingInFrame:)``)。
+    ///
+    /// 選ぶのは、**その描き切りの絵を出す先へ広げる拡大が戻す揺らし**である。
+    ///
+    /// - フレームの描き切り (フレームの中の途中の描き切りと、フレームの終わりの描き切り): その
+    ///   フレームの終わりの拡大が ``UpscaleStage/jitterInSource`` を戻すので、次に広げるフレームの揺らし
+    /// - フレームの外の描き切り (`setup()` と止まっている間のコールバックで描き切らせる): 追い付き
+    ///   (``catchUpOutput(writingBackPixels:)``) が ``UpscaleStage/lastJitterInSource`` を戻すので、
+    ///   最後に広げたフレームの揺らし
+    ///
+    /// **列を閉じる時点ではなく、描き切る時点で選ぶ。** 止まっている間に置いて閉じた列 (混ぜ方の
+    /// 切り替えで閉じる) も、描き切らせなければ次のフレームの描き切りで描かれ、そのフレームの揺らしで
+    /// 戻される。閉じる時点の状態で選ぶと、こちらがずれる。
+    ///
+    /// 空間方向では揺らさない (``UpscaleStage/jitter`` が 0)。まだ 1 枚も広げていなければ、2 つは
+    /// 同じである。
+    ///
+    /// [#1913]: https://github.com/mokume-metal/mokume/issues/1913
+    func jitter(drawingInFrame: Bool) -> SIMD2<Float> {
+        guard let stage = upscaleStage else { return .zero }
+        return drawingInFrame ? stage.jitter : stage.lastJitter
+    }
+
+    /// 落とす行列に、描き切りの揺らし (``jitter(drawingInFrame:)``) を足す。**描き切りが列ごとの値を
+    /// 置くときに足す** — 列 (`Batch.matrix`) には揺らす前の行列を持たせる。
     ///
     /// **見る窓ではなく行列を動かす。** 窓の原点は画素の単位へ丸められる (実測) ので、
     /// 画素の内側を揺らせない。行列なら切り取りの立方体の上で足せる。
     ///
     /// 足すのは切り取りの立方体の座標なので、割る前の高さぶんを掛けて足す — 立体は
     /// 遠いほど `w` が大きく、定数を足すと奥ほど揺れなくなる。
-    ///
-    /// 空間方向では揺らさない (``UpscaleStage/jitter`` が 0)。
-    func jittered(_ matrix: simd_float4x4) -> simd_float4x4 {
-        guard let offset = upscaleStage?.jitter, offset != .zero else { return matrix }
+    func jittered(_ matrix: simd_float4x4, drawingInFrame: Bool) -> simd_float4x4 {
+        let offset = jitter(drawingInFrame: drawingInFrame)
+        guard offset != .zero else { return matrix }
         var shift = matrix_identity_float4x4
         shift.columns.3.x = offset.x * 2 / Float(pixelWidth)
         // 縦は落とす行列が向きを裏返しているので、面の下向きは立方体の上では逆になる
@@ -206,7 +230,7 @@ extension Canvas {
                 // ここへ来るのは平面だけ (上の `switch` が他を返している)。**平面は
                 // 奥行きを持たないので視点行列を通さず、光も受けない** — 立体の側は
                 // `closeSolidBatch` が視点行列と閉じた時点の光を持って閉じる
-                matrix: jittered(projection),
+                matrix: projection,
                 lightRange: 0..<0,
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),
@@ -304,7 +328,7 @@ extension Canvas {
                     start: open.vertexStart, count: open.vertexCount,
                     indexStart: indexStart, indexCount: indexCount),
                 clip: style.clip,
-                matrix: jittered(viewProjection),
+                matrix: viewProjection,
                 lightRange: bakeActiveLights(),
                 material: style.material.receiving(shadow: style.receivesShadow),
                 viewer: viewer,
