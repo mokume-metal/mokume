@@ -351,13 +351,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // 終わりの合図はどれもプロセスに 1 つで、差し替えると 1 つ目の後始末 (書き切りを
         // 待つ経路・#1219) が 2 つ目へ行く。区画へ差し出す用意 (`resolveOutlet()`) も外へ
         // 名乗るので、その前で戻る
-        guard SketchApplication.running == nil else {
-            if !SketchApplication.refusalAnnounced {
-                SketchApplication.refusalAnnounced = true
-                Diagnostics.warn(SketchApplication.secondRunRefusal)
-            }
-            return
-        }
+        guard !SketchApplication.refusesSecondRun() else { return }
         let app = NSApplication.shared
         // **画面の出口を先に決める。** 活動の方針は `app.run()` より前にしか据えられない
         // ので、窓を開くかどうかをここで知っている必要がある。窓を持たないなら Dock にも
@@ -399,6 +393,23 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             startFrameRateNotice(configuration: configuration)
         }
         app.run()
+        // **戻ったら、もう走っていない** (`NSApp.stop`)。外さないと、以後の ``run()`` が
+        // 「既に走っている」と言って断る (#2027)
+        SketchApplication.running = nil
+    }
+
+    /// 既に走っているものが在れば、断ったことを 1 度だけ言って `true` を返す (#2027)。
+    ///
+    /// ``run()`` と ``Sketch/main()`` が、プロセス全体の状態に触れる前に呼ぶ。`main()` は
+    /// 組み立ての前に呼ぶ — 組み立てが投げると `exit(1)` でプロセスを落とし、走っている
+    /// 1 つ目の後始末 (書き切りを待つ経路・#1219) を飛ばすからである。
+    static func refusesSecondRun() -> Bool {
+        guard running != nil else { return false }
+        if !refusalAnnounced {
+            refusalAnnounced = true
+            Diagnostics.warn(secondRunRefusal)
+        }
+        return true
     }
 
     /// 1 秒ごとに速さを名乗る。
@@ -841,7 +852,13 @@ final class SketchApplicationDelegate: NSObject, NSApplicationDelegate {
 
 extension Sketch {
     /// スケッチを起動する (`@main` から呼ばれる)。
+    ///
+    /// **既に 1 つ走っていれば、組み立てずに戻る** (`SketchApplication.run()` と同じ断り・
+    /// [#2027](https://github.com/mokume-metal/mokume/issues/2027))。
     public static func main() {
+        // 組み立てより前に断る。組み立てが投げると下の `exit(1)` が、走っている 1 つ目を
+        // 後始末なしに落とす
+        guard !SketchApplication.refusesSecondRun() else { return }
         do {
             let gpu = try RenderDevice()
             let application = try SketchApplication(sketch: Self(), gpu: gpu)

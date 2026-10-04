@@ -33,7 +33,8 @@ struct SecondRunTests {
     /// 結果を `nil` で返す) ので、何が起きたかは終了コードから引く。
     static let exitCodes: Comment = """
         終了コードの意味は SecondRunChild.Failure \
-        (1: 動画に目次が無い・2: 1 つ目を組めない・3: 期限切れ・4: プロセス全体の状態が変わった・5: 2 つ目が戻らない)
+        (1: 動画に目次が無い・2: 1 つ目を組めない・3: 期限切れ・4: プロセス全体の状態が変わった・\
+        5: 2 つ目が戻らない・6: 止めて戻った後の run() が断った)
         """
 
     /// 起票時の再現 (probes の `secondApplication`) と同じ形。**道具と同じ合図 (SIGTERM) で終わらせ、
@@ -53,6 +54,36 @@ struct SecondRunTests {
             $0.contains(SketchApplication.secondRunRefusal)
         }
         #expect(refusals.count == 1, "断りの 1 行が 1 度だけ出ていない。標準エラー:\n\(errors)")
+    }
+
+    /// **`Sketch.main()` で 2 つ目を起こす** (Processing の `PApplet.main` に最も近い書き方)。2 つ目は
+    /// 組み立てが投げる (`frameRate: 0`) — 投げると `main()` は `exit(1)` で落ちるので、組み立てより
+    /// 前に断らないと、1 つ目の後始末を飛ばして `.mov` が開けないまま残る。
+    @Test("Sketch.main() で起こした 2 つ目も、組み立てる前に断り、1 つ目の動画を開けるまま残す")
+    func secondMainIsRefusedBeforeBuilding() async throws {
+        let result = await #expect(
+            processExitsWith: .success, observing: [\.standardErrorContent], Self.exitCodes
+        ) {
+            await SecondRunChild.recordThenStopCallingMain()
+        }
+        guard let result else { return }
+        let errors = String(decoding: result.standardErrorContent, as: UTF8.self)
+        let refusals = errors.split(separator: "\n").filter {
+            $0.contains(SketchApplication.secondRunRefusal)
+        }
+        #expect(refusals.count == 1, "断りの 1 行が 1 度だけ出ていない。標準エラー:\n\(errors)")
+        #expect(
+            !errors.contains("The sketch could not start"),
+            "2 つ目を組み立てた (組み立ての失敗を言った)。標準エラー:\n\(errors)")
+    }
+
+    /// **`run()` が戻ったら、もう走っていない。** 1 つ目を `NSApp.stop` で止めて `run()` から
+    /// 戻した後の `run()` は、断らずに走る。
+    @Test("止めて戻った後の run() は、既に走っていると言って断らない")
+    func runAfterStopIsNotRefused() async {
+        await #expect(processExitsWith: .success, Self.exitCodes) {
+            await SecondRunChild.runAgainAfterStop()
+        }
     }
 
     /// **1 つ目を窓を持たない経路 (`.accessory`) で走らせる。** 2 つ目は窓を開く経路
@@ -82,6 +113,8 @@ struct SecondRunTests {
             case processStateChanged = 4
             /// 2 つ目の `run()` が戻らなかった (入れ子で回った)
             case secondRunDidNotReturn = 5
+            /// 1 つ目が止まって `run()` から戻った後の `run()` が、既に走っていると断った
+            case refusedAfterStop = 6
         }
 
         /// 子が自分に掛ける期限 (秒)。描くのは数秒ぶんなので、越えたら固まっている。
@@ -91,6 +124,8 @@ struct SecondRunTests {
         nonisolated(unsafe) static var movie = URL(fileURLWithPath: "/")
         /// 2 つ目の `run()` が戻ったか。
         nonisolated(unsafe) static var secondRunReturned = false
+        /// 2 つ目を `run()` ではなく `Sketch.main()` で起こすか。
+        nonisolated(unsafe) static var secondViaMain = false
 
         /// 言って、その終了コードで終わる。**後始末を走らせない** — 期限を越えた・状態が変わった、の
         /// どちらでも、続けて走らせると判定が別の理由で上書きされうる。
@@ -111,6 +146,17 @@ struct SecondRunTests {
         /// 1 つ目が `beginRecord` し、10 枚目で 2 つ目の `run()` を 2 回呼び、40 枚目に SIGTERM で
         /// 終わる。プロセスの終わりに `.mov` の目次を探す。**戻らない。**
         static func recordThenStop() async {
+            secondViaMain = false
+            await recordThenStopCallingSecond()
+        }
+
+        /// ``recordThenStop()`` の 2 つ目を、組み立てが投げるスケッチの `main()` で起こす。**戻らない。**
+        static func recordThenStopCallingMain() async {
+            secondViaMain = true
+            await recordThenStopCallingSecond()
+        }
+
+        private static func recordThenStopCallingSecond() async {
             armDeadline()
             movie = FileManager.default.temporaryDirectory
                 .appendingPathComponent("second-run-\(getpid()).mov")
@@ -145,7 +191,11 @@ struct SecondRunTests {
                 if frameCount == 10 {
                     // 2 回呼ぶ。断りの 1 行は 1 度だけ出る
                     for _ in 0..<2 {
-                        try? SketchApplication(sketch: Second(), gpu: RenderDevice()).run()
+                        if SecondRunChild.secondViaMain {
+                            Unbuildable.main()
+                        } else {
+                            try? SketchApplication(sketch: Second(), gpu: RenderDevice()).run()
+                        }
                     }
                     SecondRunChild.secondRunReturned = true
                 }
@@ -211,6 +261,69 @@ struct SecondRunTests {
             var settings = SketchSettings(width: 64, height: 48, frameRate: 60, title: "second-run B")
 
             func draw() { background(0, 0, 200) }
+        }
+
+        /// 組み立てが投げる 2 つ目 (速さ 0 は組み立てが断る・#1694)。
+        @MainActor final class Unbuildable: Sketch {
+            var settings = SketchSettings(width: 64, height: 48, frameRate: 0, title: "second-run B")
+        }
+
+        // MARK: - 止めて戻った後の run()
+
+        /// 1 つ目を 3 枚目で `NSApp.stop` して `run()` から戻し、もう 1 つの `run()` を呼ぶ。断らずに
+        /// 実行ループへ入れば、先に積んだ仕事が 0.5 秒後に 0 で終わらせる。断って戻れば 6。**戻らない。**
+        static func runAgainAfterStop() async {
+            armDeadline()
+            movie = FileManager.default.temporaryDirectory
+                .appendingPathComponent("second-run-stop-\(getpid()).mov")
+            await MainActor.run {
+                guard
+                    let request = RenderRequest(
+                        frameRate: 30, frameCount: 10_000, destination: SecondRunChild.movie.path)
+                else { fail(.cannotStart, "書き出しの頼みを組めなかった") }
+                do {
+                    // 窓を開かない経路で走らせる (止めるまでの数枚のために窓を出さない)
+                    try SketchApplication(sketch: Stopping(), gpu: RenderDevice(), render: request).run()
+                } catch {
+                    fail(.cannotStart, "1 つ目を組めなかった: \(error)")
+                }
+                // 実行ループへ入れば鳴る。断って戻れば、鳴る前に下で 6 で終わる。**main の
+                // 待ち行列には積まない** — ここ自体が main の待ち行列の仕事の中なので、入れ子の
+                // 実行ループからは掃けない。実行ループの時計に掛ける
+                Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                    try? FileManager.default.removeItem(at: SecondRunChild.movie)
+                    _exit(0)
+                }
+                do {
+                    // 1 つ目の書き出し先と取り合わないよう、書き出さない経路で組む
+                    try SketchApplication(sketch: Second(), gpu: RenderDevice()).run()
+                } catch {
+                    fail(.cannotStart, "もう 1 つを組めなかった: \(error)")
+                }
+                try? FileManager.default.removeItem(at: SecondRunChild.movie)
+                fail(.refusedAfterStop, "止めて戻った後の run() が、既に走っていると断った")
+            }
+        }
+
+        /// 3 枚目で実行ループを止める 1 つ目。
+        @MainActor final class Stopping: Sketch {
+            var settings = SketchSettings(width: 64, height: 48, frameRate: 30, title: "second-run A")
+            private var stopped = false
+
+            func draw() {
+                background(0, 0, 120)
+                guard frameCount >= 3, !stopped else { return }
+                stopped = true
+                let app = NSApplication.shared
+                app.stop(nil)
+                // `stop` は次の出来事を処理した後に効く。駆動源の呼び出しは出来事ではないので、1 つ積む
+                if let wake = NSEvent.otherEvent(
+                    with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
+                    windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)
+                {
+                    app.postEvent(wake, atStart: true)
+                }
+            }
         }
 
         // MARK: - 目次を探す
