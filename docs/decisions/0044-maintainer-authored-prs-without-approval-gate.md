@@ -75,7 +75,7 @@ ADR-0003 決定 6 自身が書いているとおり、この分離は暗号的�
 2. **App identity を外す。** 適用の後に、メンテナ名義・承認なしの PR で、`gh-app-token.sh`・`pr-identity-guard.sh` (名義の判定)・`guard-lib.sh` の token の見立てと、AGENTS.md の「エージェントの identity」節を外す。この PR が承認なしで通ること自体が、新しい流れの確認になる
 3. 最後に、リポジトリの外で App をアンインストールし、秘密鍵を失効させる
 
-2・3 は未実装で、[#2108](https://github.com/mokume-metal/mokume/issues/2108) が追う。
+1 は #2111、2 は #2112 で入った。3 だけが残り、[#2108](https://github.com/mokume-metal/mokume/issues/2108) が追う。
 
 ### 5. 採らなかった案
 

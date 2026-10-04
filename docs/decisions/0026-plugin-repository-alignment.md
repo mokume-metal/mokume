@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-30)
+採用 (2026-08-30) / 一部置換 (→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md)): 決定 1 の第 2 段の `mokume-agent` App のインストール
 
 ## 文脈
 
@@ -72,6 +72,8 @@ SPDX-License-Identifier: MIT
 **基準は「割れたときに害が出るか」の 1 つである。** 帰属の宣言は割れて 1 往復した。コミットの書式が割れれば版の上げ幅が壊れる。ラベルが割れれば分類の正典が二重になる。
 
 #### 第 2 段 — 育ってから。ただし 3 つ同時
+
+**→ App とそれに伴う承認は [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) が外した。** 本体はもう App を使わず、ルールセットも承認を要求しない。パッケージに入れる第 2 段はブランチ保護のルールセットだけで、詰みの心配 (下の「2 つは必ず同じ PR で」) も無くなった。
 
 - ブランチ保護のルールセット
 - `mokume-agent` App のインストール

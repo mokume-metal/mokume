@@ -128,7 +128,7 @@ SPDX-License-Identifier: MIT
 3. 既存の機構を**置き換えて**、総量を増やさずに済むか
 4. どれでも済まないときだけ、新しい部品を足す
 
-**重ねるときは、なぜ重複が必要かを書く。** 正当な重複は既にある — `scripts/pr-identity-guard.sh` (Claude Code のフック) と `scripts/review-gate.sh` (CI) は同じ不変条件を二重に見張るが、これは**フックの効かないエージェントがいる**ためで、理由が AGENTS.md に書かれている ([#104](https://github.com/mokume-metal/mokume/issues/104))。理由を書けない重複は、どちらかが要らない。
+**重ねるときは、なぜ重複が必要かを書く。** 正当な重複はあった — `scripts/pr-identity-guard.sh` (Claude Code のフック) と `scripts/review-gate.sh` (CI) は同じ不変条件を二重に見張っていた (どちらも [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) が不変条件ごと外した)。重ねていたのは**フックの効かないエージェントがいる**ためで、理由は AGENTS.md に書かれていた ([#104](https://github.com/mokume-metal/mokume/issues/104))。理由を書けない重複は、どちらかが要らない。
 
 **この基準も機構では強制しない** (決定 3 の射程に含める)。「既存で済まないか確認したか」の判定には実質的な判断が要り、機械にできるのは PR 本文に段が書かれているかの字面検査までである。段を書けば通る検査は、書く動機だけを増やして判断を素通りさせる。
 
