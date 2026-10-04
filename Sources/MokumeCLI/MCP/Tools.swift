@@ -176,10 +176,20 @@ struct Tools {
             requestedTime = value.doubleValue
             request["time"] = value.doubleValue
         }
-        let count = max(1, arguments["count"] as? Int ?? 1)
-        let every = max(1, arguments["every"] as? Int ?? 1)
-        if count > 1 { request["count"] = count }
-        if every > 1 { request["every"] = every }
+        // **範囲では切らずに、そのまま渡す。** 範囲の外の頼みは撮る側が端へ丸め、切ったことを
+        // 応答の警告で名乗る (observe-request の約束)。ここで切ると、その警告が出ない (#2045)
+        var series: [String: Int] = [:]
+        for key in ["count", "every"] {
+            switch Self.seriesArgument(arguments[key], key: key) {
+            case .omitted: break
+            case .value(let value): series[key] = value
+            case .refused(let text): return (text, true)
+            }
+        }
+        let count = series["count"]
+        let every = series["every"]
+        if let count { request["count"] = count }
+        if let every { request["every"] = every }
         let report: [String: Any]
         switch roundTrip(
             facet: facets.observeFacet, entry: StartupReads.observe, request: request, id: id,
@@ -218,7 +228,7 @@ struct Tools {
         // **黙って寛容にはしない。** 目録は面の仕様が要求しているもの (ADR-0018 決定 4) で、
         // 無いまま読めたのは読み手が補ったからである。補ったことは読み手が名乗る
         if manifestMissing, !names.isEmpty {
-            lines.append(Self.manifestMissingNote(count: count))
+            lines.append(Self.manifestMissingNote(count: count ?? 1))
         }
         lines.append(pretty(report))
         return (lines.joined(separator: "\n\n"), false)
@@ -273,16 +283,43 @@ struct Tools {
     ///
     /// フレームレートは分からないので、遅い側 (30fps) を見込んで換算する。
     ///
-    /// **掛ける前に、撮る側と同じ範囲へ丸める** (#2045)。撮る側は範囲の外の頼みを断らず
-    /// 端へ丸めて撮る (範囲の正本は `ObservationRequest.clamped()`) ので、待つ長さも丸めた
-    /// 値で見積もる。丸めずに掛けると、スキーマの外の値 (`every = Int.max` など) で Int が
-    /// 溢れ、窓口のプロセスごと落ちる。
-    static func extraWait(count: Int, every: Int) -> TimeInterval {
-        let count = min(
-            max(count, ObservationRequest.minimumCount), ObservationRequest.maximumCount)
-        let every = min(
-            max(every, ObservationRequest.minimumEvery), ObservationRequest.maximumEvery)
-        return Double((count - 1) * every + 1) / 30
+    /// **撮る側が丸めた値で見積もる** (#2045)。範囲の外の頼みは撮る側が端へ丸めて撮るので、
+    /// 丸め方は撮る側の `ObservationRequest.clamped()` をそのまま使い、範囲を写さない。
+    /// 丸めずに掛けると、スキーマの外の値 (`every = Int.max` など) で Int が溢れ、
+    /// 窓口のプロセスごと落ちる。
+    static func extraWait(count: Int?, every: Int?) -> TimeInterval {
+        let limits = ObservationRequest(id: "", count: count ?? 1, every: every ?? 1).clamped()
+        return Double((limits.count - 1) * limits.every + 1) / 30
+    }
+
+    /// 枚数・間隔の引数の読み方。
+    enum SeriesArgument: Equatable {
+        /// 渡されていない。撮る側の既定 (1) に任せる
+        case omitted
+        /// 整数として読めた値。範囲の外でも切らない
+        case value(Int)
+        /// 整数として読めない。理由の文
+        case refused(String)
+    }
+
+    /// 枚数・間隔の引数を、範囲では切らずに整数として読む (#2045)。
+    ///
+    /// **整数でない値は断る。** 黙って既定の 1 へ倒すと、`every = 2.5` や `count = "3"` が
+    /// 毎フレーム 1 枚の頼みに化け、撮る側の警告にも載らない。`time` が型の違いを断るのと
+    /// 揃える。
+    ///
+    /// **Int に収まらない整数は、符号の側の端へ寄せる。** `1e19` も `Int.max` も「上限より
+    /// 大きい」ことに変わりはなく、撮る側が上限へ丸めて警告で名乗る。
+    static func seriesArgument(_ raw: Any?, key: String) -> SeriesArgument {
+        guard let raw else { return .omitted }
+        let refusal = SeriesArgument.refused("\(key) must be a whole number")
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            return refusal
+        }
+        if let exact = raw as? Int { return .value(exact) }
+        let double = number.doubleValue
+        guard double.isFinite, double == double.rounded() else { return refusal }
+        return .value(double > 0 ? Int.max : Int.min)
     }
 
     private func buildStatus() -> (String, Bool) {
