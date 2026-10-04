@@ -80,10 +80,10 @@ struct ParticleLifetimeTests {
         ///
         /// `requestedTime` を渡すと、時刻を指定して 1 枚描き直す観測の 1 枚になる (#1760)。
         /// `rate` を渡すと、升ではなく真ん中の 1 点から毎秒 `rate` 個を寿命 1 で出す
-        /// (上書きの注意を見る形)。
+        /// (上書きの注意を見る形)。`afterward` は進めた後、同じフレームの中で呼ぶ。
         func advance(
             emitting lives: [Float] = [], at requestedTime: Float? = nil, speed: Float = 0,
-            rate: Float? = nil
+            rate: Float? = nil, afterward: (Canvas) -> Void = { _ in }
         ) throws {
             timing.advance(at: requestedTime)
             canvas.time = timing.time
@@ -105,6 +105,7 @@ struct ParticleLifetimeTests {
                         color: .linear(red: 1, green: 1, blue: 1), using: &randomness)
                 }
                 canvas.particles(dust)
+                afterward(canvas)
             }
         }
 
@@ -376,6 +377,65 @@ struct ParticleLifetimeTests {
         #expect(
             row.dust.warnings.hasWarned(.overwrite) == discarding,
             "GPU の寿命の残り \(remaining) の粒を上書きして、注意が\(discarding ? "出なかった" : "出た")")
+    }
+
+    /// 進めの計算を描き切りより先に流す口。
+    enum SentAhead: CustomStringConvertible {
+        /// 参照の経路。`particles()` の中の読み戻しが、溜めた計算をその場で流す
+        case readBack
+        /// 面をまたぐ順 (#1870)。描き場所が粒の状態を読む計算を頼み、本体の溜めを先に流させる
+        case anotherSurface
+
+        var description: String {
+            switch self {
+            case .readBack: "読み戻し"
+            case .anotherSurface: "面をまたぐ順"
+            }
+        }
+    }
+
+    /// 先に流した進めは、そのフレームを捨てても数える。**計算は描き切りより先に GPU へ投入され、
+    /// 寿命は減っている。** 24 fps の寿命 1 の粒を枠 1 つで出し、5 枚目は進めを先に流してから
+    /// 描き切りを投げさせる。GPU で 24 回進んだところで上書きすると、残り 1 (もう描かれない)
+    /// なので注意は出ない。先に流した口で数えない作りでは、控えが捨てたフレームと一緒に落ちて
+    /// 累計が 23 に留まり、尽きた粒の上書きで注意が出た。
+    @Test("先に流した進めは、そのフレームを捨てても上書きの注意に数える", arguments: [SentAhead.readBack, .anotherSurface])
+    func anAdvanceSentAheadCountsEvenIfTheFrameIsDiscarded(_ path: SentAhead) throws {
+        let gpu = try RenderDevice()
+        let canvas = try makeCanvas(gpu: gpu, slots: 1)
+        let row = try Row(
+            on: canvas, fps: 24, slots: 1, route: path == .readBack ? .reference : .instanced)
+        let layer = try canvas.createGraphics(8, 8)
+        let touch = try canvas.makeComputation(
+            "kernel void touch(device const float *a [[buffer(0)]], device float *b [[buffer(1)]], "
+                + "uint id [[thread_position_in_grid]]) { b[id] = a[id]; }",
+            name: "touch")
+        let sink = try canvas.makeNumbers(count: 1)
+        func sendAhead(_ canvas: Canvas) {
+            guard path == .anotherSurface else { return }
+            layer.beginDraw()
+            layer.compute(touch, over: 1, reads: [row.dust.state], writes: [sink])
+            layer.endDraw()
+        }
+
+        try row.advance(emitting: [1], afterward: sendAhead)
+        for frame in 2...24 {
+            guard frame == 5 else {
+                try row.advance(afterward: sendAhead)
+                continue
+            }
+            canvas.failureForTesting = .timedOut(seconds: 5)
+            #expect(throws: RenderFailure.self) { try row.advance(afterward: sendAhead) }
+            canvas.failureForTesting = nil
+            // 捨てたフレームの進めも GPU では走った (先に流したので)
+            #expect(row.particle(0).life == 25 - 5, "\(path): 先に流した進めが走っていない")
+        }
+        let remaining = row.particle(0).life
+        #expect(remaining == 1, "\(path): GPU の寿命の残り \(remaining)")
+        try row.advance(emitting: [1], afterward: sendAhead)
+        #expect(
+            !row.dust.warnings.hasWarned(.overwrite),
+            "\(path): GPU で尽きた粒 (残り \(remaining)) を上書きして、注意が出た")
     }
 
     // MARK: - 秒の刻みの上書きの注意
