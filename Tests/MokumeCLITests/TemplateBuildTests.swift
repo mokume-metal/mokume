@@ -123,7 +123,16 @@ struct TemplateBuildTests {
         try "木目".write(
             to: root.appendingPathComponent("Sources/packed-sketch/assets/mark.txt"),
             atomically: true, encoding: .utf8)
-        try AppIdentity.example.write(
+        // 許可の文言を書いた名乗り。文言が実際の束ねを通って包みへ入るところまで見る
+        try """
+        {
+          "name": "Grain",
+          "identifier": "org.example.grain",
+          "version": "0.1.0",
+          "cameraUsage": "Grain looks at the camera to draw what it sees",
+          "microphoneUsage": "Grain listens to the room to move"
+        }
+        """.write(
             to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
             encoding: .utf8)
 
@@ -131,6 +140,17 @@ struct TemplateBuildTests {
 
         let app = root.appendingPathComponent("bundle/Grain.app", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: app.path), "包みが出来ていない")
+
+        let infoPlist = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+        let plist =
+            try PropertyListSerialization.propertyList(from: infoPlist, format: nil)
+            as? [String: Any]
+        #expect(
+            plist?["NSCameraUsageDescription"] as? String
+                == "Grain looks at the camera to draw what it sees")
+        #expect(
+            plist?["NSMicrophoneUsageDescription"] as? String
+                == "Grain listens to the room to move")
 
         // 開き方は包みの**隣**に出る。中にあっては、開けない人には読めない
         let note = root.appendingPathComponent("bundle/How to open Grain.txt")
