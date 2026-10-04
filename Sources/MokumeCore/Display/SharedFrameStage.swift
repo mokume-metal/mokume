@@ -47,6 +47,15 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         /// 出るので、ずらさないと**寸分違わず重なり**、窓が 1 つしか無いように見える (実測)。
         /// 一度動かせば以後は覚えた位置が使われるので、効くのは初めての 1 回だけである。
         var nudge: NSSize = .zero
+        /// 差し出し元が頼む窓の大きさ (描く大きさ × ``SketchSettings/windowScale``) に従うか。
+        ///
+        /// **作品の窓だけが従う。** 作品の窓の見え方は直に走らせたときと同じである
+        /// ([ADR-0032] 決定 1)。プレビューは手元に置く道具の窓で、作品の宣言に大きさを
+        /// 決めさせる理由が無い。
+        ///
+        /// 従うのは指定が前と変わったときだけで、変わらなければ手で動かした大きさと位置が
+        /// 残る (``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)``)。
+        var followsRequestedSize = false
     }
 
     /// × を押された人に問う言葉。
@@ -75,6 +84,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         let height: Int
         /// 番号ごとのテクスチャ。引けなかった面は入らない。
         let frames: [UInt32: Frame]
+        /// 窓を開く倍率。**名乗らない子 (古いライブラリ) なら `nil`** で、窓の大きさに触らない。
+        let windowScale: Float?
     }
 
     private let gpu: RenderDevice
@@ -349,7 +360,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             return
         }
         incoming = Source(
-            ids: manifest.ids, width: manifest.width, height: manifest.height, frames: frames)
+            ids: manifest.ids, width: manifest.width, height: manifest.height, frames: frames,
+            windowScale: manifest.windowScale)
     }
 
     /// 控えている世代が絵を出せるなら、そちらへ乗り換える。
@@ -371,6 +383,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         incoming = nil
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((waiting.width, waiting.height))
+        followRequestedSize(of: waiting)
         // **枚数の数え直しに備える。** 新しい子は 1 から数えるので、前の子の枚数を
         // 覚えたままだと、そこへ追い付くまで 1 枚も出さないことになる (速さも同じで、
         // 追い付くまで前の子の数字を名乗り続けることになる)
@@ -378,6 +391,25 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         lastSeenFrame = 0
         onGenerationPromoted?()
     }
+
+    /// 出す世代が頼む窓の大きさに合わせる (``Look/followsRequestedSize``)。
+    ///
+    /// **乗り換えのたびに呼ぶが、当たるのは指定が変わったときだけである。** 保存のたびに
+    /// 窓が戻らないこと ([#679](https://github.com/mokume-metal/mokume/issues/679)) は
+    /// ``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)`` が持つ。
+    private func followRequestedSize(of generation: Source) {
+        guard look.followsRequestedSize, let scale = generation.windowScale, let window else {
+            return
+        }
+        WindowPlacement.honour(
+            WindowPlacement.requestedSize(
+                width: generation.width, height: generation.height, scale: scale),
+            in: window, autosaveName: look.autosaveName, defaults: defaults)
+    }
+
+    /// 開く大きさの指定を覚える先。**検査から差し替える** — 既定のままだと、検査を走らせた
+    /// プロセスの記憶に指定が残る。
+    var defaults: UserDefaults = .standard
 
     /// 番号から面を引き、差し出せる形にする。
     private func makeFrame(id: UInt32, width: Int, height: Int) -> Frame? {

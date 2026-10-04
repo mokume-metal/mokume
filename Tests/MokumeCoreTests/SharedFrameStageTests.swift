@@ -479,6 +479,63 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 開く大きさ (#1624)
+
+    /// **作品の窓は、直に走らせたときと同じ大きさで見える** ([ADR-0032] 決定 1)。差し出し元が
+    /// 名乗る倍率に合わせ、名乗りが変わらない入れ替えでは手で変えた大きさを残す (#679)。
+    /// プレビューは従わない。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    @Test("作品の窓は差し出し元の倍率に合わせ、倍率が変わらない入れ替えでは手で変えた大きさを残す")
+    func artworkWindowFollowsTheRequestedSize() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let suite = "mokume.test.stage.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+
+            var artworkLook = look(fresh())
+            artworkLook.followsRequestedSize = true
+            let artwork = try SharedFrameStage(gpu: gpu, facet: facet, look: artworkLook)
+            let preview = try SharedFrameStage(
+                gpu: gpu, facet: facet, look: look(fresh(), size: SharedFramePreview.defaultSize))
+            for stage in [artwork, preview] {
+                stage.defaults = defaults
+                stage.open()
+            }
+            defer {
+                artwork.close()
+                preview.close()
+            }
+
+            // 32x32 を 1 画素 4 点で
+            var arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, windowScale: 4)
+            artwork.displayLinkFired()
+            preview.displayLinkFired()
+            #expect(artwork.window?.contentLayoutRect.size == NSSize(width: 128, height: 128))
+            #expect(preview.window?.contentLayoutRect.size == SharedFramePreview.defaultSize)
+
+            // 人が手で広げた後、同じ倍率の子へ入れ替わった (保存)
+            let resized = NSSize(width: 300, height: 200)
+            artwork.window?.setContentSize(resized)
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, windowScale: 4)
+            artwork.displayLinkFired()
+            #expect(artwork.window?.contentLayoutRect.size == resized, "保存で窓が戻った")
+
+            // 倍率を変えて保存した
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, windowScale: 2)
+            artwork.displayLinkFired()
+            #expect(artwork.window?.contentLayoutRect.size == NSSize(width: 64, height: 64))
+
+            // 倍率を名乗らない子 (古いライブラリ) なら触らない
+            artwork.window?.setContentSize(resized)
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            artwork.displayLinkFired()
+            #expect(artwork.window?.contentLayoutRect.size == resized)
+            _ = arriving
+        }
+    }
+
     // MARK: - 手放したときの常駐
 
     // 下の 2 本は、差し替えのときは面を常駐から外すが、持ち主ごと手放したときは外して
@@ -550,10 +607,11 @@ struct SharedFrameStageTests {
     ///
     /// **同じ区画へ 2 つ作ると、目録は後から置いたほうで上書きされる** — それが子の
     /// 入れ替えで起きることそのものである。
-    private func makeSurface(in facet: URL, gpu: RenderDevice, drawing frames: Int) throws
-        -> SharedFrameSurface
-    {
-        let shared = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+    private func makeSurface(
+        in facet: URL, gpu: RenderDevice, drawing frames: Int, windowScale: Float? = nil
+    ) throws -> SharedFrameSurface {
+        let shared = try SharedFrameSurface(
+            gpu: gpu, width: 32, height: 32, windowScale: windowScale, at: facet)
         try shared.publishManifest()
         // **更新時刻を必ず動かす。** 見張りは時刻が変わったときだけ読み直すので、同じ刻みに
         // 収まると 2 つ目の目録を読まない (``WatchedFile``)

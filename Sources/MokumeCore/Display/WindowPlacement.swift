@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import MokumeDiagnostics
 
 /// 窓をどう出すか。
 ///
@@ -37,6 +38,109 @@ enum WindowPlacement {
     /// **作品の窓と別にする。** 同じ名前だと互いの位置を上書きし合い、2 枚が重なって
     /// 開く ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1)。
     static let previewAutosaveName = "mokume.watch.preview"
+
+    // MARK: - 開く大きさの指定 (#1624)
+
+    /// 開く大きさの指定を覚えるときの鍵。**位置を覚える名前から導く。**
+    ///
+    /// 名前ごとに導くので、窓が違えば指定も別に覚える (作品の窓とプレビュー)。覚える名前を
+    /// 後から分けても (画面ごと・同じ実行ファイルの何本目か — [#2020]) 指定はそれに付いて
+    /// 分かれ、こちらは何も変えなくてよい。
+    ///
+    /// **位置の記憶 (`NSWindow Frame <名前>`) とは別の鍵に置く。** 指定を名前に混ぜて
+    /// 覚え分ける形にすると、名前は「どの窓か」と「どの大きさを頼まれたか」の 2 つを背負い、
+    /// #2020 が名前を分けるときに綴りの組み方まで決め直すことになる。
+    ///
+    /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
+    static func requestKey(for autosaveName: String) -> String { "\(autosaveName).requestedSize" }
+
+    /// 描く大きさ (画素) と倍率 (``SketchSettings/windowScale``) から、開く大きさ (点)。
+    static func requestedSize(width: Int, height: Int, scale: Float) -> NSSize {
+        NSSize(width: CGFloat(width) * CGFloat(scale), height: CGFloat(height) * CGFloat(scale))
+    }
+
+    /// 枠に収まるまで、**縦横比を保って**縮める。収まっていればそのまま返す。
+    ///
+    /// 縦横比を崩して収めると、絵は引き伸ばされずに帯が付く
+    /// (``ViewportFit``) — 頼んだ形とも違う窓になるので、相似のまま縮める。
+    static func fitted(_ size: NSSize, within bounds: NSSize) -> NSSize {
+        guard size.width > bounds.width || size.height > bounds.height,
+            bounds.width > 0, bounds.height > 0
+        else { return size }
+        let ratio = min(bounds.width / size.width, bounds.height / size.height)
+        return NSSize(width: (size.width * ratio).rounded(.down), height: (size.height * ratio).rounded(.down))
+    }
+
+    /// 開く大きさの指定が、覚えている指定と違うか。**違えば新しい指定を覚え直す。**
+    ///
+    /// 覚えている指定が無いとき (初めて開く・指定を覚える前の版で開いていた) も「違う」と
+    /// 答える。前の版が覚えた大きさは、どの指定で開いたものか分からないからである。
+    static func takesNewRequest(
+        _ requested: NSSize, autosaveName: String, defaults: UserDefaults
+    ) -> Bool {
+        let key = requestKey(for: autosaveName)
+        let spelled = NSStringFromSize(requested)
+        guard defaults.string(forKey: key) != spelled else { return false }
+        defaults.set(spelled, forKey: key)
+        return true
+    }
+
+    /// 開く大きさの指定を窓へ当てる。**指定が前と変わっていたときだけ**、覚えていた大きさと
+    /// 位置を捨てて、指定の大きさで中央へ置き直す。
+    ///
+    /// ## なぜ変わったときだけか
+    ///
+    /// 毎回当てると、手で広げた大きさが開くたびに戻る。見張りの下では保存のたびに当たるので
+    /// (作品の窓)、[#679] が直した「保存のたびに窓が戻る」がそのまま帰ってくる。逆に一度も
+    /// 当てないと、覚えた大きさが指定に勝ち、指定を変えても前の窓の大きさで開く
+    /// ([#1624] — 320x240 から 1920x1080 へ変えても 160x152 点のまま開いた)。
+    ///
+    /// ## 全画面の間は当てない
+    ///
+    /// 見張りから本番を回している窓は全画面のことがあり、保存で全画面が外れてはならない
+    /// ([ADR-0032] 決定 1)。指定も覚え直さないので、全画面を抜けた後に開いたときに当たる。
+    ///
+    /// ## 画面に収まらなければ縮める
+    ///
+    /// 縦横比を保って、窓のある画面の使える範囲へ収める (``fitted(_:within:)``)。値は断らない
+    /// — 同じスケッチでも画面が大きければ頼んだとおりに開く。縮めたことは 1 行言う。
+    ///
+    /// - Parameters:
+    ///   - requested: 開く大きさの指定 (点)。
+    ///   - window: 当てる窓。
+    ///   - autosaveName: 窓の位置を覚えている名前 (``requestKey(for:)`` の元)。
+    ///   - defaults: 指定を覚える先。**検査から差し替える。**
+    ///   - warn: 縮めたことを言う口。**検査から差し替える。**
+    /// - Returns: 当てたか。
+    ///
+    /// [#679]: https://github.com/mokume-metal/mokume/issues/679
+    /// [#1624]: https://github.com/mokume-metal/mokume/issues/1624
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    @MainActor
+    @discardableResult
+    static func honour(
+        _ requested: NSSize, in window: NSWindow, autosaveName: String,
+        defaults: UserDefaults = .standard,
+        warn: (String) -> Void = { Diagnostics.warn($0) }
+    ) -> Bool {
+        guard !window.styleMask.contains(.fullScreen),
+            takesNewRequest(requested, autosaveName: autosaveName, defaults: defaults)
+        else { return false }
+        var size = requested
+        if let screen = window.screen ?? NSScreen.main {
+            let usable = window.contentRect(forFrameRect: screen.visibleFrame).size
+            size = fitted(requested, within: usable)
+            if size != requested {
+                warn(
+                    "The window asked for \(Int(requested.width))×\(Int(requested.height)) points, "
+                        + "more than the screen holds — opening it at "
+                        + "\(Int(size.width))×\(Int(size.height)) instead (windowScale)")
+            }
+        }
+        window.setContentSize(size)
+        window.center()
+        return true
+    }
 
     /// 見張りが起こした入れ替えか。
     static func isRelaunch(stamp: String?) -> Bool { stamp != nil }

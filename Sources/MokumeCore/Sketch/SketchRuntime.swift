@@ -120,6 +120,23 @@ public final class SketchRuntime {
         }
     }
 
+    /// 組み立てで検めた、窓を開く倍率 (``checkWindowScale(_:)`` を越えた値)。
+    ///
+    /// **窓を開く側はこれを読む** (`SketchApplication`)。``declaredFrameRate`` と同じく、
+    /// `settings` を読み直すと検めた値と使う値が別物になりうる。
+    let windowScale: Float
+
+    /// 組み立てで窓を開く倍率を検める。**0 より大きい有限の数でなければ断る**
+    /// ([ADR-0020] 決定 5 の 2 行目)。
+    ///
+    /// 窓を開かない実行でも断る — 書き出しで通った作品が、窓を開く起こし方に移って初めて
+    /// 落ちる形にしない。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    static func checkWindowScale(_ scale: Float) throws(RenderFailure) {
+        guard scale.isFinite, scale > 0 else { throw .invalidWindowScale(scale) }
+    }
+
     /// 撮る係へ渡す刻みを、時計から決める (``launchFrameRate``)。
     static func recordingFrameRate(clock: Clock, declared: Int) -> Int {
         switch clock {
@@ -265,9 +282,11 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
+        try Self.checkWindowScale(settings.windowScale)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
+        self.windowScale = settings.windowScale
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(
@@ -301,9 +320,11 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
+        try Self.checkWindowScale(settings.windowScale)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
+        self.windowScale = settings.windowScale
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: settings.width, height: settings.height)
         self.canvas = try Canvas(

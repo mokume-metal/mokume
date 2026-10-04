@@ -492,7 +492,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         guard
             let shared = SharedFrameSurface.makeIfEnabled(
                 gpu: gpu, width: runtime.target.width, height: runtime.target.height,
-                at: directory, owner: owner)
+                windowScale: runtime.windowScale, at: directory, owner: owner)
         else { return nil }
         do {
             try shared.publishManifest()
@@ -524,20 +524,22 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         case .window: return
         case .pendingWindow: break
         }
-        let settings = runtime.sketch.settings
-        // 窓は描く解像度の半分で開く。描く解像度と窓の大きさは独立なので、
-        // どちらに合わせてもよい — 大きな絵が画面からはみ出さない側を既定にする
-        let contentSize = NSSize(width: settings.width / 2, height: settings.height / 2)
+        // 窓は描く解像度 × 倍率で開く (既定 0.5)。描く解像度と窓の大きさは独立なので、
+        // どちらに合わせてもよい — 既定は大きな絵が画面からはみ出さない側にしてある
+        let requested = WindowPlacement.requestedSize(
+            width: runtime.target.width, height: runtime.target.height, scale: runtime.windowScale)
         let window = WindowPlacement.makeWindow(
             title: title, autosaveName: WindowPlacement.autosaveName,
-            defaultSize: contentSize)
+            defaultSize: requested)
+        // **覚えた大きさより、変わった指定を取る** (#1624)。変わっていなければ何もしない
+        WindowPlacement.honour(requested, in: window, autosaveName: WindowPlacement.autosaveName)
 
         // 見張りが起こした入れ替えでは、窓を出しはするが前面は取らない (#679)
         let takesFocus = WindowPlacement.takesFocus(
             isRelaunch: WindowPlacement.isRelaunch(stamp: SourceStamp.current))
 
         let surface = SketchSurface(
-            frame: NSRect(origin: .zero, size: contentSize), device: gpu.device,
+            frame: NSRect(origin: .zero, size: window.contentLayoutRect.size), device: gpu.device,
             input: runtime.input,
             canvasSize: (runtime.target.width, runtime.target.height))
         surface.wantsLayer = true

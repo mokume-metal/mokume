@@ -25,7 +25,11 @@ import AppKit
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 public final class SharedFrameWindow {
-    /// 覚えている枠が無いときの大きさ。
+    /// 覚えている枠が無く、**差し出し元がまだ来ていない**ときの大きさ。
+    ///
+    /// 差し出し元が窓の倍率を名乗れば、最初の絵が出るときにその大きさ (描く大きさ ×
+    /// ``SketchSettings/windowScale``) へ合わせる — 直に走らせたときと同じ大きさで見える
+    /// ([ADR-0032] 決定 1・[#1624])。名乗らない古いライブラリの子なら、この大きさのまま残る。
     ///
     /// **この値はプレビューのずらし量の前提である。** `SharedFramePreview.nudge` は
     /// `SharedFramePreview.defaultSize` の丈からずらす量を出しており、2 つの既定が
@@ -36,14 +40,16 @@ public final class SharedFrameWindow {
     /// ## 写しは畳まない
     ///
     /// 同じ 480x270 は**3 つ目がある** — `SketchApplication` が `run` の窓を出すときの
-    /// `settings.width / 2` が、``SketchSettings`` の既定 960x540 の半分としてこの値に
-    /// なる。あちらはキャンバスの大きさで実行時に動くのに、道具の窓が出しているのは
-    /// 別プロセスが差し出す絵で、キャンバスの大きさを知らない。**3 つを寄せる先が無い**
+    /// 描く大きさ × 倍率が、``SketchSettings`` の既定 (960x540・0.5) でこの値になる。
+    /// あちらはキャンバスの大きさで実行時に動くのに、道具の窓が開く時点では差し出し元が
+    /// まだ来ておらず、キャンバスの大きさを知らない。**3 つを寄せる先が無い**
     /// ので、寄せずに「割れても直せる形」(検査) を置いた
     /// ([ADR-0008] 決定 6・[#964])。
     ///
     /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
     /// [#964]: https://github.com/mokume-metal/mokume/issues/964
+    /// [#1624]: https://github.com/mokume-metal/mokume/issues/1624
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static let defaultSize = NSSize(width: 480, height: 270)
 
     private let stage: SharedFrameStage
@@ -56,7 +62,7 @@ public final class SharedFrameWindow {
             gpu: gpu, facet: facet,
             look: SharedFrameStage.Look(
                 title: title, autosaveName: WindowPlacement.autosaveName,
-                defaultSize: Self.defaultSize))
+                defaultSize: Self.defaultSize, followsRequestedSize: true))
     }
 
     /// 作品の窓が拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行**で、

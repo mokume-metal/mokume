@@ -131,15 +131,25 @@ final class SharedFrameSurface {
         let ids: [UInt32]
         let width: Int
         let height: Int
+        /// 窓を開く倍率 (``SketchSettings/windowScale``)。**作品の窓の大きさを、直に走らせた
+        /// ときと揃えるために渡す** ([ADR-0032] 決定 1 の「見え方は直に走らせたときと同じ」)。
+        ///
+        /// **無くても絵は出る** ([ADR-0018] 決定 5 の表の 1 行目 — 版は据え置き)。書かない
+        /// 古いライブラリの子なら、道具の窓はこれまでどおりの大きさのまま開く。
+        ///
+        /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+        /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+        let windowScale: Float?
 
         private enum CodingKeys: String, CodingKey {
-            case schemaVersion, ids, width, height
+            case schemaVersion, ids, width, height, windowScale
         }
 
-        init(ids: [UInt32], width: Int, height: Int) {
+        init(ids: [UInt32], width: Int, height: Int, windowScale: Float? = nil) {
             self.ids = ids
             self.width = width
             self.height = height
+            self.windowScale = windowScale
         }
 
         /// **版が違えば読まない。** 知らない形を推測で解くと、食い違いが絵の壊れ方として出る。
@@ -166,6 +176,10 @@ final class SharedFrameSurface {
                     forKey: .width, in: container,
                     debugDescription: "Not a drawable size: \(width)x\(height)")
             }
+            // **倍率は読めなくても目録ごと捨てない。** 窓の大きさは絵の出る出ないに関わらない
+            // ので、開けない値は「頼まれていない」として扱う
+            let scale = try? container.decodeIfPresent(Float.self, forKey: .windowScale)
+            windowScale = scale.flatMap { $0 }.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         }
     }
 
@@ -177,6 +191,8 @@ final class SharedFrameSurface {
 
     let width: Int
     let height: Int
+    /// 窓を開く倍率。目録に載せて道具へ渡す (``Manifest/windowScale``)。
+    let windowScale: Float?
     /// 面の番号 (書く順)。
     let ids: [UInt32]
 
@@ -199,12 +215,13 @@ final class SharedFrameSurface {
     ///
     /// - Parameter owner: 起こした道具の名乗り (``launchOwner``)。
     static func makeIfEnabled(
-        gpu: RenderDevice, width: Int, height: Int,
+        gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil,
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
         owner: String? = SharedFrameSurface.launchOwner
     ) -> SharedFrameSurface? {
         guard isEnabled(at: directory, owner: owner) else { return nil }
-        return try? SharedFrameSurface(gpu: gpu, width: width, height: height, at: directory)
+        return try? SharedFrameSurface(
+            gpu: gpu, width: width, height: height, windowScale: windowScale, at: directory)
     }
 
     /// このプロセスを起こした、窓を持つ道具の名乗り。**起こされていなければ `nil`。**
@@ -293,12 +310,15 @@ final class SharedFrameSurface {
             + "depends on: update them together"
     }
 
-    init(gpu: RenderDevice, width: Int, height: Int, at directory: URL) throws(RenderFailure) {
+    init(
+        gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil, at directory: URL
+    ) throws(RenderFailure) {
         // 面は `makeTexture(descriptor:iosurface:plane:)` で作るので `RenderDevice.makeTexture` を
         // 通らない。寸法の関所はここで通す (上の端も含む・#1642)
         try RenderDevice.checkTextureSize(width: width, height: height)
         self.width = width
         self.height = height
+        self.windowScale = windowScale
         self.gpu = gpu
         self.manifestURL = directory.appendingPathComponent(Self.manifestName)
 
@@ -377,7 +397,9 @@ final class SharedFrameSurface {
     /// **投げる。** 置けなかったときに窓を開く側へ倒す判断は呼び手 (``SketchApplication``)
     /// が持つので、ここは名乗らない — 判断が呼び手にある口だけが `throws` である (#989)。
     func publishManifest() throws {
-        try AtomicFile.writeJSON(Manifest(ids: ids, width: width, height: height), to: manifestURL)
+        try AtomicFile.writeJSON(
+            Manifest(ids: ids, width: width, height: height, windowScale: windowScale),
+            to: manifestURL)
     }
 
     /// 描いた絵を次の面へ焼き、**前に焼いた 1 枚を差し出す。**

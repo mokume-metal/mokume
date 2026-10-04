@@ -86,6 +86,47 @@ struct SetupValueRangeTests {
         }
     }
 
+    // MARK: - windowScale (#1624)
+
+    /// 窓を開く倍率で何もしないスケッチ。
+    private final class Scaled: Sketch {
+        var settings = SketchSettings(width: 10, height: 10)
+        init() {}
+        convenience init(windowScale: Float) {
+            self.init()
+            settings.windowScale = windowScale
+        }
+        func draw() {}
+    }
+
+    /// **0 以下・無限大・NaN は断る** (ADR-0020 決定 5 の 2 行目)。窓を開かない組み立てでも
+    /// 断るので、ランタイムの 2 つの入口で見る。
+    @Test("窓の倍率が 0 以下・無限大・NaN なら、どちらの入口の組み立ても断る", arguments: [0, 1])
+    func refusesAWindowScaleThatOpensNothing(entry: Int) throws {
+        for scale: Float in [0, -0.5, -.infinity, .infinity] {
+            #expect(throws: RenderFailure.invalidWindowScale(scale), "windowScale \(scale)") {
+                try assemble(Scaled(windowScale: scale), clock: nil, entry: entry)
+            }
+        }
+        // NaN は自分と等しくないので、型と case だけを見る
+        #expect {
+            try assemble(Scaled(windowScale: .nan), clock: nil, entry: entry)
+        } throws: { error in
+            guard case .invalidWindowScale(let scale) = error as? RenderFailure else { return false }
+            return scale.isNaN
+        }
+    }
+
+    /// 下の端の側。0 を僅かに超える値も、既定より大きな値も組み立てられる。
+    @Test("窓の倍率が 0 より大きければ、小さくても大きくても組み立てられる")
+    func assemblesAnyPositiveWindowScale() throws {
+        for scale: Float in [.leastNonzeroMagnitude, 0.5, 4, 1000] {
+            let runtime = try SketchRuntime(sketch: Scaled(windowScale: scale), gpu: RenderDevice())
+            defer { runtime.closePlugins() }
+            #expect(runtime.windowScale == scale)
+        }
+    }
+
     /// 起票の再現 (probes の `badFrameRate`) の逆側。1 は正しい値で、1 秒に 1 枚進む。
     @Test("frameRate 1 なら組み立てられ、1 秒ずつ進む")
     func assemblesAtOneFramePerSecond() throws {
