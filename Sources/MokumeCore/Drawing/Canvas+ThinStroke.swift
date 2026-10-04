@@ -164,15 +164,27 @@ extension Canvas {
     /// 乗るので、`scale(2)` の下の太さ 0.5 や、細かさ 0.5 の太さ 2 の線も、描く画素では 1 ± 1e-7 に
     /// なる。特異値を 1 の付近で丸めても、これらは拾えない。
     ///
-    /// 幅は ``splitScaleTolerance`` (分割数を決める拡大率の丸め・#1645) と同じ相対 1e-3 で、根拠も
-    /// 同じ: 回転や平行移動を重ねた誤差 (1e-6 ほど) より 3 桁大きく、丸めて補わなかった線は、描く
-    /// 画素で最大 0.1% 太く (被覆 0.999 のところを 1 で) 出るだけである。
+    /// **幅 (``thinStrokeTolerance``) は、単精度の揺れだけを吸う狭さにする。** 分割数の拡大率の
+    /// 丸め (``splitScaleTolerance``・相対 1e-3) と同じ幅にはしない — 丸めの帰結が違うからである。
+    /// 拡大率の丸めは、半径を最大 0.1% 小さく見積もるだけで、絵は 0.25 画素の保証の内側に残る。
+    /// こちらは、丸めた線が補いの経路を外れ、元の太さのまま AA の無い帯を組む。描く画素で 1 より
+    /// わずかに細い軸に沿った帯は、被覆を掛けずに満濃度で出るうえ、縁が画素の中心の内側に入るので、
+    /// 中心が画素の境目に乗ると**どの画素の中心も跨がず消えうる** (太さ 0.9995 の横線の帯
+    /// [10.50025, 11.49975] は、中心 10.5 と 11.5 を外す。手元の GPU ではずれがラスタライザの格子への
+    /// 寄せより小さく、消えずに満濃度で出たが、その精度には頼らない)。「1 画素より細い線は、置く位置に
+    /// よらず太さに比例した濃さで出る」(`strokeWeight` の説明) を守るには、本当に細い線を丸めない。
+    ///
+    /// 幅は実測で選んだ (`RotatedThinStrokeFormulaTests`)。回転 1 つ・2 つの合成・平行移動と鏡映を
+    /// 挟んだ合成・拡大や細かさとの組・立体の線の細かさでは、1 からの揺れは最大 2.4e-7。小さい回転を
+    /// 1000 回重ねると 1.0014e-5 まで積もる。1e-5 では、この積み重ねが単精度で幅の端にちょうど
+    /// 乗って余裕が無いので、1 桁広い 1e-4 にする。補いを外れるのは描く画素で [0.9999, 1) の太さの
+    /// 線だけになる (`strokeWeight(0.9995)` は幅の外で、これまでどおり補う)。
     static func roundedDrawnWeight(_ drawn: Float) -> Float {
         drawn < 1 && drawn >= Float(1 - thinStrokeTolerance) ? 1 : drawn
     }
 
-    /// 細い線とみなさない幅 (相対・``roundedDrawnWeight(_:)``)。``splitScaleTolerance`` と同じ値。
-    static let thinStrokeTolerance = splitScaleTolerance
+    /// 細い線とみなさない幅 (相対・``roundedDrawnWeight(_:)``)。単精度の揺れだけを吸う。
+    static let thinStrokeTolerance = 1e-4
 
     /// 円板と周の分割数を決めるときの、形自身の座標から画面への拡大率 (#1645)。
     /// 行列の 2x2 (平面の点が写る先) の最大の特異値で、**どの向きでも、これ以上は伸びない**。
@@ -226,9 +238,17 @@ extension Canvas {
 
     /// 立体の線の描く画素での太さ。**立体の線の太さは出す画素**で書かれている
     /// (視線に正対させて画面の画素で組む) ので、変換によらず、**置く面の細かさ**だけで決まる。
+    ///
+    /// 1 をわずかに割る値は 1 に丸める (``roundedDrawnWeight(_:)``・#2039)。細かさの比
+    /// (幅 / 刻む幅) は単精度で丸められるので、細かさ 0.55・出す先 200 の太さ `1 / 0.55` は
+    /// 0.99999994 になる。丸めないと、同じ絵の平面の線 (1 に丸まって補わない) と判断が食い違う。
     func drawnSolidWeight(_ weight: Float) -> Float {
-        let units = unitsPerDrawnPixel
-        return weight / (units.x * units.y).squareRoot()
+        Self.drawnSolidWeight(weight, unitsPerDrawnPixel: unitsPerDrawnPixel)
+    }
+
+    /// ``drawnSolidWeight(_:)`` の式 (描く画素 1 つが `units` の土台)。
+    static func drawnSolidWeight(_ weight: Float, unitsPerDrawnPixel units: SIMD2<Float>) -> Float {
+        roundedDrawnWeight(weight / (units.x * units.y).squareRoot())
     }
 
     // MARK: - 平面の輪郭

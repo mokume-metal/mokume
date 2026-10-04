@@ -120,12 +120,13 @@ struct RotatedThinStrokeFormulaTests {
         #expect(broken.isEmpty, "\(setting) で細く見た \(broken.count) 件: \(broken.prefix(3))")
     }
 
-    /// 本当に細くなる変換は、従来どおり補う。幅 (1e-3) の外のわずかな縮小 (0.99・0.998) も補う。
+    /// 本当に細くなる変換は、従来どおり補う。幅 (1e-4) の外のわずかな縮小 (0.99・0.998・0.9995) も
+    /// 補う。
     @Test(
         "縮める変換は、回しても従来どおり細く見る",
         arguments: [
             (x: Float(0.5), y: Float(0.5)), (x: 1, y: 0.5), (x: 0.25, y: 3), (x: 0.99, y: 0.99),
-            (x: 0.998, y: 0.998), (x: 1, y: 0.99),
+            (x: 0.998, y: 0.998), (x: 1, y: 0.99), (x: 0.9995, y: 0.9995), (x: 1, y: 0.9995),
         ])
     func shrinkingStillThins(_ scale: (x: Float, y: Float)) {
         let expected = min(scale.x, scale.y)
@@ -172,15 +173,23 @@ struct RotatedThinStrokeFormulaTests {
         #expect(broken.isEmpty, "\(broken.count) 件: \(broken.prefix(3))")
     }
 
-    @Test("誤差の幅の内側は 1 に丸め、幅の外の細さは丸めない")
-    func roundingBandMatchesTheSplitScale() {
-        #expect(Canvas.thinStrokeTolerance == Canvas.splitScaleTolerance)
-        #expect(Canvas.thinStrokeTolerance == 1e-3)
+    /// 幅は単精度の揺れ (積み重ねて 1e-5) だけを吸う。分割数の拡大率の丸め (1e-3) とは揃えない —
+    /// 丸めた線は補いを外れ、AA の無い帯が画素の境目で消えうるので、本当に細い線は丸めない。
+    @Test("誤差の幅の内側は 1 に丸め、幅の外の細さ (0.9995 など) は丸めずに補う")
+    func roundingBandAbsorbsOnlySinglePrecisionDrift() {
+        #expect(Canvas.thinStrokeTolerance == 1e-4)
+        #expect(Canvas.thinStrokeTolerance < Canvas.splitScaleTolerance)
         // 幅の内側 (単精度の誤差が積もっても届く範囲) は、ちょうど 1
-        #expect(Canvas.roundedDrawnWeight(0.9995) == 1)
         #expect(Canvas.roundedDrawnWeight(0.99999994) == 1)
-        #expect(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: 0.9995, y: 0.9995) }) == 1)
-        // 幅の外と、1 以上はそのまま
+        #expect(Canvas.roundedDrawnWeight(0.99999) == 1)
+        #expect(Canvas.roundedDrawnWeight(0.99995) == 1)
+        #expect(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: 0.99995, y: 0.99995) }) == 1)
+        // 幅の外は丸めない (補いの経路で、描く画素 1 つの太さへ広げて濃さで出す)
+        #expect(Canvas.roundedDrawnWeight(0.9995) == 0.9995)
+        #expect(Canvas.roundedDrawnWeight(0.9998) == 0.9998)
+        #expect(abs(Canvas.thinnestDrawnWeight(0.9995, by: drawn { _ in }) - 0.9995) < 1e-7)
+        #expect(abs(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: 1, y: 0.9995) }) - 0.9995) < 1e-6)
+        // 1 以上と、ずっと細い値はそのまま
         #expect(Canvas.roundedDrawnWeight(0.998) == 0.998)
         #expect(Canvas.roundedDrawnWeight(0.5) == 0.5)
         #expect(Canvas.roundedDrawnWeight(0) == 0)
@@ -189,8 +198,8 @@ struct RotatedThinStrokeFormulaTests {
     }
 
     /// 保持した形の見積もり (`Shape.thinnestRecordedWeight`) は、置くときの行列と掛け合わせた後で
-    /// 1 度だけ丸める。記録の側で丸めると、記録 0.9995 × 置き場所 0.9993 = 0.9988 (幅の外で細い) を
-    /// 1 × 0.9993 → 1 と見て、組み直しを飛ばす。
+    /// 1 度だけ丸める。記録の側で丸めると、記録 0.99995 × 置き場所 0.99993 = 0.99988 (幅の外で
+    /// 細い) を 1 × 0.99993 → 1 と見て、組み直しを飛ばす。
     @Test("最小の特異値は丸めず、潰れた・数でない変換は従来どおり扱う")
     func smallestSingularValueIsUnrounded() {
         let slight = Canvas.smallestSingularValue(of: drawn { $0.scale(x: 0.9995, y: 0.9995) })
@@ -221,6 +230,31 @@ struct RotatedThinStrokeFormulaTests {
         // 数でない変換は、補わない側 (1 未満と比べて偽)
         #expect(!(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: .nan, y: 2) }) < 1))
         #expect(!(Canvas.thinnestDrawnWeight(1, by: drawn { $0.scale(x: .infinity, y: 2) }) < 1))
+    }
+
+    /// 立体の線の太さは出す画素で書かれ、描く画素では細かさの比 (幅 / 刻む幅) で割る。比は単精度で
+    /// 丸められるので、細かさ `d` の下の太さ `1 / d` (描く画素でちょうど 1) が 0.99999994 になりうる。
+    /// 平面の線と同じく 1 に丸め、同じ絵の中で平面と立体の判断を食い違わせない。
+    @Test("立体の線も、細かさで描く画素の太さがちょうど 1 になるなら補わない")
+    func solidStrokesRoundLikePlanarOnes() {
+        // 起票の再現: 細かさ 0.55・出す先 200 (刻む 110)・太さ 1 / 0.55
+        let units = SIMD2(repeating: Float(200) / Float(110))
+        #expect(Canvas.drawnSolidWeight(1 / 0.55, unitsPerDrawnPixel: units) >= 1)
+        var broken: [String] = []
+        for density in [0.1, 0.15, 0.2, 0.3, 0.35, 0.4, 0.45, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95] {
+            for width in stride(from: 20, through: 2000, by: 1) {
+                let pixels = (Double(width) * density).rounded()
+                guard pixels > 0, abs(pixels - Double(width) * density) < 1e-9 else { continue }
+                let units = SIMD2(repeating: Float(width) / Float(pixels))
+                let found = Canvas.drawnSolidWeight(1 / Float(density), unitsPerDrawnPixel: units)
+                if found < 1 { broken.append("細かさ \(density)・幅 \(width): \(found)") }
+            }
+        }
+        #expect(broken.isEmpty, "補いに入った \(broken.count) 件: \(broken.prefix(3))")
+        // 本当に細い立体の線は、従来どおり補う
+        let half = SIMD2<Float>(repeating: 2)
+        #expect(Canvas.drawnSolidWeight(1, unitsPerDrawnPixel: half) == 0.5)
+        #expect(Canvas.drawnSolidWeight(1.999, unitsPerDrawnPixel: half) == 0.9995)
     }
 }
 
@@ -355,5 +389,51 @@ struct RotatedThinStrokeTests {
             canvas.shape(shape)
         }
         #expect(canvas.thinStrokesRebuilt > before)
+    }
+
+    // MARK: - 丸めの幅の外の細い線 (反証 1)
+
+    /// 描く画素でわずかに 1 を割る線 (0.9995) は、丸めずに補い、太さぶんの濃さ (被覆 0.9995) で
+    /// 出す。丸めると補いを外れ、AA の無い太さ 0.9995 の帯をそのまま組む — 帯の縁が画素の中心の
+    /// 内側に入るので、置き方によってはどの画素の中心も跨がず消えうる。手元の GPU では、ずれ
+    /// (0.00025) がラスタライザの格子への寄せより小さく、帯は消えずに満濃度 1 で出た。そこで
+    /// 被覆が掛かったか (満濃度 1 を下回るか) と、太さぶんから半精度の刻み 2 つ (2⁻¹⁰) の内に
+    /// あるかを見る: かつての幅 1e-3 では、どの位置でも満濃度 1 が出て赤になる。補った線は手元で
+    /// 0.99902 (= 1 − 2⁻¹⁰) だった。
+    @Test(
+        "幅の外でわずかに細い横線は、置く位置によらず太さぶんの濃さで出る",
+        arguments: [
+            (weight: Float(0.9995), x: Float(1), y: Float(1)),
+            (weight: 1, x: 1, y: 0.9995),
+            (weight: 1, x: 0.9995, y: 0.9995),
+        ])
+    func slightlyThinLinesNeverVanish(_ setting: (weight: Float, x: Float, y: Float)) throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 100, height: 40)
+        let expected = Double(setting.weight * min(setting.x, setting.y))
+        var broken: [String] = []
+        for offset: Float in [10, 10.25, 10.5, 10.75, 11] {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeWeight(setting.weight)
+                canvas.scale(setting.x, setting.y)
+                canvas.beginShape()
+                canvas.vertex(10 / setting.x, offset / setting.y)
+                canvas.vertex(90 / setting.x, offset / setting.y)
+                canvas.endShape()
+            }
+            let pixels = try canvas.output.readPixels()
+            // 端の形を避けて、x = 40…59 の列の和を平均する
+            var total = 0.0
+            for x in 40..<60 {
+                for y in 0..<pixels.height { total += Double(pixels[x, y].red) }
+            }
+            let measured = total / 20
+            if !(measured < 1 && measured >= expected - 1.0 / 1024) {
+                broken.append("y = \(offset): \(measured) (期待 \(expected))")
+            }
+        }
+        #expect(broken.isEmpty, "\(setting): \(broken.joined(separator: " / "))")
     }
 }
