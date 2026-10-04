@@ -78,6 +78,7 @@ ON にするなら、次の赤と状態は**コードを直して push しても
 | `review-gate` (確認方法の対応表・反証の節・`CHANGES_REQUESTED`) | PR 本文と、レビュアーとのやりとり。判定は main の版のスクリプトで走るので、PR の中で判定を書き換えても消えない ([ADR-0031](decisions/0031-triage-as-the-single-gate.md) 決定 2) |
 | `drawing-evidence` | 絵を PR に載せる。絵が変わりようのないときだけ `no-visual-change` を付ける |
 | `pr-title` | タイトルを直す。rerun しない (`stall-watch.sh` の読み分け表の 6) |
+| `render-pr` が見送られた・cancel された | 必須ではないので直すものは無い。rerun しない — 門番を通らずに専用機へ積まれ、merge queue の `render` と取り合う (#2062)。要るなら queue が空いてから push し直す |
 | `render` の台帳の不一致 | 2 回描いても一致しないなら決定論が壊れている。台帳を書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
 | 承認待ちで進まない (`BLOCKED`) | 正常な状態で、直すものは無い |
 | `BEHIND` | 何もしない。"Update branch" を押すと auto-merge だけが外れる |

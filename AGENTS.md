@@ -120,7 +120,7 @@ GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && git push -u ori
 
 描画結果・動きが変わる PR には before/after の視覚的証跡を載せる (動きは動きの分かる形式で)。**専用機の `render` が見るのは触っていない絵の退行 (台帳の照合) だけで、緑は新しい絵が正しいことを意味しない。** 貼られた絵が新しい絵の唯一の検証記録で、squash merge の後には足せない。`scripts/drawing-paths.txt` に載る場所を触った PR に絵が無ければ `drawing-evidence` が赤になる (見るのは絵があることだけ — ADR-0019 決定 1)。絵が変わりようのない変更には `no-visual-change` を付ける。
 
-描画の検査は、専用機 (self-hosted runner) が merge queue の合流後の木を実際に描いて走らせる (`.github/workflows/render.yml`)。描画 PR も他の PR と同じく並んで入る。同じリポジトリの Draft でない PR には `render-pr` も走るが、早く気付くための情報で必須ではない。queue から弾かれたら、落ちた `render` の run を読んで直す。専用機での作業は画面とキーボードで行う (#180)
+描画の検査は、専用機 (self-hosted runner) が merge queue の合流後の木を実際に描いて走らせる (`.github/workflows/render.yml`)。描画 PR も他の PR と同じく並んで入る。同じリポジトリの Draft でない PR には `render-pr` も走るが (queue が専用機を待つ間は見送る)、早く気付くための情報で必須ではない。queue から弾かれたら、落ちた `render` の run を読んで直す。専用機での作業は画面とキーボードで行う (#180)
 
 見た目・動きの事象を Issue に立てるときも証跡を添える (壊れた絵は起票の時点でしか撮れない)。上げ先は問わず、Issue / PR の入力欄へ画像や動画を落とせば GitHub が保管する。エージェントの撮り方と上げ先は `.claude/skills/visual-evidence/` が持つ。
 

@@ -96,11 +96,18 @@ url=${2:-}
 
 case "$url" in
   # 専用機の render の run (#1774)。status の値ごとに応答を分ける。既定は空の並び
-  */actions/workflows/render.yml/runs\?*)
+  */actions/workflows/render.yml/runs\\?*)
     [ -z "${RUNS_FAIL:-}" ] || { echo "gh: 502" >&2; exit 1; }
     st=${url#*status=}; st=${st%%&*}
     f="$PR_DIR/render-runs.$st.json"
     [ -f "$f" ] || f="$PR_DIR/render-runs.none.json"
+    emit "$f"; exit 0 ;;
+  # run の job (#2062)。既定は空の並び
+  */actions/runs/*/jobs\\?*)
+    [ -z "${JOBS_FAIL:-}" ] || { echo "gh: 502" >&2; exit 1; }
+    id=${url%/jobs*}; id=${id##*/}
+    f="$PR_DIR/render-jobs.$id.json"
+    [ -f "$f" ] || { echo '{"jobs":[]}' > "$PR_DIR/render-jobs.none.json"; f="$PR_DIR/render-jobs.none.json"; }
     emit "$f"; exit 0 ;;
   */check-runs)
     sha=${url%/check-runs}; sha=${sha##*/}
@@ -153,9 +160,27 @@ class StallWatchTest(unittest.TestCase):
     def write(self, name, payload):
         (self.pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
 
-    def write_runs(self, status, *created):
-        """render.yml の run のうち、status のものを created の時刻で並べる。"""
-        runs = [{"status": status, "created_at": at} for at in created]
+    def write_runs(self, status, *created, job_status=None, gate="completed"):
+        """render.yml の run のうち、status のものを created の時刻で並べる。
+
+        run ごとに、専用機の job 1 本 (status は job_status・既定は run と同じ) と、GitHub
+        ホストの門番の job 1 本 (status は gate) を置く。
+        """
+        runs = []
+        for at in created:
+            self.next_run_id = getattr(self, "next_run_id", 100) + 1
+            run_id = self.next_run_id
+            runs.append({"id": run_id, "status": status, "created_at": at})
+            jobs = [
+                {"name": "render-turn", "status": gate, "created_at": at, "labels": ["ubuntu-latest"]},
+                {
+                    "name": "render",
+                    "status": job_status or status,
+                    "created_at": at,
+                    "labels": ["self-hosted", "mokume-render"],
+                },
+            ]
+            self.write(f"render-jobs.{run_id}.json", {"total_count": len(jobs), "jobs": jobs})
         self.write(f"render-runs.{status}.json", {"total_count": len(runs), "workflow_runs": runs})
 
     def add_pr(
@@ -440,6 +465,30 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(line[1:4], ["runner-offline", "name", "30"], proc.stdout)
         self.assertEqual(proc.returncode, 1, proc.stdout)
 
+    def test_門番が走って_run_が_in_progress_でも_専用機の_job_が拾われなければ名乗る(self):
+        """render.yml の run は門番 (GitHub ホスト) が走ると in_progress になる (#2062)。
+        run の status で読むと、runner が落ちても「走っている」に倒れて黙る。"""
+        self.write_runs("in_progress", ago(30), job_status="queued")
+        self.write_runs("queued", ago(5))
+        proc = self.watch()
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1:4], ["runner-offline", "name", "30"], proc.stdout)
+
+    def test_門番の_job_が走っていても_runner_が生きている印にはしない(self):
+        self.write_runs("in_progress", ago(30), job_status="queued", gate="in_progress")
+        proc = self.watch()
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1], "runner-offline", proc.stdout)
+
+    def test_job_を読めなければ読めなかったと名乗る(self):
+        self.write_runs("queued", ago(30))
+        proc = self.watch(JOBS_FAIL=1)
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1:3], ["unreadable", "name"], proc.stdout)
+
     def test_他の_run_を走らせている間は順番待ちとして黙る(self):
         self.write_runs("queued", ago(30))
         self.write_runs("in_progress", ago(33))
@@ -489,6 +538,24 @@ class StallWatchTest(unittest.TestCase):
         log = self.gh_log()
         self.assertNotIn("--job 111", log, "pr-title へ rerun を打っている")
         self.assertIn("--job 222", log, "同じ run の他の失敗ジョブへ打っていない")
+
+    def test_cancel_された_render_pr_を巻き添えで_rerun_しない(self):
+        """ジョブ単位の rerun は門番 (render-turn) を通らず、専用機へ直に積む (#2062)。"""
+        self.add_pr(25)
+        self.write(
+            "25.checkruns.json",
+            {
+                "check_runs": [
+                    {"name": "render-pr", "conclusion": "cancelled", "id": 333},
+                    {"name": "ci-check", "conclusion": "failure", "id": 222},
+                ]
+            },
+        )
+        proc = self.act(["25 stale-checks act 5 古い失敗 check"])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        log = self.gh_log()
+        self.assertNotIn("--job 333", log, "render-pr へ rerun を打っている")
+        self.assertIn("--job 222", log)
 
     def test_名乗る行には何も打たない(self):
         proc = self.act(["21 conflict name 90 main と衝突している"])

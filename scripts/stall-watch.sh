@@ -24,7 +24,9 @@
 #      対処: 承認を待つ / gh pr merge <番号> --auto --squash を打ち直す
 #   3. 全 check が緑なのに進まない
 #      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)
-#      対処: gh run rerun <run-id> --failed — **ただし pr-title には打たない** (#699)
+#      対処: gh run rerun <run-id> --failed — **ただし pr-title と render-pr には打たない**
+#      (#699・#2062。render-pr の rerun は門番を通らずに専用機へ積む。必須ではないので
+#      打たなくても merge は止まらない)
 #   4. autoMerge: false + CLEAN + 全 check 緑 で isInMergeQueue: true
 #      原因: 止まっていない — 予約が queue へ移ると autoMergeRequest は null になる (#628)
 #      対処: 何も打たない
@@ -39,7 +41,8 @@
 #      ので古いタイトルで判定し、打つ前より悪くなる (#699)。直せば edited で新しい run が走る
 #   7. close して作り直した PR が、全 check 緑なのに赤い
 #      原因: close した側の run が付けた赤が同じコミットに残っている (#513)
-#      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)
+#      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)。
+#      render.yml の run は rerun しない (3 と同じ)
 #   8. autoMerge: true + BLOCKED + 全 check 緑 で、一度承認されたのに承認が無い
 #      原因: 承認済みの PR へ push したので dismiss_stale_reviews_on_push が承認を落とした (#1033)
 #      対処: Approve を押し直す。依頼の出し直しは review-request が打つ (#1177)。衝突を解いた
@@ -55,6 +58,19 @@
 #      してから、その定義の PR を出す — 必須チェックを消すときは適用を merge より先にする
 #      (AGENTS.md「ブランチ保護の正本」)。戻すときは逆順 (PR を merge してから適用) にする。
 #      外している間は描画を誰も見ないので、戻した後の最初の merge_group の render を確かめる
+#  10. 専用機は online で busy なのに、queue の先頭の render だけが queued のまま進まない
+#      原因: 専用機は queued の job を先着順に拾わない (#2062)。先頭の render が後から
+#      積まれた render-pr や後ろの group の render に抜かれ続け、60 分の期限で弾かれる。
+#      render.yml の門番 (render-turn) が積む順番を絞るので、普段は起きない。起きたら
+#      門番が効いていない (render-turn が赤) か、門番より前に積まれた job が残っている
+#      対処: 先頭の group と、専用機で走っている job の run の render-turn の要約を読む
+#      (待った相手・見送ったか・読めずに通したか)。専用機で走っている・queued の job が
+#      render-pr なら、gh run cancel で退かせてよい (必須ではなく、stall-act も rerun しない —
+#      戻すなら queue が空いてから push し直す)。弾かれた先頭は 5 と同じく予約を掛け直す。
+#      9 との見分け: 9 は runner が offline で、どの render も走らない。10 は runner が
+#      busy で、後ろの render や render-pr は走っている。runner が online なのに専用機の
+#      job が 1 本も走らないまま先頭の render だけが queued なら (stall-watch は 9 と名乗る)、
+#      job そのものが詰まっている — 先頭の PR を queue から出し入れして job を作り直す
 #
 # 読むときの注意:
 #
@@ -147,12 +163,16 @@
 # ## PR ではなくリポジトリを見る行 (runner-offline・#1774)
 #
 # runner-offline だけは PR ごとの状態ではなく、専用機という 1 台の状態を見る。番号の欄は
-# `-` になる。判定は render.yml の run の並びから読む — runners API は GITHUB_TOKEN では
-# 読めないためである。「queued の run があり、in_progress の run が 1 本も無く、最古の
-# queued が猶予を超えた」ときに名乗る。
+# `-` になる。判定は render.yml の終わっていない run の、**専用機の job** (ラベル
+# mokume-render) の並びから読む — runners API は GITHUB_TOKEN では読めないためである。
+# 「queued の専用機の job があり、in_progress の専用機の job が 1 本も無く、最古の queued が
+# 猶予を超えた」ときに名乗る。
 #
-# - **in_progress が 1 本でもあれば名乗らない。** runner は生きていて、1 台なので順番を
-#   待っているだけである (render の所要は約 4〜5 分)
+# - **run ではなく job で見る** (#2062)。render.yml の run はどれも先に GitHub ホストの門番
+#   (render-turn) が走るので、専用機が止まっていても run は数秒で in_progress になる。run の
+#   status で読むと、runner が落ちても「走っている」に倒れて黙る
+# - **専用機の job が 1 本でも in_progress なら名乗らない。** runner は生きていて、1 台なので
+#   順番を待っているだけである (render の所要は約 7〜8 分)
 # - 生きている runner は queued の run を数秒で拾うので、猶予 (既定 15 分) は PR の猶予より
 #   短い。**ここは猶予を超えたときにしか行を出さず、出したら必ず 1 で終える** — 猶予の
 #   内の queued は正常な順番待ちなので、出すと毎回の注意になる (#642)
@@ -290,10 +310,21 @@ say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
   printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5"
 }
 
-# 専用機の render の run を、状態で絞って読む。読めなければ非 0 で返す
-render_runs() { # $1=status $2=jq
-  gh api "repos/$REPO/actions/workflows/render.yml/runs?status=$1&per_page=100" \
-    --jq "$2" 2>/dev/null
+# 終わっていない render.yml の run の、専用機の job を「<status> <created_at>」で出す。
+# 門番 (GitHub ホスト) の job は数えない。読めなければ非 0 で返す
+runner_jobs() {
+  local st ids="" got id
+  for st in queued in_progress; do
+    got=$(gh api "repos/$REPO/actions/workflows/render.yml/runs?status=$st&per_page=100" \
+      --jq '.workflow_runs[].id' 2>/dev/null) || return 1
+    ids+="$got"$'\n'
+  done
+  for id in $(printf '%s' "$ids" | sort -u); do
+    gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+      --jq '.jobs[] | select((.labels // []) | index("mokume-render"))
+        | select(.status == "queued" or .status == "in_progress")
+        | "\(.status) \(.created_at)"' 2>/dev/null || return 1
+  done
 }
 
 # --- 走査 -------------------------------------------------------------------
@@ -302,15 +333,18 @@ overdue=0
 
 # 専用機の死活。PR の走査より先に出す — 止まっていれば、下の PR の行 (弾かれた・予約が
 # 外れた) の原因はたいていここにある
-if ! oldest_queued=$(render_runs queued '[.workflow_runs[].created_at] | sort | first // ""') ||
-  ! running=$(render_runs in_progress '.workflow_runs | length'); then
+if ! jobs=$(runner_jobs); then
   say_line - unreadable name 0 "専用機の render の run を読めなかった (runner の死活を判定していない)"
-elif [ -n "$oldest_queued" ] && [ "${running:-0}" -eq 0 ]; then
-  mins=$(minutes_since "$oldest_queued")
-  if [ "$mins" -ge "$RUNNER_STALL_MINUTES" ]; then
-    say_line - runner-offline name "$mins" \
-      "専用機の runner が render を拾っていない — 戻す手順は表の 9 行目"
-    overdue=1
+else
+  oldest_queued=$(awk '$1 == "queued" { print $2 }' <<<"$jobs" | sort | sed -n '1p')
+  running=$(awk '$1 == "in_progress" { n++ } END { print n + 0 }' <<<"$jobs")
+  if [ -n "$oldest_queued" ] && [ "$running" -eq 0 ]; then
+    mins=$(minutes_since "$oldest_queued")
+    if [ "$mins" -ge "$RUNNER_STALL_MINUTES" ]; then
+      say_line - runner-offline name "$mins" \
+        "専用機の runner が render を拾っていない — 戻す手順は表の 9 行目"
+      overdue=1
+    fi
   fi
 fi
 
