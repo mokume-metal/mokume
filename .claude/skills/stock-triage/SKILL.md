@@ -50,6 +50,21 @@ git fetch origin main && git log --oneline origin/main -5
 | 前提が動いていないか | 関連する PR / ADR を読む | 起票時に正しかった観測が、いまは別の姿になっていることがある |
 | 重複が無いか | `gh issue list --search '<言葉>' --state all` | 同じことが 2 本立っていたら、片方を not planned で閉じる |
 
+### 題に「(実害待ち)」を持つ機構の提案
+
+[ADR-0008](../../../docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 2 で待たせた提案は、
+上の 4 つを調べ直さない。見るのは 1 つ — **前回の棚卸し以降に起票された Issue・入った PR に、
+その実害や同じ根に当たるものがあるか**。
+
+```bash
+gh issue list -R mokume-metal/mokume --state all --search '<言葉> created:>=<前回の棚卸しの日付>'
+gh pr list -R mokume-metal/mokume --state merged --search '<言葉> merged:>=<前回の棚卸しの日付>'
+```
+
+そのうえでメンテナに「やる / not planned / 待つ」の推奨を出す (決めるのはメンテナ。
+ADR-0008 決定 2 の 2026-10-05 改訂)。**結論が前回と同じなら、コメントを足さない** —
+6 回同じ「据え置き」を書き残した [#799](https://github.com/mokume-metal/mokume/issues/799) の轍を踏まない (#2034)。
+
 **調べても分からなかったことは、分からなかったと書く。** 起票者が「原因が読めない」と書いた
 Issue は、たいてい本当に読めない — 埋めずに、**確かめられたところまで**を書く。
 
