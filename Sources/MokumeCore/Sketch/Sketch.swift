@@ -193,13 +193,13 @@ public struct SketchSettings: Equatable, Sendable {
     /// ``Sketch/noLoop()`` を呼ぶ。
     ///
     /// **起動のときに読む。** 走っている最中に代入しても、画面の刻みも ``Sketch/time`` /
-    /// ``Sketch/deltaTime`` も変わらず、警告も出ない。`var settings = SketchSettings(…)` と
-    /// 持てば `draw()` の中で代入でき、読み返しても代入した値が返るので、変えられたように
-    /// 見えてしまう。
+    /// ``Sketch/deltaTime`` も変わらない。`var settings = SketchSettings(…)` と持てば
+    /// `setup()` や `draw()` の中で代入でき、読み返しても代入した値が返るので、変えられたように
+    /// 見えてしまう。**そのため、起動のときと違う値になったら、1 度だけ警告を標準エラーへ
+    /// 出す** (同じ走りの中では繰り返さない・[#1323](https://github.com/mokume-metal/mokume/issues/1323))。
     ///
     /// 手本 (Processing / p5) の `frameRate(n)` は走っている最中に呼べるが、ここには
-    /// 走っている最中に速さを変える口がまだ無い
-    /// ([#1323](https://github.com/mokume-metal/mokume/issues/1323))。
+    /// 走っている最中に速さを変える口が無い。
     public var frameRate: Int
     /// 窓の題名。
     public var title: String
