@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 の必須化の手段と決定 5 の報告先 / 改訂 (2026-08-30): 決定 4 が CODEOWNERS を畳む / 改訂 (2026-08-30): 決定 4 のラベル由来の要求を user 宛へ戻す / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 5 の承認 2 経路
+採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 の必須化の手段と決定 5 の報告先 / 改訂 (2026-08-30): 決定 4 が CODEOWNERS を畳む / 改訂 (2026-08-30): 決定 4 のラベル由来の要求を user 宛へ戻す / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 5 の承認 2 経路 / 改訂 (2026-10-04): 決定 4 が `require_extra_approval_for_unattributed_changes` の意味と、`true` のまま残す理由を書く
 
 ## 文脈
 
@@ -66,7 +66,7 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 
 ### 4. `required_approving_review_count` は 0 のままにする (2026-08-28 改訂)
 
-ルールセットの承認数を 1 に上げると、機械検査だけで完了を判定できる PR (`verify: machine`) まで人間の操作を待つことになり、ADR-0002 決定 1 の「機械クラスは無人で通す」が壊れる。**承認数を 0 に据え置くという決定そのものは変わらない。**
+ルールセットの承認数を 1 に上げると、機械検査だけで完了を判定できる PR (`verify: machine`) まで人間の操作を待つことになり、ADR-0002 決定 1 の「機械クラスは無人で通す」が壊れる。**承認数を 0 に据え置くという決定そのものは変わらない。** 承認数 0 は、同じルールの `require_extra_approval_for_unattributed_changes` が効かないと読む根拠でもある (意味・根拠・未確認点は下の「改訂 (2026-10-04)」)。
 
 **当初の決定**は「承認数は 0 のままにし、`require_code_owner_review` を有効にする。こうすると CODEOWNERS 対象パスに触れる PR だけが承認を要求される」だった。**この読みが誤りだった**ので、必須化の手段だけを差し替える。
 
@@ -143,6 +143,50 @@ request-review: レビュー要求に失敗した — @maintainers
 よって宛先は user (`shinyaoguri`) へ戻す。承認を課している集合の正典は `required_reviewers` の team `maintainers` のままで、変わるのは**要求を届ける手段**だけである。
 
 **宛先が割れることは受け入れる。** パス由来が飛んでいる PR ではラベル由来がスキップするので、user 宛が飛ぶのはラベル由来だけの PR に限られる — [#530](https://github.com/mokume-metal/mokume/issues/530) が畳んだ「同じ人へ 2 通」は戻らない。team のメンバーが増えたときに宛先が追随しない点は、綴りを `scripts/request-review.sh` 1 か所で持つことで受け止める (メンバーを引く権限が無い以上、他に置き場が無い)。
+
+#### 改訂 (2026-10-04) — `require_extra_approval_for_unattributed_changes` は `true` のまま残す
+
+決定 4 が据え置く承認数 0 は、同じ `pull_request` ルールが持つもう 1 つの承認の鍵とも関わる。`.github/rulesets/main-protection.json` の `require_extra_approval_for_unattributed_changes` は `true` で、**当初の決定はこの鍵を一度も扱っていなかった**。何を要求するのか・効いているのかが ADR にもスクリプトにも書かれないまま、説明のない承認の設定として残っていた ([#1955](https://github.com/mokume-metal/mokume/issues/1955))。調べた結果、**`true` のまま残す**。決定 4 の中身 (承認数 0・重要パスだけ `required_reviewers` で 1 承認) は動かさず、足すのは意味・経緯・根拠の記録である。
+
+**GitHub がこの鍵で要求するもの。** [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets) の「Require an additional approval for unattributed Copilot pull requests」の項は、次の趣旨である (2026-10-04 に読んだ)。
+
+- Copilot が、人の代理ではなく自身の identity で PR を開いたとき、設定した承認数より 1 つ多い承認を、書き込み権限を持つ人に求める
+- 承認数 0 のルールセットでは効果が無い。PR を承認の関門でなく変更の記録として使うリポジトリは影響を受けない
+- public preview で、新規・既存のルールセットとも既定で有効
+
+**ドキュメントは API の鍵の名前を挙げていない。** この項目と `require_extra_approval_for_unattributed_changes` の対応は、名前と挙動からの読みである (鍵の名は Copilot に限らず「unattributed changes」と言う — 下の未確認点 2)。
+
+**定義に入った経緯。** この鍵は [#100](https://github.com/mokume-metal/mokume/pull/100) (c658bbec) の初期定義から入っている。#100 は定義を rulesets API の GET の応答から `id` などを落とした正規形で作った ([ADR-0006](0006-github-settings-as-code.md)) ので、GitHub が既定で埋めて返した値の写しと読める。意図して選んだ値ではなく、選んだ理由を書いた記述も無かった。実設定 (`gh api repos/mokume-metal/mokume/rulesets/21453049`) も `true` で、定義と一致している。
+
+**このリポジトリの流れで発火しない根拠。**
+
+- PR を開くのは `mokume-agent` (決定 1・自前の GitHub App) で、Copilot ではない。Copilot が author の PR は 0 件である (`gh pr list --author app/copilot-swe-agent --state all`)
+- 承認数は 0 で、上の「効果が無い」に当たる (ただし未確認点 1)
+- 2026-10-03 に merge された `mokume-agent` の PR に、承認が 1 つ増えた形跡は無い。commit の author はどれも `shinyaoguri` で PR の author と食い違う (決定 1) が、止まっていない
+
+| PR | `required_reviewers` の対象のパス | merge 時の Approve |
+| --- | --- | --- |
+| [#2008](https://github.com/mokume-metal/mokume/pull/2008) / [#1997](https://github.com/mokume-metal/mokume/pull/1997) / [#1995](https://github.com/mokume-metal/mokume/pull/1995) | 触れない | 0 |
+| [#2005](https://github.com/mokume-metal/mokume/pull/2005) / [#1953](https://github.com/mokume-metal/mokume/pull/1953) | 触れる (`.github/**`) | 1 (`shinyaoguri`) |
+
+- `rulesets/rule-suites` (ref=main・過去 1 か月) に、`fail` も `bypass` も 0 件である
+
+**何を守っているか。** ドキュメントの読みでは、誰の依頼でもない Copilot の PR に承認を 1 つ余分に課す柵である。このリポジトリは Copilot をその形で使っておらず、**いま実際に守っているものは無い**。
+
+**`true` のまま残す理由。**
+
+- **外しても得るものが無い。** いまの流れで発火していない柵で、GitHub の既定のままなので、保つために足すものも無い
+- **外すのは、人に帰属しない Copilot の PR に対する柵を自分で選んで捨てることになる。** 検査の保証範囲を新たに選ぶ判断なので、人が先に決める側にある ([ADR-0036](0036-unattended-issue-processing.md) 決定 8)。残すのは現状維持で、その判断を要しない
+- **発火したとしても、柵として働く側に倒れる。** 未確認点 1 が当たると、Copilot が人に帰属しない形で重要パスに触れる PR は、書き込み権限を持つ人が 1 人しかいないので誰も通せない。それは「その経路で、エージェントの制約 (重要パス) を動かす PR を入れない」ことと同じで、文脈 1 の目的 (エージェントが自分の制約を書き換えて自分で通す経路を塞ぐ) に沿う。ただし [ADR-0007](0007-approvability-invariant.md) は「承認できる人が author 以外に存在すること」を前提にしており、必要な承認の数が承認者の数を超える形は想定していない。Copilot をその形で使うなら、この前提と合わせて先に判断する
+
+**未確認の点。** どれも実測していない。
+
+1. **`required_reviewers` だけが承認を課しているとき、+1 が掛かるか。** ルールセット全体の承認数 (`required_approving_review_count`) は 0 で、重要パスにだけ `required_reviewers` が `minimum_approvals: 1` を課している。ドキュメントの「承認数 0 では効果が無い」が前者だけを見るのか、`required_reviewers` の承認数も数えるのかは書かれていない。後者なら、重要パスに触れる PR は承認数が 0 でなくなり、人に帰属しない Copilot の PR には 2 承認が要る。書き込み権限を持つのは `shinyaoguri` 1 人 (`maintainers` チームも同じ) なので満たせない
+2. **Copilot 以外の App への効き。** 鍵の名は「unattributed changes」で、Copilot 以外の App が開いた PR も、この鍵のために承認待ちで止まったという報告が他のリポジトリにある ([cbusillo/codex-skills#791](https://github.com/cbusillo/codex-skills/issues/791)・[rjmurillo/ai-agents#6144](https://github.com/rjmurillo/ai-agents/issues/6144))。原因の読み (commit・push の identity と App の食い違い) は報告者の推定で、確かめていない。このリポジトリでは上の表のとおり、同じ現象は見えていない
+3. **鍵を定義から消したとき、GitHub が `true` を埋め直すか。** ドキュメントの「既定で有効」からはそう読めるが、試していない。埋め直すなら `scripts/check-rulesets.sh` の照合が差分を出す
+4. **`gh agent-task create` は「人に帰属しない」に当たるか。** Copilot が PR を作る口として `scripts/pr-identity-guard.sh` が挙げる形で、人が頼む操作なので当たらないと読んでいる
+
+**止めたくなったら、鍵を消さずに `false` を書く** (未確認点 3 のため、消しても既定で戻りうる)。重要パスの変更なので、App identity の PR・承認 1・merge 後の `scripts/apply-rulesets.sh --apply` で入れる ([ADR-0006](0006-github-settings-as-code.md))。外すかどうかは、未確認点 1・2 が実際に当たったとき (この鍵のために承認待ちで止まる PR が出たとき) に、その実測を添えて決める。
 
 ### 5. 承認を CI から追い出す (2026-08-28 改訂)
 
