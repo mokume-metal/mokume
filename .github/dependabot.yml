@@ -14,8 +14,7 @@ updates:
     # dependencies ラベルは付かなくなる — 読み手のいないラベルは持たない
     # (ADR-0005 決定 2)。bot の PR かどうかは author で分かる。
     #
-    # bot が自分でゲートを外しているわけではない: no-issue は承認ゲートでは
-    # なく Issue 紐づけの例外印で、このファイル自体が .github/ 配下にあり
-    # ルールセットの required_reviewers の承認なしには変えられない。actions の更新は必ず
-    # .github/workflows/ を触るので、PR ごとにメンテナの承認も要る。
+    # bot が自分でゲートを外しているわけではない: no-issue はゲートではなく
+    # Issue 紐づけの例外印である。dependabot の PR も他の PR と同じく必須チェック
+    # だけで入る (承認は要求しない — ADR-0044)。
     labels: ["no-issue"]

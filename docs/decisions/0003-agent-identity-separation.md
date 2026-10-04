@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 の必須化の手段と決定 5 の報告先 / 改訂 (2026-08-30): 決定 4 が CODEOWNERS を畳む / 改訂 (2026-08-30): 決定 4 のラベル由来の要求を user 宛へ戻す / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 5 の承認 2 経路 / 改訂 (2026-10-04): 決定 4 が `require_extra_approval_for_unattributed_changes` の意味と、`true` のまま残す理由を書く / 改訂あり (本文の「改訂 (日付)」見出し)
+採用 (2026-08-26) / 改訂 (2026-08-28): 決定 4 の必須化の手段と決定 5 の報告先 / 改訂 (2026-08-30): 決定 4 が CODEOWNERS を畳む / 改訂 (2026-08-30): 決定 4 のラベル由来の要求を user 宛へ戻す / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 5 の承認 2 経路 / 改訂 (2026-10-04): 決定 4 が `require_extra_approval_for_unattributed_changes` の意味と、`true` のまま残す理由を書く / 改訂あり (本文の「改訂 (日付)」見出し) / 一部置換 (→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md)): 決定 1・2 の App identity と、決定 3・4 の native の承認の要求
 
 ## 文脈
 
@@ -29,6 +29,8 @@ SPDX-License-Identifier: MIT
 
 ### 1. エージェントに GitHub App の identity を与える
 
+**→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) 決定 1 が置き換えた。** PR はメンテナ名義で作り、App は使わない。以下は経緯として残す。
+
 エージェントが **PR を開く**主体を、メンテナのアカウントから `mokume-metal` org 所有の GitHub App に分離する。**push の主体は分離の対象に含めない** — 理由は決定 6 に書く。App の権限は次に限り、**ルールセットの bypass list には加えない**。
 
 | 権限 | 設定 | 理由 |
@@ -48,6 +50,8 @@ SPDX-License-Identifier: MIT
 
 ### 2. machine user ではなく App を選ぶ
 
+**→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) 決定 1 が置き換えた。** 別の identity そのものを持たない。
+
 | | machine user (別アカウント) | GitHub App |
 | --- | --- | --- |
 | 認証情報の性格 | アカウント認証 (PAT) | 単一用途の秘密鍵。対象リポジトリ限定・即時失効可能 |
@@ -58,6 +62,8 @@ SPDX-License-Identifier: MIT
 
 ### 3. 承認は native の Approve に戻し、`review: approved` を廃止する
 
+**→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) 決定 2 が置き換えた。** native の承認も要求しない。`review: approved` の廃止はそのまま。
+
 PR の作成者は自分の PR を承認できない。これは GitHub のプラットフォーム制約で、ブランチ保護の設定では上書きできず、bot にも同じく適用される。identity が分かれた瞬間に、承認は演技ではなく仕組みになる。
 
 この制約は逆向きにも効く — **author が唯一の承認者候補になっている PR は、誰にも承認できない**。本 ADR はその可能性を扱っておらず、[#88](https://github.com/mokume-metal/mokume/issues/88) で実際に詰んだ。[ADR-0007](0007-approvability-invariant.md) が承認可能性を明文の不変条件として置き、機構で守る形に補っている。
@@ -65,6 +71,8 @@ PR の作成者は自分の PR を承認できない。これは GitHub のプ�
 重要パスの承認要求は **CODEOWNERS** で表現する。CODEOWNERS にはユーザーとチームしか書けないため、App の承認では code owner 要件を満たせない。制約が二重にかかる。(**必須化の手段は決定 4 の改訂で `required_reviewers` へ移り、2026-08-30 の改訂で CODEOWNERS 自体を畳んだ** — CODEOWNERS だけでは merge を止められず、`required_reviewers` を入れた後は要求を二重に飛ばすだけの写しになっていた。App が承認者になれない点は `required_reviewers` でも同じで、こちらも Team しか書けない。)
 
 ### 4. `required_approving_review_count` は 0 のままにする (2026-08-28 改訂)
+
+**→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) 決定 2 が置き換えた。** 承認数 0 は変わらないが、`required_reviewers` も空にした。下の実測と未確認点は、また置くときの手がかりとして残す。
 
 ルールセットの承認数を 1 に上げると、機械検査だけで完了を判定できる PR (`verify: machine`) まで人間の操作を待つことになり、ADR-0002 決定 1 の「機械クラスは無人で通す」が壊れる。**承認数を 0 に据え置くという決定そのものは変わらない。** 承認数 0 は、同じルールの `require_extra_approval_for_unattributed_changes` が効かないと読む根拠でもある (意味・根拠・未確認点は下の「改訂 (2026-10-04)」)。
 

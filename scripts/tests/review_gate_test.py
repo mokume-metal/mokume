@@ -3,19 +3,18 @@
 # SPDX-License-Identifier: MIT
 """scripts/review-gate.sh の検査 (#44 / #104 / #309 / #618 / #1662 / #1668)。
 
-このゲートが守るのは mokume 固有の六点だけ:
+このゲートが守るのは mokume 固有の五点だけ:
   1. PR が Issue に紐づいている (例外は no-issue ラベル)
   2. 対象 Issue に verify: ラベルがある (完了条件が固まっている)
   3. PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
   4. 閉じる Issue に Bug が含まれるなら、本文に空でない「反証」の節がある (ADR-0040 決定 4)
-  5. 承認が要る PR の author が、唯一の承認者になっていない (ADR-0007 / #88)
-  6. AGENTS.md を合流先との分岐点 (merge-base) より長くした PR は、本文の増分の宣言が
+  5. AGENTS.md を合流先との分岐点 (merge-base) より長くした PR は、本文の増分の宣言が
      実測と一致する (#1668。数え方と宣言の読み方は check-agents-md-size.py の growth が
      持ち、その細部は agents_md_size_test.py が見る。ここは材料の取り方と渡し方を見る)
 
-重要パスの承認要求そのものはルールセットの required_reviewers が担うので、ここでは見ない —
-5 がその file_patterns を読むのは「承認が要る PR か」を知るためで、承認を重ねて要求するため
-ではない。
+**承認はどこにも無い。** ルールセットは承認を要求せず (ADR-0044)、ゲートが見るのは変更要求が
+残っていないことだけである。重要パスに触れるメンテナ名義の PR を「誰も承認できない」と差し戻して
+いた節 (ADR-0007 の不変条件) も、承認のゲートと一緒に外した (#2108)。
 
 **承認待ちはもう無い。** verify: human の Issue に紐づく PR へ Approve を要求していた頃は、
 終了コード 20 で「承認待ち」を表し、それを 1 (差し戻し) と混ぜないことを固定していた
@@ -32,8 +31,7 @@ closing keyword をコードスパンの中では読まないので、緑のま�
 3 と 4 が見るのは**構造だけ**である。番号が節に現れること・節が空でないことは見るが、
 書いてある内容が正しいかは見ない (check-drawing-evidence.sh と同じ形 — ADR-0019 決定 1)。
 
-gh は PATH の先頭に置いた偽物へ差し替え、ルールセットの定義も一時ファイルへ差し替えるので、
-ネットワークも認証も実ファイルの内容も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
+gh は PATH の先頭に置いた偽物へ差し替えるので、ネットワークも認証も要らない。実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
 import json
@@ -48,44 +46,12 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "review-gate.sh"
 TEMPLATE = REPO / ".github" / "pull_request_template.md"
 
-# 実物と同じ形のルールセット定義 (承認を要求するパスの正本)。
-# review-gate はここの file_patterns だけを読む
-RULESET = json.dumps(
-    {
-        "name": "main-protection",
-        "target": "branch",
-        "enforcement": "active",
-        "rules": [
-            {
-                "type": "pull_request",
-                "parameters": {
-                    "required_approving_review_count": 0,
-                    "required_reviewers": [
-                        {
-                            "file_patterns": [
-                                "docs/decisions/**",
-                                ".github/**",
-                                ".claude/**",
-                            ],
-                            "minimum_approvals": 1,
-                            "reviewer": {"id": 1, "type": "Team"},
-                        }
-                    ],
-                },
-            }
-        ],
-    }
-)
-
-# 偽 gh。review-gate が呼ぶのは 4 つだけ:
-#   gh pr view <n> -R <repo> --json body,labels,latestReviews,author,closingIssuesReferences
+# 偽 gh。review-gate が呼ぶのは 3 つだけ:
+#   gh pr view <n> -R <repo> --json body,labels,latestReviews,closingIssuesReferences
 #   gh issue view <n> -R <repo> --json labels,issueType   ← #1662 で型も同じ応答から取る
-#   gh api repos/<repo>/pulls/<n> --jq .author_association
 #   gh api repos/<repo>/pulls/<n>/files --paginate --jq .[].filename   ← #793 で分かれた
 # 応答は環境変数で決める。--jq が付くときは本物と同じようにクエリを適用する。
 #
-# **2 つの api を綴りで分ける。** 変更ファイルの一覧は別の口になったので (#793)、
-# 一緒に返すと author_association の判定に一覧が流れ込む。
 #
 # Issue の応答は既定で全 Issue 共通 (FAKE_ISSUE_JSON)。**番号ごとに変えるときだけ**
 # FAKE_ISSUE_JSON_<番号> を置く — 複数の Issue のうち 1 つだけが Bug、を表すため (#1662)。
@@ -132,7 +98,7 @@ case "$1 $2" in
                echo "gh: Not Found (HTTP 404)" >&2
                exit 1 ;;
              *"/files"*) json=$FAKE_FILES_JSON ;;
-             *) json=$FAKE_API_JSON ;;
+             *) exit 1 ;;
            esac ;;
   *) exit 1 ;;
 esac
@@ -142,13 +108,6 @@ else
   printf '%s' "$json"
 fi
 """
-
-# author は (login, is_bot, author_association) の 3 つ組。3 つ目が承認可能性の検査に効く。
-# 値は実測 (PR #529 / #528 の App は CONTRIBUTOR、#88 のメンテナは MEMBER)
-# 既定の author は App — エージェントの常道であり、承認可能性の検査を素通しする側
-APP = ("app/mokume-agent", True, "CONTRIBUTOR")
-MAINTAINER = ("shinyaoguri", False, "MEMBER")
-OUTSIDER = ("drive-by-contributor", False, "NONE")
 
 # トリアージ済みの印。ADR-0031 より前は verify: machine / verify: human の 2 種類で、
 # 後者だけが承認を要求していた。いまラベルが表すのは「完了条件が固まっている」だけである
@@ -193,7 +152,7 @@ def verification_section(numbers):
     return f"\n\n## 確認方法\n\n{rows}\n"
 
 
-def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, files=(),
+def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), files=(),
             refs=None, verified=None):
     """偽の gh pr view 応答。
 
@@ -204,14 +163,12 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
     verified には「確認方法」節へ載せる番号を渡す。既定は closes と同じ (通常の PR は
     閉じる Issue すべてに対応表を書く)。節ごと落とすには verified=() を渡す。
     """
-    login, is_bot, assoc = author
     numbers = closes if verified is None else verified
     return json.dumps(
         {
             "body": body + verification_section(numbers),
             "labels": [{"name": n} for n in labels],
             "latestReviews": [{"state": s} for s in reviews],
-            "author": {"login": login, "is_bot": is_bot},
             "files": [{"path": p} for p in files],
             "closingIssuesReferences": (
                 closing_refs(closes) if refs is None else refs
@@ -219,8 +176,6 @@ def pr_json(body="Closes #12", closes=(12,), labels=(), reviews=(), author=APP, 
             # AGENTS.md の増分 (#1668) を比べる相手を引くのに使う
             "baseRefName": BASE_REF,
             "headRefOid": HEAD_OID,
-            # gh pr view は返さない。run_gate が偽 gh api の応答を組むために持たせる
-            "authorAssociation": assoc,
         }
     )
 
@@ -268,10 +223,8 @@ class ReviewGateTest(unittest.TestCase):
         stub = self.bindir / "gh"
         stub.write_text(FAKE_GH, encoding="utf-8")
         stub.chmod(0o755)
-        self.ruleset = Path(self.tmp.name) / "main-protection.json"
-        self.ruleset.write_text(RULESET, encoding="utf-8")
 
-    def run_gate(self, pr, issue=None, ruleset=None, all_files=None, record_calls=None,
+    def run_gate(self, pr, issue=None, all_files=None, record_calls=None,
                  issues=None, issue_fail=None, agents=None, compare_fail=None):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
@@ -292,8 +245,6 @@ class ReviewGateTest(unittest.TestCase):
             (contents / MERGE_BASE).write_text(base_text, encoding="utf-8")
             (contents / HEAD_OID).write_text(head_text, encoding="utf-8")
             (contents / BASE_REF).write_text(base_text + "先端にだけ入った他の PR の追記\n", encoding="utf-8")
-        if ruleset is not None:
-            self.ruleset.write_text(ruleset, encoding="utf-8")
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_PR_JSON"] = pr
@@ -305,14 +256,10 @@ class ReviewGateTest(unittest.TestCase):
             env[f"FAKE_ISSUE_JSON_{n}"] = body
         if issue_fail is not None:
             env["FAKE_ISSUE_FAIL"] = issue_fail
-        env["FAKE_API_JSON"] = json.dumps(
-            {"author_association": json.loads(pr)["authorAssociation"]}
-        )
         env["FAKE_COMPARE_JSON"] = json.dumps({"merge_base_commit": {"sha": MERGE_BASE}})
         env["FAKE_CONTENTS_DIR"] = str(contents)
         if compare_fail is not None:
             env["FAKE_COMPARE_FAIL"] = compare_fail
-        env["RULESET_FILE"] = str(self.ruleset)
         env["GH_CALLS"] = str(record_calls) if record_calls else "/dev/null"
         # 紐づけの所属リポジトリ判定に効くので、環境に左右されないよう固定する
         env["GITHUB_REPOSITORY"] = f"{REPO_OWNER}/{REPO_NAME}"
@@ -548,63 +495,7 @@ class ReviewGateTest(unittest.TestCase):
         )
         self.assert_blocked(proc, "issueType が無い")
 
-    # --- 5. 承認可能性の不変条件 (ADR-0007 / #88) ---------------------------
-
-    def test_maintainer_authored_pr_touching_a_protected_path_is_blocked(self):
-        # #88 と同じ形。唯一の承認者が author 本人なので、承認は永久に来ない
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
-            issue_json(TRIAGED),
-        )
-        self.assert_blocked(proc, "誰も承認できない")
-        # ADR-0007 決定 4 — 回復手順まで示し、待てば済むと読めてはいけない
-        self.assertIn("close", proc.stderr)
-        self.assertIn("作り直して", proc.stderr)
-        self.assertIn("永久に来ません", proc.stderr)
-
-    def test_app_authored_pr_touching_a_protected_path_passes(self):
-        # 同じ PR を App identity で作れば通る。App は org の外なので
-        # author_association が CONTRIBUTOR になり、承認者集合に入りようがない。
-        # 承認そのものはルールセットが要求し、GitHub 側で待つ
-        proc = self.run_gate(
-            pr_json(author=APP, files=[".claude/settings.json"]), issue_json(TRIAGED)
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-
-    def test_maintainer_authored_pr_without_required_approval_passes(self):
-        # ルールセットの file_patterns 対象外 — 承認が要らないので詰みようがない
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=["README.md", "scripts/foo.sh"]),
-            issue_json(TRIAGED),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-
-    def test_outside_contributor_is_not_blocked(self):
-        # author が承認者集合の外 — メンテナが承認できるので詰んでいない。
-        # 「author が bot でなければ差し戻す」という近似ではここを誤って止める
-        proc = self.run_gate(
-            pr_json(author=OUTSIDER, files=["docs/decisions/0009-x.md"]),
-            issue_json(TRIAGED),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-
-    def test_a_protected_path_beyond_the_graphql_cap_is_still_seen(self):
-        """**上限を越える PR** (#793)。
-
-        `gh pr view --json files` は GraphQL の接続を引くので上限があり、大きな PR では
-        後半のファイルが落ちる。落ちた先で起きるのは「保護パスに触れているのに触れて
-        いないと読む」で、**赤くならずに緩む** — 誰も承認できない PR がそのまま作られる。
-
-        ここでは `gh pr view` の側に無害な 100 件だけを持たせ、`--paginate` の側にだけ
-        保護パスを 101 件目として置く。上限のある口を読んでいれば緑で通ってしまう。
-        """
-        truncated = [f"Sources/MokumeCore/Filler{i}.swift" for i in range(100)]
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=truncated),
-            issue_json(TRIAGED),
-            all_files=truncated + [".github/rulesets/main-protection.json"],
-        )
-        self.assert_blocked(proc, "誰も承認できない")
+    # --- 5. 変更要求 -------------------------------------------------------
 
     def test_the_file_list_is_paginated(self):
         """一覧を引く呼び出しに `--paginate` が載っていること (#793)。
@@ -613,70 +504,12 @@ class ReviewGateTest(unittest.TestCase):
         """
         calls = self.bindir.parent / "gh-calls.txt"
         proc = self.run_gate(
-            pr_json(author=APP, files=["README.md"]),
+            pr_json(files=["README.md"]),
             issue_json(TRIAGED),
             record_calls=calls,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         assert_files_call_paginates(self, calls)
-
-    def test_protected_paths_come_from_the_ruleset_not_a_copy(self):
-        """承認が要るパスの正本はルールセットで、写しを持たない (#530)。
-
-        定義から `.claude/**` を外せば、同じ PR は承認不要として通る。CODEOWNERS を
-        代理に読んでいた頃は、同じ 3 パスが 2 ファイルに綴り違いで写されていて、
-        整合を見る検査が無かった。
-        """
-        narrowed = json.loads(RULESET)
-        params = narrowed["rules"][0]["parameters"]
-        params["required_reviewers"][0]["file_patterns"] = ["docs/decisions/**"]
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=[".claude/settings.json"]),
-            issue_json(TRIAGED),
-            ruleset=json.dumps(narrowed),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-
-    def test_a_wildcard_in_the_name_matches_the_files_it_names(self):
-        """名前の中のワイルドカード (`scripts/*guard*.sh`) で畳んだパターン (#2075)。
-
-        ルールセットはレビュアー 1 つにつきパターンを 15 個までしか受け取らないので、
-        ファイルを名指しする代わりに名前の glob で畳む。照合がこの形を読めないと、
-        柵のスクリプトに触れる PR を承認不要と読み、誰も承認できない PR を通す。
-        """
-        globbed = json.loads(RULESET)
-        params = globbed["rules"][0]["parameters"]
-        params["required_reviewers"][0]["file_patterns"] = ["scripts/*guard*.sh"]
-        touched = self.run_gate(
-            pr_json(author=MAINTAINER, files=["scripts/parent-guard.sh"]),
-            issue_json(TRIAGED),
-            ruleset=json.dumps(globbed),
-        )
-        self.assert_blocked(touched, "誰も承認できない")
-        untouched = self.run_gate(
-            pr_json(author=MAINTAINER, files=["scripts/guarded.py", "scripts/foo.sh"]),
-            issue_json(TRIAGED),
-            ruleset=json.dumps(globbed),
-        )
-        self.assertEqual(untouched.returncode, 0, untouched.stderr)
-
-    def test_the_real_ruleset_still_covers_the_folded_names(self):
-        # 畳んだ実物の定義で、畳む前に名指ししていたファイルがまだ承認の対象に当たる
-        real = (REPO / ".github" / "rulesets" / "main-protection.json").read_text()
-        for path in ("scripts/guard-lib.sh", "scripts/agent-comment-guard.sh",
-                     "scripts/drawing-paths.txt", "scripts/drawing-paths.sh"):
-            proc = self.run_gate(
-                pr_json(author=MAINTAINER, files=[path]), issue_json(TRIAGED), ruleset=real
-            )
-            self.assert_blocked(proc, "誰も承認できない")
-
-    def test_an_existing_approval_proves_the_pr_was_approvable(self):
-        # 現に承認が付いているなら詰んでいない (自己承認はできないので他人が付けた)
-        proc = self.run_gate(
-            pr_json(author=MAINTAINER, files=[".claude/settings.json"], reviews=["APPROVED"]),
-            issue_json(TRIAGED),
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_changes_requested_blocks_even_with_an_approval(self):
         proc = self.run_gate(
@@ -814,15 +647,18 @@ class ReviewGateTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, f"承認を待っている: {proc.stdout} {proc.stderr}")
         self.assertNotIn("承認待ち", proc.stdout + proc.stderr)
 
-    def test_important_paths_are_left_to_the_ruleset(self):
-        # 重要パスに触れていても、author が承認者集合の外なら通す。承認を要求するのは
-        # ルールセットの required_reviewers 側 (native の Review required)
+    def test_a_pr_touching_the_fences_needs_no_approval(self):
+        """柵 (.github/**・.claude/**) に触れる PR も、承認なしで通す (ADR-0044)。
+
+        承認のゲートを外す前は、メンテナ名義でここに触れる PR を「誰も承認できない」と
+        差し戻していた (ADR-0007)。同じ形が戻ると、メンテナ名義の PR が柵を直せなくなる。
+        """
         proc = self.run_gate(
-            pr_json(files=[".github/workflows/ci.yml"]), issue_json(TRIAGED)
+            pr_json(files=[".github/workflows/ci.yml", ".claude/settings.json"]),
+            issue_json(TRIAGED),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertNotIn("重要パス", proc.stdout + proc.stderr)
-
+        self.assertNotIn("承認", proc.stdout + proc.stderr)
 
 class GateRunsFromDefaultBranchTest(unittest.TestCase):
     """判定のジョブが、PR の版ではなく既定ブランチの版のスクリプトを取ること (#2001)。

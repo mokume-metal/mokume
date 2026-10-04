@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# ADR-0002 / ADR-0007 / ADR-0031 のマージ判定のうち、**GitHub にできないことだけ**を見る。
+# ADR-0002 / ADR-0031 のマージ判定のうち、**GitHub にできないことだけ**を見る。
 #   - PR は Issue に紐づく (Closes #N)。**GitHub が実際に作った紐づけを読む** —
 #     本文の文字列ではない (下の「1.」)。例外は no-issue ラベルでのみ許す
 #     (この no-issue が、PR に付く唯一のラベルである — ADR-0005。dependabot の
@@ -11,18 +11,13 @@
 #   - PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
 #   - 閉じる Issue に Bug が含まれるなら、PR 本文に空でない「反証」の節がある
 #     (ADR-0040 決定 4 — 下の「4.」)
-#   - 承認が要る PR の author が、その PR を承認できる唯一の人であってはならない
-#     (ADR-0007 の不変条件。破ると **誰も承認できない PR** ができる — #88)
 #   - AGENTS.md を合流先との分岐点より長くした PR は、本文に増分の宣言があり実測と一致する
 #     (#1668 — 下の「AGENTS.md の増分」)
 #
-# **承認そのものはここで判定しない。** 要求も必須化もルールセットの required_reviewers
-# が担う (.github/rulesets/main-protection.json — file_patterns に minimum_approvals: 1 を課して
-# team maintainers へ要求が飛ぶ)。下の「6.」がそのパターンを読むのは、承認が要る PR か
-# どうかを知るためだけである。
-# (当初は CODEOWNERS + 承認数 0 で必須化できるつもりでいたが、承認数 0 は
-#  「0 件で足りる」と読まれて非ブロックになっていた — #211 / ADR-0003 決定 4 の改訂。
-#  その CODEOWNERS も #530 で畳んだ — 自動要求が二重に飛ぶだけの写しになっていた)
+# **承認はどこでも判定しない。** ルールセットは承認を要求せず (ADR-0044)、ここが見るのは
+# 変更要求 (Changes requested) が残っていないことだけである (下の「5.」)。
+# かつてはルールセットの required_reviewers が重要パスに承認を要求し、下に「誰も承認できない
+# PR」を差し戻す節 (ADR-0007 の不変条件) があった。ADR-0044 が承認のゲートごと外した (#2108)。
 #
 # ## かつてここには承認待ちがあった
 #
@@ -42,7 +37,7 @@
 #
 #   0   通過
 #   1   差し戻し (Issue 紐づけなし・verify ラベルなし・対応表なし・反証の節なし・
-#       変更要求・誰も承認できない・対象 Issue を読めない・AGENTS.md の増分が宣言と
+#       変更要求・対象 Issue を読めない・AGENTS.md の増分が宣言と
 #       合わない・AGENTS.md を読めない)
 #
 # 使い方: review-gate.sh <PR番号> (要 GH_TOKEN / gh 認証)
@@ -53,11 +48,8 @@ PR="${1:?PR 番号が必要}"
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
 REPO="$(this_repo)"
-# 承認が要るパスの判定 (下の「6.」を参照)。**照合は 1 か所**に保つ (ADR-0001 原則 9)
-# shellcheck source=scripts/protected-paths.sh
-. "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
-# 変更ファイルの取り方も 1 か所に保つ。**照合の手前が割れていた** (#793) — gh pr view の
-# files は上限のある口なので、大きな PR では保護パスが一覧から落ちて素通りする
+# 変更ファイルの取り方は 1 か所に保つ (#793) — gh pr view の files は上限のある口なので、
+# 大きな PR では一覧からファイルが落ちる
 # shellcheck source=scripts/pr-files.sh
 . "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
 
@@ -69,40 +61,9 @@ fail() { # $1=理由 $2=次にすること (省略可)
   exit 1
 }
 
-# 「誰も承認できない」の差し戻し文言。**$( … ) の中に置かない** — macOS の bash 3.2 は
-# $( … ) の対応括弧を探すとき、ヒアドキュメントの本文まで走査対象にする。本文に $( や
-# 行頭の # が現れるとネストや行コメントを誤認して bad substitution になる (#160 と同じ形。
-# ここの文言は案内として GH_TOKEN="$(…)" と Issue 番号の両方を含むので、正しく書くほど
-# 壊れる)。関数に切り出すとヒアドキュメントが $( … ) の外へ出るので誤解されない
-unapprovable_message() {
-  cat <<'EOF'
-この PR を close し、GitHub App の identity で作り直してください。**承認を待っても
-永久に来ません** — GitHub は自分の PR を自分で承認できず、PR の author は後から
-変えられないためです。
-
-  GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && gh pr create ...
-
-代入から始めるのが要点です。export を先頭に付けると終了コードが 0 に化けて、token の
-発行に失敗しても後段が走り、同じ詰みを繰り返します (#122)。
-
-`MOKUME_APP_PRIVATE_KEY_CMD` が未設定でも「鍵が無い」と即断しないでください。手元の
-秘密管理には「自動化から読んでよい秘密の一覧」があるのが普通なので、まずその一覧を
-引いて、このリポジトリの App の鍵が載っていないかを見ます (在処そのものを読む必要は
-ありません)。一覧にも無ければ PR を作らず、鍵の渡し方を人に尋ねてください。
-
-作り直したら、**新しい PR の側の run を rerun** してください。詰んだ側の run が付けた
-この赤は同じ commit に残り続けるので、新しい PR の check が全部緑になっても ci-gate は
-赤のままです。**詰んだ側の run を rerun してはいけません** — その run は古い PR の
-イベントを持つので、何度走らせても同じ赤を再生産します (#259 の一般形とは打つ先が逆で、
-#513 に実測があります):
-
-  gh run rerun <新しい PR の run-id> --failed
-
-メンテナ自身の PR も同じです (ADR-0007 決定 2 — 例外を作らない)。
-EOF
-}
-
-# 対応表が無いときの差し戻し文言。上と同じ理由で $( … ) の外に置く
+# 対応表が無いときの差し戻し文言。**$( … ) の中に置かない** — macOS の bash 3.2 は
+# $( … ) の対応括弧を探すとき、ヒアドキュメントの本文まで走査対象にし、本文の $( や行頭の #
+# を誤認して bad substitution になる (#160 と同じ形)。関数に切り出すと $( … ) の外へ出る
 missing_table_message() {
   cat <<'EOF'
 PR 本文の「## 確認方法」節に、閉じる Issue ごとに **完了条件と、それを何でどう
@@ -189,11 +150,11 @@ strip_html_comments() {
 }
 
 pr_json=$(gh pr view "$PR" -R "$REPO" \
-  --json body,labels,latestReviews,author,closingIssuesReferences,baseRefName,headRefOid)
+  --json body,labels,latestReviews,closingIssuesReferences,baseRefName,headRefOid)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
 # **変更ファイルだけ別の口から取る** (#793)。同じ gh pr view にまとめると呼び出しは
 # 1 回で済むが、files は GraphQL の接続で上限があり、大きな PR では後半が落ちる —
-# 落ちても赤くならず、保護パスの判定が黙って素通りする。呼び出しが 1 回増えるのは
+# 落ちても赤くならず、AGENTS.md の増分の判定 (下の「6.」) が黙って素通りする。呼び出しが 1 回増えるのは
 # 正しさとの引き換えである。読めなければここで落ちる (上の pr_json と同じ向き)
 pr_paths=$(pr_files "$REPO" "$PR")
 
@@ -351,56 +312,14 @@ if [ -n "$bug_issues" ]; then
   echo "review-gate: 反証の節を確認 (${bug_issues# })"
 fi
 
-# 5. 変更要求は承認より強い
+# 5. 変更要求が残っていない
 reviews=$(jq -r '[.latestReviews[]?.state] | join("\n")' <<<"$pr_json")
 if grep -qx "CHANGES_REQUESTED" <<<"$reviews"; then
   fail "変更要求 (Changes requested) のレビューが未解消" \
-       "指摘に対応して push し、レビュアーの承認をもらい直す"
+       "指摘に対応して push し、レビュアーに変更要求を解いてもらう"
 fi
 
-# 6. 承認可能性の不変条件 (ADR-0007 決定 1)。
-#    「承認が要る PR の author は、その PR を承認できる集合の要素であってはならない」。
-#    破ると承認を待っても永久に来ない — GitHub は自分の PR を自分で承認できず、author は
-#    後から変えられない。PR 作成前のフック (scripts/pr-identity-guard.sh) が常道で、
-#    ここは経路を問わない保険にあたる (ADR-0007 決定 3)。**常道が黙る経路がある** —
-#    フックは「そのセッションが主として開いたディレクトリ」の .claude/settings.json
-#    しか読まないので、別のリポジトリを主とするセッションには効かない (#513)。
-#
-#    判定は 2 つに分かれる。**承認が要るか**は、変更がルールセットの required_reviewers の
-#    file_patterns に当たるかで決まる。パスの正本はルールセット
-#    (.github/rulesets/main-protection.json) で、ここでは写しを持たない — CODEOWNERS を
-#    代理に読んでいた頃は同じ 3 パスが 2 ファイルに綴り違いで写されていて、整合を見る
-#    検査が無かった (#530)。
-#    (verify: human も承認を要求していた頃は、この判定に「対象 Issue の性質」が
-#     混ざっていた。ADR-0031 がラベル由来を畳んだので、いま読むのはパスだけである)
-#
-#    **承認できる人が author しかいないか**は author_association を見る。org の中の人
-#    (MEMBER / OWNER) なら、単独メンテナ構成では author 自身が唯一の承認者になる。
-#    実測: App の PR は CONTRIBUTOR (#529 / #528)、#88 のメンテナの PR は MEMBER。
-#    これは gh pr view --json には無いので REST を引く (ci.yml の review-gate ジョブが
-#    宣言している pull-requests: read で足りる)。reviewDecision は使えない —
-#    **このリポジトリでは常に空で返る**。required_approving_review_count は 0 のままで
-#    (ADR-0003 決定 4)、重要パスの承認を課している required_reviewers ルールの要求は
-#    reviewDecision に映らない (#249 で実測。承認して BLOCKED が CLEAN に変わった後も
-#    空のまま)。
-#
-#    App が作った PR は org の外なので自動的に通る。外部コントリビューターも通る —
-#    メンテナが承認できるので詰んでいない。**メンテナが 2 人目に増えたときは自動で
-#    緩まない** (所属しか読めず、人数を数えられないため)。そのときは 2 人目の Approve
-#    が付いた時点でこの検査を抜けるので詰みはしないが、それまで赤が出る。緩めるかは
-#    ADR-0007 影響が言うとおり、そのとき別途判断する。
-if ! grep -qx "APPROVED" <<<"$reviews"; then
-  author=$(jq -r '.author.login // ""' <<<"$pr_json")
-  if printf '%s\n' "$pr_paths" | touches_protected_path; then
-    assoc=$(gh api "repos/$REPO/pulls/$PR" --jq '.author_association' 2>/dev/null || true)
-    if [ "$assoc" = "MEMBER" ] || [ "$assoc" = "OWNER" ]; then
-      fail "この PR は誰も承認できない — 承認が要る PR の author ($author) が、唯一の承認者になっている (ADR-0007 / #88)" \
-           "$(unapprovable_message)"
-    fi
-  fi
-fi
-
-# 7. AGENTS.md の増分 (#1668)。
+# 6. AGENTS.md の増分 (#1668)。
 #
 #    AGENTS.md は毎セッション全文が読まれる固定費なので、増やす PR には本文に宣言の 1 行
 #    (行全体で「AGENTS.md の増分: +N」) を求め、実測と突き合わせる。縮めた PR と触れて
