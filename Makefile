@@ -75,6 +75,8 @@ file-modes:
 reuse-encoding-check:
 	bash scripts/check-reuse-encoding.sh
 
+# 帰属 (著作権とライセンス) の宣言が無いファイルは、存在した時点で落とす (ADR-0001 原則 8)。
+# 第三者の素材を宣言なしに持ち込まないための唯一の機械の関所である
 reuse-lint:
 	reuse lint
 
@@ -139,6 +141,10 @@ adrs:
 agents-md-size:
 	python3 scripts/check-agents-md-size.py
 
+# フック・ガード・検査スクリプトの判定の退行を見る。判定が壊れると、赤くなるべきところで
+# 黙って緑になり、誰も気付かない — ガードは対象のセッションでしか動かないので、なおさらである
+# (ADR-0007 決定 3)。
+#
 # **ファイル単位で並列に走る** (#1714)。駆動役は scripts/run-hooks-tests.py で、並べる順と
 # 同時の数はその冒頭。時間の上限を持つ検査が並列で赤くなったと疑うときは
 # HOOKS_TEST_JOBS=1 make hooks-test で直列にして切り分ける
