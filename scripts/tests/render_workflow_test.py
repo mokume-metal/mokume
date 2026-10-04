@@ -22,7 +22,8 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
   8. 専用機のジョブはすべて門番 (`render-turn` / `scheduled-release-turn`) の後に積まれ、
      門番が赤でも走る (`!cancelled()`)。render が skipped になると必須チェックを満たして
      しまう (#2062)
-  9. 門番は GitHub ホストで、`actions: read` だけを持つ
+  9. 門番は GitHub ホストで、`actions: read` だけを持つ。待ちの上限は門番が自分で守り
+     (job の timeout より内側)、merge_group の上限は queue の期限より手前にある
 
 PyYAML は入れていない (標準の Python だけで回す) ので、`jobs:` の直下の 2 字下げの
 キーでジョブを切り、本文を行で読む。YAML の構文そのものは actionlint が見る。
@@ -38,6 +39,8 @@ WORKFLOW = REPO / ".github" / "workflows" / "render.yml"
 
 RUNNER_JOBS = ("render", "render-pr", "scheduled-debug", "scheduled-release")
 TURN_JOBS = ("render-turn", "scheduled-release-turn")
+TURN_SCRIPT = REPO / "scripts" / "render-turn.sh"
+RULESET = REPO / ".github" / "rulesets" / "main-protection.json"
 SCHEDULED_RUNNER_JOBS = ("scheduled-debug", "scheduled-release")
 
 
@@ -191,6 +194,21 @@ class RenderWorkflowTest(unittest.TestCase):
             self.assertRegex(body, r"actions:\s*read", name)
             self.assertNotRegex(body, r":\s*write", name)
             self.assertIn("scripts/render-turn.sh", body, name)
+
+    def test_待ちの上限は門番の_timeout_より内側で_queue_の期限より手前(self):
+        script = TURN_SCRIPT.read_text(encoding="utf-8")
+        limits = {m: int(v) for m, v in re.findall(r"mode=(\w+)[^\n]*limit_default=(\d+)", script)}
+        self.assertEqual(set(limits), {"merge_group", "yield", "wait"})
+        deadline = int(
+            re.search(r'"check_response_timeout_minutes":\s*(\d+)', RULESET.read_text(encoding="utf-8")).group(1)
+        )
+        # merge_group は期限より手前で自分から通す。期限を越えて待てば、自分の render が
+        # 走る前に弾かれる
+        self.assertLess(limits["merge_group"], deadline)
+        for name in TURN_JOBS:
+            timeout = int(re.search(r"(?m)^    timeout-minutes: (\d+)", self.jobs[name]).group(1))
+            # 上限は門番が自分で守る。timeout に任せると GitHub の cancel の扱いになる
+            self.assertGreater(timeout, max(limits.values()), name)
 
 
 class SplitterTest(unittest.TestCase):

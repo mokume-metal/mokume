@@ -74,7 +74,9 @@ name: Render
 # 秘密も持たない。**門番が赤でも専用機の job は走らせる (`!cancelled()`)。** needs が
 # 落ちて render が skipped になると、skipped は必須チェックを満たしてしまう — 描かずに
 # merge される。順番が乱れるほうが軽い。`always()` にしないのは、queue-sweep が cancel した
-# 捨てられた group の run で render を専用機に積まないため
+# 捨てられた group の run で render を専用機に積まないため。実測 (#2063): 門番が timeout
+# しても render は走り、門番で待っている間に run を cancel すると render は skipped ではなく
+# cancelled で終わる (必須を満たさない。#2062 より前と同じ)
 
 on:
   pull_request:

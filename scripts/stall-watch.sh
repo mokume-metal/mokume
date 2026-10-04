@@ -24,7 +24,9 @@
 #      対処: 承認を待つ / gh pr merge <番号> --auto --squash を打ち直す
 #   3. 全 check が緑なのに進まない
 #      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)
-#      対処: gh run rerun <run-id> --failed — **ただし pr-title には打たない** (#699)
+#      対処: gh run rerun <run-id> --failed — **ただし pr-title と render-pr には打たない**
+#      (#699・#2062。render-pr の rerun は門番を通らずに専用機へ積む。必須ではないので
+#      打たなくても merge は止まらない)
 #   4. autoMerge: false + CLEAN + 全 check 緑 で isInMergeQueue: true
 #      原因: 止まっていない — 予約が queue へ移ると autoMergeRequest は null になる (#628)
 #      対処: 何も打たない
@@ -39,7 +41,8 @@
 #      ので古いタイトルで判定し、打つ前より悪くなる (#699)。直せば edited で新しい run が走る
 #   7. close して作り直した PR が、全 check 緑なのに赤い
 #      原因: close した側の run が付けた赤が同じコミットに残っている (#513)
-#      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)
+#      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)。
+#      render.yml の run は rerun しない (3 と同じ)
 #   8. autoMerge: true + BLOCKED + 全 check 緑 で、一度承認されたのに承認が無い
 #      原因: 承認済みの PR へ push したので dismiss_stale_reviews_on_push が承認を落とした (#1033)
 #      対処: Approve を押し直す。依頼の出し直しは review-request が打つ (#1177)。衝突を解いた
@@ -65,7 +68,9 @@
 #      render-pr なら、gh run cancel で退かせてよい (必須ではなく、stall-act も rerun しない —
 #      戻すなら queue が空いてから push し直す)。弾かれた先頭は 5 と同じく予約を掛け直す。
 #      9 との見分け: 9 は runner が offline で、どの render も走らない。10 は runner が
-#      busy で、後ろの render や render-pr は走っている
+#      busy で、後ろの render や render-pr は走っている。runner が online なのに専用機の
+#      job が 1 本も走らないまま先頭の render だけが queued なら (stall-watch は 9 と名乗る)、
+#      job そのものが詰まっている — 先頭の PR を queue から出し入れして job を作り直す
 #
 # 読むときの注意:
 #

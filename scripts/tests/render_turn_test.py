@@ -5,13 +5,15 @@
 
 固定したいのは七つ。
 
-1. **先頭の group は待たない。** base sha が main の先端なら、すぐに通す
+1. **先頭の group は待たない。** base sha が main の先端なら、前の group の run が (人の
+   rerun で) 走っていても、すぐに通す
 2. **1 つ前の group の run が終わるまで待つ。** 待つ相手は自分の base sha を head に持つ
-   render.yml の merge_group の run で、門番で待っている間の run も数える。**上限で放さない**
-   (放すと後ろの group がそろって積まれ、前の group と取り合う)
+   render.yml の merge_group の run で、門番で待っている間の run も数える。上限 (期限の
+   直前) までは放さない — 早く放すと後ろの group がそろって積まれ、前の group と取り合う
 3. **先頭でないのに前の run が無ければ、作られるまで猶予だけ待つ。** 組み直しの直後は、前の
    group の run がまだ作られていない。先頭と取り違えると、組み直しの場面で順番が崩れる
-4. **API が読めなければ通す (go=true・終了 0)。** 門番の失敗で検査が走らないほうが重い
+4. **API が続けて読めなければ通す (go=true・終了 0)。1 回の失敗では通さない。** 門番の
+   失敗で検査が走らないほうが重いが、一過性の 502 で門を開けると元の症状に戻る
 5. **yield は merge_group の run が 1 本でも残っていれば go=false。** status が queued でも
    in_progress でも見送る (門番で待っている group の run は in_progress)
 6. **wait は merge_group の run が無くなるまで待ってから通す**
@@ -38,6 +40,9 @@ TURN = REPO / "scripts" / "render-turn.sh"
 FAKE_GH = """#!/bin/bash
 printf '%s\\n' "$*" >> "$GH_CALLS"
 [ -z "${GH_FAIL:-}" ] || { echo "gh: Server Error (HTTP 502)" >&2; exit 1; }
+if [ -n "${GH_FAIL_ONCE:-}" ] && [ ! -f "$DATA/failed-once" ]; then
+  touch "$DATA/failed-once"; echo "gh: Server Error (HTTP 502)" >&2; exit 1
+fi
 
 filter=""
 prev=""
@@ -95,8 +100,8 @@ class RenderTurnTest(unittest.TestCase):
         self.calls.write_text("", encoding="utf-8")
         self.output = root / "output.txt"
         self.summary = root / "summary.md"
-        # 既定では自分の base が main の先端 (= 自分が先頭)
-        self.main_tip(BASE)
+        # 既定では自分は先頭ではない (main の先端は別の commit)
+        self.main_tip("e" * 40)
 
     def main_tip(self, sha):
         refs = [
@@ -143,12 +148,22 @@ class RenderTurnTest(unittest.TestCase):
     # --- merge_group ---------------------------------------------------------
 
     def test_先頭の_group_は待たない(self):
+        self.main_tip(BASE)
         r = self.turn("merge_group", BASE)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.go(), "true")
-        self.assertEqual(len(self.calls_of("head_sha=")), 1)
+        self.assertEqual(len(self.calls_of("head_sha=")), 0)
+
+    def test_先頭は前の_group_の_run_が走り直していても待たない(self):
+        """merge 済みの前の group の run を人が rerun している最中でも、先頭は先頭。"""
+        self.main_tip(BASE)
+        self.answer("prev", 1, [run_of(11, PREV, "in_progress")])
+        r = self.turn("merge_group", BASE)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertNotIn("待っている相手", r.stdout)
 
     def test_前の_group_の_run_を自分の_base_sha_で引く(self):
+        self.answer("prev", 1, [run_of(11, PREV, "completed", "success")])
         self.turn("merge_group", BASE)
         (call,) = self.calls_of("head_sha=")
         self.assertIn("/actions/workflows/render.yml/runs?", call)
@@ -172,17 +187,20 @@ class RenderTurnTest(unittest.TestCase):
         self.assertEqual(self.go(), "true")
         self.assertEqual(len(self.calls_of("head_sha=")), 1, r.stdout)
 
-    def test_merge_group_は上限で放さない(self):
+    def test_上限を越えたら自分で終わって通す(self):
+        """門番の timeout (GitHub の cancel) に任せず、自分で go=true で終わる。"""
         self.answer("prev", 1, [run_of(11, PREV, "in_progress")])
-        self.answer("prev", 3, [run_of(11, PREV, "completed", "success")])
         r = self.turn("merge_group", BASE, RENDER_TURN_LIMIT=0)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.go(), "true")
-        self.assertEqual(len(self.calls_of("head_sha=")), 3, r.stdout)
-        self.assertNotIn("::warning::", r.stdout)
+        self.assertIn("::warning::", r.stdout)
+        self.assertIn(PREV, self.summary.read_text(encoding="utf-8"))
+
+    def test_merge_group_の上限は期限の直前の_55_分(self):
+        text = TURN.read_text(encoding="utf-8")
+        self.assertIn("mode=merge_group base=$2 base_ref=${3:-refs/heads/main} limit_default=55", text)
 
     def test_先頭でないのに前の_run_が無ければ作られるまで待つ(self):
-        self.main_tip("f" * 40)
         self.answer("prev", 2, [run_of(11, PREV, "in_progress")])
         self.answer("prev", 3, [run_of(11, PREV, "completed", "success")])
         r = self.turn("merge_group", BASE)
@@ -192,21 +210,32 @@ class RenderTurnTest(unittest.TestCase):
         self.assertIn("まだ作られていない", r.stdout)
 
     def test_前の_run_が猶予を越えても作られなければ通す(self):
-        self.main_tip("f" * 40)
         r = self.turn("merge_group", BASE, RENDER_TURN_MISSING_GRACE=0)
         self.assertEqual(self.go(), "true")
         self.assertEqual(len(self.calls_of("head_sha=")), 1, r.stdout)
 
     def test_base_ref_を名指しすればその先端と比べる(self):
+        self.main_tip(BASE)
         r = self.turn("merge_group", BASE, "refs/heads/main")
         self.assertEqual(self.go(), "true", r.stdout)
         self.assertEqual(len(self.calls_of("matching-refs/heads/main")), 1)
 
-    def test_API_が読めなければ通す(self):
+    def test_API_が続けて読めなければ通す(self):
         r = self.turn("merge_group", BASE, GH_FAIL=1)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.go(), "true")
         self.assertIn("::warning::", r.stdout)
+        # 3 回引き直してから通す
+        self.assertEqual(len(self.calls_of("matching-refs")), 3)
+
+    def test_1_回の失敗では通さず引き直す(self):
+        self.answer("prev", 1, [run_of(11, PREV, "in_progress")])
+        self.answer("prev", 2, [run_of(11, PREV, "completed", "success")])
+        r = self.turn("merge_group", BASE, GH_FAIL_ONCE=1)
+        self.assertEqual(self.go(), "true")
+        self.assertNotIn("::warning::", r.stdout)
+        self.assertIn("引き直す", r.stdout)
+        self.assertEqual(len(self.calls_of("head_sha=")), 2, r.stdout)
 
     # --- yield ---------------------------------------------------------------
 
