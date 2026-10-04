@@ -117,7 +117,8 @@ extension Canvas {
     ///
     /// - フレームの描き切り (フレームの中の途中の描き切りと、フレームの終わりの描き切り): このフレームで
     ///   描く絵と同じ、次に広げるフレームの揺らし。フレームの終わりの拡大が ``UpscaleStage/jitterInSource``
-    ///   で戻す
+    ///   で戻す。フレームの中で 1 度でも描き切った後の追い付き (置く口・出す先を読む口) も同じ揺らしを
+    ///   戻す ([#2103])
     /// - フレームの外の描き切り (`setup()` と止まっている間のコールバックで描き切らせる): 描く先に残る
     ///   最後のフレームの絵と同じ、最後に広げたフレームの揺らし。追い付き
     ///   (``catchUpOutput(writingBackPixels:)``) が ``UpscaleStage/lastJitterInSource`` で戻す。描く先の上
@@ -138,6 +139,7 @@ extension Canvas {
     /// 同じである。
     ///
     /// [#1913]: https://github.com/mokume-metal/mokume/issues/1913
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     func jitter(drawingInFrame: Bool) -> SIMD2<Float> {
         guard let stage = upscaleStage else { return .zero }
         return drawingInFrame ? stage.jitter : stage.lastJitter

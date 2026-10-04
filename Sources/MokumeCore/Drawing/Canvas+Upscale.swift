@@ -122,12 +122,14 @@ extension Canvas {
     ///   広げるより前に戻さないと、書いた画素が出す先に届かない
     /// - 拡大: 描く先の絵を、そのまま出す先へ広げる。**時間方向でも前のフレームと混ぜず**
     ///   (`accumulate` は重み 0.2 で変えた分を薄める)、履歴も揺らしの位相 (`framesScaled`) も
-    ///   動かさない。次に描くフレームは、これまでどおり履歴と混ぜる。**最後のフレームの揺らしは
-    ///   戻す** (``UpscaleStage/lastJitterInSource``) — 描く先の絵はその分ずれているので、戻さないと
-    ///   変えていない場所まで最大で描く画素 0.5 個ずれる。代償は、揺らして重ねて収束した絵が、変えた
-    ///   瞬間に 1 枚ぶんの三次補間に落ちること (次に描くフレームから積み上がり直す)。止まっている間に
-    ///   置いて描き切らせた図形も同じ揺らしで描く (``jitter(drawingInFrame:)``・[#1913]) ので、既にある
-    ///   絵と揃う
+    ///   動かさない。次に描くフレームは、これまでどおり履歴と混ぜる。**描く先の絵が載っている揺らしは
+    ///   戻す** — 戻さないと、変えていない場所まで最大で描く画素 0.5 個ずれる。フレームの外 (止まって
+    ///   いる間) なら最後のフレームの揺らし (``UpscaleStage/lastJitterInSource``)、フレームの中で 1 度でも
+    ///   描き切った後ならこのフレームの揺らし (``UpscaleStage/jitterInSource``・[#2103]) で、描き切りが図形を描く揺らし
+    ///   (``jitter(drawingInFrame:)``・[#1913]) と対にする。だから止まっている間に置いて描き切らせた
+    ///   図形は既にある絵と揃い、フレームの中で追い付いた絵はフレームの終わりの拡大と同じ位置に出る。
+    ///   代償は、揺らして重ねて収束した絵が、変えた瞬間に 1 枚ぶんの三次補間に落ちること (次に描く
+    ///   フレームから積み上がり直す)
     ///
     /// 環を 1 つ進めてから積む — 拡大の段は CPU が置き場へ書くので、描き切りと同じく、そのスロットを
     /// 最後に読んだ投入が終わっていなければならない。
@@ -150,6 +152,7 @@ extension Canvas {
     /// [#1913]: https://github.com/mokume-metal/mokume/issues/1913
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     func catchUpOutput(writingBackPixels: Bool = true) throws(RenderFailure) {
         guard let stage = upscaleStage else { return }
         // **コマンドを開く前に通す。** 置いた側の描き切り (写せないときの代わり) が、このコマンドの
@@ -158,7 +161,11 @@ extension Canvas {
         try frameRing.advance()
         stagePassesUsed = 0
         let pipeline = try effectPipeline()
-        let offset = stage.lastJitterInSource
+        // 描く先の絵が載っている揺らしを戻す (``jitter(drawingInFrame:)`` と対・[#2103])。フレームの中でも、
+        // まだ 1 度も描き切っていなければ描く先は前のフレームの絵のままなので、最後のフレームの揺らしを戻す
+        // (前のフレームの終わりの拡大が揺らしを進めてから失敗し、印が立ったまま入ってきた形)
+        let offset =
+            isDrawing && passesThisFrame > 0 ? stage.jitterInSource : stage.lastJitterInSource
         let wroteBack = try gpu.withCommands { commands throws(RenderFailure) in
             let wroteBack = writingBackPixels ? try encodePixelWriteBackKeepingCarry(into: commands) : false
             try encodeEnlargement(using: pipeline, offset: offset, into: commands)
@@ -171,20 +178,26 @@ extension Canvas {
         placingCatchUpDeferred = false
     }
 
-    /// 置く口が追い付かせる要があるか ([#2042])。拡大の段があり、フレームの外で描き切らせて描く先が
-    /// 出す先より進んでいて、追い付きを見送っていない (``placingCatchUpDeferred``) とき。
+    /// 置く口が追い付かせる要があるか ([#2042])。拡大の段があり、描き切らせて描く先が出す先より
+    /// 進んでいて (フレームの中でも外でも・[#2103])、追い付きを見送っていない
+    /// (``placingCatchUpDeferred``) とき。
+    ///
+    /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     var needsCatchUpForPlacing: Bool {
-        upscaleStage != nil && targetChangedSinceUpscale && !isDrawing && !placingCatchUpDeferred
+        upscaleStage != nil && targetChangedSinceUpscale && !placingCatchUpDeferred
     }
 
     /// 置く口が、置いた時点でこの面の出す先を描き切れている絵へ追い付かせる ([#2042])。
     /// **失敗しても投げない。**
     ///
     /// 描き場所に面を置く口 (``note(placing:)`` を通る口のすべて) は、出す先のテクスチャを直に読む。
-    /// 細かさを下げた面の出す先は、持ち越しの区間 (`setup()`・止まっている間のコールバック) で描き
-    /// 切らせても追い付かず、ランタイムが追い付くのはコールバックを返した後なので、同じコールバックの
-    /// 中で置いて閉じた描き場所は古い絵を読む。細かさ 1 の面は描く先が出す先そのものなので、もとから
-    /// 描き切れている絵が出る。この食い違いを、置く口の 1 点で揃える。
+    /// 細かさを下げた面の出す先は、途中で描き切らせても追い付かない。持ち越しの区間 (`setup()`・
+    /// 止まっている間のコールバック) ではランタイムが追い付くのはコールバックを返した後、自分の
+    /// フレームの中ではフレームの終わりの拡大なので、その前に置いて閉じた描き場所は古い絵を読む。
+    /// 細かさ 1 の面は描く先が出す先そのものなので、もとから描き切れている絵 (区切りが無ければ前の
+    /// フレーム、あればそこまで・効果は通らない) が出る。この食い違いを、置く口の 1 点で揃える
+    /// ([#2103])。
     ///
     /// - **置いた時点で追い付く。** 置いた側の描き切りの時点で追い付くと、置いた後に描き換えた分まで
     ///   出る (置いた時点の絵 [#1656] が破れる)。先に置いた分は、描き切らせた時点で写しへ差し替わって
@@ -194,9 +207,6 @@ extension Canvas {
     ///   内側なので、置く側自身の写しを取れなければ、今回は追い付かずに古い絵を置く
     /// - **書き戻さない** (``catchUpOutput(writingBackPixels:)``)。書いただけの画素は、細かさ 1 と
     ///   同じく置いた先に出ない
-    /// - **フレームの中の面は追い付かせない。** 自分のフレームを描いている面を置いたときの絵は、
-    ///   「`endDraw()` の前に置くと 1 フレーム前の絵」の説明とどちらへ揃えるかが決まっていないので、
-    ///   これまでどおりにする
     /// - 描き切らせていなければ何も積まない (ADR-0023 決定 5)
     ///
     /// **追い付けなかったら、この面が次に描き切るまで見送る** (``placingCatchUpDeferred``)。やり直しを
@@ -207,6 +217,7 @@ extension Canvas {
     ///
     /// [#1656]: https://github.com/mokume-metal/mokume/issues/1656
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+    /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     func catchUpOutputForPlacing(by placer: Canvas) {
         guard needsCatchUpForPlacing else { return }
         // 追い付けなければ、次に描き切るまで見送る (``placingCatchUpDeferred``)
