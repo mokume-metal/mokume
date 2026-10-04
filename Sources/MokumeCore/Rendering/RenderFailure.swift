@@ -7,7 +7,7 @@
 ///
 /// **大半は「環境かリソースが足りない」形だが、それに限らない。** 頼んだ値が通らないもの
 /// (``invalidSize(width:height:)`` / ``invalidPixelDensity(_:)`` / ``invalidFrameRate(_:)`` /
-/// ``invalidCount(_:)``) と、呼ぶ順序が誤っているもの
+/// ``invalidWindowScale(_:)`` / ``invalidCount(_:)``) と、呼ぶ順序が誤っているもの
 /// (``commandsAlreadyOpen``) も同じ型で運ぶ。呼び出し側から見ればどれも `try` した先で
 /// 起きたことで、運び方を分けても受け取る場所が増えるだけだからである ([#792])。
 ///
@@ -97,6 +97,16 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
     case invalidFrameRate(Int)
+
+    /// 窓を開く倍率が正しくない (0 より大きい有限の数でなければならない)。
+    ///
+    /// **組み立てで断る** ([ADR-0020] 決定 5 の 2 行目)。窓を開かない実行 (書き出し・
+    /// 窓を持たない `SketchRuntime`) でも断るのは、同じスケッチが窓を開く起こし方に
+    /// 移ったときに初めて落ちる形にしないためである。画面に収まらない大きさは断らない
+    /// (``SketchSettings/windowScale`` の「使える値」)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    case invalidWindowScale(Float)
 
     /// 用意する数が正しくない (1 以上でなければならない)。数の並び (`makeNumbers(count:)`)
     /// と粒 (`makeParticles(count:)`) の数で出る。
@@ -233,6 +243,12 @@ extension RenderFailure: CustomStringConvertible {
             That is not a valid frame rate: \(frameRate)
             It has to be at least 1 frame per second. To stop the sketch from moving on, call
             noLoop() instead.
+            """
+        case .invalidWindowScale(let scale):
+            """
+            That is not a valid window scale: \(scale)
+            It has to be a finite number above 0 — how many points of the window one pixel of \
+            the sketch takes (0.5 opens a 960×540 sketch in a 480×270 window).
             """
         case .invalidCount(let count):
             """
