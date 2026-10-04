@@ -661,23 +661,17 @@ class OutsideCollaboratorTest(GuardTest):
 
 
 class DraftTest(GuardTest):
-    """承認が要る PR は Draft で作らせない (#1621)。
+    """Draft で作ることを、触れるパスによらず止めない (ADR-0044・#2108)。
 
-    Draft で作った PR には、ルールセットの required_reviewers が maintainers への
-    レビュー依頼を出さない。作ってから `gh pr ready --undo` で落とせば依頼は残る
-    (#1234 の実測)。そこで重要パスに触れる PR の `--draft` だけを差し戻し、触れない
-    PR (多くの描画 PR) の `--draft` は通す — 作ってから落とす形だと、その間だけ描画の
-    行列に入ってしまうため。
-
-    判定には手元の差分を使うので、一時の git リポジトリを組んで検査する。origin は
-    このリポジトリへ向け、`origin/main` の上に「.github/ を触る枝」と「Sources/ だけの
-    枝」を置く。重要パスの一覧は本物のルールセットを読む。
+    承認のゲートがあった頃は、重要パスに触れる PR の `--draft` を差し戻していた (#1621)。
+    Draft の PR にはルールセットがレビュー依頼を出さないためだったが、承認を要求しなく
+    なったので理由が無い。差し戻しが戻ると、柵 (.github/) を直す PR だけが Draft に
+    置けなくなる。
     """
 
     TOKEN = 'GH_TOKEN="$(bash scripts/gh-app-token.sh)" && export GH_TOKEN && '
 
-    def repo(self, *, with_base=True):
-        """上の形の使い捨てリポジトリ。with_base=False は origin/main を置かない。"""
+    def test_柵に触れる_PR_も_draft_で作れる(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name) / "mokume"
@@ -686,153 +680,24 @@ class DraftTest(GuardTest):
         def run(*args):
             subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
-        def commit(path, message):
-            file = root / path
-            file.parent.mkdir(parents=True, exist_ok=True)
-            file.write_text(message, encoding="utf-8")
-            run("add", path)
-            run("commit", "-q", "-m", message)
-
         run("init", "-q", "-b", "main")
         # 使い捨てのリポジトリでは署名を切る (#344)
         run("config", "commit.gpgsign", "false")
         run("config", "user.name", "test")
         run("config", "user.email", "test@example.invalid")
         run("remote", "add", "origin", "git@github.com:mokume-metal/mokume.git")
-        commit("README.md", "base")
-        if with_base:
-            run("update-ref", "refs/remotes/origin/main", "HEAD")
-        run("switch", "-q", "-c", "code-only")
-        commit("Sources/Thing.swift", "code")
-        run("switch", "-q", "-c", "touches-github", "main")
-        commit(".github/workflows/thing.yml", "ci")
-        return root, run
+        (root / "README.md").write_text("base", encoding="utf-8")
+        run("add", "README.md")
+        run("commit", "-q", "-m", "base")
+        run("update-ref", "refs/remotes/origin/main", "HEAD")
+        run("switch", "-q", "-c", "touches-github")
+        (root / ".github" / "workflows").mkdir(parents=True)
+        (root / ".github" / "workflows" / "thing.yml").write_text("ci", encoding="utf-8")
+        run("add", ".github")
+        run("commit", "-q", "-m", "ci")
 
-    def protected(self):
-        root, _ = self.repo()
-        return str(root)
-
-    def unprotected(self):
-        root, run = self.repo()
-        run("switch", "-q", "code-only")
-        return str(root)
-
-    # --- 差し戻すもの ---------------------------------------------------
-
-    def test_重要パスに触れる_PR_を_draft_で作ると差し戻して作り方を案内する(self):
-        reason = self.assert_denied(
-            self.TOKEN + "gh pr create --draft --title t --body b", cwd=self.protected()
-        )
-        self.assertIn("gh pr ready --undo", reason, "作ってから落とす形が案内されていない")
-        self.assertIn("#1621", reason)
-
-    def test_短い旗_d_も同じ(self):
-        self.assert_denied(self.TOKEN + "gh pr create -d --fill", cwd=self.protected())
-
-    def test_pr_new_も同じ(self):
-        """create の組み込みエイリアス。口を数え上げた冒頭の表に揃える。"""
-        reason = self.assert_denied(self.TOKEN + "gh pr new --draft --fill", cwd=self.protected())
-        self.assertIn("gh pr new", reason)
-
-    def test_環境に_installation_token_を置いた経路も同じ(self):
-        self.assert_denied(
-            "gh pr create --draft --fill", cwd=self.protected(), GH_TOKEN="ghs_" + "x" * 36
-        )
-
-    def test_head_で指した枝の差分で判定する(self):
-        """手元の HEAD ではなく、PR になる枝を見る。"""
-        self.assert_denied(
-            self.TOKEN + "gh pr create --draft --head touches-github --fill",
-            cwd=self.unprotected(),
-        )
-        self.assert_passed(
-            self.TOKEN + "gh pr create --draft -H code-only --fill", cwd=self.protected()
-        )
-
-    def test_前置した_gh_でも旗を読む(self):
-        """旗を読む断片の選び方も前置を落とす (#1729)。落とさないと断片が空になり、
-        Draft の判定が黙って飛ぶ。"""
-        for gh in ("PATH=/tmp/bin:$PATH gh", "/opt/homebrew/bin/gh"):
-            with self.subTest(gh=gh):
-                self.assert_denied(
-                    self.TOKEN + f"{gh} pr create --draft --fill", cwd=self.protected()
-                )
-                self.assert_passed(
-                    self.TOKEN + f"{gh} pr create --draft -H code-only --fill",
-                    cwd=self.protected(),
-                )
-
-    def test_revert_の_draft_は差分を読めないので差し戻す(self):
-        """revert の中身は手元に無い。読めなければ差し戻す側に倒す。"""
-        self.assert_denied(self.TOKEN + "gh pr revert 42 --draft", cwd=self.unprotected())
-
-    def elsewhere(self):
-        """別のリポジトリの checkout。origin/main の上に重要パスに触れない枝を置く。
-        ここの差分は、mokume 宛ての PR の差分ではない。"""
-        root, run = self.repo()
-        run("remote", "set-url", "origin", "git@github.com:shinyaoguri/setup.git")
-        run("switch", "-q", "code-only")
-        return str(root)
-
-    def test_cwd_の差分が宛先の差分と確かめられなければ差し戻す(self):
-        """反証 #6 — 宛先の判定が cwd を使わなかったなら、Draft の判定も cwd の差分を読まない。
-
-        宛先を「決められない」と読んだ (cd などの文・前置) か、-R / GH_REPO で宛先を名指しした
-        とき、cwd の差分はその PR の差分とは限らない。読むと #1621 の穴が開く。
-        """
-        mokume = self.protected()
-        there = self.elsewhere()
-        for command in (
-            f"cd {mokume} && " + self.TOKEN + "gh pr create --draft --fill",
-            self.TOKEN + "GH_REPO=mokume-metal/mokume gh pr create --draft --fill",
-            self.TOKEN + "gh pr create -R mokume-metal/mokume --draft --fill",
-        ):
-            with self.subTest(command=command):
-                reason = self.assert_denied(command, cwd=there)
-                self.assertIn("gh pr ready --undo", reason)
-        # 同じリポジトリの別の checkout (別の worktree) へ cd しても、cwd の差分は読まない
-        reason = self.assert_denied(
-            f"cd {mokume} && " + self.TOKEN + "gh pr create --draft --fill", cwd=self.unprotected()
-        )
-        self.assertIn("cwd から変わりうる", reason)
-        # 宛先が cwd のリポジトリなら、今までどおり差分で判定する
-        self.assert_passed(
-            self.TOKEN + "gh pr create -R mokume-metal/mokume --draft --fill",
-            cwd=self.unprotected(),
-        )
-        # 宛先に効かない git の変数の前置では、cwd の差分を読むのをやめない (反証 2-5)
-        self.assert_passed(
-            self.TOKEN + "GIT_PAGER=cat gh pr create --draft --fill", cwd=self.unprotected()
-        )
-
-    def test_差分を読めなければ差し戻して_そう名乗る(self):
-        root, _ = self.repo(with_base=False)
-        reason = self.assert_denied(
-            self.TOKEN + "gh pr create --draft --fill", cwd=str(root)
-        )
-        self.assertIn("読めなかった", reason)
-
-    # --- 素通しするもの (完了条件 2) -------------------------------------
-
-    def test_重要パスに触れない_PR_の_draft_は通す(self):
-        """作ってから落とす形だと、その間だけ描画の行列に入ってしまう。"""
-        self.assert_passed(
-            self.TOKEN + "gh pr create --draft --title t --body b", cwd=self.unprotected()
-        )
-
-    def test_draft_でなければ重要パスに触れても通す(self):
-        """作り方は変えない。依頼は required_reviewers の 1 通だけ (#530 を起こさない)。"""
-        self.assert_passed(
-            self.TOKEN + "gh pr create --title t --body b", cwd=self.protected()
-        )
-
-    def test_本文に書いた_draft_は旗ではない(self):
-        self.assert_passed(
-            self.TOKEN + "gh pr create --fill --body-file - <<'EOF'\n"
-            "gh pr create --draft は差し戻される。\n"
-            "EOF",
-            cwd=self.protected(),
-        )
+        self.assert_passed(self.TOKEN + "gh pr create --draft --fill", cwd=str(root))
+        self.assert_passed(self.TOKEN + "gh pr revert 42 --draft")
 
 
 class PushFormTest(unittest.TestCase):

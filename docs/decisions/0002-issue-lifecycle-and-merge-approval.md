@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-26) / 一部置換 (→ [ADR-0003](0003-agent-identity-separation.md)): 決定 4 / 一部置換 (→ [ADR-0004](0004-issue-classification-by-issue-type.md)): 決定 1 の分類の表現 / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 1 のラベル分類・決定 3 のルーティング・決定 5 / 改訂 (2026-08-31): 決定 1 にエージェント自身の起票を含める / 改訂 (2026-09-07): 決定 1 追補の在庫の作り方を、着手の直前から先取りへ広げる / 改訂 (2026-10-04): 決定 1 追補の付与者の追跡を、人とエージェントを区別しない前提へ改める / 改訂あり (本文の「改訂 (日付)」見出し)
+採用 (2026-08-26) / 一部置換 (→ [ADR-0003](0003-agent-identity-separation.md)): 決定 4 / 一部置換 (→ [ADR-0004](0004-issue-classification-by-issue-type.md)): 決定 1 の分類の表現 / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 1 のラベル分類・決定 3 のルーティング・決定 5 / 改訂 (2026-08-31): 決定 1 にエージェント自身の起票を含める / 改訂 (2026-09-07): 決定 1 追補の在庫の作り方を、着手の直前から先取りへ広げる / 改訂 (2026-10-04): 決定 1 追補の付与者の追跡を、人とエージェントを区別しない前提へ改める / 改訂あり (本文の「改訂 (日付)」見出し) / 一部置換 (→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md)): 決定 4
 
 ## 文脈
 
@@ -95,6 +95,8 @@ required check `review-gate` が PR ごとに判定する:
 `verify: human` だけはどちらでも表現できない (パスではなく Issue の性質で決まる) ため、review-gate に残している。
 
 ### 4. 人間の承認は native の Approve レビューに一本化する
+
+**→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) 決定 2 が置き換えた。** 承認そのものを要求しない。
 
 承認の表現は **GitHub native の Approve レビュー**とする。帰属・push による stale 化の扱い・複数メンテナへの拡張・CODEOWNERS 連携が揃った専用機構だからである。Changes requested のレビューが未解消の場合は赤のまま。
 

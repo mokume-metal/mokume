@@ -20,8 +20,9 @@
 #      対処: git merge-tree --write-tree origin/main HEAD で確かめ、手元で解いて push する。
 #      ラベルの付け直しも close → reopen も効かない
 #   2. autoMerge: false + BLOCKED
-#      原因: 承認待ち、または auto-merge が外れた (#114 に出来事ごとの実測)
-#      対処: 承認を待つ / gh pr merge <番号> --auto --squash を打ち直す
+#      原因: auto-merge が外れた (#114 に出来事ごとの実測)。承認待ちはもう無い —
+#      ADR-0044 が承認のゲートを外した (#2108)
+#      対処: gh pr merge <番号> --auto --squash を打ち直す
 #   3. 全 check が緑なのに進まない
 #      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)
 #      対処: gh run rerun <run-id> --failed — **ただし pr-title と render-pr には打たない**
@@ -43,11 +44,7 @@
 #      原因: close した側の run が付けた赤が同じコミットに残っている (#513)
 #      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)。
 #      render.yml の run は rerun しない (3 と同じ)
-#   8. autoMerge: true + BLOCKED + 全 check 緑 で、一度承認されたのに承認が無い
-#      原因: 承認済みの PR へ push したので dismiss_stale_reviews_on_push が承認を落とした (#1033)
-#      対処: Approve を押し直す。依頼の出し直しは review-request が打つ (#1177)。衝突を解いた
-#      合流で落ちるのは正しい
-#   9. 描画に触れない PR も含めて、queue に入った PR が 60 分ごとに弾かれ続ける
+#   8. 描画に触れない PR も含めて、queue に入った PR が 60 分ごとに弾かれ続ける
 #      原因: 専用機の runner が止まっていて、必須の render が queued のまま走らない
 #      (#1774)。専用機は 1 台で、render は paths で絞らず merge_group ごとに走る。弾かれた
 #      PR には 5 の行も出るが、掛け直しても同じ 60 分を待つだけである
@@ -58,7 +55,7 @@
 #      してから、その定義の PR を出す — 必須チェックを消すときは適用を merge より先にする
 #      (AGENTS.md「ブランチ保護の正本」)。戻すときは逆順 (PR を merge してから適用) にする。
 #      外している間は描画を誰も見ないので、戻した後の最初の merge_group の render を確かめる
-#  10. 専用機は online で busy なのに、queue の先頭の render だけが queued のまま進まない
+#   9. 専用機は online で busy なのに、queue の先頭の render だけが queued のまま進まない
 #      原因: 専用機は queued の job を先着順に拾わない (#2062)。先頭の render が後から
 #      積まれた render-pr や後ろの group の render に抜かれ続け、60 分の期限で弾かれる。
 #      render.yml の門番 (render-turn) が積む順番を絞るので、普段は起きない。起きたら
@@ -70,9 +67,9 @@
 #      group の queue-sweep の出力 (render-pr の cancel 行) を読む。専用機で走っている・
 #      queued の job が render-pr なら、gh run cancel で退かせてよい (必須ではなく、stall-act
 #      も rerun しない — 戻すなら queue が空いてから push し直す)。弾かれた先頭は 5 と同じく予約を掛け直す。
-#      9 との見分け: 9 は runner が offline で、どの render も走らない。10 は runner が
+#      8 との見分け: 8 は runner が offline で、どの render も走らない。9 は runner が
 #      busy で、後ろの render や render-pr は走っている。runner が online なのに専用機の
-#      job が 1 本も走らないまま先頭の render だけが queued なら (stall-watch は 9 と名乗る)、
+#      job が 1 本も走らないまま先頭の render だけが queued なら (stall-watch は 8 と名乗る)、
 #      job そのものが詰まっている — 先頭の PR を queue から出し入れして job を作り直す
 #
 # 読むときの注意:
@@ -80,9 +77,6 @@
 # - **autoMerge: false は「外れた」と「queue に入った」の両方を指す** (#628)。分けるのは
 #   isInMergeQueue の 1 欄だけで、gh pr view --json に無い — 掛け直す前にこれを見る:
 #     gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){pullRequest(number:<番号>){isInMergeQueue mergeQueueEntry{position state}}}}' --jq '.data.repository.pullRequest'
-# - 承認の要否は reviewDecision には現れないので mergeStateStatus を見る (承認待ちなら
-#   BLOCKED・承認されると CLEAN)。**CLEAN だけでは「承認された」と読めない** — 承認の
-#   要らない PR も CLEAN なので、承認が付いたかは latestReviews を見る (#573)
 #
 # 表は PR が止まるたびに 1 行ずつ増えてきたが、**読むのは人間とエージェントの目だけ**
 # だった。気付く経路が「誰かがたまたま見る」しか無いので、夜間や人が離れている間は
@@ -107,13 +101,11 @@
 #   conflict             name   1       衝突の解消は人手
 #   in-queue             quiet  4       止まっていない (queue が進めている)
 #   stale-checks         act    3・7    古い失敗 check を打ち直す。冪等
-#   dismissed-approval   name   8       Approve は人の操作。機械には打てない
-#   awaiting-approval    quiet  2       承認待ちは正常な状態
 #   auto-merge-dropped   act    2・5    予約を掛け直すだけ。ゲートは飛び越えない
-#   runner-offline       name   9       専用機の前での操作と、保護の定義の適用は人手
+#   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
 #
-# **unreadable は表の行を持たない。** PR そのものか変更ファイルの一覧が読めなかった回で、
+# **unreadable は表の行を持たない。** PR そのものか専用機の render の run が読めなかった回で、
 # 詰まりの種類を言っていない — 黙って通す (quiet) と、読めていないことが誰にも見えない
 # まま「正常」に混ざる (#1303)。
 #
@@ -121,16 +113,9 @@
 # 7 が言う「**新しい PR の側**を rerun する」は、ここが open な PR しか見ないことで
 # 自動的に満たされる。
 #
-# **dismissed-approval が塞ぐのは「1 行も出ない」穴である** (#1033)。承認済みの PR へ
-# push すると dismiss_stale_reviews_on_push が承認を落とすが、checks は全部緑・衝突も
-# 無く・auto-merge も掛かったままなので、**どの行にも当たらず出力ゼロで終わっていた**
-# (#1019 は 69 分・#1020 は 17 分止まった)。
-#
-# **レビュー依頼の出し直しはここの仕事ではない** (#1177)。落ちた承認に気付く経路が当番の
-# 赤だけでは遅すぎた (この当番は実測で数時間おき) ので、落ちたその瞬間に
-# .github/workflows/review-request.yml が依頼を出し直す。ここに残る仕事は「押し直しが
-# 済んでいないまま時間が経った」を名乗ることで、分類が name のままなのはそのためである —
-# **機械に打てるのは依頼までで、Approve は人の操作である。**
+# **承認待ち (awaiting-approval) と落ちた承認 (dismissed-approval) の分類はもう無い。**
+# ADR-0044 が承認のゲートを外したので、BLOCKED のまま予約が外れていれば常に
+# auto-merge-dropped である (#2108。分類の経緯は #1033・#1303)。
 #
 # ## 順序に意味がある
 #
@@ -144,23 +129,15 @@
 # 注意は意味を失う」(#642) を踏む。**閾値 (既定 60 分) を超えて続いているものがある
 # ときだけ 1 で終える。** それ以下は出力するだけで 0。
 #
-# **dismissed-approval だけ猶予が短い (既定 15 分)。** 実測すると 60 分では #1019 も
-# #1020 も赤くならなかった — #1019 は落ちてから 69 分で押し直されたが直前の run はまだ
-# 58 分で緑、#1020 は 17 分で終わった (#1033)。押し直しは Approve 1 回で、この状態自体が
-# 稀 (衝突を解いた合流と、規約を外れた push のときだけ) なので #642 には当たりにくい。
-#
 # 経過は「その状態を作った出来事の時刻」から測る — 失敗 check があればその completedAt、
-# check が 1 本も無い conflict では PR の updatedAt、承認が落ちた PR では落とした出来事の
-# createdAt。**状態をどこにも記録しない**ので、当番が落ちていても復帰すればそのまま
-# 正しく測れる。
+# check が 1 本も無い conflict では PR の updatedAt。**状態をどこにも記録しない**ので、
+# 当番が落ちていても復帰すればそのまま正しく測れる。
 #
 # **猶予の値は、走る間隔に合わせて動かさない** (#1197)。cron は 15 分ごとに頼んでいるが、
-# GitHub の schedule は間引かれて実測は数時間おきにしか走らない。それでも 2 つの値
-# (60 分・15 分) は据え置く。
+# GitHub の schedule は間引かれて実測は数時間おきにしか走らない。それでも値 (60 分) は
+# 据え置く。
 #
 # - 猶予は上の「出来事の時刻」から測るので、走る間隔とは独立して意味を持つ
-# - 数時間おきに走ると、落ちた承認は見つかった最初の回でほぼ必ず 15 分を越えて赤くなる。
-#   それは #1033 が求めた「見つけたら名乗る」そのものである
 # - 間隔が詰まる日 (間引きが緩む日) にも、猶予が騒がしさの上限として同じように効く
 #
 # ## PR ではなくリポジトリを見る行 (runner-offline・#1774)
@@ -193,20 +170,11 @@ set -euo pipefail
 # リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
-# 変更ファイルの取り方。gh pr view --json files には上限がある (#793)
-# shellcheck source=scripts/pr-files.sh
-. "$(dirname "${BASH_SOURCE[0]}")/pr-files.sh"
-# 「承認が要るパスに触れているか」— BLOCKED の 2 つの意味を分けるのに使う
-# shellcheck source=scripts/protected-paths.sh
-. "$(dirname "${BASH_SOURCE[0]}")/protected-paths.sh"
 
 REPO="$(this_repo)"
 
 # 名乗りを赤へ上げるまでの猶予。**readonly にしない** — 検査が短い値で回すため
 STALL_MINUTES=${STALL_MINUTES:-60}
-
-# 落ちた承認だけの猶予。短い理由は冒頭の「騒がしさの上限」
-DISMISSED_APPROVAL_MINUTES=${DISMISSED_APPROVAL_MINUTES:-15}
 
 # 専用機の runner が render を拾わないまま過ぎてよい時間。理由は冒頭の「PR ではなく
 # リポジトリを見る行」
@@ -295,20 +263,6 @@ in_merge_queue() { # $1=PR 番号
     --jq '.data.repository.pullRequest.isInMergeQueue' 2>/dev/null || echo ""
 }
 
-# 承認が落とされた時刻。**latestReviews では足りない** — あれは「落ちた」と「まだ誰も
-# 見ていない」を分けられないので、落とした出来事そのものを見る (#1033)。in_merge_queue と
-# 同じく gh pr view --json に無い欄なので GraphQL で引く。読めなければ空を返し、
-# 呼び手が「落ちていない」ではなく「判定できない」に倒せるようにする
-dismissed_at() { # $1=PR 番号
-  # shellcheck disable=SC2016
-  gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$1" \
-    -f query='query($owner:String!,$name:String!,$number:Int!){
-      repository(owner:$owner,name:$name){pullRequest(number:$number){
-        timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT],last:1){
-          nodes{... on ReviewDismissedEvent{createdAt}}}}}}' \
-    --jq '.data.repository.pullRequest.timelineItems.nodes[-1].createdAt // ""' 2>/dev/null || echo ""
-}
-
 say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
   printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5"
 }
@@ -345,7 +299,7 @@ else
     mins=$(minutes_since "$oldest_queued")
     if [ "$mins" -ge "$RUNNER_STALL_MINUTES" ]; then
       say_line - runner-offline name "$mins" \
-        "専用機の runner が render を拾っていない — 戻す手順は表の 9 行目"
+        "専用機の runner が render を拾っていない — 戻す手順は表の 8 行目"
       overdue=1
     fi
   fi
@@ -363,7 +317,7 @@ numbers=$(gh pr list --repo "$REPO" --state open --limit 100 \
 
 for n in $numbers; do
   json=$(gh pr view "$n" --repo "$REPO" \
-    --json isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,latestReviews,updatedAt \
+    --json isDraft,autoMergeRequest,mergeStateStatus,statusCheckRollup,updatedAt \
     2>/dev/null) || {
     say_line "$n" unreadable name 0 "PR を読めなかった (判定していない)"
     continue
@@ -372,7 +326,6 @@ for n in $numbers; do
   auto=$(jq -r '.autoMergeRequest != null' <<<"$json")
   state=$(jq -r '.mergeStateStatus // ""' <<<"$json")
   updated=$(jq -r '.updatedAt // ""' <<<"$json")
-  approved=$(jq -r '[.latestReviews[]? | select(.state == "APPROVED")] | length > 0' <<<"$json")
 
   checks=$(normalize_checks <<<"$json")
   failing=$(failing_names <<<"$checks")
@@ -414,39 +367,8 @@ for n in $numbers; do
     continue
   fi
 
-  # 一度承認された後の push は dismiss_stale_reviews_on_push で承認を落とす。checks は
-  # 全部緑・衝突も無く・auto-merge も掛かったままなので、**この分岐が無いと 1 行も出ない**
-  # (#1033)。**auto の値を見ないのはそのためである。** 新規の承認待ちとの分かれ目は
-  # 「落とした出来事があるか」の 1 点だけで、そこは latestReviews からは読めない
-  if [ "$state" = BLOCKED ] && [ "$approved" != true ]; then
-    dismissed=$(dismissed_at "$n")
-    if [ -n "$dismissed" ]; then
-      mins=$(minutes_since "$dismissed")
-      say_line "$n" dismissed-approval name "$mins" \
-        "承認が push で落ちている — Approve 1 回で入る (依頼は出し直されている・#1177)"
-      [ "$mins" -lt "$DISMISSED_APPROVAL_MINUTES" ] || overdue=1
-      continue
-    fi
-  fi
-
+  # BLOCKED でも承認待ちとは読まない。承認のゲートは ADR-0044 で外れた (#2108)
   if [ "$auto" != true ]; then
-    # BLOCKED は「承認待ち」と「auto-merge が外れた」の両方を指す。分けるのは
-    # 「承認が要るパスに触れているか」と「もう承認されたか」の 2 つである。
-    # **「落ちた承認」は上で先に抜けている** — auto-merge も一緒に外れていたら、
-    # 押し直された次の run が auto-merge-dropped として掛け直す (2 手で収束する)
-    if [ "$state" = BLOCKED ] && [ "$approved" != true ]; then
-      # **一覧を読めなかったことを「重要パスに触れない」と読まない** (#1303)。
-      # パイプラインを条件に混ぜていた頃は取得の失敗が偽に化けて下へ落ち、
-      # **承認待ちの PR に予約を掛け直す当番が回っていた**
-      if ! files=$(pr_files "$REPO" "$n"); then
-        say_line "$n" unreadable name 0 "変更ファイルを読めなかった (承認待ちかを判定していない)"
-        continue
-      fi
-      if printf '%s\n' "$files" | touches_protected_path; then
-        say_line "$n" awaiting-approval quiet 0 "重要パスに触れる PR の承認待ち (正常)"
-        continue
-      fi
-    fi
     say_line "$n" auto-merge-dropped act 0 "auto-merge が外れている — 予約を掛け直す"
     continue
   fi

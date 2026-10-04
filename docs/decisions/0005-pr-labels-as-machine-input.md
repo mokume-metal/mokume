@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-27) / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 4 が承認の根拠として引いていた `verify: human` の判定 / 改訂 (2026-09-09): 決定 2 と影響節が挙げるラベルを現況に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂あり (本文の「改訂 (日付)」見出し)
+採用 (2026-08-27) / 一部置換 (→ [ADR-0031](0031-triage-as-the-single-gate.md)): 決定 4 が承認の根拠として引いていた `verify: human` の判定 / 改訂 (2026-09-09): 決定 2 と影響節が挙げるラベルを現況に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂あり (本文の「改訂 (日付)」見出し) / 一部置換 (→ [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md)): 決定 4 が dependabot の PR に人の目が入る根拠としていた承認
 
 ## 文脈
 
@@ -56,6 +56,8 @@ PR ラベルの唯一の役目は、**機構への入力**である。新しい 
 人が介在しない経路 — bot が開く PR — では、人の手付けを当てにできない。そこでは自動付与にする (決定 4)。
 
 ### 4. dependabot の PR は `no-issue` を自動で付ける
+
+**→ 承認の段は [ADR-0044](0044-maintainer-authored-prs-without-approval-gate.md) が置き換えた。** dependabot の PR も必須チェックだけで入る (同 ADR の影響)。`no-issue` を付けることはそのまま。
 
 `.github/dependabot.yml` に `labels: ["no-issue"]` を書く。dependabot が既定で付ける `dependencies` ラベルはこの指定によって置き換えられ、付かなくなる — 読み手がいないラベルだからで、決定 2 の帰結である (bot の PR かどうかは author `dependabot[bot]` を見れば分かる)。
 
