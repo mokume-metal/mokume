@@ -336,5 +336,4 @@ claude mcp add mokume -- mokume mcp
 
 - 書ける命令の説明 (参照の面): <https://mokume.org/documentation/mokume/>
 - 入口の 1 枚: <https://mokume.org>
-- 開発の見通し: [mokume Roadmap](https://github.com/orgs/mokume-metal/projects/1)
 - mokume 自体を触る (手元で作る・貢献の入口): [CONTRIBUTING.md](CONTRIBUTING.md)
